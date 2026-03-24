@@ -4,195 +4,879 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>名古屋・上前津のレンタル撮影スタジオ</title>
+<title>名古屋・上前津のレンタル撮影スタジオ｜Studio Nagoya Base</title>
 
 <!-- SEO -->
 <meta name="description" content="名古屋・上前津のプライベート撮影スタジオ。スマホでも綺麗に撮れる環境で、緊縛・作品撮り・ポートレート・コスプレ・創作撮影に対応。">
 
-<!-- OGP（絶対URLに変更） -->
-<meta property="og:title" content="名古屋・上前津のレンタル撮影スタジオ">
+<!-- OGP -->
+<meta property="og:title" content="名古屋・上前津のレンタル撮影スタジオ｜Studio Nagoya Base">
 <meta property="og:description" content="スマホでも綺麗に撮れるプライベート撮影スタジオ。緊縛・作品撮り・ポートレート・コスプレに対応。">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://your-domain.com/">
 <meta property="og:image" content="https://your-domain.com/images/ogp.jpg">
 
 <style>
-body {
-  font-family: Arial, sans-serif;
+/* =====================
+   CSS カスタムプロパティ
+===================== */
+:root {
+  --bg: #0e0e0e;
+  --bg-card: #1a1a1a;
+  --bg-section: #141414;
+  --text: #e0e0e0;
+  --text-muted: #888;
+  --accent: #c8a96e;
+  --accent-dark: #a08050;
+  --border: #2a2a2a;
+  --radius: 6px;
+  --max-w: 920px;
+  --font: 'Hiragino Sans', 'Noto Sans JP', 'Meiryo', sans-serif;
+}
+
+/* =====================
+   ベース
+===================== */
+*, *::before, *::after {
+  box-sizing: border-box;
   margin: 0;
-  color: #333;
+  padding: 0;
 }
 
-.container {
-  max-width: 900px;
-  margin: auto;
-  padding: 20px;
+html {
+  scroll-behavior: smooth;
 }
 
-header {
-  text-align: center;
-  padding: 60px 20px;
-  background: #f5f5f5;
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.8;
+  font-size: 15px;
 }
 
-.btn {
-  display: inline-block;
-  background: #000;
-  color: #fff;
-  padding: 12px 20px;
+img {
+  max-width: 100%;
+  display: block;
+}
+
+a {
+  color: var(--accent);
   text-decoration: none;
 }
 
-.btn:hover {
-  background: #333;
+a:hover {
+  text-decoration: underline;
+}
+
+/* =====================
+   レイアウト
+===================== */
+.container {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 0 24px;
 }
 
 section {
-  margin: 50px 0;
+  padding: 72px 0;
+  border-bottom: 1px solid var(--border);
 }
 
-h2 {
-  border-bottom: 2px solid #ccc;
-  padding-bottom: 5px;
+section:last-of-type {
+  border-bottom: none;
 }
 
-/* ギャラリー */
-.gallery div {
+/* =====================
+   見出し
+===================== */
+.section-title {
+  font-size: 1.5rem;
+  font-weight: 300;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.section-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-bottom: 40px;
+}
+
+/* =====================
+   ナビゲーション
+===================== */
+nav.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(14, 14, 14, 0.95);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-inner {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 0 24px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.gallery img {
-  flex: 1 1 200px;
-  max-width: 300px;
+  align-items: center;
+  justify-content: space-between;
+  height: 60px;
 }
 
-/* リスト */
-ul {
-  padding-left: 0;
+.nav-logo {
+  font-size: 0.85rem;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+  font-weight: 400;
 }
-ul li {
+
+.nav-links {
+  display: flex;
+  gap: 24px;
   list-style: none;
 }
-ul ul {
-  list-style-type: disc;
-  padding-left: 20px;
+
+.nav-links a {
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  transition: color 0.2s;
 }
 
-/* テーブル */
-table {
+.nav-links a:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+/* =====================
+   ヒーロー
+===================== */
+.hero {
+  min-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: radial-gradient(ellipse at 50% 30%, #1f1a12 0%, #0e0e0e 70%);
+  border-bottom: 1px solid var(--border);
+  padding: 80px 24px;
+}
+
+.hero-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.3em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 24px;
+}
+
+.hero h1 {
+  font-size: clamp(1.8rem, 5vw, 3rem);
+  font-weight: 300;
+  letter-spacing: 0.1em;
+  line-height: 1.4;
+  margin-bottom: 20px;
+  color: #f0f0f0;
+}
+
+.hero-desc {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  max-width: 480px;
+  margin: 0 auto 40px;
+  line-height: 2;
+}
+
+.btn-primary {
+  display: inline-block;
+  padding: 14px 36px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.85rem;
+  letter-spacing: 0.2em;
+  transition: background 0.2s, color 0.2s;
+}
+
+.btn-primary:hover {
+  background: var(--accent);
+  color: #000;
+  text-decoration: none;
+}
+
+/* =====================
+   特徴カード
+===================== */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.feature-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 32px 24px;
+  border-radius: var(--radius);
+  transition: border-color 0.2s;
+}
+
+.feature-card:hover {
+  border-color: var(--accent-dark);
+}
+
+.feature-icon {
+  font-size: 1.5rem;
+  color: var(--accent);
+  margin-bottom: 16px;
+}
+
+.feature-card h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.feature-card p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.8;
+}
+
+/* =====================
+   ギャラリー
+===================== */
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.gallery-placeholder {
+  aspect-ratio: 3/4;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+}
+
+.gallery-note {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* =====================
+   料金
+===================== */
+.pricing-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.pricing-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.pricing-card-header {
+  background: var(--border);
+  padding: 16px 24px;
+  font-size: 0.85rem;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+}
+
+.pricing-card table {
   width: 100%;
   border-collapse: collapse;
 }
-td, th {
-  border: 1px solid #ddd;
-  padding: 8px;
+
+.pricing-card td,
+.pricing-card th {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
 }
-th {
-  background: #f2f2f2;
+
+.pricing-card th {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  text-align: left;
+}
+
+.pricing-card td:not(:first-child) {
+  text-align: right;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.pricing-note {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 16px;
+}
+
+/* =====================
+   アクセス
+===================== */
+.access-info {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 2;
+}
+
+.access-info strong {
+  color: var(--text);
+  display: block;
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+/* =====================
+   FAQ
+===================== */
+.faq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+details.faq-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+details.faq-item summary {
+  padding: 18px 24px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background 0.2s;
+}
+
+details.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+
+details.faq-item summary::after {
+  content: '+';
+  color: var(--accent);
+  font-size: 1.2rem;
+  font-weight: 300;
+  transition: transform 0.2s;
+}
+
+details.faq-item[open] summary::after {
+  transform: rotate(45deg);
+}
+
+details.faq-item summary:hover {
+  background: rgba(200, 169, 110, 0.05);
+}
+
+.faq-answer {
+  padding: 0 24px 18px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.9;
+  border-top: 1px solid var(--border);
+}
+
+/* =====================
+   SNS
+===================== */
+.sns-section {
+  text-align: center;
+  padding: 56px 0;
+}
+
+.sns-section p {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+.btn-twitter {
+  display: inline-block;
+  padding: 12px 32px;
+  border: 1px solid #555;
+  color: var(--text);
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  border-radius: 999px;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.btn-twitter:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+/* =====================
+   法的セクション
+===================== */
+.legal-nav {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 56px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 24px;
+}
+
+.legal-nav a {
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  transition: color 0.2s;
+}
+
+.legal-nav a:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.legal-block {
+  margin-bottom: 56px;
+}
+
+.legal-block h2 {
+  font-size: 1.1rem;
+  font-weight: 400;
+  color: var(--accent);
+  letter-spacing: 0.1em;
+  margin-bottom: 20px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.legal-block h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 20px 0 8px;
+}
+
+.legal-block p,
+.legal-block li {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.9;
+}
+
+.legal-block ul {
+  list-style: none;
+  padding: 0;
+}
+
+.legal-block ul li {
+  padding: 4px 0;
+  padding-left: 16px;
+  position: relative;
+}
+
+.legal-block ul li::before {
+  content: '–';
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+}
+
+/* =====================
+   フッター
+===================== */
+footer {
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  padding: 40px 24px;
+  text-align: center;
+}
+
+footer p {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+}
+
+footer nav {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+footer nav a {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  transition: color 0.2s;
+}
+
+footer nav a:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+/* =====================
+   レスポンシブ
+===================== */
+@media (max-width: 640px) {
+  .nav-links {
+    display: none;
+  }
+
+  .hero h1 {
+    font-size: 1.6rem;
+  }
+
+  .features-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .pricing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  section {
+    padding: 48px 0;
+  }
 }
 </style>
 </head>
 
 <body>
 
-<div class="container">
+<!-- ナビゲーション -->
+<nav class="site-nav" aria-label="サイトナビゲーション">
+  <div class="nav-inner">
+    <span class="nav-logo">STUDIO NAGOYA BASE</span>
+    <ul class="nav-links">
+      <li><a href="#features">特徴</a></li>
+      <li><a href="#pricing">料金</a></li>
+      <li><a href="#access">アクセス</a></li>
+      <li><a href="#faq">FAQ</a></li>
+      <li><a href="https://forms.gle/実際のURL">予約</a></li>
+    </ul>
+  </div>
+</nav>
 
-<header>
-<h1>名古屋・上前津のプライベート撮影スタジオ</h1>
-<p>スマホでも綺麗に撮れる環境。緊縛・作品撮り・ポートレート・コスプレ・創作撮影に対応。</p>
-<a class="btn" href="https://forms.gle/実際のURL">空き状況確認・予約はこちら</a>
-</header>
-
-<section>
-<h2>特徴</h2>
-<ul>
-<li><strong>プライベート空間</strong>：周囲を気にせず撮影可能</li>
-<li><strong>スマホでも綺麗</strong>：立つだけで撮れる</li>
-<li><strong>機材対応</strong>：ストロボ持ち込みOK</li>
-</ul>
-</section>
-
-<section class="gallery">
-<h2>作例ギャラリー</h2>
-<div>
-<img src="images/sample1.jpg">
-<img src="images/sample2.jpg">
-<img src="images/sample3.jpg">
+<!-- ヒーロー -->
+<div class="hero">
+  <div>
+    <p class="hero-label">Nagoya · Kamimaezu · Private Studio</p>
+    <h1>名古屋・上前津の<br>プライベート撮影スタジオ</h1>
+    <p class="hero-desc">スマホでも綺麗に撮れる環境。<br>緊縛・作品撮り・ポートレート・コスプレ・創作撮影に対応。</p>
+    <a class="btn-primary" href="https://forms.gle/実際のURL">空き確認・ご予約はこちら</a>
+  </div>
 </div>
+
+<!-- 特徴 -->
+<section id="features">
+  <div class="container">
+    <h2 class="section-title">特徴</h2>
+    <p class="section-subtitle">Features</p>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>プライベート空間</h3>
+        <p>完全貸し切りで、周囲の目を気にせず撮影に集中できます。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>スマホでも綺麗に撮れる</h3>
+        <p>ライティング環境が整っており、スマートフォンでもクオリティの高い撮影が可能です。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>機材の持ち込みOK</h3>
+        <p>ストロボなどの撮影機材の持ち込みに対応しています。</p>
+      </div>
+    </div>
+  </div>
 </section>
 
-<section>
-<h2>料金</h2>
+<!-- ギャラリー -->
+<section id="gallery" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">作例ギャラリー</h2>
+    <p class="section-subtitle">Gallery</p>
 
-<p><strong>通常価格</strong></p>
-<table>
-<tr><th>時間</th><th>土日</th><th>平日</th></tr>
-<tr><td>2時間</td><td>6,500円</td><td>5,200円</td></tr>
-<tr><td>3時間</td><td>9,750円</td><td>7,800円</td></tr>
-<tr><td>4時間</td><td>12,350円</td><td>9,750円</td></tr>
-<tr><td>追加</td><td>3,250円</td><td>2,600円</td></tr>
-</table>
+    <div class="gallery-grid">
+      <div class="gallery-placeholder">PHOTO</div>
+      <div class="gallery-placeholder">PHOTO</div>
+      <div class="gallery-placeholder">PHOTO</div>
+    </div>
 
-<p><strong>会員価格</strong></p>
-<table>
-<tr><th>時間</th><th>土日</th><th>平日</th></tr>
-<tr><td>2時間</td><td>5,000円</td><td>4,000円</td></tr>
-<tr><td>3時間</td><td>7,500円</td><td>6,000円</td></tr>
-<tr><td>4時間</td><td>9,500円</td><td>7,500円</td></tr>
-<tr><td>追加</td><td>2,500円</td><td>2,000円</td></tr>
-</table>
-
-<p>※ 会員価格は対象者限定</p>
+    <p class="gallery-note">
+      実際の作例は Twitter でご確認いただけます →
+      <a href="https://twitter.com/ataru_nawa2020" target="_blank" rel="noopener">@ataru_nawa2020</a>
+    </p>
+  </div>
 </section>
 
-<section>
-<h2>アクセス</h2>
-<p>上前津駅 徒歩数分（住所は予約後案内）</p>
+<!-- 料金 -->
+<section id="pricing">
+  <div class="container">
+    <h2 class="section-title">料金</h2>
+    <p class="section-subtitle">Pricing</p>
+
+    <div class="pricing-grid">
+      <div class="pricing-card">
+        <div class="pricing-card-header">通常価格</div>
+        <table>
+          <tr>
+            <th>時間</th>
+            <th>土日祝</th>
+            <th>平日</th>
+          </tr>
+          <tr>
+            <td>2時間</td>
+            <td>6,500円</td>
+            <td>5,200円</td>
+          </tr>
+          <tr>
+            <td>3時間</td>
+            <td>9,750円</td>
+            <td>7,800円</td>
+          </tr>
+          <tr>
+            <td>4時間</td>
+            <td>12,350円</td>
+            <td>9,750円</td>
+          </tr>
+          <tr>
+            <td>延長（1h）</td>
+            <td>3,250円</td>
+            <td>2,600円</td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="pricing-card">
+        <div class="pricing-card-header">会員価格</div>
+        <table>
+          <tr>
+            <th>時間</th>
+            <th>土日祝</th>
+            <th>平日</th>
+          </tr>
+          <tr>
+            <td>2時間</td>
+            <td>5,000円</td>
+            <td>4,000円</td>
+          </tr>
+          <tr>
+            <td>3時間</td>
+            <td>7,500円</td>
+            <td>6,000円</td>
+          </tr>
+          <tr>
+            <td>4時間</td>
+            <td>9,500円</td>
+            <td>7,500円</td>
+          </tr>
+          <tr>
+            <td>延長（1h）</td>
+            <td>2,500円</td>
+            <td>2,000円</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+
+    <p class="pricing-note">※ 会員価格は対象者限定です。詳細はお問い合わせください。</p>
+  </div>
 </section>
 
-<section>
-<h2>FAQ</h2>
-<p><strong>スマホOK？</strong><br>はい</p>
-<p><strong>緊縛可能？</strong><br>可能（性的行為禁止）</p>
+<!-- アクセス -->
+<section id="access" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">アクセス</h2>
+    <p class="section-subtitle">Access</p>
+
+    <div class="access-info">
+      <strong>上前津駅 徒歩数分</strong>
+      名古屋市営地下鉄 鶴舞線・名城線「上前津」駅より徒歩数分。<br>
+      詳細な住所は、ご予約確定後にご案内いたします。
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq">
+  <div class="container">
+    <h2 class="section-title">よくある質問</h2>
+    <p class="section-subtitle">FAQ</p>
+
+    <div class="faq-list">
+      <details class="faq-item">
+        <summary>スマートフォンで撮影できますか？</summary>
+        <div class="faq-answer">はい、問題ありません。ライティングが整っているため、スマートフォンでもクオリティの高い写真が撮影できます。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>緊縛撮影は可能ですか？</summary>
+        <div class="faq-answer">可能です。ただし、性的行為および性的な行為を伴う撮影は禁止しています。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>機材の持ち込みはできますか？</summary>
+        <div class="faq-answer">ストロボなどの撮影機材の持ち込みは大歓迎です。事前にご相談いただけるとスムーズです。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>キャンセルポリシーはどうなっていますか？</summary>
+        <div class="faq-answer">2日前まで：無料 / 前日：料金の50% / 当日：料金の100% をキャンセル料としていただきます。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>支払い方法は何がありますか？</summary>
+        <div class="faq-answer">現金・PayPay・クレジットカードがご利用いただけます。</div>
+      </details>
+    </div>
+  </div>
 </section>
 
 <!-- SNS -->
-<section>
-<p>
-作例はこちら → 
-<a href="https://twitter.com/ataru_nawa2020" target="_blank">
-@ataru_nawa2020
-</a>
-</p>
+<div class="sns-section">
+  <div class="container">
+    <p>作例・最新情報は Twitter をご覧ください</p>
+    <a class="btn-twitter" href="https://twitter.com/ataru_nawa2020" target="_blank" rel="noopener">
+      @ataru_nawa2020 をフォロー
+    </a>
+  </div>
+</div>
+
+<!-- 法的セクション -->
+<section id="legal" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">法的事項</h2>
+    <p class="section-subtitle">Legal</p>
+
+    <nav class="legal-nav" aria-label="法的ページ内リンク">
+      <a href="#terms">利用規約</a>
+      <a href="#cancel">キャンセルポリシー</a>
+      <a href="#privacy">プライバシーポリシー</a>
+      <a href="#law">特定商取引法に基づく表記</a>
+    </nav>
+
+    <!-- 利用規約 -->
+    <div class="legal-block" id="terms">
+      <h2>1. 利用規約</h2>
+      <h3>第1条 適用範囲</h3>
+      <p>本規約は、Studio Nagoya Base（以下「当スタジオ」）の利用に際して適用されます。ご予約・ご利用をもって本規約に同意いただいたものとみなします。</p>
+
+      <h3>第2条 禁止事項</h3>
+      <ul>
+        <li>性的行為・性的な行為を伴う撮影</li>
+        <li>未成年者（18歳未満）の方のみでのご利用</li>
+        <li>スタジオ内での飲酒・喫煙</li>
+        <li>他の利用者や近隣の方への迷惑行為</li>
+        <li>機材・備品の無断持ち出し、故意の破損</li>
+        <li>反社会的勢力による利用</li>
+        <li>その他、運営者が不適切と判断する行為</li>
+      </ul>
+
+      <h3>第3条 原状回復</h3>
+      <p>ご利用後は、スタジオを使用前の状態に戻してください。機材・備品の破損や汚損が生じた場合は、実費をご請求することがあります。</p>
+
+      <h3>第4条 免責事項</h3>
+      <p>当スタジオは、利用者が撮影した作品に関する著作権・肖像権等のトラブルに対し、一切の責任を負いません。また、盗難・紛失・事故等についても同様です。</p>
+    </div>
+
+    <!-- キャンセルポリシー -->
+    <div class="legal-block" id="cancel">
+      <h2>2. キャンセルポリシー</h2>
+      <ul>
+        <li>2日前まで：キャンセル料 無料</li>
+        <li>前日：ご予約料金の 50%</li>
+        <li>当日・無断キャンセル：ご予約料金の 100%</li>
+      </ul>
+      <p style="margin-top: 12px;">ご変更・キャンセルは X（@ataru_nawa2020）または予約フォームよりお早めにご連絡ください。</p>
+    </div>
+
+    <!-- プライバシーポリシー -->
+    <div class="legal-block" id="privacy">
+      <h2>3. プライバシーポリシー</h2>
+
+      <h3>収集する情報</h3>
+      <p>当スタジオは、ご予約フォームを通じて氏名・連絡先情報（メールアドレス・X アカウント等）をお預かりします。</p>
+
+      <h3>利用目的</h3>
+      <ul>
+        <li>ご予約の確認・変更・キャンセル連絡</li>
+        <li>スタジオ運営に必要な連絡</li>
+      </ul>
+
+      <h3>第三者への提供</h3>
+      <p>法令に基づく場合を除き、お客様の個人情報を第三者に提供・開示することはありません。</p>
+
+      <h3>お問い合わせ</h3>
+      <p>個人情報の取り扱いに関するお問い合わせは、X（@ataru_nawa2020）までご連絡ください。</p>
+    </div>
+
+    <!-- 特定商取引法 -->
+    <div class="legal-block" id="law">
+      <h2>4. 特定商取引法に基づく表記</h2>
+      <ul>
+        <li>サービス名：Studio Nagoya Base（レンタル撮影スタジオ）</li>
+        <li>お問い合わせ：X（旧 Twitter） @ataru_nawa2020</li>
+        <li>所在地：名古屋市（上前津駅周辺）※詳細は予約後ご案内</li>
+        <li>料金：本ページ「料金」欄に記載</li>
+        <li>支払方法：現金 / PayPay / クレジットカード</li>
+        <li>支払時期：ご利用当日</li>
+        <li>キャンセル：本ページ「キャンセルポリシー」欄に記載</li>
+      </ul>
+    </div>
+
+  </div>
 </section>
 
-<hr>
+<!-- フッター -->
+<footer>
+  <p>STUDIO NAGOYA BASE</p>
+  <p>名古屋・上前津のプライベート撮影スタジオ</p>
+  <nav aria-label="フッターナビゲーション">
+    <a href="#terms">利用規約</a>
+    <a href="#cancel">キャンセルポリシー</a>
+    <a href="#privacy">プライバシーポリシー</a>
+    <a href="#law">特商法</a>
+  </nav>
+  <p style="margin-top: 20px;">&copy; Studio Nagoya Base. All rights reserved.</p>
+</footer>
 
-<nav>
-<ul>
-<li><a href="#terms">利用規約</a></li>
-<li><a href="#cancel">キャンセルポリシー</a></li>
-<li><a href="#privacy">プライバシーポリシー</a></li>
-<li><a href="#law">特商法</a></li>
-</ul>
-</nav>
-
-<h2 id="terms">1. 利用規約</h2>
-<p>（※ここはそのまま使ってOK）</p>
-
-<h2 id="cancel">2. キャンセルポリシー</h2>
-<p>2日前無料 / 前日50% / 当日100%</p>
-
-<h2 id="privacy">3. プライバシーポリシー</h2>
-<p>（前の内容そのまま）</p>
-
-<h2 id="law">4. 特定商取引法</h2>
-<ul>
-<li>問い合わせ：X @ataru_nawa2020</li>
-<li>価格：本ページ記載</li>
-<li>支払：現金 / PayPay / クレカ</li>
-</ul>
-
-</div>
 </body>
 </html>
