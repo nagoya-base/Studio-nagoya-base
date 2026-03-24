@@ -328,9 +328,24 @@ nav.site-nav {
 ===================== */
 .gallery-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   margin-bottom: 20px;
+}
+
+.gallery-item {
+  aspect-ratio: 3/4;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.gallery-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .gallery-placeholder {
@@ -862,6 +877,7 @@ footer nav a:hover {
 
   .gallery-grid {
     grid-template-columns: 1fr 1fr;
+    gap: 8px;
   }
 
   .pricing-grid {
@@ -1074,9 +1090,10 @@ footer nav a:hover {
     <p class="section-subtitle">Gallery</p>
 
     <div class="gallery-grid">
-      <div class="gallery-placeholder">PHOTO</div>
-      <div class="gallery-placeholder">PHOTO</div>
-      <div class="gallery-placeholder">PHOTO</div>
+      <div class="gallery-item"><img src="photo1.jpg" alt="作例1"></div>
+      <div class="gallery-item"><img src="photo2.jpg" alt="作例2"></div>
+      <div class="gallery-item"><img src="photo3.jpg" alt="作例3"></div>
+      <div class="gallery-item"><img src="photo4.jpg" alt="作例4"></div>
     </div>
 
     <p class="gallery-note">
