@@ -129,7 +129,20 @@ nav.site-nav {
 }
 
 .nav-logo {
-  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.nav-logo img {
+  height: 36px;
+  width: auto;
+  display: block;
+}
+
+.nav-logo span {
+  font-size: 0.8rem;
   letter-spacing: 0.2em;
   color: var(--accent);
   font-weight: 400;
@@ -808,7 +821,10 @@ footer nav a:hover {
 <!-- ナビゲーション -->
 <nav class="site-nav" aria-label="サイトナビゲーション">
   <div class="nav-inner">
-    <span class="nav-logo">STUDIO NAGOYA BASE</span>
+    <a href="#" class="nav-logo">
+      <img src="logo.svg" alt="Studio Nagoya Base">
+      <span>STUDIO NAGOYA BASE</span>
+    </a>
     <ul class="nav-links">
       <li><a href="#features">特徴</a></li>
       <li><a href="#pricing">料金</a></li>
