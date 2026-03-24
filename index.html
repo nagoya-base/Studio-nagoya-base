@@ -353,6 +353,32 @@ nav.site-nav {
 }
 
 /* =====================
+   営業時間
+===================== */
+.hours-block {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+}
+
+.hours-time {
+  font-size: 2.2rem;
+  font-weight: 300;
+  letter-spacing: 0.05em;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.hours-note {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* =====================
    FAQ
 ===================== */
 .faq-list {
@@ -787,6 +813,7 @@ footer nav a:hover {
       <li><a href="#features">特徴</a></li>
       <li><a href="#pricing">料金</a></li>
       <li><a href="#access">アクセス</a></li>
+      <li><a href="#hours">営業時間</a></li>
       <li><a href="#faq">FAQ</a></li>
       <li><a href="#calendar">空き確認</a></li>
     </ul>
@@ -828,7 +855,7 @@ footer nav a:hover {
       <div class="feature-card">
         <div class="feature-icon">◈</div>
         <h3>本格的な吊り床設備</h3>
-        <p>木組みの吊り床（間口2450mm）を完備。竹吊りにも対応した本格的な緊縛スペースです。</p>
+        <p>木組みの吊り床（高さ2350mm）を完備。竹吊りにも対応した本格的な緊縛スペースです。</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">◈</div>
@@ -1053,6 +1080,19 @@ footer nav a:hover {
   </div>
 </section>
 
+<!-- 営業時間 -->
+<section id="hours">
+  <div class="container">
+    <h2 class="section-title">営業時間</h2>
+    <p class="section-subtitle">Hours</p>
+
+    <div class="hours-block">
+      <div class="hours-time">8:00 – 23:00</div>
+      <div class="hours-note">年中無休（臨時休業の場合はSNSでお知らせします）</div>
+    </div>
+  </div>
+</section>
+
 <!-- FAQ -->
 <section id="faq">
   <div class="container">
@@ -1113,6 +1153,16 @@ footer nav a:hover {
       <details class="faq-item">
         <summary>背景紙を床に敷いても良いですか？</summary>
         <div class="faq-answer">可能ですが、汚さないよう土足・素足でのご使用はご遠慮ください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>駐車場はありますか？</summary>
+        <div class="faq-answer">専用駐車場はございません。近隣のコインパーキングをご利用ください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>シャワーは使えますか？</summary>
+        <div class="faq-answer">シャワーはご利用いただけません。</div>
       </details>
     </div>
   </div>
