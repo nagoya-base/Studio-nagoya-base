@@ -664,6 +664,55 @@ footer nav a:hover {
   margin-top: 16px;
 }
 
+.equipment-tables {
+  margin-top: 40px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.equipment-table-block h3 {
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+
+.equipment-table-block table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.equipment-table-block th,
+.equipment-table-block td {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+
+.equipment-table-block th {
+  background: var(--bg-card);
+  color: var(--text);
+  font-weight: 400;
+  width: 55%;
+}
+
+.equipment-table-block td {
+  text-align: center;
+  width: 45%;
+}
+
+@media (max-width: 640px) {
+  .equipment-tables {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* =====================
    カレンダー
 ===================== */
@@ -821,6 +870,38 @@ footer nav a:hover {
           <li>清掃用品（ウェットティッシュ・クイックルワイパー等）</li>
         </ul>
         <p class="equipment-note">※ 備品はご利用後に必ず清掃・元の場所へお戻しください。</p>
+      </div>
+    </div>
+
+    <div class="equipment-tables">
+      <div class="equipment-table-block">
+        <h3>撮影機材（常設・無料）</h3>
+        <table>
+          <tbody>
+            <tr><th>LEDライト（定常光）</th><td>×1</td></tr>
+            <tr><th>ライトスタンド</th><td>×2</td></tr>
+            <tr><th>ソフトボックス（60cm）</th><td>×1</td></tr>
+            <tr><th>ストリップソフトボックス（60×90cm）</th><td>×1</td></tr>
+            <tr><th>ストリップソフトボックス（30×120cm）</th><td>×1</td></tr>
+            <tr><th>背景ローラーサポート</th><td>×1</td></tr>
+            <tr><th>背景紙 ブラック（135cm×5m）</th><td>×1</td></tr>
+            <tr><th>背景紙 ホワイト（135cm×5m）</th><td>×1</td></tr>
+            <tr><th>レフ板 5-in-1（80cm）</th><td>×1</td></tr>
+            <tr><th>カラーフィルター（オレンジ）</th><td>×1</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="equipment-table-block">
+        <h3>保有機材（応相談）</h3>
+        <table>
+          <tbody>
+            <tr><th>ポータブルストロボ</th><td>×1</td></tr>
+            <tr><th>モノブロックストロボ</th><td>×1</td></tr>
+            <tr><th>ワイヤレスコマンダー（Canon用）</th><td>×1</td></tr>
+            <tr><th>スピードリングブラケット</th><td>×1</td></tr>
+          </tbody>
+        </table>
+        <p class="equipment-note">※ 保有機材のご利用はご予約時にあらかじめご相談ください。</p>
       </div>
     </div>
   </div>
