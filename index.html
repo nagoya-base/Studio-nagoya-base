@@ -166,6 +166,69 @@ nav.site-nav {
   text-decoration: none;
 }
 
+/* ハンバーガーボタン */
+.nav-hamburger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 36px;
+  height: 36px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  z-index: 101;
+}
+
+.nav-hamburger span {
+  display: block;
+  height: 1px;
+  background: var(--text);
+  transition: transform 0.25s, opacity 0.25s;
+  transform-origin: center;
+}
+
+/* × に変化 */
+.nav-hamburger.is-open span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.nav-hamburger.is-open span:nth-child(2) { opacity: 0; }
+.nav-hamburger.is-open span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+/* モバイルメニュー本体 */
+.nav-mobile {
+  display: none;
+  position: fixed;
+  inset: 60px 0 0 0;
+  background: rgba(10, 10, 10, 0.97);
+  backdrop-filter: blur(8px);
+  z-index: 100;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+
+.nav-mobile.is-open {
+  display: flex;
+}
+
+.nav-mobile a {
+  display: block;
+  width: 100%;
+  text-align: center;
+  padding: 18px 0;
+  font-size: 0.9rem;
+  letter-spacing: 0.15em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  transition: color 0.2s;
+}
+
+.nav-mobile a:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
 /* =====================
    ヒーロー
 ===================== */
@@ -785,6 +848,10 @@ footer nav a:hover {
     display: none;
   }
 
+  .nav-hamburger {
+    display: flex;
+  }
+
   .hero h1 {
     font-size: 1.6rem;
   }
@@ -833,8 +900,24 @@ footer nav a:hover {
       <li><a href="#faq">FAQ</a></li>
       <li><a href="#calendar">空き確認</a></li>
     </ul>
+
+    <button class="nav-hamburger" aria-label="メニューを開く" aria-expanded="false">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
   </div>
 </nav>
+
+<!-- モバイルメニュー -->
+<div class="nav-mobile" id="navMobile">
+  <a href="#features"  class="nav-mobile-link">特徴</a>
+  <a href="#pricing"   class="nav-mobile-link">料金</a>
+  <a href="#access"    class="nav-mobile-link">アクセス</a>
+  <a href="#hours"     class="nav-mobile-link">営業時間</a>
+  <a href="#faq"       class="nav-mobile-link">FAQ</a>
+  <a href="#calendar"  class="nav-mobile-link">空き確認</a>
+</div>
 
 <!-- ヒーロー -->
 <div class="hero">
@@ -1468,6 +1551,36 @@ footer nav a:hover {
   </nav>
   <p style="margin-top: 20px;">&copy; Studio Nagoya Base. All rights reserved.</p>
 </footer>
+
+<script>
+(function () {
+  var btn   = document.querySelector('.nav-hamburger');
+  var menu  = document.getElementById('navMobile');
+  var links = menu.querySelectorAll('a');
+
+  function open() {
+    btn.classList.add('is-open');
+    menu.classList.add('is-open');
+    btn.setAttribute('aria-expanded', 'true');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function close() {
+    btn.classList.remove('is-open');
+    menu.classList.remove('is-open');
+    btn.setAttribute('aria-expanded', 'false');
+    document.body.style.overflow = '';
+  }
+
+  btn.addEventListener('click', function () {
+    menu.classList.contains('is-open') ? close() : open();
+  });
+
+  links.forEach(function (a) {
+    a.addEventListener('click', close);
+  });
+})();
+</script>
 
 </body>
 </html>
