@@ -546,6 +546,89 @@ footer nav a:hover {
 }
 
 /* =====================
+   利用用途
+===================== */
+.usage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.usage-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.usage-item::before {
+  content: '◈';
+  color: var(--accent);
+  flex-shrink: 0;
+  font-size: 0.7rem;
+}
+
+/* =====================
+   設備・備品
+===================== */
+.equipment-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.equipment-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+
+.equipment-card h3 {
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  margin-bottom: 16px;
+  text-transform: uppercase;
+}
+
+.equipment-card ul {
+  list-style: none;
+  padding: 0;
+}
+
+.equipment-card li {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 10px;
+}
+
+.equipment-card li:last-child {
+  border-bottom: none;
+}
+
+.equipment-card li::before {
+  content: '–';
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.equipment-note {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 16px;
+}
+
+/* =====================
    カレンダー
 ===================== */
 .calendar-wrapper {
@@ -591,6 +674,10 @@ footer nav a:hover {
   }
 
   .pricing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .equipment-grid {
     grid-template-columns: 1fr;
   }
 
@@ -652,6 +739,52 @@ footer nav a:hover {
         <div class="feature-icon">◈</div>
         <h3>機材の持ち込みOK</h3>
         <p>ストロボなどの撮影機材の持ち込みに対応しています。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 利用用途 -->
+<section id="usage" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">こんな用途に</h2>
+    <p class="section-subtitle">Usage</p>
+
+    <div class="usage-grid">
+      <div class="usage-item">緊縛の練習</div>
+      <div class="usage-item">撮影（静止画・動画）</div>
+      <div class="usage-item">アート・身体表現</div>
+      <div class="usage-item">ワークショップ</div>
+      <div class="usage-item">ペア・グループの技術練習（少人数）</div>
+    </div>
+  </div>
+</section>
+
+<!-- 設備・備品 -->
+<section id="equipment">
+  <div class="container">
+    <h2 class="section-title">設備・備品</h2>
+    <p class="section-subtitle">Equipment</p>
+
+    <div class="equipment-grid">
+      <div class="equipment-card">
+        <h3>設備</h3>
+        <ul>
+          <li>個室スペース（完全貸し切り）</li>
+          <li>吊り環・固定ポイント</li>
+          <li>マット</li>
+          <li>照明（常設ライト）</li>
+          <li>冷蔵庫（使用後は必ず扉を閉めてください）</li>
+        </ul>
+      </div>
+      <div class="equipment-card">
+        <h3>備品</h3>
+        <ul>
+          <li>麻縄</li>
+          <li>はさみ（緊急時用）</li>
+          <li>清掃用品（ウェットティッシュ・クイックルワイパー等）</li>
+        </ul>
+        <p class="equipment-note">※ 備品はご利用後に必ず清掃・元の場所へお戻しください。</p>
       </div>
     </div>
   </div>
@@ -747,6 +880,7 @@ footer nav a:hover {
     </div>
 
     <p class="pricing-note">※ 会員価格は対象者限定です。詳細はお問い合わせください。</p>
+    <p class="pricing-note" style="margin-top: 8px;">※ ご予約前に必ず<a href="#terms" style="color: var(--accent);">利用規約</a>をご確認ください。</p>
   </div>
 </section>
 
@@ -794,6 +928,16 @@ footer nav a:hover {
       <details class="faq-item">
         <summary>支払い方法は何がありますか？</summary>
         <div class="faq-answer">現金・PayPay・クレジットカードがご利用いただけます。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>縛り方を教えるサービスはありますか？</summary>
+        <div class="faq-answer">当スタジオでは講習・技術指導等のサービスは行っておりません。あくまでスペースのご提供となります。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>男女問わず利用できますか？</summary>
+        <div class="faq-answer">はい、どなたでもご利用いただけます。ただし18歳以上（高校生不可）の方に限ります。</div>
       </details>
     </div>
   </div>
@@ -855,11 +999,14 @@ footer nav a:hover {
       <h3>第2条 禁止事項</h3>
       <ul>
         <li>性的行為・性的な行為を伴う撮影</li>
-        <li>未成年者（18歳未満）の方のみでのご利用</li>
+        <li>18歳未満の方、および高校生のご利用（年齢確認をお願いする場合があります）</li>
         <li>スタジオ内での喫煙・火気使用（低温蝋燭を含むすべての蝋燭・火器類）</li>
         <li>スタジオ内での飲酒（食べ物・飲み物の持ち込みはご相談ください）</li>
         <li>他の利用者や近隣の方への迷惑行為</li>
+        <li>予約時間外の滞在・入室</li>
+        <li>ゴミの放置（ゴミは必ずお持ち帰りください）</li>
         <li>機材・備品の無断持ち出し、故意の破損</li>
+        <li>破損・汚損が生じた場合の隠蔽（必ずご連絡ください）</li>
         <li>反社会的勢力による利用</li>
         <li>その他、運営者が不適切と判断する行為</li>
       </ul>
