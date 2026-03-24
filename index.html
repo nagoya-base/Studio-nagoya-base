@@ -546,6 +546,31 @@ footer nav a:hover {
 }
 
 /* =====================
+   カレンダー
+===================== */
+.calendar-wrapper {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 24px;
+  background: var(--bg-card);
+}
+
+.calendar-wrapper iframe {
+  display: block;
+  width: 100%;
+  height: 500px;
+  border: none;
+  filter: invert(1) hue-rotate(180deg);
+}
+
+.calendar-note {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+/* =====================
    レスポンシブ
 ===================== */
 @media (max-width: 640px) {
@@ -569,6 +594,10 @@ footer nav a:hover {
     grid-template-columns: 1fr;
   }
 
+  .calendar-wrapper iframe {
+    height: 360px;
+  }
+
   section {
     padding: 48px 0;
   }
@@ -587,7 +616,7 @@ footer nav a:hover {
       <li><a href="#pricing">料金</a></li>
       <li><a href="#access">アクセス</a></li>
       <li><a href="#faq">FAQ</a></li>
-      <li><a href="https://forms.gle/実際のURL">予約</a></li>
+      <li><a href="#calendar">空き確認</a></li>
     </ul>
   </div>
 </nav>
@@ -598,7 +627,7 @@ footer nav a:hover {
     <p class="hero-label">Nagoya · Kamimaezu · Private Studio</p>
     <h1>名古屋・上前津の<br>プライベート撮影スタジオ</h1>
     <p class="hero-desc">スマホでも綺麗に撮れる環境。<br>緊縛・作品撮り・ポートレート・コスプレ・創作撮影に対応。</p>
-    <a class="btn-primary" href="https://forms.gle/実際のURL">空き確認・ご予約はこちら</a>
+    <a class="btn-primary" href="#calendar">空き確認・ご予約はこちら</a>
   </div>
 </div>
 
@@ -770,6 +799,30 @@ footer nav a:hover {
   </div>
 </section>
 
+<!-- 予約カレンダー -->
+<section id="calendar" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">予約カレンダー</h2>
+    <p class="section-subtitle">Reservation Calendar</p>
+
+    <div class="calendar-wrapper">
+      <iframe
+        src="https://calendar.google.com/calendar/u/0/embed?src=nagoyabase2023@gmail.com&ctz=Asia/Tokyo"
+        scrolling="no"
+        title="Studio Nagoya Base 予約カレンダー"
+        aria-label="予約カレンダー">
+      </iframe>
+    </div>
+
+    <p class="calendar-note">※ 空き状況はカレンダーでご確認ください。ご予約・お問い合わせはメールまたは X にてご連絡ください。</p>
+
+    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+      <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com">メールで予約する</a>
+      <a class="btn-primary" href="https://twitter.com/ataru_nawa2020" target="_blank" rel="noopener" style="border-color: #555; color: var(--text-muted);">X（Twitter）で連絡</a>
+    </div>
+  </div>
+</section>
+
 <!-- SNS -->
 <div class="sns-section">
   <div class="container">
@@ -803,7 +856,8 @@ footer nav a:hover {
       <ul>
         <li>性的行為・性的な行為を伴う撮影</li>
         <li>未成年者（18歳未満）の方のみでのご利用</li>
-        <li>スタジオ内での飲酒・喫煙</li>
+        <li>スタジオ内での喫煙・火気使用（低温蝋燭を含むすべての蝋燭・火器類）</li>
+        <li>スタジオ内での飲酒（食べ物・飲み物の持ち込みはご相談ください）</li>
         <li>他の利用者や近隣の方への迷惑行為</li>
         <li>機材・備品の無断持ち出し、故意の破損</li>
         <li>反社会的勢力による利用</li>
@@ -825,7 +879,11 @@ footer nav a:hover {
         <li>前日：ご予約料金の 50%</li>
         <li>当日・無断キャンセル：ご予約料金の 100%</li>
       </ul>
-      <p style="margin-top: 12px;">ご変更・キャンセルは X（@ataru_nawa2020）または予約フォームよりお早めにご連絡ください。</p>
+      <p style="margin-top: 12px;">ご変更・キャンセルはなるべくお早めに下記いずれかの方法でご連絡ください。</p>
+      <ul>
+        <li>メール：<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a></li>
+        <li>X（旧 Twitter）：<a href="https://twitter.com/ataru_nawa2020" target="_blank" rel="noopener">@ataru_nawa2020</a></li>
+      </ul>
     </div>
 
     <!-- プライバシーポリシー -->
@@ -845,7 +903,11 @@ footer nav a:hover {
       <p>法令に基づく場合を除き、お客様の個人情報を第三者に提供・開示することはありません。</p>
 
       <h3>お問い合わせ</h3>
-      <p>個人情報の取り扱いに関するお問い合わせは、X（@ataru_nawa2020）までご連絡ください。</p>
+      <p>個人情報の取り扱いに関するお問い合わせは下記までご連絡ください。</p>
+      <ul>
+        <li>メール：<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a></li>
+        <li>X（旧 Twitter）：<a href="https://twitter.com/ataru_nawa2020" target="_blank" rel="noopener">@ataru_nawa2020</a></li>
+      </ul>
     </div>
 
     <!-- 特定商取引法 -->
@@ -853,7 +915,7 @@ footer nav a:hover {
       <h2>4. 特定商取引法に基づく表記</h2>
       <ul>
         <li>サービス名：Studio Nagoya Base（レンタル撮影スタジオ）</li>
-        <li>お問い合わせ：X（旧 Twitter） @ataru_nawa2020</li>
+        <li>お問い合わせ：<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a> / X <a href="https://twitter.com/ataru_nawa2020" target="_blank" rel="noopener">@ataru_nawa2020</a></li>
         <li>所在地：名古屋市（上前津駅周辺）※詳細は予約後ご案内</li>
         <li>料金：本ページ「料金」欄に記載</li>
         <li>支払方法：現金 / PayPay / クレジットカード</li>
