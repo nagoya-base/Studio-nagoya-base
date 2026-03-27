@@ -7,7 +7,7 @@
 <title>名古屋・上前津のレンタル撮影スタジオ｜Studio Nagoya Base</title>
 
 <!-- SEO -->
-<meta name="description" content="名古屋・上前津のプライベート撮影スタジオ。スマホでも綺麗に撮れる環境で、緊縛・作品撮り・ポートレート・コスプレ・創作撮影に対応。">
+<meta name="description" content="名古屋・上前津のプライベート撮影スタジオ。スマートフォンから一眼レフまで本格的な撮影環境。緊縛・作品撮り・ポートレート・コスプレ・創作撮影に対応。">
 
 <!-- OGP -->
 <meta property="og:title" content="名古屋・上前津のレンタル撮影スタジオ｜Studio Nagoya Base">
@@ -129,7 +129,20 @@ nav.site-nav {
 }
 
 .nav-logo {
-  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.nav-logo img {
+  height: 36px;
+  width: auto;
+  display: block;
+}
+
+.nav-logo span {
+  font-size: 0.8rem;
   letter-spacing: 0.2em;
   color: var(--accent);
   font-weight: 400;
@@ -149,6 +162,69 @@ nav.site-nav {
 }
 
 .nav-links a:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+/* ハンバーガーボタン */
+.nav-hamburger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 36px;
+  height: 36px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  z-index: 101;
+}
+
+.nav-hamburger span {
+  display: block;
+  height: 1px;
+  background: var(--text);
+  transition: transform 0.25s, opacity 0.25s;
+  transform-origin: center;
+}
+
+/* × に変化 */
+.nav-hamburger.is-open span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.nav-hamburger.is-open span:nth-child(2) { opacity: 0; }
+.nav-hamburger.is-open span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+/* モバイルメニュー本体 */
+.nav-mobile {
+  display: none;
+  position: fixed;
+  inset: 60px 0 0 0;
+  background: rgba(10, 10, 10, 0.97);
+  backdrop-filter: blur(8px);
+  z-index: 100;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+
+.nav-mobile.is-open {
+  display: flex;
+}
+
+.nav-mobile a {
+  display: block;
+  width: 100%;
+  text-align: center;
+  padding: 18px 0;
+  font-size: 0.9rem;
+  letter-spacing: 0.15em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  transition: color 0.2s;
+}
+
+.nav-mobile a:hover {
   color: var(--accent);
   text-decoration: none;
 }
@@ -252,9 +328,24 @@ nav.site-nav {
 ===================== */
 .gallery-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   margin-bottom: 20px;
+}
+
+.gallery-item {
+  aspect-ratio: 3/4;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.gallery-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .gallery-placeholder {
@@ -350,6 +441,32 @@ nav.site-nav {
   display: block;
   margin-bottom: 8px;
   font-size: 1rem;
+}
+
+/* =====================
+   営業時間
+===================== */
+.hours-block {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 32px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.hours-time {
+  font-size: 1.4rem;
+  font-weight: 300;
+  letter-spacing: 0.08em;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.hours-note {
+  font-size: 0.82rem;
+  color: var(--text-muted);
 }
 
 /* =====================
@@ -664,6 +781,55 @@ footer nav a:hover {
   margin-top: 16px;
 }
 
+.equipment-tables {
+  margin-top: 40px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.equipment-table-block h3 {
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+
+.equipment-table-block table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.equipment-table-block th,
+.equipment-table-block td {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+
+.equipment-table-block th {
+  background: var(--bg-card);
+  color: var(--text);
+  font-weight: 400;
+  width: 55%;
+}
+
+.equipment-table-block td {
+  text-align: center;
+  width: 45%;
+}
+
+@media (max-width: 640px) {
+  .equipment-tables {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* =====================
    カレンダー
 ===================== */
@@ -697,6 +863,10 @@ footer nav a:hover {
     display: none;
   }
 
+  .nav-hamburger {
+    display: flex;
+  }
+
   .hero h1 {
     font-size: 1.6rem;
   }
@@ -707,6 +877,7 @@ footer nav a:hover {
 
   .gallery-grid {
     grid-template-columns: 1fr 1fr;
+    gap: 8px;
   }
 
   .pricing-grid {
@@ -733,23 +904,43 @@ footer nav a:hover {
 <!-- ナビゲーション -->
 <nav class="site-nav" aria-label="サイトナビゲーション">
   <div class="nav-inner">
-    <span class="nav-logo">STUDIO NAGOYA BASE</span>
+    <a href="#" class="nav-logo">
+      <img src="logo.svg" alt="Studio Nagoya Base">
+      <span>STUDIO NAGOYA BASE</span>
+    </a>
     <ul class="nav-links">
       <li><a href="#features">特徴</a></li>
       <li><a href="#pricing">料金</a></li>
       <li><a href="#access">アクセス</a></li>
+      <li><a href="#hours">営業時間</a></li>
       <li><a href="#faq">FAQ</a></li>
       <li><a href="#calendar">空き確認</a></li>
     </ul>
+
+    <button class="nav-hamburger" aria-label="メニューを開く" aria-expanded="false">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
   </div>
 </nav>
+
+<!-- モバイルメニュー -->
+<div class="nav-mobile" id="navMobile">
+  <a href="#features"  class="nav-mobile-link">特徴</a>
+  <a href="#pricing"   class="nav-mobile-link">料金</a>
+  <a href="#access"    class="nav-mobile-link">アクセス</a>
+  <a href="#hours"     class="nav-mobile-link">営業時間</a>
+  <a href="#faq"       class="nav-mobile-link">FAQ</a>
+  <a href="#calendar"  class="nav-mobile-link">空き確認</a>
+</div>
 
 <!-- ヒーロー -->
 <div class="hero">
   <div>
     <p class="hero-label">Nagoya · Kamimaezu · Private Studio</p>
     <h1>名古屋・上前津の<br>プライベート撮影スタジオ</h1>
-    <p class="hero-desc">スマホでも綺麗に撮れる環境。<br>緊縛・作品撮り・ポートレート・コスプレ・創作撮影に対応。</p>
+    <p class="hero-desc">スマートフォンでも綺麗に撮れる環境。一眼レフならさらに高いクオリティで。<br>緊縛・作品撮り・ポートレート・コスプレ・創作撮影に対応。</p>
     <a class="btn-primary" href="#calendar">空き確認・ご予約はこちら</a>
   </div>
 </div>
@@ -768,14 +959,37 @@ footer nav a:hover {
       </div>
       <div class="feature-card">
         <div class="feature-icon">◈</div>
-        <h3>スマホでも綺麗に撮れる</h3>
-        <p>ライティング環境が整っており、スマートフォンでもクオリティの高い撮影が可能です。</p>
+        <h3>本格的な撮影環境</h3>
+        <p>ライティングが整っており、スマートフォンでも綺麗に撮れます。一眼レフならさらに本格的な表現が可能です。</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">◈</div>
         <h3>機材の持ち込みOK</h3>
         <p>ストロボなどの撮影機材の持ち込みに対応しています。</p>
       </div>
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>本格的な吊り床設備</h3>
+        <p>木組みの吊り床（高さ2350mm）を完備。竹吊りにも対応した本格的な緊縛スペースです。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>大型ミラー完備</h3>
+        <p>1460×800mmの大型ミラーを設置。自撮りや構図確認、演出の幅が広がります。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>フルカラー天井照明</h3>
+        <p>色温度・色彩を自由に変えられる天井照明を常設。雰囲気に合わせた空間づくりができます。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>撮影機材を無料貸し出し</h3>
+        <p>パネルライト・背景紙・レフ板など、撮影に必要な基本機材を無料でご利用いただけます。</p>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:40px;">
+      <a class="btn-primary" href="#calendar">空き状況を確認する</a>
     </div>
   </div>
 </section>
@@ -807,21 +1021,64 @@ footer nav a:hover {
         <h3>設備</h3>
         <ul>
           <li>個室スペース（完全貸し切り）</li>
-          <li>吊り環・固定ポイント</li>
-          <li>マット</li>
-          <li>照明（常設ライト）</li>
-          <li>冷蔵庫（使用後は必ず扉を閉めてください）</li>
+          <li>木組みの吊り床<br><small style="color:var(--text-muted);font-size:0.78rem;">高さ 2350mm／間口 2450mm／奥行 2000mm</small></li>
+          <li>竹吊り（長さ 150cm・体重 100kg 程度まで）</li>
+          <li>大型ミラー（1460mm × 800mm）</li>
+          <li>フルカラー天井照明</li>
+          <li>エアコン</li>
+          <li>トイレ（着替えスペースとしてご利用ください）</li>
         </ul>
+        <p class="equipment-note">※ 配管が古いため、水道水の飲用はお控えください。</p>
       </div>
       <div class="equipment-card">
         <h3>備品</h3>
         <ul>
           <li>麻縄</li>
+          <li>スリング・カラビナ・リギングプレート・スイベル</li>
+          <li>ヨガマット</li>
+          <li>置き畳</li>
+          <li>学校机・椅子（2セット）</li>
+          <li>教卓・黒板</li>
           <li>はさみ（緊急時用）</li>
           <li>清掃用品（ウェットティッシュ・クイックルワイパー等）</li>
         </ul>
         <p class="equipment-note">※ 備品はご利用後に必ず清掃・元の場所へお戻しください。</p>
       </div>
+    </div>
+
+    <div class="equipment-tables">
+      <div class="equipment-table-block">
+        <h3>撮影機材（常設・無料）</h3>
+        <table>
+          <tbody>
+            <tr><th>バイカラーパネルライト（定常光）</th><td>×1</td></tr>
+            <tr><th>ライトスタンド（100〜260cm）</th><td>×2</td></tr>
+            <tr><th>背景ローラーサポート</th><td>×1</td></tr>
+            <tr><th>背景紙 ブラック（135cm×5m）</th><td>×1</td></tr>
+            <tr><th>背景紙 ホワイト（135cm×5m）</th><td>×1</td></tr>
+            <tr><th>レフ板 5-in-1（80cm）</th><td>×1</td></tr>
+            <tr><th>カラーフィルター（オレンジ）</th><td>×1</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="equipment-table-block">
+        <h3>保有機材（応相談）</h3>
+        <table>
+          <tbody>
+            <tr><th>ポータブルストロボ</th><td>×1</td></tr>
+            <tr><th>モノブロックストロボ</th><td>×1</td></tr>
+            <tr><th>ワイヤレスコマンダー（Canon用）</th><td>×1</td></tr>
+            <tr><th>スピードリングブラケット</th><td>×1</td></tr>
+            <tr><th>ソフトボックス（60cm）</th><td>×1</td></tr>
+            <tr><th>ストリップソフトボックス（60×90cm）</th><td>×1</td></tr>
+            <tr><th>ストリップソフトボックス（30×120cm）</th><td>×1</td></tr>
+          </tbody>
+        </table>
+        <p class="equipment-note">※ 保有機材のご利用はご予約時にあらかじめご相談ください。</p>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:40px;">
+      <a class="btn-primary" href="#calendar">空き状況を確認する</a>
     </div>
   </div>
 </section>
@@ -916,8 +1173,12 @@ footer nav a:hover {
       </div>
     </div>
 
-    <p class="pricing-note">※ 会員価格は対象者限定です。詳細はお問い合わせください。</p>
+    <p class="pricing-note">※ 料金は人数に関わらず一定です（1部屋まるごとのご利用）。</p>
+    <p class="pricing-note" style="margin-top: 8px;">※ 会員価格は対象者限定です。詳細はお問い合わせください。</p>
     <p class="pricing-note" style="margin-top: 8px;">※ ご予約前に必ず<a href="#terms" style="color: var(--accent);">利用規約</a>をご確認ください。</p>
+    <div style="text-align:center;margin-top:32px;">
+      <a class="btn-primary" href="#calendar">空き状況を確認する</a>
+    </div>
   </div>
 </section>
 
@@ -928,9 +1189,22 @@ footer nav a:hover {
     <p class="section-subtitle">Access</p>
 
     <div class="access-info">
-      <strong>上前津駅 徒歩数分</strong>
-      名古屋市営地下鉄 鶴舞線・名城線「上前津」駅より徒歩数分。<br>
+      <strong>上前津駅 徒歩7〜8分</strong>
+      名古屋市営地下鉄 鶴舞線・名城線「上前津」駅 3番出口より徒歩7〜8分。<br>
       詳細な住所は、ご予約確定後にご案内いたします。
+    </div>
+  </div>
+</section>
+
+<!-- 営業時間 -->
+<section id="hours">
+  <div class="container">
+    <h2 class="section-title">営業時間</h2>
+    <p class="section-subtitle">Hours</p>
+
+    <div class="hours-block">
+      <div class="hours-time">8:00 – 23:00</div>
+      <div class="hours-note">年中無休（臨時休業の場合はSNSでお知らせします）</div>
     </div>
   </div>
 </section>
@@ -954,7 +1228,7 @@ footer nav a:hover {
 
       <details class="faq-item">
         <summary>機材の持ち込みはできますか？</summary>
-        <div class="faq-answer">ストロボなどの撮影機材の持ち込みは大歓迎です。事前にご相談いただけるとスムーズです。</div>
+        <div class="faq-answer">可能です。ライトスタンド（100〜260cm）もご利用いただけます。</div>
       </details>
 
       <details class="faq-item">
@@ -975,6 +1249,36 @@ footer nav a:hover {
       <details class="faq-item">
         <summary>男女問わず利用できますか？</summary>
         <div class="faq-answer">はい、どなたでもご利用いただけます。ただし18歳以上（高校生不可）の方に限ります。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>当日延長は可能ですか？</summary>
+        <div class="faq-answer">次の予約が空いている場合のみ可能です。当日は連絡がつかない場合もあるため、延長をご希望の場合は事前にご相談ください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>鍵の受け渡しはどうなっていますか？</summary>
+        <div class="faq-answer">予約時にお知らせします。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>予約日程の変更はできますか？</summary>
+        <div class="faq-answer">前日までであれば1回に限り無料で変更できます。2回目以降はキャンセル扱いとなりますのでご注意ください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>背景紙を床に敷いても良いですか？</summary>
+        <div class="faq-answer">可能ですが、汚さないよう土足・素足でのご使用はご遠慮ください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>駐車場はありますか？</summary>
+        <div class="faq-answer">専用駐車場はございません。近隣のコインパーキングをご利用ください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>シャワーは使えますか？</summary>
+        <div class="faq-answer">シャワーはご利用いただけません。</div>
       </details>
     </div>
   </div>
@@ -1036,9 +1340,11 @@ footer nav a:hover {
 
       <h3>2. 使用方法</h3>
       <ul>
-        <li>予約した時間帯に限り利用できます。当日延長はできません。</li>
+        <li>予約した時間帯に限り利用できます。予約が空いている場合のみ当日延長が可能です。当日は連絡がつかない場合もあるため、延長をご希望の場合は事前にご相談ください。</li>
+        <li>緊縛撮影は3時間以上のご予約を推奨します。</li>
         <li>利用人数は1〜4名とし、5名以上の利用は原則お断りしています。ただし、事前にご相談いただき、運営者が承認した場合に限り利用が可能です。</li>
         <li>入室・退室時間を厳守し、予約時間内に清掃・撤収まで完了してください。</li>
+        <li>室内はCO₂濃度が上がりやすいため、適度に換気しながらご利用ください。</li>
       </ul>
 
       <h3>3. 禁止事項</h3>
@@ -1046,8 +1352,12 @@ footer nav a:hover {
         <li>性的な行為、性的サービス、ポルノ撮影など、撮影スタジオ利用の範囲を逸脱する行為</li>
         <li>公序良俗に反する行為、違法薬物の持ち込み、アルコール類の持ち込みや酩酊状態での利用</li>
         <li>スタジオ内での飲食（蓋付き容器での水分補給を除く）</li>
-        <li>危険物の持ち込み、火気、喫煙（電子タバコを含む）</li>
+        <li>危険物の持ち込み、タバコや低温蝋燭を含む火気の使用</li>
+        <li>屋内での喫煙（電子タバコを含む。ベランダ・換気扇付近も含む）。喫煙は建物外で。</li>
         <li>施設・設備・備品の無断改造、破壊、無断持ち出し</li>
+        <li>無断で収納設備を開ける行為</li>
+        <li>ゴミ箱に持ち込み品を捨てる行為</li>
+        <li>床や設備に水・油などの液体を掛ける行為</li>
         <li>近隣に迷惑となる大音量の発生や振動</li>
         <li>スタジオ前での待ち合わせ</li>
         <li>予約時間外の入退室</li>
@@ -1058,7 +1368,8 @@ footer nav a:hover {
 
       <h3>4. 吊りおよび緊縛に関する安全ルール</h3>
       <ul>
-        <li>当施設では空中緊縛（吊り）を行うことができますが、利用者自身の自己責任で行ってください。補助者の配置を強く推奨します。</li>
+        <li>空中緊縛（吊り）は、熟練者および熟練者から指導を受けた者のみ行うことができます。利用者自身の自己責任で行ってください。</li>
+        <li>吊りを行う際は、縛り手・受け手を含む3人以上でご利用ください。</li>
         <li>固定設備（フックや取付部など）については、運営者が通常の安全確認を行っていますが、利用者は使用前に状態を確認し、異常がある場合は使用を中止し運営者へ連絡してください。</li>
         <li>竹や縄などの消耗品は利用者が安全確認を行い、瑕疵がある場合は吊りには使用せず、運営者にご連絡ください。</li>
         <li>首吊りや呼吸を阻害するような行為は禁止です。</li>
@@ -1089,7 +1400,7 @@ footer nav a:hover {
         <li>オンライン決済（クレジットカード等）の場合は、決済完了をもって予約が確定します。</li>
         <li>現金またはPayPay（現地決済）の場合は、予約確定時点で予約が成立し、利用当日に支払いを行います。利用当日に支払いが行われない場合は、無断キャンセルとみなし利用料金の100%を請求する場合があります。</li>
         <li>支払方法は、現金、PayPay、オンラインクレジットカード決済です。</li>
-        <li>予約確定後の日程変更は、前日まで1回に限り無料で対応します。</li>
+        <li>予約確定後の日程変更は、前日まで1回に限り無料で対応します。2回目以降の変更はキャンセル扱いとなり、キャンセルポリシーに従います。</li>
       </ul>
 
       <h3>8. 忘れ物</h3>
@@ -1102,7 +1413,7 @@ footer nav a:hover {
         <li>貴重品・持ち物の盗難・紛失についても、当施設は責任を負いません。</li>
         <li>想定外の機材不良・設備トラブルによる損害、天災・停電等の不可抗力による中断や損害についても、当施設は責任を負いません。</li>
         <li>利用者は自己または同伴者の行為により生じた損害について賠償する責任を負います。</li>
-        <li>消費者契約法第8条に基づき、事業者が損害賠償責任を全て免除する条項は無効であるため、本規約に反する免責の主張は無効です。</li>
+        <li>運営者の故意または重大な過失による損害については、本規約の免責条項にかかわらず、運営者が責任を負います。</li>
       </ul>
 
       <h3>10. 個人情報</h3>
@@ -1192,6 +1503,7 @@ footer nav a:hover {
       <p style="margin-top: 12px;">ご変更・キャンセルはなるべくお早めに X にてご連絡ください。</p>
       <ul>
         <li>X（旧 Twitter）：<a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">@nagoyabase2023</a></li>
+        <li>メール：<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a></li>
       </ul>
     </div>
 
@@ -1226,10 +1538,10 @@ footer nav a:hover {
       <p>法令に基づく場合や緊急の安全確保のため必要な場合を除き、本人の同意なく第三者に提供しません。決済処理等で外部サービスを利用する場合、そのサービス提供者に情報を共有することがあります。</p>
 
       <h3>6. 外部サービス</h3>
-      <p>予約受付にはX（旧Twitter）のDMを利用します。決済にはPayPay株式会社や金融機関等のサービスを利用します。当施設はクレジットカード情報を保有しません。外部サービスのプライバシーポリシーは各サービスの規定に従ってください。</p>
+      <p>予約受付にはX（旧Twitter）のDMまたはGmail（nagoyabase2023@gmail.com）を利用します。空き状況の確認にはGoogleカレンダーを利用します。決済にはPayPay株式会社や金融機関等のサービスを利用します。当施設はクレジットカード情報を保有しません。外部サービスのプライバシーポリシーは各サービスの規定に従ってください。</p>
 
       <h3>7. 情報の訂正・削除</h3>
-      <p>利用者は自身の情報について、開示・訂正・削除を求めることができます。X（旧Twitter）DM にてご連絡ください。</p>
+      <p>利用者は自身の情報について、開示・訂正・削除を求めることができます。X（旧Twitter）DM またはメール（<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a>）にてご連絡ください。</p>
 
       <h3>8. 規約の改定</h3>
       <p>本ポリシーは必要に応じて改定されます。改定後は本サイトに掲載した時点で効力を有します。</p>
@@ -1250,7 +1562,7 @@ footer nav a:hover {
         </tr>
         <tr>
           <th>問い合わせ方法</th>
-          <td>X（旧Twitter）DM にて受け付けます。<br><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">@nagoyabase2023</a></td>
+          <td>X（旧Twitter）DM またはメールにて受け付けます。<br><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">@nagoyabase2023</a><br><a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a></td>
         </tr>
         <tr>
           <th>提供サービス</th>
@@ -1302,6 +1614,36 @@ footer nav a:hover {
   </nav>
   <p style="margin-top: 20px;">&copy; Studio Nagoya Base. All rights reserved.</p>
 </footer>
+
+<script>
+(function () {
+  var btn   = document.querySelector('.nav-hamburger');
+  var menu  = document.getElementById('navMobile');
+  var links = menu.querySelectorAll('a');
+
+  function open() {
+    btn.classList.add('is-open');
+    menu.classList.add('is-open');
+    btn.setAttribute('aria-expanded', 'true');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function close() {
+    btn.classList.remove('is-open');
+    menu.classList.remove('is-open');
+    btn.setAttribute('aria-expanded', 'false');
+    document.body.style.overflow = '';
+  }
+
+  btn.addEventListener('click', function () {
+    menu.classList.contains('is-open') ? close() : open();
+  });
+
+  links.forEach(function (a) {
+    a.addEventListener('click', close);
+  });
+})();
+</script>
 
 </body>
 </html>
