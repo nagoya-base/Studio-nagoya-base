@@ -880,6 +880,54 @@ footer nav a:hover {
     padding: 48px 0;
   }
 }
+
+/* =====================
+   Floating Booking Button
+===================== */
+.floating-booking-btn {
+  position: fixed;
+  bottom: 32px;
+  right: 32px;
+  width: 60px;
+  height: 60px;
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: 50%;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(200, 169, 110, 0.3);
+  transition: all 0.3s ease;
+  z-index: 50;
+}
+
+.floating-booking-btn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 8px 24px rgba(200, 169, 110, 0.5);
+}
+
+.floating-booking-btn:active {
+  transform: scale(0.95);
+}
+
+.floating-booking-btn.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(100px);
+}
+
+@media (max-width: 640px) {
+  .floating-booking-btn {
+    bottom: 24px;
+    right: 24px;
+    width: 56px;
+    height: 56px;
+    font-size: 1.1rem;
+  }
+}
 </style>
 </head>
 <body>
@@ -1411,6 +1459,43 @@ footer nav a:hover {
   links.forEach(function (a) {
     a.addEventListener('click', close);
   });
+})();
+</script>
+
+<!-- Floating Booking Button -->
+<button class="floating-booking-btn" id="floatingBookingBtn" aria-label="Go to reservation calendar">📅</button>
+
+<script>
+(function () {
+  var btn = document.getElementById('floatingBookingBtn');
+  var calendarSection = document.getElementById('calendar');
+  
+  if (!btn || !calendarSection) return;
+  
+  // Click button to scroll to calendar
+  btn.addEventListener('click', function () {
+    calendarSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  
+  // Toggle button visibility on scroll
+  window.addEventListener('scroll', function () {
+    var calendarTop = calendarSection.getBoundingClientRect().top;
+    var windowHeight = window.innerHeight;
+    
+    // Hide button if calendar is 30% within viewport
+    if (calendarTop < windowHeight * 0.3) {
+      btn.classList.add('hidden');
+    } else {
+      btn.classList.remove('hidden');
+    }
+  });
+  
+  // Check initial state
+  var calendarTop = calendarSection.getBoundingClientRect().top;
+  var windowHeight = window.innerHeight;
+  if (calendarTop < windowHeight * 0.3) {
+    btn.classList.add('hidden');
+  }
 })();
 </script>
 
