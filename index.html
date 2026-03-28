@@ -526,6 +526,73 @@ details.faq-item summary:hover {
 }
 
 /* =====================
+   ニュース
+===================== */
+.news-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.news-item {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.88rem;
+  transition: background 0.15s;
+}
+
+.news-item:last-child {
+  border-bottom: none;
+}
+
+.news-item:hover {
+  background: var(--bg-card);
+}
+
+.news-date {
+  color: var(--accent);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.news-badge {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 1px 8px;
+  border-radius: 2px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.news-text {
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+/* =====================
+   X タイムライン
+===================== */
+.x-timeline-wrapper {
+  display: flex;
+  justify-content: center;
+}
+
+.x-timeline-wrapper .twitter-timeline {
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* =====================
    SNS
 ===================== */
 .sns-section {
@@ -909,6 +976,7 @@ footer nav a:hover {
       <span>STUDIO NAGOYA BASE</span>
     </a>
     <ul class="nav-links">
+      <li><a href="#news">ニュース</a></li>
       <li><a href="#features">特徴</a></li>
       <li><a href="#pricing">料金</a></li>
       <li><a href="#access">アクセス</a></li>
@@ -927,6 +995,7 @@ footer nav a:hover {
 
 <!-- モバイルメニュー -->
 <div class="nav-mobile" id="navMobile">
+  <a href="#news"      class="nav-mobile-link">ニュース</a>
   <a href="#features"  class="nav-mobile-link">特徴</a>
   <a href="#pricing"   class="nav-mobile-link">料金</a>
   <a href="#access"    class="nav-mobile-link">アクセス</a>
@@ -944,6 +1013,22 @@ footer nav a:hover {
     <a class="btn-primary" href="#calendar">空き確認・ご予約はこちら</a>
   </div>
 </div>
+
+<!-- ニュース -->
+<section id="news">
+  <div class="container">
+    <h2 class="section-title">お知らせ</h2>
+    <p class="section-subtitle">News</p>
+
+    <div class="news-list">
+      <div class="news-item">
+        <span class="news-date">2026.03.28</span>
+        <span class="news-badge">お知らせ</span>
+        <span class="news-text">利用規約を改訂しました。第12〜14条（会員資格・反社会的勢力の排除・予約時の規約同意）を追加しています。</span>
+      </div>
+    </div>
+  </div>
+</section>
 
 <!-- 特徴 -->
 <section id="features">
@@ -1280,6 +1365,11 @@ footer nav a:hover {
         <summary>シャワーは使えますか？</summary>
         <div class="faq-answer">シャワーはご利用いただけません。</div>
       </details>
+
+      <details class="faq-item">
+        <summary>忘れ物をしました。</summary>
+        <div class="faq-answer">発見後7日間保管しています。X（旧Twitter）DM またはメール（<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a>）にてお早めにご連絡ください。食品・飲料など衛生上保管が困難なものは随時処分します。7日間経過後も引き取りがない場合は、遺失物法に基づき警察へ届け出ます。</div>
+      </details>
     </div>
   </div>
 </section>
@@ -1308,15 +1398,31 @@ footer nav a:hover {
   </div>
 </section>
 
-<!-- SNS -->
-<div class="sns-section">
+<!-- X タイムライン -->
+<section id="x-timeline" style="background: var(--bg-section);">
   <div class="container">
-    <p>作例・最新情報は Twitter をご覧ください</p>
-    <a class="btn-twitter" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">
-      @nagoyabase2023 をフォロー
-    </a>
+    <h2 class="section-title">最新情報</h2>
+    <p class="section-subtitle">Latest Posts</p>
+
+    <div class="x-timeline-wrapper">
+      <a class="twitter-timeline"
+         data-theme="dark"
+         data-width="600"
+         data-height="500"
+         data-chrome="nofooter noborders"
+         href="https://twitter.com/nagoyabase2023">
+        @nagoyabase2023 の投稿を読み込み中...
+      </a>
+    </div>
+    <script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
+
+    <div class="sns-section" style="padding: 24px 0 0;">
+      <a class="btn-twitter" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">
+        @nagoyabase2023 をフォロー
+      </a>
+    </div>
   </div>
-</div>
+</section>
 
 <!-- 法的セクション -->
 <section id="legal" style="background: var(--bg-section);">
