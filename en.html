@@ -891,7 +891,7 @@ footer nav a:hover {
 .featured-image-wrapper {
   position: relative;
   width: 100%;
-  max-width: 800px;
+  max-width: 400px;
   margin: 0 auto;
   overflow: hidden;
   border-radius: var(--radius);
@@ -902,11 +902,6 @@ footer nav a:hover {
   width: 100%;
   height: auto;
   display: block;
-  transition: transform 0.2s ease;
-}
-
-.featured-image:hover {
-  transform: scale(1.02);
 }
 
 .cursor-pointer {
@@ -1107,7 +1102,7 @@ footer nav a:hover {
 <section id="featured-image" style="background: var(--bg-section);">
   <div class="container">
     <div class="featured-image-wrapper">
-      <img src="224a3237.jpeg" alt="Featured bondage photography - Studio Nagoya Base" class="featured-image cursor-pointer" role="button" tabindex="0" aria-label="Click to enlarge">
+      <img src="224a3237.jpeg" alt="Featured bondage photography - Studio Nagoya Base" class="featured-image">
     </div>
   </div>
 </section>
@@ -1656,8 +1651,8 @@ footer nav a:hover {
   var closeBtn = document.querySelector('.modal-close');
   var overlay = document.querySelector('.modal-overlay');
   
-  // Gallery and featured images are clickable
-  var clickableImages = document.querySelectorAll('.gallery-image, .featured-image');
+  // Gallery images are clickable
+  var clickableImages = document.querySelectorAll('.gallery-image');
   
   clickableImages.forEach(function (img) {
     img.addEventListener('click', function () {
