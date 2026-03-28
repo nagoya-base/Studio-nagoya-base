@@ -217,9 +217,13 @@ nav.site-nav {
   align-items: center;
   justify-content: center;
   text-align: center;
-  background: radial-gradient(ellipse at 50% 30%, #1f1a12 0%, #0e0e0e 70%);
+  background: var(--bg-section);
   border-bottom: 1px solid var(--border);
   padding: 80px 24px;
+}
+
+.hero-overlay {
+  display: none;
 }
 
 .hero-label {
@@ -1082,7 +1086,7 @@ footer nav a:hover {
   <a href="index.html" style="color: var(--accent); font-weight: 600;">JP</a>
 </div>
 
-<div class="hero" style="background-image: url('224a3254.jpeg');">
+<div class="hero">
   <div class="hero-overlay"></div>
   <div class="hero-content">
     <h1 class="hero-main">A private photography studio, all to yourself.</h1>
