@@ -241,14 +241,31 @@ nav.site-nav {
    ヒーロー
 ===================== */
 .hero {
-  min-height: 90vh;
+  min-height: 60vh;
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
-  background: radial-gradient(ellipse at 50% 30%, #1f1a12 0%, #0e0e0e 70%);
+  background-size: cover;
+  background-position: center;
+  background-attachment: scroll;
   border-bottom: 1px solid var(--border);
   padding: 80px 24px;
+  position: relative;
+}
+
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 2;
+  max-width: 600px;
+  margin: 0 auto;
 }
 
 .hero-label {
@@ -259,21 +276,48 @@ nav.site-nav {
   margin-bottom: 24px;
 }
 
-.hero h1 {
-  font-size: clamp(1.8rem, 5vw, 3rem);
-  font-weight: 300;
-  letter-spacing: 0.1em;
-  line-height: 1.4;
-  margin-bottom: 20px;
+.hero-main {
+  font-size: clamp(2rem, 6vw, 3.5rem);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1.3;
+  margin-bottom: 16px;
   color: #f0f0f0;
 }
 
-.hero-desc {
-  font-size: 0.95rem;
-  color: var(--text-muted);
-  max-width: 480px;
-  margin: 0 auto 40px;
-  line-height: 2;
+.hero-sub {
+  font-size: clamp(1rem, 3vw, 1.2rem);
+  color: #e0e0e0;
+  margin-bottom: 32px;
+  font-weight: 300;
+  letter-spacing: 0.05em;
+  line-height: 1.6;
+}
+
+.hero-pricing {
+  margin-bottom: 40px;
+}
+
+.hero-price-line {
+  font-size: 0.9rem;
+  color: #d0d0d0;
+  margin: 6px 0;
+  letter-spacing: 0.05em;
+}
+
+.price-amount {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+
+.hero-buttons {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
 }
 
 .btn-primary {
@@ -289,6 +333,24 @@ nav.site-nav {
 .btn-primary:hover {
   background: var(--accent);
   color: #000;
+  text-decoration: none;
+}
+
+.btn-secondary {
+  display: inline-block;
+  padding: 14px 36px;
+  border: 1px solid var(--text-muted);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.2em;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  text-decoration: none;
+}
+
+.btn-secondary:hover {
+  background: var(--text-muted);
+  color: #000;
+  border-color: var(--text-muted);
   text-decoration: none;
 }
 
@@ -1057,9 +1119,12 @@ footer nav a:hover {
 
 .modal-content {
   position: relative;
-  max-width: 90vw;
-  max-height: 90vh;
+  max-width: 85vw;
+  max-height: 85vh;
   z-index: 1001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .modal-content img {
@@ -1067,12 +1132,13 @@ footer nav a:hover {
   max-height: 100%;
   display: block;
   border-radius: var(--radius);
+  object-fit: contain;
 }
 
 .modal-close {
-  position: absolute;
-  top: -50px;
-  right: 0;
+  position: fixed;
+  top: 20px;
+  right: 20px;
   background: none;
   border: none;
   font-size: 2.5rem;
@@ -1144,12 +1210,51 @@ footer nav a:hover {
 }
 
 @media (max-width: 640px) {
+  .hero {
+    background-attachment: scroll;
+    padding: 60px 16px;
+    min-height: auto;
+  }
+  
+  .hero-main {
+    font-size: 1.8rem;
+  }
+  
+  .hero-sub {
+    font-size: 1rem;
+    margin-bottom: 24px;
+  }
+  
+  .hero-pricing {
+    margin-bottom: 32px;
+  }
+  
+  .hero-price-line {
+    font-size: 0.85rem;
+  }
+  
+  .hero-buttons {
+    gap: 12px;
+  }
+  
+  .btn-primary,
+  .btn-secondary {
+    padding: 12px 24px;
+    font-size: 0.8rem;
+  }
+  
   .floating-booking-btn {
     bottom: 24px;
     right: 24px;
     width: 56px;
     height: 56px;
     font-size: 1.1rem;
+  }
+}
+
+@media (min-width: 1200px) {
+  .hero {
+    min-height: 65vh;
   }
 }
 </style>
@@ -1196,12 +1301,25 @@ footer nav a:hover {
 </div>
 
 <!-- ヒーロー -->
-<div class="hero">
-  <div>
-    <p class="hero-label">Nagoya · Kamimaezu · Bondage Studio</p>
-    <h1>名古屋・上前津の<br>緊縛撮影スタジオ</h1>
-    <p class="hero-desc">緊縛撮影に最適なプライベート空間。スマートフォンから一眼レフまで、簡単な操作で本格撮影。<br>安全な吊り床・機材完備。</p>
-    <a class="btn-primary" href="#calendar">空き確認・ご予約はこちら</a>
+<div class="hero" style="background-image: url('224a3237.jpeg');">
+  <div class="hero-overlay"></div>
+  <div class="hero-content">
+    <h1 class="hero-main">完全個室、誰にも見られない。</h1>
+    <p class="hero-sub">2人の時間を邪魔しない場所。</p>
+    
+    <div class="hero-pricing">
+      <p class="hero-price-line">
+        通常：3時間 <span class="price-amount">¥9,750</span>
+      </p>
+      <p class="hero-price-line">
+        会員：3時間 <span class="price-amount">¥7,500</span>
+      </p>
+    </div>
+    
+    <div class="hero-buttons">
+      <a class="btn-primary" href="#calendar">今週の空きを確認</a>
+      <a class="btn-secondary" href="mailto:nagoyabase2023@gmail.com">お問い合わせ</a>
+    </div>
   </div>
 </div>
 

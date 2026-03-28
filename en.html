@@ -212,7 +212,7 @@ nav.site-nav {
 }
 
 .hero {
-  min-height: 90vh;
+  min-height: 60vh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -947,9 +947,12 @@ footer nav a:hover {
 
 .modal-content {
   position: relative;
-  max-width: 90vw;
-  max-height: 90vh;
+  max-width: 85vw;
+  max-height: 85vh;
   z-index: 1001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .modal-content img {
@@ -957,12 +960,13 @@ footer nav a:hover {
   max-height: 100%;
   display: block;
   border-radius: var(--radius);
+  object-fit: contain;
 }
 
 .modal-close {
-  position: absolute;
-  top: -50px;
-  right: 0;
+  position: fixed;
+  top: 20px;
+  right: 20px;
   background: none;
   border: none;
   font-size: 2.5rem;
@@ -1082,14 +1086,21 @@ footer nav a:hover {
   <a href="index.html" style="color: var(--accent); font-weight: 600;">JP</a>
 </div>
 
-<section class="hero">
-  <div class="container">
-    <p class="hero-label">Bondage Photography Studio</p>
-    <h1>Bondage Photography Studio in Kamimaezu, Nagoya</h1>
-    <p class="hero-desc">A professional studio specialized in bondage and rope photography. Smartphones to professional cameras work perfectly with our setup. High-quality results are guaranteed with easy-to-use equipment and safe suspension systems.</p>
-    <a class="btn-primary" href="#calendar">Check availability and book</a>
+<div class="hero" style="background-image: url('224a3237.jpeg');">
+  <div class="hero-overlay"></div>
+  <div class="hero-content">
+    <h1 class="hero-main">Complete privacy, no one will see.</h1>
+    <p class="hero-sub">A place that doesn't interrupt the two of us.</p>
+    <div class="hero-pricing">
+      <p class="hero-price-line">Regular: 3 hours <span class="price-amount">¥9,750</span></p>
+      <p class="hero-price-line">Member: 3 hours <span class="price-amount">¥7,500</span></p>
+    </div>
+    <div class="hero-buttons">
+      <a class="btn-primary" href="#calendar">Check availability and book</a>
+      <a class="btn-secondary" href="mailto:nagoyabase2023@gmail.com">Contact us</a>
+    </div>
   </div>
-</section>
+</div>
 
 <!-- Featured Image -->
 <section id="featured-image" style="background: var(--bg-section);">
