@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 206 156">
+  <defs>
+    <linearGradient id="metal" x1="20%" y1="10%" x2="80%" y2="90%">
+      <stop offset="0%"   stop-color="#c8c8c8"/>
+      <stop offset="25%"  stop-color="#efefef"/>
+      <stop offset="50%"  stop-color="#9a9a9a"/>
+      <stop offset="75%"  stop-color="#e2e2e2"/>
+      <stop offset="100%" stop-color="#7a7a7a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 水平帯 -->
+  <rect x="0" y="0"   width="206" height="47"  fill="#1e3c5e"/>
+  <rect x="0" y="47"  width="206" height="30"  fill="#f0f0f0"/>
+  <rect x="0" y="77"  width="206" height="22"  fill="#e05e3a"/>
+  <rect x="0" y="99"  width="206" height="57"  fill="#8a9a28"/>
+
+  <!-- 金属リング -->
+  <circle cx="88" cy="86" r="66"
+          fill="none"
+          stroke="url(#metal)"
+          stroke-width="9"/>
+
+  <!-- 富士山シルエット -->
+  <polygon points="166,99 182,82 198,99" fill="#8899b0"/>
+  <polygon points="179,84 182,80 185,84" fill="#e8e8e8"/>
+</svg>
