@@ -1,0 +1,1418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Rental Photo Studio in Nagoya, Kamimaezu | Studio Nagoya Base</title>
+
+<meta name="description" content="Private rental photo studio in Kamimaezu, Nagoya. Suitable for portraits, cosplay, concept shoots, and creative photography.">
+<link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/en.html">
+<link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/">
+<link rel="alternate" hreflang="en" href="https://nagoya-base.github.io/Studio-nagoya-base/en.html">
+<link rel="alternate" hreflang="x-default" href="https://nagoya-base.github.io/Studio-nagoya-base/">
+<meta property="og:title" content="Rental Photo Studio in Nagoya, Kamimaezu | Studio Nagoya Base">
+<meta property="og:description" content="Private rental photo studio in Kamimaezu, Nagoya for portraits, cosplay, concept shoots, and creative photography.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/en.html">
+<meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/224a3228.jpeg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Rental Photo Studio in Nagoya, Kamimaezu | Studio Nagoya Base">
+<meta name="twitter:description" content="Private rental photo studio in Kamimaezu, Nagoya for portraits, cosplay, concept shoots, and creative photography.">
+<meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/224a3228.jpeg">
+
+<style>
+:root {
+  --bg: #0e0e0e;
+  --bg-card: #1a1a1a;
+  --bg-section: #141414;
+  --text: #e0e0e0;
+  --text-muted: #888;
+  --accent: #c8a96e;
+  --accent-dark: #a08050;
+  --border: #2a2a2a;
+  --radius: 6px;
+  --max-w: 920px;
+  --font: 'Hiragino Sans', 'Noto Sans JP', 'Meiryo', sans-serif;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.8;
+  font-size: 15px;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.container {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+section {
+  padding: 72px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+section:last-of-type {
+  border-bottom: none;
+}
+
+.section-title {
+  font-size: 1.5rem;
+  font-weight: 300;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.section-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-bottom: 40px;
+}
+
+nav.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(14, 14, 14, 0.95);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-inner {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 60px;
+}
+
+.nav-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.nav-logo img {
+  height: 36px;
+  width: auto;
+}
+
+.nav-logo span {
+  font-size: 0.8rem;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+}
+
+.nav-links {
+  display: flex;
+  gap: 24px;
+  list-style: none;
+}
+
+.nav-links a {
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+
+.nav-links a:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.nav-hamburger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 36px;
+  height: 36px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  z-index: 101;
+}
+
+.nav-hamburger span {
+  display: block;
+  height: 1px;
+  background: var(--text);
+  transition: transform 0.25s, opacity 0.25s;
+  transform-origin: center;
+}
+
+.nav-hamburger.is-open span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.nav-hamburger.is-open span:nth-child(2) { opacity: 0; }
+.nav-hamburger.is-open span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+.nav-mobile {
+  display: none;
+  position: fixed;
+  inset: 60px 0 0 0;
+  background: rgba(10, 10, 10, 0.97);
+  backdrop-filter: blur(8px);
+  z-index: 100;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-mobile.is-open {
+  display: flex;
+}
+
+.nav-mobile a {
+  display: block;
+  width: 100%;
+  text-align: center;
+  padding: 18px 0;
+  font-size: 0.9rem;
+  letter-spacing: 0.15em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-mobile a:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.hero {
+  min-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: radial-gradient(ellipse at 50% 30%, #1f1a12 0%, #0e0e0e 70%);
+  border-bottom: 1px solid var(--border);
+  padding: 80px 24px;
+}
+
+.hero-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.3em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 24px;
+}
+
+.hero h1 {
+  font-size: clamp(1.8rem, 5vw, 3rem);
+  font-weight: 300;
+  letter-spacing: 0.1em;
+  line-height: 1.4;
+  margin-bottom: 20px;
+  color: #f0f0f0;
+}
+
+.hero-desc {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  max-width: 560px;
+  margin: 0 auto 40px;
+  line-height: 2;
+}
+
+.btn-primary {
+  display: inline-block;
+  padding: 14px 36px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.85rem;
+  letter-spacing: 0.2em;
+  transition: background 0.2s, color 0.2s;
+}
+
+.btn-primary:hover {
+  background: var(--accent);
+  color: #000;
+  text-decoration: none;
+}
+
+.features-grid,
+.info-grid,
+.gallery-grid {
+  display: grid;
+  gap: 20px;
+}
+
+.features-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.info-grid {
+  grid-template-columns: 1fr 1fr;
+}
+
+.feature-card,
+.info-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 28px 24px;
+  border-radius: var(--radius);
+}
+
+.feature-card h3,
+.info-card h3 {
+  font-size: 1rem;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+
+.feature-card p,
+.info-card p,
+.info-card li {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.pricing-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.pricing-card-header {
+  background: var(--border);
+  padding: 16px 24px;
+  font-size: 0.85rem;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+}
+
+.pricing-card table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.pricing-card td,
+.pricing-card th {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.pricing-card th {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  text-align: left;
+}
+
+.pricing-card td:not(:first-child) {
+  text-align: right;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.pricing-note {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 16px;
+}
+
+.info-card ul {
+  list-style: none;
+}
+
+.info-card li + li {
+  margin-top: 8px;
+}
+
+.gallery-grid {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.gallery-item {
+  aspect-ratio: 3 / 4;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.gallery-item a {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.gallery-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+
+.gallery-item a:hover img,
+.gallery-item a:focus-visible img {
+  transform: scale(1.03);
+  opacity: 0.92;
+}
+
+.gallery-item a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.gallery-note,
+.note {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.gallery-note {
+  text-align: center;
+  margin-top: 18px;
+}
+
+.access-info {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 2;
+}
+
+.access-info strong {
+  color: var(--text);
+  display: block;
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+.hours-block {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 32px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.hours-time {
+  font-size: 1.4rem;
+  font-weight: 300;
+  letter-spacing: 0.08em;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.hours-note {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.faq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+details.faq-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+details.faq-item summary {
+  padding: 18px 24px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background 0.2s;
+}
+
+details.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+
+details.faq-item summary::after {
+  content: '+';
+  color: var(--accent);
+  font-size: 1.2rem;
+  font-weight: 300;
+  transition: transform 0.2s;
+}
+
+details.faq-item[open] summary::after {
+  transform: rotate(45deg);
+}
+
+details.faq-item summary:hover {
+  background: rgba(200, 169, 110, 0.05);
+}
+
+.faq-answer {
+  padding: 0 24px 18px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.9;
+  border-top: 1px solid var(--border);
+}
+
+.news-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-y: auto;
+  max-height: 240px;
+}
+
+.news-item {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.88rem;
+  transition: background 0.15s;
+}
+
+.news-item:last-child {
+  border-bottom: none;
+}
+
+.news-item:hover {
+  background: var(--bg-card);
+}
+
+.news-date {
+  color: var(--accent);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.news-badge {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 1px 8px;
+  border-radius: 2px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.news-text {
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+.x-timeline-wrapper {
+  display: flex;
+  justify-content: center;
+}
+
+.x-timeline-wrapper .twitter-timeline {
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.sns-section {
+  text-align: center;
+  padding: 56px 0;
+}
+
+.btn-twitter {
+  display: inline-block;
+  padding: 12px 32px;
+  border: 1px solid #555;
+  color: var(--text);
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  border-radius: 999px;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.btn-twitter:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.legal-nav {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 56px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 24px;
+}
+
+.legal-nav a {
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  transition: color 0.2s;
+}
+
+.legal-nav a:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.legal-block {
+  margin-bottom: 56px;
+}
+
+.legal-block h2 {
+  font-size: 1.1rem;
+  font-weight: 400;
+  color: var(--accent);
+  letter-spacing: 0.1em;
+  margin-bottom: 20px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.legal-block h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 20px 0 8px;
+}
+
+.legal-block p,
+.legal-block li {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.9;
+}
+
+.legal-block ul {
+  list-style: none;
+  padding: 0;
+}
+
+.legal-block ul li {
+  padding: 4px 0;
+  padding-left: 16px;
+  position: relative;
+}
+
+.legal-block ul li::before {
+  content: '-';
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+}
+
+.legal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin-top: 8px;
+}
+
+.legal-table th,
+.legal-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  line-height: 1.8;
+  text-align: left;
+  vertical-align: top;
+}
+
+.legal-table th {
+  width: 40%;
+  color: var(--text-muted);
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.legal-table td {
+  color: var(--text-muted);
+}
+
+.legal-table tr:last-child th,
+.legal-table tr:last-child td {
+  border-bottom: none;
+}
+
+.usage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.usage-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.usage-item::before {
+  content: '笳・;
+  color: var(--accent);
+  flex-shrink: 0;
+  font-size: 0.7rem;
+}
+
+.equipment-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.equipment-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+
+.equipment-card h3 {
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  margin-bottom: 16px;
+  text-transform: uppercase;
+}
+
+.equipment-card ul {
+  list-style: none;
+  padding: 0;
+}
+
+.equipment-card li {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 10px;
+}
+
+.equipment-card li:last-child {
+  border-bottom: none;
+}
+
+.equipment-card li::before {
+  content: '-';
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.equipment-note {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 16px;
+}
+
+.equipment-tables {
+  margin-top: 40px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.equipment-table-block h3 {
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+
+.equipment-table-block table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.equipment-table-block th,
+.equipment-table-block td {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+
+.equipment-table-block th {
+  background: var(--bg-card);
+  color: var(--text);
+  font-weight: 400;
+  width: 55%;
+}
+
+.equipment-table-block td {
+  text-align: center;
+  width: 45%;
+}
+
+.calendar-wrapper {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 24px;
+  background: var(--bg-card);
+}
+
+.calendar-wrapper iframe {
+  display: block;
+  width: 100%;
+  height: 500px;
+  border: none;
+  filter: invert(1) hue-rotate(180deg);
+}
+
+footer {
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  padding: 40px 24px;
+  text-align: center;
+}
+
+footer p {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+}
+
+footer nav {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+footer nav a {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+footer nav a:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+@media (max-width: 640px) {
+  .nav-links {
+    display: none;
+  }
+
+  .nav-hamburger {
+    display: flex;
+  }
+
+  .features-grid,
+  .info-grid,
+  .gallery-grid,
+  .pricing-grid,
+  .equipment-grid,
+  .equipment-tables {
+    grid-template-columns: 1fr;
+  }
+
+  .calendar-wrapper iframe {
+    height: 360px;
+  }
+
+  section {
+    padding: 48px 0;
+  }
+}
+</style>
+</head>
+<body>
+
+<nav class="site-nav" aria-label="Site navigation">
+  <div class="nav-inner">
+    <a href="en.html" class="nav-logo">
+      <img src="logo.svg" alt="Studio Nagoya Base">
+      <span>STUDIO NAGOYA BASE</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="#news">News</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#pricing">Pricing</a></li>
+      <li><a href="#access">Access</a></li>
+      <li><a href="#hours">Hours</a></li>
+      <li><a href="#faq">FAQ</a></li>
+      <li><a href="#calendar">Availability</a></li>
+      <li><a href="index.html" style="color: var(--accent); font-weight: 600;">JP</a></li>
+    </ul>
+
+    <button class="nav-hamburger" aria-label="Open menu" aria-expanded="false">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+  </div>
+</nav>
+
+<div class="nav-mobile" id="navMobile">
+  <a href="#news">News</a>
+  <a href="#features">Features</a>
+  <a href="#pricing">Pricing</a>
+  <a href="#access">Access</a>
+  <a href="#hours">Hours</a>
+  <a href="#faq">FAQ</a>
+  <a href="#calendar">Availability</a>
+  <a href="index.html" style="color: var(--accent); font-weight: 600;">JP</a>
+</div>
+
+<section class="hero">
+  <div class="container">
+    <p class="hero-label">Private Rental Studio</p>
+    <h1>Rental Photo Studio in Kamimaezu, Nagoya</h1>
+    <p class="hero-desc">A private studio designed for portrait work, cosplay, artistic projects, bondage photography, and other creative shoots. High-quality results are possible even with a smartphone, and dedicated camera gear can take your work even further.</p>
+    <a class="btn-primary" href="#calendar">Check availability and book</a>
+  </div>
+</section>
+
+<section id="news">
+  <div class="container">
+    <h2 class="section-title">News</h2>
+    <p class="section-subtitle">Updates</p>
+    <div class="news-list">
+      <div class="news-item">
+        <span class="news-date">2026.03.28</span>
+        <span class="news-badge">Info</span>
+        <span class="news-text">The website has been updated.</span>
+      </div>
+      <div class="news-item">
+        <span class="news-date">2026.03.28</span>
+        <span class="news-badge">Important</span>
+        <span class="news-text">The new pricing will take effect on May 1, 2026.</span>
+      </div>
+      <div class="news-item">
+        <span class="news-date">2026.03.28</span>
+        <span class="news-badge">Important</span>
+        <span class="news-text">The updated terms of use will take effect on April 15, 2026.</span>
+      </div>
+      <div class="news-item">
+        <span class="news-date">2026.03.28</span>
+        <span class="news-badge">Info</span>
+        <span class="news-text">The terms of use have been revised, including member rules, exclusion of antisocial forces, and agreement to the terms at the time of booking.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <h2 class="section-title">Features</h2>
+    <p class="section-subtitle">What We Offer</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>Private Space</h3>
+        <p>The studio is reserved exclusively for one group at a time, so you can focus on your shoot without interruption.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>Professional Shooting Environment</h3>
+        <p>The lighting setup supports clean results even on a smartphone, and dedicated cameras can be used for more advanced production work.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>Bring Your Own Gear</h3>
+        <p>You may bring your own shooting equipment, including strobes and other camera accessories.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>Suspension-Friendly Setup</h3>
+        <p>The studio includes a wooden suspension frame suitable for rope work and related creative shoots.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>Commercial Use Allowed</h3>
+        <p>Commercial shoots, fan-site content, and paid creative work are allowed within the scope of the terms.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">◈</div>
+        <h3>Basic Gear Included</h3>
+        <p>Panel lights, background paper, reflectors, and other standard items are available within the rental fee.</p>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:40px;">
+      <a class="btn-primary" href="#calendar">Check availability</a>
+    </div>
+  </div>
+</section>
+
+<section id="usage" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">Suggested Uses</h2>
+    <p class="section-subtitle">Usage Examples</p>
+    <div class="usage-grid">
+      <div class="usage-item">Portrait photography</div>
+      <div class="usage-item">Cosplay photography</div>
+      <div class="usage-item">Bondage and rope photography</div>
+      <div class="usage-item">Creative concept shoots</div>
+      <div class="usage-item">Commercial and fan-site content</div>
+      <div class="usage-item">Smartphone photography</div>
+      <div class="usage-item">Camera-based studio work</div>
+      <div class="usage-item">Small private sessions</div>
+    </div>
+  </div>
+</section>
+
+<section id="equipment">
+  <div class="container">
+    <h2 class="section-title">Equipment and Props</h2>
+    <p class="section-subtitle">Equipment</p>
+    <div class="equipment-grid">
+      <div class="equipment-card">
+        <h3>Studio Fixtures</h3>
+        <ul>
+          <li>Private room space (exclusive use)</li>
+          <li>Wooden suspension frame<br><small style="color:var(--text-muted);font-size:0.78rem;">Height 2350mm / Width 2450mm / Depth 2000mm</small></li>
+          <li>Bamboo suspension bar (length 150cm, approximately up to 100kg)</li>
+          <li>Large mirror (1460mm x 800mm)</li>
+          <li>Full-color ceiling lighting</li>
+          <li>Air conditioner</li>
+          <li>Toilet space (also usable as a changing area)</li>
+        </ul>
+        <p class="equipment-note">Note: The plumbing is old, so please do not drink the tap water.</p>
+      </div>
+      <div class="equipment-card">
+        <h3>Props</h3>
+        <ul>
+          <li>Jute rope</li>
+          <li>Slings, carabiners, rigging plate, and swivel</li>
+          <li>Yoga mat</li>
+          <li>Tatami mat panels</li>
+          <li>School desks and chairs (2 sets)</li>
+          <li>Teacher's desk and blackboard</li>
+          <li>Emergency scissors</li>
+          <li>Cleaning supplies (wet wipes, floor wiper, etc.)</li>
+        </ul>
+        <p class="equipment-note">Note: Please clean props after use and return them to their original place.</p>
+      </div>
+    </div>
+    <div class="equipment-tables">
+      <div class="equipment-table-block">
+        <h3>Standard Photo Equipment (Included)</h3>
+        <table>
+          <tbody>
+            <tr><th>Bi-color panel light (continuous)</th><td>x1</td></tr>
+            <tr><th>Light stand (100-260cm)</th><td>x2</td></tr>
+            <tr><th>Background roller support</th><td>x1</td></tr>
+            <tr><th>Black background paper (135cm x 5m)</th><td>x1</td></tr>
+            <tr><th>White background paper (135cm x 5m)</th><td>x1</td></tr>
+            <tr><th>5-in-1 reflector (80cm)</th><td>x1</td></tr>
+            <tr><th>Color filter (orange)</th><td>x1</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="equipment-table-block">
+        <h3>Owned Gear (On Request)</h3>
+        <table>
+          <tbody>
+            <tr><th>Portable strobe</th><td>x1</td></tr>
+            <tr><th>Monoblock strobe</th><td>x1</td></tr>
+            <tr><th>Wireless commander (for Canon)</th><td>x1</td></tr>
+            <tr><th>Speed ring bracket</th><td>x1</td></tr>
+            <tr><th>Softbox (60cm)</th><td>x1</td></tr>
+            <tr><th>Strip softbox (60 x 90cm)</th><td>x1</td></tr>
+            <tr><th>Strip softbox (30 x 120cm)</th><td>x1</td></tr>
+          </tbody>
+        </table>
+        <p class="equipment-note">Note: Owned gear is subject to availability and must be requested in advance at the time of booking.</p>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:40px;">
+      <a class="btn-primary" href="#calendar">Check availability</a>
+    </div>
+  </div>
+</section>
+
+<section id="pricing">
+  <div class="container">
+    <h2 class="section-title">Pricing</h2>
+    <p class="section-subtitle">Pricing</p>
+    <div class="pricing-grid">
+      <div class="pricing-card">
+        <div class="pricing-card-header">Standard Rate</div>
+        <table>
+          <tr><th>Duration</th><th>Weekend / Holiday</th><th>Weekday</th></tr>
+          <tr><td>2 hours</td><td>6,500 JPY</td><td>5,200 JPY</td></tr>
+          <tr><td>3 hours</td><td>9,750 JPY</td><td>7,800 JPY</td></tr>
+          <tr><td>4 hours</td><td>12,350 JPY</td><td>9,750 JPY</td></tr>
+          <tr><td>Extension (1h)</td><td>3,250 JPY</td><td>2,600 JPY</td></tr>
+        </table>
+      </div>
+      <div class="pricing-card">
+        <div class="pricing-card-header">Member Rate</div>
+        <table>
+          <tr><th>Duration</th><th>Weekend / Holiday</th><th>Weekday</th></tr>
+          <tr><td>2 hours</td><td>5,000 JPY</td><td>4,000 JPY</td></tr>
+          <tr><td>3 hours</td><td>7,500 JPY</td><td>6,000 JPY</td></tr>
+          <tr><td>4 hours</td><td>9,500 JPY</td><td>7,500 JPY</td></tr>
+          <tr><td>Extension (1h)</td><td>2,500 JPY</td><td>2,000 JPY</td></tr>
+        </table>
+      </div>
+    </div>
+    <p class="pricing-note">Note: The fee is per room booking and does not change based on the number of people.</p>
+    <p class="pricing-note" style="margin-top: 8px;">Note: For bondage photography, bookings of 3 hours or longer are recommended.</p>
+    <p class="pricing-note" style="margin-top: 8px;">Note: Standard photo equipment and props are included in the rental fee. Owned gear is available only on prior request and subject to confirmation.</p>
+    <p class="pricing-note" style="margin-top: 8px;">Note: Member rates apply only to approved members and only for direct bookings through this site.</p>
+    <p class="pricing-note" style="margin-top: 8px;">Note: Please review the Terms of Use before making a booking.</p>
+    <div style="text-align:center;margin-top:32px;">
+      <a class="btn-primary" href="#calendar">Check availability</a>
+    </div>
+  </div>
+</section>
+
+<section id="access">
+  <div class="container">
+    <h2 class="section-title">Access</h2>
+    <p class="section-subtitle">Access</p>
+    <div class="access-info">
+      <strong>7 to 8 minutes on foot from Kamimaezu Station</strong>
+      About 7 to 8 minutes from Exit 3 of Kamimaezu Station on the Tsurumai and Meijo subway lines in Nagoya.
+      <br>
+      The detailed address will be shared after your booking is confirmed.
+    </div>
+  </div>
+</section>
+
+<section id="hours">
+  <div class="container">
+    <h2 class="section-title">Hours</h2>
+    <p class="section-subtitle">Hours</p>
+    <div class="hours-block">
+      <div class="hours-time">8:00 - 23:00</div>
+      <div class="hours-note">Open year-round. Temporary closures will be announced on social media.</div>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="container">
+    <h2 class="section-title">Frequently Asked Questions</h2>
+    <p class="section-subtitle">FAQ</p>
+    <div class="faq-list">
+      <details class="faq-item"><summary>Can I shoot with a smartphone?</summary><div class="faq-answer">Yes. The lighting environment is set up so that you can get good-quality photos even with a smartphone.</div></details>
+      <details class="faq-item"><summary>Is bondage photography allowed?</summary><div class="faq-answer">Yes. However, sexual acts and shoots involving sexual services are prohibited.</div></details>
+      <details class="faq-item"><summary>Can I bring my own equipment?</summary><div class="faq-answer">Yes. You may bring your own gear. Standard in-studio equipment and props are included in the rental fee, and owned gear such as strobes is available on prior request.</div></details>
+      <details class="faq-item"><summary>What is the cancellation policy?</summary><div class="faq-answer">Up to 2 days before use: free / the previous day: 50% of the booking fee / same day: 100% of the booking fee.</div></details>
+      <details class="faq-item"><summary>What payment methods are available?</summary><div class="faq-answer">Cash, PayPay (on-site), and online credit card payment are available.</div></details>
+      <details class="faq-item"><summary>Do you offer rope instruction or lessons?</summary><div class="faq-answer">No. We provide the studio space only and do not offer lessons or technical instruction.</div></details>
+      <details class="faq-item"><summary>Can anyone use the studio?</summary><div class="faq-answer">Yes, regardless of gender, but all users and companions must be 18 or older. High school students are not permitted.</div></details>
+      <details class="faq-item"><summary>Can I extend my booking on the day?</summary><div class="faq-answer">Only if the next time slot is available. Because same-day communication may not always be possible, please consult us in advance if you think you may need extra time.</div></details>
+      <details class="faq-item"><summary>How do I receive the key?</summary><div class="faq-answer">Instructions will be provided at the time of booking.</div></details>
+      <details class="faq-item"><summary>Can I change my booking date?</summary><div class="faq-answer">One date change is accepted free of charge up to the previous day. A second change or later is treated as a cancellation.</div></details>
+      <details class="faq-item"><summary>Can I lay the background paper on the floor?</summary><div class="faq-answer">Yes, but please avoid using it with shoes or bare feet to keep it clean.</div></details>
+      <details class="faq-item"><summary>Is there parking?</summary><div class="faq-answer">There is no dedicated parking. Please use a nearby coin-operated parking lot.</div></details>
+      <details class="faq-item"><summary>Is commercial use allowed?</summary><div class="faq-answer">Yes. Commercial shoots, fan-site content, and paid creative projects are allowed. However, all performers must consent, and all applicable laws and platform rules must be followed.</div></details>
+      <details class="faq-item"><summary>Can I use a shower?</summary><div class="faq-answer">No. Shower use is not available.</div></details>
+      <details class="faq-item"><summary>I left something behind.</summary><div class="faq-answer">Lost items are stored for 7 days after discovery. Please contact us by X DM or email as soon as possible. If the item is not claimed after 7 days, it may be reported to the police.</div></details>
+    </div>
+  </div>
+</section>
+
+<section id="gallery">
+  <div class="container">
+    <h2 class="section-title">Gallery</h2>
+    <p class="section-subtitle">Sample Images</p>
+    <div class="gallery-grid">
+      <div class="gallery-item"><a href="224a3228.jpeg" target="_blank" rel="noopener"><img src="224a3228.jpeg" alt="Studio interior example 1"></a></div>
+      <div class="gallery-item"><a href="224a3237.jpeg" target="_blank" rel="noopener"><img src="224a3237.jpeg" alt="Studio interior example 2"></a></div>
+      <div class="gallery-item"><a href="224a3254.jpeg" target="_blank" rel="noopener"><img src="224a3254.jpeg" alt="Studio interior example 3"></a></div>
+      <div class="gallery-item"><a href="IMG_7421.jpeg" target="_blank" rel="noopener"><img src="IMG_7421.jpeg" alt="Studio interior example 4"></a></div>
+    </div>
+    <p class="gallery-note">More sample images are available on <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">X (@nagoyabase2023)</a>.</p>
+  </div>
+</section>
+
+<section id="calendar" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">Reservation Calendar</h2>
+    <p class="section-subtitle">Reservation Calendar</p>
+    <div class="calendar-wrapper">
+      <iframe
+        src="https://calendar.google.com/calendar/u/0/embed?src=nagoyabase2023@gmail.com&ctz=Asia/Tokyo"
+        scrolling="no"
+        title="Studio Nagoya Base reservation calendar"
+        aria-label="Reservation calendar">
+      </iframe>
+    </div>
+    <p class="calendar-note">Please check availability on the calendar. For bookings and inquiries, contact us by email or X.</p>
+    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+      <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com">Book by email</a>
+      <a class="btn-primary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener" style="border-color: #555; color: var(--text-muted);">Contact us on X</a>
+    </div>
+  </div>
+</section>
+
+<section id="x-timeline" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">Latest Posts</h2>
+    <p class="section-subtitle">Social Updates</p>
+    <div class="x-timeline-wrapper">
+      <a class="twitter-timeline" data-theme="dark" data-width="600" data-height="500" data-chrome="nofooter noborders" href="https://twitter.com/nagoyabase2023">
+        Read the posts from @nagoyabase2023
+      </a>
+    </div>
+    <script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
+    <div class="sns-section" style="padding: 24px 0 0;">
+      <a class="btn-twitter" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">
+        Follow @nagoyabase2023
+      </a>
+    </div>
+  </div>
+</section>
+
+<section id="legal" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">Legal</h2>
+    <p class="section-subtitle">Legal</p>
+    <nav class="legal-nav" aria-label="Legal page links">
+      <a href="#terms">Terms of Use</a>
+      <a href="#cancel">Cancellation Policy</a>
+      <a href="#privacy">Privacy Policy</a>
+      <a href="#law">Commercial Disclosure</a>
+    </nav>
+    <div class="legal-block" id="terms">
+      <h2>Terms of Use</h2>
+      <h3>1. Purpose and Eligibility</h3>
+      <p>This studio is a private space for photography, bondage photography, and creative expression. All users and accompanying persons must be 18 years of age or older, and high school students are not permitted. When necessary, the operator may request age confirmation through social media accounts or similar means.</p>
+      <h3>2. How the Studio May Be Used</h3>
+      <ul>
+        <li>You may use the studio only during your reserved time slot. Same-day extension is possible only if the next time slot is available.</li>
+        <li>For bondage photography, bookings of 3 hours or longer are recommended.</li>
+        <li>The standard number of users is 1 to 4 people. Use by 5 or more people requires prior approval.</li>
+        <li>Please complete cleaning and pack-up within the reserved time.</li>
+        <li>Please ventilate the room appropriately during use.</li>
+      </ul>
+      <h3>3. Prohibited Conduct</h3>
+      <ul>
+        <li>Sexual acts, sexual services, or pornography production</li>
+        <li>Illegal drugs, intoxicated use, or conduct contrary to public order</li>
+        <li>Eating or drinking inside the studio except hydration from containers with lids</li>
+        <li>Use of flames or dangerous materials</li>
+        <li>Smoking indoors, including electronic cigarettes</li>
+        <li>Unauthorized modification, destruction, or removal of fixtures, equipment, or props</li>
+        <li>Entering or leaving outside the reserved time</li>
+        <li>Interfering with indoor cameras or safety equipment</li>
+      </ul>
+      <h3>4. Safety Rules for Suspension and Bondage</h3>
+      <ul>
+        <li>Users must confirm the safety of fixtures, rope, bamboo, and related items before use.</li>
+        <li>Activities that involve hanging by the neck or restricting breathing are strictly prohibited.</li>
+        <li>Please keep emergency scissors and rescue tools ready and stop immediately if anything unusual happens.</li>
+      </ul>
+      <h3>5. Publication and Distribution of Images</h3>
+      <p>Publishing images taken at the studio is allowed when all performers consent, privacy is respected, location-identifying information is not disclosed, and all laws and platform rules are followed.</p>
+      <h3>6. Use of Equipment</h3>
+      <ul>
+        <li>Standard in-studio photo equipment and props are included in the rental fee.</li>
+        <li>Owned gear such as strobes is available only by prior consultation and subject to confirmation.</li>
+        <li>Please clean and return items after use.</li>
+        <li>Damage may result in repair or replacement charges.</li>
+      </ul>
+      <h3>7. Booking and Payment</h3>
+      <ul>
+        <li>A booking becomes valid when the operator sends a booking confirmation.</li>
+        <li>Online payment confirms the booking once payment has been completed.</li>
+        <li>Cash or PayPay (on-site) is paid on the day of use.</li>
+        <li>Available payment methods are cash, PayPay (on-site), and online credit card payment.</li>
+        <li>One date change is accepted free of charge up to the previous day. Additional changes are treated as cancellation.</li>
+      </ul>
+      <h3>8. Lost Property</h3>
+      <p>Lost items are stored for 7 days after discovery. If not claimed within that period, they may be handled under applicable lost-property rules.</p>
+      <h3>9. Disclaimer and Liability</h3>
+      <ul>
+        <li>The operator is not responsible for accidents or damage caused by the acts of users, except where the operator acted intentionally or with gross negligence.</li>
+        <li>The operator is not responsible for disputes between users.</li>
+        <li>The operator is not responsible for theft, loss, or damage to valuables or personal belongings.</li>
+      </ul>
+      <h3>10. Personal Information</h3>
+      <p>The handling of personal information is governed by the Privacy Policy below.</p>
+      <h3>11. Amendments</h3>
+      <p>Revisions to the terms will be announced at least 14 days before the effective date. Pricing revisions will be announced at least 30 days in advance.</p>
+      <h3>12. Membership</h3>
+      <ol>
+        <li><strong>Membership system</strong><br>The studio operates a membership system for users. Member pricing applies only to eligible members making direct bookings.</li>
+        <li><strong>Eligibility for membership</strong><br>First-time users may be considered for membership review after use.</li>
+        <li><strong>Continuation, lapse, and reinstatement</strong><br>Membership continues with monthly use, lapses after a month with no use, and may be restored after later use.</li>
+        <li><strong>Conditions for member pricing</strong><br>Member pricing applies only to direct bookings made through this site.</li>
+        <li><strong>Cancellation of membership</strong><br>Membership may be revoked if the user violates the terms or is otherwise judged unsuitable.</li>
+      </ol>
+      <h3>13. Exclusion of Antisocial Forces</h3>
+      <ol>
+        <li>Users and accompanying persons must not belong to or support antisocial forces.</li>
+        <li>If such involvement is discovered, the operator may refuse use and no refund will be made.</li>
+      </ol>
+      <h3>14. Agreement to Terms at the Time of Booking</h3>
+      <ol>
+        <li>By submitting a booking request, the user is deemed to have agreed to the Terms of Use, Cancellation Policy, and Privacy Policy.</li>
+        <li>For bookings by email or X DM, the booking confirmation will state that the booking includes agreement to these policies.</li>
+      </ol>
+    </div>
+    <div class="legal-block" id="cancel">
+      <h2>Cancellation Policy</h2>
+      <table class="legal-table">
+        <tr><th>Cancellation timing</th><th>Cancellation fee</th></tr>
+        <tr><td>Up to 2 days before the booking date</td><td>Free</td></tr>
+        <tr><td>Cancellation on the previous day</td><td>50% of the usage fee</td></tr>
+        <tr><td>Same-day cancellation or no-show</td><td>100% of the usage fee</td></tr>
+      </table>
+      <ul style="margin-top: 16px;">
+        <li>One date change is accepted free of charge up to the previous day.</li>
+        <li>In the event of a no-show, future use may be refused.</li>
+      </ul>
+    </div>
+    <div class="legal-block" id="privacy">
+      <h2>Privacy Policy</h2>
+      <h3>1. Information We Collect</h3>
+      <ul>
+        <li>Information provided at the time of booking, such as social media account name and contact details</li>
+        <li>Usage history such as booking date and time, plan details, and payment status</li>
+        <li>Information necessary for PayPay (on-site payment) and online payment procedures. The studio does not store credit card numbers.</li>
+        <li>Security camera footage used for facility safety management</li>
+      </ul>
+      <h3>2. Purpose of Use</h3>
+      <ul>
+        <li>Handling bookings, changes, and cancellations</li>
+        <li>Facility safety management and service improvement</li>
+        <li>Responding to inquiries</li>
+        <li>Investigating violations of the rules when necessary</li>
+      </ul>
+      <h3>3. Handling of Security Camera Footage</h3>
+      <p>The studio operates unattended, and security cameras are installed inside the room and at the entrance for safety management. Footage is used only for safety, operational checking, and investigation when trouble occurs.</p>
+      <h3>4. Management and Retention</h3>
+      <p>Collected information is appropriately managed, stored only for as long as necessary, and then deleted or disposed of by reasonable means.</p>
+      <h3>5. Third-Party Provision</h3>
+      <p>Information is not provided to third parties without the user's consent, except where required by law or necessary for urgent safety reasons.</p>
+      <h3>6. External Services</h3>
+      <p>The studio uses X DM, Gmail, Google Calendar, PayPay, online payment providers, and financial institutions as part of its operations. Each external service is governed by its own privacy policy.</p>
+      <h3>7. Correction and Deletion of Information</h3>
+      <p>Users may request disclosure, correction, or deletion of their information by contacting the studio through X or email.</p>
+      <h3>8. Amendments</h3>
+      <p>If this policy is revised, notice will be posted on the website at least 14 days before the effective date.</p>
+    </div>
+    <div class="legal-block" id="law">
+      <h2>Commercial Disclosure</h2>
+      <table class="legal-table">
+        <tr><th>Business name</th><td>Studio Nagoya Base<br>(Name, address, and phone number are omitted pursuant to the applicable Japanese law and will be disclosed without delay upon request.)</td></tr>
+        <tr><th>Location</th><td>Kamimaezu area, Naka Ward, Nagoya, Aichi, Japan. The detailed address will be disclosed without delay upon request.</td></tr>
+        <tr><th>Contact method</th><td>X DM or email.<br><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">@nagoyabase2023</a><br><a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a></td></tr>
+        <tr><th>Services provided</th><td>Rental of a photography studio and use of standard photo equipment and props. Owned gear is available on prior request.</td></tr>
+        <tr><th>Price</th><td>Please refer to the Pricing section on this page.</td></tr>
+        <tr><th>Payment methods</th><td>Cash, PayPay (on-site payment), and online credit card payment.</td></tr>
+        <tr><th>Payment timing</th><td>Online payment is completed when the booking is confirmed. Cash and PayPay (on-site payment) are paid on the day of use.</td></tr>
+        <tr><th>Service timing</th><td>The service is provided on the reserved date and time.</td></tr>
+        <tr><th>Cancellation</th><td>Please refer to the Cancellation Policy on this page.</td></tr>
+        <tr><th>Refunds</th><td>Refunds are handled according to the cancellation policy. In principle, no refund is provided after the service has been delivered, except where otherwise required.</td></tr>
+        <tr><th>Special conditions</th><td>Security cameras are installed because the facility is operated unattended. Bondage and suspension must be carried out safely and at the user's own responsibility. Sexual acts and use for sexual services are prohibited.</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>STUDIO NAGOYA BASE</p>
+  <p>Private rental photography studio in Kamimaezu, Nagoya</p>
+  <nav aria-label="Footer navigation">
+    <a href="#terms">Terms of Use</a>
+    <a href="#cancel">Cancellation Policy</a>
+    <a href="#privacy">Privacy Policy</a>
+    <a href="#law">Commercial Disclosure</a>
+  </nav>
+  <p style="margin-top: 20px;">&copy; Studio Nagoya Base. All rights reserved.</p>
+</footer>
+
+<script>
+(function () {
+  var btn = document.querySelector('.nav-hamburger');
+  var menu = document.getElementById('navMobile');
+  var links = menu.querySelectorAll('a');
+
+  function open() {
+    btn.classList.add('is-open');
+    menu.classList.add('is-open');
+    btn.setAttribute('aria-expanded', 'true');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function close() {
+    btn.classList.remove('is-open');
+    menu.classList.remove('is-open');
+    btn.setAttribute('aria-expanded', 'false');
+    document.body.style.overflow = '';
+  }
+
+  btn.addEventListener('click', function () {
+    menu.classList.contains('is-open') ? close() : open();
+  });
+
+  links.forEach(function (a) {
+    a.addEventListener('click', close);
+  });
+})();
+</script>
+
+</body>
+</html>
