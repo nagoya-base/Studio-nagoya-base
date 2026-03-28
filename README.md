@@ -1,1 +1,0 @@
-# Studio-nagoya-base
