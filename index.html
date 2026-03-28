@@ -992,6 +992,120 @@ footer nav a:hover {
 }
 
 /* =====================
+   フィーチャー画像
+===================== */
+#featured-image {
+  padding: 40px 0;
+}
+
+.featured-image-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.featured-image {
+  width: 100%;
+  height: auto;
+  display: block;
+  transition: transform 0.2s ease;
+}
+
+.featured-image:hover {
+  transform: scale(1.02);
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+/* =====================
+   イメージモーダル
+===================== */
+.image-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease;
+}
+
+.image-modal.show {
+  display: flex;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.modal-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  z-index: 1001;
+}
+
+.modal-content img {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  border-radius: var(--radius);
+}
+
+.modal-close {
+  position: absolute;
+  top: -50px;
+  right: 0;
+  background: none;
+  border: none;
+  font-size: 2.5rem;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+  width: 50px;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+  z-index: 1002;
+}
+
+.modal-close:hover {
+  color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .modal-close {
+    top: -45px;
+    font-size: 2rem;
+    width: 40px;
+    height: 40px;
+  }
+  
+  #featured-image {
+    padding: 24px 0;
+  }
+}
+
+/* =====================
    フローティング予約ボタン
 ===================== */
 .floating-booking-btn {
@@ -1090,6 +1204,15 @@ footer nav a:hover {
     <a class="btn-primary" href="#calendar">空き確認・ご予約はこちら</a>
   </div>
 </div>
+
+<!-- フィーチャー画像 -->
+<section id="featured-image" style="background: var(--bg-section);">
+  <div class="container">
+    <div class="featured-image-wrapper">
+      <img src="224a3237.jpeg" alt="Studio Nagoya Base featured image - bondage photography" class="featured-image cursor-pointer" role="button" tabindex="0" aria-label="Click to enlarge">
+    </div>
+  </div>
+</section>
 
 <!-- ニュース -->
 <section id="news">
@@ -1269,10 +1392,10 @@ footer nav a:hover {
     <p class="section-subtitle">Gallery</p>
 
     <div class="gallery-grid">
-      <div class="gallery-item"><a href="224a3228.jpeg" target="_blank" rel="noopener"><img src="224a3228.jpeg" alt="Studio Nagoya Base gallery image 1"></a></div>
-      <div class="gallery-item"><a href="224a3237.jpeg" target="_blank" rel="noopener"><img src="224a3237.jpeg" alt="Studio Nagoya Base gallery image 2"></a></div>
-      <div class="gallery-item"><a href="224a3254.jpeg" target="_blank" rel="noopener"><img src="224a3254.jpeg" alt="Studio Nagoya Base gallery image 3"></a></div>
-      <div class="gallery-item"><a href="IMG_7421.jpeg" target="_blank" rel="noopener"><img src="IMG_7421.jpeg" alt="Studio Nagoya Base gallery image 4"></a></div>
+      <div class="gallery-item"><img src="224a3228.jpeg" alt="Studio Nagoya Base gallery image 1" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="224a3237.jpeg" alt="Studio Nagoya Base gallery image 2" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="224a3254.jpeg" alt="Studio Nagoya Base gallery image 3" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="IMG_7421.jpeg" alt="Studio Nagoya Base gallery image 4" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
     </div>
 
     <p class="gallery-note">
@@ -1888,6 +2011,61 @@ footer nav a:hover {
   if (calendarTop < windowHeight * 0.3) {
     btn.classList.add('hidden');
   }
+})();
+</script>
+
+<!-- イメージモーダル -->
+<div id="imageModal" class="image-modal">
+  <div class="modal-overlay"></div>
+  <div class="modal-content">
+    <button class="modal-close" aria-label="Close modal">&times;</button>
+    <img id="modalImage" src="" alt="Enlarged image">
+  </div>
+</div>
+
+<script>
+(function () {
+  var modal = document.getElementById('imageModal');
+  var modalImage = document.getElementById('modalImage');
+  var closeBtn = document.querySelector('.modal-close');
+  var overlay = document.querySelector('.modal-overlay');
+  
+  // ギャラリー画像とフィーチャー画像をクリック可能にする
+  var clickableImages = document.querySelectorAll('.gallery-image, .featured-image');
+  
+  clickableImages.forEach(function (img) {
+    img.addEventListener('click', function () {
+      modalImage.setAttribute('src', this.getAttribute('src'));
+      modal.classList.add('show');
+      document.body.style.overflow = 'hidden';
+    });
+    
+    // キーボード操作対応
+    img.addEventListener('keypress', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        this.click();
+      }
+    });
+  });
+  
+  // モーダルを閉じる関数
+  function closeModal() {
+    modal.classList.remove('show');
+    document.body.style.overflow = '';
+  }
+  
+  // 閉じるボタン
+  closeBtn.addEventListener('click', closeModal);
+  
+  // オーバーレイクリック
+  overlay.addEventListener('click', closeModal);
+  
+  // ESCキーで閉じる
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && modal.classList.contains('show')) {
+      closeModal();
+    }
+  });
 })();
 </script>
 

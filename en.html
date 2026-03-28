@@ -882,6 +882,120 @@ footer nav a:hover {
 }
 
 /* =====================
+   Featured Image
+===================== */
+#featured-image {
+  padding: 40px 0;
+}
+
+.featured-image-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.featured-image {
+  width: 100%;
+  height: auto;
+  display: block;
+  transition: transform 0.2s ease;
+}
+
+.featured-image:hover {
+  transform: scale(1.02);
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+/* =====================
+   Image Modal
+===================== */
+.image-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease;
+}
+
+.image-modal.show {
+  display: flex;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.modal-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  z-index: 1001;
+}
+
+.modal-content img {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  border-radius: var(--radius);
+}
+
+.modal-close {
+  position: absolute;
+  top: -50px;
+  right: 0;
+  background: none;
+  border: none;
+  font-size: 2.5rem;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+  width: 50px;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+  z-index: 1002;
+}
+
+.modal-close:hover {
+  color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .modal-close {
+    top: -45px;
+    font-size: 2rem;
+    width: 40px;
+    height: 40px;
+  }
+  
+  #featured-image {
+    padding: 24px 0;
+  }
+}
+
+/* =====================
    Floating Booking Button
 ===================== */
 .floating-booking-btn {
@@ -974,6 +1088,15 @@ footer nav a:hover {
     <h1>Bondage Photography Studio in Kamimaezu, Nagoya</h1>
     <p class="hero-desc">A professional studio specialized in bondage and rope photography. Smartphones to professional cameras work perfectly with our setup. High-quality results are guaranteed with easy-to-use equipment and safe suspension systems.</p>
     <a class="btn-primary" href="#calendar">Check availability and book</a>
+  </div>
+</section>
+
+<!-- Featured Image -->
+<section id="featured-image" style="background: var(--bg-section);">
+  <div class="container">
+    <div class="featured-image-wrapper">
+      <img src="224a3237.jpeg" alt="Featured bondage photography - Studio Nagoya Base" class="featured-image cursor-pointer" role="button" tabindex="0" aria-label="Click to enlarge">
+    </div>
   </div>
 </section>
 
@@ -1231,10 +1354,10 @@ footer nav a:hover {
     <h2 class="section-title">Gallery</h2>
     <p class="section-subtitle">Sample Images</p>
     <div class="gallery-grid">
-      <div class="gallery-item"><a href="224a3228.jpeg" target="_blank" rel="noopener"><img src="224a3228.jpeg" alt="Studio interior example 1"></a></div>
-      <div class="gallery-item"><a href="224a3237.jpeg" target="_blank" rel="noopener"><img src="224a3237.jpeg" alt="Studio interior example 2"></a></div>
-      <div class="gallery-item"><a href="224a3254.jpeg" target="_blank" rel="noopener"><img src="224a3254.jpeg" alt="Studio interior example 3"></a></div>
-      <div class="gallery-item"><a href="IMG_7421.jpeg" target="_blank" rel="noopener"><img src="IMG_7421.jpeg" alt="Studio interior example 4"></a></div>
+      <div class="gallery-item"><img src="224a3228.jpeg" alt="Studio interior example 1" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="224a3237.jpeg" alt="Studio interior example 2" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="224a3254.jpeg" alt="Studio interior example 3" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="IMG_7421.jpeg" alt="Studio interior example 4" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
     </div>
     <p class="gallery-note">More sample images are available on <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">X (@nagoyabase2023)</a>.</p>
   </div>
@@ -1502,6 +1625,61 @@ footer nav a:hover {
   if (calendarTop < windowHeight * 0.3) {
     btn.classList.add('hidden');
   }
+})();
+</script>
+
+<!-- Image Modal -->
+<div id="imageModal" class="image-modal">
+  <div class="modal-overlay"></div>
+  <div class="modal-content">
+    <button class="modal-close" aria-label="Close modal">&times;</button>
+    <img id="modalImage" src="" alt="Enlarged image">
+  </div>
+</div>
+
+<script>
+(function () {
+  var modal = document.getElementById('imageModal');
+  var modalImage = document.getElementById('modalImage');
+  var closeBtn = document.querySelector('.modal-close');
+  var overlay = document.querySelector('.modal-overlay');
+  
+  // Gallery and featured images are clickable
+  var clickableImages = document.querySelectorAll('.gallery-image, .featured-image');
+  
+  clickableImages.forEach(function (img) {
+    img.addEventListener('click', function () {
+      modalImage.setAttribute('src', this.getAttribute('src'));
+      modal.classList.add('show');
+      document.body.style.overflow = 'hidden';
+    });
+    
+    // Keyboard support
+    img.addEventListener('keypress', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        this.click();
+      }
+    });
+  });
+  
+  // Close modal function
+  function closeModal() {
+    modal.classList.remove('show');
+    document.body.style.overflow = '';
+  }
+  
+  // Close button
+  closeBtn.addEventListener('click', closeModal);
+  
+  // Overlay click
+  overlay.addEventListener('click', closeModal);
+  
+  // ESC key
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && modal.classList.contains('show')) {
+      closeModal();
+    }
+  });
 })();
 </script>
 
