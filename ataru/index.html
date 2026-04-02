@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>アタル｜名古屋・緊縛セッション</title>
-  <meta name="description" content="名古屋で活動する緊縛師アタルの個人セッション。体育会系・ユニフォーム系緊縛を得意とし、初心者歓迎。見映えの良さ・安全性・落ち着いた進行を重視しています。">
+  <title>アタル｜名古屋・ポートレート＆ロープセッション</title>
+  <meta name="description" content="名古屋で活動するアタルの個人セッション。ユニフォーム撮影・ポートレート・ロープ体験まで幅広く対応。初心者歓迎、完全貸切、丁寧な進行。">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -350,6 +350,51 @@
     .footer-note { font-size: 0.78rem; color: var(--text-muted); line-height: 1.7; max-width: 340px; }
     .footer-copy { font-size: 0.74rem; color: var(--text-muted); margin-top: 1.75rem; }
 
+    /* ── Hamburger ── */
+    .hamburger {
+      display: none;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0.4rem;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .hamburger span {
+      display: block;
+      width: 22px;
+      height: 2px;
+      background: var(--text);
+      border-radius: 2px;
+      transition: all 0.25s;
+    }
+    .hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+    /* ── Photo features ── */
+    .plan-intro {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-bottom: 1.75rem;
+      line-height: 1.85;
+    }
+    .photo-features {
+      list-style: none;
+      margin-top: 1.5rem;
+      display: grid;
+      gap: 0.5rem;
+    }
+    .photo-features li {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      padding-left: 1.2rem;
+      position: relative;
+    }
+    .photo-features li::before { content: '✓'; position: absolute; left: 0; color: var(--accent); }
+    .photo-gallery-mini { grid-template-columns: repeat(2, 1fr); }
+    .gallery-mini-lg { grid-template-columns: repeat(3, 1fr); }
+
     /* ── Gallery ── */
     .gallery-grid {
       display: grid;
@@ -427,11 +472,30 @@
       .options-grid { grid-template-columns: 1fr; }
       .gallery-grid { grid-template-columns: repeat(2, 1fr); }
       .gallery-mini { grid-template-columns: repeat(2, 1fr); }
-      .nav-links { display: none; }
+      .gallery-mini-lg { grid-template-columns: repeat(2, 1fr); }
       .btn-outline { margin-left: 0; margin-top: 0.75rem; display: block; text-align: center; }
       .rental-table { font-size: 0.8rem; }
       .rental-table th, .rental-table td { padding: 0.55rem 0.75rem; }
       .schedule-box { padding: 1.25rem; }
+      /* hamburger */
+      .hamburger { display: flex; }
+      .nav-links {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: rgba(8, 13, 23, 0.97);
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid var(--border);
+        flex-direction: column;
+        padding: 0.5rem 1.5rem;
+        gap: 0;
+      }
+      .nav-links.open { display: flex; }
+      .nav-links li { border-bottom: 1px solid var(--border); }
+      .nav-links li:last-child { border-bottom: none; }
+      .nav-links a { padding: 0.85rem 0; font-size: 0.92rem; display: block; }
     }
   </style>
 </head>
@@ -442,22 +506,25 @@
   <span class="nav-brand">ATARU</span>
   <ul class="nav-links">
     <li><a href="#features">特徴</a></li>
+    <li><a href="#photo">作品撮り</a></li>
     <li><a href="#session">セッション</a></li>
     <li><a href="#pricing">料金</a></li>
-    <li><a href="#gallery">ギャラリー</a></li>
     <li><a href="#schedule">日程・場所</a></li>
     <li><a href="#contact">予約</a></li>
   </ul>
+  <button class="hamburger" aria-label="メニューを開く" aria-expanded="false">
+    <span></span><span></span><span></span>
+  </button>
 </nav>
 
 <!-- ── Hero ── -->
 <section class="hero">
   <div class="container">
-    <div class="hero-tag">名古屋・緊縛セッション</div>
-    <h1>体育会系の緊縛を、<br><em>丁寧に。安全に。</em></h1>
+    <div class="hero-tag">名古屋・ポートレート &amp; ロープセッション</div>
+    <h1>ユニフォームとロープで作る、<br><em>あなただけの一枚。</em></h1>
     <p class="hero-sub">
-      緊縛師アタルによるマンツーマン個人セッション。<br>
-      体育会系・ユニフォーム系の緊縛を得意としています。<br>
+      アタルによるマンツーマン個人セッション。<br>
+      ユニフォーム撮影・ポートレートから、ロープを使った体験まで対応。<br>
       初心者の方も、まずはお気軽にご相談ください。
     </p>
     <a href="#contact" class="btn btn-primary">予約・相談する</a>
@@ -528,6 +595,82 @@
   </div>
 </section>
 
+<!-- ── Photography ── -->
+<section id="photo">
+  <div class="container">
+    <p class="section-label">Photography</p>
+    <h2>📸 作品撮り体験コース</h2>
+    <p class="plan-intro">完全貸切スペースで、ポートレート・コスプレ・ユニフォームの本格撮影が体験できます。初心者OK、ポージングサポートあり。</p>
+
+    <div class="pricing-plans">
+
+      <!-- 体験プラン -->
+      <div class="plan-card">
+        <div class="plan-header">
+          <span class="plan-name">🟡 体験プラン 90分</span>
+        </div>
+        <div class="plan-body">
+          <p class="plan-desc">パネルライト＋Hueで雰囲気を楽しむライトな体験。</p>
+          <div class="price-row">
+            <span class="price-label">納品5枚（撮って出し）</span>
+            <span class="price-value">¥5,000</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- スタンダード -->
+      <div class="plan-card featured">
+        <div class="plan-header">
+          <span class="plan-name">🔵 スタンダード 2時間</span>
+        </div>
+        <div class="plan-body">
+          <p class="plan-desc">ストロボ1灯で、しっかりしたポートレートに。</p>
+          <div class="price-row">
+            <span class="price-label">納品15枚（軽調整込み）</span>
+            <span class="price-value">¥10,000</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 作品撮り -->
+      <div class="plan-card">
+        <div class="plan-header">
+          <span class="plan-name">🟣 作品撮り 2時間</span>
+          <span class="plan-badge">ロープ表現対応可</span>
+        </div>
+        <div class="plan-body">
+          <p class="plan-desc">ストロボ複数 or COBでライティング込みの作品制作。</p>
+          <div class="price-row">
+            <span class="price-label">納品15枚＋一部レタッチ</span>
+            <span class="price-value">¥15,000</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <ul class="photo-features">
+      <li>1組貸切（完全プライベート）</li>
+      <li>初心者OK・ポージング／撮影サポートあり</li>
+      <li>白背景・黒背景どちらも対応</li>
+    </ul>
+
+    <div class="session-note" style="margin-top: 1.25rem;">
+      スタンダード以上は白背景をより明るく仕上げることも可能。黒背景はサイド光などアレンジにも対応します。
+    </div>
+
+    <p class="gallery-mini-label">📷 作例（コスプレ・ユニフォーム）</p>
+    <div class="gallery-mini photo-gallery-mini">
+      <div class="gallery-item" onclick="openModal('images/IMG_7278.jpeg')">
+        <img src="images/IMG_7278.jpeg" alt="コスプレ作例" loading="lazy">
+      </div>
+      <div class="gallery-item" onclick="openModal('images/224A3133.jpeg')">
+        <img src="images/224A3133.jpeg" alt="ユニフォーム作例" loading="lazy">
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ── Session ── -->
 <section id="session">
   <div class="container">
@@ -589,6 +732,22 @@
           </div>
         </div>
       </div>
+
+    </div>
+
+    <!-- 縛り作例ミニギャラリー（スタンダード直後） -->
+    <p class="gallery-mini-label">🔵 縛り・作例</p>
+    <div class="gallery-mini gallery-mini-lg">
+      <div class="gallery-item" onclick="openModal('images/IMG_5723.jpeg')"><img src="images/IMG_5723.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/IMG_3149.jpeg')"><img src="images/IMG_3149.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/224A3035.jpeg')"><img src="images/224A3035.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/224A3124.jpeg')"><img src="images/224A3124.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/224A3127.jpeg')"><img src="images/224A3127.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/224A3130.jpeg')"><img src="images/224A3130.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/IMG_7269.jpeg')"><img src="images/IMG_7269.jpeg" alt="縛り作例" loading="lazy"></div>
+    </div>
+
+    <div class="pricing-plans">
 
       <!-- ハード・吊り -->
       <div class="plan-card">
@@ -723,25 +882,6 @@
   </div>
 </section>
 
-<!-- ── Gallery ── -->
-<section id="gallery">
-  <div class="container">
-    <p class="section-label">Gallery</p>
-    <h2>作例ギャラリー</h2>
-    <div class="gallery-grid">
-      <div class="gallery-item" onclick="openModal('images/IMG_5723.jpeg')"><img src="images/IMG_5723.jpeg" alt="作例" loading="lazy"></div>
-      <div class="gallery-item" onclick="openModal('images/IMG_3149.jpeg')"><img src="images/IMG_3149.jpeg" alt="作例" loading="lazy"></div>
-      <div class="gallery-item" onclick="openModal('images/224A3035.jpeg')"><img src="images/224A3035.jpeg" alt="作例" loading="lazy"></div>
-      <div class="gallery-item" onclick="openModal('images/224A3124.jpeg')"><img src="images/224A3124.jpeg" alt="作例" loading="lazy"></div>
-      <div class="gallery-item" onclick="openModal('images/224A3127.jpeg')"><img src="images/224A3127.jpeg" alt="作例" loading="lazy"></div>
-      <div class="gallery-item" onclick="openModal('images/224A3130.jpeg')"><img src="images/224A3130.jpeg" alt="作例" loading="lazy"></div>
-      <div class="gallery-item" onclick="openModal('images/IMG_7269.jpeg')"><img src="images/IMG_7269.jpeg" alt="作例" loading="lazy"></div>
-      <div class="gallery-item" onclick="openModal('images/224A3133.jpeg')"><img src="images/224A3133.jpeg" alt="作例" loading="lazy"></div>
-      <div class="gallery-item" onclick="openModal('images/IMG_7278.jpeg')"><img src="images/IMG_7278.jpeg" alt="作例" loading="lazy"></div>
-    </div>
-  </div>
-</section>
-
 <!-- ── Notice ── -->
 <section id="notice">
   <div class="container">
@@ -802,6 +942,21 @@
     document.body.style.overflow = '';
   }
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+  const hamburger = document.querySelector('.hamburger');
+  const navLinks = document.querySelector('.nav-links');
+  hamburger.addEventListener('click', () => {
+    const isOpen = navLinks.classList.toggle('open');
+    hamburger.classList.toggle('open');
+    hamburger.setAttribute('aria-expanded', isOpen);
+  });
+  document.querySelectorAll('.nav-links a').forEach(a =>
+    a.addEventListener('click', () => {
+      navLinks.classList.remove('open');
+      hamburger.classList.remove('open');
+      hamburger.setAttribute('aria-expanded', 'false');
+    })
+  );
 </script>
 </body>
 </html>
