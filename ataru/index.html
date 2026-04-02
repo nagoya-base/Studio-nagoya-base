@@ -433,6 +433,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      cursor: default;
+      pointer-events: none;
     }
     .gallery-placeholder span {
       color: var(--text-muted);
@@ -440,6 +442,14 @@
       text-align: center;
       padding: 0.5rem;
     }
+
+    /* ── Plan section layout helpers ── */
+    .plan-section-title { font-size: 1.1rem; margin-top: 0; margin-bottom: 1.5rem; }
+    .plan-section-lead { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem; line-height: 1.8; }
+    .pricing-plans-flush { margin-top: 0; }
+    .pricing-plans-narrow { margin-top: 1.25rem; }
+    .section-divider { border: none; border-top: 1px solid var(--border); margin: 3rem 0; }
+    .session-note-spaced { margin-top: 1.5rem; }
 
     /* ── Hamburger ── */
     .hamburger {
@@ -508,7 +518,7 @@
     <li><a href="#schedule" onclick="closeNav()">日程・場所</a></li>
     <li><a href="#contact" onclick="closeNav()">予約</a></li>
   </ul>
-  <button class="hamburger" id="hamburger" aria-label="メニュー" aria-expanded="false" onclick="toggleNav()">
+  <button class="hamburger" id="hamburger" type="button" aria-label="メニュー" aria-expanded="false" aria-controls="nav-links" onclick="toggleNav()">
     <span></span><span></span><span></span>
   </button>
 </nav>
@@ -620,12 +630,12 @@
 
     <!-- ── 作品撮り体験コース ── -->
     <div id="photo-plan">
-      <h3 style="font-size: 1.1rem; margin-bottom: 0.6rem; margin-top: 0;">📸 作品撮り体験コース</h3>
-      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem; line-height: 1.8;">
+      <h3 class="plan-section-title">📸 作品撮り体験コース</h3>
+      <p class="plan-section-lead">
         白背景・黒背景のスタジオで1組貸切撮影。初心者の方もポージングサポートつきで安心。
       </p>
 
-      <div class="pricing-plans" style="margin-top: 0;">
+      <div class="pricing-plans pricing-plans-flush">
 
         <!-- 体験プラン -->
         <div class="plan-card">
@@ -639,7 +649,7 @@
               <span class="price-label">料金</span>
               <span class="price-value">¥5,000</span>
             </div>
-            <ul class="rental-notes" style="margin-top: 0.75rem;">
+            <ul class="rental-notes">
               <li>納品5枚（撮って出し）</li>
               <li>パネルライト＋Hue</li>
             </ul>
@@ -657,7 +667,7 @@
               <span class="price-label">料金</span>
               <span class="price-value">¥10,000</span>
             </div>
-            <ul class="rental-notes" style="margin-top: 0.75rem;">
+            <ul class="rental-notes">
               <li>納品15枚（軽調整込み）</li>
               <li>ストロボ1灯</li>
             </ul>
@@ -676,7 +686,7 @@
               <span class="price-label">料金</span>
               <span class="price-value">¥15,000</span>
             </div>
-            <ul class="rental-notes" style="margin-top: 0.75rem;">
+            <ul class="rental-notes">
               <li>納品15枚＋一部レタッチ</li>
               <li>ストロボ複数 or COB</li>
             </ul>
@@ -685,7 +695,7 @@
 
       </div>
 
-      <div class="session-note" style="margin-top: 1.5rem; margin-bottom: 0;">
+      <div class="session-note session-note-spaced">
         ✅ 1組貸切（完全プライベート）&emsp;✅ 初心者OK&emsp;✅ ポージング／撮影サポートあり<br><br>
         スタンダードコース以上では、白背景をさらに白く飛ばすことや、黒背景にサイド光などのアレンジも可能です。
       </div>
@@ -701,13 +711,13 @@
       </div>
     </div>
 
-    <hr style="border: none; border-top: 1px solid var(--border); margin: 3rem 0;">
+    <hr class="section-divider">
 
     <!-- ── 緊縛セッション ── -->
     <div id="binding-plan">
-      <h3 style="font-size: 1.1rem; margin-bottom: 1.5rem; margin-top: 0;">🪢 緊縛セッション</h3>
+      <h3 class="plan-section-title">🪢 緊縛セッション</h3>
 
-      <div class="pricing-plans" style="margin-top: 0;">
+      <div class="pricing-plans pricing-plans-flush">
 
         <!-- ライト -->
         <div class="plan-card">
@@ -753,7 +763,7 @@
         <div class="gallery-item" onclick="openModal('images/224A3130.jpeg')"><img src="images/224A3130.jpeg" alt="緊縛作例" loading="lazy"></div>
       </div>
 
-      <div class="pricing-plans" style="margin-top: 1.25rem;">
+      <div class="pricing-plans pricing-plans-narrow">
 
         <!-- ハード・吊り -->
         <div class="plan-card">
@@ -958,16 +968,32 @@
 </footer>
 
 <script>
+  function updateScrollLock() {
+    const navOpen = document.getElementById('nav-links').classList.contains('open');
+    const modalOpen = document.getElementById('modal').classList.contains('open');
+    document.body.style.overflow = (navOpen || modalOpen) ? 'hidden' : '';
+  }
+
   function openModal(src) {
     document.getElementById('modal-img').src = src;
     document.getElementById('modal').classList.add('open');
-    document.body.style.overflow = 'hidden';
+    updateScrollLock();
   }
   function closeModal() {
     document.getElementById('modal').classList.remove('open');
-    document.body.style.overflow = '';
+    updateScrollLock();
   }
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    const nav = document.getElementById('nav-links');
+    const modal = document.getElementById('modal');
+    if (nav && nav.classList.contains('open')) {
+      closeNav();
+    } else if (modal && modal.classList.contains('open')) {
+      closeModal();
+    }
+  });
 
   function toggleNav() {
     const nav = document.getElementById('nav-links');
@@ -975,7 +1001,7 @@
     const open = nav.classList.toggle('open');
     btn.classList.toggle('open', open);
     btn.setAttribute('aria-expanded', open);
-    document.body.style.overflow = open ? 'hidden' : '';
+    updateScrollLock();
   }
   function closeNav() {
     const nav = document.getElementById('nav-links');
@@ -983,7 +1009,7 @@
     nav.classList.remove('open');
     btn.classList.remove('open');
     btn.setAttribute('aria-expanded', 'false');
-    document.body.style.overflow = '';
+    updateScrollLock();
   }
 </script>
 </body>
