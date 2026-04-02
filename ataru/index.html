@@ -4,7 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>アタル｜名古屋・緊縛セッション</title>
-  <meta name="description" content="名古屋で活動する緊縛師アタルの個人セッション。体育会系・ユニフォーム系緊縛を得意とし、初心者歓迎。見映えの良さ・安全性・落ち着いた進行を重視しています。">
+  <meta name="description" content="名古屋で活動するアタルの個人セッション。作品撮り体験コース（白背景・黒背景）から専門セッションまで対応。初心者歓迎、1組完全貸切のプライベート空間。">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="アタル｜名古屋・作品撮り＆個人セッション">
+  <meta property="og:description" content="名古屋で活動するアタルの個人セッション。作品撮り体験コース（白背景・黒背景）から専門セッションまで対応。初心者歓迎、1組完全貸切のプライベート空間。">
+  <meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/ataru/images/224A3035.jpeg">
+  <meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/ataru/">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="アタル｜名古屋・作品撮り＆個人セッション">
+  <meta name="twitter:description" content="名古屋で活動するアタルの個人セッション。作品撮り体験コース（白背景・黒背景）から専門セッションまで対応。初心者歓迎、1組完全貸切のプライベート空間。">
+  <meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/ataru/images/224A3035.jpeg">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -419,6 +428,43 @@
     }
     .modal-close:hover { opacity: 1; }
 
+    /* ── Gallery placeholder ── */
+    .gallery-placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .gallery-placeholder span {
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      text-align: center;
+      padding: 0.5rem;
+    }
+
+    /* ── Hamburger ── */
+    .hamburger {
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      gap: 5px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0.4rem;
+      color: var(--text);
+      z-index: 101;
+    }
+    .hamburger span {
+      display: block;
+      width: 22px;
+      height: 2px;
+      background: currentColor;
+      transition: transform 0.2s, opacity 0.2s;
+    }
+    .hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+    .hamburger.open span:nth-child(2) { opacity: 0; }
+    .hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
     /* ── Responsive ── */
     @media (max-width: 640px) {
       section { padding: 3.5rem 0; }
@@ -427,7 +473,20 @@
       .options-grid { grid-template-columns: 1fr; }
       .gallery-grid { grid-template-columns: repeat(2, 1fr); }
       .gallery-mini { grid-template-columns: repeat(2, 1fr); }
-      .nav-links { display: none; }
+      .hamburger { display: flex; }
+      .nav-links {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: var(--bg);
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2rem;
+        z-index: 100;
+      }
+      .nav-links.open { display: flex; }
+      .nav-links a { font-size: 1.1rem; }
       .btn-outline { margin-left: 0; margin-top: 0.75rem; display: block; text-align: center; }
       .rental-table { font-size: 0.8rem; }
       .rental-table th, .rental-table td { padding: 0.55rem 0.75rem; }
@@ -440,14 +499,18 @@
 <!-- ── Navigation ── -->
 <nav>
   <span class="nav-brand">ATARU</span>
-  <ul class="nav-links">
-    <li><a href="#features">特徴</a></li>
-    <li><a href="#session">セッション</a></li>
-    <li><a href="#pricing">料金</a></li>
-    <li><a href="#gallery">ギャラリー</a></li>
-    <li><a href="#schedule">日程・場所</a></li>
-    <li><a href="#contact">予約</a></li>
+  <ul class="nav-links" id="nav-links">
+    <li><a href="#features" onclick="closeNav()">特徴</a></li>
+    <li><a href="#session" onclick="closeNav()">セッション</a></li>
+    <li><a href="#photo-plan" onclick="closeNav()">作品撮り</a></li>
+    <li><a href="#pricing" onclick="closeNav()">料金</a></li>
+    <li><a href="#gallery" onclick="closeNav()">ギャラリー</a></li>
+    <li><a href="#schedule" onclick="closeNav()">日程・場所</a></li>
+    <li><a href="#contact" onclick="closeNav()">予約</a></li>
   </ul>
+  <button class="hamburger" id="hamburger" aria-label="メニュー" aria-expanded="false" onclick="toggleNav()">
+    <span></span><span></span><span></span>
+  </button>
 </nav>
 
 <!-- ── Hero ── -->
@@ -555,77 +618,180 @@
     <p class="section-label">Pricing</p>
     <h2>料金・プラン</h2>
 
-    <div class="pricing-plans">
+    <!-- ── 作品撮り体験コース ── -->
+    <div id="photo-plan">
+      <h3 style="font-size: 1.1rem; margin-bottom: 0.6rem; margin-top: 0;">📸 作品撮り体験コース</h3>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem; line-height: 1.8;">
+        白背景・黒背景のスタジオで1組貸切撮影。初心者の方もポージングサポートつきで安心。
+      </p>
 
-      <!-- ライト -->
-      <div class="plan-card">
-        <div class="plan-header">
-          <span class="plan-name">🟢 ライト 60分</span>
-          <span class="plan-badge">初回限定</span>
-        </div>
-        <div class="plan-body">
-          <p class="plan-desc">胸縄・軽拘束・軽スポユニ体験。初めての方に最適なプランです。</p>
-          <div class="price-row">
-            <span class="price-label">平日 / 休日（共通）</span>
-            <span class="price-value">¥7,000</span>
+      <div class="pricing-plans" style="margin-top: 0;">
+
+        <!-- 体験プラン -->
+        <div class="plan-card">
+          <div class="plan-header">
+            <span class="plan-name">体験プラン（90分）</span>
+            <span class="plan-badge">ライト体験</span>
+          </div>
+          <div class="plan-body">
+            <p class="plan-desc">雰囲気を楽しむライトな体験。パネルライト＋Hueで柔らかい空間づくり。</p>
+            <div class="price-row">
+              <span class="price-label">料金</span>
+              <span class="price-value">¥5,000</span>
+            </div>
+            <ul class="rental-notes" style="margin-top: 0.75rem;">
+              <li>納品5枚（撮って出し）</li>
+              <li>パネルライト＋Hue</li>
+            </ul>
           </div>
         </div>
+
+        <!-- 作品撮りスタンダード -->
+        <div class="plan-card featured">
+          <div class="plan-header">
+            <span class="plan-name">スタンダード（2時間）</span>
+          </div>
+          <div class="plan-body">
+            <p class="plan-desc">しっかりしたポートレートに。ストロボ1灯でクリアな仕上がり。</p>
+            <div class="price-row">
+              <span class="price-label">料金</span>
+              <span class="price-value">¥10,000</span>
+            </div>
+            <ul class="rental-notes" style="margin-top: 0.75rem;">
+              <li>納品15枚（軽調整込み）</li>
+              <li>ストロボ1灯</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- 作品撮りフル -->
+        <div class="plan-card">
+          <div class="plan-header">
+            <span class="plan-name">作品撮り（2時間）</span>
+            <span class="plan-badge">ライティング込み</span>
+          </div>
+          <div class="plan-body">
+            <p class="plan-desc">ライティングにこだわった作品制作。希望者はロープ表現対応可。</p>
+            <div class="price-row">
+              <span class="price-label">料金</span>
+              <span class="price-value">¥15,000</span>
+            </div>
+            <ul class="rental-notes" style="margin-top: 0.75rem;">
+              <li>納品15枚＋一部レタッチ</li>
+              <li>ストロボ複数 or COB</li>
+            </ul>
+          </div>
+        </div>
+
       </div>
 
-      <!-- スタンダード -->
-      <div class="plan-card featured">
-        <div class="plan-header">
-          <span class="plan-name">🔵 スタンダード 90分</span>
-        </div>
-        <div class="plan-body">
-          <p class="plan-desc">しっかり体験したい方向けのベーシックプラン。</p>
-          <div class="price-row">
-            <span class="price-label">平日</span>
-            <span class="price-value">¥10,000</span>
-          </div>
-          <div class="price-row">
-            <span class="price-label">休日（土日祝）</span>
-            <span class="price-value">¥15,000</span>
-          </div>
-        </div>
+      <div class="session-note" style="margin-top: 1.5rem; margin-bottom: 0;">
+        ✅ 1組貸切（完全プライベート）&emsp;✅ 初心者OK&emsp;✅ ポージング／撮影サポートあり<br><br>
+        スタンダードコース以上では、白背景をさらに白く飛ばすことや、黒背景にサイド光などのアレンジも可能です。
       </div>
 
-      <!-- ハード・吊り -->
-      <div class="plan-card">
-        <div class="plan-header">
-          <span class="plan-name">🔴 ハード／吊り</span>
-          <span class="plan-badge">条件クリア者のみ</span>
-        </div>
-        <div class="plan-body">
-          <p class="plan-desc">低空〜中空吊り。適性確認・条件クリアが必要です。詳細はお問い合わせください。</p>
-          <div class="price-row">
-            <span class="price-label">平日 120分</span>
-            <span class="price-value">¥20,000</span>
-          </div>
-          <div class="price-row">
-            <span class="price-label">平日 150分</span>
-            <span class="price-value">¥22,000</span>
-          </div>
-          <div class="price-row">
-            <span class="price-label">休日 120分</span>
-            <span class="price-value">¥23,000</span>
-          </div>
-          <div class="price-row">
-            <span class="price-label">休日 150分</span>
-            <span class="price-value">¥25,000</span>
-          </div>
-        </div>
+      <!-- 撮影作例（コスプレ・野球ユニ縄なし）-->
+      <p class="gallery-mini-label">📷 撮影イメージ（コスプレ・ユニフォーム系）</p>
+      <div class="gallery-mini">
+        <!-- コスプレ・野球ユニ作例（縄なし）を追加予定 -->
+        <div class="gallery-item gallery-placeholder"><span>作例<br>準備中</span></div>
+        <div class="gallery-item gallery-placeholder"><span>作例<br>準備中</span></div>
+        <div class="gallery-item gallery-placeholder"><span>作例<br>準備中</span></div>
+        <div class="gallery-item gallery-placeholder"><span>作例<br>準備中</span></div>
       </div>
-
     </div>
 
-    <!-- ハード作例 -->
-    <p class="gallery-mini-label">🔴 吊り・作例</p>
-    <div class="gallery-mini">
-      <div class="gallery-item" onclick="openModal('images/224A2715.jpeg')"><img src="images/224A2715.jpeg" alt="吊り作例" loading="lazy"></div>
-      <div class="gallery-item" onclick="openModal('images/224A2815.jpeg')"><img src="images/224A2815.jpeg" alt="吊り作例" loading="lazy"></div>
-      <div class="gallery-item" onclick="openModal('images/IMG_7268.jpeg')"><img src="images/IMG_7268.jpeg" alt="吊り作例" loading="lazy"></div>
-      <div class="gallery-item" onclick="openModal('images/IMG_7276.jpeg')"><img src="images/IMG_7276.jpeg" alt="吊り作例" loading="lazy"></div>
+    <hr style="border: none; border-top: 1px solid var(--border); margin: 3rem 0;">
+
+    <!-- ── 緊縛セッション ── -->
+    <div id="binding-plan">
+      <h3 style="font-size: 1.1rem; margin-bottom: 1.5rem; margin-top: 0;">🪢 緊縛セッション</h3>
+
+      <div class="pricing-plans" style="margin-top: 0;">
+
+        <!-- ライト -->
+        <div class="plan-card">
+          <div class="plan-header">
+            <span class="plan-name">🟢 ライト 60分</span>
+            <span class="plan-badge">初回限定</span>
+          </div>
+          <div class="plan-body">
+            <p class="plan-desc">胸縄・軽拘束・軽スポユニ体験。初めての方に最適なプランです。</p>
+            <div class="price-row">
+              <span class="price-label">平日 / 休日（共通）</span>
+              <span class="price-value">¥7,000</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- スタンダード -->
+        <div class="plan-card featured">
+          <div class="plan-header">
+            <span class="plan-name">🔵 スタンダード 90分</span>
+          </div>
+          <div class="plan-body">
+            <p class="plan-desc">しっかり体験したい方向けのベーシックプラン。</p>
+            <div class="price-row">
+              <span class="price-label">平日</span>
+              <span class="price-value">¥10,000</span>
+            </div>
+            <div class="price-row">
+              <span class="price-label">休日（土日祝）</span>
+              <span class="price-value">¥15,000</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- 緊縛作例（🔵 スタンダードの次） -->
+      <p class="gallery-mini-label">🔵 緊縛・作例</p>
+      <div class="gallery-mini">
+        <div class="gallery-item" onclick="openModal('images/IMG_5723.jpeg')"><img src="images/IMG_5723.jpeg" alt="緊縛作例" loading="lazy"></div>
+        <div class="gallery-item" onclick="openModal('images/IMG_3149.jpeg')"><img src="images/IMG_3149.jpeg" alt="緊縛作例" loading="lazy"></div>
+        <div class="gallery-item" onclick="openModal('images/224A3127.jpeg')"><img src="images/224A3127.jpeg" alt="緊縛作例" loading="lazy"></div>
+        <div class="gallery-item" onclick="openModal('images/224A3130.jpeg')"><img src="images/224A3130.jpeg" alt="緊縛作例" loading="lazy"></div>
+      </div>
+
+      <div class="pricing-plans" style="margin-top: 1.25rem;">
+
+        <!-- ハード・吊り -->
+        <div class="plan-card">
+          <div class="plan-header">
+            <span class="plan-name">🔴 ハード／吊り</span>
+            <span class="plan-badge">条件クリア者のみ</span>
+          </div>
+          <div class="plan-body">
+            <p class="plan-desc">低空〜中空吊り。適性確認・条件クリアが必要です。詳細はお問い合わせください。</p>
+            <div class="price-row">
+              <span class="price-label">平日 120分</span>
+              <span class="price-value">¥20,000</span>
+            </div>
+            <div class="price-row">
+              <span class="price-label">平日 150分</span>
+              <span class="price-value">¥22,000</span>
+            </div>
+            <div class="price-row">
+              <span class="price-label">休日 120分</span>
+              <span class="price-value">¥23,000</span>
+            </div>
+            <div class="price-row">
+              <span class="price-label">休日 150分</span>
+              <span class="price-value">¥25,000</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- 吊り作例 -->
+      <p class="gallery-mini-label">🔴 吊り・作例</p>
+      <div class="gallery-mini">
+        <div class="gallery-item" onclick="openModal('images/224A2715.jpeg')"><img src="images/224A2715.jpeg" alt="吊り作例" loading="lazy"></div>
+        <div class="gallery-item" onclick="openModal('images/224A2815.jpeg')"><img src="images/224A2815.jpeg" alt="吊り作例" loading="lazy"></div>
+        <div class="gallery-item" onclick="openModal('images/IMG_7268.jpeg')"><img src="images/IMG_7268.jpeg" alt="吊り作例" loading="lazy"></div>
+        <div class="gallery-item" onclick="openModal('images/IMG_7276.jpeg')"><img src="images/IMG_7276.jpeg" alt="吊り作例" loading="lazy"></div>
+      </div>
     </div>
 
     <!-- オプション -->
@@ -802,6 +968,23 @@
     document.body.style.overflow = '';
   }
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+  function toggleNav() {
+    const nav = document.getElementById('nav-links');
+    const btn = document.getElementById('hamburger');
+    const open = nav.classList.toggle('open');
+    btn.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', open);
+    document.body.style.overflow = open ? 'hidden' : '';
+  }
+  function closeNav() {
+    const nav = document.getElementById('nav-links');
+    const btn = document.getElementById('hamburger');
+    nav.classList.remove('open');
+    btn.classList.remove('open');
+    btn.setAttribute('aria-expanded', 'false');
+    document.body.style.overflow = '';
+  }
 </script>
 </body>
 </html>
