@@ -298,6 +298,8 @@
       opacity: 0.18;
       font-family: Georgia, serif;
     }
+    .testimonial--summary::before { content: ''; }
+    .testimonial--summary strong { color: var(--text); }
     .testimonial-text { font-size: 0.9rem; line-height: 1.88; }
 
     /* ── Notice ── */
@@ -518,17 +520,29 @@
 </nav>
 
 <!-- ── Hero ── -->
-<section class="hero">
+<section class="hero" id="top">
   <div class="container">
-    <div class="hero-tag">名古屋・ポートレート &amp; ロープセッション</div>
+    <div class="hero-tag">名古屋・上前津エリア ／ ポートレート＆ロープセッション</div>
     <h1>ユニフォームとロープで作る、<br><em>あなただけの一枚。</em></h1>
     <p class="hero-sub">
-      アタルによるマンツーマン個人セッション。<br>
-      ユニフォーム撮影・ポートレートから、ロープを使った体験まで対応。<br>
+      アタルによる完全マンツーマン個人セッション。<br>
+      「ロープを体験してみたい」「撮影だけしたい」どちらのご要望にも対応します。<br>
       初心者の方も、まずはお気軽にご相談ください。
     </p>
     <a href="#contact" class="btn btn-primary">予約・相談する</a>
     <a href="#pricing" class="btn btn-outline">料金を見る</a>
+    <div class="options-grid" style="margin-top: 2.5rem;">
+      <div class="option-card">
+        <div class="option-title">📸 作品撮りコース</div>
+        <p class="option-note" style="margin-top: 0.4rem;">ポートレート・コスプレ・ユニフォームを本格的な一枚に。撮影が目的の方へ。</p>
+        <a href="#photo" class="btn btn-outline" style="margin-top: 0.75rem; display: inline-block; font-size: 0.82rem; padding: 0.55rem 1.1rem;">詳しくはこちら →</a>
+      </div>
+      <div class="option-card">
+        <div class="option-title">🪢 ロープセッション</div>
+        <p class="option-note" style="margin-top: 0.4rem;">体験・緊縛・感覚を楽しみたい方へ。撮影なしでも参加できます。</p>
+        <a href="#pricing" class="btn btn-outline" style="margin-top: 0.75rem; display: inline-block; font-size: 0.82rem; padding: 0.55rem 1.1rem;">詳しくはこちら →</a>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -537,6 +551,9 @@
   <div class="container">
     <p class="section-label">Philosophy</p>
     <h2>3つのこだわり</h2>
+    <div style="margin-bottom: 2rem; border-radius: 8px; overflow: hidden; max-height: 420px;">
+      <img src="images/IMG_3771.jpeg" alt="アタル｜ロープと向き合う" style="width: 100%; height: 100%; object-fit: cover; object-position: center 20%; display: block;">
+    </div>
     <div class="values-grid">
       <div class="value-card">
         <div class="value-num">01</div>
@@ -667,6 +684,9 @@
       <div class="gallery-item" onclick="openModal('images/224A3133.jpeg')">
         <img src="images/224A3133.jpeg" alt="ユニフォーム作例" loading="lazy">
       </div>
+      <div class="gallery-item" onclick="openModal('images/IMG_7264.jpeg')">
+        <img src="images/IMG_7264.jpeg" alt="野球ユニフォーム作例" loading="lazy">
+      </div>
     </div>
   </div>
 </section>
@@ -740,6 +760,8 @@
     <div class="gallery-mini gallery-mini-lg">
       <div class="gallery-item" onclick="openModal('images/IMG_5723.jpeg')"><img src="images/IMG_5723.jpeg" alt="縛り作例" loading="lazy"></div>
       <div class="gallery-item" onclick="openModal('images/IMG_3149.jpeg')"><img src="images/IMG_3149.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/DSC03598.jpeg')"><img src="images/DSC03598.jpeg" alt="フルカラー縛り作例（赤）" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/DSC03600.jpeg')"><img src="images/DSC03600.jpeg" alt="フルカラー縛り作例（青）" loading="lazy"></div>
       <div class="gallery-item" onclick="openModal('images/224A3035.jpeg')"><img src="images/224A3035.jpeg" alt="縛り作例" loading="lazy"></div>
       <div class="gallery-item" onclick="openModal('images/224A3124.jpeg')"><img src="images/224A3124.jpeg" alt="縛り作例" loading="lazy"></div>
       <div class="gallery-item" onclick="openModal('images/224A3127.jpeg')"><img src="images/224A3127.jpeg" alt="縛り作例" loading="lazy"></div>
@@ -858,8 +880,8 @@
       <div class="schedule-row">
         <span class="schedule-day">場所</span>
         <span class="schedule-time">
-          名古屋市内<br>
-          <small>詳細はご予約確定後にお伝えします</small>
+          名古屋市内・上前津〜栄エリア<br>
+          <small>詳細はご予約確定後にお伝えします（最寄り：地下鉄鶴舞線／名城線 上前津駅）</small>
         </span>
       </div>
     </div>
@@ -869,14 +891,14 @@
 <!-- ── Testimonials ── -->
 <section id="reviews">
   <div class="container">
-    <p class="section-label">Reviews</p>
-    <h2>ご利用者の声</h2>
+    <p class="section-label">Sessions</p>
+    <h2>セッションについて</h2>
     <div class="testimonial-grid">
-      <div class="testimonial">
-        <p class="testimonial-text">初めてでも安心できた、と好評をいただいているスタイルです。これまで多くの方にお越しいただいています。</p>
+      <div class="testimonial testimonial--summary">
+        <p class="testimonial-text"><strong>参加者の約8割が初回利用です。</strong><br>「緊縛は初めて」という方が多く、事前に不安を伝えていただければ内容を調整します。</p>
       </div>
-      <div class="testimonial">
-        <p class="testimonial-text">「楽しかった」という声を多くいただいており、リピートや友人紹介でお越しになる方も少なくありません。</p>
+      <div class="testimonial testimonial--summary">
+        <p class="testimonial-text"><strong>リピート・紹介での来訪が全体の約6割を占めます。</strong><br>はじめての方から「また来たい」と言っていただけることが多いです。</p>
       </div>
     </div>
   </div>
@@ -891,8 +913,8 @@
       <div class="notice-title">快適に進めるために、以下をお守りください</div>
       <ul class="notice-list">
         <li>事前にシャワーを浴びるなど、身だしなみを整えてお越しください</li>
-        <li>当セッション中は性的行為はできません<span class="ng-badge">NG</span></li>
-        <li>18歳未満の方はご参加いただけません</li>
+        <li>本セッションはロープ・写真制作を目的としており、性的なサービスは含まれません</li>
+        <li>18歳未満の方はご参加いただけません<span class="ng-badge">NG</span></li>
       </ul>
     </div>
   </div>
@@ -904,9 +926,19 @@
     <p class="section-label">Contact</p>
     <h2>ご予約・お問い合わせ</h2>
     <p class="contact-desc">
-      興味のある方は、Googleフォームからご連絡ください。<br>
+      ご質問だけでも、匿名でも構いません。<br>
       内容・日時のご希望を伺い、最適なプランをご提案します。
     </p>
+    <div class="session-note" style="text-align: left; max-width: 480px; margin: 0 auto 2rem;">
+      お名前はニックネームやイニシャルで構いません。<br>
+      いただいた情報はセッション調整のみに使用し、第三者への共有・無断公開は一切行いません。<br>
+      まずはご質問だけでもOKです。
+    </div>
+    <ol class="notice-list" style="text-align: left; max-width: 480px; margin: 0 auto 2rem; list-style: none;">
+      <li style="padding-left: 1.6rem; position: relative;"><span style="position: absolute; left: 0; color: var(--accent); font-weight: 700;">1.</span>フォームで連絡（匿名・ニックネームOK）</li>
+      <li style="padding-left: 1.6rem; position: relative;"><span style="position: absolute; left: 0; color: var(--accent); font-weight: 700;">2.</span>希望日程・内容を確認（やりとり2〜3回が目安）</li>
+      <li style="padding-left: 1.6rem; position: relative;"><span style="position: absolute; left: 0; color: var(--accent); font-weight: 700;">3.</span>場所・詳細をお伝えして当日へ</li>
+    </ol>
     <a href="https://forms.gle/8ZETsRLbMra1kcs87" target="_blank" rel="noopener" class="btn btn-primary btn-lg">
       Googleフォームで相談・予約する
     </a>
