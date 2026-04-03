@@ -261,13 +261,19 @@ nav.site-nav {
   align-items: center;
   justify-content: center;
   text-align: center;
-  background: var(--bg-section);
+  position: relative;
+  background-image: url('images/IMG_2311.jpeg');
+  background-size: cover;
+  background-position: center;
   border-bottom: 1px solid var(--border);
   padding: 80px 24px;
 }
 
 .hero-overlay {
-  display: none;
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 10, 10, 0.72);
 }
 
 .hero-label {
@@ -276,6 +282,11 @@ nav.site-nav {
   color: var(--accent);
   text-transform: uppercase;
   margin-bottom: 24px;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
 }
 
 .hero h1 {
@@ -455,6 +466,30 @@ nav.site-nav {
 .gallery-note {
   text-align: center;
   margin-top: 18px;
+}
+
+.color-grid-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-top: 40px;
+  margin-bottom: 12px;
+}
+
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+
+.color-grid .gallery-item img {
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+}
+
+@media (max-width: 600px) {
+  .color-grid { grid-template-columns: repeat(3, 1fr); }
 }
 
 .access-info {
@@ -1329,6 +1364,17 @@ footer nav a:hover {
       <div class="gallery-item"><img src="images/224a3254.jpeg" alt="Studio interior example 7" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
       <div class="gallery-item"><img src="images/IMG_7421.jpeg" alt="Studio interior example 8" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
     </div>
+
+    <p class="color-grid-label">Full-Color Lighting / Color Variations</p>
+    <div class="color-grid">
+      <div class="gallery-item"><img src="images/IMG_2263.jpeg" alt="Full-color lighting sample 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2264.jpeg" alt="Full-color lighting sample 2 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2265.jpeg" alt="Full-color lighting sample 3 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2310.jpeg" alt="Full-color lighting sample 4 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2311.jpeg" alt="Full-color lighting sample 5 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2312.jpeg" alt="Full-color lighting sample 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+    </div>
+
     <p class="gallery-note">More samples including cosplay and portrait shoots are available on <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">X (@nagoyabase2023)</a>.</p>
   </div>
 </section>
