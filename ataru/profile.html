@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>アタル｜名古屋・ポートレートセッション</title>
+  <meta name="description" content="名古屋で活動するアタルの個人セッション。ポートレート・ユニフォーム撮影・ロープ体験まで。完全貸切、丁寧な進行、初心者歓迎。">
+
+  <!-- OGP（Xカード用・センシティブな表現なし） -->
+  <meta property="og:title" content="アタル｜名古屋・ポートレートセッション">
+  <meta property="og:description" content="名古屋で活動するアタルの個人セッション。完全貸切・丁寧な進行・初心者歓迎。">
+  <meta property="og:type" content="profile">
+  <meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/ataru/profile.html">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="アタル｜名古屋・ポートレートセッション">
+  <meta name="twitter:description" content="名古屋で活動するアタルの個人セッション。完全貸切・丁寧な進行・初心者歓迎。">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #080d17;
+      --bg-card:    #0f1724;
+      --accent:     #5b8fd4;
+      --accent-lt:  #7baae0;
+      --text:       #e4e8f0;
+      --text-muted: #7a8ba8;
+      --border:     #1c2a3f;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Hiragino Sans', 'Noto Sans JP', 'Meiryo', sans-serif;
+      font-size: 15px;
+      line-height: 1.8;
+      -webkit-font-smoothing: antialiased;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 2rem 1.5rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 3rem 2.5rem;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .brand {
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--accent-lt);
+      margin-bottom: 0.5rem;
+    }
+
+    .title {
+      font-size: 1.35rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.75rem;
+      color: var(--text);
+    }
+
+    .subtitle {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+      line-height: 1.7;
+    }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 1rem 1.5rem;
+      border-radius: 5px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      border: none;
+      transition: all 0.18s;
+      text-decoration: none;
+      line-height: 1.4;
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn:hover { background: var(--accent-lt); transform: translateY(-1px); }
+
+    .redirect-note {
+      margin-top: 1.25rem;
+      font-size: 0.74rem;
+      color: var(--text-muted);
+    }
+
+    @media (max-width: 480px) {
+      .card { padding: 2.25rem 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <p class="brand">ATARU</p>
+  <h1 class="title">アタルのセッション詳細</h1>
+  <p class="subtitle">
+    名古屋で活動するアタルの個人セッションページです。<br>
+    詳細・メニュー・料金は次のページでご確認いただけます。
+  </p>
+
+  <a class="btn" id="btn-proceed" href="./index.html">
+    詳細ページへ進む
+  </a>
+
+  <p class="redirect-note">3秒後に自動で移動します</p>
+</div>
+
+<script>
+  setTimeout(function () {
+    location.replace('./index.html');
+  }, 3000);
+</script>
+
+</body>
+</html>

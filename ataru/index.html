@@ -203,9 +203,9 @@
   <button class="btn btn-enter" id="btn-enter" type="button">
     上記に同意して入場する
   </button>
-  <button class="btn btn-exit" id="btn-exit" type="button">
-    退出する（前のページへ戻る）
-  </button>
+  <a class="btn btn-exit" href="https://www.google.com">
+    退出する
+  </a>
 
   <p class="note">
     Studio Nagoya Base の
@@ -223,16 +223,6 @@
     document.getElementById('btn-enter').addEventListener('click', function () {
       sessionStorage.setItem('ataru_age_verified', '1');
       location.href = 'main.html';
-    });
-
-    document.getElementById('btn-exit').addEventListener('click', function () {
-      if (document.referrer && document.referrer !== location.href) {
-        location.href = document.referrer;
-      } else if (history.length > 1) {
-        history.back();
-      } else {
-        location.href = '../';
-      }
     });
   })();
 </script>
