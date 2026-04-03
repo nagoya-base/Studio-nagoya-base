@@ -15,11 +15,11 @@
 <meta property="og:description" content="Private photography studio for cosplay, portrait, and creative shoots in Kamimaezu, Nagoya. Equipment included. Bondage photography also available.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/en.html">
-<meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/224a3228.jpeg">
+<meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/224A3299.jpg">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Private Photography Studio in Nagoya, Kamimaezu | Studio Nagoya Base">
 <meta name="twitter:description" content="Private photography studio for cosplay, portrait, and creative shoots in Kamimaezu, Nagoya. Equipment included. Bondage photography also available.">
-<meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/224a3228.jpeg">
+<meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/224A3299.jpg">
 
 <style>
 :root {
@@ -261,13 +261,19 @@ nav.site-nav {
   align-items: center;
   justify-content: center;
   text-align: center;
-  background: var(--bg-section);
+  position: relative;
+  background-image: url('images/IMG_2311.jpeg');
+  background-size: cover;
+  background-position: center;
   border-bottom: 1px solid var(--border);
   padding: 80px 24px;
 }
 
 .hero-overlay {
-  display: none;
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 10, 10, 0.55);
 }
 
 .hero-label {
@@ -276,6 +282,11 @@ nav.site-nav {
   color: var(--accent);
   text-transform: uppercase;
   margin-bottom: 24px;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
 }
 
 .hero h1 {
@@ -457,6 +468,34 @@ nav.site-nav {
   margin-top: 18px;
 }
 
+.color-grid-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-top: 40px;
+  margin-bottom: 12px;
+}
+
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+
+.color-grid .gallery-item {
+  aspect-ratio: 1 / 1;
+}
+
+.color-grid .gallery-item img {
+  aspect-ratio: auto;
+  object-fit: cover;
+}
+
+@media (max-width: 600px) {
+  .color-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
 .access-info {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -600,16 +639,6 @@ details.faq-item summary:hover {
 .news-text {
   color: var(--text-muted);
   line-height: 1.7;
-}
-
-.x-timeline-wrapper {
-  display: flex;
-  justify-content: center;
-}
-
-.x-timeline-wrapper .twitter-timeline {
-  border-radius: var(--radius);
-  overflow: hidden;
 }
 
 .sns-section {
@@ -1097,7 +1126,7 @@ footer nav a:hover {
 <nav class="site-nav" aria-label="Site navigation">
   <div class="nav-inner">
     <a href="en.html" class="nav-logo">
-      <img src="logo.svg" alt="Studio Nagoya Base">
+      <img src="images/logo.svg" alt="Studio Nagoya Base">
       <span>STUDIO NAGOYA BASE</span>
     </a>
     <ul class="nav-links">
@@ -1156,7 +1185,7 @@ footer nav a:hover {
 <section id="featured-image" style="background: var(--bg-section);">
   <div class="container">
     <div class="featured-image-wrapper">
-      <img src="224a3299.jpeg" alt="Studio Nagoya Base - Private photography studio in Nagoya, Kamimaezu" class="featured-image">
+      <img src="images/224A3299.jpg" alt="Studio Nagoya Base - Private photography studio in Nagoya, Kamimaezu" class="featured-image">
     </div>
   </div>
 </section>
@@ -1325,6 +1354,35 @@ footer nav a:hover {
   </div>
 </section>
 
+<section id="gallery" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">Gallery</h2>
+    <p class="section-subtitle">Sample Images</p>
+    <div class="gallery-grid">
+      <div class="gallery-item"><img src="images/224A3274.jpg" alt="Studio interior example 1" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224A3294.jpg" alt="Studio interior example 2" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224A3295.jpg" alt="Studio interior example 3" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224A3299.jpg" alt="Studio interior example 4" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224a3228.jpeg" alt="Studio interior example 5" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224a3237.jpeg" alt="Studio interior example 6" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224a3254.jpeg" alt="Studio interior example 7" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_7421.jpeg" alt="Studio interior example 8" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+    </div>
+
+    <p class="color-grid-label">Full-Color Lighting / Color Variations</p>
+    <div class="color-grid">
+      <div class="gallery-item"><img src="images/IMG_2263.jpeg" alt="Full-color lighting sample 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2264.jpeg" alt="Full-color lighting sample 2 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2265.jpeg" alt="Full-color lighting sample 3 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2310.jpeg" alt="Full-color lighting sample 4 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2311.jpeg" alt="Full-color lighting sample 5 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2312.jpeg" alt="Full-color lighting sample 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+    </div>
+
+    <p class="gallery-note">More samples including cosplay and portrait shoots are available on <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">X (@nagoyabase2023)</a>.</p>
+  </div>
+</section>
+
 <section id="pricing">
   <div class="container">
     <h2 class="section-title">Pricing</h2>
@@ -1411,24 +1469,6 @@ footer nav a:hover {
   </div>
 </section>
 
-<section id="gallery">
-  <div class="container">
-    <h2 class="section-title">Gallery</h2>
-    <p class="section-subtitle">Sample Images</p>
-    <div class="gallery-grid">
-      <div class="gallery-item"><img src="224A3274.jpg" alt="Studio interior example 1" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224A3294.jpg" alt="Studio interior example 2" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224A3295.jpg" alt="Studio interior example 3" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224A3299.jpg" alt="Studio interior example 4" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224a3228.jpeg" alt="Studio interior example 5" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224a3237.jpeg" alt="Studio interior example 6" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224a3254.jpeg" alt="Studio interior example 7" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="IMG_7421.jpeg" alt="Studio interior example 8" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-    </div>
-    <p class="gallery-note">More samples including cosplay and portrait shoots are available on <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">X (@nagoyabase2023)</a>.</p>
-  </div>
-</section>
-
 <section id="calendar" style="background: var(--bg-section);">
   <div class="container">
     <h2 class="section-title">Reservation Calendar</h2>
@@ -1453,13 +1493,8 @@ footer nav a:hover {
   <div class="container">
     <h2 class="section-title">Latest Posts</h2>
     <p class="section-subtitle">Social Updates</p>
-    <div class="x-timeline-wrapper">
-      <a class="twitter-timeline" data-theme="dark" data-width="600" data-height="500" data-chrome="nofooter noborders" href="https://twitter.com/nagoyabase2023">
-        Read the posts from @nagoyabase2023
-      </a>
-    </div>
-    <script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
-    <div class="sns-section" style="padding: 24px 0 0;">
+    <div class="sns-section">
+      <p>Check our latest work and availability on X (Twitter).</p>
       <a class="btn-twitter" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">
         Follow @nagoyabase2023
       </a>

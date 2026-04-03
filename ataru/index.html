@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>アタル｜名古屋・ポートレート＆ロープセッション</title>
+  <meta name="description" content="名古屋で活動するアタルの個人セッション。ユニフォーム撮影・ポートレート・ロープ体験まで幅広く対応。初心者歓迎、完全貸切、丁寧な進行。">
+  <link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/ataru/">
+
+  <!-- OGP -->
+  <meta property="og:title" content="アタル｜名古屋・ポートレート＆ロープセッション">
+  <meta property="og:description" content="名古屋で活動するアタルの個人セッション。ユニフォーム撮影・ポートレート・ロープ体験まで幅広く対応。初心者歓迎、完全貸切、丁寧な進行。">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/ataru/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="アタル｜名古屋・ポートレート＆ロープセッション">
+  <meta name="twitter:description" content="名古屋で活動するアタルの個人セッション。ユニフォーム撮影・ポートレート・ロープ体験まで幅広く対応。">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #080d17;
+      --bg-card:    #0f1724;
+      --bg-card2:   #162035;
+      --accent:     #5b8fd4;
+      --accent-lt:  #7baae0;
+      --gold:       #c8a030;
+      --text:       #e4e8f0;
+      --text-muted: #7a8ba8;
+      --border:     #1c2a3f;
+      --warn:       #f87171;
+      --warn-bg:    rgba(239, 68, 68, 0.07);
+      --warn-border:rgba(239, 68, 68, 0.22);
+    }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Hiragino Sans', 'Noto Sans JP', 'Meiryo', sans-serif;
+      font-size: 15px;
+      line-height: 1.8;
+      -webkit-font-smoothing: antialiased;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 2rem 1.5rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 3rem 2.5rem;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .brand {
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--accent-lt);
+      margin-bottom: 0.5rem;
+    }
+
+    .title {
+      font-size: 1.35rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      margin-bottom: 2rem;
+      color: var(--text);
+    }
+
+    .warn-box {
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-border);
+      border-radius: 6px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.75rem;
+      text-align: left;
+    }
+
+    .warn-label {
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--warn);
+      margin-bottom: 0.65rem;
+    }
+
+    .warn-text {
+      font-size: 0.86rem;
+      color: var(--text-muted);
+      line-height: 1.85;
+    }
+
+    .warn-text strong {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .checklist {
+      list-style: none;
+      text-align: left;
+      margin-bottom: 2rem;
+      display: grid;
+      gap: 0.5rem;
+    }
+
+    .checklist li {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      padding-left: 1.3rem;
+      position: relative;
+      line-height: 1.7;
+    }
+
+    .checklist li::before {
+      content: '›';
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 1rem 1.5rem;
+      border-radius: 5px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      border: none;
+      transition: all 0.18s;
+      text-decoration: none;
+      line-height: 1.4;
+    }
+
+    .btn-enter {
+      background: var(--accent);
+      color: #fff;
+      margin-bottom: 0.75rem;
+    }
+    .btn-enter:hover { background: var(--accent-lt); transform: translateY(-1px); }
+
+    .btn-exit {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+    .btn-exit:hover { border-color: var(--text-muted); color: var(--text); }
+
+    .note {
+      margin-top: 1.5rem;
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+
+    .note a {
+      color: var(--accent-lt);
+      text-decoration: none;
+    }
+    .note a:hover { color: #fff; }
+
+    @media (max-width: 480px) {
+      .card { padding: 2.25rem 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <p class="brand">ATARU</p>
+  <h1 class="title">コンテンツの確認</h1>
+
+  <div class="warn-box">
+    <p class="warn-label">⚠ 18歳以上限定コンテンツ</p>
+    <p class="warn-text">
+      このページには<strong>18歳以上を対象とした成人向けコンテンツ</strong>が含まれます。<br>
+      ロープセッション（緊縛）・ボンデージ・性的な表現を含む画像および文章が掲載されています。<br><br>
+      <strong>18歳未満の方の閲覧はできません。</strong>
+    </p>
+  </div>
+
+  <ul class="checklist">
+    <li>私は18歳以上です</li>
+    <li>このようなコンテンツを自らの意志で閲覧することに同意します</li>
+    <li>居住地の法律の下で、このコンテンツを閲覧することは合法です</li>
+  </ul>
+
+  <button class="btn btn-enter" id="btn-enter" type="button">
+    上記に同意して入場する
+  </button>
+  <a class="btn btn-exit" href="https://www.google.com">
+    退出する
+  </a>
+
+  <p class="note">
+    Studio Nagoya Base の
+    <a href="../" target="_self">トップページはこちら</a>
+  </p>
+</div>
+
+<script>
+  (function () {
+    // すでに同意済みなら本ページにリダイレクト
+    if (sessionStorage.getItem('ataru_age_verified')) {
+      location.replace('main.html');
+    }
+
+    document.getElementById('btn-enter').addEventListener('click', function () {
+      sessionStorage.setItem('ataru_age_verified', '1');
+      location.replace('main.html');
+    });
+  })();
+</script>
+
+</body>
+</html>

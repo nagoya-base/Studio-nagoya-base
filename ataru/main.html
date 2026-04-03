@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>アタル｜名古屋・ポートレート＆ロープセッション</title>
+  <meta name="description" content="名古屋で活動するアタルの個人セッション。ユニフォーム撮影・ポートレート・ロープ体験まで幅広く対応。初心者歓迎、完全貸切、丁寧な進行。">
+  <meta name="robots" content="noindex, nofollow">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #080d17;
+      --bg-card:     #0f1724;
+      --bg-card2:    #162035;
+      --accent:      #5b8fd4;
+      --accent-lt:   #7baae0;
+      --gold:        #c8a030;
+      --text:        #e4e8f0;
+      --text-muted:  #7a8ba8;
+      --border:      #1c2a3f;
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Hiragino Sans', 'Noto Sans JP', 'Meiryo', sans-serif;
+      font-size: 15px;
+      line-height: 1.8;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent-lt); text-decoration: none; }
+    a:hover { color: #fff; }
+
+    /* ── Layout ── */
+    .container { max-width: 800px; margin: 0 auto; padding: 0 1.5rem; }
+    section { padding: 5rem 0; }
+    section + section { border-top: 1px solid var(--border); }
+
+    .section-label {
+      font-size: 0.68rem;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 0.65rem;
+    }
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      margin-bottom: 2rem;
+    }
+    h3 {
+      font-size: 0.98rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      margin-bottom: 0;
+    }
+
+    /* ── Nav ── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(8, 13, 23, 0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.9rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .nav-brand { font-size: 0.88rem; font-weight: 800; letter-spacing: 0.12em; }
+    .nav-links { display: flex; gap: 1.5rem; list-style: none; }
+    .nav-links a { font-size: 0.78rem; letter-spacing: 0.04em; color: var(--text-muted); transition: color 0.15s; }
+    .nav-links a:hover { color: var(--text); }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-block;
+      padding: 0.85rem 1.9rem;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      transition: all 0.18s;
+      cursor: pointer;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-lt); color: #fff; transform: translateY(-1px); }
+    .btn-outline { border: 1px solid var(--border); color: var(--text-muted); margin-left: 0.8rem; }
+    .btn-outline:hover { border-color: var(--accent); color: var(--accent-lt); }
+    .btn-lg { padding: 1.1rem 2.75rem; font-size: 1rem; }
+
+    /* ── Hero ── */
+    .hero { padding: 7rem 0 6rem; border-bottom: 1px solid var(--border); }
+    .hero-tag {
+      display: inline-block;
+      background: rgba(91, 143, 212, 0.1);
+      border: 1px solid rgba(91, 143, 212, 0.28);
+      color: var(--accent-lt);
+      font-size: 0.7rem;
+      letter-spacing: 0.22em;
+      padding: 0.3rem 1rem;
+      border-radius: 2px;
+      margin-bottom: 2rem;
+    }
+    .hero h1 {
+      font-size: clamp(2rem, 5.5vw, 3.2rem);
+      font-weight: 800;
+      letter-spacing: 0.03em;
+      line-height: 1.25;
+      margin-bottom: 1.4rem;
+    }
+    .hero h1 em { font-style: normal; color: var(--accent-lt); }
+    .hero-sub {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      max-width: 480px;
+      line-height: 1.95;
+      margin-bottom: 2.75rem;
+    }
+
+    /* ── Values ── */
+    .values-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.25rem;
+      margin-top: 2.25rem;
+    }
+    .value-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.75rem 1.5rem;
+    }
+    .value-num {
+      font-size: 1.7rem;
+      font-weight: 800;
+      color: var(--accent);
+      opacity: 0.4;
+      line-height: 1;
+      margin-bottom: 0.85rem;
+    }
+    .value-title { font-size: 0.93rem; font-weight: 700; margin-bottom: 0.5rem; }
+    .value-desc { font-size: 0.82rem; color: var(--text-muted); line-height: 1.75; }
+
+    /* ── Features ── */
+    .features-list { list-style: none; display: grid; gap: 0.9rem; margin-top: 2rem; }
+    .features-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.2rem 1.5rem;
+    }
+    .feat-icon { font-size: 1.15rem; flex-shrink: 0; margin-top: 0.1rem; }
+    .feat-text strong { display: block; font-size: 0.9rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .feat-text span { font-size: 0.82rem; color: var(--text-muted); }
+
+    /* ── Session tags ── */
+    .session-lead { font-size: 0.88rem; color: var(--text-muted); line-height: 1.9; margin-bottom: 1.25rem; }
+    .session-tags { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1.5rem; }
+    .session-tag {
+      background: rgba(91, 143, 212, 0.09);
+      border: 1px solid rgba(91, 143, 212, 0.22);
+      color: var(--accent-lt);
+      font-size: 0.82rem;
+      padding: 0.35rem 0.9rem;
+      border-radius: 3px;
+    }
+    .session-note {
+      padding: 1.25rem 1.5rem;
+      background: var(--bg-card2);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 4px 4px 0;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.85;
+    }
+
+    /* ── Pricing ── */
+    .pricing-plans { display: grid; gap: 1.25rem; margin-top: 2rem; }
+    .plan-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .plan-card.featured { border-color: rgba(91, 143, 212, 0.5); }
+    .plan-header {
+      padding: 1.1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .plan-name { font-size: 0.95rem; font-weight: 700; }
+    .plan-badge {
+      font-size: 0.68rem;
+      background: rgba(200, 160, 48, 0.12);
+      color: var(--gold);
+      border: 1px solid rgba(200, 160, 48, 0.28);
+      padding: 0.2rem 0.6rem;
+      border-radius: 2px;
+      letter-spacing: 0.05em;
+    }
+    .plan-body { padding: 1.5rem; }
+    .plan-desc { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1.25rem; }
+    .price-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.55rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.88rem;
+    }
+    .price-row:last-of-type { border-bottom: none; }
+    .price-label { color: var(--text-muted); }
+    .price-value { font-weight: 800; font-size: 1rem; }
+
+    /* ── Options ── */
+    .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1.5rem; }
+    .option-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.25rem 1.5rem;
+    }
+    .option-title { font-size: 0.85rem; font-weight: 700; margin-bottom: 0.4rem; }
+    .option-price { font-size: 1.1rem; font-weight: 800; color: var(--accent-lt); }
+    .option-note { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.3rem; }
+
+    /* ── Rental table ── */
+    .rental-table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; font-size: 0.88rem; }
+    .rental-table th {
+      text-align: left;
+      padding: 0.7rem 1rem;
+      background: var(--bg-card2);
+      color: var(--text-muted);
+      font-weight: 700;
+      border: 1px solid var(--border);
+      font-size: 0.76rem;
+      letter-spacing: 0.06em;
+    }
+    .rental-table td { padding: 0.7rem 1rem; border: 1px solid var(--border); }
+    .rental-notes { margin-top: 0.7rem; font-size: 0.8rem; color: var(--text-muted); }
+    .rental-notes li { margin-left: 1.2rem; margin-bottom: 0.2rem; }
+
+    /* ── Schedule ── */
+    .schedule-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.75rem 2rem;
+      margin-top: 1.75rem;
+    }
+    .schedule-row {
+      display: flex;
+      gap: 1.5rem;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--border);
+      align-items: flex-start;
+    }
+    .schedule-row:last-of-type { border-bottom: none; }
+    .schedule-day {
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      min-width: 64px;
+      padding-top: 0.15rem;
+      text-transform: uppercase;
+    }
+    .schedule-time { font-size: 0.88rem; }
+    .schedule-time small { font-size: 0.78rem; color: var(--text-muted); }
+
+    /* ── Testimonials ── */
+    .testimonial-grid { display: grid; gap: 1rem; margin-top: 2rem; }
+    .testimonial {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem 1.75rem 1.5rem 2rem;
+      position: relative;
+    }
+    .testimonial::before {
+      content: '\201C';
+      position: absolute;
+      top: 0.6rem;
+      left: 1rem;
+      font-size: 3rem;
+      line-height: 1;
+      color: var(--accent);
+      opacity: 0.18;
+      font-family: Georgia, serif;
+    }
+    .testimonial--summary::before { content: ''; }
+    .testimonial--summary strong { color: var(--text); }
+    .testimonial-text { font-size: 0.9rem; line-height: 1.88; }
+
+    /* ── Notice ── */
+    .notice-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.75rem 2rem;
+      margin-top: 2rem;
+    }
+    .notice-title { font-size: 0.88rem; font-weight: 700; margin-bottom: 0.9rem; }
+    .notice-list { list-style: none; display: grid; gap: 0.45rem; }
+    .notice-list li {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      padding-left: 1.1rem;
+      position: relative;
+    }
+    .notice-list li::before { content: '—'; position: absolute; left: 0; color: var(--border); }
+    .ng-badge {
+      display: inline-block;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      color: #f87171;
+      font-size: 0.7rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 2px;
+      letter-spacing: 0.05em;
+      font-weight: 700;
+      margin-left: 0.4rem;
+    }
+
+    /* ── Contact ── */
+    .contact-wrap { text-align: center; }
+    .contact-wrap h2 { text-align: center; }
+    .contact-desc {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      max-width: 480px;
+      margin: 0 auto 2.5rem;
+      line-height: 1.95;
+    }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 3rem 0;
+    }
+    .footer-brand { font-size: 0.88rem; font-weight: 800; letter-spacing: 0.06em; margin-bottom: 0.5rem; }
+    .footer-note { font-size: 0.78rem; color: var(--text-muted); line-height: 1.7; max-width: 340px; }
+    .footer-copy { font-size: 0.74rem; color: var(--text-muted); margin-top: 1.75rem; }
+
+    /* ── Hamburger ── */
+    .hamburger {
+      display: none;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0.4rem;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .hamburger span {
+      display: block;
+      width: 22px;
+      height: 2px;
+      background: var(--text);
+      border-radius: 2px;
+      transition: all 0.25s;
+    }
+    .hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+    /* ── Photo features ── */
+    .plan-intro {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-bottom: 1.75rem;
+      line-height: 1.85;
+    }
+    .photo-features {
+      list-style: none;
+      margin-top: 1.5rem;
+      display: grid;
+      gap: 0.5rem;
+    }
+    .photo-features li {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      padding-left: 1.2rem;
+      position: relative;
+    }
+    .photo-features li::before { content: '✓'; position: absolute; left: 0; color: var(--accent); }
+    .photo-gallery-mini { grid-template-columns: repeat(2, 1fr); }
+    .gallery-mini-lg { grid-template-columns: repeat(3, 1fr); }
+
+    /* ── Gallery ── */
+    .gallery-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.6rem;
+      margin-top: 1.75rem;
+    }
+    .gallery-mini {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.6rem;
+      margin-top: 0.75rem;
+    }
+    .gallery-mini-label {
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-top: 1.75rem;
+      margin-bottom: 0;
+    }
+    .gallery-item {
+      aspect-ratio: 1;
+      overflow: hidden;
+      border-radius: 4px;
+      cursor: pointer;
+      background: var(--bg-card2);
+    }
+    .gallery-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      transition: transform 0.3s, opacity 0.2s;
+    }
+    .gallery-item:hover img { transform: scale(1.05); opacity: 0.8; }
+
+    /* ── Modal ── */
+    .modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.92);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal.open { display: flex; }
+    .modal-img {
+      max-width: 90vw;
+      max-height: 90vh;
+      object-fit: contain;
+      border-radius: 4px;
+    }
+    .modal-close {
+      position: absolute;
+      top: 1.25rem;
+      right: 1.5rem;
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 2.25rem;
+      cursor: pointer;
+      line-height: 1;
+      opacity: 0.6;
+    }
+    .modal-close:hover { opacity: 1; }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      section { padding: 3.5rem 0; }
+      .hero { padding: 5rem 0 4rem; }
+      .values-grid { grid-template-columns: 1fr; gap: 1rem; }
+      .options-grid { grid-template-columns: 1fr; }
+      .gallery-grid { grid-template-columns: repeat(2, 1fr); }
+      .gallery-mini { grid-template-columns: repeat(2, 1fr); }
+      .gallery-mini-lg { grid-template-columns: repeat(2, 1fr); }
+      .btn-outline { margin-left: 0; margin-top: 0.75rem; display: block; text-align: center; }
+      .rental-table { font-size: 0.8rem; }
+      .rental-table th, .rental-table td { padding: 0.55rem 0.75rem; }
+      .schedule-box { padding: 1.25rem; }
+      /* hamburger */
+      .hamburger { display: flex; }
+      .nav-links {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: rgba(8, 13, 23, 0.97);
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid var(--border);
+        flex-direction: column;
+        padding: 0.5rem 1.5rem;
+        gap: 0;
+      }
+      .nav-links.open { display: flex; }
+      .nav-links li { border-bottom: 1px solid var(--border); }
+      .nav-links li:last-child { border-bottom: none; }
+      .nav-links a { padding: 0.85rem 0; font-size: 0.92rem; display: block; }
+    }
+  </style>
+  <script>
+  (function () {
+    if (!sessionStorage.getItem('ataru_age_verified')) {
+      location.replace('./');
+    }
+  })();
+  </script>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav>
+  <span class="nav-brand">ATARU</span>
+  <ul class="nav-links">
+    <li><a href="#features">特徴</a></li>
+    <li><a href="#photo">作品撮り</a></li>
+    <li><a href="#session">セッション</a></li>
+    <li><a href="#pricing">料金</a></li>
+    <li><a href="#schedule">日程・場所</a></li>
+    <li><a href="#contact">予約</a></li>
+  </ul>
+  <button class="hamburger" aria-label="メニューを開く" aria-expanded="false">
+    <span></span><span></span><span></span>
+  </button>
+</nav>
+
+<!-- ── Hero ── -->
+<section class="hero" id="top">
+  <div class="container">
+    <div class="hero-tag">名古屋・上前津エリア ／ ポートレート＆ロープセッション</div>
+    <h1>ユニフォームとロープで作る、<br><em>あなただけの一枚。</em></h1>
+    <p class="hero-sub">
+      アタルによる完全マンツーマン個人セッション。<br>
+      「ロープを体験してみたい」「撮影だけしたい」どちらのご要望にも対応します。<br>
+      初心者の方も、まずはお気軽にご相談ください。
+    </p>
+    <a href="#contact" class="btn btn-primary">予約・相談する</a>
+    <a href="#pricing" class="btn btn-outline">料金を見る</a>
+    <div class="options-grid" style="margin-top: 2.5rem;">
+      <div class="option-card">
+        <div class="option-title">📸 作品撮りコース</div>
+        <p class="option-note" style="margin-top: 0.4rem;">ポートレート・コスプレ・ユニフォームを本格的な一枚に。撮影が目的の方へ。</p>
+        <a href="#photo" class="btn btn-outline" style="margin-top: 0.75rem; display: inline-block; font-size: 0.82rem; padding: 0.55rem 1.1rem;">詳しくはこちら →</a>
+      </div>
+      <div class="option-card">
+        <div class="option-title">🪢 ロープセッション</div>
+        <p class="option-note" style="margin-top: 0.4rem;">体験・緊縛・感覚を楽しみたい方へ。撮影なしでも参加できます。</p>
+        <a href="#pricing" class="btn btn-outline" style="margin-top: 0.75rem; display: inline-block; font-size: 0.82rem; padding: 0.55rem 1.1rem;">詳しくはこちら →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 3 Values ── -->
+<section id="about">
+  <div class="container">
+    <p class="section-label">Philosophy</p>
+    <h2>3つのこだわり</h2>
+    <div style="margin-bottom: 2rem; border-radius: 8px; overflow: hidden; max-height: 420px;">
+      <img src="images/IMG_3771.jpeg" alt="アタル｜ロープと向き合う" style="width: 100%; height: 100%; object-fit: cover; object-position: center 20%; display: block;">
+    </div>
+    <div class="values-grid">
+      <div class="value-card">
+        <div class="value-num">01</div>
+        <div class="value-title">見映えの良さ</div>
+        <p class="value-desc">体格を美しく引き立てる縄のデザインを重視。後から見返したとき、納得できる仕上がりを目指します。</p>
+      </div>
+      <div class="value-card">
+        <div class="value-num">02</div>
+        <div class="value-title">安全性</div>
+        <p class="value-desc">縛りの強さ・時間・体調を都度確認しながら進めます。「痛い」「しんどい」はいつでも言ってください。</p>
+      </div>
+      <div class="value-card">
+        <div class="value-num">03</div>
+        <div class="value-title">落ち着いた進行</div>
+        <p class="value-desc">急かさず、押しつけず。あなたのペースに合わせてゆっくり進めます。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Features ── -->
+<section id="features">
+  <div class="container">
+    <p class="section-label">Features</p>
+    <h2>アタルの特徴</h2>
+    <ul class="features-list">
+      <li>
+        <span class="feat-icon">🤝</span>
+        <div class="feat-text">
+          <strong>丁寧で安心できる進行</strong>
+          <span>初めての方が不安なく楽しめるよう、流れの説明から丁寧に対応します。</span>
+        </div>
+      </li>
+      <li>
+        <span class="feat-icon">😌</span>
+        <div class="feat-text">
+          <strong>初心者でもリラックスしやすい柔らかい雰囲気</strong>
+          <span>緊張しやすい方も、自然とほぐれていただける雰囲気づくりを意識しています。</span>
+        </div>
+      </li>
+      <li>
+        <span class="feat-icon">🎨</span>
+        <div class="feat-text">
+          <strong>体格を美しく見せるデザイン力</strong>
+          <span>体育会系の体格を生かした縄の配置・デザインを得意としています。</span>
+        </div>
+      </li>
+      <li>
+        <span class="feat-icon">💬</span>
+        <div class="feat-text">
+          <strong>威圧感のない、落ち着いたコミュニケーション</strong>
+          <span>圧をかけず、希望や不安をしっかり聞きながら進めます。</span>
+        </div>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- ── Photography ── -->
+<section id="photo">
+  <div class="container">
+    <p class="section-label">Photography</p>
+    <h2>📸 作品撮り体験コース</h2>
+    <p class="plan-intro">完全貸切スペースで、ポートレート・コスプレ・ユニフォームの本格撮影が体験できます。初心者OK、ポージングサポートあり。</p>
+
+    <div class="pricing-plans">
+
+      <!-- 体験プラン -->
+      <div class="plan-card">
+        <div class="plan-header">
+          <span class="plan-name">🟡 体験プラン 90分</span>
+        </div>
+        <div class="plan-body">
+          <p class="plan-desc">パネルライト＋Hueで雰囲気を楽しむライトな体験。</p>
+          <div class="price-row">
+            <span class="price-label">納品5枚（撮って出し）</span>
+            <span class="price-value">¥5,000</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- スタンダード -->
+      <div class="plan-card featured">
+        <div class="plan-header">
+          <span class="plan-name">🔵 スタンダード 2時間</span>
+        </div>
+        <div class="plan-body">
+          <p class="plan-desc">ストロボ1灯で、しっかりしたポートレートに。</p>
+          <div class="price-row">
+            <span class="price-label">納品15枚（軽調整込み）</span>
+            <span class="price-value">¥10,000</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 作品撮り -->
+      <div class="plan-card">
+        <div class="plan-header">
+          <span class="plan-name">🟣 作品撮り 2時間</span>
+          <span class="plan-badge">ロープ表現対応可</span>
+        </div>
+        <div class="plan-body">
+          <p class="plan-desc">ストロボ複数 or COBでライティング込みの作品制作。</p>
+          <div class="price-row">
+            <span class="price-label">納品15枚＋一部レタッチ</span>
+            <span class="price-value">¥15,000</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <ul class="photo-features">
+      <li>1組貸切（完全プライベート）</li>
+      <li>初心者OK・ポージング／撮影サポートあり</li>
+      <li>白背景・黒背景どちらも対応</li>
+    </ul>
+
+    <div class="session-note" style="margin-top: 1.25rem;">
+      スタンダード以上は白背景をより明るく仕上げることも可能。黒背景はサイド光などアレンジにも対応します。
+    </div>
+
+    <p class="gallery-mini-label">📷 作例（コスプレ・ユニフォーム）</p>
+    <div class="gallery-mini photo-gallery-mini">
+      <div class="gallery-item" onclick="openModal('images/IMG_7278.jpeg')">
+        <img src="images/IMG_7278.jpeg" alt="コスプレ作例" loading="lazy">
+      </div>
+      <div class="gallery-item" onclick="openModal('images/224A3133.jpeg')">
+        <img src="images/224A3133.jpeg" alt="ユニフォーム作例" loading="lazy">
+      </div>
+      <div class="gallery-item" onclick="openModal('images/IMG_7264.jpeg')">
+        <img src="images/IMG_7264.jpeg" alt="野球ユニフォーム作例" loading="lazy">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Session ── -->
+<section id="session">
+  <div class="container">
+    <p class="section-label">Session</p>
+    <h2>セッション内容</h2>
+    <p class="session-lead">
+      体育会系・ユニフォーム好きの方を中心に、「前から気になっていた」「一度しっかり体験してみたい」という方から多くお問い合わせをいただいています。
+    </p>
+    <div class="session-tags">
+      <span class="session-tag">ユニフォーム緊縛（野球・サッカー・ラグビー等）</span>
+      <span class="session-tag">横吊り・体験型の緊縛</span>
+      <span class="session-tag">体格を活かした見映え重視の縄デザイン</span>
+      <span class="session-tag">フェチコスプレ撮影のみ（縛りなし）も可</span>
+    </div>
+    <div class="session-note">
+      「まずは軽く試してみたい」という方から、「しっかり作品のように撮りたい」という方まで調整可能です。<br>
+      お一人ずつ体格・柔軟性・希望に合わせてゆっくり進めます。
+    </div>
+  </div>
+</section>
+
+<!-- ── Pricing ── -->
+<section id="pricing">
+  <div class="container">
+    <p class="section-label">Pricing</p>
+    <h2>料金・プラン</h2>
+
+    <div class="pricing-plans">
+
+      <!-- ライト -->
+      <div class="plan-card">
+        <div class="plan-header">
+          <span class="plan-name">🟢 ライト 60分</span>
+          <span class="plan-badge">初回限定</span>
+        </div>
+        <div class="plan-body">
+          <p class="plan-desc">胸縄・軽拘束・軽スポユニ体験。初めての方に最適なプランです。</p>
+          <div class="price-row">
+            <span class="price-label">平日 / 休日（共通）</span>
+            <span class="price-value">¥7,000</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- スタンダード -->
+      <div class="plan-card featured">
+        <div class="plan-header">
+          <span class="plan-name">🔵 スタンダード 90分</span>
+        </div>
+        <div class="plan-body">
+          <p class="plan-desc">しっかり体験したい方向けのベーシックプラン。</p>
+          <div class="price-row">
+            <span class="price-label">平日</span>
+            <span class="price-value">¥10,000</span>
+          </div>
+          <div class="price-row">
+            <span class="price-label">休日（土日祝）</span>
+            <span class="price-value">¥15,000</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 縛り作例ミニギャラリー（スタンダード直後） -->
+    <p class="gallery-mini-label">🔵 縛り・作例</p>
+    <div class="gallery-mini gallery-mini-lg">
+      <div class="gallery-item" onclick="openModal('images/IMG_5723.jpeg')"><img src="images/IMG_5723.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/IMG_3149.jpeg')"><img src="images/IMG_3149.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/DSC03598.jpeg')"><img src="images/DSC03598.jpeg" alt="フルカラー縛り作例（赤）" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/DSC03600.jpeg')"><img src="images/DSC03600.jpeg" alt="フルカラー縛り作例（青）" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/224A3035.jpeg')"><img src="images/224A3035.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/224A3124.jpeg')"><img src="images/224A3124.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/224A3127.jpeg')"><img src="images/224A3127.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/224A3130.jpeg')"><img src="images/224A3130.jpeg" alt="縛り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/IMG_7269.jpeg')"><img src="images/IMG_7269.jpeg" alt="縛り作例" loading="lazy"></div>
+    </div>
+
+    <div class="pricing-plans">
+
+      <!-- ハード・吊り -->
+      <div class="plan-card">
+        <div class="plan-header">
+          <span class="plan-name">🔴 ハード／吊り</span>
+          <span class="plan-badge">条件クリア者のみ</span>
+        </div>
+        <div class="plan-body">
+          <p class="plan-desc">低空〜中空吊り。適性確認・条件クリアが必要です。詳細はお問い合わせください。</p>
+          <div class="price-row">
+            <span class="price-label">平日 120分</span>
+            <span class="price-value">¥20,000</span>
+          </div>
+          <div class="price-row">
+            <span class="price-label">平日 150分</span>
+            <span class="price-value">¥22,000</span>
+          </div>
+          <div class="price-row">
+            <span class="price-label">休日 120分</span>
+            <span class="price-value">¥23,000</span>
+          </div>
+          <div class="price-row">
+            <span class="price-label">休日 150分</span>
+            <span class="price-value">¥25,000</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ハード作例 -->
+    <p class="gallery-mini-label">🔴 吊り・作例</p>
+    <div class="gallery-mini">
+      <div class="gallery-item" onclick="openModal('images/224A2715.jpeg')"><img src="images/224A2715.jpeg" alt="吊り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/224A2815.jpeg')"><img src="images/224A2815.jpeg" alt="吊り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/IMG_7268.jpeg')"><img src="images/IMG_7268.jpeg" alt="吊り作例" loading="lazy"></div>
+      <div class="gallery-item" onclick="openModal('images/IMG_7276.jpeg')"><img src="images/IMG_7276.jpeg" alt="吊り作例" loading="lazy"></div>
+    </div>
+
+    <!-- オプション -->
+    <h3 style="margin-top: 3rem; margin-bottom: 0;">📷 オプション</h3>
+    <div class="options-grid">
+      <div class="option-card">
+        <div class="option-title">写真撮影</div>
+        <div class="option-price">無料</div>
+        <div class="option-note">受け手のスマートフォンのみ</div>
+      </div>
+      <div class="option-card">
+        <div class="option-title">一眼レフ撮影</div>
+        <div class="option-price">＋¥3,000〜5,000</div>
+        <div class="option-note">希望の場合はご相談ください</div>
+      </div>
+    </div>
+
+    <!-- ユニフォーム貸出 -->
+    <h3 style="margin-top: 3rem;">👕 ユニフォーム貸出</h3>
+    <table class="rental-table">
+      <thead>
+        <tr>
+          <th>プラン</th>
+          <th>内容</th>
+          <th>料金</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>単品</td>
+          <td>上 or 下</td>
+          <td>¥1,500</td>
+        </tr>
+        <tr>
+          <td>上下セット</td>
+          <td>上＋下</td>
+          <td>¥2,500</td>
+        </tr>
+        <tr>
+          <td>フルセット</td>
+          <td>上下＋ソックス＋ストッキング＋帽子＋ベルト</td>
+          <td>¥3,000</td>
+        </tr>
+      </tbody>
+    </table>
+    <ul class="rental-notes">
+      <li>全て洗濯・消毒済み</li>
+      <li>サイズは事前にご相談ください</li>
+      <li>事前予約が必要です</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ── Schedule & Location ── -->
+<section id="schedule">
+  <div class="container">
+    <p class="section-label">Schedule &amp; Location</p>
+    <h2>日程・場所</h2>
+    <div class="schedule-box">
+      <div class="schedule-row">
+        <span class="schedule-day">平日</span>
+        <span class="schedule-time">
+          火曜・木曜・金曜<br>
+          20:00〜 ／ 20:30〜 ／ 21:00〜 よりご予約いただけます
+        </span>
+      </div>
+      <div class="schedule-row">
+        <span class="schedule-day">土日祝</span>
+        <span class="schedule-time">応相談</span>
+      </div>
+      <div class="schedule-row">
+        <span class="schedule-day">場所</span>
+        <span class="schedule-time">
+          名古屋市内・上前津〜栄エリア<br>
+          <small>詳細はご予約確定後にお伝えします（最寄り：地下鉄鶴舞線／名城線 上前津駅）</small>
+        </span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Testimonials ── -->
+<section id="reviews">
+  <div class="container">
+    <p class="section-label">Sessions</p>
+    <h2>セッションについて</h2>
+    <div class="testimonial-grid">
+      <div class="testimonial testimonial--summary">
+        <p class="testimonial-text"><strong>参加者の約8割が初回利用です。</strong><br>「緊縛は初めて」という方が多く、事前に不安を伝えていただければ内容を調整します。</p>
+      </div>
+      <div class="testimonial testimonial--summary">
+        <p class="testimonial-text"><strong>リピート・紹介での来訪が全体の約6割を占めます。</strong><br>はじめての方から「また来たい」と言っていただけることが多いです。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Notice ── -->
+<section id="notice">
+  <div class="container">
+    <p class="section-label">Notice</p>
+    <h2>来店時のお願い</h2>
+    <div class="notice-box">
+      <div class="notice-title">快適に進めるために、以下をお守りください</div>
+      <ul class="notice-list">
+        <li>事前にシャワーを浴びるなど、身だしなみを整えてお越しください</li>
+        <li>本セッションはロープ・写真制作を目的としており、性的なサービスは含まれません</li>
+        <li>18歳未満の方はご参加いただけません<span class="ng-badge">NG</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── Contact ── -->
+<section id="contact">
+  <div class="container contact-wrap">
+    <p class="section-label">Contact</p>
+    <h2>ご予約・お問い合わせ</h2>
+    <p class="contact-desc">
+      ご質問だけでも、匿名でも構いません。<br>
+      内容・日時のご希望を伺い、最適なプランをご提案します。
+    </p>
+    <div class="session-note" style="text-align: left; max-width: 480px; margin: 0 auto 2rem;">
+      お名前はニックネームやイニシャルで構いません。<br>
+      いただいた情報はセッション調整のみに使用し、第三者への共有・無断公開は一切行いません。<br>
+      まずはご質問だけでもOKです。
+    </div>
+    <ol class="notice-list" style="text-align: left; max-width: 480px; margin: 0 auto 2rem; list-style: none;">
+      <li style="padding-left: 1.6rem; position: relative;"><span style="position: absolute; left: 0; color: var(--accent); font-weight: 700;">1.</span>フォームで連絡（匿名・ニックネームOK）</li>
+      <li style="padding-left: 1.6rem; position: relative;"><span style="position: absolute; left: 0; color: var(--accent); font-weight: 700;">2.</span>希望日程・内容を確認（やりとり2〜3回が目安）</li>
+      <li style="padding-left: 1.6rem; position: relative;"><span style="position: absolute; left: 0; color: var(--accent); font-weight: 700;">3.</span>場所・詳細をお伝えして当日へ</li>
+    </ol>
+    <a href="https://forms.gle/8ZETsRLbMra1kcs87" target="_blank" rel="noopener" class="btn btn-primary btn-lg">
+      Googleフォームで相談・予約する
+    </a>
+  </div>
+</section>
+
+<!-- ── Modal ── -->
+<div id="modal" class="modal" role="dialog" aria-modal="true" onclick="if(event.target===this)closeModal()">
+  <button class="modal-close" onclick="closeModal()" aria-label="閉じる">&times;</button>
+  <img id="modal-img" class="modal-img" src="" alt="">
+</div>
+
+<!-- ── Footer ── -->
+<footer>
+  <div class="container">
+    <div class="footer-brand">アタル｜名古屋・緊縛セッション</div>
+    <p class="footer-note">
+      名古屋市内にて活動中。体育会系・ユニフォーム系の緊縛を得意としています。<br>
+      初心者歓迎・18歳以上対象。
+    </p>
+    <p class="footer-copy">© 2026 アタル. All rights reserved.</p>
+  </div>
+</footer>
+
+<script>
+  function openModal(src) {
+    document.getElementById('modal-img').src = src;
+    document.getElementById('modal').classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeModal() {
+    document.getElementById('modal').classList.remove('open');
+    document.body.style.overflow = '';
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+  const hamburger = document.querySelector('.hamburger');
+  const navLinks = document.querySelector('.nav-links');
+  hamburger.addEventListener('click', () => {
+    const isOpen = navLinks.classList.toggle('open');
+    hamburger.classList.toggle('open');
+    hamburger.setAttribute('aria-expanded', isOpen);
+  });
+  document.querySelectorAll('.nav-links a').forEach(a =>
+    a.addEventListener('click', () => {
+      navLinks.classList.remove('open');
+      hamburger.classList.remove('open');
+      hamburger.setAttribute('aria-expanded', 'false');
+    })
+  );
+</script>
+</body>
+</html>

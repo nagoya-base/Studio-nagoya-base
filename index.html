@@ -18,11 +18,11 @@
 <meta property="og:description" content="コスプレ・ポートレート・白背景撮影に対応した完全個室スタジオ。撮影機材無料貸し出し。スマートフォンでも本格撮影可。名古屋・上前津。">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/">
-<meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/224a3228.jpeg">
+<meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/224A3299.jpg">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="名古屋・上前津の完全個室撮影スタジオ｜Studio Nagoya Base">
 <meta name="twitter:description" content="コスプレ・ポートレート・白背景撮影に対応した完全個室スタジオ。撮影機材無料貸し出し。スマートフォンでも本格撮影可。名古屋・上前津。">
-<meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/224a3228.jpeg">
+<meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/224A3299.jpg">
 
 <style>
 /* =====================
@@ -295,18 +295,26 @@ body.has-booking-banner .hero {
   align-items: center;
   justify-content: center;
   text-align: center;
-  background: var(--bg-section);
+  position: relative;
+  background-image: url('images/IMG_2311.jpeg');
+  background-size: cover;
+  background-position: center;
   border-bottom: 1px solid var(--border);
   padding: 80px 24px;
 }
 
 .hero-overlay {
-  display: none;
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 10, 10, 0.55);
 }
 
 .hero-content {
   max-width: 600px;
   margin: 0 auto;
+  position: relative;
+  z-index: 1;
 }
 
 .hero-label {
@@ -494,6 +502,34 @@ body.has-booking-banner .hero {
   font-size: 0.85rem;
   color: var(--text-muted);
   text-align: center;
+}
+
+.color-grid-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-top: 40px;
+  margin-bottom: 12px;
+}
+
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+
+.color-grid .gallery-item {
+  aspect-ratio: 1 / 1;
+}
+
+.color-grid .gallery-item img {
+  aspect-ratio: auto;
+  object-fit: cover;
+}
+
+@media (max-width: 600px) {
+  .color-grid { grid-template-columns: repeat(3, 1fr); }
 }
 
 /* =====================
@@ -707,19 +743,6 @@ details.faq-item summary:hover {
 .news-text {
   color: var(--text-muted);
   line-height: 1.7;
-}
-
-/* =====================
-   X タイムライン
-===================== */
-.x-timeline-wrapper {
-  display: flex;
-  justify-content: center;
-}
-
-.x-timeline-wrapper .twitter-timeline {
-  border-radius: var(--radius);
-  overflow: hidden;
 }
 
 /* =====================
@@ -1303,7 +1326,7 @@ footer nav a:hover {
 <nav class="site-nav" aria-label="サイトナビゲーション">
   <div class="nav-inner">
     <a href="#" class="nav-logo">
-      <img src="logo.svg" alt="Studio Nagoya Base">
+      <img src="images/logo.svg" alt="Studio Nagoya Base">
       <span>STUDIO NAGOYA BASE</span>
     </a>
     <ul class="nav-links">
@@ -1369,7 +1392,7 @@ footer nav a:hover {
 <section id="featured-image" style="background: var(--bg-section);">
   <div class="container">
     <div class="featured-image-wrapper">
-      <img src="224a3299.jpeg" alt="Studio Nagoya Base - 完全個室の撮影スタジオ（名古屋・上前津）" class="featured-image">
+      <img src="images/224A3299.jpg" alt="Studio Nagoya Base - 完全個室の撮影スタジオ（名古屋・上前津）" class="featured-image">
     </div>
   </div>
 </section>
@@ -1555,14 +1578,24 @@ footer nav a:hover {
     <p class="section-subtitle">Gallery</p>
 
     <div class="gallery-grid">
-      <div class="gallery-item"><img src="224A3274.jpg" alt="Studio Nagoya Base gallery image 1" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224A3294.jpg" alt="Studio Nagoya Base gallery image 2" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224A3295.jpg" alt="Studio Nagoya Base gallery image 3" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224A3299.jpg" alt="Studio Nagoya Base gallery image 4" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224a3228.jpeg" alt="Studio Nagoya Base gallery image 5" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224a3237.jpeg" alt="Studio Nagoya Base gallery image 6" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="224a3254.jpeg" alt="Studio Nagoya Base gallery image 7" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="IMG_7421.jpeg" alt="Studio Nagoya Base gallery image 8" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224A3274.jpg" alt="Studio Nagoya Base gallery image 1" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224A3294.jpg" alt="Studio Nagoya Base gallery image 2" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224A3295.jpg" alt="Studio Nagoya Base gallery image 3" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224A3299.jpg" alt="Studio Nagoya Base gallery image 4" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224a3228.jpeg" alt="Studio Nagoya Base gallery image 5" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224a3237.jpeg" alt="Studio Nagoya Base gallery image 6" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224a3254.jpeg" alt="Studio Nagoya Base gallery image 7" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_7421.jpeg" alt="Studio Nagoya Base gallery image 8" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+    </div>
+
+    <p class="color-grid-label">フルカラー照明 / Color Variations</p>
+    <div class="color-grid">
+      <div class="gallery-item"><img src="images/IMG_2263.jpeg" alt="フルカラー照明サンプル 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2264.jpeg" alt="フルカラー照明サンプル 2 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2265.jpeg" alt="フルカラー照明サンプル 3 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2310.jpeg" alt="フルカラー照明サンプル 4 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2311.jpeg" alt="フルカラー照明サンプル 5 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2312.jpeg" alt="フルカラー照明サンプル 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
     </div>
 
     <p class="gallery-note">
@@ -1796,19 +1829,8 @@ footer nav a:hover {
     <h2 class="section-title">最新情報</h2>
     <p class="section-subtitle">Latest Posts</p>
 
-    <div class="x-timeline-wrapper">
-      <a class="twitter-timeline"
-         data-theme="dark"
-         data-width="600"
-         data-height="500"
-         data-chrome="nofooter noborders"
-         href="https://twitter.com/nagoyabase2023">
-        @nagoyabase2023 の投稿を読み込み中...
-      </a>
-    </div>
-    <script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
-
-    <div class="sns-section" style="padding: 24px 0 0;">
+    <div class="sns-section">
+      <p>最新の作例・空き情報は X（Twitter）でご確認ください。</p>
       <a class="btn-twitter" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">
         @nagoyabase2023 をフォロー
       </a>
