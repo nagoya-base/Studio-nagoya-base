@@ -18,6 +18,7 @@ import os
 import random
 import time
 from datetime import datetime, timedelta
+from typing import Optional
 
 import tweepy
 import yaml
@@ -97,7 +98,7 @@ def load_posts() -> list:
     return data.get("scheduled_posts", [])
 
 
-def select_post(log: dict, posts: list) -> dict | None:
+def select_post(log: dict, posts: list) -> Optional[dict]:
     """Pick a random post that has not been sent yet."""
     posted_hashes = {p["content_hash"] for p in log["posts"]}
     available = [p for p in posts if _content_hash(p["text"]) not in posted_hashes]
@@ -143,7 +144,7 @@ def _build_clients():
     return client_v2, api_v1
 
 
-def _upload_media(api_v1, image_path: str, sensitive: bool) -> int | None:
+def _upload_media(api_v1, image_path: str, sensitive: bool) -> Optional[int]:
     """Upload a single image and return its media_id, or None on failure."""
     if not image_path:
         return None
