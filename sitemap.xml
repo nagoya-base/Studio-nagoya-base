@@ -12,4 +12,7 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://nagoya-base.github.io/Studio-nagoya-base/en.html" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://nagoya-base.github.io/Studio-nagoya-base/" />
   </url>
+  <url>
+    <loc>https://nagoya-base.github.io/Studio-nagoya-base/mens.html</loc>
+  </url>
 </urlset>
