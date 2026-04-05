@@ -1596,22 +1596,22 @@ footer nav a:hover {
 
     <p class="color-grid-label">白ホリ・カラーバリエーション / White Cyclorama &amp; Color Variations</p>
     <div class="color-grid">
-      <div class="gallery-item"><img src="images/IMG_7774.jpeg" alt="白ホリ・カラーバリエーション 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="images/IMG_7775.jpeg" alt="白ホリ・カラーバリエーション 2 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="images/IMG_7776.jpeg" alt="白ホリ・カラーバリエーション 3 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="images/IMG_7777.jpeg" alt="白ホリ・カラーバリエーション 4 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="images/IMG_7778.jpeg" alt="白ホリ・カラーバリエーション 5 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="images/IMG_7779.jpeg" alt="白ホリ・カラーバリエーション 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/IMG_7774.jpeg" alt="白ホリ・カラーバリエーション 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
+      <div class="gallery-item"><img src="images/IMG_7775.jpeg" alt="白ホリ・カラーバリエーション 2 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
+      <div class="gallery-item"><img src="images/IMG_7776.jpeg" alt="白ホリ・カラーバリエーション 3 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
+      <div class="gallery-item"><img src="images/IMG_7777.jpeg" alt="白ホリ・カラーバリエーション 4 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
+      <div class="gallery-item"><img src="images/IMG_7778.jpeg" alt="白ホリ・カラーバリエーション 5 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
+      <div class="gallery-item"><img src="images/IMG_7779.jpeg" alt="白ホリ・カラーバリエーション 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
     </div>
 
     <p class="color-grid-label">フルカラー照明 / Color Variations</p>
     <div class="color-grid">
-      <div class="gallery-item"><img src="images/IMG_2263.jpeg" alt="フルカラー照明サンプル 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/IMG_2264.jpeg" alt="フルカラー照明サンプル 2 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/IMG_2265.jpeg" alt="フルカラー照明サンプル 3 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/IMG_2310.jpeg" alt="フルカラー照明サンプル 4 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/IMG_2311.jpeg" alt="フルカラー照明サンプル 5 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/IMG_2312.jpeg" alt="フルカラー照明サンプル 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/IMG_2263.jpeg" alt="フルカラー照明サンプル 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/IMG_2264.jpeg" alt="フルカラー照明サンプル 2 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/IMG_2265.jpeg" alt="フルカラー照明サンプル 3 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/IMG_2310.jpeg" alt="フルカラー照明サンプル 4 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/IMG_2311.jpeg" alt="フルカラー照明サンプル 5 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/IMG_2312.jpeg" alt="フルカラー照明サンプル 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
     </div>
 
     <p class="gallery-note">
@@ -2242,13 +2242,15 @@ footer nav a:hover {
   clickableImages.forEach(function (img) {
     img.addEventListener('click', function () {
       modalImage.setAttribute('src', this.getAttribute('src'));
+      modalImage.setAttribute('alt', this.getAttribute('alt'));
       modal.classList.add('show');
       document.body.style.overflow = 'hidden';
     });
     
     // キーボード操作対応
-    img.addEventListener('keypress', function (e) {
+    img.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
         this.click();
       }
     });

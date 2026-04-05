@@ -2148,12 +2148,14 @@ details.faq-item summary:hover {
   clickableImages.forEach(function (img) {
     img.addEventListener('click', function () {
       modalImage.setAttribute('src', this.getAttribute('src'));
+      modalImage.setAttribute('alt', this.getAttribute('alt'));
       modal.classList.add('show');
       document.body.style.overflow = 'hidden';
     });
 
-    img.addEventListener('keypress', function (e) {
+    img.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
         this.click();
       }
     });
