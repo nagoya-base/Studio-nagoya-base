@@ -147,6 +147,8 @@ nav.site-nav {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
   border-bottom: 1px solid var(--accent-dark);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
@@ -168,6 +170,12 @@ nav.site-nav {
   text-decoration: none;
 }
 
+.booking-fixed-banner .banner-separator {
+  color: rgba(0, 0, 0, 0.4);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
 /* ファーストビューのパディング調整 */
 body.has-booking-banner .hero {
   margin-top: 0;
@@ -177,10 +185,15 @@ body.has-booking-banner .hero {
   .booking-fixed-banner {
     top: 60px;
     padding: 10px 16px;
+    gap: 10px;
   }
   
   .booking-fixed-banner a {
     font-size: 0.85rem;
+  }
+
+  .booking-fixed-banner .banner-separator {
+    font-size: 0.8rem;
   }
 }
 
@@ -1359,7 +1372,9 @@ footer nav a:hover {
 
 <!-- 予約導線固定バナー -->
 <div class="booking-fixed-banner">
-  <a href="#calendar">今週の空きはこちら</a>
+  <a href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">2週間先まではこちらから予約 →</a>
+  <span class="banner-separator">｜</span>
+  <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">2週間以上先・会員料金はDMで</a>
 </div>
 
 <!-- モバイルメニュー -->
@@ -1391,8 +1406,8 @@ footer nav a:hover {
     </div>
     
     <div class="hero-buttons">
-      <a class="btn-primary" href="#calendar">今週の空きを確認</a>
-      <a class="btn-secondary" href="mailto:nagoyabase2023@gmail.com">お問い合わせ</a>
+      <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">2週間先まで予約する（Spacemarket）</a>
+      <a class="btn-secondary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">2週間以上先・会員料金はDMで</a>
     </div>
   </div>
 </div>
@@ -1704,10 +1719,10 @@ footer nav a:hover {
     <p class="pricing-note" style="margin-top: 8px;">※ 緊縛撮影は3時間以上のご予約をおすすめします。</p>
     <p class="pricing-note" style="margin-top: 8px;">※ 料金は人数に関わらず一定です（1部屋まるごとのご利用）。</p>
     <p class="pricing-note" style="margin-top: 8px;">※ 常設の撮影機材・備品は利用料金内でご利用いただけます。保有機材（応相談）は、利用可否を含めご予約時にご確認ください。</p>
-    <p class="pricing-note" style="margin-top: 8px;">※ 会員価格は、当施設が承認した会員のみ適用されます。当サイトからの直接予約に限り会員料金となります。詳細は<a href="#terms" style="color: var(--accent);">利用規約 第12条</a>をご確認ください。</p>
+    <p class="pricing-note" style="margin-top: 8px;">※ 会員価格は、当施設が承認した会員のみ適用されます。会員料金でのご予約は X（DM）または Google フォームにてご連絡ください。詳細は<a href="#terms" style="color: var(--accent);">利用規約 第12条</a>をご確認ください。</p>
     <p class="pricing-note" style="margin-top: 8px;">※ ご予約前に必ず<a href="#terms" style="color: var(--accent);">利用規約</a>をご確認ください。</p>
     <div style="text-align:center;margin-top:32px;">
-      <a class="btn-primary" href="#calendar">空き状況を確認する</a>
+      <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">2週間先まで予約する（Spacemarket）</a>
     </div>
   </div>
 </section>
@@ -1839,11 +1854,12 @@ footer nav a:hover {
       </iframe>
     </div>
 
-    <p class="calendar-note">※ 空き状況はカレンダーでご確認ください。ご予約・お問い合わせはメールまたは X にてご連絡ください。</p>
+    <p class="calendar-note">※ 空き状況はカレンダーでご確認ください。<strong>2週間先まで</strong>の予約は Spacemarket からも可能です。<strong>2週間以上先</strong>のご予約・<strong>会員料金</strong>でのご利用は、X（DM）または Google フォームからお問い合わせください。</p>
 
     <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-      <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com">メールで予約する</a>
-      <a class="btn-primary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener" style="border-color: #555; color: var(--text-muted);">X（Twitter）で連絡</a>
+      <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">Spacemarket で予約（2週間先まで）</a>
+      <a class="btn-primary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener" style="border-color: #555; color: var(--text-muted);">X（DM）で予約・問い合わせ</a>
+      <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com" style="border-color: #555; color: var(--text-muted);">メールで問い合わせ</a>
     </div>
   </div>
 </section>

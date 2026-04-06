@@ -131,6 +131,8 @@ nav.site-nav {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
   border-bottom: 1px solid var(--accent-dark);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
@@ -152,14 +154,25 @@ nav.site-nav {
   text-decoration: none;
 }
 
+.booking-fixed-banner .banner-separator {
+  color: rgba(0, 0, 0, 0.4);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
 @media (max-width: 768px) {
   .booking-fixed-banner {
     top: 60px;
     padding: 10px 16px;
+    gap: 10px;
   }
   
   .booking-fixed-banner a {
     font-size: 0.85rem;
+  }
+
+  .booking-fixed-banner .banner-separator {
+    font-size: 0.8rem;
   }
 }
 
@@ -1224,7 +1237,9 @@ footer nav a:hover {
 
 <!-- Booking fixed banner -->
 <div class="booking-fixed-banner">
-  <a href="#calendar">Check availability now</a>
+  <a href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">Book up to 2 weeks ahead on Spacemarket →</a>
+  <span class="banner-separator">｜</span>
+  <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">Further ahead or member rate? DM us</a>
 </div>
 
 <!-- Mobile menu -->
@@ -1249,8 +1264,8 @@ footer nav a:hover {
       <p class="hero-price-line">Member: 3 hours <span class="price-amount">¥7,500</span></p>
     </div>
     <div class="hero-buttons">
-      <a class="btn-primary" href="#calendar">Check availability and book</a>
-      <a class="btn-secondary" href="mailto:nagoyabase2023@gmail.com">Contact us</a>
+      <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">Book up to 2 weeks ahead (Spacemarket)</a>
+      <a class="btn-secondary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">Further ahead or member rate? DM us</a>
     </div>
   </div>
 </div>
@@ -1503,10 +1518,10 @@ footer nav a:hover {
     <p class="pricing-note" style="margin-top: 8px;">Note: For bondage photography, bookings of 3 hours or longer are recommended.</p>
     <p class="pricing-note" style="margin-top: 8px;">Note: The fee is per room booking and does not change based on the number of people.</p>
     <p class="pricing-note" style="margin-top: 8px;">Note: Standard photo equipment and props are included in the rental fee. Owned gear is available only on prior request and subject to confirmation.</p>
-    <p class="pricing-note" style="margin-top: 8px;">Note: Member rates apply only to approved members and only for direct bookings through this site.</p>
+    <p class="pricing-note" style="margin-top: 8px;">Note: Member rates apply only to approved members. To book at the member rate, please contact us on X (DM) or via Google Form. See <a href="#terms" style="color: var(--accent);">Terms of Use, Article 12</a> for details.</p>
     <p class="pricing-note" style="margin-top: 8px;">Note: Please review the Terms of Use before making a booking.</p>
     <div style="text-align:center;margin-top:32px;">
-      <a class="btn-primary" href="#calendar">Check availability</a>
+      <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">Book up to 2 weeks ahead (Spacemarket)</a>
     </div>
   </div>
 </section>
@@ -1571,10 +1586,11 @@ footer nav a:hover {
         aria-label="Reservation calendar">
       </iframe>
     </div>
-    <p class="calendar-note">Please check availability on the calendar. For bookings and inquiries, contact us by email or X.</p>
+    <p class="calendar-note">Check availability on the calendar. Bookings <strong>up to 2 weeks ahead</strong> can be made via Spacemarket. For dates <strong>more than 2 weeks out</strong> or to book at the <strong>member rate</strong>, please contact us on X (DM) or via Google Form.</p>
     <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-      <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com">Book by email</a>
-      <a class="btn-primary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener" style="border-color: #555; color: var(--text-muted);">Contact us on X</a>
+      <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">Book on Spacemarket (up to 2 weeks)</a>
+      <a class="btn-primary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener" style="border-color: #555; color: var(--text-muted);">Contact us on X (DM)</a>
+      <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com" style="border-color: #555; color: var(--text-muted);">Contact by email</a>
     </div>
   </div>
 </section>
