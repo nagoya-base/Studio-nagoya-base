@@ -385,6 +385,65 @@ nav.site-nav {
   text-decoration: none;
 }
 
+/* =====================
+   CTA bifurcation
+===================== */
+.cta-bifurcation {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.cta-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.cta-card.cta-immediate {
+  border-color: var(--accent);
+}
+
+.cta-tag {
+  font-size: 0.7rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.cta-card-heading {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+
+.cta-card-desc {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.cta-card .btn-primary,
+.cta-card .btn-secondary {
+  margin-top: 8px;
+  width: 100%;
+  text-align: center;
+}
+
+@media (max-width: 600px) {
+  .cta-bifurcation {
+    grid-template-columns: 1fr;
+  }
+}
+
 .hero-desc {
   font-size: 0.95rem;
   color: var(--text-muted);
@@ -1270,6 +1329,27 @@ footer nav a:hover {
   </div>
 </div>
 
+<!-- CTA bifurcation -->
+<section id="cta" style="padding: 40px 0;">
+  <div class="container">
+    <div class="cta-bifurcation">
+      <div class="cta-card cta-immediate">
+        <p class="cta-tag">Book Now</p>
+        <p class="cta-card-heading">Reservations within 2 weeks</p>
+        <p class="cta-card-desc">Easy online booking with secure payment via Spacemarket</p>
+        <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">Book on Spacemarket →</a>
+      </div>
+      <div class="cta-card cta-advance">
+        <p class="cta-tag">Advance Booking</p>
+        <p class="cta-card-heading">2+ weeks ahead or member rate</p>
+        <p class="cta-card-desc">Send us a DM on X with your preferred date and time</p>
+        <a class="btn-secondary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">DM us on X →</a>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:0.8rem;color:var(--text-muted);margin-top:20px;">Want to check availability first? <a href="#calendar">View calendar</a></p>
+  </div>
+</section>
+
 <!-- Featured Image -->
 <section id="featured-image" style="background: var(--bg-section);">
   <div class="container">
@@ -1531,6 +1611,27 @@ footer nav a:hover {
   </div>
 </section>
 
+<section id="calendar" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">Reservation Calendar</h2>
+    <p class="section-subtitle">Reservation Calendar</p>
+    <div class="calendar-wrapper">
+      <iframe
+        src="https://calendar.google.com/calendar/u/0/embed?src=nagoyabase2023@gmail.com&ctz=Asia/Tokyo"
+        scrolling="no"
+        title="Studio Nagoya Base reservation calendar"
+        aria-label="Reservation calendar">
+      </iframe>
+    </div>
+    <p class="calendar-note">Check availability on the calendar. Bookings <strong>up to 2 weeks ahead</strong> can be made via Spacemarket. For dates <strong>more than 2 weeks out</strong> or to book at the <strong>member rate</strong>, please contact us on X (DM) or via Google Form.</p>
+    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+      <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">Book on Spacemarket (up to 2 weeks)</a>
+      <a class="btn-primary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener" style="border-color: #555; color: var(--text-muted);">Contact us on X (DM)</a>
+      <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com" style="border-color: #555; color: var(--text-muted);">Contact by email</a>
+    </div>
+  </div>
+</section>
+
 <section id="access">
   <div class="container">
     <h2 class="section-title">Access</h2>
@@ -1575,27 +1676,6 @@ footer nav a:hover {
       <details class="faq-item"><summary>Is commercial use allowed?</summary><div class="faq-answer">Yes. Commercial shoots, fan-site content, and paid creative projects are allowed. However, all performers must consent, and all applicable laws and platform rules must be followed.</div></details>
       <details class="faq-item"><summary>Can I use a shower?</summary><div class="faq-answer">No. Shower use is not available.</div></details>
       <details class="faq-item"><summary>I left something behind.</summary><div class="faq-answer">Lost items are stored for 7 days after discovery. Please contact us by X DM or email as soon as possible. If the item is not claimed after 7 days, it may be reported to the police.</div></details>
-    </div>
-  </div>
-</section>
-
-<section id="calendar" style="background: var(--bg-section);">
-  <div class="container">
-    <h2 class="section-title">Reservation Calendar</h2>
-    <p class="section-subtitle">Reservation Calendar</p>
-    <div class="calendar-wrapper">
-      <iframe
-        src="https://calendar.google.com/calendar/u/0/embed?src=nagoyabase2023@gmail.com&ctz=Asia/Tokyo"
-        scrolling="no"
-        title="Studio Nagoya Base reservation calendar"
-        aria-label="Reservation calendar">
-      </iframe>
-    </div>
-    <p class="calendar-note">Check availability on the calendar. Bookings <strong>up to 2 weeks ahead</strong> can be made via Spacemarket. For dates <strong>more than 2 weeks out</strong> or to book at the <strong>member rate</strong>, please contact us on X (DM) or via Google Form.</p>
-    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-      <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">Book on Spacemarket (up to 2 weeks)</a>
-      <a class="btn-primary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener" style="border-color: #555; color: var(--text-muted);">Contact us on X (DM)</a>
-      <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com" style="border-color: #555; color: var(--text-muted);">Contact by email</a>
     </div>
   </div>
 </section>
