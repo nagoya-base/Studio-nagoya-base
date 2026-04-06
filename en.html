@@ -1855,6 +1855,30 @@ footer nav a:hover {
 
 <script>
 (function () {
+  /* Ensure the hero content is not hidden behind the fixed booking banner */
+  var banner = document.querySelector('.booking-fixed-banner');
+  var hero   = document.querySelector('.hero');
+  if (banner && hero) {
+    function syncHeroPadding() {
+      hero.style.paddingTop = '';
+      var cssPadding = parseInt(window.getComputedStyle(hero).paddingTop, 10);
+      var bannerH    = banner.offsetHeight;
+      if (bannerH > cssPadding) {
+        hero.style.paddingTop = bannerH + 'px';
+      }
+    }
+    syncHeroPadding();
+    var resizeTimer;
+    window.addEventListener('resize', function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(syncHeroPadding, 100);
+    });
+  }
+})();
+</script>
+
+<script>
+(function () {
   var btn = document.querySelector('.nav-hamburger');
   var menu = document.getElementById('navMobile');
   var links = menu.querySelectorAll('a');

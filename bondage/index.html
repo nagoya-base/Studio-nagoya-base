@@ -1352,7 +1352,7 @@ footer nav a:hover {
 @media (max-width: 640px) {
   .hero {
     background-attachment: scroll;
-    padding: 60px 16px;
+    padding: 80px 16px;
     min-height: auto;
   }
   
@@ -2261,6 +2261,30 @@ footer nav a:hover {
   </nav>
   <p style="margin-top: 20px;">&copy; Studio Nagoya Base. All rights reserved.</p>
 </footer>
+
+<script>
+(function () {
+  /* バナーがモバイルで折り返した際にヒーローが隠れないよう padding-top を動的に調整 */
+  var banner = document.querySelector('.booking-fixed-banner');
+  var hero   = document.querySelector('.hero');
+  if (banner && hero) {
+    function syncHeroPadding() {
+      hero.style.paddingTop = '';
+      var cssPadding = parseInt(window.getComputedStyle(hero).paddingTop, 10);
+      var bannerH    = banner.offsetHeight;
+      if (bannerH > cssPadding) {
+        hero.style.paddingTop = bannerH + 'px';
+      }
+    }
+    syncHeroPadding();
+    var resizeTimer;
+    window.addEventListener('resize', function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(syncHeroPadding, 100);
+    });
+  }
+})();
+</script>
 
 <script>
 (function () {
