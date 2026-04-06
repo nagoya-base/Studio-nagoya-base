@@ -425,6 +425,65 @@ body.has-booking-banner .hero {
 }
 
 /* =====================
+   CTA二分岐
+===================== */
+.cta-bifurcation {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.cta-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.cta-card.cta-immediate {
+  border-color: var(--accent);
+}
+
+.cta-tag {
+  font-size: 0.7rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.cta-card-heading {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+
+.cta-card-desc {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.cta-card .btn-primary,
+.cta-card .btn-secondary {
+  margin-top: 8px;
+  width: 100%;
+  text-align: center;
+}
+
+@media (max-width: 600px) {
+  .cta-bifurcation {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =====================
    特徴カード
 ===================== */
 .features-grid {
@@ -1411,6 +1470,27 @@ footer nav a:hover {
   </div>
 </div>
 
+<!-- CTA二分岐 -->
+<section id="cta" style="padding: 40px 0;">
+  <div class="container">
+    <div class="cta-bifurcation">
+      <div class="cta-card cta-immediate">
+        <p class="cta-tag">即予約</p>
+        <p class="cta-card-heading">今から2週間以内のご予約</p>
+        <p class="cta-card-desc">Spacemarket からオンライン決済でかんたん予約できます</p>
+        <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">Spacemarket で予約する →</a>
+      </div>
+      <div class="cta-card cta-advance">
+        <p class="cta-tag">先予約</p>
+        <p class="cta-card-heading">2週間以上先・会員料金</p>
+        <p class="cta-card-desc">X（DM）またはメールでご希望日程をご連絡ください</p>
+        <a class="btn-secondary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">X（DM）で問い合わせる →</a>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:0.8rem;color:var(--text-muted);margin-top:20px;">まず空き状況を確認したい方は <a href="#calendar">予約カレンダー</a> へ</p>
+  </div>
+</section>
+
 <!-- フィーチャー画像 -->
 <section id="featured-image" style="background: var(--bg-section);">
   <div class="container">
@@ -1731,6 +1811,31 @@ footer nav a:hover {
   </div>
 </section>
 
+<!-- 予約カレンダー -->
+<section id="calendar" style="background: var(--bg-section);">
+  <div class="container">
+    <h2 class="section-title">予約カレンダー</h2>
+    <p class="section-subtitle">Reservation Calendar</p>
+
+    <div class="calendar-wrapper">
+      <iframe
+        src="https://calendar.google.com/calendar/u/0/embed?src=nagoyabase2023@gmail.com&ctz=Asia/Tokyo"
+        scrolling="no"
+        title="Studio Nagoya Base 予約カレンダー"
+        aria-label="予約カレンダー">
+      </iframe>
+    </div>
+
+    <p class="calendar-note">※ 空き状況はカレンダーでご確認ください。<strong>2週間先まで</strong>の予約は Spacemarket からも可能です。<strong>2週間以上先</strong>のご予約・<strong>会員料金</strong>でのご利用は、X（DM）または Google フォームからお問い合わせください。</p>
+
+    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+      <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">Spacemarket で予約（2週間先まで）</a>
+      <a class="btn-primary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener" style="border-color: #555; color: var(--text-muted);">X（DM）で予約・問い合わせ</a>
+      <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com" style="border-color: #555; color: var(--text-muted);">メールで問い合わせ</a>
+    </div>
+  </div>
+</section>
+
 <!-- アクセス -->
 <section id="access" style="background: var(--bg-section);">
   <div class="container">
@@ -1839,30 +1944,6 @@ footer nav a:hover {
         <summary>忘れ物をしました。</summary>
         <div class="faq-answer">発見後7日間保管しています。X（旧Twitter）DM またはメール（<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a>）にてお早めにご連絡ください。食品・飲料など衛生上保管が困難なものは随時処分します。7日間経過後も引き取りがない場合は、遺失物法に基づき警察へ届け出ます。</div>
       </details>
-    </div>
-  </div>
-</section>
-
-<!-- 予約カレンダー -->
-<section id="calendar" style="background: var(--bg-section);">
-  <div class="container">
-    <h2 class="section-title">予約カレンダー</h2>
-    <p class="section-subtitle">Reservation Calendar</p>
-
-    <div class="calendar-wrapper">
-      <iframe
-        src="https://calendar.google.com/calendar/u/0/embed?src=nagoyabase2023@gmail.com&ctz=Asia/Tokyo"
-        scrolling="no"
-        title="Studio Nagoya Base 予約カレンダー"
-        aria-label="予約カレンダー">
-      </iframe>
-    </div>
-
-    <p class="calendar-note">※ 空き状況はカレンダーでご確認ください。ご予約・お問い合わせはメールまたは X にてご連絡ください。</p>
-
-    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-      <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com">メールで予約する</a>
-      <a class="btn-primary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener" style="border-color: #555; color: var(--text-muted);">X（Twitter）で連絡</a>
     </div>
   </div>
 </section>
