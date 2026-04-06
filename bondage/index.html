@@ -146,6 +146,8 @@ nav.site-nav {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
   border-bottom: 1px solid var(--accent-dark);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
@@ -167,6 +169,12 @@ nav.site-nav {
   text-decoration: none;
 }
 
+.booking-fixed-banner .banner-separator {
+  color: rgba(0, 0, 0, 0.4);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
 /* ファーストビューのパディング調整 */
 body.has-booking-banner .hero {
   margin-top: 0;
@@ -176,10 +184,15 @@ body.has-booking-banner .hero {
   .booking-fixed-banner {
     top: 60px;
     padding: 10px 16px;
+    gap: 10px;
   }
   
   .booking-fixed-banner a {
     font-size: 0.85rem;
+  }
+
+  .booking-fixed-banner .banner-separator {
+    font-size: 0.8rem;
   }
 }
 
@@ -1358,7 +1371,9 @@ footer nav a:hover {
 
 <!-- 予約導線固定バナー -->
 <div class="booking-fixed-banner">
-  <a href="#calendar">今週の空きはこちら</a>
+  <a href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">2週間先まではこちらから予約 →</a>
+  <span class="banner-separator" aria-hidden="true">｜</span>
+  <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">2週間以上先・会員料金はDMで</a>
 </div>
 
 <!-- モバイルメニュー -->
@@ -1390,8 +1405,8 @@ footer nav a:hover {
     </div>
     
     <div class="hero-buttons">
-      <a class="btn-primary" href="#calendar">今週の空きを確認</a>
-      <a class="btn-secondary" href="mailto:nagoyabase2023@gmail.com">お問い合わせ</a>
+      <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener">2週間先まで予約する（Spacemarket）</a>
+      <a class="btn-secondary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">2週間以上先・会員料金はDMで</a>
     </div>
   </div>
 </div>
@@ -1400,7 +1415,7 @@ footer nav a:hover {
 <section id="featured-image" style="background: var(--bg-section);">
   <div class="container">
     <div class="featured-image-wrapper">
-      <img src="../images/IMG_2311.jpeg" alt="Studio Nagoya Base - 吊り床・身体表現対応の撮影スタジオ（名古屋・上前津）" class="featured-image">
+      <img src="../images/224A3299.jpg" alt="Studio Nagoya Base - 吊り床・身体表現対応の撮影スタジオ（名古屋・上前津）" class="featured-image">
     </div>
   </div>
 </section>
@@ -1413,6 +1428,11 @@ footer nav a:hover {
 
     <!-- 運用メモ: 料金や利用規約を更新した場合は、ここに告知を追加する -->
     <div class="news-list">
+      <div class="news-item">
+        <span class="news-date">2026.04.06</span>
+        <span class="news-badge">お知らせ</span>
+        <span class="news-text">2週間先までの予約はスペースマーケットもご利用可能です。</span>
+      </div>
       <div class="news-item">
         <span class="news-date">2026.03.28</span>
         <span class="news-badge">お知らせ</span>
