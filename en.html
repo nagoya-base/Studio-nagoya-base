@@ -13,7 +13,6 @@
 <link rel="alternate" hreflang="x-default" href="https://nagoya-base.github.io/Studio-nagoya-base/">
 
 <!-- Google Analytics 4 -->
-<!-- Google Analytics 4 -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
@@ -1257,12 +1256,51 @@ footer nav a:hover {
 }
 
 @media (max-width: 640px) {
+  .hero {
+    background-attachment: scroll;
+    padding: 80px 16px;
+    min-height: auto;
+  }
+
+  .hero-main {
+    font-size: 1.8rem;
+  }
+
+  .hero-sub {
+    font-size: 1rem;
+    margin-bottom: 24px;
+  }
+
+  .hero-pricing {
+    margin-bottom: 32px;
+  }
+
+  .hero-price-line {
+    font-size: 0.85rem;
+  }
+
+  .hero-buttons {
+    gap: 12px;
+  }
+
+  .btn-primary,
+  .btn-secondary {
+    padding: 12px 24px;
+    font-size: 0.8rem;
+  }
+
   .floating-booking-btn {
     bottom: 24px;
     right: 24px;
     width: 56px;
     height: 56px;
     font-size: 1.1rem;
+  }
+}
+
+@media (min-width: 1200px) {
+  .hero {
+    min-height: 65vh;
   }
 }
 </style>
@@ -1303,14 +1341,14 @@ footer nav a:hover {
 
 <!-- Mobile menu -->
 <div class="nav-mobile" id="navMobile">
-  <a href="#news">News</a>
-  <a href="#features">Features</a>
-  <a href="#pricing">Pricing</a>
-  <a href="#access">Access</a>
-  <a href="#hours">Hours</a>
-  <a href="#faq">FAQ</a>
-  <a href="#calendar">Availability</a>
-  <a href="index.html" style="color: var(--accent); font-weight: 600;">JP</a>
+  <a href="#news" class="nav-mobile-link">News</a>
+  <a href="#features" class="nav-mobile-link">Features</a>
+  <a href="#pricing" class="nav-mobile-link">Pricing</a>
+  <a href="#access" class="nav-mobile-link">Access</a>
+  <a href="#hours" class="nav-mobile-link">Hours</a>
+  <a href="#faq" class="nav-mobile-link">FAQ</a>
+  <a href="#calendar" class="nav-mobile-link">Availability</a>
+  <a href="index.html" class="nav-mobile-link" style="color: var(--accent); font-weight: 600;">JP</a>
 </div>
 
 <div class="hero">
@@ -1632,7 +1670,7 @@ footer nav a:hover {
   </div>
 </section>
 
-<section id="access">
+<section id="access" style="background: var(--bg-section);">
   <div class="container">
     <h2 class="section-title">Access</h2>
     <p class="section-subtitle">Access</p>
