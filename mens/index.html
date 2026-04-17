@@ -200,17 +200,49 @@ nav.site-nav {
   text-decoration: none;
 }
 
-.nav-logo img {
-  height: 44px;
-  width: auto;
-  display: block;
+.logo-mark {
+  width: 42px;
+  height: 42px;
+  background: #6b7c4b;
+  border: 2px solid rgba(245, 242, 232, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  color: #f5f0e8;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: normal;
+  flex-shrink: 0;
 }
 
-.nav-logo span {
-  font-size: 0.8rem;
-  letter-spacing: 0.2em;
-  color: var(--accent);
-  font-weight: 400;
+.logo-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+
+.logo-kana {
+  font-size: 0.6rem;
+  letter-spacing: 0.3em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.logo-name {
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  color: var(--text);
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.logo-en {
+  font-size: 0.55rem;
+  letter-spacing: 0.15em;
+  color: var(--text-muted);
+  border-top: 1px solid #3a3a3a;
+  padding-top: 2px;
 }
 
 .nav-links {
@@ -1382,7 +1414,12 @@ details.faq-item summary:hover {
 <nav class="site-nav" aria-label="サイトナビゲーション">
   <div class="nav-inner">
     <a href="../index.html" class="nav-logo">
-      <img src="../images/IMG_8212.jpeg" alt="Studio Nagoya Base ロゴ">
+      <div class="logo-mark">N</div>
+      <div class="logo-text">
+        <span class="logo-kana">スタジオ</span>
+        <span class="logo-name">名古屋ベース</span>
+        <span class="logo-en">NAGOYA · KAMIMAEZU</span>
+      </div>
     </a>
     <ul class="nav-links">
       <li><a href="#news">ニュース</a></li>
