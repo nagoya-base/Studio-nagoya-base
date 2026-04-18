@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="index, follow">
 
 <title>Private Photography Studio in Nagoya, Kamimaezu | Cosplay, Portrait &amp; Studio Work | Studio Nagoya Base</title>
 
@@ -1335,9 +1336,71 @@ footer nav a:hover {
     min-height: 65vh;
   }
 }
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--accent);
+  color: #000;
+  padding: 8px 16px;
+  z-index: 9999;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 0 0 4px 0;
+}
+.skip-link:focus { top: 0; }
+.cookie-banner {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #1a1a1a;
+  border-top: 1px solid var(--accent);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  z-index: 9000;
+  font-size: 0.85rem;
+}
+.cookie-banner.hidden { display: none; }
+.cookie-banner p { margin: 0; }
+.cookie-accept-btn {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  padding: 8px 20px;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 </style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "LocalBusiness",
+  "name": "Studio Nagoya Base",
+  "description": "Private photography studio in Kamimaezu, Nagoya. Ideal for cosplay, portrait, and creative shoots. Equipment included.",
+  "url": "https://nagoya-base.github.io/Studio-nagoya-base/en.html",
+  "image": "https://nagoya-base.github.io/Studio-nagoya-base/images/IMG_2311.jpeg",
+  "email": "nagoyabase2023@gmail.com",
+  "address": {
+    "@type": "PostalAddress",
+    "addressLocality": "Kamimaezu, Naka Ward, Nagoya",
+    "addressRegion": "Aichi",
+    "addressCountry": "JP"
+  },
+  "priceRange": "¥¥",
+  "currenciesAccepted": "JPY",
+  "paymentAccepted": "Cash, PayPay, Credit Card"
+}
+</script>
 </head>
 <body>
+<a href="#main-content" class="skip-link">Skip to main content</a>
 
 <nav class="site-nav" aria-label="Site navigation">
   <div class="nav-inner">
@@ -1386,7 +1449,7 @@ footer nav a:hover {
   <a href="index.html" class="nav-mobile-link" style="color: var(--accent); font-weight: 600;">JP</a>
 </div>
 
-<div class="hero">
+<div id="main-content" class="hero">
   <div class="hero-overlay"></div>
   <div class="hero-content">
     <h1 class="hero-main">A private photography studio, all to yourself.</h1>
@@ -1494,37 +1557,37 @@ footer nav a:hover {
     <p class="section-subtitle">What We Offer</p>
     <div class="features-grid">
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>Smartphone-Friendly Professional Lighting</h3>
         <p>Professional lighting setup allows high-quality results even on a smartphone. Simple to use. Dedicated cameras achieve even higher production value.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>Basic Gear Included</h3>
         <p>Panel lights, background paper, reflectors, and other standard shooting equipment are available at no extra cost. All gear is easy to use.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>Private Space</h3>
         <p>The studio is reserved exclusively for one group at a time, so you can focus on your shoot without interruption.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>Full-Color Ceiling Lighting</h3>
         <p>Adjustable color-changing ceiling lights set mood and atmosphere to match your creative vision.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>Large Mirror</h3>
         <p>A large mirror (1460x800mm) allows self-portrait checks, framing confirmation, and expanded creative possibilities.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>Bring Your Own Gear</h3>
         <p>You may bring your own shooting equipment, including strobes and other camera accessories.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>Advanced Suspension System</h3>
         <p>Wooden suspension frame (2350mm height) ready for rope work and bondage photography. Includes beam rigging for professional bondage sessions.</p>
       </div>
@@ -1591,13 +1654,13 @@ footer nav a:hover {
         <p class="equipment-note" style="margin-bottom: 16px;">All equipment is beginner-friendly and easy to operate. If you need setup guidance or have questions about operation, please feel free to contact us.</p>
         <table>
           <tbody>
-            <tr><th>Full-color panel light (continuous)</th><td>x1</td></tr>
-            <tr><th>Bi-color panel light (continuous)</th><td>x1</td></tr>
-            <tr><th>Light stand (100-190cm)</th><td>x2</td></tr>
-            <tr><th>Background roller support</th><td>x1</td></tr>
-            <tr><th>Black background paper (135cm x 5m)</th><td>x1</td></tr>
-            <tr><th>White background paper (135cm x 5m)</th><td>x1</td></tr>
-            <tr><th>5-in-1 reflector (80cm)</th><td>x1</td></tr>
+            <tr><th scope="row">Full-color panel light (continuous)</th><td>x1</td></tr>
+            <tr><th scope="row">Bi-color panel light (continuous)</th><td>x1</td></tr>
+            <tr><th scope="row">Light stand (100-190cm)</th><td>x2</td></tr>
+            <tr><th scope="row">Background roller support</th><td>x1</td></tr>
+            <tr><th scope="row">Black background paper (135cm x 5m)</th><td>x1</td></tr>
+            <tr><th scope="row">White background paper (135cm x 5m)</th><td>x1</td></tr>
+            <tr><th scope="row">5-in-1 reflector (80cm)</th><td>x1</td></tr>
           </tbody>
         </table>
       </div>
@@ -1605,19 +1668,19 @@ footer nav a:hover {
         <h3>Owned Gear (On Request)</h3>
         <table>
           <tbody>
-            <tr><th>Continuous light (Bi-color COB light)</th><td>x1</td></tr>
-            <tr><th>Monoblock strobe</th><td>x1</td></tr>
-            <tr><th>Portable strobe</th><td>x1</td></tr>
-            <tr><th>Wireless commander (Canon dedicated)</th><td>x1</td></tr>
-            <tr><th>Wireless commander (SONY dedicated)</th><td>x1</td></tr>
-            <tr><th>Light stand (260cm)</th><td>x3</td></tr>
-            <tr><th>Bowens mount bracket</th><td>x1</td></tr>
-            <tr><th>Strip softbox (60 x 90cm)</th><td>x1</td></tr>
-            <tr><th>Strip softbox (30 x 120cm)</th><td>x1</td></tr>
-            <tr><th>Softbox (60cm)</th><td>x1</td></tr>
-            <tr><th>Background fabric (white/black) (180cm x 250cm)</th><td>x1 each</td></tr>
-            <tr><th>Background stand</th><td>x1</td></tr>
-            <tr><th>Color filter set (8 colors)</th><td>x1</td></tr>
+            <tr><th scope="row">Continuous light (Bi-color COB light)</th><td>x1</td></tr>
+            <tr><th scope="row">Monoblock strobe</th><td>x1</td></tr>
+            <tr><th scope="row">Portable strobe</th><td>x1</td></tr>
+            <tr><th scope="row">Wireless commander (Canon dedicated)</th><td>x1</td></tr>
+            <tr><th scope="row">Wireless commander (SONY dedicated)</th><td>x1</td></tr>
+            <tr><th scope="row">Light stand (260cm)</th><td>x3</td></tr>
+            <tr><th scope="row">Bowens mount bracket</th><td>x1</td></tr>
+            <tr><th scope="row">Strip softbox (60 x 90cm)</th><td>x1</td></tr>
+            <tr><th scope="row">Strip softbox (30 x 120cm)</th><td>x1</td></tr>
+            <tr><th scope="row">Softbox (60cm)</th><td>x1</td></tr>
+            <tr><th scope="row">Background fabric (white/black) (180cm x 250cm)</th><td>x1 each</td></tr>
+            <tr><th scope="row">Background stand</th><td>x1</td></tr>
+            <tr><th scope="row">Color filter set (8 colors)</th><td>x1</td></tr>
           </tbody>
         </table>
         <p class="equipment-note">Note: Owned gear is subject to availability and must be requested in advance at the time of booking.</p>
@@ -1634,24 +1697,24 @@ footer nav a:hover {
     <h2 class="section-title">Gallery</h2>
     <p class="section-subtitle">Sample Images</p>
     <div class="gallery-grid">
-      <div class="gallery-item"><img src="images/224A3274.jpg" alt="Studio interior example 1" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/224A3294.jpg" alt="Studio interior example 2" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/224A3295.jpg" alt="Studio interior example 3" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/224A3299.jpg" alt="Studio interior example 4" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/224a3228.jpeg" alt="Studio interior example 5" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/224a3237.jpeg" alt="Studio interior example 6" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/224a3254.jpeg" alt="Studio interior example 7" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
-      <div class="gallery-item"><img src="images/IMG_7421.jpeg" alt="Studio interior example 8" class="gallery-image cursor-pointer" role="button" tabindex="0"></div>
+      <div class="gallery-item"><img src="images/224A3274.jpg" alt="Studio interior example 1" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="Studio interior example 1 — click to enlarge" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/224A3294.jpg" alt="Studio interior example 2" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="Studio interior example 2 — click to enlarge" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/224A3295.jpg" alt="Studio interior example 3" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="Studio interior example 3 — click to enlarge" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/224A3299.jpg" alt="Studio interior example 4" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="Studio interior example 4 — click to enlarge" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/224a3228.jpeg" alt="Studio interior example 5" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="Studio interior example 5 — click to enlarge" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/224a3237.jpeg" alt="Studio interior example 6" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="Studio interior example 6 — click to enlarge" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/224a3254.jpeg" alt="Studio interior example 7" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="Studio interior example 7 — click to enlarge" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/IMG_7421.jpeg" alt="Studio interior example 8" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="Studio interior example 8 — click to enlarge" loading="lazy" decoding="async"></div>
     </div>
 
     <p class="color-grid-label">White Cyclorama &amp; Color Variations</p>
     <div class="color-grid">
-      <div class="gallery-item"><img src="images/IMG_7774.jpeg" alt="White cyclorama color variation 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
-      <div class="gallery-item"><img src="images/IMG_7775.jpeg" alt="White cyclorama color variation 2 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
-      <div class="gallery-item"><img src="images/IMG_7776.jpeg" alt="White cyclorama color variation 3 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
-      <div class="gallery-item"><img src="images/IMG_7777.jpeg" alt="White cyclorama color variation 4 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
-      <div class="gallery-item"><img src="images/IMG_7778.jpeg" alt="White cyclorama color variation 5 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
-      <div class="gallery-item"><img src="images/IMG_7779.jpeg" alt="White cyclorama color variation 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
+      <div class="gallery-item"><img src="images/IMG_7774.jpeg" alt="White cyclorama color variation 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="White cyclorama color variation 1 — click to enlarge" loading="lazy" decoding="async" fetchpriority="low"></div>
+      <div class="gallery-item"><img src="images/IMG_7775.jpeg" alt="White cyclorama color variation 2 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="White cyclorama color variation 2 — click to enlarge" loading="lazy" decoding="async" fetchpriority="low"></div>
+      <div class="gallery-item"><img src="images/IMG_7776.jpeg" alt="White cyclorama color variation 3 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="White cyclorama color variation 3 — click to enlarge" loading="lazy" decoding="async" fetchpriority="low"></div>
+      <div class="gallery-item"><img src="images/IMG_7777.jpeg" alt="White cyclorama color variation 4 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="White cyclorama color variation 4 — click to enlarge" loading="lazy" decoding="async" fetchpriority="low"></div>
+      <div class="gallery-item"><img src="images/IMG_7778.jpeg" alt="White cyclorama color variation 5 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="White cyclorama color variation 5 — click to enlarge" loading="lazy" decoding="async" fetchpriority="low"></div>
+      <div class="gallery-item"><img src="images/IMG_7779.jpeg" alt="White cyclorama color variation 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" aria-label="White cyclorama color variation 6 — click to enlarge" loading="lazy" decoding="async" fetchpriority="low"></div>
     </div>
 
     <p class="color-grid-label">Full-Color Lighting / Color Variations</p>
@@ -1676,21 +1739,29 @@ footer nav a:hover {
       <div class="pricing-card">
         <div class="pricing-card-header">Standard Rate</div>
         <table>
-          <tr><th>Duration</th><th>Weekend / Holiday</th><th>Weekday</th></tr>
-          <tr><td>2 hours</td><td>6,500 JPY</td><td>5,200 JPY</td></tr>
-          <tr><td>3 hours</td><td>9,750 JPY</td><td>7,800 JPY</td></tr>
-          <tr><td>4 hours</td><td>12,350 JPY</td><td>9,750 JPY</td></tr>
-          <tr><td>Extension (1h)</td><td>3,250 JPY</td><td>2,600 JPY</td></tr>
+          <thead>
+            <tr><th scope="col">Duration</th><th scope="col">Weekend / Holiday</th><th scope="col">Weekday</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>2 hours</td><td>6,500 JPY</td><td>5,200 JPY</td></tr>
+            <tr><td>3 hours</td><td>9,750 JPY</td><td>7,800 JPY</td></tr>
+            <tr><td>4 hours</td><td>12,350 JPY</td><td>9,750 JPY</td></tr>
+            <tr><td>Extension (1h)</td><td>3,250 JPY</td><td>2,600 JPY</td></tr>
+          </tbody>
         </table>
       </div>
       <div class="pricing-card">
         <div class="pricing-card-header">Member Rate</div>
         <table>
-          <tr><th>Duration</th><th>Weekend / Holiday</th><th>Weekday</th></tr>
-          <tr><td>2 hours</td><td>5,000 JPY</td><td>4,000 JPY</td></tr>
-          <tr><td>3 hours</td><td>7,500 JPY</td><td>6,000 JPY</td></tr>
-          <tr><td>4 hours</td><td>9,500 JPY</td><td>7,500 JPY</td></tr>
-          <tr><td>Extension (1h)</td><td>2,500 JPY</td><td>2,000 JPY</td></tr>
+          <thead>
+            <tr><th scope="col">Duration</th><th scope="col">Weekend / Holiday</th><th scope="col">Weekday</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>2 hours</td><td>5,000 JPY</td><td>4,000 JPY</td></tr>
+            <tr><td>3 hours</td><td>7,500 JPY</td><td>6,000 JPY</td></tr>
+            <tr><td>4 hours</td><td>9,500 JPY</td><td>7,500 JPY</td></tr>
+            <tr><td>Extension (1h)</td><td>2,500 JPY</td><td>2,000 JPY</td></tr>
+          </tbody>
         </table>
       </div>
     </div>
@@ -1857,10 +1928,14 @@ footer nav a:hover {
     <div class="legal-block" id="cancel">
       <h2>Cancellation Policy</h2>
       <table class="legal-table">
-        <tr><th>Cancellation timing</th><th>Cancellation fee</th></tr>
-        <tr><td>Up to 2 days before the booking date</td><td>Free</td></tr>
-        <tr><td>Cancellation on the previous day</td><td>50% of the usage fee</td></tr>
-        <tr><td>Same-day cancellation or no-show</td><td>100% of the usage fee</td></tr>
+        <thead>
+          <tr><th scope="col">Cancellation timing</th><th scope="col">Cancellation fee</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Up to 2 days before the booking date</td><td>Free</td></tr>
+          <tr><td>Cancellation on the previous day</td><td>50% of the usage fee</td></tr>
+          <tr><td>Same-day cancellation or no-show</td><td>100% of the usage fee</td></tr>
+        </tbody>
       </table>
       <ul style="margin-top: 16px;">
         <li>One date change is accepted free of charge up to the previous day.</li>
@@ -1890,7 +1965,7 @@ footer nav a:hover {
       <h3>5. Third-Party Provision</h3>
       <p>Information is not provided to third parties without the user's consent, except where required by law or necessary for urgent safety reasons.</p>
       <h3>6. External Services</h3>
-      <p>The studio uses X DM, Gmail, Google Calendar, PayPay, online payment providers, and financial institutions as part of its operations. Each external service is governed by its own privacy policy. The studio also uses Google Analytics 4 (Measurement ID: G-6TWDLEFWJT) on all pages to analyze website traffic. Access data is collected by Google via cookies and is managed according to Google's privacy policy.</p>
+      <p>The studio uses X DM, Gmail, Google Calendar, PayPay, online payment providers, and financial institutions as part of its operations. Each external service is governed by its own privacy policy. The studio also uses Google Analytics 4 (Measurement ID: G-6TWDLEFWJT) on all pages to analyze website traffic. Access data is collected by Google via cookies and is managed according to <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's privacy policy</a>.</p>
       <h3>7. Correction and Deletion of Information</h3>
       <p>Users may request disclosure, correction, or deletion of their information by contacting the studio through X or email.</p>
       <h3>8. Amendments</h3>
@@ -1899,17 +1974,19 @@ footer nav a:hover {
     <div class="legal-block" id="law">
       <h2>Commercial Disclosure</h2>
       <table class="legal-table">
-        <tr><th>Business name</th><td>Studio Nagoya Base<br>(Name, address, and phone number are omitted pursuant to the applicable Japanese law and will be disclosed without delay upon request.)</td></tr>
-        <tr><th>Location</th><td>Kamimaezu area, Naka Ward, Nagoya, Aichi, Japan. The detailed address will be disclosed without delay upon request.</td></tr>
-        <tr><th>Contact method</th><td>X DM or email.<br><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">@nagoyabase2023</a><br><a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a></td></tr>
-        <tr><th>Services provided</th><td>Rental of a photography studio and use of standard photo equipment and props. Owned gear is available on prior request.</td></tr>
-        <tr><th>Price</th><td>Please refer to the Pricing section on this page.</td></tr>
-        <tr><th>Payment methods</th><td>Cash, PayPay (on-site payment), and online credit card payment.</td></tr>
-        <tr><th>Payment timing</th><td>Online payment is completed when the booking is confirmed. Cash and PayPay (on-site payment) are paid on the day of use.</td></tr>
-        <tr><th>Service timing</th><td>The service is provided on the reserved date and time.</td></tr>
-        <tr><th>Cancellation</th><td>Please refer to the Cancellation Policy on this page.</td></tr>
-        <tr><th>Refunds</th><td>Refunds are handled according to the cancellation policy. In principle, no refund is provided after the service has been delivered, except where otherwise required.</td></tr>
-        <tr><th>Special conditions</th><td>Security cameras are installed because the facility is operated unattended. Bondage and suspension must be carried out safely and at the user's own responsibility. Sexual acts and use for sexual services are prohibited.</td></tr>
+        <tbody>
+          <tr><th scope="row">Business name</th><td>Studio Nagoya Base<br>(Name, address, and phone number are omitted pursuant to the applicable Japanese law and will be disclosed without delay upon request.)</td></tr>
+          <tr><th scope="row">Location</th><td>Kamimaezu area, Naka Ward, Nagoya, Aichi, Japan. The detailed address will be disclosed without delay upon request.</td></tr>
+          <tr><th scope="row">Contact method</th><td>X DM or email.<br><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">@nagoyabase2023</a><br><a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a></td></tr>
+          <tr><th scope="row">Services provided</th><td>Rental of a photography studio and use of standard photo equipment and props. Owned gear is available on prior request.</td></tr>
+          <tr><th scope="row">Price</th><td>Please refer to the Pricing section on this page.</td></tr>
+          <tr><th scope="row">Payment methods</th><td>Cash, PayPay (on-site payment), and online credit card payment.</td></tr>
+          <tr><th scope="row">Payment timing</th><td>Online payment is completed when the booking is confirmed. Cash and PayPay (on-site payment) are paid on the day of use.</td></tr>
+          <tr><th scope="row">Service timing</th><td>The service is provided on the reserved date and time.</td></tr>
+          <tr><th scope="row">Cancellation</th><td>Please refer to the Cancellation Policy on this page.</td></tr>
+          <tr><th scope="row">Refunds</th><td>Refunds are handled according to the cancellation policy. In principle, no refund is provided after the service has been delivered, except where otherwise required.</td></tr>
+          <tr><th scope="row">Special conditions</th><td>Security cameras are installed because the facility is operated unattended. Bondage and suspension must be carried out safely and at the user's own responsibility. Sexual acts and use for sexual services are prohibited.</td></tr>
+        </tbody>
       </table>
     </div>
   </div>
@@ -2073,6 +2150,33 @@ footer nav a:hover {
     }
   });
 })();
+</script>
+
+<!-- Cookie Consent Banner -->
+<div id="cookie-banner" class="cookie-banner" role="alert" aria-live="polite">
+  <p>This site uses Google Analytics (cookies) for access analysis. See our <a href="#privacy" style="color: var(--accent);">Privacy Policy</a> for details.</p>
+  <button id="cookie-accept" class="cookie-accept-btn">OK</button>
+</div>
+
+<script>
+(function () {
+  var banner = document.getElementById('cookie-banner');
+  if (!banner) return;
+  if (localStorage.getItem('cookie-consent') === '1') {
+    banner.classList.add('hidden');
+    return;
+  }
+  document.getElementById('cookie-accept').addEventListener('click', function () {
+    localStorage.setItem('cookie-consent', '1');
+    banner.classList.add('hidden');
+  });
+})();
+
+/* Add (opens in new window) aria-label to target=_blank links */
+document.querySelectorAll('a[target="_blank"]:not([aria-label])').forEach(function (a) {
+  var text = a.textContent.trim();
+  if (text) a.setAttribute('aria-label', text + ' (opens in new window)');
+});
 </script>
 
 </body>

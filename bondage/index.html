@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="index, follow">
 
 <title>名古屋・上前津の緊縛・吊り床対応スタジオ｜身体表現・ロープ撮影｜Studio Nagoya Base</title>
 
@@ -1428,10 +1429,73 @@ footer nav a:hover {
     min-height: 65vh;
   }
 }
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--accent);
+  color: #000;
+  padding: 8px 16px;
+  z-index: 9999;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 0 0 4px 0;
+}
+.skip-link:focus { top: 0; }
+.cookie-banner {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #1a1a1a;
+  border-top: 1px solid var(--accent);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  z-index: 9000;
+  font-size: 0.85rem;
+}
+.cookie-banner.hidden { display: none; }
+.cookie-banner p { margin: 0; }
+.cookie-accept-btn {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  padding: 8px 20px;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 </style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "LocalBusiness",
+  "name": "スタジオ名古屋ベース（緊縛・吊り床対応）",
+  "alternateName": "Studio Nagoya Base",
+  "description": "名古屋・上前津の緊縛・吊り床対応スタジオ。木組みの吊り床（高さ2350mm）完備。身体表現・ロープ撮影・ワークショップに対応。",
+  "url": "https://nagoya-base.github.io/Studio-nagoya-base/bondage/",
+  "image": "https://nagoya-base.github.io/Studio-nagoya-base/images/IMG_2311.jpeg",
+  "email": "nagoyabase2023@gmail.com",
+  "address": {
+    "@type": "PostalAddress",
+    "addressLocality": "名古屋市中区上前津周辺",
+    "addressRegion": "愛知県",
+    "addressCountry": "JP"
+  },
+  "priceRange": "¥¥",
+  "currenciesAccepted": "JPY",
+  "paymentAccepted": "現金, PayPay, クレジットカード"
+}
+</script>
 </head>
 
 <body>
+<a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
 
 <!-- ナビゲーション -->
 <nav class="site-nav" aria-label="サイトナビゲーション">
@@ -1482,7 +1546,7 @@ footer nav a:hover {
 </div>
 
 <!-- ヒーロー -->
-<div class="hero">
+<div id="main-content" class="hero">
   <div class="hero-overlay"></div>
   <div class="hero-content">
     <h1 class="hero-main">吊り床・身体表現の撮影スタジオ。</h1>
@@ -1605,37 +1669,37 @@ footer nav a:hover {
 
     <div class="features-grid">
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>本格的な吊り床設備</h3>
         <p>木組みの吊り床（高さ2350mm）を完備。竹吊りにも対応した本格的な緊縛スペースです。</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>プライベート空間</h3>
         <p>完全貸し切りで、周囲の目を気にせず撮影に集中できます。</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>フルカラー天井照明</h3>
         <p>色温度・色彩を自由に変えられる天井照明を常設。雰囲気に合わせた空間づくりができます。</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>機材の持ち込みOK</h3>
         <p>ストロボなどの撮影機材の持ち込みに対応しています。</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>撮影機材を無料貸し出し</h3>
         <p>パネルライト・背景紙・レフ板など、撮影に必要な基本機材を無料でご利用いただけます。簡単に使える機材ばかりです。</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>大型ミラー完備</h3>
         <p>1460×800mmの大型ミラーを設置。自撮りや構図確認、演出の幅が広がります。</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">◈</div>
+        <div class="feature-icon" aria-hidden="true">◈</div>
         <h3>スマートフォンでも本格撮影</h3>
         <p>ライティングが整い、スマートフォンでも綺麗に撮影できます。操作も簡単。一眼レフなら更に高いクオリティが実現できます。</p>
       </div>
@@ -1707,13 +1771,13 @@ footer nav a:hover {
         <p class="equipment-note" style="margin-bottom: 16px;">初心者でも簡単に使える機材ばかり。設置・操作のサポート説明は省略していますので、不安な点はお気軽にお問い合わせください。</p>
         <table>
           <tbody>
-            <tr><th>フルカラーパネルライト（定常光）</th><td>×1</td></tr>
-            <tr><th>バイカラーパネルライト（定常光）</th><td>×1</td></tr>
-            <tr><th>ライトスタンド（100〜190cm）</th><td>×2</td></tr>
-            <tr><th>背景ローラーサポート</th><td>×1</td></tr>
-            <tr><th>背景紙 ブラック（135cm×5m）</th><td>×1</td></tr>
-            <tr><th>背景紙 ホワイト（135cm×5m）</th><td>×1</td></tr>
-            <tr><th>レフ板 5-in-1（80cm）</th><td>×1</td></tr>
+            <tr><th scope="row">フルカラーパネルライト（定常光）</th><td>×1</td></tr>
+            <tr><th scope="row">バイカラーパネルライト（定常光）</th><td>×1</td></tr>
+            <tr><th scope="row">ライトスタンド（100〜190cm）</th><td>×2</td></tr>
+            <tr><th scope="row">背景ローラーサポート</th><td>×1</td></tr>
+            <tr><th scope="row">背景紙 ブラック（135cm×5m）</th><td>×1</td></tr>
+            <tr><th scope="row">背景紙 ホワイト（135cm×5m）</th><td>×1</td></tr>
+            <tr><th scope="row">レフ板 5-in-1（80cm）</th><td>×1</td></tr>
           </tbody>
         </table>
       </div>
@@ -1721,19 +1785,19 @@ footer nav a:hover {
         <h3>保有機材（応相談）</h3>
         <table>
           <tbody>
-            <tr><th>バイカラーCOBライト(定常光)</th><td>×1</td></tr>
-            <tr><th>モノブロックストロボ</th><td>×1</td></tr>
-            <tr><th>ポータブルストロボ</th><td>×1</td></tr>
-            <tr><th>ワイヤレスコマンダー（Canon専用）</th><td>×1</td></tr>
-            <tr><th>ワイヤレスコマンダー（SONY専用）</th><td>×1</td></tr>
-            <tr><th>ライトスタンド（260cm）</th><td>×3</td></tr>
-            <tr><th>ボーエンズマウントブラケット</th><td>×1</td></tr>
-            <tr><th>ストリップソフトボックス（60×90cm）</th><td>×1</td></tr>
-            <tr><th>ストリップソフトボックス（30×120cm）</th><td>×1</td></tr>
-            <tr><th>ソフトボックス（60cm）</th><td>×1</td></tr>
-            <tr><th>背景布（白/黒）（幅180cm×長さ250cm）</th><td>×各1</td></tr>
-            <tr><th>背景スタンド</th><td>×1</td></tr>
-            <tr><th>カラーフィルター（8色セット）</th><td>×1</td></tr>
+            <tr><th scope="row">バイカラーCOBライト(定常光)</th><td>×1</td></tr>
+            <tr><th scope="row">モノブロックストロボ</th><td>×1</td></tr>
+            <tr><th scope="row">ポータブルストロボ</th><td>×1</td></tr>
+            <tr><th scope="row">ワイヤレスコマンダー（Canon専用）</th><td>×1</td></tr>
+            <tr><th scope="row">ワイヤレスコマンダー（SONY専用）</th><td>×1</td></tr>
+            <tr><th scope="row">ライトスタンド（260cm）</th><td>×3</td></tr>
+            <tr><th scope="row">ボーエンズマウントブラケット</th><td>×1</td></tr>
+            <tr><th scope="row">ストリップソフトボックス（60×90cm）</th><td>×1</td></tr>
+            <tr><th scope="row">ストリップソフトボックス（30×120cm）</th><td>×1</td></tr>
+            <tr><th scope="row">ソフトボックス（60cm）</th><td>×1</td></tr>
+            <tr><th scope="row">背景布（白/黒）（幅180cm×長さ250cm）</th><td>×各1</td></tr>
+            <tr><th scope="row">背景スタンド</th><td>×1</td></tr>
+            <tr><th scope="row">カラーフィルター（8色セット）</th><td>×1</td></tr>
           </tbody>
         </table>
         <p class="equipment-note">※ 保有機材のご利用は、利用可否を含めご予約時にあらかじめご相談ください。</p>
@@ -1773,14 +1837,14 @@ footer nav a:hover {
 
     <p class="color-grid-label">スタジオ作例 / Gallery</p>
     <div class="gallery-grid">
-      <div class="gallery-item"><img src="../images/224A3274.jpg" alt="Studio Nagoya Base gallery image 1" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/224A3294.jpg" alt="Studio Nagoya Base gallery image 2" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/224A3295.jpg" alt="Studio Nagoya Base gallery image 3" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/224A3299.jpg" alt="Studio Nagoya Base gallery image 4" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/224a3228.jpeg" alt="Studio Nagoya Base gallery image 5" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/224a3237.jpeg" alt="Studio Nagoya Base gallery image 6" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/224a3254.jpeg" alt="Studio Nagoya Base gallery image 7" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/IMG_7421.jpeg" alt="Studio Nagoya Base gallery image 8" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="../images/224A3274.jpg" alt="Studio Nagoya Base gallery image 1" aria-label="ギャラリー画像 1 — クリックして拡大" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="../images/224A3294.jpg" alt="Studio Nagoya Base gallery image 2" aria-label="ギャラリー画像 2 — クリックして拡大" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="../images/224A3295.jpg" alt="Studio Nagoya Base gallery image 3" aria-label="ギャラリー画像 3 — クリックして拡大" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="../images/224A3299.jpg" alt="Studio Nagoya Base gallery image 4" aria-label="ギャラリー画像 4 — クリックして拡大" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="../images/224a3228.jpeg" alt="Studio Nagoya Base gallery image 5" aria-label="ギャラリー画像 5 — クリックして拡大" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="../images/224a3237.jpeg" alt="Studio Nagoya Base gallery image 6" aria-label="ギャラリー画像 6 — クリックして拡大" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="../images/224a3254.jpeg" alt="Studio Nagoya Base gallery image 7" aria-label="ギャラリー画像 7 — クリックして拡大" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="../images/IMG_7421.jpeg" alt="Studio Nagoya Base gallery image 8" aria-label="ギャラリー画像 8 — クリックして拡大" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
     </div>
 
     <p class="gallery-note">
@@ -1800,11 +1864,14 @@ footer nav a:hover {
       <div class="pricing-card">
         <div class="pricing-card-header">通常価格</div>
         <table>
+          <thead>
           <tr>
-            <th>時間</th>
-            <th>土日祝</th>
-            <th>平日</th>
+            <th scope="col">時間</th>
+            <th scope="col">土日祝</th>
+            <th scope="col">平日</th>
           </tr>
+          </thead>
+          <tbody>
           <tr>
             <td>2時間</td>
             <td>6,500円</td>
@@ -1825,17 +1892,21 @@ footer nav a:hover {
             <td>3,250円</td>
             <td>2,600円</td>
           </tr>
+          </tbody>
         </table>
       </div>
 
       <div class="pricing-card">
         <div class="pricing-card-header">会員価格</div>
         <table>
+          <thead>
           <tr>
-            <th>時間</th>
-            <th>土日祝</th>
-            <th>平日</th>
+            <th scope="col">時間</th>
+            <th scope="col">土日祝</th>
+            <th scope="col">平日</th>
           </tr>
+          </thead>
+          <tbody>
           <tr>
             <td>2時間</td>
             <td>5,000円</td>
@@ -1856,6 +1927,7 @@ footer nav a:hover {
             <td>2,500円</td>
             <td>2,000円</td>
           </tr>
+          </tbody>
         </table>
       </div>
     </div>
@@ -2158,10 +2230,13 @@ footer nav a:hover {
       <h2>キャンセルポリシー</h2>
 
       <table class="legal-table">
+        <thead>
         <tr>
-          <th>キャンセル時期</th>
-          <th>キャンセル料</th>
+          <th scope="col">キャンセル時期</th>
+          <th scope="col">キャンセル料</th>
         </tr>
+        </thead>
+        <tbody>
         <tr>
           <td>利用日の2日前まで</td>
           <td>無料</td>
@@ -2174,6 +2249,7 @@ footer nav a:hover {
           <td>当日キャンセル・無断キャンセル</td>
           <td>利用料金の100%</td>
         </tr>
+        </tbody>
       </table>
 
       <ul style="margin-top: 16px;">
@@ -2219,7 +2295,7 @@ footer nav a:hover {
       <p>法令に基づく場合や緊急の安全確保のため必要な場合を除き、本人の同意なく第三者に提供しません。決済処理等で外部サービスを利用する場合、そのサービス提供者に情報を共有することがあります。</p>
 
       <h3>6. 外部サービス</h3>
-      <p>予約受付にはX（旧Twitter）のDMまたはGmail（nagoyabase2023@gmail.com）を利用します。空き状況の確認にはGoogleカレンダーを利用します。決済にはPayPay株式会社、オンラインクレジットカード決済の提供事業者、金融機関等のサービスを利用します。当施設はクレジットカード情報を保有しません。外部サービスのプライバシーポリシーは各サービスの規定に従ってください。また、ウェブサイトのアクセス状況を分析するためにGoogleアナリティクス（Google Analytics 4、測定ID：G-6TWDLEFWJT）を全ページで利用しています。アクセス情報はCookieを通じてGoogleに送信・収集され、Googleのプライバシーポリシーに従い管理されます。</p>
+      <p>予約受付にはX（旧Twitter）のDMまたはGmail（nagoyabase2023@gmail.com）を利用します。空き状況の確認にはGoogleカレンダーを利用します。決済にはPayPay株式会社、オンラインクレジットカード決済の提供事業者、金融機関等のサービスを利用します。当施設はクレジットカード情報を保有しません。外部サービスのプライバシーポリシーは各サービスの規定に従ってください。また、ウェブサイトのアクセス状況を分析するためにGoogleアナリティクス（Google Analytics 4、測定ID：G-6TWDLEFWJT）を全ページで利用しています。アクセス情報はCookieを通じてGoogleに送信・収集され、<a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Googleのプライバシーポリシー</a>に従い管理されます。</p>
 
       <h3>7. 情報の訂正・削除</h3>
       <p>利用者は自身の情報について、開示・訂正・削除を求めることができます。X（旧Twitter）DM またはメール（<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a>）にてご連絡ください。</p>
@@ -2233,50 +2309,52 @@ footer nav a:hover {
       <h2>特定商取引法に基づく表記</h2>
 
       <table class="legal-table">
+        <tbody>
         <tr>
-          <th>事業者名</th>
+          <th scope="row">事業者名</th>
           <td>スタジオ名古屋ベース<br>（氏名・住所・電話番号は、特定商取引法第11条ただし書きにより省略しております。請求があった場合は遅滞なく開示いたします。）</td>
         </tr>
         <tr>
-          <th>所在地</th>
+          <th scope="row">所在地</th>
           <td>愛知県名古屋市中区上前津周辺。詳細は請求があった場合に遅滞なく開示します。</td>
         </tr>
         <tr>
-          <th>問い合わせ方法</th>
+          <th scope="row">問い合わせ方法</th>
           <td>X（旧Twitter）DM またはメールにて受け付けます。<br><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener">@nagoyabase2023</a><br><a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a></td>
         </tr>
         <tr>
-          <th>提供サービス</th>
+          <th scope="row">提供サービス</th>
           <td>レンタル撮影スタジオの貸出、および常設の撮影機材・備品の利用。保有機材は事前相談制です。無人運営による個室レンタルサービスです。</td>
         </tr>
         <tr>
-          <th>価格</th>
+          <th scope="row">価格</th>
           <td>本ページ「料金」欄をご確認ください。</td>
         </tr>
         <tr>
-          <th>支払方法</th>
+          <th scope="row">支払方法</th>
           <td>現金、PayPay（現地決済）、オンラインクレジットカード決済。</td>
         </tr>
         <tr>
-          <th>支払時期</th>
+          <th scope="row">支払時期</th>
           <td>オンライン決済は予約確定時。現金・PayPay（現地決済）は利用当日です。</td>
         </tr>
         <tr>
-          <th>サービス提供時期</th>
+          <th scope="row">サービス提供時期</th>
           <td>予約日時に提供します。</td>
         </tr>
         <tr>
-          <th>キャンセル</th>
+          <th scope="row">キャンセル</th>
           <td>本ページ内のキャンセルポリシーに従います。</td>
         </tr>
         <tr>
-          <th>返金</th>
+          <th scope="row">返金</th>
           <td>キャンセルポリシーに従って対応します。サービス提供後の返金には原則対応しておりません。トラブル・設備不具合等、運営側の責任による場合は別途ご相談ください。</td>
         </tr>
         <tr>
-          <th>特別な条件</th>
+          <th scope="row">特別な条件</th>
           <td>防犯カメラを設置しています（無人運営）。緊縛・吊りは安全に配慮し、利用者の責任で行ってください。性的行為・性的サービス目的での利用は禁止しています。</td>
         </tr>
+        </tbody>
       </table>
     </div>
 
