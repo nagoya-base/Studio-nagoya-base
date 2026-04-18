@@ -5,7 +5,8 @@
 ===================== */
 
 /* common.css の .hero-content には max-width: 600px と margin: 0 auto が含まれるが、
-   英語ページではコンテンツを自然な幅で表示するためこれを解除する。 */
+   英語ページではコンテンツを自然な幅で表示するためこれを解除する。
+   ※ 同一セレクタのため特異度は同じ（0,1,0）。en.css が common.css より後にロードされることで上書きが有効になる。 */
 .hero-content {
   max-width: none;
   margin-left: 0;
@@ -19,14 +20,6 @@
   line-height: 1.4;
   margin-bottom: 20px;
   color: #f0f0f0;
-}
-
-.hero-desc {
-  font-size: 0.95rem;
-  color: var(--text-muted);
-  max-width: 560px;
-  margin: 0 auto 40px;
-  line-height: 2;
 }
 
 /* =====================
@@ -70,10 +63,6 @@
 ===================== */
 /* common.css では '–'（ダッシュ）を使用しているが、EN ページでは '-'（ハイフン）を使用 */
 .legal-block ul li::before {
-  content: '-';
-}
-
-.equipment-list li::before {
   content: '-';
 }
 
