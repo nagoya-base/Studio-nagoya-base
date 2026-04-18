@@ -1,0 +1,76 @@
+/* styles/en.css – en.html 固有スタイル */
+
+/* =====================
+   ヒーロー（EN 固有）
+===================== */
+
+/* common.css の .hero-content には max-width: 600px と margin: 0 auto が含まれるが、
+   英語ページではコンテンツを自然な幅で表示するためこれを解除する。
+   ※ 同一セレクタのため特異度は同じ（0,1,0）。en.css が common.css より後にロードされることで上書きが有効になる。 */
+.hero-content {
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.hero h1 {
+  font-size: clamp(1.8rem, 5vw, 3rem);
+  font-weight: 300;
+  letter-spacing: 0.1em;
+  line-height: 1.4;
+  margin-bottom: 20px;
+  color: #f0f0f0;
+}
+
+/* =====================
+   情報グリッド（EN 固有）
+===================== */
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.info-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 28px 24px;
+  border-radius: var(--radius);
+}
+
+.info-card h3 {
+  font-size: 1rem;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+
+.info-card p,
+.info-card li {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+.info-card ul {
+  list-style: none;
+}
+
+.info-card li + li {
+  margin-top: 8px;
+}
+
+/* =====================
+   リストマーカー（EN 固有）
+===================== */
+/* common.css では '–'（ダッシュ）を使用しているが、EN ページでは '-'（ハイフン）を使用 */
+.legal-block ul li::before {
+  content: '-';
+}
+
+/* =====================
+   レスポンシブ（EN 固有）
+===================== */
+@media (max-width: 768px) {
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+}

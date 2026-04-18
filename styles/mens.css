@@ -1,0 +1,46 @@
+/* styles/mens.css – mens/index.html 固有スタイル */
+
+/* =====================
+   会員バナー
+===================== */
+.member-banner {
+  background: rgba(200, 169, 110, 0.08);
+  border: 1px solid var(--accent-dark);
+  border-radius: var(--radius);
+  padding: 20px 28px;
+  margin-bottom: 32px;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.member-banner-icon {
+  color: var(--accent);
+  font-size: 1.3rem;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.member-banner-text {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  line-height: 1.9;
+}
+
+.member-banner-text strong {
+  color: var(--accent);
+  display: block;
+  font-size: 1rem;
+  margin-bottom: 4px;
+}
+
+/* =====================
+   会員プラン料金カード
+===================== */
+.pricing-card.is-member {
+  border-color: var(--accent-dark);
+}
+
+.pricing-card.is-member .pricing-card-header {
+  background: rgba(200, 169, 110, 0.12);
+}

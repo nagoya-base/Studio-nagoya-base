@@ -1,0 +1,5 @@
+/* styles/home.css – index.html 固有スタイル */
+/* index.html 固有のスタイルはなし。
+   common.css の url('../images/...') はCSSファイルの位置（styles/）から解決されるため、
+   どのHTMLページからロードされても同じ画像パスで正しく機能する。 */
+
