@@ -1,0 +1,4 @@
+/* styles/home.css – index.html 固有スタイル */
+/* 共通スタイルは styles/common.css に定義済み。
+   index.html は common.css のヒーロー背景画像パス（images/IMG_2311.jpeg）を
+   そのまま使用するため、追加のオーバーライドは不要。 */

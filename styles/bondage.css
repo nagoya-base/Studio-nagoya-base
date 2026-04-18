@@ -1,0 +1,10 @@
+/* styles/bondage.css – bondage/index.html 固有スタイル */
+
+/* =====================
+   ヒーロー背景画像パス（サブディレクトリ対応）
+===================== */
+/* common.css のパス（images/...）はルートからの相対パスのため、
+   サブディレクトリ（bondage/）からは ../images/ に上書きする。 */
+.hero {
+  background-image: url('../images/IMG_2311.jpeg');
+}
