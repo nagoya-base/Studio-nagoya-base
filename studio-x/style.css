@@ -108,11 +108,6 @@ nav {
   padding: 120px 60px 80px;
   position: relative;
   overflow: hidden;
-  background-image:
-    linear-gradient(rgba(6,6,16,0.68), rgba(6,6,16,0.68)),
-    url('../images/IMG_2311.jpeg');
-  background-size: cover;
-  background-position: center;
 }
 
 #hero::before {
