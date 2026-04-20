@@ -15,4 +15,9 @@
   <url>
     <loc>https://nagoya-base.github.io/Studio-nagoya-base/mens/</loc>
   </url>
+  <url>
+    <loc>https://nagoya-base.github.io/Studio-nagoya-base/studio-x/</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
 </urlset>
