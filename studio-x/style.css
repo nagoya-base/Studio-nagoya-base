@@ -522,9 +522,11 @@ section { padding: 100px 60px; position: relative; }
 
 .price-regular {
   font-size: 0.65rem;
-  color: rgba(120,120,160,0.4);
+  color: rgba(120,120,160,0.6);
   line-height: 1.6;
   margin-top: 4px;
+  text-decoration: line-through;
+  text-decoration-style: double;
 }
 
 .price-sub {
