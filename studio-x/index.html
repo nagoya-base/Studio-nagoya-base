@@ -12,7 +12,7 @@
   <meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/IMG_2311.jpeg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/IMG_2311.jpeg">
-  <link rel="apple-touch-icon" href="../images/IMG_8323.jpeg">
+  <link rel="apple-touch-icon" href="touch-icon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Noto+Sans+JP:wght@300;400;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
@@ -42,7 +42,7 @@
     <span class="line2">X</span>
   </h1>
   <p class="hero-subtitle">
-    大須商店街の路地裏に潜む、<em>完全個室の撮影スタジオ</em>。<br>
+    大須商店街すぐそこ、上前津駅から徒歩8分。<em>完全個室の撮影スタジオ</em>。<br>
     唯一無二のX型木組みとネオンカラーが、<br>
     あなたの世界観を限界まで引き出す。<br>
     <em>ポトレ・コスプレ・特殊撮影</em>（特殊撮影の詳細はDMにて）
@@ -66,7 +66,7 @@
         この街には<strong>あらゆる表現者</strong>が集まる。
       </p>
       <p>
-        Studio Xは、そんな大須の空気を吸って育った<strong>隠れ家スタジオ</strong>。<br>
+        Studio Xは、大須商店街からすぐの<strong>隠れ家スタジオ</strong>。<br>
         完全個室・無人運営だから、カメラを向けた瞬間から<br>
         あなたと被写体だけの世界が始まる。
       </p>
@@ -82,7 +82,10 @@
         <span class="corner corner-tr"></span>
         <span class="corner corner-bl"></span>
         <span class="corner corner-br"></span>
-        <img src="../images/IMG_2311.jpeg" alt="Studio X – スタジオ内観" class="concept-photo">
+        <div class="concept-photos">
+          <img src="../images/IMG_2311.jpeg" alt="Studio X – X型木組み背景" class="concept-photo">
+          <img src="../images/IMG_2315.jpeg" alt="Studio X – 机とピンク照明" class="concept-photo">
+        </div>
       </div>
     </div>
   </div>
@@ -166,6 +169,10 @@
 <section id="price">
   <p class="section-label">Price</p>
   <h2 class="section-title">料金プラン</h2>
+  <div class="price-discount-banner">
+    <span class="discount-badge">15% OFF</span>
+    スペースマーケット経由で予約すると通常料金より<strong>15%お得</strong>
+  </div>
   <p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:36px;letter-spacing:0.05em;">
     ※ 人数追加料金なし（最大4名）　※ SpaceMarket経由でご予約ください　※ 平日午後の当日予約も歓迎
   </p>
@@ -218,7 +225,8 @@
       <dt>Hours</dt>
       <dd>8:00 – 23:00（年中無休）</dd>
       <dt>Parking</dt>
-      <dd>近隣にコインパーキングあり</dd>
+      <dd>近隣にコインパーキングあり<br>
+      <small style="color:var(--neon-cyan);font-size:0.8rem;">※ 20時以降 最大300円上限</small></dd>
       <dt>SNS</dt>
       <dd>
         <a href="https://x.com/studiox2026" target="_blank" rel="noopener" style="color:var(--neon-purple);text-decoration:none;">
@@ -227,10 +235,14 @@
       </dd>
     </dl>
 
-    <div class="map-placeholder">
-      <div class="map-pin">📍</div>
-      <div class="map-label">Studio X</div>
-      <div class="map-address">名古屋市中区富士見町 / 大須エリア<br>上前津駅・東別院駅 各徒歩8分</div>
+    <div class="map-embed">
+      <iframe
+        src="https://www.google.com/maps?q=愛知県名古屋市中区富士見町5-24&output=embed&hl=ja"
+        width="100%" height="100%"
+        style="border:0;" allowfullscreen="" loading="lazy"
+        referrerpolicy="no-referrer-when-downgrade"
+        title="Studio X アクセスマップ">
+      </iframe>
     </div>
   </div>
 </section>

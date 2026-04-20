@@ -444,6 +444,22 @@ section { padding: 100px 60px; position: relative; }
 /* ── PRICE SECTION ── */
 #price { background: var(--dark); }
 
+.price-discount-banner {
+  display: flex; align-items: center; gap: 14px;
+  background: linear-gradient(90deg, rgba(201,64,255,0.15), rgba(255,45,155,0.08));
+  border: 1px solid var(--neon-purple);
+  box-shadow: var(--glow-purple);
+  padding: 14px 20px;
+  margin-bottom: 28px;
+  max-width: 900px;
+  font-size: 0.85rem; color: var(--text); letter-spacing: 0.05em;
+}
+.discount-badge {
+  font-family: 'Orbitron', monospace; font-weight: 900;
+  font-size: 1.1rem; color: var(--neon-purple);
+  text-shadow: var(--glow-purple); white-space: nowrap;
+}
+
 .price-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -541,44 +557,19 @@ section { padding: 100px 60px; position: relative; }
   line-height: 1.7;
 }
 
-.map-placeholder {
+.map-embed {
   aspect-ratio: 4/3;
-  background: var(--dark3);
   border: 1px solid rgba(201,64,255,0.2);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 12px;
-  position: relative;
   overflow: hidden;
 }
-.map-placeholder::before {
-  content: '';
-  position: absolute; inset: 0;
-  background:
-    linear-gradient(rgba(0,245,255,0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,245,255,0.04) 1px, transparent 1px);
-  background-size: 30px 30px;
-}
-.map-pin {
-  font-size: 2.5rem;
-  filter: drop-shadow(0 0 12px rgba(201,64,255,0.8));
-  animation: pinFloat 2s ease-in-out infinite;
-}
-@keyframes pinFloat {
-  0%, 100% { transform: translateY(0); }
-  50%       { transform: translateY(-8px); }
-}
-.map-label {
-  font-family: 'Orbitron', monospace;
-  font-size: 0.75rem;
-  color: var(--neon-purple);
-  letter-spacing: 0.1em;
-}
-.map-address {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 0.65rem;
-  color: var(--text-dim);
-  letter-spacing: 0.05em;
-  text-align: center;
+.map-embed iframe { display: block; }
+
+.concept-photos {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
 }
 
 /* ── CTA SECTION ── */
