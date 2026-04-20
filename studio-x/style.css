@@ -495,9 +495,9 @@ section { padding: 100px 60px; position: relative; }
   font-family: 'Orbitron', monospace;
   font-weight: 900;
   font-size: 2rem;
-  color: #fff;
+  color: var(--neon-cyan);
   line-height: 1;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 .price-card.featured .price-amount {
   color: var(--neon-purple);
@@ -506,15 +506,25 @@ section { padding: 100px 60px; position: relative; }
 
 .price-unit {
   font-family: 'Share Tech Mono', monospace;
-  font-size: 0.7rem;
-  color: var(--text-dim);
-  margin-bottom: 16px;
+  font-size: 0.65rem;
+  color: var(--neon-cyan);
+  margin-bottom: 10px;
+  letter-spacing: 0.05em;
 }
+.price-card.featured .price-unit { color: var(--neon-purple); }
 
 .price-note {
-  font-size: 0.75rem;
-  color: rgba(120,120,160,0.7);
+  font-size: 0.8rem;
+  color: var(--text);
   line-height: 1.6;
+  margin-bottom: 8px;
+}
+
+.price-regular {
+  font-size: 0.65rem;
+  color: rgba(120,120,160,0.4);
+  line-height: 1.6;
+  margin-top: 4px;
 }
 
 .price-sub {
