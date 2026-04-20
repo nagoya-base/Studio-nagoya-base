@@ -331,14 +331,11 @@ section { padding: 100px 60px; position: relative; }
   background: radial-gradient(ellipse at center, rgba(201,64,255,0.15) 0%, transparent 70%);
 }
 
-.concept-frame-x {
-  font-family: 'Orbitron', monospace;
-  font-size: 120px;
-  font-weight: 900;
-  color: transparent;
-  -webkit-text-stroke: 2px var(--neon-purple);
-  text-shadow: var(--glow-purple);
-  animation: xPulse 4s ease-in-out infinite;
+.concept-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .corner {
