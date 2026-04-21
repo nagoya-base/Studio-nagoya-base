@@ -659,7 +659,7 @@ body.has-booking-banner .hero {
 
 .pricing-discount-badge {
   display: inline-block;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   background: rgba(200, 169, 110, 0.15);
   color: var(--accent);
   border: 1px solid var(--accent-dark);
@@ -678,7 +678,7 @@ body.has-booking-banner .hero {
   border-left: 2px solid var(--accent-dark);
   border-radius: 0 var(--radius) var(--radius) 0;
   font-size: 0.8rem;
-  color: var(--accent);
+  color: var(--text);
 }
 
 .pricing-note {
@@ -1201,6 +1201,12 @@ footer nav a:hover {
 
   .pricing-grid {
     grid-template-columns: 1fr;
+  }
+
+  .pricing-discount-badge {
+    display: block;
+    margin-left: 0;
+    margin-top: 3px;
   }
 
   .equipment-grid {
