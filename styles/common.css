@@ -653,6 +653,34 @@ body.has-booking-banner .hero {
   font-weight: 500;
 }
 
+.pricing-highlight-row {
+  background: rgba(200, 169, 110, 0.07);
+}
+
+.pricing-discount-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  background: rgba(200, 169, 110, 0.15);
+  color: var(--accent);
+  border: 1px solid var(--accent-dark);
+  border-radius: 2px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.pricing-extension-note {
+  margin-top: 12px;
+  padding: 10px 16px;
+  background: rgba(200, 169, 110, 0.06);
+  border-left: 2px solid var(--accent-dark);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
 .pricing-note {
   font-size: 0.8rem;
   color: var(--text-muted);
@@ -1173,6 +1201,12 @@ footer nav a:hover {
 
   .pricing-grid {
     grid-template-columns: 1fr;
+  }
+
+  .pricing-discount-badge {
+    display: block;
+    margin-left: 0;
+    margin-top: 3px;
   }
 
   .equipment-grid {
