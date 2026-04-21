@@ -453,7 +453,6 @@ section { padding: 100px 60px; position: relative; }
   margin-bottom: 28px;
   max-width: 900px;
   font-size: 0.85rem; color: var(--text); letter-spacing: 0.05em;
-  word-break: keep-all; line-break: strict;
 }
 .discount-badge {
   font-family: 'Orbitron', monospace; font-weight: 900;
