@@ -915,6 +915,8 @@ details.faq-item summary:hover {
   margin-bottom: 56px;
 }
 
+/* legal-block-title: <h2> から <h3 class="legal-block-title"> に変更した法的ブロックタイトル用
+   （.legal-block h3 はサブセクション見出しに使用するため、クラスで区別） */
 .legal-block .legal-block-title {
   font-size: 1.1rem;
   font-weight: 400;
