@@ -875,6 +875,15 @@ footer {
   top: 3px;
 }
 
+.guide-image-wrap {
+  margin-top: 3rem;
+  text-align: center;
+}
+.guide-image-wrap img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+
 /* ── VIBES SECTION ── */
 #vibes {
   background: var(--dark);
