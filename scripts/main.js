@@ -1,3 +1,21 @@
+/* scroll-padding-top sync: keeps anchor targets below sticky nav + fixed booking banner */
+(function () {
+  var siteNav       = document.querySelector('nav.site-nav');
+  var bookingBanner = document.querySelector('.booking-fixed-banner');
+  if (!siteNav) return;
+  function syncScrollPadding() {
+    var navHeight    = siteNav.offsetHeight;
+    var bannerHeight = bookingBanner ? bookingBanner.offsetHeight : 0;
+    document.documentElement.style.scrollPaddingTop = (navHeight + bannerHeight) + 'px';
+  }
+  syncScrollPadding();
+  var scrollPaddingResizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(scrollPaddingResizeTimer);
+    scrollPaddingResizeTimer = setTimeout(syncScrollPadding, 100);
+  });
+})();
+
 /* Hero padding adjustment for fixed booking banner */
 (function () {
   var banner = document.querySelector('.booking-fixed-banner');
