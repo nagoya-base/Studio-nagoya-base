@@ -108,6 +108,9 @@ nav {
   padding: 120px 60px 80px;
   position: relative;
   overflow: hidden;
+  background-image: url("images/hero.png");
+  background-size: cover;
+  background-position: center;
 }
 
 #hero::before {
