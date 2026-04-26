@@ -3,26 +3,37 @@
 Studio Nagoya Base の静的サイト一式です。GitHub Pages で公開する前提の構成です。
 
 公開 URL:
-- Japanese: `https://nagoya-base.github.io/Studio-nagoya-base/`
-- English: `https://nagoya-base.github.io/Studio-nagoya-base/en.html`
+- 日本語トップ: `https://nagoya-base.github.io/Studio-nagoya-base/`
+- 英語: `https://nagoya-base.github.io/Studio-nagoya-base/en.html`
+- メンズ向け: `https://nagoya-base.github.io/Studio-nagoya-base/mens/`
+- 緊縛・吊り床: `https://nagoya-base.github.io/Studio-nagoya-base/bondage/`
+- Studio X: `https://nagoya-base.github.io/Studio-nagoya-base/studio-x/`
 
 ## ファイル構成
 
-- `index.html`
-  日本語トップページ
-- `en.html`
-  英語ページ
-- `224a3228.jpeg`
-- `224a3237.jpeg`
-- `224a3254.jpeg`
-- `IMG_7421.jpeg`
-  ギャラリー画像と OGP 用画像
-- `logo.svg`
-  ロゴ画像
-- `sitemap.xml`
-  検索エンジン向けサイトマップ
-- `robots.txt`
-  クローラー向け設定
+```
+/
+├── index.html          日本語トップページ
+├── en.html             英語ページ
+├── sitemap.xml         検索エンジン向けサイトマップ
+├── robots.txt          クローラー向け設定
+├── images/             画像ファイル一式（ギャラリー・OGP・ロゴ・ファビコン）
+├── styles/             共通・ページ別 CSS
+│   ├── common.css
+│   ├── home.css
+│   ├── en.css
+│   ├── mens.css
+│   └── bondage.css
+├── scripts/
+│   └── main.js         共通 JavaScript
+├── mens/
+│   └── index.html      メンズ向けページ
+├── bondage/
+│   └── index.html      緊縛・吊り床ページ
+└── studio-x/
+    ├── index.html      Studio X ページ
+    └── style.css       Studio X 専用スタイル
+```
 
 ## 編集ポイント
 
@@ -44,25 +55,30 @@ Studio Nagoya Base の静的サイト一式です。GitHub Pages で公開する
 
 日本語ページの内容変更に合わせて、必要な範囲で英語ページも更新してください。
 
-### 3. 画像を差し替える
+### 3. サブページを編集する
 
-画像ファイルをリポジトリ直下に配置し、HTML 内の `src` と `href` を差し替えます。
+| ページ | ファイル | 内容 |
+|--------|----------|------|
+| メンズ向け | `mens/index.html` | ユニフォーム×ロープ表現・男性向け撮影 |
+| 緊縛・吊り床 | `bondage/index.html` | 緊縛・吊り床（高さ2350mm）対応スタジオ |
+| Studio X | `studio-x/index.html` | カラー照明・無人レンタルスタジオ |
 
-現在のギャラリー画像:
-- `224a3228.jpeg`
-- `224a3237.jpeg`
-- `224a3254.jpeg`
-- `IMG_7421.jpeg`
+### 4. 画像を差し替える
+
+画像ファイルは `images/` フォルダに配置し、HTML 内の `src` と `href` を差し替えます。
 
 ギャラリーは画像クリックで元画像を開く仕様です。
 
-### 4. OGP を更新する
+### 5. OGP を更新する
 
 OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 
-更新箇所:
+更新対象ファイル:
 - `index.html`
 - `en.html`
+- `mens/index.html`
+- `bondage/index.html`
+- `studio-x/index.html`
 
 主な設定:
 - `og:title`
@@ -74,17 +90,13 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 
 画像を差し替えた場合は `og:image` も合わせて更新してください。
 
-### 5. 規約や料金を更新したとき
+### 6. 規約や料金を更新したとき
 
 利用規約や料金表を更新した場合は、`index.html` のニュース欄にも必ず告知を追加してください。
 
 対応の目安:
 - 規約改定: 効力発生日の 14 日前までにニュース掲載
 - 料金改定: 効力発生日の 30 日前までにニュース掲載
-
-今回の反映例:
-- 利用規約の新ルール有効日: `2026/4/15`
-- 新料金の適用開始日: `2026/5/1`
 
 ニュースに入れる内容の例:
 - 改定した内容の要点
@@ -99,7 +111,7 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 - `nagoya-base/Studio-nagoya-base`
 
 基本の流れ:
-1. ローカルで `index.html` などを編集
+1. ローカルで HTML / CSS / 画像などを編集
 2. 変更内容を確認
 3. Git にコミット
 4. GitHub に push
@@ -108,6 +120,7 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 反映後の確認ポイント:
 - 日本語ページが開く
 - `EN` から `en.html` に遷移できる
+- 各サブページ（mens / bondage / studio-x）が開く
 - ギャラリー画像が表示される
 - 画像クリックで元画像が開く
 - OGP が正しい画像とタイトルで出る
@@ -130,28 +143,25 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 
 - 規約や料金を更新した場合、ニュース欄にも告知を追加したか
 - 文言変更が日本語ページと英語ページでずれていないか
+- 画像ファイルが `images/` フォルダに配置されているか
 - 画像ファイル名に誤りがないか
 - OGP の URL と画像が実在するか
 - `sitemap.xml` の URL が最新か
 - 外部リンクや予約導線が正しいか
+- 新しいページを追加した場合、ナビゲーション・フッター・`sitemap.xml` も更新したか
 
 ## アクセス数の計測（Google Analytics 4）
 
-各ページに Google Analytics 4 (GA4) のトラッキングコードを追加しています。  
-アクセス数を確認するには、以下の手順で GA4 測定 ID を設定してください。
+各ページに Google Analytics 4 (GA4) のトラッキングコードを設定済みです（測定 ID: `G-6TWDLEFWJT`）。
 
-### GA4 測定 ID の設定手順
+[GA4 管理画面](https://analytics.google.com/) の「レポート」→「リアルタイム」でアクセスを確認できます。
 
-1. [Google Analytics](https://analytics.google.com/) にアクセスし、Google アカウントでログインします
-2. 「管理」→「プロパティを作成」から新しいプロパティを作成します
-3. 「データストリーム」→「ウェブ」を選択し、サイト URL（`https://nagoya-base.github.io/Studio-nagoya-base/`）を入力します
-4. 発行された **測定 ID**（`G-XXXXXXXXXX` 形式）をコピーします
-5. 以下の 3 ファイルで `G-XXXXXXXXXX` を実際の測定 ID に置き換えます：
-   - `index.html`（2 箇所）
-   - `en.html`（2 箇所）
-   - `mens.html`（2 箇所）
-
-設定後、[GA4 管理画面](https://analytics.google.com/) の「レポート」→「リアルタイム」でアクセスを確認できます。
+測定 ID を変更する場合は、以下のファイルの `G-6TWDLEFWJT` をすべて置き換えてください:
+- `index.html`
+- `en.html`
+- `mens/index.html`
+- `bondage/index.html`
+- `studio-x/index.html`
 
 ### 確認できる主な指標
 
@@ -165,6 +175,6 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 ## メモ
 
 - このリポジトリはビルド不要の静的 HTML サイトです
-- CSS と JavaScript は各 HTML ファイル内にインラインで記述しています
-- ページ追加時はナビゲーションとフッター導線も合わせて更新すると運用しやすいです
-- 新しいページを追加した場合は、同様に GA4 トラッキングコードを `<head>` 内に追加してください
+- CSS は `styles/` フォルダに、JavaScript は `scripts/main.js` に分離されています（Studio X は `studio-x/style.css` を使用）
+- 画像は `images/` フォルダにまとめて管理しています（Studio X サブページの画像を除く）
+- 新しいページを追加した場合は、ナビゲーション・フッター導線・GA4 トラッキングコードも合わせて追加してください
