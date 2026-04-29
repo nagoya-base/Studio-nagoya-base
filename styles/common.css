@@ -1527,6 +1527,10 @@ section#cta {
   margin-top: 20px;
 }
 
+.cta-hint strong {
+  color: var(--accent);
+}
+
 /* 料金テーブル – 価格セル */
 .td-price {
   text-align: right;
