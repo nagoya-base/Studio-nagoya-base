@@ -29,4 +29,16 @@
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
+  <url>
+    <loc>https://nagoya-base.github.io/Studio-nagoya-base/legal/</loc>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/legal/" />
+    <xhtml:link rel="alternate" hreflang="en" href="https://nagoya-base.github.io/Studio-nagoya-base/legal/en.html" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://nagoya-base.github.io/Studio-nagoya-base/legal/en.html" />
+  </url>
+  <url>
+    <loc>https://nagoya-base.github.io/Studio-nagoya-base/legal/en.html</loc>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/legal/" />
+    <xhtml:link rel="alternate" hreflang="en" href="https://nagoya-base.github.io/Studio-nagoya-base/legal/en.html" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://nagoya-base.github.io/Studio-nagoya-base/legal/en.html" />
+  </url>
 </urlset>
