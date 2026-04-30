@@ -1018,9 +1018,11 @@ footer {
   .btn-primary, .btn-secondary { text-align: center; }
   .samples-bento { grid-template-columns: 1fr; }
   .sb-item.sb-maid,
+  .sb-item.sb-gothic,
   .sb-item.sb-neon,
-  .sb-item.sb-wagasa { grid-column: span 1; }
-  .sb-item.sb-gothic { grid-row: span 1; }
+  .sb-item.sb-horror,
+  .sb-item.sb-wagasa,
+  .sb-item.sb-darkclass { grid-column: auto; grid-row: auto; }
 }
 
 /* ── SAMPLES（スタジオ作例ギャラリー） ── */
@@ -1032,23 +1034,25 @@ footer {
 .samples-bento {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-auto-rows: 180px;
   gap: 8px;
   max-width: 1100px;
   margin-top: 56px;
 }
 
-/* ベントーレイアウト */
-.sb-item.sb-maid   { grid-column: 1 / 3; }           /* wide – row 1 */
-.sb-item.sb-gothic { grid-column: 3 / 4; grid-row: 1 / 3; } /* tall – rows 1–2 */
-.sb-item.sb-neon   { grid-column: 1 / 3; }           /* wide – row 2 */
-/* dark-class, horror, wagasa – auto placement: row 3 */
+/* ベントーレイアウト – 各画像の実際のアスペクト比に合わせる */
+.sb-item.sb-maid     { grid-column: 1 / 3; grid-row: 1; aspect-ratio: 16/9; }  /* 1672×941 */
+.sb-item.sb-gothic   { grid-column: 3;     grid-row: 1; aspect-ratio: 3/4; }   /* 1086×1448 */
+.sb-item.sb-neon     { grid-column: 1 / 3; grid-row: 2; aspect-ratio: 1/1; }   /* 1254×1254 */
+.sb-item.sb-horror   { grid-column: 3;     grid-row: 2; aspect-ratio: 9/16; }  /* 941×1672 */
+.sb-item.sb-wagasa   { grid-column: 1 / 3; grid-row: 3; aspect-ratio: 16/9; }  /* sample-oiran.png 1364×768 */
+.sb-item.sb-darkclass{ grid-column: 3;     grid-row: 3; aspect-ratio: 4/3; }   /* 1448×1086 */
 
 .sb-item {
   position: relative;
   overflow: hidden;
   border-radius: 2px;
   background: var(--dark3);
+  align-self: start;
 }
 
 .sb-item img {
@@ -1105,9 +1109,13 @@ footer {
 @media (max-width: 768px) {
   .samples-bento {
     grid-template-columns: 1fr 1fr;
-    grid-auto-rows: 150px;
   }
   .sb-item.sb-maid,
+  .sb-item.sb-gothic,
+  .sb-item.sb-neon,
+  .sb-item.sb-horror,
+  .sb-item.sb-wagasa,
+  .sb-item.sb-darkclass { grid-column: auto; grid-row: auto; }
+  .sb-item.sb-maid,
   .sb-item.sb-neon  { grid-column: 1 / 3; }
-  .sb-item.sb-gothic { grid-column: span 1; grid-row: span 1; }
 }
