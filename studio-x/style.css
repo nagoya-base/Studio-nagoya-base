@@ -534,7 +534,7 @@ section { padding: 100px 60px; position: relative; }
 .price-card.featured .price-unit { color: var(--neon-purple); }
 
 .price-note {
-  font-size: 0.8rem;
+  font-size: 1rem;
   color: var(--text);
   line-height: 1.6;
   margin-bottom: 8px;
