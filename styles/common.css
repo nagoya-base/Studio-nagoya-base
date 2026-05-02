@@ -1591,6 +1591,114 @@ p.pricing-note + p.pricing-note {
   margin-top: 20px;
 }
 
+/* =====================
+   予約の流れ
+===================== */
+.flow-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 40px;
+}
+
+.flow-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.flow-item:last-child {
+  border-bottom: none;
+}
+
+.flow-step {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
+}
+
+.flow-body {
+  flex: 1;
+}
+
+.flow-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+  letter-spacing: 0.04em;
+}
+
+.flow-desc {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.8;
+}
+
+.flow-after {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  margin-bottom: 40px;
+}
+
+.flow-after-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.1em;
+  margin-bottom: 16px;
+}
+
+.flow-after-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.flow-after-list li {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding-left: 1.4em;
+  position: relative;
+  line-height: 1.8;
+}
+
+.flow-after-list li::before {
+  content: '–';
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+}
+
+@media (max-width: 600px) {
+  .flow-step {
+    width: 36px;
+    height: 36px;
+    font-size: 0.85rem;
+  }
+
+  .flow-item {
+    gap: 16px;
+  }
+}
+
 /* ギャラリーノート 余白付き */
 .gallery-note-spaced {
   margin-top: 20px;
