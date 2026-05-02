@@ -1502,6 +1502,13 @@ section#cta {
   font-weight: 600;
 }
 
+/* ナビ 現在ページ */
+.nav-link-current {
+  color: var(--accent);
+  font-weight: 600;
+  pointer-events: none;
+}
+
 /* ナビ 戻りリンク */
 .nav-link-back {
   color: var(--text-muted);
