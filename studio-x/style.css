@@ -1040,12 +1040,12 @@ footer {
 }
 
 /* ベントーレイアウト – 各画像の実際のアスペクト比に合わせる */
-.sb-item.sb-maid     { grid-column: 1 / 3; grid-row: 1; aspect-ratio: 16/9; }  /* 1672×941 */
-.sb-item.sb-gothic   { grid-column: 3;     grid-row: 1; aspect-ratio: 3/4; }   /* 1086×1448 */
+.sb-item.sb-maid     { grid-column: 1 / 3; grid-row: 1; aspect-ratio: 9/16; }  /* 768×1364 */
+.sb-item.sb-gothic   { grid-column: 3;     grid-row: 1; aspect-ratio: 9/16; }  /* 768×1364 */
 .sb-item.sb-neon     { grid-column: 1 / 3; grid-row: 2; aspect-ratio: 1/1; }   /* 1254×1254 */
-.sb-item.sb-horror   { grid-column: 3;     grid-row: 2; aspect-ratio: 9/16; }  /* 941×1672 */
+.sb-item.sb-horror   { grid-column: 3;     grid-row: 2; aspect-ratio: 9/16; }  /* 768×1364 */
 .sb-item.sb-wagasa   { grid-column: 1 / 3; grid-row: 3; aspect-ratio: 16/9; }  /* sample-oiran.png 1364×768 */
-.sb-item.sb-darkclass{ grid-column: 3;     grid-row: 3; aspect-ratio: 4/3; }   /* 1448×1086 */
+.sb-item.sb-darkclass{ grid-column: 3;     grid-row: 3; aspect-ratio: 16/9; }  /* 1364×768 */
 
 .sb-item {
   position: relative;
