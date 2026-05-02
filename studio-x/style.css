@@ -760,6 +760,15 @@ footer {
   letter-spacing: 0.15em;
 }
 
+.footer-brand-note {
+  font-size: 0.6rem;
+  color: rgba(120,120,160,0.35);
+  letter-spacing: 0.08em;
+  margin-top: 8px;
+  width: 100%;
+  text-align: center;
+}
+
 /* ── GLITCH TEXT EFFECT ── */
 .glitch {
   position: relative;
