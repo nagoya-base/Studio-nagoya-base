@@ -35,9 +35,9 @@
 <a href="#hero" class="skip-link">メインコンテンツへスキップ</a>
 
 <div class="theme-switcher" role="group" aria-label="テーマ切り替え">
-  <button class="theme-btn" type="button" data-theme="cyber" aria-label="CYBER テーマ">⚡ CYBER</button>
-  <button class="theme-btn" type="button" data-theme="school" aria-label="SCHOOL テーマ">📐 SCHOOL</button>
-  <button class="theme-btn" type="button" data-theme="portrait" aria-label="PORTRAIT テーマ">◯ PORTRAIT</button>
+  <button class="theme-btn" type="button" data-theme="cyber" aria-label="CYBER テーマ"><span aria-hidden="true">⚡</span> CYBER</button>
+  <button class="theme-btn" type="button" data-theme="school" aria-label="SCHOOL テーマ"><span aria-hidden="true">📐</span> SCHOOL</button>
+  <button class="theme-btn" type="button" data-theme="portrait" aria-label="PORTRAIT テーマ"><span aria-hidden="true">◯</span> PORTRAIT</button>
 </div>
 
 <!-- NAV -->
@@ -445,9 +445,10 @@
 
     function switchTheme(themeName) {
       document.documentElement.setAttribute('data-theme', themeName);
-      document.querySelectorAll('.theme-btn').forEach((btn) => {
-        btn.classList.toggle('active', btn.dataset.theme === themeName);
-      });
+      const buttons = document.querySelectorAll('.theme-btn');
+      buttons.forEach((btn) => btn.classList.remove('active'));
+      const activeButton = document.querySelector(`.theme-btn[data-theme="${themeName}"]`);
+      if (activeButton) activeButton.classList.add('active');
     }
 
     document.querySelectorAll('.theme-btn').forEach((btn) => {
