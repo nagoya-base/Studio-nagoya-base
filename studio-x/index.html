@@ -441,21 +441,20 @@
 <script>
   (() => {
     const themes = ['cyber', 'school', 'portrait'];
-    let currentIndex = 0;
+    const defaultTheme = themes[0];
 
     function switchTheme(themeName) {
       document.documentElement.setAttribute('data-theme', themeName);
       document.querySelectorAll('.theme-btn').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.theme === themeName);
       });
-      currentIndex = themes.indexOf(themeName);
     }
 
     document.querySelectorAll('.theme-btn').forEach((btn) => {
       btn.addEventListener('click', () => switchTheme(btn.dataset.theme));
     });
 
-    switchTheme(themes[currentIndex]);
+    switchTheme(defaultTheme);
   })();
 </script>
 <script src="../scripts/main.js"></script>
