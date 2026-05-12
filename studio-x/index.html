@@ -34,6 +34,12 @@
 
 <a href="#hero" class="skip-link">メインコンテンツへスキップ</a>
 
+<div class="theme-switcher" role="group" aria-label="テーマ切り替え">
+  <button class="theme-btn active" type="button" data-theme="cyber" aria-label="CYBER テーマ">⚡ CYBER</button>
+  <button class="theme-btn" type="button" data-theme="school" aria-label="SCHOOL テーマ">📐 学校</button>
+  <button class="theme-btn" type="button" data-theme="portrait" aria-label="PORTRAIT テーマ">◯ MONO</button>
+</div>
+
 <!-- NAV -->
 <nav aria-label="サイトナビゲーション">
   <a class="nav-logo" href="#">STUDIO<span>X</span></a>
@@ -432,6 +438,26 @@
   <p class="footer-brand-note">スタジオXはスタジオ名古屋ベースのセカンドブランドです</p>
 </footer>
 
+<script>
+  (() => {
+    const themes = ['cyber', 'school', 'portrait'];
+    let currentIndex = 0;
+
+    function switchTheme(themeName) {
+      document.documentElement.setAttribute('data-theme', themeName);
+      document.querySelectorAll('.theme-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.theme === themeName);
+      });
+      currentIndex = themes.indexOf(themeName);
+    }
+
+    document.querySelectorAll('.theme-btn').forEach((btn) => {
+      btn.addEventListener('click', () => switchTheme(btn.dataset.theme));
+    });
+
+    switchTheme(themes[currentIndex]);
+  })();
+</script>
 <script src="../scripts/main.js"></script>
 </body>
 </html>
