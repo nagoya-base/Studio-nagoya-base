@@ -1252,8 +1252,10 @@ footer {
 /* ── MOBILE ── */
 @media (max-width: 768px) {
   nav { padding: 16px 24px; }
+  .nav-cta { display: none; }
   .nav-links { display: none; }
   .nav-hamburger { display: flex; }
+  .theme-switcher { top: 84px; right: 24px; }
   section { padding: 70px 24px; }
   .hero-content { padding: 40px 24px 60px; }
   .hero-x-bg { display: none; }
@@ -1267,7 +1269,7 @@ footer {
 }
 
 @media (max-width: 480px) {
-  .theme-switcher { top: 12px; right: 12px; }
+  .theme-switcher { top: 84px; right: 12px; }
   .theme-btn { padding: 8px 10px; font-size: 0.58rem; }
   .price-grid { grid-template-columns: 1fr; }
   .vibes-grid { grid-template-columns: 1fr; }
