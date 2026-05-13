@@ -79,6 +79,17 @@
     コスプレ・ポートレート・創作撮影に。<br>
     <em>白黒背景、カラー照明、教室小物</em>をそろえた完全個室。
   </p>
+  <div class="hero-theme-area">
+    <p class="hero-theme-label">照明で世界が変わる</p>
+    <div class="theme-switcher hero-theme-switcher" role="group" aria-label="ヒーローのテーマ切り替え">
+      <button class="theme-btn active" type="button" data-theme="cyber" aria-label="CYBER テーマに切り替え">⚡ CYBER</button>
+      <button class="theme-btn" type="button" data-theme="dark" aria-label="DARK テーマに切り替え">⬛ DARK</button>
+      <button class="theme-btn" type="button" data-theme="school" aria-label="SCHOOL テーマに切り替え">📐 SCHOOL</button>
+      <button class="theme-btn" type="button" data-theme="white" aria-label="WHITE テーマに切り替え">⬜ WHITE</button>
+      <button class="theme-btn" type="button" data-theme="wabi" aria-label="和ダーク テーマに切り替え">🌸 和ダーク</button>
+      <button class="theme-btn" type="button" data-theme="grunge" aria-label="GRUNGE テーマに切り替え">🧱 GRUNGE</button>
+    </div>
+  </div>
   <div class="hero-buttons">
     <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer">今すぐ予約する（15%OFF）</a>
     <a class="btn-secondary" href="#price">料金を見る</a>
@@ -442,19 +453,25 @@
 </footer>
 
 <script>
-  document.querySelectorAll('.theme-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const theme = btn.dataset.theme;
+  const themeButtons = document.querySelectorAll('.theme-btn');
+
+  const syncThemeButtons = (theme) => {
+    themeButtons.forEach(button => {
+      const isActive = button.dataset.theme === theme;
+      button.classList.toggle('active', isActive);
+      button.setAttribute('aria-pressed', String(isActive));
+    });
+  };
+
+  themeButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      const theme = button.dataset.theme;
       document.documentElement.setAttribute('data-theme', theme);
-      document.querySelectorAll('.theme-btn').forEach(b => {
-        b.classList.toggle('active', b === btn);
-      });
+      syncThemeButtons(theme);
     });
   });
-  const initialTheme = document.documentElement.getAttribute('data-theme') || 'cyber';
-  document.querySelectorAll('.theme-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.theme === initialTheme);
-  });
+
+  syncThemeButtons(document.documentElement.getAttribute('data-theme') || 'cyber');
 </script>
 <script src="../scripts/main.js"></script>
 </body>
