@@ -139,16 +139,18 @@ body * {
 
 /* ── THEME SWITCHER ── */
 .theme-switcher {
-  position: fixed;
-  top: 24px;
-  right: 24px;
-  z-index: 1100;
   display: flex;
+  justify-content: center;
+  align-items: center;
   gap: 8px;
-  padding: 6px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-primary-95);
-  backdrop-filter: blur(6px);
+  padding: 8px 16px;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  position: sticky;
+  top: 62px;
+  z-index: 999;
 }
 
 .theme-btn {
@@ -1255,7 +1257,7 @@ footer {
   .nav-cta { display: none; }
   .nav-links { display: none; }
   .nav-hamburger { display: flex; }
-  .theme-switcher { top: 84px; right: 24px; }
+  .theme-switcher { top: 58px; }
   section { padding: 70px 24px; }
   .hero-content { padding: 40px 24px 60px; }
   .hero-x-bg { display: none; }
@@ -1269,7 +1271,7 @@ footer {
 }
 
 @media (max-width: 480px) {
-  .theme-switcher { top: 84px; right: 12px; }
+  .theme-switcher { top: 58px; }
   .theme-btn { padding: 8px 10px; font-size: 0.58rem; }
   .price-grid { grid-template-columns: 1fr; }
   .vibes-grid { grid-template-columns: 1fr; }
