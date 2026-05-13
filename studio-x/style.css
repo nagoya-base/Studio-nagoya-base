@@ -517,10 +517,31 @@ nav {
   font-weight: 700;
 }
 
+.hero-theme-area {
+  max-width: 720px;
+  margin-bottom: 40px;
+  opacity: 0;
+  animation: fadeUp 0.8s 0.75s forwards;
+}
+
+.hero-theme-label {
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(1.25rem, 2.2vw, 2rem);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+
+.hero-theme-switcher {
+  justify-content: flex-start;
+  margin: 0;
+}
+
 .hero-buttons {
   display: flex; gap: 16px; flex-wrap: wrap;
   opacity: 0;
-  animation: fadeUp 0.8s 0.8s forwards;
+  animation: fadeUp 0.8s 0.95s forwards;
 }
 
 .btn-primary {
@@ -1317,6 +1338,7 @@ footer {
   section { padding: 70px 24px; }
   .hero-content { padding: 40px 24px 60px; }
   .hero-x-bg { display: none; }
+  .hero-theme-label { letter-spacing: 0.08em; }
   .access-grid { grid-template-columns: 1fr; gap: 40px; }
   .guide-grid { grid-template-columns: 1fr; }
   .vibes-grid { grid-template-columns: 1fr 1fr; }
@@ -1331,6 +1353,7 @@ footer {
   .price-grid { grid-template-columns: 1fr; }
   .vibes-grid { grid-template-columns: 1fr; }
   .usecase-grid { grid-template-columns: repeat(2, 1fr); }
+  .hero-theme-area { margin-bottom: 32px; }
   .hero-buttons { flex-direction: column; }
   .btn-primary, .btn-secondary { text-align: center; }
   .samples-bento { grid-template-columns: 1fr; }
