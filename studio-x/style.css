@@ -1,4 +1,5 @@
-:root {
+:root,
+[data-theme="cyber"] {
   --bg-primary: #0a0a0f;
   --bg-primary-rgb: 10, 10, 15;
   --bg-secondary: #12121a;
@@ -69,6 +70,31 @@
   --glow-pink:   0 0 8px rgba(var(--accent-alt-rgb), 1), 0 0 24px rgba(var(--accent-alt-rgb), 0.38);
 }
 
+[data-theme="dark"] {
+  --bg-primary: #080808;
+  --bg-primary-rgb: 8, 8, 8;
+  --bg-secondary: #120808;
+  --bg-secondary-rgb: 18, 8, 8;
+  --bg-tertiary: #1a1010;
+
+  --accent-main: #cc0000;
+  --accent-main-rgb: 204, 0, 0;
+  --accent-sub: #660000;
+  --accent-sub-rgb: 102, 0, 0;
+  --accent-alt: #8f1111;
+  --accent-alt-rgb: 143, 17, 17;
+
+  --text-primary: #cccccc;
+  --text-primary-rgb: 204, 204, 204;
+  --text-secondary: #888888;
+  --text-secondary-rgb: 136, 136, 136;
+  --text-contrast: #ffffff;
+  --btn-primary-text: #ffffff;
+
+  --border-color: rgba(204, 0, 0, 0.3);
+  --scanline-color: rgba(0, 0, 0, 0.09);
+}
+
 [data-theme="school"] {
   --bg-primary: #f0ebe0;
   --bg-primary-rgb: 240, 235, 224;
@@ -94,7 +120,7 @@
   --scanline-color: rgba(0, 0, 0, 0.05);
 }
 
-[data-theme="portrait"] {
+[data-theme="white"] {
   --bg-primary: #f8f8f8;
   --bg-primary-rgb: 248, 248, 248;
   --bg-secondary: #efefef;
@@ -119,6 +145,56 @@
   --scanline-color: rgba(0, 0, 0, 0.04);
 }
 
+[data-theme="wabi"] {
+  --bg-primary: #1a0f0f;
+  --bg-primary-rgb: 26, 15, 15;
+  --bg-secondary: #231010;
+  --bg-secondary-rgb: 35, 16, 16;
+  --bg-tertiary: #2b1515;
+
+  --accent-main: #c8922a;
+  --accent-main-rgb: 200, 146, 42;
+  --accent-sub: #8b1a1a;
+  --accent-sub-rgb: 139, 26, 26;
+  --accent-alt: #704120;
+  --accent-alt-rgb: 112, 65, 32;
+
+  --text-primary: #e8d5b0;
+  --text-primary-rgb: 232, 213, 176;
+  --text-secondary: #b09870;
+  --text-secondary-rgb: 176, 152, 112;
+  --text-contrast: #1a0f0f;
+  --btn-primary-text: #1a0f0f;
+
+  --border-color: rgba(200, 146, 42, 0.3);
+  --scanline-color: rgba(0, 0, 0, 0.07);
+}
+
+[data-theme="grunge"] {
+  --bg-primary: #1c1a17;
+  --bg-primary-rgb: 28, 26, 23;
+  --bg-secondary: #252320;
+  --bg-secondary-rgb: 37, 35, 32;
+  --bg-tertiary: #2e2a25;
+
+  --accent-main: #8b7355;
+  --accent-main-rgb: 139, 115, 85;
+  --accent-sub: #5a4a35;
+  --accent-sub-rgb: 90, 74, 53;
+  --accent-alt: #6f5f48;
+  --accent-alt-rgb: 111, 95, 72;
+
+  --text-primary: #c0b8a8;
+  --text-primary-rgb: 192, 184, 168;
+  --text-secondary: #807060;
+  --text-secondary-rgb: 128, 112, 96;
+  --text-contrast: #1c1a17;
+  --btn-primary-text: #1c1a17;
+
+  --border-color: rgba(139, 115, 85, 0.3);
+  --scanline-color: rgba(0, 0, 0, 0.08);
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html { scroll-behavior: smooth; }
@@ -141,55 +217,33 @@ body * {
 .theme-switcher {
   display: flex;
   justify-content: center;
-  align-items: center;
   gap: 8px;
-  padding: 8px 16px;
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
-  position: sticky;
-  top: 62px;
-  z-index: 999;
+  margin: 24px 0;
+  flex-wrap: wrap;
 }
 
 .theme-btn {
-  min-width: 44px;
-  min-height: 44px;
-  padding: 10px 12px;
-  border: 1px solid transparent;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 0.62rem;
-  letter-spacing: 0.08em;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  padding: 8px 16px;
+  border: 1px solid var(--accent-main);
+  background: transparent;
   cursor: pointer;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  border-radius: 2px;
+  transition: background 0.2s, color 0.2s;
+  color: var(--text-primary);
+  font-family: 'Share Tech Mono', monospace;
 }
-
-.theme-btn::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.theme-btn[data-theme="cyber"]::before { background: #b44fff; }
-.theme-btn[data-theme="school"]::before { background: #2d5c1e; }
-.theme-btn[data-theme="portrait"]::before { background: #111111; }
 
 .theme-btn:hover {
-  transform: scale(1.05);
-  color: var(--text-primary);
+  background: var(--accent-main);
+  color: #fff;
 }
 
 .theme-btn.active {
+  background: var(--accent-main);
+  color: #fff;
   border-color: var(--accent-main);
-  box-shadow: inset 0 -2px 0 var(--accent-main);
-  color: var(--text-primary);
 }
 
 /* ── SCANLINE OVERLAY ── */
@@ -1257,7 +1311,6 @@ footer {
   .nav-cta { display: none; }
   .nav-links { display: none; }
   .nav-hamburger { display: flex; }
-  .theme-switcher { top: 58px; }
   section { padding: 70px 24px; }
   .hero-content { padding: 40px 24px 60px; }
   .hero-x-bg { display: none; }
@@ -1271,7 +1324,6 @@ footer {
 }
 
 @media (max-width: 480px) {
-  .theme-switcher { top: 58px; }
   .theme-btn { padding: 8px 10px; font-size: 0.58rem; }
   .price-grid { grid-template-columns: 1fr; }
   .vibes-grid { grid-template-columns: 1fr; }

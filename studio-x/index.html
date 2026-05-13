@@ -46,7 +46,7 @@
     <li><a href="#access">アクセス</a></li>
     <li><a href="how-to/">ご利用ガイド</a></li>
   </ul>
-  <a class="nav-cta" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer">BOOK NOW</a>
+  <a class="nav-cta btn-booknow" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer">BOOK NOW</a>
   <button class="nav-hamburger" aria-label="メニューを開く" aria-expanded="false">
     <span></span>
     <span></span>
@@ -66,12 +66,6 @@
   <a href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer" class="nav-mobile-link nav-mobile-cta">BOOK NOW →</a>
 </div>
 
-<div class="theme-switcher" role="group" aria-label="テーマ切り替え">
-  <button class="theme-btn active" type="button" data-theme="cyber" aria-label="CYBER テーマに切り替え"><span aria-hidden="true">⚡</span> CYBER</button>
-  <button class="theme-btn" type="button" data-theme="school" aria-label="SCHOOL テーマに切り替え"><span aria-hidden="true">📐</span> SCHOOL</button>
-  <button class="theme-btn" type="button" data-theme="portrait" aria-label="PORTRAIT テーマに切り替え"><span aria-hidden="true">◯</span> PORTRAIT</button>
-</div>
-
 <!-- HERO -->
 <section id="hero">
   <div class="hero-img-wrap">
@@ -86,7 +80,7 @@
     <em>白黒背景、カラー照明、教室小物</em>をそろえた完全個室。
   </p>
   <div class="hero-buttons">
-    <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer">空き状況を見る</a>
+    <a class="btn-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer">今すぐ予約する（15%OFF）</a>
     <a class="btn-secondary" href="#price">料金を見る</a>
     <a class="btn-tertiary" href="#guide">スタジオ紹介図鑑</a>
   </div>
@@ -188,6 +182,15 @@
   <p class="section-label">Atmosphere</p>
   <h2 class="section-title">つくれる雰囲気</h2>
   <p class="section-sub">照明と背景の組み合わせで、撮れる世界が変わる。</p>
+
+  <div class="theme-switcher" role="group" aria-label="テーマ切り替え">
+    <button class="theme-btn active" type="button" data-theme="cyber" aria-label="CYBER テーマに切り替え">⚡ CYBER</button>
+    <button class="theme-btn" type="button" data-theme="dark" aria-label="DARK テーマに切り替え">⬛ DARK</button>
+    <button class="theme-btn" type="button" data-theme="school" aria-label="SCHOOL テーマに切り替え">📐 SCHOOL</button>
+    <button class="theme-btn" type="button" data-theme="white" aria-label="WHITE テーマに切り替え">⬜ WHITE</button>
+    <button class="theme-btn" type="button" data-theme="wabi" aria-label="和ダーク テーマに切り替え">🌸 和ダーク</button>
+    <button class="theme-btn" type="button" data-theme="grunge" aria-label="GRUNGE テーマに切り替え">🧱 GRUNGE</button>
+  </div>
 
   <div class="vibes-grid">
     <div class="vibe-card">
@@ -439,24 +442,19 @@
 </footer>
 
 <script>
-  (() => {
-    const themes = ['cyber', 'school', 'portrait'];
-    const defaultTheme = themes[0];
-
-    function switchTheme(themeName) {
-      document.documentElement.setAttribute('data-theme', themeName);
-      const buttons = document.querySelectorAll('.theme-btn');
-      buttons.forEach((btn) => btn.classList.remove('active'));
-      const activeButton = document.querySelector(`.theme-btn[data-theme="${themeName}"]`);
-      if (activeButton) activeButton.classList.add('active');
-    }
-
-    document.querySelectorAll('.theme-btn').forEach((btn) => {
-      btn.addEventListener('click', () => switchTheme(btn.dataset.theme));
+  document.querySelectorAll('.theme-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const theme = btn.dataset.theme;
+      document.documentElement.setAttribute('data-theme', theme);
+      document.querySelectorAll('.theme-btn').forEach(b => {
+        b.classList.toggle('active', b === btn);
+      });
     });
-
-    switchTheme(defaultTheme);
-  })();
+  });
+  const initialTheme = document.documentElement.getAttribute('data-theme') || 'cyber';
+  document.querySelectorAll('.theme-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.theme === initialTheme);
+  });
 </script>
 <script src="../scripts/main.js"></script>
 </body>
