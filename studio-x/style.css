@@ -149,7 +149,7 @@
   --scanline-color: rgba(0, 0, 0, 0.08);
 }
 
-:root {
+[data-theme] {
   --bg-primary-95: rgba(var(--bg-primary-rgb), 0.95);
   --bg-primary-97: rgba(var(--bg-primary-rgb), 0.97);
   --bg-primary-90: rgba(var(--bg-primary-rgb), 0.9);
@@ -175,9 +175,6 @@
   --accent-alt-08: rgba(var(--accent-alt-rgb), 0.08);
   --accent-alt-10: rgba(var(--accent-alt-rgb), 0.1);
 
-  --surface-border-04: rgba(var(--text-primary-rgb), 0.04);
-  --surface-border-05: rgba(var(--text-primary-rgb), 0.05);
-
   --text-secondary-12: rgba(var(--text-secondary-rgb), 0.12);
   --text-secondary-25: rgba(var(--text-secondary-rgb), 0.25);
   --text-secondary-35: rgba(var(--text-secondary-rgb), 0.35);
@@ -199,7 +196,11 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { scroll-behavior: smooth; }
+html {
+  scroll-behavior: smooth;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
 
 body {
   background-color: var(--bg-primary);
@@ -679,7 +680,7 @@ section { padding: 100px 60px; position: relative; }
 .feature-card {
   background-color: var(--dark3);
   padding: 40px 32px;
-  border: 1px solid var(--surface-border-04);
+  border: 1px solid var(--border-color);
   position: relative;
   overflow: hidden;
   transition: border-color 0.3s;
@@ -740,7 +741,7 @@ section { padding: 100px 60px; position: relative; }
   display: grid;
   grid-template-columns: 180px 1fr;
   gap: 0;
-  border-bottom: 1px solid var(--surface-border-05);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .equip-category {
@@ -793,7 +794,7 @@ section { padding: 100px 60px; position: relative; }
 
 .price-card {
   background-color: var(--dark3);
-  border: 1px solid var(--surface-border-05);
+  border: 1px solid var(--border-color);
   padding: 36px 24px;
   text-align: center;
   position: relative;
@@ -948,7 +949,7 @@ section { padding: 100px 60px; position: relative; }
 /* ── FOOTER ── */
 footer {
   padding: 40px 60px;
-  border-top: 1px solid var(--surface-border-05);
+  border-top: 1px solid var(--border-color);
   display: flex; align-items: center; justify-content: space-between;
   flex-wrap: wrap; gap: 16px;
 }
@@ -1069,7 +1070,7 @@ footer {
 
 .guide-chapter {
   background-color: var(--dark3);
-  border: 1px solid var(--surface-border-04);
+  border: 1px solid var(--border-color);
   padding: 32px 28px;
   transition: border-color 0.3s;
 }
@@ -1228,7 +1229,7 @@ footer {
 
 .vibe-card {
   background-color: var(--dark3);
-  border: 1px solid var(--surface-border-04);
+  border: 1px solid var(--border-color);
   overflow: hidden;
   transition: border-color 0.3s;
 }
@@ -1281,7 +1282,7 @@ footer {
 
 .usecase-item {
   background-color: var(--dark3);
-  border: 1px solid var(--surface-border-04);
+  border: 1px solid var(--border-color);
   padding: 32px 16px;
   text-align: center;
   transition: border-color 0.3s, background 0.3s;
