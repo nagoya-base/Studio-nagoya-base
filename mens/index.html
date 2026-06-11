@@ -1,3 +1,5 @@
+---
+---
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -195,51 +197,7 @@
 
 <a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
 
-<!-- ナビゲーション -->
-<nav class="site-nav" aria-label="サイトナビゲーション">
-  <div class="nav-inner">
-    <a href="../" class="nav-logo">
-      <div class="logo-mark">N</div>
-      <div class="logo-text">
-        <span class="logo-name">スタジオ　名古屋ベース</span>
-        <span class="logo-en">KAMIMAEZU · NAGOYA</span>
-      </div>
-    </a>
-    <ul class="nav-links">
-      <li><a href="#calendar">空き確認</a></li>
-      <li><a href="#features">特徴</a></li>
-      <li><a href="#pricing">料金</a></li>
-      <li><a href="#access">アクセス・営業時間</a></li>
-      <li><a href="../how-to/">ご利用ガイド</a></li>
-      <li><a href="#faq">FAQ</a></li>
-      <li><a href="../legal/">利用規約</a></li>
-      <li><a href="../en.html" class="nav-link-accent">EN</a></li>
-    </ul>
-
-    <button class="nav-hamburger" aria-label="メニューを開く" aria-expanded="false">
-      <span></span>
-      <span></span>
-      <span></span>
-    </button>
-  </div>
-</nav>
-
-<!-- 予約導線固定バナー -->
-<div class="booking-fixed-banner">
-  <a href="#calendar">今週の空きはこちら</a>
-</div>
-
-<!-- モバイルメニュー -->
-<div class="nav-mobile" id="navMobile">
-  <a href="#calendar"  class="nav-mobile-link">空き確認</a>
-  <a href="#features"  class="nav-mobile-link">特徴</a>
-  <a href="#pricing"   class="nav-mobile-link">料金</a>
-  <a href="#access"    class="nav-mobile-link">アクセス・営業時間</a>
-  <a href="../how-to/" class="nav-mobile-link">ご利用ガイド</a>
-  <a href="#faq"       class="nav-mobile-link">FAQ</a>
-  <a href="../legal/"  class="nav-mobile-link">利用規約</a>
-  <a href="../en.html" class="nav-mobile-link nav-link-accent">EN</a>
-</div>
+{% include header_ja.html banner="calendar" %}
 
 <!-- ヒーロー -->
 <main id="main-content">
@@ -270,14 +228,7 @@
     <h2 class="section-title">予約カレンダー</h2>
     <p class="section-subtitle">Reservation Calendar</p>
 
-    <div class="calendar-wrapper">
-      <iframe
-        src="https://calendar.google.com/calendar/embed?src=nagoyabase2023@gmail.com&ctz=Asia/Tokyo"
-        loading="lazy"
-        title="Studio Nagoya Base 予約カレンダー"
-        aria-label="予約カレンダー">
-      </iframe>
-    </div>
+    {% include calendar_embed.html %}
 
     <p class="calendar-note">※ 空き状況はカレンダーでご確認ください。ご予約・お問い合わせはメールまたは X にてご連絡ください。</p>
     <p class="calendar-note">※ ご予約の際は「メンズページを見た」とお伝えください。会員料金を適用いたします。</p>
@@ -325,28 +276,15 @@
     <h2 class="section-title">お知らせ</h2>
     <p class="section-subtitle">News</p>
 
-    <!-- 運用メモ: 料金や利用規約を更新した場合は、ここに告知を追加する -->
+    <!-- 運用メモ: 料金や利用規約を更新した場合は、_data/news_ja.yml に告知を追加する -->
     <div class="news-list">
+      {% for item in site.data.news_ja %}
       <div class="news-item">
-        <span class="news-date">2026.04.30</span>
-        <span class="news-badge">キャンペーン</span>
-        <span class="news-text">SNSレビュー割（5/1～6/30）開始。期間中1回限定・2時間以上・写真付きSNS投稿・メンションまたはURL共有で延長（1h）が1,000円に。先着10名様。</span>
+        <span class="news-date">{{ item.date }}</span>
+        <span class="news-badge">{{ item.type }}</span>
+        <span class="news-text">{{ item.body }}</span>
       </div>
-      <div class="news-item">
-        <span class="news-date">2026.03.28</span>
-        <span class="news-badge">重要</span>
-        <span class="news-text">新しい料金は2026年5月1日より適用されます。</span>
-      </div>
-      <div class="news-item">
-        <span class="news-date">2026.03.28</span>
-        <span class="news-badge">重要</span>
-        <span class="news-text">新しい利用規約は2026年4月15日より適用されます。</span>
-      </div>
-      <div class="news-item">
-        <span class="news-date">2026.03.28</span>
-        <span class="news-badge">お知らせ</span>
-        <span class="news-text">利用規約を改訂しました。第12〜14条（会員資格・反社会的勢力の排除・予約時の規約同意）を追加しています。</span>
-      </div>
+      {% endfor %}
     </div>
   </div>
 </section>
@@ -447,44 +385,7 @@
       </div>
     </div>
 
-    <div class="equipment-tables">
-      <div class="equipment-table-block">
-        <h3>撮影機材（常設・無料・簡単操作）</h3>
-        <p class="equipment-note">初心者でも簡単に使える機材ばかりです。</p>
-        <table>
-          <tbody>
-            <tr><th>フルカラーパネルライト（定常光）</th><td>×1</td></tr>
-            <tr><th>バイカラーパネルライト（定常光）</th><td>×1</td></tr>
-            <tr><th>ライトスタンド（100〜190cm）</th><td>×2</td></tr>
-            <tr><th>背景ローラーサポート</th><td>×1</td></tr>
-            <tr><th>背景紙 ブラック（135cm×5m）</th><td>×1</td></tr>
-            <tr><th>背景紙 ホワイト（135cm×5m）</th><td>×1</td></tr>
-            <tr><th>レフ板 5-in-1（80cm）</th><td>×1</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="equipment-table-block">
-        <h3>保有機材（応相談）</h3>
-        <table>
-          <tbody>
-            <tr><th>バイカラーCOBライト(定常光)</th><td>×1</td></tr>
-            <tr><th>モノブロックストロボ</th><td>×1</td></tr>
-            <tr><th>ポータブルストロボ</th><td>×1</td></tr>
-            <tr><th>ワイヤレスコマンダー（Canon専用）</th><td>×1</td></tr>
-            <tr><th>ワイヤレスコマンダー（SONY専用）</th><td>×1</td></tr>
-            <tr><th>ライトスタンド（260cm）</th><td>×3</td></tr>
-            <tr><th>ボーエンズマウントブラケット</th><td>×1</td></tr>
-            <tr><th>ストリップソフトボックス（60×90cm）</th><td>×1</td></tr>
-            <tr><th>ストリップソフトボックス（30×120cm）</th><td>×1</td></tr>
-            <tr><th>ソフトボックス（60cm）</th><td>×1</td></tr>
-            <tr><th>背景布（白/黒）（幅180cm×長さ250cm）</th><td>×各1</td></tr>
-            <tr><th>背景スタンド</th><td>×1</td></tr>
-            <tr><th>カラーフィルター（8色セット）</th><td>×1</td></tr>
-          </tbody>
-        </table>
-        <p class="equipment-note">※ 保有機材のご利用は、利用可否を含めご予約時にあらかじめご相談ください。</p>
-      </div>
-    </div>
+    {% include equipment_table.html intro="初心者でも簡単に使える機材ばかりです。" %}
     <div class="section-cta">
       <a class="btn-primary" href="#calendar">空き状況を確認する</a>
     </div>
@@ -651,7 +552,7 @@
   </tbody>
 </table>
       <div class="pricing-card-note">
-        ストロボ2灯・ビデオライト・ソフトボックス類・スタンド類 使い放題。予約時のDMで申告してください。部屋代と合算にて請求します。操作説明は行いません（自己責任使用）。破損・紛失の場合は実費をご請求します。詳細は<a href="../legal/#terms">利用規約</a>をご確認ください。
+        ストロボ2灯・ビデオライト・ソフトボックス類・スタンド類 使い放題。予約時のDMで申告してください。部屋代と合算にて請求します。操作説明は行いません（自己責任使用）。破損・紛失の場合は実費をご請求します。詳細は<a href="#terms">利用規約</a>をご確認ください。
       </div>
     </div>
 
@@ -683,8 +584,8 @@
     <p class="pricing-note">※ 緊縛・ロープ表現を含む撮影は3時間以上のご予約をおすすめします。</p>
     <p class="pricing-note">※ 料金は人数に関わらず一定です（1部屋まるごとのご利用）。</p>
     <p class="pricing-note">※ 常設の撮影機材・備品は利用料金内でご利用いただけます。機材レンタルオプション（会員限定・有料）の詳細は上記をご覧ください。</p>
-    <p class="pricing-note">※ 会員料金は、当施設が承認した会員が当サイトからの直接予約（メール・X DM）でご予約いただいた場合に適用されます。プラットフォーム経由のご予約には適用されません。詳細は<a href="../legal/#terms">利用規約 第12条</a>をご確認ください。</p>
-    <p class="pricing-note">※ ご予約前に必ず<a href="../legal/#terms">利用規約</a>をご確認ください。</p>
+    <p class="pricing-note">※ 会員料金は、当施設が承認した会員が当サイトからの直接予約（メール・X DM）でご予約いただいた場合に適用されます。プラットフォーム経由のご予約には適用されません。詳細は<a href="#terms">利用規約 第12条</a>をご確認ください。</p>
+    <p class="pricing-note">※ ご予約前に必ず<a href="#terms">利用規約</a>をご確認ください。</p>
     <div class="section-cta-sm">
       <a class="btn-primary" href="#calendar">空き状況を確認する</a>
     </div>
@@ -749,7 +650,7 @@
 
       <details class="faq-item">
         <summary>ファンサイト向けの撮影（有償コンテンツ）は可能ですか？</summary>
-        <div class="faq-answer">可能です。ファンサイトや有償コンテンツ向けの撮影（営利目的）に対応しています。ただし出演者全員の同意取得・法令遵守・プラットフォーム規約への準拠が必要です。性的行為を伴う撮影は禁止です。詳細は<a href="../legal/#terms">利用規約 第5条</a>をご確認ください。</div>
+        <div class="faq-answer">可能です。ファンサイトや有償コンテンツ向けの撮影（営利目的）に対応しています。ただし出演者全員の同意取得・法令遵守・プラットフォーム規約への準拠が必要です。性的行為を伴う撮影は禁止です。詳細は<a href="#terms">利用規約 第5条</a>をご確認ください。</div>
       </details>
 
       <details class="faq-item">
@@ -816,31 +717,13 @@
     <h2 class="section-title">法的事項</h2>
     <p class="section-subtitle">Legal</p>
 
-    <nav class="legal-nav" aria-label="法的ページリンク">
-      <a href="../legal/#terms">利用規約</a>
-      <a href="../legal/#cancel">キャンセルポリシー</a>
-      <a href="../legal/#privacy">プライバシーポリシー</a>
-      <a href="../legal/#law">特定商取引法に基づく表記</a>
-    </nav>
-    <p class="section-subtitle">詳細は各リンク先のページでご確認ください。</p>
+    {% include legal_ja.html %}
   </div>
 </section>
 
 </main>
 
-<!-- フッター -->
-<footer>
-  <p>STUDIO NAGOYA BASE</p>
-  <p>名古屋・上前津のプライベート撮影スタジオ</p>
-  <nav aria-label="フッターナビゲーション">
-    <a href="../legal/#terms">利用規約</a>
-    <a href="../legal/#cancel">キャンセルポリシー</a>
-    <a href="../legal/#privacy">プライバシーポリシー</a>
-    <a href="../legal/#law">特商法</a>
-    <a href="../index.html">トップページへ</a>
-  </nav>
-  <p class="footer-copy">&copy; Studio Nagoya Base. All rights reserved.</p>
-</footer>
+{% include footer_ja.html show_top=true %}
 
 
 

@@ -1,0 +1,13 @@
+<!-- フッター -->
+<footer>
+  <p>STUDIO NAGOYA BASE</p>
+  <p>名古屋・上前津のプライベート撮影スタジオ</p>
+  <nav aria-label="フッターナビゲーション">
+    <a href="#terms">利用規約</a>
+    <a href="#cancel">キャンセルポリシー</a>
+    <a href="#privacy">プライバシーポリシー</a>
+    <a href="#law">特商法</a>
+    {% if include.show_top %}<a href="{{ '/' | relative_url }}">トップページへ</a>{% endif %}
+  </nav>
+  <p class="footer-copy">&copy; Studio Nagoya Base. All rights reserved.</p>
+</footer>
