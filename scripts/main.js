@@ -42,7 +42,7 @@
   var btn  = document.querySelector('.nav-hamburger');
   var menu = document.getElementById('navMobile');
   if (!btn || !menu) return;
-  var links = menu.querySelectorAll('a');
+  var links = menu.querySelectorAll('a, button');
 
   function open() {
     btn.classList.add('is-open');
@@ -138,5 +138,54 @@
     if (e.key === 'Escape' && modal.classList.contains('show')) {
       closeModal();
     }
+  });
+})();
+
+/* Legal modal */
+(function () {
+  var modal = document.getElementById('legalModal');
+  if (!modal) return;
+  var overlay  = modal.querySelector('.legal-modal-overlay');
+  var closeBtn = modal.querySelector('.legal-modal-close');
+  var content  = modal.querySelector('.legal-modal-content');
+  var openBtns = document.querySelectorAll('.nav-legal-btn');
+
+  /* ページ内 #legal セクション（legal_ja.html の内容）を初回オープン時に複製。
+     id はページ本体と重複しないよう接頭辞を付け、モーダル内アンカーも追従させる */
+  function fillContent() {
+    if (content.childElementCount > 0) return;
+    var source = document.querySelector('#legal .container');
+    if (!source) return;
+    var clone = source.cloneNode(true);
+    clone.querySelectorAll('[id]').forEach(function (el) {
+      el.id = 'legal-modal-' + el.id;
+    });
+    clone.querySelectorAll('a[href^="#"]').forEach(function (a) {
+      a.setAttribute('href', '#legal-modal-' + a.getAttribute('href').slice(1));
+    });
+    while (clone.firstChild) content.appendChild(clone.firstChild);
+  }
+
+  function openModal() {
+    fillContent();
+    modal.removeAttribute('hidden');
+    document.body.style.overflow = 'hidden';
+    closeBtn && closeBtn.focus();
+  }
+
+  function closeModal() {
+    modal.setAttribute('hidden', '');
+    document.body.style.overflow = '';
+  }
+
+  openBtns.forEach(function (btn) {
+    btn.addEventListener('click', openModal);
+  });
+
+  closeBtn && closeBtn.addEventListener('click', closeModal);
+  overlay  && overlay.addEventListener('click', closeModal);
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !modal.hasAttribute('hidden')) closeModal();
   });
 })();
