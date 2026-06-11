@@ -104,7 +104,7 @@
    会員バナー
 ===================== */
 .member-banner {
-  background: rgba(86, 107, 61, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
   border: 1px solid var(--accent-dark);
   border-radius: var(--radius);
   padding: 20px 28px;
@@ -142,7 +142,7 @@
 }
 
 .pricing-card.is-member .pricing-card-header {
-  background: rgba(86, 107, 61, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 
 /* =====================
@@ -349,4 +349,7 @@
   .mens-flow-list {
     grid-template-columns: 1fr;
   }
+=======
+  background: rgba(var(--accent-rgb), 0.12);
+>>>>>>> 74e37ef (Add SNB theme switcher)
 }

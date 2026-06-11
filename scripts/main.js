@@ -162,7 +162,5 @@
     });
   });
 
-  syncButtons(
-    document.documentElement.getAttribute('data-theme') || 'kinari'
-  );
+  syncButtons(document.documentElement.getAttribute('data-theme') || 'kinari');
 })();

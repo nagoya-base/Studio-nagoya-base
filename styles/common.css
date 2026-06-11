@@ -1369,7 +1369,10 @@ html[data-theme="kuro"] .calendar-wrapper iframe {
     display: none;
   }
 
+<<<<<<< HEAD
   /* モバイルではドロワー内の切り替えボタンを使用 */
+=======
+>>>>>>> 74e37ef (Add SNB theme switcher)
   .nav-inner > .theme-switcher {
     display: none;
   }
@@ -2046,6 +2049,7 @@ p.pricing-note + p.pricing-note {
   border-top: 1px solid var(--border);
   justify-content: center;
 }
+<<<<<<< HEAD
 
 /* =====================
    ご利用者の声
@@ -2136,4 +2140,16 @@ p.pricing-note + p.pricing-note {
   font-size: 0.8rem;
   color: var(--text-muted);
   line-height: 1.8;
+=======
+.theme-switcher-fallback {
+  position: fixed;
+  top: 76px;
+  right: 16px;
+  z-index: 1001;
+  padding: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+>>>>>>> 74e37ef (Add SNB theme switcher)
 }
