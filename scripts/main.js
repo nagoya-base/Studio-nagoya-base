@@ -77,7 +77,7 @@
     calendarSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
-  window.addEventListener('scroll', function () {
+  function syncVisibility() {
     var calendarTop  = calendarSection.getBoundingClientRect().top;
     var windowHeight = window.innerHeight;
     if (calendarTop < windowHeight * 0.3) {
@@ -85,13 +85,19 @@
     } else {
       btn.classList.remove('hidden');
     }
-  });
-
-  var calendarTop  = calendarSection.getBoundingClientRect().top;
-  var windowHeight = window.innerHeight;
-  if (calendarTop < windowHeight * 0.3) {
-    btn.classList.add('hidden');
   }
+
+  var scrollTicking = false;
+  window.addEventListener('scroll', function () {
+    if (scrollTicking) return;
+    scrollTicking = true;
+    requestAnimationFrame(function () {
+      syncVisibility();
+      scrollTicking = false;
+    });
+  }, { passive: true });
+
+  syncVisibility();
 })();
 
 /* Image modal */
