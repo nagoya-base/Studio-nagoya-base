@@ -112,7 +112,7 @@
 
   clickableImages.forEach(function (img) {
     img.addEventListener('click', function () {
-      modalImg.setAttribute('src', this.getAttribute('src'));
+      modalImg.setAttribute('src', this.currentSrc || this.getAttribute('src'));
       modalImg.setAttribute('alt', this.getAttribute('alt'));
       modal.classList.add('show');
       document.body.style.overflow = 'hidden';
