@@ -2,14 +2,14 @@
    CSS カスタムプロパティ
 ===================== */
 :root {
-  --bg: #0e0e0e;
-  --bg-card: #1a1a1a;
-  --bg-section: #141414;
-  --text: #e0e0e0;
-  --text-muted: #888;
-  --accent: #c8a96e;
-  --accent-dark: #a08050;
-  --border: #2a2a2a;
+  --bg: #f5f0e2;          /* きなり */
+  --bg-card: #ede6d3;     /* 淡きなり */
+  --bg-section: #ede4cf;  /* 薄きなり */
+  --text: #2a2318;        /* 濃茶（可読性確保） */
+  --text-muted: #6b5e4a;  /* 中間茶 */
+  --accent: #566b3d;      /* うぐいす（指定#5a7040をWCAG AA対応で微調整） */
+  --accent-dark: #3e5028; /* 深うぐいす */
+  --border: #d0c4a8;      /* 薄茶ボーダー */
   --radius: 6px;
   --max-w: 920px;
   --font: 'Hiragino Sans', 'Noto Sans JP', 'Meiryo', sans-serif;
