@@ -469,6 +469,51 @@ body.has-booking-banner .hero {
   text-decoration: none;
 }
 
+/* ヒーロー（生成り系テーマ）のコントラスト確保:
+   暗い背景写真の上ではアクセント色（オリーブ）や text-muted が沈むため、
+   料金表示は明色＋縁取り、ボタンは不透明な明色面に切り替える。
+   kuro テーマは金色アクセントで視認できるため対象外 */
+html:not([data-theme="kuro"]) .hero-price-line {
+  color: #f5f0e2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 8px rgba(0, 0, 0, 0.55);
+}
+
+html:not([data-theme="kuro"]) .price-amount {
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 8px rgba(0, 0, 0, 0.55);
+}
+
+html:not([data-theme="kuro"]) .hero .btn-primary {
+  background: #f5f0e2;
+  border-color: #f5f0e2;
+  color: #2a2318;
+}
+
+html:not([data-theme="kuro"]) .hero .btn-primary:hover {
+  background: #fff;
+  border-color: #fff;
+  color: #2a2318;
+}
+
+html:not([data-theme="kuro"]) .hero .btn-secondary {
+  background: rgba(10, 10, 10, 0.35);
+  border-color: rgba(255, 255, 255, 0.85);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+html:not([data-theme="kuro"]) .hero .btn-secondary:hover {
+  background: #f5f0e2;
+  border-color: #f5f0e2;
+  color: #2a2318;
+  text-shadow: none;
+}
+
+html:not([data-theme="kuro"]) .hero .btn-primary:focus-visible,
+html:not([data-theme="kuro"]) .hero .btn-secondary:focus-visible {
+  outline-color: #fff;
+}
+
 /* =====================
    CTA二分岐
 ===================== */
