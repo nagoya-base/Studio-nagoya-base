@@ -189,3 +189,29 @@
     if (e.key === 'Escape' && !modal.hasAttribute('hidden')) closeModal();
   });
 })();
+
+/* Theme switcher */
+(function () {
+  var buttons = document.querySelectorAll('.theme-btn');
+  if (!buttons.length) return;
+
+  function syncButtons(theme) {
+    buttons.forEach(function (btn) {
+      var isActive = btn.dataset.theme === theme;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-pressed', String(isActive));
+    });
+  }
+
+  buttons.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var theme = btn.dataset.theme;
+      document.documentElement.setAttribute('data-theme', theme);
+      syncButtons(theme);
+    });
+  });
+
+  syncButtons(
+    document.documentElement.getAttribute('data-theme') || 'kinari'
+  );
+})();

@@ -19,6 +19,13 @@
       <li><a href="{{ '/en.html' | relative_url }}" class="nav-link-accent">EN</a></li>
     </ul>
 
+    <div class="theme-switcher" role="group" aria-label="カラーテーマ切り替え">
+      <button class="theme-btn active" type="button" data-theme="kinari"
+              aria-label="生成りテーマ" aria-pressed="true">🌿 生成り</button>
+      <button class="theme-btn" type="button" data-theme="kuro"
+              aria-label="黒テーマ" aria-pressed="false">🌑 黒</button>
+    </div>
+
     <button class="nav-hamburger" aria-label="メニューを開く" aria-expanded="false">
       <span></span>
       <span></span>
@@ -50,4 +57,10 @@
   <a href="#faq"       class="nav-mobile-link">FAQ</a>
   <button type="button" class="nav-mobile-link nav-legal-btn" id="openLegalModal">利用規約</button>
   <a href="{{ '/en.html' | relative_url }}" class="nav-mobile-link nav-link-accent">EN</a>
+  <div class="theme-switcher theme-switcher-mobile" role="group" aria-label="カラーテーマ切り替え">
+    <button class="theme-btn active" type="button" data-theme="kinari"
+            aria-label="生成りテーマ" aria-pressed="true">🌿 生成り</button>
+    <button class="theme-btn" type="button" data-theme="kuro"
+            aria-label="黒テーマ" aria-pressed="false">🌑 黒</button>
+  </div>
 </div>
