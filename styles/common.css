@@ -1891,6 +1891,11 @@ p.pricing-note + p.pricing-note {
   padding: 20px;
   margin: 0;
 }
+.voice-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
 .voice-text {
   font-size: 0.9rem;
   line-height: 1.8;

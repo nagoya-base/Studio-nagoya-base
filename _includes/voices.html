@@ -4,6 +4,7 @@
     <div class="voices-grid">
       {% for voice in site.data.voices_ja %}
       <blockquote class="voice-card">
+        {% if voice.title %}<p class="voice-title">{{ voice.title }}</p>{% endif %}
         <p class="voice-text">{{ voice.text }}</p>
         <footer class="voice-meta">{{ voice.attribution }}{% if voice.usage %}<span class="voice-usage">{{ voice.usage }}</span>{% endif %}</footer>
       </blockquote>
