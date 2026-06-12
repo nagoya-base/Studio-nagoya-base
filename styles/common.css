@@ -2,17 +2,43 @@
    CSS カスタムプロパティ
 ===================== */
 :root {
-  --bg: #f5f0e2;          /* きなり */
-  --bg-card: #ede6d3;     /* 淡きなり */
-  --bg-section: #ede4cf;  /* 薄きなり */
-  --text: #2a2318;        /* 濃茶（可読性確保） */
-  --text-muted: #6b5e4a;  /* 中間茶 */
-  --accent: #566b3d;      /* うぐいす（指定#5a7040をWCAG AA対応で微調整） */
-  --accent-dark: #3e5028; /* 深うぐいす */
-  --border: #d0c4a8;      /* 薄茶ボーダー */
   --radius: 6px;
   --max-w: 920px;
   --font: 'Hiragino Sans', 'Noto Sans JP', 'Meiryo', sans-serif;
+}
+
+/* テーマ変数（html[data-theme] で切り替え。属性なしは生成り） */
+:root,
+html[data-theme="kinari"] {
+  --bg:           #f5f0e2;
+  --bg-card:      #ede6d3;
+  --bg-section:   #ede4cf;
+  --text:         #2a2318;
+  --text-muted:   #6b5e4a;
+  --accent:       #566b3d;
+  --accent-dark:  #3e5028;
+  --accent-rgb:   86, 107, 61;
+  --border:       #d0c4a8;
+  --bg-nav:       rgba(237, 230, 211, 0.95);
+  --bg-drawer:    rgba(237, 230, 211, 0.98);
+  --banner-bg:    #2a2318;
+  --banner-text:  #f5f0e2;
+}
+
+html[data-theme="kuro"] {
+  --bg:           #0e0e0e;
+  --bg-card:      #1a1a1a;
+  --bg-section:   #141414;
+  --text:         #e0e0e0;
+  --text-muted:   #888888;
+  --accent:       #c8a96e;
+  --accent-dark:  #a08050;
+  --accent-rgb:   200, 169, 110;
+  --border:       #2a2a2a;
+  --bg-nav:       rgba(14, 14, 14, 0.95);
+  --bg-drawer:    rgba(10, 10, 10, 0.97);
+  --banner-bg:    linear-gradient(135deg, #c8a96e 0%, #a08050 100%);
+  --banner-text:  #000000;
 }
 
 /* =====================
@@ -27,6 +53,7 @@
 html {
   scroll-behavior: smooth;
   overflow-x: clip;
+  color-scheme: light; /* Googleカレンダー埋め込みのダークモード防止 */
 }
 
 body {
@@ -101,7 +128,7 @@ nav.site-nav {
   position: sticky;
   top: 0;
   z-index: 100;
-  background: rgba(14, 14, 14, 0.95);
+  background: var(--bg-nav);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
 }
@@ -112,7 +139,7 @@ nav.site-nav {
   top: 60px;
   left: 0;
   right: 0;
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+  background: var(--banner-bg);
   padding: 12px 24px;
   z-index: 99;
   display: flex;
@@ -126,7 +153,7 @@ nav.site-nav {
 
 .booking-fixed-banner a {
   display: inline-block;
-  color: #000;
+  color: var(--banner-text);
   font-size: 0.9rem;
   font-weight: 600;
   letter-spacing: 0.1em;
@@ -142,7 +169,7 @@ nav.site-nav {
 }
 
 .booking-fixed-banner .banner-separator {
-  color: rgba(0, 0, 0, 0.4);
+  color: rgba(var(--accent-rgb), 0.6);
   font-size: 0.85rem;
   font-weight: 400;
 }
@@ -169,12 +196,14 @@ body.has-booking-banner .hero {
 }
 
 .nav-inner {
-  max-width: var(--max-w);
+  /* テーマ切り替えボタン追加分、本文より少し広く取る（1行に収めるため） */
+  max-width: 1000px;
   margin: 0 auto;
   padding: 0 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   height: 60px;
 }
 
@@ -194,7 +223,7 @@ body.has-booking-banner .hero {
   align-items: center;
   justify-content: center;
   font-size: 1.6rem;
-  color: #f5f0e8;
+  color: var(--accent);
   font-family: Georgia, 'Times New Roman', serif;
   font-style: italic;
   font-weight: normal;
@@ -226,7 +255,9 @@ body.has-booking-banner .hero {
 
 .nav-links {
   display: flex;
-  gap: 24px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 16px;
   list-style: none;
 }
 
@@ -236,6 +267,7 @@ body.has-booking-banner .hero {
   letter-spacing: 0.1em;
   color: var(--text-muted);
   transition: color 0.2s;
+  white-space: nowrap;
 }
 
 .nav-links a:hover,
@@ -277,7 +309,7 @@ body.has-booking-banner .hero {
   display: none;
   position: fixed;
   inset: 60px 0 0 0;
-  background: rgba(10, 10, 10, 0.97);
+  background: var(--bg-drawer);
   backdrop-filter: blur(8px);
   z-index: 100;
   flex-direction: column;
@@ -1189,6 +1221,10 @@ footer nav a:hover {
   height: 500px;
   border: none;
   overflow: hidden;
+}
+
+/* 黒テーマのみ反転（生成りテーマでは白背景のまま表示） */
+html[data-theme="kuro"] .calendar-wrapper iframe {
   filter: invert(1) hue-rotate(180deg);
 }
 
@@ -1201,15 +1237,23 @@ footer nav a:hover {
 /* =====================
    レスポンシブ
 ===================== */
-@media (max-width: 640px) {
+/* ナビは2行までしか60pxバーに収まらないため、760px未満はハンバーガーに切り替え */
+@media (max-width: 760px) {
   .nav-links {
+    display: none;
+  }
+
+  /* モバイルではドロワー内の切り替えボタンを使用 */
+  .nav-inner > .theme-switcher {
     display: none;
   }
 
   .nav-hamburger {
     display: flex;
   }
+}
 
+@media (max-width: 640px) {
   .hero h1 {
     font-size: 1.6rem;
   }
@@ -1795,4 +1839,38 @@ p.pricing-note + p.pricing-note {
   cursor: pointer;
   font: inherit;
   color: inherit;
+}
+
+/* =====================
+   Theme Switcher
+===================== */
+.theme-switcher {
+  display: flex;
+  gap: 4px;
+}
+.theme-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+  white-space: nowrap;
+}
+.theme-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.theme-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.theme-switcher-mobile {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  justify-content: center;
 }
