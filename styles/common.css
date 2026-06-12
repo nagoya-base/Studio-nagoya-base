@@ -1875,3 +1875,36 @@ p.pricing-note + p.pricing-note {
   border-top: 1px solid var(--border);
   justify-content: center;
 }
+
+/* =====================
+   ご利用者の声
+===================== */
+.voices-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+.voice-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin: 0;
+}
+.voice-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.voice-text {
+  font-size: 0.9rem;
+  line-height: 1.8;
+  margin-bottom: 12px;
+}
+.voice-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.voice-usage {
+  margin-left: 8px;
+}
