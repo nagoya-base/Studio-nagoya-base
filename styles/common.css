@@ -342,26 +342,6 @@ body.has-booking-banner .hero {
   text-decoration: none;
 }
 
-@media (max-width: 768px) {
-  .nav-inner {
-    padding: 0 16px;
-    gap: 12px;
-  }
-
-  .nav-links,
-  .nav-inner > .theme-switcher:not(.theme-switcher-mobile) {
-    display: none;
-  }
-
-  .nav-hamburger {
-    display: flex;
-  }
-
-  .nav-mobile .theme-switcher-mobile {
-    display: flex;
-  }
-}
-
 /* =====================
    ヒーロー
 ===================== */
