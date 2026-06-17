@@ -1250,7 +1250,7 @@ footer {
 
 .vibe-card {
   background-color: var(--dark3);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--accent-sub-20);
   overflow: hidden;
   transition: border-color 0.3s;
 }
@@ -1271,6 +1271,8 @@ footer {
 
 .vibe-body {
   padding: 20px;
+  background-color: var(--bg-secondary);
+  border-top: 1px solid var(--accent-sub-20);
 }
 
 .vibe-label {
@@ -1284,7 +1286,7 @@ footer {
 
 .vibe-desc {
   font-size: 0.8rem;
-  color: var(--text-dim);
+  color: var(--text);
   line-height: 1.7;
 }
 
