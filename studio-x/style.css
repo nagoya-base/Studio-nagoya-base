@@ -1466,27 +1466,7 @@ footer {
   margin: 0 auto;
   padding: 40px 40px 80px;
 }
-.legal-page-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 60px;
-}
-.legal-page-nav a {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 0.7rem;
-  letter-spacing: 0.15em;
-  color: var(--text-dim);
-  text-decoration: none;
-  border: 1px solid rgba(201,64,255,0.2);
-  padding: 6px 14px;
-  border-radius: 2px;
-  transition: color 0.2s, border-color 0.2s;
-}
-.legal-page-nav a:hover {
-  color: var(--neon-cyan);
-  border-color: rgba(0,245,255,0.4);
-}
+
 .legal-back {
   font-family: 'Share Tech Mono', monospace;
   font-size: 0.7rem;
