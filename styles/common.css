@@ -305,8 +305,8 @@ body.has-booking-banner .hero {
 .nav-hamburger.is-open span:nth-child(2) { opacity: 0; }
 .nav-hamburger.is-open span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
 
-/* モバイルメニュー本体 */
-.nav-mobile {
+/* モバイルメニュー本体（nav.site-nav の兄弟要素にのみ適用） */
+nav.site-nav ~ .nav-mobile {
   display: none;
   position: fixed;
   inset: 60px 0 0 0;
@@ -319,12 +319,12 @@ body.has-booking-banner .hero {
   gap: 0;
 }
 
-.nav-mobile.is-open {
+nav.site-nav ~ .nav-mobile.is-open {
   display: flex;
 }
 
-.nav-mobile a,
-.nav-mobile .nav-legal-btn {
+nav.site-nav ~ .nav-mobile a,
+nav.site-nav ~ .nav-mobile .nav-legal-btn {
   display: block;
   width: 100%;
   text-align: center;
@@ -336,8 +336,8 @@ body.has-booking-banner .hero {
   transition: color 0.2s;
 }
 
-.nav-mobile a:hover,
-.nav-mobile .nav-legal-btn:hover {
+nav.site-nav ~ .nav-mobile a:hover,
+nav.site-nav ~ .nav-mobile .nav-legal-btn:hover {
   color: var(--accent);
   text-decoration: none;
 }
