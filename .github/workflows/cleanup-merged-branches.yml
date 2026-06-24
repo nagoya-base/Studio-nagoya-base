@@ -1,0 +1,47 @@
+name: Cleanup Merged Branches
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable auto-delete head branches
+        run: |
+          gh api --method PATCH repos/${{ github.repository }} \
+            -f delete_branch_on_merge=true
+          echo "✅ Auto-delete head branches enabled"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete merged claude/ branches
+        run: |
+          branches=(
+            "claude/kinari-theme-switcher-8clii5"
+            "claude/legal-inline-jekyll-ja-xp3r81"
+            "claude/nagoya-studio-page-update-lCXZ6"
+            "claude/reorganize-prohibited-items-QeRxt"
+            "claude/snb-gallery-legal-modal-ewy522"
+            "claude/snb-index-restructure-wtq8ir"
+            "claude/snb-voices-section-3x8550"
+            "claude/studio-website-audit-q6zywb"
+            "claude/studio-x-homepage-redesign-v8ZOp"
+            "claude/studio-x-landing-page-VeyuI"
+            "claude/update-equipment-section-fD0NH"
+            "claude/weekday-6hour-pass-blxnd0"
+            "claude/weekday-pass-fix-blxnd0"
+          )
+          for branch in "${branches[@]}"; do
+            if gh api "repos/${{ github.repository }}/git/refs/heads/${branch}" &>/dev/null; then
+              gh api --method DELETE "repos/${{ github.repository }}/git/refs/heads/${branch}"
+              echo "🗑️  Deleted: $branch"
+            else
+              echo "⏭️  Already gone: $branch"
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
