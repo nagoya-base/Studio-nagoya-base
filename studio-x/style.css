@@ -806,6 +806,17 @@ section { padding: 100px 60px; position: relative; }
   text-shadow: var(--glow-purple); white-space: nowrap;
 }
 
+@media (max-width: 640px) {
+  .price-discount-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .discount-badge {
+    white-space: normal;
+  }
+}
+
 .price-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
