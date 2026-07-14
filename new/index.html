@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ja" data-mood="school">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#0b0b0f">
+  <title>Studio X 新ページ試作 | 名古屋・上前津の完全個室撮影スタジオ</title>
+  <meta name="description" content="名古屋・上前津の少人数向け完全個室撮影スタジオ。白黒背景、学校机・黒板、フルカラー照明で、スマホでも世界観のある作品撮りを楽しめます。">
+  <link rel="icon" href="../studio-x/touch-icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body id="top">
+  <a class="skip-link" href="#main-content">本文へ移動</a>
+
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="Studio X ページ上部へ">
+      <span class="brand-name">STUDIO <b>X</b></span>
+      <span class="brand-place">KAMIMAEZU / NAGOYA</span>
+    </a>
+
+    <nav class="desktop-nav" aria-label="メインナビゲーション">
+      <a href="#worlds">撮れる世界</a>
+      <a href="#beginners">初めての方へ</a>
+      <a href="#specs">設備</a>
+      <a href="#price">料金</a>
+      <a href="#access">アクセス</a>
+    </nav>
+
+    <a class="header-cta" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer">空きを確認</a>
+
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="メニューを開く">
+      <span></span><span></span>
+    </button>
+  </header>
+
+  <div class="mobile-menu" id="mobile-menu" hidden>
+    <a href="#worlds">撮れる世界</a>
+    <a href="#beginners">初めての方へ</a>
+    <a href="#specs">設備</a>
+    <a href="#price">料金</a>
+    <a href="#access">アクセス</a>
+    <a class="mobile-menu-cta" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer">スペースマーケットで空きを確認</a>
+  </div>
+
+  <main id="main-content">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">PRIVATE CREATIVE ROOM / 1-4 PEOPLE</p>
+        <h1 id="hero-title">撮られるのが<br>初めてでも、<br><em>ちゃんと作品になる。</em></h1>
+        <p class="hero-lead">照明で世界が変わる、少人数作品撮りの部屋。白・黒背景、教室セット、フルカラー照明を、完全個室でゆっくり使えます。</p>
+
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer">
+            空き状況を見て予約する
+            <span aria-hidden="true">↗</span>
+          </a>
+          <a class="button button-ghost" href="#worlds">撮れる雰囲気を見る</a>
+        </div>
+
+        <dl class="hero-facts">
+          <div><dt>PRIVATE</dt><dd>完全個室</dd></div>
+          <div><dt>CAPACITY</dt><dd>1〜4名</dd></div>
+          <div><dt>ACCESS</dt><dd>上前津 徒歩8分</dd></div>
+          <div><dt>HOURS</dt><dd>8:00〜23:00</dd></div>
+        </dl>
+      </div>
+
+      <div class="hero-visual" role="group" aria-label="撮影イメージ切り替え">
+        <div class="hero-frame">
+          <img
+            id="hero-image"
+            src="../studio-x/images/sample_03_slant_light_1200.webp"
+            width="1200"
+            height="1800"
+            alt="学校机と黒板を使った温かい光の撮影作例"
+            fetchpriority="high">
+          <div class="hero-image-shade"></div>
+          <p class="hero-shot-label"><span id="shot-number">01</span> / SCHOOL LIGHT</p>
+          <p class="hero-shot-note">Same room.<br>Different story.</p>
+        </div>
+
+        <div class="mood-switcher" role="group" aria-label="撮影イメージを切り替える">
+          <button type="button" class="mood-button is-active" data-mood="school" data-src="../studio-x/images/sample_03_slant_light_1200.webp" data-alt="学校机と黒板を使った温かい光の撮影作例" data-label="SCHOOL LIGHT" data-number="01" aria-pressed="true">SCHOOL</button>
+          <button type="button" class="mood-button" data-mood="cyber" data-src="../studio-x/images/sample_04_neon_1200.webp" data-alt="紫色のカラー照明を使った撮影作例" data-label="CYBER PURPLE" data-number="02" aria-pressed="false">CYBER</button>
+          <button type="button" class="mood-button" data-mood="dark" data-src="../studio-x/images/sample_05_blue_purple_full_body_1200.webp" data-alt="緑とマゼンタの照明を使った暗い雰囲気の撮影作例" data-label="DARK COLOR" data-number="03" aria-pressed="false">DARK</button>
+          <button type="button" class="mood-button" data-mood="clean" data-src="../studio-x/images/studiox_white_1200.webp" data-alt="白背景を使った明るい撮影スペース" data-label="CLEAN WHITE" data-number="04" aria-pressed="false">WHITE</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="trust-strip" aria-label="スタジオの特徴">
+      <p>スマホ撮影OK</p>
+      <p>人数追加料金なし</p>
+      <p>無人・完全貸切</p>
+      <p>白黒背景・照明無料</p>
+    </section>
+
+    <section class="statement section-shell reveal">
+      <p class="section-kicker">WHY STUDIO X</p>
+      <div class="statement-grid">
+        <h2>広いスタジオより、<br><span>世界観に入り込める部屋。</span></h2>
+        <div>
+          <p>Studio Xは、2〜4人の作品撮りにちょうどいいワンルーム。大人数用の広さではなく、照明・背景・小物を近い距離で組み合わせ、短時間でも密度のある一枚を作ることに向いています。</p>
+          <p>カメラマンがいないセルフ撮影も、一眼カメラでの本格撮影も歓迎です。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="worlds section-shell" id="worlds" aria-labelledby="worlds-title">
+      <div class="section-heading reveal">
+        <div>
+          <p class="section-kicker">ONE ROOM, SIX WORLDS</p>
+          <h2 id="worlds-title">一室で、6つの世界。</h2>
+        </div>
+        <p>衣装やテーマに合わせて、背景と光を選べます。</p>
+      </div>
+
+      <div class="world-grid">
+        <article class="world-card world-card-wide reveal">
+          <img src="../studio-x/images/sample_04_neon_1200.webp" width="1200" height="1887" alt="紫色のカラー照明によるサイバー撮影作例" loading="lazy" decoding="async">
+          <div class="world-overlay"></div>
+          <div class="world-copy"><span>01 / COLOR</span><h3>サイバー・ネオン</h3><p>色を変えるだけで、同じ衣装が別の物語になる。</p></div>
+        </article>
+
+        <article class="world-card reveal">
+          <img src="../studio-x/images/studiox_white_1200.webp" width="1200" height="675" alt="白背景の撮影スペース" loading="lazy" decoding="async">
+          <div class="world-overlay"></div>
+          <div class="world-copy"><span>02 / WHITE</span><h3>白背景</h3><p>宣材、プロフィール、衣装記録に。</p></div>
+        </article>
+
+        <article class="world-card reveal">
+          <img src="../studio-x/images/studiox_black_1200.webp" width="675" height="1200" alt="黒背景の撮影スペース" loading="lazy" decoding="async">
+          <div class="world-overlay"></div>
+          <div class="world-copy"><span>03 / BLACK</span><h3>黒背景</h3><p>被写体を闇から浮かび上がらせる。</p></div>
+        </article>
+
+        <article class="world-card world-card-tall reveal">
+          <img src="../studio-x/images/sample_02_four_color_collage_1200.webp" width="1200" height="1800" alt="学校机と黒板を使った撮影作例" loading="lazy" decoding="async">
+          <div class="world-overlay"></div>
+          <div class="world-copy"><span>04 / SCHOOL</span><h3>教室セット</h3><p>学校机、椅子、教卓、黒板を常設。</p></div>
+        </article>
+
+        <article class="world-card reveal">
+          <img src="../studio-x/images/studiox_oiran_1200.webp" width="1200" height="675" alt="鶴柄の和風背景" loading="lazy" decoding="async">
+          <div class="world-overlay"></div>
+          <div class="world-copy"><span>05 / JAPANESE</span><h3>和ダーク</h3><p>和装、花魁、退廃的な創作に。</p></div>
+        </article>
+
+        <article class="world-card reveal">
+          <img src="../studio-x/images/studiox_ruins_1200.webp" width="1200" height="675" alt="廃墟風の背景セット" loading="lazy" decoding="async">
+          <div class="world-overlay"></div>
+          <div class="world-copy"><span>06 / GRUNGE</span><h3>グランジ・廃墟風</h3><p>汚し、退廃、物語のある背景に。</p></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="for-you section-shell reveal" aria-labelledby="for-you-title">
+      <p class="section-kicker">MADE FOR SMALL CREWS</p>
+      <h2 id="for-you-title">こんな撮影に、ちょうどいい。</h2>
+      <div class="usecase-list">
+        <article><span>01</span><h3>コスプレ・少人数併せ</h3><p>衣装テストから2〜4人の作品撮りまで。完全個室なので周囲を気にせず集中できます。</p></article>
+        <article><span>02</span><h3>ポートレート・創作</h3><p>白背景のシンプルな一枚から、色と影を使ったダークポートレートまで。</p></article>
+        <article><span>03</span><h3>セルフ撮影・推し活制作</h3><p>スマホでも利用可能。大型ミラーで衣装を整えながら、自分たちのペースで撮れます。</p></article>
+        <article><span>04</span><h3>撮影練習・ライティング</h3><p>照明の色や角度を試したい方にも。外部照明やストロボの持ち込みも可能です。</p></article>
+      </div>
+    </section>
+
+    <section class="beginners section-shell" id="beginners" aria-labelledby="beginners-title">
+      <div class="beginners-intro reveal">
+        <p class="section-kicker">FIRST STUDIO SESSION</p>
+        <h2 id="beginners-title">初めてのスタジオ撮影でも、<br>迷わせません。</h2>
+        <p>予約から入室までオンラインで完結。撮る雰囲気を決めておけば、当日は照明と背景を組み合わせるだけです。</p>
+      </div>
+
+      <ol class="step-list">
+        <li class="reveal"><span>STEP 01</span><h3>撮りたい雰囲気を選ぶ</h3><p>白・黒・教室・カラー照明から、衣装に合う方向を決めます。</p></li>
+        <li class="reveal"><span>STEP 02</span><h3>日時を選んで予約</h3><p>スペースマーケットで空き時間を確認し、そのまま予約・決済できます。</p></li>
+        <li class="reveal"><span>STEP 03</span><h3>パスコードで入室</h3><p>案内された番号で入室。無人運営なので、完全個室のまま撮影を始められます。</p></li>
+      </ol>
+
+      <figure class="review-card reveal">
+        <blockquote>「ライトも2機あり、明るさも十分なので撮影に使いやすかったです。天井のライトも変えられるので、雰囲気に合わせて変えられるのが魅力的でした。」</blockquote>
+        <figcaption>実際のご利用レビューより / 撮影・収録</figcaption>
+      </figure>
+    </section>
+
+    <section class="specs section-shell" id="specs" aria-labelledby="specs-title">
+      <div class="section-heading reveal">
+        <div>
+          <p class="section-kicker">WHAT'S INSIDE</p>
+          <h2 id="specs-title">持ってくるのは、<br>衣装と撮りたい気持ち。</h2>
+        </div>
+        <p>基本の背景と照明は利用料金内。より本格的な機材の持ち込みもできます。</p>
+      </div>
+
+      <div class="spec-layout">
+        <div class="spec-image reveal">
+          <img src="../studio-x/images/studiox_classroom_1200.webp" width="1200" height="1800" alt="学校机、黒板、木組みフレームのあるスタジオ内観" loading="lazy" decoding="async">
+        </div>
+        <dl class="spec-list reveal">
+          <div><dt>BACKGROUND</dt><dd>白・黒の背景紙ロール</dd></div>
+          <div><dt>LIGHTING</dt><dd>天井フルカラーLED、LEDパネルライト</dd></div>
+          <div><dt>PROPS</dt><dd>学校机、椅子、教卓、黒板</dd></div>
+          <div><dt>CHECK</dt><dd>大型全身ミラー</dd></div>
+          <div><dt>CHANGE</dt><dd>ユニットバス、カーテン内で着替え可能</dd></div>
+          <div><dt>BRING IN</dt><dd>カメラ、ストロボ、外部照明の持ち込み可</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="price section-shell" id="price" aria-labelledby="price-title">
+      <div class="price-intro reveal">
+        <p class="section-kicker">PRICE</p>
+        <h2 id="price-title">一室貸切。<br>4名まで同一料金。</h2>
+        <p>最短2時間から。下記は、このページの予約リンクから15%OFFが適用された場合の目安です。</p>
+      </div>
+
+      <div class="price-cards">
+        <article class="price-card reveal">
+          <p class="price-label">WEEKDAY</p>
+          <p class="price-value"><small>約</small>1,963<small>円 / 1時間〜</small></p>
+          <p>平日 / 最低利用2時間</p>
+        </article>
+        <article class="price-card price-card-accent reveal">
+          <p class="price-label">WEEKEND &amp; HOLIDAY</p>
+          <p class="price-value"><small>約</small>2,454<small>円 / 1時間〜</small></p>
+          <p>土日祝 / 最低利用2時間</p>
+        </article>
+      </div>
+
+      <div class="price-notes reveal">
+        <p>人数追加料金なし（最大4名）</p>
+        <p>3か月前から前日まで予約可能</p>
+        <p>正式な料金は予約画面でご確認ください</p>
+      </div>
+
+      <a class="button button-primary reveal" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer">空き状況と正式料金を見る <span aria-hidden="true">↗</span></a>
+    </section>
+
+    <section class="access section-shell" id="access" aria-labelledby="access-title">
+      <div class="access-grid">
+        <div class="reveal">
+          <p class="section-kicker">ACCESS</p>
+          <h2 id="access-title">大須から近い、<br>上前津の隠れ家。</h2>
+          <address>
+            <strong>愛知県名古屋市中区富士見町5-24</strong><br>
+            ラウムズ富士見町<br><br>
+            地下鉄「上前津駅」徒歩8分<br>
+            地下鉄「東別院駅」徒歩8分
+          </address>
+          <p class="access-note">営業時間 8:00〜23:00 / 年中無休<br>専用駐車場なし・近隣コインパーキングあり</p>
+        </div>
+
+        <div class="arrival-card reveal">
+          <p class="arrival-label">ON THE DAY</p>
+          <ol>
+            <li><span>1</span>予約後に入室案内を確認</li>
+            <li><span>2</span>キーボックスから鍵を受け取る</li>
+            <li><span>3</span>スマートロックで入室</li>
+            <li><span>4</span>撮影後に簡易清掃・原状復帰</li>
+          </ol>
+          <a href="../studio-x/how-to/">詳しいご利用ガイドを見る →</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="faq section-shell" aria-labelledby="faq-title">
+      <p class="section-kicker reveal">FAQ</p>
+      <h2 id="faq-title" class="reveal">予約前によくある質問</h2>
+      <div class="faq-list reveal">
+        <details>
+          <summary>スマートフォンだけでも撮影できますか？</summary>
+          <p>はい。天井照明や常設ライトを使えるため、スマートフォンでの撮影や自撮りにもご利用いただけます。</p>
+        </details>
+        <details>
+          <summary>何人まで利用できますか？</summary>
+          <p>1〜4名まで人数追加料金なしで利用できます。5名以上をご希望の場合は、事前にお問い合わせください。</p>
+        </details>
+        <details>
+          <summary>着替える場所はありますか？</summary>
+          <p>ユニットバス、または木組みフレームのカーテン内を着替えスペースとして利用できます。</p>
+        </details>
+        <details>
+          <summary>ストロボや照明を持ち込めますか？</summary>
+          <p>持ち込み可能です。白・黒背景紙、天井フルカラーLED、LEDパネルライトなどの常設備品は利用料金内で使えます。</p>
+        </details>
+        <details>
+          <summary>当日でも予約できますか？</summary>
+          <p>スペースマーケットは前日まで受付です。当日の空き確認はX（@studiox2026）のDMからお問い合わせください。</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="final-cta" aria-labelledby="final-cta-title">
+      <div class="final-cta-image" aria-hidden="true"></div>
+      <div class="final-cta-shade"></div>
+      <div class="final-cta-content reveal">
+        <p class="section-kicker">YOUR STORY STARTS HERE</p>
+        <h2 id="final-cta-title">次の一枚は、<br>この部屋から。</h2>
+        <p>名古屋・上前津。2〜4人の作品撮りにちょうどいい完全個室です。</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer">空き状況を見て予約する <span aria-hidden="true">↗</span></a>
+          <a class="button button-ghost" href="https://x.com/studiox2026" target="_blank" rel="noopener noreferrer">Xで相談する</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <a class="brand" href="#top">
+      <span class="brand-name">STUDIO <b>X</b></span>
+      <span class="brand-place">KAMIMAEZU / NAGOYA</span>
+    </a>
+    <div class="footer-links">
+      <a href="../studio-x/">現在のStudio Xページ</a>
+      <a href="../studio-x/how-to/">ご利用ガイド</a>
+      <a href="https://x.com/studiox2026" target="_blank" rel="noopener noreferrer">X @studiox2026</a>
+    </div>
+    <p>© Studio X / Studio Nagoya Base</p>
+  </footer>
+
+  <a class="mobile-booking" href="https://spacemarket.com/p/E5rr6n2znMy5tFdS" target="_blank" rel="noopener noreferrer">空き状況を見て予約する <span aria-hidden="true">↗</span></a>
+
+  <script src="main.js"></script>
+</body>
+</html>
