@@ -1,9 +1,78 @@
 /* styles/bondage.css – トップページ固有スタイル */
 
+#calendar,
+#first-time,
+#safety,
+#features,
+#usage,
+#interior,
+#equipment,
+#gallery,
+#pricing,
+#voices,
+#access,
+#hours,
+#news,
+#faq,
+#legal,
+#terms {
+  scroll-margin-top: 112px;
+}
+
+.section-intro,
+.pricing-intro {
+  max-width: 760px;
+  margin: -16px auto 28px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.8;
+  text-align: center;
+}
+
+#first-time .phase2-card-grid,
+.equipment-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#interior .featured-image-wrapper {
+  max-width: 800px;
+}
+
+.pricing-note-first {
+  margin-top: 24px;
+}
+
+.btn-group-centered {
+  justify-content: center;
+}
+
+.voices-calendar-link {
+  margin-top: 24px;
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 1100px) {
+  .nav-links,
+  .nav-inner > .theme-switcher {
+    display: none;
+  }
+
+  .nav-hamburger {
+    display: flex;
+  }
+}
+
 .phase2-trust-block {
   margin-top: 64px;
   padding-top: 56px;
   border-top: 1px solid var(--border);
+}
+
+.phase2-section #first-time {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .phase2-intro {
@@ -114,6 +183,11 @@
 }
 
 @media (max-width: 520px) {
+  #first-time .phase2-card-grid,
+  .equipment-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
   .phase2-card-grid {
     grid-template-columns: 1fr;
   }
