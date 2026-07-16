@@ -1,4 +1,139 @@
-/* styles/bondage.css – bondage/index.html 固有スタイル */
-/* bondage/index.html 固有のスタイルはなし。
-   common.css の url('../images/...') はCSSファイルの位置（styles/）から解決されるため、
-   どのHTMLページからロードされても同じ画像パスで正しく機能する。 */
+/* styles/bondage.css – トップページ固有スタイル */
+
+.phase2-trust-block {
+  margin-top: 64px;
+  padding-top: 56px;
+  border-top: 1px solid var(--border);
+}
+
+.phase2-intro {
+  max-width: 760px;
+  margin-bottom: 28px;
+  color: var(--text-muted);
+}
+
+.phase2-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.phase2-card {
+  min-width: 0;
+  padding: 24px 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.phase2-card-icon {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--accent);
+  font-size: 1.2rem;
+}
+
+.phase2-card h3 {
+  margin-bottom: 8px;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.phase2-card p {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.75;
+}
+
+.phase2-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.phase2-rule-note {
+  margin-top: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.phase2-trust-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 18px;
+  margin: 40px 0 8px;
+  padding: 18px 20px;
+  list-style: none;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.phase2-trust-strip li {
+  position: relative;
+  padding-left: 14px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.phase2-trust-strip li::before {
+  content: "◈";
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+}
+
+.voices-intro {
+  margin: -20px 0 28px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.voice-usage {
+  display: inline-block;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+@media (max-width: 768px) {
+  .phase2-trust-block {
+    margin-top: 48px;
+    padding-top: 44px;
+  }
+
+  .phase2-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .phase2-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .phase2-card {
+    padding: 22px 18px;
+  }
+
+  .phase2-link-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .phase2-link-row .btn-primary,
+  .phase2-link-row .btn-secondary {
+    width: 100%;
+    text-align: center;
+  }
+
+  .phase2-trust-strip {
+    justify-content: flex-start;
+  }
+}
