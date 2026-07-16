@@ -252,7 +252,7 @@
       <a class="btn-primary" href="#calendar">空きを確認して予約する</a>
       <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">利用前に相談する</a>
     </div>
-    <p class="hero-note">カレンダーで空きを確認後、メールでお申し込みください。</p>
+    <p class="hero-note">カレンダーで空きを確認後、ページ内フォームからお申し込みください。</p>
   </div>
 </section>
 
@@ -265,35 +265,34 @@
     {% include calendar_embed.html %}
 
     <p class="calendar-note">カレンダーで希望日時の空きをご確認のうえ、下の「予約を申し込む」からお知らせください。<br>ご予約は<strong>前日まで</strong>受け付けています。通常は24時間以内に返信します。当方からの予約確定連絡をもって予約成立となります。</p>
-    <p class="calendar-note">予約窓口：メール　／　相談窓口：メールまたはX DM</p>
+    <p class="calendar-note">予約窓口：ページ内フォーム　／　相談窓口：メールまたはX DM</p>
 
     <div class="btn-group">
-      <a class="btn-primary" href="{{ site.data.mailto_ja.reserve_url }}">予約を申し込む</a>
+      <a class="btn-primary" href="#reservation-form">予約申込フォームへ進む</a>
       <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">利用前に相談する</a>
     </div>
     <p class="cta-hint"><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DMでも相談できます</a></p>
   </div>
 </section>
 
-<!-- CTA二分岐 -->
+{% include reservation_form_ja.html %}
+
+<!-- 利用前相談 -->
 <section id="cta">
   <div class="container">
-    <div class="cta-bifurcation">
-      <div class="cta-card cta-immediate">
-        <p class="cta-tag">予約申込</p>
-        <p class="cta-card-heading">空きを確認して予約する</p>
-        <p class="cta-card-desc">カレンダーで空きを確認後、希望日時・利用時間・人数をお知らせください。</p>
-        <a class="btn-primary" href="{{ site.data.mailto_ja.reserve_url }}">予約を申し込む →</a>
-      </div>
-      <div class="cta-card cta-advance">
-        <p class="cta-tag">利用前相談</p>
-        <p class="cta-card-heading">予約前に相談したい方</p>
-        <p class="cta-card-desc">吊り床の利用方法、講習会、長時間利用、機材など、ご不明な点をご相談いただけます。</p>
-        <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">メールで相談する →</a>
-      </div>
+    <div class="cta-card cta-advance consultation-card">
+      <p class="cta-tag">利用前相談</p>
+      <h2 class="cta-card-heading">予約前に相談したい方</h2>
+      <p class="cta-card-desc">吊り床の利用、講習会、長時間利用、持ち込み機材など、ご不明な点は予約前にご相談いただけます。</p>
+      <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">メールで相談する →</a>
     </div>
-    <p class="cta-hint">通常は24時間以内に返信します。当方からの予約確定連絡をもって予約成立となります。</p>
-    <p class="cta-hint">先に<a href="#calendar">予約カレンダー</a>を確認する</p>
+    <p class="cta-hint"><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DMでも相談できます</a></p>
+  </div>
+</section>
+
+<section id="trust" class="bg-section">
+  <div class="container">
+    {% include phase2_trust_ja.html %}
   </div>
 </section>
 
@@ -812,6 +811,7 @@
 
 
 <script src="scripts/main.js"></script>
+<script src="scripts/reservation-form.js"></script>
 
 </body>
 </html>
