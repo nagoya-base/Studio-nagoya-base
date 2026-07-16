@@ -78,16 +78,16 @@
           <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">1</span>
           <div style="padding-top:4px;">
             <strong style="display:block;margin-bottom:4px;">カレンダーで空き確認</strong>
-            <span style="color:var(--text-muted);font-size:0.9rem;">Xプロフィールまたは各部屋ページのカレンダーで希望日時の空きをご確認ください。</span>
+            <span style="color:var(--text-muted);font-size:0.9rem;">希望日時が空いていることをご確認ください。</span>
           </div>
         </li>
         <li style="display:flex;gap:16px;margin-bottom:24px;">
           <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">2</span>
           <div style="padding-top:4px;">
-            <strong style="display:block;margin-bottom:4px;">メールで予約を申し込む</strong>
-            <span style="color:var(--text-muted);font-size:0.9rem;">希望日・希望時間・利用時間・人数・利用目的・支払方法をお知らせください。<br>
-              <a href="{{ site.data.mailto_ja.reserve_url }}">✉️ 予約メールのひな形を開く →</a><br>
-              <span style="display:block;margin-top:8px;font-size:0.82rem;">利用前のご相談はX DMでも受け付けています。</span>
+            <strong style="display:block;margin-bottom:4px;">予約申込フォームを送信</strong>
+            <span style="color:var(--text-muted);font-size:0.9rem;">希望日、開始時間、利用時間、人数、利用目的、支払方法などをご入力ください。<br>
+              <a href="../#reservation-form">予約申込フォームへ進む →</a><br>
+              <span style="display:block;margin-top:8px;font-size:0.82rem;">フォームを利用できない場合は、<a href="{{ site.data.mailto_ja.reserve_url }}">メールでもお申し込みいただけます</a>。</span>
             </span>
           </div>
         </li>
@@ -101,8 +101,12 @@
         <li style="display:flex;gap:16px;margin-bottom:24px;">
           <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">4</span>
           <div style="padding-top:4px;">
-            <strong style="display:block;margin-bottom:4px;">部屋番号・入室案内を受け取る</strong>
-            <span style="color:var(--text-muted);font-size:0.9rem;">予約確定後、当日ご利用いただく部屋番号と入室案内をお知らせします。</span>
+            <strong style="display:block;margin-bottom:4px;">入室案内を確認</strong>
+            <span style="color:var(--text-muted);font-size:0.9rem;">予約確定後、部屋番号・パスコード・入室方法をお知らせします。事前にご確認ください。<br>
+              <a href="../pdf/key-location.pdf" target="_blank" rel="noopener noreferrer">📄 鍵の場所を確認する（PDF）</a><br>
+              <a href="../pdf/lock_manual.pdf" target="_blank" rel="noopener noreferrer">📄 ロックの使い方（PDF）</a><br>
+              <a href="../pdf/switch_manual.pdf" target="_blank" rel="noopener noreferrer">📄 スイッチの使い方（PDF）</a>
+            </span>
           </div>
         </li>
         <!-- オートロック注意 -->
@@ -116,26 +120,16 @@
         <li style="display:flex;gap:16px;margin-bottom:24px;">
           <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">5</span>
           <div style="padding-top:4px;">
-            <strong style="display:block;margin-bottom:4px;">入室方法を確認</strong>
-            <span style="color:var(--text-muted);font-size:0.9rem;">鍵の位置・鍵の開け方・照明のつけ方を事前にご確認ください。<br>
-              <a href="../pdf/key-location.pdf" target="_blank" rel="noopener noreferrer">📄 鍵の場所を確認する（PDF）</a><br>
-              <a href="../pdf/lock_manual.pdf" target="_blank" rel="noopener noreferrer">📄 ロックの使い方（PDF）</a><br>
-              <a href="../pdf/switch_manual.pdf" target="_blank" rel="noopener noreferrer">📄 スイッチの使い方（PDF）</a>
-            </span>
-          </div>
-        </li>
-        <li style="display:flex;gap:16px;margin-bottom:24px;">
-          <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">6</span>
-          <div style="padding-top:4px;">
             <strong style="display:block;margin-bottom:4px;">料金をお支払い（先払い）</strong>
             <span style="color:var(--text-muted);font-size:0.9rem;">
               <span style="display:block;">現金：封筒に予約名・金額を記入し、室内の料金箱へ。</span>
               <span style="display:block;">PayPay：室内のQRコードを読み取りお支払いください。</span>
+              <span style="display:block;">オンラインクレジットカード：予約確定後にご案内する決済リンクからお支払いください。決済のみでは予約は成立しません。</span>
             </span>
           </div>
         </li>
         <li style="display:flex;gap:16px;">
-          <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">7</span>
+          <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">6</span>
           <div style="padding-top:4px;">
             <strong style="display:block;margin-bottom:4px;">ご利用開始</strong>
             <span style="color:var(--text-muted);font-size:0.9rem;">準備が整いましたら自由にご利用ください。<br>
@@ -149,28 +143,28 @@
       <p style="font-size:0.875rem;letter-spacing:0.12em;color:var(--text-muted);text-transform:uppercase;margin-bottom:16px;">After Your Visit</p>
       <ol style="list-style:none;padding:0;margin:0;">
         <li style="display:flex;gap:16px;margin-bottom:24px;">
-          <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">8</span>
+          <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">7</span>
           <div style="padding-top:4px;">
             <strong style="display:block;margin-bottom:4px;">使用物の原状復帰</strong>
             <span style="color:var(--text-muted);font-size:0.9rem;">使用した備品・小道具を元の位置に戻してください。</span>
           </div>
         </li>
         <li style="display:flex;gap:16px;margin-bottom:24px;">
-          <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">9</span>
+          <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">8</span>
           <div style="padding-top:4px;">
             <strong style="display:block;margin-bottom:4px;">簡易清掃</strong>
             <span style="color:var(--text-muted);font-size:0.9rem;">掃除機・クイックルワイパーで床をご清掃ください。</span>
           </div>
         </li>
         <li style="display:flex;gap:16px;margin-bottom:24px;">
-          <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">10</span>
+          <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">9</span>
           <div style="padding-top:4px;">
             <strong style="display:block;margin-bottom:4px;">エアコン・照明をオフ</strong>
             <span style="color:var(--text-muted);font-size:0.9rem;">すべての照明・エアコンの電源をオフにしてください。</span>
           </div>
         </li>
         <li style="display:flex;gap:16px;">
-          <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">11</span>
+          <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">10</span>
           <div style="padding-top:4px;">
             <strong style="display:block;margin-bottom:4px;">施錠・鍵を返却</strong>
             <span style="color:var(--text-muted);font-size:0.9rem;">ドアを施錠してご退室ください。鍵は外のキーボックスに戻し、ダイヤルを００００に設定してください。</span>
@@ -179,7 +173,7 @@
       </ol>
 
       <div style="margin-top:48px;text-align:center;">
-        <a class="btn-primary" href="{{ site.data.mailto_ja.reserve_url }}">メールで予約を申し込む</a>
+        <a class="btn-primary" href="../#reservation-form">予約申込フォームへ進む</a>
         &nbsp;&nbsp;
         <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">利用前に相談する</a>
         <p class="cta-hint" style="margin-top:16px;"><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DMでも相談できます</a></p>

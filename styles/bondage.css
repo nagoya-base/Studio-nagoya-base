@@ -1,5 +1,336 @@
 /* styles/bondage.css – トップページ固有スタイル */
 
+/* =====================
+   予約申込フォーム
+===================== */
+.reservation-container {
+  max-width: 880px;
+}
+
+.reservation-intro {
+  max-width: 760px;
+  margin: 0 auto 36px;
+  color: var(--text-muted);
+  line-height: 1.9;
+  text-align: center;
+}
+
+.reservation-form {
+  padding: 36px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.reservation-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0 0 36px;
+  border: 0;
+}
+
+.reservation-group + .reservation-group {
+  padding-top: 36px;
+  border-top: 1px solid var(--border);
+}
+
+.reservation-group:last-child {
+  padding-bottom: 0;
+}
+
+.reservation-group > legend {
+  width: 100%;
+  margin-bottom: 22px;
+  color: var(--text);
+  font-size: 1.08rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.reservation-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 20px;
+}
+
+.reservation-fields--compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.reservation-field {
+  min-width: 0;
+}
+
+.reservation-field--full {
+  grid-column: 1 / -1;
+}
+
+.reservation-field > label,
+.reservation-choice-group > legend {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.field-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.6;
+  vertical-align: 0.08em;
+}
+
+.field-badge--required {
+  border-color: var(--accent-dark);
+  color: var(--accent-dark);
+}
+
+.reservation-form input[type="text"],
+.reservation-form input[type="email"],
+.reservation-form input[type="tel"],
+.reservation-form input[type="date"],
+.reservation-form input[type="time"],
+.reservation-form select,
+.reservation-form textarea {
+  width: 100%;
+  min-height: 48px;
+  padding: 11px 12px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: #2a2318;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.reservation-form textarea {
+  min-height: 132px;
+  resize: vertical;
+}
+
+.reservation-form input:focus-visible,
+.reservation-form select:focus-visible,
+.reservation-form textarea:focus-visible,
+.reservation-choices label:focus-within,
+.reservation-consents label:focus-within {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.reservation-form [aria-invalid="true"] {
+  border-color: #9c2f24;
+  box-shadow: 0 0 0 1px #9c2f24;
+}
+
+.field-help,
+.field-error,
+.reservation-submit-state {
+  margin-top: 7px;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.field-help,
+.reservation-submit-state {
+  color: var(--text-muted);
+}
+
+.field-error {
+  color: #9c2f24;
+  font-weight: 700;
+}
+
+.field-error::before {
+  content: "エラー：";
+}
+
+.reservation-choice-group {
+  min-width: 0;
+  margin: 30px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.reservation-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.reservation-choices label,
+.reservation-consents label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 46px;
+  padding: 11px 13px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.reservation-choices input,
+.reservation-consents input {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  accent-color: var(--accent-dark);
+}
+
+.reservation-warning,
+.reservation-privacy,
+.reservation-review-note {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-left: 4px solid var(--accent);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.7;
+}
+
+.reservation-consents {
+  display: grid;
+  gap: 12px;
+}
+
+.reservation-consents .field-error {
+  margin: -6px 0 2px 14px;
+}
+
+.reservation-submit {
+  display: block;
+  width: min(100%, 420px);
+  min-height: 52px;
+  margin: 28px auto 0;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.reservation-submit:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.reservation-submit-state {
+  text-align: center;
+}
+
+.reservation-status,
+.reservation-error-summary {
+  margin-bottom: 24px;
+  padding: 20px;
+  background: var(--bg-card);
+  border: 2px solid var(--accent-dark);
+  border-radius: var(--radius);
+}
+
+.reservation-status--error,
+.reservation-error-summary {
+  border-color: #9c2f24;
+}
+
+.reservation-status h3,
+.reservation-error-summary h3 {
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+.reservation-status p + p {
+  margin-top: 10px;
+}
+
+.reservation-status .btn-secondary {
+  margin-top: 16px;
+}
+
+.reservation-error-summary ul {
+  margin: 8px 0 0 20px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.7;
+}
+
+.reservation-fallback {
+  margin-top: 24px;
+  text-align: center;
+}
+
+.reservation-fallback p {
+  margin-bottom: 12px;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.reservation-honeypot {
+  position: absolute !important;
+  left: -10000px !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+}
+
+.consultation-card {
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+#trust .phase2-trust-block:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+@media (max-width: 768px) {
+  .reservation-form {
+    padding: 28px 22px;
+  }
+
+  .reservation-fields--compact {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .reservation-intro {
+    text-align: left;
+  }
+
+  .reservation-form {
+    padding: 24px 16px;
+  }
+
+  .reservation-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .reservation-choices {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .reservation-choices label,
+  .reservation-consents label {
+    width: 100%;
+    min-height: 48px;
+  }
+}
+
 .phase2-trust-block {
   margin-top: 64px;
   padding-top: 56px;
