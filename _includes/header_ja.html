@@ -9,8 +9,12 @@
       </div>
     </a>
     <ul class="nav-links">
-      <li><a href="#calendar">空き確認</a></li>
+      <li><a href="#calendar">予約</a></li>
+      {% if page.url == "/" %}
+      <li><a href="#first-time">初めての方へ</a></li>
+      {% endif %}
       <li><a href="#features">特徴</a></li>
+      <li><a href="#equipment">設備</a></li>
       <li><a href="#pricing">料金</a></li>
       <li><a href="#access">アクセス・営業時間</a></li>
       <li><a href="{{ '/how-to/' | relative_url }}">ご利用ガイド</a></li>
@@ -26,7 +30,7 @@
               aria-label="黒テーマ" aria-pressed="false">🌑 黒</button>
     </div>
 
-    <button class="nav-hamburger" aria-label="メニューを開く" aria-expanded="false">
+    <button type="button" class="nav-hamburger" aria-label="メニューを開く" aria-expanded="false">
       <span></span>
       <span></span>
       <span></span>
@@ -49,8 +53,12 @@
 
 <!-- モバイルメニュー -->
 <div class="nav-mobile" id="navMobile">
-  <a href="#calendar"  class="nav-mobile-link">空き確認</a>
+  <a href="#calendar"  class="nav-mobile-link">予約</a>
+  {% if page.url == "/" %}
+  <a href="#first-time" class="nav-mobile-link">初めての方へ</a>
+  {% endif %}
   <a href="#features"  class="nav-mobile-link">特徴</a>
+  <a href="#equipment" class="nav-mobile-link">設備</a>
   <a href="#pricing"   class="nav-mobile-link">料金</a>
   <a href="#access"    class="nav-mobile-link">アクセス・営業時間</a>
   <a href="{{ '/how-to/' | relative_url }}" class="nav-mobile-link">ご利用ガイド</a>
