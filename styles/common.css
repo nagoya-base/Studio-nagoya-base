@@ -429,6 +429,13 @@ nav.site-nav ~ .nav-mobile .nav-legal-btn:hover {
   align-items: center;
 }
 
+.hero-note {
+  font-size: 0.78rem;
+  color: #d0d0d0;
+  margin-top: 16px;
+  letter-spacing: 0.03em;
+}
+
 .btn-primary {
   display: inline-block;
   padding: 14px 36px;
@@ -1525,7 +1532,12 @@ html[data-theme="kuro"] .calendar-wrapper iframe {
   .hero-buttons {
     gap: 12px;
   }
-  
+
+  .hero-note {
+    font-size: 0.72rem;
+    margin-top: 12px;
+  }
+
   .btn-primary,
   .btn-secondary {
     padding: 12px 24px;

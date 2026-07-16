@@ -249,9 +249,10 @@
     </div>
     
     <div class="hero-buttons">
-      <a class="btn-primary" href="#calendar">空き状況を確認する</a>
-      <a class="btn-secondary" href="mailto:nagoyabase2023@gmail.com?subject=スタジオ名古屋ベースお問い合わせ">メールで予約する</a>
+      <a class="btn-primary" href="#calendar">空きを確認して予約する</a>
+      <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">利用前に相談する</a>
     </div>
+    <p class="hero-note">カレンダーで空きを確認後、メールでお申し込みください。</p>
   </div>
 </section>
 
@@ -263,12 +264,14 @@
 
     {% include calendar_embed.html %}
 
-    <p class="calendar-note">※ 空き状況はカレンダーでご確認ください。ご予約は<strong>前日まで</strong>受付しております。ご予約・お問い合わせはメールにてお願いします。メール：<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a>　X DM：<a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">@nagoyabase2023</a>（サブ窓口）</p>
+    <p class="calendar-note">カレンダーで希望日時の空きをご確認のうえ、下の「予約を申し込む」からお知らせください。<br>ご予約は<strong>前日まで</strong>受け付けています。通常は24時間以内に返信します。当方からの予約確定連絡をもって予約成立となります。</p>
+    <p class="calendar-note">予約窓口：メール　／　相談窓口：メールまたはX DM</p>
 
     <div class="btn-group">
-      <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com">メールで予約・問い合わせ</a>
-      <a class="btn-primary btn-muted" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DM（サブ窓口）</a>
+      <a class="btn-primary" href="{{ site.data.mailto_ja.reserve_url }}">予約を申し込む</a>
+      <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">利用前に相談する</a>
     </div>
+    <p class="cta-hint"><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DMでも相談できます</a></p>
   </div>
 </section>
 
@@ -277,19 +280,20 @@
   <div class="container">
     <div class="cta-bifurcation">
       <div class="cta-card cta-immediate">
-        <p class="cta-tag">予約・お問い合わせ</p>
-        <p class="cta-card-heading">前日までにご予約ください</p>
-        <p class="cta-card-desc">メールにてご希望日時・利用時間をお知らせください。（<a href="how-to/">予約の流れ</a>）</p>
-        <a class="btn-primary" href="mailto:nagoyabase2023@gmail.com?subject=スタジオ名古屋ベースお問い合わせ">メールで予約する →</a>
+        <p class="cta-tag">予約申込</p>
+        <p class="cta-card-heading">空きを確認して予約する</p>
+        <p class="cta-card-desc">カレンダーで空きを確認後、希望日時・利用時間・人数をお知らせください。</p>
+        <a class="btn-primary" href="{{ site.data.mailto_ja.reserve_url }}">予約を申し込む →</a>
       </div>
       <div class="cta-card cta-advance">
-        <p class="cta-tag">お問い合わせ</p>
-        <p class="cta-card-heading">料金・ご相談</p>
-        <p class="cta-card-desc">会員料金や長時間利用のご相談はメールでもどうぞ</p>
-        <a class="btn-secondary" href="mailto:nagoyabase2023@gmail.com">メールで問い合わせる →</a>
+        <p class="cta-tag">利用前相談</p>
+        <p class="cta-card-heading">予約前に相談したい方</p>
+        <p class="cta-card-desc">吊り床の利用方法、講習会、長時間利用、機材など、ご不明な点をご相談いただけます。</p>
+        <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">メールで相談する →</a>
       </div>
     </div>
-    <p class="cta-hint">空き状況は上の <a href="#calendar">予約カレンダー</a> でご確認ください</p>
+    <p class="cta-hint">通常は24時間以内に返信します。当方からの予約確定連絡をもって予約成立となります。</p>
+    <p class="cta-hint">先に<a href="#calendar">予約カレンダー</a>を確認する</p>
   </div>
 </section>
 
@@ -375,7 +379,7 @@
       </div>
     </div>
     <div class="section-cta">
-      <a class="btn-primary" href="#calendar">空き状況を確認する</a>
+      <a class="btn-primary" href="#calendar">空きを確認して予約する</a>
     </div>
   </div>
 </section>
@@ -435,7 +439,7 @@
 
     {% include equipment_table.html %}
     <div class="section-cta">
-      <a class="btn-primary" href="#calendar">空き状況を確認する</a>
+      <a class="btn-primary" href="#calendar">空きを確認して予約する</a>
     </div>
   </div>
 </section>
@@ -626,11 +630,11 @@
     <p class="pricing-note">※ 常設の撮影機材・備品は利用料金内でご利用いただけます。機材レンタルオプション（会員限定・有料）の詳細は上記をご覧ください。</p>
     <p class="pricing-note">※ 会員料金は、当施設が承認した会員が当サイトからの直接予約（メール・X DM）でご予約いただいた場合に適用されます。プラットフォーム経由のご予約には適用されません。詳細は<a href="#terms">利用規約 第12条</a>をご確認ください。</p>
     <p class="pricing-note">※ ご予約前に必ず<a href="#terms">利用規約</a>をご確認ください。</p>
-    <p class="pricing-note">※ クレジットカード決済は、メールにて日時・ご利用料金をご確認いただいた後、下記よりお支払いいただけます。</p>
+    <p class="pricing-note">※ クレジットカード決済は、予約確定メールで日時と料金をご確認いただいた後にご利用ください。決済のみでは予約は成立しません。</p>
     <div class="section-cta-sm">
       <div class="btn-group" style="justify-content: center;">
-        <a class="btn-primary" href="#calendar">空き状況を確認する</a>
-        <a class="btn-secondary" href="https://buy.stripe.com/cNi3cwb5seVgc2Tgsw9k40a" target="_blank" rel="noopener noreferrer">クレジットカードで決済する</a>
+        <a class="btn-primary" href="#calendar">空きを確認して予約する</a>
+        <a class="btn-secondary" href="https://buy.stripe.com/cNi3cwb5seVgc2Tgsw9k40a" target="_blank" rel="noopener noreferrer">予約確定済みの方：カードで支払う</a>
       </div>
     </div>
   </div>
