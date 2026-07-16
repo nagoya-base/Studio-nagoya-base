@@ -297,39 +297,17 @@
   </div>
 </section>
 
-<!-- フィーチャー画像 -->
-<section id="featured-image" class="bg-section">
+<section class="phase2-section bg-section" aria-label="初回利用と安全に関する案内">
   <div class="container">
-    <div class="featured-image-wrapper">
-      <picture><source srcset="images/IMG_2309_1200.webp" type="image/webp"><img src="images/IMG_2309_1200.jpeg" width="1200" height="675" alt="Studio Nagoya Base - スタジオ内観（名古屋・上前津）" class="featured-image" loading="lazy" decoding="async"></picture>
-    </div>
-  </div>
-</section>
-
-<!-- ニュース -->
-<section id="news">
-  <div class="container">
-    <h2 class="section-title">お知らせ</h2>
-    <p class="section-subtitle">News</p>
-
-    <!-- 運用メモ: 料金や利用規約を更新した場合は、_data/news_ja.yml に告知を追加する -->
-    <div class="news-list">
-      {% for item in site.data.news_ja %}
-      <div class="news-item">
-        <span class="news-date">{{ item.date }}</span>
-        <span class="news-badge">{{ item.type }}</span>
-        <span class="news-text">{{ item.body }}</span>
-      </div>
-      {% endfor %}
-    </div>
+    {% include phase2_trust_ja.html %}
   </div>
 </section>
 
 <!-- 特徴 -->
 <section id="features">
   <div class="container">
-    <h2 class="section-title">特徴</h2>
-    <p class="section-subtitle">Features for Body Expression</p>
+    <h2 class="section-title">スタジオの主な特徴</h2>
+    <p class="section-subtitle">Main Features</p>
 
     <div class="features-grid">
       <div class="feature-card">
@@ -344,8 +322,8 @@
       </div>
       <div class="feature-card">
         <div class="feature-icon">◈</div>
-        <h3>プライベート空間</h3>
-        <p>完全貸し切りで、周囲の目を気にせず撮影に集中できます。</p>
+        <h3>完全貸切の個室</h3>
+        <p>周囲の目を気にせず、練習や撮影に集中できる個室です。</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">◈</div>
@@ -359,27 +337,9 @@
       </div>
       <div class="feature-card">
         <div class="feature-icon">◈</div>
-        <h3>機材の持ち込みOK</h3>
-        <p>ストロボなどの撮影機材の持ち込みに対応しています。</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">◈</div>
-        <h3>スマートフォンでも本格撮影</h3>
-        <p>ライティングが整い、スマートフォンでも綺麗に撮影できます。操作も簡単。一眼レフなら更に高いクオリティが実現できます。</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">◈</div>
-        <h3>大型ミラー完備</h3>
-        <p>1460×800mmの大型ミラーを設置。自撮りや構図確認、演出の幅が広がります。</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">◈</div>
         <h3>🏳️‍🌈 LGBTQ+歓迎</h3>
         <p>性別・性的指向・性自認を問わず、どなたでもご利用いただけます。同性カップル・クィアな表現を含む撮影を歓迎しています。</p>
       </div>
-    </div>
-    <div class="section-cta">
-      <a class="btn-primary" href="#calendar">空きを確認して予約する</a>
     </div>
   </div>
 </section>
@@ -387,68 +347,98 @@
 <!-- 利用用途 -->
 <section id="usage" class="bg-section">
   <div class="container">
-    <h2 class="section-title">こんな撮影に使えます</h2>
+    <h2 class="section-title">利用用途</h2>
     <p class="section-subtitle">Usage</p>
 
     <div class="usage-grid">
-      <div class="usage-item">緊縛・ロープ表現</div>
-      <div class="usage-item">吊り床撮影</div>
-      <div class="usage-item">講習会・ワークショップ・自主練</div>
-      <div class="usage-item">アート・身体表現</div>
-      <div class="usage-item">作品撮り・ファンコンテンツ</div>
-      <div class="usage-item">撮影（静止画・動画）</div>
+      <div class="usage-item">緊縛の自主練習</div>
+      <div class="usage-item">ショー・パフォーマンス練習</div>
+      <div class="usage-item">講習会・ワークショップ</div>
+      <div class="usage-item">緊縛・ロープ表現の撮影</div>
+      <div class="usage-item">身体表現・作品撮り</div>
+      <div class="usage-item">静止画・動画撮影</div>
+    </div>
+  </div>
+</section>
+
+<!-- スタジオ内観 -->
+<section id="interior">
+  <div class="container">
+    <h2 class="section-title">スタジオ内観</h2>
+    <p class="section-subtitle">Studio Interior</p>
+    <p class="section-intro">約25㎡の完全個室に、木組み吊り床、置き畳、学校机、黒板、カラー照明を備えています。</p>
+    <div class="featured-image-wrapper">
+      <picture><source srcset="images/IMG_2309_1200.webp" type="image/webp"><img src="images/IMG_2309_1200.jpeg" width="1200" height="675" alt="木組み吊り床と置き畳を備えたStudio Nagoya Baseの内観" class="featured-image" loading="lazy" decoding="async"></picture>
     </div>
   </div>
 </section>
 
 <!-- 設備・備品 -->
-<section id="equipment">
+<section id="equipment" class="bg-section">
   <div class="container">
     <h2 class="section-title">設備・備品</h2>
     <p class="section-subtitle">Equipment</p>
 
-    <div class="equipment-grid">
+    <div class="equipment-grid equipment-summary-grid">
       <div class="equipment-card">
-        <h3>設備</h3>
+        <h3>主要設備</h3>
         <ul>
-          <li>個室スペース（完全貸し切り）</li>
           <li>木組みの吊り床<br><small class="equipment-spec">高さ 2350mm／間口 2450mm／奥行 2000mm</small></li>
           <li>竹吊り（長さ 150cm・体重 100kg 程度まで）</li>
-          <li>大型ミラー（1460mm × 800mm）</li>
+          <li>完全個室</li>
           <li>フルカラー天井照明</li>
-          <li>エアコン</li>
-          <li>トイレ（着替えスペースとしてご利用ください）</li>
+          <li>大型ミラー（1460mm × 800mm）</li>
+          <li>エアコン・トイレ</li>
         </ul>
-        <p class="equipment-note">※ 配管が古いため、水道水の飲用はお控えください。</p>
       </div>
       <div class="equipment-card">
-        <h3>備品</h3>
+        <h3>緊縛・リギング備品</h3>
         <ul>
           <li>麻縄</li>
-          <li>スリング・カラビナ・リギングプレート・スイベル</li>
-          <li>ヨガマット</li>
+          <li>スリング・カラビナ</li>
+          <li>リギングプレート・スイベル</li>
+          <li>はさみ（緊急時用）</li>
+        </ul>
+      </div>
+      <div class="equipment-card">
+        <h3>撮影・演出備品</h3>
+        <ul>
           <li>置き畳</li>
           <li>学校机・椅子（2セット）</li>
           <li>教卓・黒板</li>
-          <li>はさみ（緊急時用）</li>
-          <li>清掃用品（ウェットティッシュ・クイックルワイパー等）</li>
+          <li>常設撮影機材</li>
         </ul>
-        <p class="equipment-note">※ 備品はご利用後に必ず清掃・元の場所へお戻しください。</p>
+      </div>
+      <div class="equipment-card">
+        <h3>その他</h3>
+        <ul>
+          <li>ヨガマット</li>
+          <li>清掃用品</li>
+        </ul>
+        <p class="equipment-note">※ 水道水の飲用はお控えください。備品は清掃後、元の場所へお戻しください。</p>
       </div>
     </div>
 
     {% include equipment_table.html %}
-    <div class="section-cta">
-      <a class="btn-primary" href="#calendar">空きを確認して予約する</a>
-    </div>
   </div>
 </section>
 
 <!-- ギャラリー -->
-<section id="gallery" class="bg-section">
+<section id="gallery">
   <div class="container">
     <h2 class="section-title">作例ギャラリー</h2>
     <p class="section-subtitle">Gallery</p>
+
+    <p class="color-grid-label">吊り床・緊縛作例 / Suspension &amp; Rope Work</p>
+    <div class="gallery-grid">
+      <div class="gallery-item"><img src="images/gallery_bondage01_1200.webp" width="876" height="1200" alt="Studio Nagoya Base gallery image 1" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/hero_studio_1200.webp" width="877" height="1200" alt="Studio Nagoya Base gallery image 2" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/gallery_bondage02_1200.webp" width="1200" height="1118" alt="Studio Nagoya Base gallery image 3" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/hero_bondage_1200.webp" width="800" height="1200" alt="Studio Nagoya Base gallery image 4" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/gallery_man01_1200.webp" width="800" height="1200" alt="Studio Nagoya Base gallery image 5" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/gallery_man02_1200.webp" width="800" height="1200" alt="Studio Nagoya Base gallery image 6" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+      <div class="gallery-item"><img src="images/gallery_man03_1200.webp" width="1200" height="800" alt="Studio Nagoya Base gallery image 8" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+    </div>
 
     <p class="color-grid-label">フルカラー照明 / Color Lighting</p>
     <div class="color-grid">
@@ -460,7 +450,7 @@
       <div class="gallery-item"><img src="images/gallery_lighting05_1200.webp" width="1200" height="675" alt="フルカラー照明サンプル 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
     </div>
 
-    <p class="color-grid-label">白ホリ・カラーバリエーション / White Cyclorama &amp; Color Variations</p>
+    <p class="color-grid-label">白背景・撮影作例 / White Backdrop</p>
     <div class="color-grid">
       <div class="gallery-item"><img src="images/gallery_white01_1200.webp" width="675" height="1200" alt="白ホリ・カラーバリエーション 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
       <div class="gallery-item"><img src="images/gallery_white02_1200.webp" width="675" height="1200" alt="白ホリ・カラーバリエーション 2 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
@@ -468,17 +458,6 @@
       <div class="gallery-item"><img src="images/gallery_white04_1200.webp" width="675" height="1200" alt="白ホリ・カラーバリエーション 4 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
       <div class="gallery-item"><img src="images/gallery_white05_1200.webp" width="675" height="1200" alt="白ホリ・カラーバリエーション 5 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
       <div class="gallery-item"><img src="images/gallery_white06_1200.webp" width="675" height="1200" alt="白ホリ・カラーバリエーション 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async" fetchpriority="low"></div>
-    </div>
-
-    <p class="color-grid-label">スタジオ作例 / Gallery</p>
-    <div class="gallery-grid">
-      <div class="gallery-item"><img src="images/gallery_bondage01_1200.webp" width="876" height="1200" alt="Studio Nagoya Base gallery image 1" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="images/hero_studio_1200.webp" width="877" height="1200" alt="Studio Nagoya Base gallery image 2" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="images/gallery_bondage02_1200.webp" width="1200" height="1118" alt="Studio Nagoya Base gallery image 3" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="images/hero_bondage_1200.webp" width="800" height="1200" alt="Studio Nagoya Base gallery image 4" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="images/gallery_man01_1200.webp" width="800" height="1200" alt="Studio Nagoya Base gallery image 5" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="images/gallery_man02_1200.webp" width="800" height="1200" alt="Studio Nagoya Base gallery image 6" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="images/gallery_man03_1200.webp" width="1200" height="800" alt="Studio Nagoya Base gallery image 8" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
     </div>
 
     <p class="color-grid-label">和の背景 / Japanese-style Backdrop</p>
@@ -495,10 +474,11 @@
 </section>
 
 <!-- 料金 -->
-<section id="pricing">
+<section id="pricing" class="bg-section">
   <div class="container">
     <h2 class="section-title">料金</h2>
     <p class="section-subtitle">Pricing</p>
+    <p class="pricing-intro">初回利用は通常価格です。会員価格は、当施設が承認した継続利用者の直接予約に適用されます。</p>
 
     <div class="pricing-grid">
       <div class="pricing-card">
@@ -625,14 +605,14 @@
         講習会・ワークショップ・参加費を徴収する利用は対象外です。詳細は<a href="#terms">利用規約</a>をご確認ください。
       </div>
     </div>
-    <p class="pricing-note" style="margin-top: 24px;">※ 緊縛・吊り床を使う撮影は3時間以上のご予約をおすすめします。</p>
+    <p class="pricing-note pricing-note-first">※ 緊縛・吊り床を使う撮影は3時間以上のご予約をおすすめします。</p>
     <p class="pricing-note">※ 料金は人数に関わらず一定です（1部屋まるごとのご利用）。</p>
     <p class="pricing-note">※ 常設の撮影機材・備品は利用料金内でご利用いただけます。機材レンタルオプション（会員限定・有料）の詳細は上記をご覧ください。</p>
     <p class="pricing-note">※ 会員料金は、当施設が承認した会員が当サイトからの直接予約（メール・X DM）でご予約いただいた場合に適用されます。プラットフォーム経由のご予約には適用されません。詳細は<a href="#terms">利用規約 第12条</a>をご確認ください。</p>
     <p class="pricing-note">※ ご予約前に必ず<a href="#terms">利用規約</a>をご確認ください。</p>
     <p class="pricing-note">※ クレジットカード決済は、予約確定メールで日時と料金をご確認いただいた後にご利用ください。決済のみでは予約は成立しません。</p>
     <div class="section-cta-sm">
-      <div class="btn-group" style="justify-content: center;">
+      <div class="btn-group btn-group-centered">
         <a class="btn-primary" href="#calendar">空きを確認して予約する</a>
         <a class="btn-secondary" href="https://buy.stripe.com/cNi3cwb5seVgc2Tgsw9k40a" target="_blank" rel="noopener noreferrer">予約確定済みの方：カードで支払う</a>
       </div>
@@ -671,103 +651,27 @@
   </div>
 </section>
 
-<!-- FAQ -->
-<section id="faq">
+<!-- ニュース -->
+<section id="news" class="bg-section">
   <div class="container">
-    <h2 class="section-title">よくある質問</h2>
-    <p class="section-subtitle">FAQ</p>
+    <h2 class="section-title">お知らせ</h2>
+    <p class="section-subtitle">News</p>
 
-    <div class="faq-list">
-      <details class="faq-item">
-        <summary>スタジオ内での飲食はできますか？</summary>
-        <div class="faq-answer">飲食物の持ち込みは可能ですが、ちゃぶ台および学校机周辺のみでお召し上がりください。畳スペースおよび吊り床周辺での飲食は禁止です。こぼれ・汚損・臭気残り等が発生した場合は清掃費用の実費をご請求する場合があります。ゴミは必ずお持ち帰りください。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>アルコールの持ち込みはできますか？</summary>
-        <div class="faq-answer">持ち込みは可能ですが、宴会・飲み会目的での利用は禁止しています。安全管理上の理由により、飲酒後の緊縛行為（練習・撮影・パフォーマンスを含む）は禁止です。泥酔状態での利用および近隣への迷惑行為もお断りしています。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>スマートフォンで撮影できますか？</summary>
-        <div class="faq-answer">はい、問題ありません。ライティングが整っているため、スマートフォンでもクオリティの高い写真が撮影できます。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>緊縛撮影は可能ですか？</summary>
-        <div class="faq-answer">可能です。ただし、性的行為および性的な行為を伴う撮影は禁止しています。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>機材の持ち込みはできますか？</summary>
-        <div class="faq-answer">可能です。お持ち込み機材をご利用いただけるほか、常設の撮影機材・備品は利用料金内でご利用いただけます。有料機材オプション（ストロボ2灯・ビデオライト等）は会員限定・¥2,000〜でご利用いただけます（予約時DMで申告）。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>キャンセルポリシーはどうなっていますか？</summary>
-        <div class="faq-answer">2日前まで：無料 / 前日：料金の50% / 当日：料金の100% をキャンセル料としていただきます。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>支払い方法は何がありますか？</summary>
-        <div class="faq-answer">現金・PayPay（現地決済）・オンラインクレジットカード決済がご利用いただけます。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>縛り方を教えるサービスはありますか？</summary>
-        <div class="faq-answer">当スタジオでは講習・技術指導等のサービスは行っておりません。あくまでスペースのご提供となります。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>男女問わず利用できますか？</summary>
-        <div class="faq-answer">はい、どなたでもご利用いただけます。ただし18歳以上（高校生不可）の方に限ります。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>当日延長は可能ですか？</summary>
-        <div class="faq-answer">次の予約が空いている場合のみ可能です。当日は連絡がつかない場合もあるため、延長をご希望の場合は事前にご相談ください。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>鍵の受け渡しはどうなっていますか？</summary>
-        <div class="faq-answer">予約時にお知らせします。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>予約日程の変更はできますか？</summary>
-        <div class="faq-answer">前日までであれば1回に限り無料で変更できます。2回目以降はキャンセル扱いとなりますのでご注意ください。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>背景紙を床に敷いても良いですか？</summary>
-        <div class="faq-answer">可能ですが、汚さないよう土足・素足でのご使用はご遠慮ください。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>駐車場はありますか？</summary>
-        <div class="faq-answer">専用駐車場はございません。近隣のコインパーキングをご利用ください。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>営利利用は可能ですか？</summary>
-        <div class="faq-answer">可能です。有償コンテンツやファンサイト向けの撮影など、営利目的でのご利用に対応しています。ただし、撮影物の公開・販売にあたっては出演者全員の同意取得・法令遵守が必要です。詳細は<a href="#terms">利用規約 第5条</a>をご確認ください。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>シャワーは使えますか？</summary>
-        <div class="faq-answer">シャワーはご利用いただけません。</div>
-      </details>
-
-      <details class="faq-item">
-        <summary>忘れ物をしました。</summary>
-        <div class="faq-answer">発見後7日間保管しています。X（旧Twitter）DM またはメール（<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a>）にてお早めにご連絡ください。食品・飲料など衛生上保管が困難なものは随時処分します。7日間経過後も引き取りがない場合は、遺失物法に基づき警察へ届け出ます。</div>
-      </details>
+    <!-- 運用メモ: 料金や利用規約を更新した場合は、_data/news_ja.yml に告知を追加する -->
+    <div class="news-list">
+      {% for item in site.data.news_ja %}
+      <div class="news-item">
+        <span class="news-date">{{ item.date }}</span>
+        <span class="news-badge">{{ item.type }}</span>
+        <span class="news-text">{{ item.body }}</span>
+      </div>
+      {% endfor %}
     </div>
   </div>
 </section>
 
 <!-- X タイムライン -->
-<section id="x-timeline" class="bg-section">
+<section id="x-timeline">
   <div class="container">
     <h2 class="section-title">最新情報</h2>
     <p class="section-subtitle">Latest Posts</p>
@@ -781,8 +685,103 @@
   </div>
 </section>
 
+<!-- FAQ -->
+<section id="faq" class="bg-section">
+  <div class="container">
+    <h2 class="section-title">よくある質問</h2>
+    <p class="section-subtitle">FAQ</p>
+
+    <div class="faq-list">
+      <details class="faq-item">
+        <summary>緊縛撮影は可能ですか？</summary>
+        <div class="faq-answer">可能です。ただし、性的行為および性的な行為を伴う撮影は禁止しています。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>男女問わず利用できますか？</summary>
+        <div class="faq-answer">はい、どなたでもご利用いただけます。ただし18歳以上（高校生不可）の方に限ります。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>縛り方を教えるサービスはありますか？</summary>
+        <div class="faq-answer">当スタジオでは講習・技術指導等のサービスは行っておりません。あくまでスペースのご提供となります。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>支払い方法は何がありますか？</summary>
+        <div class="faq-answer">現金・PayPay（現地決済）・オンラインクレジットカード決済がご利用いただけます。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>キャンセルポリシーはどうなっていますか？</summary>
+        <div class="faq-answer">2日前まで：無料 / 前日：料金の50% / 当日：料金の100% をキャンセル料としていただきます。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>予約日程の変更はできますか？</summary>
+        <div class="faq-answer">前日までであれば1回に限り無料で変更できます。2回目以降はキャンセル扱いとなりますのでご注意ください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>鍵の受け渡しはどうなっていますか？</summary>
+        <div class="faq-answer">予約時にお知らせします。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>機材の持ち込みはできますか？</summary>
+        <div class="faq-answer">可能です。お持ち込み機材をご利用いただけるほか、常設の撮影機材・備品は利用料金内でご利用いただけます。有料機材オプション（ストロボ2灯・ビデオライト等）は会員限定・¥2,000〜でご利用いただけます（予約時DMで申告）。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>スマートフォンで撮影できますか？</summary>
+        <div class="faq-answer">はい、問題ありません。ライティングが整っているため、スマートフォンでもクオリティの高い写真が撮影できます。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>営利利用は可能ですか？</summary>
+        <div class="faq-answer">可能です。有償コンテンツやファンサイト向けの撮影など、営利目的でのご利用に対応しています。ただし、撮影物の公開・販売にあたっては出演者全員の同意取得・法令遵守が必要です。詳細は<a href="#terms">利用規約 第5条</a>をご確認ください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>スタジオ内での飲食はできますか？</summary>
+        <div class="faq-answer">飲食物の持ち込みは可能ですが、ちゃぶ台および学校机周辺のみでお召し上がりください。畳スペースおよび吊り床周辺での飲食は禁止です。こぼれ・汚損・臭気残り等が発生した場合は清掃費用の実費をご請求する場合があります。ゴミは必ずお持ち帰りください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>アルコールの持ち込みはできますか？</summary>
+        <div class="faq-answer">持ち込みは可能ですが、宴会・飲み会目的での利用は禁止しています。安全管理上の理由により、飲酒後の緊縛行為（練習・撮影・パフォーマンスを含む）は禁止です。泥酔状態での利用および近隣への迷惑行為もお断りしています。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>駐車場はありますか？</summary>
+        <div class="faq-answer">専用駐車場はございません。近隣のコインパーキングをご利用ください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>当日延長は可能ですか？</summary>
+        <div class="faq-answer">次の予約が空いている場合のみ可能です。当日は連絡がつかない場合もあるため、延長をご希望の場合は事前にご相談ください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>シャワーは使えますか？</summary>
+        <div class="faq-answer">シャワーはご利用いただけません。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>背景紙を床に敷いても良いですか？</summary>
+        <div class="faq-answer">可能ですが、汚さないよう土足・素足でのご使用はご遠慮ください。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>忘れ物をしました。</summary>
+        <div class="faq-answer">発見後7日間保管しています。X（旧Twitter）DM またはメール（<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a>）にてお早めにご連絡ください。食品・飲料など衛生上保管が困難なものは随時処分します。7日間経過後も引き取りがない場合は、遺失物法に基づき警察へ届け出ます。</div>
+      </details>
+    </div>
+  </div>
+</section>
+
 <!-- 法的事項 -->
-<section id="legal" class="bg-section">
+<section id="legal">
   <div class="container">
     <h2 class="section-title">法的事項</h2>
     <p class="section-subtitle">Legal</p>
