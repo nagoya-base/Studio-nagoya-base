@@ -33,6 +33,13 @@
   text-align: center;
 }
 
+.hero-ad-subcopy {
+  margin-bottom: 18px;
+  color: var(--text);
+  font-size: 0.92rem;
+  line-height: 1.7;
+}
+
 .hero-ad-price {
   margin-bottom: 20px;
   color: var(--text-muted);
@@ -140,6 +147,74 @@
   margin-top: 28px;
 }
 
+/* 利用用途カード（こんな利用におすすめ） */
+.usage-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.usage-card {
+  min-width: 0;
+  padding: 28px 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color 0.2s;
+}
+
+.usage-card:hover {
+  border-color: var(--accent-dark);
+}
+
+.usage-card-icon {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--accent);
+  font-size: 1.3rem;
+}
+
+.usage-card h3 {
+  margin-bottom: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.usage-card p {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.8;
+}
+
+/* 安全ルール要点（読み飛ばし防止用の簡潔な箇条書き） */
+.phase2-safety-rules {
+  list-style: none;
+  margin: 0 0 24px;
+  padding: 20px 24px;
+  display: grid;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.phase2-safety-rules li {
+  position: relative;
+  padding-left: 20px;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.phase2-safety-rules li::before {
+  content: '◈';
+  position: absolute;
+  left: 0;
+  top: 0.1em;
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+
 .voices-intro {
   margin: -20px 0 28px;
   color: var(--text-muted);
@@ -184,5 +259,19 @@
   .phase2-link-row .btn-secondary {
     width: 100%;
     text-align: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .usage-cards-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .usage-card {
+    padding: 22px 20px;
+  }
+
+  .phase2-safety-rules {
+    padding: 18px 18px;
   }
 }
