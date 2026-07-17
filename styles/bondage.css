@@ -2,6 +2,80 @@
 
 /* 予約フォーム専用スタイルは styles/reservation-form.css に分離（index.html / mens/index.html 共通） */
 
+/* =====================
+   ヒーロー（広告画像／OGP兼用）
+   画像自体に見出し・料金訴求・ロゴを含むため、
+   同じ文言をテキストで重ねて表示しない（h1はSEO/読み上げ用にsr-only化）。
+   画像は等倍表示（トリミングなし）し、料金補足とCTAは画像下に配置する。
+===================== */
+.hero-ad {
+  padding-top: 80px;
+  border-bottom: 1px solid var(--border);
+}
+
+.hero-ad-media {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  line-height: 0;
+}
+
+.hero-ad-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.hero-ad-content {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 28px 24px 36px;
+  text-align: center;
+}
+
+.hero-ad-price {
+  margin-bottom: 20px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  letter-spacing: 0.05em;
+}
+
+.hero-ad-price-amount {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+
+.hero-ad-note {
+  margin-top: 14px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 640px) {
+  .hero-ad {
+    padding-top: 80px;
+  }
+
+  .hero-ad-content {
+    padding: 22px 16px 28px;
+  }
+}
+
 .consultation-card {
   max-width: 680px;
   margin: 0 auto;
