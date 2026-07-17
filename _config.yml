@@ -4,3 +4,5 @@ baseurl: "/Studio-nagoya-base"
 
 # Formspreeの公開Form ID。秘密鍵や認証情報は保存しない。
 formspree_form_id: "maqreqjk"
+
+# GitHub Pages rebuild trigger: 2026-07-17
