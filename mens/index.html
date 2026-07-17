@@ -185,8 +185,9 @@
 
       <div class="mens-ogp-hero-actions">
         <a class="btn-primary" href="#calendar">空き状況を確認する</a>
-        <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">予約・利用相談</a>
+        <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">利用前に相談する</a>
       </div>
+      <p class="hero-note">カレンダーで空きを確認後、ページ内フォームからお申し込みください。</p>
     </div>
   </div>
 </section>
@@ -220,30 +221,31 @@
 
     {% include calendar_embed.html %}
 
-    <p class="calendar-note">※ 空き状況はカレンダーでご確認ください。ご予約・お問い合わせはメールまたは X にてご連絡ください。</p>
-    <p class="calendar-note">※ ご予約の際に「メンズページを見た」とお伝えください。直接予約に限り、3時間以上のご利用と延長料金に会員料金を適用します。</p>
-    <p class="calendar-note">お急ぎの場合は <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DM（サブ窓口）</a> でもご連絡いただけます。</p>
+    <p class="calendar-note">カレンダーで希望日時の空きをご確認のうえ、下の「予約を申し込む」からお知らせください。<br>ご予約は<strong>前日まで</strong>受け付けています。通常は24時間以内に返信します。当方からの予約確定連絡をもって予約成立となります。</p>
+    <p class="calendar-note">予約窓口：ページ内フォーム　／　相談窓口：メールまたはX DM</p>
+    <p class="calendar-note">※ ご予約の際は、予約フォームの「連絡事項」欄に「メンズページを見た」とご記入ください。直接予約に限り、3時間以上のご利用と延長料金に会員料金を適用します。</p>
+
+    <div class="btn-group">
+      <a class="btn-primary" href="#reservation-form">予約申込フォームへ進む</a>
+      <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">利用前に相談する</a>
+    </div>
+    <p class="cta-hint"><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DMでも相談できます</a></p>
   </div>
 </section>
 
-<!-- CTA二分岐 -->
+{% include reservation_form_ja.html %}
+
+<!-- 利用前相談 -->
 <section id="cta">
   <div class="container">
-    <div class="cta-bifurcation">
-      <div class="cta-card cta-immediate">
-        <p class="cta-tag">予約</p>
-        <p class="cta-card-heading">空き状況を確認して予約</p>
-        <p class="cta-card-desc">カレンダーで空きを確認後、メールで希望日時・人数・利用用途をお知らせください。</p>
-        <a class="btn-primary" href="{{ site.data.mailto_ja.reserve_url }}">メールで予約する →</a>
-      </div>
-      <div class="cta-card cta-advance">
-        <p class="cta-tag">問い合わせ</p>
-        <p class="cta-card-heading">日程・設備について相談</p>
-        <p class="cta-card-desc">吊り設備、利用人数、撮影内容など、予約前に確認したい点がある場合はこちらからお問い合わせください。</p>
-        <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">メールで問い合わせる →</a>
-      </div>
+    <div class="cta-card cta-advance consultation-card">
+      <p class="cta-tag">利用前相談</p>
+      <h2 class="cta-card-heading">日程・設備について相談</h2>
+      <p class="cta-card-desc">吊り設備、利用人数、撮影内容など、予約前に確認したい点がある場合はこちらからお問い合わせください。</p>
+      <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">メールで問い合わせる →</a>
     </div>
-    <p class="cta-hint">空き状況は上の <a href="#calendar">予約カレンダー</a> でご確認ください。このページをご覧の方は<strong>会員料金</strong>が適用されます（割引対象は3時間以上のご利用と延長料金。例：平日 3時間 ¥5,500 / 4時間 ¥7,000）</p>
+    <p class="cta-hint">空き状況は上の <a href="#calendar">予約カレンダー</a> でご確認のうえ、<a href="#reservation-form">予約申込フォーム</a>からお申し込みください。このページをご覧の方は<strong>会員料金</strong>が適用されます（割引対象は3時間以上のご利用と延長料金。例：平日 3時間 ¥5,500 / 4時間 ¥7,000）</p>
+    <p class="cta-hint"><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DMでも相談できます</a></p>
   </div>
 </section>
 
@@ -386,7 +388,7 @@
       <div class="member-banner-icon">◈</div>
       <div class="member-banner-text">
         <strong>このページをご覧の方は会員料金でご利用いただけます</strong>
-        ご予約の際に「メンズページを見た」とお伝えください。会員料金を適用いたします（割引対象は3時間以上のご利用と延長料金。当サイトからの直接予約に限ります）。
+        予約フォームの「連絡事項」欄に「メンズページを見た」とご記入ください。会員料金を適用いたします（割引対象は3時間以上のご利用と延長料金。当サイトからの直接予約に限ります）。
       </div>
     </div>
 
@@ -494,7 +496,7 @@
     <p class="pricing-note">※ 緊縛・ロープ表現を含む撮影は3時間以上のご予約をおすすめします。</p>
     <p class="pricing-note">※ 料金は人数に関わらず一定です（1部屋まるごとのご利用）。</p>
     <p class="pricing-note">※ 常設の撮影機材・備品は利用料金内でご利用いただけます。機材レンタルオプション（会員限定・有料）の詳細は上記をご覧ください。</p>
-    <p class="pricing-note">※ 会員料金は、当施設が承認した会員が当サイトからの直接予約（メール・X DM）でご予約いただいた場合に適用されます。プラットフォーム経由のご予約には適用されません。詳細は<a href="{{ '/mens/legal/' | relative_url }}#terms">利用規約 第12条</a>をご確認ください。</p>
+    <p class="pricing-note">※ 会員料金は、当施設が承認した会員が当サイトからの直接予約（予約フォーム・メール・X DM）でご予約いただいた場合に適用されます。プラットフォーム経由のご予約には適用されません。詳細は<a href="{{ '/mens/legal/' | relative_url }}#terms">利用規約 第12条</a>をご確認ください。</p>
     <p class="pricing-note">※ ご予約前に必ず<a href="{{ '/mens/legal/' | relative_url }}#terms">利用規約</a>をご確認ください。</p>
   </div>
 </section>
@@ -529,7 +531,7 @@
 
     <ol class="mens-flow-list">
       <li><span class="mens-flow-num">1</span>カレンダーで空き状況を確認</li>
-      <li><span class="mens-flow-num">2</span>メールまたはXで予約</li>
+      <li><span class="mens-flow-num">2</span>予約申込フォームで予約</li>
       <li><span class="mens-flow-num">3</span>料金・支払い方法を確認</li>
       <li><span class="mens-flow-num">4</span>入室案内を受け取る</li>
       <li><span class="mens-flow-num">5</span>スマートロックで無人入室</li>
@@ -631,7 +633,7 @@
     </p>
     <div class="hero-buttons">
       <a class="btn-primary" href="#calendar">空き状況を確認する</a>
-      <a class="btn-secondary" href="{{ site.data.mailto_ja.reserve_url }}">メールで予約する</a>
+      <a class="btn-secondary" href="#reservation-form">予約申込フォームへ進む</a>
     </div>
     <p class="cta-hint" style="margin-top:20px;">X（旧Twitter）でも最新の作例・空き情報を発信しています → <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">@nagoyabase2023</a></p>
   </div>
