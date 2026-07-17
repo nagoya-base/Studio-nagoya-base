@@ -41,7 +41,7 @@
 <link rel="stylesheet" href="../styles/common.css">
 </head>
 
-<body>
+<body data-page-type="how_to">
 
 <a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
 
@@ -86,8 +86,8 @@
           <div style="padding-top:4px;">
             <strong style="display:block;margin-bottom:4px;">予約申込フォームを送信</strong>
             <span style="color:var(--text-muted);font-size:0.9rem;">希望日、開始時間、利用時間、人数、利用目的、支払方法などをご入力ください。<br>
-              <a href="../#reservation-form">予約申込フォームへ進む →</a><br>
-              <span style="display:block;margin-top:8px;font-size:0.82rem;">フォームを利用できない場合は、<a href="{{ site.data.mailto_ja.reserve_url }}">メールでもお申し込みいただけます</a>。</span>
+              <a href="../#reservation-form" data-analytics-event="reservation_cta_click" data-analytics-location="how_to" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む →</a><br>
+              <span style="display:block;margin-top:8px;font-size:0.82rem;">フォームを利用できない場合は、<a href="{{ site.data.mailto_ja.reserve_url }}" data-analytics-event="reservation_email_click" data-analytics-location="how_to">メールでもお申し込みいただけます</a>。</span>
             </span>
           </div>
         </li>
@@ -173,10 +173,10 @@
       </ol>
 
       <div style="margin-top:48px;text-align:center;">
-        <a class="btn-primary" href="../#reservation-form">予約申込フォームへ進む</a>
+        <a class="btn-primary" href="../#reservation-form" data-analytics-event="reservation_cta_click" data-analytics-location="how_to" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む</a>
         &nbsp;&nbsp;
-        <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">利用前に相談する</a>
-        <p class="cta-hint" style="margin-top:16px;"><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DMでも相談できます</a></p>
+        <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}" data-analytics-event="consultation_email_click" data-analytics-location="how_to">利用前に相談する</a>
+        <p class="cta-hint" style="margin-top:16px;"><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer" data-analytics-event="consultation_x_click" data-analytics-location="how_to">X DMでも相談できます</a></p>
       </div>
 
     </div>
@@ -254,12 +254,13 @@
   <nav class="footer-nav" aria-label="フッターナビゲーション">
     <a href="../">トップ</a>
     <a href="../#pricing">料金</a>
-    <a href="../legal/">利用規約</a>
+    <a href="../legal/" data-analytics-event="terms_link_click" data-analytics-location="other" data-analytics-destination="terms">利用規約</a>
   </nav>
   <p class="footer-copy">&copy; Studio Nagoya Base. All rights reserved.</p>
 </footer>
 
 <script src="../scripts/main.js"></script>
+<script src="../scripts/analytics.js"></script>
 
 </body>
 </html>

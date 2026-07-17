@@ -15,7 +15,7 @@
       <li><a href="#access">アクセス・営業時間</a></li>
       <li><a href="{{ '/how-to/' | relative_url }}">ご利用ガイド</a></li>
       <li><a href="#faq">FAQ</a></li>
-      <li><button type="button" class="nav-legal-btn">利用規約</button></li>
+      <li><button type="button" class="nav-legal-btn" data-analytics-event="terms_link_click" data-analytics-location="other">利用規約</button></li>
       <li><a href="{{ '/en.html' | relative_url }}" class="nav-link-accent">EN</a></li>
     </ul>
 
@@ -41,9 +41,9 @@
 </div>
 {% else %}
 <div class="booking-fixed-banner">
-  <a href="mailto:nagoyabase2023@gmail.com">メール受付</a>
+  <a href="mailto:nagoyabase2023@gmail.com" data-analytics-event="reservation_email_click" data-analytics-location="other">メール受付</a>
   <span class="banner-separator" aria-hidden="true">｜</span>
-  <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DM（サブ窓口）</a>
+  <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer" data-analytics-event="consultation_x_click" data-analytics-location="banner">X DM（サブ窓口）</a>
 </div>
 {% endif %}
 
@@ -55,7 +55,7 @@
   <a href="#access"    class="nav-mobile-link">アクセス・営業時間</a>
   <a href="{{ '/how-to/' | relative_url }}" class="nav-mobile-link">ご利用ガイド</a>
   <a href="#faq"       class="nav-mobile-link">FAQ</a>
-  <button type="button" class="nav-mobile-link nav-legal-btn" id="openLegalModal">利用規約</button>
+  <button type="button" class="nav-mobile-link nav-legal-btn" id="openLegalModal" data-analytics-event="terms_link_click" data-analytics-location="other">利用規約</button>
   <a href="{{ '/en.html' | relative_url }}" class="nav-mobile-link nav-link-accent">EN</a>
   <div class="theme-switcher theme-switcher-mobile" role="group" aria-label="カラーテーマ切り替え">
     <button class="theme-btn active" type="button" data-theme="kinari"
