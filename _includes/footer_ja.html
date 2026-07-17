@@ -1,13 +1,20 @@
 <!-- フッター -->
+{% if include.brand == "mens" %}
+{% assign legal_url = "/mens/legal/" | relative_url %}
+{% assign top_url = "/mens/" | relative_url %}
+{% else %}
+{% assign legal_url = "/legal/" | relative_url %}
+{% assign top_url = "/" | relative_url %}
+{% endif %}
 <footer>
   <p>STUDIO NAGOYA BASE</p>
   <p>名古屋・上前津のプライベート撮影スタジオ</p>
   <nav aria-label="フッターナビゲーション">
-    <a href="#terms" data-analytics-event="terms_link_click" data-analytics-location="other">利用規約</a>
-    <a href="#cancel">キャンセルポリシー</a>
-    <a href="#privacy">プライバシーポリシー</a>
-    <a href="#law">特商法</a>
-    {% if include.show_top %}<a href="{{ '/' | relative_url }}">トップページへ</a>{% endif %}
+    <a href="{{ legal_url }}" data-analytics-event="terms_link_click" data-analytics-location="other">利用規約</a>
+    <a href="{{ legal_url }}#cancel">キャンセルポリシー</a>
+    <a href="{{ legal_url }}#privacy">プライバシーポリシー</a>
+    <a href="{{ legal_url }}#law">特商法</a>
+    {% if include.show_top %}<a href="{{ top_url }}">トップページへ</a>{% endif %}
   </nav>
   <p class="footer-copy">&copy; Studio Nagoya Base. All rights reserved.</p>
 </footer>

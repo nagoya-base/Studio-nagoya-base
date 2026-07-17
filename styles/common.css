@@ -1821,6 +1821,47 @@ p.pricing-note + p.pricing-note {
   margin-top: 20px;
 }
 
+/* 要点ストリップ・注記（緊縛・メンズ共通、法的事項サマリー等で使用） */
+.phase2-rule-note {
+  margin-top: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.phase2-trust-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 18px;
+  margin: 40px 0 8px;
+  padding: 18px 20px;
+  list-style: none;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.phase2-trust-strip li {
+  position: relative;
+  padding-left: 14px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.phase2-trust-strip li::before {
+  content: "◈";
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+}
+
+@media (max-width: 520px) {
+  .phase2-trust-strip {
+    justify-content: flex-start;
+  }
+}
+
 /* legal ページ戻りリンク */
 .legal-back-link {
   display: inline-block;

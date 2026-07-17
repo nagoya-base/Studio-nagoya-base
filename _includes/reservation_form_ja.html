@@ -178,7 +178,7 @@
       <fieldset class="reservation-group reservation-confirmation">
         <legend>4. 確認・同意</legend>
         <div class="reservation-consents">
-          <label for="reservation-terms"><input type="checkbox" id="reservation-terms" name="利用規約同意" value="同意する" required aria-describedby="reservation-terms-error"> <span><a href="#terms" data-analytics-event="terms_link_click" data-analytics-location="reservation_form">利用規約</a>を確認し、内容に同意します。 <span class="field-badge field-badge--required">必須</span></span></label>
+          <label for="reservation-terms"><input type="checkbox" id="reservation-terms" name="利用規約同意" value="同意する" required aria-describedby="reservation-terms-error"> <span><a href="{{ '/legal/' | relative_url }}#terms" data-analytics-event="terms_link_click" data-analytics-location="reservation_form">利用規約</a>を確認し、内容に同意します。 <span class="field-badge field-badge--required">必須</span></span></label>
           <p id="reservation-terms-error" class="field-error" hidden></p>
 
           <label for="reservation-safety"><input type="checkbox" id="reservation-safety" name="安全ルール同意" value="同意する" required aria-describedby="reservation-safety-error"> <span>吊り床・緊縛を利用する場合は、利用者自身で安全管理を行い、安全ルールを守ります。 <span class="field-badge field-badge--required">必須</span></span></label>
@@ -188,7 +188,7 @@
           <p id="reservation-condition-error" class="field-error" hidden></p>
         </div>
 
-        <p class="reservation-privacy">入力された情報は、予約確認、利用案内、当日の連絡および必要な運営対応のために使用し、フォーム送信にはFormspreeを利用します。詳しくは<a href="#privacy">プライバシーポリシー</a>をご確認ください。</p>
+        <p class="reservation-privacy">入力された情報は、予約確認、利用案内、当日の連絡および必要な運営対応のために使用し、フォーム送信にはFormspreeを利用します。詳しくは<a href="{{ '/legal/' | relative_url }}#privacy">プライバシーポリシー</a>をご確認ください。</p>
         <p class="reservation-review-note">送信前に、希望日・開始時間・利用時間・メールアドレスをご確認ください。</p>
         <button type="submit" id="reservation-submit" class="btn-primary reservation-submit">予約を申し込む</button>
         <p id="reservation-submit-state" class="reservation-submit-state" role="status" aria-live="polite">送信内容を確認後、入力したメールアドレスへご連絡します。</p>

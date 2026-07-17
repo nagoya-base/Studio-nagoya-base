@@ -1,10 +1,21 @@
 <!-- ナビゲーション -->
+{% if include.brand == "mens" %}
+{% assign nav_top_url = "/mens/" | relative_url %}
+{% assign nav_logo_name = "男性ポートレート" %}
+{% assign nav_howto_url = "/mens/how-to/" | relative_url %}
+{% assign nav_legal_url = "/mens/legal/" | relative_url %}
+{% else %}
+{% assign nav_top_url = "/" | relative_url %}
+{% assign nav_logo_name = "スタジオ　名古屋ベース" %}
+{% assign nav_howto_url = "/how-to/" | relative_url %}
+{% assign nav_legal_url = "/legal/" | relative_url %}
+{% endif %}
 <nav class="site-nav" aria-label="サイトナビゲーション">
   <div class="nav-inner">
-    <a href="{{ '/' | relative_url }}" class="nav-logo">
+    <a href="{{ nav_top_url }}" class="nav-logo">
       <div class="logo-mark">N</div>
       <div class="logo-text">
-        <span class="logo-name">スタジオ　名古屋ベース</span>
+        <span class="logo-name">{{ nav_logo_name }}</span>
         <span class="logo-en">KAMIMAEZU · NAGOYA</span>
       </div>
     </a>
@@ -13,9 +24,9 @@
       <li><a href="#features">特徴</a></li>
       <li><a href="#pricing">料金</a></li>
       <li><a href="#access">アクセス・営業時間</a></li>
-      <li><a href="{{ '/how-to/' | relative_url }}">ご利用ガイド</a></li>
+      <li><a href="{{ nav_howto_url }}">使い方</a></li>
       <li><a href="#faq">FAQ</a></li>
-      <li><button type="button" class="nav-legal-btn" data-analytics-event="terms_link_click" data-analytics-location="other">利用規約</button></li>
+      <li><a href="{{ nav_legal_url }}" data-analytics-event="terms_link_click" data-analytics-location="other">利用規約</a></li>
       <li><a href="{{ '/en.html' | relative_url }}" class="nav-link-accent">EN</a></li>
     </ul>
 
@@ -53,9 +64,9 @@
   <a href="#features"  class="nav-mobile-link">特徴</a>
   <a href="#pricing"   class="nav-mobile-link">料金</a>
   <a href="#access"    class="nav-mobile-link">アクセス・営業時間</a>
-  <a href="{{ '/how-to/' | relative_url }}" class="nav-mobile-link">ご利用ガイド</a>
+  <a href="{{ nav_howto_url }}" class="nav-mobile-link">使い方</a>
   <a href="#faq"       class="nav-mobile-link">FAQ</a>
-  <button type="button" class="nav-mobile-link nav-legal-btn" id="openLegalModal" data-analytics-event="terms_link_click" data-analytics-location="other">利用規約</button>
+  <a href="{{ nav_legal_url }}" class="nav-mobile-link" data-analytics-event="terms_link_click" data-analytics-location="other">利用規約</a>
   <a href="{{ '/en.html' | relative_url }}" class="nav-mobile-link nav-link-accent">EN</a>
   <div class="theme-switcher theme-switcher-mobile" role="group" aria-label="カラーテーマ切り替え">
     <button class="theme-btn active" type="button" data-theme="kinari"
