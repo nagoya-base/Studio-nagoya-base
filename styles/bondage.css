@@ -9,7 +9,7 @@
    画像は等倍表示（トリミングなし）し、料金補足とCTAは画像下に配置する。
 ===================== */
 .hero-ad {
-  padding-top: 80px;
+  padding: 80px 0 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -68,7 +68,7 @@
 
 @media (max-width: 640px) {
   .hero-ad {
-    padding-top: 80px;
+    padding: 80px 0 0;
   }
 
   .hero-ad-content {
