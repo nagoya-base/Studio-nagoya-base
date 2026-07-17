@@ -1,6 +1,106 @@
 /* styles/mens.css – mens/index.html 固有スタイル */
 
 /* =====================
+   OGPヒーロー（男性向け専用OGP画像を主役にした構成）
+===================== */
+.mens-ogp-hero {
+  background: var(--bg);
+}
+
+.mens-ogp-hero-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 36px;
+  text-align: center;
+}
+
+.mens-ogp-hero-image {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-card);
+}
+
+.mens-ogp-hero-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.mens-ogp-hero-copy {
+  max-width: 600px;
+}
+
+.mens-ogp-hero-copy .hero-label {
+  margin-bottom: 16px;
+}
+
+.mens-ogp-hero-title {
+  font-size: clamp(1.5rem, 5vw, 2.3rem);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1.45;
+  color: var(--text);
+  margin-bottom: 18px;
+}
+
+.mens-ogp-hero-description {
+  font-size: clamp(0.92rem, 2.4vw, 1.02rem);
+  color: var(--text-muted);
+  line-height: 1.9;
+  margin-bottom: 22px;
+}
+
+.mens-ogp-hero .hero-badges {
+  margin-bottom: 22px;
+}
+
+.mens-ogp-hero .hero-badge {
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.mens-ogp-hero-price {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+  margin-bottom: 28px;
+}
+
+.mens-ogp-hero-price strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mens-ogp-hero-actions {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+@media (max-width: 520px) {
+  .mens-ogp-hero-inner {
+    gap: 28px;
+  }
+
+  .mens-ogp-hero-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mens-ogp-hero-actions .btn-primary,
+  .mens-ogp-hero-actions .btn-secondary {
+    text-align: center;
+  }
+}
+
+/* =====================
    会員バナー
 ===================== */
 .member-banner {
