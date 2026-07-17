@@ -17,7 +17,7 @@
 <!-- Favicon -->
 <link rel="icon" href="../images/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" sizes="180x180" href="../images/apple-touch-icon.png">
-<link rel="preload" as="image" href="../images/IMG_2309_1600.webp" fetchpriority="high">
+<link rel="preload" as="image" href="../images/ogp-mens-v2-1200x630.jpg" fetchpriority="high">
 
 <!-- Google Analytics 4 -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
@@ -53,7 +53,7 @@
   "name": "Studio Nagoya Base",
   "description": "名古屋・上前津の完全個室レンタルスペース。男性同士の緊縛練習、吊り撮影、ユニフォーム・スポーツウェア・フェティッシュ衣装の作品撮りに対応。無人入室、最大4名、スマホ撮影可。",
   "url": "https://nagoya-base.github.io/Studio-nagoya-base/mens/",
-  "image": "https://nagoya-base.github.io/Studio-nagoya-base/images/gallery_man02_1200.webp",
+  "image": "https://nagoya-base.github.io/Studio-nagoya-base/images/ogp-mens-v2-1200x630.jpg",
   "email": "nagoyabase2023@gmail.com",
   "address": {
     "@type": "PostalAddress",
@@ -185,6 +185,14 @@
     },
     {
       "@type": "Question",
+      "name": "当日延長は可能ですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "次の予約が空いている場合のみ可能です。当日は連絡がつかない場合もあるため、延長をご希望の場合は事前にご相談ください。"
+      }
+    },
+    {
+      "@type": "Question",
       "name": "キャンセルポリシーはどうなっていますか？",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -228,30 +236,37 @@
 
 <main id="main-content">
 
-<!-- ヒーロー -->
-<section class="hero" aria-label="メインビジュアル">
-  <div class="hero-overlay"></div>
-  <div class="hero-content">
-    <p class="hero-label">Men's Private Studio</p>
-    <h1 class="hero-main">男性同士の緊縛とフェティッシュ表現を、完全個室で。</h1>
-    <p class="hero-sub">緊縛練習、吊り撮影、ユニフォームやフェティッシュ衣装の作品撮りに。<br>男性ペア・男性グループでの利用を歓迎しています。名古屋・上前津。</p>
+<!-- ヒーロー（男性向け専用OGP画像） -->
+<section class="mens-ogp-hero" aria-labelledby="mens-hero-title">
+  <div class="container mens-ogp-hero-inner">
+    <picture class="mens-ogp-hero-image">
+      <img
+        src="../images/ogp-mens-v2-1200x630.jpg"
+        width="1200"
+        height="630"
+        alt="男性同士のフェティッシュ撮影に対応するStudio Nagoya Baseの男性向け案内"
+        fetchpriority="high"
+        decoding="async"
+      >
+    </picture>
+    <div class="mens-ogp-hero-copy">
+      <p class="hero-label">Men's Private Studio</p>
+      <h1 id="mens-hero-title" class="mens-ogp-hero-title">男性同士の緊縛・フェティッシュ撮影向けレンタルスペース</h1>
+      <p class="mens-ogp-hero-description">男性モデルによる緊縛、吊り撮影、ユニフォームやフェティッシュ衣装の作品撮りに。名古屋・上前津の完全個室・無人入室スタジオです。</p>
 
-    <ul class="hero-badges" aria-label="ご利用の安心材料">
-      <li class="hero-badge">完全貸切</li>
-      <li class="hero-badge">無人入室</li>
-      <li class="hero-badge">最大4名</li>
-      <li class="hero-badge">スマホ撮影OK</li>
-    </ul>
+      <ul class="hero-badges" aria-label="ご利用の安心材料">
+        <li class="hero-badge">完全貸切</li>
+        <li class="hero-badge">無人入室</li>
+        <li class="hero-badge">最大4名</li>
+        <li class="hero-badge">スマホ撮影OK</li>
+      </ul>
 
-    <div class="hero-pricing">
-      <p class="hero-price-line">
-        2時間から <span class="price-amount">¥4,000</span>（平日）/ <span class="price-amount">¥5,000</span>（土日祝）
-      </p>
-    </div>
+      <p class="mens-ogp-hero-price">2時間から <strong>平日 ¥4,000</strong> / <strong>土日祝 ¥5,000</strong></p>
 
-    <div class="hero-buttons">
-      <a class="btn-primary" href="#calendar">今週の空きを確認</a>
-      <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">お問い合わせ</a>
+      <div class="mens-ogp-hero-actions">
+        <a class="btn-primary" href="#calendar">空き状況を確認する</a>
+        <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">予約・利用相談</a>
+      </div>
     </div>
   </div>
 </section>
@@ -287,11 +302,7 @@
 
     <p class="calendar-note">※ 空き状況はカレンダーでご確認ください。ご予約・お問い合わせはメールまたは X にてご連絡ください。</p>
     <p class="calendar-note">※ ご予約の際に「メンズページを見た」とお伝えください。直接予約に限り、3時間以上のご利用と延長料金に会員料金を適用します。</p>
-
-    <div class="btn-group">
-      <a class="btn-primary" href="{{ site.data.mailto_ja.reserve_url }}">メールで予約する</a>
-      <a class="btn-primary btn-muted" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DM（サブ窓口）</a>
-    </div>
+    <p class="calendar-note">お急ぎの場合は <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DM（サブ窓口）</a> でもご連絡いただけます。</p>
   </div>
 </section>
 
@@ -371,9 +382,6 @@
         <p>麻縄、スリング、カラビナ、ヨガマット、置き畳など、緊縛練習や撮影に必要な基本備品を常設しています。</p>
       </div>
     </div>
-    <div class="section-cta">
-      <a class="btn-primary" href="#calendar">空き状況を確認する</a>
-    </div>
   </div>
 </section>
 
@@ -415,6 +423,9 @@
       最新の作例・空き情報は X でご確認いただけます →
       <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">@nagoyabase2023</a>
     </p>
+    <div class="section-cta">
+      <a class="btn-primary" href="#calendar">このスタジオの空き状況を確認する</a>
+    </div>
   </div>
 </section>
 
@@ -455,9 +466,6 @@
     </div>
 
     {% include equipment_table.html intro="初心者でも簡単に使える機材ばかりです。" %}
-    <div class="section-cta">
-      <a class="btn-primary" href="#calendar">空き状況を確認する</a>
-    </div>
   </div>
 </section>
 
@@ -581,9 +589,6 @@
     <p class="pricing-note">※ 常設の撮影機材・備品は利用料金内でご利用いただけます。機材レンタルオプション（会員限定・有料）の詳細は上記をご覧ください。</p>
     <p class="pricing-note">※ 会員料金は、当施設が承認した会員が当サイトからの直接予約（メール・X DM）でご予約いただいた場合に適用されます。プラットフォーム経由のご予約には適用されません。詳細は<a href="#terms">利用規約 第12条</a>をご確認ください。</p>
     <p class="pricing-note">※ ご予約前に必ず<a href="#terms">利用規約</a>をご確認ください。</p>
-    <div class="section-cta-sm">
-      <a class="btn-primary" href="#calendar">空き状況を確認する</a>
-    </div>
   </div>
 </section>
 
@@ -605,10 +610,7 @@
       <div class="mens-safety-item">利用前に利用規約を確認する</div>
     </div>
 
-    <p class="phase2-rule-note">安全ルールと禁止事項の詳細は、利用規約をご確認ください。</p>
-    <div class="section-cta-sm">
-      <a class="btn-primary" href="#terms">利用規約を確認する</a>
-    </div>
+    <p class="phase2-rule-note">安全ルールと禁止事項の詳細は、<a href="#terms">利用規約</a>をご確認ください。</p>
   </div>
 </section>
 
@@ -633,10 +635,6 @@
       <li>ゴミは必ずお持ち帰りください。</li>
       <li>利用終了時刻までに清掃・退室を完了してください。</li>
     </ul>
-
-    <div class="section-cta">
-      <a class="btn-primary" href="#calendar">空き状況を確認する</a>
-    </div>
   </div>
 </section>
 
@@ -736,6 +734,11 @@
       <details class="faq-item">
         <summary>支払い方法は何がありますか？</summary>
         <div class="faq-answer">現金・PayPay（現地決済）・オンラインクレジットカード決済がご利用いただけます。</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>当日延長は可能ですか？</summary>
+        <div class="faq-answer">次の予約が空いている場合のみ可能です。当日は連絡がつかない場合もあるため、延長をご希望の場合は事前にご相談ください。</div>
       </details>
 
       <details class="faq-item">
