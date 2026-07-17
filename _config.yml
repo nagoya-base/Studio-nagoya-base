@@ -2,6 +2,5 @@ title: Studio Nagoya Base
 url: "https://nagoya-base.github.io"
 baseurl: "/Studio-nagoya-base"
 
-# Formspree dashboardで発行した公開Form IDを設定してからPhase 4をマージすること。
-# Form IDは秘密鍵ではないが、空値のままでは予約フォームは送信されない。
-formspree_form_id: ""
+# Formspreeの公開Form ID。秘密鍵や認証情報は保存しない。
+formspree_form_id: "maqreqjk"
