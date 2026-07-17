@@ -13,7 +13,7 @@
     <div id="reservation-failure" class="reservation-status reservation-status--error" role="alert" aria-live="assertive" tabindex="-1" hidden>
       <h3>送信できませんでした</h3>
       <p id="reservation-failure-message">通信状況をご確認のうえ、時間を置いて再度お試しください。送信できない場合は、メールからお申し込みください。</p>
-      <a class="btn-secondary" href="{{ site.data.mailto_ja.reserve_url }}">メールで予約を申し込む</a>
+      <a class="btn-secondary" href="{{ site.data.mailto_ja.reserve_url }}" data-analytics-event="reservation_email_click" data-analytics-location="error_message">メールで予約を申し込む</a>
     </div>
 
     <form
@@ -178,7 +178,7 @@
       <fieldset class="reservation-group reservation-confirmation">
         <legend>4. 確認・同意</legend>
         <div class="reservation-consents">
-          <label for="reservation-terms"><input type="checkbox" id="reservation-terms" name="利用規約同意" value="同意する" required aria-describedby="reservation-terms-error"> <span><a href="#terms">利用規約</a>を確認し、内容に同意します。 <span class="field-badge field-badge--required">必須</span></span></label>
+          <label for="reservation-terms"><input type="checkbox" id="reservation-terms" name="利用規約同意" value="同意する" required aria-describedby="reservation-terms-error"> <span><a href="#terms" data-analytics-event="terms_link_click" data-analytics-location="reservation_form">利用規約</a>を確認し、内容に同意します。 <span class="field-badge field-badge--required">必須</span></span></label>
           <p id="reservation-terms-error" class="field-error" hidden></p>
 
           <label for="reservation-safety"><input type="checkbox" id="reservation-safety" name="安全ルール同意" value="同意する" required aria-describedby="reservation-safety-error"> <span>吊り床・緊縛を利用する場合は、利用者自身で安全管理を行い、安全ルールを守ります。 <span class="field-badge field-badge--required">必須</span></span></label>
@@ -197,7 +197,7 @@
 
     <div class="reservation-fallback">
       <p>フォームを利用できない場合は、メールでも予約を申し込めます。</p>
-      <a class="btn-secondary" href="{{ site.data.mailto_ja.reserve_url }}">メールで予約を申し込む</a>
+      <a class="btn-secondary" href="{{ site.data.mailto_ja.reserve_url }}" data-analytics-event="reservation_email_click" data-analytics-location="form_fallback">メールで予約を申し込む</a>
     </div>
   </div>
 </section>

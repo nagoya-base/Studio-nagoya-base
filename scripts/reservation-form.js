@@ -7,6 +7,7 @@
   var dateInput = document.getElementById('reservation-date');
   var timeInput = document.getElementById('reservation-start-time');
   var durationInput = document.getElementById('reservation-duration');
+  var partySizeInput = document.getElementById('reservation-party-size');
   var purposeInput = document.getElementById('reservation-purpose');
   var purposeOtherWrap = document.getElementById('reservation-purpose-other-wrap');
   var purposeOtherInput = document.getElementById('reservation-purpose-other');
@@ -59,12 +60,88 @@
 
   dateInput.min = tomorrowInJapan();
 
-  function setError(element, errorId, message) {
+  function trackFormStart() {
+    if (window.StudioAnalytics) window.StudioAnalytics.trackFormStart();
+  }
+  form.addEventListener('input', function (event) {
+    var tag = event.target && event.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') trackFormStart();
+  });
+  form.addEventListener('change', function (event) {
+    var tag = event.target && event.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') trackFormStart();
+  });
+
+  function mapDurationGroup(value) {
+    switch (value) {
+      case '2': return '2h';
+      case '3': return '3h';
+      case '4': return '4h';
+      case '5': return '5h';
+      case '6': return '6h';
+      case '7+': return '7h_plus';
+      default: return 'unknown';
+    }
+  }
+
+  function mapPartySizeGroup(value) {
+    switch (value) {
+      case '1名': return '1';
+      case '2名': return '2';
+      case '3名': return '3';
+      case '4名': return '4';
+      case '5名以上・要相談': return '5_plus';
+      default: return 'unknown';
+    }
+  }
+
+  function mapUsageCategory(value) {
+    switch (value) {
+      case '緊縛の自主練習': return 'practice';
+      case 'ショー・パフォーマンス練習': return 'performance';
+      case '講習会・ワークショップ': return 'workshop';
+      case '緊縛・ロープ表現の撮影': return 'bondage_photography';
+      case '身体表現・作品撮り': return 'body_expression';
+      case '静止画・動画撮影': return 'photo_video';
+      case 'その他': return 'other';
+      default: return 'unknown';
+    }
+  }
+
+  function mapRiggingUsage(value) {
+    switch (value) {
+      case '利用する': return 'yes';
+      case '利用しない': return 'no';
+      case '未定・相談したい': return 'undecided';
+      default: return 'unknown';
+    }
+  }
+
+  function mapPaymentMethod(value) {
+    switch (value) {
+      case '現金': return 'cash';
+      case 'PayPay': return 'paypay';
+      case 'オンラインクレジットカード': return 'card';
+      case '未定': return 'undecided';
+      default: return 'unknown';
+    }
+  }
+
+  function mapCustomerType(value) {
+    switch (value) {
+      case '初回利用': return 'first_time';
+      case '通常利用': return 'regular';
+      case '会員利用': return 'member';
+      default: return 'unknown';
+    }
+  }
+
+  function setError(element, errorId, message, type) {
     var error = document.getElementById(errorId);
     element.setAttribute('aria-invalid', 'true');
     error.textContent = message;
     error.hidden = false;
-    return { element: element, message: message };
+    return { element: element, message: message, type: type || 'unknown' };
   }
 
   function clearError(element, errorId) {
@@ -88,13 +165,13 @@
     error.hidden = true;
   }
 
-  function setRadioError(name, errorId, message) {
+  function setRadioError(name, errorId, message, type) {
     var radios = form.querySelectorAll('input[name="' + name + '"]');
     radios.forEach(function (radio) { radio.setAttribute('aria-invalid', 'true'); });
     var error = document.getElementById(errorId);
     error.textContent = message;
     error.hidden = false;
-    return { element: radios[0], message: message };
+    return { element: radios[0], message: message, type: type || 'unknown' };
   }
 
   function endTimeExceedsClosing() {
@@ -125,7 +202,6 @@
     var errors = [];
     var nameInput = document.getElementById('reservation-name');
     var emailInput = document.getElementById('reservation-email');
-    var partySizeInput = document.getElementById('reservation-party-size');
     var termsInput = document.getElementById('reservation-terms');
     var safetyInput = document.getElementById('reservation-safety');
     var conditionInput = document.getElementById('reservation-condition');
@@ -145,37 +221,38 @@
     clearRadioError('支払方法', 'reservation-payment-error');
     clearRadioError('利用区分', 'reservation-member-error');
 
-    if (!nameInput.value.trim()) errors.push(setError(nameInput, 'reservation-name-error', 'お名前を入力してください。'));
+    if (!nameInput.value.trim()) errors.push(setError(nameInput, 'reservation-name-error', 'お名前を入力してください。', 'required_missing'));
     if (!emailInput.value.trim()) {
-      errors.push(setError(emailInput, 'reservation-email-error', 'メールアドレスを入力してください。'));
+      errors.push(setError(emailInput, 'reservation-email-error', 'メールアドレスを入力してください。', 'required_missing'));
     } else if (!emailInput.validity.valid) {
-      errors.push(setError(emailInput, 'reservation-email-error', 'メールアドレスを正しい形式で入力してください。'));
+      errors.push(setError(emailInput, 'reservation-email-error', 'メールアドレスを正しい形式で入力してください。', 'invalid_email'));
     }
     if (!dateInput.value) {
-      errors.push(setError(dateInput, 'reservation-date-error', '希望日を入力してください。'));
+      errors.push(setError(dateInput, 'reservation-date-error', '希望日を入力してください。', 'required_missing'));
     } else if (dateInput.value <= todayInJapan()) {
-      errors.push(setError(dateInput, 'reservation-date-error', dateInput.value === todayInJapan() ? '当日の予約は申し込めません。翌日以降を選択してください。' : '過去の日付は選択できません。'));
+      var isSameDay = dateInput.value === todayInJapan();
+      errors.push(setError(dateInput, 'reservation-date-error', isSameDay ? '当日の予約は申し込めません。翌日以降を選択してください。' : '過去の日付は選択できません。', isSameDay ? 'same_day' : 'invalid_date'));
     }
     if (!timeInput.value) {
-      errors.push(setError(timeInput, 'reservation-start-time-error', '開始時間を入力してください。'));
+      errors.push(setError(timeInput, 'reservation-start-time-error', '開始時間を入力してください。', 'required_missing'));
     } else if (timeInput.value < '08:00' || timeInput.value > '23:00') {
-      errors.push(setError(timeInput, 'reservation-start-time-error', '開始時間は8:00〜23:00の範囲で選択してください。'));
+      errors.push(setError(timeInput, 'reservation-start-time-error', '開始時間は8:00〜23:00の範囲で選択してください。', 'outside_business_hours'));
     }
-    if (!durationInput.value) errors.push(setError(durationInput, 'reservation-duration-error', '利用時間を選択してください。'));
+    if (!durationInput.value) errors.push(setError(durationInput, 'reservation-duration-error', '利用時間を選択してください。', 'required_missing'));
     if (timeInput.value && durationInput.value && endTimeExceedsClosing()) {
-      errors.push(setError(timeInput, 'reservation-start-time-error', '利用終了時間が23:00を超えています。'));
+      errors.push(setError(timeInput, 'reservation-start-time-error', '利用終了時間が23:00を超えています。', 'end_time_over'));
     }
-    if (!partySizeInput.value) errors.push(setError(partySizeInput, 'reservation-party-size-error', '利用人数を選択してください。'));
-    if (!purposeInput.value) errors.push(setError(purposeInput, 'reservation-purpose-error', '利用目的を選択してください。'));
+    if (!partySizeInput.value) errors.push(setError(partySizeInput, 'reservation-party-size-error', '利用人数を選択してください。', 'required_missing'));
+    if (!purposeInput.value) errors.push(setError(purposeInput, 'reservation-purpose-error', '利用目的を選択してください。', 'required_missing'));
     if (purposeInput.value === 'その他' && !purposeOtherInput.value.trim()) {
-      errors.push(setError(purposeOtherInput, 'reservation-purpose-other-error', '「その他」の利用目的を入力してください。'));
+      errors.push(setError(purposeOtherInput, 'reservation-purpose-other-error', '「その他」の利用目的を入力してください。', 'other_detail_missing'));
     }
-    if (!checkedRadio('吊り床利用予定')) errors.push(setRadioError('吊り床利用予定', 'reservation-suspension-error', '吊り床の利用予定を選択してください。'));
-    if (!checkedRadio('支払方法')) errors.push(setRadioError('支払方法', 'reservation-payment-error', '支払方法を選択してください。'));
-    if (!checkedRadio('利用区分')) errors.push(setRadioError('利用区分', 'reservation-member-error', '利用区分を選択してください。'));
-    if (!termsInput.checked) errors.push(setError(termsInput, 'reservation-terms-error', '利用規約への同意が必要です。'));
-    if (!safetyInput.checked) errors.push(setError(safetyInput, 'reservation-safety-error', '安全ルールへの同意が必要です。'));
-    if (!conditionInput.checked) errors.push(setError(conditionInput, 'reservation-condition-error', '予約成立条件の確認が必要です。'));
+    if (!checkedRadio('吊り床利用予定')) errors.push(setRadioError('吊り床利用予定', 'reservation-suspension-error', '吊り床の利用予定を選択してください。', 'required_missing'));
+    if (!checkedRadio('支払方法')) errors.push(setRadioError('支払方法', 'reservation-payment-error', '支払方法を選択してください。', 'required_missing'));
+    if (!checkedRadio('利用区分')) errors.push(setRadioError('利用区分', 'reservation-member-error', '利用区分を選択してください。', 'required_missing'));
+    if (!termsInput.checked) errors.push(setError(termsInput, 'reservation-terms-error', '利用規約への同意が必要です。', 'terms_not_agreed'));
+    if (!safetyInput.checked) errors.push(setError(safetyInput, 'reservation-safety-error', '安全ルールへの同意が必要です。', 'safety_not_agreed'));
+    if (!conditionInput.checked) errors.push(setError(conditionInput, 'reservation-condition-error', '予約成立条件の確認が必要です。', 'reservation_condition_not_agreed'));
 
     var list = errorSummary.querySelector('ul');
     list.innerHTML = '';
@@ -188,6 +265,7 @@
     if (errors.length) {
       errorSummary.focus();
       errors[0].element.focus();
+      if (window.StudioAnalytics) window.StudioAnalytics.trackFormError(errors[0].type, errors.length);
     }
     return errors.length === 0;
   }
@@ -226,19 +304,35 @@
     }).format(new Date());
     subjectInput.value = '【Studio Nagoya Base】予約申込：' + dateInput.value + ' ' + timeInput.value;
 
+    if (window.StudioAnalytics) window.StudioAnalytics.trackSubmit();
+
     fetch(form.action, {
       method: 'POST',
       body: new FormData(form),
       headers: { Accept: 'application/json' }
     }).then(function (response) {
-      if (!response.ok) throw new Error('HTTP ' + response.status);
+      if (!response.ok) {
+        var httpError = new Error('HTTP ' + response.status);
+        httpError.failureType = 'server';
+        throw httpError;
+      }
+      var completionParams = {
+        duration_group: mapDurationGroup(durationInput.value),
+        party_size_group: mapPartySizeGroup(partySizeInput.value),
+        usage_category: mapUsageCategory(purposeInput.value),
+        rigging_usage: mapRiggingUsage((checkedRadio('吊り床利用予定') || {}).value),
+        payment_method: mapPaymentMethod((checkedRadio('支払方法') || {}).value),
+        customer_type: mapCustomerType((checkedRadio('利用区分') || {}).value)
+      };
       successMessage.hidden = false;
       form.reset();
       updatePurposeOther();
       updateSuspensionNote();
       updateEndWarning();
       successMessage.focus();
-    }).catch(function () {
+      if (window.StudioAnalytics) window.StudioAnalytics.trackRequestComplete(completionParams);
+    }).catch(function (error) {
+      if (window.StudioAnalytics) window.StudioAnalytics.trackRequestFailed((error && error.failureType) || 'network');
       failureText.textContent = '通信状況をご確認のうえ、時間を置いて再度お試しください。送信できない場合は、メールからお申し込みください。';
       failureMessage.hidden = false;
       failureMessage.focus();
