@@ -46,17 +46,6 @@
 }
 
 /* =====================
-   ヒーロー画像（男性モデル差し替え）
-===================== */
-.hero.mens-hero {
-  background-image: url('../images/gallery_man02_1200.webp');
-  background-image: image-set(
-    url('../images/gallery_man02_1200.webp') type('image/webp')
-  );
-  background-position: center 15%;
-}
-
-/* =====================
    ヒーロー安心バッジ
 ===================== */
 .hero-badges {
