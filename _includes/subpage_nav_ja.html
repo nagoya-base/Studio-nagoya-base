@@ -1,0 +1,28 @@
+<!-- サブページ共通ナビゲーション（緊縛／メンズ共通include・brand引数で出し分け） -->
+{% if include.brand == "mens" %}
+{% assign brand_name = "男性ポートレート" %}
+{% assign top_url = "/mens/" | relative_url %}
+{% assign howto_url = "/mens/how-to/" | relative_url %}
+{% assign legal_url = "/mens/legal/" | relative_url %}
+{% else %}
+{% assign brand_name = "Studio Nagoya Base" %}
+{% assign top_url = "/" | relative_url %}
+{% assign howto_url = "/how-to/" | relative_url %}
+{% assign legal_url = "/legal/" | relative_url %}
+{% endif %}
+<nav class="site-nav" aria-label="サイトナビゲーション">
+  <div class="nav-inner">
+    <a href="{{ top_url }}" class="nav-logo">
+      <div class="logo-mark">N</div>
+      <div class="logo-text">
+        <span class="logo-name">{{ brand_name }}</span>
+        <span class="logo-en">KAMIMAEZU · NAGOYA</span>
+      </div>
+    </a>
+    <ul class="nav-links">
+      <li><a href="{{ top_url }}">トップ</a></li>
+      <li><a href="{{ howto_url }}">使い方</a></li>
+      <li><a href="{{ legal_url }}">利用規約</a></li>
+    </ul>
+  </div>
+</nav>

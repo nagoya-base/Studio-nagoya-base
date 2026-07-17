@@ -1,0 +1,21 @@
+<!-- サブページ共通フッター（brand引数で出し分け） -->
+{% if include.brand == "mens" %}
+{% assign top_url = "/mens/" | relative_url %}
+{% assign pricing_url = "/mens/#pricing" | relative_url %}
+{% assign howto_url = "/mens/how-to/" | relative_url %}
+{% assign legal_url = "/mens/legal/" | relative_url %}
+{% else %}
+{% assign top_url = "/" | relative_url %}
+{% assign pricing_url = "/#pricing" | relative_url %}
+{% assign howto_url = "/how-to/" | relative_url %}
+{% assign legal_url = "/legal/" | relative_url %}
+{% endif %}
+<footer class="site-footer">
+  <nav class="footer-nav" aria-label="フッターナビゲーション">
+    <a href="{{ top_url }}">トップ</a>
+    <a href="{{ pricing_url }}">料金</a>
+    <a href="{{ howto_url }}">使い方</a>
+    <a href="{{ legal_url }}" data-analytics-event="terms_link_click" data-analytics-location="other" data-analytics-destination="terms">利用規約</a>
+  </nav>
+  <p class="footer-copy">&copy; Studio Nagoya Base. All rights reserved.</p>
+</footer>

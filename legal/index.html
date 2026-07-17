@@ -40,60 +40,278 @@
 <meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/ogp_IMG_2309_1200.jpeg">
 
 <link rel="stylesheet" href="../styles/common.css">
+
+<!-- 構造化データ -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "スタジオ内での飲食はできますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "飲食物の持ち込みは可能ですが、ちゃぶ台および学校机周辺のみでお召し上がりください。畳スペースおよび吊り床周辺での飲食は禁止です。こぼれ・汚損・臭気残り等が発生した場合は清掃費用の実費をご請求する場合があります。ゴミは必ずお持ち帰りください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "アルコールの持ち込みはできますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "持ち込みは可能ですが、宴会・飲み会目的での利用は禁止しています。安全管理上の理由により、飲酒後の緊縛行為（練習・撮影・パフォーマンスを含む）は禁止です。泥酔状態での利用および近隣への迷惑行為もお断りしています。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "スマートフォンで撮影できますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "はい、問題ありません。ライティングが整っているため、スマートフォンでもクオリティの高い写真が撮影できます。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "緊縛撮影は可能ですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "可能です。ただし、性的行為および性的な行為を伴う撮影は禁止しています。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "機材の持ち込みはできますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "可能です。お持ち込み機材をご利用いただけるほか、常設の撮影機材・備品は利用料金内でご利用いただけます。有料機材オプション（ストロボ2灯・ビデオライト等）は会員限定・¥2,000〜でご利用いただけます（予約時DMで申告）。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "キャンセルポリシーはどうなっていますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "2日前まで：無料 / 前日：料金の50% / 当日：料金の100% をキャンセル料としていただきます。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "支払い方法は何がありますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "現金・PayPay（現地決済）・オンラインクレジットカード決済がご利用いただけます。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "縛り方を教えるサービスはありますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "当スタジオでは講習・技術指導等のサービスは行っておりません。あくまでスペースのご提供となります。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "男女問わず利用できますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "はい、どなたでもご利用いただけます。ただし18歳以上（高校生不可）の方に限ります。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "当日延長は可能ですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "次の予約が空いている場合のみ可能です。当日は連絡がつかない場合もあるため、延長をご希望の場合は事前にご相談ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "鍵の受け渡しはどうなっていますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "予約時にお知らせします。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "予約日程の変更はできますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "前日までであれば1回に限り無料で変更できます。2回目以降はキャンセル扱いとなりますのでご注意ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "背景紙を床に敷いても良いですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "可能ですが、汚さないよう土足・素足でのご使用はご遠慮ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "駐車場はありますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "専用駐車場はございません。近隣のコインパーキングをご利用ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "営利利用は可能ですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "可能です。有償コンテンツやファンサイト向けの撮影など、営利目的でのご利用に対応しています。ただし、撮影物の公開・販売にあたっては出演者全員の同意取得・法令遵守が必要です。詳細は利用規約 第5条をご確認ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "シャワーは使えますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "シャワーはご利用いただけません。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "忘れ物をしました。",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "発見後7日間保管しています。X（旧Twitter）DM またはメール（nagoyabase2023@gmail.com）にてお早めにご連絡ください。食品・飲料など衛生上保管が困難なものは随時処分します。7日間経過後も引き取りがない場合は、遺失物法に基づき警察へ届け出ます。"
+      }
+    }
+  ]
+}
+</script>
 </head>
 
 <body>
 
 <a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
 
-<!-- ナビゲーション -->
-<nav class="site-nav" aria-label="サイトナビゲーション">
-  <div class="nav-inner">
-    <a href="../" class="nav-logo">
-      <div class="logo-mark">N</div>
-      <div class="logo-text">
-        <span class="logo-name">スタジオ　名古屋ベース</span>
-        <span class="logo-en">KAMIMAEZU · NAGOYA</span>
-      </div>
-    </a>
-    <ul class="nav-links">
-      <li><a href="javascript:history.back()">← 前のページに戻る</a></li>
-      <li><a href="../">トップに戻る</a></li>
-    </ul>
-  </div>
-</nav>
+{% include subpage_nav_ja.html %}
 
 <main id="main-content">
 
 <!-- 法的事項 -->
 <section id="legal" class="bg-section">
   <div class="container">
+    {% include subpage_backlink_ja.html %}
     <h1 class="section-title">法的事項</h1>
     <p class="section-subtitle">Legal</p>
 
-    <a href="../" class="legal-back-link">← スタジオトップに戻る</a>
-
-    <p>※ 各スタジオページにも同内容を掲載しています。</p>
+    <p>※ この内容は緊縛ページ・メンズページ共通です。</p>
 
     {% include legal_ja.html %}
 
   </div>
 </section>
 
+<!-- よくある質問（全件） -->
+<section id="faq-full" class="bg-section">
+  <div class="container">
+    <h2 class="section-title">よくある質問（全件）</h2>
+    <p class="section-subtitle">FAQ</p>
+
+    <div class="faq-list">
+      <details class="faq-item" data-analytics-faq-id="bondage_allowed">
+        <summary>緊縛撮影は可能ですか？</summary>
+        <div class="faq-answer">可能です。ただし、性的行為および性的な行為を伴う撮影は禁止しています。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="gender">
+        <summary>男女問わず利用できますか？</summary>
+        <div class="faq-answer">はい、どなたでもご利用いただけます。ただし18歳以上（高校生不可）の方に限ります。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="food_drink">
+        <summary>スタジオ内での飲食はできますか？</summary>
+        <div class="faq-answer">飲食物の持ち込みは可能ですが、ちゃぶ台および学校机周辺のみでお召し上がりください。畳スペースおよび吊り床周辺での飲食は禁止です。こぼれ・汚損・臭気残り等が発生した場合は清掃費用の実費をご請求する場合があります。ゴミは必ずお持ち帰りください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="alcohol">
+        <summary>アルコールの持ち込みはできますか？</summary>
+        <div class="faq-answer">持ち込みは可能ですが、宴会・飲み会目的での利用は禁止しています。安全管理上の理由により、飲酒後の緊縛行為（練習・撮影・パフォーマンスを含む）は禁止です。泥酔状態での利用および近隣への迷惑行為もお断りしています。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="smartphone_photography">
+        <summary>スマートフォンで撮影できますか？</summary>
+        <div class="faq-answer">はい、問題ありません。ライティングが整っているため、スマートフォンでもクオリティの高い写真が撮影できます。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="equipment_rental">
+        <summary>機材の持ち込みはできますか？</summary>
+        <div class="faq-answer">可能です。お持ち込み機材をご利用いただけるほか、常設の撮影機材・備品は利用料金内でご利用いただけます。有料機材オプション（ストロボ2灯・ビデオライト等）は会員限定・¥2,000〜でご利用いただけます（予約時DMで申告）。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="cancellation">
+        <summary>キャンセルポリシーはどうなっていますか？</summary>
+        <div class="faq-answer">2日前まで：無料 / 前日：料金の50% / 当日：料金の100% をキャンセル料としていただきます。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="payment_method">
+        <summary>支払い方法は何がありますか？</summary>
+        <div class="faq-answer">現金・PayPay（現地決済）・オンラインクレジットカード決済がご利用いただけます。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="instruction_service">
+        <summary>縛り方を教えるサービスはありますか？</summary>
+        <div class="faq-answer">当スタジオでは講習・技術指導等のサービスは行っておりません。あくまでスペースのご提供となります。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="same_day_extension">
+        <summary>当日延長は可能ですか？</summary>
+        <div class="faq-answer">次の予約が空いている場合のみ可能です。当日は連絡がつかない場合もあるため、延長をご希望の場合は事前にご相談ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="key_handover">
+        <summary>鍵の受け渡しはどうなっていますか？</summary>
+        <div class="faq-answer">予約時にお知らせします。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="reschedule">
+        <summary>予約日程の変更はできますか？</summary>
+        <div class="faq-answer">前日までであれば1回に限り無料で変更できます。2回目以降はキャンセル扱いとなりますのでご注意ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="backdrop_paper">
+        <summary>背景紙を床に敷いても良いですか？</summary>
+        <div class="faq-answer">可能ですが、汚さないよう土足・素足でのご使用はご遠慮ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="parking">
+        <summary>駐車場はありますか？</summary>
+        <div class="faq-answer">専用駐車場はございません。近隣のコインパーキングをご利用ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="commercial_use">
+        <summary>営利利用は可能ですか？</summary>
+        <div class="faq-answer">可能です。有償コンテンツやファンサイト向けの撮影など、営利目的でのご利用に対応しています。ただし、撮影物の公開・販売にあたっては出演者全員の同意取得・法令遵守が必要です。詳細は<a href="#terms">利用規約 第5条</a>をご確認ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="shower">
+        <summary>シャワーは使えますか？</summary>
+        <div class="faq-answer">シャワーはご利用いただけません。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="lost_item">
+        <summary>忘れ物をしました。</summary>
+        <div class="faq-answer">発見後7日間保管しています。X（旧Twitter）DM またはメール（<a href="mailto:nagoyabase2023@gmail.com">nagoyabase2023@gmail.com</a>）にてお早めにご連絡ください。食品・飲料など衛生上保管が困難なものは随時処分します。7日間経過後も引き取りがない場合は、遺失物法に基づき警察へ届け出ます。</div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<div class="container" style="text-align:center;padding-bottom:40px;">
+  {% include subpage_backlink_ja.html %}
+</div>
+
 </main>
 
-<!-- フッター -->
-<footer>
-  <p>STUDIO NAGOYA BASE</p>
-  <p>名古屋・上前津のプライベート撮影スタジオ</p>
-  <nav aria-label="フッターナビゲーション">
-    <a href="#terms">利用規約</a>
-    <a href="#cancel">キャンセルポリシー</a>
-    <a href="#privacy">プライバシーポリシー</a>
-    <a href="#law">特商法</a>
-  </nav>
-  <p class="footer-copy">&copy; Studio Nagoya Base. All rights reserved.</p>
-</footer>
+{% include subpage_footer_ja.html %}
 
 <script src="../scripts/main.js"></script>
 

@@ -1,0 +1,6 @@
+<!-- サブページ用「戻る」リンク（brand引数で遷移先と文言を出し分け・曖昧な「戻る」表記は使用しない） -->
+{% if include.brand == "mens" %}
+<a href="{{ '/mens/' | relative_url }}" class="legal-back-link">← 男性ポートレートページへ戻る</a>
+{% else %}
+<a href="{{ '/' | relative_url }}" class="legal-back-link">← Studio Nagoya Baseトップへ戻る</a>
+{% endif %}
