@@ -352,10 +352,10 @@ nav.site-nav ~ .nav-mobile .nav-legal-btn:hover {
   justify-content: center;
   text-align: center;
   position: relative;
-  background-image: url('../images/IMG_2309_1600.webp');
+  background-image: url('../images/interior-rigging-frame_1600.webp');
   background-image: image-set(
-    url('../images/IMG_2309_1600.webp') type('image/webp'),
-    url('../images/IMG_2309_1600.jpeg') type('image/jpeg')
+    url('../images/interior-rigging-frame_1600.webp') type('image/webp'),
+    url('../images/interior-rigging-frame_1600.jpeg') type('image/jpeg')
   );
   background-size: cover;
   background-position: center;
