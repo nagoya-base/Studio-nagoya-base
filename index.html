@@ -195,10 +195,13 @@
       <li>無人運営・利用前相談も可能</li>
     </ul>
 
+    {% assign featured_voice = site.data.voices_ja | where: "featured", true | first %}
+    {% if featured_voice %}
     <blockquote class="voice-card assurance-voice">
-      <p class="voice-text">少人数練習にも撮影にも利用しやすいスペースです<br>また利用します！</p>
-      <footer class="voice-meta"><span class="voice-usage">利用目的：緊縛練習・撮影</span></footer>
+      <p class="voice-text">{{ featured_voice.text }}</p>
+      {% if featured_voice.usage %}<footer class="voice-meta"><span class="voice-usage">利用目的：{{ featured_voice.usage }}</span></footer>{% endif %}
     </blockquote>
+    {% endif %}
   </div>
 </section>
 
@@ -602,7 +605,7 @@
   </div>
 </section>
 
-{% include voices.html %}
+{% include voices.html hide_featured=true %}
 
 <!-- アクセス -->
 <section id="access" class="bg-section">
