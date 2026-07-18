@@ -202,6 +202,14 @@ button, a { -webkit-tap-highlight-color: transparent; }
   line-height: 2;
 }
 
+.hero-usage-line {
+  margin: 0 0 16px;
+  color: var(--text);
+  font-size: clamp(.92rem, 1.3vw, 1.05rem);
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+
 .hero-actions {
   margin-top: 36px;
   display: flex;
@@ -464,6 +472,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .price-label { margin: 0 0 30px; font-family: var(--font-display); font-size: .68rem; font-weight: 700; letter-spacing: .12em; }
 .price-value { margin: 0; font-family: var(--font-display); font-size: clamp(2.5rem, 5vw, 5rem); font-weight: 700; line-height: 1; letter-spacing: -.07em; }
 .price-value small { font-family: var(--font-sans); font-size: .22em; letter-spacing: 0; }
+.price-value-sub { margin: 10px 0 0; font-family: var(--font-display); font-size: .78rem; color: inherit; opacity: .72; }
 .price-card > p:last-child { margin: 20px 0 0; font-size: .8rem; }
 .price-notes { margin: 24px 0 40px; display: flex; gap: 18px 40px; flex-wrap: wrap; color: var(--muted); }
 .price-notes p { margin: 0; font-size: .72rem; }
