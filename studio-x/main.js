@@ -45,6 +45,10 @@
       document.documentElement.setAttribute('data-mood', button.dataset.mood);
       heroImage.classList.add('is-changing');
 
+      if (window.StudioXAnalytics) {
+        window.StudioXAnalytics.trackMoodSwitch(button.dataset.mood);
+      }
+
       var preload = new Image();
       preload.src = button.dataset.src;
       preload.onload = function () {

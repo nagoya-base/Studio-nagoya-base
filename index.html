@@ -174,19 +174,34 @@
     </p>
 
     <div class="hero-buttons">
-      <a class="btn-primary" href="#calendar" data-analytics-event="reservation_cta_click" data-analytics-location="hero" data-analytics-type="calendar" data-analytics-destination="calendar">空きを確認して予約する</a>
+      <a class="btn-primary" href="#calendar" data-analytics-event="reservation_cta_click" data-analytics-location="hero" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
       <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}" data-analytics-event="consultation_email_click" data-analytics-location="hero">利用内容を事前に相談する</a>
     </div>
     <p class="hero-ad-note">カレンダーで空きを確認後、ページ内フォームからお申し込みください。1〜4名まで同一料金。緊縛や作品撮りに関する打ち合わせにも利用できます。</p>
   </div>
 </section>
 
-<!-- 利用目的 -->
+<!-- 利用目的・安心材料 -->
 <section id="purpose">
   <div class="container">
     <h2 class="section-title">練習・講習・作品づくりの拠点に</h2>
     <p class="section-subtitle">For Practice, Workshops &amp; Creative Work</p>
     <p class="phase2-intro">Studio Nagoya Baseは、縄師と受け手の自主練、ショーや演目の練習、少人数の講習会、作品撮りに利用できる完全貸切のレンタルスタジオです。周囲を気にせず、1〜4名で落ち着いて利用できます。</p>
+
+    <ul class="phase2-trust-strip" aria-label="ご利用の安心材料">
+      <li>完全貸切・1〜4名まで同一料金</li>
+      <li>常設の吊り設備と大型ミラー</li>
+      <li>自主練・ショー練習・少人数講習に対応</li>
+      <li>無人運営・利用前相談も可能</li>
+    </ul>
+
+    {% assign featured_voice = site.data.voices_ja | where: "featured", true | first %}
+    {% if featured_voice %}
+    <blockquote class="voice-card assurance-voice">
+      <p class="voice-text">{{ featured_voice.text }}</p>
+      {% if featured_voice.usage %}<footer class="voice-meta"><span class="voice-usage">利用目的：{{ featured_voice.usage }}</span></footer>{% endif %}
+    </blockquote>
+    {% endif %}
   </div>
 </section>
 
@@ -198,7 +213,13 @@
 
     {% include calendar_embed.html %}
 
-    <p class="calendar-note">カレンダーで希望日時の空きをご確認のうえ、下の「予約を申し込む」からお知らせください。<br>ご予約は<strong>前日まで</strong>受け付けています。通常は24時間以内に返信します。当方からの予約確定連絡をもって予約成立となります。</p>
+    <ol class="reservation-steps">
+      <li><span class="reservation-steps-num">1</span>カレンダーで空きを確認</li>
+      <li><span class="reservation-steps-num">2</span>予約申込フォームを送信</li>
+      <li><span class="reservation-steps-num">3</span>運営からの確定連絡で予約成立</li>
+    </ol>
+
+    <p class="calendar-note"><strong>フォーム送信だけでは予約確定ではありません。</strong>ご予約は<strong>前日まで</strong>受け付けています。通常は24時間以内に運営から確定のご連絡をお送りし、この連絡をもって予約成立となります。</p>
     <p class="calendar-note">予約窓口：ページ内フォーム　／　相談窓口：メールまたはX DM</p>
 
     <div class="btn-group">
@@ -312,7 +333,7 @@
       </div>
     </div>
     <div class="section-cta">
-      <a class="btn-primary" href="#calendar">空きを確認して予約する</a>
+      <a class="btn-primary" href="#calendar" data-analytics-event="reservation_cta_click" data-analytics-location="features" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
     </div>
   </div>
 </section>
@@ -348,7 +369,7 @@
     </div>
 
     <div class="section-cta">
-      <a class="btn-primary" href="#calendar" data-analytics-event="reservation_cta_click" data-analytics-location="usage" data-analytics-type="calendar" data-analytics-destination="calendar">空きを確認して予約する</a>
+      <a class="btn-primary" href="#calendar" data-analytics-event="reservation_cta_click" data-analytics-location="usage" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
     </div>
   </div>
 </section>
@@ -382,7 +403,7 @@
 
     <p class="pricing-note"><a href="{{ '/how-to/' | relative_url }}#equipment">全設備・備品一覧はこちら →</a></p>
     <div class="section-cta">
-      <a class="btn-primary" href="#calendar">空きを確認して予約する</a>
+      <a class="btn-primary" href="#calendar" data-analytics-event="reservation_cta_click" data-analytics-location="equipment" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
     </div>
   </div>
 </section>
@@ -577,14 +598,14 @@
     <p class="pricing-note">※ カード決済をご希望の場合は、予約確定後にお送りする案内からお支払いください。</p>
     <div class="section-cta-sm">
       <div class="btn-group" style="justify-content: center;">
-        <a class="btn-primary" href="#calendar" data-analytics-event="reservation_cta_click" data-analytics-location="pricing" data-analytics-type="calendar" data-analytics-destination="calendar">空きを確認して予約する</a>
+        <a class="btn-primary" href="#calendar" data-analytics-event="reservation_cta_click" data-analytics-location="pricing" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
         <a class="btn-secondary" href="https://buy.stripe.com/cNi3cwb5seVgc2Tgsw9k40a" target="_blank" rel="noopener noreferrer" data-analytics-event="payment_link_click" data-analytics-location="pricing">予約確定済みの方：カードで支払う</a>
       </div>
     </div>
   </div>
 </section>
 
-{% include voices.html %}
+{% include voices.html hide_featured=true %}
 
 <!-- アクセス -->
 <section id="access" class="bg-section">

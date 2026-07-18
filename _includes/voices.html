@@ -5,11 +5,13 @@
     <p class="voices-intro">実際にスタジオを利用した方から寄せられた感想です。実際のレビューより掲載しています。</p>
     <div class="voices-grid">
       {% for voice in site.data.voices_ja %}
+      {% unless voice.featured and include.hide_featured %}
       <blockquote class="voice-card">
         {% if voice.title %}<p class="voice-title">{{ voice.title }}</p>{% endif %}
         <p class="voice-text">{{ voice.text }}</p>
         {% if voice.usage %}<footer class="voice-meta"><span class="voice-usage">利用目的：{{ voice.usage }}</span></footer>{% elsif voice.attribution %}<footer class="voice-meta">{{ voice.attribution }}</footer>{% endif %}
       </blockquote>
+      {% endunless %}
       {% endfor %}
     </div>
   </div>
