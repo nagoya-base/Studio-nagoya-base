@@ -19,6 +19,7 @@
     CONSULT_X_CLICK: 'consultation_x_click',
     PAYMENT_LINK_CLICK: 'payment_link_click',
     TERMS_LINK_CLICK: 'terms_link_click',
+    PRECONDITIONING_CTA_CLICK: 'preconditioning_cta_click',
     FAQ_VIEW: 'faq_view',
     FAQ_OPEN: 'faq_open'
   };
@@ -116,6 +117,13 @@
         break;
       case EVENTS.TERMS_LINK_CLICK:
         params = { cta_location: location, destination: 'terms' };
+        break;
+      case EVENTS.PRECONDITIONING_CTA_CLICK:
+        params = {
+          cta_location: location,
+          cta_type: el.getAttribute('data-analytics-type') || 'unknown',
+          destination: el.getAttribute('data-analytics-destination') || 'unknown'
+        };
         break;
       default:
         return;

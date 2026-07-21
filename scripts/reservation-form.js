@@ -136,6 +136,14 @@
     }
   }
 
+  function mapPreconditioning(value) {
+    switch (value) {
+      case '希望する': return 'yes';
+      case '希望しない': return 'no';
+      default: return 'unknown';
+    }
+  }
+
   function setError(element, errorId, message, type) {
     var error = document.getElementById(errorId);
     element.setAttribute('aria-invalid', 'true');
@@ -218,6 +226,7 @@
     clearError(safetyInput, 'reservation-safety-error');
     clearError(conditionInput, 'reservation-condition-error');
     clearRadioError('吊り床利用予定', 'reservation-suspension-error');
+    clearRadioError('事前空調サービス', 'reservation-preconditioning-error');
     clearRadioError('支払方法', 'reservation-payment-error');
     clearRadioError('利用区分', 'reservation-member-error');
 
@@ -248,6 +257,10 @@
       errors.push(setError(purposeOtherInput, 'reservation-purpose-other-error', '「その他」の利用目的を入力してください。', 'other_detail_missing'));
     }
     if (!checkedRadio('吊り床利用予定')) errors.push(setRadioError('吊り床利用予定', 'reservation-suspension-error', '吊り床の利用予定を選択してください。', 'required_missing'));
+    var preconditioningChoice = checkedRadio('事前空調サービス');
+    if (preconditioningChoice && preconditioningChoice.value === '希望する' && dateInput.value && dateInput.value <= todayInJapan()) {
+      errors.push(setRadioError('事前空調サービス', 'reservation-preconditioning-error', '当日のお申し込みには事前空調サービスをご利用いただけません。「希望しない」を選択してください。', 'preconditioning_same_day'));
+    }
     if (!checkedRadio('支払方法')) errors.push(setRadioError('支払方法', 'reservation-payment-error', '支払方法を選択してください。', 'required_missing'));
     if (!checkedRadio('利用区分')) errors.push(setRadioError('利用区分', 'reservation-member-error', '利用区分を選択してください。', 'required_missing'));
     if (!termsInput.checked) errors.push(setError(termsInput, 'reservation-terms-error', '利用規約への同意が必要です。', 'terms_not_agreed'));
@@ -321,6 +334,7 @@
         party_size_group: mapPartySizeGroup(partySizeInput.value),
         usage_category: mapUsageCategory(purposeInput.value),
         rigging_usage: mapRiggingUsage((checkedRadio('吊り床利用予定') || {}).value),
+        preconditioning: mapPreconditioning((checkedRadio('事前空調サービス') || {}).value),
         payment_method: mapPaymentMethod((checkedRadio('支払方法') || {}).value),
         customer_type: mapCustomerType((checkedRadio('利用区分') || {}).value)
       };
