@@ -145,6 +145,16 @@
         </fieldset>
 
         <fieldset class="reservation-choice-group">
+          <legend>事前空調サービス（無料）</legend>
+          <div class="reservation-choices">
+            <label><input type="radio" name="事前空調サービス" value="希望する" aria-describedby="reservation-preconditioning-error"> <span>希望する</span></label>
+            <label><input type="radio" name="事前空調サービス" value="希望しない" checked aria-describedby="reservation-preconditioning-error"> <span>希望しない</span></label>
+          </div>
+          <p class="field-help">利用日前日の23:59までにお申し込みください。利用開始の1時間前を目安に冷房または暖房を運転します。当日の申込み・変更には対応できません。</p>
+          <p id="reservation-preconditioning-error" class="field-error" hidden></p>
+        </fieldset>
+
+        <fieldset class="reservation-choice-group">
           <legend>希望する支払方法 <span class="field-badge field-badge--required">必須</span></legend>
           <div class="reservation-choices">
             <label><input type="radio" name="支払方法" value="現金" required aria-describedby="reservation-payment-error"> <span>現金</span></label>
