@@ -58,9 +58,8 @@
 
     <section class="content-section" id="calendar" data-analytics-section-view="calendar">
       <h2>空き状況</h2>
-      <p class="calendar-intro">カレンダーで空いている日時をご確認のうえ、下のフォームから希望日時をお送りください。カレンダー上で空いていても、フォーム送信時点では予約は確定していません。当方からの予約確定連絡をもって予約成立となります。</p>
-      {% include calendar_embed.html title="Studio X 予約カレンダー" aria_label="予約カレンダー" %}
-      <a class="button button-primary" href="#reservation-form-section" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="calendar" data-analytics-destination="direct_form">予約フォームへ進む</a>
+      <p class="calendar-intro">カレンダーに予定が表示されていない時間帯が空き時間です。予定が入っている時間帯はご利用いただけません。空いている時間帯をご確認のうえ、そのまま下のフォームから希望日時をお送りください。カレンダー上で空いていても、フォーム送信時点では予約は確定していません。当方からの予約確定連絡をもって予約成立となります。カレンダーが表示されない場合も、フォームから希望日時をお送りいただけます。</p>
+      {% include calendar_embed.html title="Studio X 予約カレンダー" aria_label="予約カレンダー" mobile_link=true mobile_link_location="calendar" %}
     </section>
 
     <section class="content-section" id="reservation-form-section" data-analytics-section-view="reservation_form">

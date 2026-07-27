@@ -57,13 +57,23 @@
   if (dateInput) dateInput.min = tomorrowInJapan();
 
   /* ── 遷移元からの問い合わせ種別プリフィル（未知の値は安全に無視） ── */
-  var INTENT_QUERY_MAP = { booking: 'booking', consult: 'consult', 'same-day': 'same-day' };
+  var INTENT_QUERY_MAP = { booking: 'booking', consult: 'consult', 'same-day': 'same-day', tour: 'tour' };
+  /* 相談・見学目的の来訪者には、空き状況カレンダーの閲覧を強制しない */
+  var CALENDAR_HIDDEN_INTENTS = { consult: true, tour: true };
   try {
     var params = new URLSearchParams(window.location.search);
     var queryIntent = params.get('intent');
     if (queryIntent && Object.prototype.hasOwnProperty.call(INTENT_QUERY_MAP, queryIntent)) {
       var target = form.querySelector('input[name="お問い合わせ種別"][data-intent="' + INTENT_QUERY_MAP[queryIntent] + '"]');
       if (target) target.checked = true;
+    }
+    if (queryIntent && CALENDAR_HIDDEN_INTENTS[queryIntent]) {
+      var calendarSection = document.getElementById('calendar');
+      if (calendarSection) calendarSection.hidden = true;
+      document.querySelectorAll('.header-cta, .mobile-menu-cta').forEach(function (link) {
+        link.setAttribute('href', '#reservation-form-section');
+        link.textContent = '相談フォームへ進む';
+      });
     }
   } catch (e) {
     /* URLSearchParams非対応環境でもフォーム自体は使えるようにする */

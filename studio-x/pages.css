@@ -60,6 +60,8 @@
 .content-section > h3, .legal-card h3 { margin: 38px 0 12px; font-size: 1.05rem; }
 .content-section p, .content-section li, .legal-card p, .legal-card li { color: #c8c4cc; font-size: .88rem; }
 .content-section a, .legal-card a { color: var(--accent); text-underline-offset: 3px; }
+.content-section a.button-primary, .legal-card a.button-primary { color: var(--accent-ink); }
+.content-section a.button-ghost, .legal-card a.button-ghost { color: var(--text); }
 .content-section ul, .content-section ol, .legal-card ul, .legal-card ol { padding-left: 1.35rem; }
 .content-section li + li, .legal-card li + li { margin-top: 8px; }
 

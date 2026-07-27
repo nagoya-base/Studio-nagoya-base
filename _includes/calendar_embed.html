@@ -1,8 +1,24 @@
 <div class="calendar-wrapper">
   <iframe
+    class="calendar-frame"
     src="https://calendar.google.com/calendar/embed?src=nagoyabase2023@gmail.com&ctz=Asia/Tokyo"
     loading="lazy"
     title="{{ include.title | default: 'Studio Nagoya Base 予約カレンダー' }}"
     aria-label="{{ include.aria_label | default: '予約カレンダー' }}">
   </iframe>
+  {% if include.mobile_link %}
+  <div class="calendar-fallback">
+    <p>スマホでは埋め込み表示が見づらいため、Googleカレンダーを別タブで開いてご確認ください。</p>
+    <a
+      class="button button-ghost"
+      href="https://calendar.google.com/calendar/embed?src=nagoyabase2023@gmail.com&ctz=Asia/Tokyo"
+      target="_blank"
+      rel="noopener noreferrer"
+      data-analytics-event="cta_click"
+      data-analytics-type="calendar_external"
+      data-analytics-location="{{ include.mobile_link_location | default: 'calendar' }}">
+      Googleカレンダーを別タブで開く
+    </a>
+  </div>
+  {% endif %}
 </div>
