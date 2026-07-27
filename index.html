@@ -116,7 +116,7 @@
       "name": "機材の持ち込みはできますか？",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "可能です。お持ち込み機材をご利用いただけるほか、常設の撮影機材・備品は利用料金内でご利用いただけます。有料機材オプション（ストロボ2灯・ビデオライト等）は会員限定・¥2,000〜でご利用いただけます（予約時DMで申告）。"
+        "text": "可能です。お持ち込み機材をご利用いただけるほか、常設の撮影機材・備品は利用料金内でご利用いただけます。有料機材オプション（ストロボ2灯・ビデオライト等）は会員限定・¥2,000〜でご利用いただけます（予約フォームの連絡事項欄で申告）。"
       }
     },
     {
@@ -152,7 +152,7 @@
 
 <a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
 
-{% include header_ja.html %}
+{% include header_ja.html banner="calendar" %}
 
 <!-- ヒーロー -->
 <main id="main-content">
@@ -175,7 +175,7 @@
 
     <div class="hero-buttons">
       <a class="btn-primary" href="#calendar" data-analytics-event="reservation_cta_click" data-analytics-location="hero" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
-      <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}" data-analytics-event="consultation_email_click" data-analytics-location="hero">利用内容を事前に相談する</a>
+      <a class="btn-secondary" href="#reservation-form" data-analytics-event="consultation_form_click" data-analytics-location="hero">利用内容を事前に相談する</a>
     </div>
     <p class="hero-ad-note">カレンダーで空きを確認後、ページ内フォームからお申し込みください。1〜4名まで同一料金。緊縛や作品撮りに関する打ち合わせにも利用できます。</p>
   </div>
@@ -249,9 +249,8 @@
 
     <div class="btn-group">
       <a class="btn-primary" href="#reservation-form" data-analytics-event="reservation_cta_click" data-analytics-location="calendar" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む</a>
-      <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}" data-analytics-event="consultation_email_click" data-analytics-location="calendar">利用内容を事前に相談する</a>
+      <a class="btn-secondary" href="#reservation-form" data-analytics-event="consultation_form_click" data-analytics-location="calendar">利用内容を事前に相談する</a>
     </div>
-    <p class="cta-hint"><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer" data-analytics-event="consultation_x_click" data-analytics-location="calendar">X DMでも相談できます</a></p>
   </div>
 </section>
 
@@ -264,9 +263,8 @@
       <p class="cta-tag">利用前相談</p>
       <h2 class="cta-card-heading">予約前に相談したい方</h2>
       <p class="cta-card-desc">吊り床の利用、講習会、長時間利用、持ち込み機材など、ご不明な点は予約前にご相談いただけます。</p>
-      <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}" data-analytics-event="consultation_email_click" data-analytics-location="consultation_section">メールで相談する →</a>
+      <a class="btn-secondary" href="#reservation-form" data-analytics-event="consultation_form_click" data-analytics-location="consultation_section">予約フォームで相談する →</a>
     </div>
-    <p class="cta-hint"><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer" data-analytics-event="consultation_x_click" data-analytics-location="consultation_section">X DMでも相談できます</a></p>
   </div>
 </section>
 
@@ -682,7 +680,7 @@
 
       <details class="faq-item" data-analytics-faq-id="equipment_rental">
         <summary>機材の持ち込みはできますか？</summary>
-        <div class="faq-answer">可能です。お持ち込み機材をご利用いただけるほか、常設の撮影機材・備品は利用料金内でご利用いただけます。有料機材オプション（ストロボ2灯・ビデオライト等）は会員限定・¥2,000〜でご利用いただけます（予約時DMで申告）。</div>
+        <div class="faq-answer">可能です。お持ち込み機材をご利用いただけるほか、常設の撮影機材・備品は利用料金内でご利用いただけます。有料機材オプション（ストロボ2灯・ビデオライト等）は会員限定・¥2,000〜でご利用いただけます（予約フォームの連絡事項欄で申告）。</div>
       </details>
 
       <details class="faq-item" data-analytics-faq-id="cancellation">
