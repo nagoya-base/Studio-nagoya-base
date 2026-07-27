@@ -121,8 +121,6 @@
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') trackFormStart();
   });
 
-  if (window.StudioXAnalytics) window.StudioXAnalytics.trackFormView();
-
   function setError(element, errorId, message) {
     var error = document.getElementById(errorId);
     if (element) element.setAttribute('aria-invalid', 'true');
@@ -259,7 +257,7 @@
     if (errors.length) {
       errorSummary.focus();
       if (errors[0].element) errors[0].element.focus();
-      if (window.StudioXAnalytics) window.StudioXAnalytics.trackFormError(errors[0].message);
+      if (window.StudioXAnalytics) window.StudioXAnalytics.trackFormError('required');
     }
     return errors.length === 0;
   }
@@ -288,7 +286,11 @@
       body: new FormData(form),
       headers: { Accept: 'application/json' }
     }).then(function (response) {
-      if (!response.ok) throw new Error('HTTP ' + response.status);
+      if (!response.ok) {
+        var httpError = new Error('HTTP ' + response.status);
+        httpError.errorType = 'server';
+        throw httpError;
+      }
       successMessage.hidden = false;
       form.reset();
       applyIntentMode(null);
@@ -296,11 +298,10 @@
       updateEndWarning();
       successMessage.focus();
       if (window.StudioXAnalytics) {
-        window.StudioXAnalytics.trackFormSubmit(submissionToken, intent, { contact_intent: intent || 'unknown' });
-        window.StudioXAnalytics.trackFormSuccess(intent);
+        window.StudioXAnalytics.trackGenerateLead(submissionToken, intent, { contact_intent: intent || 'unknown' });
       }
-    }).catch(function () {
-      if (window.StudioXAnalytics) window.StudioXAnalytics.trackFormError('network');
+    }).catch(function (error) {
+      if (window.StudioXAnalytics) window.StudioXAnalytics.trackFormError((error && error.errorType) || 'network');
       failureText.textContent = '通信状況をご確認のうえ、時間を置いて再度お試しください。';
       failureMessage.hidden = false;
       failureMessage.focus();

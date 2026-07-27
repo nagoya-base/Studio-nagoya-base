@@ -30,7 +30,7 @@
   var submittedAt = document.getElementById('reservation-submitted-at');
   var subjectInput = document.getElementById('reservation-subject');
   var isSubmitting = false;
-  /* 送信操作ごとに採番し、reservation_submit の二重計測を防ぐ */
+  /* 送信操作ごとに採番し、generate_lead の二重計測を防ぐ */
   var submissionSeq = 0;
 
   var SUBMIT_LABEL_DEFAULT = '予約を申し込む';
@@ -51,7 +51,7 @@
   }
 
   /* 「お問い合わせ種別」の選択に応じて、予約専用項目の表示・必須判定を切り替える */
-  function applyIntentMode(intent, fireEvent) {
+  function applyIntentMode(intent) {
     var isBooking = intent === 'booking';
 
     bookingOnlyEls.forEach(function (el) { el.hidden = !isBooking; });
@@ -80,10 +80,6 @@
 
     if (submitButton && !submitButton.disabled) {
       submitButton.textContent = submitLabelForIntent(intent);
-    }
-
-    if (fireEvent && intent && window.StudioAnalytics) {
-      window.StudioAnalytics.track('reservation_select_intent', { contact_intent: intent });
     }
   }
 
@@ -370,11 +366,11 @@
   intentRadios.forEach(function (radio) {
     radio.addEventListener('change', function () {
       if (intentError) intentError.hidden = true;
-      applyIntentMode(getIntent(), true);
+      applyIntentMode(getIntent());
       updatePurposeOther();
     });
   });
-  applyIntentMode(getIntent(), false);
+  applyIntentMode(getIntent());
   updatePurposeOther();
   updateSuspensionNote();
 
@@ -441,18 +437,17 @@
       }
       successMessage.hidden = false;
       form.reset();
-      applyIntentMode(null, false);
+      applyIntentMode(null);
       updatePurposeOther();
       updateSuspensionNote();
       updateEndWarning();
       successMessage.focus();
       if (window.StudioAnalytics) {
         /* キーイベント：POST成功時のみ、1送信につき1回 */
-        window.StudioAnalytics.trackReservationSubmit(submissionToken, completionParams);
-        window.StudioAnalytics.trackRequestComplete(completionParams);
+        window.StudioAnalytics.trackGenerateLead(submissionToken, completionParams);
       }
     }).catch(function (error) {
-      if (window.StudioAnalytics) window.StudioAnalytics.trackRequestFailed((error && error.failureType) || 'network');
+      if (window.StudioAnalytics) window.StudioAnalytics.trackFormError((error && error.failureType) || 'network', 0);
       failureText.textContent = '通信状況をご確認のうえ、時間を置いて再度お試しください。送信できない場合は、メールからお申し込みください。';
       failureMessage.hidden = false;
       failureMessage.focus();

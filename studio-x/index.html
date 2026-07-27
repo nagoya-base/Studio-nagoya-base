@@ -55,7 +55,7 @@
       <a href="how-to/">利用ガイド</a>
     </nav>
 
-    <a class="header-cta" href="reservation/?intent=booking" data-analytics-event="studio_x_booking_click" data-analytics-location="header" data-analytics-destination="direct_form">空き状況を確認して予約する</a>
+    <a class="header-cta" href="reservation/?intent=booking" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="header" data-analytics-destination="direct_form">空き状況を確認して予約する</a>
 
     <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="メニューを開く">
       <span></span><span></span>
@@ -70,7 +70,7 @@
     <a href="#access">アクセス</a>
     <a href="how-to/">ご利用ガイド</a>
     <a href="legal/">利用規約・プライバシー</a>
-    <a class="mobile-menu-cta" href="reservation/?intent=booking" data-analytics-event="studio_x_booking_click" data-analytics-location="header_mobile_menu" data-analytics-destination="direct_form">空き状況を確認して予約する</a>
+    <a class="mobile-menu-cta" href="reservation/?intent=booking" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="header_mobile_menu" data-analytics-destination="direct_form">空き状況を確認して予約する</a>
   </div>
 
   <main id="main-content">
@@ -82,7 +82,7 @@
         <p class="hero-lead">照明で世界が変わる、少人数作品撮りの部屋。白・黒背景、教室セット、フルカラー照明を、完全個室でゆっくり使えます。</p>
 
         <div class="hero-actions">
-          <a class="button button-primary" href="reservation/?intent=booking" data-analytics-event="studio_x_booking_click" data-analytics-location="hero" data-analytics-destination="direct_form">
+          <a class="button button-primary" href="reservation/?intent=booking" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="hero" data-analytics-destination="direct_form">
             空き状況を確認して予約する
           </a>
           <a class="button button-ghost" href="#worlds">撮れる雰囲気を見る</a>
@@ -137,7 +137,7 @@
       </div>
     </section>
 
-    <section class="worlds section-shell" id="worlds" aria-labelledby="worlds-title">
+    <section class="worlds section-shell" id="worlds" data-analytics-section-view="worlds" aria-labelledby="worlds-title">
       <div class="section-heading reveal">
         <div>
           <p class="section-kicker">ONE ROOM, SIX WORLDS</p>
@@ -196,7 +196,7 @@
       </div>
     </section>
 
-    <section class="beginners section-shell" id="beginners" aria-labelledby="beginners-title">
+    <section class="beginners section-shell" id="beginners" data-analytics-section-view="beginners" aria-labelledby="beginners-title">
       <div class="beginners-intro reveal">
         <p class="section-kicker">FIRST STUDIO SESSION</p>
         <h2 id="beginners-title">初めてのスタジオ撮影でも、<br>迷わせません。</h2>
@@ -239,7 +239,7 @@
       </div>
     </section>
 
-    <section class="price section-shell" id="price" aria-labelledby="price-title">
+    <section class="price section-shell" id="price" data-analytics-section-view="price" aria-labelledby="price-title">
       <div class="price-intro reveal">
         <p class="section-kicker">PRICE</p>
         <h2 id="price-title">一室貸切。<br>4名まで同一料金。</h2>
@@ -267,10 +267,10 @@
         <p>予約フォーム送信時点では予約は確定しません。内容を確認後、当方からの確定連絡をもって成立します。</p>
       </div>
 
-      <a class="button button-primary reveal" href="reservation/?intent=booking" data-analytics-event="studio_x_booking_click" data-analytics-location="price" data-analytics-destination="direct_form">空き状況を確認して予約する</a>
+      <a class="button button-primary reveal" href="reservation/?intent=booking" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="price" data-analytics-destination="direct_form">空き状況を確認して予約する</a>
     </section>
 
-    <section class="access section-shell" id="access" aria-labelledby="access-title">
+    <section class="access section-shell" id="access" data-analytics-section-view="access" aria-labelledby="access-title">
       <div class="access-grid">
         <div class="reveal">
           <p class="section-kicker">ACCESS</p>
@@ -332,8 +332,8 @@
         <h2 id="final-cta-title">次の一枚は、<br>この部屋から。</h2>
         <p>名古屋・上前津。1〜4名の少人数撮影にちょうどいい完全個室です。</p>
         <div class="hero-actions">
-          <a class="button button-primary" href="reservation/?intent=booking" data-analytics-event="studio_x_booking_click" data-analytics-location="final_cta" data-analytics-destination="direct_form">空き状況を確認して予約する</a>
-          <a class="button button-ghost" href="reservation/?intent=consult" data-analytics-event="studio_x_consultation_click" data-analytics-location="final_cta" data-analytics-destination="direct_form">撮影内容を相談する</a>
+          <a class="button button-primary" href="reservation/?intent=booking" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="final_cta" data-analytics-destination="direct_form">空き状況を確認して予約する</a>
+          <a class="button button-ghost" href="reservation/?intent=consult" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="final_cta" data-analytics-destination="direct_form">撮影内容を相談する</a>
         </div>
       </div>
     </section>
@@ -352,7 +352,7 @@
     <p>© Studio X / Studio Nagoya Base</p>
   </footer>
 
-  <a class="mobile-booking" href="reservation/?intent=booking" data-analytics-event="studio_x_booking_click" data-analytics-location="mobile_fixed" data-analytics-destination="direct_form">空き状況を確認して予約する</a>
+  <a class="mobile-booking" href="reservation/?intent=booking" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="mobile_fixed" data-analytics-destination="direct_form">空き状況を確認して予約する</a>
 
   <script src="analytics.js"></script>
   <script src="main.js"></script>

@@ -26,7 +26,7 @@
       <li><a href="#access">アクセス・営業時間</a></li>
       <li><a href="{{ nav_howto_url }}">使い方</a></li>
       <li><a href="#faq">FAQ</a></li>
-      <li><a href="{{ nav_legal_url }}" data-analytics-event="terms_link_click" data-analytics-location="other">利用規約</a></li>
+      <li><a href="{{ nav_legal_url }}" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="other">利用規約</a></li>
       <li><a href="{{ '/en.html' | relative_url }}" class="nav-link-accent">EN</a></li>
     </ul>
 
@@ -52,7 +52,7 @@
 </div>
 {% else %}
 <div class="booking-fixed-banner">
-  <a href="#reservation-form" data-analytics-event="reservation_cta_click" data-analytics-location="banner" data-analytics-type="anchor" data-analytics-destination="reservation_form">予約フォームへ</a>
+  <a href="#reservation-form" data-analytics-event="cta_click" data-analytics-location="banner" data-analytics-type="anchor" data-analytics-destination="reservation_form">予約フォームへ</a>
 </div>
 {% endif %}
 
@@ -64,7 +64,7 @@
   <a href="#access"    class="nav-mobile-link">アクセス・営業時間</a>
   <a href="{{ nav_howto_url }}" class="nav-mobile-link">使い方</a>
   <a href="#faq"       class="nav-mobile-link">FAQ</a>
-  <a href="{{ nav_legal_url }}" class="nav-mobile-link" data-analytics-event="terms_link_click" data-analytics-location="other">利用規約</a>
+  <a href="{{ nav_legal_url }}" class="nav-mobile-link" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="other">利用規約</a>
   <a href="{{ '/en.html' | relative_url }}" class="nav-mobile-link nav-link-accent">EN</a>
   <div class="theme-switcher theme-switcher-mobile" role="group" aria-label="カラーテーマ切り替え">
     <button class="theme-btn active" type="button" data-theme="kinari"

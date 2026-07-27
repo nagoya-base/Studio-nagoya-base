@@ -41,7 +41,7 @@
 <link rel="stylesheet" href="../styles/common.css">
 </head>
 
-<body data-page-type="how_to" data-site-section="studio">
+<body data-page-type="guide" data-site-section="studio_main">
 
 <a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
 
@@ -72,8 +72,8 @@
           <div style="padding-top:4px;">
             <strong style="display:block;margin-bottom:4px;">予約申込フォームを送信</strong>
             <span style="color:var(--text-muted);font-size:0.9rem;">希望日、開始時間、利用時間、人数、利用目的、支払方法などをご入力ください。<br>
-              <a href="../#reservation-form" data-analytics-event="reservation_cta_click" data-analytics-location="how_to" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む →</a><br>
-              <span style="display:block;margin-top:8px;font-size:0.82rem;">フォームを利用できない場合は、<a href="{{ site.data.mailto_ja.reserve_url }}" data-analytics-event="reservation_email_click" data-analytics-location="how_to">メールでもお申し込みいただけます</a>。</span>
+              <a href="../#reservation-form" data-analytics-event="cta_click" data-analytics-location="how_to" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む →</a><br>
+              <span style="display:block;margin-top:8px;font-size:0.82rem;">フォームを利用できない場合は、<a href="{{ site.data.mailto_ja.reserve_url }}" data-analytics-event="outbound_contact_click" data-analytics-channel="mail" data-analytics-location="how_to">メールでもお申し込みいただけます</a>。</span>
             </span>
           </div>
         </li>
@@ -93,9 +93,9 @@
       </ol>
 
       <div style="margin-top:48px;text-align:center;">
-        <a class="btn-primary" href="../#reservation-form" data-analytics-event="reservation_cta_click" data-analytics-location="how_to" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む</a>
+        <a class="btn-primary" href="../#reservation-form" data-analytics-event="cta_click" data-analytics-location="how_to" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む</a>
         &nbsp;&nbsp;
-        <a class="btn-secondary" href="../#reservation-form" data-analytics-event="consultation_form_click" data-analytics-location="how_to">利用前に相談する</a>
+        <a class="btn-secondary" href="../#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="how_to">利用前に相談する</a>
       </div>
 
     </div>
