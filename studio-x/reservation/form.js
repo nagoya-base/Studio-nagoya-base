@@ -308,7 +308,7 @@
       isSubmitting = false;
       submitButton.disabled = false;
       applyIntentMode(getIntent());
-      submitState.textContent = '送信内容を確認後、入力したメールアドレスへご連絡します。';
+      submitState.textContent = '送信内容を確認後、ご指定の返信方法でご連絡します。';
     });
   });
 })();
