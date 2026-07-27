@@ -38,6 +38,10 @@
     <loc>https://nagoya-base.github.io/Studio-nagoya-base/studio-x/how-to/</loc>
     <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/how-to/" />
   </url>
+  <url>
+    <loc>https://nagoya-base.github.io/Studio-nagoya-base/studio-x/reservation/</loc>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/reservation/" />
+  </url>
 
   <url>
     <loc>https://nagoya-base.github.io/Studio-nagoya-base/legal/</loc>

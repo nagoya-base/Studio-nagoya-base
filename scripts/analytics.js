@@ -26,7 +26,7 @@
     REQUEST_FAILED: 'reservation_request_failed',
     CTA_CLICK: 'reservation_cta_click',
     EMAIL_CLICK: 'reservation_email_click',
-    CONSULT_EMAIL_CLICK: 'consultation_email_click',
+    CONSULT_FORM_CLICK: 'consultation_form_click',
     CONSULT_X_CLICK: 'consultation_x_click',
     PAYMENT_LINK_CLICK: 'payment_link_click',
     TERMS_LINK_CLICK: 'terms_link_click',
@@ -120,8 +120,8 @@
       case EVENTS.EMAIL_CLICK:
         params = { cta_location: location, reservation_type: 'email', link_destination: 'mail' };
         break;
-      case EVENTS.CONSULT_EMAIL_CLICK:
-        params = { cta_location: location, consultation_type: 'email', link_destination: 'mail' };
+      case EVENTS.CONSULT_FORM_CLICK:
+        params = { cta_location: location, consultation_type: 'form', link_destination: 'reservation_form' };
         break;
       case EVENTS.CONSULT_X_CLICK:
         params = { cta_location: location, consultation_type: 'x_dm', link_destination: 'x' };

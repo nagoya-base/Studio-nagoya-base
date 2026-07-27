@@ -31,8 +31,12 @@ Studio Nagoya Base の静的サイト一式です。GitHub Pages で公開する
 ├── bondage/
 │   └── index.html      緊縛・吊り床ページ
 └── studio-x/
-    ├── index.html      Studio X ページ
-    └── style.css       Studio X 専用スタイル
+    ├── index.html          Studio X ページ
+    ├── style.css           Studio X 専用スタイル
+    └── reservation/
+        ├── index.html      Studio X 予約・撮影相談フォーム
+        ├── style.css       予約フォーム専用スタイル
+        └── form.js         予約フォームのバリデーション・送信制御
 ```
 
 ## 編集ポイント
