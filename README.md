@@ -31,8 +31,12 @@ Studio Nagoya Base の静的サイト一式です。GitHub Pages で公開する
 ├── bondage/
 │   └── index.html      緊縛・吊り床ページ
 └── studio-x/
-    ├── index.html      Studio X ページ
-    └── style.css       Studio X 専用スタイル
+    ├── index.html          Studio X ページ
+    ├── style.css           Studio X 専用スタイル
+    └── reservation/
+        ├── index.html      Studio X 予約・撮影相談フォーム
+        ├── style.css       予約フォーム専用スタイル
+        └── form.js         予約フォームのバリデーション・送信制御
 ```
 
 ## 編集ポイント
@@ -157,11 +161,11 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 [GA4 管理画面](https://analytics.google.com/) の「レポート」→「リアルタイム」でアクセスを確認できます。
 
 測定 ID を変更する場合は、以下のファイルの `G-6TWDLEFWJT` をすべて置き換えてください:
-- `index.html`
-- `en.html`
-- `mens/index.html`
-- `bondage/index.html`
-- `studio-x/index.html`
+- `index.html` / `en.html` / `mens/index.html`
+- `how-to/index.html` / `how-to/en.html` / `mens/how-to/index.html`
+- `legal/index.html` / `legal/en.html` / `mens/legal/index.html`（`_includes/legal_ja.html` 経由で共通化）
+- `studio-x/index.html` / `studio-x/legal/index.html` / `studio-x/reservation/index.html`
+- `archive/index.html` / `archive/how-to/index.html`
 
 ### 確認できる主な指標
 
@@ -175,55 +179,65 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 ### 成果イベント（キーイベント）
 
 計測しているイベントは「成果イベント」と「分析用イベント」に分かれます。
+3リポジトリ（snb-community / Studio-nagoya-base / ataru-nagoya）共通のイベント
+設計に統一しています。新規にイベント名を追加する場合は、共通設計から外れて
+いないか確認してください。
 
 #### GA4 管理画面でキーイベントとして ON にするもの
 
 | イベント名 | 発火条件 |
 | --- | --- |
-| `reservation_submit` | 予約申込フォームの POST が**成功した時だけ** 1 回 |
+| `generate_lead`（`lead_type: studio_reservation`） | Studio本体の予約申込フォームの POST が**成功した時だけ** 1 回 |
+| `generate_lead`（`lead_type: studio_x_reservation` / `studio_x_consultation`） | Studio Xの予約・撮影相談フォームの POST が成功した時だけ 1 回 |
 
 設定手順：GA4 管理画面 →「管理」→「データの表示」→「イベント」→ 一覧から
-`reservation_submit` を探し、「キーイベントとしてマークを付ける」を ON にします。
+`generate_lead` を探し、「キーイベントとしてマークを付ける」を ON にします。
 イベントが一覧に出てくるのは、実際に 1 回以上計測された後です（最大 24 時間程度）。
+予約の種別は `lead_type` パラメータで区別するため、レポート側でセグメントして
+ください。
 
-`reservation_submit` はコード上 `scripts/analytics.js` の
-`StudioAnalytics.trackReservationSubmit()` からのみ送信され、以下では発火しません。
+`generate_lead` はコード上 `scripts/analytics.js` の `StudioAnalytics.trackGenerateLead()`、
+`studio-x/analytics.js` の `StudioXAnalytics.trackGenerateLead()` からのみ送信され、
+以下では発火しません。
 
 - 送信ボタンを押しただけの時
 - 入力内容にバリデーションエラーがある時
-- 送信は試みたがサーバー・通信エラーで失敗した時（`reservation_request_failed` を送信）
+- 送信は試みたがサーバー・通信エラーで失敗した時（`form_error` を送信）
 
-二重計測は、送信操作ごとに採番するトークンで防いでいます。
+二重計測は、送信操作ごとに採番するトークンで防いでいます。以前は POST 成功時に
+`reservation_submit` と `reservation_request_complete` の両方を発火しており、
+1件の申込を二重に計上していました。`generate_lead` 1本に統一し解消しています。
 
 #### 実装していない成果イベント
 
 | イベント名 | 実装しない理由 |
 | --- | --- |
-| `reservation_complete` | 予約完了ページが存在しない。フォーム送信は「予約申込」であり、当方からの予約確定連絡をもって予約成立となるため、サイト側で完了を判定できない |
-| `generate_lead` | 問い合わせ導線がメールリンクと X DM リンクのみで、送信成功をサイト側で判定できない。クリックは従来どおり `reservation_email_click` / `consultation_email_click` / `consultation_x_click` として計測する |
+| `entry_complete` | 完了ページが存在しない。フォーム送信は「申込」であり、当方からの確定連絡をもって成立となるため、サイト側で完了を判定できない |
 
-将来、予約確定を通知する完了ページや問い合わせフォームを追加した場合に、
-はじめてこれらのイベントを実装してください。
+将来、予約確定を通知する完了ページを追加した場合に、はじめてこのイベントを
+実装してください。
 
-#### 分析用イベント（キーイベントにしない）
+#### 使用してよいイベント名（これ以外を新規に作らない）
 
-`page_view` / `scroll` / `reservation_calendar_view` / `reservation_form_view` /
-`reservation_form_start` / `reservation_form_error` / `reservation_request_complete` /
-`reservation_request_failed` / `reservation_cta_click` / `reservation_email_click` /
-`consultation_email_click` / `consultation_x_click` / `payment_link_click` /
-`terms_link_click` / `preconditioning_cta_click` / `faq_view` / `faq_open` /
-`studio_x_booking_click` / `studio_x_consultation_click` / `studio_x_mood_switch`
+`page_view` / `scroll` / `section_view` / `cta_click` / `faq_open` /
+`form_start` / `form_error` / `generate_lead` / `booking_platform_click` /
+`outbound_contact_click`
+
+このうち成果イベントは `generate_lead`（主成果）と `booking_platform_click` /
+`outbound_contact_click`（補助成果）。他はすべて分析用イベントで、キーイベント
+には設定しない。
 
 #### 共通パラメータ
 
 個人情報（氏名・メールアドレス・電話番号・希望日時・自由記述）は一切送信しません。
 送信するのはカテゴリ値のみです。
 
-- `site_section`：`studio` / `studio_mens` / `studio_x`
-- `page_type`：`<body data-page-type>` の値
-- `page_path`：`location.pathname`
-- `form_name`：`reservation_form` / `reservation_form_en`
-- `link_destination`：`mail` / `x` など
+- `site_brand`：`studio` 固定
+- `site_section`：`studio_main` / `mens` / `studio_x`
+- `page_type`：`<body data-page-type>` の値（`top` / `guide` / `policy` など）
+- `form_name`：`studio_reservation` / `studio_x_reservation` / `reservation_form_en`
+- `channel`：`mail` / `x`（`outbound_contact_click`）
+- `provider`：`stripe`（`booking_platform_click`）
 
 ### 発火確認の手順
 
@@ -233,7 +247,7 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
    イベント名とパラメータが出力されます
 3. GA4 管理画面 →「管理」→「DebugView」を開くと、同じイベントがリアルタイムで
    表示されます
-4. `reservation_submit` の確認は、フォームを実際に送信して成功メッセージが
+4. `generate_lead` の確認は、フォームを実際に送信して成功メッセージが
    表示されることまで確認してください。バリデーションエラーの状態で送信ボタンを
    押しても発火しないことも合わせて確認します
 

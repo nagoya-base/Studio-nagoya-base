@@ -21,7 +21,7 @@
   var submittedAt = document.getElementById('reservation-submitted-at');
   var subjectInput = document.getElementById('reservation-subject');
   var isSubmitting = false;
-  /* 送信操作ごとに採番し、reservation_submit の二重計測を防ぐ */
+  /* 送信操作ごとに採番し、generate_lead の二重計測を防ぐ */
   var submissionSeq = 0;
   var FORM_NAME = 'reservation_form_en';
 

@@ -71,10 +71,10 @@
         <li style="display:flex;gap:16px;margin-bottom:24px;">
           <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">2</span>
           <div style="padding-top:4px;">
-            <strong style="display:block;margin-bottom:4px;">メールで予約を送信</strong>
-            <span style="color:var(--text-muted);font-size:0.9rem;">希望日時、利用人数、利用目的をメールでお知らせください。「メンズページを見た」とお伝えいただくと会員料金が適用されます。<br>
-              <a href="{{ site.data.mailto_ja.reserve_url }}">メールで予約する →</a><br>
-              <span style="display:block;margin-top:8px;font-size:0.82rem;">お急ぎの場合は <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DM（サブ窓口）</a> でもご連絡いただけます。</span>
+            <strong style="display:block;margin-bottom:4px;">予約申込フォームを送信</strong>
+            <span style="color:var(--text-muted);font-size:0.9rem;">希望日時、利用人数、利用目的をご入力ください。「連絡事項」欄に「メンズページを見た」とご記入いただくと会員料金が適用されます。<br>
+              <a href="../#reservation-form">予約申込フォームへ進む →</a><br>
+              <span style="display:block;margin-top:8px;font-size:0.82rem;">フォームを利用できない場合は、<a href="{{ site.data.mailto_ja.reserve_url }}">メールでもお申し込みいただけます</a>。</span>
             </span>
           </div>
         </li>
@@ -94,10 +94,9 @@
       </ol>
 
       <div style="margin-top:48px;text-align:center;">
-        <a class="btn-primary" href="{{ site.data.mailto_ja.reserve_url }}">メールで予約する</a>
+        <a class="btn-primary" href="../#reservation-form">予約申込フォームへ進む</a>
         &nbsp;&nbsp;
-        <a class="btn-secondary" href="{{ site.data.mailto_ja.consult_url }}">予約・利用相談</a>
-        <p class="cta-hint" style="margin-top:16px;"><a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">X DMでも相談できます</a></p>
+        <a class="btn-secondary" href="../#reservation-form">予約・利用相談</a>
       </div>
 
     </div>

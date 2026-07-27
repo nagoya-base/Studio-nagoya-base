@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ja" data-mood="school">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#0b0b0f">
+  <title>予約・撮影相談 | Studio X</title>
+  <meta name="description" content="Studio X（名古屋・上前津の完全個室撮影スタジオ）の予約・撮影相談フォームです。空き状況の確認、当日利用、見学・下見のご相談も承ります。">
+  <meta property="og:title" content="予約・撮影相談 | Studio X">
+  <meta property="og:description" content="Studio Xの予約・撮影相談は、こちらのフォームから承ります。">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/reservation/">
+  <meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/images/studio-x-ogp.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="予約・撮影相談 | Studio X">
+  <meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/images/studio-x-ogp.jpg">
+  <link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/reservation/">
+  <link rel="icon" href="../touch-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../touch-icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="../pages.css">
+  <link rel="stylesheet" href="style.css">
+
+  <!-- Google Analytics 4 -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-6TWDLEFWJT');
+  </script>
+</head>
+<body id="top">
+  <a class="skip-link" href="#main-content">本文へ移動</a>
+  <header class="site-header">
+    <a class="brand" href="../" aria-label="Studio X トップへ"><span class="brand-name">STUDIO <b>X</b></span><span class="brand-place">KAMIMAEZU / NAGOYA</span></a>
+    <nav class="desktop-nav" aria-label="メインナビゲーション"><a href="../">トップ</a><a href="../how-to/">利用ガイド</a><a href="../legal/">規約</a></nav>
+    <a class="header-cta" href="#reservation-form">予約フォームへ</a>
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="メニューを開く"><span></span><span></span></button>
+  </header>
+  <div class="mobile-menu" id="mobile-menu" hidden>
+    <a href="../">トップ</a><a href="../how-to/">ご利用ガイド</a><a href="../legal/">利用規約・プライバシー</a>
+    <a class="mobile-menu-cta" href="#reservation-form">予約フォームへ</a>
+  </div>
+
+  <main id="main-content" class="subpage-main">
+    <header class="subpage-hero">
+      <p class="section-kicker">RESERVATION &amp; CONSULTATION</p>
+      <h1>予約・撮影相談<br>フォーム</h1>
+      <p class="subpage-lead">空き状況を確認しての予約、撮影内容・設備のご相談、当日利用の確認、見学・下見のご相談まで、このフォームから承ります。フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内にご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
+    </header>
+
+    <section class="content-section" id="reservation-form-section" data-analytics-section-view="reservation_form">
+      <div id="reservation-success" class="reservation-status reservation-status--success" role="status" aria-live="polite" tabindex="-1" hidden>
+        <h3>送信を受け付けました</h3>
+        <p>お問い合わせ・予約申込ありがとうございます。<br>フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内に、ご指定の返信方法でご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
+        <p>24時間を過ぎても返信がない場合は、迷惑メールフォルダをご確認のうえ、Xのプロフィールからご連絡ください。</p>
+      </div>
+
+      <div id="reservation-failure" class="reservation-status reservation-status--error" role="alert" aria-live="assertive" tabindex="-1" hidden>
+        <h3>送信できませんでした</h3>
+        <p id="reservation-failure-message">通信状況をご確認のうえ、時間を置いて再度お試しください。</p>
+      </div>
+
+      <form
+        id="reservation-request-form"
+        class="reservation-form"
+        action="https://formspree.io/f/maqreqjk"
+        method="post"
+        accept-charset="UTF-8"
+        novalidate>
+        <input type="hidden" name="_subject" id="reservation-subject" value="【Studio X】予約・撮影相談">
+        <input type="hidden" name="送信日時" id="reservation-submitted-at" value="">
+        <input type="text" name="_gotcha" class="reservation-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
+
+        <div id="reservation-error-summary" class="reservation-error-summary" role="alert" aria-live="assertive" tabindex="-1" hidden>
+          <h3>入力内容をご確認ください</h3>
+          <ul></ul>
+        </div>
+
+        <fieldset class="reservation-group">
+          <legend>1. お問い合わせ種別</legend>
+          <fieldset class="reservation-choice-group">
+            <legend>ご希望の内容 <span class="field-badge field-badge--required">必須</span></legend>
+            <div class="reservation-choices">
+              <label><input type="radio" name="お問い合わせ種別" value="空き状況を確認して予約したい" data-intent="booking" required aria-describedby="reservation-intent-error"> <span>空き状況を確認して予約したい</span></label>
+              <label><input type="radio" name="お問い合わせ種別" value="撮影内容・設備について相談したい" data-intent="consult" aria-describedby="reservation-intent-error"> <span>撮影内容・設備について相談したい</span></label>
+              <label><input type="radio" name="お問い合わせ種別" value="当日利用について確認したい" data-intent="same-day" aria-describedby="reservation-intent-error"> <span>当日利用について確認したい</span></label>
+              <label><input type="radio" name="お問い合わせ種別" value="見学・下見について相談したい" data-intent="tour" aria-describedby="reservation-intent-error"> <span>見学・下見について相談したい</span></label>
+              <label><input type="radio" name="お問い合わせ種別" value="その他" data-intent="other" aria-describedby="reservation-intent-error"> <span>その他</span></label>
+            </div>
+            <p id="reservation-intent-error" class="field-error" hidden></p>
+          </fieldset>
+        </fieldset>
+
+        <fieldset class="reservation-group">
+          <legend>2. 連絡先</legend>
+          <p class="field-help">メールアドレスまたはXアカウントのどちらかを入力してください。</p>
+          <div class="reservation-fields">
+            <div class="reservation-field">
+              <label for="reservation-name">お名前またはハンドルネーム <span class="field-badge field-badge--required">必須</span></label>
+              <input type="text" id="reservation-name" name="お名前" autocomplete="name" required aria-describedby="reservation-name-error">
+              <p id="reservation-name-error" class="field-error" hidden></p>
+            </div>
+            <div class="reservation-field">
+              <label for="reservation-email">メールアドレス <span class="field-badge">メールまたはXのどちらか必須</span></label>
+              <input type="email" id="reservation-email" name="メールアドレス" autocomplete="email" inputmode="email" aria-describedby="reservation-email-help reservation-email-error">
+              <p id="reservation-email-help" class="field-help">予約・相談内容の返信を受け取れるアドレスをご入力ください。</p>
+              <p id="reservation-email-error" class="field-error" hidden></p>
+            </div>
+            <div class="reservation-field">
+              <label for="reservation-x">Xアカウント <span class="field-badge">メールまたはXのどちらか必須</span></label>
+              <input type="text" id="reservation-x" name="Xアカウント" placeholder="@studiox2026" autocomplete="off" aria-describedby="reservation-x-error">
+              <p id="reservation-x-error" class="field-error" hidden></p>
+            </div>
+            <div class="reservation-field">
+              <label for="reservation-tel">電話番号 <span class="field-badge">任意</span></label>
+              <input type="tel" id="reservation-tel" name="電話番号" autocomplete="tel" inputmode="tel">
+            </div>
+          </div>
+          <fieldset class="reservation-choice-group">
+            <legend>希望する返信方法 <span class="field-badge field-badge--required">必須</span></legend>
+            <div class="reservation-choices">
+              <label><input type="radio" name="希望する返信方法" value="メール" required aria-describedby="reservation-method-error"> <span>メール</span></label>
+              <label><input type="radio" name="希望する返信方法" value="XのDM" aria-describedby="reservation-method-error"> <span>XのDM</span></label>
+              <label><input type="radio" name="希望する返信方法" value="どちらでもよい" aria-describedby="reservation-method-error"> <span>どちらでもよい</span></label>
+            </div>
+            <p class="field-help">XのDMを希望する場合は、Xアカウントを入力してください。</p>
+            <p id="reservation-method-error" class="field-error" hidden></p>
+          </fieldset>
+        </fieldset>
+
+        <fieldset class="reservation-group is-booking-only" data-scope="booking">
+          <legend>3. 希望日時・利用内容</legend>
+          <div class="reservation-fields reservation-fields--compact">
+            <div class="reservation-field">
+              <label for="reservation-date">第1希望日 <span class="field-badge field-badge--required">必須</span></label>
+              <input type="date" id="reservation-date" name="第1希望日" aria-describedby="reservation-date-error">
+              <p id="reservation-date-error" class="field-error" hidden></p>
+            </div>
+            <div class="reservation-field">
+              <label for="reservation-start-time">希望開始時間 <span class="field-badge field-badge--required">必須</span></label>
+              <input type="time" id="reservation-start-time" name="希望開始時間" min="08:00" max="23:00" step="1800" aria-describedby="reservation-start-time-help reservation-start-time-error">
+              <p id="reservation-start-time-help" class="field-help">営業時間は8:00〜23:00です。</p>
+              <p id="reservation-start-time-error" class="field-error" hidden></p>
+            </div>
+            <div class="reservation-field">
+              <label for="reservation-duration">利用時間 <span class="field-badge field-badge--required">必須</span></label>
+              <select id="reservation-duration" name="利用時間" aria-describedby="reservation-duration-error">
+                <option value="">選択してください</option>
+                <option value="2">2時間</option>
+                <option value="3">3時間</option>
+                <option value="4">4時間</option>
+                <option value="5">5時間</option>
+                <option value="6">6時間</option>
+                <option value="7+">7時間以上・長時間利用</option>
+              </select>
+              <p id="reservation-duration-error" class="field-error" hidden></p>
+            </div>
+          </div>
+          <p id="reservation-end-warning" class="reservation-warning" role="alert" hidden>利用終了時間が23:00を超えています。開始時間または利用時間を変更してください。</p>
+
+          <div class="reservation-field reservation-field--full" style="margin-top: 24px;">
+            <label for="reservation-date2">第2希望日時 <span class="field-badge">任意</span></label>
+            <input type="text" id="reservation-date2" name="第2希望日時" placeholder="例：8月10日（月）14時〜、または平日夜なら調整可能">
+          </div>
+
+          <div class="reservation-fields" style="margin-top: 24px;">
+            <div class="reservation-field">
+              <label for="reservation-party-size">利用人数 <span class="field-badge field-badge--required">必須</span></label>
+              <select id="reservation-party-size" name="利用人数" aria-describedby="reservation-party-size-error">
+                <option value="">選択してください</option>
+                <option value="1名">1名</option>
+                <option value="2名">2名</option>
+                <option value="3名">3名</option>
+                <option value="4名">4名</option>
+                <option value="5名以上・要相談">5名以上・要相談</option>
+              </select>
+              <p id="reservation-party-size-error" class="field-error" hidden></p>
+            </div>
+
+            <div class="reservation-field">
+              <label for="reservation-purpose">利用目的 <span class="field-badge field-badge--required">必須</span></label>
+              <select id="reservation-purpose" name="利用目的" aria-describedby="reservation-purpose-error">
+                <option value="">選択してください</option>
+                <option value="コスプレ">コスプレ</option>
+                <option value="ポートレート">ポートレート</option>
+                <option value="セルフ撮影">セルフ撮影</option>
+                <option value="作品撮り">作品撮り</option>
+                <option value="商品・物撮り">商品・物撮り</option>
+                <option value="動画撮影">動画撮影</option>
+                <option value="衣装テスト">衣装テスト</option>
+                <option value="その他">その他</option>
+              </select>
+              <p id="reservation-purpose-error" class="field-error" hidden></p>
+            </div>
+
+            <div id="reservation-purpose-other-wrap" class="reservation-field reservation-field--full">
+              <label for="reservation-purpose-other">利用目的の詳細 <span class="field-badge">「その他」の場合は必須</span></label>
+              <input type="text" id="reservation-purpose-other" name="利用目的の詳細" aria-describedby="reservation-purpose-other-error">
+              <p id="reservation-purpose-other-error" class="field-error" hidden></p>
+            </div>
+          </div>
+
+          <fieldset class="reservation-choice-group">
+            <legend>使用したい背景・セット <span class="field-badge">任意・複数選択可</span></legend>
+            <div class="reservation-choices">
+              <label><input type="checkbox" name="使用したい背景・セット[]" value="白背景"> <span>白背景</span></label>
+              <label><input type="checkbox" name="使用したい背景・セット[]" value="黒背景"> <span>黒背景</span></label>
+              <label><input type="checkbox" name="使用したい背景・セット[]" value="教室セット"> <span>教室セット</span></label>
+              <label><input type="checkbox" name="使用したい背景・セット[]" value="フルカラー照明"> <span>フルカラー照明</span></label>
+              <label><input type="checkbox" name="使用したい背景・セット[]" value="未定・相談したい"> <span>未定・相談したい</span></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="reservation-choice-group">
+            <legend>希望する支払方法 <span class="field-badge field-badge--required">必須</span></legend>
+            <div class="reservation-choices">
+              <label><input type="radio" name="希望する支払方法" value="現金" aria-describedby="reservation-payment-error"> <span>現金</span></label>
+              <label><input type="radio" name="希望する支払方法" value="PayPay" aria-describedby="reservation-payment-error"> <span>PayPay</span></label>
+              <label><input type="radio" name="希望する支払方法" value="オンラインクレジットカード" aria-describedby="reservation-payment-error"> <span>オンラインクレジットカード</span></label>
+              <label><input type="radio" name="希望する支払方法" value="未定" aria-describedby="reservation-payment-error"> <span>未定</span></label>
+            </div>
+            <p class="field-help">支払方法・支払時期は予約確定後にご案内します。</p>
+            <p id="reservation-payment-error" class="field-error" hidden></p>
+          </fieldset>
+
+          <fieldset class="reservation-choice-group">
+            <legend>事前空調サービス（無料）</legend>
+            <div class="reservation-choices">
+              <label><input type="radio" name="事前空調サービス" value="希望する"> <span>希望する</span></label>
+              <label><input type="radio" name="事前空調サービス" value="希望しない" checked> <span>希望しない</span></label>
+            </div>
+            <p class="field-help">利用日前日の23:59までにお申し込みください。利用開始の1時間前を目安に冷房または暖房を運転します。当日の申込み・変更には対応できません。</p>
+          </fieldset>
+
+          <fieldset class="reservation-choice-group">
+            <legend>ご利用区分 <span class="field-badge field-badge--required">必須</span></legend>
+            <div class="reservation-choices">
+              <label><input type="radio" name="ご利用区分" value="初めて利用する" aria-describedby="reservation-repeat-error"> <span>初めて利用する</span></label>
+              <label><input type="radio" name="ご利用区分" value="リピーター（利用したことがある）" aria-describedby="reservation-repeat-error"> <span>リピーター（利用したことがある）</span></label>
+            </div>
+            <p id="reservation-repeat-error" class="field-error" hidden></p>
+          </fieldset>
+        </fieldset>
+
+        <fieldset class="reservation-group">
+          <legend>4. 質問・確認事項</legend>
+          <div class="reservation-field reservation-field--full">
+            <label for="reservation-message" id="reservation-message-label">質問・連絡事項 <span class="field-badge" id="reservation-message-mark">任意</span></label>
+            <textarea id="reservation-message" name="質問・連絡事項" rows="5" maxlength="1000" placeholder="撮影内容、設備について気になること、見学・下見のご希望日などをご記入ください。" aria-describedby="reservation-message-error"></textarea>
+            <p id="reservation-message-error" class="field-error" hidden></p>
+          </div>
+        </fieldset>
+
+        <fieldset class="reservation-group reservation-confirmation">
+          <legend>5. 確認・同意</legend>
+          <div class="reservation-consents">
+            <label for="reservation-terms"><input type="checkbox" id="reservation-terms" name="利用規約同意" value="同意する" required aria-describedby="reservation-terms-error"> <span><a href="../legal/#terms" target="_blank" rel="noopener noreferrer">利用規約・プライバシーポリシー</a>を確認し、内容に同意します。 <span class="field-badge field-badge--required">必須</span></span></label>
+            <p id="reservation-terms-error" class="field-error" hidden></p>
+
+            <label for="reservation-condition" class="is-booking-only" data-scope="booking"><input type="checkbox" id="reservation-condition" name="予約成立条件同意" value="同意する" aria-describedby="reservation-condition-error"> <span>フォーム送信時点では予約は確定せず、当方からの予約確定連絡をもって予約成立となることを確認しました。 <span class="field-badge field-badge--required">必須</span></span></label>
+            <p id="reservation-condition-error" class="field-error" hidden></p>
+          </div>
+
+          <p class="reservation-privacy">入力された情報は、予約・お問い合わせ対応、利用案内、当日の連絡および必要な運営対応のために使用し、フォーム送信にはFormspreeを利用します。詳しくは<a href="../legal/#privacy">プライバシーポリシー</a>をご確認ください。</p>
+          <button type="submit" id="reservation-submit" class="button button-primary reservation-submit">送信する</button>
+          <p id="reservation-submit-state" class="reservation-submit-state" role="status" aria-live="polite">送信内容を確認後、ご指定の返信方法でご連絡します。</p>
+        </fieldset>
+      </form>
+    </section>
+
+    <aside class="page-cta"><h2>予約前に、使い方も確認。</h2><p>入室、照明、清掃、施錠までを画像付きPDFと一緒に案内しています。</p><a class="button button-primary" href="../how-to/">ご利用ガイドを見る</a></aside>
+  </main>
+
+  <footer><a class="brand" href="../"><span class="brand-name">STUDIO <b>X</b></span><span class="brand-place">KAMIMAEZU / NAGOYA</span></a><div class="footer-links"><a href="../">トップ</a><a href="../how-to/">ご利用ガイド</a><a href="../legal/">利用規約・プライバシー</a><a href="https://x.com/studiox2026" target="_blank" rel="noopener noreferrer">X @studiox2026</a></div><p>© Studio X / Studio Nagoya Base</p></footer>
+
+  <script src="../analytics.js"></script>
+  <script src="../main.js"></script>
+  <script src="form.js"></script>
+</body>
+</html>

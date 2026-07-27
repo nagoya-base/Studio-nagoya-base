@@ -6,14 +6,19 @@
   'use strict';
 
   var EVENTS = {
-    BOOKING_PLATFORM_CLICK: 'booking_platform_click',
     OUTBOUND_CONTACT_CLICK: 'outbound_contact_click',
     CTA_CLICK: 'cta_click',
-    SECTION_VIEW: 'section_view'
+    SECTION_VIEW: 'section_view',
+    FORM_START: 'form_start',
+    FORM_ERROR: 'form_error',
+    GENERATE_LEAD: 'generate_lead'
   };
 
   var isDebug = /(?:^|[?&])debug_mode=true(?:&|$)/.test(window.location.search);
   var sectionFired = {};
+  var sentOnce = {};
+  /* 成果イベント（generate_lead）の二重送信防止用。送信成功1回につき1件だけ記録する。 */
+  var submittedTokens = {};
 
   function isTrackableEnvironment() {
     if (isDebug) return true;
@@ -53,12 +58,6 @@
     var location = el.getAttribute('data-analytics-location') || 'other';
 
     switch (eventName) {
-      case EVENTS.BOOKING_PLATFORM_CLICK:
-        trackEvent(eventName, {
-          provider: el.getAttribute('data-analytics-provider') || 'spacemarket',
-          cta_location: location
-        });
-        break;
       case EVENTS.OUTBOUND_CONTACT_CLICK:
         trackEvent(eventName, {
           channel: el.getAttribute('data-analytics-channel') || 'unknown',
@@ -75,6 +74,12 @@
       default:
         break;
     }
+  }
+
+  function trackOnce(key, eventName, params) {
+    if (sentOnce[key]) return;
+    sentOnce[key] = true;
+    trackEvent(eventName, params);
   }
 
   document.addEventListener('click', handleDelegatedClick);
@@ -99,6 +104,30 @@
     /* cta_click（cta_name: mood_switch）。キーイベントにはしない。 */
     trackMoodSwitch: function (mood) {
       trackEvent(EVENTS.CTA_CLICK, { cta_name: 'mood_switch', cta_location: 'mood_switcher', mood_color: mood || 'unknown' });
+    },
+    trackFormStart: function () {
+      trackOnce(EVENTS.FORM_START, EVENTS.FORM_START, { form_name: 'studio_x_reservation' });
+    },
+    trackFormError: function (errorType) {
+      trackEvent(EVENTS.FORM_ERROR, { form_name: 'studio_x_reservation', error_type: errorType || 'unknown' });
+    },
+    /* キーイベント。POST成功時のみ、1送信につき1回呼ぶこと。
+       submissionToken は1回の送信操作ごとに一意な値。同じトークンでは二度送信しない。 */
+    trackGenerateLead: function (submissionToken, intent, params) {
+      var token = String(submissionToken);
+      if (submittedTokens[token]) return;
+      submittedTokens[token] = true;
+
+      var payload = {
+        lead_type: intent === 'booking' ? 'studio_x_reservation' : 'studio_x_consultation',
+        form_name: 'studio_x_reservation'
+      };
+      if (params) {
+        for (var key in params) {
+          if (Object.prototype.hasOwnProperty.call(params, key)) payload[key] = params[key];
+        }
+      }
+      trackEvent(EVENTS.GENERATE_LEAD, payload);
     }
   };
 })();
