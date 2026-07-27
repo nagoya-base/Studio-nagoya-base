@@ -26,6 +26,9 @@
   var messageMark = document.getElementById('reservation-message-mark');
   var conditionInput = document.getElementById('reservation-condition');
   var bookingOnlyEls = form.querySelectorAll('.is-booking-only');
+  var emailField = document.getElementById('reservation-email');
+  var xField = document.getElementById('reservation-x');
+  var methodRadios = form.querySelectorAll('input[name="希望する返信方法"]');
   var isSubmitting = false;
   var submissionSeq = 0;
 
@@ -179,6 +182,7 @@
 
     clearError(nameInput, 'reservation-name-error');
     clearError(emailInput, 'reservation-email-error');
+    clearError(xField, 'reservation-x-error');
     clearError(dateInput, 'reservation-date-error');
     clearError(timeInput, 'reservation-start-time-error');
     clearError(durationInput, 'reservation-duration-error');
@@ -188,6 +192,7 @@
     clearError(termsInput, 'reservation-terms-error');
     clearError(messageInput, 'reservation-message-error');
     clearError(conditionInput, 'reservation-condition-error');
+    clearRadioError('希望する返信方法', 'reservation-method-error');
     clearRadioError('希望する支払方法', 'reservation-payment-error');
     clearRadioError('ご利用区分', 'reservation-repeat-error');
     intentError.hidden = true;
@@ -196,10 +201,24 @@
       errors.push(setError(intentRadios[0], 'reservation-intent-error', 'お問い合わせ種別を選択してください。'));
     }
     if (!nameInput.value.trim()) errors.push(setError(nameInput, 'reservation-name-error', 'お名前を入力してください。'));
-    if (!emailInput.value.trim()) {
-      errors.push(setError(emailInput, 'reservation-email-error', 'メールアドレスを入力してください。'));
-    } else if (!emailInput.validity.valid) {
+
+    var hasEmail = emailInput.value.trim() !== '';
+    var hasX = xField.value.trim() !== '';
+    if (!hasEmail && !hasX) {
+      errors.push(setError(emailInput, 'reservation-email-error', 'メールアドレスまたはXアカウントのどちらかを入力してください。'));
+    } else if (hasEmail && !emailInput.validity.valid) {
       errors.push(setError(emailInput, 'reservation-email-error', 'メールアドレスを正しい形式で入力してください。'));
+    }
+    if (!checkedRadio('希望する返信方法')) {
+      errors.push(setRadioError('希望する返信方法', 'reservation-method-error', '希望する返信方法を選択してください。'));
+    } else {
+      var preferredMethod = checkedRadio('希望する返信方法').value;
+      if (preferredMethod === 'メール' && !hasEmail) {
+        errors.push(setError(emailInput, 'reservation-email-error', 'メールでの返信を希望する場合は、メールアドレスを入力してください。'));
+      }
+      if (preferredMethod === 'XのDM' && !hasX) {
+        errors.push(setError(xField, 'reservation-x-error', 'XのDMでの返信を希望する場合は、Xアカウントを入力してください。'));
+      }
     }
 
     if (intent === 'booking') {

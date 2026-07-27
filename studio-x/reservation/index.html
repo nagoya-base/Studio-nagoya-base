@@ -99,6 +99,7 @@
 
         <fieldset class="reservation-group">
           <legend>2. 連絡先</legend>
+          <p class="field-help">メールアドレスまたはXアカウントのどちらかを入力してください。</p>
           <div class="reservation-fields">
             <div class="reservation-field">
               <label for="reservation-name">お名前またはハンドルネーム <span class="field-badge field-badge--required">必須</span></label>
@@ -106,20 +107,31 @@
               <p id="reservation-name-error" class="field-error" hidden></p>
             </div>
             <div class="reservation-field">
-              <label for="reservation-email">メールアドレス <span class="field-badge field-badge--required">必須</span></label>
-              <input type="email" id="reservation-email" name="メールアドレス" autocomplete="email" inputmode="email" required aria-describedby="reservation-email-help reservation-email-error">
+              <label for="reservation-email">メールアドレス <span class="field-badge">メールまたはXのどちらか必須</span></label>
+              <input type="email" id="reservation-email" name="メールアドレス" autocomplete="email" inputmode="email" aria-describedby="reservation-email-help reservation-email-error">
               <p id="reservation-email-help" class="field-help">予約・相談内容の返信を受け取れるアドレスをご入力ください。</p>
               <p id="reservation-email-error" class="field-error" hidden></p>
+            </div>
+            <div class="reservation-field">
+              <label for="reservation-x">Xアカウント <span class="field-badge">メールまたはXのどちらか必須</span></label>
+              <input type="text" id="reservation-x" name="Xアカウント" placeholder="@studiox2026" autocomplete="off" aria-describedby="reservation-x-error">
+              <p id="reservation-x-error" class="field-error" hidden></p>
             </div>
             <div class="reservation-field">
               <label for="reservation-tel">電話番号 <span class="field-badge">任意</span></label>
               <input type="tel" id="reservation-tel" name="電話番号" autocomplete="tel" inputmode="tel">
             </div>
-            <div class="reservation-field">
-              <label for="reservation-x">Xアカウント <span class="field-badge">任意</span></label>
-              <input type="text" id="reservation-x" name="Xアカウント" placeholder="@studiox2026" autocomplete="off">
-            </div>
           </div>
+          <fieldset class="reservation-choice-group">
+            <legend>希望する返信方法 <span class="field-badge field-badge--required">必須</span></legend>
+            <div class="reservation-choices">
+              <label><input type="radio" name="希望する返信方法" value="メール" required aria-describedby="reservation-method-error"> <span>メール</span></label>
+              <label><input type="radio" name="希望する返信方法" value="XのDM" aria-describedby="reservation-method-error"> <span>XのDM</span></label>
+              <label><input type="radio" name="希望する返信方法" value="どちらでもよい" aria-describedby="reservation-method-error"> <span>どちらでもよい</span></label>
+            </div>
+            <p class="field-help">XのDMを希望する場合は、Xアカウントを入力してください。</p>
+            <p id="reservation-method-error" class="field-error" hidden></p>
+          </fieldset>
         </fieldset>
 
         <fieldset class="reservation-group is-booking-only" data-scope="booking">
