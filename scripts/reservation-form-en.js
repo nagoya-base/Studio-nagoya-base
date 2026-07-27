@@ -241,11 +241,11 @@
       successMessage.focus();
       if (window.StudioAnalytics) {
         /* キーイベント：POST成功時のみ、1送信につき1回 */
-        window.StudioAnalytics.trackReservationSubmit(submissionToken, { form_name: FORM_NAME, page_language: 'en' });
+        window.StudioAnalytics.trackGenerateLead(submissionToken, { form_name: FORM_NAME, page_language: 'en' });
       }
     }).catch(function (error) {
       if (window.StudioAnalytics) {
-        window.StudioAnalytics.trackRequestFailed((error && error.failureType) || 'network');
+        window.StudioAnalytics.trackFormError((error && error.failureType) || 'network', 0, FORM_NAME);
       }
       failureText.textContent = 'Please check your connection and try again. If the form still does not work, please contact us by email instead.';
       failureMessage.hidden = false;

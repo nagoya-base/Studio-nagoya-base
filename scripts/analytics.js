@@ -1,45 +1,37 @@
-/* GA4 reservation funnel analytics (Phase 5).
+/* GA4 reservation funnel analytics.
    Sends only categorical event data — never names, emails, phone numbers,
    dates/times, or free-text input. Fails silently if gtag is unavailable
    so tracking never blocks reservation functionality.
 
-   成果イベント（GA4管理画面でキーイベント化する対象）は reservation_submit のみ。
+   成果イベント（GA4管理画面でキーイベント化する対象）は generate_lead のみ。
    予約申込のPOSTが成功した時だけ送信し、送信ボタンのクリックやバリデーション
    エラーでは送信しない。
 
    reservation_complete は実装しない。当サイトには予約完了ページが存在せず、
    フォーム送信は「予約申込」であって予約成立ではないため（当方からの予約確定
    連絡をもって成立）、サイト側で完了を判定できない。架空の完了イベントは作らない。
-
-   generate_lead も実装しない。問い合わせ導線はメールとX DMのリンクのみで、
-   送信成功をサイト側で判定できないため、既存のクリックイベントとして維持する。 */
+   以前は POST 成功時に reservation_submit と reservation_request_complete の
+   両方を発火しており、1件の申込を二重に計上していた。generate_lead 1本に統一し
+   二重計上を解消する。 */
 (function () {
   'use strict';
 
   var EVENTS = {
-    CALENDAR_VIEW: 'reservation_calendar_view',
-    FORM_VIEW: 'reservation_form_view',
-    FORM_START: 'reservation_form_start',
-    FORM_ERROR: 'reservation_form_error',
-    SUBMIT: 'reservation_submit',
-    REQUEST_COMPLETE: 'reservation_request_complete',
-    REQUEST_FAILED: 'reservation_request_failed',
-    CTA_CLICK: 'reservation_cta_click',
-    EMAIL_CLICK: 'reservation_email_click',
-    CONSULT_EMAIL_CLICK: 'consultation_email_click',
-    CONSULT_X_CLICK: 'consultation_x_click',
-    PAYMENT_LINK_CLICK: 'payment_link_click',
-    TERMS_LINK_CLICK: 'terms_link_click',
-    PRECONDITIONING_CTA_CLICK: 'preconditioning_cta_click',
-    FAQ_VIEW: 'faq_view',
+    SECTION_VIEW: 'section_view',
+    FORM_START: 'form_start',
+    FORM_ERROR: 'form_error',
+    GENERATE_LEAD: 'generate_lead',
+    CTA_CLICK: 'cta_click',
+    OUTBOUND_CONTACT_CLICK: 'outbound_contact_click',
+    BOOKING_PLATFORM_CLICK: 'booking_platform_click',
     FAQ_OPEN: 'faq_open'
   };
 
   var pageType = (document.body && document.body.getAttribute('data-page-type')) || 'bondage_studio';
-  var siteSection = (document.body && document.body.getAttribute('data-site-section')) || 'studio';
+  var siteSection = (document.body && document.body.getAttribute('data-site-section')) || 'studio_main';
   var isDebug = /(?:^|[?&])debug_mode=true(?:&|$)/.test(window.location.search);
   var sentOnce = {};
-  /* 成果イベント（reservation_submit）の二重送信防止用。送信成功1回につき1件だけ記録する。 */
+  /* 成果イベント（generate_lead）の二重送信防止用。送信成功1回につき1件だけ記録する。 */
   var submittedTokens = {};
 
   function isTrackableEnvironment() {
@@ -55,9 +47,9 @@
     if (!isTrackableEnvironment()) return;
 
     var payload = {
+      site_brand: 'studio',
       page_type: pageType,
-      site_section: siteSection,
-      page_path: window.location.pathname
+      site_section: siteSection
     };
     if (params) {
       for (var key in params) {
@@ -83,18 +75,18 @@
     trackEvent(eventName, params);
   }
 
-  function observeSectionOnce(selector, eventName, params) {
+  function observeSectionOnce(selector, sectionId) {
     var target = document.querySelector(selector);
     if (!target || typeof window.IntersectionObserver !== 'function') return;
 
     var observer = new window.IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
         if (entry.isIntersecting) {
-          trackOnce(eventName, eventName, params);
+          trackOnce('section_view:' + sectionId, EVENTS.SECTION_VIEW, { section_id: sectionId });
           observer.unobserve(entry.target);
         }
       });
-    }, { threshold: 0.5 });
+    }, { threshold: 0 });
 
     observer.observe(target);
   }
@@ -112,35 +104,21 @@
     switch (eventName) {
       case EVENTS.CTA_CLICK:
         params = {
+          cta_name: el.getAttribute('data-analytics-type') || 'unknown',
           cta_location: location,
-          cta_type: el.getAttribute('data-analytics-type') || 'unknown',
-          destination: el.getAttribute('data-analytics-destination') || 'unknown'
+          link_destination: el.getAttribute('data-analytics-destination') || undefined
         };
         break;
-      case EVENTS.EMAIL_CLICK:
-        params = { cta_location: location, reservation_type: 'email', link_destination: 'mail' };
-        break;
-      case EVENTS.CONSULT_EMAIL_CLICK:
-        params = { cta_location: location, consultation_type: 'email', link_destination: 'mail' };
-        break;
-      case EVENTS.CONSULT_X_CLICK:
-        params = { cta_location: location, consultation_type: 'x_dm', link_destination: 'x' };
-        break;
-      case EVENTS.PAYMENT_LINK_CLICK:
+      case EVENTS.OUTBOUND_CONTACT_CLICK:
         params = {
-          payment_provider: 'stripe',
-          payment_stage: 'after_reservation_confirmation',
+          channel: el.getAttribute('data-analytics-channel') || 'unknown',
           cta_location: location
         };
         break;
-      case EVENTS.TERMS_LINK_CLICK:
-        params = { cta_location: location, destination: 'terms' };
-        break;
-      case EVENTS.PRECONDITIONING_CTA_CLICK:
+      case EVENTS.BOOKING_PLATFORM_CLICK:
         params = {
-          cta_location: location,
-          cta_type: el.getAttribute('data-analytics-type') || 'unknown',
-          destination: el.getAttribute('data-analytics-destination') || 'unknown'
+          provider: el.getAttribute('data-analytics-provider') || 'unknown',
+          cta_location: location
         };
         break;
       default:
@@ -163,22 +141,20 @@
 
   document.addEventListener('click', handleDelegatedClick);
 
-  observeSectionOnce('#calendar', EVENTS.CALENDAR_VIEW, { section_id: 'calendar' });
-  observeSectionOnce('#reservation-form', EVENTS.FORM_VIEW, { form_id: 'reservation_form' });
-  observeSectionOnce('#faq', EVENTS.FAQ_VIEW, { section_id: 'faq' });
+  observeSectionOnce('#calendar', 'calendar');
+  observeSectionOnce('#reservation-form', 'reservation_form');
+  observeSectionOnce('#faq', 'faq');
   initFaqOpenTracking();
 
   window.StudioAnalytics = {
     trackFormStart: function (formName) {
       trackOnce(EVENTS.FORM_START, EVENTS.FORM_START, {
-        form_id: 'reservation_form',
-        form_name: formName || 'reservation_form'
+        form_name: formName || 'studio_reservation'
       });
     },
     trackFormError: function (errorType, errorCount, formName) {
       trackEvent(EVENTS.FORM_ERROR, {
-        form_id: 'reservation_form',
-        form_name: formName || 'reservation_form',
+        form_name: formName || 'studio_reservation',
         error_type: errorType || 'unknown',
         error_count: errorCount || 0
       });
@@ -186,37 +162,21 @@
     /* キーイベント。予約申込のPOSTが成功した時だけ呼ぶこと。
        送信ボタンのクリックやバリデーションエラーでは呼ばない。
        submissionToken は1回の送信操作ごとに一意な値。同じトークンでは二度送信しない。 */
-    trackReservationSubmit: function (submissionToken, params) {
+    trackGenerateLead: function (submissionToken, params) {
       var token = String(submissionToken);
       if (submittedTokens[token]) return;
       submittedTokens[token] = true;
 
       var payload = {
-        form_id: 'reservation_form',
-        form_name: 'reservation_form',
-        reservation_type: 'form'
+        lead_type: 'studio_reservation',
+        form_name: 'studio_reservation'
       };
       if (params) {
         for (var key in params) {
           if (Object.prototype.hasOwnProperty.call(params, key)) payload[key] = params[key];
         }
       }
-      trackEvent(EVENTS.SUBMIT, payload);
-    },
-    trackRequestComplete: function (params) {
-      var payload = { form_id: 'reservation_form', reservation_type: 'form' };
-      if (params) {
-        for (var key in params) {
-          if (Object.prototype.hasOwnProperty.call(params, key)) payload[key] = params[key];
-        }
-      }
-      trackEvent(EVENTS.REQUEST_COMPLETE, payload);
-    },
-    trackRequestFailed: function (failureType) {
-      trackEvent(EVENTS.REQUEST_FAILED, {
-        form_id: 'reservation_form',
-        failure_type: failureType || 'unknown'
-      });
+      trackEvent(EVENTS.GENERATE_LEAD, payload);
     }
   };
 })();

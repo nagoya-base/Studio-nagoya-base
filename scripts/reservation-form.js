@@ -349,11 +349,10 @@
       successMessage.focus();
       if (window.StudioAnalytics) {
         /* キーイベント：POST成功時のみ、1送信につき1回 */
-        window.StudioAnalytics.trackReservationSubmit(submissionToken, completionParams);
-        window.StudioAnalytics.trackRequestComplete(completionParams);
+        window.StudioAnalytics.trackGenerateLead(submissionToken, completionParams);
       }
     }).catch(function (error) {
-      if (window.StudioAnalytics) window.StudioAnalytics.trackRequestFailed((error && error.failureType) || 'network');
+      if (window.StudioAnalytics) window.StudioAnalytics.trackFormError((error && error.failureType) || 'network', 0);
       failureText.textContent = '通信状況をご確認のうえ、時間を置いて再度お試しください。送信できない場合は、メールからお申し込みください。';
       failureMessage.hidden = false;
       failureMessage.focus();

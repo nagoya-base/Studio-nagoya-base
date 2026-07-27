@@ -6,12 +6,14 @@
   'use strict';
 
   var EVENTS = {
-    BOOKING_CLICK: 'studio_x_booking_click',
-    CONSULTATION_CLICK: 'studio_x_consultation_click',
-    MOOD_SWITCH: 'studio_x_mood_switch'
+    BOOKING_PLATFORM_CLICK: 'booking_platform_click',
+    OUTBOUND_CONTACT_CLICK: 'outbound_contact_click',
+    CTA_CLICK: 'cta_click',
+    SECTION_VIEW: 'section_view'
   };
 
   var isDebug = /(?:^|[?&])debug_mode=true(?:&|$)/.test(window.location.search);
+  var sectionFired = {};
 
   function isTrackableEnvironment() {
     if (isDebug) return true;
@@ -26,8 +28,9 @@
     if (!isTrackableEnvironment()) return;
 
     var payload = params || {};
+    payload.site_brand = 'studio';
     payload.site_section = 'studio_x';
-    payload.page_path = window.location.pathname;
+    payload.page_type = 'top';
     if (isDebug) payload.debug_mode = true;
 
     if (isDebug) console.debug('[StudioXAnalytics]', eventName, payload);
@@ -48,22 +51,54 @@
 
     var eventName = el.getAttribute('data-analytics-event');
     var location = el.getAttribute('data-analytics-location') || 'other';
-    var destination = el.getAttribute('data-analytics-destination') || 'unknown';
 
-    if (eventName === EVENTS.BOOKING_CLICK || eventName === EVENTS.CONSULTATION_CLICK) {
-      trackEvent(eventName, {
-        cta_location: location,
-        destination: destination,
-        link_destination: el.getAttribute('data-analytics-link-destination') || destination
-      });
+    switch (eventName) {
+      case EVENTS.BOOKING_PLATFORM_CLICK:
+        trackEvent(eventName, {
+          provider: el.getAttribute('data-analytics-provider') || 'spacemarket',
+          cta_location: location
+        });
+        break;
+      case EVENTS.OUTBOUND_CONTACT_CLICK:
+        trackEvent(eventName, {
+          channel: el.getAttribute('data-analytics-channel') || 'unknown',
+          cta_location: location
+        });
+        break;
+      case EVENTS.CTA_CLICK:
+        trackEvent(eventName, {
+          cta_name: el.getAttribute('data-analytics-type') || 'unknown',
+          cta_location: location,
+          mood_color: el.getAttribute('data-analytics-mood-color') || undefined
+        });
+        break;
+      default:
+        break;
     }
   }
 
   document.addEventListener('click', handleDelegatedClick);
 
+  if ('IntersectionObserver' in window) {
+    var sectionObserver = new window.IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        var sectionId = entry.target.getAttribute('data-analytics-section-view');
+        if (sectionFired[sectionId]) return;
+        sectionFired[sectionId] = true;
+        trackEvent(EVENTS.SECTION_VIEW, { section_id: sectionId });
+        sectionObserver.unobserve(entry.target);
+      });
+    }, { threshold: 0 });
+    document.querySelectorAll('[data-analytics-section-view]').forEach(function (el) {
+      sectionObserver.observe(el);
+    });
+  }
+
   window.StudioXAnalytics = {
+    /* cta_click（cta_name: mood_switch）。キーイベントにはしない。 */
     trackMoodSwitch: function (mood) {
-      trackEvent(EVENTS.MOOD_SWITCH, { mood: mood || 'unknown' });
+      trackEvent(EVENTS.CTA_CLICK, { cta_name: 'mood_switch', cta_location: 'mood_switcher', mood_color: mood || 'unknown' });
     }
   };
 })();
