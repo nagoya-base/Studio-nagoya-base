@@ -1,3 +1,5 @@
+---
+---
 <!DOCTYPE html>
 <html lang="ja" data-mood="school">
 <head>
@@ -39,12 +41,12 @@
   <header class="site-header">
     <a class="brand" href="../" aria-label="Studio X トップへ"><span class="brand-name">STUDIO <b>X</b></span><span class="brand-place">KAMIMAEZU / NAGOYA</span></a>
     <nav class="desktop-nav" aria-label="メインナビゲーション"><a href="../">トップ</a><a href="../how-to/">利用ガイド</a><a href="../legal/">規約</a></nav>
-    <a class="header-cta" href="#reservation-form">予約フォームへ</a>
+    <a class="header-cta" href="#calendar">空き状況を確認</a>
     <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="メニューを開く"><span></span><span></span></button>
   </header>
   <div class="mobile-menu" id="mobile-menu" hidden>
     <a href="../">トップ</a><a href="../how-to/">ご利用ガイド</a><a href="../legal/">利用規約・プライバシー</a>
-    <a class="mobile-menu-cta" href="#reservation-form">予約フォームへ</a>
+    <a class="mobile-menu-cta" href="#calendar">空き状況を確認</a>
   </div>
 
   <main id="main-content" class="subpage-main">
@@ -53,6 +55,13 @@
       <h1>予約・撮影相談<br>フォーム</h1>
       <p class="subpage-lead">空き状況を確認しての予約、撮影内容・設備のご相談、当日利用の確認、見学・下見のご相談まで、このフォームから承ります。フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内にご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
     </header>
+
+    <section class="content-section" id="calendar" data-analytics-section-view="calendar">
+      <h2>空き状況</h2>
+      <p class="calendar-intro">カレンダーで空いている日時をご確認のうえ、下のフォームから希望日時をお送りください。カレンダー上で空いていても、フォーム送信時点では予約は確定していません。当方からの予約確定連絡をもって予約成立となります。</p>
+      {% include calendar_embed.html %}
+      <a class="button button-primary" href="#reservation-form-section" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="calendar" data-analytics-destination="direct_form">予約フォームへ進む</a>
+    </section>
 
     <section class="content-section" id="reservation-form-section" data-analytics-section-view="reservation_form">
       <div id="reservation-complete" class="reservation-complete" role="status" aria-live="polite" tabindex="-1" hidden>
