@@ -1,12 +1,12 @@
 <section id="reservation-form" class="reservation-section" aria-labelledby="reservation-form-title">
   <div class="container reservation-container">
-    <h2 id="reservation-form-title" class="section-title">予約を申し込む</h2>
-    <p class="section-subtitle">Reservation Request</p>
-    <p class="reservation-intro">カレンダーで希望日時の空きをご確認のうえ、以下のフォームからお申し込みください。<br>フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内にご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
+    <h2 id="reservation-form-title" class="section-title">予約・相談を申し込む</h2>
+    <p class="section-subtitle">Reservation &amp; Consultation Request</p>
+    <p class="reservation-intro">日程が決まっている方はカレンダーで空きをご確認のうえ、決まっていない方はそのままご相談ください。<br>予約の場合、フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内にご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
 
     <div id="reservation-success" class="reservation-status reservation-status--success" role="status" aria-live="polite" tabindex="-1" hidden>
-      <h3>予約申込を受け付けました</h3>
-      <p>お申し込みありがとうございます。<br>フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内にメールでご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
+      <h3 id="reservation-success-title">予約申込を受け付けました</h3>
+      <p id="reservation-success-body">お申し込みありがとうございます。<br>フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内にメールでご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
       <p>24時間を過ぎても返信がない場合は、迷惑メールフォルダをご確認のうえ、メールまたはX DMでお問い合わせください。</p>
     </div>
 
@@ -34,7 +34,18 @@
       </div>
 
       <fieldset class="reservation-group">
-        <legend>1. 連絡先</legend>
+        <legend>1. お問い合わせ種別</legend>
+        <div class="reservation-choice-group">
+          <div class="reservation-choices">
+            <label><input type="radio" name="お問い合わせ種別" value="日程を決めて予約する" data-intent="booking" required aria-describedby="reservation-intent-error"> <span>日程を決めて予約する</span></label>
+            <label><input type="radio" name="お問い合わせ種別" value="予約前に相談する" data-intent="consult" aria-describedby="reservation-intent-error"> <span>予約前に相談する</span></label>
+          </div>
+          <p id="reservation-intent-error" class="field-error" hidden></p>
+        </div>
+      </fieldset>
+
+      <fieldset class="reservation-group">
+        <legend>2. 連絡先</legend>
         <div class="reservation-fields">
           <div class="reservation-field">
             <label for="reservation-name">お名前 <span class="field-badge field-badge--required">必須</span></label>
@@ -58,26 +69,26 @@
         </div>
       </fieldset>
 
-      <fieldset class="reservation-group">
-        <legend>2. 希望日時</legend>
+      <fieldset class="reservation-group is-booking-only" data-scope="booking">
+        <legend>3. 希望日時</legend>
         <div class="reservation-fields reservation-fields--compact">
           <div class="reservation-field">
-            <label for="reservation-date">希望日 <span class="field-badge field-badge--required">必須</span></label>
-            <input type="date" id="reservation-date" name="希望日" required aria-describedby="reservation-date-help reservation-date-error">
+            <label for="reservation-date">希望日 <span class="field-badge field-badge--required" id="reservation-date-badge">必須</span></label>
+            <input type="date" id="reservation-date" name="希望日" data-required-if-booking="true" aria-describedby="reservation-date-help reservation-date-error">
             <p id="reservation-date-help" class="field-help">ご予約は前日まで受け付けています。</p>
             <p id="reservation-date-error" class="field-error" hidden></p>
           </div>
 
           <div class="reservation-field">
-            <label for="reservation-start-time">希望開始時間 <span class="field-badge field-badge--required">必須</span></label>
-            <input type="time" id="reservation-start-time" name="希望開始時間" min="08:00" max="23:00" step="1800" required aria-describedby="reservation-start-time-help reservation-start-time-error">
+            <label for="reservation-start-time">希望開始時間 <span class="field-badge field-badge--required" id="reservation-start-time-badge">必須</span></label>
+            <input type="time" id="reservation-start-time" name="希望開始時間" min="08:00" max="23:00" step="1800" data-required-if-booking="true" aria-describedby="reservation-start-time-help reservation-start-time-error">
             <p id="reservation-start-time-help" class="field-help">営業時間は8:00〜23:00です。30分単位をおすすめします。</p>
             <p id="reservation-start-time-error" class="field-error" hidden></p>
           </div>
 
           <div class="reservation-field">
-            <label for="reservation-duration">利用時間 <span class="field-badge field-badge--required">必須</span></label>
-            <select id="reservation-duration" name="利用時間" required aria-describedby="reservation-duration-help reservation-duration-error">
+            <label for="reservation-duration">利用時間 <span class="field-badge field-badge--required" id="reservation-duration-badge">必須</span></label>
+            <select id="reservation-duration" name="利用時間" data-required-if-booking="true" aria-describedby="reservation-duration-help reservation-duration-error">
               <option value="">選択してください</option>
               <option value="2">2時間</option>
               <option value="3">3時間</option>
@@ -94,11 +105,11 @@
       </fieldset>
 
       <fieldset class="reservation-group">
-        <legend>3. 利用内容</legend>
+        <legend>4. 利用内容</legend>
         <div class="reservation-fields">
-          <div class="reservation-field">
-            <label for="reservation-party-size">利用人数 <span class="field-badge field-badge--required">必須</span></label>
-            <select id="reservation-party-size" name="利用人数" required aria-describedby="reservation-party-size-help reservation-party-size-error">
+          <div class="reservation-field is-booking-only" data-scope="booking">
+            <label for="reservation-party-size">利用人数 <span class="field-badge field-badge--required" id="reservation-party-size-badge">必須</span></label>
+            <select id="reservation-party-size" name="利用人数" data-required-if-booking="true" aria-describedby="reservation-party-size-help reservation-party-size-error">
               <option value="">選択してください</option>
               <option value="1名">1名</option>
               <option value="2名">2名</option>
@@ -110,9 +121,9 @@
             <p id="reservation-party-size-error" class="field-error" hidden></p>
           </div>
 
-          <div class="reservation-field">
+          <div class="reservation-field is-booking-only" data-scope="booking">
             <label for="reservation-purpose">利用目的 <span class="field-badge field-badge--required">必須</span></label>
-            <select id="reservation-purpose" name="利用目的" required aria-describedby="reservation-purpose-error">
+            <select id="reservation-purpose" name="利用目的" data-required-if-booking="true" aria-describedby="reservation-purpose-error">
               <option value="">選択してください</option>
               <option value="緊縛の自主練習">緊縛の自主練習</option>
               <option value="ショー・パフォーマンス練習">ショー・パフォーマンス練習</option>
@@ -125,17 +136,17 @@
             <p id="reservation-purpose-error" class="field-error" hidden></p>
           </div>
 
-          <div id="reservation-purpose-other-wrap" class="reservation-field reservation-field--full">
+          <div id="reservation-purpose-other-wrap" class="reservation-field reservation-field--full is-booking-only" data-scope="booking">
             <label for="reservation-purpose-other">利用目的の詳細 <span class="field-badge">「その他」の場合は必須</span></label>
             <input type="text" id="reservation-purpose-other" name="利用目的の詳細" aria-describedby="reservation-purpose-other-error">
             <p id="reservation-purpose-other-error" class="field-error" hidden></p>
           </div>
         </div>
 
-        <fieldset class="reservation-choice-group">
+        <fieldset class="reservation-choice-group is-booking-only" data-scope="booking">
           <legend>吊り床の利用予定 <span class="field-badge field-badge--required">必須</span></legend>
           <div class="reservation-choices">
-            <label><input type="radio" name="吊り床利用予定" value="利用する" required aria-describedby="reservation-suspension-error"> <span>利用する</span></label>
+            <label><input type="radio" name="吊り床利用予定" value="利用する" data-required-if-booking="true" aria-describedby="reservation-suspension-error"> <span>利用する</span></label>
             <label><input type="radio" name="吊り床利用予定" value="利用しない" aria-describedby="reservation-suspension-error"> <span>利用しない</span></label>
             <label><input type="radio" name="吊り床利用予定" value="未定・相談したい" aria-describedby="reservation-suspension-error"> <span>未定・相談したい</span></label>
           </div>
@@ -144,7 +155,7 @@
           <noscript><p class="reservation-warning">吊り床を利用する場合は、緊縛・リギングの知識を持つ方が安全管理を行ってください。</p></noscript>
         </fieldset>
 
-        <fieldset class="reservation-choice-group">
+        <fieldset class="reservation-choice-group is-booking-only" data-scope="booking">
           <legend>事前空調サービス（無料）</legend>
           <div class="reservation-choices">
             <label><input type="radio" name="事前空調サービス" value="希望する" aria-describedby="reservation-preconditioning-error"> <span>希望する</span></label>
@@ -154,10 +165,10 @@
           <p id="reservation-preconditioning-error" class="field-error" hidden></p>
         </fieldset>
 
-        <fieldset class="reservation-choice-group">
+        <fieldset class="reservation-choice-group is-booking-only" data-scope="booking">
           <legend>希望する支払方法 <span class="field-badge field-badge--required">必須</span></legend>
           <div class="reservation-choices">
-            <label><input type="radio" name="支払方法" value="現金" required aria-describedby="reservation-payment-error"> <span>現金</span></label>
+            <label><input type="radio" name="支払方法" value="現金" data-required-if-booking="true" aria-describedby="reservation-payment-error"> <span>現金</span></label>
             <label><input type="radio" name="支払方法" value="PayPay" aria-describedby="reservation-payment-error"> <span>PayPay</span></label>
             <label><input type="radio" name="支払方法" value="オンラインクレジットカード" aria-describedby="reservation-payment-error"> <span>オンラインクレジットカード</span></label>
             <label><input type="radio" name="支払方法" value="未定" aria-describedby="reservation-payment-error"> <span>未定</span></label>
@@ -166,10 +177,10 @@
           <p id="reservation-payment-error" class="field-error" hidden></p>
         </fieldset>
 
-        <fieldset class="reservation-choice-group">
+        <fieldset class="reservation-choice-group is-booking-only" data-scope="booking">
           <legend>利用区分 <span class="field-badge field-badge--required">必須</span></legend>
           <div class="reservation-choices">
-            <label><input type="radio" name="利用区分" value="初回利用" required aria-describedby="reservation-member-error"> <span>初回利用</span></label>
+            <label><input type="radio" name="利用区分" value="初回利用" data-required-if-booking="true" aria-describedby="reservation-member-error"> <span>初回利用</span></label>
             <label><input type="radio" name="利用区分" value="通常利用" aria-describedby="reservation-member-error"> <span>通常利用</span></label>
             <label><input type="radio" name="利用区分" value="会員利用" aria-describedby="reservation-member-error"> <span>会員利用</span></label>
             <label><input type="radio" name="利用区分" value="分からない" aria-describedby="reservation-member-error"> <span>分からない</span></label>
@@ -179,14 +190,15 @@
         </fieldset>
 
         <div class="reservation-field reservation-field--full">
-          <label for="reservation-message">連絡事項 <span class="field-badge">任意</span></label>
-          <textarea id="reservation-message" name="連絡事項" rows="5" maxlength="1000" placeholder="講習会の内容、持ち込み機材、長時間利用、その他ご相談があればご記入ください。" aria-describedby="reservation-message-help"></textarea>
-          <p id="reservation-message-help" class="field-help">1000文字以内でご入力ください。</p>
+          <label for="reservation-message" id="reservation-message-label">連絡事項 <span class="field-badge" id="reservation-message-mark">任意</span></label>
+          <textarea id="reservation-message" name="連絡事項" rows="5" maxlength="1000" placeholder="講習会の内容、持ち込み機材、長時間利用、その他ご相談があればご記入ください。" aria-describedby="reservation-message-help reservation-message-error"></textarea>
+          <p id="reservation-message-help" class="field-help">1000文字以内でご入力ください。相談内容はここにご記入ください。</p>
+          <p id="reservation-message-error" class="field-error" hidden></p>
         </div>
       </fieldset>
 
       <fieldset class="reservation-group reservation-confirmation">
-        <legend>4. 確認・同意</legend>
+        <legend>5. 確認・同意</legend>
         <div class="reservation-consents">
           <label for="reservation-terms"><input type="checkbox" id="reservation-terms" name="利用規約同意" value="同意する" required aria-describedby="reservation-terms-error"> <span><a href="{{ '/legal/' | relative_url }}#terms" data-analytics-event="terms_link_click" data-analytics-location="reservation_form">利用規約</a>を確認し、内容に同意します。 <span class="field-badge field-badge--required">必須</span></span></label>
           <p id="reservation-terms-error" class="field-error" hidden></p>
@@ -194,12 +206,12 @@
           <label for="reservation-safety"><input type="checkbox" id="reservation-safety" name="安全ルール同意" value="同意する" required aria-describedby="reservation-safety-error"> <span>吊り床・緊縛を利用する場合は、利用者自身で安全管理を行い、安全ルールを守ります。 <span class="field-badge field-badge--required">必須</span></span></label>
           <p id="reservation-safety-error" class="field-error" hidden></p>
 
-          <label for="reservation-condition"><input type="checkbox" id="reservation-condition" name="予約成立条件同意" value="同意する" required aria-describedby="reservation-condition-error"> <span>フォーム送信時点では予約は確定せず、当方からの予約確定連絡をもって予約成立となることを確認しました。 <span class="field-badge field-badge--required">必須</span></span></label>
+          <label for="reservation-condition" class="is-booking-only" data-scope="booking"><input type="checkbox" id="reservation-condition" name="予約成立条件同意" value="同意する" data-required-if-booking="true" aria-describedby="reservation-condition-error"> <span>フォーム送信時点では予約は確定せず、当方からの予約確定連絡をもって予約成立となることを確認しました。 <span class="field-badge field-badge--required">必須</span></span></label>
           <p id="reservation-condition-error" class="field-error" hidden></p>
         </div>
 
         <p class="reservation-privacy">入力された情報は、予約確認、利用案内、当日の連絡および必要な運営対応のために使用し、フォーム送信にはFormspreeを利用します。詳しくは<a href="{{ '/legal/' | relative_url }}#privacy">プライバシーポリシー</a>をご確認ください。</p>
-        <p class="reservation-review-note">送信前に、希望日・開始時間・利用時間・メールアドレスをご確認ください。</p>
+        <p class="reservation-review-note">送信前に、入力内容とメールアドレスをご確認ください。</p>
         <button type="submit" id="reservation-submit" class="btn-primary reservation-submit">予約を申し込む</button>
         <p id="reservation-submit-state" class="reservation-submit-state" role="status" aria-live="polite">送信内容を確認後、入力したメールアドレスへご連絡します。</p>
       </fieldset>
