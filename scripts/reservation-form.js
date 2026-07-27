@@ -22,6 +22,8 @@
   var submittedAt = document.getElementById('reservation-submitted-at');
   var subjectInput = document.getElementById('reservation-subject');
   var isSubmitting = false;
+  /* 送信操作ごとに採番し、reservation_submit の二重計測を防ぐ */
+  var submissionSeq = 0;
 
   function japanDateParts(date) {
     var parts = new Intl.DateTimeFormat('en-CA', {
@@ -317,7 +319,8 @@
     }).format(new Date());
     subjectInput.value = '【Studio Nagoya Base】予約申込：' + dateInput.value + ' ' + timeInput.value;
 
-    if (window.StudioAnalytics) window.StudioAnalytics.trackSubmit();
+    submissionSeq += 1;
+    var submissionToken = submissionSeq;
 
     fetch(form.action, {
       method: 'POST',
@@ -344,7 +347,11 @@
       updateSuspensionNote();
       updateEndWarning();
       successMessage.focus();
-      if (window.StudioAnalytics) window.StudioAnalytics.trackRequestComplete(completionParams);
+      if (window.StudioAnalytics) {
+        /* キーイベント：POST成功時のみ、1送信につき1回 */
+        window.StudioAnalytics.trackReservationSubmit(submissionToken, completionParams);
+        window.StudioAnalytics.trackRequestComplete(completionParams);
+      }
     }).catch(function (error) {
       if (window.StudioAnalytics) window.StudioAnalytics.trackRequestFailed((error && error.failureType) || 'network');
       failureText.textContent = '通信状況をご確認のうえ、時間を置いて再度お試しください。送信できない場合は、メールからお申し込みください。';
