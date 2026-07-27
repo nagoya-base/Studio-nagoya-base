@@ -55,10 +55,16 @@
     </header>
 
     <section class="content-section" id="reservation-form-section" data-analytics-section-view="reservation_form">
-      <div id="reservation-success" class="reservation-status reservation-status--success" role="status" aria-live="polite" tabindex="-1" hidden>
-        <h3>送信を受け付けました</h3>
-        <p>お問い合わせ・予約申込ありがとうございます。<br>フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内に、ご指定の返信方法でご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
-        <p>24時間を過ぎても返信がない場合は、迷惑メールフォルダをご確認のうえ、Xのプロフィールからご連絡ください。</p>
+      <div id="reservation-complete" class="reservation-complete" role="status" aria-live="polite" tabindex="-1" hidden>
+        <div class="reservation-complete-icon" aria-hidden="true">&#10003;</div>
+        <h2>送信を受け付けました</h2>
+        <p>お問い合わせ・予約申込ありがとうございます。内容を確認後、通常24時間以内に、ご指定の返信方法でご連絡します。</p>
+        <p>予約申込の場合、フォーム送信時点では予約は確定していません。当方からの予約確定連絡をもって予約成立となります。</p>
+        <p>24時間を過ぎても返信がない場合は、メールの迷惑メールフォルダやXのDM受信設定をご確認ください。</p>
+        <div class="reservation-complete-actions">
+          <a class="button button-primary" href="../">Studio Xトップへ戻る</a>
+          <button type="button" id="reservation-restart" class="button button-ghost">新しく送信する</button>
+        </div>
       </div>
 
       <div id="reservation-failure" class="reservation-status reservation-status--error" role="alert" aria-live="assertive" tabindex="-1" hidden>
@@ -66,21 +72,23 @@
         <p id="reservation-failure-message">通信状況をご確認のうえ、時間を置いて再度お試しください。</p>
       </div>
 
-      <form
-        id="reservation-request-form"
-        class="reservation-form"
-        action="https://formspree.io/f/maqreqjk"
-        method="post"
-        accept-charset="UTF-8"
-        novalidate>
-        <input type="hidden" name="_subject" id="reservation-subject" value="【Studio X】予約・撮影相談">
-        <input type="hidden" name="送信日時" id="reservation-submitted-at" value="">
-        <input type="text" name="_gotcha" class="reservation-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <div id="reservation-form-wrap">
+        <h2 id="reservation-form-heading" class="reservation-form-heading" tabindex="-1">予約・撮影相談フォーム</h2>
+        <form
+          id="reservation-request-form"
+          class="reservation-form"
+          action="https://formspree.io/f/maqreqjk"
+          method="post"
+          accept-charset="UTF-8"
+          novalidate>
+          <input type="hidden" name="_subject" id="reservation-subject" value="【Studio X】予約・撮影相談">
+          <input type="hidden" name="送信日時" id="reservation-submitted-at" value="">
+          <input type="text" name="_gotcha" class="reservation-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
 
-        <div id="reservation-error-summary" class="reservation-error-summary" role="alert" aria-live="assertive" tabindex="-1" hidden>
-          <h3>入力内容をご確認ください</h3>
-          <ul></ul>
-        </div>
+          <div id="reservation-error-summary" class="reservation-error-summary" role="alert" aria-live="assertive" tabindex="-1" hidden>
+            <h3>入力内容をご確認ください</h3>
+            <ul></ul>
+          </div>
 
         <fieldset class="reservation-group">
           <legend>1. お問い合わせ種別</legend>
@@ -271,7 +279,8 @@
           <button type="submit" id="reservation-submit" class="button button-primary reservation-submit">送信する</button>
           <p id="reservation-submit-state" class="reservation-submit-state" role="status" aria-live="polite">送信内容を確認後、ご指定の返信方法でご連絡します。</p>
         </fieldset>
-      </form>
+        </form>
+      </div>
     </section>
 
     <aside class="page-cta"><h2>予約前に、使い方も確認。</h2><p>入室、照明、清掃、施錠までを画像付きPDFと一緒に案内しています。</p><a class="button button-primary" href="../how-to/">ご利用ガイドを見る</a></aside>

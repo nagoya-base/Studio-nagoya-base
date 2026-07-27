@@ -15,7 +15,10 @@
   var purposeOtherInput = document.getElementById('reservation-purpose-other');
   var endWarning = document.getElementById('reservation-end-warning');
   var errorSummary = document.getElementById('reservation-error-summary');
-  var successMessage = document.getElementById('reservation-success');
+  var formWrap = document.getElementById('reservation-form-wrap');
+  var formHeading = document.getElementById('reservation-form-heading');
+  var completeScreen = document.getElementById('reservation-complete');
+  var restartButton = document.getElementById('reservation-restart');
   var failureMessage = document.getElementById('reservation-failure');
   var failureText = document.getElementById('reservation-failure-message');
   var submitButton = document.getElementById('reservation-submit');
@@ -267,7 +270,6 @@
     if (isSubmitting || !validateForm()) return;
 
     failureMessage.hidden = true;
-    successMessage.hidden = true;
 
     var intent = getIntent();
 
@@ -291,12 +293,13 @@
         httpError.errorType = 'server';
         throw httpError;
       }
-      successMessage.hidden = false;
       form.reset();
       applyIntentMode(null);
       updatePurposeOther();
       updateEndWarning();
-      successMessage.focus();
+      formWrap.hidden = true;
+      completeScreen.hidden = false;
+      completeScreen.focus();
       if (window.StudioXAnalytics) {
         window.StudioXAnalytics.trackGenerateLead(submissionToken, intent, { contact_intent: intent || 'unknown' });
       }
@@ -312,4 +315,12 @@
       submitState.textContent = '送信内容を確認後、ご指定の返信方法でご連絡します。';
     });
   });
+
+  if (restartButton) {
+    restartButton.addEventListener('click', function () {
+      completeScreen.hidden = true;
+      formWrap.hidden = false;
+      formHeading.focus();
+    });
+  }
 })();

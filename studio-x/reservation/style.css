@@ -186,6 +186,57 @@
 .reservation-status p + p { margin-top: 10px; }
 .reservation-status .button-ghost { margin-top: 16px; display: inline-block; }
 
+.reservation-form-heading {
+  margin: 0 0 22px;
+  color: var(--text);
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.reservation-complete {
+  max-width: 640px;
+  margin: 0 auto 24px;
+  padding: clamp(32px, 5vw, 56px) clamp(24px, 4vw, 40px);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-left: 3px solid var(--accent);
+  text-align: center;
+}
+
+.reservation-complete-icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 20px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 1.7rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.reservation-complete h2 { margin: 0 0 16px; font-size: 1.5rem; }
+.reservation-complete p { color: #c6c1c9; font-size: 0.88rem; line-height: 1.9; }
+.reservation-complete p + p { margin-top: 12px; }
+
+.reservation-complete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 28px;
+}
+
+.reservation-complete-actions a.button-primary { color: var(--accent-ink); }
+.reservation-complete-actions a.button-ghost { color: var(--text); }
+
+@media (max-width: 600px) {
+  .reservation-complete-actions { flex-direction: column; align-items: stretch; }
+}
+
 .reservation-error-summary ul { margin: 8px 0 0 20px; color: var(--muted); font-size: 0.84rem; line-height: 1.7; }
 
 .reservation-fallback { margin-top: 24px; text-align: center; }
