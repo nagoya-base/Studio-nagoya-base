@@ -21,6 +21,21 @@
   var submittedAt = document.getElementById('reservation-submitted-at');
   var subjectInput = document.getElementById('reservation-subject');
   var isSubmitting = false;
+  /* 送信操作ごとに採番し、reservation_submit の二重計測を防ぐ */
+  var submissionSeq = 0;
+  var FORM_NAME = 'reservation_form_en';
+
+  function trackFormStart() {
+    if (window.StudioAnalytics) window.StudioAnalytics.trackFormStart(FORM_NAME);
+  }
+  form.addEventListener('input', function (event) {
+    var tag = event.target && event.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') trackFormStart();
+  });
+  form.addEventListener('change', function (event) {
+    var tag = event.target && event.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') trackFormStart();
+  });
 
   function japanDateParts(date) {
     var parts = new Intl.DateTimeFormat('en-CA', {
@@ -176,6 +191,9 @@
     if (errors.length) {
       errorSummary.focus();
       errors[0].element.focus();
+      if (window.StudioAnalytics) {
+        window.StudioAnalytics.trackFormError('validation_error', errors.length, FORM_NAME);
+      }
     }
     return errors.length === 0;
   }
@@ -203,18 +221,32 @@
     }).format(new Date());
     subjectInput.value = '[Studio Nagoya Base] Booking Request: ' + dateInput.value + ' ' + timeInput.value;
 
+    submissionSeq += 1;
+    var submissionToken = 'en-' + submissionSeq;
+
     fetch(form.action, {
       method: 'POST',
       body: new FormData(form),
       headers: { Accept: 'application/json' }
     }).then(function (response) {
-      if (!response.ok) throw new Error('HTTP ' + response.status);
+      if (!response.ok) {
+        var httpError = new Error('HTTP ' + response.status);
+        httpError.failureType = 'server';
+        throw httpError;
+      }
       successMessage.hidden = false;
       form.reset();
       updatePurposeOther();
       updateEndWarning();
       successMessage.focus();
-    }).catch(function () {
+      if (window.StudioAnalytics) {
+        /* キーイベント：POST成功時のみ、1送信につき1回 */
+        window.StudioAnalytics.trackReservationSubmit(submissionToken, { form_name: FORM_NAME, page_language: 'en' });
+      }
+    }).catch(function (error) {
+      if (window.StudioAnalytics) {
+        window.StudioAnalytics.trackRequestFailed((error && error.failureType) || 'network');
+      }
       failureText.textContent = 'Please check your connection and try again. If the form still does not work, please contact us by email instead.';
       failureMessage.hidden = false;
       failureMessage.focus();

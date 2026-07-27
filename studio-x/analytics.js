@@ -26,6 +26,8 @@
     if (!isTrackableEnvironment()) return;
 
     var payload = params || {};
+    payload.site_section = 'studio_x';
+    payload.page_path = window.location.pathname;
     if (isDebug) payload.debug_mode = true;
 
     if (isDebug) console.debug('[StudioXAnalytics]', eventName, payload);
@@ -49,7 +51,11 @@
     var destination = el.getAttribute('data-analytics-destination') || 'unknown';
 
     if (eventName === EVENTS.BOOKING_CLICK || eventName === EVENTS.CONSULTATION_CLICK) {
-      trackEvent(eventName, { cta_location: location, destination: destination });
+      trackEvent(eventName, {
+        cta_location: location,
+        destination: destination,
+        link_destination: el.getAttribute('data-analytics-link-destination') || destination
+      });
     }
   }
 

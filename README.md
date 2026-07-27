@@ -172,6 +172,74 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 - **デバイス**：スマートフォン / PC / タブレットの比率
 - **地域**：アクセス元の地域情報
 
+### 成果イベント（キーイベント）
+
+計測しているイベントは「成果イベント」と「分析用イベント」に分かれます。
+
+#### GA4 管理画面でキーイベントとして ON にするもの
+
+| イベント名 | 発火条件 |
+| --- | --- |
+| `reservation_submit` | 予約申込フォームの POST が**成功した時だけ** 1 回 |
+
+設定手順：GA4 管理画面 →「管理」→「データの表示」→「イベント」→ 一覧から
+`reservation_submit` を探し、「キーイベントとしてマークを付ける」を ON にします。
+イベントが一覧に出てくるのは、実際に 1 回以上計測された後です（最大 24 時間程度）。
+
+`reservation_submit` はコード上 `scripts/analytics.js` の
+`StudioAnalytics.trackReservationSubmit()` からのみ送信され、以下では発火しません。
+
+- 送信ボタンを押しただけの時
+- 入力内容にバリデーションエラーがある時
+- 送信は試みたがサーバー・通信エラーで失敗した時（`reservation_request_failed` を送信）
+
+二重計測は、送信操作ごとに採番するトークンで防いでいます。
+
+#### 実装していない成果イベント
+
+| イベント名 | 実装しない理由 |
+| --- | --- |
+| `reservation_complete` | 予約完了ページが存在しない。フォーム送信は「予約申込」であり、当方からの予約確定連絡をもって予約成立となるため、サイト側で完了を判定できない |
+| `generate_lead` | 問い合わせ導線がメールリンクと X DM リンクのみで、送信成功をサイト側で判定できない。クリックは従来どおり `reservation_email_click` / `consultation_email_click` / `consultation_x_click` として計測する |
+
+将来、予約確定を通知する完了ページや問い合わせフォームを追加した場合に、
+はじめてこれらのイベントを実装してください。
+
+#### 分析用イベント（キーイベントにしない）
+
+`page_view` / `scroll` / `reservation_calendar_view` / `reservation_form_view` /
+`reservation_form_start` / `reservation_form_error` / `reservation_request_complete` /
+`reservation_request_failed` / `reservation_cta_click` / `reservation_email_click` /
+`consultation_email_click` / `consultation_x_click` / `payment_link_click` /
+`terms_link_click` / `preconditioning_cta_click` / `faq_view` / `faq_open` /
+`studio_x_booking_click` / `studio_x_consultation_click` / `studio_x_mood_switch`
+
+#### 共通パラメータ
+
+個人情報（氏名・メールアドレス・電話番号・希望日時・自由記述）は一切送信しません。
+送信するのはカテゴリ値のみです。
+
+- `site_section`：`studio` / `studio_mens` / `studio_x`
+- `page_type`：`<body data-page-type>` の値
+- `page_path`：`location.pathname`
+- `form_name`：`reservation_form` / `reservation_form_en`
+- `link_destination`：`mail` / `x` など
+
+### 発火確認の手順
+
+1. 確認したいページを `?debug_mode=true` 付きで開きます
+   （例：`https://nagoya-base.github.io/Studio-nagoya-base/?debug_mode=true`）
+2. ブラウザの開発者ツールのコンソールを開きます。`[Analytics]` から始まるログに
+   イベント名とパラメータが出力されます
+3. GA4 管理画面 →「管理」→「DebugView」を開くと、同じイベントがリアルタイムで
+   表示されます
+4. `reservation_submit` の確認は、フォームを実際に送信して成功メッセージが
+   表示されることまで確認してください。バリデーションエラーの状態で送信ボタンを
+   押しても発火しないことも合わせて確認します
+
+`file://` での直接表示と `localhost` では、誤計測を防ぐため送信されません
+（`?debug_mode=true` を付けた場合を除く）。
+
 ## メモ
 
 - このリポジトリはビルド不要の静的 HTML サイトです

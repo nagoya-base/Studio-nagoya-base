@@ -1,7 +1,18 @@
 /* GA4 reservation funnel analytics (Phase 5).
    Sends only categorical event data — never names, emails, phone numbers,
    dates/times, or free-text input. Fails silently if gtag is unavailable
-   so tracking never blocks reservation functionality. */
+   so tracking never blocks reservation functionality.
+
+   成果イベント（GA4管理画面でキーイベント化する対象）は reservation_submit のみ。
+   予約申込のPOSTが成功した時だけ送信し、送信ボタンのクリックやバリデーション
+   エラーでは送信しない。
+
+   reservation_complete は実装しない。当サイトには予約完了ページが存在せず、
+   フォーム送信は「予約申込」であって予約成立ではないため（当方からの予約確定
+   連絡をもって成立）、サイト側で完了を判定できない。架空の完了イベントは作らない。
+
+   generate_lead も実装しない。問い合わせ導線はメールとX DMのリンクのみで、
+   送信成功をサイト側で判定できないため、既存のクリックイベントとして維持する。 */
 (function () {
   'use strict';
 
@@ -25,8 +36,11 @@
   };
 
   var pageType = (document.body && document.body.getAttribute('data-page-type')) || 'bondage_studio';
+  var siteSection = (document.body && document.body.getAttribute('data-site-section')) || 'studio';
   var isDebug = /(?:^|[?&])debug_mode=true(?:&|$)/.test(window.location.search);
   var sentOnce = {};
+  /* 成果イベント（reservation_submit）の二重送信防止用。送信成功1回につき1件だけ記録する。 */
+  var submittedTokens = {};
 
   function isTrackableEnvironment() {
     if (isDebug) return true;
@@ -40,7 +54,11 @@
   function trackEvent(eventName, params) {
     if (!isTrackableEnvironment()) return;
 
-    var payload = { page_type: pageType };
+    var payload = {
+      page_type: pageType,
+      site_section: siteSection,
+      page_path: window.location.pathname
+    };
     if (params) {
       for (var key in params) {
         if (Object.prototype.hasOwnProperty.call(params, key)) payload[key] = params[key];
@@ -100,13 +118,13 @@
         };
         break;
       case EVENTS.EMAIL_CLICK:
-        params = { cta_location: location, reservation_type: 'email' };
+        params = { cta_location: location, reservation_type: 'email', link_destination: 'mail' };
         break;
       case EVENTS.CONSULT_EMAIL_CLICK:
-        params = { cta_location: location, consultation_type: 'email' };
+        params = { cta_location: location, consultation_type: 'email', link_destination: 'mail' };
         break;
       case EVENTS.CONSULT_X_CLICK:
-        params = { cta_location: location, consultation_type: 'x_dm' };
+        params = { cta_location: location, consultation_type: 'x_dm', link_destination: 'x' };
         break;
       case EVENTS.PAYMENT_LINK_CLICK:
         params = {
@@ -151,18 +169,39 @@
   initFaqOpenTracking();
 
   window.StudioAnalytics = {
-    trackFormStart: function () {
-      trackOnce(EVENTS.FORM_START, EVENTS.FORM_START, { form_id: 'reservation_form' });
+    trackFormStart: function (formName) {
+      trackOnce(EVENTS.FORM_START, EVENTS.FORM_START, {
+        form_id: 'reservation_form',
+        form_name: formName || 'reservation_form'
+      });
     },
-    trackFormError: function (errorType, errorCount) {
+    trackFormError: function (errorType, errorCount, formName) {
       trackEvent(EVENTS.FORM_ERROR, {
         form_id: 'reservation_form',
+        form_name: formName || 'reservation_form',
         error_type: errorType || 'unknown',
         error_count: errorCount || 0
       });
     },
-    trackSubmit: function () {
-      trackEvent(EVENTS.SUBMIT, { form_id: 'reservation_form' });
+    /* キーイベント。予約申込のPOSTが成功した時だけ呼ぶこと。
+       送信ボタンのクリックやバリデーションエラーでは呼ばない。
+       submissionToken は1回の送信操作ごとに一意な値。同じトークンでは二度送信しない。 */
+    trackReservationSubmit: function (submissionToken, params) {
+      var token = String(submissionToken);
+      if (submittedTokens[token]) return;
+      submittedTokens[token] = true;
+
+      var payload = {
+        form_id: 'reservation_form',
+        form_name: 'reservation_form',
+        reservation_type: 'form'
+      };
+      if (params) {
+        for (var key in params) {
+          if (Object.prototype.hasOwnProperty.call(params, key)) payload[key] = params[key];
+        }
+      }
+      trackEvent(EVENTS.SUBMIT, payload);
     },
     trackRequestComplete: function (params) {
       var payload = { form_id: 'reservation_form', reservation_type: 'form' };
