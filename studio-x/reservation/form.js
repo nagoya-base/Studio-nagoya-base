@@ -67,13 +67,18 @@
       var target = form.querySelector('input[name="お問い合わせ種別"][data-intent="' + INTENT_QUERY_MAP[queryIntent] + '"]');
       if (target) target.checked = true;
     }
+    var calendarSection = document.getElementById('calendar');
     if (queryIntent && CALENDAR_HIDDEN_INTENTS[queryIntent]) {
-      var calendarSection = document.getElementById('calendar');
       if (calendarSection) calendarSection.hidden = true;
       document.querySelectorAll('.header-cta, .mobile-menu-cta').forEach(function (link) {
         link.setAttribute('href', '#reservation-form-section');
         link.textContent = '相談フォームへ進む';
       });
+    } else if (calendarSection && window.location.hash === '#reservation-form-section') {
+      /* 廃止した「予約フォームへ進む」ボタンが残したURL（旧共有・ブックマーク経由）を
+         開いた場合でも、カレンダーを飛ばさず空き状況セクションから見せる */
+      window.history.replaceState(null, '', window.location.pathname + window.location.search + '#calendar');
+      calendarSection.scrollIntoView({ behavior: 'auto', block: 'start' });
     }
   } catch (e) {
     /* URLSearchParams非対応環境でもフォーム自体は使えるようにする */
