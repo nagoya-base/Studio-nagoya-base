@@ -12,15 +12,29 @@
   overflow: hidden;
 }
 
-.calendar-wrapper iframe {
+.calendar-frame {
   display: block;
   width: 100%;
   height: 500px;
   border: none;
 }
 
+.calendar-fallback {
+  display: none;
+  padding: 28px 20px;
+  text-align: center;
+}
+
+.calendar-fallback p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.7;
+}
+
 @media (max-width: 600px) {
-  .calendar-wrapper iframe { height: 380px; }
+  .calendar-frame { display: none; }
+  .calendar-fallback { display: block; }
 }
 
 .reservation-intro {
