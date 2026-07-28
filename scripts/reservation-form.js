@@ -29,6 +29,7 @@
   var submitState = document.getElementById('reservation-submit-state');
   var submittedAt = document.getElementById('reservation-submitted-at');
   var subjectInput = document.getElementById('reservation-subject');
+  var sourcePageInput = document.getElementById('reservation-source-page');
   var isSubmitting = false;
   /* 送信操作ごとに採番し、generate_lead の二重計測を防ぐ */
   var submissionSeq = 0;
@@ -399,6 +400,9 @@
       dateStyle: 'medium',
       timeStyle: 'medium'
     }).format(new Date());
+    if (sourcePageInput) {
+      sourcePageInput.value = window.location.pathname;
+    }
     subjectInput.value = intent === 'booking'
       ? '【Studio Nagoya Base】予約申込：' + dateInput.value + ' ' + timeInput.value
       : '【Studio Nagoya Base】予約前の相談';
