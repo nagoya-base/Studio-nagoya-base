@@ -1278,8 +1278,7 @@ footer nav a:hover {
 .equipment-photo-card img {
   width: 100%;
   height: auto;
-  aspect-ratio: 3 / 4;
-  object-fit: cover;
+  /* 画像本来の縦横比を維持し、機材の外観全体が見えるようにする（クロップしない） */
 }
 
 .equipment-photo-card-body {
