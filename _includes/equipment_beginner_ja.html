@@ -1,0 +1,19 @@
+{% assign card_class = include.card_class | default: "feature-card" %}
+<div class="{{ include.wrap_class | default: "features-grid" }}">
+  <div class="{{ card_class }}">
+    <h3>定常光</h3>
+    <p>点灯した状態のまま明るさや向きを確認しながら調整できるので、光の扱いに慣れていない方でも設定しやすい照明です。</p>
+  </div>
+  <div class="{{ card_class }}">
+    <h3>ストロボ</h3>
+    <p>発光時にしか光らないため、事前のご相談が必要です。使用をご希望の場合は予約時にお申し出ください。</p>
+  </div>
+  <div class="{{ card_class }}">
+    <h3>背景紙</h3>
+    <p>白・黒の背景紙（135cm×5m）を常設しています。無料でそのままご利用いただけます。</p>
+  </div>
+  <div class="{{ card_class }}">
+    <h3>持ち込み機材</h3>
+    <p>ストロボ・外部照明など、ご自身の機材の持ち込みも可能です。</p>
+  </div>
+</div>
