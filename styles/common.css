@@ -1258,6 +1258,80 @@ footer nav a:hover {
 }
 
 /* =====================
+   撮影機材フォトカード
+===================== */
+.equipment-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+}
+
+.equipment-photo-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.equipment-photo-card img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+}
+
+.equipment-photo-card-body {
+  padding: 16px 18px 20px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.equipment-photo-badge {
+  align-self: flex-start;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-dark);
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.equipment-photo-badge.is-reserve {
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.equipment-photo-card h3 {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+
+.equipment-photo-card p {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+@media (max-width: 900px) {
+  .equipment-photo-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .equipment-photo-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =====================
    カレンダー
 ===================== */
 .calendar-wrapper {
