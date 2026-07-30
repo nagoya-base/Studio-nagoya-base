@@ -438,7 +438,7 @@
       }
     }).catch(function (error) {
       if (window.StudioAnalytics) window.StudioAnalytics.trackFormError((error && error.failureType) || 'network', 0);
-      failureText.textContent = '通信状況をご確認のうえ、時間を置いて再度お試しください。解決しない場合は、X DMでお問い合わせください。';
+      failureText.textContent = '通信状況をご確認のうえ、しばらく時間を置いてから再度お試しください。入力内容は保持されていますので、そのまま再送信いただけます。';
       failureMessage.hidden = false;
       failureMessage.focus();
     }).finally(function () {

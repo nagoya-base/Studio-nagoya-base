@@ -257,10 +257,6 @@
   margin-top: 10px;
 }
 
-.reservation-status .btn-secondary {
-  margin-top: 16px;
-}
-
 .reservation-error-summary ul {
   margin: 8px 0 0 20px;
   color: var(--text-muted);
