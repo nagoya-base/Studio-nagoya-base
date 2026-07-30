@@ -433,17 +433,6 @@
   line-height: 1.7;
 }
 
-.reservation-fallback {
-  margin-top: 24px;
-  text-align: center;
-}
-
-.reservation-fallback p {
-  margin-bottom: 12px;
-  color: var(--text-muted);
-  font-size: 0.84rem;
-}
-
 .reservation-honeypot {
   position: absolute !important;
   left: -10000px !important;

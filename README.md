@@ -236,7 +236,7 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 - `site_section`：`studio_main` / `mens` / `studio_x`
 - `page_type`：`<body data-page-type>` の値（`top` / `guide` / `policy` など）
 - `form_name`：`studio_reservation` / `studio_x_reservation` / `reservation_form_en`
-- `channel`：`mail` / `x`（`outbound_contact_click`）
+- `channel`：`x`（`outbound_contact_click`）
 - `provider`：`stripe`（`booking_platform_click`）
 
 ### 発火確認の手順

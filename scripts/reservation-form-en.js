@@ -247,7 +247,7 @@
       if (window.StudioAnalytics) {
         window.StudioAnalytics.trackFormError((error && error.failureType) || 'network', 0, FORM_NAME);
       }
-      failureText.textContent = 'Please check your connection and try again. If the form still does not work, please contact us by email instead.';
+      failureText.textContent = 'Please check your connection and try again. If the form still does not work, please contact us via X DM instead.';
       failureMessage.hidden = false;
       failureMessage.focus();
     }).finally(function () {

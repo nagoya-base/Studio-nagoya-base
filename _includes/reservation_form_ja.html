@@ -7,13 +7,13 @@
     <div id="reservation-success" class="reservation-status reservation-status--success" role="status" aria-live="polite" tabindex="-1" hidden>
       <h3 id="reservation-success-title">予約申込を受け付けました</h3>
       <p id="reservation-success-body">お申し込みありがとうございます。<br>フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内にメールでご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
-      <p>24時間を過ぎても返信がない場合は、迷惑メールフォルダをご確認のうえ、メールまたはX DMでお問い合わせください。</p>
+      <p>24時間を過ぎても返信がない場合は、迷惑メールフォルダをご確認のうえ、X DMでお問い合わせください。</p>
     </div>
 
     <div id="reservation-failure" class="reservation-status reservation-status--error" role="alert" aria-live="assertive" tabindex="-1" hidden>
       <h3>送信できませんでした</h3>
-      <p id="reservation-failure-message">通信状況をご確認のうえ、時間を置いて再度お試しください。送信できない場合は、メールからお申し込みください。</p>
-      <a class="btn-secondary" href="{{ site.data.mailto_ja.reserve_url }}" data-analytics-event="outbound_contact_click" data-analytics-channel="mail" data-analytics-location="error_message">メールで予約を申し込む</a>
+      <p id="reservation-failure-message">通信状況をご確認のうえ、時間を置いて再度お試しください。解決しない場合は、X DMでお問い合わせください。</p>
+      <a class="btn-secondary" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer" data-analytics-event="outbound_contact_click" data-analytics-channel="x" data-analytics-location="error_message">X DMで問い合わせる</a>
     </div>
 
     <form
@@ -207,10 +207,5 @@
         <p id="reservation-submit-state" class="reservation-submit-state" role="status" aria-live="polite">送信内容を確認後、入力したメールアドレスへご連絡します。</p>
       </fieldset>
     </form>
-
-    <div class="reservation-fallback">
-      <p>フォームを利用できない場合は、メールでも予約を申し込めます。</p>
-      <a class="btn-secondary" href="{{ site.data.mailto_ja.reserve_url }}" data-analytics-event="outbound_contact_click" data-analytics-channel="mail" data-analytics-location="form_fallback">メールで予約を申し込む</a>
-    </div>
   </div>
 </section>
