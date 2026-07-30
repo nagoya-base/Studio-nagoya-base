@@ -370,7 +370,7 @@
     successMessage.hidden = true;
 
     if (form.dataset.endpointConfigured !== 'true') {
-      failureText.textContent = 'フォームの送信先がまだ設定されていません。メールからお申し込みください。';
+      failureText.textContent = 'フォームの送信先がまだ設定されていません。しばらくしてから再度お試しください。';
       failureMessage.hidden = false;
       failureMessage.focus();
       return;
@@ -438,7 +438,7 @@
       }
     }).catch(function (error) {
       if (window.StudioAnalytics) window.StudioAnalytics.trackFormError((error && error.failureType) || 'network', 0);
-      failureText.textContent = '通信状況をご確認のうえ、時間を置いて再度お試しください。送信できない場合は、メールからお申し込みください。';
+      failureText.textContent = '通信状況をご確認のうえ、しばらく時間を置いてから再度お試しください。入力内容は保持されていますので、そのまま再送信いただけます。';
       failureMessage.hidden = false;
       failureMessage.focus();
     }).finally(function () {

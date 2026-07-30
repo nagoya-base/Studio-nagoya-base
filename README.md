@@ -227,6 +227,10 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 `outbound_contact_click`（補助成果）。他はすべて分析用イベントで、キーイベント
 には設定しない。
 
+`outbound_contact_click` は現在、問い合わせ・予約導線をフォームへ一元化した
+ため発火箇所がありません。メール・X DM等の外部連絡手段を新設する場合にのみ、
+`channel` パラメータとあわせて再度使用してください。
+
 #### 共通パラメータ
 
 個人情報（氏名・メールアドレス・電話番号・希望日時・自由記述）は一切送信しません。
@@ -236,7 +240,6 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 - `site_section`：`studio_main` / `mens` / `studio_x`
 - `page_type`：`<body data-page-type>` の値（`top` / `guide` / `policy` など）
 - `form_name`：`studio_reservation` / `studio_x_reservation` / `reservation_form_en`
-- `channel`：`mail` / `x`（`outbound_contact_click`）
 - `provider`：`stripe`（`booking_platform_click`）
 
 ### 発火確認の手順

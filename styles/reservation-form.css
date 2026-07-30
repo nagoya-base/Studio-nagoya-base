@@ -257,26 +257,11 @@
   margin-top: 10px;
 }
 
-.reservation-status .btn-secondary {
-  margin-top: 16px;
-}
-
 .reservation-error-summary ul {
   margin: 8px 0 0 20px;
   color: var(--text-muted);
   font-size: 0.85rem;
   line-height: 1.7;
-}
-
-.reservation-fallback {
-  margin-top: 24px;
-  text-align: center;
-}
-
-.reservation-fallback p {
-  margin-bottom: 12px;
-  color: var(--text-muted);
-  font-size: 0.84rem;
 }
 
 .reservation-honeypot {
