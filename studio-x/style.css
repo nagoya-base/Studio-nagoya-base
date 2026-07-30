@@ -447,6 +447,26 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .review-card blockquote { max-width: 900px; margin: 0; font-size: clamp(1.08rem, 2vw, 1.55rem); font-weight: 600; line-height: 1.9; }
 .review-card figcaption { margin-top: 22px; color: var(--muted); font-size: .7rem; letter-spacing: .06em; }
 
+.equipment-highlight { border-top: 1px solid var(--line); }
+.equipment-highlight-grid { margin-top: 60px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.equipment-highlight-card { display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border: 1px solid var(--line); }
+.equipment-highlight-card img { display: block; width: 100%; height: auto; }
+.equipment-highlight-body { padding: 24px 26px 30px; flex: 1; display: flex; flex-direction: column; }
+.equipment-highlight-badge {
+  align-self: flex-start;
+  margin-bottom: 12px;
+  padding: 3px 12px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: .64rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+.equipment-highlight-body h3 { margin: 0 0 8px; font-size: 1.05rem; }
+.equipment-highlight-body p { margin: 0; color: var(--muted); font-size: .84rem; line-height: 1.7; }
+.equipment-highlight-cta { margin-top: 40px; }
+
 .specs { border-top: 1px solid var(--line); }
 .spec-layout { display: grid; grid-template-columns: .82fr 1fr; gap: clamp(28px, 6vw, 80px); align-items: stretch; }
 .spec-image { min-height: 640px; overflow: hidden; }
@@ -622,6 +642,7 @@ footer {
   .usecase-list p { grid-column: 2; }
   .step-list { margin-top: 10px; }
   .review-card { margin-top: 60px; }
+  .equipment-highlight-grid { grid-template-columns: 1fr; margin-top: 38px; }
   .spec-image { min-height: 480px; }
   .spec-list div { grid-template-columns: 105px 1fr; gap: 14px; }
   .price-intro .section-kicker { grid-column: auto; }
