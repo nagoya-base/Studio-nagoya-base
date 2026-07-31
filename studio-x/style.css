@@ -35,6 +35,12 @@ html[data-mood="clean"] {
   --accent-ink: #101300;
 }
 
+html[data-mood="cosplay"] {
+  --accent: #22e1ff;
+  --accent-rgb: 34, 225, 255;
+  --accent-ink: #001318;
+}
+
 *, *::before, *::after { box-sizing: border-box; }
 
 html {
