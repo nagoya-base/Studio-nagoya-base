@@ -322,6 +322,27 @@
     return errors.length === 0;
   }
 
+  /* 複数選択項目（name="○○[]"）は、送信先の受信メール・管理画面で1件しか表示されない
+     可能性があるため、送信直前に選択済みの値を「、」で連結した単一キーへ集約する。
+     未選択の場合はキー自体を追加しない。 */
+  var MULTI_SELECT_FIELDS = ['使用したい背景・セット'];
+
+  function aggregateMultiSelectField(formData, fieldName) {
+    var values = formData.getAll(fieldName + '[]');
+    formData.delete(fieldName + '[]');
+    if (values.length > 0) {
+      formData.append(fieldName, values.join('、'));
+    }
+  }
+
+  function buildSubmissionFormData(formEl) {
+    var data = new FormData(formEl);
+    MULTI_SELECT_FIELDS.forEach(function (fieldName) {
+      aggregateMultiSelectField(data, fieldName);
+    });
+    return data;
+  }
+
   form.addEventListener('submit', function (event) {
     event.preventDefault();
     if (isSubmitting || !validateForm()) return;
@@ -342,7 +363,7 @@
 
     fetch(form.action, {
       method: 'POST',
-      body: new FormData(form),
+      body: buildSubmissionFormData(form),
       headers: { Accept: 'application/json' }
     }).then(function (response) {
       if (!response.ok) {
