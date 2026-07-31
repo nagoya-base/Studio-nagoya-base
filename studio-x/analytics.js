@@ -35,7 +35,7 @@
     var payload = params || {};
     payload.site_brand = 'studio';
     payload.site_section = 'studio_x';
-    payload.page_type = 'top';
+    payload.page_type = (document.body && document.body.getAttribute('data-page-type')) || 'top';
     if (isDebug) payload.debug_mode = true;
 
     if (isDebug) console.debug('[StudioXAnalytics]', eventName, payload);

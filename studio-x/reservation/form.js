@@ -60,6 +60,16 @@
   var INTENT_QUERY_MAP = { booking: 'booking', consult: 'consult', 'same-day': 'same-day', tour: 'tour' };
   /* 相談・見学目的の来訪者には、空き状況カレンダーの閲覧を強制しない */
   var CALENDAR_HIDDEN_INTENTS = { consult: true, tour: true };
+  /* ── イベント特設ページからの流入（?event=...&source=...）の識別・記録 ── */
+  var EVENT_QUERY_CONFIG = {
+    '2026-09-12-cosplay': {
+      label: '9/12 コスプレ撮影体験（10分1,000円）',
+      noticeHtml: '<p><strong>「9/12 コスプレ撮影体験」への申込みとして送信されます。</strong>開催時間・受付枠などの詳細は、送信後の返信でご案内します。</p>',
+      messagePlaceholder: '参加人数、当日の希望時間帯（例：13時台希望など）、その他ご質問があればご記入ください。'
+    }
+  };
+  var queryEvent = null;
+  var queryEventConfig = null;
   try {
     var params = new URLSearchParams(window.location.search);
     var queryIntent = params.get('intent');
@@ -79,6 +89,38 @@
          開いた場合でも、カレンダーを飛ばさず空き状況セクションから見せる */
       window.history.replaceState(null, '', window.location.pathname + window.location.search + '#calendar');
       calendarSection.scrollIntoView({ behavior: 'auto', block: 'start' });
+    }
+
+    var rawEvent = params.get('event');
+    var querySource = params.get('source');
+    if (rawEvent && Object.prototype.hasOwnProperty.call(EVENT_QUERY_CONFIG, rawEvent)) {
+      queryEvent = rawEvent;
+      queryEventConfig = EVENT_QUERY_CONFIG[rawEvent];
+
+      var eventField = document.createElement('input');
+      eventField.type = 'hidden';
+      eventField.name = 'イベント';
+      eventField.value = queryEventConfig.label;
+      form.appendChild(eventField);
+
+      if (querySource) {
+        var sourceField = document.createElement('input');
+        sourceField.type = 'hidden';
+        sourceField.name = '流入元';
+        sourceField.value = querySource;
+        form.appendChild(sourceField);
+      }
+
+      if (messageInput && queryEventConfig.messagePlaceholder) {
+        messageInput.placeholder = queryEventConfig.messagePlaceholder;
+      }
+
+      if (queryEventConfig.noticeHtml && errorSummary && errorSummary.parentNode) {
+        var eventNotice = document.createElement('div');
+        eventNotice.className = 'reservation-status';
+        eventNotice.innerHTML = queryEventConfig.noticeHtml;
+        errorSummary.parentNode.insertBefore(eventNotice, errorSummary);
+      }
     }
   } catch (e) {
     /* URLSearchParams非対応環境でもフォーム自体は使えるようにする */
@@ -293,7 +335,7 @@
     submitButton.textContent = '送信中…';
     submitState.textContent = '送信しています。';
     submittedAt.value = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', dateStyle: 'medium', timeStyle: 'medium' }).format(new Date());
-    subjectInput.value = '【Studio X】' + (intent === 'booking' ? '予約申込' : '撮影相談') + '：' + (dateInput.value ? dateInput.value + ' ' + timeInput.value : '日程未定');
+    subjectInput.value = '【Studio X】' + (queryEventConfig ? queryEventConfig.label + '／' : '') + (intent === 'booking' ? '予約申込' : '撮影相談') + '：' + (dateInput.value ? dateInput.value + ' ' + timeInput.value : '日程未定');
 
     submissionSeq += 1;
     var submissionToken = submissionSeq;
@@ -316,7 +358,12 @@
       completeScreen.hidden = false;
       completeScreen.focus();
       if (window.StudioXAnalytics) {
-        window.StudioXAnalytics.trackGenerateLead(submissionToken, intent, { contact_intent: intent || 'unknown' });
+        var leadParams = { contact_intent: intent || 'unknown' };
+        if (queryEvent) {
+          leadParams.lead_type = 'studio_x_event_application';
+          leadParams.event_id = queryEvent;
+        }
+        window.StudioXAnalytics.trackGenerateLead(submissionToken, intent, leadParams);
       }
     }).catch(function (error) {
       if (window.StudioXAnalytics) window.StudioXAnalytics.trackFormError((error && error.errorType) || 'network');
