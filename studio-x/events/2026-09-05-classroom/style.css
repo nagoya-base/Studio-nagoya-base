@@ -1,0 +1,118 @@
+/* Studio X「9/5 教室セット コスプレ撮影体験」イベントページ専用スタイル。style.css / pages.css を先に読み込むこと。 */
+
+.event-body {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 var(--gutter) 120px;
+}
+
+/* ヒーロー画像は横長（3:2）のため、比率を画像に合わせてオブジェクトが切れないようにする */
+.event-hero-frame {
+  aspect-ratio: 3 / 2;
+  max-height: 640px;
+}
+
+.event-hero-frame img { object-fit: cover; object-position: 50% 50%; }
+
+.event-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 26px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.event-tag-list li {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: .78rem;
+  font-weight: 700;
+}
+
+/* 開催終了後は <body data-event-status="closed"> に切り替えると、
+   募集終了メッセージが表示され、申込みCTAが非表示になる。 */
+.event-closed-notice {
+  display: none;
+  margin: 0 0 28px;
+  padding: 18px 20px;
+  background: rgba(var(--accent-rgb), .1);
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+  font-size: .88rem;
+  line-height: 1.8;
+}
+
+[data-event-status="closed"] .event-closed-notice { display: block; }
+[data-event-status="closed"] .js-event-apply-cta { display: none !important; }
+[data-event-status="closed"] .mobile-booking { display: none !important; }
+
+.event-note {
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.8;
+}
+
+.event-disclaimer {
+  margin-top: 20px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.8;
+}
+
+.event-access-mini {
+  margin: 0 0 20px;
+  color: #c6c1c9;
+  font-size: .88rem;
+  line-height: 1.9;
+}
+
+/* 作例／ギャラリーセクション */
+.event-gallery {
+  display: grid;
+  grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+  gap: clamp(24px, 4vw, 48px);
+  align-items: start;
+}
+
+.event-gallery-frame {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: 20px 20px 0 rgba(var(--accent-rgb), .12);
+}
+
+.event-gallery-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.event-gallery-caption {
+  margin: 0;
+  padding: 12px 16px;
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.7;
+  border-top: 1px solid var(--line);
+}
+
+.event-gallery-body h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.event-gallery-body p { margin: 0 0 14px; }
+
+.event-gallery-body p:last-child { margin-bottom: 0; }
+
+@media (max-width: 760px) {
+  .event-hero-frame { max-height: none; }
+  .event-gallery { grid-template-columns: 1fr; }
+}
