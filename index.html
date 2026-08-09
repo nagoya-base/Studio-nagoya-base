@@ -184,7 +184,7 @@
       <a class="btn-primary" href="#calendar" data-analytics-event="cta_click" data-analytics-location="hero" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
       <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="hero">利用内容を事前に相談する</a>
     </div>
-    <p class="hero-ad-note">カレンダーで空きを確認後、ページ内フォームからお申し込みください。1〜4名まで同一料金。緊縛や作品撮りに関する打ち合わせにも利用できます。</p>
+    <p class="hero-ad-note">カレンダーで空きを確認後、はじめての方は予約申込フォーム、ご利用経験のある方はメールまたはXのDMからお申し込みください。1〜4名まで同一料金。緊縛や作品撮りに関する打ち合わせにも利用できます。</p>
   </div>
 </section>
 
@@ -222,16 +222,29 @@
 
     <ol class="reservation-steps">
       <li><span class="reservation-steps-num">1</span>カレンダーで空きを確認</li>
-      <li><span class="reservation-steps-num">2</span>予約申込フォームを送信</li>
+      <li><span class="reservation-steps-num">2</span>はじめての方はフォーム、ご利用経験のある方はメール・DMで希望を送信</li>
       <li><span class="reservation-steps-num">3</span>運営からの確定連絡で予約成立</li>
     </ol>
 
-    <p class="calendar-note"><strong>フォーム送信だけでは予約確定ではありません。</strong>ご予約は<strong>前日まで</strong>受け付けています。通常は24時間以内に運営から確定のご連絡をお送りし、この連絡をもって予約成立となります。</p>
-    <p class="calendar-note">予約・相談窓口：ページ内フォーム</p>
+    <p class="calendar-note"><strong>フォーム送信・メール・DMのいずれも、送信だけでは予約確定ではありません。</strong>ご予約は<strong>前日まで</strong>受け付けています。通常は24時間以内に運営から確定のご連絡をお送りし、この連絡をもって予約成立となります。</p>
 
-    <div class="btn-group">
-      <a class="btn-primary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む</a>
-      <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="calendar">利用内容を事前に相談する</a>
+    <div class="reservation-path-grid">
+      <div class="reservation-path-card">
+        <h3 class="reservation-path-label">はじめてご利用の方</h3>
+        <p class="reservation-path-desc">予約申込フォームから、利用目的・安全ルールへのご同意とあわせてお申し込みください。</p>
+        <div class="btn-group">
+          <a class="btn-primary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む</a>
+          <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="calendar">利用内容を事前に相談する</a>
+        </div>
+      </div>
+      <div class="reservation-path-card">
+        <h3 class="reservation-path-label">ご利用経験のある方</h3>
+        <p class="reservation-path-desc">希望日・開始時刻・利用時間を、前回のやり取りへのメール返信、またはXのDMでお送りください。</p>
+        <div class="btn-group">
+          <a class="btn-secondary" href="https://x.com/nagoyabase2023" target="_blank" rel="noopener noreferrer" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="repeat_dm" data-analytics-destination="x_dm">XのDMで相談する（@nagoyabase2023）</a>
+        </div>
+        <p class="reservation-path-note">DMを送れない場合は、はじめての方向けの予約申込フォームをご利用ください。</p>
+      </div>
     </div>
   </div>
 </section>
