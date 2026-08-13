@@ -31,6 +31,7 @@
   var bookingOnlyEls = form.querySelectorAll('.is-booking-only');
   var emailField = document.getElementById('reservation-email');
   var xField = document.getElementById('reservation-x');
+  var carrierMailField = document.getElementById('reservation-carrier-mail');
   var methodRadios = form.querySelectorAll('input[name="希望する返信方法"]');
   var isSubmitting = false;
   var submissionSeq = 0;
@@ -241,6 +242,7 @@
     clearError(nameInput, 'reservation-name-error');
     clearError(emailInput, 'reservation-email-error');
     clearError(xField, 'reservation-x-error');
+    clearError(carrierMailField, 'reservation-carrier-mail-error');
     clearError(dateInput, 'reservation-date-error');
     clearError(timeInput, 'reservation-start-time-error');
     clearError(durationInput, 'reservation-duration-error');
@@ -276,6 +278,9 @@
       }
       if (preferredMethod === 'XのDM' && !hasX) {
         errors.push(setError(xField, 'reservation-x-error', 'XのDMでの返信を希望する場合は、Xアカウントを入力してください。'));
+      }
+      if (preferredMethod === 'メール' && !carrierMailField.checked) {
+        errors.push(setError(carrierMailField, 'reservation-carrier-mail-error', 'メールでの返信を希望する場合は、メール受信設定・迷惑メールフォルダのご確認が必要です。'));
       }
     }
 

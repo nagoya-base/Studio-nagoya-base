@@ -267,6 +267,7 @@
     var termsInput = document.getElementById('reservation-terms');
     var safetyInput = document.getElementById('reservation-safety');
     var conditionInput = document.getElementById('reservation-condition');
+    var carrierMailInput = document.getElementById('reservation-carrier-mail');
     var intent = getIntent();
 
     clearError(nameInput, 'reservation-name-error');
@@ -281,6 +282,7 @@
     clearError(termsInput, 'reservation-terms-error');
     clearError(safetyInput, 'reservation-safety-error');
     clearError(conditionInput, 'reservation-condition-error');
+    clearError(carrierMailInput, 'reservation-carrier-mail-error');
     clearRadioError('吊り床利用予定', 'reservation-suspension-error');
     clearRadioError('支払方法', 'reservation-payment-error');
     clearRadioError('利用区分', 'reservation-member-error');
@@ -328,6 +330,7 @@
 
     if (!termsInput.checked) errors.push(setError(termsInput, 'reservation-terms-error', '利用規約への同意が必要です。', 'terms_not_agreed'));
     if (!safetyInput.checked) errors.push(setError(safetyInput, 'reservation-safety-error', '安全ルールへの同意が必要です。', 'safety_not_agreed'));
+    if (!carrierMailInput.checked) errors.push(setError(carrierMailInput, 'reservation-carrier-mail-error', 'メール受信設定・迷惑メールフォルダのご確認が必要です。', 'carrier_mail_not_confirmed'));
 
     var list = errorSummary.querySelector('ul');
     list.innerHTML = '';
