@@ -227,10 +227,21 @@
     if (!isOther) clearError(purposeOtherInput, 'reservation-purpose-other-error');
   }
 
+  function updateCarrierMailRequired() {
+    var preferredMethod = checkedRadio('希望する返信方法');
+    if (carrierMailField) {
+      carrierMailField.required = !!preferredMethod && preferredMethod.value === 'メール';
+    }
+  }
+
   if (purposeInput) purposeInput.addEventListener('change', updatePurposeOther);
   if (timeInput) timeInput.addEventListener('change', updateEndWarning);
   if (durationInput) durationInput.addEventListener('change', updateEndWarning);
+  methodRadios.forEach(function (radio) {
+    radio.addEventListener('change', updateCarrierMailRequired);
+  });
   updatePurposeOther();
+  updateCarrierMailRequired();
 
   function validateForm() {
     var errors = [];
