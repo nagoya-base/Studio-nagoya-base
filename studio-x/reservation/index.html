@@ -107,6 +107,7 @@
               <label><input type="radio" name="お問い合わせ種別" value="撮影内容・設備について相談したい" data-intent="consult" aria-describedby="reservation-intent-error"> <span>撮影内容・設備について相談したい</span></label>
               <label><input type="radio" name="お問い合わせ種別" value="当日利用について確認したい" data-intent="same-day" aria-describedby="reservation-intent-error"> <span>当日利用について確認したい</span></label>
               <label><input type="radio" name="お問い合わせ種別" value="見学・下見について相談したい" data-intent="tour" aria-describedby="reservation-intent-error"> <span>見学・下見について相談したい</span></label>
+              <label><input type="radio" name="お問い合わせ種別" value="下見プラン申込み（30分・1,000円）" data-intent="preview" aria-describedby="reservation-intent-error"> <span>下見プラン（30分・1,000円）を申し込む</span></label>
               <label><input type="radio" name="お問い合わせ種別" value="その他" data-intent="other" aria-describedby="reservation-intent-error"> <span>その他</span></label>
             </div>
             <p id="reservation-intent-error" class="field-error" hidden></p>
@@ -150,7 +151,7 @@
           </fieldset>
         </fieldset>
 
-        <fieldset class="reservation-group is-booking-only" data-scope="booking">
+        <fieldset class="reservation-group is-booking-or-preview" data-scope="booking preview">
           <legend>3. 希望日時・利用内容</legend>
           <div class="reservation-fields reservation-fields--compact">
             <div class="reservation-field">
@@ -164,7 +165,7 @@
               <p id="reservation-start-time-help" class="field-help">営業時間は8:00〜23:00です。</p>
               <p id="reservation-start-time-error" class="field-error" hidden></p>
             </div>
-            <div class="reservation-field">
+            <div class="reservation-field is-booking-only" data-scope="booking">
               <label for="reservation-duration">利用時間 <span class="field-badge field-badge--required">必須</span></label>
               <select id="reservation-duration" name="利用時間" aria-describedby="reservation-duration-error">
                 <option value="">選択してください</option>
@@ -180,12 +181,18 @@
           </div>
           <p id="reservation-end-warning" class="reservation-warning" role="alert" hidden>利用終了時間が23:00を超えています。開始時間または利用時間を変更してください。</p>
 
-          <div class="reservation-field reservation-field--full" style="margin-top: 24px;">
+          <div class="reservation-field reservation-field--full is-preview-only" data-scope="preview" style="margin-top: 24px;" hidden>
+            <p class="field-help">下見プランは<strong>30分・1,000円</strong>固定です（当日払い・PayPayまたは現金）。作品撮影・衣装撮影としてのご利用はできません（画角・設備確認の簡単なテスト撮影は可能です）。</p>
+            <input type="hidden" name="利用時間" value="30分（下見プラン固定）">
+            <input type="hidden" name="料金" value="1,000円（下見プラン固定・当日払い）">
+          </div>
+
+          <div class="reservation-field reservation-field--full is-booking-only" data-scope="booking" style="margin-top: 24px;">
             <label for="reservation-date2">第2希望日時 <span class="field-badge">任意</span></label>
             <input type="text" id="reservation-date2" name="第2希望日時" placeholder="例：8月10日（月）14時〜、または平日夜なら調整可能">
           </div>
 
-          <div class="reservation-fields" style="margin-top: 24px;">
+          <div class="reservation-fields is-booking-only" data-scope="booking" style="margin-top: 24px;">
             <div class="reservation-field">
               <label for="reservation-party-size">利用人数 <span class="field-badge field-badge--required">必須</span></label>
               <select id="reservation-party-size" name="利用人数" aria-describedby="reservation-party-size-error">
@@ -222,7 +229,7 @@
             </div>
           </div>
 
-          <fieldset class="reservation-choice-group">
+          <fieldset class="reservation-choice-group is-booking-only" data-scope="booking">
             <legend>使用したい背景・セット <span class="field-badge">任意・複数選択可</span></legend>
             <div class="reservation-choices">
               <label><input type="checkbox" name="使用したい背景・セット[]" value="白背景"> <span>白背景</span></label>
@@ -233,19 +240,19 @@
             </div>
           </fieldset>
 
-          <fieldset class="reservation-choice-group">
+          <fieldset class="reservation-choice-group is-booking-or-preview" data-scope="booking preview">
             <legend>希望する支払方法 <span class="field-badge field-badge--required">必須</span></legend>
             <div class="reservation-choices">
               <label><input type="radio" name="希望する支払方法" value="現金" aria-describedby="reservation-payment-error"> <span>現金</span></label>
               <label><input type="radio" name="希望する支払方法" value="PayPay" aria-describedby="reservation-payment-error"> <span>PayPay</span></label>
-              <label><input type="radio" name="希望する支払方法" value="オンラインクレジットカード" aria-describedby="reservation-payment-error"> <span>オンラインクレジットカード</span></label>
-              <label><input type="radio" name="希望する支払方法" value="未定" aria-describedby="reservation-payment-error"> <span>未定</span></label>
+              <label class="is-booking-only" data-scope="booking"><input type="radio" name="希望する支払方法" value="オンラインクレジットカード" aria-describedby="reservation-payment-error"> <span>オンラインクレジットカード</span></label>
+              <label class="is-booking-only" data-scope="booking"><input type="radio" name="希望する支払方法" value="未定" aria-describedby="reservation-payment-error"> <span>未定</span></label>
             </div>
             <p class="field-help">支払方法・支払時期は予約確定後にご案内します。</p>
             <p id="reservation-payment-error" class="field-error" hidden></p>
           </fieldset>
 
-          <fieldset class="reservation-choice-group">
+          <fieldset class="reservation-choice-group is-booking-only" data-scope="booking">
             <legend>ご利用区分 <span class="field-badge field-badge--required">必須</span></legend>
             <div class="reservation-choices">
               <label><input type="radio" name="ご利用区分" value="初めて利用する" aria-describedby="reservation-repeat-error"> <span>初めて利用する</span></label>
@@ -274,7 +281,7 @@
             <label for="reservation-terms"><input type="checkbox" id="reservation-terms" name="利用規約同意" value="同意する" required aria-describedby="reservation-terms-error"> <span><a href="../legal/#terms" target="_blank" rel="noopener noreferrer">利用規約・プライバシーポリシー</a>を確認し、内容に同意します。 <span class="field-badge field-badge--required">必須</span></span></label>
             <p id="reservation-terms-error" class="field-error" hidden></p>
 
-            <label for="reservation-condition" class="is-booking-only" data-scope="booking"><input type="checkbox" id="reservation-condition" name="予約成立条件同意" value="同意する" aria-describedby="reservation-condition-error"> <span>フォーム送信時点では予約は確定せず、当方からの予約確定連絡をもって予約成立となることを確認しました。 <span class="field-badge field-badge--required">必須</span></span></label>
+            <label for="reservation-condition" class="is-booking-or-preview" data-scope="booking preview"><input type="checkbox" id="reservation-condition" name="予約成立条件同意" value="同意する" aria-describedby="reservation-condition-error"> <span>フォーム送信時点では予約は確定せず、当方からの予約確定連絡をもって予約成立となることを確認しました。 <span class="field-badge field-badge--required">必須</span></span></label>
             <p id="reservation-condition-error" class="field-error" hidden></p>
 
             <label for="reservation-carrier-mail"><input type="checkbox" id="reservation-carrier-mail" name="メール受信設定確認" value="確認しました" aria-describedby="reservation-carrier-mail-error"> <span>上記のメール受信設定・迷惑メールフォルダについて確認しました <span class="field-badge">メール返信を希望する場合は必須</span></span></label>
