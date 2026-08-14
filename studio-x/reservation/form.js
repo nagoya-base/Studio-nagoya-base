@@ -29,6 +29,8 @@
   var messageMark = document.getElementById('reservation-message-mark');
   var conditionInput = document.getElementById('reservation-condition');
   var bookingOnlyEls = form.querySelectorAll('.is-booking-only');
+  var previewOnlyEls = form.querySelectorAll('.is-preview-only');
+  var bookingOrPreviewEls = form.querySelectorAll('.is-booking-or-preview');
   var emailField = document.getElementById('reservation-email');
   var xField = document.getElementById('reservation-x');
   var carrierMailField = document.getElementById('reservation-carrier-mail');
@@ -58,7 +60,7 @@
   if (dateInput) dateInput.min = tomorrowInJapan();
 
   /* ── 遷移元からの問い合わせ種別プリフィル（未知の値は安全に無視） ── */
-  var INTENT_QUERY_MAP = { booking: 'booking', consult: 'consult', 'same-day': 'same-day', tour: 'tour' };
+  var INTENT_QUERY_MAP = { booking: 'booking', consult: 'consult', 'same-day': 'same-day', tour: 'tour', preview: 'preview' };
   /* 相談・見学目的の来訪者には、空き状況カレンダーの閲覧を強制しない */
   var CALENDAR_HIDDEN_INTENTS = { consult: true, tour: true };
   /* ── イベント特設ページからの流入（?event=...&source=...）の識別・記録 ── */
@@ -134,24 +136,45 @@
     return null;
   }
 
+  function toggleScopedEl(el, show) {
+    el.hidden = !show;
+    el.querySelectorAll('input, select, textarea').forEach(function (field) { field.disabled = !show; });
+    if (/^(?:INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) el.disabled = !show;
+  }
+
   function applyIntentMode(intent) {
     var isBooking = intent === 'booking';
-    bookingOnlyEls.forEach(function (el) { el.hidden = !isBooking; });
+    var isPreview = intent === 'preview';
+    var isBookingOrPreview = isBooking || isPreview;
 
-    ['reservation-date', 'reservation-start-time', 'reservation-duration', 'reservation-party-size', 'reservation-purpose'].forEach(function (id) {
+    /* 外側（booking+preview共通スコープ）から先に適用し、内側のbooking限定・preview限定スコープを
+       後から適用することで、入れ子になった要素でも内側のより限定的な状態が優先されるようにする。 */
+    bookingOrPreviewEls.forEach(function (el) { toggleScopedEl(el, isBookingOrPreview); });
+    bookingOnlyEls.forEach(function (el) { toggleScopedEl(el, isBooking); });
+    previewOnlyEls.forEach(function (el) { toggleScopedEl(el, isPreview); });
+
+    ['reservation-date', 'reservation-start-time'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      if (isBookingOrPreview) el.setAttribute('required', 'required'); else el.removeAttribute('required');
+    });
+    ['reservation-duration', 'reservation-party-size', 'reservation-purpose'].forEach(function (id) {
       var el = document.getElementById(id);
       if (!el) return;
       if (isBooking) el.setAttribute('required', 'required'); else el.removeAttribute('required');
     });
-    form.querySelectorAll('input[name="希望する支払方法"], input[name="ご利用区分"]').forEach(function (radio) {
+    form.querySelectorAll('input[name="ご利用区分"]').forEach(function (radio) {
       if (isBooking) radio.setAttribute('required', 'required'); else radio.removeAttribute('required');
     });
+    form.querySelectorAll('input[name="希望する支払方法"]').forEach(function (radio) {
+      if (isBookingOrPreview) radio.setAttribute('required', 'required'); else radio.removeAttribute('required');
+    });
     if (conditionInput) {
-      if (isBooking) conditionInput.setAttribute('required', 'required'); else conditionInput.removeAttribute('required');
+      if (isBookingOrPreview) conditionInput.setAttribute('required', 'required'); else conditionInput.removeAttribute('required');
     }
 
     if (messageInput && messageMark) {
-      if (isBooking) {
+      if (isBookingOrPreview) {
         messageInput.removeAttribute('required');
         messageMark.textContent = '任意';
       } else {
@@ -161,8 +184,10 @@
     }
 
     if (submitButton && !submitButton.disabled) {
-      submitButton.textContent = isBooking ? '予約を申し込む' : '送信する';
+      submitButton.textContent = isBooking ? '予約を申し込む' : (isPreview ? '下見を申し込む' : '送信する');
     }
+
+    updateEndWarning();
   }
 
   intentRadios.forEach(function (radio) {
@@ -211,10 +236,13 @@
   }
 
   function endTimeExceedsClosing() {
-    if (!timeInput.value || !durationInput.value) return false;
+    if (!timeInput.value) return false;
+    var intent = getIntent();
+    if (intent !== 'booking' && intent !== 'preview') return false;
+    if (intent === 'booking' && !durationInput.value) return false;
     var timeParts = timeInput.value.split(':');
     var startMinutes = Number(timeParts[0]) * 60 + Number(timeParts[1]);
-    var durationHours = durationInput.value === '7+' ? 7 : Number(durationInput.value);
+    var durationHours = intent === 'preview' ? 0.5 : (durationInput.value === '7+' ? 7 : Number(durationInput.value));
     return startMinutes + durationHours * 60 > 23 * 60;
   }
 
@@ -316,6 +344,20 @@
       if (!checkedRadio('希望する支払方法')) errors.push(setRadioError('希望する支払方法', 'reservation-payment-error', '支払方法を選択してください。'));
       if (!checkedRadio('ご利用区分')) errors.push(setRadioError('ご利用区分', 'reservation-repeat-error', '利用区分を選択してください。'));
       if (!conditionInput.checked) errors.push(setError(conditionInput, 'reservation-condition-error', '予約成立条件の確認が必要です。'));
+    } else if (intent === 'preview') {
+      if (!dateInput.value) {
+        errors.push(setError(dateInput, 'reservation-date-error', '第1希望日を入力してください。'));
+      }
+      if (!timeInput.value) {
+        errors.push(setError(timeInput, 'reservation-start-time-error', '希望開始時間を入力してください。'));
+      } else if (timeInput.value < '08:00' || timeInput.value > '23:00') {
+        errors.push(setError(timeInput, 'reservation-start-time-error', '開始時間は8:00〜23:00の範囲で選択してください。'));
+      }
+      if (timeInput.value && endTimeExceedsClosing()) {
+        errors.push(setError(timeInput, 'reservation-start-time-error', '利用終了時間が23:00を超えています。'));
+      }
+      if (!checkedRadio('希望する支払方法')) errors.push(setRadioError('希望する支払方法', 'reservation-payment-error', '支払方法を選択してください。'));
+      if (!conditionInput.checked) errors.push(setError(conditionInput, 'reservation-condition-error', '予約成立条件の確認が必要です。'));
     } else if (messageInput && !messageInput.value.trim()) {
       errors.push(setError(messageInput, 'reservation-message-error', 'ご質問・ご相談内容を入力してください。'));
     }
@@ -372,7 +414,8 @@
     submitButton.textContent = '送信中…';
     submitState.textContent = '送信しています。';
     submittedAt.value = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', dateStyle: 'medium', timeStyle: 'medium' }).format(new Date());
-    subjectInput.value = '【Studio X】' + (queryEventConfig ? queryEventConfig.label + '／' : '') + (intent === 'booking' ? '予約申込' : '撮影相談') + '：' + (dateInput.value ? dateInput.value + ' ' + timeInput.value : '日程未定');
+    var intentLabel = intent === 'booking' ? '予約申込' : (intent === 'preview' ? '下見申込' : '撮影相談');
+    subjectInput.value = '【Studio X】' + (queryEventConfig ? queryEventConfig.label + '／' : '') + intentLabel + '：' + (dateInput.value ? dateInput.value + ' ' + timeInput.value : '日程未定');
 
     submissionSeq += 1;
     var submissionToken = submissionSeq;

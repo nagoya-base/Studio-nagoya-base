@@ -504,6 +504,13 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .price-notes p { margin: 0; font-size: .72rem; }
 .price-notes p::before { content: '—'; margin-right: 10px; color: var(--accent); }
 
+.price-preview { margin-top: 44px; }
+.price-preview-card { max-width: 560px; padding: 24px clamp(20px, 4vw, 32px); border: 1px solid var(--line); }
+.price-preview-label { margin: 0 0 8px; font-size: .78rem; color: var(--muted); }
+.price-preview-value { margin: 0 0 10px; font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+.price-preview-value strong { font-size: 1.3em; }
+.price-preview-desc { margin: 0 0 20px; font-size: .82rem; color: var(--muted); line-height: 1.7; }
+
 .access-grid { display: grid; grid-template-columns: 1fr .8fr; gap: clamp(50px, 10vw, 150px); }
 .access address { margin-top: 46px; color: #c5c0c8; font-size: .92rem; font-style: normal; }
 .access address strong { color: var(--text); font-size: 1rem; }
