@@ -194,7 +194,8 @@
 
 .reservation-warning,
 .reservation-privacy,
-.reservation-review-note {
+.reservation-review-note,
+.reservation-carrier-notice {
   margin-top: 16px;
   padding: 14px 16px;
   border-left: 4px solid var(--accent);
@@ -202,6 +203,10 @@
   color: var(--text-muted);
   font-size: 0.84rem;
   line-height: 1.7;
+}
+
+.reservation-carrier-notice p + p {
+  margin-top: 8px;
 }
 
 .reservation-consents {

@@ -189,6 +189,10 @@
 
       <fieldset class="reservation-group reservation-confirmation">
         <legend>5. 確認・同意</legend>
+        <div class="reservation-carrier-notice">
+          <p><strong>携帯電話会社のメールアドレスをご利用の方へ</strong></p>
+          <p>docomo・au・SoftBankなどのキャリアメールでは、当方からのGmailが受信拒否される場合があります。Gmailからのメールを受信できる設定になっているか、迷惑メールフォルダに振り分けられていないかをご確認ください。</p>
+        </div>
         <div class="reservation-consents">
           <label for="reservation-terms"><input type="checkbox" id="reservation-terms" name="利用規約同意" value="同意する" required aria-describedby="reservation-terms-error"> <span><a href="{{ '/legal/' | relative_url }}#terms" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="reservation_form">利用規約</a>を確認し、内容に同意します。 <span class="field-badge field-badge--required">必須</span></span></label>
           <p id="reservation-terms-error" class="field-error" hidden></p>
@@ -198,6 +202,9 @@
 
           <label for="reservation-condition" class="is-booking-only" data-scope="booking"><input type="checkbox" id="reservation-condition" name="予約成立条件同意" value="同意する" data-required-if-booking="true" aria-describedby="reservation-condition-error"> <span>フォーム送信時点では予約は確定せず、当方からの予約確定連絡をもって予約成立となることを確認しました。 <span class="field-badge field-badge--required">必須</span></span></label>
           <p id="reservation-condition-error" class="field-error" hidden></p>
+
+          <label for="reservation-carrier-mail"><input type="checkbox" id="reservation-carrier-mail" name="メール受信設定確認" value="確認しました" required aria-describedby="reservation-carrier-mail-error"> <span>上記のメール受信設定・迷惑メールフォルダについて確認しました <span class="field-badge field-badge--required">必須</span></span></label>
+          <p id="reservation-carrier-mail-error" class="field-error" hidden></p>
         </div>
 
         <p class="reservation-privacy">入力された情報は、予約確認、利用案内、当日の連絡および必要な運営対応のために使用し、フォーム送信にはFormspreeを利用します。詳しくは<a href="{{ '/legal/' | relative_url }}#privacy">プライバシーポリシー</a>をご確認ください。</p>
