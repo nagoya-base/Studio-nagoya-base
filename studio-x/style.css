@@ -453,6 +453,9 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .review-card blockquote { max-width: 900px; margin: 0; font-size: clamp(1.08rem, 2vw, 1.55rem); font-weight: 600; line-height: 1.9; }
 .review-card figcaption { margin-top: 22px; color: var(--muted); font-size: .7rem; letter-spacing: .06em; }
 
+.beginners-preview { grid-column: 1 / -1; margin-top: 40px; }
+.beginners-preview p { margin: 0 0 16px; color: var(--muted); font-size: .88rem; }
+
 .equipment-highlight { border-top: 1px solid var(--line); }
 .equipment-highlight-grid { margin-top: 60px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .equipment-highlight-card { display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border: 1px solid var(--line); }
