@@ -303,11 +303,8 @@
       errors.push(setError(emailInput, 'reservation-email-error', 'メールアドレスを正しい形式で入力してください。', 'invalid_email'));
     }
 
-    if (!xAccountInput.value.trim()) {
-      errors.push(setError(xAccountInput, 'reservation-x-account-error', 'Xアカウントを入力してください。', 'required_missing'));
-    }
-    if (!xDmConfirmInput.checked) {
-      errors.push(setError(xDmConfirmInput, 'reservation-x-dm-confirm-error', 'DM受信設定の確認が必要です。', 'x_dm_not_confirmed'));
+    if (xAccountInput.value.trim() && !xDmConfirmInput.checked) {
+      errors.push(setError(xDmConfirmInput, 'reservation-x-dm-confirm-error', 'Xアカウントを入力した場合は、DM受信設定の確認が必要です。', 'x_dm_not_confirmed'));
     }
 
     if (intent === 'booking') {
