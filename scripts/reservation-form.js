@@ -264,6 +264,8 @@
     var errors = [];
     var nameInput = document.getElementById('reservation-name');
     var emailInput = document.getElementById('reservation-email');
+    var xAccountInput = document.getElementById('reservation-x-account');
+    var xDmConfirmInput = document.getElementById('reservation-x-dm-confirm');
     var termsInput = document.getElementById('reservation-terms');
     var safetyInput = document.getElementById('reservation-safety');
     var conditionInput = document.getElementById('reservation-condition');
@@ -272,6 +274,8 @@
 
     clearError(nameInput, 'reservation-name-error');
     clearError(emailInput, 'reservation-email-error');
+    clearError(xAccountInput, 'reservation-x-account-error');
+    clearError(xDmConfirmInput, 'reservation-x-dm-confirm-error');
     clearError(dateInput, 'reservation-date-error');
     clearError(timeInput, 'reservation-start-time-error');
     clearError(durationInput, 'reservation-duration-error');
@@ -297,6 +301,13 @@
       errors.push(setError(emailInput, 'reservation-email-error', 'メールアドレスを入力してください。', 'required_missing'));
     } else if (!emailInput.validity.valid) {
       errors.push(setError(emailInput, 'reservation-email-error', 'メールアドレスを正しい形式で入力してください。', 'invalid_email'));
+    }
+
+    if (!xAccountInput.value.trim()) {
+      errors.push(setError(xAccountInput, 'reservation-x-account-error', 'Xアカウントを入力してください。', 'required_missing'));
+    }
+    if (!xDmConfirmInput.checked) {
+      errors.push(setError(xDmConfirmInput, 'reservation-x-dm-confirm-error', 'DM受信設定の確認が必要です。', 'x_dm_not_confirmed'));
     }
 
     if (intent === 'booking') {
@@ -371,6 +382,9 @@
 
     failureMessage.hidden = true;
     successMessage.hidden = true;
+
+    var xAccountInput = document.getElementById('reservation-x-account');
+    xAccountInput.value = xAccountInput.value.trim();
 
     if (form.dataset.endpointConfigured !== 'true') {
       failureText.textContent = 'フォームの送信先がまだ設定されていません。しばらくしてから再度お試しください。';
