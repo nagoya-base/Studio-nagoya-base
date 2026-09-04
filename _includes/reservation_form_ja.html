@@ -61,6 +61,21 @@
             <p id="reservation-email-error" class="field-error" hidden></p>
           </div>
 
+          <div class="reservation-field reservation-field--full">
+            <label for="reservation-x-account">Xアカウント <span class="field-badge field-badge--required">必須</span></label>
+            <input type="text" id="reservation-x-account" name="Xアカウント" placeholder="@example" autocomplete="off" required aria-describedby="reservation-x-account-help reservation-x-account-error">
+            <p id="reservation-x-account-help" class="field-help">予約確認やメール不達時の連絡に使用します。Xのユーザー名（@から始まるID）をご入力ください。</p>
+            <p id="reservation-x-account-error" class="field-error" hidden></p>
+          </div>
+
+          <div class="reservation-field reservation-field--full">
+            <div class="reservation-consents">
+              <label for="reservation-x-dm-confirm"><input type="checkbox" id="reservation-x-dm-confirm" name="X DM受信設定確認" value="確認しました" required aria-describedby="reservation-x-dm-confirm-note reservation-x-dm-confirm-error"> <span>Studio Nagoya Base（@Nagoyabase2023）からDMを受信できる状態にしています。 <span class="field-badge field-badge--required">必須</span></span></label>
+              <p id="reservation-x-dm-confirm-note" class="field-help">XのDM設定をご確認ください。鍵アカウントの場合も、当アカウントから連絡できる状態にしてください。</p>
+              <p id="reservation-x-dm-confirm-error" class="field-error" hidden></p>
+            </div>
+          </div>
+
           <div class="reservation-field">
             <label for="reservation-tel">電話番号 <span class="field-badge">任意</span></label>
             <input type="tel" id="reservation-tel" name="電話番号" autocomplete="tel" inputmode="tel" aria-describedby="reservation-tel-help">
