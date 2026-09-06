@@ -88,6 +88,24 @@
   margin: 0 auto;
 }
 
+/* ショー練習・吊り演目ブロック：平日夜の利用シーン訴求 */
+.show-practice-highlight {
+  max-width: 560px;
+  margin: 24px auto 32px;
+  padding: 20px 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+  font-size: 0.9rem;
+  line-height: 1.8;
+  color: var(--text);
+}
+
+.show-practice-highlight strong {
+  color: var(--accent);
+}
+
 #trust .phase2-trust-block:first-child {
   margin-top: 0;
   padding-top: 0;
