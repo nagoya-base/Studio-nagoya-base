@@ -133,3 +133,7 @@ CalendarApp / PropertiesService / Utilities / ContentService はいずれもテ�
 
 Phase 0のゲート確認（スペースマーケットとの同一Calendar共存の実環境確認）はIssue #267で行う。
 #267がPASSするまで、#268（仮予約createBooking）には着手しない。
+
+確認手順・記録テンプレートは
+[`docs/phase0-issue267-spacemarket-coexistence.md`](../../docs/phase0-issue267-spacemarket-coexistence.md)
+を参照。
