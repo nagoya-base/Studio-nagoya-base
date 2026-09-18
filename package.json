@@ -1,0 +1,8 @@
+{
+  "name": "studio-nagoya-base",
+  "private": true,
+  "description": "Studio Nagoya Base サイト・自社予約システム(GAS)のテストスクリプト（依存パッケージなし）",
+  "scripts": {
+    "test": "node --test"
+  }
+}
