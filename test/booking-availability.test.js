@@ -154,6 +154,48 @@ test('120分未満（最低利用時間未満）はエラーになる', function
   assert.strictEqual(result.error.code, 'DURATION_TOO_SHORT');
 });
 
+test('durationMinutesが非数値・非整数・0以下の場合はINVALID_DURATIONになる', function () {
+  var BookingAvailability = loadAvailability();
+  [NaN, '120', 120.9, 0, -120, undefined, null, {}, []].forEach(function (invalidDuration) {
+    var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: invalidDuration }, [], DEFAULT_CONFIG);
+    assert.strictEqual(result.success, false, JSON.stringify(invalidDuration) + ' は無効な利用時間として扱われるべき');
+    assert.strictEqual(result.error.code, 'INVALID_DURATION');
+  });
+});
+
+test('Script Propertiesの誤設定はfail-closedにINVALID_CONFIGを返す（既存予約を空き扱いしない）', function () {
+  var BookingAvailability = loadAvailability();
+
+  var invalidConfigs = [
+    Object.assign({}, DEFAULT_CONFIG, { bufferMinutes: NaN }),
+    Object.assign({}, DEFAULT_CONFIG, { bufferMinutes: 'abc' }),
+    Object.assign({}, DEFAULT_CONFIG, { bufferMinutes: -1 }),
+    Object.assign({}, DEFAULT_CONFIG, { slotStepMinutes: 0 }),
+    Object.assign({}, DEFAULT_CONFIG, { slotStepMinutes: -15 }),
+    Object.assign({}, DEFAULT_CONFIG, { slotStepMinutes: NaN }),
+    Object.assign({}, DEFAULT_CONFIG, { minBookingMinutes: 0 }),
+    Object.assign({}, DEFAULT_CONFIG, { minBookingMinutes: -120 }),
+    Object.assign({}, DEFAULT_CONFIG, { minBookingMinutes: NaN }),
+    Object.assign({}, DEFAULT_CONFIG, { openTime: '23:00', closeTime: '08:00' }),
+    Object.assign({}, DEFAULT_CONFIG, { openTime: '10:00', closeTime: '10:00' }),
+    Object.assign({}, DEFAULT_CONFIG, { openTime: 'invalid' }),
+    Object.assign({}, DEFAULT_CONFIG, { closeTime: undefined })
+  ];
+
+  invalidConfigs.forEach(function (config) {
+    var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], config);
+    assert.strictEqual(result.success, false, JSON.stringify(config) + ' はINVALID_CONFIGとして拒否されるべき');
+    assert.strictEqual(result.error.code, 'INVALID_CONFIG');
+  });
+});
+
+test('BUFFER_MINUTES:0 / SLOT_STEP_MINUTES最小値等、正常な境界値のconfigは拒否しない', function () {
+  var BookingAvailability = loadAvailability();
+  var config = Object.assign({}, DEFAULT_CONFIG, { bufferMinutes: 0, slotStepMinutes: 1, minBookingMinutes: 1 });
+  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], config);
+  assert.strictEqual(result.success, true);
+});
+
 test('23:00を超える利用時間は、エラーにはせず空き枠0件を返す', function () {
   var BookingAvailability = loadAvailability();
   // 営業時間(08:00-23:00=900分)を超える901分では、どの開始時刻でも23:00に収まらない。

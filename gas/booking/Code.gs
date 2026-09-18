@@ -43,9 +43,13 @@ function handleGetAvailability_(params) {
   return BookingAvailability.getAvailability(request, busyIntervals, config);
 }
 
-/* undefined/空文字/数値以外の入力はNaNにする（Availability.gs側のバリデーションに判定を委ねる） */
+/* 公開Web APIのため、"120abc"や"120.9"のような部分一致をparseIntで緩く受理しない。
+   文字列全体が先頭0を持たない正の整数のときだけ数値化し、それ以外はNaNにする
+   （Availability.gs側のバリデーションに判定を委ねる。マージ前レビュー指摘対応）。 */
+var POSITIVE_INTEGER_PATTERN_ = /^[1-9]\d*$/;
+
 function parseDurationParam_(value) {
-  if (value === undefined || value === null || value === '') return NaN;
+  if (typeof value !== 'string' || !POSITIVE_INTEGER_PATTERN_.test(value)) return NaN;
   return parseInt(value, 10);
 }
 

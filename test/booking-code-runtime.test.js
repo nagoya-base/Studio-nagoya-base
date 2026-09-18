@@ -116,6 +116,51 @@ test('doGet: durationMinutesが未指定・数値以外でもエラーになり�
   assert.strictEqual(body2.error.code, 'INVALID_DURATION');
 });
 
+test('doGet: durationMinutesは文字列全体が正の整数のときだけ受理する（"120abc"や"120.9"は120として通さない）', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
+  ['120abc', '120.9', '0', '-5', ' 120', '120 ', '007', ''].forEach(function (rawValue) {
+    var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: rawValue });
+    assert.strictEqual(body.success, false, JSON.stringify(rawValue) + ' は正の整数として拒否されるべき');
+    assert.strictEqual(body.error.code, 'INVALID_DURATION');
+  });
+});
+
+test('doGet: Script Propertiesの数値項目が不正な場合はfail-closedにINVALID_CONFIGを返し、Calendarへ問い合わせない（BUFFER_MINUTES誤設定で既存予約を空き扱いする事故を防ぐ）', function () {
+  var calendarQueried = false;
+  var calendarsById = {
+    cal1: {
+      get events() {
+        calendarQueried = true;
+        return [];
+      }
+    }
+  };
+
+  var body1 = callDoGet(
+    loadCode({ CALENDAR_ID: 'cal1', BUFFER_MINUTES: 'abc' }, calendarsById),
+    { date: '2026-10-01', durationMinutes: '120' }
+  );
+  assert.strictEqual(body1.success, false);
+  assert.strictEqual(body1.error.code, 'INVALID_CONFIG');
+  assert.strictEqual(calendarQueried, false, 'BUFFER_MINUTES=abc(NaN)のままCalendarを問い合わせてはいけない');
+});
+
+test('doGet: SLOT_STEP_MINUTES=0はINVALID_CONFIGで拒否し、無限ループ相当のタイムアウトを起こさない', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1', SLOT_STEP_MINUTES: '0' }, { cal1: { events: [] } });
+  var start = Date.now();
+  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120' });
+  assert.ok(Date.now() - start < 1000, 'SLOT_STEP_MINUTES=0でハングしてはいけない');
+  assert.strictEqual(body.success, false);
+  assert.strictEqual(body.error.code, 'INVALID_CONFIG');
+});
+
+test('doGet: OPEN_TIME >= CLOSE_TIMEの誤設定はINVALID_CONFIGになる', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1', OPEN_TIME: '23:00', CLOSE_TIME: '08:00' }, { cal1: { events: [] } });
+  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120' });
+  assert.strictEqual(body.success, false);
+  assert.strictEqual(body.error.code, 'INVALID_CONFIG');
+});
+
 test('doGet: レスポンスはJSON MIMEタイプで返す', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
   var output = sandbox.doGet({ parameter: { date: '2026-10-01', durationMinutes: '120' } });

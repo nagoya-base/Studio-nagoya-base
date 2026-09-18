@@ -48,14 +48,38 @@ var BookingAvailability = (function () {
     return typeof value === 'string' && TIME_PATTERN.test(value);
   }
 
+  function isPositiveInteger_(value) {
+    return typeof value === 'number' && Number.isInteger(value) && value > 0;
+  }
+
+  function isNonNegativeInteger_(value) {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+  }
+
+  /*
+   * Script Propertiesの誤設定・欠落をfail-closedに検出する（マージ前レビュー指摘対応）。
+   * ここを通さないと、例えば BUFFER_MINUTES=abc（NaN）で占有区間の前後バッファ計算が
+   * NaNになり、比較が常にfalseへ倒れて既存予約を空きと誤判定する恐れがある。
+   * また SLOT_STEP_MINUTES=0 だと候補スロット生成のfor文が進まずタイムアウトする。
+   */
+  function isValidConfig_(config) {
+    if (!config) return false;
+    if (!isValidTimeString_(config.openTime) || !isValidTimeString_(config.closeTime)) return false;
+    if (parseTimeToMinutes_(config.openTime) >= parseTimeToMinutes_(config.closeTime)) return false;
+    if (!isPositiveInteger_(config.minBookingMinutes)) return false;
+    if (!isNonNegativeInteger_(config.bufferMinutes)) return false;
+    if (!isPositiveInteger_(config.slotStepMinutes)) return false;
+    return true;
+  }
+
   function validateInput(date, durationMinutes, config) {
     if (!isValidDateString(date)) {
       return { code: 'INVALID_DATE', message: '日付の形式が正しくありません（YYYY-MM-DD）。' };
     }
-    if (!config || !isValidTimeString_(config.openTime) || !isValidTimeString_(config.closeTime)) {
-      return { code: 'INVALID_CONFIG', message: '営業時間の設定が正しくありません。' };
+    if (!isValidConfig_(config)) {
+      return { code: 'INVALID_CONFIG', message: '営業時間・予約ルールの設定が正しくありません。' };
     }
-    if (typeof durationMinutes !== 'number' || isNaN(durationMinutes) || durationMinutes <= 0) {
+    if (!isPositiveInteger_(durationMinutes)) {
       return { code: 'INVALID_DURATION', message: '利用時間（分）が正しくありません。' };
     }
     if (durationMinutes < config.minBookingMinutes) {

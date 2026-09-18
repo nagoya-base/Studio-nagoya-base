@@ -48,3 +48,10 @@ test('CALENDAR_IDが設定されていれば取得できる', function () {
   var BookingConfig = loadConfig({ CALENDAR_ID: 'test-calendar-id@group.calendar.google.com' });
   assert.strictEqual(BookingConfig.getCalendarId(), 'test-calendar-id@group.calendar.google.com');
 });
+
+test('数値項目の誤設定はConfig.gs自体では例外にせずNaNとして返す（fail-closed判定はAvailability.gs側のvalidateInputが担う）', function () {
+  var BookingConfig = loadConfig({ BUFFER_MINUTES: 'abc', SLOT_STEP_MINUTES: '0' });
+  var config = BookingConfig.getAvailabilityConfig();
+  assert.ok(isNaN(config.bufferMinutes));
+  assert.strictEqual(config.slotStepMinutes, 0);
+});
