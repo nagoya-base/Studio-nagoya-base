@@ -161,6 +161,31 @@ test('doGet: OPEN_TIME >= CLOSE_TIMEの誤設定はINVALID_CONFIGになる', fun
   assert.strictEqual(body.error.code, 'INVALID_CONFIG');
 });
 
+test('doGet: Script Propertiesの数値項目が"15abc"のような部分一致混じりでもINVALID_CONFIGになり、Calendarへ問い合わせない', function () {
+  var calendarQueried = false;
+  var calendarsById = {
+    cal1: {
+      get events() {
+        calendarQueried = true;
+        return [];
+      }
+    }
+  };
+
+  [
+    { MIN_BOOKING_MINUTES: '120foo' },
+    { BUFFER_MINUTES: '15abc' },
+    { SLOT_STEP_MINUTES: '15xyz' },
+    { BUFFER_MINUTES: '15.5' }
+  ].forEach(function (badProperty) {
+    var properties = Object.assign({ CALENDAR_ID: 'cal1' }, badProperty);
+    var body = callDoGet(loadCode(properties, calendarsById), { date: '2026-10-01', durationMinutes: '120' });
+    assert.strictEqual(body.success, false, JSON.stringify(badProperty) + ' はINVALID_CONFIGとして拒否されるべき');
+    assert.strictEqual(body.error.code, 'INVALID_CONFIG');
+  });
+  assert.strictEqual(calendarQueried, false);
+});
+
 test('doGet: レスポンスはJSON MIMEタイプで返す', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
   var output = sandbox.doGet({ parameter: { date: '2026-10-01', durationMinutes: '120' } });

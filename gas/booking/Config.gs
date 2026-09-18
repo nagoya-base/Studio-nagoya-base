@@ -19,9 +19,22 @@ var BookingConfig = (function () {
     SLOT_STEP_MINUTES: '15'
   };
 
+  /* 先頭に-を許すが、小数点・空白・数字以外の文字を一切許さない厳密な整数文字列のみ受理する。
+     parseInt()単体だと"15abc"や"15.5"の先頭部分だけを緩く読み取って15を返してしまい、
+     誤設定に気付けない（マージ前レビュー指摘対応）。 */
+  var STRICT_INTEGER_PATTERN_ = /^-?\d+$/;
+
   function readProperty_(key) {
     var value = PropertiesService.getScriptProperties().getProperty(key);
     return value === null || value === '' ? DEFAULTS[key] : value;
+  }
+
+  /* 不正な文字列（"15abc"・"15.5"・" 15"等）はNaNを返す。fail-closedな妥当性判定自体は
+     Availability.gsのvalidateInputが一元的に行う（Config.gsはここでは例外を投げない）。 */
+  function readIntegerProperty_(key) {
+    var raw = readProperty_(key);
+    if (typeof raw !== 'string' || !STRICT_INTEGER_PATTERN_.test(raw)) return NaN;
+    return parseInt(raw, 10);
   }
 
   function getCalendarId() {
@@ -39,9 +52,9 @@ var BookingConfig = (function () {
       timezone: readProperty_('TIMEZONE'),
       openTime: readProperty_('OPEN_TIME'),
       closeTime: readProperty_('CLOSE_TIME'),
-      minBookingMinutes: parseInt(readProperty_('MIN_BOOKING_MINUTES'), 10),
-      bufferMinutes: parseInt(readProperty_('BUFFER_MINUTES'), 10),
-      slotStepMinutes: parseInt(readProperty_('SLOT_STEP_MINUTES'), 10)
+      minBookingMinutes: readIntegerProperty_('MIN_BOOKING_MINUTES'),
+      bufferMinutes: readIntegerProperty_('BUFFER_MINUTES'),
+      slotStepMinutes: readIntegerProperty_('SLOT_STEP_MINUTES')
     };
   }
 
