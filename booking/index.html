@@ -1,0 +1,67 @@
+---
+---
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>予約フォーム（仮予約） | Studio Nagoya Base</title>
+
+<!-- SEO -->
+<meta name="description" content="Studio Nagoya Base（名古屋・上前津）の予約フォームです。空き状況を確認しながら仮予約（PENDING）を申し込めます。送信時点では予約は確定しません。">
+<meta name="robots" content="noindex, follow">
+<link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/booking/">
+
+<!-- Favicon -->
+<link rel="icon" href="../images/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="../images/apple-touch-icon.png">
+
+<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-6TWDLEFWJT');
+</script>
+
+<link rel="stylesheet" href="../styles/common.css">
+<link rel="stylesheet" href="../styles/booking.css">
+</head>
+
+<body data-page-type="booking" data-site-section="studio_main">
+
+<a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
+
+{% include subpage_nav_ja.html %}
+
+<main id="main-content">
+
+<section id="booking" class="bg-section">
+  <div class="container">
+    {% include subpage_backlink_ja.html %}
+    <h1 class="section-title">予約フォーム（仮予約）</h1>
+    <p class="section-subtitle">Reservation Request</p>
+
+    {% assign booking_back_url = "/" | relative_url %}
+    {% include booking_app_ja.html
+      brand="snb"
+      back_url=booking_back_url
+      back_label="Studio Nagoya Baseトップへ戻る"
+      intro_note="このフォームはStudio Nagoya Base（緊縛スタジオ）専用です。設備・料金は既存の予約カレンダー・トップページの案内もあわせてご確認ください。"
+    %}
+  </div>
+</section>
+
+</main>
+
+{% include subpage_footer_ja.html %}
+
+<script src="../scripts/booking-logic.js"></script>
+<script src="../scripts/booking-config.js"></script>
+<script src="../scripts/booking-app.js"></script>
+<script src="../scripts/analytics.js"></script>
+
+</body>
+</html>

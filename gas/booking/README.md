@@ -6,6 +6,10 @@ Epic #265の一部として以下を実装済み。
 - **Issue #268**: `createBooking`（Studio X限定の仮予約作成）・予約台帳（Spreadsheet）・
   PENDING/CONFIRMED/CANCELLED/EXPIRED状態管理・部分失敗補償・TTL失効・レート制限・
   Spreadsheetカスタムメニューからの予約確定
+- **Issue #269**: `createBooking`をSNB / SNB mens / Studio Xの3ブランドへ正式拡張し、
+  3ブランド共通の予約UI（`booking/` / `mens/booking/` / `studio-x/booking/`）から
+  実際にPENDING予約を作成できるようにした（詳細は「Issue #269: 3ブランド対応と
+  共通予約UI」参照）
 
 このディレクトリは自社予約システム専用のApps Scriptプロジェクトの元になるソース一式
 （複数プロジェクトへ配布するファイル群）として運用し、`gas/ataru_survey_public` 等の
@@ -43,11 +47,11 @@ PENDING→EXPIREDが同時に進んでCalendar/Sheetsが不整合になる競合
   コンテナバインドの別GASプロジェクト（Booking Admin）から実行し、同じLockServiceを共有する
 - レート制限（同一メール・全体・同一内容連投）
 
-## このIssueで実装していないもの（非対象）
+## このIssueで実装していないもの（非対象。#268時点）
 
-- Studio Nagoya Base / SNB mensでの予約作成（Phase 1はStudio Xのみ。brand偽装で
-  他ブランドから予約できないようサーバー側でも`studio_x`のみ許可している）
-- `#269` 以降の共通予約UI実装（フロントエンドからcreateBookingを呼ぶ画面）
+- Studio Nagoya Base / SNB mensでの予約作成（Phase 1はStudio Xのみ。**#269で解消。
+  下記「Issue #269: 3ブランド対応と共通予約UI」を参照**）
+- `#269` 以降の共通予約UI実装（フロントエンドからcreateBookingを呼ぶ画面。**#269で実装**）
 - `#271` 利用者向けメール通知（仮予約受付・確定・キャンセル・前日リマインド・来場案内）。
   本Issueで送るのは管理者向けの最低限の内部通知のみ
 - `#272` 管理者キャンセル機能
@@ -55,6 +59,100 @@ PENDING→EXPIREDが同時に進んでCalendar/Sheetsが不整合になる競合
   Studio Nagoya Base / SNB mens側の予約導線切替を含む）
 - 料金自動計算・決済・会員DB照合
 - 既存予約フォーム（`studio-x/reservation/`）・`_includes/calendar_embed.html`の変更/撤去
+
+## Issue #269: 3ブランド対応と共通予約UI
+
+Issue #268で `studio_x` 限定だった`createBooking`を、SNB（緊縛スタジオ本体） / SNB mens /
+Studio Xの3ブランドへ正式に拡張し、3ブランド共通の予約UIから実際にPENDING予約を
+作成できるようにした。
+
+### 採用したbrand識別子・bookingId prefix・表示名
+
+既存コードに正式なbrand識別子が無かったため、Issue #269本文の指定どおり
+`snb` / `mens` / `studio_x` を採用した（`gas/booking/Availability.gs`のコメントで
+Issue #265/#266時点から既にこの3値が前提として書かれていたことも確認済み）。
+brand文字列・prefix・表示名は`Booking.gs`の`ALLOWED_BOOKING_BRANDS` /
+`BRAND_ID_PREFIX_` / `BRAND_LABELS_`（`Booking.getBrandLabel`）に一元管理し、
+他ファイル（`CalendarRepository.gs` / `AdminNotifier.gs`等）はbrand文字列や
+表示名を直接持たない。
+
+| brand識別子 | 表示名（Calendar/管理者通知） | bookingId prefix | 例 |
+| --- | --- | --- | --- |
+| `snb` | SNB | `SNB` | `SNB-20261001-3F2A9B1C` |
+| `mens` | SNB mens | `MENS` | `MENS-20261001-3F2A9B1C` |
+| `studio_x` | Studio X | `SX`（**Issue #268から変更なし**） | `SX-20261001-3F2A9B1C` |
+
+未知のbrandは従来どおり`INVALID_BRAND`で拒否する（`ALLOWED_BOOKING_BRANDS`にない
+文字列は一切許可しない。brand偽装対策）。
+
+### サーバー側（GAS）の変更点
+
+- `Booking.gs`: `ALLOWED_BOOKING_BRANDS`を3ブランドへ拡張。`BRAND_ID_PREFIX_`に
+  `snb`/`mens`のprefixを追加（`studio_x`の`SX`は変更しない）。ブランド表示名を返す
+  `Booking.getBrandLabel(brand)`を追加。
+- `CalendarRepository.gs`: Calendarイベントのタイトルを`[ブランド表示名 状態] bookingId`
+  の形式に一般化し、`Booking.getBrandLabel`経由でブランド名を取得するようにした
+  （以前は`[Studio X ...]`にハードコードしていた）。`setEventStatus`はイベント作成時に
+  `setTag('brand', ...)`済みのタグから表示名を再取得するため、呼び出し側の
+  シグネチャは変更していない。**空き判定・状態判定のロジック自体はタイトル文字列にも
+  brandにも一切依存しない**（3ブランドとも同一Calendar・同一室のため、Availability.gsは
+  Issue #265/#266時点から変更していない）。
+- `AdminNotifier.gs`: 管理者通知メールの件名を`[ブランド表示名] 仮予約を受け付けました: ...`
+  に一般化した（以前は`[Studio X] ...`固定）。
+- `BookingRepository.gs` / `SpreadsheetRepository.gs` / `Availability.gs` / `Config.gs` /
+  `RateLimiter.gs`は**変更なし**（brandはすでに`input.brand`としてパイプライン全体を
+  透過しており、Sheetsの`brand`列・CalendarEventの`brand`タグへも元から正しいbrandが
+  保存されていた。Issue #268時点の制約は`ALLOWED_BOOKING_BRANDS`の一覧のみだったため）。
+
+### 変更していないこと（#269の意図的なスコープ外）
+
+- **Calendarはbrandごとに分けない。** 3ブランドとも同一室のため、引き続き
+  `CALENDAR_ID`ひとつだけを共有する（Web App・Calendar・Spreadsheetともに1つのまま。
+  ブランド別API・別Web Appも作らない）。
+- **空き判定ロジックをbrandで分岐させない。** `Availability.gs`は無変更。SNBで作られた
+  予約はmens/Studio Xの`getAvailability`でも塞がり、mens/Studio Xの予約もSNBから見て
+  塞がる（相互に競合する。テストは「テストの実行」節参照）。
+- `#270`（当日利用ルール・会員判定）・`#271`（利用者向けメール）・`#272`（管理者
+  キャンセル）・`#273`（本番切替・旧導線撤去）はいずれも実装していない。
+
+### 共通予約UI（フロントエンド）
+
+3ブランドともHTML/JSをコピーせず、以下を共通で使う。
+
+| ファイル | 役割 |
+| --- | --- |
+| `_includes/booking_app_ja.html` | 予約ウィザードの共通マークアップ（日時→空き時間→利用者情報→確認→完了の5ステップ） |
+| `scripts/booking-logic.js` | DOM非依存の共通ロジック（エラーメッセージ変換・入力検証・ペイロード組み立て等。`test/booking-logic.test.js`でテスト） |
+| `scripts/booking-app.js` | DOM配線・`getAvailability`/`createBooking`の呼び出し |
+| `styles/booking.css` | 共通スタイル（SNB/mensの`styles/common.css`とStudio Xの`studio-x/style.css`、テーマ変数名が異なる両方をCSS変数のフォールバック連鎖で吸収し、ブランドごとにCSSを複製しない） |
+| `scripts/booking-config.js` | **Booking Web AppのURLを設定する唯一の場所**（3ブランド共通。`BASE_URL`が空の間はAPIを呼ばず「準備中」の案内を表示する） |
+
+ブランドごとに変わるのは、ページ側（`booking/index.html` / `mens/booking/index.html` /
+`studio-x/booking/index.html`）が`_includes/booking_app_ja.html`へ渡す
+`brand` / `back_url` / `back_label` / `intro_note`のみ。空き判定・最低利用時間・
+15分刻み・競合判定のような業務ルールはフロント側に複製せず、`getAvailability`/
+`createBooking`の応答をそのまま表示する（GASを正とする）。
+
+`createBooking`へのPOSTは`Content-Type: text/plain;charset=utf-8`で送る
+（本文は引き続きJSON文字列）。Apps ScriptのWeb Appは`doOptions`を実装していないため、
+`application/json`を指定するとブラウザのCORSプリフライト(OPTIONS)が失敗する。
+`text/plain`はCORSセーフリストに含まれるためプリフライトが発生せず、
+`Code.gs`の`handleCreateBooking_`はContent-Typeの値に関わらず`e.postData.contents`を
+常に`JSON.parse`するため、この送り方でサーバー側の処理は変わらない。
+
+**本番デプロイ・本番URLへの接続はこのPR（#269）では行っていない。**
+`scripts/booking-config.js`の`BASE_URL`は空文字のままで、共通予約UIは
+「オンライン予約準備中」の案内を表示するのみ（実際のCalendar/Spreadsheetへは
+一切書き込まない）。本番デプロイ後にこの1ファイルのURLを差し替えることで
+3ブランドとも接続される（本番デプロイ自体は`#273`の責務）。
+
+### 既存導線との関係
+
+`studio-x/reservation/`（Formspreeの予約・撮影相談フォーム）・
+`_includes/calendar_embed.html`・トップページ/mensページの既存予約カレンダー導線は
+**このPRでは一切変更・撤去していない**。共通予約UIは新しいURL
+（`/booking/` `/mens/booking/` `/studio-x/booking/`）を追加しただけで、既存ページから
+このURLへリンクする変更もこのPRには含めていない（本番切替・旧導線撤去は`#273`）。
 
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
@@ -253,6 +351,9 @@ Spreadsheetを参照してしまう）。
 
 ### `GET ?date=YYYY-MM-DD&durationMinutes=120&brand=studio_x`（getAvailability。#266から変更なし）
 
+`brand`には`snb` / `mens` / `studio_x`のいずれかを指定できる（getAvailabilityは元から
+brandで判定を分岐させないため、この値は表示・流入元識別以外に使われない）。
+
 成功時：
 
 ```json
@@ -265,10 +366,10 @@ Spreadsheetを参照してしまう）。
 }
 ```
 
-### `POST`（createBooking。#268で追加）
+### `POST`（createBooking。#268でstudio_x限定として追加、#269でsnb/mensへ拡張）
 
-リクエストボディ（JSON。`Content-Type`はGAS Web Appの制約上テキストとして送る想定。
-フロントエンド実装は#269の責務）:
+リクエストボディ（JSON。`Content-Type`は共通予約UIから`text/plain;charset=utf-8`で
+送る。理由は「共通予約UI（フロントエンド）」節を参照）:
 
 ```json
 {
@@ -283,9 +384,14 @@ Spreadsheetを参照してしまう）。
   "purpose": "緊縛の自主練習",
   "paymentMethod": "現金",
   "note": "",
-  "source": "studio-x-reservation-form"
+  "source": "studio-x-booking-app"
 }
 ```
+
+`brand`には`snb` / `mens` / `studio_x`のいずれかを指定する。`source`は共通予約UIが
+ブランドごとに自動設定する値で、`snb-booking-app` / `mens-booking-app` /
+`studio-x-booking-app`のいずれかになる（`scripts/booking-logic.js`の
+`BRAND_META`参照）。
 
 成功時：
 
@@ -318,8 +424,9 @@ fail-closed） / `INVALID_DATE` / `INVALID_DURATION` / `DURATION_TOO_SHORT` /
 `LOCK_TIMEOUT` / `SLOT_CONFLICT` / `BOOKING_SAVE_FAILED` / `INVALID_JSON` /
 `INTERNAL_ERROR`
 
-Phase 1では`studio_x`以外の`brand`を指定してもサーバー側で拒否する
-（フロント表示に関わらずbrand偽装で他ブランドの予約は作れない）。
+Issue #269時点で`brand`に指定できるのは`snb` / `mens` / `studio_x`の3つのみで、
+それ以外の文字列を指定した場合はサーバー側で`INVALID_BRAND`として拒否する
+（フロント表示に関わらずbrand偽装で未許可のbrandからの予約は作れない）。
 
 ## 管理メニュー用GASプロジェクト（Booking Admin）のセットアップ
 
@@ -624,11 +731,35 @@ Issue #268で追加:
   同一LockServiceを共有し直列化されることの検証・container-boundスクリプトのonOpen
   単純トリガーによる管理メニューの配線）
 
+Issue #269で追加・更新:
+
+- `test/booking-model.test.js`（更新） — snb/mens/studio_xの3ブランドすべてを許可し、
+  未知のbrandは引き続き`INVALID_BRAND`になること、brand別bookingId prefix
+  （`SNB-`/`MENS-`/`SX-`）、`Booking.getBrandLabel`の表示名を追加検証
+- `test/booking-create-booking.test.js`（更新） — 3ブランドすべてでcreateBooking成功・
+  PENDING作成・Sheetsのbrand列保存・Calendarのbrandタグ保存・bookingId prefix・
+  Calendarタイトルへのブランド表示名反映・管理者通知件名へのブランド表示名反映・
+  未知brandの拒否・**SNB/mens/Studio Xは同一Calendarのため、いずれかのブランドで
+  作った予約が他の2ブランドから見てSLOT_CONFLICTになること**（6パターン総当たり）を追加
+- `test/booking-logic.test.js`（新規） — 共通予約UIのDOM非依存ロジック
+  （`scripts/booking-logic.js`）。ブランド別表示名・error.code→日本語メッセージ変換・
+  エラー種別ごとの回復導線（時間の選び直し/入力の修正/再試行）振り分け・入力検証・
+  createBookingペイロード組み立て・JST「明日」計算
+- `test/helpers/frontend-sandbox.js`（新規） — `test/helpers/gas-sandbox.js`と同じ方針で
+  `scripts/`配下のDOM非依存JSをvm実行するテストヘルパー
+
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに
 差し替えており、実際のGoogle Calendar・Spreadsheet・Script Propertiesにはアクセスしない
 （`test/helpers/gas-stubs.js`）。実Calendarへ直接書き込むテストは、通常の自動テストとして
 実装していない（Issue #268本文の要件どおり）。
+
+共通予約UIのDOM配線（`scripts/booking-app.js`）自体はnode --testの対象外で、
+Playwright（Chromium）を使ったローカルブラウザでの手動確認で検証した
+（3ブランドとも375px幅で横スクロールなし・ステップ遷移・`getAvailability`/
+`createBooking`のモック応答に対するSLOT_CONFLICT/RATE_LIMITED/INTERNAL_ERROR等の
+表示・二重送信防止・成功後の再送信不可を確認済み。実Calendar/Spreadsheetへは
+アクセスしていない）。
 
 ## デプロイ後の手動確認（実Calendar・実Spreadsheet・実デプロイが前提のため、コードレビュー時点では確認不能）
 
@@ -644,6 +775,18 @@ CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用�
 - [ ] `expirePendingBookings`のトリガーが実際に15分おきに動作すること
 - [ ] 既存の`_includes/calendar_embed.html`および`studio-x/reservation/`の予約フォームが
       これまで通り動作すること（本Issueでは一切変更していない）
+
+Issue #269（3ブランド対応・共通予約UI）の追加確認:
+
+- [ ] `scripts/booking-config.js`の`BASE_URL`を実際のBooking Web App URLへ差し替えること
+      （3ブランド共通・この1ファイルのみでよい）
+- [ ] `/booking/`（SNB） / `/mens/booking/`（SNB mens） / `/studio-x/booking/`（Studio X）
+      それぞれから実際にPENDING予約を作成できること
+- [ ] 3ブランドのbookingIdがそれぞれ`SNB-` / `MENS-` / `SX-`で始まること
+- [ ] `Bookings`シートのbrand列・Calendarイベントのbrandタグに正しいbrandが保存されること
+- [ ] いずれかのブランドで作った予約が、他の2ブランドの予約フォーム・
+      `getAvailability`から見て塞がっていること（同一Calendarであることの実地確認）
+- [ ] 完了画面で「まだ予約は確定していない」ことが明示されていること
 
 Phase 0のゲート確認（スペースマーケットとの同一Calendar共存の実環境確認）は
 Issue #267で完了（PASS, 2026-09-19）。確認手順・記録は

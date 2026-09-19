@@ -7,11 +7,15 @@
  * GAS実行時は全.gsファイルが同一グローバルスコープにコンパイルされるため、
  * Availability.gsを先に読み込む前提で参照できる（Code.gs等の既存の依存順と同じ）。
  *
- * 固定仕様（Issue #268。実装中に変更しない）:
+ * 固定仕様（Issue #268/#269。実装中に変更しない）:
  * - 予約状態は PENDING / CONFIRMED / CANCELLED / EXPIRED の4つ
  * - 利用者からの送信は必ずPENDING（送信即CONFIRMEDは禁止）
- * - Phase 1で予約作成を許可するbrandは studio_x のみ（#269以降でSNB/mensへ拡張予定。
- *   ブランド拡張は運用値ではなく仕様変更のため、Script Propertiesではなくこの定数で管理する）
+ * - 予約作成を許可するbrandは snb / mens / studio_x の3つ（Issue #269でstudio_x限定から
+ *   拡張。3ブランドとも同一室・同一Calendarのため、空き判定ロジックはbrandで分岐させない。
+ *   ブランド一覧・bookingId prefix・表示名はいずれも運用値ではなく仕様であるため、
+ *   Script Propertiesではなくこの定数で一元管理する。他ファイル（CalendarRepository.gs /
+ *   AdminNotifier.gs等）はbrand文字列やラベルを直接持たず、必ずBooking.getBrandLabel等
+ *   ここの定義を経由する）
  */
 'use strict';
 
@@ -23,11 +27,21 @@ var Booking = (function () {
     EXPIRED: 'EXPIRED'
   };
 
-  /* Phase 1で予約作成できるbrandはstudio_xのみ。brand偽装で他ブランドから
+  /* 予約作成できるbrandはこの3つのみ（Issue #269）。brand偽装で未知のbrandから
      予約を作れないよう、フロントの表示に関わらずサーバー側でこの一覧のみ許可する。 */
-  var ALLOWED_BOOKING_BRANDS = ['studio_x'];
+  var ALLOWED_BOOKING_BRANDS = ['snb', 'mens', 'studio_x'];
 
-  var BRAND_ID_PREFIX_ = { studio_x: 'SX' };
+  /* bookingIdの接頭辞。studio_xの'SX'はIssue #268から変更しない
+     （既発行のbookingId・運用ドキュメントとの整合のため）。 */
+  var BRAND_ID_PREFIX_ = { snb: 'SNB', mens: 'MENS', studio_x: 'SX' };
+
+  /* Calendarタイトル・管理者通知メール等、人が読む表示にのみ使うブランド名。
+     空き判定・状態判定のロジックはこのラベルに一切依存しない。 */
+  var BRAND_LABELS_ = { snb: 'SNB', mens: 'SNB mens', studio_x: 'Studio X' };
+
+  function getBrandLabel(brand) {
+    return BRAND_LABELS_[brand] || String(brand || '');
+  }
 
   /* PENDINGから遷移できる先のみを許可する。CONFIRMED/CANCELLED/EXPIREDはいずれも
      終端状態として扱う（#268時点でCONFIRMED後のキャンセルは#272の責務）。 */
@@ -196,6 +210,7 @@ var Booking = (function () {
   return {
     STATUS: STATUS,
     ALLOWED_BOOKING_BRANDS: ALLOWED_BOOKING_BRANDS,
+    getBrandLabel: getBrandLabel,
     canTransition: canTransition,
     isAllowedBrand: isAllowedBrand,
     validateCreateBookingInput: validateCreateBookingInput,

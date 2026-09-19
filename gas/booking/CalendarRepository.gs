@@ -9,9 +9,12 @@
  * 一切触れず、開始・終了時刻と終日フラグだけを取り出す。
  *
  * Issue #268で追加したcreateBookingEvent等は、Calendarイベントに氏名・メール等の
- * PIIを一切書き込まない（タイトルは「[Studio X 状態] bookingId」の形式のみ。
- * 詳細はSpreadsheet台帳側にのみ保存する）。bookingId・statusはCalendarEventの
- * setTag/getTagで保持し、タイトル文字列に判定ロジックを依存させない。
+ * PIIを一切書き込まない（タイトルは「[ブランド名 状態] bookingId」の形式のみ。
+ * 詳細はSpreadsheet台帳側にのみ保存する）。bookingId・status・brandはCalendarEventの
+ * setTag/getTagで保持し、タイトル文字列に判定ロジックを依存させない
+ * （Issue #269でSNB/mens/Studio Xの3ブランドに拡張したが、3ブランドとも同一室・
+ * 同一Calendarのため空き判定はタイトルにもbrandにも依存しない。ブランド表示名は
+ * Booking.getBrandLabelを経由し、このファイルではbrand文字列を持たない）。
  */
 'use strict';
 
@@ -19,13 +22,20 @@ var CalendarRepository = (function () {
   var MINUTES_PER_DAY = 24 * 60;
 
   /* Calendarイベントのタイトルは人が一覧で状態を把握するための表示用に過ぎず、
-     空き判定・状態判定のいずれのロジックもこの文字列には依存しない（setTagが正）。 */
-  var STATUS_TITLE_PREFIX_ = {
-    PENDING: '[Studio X 仮予約]',
-    CONFIRMED: '[Studio X 確定]',
-    CANCELLED: '[Studio X キャンセル]',
-    EXPIRED: '[Studio X 期限切れ]'
+     空き判定・状態判定のいずれのロジックもこの文字列には依存しない（setTagが正）。
+     ブランド名はBooking.getBrandLabelから取得し、ここではbrand文字列を持たない。 */
+  var STATUS_LABEL_ = {
+    PENDING: '仮予約',
+    CONFIRMED: '確定',
+    CANCELLED: 'キャンセル',
+    EXPIRED: '期限切れ'
   };
+
+  function buildEventTitle_(brand, status, bookingId) {
+    var brandLabel = Booking.getBrandLabel(brand) || '予約';
+    var statusLabel = STATUS_LABEL_[status] || status;
+    return '[' + brandLabel + ' ' + statusLabel + '] ' + bookingId;
+  }
 
   function getCalendarOrThrow_(calendarId) {
     var calendar = CalendarApp.getCalendarById(calendarId);
@@ -81,7 +91,7 @@ var CalendarRepository = (function () {
     var calendar = getCalendarOrThrow_(calendarId);
     var start = parseDateTime(params.date, params.startTime, params.timezone);
     var end = new Date(start.getTime() + params.durationMinutes * 60000);
-    var title = STATUS_TITLE_PREFIX_.PENDING + ' ' + params.bookingId;
+    var title = buildEventTitle_(params.brand, 'PENDING', params.bookingId);
 
     var event = calendar.createEvent(title, start, end);
     event.setTag('bookingId', params.bookingId);
@@ -107,15 +117,16 @@ var CalendarRepository = (function () {
     event.deleteEvent();
   }
 
-  /* confirmBooking等でPENDING以外の状態へ遷移させる際、タイトルの接頭辞とstatusタグを
-     更新する。イベントが見つからない場合は例外を投げる（confirmBooking側でrecoveryへ記録）。 */
+  /* confirmBooking等でPENDING以外の状態へ遷移させる際、タイトルとstatusタグを更新する。
+     ブランド名は呼び出し側から渡させず、作成時にsetTagしたbrandタグから読み取る
+     （brand文字列を呼び出し元へ伝播させない・複数箇所でのbrand取り違えを避けるため）。
+     イベントが見つからない場合は例外を投げる（confirmBooking側でrecoveryへ記録）。 */
   function setEventStatus(calendarId, eventId, status, bookingId) {
     var event = getEventById(calendarId, eventId);
     if (!event) {
       throw new Error('Calendarイベントが見つかりません: ' + eventId);
     }
-    var prefix = STATUS_TITLE_PREFIX_[status] || ('[Studio X ' + status + ']');
-    event.setTitle(prefix + ' ' + bookingId);
+    event.setTitle(buildEventTitle_(event.getTag('brand'), status, bookingId));
     event.setTag('status', status);
   }
 

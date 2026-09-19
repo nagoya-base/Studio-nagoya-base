@@ -1,0 +1,74 @@
+---
+---
+<!DOCTYPE html>
+<html lang="ja" data-mood="school">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, follow">
+  <meta name="theme-color" content="#0b0b0f">
+  <title>予約フォーム（仮予約） | Studio X</title>
+  <meta name="description" content="Studio X（名古屋・上前津の完全個室撮影スタジオ）の予約フォームです。空き状況を確認しながら仮予約（PENDING）を申し込めます。送信時点では予約は確定しません。">
+  <link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/booking/">
+  <link rel="icon" href="../touch-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../touch-icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="../pages.css">
+  <link rel="stylesheet" href="../../styles/booking.css">
+
+  <!-- Google Analytics 4 -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-6TWDLEFWJT');
+  </script>
+</head>
+<body id="top">
+  <a class="skip-link" href="#main-content">本文へ移動</a>
+  <header class="site-header">
+    <a class="brand" href="../" aria-label="Studio X トップへ"><span class="brand-name">STUDIO <b>X</b></span><span class="brand-place">KAMIMAEZU / NAGOYA</span></a>
+    <nav class="desktop-nav" aria-label="メインナビゲーション"><a href="../">トップ</a><a href="../how-to/">利用ガイド</a><a href="../legal/">規約</a></nav>
+    <a class="header-cta" href="#booking-app">予約フォームへ</a>
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="メニューを開く"><span></span><span></span></button>
+  </header>
+  <div class="mobile-menu" id="mobile-menu" hidden>
+    <a href="../">トップ</a><a href="../how-to/">ご利用ガイド</a><a href="../legal/">利用規約・プライバシー</a>
+    <a class="mobile-menu-cta" href="#booking-app">予約フォームへ</a>
+  </div>
+
+  <main id="main-content" class="subpage-main">
+    <header class="subpage-hero">
+      <p class="section-kicker">RESERVATION (PENDING REQUEST)</p>
+      <h1>予約フォーム<br>（仮予約）</h1>
+      <p class="subpage-lead">利用日・利用時間・空き開始時刻を選んで仮予約（PENDING）を送信できます。送信時点では予約は確定していません。内容を確認後、通常24時間以内にご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
+    </header>
+
+    <section class="content-section" id="booking-app-section">
+      <a class="button button-ghost" href="../">← Studio Xトップへ戻る</a>
+      <h2 style="margin-top:24px;">仮予約フォーム</h2>
+      {% assign booking_back_url = "/studio-x/" | relative_url %}
+      {% include booking_app_ja.html
+        brand="studio_x"
+        back_url=booking_back_url
+        back_label="Studio Xトップへ戻る"
+        intro_note="このフォームはStudio X（コスプレ・ポートレート撮影スタジオ）専用です。撮影内容・設備のご相談は既存の「予約・撮影相談フォーム」もご利用いただけます。"
+      %}
+    </section>
+
+    <aside class="page-cta"><h2>予約前に、使い方も確認。</h2><p>入室、照明、清掃、施錠までを画像付きPDFと一緒に案内しています。</p><a class="button button-primary" href="../how-to/">ご利用ガイドを見る</a></aside>
+  </main>
+
+  <footer><a class="brand" href="../"><span class="brand-name">STUDIO <b>X</b></span><span class="brand-place">KAMIMAEZU / NAGOYA</span></a><div class="footer-links"><a href="../">トップ</a><a href="../how-to/">ご利用ガイド</a><a href="../legal/">利用規約・プライバシー</a><a href="https://x.com/studiox2026" target="_blank" rel="noopener noreferrer">X @studiox2026</a></div><p>© Studio X / Studio Nagoya Base</p></footer>
+
+  <script src="../analytics.js"></script>
+  <script src="../main.js"></script>
+  <script src="../../scripts/booking-logic.js"></script>
+  <script src="../../scripts/booking-config.js"></script>
+  <script src="../../scripts/booking-app.js"></script>
+</body>
+</html>

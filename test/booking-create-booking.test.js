@@ -102,14 +102,82 @@ test('createBooking: Calendarイベントのタイトル・説明に氏名・メ
   assert.strictEqual(event.getTitle().indexOf('himitsu@example.com'), -1);
 });
 
-test('createBooking: studio_x以外のbrandは作成を拒否し、Calendar/Sheetsに何も作らない', function () {
+test('createBooking: 未知のbrandは作成を拒否し、Calendar/Sheetsに何も作らない（Issue #269でsnb/mens/studio_xの3ブランドを許可した後も同様）', function () {
   var ctx = setup();
-  var result = ctx.sandbox.BookingRepository.createBooking(validPayload({ brand: 'snb' }));
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload({ brand: 'ataru' }));
 
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'INVALID_BRAND');
   assert.strictEqual(ctx.calendarsById.cal1.events.length, 0);
   assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 0);
+});
+
+test('createBooking (Issue #269): snb/mens/studio_xの3ブランドすべてでPENDING予約を作成できる', function () {
+  ['snb', 'mens', 'studio_x'].forEach(function (brand, index) {
+    var ctx = setup();
+    var result = ctx.sandbox.BookingRepository.createBooking(validPayload({ brand: brand, email: brand + '@example.com' }));
+
+    assert.strictEqual(result.success, true, brand + ' は作成に成功するべき');
+    assert.strictEqual(result.status, 'PENDING');
+    assert.strictEqual(result.brand, brand);
+
+    var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+    assert.ok(found, brand + ' の予約がSheetsに保存されているべき');
+    assert.strictEqual(found.record.brand, brand, 'Sheetsのbrand列に正しいbrandが保存されるべき');
+    assert.strictEqual(found.record.status, 'PENDING');
+
+    var calendarEvent = ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); })[0];
+    assert.strictEqual(calendarEvent.getTag('brand'), brand, 'Calendarのbrandタグに正しいbrandが保存されるべき');
+    assert.strictEqual(calendarEvent.getTag('bookingId'), result.bookingId);
+  });
+});
+
+test('createBooking (Issue #269): bookingId prefixはブランドごとに異なり、studio_xの既存prefix "SX" は変更しない', function () {
+  var expectedPrefixes = { snb: 'SNB-', mens: 'MENS-', studio_x: 'SX-' };
+  Object.keys(expectedPrefixes).forEach(function (brand) {
+    var ctx = setup();
+    var result = ctx.sandbox.BookingRepository.createBooking(validPayload({ brand: brand }));
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.bookingId.indexOf(expectedPrefixes[brand]), 0, brand + ' のbookingIdは "' + expectedPrefixes[brand] + '" で始まるべき: ' + result.bookingId);
+  });
+});
+
+test('createBooking (Issue #269): Calendarタイトルにもブランド表示名が入るが、空き判定・状態判定はこれに依存しない', function () {
+  var ctx = setup();
+  ctx.sandbox.BookingRepository.createBooking(validPayload({ brand: 'mens' }));
+  var event = ctx.calendarsById.cal1.events[0];
+  assert.match(event.getTitle(), /SNB mens/);
+});
+
+test('createBooking (Issue #269): SNB/mens/Studio Xは同一Calendarのため、いずれかのブランドで作った予約は他の2ブランドから見てもSLOT_CONFLICTになる', function () {
+  var pairs = [
+    ['snb', 'mens'],
+    ['snb', 'studio_x'],
+    ['mens', 'snb'],
+    ['mens', 'studio_x'],
+    ['studio_x', 'snb'],
+    ['studio_x', 'mens']
+  ];
+  pairs.forEach(function (pair) {
+    var firstBrand = pair[0];
+    var secondBrand = pair[1];
+    var ctx = setup();
+    var first = ctx.sandbox.BookingRepository.createBooking(
+      validPayload({ brand: firstBrand, email: firstBrand + '-a@example.com' })
+    );
+    assert.strictEqual(first.success, true, firstBrand + ' の1件目は成功するべき');
+
+    var second = ctx.sandbox.BookingRepository.createBooking(
+      validPayload({ brand: secondBrand, email: secondBrand + '-b@example.com' })
+    );
+    assert.strictEqual(second.success, false, firstBrand + '予約後の同時間' + secondBrand + '予約は拒否されるべき');
+    assert.strictEqual(second.error.code, 'SLOT_CONFLICT');
+    assert.strictEqual(
+      ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length,
+      1,
+      firstBrand + '/' + secondBrand + ': 競合時に新規イベントが作られてはいけない'
+    );
+  });
 });
 
 test('createBooking: 入力不正（不正な日付）はCalendar再取得すら行わずに拒否する', function () {
@@ -373,4 +441,14 @@ test('管理者通知: ADMIN_NOTIFICATION_EMAIL設定時は氏名・メール等
   assert.strictEqual(sent.to, 'admin@example.com');
   assert.strictEqual(sent.body.indexOf('極秘太郎'), -1);
   assert.strictEqual(sent.body.indexOf('himitsu@example.com'), -1);
+});
+
+test('管理者通知 (Issue #269): 通知件名にはbrandの表示名が入り、ブランドごとに区別できる', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' }, mailApp: mailApp });
+
+  ctx.sandbox.BookingRepository.createBooking(validPayload({ brand: 'mens' }));
+
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+  assert.match(mailApp._sentEmails[0].subject, /SNB mens/);
 });
