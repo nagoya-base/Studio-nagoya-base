@@ -21,7 +21,11 @@
  * - 「会員かどうか」ではなく「利用区分（customerType。初回利用/利用経験あり）」で
  *   当日予約可否を判定する。CUSTOMER_TYPES/isAllowedCustomerType参照。
  * - 当日判定は必ずavailabilityConfig.timezone（既定Asia/Tokyo）基準で行い、
- *   ブラウザのローカルtimezoneには依存しない（formatDateInTimezone参照）。
+ *   ブラウザのローカルtimezoneには依存しない（formatDateInTimezone参照。実体は
+ *   BookingAvailability.formatDateInTimezone）。
+ * - 当日（isSameDayBooking）は、開始時刻が現在時刻より後であることも必須とする
+ *   （レビュー対応で追加。SAME_DAY_START_TIME_PASSED。現在時刻の判定は
+ *   BookingAvailability.getCurrentMinutesInTimezoneを使う）。
  * - brandでこのルールを分岐させない（snb/mens/studio_xは同一施設という前提はIssue #269と同じ）。
  */
 'use strict';
@@ -116,23 +120,14 @@ var Booking = (function () {
 
   /*
    * dateオブジェクトを指定timezoneの暦日として'YYYY-MM-DD'へ変換する（Issue #270）。
-   * 当日判定はブラウザのローカルtimezoneに依存させず、サーバー側でこの関数を使い
-   * 必ずAsia/Tokyo（availabilityConfig.timezone）基準で行う。
-   * timezoneが不正でIntlが例外を投げた場合はnullを返す（呼び出し側でfail-closedに扱う）。
+   * 実体はBookingAvailability.formatDateInTimezone（Availability.gs）で、getAvailabilityと
+   * createBookingの両方が同じタイムゾーン変換ロジックを共有する（レビュー対応で
+   * getCurrentMinutesInTimezoneと合わせてAvailability.gs側に一元化した）。
+   * ここではBooking.gs内部の呼び出し・Booking.formatDateInTimezoneとしての
+   * 後方互換エクスポートのために薄いエイリアスを用意する。
    */
   function formatDateInTimezone(date, timezone) {
-    if (!isDateLike_(date)) return null;
-    try {
-      var parts = new Intl.DateTimeFormat('en-CA', {
-        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit'
-      }).formatToParts(date);
-      var result = {};
-      parts.forEach(function (part) { if (part.type !== 'literal') result[part.type] = part.value; });
-      if (!result.year || !result.month || !result.day) return null;
-      return result.year + '-' + result.month + '-' + result.day;
-    } catch (e) {
-      return null;
-    }
+    return BookingAvailability.formatDateInTimezone(date, timezone);
   }
 
   /*
@@ -231,6 +226,31 @@ var Booking = (function () {
       };
     }
 
+    /*
+     * 当日（isSameDayBooking）は、開始時刻が現在時刻より後であることを必須とする
+     * （Issue #270レビュー対応）。現在時刻ちょうども不可（「後」であることを要求する）。
+     * ここに到達する時点でfirst_time+当日は既に上でSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEとして
+     * 拒否済みのため、この判定に実際に到達するのはreturning+当日のみ。フロントの
+     * getAvailabilityが過去時刻を候補から除外していても、フロント改変・タイミングのずれ
+     * （空き取得後に時間が経過した等）でここまで来る可能性があるため、Calendar書き込み前に
+     * 必ずここで再検証する。
+     */
+    if (isSameDayBooking) {
+      var currentMinutes = BookingAvailability.getCurrentMinutesInTimezone(receivedAt, availabilityConfig.timezone);
+      if (currentMinutes === null) {
+        return { valid: false, error: err_('INVALID_CONFIG', '営業時間・予約ルールの設定が正しくありません。') };
+      }
+      if (startMinutes <= currentMinutes) {
+        return {
+          valid: false,
+          error: err_(
+            'SAME_DAY_START_TIME_PASSED',
+            '指定した開始時刻はすでに過ぎています。現在時刻より後の開始時刻を選択してください。'
+          )
+        };
+      }
+    }
+
     if (!isNonEmptyString_(input.name, 100)) {
       return { valid: false, error: err_('INVALID_NAME', 'お名前を入力してください。') };
     }
@@ -292,26 +312,30 @@ var Booking = (function () {
 
   /*
    * PENDING TTLの失効時刻（ミリ秒epoch）を計算する。
-   * 「受付から ttlHours 時間後」と「利用開始時刻の minHoursBeforeStart 時間前」の
-   * より早い方を採用する（Issue #268固定仕様）。
+   * 通常TTL（#268固定仕様。翌日以降の予約はこの式のみで決まる）:
+   *   normalExpiry = min(受付+ttlHours, 利用開始-minHoursBeforeStart)
    *
-   * minHoldHours（Issue #270で追加。省略時0＝#268時点と完全に同じ挙動）:
-   * 「利用開始時刻のminHoursBeforeStart時間前」が受付時刻より前（＝利用開始まで
-   * minHoursBeforeStart未満しかない）だと、上のMath.minにより失効時刻が受付時刻より
-   * 過去になり、作成直後に即EXPIREDになってしまう（#268時点では想定していなかった
-   * 「当日・利用経験ありの直前予約」で顕在化する）。minHoldHoursを渡すと、
-   * 「受付からminHoldHours時間は少なくとも保持する」下限を足し、この事故を防ぐ。
-   * ttlHoursによる上限（PENDINGを無期限にしない）は従来どおりMath.minで維持される。
+   * minHoldHours（Issue #270レビュー対応で再設計。省略時0＝#268時点と完全に同じ挙動）:
+   * 通常TTLの「利用開始-minHoursBeforeStart」が受付時刻以前になる場合（＝利用開始まで
+   * minHoursBeforeStart未満しかない直前の当日予約）に限り、grace（猶予）を使う。
+   * 「受付から少なくともminHoldHours時間は保持する」という単純な下限ではなく、
+   * **利用開始時刻(startAtMillis)を必ず上限とする**（expiry <= startAt を保証する。
+   * 当日PENDINGが利用開始後までCalendar/Sheets上に残ってしまう事故を防ぐため）。
+   * 通常TTLが受付時刻より後になる場合（＝開始まで十分な余裕がある）はgraceを使わず、
+   * 通常TTLをそのまま返す＝#268時点とビット単位で同じ値になる。
    */
   function computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, minHoldHours) {
     var ttlExpiry = createdAtMillis + ttlHours * 3600000;
-    var startLimit = startAtMillis - minHoursBeforeStart * 3600000;
-    /* minHoldHours未指定（0以下含む）の場合はMath.maxを一切効かせず、#268時点の
-       `Math.min(ttlExpiry, startLimit)` とビット単位で同じ値を返す（既存の翌日以降予約の
-       TTLへ一切影響しないことを保証するための設計。README/PR本文参照）。 */
-    var minHoldFloor = typeof minHoldHours === 'number' && minHoldHours > 0 ? createdAtMillis + minHoldHours * 3600000 : -Infinity;
-    var effectiveStartLimit = Math.max(startLimit, minHoldFloor);
-    return Math.min(ttlExpiry, effectiveStartLimit);
+    var normalStartLimit = startAtMillis - minHoursBeforeStart * 3600000;
+    var normalExpiry = Math.min(ttlExpiry, normalStartLimit);
+
+    if (!minHoldHours || minHoldHours <= 0 || normalExpiry > createdAtMillis) {
+      return normalExpiry;
+    }
+
+    var graceExpiry = createdAtMillis + minHoldHours * 3600000;
+
+    return Math.min(ttlExpiry, graceExpiry, startAtMillis);
   }
 
   function isExpired(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, nowMillis, minHoldHours) {

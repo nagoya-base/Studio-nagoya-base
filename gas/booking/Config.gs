@@ -80,9 +80,11 @@ var BookingConfig = (function () {
   /* PENDING TTLの既定値（Issue #268固定仕様 + Issue #270で追加）:
      - PENDING_TTL_HOURS: 受付から24時間
      - PENDING_TTL_MIN_HOURS_BEFORE_START: 利用開始時刻の2時間前を超えて保持しない
-     - PENDING_TTL_MIN_HOLD_HOURS（Issue #270で追加）: 上記2つの組み合わせにより
-       「利用開始まで2時間未満で受け付けた予約」が作成直後に即EXPIREDになる事故を防ぐための
-       最小保持時間。既定2時間（Booking.gsのcomputeTtlExpiryMillisコメント参照）。
+     - PENDING_TTL_MIN_HOLD_HOURS（Issue #270で追加。レビュー対応で意味を再定義）:
+       「利用開始まで2時間未満で受け付けた当日予約」で通常TTL計算式が受付時刻以前に
+       なってしまう場合にだけ使う最大猶予（grace）。既定2時間。「受付から少なくとも
+       この時間は必ず保持する」という下限ではなく、利用開始時刻を必ず上限とする
+       （expiry<=startAtを保証。Booking.gsのcomputeTtlExpiryMillisコメント参照）。
      - timezone（Issue #270で追加）: expirePendingBookingsが「当日受付かどうか」を
        Asia/Tokyo基準で判定するために使う（Availability設定のTIMEZONEと同じ値を共有する）。
      いずれもScript Propertiesで変更可能。 */

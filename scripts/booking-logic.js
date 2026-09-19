@@ -70,6 +70,7 @@
     INVALID_SOURCE: '送信元の情報が正しくありません。お手数ですがページを開き直してください。',
     INVALID_CUSTOMER_TYPE: '利用区分（初回利用／利用経験あり）を選択してください。',
     SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME: '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付を選択してください。',
+    SAME_DAY_START_TIME_PASSED: '指定した開始時刻はすでに過ぎています。現在時刻より後の開始時刻を選択してください。',
     RATE_LIMITED: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。',
     LOCK_TIMEOUT: '一時的に混み合っています。もう一度お試しください。',
     BOOKING_SAVE_FAILED: '予約の保存に失敗しました。しばらくしてから再度お試しください。',
@@ -94,7 +95,12 @@
     if (code === 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME' || code === 'INVALID_CUSTOMER_TYPE') {
       return 'reselect-date';
     }
-    if (code === 'SLOT_CONFLICT' || code === 'INVALID_START_TIME' || code === 'START_TIME_NOT_ALIGNED') {
+    if (
+      code === 'SLOT_CONFLICT' ||
+      code === 'INVALID_START_TIME' ||
+      code === 'START_TIME_NOT_ALIGNED' ||
+      code === 'SAME_DAY_START_TIME_PASSED'
+    ) {
       return 'reselect-time';
     }
     if (

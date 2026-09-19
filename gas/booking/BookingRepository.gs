@@ -361,11 +361,13 @@ var BookingRepository = (function () {
       }
 
       /*
-       * Issue #270: 「利用開始まで2時間未満で受け付けた当日予約」が作成直後に即EXPIREDに
-       * なる事故を防ぐため、受付時刻(createdAt)の暦日(Asia/Tokyo基準)と予約の利用日(date)が
-       * 一致する場合のみ、Booking.computeTtlExpiryMillisの最小保持時間(minHoldHours)を適用する。
-       * 一致しない（＝翌日以降に通常の余裕を持って受け付けた）予約は、minHoldHours=0のまま
-       * #268時点と完全に同じTTL計算になる（既存の翌日以降予約のTTLへの影響なし）。
+       * Issue #270（レビュー対応）: 「利用開始まで2時間未満で受け付けた当日予約」が
+       * 作成直後に即EXPIREDになる事故を防ぐため、受付時刻(createdAt)の暦日(Asia/Tokyo基準)と
+       * 予約の利用日(date)が一致する場合のみ、Booking.computeTtlExpiryMillisのgrace
+       * （通常TTLが受付時刻以前になる直前当日予約にだけ使う最大猶予。利用開始時刻を
+       * 必ず上限とする＝expiry<=startAtを保証する）を適用する。一致しない（＝翌日以降に
+       * 通常の余裕を持って受け付けた）予約はminHoldHours=0のまま#268時点と完全に同じ
+       * TTL計算になる（既存の翌日以降予約のTTLへの影響なし）。
        */
       var createdDateString = Booking.formatDateInTimezone(new Date(createdAtMillis), ttlConfig.timezone);
       var isSameDayBooking = !!createdDateString && record.date === createdDateString;

@@ -221,3 +221,17 @@ test('doPost: Issue #268でcreateBooking用のdoPostが追加されている', f
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
   assert.strictEqual(typeof sandbox.doPost, 'function');
 });
+
+/*
+ * doGet（getAvailability）は本番実行時、内部でnow省略時デフォルト（現在時刻）を使う
+ * ため、固定nowを直接注入するテストはBookingAvailability.getAvailability自体に対して
+ * test/booking-availability.test.jsで行う。ここでは、doGetの配線自体が壊れていないこと
+ * （実行時の現在日時と一致しない固定日付では当日フィルタが働かず、従来どおり
+ * 08:00から候補が出ること）だけを確認する（Issue #270レビュー対応）。
+ */
+test('doGet: 実行時の現在日付と一致しない固定日付を指定した場合は、従来どおり08:00から候補が出る（当日フィルタが誤って翌日以降の候補まで消さないことの確認）', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
+  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120' });
+  assert.strictEqual(body.success, true);
+  assert.ok(body.bookableStartTimes.indexOf('08:00') !== -1);
+});

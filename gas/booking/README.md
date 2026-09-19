@@ -14,8 +14,10 @@ Epic #265の一部として以下を実装済み。
   Studio Xは同一施設）の利用経験があるか」で判定するようにした。利用区分
   （`first_time`/`returning`）を共通予約UI・createBooking・Sheets台帳に追加し、
   GAS側でも「当日＋初回利用」を`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`で拒否する。
-  PENDING TTLも「当日受付・開始2時間未満」の予約が作成直後に即EXPIREDにならないよう
-  調整した（詳細は「Issue #270: 当日利用ルールと利用経験判定」参照）
+  さらにレビュー対応として、`getAvailability`/`createBooking`の両方で「当日の
+  過去開始時刻」を拒否し（`SAME_DAY_START_TIME_PASSED`）、PENDING TTLも
+  「当日受付・開始2時間未満」の予約が作成直後に即EXPIREDにならず、かつ利用開始後まで
+  PENDINGが残らないよう調整した（詳細は「Issue #270: 当日利用ルールと利用経験判定」参照）
 
 このディレクトリは自社予約システム専用のApps Scriptプロジェクトの元になるソース一式
 （複数プロジェクトへ配布するファイル群）として運用し、`gas/ataru_survey_public` 等の
@@ -178,7 +180,11 @@ brand文字列・prefix・表示名は`Booking.gs`の`ALLOWED_BOOKING_BRANDS` /
   （管理者確認後に`confirmBooking`でCONFIRMEDへ遷移させる、という#268からの仕組みは
   一切変更していない）。
 - 当日判定は必ず`availabilityConfig.timezone`（既定`Asia/Tokyo`）基準で行う。
-  ブラウザのローカルtimezoneには依存しない（`Booking.formatDateInTimezone`参照）。
+  ブラウザのローカルtimezoneには依存しない（`BookingAvailability.formatDateInTimezone`参照）。
+- **利用経験あり＋当日でも、開始時刻が現在時刻より後であることを必須とする**
+  （現在時刻ちょうども不可。レビュー対応で追加）。今日の空き候補（`getAvailability`）は
+  現在時刻より後だけを返し、`createBooking`もCalendar書き込み前に同じ判定を
+  再検証する（`SAME_DAY_START_TIME_PASSED`。「当日の過去開始時刻を防ぐ」参照）。
 - brandでこのルールを分岐させない。snb/mens/studio_xのいずれでも同じ判定になる。
 
 ### 採用した利用区分の内部値
@@ -193,28 +199,37 @@ brand文字列・prefix・表示名は`Booking.gs`の`ALLOWED_BOOKING_BRANDS` /
 
 ### GAS側の変更点
 
+- **`Availability.gs`**: `formatDateInTimezone`（Dateを指定timezone基準の
+  `'YYYY-MM-DD'`へ変換）と`getCurrentMinutesInTimezone`（Dateを指定timezone基準の
+  「00:00からの経過分」0〜1439へ変換）を追加。どちらもGAS組み込みサービスに
+  依存しない純粋関数で、timezoneが不正な場合はnullを返しfail-closedに扱う
+  （`Booking.gs`は`BookingAvailability.formatDateInTimezone`を再利用し、
+  `Booking.formatDateInTimezone`として薄いエイリアスを公開する）。
+  `computeBookableStartTimes`に第4引数`minimumStartMinutes`（省略可）を追加し、
+  指定した場合はそれ以前（ちょうど含む）の候補を除外する。`getAvailability`自体も
+  第4引数`now`（省略時は現在時刻）を受け取り、利用日が当日の場合だけ
+  `getCurrentMinutesInTimezone`で現在時刻を求めて`minimumStartMinutes`として渡す
+  （**customerTypeルールはgetAvailabilityに一切持ち込まない**。当日+初回利用の
+  可否判定は引き続き`createBooking`のみの責務）。
 - **`Booking.gs`**: `CUSTOMER_TYPES` / `ALLOWED_CUSTOMER_TYPES` /
   `isAllowedCustomerType` / `getCustomerTypeLabel`を追加。
   `validateCreateBookingInput`に`customerType`の必須検証（未指定・未知の値は
   `INVALID_CUSTOMER_TYPE`でfail-closedに拒否）と、当日判定・同日+初回利用の拒否
-  （`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`）を追加した。当日判定用に、Dateを
-  指定timezone基準の`'YYYY-MM-DD'`へ変換する`formatDateInTimezone`（timezoneが
-  不正な場合はnullを返し、呼び出し側でfail-closedに`INVALID_CONFIG`とする）も追加した。
-  `validateCreateBookingInput`は新たに第3引数`now`（受付時刻）を受け取る
-  （省略時は現在時刻）。
+  （`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`）、**当日の過去開始時刻の拒否**
+  （`SAME_DAY_START_TIME_PASSED`。開始時刻が現在時刻より後であることを必須とする。
+  Calendar書き込み前の`validateCreateBookingInput`内で検証するため、フロントや
+  `getAvailability`だけに依存しない）を追加した。`validateCreateBookingInput`は
+  新たに第3引数`now`（受付時刻）を受け取る（省略時は現在時刻）。
 - **`BookingRepository.gs`**: `createBooking`が`validateCreateBookingInput`へ
   `now`を渡すよう変更。Sheets保存用の`record`へ`customerType`を追加。
   `expirePendingBookings`にTTL調整（後述）を追加。
 - **`Config.gs`**: `getTtlConfig()`へ`minHoldHours`（`PENDING_TTL_MIN_HOLD_HOURS`。
-  既定2）と`timezone`（`TIMEZONE`と共有）を追加。
+  既定2。意味は「TTLの変更内容と理由」参照）と`timezone`（`TIMEZONE`と共有）を追加。
 - **`SpreadsheetRepository.gs`**: `Bookings`シートのヘッダーへ`customerType`を
   **末尾に追記**（既存行の列を一切ずらさない。詳細は「Sheets変更」参照）。
 - **`BookingTriggers.gs`**: グローバル関数`expirePendingBookings()`が`now`引数を
   受け取れるようにした（時間主導トリガーからは引数なしで呼ばれるため本番動作に
   影響しない。テストから受付時刻を固定してTTLを検証できるようにするための変更）。
-- **`Availability.gs`（getAvailability）は無変更**。当日利用ルールは
-  `createBooking`のみの責務とする（Issue #270本文の非対象「利用履歴DBによる自動照合」
-  とも整合し、`getAvailability`は引き続きbrand・customerTypeに一切依存しない）。
 
 ### createBooking payloadへの追加項目
 
@@ -231,18 +246,40 @@ brand文字列・prefix・表示名は`Booking.gs`の`ALLOWED_BOOKING_BRANDS` /
 `customerType`は`"first_time"`または`"returning"`のいずれか必須。省略・未知の値は
 `INVALID_CUSTOMER_TYPE`で拒否する（「API仕様」節参照）。
 
+### 当日の過去開始時刻を防ぐ
+
+当日は「利用経験あり」であっても、開始時刻が現在時刻より後であることを必須とする
+（現在時刻ちょうども不可）。判定は`availabilityConfig.timezone`（既定`Asia/Tokyo`）
+基準で行い、ブラウザのtimezone・GAS実行環境timezoneのいずれにも依存しない。
+
+- `getAvailability`: 利用日が当日の場合だけ、`getCurrentMinutesInTimezone`で
+  求めた現在時刻（分）より後の候補開始時刻のみを返す（`computeBookableStartTimes`の
+  `minimumStartMinutes`）。例: JST 10:07に問い合わせた場合、09:00・10:00は候補に
+  出ず、10:15・10:30はCalendar競合がなければ候補に出る。
+- `createBooking`: Calendar書き込み前の`validateCreateBookingInput`で同じ判定を
+  必ず再検証する。フロントの`getAvailability`が過去時刻を除外していても、
+  フロント改変や、空き取得から送信までの間に時刻が経過したケースに備え、
+  サーバー側で独立して検証する（`SAME_DAY_START_TIME_PASSED`）。
+- 当日＋初回利用は、開始時刻が現在時刻より後であっても
+  `SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`が先に返る（`SAME_DAY_START_TIME_PASSED`の
+  判定に到達するのは実質的に当日＋利用経験ありのみ）。
+- 翌日以降はこの判定を一切行わない（現在時刻に関わらず、日付が異なれば従来どおり）。
+
 ### 新規error.code
 
 | error.code | 意味 |
 | --- | --- |
 | `INVALID_CUSTOMER_TYPE` | `customerType`が未指定、または`first_time`/`returning`以外の値 |
 | `SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME` | 利用日が当日（Asia/Tokyo基準）かつ`customerType`が`first_time` |
+| `SAME_DAY_START_TIME_PASSED` | 利用日が当日かつ開始時刻が現在時刻以前（ちょうど含む） |
 
 いずれも`scripts/booking-logic.js`の`messageForErrorCode`/`recoveryActionForErrorCode`へ
-対応する日本語メッセージと回復導線（`reselect-date`。日付・利用区分の選び直しへ誘導する。
-既存の`reselect-time`は空き時間の選び直しのみで、利用日自体は変えないため区別した）を
-追加済み。API直叩きでこれらのエラーが返っても、フロントは意味不明な`INTERNAL_ERROR`
-表示にはしない。
+対応する日本語メッセージと回復導線を追加済み。`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`/
+`INVALID_CUSTOMER_TYPE`は`reselect-date`（日付・利用区分の選び直しへ誘導）、
+`SAME_DAY_START_TIME_PASSED`は`reselect-time`（Step2へ戻り`getAvailability`を
+再取得。当日の過去時刻は`getAvailability`側で既に除外されるため、再取得すれば
+現在時刻より後の候補のみが表示される）。API直叩きでこれらのエラーが返っても、
+フロントは意味不明な`INTERNAL_ERROR`表示にはしない。
 
 ### UI側の変更点（共通予約UI）
 
@@ -283,16 +320,37 @@ brand文字列・prefix・表示名は`Booking.gs`の`ALLOWED_BOOKING_BRANDS` /
 
 **背景（#268時点の課題）**: PENDING TTLは「受付から`PENDING_TTL_HOURS`時間後」と
 「利用開始時刻の`PENDING_TTL_MIN_HOURS_BEFORE_START`時間前」の早い方
-（`Booking.computeTtlExpiryMillis`）。利用経験ありの当日予約で利用開始まで
-`PENDING_TTL_MIN_HOURS_BEFORE_START`（既定2時間）未満しかない場合、
-「開始2時間前」が受付時刻より過去になり、**失効時刻が受付時刻より前になる＝
+（`normalExpiry = min(受付+ttlHours, 開始-minHoursBeforeStart)`）。利用経験ありの
+当日予約で利用開始まで`PENDING_TTL_MIN_HOURS_BEFORE_START`（既定2時間）未満しか
+ない場合、`normalExpiry`が受付時刻以前になり、**失効時刻が受付時刻より前になる＝
 作成直後に即EXPIREDになる**可能性があった。
 
-**採用した設計**: `computeTtlExpiryMillis`/`isExpired`に第5引数
-`minHoldHours`（省略可）を追加し、「受付からminHoldHours時間は少なくとも保持する」
-下限を`Math.max(startLimit, 受付時刻+minHoldHours)`として`Math.min`の対象に加えた。
-`minHoldHours`を渡さない場合は#268時点の計算式とビット単位で完全に同じ値を返す
-（`Math.max(startLimit, -Infinity)`＝`startLimit`）。
+**最初の実装（1回目レビューで指摘・修正）**: 「受付から少なくともminHoldHours時間は
+保持する」下限を単純に足す設計にしたところ、例えば09:00受付・09:30開始の予約が
+11:00までPENDINGとして残り得る（**利用開始後もPENDINGが残ってしまう**）という
+指摘を受けた。
+
+**採用した設計（レビュー対応後）**: `minHoldHours`は「受付から少なくともこの時間は
+保持する」という単純な下限ではなく、**「通常TTL計算式（`normalExpiry`）が受付時刻
+以前になってしまう直前当日予約にだけ使う最大猶予（grace）」**として再定義し、
+**利用開始時刻（`startAt`）を必ず上限とする**（`expiry <= startAt`を保証する）。
+
+```js
+var ttlExpiry = createdAtMillis + ttlHours * 3600000;
+var normalStartLimit = startAtMillis - minHoursBeforeStart * 3600000;
+var normalExpiry = Math.min(ttlExpiry, normalStartLimit);
+
+if (!minHoldHours || minHoldHours <= 0 || normalExpiry > createdAtMillis) {
+  return normalExpiry;
+}
+
+var graceExpiry = createdAtMillis + minHoldHours * 3600000;
+return Math.min(ttlExpiry, graceExpiry, startAtMillis);
+```
+
+`normalExpiry`が受付時刻より後（＝開始まで十分な余裕がある）であればgraceを使わず
+`normalExpiry`をそのまま返す＝#268時点の計算式とビット単位で完全に同じ値になる。
+`minHoldHours`を渡さない場合も同様（`normalExpiry`をそのまま返す）。
 
 `BookingRepository.expirePendingBookings`は、候補行ごとに**受付時刻（`createdAt`）の
 暦日（Asia/Tokyo基準）と、その予約の利用日（`date`列）が一致する場合のみ**
@@ -309,28 +367,39 @@ brand文字列・prefix・表示名は`Booking.gs`の`ALLOWED_BOOKING_BRANDS` /
   一致する予約だけ」に対象を絞っても、当日予約の救済という目的を過不足なく
   達成でき、かつ既存の翌日以降予約のTTL計算には数学的に一切影響しない
   （`record.date !== 受付日`の予約は常に`minHoldHours=0`で呼ばれるため）。
-- `minHoldHours`はGAS側のみで完結する値であり、フロントの当日判定
-  （`isSameDayFirstTimeBlocked`）とは独立している。フロントの表示都合で
-  TTLの実際の計算を変えることはない。
+- 利用開始時刻を必ず上限とすることで、**当日PENDINGが利用開始後までCalendar/
+  Sheets上に残ってしまう事故を防ぐ**（1回目レビュー指摘への対応）。
+- `minHoldHours`・brand・customerTypeのいずれもTTL計算式を分岐させない
+  （GAS側のみで完結し、フロントの当日判定`isSameDayFirstTimeBlocked`とは独立）。
 
-**当日予約・開始2時間未満のケースの扱い**: 受付から`PENDING_TTL_MIN_HOLD_HOURS`
-（既定2時間）は必ずPENDINGとして保持される。それを過ぎ、かつ
-`PENDING_TTL_HOURS`（既定24時間）にも達していなければ、通常どおり
-`expirePendingBookings`（15分おきの時間主導トリガー）でEXPIREDになる
-（**PENDINGを無期限にはしない**）。管理者が`PENDING_TTL_MIN_HOLD_HOURS`以内に
-確認・`confirmBooking`すれば、当日予約も通常の予約と同じ手順で確定できる。
+**当日直前予約のTTLの扱い（09:00受付を例に）**:
+
+| 開始時刻 | 通常式（開始-2h） | 実際のexpiry | 備考 |
+| --- | --- | --- | --- |
+| 09:30 | 07:30（受付前） | **09:30**（開始時刻） | graceを使うが開始時刻が上限 |
+| 10:30 | 08:30（受付前） | **10:30**（開始時刻） | 同上 |
+| 11:30 | 09:30（受付後） | **09:30**（通常式のまま） | graceは使わない |
+| 12:00 | 10:00（受付後） | **10:00**（通常式のまま） | graceは使わない |
+
+いずれのケースも`expiry <= startAt`（利用開始後までPENDINGが残らない）かつ
+`expiry > createdAt`（正常に作成できた予約が作成直後に即EXPIREDにはならない）を
+満たす。それでも`PENDING_TTL_HOURS`（既定24時間）による上限（`Math.min`）は
+維持されるため、**PENDINGを無期限にはしない**。管理者が利用開始前に確認・
+`confirmBooking`すれば、当日予約も通常の予約と同じ手順で確定できる。
 
 **要件との対応**:
 
-- 当日予約が作成直後に即EXPIREDにならない → `minHoldHours`の下限で満たす
+- 当日予約が作成直後に即EXPIREDにならない → graceにより`expiry > createdAt`を満たす
+- 当日PENDINGが利用開始後まで残らない → graceは`startAtMillis`を必ず上限とする
+  ため`expiry <= startAt`を満たす
 - 翌日以降の既存TTLを壊さない → 「受付日と利用日が一致する場合のみ」という
   ガードにより、既存のTTL計算式をビット単位で保つ
 - PENDINGを無期限にしない → `PENDING_TTL_HOURS`による上限（`Math.min`）は
   従来どおり維持される
-- 管理者確認前に意図せず消えない → `PENDING_TTL_MIN_HOLD_HOURS`の間は
-  必ず保持される
 - expiry判定をフロントに持たせない → `computeTtlExpiryMillis`/`isExpired`は
   引き続き`gas/booking/Booking.gs`のみに存在し、フロントは一切この判定を行わない
+- `expirePendingBookings`のCalendar削除・Sheets EXPIRED更新・recovery記録・
+  LockService・`confirmBooking`との排他はいずれも変更していない
 
 ### 3ブランド共通であることの確認
 
@@ -561,10 +630,17 @@ Spreadsheetを参照してしまう）。
 
 ## API仕様
 
-### `GET ?date=YYYY-MM-DD&durationMinutes=120&brand=studio_x`（getAvailability。#266から変更なし）
+### `GET ?date=YYYY-MM-DD&durationMinutes=120&brand=studio_x`（getAvailability。
+#266から拡張、Issue #270レビュー対応で「当日の過去開始時刻を除外」を追加）
 
 `brand`には`snb` / `mens` / `studio_x`のいずれかを指定できる（getAvailabilityは元から
 brandで判定を分岐させないため、この値は表示・流入元識別以外に使われない）。
+`customerType`はgetAvailabilityの入力・応答のいずれにも登場しない（当日+初回利用の
+可否判定は`createBooking`のみの責務。「当日の過去開始時刻を防ぐ」参照）。
+
+`date`が当日（`Asia/Tokyo`基準）の場合、`bookableStartTimes`には現在時刻より後の
+開始時刻のみを含める（現在時刻ちょうども除外）。翌日以降は現在時刻に関わらず
+従来どおり全候補を返す。
 
 成功時：
 
@@ -606,10 +682,12 @@ brandで判定を分岐させないため、この値は表示・流入元識別
 `first_time`（初回利用）または`returning`（利用経験あり）のいずれかを指定する
 （Issue #270で必須項目として追加。省略・未知の値は`INVALID_CUSTOMER_TYPE`で拒否する）。
 `date`が当日（Asia/Tokyo基準）かつ`customerType`が`first_time`の場合は
-`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`で拒否する（「Issue #270: 当日利用ルールと
-利用経験判定」参照）。`source`は共通予約UIがブランドごとに自動設定する値で、
-`snb-booking-app` / `mens-booking-app` / `studio-x-booking-app`のいずれかになる
-（`scripts/booking-logic.js`の`BRAND_META`参照）。
+`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`で拒否する。当日かつ`startTime`が現在時刻以前
+（ちょうど含む。Asia/Tokyo基準）の場合は`SAME_DAY_START_TIME_PASSED`で拒否する
+（「Issue #270: 当日利用ルールと利用経験判定」参照）。`source`は共通予約UIが
+ブランドごとに自動設定する値で、`snb-booking-app` / `mens-booking-app` /
+`studio-x-booking-app`のいずれかになる（`scripts/booking-logic.js`の
+`BRAND_META`参照）。
 
 成功時：
 
@@ -637,7 +715,8 @@ brandで判定を分岐させないため、この値は表示・流入元識別
 `customerType`が未指定・未知の値） / `INVALID_CONFIG`（Availability設定自体が不正。
 fail-closed） / `INVALID_DATE`（過去日を含む） /
 `SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`（Issue #270で追加。当日＋`first_time`の組み合わせ）/
-`INVALID_DURATION` / `DURATION_TOO_SHORT` /
+`SAME_DAY_START_TIME_PASSED`（Issue #270レビュー対応で追加。当日＋開始時刻が現在時刻
+以前）/ `INVALID_DURATION` / `DURATION_TOO_SHORT` /
 `INVALID_START_TIME` / `START_TIME_NOT_ALIGNED`（開始時刻が`SLOT_STEP_MINUTES`刻みでない）/
 `INVALID_NAME` / `INVALID_EMAIL` / `INVALID_PHONE` / `INVALID_PEOPLE` / `INVALID_PURPOSE` /
 `INVALID_PAYMENT_METHOD` / `INVALID_NOTE` / `INVALID_SOURCE` / `RATE_LIMITED`
@@ -983,9 +1062,23 @@ Issue #270で追加・更新:
   `INVALID_CUSTOMER_TYPE`）、過去日の拒否（`INVALID_DATE`）、当日+初回利用の拒否
   （`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`）、当日+利用経験ありの許可、翌日以降は
   両方許可、snb/mens/studio_xで同じ挙動になること、`Booking.formatDateInTimezone`の
-  タイムゾーン変換・不正timezoneのfail-closed、`computeTtlExpiryMillis`/`isExpired`の
-  `minHoldHours`引数（省略時は#268時点と同じ値になること・開始まで余裕がある場合は
-  結果が変わらないこと）を追加
+  タイムゾーン変換・不正timezoneのfail-closedを追加。**レビュー対応で追加**:
+  当日+利用経験ありで開始時刻が現在時刻以前（ちょうど含む）は
+  `SAME_DAY_START_TIME_PASSED`で拒否、現在時刻より後なら許可、当日+初回利用は
+  過去開始時刻でも`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`が優先、翌日以降は
+  過去開始時刻判定を行わないこと、snb/mens/studio_xで同じ挙動になること。
+  `computeTtlExpiryMillis`/`isExpired`の`minHoldHours`引数をレビュー指摘の
+  最低限のTTLテスト（09:00受付/09:30・10:30・11:30・12:00開始、翌日、ttlHours=1、
+  当日直前予約すべてで`expiry<=startAt`かつ`expiry>createdAt`）に置き換え
+- `test/booking-availability.test.js`（更新） — `computeBookableStartTimes`の
+  `minimumStartMinutes`引数、`getAvailability`が当日は現在時刻以前（ちょうど含む）の
+  候補を除外し翌日以降は従来どおり全候補を返すこと、`now`省略時のデフォルト、
+  `getAvailability`の応答にcustomerType関連キーが一切含まれないこと、
+  `getCurrentMinutesInTimezone`/`formatDateInTimezone`の不正timezoneのfail-closedを追加
+  （Issue #270レビュー対応）
+- `test/booking-code-runtime.test.js`（更新） — doGetの配線が当日フィルタ追加後も
+  壊れていないこと（実行時の現在日付と一致しない固定日付では従来どおり全候補が
+  返ること）を追加
 - `test/booking-config.test.js`（更新） — `getTtlConfig()`の既定値
   （`minHoldHours`/`timezone`を含む）、`PENDING_TTL_MIN_HOLD_HOURS`の
   Script Properties上書き・誤設定時のフォールバックを追加
@@ -993,16 +1086,21 @@ Issue #270で追加・更新:
   使い、当日+初回利用の拒否（Calendar/Sheetsに何も作らずbookingIdも返さないことを含む）・
   当日+利用経験ありのPENDING作成成功（Sheetsの`customerType`列保存を含む）・
   翌日以降は両方成功・snb/mens/studio_xで同じ挙動になること・`customerType`未指定/
-  不正値の拒否・過去日の拒否を追加
+  不正値の拒否・過去日の拒否を追加。**レビュー対応で追加**: 当日+利用経験ありで
+  開始時刻が現在時刻以前はAPI直呼びでも`SAME_DAY_START_TIME_PASSED`で拒否し
+  Calendar/Sheetsに何も作らないこと、現在時刻より後なら成功すること、当日+初回利用は
+  過去開始時刻でも優先順位どおり`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`が返ること、
+  snb/mens/studio_xで同じ挙動になること
 - `test/booking-confirm-expire.test.js`（更新） — 当日受付・開始2時間未満の予約が
-  作成直後の`expirePendingBookings`実行で即EXPIREDにならないこと、
-  `PENDING_TTL_MIN_HOLD_HOURS`を過ぎればEXPIREDになること（無期限PENDINGにしない）、
-  受付日と利用日が一致しない（＝当日受付でない）予約は対象外のまま#268時点と同じ
-  TTL計算になることを追加（`BookingTriggers.gs`のグローバル関数
-  `expirePendingBookings(now)`が受付時刻を受け取れるようにした変更に対応）
+  作成直後の`expirePendingBookings`実行で即EXPIREDにならないこと、受付日と利用日が
+  一致しない（＝当日受付でない）予約は対象外のまま#268時点と同じTTL計算になることを
+  追加（`BookingTriggers.gs`のグローバル関数`expirePendingBookings(now)`が受付時刻を
+  受け取れるようにした変更に対応）。**レビュー対応で更新**: 「minHoldHoursを過ぎれば
+  EXPIREDになる」テストを「利用開始時刻の1分前はまだPENDING・1分後にはEXPIREDになる」
+  テストに置き換え、当日PENDINGが利用開始後まで残らないことを直接検証
 - `test/booking-logic.test.js`（更新） — 利用区分の内部値（`isAllowedCustomerType`/
   `customerTypeLabel`）、当日+初回利用の検出（`isSameDayFirstTimeBlocked`）、新規
-  error.codeの日本語メッセージ・回復導線（`reselect-date`）、
+  error.codeの日本語メッセージ・回復導線（`reselect-date`/`reselect-time`）、
   `buildCreateBookingPayload`への`customerType`追加を追加
 
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
@@ -1057,10 +1155,20 @@ Issue #270（当日利用ルールと利用経験判定）の追加確認:
 - [ ] 利用経験あり＋当日で実際にPENDING予約を作成し、`Bookings`シートの
       `customerType`列に`returning`が保存されること
 - [ ] 当日・利用開始まで2時間未満の予約が、作成直後にEXPIREDにならないこと
-      （`PENDING_TTL_MIN_HOLD_HOURS`が経過するまでPENDINGのまま残ること）
-- [ ] `PENDING_TTL_MIN_HOLD_HOURS`を過ぎ、かつ管理者が確定しなかった当日予約が
-      正しくEXPIREDになること（Calendarイベント削除・Sheets側`status`更新を含む）
+      （graceにより`expiry > createdAt`が保たれる）
+- [ ] 当日・利用開始まで2時間未満の予約が、利用開始時刻を過ぎればEXPIREDになること
+      （graceは利用開始時刻を上限とするため`expiry <= startAt`。利用開始後まで
+      PENDINGが残らないことの実地確認。Calendarイベント削除・Sheets側`status`更新を含む）
 - [ ] 翌日以降の通常予約のPENDING失効タイミングが、このIssue導入前と変わっていないこと
+- [ ] `getAvailability`に当日の日付を指定した場合、現在時刻より前の開始時刻が
+      候補に含まれないこと（現在時刻ちょうども除外）。翌日以降は現在時刻に関わらず
+      従来どおり全候補が返ること
+- [ ] 利用経験あり＋当日で、現在時刻以前の開始時刻を指定してcreateBooking APIを
+      直接呼んでも`SAME_DAY_START_TIME_PASSED`で拒否され、CalendarイベントもSheets行も
+      作られないこと
+- [ ] 共通予約UIで、空き時間取得後に時間が経過し送信時点で開始時刻が過去になった場合、
+      `SAME_DAY_START_TIME_PASSED`を受けてStep2（空き開始時刻）へ戻り、
+      `getAvailability`が再取得されること
 
 Phase 0のゲート確認（スペースマーケットとの同一Calendar共存の実環境確認）は
 Issue #267で完了（PASS, 2026-09-19）。確認手順・記録は

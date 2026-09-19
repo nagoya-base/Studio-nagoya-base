@@ -400,6 +400,51 @@ test('createBooking: 過去日はcustomerTypeを問わずINVALID_DATEで拒否�
   });
 });
 
+test('createBooking: 当日+利用経験ありで、開始時刻が現在時刻以前（受付NOW=12:00に対し09:00開始）はAPI直呼びでもSAME_DAY_START_TIME_PASSEDで拒否し、Calendar/Sheetsに何も作らない', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'returning', date: '2026-10-01', startTime: '09:00' }),
+    NOW
+  );
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'SAME_DAY_START_TIME_PASSED');
+  assert.strictEqual(result.bookingId, undefined);
+  assert.strictEqual(ctx.calendarsById.cal1.events.length, 0);
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 0);
+});
+
+test('createBooking: 当日+利用経験ありで、開始時刻が現在時刻より後（受付NOW=12:00に対し13:00開始）なら他条件が正常な限り成功する', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'returning', date: '2026-10-01', startTime: '13:00' }),
+    NOW
+  );
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.status, 'PENDING');
+});
+
+test('createBooking: 当日+初回利用は、開始時刻が現在時刻より後であってもSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEが先に返る（優先順位の確認）', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'first_time', date: '2026-10-01', startTime: '13:00' }),
+    NOW
+  );
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME');
+});
+
+test('createBooking: snb/mens/studio_xのいずれのbrandでも当日の過去開始時刻拒否は同じ挙動になる（brandで分岐させない）', function () {
+  ['snb', 'mens', 'studio_x'].forEach(function (brand) {
+    var ctx = setup();
+    var result = ctx.sandbox.BookingRepository.createBooking(
+      validPayload({ brand: brand, customerType: 'returning', date: '2026-10-01', startTime: '09:00' }),
+      NOW
+    );
+    assert.strictEqual(result.success, false, brand);
+    assert.strictEqual(result.error.code, 'SAME_DAY_START_TIME_PASSED', brand);
+  });
+});
+
 test('rate limit: 同一メール10分以内3件を超えるとRATE_LIMITEDで拒否する', function () {
   var ctx = setup();
   var now = Date.parse('2026-09-20T00:00:00+09:00');
