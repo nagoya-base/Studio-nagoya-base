@@ -35,7 +35,8 @@ test('messageForErrorCode: createBooking/getAvailabilityのerror.code一覧を�
     'INVALID_BRAND', 'INVALID_CONFIG', 'INVALID_DATE', 'INVALID_DURATION', 'DURATION_TOO_SHORT',
     'INVALID_START_TIME', 'START_TIME_NOT_ALIGNED', 'SLOT_CONFLICT', 'INVALID_NAME', 'INVALID_EMAIL',
     'INVALID_PHONE', 'INVALID_PEOPLE', 'INVALID_PURPOSE', 'INVALID_PAYMENT_METHOD', 'INVALID_NOTE',
-    'INVALID_SOURCE', 'RATE_LIMITED', 'LOCK_TIMEOUT', 'BOOKING_SAVE_FAILED', 'INVALID_JSON', 'INTERNAL_ERROR'
+    'INVALID_SOURCE', 'INVALID_CUSTOMER_TYPE', 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME',
+    'RATE_LIMITED', 'LOCK_TIMEOUT', 'BOOKING_SAVE_FAILED', 'INVALID_JSON', 'INTERNAL_ERROR'
   ];
   codes.forEach(function (code) {
     var message = Logic.messageForErrorCode(code);
@@ -59,6 +60,34 @@ test('recoveryActionForErrorCode: SLOT_CONFLICT系は時間の選び直し、入
   assert.strictEqual(Logic.recoveryActionForErrorCode('RATE_LIMITED'), 'retry');
   assert.strictEqual(Logic.recoveryActionForErrorCode('LOCK_TIMEOUT'), 'retry');
   assert.strictEqual(Logic.recoveryActionForErrorCode('INTERNAL_ERROR'), 'retry');
+});
+
+test('recoveryActionForErrorCode: 当日+初回利用・利用区分未指定は日付・利用区分の選び直しに振り分ける（Issue #270。空き時間の再取得だけでは解決しないためreselect-timeとは区別する）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.recoveryActionForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME'), 'reselect-date');
+  assert.strictEqual(Logic.recoveryActionForErrorCode('INVALID_CUSTOMER_TYPE'), 'reselect-date');
+});
+
+test('isAllowedCustomerType/customerTypeLabel: first_time/returningのみ許可し、表示文言を返す（Issue #270）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.isAllowedCustomerType('first_time'), true);
+  assert.strictEqual(Logic.isAllowedCustomerType('returning'), true);
+  assert.strictEqual(Logic.isAllowedCustomerType(''), false);
+  assert.strictEqual(Logic.isAllowedCustomerType('member'), false);
+  assert.strictEqual(Logic.isAllowedCustomerType(undefined), false);
+
+  assert.strictEqual(Logic.customerTypeLabel('first_time'), '初回利用');
+  assert.strictEqual(Logic.customerTypeLabel('returning'), '利用経験あり');
+  assert.strictEqual(Logic.customerTypeLabel('unknown'), '');
+});
+
+test('isSameDayFirstTimeBlocked: 当日+初回利用の組み合わせのみtrue（Issue #270最終仕様）', function () {
+  var Logic = loadLogic();
+  var today = '2026-10-01';
+  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-01', 'first_time', today), true);
+  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-01', 'returning', today), false, '当日+利用経験ありは通常フロー');
+  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-02', 'first_time', today), false, '翌日+初回利用は通常フロー');
+  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-02', 'returning', today), false, '翌日+利用経験ありは通常フロー');
 });
 
 test('durationHoursToMinutes: 正の整数時間だけを分へ変換し、それ以外はnull', function () {
@@ -127,6 +156,7 @@ test('buildCreateBookingPayload: createBookingへ渡すペイロードを組み�
   var Logic = loadLogic();
   var payload = Logic.buildCreateBookingPayload({
     brand: 'mens',
+    customerType: 'returning',
     date: '2026-10-01',
     startTime: '10:00',
     durationMinutes: 120,
@@ -144,6 +174,7 @@ test('buildCreateBookingPayload: createBookingへ渡すペイロードを組み�
      （test/booking-calendar-repository.test.jsと同じ方針）。 */
   assert.deepEqual(payload, {
     brand: 'mens',
+    customerType: 'returning',
     date: '2026-10-01',
     startTime: '10:00',
     durationMinutes: 120,
@@ -164,7 +195,7 @@ test('buildCreateBookingPayload: 未知のbrandでもsourceは"unknown"になり
   assert.strictEqual(payload.source, 'unknown');
 });
 
-test('todayInJapan: 日本時間での「今日」をYYYY-MM-DD形式で返す（当日を選択禁止にするためではなく、過去日を防ぐための下限にのみ使う。#270で当日利用ルールが実装されるまで、当日の可否自体はここで判定しない）', function () {
+test('todayInJapan: 日本時間での「今日」をYYYY-MM-DD形式で返す（日付入力の下限と、isSameDayFirstTimeBlockedへ渡す当日判定の基準の両方に使う。Issue #270）', function () {
   var Logic = loadLogic();
   /* 2026-09-19 12:00 UTC は JST 2026-09-19 21:00 → 今日は2026-09-19 */
   var result = Logic.todayInJapan(new Date('2026-09-19T12:00:00Z'));

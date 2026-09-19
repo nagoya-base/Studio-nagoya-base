@@ -16,6 +16,13 @@
  *   Script Propertiesではなくこの定数で一元管理する。他ファイル（CalendarRepository.gs /
  *   AdminNotifier.gs等）はbrand文字列やラベルを直接持たず、必ずBooking.getBrandLabel等
  *   ここの定義を経由する）
+ *
+ * Issue #270で追加した当日利用ルール:
+ * - 「会員かどうか」ではなく「利用区分（customerType。初回利用/利用経験あり）」で
+ *   当日予約可否を判定する。CUSTOMER_TYPES/isAllowedCustomerType参照。
+ * - 当日判定は必ずavailabilityConfig.timezone（既定Asia/Tokyo）基準で行い、
+ *   ブラウザのローカルtimezoneには依存しない（formatDateInTimezone参照）。
+ * - brandでこのルールを分岐させない（snb/mens/studio_xは同一施設という前提はIssue #269と同じ）。
  */
 'use strict';
 
@@ -30,6 +37,27 @@ var Booking = (function () {
   /* 予約作成できるbrandはこの3つのみ（Issue #269）。brand偽装で未知のbrandから
      予約を作れないよう、フロントの表示に関わらずサーバー側でこの一覧のみ許可する。 */
   var ALLOWED_BOOKING_BRANDS = ['snb', 'mens', 'studio_x'];
+
+  /*
+   * 利用区分（Issue #270）。「会員かどうか」ではなく、SNB / SNB mens / Studio X という
+   * 同一施設を過去に利用した経験があるかどうかで当日予約可否を判定する。
+   * brandをまたいで自己申告する値であり、DB照合はしない（Issue #270本文の非対象）。
+   * 表示文言と内部値を混同しないよう、内部値はfirst_time/returningの2値のみで固定する
+   * （既存にこの区分の正式名称が無かったため、Issue #270本文の例示どおり採用した）。
+   */
+  var CUSTOMER_TYPES = { FIRST_TIME: 'first_time', RETURNING: 'returning' };
+  var ALLOWED_CUSTOMER_TYPES = [CUSTOMER_TYPES.FIRST_TIME, CUSTOMER_TYPES.RETURNING];
+
+  /* Sheets台帳・管理者向け表示にのみ使う。判定ロジックはCUSTOMER_TYPESの内部値のみで行う。 */
+  var CUSTOMER_TYPE_LABELS_ = { first_time: '初回利用', returning: '利用経験あり' };
+
+  function isAllowedCustomerType(value) {
+    return ALLOWED_CUSTOMER_TYPES.indexOf(value) !== -1;
+  }
+
+  function getCustomerTypeLabel(value) {
+    return CUSTOMER_TYPE_LABELS_[value] || String(value || '');
+  }
 
   /* bookingIdの接頭辞。studio_xの'SX'はIssue #268から変更しない
      （既発行のbookingId・運用ドキュメントとの整合のため）。 */
@@ -79,20 +107,59 @@ var Booking = (function () {
     return { code: code, message: message };
   }
 
+  /* instanceof Dateではなくダックタイピングで判定する（別realm・vmサンドボックスを
+     またぐテストでinstanceof Dateが偽陰性になるため。BookingRepository.gs/
+     scripts/booking-logic.jsのisDateLike_と同じ方針）。 */
+  function isDateLike_(value) {
+    return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
+  }
+
+  /*
+   * dateオブジェクトを指定timezoneの暦日として'YYYY-MM-DD'へ変換する（Issue #270）。
+   * 当日判定はブラウザのローカルtimezoneに依存させず、サーバー側でこの関数を使い
+   * 必ずAsia/Tokyo（availabilityConfig.timezone）基準で行う。
+   * timezoneが不正でIntlが例外を投げた場合はnullを返す（呼び出し側でfail-closedに扱う）。
+   */
+  function formatDateInTimezone(date, timezone) {
+    if (!isDateLike_(date)) return null;
+    try {
+      var parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit'
+      }).formatToParts(date);
+      var result = {};
+      parts.forEach(function (part) { if (part.type !== 'literal') result[part.type] = part.value; });
+      if (!result.year || !result.month || !result.day) return null;
+      return result.year + '-' + result.month + '-' + result.day;
+    } catch (e) {
+      return null;
+    }
+  }
+
   /*
    * rawInput: createBooking APIが受け取る生のリクエストボディ相当。
    * availabilityConfig: BookingConfig.getAvailabilityConfig()の戻り値
    *   （openTime/closeTime/minBookingMinutes/slotStepMinutes/bufferMinutes/timezone）。
+   * now: 受付時刻（Date）。省略時は現在時刻。当日判定（Asia/Tokyo基準）に使う（Issue #270）。
    *
    * 戻り値: { valid: true, normalized: {...} } または { valid: false, error: {code, message} }。
    * normalizedはtrim済み・型を揃えた値のみを含み、以降の処理（bookingId発行・Calendar/Sheets保存）は
    * すべてこのnormalizedを使う（生入力を直接使わない）。
    */
-  function validateCreateBookingInput(rawInput, availabilityConfig) {
+  function validateCreateBookingInput(rawInput, availabilityConfig, now) {
     var input = rawInput || {};
+    var receivedAt = isDateLike_(now) ? now : new Date();
 
     if (!isAllowedBrand(input.brand)) {
       return { valid: false, error: err_('INVALID_BRAND', 'このブランドではオンライン予約を受け付けていません。') };
+    }
+
+    /*
+     * 利用区分（初回利用/利用経験あり）はIssue #270で必須項目とした。未指定・未知の値は
+     * fail-closedで拒否する（フロントを書き換えてcustomerTypeを省略・改ざんしても
+     * 当日予約制限を回避できないようにするための、サーバー側の必須検証）。
+     */
+    if (!isAllowedCustomerType(input.customerType)) {
+      return { valid: false, error: err_('INVALID_CUSTOMER_TYPE', '利用区分（初回利用／利用経験あり）を選択してください。') };
     }
 
     /*
@@ -109,6 +176,36 @@ var Booking = (function () {
       return { valid: false, error: baseError };
     }
     var durationMinutes = input.durationMinutes;
+
+    /*
+     * 当日判定はブラウザのローカルtimezoneを正としない。受付時刻(receivedAt)を
+     * availabilityConfig.timezone（既定Asia/Tokyo）基準の暦日へ変換し、入力された
+     * 利用日(input.date)と文字列比較する（'YYYY-MM-DD'は辞書順=日付順に一致する）。
+     * - 過去日は初回/利用経験ありを問わず拒否する
+     * - 当日 + 初回利用は拒否する（Issue #270本文の最終仕様）
+     * - 当日 + 利用経験ありはここでは拒否せず、以降の通常フローへ進む
+     * - 翌日以降は初回/利用経験ありのどちらも通常フローへ進む
+     * timezoneの設定自体が不正でIntlが解釈できない場合はfail-closedにINVALID_CONFIGとする
+     * （BUFFER_MINUTES等の誤設定と同じ扱い。isValidConfig_はtimezoneの妥当性まで検証しないため、
+     * ここで別途フォールバックする）。
+     */
+    var todayString = formatDateInTimezone(receivedAt, availabilityConfig.timezone);
+    if (!todayString) {
+      return { valid: false, error: err_('INVALID_CONFIG', '営業時間・予約ルールの設定が正しくありません。') };
+    }
+    if (input.date < todayString) {
+      return { valid: false, error: err_('INVALID_DATE', '過去の日付は指定できません。') };
+    }
+    var isSameDayBooking = input.date === todayString;
+    if (isSameDayBooking && input.customerType === CUSTOMER_TYPES.FIRST_TIME) {
+      return {
+        valid: false,
+        error: err_(
+          'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME',
+          '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付をお選びください。'
+        )
+      };
+    }
 
     if (!BookingAvailability.isValidTimeString(input.startTime)) {
       return { valid: false, error: err_('INVALID_START_TIME', '開始時刻の形式が正しくありません（HH:mm）。') };
@@ -163,6 +260,7 @@ var Booking = (function () {
       valid: true,
       normalized: {
         brand: input.brand,
+        customerType: input.customerType,
         date: input.date,
         startTime: input.startTime,
         durationMinutes: durationMinutes,
@@ -196,23 +294,41 @@ var Booking = (function () {
    * PENDING TTLの失効時刻（ミリ秒epoch）を計算する。
    * 「受付から ttlHours 時間後」と「利用開始時刻の minHoursBeforeStart 時間前」の
    * より早い方を採用する（Issue #268固定仕様）。
+   *
+   * minHoldHours（Issue #270で追加。省略時0＝#268時点と完全に同じ挙動）:
+   * 「利用開始時刻のminHoursBeforeStart時間前」が受付時刻より前（＝利用開始まで
+   * minHoursBeforeStart未満しかない）だと、上のMath.minにより失効時刻が受付時刻より
+   * 過去になり、作成直後に即EXPIREDになってしまう（#268時点では想定していなかった
+   * 「当日・利用経験ありの直前予約」で顕在化する）。minHoldHoursを渡すと、
+   * 「受付からminHoldHours時間は少なくとも保持する」下限を足し、この事故を防ぐ。
+   * ttlHoursによる上限（PENDINGを無期限にしない）は従来どおりMath.minで維持される。
    */
-  function computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart) {
+  function computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, minHoldHours) {
     var ttlExpiry = createdAtMillis + ttlHours * 3600000;
     var startLimit = startAtMillis - minHoursBeforeStart * 3600000;
-    return Math.min(ttlExpiry, startLimit);
+    /* minHoldHours未指定（0以下含む）の場合はMath.maxを一切効かせず、#268時点の
+       `Math.min(ttlExpiry, startLimit)` とビット単位で同じ値を返す（既存の翌日以降予約の
+       TTLへ一切影響しないことを保証するための設計。README/PR本文参照）。 */
+    var minHoldFloor = typeof minHoldHours === 'number' && minHoldHours > 0 ? createdAtMillis + minHoldHours * 3600000 : -Infinity;
+    var effectiveStartLimit = Math.max(startLimit, minHoldFloor);
+    return Math.min(ttlExpiry, effectiveStartLimit);
   }
 
-  function isExpired(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, nowMillis) {
-    return nowMillis >= computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart);
+  function isExpired(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, nowMillis, minHoldHours) {
+    return nowMillis >= computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, minHoldHours);
   }
 
   return {
     STATUS: STATUS,
     ALLOWED_BOOKING_BRANDS: ALLOWED_BOOKING_BRANDS,
+    CUSTOMER_TYPES: CUSTOMER_TYPES,
+    ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,
     getBrandLabel: getBrandLabel,
+    getCustomerTypeLabel: getCustomerTypeLabel,
     canTransition: canTransition,
     isAllowedBrand: isAllowedBrand,
+    isAllowedCustomerType: isAllowedCustomerType,
+    formatDateInTimezone: formatDateInTimezone,
     validateCreateBookingInput: validateCreateBookingInput,
     generateBookingId: generateBookingId,
     computeTtlExpiryMillis: computeTtlExpiryMillis,

@@ -26,6 +26,7 @@ function validInput(overrides) {
   return Object.assign(
     {
       brand: 'studio_x',
+      customerType: 'returning',
       date: '2026-10-01',
       startTime: '10:00',
       durationMinutes: 120,
@@ -73,6 +74,104 @@ test('validateCreateBookingInput: 不正な日付はINVALID_DATE', function () {
   var result = Booking.validateCreateBookingInput(validInput({ date: '2026/10/01' }), DEFAULT_CONFIG);
   assert.strictEqual(result.valid, false);
   assert.strictEqual(result.error.code, 'INVALID_DATE');
+});
+
+/*
+ * 当日利用ルール（Issue #270）。当日判定はnow引数（受付時刻）をavailabilityConfig.timezone
+ * （既定Asia/Tokyo）基準の暦日へ変換して行う。ブラウザのローカルtimezoneには依存しない。
+ * NOWを固定してJST 2026-10-01 12:00に受付したことにし、'2026-10-01'を当日、
+ * '2026-10-02'を翌日、'2026-09-30'を過去日として扱う。
+ */
+var NOW = new Date('2026-10-01T12:00:00+09:00');
+
+test('validateCreateBookingInput: customerTypeが未指定・未知の値はINVALID_CUSTOMER_TYPEでfail-closedに拒否する（Issue #270）', function () {
+  var Booking = loadBooking();
+  [undefined, null, '', 'member', 'FIRST_TIME', 'first-time', ' returning'].forEach(function (customerType) {
+    var result = Booking.validateCreateBookingInput(validInput({ customerType: customerType, date: '2026-10-05' }), DEFAULT_CONFIG, NOW);
+    assert.strictEqual(result.valid, false, JSON.stringify(customerType) + ' は拒否されるべき');
+    assert.strictEqual(result.error.code, 'INVALID_CUSTOMER_TYPE');
+  });
+});
+
+test('validateCreateBookingInput: 過去日はcustomerTypeを問わずINVALID_DATEで拒否する（当日判定はAsia/Tokyo基準）', function () {
+  var Booking = loadBooking();
+  ['first_time', 'returning'].forEach(function (customerType) {
+    var result = Booking.validateCreateBookingInput(
+      validInput({ customerType: customerType, date: '2026-09-30' }),
+      DEFAULT_CONFIG,
+      NOW
+    );
+    assert.strictEqual(result.valid, false, customerType);
+    assert.strictEqual(result.error.code, 'INVALID_DATE');
+  });
+});
+
+test('validateCreateBookingInput: 当日(2026-10-01) + 初回利用(first_time)はSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEで拒否する（Issue #270最終仕様）', function () {
+  var Booking = loadBooking();
+  var result = Booking.validateCreateBookingInput(
+    validInput({ customerType: 'first_time', date: '2026-10-01' }),
+    DEFAULT_CONFIG,
+    NOW
+  );
+  assert.strictEqual(result.valid, false);
+  assert.strictEqual(result.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME');
+});
+
+test('validateCreateBookingInput: 当日(2026-10-01) + 利用経験あり(returning)は通常どおり許可する', function () {
+  var Booking = loadBooking();
+  var result = Booking.validateCreateBookingInput(
+    validInput({ customerType: 'returning', date: '2026-10-01' }),
+    DEFAULT_CONFIG,
+    NOW
+  );
+  assert.strictEqual(result.valid, true);
+  assert.strictEqual(result.normalized.customerType, 'returning');
+});
+
+test('validateCreateBookingInput: 翌日以降(2026-10-02)は初回利用/利用経験ありのどちらも許可する', function () {
+  var Booking = loadBooking();
+  ['first_time', 'returning'].forEach(function (customerType) {
+    var result = Booking.validateCreateBookingInput(
+      validInput({ customerType: customerType, date: '2026-10-02' }),
+      DEFAULT_CONFIG,
+      NOW
+    );
+    assert.strictEqual(result.valid, true, customerType);
+  });
+});
+
+test('validateCreateBookingInput: 当日+初回利用の拒否ルールはsnb/mens/studio_xのいずれのbrandでも同じ（brandで分岐させない。Issue #270）', function () {
+  var Booking = loadBooking();
+  ['snb', 'mens', 'studio_x'].forEach(function (brand) {
+    var blocked = Booking.validateCreateBookingInput(
+      validInput({ brand: brand, customerType: 'first_time', date: '2026-10-01' }),
+      DEFAULT_CONFIG,
+      NOW
+    );
+    assert.strictEqual(blocked.valid, false, brand);
+    assert.strictEqual(blocked.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', brand);
+
+    var allowed = Booking.validateCreateBookingInput(
+      validInput({ brand: brand, customerType: 'returning', date: '2026-10-01' }),
+      DEFAULT_CONFIG,
+      NOW
+    );
+    assert.strictEqual(allowed.valid, true, brand);
+  });
+});
+
+test('validateCreateBookingInput: nowを省略した場合は現在時刻を使う（デフォルト引数）', function () {
+  var Booking = loadBooking();
+  var farFuture = new Date(Date.now() + 30 * 24 * 3600000).toISOString().slice(0, 10);
+  var result = Booking.validateCreateBookingInput(validInput({ customerType: 'first_time', date: farFuture }), DEFAULT_CONFIG);
+  assert.strictEqual(result.valid, true, '30日後は当日ではないため初回利用でも許可されるべき');
+});
+
+test('formatDateInTimezone: Asia/Tokyo基準の暦日を返し、不正なtimezoneはnullを返す（fail-closed）', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.formatDateInTimezone(new Date('2026-10-01T15:30:00Z'), 'Asia/Tokyo'), '2026-10-02', 'UTC 15:30はJST翌日0:30');
+  assert.strictEqual(Booking.formatDateInTimezone(new Date('2026-10-01T00:00:00Z'), 'Asia/Tokyo'), '2026-10-01', 'UTC 0:00はJST同日9:00');
+  assert.strictEqual(Booking.formatDateInTimezone(new Date(), 'Not/A_Timezone'), null);
 });
 
 test('validateCreateBookingInput: durationMinutesが数値以外・0以下はINVALID_DURATION', function () {
@@ -232,6 +331,38 @@ test('computeTtlExpiryMillis: 受付24時間後と開始2時間前の早い方�
   assert.strictEqual(expiry2, soonStart - 2 * 3600000);
 });
 
+test('computeTtlExpiryMillis: minHoldHoursを渡すと「受付からminHoldHours時間は少なくとも保持する」下限が働く（Issue #270。省略時でも失効時刻が受付時刻より前にはならない）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T09:00:00+09:00').getTime();
+
+  /* 開始が30分後（minHoursBeforeStart=2h未満。#268時点ではこの組み合わせで
+     「利用開始2時間前」が受付時刻より過去になり、作成直後に即EXPIREDになっていた）。
+     minHoldHoursを渡さない場合でも、失効時刻が受付時刻より過去にはならない
+     （ただしminHoldHours=2を渡した場合ほどの猶予はなく、事実上直後に失効し得る）。 */
+  var soonStart = createdAt + 30 * 60000;
+  var expiryWithoutFloor = Booking.computeTtlExpiryMillis(createdAt, soonStart, 24, 2);
+  assert.ok(expiryWithoutFloor < createdAt, 'minHoldHours省略時は#268時点とビット単位で同じ計算式になり、受付時刻より前になり得る（この課題をminHoldHoursで解消する）');
+
+  /* minHoldHours=2を渡すと、受付から少なくとも2時間は保持される */
+  var expiryWithFloor = Booking.computeTtlExpiryMillis(createdAt, soonStart, 24, 2, 2);
+  assert.strictEqual(expiryWithFloor, createdAt + 2 * 3600000);
+
+  /* ttlHours自体はminHoldHoursで上書きされない（PENDINGを無期限にしない上限は維持） */
+  var expiryCappedByTtl = Booking.computeTtlExpiryMillis(createdAt, soonStart, 1, 2, 2);
+  assert.strictEqual(expiryCappedByTtl, createdAt + 1 * 3600000, 'minHoldHours(2h)よりttlHours(1h)の方が早ければttlHoursが優先される');
+});
+
+test('computeTtlExpiryMillis: minHoldHoursを渡しても、開始まで十分な余裕がある通常の予約は#268時点と同じ結果になる（翌日以降の既存TTLへの影響なし）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T09:00:00+09:00').getTime();
+  var farStart = new Date('2026-10-04T09:00:00+09:00').getTime();
+
+  var withoutMinHold = Booking.computeTtlExpiryMillis(createdAt, farStart, 24, 2);
+  var withMinHold = Booking.computeTtlExpiryMillis(createdAt, farStart, 24, 2, 2);
+  assert.strictEqual(withMinHold, withoutMinHold, '開始まで余裕がある場合はminHoldHoursの有無で結果が変わらないべき');
+  assert.strictEqual(withMinHold, createdAt + 24 * 3600000);
+});
+
 test('isExpired: 失効時刻ちょうど・その後はtrue、前はfalse', function () {
   var Booking = loadBooking();
   var createdAt = Date.now();
@@ -250,4 +381,18 @@ test('isAllowedBrand: Issue #269でsnb/mens/studio_xの3ブランドを許可し
   assert.strictEqual(Booking.isAllowedBrand('mens'), true);
   assert.strictEqual(Booking.isAllowedBrand('ataru'), false);
   assert.strictEqual(Booking.isAllowedBrand(''), false);
+});
+
+test('isAllowedCustomerType/getCustomerTypeLabel: first_time/returningのみ許可し、Sheets/管理者表示用のラベルを返す（Issue #270）', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.isAllowedCustomerType('first_time'), true);
+  assert.strictEqual(Booking.isAllowedCustomerType('returning'), true);
+  assert.strictEqual(Booking.isAllowedCustomerType('member'), false);
+  assert.strictEqual(Booking.isAllowedCustomerType(''), false);
+  assert.strictEqual(Booking.isAllowedCustomerType(undefined), false);
+
+  assert.strictEqual(Booking.getCustomerTypeLabel('first_time'), '初回利用');
+  assert.strictEqual(Booking.getCustomerTypeLabel('returning'), '利用経験あり');
+
+  assert.deepEqual(Booking.CUSTOMER_TYPES, { FIRST_TIME: 'first_time', RETURNING: 'returning' });
 });

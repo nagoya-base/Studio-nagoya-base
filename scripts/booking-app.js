@@ -36,6 +36,7 @@
     date: '',
     durationMinutes: null,
     startTime: null,
+    customerType: '',
     name: '', email: '', phone: '', people: '', purpose: '', purposeOther: '',
     paymentMethod: '', note: ''
   };
@@ -55,6 +56,7 @@
     dateError: document.getElementById('ba-date-error'),
     duration: document.getElementById('ba-duration'),
     durationError: document.getElementById('ba-duration-error'),
+    customerTypeError: document.getElementById('ba-customer-type-error'),
     step1Next: document.getElementById('ba-step-datetime-next'),
 
     stepStartTime: document.getElementById('ba-step-start-time'),
@@ -87,6 +89,7 @@
 
     stepConfirm: document.getElementById('ba-step-confirm'),
     confirmBrand: document.getElementById('ba-confirm-brand'),
+    confirmCustomerType: document.getElementById('ba-confirm-customer-type'),
     confirmDate: document.getElementById('ba-confirm-date'),
     confirmTime: document.getElementById('ba-confirm-time'),
     confirmName: document.getElementById('ba-confirm-name'),
@@ -115,8 +118,9 @@
     return;
   }
 
-  /* 過去日を選べないようにするだけの技術的な下限（当日は選択可）。当日利用ルール・
-     新規/会員による当日可否の判定は#270の責務のためここでは行わない。 */
+  /* 過去日を選べないようにするだけの技術的な下限（当日は選択可）。当日利用ルール
+     （初回利用+当日の禁止）は、日付・利用区分の両方が決まるStep1の「次へ」押下時に
+     Logic.isSameDayFirstTimeBlockedで判定する（Issue #270）。 */
   if (els.date) els.date.min = Logic.todayInJapan();
 
   /* ── ステップ切り替え ── */
@@ -177,18 +181,38 @@
     }
   }
 
-  /* ── Step 1: 日時 ── */
+  /* ── Step 1: 日時・利用区分 ── */
+  function checkedCustomerType() {
+    var checked = root.querySelector('input[name="customerType"]:checked');
+    return checked ? checked.value : '';
+  }
+
   if (els.step1Next) {
     els.step1Next.addEventListener('click', function () {
       var dateValue = els.date ? els.date.value : '';
       var durationMinutes = Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
+      var customerType = checkedCustomerType();
 
       setFieldError_(els.date, els.dateError, dateValue ? '' : '利用日を選択してください。');
       setFieldError_(els.duration, els.durationError, durationMinutes ? '' : '利用時間を1時間以上の整数で入力してください。');
-      if (!dateValue || !durationMinutes) return;
+      setFieldError_(null, els.customerTypeError, customerType ? '' : '利用区分を選択してください。');
+      if (!dateValue || !durationMinutes || !customerType) return;
+
+      /*
+       * 初回利用＋当日はここで空き時間取得（getAvailability）へ進ませない（Issue #270）。
+       * これはUX目的の一次チェックであり、最終的な当日予約可否の正はcreateBookingの
+       * サーバー側検証（Booking.validateCreateBookingInput）。フロントを書き換えて
+       * このチェックを回避されても、サーバー側でSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEとして
+       * 拒否される（BookingRepository.gs参照）。
+       */
+      if (Logic.isSameDayFirstTimeBlocked(dateValue, customerType, Logic.todayInJapan())) {
+        setFieldError_(els.date, els.dateError, Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME'));
+        return;
+      }
 
       state.date = dateValue;
       state.durationMinutes = durationMinutes;
+      state.customerType = customerType;
       state.startTime = null;
 
       goToStep('start-time');
@@ -342,6 +366,7 @@
   function renderConfirmSummary() {
     var endTime = Logic.computeEndTime(state.startTime, state.durationMinutes);
     els.confirmBrand.textContent = brandMeta.displayName;
+    els.confirmCustomerType.textContent = Logic.customerTypeLabel(state.customerType);
     els.confirmDate.textContent = state.date;
     els.confirmTime.textContent = state.startTime + '〜' + endTime + '（' + (state.durationMinutes / 60) + '時間）';
     els.confirmName.textContent = state.name;
@@ -370,6 +395,11 @@
        維持する。goToStep()はステップ切り替え時に一度エラーを隠すため、
        goToStepの後にshowGlobalErrorを呼ぶ順序を守ること
        （「成立したか不明」な画面のまま無言で戻さないための対応）。 */
+    if (action === 'reselect-date') {
+      goToStep('datetime');
+      showGlobalError(message, []);
+      return;
+    }
     if (action === 'reselect-time') {
       goToStep('start-time');
       showGlobalError(message, []);
@@ -412,6 +442,7 @@
 
       var payload = Logic.buildCreateBookingPayload({
         brand: brand,
+        customerType: state.customerType,
         date: state.date,
         startTime: state.startTime,
         durationMinutes: state.durationMinutes,
