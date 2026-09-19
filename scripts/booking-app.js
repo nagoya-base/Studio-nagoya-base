@@ -115,7 +115,9 @@
     return;
   }
 
-  if (els.date) els.date.min = Logic.tomorrowInJapan();
+  /* 過去日を選べないようにするだけの技術的な下限（当日は選択可）。当日利用ルール・
+     新規/会員による当日可否の判定は#270の責務のためここでは行わない。 */
+  if (els.date) els.date.min = Logic.todayInJapan();
 
   /* ── ステップ切り替え ── */
   var STEP_ORDER = ['datetime', 'start-time', 'details', 'confirm', 'complete'];
@@ -182,7 +184,7 @@
       var durationMinutes = Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
 
       setFieldError_(els.date, els.dateError, dateValue ? '' : '利用日を選択してください。');
-      setFieldError_(els.duration, els.durationError, durationMinutes ? '' : '利用時間を選択してください。');
+      setFieldError_(els.duration, els.durationError, durationMinutes ? '' : '利用時間を1時間以上の整数で入力してください。');
       if (!dateValue || !durationMinutes) return;
 
       state.date = dateValue;

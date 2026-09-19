@@ -72,6 +72,15 @@ test('durationHoursToMinutes: 正の整数時間だけを分へ変換し、そ�
   assert.strictEqual(Logic.durationHoursToMinutes('2.5'), null);
 });
 
+test('durationHoursToMinutes: 8時間を超える長時間利用もUI側で上限を設けず変換できる（#269レビュー対応：長時間利用をフロントだけで塞がない）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.durationHoursToMinutes('9'), 540);
+  assert.strictEqual(Logic.durationHoursToMinutes('12'), 720);
+  assert.strictEqual(Logic.durationHoursToMinutes('15'), 900);
+  assert.strictEqual(Logic.durationHoursToMinutes('24'), 1440);
+  /* 営業時間内に収まるかどうかの最終判定はcreateBooking/getAvailability側（INVALID_START_TIME等）が行う */
+});
+
 test('computeEndTime: 開始時刻＋利用時間（分）を表示用に加算する', function () {
   var Logic = loadLogic();
   assert.strictEqual(Logic.computeEndTime('10:00', 120), '12:00');
@@ -155,13 +164,13 @@ test('buildCreateBookingPayload: 未知のbrandでもsourceは"unknown"になり
   assert.strictEqual(payload.source, 'unknown');
 });
 
-test('tomorrowInJapan: 日本時間での「明日」をYYYY-MM-DD形式で返す', function () {
+test('todayInJapan: 日本時間での「今日」をYYYY-MM-DD形式で返す（当日を選択禁止にするためではなく、過去日を防ぐための下限にのみ使う。#270で当日利用ルールが実装されるまで、当日の可否自体はここで判定しない）', function () {
   var Logic = loadLogic();
-  /* 2026-09-19 12:00 UTC は JST 2026-09-19 21:00 → 明日は2026-09-20 */
-  var result = Logic.tomorrowInJapan(new Date('2026-09-19T12:00:00Z'));
-  assert.strictEqual(result, '2026-09-20');
+  /* 2026-09-19 12:00 UTC は JST 2026-09-19 21:00 → 今日は2026-09-19 */
+  var result = Logic.todayInJapan(new Date('2026-09-19T12:00:00Z'));
+  assert.strictEqual(result, '2026-09-19');
 
-  /* 2026-09-19 20:00 UTC は JST 2026-09-20 05:00 → 明日は2026-09-21 */
-  var result2 = Logic.tomorrowInJapan(new Date('2026-09-19T20:00:00Z'));
-  assert.strictEqual(result2, '2026-09-21');
+  /* 2026-09-19 20:00 UTC は JST 2026-09-20 05:00 → 今日は2026-09-20（日付が変わる） */
+  var result2 = Logic.todayInJapan(new Date('2026-09-19T20:00:00Z'));
+  assert.strictEqual(result2, '2026-09-20');
 });

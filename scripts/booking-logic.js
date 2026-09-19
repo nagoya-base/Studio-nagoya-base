@@ -172,9 +172,6 @@
     };
   }
 
-  /* JST（日本時間）の「明日」を'YYYY-MM-DD'で返す。#270で当日利用ルールが実装されるまでの
-     暫定の下限であり、会員/新規による当日可否の判定はここでは行わない
-     （TODO #270: 会員種別に応じた当日利用可否の分岐はこの関数の責務にしない）。 */
   function isDateLike_(value) {
     /* instanceof Dateではなくダックタイピングで判定する（別realm・vmサンドボックスを
        またぐテストでinstanceof Dateが偽陰性になるため。gas/booking/BookingRepository.gsの
@@ -182,19 +179,21 @@
     return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
   }
 
-  function tomorrowInJapan(now) {
+  /*
+   * JST（日本時間）での「今日」を'YYYY-MM-DD'で返す。日付入力の下限にのみ使い、
+   * 過去日を選べないようにするためだけの技術的な下限であり、当日利用の可否そのものは
+   * ここでは判定しない（当日利用ルール・新規/会員による可否判定は#270の責務。
+   * TODO #270: 新規は当日不可・会員は当日相談、のような業務ルールをこの関数や
+   * booking-app.jsへ実装しないこと。当日を含め、可否の最終判定はcreateBookingの
+   * サーバー側検証に委ねる）。
+   */
+  function todayInJapan(now) {
     var base = isDateLike_(now) ? now : new Date();
-    var formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric' });
-    var values = {};
-    formatter.formatToParts(base).forEach(function (part) {
-      if (part.type !== 'literal') values[part.type] = Number(part.value);
-    });
-    var nextDayNoonUtc = new Date(Date.UTC(values.year, values.month - 1, values.day + 1, 3));
-    var jstParts = new Intl.DateTimeFormat('en-CA', {
+    var parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
-    }).formatToParts(nextDayNoonUtc);
+    }).formatToParts(base);
     var result = {};
-    jstParts.forEach(function (part) { if (part.type !== 'literal') result[part.type] = part.value; });
+    parts.forEach(function (part) { if (part.type !== 'literal') result[part.type] = part.value; });
     return result.year + '-' + result.month + '-' + result.day;
   }
 
@@ -212,7 +211,7 @@
     validateDetailsForm: validateDetailsForm,
     buildPurposeValue: buildPurposeValue,
     buildCreateBookingPayload: buildCreateBookingPayload,
-    tomorrowInJapan: tomorrowInJapan
+    todayInJapan: todayInJapan
   };
 
   global.BookingLogic = api;

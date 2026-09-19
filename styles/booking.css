@@ -135,11 +135,11 @@
   font-weight: 600;
 }
 
-.ba-app input[type="text"],
 .booking-app input[type="text"],
 .booking-app input[type="email"],
 .booking-app input[type="tel"],
 .booking-app input[type="date"],
+.booking-app input[type="number"],
 .booking-app select,
 .booking-app textarea {
   width: 100%;
