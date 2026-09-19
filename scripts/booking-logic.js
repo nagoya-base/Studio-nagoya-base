@@ -93,8 +93,9 @@
     return typeof value === 'string' && PHONE_PATTERN.test(value);
   }
 
-  /* '2'〜'8'（時間単位・UIの選択肢）を分単位へ変換する。不正な値はnull
-     （最終的な最低利用時間・上限の判定はgetAvailability/createBooking側の責務）。 */
+  /* 利用時間（時間単位の入力値）を分単位へ変換する。正の整数時間であれば上限を設けず
+     そのまま変換する（不正な値はnull）。最低利用時間・上限の判定はgetAvailability/
+     createBooking側の責務であり、ここでは何時間までなら妥当かを判断しない。 */
   function durationHoursToMinutes(hours) {
     var n = Number(hours);
     if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return null;
