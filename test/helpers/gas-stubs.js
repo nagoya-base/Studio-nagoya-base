@@ -309,32 +309,22 @@ function createMailAppStub(options) {
   };
 }
 
-/* ScriptApp相当。トリガー一覧・作成のみをメモリ上で再現する。
-   時間主導型（timeBased().everyMinutes()）とSpreadsheetのinstallable onOpen型
-   （forSpreadsheet(spreadsheet).onOpen()）の両方のビルダーチェーンをサポートする。 */
+/* ScriptApp相当。時間主導トリガー（timeBased().everyMinutes()。expirePendingBookings用）の
+   一覧・作成のみをメモリ上で再現する。カスタムメニューはコンテナバインドスクリプトの
+   onOpen単純トリガーでのみ動作する仕様のため、installable onOpenトリガーのチェーンは
+   意図的にサポートしない（1回目レビューで採用したinstallBookingAdminMenuTrigger()方式は
+   Googleの仕様上成立しないため2回目レビューで撤回した。gas/booking/README.md参照）。 */
 function createScriptAppStub() {
   var triggers = [];
   return {
     getProjectTriggers: function () { return triggers.slice(); },
     newTrigger: function (functionName) {
-      var sourceId = null;
-      var eventType = null;
       var builder = {
         timeBased: function () { return builder; },
         everyMinutes: function () { return builder; },
-        forSpreadsheet: function (spreadsheet) {
-          sourceId = typeof spreadsheet === 'string' ? spreadsheet : spreadsheet.getId();
-          return builder;
-        },
-        onOpen: function () {
-          eventType = 'ON_OPEN';
-          return builder;
-        },
         create: function () {
           var trigger = {
-            getHandlerFunction: function () { return functionName; },
-            getTriggerSourceId: function () { return sourceId; },
-            getEventType: function () { return eventType; }
+            getHandlerFunction: function () { return functionName; }
           };
           triggers.push(trigger);
           return trigger;

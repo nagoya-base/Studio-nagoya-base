@@ -150,6 +150,33 @@ test('confirmBooking: 対応するCalendarイベントが見つからない場�
   assert.strictEqual(recovered[0].failureType, 'CONFIRM_CALENDAR_EVENT_MISSING');
 });
 
+test('confirmBooking: Calendarを実際に変更する直前の再確認で、最初の確認からの間に別プロセス(expirePendingBookings等)がstatusを変えていたことを検出し、Calendar/Sheetsのどちらも変更せずCONFLICTING_STATUS_CHANGEを返す（confirmBookingはSpreadsheetにコンテナバインドした別GASプロジェクトから呼ばれ、Web App側のexpirePendingBookingsとはLockServiceが別プロジェクトのため排他されないことへの緩和策）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+
+  var originalFind = ctx.sandbox.SpreadsheetRepository.findRowByBookingId;
+  var callCount = 0;
+  ctx.sandbox.SpreadsheetRepository.findRowByBookingId = function (id) {
+    callCount++;
+    var found = originalFind(id);
+    if (callCount === 2 && found) {
+      /* 2回目の呼び出し(Calendar変更直前の再確認)の時点で、あたかも別プロセスが
+         既にEXPIREDへ進めていたかのように装う */
+      found = { rowNumber: found.rowNumber, record: Object.assign({}, found.record, { status: 'EXPIRED' }) };
+    }
+    return found;
+  };
+
+  var result = ctx.sandbox.confirmBooking(bookingId);
+  assert.strictEqual(callCount, 2, '初回確認とCalendar変更直前の再確認の2回、statusを読み直しているべき');
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'CONFLICTING_STATUS_CHANGE');
+
+  ctx.sandbox.SpreadsheetRepository.findRowByBookingId = originalFind;
+  var event = ctx.calendarsById.cal1.events[0];
+  assert.strictEqual(event.getTag('status'), 'PENDING', '再確認で競合を検出した場合、Calendarは変更されないべき');
+});
+
 test('confirmBooking: Calendar成功(CONFIRMED)・Sheets更新失敗時はCalendarをPENDINGへ補償し、recoveryへRESOLVED記録を残す', function () {
   var ctx = setup();
   var bookingId = createPending(ctx);
@@ -413,32 +440,18 @@ test('createExpirePendingBookingsTrigger: トリガーを作成し、二重作�
   assert.strictEqual(triggers.length, 1, '同じハンドラのトリガーを重複作成しない');
 });
 
-/* ---------- 管理メニュー: installable onOpenトリガー（スタンドアロンWebApp運用） ---------- */
+/*
+ * ---------- 管理メニュー: container-boundスクリプトのonOpen単純トリガー ----------
+ *
+ * BookingAdmin.gsはSPREADSHEET_IDのSpreadsheetへコンテナバインドした専用のApps Script
+ * プロジェクト（Booking Admin。README「管理メニュー用GASプロジェクトのセットアップ」参照）
+ * へデプロイする前提。コンテナバインドスクリプトではonOpen単純トリガーがSpreadsheetを
+ * 開くたびに自動発火するため、（1回目レビューで採用したinstallable onOpenトリガーの
+ * 手動作成とは異なり）追加のトリガー設定は不要。ここではonOpen/addBookingAdminMenuの
+ * メニュー構築配線のみを検証する。
+ */
 
-test('installBookingAdminMenuTrigger: SPREADSHEET_IDのSpreadsheetに対するinstallable onOpenトリガーを作成する', function () {
-  var scriptApp = stubs.createScriptAppStub();
-  var ctx = setup({ scriptApp: scriptApp });
-
-  ctx.sandbox.installBookingAdminMenuTrigger();
-
-  var triggers = scriptApp.getProjectTriggers();
-  assert.strictEqual(triggers.length, 1);
-  assert.strictEqual(triggers[0].getHandlerFunction(), 'addBookingAdminMenu');
-  assert.strictEqual(triggers[0].getTriggerSourceId(), SPREADSHEET_ID, 'SPREADSHEET_IDのSpreadsheetに紐づくトリガーであるべき');
-  assert.strictEqual(triggers[0].getEventType(), 'ON_OPEN');
-});
-
-test('installBookingAdminMenuTrigger: 同じSpreadsheet・同じハンドラのトリガーを重複作成しない', function () {
-  var scriptApp = stubs.createScriptAppStub();
-  var ctx = setup({ scriptApp: scriptApp });
-
-  ctx.sandbox.installBookingAdminMenuTrigger();
-  ctx.sandbox.installBookingAdminMenuTrigger();
-
-  assert.strictEqual(scriptApp.getProjectTriggers().length, 1);
-});
-
-test('addBookingAdminMenu: 「予約管理」メニューにconfirmBooking用の2項目を追加する（installableトリガー・単純トリガーonOpenの両方から呼ばれる本体）', function () {
+test('addBookingAdminMenu: 「予約管理」メニューにconfirmBooking用の2項目を追加する', function () {
   var ui = stubs.createSpreadsheetUiStub();
   var ctx = setup({ ui: ui });
 
@@ -451,7 +464,7 @@ test('addBookingAdminMenu: 「予約管理」メニューにconfirmBooking用の
   assert.ok(functionNames.indexOf('confirmBookingByPrompt_') !== -1);
 });
 
-test('onOpen: 単純トリガー(コンテナバインド時のフォールバック)からもaddBookingAdminMenuと同じメニューが追加される', function () {
+test('onOpen: container-boundスクリプトの単純トリガーとしてaddBookingAdminMenuと同じメニューを追加する（このファイルをSpreadsheetへコンテナバインドしたときの唯一の正式手順）', function () {
   var ui = stubs.createSpreadsheetUiStub();
   var ctx = setup({ ui: ui });
 

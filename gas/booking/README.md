@@ -7,9 +7,20 @@ Epic #265の一部として以下を実装済み。
   PENDING/CONFIRMED/CANCELLED/EXPIRED状態管理・部分失敗補償・TTL失効・レート制限・
   Spreadsheetカスタムメニューからの予約確定
 
-このディレクトリは自社予約システム専用のApps Scriptプロジェクトとして運用し、
-`gas/ataru_survey_public` 等の既存GASプロジェクトとは完全に分離する
-（互いのコードを参照・importしない）。
+このディレクトリは自社予約システム専用のApps Scriptプロジェクトの元になるソース一式
+（複数プロジェクトへ配布するファイル群）として運用し、`gas/ataru_survey_public` 等の
+既存GASプロジェクトとは完全に分離する（互いのコードを参照・importしない）。
+
+**このディレクトリのファイルは、2つの独立したApps Scriptプロジェクトへ配布する。**
+Googleの仕様上、Spreadsheetのカスタムメニュー（`SpreadsheetApp.getUi()`）は
+対象Spreadsheetへコンテナバインドしたスクリプトからしか作成できないため、
+Web App本体とは別にコンテナバインドの管理用プロジェクトを用意する（詳細は
+「GASプロジェクトへのデプロイ対象ファイル」節を参照）。
+
+| プロジェクト | 種別 | 役割 |
+| --- | --- | --- |
+| **Booking Web App** | スタンドアロン | `getAvailability`（`doGet`）・`createBooking`（`doPost`）・PENDING TTL失効（`expirePendingBookings`の時間主導トリガー） |
+| **Booking Admin** | `SPREADSHEET_ID`のSpreadsheetへコンテナバインド | カスタムメニュー（`onOpen`）・`confirmBooking(bookingId)` |
 
 ## このIssue（#268）で実装した範囲
 
@@ -23,7 +34,8 @@ Epic #265の一部として以下を実装済み。
     タイトルで区別せず、すべて占有として扱う）
 - Spreadsheet予約台帳（`Bookings`シート）・部分失敗記録（`Recovery`シート）
 - PENDING TTL失効（`expirePendingBookings()`。時間主導トリガー用）
-- Spreadsheetカスタムメニューからの予約確定（`confirmBooking(bookingId)`）
+- Spreadsheetカスタムメニューからの予約確定（`confirmBooking(bookingId)`）。
+  コンテナバインドの別GASプロジェクト（Booking Admin）から実行する
 - レート制限（同一メール・全体・同一内容連投）
 
 ## このIssueで実装していないもの（非対象）
@@ -82,10 +94,49 @@ Epic #265の一部として以下を実装済み。
 - `AdminNotifier.gs` — 管理者向け最低限の通知フック（`ADMIN_NOTIFICATION_EMAIL`未設定時は
   何もしない）
 - `BookingAdmin.gs` — Spreadsheetのカスタムメニュー（`onOpen`）と正式関数
-  `confirmBooking(bookingId)`
+  `confirmBooking(bookingId)`。**Booking Adminプロジェクト（コンテナバインド）専用**
 - `BookingTriggers.gs` — 時間主導トリガー用の正式関数`expirePendingBookings()`と、
-  トリガー作成の補助関数`createExpirePendingBookingsTrigger()`
-- `Code.gs`（拡張） — `doPost`を追加（`createBooking`用。POST専用）
+  トリガー作成の補助関数`createExpirePendingBookingsTrigger()`。
+  **Booking Web Appプロジェクト（スタンドアロン）専用**
+- `Code.gs`（拡張） — `doPost`を追加（`createBooking`用。POST専用）。
+  **Booking Web Appプロジェクト（スタンドアロン）専用**
+
+## GASプロジェクトへのデプロイ対象ファイル
+
+上記の理由（カスタムメニューはコンテナバインドスクリプトでしか作成できない）により、
+このディレクトリの`.gs`ファイルは、**Booking Web App**（スタンドアロン）と
+**Booking Admin**（`SPREADSHEET_ID`のSpreadsheetへコンテナバインド）という
+2つの独立したApps Scriptプロジェクトへ配布する。
+
+| ファイル | Booking Web App（スタンドアロン） | Booking Admin（コンテナバインド） |
+| --- | :---: | :---: |
+| `Code.gs` | ✓ | – |
+| `Availability.gs` | ✓ | – |
+| `Config.gs` | ✓ | ✓ |
+| `CalendarRepository.gs` | ✓ | ✓ |
+| `Booking.gs` | ✓ | ✓ |
+| `RateLimiter.gs` | ✓ | – |
+| `SpreadsheetRepository.gs` | ✓ | ✓ |
+| `RecoveryRepository.gs` | ✓ | ✓ |
+| `BookingRepository.gs` | ✓ | ✓ |
+| `AdminNotifier.gs` | ✓ | – |
+| `BookingTriggers.gs` | ✓ | – |
+| `BookingAdmin.gs` | – | ✓ |
+| `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい） |
+
+`BookingRepository.gs`の`confirmBooking`が実際に参照するファイルは
+`Config.gs`/`Booking.gs`/`CalendarRepository.gs`/`SpreadsheetRepository.gs`/
+`RecoveryRepository.gs`のみ（`createBooking`/`expirePendingBookings`が使う
+`Availability.gs`/`RateLimiter.gs`/`AdminNotifier.gs`/`BookingTriggers.gs`は
+Booking Adminプロジェクトでは呼び出されない）。ただし、コピー漏れによる将来の
+機能追加時の事故を避けるため、上表のとおり「`Code.gs`/`Availability.gs`/
+`RateLimiter.gs`/`AdminNotifier.gs`/`BookingTriggers.gs`以外の全ファイル」を
+Booking Adminプロジェクトにも配布することを推奨する。
+
+両プロジェクトは**同一の`.gs`ファイル**（このリポジトリの`gas/booking/`）を元にしており、
+コード自体を複製・分岐させているわけではない（clasp等のデプロイ自動化は本リポジトリに
+未導入のため、現状はいずれも手動コピーでのデプロイになる。ファイルを更新した際は、
+変更が影響する側のプロジェクトへ再度手動でコピーし直すこと）。
 
 ## Script Properties
 
@@ -119,6 +170,14 @@ TTL・レート制限の数値プロパティは、誤設定（数値以外・0�
 既存予約との競合を見落とす恐れがあるため、`createBooking`は`Booking.validateCreateBookingInput`
 の冒頭で`BookingAvailability.validateInput`（getAvailabilityと同じ設定検証）を通し、
 Calendarへ問い合わせる前に必ず設定の妥当性を確認する。
+
+**Script PropertiesはApps Scriptプロジェクトごとに独立している。** Booking Web Appと
+Booking Adminは別プロジェクトのため、`confirmBooking`が使う`CALENDAR_ID`・
+`SPREADSHEET_ID`は、**両方のプロジェクトに同じ値を設定する必要がある**
+（片方だけ設定・値がずれている場合、`confirmBooking`が誤ったCalendar/Spreadsheetを
+参照してしまう）。`TTL_*`/`RATE_LIMIT_*`/`ADMIN_NOTIFICATION_EMAIL`はBooking Web App側
+（`createBooking`/`expirePendingBookings`）でのみ使われるため、Booking Admin側には
+設定不要。
 
 ## Spreadsheet構成
 
@@ -254,29 +313,59 @@ fail-closed） / `INVALID_DATE` / `INVALID_DURATION` / `DURATION_TOO_SHORT` /
 Phase 1では`studio_x`以外の`brand`を指定してもサーバー側で拒否する
 （フロント表示に関わらずbrand偽装で他ブランドの予約は作れない）。
 
-## 管理メニューのセットアップ（installable onOpenトリガー）
+## 管理メニュー用GASプロジェクト（Booking Admin）のセットアップ
 
-このGASプロジェクトはスタンドアロンのWeb Appとして運用する（「デプロイ設定」参照）。
-スタンドアロンスクリプトに単純トリガーの`onOpen()`を書くだけでは、`SPREADSHEET_ID`で
-指定した対象Spreadsheetを開いても「予約管理」メニューは自動表示されない
-（単純トリガーのonOpenは、このスクリプト自身が対象Spreadsheetに
-コンテナバインドされている場合のみ発火するため）。
+**背景**: Googleの仕様上、`SpreadsheetApp.getUi()`によるカスタムメニュー作成は、
+対象Spreadsheetへコンテナバインドしたスクリプト（Spreadsheetの「拡張機能 → Apps Script」
+から作成するプロジェクト）からしか使えない。スタンドアロンスクリプトが対象Spreadsheetに
+対するinstallable onOpenトリガーを作成しても、そのスクリプト自体がbound scriptになる
+わけではなく、`getUi()`は利用できない（1回目レビューでは
+`installBookingAdminMenuTrigger()`によるinstallable onOpenトリガー方式を採用したが、
+この理由により2回目レビューで指摘を受け撤回した。Web App本体は変更していない）。
 
-**正式な運用手順（この方式で動作確認する）**: 運用開始時に、スクリプトエディタで
-`installBookingAdminMenuTrigger` を選択して一度だけ手動実行する。これにより、
-`SPREADSHEET_ID`のSpreadsheetに対するinstallable onOpenトリガーが作成され
-（実行には対象Spreadsheetへの編集権限が必要）、以降そのSpreadsheetを開くたびに
-`addBookingAdminMenu`が呼ばれて「予約管理」メニューが自動的に追加されるようになる。
-同一Spreadsheet・同一ハンドラのトリガーが既に存在する場合は重複作成しない。
+そのため、カスタムメニュー（`BookingAdmin.gs`）は、Web App本体（スタンドアロン）とは
+別の、`SPREADSHEET_ID`のSpreadsheetへコンテナバインドした専用のApps Scriptプロジェクト
+（Booking Admin）へデプロイする。
 
-（このスクリプトを将来コンテナバインド型へ分離・移行する場合に備え、単純トリガーの
-`onOpen()`もフォールバックとして残しているが、上記のスタンドアロン運用では発火しない
-ため、`installBookingAdminMenuTrigger`の実行が必須）。
+### セットアップ手順
+
+1. `SPREADSHEET_ID`で指定したGoogle Spreadsheetを開く。
+2. メニュー「拡張機能」→「Apps Script」を選択する（このSpreadsheetにコンテナバインドした
+   新規プロジェクトが作成される）。
+3. 「GASプロジェクトへのデプロイ対象ファイル」の表にある**Booking Admin列が✓のファイル**
+   （`Config.gs` / `CalendarRepository.gs` / `Booking.gs` / `SpreadsheetRepository.gs` /
+   `RecoveryRepository.gs` / `BookingRepository.gs` / `BookingAdmin.gs`）をコピーする。
+4. このプロジェクトのScript Propertiesに `CALENDAR_ID` / `SPREADSHEET_ID` を設定する
+   （Booking Web App側と同じ値。「Script Properties」節参照）。
+5. 保存してSpreadsheetを再読み込みする。コンテナバインドスクリプトの`onOpen()`単純トリガーが
+   自動的に発火し、「予約管理」メニューが表示される（installable trigger等の追加設定は
+   一切不要。これがcontainer-bound scriptの標準的な挙動）。
+6. Web Appとしてのデプロイは不要（このプロジェクトはSpreadsheetのUI拡張としてのみ使う）。
+
+### 既知の制約（LockServiceがプロジェクトごとに独立している）
+
+`LockService.getScriptLock()`が提供する排他は、**呼び出し元のApps Scriptプロジェクト内**
+でのみ有効であり、別プロジェクト間では共有されない。`confirmBooking`はBooking Admin
+プロジェクトで、`expirePendingBookings`はBooking Web Appプロジェクトでそれぞれ独立して
+Lockを取得するため、この2つは互いを排他できない。
+
+万一、ちょうど同じタイミングで管理者が`confirmBooking`を実行し、かつ時間主導トリガーが
+同じbookingIdを失効処理しようとした場合、理論上は競合のwindowが残る。これを緩和するため、
+`confirmBooking`はCalendarを実際に書き換える直前にもう一度Sheets上のstatusを読み直し、
+その間にstatusが変化していれば（`CONFLICTING_STATUS_CHANGE`）Calendar/Sheetsのどちらも
+変更せずに中断する（`BookingRepository.gs`参照。`test/booking-confirm-expire.test.js`で
+検証済み）。同様に`expirePendingBookings`もCalendar削除・Sheets更新の直前にstatusを
+再確認する。これにより競合windowは大幅に狭まるが、**理論上のwindowをゼロにはできない**
+（「同一Calendarと直前再確認でリスクを最小化する設計」であり、「絶対に競合しない」とは
+主張しない。#267のスペースマーケット共存と同じ考え方）。実運用上は、TTL失効の対象になる
+ほど古いPENDINGを管理者が実際に確定しようとする状況自体が稀であり、影響は限定的と判断
+している。
 
 ## 管理メニューからの予約確定（confirmBooking）手順
 
-1. 上記のセットアップ済みであることを確認し、`SPREADSHEET_ID`で指定したSpreadsheetを
-   開くと「予約管理」メニューが表示される。
+1. Booking Adminプロジェクトのセットアップが完了していれば、`SPREADSHEET_ID`で
+   指定したSpreadsheetを開くだけで「予約管理」メニューが自動的に表示される
+   （追加のトリガー設定は不要）。
 2. 確定したい予約の内容を`Bookings`シートで確認する。
 3. 次のいずれかの方法で確定する。
    - **アクティブ行を確定**: `Bookings`シート上で対象の行（bookingIdの行）を選択してから、
@@ -285,8 +374,8 @@ Phase 1では`studio_x`以外の`brand`を指定してもサーバー側で拒�
      （confirmBooking）」を実行し、ダイアログにbookingIdを入力する。
 4. 結果はダイアログで表示される。成功時は`status`が`CONFIRMED`になり、`confirmedAt`が
    記録され、対応するCalendarイベントのタイトルが`[Studio X 確定]`へ更新される。
-5. スクリプトエディタから`confirmBooking("SX-...")`を直接実行することもできる
-   （Issue #268本文の正式関数名）。
+5. Booking Adminプロジェクトのスクリプトエディタから`confirmBooking("SX-...")`を
+   直接実行することもできる（Issue #268本文の正式関数名）。
 6. **`status`セルを直接編集して確定させる運用はしないこと。** 必ずこの手順（＝
    `confirmBooking`経由）で行う。二重実行しても壊れない（2回目は「すでに確定済みです」と
    表示されるだけで安全）。
@@ -309,7 +398,11 @@ Calendarイベントを削除し、Sheets側の`status`を`EXPIRED`にして`exp
 Calendar削除に失敗した場合も`Recovery`シートへ記録した上でSheets側はEXPIREDへ進める
 （PENDINGのまま放置しない）。
 
-## デプロイ設定
+## デプロイ設定（Booking Web Appプロジェクト）
+
+Booking Adminプロジェクト（コンテナバインド）はWeb Appとしてデプロイしない
+（Spreadsheetを開いたときのUI拡張として動くだけでよい）。以下はBooking Web App
+プロジェクトのみに適用する設定。
 
 - **実行ユーザー（Execute as）**: Me（自分）
 - **アクセスできるユーザー（Who has access）**: Anyone（匿名を含む全員）
@@ -320,16 +413,17 @@ Calendar削除に失敗した場合も`Recovery`シートへ記録した上でSh
 
 ## セットアップ手順
 
-1. 新規のGoogle Apps Scriptプロジェクトを作成し、このディレクトリ配下の全`.gs`ファイルと
-   `appsscript.json`をコピーする（スタンドアロンスクリプトのままでよい。
-   `SPREADSHEET_ID`のSpreadsheetへコンテナバインドする必要はない）。
-2. 上記のScript Propertiesを設定する（最低限 `CALENDAR_ID` / `SPREADSHEET_ID`）。
+1. **Booking Web App**: 新規のスタンドアロンGoogle Apps Scriptプロジェクトを作成し、
+   「GASプロジェクトへのデプロイ対象ファイル」表のBooking Web App列が✓のファイル
+   （`BookingAdmin.gs`を除く全`.gs`ファイルと`appsscript.json`）をコピーする。
+2. Script Propertiesを設定する（最低限 `CALENDAR_ID` / `SPREADSHEET_ID`）。
 3. Webアプリとして新規デプロイし、上記の「デプロイ設定」の通りに設定する。
 4. デプロイ後のWeb App URLは、本Issueでは既存フォーム・既存サイトのどこからも
    参照しない（#269以降の共通予約UI実装時に接続する）。
 5. 運用開始時に「PENDING TTL失効トリガーの作成手順」に従ってトリガーを作成する。
-6. 運用開始時に「管理メニューのセットアップ（installable onOpenトリガー）」に従って
-   `installBookingAdminMenuTrigger`を一度だけ手動実行する。
+6. **Booking Admin**: 「管理メニュー用GASプロジェクト（Booking Admin）のセットアップ」に
+   従って別途セットアップする（`CALENDAR_ID` / `SPREADSHEET_ID`をこのプロジェクトにも
+   同じ値で設定することを忘れないこと）。
 
 ## ロールバック方法
 
@@ -342,12 +436,14 @@ Calendar削除に失敗した場合も`Recovery`シートへ記録した上でSh
   古いバージョン（#266時点のデプロイ）へロールバックする、または新デプロイを無効化する。
   `doGet`（getAvailability）の挙動はこのIssueで変更していないため、ロールバックしても
   既存フォーム・既存の空き判定表示には影響しない。
-- **時間主導トリガーを作成済みの場合**: スクリプトエディタの「トリガー」画面から
-  `expirePendingBookings`のトリガーを削除する。
-- **管理メニュー用のinstallable onOpenトリガーを作成済みの場合**: 同じく「トリガー」画面から
-  `addBookingAdminMenu`のトリガーを削除する。
-- **Spreadsheet運用を開始済みの場合**: `Bookings`/`Recovery`シートはこのGASプロジェクト
-  以外から書き込まれないため、GASのデプロイを止めれば新規の自動書き込みは止まる
+- **時間主導トリガーを作成済みの場合**: Booking Web Appプロジェクトのスクリプトエディタ
+  「トリガー」画面から`expirePendingBookings`のトリガーを削除する。
+- **Booking Adminプロジェクトを作成済みの場合**: そのプロジェクト自体を削除するか、
+  対象Spreadsheetへの紐付け（コンテナバインド）を解除すれば「予約管理」メニューは
+  表示されなくなる。
+- **Spreadsheet運用を開始済みの場合**: `Bookings`/`Recovery`シートはBooking Web App /
+  Booking Adminの2プロジェクト以外から書き込まれないため、両方のGASデプロイ・
+  スクリプトを止めれば新規の自動書き込みは止まる
   （既存の行データ自体を削除する必要はない）。
 
 ## 設計判断メモ（レビュー時にご確認ください）
@@ -369,6 +465,10 @@ Issue本文で「実装前に確認してほしい」とされた設計ポイン
 3. **Lockの範囲**: `createBooking`は「Calendar再取得〜Sheets保存」のみをLockで保護し、
    入力検証・rate limit確認・管理者通知はLockの外。`confirmBooking`・
    `expirePendingBookings`の各候補処理もそれぞれ短時間のLockで保護している。
+   ただし`confirmBooking`（Booking Adminプロジェクト）と`expirePendingBookings`
+   （Booking Web Appプロジェクト）は別々のApps ScriptプロジェクトのためLockServiceが
+   共有されない。「管理メニュー用GASプロジェクト（Booking Admin）のセットアップ」内
+   「既知の制約」を参照（2回目レビュー指摘を受けて追記）。
 4. **PENDING TTLとEXPIRED状態遷移**: 「受付+24h」と「開始-2h」の早い方を失効時刻とし、
    時間主導トリガー（`expirePendingBookings`）が候補を抽出→Lock取得→status再確認→
    Calendar削除→Sheets更新の順で処理する。
@@ -378,11 +478,15 @@ Issue本文で「実装前に確認してほしい」とされた設計ポイン
    「概ね閾値を超えたら拒否する」ゆるい防御として位置づけている。
 6. **SpreadsheetカスタムメニューからのbookingId指定方法・実運用方式**: 「アクティブ行を確定」
    （選択中の行のA列=bookingIdを読む）と「bookingIdを入力して確定」（プロンプト入力）の
-   2通りを用意した。このGASプロジェクトはスタンドアロンWeb Appのため、単純トリガーの
-   `onOpen()`だけでは対象Spreadsheetを開いてもメニューが出ない。そのため
-   `installBookingAdminMenuTrigger()`でSPREADSHEET_IDに対するinstallable onOpenトリガーを
-   明示的に作成する方式を正式手順とした（レビュー指摘を受けて、曖昧な「コンテナバインド
-   推奨」から具体的な実装・セットアップ手順へ変更）。
+   2通りを用意した。カスタムメニュー（`SpreadsheetApp.getUi()`）はGoogleの仕様上
+   コンテナバインドスクリプトからしか作成できないため、`BookingAdmin.gs`は`SPREADSHEET_ID`
+   のSpreadsheetへコンテナバインドした別プロジェクト（Booking Admin）へデプロイする方式を
+   正式手順とした。1回目レビューでは、スタンドアロンのWeb Appプロジェクトから
+   installable onOpenトリガーを作成する方式（`installBookingAdminMenuTrigger()`）を
+   採用したが、installable triggerを作ってもスクリプト自体がbound scriptにはならず
+   `getUi()`は使えないという2回目レビューの指摘を受けて撤回し、コンテナバインド
+   プロジェクトへの分離に設計変更した（詳細は「管理メニュー用GASプロジェクト
+   （Booking Admin）のセットアップ」を参照）。
 7. **createBooking APIのPOST方式**: `doPost`を新設し、`e.postData.contents`をJSONとして
    パースする。GETクエリパラメータでは個人情報を送らせない。
 8. **doGet/getAvailabilityとdoPost/createBookingの共存**: 同一`Code.gs`内で`doGet`
@@ -398,9 +502,34 @@ Issue本文で「実装前に確認してほしい」とされた設計ポイン
 - **Availability設定全体のfail-closed検証をcreateBookingにも適用**: `BookingAvailability.validateInput`
   （getAvailabilityと同じ設定検証）を`createBooking`の入力検証冒頭で呼び出し、
   `BUFFER_MINUTES`等の誤設定時にNaNのまま競合判定へ進んで既存予約の見落としが起きないようにした。
-- **Spreadsheetカスタムメニューの実運用方式を明確化**: 上記6.の`installBookingAdminMenuTrigger()`を追加。
+- **Spreadsheetカスタムメニューの実運用方式を明確化**: `installBookingAdminMenuTrigger()`を追加した
+  （※この対応は2回目レビューで撤回・再設計。下記参照）。
 - **confirmBooking/expirePendingBookingsの部分失敗もrecoveryへ記録**: 上記1.のとおり両関数に
   補償・recovery記録を追加した。
+
+### PRレビュー（2回目）指摘への追加対応
+
+2回目のレビューで、1回目の管理メニュー対応（`installBookingAdminMenuTrigger()`による
+installable onOpenトリガー方式）が「Googleの仕様上、カスタムメニューを作成できるのは
+bound scriptのみであり、installable triggerを作ってもstandalone scriptがbound script
+になるわけではない」という理由で不成立である、との指摘を受けた。指摘の通りであるため、
+以下のとおり設計を変更した。
+
+- `installBookingAdminMenuTrigger()`を`BookingAdmin.gs`から削除し、関連するテスト
+  （`test/booking-confirm-expire.test.js`のinstallable trigger作成/重複防止テスト）・
+  README記述（旧「管理メニューのセットアップ（installable onOpenトリガー）」節）も削除した。
+- `BookingAdmin.gs`（カスタムメニュー・`confirmBooking`）を、Web App本体
+  （スタンドアロンのまま維持）とは別の、`SPREADSHEET_ID`のSpreadsheetへコンテナバインドした
+  専用プロジェクト（Booking Admin）へデプロイする設計に変更した。単純トリガーの`onOpen()`は
+  そのままで、コンテナバインドスクリプトとしてデプロイすれば追加設定なしで機能する。
+  ファイル構成・セットアップ手順・confirmBooking実行方法は「GASプロジェクトへの
+  デプロイ対象ファイル」「管理メニュー用GASプロジェクト（Booking Admin）のセットアップ」
+  「管理メニューからの予約確定（confirmBooking）手順」の各節に明記した。
+- 副作用として、`confirmBooking`（Booking Adminプロジェクト）と`expirePendingBookings`
+  （Booking Web Appプロジェクト）が別プロジェクトになったことで、LockServiceによる
+  相互排他が効かなくなる点を認識し、「既知の制約」として文書化した上で、Calendarを
+  実際に変更する直前にもう一度statusを再確認する緩和策（`CONFLICTING_STATUS_CHANGE`）を
+  `confirmBooking`に追加した（`test/booking-confirm-expire.test.js`で検証）。
 
 ## テスト結果について
 
@@ -435,8 +564,9 @@ Issue #268で追加:
   （正常系・15分刻み拒否・設定fail-closed拒否・#267境界の競合検出・LockService・rate limit・
   部分失敗補償・管理者通知失敗など）
 - `test/booking-confirm-expire.test.js` — `confirmBooking`/`expirePendingBookings`の
-  統合テスト（状態遷移・TTL・二重実行・部分失敗補償/recovery記録・障害分離・installable
-  onOpenトリガーの作成/重複防止・管理メニューの配線）
+  統合テスト（状態遷移・TTL・二重実行・部分失敗補償/recovery記録・障害分離・Calendar変更
+  直前の再確認によるCONFLICTING_STATUS_CHANGE検出・container-boundスクリプトの
+  onOpen単純トリガーによる管理メニューの配線）
 
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに
@@ -451,8 +581,9 @@ CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用�
 - [ ] 同じ予約が`Bookings`シートに同じbookingIdで保存されること
 - [ ] getAvailabilityで空きだった枠が、スペースマーケット予約で埋まった直後に
       `createBooking`すると`SLOT_CONFLICT`になり、CalendarにもSheetsにも何も作られないこと
-- [ ] `installBookingAdminMenuTrigger`を実行後、`SPREADSHEET_ID`のSpreadsheetを開くと
-      実際に「予約管理」メニューが表示されること（スタンドアロン運用での実地確認）
+- [ ] Booking Adminプロジェクト（`SPREADSHEET_ID`のSpreadsheetへコンテナバインド）を
+      セットアップ後、そのSpreadsheetを開くと追加設定なしで実際に「予約管理」メニューが
+      表示されること（container-bound scriptのonOpen単純トリガーの実地確認）
 - [ ] Spreadsheetのカスタムメニューから`confirmBooking`が実行できること
 - [ ] `expirePendingBookings`のトリガーが実際に15分おきに動作すること
 - [ ] 既存の`_includes/calendar_embed.html`および`studio-x/reservation/`の予約フォームが

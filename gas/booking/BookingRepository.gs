@@ -260,6 +260,29 @@ var BookingRepository = (function () {
         };
       }
 
+      /*
+       * Calendarを実際に変更する直前に、もう一度Sheets上のstatusを読み直す。
+       * confirmBookingはSpreadsheetにコンテナバインドした別GASプロジェクト
+       * （BookingAdmin.gs参照）から呼ばれる一方、expirePendingBookings()は
+       * Web App側のGASプロジェクトで動く時間主導トリガーから呼ばれる。
+       * LockServiceのスクリプトロックはスクリプトプロジェクトごとに独立しているため、
+       * この2つの処理は互いを排他できない。最初のfindRowByBookingId確認からここまでの
+       * 間に、ちょうどTTLが失効してexpirePendingBookingsが同じbookingIdを
+       * PENDING→EXPIREDへ進めてしまう競合を完全には防げないが、実際にCalendarを
+       * 書き換える直前でもう一度確認することで、その競合windowを可能な限り狭める
+       * （それでも理論上のwindowが0になるわけではない。README「既知の制約」参照）。
+       */
+      var recheck = SpreadsheetRepository.findRowByBookingId(bookingId);
+      if (!recheck || recheck.record.status !== Booking.STATUS.PENDING) {
+        return {
+          success: false,
+          error: {
+            code: 'CONFLICTING_STATUS_CHANGE',
+            message: '確定処理中に予約状態が変化しました（現在: ' + (recheck && recheck.record.status) + '）。最新の状態を確認してください。'
+          }
+        };
+      }
+
       CalendarRepository.setEventStatus(calendarId, record.calendarEventId, Booking.STATUS.CONFIRMED, bookingId);
 
       var confirmedAt = new Date();
