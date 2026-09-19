@@ -91,6 +91,16 @@ var BookingAvailability = (function () {
     return null;
   }
 
+  /* busyIntervals（終日イベント含む）から、bufferMinutesぶん前後に拡張した占有区間の
+     配列を作る。computeBookableStartTimes・isStartTimeBookableの両方から使う共通ロジック。 */
+  function computeBlockedRanges_(busyIntervals, bufferMinutes) {
+    return (busyIntervals || [])
+      .filter(function (interval) { return interval && !interval.isAllDay; })
+      .map(function (interval) {
+        return { start: interval.startMinutes - bufferMinutes, end: interval.endMinutes + bufferMinutes };
+      });
+  }
+
   /*
    * busyIntervals: [{ startMinutes, endMinutes, isAllDay }]（当日00:00からの経過分）
    * 戻り値: 'HH:mm' 形式の予約可能開始時刻の配列
@@ -105,23 +115,34 @@ var BookingAvailability = (function () {
     var openMinutes = parseTimeToMinutes_(config.openTime);
     var closeMinutes = parseTimeToMinutes_(config.closeTime);
     var step = config.slotStepMinutes;
-    var buffer = config.bufferMinutes;
-
-    var blockedRanges = (busyIntervals || [])
-      .filter(function (interval) { return interval && !interval.isAllDay; })
-      .map(function (interval) {
-        return { start: interval.startMinutes - buffer, end: interval.endMinutes + buffer };
-      });
+    var blockedRanges = computeBlockedRanges_(busyIntervals, config.bufferMinutes);
 
     var bookable = [];
     for (var start = openMinutes; start + durationMinutes <= closeMinutes; start += step) {
-      var end = start + durationMinutes;
-      var isBlocked = blockedRanges.some(function (range) {
-        return start < range.end && end > range.start;
-      });
-      if (!isBlocked) bookable.push(minutesToTime_(start));
+      if (isRangeFree_(start, start + durationMinutes, blockedRanges)) bookable.push(minutesToTime_(start));
     }
     return bookable;
+  }
+
+  function isRangeFree_(start, end, blockedRanges) {
+    return !blockedRanges.some(function (range) {
+      return start < range.end && end > range.start;
+    });
+  }
+
+  /*
+   * createBooking（Issue #268）が、Lock取得後の直前再確認で使う単一スロット判定。
+   * computeBookableStartTimesと同じ「buffer込みの占有区間に重ならないか」だけを見る。
+   * openTime/closeTimeの範囲チェックはvalidateCreateBookingInput側の責務とし、
+   * ここでは営業時間外の呼び出しかどうかは判定しない（純粋に空き重複だけを見る）。
+   */
+  function isStartTimeBookable(startMinutes, durationMinutes, busyIntervals, bufferMinutes) {
+    var blockedRanges = computeBlockedRanges_(busyIntervals, bufferMinutes);
+    return isRangeFree_(startMinutes, startMinutes + durationMinutes, blockedRanges);
+  }
+
+  function isValidTimeString(value) {
+    return isValidTimeString_(value);
   }
 
   /*
@@ -155,8 +176,11 @@ var BookingAvailability = (function () {
 
   return {
     isValidDateString: isValidDateString,
+    isValidTimeString: isValidTimeString,
+    parseTimeToMinutes: parseTimeToMinutes_,
     validateInput: validateInput,
     computeBookableStartTimes: computeBookableStartTimes,
+    isStartTimeBookable: isStartTimeBookable,
     getAvailability: getAvailability
   };
 })();

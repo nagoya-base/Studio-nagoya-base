@@ -1,0 +1,132 @@
+/*
+ * SpreadsheetRepository.gs — 予約台帳（Issue #268）のSpreadsheet読み書き。
+ *
+ * Script Propertiesの SPREADSHEET_ID で指定した専用Spreadsheet内に
+ * 「Bookings」シートを作成・使用する（存在しなければ自動作成しヘッダー行を書く）。
+ *
+ * 列構成は固定（Issue #268 v1仕様 + 監査用カラム）。列を増やす場合はHEADERS_と
+ * README.mdの両方を更新すること。
+ */
+'use strict';
+
+var SpreadsheetRepository = (function () {
+  var SHEET_NAME_ = 'Bookings';
+
+  var HEADERS_ = [
+    'bookingId',
+    'createdAt',
+    'date',
+    'startAt',
+    'endAt',
+    'brand',
+    'name',
+    'email',
+    'phone',
+    'people',
+    'purpose',
+    'paymentMethod',
+    'status',
+    'calendarEventId',
+    'source',
+    'note',
+    'confirmedAt',
+    'expiredAt',
+    'cancelledAt',
+    'updatedAt'
+  ];
+
+  function getSpreadsheet_() {
+    return SpreadsheetApp.openById(BookingConfig.getSpreadsheetId());
+  }
+
+  /* シートが存在しない、またはヘッダー行が未設定の場合はヘッダー行を書く（冪等）。 */
+  function ensureBookingsSheet_() {
+    var spreadsheet = getSpreadsheet_();
+    var sheet = spreadsheet.getSheetByName(SHEET_NAME_);
+    if (!sheet) {
+      sheet = spreadsheet.insertSheet(SHEET_NAME_);
+    }
+    if (sheet.getLastRow() < 1) {
+      sheet.appendRow(HEADERS_);
+    }
+    return sheet;
+  }
+
+  function rowToRecord_(row) {
+    var record = {};
+    HEADERS_.forEach(function (header, index) {
+      record[header] = row[index];
+    });
+    return record;
+  }
+
+  function recordToRow_(record) {
+    return HEADERS_.map(function (header) {
+      return record[header] !== undefined && record[header] !== null ? record[header] : '';
+    });
+  }
+
+  /* record: HEADERS_のキーを持つオブジェクト（未指定のフィールドは空文字で埋める）。 */
+  function appendBooking(record) {
+    var sheet = ensureBookingsSheet_();
+    sheet.appendRow(recordToRow_(record));
+  }
+
+  /* 戻り値: { rowNumber, record } または見つからない場合はnull。
+     rowNumberは1始まり・ヘッダー行込みのSpreadsheet実際の行番号（getRange等にそのまま使える）。 */
+  function findRowByBookingId(bookingId) {
+    var sheet = ensureBookingsSheet_();
+    var values = sheet.getDataRange().getValues();
+    for (var i = 1; i < values.length; i++) {
+      if (values[i][0] === bookingId) {
+        return { rowNumber: i + 1, record: rowToRecord_(values[i]) };
+      }
+    }
+    return null;
+  }
+
+  /* status===PENDINGの全行を返す（expirePendingBookings用）。件数が多くなる想定は
+     Phase 1ではないため、全行取得→フィルタというシンプルな実装にしている。 */
+  function getAllPendingBookings() {
+    var sheet = ensureBookingsSheet_();
+    var values = sheet.getDataRange().getValues();
+    var result = [];
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(values[i]);
+      if (record.status === 'PENDING') {
+        result.push({ rowNumber: i + 1, record: record });
+      }
+    }
+    return result;
+  }
+
+  /*
+   * fields: { [HEADERS_のいずれか]: value } の部分更新。statusセルの直接編集を
+   * 正式運用にしないため、statusを含む更新は必ずこの関数（＝confirmBooking /
+   * expirePendingBookings）経由でのみ行う。
+   * bookingIdが見つからない場合は例外を投げる。
+   */
+  function updateBookingFields(bookingId, fields) {
+    var found = findRowByBookingId(bookingId);
+    if (!found) {
+      throw new Error('bookingIdが見つかりません: ' + bookingId);
+    }
+    var sheet = ensureBookingsSheet_();
+    Object.keys(fields).forEach(function (key) {
+      var columnIndex = HEADERS_.indexOf(key);
+      if (columnIndex === -1) {
+        throw new Error('未知のbookingフィールドです: ' + key);
+      }
+      sheet.getRange(found.rowNumber, columnIndex + 1, 1, 1).setValues([[fields[key]]]);
+    });
+    return found.rowNumber;
+  }
+
+  return {
+    HEADERS: HEADERS_,
+    appendBooking: appendBooking,
+    findRowByBookingId: findRowByBookingId,
+    getAllPendingBookings: getAllPendingBookings,
+    updateBookingFields: updateBookingFields
+  };
+})();

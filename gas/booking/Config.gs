@@ -1,11 +1,17 @@
 /*
- * Config.gs — 自社予約システム（Issue #266）の固定仕様値とScript Propertiesの読み出し。
+ * Config.gs — 自社予約システム（Issue #266/#268）の固定仕様値とScript Propertiesの読み出し。
  *
- * Script Propertiesに未設定の項目は、Issue #265/#266で固定された仕様値を
- * デフォルトとして使う。CALENDAR_IDのみ必須（未設定ならエラーにする）。
+ * Script Propertiesに未設定の項目は、Issue #265/#266/#268で固定された仕様値を
+ * デフォルトとして使う。CALENDAR_ID / SPREADSHEET_ID のみ必須（未設定ならエラーにする）。
  *
- * このファイルはPropertiesServiceに依存するため、実際のGAS実行環境でのみ
- * 完全に動作する（vmテストではPropertiesServiceをスタブして検証する）。
+ * TTL・レート制限のような運用チューニング値は、誤設定（数値以外・0以下）の場合でも
+ * 例外を投げず安全な既定値へフォールバックする。空き判定側（BUFFER_MINUTES等）と異なり、
+ * ここでNaNをそのまま返すと「レート制限が常に無効化される」というfail-open事故になるため
+ * （例: count < NaN は常にfalseになり、無制限に送信を許してしまう）、あえてfail-closedに
+ * 倒れる既定値へ丸める方針にしている。
+ *
+ * このファイルはPropertiesService依存のため、実際のGAS実行環境でのみ完全に動作する
+ * （vmテストではPropertiesServiceをスタブして検証する）。
  */
 'use strict';
 
@@ -45,6 +51,58 @@ var BookingConfig = (function () {
     return id;
   }
 
+  function getSpreadsheetId() {
+    var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+    if (!id) {
+      throw new Error('Script Propertiesに SPREADSHEET_ID が設定されていません。README.mdを参照してください。');
+    }
+    return id;
+  }
+
+  /* getAdminNotificationEmail() の戻り値が空文字の場合、AdminNotifier.gsは通知を送らない
+     （管理者通知は#268では任意機能のため、未設定でもcreateBooking自体は失敗させない）。 */
+  function getAdminNotificationEmail() {
+    return PropertiesService.getScriptProperties().getProperty('ADMIN_NOTIFICATION_EMAIL') || '';
+  }
+
+  var POSITIVE_INTEGER_STRICT_PATTERN_ = /^\d+$/;
+
+  /* readIntegerProperty_と異なり、不正値・0以下は例外にもNaNにもせずdefaultValueへフォールバックする
+     （このファイル冒頭のコメント参照）。 */
+  function readPositiveIntegerProperty_(key, defaultValue) {
+    var raw = PropertiesService.getScriptProperties().getProperty(key);
+    if (raw === null || raw === '') return defaultValue;
+    if (typeof raw !== 'string' || !POSITIVE_INTEGER_STRICT_PATTERN_.test(raw)) return defaultValue;
+    var parsed = parseInt(raw, 10);
+    return parsed > 0 ? parsed : defaultValue;
+  }
+
+  /* PENDING TTLの既定値（Issue #268固定仕様）:
+     - PENDING_TTL_HOURS: 受付から24時間
+     - PENDING_TTL_MIN_HOURS_BEFORE_START: 利用開始時刻の2時間前を超えて保持しない
+     どちらもScript Propertiesで変更可能。 */
+  function getTtlConfig() {
+    return {
+      ttlHours: readPositiveIntegerProperty_('PENDING_TTL_HOURS', 24),
+      minHoursBeforeStart: readPositiveIntegerProperty_('PENDING_TTL_MIN_HOURS_BEFORE_START', 2)
+    };
+  }
+
+  /* レート制限の既定値（Issue #268固定仕様）:
+     - 同一メール: 10分以内3件まで
+     - 全体: 1分あたり20件まで
+     - 同一内容の連投抑止: 2分以内の完全一致再送信を1件目のみ許可する
+     すべてScript Propertiesで変更可能。 */
+  function getRateLimitConfig() {
+    return {
+      emailCount: readPositiveIntegerProperty_('RATE_LIMIT_EMAIL_COUNT', 3),
+      emailWindowMinutes: readPositiveIntegerProperty_('RATE_LIMIT_EMAIL_WINDOW_MINUTES', 10),
+      globalCount: readPositiveIntegerProperty_('RATE_LIMIT_GLOBAL_COUNT', 20),
+      globalWindowMinutes: readPositiveIntegerProperty_('RATE_LIMIT_GLOBAL_WINDOW_MINUTES', 1),
+      duplicateWindowMinutes: readPositiveIntegerProperty_('RATE_LIMIT_DUPLICATE_WINDOW_MINUTES', 2)
+    };
+  }
+
   /* getAvailability（Issue #266）が使う空き判定の固定条件一式。
      brandはここに含めない（空き判定ロジックをbrandで分岐させないため）。 */
   function getAvailabilityConfig() {
@@ -61,6 +119,10 @@ var BookingConfig = (function () {
   return {
     DEFAULTS: DEFAULTS,
     getCalendarId: getCalendarId,
-    getAvailabilityConfig: getAvailabilityConfig
+    getAvailabilityConfig: getAvailabilityConfig,
+    getSpreadsheetId: getSpreadsheetId,
+    getAdminNotificationEmail: getAdminNotificationEmail,
+    getTtlConfig: getTtlConfig,
+    getRateLimitConfig: getRateLimitConfig
   };
 })();
