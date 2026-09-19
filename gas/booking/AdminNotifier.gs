@@ -19,7 +19,7 @@ var AdminNotifier = (function () {
     var adminEmail = BookingConfig.getAdminNotificationEmail();
     if (!adminEmail) return;
 
-    var subject = '[Studio X] 仮予約を受け付けました: ' + record.bookingId;
+    var subject = '[' + Booking.getBrandLabel(record.brand) + '] 仮予約を受け付けました: ' + record.bookingId;
     var body = [
       '新しい仮予約（PENDING）が届きました。内容を確認し、問題なければSpreadsheetの管理メニューから確定してください。',
       '',

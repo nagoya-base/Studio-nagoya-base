@@ -23,21 +23,44 @@ Studio Nagoya Base の静的サイト一式です。GitHub Pages で公開する
 │   ├── home.css
 │   ├── en.css
 │   ├── mens.css
-│   └── bondage.css
+│   ├── bondage.css
+│   └── booking.css     共通予約UI（Issue #269）専用スタイル。3ブランド共通
 ├── scripts/
-│   └── main.js         共通 JavaScript
+│   ├── main.js             共通 JavaScript
+│   ├── booking-logic.js    共通予約UIのDOM非依存ロジック（node --testで検証）
+│   ├── booking-app.js      共通予約UIのDOM配線・API呼び出し
+│   └── booking-config.js   共通予約UIが呼ぶBooking Web AppのURL設定（3ブランド共通）
+├── booking/
+│   └── index.html      SNB（Studio Nagoya Base）の共通予約UI（仮予約フォーム）
 ├── mens/
-│   └── index.html      メンズ向けページ
+│   ├── index.html      メンズ向けページ
+│   └── booking/
+│       └── index.html  SNB mensの共通予約UI（仮予約フォーム）
 ├── bondage/
 │   └── index.html      緊縛・吊り床ページ
 └── studio-x/
     ├── index.html          Studio X ページ
     ├── style.css           Studio X 専用スタイル
-    └── reservation/
-        ├── index.html      Studio X 予約・撮影相談フォーム
-        ├── style.css       予約フォーム専用スタイル
-        └── form.js         予約フォームのバリデーション・送信制御
+    ├── reservation/
+    │   ├── index.html      Studio X 予約・撮影相談フォーム（Formspree・既存導線）
+    │   ├── style.css       予約フォーム専用スタイル
+    │   └── form.js         予約フォームのバリデーション・送信制御
+    └── booking/
+        └── index.html      Studio Xの共通予約UI（仮予約フォーム）
 ```
+
+### 共通予約UI（Issue #269）について
+
+`booking/` / `mens/booking/` / `studio-x/booking/` は、SNB / SNB mens / Studio X の
+3ブランドが同じ予約基盤（`gas/booking/`のGAS Web App）へ接続する共通の仮予約フォームです。
+3ページとも `_includes/booking_app_ja.html`（共通マークアップ）・
+`scripts/booking-logic.js` / `scripts/booking-app.js`（共通ロジック）・
+`styles/booking.css`（共通スタイル）をそのまま共有しており、ブランドごとの差分は
+ブランド識別子・戻り先URL・案内文のみです。詳細は
+[`gas/booking/README.md`](gas/booking/README.md) を参照してください。
+
+**このIssue（#269）時点では、`studio-x/reservation/`（既存の予約・撮影相談フォーム）や
+トップページの予約カレンダー導線は撤去していません。** 本番切替・旧導線撤去は`#273`の責務です。
 
 ## 編集ポイント
 

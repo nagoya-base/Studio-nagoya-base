@@ -1,0 +1,225 @@
+<!--
+  _includes/booking_app_ja.html — 共通予約UI本体（Issue #269）。
+
+  SNB（/booking/）・SNB mens（/mens/booking/）・Studio X（/studio-x/booking/）の
+  3ブランドから、この同じincludeを使う（HTML/JSをブランドごとにコピーしない）。
+  ブランドごとに変わるのは include.brand / include.back_url / include.back_label /
+  include.intro_note のみで、ステップ構成・入力項目・検証・送信ロジックは共通
+  （scripts/booking-app.js）。空き判定・最低利用時間・15分刻み・競合判定などの
+  業務ルールはここにもJS側にも実装せず、getAvailability/createBooking（GAS）の
+  応答をそのまま表示するだけにする。
+
+  必須パラメータ:
+    include.brand      — 'snb' | 'mens' | 'studio_x'
+    include.back_url    — 完了画面・トップリンクの遷移先（relative_url済みの値を渡すこと）
+    include.back_label  — 上記リンクのラベル
+  任意パラメータ:
+    include.intro_note  — ステップ1の上に表示する案内文（ブランド固有の一言。任意）
+-->
+<div
+  id="booking-app"
+  class="booking-app"
+  data-brand="{{ include.brand }}"
+  data-back-url="{{ include.back_url }}"
+  data-back-label="{{ include.back_label }}">
+
+  {% if include.intro_note %}
+  <p class="ba-banner ba-banner--notice">{{ include.intro_note }}</p>
+  {% endif %}
+
+  <p class="ba-banner ba-banner--notice">
+    このフォームの送信は「仮予約（PENDING）」の申込です。<strong>この時点では予約は確定していません。</strong>
+    内容を確認のうえ、当方から確定のご連絡をします（当方からの確定連絡をもって予約成立となります）。
+  </p>
+
+  <ol class="ba-progress" id="ba-progress" aria-label="予約手続きの進み具合">
+    <li data-step="datetime">1. 利用日・時間</li>
+    <li data-step="start-time">2. 空き開始時刻</li>
+    <li data-step="details">3. 利用者情報</li>
+    <li data-step="confirm">4. 内容確認</li>
+    <li data-step="complete">5. 完了</li>
+  </ol>
+
+  <div id="ba-global-error" class="ba-banner ba-banner--error" role="alert" aria-live="assertive" tabindex="-1" hidden>
+    <p id="ba-global-error-message"></p>
+    <div class="ba-banner-actions" id="ba-global-error-actions"></div>
+  </div>
+
+  <!-- Step 1: 利用日・利用時間 -->
+  <section class="ba-step" id="ba-step-datetime" data-step="datetime">
+    <h2>利用日・利用時間を選択</h2>
+    <p class="ba-step-desc">希望する利用日と利用時間（長さ）を選択してください。</p>
+
+    <!-- TODO #270: 当日利用ルール・新規/会員による当日可否の判定はここでは実装しない。
+         当日の日付も選択でき、可否の最終判定はcreateBookingのサーバー側検証に委ねる。 -->
+    <div class="ba-field">
+      <label for="ba-date">利用日<span class="ba-required">必須</span></label>
+      <input type="date" id="ba-date" name="date" autocomplete="off">
+      <p class="ba-field-error" id="ba-date-error" hidden></p>
+    </div>
+
+    <!-- 利用時間の上限をUI側で決め打ちしない（長時間利用もサーバー側の判定に委ねる。
+         最低利用時間・15分刻み・営業時間内かどうかはgetAvailability/createBookingが正）。 -->
+    <div class="ba-field">
+      <label for="ba-duration">利用時間（時間単位）<span class="ba-required">必須</span></label>
+      <input type="number" id="ba-duration" name="durationHours" inputmode="numeric" min="1" step="1" placeholder="例：3">
+      <p class="ba-field-help">最低利用時間・予約可能な開始時刻は、次の画面で実際の空き状況とあわせてご案内します。長時間のご利用も入力できます。</p>
+      <p class="ba-field-error" id="ba-duration-error" hidden></p>
+    </div>
+
+    <div class="ba-actions">
+      <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">空き時間を確認する</button>
+    </div>
+  </section>
+
+  <!-- Step 2: 空き開始時刻 -->
+  <section class="ba-step" id="ba-step-start-time" data-step="start-time" hidden>
+    <h2>空き開始時刻を選択</h2>
+    <p class="ba-step-desc" id="ba-start-time-summary"></p>
+
+    <div id="ba-start-time-loading" class="ba-loading">空き状況を確認しています…</div>
+    <div id="ba-start-time-grid" class="ba-time-grid" role="group" aria-label="空き開始時刻" hidden></div>
+    <p id="ba-start-time-empty" class="ba-time-empty" hidden>この条件で空いている時間帯がありません。日付・利用時間を変更してお試しください。</p>
+
+    <div class="ba-actions">
+      <button type="button" class="ba-btn ba-btn-ghost" id="ba-step-start-time-back">戻る</button>
+      <button type="button" class="ba-btn ba-btn-primary" id="ba-step-start-time-next" disabled>次へ進む</button>
+    </div>
+  </section>
+
+  <!-- Step 3: 利用者情報 -->
+  <section class="ba-step" id="ba-step-details" data-step="details" hidden>
+    <h2>利用者情報を入力</h2>
+    <p class="ba-step-desc">予約内容の確認・ご連絡に使用します。</p>
+
+    <div class="ba-field">
+      <label for="ba-name">お名前<span class="ba-required">必須</span></label>
+      <input type="text" id="ba-name" name="name" autocomplete="name" maxlength="100">
+      <p class="ba-field-error" id="ba-name-error" hidden></p>
+    </div>
+
+    <div class="ba-field">
+      <label for="ba-email">メールアドレス<span class="ba-required">必須</span></label>
+      <input type="email" id="ba-email" name="email" autocomplete="email" inputmode="email" maxlength="254">
+      <p class="ba-field-help">確定連絡を受け取れるアドレスをご入力ください。</p>
+      <p class="ba-field-error" id="ba-email-error" hidden></p>
+    </div>
+
+    <div class="ba-field">
+      <label for="ba-phone">電話番号<span class="ba-optional">任意</span></label>
+      <input type="tel" id="ba-phone" name="phone" autocomplete="tel" inputmode="tel" maxlength="20">
+      <p class="ba-field-error" id="ba-phone-error" hidden></p>
+    </div>
+
+    <div class="ba-field">
+      <label for="ba-people">利用人数<span class="ba-required">必須</span></label>
+      <select id="ba-people" name="people">
+        <option value="">選択してください</option>
+        <option value="1名">1名</option>
+        <option value="2名">2名</option>
+        <option value="3名">3名</option>
+        <option value="4名">4名</option>
+        <option value="5名以上・要相談">5名以上・要相談</option>
+      </select>
+      <p class="ba-field-error" id="ba-people-error" hidden></p>
+    </div>
+
+    <div class="ba-field">
+      <label for="ba-purpose">利用目的<span class="ba-required">必須</span></label>
+      <select id="ba-purpose" name="purpose">
+        <option value="">選択してください</option>
+        <option value="緊縛・ロープ表現の自主練習">緊縛・ロープ表現の自主練習</option>
+        <option value="コスプレ撮影">コスプレ撮影</option>
+        <option value="ポートレート撮影">ポートレート撮影</option>
+        <option value="セルフ撮影">セルフ撮影</option>
+        <option value="作品撮り">作品撮り</option>
+        <option value="商品・物撮り">商品・物撮り</option>
+        <option value="動画撮影">動画撮影</option>
+        <option value="講習会・ワークショップ">講習会・ワークショップ</option>
+        <option value="その他">その他</option>
+      </select>
+      <p class="ba-field-error" id="ba-purpose-error" hidden></p>
+    </div>
+
+    <div class="ba-field" id="ba-purpose-other-wrap" hidden>
+      <label for="ba-purpose-other">利用目的の詳細<span class="ba-required">「その他」の場合は必須</span></label>
+      <input type="text" id="ba-purpose-other" name="purposeOther" maxlength="150">
+      <p class="ba-field-error" id="ba-purpose-other-error" hidden></p>
+    </div>
+
+    <fieldset class="ba-fieldset">
+      <legend>希望する支払方法<span class="ba-required">必須</span></legend>
+      <div class="ba-choices" id="ba-payment-choices">
+        <label class="ba-choice"><input type="radio" name="paymentMethod" value="現金"> <span>現金</span></label>
+        <label class="ba-choice"><input type="radio" name="paymentMethod" value="PayPay"> <span>PayPay</span></label>
+        <label class="ba-choice"><input type="radio" name="paymentMethod" value="オンラインクレジットカード"> <span>オンラインクレジットカード</span></label>
+        <label class="ba-choice"><input type="radio" name="paymentMethod" value="未定"> <span>未定</span></label>
+      </div>
+      <p class="ba-field-error" id="ba-payment-error" hidden></p>
+    </fieldset>
+
+    <div class="ba-field">
+      <label for="ba-note">連絡事項<span class="ba-optional">任意</span></label>
+      <textarea id="ba-note" name="note" maxlength="1000" rows="4"></textarea>
+      <p class="ba-field-help">持ち込み機材、当日利用のご相談など、確認したい点があればご記入ください。</p>
+      <p class="ba-field-error" id="ba-note-error" hidden></p>
+    </div>
+
+    <div class="ba-actions">
+      <button type="button" class="ba-btn ba-btn-ghost" id="ba-step-details-back">戻る</button>
+      <button type="button" class="ba-btn ba-btn-primary" id="ba-step-details-next">確認画面へ</button>
+    </div>
+  </section>
+
+  <!-- Step 4: 内容確認 -->
+  <section class="ba-step" id="ba-step-confirm" data-step="confirm" hidden>
+    <h2>内容を確認して仮予約を送信</h2>
+
+    <table class="ba-summary">
+      <tbody>
+        <tr><th>ブランド</th><td id="ba-confirm-brand"></td></tr>
+        <tr><th>利用日</th><td id="ba-confirm-date"></td></tr>
+        <tr><th>利用時間</th><td id="ba-confirm-time"></td></tr>
+        <tr><th>お名前</th><td id="ba-confirm-name"></td></tr>
+        <tr><th>メールアドレス</th><td id="ba-confirm-email"></td></tr>
+        <tr><th>電話番号</th><td id="ba-confirm-phone"></td></tr>
+        <tr><th>利用人数</th><td id="ba-confirm-people"></td></tr>
+        <tr><th>利用目的</th><td id="ba-confirm-purpose"></td></tr>
+        <tr><th>支払方法</th><td id="ba-confirm-payment"></td></tr>
+        <tr><th>連絡事項</th><td id="ba-confirm-note"></td></tr>
+      </tbody>
+    </table>
+
+    <p class="ba-banner ba-banner--notice">
+      送信すると「仮予約（PENDING）」として受け付けます。<strong>この時点では予約は確定していません。</strong>
+      当方が内容を確認し、確定のご連絡をした時点で予約成立となります。
+    </p>
+
+    <label class="ba-choice" style="align-items: flex-start;">
+      <input type="checkbox" id="ba-confirm-consent">
+      <span>フォーム送信時点では予約は確定せず、当方からの確定連絡をもって予約成立となることを確認しました。<span class="ba-required">必須</span></span>
+    </label>
+    <p class="ba-field-error" id="ba-consent-error" hidden></p>
+
+    <div id="ba-submit-error" class="ba-banner ba-banner--error" role="alert" aria-live="assertive" hidden></div>
+
+    <div class="ba-actions">
+      <button type="button" class="ba-btn ba-btn-ghost" id="ba-step-confirm-back">内容を修正する</button>
+      <button type="button" class="ba-btn ba-btn-primary" id="ba-submit">この内容で仮予約を送信する</button>
+    </div>
+  </section>
+
+  <!-- Step 5: 完了 -->
+  <section class="ba-step ba-complete" id="ba-step-complete" data-step="complete" hidden>
+    <div class="ba-complete-icon" aria-hidden="true">&#10003;</div>
+    <h2>仮予約の送信を受け付けました</h2>
+    <p>受付番号: <span class="ba-booking-id" id="ba-complete-booking-id"></span></p>
+
+    <div class="ba-complete-pending-notice">
+      <strong>まだ予約は確定していません。</strong><br>
+      当方が内容を確認し、確定のご連絡をした時点ではじめて予約成立となります。通常24時間以内にご連絡します。
+    </div>
+
+    <p id="ba-complete-back-link-wrap"><a class="ba-btn ba-btn-primary" id="ba-complete-back-link" href="#"></a></p>
+  </section>
+</div>

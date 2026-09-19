@@ -50,9 +50,18 @@ test('validateCreateBookingInput: 正常な入力は valid:true でnormalizedを
   assert.strictEqual(result.normalized.durationMinutes, 120);
 });
 
-test('validateCreateBookingInput: studio_x以外のbrandはINVALID_BRANDで拒否する（brand偽装対策）', function () {
+test('validateCreateBookingInput: snb/mens/studio_xの3ブランドはいずれも許可される（Issue #269）', function () {
   var Booking = loadBooking();
-  ['snb', 'mens', 'STUDIO_X', '', undefined, null].forEach(function (brand) {
+  ['snb', 'mens', 'studio_x'].forEach(function (brand) {
+    var result = Booking.validateCreateBookingInput(validInput({ brand: brand }), DEFAULT_CONFIG);
+    assert.strictEqual(result.valid, true, JSON.stringify(brand) + ' は許可されるべき');
+    assert.strictEqual(result.normalized.brand, brand);
+  });
+});
+
+test('validateCreateBookingInput: 未知のbrandはINVALID_BRANDで拒否する（brand偽装対策）', function () {
+  var Booking = loadBooking();
+  ['STUDIO_X', 'SNB', 'Mens', 'studio-x', 'ataru', '', ' ', 'snb ', undefined, null].forEach(function (brand) {
     var result = Booking.validateCreateBookingInput(validInput({ brand: brand }), DEFAULT_CONFIG);
     assert.strictEqual(result.valid, false, JSON.stringify(brand) + ' は拒否されるべき');
     assert.strictEqual(result.error.code, 'INVALID_BRAND');
@@ -174,13 +183,27 @@ test('validateCreateBookingInput: noteは1000文字を超えるとINVALID_NOTE�
   assert.strictEqual(Booking.validateCreateBookingInput(validInput({ note: undefined }), DEFAULT_CONFIG).valid, true);
 });
 
-test('generateBookingId: brand/date/uuidからstudio_x用の一意なIDを生成する', function () {
+test('generateBookingId: brand/date/uuidからstudio_x用の一意なIDを生成する（Issue #268からprefix "SX" を変更しない）', function () {
   var Booking = loadBooking();
   var id1 = Booking.generateBookingId('studio_x', '2026-10-01', '3f2a9b1c-aaaa-bbbb-cccc-111122223333');
   assert.strictEqual(id1, 'SX-20261001-3F2A9B1C');
 
   var id2 = Booking.generateBookingId('studio_x', '2026-10-01', 'different-uuid-0000-0000-000000000000');
   assert.notStrictEqual(id1, id2, '異なるuuidからは異なるbookingIdが生成されるべき');
+});
+
+test('generateBookingId: snb/mensはそれぞれ専用のbookingId prefixを持つ（Issue #269）', function () {
+  var Booking = loadBooking();
+  var uuid = '3f2a9b1c-aaaa-bbbb-cccc-111122223333';
+  assert.strictEqual(Booking.generateBookingId('snb', '2026-10-01', uuid), 'SNB-20261001-3F2A9B1C');
+  assert.strictEqual(Booking.generateBookingId('mens', '2026-10-01', uuid), 'MENS-20261001-3F2A9B1C');
+});
+
+test('getBrandLabel: 3ブランドそれぞれの表示名を返す（Calendar/管理者通知の表示専用）', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.getBrandLabel('snb'), 'SNB');
+  assert.strictEqual(Booking.getBrandLabel('mens'), 'SNB mens');
+  assert.strictEqual(Booking.getBrandLabel('studio_x'), 'Studio X');
 });
 
 test('canTransition: PENDINGからのみ CONFIRMED/CANCELLED/EXPIRED へ遷移でき、それ以外は不可', function () {
@@ -220,9 +243,11 @@ test('isExpired: 失効時刻ちょうど・その後はtrue、前はfalse', fun
   assert.strictEqual(Booking.isExpired(createdAt, startAt, 24, 2, expiryMillis + 1), true);
 });
 
-test('isAllowedBrand: Phase 1ではstudio_xのみ許可', function () {
+test('isAllowedBrand: Issue #269でsnb/mens/studio_xの3ブランドを許可し、未知のbrandは拒否する', function () {
   var Booking = loadBooking();
   assert.strictEqual(Booking.isAllowedBrand('studio_x'), true);
-  assert.strictEqual(Booking.isAllowedBrand('snb'), false);
-  assert.strictEqual(Booking.isAllowedBrand('mens'), false);
+  assert.strictEqual(Booking.isAllowedBrand('snb'), true);
+  assert.strictEqual(Booking.isAllowedBrand('mens'), true);
+  assert.strictEqual(Booking.isAllowedBrand('ataru'), false);
+  assert.strictEqual(Booking.isAllowedBrand(''), false);
 });
