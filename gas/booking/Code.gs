@@ -1,25 +1,49 @@
 /*
- * Code.gs — 自社予約システム Web App エントリポイント（Issue #266）。
+ * Code.gs — 自社予約システム Web App エントリポイント（Issue #266: getAvailability / Issue #268: createBooking）。
  *
- * このIssueで実装するのはgetAvailability（読み取り専用の空き判定）のみ。
- * 以下は明示的に非対象（Issue #266の「非対象」節）：
- * - createBooking（予約作成）
- * - 利用者情報の入力・保存
- * - 料金計算 / 会員判定 / キャンセル / 決済
+ * doGet: getAvailability（読み取り専用の空き判定）のみ。Issue #266のまま変更していない。
+ * doPost: createBooking（Issue #268で追加）。個人情報を書き込むAPIのため、GETではなく
+ *   POST専用にしている（GETクエリパラメータや閲覧履歴にPIIが残る事故を避けるため）。
  *
  * デプロイ設定（README.md参照）:
  *   Execute as: Me
  *   Who has access: Anyone
  *
- * フロントエンドはCalendar IDを一切知らない。Script Propertiesで管理し、
- * レスポンスにもイベントの詳細・PIIを含めない（date / durationMinutes / brand /
- * bookableStartTimes / errorのみを返す）。
+ * フロントエンドはCalendar ID・Spreadsheet IDを一切知らない。Script Propertiesで管理し、
+ * getAvailabilityのレスポンスにもcreateBookingのレスポンスにも、他の予約のイベント詳細・
+ * PIIを一切含めない（createBookingは呼び出した本人が送った内容の要約のみを返す）。
  */
 'use strict';
 
 function doGet(e) {
   var params = (e && e.parameter) || {};
   return jsonOutput_(handleGetAvailability_(params));
+}
+
+function doPost(e) {
+  return jsonOutput_(handleCreateBooking_(e));
+}
+
+/* e.postData.contentsをJSONとしてパースし、BookingRepository.createBookingへ渡す。
+   createBooking内部・依存先で想定外の例外が発生した場合も、スタックトレースや内部エラー
+   文言を外部レスポンスへ出さず、汎用のINTERNAL_ERRORとして返す（詳細はLoggerへのみ残す）。 */
+function handleCreateBooking_(e) {
+  var payload;
+  try {
+    payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (parseError) {
+    return { success: false, error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' } };
+  }
+
+  try {
+    return BookingRepository.createBooking(payload);
+  } catch (unexpectedError) {
+    Logger.log('createBooking unexpected error: ' + (unexpectedError && unexpectedError.message));
+    return {
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: '予約処理中にエラーが発生しました。しばらくしてから再度お試しください。' }
+    };
+  }
 }
 
 /* params: { date, durationMinutes, brand }（すべて文字列。GASのdoGetクエリパラメータのため） */

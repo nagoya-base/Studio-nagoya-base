@@ -206,7 +206,18 @@ test('doGet: レスポンスにイベント詳細やPIIを含む余分なキー�
   });
 });
 
-test('doGet: 既存フォーム(studio-x/reservation)には触れない静的な配線であることの確認（doPostは実装しない）', function () {
+test('doGet: getAvailabilityの配線はIssue #268実装後も変化しない（既存フォーム・既存挙動を壊さない）', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
-  assert.strictEqual(sandbox.doPost, undefined, 'Issue #266では予約作成(createBooking)を実装しない');
+  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120', brand: 'studio_x' });
+  assert.strictEqual(body.success, true);
+});
+
+/* doPost(createBooking)自体の配線・部分失敗補償・rate limit等はBooking関連の
+   全ファイルを読み込むtest/booking-create-booking.test.js側で検証する。
+   このファイル（Config/CalendarRepository/Availability/Codeのみ読み込み）では、
+   doPostがCode.gsに存在すること自体だけを確認する（Issue #266時点ではdoPost自体が
+   存在しなかったが、#268で追加された）。 */
+test('doPost: Issue #268でcreateBooking用のdoPostが追加されている', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
+  assert.strictEqual(typeof sandbox.doPost, 'function');
 });
