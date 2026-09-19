@@ -219,3 +219,80 @@ function timeToMinutes(hhmm) {
   var parts = hhmm.split(':');
   return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
 }
+
+/*
+ * 当日の過去開始時刻を除外する仕様（Issue #270レビュー対応）。
+ * customerTypeルールはgetAvailabilityに一切持ち込まない。「今日なら現在時刻以前
+ * （ちょうど含む）の開始時刻を返さない」だけを検証する。
+ */
+var NOW_JST_1007 = new Date('2026-10-01T10:07:00+09:00');
+
+test('computeBookableStartTimes: minimumStartMinutesを指定すると、それ以前（ちょうど含む）の候補を除外する（省略時は従来どおり全候補）', function () {
+  var BookingAvailability = loadAvailability();
+  var withoutFloor = BookingAvailability.computeBookableStartTimes(120, [], DEFAULT_CONFIG);
+  assert.ok(withoutFloor.indexOf('08:00') !== -1, '省略時は従来どおり08:00から候補が出るべき');
+
+  /* 10:07時点でのレビュー例: 09:00/10:00は不可、10:15/10:30は可（Calendar競合なしの場合） */
+  var currentMinutes = timeToMinutes('10:07');
+  var withFloor = BookingAvailability.computeBookableStartTimes(120, [], DEFAULT_CONFIG, currentMinutes);
+  assert.strictEqual(withFloor.indexOf('09:00'), -1);
+  assert.strictEqual(withFloor.indexOf('10:00'), -1);
+  assert.ok(withFloor.indexOf('10:15') !== -1);
+  assert.ok(withFloor.indexOf('10:30') !== -1);
+});
+
+test('getAvailability: 当日（now基準）は現在時刻以前の開始時刻を候補から除外する。翌日は従来どおり全候補', function () {
+  var BookingAvailability = loadAvailability();
+
+  var today = BookingAvailability.getAvailability(
+    { date: '2026-10-01', durationMinutes: 120 },
+    [],
+    DEFAULT_CONFIG,
+    NOW_JST_1007
+  );
+  assert.strictEqual(today.success, true);
+  assert.strictEqual(today.bookableStartTimes.indexOf('09:00'), -1, '10:07時点で09:00はすでに過ぎている');
+  assert.strictEqual(today.bookableStartTimes.indexOf('10:00'), -1, '10:07時点で10:00はすでに過ぎている');
+  assert.ok(today.bookableStartTimes.indexOf('10:15') !== -1, '10:15はまだ先なので候補に出るべき（競合なし）');
+  assert.ok(today.bookableStartTimes.indexOf('10:30') !== -1, '10:30もまだ先なので候補に出るべき');
+
+  var tomorrow = BookingAvailability.getAvailability(
+    { date: '2026-10-02', durationMinutes: 120 },
+    [],
+    DEFAULT_CONFIG,
+    NOW_JST_1007
+  );
+  assert.strictEqual(tomorrow.success, true);
+  assert.ok(tomorrow.bookableStartTimes.indexOf('08:00') !== -1, '翌日は現在時刻に関わらず従来どおり08:00から候補が出るべき');
+});
+
+test('getAvailability: nowを省略した場合は現在時刻を使う（デフォルト引数。過去の固定日付では当日フィルタが働かず従来どおり全候補になる）', function () {
+  var BookingAvailability = loadAvailability();
+  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], DEFAULT_CONFIG);
+  assert.strictEqual(result.success, true);
+  assert.ok(result.bookableStartTimes.indexOf('08:00') !== -1, '実行時の現在日付が2026-10-01と一致しない限り当日フィルタは働かない');
+});
+
+test('getAvailability: 当日+現在時刻ちょうどの候補も除外する（現在時刻ちょうどは不可）', function () {
+  var BookingAvailability = loadAvailability();
+  var now = new Date('2026-10-01T10:15:00+09:00');
+  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], DEFAULT_CONFIG, now);
+  assert.strictEqual(result.bookableStartTimes.indexOf('10:15'), -1, '現在時刻ちょうどの開始時刻は不可');
+  assert.ok(result.bookableStartTimes.indexOf('10:30') !== -1);
+});
+
+test('getAvailability: getAvailabilityの応答にcustomerType関連のキーは一切含まれない（Issue #270: customerTypeルールをgetAvailabilityに持ち込まない）', function () {
+  var BookingAvailability = loadAvailability();
+  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], DEFAULT_CONFIG, NOW_JST_1007);
+  var allowedKeys = ['success', 'date', 'durationMinutes', 'brand', 'bookableStartTimes'];
+  Object.keys(result).forEach(function (key) {
+    assert.ok(allowedKeys.indexOf(key) !== -1, '想定外のキーが含まれている: ' + key);
+  });
+});
+
+test('getCurrentMinutesInTimezone/formatDateInTimezone: 不正なtimezoneはnullを返す（fail-closed）', function () {
+  var BookingAvailability = loadAvailability();
+  assert.strictEqual(BookingAvailability.getCurrentMinutesInTimezone(new Date(), 'Not/A_Timezone'), null);
+  assert.strictEqual(BookingAvailability.formatDateInTimezone(new Date(), 'Not/A_Timezone'), null);
+  assert.strictEqual(BookingAvailability.getCurrentMinutesInTimezone(new Date('2026-10-01T01:07:00Z'), 'Asia/Tokyo'), 10 * 60 + 7);
+});

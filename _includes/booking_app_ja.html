@@ -50,8 +50,6 @@
     <h2>利用日・利用時間を選択</h2>
     <p class="ba-step-desc">希望する利用日と利用時間（長さ）を選択してください。</p>
 
-    <!-- TODO #270: 当日利用ルール・新規/会員による当日可否の判定はここでは実装しない。
-         当日の日付も選択でき、可否の最終判定はcreateBookingのサーバー側検証に委ねる。 -->
     <div class="ba-field">
       <label for="ba-date">利用日<span class="ba-required">必須</span></label>
       <input type="date" id="ba-date" name="date" autocomplete="off">
@@ -66,6 +64,20 @@
       <p class="ba-field-help">最低利用時間・予約可能な開始時刻は、次の画面で実際の空き状況とあわせてご案内します。長時間のご利用も入力できます。</p>
       <p class="ba-field-error" id="ba-duration-error" hidden></p>
     </div>
+
+    <!-- 利用区分（Issue #270）: 「会員かどうか」ではなく、SNB／SNB mens／Studio Xという
+         同一施設の利用経験の有無で当日予約可否を判定する。当日+初回利用の組み合わせは
+         このあと空き時間取得へ進ませず、翌日以降の日付を選び直すよう案内する（UX目的の
+         一次チェック。最終的な可否の正はcreateBookingのサーバー側検証）。 -->
+    <fieldset class="ba-fieldset">
+      <legend>利用区分<span class="ba-required">必須</span></legend>
+      <div class="ba-choices" id="ba-customer-type-choices">
+        <label class="ba-choice"><input type="radio" name="customerType" value="first_time"> <span>初回利用</span></label>
+        <label class="ba-choice"><input type="radio" name="customerType" value="returning"> <span>利用経験あり（SNB／SNB mens／Studio Xのいずれかで利用したことがある）</span></label>
+      </div>
+      <p class="ba-field-help">ブランドを問わず、この施設をご利用いただいたことがあれば「利用経験あり」を選択してください。初回利用の方は当日のご予約を受け付けていません。</p>
+      <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
+    </fieldset>
 
     <div class="ba-actions">
       <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">空き時間を確認する</button>
@@ -178,6 +190,7 @@
     <table class="ba-summary">
       <tbody>
         <tr><th>ブランド</th><td id="ba-confirm-brand"></td></tr>
+        <tr><th>利用区分</th><td id="ba-confirm-customer-type"></td></tr>
         <tr><th>利用日</th><td id="ba-confirm-date"></td></tr>
         <tr><th>利用時間</th><td id="ba-confirm-time"></td></tr>
         <tr><th>お名前</th><td id="ba-confirm-name"></td></tr>

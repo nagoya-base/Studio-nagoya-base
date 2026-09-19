@@ -59,6 +59,7 @@ function validPayload(overrides) {
   return Object.assign(
     {
       brand: 'studio_x',
+      customerType: 'returning',
       date: '2026-10-01',
       startTime: '10:00',
       durationMinutes: 120,
@@ -303,6 +304,73 @@ test('expirePendingBookings: TTL・開始2時間前のいずれにも該当し�
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.strictEqual(found.record.status, 'PENDING');
   assert.strictEqual(ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length, 1);
+});
+
+/* ---------- PENDING TTLと当日予約の整合（Issue #270） ---------- */
+
+test('expirePendingBookings: 当日受付・利用開始まで2時間未満の予約は、作成直後にexpirePendingBookingsを実行しても即EXPIREDにならない（graceによる猶予）', function () {
+  var ctx = setup();
+  /* JST 2026-10-01 20:00に受付。開始は21:00（1時間後 < minHoursBeforeStart既定2時間）で、
+     利用日(date)も受付と同じ2026-10-01（＝当日受付）。 */
+  var receivedAt = new Date('2026-10-01T20:00:00+09:00');
+  var created = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'returning', date: '2026-10-01', startTime: '21:00', durationMinutes: 120 }),
+    receivedAt
+  );
+  assert.strictEqual(created.success, true, '当日+利用経験ありはPENDING作成に成功する前提');
+
+  /* 受付5分後にTTL失効処理を実行しても、まだEXPIREDにならないべき
+     （#268時点の計算式のままだと、開始2時間前(19:00)は受付時刻より過去のため即EXPIREDになっていた）。 */
+  var justAfter = new Date(receivedAt.getTime() + 5 * 60000);
+  var result = ctx.sandbox.expirePendingBookings(justAfter);
+  assert.strictEqual(result.expiredCount, 0, '作成直後に即EXPIREDになってはいけない');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(created.bookingId);
+  assert.strictEqual(found.record.status, 'PENDING');
+  assert.strictEqual(ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length, 1);
+});
+
+test('expirePendingBookings: 当日受付・利用開始まで2時間未満の予約は、利用開始時刻を過ぎればEXPIREDになる（graceは利用開始時刻を上限とするため、開始後までPENDINGが残らない）', function () {
+  var ctx = setup();
+  var receivedAt = new Date('2026-10-01T20:00:00+09:00');
+  var startAt = new Date('2026-10-01T21:00:00+09:00');
+  var created = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'returning', date: '2026-10-01', startTime: '21:00', durationMinutes: 120 }),
+    receivedAt
+  );
+  assert.strictEqual(created.success, true);
+
+  /* 利用開始（21:00）の1分前はまだPENDINGのままであるべき */
+  var justBeforeStart = new Date(startAt.getTime() - 60000);
+  var beforeResult = ctx.sandbox.expirePendingBookings(justBeforeStart);
+  assert.strictEqual(beforeResult.expiredCount, 0, '利用開始前はまだEXPIREDにしてはいけない');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(created.bookingId).record.status, 'PENDING');
+
+  /* 利用開始（21:00）の1分後にはEXPIREDになっているべき（利用開始後までPENDINGが残らない） */
+  var justAfterStart = new Date(startAt.getTime() + 60000);
+  var afterResult = ctx.sandbox.expirePendingBookings(justAfterStart);
+  assert.strictEqual(afterResult.expiredCount, 1, '利用開始後はEXPIREDになるべき（無期限PENDINGにも利用開始後残留にもしない）');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(created.bookingId);
+  assert.strictEqual(found.record.status, 'EXPIRED');
+});
+
+test('expirePendingBookings: 受付日と利用日(date)が一致しない予約（＝当日受付ではない）はPENDING_TTL_MIN_HOLD_HOURSの対象外のまま、#268時点と同じ計算式でTTLが決まる（既存の翌日以降TTLへの影響なし）', function () {
+  var ctx = setup();
+  /* 営業時間（08:00〜23:00）の制約上、実際の「翌日以降」予約は受付から開始まで
+     必ず数時間以上の余裕がある（当日をまたいで直後に開始する翌日予約は存在し得ない）ため、
+     ここでは既存のTTLテスト（このファイルの他のテスト）と同じ方法で、createdAt/startAtを
+     直接上書きして「date列と受付日が一致しない」状態を作る。 */
+  var bookingId = createPending(ctx, { date: '2026-12-01', startTime: '10:00', durationMinutes: 120 });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, {
+    createdAt: new Date('2026-11-05T10:00:00+09:00'),
+    startAt: new Date('2026-11-05T10:30:00+09:00') /* 受付から30分後に開始（2時間未満） */
+  });
+
+  /* record.date('2026-12-01') と受付日(2026-11-05)が一致しないため isSameDayBooking=false。
+     #268時点と同じ計算式のまま（開始2時間前 < 受付時刻）で、受付1分後にはもうEXPIREDになる。 */
+  var result = ctx.sandbox.expirePendingBookings(new Date('2026-11-05T10:01:00+09:00'));
+  assert.strictEqual(result.expiredCount, 1, '当日受付でない場合はminHoldHoursの保護対象外のまま（既存仕様どおり）');
 });
 
 test('expirePendingBookings: 正式関数名 expirePendingBookings() がグローバルに存在する（時間主導トリガー用）', function () {

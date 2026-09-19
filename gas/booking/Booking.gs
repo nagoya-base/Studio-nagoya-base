@@ -16,6 +16,17 @@
  *   Script Propertiesではなくこの定数で一元管理する。他ファイル（CalendarRepository.gs /
  *   AdminNotifier.gs等）はbrand文字列やラベルを直接持たず、必ずBooking.getBrandLabel等
  *   ここの定義を経由する）
+ *
+ * Issue #270で追加した当日利用ルール:
+ * - 「会員かどうか」ではなく「利用区分（customerType。初回利用/利用経験あり）」で
+ *   当日予約可否を判定する。CUSTOMER_TYPES/isAllowedCustomerType参照。
+ * - 当日判定は必ずavailabilityConfig.timezone（既定Asia/Tokyo）基準で行い、
+ *   ブラウザのローカルtimezoneには依存しない（formatDateInTimezone参照。実体は
+ *   BookingAvailability.formatDateInTimezone）。
+ * - 当日（isSameDayBooking）は、開始時刻が現在時刻より後であることも必須とする
+ *   （レビュー対応で追加。SAME_DAY_START_TIME_PASSED。現在時刻の判定は
+ *   BookingAvailability.getCurrentMinutesInTimezoneを使う）。
+ * - brandでこのルールを分岐させない（snb/mens/studio_xは同一施設という前提はIssue #269と同じ）。
  */
 'use strict';
 
@@ -30,6 +41,27 @@ var Booking = (function () {
   /* 予約作成できるbrandはこの3つのみ（Issue #269）。brand偽装で未知のbrandから
      予約を作れないよう、フロントの表示に関わらずサーバー側でこの一覧のみ許可する。 */
   var ALLOWED_BOOKING_BRANDS = ['snb', 'mens', 'studio_x'];
+
+  /*
+   * 利用区分（Issue #270）。「会員かどうか」ではなく、SNB / SNB mens / Studio X という
+   * 同一施設を過去に利用した経験があるかどうかで当日予約可否を判定する。
+   * brandをまたいで自己申告する値であり、DB照合はしない（Issue #270本文の非対象）。
+   * 表示文言と内部値を混同しないよう、内部値はfirst_time/returningの2値のみで固定する
+   * （既存にこの区分の正式名称が無かったため、Issue #270本文の例示どおり採用した）。
+   */
+  var CUSTOMER_TYPES = { FIRST_TIME: 'first_time', RETURNING: 'returning' };
+  var ALLOWED_CUSTOMER_TYPES = [CUSTOMER_TYPES.FIRST_TIME, CUSTOMER_TYPES.RETURNING];
+
+  /* Sheets台帳・管理者向け表示にのみ使う。判定ロジックはCUSTOMER_TYPESの内部値のみで行う。 */
+  var CUSTOMER_TYPE_LABELS_ = { first_time: '初回利用', returning: '利用経験あり' };
+
+  function isAllowedCustomerType(value) {
+    return ALLOWED_CUSTOMER_TYPES.indexOf(value) !== -1;
+  }
+
+  function getCustomerTypeLabel(value) {
+    return CUSTOMER_TYPE_LABELS_[value] || String(value || '');
+  }
 
   /* bookingIdの接頭辞。studio_xの'SX'はIssue #268から変更しない
      （既発行のbookingId・運用ドキュメントとの整合のため）。 */
@@ -79,20 +111,50 @@ var Booking = (function () {
     return { code: code, message: message };
   }
 
+  /* instanceof Dateではなくダックタイピングで判定する（別realm・vmサンドボックスを
+     またぐテストでinstanceof Dateが偽陰性になるため。BookingRepository.gs/
+     scripts/booking-logic.jsのisDateLike_と同じ方針）。 */
+  function isDateLike_(value) {
+    return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
+  }
+
+  /*
+   * dateオブジェクトを指定timezoneの暦日として'YYYY-MM-DD'へ変換する（Issue #270）。
+   * 実体はBookingAvailability.formatDateInTimezone（Availability.gs）で、getAvailabilityと
+   * createBookingの両方が同じタイムゾーン変換ロジックを共有する（レビュー対応で
+   * getCurrentMinutesInTimezoneと合わせてAvailability.gs側に一元化した）。
+   * ここではBooking.gs内部の呼び出し・Booking.formatDateInTimezoneとしての
+   * 後方互換エクスポートのために薄いエイリアスを用意する。
+   */
+  function formatDateInTimezone(date, timezone) {
+    return BookingAvailability.formatDateInTimezone(date, timezone);
+  }
+
   /*
    * rawInput: createBooking APIが受け取る生のリクエストボディ相当。
    * availabilityConfig: BookingConfig.getAvailabilityConfig()の戻り値
    *   （openTime/closeTime/minBookingMinutes/slotStepMinutes/bufferMinutes/timezone）。
+   * now: 受付時刻（Date）。省略時は現在時刻。当日判定（Asia/Tokyo基準）に使う（Issue #270）。
    *
    * 戻り値: { valid: true, normalized: {...} } または { valid: false, error: {code, message} }。
    * normalizedはtrim済み・型を揃えた値のみを含み、以降の処理（bookingId発行・Calendar/Sheets保存）は
    * すべてこのnormalizedを使う（生入力を直接使わない）。
    */
-  function validateCreateBookingInput(rawInput, availabilityConfig) {
+  function validateCreateBookingInput(rawInput, availabilityConfig, now) {
     var input = rawInput || {};
+    var receivedAt = isDateLike_(now) ? now : new Date();
 
     if (!isAllowedBrand(input.brand)) {
       return { valid: false, error: err_('INVALID_BRAND', 'このブランドではオンライン予約を受け付けていません。') };
+    }
+
+    /*
+     * 利用区分（初回利用/利用経験あり）はIssue #270で必須項目とした。未指定・未知の値は
+     * fail-closedで拒否する（フロントを書き換えてcustomerTypeを省略・改ざんしても
+     * 当日予約制限を回避できないようにするための、サーバー側の必須検証）。
+     */
+    if (!isAllowedCustomerType(input.customerType)) {
+      return { valid: false, error: err_('INVALID_CUSTOMER_TYPE', '利用区分（初回利用／利用経験あり）を選択してください。') };
     }
 
     /*
@@ -109,6 +171,36 @@ var Booking = (function () {
       return { valid: false, error: baseError };
     }
     var durationMinutes = input.durationMinutes;
+
+    /*
+     * 当日判定はブラウザのローカルtimezoneを正としない。受付時刻(receivedAt)を
+     * availabilityConfig.timezone（既定Asia/Tokyo）基準の暦日へ変換し、入力された
+     * 利用日(input.date)と文字列比較する（'YYYY-MM-DD'は辞書順=日付順に一致する）。
+     * - 過去日は初回/利用経験ありを問わず拒否する
+     * - 当日 + 初回利用は拒否する（Issue #270本文の最終仕様）
+     * - 当日 + 利用経験ありはここでは拒否せず、以降の通常フローへ進む
+     * - 翌日以降は初回/利用経験ありのどちらも通常フローへ進む
+     * timezoneの設定自体が不正でIntlが解釈できない場合はfail-closedにINVALID_CONFIGとする
+     * （BUFFER_MINUTES等の誤設定と同じ扱い。isValidConfig_はtimezoneの妥当性まで検証しないため、
+     * ここで別途フォールバックする）。
+     */
+    var todayString = formatDateInTimezone(receivedAt, availabilityConfig.timezone);
+    if (!todayString) {
+      return { valid: false, error: err_('INVALID_CONFIG', '営業時間・予約ルールの設定が正しくありません。') };
+    }
+    if (input.date < todayString) {
+      return { valid: false, error: err_('INVALID_DATE', '過去の日付は指定できません。') };
+    }
+    var isSameDayBooking = input.date === todayString;
+    if (isSameDayBooking && input.customerType === CUSTOMER_TYPES.FIRST_TIME) {
+      return {
+        valid: false,
+        error: err_(
+          'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME',
+          '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付をお選びください。'
+        )
+      };
+    }
 
     if (!BookingAvailability.isValidTimeString(input.startTime)) {
       return { valid: false, error: err_('INVALID_START_TIME', '開始時刻の形式が正しくありません（HH:mm）。') };
@@ -132,6 +224,31 @@ var Booking = (function () {
         valid: false,
         error: err_('START_TIME_NOT_ALIGNED', '開始時刻は' + availabilityConfig.slotStepMinutes + '分刻みで指定してください。')
       };
+    }
+
+    /*
+     * 当日（isSameDayBooking）は、開始時刻が現在時刻より後であることを必須とする
+     * （Issue #270レビュー対応）。現在時刻ちょうども不可（「後」であることを要求する）。
+     * ここに到達する時点でfirst_time+当日は既に上でSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEとして
+     * 拒否済みのため、この判定に実際に到達するのはreturning+当日のみ。フロントの
+     * getAvailabilityが過去時刻を候補から除外していても、フロント改変・タイミングのずれ
+     * （空き取得後に時間が経過した等）でここまで来る可能性があるため、Calendar書き込み前に
+     * 必ずここで再検証する。
+     */
+    if (isSameDayBooking) {
+      var currentMinutes = BookingAvailability.getCurrentMinutesInTimezone(receivedAt, availabilityConfig.timezone);
+      if (currentMinutes === null) {
+        return { valid: false, error: err_('INVALID_CONFIG', '営業時間・予約ルールの設定が正しくありません。') };
+      }
+      if (startMinutes <= currentMinutes) {
+        return {
+          valid: false,
+          error: err_(
+            'SAME_DAY_START_TIME_PASSED',
+            '指定した開始時刻はすでに過ぎています。現在時刻より後の開始時刻を選択してください。'
+          )
+        };
+      }
     }
 
     if (!isNonEmptyString_(input.name, 100)) {
@@ -163,6 +280,7 @@ var Booking = (function () {
       valid: true,
       normalized: {
         brand: input.brand,
+        customerType: input.customerType,
         date: input.date,
         startTime: input.startTime,
         durationMinutes: durationMinutes,
@@ -194,25 +312,47 @@ var Booking = (function () {
 
   /*
    * PENDING TTLの失効時刻（ミリ秒epoch）を計算する。
-   * 「受付から ttlHours 時間後」と「利用開始時刻の minHoursBeforeStart 時間前」の
-   * より早い方を採用する（Issue #268固定仕様）。
+   * 通常TTL（#268固定仕様。翌日以降の予約はこの式のみで決まる）:
+   *   normalExpiry = min(受付+ttlHours, 利用開始-minHoursBeforeStart)
+   *
+   * minHoldHours（Issue #270レビュー対応で再設計。省略時0＝#268時点と完全に同じ挙動）:
+   * 通常TTLの「利用開始-minHoursBeforeStart」が受付時刻以前になる場合（＝利用開始まで
+   * minHoursBeforeStart未満しかない直前の当日予約）に限り、grace（猶予）を使う。
+   * 「受付から少なくともminHoldHours時間は保持する」という単純な下限ではなく、
+   * **利用開始時刻(startAtMillis)を必ず上限とする**（expiry <= startAt を保証する。
+   * 当日PENDINGが利用開始後までCalendar/Sheets上に残ってしまう事故を防ぐため）。
+   * 通常TTLが受付時刻より後になる場合（＝開始まで十分な余裕がある）はgraceを使わず、
+   * 通常TTLをそのまま返す＝#268時点とビット単位で同じ値になる。
    */
-  function computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart) {
+  function computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, minHoldHours) {
     var ttlExpiry = createdAtMillis + ttlHours * 3600000;
-    var startLimit = startAtMillis - minHoursBeforeStart * 3600000;
-    return Math.min(ttlExpiry, startLimit);
+    var normalStartLimit = startAtMillis - minHoursBeforeStart * 3600000;
+    var normalExpiry = Math.min(ttlExpiry, normalStartLimit);
+
+    if (!minHoldHours || minHoldHours <= 0 || normalExpiry > createdAtMillis) {
+      return normalExpiry;
+    }
+
+    var graceExpiry = createdAtMillis + minHoldHours * 3600000;
+
+    return Math.min(ttlExpiry, graceExpiry, startAtMillis);
   }
 
-  function isExpired(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, nowMillis) {
-    return nowMillis >= computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart);
+  function isExpired(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, nowMillis, minHoldHours) {
+    return nowMillis >= computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, minHoldHours);
   }
 
   return {
     STATUS: STATUS,
     ALLOWED_BOOKING_BRANDS: ALLOWED_BOOKING_BRANDS,
+    CUSTOMER_TYPES: CUSTOMER_TYPES,
+    ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,
     getBrandLabel: getBrandLabel,
+    getCustomerTypeLabel: getCustomerTypeLabel,
     canTransition: canTransition,
     isAllowedBrand: isAllowedBrand,
+    isAllowedCustomerType: isAllowedCustomerType,
+    formatDateInTimezone: formatDateInTimezone,
     validateCreateBookingInput: validateCreateBookingInput,
     generateBookingId: generateBookingId,
     computeTtlExpiryMillis: computeTtlExpiryMillis,

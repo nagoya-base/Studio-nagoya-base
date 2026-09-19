@@ -24,6 +24,31 @@
     return BRAND_META[brand] || null;
   }
 
+  /*
+   * 利用区分（Issue #270）。「会員かどうか」ではなく、SNB / SNB mens / Studio Xという
+   * 同一施設を過去に利用した経験があるかどうかで当日予約可否を判定する。
+   * 内部値はgas/booking/Booking.gsのCUSTOMER_TYPESと一致させること（first_time/returning）。
+   * 表示文言と内部値を混同しない（表示はCUSTOMER_TYPE_LABELS経由のみ）。
+   */
+  var CUSTOMER_TYPES = { FIRST_TIME: 'first_time', RETURNING: 'returning' };
+  var ALLOWED_CUSTOMER_TYPES = [CUSTOMER_TYPES.FIRST_TIME, CUSTOMER_TYPES.RETURNING];
+  var CUSTOMER_TYPE_LABELS = { first_time: '初回利用', returning: '利用経験あり' };
+
+  function isAllowedCustomerType(value) {
+    return ALLOWED_CUSTOMER_TYPES.indexOf(value) !== -1;
+  }
+
+  function customerTypeLabel(value) {
+    return CUSTOMER_TYPE_LABELS[value] || '';
+  }
+
+  /* dateValue/todayValueは'YYYY-MM-DD'。当日（dateValue===todayValue）かつ初回利用の
+     組み合わせのみを検出する（Issue #270最終仕様）。todayValueは呼び出し側がtodayInJapan()で
+     求めた値を渡すこと（この関数自体はブラウザのローカルtimezoneに依存しない）。 */
+  function isSameDayFirstTimeBlocked(dateValue, customerType, todayValue) {
+    return dateValue === todayValue && customerType === CUSTOMER_TYPES.FIRST_TIME;
+  }
+
   /* createBooking / getAvailability が返すerror.codeの文言。
      gas/booking/README.md「API仕様」のerror.code一覧と対応させること。 */
   var ERROR_MESSAGES = {
@@ -43,6 +68,9 @@
     INVALID_PAYMENT_METHOD: '支払方法を選択してください。',
     INVALID_NOTE: '連絡事項は1000文字以内で入力してください。',
     INVALID_SOURCE: '送信元の情報が正しくありません。お手数ですがページを開き直してください。',
+    INVALID_CUSTOMER_TYPE: '利用区分（初回利用／利用経験あり）を選択してください。',
+    SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME: '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付を選択してください。',
+    SAME_DAY_START_TIME_PASSED: '指定した開始時刻はすでに過ぎています。現在時刻より後の開始時刻を選択してください。',
     RATE_LIMITED: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。',
     LOCK_TIMEOUT: '一時的に混み合っています。もう一度お試しください。',
     BOOKING_SAVE_FAILED: '予約の保存に失敗しました。しばらくしてから再度お試しください。',
@@ -59,9 +87,20 @@
 
   /* SLOT_CONFLICTのみ「空き時間の選び直し」に誘導し、それ以外の入力系エラー
      （INVALID_EMAIL等）は「内容の修正」に、rate limit等は「再試行」に誘導する。
+     利用日・利用区分そのものをやり直す必要があるエラー（当日+初回利用の組み合わせ等）は
+     「日付・利用区分の選び直し」（'reselect-date'）に誘導する。空き時間の再取得だけでは
+     解決しないため、'reselect-time'とは区別する（Issue #270）。
      UIの導線分岐のみを担い、エラーメッセージ自体はmessageForErrorCode()を使う。 */
   function recoveryActionForErrorCode(code) {
-    if (code === 'SLOT_CONFLICT' || code === 'INVALID_START_TIME' || code === 'START_TIME_NOT_ALIGNED') {
+    if (code === 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME' || code === 'INVALID_CUSTOMER_TYPE') {
+      return 'reselect-date';
+    }
+    if (
+      code === 'SLOT_CONFLICT' ||
+      code === 'INVALID_START_TIME' ||
+      code === 'START_TIME_NOT_ALIGNED' ||
+      code === 'SAME_DAY_START_TIME_PASSED'
+    ) {
       return 'reselect-time';
     }
     if (
@@ -149,16 +188,19 @@
   }
 
   /*
-   * state: { brand, date, startTime, durationMinutes, name, email, phone, people,
-   *          purpose, purposeOther, paymentMethod, note }
+   * state: { brand, customerType, date, startTime, durationMinutes, name, email, phone,
+   *          people, purpose, purposeOther, paymentMethod, note }
    * 戻り値: createBooking（POST）へそのまま渡せるペイロード。
    * sourceはブランドごとに固定の値をBRAND_METAから補う（利用者が触れる余地を与えない）。
+   * customerTypeはサーバー側（Booking.validateCreateBookingInput）でも必須検証・fail-closedに
+   * 拒否されるため、ここで未指定・不正値を補正することはしない（そのまま渡す）。
    */
   function buildCreateBookingPayload(state) {
     var s = state || {};
     var brandMeta = getBrandMeta(s.brand);
     return {
       brand: s.brand,
+      customerType: s.customerType,
       date: s.date,
       startTime: s.startTime,
       durationMinutes: s.durationMinutes,
@@ -181,12 +223,12 @@
   }
 
   /*
-   * JST（日本時間）での「今日」を'YYYY-MM-DD'で返す。日付入力の下限にのみ使い、
-   * 過去日を選べないようにするためだけの技術的な下限であり、当日利用の可否そのものは
-   * ここでは判定しない（当日利用ルール・新規/会員による可否判定は#270の責務。
-   * TODO #270: 新規は当日不可・会員は当日相談、のような業務ルールをこの関数や
-   * booking-app.jsへ実装しないこと。当日を含め、可否の最終判定はcreateBookingの
-   * サーバー側検証に委ねる）。
+   * JST（日本時間）での「今日」を'YYYY-MM-DD'で返す。日付入力の下限（過去日を選べなくする）と、
+   * isSameDayFirstTimeBlockedへ渡す「当日かどうか」の判定基準の両方に使う（Issue #270）。
+   * ブラウザのローカルtimezoneには依存せず、常にAsia/Tokyo基準で計算する。
+   * ここでの判定はあくまでUI側の一次チェック（UX目的）であり、最終的な当日予約可否の正は
+   * createBookingのサーバー側検証（gas/booking/Booking.gsのformatDateInTimezoneも同じ方針で
+   * availabilityConfig.timezone基準の暦日を計算する）。
    */
   function todayInJapan(now) {
     var base = isDateLike_(now) ? now : new Date();
@@ -200,6 +242,11 @@
 
   var api = {
     getBrandMeta: getBrandMeta,
+    CUSTOMER_TYPES: CUSTOMER_TYPES,
+    ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,
+    isAllowedCustomerType: isAllowedCustomerType,
+    customerTypeLabel: customerTypeLabel,
+    isSameDayFirstTimeBlocked: isSameDayFirstTimeBlocked,
     messageForErrorCode: messageForErrorCode,
     recoveryActionForErrorCode: recoveryActionForErrorCode,
     NETWORK_ERROR_MESSAGE: NETWORK_ERROR_MESSAGE,
