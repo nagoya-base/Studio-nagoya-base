@@ -263,16 +263,57 @@ var BookingRepository = (function () {
       CalendarRepository.setEventStatus(calendarId, record.calendarEventId, Booking.STATUS.CONFIRMED, bookingId);
 
       var confirmedAt = new Date();
-      SpreadsheetRepository.updateBookingFields(bookingId, {
-        status: Booking.STATUS.CONFIRMED,
-        confirmedAt: confirmedAt,
-        updatedAt: confirmedAt
-      });
+      try {
+        SpreadsheetRepository.updateBookingFields(bookingId, {
+          status: Booking.STATUS.CONFIRMED,
+          confirmedAt: confirmedAt,
+          updatedAt: confirmedAt
+        });
+      } catch (sheetsError) {
+        return handleConfirmSheetsUpdateFailure_(calendarId, bookingId, record.calendarEventId, sheetsError);
+      }
 
       return { success: true, bookingId: bookingId, status: Booking.STATUS.CONFIRMED };
     } finally {
       lock.releaseLock();
     }
+  }
+
+  /*
+   * Calendar成功（CONFIRMEDへの更新）→ Sheets失敗（statusをCONFIRMEDへ更新できない）の
+   * 部分失敗補償。createBooking時のCalendar成功/Sheets失敗補償と対称に、Calendar側の
+   * 状態をPENDINGへ戻すことを試み、成否をrecoveryへ記録する（#268「Calendar成功/Sheets
+   * 失敗を検知」「部分失敗はrecoveryへ」を状態遷移にも適用。レビュー指摘対応）。
+   */
+  function handleConfirmSheetsUpdateFailure_(calendarId, bookingId, eventId, sheetsError) {
+    var compensated = false;
+    var compensationError = null;
+    try {
+      CalendarRepository.setEventStatus(calendarId, eventId, Booking.STATUS.PENDING, bookingId);
+      compensated = true;
+    } catch (revertError) {
+      compensationError = revertError;
+    }
+
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: compensated ? 'CALENDAR_ROLLED_BACK_AFTER_CONFIRM_SHEETS_FAILURE' : 'CONFIRM_SHEETS_FAILURE_CALENDAR_ORPHANED',
+        occurredAt: new Date(),
+        calendarEventId: eventId,
+        status: compensated ? 'PENDING' : 'CONFIRMED',
+        errorMessage: describeError_(sheetsError) + (compensationError ? ' / compensation error: ' + describeError_(compensationError) : ''),
+        recoveryState: compensated ? 'RESOLVED' : 'OPEN',
+        resolvedAt: compensated ? new Date() : ''
+      });
+    } catch (recoveryError) {
+      Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+    }
+
+    return {
+      success: false,
+      error: { code: 'CONFIRM_SAVE_FAILED', message: '確定内容の保存に失敗しました。Recoveryシートを確認してください。' }
+    };
   }
 
   /*
@@ -337,12 +378,35 @@ var BookingRepository = (function () {
         }
 
         var expiredAt = new Date();
-        SpreadsheetRepository.updateBookingFields(record.bookingId, {
-          status: Booking.STATUS.EXPIRED,
-          expiredAt: expiredAt,
-          updatedAt: expiredAt
-        });
-        expiredCount++;
+        try {
+          SpreadsheetRepository.updateBookingFields(record.bookingId, {
+            status: Booking.STATUS.EXPIRED,
+            expiredAt: expiredAt,
+            updatedAt: expiredAt
+          });
+          expiredCount++;
+        } catch (sheetsError) {
+          /* Calendar側は削除済み（または削除失敗をrecovery記録済み）だが、Sheets側の
+             statusをEXPIREDへ更新できなかった場合の不整合をrecoveryへ記録する。
+             ここで例外を外へ投げるとforEachの以降の候補が処理されなくなるため、
+             このcatchで必ず握りつぶし、他の候補の処理を継続する（レビュー指摘対応:
+             1件のSheets更新失敗で他の候補まで巻き込んで未処理にしない）。 */
+          try {
+            RecoveryRepository.recordFailure({
+              bookingId: record.bookingId,
+              failureType: 'EXPIRE_SHEETS_UPDATE_FAILED',
+              occurredAt: new Date(),
+              calendarEventId: latest.record.calendarEventId,
+              status: 'PENDING',
+              errorMessage: describeError_(sheetsError),
+              recoveryState: 'OPEN',
+              resolvedAt: ''
+            });
+          } catch (recoveryError) {
+            Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+          }
+          skippedCount++;
+        }
       } finally {
         lock.releaseLock();
       }

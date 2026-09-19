@@ -9,10 +9,25 @@
  * 1. Bookings行を選択してから「アクティブ行を確定」を実行する（A列=bookingIdをそのまま読む）
  * 2. 「bookingIdを入力して確定」でダイアログに直接入力する
  *
- * このファイルはSpreadsheetApp.getUi()に依存するため、GAS実行環境（Spreadsheetに
- *紐付けたコンテナバインドスクリプト、またはSpreadsheetを開いた状態でのスタンドアロン
- * スクリプト）でのみ動作する。node --testではonOpen/メニュー部分はスタブを使って
- * 配線のみ検証し、confirmBooking自体のロジックはBookingRepositoryのテストで担保する。
+ * 【重要】このGASプロジェクトはスタンドアロンのWeb Appとして運用する（README.md
+ * 「デプロイ設定」参照）。スタンドアロンスクリプトに単純トリガーの`onOpen()`を書いても、
+ * SPREADSHEET_IDで指定した対象Spreadsheetを開いたときには自動発火しない
+ * （単純トリガーのonOpenは、このスクリプト自身が対象Spreadsheetにコンテナバインド
+ * されている場合のみ有効なため）。
+ *
+ * そのため、このスクリプトの権限で対象Spreadsheetに対するinstallable onOpenトリガーを
+ * 明示的に作成する方式を正式な運用手順とする。運用開始時に、スクリプトエディタで
+ * installBookingAdminMenuTrigger() を一度だけ手動実行すること（README.md参照）。
+ * これにより、SPREADSHEET_IDのSpreadsheetを開くたびに addBookingAdminMenu が
+ * 呼ばれ、「予約管理」メニューが追加される。
+ *
+ * （このスクリプトを将来コンテナバインドスクリプトへ移行・分離する場合に備え、
+ * 単純トリガーのonOpen()もフォールバックとして残しているが、スタンドアロン運用時は
+ * 発火しないため、installBookingAdminMenuTrigger()の実行が必須）。
+ *
+ * このファイルはSpreadsheetApp.getUi()に依存するため、GAS実行環境でのみ動作する。
+ * node --testではonOpen/メニュー部分はスタブを使って配線のみ検証し、confirmBooking
+ * 自体のロジックはBookingRepositoryのテストで担保する。
  */
 'use strict';
 
@@ -22,12 +37,45 @@ function confirmBooking(bookingId) {
   return BookingRepository.confirmBooking(bookingId);
 }
 
+/* 単純トリガー用フォールバック。このスクリプトを対象Spreadsheetへ
+   コンテナバインドした場合のみ自動発火する（スタンドアロン運用時は発火しない）。 */
 function onOpen() {
+  addBookingAdminMenu();
+}
+
+/* installable onOpenトリガーのハンドラ本体。単純トリガーからも
+   installBookingAdminMenuTrigger()で作成したinstallableトリガーからも
+   同じこの関数が呼ばれる。 */
+function addBookingAdminMenu() {
   SpreadsheetApp.getUi()
     .createMenu('予約管理')
     .addItem('アクティブ行のbookingIdを確定（confirmBooking）', 'confirmActiveRowBooking_')
     .addItem('bookingIdを入力して確定（confirmBooking）', 'confirmBookingByPrompt_')
     .addToUi();
+}
+
+/*
+ * 運用開始時にスクリプトエディタから一度だけ手動実行する補助関数。
+ * SPREADSHEET_IDで指定したSpreadsheetに対するinstallable onOpenトリガーを作成する
+ * （このスクリプト自身をそのSpreadsheetへコンテナバインドしなくても、
+ * このスクリプトを認可したアカウントの権限でトリガーが動くようになる）。
+ * 同一Spreadsheet・同一ハンドラのトリガーが既に存在する場合は重複作成しない。
+ * 実行にはSPREADSHEET_IDのSpreadsheetへの編集権限が必要。
+ */
+function installBookingAdminMenuTrigger() {
+  var FUNCTION_NAME = 'addBookingAdminMenu';
+  var spreadsheet = SpreadsheetApp.openById(BookingConfig.getSpreadsheetId());
+  var spreadsheetId = spreadsheet.getId();
+
+  var existing = ScriptApp.getProjectTriggers().filter(function (trigger) {
+    return trigger.getHandlerFunction() === FUNCTION_NAME && trigger.getTriggerSourceId() === spreadsheetId;
+  });
+  if (existing.length > 0) {
+    Logger.log('トリガーは既に存在します: ' + FUNCTION_NAME + ' (spreadsheet=' + spreadsheetId + ')');
+    return existing[0];
+  }
+
+  return ScriptApp.newTrigger(FUNCTION_NAME).forSpreadsheet(spreadsheet).onOpen().create();
 }
 
 function confirmActiveRowBooking_() {

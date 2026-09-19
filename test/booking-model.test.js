@@ -103,6 +103,48 @@ test('validateCreateBookingInput: 営業時間外（開始が早すぎる/終了
   assert.strictEqual(justFits.valid, true, '21:00+120分はちょうど23:00に収まるため許可されるべき');
 });
 
+test('validateCreateBookingInput: 開始時刻はslotStepMinutes（既定15分）刻みでなければSTART_TIME_NOT_ALIGNEDで拒否する（#265/#266固定仕様）', function () {
+  var Booking = loadBooking();
+
+  ['10:00', '10:15', '10:30', '10:45'].forEach(function (startTime) {
+    var result = Booking.validateCreateBookingInput(validInput({ startTime: startTime }), DEFAULT_CONFIG);
+    assert.strictEqual(result.valid, true, startTime + ' は15分刻みなので許可されるべき');
+  });
+
+  ['10:07', '10:01', '10:14', '10:44', '10:59'].forEach(function (startTime) {
+    var result = Booking.validateCreateBookingInput(validInput({ startTime: startTime }), DEFAULT_CONFIG);
+    assert.strictEqual(result.valid, false, startTime + ' は15分刻みでないため拒否されるべき');
+    assert.strictEqual(result.error.code, 'START_TIME_NOT_ALIGNED');
+  });
+});
+
+test('validateCreateBookingInput: SLOT_STEP_MINUTESが変更されていれば、その刻みで判定する', function () {
+  var Booking = loadBooking();
+  var config30 = Object.assign({}, DEFAULT_CONFIG, { slotStepMinutes: 30 });
+
+  assert.strictEqual(Booking.validateCreateBookingInput(validInput({ startTime: '10:30' }), config30).valid, true);
+  var result = Booking.validateCreateBookingInput(validInput({ startTime: '10:15' }), config30);
+  assert.strictEqual(result.valid, false);
+  assert.strictEqual(result.error.code, 'START_TIME_NOT_ALIGNED');
+});
+
+test('validateCreateBookingInput: Availability設定が不正（fail-closed）な場合はINVALID_CONFIGで拒否し、開始時刻の判定まで進まない', function () {
+  var Booking = loadBooking();
+
+  var invalidConfigs = [
+    Object.assign({}, DEFAULT_CONFIG, { bufferMinutes: NaN }), /* BUFFER_MINUTES=abc相当 */
+    Object.assign({}, DEFAULT_CONFIG, { slotStepMinutes: 0 }), /* SLOT_STEP_MINUTES=0相当 */
+    Object.assign({}, DEFAULT_CONFIG, { openTime: '23:00', closeTime: '08:00' }), /* OPEN>=CLOSE */
+    Object.assign({}, DEFAULT_CONFIG, { minBookingMinutes: NaN })
+  ];
+
+  invalidConfigs.forEach(function (config) {
+    var result = Booking.validateCreateBookingInput(validInput(), config);
+    assert.strictEqual(result.valid, false, JSON.stringify(config));
+    assert.strictEqual(result.error.code, 'INVALID_CONFIG', JSON.stringify(config));
+  });
+});
+
 test('validateCreateBookingInput: 氏名・メール・電話・人数・目的・支払方法の入力不正をそれぞれ拒否する', function () {
   var Booking = loadBooking();
 

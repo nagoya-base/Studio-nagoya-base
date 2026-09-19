@@ -222,12 +222,14 @@ function createSheetStub(name) {
  * 用意しなければ、insertSheet()で自動作成する（実際のSpreadsheetRepository.gsの
  * ensureSheet挙動と一致させる）。
  */
-function createSpreadsheetAppStub(spreadsheetsById) {
+function createSpreadsheetAppStub(spreadsheetsById, options) {
+  var opts = options || {};
   return {
     openById: function (id) {
       var sheetsByName = spreadsheetsById[id];
       if (!sheetsByName) throw new Error('Spreadsheetが見つかりません: ' + id);
       return {
+        getId: function () { return id; },
         getSheetByName: function (name) {
           return Object.prototype.hasOwnProperty.call(sheetsByName, name) ? sheetsByName[name] : null;
         },
@@ -239,8 +241,58 @@ function createSpreadsheetAppStub(spreadsheetsById) {
       };
     },
     getActiveSheet: function () {
+      if (opts.activeSheet) return opts.activeSheet;
       throw new Error('SpreadsheetApp stub の getActiveSheet は未実装です（BookingAdmin.gsのテストでは個別にスタブすること）。');
+    },
+    getUi: function () {
+      if (opts.ui) return opts.ui;
+      throw new Error('SpreadsheetApp stub の getUi は未実装です（BookingAdmin.gsのテストではcreateSpreadsheetUiStub()を渡すこと）。');
     }
+  };
+}
+
+/*
+ * SpreadsheetApp.getUi()相当。createMenu(...).addItem(...).addToUi()、alert(...)、
+ * prompt(...)（options.promptResponsesを順番に消費する）を再現する。
+ * 実際にメニュー項目のハンドラ関数を呼び出すことはしない（クリック操作の再現はせず、
+ * 配線とダイアログ表示内容のみを検証する）。
+ */
+function createSpreadsheetUiStub(options) {
+  var opts = options || {};
+  var promptResponses = (opts.promptResponses || []).slice();
+  var alerts = [];
+  var menus = [];
+
+  var BUTTON = { OK: 'OK', CANCEL: 'CANCEL', CLOSE: 'CLOSE' };
+
+  function menuBuilder(name) {
+    var items = [];
+    var builder = {
+      addItem: function (caption, functionName) {
+        items.push({ caption: caption, functionName: functionName });
+        return builder;
+      },
+      addToUi: function () {
+        menus.push({ name: name, items: items });
+      }
+    };
+    return builder;
+  }
+
+  return {
+    Button: BUTTON,
+    ButtonSet: { OK_CANCEL: 'OK_CANCEL', OK: 'OK' },
+    createMenu: function (name) { return menuBuilder(name); },
+    alert: function (message) { alerts.push(message); },
+    prompt: function () {
+      var next = promptResponses.shift() || { button: BUTTON.CANCEL, text: '' };
+      return {
+        getSelectedButton: function () { return next.button; },
+        getResponseText: function () { return next.text; }
+      };
+    },
+    _menus: menus,
+    _alerts: alerts
   };
 }
 
@@ -257,18 +309,32 @@ function createMailAppStub(options) {
   };
 }
 
-/* ScriptApp相当。トリガー一覧・作成のみをメモリ上で再現する。 */
+/* ScriptApp相当。トリガー一覧・作成のみをメモリ上で再現する。
+   時間主導型（timeBased().everyMinutes()）とSpreadsheetのinstallable onOpen型
+   （forSpreadsheet(spreadsheet).onOpen()）の両方のビルダーチェーンをサポートする。 */
 function createScriptAppStub() {
   var triggers = [];
   return {
     getProjectTriggers: function () { return triggers.slice(); },
     newTrigger: function (functionName) {
+      var sourceId = null;
+      var eventType = null;
       var builder = {
         timeBased: function () { return builder; },
         everyMinutes: function () { return builder; },
+        forSpreadsheet: function (spreadsheet) {
+          sourceId = typeof spreadsheet === 'string' ? spreadsheet : spreadsheet.getId();
+          return builder;
+        },
+        onOpen: function () {
+          eventType = 'ON_OPEN';
+          return builder;
+        },
         create: function () {
           var trigger = {
-            getHandlerFunction: function () { return functionName; }
+            getHandlerFunction: function () { return functionName; },
+            getTriggerSourceId: function () { return sourceId; },
+            getEventType: function () { return eventType; }
           };
           triggers.push(trigger);
           return trigger;
@@ -306,6 +372,7 @@ module.exports = {
   createCacheServiceStub: createCacheServiceStub,
   createSheetStub: createSheetStub,
   createSpreadsheetAppStub: createSpreadsheetAppStub,
+  createSpreadsheetUiStub: createSpreadsheetUiStub,
   createMailAppStub: createMailAppStub,
   createScriptAppStub: createScriptAppStub
 };

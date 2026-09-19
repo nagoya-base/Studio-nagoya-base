@@ -40,7 +40,7 @@ function setup(options) {
     Utilities: stubs.createUtilitiesStub(),
     LockService: opts.lockService || stubs.createLockServiceStub(),
     CacheService: opts.cacheService || stubs.createCacheServiceStub(),
-    SpreadsheetApp: stubs.createSpreadsheetAppStub(spreadsheetsById),
+    SpreadsheetApp: stubs.createSpreadsheetAppStub(spreadsheetsById, { ui: opts.ui, activeSheet: opts.activeSheet }),
     MailApp: opts.mailApp || stubs.createMailAppStub(),
     ScriptApp: opts.scriptApp || stubs.createScriptAppStub(),
     Logger: stubs.createLoggerStub()
@@ -150,6 +150,65 @@ test('confirmBooking: 対応するCalendarイベントが見つからない場�
   assert.strictEqual(recovered[0].failureType, 'CONFIRM_CALENDAR_EVENT_MISSING');
 });
 
+test('confirmBooking: Calendar成功(CONFIRMED)・Sheets更新失敗時はCalendarをPENDINGへ補償し、recoveryへRESOLVED記録を残す', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+
+  var originalUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function () {
+    throw new Error('simulated sheets update failure');
+  };
+
+  var result = ctx.sandbox.confirmBooking(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'CONFIRM_SAVE_FAILED');
+
+  var event = ctx.calendarsById.cal1.events[0];
+  assert.strictEqual(event.getTag('status'), 'PENDING', 'Sheets更新失敗時はCalendar側もPENDINGへ補償されているべき');
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].failureType, 'CALENDAR_ROLLED_BACK_AFTER_CONFIRM_SHEETS_FAILURE');
+  assert.strictEqual(recovered[0].recoveryState, 'RESOLVED');
+
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = originalUpdate;
+  /* 元のupdateBookingFieldsに戻した上で、Sheets側が実際にPENDINGのままであることも確認する */
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'PENDING');
+});
+
+test('confirmBooking: Calendar成功(CONFIRMED)・Sheets更新失敗・Calendar補償(PENDINGへ戻す)も失敗した場合、Calendar=CONFIRMED/Sheets=PENDINGの不整合をrecoveryへOPENで記録する', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function () {
+    throw new Error('simulated sheets update failure');
+  };
+  ctx.sandbox.CalendarRepository.setEventStatus = function (calendarId, eventId, status) {
+    if (status === 'PENDING') throw new Error('simulated calendar revert failure');
+    /* CONFIRMEDへの最初の更新自体は成功させる */
+    var event = ctx.calendarsById.cal1.events.filter(function (e) { return e.getId() === eventId; })[0];
+    event.setTag('status', status);
+  };
+
+  var result = ctx.sandbox.confirmBooking(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'CONFIRM_SAVE_FAILED');
+
+  var event = ctx.calendarsById.cal1.events[0];
+  assert.strictEqual(event.getTag('status'), 'CONFIRMED', '補償にも失敗した場合、Calendar側はCONFIRMEDのまま残る（Sheets側はPENDINGのまま不整合）');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'PENDING');
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].failureType, 'CONFIRM_SHEETS_FAILURE_CALENDAR_ORPHANED');
+  assert.strictEqual(recovered[0].recoveryState, 'OPEN');
+  assert.match(recovered[0].errorMessage, /simulated sheets update failure/);
+  assert.match(recovered[0].errorMessage, /simulated calendar revert failure/);
+});
+
 test('confirmBooking: Lock取得に失敗した場合はLOCK_TIMEOUTを返す', function () {
   var lockService = stubs.createLockServiceStub({ forceTryLockFail: true });
   var ctx = setup({ lockService: lockService });
@@ -256,6 +315,93 @@ test('expirePendingBookings: Calendarイベント削除に失敗してもSheets�
   assert.strictEqual(recovered[0].failureType, 'EXPIRE_CALENDAR_DELETE_FAILED');
 });
 
+test('expirePendingBookings: Calendar削除成功・Sheets EXPIRED更新失敗の場合はrecoveryへ記録し、Sheets側はPENDINGのまま残す', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 25 * 3600000) });
+
+  var originalUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (fields.status === 'EXPIRED') throw new Error('simulated sheets expire update failure');
+    return originalUpdate(id, fields);
+  };
+
+  var result = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(result.expiredCount, 0, 'Sheets更新に失敗した候補はexpiredCountへ数えない');
+  assert.strictEqual(result.skippedCount, 1);
+
+  assert.strictEqual(
+    ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length,
+    0,
+    'Calendarイベント自体は削除済みのはず（Sheets更新失敗より前に成功している）'
+  );
+
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = originalUpdate;
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'PENDING', 'Sheets更新が失敗したためstatusは更新前のまま残る（Calendar削除済みとの不整合）');
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].failureType, 'EXPIRE_SHEETS_UPDATE_FAILED');
+  assert.strictEqual(recovered[0].recoveryState, 'OPEN');
+  assert.match(recovered[0].errorMessage, /simulated sheets expire update failure/);
+});
+
+test('expirePendingBookings: EXPIRE_SHEETS_UPDATE_FAILED後、Sheets保存先の障害が解消してから再実行すると、Calendarは既に削除済みとして再記録しつつSheets側は正しくEXPIREDになる（README「部分失敗・recoveryの確認手順」記載の再実行手順の裏付け）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 25 * 3600000) });
+
+  var originalUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (fields.status === 'EXPIRED') throw new Error('simulated sheets expire update failure');
+    return originalUpdate(id, fields);
+  };
+  var first = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(first.expiredCount, 0);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = originalUpdate; /* 障害解消をシミュレート */
+
+  var second = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(second.expiredCount, 1, '再実行時にSheets保存が復旧していれば正しくEXPIREDへ進むべき');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'EXPIRED');
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 2, '1回目のEXPIRE_SHEETS_UPDATE_FAILEDに加え、2回目はCalendarが既に削除済みのためEXPIRE_CALENDAR_DELETE_FAILEDも記録される');
+  /* recoveredはvmサンドボックス（別realm）内で生成された配列のため、非strict deepEqualで
+     比較する（test/booking-config.test.js・test/booking-spreadsheet-repository.test.jsと同じ理由）。 */
+  var failureTypes = [];
+  recovered.forEach(function (r) { failureTypes.push(r.failureType); });
+  assert.deepEqual(failureTypes.sort(), ['EXPIRE_CALENDAR_DELETE_FAILED', 'EXPIRE_SHEETS_UPDATE_FAILED']);
+});
+
+test('expirePendingBookings: 1件のSheets更新失敗が他の失効対象の処理を止めない（バッチ内の障害分離）', function () {
+  var ctx = setup();
+  var failingBookingId = createPending(ctx, { date: '2026-11-01', startTime: '10:00', email: 'a@example.com' });
+  var okBookingId = createPending(ctx, { date: '2026-11-02', startTime: '10:00', email: 'b@example.com' });
+
+  var oldCreatedAt = new Date(Date.now() - 25 * 3600000);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(failingBookingId, { createdAt: oldCreatedAt });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(okBookingId, { createdAt: oldCreatedAt });
+
+  var originalUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (id === failingBookingId && fields.status === 'EXPIRED') {
+      throw new Error('simulated sheets expire update failure');
+    }
+    return originalUpdate(id, fields);
+  };
+
+  var result = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(result.expiredCount, 1, '失敗した1件を除く、もう1件は正常にEXPIREDへ進むべき');
+  assert.strictEqual(result.skippedCount, 1);
+
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = originalUpdate;
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(failingBookingId).record.status, 'PENDING');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(okBookingId).record.status, 'EXPIRED');
+});
+
 test('createExpirePendingBookingsTrigger: トリガーを作成し、二重作成しない', function () {
   var scriptApp = stubs.createScriptAppStub();
   var ctx = setup({ scriptApp: scriptApp });
@@ -265,4 +411,52 @@ test('createExpirePendingBookingsTrigger: トリガーを作成し、二重作�
 
   var triggers = scriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'expirePendingBookings'; });
   assert.strictEqual(triggers.length, 1, '同じハンドラのトリガーを重複作成しない');
+});
+
+/* ---------- 管理メニュー: installable onOpenトリガー（スタンドアロンWebApp運用） ---------- */
+
+test('installBookingAdminMenuTrigger: SPREADSHEET_IDのSpreadsheetに対するinstallable onOpenトリガーを作成する', function () {
+  var scriptApp = stubs.createScriptAppStub();
+  var ctx = setup({ scriptApp: scriptApp });
+
+  ctx.sandbox.installBookingAdminMenuTrigger();
+
+  var triggers = scriptApp.getProjectTriggers();
+  assert.strictEqual(triggers.length, 1);
+  assert.strictEqual(triggers[0].getHandlerFunction(), 'addBookingAdminMenu');
+  assert.strictEqual(triggers[0].getTriggerSourceId(), SPREADSHEET_ID, 'SPREADSHEET_IDのSpreadsheetに紐づくトリガーであるべき');
+  assert.strictEqual(triggers[0].getEventType(), 'ON_OPEN');
+});
+
+test('installBookingAdminMenuTrigger: 同じSpreadsheet・同じハンドラのトリガーを重複作成しない', function () {
+  var scriptApp = stubs.createScriptAppStub();
+  var ctx = setup({ scriptApp: scriptApp });
+
+  ctx.sandbox.installBookingAdminMenuTrigger();
+  ctx.sandbox.installBookingAdminMenuTrigger();
+
+  assert.strictEqual(scriptApp.getProjectTriggers().length, 1);
+});
+
+test('addBookingAdminMenu: 「予約管理」メニューにconfirmBooking用の2項目を追加する（installableトリガー・単純トリガーonOpenの両方から呼ばれる本体）', function () {
+  var ui = stubs.createSpreadsheetUiStub();
+  var ctx = setup({ ui: ui });
+
+  ctx.sandbox.addBookingAdminMenu();
+
+  assert.strictEqual(ui._menus.length, 1);
+  assert.strictEqual(ui._menus[0].name, '予約管理');
+  var functionNames = ui._menus[0].items.map(function (item) { return item.functionName; });
+  assert.ok(functionNames.indexOf('confirmActiveRowBooking_') !== -1);
+  assert.ok(functionNames.indexOf('confirmBookingByPrompt_') !== -1);
+});
+
+test('onOpen: 単純トリガー(コンテナバインド時のフォールバック)からもaddBookingAdminMenuと同じメニューが追加される', function () {
+  var ui = stubs.createSpreadsheetUiStub();
+  var ctx = setup({ ui: ui });
+
+  ctx.sandbox.onOpen();
+
+  assert.strictEqual(ui._menus.length, 1);
+  assert.strictEqual(ui._menus[0].name, '予約管理');
 });

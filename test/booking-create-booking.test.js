@@ -120,6 +120,33 @@ test('createBooking: 入力不正（不正な日付）はCalendar再取得すら
   assert.strictEqual(ctx.calendarsById.cal1.events.length, 0);
 });
 
+test('createBooking: 開始時刻が15分刻みでない場合はSTART_TIME_NOT_ALIGNEDで拒否し、Calendar/Sheetsに何も作らない', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload({ startTime: '10:07' }));
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'START_TIME_NOT_ALIGNED');
+  assert.strictEqual(ctx.calendarsById.cal1.events.length, 0);
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 0);
+});
+
+test('createBooking: Availability設定（BUFFER_MINUTES等）が不正な場合はfail-closedにINVALID_CONFIGで拒否し、Calendarへ問い合わせない（既存予約との競合見落とし事故を防ぐ）', function () {
+  var ctx = setup({ properties: { BUFFER_MINUTES: 'abc' } });
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload());
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'INVALID_CONFIG');
+  assert.strictEqual(ctx.calendarsById.cal1.events.length, 0, 'BUFFER_MINUTESが不正な間はCalendarへ問い合わせてはいけない');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 0);
+});
+
+test('createBooking: SLOT_STEP_MINUTES=0のような不正設定もfail-closedにINVALID_CONFIGで拒否する', function () {
+  var ctx = setup({ properties: { SLOT_STEP_MINUTES: '0' } });
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload());
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'INVALID_CONFIG');
+  assert.strictEqual(ctx.calendarsById.cal1.events.length, 0);
+});
+
 test('#267との境界: getAvailabilityでは空きだったのに、その後Calendarに別予定(スペースマーケット由来含む)が入った場合、createBooking直前の再確認で検出して拒否し、PENDINGイベント・Sheets行のどちらも作らない', function () {
   var ctx = setup();
 

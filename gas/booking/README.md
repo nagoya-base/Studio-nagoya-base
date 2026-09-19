@@ -45,14 +45,16 @@ Epic #265の一部として以下を実装済み。
 | --- | --- |
 | 営業時間 | 08:00〜23:00 |
 | 最低利用時間 | 120分 |
-| 開始時刻の刻み（getAvailabilityの候補生成のみ） | 15分 |
+| 開始時刻の刻み | 15分（`SLOT_STEP_MINUTES`） |
 | 予約同士の間隔（マージン） | 15分以上 |
 | タイムゾーン | Asia/Tokyo |
 | 終日イベント | 空き枠を占有しない |
 
-`createBooking`は開始時刻が15分刻みかどうかは検証しない（営業時間内かどうかと、
-実際の占有区間との重複有無のみを見る）。15分刻みはgetAvailabilityが候補を
-提示する際のUI都合であり、createBooking自体のハード制約ではない。
+`createBooking`も開始時刻が`SLOT_STEP_MINUTES`（既定15分）刻みであることをサーバー側で
+必須とする（例: `10:00`/`10:15`/`10:30`/`10:45`は許可、`10:07`は`START_TIME_NOT_ALIGNED`
+で拒否）。getAvailabilityが提示する候補開始時刻と、実際にcreateBookingできる開始時刻を
+一致させるハード制約であり、フロントのUI都合ではない（`Booking.gs`の
+`validateCreateBookingInput`参照）。
 
 ## ファイル構成
 
@@ -110,6 +112,14 @@ TTL・レート制限の数値プロパティは、誤設定（数値以外・0�
 安全な既定値へフォールバックする（fail-openでレート制限が無効化される事故を防ぐため。
 `Config.gs`のコメント参照）。
 
+一方、`OPEN_TIME`/`CLOSE_TIME`/`MIN_BOOKING_MINUTES`/`BUFFER_MINUTES`/`SLOT_STEP_MINUTES`
+（Availability設定）が誤設定の場合は、フォールバックせず`createBooking`・`getAvailability`
+の両方をfail-closedに`INVALID_CONFIG`で拒否する。例えば`BUFFER_MINUTES=abc`のまま
+既存予約との重複判定（`isStartTimeBookable`）へ進むと、NaNを含む比較が常にfalseになり
+既存予約との競合を見落とす恐れがあるため、`createBooking`は`Booking.validateCreateBookingInput`
+の冒頭で`BookingAvailability.validateInput`（getAvailabilityと同じ設定検証）を通し、
+Calendarへ問い合わせる前に必ず設定の妥当性を確認する。
+
 ## Spreadsheet構成
 
 1. 新規のGoogle Spreadsheetを1つ作成し、そのidを`SPREADSHEET_ID`に設定する。
@@ -137,10 +147,13 @@ TTL・レート制限の数値プロパティは、誤設定（数値以外・0�
 
 | failureType | 意味 |
 | --- | --- |
-| `CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE` | Calendar作成成功→Sheets保存失敗→Calendarを補償削除できた |
-| `SHEETS_FAILURE_CALENDAR_ORPHANED` | 上記でCalendarの補償削除も失敗（**要手動対応**。Calendar側にPENDINGイベントが残っている） |
-| `EXPIRE_CALENDAR_DELETE_FAILED` | TTL失効時にCalendarイベント削除が失敗（Sheets側はEXPIREDへ進めている） |
+| `CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE` | createBooking: Calendar作成成功→Sheets保存失敗→Calendarを補償削除できた |
+| `SHEETS_FAILURE_CALENDAR_ORPHANED` | createBooking: 上記でCalendarの補償削除も失敗（**要手動対応**。Calendar側にPENDINGイベントが残っている） |
+| `CALENDAR_ROLLED_BACK_AFTER_CONFIRM_SHEETS_FAILURE` | confirmBooking: CalendarをCONFIRMEDへ更新成功→Sheets更新失敗→CalendarをPENDINGへ補償できた |
+| `CONFIRM_SHEETS_FAILURE_CALENDAR_ORPHANED` | confirmBooking: 上記でCalendarの補償（PENDINGへ戻す）も失敗（**要手動対応**。CalendarはCONFIRMED・SheetsはPENDINGのまま不整合） |
 | `CONFIRM_CALENDAR_EVENT_MISSING` | confirmBooking時に対応するCalendarイベントが見つからない（Sheets側はPENDINGのまま） |
+| `EXPIRE_CALENDAR_DELETE_FAILED` | expirePendingBookings: Calendarイベント削除が失敗（Sheets側はEXPIREDへ進めている） |
+| `EXPIRE_SHEETS_UPDATE_FAILED` | expirePendingBookings: Calendarイベント削除成功→Sheets側のEXPIRED更新が失敗（**要手動対応**。CalendarはPENDINGのイベントが既に削除済み・SheetsはPENDING表示のまま不整合） |
 | `ADMIN_NOTIFICATION_FAILED` | 管理者通知メール送信に失敗（予約自体は成功のまま。情報用途） |
 
 ## 部分失敗・recoveryの確認手順（運用者向け）
@@ -153,7 +166,20 @@ TTL・レート制限の数値プロパティは、誤設定（数値以外・0�
    シートで確認し、Calendar側に該当イベントが本当にないかを確認する。運用判断で
    利用者へ連絡するか、Calendarへ手動でイベントを作り直してから再度
    `confirmBooking(bookingId)`を実行する。
-4. 対応が完了したら、`Recovery`シートの`recoveryState`・`resolvedAt`列へ手動で
+4. `failureType`が`CONFIRM_SHEETS_FAILURE_CALENDAR_ORPHANED`の場合、`calendarEventId`を
+   Calendarで開いて確定表示（`[Studio X 確定]`）になっているか確認する。`Bookings`
+   シート側は`PENDING`のままなので、Sheets側の`status`を手動で`CONFIRMED`に直接書き換える
+   のではなく、Calendar側の表示を`[Studio X 仮予約]`へ手動で戻すか、Sheets保存先の
+   一時的な障害が解消したことを確認したうえで再度`confirmBooking(bookingId)`を実行する
+   （`getEventById`はCalendarイベントが現存する限り再実行を妨げない）。
+5. `failureType`が`EXPIRE_SHEETS_UPDATE_FAILED`の場合、`calendarEventId`のCalendarイベントは
+   既に削除済みだが、`Bookings`シート側は`status`が`PENDING`のまま残っている。
+   Sheets保存先の一時的な障害が解消したことを確認できれば、`statusセルの直接編集はしない`
+   （`expirePendingBookings`を再実行すれば、このbookingIdはまだ`PENDING`のため再び候補として
+   抽出され、Calendar側は既に削除済みのため`EXPIRE_CALENDAR_DELETE_FAILED`が追加記録される
+   ものの、続くSheets更新が今度は成功すれば`status`が正しく`EXPIRED`になる。この経路は
+   `test/booking-confirm-expire.test.js`の障害分離テストと同じ仕組みで安全に再実行できる）。
+6. 対応が完了したら、`Recovery`シートの`recoveryState`・`resolvedAt`列へ手動で
    記録する（このシートはBookings台帳と異なり、運用者が直接編集してよい）。
 
 ## API仕様
@@ -216,22 +242,41 @@ TTL・レート制限の数値プロパティは、誤設定（数値以外・0�
 { "success": false, "error": { "code": "SLOT_CONFLICT", "message": "..." } }
 ```
 
-`error.code`の主な値: `INVALID_BRAND` / `INVALID_DATE` / `INVALID_DURATION` /
-`DURATION_TOO_SHORT` / `INVALID_START_TIME` / `INVALID_NAME` / `INVALID_EMAIL` /
-`INVALID_PHONE` / `INVALID_PEOPLE` / `INVALID_PURPOSE` / `INVALID_PAYMENT_METHOD` /
-`INVALID_NOTE` / `INVALID_SOURCE` / `RATE_LIMITED`（`error.reason`に
-`EMAIL_RATE_LIMIT`/`GLOBAL_RATE_LIMIT`/`DUPLICATE_SUBMISSION`のいずれか） /
+`error.code`の主な値: `INVALID_BRAND` / `INVALID_CONFIG`（Availability設定自体が不正。
+fail-closed） / `INVALID_DATE` / `INVALID_DURATION` / `DURATION_TOO_SHORT` /
+`INVALID_START_TIME` / `START_TIME_NOT_ALIGNED`（開始時刻が`SLOT_STEP_MINUTES`刻みでない）/
+`INVALID_NAME` / `INVALID_EMAIL` / `INVALID_PHONE` / `INVALID_PEOPLE` / `INVALID_PURPOSE` /
+`INVALID_PAYMENT_METHOD` / `INVALID_NOTE` / `INVALID_SOURCE` / `RATE_LIMITED`
+（`error.reason`に`EMAIL_RATE_LIMIT`/`GLOBAL_RATE_LIMIT`/`DUPLICATE_SUBMISSION`のいずれか）/
 `LOCK_TIMEOUT` / `SLOT_CONFLICT` / `BOOKING_SAVE_FAILED` / `INVALID_JSON` /
 `INTERNAL_ERROR`
 
 Phase 1では`studio_x`以外の`brand`を指定してもサーバー側で拒否する
 （フロント表示に関わらずbrand偽装で他ブランドの予約は作れない）。
 
+## 管理メニューのセットアップ（installable onOpenトリガー）
+
+このGASプロジェクトはスタンドアロンのWeb Appとして運用する（「デプロイ設定」参照）。
+スタンドアロンスクリプトに単純トリガーの`onOpen()`を書くだけでは、`SPREADSHEET_ID`で
+指定した対象Spreadsheetを開いても「予約管理」メニューは自動表示されない
+（単純トリガーのonOpenは、このスクリプト自身が対象Spreadsheetに
+コンテナバインドされている場合のみ発火するため）。
+
+**正式な運用手順（この方式で動作確認する）**: 運用開始時に、スクリプトエディタで
+`installBookingAdminMenuTrigger` を選択して一度だけ手動実行する。これにより、
+`SPREADSHEET_ID`のSpreadsheetに対するinstallable onOpenトリガーが作成され
+（実行には対象Spreadsheetへの編集権限が必要）、以降そのSpreadsheetを開くたびに
+`addBookingAdminMenu`が呼ばれて「予約管理」メニューが自動的に追加されるようになる。
+同一Spreadsheet・同一ハンドラのトリガーが既に存在する場合は重複作成しない。
+
+（このスクリプトを将来コンテナバインド型へ分離・移行する場合に備え、単純トリガーの
+`onOpen()`もフォールバックとして残しているが、上記のスタンドアロン運用では発火しない
+ため、`installBookingAdminMenuTrigger`の実行が必須）。
+
 ## 管理メニューからの予約確定（confirmBooking）手順
 
-1. `SPREADSHEET_ID`で指定したSpreadsheetを開くと、`onOpen`により「予約管理」メニューが
-   追加される（コンテナバインドスクリプトとして紐付けている場合。詳細は後述の
-   デプロイ手順を参照）。
+1. 上記のセットアップ済みであることを確認し、`SPREADSHEET_ID`で指定したSpreadsheetを
+   開くと「予約管理」メニューが表示される。
 2. 確定したい予約の内容を`Bookings`シートで確認する。
 3. 次のいずれかの方法で確定する。
    - **アクティブ行を確定**: `Bookings`シート上で対象の行（bookingIdの行）を選択してから、
@@ -276,16 +321,15 @@ Calendar削除に失敗した場合も`Recovery`シートへ記録した上でSh
 ## セットアップ手順
 
 1. 新規のGoogle Apps Scriptプロジェクトを作成し、このディレクトリ配下の全`.gs`ファイルと
-   `appsscript.json`をコピーする。
-   - カスタムメニュー（`onOpen`）を使うには、`SPREADSHEET_ID`で指定するSpreadsheetに
-     このスクリプトをコンテナバインドする（Spreadsheetの拡張機能 → Apps Script）ことを
-     推奨する。スタンドアロンスクリプトのままでも`confirmBooking`関数は動作するが、
-     `onOpen`のカスタムメニューはSpreadsheetを開いたときにしか発火しない点に注意。
+   `appsscript.json`をコピーする（スタンドアロンスクリプトのままでよい。
+   `SPREADSHEET_ID`のSpreadsheetへコンテナバインドする必要はない）。
 2. 上記のScript Propertiesを設定する（最低限 `CALENDAR_ID` / `SPREADSHEET_ID`）。
 3. Webアプリとして新規デプロイし、上記の「デプロイ設定」の通りに設定する。
 4. デプロイ後のWeb App URLは、本Issueでは既存フォーム・既存サイトのどこからも
    参照しない（#269以降の共通予約UI実装時に接続する）。
 5. 運用開始時に「PENDING TTL失効トリガーの作成手順」に従ってトリガーを作成する。
+6. 運用開始時に「管理メニューのセットアップ（installable onOpenトリガー）」に従って
+   `installBookingAdminMenuTrigger`を一度だけ手動実行する。
 
 ## ロールバック方法
 
@@ -300,6 +344,8 @@ Calendar削除に失敗した場合も`Recovery`シートへ記録した上でSh
   既存フォーム・既存の空き判定表示には影響しない。
 - **時間主導トリガーを作成済みの場合**: スクリプトエディタの「トリガー」画面から
   `expirePendingBookings`のトリガーを削除する。
+- **管理メニュー用のinstallable onOpenトリガーを作成済みの場合**: 同じく「トリガー」画面から
+  `addBookingAdminMenu`のトリガーを削除する。
 - **Spreadsheet運用を開始済みの場合**: `Bookings`/`Recovery`シートはこのGASプロジェクト
   以外から書き込まれないため、GASのデプロイを止めれば新規の自動書き込みは止まる
   （既存の行データ自体を削除する必要はない）。
@@ -309,10 +355,13 @@ Calendar削除に失敗した場合も`Recovery`シートへ記録した上でSh
 Issue本文で「実装前に確認してほしい」とされた設計ポイントについて、今回採用した方針。
 仕様変更が必要な場合はご連絡ください。
 
-1. **Calendar成功→Sheets失敗時の補償方法**: Calendarイベントの削除を試み、成功すれば
-   `CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE`、削除も失敗すれば
+1. **Calendar成功→Sheets失敗時の補償方法**: `createBooking`はCalendarイベントの削除を試み、
+   成功すれば`CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE`、削除も失敗すれば
    `SHEETS_FAILURE_CALENDAR_ORPHANED`として`Recovery`シートへ記録する
-   （`BookingRepository.gs`の`handleSheetsSaveFailure_`）。
+   （`BookingRepository.gs`の`handleSheetsSaveFailure_`）。同じ考え方を状態遷移にも適用し、
+   `confirmBooking`（Calendar確定成功→Sheets更新失敗→CalendarをPENDINGへ補償）・
+   `expirePendingBookings`（Calendar削除成功→Sheets更新失敗→次回再実行で自動的に整合を取り戻せる）
+   にもrecovery記録と対応方針を用意している（レビュー指摘を受けて追加）。
 2. **bookingIdをCalendarへどう保持するか**: `CalendarEvent.setTag('bookingId', ...)`/
    `setTag('status', ...)`で保持し、タイトルには`[Studio X 仮予約] <bookingId>`のように
    人が一覧で読める形でも重複して載せている（判定ロジックはタグのみを見る。タイトルは
@@ -327,14 +376,38 @@ Issue本文で「実装前に確認してほしい」とされた設計ポイン
    JSON）を保存する方式を採用。PropertiesServiceより高頻度カウンタ用途に向いている一方、
    CacheServiceの性質上、複数インスタンス間で常に完全同期しているとは限らない
    「概ね閾値を超えたら拒否する」ゆるい防御として位置づけている。
-6. **SpreadsheetカスタムメニューからのbookingId指定方法**: 「アクティブ行を確定」
+6. **SpreadsheetカスタムメニューからのbookingId指定方法・実運用方式**: 「アクティブ行を確定」
    （選択中の行のA列=bookingIdを読む）と「bookingIdを入力して確定」（プロンプト入力）の
-   2通りを用意した。
+   2通りを用意した。このGASプロジェクトはスタンドアロンWeb Appのため、単純トリガーの
+   `onOpen()`だけでは対象Spreadsheetを開いてもメニューが出ない。そのため
+   `installBookingAdminMenuTrigger()`でSPREADSHEET_IDに対するinstallable onOpenトリガーを
+   明示的に作成する方式を正式手順とした（レビュー指摘を受けて、曖昧な「コンテナバインド
+   推奨」から具体的な実装・セットアップ手順へ変更）。
 7. **createBooking APIのPOST方式**: `doPost`を新設し、`e.postData.contents`をJSONとして
    パースする。GETクエリパラメータでは個人情報を送らせない。
 8. **doGet/getAvailabilityとdoPost/createBookingの共存**: 同一`Code.gs`内で`doGet`
    （#266のまま変更なし）と`doPost`（#268で追加）を分離して定義しており、GAS Web Appは
    同一デプロイでこの両方を配信できる。
+
+### PRレビュー（1回目）指摘への追加対応
+
+1回目のレビューで以下4点の指摘を受け、対応した。
+
+- **開始時刻の15分刻みをcreateBookingでも必須化**: `Booking.validateCreateBookingInput`に
+  `START_TIME_NOT_ALIGNED`判定を追加（例: `10:07`は拒否、`10:00`/`10:15`/`10:30`/`10:45`は許可）。
+- **Availability設定全体のfail-closed検証をcreateBookingにも適用**: `BookingAvailability.validateInput`
+  （getAvailabilityと同じ設定検証）を`createBooking`の入力検証冒頭で呼び出し、
+  `BUFFER_MINUTES`等の誤設定時にNaNのまま競合判定へ進んで既存予約の見落としが起きないようにした。
+- **Spreadsheetカスタムメニューの実運用方式を明確化**: 上記6.の`installBookingAdminMenuTrigger()`を追加。
+- **confirmBooking/expirePendingBookingsの部分失敗もrecoveryへ記録**: 上記1.のとおり両関数に
+  補償・recovery記録を追加した。
+
+## テスト結果について
+
+このREADME・PRに記載する「node --testが全件pass」は、**ローカルで`node --test`を実行した
+結果**であり、GitHub Actions等のCIが本リポジトリに設定されている、またはそのCIが通過した
+ことを意味しない（本リポジトリには現時点でCIが登録されていない）。実Calendar・実Spreadsheet・
+実デプロイへの検証はいずれも「デプロイ後の手動確認」節に委ねている。
 
 ## テストの実行
 
@@ -352,15 +425,18 @@ Issue #266関連（変更なし）:
 
 Issue #268で追加:
 
-- `test/booking-model.test.js` — `Booking.gs`（入力検証・bookingId発行・状態遷移・TTL計算）
+- `test/booking-model.test.js` — `Booking.gs`（入力検証・15分刻み判定・Availability設定の
+  fail-closed検証・bookingId発行・状態遷移・TTL計算）
 - `test/booking-rate-limiter.test.js` — `RateLimiter.gs`（同一メール/全体/連投のスライディング
   ウィンドウ制限）
 - `test/booking-spreadsheet-repository.test.js` — `SpreadsheetRepository.gs` /
   `RecoveryRepository.gs`（台帳read/write・recovery記録）
 - `test/booking-create-booking.test.js` — `BookingRepository.createBooking`の統合テスト
-  （正常系・#267境界の競合検出・LockService・rate limit・部分失敗補償・管理者通知失敗など）
+  （正常系・15分刻み拒否・設定fail-closed拒否・#267境界の競合検出・LockService・rate limit・
+  部分失敗補償・管理者通知失敗など）
 - `test/booking-confirm-expire.test.js` — `confirmBooking`/`expirePendingBookings`の
-  統合テスト（状態遷移・TTL・二重実行・部分失敗）
+  統合テスト（状態遷移・TTL・二重実行・部分失敗補償/recovery記録・障害分離・installable
+  onOpenトリガーの作成/重複防止・管理メニューの配線）
 
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに
@@ -375,6 +451,8 @@ CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用�
 - [ ] 同じ予約が`Bookings`シートに同じbookingIdで保存されること
 - [ ] getAvailabilityで空きだった枠が、スペースマーケット予約で埋まった直後に
       `createBooking`すると`SLOT_CONFLICT`になり、CalendarにもSheetsにも何も作られないこと
+- [ ] `installBookingAdminMenuTrigger`を実行後、`SPREADSHEET_ID`のSpreadsheetを開くと
+      実際に「予約管理」メニューが表示されること（スタンドアロン運用での実地確認）
 - [ ] Spreadsheetのカスタムメニューから`confirmBooking`が実行できること
 - [ ] `expirePendingBookings`のトリガーが実際に15分おきに動作すること
 - [ ] 既存の`_includes/calendar_embed.html`および`studio-x/reservation/`の予約フォームが

@@ -81,20 +81,20 @@ var Booking = (function () {
       return { valid: false, error: err_('INVALID_BRAND', 'このブランドではオンライン予約を受け付けていません。') };
     }
 
-    if (!BookingAvailability.isValidDateString(input.date)) {
-      return { valid: false, error: err_('INVALID_DATE', '日付の形式が正しくありません（YYYY-MM-DD）。') };
+    /*
+     * 日付・利用時間・Availability設定全体（営業時間/最低利用時間/バッファ分/開始刻み）を、
+     * getAvailabilityと全く同じ判定（BookingAvailability.validateInput）でfail-closedに
+     * 検証する。ここを素通りさせると、例えばBUFFER_MINUTES=abc（NaN）のまま後続の
+     * isStartTimeBookableへ渡ってしまい、既存予約との競合を見落とす恐れがある
+     * （NaNを含む比較は常にfalseになるため）。openTime/closeTime/slotStepMinutesの
+     * 形式・整合性もここで保証されるため、これより後のstartMinutes計算は安全に行える
+     * （レビュー指摘対応）。
+     */
+    var baseError = BookingAvailability.validateInput(input.date, input.durationMinutes, availabilityConfig);
+    if (baseError) {
+      return { valid: false, error: baseError };
     }
-
     var durationMinutes = input.durationMinutes;
-    if (typeof durationMinutes !== 'number' || !Number.isInteger(durationMinutes) || durationMinutes <= 0) {
-      return { valid: false, error: err_('INVALID_DURATION', '利用時間（分）が正しくありません。') };
-    }
-    if (!availabilityConfig || durationMinutes < availabilityConfig.minBookingMinutes) {
-      return {
-        valid: false,
-        error: err_('DURATION_TOO_SHORT', '最低利用時間（' + (availabilityConfig && availabilityConfig.minBookingMinutes) + '分）未満です。')
-      };
-    }
 
     if (!BookingAvailability.isValidTimeString(input.startTime)) {
       return { valid: false, error: err_('INVALID_START_TIME', '開始時刻の形式が正しくありません（HH:mm）。') };
@@ -104,6 +104,20 @@ var Booking = (function () {
     var closeMinutes = BookingAvailability.parseTimeToMinutes(availabilityConfig.closeTime);
     if (startMinutes < openMinutes || startMinutes + durationMinutes > closeMinutes) {
       return { valid: false, error: err_('INVALID_START_TIME', '営業時間（' + availabilityConfig.openTime + '〜' + availabilityConfig.closeTime + '）の範囲外です。') };
+    }
+    /*
+     * #265/#266固定仕様: 開始時刻はslotStepMinutes（既定15分）刻みのみ許可する
+     * （例: 10:00/10:15/10:30/10:45は可、10:07は不可）。getAvailabilityが提示する
+     * 候補開始時刻と、実際にcreateBookingできる開始時刻を一致させるサーバー側の
+     * ハード制約であり、フロントのUI都合ではない（レビュー指摘対応）。
+     * baseErrorのチェックによりslotStepMinutesは正の整数であることが保証済みのため、
+     * 剰余演算がNaN・0除算になることはない。
+     */
+    if ((startMinutes - openMinutes) % availabilityConfig.slotStepMinutes !== 0) {
+      return {
+        valid: false,
+        error: err_('START_TIME_NOT_ALIGNED', '開始時刻は' + availabilityConfig.slotStepMinutes + '分刻みで指定してください。')
+      };
     }
 
     if (!isNonEmptyString_(input.name, 100)) {
