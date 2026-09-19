@@ -24,14 +24,14 @@
  * コンテナバインドスクリプトでは単純トリガーの`onOpen()`がSpreadsheetを開くたびに
  * 自動発火するため、追加のトリガー作成作業は不要。
  *
- * 【重要・LockServiceについて】
- * confirmBooking（このBooking Adminプロジェクトで実行）とexpirePendingBookings
- * （Web App側のプロジェクトで時間主導トリガーにより実行）は別々のApps Scriptプロジェクトで
- * 動くため、LockService.getScriptLock()が提供する排他はプロジェクトごとに独立しており、
- * 両者の間では排他されない。BookingRepository.confirmBookingはCalendarを実際に
- * 変更する直前にもう一度Sheets上のstatusを読み直す再確認を行い、この競合windowを
- * 可能な限り小さくしているが、理論上のwindowを完全にゼロにはできない
- * （README「既知の制約」参照。「絶対に競合しない」とは書かないこと）。
+ * 【重要・BookingTriggers.gsも同じプロジェクトへ】
+ * PENDING TTL失効（`expirePendingBookings`）もこのBooking Adminプロジェクトへ
+ * デプロイし、その時間主導トリガーもここで作成する（BookingTriggers.gs参照）。
+ * confirmBookingとexpirePendingBookingsを同一プロジェクトに置くことで、両者が同じ
+ * LockService.getScriptLock()を共有し、PENDING→CONFIRMEDとPENDING→EXPIREDが
+ * 同時に進んでCalendar/Sheetsが不整合になる競合を排除している（3回目レビュー指摘対応。
+ * 当初はexpirePendingBookingsをWeb App側に置く設計だったが、LockServiceがプロジェクト
+ * ごとに独立しているため確定/失効間の排他が効かず、指摘を受けてBooking Adminへ統合した）。
  *
  * このファイルはSpreadsheetApp.getUi()に依存するため、GAS実行環境でのみ動作する。
  * node --testではonOpen/メニュー部分はスタブを使って配線のみ検証し、confirmBooking

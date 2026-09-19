@@ -3,6 +3,15 @@
  * オーケストレーション（Issue #268）。CalendarRepository・SpreadsheetRepository・
  * RecoveryRepository・RateLimiter・Bookingを組み合わせる、GAS実行環境依存の本体。
  *
+ * このファイル自体は1つだが、実際にどの関数がどのGASプロジェクトから呼ばれるかは
+ * プロジェクトによって異なる（README「GASプロジェクトへのデプロイ対象ファイル」参照）:
+ * - createBooking: Booking Web Appプロジェクト（Code.gsのdoPostから）
+ * - confirmBooking / expirePendingBookings: Booking Adminプロジェクト
+ *   （BookingAdmin.gs / BookingTriggers.gsから。両方とも同じプロジェクト内で動くため、
+ *   LockService.getScriptLock()を共有し、互いに直列化される。3回目レビューで
+ *   confirmBookingとexpirePendingBookingsを同一プロジェクトへ統合し、この2つの間の
+ *   Lock非共有によるCalendar/Sheets不整合の可能性を構造的に解消した）
+ *
  * createBookingの処理順（Issue #268本文どおり）:
  *   1. サーバー側入力検証        → Booking.validateCreateBookingInput
  *   2. abuse / rate limit確認    → RateLimiter.evaluate（Lockの外。ここで弾けばLock不要なため）
@@ -22,7 +31,10 @@
  * だけを提供する。スペースマーケット側からの外部Calendar書き込みまではロックできない。
  * そのためLock取得後に必ずCalendarを再取得し、直前の空き状況を再確認してから
  * PENDINGイベントを作成する（「絶対に競合しない」ではなく「同一Calendarと直前再確認で
- * リスクを最小化する」設計）。
+ * リスクを最小化する」設計）。この注意はcreateBooking（Booking Web App）対
+ * スペースマーケット側の外部書き込みについてのみ当てはまる。confirmBooking対
+ * expirePendingBookings（いずれもBooking Admin内）は同一LockServiceで直列化されるため、
+ * この種の非同期な外部書き込みの問題は生じない。
  */
 'use strict';
 
@@ -205,9 +217,13 @@ var BookingRepository = (function () {
   }
 
   /*
-   * confirmBooking(bookingId) — Spreadsheetのカスタムメニュー（BookingAdmin.gs）から呼ばれる
-   * 正式な確定手順。PENDINGのみCONFIRMEDへ遷移できる。既にCONFIRMED済みなら
-   * 何もせず成功扱いにする（二重実行しても壊れない）。
+   * confirmBooking(bookingId) — Spreadsheetのカスタムメニュー（BookingAdmin.gs。
+   * Booking Adminプロジェクト）から呼ばれる正式な確定手順。PENDINGのみCONFIRMEDへ
+   * 遷移できる。既にCONFIRMED済みなら何もせず成功扱いにする（二重実行しても壊れない）。
+   * expirePendingBookingsも同じBooking Adminプロジェクトに属し、同じ
+   * LockService.getScriptLock()を取得するため、この2つが同時に同じbookingIdを
+   * 処理することはない（一方がLockを保持している間、他方はtryLockが失敗するかLockが
+   * 解放されるまで待つ）。
    */
   function confirmBooking(bookingId) {
     if (!bookingId) {
@@ -257,29 +273,6 @@ var BookingRepository = (function () {
         return {
           success: false,
           error: { code: 'CALENDAR_EVENT_MISSING', message: '対応するCalendarイベントが見つかりません。Recoveryシートを確認してください。' }
-        };
-      }
-
-      /*
-       * Calendarを実際に変更する直前に、もう一度Sheets上のstatusを読み直す。
-       * confirmBookingはSpreadsheetにコンテナバインドした別GASプロジェクト
-       * （BookingAdmin.gs参照）から呼ばれる一方、expirePendingBookings()は
-       * Web App側のGASプロジェクトで動く時間主導トリガーから呼ばれる。
-       * LockServiceのスクリプトロックはスクリプトプロジェクトごとに独立しているため、
-       * この2つの処理は互いを排他できない。最初のfindRowByBookingId確認からここまでの
-       * 間に、ちょうどTTLが失効してexpirePendingBookingsが同じbookingIdを
-       * PENDING→EXPIREDへ進めてしまう競合を完全には防げないが、実際にCalendarを
-       * 書き換える直前でもう一度確認することで、その競合windowを可能な限り狭める
-       * （それでも理論上のwindowが0になるわけではない。README「既知の制約」参照）。
-       */
-      var recheck = SpreadsheetRepository.findRowByBookingId(bookingId);
-      if (!recheck || recheck.record.status !== Booking.STATUS.PENDING) {
-        return {
-          success: false,
-          error: {
-            code: 'CONFLICTING_STATUS_CHANGE',
-            message: '確定処理中に予約状態が変化しました（現在: ' + (recheck && recheck.record.status) + '）。最新の状態を確認してください。'
-          }
         };
       }
 
@@ -340,7 +333,10 @@ var BookingRepository = (function () {
   }
 
   /*
-   * expirePendingBookings() — 時間主導トリガーから呼ばれるTTL失効処理（BookingTriggers.gs参照）。
+   * expirePendingBookings() — Booking Adminプロジェクトの時間主導トリガーから呼ばれる
+   * TTL失効処理（BookingTriggers.gs参照）。confirmBookingと同じBooking Adminプロジェクトに
+   * 属し、同じLockService.getScriptLock()を使うため、confirmBookingとの間で
+   * PENDING→CONFIRMEDとPENDING→EXPIREDが同時に進んでしまう競合はLockにより直列化される。
    * 候補行ごとにLockを取得し、Lock取得後に最新statusを再確認してから処理する（他プロセスとの
    * 二重処理を防ぐ）。Calendarイベント削除に失敗した場合もrecoveryへ記録した上でSheets側は
    * EXPIREDへ進める（削除失敗を理由にPENDINGのまま放置しない）。

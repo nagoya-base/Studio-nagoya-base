@@ -19,8 +19,13 @@ Web App本体とは別にコンテナバインドの管理用プロジェクト�
 
 | プロジェクト | 種別 | 役割 |
 | --- | --- | --- |
-| **Booking Web App** | スタンドアロン | `getAvailability`（`doGet`）・`createBooking`（`doPost`）・PENDING TTL失効（`expirePendingBookings`の時間主導トリガー） |
-| **Booking Admin** | `SPREADSHEET_ID`のSpreadsheetへコンテナバインド | カスタムメニュー（`onOpen`）・`confirmBooking(bookingId)` |
+| **Booking Web App** | スタンドアロン | `getAvailability`（`doGet`）・`createBooking`（`doPost`）・管理者通知 |
+| **Booking Admin** | `SPREADSHEET_ID`のSpreadsheetへコンテナバインド | カスタムメニュー（`onOpen`）・`confirmBooking(bookingId)`・PENDING TTL失効（`expirePendingBookings`の時間主導トリガー） |
+
+`confirmBooking`と`expirePendingBookings`は、いずれもBooking Adminプロジェクトに
+配置し、同じ`LockService.getScriptLock()`を共有させることで、PENDING→CONFIRMEDと
+PENDING→EXPIREDが同時に進んでCalendar/Sheetsが不整合になる競合を構造的に排除している
+（3回目レビュー指摘対応。詳細は「PRレビュー（3回目）指摘への追加対応」参照）。
 
 ## このIssue（#268）で実装した範囲
 
@@ -33,9 +38,9 @@ Web App本体とは別にコンテナバインドの管理用プロジェクト�
     （#267との境界。スペースマーケット由来・管理者手入力・その他の時間指定イベントを
     タイトルで区別せず、すべて占有として扱う）
 - Spreadsheet予約台帳（`Bookings`シート）・部分失敗記録（`Recovery`シート）
-- PENDING TTL失効（`expirePendingBookings()`。時間主導トリガー用）
-- Spreadsheetカスタムメニューからの予約確定（`confirmBooking(bookingId)`）。
-  コンテナバインドの別GASプロジェクト（Booking Admin）から実行する
+- PENDING TTL失効（`expirePendingBookings()`。時間主導トリガー用）。
+  Spreadsheetカスタムメニューからの予約確定（`confirmBooking(bookingId)`）と同じ
+  コンテナバインドの別GASプロジェクト（Booking Admin）から実行し、同じLockServiceを共有する
 - レート制限（同一メール・全体・同一内容連投）
 
 ## このIssueで実装していないもの（非対象）
@@ -97,7 +102,8 @@ Web App本体とは別にコンテナバインドの管理用プロジェクト�
   `confirmBooking(bookingId)`。**Booking Adminプロジェクト（コンテナバインド）専用**
 - `BookingTriggers.gs` — 時間主導トリガー用の正式関数`expirePendingBookings()`と、
   トリガー作成の補助関数`createExpirePendingBookingsTrigger()`。
-  **Booking Web Appプロジェクト（スタンドアロン）専用**
+  **Booking Adminプロジェクト（コンテナバインド）専用**（`confirmBooking`と同じ
+  プロジェクトに置き、LockServiceを共有させるため。3回目レビュー指摘対応）
 - `Code.gs`（拡張） — `doPost`を追加（`createBooking`用。POST専用）。
   **Booking Web Appプロジェクト（スタンドアロン）専用**
 
@@ -120,18 +126,17 @@ Web App本体とは別にコンテナバインドの管理用プロジェクト�
 | `RecoveryRepository.gs` | ✓ | ✓ |
 | `BookingRepository.gs` | ✓ | ✓ |
 | `AdminNotifier.gs` | ✓ | – |
-| `BookingTriggers.gs` | ✓ | – |
+| `BookingTriggers.gs` | – | ✓ |
 | `BookingAdmin.gs` | – | ✓ |
 | `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい） |
 
-`BookingRepository.gs`の`confirmBooking`が実際に参照するファイルは
-`Config.gs`/`Booking.gs`/`CalendarRepository.gs`/`SpreadsheetRepository.gs`/
-`RecoveryRepository.gs`のみ（`createBooking`/`expirePendingBookings`が使う
-`Availability.gs`/`RateLimiter.gs`/`AdminNotifier.gs`/`BookingTriggers.gs`は
-Booking Adminプロジェクトでは呼び出されない）。ただし、コピー漏れによる将来の
-機能追加時の事故を避けるため、上表のとおり「`Code.gs`/`Availability.gs`/
-`RateLimiter.gs`/`AdminNotifier.gs`/`BookingTriggers.gs`以外の全ファイル」を
-Booking Adminプロジェクトにも配布することを推奨する。
+`BookingRepository.gs`の`confirmBooking`・`expirePendingBookings`が実際に参照する
+ファイルは`Config.gs`/`Booking.gs`/`CalendarRepository.gs`/`SpreadsheetRepository.gs`/
+`RecoveryRepository.gs`のみ（`createBooking`が使う`Availability.gs`/`RateLimiter.gs`/
+`AdminNotifier.gs`はBooking Adminプロジェクトでは呼び出されない）。ただし、コピー漏れに
+よる将来の機能追加時の事故を避けるため、上表のとおり「`Code.gs`/`Availability.gs`/
+`RateLimiter.gs`/`AdminNotifier.gs`以外の全ファイル」をBooking Adminプロジェクトにも
+配布することを推奨する。
 
 両プロジェクトは**同一の`.gs`ファイル**（このリポジトリの`gas/booking/`）を元にしており、
 コード自体を複製・分岐させているわけではない（clasp等のデプロイ自動化は本リポジトリに
@@ -172,12 +177,15 @@ TTL・レート制限の数値プロパティは、誤設定（数値以外・0�
 Calendarへ問い合わせる前に必ず設定の妥当性を確認する。
 
 **Script PropertiesはApps Scriptプロジェクトごとに独立している。** Booking Web Appと
-Booking Adminは別プロジェクトのため、`confirmBooking`が使う`CALENDAR_ID`・
-`SPREADSHEET_ID`は、**両方のプロジェクトに同じ値を設定する必要がある**
-（片方だけ設定・値がずれている場合、`confirmBooking`が誤ったCalendar/Spreadsheetを
-参照してしまう）。`TTL_*`/`RATE_LIMIT_*`/`ADMIN_NOTIFICATION_EMAIL`はBooking Web App側
-（`createBooking`/`expirePendingBookings`）でのみ使われるため、Booking Admin側には
-設定不要。
+Booking Adminは別プロジェクトのため、`CALENDAR_ID`・`SPREADSHEET_ID`は
+**両方のプロジェクトに同じ値を設定する必要がある**（片方だけ設定・値がずれている場合、
+`createBooking`/`confirmBooking`/`expirePendingBookings`のいずれかが誤ったCalendar/
+Spreadsheetを参照してしまう）。
+
+`PENDING_TTL_HOURS`/`PENDING_TTL_MIN_HOURS_BEFORE_START`は`expirePendingBookings`が
+使うため、**Booking Adminプロジェクト側に設定する**（Booking Web App側は不要）。
+`RATE_LIMIT_*`/`ADMIN_NOTIFICATION_EMAIL`は`createBooking`のみが使うため、
+**Booking Web App側に設定する**（Booking Admin側は不要）。
 
 ## Spreadsheet構成
 
@@ -323,9 +331,16 @@ Phase 1では`studio_x`以外の`brand`を指定してもサーバー側で拒�
 `installBookingAdminMenuTrigger()`によるinstallable onOpenトリガー方式を採用したが、
 この理由により2回目レビューで指摘を受け撤回した。Web App本体は変更していない）。
 
-そのため、カスタムメニュー（`BookingAdmin.gs`）は、Web App本体（スタンドアロン）とは
-別の、`SPREADSHEET_ID`のSpreadsheetへコンテナバインドした専用のApps Scriptプロジェクト
-（Booking Admin）へデプロイする。
+そのため、カスタムメニュー（`BookingAdmin.gs`）と、PENDING TTL失効
+（`BookingTriggers.gs`／`expirePendingBookings`）は、Web App本体（スタンドアロン。
+`createBooking`/`getAvailability`専用）とは別の、`SPREADSHEET_ID`のSpreadsheetへ
+コンテナバインドした専用のApps Scriptプロジェクト（Booking Admin）へデプロイする。
+`confirmBooking`と`expirePendingBookings`を同一プロジェクトに置くのは、GASの
+`LockService.getScriptLock()`がスクリプトプロジェクト単位でしか排他を提供しないため
+であり、この2つを同一プロジェクトにまとめることで**同じLockを共有し、PENDING→CONFIRMED
+とPENDING→EXPIREDが同時に進む競合を構造的に排除する**（3回目レビュー指摘対応。
+当初はexpirePendingBookingsをWeb App側に置いていたが、Lock非共有によるCalendar/Sheets
+不整合の可能性を指摘され、この設計に変更した）。
 
 ### セットアップ手順
 
@@ -334,32 +349,34 @@ Phase 1では`studio_x`以外の`brand`を指定してもサーバー側で拒�
    新規プロジェクトが作成される）。
 3. 「GASプロジェクトへのデプロイ対象ファイル」の表にある**Booking Admin列が✓のファイル**
    （`Config.gs` / `CalendarRepository.gs` / `Booking.gs` / `SpreadsheetRepository.gs` /
-   `RecoveryRepository.gs` / `BookingRepository.gs` / `BookingAdmin.gs`）をコピーする。
-4. このプロジェクトのScript Propertiesに `CALENDAR_ID` / `SPREADSHEET_ID` を設定する
-   （Booking Web App側と同じ値。「Script Properties」節参照）。
+   `RecoveryRepository.gs` / `BookingRepository.gs` / `BookingAdmin.gs` /
+   `BookingTriggers.gs`）をコピーする。
+4. このプロジェクトのScript Propertiesに `CALENDAR_ID` / `SPREADSHEET_ID` /
+   `PENDING_TTL_HOURS` / `PENDING_TTL_MIN_HOURS_BEFORE_START` を設定する
+   （`CALENDAR_ID`/`SPREADSHEET_ID`はBooking Web App側と同じ値。「Script Properties」節参照）。
 5. 保存してSpreadsheetを再読み込みする。コンテナバインドスクリプトの`onOpen()`単純トリガーが
    自動的に発火し、「予約管理」メニューが表示される（installable trigger等の追加設定は
    一切不要。これがcontainer-bound scriptの標準的な挙動）。
-6. Web Appとしてのデプロイは不要（このプロジェクトはSpreadsheetのUI拡張としてのみ使う）。
+6. 「PENDING TTL失効トリガーの作成手順」に従って、このBooking Adminプロジェクトの
+   スクリプトエディタから`createExpirePendingBookingsTrigger`を実行する
+   （または手動でトリガーを作成する）。
+7. Web Appとしてのデプロイは不要（このプロジェクトはSpreadsheetのUI拡張＋時間主導
+   トリガーとしてのみ使う）。
 
-### 既知の制約（LockServiceがプロジェクトごとに独立している）
+### LockServiceの共有について
 
-`LockService.getScriptLock()`が提供する排他は、**呼び出し元のApps Scriptプロジェクト内**
-でのみ有効であり、別プロジェクト間では共有されない。`confirmBooking`はBooking Admin
-プロジェクトで、`expirePendingBookings`はBooking Web Appプロジェクトでそれぞれ独立して
-Lockを取得するため、この2つは互いを排他できない。
+`confirmBooking`と`expirePendingBookings`はいずれもこのBooking Adminプロジェクトに属し、
+同じ`LockService.getScriptLock()`を取得する。そのため、一方がLockを保持している間は
+もう一方の`tryLock`が失敗（`LOCK_TIMEOUT`、またはexpirePendingBookings側は該当候補を
+スキップして次回トリガーへ持ち越し）し、PENDING→CONFIRMEDとPENDING→EXPIREDが同時に
+進んでCalendar/Sheetsが不整合になることはない（`test/booking-confirm-expire.test.js`の
+Lock共有テストで検証済み）。
 
-万一、ちょうど同じタイミングで管理者が`confirmBooking`を実行し、かつ時間主導トリガーが
-同じbookingIdを失効処理しようとした場合、理論上は競合のwindowが残る。これを緩和するため、
-`confirmBooking`はCalendarを実際に書き換える直前にもう一度Sheets上のstatusを読み直し、
-その間にstatusが変化していれば（`CONFLICTING_STATUS_CHANGE`）Calendar/Sheetsのどちらも
-変更せずに中断する（`BookingRepository.gs`参照。`test/booking-confirm-expire.test.js`で
-検証済み）。同様に`expirePendingBookings`もCalendar削除・Sheets更新の直前にstatusを
-再確認する。これにより競合windowは大幅に狭まるが、**理論上のwindowをゼロにはできない**
-（「同一Calendarと直前再確認でリスクを最小化する設計」であり、「絶対に競合しない」とは
-主張しない。#267のスペースマーケット共存と同じ考え方）。実運用上は、TTL失効の対象になる
-ほど古いPENDINGを管理者が実際に確定しようとする状況自体が稀であり、影響は限定的と判断
-している。
+なお、`createBooking`（Booking Web Appプロジェクト）とこの2関数（Booking Admin
+プロジェクト）は別々のプロジェクトのため、Lockは共有されない。ただし
+`createBooking`は常に新しいbookingIdの行を追加するだけで既存行を書き換えないため、
+`confirmBooking`/`expirePendingBookings`（既存行の状態遷移のみを扱う）と競合する余地は
+そもそもない。
 
 ## 管理メニューからの予約確定（confirmBooking）手順
 
@@ -382,15 +399,20 @@ Lockを取得するため、この2つは互いを排他できない。
 
 ## PENDING TTL失効トリガーの作成手順
 
+`expirePendingBookings`・そのトリガーは**Booking Adminプロジェクト**（`BookingTriggers.gs`。
+「管理メニュー用GASプロジェクト（Booking Admin）のセットアップ」参照）に属する。
+Booking Web Appプロジェクトのスクリプトエディタではない点に注意。
+
 本PRでは本番の時間主導トリガー作成そのものは行わない（コードのみ実装）。以下の
 いずれかの方法で運用開始時に設定する。
 
-- **方法A（推奨・補助関数を使う）**: スクリプトエディタで`createExpirePendingBookingsTrigger`
-  を選択し、一度だけ実行する。`expirePendingBookings`を15分おきに実行するトリガーが
-  作成される（同名トリガーが既にある場合は重複作成しない）。
-- **方法B（Apps Script UIから手動作成）**: スクリプトエディタ左メニューの「トリガー」→
-  「トリガーを追加」→ 実行する関数: `expirePendingBookings` / イベントのソース:
-  時間主導型 / 時間ベースのタイマー: 分ベースのタイマー（例: 15分おき）を選択して保存する。
+- **方法A（推奨・補助関数を使う）**: Booking Adminプロジェクトのスクリプトエディタで
+  `createExpirePendingBookingsTrigger`を選択し、一度だけ実行する。`expirePendingBookings`
+  を15分おきに実行するトリガーが作成される（同名トリガーが既にある場合は重複作成しない）。
+- **方法B（Apps Script UIから手動作成）**: Booking Adminプロジェクトのスクリプトエディタ
+  左メニューの「トリガー」→「トリガーを追加」→ 実行する関数: `expirePendingBookings` /
+  イベントのソース: 時間主導型 / 時間ベースのタイマー: 分ベースのタイマー（例: 15分おき）を
+  選択して保存する。
 
 失効判定は「受付から`PENDING_TTL_HOURS`時間後」と「利用開始時刻の
 `PENDING_TTL_MIN_HOURS_BEFORE_START`時間前」の早い方。失効したPENDINGは
@@ -415,15 +437,16 @@ Booking Adminプロジェクト（コンテナバインド）はWeb Appとして
 
 1. **Booking Web App**: 新規のスタンドアロンGoogle Apps Scriptプロジェクトを作成し、
    「GASプロジェクトへのデプロイ対象ファイル」表のBooking Web App列が✓のファイル
-   （`BookingAdmin.gs`を除く全`.gs`ファイルと`appsscript.json`）をコピーする。
-2. Script Propertiesを設定する（最低限 `CALENDAR_ID` / `SPREADSHEET_ID`）。
+   （`BookingAdmin.gs`・`BookingTriggers.gs`を除く全`.gs`ファイルと`appsscript.json`）を
+   コピーする。
+2. Script Propertiesを設定する（最低限 `CALENDAR_ID` / `SPREADSHEET_ID`。
+   `PENDING_TTL_*`はBooking Admin側の設定のためここでは不要）。
 3. Webアプリとして新規デプロイし、上記の「デプロイ設定」の通りに設定する。
 4. デプロイ後のWeb App URLは、本Issueでは既存フォーム・既存サイトのどこからも
    参照しない（#269以降の共通予約UI実装時に接続する）。
-5. 運用開始時に「PENDING TTL失効トリガーの作成手順」に従ってトリガーを作成する。
-6. **Booking Admin**: 「管理メニュー用GASプロジェクト（Booking Admin）のセットアップ」に
+5. **Booking Admin**: 「管理メニュー用GASプロジェクト（Booking Admin）のセットアップ」に
    従って別途セットアップする（`CALENDAR_ID` / `SPREADSHEET_ID`をこのプロジェクトにも
-   同じ値で設定することを忘れないこと）。
+   同じ値で設定することを忘れないこと。PENDING TTL失効トリガーの作成もこの手順に含まれる）。
 
 ## ロールバック方法
 
@@ -436,11 +459,11 @@ Booking Adminプロジェクト（コンテナバインド）はWeb Appとして
   古いバージョン（#266時点のデプロイ）へロールバックする、または新デプロイを無効化する。
   `doGet`（getAvailability）の挙動はこのIssueで変更していないため、ロールバックしても
   既存フォーム・既存の空き判定表示には影響しない。
-- **時間主導トリガーを作成済みの場合**: Booking Web Appプロジェクトのスクリプトエディタ
-  「トリガー」画面から`expirePendingBookings`のトリガーを削除する。
 - **Booking Adminプロジェクトを作成済みの場合**: そのプロジェクト自体を削除するか、
   対象Spreadsheetへの紐付け（コンテナバインド）を解除すれば「予約管理」メニューは
-  表示されなくなる。
+  表示されなくなる。時間主導トリガー（`expirePendingBookings`）もこのプロジェクトの
+  スクリプトエディタ「トリガー」画面から削除できる（プロジェクト自体を削除すれば
+  トリガーも合わせて失効する）。
 - **Spreadsheet運用を開始済みの場合**: `Bookings`/`Recovery`シートはBooking Web App /
   Booking Adminの2プロジェクト以外から書き込まれないため、両方のGASデプロイ・
   スクリプトを止めれば新規の自動書き込みは止まる
@@ -465,13 +488,16 @@ Issue本文で「実装前に確認してほしい」とされた設計ポイン
 3. **Lockの範囲**: `createBooking`は「Calendar再取得〜Sheets保存」のみをLockで保護し、
    入力検証・rate limit確認・管理者通知はLockの外。`confirmBooking`・
    `expirePendingBookings`の各候補処理もそれぞれ短時間のLockで保護している。
-   ただし`confirmBooking`（Booking Adminプロジェクト）と`expirePendingBookings`
-   （Booking Web Appプロジェクト）は別々のApps ScriptプロジェクトのためLockServiceが
-   共有されない。「管理メニュー用GASプロジェクト（Booking Admin）のセットアップ」内
-   「既知の制約」を参照（2回目レビュー指摘を受けて追記）。
+   `confirmBooking`と`expirePendingBookings`は同じBooking Adminプロジェクトに属し、
+   同じ`LockService.getScriptLock()`を取得するため、PENDING→CONFIRMEDと
+   PENDING→EXPIREDが同時に進む競合は発生しない（3回目レビュー指摘を受け、両関数を
+   同一プロジェクトへ統合。詳細は「管理メニュー用GASプロジェクト（Booking Admin）の
+   セットアップ」内「LockServiceの共有について」を参照）。`createBooking`
+   （Booking Web Appプロジェクト）はこの2つとLockを共有しないが、常に新規行を追加する
+   だけで既存行を書き換えないため、そもそも競合しない。
 4. **PENDING TTLとEXPIRED状態遷移**: 「受付+24h」と「開始-2h」の早い方を失効時刻とし、
-   時間主導トリガー（`expirePendingBookings`）が候補を抽出→Lock取得→status再確認→
-   Calendar削除→Sheets更新の順で処理する。
+   Booking Adminプロジェクトの時間主導トリガー（`expirePendingBookings`）が候補を
+   抽出→Lock取得→status再確認→Calendar削除→Sheets更新の順で処理する。
 5. **rate limitの保存方式**: `CacheService`にスライディングウィンドウ（タイムスタンプ配列の
    JSON）を保存する方式を採用。PropertiesServiceより高頻度カウンタ用途に向いている一方、
    CacheServiceの性質上、複数インスタンス間で常に完全同期しているとは限らない
@@ -526,10 +552,40 @@ bound scriptのみであり、installable triggerを作ってもstandalone scrip
   デプロイ対象ファイル」「管理メニュー用GASプロジェクト（Booking Admin）のセットアップ」
   「管理メニューからの予約確定（confirmBooking）手順」の各節に明記した。
 - 副作用として、`confirmBooking`（Booking Adminプロジェクト）と`expirePendingBookings`
-  （Booking Web Appプロジェクト）が別プロジェクトになったことで、LockServiceによる
-  相互排他が効かなくなる点を認識し、「既知の制約」として文書化した上で、Calendarを
+  （当時はBooking Web Appプロジェクトに配置）が別プロジェクトになったことで、LockService
+  による相互排他が効かなくなる点を認識し、「既知の制約」として文書化した上で、Calendarを
   実際に変更する直前にもう一度statusを再確認する緩和策（`CONFLICTING_STATUS_CHANGE`）を
   `confirmBooking`に追加した（`test/booking-confirm-expire.test.js`で検証）。
+  **この「既知の制約」自体は3回目レビューでさらに指摘を受け、根本解消した（下記参照）。**
+
+### PRレビュー（3回目）指摘への追加対応
+
+2回目レビューで対応した「confirmBookingとexpirePendingBookingsが別プロジェクトになり
+LockServiceを共有できない」という既知の制約について、3回目のレビューで
+「status再確認を追加しても“再確認→Calendar変更→Sheets更新”の間に別プロジェクト側が
+同じbookingIdを処理できるため、confirmとexpireの同時実行でCalendar/Sheets不整合が
+起こり得る。この競合は既知の制約として残さず#268内で解消してほしい」との指摘を受けた。
+指摘の通り、再確認による緩和では競合windowを狭めるだけで根本解決にはならないため、
+以下のとおり設計を変更した。
+
+- `expirePendingBookings`とそのトリガー（`BookingTriggers.gs`）を、Booking Web App
+  プロジェクトからBooking Adminプロジェクトへ移した。これにより`confirmBooking`と
+  `expirePendingBookings`が同一Apps Scriptプロジェクトに属し、同じ
+  `LockService.getScriptLock()`を共有するようになり、PENDING→CONFIRMEDと
+  PENDING→EXPIREDが同時に進む競合が構造的に発生しなくなった。
+- 上記により不要になった`confirmBooking`内のCalendar変更直前のstatus再確認
+  （`CONFLICTING_STATUS_CHANGE`）を削除し、2回目レビュー以前のシンプルな実装に戻した
+  （同一Lockで直列化されるため、この緩和策はもはや意味を持たないため）。
+- Booking Web Appプロジェクトの役割を`getAvailability`・`createBooking`・管理者通知の
+  みに整理し、Booking Adminプロジェクトの役割にカスタムメニュー・`confirmBooking`・
+  `expirePendingBookings`（TTL失効トリガー含む）をまとめた。
+- README「GASプロジェクトへのデプロイ対象ファイル」「管理メニュー用GASプロジェクト
+  （Booking Admin）のセットアップ」「Script Properties」「PENDING TTL失効トリガーの
+  作成手順」の各節を更新し、旧「既知の制約」節は「LockServiceの共有について」（両者が
+  同じLockを共有し安全に直列化される旨の説明）に置き換えた。
+- `test/booking-confirm-expire.test.js`の`CONFLICTING_STATUS_CHANGE`テストを、
+  「同一LockServiceを共有するため片方がLock保持中はもう片方がLOCK_TIMEOUT/スキップに
+  なる」ことを検証するテストに置き換えた。
 
 ## テスト結果について
 
@@ -564,9 +620,9 @@ Issue #268で追加:
   （正常系・15分刻み拒否・設定fail-closed拒否・#267境界の競合検出・LockService・rate limit・
   部分失敗補償・管理者通知失敗など）
 - `test/booking-confirm-expire.test.js` — `confirmBooking`/`expirePendingBookings`の
-  統合テスト（状態遷移・TTL・二重実行・部分失敗補償/recovery記録・障害分離・Calendar変更
-  直前の再確認によるCONFLICTING_STATUS_CHANGE検出・container-boundスクリプトの
-  onOpen単純トリガーによる管理メニューの配線）
+  統合テスト（状態遷移・TTL・二重実行・部分失敗補償/recovery記録・障害分離・両関数が
+  同一LockServiceを共有し直列化されることの検証・container-boundスクリプトのonOpen
+  単純トリガーによる管理メニューの配線）
 
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに

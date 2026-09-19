@@ -1,10 +1,17 @@
 /*
  * BookingTriggers.gs — PENDING TTL失効の時間主導トリガー（Issue #268）。
  *
+ * 【重要・デプロイ先について】このファイルはBookingAdmin.gsと同じBooking Admin
+ * プロジェクト（`SPREADSHEET_ID`のSpreadsheetへコンテナバインド）へデプロイする。
+ * Web App本体（スタンドアロン）へはデプロイしない。confirmBooking（BookingAdmin.gs）と
+ * expirePendingBookings（このファイル）を同一プロジェクトに置くことで、両者が同じ
+ * LockService.getScriptLock()を共有し、PENDING→CONFIRMEDとPENDING→EXPIREDの競合を
+ * 排除している（3回目レビュー指摘対応。詳細はBookingRepository.gs・README参照）。
+ *
  * 本PRでは本番の時間主導トリガー作成そのものは必須にしない（README.mdに手動セットアップ
- * 手順を記載する）。createExpirePendingBookingsTrigger()は、GASエディタから一度だけ
- * 手動実行すればトリガーを作成できる補助関数。既に同名関数のトリガーが存在する場合は
- * 重複作成しない。
+ * 手順を記載する）。createExpirePendingBookingsTrigger()は、Booking Adminプロジェクトの
+ * スクリプトエディタから一度だけ手動実行すればトリガーを作成できる補助関数。既に同名関数の
+ * トリガーが存在する場合は重複作成しない。
  */
 'use strict';
 

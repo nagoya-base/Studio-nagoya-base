@@ -2,6 +2,11 @@
  * BookingRepository.confirmBooking / expirePendingBookings の統合テスト（Issue #268）。
  * 併せてBookingAdmin.gs / BookingTriggers.gsのグローバル関数配線（confirmBooking(bookingId) /
  * expirePendingBookings()という正式関数名）も検証する。
+ *
+ * この2つはいずれもBooking Adminプロジェクト（SPREADSHEET_IDのSpreadsheetへコンテナ
+ * バインド）へデプロイする前提のため、このテストファイルでは同一sandbox・同一LockService
+ * モックを共有させて検証している（3回目レビュー指摘を受け、confirmBookingと
+ * expirePendingBookingsを同一プロジェクトへ統合した設計変更を反映）。
  */
 'use strict';
 
@@ -150,31 +155,29 @@ test('confirmBooking: 対応するCalendarイベントが見つからない場�
   assert.strictEqual(recovered[0].failureType, 'CONFIRM_CALENDAR_EVENT_MISSING');
 });
 
-test('confirmBooking: Calendarを実際に変更する直前の再確認で、最初の確認からの間に別プロセス(expirePendingBookings等)がstatusを変えていたことを検出し、Calendar/Sheetsのどちらも変更せずCONFLICTING_STATUS_CHANGEを返す（confirmBookingはSpreadsheetにコンテナバインドした別GASプロジェクトから呼ばれ、Web App側のexpirePendingBookingsとはLockServiceが別プロジェクトのため排他されないことへの緩和策）', function () {
-  var ctx = setup();
+test('confirmBookingとexpirePendingBookingsは同一Booking AdminプロジェクトのLockServiceを共有するため、片方がLockを保持している間はもう片方がLOCK_TIMEOUTになる（3回目レビュー指摘対応: 別プロジェクト分離によるLock非共有を解消）', function () {
+  var lockService = stubs.createLockServiceStub();
+  var ctx = setup({ lockService: lockService });
   var bookingId = createPending(ctx);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 25 * 3600000) });
 
-  var originalFind = ctx.sandbox.SpreadsheetRepository.findRowByBookingId;
-  var callCount = 0;
-  ctx.sandbox.SpreadsheetRepository.findRowByBookingId = function (id) {
-    callCount++;
-    var found = originalFind(id);
-    if (callCount === 2 && found) {
-      /* 2回目の呼び出し(Calendar変更直前の再確認)の時点で、あたかも別プロセスが
-         既にEXPIREDへ進めていたかのように装う */
-      found = { rowNumber: found.rowNumber, record: Object.assign({}, found.record, { status: 'EXPIRED' }) };
-    }
-    return found;
-  };
+  /* 別プロセス(例えば同時に実行された時間主導トリガー)がLockを保持している状況を模擬する */
+  var externalLock = lockService.getScriptLock();
+  assert.strictEqual(externalLock.tryLock(), true);
 
-  var result = ctx.sandbox.confirmBooking(bookingId);
-  assert.strictEqual(callCount, 2, '初回確認とCalendar変更直前の再確認の2回、statusを読み直しているべき');
-  assert.strictEqual(result.success, false);
-  assert.strictEqual(result.error.code, 'CONFLICTING_STATUS_CHANGE');
+  var confirmResult = ctx.sandbox.confirmBooking(bookingId);
+  assert.strictEqual(confirmResult.success, false);
+  assert.strictEqual(confirmResult.error.code, 'LOCK_TIMEOUT', 'confirmBookingはexpirePendingBookings側が保持するLockを奪えないべき');
 
-  ctx.sandbox.SpreadsheetRepository.findRowByBookingId = originalFind;
-  var event = ctx.calendarsById.cal1.events[0];
-  assert.strictEqual(event.getTag('status'), 'PENDING', '再確認で競合を検出した場合、Calendarは変更されないべき');
+  var expireResult = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(expireResult.expiredCount, 0, 'expirePendingBookingsもLockが空くまで候補を処理できないべき');
+  assert.strictEqual(expireResult.skippedCount, 1);
+
+  externalLock.releaseLock();
+
+  /* Lockが解放されれば、どちらも通常どおり処理を進められる */
+  var confirmAfterRelease = ctx.sandbox.confirmBooking(bookingId);
+  assert.strictEqual(confirmAfterRelease.success, true);
 });
 
 test('confirmBooking: Calendar成功(CONFIRMED)・Sheets更新失敗時はCalendarをPENDINGへ補償し、recoveryへRESOLVED記録を残す', function () {
