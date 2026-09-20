@@ -103,6 +103,8 @@ var BookingMailTemplates = (function () {
       '利用人数: ' + record.people,
       record.paymentMethod ? '支払方法: ' + record.paymentMethod : '',
       '',
+      'ご利用時は、施設の利用ルールを守り、利用後は原状回復をお願いいたします。設備・備品の取り扱いには十分ご注意ください。',
+      '',
       '来場方法・キーボックス等の詳細案内は、利用日前日に別途メールでお送りします。',
       'ご不明点やキャンセル・変更のご希望は下記までご連絡ください。',
       contactLine_(config)
@@ -177,6 +179,7 @@ var BookingMailTemplates = (function () {
       guide.room ? '部屋番号: ' + guide.room : '',
       guide.entrance ? '入口からのご案内: ' + guide.entrance : '',
       guide.keyboxLocation ? 'キーボックス位置: ' + guide.keyboxLocation : '',
+      guide.entryMethod ? '入室方法: ' + guide.entryMethod : '',
       secretLine_('キーボックス番号', guide.keyboxNumber),
       secretLine_('解錠コード', guide.unlockCode),
       guide.url ? '利用案内ページ: ' + guide.url : '',

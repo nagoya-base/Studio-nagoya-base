@@ -41,6 +41,7 @@ var DUMMY_ACCESS_GUIDE = {
   room: '101',
   entrance: '正面入口から左手',
   keyboxLocation: '玄関脇',
+  entryMethod: '玄関の暗証番号を入力して解錠',
   keyboxNumber: 'TEST-KEYBOX',
   unlockCode: 'TEST-CODE',
   url: 'https://example.com/how-to',
@@ -93,6 +94,12 @@ test('buildConfirmedMail: 必須内容を含み、来場詳細は前日案内で
   assert.strictEqual(mail.body.indexOf('料金'), -1, '現行Bookingsに確定料金列がないため料金を出さない');
 });
 
+test('buildConfirmedMail: 利用上の基本注意を含む（PRレビュー対応。Issue #271本文の必須内容）', function () {
+  var templates = loadTemplates();
+  var mail = templates.buildConfirmedMail(sampleRecord(), CONFIG);
+  assert.match(mail.body, /原状回復/);
+});
+
 test('buildConfirmedMail: キーボックス番号・解錠コードを含まない（直後メールには来場秘密値を出さない）', function () {
   var templates = loadTemplates();
   var mail = templates.buildConfirmedMail(sampleRecord(), CONFIG);
@@ -121,6 +128,7 @@ test('buildReminderMail: 「明日」の案内であることが分かり、来�
   assert.match(mail.body, /101/);
   assert.match(mail.body, /正面入口/);
   assert.match(mail.body, /玄関脇/);
+  assert.match(mail.body, /入室方法/);
   assert.match(mail.body, /how-to/);
   assert.match(mail.body, /guide\.pdf/);
 });

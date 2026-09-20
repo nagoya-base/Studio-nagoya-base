@@ -112,3 +112,73 @@ test('getTtlConfig: timezoneはTIMEZONEプロパティと共有される（expir
   assert.strictEqual(BookingConfig.getTtlConfig().timezone, 'Asia/Tokyo');
   assert.strictEqual(BookingConfig.getAvailabilityConfig().timezone, 'Asia/Tokyo');
 });
+
+/* Issue #271: 利用者向けメール設定（PRレビュー対応でtimezoneを追加）。 */
+
+test('getMailConfig: Script Propertiesが空でも既定値(timezone=Asia/Tokyo・他は空文字)を返す', function () {
+  var BookingConfig = loadConfig({});
+  var config = BookingConfig.getMailConfig();
+  assert.deepEqual(config, {
+    displayName: '',
+    replyTo: '',
+    contactEmail: '',
+    timezone: 'Asia/Tokyo'
+  });
+});
+
+test('getMailConfig: 設定した値がそのまま返る', function () {
+  var BookingConfig = loadConfig({
+    BOOKING_MAIL_DISPLAY_NAME: 'Studio Nagoya Base',
+    BOOKING_MAIL_REPLY_TO: 'noreply@example.com',
+    BOOKING_CONTACT_EMAIL: 'contact@example.com'
+  });
+  var config = BookingConfig.getMailConfig();
+  assert.strictEqual(config.displayName, 'Studio Nagoya Base');
+  assert.strictEqual(config.replyTo, 'noreply@example.com');
+  assert.strictEqual(config.contactEmail, 'contact@example.com');
+});
+
+test('getMailConfig: TIMEZONEを上書きすると、getAvailabilityConfig/getTtlConfigと同じ値がmail configにも反映される（PRレビュー対応。新しいScript Propertyは追加しない）', function () {
+  var BookingConfig = loadConfig({ TIMEZONE: 'UTC' });
+  assert.strictEqual(BookingConfig.getMailConfig().timezone, 'UTC');
+  assert.strictEqual(BookingConfig.getAvailabilityConfig().timezone, 'UTC');
+  assert.strictEqual(BookingConfig.getTtlConfig().timezone, 'UTC');
+});
+
+test('getAccessGuideConfig: Script Propertiesが空ならすべて空文字（entryMethodを含む）', function () {
+  var BookingConfig = loadConfig({});
+  var config = BookingConfig.getAccessGuideConfig();
+  assert.deepEqual(config, {
+    address: '',
+    building: '',
+    room: '',
+    entrance: '',
+    keyboxLocation: '',
+    keyboxNumber: '',
+    unlockCode: '',
+    entryMethod: '',
+    url: '',
+    pdfUrl: ''
+  });
+});
+
+test('getAccessGuideConfig: ACCESS_GUIDE_ENTRY_METHOD（PRレビュー対応で追加）を含む全項目が設定値どおりに返る', function () {
+  var BookingConfig = loadConfig({
+    ACCESS_GUIDE_ADDRESS: '愛知県名古屋市...',
+    ACCESS_GUIDE_BUILDING: 'テストビル',
+    ACCESS_GUIDE_ROOM: '101',
+    ACCESS_GUIDE_ENTRANCE: '正面入口から左手',
+    ACCESS_GUIDE_KEYBOX_LOCATION: '玄関脇',
+    ACCESS_GUIDE_ENTRY_METHOD: '玄関の暗証番号を入力して解錠',
+    ACCESS_GUIDE_KEYBOX_NUMBER: 'TEST-KEYBOX',
+    ACCESS_GUIDE_UNLOCK_CODE: 'TEST-CODE',
+    ACCESS_GUIDE_URL: 'https://example.com/how-to',
+    ACCESS_GUIDE_PDF_URL: 'https://example.com/guide.pdf'
+  });
+  var config = BookingConfig.getAccessGuideConfig();
+  assert.strictEqual(config.entryMethod, '玄関の暗証番号を入力して解錠');
+  assert.strictEqual(config.keyboxNumber, 'TEST-KEYBOX');
+  assert.strictEqual(config.unlockCode, 'TEST-CODE');
+  assert.strictEqual(config.url, 'https://example.com/how-to');
+  assert.strictEqual(config.pdfUrl, 'https://example.com/guide.pdf');
+});

@@ -28,6 +28,7 @@ var COMPLETE_ACCESS_GUIDE_PROPERTIES = Object.assign({}, COMPLETE_MAIL_PROPERTIE
   ACCESS_GUIDE_ROOM: '101',
   ACCESS_GUIDE_ENTRANCE: '正面入口から左手',
   ACCESS_GUIDE_KEYBOX_LOCATION: '玄関脇',
+  ACCESS_GUIDE_ENTRY_METHOD: '玄関の暗証番号を入力して解錠',
   ACCESS_GUIDE_KEYBOX_NUMBER: 'TEST-KEYBOX',
   ACCESS_GUIDE_UNLOCK_CODE: 'TEST-CODE',
   ACCESS_GUIDE_URL: 'https://example.com/how-to',
@@ -106,9 +107,42 @@ test('sendPendingMailForBooking: PENDING予約に1通送り、pendingMailSentAt�
   assert.strictEqual(mailApp._sentEmails[0].to, 'taro@example.com');
   assert.match(mailApp._sentEmails[0].subject, /未確定/);
   assert.strictEqual(mailApp._sentEmails[0].body.indexOf('TEST-KEYBOX'), -1);
+  /* PRレビュー対応: JST 10:00開始/12:00終了の予約が、実行環境のローカルtimezoneに
+     依存せず本文でも10:00/12:00のまま表示されること（config.timezoneが渡っていないと
+     Intl.DateTimeFormatが環境既定timezoneへフォールバックし、ここが例えば01:00等の
+     UTC時刻表示に化けてしまう）。 */
+  assert.match(mailApp._sentEmails[0].body, /開始時刻: 10:00/);
+  assert.match(mailApp._sentEmails[0].body, /終了時刻: 12:00/);
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.ok(stubs.isDateLike(found.record.pendingMailSentAt));
+});
+
+test('sendPendingMailForBooking: TIMEZONEをUTC等へ変更しても、その設定に従って本文の時刻表示が変わる（config.timezoneが実際にBookingMailTemplatesへ渡っていることの確認）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: Object.assign({}, COMPLETE_MAIL_PROPERTIES, { TIMEZONE: 'UTC' }), mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING' });
+
+  var result = ctx.sandbox.BookingMailer.sendPendingMailForBooking(bookingId);
+  assert.strictEqual(result.success, true);
+  /* startAt=2026-10-01T10:00:00+09:00はUTCでは01:00になる */
+  assert.match(mailApp._sentEmails[0].body, /開始時刻: 01:00/);
+});
+
+test('sendPendingMailForBooking: TIMEZONEが不正な文字列の場合はfail-closedにMAIL_NOT_READYとしてメールを送らず、lastMailError*へ記録する', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: Object.assign({}, COMPLETE_MAIL_PROPERTIES, { TIMEZONE: 'Not/AValidZone' }), mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING' });
+
+  var result = ctx.sandbox.BookingMailer.sendPendingMailForBooking(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'MAIL_NOT_READY');
+  assert.strictEqual(mailApp._sentEmails.length, 0, '不正timezoneのときはMailAppを呼ばない');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'PENDING');
+  assert.ok(stubs.isDateLike(found.record.lastMailErrorAt));
+  assert.strictEqual(found.record.lastMailErrorType, 'PENDING');
 });
 
 test('sendPendingMailForBooking: 再実行では送らない（pendingMailSentAtがあればskip）', function () {
@@ -155,6 +189,21 @@ test('sendPendingMailForBooking: MailApp送信失敗時はbooking statusを変�
   assert.strictEqual(recovered.length, 1);
   assert.strictEqual(recovered[0].failureType, 'MAIL_PENDING_FAILED');
   assert.strictEqual(recovered[0].bookingId, bookingId);
+  assert.strictEqual(recovered[0].status, 'PENDING', 'Recoveryのstatusはメール種別ではなく予約状態を記録する');
+});
+
+test('sendReminderMailForBooking失敗時: RecoveryのstatusはmailType(REMINDER)ではなく予約status(CONFIRMED)を記録する（PRレビュー対応）', function () {
+  var mailApp = stubs.createMailAppStub({ throwError: new Error('mail server down') });
+  var ctx = setup({ properties: COMPLETE_ACCESS_GUIDE_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'CONFIRMED' });
+
+  var result = ctx.sandbox.BookingMailer.sendReminderMailForBooking(bookingId);
+  assert.strictEqual(result.success, false);
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].failureType, 'MAIL_REMINDER_FAILED');
+  assert.strictEqual(recovered[0].status, 'CONFIRMED', 'Recoveryのstatusに"REMINDER"というメール種別を入れてはいけない');
 });
 
 test('sendPendingMailForBooking: display name / reply-to / 問い合わせ先の設定が不足している場合はfail-closedに失敗扱いにする', function () {
@@ -182,6 +231,9 @@ test('sendConfirmedMailForBooking: CONFIRMED予約に1通送り、confirmedMailS
   assert.strictEqual(result.success, true);
   assert.strictEqual(mailApp._sentEmails.length, 1);
   assert.match(mailApp._sentEmails[0].subject, /確定/);
+  /* PRレビュー対応（Blocker 3）: 確定メールに「利用上の基本注意」に相当する文言が
+     含まれること。 */
+  assert.match(mailApp._sentEmails[0].body, /原状回復/);
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.ok(stubs.isDateLike(found.record.confirmedMailSentAt));
@@ -268,11 +320,24 @@ test('sendReminderMailForBooking: CONFIRMED予約に1通送り、reminderSentAt�
   assert.strictEqual(mailApp._sentEmails.length, 1);
   assert.match(mailApp._sentEmails[0].body, /TEST-KEYBOX/);
   assert.match(mailApp._sentEmails[0].body, /TEST-CODE/);
+  /* PRレビュー対応（Blocker 2）: 「入室方法」が本文に含まれること。 */
+  assert.match(mailApp._sentEmails[0].body, /入室方法/);
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.ok(stubs.isDateLike(found.record.reminderSentAt));
   assert.ok(stubs.isDateLike(found.record.accessGuideSentAt));
   assert.strictEqual(found.record.reminderSentAt.getTime(), found.record.accessGuideSentAt.getTime());
+});
+
+test('sendReminderMailForBooking: ACCESS_GUIDE_PDF_URLは「必要に応じて」のため未設定でも送信できる（必須ではない）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var propertiesWithoutPdf = Object.assign({}, COMPLETE_ACCESS_GUIDE_PROPERTIES);
+  delete propertiesWithoutPdf.ACCESS_GUIDE_PDF_URL;
+  var ctx = setup({ properties: propertiesWithoutPdf, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'CONFIRMED' });
+
+  var result = ctx.sandbox.BookingMailer.sendReminderMailForBooking(bookingId);
+  assert.strictEqual(result.success, true, 'ACCESS_GUIDE_PDF_URLは必須項目ではない');
 });
 
 test('sendReminderMailForBooking: reminderSentAt/accessGuideSentAtのいずれかがあれば再送しない', function () {
@@ -315,6 +380,43 @@ test('sendReminderMailForBooking: 解錠コード/キーボックス番号が未
   assert.strictEqual(found.record.accessGuideSentAt, '');
   assert.ok(stubs.isDateLike(found.record.lastMailErrorAt));
   assert.strictEqual(found.record.lastMailErrorType, 'REMINDER');
+});
+
+/*
+ * PRレビュー対応（Blocker 2）: 秘密値（keyboxNumber/unlockCode）だけでなく、
+ * 前日リマインドの必須内容（住所・建物・部屋・入口案内・キーボックス位置・入室方法・
+ * 利用案内URL）がいずれか1つでも欠けていれば送信しない・成功扱いにしないことを
+ * 1項目ずつ検証する。
+ */
+test('sendReminderMailForBooking: 来場案内の必須項目（住所/建物/部屋/入口案内/キーボックス位置/入室方法/URL/キーボックス番号/解錠コード）が1つでも欠けると送信せず、CONFIRMED状態を維持する', function () {
+  var REQUIRED_KEYS = [
+    'ACCESS_GUIDE_ADDRESS',
+    'ACCESS_GUIDE_BUILDING',
+    'ACCESS_GUIDE_ROOM',
+    'ACCESS_GUIDE_ENTRANCE',
+    'ACCESS_GUIDE_KEYBOX_LOCATION',
+    'ACCESS_GUIDE_ENTRY_METHOD',
+    'ACCESS_GUIDE_KEYBOX_NUMBER',
+    'ACCESS_GUIDE_UNLOCK_CODE',
+    'ACCESS_GUIDE_URL'
+  ];
+
+  REQUIRED_KEYS.forEach(function (missingKey) {
+    var mailApp = stubs.createMailAppStub();
+    var properties = Object.assign({}, COMPLETE_ACCESS_GUIDE_PROPERTIES);
+    delete properties[missingKey];
+    var ctx = setup({ properties: properties, mailApp: mailApp });
+    var bookingId = seedBooking(ctx, { status: 'CONFIRMED', bookingId: 'SX-MISSING-' + missingKey });
+
+    var result = ctx.sandbox.BookingMailer.sendReminderMailForBooking(bookingId);
+    assert.strictEqual(result.success, false, missingKey + ' が欠けた場合は送信失敗にするべき');
+    assert.strictEqual(mailApp._sentEmails.length, 0, missingKey + ' 欠落時はメールを送らない');
+
+    var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+    assert.strictEqual(found.record.status, 'CONFIRMED', missingKey + ' 欠落でもstatusは変更しない');
+    assert.strictEqual(found.record.reminderSentAt, '', missingKey);
+    assert.strictEqual(found.record.accessGuideSentAt, '', missingKey);
+  });
 });
 
 /* ---------- 再送（force） ---------- */

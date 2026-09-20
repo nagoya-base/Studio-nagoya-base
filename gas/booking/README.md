@@ -505,9 +505,9 @@ Lock取得 → bookingIdで最新レコード再読込 → status確認 → 対�
 
 ### エラー処理（メール送信失敗は予約状態を壊さない）
 
-**最重要**: メール送信の失敗（`BOOKING_MAIL_DISPLAY_NAME`等の設定不足による
-fail-closedな拒否を含む）は、`createBooking`/`confirmBooking`の成否・`Bookings`
-シートの`status`のいずれにも影響しない。失敗時は:
+**最重要**: メール送信の失敗（`BOOKING_MAIL_DISPLAY_NAME`等の設定不足・`TIMEZONE`が
+不正でIntlが解釈できない場合のfail-closedな拒否を含む）は、`createBooking`/
+`confirmBooking`の成否・`Bookings`シートの`status`のいずれにも影響しない。失敗時は:
 
 - `Bookings`シートの該当行へ`lastMailErrorAt`/`lastMailErrorType`/`lastMailErrorMessage`
   をbest effortで記録する
@@ -521,10 +521,14 @@ fail-closedな拒否を含む）は、`createBooking`/`confirmBooking`の成否�
 - エラーメッセージは例外の`message`のみを`RecoveryRepository`/`lastMailErrorMessage`へ
   記録し、メール本文全文・解錠コード等の秘密値・利用者のメールアドレスは含めない
 
-**fail-safe（来場案内の秘密値）**: `ACCESS_GUIDE_KEYBOX_NUMBER`/
-`ACCESS_GUIDE_UNLOCK_CODE`が未設定の場合、前日リマインド（`REMINDER`）を
+**fail-safe（来場案内の必須項目）**: `ACCESS_GUIDE_ADDRESS`/`ACCESS_GUIDE_BUILDING`/
+`ACCESS_GUIDE_ROOM`/`ACCESS_GUIDE_ENTRANCE`/`ACCESS_GUIDE_KEYBOX_LOCATION`/
+`ACCESS_GUIDE_ENTRY_METHOD`/`ACCESS_GUIDE_KEYBOX_NUMBER`/`ACCESS_GUIDE_UNLOCK_CODE`/
+`ACCESS_GUIDE_URL`のいずれか1つでも未設定の場合、前日リマインド（`REMINDER`）を
 「成功扱い」にせず送信自体を行わない（`reminderSentAt`/`accessGuideSentAt`は更新
-しない）。予約の`status`はCONFIRMEDのまま維持し、`lastMailError*`へ記録する。
+しない。PRレビュー対応で、当初は秘密値2項目のみの検証だったものを来場案内の
+必須項目全体へ拡張した）。予約の`status`はCONFIRMEDのまま維持し、`lastMailError*`へ
+記録する。`ACCESS_GUIDE_PDF_URL`のみ「必要に応じて」のため必須にしない。
 
 ### 手動再送
 
@@ -538,8 +542,9 @@ Booking Adminプロジェクトの「予約管理」メニューへ「予約メ�
   消す運用はしない（誤送信を避けるため）
 - ただし**状態条件（status一致）はforceでも無視しない**。例えば`PENDING`のメールを
   `CONFIRMED`の予約へforce送信しようとしても`INVALID_STATUS`で拒否する
-- `REMINDER`の手動再送も、秘密値（`ACCESS_GUIDE_KEYBOX_NUMBER`/
-  `ACCESS_GUIDE_UNLOCK_CODE`）が未設定なら送信しない（fail-safe自体はforceでも解除しない）
+- `REMINDER`の手動再送も、来場案内の必須項目（秘密値の`ACCESS_GUIDE_KEYBOX_NUMBER`/
+  `ACCESS_GUIDE_UNLOCK_CODE`を含む）が1つでも未設定なら送信しない
+  （fail-safe自体はforceでも解除しない）
 
 ### 前日リマインド用トリガーの作成
 
@@ -750,15 +755,16 @@ Calendar削除までに最大約15分の遅延があり得る（Issue #271でメ
 | `BOOKING_MAIL_DISPLAY_NAME`（Issue #271） | - | 利用者向けメールの送信者表示名。**未設定の場合、PENDING/CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗として扱う**（予約状態は維持） |
 | `BOOKING_MAIL_REPLY_TO`（Issue #271） | - | 利用者向けメールのreply-toアドレス。未設定時の扱いは`BOOKING_MAIL_DISPLAY_NAME`と同じ |
 | `BOOKING_CONTACT_EMAIL`（Issue #271） | - | 利用者向けメール本文に載せる問い合わせ先。未設定時の扱いは`BOOKING_MAIL_DISPLAY_NAME`と同じ |
-| `ACCESS_GUIDE_ADDRESS`（Issue #271） | - | 前日リマインドに載せる施設住所。未設定でもREMINDER送信自体は失敗にしない（本文で空欄になるのみ） |
-| `ACCESS_GUIDE_BUILDING`（Issue #271） | - | 建物名。同上 |
+| `ACCESS_GUIDE_ADDRESS`（Issue #271） | - | 前日リマインドに載せる施設住所。**未設定の場合、前日リマインド（REMINDER）を成功扱いにせず送信しない**（PRレビュー対応。以下`ACCESS_GUIDE_PDF_URL`を除く全項目が同じ扱い） |
+| `ACCESS_GUIDE_BUILDING`（Issue #271） | - | 建物名。同上（未設定なら送信しない） |
 | `ACCESS_GUIDE_ROOM`（Issue #271） | - | 部屋番号。同上 |
 | `ACCESS_GUIDE_ENTRANCE`（Issue #271） | - | 建物入口から部屋までの案内。同上 |
 | `ACCESS_GUIDE_KEYBOX_LOCATION`（Issue #271） | - | キーボックス設置位置。同上 |
-| `ACCESS_GUIDE_KEYBOX_NUMBER`（Issue #271。秘密値） | - | キーボックス番号。**未設定の場合、前日リマインド（REMINDER）を成功扱いにせず送信しない**（`ACCESS_GUIDE_UNLOCK_CODE`とセットで必須。実値はGitHubへコミットしない） |
-| `ACCESS_GUIDE_UNLOCK_CODE`（Issue #271。秘密値） | - | 解錠コード。未設定時の扱いは`ACCESS_GUIDE_KEYBOX_NUMBER`と同じ |
-| `ACCESS_GUIDE_URL`（Issue #271） | - | 利用案内ページURL。未設定でもREMINDER送信自体は失敗にしない |
-| `ACCESS_GUIDE_PDF_URL`（Issue #271） | - | キーボックス案内PDF等のURL（任意）。同上 |
+| `ACCESS_GUIDE_ENTRY_METHOD`（Issue #271。PRレビュー対応で追加） | - | 入室方法（前日リマインドの必須内容）。同上（未設定なら送信しない） |
+| `ACCESS_GUIDE_KEYBOX_NUMBER`（Issue #271。秘密値） | - | キーボックス番号。同上。実値はGitHubへコミットしない |
+| `ACCESS_GUIDE_UNLOCK_CODE`（Issue #271。秘密値） | - | 解錠コード。同上 |
+| `ACCESS_GUIDE_URL`（Issue #271） | - | 利用案内ページURL。同上 |
+| `ACCESS_GUIDE_PDF_URL`（Issue #271） | - | キーボックス案内PDF等のURL。**これだけは任意**（「必要に応じて」の項目のため未設定でも送信は失敗にしない） |
 
 TTL・レート制限の数値プロパティは、誤設定（数値以外・0以下）の場合でも例外にせず
 安全な既定値へフォールバックする（fail-openでレート制限が無効化される事故を防ぐため。
@@ -797,7 +803,12 @@ Script Propertiesにのみ設定すること（README・PRにも実値は記載�
 `BookingConfig.getTtlConfig().timezone`を参照するようになったため（「PENDING TTLの
 変更内容と理由」参照）、`TIMEZONE`を独自に設定している場合はBooking Adminプロジェクト
 側にも同じ値を設定すること（既定`Asia/Tokyo`のまま変更していなければ、両プロジェクトとも
-未設定でよく、対応不要）。
+未設定でよく、対応不要）。**Issue #271のPRレビュー対応で、`BookingConfig.getMailConfig()`
+にも同じ`TIMEZONE`をそのまま含めるようにした**（新しいScript Propertyは追加していない）。
+利用者向けメール本文の開始/終了時刻表示はこの値を使うため、`TIMEZONE`を独自設定している
+場合は両プロジェクトで値を揃えないと、メール本文の時刻表示とCalendar/`Bookings`シートの
+実際の時刻がずれる可能性がある。`TIMEZONE`が不正でIntlが解釈できない場合、PENDING/
+CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗として扱う。
 
 ## Spreadsheet構成
 
@@ -1397,19 +1408,32 @@ Issue #271で追加・更新:
 
 - `test/booking-mail-templates.test.js`（新規） — `BookingMailTemplates.gs`の純粋関数
   （件名・本文生成）。PENDING/CONFIRMEDに「未確定」/「確定」の明記・解錠コード/
-  キーボックス番号を含まないこと、CANCELLEDの必須内容、REMINDERの来場案内一式・
+  キーボックス番号を含まないこと、**CONFIRMEDに利用上の基本注意（原状回復の案内）が
+  含まれること**、CANCELLEDの必須内容、REMINDERの来場案内一式（**入室方法を含む**）・
   ダミー秘密値の表示・秘密値未設定時のプレースホルダ、snb/mens/studio_xで表示名のみ
   変わることを検証
 - `test/booking-mailer.test.js`（新規） — `BookingMailer.gs`の送信制御。PENDING/
   CONFIRMED/CANCELLED/REMINDERそれぞれについて、正常送信・SentAt記録・二重送信防止・
   status不一致時の拒否・MailApp失敗時の予約状態維持とlastMailError*/Recovery記録・
-  設定不足のfail-closed拒否・REMINDER秘密値不足のfail-safe拒否・force resend
-  （SentAtありでも送信・status不一致は無視しない）・LockServiceの取得/解放を検証
+  設定不足のfail-closed拒否・force resend（SentAtありでも送信・status不一致は無視
+  しない）・LockServiceの取得/解放を検証。**PRレビュー対応で追加**:
+  `config.timezone`が実際にテンプレートへ渡り、JST 10:00の予約が本文でも10:00に
+  なること・`TIMEZONE`をUTC等へ変更すると表示も追従すること・`TIMEZONE`が不正な
+  文字列の場合はMailAppを呼ばずfail-closedに失敗すること、来場案内の必須項目
+  （住所/建物/部屋/入口案内/キーボックス位置/入室方法/URL/キーボックス番号/解錠コード）
+  が1項目ずつ欠けても送信しないこと、`ACCESS_GUIDE_PDF_URL`のみ任意で欠けても送信
+  できること、メール送信失敗時に`RecoveryRepository`の`status`へメール種別
+  （例: `REMINDER`）ではなく予約の現在status（例: `CONFIRMED`）が記録されることを検証
 - `test/booking-reminders.test.js`（新規） — `BookingReminderTriggers.gs`。JST基準で
   翌日のCONFIRMED予約だけを抽出すること、PENDING/CANCELLED/EXPIREDは対象外、
-  reminderSentAt/accessGuideSentAt済みはskip、1件の失敗（秘密値不足・MailApp例外）が
+  reminderSentAt/accessGuideSentAt済みはskip、1件の失敗（設定不足・MailApp例外）が
   他の予約の送信を妨げないこと（バッチ内の障害分離）、`createNextDayReminderTrigger`の
   トリガー二重作成防止を検証
+- `test/booking-config.test.js`（更新。**PRレビュー対応で追加**） — `getMailConfig()`が
+  `timezone`を含み既定値`Asia/Tokyo`になること、`TIMEZONE`上書きが
+  `getAvailabilityConfig`/`getTtlConfig`と同じ値でmail configにも反映されること、
+  `getAccessGuideConfig()`に`entryMethod`（`ACCESS_GUIDE_ENTRY_METHOD`）を含む
+  全項目が正しく読めることを追加
 - `test/booking-create-booking.test.js`（更新） — `createBooking`がbooking Lock解除後に
   利用者向けPENDINGメールをbest effortで送ること、メール設定不足時も`createBooking`は
   成功しlastMailError*が記録されること、管理者通知とPENDINGメールの両方が失敗しても
@@ -1495,18 +1519,22 @@ Issue #271（予約通知メール自動送信）の追加確認:
 
 - [ ] Booking Web App / Booking Adminの両プロジェクトへ`BOOKING_MAIL_DISPLAY_NAME` /
       `BOOKING_MAIL_REPLY_TO` / `BOOKING_CONTACT_EMAIL`を設定し、Booking Admin側にのみ
-      `ACCESS_GUIDE_*`（秘密値の`ACCESS_GUIDE_KEYBOX_NUMBER`/`ACCESS_GUIDE_UNLOCK_CODE`を
-      含む）を設定すること
+      `ACCESS_GUIDE_*`一式（住所・建物・部屋・入口案内・キーボックス位置・入室方法
+      `ACCESS_GUIDE_ENTRY_METHOD`・利用案内URL・秘密値の`ACCESS_GUIDE_KEYBOX_NUMBER`/
+      `ACCESS_GUIDE_UNLOCK_CODE`を含む）を設定すること
+- [ ] `TIMEZONE`を独自設定している場合、Booking Web App/Adminの両方に同じ値を設定し、
+      メール本文の開始/終了時刻表示が実際の予約時刻（JST）と一致すること
 - [ ] テスト予約でPENDINGを作成し、仮予約受付メールが1通だけ届くこと（「未確定」の
       明記・解錠コード/キーボックス番号を含まないことを含む）
-- [ ] 管理者が`confirmBooking`で確定した際、確定メールが1通だけ届くこと。
-      `confirmBooking`を再実行しても二重送信されないこと
+- [ ] 管理者が`confirmBooking`で確定した際、確定メールが1通だけ届くこと（利用上の
+      基本注意の文言を含む）。`confirmBooking`を再実行しても二重送信されないこと
 - [ ] Booking Adminプロジェクトのスクリプトエディタから`createNextDayReminderTrigger`を
       実行し、毎日18時台に`sendNextDayReminders`が実際に1回動作すること
-- [ ] 翌日にCONFIRMED予約がある状態で前日リマインドが1通だけ届き、来場方法・
-      キーボックス位置・（設定していれば）解錠コードが正しく記載されていること
-- [ ] キーボックス番号・解錠コードが未設定のまま前日リマインドの送信を試みると、
-      送信されず`lastMailError*`に記録されること（fail-safeの実地確認）
+- [ ] 翌日にCONFIRMED予約がある状態で前日リマインドが1通だけ届き、来場方法（住所・
+      建物・部屋・入口案内・キーボックス位置・入室方法・利用案内URL）・
+      （設定していれば）解錠コードが正しく記載されていること
+- [ ] 来場案内の必須項目（秘密値を含む）のいずれか1つでも未設定のまま前日リマインドの
+      送信を試みると、送信されず`lastMailError*`に記録されること（fail-safeの実地確認）
 - [ ] メール送信を意図的に失敗させても（例: 一時的にScript Propertiesを空にする）、
       予約自体（Calendar/Sheetsの`status`）が壊れず、`lastMailError*`に記録されること
 - [ ] 「予約管理」メニューの「予約メールを再送（予約ID指定・強制再送）」から、

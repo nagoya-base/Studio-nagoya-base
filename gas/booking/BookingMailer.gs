@@ -42,8 +42,11 @@ var BookingMailer = (function () {
   }
 
   /* メール失敗はbooking状態を一切壊さない。lastMailError*への記録・Recoveryへの記録は
-     いずれもbest effortとし、ここでの失敗はLoggerへ残すだけで上位へ例外を投げない。 */
-  function recordMailFailure_(bookingId, mailType, error) {
+     いずれもbest effortとし、ここでの失敗はLoggerへ残すだけで上位へ例外を投げない。
+     status（PRレビュー対応）: Recoveryシートのstatus列は予約状態の監査情報のため、
+     mailType（メール種別）を入れず、必ずbookingIdの現在の予約status（呼び出し側が
+     再読込済みのrecord.status）を渡すこと。 */
+  function recordMailFailure_(bookingId, mailType, error, status) {
     var now = new Date();
     var message = sanitizeErrorMessage_(describeError_(error));
     try {
@@ -60,7 +63,7 @@ var BookingMailer = (function () {
         bookingId: bookingId,
         failureType: 'MAIL_' + mailType + '_FAILED',
         occurredAt: now,
-        status: mailType,
+        status: status,
         errorMessage: message,
         recoveryState: 'OPEN',
         resolvedAt: ''
@@ -70,6 +73,14 @@ var BookingMailer = (function () {
     }
   }
 
+  /*
+   * PRレビュー対応: displayName/replyTo/contactEmailの3項目だけでなく、timezoneも
+   * 実際にIntlで解釈可能であることを確認する（fail-closed）。timezoneが未設定・
+   * 不正な文字列のままメールを送ると、Intl.DateTimeFormatがGAS実行環境の既定
+   * timezoneへフォールバックし、開始/終了時刻の表示がJSTからずれる事故につながるため、
+   * 単に空文字でないことのチェックに留めず、BookingAvailability.formatDateInTimezone
+   * （既存の空き判定・当日判定と同じtimezone解釈ロジック）で実際に解釈できることまで確認する。
+   */
   function ensureMailConfigComplete_() {
     var config = BookingConfig.getMailConfig();
     if (!config.displayName || !config.replyTo || !config.contactEmail) {
@@ -77,17 +88,38 @@ var BookingMailer = (function () {
         'Script PropertiesにBOOKING_MAIL_DISPLAY_NAME / BOOKING_MAIL_REPLY_TO / BOOKING_CONTACT_EMAILが未設定です。'
       );
     }
+    if (!BookingAvailability.formatDateInTimezone(new Date(), config.timezone)) {
+      throw new Error('Script PropertiesのTIMEZONEが不正です: ' + config.timezone);
+    }
     return config;
   }
 
-  /* 解錠コード等の秘密値が未設定の場合、前日案内（REMINDER）を成功扱いにしない
-     （Issue #271「fail-closed / fail-safe」節）。住所・建物等の非秘密項目の欠落までは
-     ここでは拒否しない（実装が空欄のまま出力するのみに留める。テンプレート側の責務）。 */
-  function ensureAccessGuideSecretComplete_(guide) {
-    if (!guide.keyboxNumber || !guide.unlockCode) {
-      throw new Error(
-        'Script PropertiesにACCESS_GUIDE_KEYBOX_NUMBER / ACCESS_GUIDE_UNLOCK_CODEが未設定です。'
-      );
+  /*
+   * PRレビュー対応: 秘密値（keyboxNumber/unlockCode）だけでなく、Issue #271の
+   * 前日リマインド必須内容（住所・建物・部屋・入口案内・キーボックス位置・入室方法・
+   * 利用案内URL）もすべて設定済みであることを確認する（fail-closed。前日案内を
+   * 「来場方法を含む案内」として成立させるための必須項目一式）。
+   * ACCESS_GUIDE_PDF_URLは「必要に応じて」のため必須にしない。
+   */
+  var REQUIRED_ACCESS_GUIDE_FIELDS_ = {
+    address: 'ACCESS_GUIDE_ADDRESS',
+    building: 'ACCESS_GUIDE_BUILDING',
+    room: 'ACCESS_GUIDE_ROOM',
+    entrance: 'ACCESS_GUIDE_ENTRANCE',
+    keyboxLocation: 'ACCESS_GUIDE_KEYBOX_LOCATION',
+    entryMethod: 'ACCESS_GUIDE_ENTRY_METHOD',
+    keyboxNumber: 'ACCESS_GUIDE_KEYBOX_NUMBER',
+    unlockCode: 'ACCESS_GUIDE_UNLOCK_CODE',
+    url: 'ACCESS_GUIDE_URL'
+  };
+
+  function ensureAccessGuideComplete_(guide) {
+    var missing = [];
+    Object.keys(REQUIRED_ACCESS_GUIDE_FIELDS_).forEach(function (key) {
+      if (!guide[key]) missing.push(REQUIRED_ACCESS_GUIDE_FIELDS_[key]);
+    });
+    if (missing.length) {
+      throw new Error('来場案内に必要なScript Propertiesが未設定です: ' + missing.join(', '));
     }
   }
 
@@ -145,7 +177,7 @@ var BookingMailer = (function () {
       try {
         mail = buildTemplateFn(record);
       } catch (buildError) {
-        recordMailFailure_(bookingId, mailType, buildError);
+        recordMailFailure_(bookingId, mailType, buildError, record.status);
         return { success: false, error: { code: 'MAIL_NOT_READY', message: describeError_(buildError) } };
       }
 
@@ -159,7 +191,7 @@ var BookingMailer = (function () {
           replyTo: mailConfig.replyTo
         });
       } catch (sendError) {
-        recordMailFailure_(bookingId, mailType, sendError);
+        recordMailFailure_(bookingId, mailType, sendError, record.status);
         return { success: false, error: { code: 'MAIL_SEND_FAILED', message: describeError_(sendError) } };
       }
 
@@ -228,7 +260,7 @@ var BookingMailer = (function () {
       function (record) {
         var config = ensureMailConfigComplete_();
         var guide = BookingConfig.getAccessGuideConfig();
-        ensureAccessGuideSecretComplete_(guide);
+        ensureAccessGuideComplete_(guide);
         return BookingMailTemplates.buildReminderMail(record, config, guide);
       }
     );

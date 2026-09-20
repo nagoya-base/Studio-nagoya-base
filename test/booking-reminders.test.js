@@ -26,8 +26,15 @@ var COMPLETE_ACCESS_GUIDE_PROPERTIES = {
   BOOKING_MAIL_DISPLAY_NAME: 'Studio Nagoya Base',
   BOOKING_MAIL_REPLY_TO: 'noreply@example.com',
   BOOKING_CONTACT_EMAIL: 'contact@example.com',
+  ACCESS_GUIDE_ADDRESS: '愛知県名古屋市...',
+  ACCESS_GUIDE_BUILDING: 'テストビル',
+  ACCESS_GUIDE_ROOM: '101',
+  ACCESS_GUIDE_ENTRANCE: '正面入口から左手',
+  ACCESS_GUIDE_KEYBOX_LOCATION: '玄関脇',
+  ACCESS_GUIDE_ENTRY_METHOD: '玄関の暗証番号を入力して解錠',
   ACCESS_GUIDE_KEYBOX_NUMBER: 'TEST-KEYBOX',
-  ACCESS_GUIDE_UNLOCK_CODE: 'TEST-CODE'
+  ACCESS_GUIDE_UNLOCK_CODE: 'TEST-CODE',
+  ACCESS_GUIDE_URL: 'https://example.com/how-to'
 };
 
 function setup(options) {
