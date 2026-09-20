@@ -75,10 +75,15 @@ var Booking = (function () {
     return BRAND_LABELS_[brand] || String(brand || '');
   }
 
-  /* PENDINGから遷移できる先のみを許可する。CONFIRMED/CANCELLED/EXPIREDはいずれも
-     終端状態として扱う（#268時点でCONFIRMED後のキャンセルは#272の責務）。 */
+  /*
+   * PENDINGからCONFIRMED/CANCELLED/EXPIREDへ、CONFIRMEDからCANCELLEDへの遷移のみを許可する
+   * （Issue #272で管理者キャンセルを追加し、CONFIRMEDを終端状態から外した）。
+   * CANCELLED/EXPIREDはいずれも終端状態のまま（CANCELLED→CANCELLEDの二重実行は
+   * この関数ではなくcancelBookingAdmin側でalreadyCancelledとして冪等に処理する）。
+   */
   var ALLOWED_TRANSITIONS = {
-    PENDING: [STATUS.CONFIRMED, STATUS.CANCELLED, STATUS.EXPIRED]
+    PENDING: [STATUS.CONFIRMED, STATUS.CANCELLED, STATUS.EXPIRED],
+    CONFIRMED: [STATUS.CANCELLED]
   };
 
   function canTransition(fromStatus, toStatus) {

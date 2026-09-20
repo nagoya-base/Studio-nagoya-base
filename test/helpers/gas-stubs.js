@@ -256,14 +256,19 @@ function createSpreadsheetAppStub(spreadsheetsById, options) {
  * prompt(...)（options.promptResponsesを順番に消費する）を再現する。
  * 実際にメニュー項目のハンドラ関数を呼び出すことはしない（クリック操作の再現はせず、
  * 配線とダイアログ表示内容のみを検証する）。
+ *
+ * alert(message, buttonSet)の2引数形式（Issue #272のキャンセル誤操作防止確認用）は、
+ * options.alertResponsesを順番に消費してBUTTON.YES/NOを返す（buttonSet省略の1引数形式は
+ * 引き続きBUTTON.OKを返すのみで、alertResponsesは消費しない）。
  */
 function createSpreadsheetUiStub(options) {
   var opts = options || {};
   var promptResponses = (opts.promptResponses || []).slice();
+  var alertResponses = (opts.alertResponses || []).slice();
   var alerts = [];
   var menus = [];
 
-  var BUTTON = { OK: 'OK', CANCEL: 'CANCEL', CLOSE: 'CLOSE' };
+  var BUTTON = { OK: 'OK', CANCEL: 'CANCEL', CLOSE: 'CLOSE', YES: 'YES', NO: 'NO' };
 
   function menuBuilder(name) {
     var items = [];
@@ -281,9 +286,14 @@ function createSpreadsheetUiStub(options) {
 
   return {
     Button: BUTTON,
-    ButtonSet: { OK_CANCEL: 'OK_CANCEL', OK: 'OK' },
+    ButtonSet: { OK_CANCEL: 'OK_CANCEL', OK: 'OK', YES_NO: 'YES_NO' },
     createMenu: function (name) { return menuBuilder(name); },
-    alert: function (message) { alerts.push(message); },
+    alert: function (message, buttonSet) {
+      alerts.push(message);
+      if (buttonSet === undefined) return BUTTON.OK;
+      var next = alertResponses.shift();
+      return next !== undefined ? next : BUTTON.NO;
+    },
     prompt: function () {
       var next = promptResponses.shift() || { button: BUTTON.CANCEL, text: '' };
       return {

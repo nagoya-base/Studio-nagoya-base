@@ -23,6 +23,13 @@ Epic #265の一部として以下を実装済み。
   Spreadsheet記録、SentAtによる二重送信防止、管理者による個別再送、前日リマインド用
   時間主導トリガー作成関数を実装した。実メール送信・本番Script Properties設定・
   本番トリガー作成はこのPRでは行わない（詳細は「Issue #271: 予約通知メール自動送信」参照）
+- **Issue #272**: 管理者キャンセル（`cancelBookingAdmin(bookingId)`）を実装し、
+  PENDING/CONFIRMED→CANCELLEDの状態遷移・Calendarイベント削除による枠の再開放・
+  Sheets台帳の`cancelledAt`/`updatedAt`更新・#271の`sendCancelledMailForBooking`への
+  接続・Spreadsheetカスタムメニューからのキャンセル操作（YES/NO確認付き）・
+  Calendar/Sheetsの部分失敗のRecovery記録・Sheets行が無い場合のCalendar診断を
+  実装した。Booking Admin側のみに追加し、公開Web Appにはキャンセルエンドポイントを
+  一切公開しない（詳細は「Issue #272: 管理者キャンセルでCalendar / Sheetsを一貫更新する」参照）
 
 このディレクトリは自社予約システム専用のApps Scriptプロジェクトの元になるソース一式
 （複数プロジェクトへ配布するファイル群）として運用し、`gas/ataru_survey_public` 等の
@@ -37,12 +44,15 @@ Web App本体とは別にコンテナバインドの管理用プロジェクト�
 | プロジェクト | 種別 | 役割 |
 | --- | --- | --- |
 | **Booking Web App** | スタンドアロン | `getAvailability`（`doGet`）・`createBooking`（`doPost`）・管理者通知 |
-| **Booking Admin** | `SPREADSHEET_ID`のSpreadsheetへコンテナバインド | カスタムメニュー（`onOpen`）・`confirmBooking(bookingId)`・PENDING TTL失効（`expirePendingBookings`の時間主導トリガー） |
+| **Booking Admin** | `SPREADSHEET_ID`のSpreadsheetへコンテナバインド | カスタムメニュー（`onOpen`）・`confirmBooking(bookingId)`・`cancelBookingAdmin(bookingId)`（Issue #272）・PENDING TTL失効（`expirePendingBookings`の時間主導トリガー） |
 
 `confirmBooking`と`expirePendingBookings`は、いずれもBooking Adminプロジェクトに
 配置し、同じ`LockService.getScriptLock()`を共有させることで、PENDING→CONFIRMEDと
 PENDING→EXPIREDが同時に進んでCalendar/Sheetsが不整合になる競合を構造的に排除している
 （3回目レビュー指摘対応。詳細は「PRレビュー（3回目）指摘への追加対応」参照）。
+`cancelBookingAdmin`（Issue #272）も同じBooking Adminプロジェクト・同じLockServiceに
+加えたため、この3関数の間では常に1つの状態遷移だけが成立する（詳細は
+「Issue #272: 管理者キャンセルでCalendar / Sheetsを一貫更新する」参照）。
 
 ## このIssue（#268）で実装した範囲
 
@@ -67,7 +77,8 @@ PENDING→EXPIREDが同時に進んでCalendar/Sheetsが不整合になる競合
 - `#269` 以降の共通予約UI実装（フロントエンドからcreateBookingを呼ぶ画面。**#269で実装**）
 - `#271` 利用者向けメール通知（仮予約受付・確定・キャンセル・前日リマインド・来場案内）。
   本Issueで送るのは管理者向けの最低限の内部通知のみ
-- `#272` 管理者キャンセル機能
+- `#272` 管理者キャンセル機能（**#272で実装済み**。詳細は
+  「Issue #272: 管理者キャンセルでCalendar / Sheetsを一貫更新する」参照）
 - `#273` 本番切替（既存予約フォーム・`_includes/calendar_embed.html`の撤去、
   Studio Nagoya Base / SNB mens側の予約導線切替を含む）
 - 料金自動計算・決済・会員DB照合
@@ -126,8 +137,10 @@ brand文字列・prefix・表示名は`Booking.gs`の`ALLOWED_BOOKING_BRANDS` /
   予約はmens/Studio Xの`getAvailability`でも塞がり、mens/Studio Xの予約もSNBから見て
   塞がる（相互に競合する。テストは「テストの実行」節参照）。
 - `#271`（利用者向けメール）・`#272`（管理者キャンセル）・`#273`（本番切替・
-  旧導線撤去）はいずれも実装していない（`#270`は「Issue #270: 当日利用ルールと
-  利用経験判定」で実装済み）。
+  旧導線撤去）はこのIssue（#269）時点ではいずれも実装していない（`#270`は
+  「Issue #270: 当日利用ルールと利用経験判定」、`#271`は「Issue #271: 予約通知メール
+  自動送信」、`#272`は「Issue #272: 管理者キャンセルでCalendar / Sheetsを一貫更新する」
+  でそれぞれ実装済み）。
 
 ### 共通予約UI（フロントエンド）
 
@@ -434,7 +447,8 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
   #268からの管理者向け内部通知（`AdminNotifier.gs`）はこのIssueで変更していない
   （利用者向けメールとは別ファイル・別責務のまま維持）。
 - `#272`（管理者キャンセル機能。PENDING/CONFIRMED→CANCELLEDの状態遷移・Calendar削除・
-  キャンセルメール呼び出し配線）は実装していない。
+  キャンセルメール呼び出し配線）は**実装済み**（詳細は「Issue #272: 管理者キャンセルで
+  Calendar / Sheetsを一貫更新する」参照）。
 - `#273`（本番GASデプロイ・本番Web App URL差替・旧フォーム撤去・Calendar embed撤去・
   本番切替・ロールバック実施）は実装していない。`scripts/booking-config.js`の
   `BASE_URL`は引き続き空文字のまま。
@@ -449,7 +463,9 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 
 予約に関する利用者向けメール（仮予約受付・確定・前日リマインド+来場案内）をGASから
 自動送信するようにした。キャンセルメールは**送信ロジックのみ**を実装し、実際に
-`CANCELLED`成功後に呼ぶ配線は`#272`（管理者キャンセル機能）の責務とする。
+`CANCELLED`成功後に呼ぶ配線は`#272`（管理者キャンセル機能）の責務とした
+（**#272で実装済み**。詳細は「Issue #272: 管理者キャンセルでCalendar / Sheetsを
+一貫更新する」参照）。
 
 ### このIssueで実装した範囲
 
@@ -459,7 +475,7 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
    メール（best effort。既にCONFIRMED済みで`confirmedMailSentAt`が空の場合は
    メールだけ再試行する）
 3. `CANCELLED`状態の予約に送れるキャンセルメール送信関数（`BookingMailer.sendCancelledMailForBooking`）。
-   **呼び出し配線は#272**（このIssueでは状態遷移自体もCalendar削除も実装しない）
+   **呼び出し配線は#272**（このIssueでは状態遷移自体もCalendar削除も実装しない。#272で実装済み）
 4. 翌日の`CONFIRMED`予約への前日リマインド（`sendNextDayReminders(now)`）
 5. 前日リマインドへ同梱する来場案内（住所・建物・部屋・入口案内・キーボックス位置・
    キーボックス番号・解錠コード・利用案内URL・案内PDF URL）
@@ -475,7 +491,7 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 
 - `PENDING`/`CONFIRMED` → `CANCELLED`の状態遷移そのもの、Calendar予約削除を伴う
   キャンセル処理、`#272`の管理者キャンセルUI（このIssueでは`sendCancelledMailForBooking`
-  という送信関数とテストまでを用意する）
+  という送信関数とテストまでを用意する。いずれも**#272で実装済み**）
 - 本番GASデプロイ・本番Script Properties設定・本番トリガー作成・実メール送信
 - LINE/SMS通知・Stripe決済メール・PayPay API・外部媒体（スペースマーケット）予約者への
   自社メール送信・会員DB自動照合・動的なスマートロックAPI連携・解錠コードの自動生成/変更
@@ -486,7 +502,7 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 | --- | --- | --- | --- |
 | `PENDING` | `PENDING` | `pendingMailSentAt` | SentAtが空の場合のみ送信 |
 | `CONFIRMED` | `CONFIRMED` | `confirmedMailSentAt` | 同上（既にCONFIRMEDでもSentAt空なら再試行可） |
-| `CANCELLED` | `CANCELLED` | `cancelMailSentAt` | 同上（#271では送信関数のみ。呼び出しは#272） |
+| `CANCELLED` | `CANCELLED` | `cancelMailSentAt` | 同上（#271では送信関数のみ。呼び出しは#272の`cancelBookingAdmin`で実装済み） |
 | `REMINDER` | `CONFIRMED`かつ利用日が翌日（`SpreadsheetRepository.getConfirmedBookingsForDate`で抽出） | `reminderSentAt`と`accessGuideSentAt`（同時記録） | 上記2列のいずれかが空の場合のみ送信 |
 
 `BookingMailer.gs`の`withBookingLock_`が全メール種別共通で以下の順序を守る
@@ -608,6 +624,298 @@ Calendar削除までに最大約15分の遅延があり得る（Issue #271でメ
 表示名を取得するのみで、SNB/mens/Studio Xごとにテンプレート関数・送信ロジックを
 複製していない（`test/booking-mail-templates.test.js`で3ブランド共通であることを検証）。
 
+## Issue #272: 管理者キャンセルでCalendar / Sheetsを一貫更新する
+
+管理者が予約をキャンセルしたとき、Google CalendarとSpreadsheet（`Bookings`シート）の
+状態をbookingId単位で一貫して更新する正式関数`cancelBookingAdmin(bookingId)`を実装した。
+Calendarだけ削除・Sheetsだけ`CANCELLED`という片落ちを許さず、部分失敗は必ず`Recovery`
+シートへ記録する。専用のWeb管理画面は作らず、Phase 1で導入したSpreadsheetの「予約管理」
+メニューからbookingId単位でキャンセルを実行できるようにした。`statusセルを直接手編集する
+運用は正式手順にしない`（確定と同じ方針）。
+
+### このIssueで実装した範囲
+
+1. 正式関数`cancelBookingAdmin(bookingId)`（`BookingAdmin.gs`の薄いグローバル関数から
+   `BookingRepository.cancelBookingAdmin`へ委譲。実ロジックは`BookingRepository.gs`）
+2. `PENDING` → `CANCELLED`、`CONFIRMED` → `CANCELLED`の状態遷移
+3. Calendarイベントの**削除**による枠の再開放（タイトルを「キャンセル」へ変更して残す
+   方式は採用しない。理由は「Calendarイベントの扱い」参照）
+4. Sheetsの`status`を`CANCELLED`へ更新し、`cancelledAt`/`updatedAt`を記録
+5. #271の`BookingMailer.sendCancelledMailForBooking(bookingId)`への接続（Lock解除後・
+   best effort）
+6. 二重実行時の冪等性（`alreadyCancelled: true`。Calendar再削除・`cancelledAt`上書きを
+   しない）
+7. Calendar/Sheetsの部分失敗のRecovery記録（`failureType`一覧は後述）
+8. Spreadsheet「予約管理」メニューからのキャンセル操作（confirmと対称の2導線＋
+   実行直前のYES/NO確認）
+9. Calendarイベントが既に存在しない場合の収束処理（枠は既に空いているとみなし、
+   SheetsをCANCELLEDへ進める）
+10. Sheets行が存在しない場合のCalendar診断とRecovery記録（Calendarは自動削除しない）
+
+### このIssueで実装していないもの（非対象）
+
+- 利用者自身が押すキャンセルURL・公開Web APIからのキャンセル（`cancelBookingAdmin`は
+  **Booking Admin側のみ**に公開し、公開Web App（`Code.gs`）には一切追加しない）
+- キャンセル料の自動計算・返金API・決済API
+- SpaceMarket側のキャンセル操作
+- メールテンプレートの全面変更（#271の`sendCancelledMailForBooking`をそのまま呼ぶだけ）
+- `#273`の本番切替（本番GASデプロイ・本番Calendar/Spreadsheet操作・実メール送信は
+  このPRでは行わない）
+- `status`セル直接編集を正式運用にすること
+
+### 状態遷移の更新
+
+`Booking.gs`の`ALLOWED_TRANSITIONS`を、CONFIRMEDを終端状態から外す形へ変更した。
+
+```js
+var ALLOWED_TRANSITIONS = {
+  PENDING: [STATUS.CONFIRMED, STATUS.CANCELLED, STATUS.EXPIRED],
+  CONFIRMED: [STATUS.CANCELLED]
+};
+```
+
+| 遷移 | 可否 |
+| --- | --- |
+| `PENDING` → `CANCELLED` | 可 |
+| `CONFIRMED` → `CANCELLED` | 可（**#272で追加**） |
+| `CANCELLED` → `CANCELLED` | 冪等扱い（`canTransition`ではなく`cancelBookingAdmin`側で`alreadyCancelled`として処理） |
+| `EXPIRED` → `CANCELLED` | 不可（`INVALID_TRANSITION`） |
+| `CANCELLED` → `CONFIRMED` / `EXPIRED` → `CONFIRMED` | 不可（従来どおり変更なし） |
+
+`confirmBooking`/`expirePendingBookings`の既存仕様（PENDING→CONFIRMED/EXPIREDの遷移・
+TTL計算・二重実行時の冪等性）はいずれも変更していない。
+
+### Lock取得順序（Issue本文より安全側に実装）
+
+Issue本文は「Sheets取得→status確認→Lock取得」の順だが、実装では必ず次の順序にした。
+
+```text
+bookingId基本検証
+↓
+Lock取得
+↓
+Sheetsをbookingidで最新再読込
+↓
+最新status確認
+↓
+Calendar状態確認・削除
+↓
+Sheets CANCELLED更新
+↓
+Lock解除
+↓
+キャンセルメール best effort
+```
+
+`confirmBooking`/`expirePendingBookings`/`cancelBookingAdmin`が同時に動いても、Lock取得前に
+読んだ古いstatusで処理してしまわないよう、**status判定は必ずLock取得後に最新行を
+再読込して行う**（`BookingRepository.cancelBookingAdminLocked_`参照）。
+
+### 正常キャンセルフロー
+
+対象status: `PENDING` / `CONFIRMED`。
+
+```text
+Lock取得
+↓
+最新Sheets行取得（PENDING/CONFIRMEDであることを確認）
+↓
+calendarEventId取得・Calendarイベント存在確認
+↓
+Calendarイベント削除
+↓
+Sheets: status=CANCELLED, cancelledAt=now, updatedAt=now
+↓
+Lock解除
+↓
+BookingMailer.sendCancelledMailForBooking(bookingId)
+↓
+return { success: true, bookingId, status: 'CANCELLED' }
+```
+
+**Calendarイベントは削除する。** タイトルを「キャンセル」へ変更して残す方式は採用しない。
+理由: 現行`Availability.gs`は「時間指定Calendarイベントはタイトル・statusに関係なく塞ぐ」
+実装のため、残すとCANCELLED後も同じ枠が予約不可能なまま残ってしまう。正常キャンセル後は、
+同じ時間枠が`getAvailability`で再び候補になり、同時間で新しい`createBooking`も成功する
+（`test/booking-cancel.test.js`で検証）。
+
+### cancelledAt / updatedAt
+
+初回キャンセル成功時に同一の`now`を使って`status`/`cancelledAt`/`updatedAt`を保存する。
+二重実行時（既に`CANCELLED`）は`cancelledAt`を上書きしない（最初にキャンセルが成立した
+日時を保持する）。
+
+### 既にCANCELLEDの場合（冪等性）
+
+最新Sheets statusが`CANCELLED`の場合:
+
+- Calendar削除を再実行しない
+- `cancelledAt`を書き換えない
+- `success: true, alreadyCancelled: true`を返す
+- `cancelMailSentAt`が空ならLock解除後にキャンセルメールだけ再試行する
+  （#271の`BookingMailer`のSentAt冪等性をそのまま再利用。既送信なら二重送信しない）
+
+### EXPIRED等の不正な遷移
+
+`EXPIRED`（またはその他`canTransition`が許可しない状態）をキャンセルしようとした場合、
+`success: false, error.code: 'INVALID_TRANSITION'`を返し、Calendar/Sheets/メールのいずれも
+変更しない。
+
+### Calendarイベントが既に存在しない場合
+
+SheetsはPENDING/CONFIRMEDだが`CalendarRepository.getEventById`が`null`を返す場合、
+Calendar側は既に非占有（＝枠は既に空いている）とみなし、**キャンセル処理を収束させる**
+方向で扱う。
+
+1. `Recovery`へ`failureType: 'CANCEL_CALENDAR_EVENT_MISSING'`, `recoveryState: 'OPEN'`で記録
+2. SheetsをCANCELLEDへ更新（`cancelledAt`/`updatedAt`を記録）
+3. Lock解除
+4. キャンセルメールをbest effort送信
+5. `success: true`だが補助情報`calendarAlreadyMissing: true`を返す
+
+「なぜCalendarだけ先に無かったか」は`Recovery`で人が確認できるよう、自動ではRESOLVEDに
+しない（`recoveryState`はOPENのまま）。メールはSheetsがCANCELLEDへ更新できた場合のみ送る。
+
+### Calendar削除自体が失敗した場合
+
+イベントは存在するが`deleteEventById`が例外を投げた場合、Calendarがまだ占有している
+可能性があるため、Sheetsは元statusのまま進めず、メールも送らない。
+
+- `Recovery`へ`failureType: 'CANCEL_CALENDAR_DELETE_FAILED'`, `recoveryState: 'OPEN'`で記録
+- `success: false, error.code: 'CANCEL_CALENDAR_FAILED'`を返す
+
+### Calendar削除成功 → Sheets更新失敗（最重要の部分失敗）
+
+Calendar側は削除済み（枠は空き）だが、Sheets側がPENDING/CONFIRMEDのまま更新できない
+最も重要な部分失敗ケース。**Calendarイベントを無理に再作成して補償しない**
+（再作成するとeventIdが変わり、Sheets更新障害中に書き戻せず、二次的不整合を増やすため）。
+
+- `Recovery`へ`failureType: 'CANCEL_SHEETS_UPDATE_FAILED_CALENDAR_REMOVED'`,
+  `recoveryState: 'OPEN'`（`status`はSheetsに残っている現在status）で記録
+- キャンセルメールは送らない
+- `success: false, error.code: 'CANCEL_SAVE_FAILED'`を返す
+- **次回同じbookingIdで`cancelBookingAdmin`を再実行すれば**、Calendarは既に無いため
+  「Calendarイベントが既に存在しない場合」の経路からSheetsがCANCELLEDへ収束する
+  （`test/booking-cancel.test.js`の障害分離テストで、再実行によりCANCELLEDへ収束すること・
+  2回目の実行で`CANCEL_CALENDAR_EVENT_MISSING`が追加記録されることの両方を検証済み）
+
+### Recovery記録自体の失敗
+
+Recovery書き込みもbest effortであり、失敗しても元の例外を上書きしない。Loggerへ
+`bookingId`/`failureType`/エラー概要のみを最小限記録する（メールアドレス・秘密値は
+Loggerへ出さない。既存の`confirmBooking`/`expirePendingBookings`と同じ方針）。
+
+### Sheets行が存在しない場合のCalendar診断
+
+`bookingId`でSheets行が見つからない場合、単にNOT_FOUNDで終わらせず、bookingId形式
+（`SNB-YYYYMMDD-XXXXXXXX` / `MENS-YYYYMMDD-XXXXXXXX` / `SX-YYYYMMDD-XXXXXXXX`）から
+利用日を復元し、対象日のCalendarを`bookingId`タグで診断する
+（`BookingRepository.parseBookingDateFromId_` / `CalendarRepository.findBookingEventsByBookingId`）。
+
+`findBookingEventsByBookingId(calendarId, bookingId, dateString, timezone)`は対象日の
+Calendarイベントのうち`event.getTag('bookingId') === bookingId`で一致するものだけを返す
+（タイトル文字列検索には依存しない。PII・brandは検索条件に使わない。SpaceMarket等の
+外部イベントはbookingIdタグを持たないため対象外になる）。**この診断は異常時のRecovery
+支援のためだけに使う。通常のキャンセル処理では引き続きSheetsの`calendarEventId`を
+正として使う。**
+
+| 診断結果 | failureType | 挙動 |
+| --- | --- | --- |
+| bookingId形式が不正で日付を復元できない | `CANCEL_BOOKING_NOT_FOUND` | Calendar走査自体をスキップして記録 |
+| Calendarに1件だけ見つかった | `CANCEL_SHEETS_ROW_MISSING_CALENDAR_PRESENT` | `calendarEventId`を記録。**Calendarは自動削除しない**（正式台帳が無い状態で破壊的変更をするのは危険なため） |
+| Calendarに複数件見つかった | `CANCEL_MULTIPLE_CALENDAR_EVENTS_FOUND` | 同上。自動削除しない |
+| Calendarに0件 | `CANCEL_BOOKING_NOT_FOUND` | `calendarEventId`/`status`は空で記録 |
+
+いずれの診断結果でも、`cancelBookingAdmin`の戻り値は`success: false, error.code: 'NOT_FOUND'`
+になる。
+
+### キャンセルメールの接続位置
+
+#271の`BookingMailer.sendCancelledMailForBooking(bookingId)`を、**必ずLock解除後**に
+best effortで呼ぶ（`Calendar削除→Sheets CANCELLED→Lock解除→cancel mail best effort`）。
+メール失敗時は`cancelBookingAdmin`自体は`success: true`のまま、`CANCELLED`を元へ戻さず
+Calendarも復元しない（`BookingMailer`側の`lastMailErrorAt`/`lastMailErrorType`/
+`lastMailErrorMessage`・`Recovery`（`MAIL_CANCELLED_FAILED`）へ任せる）。戻り値へ補助情報
+`mailSent`/`mailError`を追加した。既にCANCELLED＋メール未送信（`cancelMailSentAt`が空）の
+状態で再実行した場合も、状態変更・Calendar操作は行わずメールだけ再試行する
+（#271のSentAt冪等性・`{ force: true }`不要の自動再試行）。
+
+### confirm / expireとの競合
+
+`cancelBookingAdmin`は`confirmBooking`/`expirePendingBookings`と同じBooking Adminプロジェクトに
+置き、同じ`LockService.getScriptLock()`を使う。Lock取得後に必ず最新statusを読むため、
+3関数のうちどれが同時に実行されても1つの状態遷移だけが成立する。
+
+| 先に実行 | 後から実行 | 結果 |
+| --- | --- | --- |
+| `cancelBookingAdmin`（→CANCELLED） | `confirmBooking` | `INVALID_TRANSITION` |
+| `expirePendingBookings`（→EXPIRED） | `cancelBookingAdmin` | `INVALID_TRANSITION` |
+| `confirmBooking`（→CONFIRMED） | `cancelBookingAdmin` | 成功（CONFIRMED→CANCELLEDとして続行） |
+
+（`test/booking-cancel.test.js`の競合テストで検証。Lock共有自体のテストも同ファイルに
+`test/booking-confirm-expire.test.js`と同じ方式で用意した）
+
+### Spreadsheet管理メニュー
+
+既存「予約管理」メニューへ、`confirmBooking`と対称の2項目を追加した。
+
+- 「アクティブ行のbookingIdをキャンセル（cancelBookingAdmin）」
+- 「bookingIdを入力してキャンセル（cancelBookingAdmin）」
+
+**誤操作防止**として、実行直前に必ずYES/NO確認ダイアログを挟む（`ui.alert(message,
+ui.ButtonSet.YES_NO)`）。
+
+```text
+予約 SX-20261001-XXXXXXXX をキャンセルします。
+Calendarから予約枠を削除し、利用者へキャンセルメールを送信します。
+よろしいですか？
+```
+
+NOなら`cancelBookingAdmin`自体を呼ばず、何も変更しない。結果表示:
+
+- 初回成功: `キャンセルしました: <bookingId>`
+- 再実行（`alreadyCancelled`）: `すでにキャンセル済みです: <bookingId>`
+- Calendar既に無（`calendarAlreadyMissing`）: `キャンセルしました。Calendarイベントは
+  既に存在しなかったためRecoveryへ記録しました: <bookingId>`
+- 失敗: `result.error.message`を表示
+
+`status`セルの手編集は案内しない（confirmと同じ方針）。
+
+### PII・セキュリティ
+
+キャンセル処理のCalendarイベント・Recovery記録・管理メニューのダイアログのいずれにも、
+氏名・メールアドレス・電話番号・解錠情報等のPIIを追加していない。Recoveryは`bookingId`/
+`calendarEventId`/`status`で追跡する。
+
+### 3ブランド共通であることの確認
+
+`cancelBookingAdmin`・`findBookingEventsByBookingId`のいずれも`brand`を一切参照しない
+（`Availability.gs`と同じ「brandで分岐させない」方針）。`test/booking-cancel.test.js`で
+snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検証している。
+
+### 変更したファイル
+
+- `Booking.gs` — `ALLOWED_TRANSITIONS`へ`CONFIRMED: [STATUS.CANCELLED]`を追加
+- `BookingRepository.gs` — `cancelBookingAdmin`本体（Lock・状態遷移・部分失敗補償・
+  Recovery記録・キャンセルメール接続）、`CalendarRepository.findBookingEventsByBookingId`
+  を使ったSheets行なし診断を追加
+- `BookingAdmin.gs` — グローバル関数`cancelBookingAdmin(bookingId)`、メニュー2項目、
+  YES/NO確認・結果表示のハンドラを追加
+- `CalendarRepository.gs` — 診断用`findBookingEventsByBookingId(calendarId, bookingId,
+  dateString, timezone)`を追加（既存の`getEventById`/`deleteEventById`は変更なし）
+- `RecoveryRepository.gs` — ファイル冒頭コメントへ新規failureTypeの説明を追加
+  （列構成・`recordFailure`/`listAll`自体は変更なし。新しい列も追加していない）
+- `SpreadsheetRepository.gs` — **変更なし**（既存の`status`/`cancelledAt`/`updatedAt`/
+  `cancelMailSentAt`列をそのまま利用。新しいSheets列は追加していない）
+- `BookingMailer.gs` — **変更なし**（#271の`sendCancelledMailForBooking`をそのまま呼ぶだけ）
+- `test/booking-cancel.test.js`（新規） — 状態遷移・正常キャンセル・二重実行・メール失敗・
+  Calendar既に無い・Calendar削除失敗・Calendar削除成功→Sheets失敗とその再実行収束・
+  Sheets行なし診断（0/1/複数件）・confirm/expireとの競合・Reminder対象外・管理メニュー・
+  3ブランド共通を検証
+- `test/helpers/gas-stubs.js` — `SpreadsheetApp.getUi()`スタブの`alert(message, buttonSet)`
+  2引数形式（YES/NO確認ダイアログ）に対応。既存の1引数`alert(message)`呼び出しの挙動は
+  変更していない
+
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
 | 項目 | 値 |
@@ -698,6 +1006,26 @@ Calendar削除までに最大約15分の遅延があり得る（Issue #271でメ
   CANCELLED/REMINDER）をダイアログで入力させ、`{ force: true }`で
   `BookingMailer.send*ForBooking`を呼ぶ
 
+### Issue #272（管理者キャンセルで追加・拡張）
+
+- `Booking.gs`（拡張） — `ALLOWED_TRANSITIONS`へ`CONFIRMED: [STATUS.CANCELLED]`を追加し、
+  CONFIRMEDを終端状態から外した
+- `BookingRepository.gs`（拡張） — 正式ロジック`cancelBookingAdmin(bookingId)`を追加
+  （Lock取得→Sheets最新再読込→status確認→Calendar確認・削除→Sheets CANCELLED更新→
+  Lock解除→キャンセルメールbest effort。部分失敗のRecovery記録、Sheets行なし時の
+  Calendar診断（`parseBookingDateFromId_`/`findBookingEventsByBookingId`利用）を含む）
+- `CalendarRepository.gs`（拡張） — 診断用`findBookingEventsByBookingId(calendarId,
+  bookingId, dateString, timezone)`を追加（既存関数は変更なし）
+- `BookingAdmin.gs`（拡張） — グローバル関数`cancelBookingAdmin(bookingId)`、「予約管理」
+  メニューへキャンセル用2項目（アクティブ行／bookingId入力）、実行直前のYES/NO確認・
+  結果表示ハンドラを追加
+- `RecoveryRepository.gs`（拡張） — ファイル冒頭コメントへ新規failureType
+  （`CANCEL_CALENDAR_EVENT_MISSING`等）の説明を追加。列構成・`recordFailure`/`listAll`
+  自体・列追加は無し
+- `SpreadsheetRepository.gs` / `BookingMailer.gs` — **変更なし**（既存の
+  `status`/`cancelledAt`/`updatedAt`/`cancelMailSentAt`列と#271の
+  `sendCancelledMailForBooking`をそのまま利用）
+
 ## GASプロジェクトへのデプロイ対象ファイル
 
 上記の理由（カスタムメニューはコンテナバインドスクリプトでしか作成できない）により、
@@ -724,15 +1052,20 @@ Calendar削除までに最大約15分の遅延があり得る（Issue #271でメ
 | `BookingReminderTriggers.gs`（Issue #271） | – | ✓ |
 | `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい） |
 
-`BookingRepository.gs`の`confirmBooking`・`expirePendingBookings`が実際に参照する
-ファイルは`Config.gs`/`Booking.gs`/`CalendarRepository.gs`/`SpreadsheetRepository.gs`/
-`RecoveryRepository.gs`/`BookingMailTemplates.gs`/`BookingMailer.gs`のみ（`createBooking`が
-使う`Availability.gs`/`RateLimiter.gs`/`AdminNotifier.gs`はBooking Adminプロジェクトでは
-呼び出されない）。ただし、コピー漏れによる将来の機能追加時の事故を避けるため、上表のとおり
+`BookingRepository.gs`の`confirmBooking`・`expirePendingBookings`・`cancelBookingAdmin`
+（Issue #272）が実際に参照するファイルは`Config.gs`/`Booking.gs`/`CalendarRepository.gs`/
+`SpreadsheetRepository.gs`/`RecoveryRepository.gs`/`BookingMailTemplates.gs`/
+`BookingMailer.gs`のみ（`createBooking`が使う`Availability.gs`/`RateLimiter.gs`/
+`AdminNotifier.gs`はBooking Adminプロジェクトでは呼び出されない）。ただし、コピー漏れに
+よる将来の機能追加時の事故を避けるため、上表のとおり
 「`Code.gs`/`Availability.gs`/`RateLimiter.gs`/`AdminNotifier.gs`/`BookingReminderTriggers.gs`
 以外の全ファイル」をBooking Adminプロジェクトにも配布することを推奨する
 （`BookingMailTemplates.gs`/`BookingMailer.gs`はcreateBooking側のPENDINGメール送信でも
-使うため、両プロジェクトへの配布が必須）。
+使うため、両プロジェクトへの配布が必須）。**`cancelBookingAdmin`はBooking Admin側の
+みで公開し、Booking Web Appプロジェクト（`Code.gs`）にはキャンセル用エンドポイントを
+一切追加しない**（`BookingRepository.gs`自体は両プロジェクトへ配布されるが、
+`cancelBookingAdmin`を呼び出すグローバル関数は`BookingAdmin.gs`側にしか無いため、
+Booking Web App側からは呼び出せない）。
 
 両プロジェクトは**同一の`.gs`ファイル**（このリポジトリの`gas/booking/`）を元にしており、
 コード自体を複製・分岐させているわけではない（clasp等のデプロイ自動化は本リポジトリに
@@ -873,7 +1206,13 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 | `ADMIN_NOTIFICATION_FAILED` | 管理者通知メール送信に失敗（予約自体は成功のまま。情報用途） |
 | `MAIL_PENDING_FAILED`（Issue #271） | 利用者向けPENDINGメールの送信に失敗（設定不足によるfail-closedな拒否を含む。予約自体・`status`は変更しない。`Bookings`シートの`lastMailError*`にも同時記録） |
 | `MAIL_CONFIRMED_FAILED`（Issue #271） | 利用者向けCONFIRMEDメールの送信に失敗。同上（`confirmBooking`自体の成否には影響しない） |
-| `MAIL_CANCELLED_FAILED`（Issue #271） | 利用者向けCANCELLEDメールの送信に失敗。同上（#271では送信関数のみ。呼び出し配線は#272） |
+| `MAIL_CANCELLED_FAILED`（Issue #271） | 利用者向けCANCELLEDメールの送信に失敗。同上（#271では送信関数のみ。呼び出し配線は#272の`cancelBookingAdmin`で実装済み） |
+| `CANCEL_CALENDAR_EVENT_MISSING`（Issue #272） | cancelBookingAdmin時にCalendarイベントが既に存在しなかった（SheetsはCANCELLEDへ収束させる。「Issue #272」参照） |
+| `CANCEL_CALENDAR_DELETE_FAILED`（Issue #272） | cancelBookingAdmin時のCalendarイベント削除自体が失敗（Sheetsは元statusのまま進めない・**要手動対応**） |
+| `CANCEL_SHEETS_UPDATE_FAILED_CALENDAR_REMOVED`（Issue #272） | Calendar削除成功→Sheets側のCANCELLED更新が失敗（**要手動対応**。同じbookingIdで再実行すればCalendar既に無い経路から収束できる） |
+| `CANCEL_SHEETS_ROW_MISSING_CALENDAR_PRESENT`（Issue #272） | Sheets行が無いが、Calendarに対象日・bookingIdタグ一致のイベントが1件見つかった（Calendarは自動削除しない・**要手動対応**） |
+| `CANCEL_MULTIPLE_CALENDAR_EVENTS_FOUND`（Issue #272） | 同上でCalendarに複数件見つかった（**要手動対応**。Calendarは自動削除しない） |
+| `CANCEL_BOOKING_NOT_FOUND`（Issue #272） | Sheets行が無く、Calendarにも該当イベントが見つからない（またはbookingId形式が不正で診断自体をスキップした） |
 | `MAIL_REMINDER_FAILED`（Issue #271） | 前日リマインド（来場案内含む）の送信に失敗。解錠コード等の秘密値未設定によるfail-safeな拒否もここに含む。`status`はCONFIRMEDのまま変更しない |
 
 ## 部分失敗・recoveryの確認手順（運用者向け）
@@ -912,6 +1251,35 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
    指定して再送する（詳細は「Issue #271: 予約通知メール自動送信」の「手動再送」参照）。
    自動処理は対応するSentAtが既にある場合は再送しないため、原因解消後の再送は
    必ずこの手動再送機能を使うこと（SentAtを直接消す運用はしない）。
+8. `failureType`が`CANCEL_CALENDAR_EVENT_MISSING`（Issue #272）の場合、`cancelBookingAdmin`
+   実行時点でCalendarイベントが既に無かったことを示す（Sheetsは`CANCELLED`へ収束済み。
+   予約処理自体は完了している）。`bookingId`を`Bookings`シートで確認し、いつ・なぜ
+   Calendar側だけ先に消えたか（手動削除・スペースマーケット側の操作等）を調査する。
+   調査が完了したら`recoveryState`・`resolvedAt`を手動で記録する（自動ではRESOLVEDに
+   ならない。詳細は「Issue #272: 管理者キャンセルでCalendar / Sheetsを一貫更新する」参照）。
+9. `failureType`が`CANCEL_CALENDAR_DELETE_FAILED`（Issue #272）の場合、`calendarEventId`は
+   まだCalendar上に残っている可能性が高い（`Bookings`シートの`status`は元のまま）。
+   Calendar側の一時的な障害（API制限等）が解消したことを確認したうえで、同じbookingIdで
+   再度`cancelBookingAdmin(bookingId)`を実行する。
+10. `failureType`が`CANCEL_SHEETS_UPDATE_FAILED_CALENDAR_REMOVED`（Issue #272）の場合、
+    `calendarEventId`のCalendarイベントは既に削除済みだが、`Bookings`シート側は`status`が
+    `PENDING`/`CONFIRMED`のまま残っている。**Calendarイベントを手動で作り直して補償しない**
+    （eventIdが変わり二次的不整合を増やすため）。Sheets保存先の一時的な障害が解消したことを
+    確認できれば、同じbookingIdで再度`cancelBookingAdmin(bookingId)`を実行する
+    （Calendar側は既に無いため`CANCEL_CALENDAR_EVENT_MISSING`の経路から`Bookings`の`status`が
+    正しく`CANCELLED`へ収束し、キャンセルメールも送信される。`test/booking-cancel.test.js`の
+    障害分離テストと同じ仕組みで安全に再実行できる）。
+11. `failureType`が`CANCEL_SHEETS_ROW_MISSING_CALENDAR_PRESENT`/
+    `CANCEL_MULTIPLE_CALENDAR_EVENTS_FOUND`（Issue #272）の場合、`Bookings`シートに
+    正式な予約台帳の行が無いまま、Calendarにだけ`bookingId`タグ一致のイベントが1件/複数件
+    残っている。**この診断ではCalendarを自動削除しない**（正式台帳が無い状態で破壊的変更を
+    行うのは危険なため）。`calendarEventId`をCalendarで直接確認し、利用者情報・支払い状況を
+    運用側の記録（メール等）から復元したうえで、Google Calendar UIから手動で削除するか、
+    運用判断でそのまま残すかを決める。
+12. `failureType`が`CANCEL_BOOKING_NOT_FOUND`（Issue #272）の場合、`Bookings`シートにも
+    Calendarにも該当する予約が見つからない（bookingIdの入力ミス、または既に別の方法で
+    削除済みの可能性がある）。`bookingId`の入力内容を確認し、心当たりがなければ対応不要
+    （記録のみで実害はない）。
 
 ## API仕様
 
@@ -1073,18 +1441,19 @@ Issue #270時点で`customerType`に指定できるのは`first_time` / `returni
 
 ### LockServiceの共有について
 
-`confirmBooking`と`expirePendingBookings`はいずれもこのBooking Adminプロジェクトに属し、
-同じ`LockService.getScriptLock()`を取得する。そのため、一方がLockを保持している間は
-もう一方の`tryLock`が失敗（`LOCK_TIMEOUT`、またはexpirePendingBookings側は該当候補を
-スキップして次回トリガーへ持ち越し）し、PENDING→CONFIRMEDとPENDING→EXPIREDが同時に
-進んでCalendar/Sheetsが不整合になることはない（`test/booking-confirm-expire.test.js`の
-Lock共有テストで検証済み）。
+`confirmBooking`・`expirePendingBookings`・`cancelBookingAdmin`（Issue #272）はいずれも
+このBooking Adminプロジェクトに属し、同じ`LockService.getScriptLock()`を取得する。
+そのため、いずれか1つがLockを保持している間は他の`tryLock`が失敗（`LOCK_TIMEOUT`、
+または`expirePendingBookings`側は該当候補をスキップして次回トリガーへ持ち越し）し、
+PENDING→CONFIRMED、PENDING→EXPIRED、PENDING/CONFIRMED→CANCELLEDが同時に進んで
+Calendar/Sheetsが不整合になることはない（`test/booking-confirm-expire.test.js`・
+`test/booking-cancel.test.js`のLock共有テストで検証済み）。
 
-なお、`createBooking`（Booking Web Appプロジェクト）とこの2関数（Booking Admin
+なお、`createBooking`（Booking Web Appプロジェクト）とこの3関数（Booking Admin
 プロジェクト）は別々のプロジェクトのため、Lockは共有されない。ただし
 `createBooking`は常に新しいbookingIdの行を追加するだけで既存行を書き換えないため、
-`confirmBooking`/`expirePendingBookings`（既存行の状態遷移のみを扱う）と競合する余地は
-そもそもない。
+`confirmBooking`/`expirePendingBookings`/`cancelBookingAdmin`（既存行の状態遷移のみを
+扱う）と競合する余地はそもそもない。
 
 ## 管理メニューからの予約確定（confirmBooking）手順
 
@@ -1104,6 +1473,41 @@ Lock共有テストで検証済み）。
 6. **`status`セルを直接編集して確定させる運用はしないこと。** 必ずこの手順（＝
    `confirmBooking`経由）で行う。二重実行しても壊れない（2回目は「すでに確定済みです」と
    表示されるだけで安全）。
+
+## 管理メニューからの予約キャンセル（cancelBookingAdmin）手順（Issue #272）
+
+1. Booking Adminプロジェクトのセットアップが完了していれば、`SPREADSHEET_ID`で
+   指定したSpreadsheetを開くだけで「予約管理」メニューが自動的に表示される
+   （追加のトリガー設定は不要）。
+2. キャンセルしたい予約の内容を`Bookings`シートで確認する（利用者への連絡が
+   必要な場合は、このタイミングで運用側の記録・利用者への通知方針を確認しておく）。
+3. 次のいずれかの方法でキャンセルを実行する。
+   - **アクティブ行をキャンセル**: `Bookings`シート上で対象の行（bookingIdの行）を
+     選択してから、メニュー「予約管理」→「アクティブ行のbookingIdをキャンセル
+     （cancelBookingAdmin）」を実行する。
+   - **bookingIdを入力してキャンセル**: メニュー「予約管理」→「bookingIdを入力して
+     キャンセル（cancelBookingAdmin）」を実行し、ダイアログにbookingIdを入力する。
+4. **実行直前に必ずYES/NO確認ダイアログが表示される。** 「Calendarから予約枠を
+   削除し、利用者へキャンセルメールを送信します。よろしいですか？」に対してNOを
+   選ぶと何も変更されない（`cancelBookingAdmin`自体を呼ばない）。YESを選んで初めて
+   実行される。
+5. 結果はダイアログで表示される。
+   - 初回成功: `キャンセルしました: <bookingId>`（`status`が`CANCELLED`になり、
+     `cancelledAt`が記録され、対応するCalendarイベントが**削除**される）
+   - 再実行（既にCANCELLED）: `すでにキャンセル済みです: <bookingId>`
+   - Calendarイベントが既に存在しなかった場合: `キャンセルしました。Calendarイベントは
+     既に存在しなかったためRecoveryへ記録しました: <bookingId>`（`Recovery`シートに
+     `CANCEL_CALENDAR_EVENT_MISSING`が記録される。詳細は「部分失敗・recoveryの確認手順」参照）
+   - 失敗時: エラーメッセージが表示される（`Recovery`シートを確認する）
+6. Booking Adminプロジェクトのスクリプトエディタから`cancelBookingAdmin("SX-...")`を
+   直接実行することもできる（Issue #272本文の正式関数名）。
+7. **`status`セルを直接編集してキャンセルさせる運用はしないこと。** 必ずこの手順
+   （＝`cancelBookingAdmin`経由）で行う。二重実行しても壊れない（2回目は「すでに
+   キャンセル済みです」と表示されるだけで安全。Calendarを再削除したり`cancelledAt`を
+   上書きしたりしない）。
+8. **公開Web App（利用者向けURL）にはキャンセル機能を一切公開していない。** 利用者
+   自身がキャンセルできる導線は#272の非対象であり、このメニュー（Booking Admin側）
+   からのみキャンセルできる。
 
 ## PENDING TTL失効トリガーの作成手順
 
@@ -1188,6 +1592,14 @@ Booking Adminプロジェクト（コンテナバインド）はWeb Appとして
   既にScript Propertiesを設定・`createNextDayReminderTrigger`を実行済みの場合は、
   該当プロパティの削除とBooking Adminプロジェクトの「トリガー」画面から
   `sendNextDayReminders`のトリガーを削除する。
+- **Issue #272（管理者キャンセル）分**: このPRでは本番Calendarイベントの削除・本番
+  Spreadsheetの`status`変更・実キャンセルメール送信のいずれも行っていないため、
+  コードをrevertするだけで元の状態（PENDING/CONFIRMED→CANCELLEDへの正式な手段が
+  無い状態）に戻る。既にBooking Adminプロジェクトへ本PRのファイルを反映済みの場合は、
+  反映前のファイル（`Booking.gs`の`ALLOWED_TRANSITIONS`にCONFIRMEDが無い版・
+  `BookingAdmin.gs`にキャンセルメニューが無い版等）へ手動で戻すか、Booking Admin
+  プロジェクト自体を削除する。`cancelBookingAdmin`は新しいScript Propertyを追加
+  していないため、ロールバック時にプロパティの削除は不要。
 
 ## 設計判断メモ（レビュー時にご確認ください）
 
@@ -1469,6 +1881,35 @@ Issue #271で追加・更新:
   （`{to, subject, body, name, replyTo}`）にも対応させ、`ScriptApp`の時間主導トリガー
   builderへ`everyDays`/`atHour`/`nearMinute`を追加（前日リマインドトリガー用）
 
+Issue #272で追加・更新:
+
+- `test/booking-cancel.test.js`（新規） — `cancelBookingAdmin`の統合テスト。
+  状態遷移（PENDING/CONFIRMED→CANCELLED成功、EXPIREDからの拒否、
+  `Booking.canTransition`がCONFIRMED→CANCELLEDを許可すること）、正常キャンセル
+  （Calendar削除・Sheets CANCELLED・`cancelledAt`/`updatedAt`・同時間枠が
+  `getAvailability`で再度空くこと・同時間での新規`createBooking`成功・キャンセルメール
+  1通・`cancelMailSentAt`）、二重実行時の冪等性（Calendar再削除なし・`cancelledAt`
+  上書きなし・メール二重送信なし）、キャンセルメール送信失敗時も`success:true`を維持し
+  再実行でメールだけ再試行できること、Calendarイベントが既に存在しない場合の収束
+  （`CANCEL_CALENDAR_EVENT_MISSING`・`calendarAlreadyMissing`）、Calendar削除失敗時の
+  recovery記録、Calendar削除成功→Sheets更新失敗時のrecovery記録と再実行による収束、
+  Sheets行が無い場合のCalendar診断（0/1/複数件それぞれの`failureType`と自動削除しない
+  こと）、bookingId形式不正時の扱い、`confirmBooking`/`expirePendingBookings`との
+  Lock共有・競合規則（cancel→confirmはINVALID_TRANSITION、expire→cancelは
+  INVALID_TRANSITION、confirm→cancelは成功）、CANCELLED後は`sendNextDayReminders`が
+  リマインドを送らないこと、Spreadsheet管理メニューのキャンセル導線
+  （メニュー2項目・YES/NO確認・アクティブ行/prompt入力の両方）、snb/mens/studio_xの
+  3ブランドで同一挙動になることを検証
+- `test/booking-confirm-expire.test.js`（更新） — `Booking.gs`の`ALLOWED_TRANSITIONS`
+  変更（CONFIRMEDを終端から除外）後も、既存のconfirm/expireの状態遷移・部分失敗補償・
+  recovery件数の検証が壊れていないことを確認（既存テスト自体の変更は無し。
+  `node --test`全件で回帰が無いことを担保）
+- `test/helpers/gas-stubs.js`（更新） — `SpreadsheetApp.getUi()`スタブの
+  `alert(message, buttonSet)`2引数形式を追加し、`options.alertResponses`から
+  `Button.YES`/`Button.NO`を順番に返せるようにした（キャンセル誤操作防止の
+  YES/NO確認ダイアログ用）。既存の1引数`alert(message)`呼び出しは影響を受けない
+  （`Button`に`YES`/`NO`、`ButtonSet`に`YES_NO`を追加。既存の`OK`/`CANCEL`/`OK_CANCEL`は変更なし）
+
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに
 差し替えており、実際のGoogle Calendar・Spreadsheet・Script Propertiesにはアクセスしない
@@ -1562,6 +2003,31 @@ Issue #271（予約通知メール自動送信）の追加確認:
       設定不足解消後に実際にメールを再送できること
 - [ ] 既存の管理者向け内部通知（`AdminNotifier.gs`。新しい予約が入ったことの通知）が
       このIssueの変更後も従来どおり届くこと
+
+Issue #272（管理者キャンセルでCalendar / Sheetsを一貫更新する）の追加確認:
+
+- [ ] 「予約管理」メニューに「アクティブ行のbookingIdをキャンセル（cancelBookingAdmin）」
+      「bookingIdを入力してキャンセル（cancelBookingAdmin）」の2項目が表示されること
+- [ ] PENDING予約に対してキャンセルを実行すると、YES/NO確認ダイアログが表示され、
+      NOを選ぶと何も変更されないこと
+- [ ] YESを選ぶと、対応するCalendarイベントが実際に**削除**され、`Bookings`シートの
+      `status`が`CANCELLED`・`cancelledAt`/`updatedAt`が記録されること
+- [ ] CONFIRMED予約に対しても同様にキャンセルできること（CONFIRMED→CANCELLED）
+- [ ] キャンセル後、同じ日時が実際の共通予約UI（`getAvailability`）で再び候補として
+      表示され、同じ時間帯で新しい予約を作成できること
+- [ ] キャンセル完了後、利用者へキャンセルメールが1通だけ届くこと
+      （`cancelMailSentAt`が記録されること）
+- [ ] 同じbookingIdでもう一度キャンセルを実行すると「すでにキャンセル済みです」と
+      表示され、Calendar操作もキャンセルメールの再送信も行われないこと
+- [ ] Calendarイベントを手動で削除した状態でキャンセルを実行すると、「Calendarイベントは
+      既に存在しなかったためRecoveryへ記録しました」と表示され、`Recovery`シートに
+      `CANCEL_CALENDAR_EVENT_MISSING`が記録され、`Bookings`シートの`status`は
+      `CANCELLED`へ進むこと
+- [ ] EXPIRED予約に対してキャンセルを実行すると失敗し、Calendar/Sheets/メールの
+      いずれも変更されないこと
+- [ ] 既存の`confirmBooking`・`expirePendingBookings`が、この変更後も従来どおり
+      動作すること（特にCONFIRMED→CANCELLED追加後もPENDING→CONFIRMED/EXPIREDの
+      既存挙動が壊れていないこと）
 
 Phase 0のゲート確認（スペースマーケットとの同一Calendar共存の実環境確認）は
 Issue #267で完了（PASS, 2026-09-19）。確認手順・記録は
