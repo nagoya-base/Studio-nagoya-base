@@ -61,10 +61,26 @@ function handleGetAvailability_(params) {
     return { success: false, error: validationError };
   }
 
+  /*
+   * 過去日はCalendarへ問い合わせる前にfail-closedに拒否する（2回目レビュー指摘対応）。
+   * BookingAvailability.getAvailability内でも同じ判定を行うため二重の安全網になるが、
+   * ここで先に弾くことで過去日リクエストの無駄なCalendar API呼び出しを避ける。
+   * todayString算出はBookingAvailability.formatDateInTimezone（共通ヘルパー）を再利用し、
+   * 判定ロジック自体を重複実装しない。receivedAtはこの後のgetAvailability呼び出しにも
+   * そのまま渡し、同一リクエスト内で「現在時刻」が呼び出しごとにぶれないようにする。 */
+  var receivedAt = new Date();
+  var todayString = BookingAvailability.formatDateInTimezone(receivedAt, config.timezone);
+  if (!todayString) {
+    return { success: false, error: { code: 'INVALID_CONFIG', message: '営業時間・予約ルールの設定が正しくありません。' } };
+  }
+  if (request.date < todayString) {
+    return { success: false, error: { code: 'INVALID_DATE', message: '過去の日付は指定できません。' } };
+  }
+
   var calendarId = BookingConfig.getCalendarId();
   var busyIntervals = CalendarRepository.getBusyIntervalsForDate(calendarId, request.date, config.timezone);
 
-  return BookingAvailability.getAvailability(request, busyIntervals, config);
+  return BookingAvailability.getAvailability(request, busyIntervals, config, receivedAt);
 }
 
 /* 公開Web APIのため、"120abc"や"120.9"のような部分一致をparseIntで緩く受理しない。

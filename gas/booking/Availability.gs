@@ -240,6 +240,15 @@ var BookingAvailability = (function () {
       return { success: false, error: { code: 'INVALID_CONFIG', message: '営業時間・予約ルールの設定が正しくありません。' } };
     }
 
+    /*
+     * 過去日はfail-closedに拒否する（2回目レビュー指摘対応）。createBooking
+     * （Booking.validateCreateBookingInput）と同じ判定・同じerror.code/messageに揃え、
+     * API間で意味を統一する。当日・翌日以降の判定はこの下で従来どおり行う。
+     */
+    if (date < todayString) {
+      return { success: false, error: { code: 'INVALID_DATE', message: '過去の日付は指定できません。' } };
+    }
+
     var minimumStartMinutes = null;
     if (date === todayString) {
       minimumStartMinutes = getCurrentMinutesInTimezone(receivedAt, config.timezone);

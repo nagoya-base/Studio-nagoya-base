@@ -235,3 +235,28 @@ test('doGet: 実行時の現在日付と一致しない固定日付を指定し�
   assert.strictEqual(body.success, true);
   assert.ok(body.bookableStartTimes.indexOf('08:00') !== -1);
 });
+
+/*
+ * 過去日はINVALID_DATEで拒否し、bookableStartTimesを返さない（2回目レビュー指摘対応）。
+ * doGet（Code.gs）はnowを注入できないため、実行時の実時刻を基準に「確実に過去」と
+ * 言える日付（2020-01-01固定）を使う。handleGetAvailability_がCalendarを取得する前に
+ * 拒否することも、Calendar呼び出し有無を検知するスタブで併せて確認する。
+ */
+test('doGet: 過去日はINVALID_DATEで拒否し、bookableStartTimesを返さない。Calendar取得前に拒否する（handleGetAvailability_のCalendar呼び出し前チェック）', function () {
+  var calendarQueried = false;
+  var calendarsById = {
+    cal1: {
+      get events() {
+        calendarQueried = true;
+        return [];
+      }
+    }
+  };
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, calendarsById);
+  var body = callDoGet(sandbox, { date: '2020-01-01', durationMinutes: '120', brand: 'snb' });
+
+  assert.strictEqual(body.success, false);
+  assert.strictEqual(body.error.code, 'INVALID_DATE');
+  assert.strictEqual(body.bookableStartTimes, undefined);
+  assert.strictEqual(calendarQueried, false, '過去日はCalendarへ問い合わせる前に拒否するべき');
+});

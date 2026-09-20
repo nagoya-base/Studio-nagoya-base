@@ -266,6 +266,19 @@ test('getAvailability: 当日（now基準）は現在時刻以前の開始時刻
   assert.ok(tomorrow.bookableStartTimes.indexOf('08:00') !== -1, '翌日は現在時刻に関わらず従来どおり08:00から候補が出るべき');
 });
 
+test('getAvailability: 過去日（date < today）はINVALID_DATEでfail-closedに拒否する（2回目レビュー指摘対応。createBooking側と同じerror.code/messageに統一）', function () {
+  var BookingAvailability = loadAvailability();
+  var result = BookingAvailability.getAvailability(
+    { date: '2026-09-30', durationMinutes: 120 },
+    [],
+    DEFAULT_CONFIG,
+    NOW_JST_1007
+  );
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'INVALID_DATE');
+  assert.strictEqual(result.error.message, '過去の日付は指定できません。');
+});
+
 test('getAvailability: nowを省略した場合は現在時刻を使う（デフォルト引数。過去の固定日付では当日フィルタが働かず従来どおり全候補になる）', function () {
   var BookingAvailability = loadAvailability();
   var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], DEFAULT_CONFIG);

@@ -207,10 +207,18 @@ brand文字列・prefix・表示名は`Booking.gs`の`ALLOWED_BOOKING_BRANDS` /
   `Booking.formatDateInTimezone`として薄いエイリアスを公開する）。
   `computeBookableStartTimes`に第4引数`minimumStartMinutes`（省略可）を追加し、
   指定した場合はそれ以前（ちょうど含む）の候補を除外する。`getAvailability`自体も
-  第4引数`now`（省略時は現在時刻）を受け取り、利用日が当日の場合だけ
-  `getCurrentMinutesInTimezone`で現在時刻を求めて`minimumStartMinutes`として渡す
-  （**customerTypeルールはgetAvailabilityに一切持ち込まない**。当日+初回利用の
-  可否判定は引き続き`createBooking`のみの責務）。
+  第4引数`now`（省略時は現在時刻）を受け取り、`todayString`算出直後に
+  **過去日（`date < todayString`）を`INVALID_DATE`で拒否**するようにした
+  （2回目レビュー指摘対応。それまでは当日の現在時刻フィルタのみで、過去日自体は
+  拒否していなかった）。利用日が当日の場合だけ`getCurrentMinutesInTimezone`で
+  現在時刻を求めて`minimumStartMinutes`として渡す（**customerTypeルールは
+  getAvailabilityに一切持ち込まない**。当日+初回利用の可否判定は引き続き
+  `createBooking`のみの責務）。
+- **`Code.gs`**: `handleGetAvailability_`に、Calendarへ問い合わせる前の過去日拒否を
+  追加した（`BookingAvailability.formatDateInTimezone`を再利用し、判定ロジックを
+  重複実装しない）。`BookingAvailability.getAvailability`内でも同じ判定を行うため
+  二重の安全網になるが、過去日リクエストで不要なCalendar API呼び出しを避けるための
+  追加（2回目レビュー指摘対応）。
 - **`Booking.gs`**: `CUSTOMER_TYPES` / `ALLOWED_CUSTOMER_TYPES` /
   `isAllowedCustomerType` / `getCustomerTypeLabel`を追加。
   `validateCreateBookingInput`に`customerType`の必須検証（未指定・未知の値は
@@ -251,11 +259,17 @@ brand文字列・prefix・表示名は`Booking.gs`の`ALLOWED_BOOKING_BRANDS` /
 当日は「利用経験あり」であっても、開始時刻が現在時刻より後であることを必須とする
 （現在時刻ちょうども不可）。判定は`availabilityConfig.timezone`（既定`Asia/Tokyo`）
 基準で行い、ブラウザのtimezone・GAS実行環境timezoneのいずれにも依存しない。
+過去日（`date < today`）はgetAvailability・createBookingの両方で`INVALID_DATE`
+として拒否する（2回目レビュー指摘対応。判定ルールのまとめ:
+`date < today` → `INVALID_DATE` / `date === today` → 現在時刻より後の候補・開始時刻のみ許可
+/ `date > today` → 従来どおり）。
 
-- `getAvailability`: 利用日が当日の場合だけ、`getCurrentMinutesInTimezone`で
-  求めた現在時刻（分）より後の候補開始時刻のみを返す（`computeBookableStartTimes`の
-  `minimumStartMinutes`）。例: JST 10:07に問い合わせた場合、09:00・10:00は候補に
-  出ず、10:15・10:30はCalendar競合がなければ候補に出る。
+- `getAvailability`: 過去日は`INVALID_DATE`で拒否する（`handleGetAvailability_`
+  （`Code.gs`）でも同じ判定を行い、過去日はCalendarへ問い合わせる前に拒否する）。
+  利用日が当日の場合だけ、`getCurrentMinutesInTimezone`で求めた現在時刻（分）より
+  後の候補開始時刻のみを返す（`computeBookableStartTimes`の`minimumStartMinutes`）。
+  例: JST 10:07に問い合わせた場合、09:00・10:00は候補に出ず、10:15・10:30は
+  Calendar競合がなければ候補に出る。
 - `createBooking`: Calendar書き込み前の`validateCreateBookingInput`で同じ判定を
   必ず再検証する。フロントの`getAvailability`が過去時刻を除外していても、
   フロント改変や、空き取得から送信までの間に時刻が経過したケースに備え、
@@ -631,16 +645,24 @@ Spreadsheetを参照してしまう）。
 ## API仕様
 
 ### `GET ?date=YYYY-MM-DD&durationMinutes=120&brand=studio_x`（getAvailability。
-#266から拡張、Issue #270レビュー対応で「当日の過去開始時刻を除外」を追加）
+#266から拡張、Issue #270レビュー対応で「過去日の拒否」「当日の過去開始時刻を除外」を追加）
 
 `brand`には`snb` / `mens` / `studio_x`のいずれかを指定できる（getAvailabilityは元から
 brandで判定を分岐させないため、この値は表示・流入元識別以外に使われない）。
 `customerType`はgetAvailabilityの入力・応答のいずれにも登場しない（当日+初回利用の
 可否判定は`createBooking`のみの責務。「当日の過去開始時刻を防ぐ」参照）。
 
-`date`が当日（`Asia/Tokyo`基準）の場合、`bookableStartTimes`には現在時刻より後の
-開始時刻のみを含める（現在時刻ちょうども除外）。翌日以降は現在時刻に関わらず
-従来どおり全候補を返す。
+`date`は`Asia/Tokyo`基準の「今日」（`today`）と比較する:
+
+- `date < today` → `INVALID_DATE`（`過去の日付は指定できません。`）で拒否する。
+  `handleGetAvailability_`（`Code.gs`）でも同じ判定を行い、過去日はCalendarへ
+  問い合わせる前に拒否する（不要なCalendar API呼び出しを避けるため。
+  `BookingAvailability.getAvailability`内でも同じ判定を行うため二重の安全網になる）
+- `date === today` → `bookableStartTimes`には現在時刻より後の開始時刻のみを含める
+  （現在時刻ちょうども除外）
+- `date > today` → 現在時刻に関わらず従来どおり全候補を返す
+
+`createBooking`の`INVALID_DATE`（過去日拒否）と同じerror.code・同じメッセージで統一する。
 
 成功時：
 
@@ -1075,10 +1097,14 @@ Issue #270で追加・更新:
   候補を除外し翌日以降は従来どおり全候補を返すこと、`now`省略時のデフォルト、
   `getAvailability`の応答にcustomerType関連キーが一切含まれないこと、
   `getCurrentMinutesInTimezone`/`formatDateInTimezone`の不正timezoneのfail-closedを追加
-  （Issue #270レビュー対応）
+  （Issue #270レビュー対応）。**2回目レビュー対応で追加**: `getAvailability`が
+  過去日（`date < today`）を`INVALID_DATE`（`過去の日付は指定できません。`）で
+  拒否すること
 - `test/booking-code-runtime.test.js`（更新） — doGetの配線が当日フィルタ追加後も
   壊れていないこと（実行時の現在日付と一致しない固定日付では従来どおり全候補が
-  返ること）を追加
+  返ること）を追加。**2回目レビュー対応で追加**: doGetに過去日を指定すると
+  `INVALID_DATE`を返し`bookableStartTimes`を含まないこと、かつCalendarへ
+  問い合わせる前に拒否すること（`handleGetAvailability_`のCalendar呼び出し前チェック）
 - `test/booking-config.test.js`（更新） — `getTtlConfig()`の既定値
   （`minHoldHours`/`timezone`を含む）、`PENDING_TTL_MIN_HOLD_HOURS`の
   Script Properties上書き・誤設定時のフォールバックを追加
