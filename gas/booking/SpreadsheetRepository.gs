@@ -157,12 +157,45 @@ var SpreadsheetRepository = (function () {
     return found.rowNumber;
   }
 
+  /*
+   * bookingIdの行全体を1回のsetValuesで更新する（Issue #272 PRレビュー対応）。
+   * updateBookingFieldsはfieldsのキーごとに個別のgetRange().setValues()を順番に
+   * 実行するため、複数フィールドを同時に更新する途中で例外が起きると部分更新
+   * （例: statusだけCANCELLEDになりcancelledAtが空のまま）になり得る。呼び出し元が
+   * 複数フィールドを必ず一貫して更新したい場合（cancelBookingAdminのstatus/
+   * cancelledAt/updatedAt等）は、この関数で行全体を1回のSpreadsheet書き込みに
+   * まとめること。bookingIdが見つからない・未知のフィールド名の場合の挙動は
+   * updateBookingFieldsと同じ（例外を投げる）。
+   */
+  function updateBookingFieldsAtomic(bookingId, fields) {
+    var found = findRowByBookingId(bookingId);
+    if (!found) {
+      throw new Error('bookingIdが見つかりません: ' + bookingId);
+    }
+
+    var updatedRecord = {};
+    HEADERS_.forEach(function (header) {
+      updatedRecord[header] = found.record[header];
+    });
+    Object.keys(fields).forEach(function (key) {
+      if (HEADERS_.indexOf(key) === -1) {
+        throw new Error('未知のbookingフィールドです: ' + key);
+      }
+      updatedRecord[key] = fields[key];
+    });
+
+    var sheet = ensureBookingsSheet_();
+    sheet.getRange(found.rowNumber, 1, 1, HEADERS_.length).setValues([recordToRow_(updatedRecord)]);
+    return found.rowNumber;
+  }
+
   return {
     HEADERS: HEADERS_,
     appendBooking: appendBooking,
     findRowByBookingId: findRowByBookingId,
     getAllPendingBookings: getAllPendingBookings,
     getConfirmedBookingsForDate: getConfirmedBookingsForDate,
-    updateBookingFields: updateBookingFields
+    updateBookingFields: updateBookingFields,
+    updateBookingFieldsAtomic: updateBookingFieldsAtomic
   };
 })();

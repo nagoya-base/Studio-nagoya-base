@@ -592,7 +592,39 @@ var BookingRepository = (function () {
     }
 
     var calendarId = BookingConfig.getCalendarId();
-    var event = CalendarRepository.getEventById(calendarId, record.calendarEventId);
+    var event;
+    try {
+      event = CalendarRepository.getEventById(calendarId, record.calendarEventId);
+    } catch (lookupError) {
+      /*
+       * getEventById()はイベントが無い場合はnullを返すが、CALENDAR_ID不正・Calendar
+       * アクセス障害等では例外を投げる（PRレビュー対応）。この例外を捕捉せずに
+       * 抜けると、Lockはfinallyで解除されるものの、Recoveryに何も記録されず
+       * 部分失敗が追跡できなくなる。Sheets/Calendarのいずれも変更せず、メールも
+       * 送らずにfail-closedで返す。
+       */
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CANCEL_CALENDAR_LOOKUP_FAILED',
+          occurredAt: new Date(),
+          calendarEventId: record.calendarEventId,
+          status: record.status,
+          errorMessage: BookingMailer.sanitizeErrorMessage(describeError_(lookupError)),
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return {
+        response: {
+          success: false,
+          error: { code: 'CANCEL_CALENDAR_LOOKUP_FAILED', message: 'Calendarの予約状態を確認できませんでした。Recoveryシートを確認してください。' }
+        },
+        shouldTryMail: false
+      };
+    }
 
     if (!event) {
       /*
@@ -660,7 +692,16 @@ var BookingRepository = (function () {
   function finalizeCancelledSheetsUpdate_(bookingId, record, calendarAlreadyMissing) {
     var now = new Date();
     try {
-      SpreadsheetRepository.updateBookingFields(bookingId, {
+      /*
+       * status/cancelledAt/updatedAtの3項目は必ず1回のSpreadsheet書き込みで反映する
+       * （PRレビュー対応）。updateBookingFieldsのようにフィールドごとに個別書き込みすると、
+       * 途中で例外が起きた場合にstatusだけCANCELLEDになりcancelledAtが空、という
+       * 部分更新が起こり得る。部分更新が起きると、次回再実行時にstatus===CANCELLEDの
+       * 分岐（二重実行の冪等処理）へ入ってしまい、空のままのcancelledAt/updatedAtを
+       * 修復する経路が無くなるため、この関数では単一書き込みのupdateBookingFieldsAtomic
+       * を使う。
+       */
+      SpreadsheetRepository.updateBookingFieldsAtomic(bookingId, {
         status: Booking.STATUS.CANCELLED,
         cancelledAt: now,
         updatedAt: now
@@ -726,7 +767,31 @@ var BookingRepository = (function () {
 
     var calendarId = BookingConfig.getCalendarId();
     var timezone = BookingConfig.getAvailabilityConfig().timezone;
-    var matches = CalendarRepository.findBookingEventsByBookingId(calendarId, bookingId, dateString, timezone);
+    var matches;
+    try {
+      matches = CalendarRepository.findBookingEventsByBookingId(calendarId, bookingId, dateString, timezone);
+    } catch (lookupError) {
+      /* 診断自体のCalendar走査が失敗した場合も、生例外で処理を抜けずRecoveryへ記録する
+         （PRレビュー対応）。Calendarは変更しない。 */
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED',
+          occurredAt: new Date(),
+          calendarEventId: '',
+          status: '',
+          errorMessage: BookingMailer.sanitizeErrorMessage(describeError_(lookupError)),
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return {
+        success: false,
+        error: { code: 'CANCEL_DIAGNOSTIC_FAILED', message: 'Calendarの診断中にエラーが発生しました。Recoveryシートを確認してください。' }
+      };
+    }
 
     if (matches.length === 1) {
       try {

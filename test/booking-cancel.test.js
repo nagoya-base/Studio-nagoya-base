@@ -129,6 +129,11 @@ test('cancelBookingAdmin: PENDING → CANCELLEDへ遷移し、Calendarイベン�
   assert.strictEqual(found.record.status, 'CANCELLED');
   assert.ok(stubs.isDateLike(found.record.cancelledAt));
   assert.ok(stubs.isDateLike(found.record.updatedAt));
+  assert.strictEqual(
+    found.record.cancelledAt.getTime(),
+    found.record.updatedAt.getTime(),
+    'status/cancelledAt/updatedAtは同一nowを使った1回の書き込みで反映されるため、cancelledAtとupdatedAtは同じDate値になる（PRレビュー対応）'
+  );
   assert.strictEqual(activeEventCount(ctx), 0, 'Calendarイベントは削除されている');
 });
 
@@ -306,6 +311,35 @@ test('cancelBookingAdmin: Calendarイベントが既に存在しない場合、R
   assert.strictEqual(recovered[0].recoveryState, 'OPEN');
 });
 
+/* ---------- Calendar読み取り失敗（PRレビュー対応。イベントが無いのではなく例外） ---------- */
+
+test('cancelBookingAdmin: CalendarRepository.getEventById自体が例外を投げた場合、success:falseでrecoveryへCANCEL_CALENDAR_LOOKUP_FAILEDを記録し、Sheets/Calendar/メールのいずれも変更しない', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+  ctx.globals.MailApp._sentEmails.length = 0; /* createPending自体が送るPENDINGメール分をリセットする */
+
+  ctx.sandbox.CalendarRepository.getEventById = function () {
+    throw new Error('simulated calendar lookup failure');
+  };
+
+  var result = ctx.sandbox.cancelBookingAdmin(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'CANCEL_CALENDAR_LOOKUP_FAILED');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'PENDING', 'Calendar読み取り自体が失敗したためSheetsは元statusのまま');
+  assert.strictEqual(found.record.cancelledAt, '');
+  assert.strictEqual(activeEventCount(ctx), 1, 'Calendar削除は試みない（読み取りで例外が起きているため）');
+  assert.strictEqual(ctx.globals.MailApp._sentEmails.length, 0, 'メールも送らない');
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].failureType, 'CANCEL_CALENDAR_LOOKUP_FAILED');
+  assert.strictEqual(recovered[0].recoveryState, 'OPEN');
+  assert.strictEqual(recovered[0].status, 'PENDING');
+  assert.match(recovered[0].errorMessage, /simulated calendar lookup failure/);
+});
+
 /* ---------- Calendar削除失敗 ---------- */
 
 test('cancelBookingAdmin: Calendarイベント削除自体が失敗した場合、Sheetsは元statusのまま進めず、メールも送らずrecoveryへ記録する', function () {
@@ -335,14 +369,15 @@ test('cancelBookingAdmin: Calendarイベント削除自体が失敗した場合�
 
 /* ---------- Calendar削除成功 → Sheets更新失敗 ---------- */
 
-test('cancelBookingAdmin: Calendar削除成功・Sheets更新失敗の場合はrecoveryへ記録し、Sheets側は元statusのまま残す。メールも送らない', function () {
+test('cancelBookingAdmin ケースA: atomic write失敗時はrecoveryへ記録し、Sheets側は元statusのまま・cancelledAt空・updatedAtも元値のまま残す。メールも送らない', function () {
   var ctx = setup();
   var bookingId = createPending(ctx);
   ctx.globals.MailApp._sentEmails.length = 0; /* createPending自体が送るPENDINGメール分をリセットする */
+  var beforeUpdatedAt = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.updatedAt;
 
-  var originalUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function () {
-    throw new Error('simulated sheets update failure');
+  var originalUpdateAtomic = ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic = function () {
+    throw new Error('simulated atomic sheets update failure');
   };
 
   var result = ctx.sandbox.cancelBookingAdmin(bookingId);
@@ -352,36 +387,43 @@ test('cancelBookingAdmin: Calendar削除成功・Sheets更新失敗の場合はr
   assert.strictEqual(activeEventCount(ctx), 0, 'Calendar側は削除済みのはず');
   assert.strictEqual(ctx.globals.MailApp._sentEmails.length, 0, 'Sheets更新が失敗しているためメールは送らない');
 
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields = originalUpdate;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic = originalUpdateAtomic;
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
-  assert.strictEqual(found.record.status, 'PENDING', 'Sheets更新に失敗したためstatusは更新前のまま残る（Calendar削除済みとの不整合）');
+  assert.strictEqual(found.record.status, 'PENDING', 'atomic write失敗のためstatusは更新前のまま残る（Calendar削除済みとの不整合）');
+  assert.strictEqual(found.record.cancelledAt, '', 'atomic write自体が失敗しているためcancelledAtは空のまま');
+  assert.strictEqual(found.record.updatedAt, beforeUpdatedAt, 'atomic write自体が失敗しているためupdatedAtも元値のまま（部分更新が起きない）');
 
   var recovered = ctx.sandbox.RecoveryRepository.listAll();
   assert.strictEqual(recovered.length, 1);
   assert.strictEqual(recovered[0].failureType, 'CANCEL_SHEETS_UPDATE_FAILED_CALENDAR_REMOVED');
   assert.strictEqual(recovered[0].recoveryState, 'OPEN');
   assert.strictEqual(recovered[0].status, 'PENDING', 'Recovery.statusはSheetsに残っている現在statusを記録する');
-  assert.match(recovered[0].errorMessage, /simulated sheets update failure/);
+  assert.match(recovered[0].errorMessage, /simulated atomic sheets update failure/);
 });
 
-test('cancelBookingAdmin: CANCEL_SHEETS_UPDATE_FAILED_CALENDAR_REMOVED後、Sheets障害が解消してから再実行すると、Calendarは既に無い経路からSheetsがCANCELLEDへ収束する', function () {
+test('cancelBookingAdmin ケースB: ケースAの障害解消後に再実行すると、Calendarは既に無い経路からSheetsがCANCELLED・cancelledAt・updatedAtへ収束し、キャンセルメールも送信される', function () {
   var ctx = setup();
   var bookingId = createPending(ctx);
+  ctx.globals.MailApp._sentEmails.length = 0;
 
-  var originalUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function () {
-    throw new Error('simulated sheets update failure');
+  var originalUpdateAtomic = ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic = function () {
+    throw new Error('simulated atomic sheets update failure');
   };
   var first = ctx.sandbox.cancelBookingAdmin(bookingId);
   assert.strictEqual(first.success, false);
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields = originalUpdate; /* 障害解消をシミュレート */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic = originalUpdateAtomic; /* 障害解消をシミュレート */
 
   var second = ctx.sandbox.cancelBookingAdmin(bookingId);
   assert.strictEqual(second.success, true, '再実行時にSheets保存が復旧していれば正しくCANCELLEDへ進むべき');
   assert.strictEqual(second.calendarAlreadyMissing, true, 'Calendarは1回目の実行で既に削除済みのため、2回目はこの経路から収束する');
+  assert.strictEqual(second.mailSent, true, '収束時にキャンセルメールも送信される');
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.strictEqual(found.record.status, 'CANCELLED');
+  assert.ok(stubs.isDateLike(found.record.cancelledAt), '収束時にcancelledAtが設定される');
+  assert.ok(stubs.isDateLike(found.record.updatedAt), '収束時にupdatedAtも設定される');
+  assert.strictEqual(ctx.globals.MailApp._sentEmails.length, 1);
 
   var recovered = ctx.sandbox.RecoveryRepository.listAll();
   var failureTypes = [];
@@ -462,6 +504,29 @@ test('cancelBookingAdmin: bookingId形式が不正で日付を復元できない
   var recovered = ctx.sandbox.RecoveryRepository.listAll();
   assert.strictEqual(recovered.length, 1);
   assert.strictEqual(recovered[0].failureType, 'CANCEL_BOOKING_NOT_FOUND');
+});
+
+test('cancelBookingAdmin: Sheets行なし診断中にfindBookingEventsByBookingId自体が例外を投げた場合、CANCEL_DIAGNOSTIC_FAILEDを返しCANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILEDをrecoveryへ記録する。Calendarは変更しない', function () {
+  var ctx = setup();
+  var date = futureDateJst_(103);
+  var bookingId = 'SX-' + date.replace(/-/g, '') + '-DEADBEEF';
+
+  ctx.sandbox.CalendarRepository.findBookingEventsByBookingId = function () {
+    throw new Error('simulated diagnostic calendar lookup failure');
+  };
+
+  var result = ctx.sandbox.cancelBookingAdmin(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'CANCEL_DIAGNOSTIC_FAILED');
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].failureType, 'CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED');
+  assert.strictEqual(recovered[0].recoveryState, 'OPEN');
+  assert.strictEqual(recovered[0].calendarEventId, '');
+  assert.strictEqual(recovered[0].status, '');
+  assert.match(recovered[0].errorMessage, /simulated diagnostic calendar lookup failure/);
+  assert.strictEqual(activeEventCount(ctx), 0, '診断そのものが失敗しているためCalendarには何も作られていない');
 });
 
 /* ---------- confirm / expireとの競合 ---------- */

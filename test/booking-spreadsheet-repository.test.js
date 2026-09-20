@@ -93,6 +93,48 @@ test('updateBookingFields: 未知のフィールド名は例外を投げる（st
   });
 });
 
+/*
+ * updateBookingFieldsAtomic（Issue #272 PRレビュー対応）: 複数フィールドを1回のsetValuesで
+ * 更新する。cancelBookingAdminのstatus/cancelledAt/updatedAtのように、途中で例外が起きると
+ * 部分更新になってはいけない呼び出し元向け。
+ */
+test('updateBookingFieldsAtomic: 複数フィールドを1回の書き込みで更新し、他のフィールドは変化しない', function () {
+  var sandbox = loadRepos();
+  sandbox.SpreadsheetRepository.appendBooking(sampleRecord());
+
+  var cancelledAt = new Date('2026-10-01T09:00:00+09:00');
+  sandbox.SpreadsheetRepository.updateBookingFieldsAtomic('SX-20261001-AAAAAAAA', {
+    status: 'CANCELLED',
+    cancelledAt: cancelledAt,
+    updatedAt: cancelledAt
+  });
+
+  var found = sandbox.SpreadsheetRepository.findRowByBookingId('SX-20261001-AAAAAAAA');
+  assert.strictEqual(found.record.status, 'CANCELLED');
+  assert.strictEqual(found.record.cancelledAt.getTime(), cancelledAt.getTime());
+  assert.strictEqual(found.record.updatedAt.getTime(), cancelledAt.getTime());
+  assert.strictEqual(found.record.name, '山田太郎', '更新対象外のフィールドは変化しない');
+});
+
+test('updateBookingFieldsAtomic: 存在しないbookingIdは例外を投げる（書き込み自体を行わない）', function () {
+  var sandbox = loadRepos();
+  assert.throws(function () {
+    sandbox.SpreadsheetRepository.updateBookingFieldsAtomic('NOT-EXIST', { status: 'CANCELLED' });
+  });
+});
+
+test('updateBookingFieldsAtomic: 未知のフィールド名は例外を投げ、行自体を書き換えない', function () {
+  var sandbox = loadRepos();
+  sandbox.SpreadsheetRepository.appendBooking(sampleRecord());
+
+  assert.throws(function () {
+    sandbox.SpreadsheetRepository.updateBookingFieldsAtomic('SX-20261001-AAAAAAAA', { unknownField: 'x' });
+  });
+
+  var found = sandbox.SpreadsheetRepository.findRowByBookingId('SX-20261001-AAAAAAAA');
+  assert.strictEqual(found.record.status, 'PENDING', '例外発生時は行を書き換えない（HEADERS_検証をsetValues呼び出し前に行うため）');
+});
+
 test('getAllPendingBookings: PENDINGの行のみ抽出する', function () {
   var sandbox = loadRepos();
   sandbox.SpreadsheetRepository.appendBooking(sampleRecord({ bookingId: 'SX-1', status: 'PENDING' }));

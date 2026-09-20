@@ -75,6 +75,12 @@ var RecoveryRepository = (function () {
    * - CANCEL_MULTIPLE_CALENDAR_EVENTS_FOUND（Issue #272）: 同上でCalendarに複数件見つかった
    * - CANCEL_BOOKING_NOT_FOUND（Issue #272）: Sheets行が無く、Calendarにも該当イベントが
    *   見つからない（またはbookingId形式が不正で診断自体をスキップした）
+   * - CANCEL_CALENDAR_LOOKUP_FAILED（Issue #272 PRレビュー対応）: cancelBookingAdmin時に
+   *   CalendarRepository.getEventById自体が例外を投げた（イベントが無いのではなく、
+   *   CALENDAR_ID不正・Calendarアクセス障害等。Sheets/Calendarとも変更しない）
+   * - CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED（Issue #272 PRレビュー対応）: Sheets行が
+   *   無い場合の診断中にCalendarRepository.findBookingEventsByBookingId自体が例外を
+   *   投げた（診断そのものが失敗。Calendarは変更しない）
    */
   function recordFailure(record) {
     var sheet = ensureRecoverySheet_();

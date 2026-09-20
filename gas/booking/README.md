@@ -745,6 +745,18 @@ return { success: true, bookingId, status: 'CANCELLED' }
 二重実行時（既に`CANCELLED`）は`cancelledAt`を上書きしない（最初にキャンセルが成立した
 日時を保持する）。
 
+**この3項目は必ず1回のSpreadsheet書き込みで反映する**（PRレビュー対応）。既存の
+`SpreadsheetRepository.updateBookingFields`はフィールドごとに`getRange().setValues()`を
+個別に呼ぶため、複数フィールドを更新する途中で例外が起きると、例えば`status`だけ
+`CANCELLED`になり`cancelledAt`が空のまま、という部分更新が起こり得る。部分更新が
+起きると、次回再実行時に`record.status === 'CANCELLED'`の分岐（二重実行の冪等処理）へ
+入ってしまい、空のままの`cancelledAt`/`updatedAt`を修復する経路が無くなってしまう。
+そのため`cancelBookingAdmin`は専用の`SpreadsheetRepository.updateBookingFieldsAtomic
+(bookingId, fields)`を使う。この関数は対象行の現在値を読み込み、指定フィールドだけ
+マージした行全体を`getRange(rowNumber, 1, 1, HEADERS_.length).setValues([...])`で
+**1回だけ**書き込む（既存の`updateBookingFields`・`confirmBooking`/
+`expirePendingBookings`の呼び出し方は変更していない）。
+
 ### 既にCANCELLEDの場合（冪等性）
 
 最新Sheets statusが`CANCELLED`の場合:
@@ -761,11 +773,25 @@ return { success: true, bookingId, status: 'CANCELLED' }
 `success: false, error.code: 'INVALID_TRANSITION'`を返し、Calendar/Sheets/メールのいずれも
 変更しない。
 
+### Calendarの読み取り自体が失敗した場合（PRレビュー対応）
+
+`CalendarRepository.getEventById(calendarId, record.calendarEventId)`は、イベントが
+無い場合は`null`を返すが、`CALENDAR_ID`不正・Calendarアクセス障害等では**例外を
+投げる**。この2つは区別しなければならない。この呼び出し自体を`try/catch`し、例外の
+場合は以下のように扱う（当初の実装ではここが未catchで、Lockはfinallyで解除される
+ものの`Recovery`に何も残らないまま抜けていた）。
+
+- `Recovery`へ`failureType: 'CANCEL_CALENDAR_LOOKUP_FAILED'`, `recoveryState: 'OPEN'`で記録
+  （`errorMessage`は`BookingMailer.sanitizeErrorMessage`を通す）
+- Sheets/Calendarのいずれも変更しない（Calendar削除を試みない）
+- キャンセルメールは送らない
+- `success: false, error.code: 'CANCEL_CALENDAR_LOOKUP_FAILED'`を返す
+
 ### Calendarイベントが既に存在しない場合
 
-SheetsはPENDING/CONFIRMEDだが`CalendarRepository.getEventById`が`null`を返す場合、
-Calendar側は既に非占有（＝枠は既に空いている）とみなし、**キャンセル処理を収束させる**
-方向で扱う。
+`getEventById`が例外を投げずに`null`を返した場合（＝SheetsはPENDING/CONFIRMEDだが
+対応するCalendarイベントが本当に存在しない場合）、Calendar側は既に非占有
+（＝枠は既に空いている）とみなし、**キャンセル処理を収束させる**方向で扱う。
 
 1. `Recovery`へ`failureType: 'CANCEL_CALENDAR_EVENT_MISSING'`, `recoveryState: 'OPEN'`で記録
 2. SheetsをCANCELLEDへ更新（`cancelledAt`/`updatedAt`を記録）
@@ -790,14 +816,21 @@ Calendar側は削除済み（枠は空き）だが、Sheets側がPENDING/CONFIRM
 最も重要な部分失敗ケース。**Calendarイベントを無理に再作成して補償しない**
 （再作成するとeventIdが変わり、Sheets更新障害中に書き戻せず、二次的不整合を増やすため）。
 
+「Sheets側がPENDING/CONFIRMEDのまま更新できない」とは、`updateBookingFieldsAtomic`
+（前述「cancelledAt / updatedAt」参照）の**1回の書き込みそのもの**が失敗すること。
+`status`だけ更新できて`cancelledAt`が空、という中途半端な状態にはならない
+（1回の`setValues`が成功するか、行がまったく変化しないかのどちらかしかない）。
+
 - `Recovery`へ`failureType: 'CANCEL_SHEETS_UPDATE_FAILED_CALENDAR_REMOVED'`,
   `recoveryState: 'OPEN'`（`status`はSheetsに残っている現在status）で記録
 - キャンセルメールは送らない
 - `success: false, error.code: 'CANCEL_SAVE_FAILED'`を返す
 - **次回同じbookingIdで`cancelBookingAdmin`を再実行すれば**、Calendarは既に無いため
   「Calendarイベントが既に存在しない場合」の経路からSheetsがCANCELLEDへ収束する
-  （`test/booking-cancel.test.js`の障害分離テストで、再実行によりCANCELLEDへ収束すること・
-  2回目の実行で`CANCEL_CALENDAR_EVENT_MISSING`が追加記録されることの両方を検証済み）
+  （`test/booking-cancel.test.js`のケースA/B（障害分離テスト）で、1回目の失敗時に
+  `status`/`cancelledAt`/`updatedAt`がいずれも書き込み前の値のまま残ること、
+  再実行によりCANCELLEDへ収束すること・2回目の実行で`CANCEL_CALENDAR_EVENT_MISSING`が
+  追加記録されることをそれぞれ検証済み）
 
 ### Recovery記録自体の失敗
 
@@ -822,12 +855,17 @@ Calendarイベントのうち`event.getTag('bookingId') === bookingId`で一致�
 | 診断結果 | failureType | 挙動 |
 | --- | --- | --- |
 | bookingId形式が不正で日付を復元できない | `CANCEL_BOOKING_NOT_FOUND` | Calendar走査自体をスキップして記録 |
+| `findBookingEventsByBookingId`自体が例外を投げた（PRレビュー対応） | `CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED` | 診断そのものが失敗。Calendarは変更しない |
 | Calendarに1件だけ見つかった | `CANCEL_SHEETS_ROW_MISSING_CALENDAR_PRESENT` | `calendarEventId`を記録。**Calendarは自動削除しない**（正式台帳が無い状態で破壊的変更をするのは危険なため） |
 | Calendarに複数件見つかった | `CANCEL_MULTIPLE_CALENDAR_EVENTS_FOUND` | 同上。自動削除しない |
 | Calendarに0件 | `CANCEL_BOOKING_NOT_FOUND` | `calendarEventId`/`status`は空で記録 |
 
-いずれの診断結果でも、`cancelBookingAdmin`の戻り値は`success: false, error.code: 'NOT_FOUND'`
-になる。
+`findBookingEventsByBookingId`自体の例外（診断走査中のCalendarアクセス障害等）も
+`try/catch`し、生例外のまま処理を抜けないようにしている（当初の実装ではここも
+未catchだった）。この場合の戻り値は`success: false, error.code:
+'CANCEL_DIAGNOSTIC_FAILED'`（診断そのものの失敗であることを`NOT_FOUND`と区別する）。
+それ以外の診断結果（0/1/複数件）では、`cancelBookingAdmin`の戻り値は
+`success: false, error.code: 'NOT_FOUND'`になる。
 
 ### キャンセルメールの接続位置
 
@@ -898,20 +936,41 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 - `Booking.gs` — `ALLOWED_TRANSITIONS`へ`CONFIRMED: [STATUS.CANCELLED]`を追加
 - `BookingRepository.gs` — `cancelBookingAdmin`本体（Lock・状態遷移・部分失敗補償・
   Recovery記録・キャンセルメール接続）、`CalendarRepository.findBookingEventsByBookingId`
-  を使ったSheets行なし診断を追加
+  を使ったSheets行なし診断を追加。**PRレビュー対応で追加**: `CalendarRepository.
+  getEventById`/`findBookingEventsByBookingId`の呼び出しをそれぞれ`try/catch`し、
+  例外時は`CANCEL_CALENDAR_LOOKUP_FAILED`/`CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`
+  をRecoveryへ記録するようにした（詳細は「Calendarの読み取り自体が失敗した場合」
+  「Sheets行が存在しない場合のCalendar診断」参照）。`finalizeCancelledSheetsUpdate_`が
+  `SpreadsheetRepository.updateBookingFieldsAtomic`を使うよう変更（詳細は
+  「cancelledAt / updatedAt」参照）
 - `BookingAdmin.gs` — グローバル関数`cancelBookingAdmin(bookingId)`、メニュー2項目、
   YES/NO確認・結果表示のハンドラを追加
 - `CalendarRepository.gs` — 診断用`findBookingEventsByBookingId(calendarId, bookingId,
   dateString, timezone)`を追加（既存の`getEventById`/`deleteEventById`は変更なし）
+- `SpreadsheetRepository.gs`（**PRレビュー対応で追加**） — `updateBookingFieldsAtomic
+  (bookingId, fields)`を追加。複数フィールドを1回の`getRange().setValues()`で更新し、
+  途中の例外による部分更新（statusだけ更新されcancelledAt/updatedAtが空のまま、等）を
+  防ぐ。既存の`updateBookingFields`・列構成（`HEADERS_`）・他の関数は変更していない
+  （新しいSheets列も追加していない）
 - `RecoveryRepository.gs` — ファイル冒頭コメントへ新規failureTypeの説明を追加
   （列構成・`recordFailure`/`listAll`自体は変更なし。新しい列も追加していない）
-- `SpreadsheetRepository.gs` — **変更なし**（既存の`status`/`cancelledAt`/`updatedAt`/
-  `cancelMailSentAt`列をそのまま利用。新しいSheets列は追加していない）
-- `BookingMailer.gs` — **変更なし**（#271の`sendCancelledMailForBooking`をそのまま呼ぶだけ）
-- `test/booking-cancel.test.js`（新規） — 状態遷移・正常キャンセル・二重実行・メール失敗・
-  Calendar既に無い・Calendar削除失敗・Calendar削除成功→Sheets失敗とその再実行収束・
+- `BookingMailer.gs` — **変更なし**（#271の`sendCancelledMailForBooking`をそのまま呼ぶだけ。
+  新規failureTypeのerrorMessageサニタイズには既存の`BookingMailer.sanitizeErrorMessage`を
+  そのまま再利用した）
+- `test/booking-cancel.test.js`（新規・PRレビュー対応で追加検証） — 状態遷移・正常キャンセル・
+  二重実行・メール失敗・Calendar既に無い・Calendar削除失敗・
+  Calendar削除成功→Sheets失敗（ケースA: atomic write失敗時に`status`/`cancelledAt`/
+  `updatedAt`がいずれも書き込み前のまま残ること／ケースB: 障害解消後の再実行で収束し
+  キャンセルメールも送信されること）・cancelledAtとupdatedAtが同一書き込みで同じDate値に
+  なること（ケースC）・**Calendar読み取り自体の失敗**（`getEventById`が例外を投げた場合の
+  `CANCEL_CALENDAR_LOOKUP_FAILED`）・**Sheets行なし診断中のCalendar読み取り失敗**
+  （`findBookingEventsByBookingId`が例外を投げた場合の
+  `CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`/`CANCEL_DIAGNOSTIC_FAILED`）・
   Sheets行なし診断（0/1/複数件）・confirm/expireとの競合・Reminder対象外・管理メニュー・
   3ブランド共通を検証
+- `test/booking-spreadsheet-repository.test.js`（PRレビュー対応で追加） —
+  `updateBookingFieldsAtomic`の単体テスト（複数フィールドの単一書き込み・存在しない
+  bookingId/未知フィールド名での例外・例外時に行を書き換えないこと）
 - `test/helpers/gas-stubs.js` — `SpreadsheetApp.getUi()`スタブの`alert(message, buttonSet)`
   2引数形式（YES/NO確認ダイアログ）に対応。既存の1引数`alert(message)`呼び出しの挙動は
   変更していない
@@ -1013,18 +1072,28 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 - `BookingRepository.gs`（拡張） — 正式ロジック`cancelBookingAdmin(bookingId)`を追加
   （Lock取得→Sheets最新再読込→status確認→Calendar確認・削除→Sheets CANCELLED更新→
   Lock解除→キャンセルメールbest effort。部分失敗のRecovery記録、Sheets行なし時の
-  Calendar診断（`parseBookingDateFromId_`/`findBookingEventsByBookingId`利用）を含む）
+  Calendar診断（`parseBookingDateFromId_`/`findBookingEventsByBookingId`利用）を含む）。
+  **PRレビュー対応で追加**: `CalendarRepository.getEventById`/
+  `findBookingEventsByBookingId`の呼び出し自体の例外を`try/catch`しRecoveryへ記録
+  （`CANCEL_CALENDAR_LOOKUP_FAILED`/`CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`）。
+  Sheetsの`status`/`cancelledAt`/`updatedAt`更新は`SpreadsheetRepository.
+  updateBookingFieldsAtomic`による単一書き込みへ変更
 - `CalendarRepository.gs`（拡張） — 診断用`findBookingEventsByBookingId(calendarId,
   bookingId, dateString, timezone)`を追加（既存関数は変更なし）
 - `BookingAdmin.gs`（拡張） — グローバル関数`cancelBookingAdmin(bookingId)`、「予約管理」
   メニューへキャンセル用2項目（アクティブ行／bookingId入力）、実行直前のYES/NO確認・
   結果表示ハンドラを追加
+- `SpreadsheetRepository.gs`（拡張。**PRレビュー対応で追加**） —
+  `updateBookingFieldsAtomic(bookingId, fields)`を追加。指定した複数フィールドを
+  行全体の1回の`setValues()`で更新し、フィールドごとの個別書き込み（既存の
+  `updateBookingFields`）で起こり得る部分更新を防ぐ。列構成（`HEADERS_`）・既存関数は
+  変更していない
 - `RecoveryRepository.gs`（拡張） — ファイル冒頭コメントへ新規failureType
-  （`CANCEL_CALENDAR_EVENT_MISSING`等）の説明を追加。列構成・`recordFailure`/`listAll`
-  自体・列追加は無し
-- `SpreadsheetRepository.gs` / `BookingMailer.gs` — **変更なし**（既存の
-  `status`/`cancelledAt`/`updatedAt`/`cancelMailSentAt`列と#271の
-  `sendCancelledMailForBooking`をそのまま利用）
+  （`CANCEL_CALENDAR_EVENT_MISSING`等、および**PRレビュー対応で追加**した
+  `CANCEL_CALENDAR_LOOKUP_FAILED`/`CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`）の
+  説明を追加。列構成・`recordFailure`/`listAll`自体・列追加は無し
+- `BookingMailer.gs` — **変更なし**（既存の`sendCancelledMailForBooking`をそのまま利用。
+  新規failureTypeのerrorMessageサニタイズにも既存の`sanitizeErrorMessage`を再利用）
 
 ## GASプロジェクトへのデプロイ対象ファイル
 
@@ -1213,6 +1282,8 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 | `CANCEL_SHEETS_ROW_MISSING_CALENDAR_PRESENT`（Issue #272） | Sheets行が無いが、Calendarに対象日・bookingIdタグ一致のイベントが1件見つかった（Calendarは自動削除しない・**要手動対応**） |
 | `CANCEL_MULTIPLE_CALENDAR_EVENTS_FOUND`（Issue #272） | 同上でCalendarに複数件見つかった（**要手動対応**。Calendarは自動削除しない） |
 | `CANCEL_BOOKING_NOT_FOUND`（Issue #272） | Sheets行が無く、Calendarにも該当イベントが見つからない（またはbookingId形式が不正で診断自体をスキップした） |
+| `CANCEL_CALENDAR_LOOKUP_FAILED`（Issue #272 PRレビュー対応） | cancelBookingAdmin時に`CalendarRepository.getEventById`自体が例外を投げた（イベントが無いのではなくCALENDAR_ID不正・Calendarアクセス障害等。Sheets/Calendarとも変更しない・**要手動対応**） |
+| `CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`（Issue #272 PRレビュー対応） | Sheets行なし診断中に`findBookingEventsByBookingId`自体が例外を投げた（診断そのものが失敗。Calendarは変更しない・**要手動対応**） |
 | `MAIL_REMINDER_FAILED`（Issue #271） | 前日リマインド（来場案内含む）の送信に失敗。解錠コード等の秘密値未設定によるfail-safeな拒否もここに含む。`status`はCONFIRMEDのまま変更しない |
 
 ## 部分失敗・recoveryの確認手順（運用者向け）
@@ -1280,6 +1351,17 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
     Calendarにも該当する予約が見つからない（bookingIdの入力ミス、または既に別の方法で
     削除済みの可能性がある）。`bookingId`の入力内容を確認し、心当たりがなければ対応不要
     （記録のみで実害はない）。
+13. `failureType`が`CANCEL_CALENDAR_LOOKUP_FAILED`（Issue #272 PRレビュー対応）の場合、
+    `cancelBookingAdmin`実行時に`CalendarRepository.getEventById`自体が例外を投げている
+    （イベントが無いのではなく、`CALENDAR_ID`設定不正・Calendar APIの一時的な障害等）。
+    `Bookings`シートの`status`・Calendarはいずれも変更されていない。原因
+    （`CALENDAR_ID`の設定・Calendar APIのクォータ/権限等）を解消したうえで、同じ
+    bookingIdで再度`cancelBookingAdmin(bookingId)`を実行する。
+14. `failureType`が`CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`（Issue #272 PRレビュー対応）
+    の場合、`Bookings`シートにbookingId行が無い状態でのCalendar診断
+    （`findBookingEventsByBookingId`）自体が例外で失敗している（診断結果が0/1/複数件のいずれ
+    でもない）。Calendarは変更されていない。原因を解消したうえで、同じbookingIdで
+    再度`cancelBookingAdmin(bookingId)`を実行し、診断が正常に完了することを確認する。
 
 ## API仕様
 
@@ -1883,27 +1965,39 @@ Issue #271で追加・更新:
 
 Issue #272で追加・更新:
 
-- `test/booking-cancel.test.js`（新規） — `cancelBookingAdmin`の統合テスト。
-  状態遷移（PENDING/CONFIRMED→CANCELLED成功、EXPIREDからの拒否、
+- `test/booking-cancel.test.js`（新規・PRレビュー対応で追加検証） — `cancelBookingAdmin`の
+  統合テスト。状態遷移（PENDING/CONFIRMED→CANCELLED成功、EXPIREDからの拒否、
   `Booking.canTransition`がCONFIRMED→CANCELLEDを許可すること）、正常キャンセル
-  （Calendar削除・Sheets CANCELLED・`cancelledAt`/`updatedAt`・同時間枠が
-  `getAvailability`で再度空くこと・同時間での新規`createBooking`成功・キャンセルメール
-  1通・`cancelMailSentAt`）、二重実行時の冪等性（Calendar再削除なし・`cancelledAt`
-  上書きなし・メール二重送信なし）、キャンセルメール送信失敗時も`success:true`を維持し
-  再実行でメールだけ再試行できること、Calendarイベントが既に存在しない場合の収束
-  （`CANCEL_CALENDAR_EVENT_MISSING`・`calendarAlreadyMissing`）、Calendar削除失敗時の
-  recovery記録、Calendar削除成功→Sheets更新失敗時のrecovery記録と再実行による収束、
+  （Calendar削除・Sheets CANCELLED・`cancelledAt`/`updatedAt`が同一書き込みで同じDate値に
+  なること・同時間枠が`getAvailability`で再度空くこと・同時間での新規`createBooking`成功・
+  キャンセルメール1通・`cancelMailSentAt`）、二重実行時の冪等性（Calendar再削除なし・
+  `cancelledAt`上書きなし・メール二重送信なし）、キャンセルメール送信失敗時も
+  `success:true`を維持し再実行でメールだけ再試行できること、Calendarイベントが既に
+  存在しない場合の収束（`CANCEL_CALENDAR_EVENT_MISSING`・`calendarAlreadyMissing`）、
+  **Calendar読み取り自体が例外を投げた場合**（`getEventById`が例外→
+  `CANCEL_CALENDAR_LOOKUP_FAILED`。Sheets/Calendar/メールいずれも変更しないこと）、
+  Calendar削除失敗時のrecovery記録、**Calendar削除成功→Sheets更新失敗
+  （`updateBookingFieldsAtomic`自体の失敗）時にstatus/cancelledAt/updatedAtがいずれも
+  書き込み前のまま残ること（ケースA）、障害解消後の再実行でCalendar既に無い経路から
+  status/cancelledAt/updatedAtが収束しキャンセルメールも送信されること（ケースB）**、
   Sheets行が無い場合のCalendar診断（0/1/複数件それぞれの`failureType`と自動削除しない
-  こと）、bookingId形式不正時の扱い、`confirmBooking`/`expirePendingBookings`との
-  Lock共有・競合規則（cancel→confirmはINVALID_TRANSITION、expire→cancelは
-  INVALID_TRANSITION、confirm→cancelは成功）、CANCELLED後は`sendNextDayReminders`が
-  リマインドを送らないこと、Spreadsheet管理メニューのキャンセル導線
-  （メニュー2項目・YES/NO確認・アクティブ行/prompt入力の両方）、snb/mens/studio_xの
-  3ブランドで同一挙動になることを検証
+  こと）、**Sheets行なし診断中にCalendar走査自体が例外を投げた場合**
+  （`findBookingEventsByBookingId`が例外→`CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`・
+  `error.code: 'CANCEL_DIAGNOSTIC_FAILED'`）、bookingId形式不正時の扱い、
+  `confirmBooking`/`expirePendingBookings`とのLock共有・競合規則（cancel→confirmは
+  INVALID_TRANSITION、expire→cancelはINVALID_TRANSITION、confirm→cancelは成功）、
+  CANCELLED後は`sendNextDayReminders`がリマインドを送らないこと、Spreadsheet管理メニューの
+  キャンセル導線（メニュー2項目・YES/NO確認・アクティブ行/prompt入力の両方）、
+  snb/mens/studio_xの3ブランドで同一挙動になることを検証
 - `test/booking-confirm-expire.test.js`（更新） — `Booking.gs`の`ALLOWED_TRANSITIONS`
   変更（CONFIRMEDを終端から除外）後も、既存のconfirm/expireの状態遷移・部分失敗補償・
   recovery件数の検証が壊れていないことを確認（既存テスト自体の変更は無し。
   `node --test`全件で回帰が無いことを担保）
+- `test/booking-spreadsheet-repository.test.js`（更新。PRレビュー対応で追加） —
+  `SpreadsheetRepository.updateBookingFieldsAtomic`の単体テスト。複数フィールドを
+  1回の書き込みで更新し他フィールドは変化しないこと、存在しないbookingId/未知フィールド名
+  で例外を投げること、未知フィールド名時は行自体を書き換えないこと（`setValues`呼び出し前に
+  検証するため）を検証
 - `test/helpers/gas-stubs.js`（更新） — `SpreadsheetApp.getUi()`スタブの
   `alert(message, buttonSet)`2引数形式を追加し、`options.alertResponses`から
   `Button.YES`/`Button.NO`を順番に返せるようにした（キャンセル誤操作防止の
@@ -2028,6 +2122,11 @@ Issue #272（管理者キャンセルでCalendar / Sheetsを一貫更新する�
 - [ ] 既存の`confirmBooking`・`expirePendingBookings`が、この変更後も従来どおり
       動作すること（特にCONFIRMED→CANCELLED追加後もPENDING→CONFIRMED/EXPIREDの
       既存挙動が壊れていないこと）
+- [ ]（PRレビュー対応）`CALENDAR_ID`を一時的に不正な値へ変更した状態でキャンセルを
+      実行すると、失敗メッセージが表示され、`Recovery`シートに
+      `CANCEL_CALENDAR_LOOKUP_FAILED`が記録され、`Bookings`シートの`status`・
+      Calendarのいずれも変更されないこと（設定を元に戻してから同じbookingIdで
+      再実行すれば正常にキャンセルできること）
 
 Phase 0のゲート確認（スペースマーケットとの同一Calendar共存の実環境確認）は
 Issue #267で完了（PASS, 2026-09-19）。確認手順・記録は
