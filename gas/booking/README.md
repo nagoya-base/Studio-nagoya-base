@@ -751,11 +751,26 @@ return { success: true, bookingId, status: 'CANCELLED' }
 `CANCELLED`になり`cancelledAt`が空のまま、という部分更新が起こり得る。部分更新が
 起きると、次回再実行時に`record.status === 'CANCELLED'`の分岐（二重実行の冪等処理）へ
 入ってしまい、空のままの`cancelledAt`/`updatedAt`を修復する経路が無くなってしまう。
-そのため`cancelBookingAdmin`は専用の`SpreadsheetRepository.updateBookingFieldsAtomic
-(bookingId, fields)`を使う。この関数は対象行の現在値を読み込み、指定フィールドだけ
-マージした行全体を`getRange(rowNumber, 1, 1, HEADERS_.length).setValues([...])`で
-**1回だけ**書き込む（既存の`updateBookingFields`・`confirmBooking`/
-`expirePendingBookings`の呼び出し方は変更していない）。
+
+そのため`cancelBookingAdmin`は専用の`SpreadsheetRepository.updateBookingCancellationStateAtomic
+(bookingId, fields)`を使う。**PRレビュー2回目対応**: 当初は行全体（全29列）を
+`getRange(rowNumber, 1, 1, HEADERS_.length).setValues([...])`で1回だけ書き込む
+`updateBookingFieldsAtomic`を実装したが、これは新たな競合を生むと指摘された。
+Booking Web App（`createBooking`）とBooking Admin（`confirmBooking`/
+`expirePendingBookings`/`cancelBookingAdmin`）は別々のGASプロジェクトで
+`LockService.getScriptLock()`を共有しないため、Web App側がキャンセル処理の直前・直後に
+`pendingMailSentAt`等（21列目以降のメール関連列）を更新していた場合、Admin側が古い行
+全体を書き戻すとその更新を空値で巻き戻してしまう恐れがあった（#271はメール列のSentAtを
+二重送信防止の冪等性の基準にしているため、これは二重送信事故につながり得る）。
+
+現在の`updateBookingCancellationStateAtomic`は、`status`/`cancelledAt`/`updatedAt`の
+3項目**だけ**を、`HEADERS_`上で連続する`'status'`（13列目）〜`'updatedAt'`（20列目）の
+**8列の範囲**に対する1回の`getRange(rowNumber, 13, 1, 8).setValues([...])`で更新する
+（範囲内だが指定していない`calendarEventId`/`source`/`note`/`confirmedAt`/`expiredAt`は
+既存値のまま書き戻す）。21列目以降（`customerType`・mail SentAt各列・
+`lastMailError*`）は読み書きの対象に一切含まれないため、Web App側がその前後に
+更新していても巻き戻されない。`confirmBooking`/`expirePendingBookings`の呼び出し方や
+既存の`updateBookingFields`自体は変更していない。
 
 ### 既にCANCELLEDの場合（冪等性）
 
@@ -816,7 +831,7 @@ Calendar側は削除済み（枠は空き）だが、Sheets側がPENDING/CONFIRM
 最も重要な部分失敗ケース。**Calendarイベントを無理に再作成して補償しない**
 （再作成するとeventIdが変わり、Sheets更新障害中に書き戻せず、二次的不整合を増やすため）。
 
-「Sheets側がPENDING/CONFIRMEDのまま更新できない」とは、`updateBookingFieldsAtomic`
+「Sheets側がPENDING/CONFIRMEDのまま更新できない」とは、`updateBookingCancellationStateAtomic`
 （前述「cancelledAt / updatedAt」参照）の**1回の書き込みそのもの**が失敗すること。
 `status`だけ更新できて`cancelledAt`が空、という中途半端な状態にはならない
 （1回の`setValues`が成功するか、行がまったく変化しないかのどちらかしかない）。
@@ -940,18 +955,24 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
   getEventById`/`findBookingEventsByBookingId`の呼び出しをそれぞれ`try/catch`し、
   例外時は`CANCEL_CALENDAR_LOOKUP_FAILED`/`CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`
   をRecoveryへ記録するようにした（詳細は「Calendarの読み取り自体が失敗した場合」
-  「Sheets行が存在しない場合のCalendar診断」参照）。`finalizeCancelledSheetsUpdate_`が
-  `SpreadsheetRepository.updateBookingFieldsAtomic`を使うよう変更（詳細は
+  「Sheets行が存在しない場合のCalendar診断」参照）。**PRレビュー2回目対応**:
+  `finalizeCancelledSheetsUpdate_`が
+  `SpreadsheetRepository.updateBookingCancellationStateAtomic`を使うよう変更（詳細は
   「cancelledAt / updatedAt」参照）
 - `BookingAdmin.gs` — グローバル関数`cancelBookingAdmin(bookingId)`、メニュー2項目、
   YES/NO確認・結果表示のハンドラを追加
 - `CalendarRepository.gs` — 診断用`findBookingEventsByBookingId(calendarId, bookingId,
   dateString, timezone)`を追加（既存の`getEventById`/`deleteEventById`は変更なし）
-- `SpreadsheetRepository.gs`（**PRレビュー対応で追加**） — `updateBookingFieldsAtomic
-  (bookingId, fields)`を追加。複数フィールドを1回の`getRange().setValues()`で更新し、
-  途中の例外による部分更新（statusだけ更新されcancelledAt/updatedAtが空のまま、等）を
-  防ぐ。既存の`updateBookingFields`・列構成（`HEADERS_`）・他の関数は変更していない
-  （新しいSheets列も追加していない）
+- `SpreadsheetRepository.gs`（**PRレビュー対応で追加・2回目対応で置き換え**） —
+  `updateBookingCancellationStateAtomic(bookingId, fields)`を追加。`status`/
+  `cancelledAt`/`updatedAt`の3項目**だけ**を、`HEADERS_`上で連続する`'status'`
+  （13列目）〜`'updatedAt'`（20列目）の8列範囲に対する1回の`getRange().setValues()`で
+  更新し、21列目以降（`customerType`・mail SentAt各列・`lastMailError*`）には一切
+  書き込まない（1回目対応で実装した、行全体（全29列）を丸ごと書き戻す
+  `updateBookingFieldsAtomic`は、Booking Web App側が別GASプロジェクト・別
+  LockServiceで更新するメール列を巻き戻す競合リスクがあると2回目レビューで指摘され、
+  この列範囲限定版へ置き換えた）。既存の`updateBookingFields`・列構成（`HEADERS_`）・
+  他の関数は変更していない（新しいSheets列も追加していない）
 - `RecoveryRepository.gs` — ファイル冒頭コメントへ新規failureTypeの説明を追加
   （列構成・`recordFailure`/`listAll`自体は変更なし。新しい列も追加していない）
 - `BookingMailer.gs` — **変更なし**（#271の`sendCancelledMailForBooking`をそのまま呼ぶだけ。
@@ -966,14 +987,23 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
   `CANCEL_CALENDAR_LOOKUP_FAILED`）・**Sheets行なし診断中のCalendar読み取り失敗**
   （`findBookingEventsByBookingId`が例外を投げた場合の
   `CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`/`CANCEL_DIAGNOSTIC_FAILED`）・
+  **（PRレビュー2回目対応で追加）キャンセルのSpreadsheet書き込みがstatus〜updatedAtの
+  8列だけに限定され、事前に設定した`pendingMailSentAt`/`customerType`（21列目以降）が
+  書き換わらないこと・書き込み先rangeの`col`/`numCols`が13/8であること**・
   Sheets行なし診断（0/1/複数件）・confirm/expireとの競合・Reminder対象外・管理メニュー・
   3ブランド共通を検証
-- `test/booking-spreadsheet-repository.test.js`（PRレビュー対応で追加） —
-  `updateBookingFieldsAtomic`の単体テスト（複数フィールドの単一書き込み・存在しない
-  bookingId/未知フィールド名での例外・例外時に行を書き換えないこと）
+- `test/booking-spreadsheet-repository.test.js`（PRレビュー対応で追加・2回目対応で更新） —
+  `updateBookingCancellationStateAtomic`の単体テスト。status/cancelledAt/updatedAtの
+  3列だけを1回の書き込みで更新し、範囲内の他フィールド（`calendarEventId`等）・
+  mail SentAt列・`customerType`が変化しないこと、書き込み先rangeが`col: 13, numCols: 8`
+  であることを`_setValuesCalls`で直接assert、存在しないbookingId/許可されていない
+  フィールド名での例外・例外時に行を書き換えないことを検証
 - `test/helpers/gas-stubs.js` — `SpreadsheetApp.getUi()`スタブの`alert(message, buttonSet)`
   2引数形式（YES/NO確認ダイアログ）に対応。既存の1引数`alert(message)`呼び出しの挙動は
-  変更していない
+  変更していない。**PRレビュー2回目対応で追加**: シートスタブの`getRange().setValues()`
+  呼び出しを`{row, col, numRows, numCols}`として`_setValuesCalls`へ記録するようにした
+  （書き込み対象rangeをテストから直接assertできるようにするため。既存の挙動には
+  影響しない）
 
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
@@ -1077,17 +1107,21 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
   `findBookingEventsByBookingId`の呼び出し自体の例外を`try/catch`しRecoveryへ記録
   （`CANCEL_CALENDAR_LOOKUP_FAILED`/`CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`）。
   Sheetsの`status`/`cancelledAt`/`updatedAt`更新は`SpreadsheetRepository.
-  updateBookingFieldsAtomic`による単一書き込みへ変更
+  updateBookingCancellationStateAtomic`による単一書き込みへ変更（**PRレビュー2回目対応**）
 - `CalendarRepository.gs`（拡張） — 診断用`findBookingEventsByBookingId(calendarId,
   bookingId, dateString, timezone)`を追加（既存関数は変更なし）
 - `BookingAdmin.gs`（拡張） — グローバル関数`cancelBookingAdmin(bookingId)`、「予約管理」
   メニューへキャンセル用2項目（アクティブ行／bookingId入力）、実行直前のYES/NO確認・
   結果表示ハンドラを追加
-- `SpreadsheetRepository.gs`（拡張。**PRレビュー対応で追加**） —
-  `updateBookingFieldsAtomic(bookingId, fields)`を追加。指定した複数フィールドを
-  行全体の1回の`setValues()`で更新し、フィールドごとの個別書き込み（既存の
-  `updateBookingFields`）で起こり得る部分更新を防ぐ。列構成（`HEADERS_`）・既存関数は
-  変更していない
+- `SpreadsheetRepository.gs`（拡張。**PRレビュー対応で追加・2回目対応で置き換え**） —
+  `updateBookingCancellationStateAtomic(bookingId, fields)`を追加。`status`/
+  `cancelledAt`/`updatedAt`の3項目だけを、`HEADERS_`上で連続する`'status'`〜
+  `'updatedAt'`の8列範囲に対する1回の`setValues()`で更新し、フィールドごとの
+  個別書き込み（既存の`updateBookingFields`）で起こり得る部分更新を防ぐ。1回目対応の
+  `updateBookingFieldsAtomic`（行全体を丸ごと書き戻す版）は、Booking Web App側が
+  別GASプロジェクト・別LockServiceで更新するメール列（21列目以降）を巻き戻す
+  競合リスクがあると2回目レビューで指摘され、この列範囲限定版へ置き換えた。
+  列構成（`HEADERS_`）・既存関数（`updateBookingFields`含む）は変更していない
 - `RecoveryRepository.gs`（拡張） — ファイル冒頭コメントへ新規failureType
   （`CANCEL_CALENDAR_EVENT_MISSING`等、および**PRレビュー対応で追加**した
   `CANCEL_CALENDAR_LOOKUP_FAILED`/`CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`）の
@@ -1977,9 +2011,12 @@ Issue #272で追加・更新:
   **Calendar読み取り自体が例外を投げた場合**（`getEventById`が例外→
   `CANCEL_CALENDAR_LOOKUP_FAILED`。Sheets/Calendar/メールいずれも変更しないこと）、
   Calendar削除失敗時のrecovery記録、**Calendar削除成功→Sheets更新失敗
-  （`updateBookingFieldsAtomic`自体の失敗）時にstatus/cancelledAt/updatedAtがいずれも
-  書き込み前のまま残ること（ケースA）、障害解消後の再実行でCalendar既に無い経路から
+  （`updateBookingCancellationStateAtomic`自体の失敗）時にstatus/cancelledAt/updatedAtが
+  いずれも書き込み前のまま残ること（ケースA）、障害解消後の再実行でCalendar既に無い経路から
   status/cancelledAt/updatedAtが収束しキャンセルメールも送信されること（ケースB）**、
+  **（PRレビュー2回目対応で追加）キャンセルのSpreadsheet書き込みがstatus〜updatedAt
+  （13〜20列目）の8列だけに限定され、事前に設定した`pendingMailSentAt`/`customerType`
+  （21列目以降）が書き換わらないこと・書き込み先rangeの`col`/`numCols`が13/8であること**、
   Sheets行が無い場合のCalendar診断（0/1/複数件それぞれの`failureType`と自動削除しない
   こと）、**Sheets行なし診断中にCalendar走査自体が例外を投げた場合**
   （`findBookingEventsByBookingId`が例外→`CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`・
@@ -1993,16 +2030,21 @@ Issue #272で追加・更新:
   変更（CONFIRMEDを終端から除外）後も、既存のconfirm/expireの状態遷移・部分失敗補償・
   recovery件数の検証が壊れていないことを確認（既存テスト自体の変更は無し。
   `node --test`全件で回帰が無いことを担保）
-- `test/booking-spreadsheet-repository.test.js`（更新。PRレビュー対応で追加） —
-  `SpreadsheetRepository.updateBookingFieldsAtomic`の単体テスト。複数フィールドを
-  1回の書き込みで更新し他フィールドは変化しないこと、存在しないbookingId/未知フィールド名
-  で例外を投げること、未知フィールド名時は行自体を書き換えないこと（`setValues`呼び出し前に
-  検証するため）を検証
+- `test/booking-spreadsheet-repository.test.js`（更新。PRレビュー対応で追加・2回目対応で
+  更新） — `SpreadsheetRepository.updateBookingCancellationStateAtomic`の単体テスト。
+  status/cancelledAt/updatedAtの3列だけを1回の書き込みで更新し、範囲内の他フィールド
+  （`calendarEventId`等）・mail SentAt列・`customerType`が変化しないこと、書き込み先
+  rangeが`col: 13, numCols: 8`であることを`_setValuesCalls`で直接assert、存在しない
+  bookingId/許可されていないフィールド名（mail列等）で例外を投げること、例外時は行自体を
+  書き換えないこと（範囲書き込み前にフィールド名を検証するため）を検証
 - `test/helpers/gas-stubs.js`（更新） — `SpreadsheetApp.getUi()`スタブの
   `alert(message, buttonSet)`2引数形式を追加し、`options.alertResponses`から
   `Button.YES`/`Button.NO`を順番に返せるようにした（キャンセル誤操作防止の
   YES/NO確認ダイアログ用）。既存の1引数`alert(message)`呼び出しは影響を受けない
-  （`Button`に`YES`/`NO`、`ButtonSet`に`YES_NO`を追加。既存の`OK`/`CANCEL`/`OK_CANCEL`は変更なし）
+  （`Button`に`YES`/`NO`、`ButtonSet`に`YES_NO`を追加。既存の`OK`/`CANCEL`/`OK_CANCEL`は変更なし）。
+  **PRレビュー2回目対応で追加**: シートスタブに`_setValuesCalls`（`{row, col, numRows,
+  numCols}`の呼び出し履歴）を追加し、`updateBookingCancellationStateAtomic`の書き込み
+  range自体をテストからassertできるようにした（既存の`setValues`の挙動には影響しない）
 
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに

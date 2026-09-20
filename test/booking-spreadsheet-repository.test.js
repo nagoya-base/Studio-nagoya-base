@@ -94,16 +94,29 @@ test('updateBookingFields: 未知のフィールド名は例外を投げる（st
 });
 
 /*
- * updateBookingFieldsAtomic（Issue #272 PRレビュー対応）: 複数フィールドを1回のsetValuesで
- * 更新する。cancelBookingAdminのstatus/cancelledAt/updatedAtのように、途中で例外が起きると
- * 部分更新になってはいけない呼び出し元向け。
+ * updateBookingCancellationStateAtomic（Issue #272 PRレビュー2回目対応）:
+ * status/cancelledAt/updatedAtの3項目だけを、HEADERS_上で連続する'status'（13列目）〜
+ * 'updatedAt'（20列目）の範囲に対する1回のsetValuesで更新する。cancelBookingAdmin専用の
+ * 用途に限定し、mail SentAt・lastMailError*・customerType（21列目以降）へは
+ * 一切書き込まない（別GASプロジェクトであるBooking Web App側の更新を巻き戻さないため。
+ * 初回対応のupdateBookingFieldsAtomicはBookings行全29列を丸ごと書き戻していたため
+ * この競合リスクがあり、2回目レビューで指摘され撤回した）。
  */
-test('updateBookingFieldsAtomic: 複数フィールドを1回の書き込みで更新し、他のフィールドは変化しない', function () {
+test('updateBookingCancellationStateAtomic: status/cancelledAt/updatedAtの3列だけを1回の書き込みで更新し、範囲内の他フィールド・mail列・customerTypeは変化しない', function () {
   var sandbox = loadRepos();
   sandbox.SpreadsheetRepository.appendBooking(sampleRecord());
 
+  var pendingMailSentAt = new Date('2026-10-01T08:00:00+09:00');
+  var confirmedMailSentAt = new Date('2026-10-01T08:30:00+09:00');
+  sandbox.SpreadsheetRepository.updateBookingFields('SX-20261001-AAAAAAAA', {
+    pendingMailSentAt: pendingMailSentAt,
+    confirmedMailSentAt: confirmedMailSentAt,
+    lastMailErrorType: 'TEST',
+    customerType: 'returning'
+  });
+
   var cancelledAt = new Date('2026-10-01T09:00:00+09:00');
-  sandbox.SpreadsheetRepository.updateBookingFieldsAtomic('SX-20261001-AAAAAAAA', {
+  sandbox.SpreadsheetRepository.updateBookingCancellationStateAtomic('SX-20261001-AAAAAAAA', {
     status: 'CANCELLED',
     cancelledAt: cancelledAt,
     updatedAt: cancelledAt
@@ -113,26 +126,37 @@ test('updateBookingFieldsAtomic: 複数フィールドを1回の書き込みで�
   assert.strictEqual(found.record.status, 'CANCELLED');
   assert.strictEqual(found.record.cancelledAt.getTime(), cancelledAt.getTime());
   assert.strictEqual(found.record.updatedAt.getTime(), cancelledAt.getTime());
-  assert.strictEqual(found.record.name, '山田太郎', '更新対象外のフィールドは変化しない');
+  assert.strictEqual(found.record.name, '山田太郎', '範囲外（1〜12列目）のフィールドは変化しない');
+  assert.strictEqual(found.record.calendarEventId, 'event-1', '範囲内（14〜18列目）だが指定していないフィールドは元値のまま維持される');
+  assert.strictEqual(found.record.pendingMailSentAt.getTime(), pendingMailSentAt.getTime(), 'mail SentAt列（21列目以降）は書き換えない');
+  assert.strictEqual(found.record.confirmedMailSentAt.getTime(), confirmedMailSentAt.getTime());
+  assert.strictEqual(found.record.lastMailErrorType, 'TEST');
+  assert.strictEqual(found.record.customerType, 'returning');
+
+  var sheet = sandbox.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
+  var lastCall = sheet._setValuesCalls[sheet._setValuesCalls.length - 1];
+  assert.strictEqual(lastCall.col, 13, 'statusは13列目から始まる（HEADERS_の並び順どおり）');
+  assert.strictEqual(lastCall.numCols, 8, 'status(13)〜updatedAt(20)の8列だけを1回で書く');
+  assert.strictEqual(lastCall.numRows, 1);
 });
 
-test('updateBookingFieldsAtomic: 存在しないbookingIdは例外を投げる（書き込み自体を行わない）', function () {
+test('updateBookingCancellationStateAtomic: 存在しないbookingIdは例外を投げる（書き込み自体を行わない）', function () {
   var sandbox = loadRepos();
   assert.throws(function () {
-    sandbox.SpreadsheetRepository.updateBookingFieldsAtomic('NOT-EXIST', { status: 'CANCELLED' });
+    sandbox.SpreadsheetRepository.updateBookingCancellationStateAtomic('NOT-EXIST', { status: 'CANCELLED' });
   });
 });
 
-test('updateBookingFieldsAtomic: 未知のフィールド名は例外を投げ、行自体を書き換えない', function () {
+test('updateBookingCancellationStateAtomic: status/cancelledAt/updatedAt以外のフィールドは例外を投げ、行自体を書き換えない（mail列等への誤用を防ぐ）', function () {
   var sandbox = loadRepos();
   sandbox.SpreadsheetRepository.appendBooking(sampleRecord());
 
   assert.throws(function () {
-    sandbox.SpreadsheetRepository.updateBookingFieldsAtomic('SX-20261001-AAAAAAAA', { unknownField: 'x' });
+    sandbox.SpreadsheetRepository.updateBookingCancellationStateAtomic('SX-20261001-AAAAAAAA', { pendingMailSentAt: new Date() });
   });
 
   var found = sandbox.SpreadsheetRepository.findRowByBookingId('SX-20261001-AAAAAAAA');
-  assert.strictEqual(found.record.status, 'PENDING', '例外発生時は行を書き換えない（HEADERS_検証をsetValues呼び出し前に行うため）');
+  assert.strictEqual(found.record.status, 'PENDING', '例外発生時は行を書き換えない（範囲書き込み前にフィールド名を検証するため）');
 });
 
 test('getAllPendingBookings: PENDINGの行のみ抽出する', function () {

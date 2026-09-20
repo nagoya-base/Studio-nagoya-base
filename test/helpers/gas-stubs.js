@@ -175,9 +175,13 @@ function createCacheServiceStub() {
 /*
  * 簡易インメモリSheet。appendRow / getRange / getDataRange / getLastRowのみ実装する
  * （SpreadsheetRepository.gs / RecoveryRepository.gsが実際に使うAPIのみ）。
+ * _setValuesCallsに{row, col, numRows, numCols}を呼び出し順に記録する（Issue #272
+ * PRレビュー2回目対応。setValuesの書き込み対象range自体をテストからassertできるように
+ * するため。呼び出し側の挙動には一切影響しない）。
  */
 function createSheetStub(name) {
   var rows = [];
+  var setValuesCalls = [];
   return {
     getName: function () { return name; },
     appendRow: function (row) {
@@ -205,6 +209,7 @@ function createSheetStub(name) {
           return out;
         },
         setValues: function (values) {
+          setValuesCalls.push({ row: row, col: col, numRows: numRows, numCols: numCols });
           for (var r = 0; r < numRows; r++) {
             for (var c = 0; c < numCols; c++) {
               rows[row - 1 + r][col - 1 + c] = values[r][c];
@@ -213,7 +218,8 @@ function createSheetStub(name) {
         }
       };
     },
-    _rows: rows
+    _rows: rows,
+    _setValuesCalls: setValuesCalls
   };
 }
 

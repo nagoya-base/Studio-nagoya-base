@@ -698,10 +698,16 @@ var BookingRepository = (function () {
        * 途中で例外が起きた場合にstatusだけCANCELLEDになりcancelledAtが空、という
        * 部分更新が起こり得る。部分更新が起きると、次回再実行時にstatus===CANCELLEDの
        * 分岐（二重実行の冪等処理）へ入ってしまい、空のままのcancelledAt/updatedAtを
-       * 修復する経路が無くなるため、この関数では単一書き込みのupdateBookingFieldsAtomic
-       * を使う。
+       * 修復する経路が無くなるため、この関数では単一書き込みの
+       * updateBookingCancellationStateAtomicを使う。
+       *
+       * この関数はstatus/cancelledAt/updatedAt（HEADERS_上で連続する13〜20列目）だけを
+       * 書き込み対象にし、21列目以降（customerType・mail SentAt・lastMailError*）には
+       * 一切触れない（PRレビュー2回目対応）。Booking Web App（別GASプロジェクト・
+       * 別LockService）がこの直前直後にpendingMailSentAt等を更新していても、その値を
+       * 古い状態で巻き戻すことはない。
        */
-      SpreadsheetRepository.updateBookingFieldsAtomic(bookingId, {
+      SpreadsheetRepository.updateBookingCancellationStateAtomic(bookingId, {
         status: Booking.STATUS.CANCELLED,
         cancelledAt: now,
         updatedAt: now

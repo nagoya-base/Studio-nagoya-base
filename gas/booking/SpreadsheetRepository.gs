@@ -157,35 +157,59 @@ var SpreadsheetRepository = (function () {
     return found.rowNumber;
   }
 
+  /* cancelBookingAdminのatomic更新で触ってよいフィールドのみを列挙する（下記参照）。 */
+  var CANCELLATION_ATOMIC_FIELDS_ = ['status', 'cancelledAt', 'updatedAt'];
+
   /*
-   * bookingIdの行全体を1回のsetValuesで更新する（Issue #272 PRレビュー対応）。
-   * updateBookingFieldsはfieldsのキーごとに個別のgetRange().setValues()を順番に
-   * 実行するため、複数フィールドを同時に更新する途中で例外が起きると部分更新
-   * （例: statusだけCANCELLEDになりcancelledAtが空のまま）になり得る。呼び出し元が
-   * 複数フィールドを必ず一貫して更新したい場合（cancelBookingAdminのstatus/
-   * cancelledAt/updatedAt等）は、この関数で行全体を1回のSpreadsheet書き込みに
-   * まとめること。bookingIdが見つからない・未知のフィールド名の場合の挙動は
-   * updateBookingFieldsと同じ（例外を投げる）。
+   * cancelBookingAdmin専用のatomic更新（Issue #272 PRレビュー2回目対応）。
+   * status/cancelledAt/updatedAtの3項目**だけ**を、HEADERS_上で連続する
+   * 'status'（13列目）〜'updatedAt'（20列目）の列範囲に対する1回のsetValuesで更新する
+   * （途中のcalendarEventId/source/note/confirmedAt/expiredAtは呼び出し元が指定しない限り
+   * 既存値のまま書き戻す。'status'〜'updatedAt'が連続列であるためこの範囲書き込みが成立する）。
+   *
+   * 初回対応（レビュー1回目）ではBookings行の全29列を丸ごと`setValues`する
+   * `updateBookingFieldsAtomic`を用意したが、これは以下の競合を生む恐れがあると
+   * 2回目レビューで指摘された:
+   * - Booking Web App（createBooking等）とBooking Admin（confirmBooking/
+   *   expirePendingBookings/cancelBookingAdmin）は別々のGASプロジェクトであり、
+   *   LockService.getScriptLock()を共有しない
+   * - Web App側がpendingMailSentAt等（22列目以降）を更新した直後に、Admin側が
+   *   古い行全体を書き戻すと、Web App側の更新を空値で巻き戻してしまう
+   * - #271はメール列のSentAtを二重送信防止の冪等性の基準にしているため、これは
+   *   実運用で二重送信事故につながり得る
+   *
+   * そのためこの関数は21列目以降（customerType・mail SentAt・lastMailError*）は
+   * 一切読み書きしない（そもそも書き込み範囲に含めない）。confirmBooking/
+   * expirePendingBookings/cancelBookingAdminは同一Booking AdminプロジェクトのLockで
+   * 直列化されるため、13〜20列の範囲内で複数呼び出しが競合することもない。
+   *
+   * status/cancelledAt/updatedAt以外のキーが渡された場合は例外を投げる（mail列等への
+   * 誤用を防ぐfail-closed）。bookingIdが見つからない場合も例外を投げる。
    */
-  function updateBookingFieldsAtomic(bookingId, fields) {
+  function updateBookingCancellationStateAtomic(bookingId, fields) {
     var found = findRowByBookingId(bookingId);
     if (!found) {
       throw new Error('bookingIdが見つかりません: ' + bookingId);
     }
 
-    var updatedRecord = {};
-    HEADERS_.forEach(function (header) {
-      updatedRecord[header] = found.record[header];
-    });
     Object.keys(fields).forEach(function (key) {
-      if (HEADERS_.indexOf(key) === -1) {
-        throw new Error('未知のbookingフィールドです: ' + key);
+      if (CANCELLATION_ATOMIC_FIELDS_.indexOf(key) === -1) {
+        throw new Error('キャンセルatomic更新で許可されていないフィールドです: ' + key);
       }
-      updatedRecord[key] = fields[key];
     });
 
+    var startIndex = HEADERS_.indexOf('status');
+    var endIndex = HEADERS_.indexOf('updatedAt');
+    var values = [];
+    for (var i = startIndex; i <= endIndex; i++) {
+      var header = HEADERS_[i];
+      var hasOverride = Object.prototype.hasOwnProperty.call(fields, header);
+      var value = hasOverride ? fields[header] : found.record[header];
+      values.push(value !== undefined && value !== null ? value : '');
+    }
+
     var sheet = ensureBookingsSheet_();
-    sheet.getRange(found.rowNumber, 1, 1, HEADERS_.length).setValues([recordToRow_(updatedRecord)]);
+    sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
     return found.rowNumber;
   }
 
@@ -196,6 +220,6 @@ var SpreadsheetRepository = (function () {
     getAllPendingBookings: getAllPendingBookings,
     getConfirmedBookingsForDate: getConfirmedBookingsForDate,
     updateBookingFields: updateBookingFields,
-    updateBookingFieldsAtomic: updateBookingFieldsAtomic
+    updateBookingCancellationStateAtomic: updateBookingCancellationStateAtomic
   };
 })();

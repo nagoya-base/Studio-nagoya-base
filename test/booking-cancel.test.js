@@ -137,6 +137,46 @@ test('cancelBookingAdmin: PENDING → CANCELLEDへ遷移し、Calendarイベン�
   assert.strictEqual(activeEventCount(ctx), 0, 'Calendarイベントは削除されている');
 });
 
+test('cancelBookingAdmin: キャンセルのSpreadsheet書き込みはstatus〜updatedAt（13〜20列目）の8列だけに限定され、mail SentAt/lastMailError*/customerType（21列目以降）は一切書き換えない（PRレビュー2回目対応）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+
+  /*
+   * Booking Web App（別GASプロジェクト）が先にメール関連列を更新済み、という状況を再現する。
+   * lastMailError*はキャンセルメール送信成功時にBookingMailer側で正当にクリアされるため
+   * （どのメール種別でも共通の挙動）、ここではその影響を受けないpendingMailSentAt/
+   * customerTypeで「cancelBookingAdmin自身の書き込みが21列目以降を巻き戻さないこと」を検証する。
+   */
+  var pendingMailSentAt = new Date('2026-10-01T08:00:00+09:00');
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, {
+    pendingMailSentAt: pendingMailSentAt,
+    customerType: 'returning'
+  });
+
+  var result = ctx.sandbox.cancelBookingAdmin(bookingId);
+  assert.strictEqual(result.success, true);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'CANCELLED');
+  assert.strictEqual(
+    found.record.pendingMailSentAt.getTime(),
+    pendingMailSentAt.getTime(),
+    'Web App側が書いたpendingMailSentAtをcancelBookingAdminの書き込みが巻き戻さない'
+  );
+  assert.strictEqual(found.record.customerType, 'returning');
+
+  /*
+   * この後にキャンセルメール送信（BookingMailer.withBookingLock_）がcancelMailSentAt等を
+   * 1セルずつ個別に書き込むため、_setValuesCallsの最後の要素はそちらになる。ここでは
+   * 「8列まとめて書く」cancellation atomic write自体を範囲の広さ（numCols===8）で特定する。
+   */
+  var sheet = ctx.globals.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
+  var cancellationWrites = sheet._setValuesCalls.filter(function (call) { return call.numCols === 8; });
+  assert.strictEqual(cancellationWrites.length, 1, 'status〜updatedAtをまとめて書き込む呼び出しがちょうど1回だけ記録されているはず');
+  assert.strictEqual(cancellationWrites[0].col, 13, 'statusは13列目から始まる');
+  assert.strictEqual(cancellationWrites[0].numCols, 8, 'status(13)〜updatedAt(20)の8列だけを1回で書く（21列目以降のmail列は範囲外）');
+});
+
 test('cancelBookingAdmin: CONFIRMED → CANCELLEDへ遷移できる（Issue #272でCONFIRMEDを終端から外した）', function () {
   var ctx = setup();
   var bookingId = createPending(ctx);
@@ -375,8 +415,8 @@ test('cancelBookingAdmin ケースA: atomic write失敗時はrecoveryへ記録�
   ctx.globals.MailApp._sentEmails.length = 0; /* createPending自体が送るPENDINGメール分をリセットする */
   var beforeUpdatedAt = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.updatedAt;
 
-  var originalUpdateAtomic = ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic;
-  ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic = function () {
+  var originalUpdateAtomic = ctx.sandbox.SpreadsheetRepository.updateBookingCancellationStateAtomic;
+  ctx.sandbox.SpreadsheetRepository.updateBookingCancellationStateAtomic = function () {
     throw new Error('simulated atomic sheets update failure');
   };
 
@@ -387,7 +427,7 @@ test('cancelBookingAdmin ケースA: atomic write失敗時はrecoveryへ記録�
   assert.strictEqual(activeEventCount(ctx), 0, 'Calendar側は削除済みのはず');
   assert.strictEqual(ctx.globals.MailApp._sentEmails.length, 0, 'Sheets更新が失敗しているためメールは送らない');
 
-  ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic = originalUpdateAtomic;
+  ctx.sandbox.SpreadsheetRepository.updateBookingCancellationStateAtomic = originalUpdateAtomic;
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.strictEqual(found.record.status, 'PENDING', 'atomic write失敗のためstatusは更新前のまま残る（Calendar削除済みとの不整合）');
   assert.strictEqual(found.record.cancelledAt, '', 'atomic write自体が失敗しているためcancelledAtは空のまま');
@@ -406,13 +446,13 @@ test('cancelBookingAdmin ケースB: ケースAの障害解消後に再実行す
   var bookingId = createPending(ctx);
   ctx.globals.MailApp._sentEmails.length = 0;
 
-  var originalUpdateAtomic = ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic;
-  ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic = function () {
+  var originalUpdateAtomic = ctx.sandbox.SpreadsheetRepository.updateBookingCancellationStateAtomic;
+  ctx.sandbox.SpreadsheetRepository.updateBookingCancellationStateAtomic = function () {
     throw new Error('simulated atomic sheets update failure');
   };
   var first = ctx.sandbox.cancelBookingAdmin(bookingId);
   assert.strictEqual(first.success, false);
-  ctx.sandbox.SpreadsheetRepository.updateBookingFieldsAtomic = originalUpdateAtomic; /* 障害解消をシミュレート */
+  ctx.sandbox.SpreadsheetRepository.updateBookingCancellationStateAtomic = originalUpdateAtomic; /* 障害解消をシミュレート */
 
   var second = ctx.sandbox.cancelBookingAdmin(bookingId);
   assert.strictEqual(second.success, true, '再実行時にSheets保存が復旧していれば正しくCANCELLEDへ進むべき');
