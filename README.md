@@ -62,6 +62,65 @@ Studio Nagoya Base の静的サイト一式です。GitHub Pages で公開する
 **このIssue（#269）時点では、`studio-x/reservation/`（既存の予約・撮影相談フォーム）や
 トップページの予約カレンダー導線は撤去していません。** 本番切替・旧導線撤去は`#273`の責務です。
 
+### Issue #273: 本番切替・ロールバック（Stage A / Stage B）
+
+`#273`は「コード切替準備」（Stage A）と「本番導入・実地確認」（Stage B）の2段階で進めます。
+
+#### Stage A（このリポジトリのコード変更）
+
+- 3ブランドの**直接予約**CTA（「空き確認・予約を申し込む」等）を、それぞれの共通予約UI
+  （`/booking/` / `/mens/booking/` / `/studio-x/booking/`）へ切り替えた。
+- 「利用内容を事前に相談する」「予約前に相談したい方」「撮影内容を相談する」「見学・下見」
+  「当日利用の確認」など、**相談・下見・問い合わせ系の導線は旧フォームのまま**とした
+  （`_includes/reservation_form_ja.html` / `studio-x/reservation/`）。
+- 旧フォーム本体・Formspree送信先（`studio-x/reservation/`）はいずれも削除していない。
+  問題があれば主要CTAのhrefを旧フォームへ戻すだけでロールバックできるよう、Stage Aの
+  CTA切替・`BASE_URL`設定は1つのcutover commitへまとめている。
+- `_includes/calendar_embed.html`（旧Calendar埋め込み）は削除していない。3箇所
+  （`index.html` / `mens/index.html` / `studio-x/reservation/index.html`）とも維持し、
+  埋め込み直下に新しい予約ページへの案内文を追加した。
+- 当日予約に関する古い文言（「ご予約は前日まで」「当日利用は会員のお客様に限り」等、
+  `#270`と矛盾する記述）を、`#270`の仕様（初回利用は当日不可・利用経験があれば当日可・
+  会員登録の有無では判定しない）に合わせて修正した。
+- `scripts/booking-config.js`の`BASE_URL`は、Issue #267の実環境確認コメントに記録済みの
+  既存Booking Web Appプロジェクトの本番`/exec` URLを設定した（新規デプロイはしていない）。
+
+#### Stage B（オペレーターが実施。このリポジトリのコード変更では実施しない）
+
+1. Booking Web App（`gas/booking/`）を既存GASプロジェクトへ反映
+2. Booking Adminを既存GASプロジェクトへ反映
+3. 両プロジェクトのScript Properties（`CALENDAR_ID` / `SPREADSHEET_ID` / `TIMEZONE`等）確認
+4. `expirePendingBookings` / `sendNextDayReminders`のtrigger確認（重複作成しない）
+5. 本番`/exec` URLの動作確認（GitHub Pages側からの疎通確認を含む）
+6. 3ブランドでの実地受入テスト（専用テスト日時を使用。本予約・SpaceMarket予約は操作しない）
+7. ロールバック実地確認（新UI停止→旧フォーム復帰→再度新UIへ戻す）
+8. 旧Calendar embedの最終方針（削除 / 参考表示への格下げ / 新UIリンクへの置換）を確定
+9. 上記すべてが完了した時点で、Issue #273へ結果を記録し、`Closes #273`を付けたPRでclose
+
+#### 本番導入チェックリスト（Stage B開始前に確認）
+
+- [ ] Booking Web App `/exec` URLが本番想定のものであること（`/dev`でないこと）
+- [ ] Booking Web App / Booking Adminの両方に、mainの`gas/booking/`最新版が反映されていること
+- [ ] Script Propertiesが両プロジェクトで正しく設定されていること（実値はGitHubへ書かない）
+- [ ] `expirePendingBookings` / `sendNextDayReminders`のtriggerが重複なく設定されていること
+- [ ] 3ブランドとも、予約ページからのAPI疎通（`getAvailability`）が成功すること
+- [ ] SpaceMarket予約・既存自社予約の時間帯が空きとして出ないこと
+- [ ] 旧Calendar埋め込みにPII（氏名・連絡先・解錠情報等）が表示されないこと
+- [ ] ロールバック手順（CTAを旧フォームへ戻す）を実地確認済みであること
+
+#### ロールバック手順（本番切替後に問題が発生した場合）
+
+1. 3ブランドの直接予約CTAのhrefを、Stage Aのcutover commitをrevertして旧フォーム
+   （`#reservation-form` / `studio-x/reservation/`）へ戻す
+2. `scripts/booking-config.js`の`BASE_URL`を空文字へ戻す、または新UIへの主要CTAを
+   一時的に非公開導線へ戻す
+3. Calendar / Sheetsに既に作成済みの予約は削除・変更しない
+4. Booking Adminの既存CONFIRMED/CANCELLED管理・通知メールはそのまま維持する
+5. SpaceMarket側には一切変更を加えない
+6. 旧Formspreeフォーム（Studio X）・旧`reservation_form_ja.html`フォームが送信可能な
+   ままであることを確認する
+7. 旧Calendar埋め込みが従来どおり表示できることを確認する
+
 ## 編集ポイント
 
 ### 1. 日本語ページを編集する
