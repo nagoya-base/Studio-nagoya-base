@@ -40,7 +40,19 @@ var SpreadsheetRepository = (function () {
     'expiredAt',
     'cancelledAt',
     'updatedAt',
-    'customerType'
+    'customerType',
+    /*
+     * ここから先はIssue #271（予約通知メール自動送信）で追加した列。
+     * HEADERS_の並びどおり末尾へ追記する方針はcustomerType追加時（Issue #270）と同じ。
+     */
+    'pendingMailSentAt',
+    'confirmedMailSentAt',
+    'cancelMailSentAt',
+    'reminderSentAt',
+    'accessGuideSentAt',
+    'lastMailErrorAt',
+    'lastMailErrorType',
+    'lastMailErrorMessage'
   ];
 
   function getSpreadsheet_() {
@@ -108,6 +120,21 @@ var SpreadsheetRepository = (function () {
     return result;
   }
 
+  /* status===CONFIRMEDかつdate===dateStringの全行を返す（前日リマインド抽出用。Issue #271）。
+     reminderSentAt等の判定はBookingMailer側の責務とし、ここではstatus/dateのみで絞り込む。 */
+  function getConfirmedBookingsForDate(dateString) {
+    var sheet = ensureBookingsSheet_();
+    var values = sheet.getDataRange().getValues();
+    var result = [];
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(values[i]);
+      if (record.status === 'CONFIRMED' && record.date === dateString) {
+        result.push({ rowNumber: i + 1, record: record });
+      }
+    }
+    return result;
+  }
+
   /*
    * fields: { [HEADERS_のいずれか]: value } の部分更新。statusセルの直接編集を
    * 正式運用にしないため、statusを含む更新は必ずこの関数（＝confirmBooking /
@@ -135,6 +162,7 @@ var SpreadsheetRepository = (function () {
     appendBooking: appendBooking,
     findRowByBookingId: findRowByBookingId,
     getAllPendingBookings: getAllPendingBookings,
+    getConfirmedBookingsForDate: getConfirmedBookingsForDate,
     updateBookingFields: updateBookingFields
   };
 })();

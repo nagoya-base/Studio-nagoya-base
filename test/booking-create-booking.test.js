@@ -21,6 +21,8 @@ var FILES = [
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
   'AdminNotifier.gs',
+  'BookingMailTemplates.gs',
+  'BookingMailer.gs',
   'BookingRepository.gs'
 ];
 
@@ -588,9 +590,46 @@ test('通知失敗: 管理者通知が失敗しても予約自体は成功のま
   assert.strictEqual(result.success, true, '通知失敗は予約失敗として扱わない');
   assert.strictEqual(result.status, 'PENDING');
 
+  /*
+   * Issue #271でcreateBookingへ利用者向けPENDINGメールも配線したため、このテストのように
+   * BOOKING_MAIL_*（表示名/reply-to/問い合わせ先）を設定していない場合、管理者通知に加えて
+   * 利用者PENDINGメールもfail-closedに失敗し、recoveryへ2件記録される
+   * （どちらの失敗もcreateBooking自体の成否には影響しない）。
+   */
   var recovered = ctx.sandbox.RecoveryRepository.listAll();
-  assert.strictEqual(recovered.length, 1);
-  assert.strictEqual(recovered[0].failureType, 'ADMIN_NOTIFICATION_FAILED');
+  assert.strictEqual(recovered.length, 2);
+  var failureTypes = recovered.map(function (r) { return r.failureType; });
+  assert.ok(failureTypes.indexOf('ADMIN_NOTIFICATION_FAILED') !== -1);
+  assert.ok(failureTypes.indexOf('MAIL_PENDING_FAILED') !== -1);
+});
+
+test('通知失敗: 利用者向けPENDINGメール送信の設定・送信自体が失敗しても、createBookingは成功のままでlastMailError*が記録される', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload());
+
+  assert.strictEqual(result.success, true, 'PENDINGメール設定不足でもcreateBooking自体は成功する');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.strictEqual(found.record.status, 'PENDING');
+  assert.strictEqual(found.record.pendingMailSentAt, '');
+  assert.ok(stubs.isDateLike(found.record.lastMailErrorAt));
+  assert.strictEqual(found.record.lastMailErrorType, 'PENDING');
+});
+
+test('通知失敗（PRレビュー2回目対応）: BookingMailer.sendPendingMailForBookingが想定外の例外を投げても、Loggerへ生のメールアドレスを残さない', function () {
+  var ctx = setup();
+  ctx.sandbox.BookingMailer.sendPendingMailForBooking = function () {
+    throw new Error('unexpected failure for secret@example.com');
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload({ email: 'secret@example.com' }));
+  assert.strictEqual(result.success, true, 'PENDINGメール送信中の想定外例外でもcreateBooking自体は成功する');
+
+  var logs = ctx.globals.Logger._logs;
+  var pendingMailLogs = logs.filter(function (line) { return line.indexOf('PENDINGメール送信中') !== -1; });
+  assert.strictEqual(pendingMailLogs.length, 1);
+  assert.strictEqual(pendingMailLogs[0].indexOf('secret@example.com'), -1, 'Loggerに生のメールアドレスを残してはいけない');
+  assert.match(pendingMailLogs[0], /\[REDACTED_EMAIL\]/);
 });
 
 test('管理者通知: ADMIN_NOTIFICATION_EMAIL未設定なら通知を送らないが、予約自体は成功する', function () {

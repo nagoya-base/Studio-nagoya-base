@@ -24,13 +24,27 @@ var FILES = [
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
   'AdminNotifier.gs',
+  'BookingMailTemplates.gs',
+  'BookingMailer.gs',
   'BookingRepository.gs',
   'BookingAdmin.gs',
-  'BookingTriggers.gs'
+  'BookingTriggers.gs',
+  'BookingReminderTriggers.gs'
 ];
 
 var CALENDAR_ID = 'cal1';
 var SPREADSHEET_ID = 'ss1';
+
+/* Issue #271でcreateBooking/confirmBookingへ配線した利用者向けメール送信のデフォルト設定値。
+   このファイルはメール送信そのものの挙動を検証対象にしていないため、既定で送信成功させ、
+   設定不足によるlastMailError系フィールドやRecovery記録が既存のconfirmBooking/
+   expirePendingBookingsテストの想定件数へ意図せず混入しないようにする
+   （メール自体の検証はtest/booking-mailer.test.js・test/booking-create-booking.test.jsで行う）。 */
+var DEFAULT_MAIL_PROPERTIES = {
+  BOOKING_MAIL_DISPLAY_NAME: 'Studio Nagoya Base',
+  BOOKING_MAIL_REPLY_TO: 'noreply@example.com',
+  BOOKING_CONTACT_EMAIL: 'contact@example.com'
+};
 
 /* Asia/Tokyo基準で実行時刻からdaysAhead日後の'YYYY-MM-DD'を返す（Issue #270 3回目
    レビュー指摘対応）。createBookingはnow省略時に実時刻で過去日拒否を行うため、
@@ -54,7 +68,11 @@ function setup(options) {
   var calendarsById = opts.calendarsById || { cal1: { events: [] } };
   var spreadsheetsById = {};
   spreadsheetsById[SPREADSHEET_ID] = opts.sheetsByName || {};
-  var properties = Object.assign({ CALENDAR_ID: CALENDAR_ID, SPREADSHEET_ID: SPREADSHEET_ID }, opts.properties || {});
+  var properties = Object.assign(
+    { CALENDAR_ID: CALENDAR_ID, SPREADSHEET_ID: SPREADSHEET_ID },
+    DEFAULT_MAIL_PROPERTIES,
+    opts.properties || {}
+  );
 
   var globals = {
     PropertiesService: stubs.createPropertiesServiceStub(properties),
@@ -69,7 +87,7 @@ function setup(options) {
   };
 
   var sandbox = loadBookingSandbox(FILES, globals);
-  return { sandbox: sandbox, calendarsById: calendarsById };
+  return { sandbox: sandbox, calendarsById: calendarsById, globals: globals };
 }
 
 function validPayload(overrides) {
@@ -115,6 +133,26 @@ test('confirmBooking: PENDING → CONFIRMEDへ遷移し、Calendar/Sheets双方�
 
   var event = ctx.calendarsById.cal1.events[0];
   assert.strictEqual(event.getTag('status'), 'CONFIRMED');
+});
+
+test('confirmBooking（PRレビュー2回目対応）: BookingMailer.sendConfirmedMailForBookingが想定外の例外を投げても、Loggerへ生のメールアドレスを残さない', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { email: 'secret@example.com' });
+
+  ctx.sandbox.BookingMailer.sendConfirmedMailForBooking = function () {
+    throw new Error('unexpected failure for secret@example.com');
+  };
+
+  var result = ctx.sandbox.confirmBooking(bookingId);
+  assert.strictEqual(result.success, true, 'CONFIRMEDメール送信中の想定外例外でもconfirmBooking自体は成功する');
+  assert.strictEqual(result.mailSent, false);
+  assert.strictEqual(result.mailError.message.indexOf('secret@example.com'), -1, '戻り値のmailError.messageにも生のメールアドレスを残さない');
+
+  var logs = ctx.globals.Logger._logs;
+  var confirmedMailLogs = logs.filter(function (line) { return line.indexOf('CONFIRMEDメール送信中') !== -1; });
+  assert.strictEqual(confirmedMailLogs.length, 1);
+  assert.strictEqual(confirmedMailLogs[0].indexOf('secret@example.com'), -1, 'Loggerに生のメールアドレスを残してはいけない');
+  assert.match(confirmedMailLogs[0], /\[REDACTED_EMAIL\]/);
 });
 
 test('confirmBooking: 正式関数名 confirmBooking(bookingId) がグローバルに存在する（Issue #268本文の要件）', function () {

@@ -296,14 +296,29 @@ function createSpreadsheetUiStub(options) {
   };
 }
 
-/* MailApp.sendEmail相当。options.throwError を設定すると送信のたびに例外を投げる（通知失敗の模擬用）。 */
+/*
+ * MailApp.sendEmail相当。options.throwError を設定すると送信のたびに例外を投げる（通知失敗の模擬用）。
+ * 実際のMailAppと同様、sendEmail(to, subject, body)の3引数形式と、
+ * sendEmail({to, subject, body, name, replyTo, ...})のオブジェクト形式の両方に対応する
+ * （AdminNotifier.gsは前者、BookingMailer.gsは後者を使う。Issue #271）。
+ */
 function createMailAppStub(options) {
   var opts = options || {};
   var sentEmails = [];
   return {
-    sendEmail: function (to, subject, body) {
+    sendEmail: function (toOrMessage, subject, body) {
       if (opts.throwError) throw opts.throwError;
-      sentEmails.push({ to: to, subject: subject, body: body });
+      if (toOrMessage && typeof toOrMessage === 'object') {
+        sentEmails.push({
+          to: toOrMessage.to,
+          subject: toOrMessage.subject,
+          body: toOrMessage.body,
+          name: toOrMessage.name,
+          replyTo: toOrMessage.replyTo
+        });
+      } else {
+        sentEmails.push({ to: toOrMessage, subject: subject, body: body });
+      }
     },
     _sentEmails: sentEmails
   };
@@ -322,6 +337,9 @@ function createScriptAppStub() {
       var builder = {
         timeBased: function () { return builder; },
         everyMinutes: function () { return builder; },
+        everyDays: function () { return builder; },
+        atHour: function () { return builder; },
+        nearMinute: function () { return builder; },
         create: function () {
           var trigger = {
             getHandlerFunction: function () { return functionName; }

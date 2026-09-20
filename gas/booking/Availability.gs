@@ -113,6 +113,30 @@ var BookingAvailability = (function () {
     }
   }
 
+  /*
+   * dateを指定timezoneの'HH:mm'へ変換する（Issue #271。メールテンプレートの開始/終了時刻表示用）。
+   * getCurrentMinutesInTimezoneと同じIntl.DateTimeFormatベースの実装を共有し、
+   * ブラウザ・GAS実行環境のローカルtimezoneに依存しない。timezoneが不正な場合はnullを返す。
+   */
+  function formatTimeInTimezone(date, timezone) {
+    if (!isDateLike_(date)) return null;
+    try {
+      var parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+      }).formatToParts(date);
+      var hour = null;
+      var minute = null;
+      parts.forEach(function (part) {
+        if (part.type === 'hour') hour = part.value;
+        if (part.type === 'minute') minute = part.value;
+      });
+      if (hour === null || minute === null) return null;
+      return hour + ':' + minute;
+    } catch (e) {
+      return null;
+    }
+  }
+
   function isNonNegativeInteger_(value) {
     return typeof value === 'number' && Number.isInteger(value) && value >= 0;
   }
@@ -273,6 +297,7 @@ var BookingAvailability = (function () {
     isValidTimeString: isValidTimeString,
     parseTimeToMinutes: parseTimeToMinutes_,
     formatDateInTimezone: formatDateInTimezone,
+    formatTimeInTimezone: formatTimeInTimezone,
     getCurrentMinutesInTimezone: getCurrentMinutesInTimezone,
     validateInput: validateInput,
     computeBookableStartTimes: computeBookableStartTimes,

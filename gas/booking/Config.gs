@@ -125,6 +125,52 @@ var BookingConfig = (function () {
     };
   }
 
+  /*
+   * 利用者向けメール（Issue #271）の基本設定。実値（表示名・reply-to・問い合わせ先）は
+   * GitHubへ直書きせず、すべてScript Propertiesから読む。未設定の項目は空文字を返す
+   * （fail-closedな要否判定自体はBookingMailer.gs側で行う。ここでは例外を投げない）。
+   *
+   * timezone（PRレビュー対応で追加）: メール本文の開始/終了時刻表示（
+   * BookingMailTemplates.gsのformatTime_）に使う。新規Script Propertyは追加せず、
+   * 既存のTIMEZONE（getAvailabilityConfig/getTtlConfigと共有。既定Asia/Tokyo）を
+   * そのまま使う。ここを渡し忘れると、Intl.DateTimeFormatがGAS実行環境の既定
+   * timezoneへフォールバックし、実行環境によってはJSTではない時刻がメール本文へ
+   * 出てしまう事故につながるため、getMailConfig()の戻り値に必ず含める。
+   */
+  function getMailConfig() {
+    return {
+      displayName: PropertiesService.getScriptProperties().getProperty('BOOKING_MAIL_DISPLAY_NAME') || '',
+      replyTo: PropertiesService.getScriptProperties().getProperty('BOOKING_MAIL_REPLY_TO') || '',
+      contactEmail: PropertiesService.getScriptProperties().getProperty('BOOKING_CONTACT_EMAIL') || '',
+      timezone: readProperty_('TIMEZONE')
+    };
+  }
+
+  /*
+   * 来場案内（前日リマインドに同梱。Issue #271）の設定値。
+   * keyboxNumber / unlockCodeは特に機密性が高いため、実値はScript Properties（または
+   * 将来的な管理用Sheet等）でのみ管理し、GitHubへは一切コミットしない。README.mdには
+   * キー名と「何を入れるか」のみを記載する。
+   * entryMethod（PRレビュー対応で追加。ACCESS_GUIDE_ENTRY_METHOD）: 前日リマインド
+   * 必須内容の「入室方法」用。将来、施設側の運用変更で入室方法が変わっても
+   * コード変更なしで差し替えられるよう、固定文言をテンプレートへ埋め込まずScript
+   * Propertyから読む。
+   */
+  function getAccessGuideConfig() {
+    return {
+      address: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_ADDRESS') || '',
+      building: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_BUILDING') || '',
+      room: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_ROOM') || '',
+      entrance: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_ENTRANCE') || '',
+      keyboxLocation: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_KEYBOX_LOCATION') || '',
+      keyboxNumber: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_KEYBOX_NUMBER') || '',
+      unlockCode: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_UNLOCK_CODE') || '',
+      entryMethod: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_ENTRY_METHOD') || '',
+      url: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_URL') || '',
+      pdfUrl: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_PDF_URL') || ''
+    };
+  }
+
   return {
     DEFAULTS: DEFAULTS,
     getCalendarId: getCalendarId,
@@ -132,6 +178,8 @@ var BookingConfig = (function () {
     getSpreadsheetId: getSpreadsheetId,
     getAdminNotificationEmail: getAdminNotificationEmail,
     getTtlConfig: getTtlConfig,
-    getRateLimitConfig: getRateLimitConfig
+    getRateLimitConfig: getRateLimitConfig,
+    getMailConfig: getMailConfig,
+    getAccessGuideConfig: getAccessGuideConfig
   };
 })();

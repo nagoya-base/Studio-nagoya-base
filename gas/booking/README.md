@@ -18,6 +18,11 @@ Epic #265の一部として以下を実装済み。
   過去開始時刻」を拒否し（`SAME_DAY_START_TIME_PASSED`）、PENDING TTLも
   「当日受付・開始2時間未満」の予約が作成直後に即EXPIREDにならず、かつ利用開始後まで
   PENDINGが残らないよう調整した（詳細は「Issue #270: 当日利用ルールと利用経験判定」参照）
+- **Issue #271**: 予約通知メール（仮予約受付・確定・前日リマインド+来場案内）の自動送信、
+  キャンセルメールの送信ロジック（呼び出し配線自体は#272）、送信履歴・エラーの
+  Spreadsheet記録、SentAtによる二重送信防止、管理者による個別再送、前日リマインド用
+  時間主導トリガー作成関数を実装した。実メール送信・本番Script Properties設定・
+  本番トリガー作成はこのPRでは行わない（詳細は「Issue #271: 予約通知メール自動送信」参照）
 
 このディレクトリは自社予約システム専用のApps Scriptプロジェクトの元になるソース一式
 （複数プロジェクトへ配布するファイル群）として運用し、`gas/ataru_survey_public` 等の
@@ -425,9 +430,11 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 ### #271/#272/#273との境界
 
 - `#271`（利用者向けメール通知: 仮予約受付・確定・キャンセル・前日リマインド・
-  来場案内）は実装していない。#268からの管理者向け内部通知（`AdminNotifier.gs`）は
-  変更していない。
-- `#272`（管理者キャンセル機能）は実装していない。
+  来場案内）は**実装済み**（詳細は「Issue #271: 予約通知メール自動送信」参照）。
+  #268からの管理者向け内部通知（`AdminNotifier.gs`）はこのIssueで変更していない
+  （利用者向けメールとは別ファイル・別責務のまま維持）。
+- `#272`（管理者キャンセル機能。PENDING/CONFIRMED→CANCELLEDの状態遷移・Calendar削除・
+  キャンセルメール呼び出し配線）は実装していない。
 - `#273`（本番GASデプロイ・本番Web App URL差替・旧フォーム撤去・Calendar embed撤去・
   本番切替・ロールバック実施）は実装していない。`scripts/booking-config.js`の
   `BASE_URL`は引き続き空文字のまま。
@@ -437,6 +444,169 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 「利用経験あり」は当日予約可否の判定にのみ使う。会員料金・割引判定を自動化する
 ものではない（Issue #270の非対象）。特にmensページの会員料金表示・「メンズページを
 見た」申告等の既存運用は、このIssueでは一切変更していない。
+
+## Issue #271: 予約通知メール自動送信
+
+予約に関する利用者向けメール（仮予約受付・確定・前日リマインド+来場案内）をGASから
+自動送信するようにした。キャンセルメールは**送信ロジックのみ**を実装し、実際に
+`CANCELLED`成功後に呼ぶ配線は`#272`（管理者キャンセル機能）の責務とする。
+
+### このIssueで実装した範囲
+
+1. `createBooking`成功後（Calendar/Sheets保存・booking Lock解除後）の、利用者向け
+   PENDINGメール（best effort。失敗しても`createBooking`は成功のまま）
+2. `confirmBooking`成功後（Calendar/Sheets確定・Lock解除後）の、利用者向けCONFIRMED
+   メール（best effort。既にCONFIRMED済みで`confirmedMailSentAt`が空の場合は
+   メールだけ再試行する）
+3. `CANCELLED`状態の予約に送れるキャンセルメール送信関数（`BookingMailer.sendCancelledMailForBooking`）。
+   **呼び出し配線は#272**（このIssueでは状態遷移自体もCalendar削除も実装しない）
+4. 翌日の`CONFIRMED`予約への前日リマインド（`sendNextDayReminders(now)`）
+5. 前日リマインドへ同梱する来場案内（住所・建物・部屋・入口案内・キーボックス位置・
+   キーボックス番号・解錠コード・利用案内URL・案内PDF URL）
+6. `Bookings`シートへの送信履歴・エラー記録（8列追加。「Sheets変更（Issue #271）」参照）
+7. SentAtによる二重送信防止（`LockService`での直列化を含む）
+8. 管理者による明示的な個別再送（`{ force: true }`。SentAtを先に消す運用はしない）
+9. 前日リマインド用の時間主導トリガー作成関数（`createNextDayReminderTrigger()`。
+   本番トリガー作成自体はこのPRでは行わない）
+10. ブランド共通のメールテンプレート（`BookingMailTemplates.gs`。SNB/mens/Studio X
+    で本文生成ロジックを複製しない）
+
+### このIssueで実装していないもの（非対象）
+
+- `PENDING`/`CONFIRMED` → `CANCELLED`の状態遷移そのもの、Calendar予約削除を伴う
+  キャンセル処理、`#272`の管理者キャンセルUI（このIssueでは`sendCancelledMailForBooking`
+  という送信関数とテストまでを用意する）
+- 本番GASデプロイ・本番Script Properties設定・本番トリガー作成・実メール送信
+- LINE/SMS通知・Stripe決済メール・PayPay API・外部媒体（スペースマーケット）予約者への
+  自社メール送信・会員DB自動照合・動的なスマートロックAPI連携・解錠コードの自動生成/変更
+
+### メール種別とSentAtの対応
+
+| mail type | 送信条件（status） | 対応するSentAt | 二重送信防止 |
+| --- | --- | --- | --- |
+| `PENDING` | `PENDING` | `pendingMailSentAt` | SentAtが空の場合のみ送信 |
+| `CONFIRMED` | `CONFIRMED` | `confirmedMailSentAt` | 同上（既にCONFIRMEDでもSentAt空なら再試行可） |
+| `CANCELLED` | `CANCELLED` | `cancelMailSentAt` | 同上（#271では送信関数のみ。呼び出しは#272） |
+| `REMINDER` | `CONFIRMED`かつ利用日が翌日（`SpreadsheetRepository.getConfirmedBookingsForDate`で抽出） | `reminderSentAt`と`accessGuideSentAt`（同時記録） | 上記2列のいずれかが空の場合のみ送信 |
+
+`BookingMailer.gs`の`withBookingLock_`が全メール種別共通で以下の順序を守る
+（`LockService.getScriptLock()`で直列化）:
+
+```text
+Lock取得 → bookingIdで最新レコード再読込 → status確認 → 対応SentAt確認 →
+テンプレート生成（設定不足はここでfail-closedに失敗させる） → MailApp送信 →
+送信成功 → SentAt更新・lastMailError*クリア → Lock解除
+```
+
+`MailApp`と`Spreadsheet`は1つの原子的トランザクションにできないため、「メール送信成功
+直後にプロセスが異常終了しSentAtだけ書けない」という理論上の完全なexactly-onceは
+保証できない。ただし通常の二重クリック・トリガー重複・再実行・`confirmBooking`の
+再実行では、SentAt確認とLockにより二重送信を防ぐ。
+
+### エラー処理（メール送信失敗は予約状態を壊さない）
+
+**最重要**: メール送信の失敗（`BOOKING_MAIL_DISPLAY_NAME`等の設定不足・`TIMEZONE`が
+不正でIntlが解釈できない場合のfail-closedな拒否を含む）は、`createBooking`/
+`confirmBooking`の成否・`Bookings`シートの`status`のいずれにも影響しない。失敗時は:
+
+- `Bookings`シートの該当行へ`lastMailErrorAt`/`lastMailErrorType`/`lastMailErrorMessage`
+  をbest effortで記録する
+- `RecoveryRepository.recordFailure`へ`failureType: 'MAIL_<TYPE>_FAILED'`
+  （`MAIL_PENDING_FAILED`/`MAIL_CONFIRMED_FAILED`/`MAIL_CANCELLED_FAILED`/
+  `MAIL_REMINDER_FAILED`）・`recoveryState: 'OPEN'`で記録する（詳細は
+  「Recoveryシート（部分失敗・不整合記録）列構成」参照）
+- 次回同種メールの送信に成功すると、`lastMailErrorAt`等は自動的に空へ戻す
+- Recovery記録自体・`lastMailError*`更新自体が失敗した場合はLoggerへ最小限記録するのみ
+  （利用者への応答・予約処理自体を失敗させない）
+- エラーメッセージは例外の`message`のみを`RecoveryRepository`/`lastMailErrorMessage`へ
+  記録し、メール本文全文は含めない。**PRレビュー対応（2回目）で、`BookingMailer.gs`の
+  `sanitizeErrorMessage_`がメールアドレス形式（正規表現）を`[REDACTED_EMAIL]`へ、
+  REMINDER送信時は`ACCESS_GUIDE_KEYBOX_NUMBER`/`ACCESS_GUIDE_UNLOCK_CODE`の実値が
+  万一例外メッセージへ混入した場合も`[REDACTED]`へ置換してから記録するようにした**
+  （`BookingMailer.sanitizeErrorMessage`として公開し、`BookingRepository.gs`の
+  `notifyCustomerPendingBestEffort_`/`notifyCustomerConfirmedBestEffort_`・
+  `BookingReminderTriggers.gs`の`sendNextDayReminders`のLogger出力にも同じ関数を
+  適用している）。`sendNextDayReminders`のLoggerには送信失敗時に`bookingId`と
+  `error.code`のみを記録し、生のエラーオブジェクトを`JSON.stringify`しない
+
+**fail-safe（来場案内の必須項目）**: `ACCESS_GUIDE_ADDRESS`/`ACCESS_GUIDE_BUILDING`/
+`ACCESS_GUIDE_ROOM`/`ACCESS_GUIDE_ENTRANCE`/`ACCESS_GUIDE_KEYBOX_LOCATION`/
+`ACCESS_GUIDE_ENTRY_METHOD`/`ACCESS_GUIDE_KEYBOX_NUMBER`/`ACCESS_GUIDE_UNLOCK_CODE`/
+`ACCESS_GUIDE_URL`のいずれか1つでも未設定の場合、前日リマインド（`REMINDER`）を
+「成功扱い」にせず送信自体を行わない（`reminderSentAt`/`accessGuideSentAt`は更新
+しない。PRレビュー対応で、当初は秘密値2項目のみの検証だったものを来場案内の
+必須項目全体へ拡張した）。予約の`status`はCONFIRMEDのまま維持し、`lastMailError*`へ
+記録する。`ACCESS_GUIDE_PDF_URL`のみ「必要に応じて」のため必須にしない。
+
+### 手動再送
+
+Booking Adminプロジェクトの「予約管理」メニューへ「予約メールを再送
+（予約ID指定・強制再送）」を追加した（`BookingAdmin.gs`の
+`resendBookingMailByPrompt_`）。bookingId・メール種別（`PENDING`/`CONFIRMED`/
+`CANCELLED`/`REMINDER`）をそれぞれ別のダイアログで入力し、
+`BookingMailer.send*ForBooking(bookingId, { force: true })`を呼ぶ。
+
+- `force: true`はSentAtが既にあっても送信する明示的な再送であり、SentAtを事前に
+  消す運用はしない（誤送信を避けるため）
+- ただし**状態条件（status一致）はforceでも無視しない**。例えば`PENDING`のメールを
+  `CONFIRMED`の予約へforce送信しようとしても`INVALID_STATUS`で拒否する
+- `REMINDER`の手動再送も、来場案内の必須項目（秘密値の`ACCESS_GUIDE_KEYBOX_NUMBER`/
+  `ACCESS_GUIDE_UNLOCK_CODE`を含む）が1つでも未設定なら送信しない
+  （fail-safe自体はforceでも解除しない）
+
+### 前日リマインド用トリガーの作成
+
+`sendNextDayReminders`・そのトリガーは**Booking Adminプロジェクト**
+（`BookingReminderTriggers.gs`）に属する。本PRでは本番の時間主導トリガー作成
+そのものは行わない（コードのみ実装）。運用開始時は、Booking Adminプロジェクトの
+スクリプトエディタから`createNextDayReminderTrigger`を一度だけ実行する（毎日18時台に
+1回、`sendNextDayReminders`を実行するトリガーが作成される。同名トリガーが既にある
+場合は重複作成しない）。GASの時間主導トリガーは分単位の完全一致を保証しないため、
+「18:00ちょうど」ではなく「18時台に1回」を業務要件とする。
+
+`sendNextDayReminders(now)`の処理:
+
+1. `now`（省略時は現在時刻）を`BookingConfig.getAvailabilityConfig().timezone`
+   （既定`Asia/Tokyo`）基準の「今日」に変換し、翌日の`YYYY-MM-DD`を計算する
+2. `SpreadsheetRepository.getConfirmedBookingsForDate`で翌日の`CONFIRMED`予約を取得する
+3. 1件ずつ`BookingMailer.sendReminderMailForBooking`へ委譲し、内部で最新status/SentAtを
+   再確認してから送信する
+4. 1件が失敗（MailApp例外・秘密値未設定等）しても、残りの予約の処理を継続する
+   （バッチ内の障害分離）
+5. `{ processedCount, sentCount, skippedCount, failedCount }`を返す
+
+ブランド（snb/mens/studio_x）で抽出ロジック・送信ロジックを分岐させない。
+
+### PENDING TTL失効の遅延についての注記
+
+「Issue #270: 当日利用ルールと利用経験判定」に記載のとおり、PENDING TTLの失効時刻
+（`expiry`）自体は利用開始時刻を超えないよう設計しているが、**実際にCalendarイベントを
+削除しSheetsの`status`を`EXPIRED`へ更新する処理は、15分間隔の`expirePendingBookings`
+トリガーの次回実行時になる**ため、TTL上の失効期限を迎えてから実際のSheets更新・
+Calendar削除までに最大約15分の遅延があり得る（Issue #271でメール送信の設計を
+見直す過程で改めて明記する）。前日リマインド（`sendNextDayReminders`）は
+`status === 'CONFIRMED'`のみを対象とするため、この遅延はリマインド送信対象の
+判定には影響しない。
+
+### セキュリティ・個人情報
+
+- キーボックス番号・解錠コード等の秘密値はScript Propertiesでのみ管理し、GitHubへは
+  実値を一切コミットしない（README・PRにもキー名と「何を入れるか」のみを記載する）
+- `buildPendingMail`/`buildConfirmedMail`は構造上`accessGuide`を引数に取らないため、
+  実装ミスで仮予約・確定直後メールに秘密値が混入することを防いでいる
+  （`test/booking-mail-templates.test.js`で検証）
+- テストでは実秘密値・実メールアドレスを使わず、`test@example.com`・`TEST-KEYBOX`/
+  `TEST-CODE`等のダミー値のみを使う
+- エラーメッセージ（`lastMailErrorMessage`・Recoveryの`errorMessage`）にはメール本文
+  全文・秘密値・利用者のメールアドレスを含めない
+- 公開Web APIレスポンス（`getAvailability`/`createBooking`）へ、メール送信状況・
+  来場案内・解錠コードを追加していない
+
+### 共通化（3ブランド）
+
+`BookingMailTemplates.gs`の全関数は`record.brand`から`Booking.getBrandLabel`で
+表示名を取得するのみで、SNB/mens/Studio Xごとにテンプレート関数・送信ロジックを
+複製していない（`test/booking-mail-templates.test.js`で3ブランド共通であることを検証）。
 
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
@@ -489,6 +659,45 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 - `Code.gs`（拡張） — `doPost`を追加（`createBooking`用。POST専用）。
   **Booking Web Appプロジェクト（スタンドアロン）専用**
 
+### Issue #271（予約通知メール自動送信で追加）
+
+- `BookingMailTemplates.gs` — 件名・本文生成のみの純粋関数
+  （`buildPendingMail`/`buildConfirmedMail`/`buildCancelledMail`/`buildReminderMail`）。
+  `MailApp`/`SpreadsheetApp`等のGAS組み込みサービスに一切依存せず、`node --test`で
+  vm実行できる。ブランド差分は`Booking.getBrandLabel`のみで吸収し、SNB/mens/Studio X
+  で本文生成ロジックを複製しない
+- `BookingMailer.gs` — 送信制御本体。`LockService`で直列化しつつ、bookingIdで最新
+  レコードを再読込→status確認→対応するSentAt確認→`BookingMailTemplates`でテンプレート
+  生成→`MailApp.sendEmail`呼び出し→成功時SentAt更新/失敗時`lastMailError*`・
+  `RecoveryRepository`記録、を行う。`sendPendingMailForBooking`/
+  `sendConfirmedMailForBooking`/`sendCancelledMailForBooking`/
+  `sendReminderMailForBooking`をそれぞれ公開し、`{ force: true }`を渡すと
+  管理者の明示的な再送として、SentAt済みでも状態条件（status一致）は無視せず再送する
+- `BookingReminderTriggers.gs` — 前日リマインド用の正式関数`sendNextDayReminders(now)`と、
+  時間主導トリガー作成の補助関数`createNextDayReminderTrigger()`。
+  **Booking Adminプロジェクト（コンテナバインド）専用**（`BookingTriggers.gs`と同じ
+  理由。`confirmBooking`と同じLockServiceを共有する`BookingMailer`を使うため）
+- `SpreadsheetRepository.gs`（拡張） — `Bookings`シートのヘッダーへ送信履歴・
+  エラー記録用の8列を**末尾に追記**（後述「Spreadsheet変更（Issue #271）」参照）。
+  翌日のCONFIRMED予約抽出用に`getConfirmedBookingsForDate(dateString)`を追加
+- `Availability.gs`（拡張） — メールテンプレートの開始/終了時刻表示用に
+  `formatTimeInTimezone(date, timezone)`を追加（`formatDateInTimezone`/
+  `getCurrentMinutesInTimezone`と同じIntl.DateTimeFormatベースの純粋関数）
+- `Config.gs`（拡張） — `getMailConfig()`（`BOOKING_MAIL_DISPLAY_NAME`/
+  `BOOKING_MAIL_REPLY_TO`/`BOOKING_CONTACT_EMAIL`）と`getAccessGuideConfig()`
+  （`ACCESS_GUIDE_*`。来場案内・秘密値を含む）を追加
+- `BookingRepository.gs`（拡張） — `createBooking`はbooking Lock解除後・best effortで
+  利用者向けPENDINGメール（`BookingMailer.sendPendingMailForBooking`）を送るようにした
+  （管理者通知より先。どちらが失敗しても`createBooking`は`success:true`のまま）。
+  `confirmBooking`はCalendar/Sheets確定・Lock解除後・best effortで利用者向けCONFIRMED
+  メールを送るようにし、戻り値へ補助情報`mailSent`/`mailError`を追加した（メール失敗でも
+  `success:false`にはしない）。既にCONFIRMED済みで`confirmedMailSentAt`が空の場合も、
+  状態は変更せずメール送信だけ再試行する
+- `BookingAdmin.gs`（拡張） — 「予約管理」メニューへ「予約メールを再送
+  （予約ID指定・強制再送）」を追加。bookingIdとメール種別（PENDING/CONFIRMED/
+  CANCELLED/REMINDER）をダイアログで入力させ、`{ force: true }`で
+  `BookingMailer.send*ForBooking`を呼ぶ
+
 ## GASプロジェクトへのデプロイ対象ファイル
 
 上記の理由（カスタムメニューはコンテナバインドスクリプトでしか作成できない）により、
@@ -508,17 +717,22 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 | `RecoveryRepository.gs` | ✓ | ✓ |
 | `BookingRepository.gs` | ✓ | ✓ |
 | `AdminNotifier.gs` | ✓ | – |
+| `BookingMailTemplates.gs`（Issue #271） | ✓ | ✓ |
+| `BookingMailer.gs`（Issue #271） | ✓ | ✓ |
 | `BookingTriggers.gs` | – | ✓ |
 | `BookingAdmin.gs` | – | ✓ |
+| `BookingReminderTriggers.gs`（Issue #271） | – | ✓ |
 | `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい） |
 
 `BookingRepository.gs`の`confirmBooking`・`expirePendingBookings`が実際に参照する
 ファイルは`Config.gs`/`Booking.gs`/`CalendarRepository.gs`/`SpreadsheetRepository.gs`/
-`RecoveryRepository.gs`のみ（`createBooking`が使う`Availability.gs`/`RateLimiter.gs`/
-`AdminNotifier.gs`はBooking Adminプロジェクトでは呼び出されない）。ただし、コピー漏れに
-よる将来の機能追加時の事故を避けるため、上表のとおり「`Code.gs`/`Availability.gs`/
-`RateLimiter.gs`/`AdminNotifier.gs`以外の全ファイル」をBooking Adminプロジェクトにも
-配布することを推奨する。
+`RecoveryRepository.gs`/`BookingMailTemplates.gs`/`BookingMailer.gs`のみ（`createBooking`が
+使う`Availability.gs`/`RateLimiter.gs`/`AdminNotifier.gs`はBooking Adminプロジェクトでは
+呼び出されない）。ただし、コピー漏れによる将来の機能追加時の事故を避けるため、上表のとおり
+「`Code.gs`/`Availability.gs`/`RateLimiter.gs`/`AdminNotifier.gs`/`BookingReminderTriggers.gs`
+以外の全ファイル」をBooking Adminプロジェクトにも配布することを推奨する
+（`BookingMailTemplates.gs`/`BookingMailer.gs`はcreateBooking側のPENDINGメール送信でも
+使うため、両プロジェクトへの配布が必須）。
 
 両プロジェクトは**同一の`.gs`ファイル**（このリポジトリの`gas/booking/`）を元にしており、
 コード自体を複製・分岐させているわけではない（clasp等のデプロイ自動化は本リポジトリに
@@ -546,6 +760,19 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 | `RATE_LIMIT_GLOBAL_WINDOW_MINUTES` | - | 省略時 `1` |
 | `RATE_LIMIT_DUPLICATE_WINDOW_MINUTES` | - | 省略時 `2`。同一内容の連投とみなす時間窓 |
 | `ADMIN_NOTIFICATION_EMAIL` | - | 省略時は管理者通知を送らない（未設定でもcreateBooking自体は失敗しない） |
+| `BOOKING_MAIL_DISPLAY_NAME`（Issue #271） | - | 利用者向けメールの送信者表示名。**未設定の場合、PENDING/CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗として扱う**（予約状態は維持） |
+| `BOOKING_MAIL_REPLY_TO`（Issue #271） | - | 利用者向けメールのreply-toアドレス。未設定時の扱いは`BOOKING_MAIL_DISPLAY_NAME`と同じ |
+| `BOOKING_CONTACT_EMAIL`（Issue #271） | - | 利用者向けメール本文に載せる問い合わせ先。未設定時の扱いは`BOOKING_MAIL_DISPLAY_NAME`と同じ |
+| `ACCESS_GUIDE_ADDRESS`（Issue #271） | - | 前日リマインドに載せる施設住所。**未設定の場合、前日リマインド（REMINDER）を成功扱いにせず送信しない**（PRレビュー対応。以下`ACCESS_GUIDE_PDF_URL`を除く全項目が同じ扱い） |
+| `ACCESS_GUIDE_BUILDING`（Issue #271） | - | 建物名。同上（未設定なら送信しない） |
+| `ACCESS_GUIDE_ROOM`（Issue #271） | - | 部屋番号。同上 |
+| `ACCESS_GUIDE_ENTRANCE`（Issue #271） | - | 建物入口から部屋までの案内。同上 |
+| `ACCESS_GUIDE_KEYBOX_LOCATION`（Issue #271） | - | キーボックス設置位置。同上 |
+| `ACCESS_GUIDE_ENTRY_METHOD`（Issue #271。PRレビュー対応で追加） | - | 入室方法（前日リマインドの必須内容）。同上（未設定なら送信しない） |
+| `ACCESS_GUIDE_KEYBOX_NUMBER`（Issue #271。秘密値） | - | キーボックス番号。同上。実値はGitHubへコミットしない |
+| `ACCESS_GUIDE_UNLOCK_CODE`（Issue #271。秘密値） | - | 解錠コード。同上 |
+| `ACCESS_GUIDE_URL`（Issue #271） | - | 利用案内ページURL。同上 |
+| `ACCESS_GUIDE_PDF_URL`（Issue #271） | - | キーボックス案内PDF等のURL。**これだけは任意**（「必要に応じて」の項目のため未設定でも送信は失敗にしない） |
 
 TTL・レート制限の数値プロパティは、誤設定（数値以外・0以下）の場合でも例外にせず
 安全な既定値へフォールバックする（fail-openでレート制限が無効化される事故を防ぐため。
@@ -570,12 +797,26 @@ Spreadsheetを参照してしまう）。
 （Booking Web App側は不要）。`RATE_LIMIT_*`/`ADMIN_NOTIFICATION_EMAIL`は
 `createBooking`のみが使うため、**Booking Web App側に設定する**（Booking Admin側は不要）。
 
+**`BOOKING_MAIL_DISPLAY_NAME`/`BOOKING_MAIL_REPLY_TO`/`BOOKING_CONTACT_EMAIL`（Issue #271）は
+両方のプロジェクトに設定する。** Booking Web App側は`createBooking`のPENDINGメールで、
+Booking Admin側は`confirmBooking`のCONFIRMEDメール・`sendNextDayReminders`のREMINDERメール・
+`resendBookingMailByPrompt_`の手動再送で、それぞれ利用者向けメールを送るため。
+`ACCESS_GUIDE_*`（来場案内。秘密値の`ACCESS_GUIDE_KEYBOX_NUMBER`/`ACCESS_GUIDE_UNLOCK_CODE`を
+含む）は前日リマインド（`sendNextDayReminders`）でのみ使うため、**Booking Adminプロジェクト側
+にのみ設定する**（Booking Web App側は不要）。秘密値はいずれもGitHubへ直書きせず、
+Script Propertiesにのみ設定すること（README・PRにも実値は記載しない）。
+
 **`TIMEZONE`はIssue #270から両方のプロジェクトで必要になった。** `expirePendingBookings`
 （Booking Adminプロジェクト）が「当日受付の予約かどうか」を判定するために
 `BookingConfig.getTtlConfig().timezone`を参照するようになったため（「PENDING TTLの
 変更内容と理由」参照）、`TIMEZONE`を独自に設定している場合はBooking Adminプロジェクト
 側にも同じ値を設定すること（既定`Asia/Tokyo`のまま変更していなければ、両プロジェクトとも
-未設定でよく、対応不要）。
+未設定でよく、対応不要）。**Issue #271のPRレビュー対応で、`BookingConfig.getMailConfig()`
+にも同じ`TIMEZONE`をそのまま含めるようにした**（新しいScript Propertyは追加していない）。
+利用者向けメール本文の開始/終了時刻表示はこの値を使うため、`TIMEZONE`を独自設定している
+場合は両プロジェクトで値を揃えないと、メール本文の時刻表示とCalendar/`Bookings`シートの
+実際の時刻がずれる可能性がある。`TIMEZONE`が不正でIntlが解釈できない場合、PENDING/
+CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗として扱う。
 
 ## Spreadsheet構成
 
@@ -589,14 +830,29 @@ Spreadsheetを参照してしまう）。
 `bookingId` / `createdAt` / `date` / `startAt` / `endAt` / `brand` / `name` / `email` /
 `phone` / `people` / `purpose` / `paymentMethod` / `status` / `calendarEventId` /
 `source` / `note` / `confirmedAt` / `expiredAt` / `cancelledAt` / `updatedAt` /
-`customerType`（Issue #270で追加。`first_time`または`returning`）
+`customerType`（Issue #270で追加。`first_time`または`returning`） /
+`pendingMailSentAt` / `confirmedMailSentAt` / `cancelMailSentAt` / `reminderSentAt` /
+`accessGuideSentAt` / `lastMailErrorAt` / `lastMailErrorType` / `lastMailErrorMessage`
+（いずれもIssue #271で追加）
 
 - `customerType`はIssue #270で20列目として**末尾に追記**した。既存行との互換性を保つため
   途中に挿入していない（既存行はこの列が空のまま＝利用区分不明として扱われる）。
+- `pendingMailSentAt`〜`lastMailErrorMessage`の8列はIssue #271で21〜28列目として、同じ
+  「末尾に追記」の方針で追加した（既存行はこれらの列が空のまま読める。`rowToRecord_`/
+  `recordToRow_`/`appendBooking`/`updateBookingFields`の互換性は壊していない）。
+  - `pendingMailSentAt`/`confirmedMailSentAt`/`cancelMailSentAt`/`reminderSentAt`/
+    `accessGuideSentAt`はそれぞれのメール種別を送信した日時。**空の場合だけ自動送信の
+    対象になる**（二重送信防止。詳細は「Issue #271: 予約通知メール自動送信」参照）。
+    `reminderSentAt`と`accessGuideSentAt`は前日リマインドを1通にまとめて送るため、
+    成功時に同じ時刻で同時に記録する。
+  - `lastMailErrorAt`/`lastMailErrorType`/`lastMailErrorMessage`は直近のメール送信失敗
+    （設定不足によるfail-closedな拒否を含む）の記録。次回同種メールの送信に成功すると
+    自動的に空へ戻す。
 - `status`は`PENDING` / `CONFIRMED` / `CANCELLED` / `EXPIRED`のいずれか。
   **このセルを直接手編集するのは正式運用ではない。** 確定は必ず`confirmBooking(bookingId)`
   （カスタムメニュー経由）を使うこと。TTL失効・キャンセルも将来的に専用関数経由のみとする。
-- 料金列は持たない（Phase 1では自動料金計算をしないため）。
+- 料金列は持たない（Phase 1では自動料金計算をしないため。Issue #271の確定メールでも
+  料金は本文へ出さない）。
 
 ### `Recovery`シート（部分失敗・不整合記録）列構成
 
@@ -615,6 +871,10 @@ Spreadsheetを参照してしまう）。
 | `EXPIRE_CALENDAR_DELETE_FAILED` | expirePendingBookings: Calendarイベント削除が失敗（Sheets側はEXPIREDへ進めている） |
 | `EXPIRE_SHEETS_UPDATE_FAILED` | expirePendingBookings: Calendarイベント削除成功→Sheets側のEXPIRED更新が失敗（**要手動対応**。CalendarはPENDINGのイベントが既に削除済み・SheetsはPENDING表示のまま不整合） |
 | `ADMIN_NOTIFICATION_FAILED` | 管理者通知メール送信に失敗（予約自体は成功のまま。情報用途） |
+| `MAIL_PENDING_FAILED`（Issue #271） | 利用者向けPENDINGメールの送信に失敗（設定不足によるfail-closedな拒否を含む。予約自体・`status`は変更しない。`Bookings`シートの`lastMailError*`にも同時記録） |
+| `MAIL_CONFIRMED_FAILED`（Issue #271） | 利用者向けCONFIRMEDメールの送信に失敗。同上（`confirmBooking`自体の成否には影響しない） |
+| `MAIL_CANCELLED_FAILED`（Issue #271） | 利用者向けCANCELLEDメールの送信に失敗。同上（#271では送信関数のみ。呼び出し配線は#272） |
+| `MAIL_REMINDER_FAILED`（Issue #271） | 前日リマインド（来場案内含む）の送信に失敗。解錠コード等の秘密値未設定によるfail-safeな拒否もここに含む。`status`はCONFIRMEDのまま変更しない |
 
 ## 部分失敗・recoveryの確認手順（運用者向け）
 
@@ -641,6 +901,17 @@ Spreadsheetを参照してしまう）。
    `test/booking-confirm-expire.test.js`の障害分離テストと同じ仕組みで安全に再実行できる）。
 6. 対応が完了したら、`Recovery`シートの`recoveryState`・`resolvedAt`列へ手動で
    記録する（このシートはBookings台帳と異なり、運用者が直接編集してよい）。
+7. `failureType`が`MAIL_PENDING_FAILED`/`MAIL_CONFIRMED_FAILED`/`MAIL_CANCELLED_FAILED`/
+   `MAIL_REMINDER_FAILED`（Issue #271）の場合、予約自体の`status`・Calendar/Sheetsの
+   予約データは正常なまま（メール送信のみが失敗している）。`Bookings`シートの該当行の
+   `lastMailErrorAt`/`lastMailErrorType`/`lastMailErrorMessage`で発生日時・種別・
+   エラー概要を確認し、原因（`BOOKING_MAIL_DISPLAY_NAME`等の設定不足、
+   `ACCESS_GUIDE_KEYBOX_NUMBER`/`ACCESS_GUIDE_UNLOCK_CODE`の未設定、MailAppの
+   日次クォータ超過等）を解消したうえで、Booking Adminプロジェクトの「予約管理」
+   メニュー→「予約メールを再送（予約ID指定・強制再送）」からbookingIdとメール種別を
+   指定して再送する（詳細は「Issue #271: 予約通知メール自動送信」の「手動再送」参照）。
+   自動処理は対応するSentAtが既にある場合は再送しないため、原因解消後の再送は
+   必ずこの手動再送機能を使うこと（SentAtを直接消す運用はしない）。
 
 ## API仕様
 
@@ -779,20 +1050,24 @@ Issue #270時点で`customerType`に指定できるのは`first_time` / `returni
    新規プロジェクトが作成される）。
 3. 「GASプロジェクトへのデプロイ対象ファイル」の表にある**Booking Admin列が✓のファイル**
    （`Config.gs` / `CalendarRepository.gs` / `Booking.gs` / `SpreadsheetRepository.gs` /
-   `RecoveryRepository.gs` / `BookingRepository.gs` / `BookingAdmin.gs` /
-   `BookingTriggers.gs`）をコピーする。
+   `RecoveryRepository.gs` / `BookingRepository.gs` / `BookingMailTemplates.gs` /
+   `BookingMailer.gs` / `BookingAdmin.gs` / `BookingTriggers.gs` /
+   `BookingReminderTriggers.gs`）をコピーする。
 4. このプロジェクトのScript Propertiesに `CALENDAR_ID` / `SPREADSHEET_ID` /
    `PENDING_TTL_HOURS` / `PENDING_TTL_MIN_HOURS_BEFORE_START` /
-   `PENDING_TTL_MIN_HOLD_HOURS`（Issue #270で追加）を設定する
-   （`CALENDAR_ID`/`SPREADSHEET_ID`はBooking Web App側と同じ値。`TIMEZONE`を
-   既定値`Asia/Tokyo`から変更している場合はここにも同じ値を設定すること。
-   「Script Properties」節参照）。
+   `PENDING_TTL_MIN_HOLD_HOURS`（Issue #270で追加） / `BOOKING_MAIL_DISPLAY_NAME` /
+   `BOOKING_MAIL_REPLY_TO` / `BOOKING_CONTACT_EMAIL` / `ACCESS_GUIDE_*`一式
+   （Issue #271で追加。「Script Properties」節参照）を設定する
+   （`CALENDAR_ID`/`SPREADSHEET_ID`/`BOOKING_MAIL_*`はBooking Web App側と同じ値。
+   `TIMEZONE`を既定値`Asia/Tokyo`から変更している場合はここにも同じ値を設定すること）。
 5. 保存してSpreadsheetを再読み込みする。コンテナバインドスクリプトの`onOpen()`単純トリガーが
    自動的に発火し、「予約管理」メニューが表示される（installable trigger等の追加設定は
    一切不要。これがcontainer-bound scriptの標準的な挙動）。
 6. 「PENDING TTL失効トリガーの作成手順」に従って、このBooking Adminプロジェクトの
    スクリプトエディタから`createExpirePendingBookingsTrigger`を実行する
-   （または手動でトリガーを作成する）。
+   （または手動でトリガーを作成する）。前日リマインドを運用する場合は、同様に
+   「前日リマインド用トリガーの作成」（Issue #271）に従って`createNextDayReminderTrigger`
+   も実行する。
 7. Web Appとしてのデプロイは不要（このプロジェクトはSpreadsheetのUI拡張＋時間主導
    トリガーとしてのみ使う）。
 
@@ -874,10 +1149,12 @@ Booking Adminプロジェクト（コンテナバインド）はWeb Appとして
 
 1. **Booking Web App**: 新規のスタンドアロンGoogle Apps Scriptプロジェクトを作成し、
    「GASプロジェクトへのデプロイ対象ファイル」表のBooking Web App列が✓のファイル
-   （`BookingAdmin.gs`・`BookingTriggers.gs`を除く全`.gs`ファイルと`appsscript.json`）を
-   コピーする。
+   （`BookingAdmin.gs`・`BookingTriggers.gs`・`BookingReminderTriggers.gs`を除く全
+   `.gs`ファイルと`appsscript.json`）をコピーする。
 2. Script Propertiesを設定する（最低限 `CALENDAR_ID` / `SPREADSHEET_ID`。
-   `PENDING_TTL_*`はBooking Admin側の設定のためここでは不要）。
+   利用者向けPENDINGメールを送る場合は`BOOKING_MAIL_DISPLAY_NAME` /
+   `BOOKING_MAIL_REPLY_TO` / `BOOKING_CONTACT_EMAIL`もここに設定する（Issue #271）。
+   `PENDING_TTL_*`/`ACCESS_GUIDE_*`はBooking Admin側の設定のためここでは不要）。
 3. Webアプリとして新規デプロイし、上記の「デプロイ設定」の通りに設定する。
 4. デプロイ後のWeb App URLは、本Issueでは既存フォーム・既存サイトのどこからも
    参照しない（#269以降の共通予約UI実装時に接続する）。
@@ -905,6 +1182,12 @@ Booking Adminプロジェクト（コンテナバインド）はWeb Appとして
   Booking Adminの2プロジェクト以外から書き込まれないため、両方のGASデプロイ・
   スクリプトを止めれば新規の自動書き込みは止まる
   （既存の行データ自体を削除する必要はない）。
+- **Issue #271（予約通知メール自動送信）分**: このPRでは実メール送信・本番Script
+  Properties設定（`BOOKING_MAIL_*`/`ACCESS_GUIDE_*`）・本番トリガー作成のいずれも
+  行っていないため、コードをrevertするだけで元の状態（管理者向け内部通知のみ）に戻る。
+  既にScript Propertiesを設定・`createNextDayReminderTrigger`を実行済みの場合は、
+  該当プロパティの削除とBooking Adminプロジェクトの「トリガー」画面から
+  `sendNextDayReminders`のトリガーを削除する。
 
 ## 設計判断メモ（レビュー時にご確認ください）
 
@@ -1129,6 +1412,63 @@ Issue #270で追加・更新:
   error.codeの日本語メッセージ・回復導線（`reselect-date`/`reselect-time`）、
   `buildCreateBookingPayload`への`customerType`追加を追加
 
+Issue #271で追加・更新:
+
+- `test/booking-mail-templates.test.js`（新規） — `BookingMailTemplates.gs`の純粋関数
+  （件名・本文生成）。PENDING/CONFIRMEDに「未確定」/「確定」の明記・解錠コード/
+  キーボックス番号を含まないこと、**CONFIRMEDに利用上の基本注意（原状回復の案内）が
+  含まれること**、CANCELLEDの必須内容、REMINDERの来場案内一式（**入室方法を含む**）・
+  ダミー秘密値の表示・秘密値未設定時のプレースホルダ、snb/mens/studio_xで表示名のみ
+  変わることを検証
+- `test/booking-mailer.test.js`（新規） — `BookingMailer.gs`の送信制御。PENDING/
+  CONFIRMED/CANCELLED/REMINDERそれぞれについて、正常送信・SentAt記録・二重送信防止・
+  status不一致時の拒否・MailApp失敗時の予約状態維持とlastMailError*/Recovery記録・
+  設定不足のfail-closed拒否・force resend（SentAtありでも送信・status不一致は無視
+  しない）・LockServiceの取得/解放を検証。**PRレビュー対応で追加**:
+  `config.timezone`が実際にテンプレートへ渡り、JST 10:00の予約が本文でも10:00に
+  なること・`TIMEZONE`をUTC等へ変更すると表示も追従すること・`TIMEZONE`が不正な
+  文字列の場合はMailAppを呼ばずfail-closedに失敗すること、来場案内の必須項目
+  （住所/建物/部屋/入口案内/キーボックス位置/入室方法/URL/キーボックス番号/解錠コード）
+  が1項目ずつ欠けても送信しないこと、`ACCESS_GUIDE_PDF_URL`のみ任意で欠けても送信
+  できること、メール送信失敗時に`RecoveryRepository`の`status`へメール種別
+  （例: `REMINDER`）ではなく予約の現在status（例: `CONFIRMED`）が記録されることを検証。
+  **PRレビュー対応（2回目）で追加**: MailApp例外にメールアドレスが含まれても
+  `lastMailErrorMessage`/`Recovery.errorMessage`が`[REDACTED_EMAIL]`へ置換される
+  こと、REMINDER失敗時に解錠コード/キーボックス番号の実値が例外文言に混入しても
+  `[REDACTED]`へ置換されること、`BookingMailer.sanitizeErrorMessage`が公開関数として
+  再利用できること
+- `test/booking-reminders.test.js`（新規） — `BookingReminderTriggers.gs`。JST基準で
+  翌日のCONFIRMED予約だけを抽出すること、PENDING/CANCELLED/EXPIREDは対象外、
+  reminderSentAt/accessGuideSentAt済みはskip、1件の失敗（設定不足・MailApp例外）が
+  他の予約の送信を妨げないこと（バッチ内の障害分離）、`createNextDayReminderTrigger`の
+  トリガー二重作成防止を検証。**PRレビュー対応（2回目）で追加**: MailApp例外に
+  利用者メールアドレスが含まれても、Loggerには`bookingId`と`error.code`のみが
+  残り、メールアドレス・キーボックス番号・解錠コード・メール本文が残らないこと、
+  `BookingMailer`側で想定外の例外が発生した場合もLoggerへ生のメールアドレスを
+  残さないことを検証
+- `test/booking-create-booking.test.js`・`test/booking-confirm-expire.test.js`
+  （更新。**PRレビュー対応（2回目）で追加**） — `notifyCustomerPendingBestEffort_`/
+  `notifyCustomerConfirmedBestEffort_`（`BookingRepository.gs`）でBookingMailerが
+  想定外の例外を投げても、Loggerへ生のメールアドレスを残さないことを検証
+- `test/booking-config.test.js`（更新。**PRレビュー対応で追加**） — `getMailConfig()`が
+  `timezone`を含み既定値`Asia/Tokyo`になること、`TIMEZONE`上書きが
+  `getAvailabilityConfig`/`getTtlConfig`と同じ値でmail configにも反映されること、
+  `getAccessGuideConfig()`に`entryMethod`（`ACCESS_GUIDE_ENTRY_METHOD`）を含む
+  全項目が正しく読めることを追加
+- `test/booking-create-booking.test.js`（更新） — `createBooking`がbooking Lock解除後に
+  利用者向けPENDINGメールをbest effortで送ること、メール設定不足時も`createBooking`は
+  成功しlastMailError*が記録されること、管理者通知とPENDINGメールの両方が失敗しても
+  `createBooking`は成功しRecoveryへ両方の`failureType`（`ADMIN_NOTIFICATION_FAILED`/
+  `MAIL_PENDING_FAILED`）が記録されることを追加
+- `test/booking-confirm-expire.test.js`（更新） — `FILES`へ`BookingMailTemplates.gs`/
+  `BookingMailer.gs`/`BookingReminderTriggers.gs`を追加し、`confirmBooking`が
+  利用者向けメールを試行するようになった後も既存の状態遷移・部分失敗補償・recovery件数の
+  検証が壊れないよう、既定のScript Propertiesへ完全なメール設定値を追加（メール自体の
+  挙動検証は`test/booking-mailer.test.js`に委ねる）
+- `test/helpers/gas-stubs.js`（更新） — `MailApp.sendEmail`をオブジェクト引数形式
+  （`{to, subject, body, name, replyTo}`）にも対応させ、`ScriptApp`の時間主導トリガー
+  builderへ`everyDays`/`atHour`/`nearMinute`を追加（前日リマインドトリガー用）
+
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに
 差し替えており、実際のGoogle Calendar・Spreadsheet・Script Propertiesにはアクセスしない
@@ -1195,6 +1535,33 @@ Issue #270（当日利用ルールと利用経験判定）の追加確認:
 - [ ] 共通予約UIで、空き時間取得後に時間が経過し送信時点で開始時刻が過去になった場合、
       `SAME_DAY_START_TIME_PASSED`を受けてStep2（空き開始時刻）へ戻り、
       `getAvailability`が再取得されること
+
+Issue #271（予約通知メール自動送信）の追加確認:
+
+- [ ] Booking Web App / Booking Adminの両プロジェクトへ`BOOKING_MAIL_DISPLAY_NAME` /
+      `BOOKING_MAIL_REPLY_TO` / `BOOKING_CONTACT_EMAIL`を設定し、Booking Admin側にのみ
+      `ACCESS_GUIDE_*`一式（住所・建物・部屋・入口案内・キーボックス位置・入室方法
+      `ACCESS_GUIDE_ENTRY_METHOD`・利用案内URL・秘密値の`ACCESS_GUIDE_KEYBOX_NUMBER`/
+      `ACCESS_GUIDE_UNLOCK_CODE`を含む）を設定すること
+- [ ] `TIMEZONE`を独自設定している場合、Booking Web App/Adminの両方に同じ値を設定し、
+      メール本文の開始/終了時刻表示が実際の予約時刻（JST）と一致すること
+- [ ] テスト予約でPENDINGを作成し、仮予約受付メールが1通だけ届くこと（「未確定」の
+      明記・解錠コード/キーボックス番号を含まないことを含む）
+- [ ] 管理者が`confirmBooking`で確定した際、確定メールが1通だけ届くこと（利用上の
+      基本注意の文言を含む）。`confirmBooking`を再実行しても二重送信されないこと
+- [ ] Booking Adminプロジェクトのスクリプトエディタから`createNextDayReminderTrigger`を
+      実行し、毎日18時台に`sendNextDayReminders`が実際に1回動作すること
+- [ ] 翌日にCONFIRMED予約がある状態で前日リマインドが1通だけ届き、来場方法（住所・
+      建物・部屋・入口案内・キーボックス位置・入室方法・利用案内URL）・
+      （設定していれば）解錠コードが正しく記載されていること
+- [ ] 来場案内の必須項目（秘密値を含む）のいずれか1つでも未設定のまま前日リマインドの
+      送信を試みると、送信されず`lastMailError*`に記録されること（fail-safeの実地確認）
+- [ ] メール送信を意図的に失敗させても（例: 一時的にScript Propertiesを空にする）、
+      予約自体（Calendar/Sheetsの`status`）が壊れず、`lastMailError*`に記録されること
+- [ ] 「予約管理」メニューの「予約メールを再送（予約ID指定・強制再送）」から、
+      設定不足解消後に実際にメールを再送できること
+- [ ] 既存の管理者向け内部通知（`AdminNotifier.gs`。新しい予約が入ったことの通知）が
+      このIssueの変更後も従来どおり届くこと
 
 Phase 0のゲート確認（スペースマーケットとの同一Calendar共存の実環境確認）は
 Issue #267で完了（PASS, 2026-09-19）。確認手順・記録は
