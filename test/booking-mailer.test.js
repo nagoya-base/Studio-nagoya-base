@@ -206,6 +206,54 @@ test('sendReminderMailForBooking失敗時: RecoveryのstatusはmailType(REMINDER
   assert.strictEqual(recovered[0].status, 'CONFIRMED', 'Recoveryのstatusに"REMINDER"というメール種別を入れてはいけない');
 });
 
+/* ---------- セキュリティ（PRレビュー2回目対応）: エラーメッセージのredaction ---------- */
+
+test('sendPendingMailForBooking: MailApp例外にメールアドレスが含まれる場合、lastMailErrorMessage/Recovery.errorMessageともに生のメールアドレスを残さず[REDACTED_EMAIL]へ置換する', function () {
+  var mailApp = stubs.createMailAppStub({ throwError: new Error('Invalid recipient: user@example.com') });
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', email: 'user@example.com' });
+
+  var result = ctx.sandbox.BookingMailer.sendPendingMailForBooking(bookingId);
+  assert.strictEqual(result.success, false);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.lastMailErrorMessage.indexOf('user@example.com'), -1, 'lastMailErrorMessageに生のメールアドレスを残してはいけない');
+  assert.match(found.record.lastMailErrorMessage, /\[REDACTED_EMAIL\]/);
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].errorMessage.indexOf('user@example.com'), -1, 'Recovery.errorMessageに生のメールアドレスを残してはいけない');
+  assert.match(recovered[0].errorMessage, /\[REDACTED_EMAIL\]/);
+});
+
+test('sendReminderMailForBooking: MailApp例外に解錠コード/キーボックス番号の実値が偶然含まれても、lastMailErrorMessage/Recovery.errorMessageに残さず[REDACTED]へ置換する', function () {
+  var mailApp = stubs.createMailAppStub({
+    throwError: new Error('send failed for keybox=TEST-KEYBOX code=TEST-CODE')
+  });
+  var ctx = setup({ properties: COMPLETE_ACCESS_GUIDE_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'CONFIRMED' });
+
+  var result = ctx.sandbox.BookingMailer.sendReminderMailForBooking(bookingId);
+  assert.strictEqual(result.success, false);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.lastMailErrorMessage.indexOf('TEST-KEYBOX'), -1, 'lastMailErrorMessageにキーボックス番号を残してはいけない');
+  assert.strictEqual(found.record.lastMailErrorMessage.indexOf('TEST-CODE'), -1, 'lastMailErrorMessageに解錠コードを残してはいけない');
+  assert.match(found.record.lastMailErrorMessage, /\[REDACTED\]/);
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].errorMessage.indexOf('TEST-KEYBOX'), -1);
+  assert.strictEqual(recovered[0].errorMessage.indexOf('TEST-CODE'), -1);
+});
+
+test('BookingMailer.sanitizeErrorMessage: 他ファイル（BookingRepository.gs等）が再利用できるよう公開されており、メールアドレスをredactする', function () {
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES });
+  var sanitized = ctx.sandbox.BookingMailer.sanitizeErrorMessage('failed to notify admin@example.com');
+  assert.strictEqual(sanitized.indexOf('admin@example.com'), -1);
+  assert.match(sanitized, /\[REDACTED_EMAIL\]/);
+});
+
 test('sendPendingMailForBooking: display name / reply-to / 問い合わせ先の設定が不足している場合はfail-closedに失敗扱いにする', function () {
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ properties: {}, mailApp: mailApp });

@@ -519,7 +519,15 @@ Lock取得 → bookingIdで最新レコード再読込 → status確認 → 対�
 - Recovery記録自体・`lastMailError*`更新自体が失敗した場合はLoggerへ最小限記録するのみ
   （利用者への応答・予約処理自体を失敗させない）
 - エラーメッセージは例外の`message`のみを`RecoveryRepository`/`lastMailErrorMessage`へ
-  記録し、メール本文全文・解錠コード等の秘密値・利用者のメールアドレスは含めない
+  記録し、メール本文全文は含めない。**PRレビュー対応（2回目）で、`BookingMailer.gs`の
+  `sanitizeErrorMessage_`がメールアドレス形式（正規表現）を`[REDACTED_EMAIL]`へ、
+  REMINDER送信時は`ACCESS_GUIDE_KEYBOX_NUMBER`/`ACCESS_GUIDE_UNLOCK_CODE`の実値が
+  万一例外メッセージへ混入した場合も`[REDACTED]`へ置換してから記録するようにした**
+  （`BookingMailer.sanitizeErrorMessage`として公開し、`BookingRepository.gs`の
+  `notifyCustomerPendingBestEffort_`/`notifyCustomerConfirmedBestEffort_`・
+  `BookingReminderTriggers.gs`の`sendNextDayReminders`のLogger出力にも同じ関数を
+  適用している）。`sendNextDayReminders`のLoggerには送信失敗時に`bookingId`と
+  `error.code`のみを記録し、生のエラーオブジェクトを`JSON.stringify`しない
 
 **fail-safe（来場案内の必須項目）**: `ACCESS_GUIDE_ADDRESS`/`ACCESS_GUIDE_BUILDING`/
 `ACCESS_GUIDE_ROOM`/`ACCESS_GUIDE_ENTRANCE`/`ACCESS_GUIDE_KEYBOX_LOCATION`/
@@ -1423,12 +1431,25 @@ Issue #271で追加・更新:
   （住所/建物/部屋/入口案内/キーボックス位置/入室方法/URL/キーボックス番号/解錠コード）
   が1項目ずつ欠けても送信しないこと、`ACCESS_GUIDE_PDF_URL`のみ任意で欠けても送信
   できること、メール送信失敗時に`RecoveryRepository`の`status`へメール種別
-  （例: `REMINDER`）ではなく予約の現在status（例: `CONFIRMED`）が記録されることを検証
+  （例: `REMINDER`）ではなく予約の現在status（例: `CONFIRMED`）が記録されることを検証。
+  **PRレビュー対応（2回目）で追加**: MailApp例外にメールアドレスが含まれても
+  `lastMailErrorMessage`/`Recovery.errorMessage`が`[REDACTED_EMAIL]`へ置換される
+  こと、REMINDER失敗時に解錠コード/キーボックス番号の実値が例外文言に混入しても
+  `[REDACTED]`へ置換されること、`BookingMailer.sanitizeErrorMessage`が公開関数として
+  再利用できること
 - `test/booking-reminders.test.js`（新規） — `BookingReminderTriggers.gs`。JST基準で
   翌日のCONFIRMED予約だけを抽出すること、PENDING/CANCELLED/EXPIREDは対象外、
   reminderSentAt/accessGuideSentAt済みはskip、1件の失敗（設定不足・MailApp例外）が
   他の予約の送信を妨げないこと（バッチ内の障害分離）、`createNextDayReminderTrigger`の
-  トリガー二重作成防止を検証
+  トリガー二重作成防止を検証。**PRレビュー対応（2回目）で追加**: MailApp例外に
+  利用者メールアドレスが含まれても、Loggerには`bookingId`と`error.code`のみが
+  残り、メールアドレス・キーボックス番号・解錠コード・メール本文が残らないこと、
+  `BookingMailer`側で想定外の例外が発生した場合もLoggerへ生のメールアドレスを
+  残さないことを検証
+- `test/booking-create-booking.test.js`・`test/booking-confirm-expire.test.js`
+  （更新。**PRレビュー対応（2回目）で追加**） — `notifyCustomerPendingBestEffort_`/
+  `notifyCustomerConfirmedBestEffort_`（`BookingRepository.gs`）でBookingMailerが
+  想定外の例外を投げても、Loggerへ生のメールアドレスを残さないことを検証
 - `test/booking-config.test.js`（更新。**PRレビュー対応で追加**） — `getMailConfig()`が
   `timezone`を含み既定値`Asia/Tokyo`になること、`TIMEZONE`上書きが
   `getAvailabilityConfig`/`getTtlConfig`と同じ値でmail configにも反映されること、

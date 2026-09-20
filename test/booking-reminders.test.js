@@ -42,6 +42,7 @@ function setup(options) {
   var spreadsheetsById = {};
   spreadsheetsById[SPREADSHEET_ID] = opts.sheetsByName || {};
   var properties = Object.assign({ SPREADSHEET_ID: SPREADSHEET_ID }, opts.properties || {});
+  var logger = opts.logger || stubs.createLoggerStub();
 
   var globals = {
     PropertiesService: stubs.createPropertiesServiceStub(properties),
@@ -49,11 +50,11 @@ function setup(options) {
     LockService: opts.lockService || stubs.createLockServiceStub(),
     MailApp: opts.mailApp || stubs.createMailAppStub(),
     ScriptApp: opts.scriptApp || stubs.createScriptAppStub(),
-    Logger: stubs.createLoggerStub()
+    Logger: logger
   };
 
   var sandbox = loadBookingSandbox(FILES, globals);
-  return { sandbox: sandbox };
+  return { sandbox: sandbox, logger: logger };
 }
 
 function seedBooking(ctx, overrides) {
@@ -207,6 +208,49 @@ test('sendNextDayReminders: 1件だけMailApp送信が例外を投げても、�
 
   assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId('OK').record.reminderSentAt !== '', true);
   assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId('NG').record.reminderSentAt, '');
+});
+
+/* ---------- セキュリティ（PRレビュー2回目対応）: Loggerへ個人情報・秘密値を残さない ---------- */
+
+test('sendNextDayReminders: MailApp例外に利用者メールアドレスが含まれても、Loggerにはbooking Id + error.codeのみを残す', function () {
+  var mailApp = stubs.createMailAppStub({ throwError: new Error('Invalid recipient: leak@example.com') });
+  var logger = stubs.createLoggerStub();
+  var ctx = setup({ properties: COMPLETE_ACCESS_GUIDE_PROPERTIES, mailApp: mailApp, logger: logger });
+  seedBooking(ctx, { bookingId: 'LEAK-CHECK', date: '2026-10-02', email: 'leak@example.com' });
+
+  var summary = ctx.sandbox.sendNextDayReminders(NOW);
+  assert.strictEqual(summary.failedCount, 1);
+
+  var failureLogs = logger._logs.filter(function (line) { return line.indexOf('LEAK-CHECK') !== -1; });
+  assert.strictEqual(failureLogs.length, 1);
+  assert.match(failureLogs[0], /MAIL_SEND_FAILED/, 'Loggerにerror.codeは残ってよい');
+  logger._logs.forEach(function (line) {
+    assert.strictEqual(line.indexOf('leak@example.com'), -1, 'Loggerに利用者メールアドレスを残してはいけない: ' + line);
+    assert.strictEqual(line.indexOf('TEST-KEYBOX'), -1, 'Loggerにキーボックス番号を残してはいけない: ' + line);
+    assert.strictEqual(line.indexOf('TEST-CODE'), -1, 'Loggerに解錠コードを残してはいけない: ' + line);
+    assert.strictEqual(line.indexOf('明日のご予約について'), -1, 'Loggerにメール本文を残してはいけない: ' + line);
+  });
+});
+
+test('sendNextDayReminders: BookingMailer側で想定外の例外が発生しても、Loggerへ生のメールアドレスを残さずsanitize済みの内容のみ残す', function () {
+  var logger = stubs.createLoggerStub();
+  var ctx = setup({ properties: COMPLETE_ACCESS_GUIDE_PROPERTIES, logger: logger });
+  seedBooking(ctx, { bookingId: 'UNEXPECTED-CHECK', date: '2026-10-02', email: 'unexpected@example.com' });
+
+  /* BookingMailer.sendReminderMailForBooking自体が想定外の例外を投げるケースを模擬する
+     （通常は発生しないが、sendNextDayReminders側のcatch (unexpectedError)の
+     redaction経路を検証するため）。 */
+  ctx.sandbox.BookingMailer.sendReminderMailForBooking = function () {
+    throw new Error('unexpected failure for unexpected@example.com');
+  };
+
+  var summary = ctx.sandbox.sendNextDayReminders(NOW);
+  assert.strictEqual(summary.failedCount, 1);
+
+  var failureLogs = logger._logs.filter(function (line) { return line.indexOf('UNEXPECTED-CHECK') !== -1; });
+  assert.strictEqual(failureLogs.length, 1);
+  assert.strictEqual(failureLogs[0].indexOf('unexpected@example.com'), -1, 'Loggerに生のメールアドレスを残してはいけない');
+  assert.match(failureLogs[0], /\[REDACTED_EMAIL\]/);
 });
 
 test('sendNextDayReminders: 正式関数名 sendNextDayReminders(now) がグローバルに存在する（時間主導トリガー用）', function () {

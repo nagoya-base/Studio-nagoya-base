@@ -162,7 +162,9 @@ var BookingRepository = (function () {
     try {
       BookingMailer.sendPendingMailForBooking(record.bookingId);
     } catch (mailError) {
-      Logger.log('BookingRepository: PENDINGメール送信中に予期しない例外: ' + describeError_(mailError));
+      /* PRレビュー対応: 例外messageをそのままLoggerへ出さず、BookingMailer.gsと同じ
+         redaction方針（メールアドレス等をマスク）を適用してから記録する。 */
+      Logger.log('BookingRepository: PENDINGメール送信中に予期しない例外: ' + BookingMailer.sanitizeErrorMessage(describeError_(mailError)));
     }
   }
 
@@ -356,9 +358,12 @@ var BookingRepository = (function () {
         response.mailError = mailResult && mailResult.error;
       }
     } catch (mailError) {
-      Logger.log('BookingRepository: CONFIRMEDメール送信中に予期しない例外: ' + describeError_(mailError));
+      /* PRレビュー対応: 例外messageをそのままLoggerへ出さず、BookingMailer.gsと同じ
+         redaction方針（メールアドレス等をマスク）を適用してから記録する。 */
+      var sanitizedMessage = BookingMailer.sanitizeErrorMessage(describeError_(mailError));
+      Logger.log('BookingRepository: CONFIRMEDメール送信中に予期しない例外: ' + sanitizedMessage);
       response.mailSent = false;
-      response.mailError = { code: 'UNEXPECTED_ERROR', message: describeError_(mailError) };
+      response.mailError = { code: 'UNEXPECTED_ERROR', message: sanitizedMessage };
     }
   }
 

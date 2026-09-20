@@ -53,7 +53,13 @@ function sendNextDayReminders(now) {
       var result = BookingMailer.sendReminderMailForBooking(item.record.bookingId);
       if (!result.success) {
         summary.failedCount++;
-        Logger.log('sendNextDayReminders: 送信失敗 ' + item.record.bookingId + ': ' + JSON.stringify(result.error));
+        /*
+         * PRレビュー対応: JSON.stringify(result.error)はresult.error.messageに
+         * MailApp/Gmail側の生の例外メッセージ（利用者メールアドレス等を含み得る）を
+         * そのまま含むため、Loggerにはbooking Id・error.codeのみを残す
+         * （利用者メールアドレス・解錠コード・キーボックス番号・メール本文は残さない）。
+         */
+        Logger.log('sendNextDayReminders: 送信失敗 ' + item.record.bookingId + ' code=' + (result.error && result.error.code));
       } else if (result.skipped) {
         summary.skippedCount++;
       } else {
@@ -61,10 +67,15 @@ function sendNextDayReminders(now) {
       }
     } catch (unexpectedError) {
       /* buildTemplateFn内の想定外の例外等でここまで届いた場合も、他の候補の処理を
-         止めない（Issue #271「1件失敗しても残りの予約送信を継続する」）。 */
+         止めない（Issue #271「1件失敗しても残りの予約送信を継続する」）。
+         例外messageをそのまま出さず、BookingMailer.sanitizeErrorMessageでメール
+         アドレスをredactしてから記録する（PRレビュー対応）。 */
       summary.failedCount++;
       Logger.log(
-        'sendNextDayReminders: 予期しない例外 ' + item.record.bookingId + ': ' + (unexpectedError && unexpectedError.message)
+        'sendNextDayReminders: 予期しない例外 ' +
+          item.record.bookingId +
+          ': ' +
+          BookingMailer.sanitizeErrorMessage(unexpectedError && unexpectedError.message)
       );
     }
   });

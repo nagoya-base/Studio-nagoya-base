@@ -35,20 +35,38 @@ var BookingMailer = (function () {
     return String((error && error.message) || error);
   }
 
-  /* Recovery/lastMailErrorへ残すメッセージは、例外のmessageのみを使い、メール本文全文や
-     秘密値（解錠コード等）を含めない。念のため長さも制限する（Issue #271「セキュリティ」節）。 */
-  function sanitizeErrorMessage_(message) {
-    return String(message || '').slice(0, 500);
+  /* MailApp/Gmail側の例外メッセージに受信者メールアドレスが含まれることがあるため、
+     一般的なメールアドレス形式を検出して置換する（PRレビュー対応）。 */
+  var EMAIL_REDACTION_PATTERN_ = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+
+  /*
+   * Recovery/lastMailErrorへ残すメッセージは、例外のmessageのみを使い、メール本文全文を
+   * 含めない（Issue #271「セキュリティ」節）。加えて（PRレビュー対応）:
+   * - メールアドレス形式は常に'[REDACTED_EMAIL]'へ置換する
+   * - extraRedactions（呼び出し側が渡す解錠コード・キーボックス番号等の秘密値）が
+   *   万一エラーメッセージへ混入していた場合も'[REDACTED]'へ置換する
+   * 置換後に長さを制限する。
+   */
+  function sanitizeErrorMessage_(message, extraRedactions) {
+    var sanitized = String(message || '').replace(EMAIL_REDACTION_PATTERN_, '[REDACTED_EMAIL]');
+    (extraRedactions || []).forEach(function (secret) {
+      if (!secret) return;
+      sanitized = sanitized.split(secret).join('[REDACTED]');
+    });
+    return sanitized.slice(0, 500);
   }
 
   /* メール失敗はbooking状態を一切壊さない。lastMailError*への記録・Recoveryへの記録は
      いずれもbest effortとし、ここでの失敗はLoggerへ残すだけで上位へ例外を投げない。
      status（PRレビュー対応）: Recoveryシートのstatus列は予約状態の監査情報のため、
      mailType（メール種別）を入れず、必ずbookingIdの現在の予約status（呼び出し側が
-     再読込済みのrecord.status）を渡すこと。 */
-  function recordMailFailure_(bookingId, mailType, error, status) {
+     再読込済みのrecord.status）を渡すこと。
+     extraRedactions（PRレビュー対応）: REMINDER送信時のkeyboxNumber/unlockCode等、
+     エラーメッセージへ混入すると困る秘密値の配列。省略可（PENDING/CONFIRMED/
+     CANCELLEDでは渡さない）。 */
+  function recordMailFailure_(bookingId, mailType, error, status, extraRedactions) {
     var now = new Date();
-    var message = sanitizeErrorMessage_(describeError_(error));
+    var message = sanitizeErrorMessage_(describeError_(error), extraRedactions);
     try {
       SpreadsheetRepository.updateBookingFields(bookingId, {
         lastMailErrorAt: now,
@@ -56,7 +74,7 @@ var BookingMailer = (function () {
         lastMailErrorMessage: message
       });
     } catch (sheetsError) {
-      Logger.log('BookingMailer: lastMailError更新に失敗しました: ' + describeError_(sheetsError));
+      Logger.log('BookingMailer: lastMailError更新に失敗しました: ' + sanitizeErrorMessage_(describeError_(sheetsError), extraRedactions));
     }
     try {
       RecoveryRepository.recordFailure({
@@ -69,7 +87,7 @@ var BookingMailer = (function () {
         resolvedAt: ''
       });
     } catch (recoveryError) {
-      Logger.log('BookingMailer: RecoveryRepository.recordFailure失敗: ' + describeError_(recoveryError));
+      Logger.log('BookingMailer: RecoveryRepository.recordFailure失敗: ' + sanitizeErrorMessage_(describeError_(recoveryError), extraRedactions));
     }
   }
 
@@ -132,12 +150,16 @@ var BookingMailer = (function () {
    *   ただしstatus不一致は force でも無視しない。
    * buildTemplateFn(record): { subject, body } を返す。設定不足等で送信できない場合は
    *   例外を投げる（この関数側でrecordMailFailure_・fail-closedな結果へ変換する）。
+   * getExtraRedactions（省略可。PRレビュー対応）: 呼び出し直前に評価する関数。
+   *   REMINDERのkeyboxNumber/unlockCodeのように、万一エラーメッセージへ混入すると
+   *   困る秘密値の配列を返す。取得自体が失敗しても送信フロー全体を壊さないよう、
+   *   ここでtry/catchして空配列にフォールバックする。
    *
    * 処理順序（Issue #271「9. 自動送信と二重送信防止」どおり）:
    *   Lock取得 → 最新レコード再読込 → status確認 → SentAt確認 → テンプレート生成 →
    *   MailApp送信 → 送信成功 → SentAt更新 → lastMailError*クリア → Lock解除
    */
-  function withBookingLock_(mailType, bookingId, requiredStatus, sentAtFields, force, buildTemplateFn) {
+  function withBookingLock_(mailType, bookingId, requiredStatus, sentAtFields, force, buildTemplateFn, getExtraRedactions) {
     if (!bookingId) {
       return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
     }
@@ -173,11 +195,20 @@ var BookingMailer = (function () {
         return { success: true, skipped: true, reason: 'ALREADY_SENT', bookingId: bookingId, mailType: mailType };
       }
 
+      var extraRedactions = [];
+      try {
+        if (typeof getExtraRedactions === 'function') {
+          extraRedactions = getExtraRedactions() || [];
+        }
+      } catch (redactionError) {
+        extraRedactions = [];
+      }
+
       var mail;
       try {
         mail = buildTemplateFn(record);
       } catch (buildError) {
-        recordMailFailure_(bookingId, mailType, buildError, record.status);
+        recordMailFailure_(bookingId, mailType, buildError, record.status, extraRedactions);
         return { success: false, error: { code: 'MAIL_NOT_READY', message: describeError_(buildError) } };
       }
 
@@ -191,7 +222,7 @@ var BookingMailer = (function () {
           replyTo: mailConfig.replyTo
         });
       } catch (sendError) {
-        recordMailFailure_(bookingId, mailType, sendError, record.status);
+        recordMailFailure_(bookingId, mailType, sendError, record.status, extraRedactions);
         return { success: false, error: { code: 'MAIL_SEND_FAILED', message: describeError_(sendError) } };
       }
 
@@ -204,7 +235,7 @@ var BookingMailer = (function () {
         /* メール送信自体は成功済み。SentAt記録に失敗しても、少なくとも例外は投げず
            Loggerへ残す（実際上は次回自動送信が再送を試み、二重送信の可能性が残る旨は
            README「制約」節に明記する）。 */
-        Logger.log('BookingMailer: SentAt更新に失敗しました（メール送信自体は成功）: ' + describeError_(sheetsError));
+        Logger.log('BookingMailer: SentAt更新に失敗しました（メール送信自体は成功）: ' + sanitizeErrorMessage_(describeError_(sheetsError), extraRedactions));
       }
 
       return { success: true, bookingId: bookingId, mailType: mailType, sentAt: sentAt };
@@ -248,6 +279,8 @@ var BookingMailer = (function () {
    * 「利用日 === 翌日」の判定はBookingReminderTriggers.sendNextDayReminders側の責務
    * （抽出はSpreadsheetRepository.getConfirmedBookingsForDateで行う）。ここでは
    * status===CONFIRMEDであることのみを再確認する。
+   * getExtraRedactions（PRレビュー対応）: keyboxNumber/unlockCodeがエラーメッセージへ
+   * 万一混入した場合に備え、lastMailError系フィールドやRecoveryへ記録する前にredactする対象として渡す。
    */
   function sendReminderMailForBooking(bookingId, options) {
     var opts = options || {};
@@ -262,6 +295,10 @@ var BookingMailer = (function () {
         var guide = BookingConfig.getAccessGuideConfig();
         ensureAccessGuideComplete_(guide);
         return BookingMailTemplates.buildReminderMail(record, config, guide);
+      },
+      function () {
+        var guide = BookingConfig.getAccessGuideConfig();
+        return [guide.keyboxNumber, guide.unlockCode];
       }
     );
   }
@@ -271,6 +308,9 @@ var BookingMailer = (function () {
     sendPendingMailForBooking: sendPendingMailForBooking,
     sendConfirmedMailForBooking: sendConfirmedMailForBooking,
     sendCancelledMailForBooking: sendCancelledMailForBooking,
-    sendReminderMailForBooking: sendReminderMailForBooking
+    sendReminderMailForBooking: sendReminderMailForBooking,
+    /* BookingRepository.gs等、利用者メール経路の他ファイルからも同じredaction方針で
+       Loggerへ出力できるよう公開する（PRレビュー対応）。 */
+    sanitizeErrorMessage: sanitizeErrorMessage_
   };
 })();

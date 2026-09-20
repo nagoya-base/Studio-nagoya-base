@@ -616,6 +616,22 @@ test('通知失敗: 利用者向けPENDINGメール送信の設定・送信自�
   assert.strictEqual(found.record.lastMailErrorType, 'PENDING');
 });
 
+test('通知失敗（PRレビュー2回目対応）: BookingMailer.sendPendingMailForBookingが想定外の例外を投げても、Loggerへ生のメールアドレスを残さない', function () {
+  var ctx = setup();
+  ctx.sandbox.BookingMailer.sendPendingMailForBooking = function () {
+    throw new Error('unexpected failure for secret@example.com');
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload({ email: 'secret@example.com' }));
+  assert.strictEqual(result.success, true, 'PENDINGメール送信中の想定外例外でもcreateBooking自体は成功する');
+
+  var logs = ctx.globals.Logger._logs;
+  var pendingMailLogs = logs.filter(function (line) { return line.indexOf('PENDINGメール送信中') !== -1; });
+  assert.strictEqual(pendingMailLogs.length, 1);
+  assert.strictEqual(pendingMailLogs[0].indexOf('secret@example.com'), -1, 'Loggerに生のメールアドレスを残してはいけない');
+  assert.match(pendingMailLogs[0], /\[REDACTED_EMAIL\]/);
+});
+
 test('管理者通知: ADMIN_NOTIFICATION_EMAIL未設定なら通知を送らないが、予約自体は成功する', function () {
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ mailApp: mailApp });
