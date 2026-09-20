@@ -130,12 +130,31 @@ var CalendarRepository = (function () {
     event.setTag('status', status);
   }
 
+  /*
+   * cancelBookingAdmin（Issue #272）の「Sheets行が無い場合のCalendar診断」専用。
+   * 対象日のCalendarイベントのうち、bookingIdタグが一致するものだけを返す
+   * （タイトル文字列検索には依存しない。スペースマーケット等の外部イベントは
+   * bookingIdタグを持たないため対象外になる）。PII・brandは検索条件に使わない。
+   * 通常のキャンセル処理ではSheetsのcalendarEventIdを正として使い、この関数は
+   * 異常時のRecovery支援としてのみ呼ぶ。戻り値は配列（0/1/複数件を呼び出し側で区別する）。
+   */
+  function findBookingEventsByBookingId(calendarId, bookingId, dateString, timezone) {
+    var dayStart = parseDateTime(dateString, '00:00', timezone);
+    var dayEnd = new Date(dayStart.getTime() + MINUTES_PER_DAY * 60 * 1000);
+    var calendar = getCalendarOrThrow_(calendarId);
+    var events = calendar.getEvents(dayStart, dayEnd);
+    return events.filter(function (event) {
+      return event.getTag('bookingId') === bookingId;
+    });
+  }
+
   return {
     getBusyIntervalsForDate: getBusyIntervalsForDate,
     parseDateTime: parseDateTime,
     createBookingEvent: createBookingEvent,
     getEventById: getEventById,
     deleteEventById: deleteEventById,
-    setEventStatus: setEventStatus
+    setEventStatus: setEventStatus,
+    findBookingEventsByBookingId: findBookingEventsByBookingId
   };
 })();

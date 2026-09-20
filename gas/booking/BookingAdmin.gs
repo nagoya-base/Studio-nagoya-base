@@ -1,13 +1,21 @@
 /*
- * BookingAdmin.gs — Spreadsheetのカスタムメニューからの予約確定（Issue #268）。
+ * BookingAdmin.gs — Spreadsheetのカスタムメニューからの予約確定・キャンセル
+ * （Issue #268 / Issue #272）。
  *
  * 専用のWeb管理画面は作らない。SpreadsheetのカスタムメニューからbookingId単位で
- * confirmBooking(bookingId) を呼ぶことを正式な確定手順とする。statusセルの直接編集は
- * 正式運用にしない（このメニュー経由でのみCONFIRMEDへ遷移させる）。
+ * confirmBooking(bookingId) / cancelBookingAdmin(bookingId) を呼ぶことを正式な
+ * 確定・キャンセル手順とする。statusセルの直接編集は正式運用にしない（このメニュー
+ * 経由でのみCONFIRMED/CANCELLEDへ遷移させる）。cancelBookingAdminはBooking Admin側の
+ * みで公開し、公開Web App（Code.gs）にはキャンセル用エンドポイントを一切追加しない
+ * （利用者自身のキャンセルURLは#272の非対象）。
  *
- * bookingIdの指定方法は2通り用意する:
- * 1. Bookings行を選択してから「アクティブ行を確定」を実行する（A列=bookingIdをそのまま読む）
- * 2. 「bookingIdを入力して確定」でダイアログに直接入力する
+ * bookingIdの指定方法は確定・キャンセルともそれぞれ2通り用意する:
+ * 1. Bookings行を選択してから「アクティブ行を確定/キャンセル」を実行する
+ *    （A列=bookingIdをそのまま読む）
+ * 2. 「bookingIdを入力して確定/キャンセル」でダイアログに直接入力する
+ *
+ * キャンセルのみ、実行直前にYES/NO確認ダイアログを必須にする（誤操作防止。
+ * NOなら何も変更しない。confirmBookingにはこの確認を追加していない＝既存挙動のまま）。
  *
  * 【重要・デプロイ先について】
  * Googleの仕様上、SpreadsheetApp.getUi()によるカスタムメニュー作成はコンテナバインド
@@ -45,6 +53,13 @@ function confirmBooking(bookingId) {
   return BookingRepository.confirmBooking(bookingId);
 }
 
+/* 正式関数: cancelBookingAdmin(bookingId)（Issue #272本文どおりのグローバル関数名）。
+   Booking Admin側のみで公開する（公開Web AppにはcancelBookingAdminを一切追加しない）。
+   スクリプトエディタから直接実行することもできる。 */
+function cancelBookingAdmin(bookingId) {
+  return BookingRepository.cancelBookingAdmin(bookingId);
+}
+
 /* 単純トリガー。このファイルをSPREADSHEET_IDのSpreadsheetへコンテナバインドした
    Apps Scriptプロジェクトへデプロイしていれば、そのSpreadsheetを開くたびに
    自動発火し、追加のトリガー設定なしで「予約管理」メニューが表示される。 */
@@ -58,6 +73,8 @@ function addBookingAdminMenu() {
     .createMenu('予約管理')
     .addItem('アクティブ行のbookingIdを確定（confirmBooking）', 'confirmActiveRowBooking_')
     .addItem('bookingIdを入力して確定（confirmBooking）', 'confirmBookingByPrompt_')
+    .addItem('アクティブ行のbookingIdをキャンセル（cancelBookingAdmin）', 'cancelActiveRowBooking_')
+    .addItem('bookingIdを入力してキャンセル（cancelBookingAdmin）', 'cancelBookingByPrompt_')
     .addItem('予約メールを再送（予約ID指定・強制再送）', 'resendBookingMailByPrompt_')
     .addToUi();
 }
@@ -103,6 +120,77 @@ function runConfirmAndAlert_(bookingId) {
       ui.alert(result.alreadyConfirmed ? 'すでに確定済みです: ' + bookingId : '確定しました: ' + bookingId);
     } else {
       ui.alert('確定できませんでした（' + bookingId + '）: ' + (result.error && result.error.message));
+    }
+  } catch (e) {
+    ui.alert('エラーが発生しました（' + bookingId + '）: ' + (e && e.message));
+  }
+}
+
+/*
+ * キャンセル導線（Issue #272）。confirmと対称に、アクティブ行選択とbookingId直接入力の
+ * 2通りを用意する。statusセルの直接編集は案内しない。誤操作防止のため、実行直前に
+ * 必ずYES/NO確認を挟み、NOなら何も変更しない。
+ */
+function cancelActiveRowBooking_() {
+  var ui = SpreadsheetApp.getUi();
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var activeRange = sheet.getActiveRange();
+  if (!activeRange) {
+    ui.alert('キャンセルしたい予約の行を選択してから実行してください。');
+    return;
+  }
+  var row = activeRange.getRow();
+  if (row <= 1) {
+    ui.alert('見出し行ではなく、bookingIdの行を選択してください。');
+    return;
+  }
+  var bookingId = sheet.getRange(row, 1).getValue();
+  if (!bookingId) {
+    ui.alert('選択した行にbookingIdがありません。');
+    return;
+  }
+  confirmAndRunCancel_(bookingId);
+}
+
+function cancelBookingByPrompt_() {
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.prompt('キャンセルするbookingIdを入力してください', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+  var bookingId = (response.getResponseText() || '').trim();
+  if (!bookingId) {
+    ui.alert('bookingIdを入力してください。');
+    return;
+  }
+  confirmAndRunCancel_(bookingId);
+}
+
+/* 実行直前の誤操作防止確認。NOならcancelBookingAdmin自体を呼ばない。 */
+function confirmAndRunCancel_(bookingId) {
+  var ui = SpreadsheetApp.getUi();
+  var confirmed = ui.alert(
+    '予約 ' + bookingId + ' をキャンセルします。\n' +
+      'Calendarから予約枠を削除し、利用者へキャンセルメールを送信します。\n' +
+      'よろしいですか？',
+    ui.ButtonSet.YES_NO
+  );
+  if (confirmed !== ui.Button.YES) return;
+  runCancelAndAlert_(bookingId);
+}
+
+function runCancelAndAlert_(bookingId) {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    var result = cancelBookingAdmin(bookingId);
+    if (result.success) {
+      if (result.alreadyCancelled) {
+        ui.alert('すでにキャンセル済みです: ' + bookingId);
+      } else if (result.calendarAlreadyMissing) {
+        ui.alert('キャンセルしました。Calendarイベントは既に存在しなかったためRecoveryへ記録しました: ' + bookingId);
+      } else {
+        ui.alert('キャンセルしました: ' + bookingId);
+      }
+    } else {
+      ui.alert('キャンセルできませんでした（' + bookingId + '）: ' + (result.error && result.error.message));
     }
   } catch (e) {
     ui.alert('エラーが発生しました（' + bookingId + '）: ' + (e && e.message));

@@ -64,6 +64,23 @@ var RecoveryRepository = (function () {
    * - EXPIRE_CALENDAR_DELETE_FAILED: TTL失効時のCalendarイベント削除に失敗
    * - CONFIRM_CALENDAR_EVENT_MISSING: confirmBooking時に対応するCalendarイベントが見つからない
    * - ADMIN_NOTIFICATION_FAILED: 管理者通知の送信に失敗（予約自体は成功のまま）
+   * - CANCEL_CALENDAR_EVENT_MISSING（Issue #272）: cancelBookingAdmin時にCalendarイベントが
+   *   既に存在しなかった（SheetsはCANCELLEDへ収束させる）
+   * - CANCEL_CALENDAR_DELETE_FAILED（Issue #272）: cancelBookingAdmin時のCalendarイベント削除が失敗
+   *   （Sheetsは元statusのまま進めない）
+   * - CANCEL_SHEETS_UPDATE_FAILED_CALENDAR_REMOVED（Issue #272）: Calendar削除成功→Sheets側の
+   *   CANCELLED更新が失敗（要手動対応。再実行すればCalendar既に無い経路から収束できる）
+   * - CANCEL_SHEETS_ROW_MISSING_CALENDAR_PRESENT（Issue #272）: Sheets行が無いがCalendarに
+   *   bookingIdタグ一致イベントが1件見つかった（Calendarは自動削除しない）
+   * - CANCEL_MULTIPLE_CALENDAR_EVENTS_FOUND（Issue #272）: 同上でCalendarに複数件見つかった
+   * - CANCEL_BOOKING_NOT_FOUND（Issue #272）: Sheets行が無く、Calendarにも該当イベントが
+   *   見つからない（またはbookingId形式が不正で診断自体をスキップした）
+   * - CANCEL_CALENDAR_LOOKUP_FAILED（Issue #272 PRレビュー対応）: cancelBookingAdmin時に
+   *   CalendarRepository.getEventById自体が例外を投げた（イベントが無いのではなく、
+   *   CALENDAR_ID不正・Calendarアクセス障害等。Sheets/Calendarとも変更しない）
+   * - CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED（Issue #272 PRレビュー対応）: Sheets行が
+   *   無い場合の診断中にCalendarRepository.findBookingEventsByBookingId自体が例外を
+   *   投げた（診断そのものが失敗。Calendarは変更しない）
    */
   function recordFailure(record) {
     var sheet = ensureRecoverySheet_();

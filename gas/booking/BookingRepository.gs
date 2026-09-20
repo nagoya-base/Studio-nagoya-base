@@ -6,11 +6,13 @@
  * このファイル自体は1つだが、実際にどの関数がどのGASプロジェクトから呼ばれるかは
  * プロジェクトによって異なる（README「GASプロジェクトへのデプロイ対象ファイル」参照）:
  * - createBooking: Booking Web Appプロジェクト（Code.gsのdoPostから）
- * - confirmBooking / expirePendingBookings: Booking Adminプロジェクト
- *   （BookingAdmin.gs / BookingTriggers.gsから。両方とも同じプロジェクト内で動くため、
+ * - confirmBooking / expirePendingBookings / cancelBookingAdmin: Booking Adminプロジェクト
+ *   （BookingAdmin.gs / BookingTriggers.gsから。3関数とも同じプロジェクト内で動くため、
  *   LockService.getScriptLock()を共有し、互いに直列化される。3回目レビューで
  *   confirmBookingとexpirePendingBookingsを同一プロジェクトへ統合し、この2つの間の
- *   Lock非共有によるCalendar/Sheets不整合の可能性を構造的に解消した）
+ *   Lock非共有によるCalendar/Sheets不整合の可能性を構造的に解消した。Issue #272で
+ *   cancelBookingAdminも同じプロジェクト・同じLockServiceへ加えた。公開Web App側には
+ *   cancelBookingAdminを一切公開しない）
  *
  * createBookingの処理順（Issue #268本文どおり）:
  *   1. サーバー側入力検証        → Booking.validateCreateBookingInput
@@ -519,9 +521,364 @@ var BookingRepository = (function () {
     return { expiredCount: expiredCount, skippedCount: skippedCount, candidateCount: candidates.length };
   }
 
+  /*
+   * cancelBookingAdmin(bookingId) — Spreadsheetのカスタムメニュー（BookingAdmin.gs。
+   * Booking Adminプロジェクト）から呼ばれる正式なキャンセル手順（Issue #272）。
+   * PENDING/CONFIRMEDのいずれからもCANCELLEDへ遷移できる。Booking Web App側には
+   * このキャンセル機能を一切公開しない（利用者自身のキャンセルURLは非対象）。
+   *
+   * confirmBooking / expirePendingBookingsと同じBooking Adminプロジェクトに属し、
+   * 同じLockService.getScriptLock()を取得するため、この3関数の間では常に1つの
+   * 状態遷移だけが成立する（Lock取得後に必ずSheetsを再読込し、Lock取得前の古い
+   * statusで判定しない）。
+   */
+  function cancelBookingAdmin(bookingId) {
+    if (!bookingId) {
+      return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
+    }
+
+    var lock = LockService.getScriptLock();
+    var gotLock = lock.tryLock(LOCK_TIMEOUT_MS_);
+    if (!gotLock) {
+      return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
+    }
+
+    var outcome;
+    try {
+      outcome = cancelBookingAdminLocked_(bookingId);
+    } finally {
+      lock.releaseLock();
+    }
+
+    /*
+     * キャンセルメール（#271のBookingMailer.sendCancelledMailForBooking）はbooking Lockの
+     * 外・best effortで送る。Calendar/Sheetsのキャンセル処理自体が成功した場合のみ
+     * 試行する（Sheetsを更新できていない部分失敗ではメールを送らない）。
+     */
+    if (outcome.shouldTryMail) {
+      notifyCustomerCancelledBestEffort_(bookingId, outcome.response);
+    }
+
+    return outcome.response;
+  }
+
+  /* cancelBookingAdminのLock保持区間の本体。戻り値: { response, shouldTryMail }。
+     Issue #272本文どおり、Lock取得後に必ずSheetsを最新再読込してからstatusを判定する。 */
+  function cancelBookingAdminLocked_(bookingId) {
+    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+    if (!found) {
+      return { response: handleCancelSheetsRowMissing_(bookingId), shouldTryMail: false };
+    }
+
+    var record = found.record;
+
+    if (record.status === Booking.STATUS.CANCELLED) {
+      /* 二重実行しても壊れない: Calendar削除・cancelledAt上書きのいずれも行わず、
+         cancelMailSentAtが空の場合だけメール送信を再試行する（#271のSentAt冪等性を再利用）。 */
+      return {
+        response: { success: true, alreadyCancelled: true, bookingId: bookingId, status: Booking.STATUS.CANCELLED },
+        shouldTryMail: !record.cancelMailSentAt
+      };
+    }
+
+    if (!Booking.canTransition(record.status, Booking.STATUS.CANCELLED)) {
+      return {
+        response: {
+          success: false,
+          error: { code: 'INVALID_TRANSITION', message: record.status + ' から CANCELLED へは遷移できません。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    var calendarId = BookingConfig.getCalendarId();
+    var event;
+    try {
+      event = CalendarRepository.getEventById(calendarId, record.calendarEventId);
+    } catch (lookupError) {
+      /*
+       * getEventById()はイベントが無い場合はnullを返すが、CALENDAR_ID不正・Calendar
+       * アクセス障害等では例外を投げる（PRレビュー対応）。この例外を捕捉せずに
+       * 抜けると、Lockはfinallyで解除されるものの、Recoveryに何も記録されず
+       * 部分失敗が追跡できなくなる。Sheets/Calendarのいずれも変更せず、メールも
+       * 送らずにfail-closedで返す。
+       */
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CANCEL_CALENDAR_LOOKUP_FAILED',
+          occurredAt: new Date(),
+          calendarEventId: record.calendarEventId,
+          status: record.status,
+          errorMessage: BookingMailer.sanitizeErrorMessage(describeError_(lookupError)),
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return {
+        response: {
+          success: false,
+          error: { code: 'CANCEL_CALENDAR_LOOKUP_FAILED', message: 'Calendarの予約状態を確認できませんでした。Recoveryシートを確認してください。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    if (!event) {
+      /*
+       * Calendar側が既に非占有（＝枠は既に空いている）なので、SheetsをCANCELLEDへ
+       * 進めてキャンセル処理を収束させる。「なぜCalendarだけ無かったか」はRecoveryで
+       * 人が確認できるようにOPENのまま記録する（自動ではRESOLVEDにしない）。
+       */
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CANCEL_CALENDAR_EVENT_MISSING',
+          occurredAt: new Date(),
+          calendarEventId: record.calendarEventId,
+          status: record.status,
+          errorMessage: 'cancelBookingAdmin時にCalendarイベントが既に存在しませんでした。',
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return finalizeCancelledSheetsUpdate_(bookingId, record, true);
+    }
+
+    try {
+      CalendarRepository.deleteEventById(calendarId, record.calendarEventId);
+    } catch (deleteError) {
+      /*
+       * イベントは存在したが削除自体が失敗した場合、Calendarがまだ占有している
+       * 可能性があるため、Sheetsは元statusのまま進めない（メールも送らない）。
+       */
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CANCEL_CALENDAR_DELETE_FAILED',
+          occurredAt: new Date(),
+          calendarEventId: record.calendarEventId,
+          status: record.status,
+          errorMessage: describeError_(deleteError),
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return {
+        response: {
+          success: false,
+          error: { code: 'CANCEL_CALENDAR_FAILED', message: 'Calendarのキャンセル処理に失敗しました。Recoveryシートを確認してください。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    return finalizeCancelledSheetsUpdate_(bookingId, record, false);
+  }
+
+  /*
+   * Calendar側の非占有化（削除成功、または元から既に無かった）が確定した後、Sheetsを
+   * CANCELLEDへ進める共通処理。ここでSheets更新自体が失敗した場合は、Calendarイベントを
+   * 無理に再作成して補償しない（再作成するとeventIdが変わり、Sheets更新障害中に
+   * 書き戻せないため二次的不整合を増やす）。次回同じbookingIdでcancelBookingAdminを
+   * 再実行すれば、Calendarが既に無い経路（#9）からSheetsをCANCELLEDへ収束できる。
+   */
+  function finalizeCancelledSheetsUpdate_(bookingId, record, calendarAlreadyMissing) {
+    var now = new Date();
+    try {
+      /*
+       * status/cancelledAt/updatedAtの3項目は必ず1回のSpreadsheet書き込みで反映する
+       * （PRレビュー対応）。updateBookingFieldsのようにフィールドごとに個別書き込みすると、
+       * 途中で例外が起きた場合にstatusだけCANCELLEDになりcancelledAtが空、という
+       * 部分更新が起こり得る。部分更新が起きると、次回再実行時にstatus===CANCELLEDの
+       * 分岐（二重実行の冪等処理）へ入ってしまい、空のままのcancelledAt/updatedAtを
+       * 修復する経路が無くなるため、この関数では単一書き込みの
+       * updateBookingCancellationStateAtomicを使う。
+       *
+       * この関数はstatus/cancelledAt/updatedAt（HEADERS_上で連続する13〜20列目）だけを
+       * 書き込み対象にし、21列目以降（customerType・mail SentAt・lastMailError*）には
+       * 一切触れない（PRレビュー2回目対応）。Booking Web App（別GASプロジェクト・
+       * 別LockService）がこの直前直後にpendingMailSentAt等を更新していても、その値を
+       * 古い状態で巻き戻すことはない。
+       */
+      SpreadsheetRepository.updateBookingCancellationStateAtomic(bookingId, {
+        status: Booking.STATUS.CANCELLED,
+        cancelledAt: now,
+        updatedAt: now
+      });
+    } catch (sheetsError) {
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CANCEL_SHEETS_UPDATE_FAILED_CALENDAR_REMOVED',
+          occurredAt: new Date(),
+          calendarEventId: record.calendarEventId,
+          status: record.status,
+          errorMessage: describeError_(sheetsError),
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return {
+        response: {
+          success: false,
+          error: { code: 'CANCEL_SAVE_FAILED', message: 'Calendar側はキャンセルされましたが、予約台帳の更新に失敗しました。Recoveryシートを確認してください。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    var response = { success: true, bookingId: bookingId, status: Booking.STATUS.CANCELLED };
+    if (calendarAlreadyMissing) {
+      response.calendarAlreadyMissing = true;
+    }
+    return { response: response, shouldTryMail: true };
+  }
+
+  /*
+   * Sheets行が見つからない場合の診断（Issue #272「13. Sheets行が存在しない場合」）。
+   * bookingId形式から利用日を復元し、対象日のCalendarをbookingIdタグで走査する。
+   * 通常キャンセルではこの経路は使わない（異常時のRecovery支援専用）。Calendarは
+   * いずれのケースも自動削除しない（Sheetsという正式台帳が無い状態で破壊的変更を
+   * 行うのは危険なため）。
+   */
+  function handleCancelSheetsRowMissing_(bookingId) {
+    var notFoundResponse = { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
+    var dateString = parseBookingDateFromId_(bookingId);
+    if (!dateString) {
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CANCEL_BOOKING_NOT_FOUND',
+          occurredAt: new Date(),
+          calendarEventId: '',
+          status: '',
+          errorMessage: 'bookingIdの形式が不正なため、Calendar診断をスキップしました。',
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return notFoundResponse;
+    }
+
+    var calendarId = BookingConfig.getCalendarId();
+    var timezone = BookingConfig.getAvailabilityConfig().timezone;
+    var matches;
+    try {
+      matches = CalendarRepository.findBookingEventsByBookingId(calendarId, bookingId, dateString, timezone);
+    } catch (lookupError) {
+      /* 診断自体のCalendar走査が失敗した場合も、生例外で処理を抜けずRecoveryへ記録する
+         （PRレビュー対応）。Calendarは変更しない。 */
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED',
+          occurredAt: new Date(),
+          calendarEventId: '',
+          status: '',
+          errorMessage: BookingMailer.sanitizeErrorMessage(describeError_(lookupError)),
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return {
+        success: false,
+        error: { code: 'CANCEL_DIAGNOSTIC_FAILED', message: 'Calendarの診断中にエラーが発生しました。Recoveryシートを確認してください。' }
+      };
+    }
+
+    if (matches.length === 1) {
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CANCEL_SHEETS_ROW_MISSING_CALENDAR_PRESENT',
+          occurredAt: new Date(),
+          calendarEventId: matches[0].getId(),
+          status: '',
+          errorMessage: 'Sheets台帳にbookingId行が無く、Calendarには対応するイベントが1件見つかりました。',
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+    } else if (matches.length > 1) {
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CANCEL_MULTIPLE_CALENDAR_EVENTS_FOUND',
+          occurredAt: new Date(),
+          calendarEventId: matches.map(function (e) { return e.getId(); }).join(', '),
+          status: '',
+          errorMessage: 'Sheets台帳にbookingId行が無く、Calendarには対応するイベントが複数見つかりました。',
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+    } else {
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CANCEL_BOOKING_NOT_FOUND',
+          occurredAt: new Date(),
+          calendarEventId: '',
+          status: '',
+          errorMessage: 'Sheets台帳にもCalendarにも該当するbookingIdが見つかりませんでした。',
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+    }
+
+    return notFoundResponse;
+  }
+
+  /* bookingId（例: 'SX-20261001-3F2A9B1C'）から利用日'YYYY-MM-DD'を復元する。
+     形式が不正な場合はnullを返す（呼び出し側はCalendar走査をせずNOT_FOUNDにする）。 */
+  function parseBookingDateFromId_(bookingId) {
+    var match = /^[A-Za-z]+-(\d{4})(\d{2})(\d{2})-[0-9A-Za-z]{8}$/.exec(String(bookingId || ''));
+    if (!match) return null;
+    return match[1] + '-' + match[2] + '-' + match[3];
+  }
+
+  /* response（cancelBookingAdminの戻り値オブジェクト）へmailSent/mailErrorを補助情報として
+     追加する。メール失敗はcancelBookingAdmin自体の成功可否には影響させない
+     （Calendar/Sheetsの状態はメール失敗を理由に元へ戻さない）。 */
+  function notifyCustomerCancelledBestEffort_(bookingId, response) {
+    try {
+      var mailResult = BookingMailer.sendCancelledMailForBooking(bookingId);
+      response.mailSent = !!(mailResult && mailResult.success && !mailResult.skipped);
+      if (!mailResult || !mailResult.success) {
+        response.mailError = mailResult && mailResult.error;
+      }
+    } catch (mailError) {
+      var sanitizedMessage = BookingMailer.sanitizeErrorMessage(describeError_(mailError));
+      Logger.log('BookingRepository: CANCELLEDメール送信中に予期しない例外: ' + sanitizedMessage);
+      response.mailSent = false;
+      response.mailError = { code: 'UNEXPECTED_ERROR', message: sanitizedMessage };
+    }
+  }
+
   return {
     createBooking: createBooking,
     confirmBooking: confirmBooking,
-    expirePendingBookings: expirePendingBookings
+    expirePendingBookings: expirePendingBookings,
+    cancelBookingAdmin: cancelBookingAdmin
   };
 })();
