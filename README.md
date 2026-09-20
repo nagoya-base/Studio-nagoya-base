@@ -85,25 +85,55 @@ Studio Nagoya Base の静的サイト一式です。GitHub Pages で公開する
 - `scripts/booking-config.js`の`BASE_URL`は、Issue #267の実環境確認コメントに記録済みの
   既存Booking Web Appプロジェクトの本番`/exec` URLを設定した（新規デプロイはしていない）。
 
-#### Stage B（オペレーターが実施。このリポジトリのコード変更では実施しない）
+#### Stage B（オペレーターが実施。backend-first。**PR #282は、下記1〜5のbackend本番反映・
+API ready確認が完了するまでmainへマージしない**）
 
-1. Booking Web App（`gas/booking/`）を既存GASプロジェクトへ反映
-2. Booking Adminを既存GASプロジェクトへ反映
-3. 両プロジェクトのScript Properties（`CALENDAR_ID` / `SPREADSHEET_ID` / `TIMEZONE`等）確認
-4. `expirePendingBookings` / `sendNextDayReminders`のtrigger確認（重複作成しない）
-5. 本番`/exec` URLの動作確認（GitHub Pages側からの疎通確認を含む）
-6. 3ブランドでの実地受入テスト（専用テスト日時を使用。本予約・SpaceMarket予約は操作しない）
-7. ロールバック実地確認（新UI停止→旧フォーム復帰→再度新UIへ戻す）
-8. 旧Calendar embedの最終方針（削除 / 参考表示への格下げ / 新UIリンクへの置換）を確定
-9. 上記すべてが完了した時点で、Issue #273へ結果を記録し、`Closes #273`を付けたPRでclose
+> **重要（切替順序）**: `scripts/booking-config.js`の`BASE_URL`はStage AのPRに既に本番
+> `/exec` URLが入っている。しかし、そのデプロイ先GASプロジェクトへ`#268`〜`#272`の最新
+> コード（`createBooking`・#270の当日利用ルール・#271の通知メール等）が反映されている
+> 保証はまだない。**先にPR #282をmainへマージしてGitHub Pagesで新CTAを公開してしまうと、
+> バックエンドが未更新のまま一般利用者が新UIに接続できてしまう**（`getAvailability`は
+> 動くが`createBooking`が未対応、等の中間状態）。これを避けるため、必ずbackendを
+> readyにしてから、PRマージ（frontend公開）を行う順序で進める。
 
-#### 本番導入チェックリスト（Stage B開始前に確認）
+1. **（PRレビュー完了・mainマージ前）** Booking Web Appを、既存`/exec`のGASプロジェクトへ
+   最新main（`#272`まで）の`gas/booking/`で本番反映する。新規GASプロジェクトは作らない
+2. **（mainマージ前）** Booking Adminも同様に、既存GASプロジェクトへ最新mainで本番反映する
+3. **（mainマージ前）** 両プロジェクトのScript Properties（`CALENDAR_ID` / `SPREADSHEET_ID` /
+   `TIMEZONE`等）を確認する
+4. **（mainマージ前）** `expirePendingBookings` / `sendNextDayReminders`のtriggerを確認する
+   （重複作成しない。既存triggerがあれば新規作成しない）
+5. **（mainマージ前）** 既存`/exec`を直接叩いて最小smoke testを行い、**API readyを確認する**
+   （実予約作成は不要）:
+   - `GET`で`getAvailability`が成功すること
+   - `POST`で`createBooking`のendpointが存在し、安全な不正入力に対する想定どおりの
+     validation errorを返すこと（関数として動作することの確認。実Calendarへの書き込みは
+     まだ行わない）
+   - この時点では一般サイトのCTAはまだ旧導線のまま（PR #282は未マージ）なので、利用者へ
+     の影響はない
+6. **API ready確認後、ここではじめてPR #282をmainへマージする**（frontendの新CTA公開は
+   backendの動作確認が取れてから）
+7. GitHub Pages側への反映を確認する（新UIが実際に公開され、旧フォーム・calendar embedも
+   従来どおり表示されること）
+8. 3ブランドのUI経由での実地受入テスト（専用テスト日時を使用。本予約・SpaceMarket予約は
+   削除・変更しない）
+9. ロールバック実地確認（新UI停止→旧フォーム復帰→再度新UIへ戻す）
+10. 旧Calendar embedの最終方針（削除 / 参考表示への格下げ / 新UIリンクへの置換）を確定
+11. 上記すべてが完了した時点で、Issue #273へ結果を記録し、`Closes #273`を付けたPRまたは
+    cutover完了commitでclose
+
+#### 本番導入チェックリスト（PR #282をmainへマージする前に、上記1〜6の完了として確認）
 
 - [ ] Booking Web App `/exec` URLが本番想定のものであること（`/dev`でないこと）
-- [ ] Booking Web App / Booking Adminの両方に、mainの`gas/booking/`最新版が反映されていること
+- [ ] Booking Web App / Booking Adminの両方に、mainの`gas/booking/`最新版（`#272`まで）が
+      反映されていること（**PR #282のマージより前に完了していること**）
 - [ ] Script Propertiesが両プロジェクトで正しく設定されていること（実値はGitHubへ書かない）
 - [ ] `expirePendingBookings` / `sendNextDayReminders`のtriggerが重複なく設定されていること
-- [ ] 3ブランドとも、予約ページからのAPI疎通（`getAvailability`）が成功すること
+- [ ] 既存`/exec`への直接smoke testで、`getAvailability`が成功すること
+- [ ] 既存`/exec`への直接smoke testで、`createBooking` endpointが存在し、想定どおりの
+      validation errorを返すこと（＝API ready）
+- [ ] 上記API ready確認が完了して**初めて**PR #282をmainへマージすること
+- [ ] （マージ後）GitHub Pages側の反映・3ブランドとも新UIからの`getAvailability`疎通を確認
 - [ ] SpaceMarket予約・既存自社予約の時間帯が空きとして出ないこと
 - [ ] 旧Calendar埋め込みにPII（氏名・連絡先・解錠情報等）が表示されないこと
 - [ ] ロールバック手順（CTAを旧フォームへ戻す）を実地確認済みであること
