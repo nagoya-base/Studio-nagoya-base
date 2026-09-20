@@ -12,6 +12,11 @@
  * - 08:00開始時の前マージン・23:00終了時の後マージンは不要
  * - 終日イベントは空き枠を占有しない
  * - SNB / mens / Studio Xは同一室のため、brandで空き判定を分岐させない
+ *
+ * Issue #270（レビュー対応）で追加した当日の過去時刻除外:
+ * - date/getCurrentMinutesInTimezoneを使い、利用日が当日（config.timezone基準）の場合のみ、
+ *   現在時刻以前（ちょうど含む）の開始時刻を候補から除外する。customerTypeルールは
+ *   ここに一切持ち込まない（当日+初回利用の可否判定はBooking.gs/createBookingの責務）。
  */
 'use strict';
 
@@ -50,6 +55,62 @@ var BookingAvailability = (function () {
 
   function isPositiveInteger_(value) {
     return typeof value === 'number' && Number.isInteger(value) && value > 0;
+  }
+
+  /* instanceof Dateではなくダックタイピングで判定する（別realm・vmサンドボックスを
+     またぐテストでinstanceof Dateが偽陰性になるため。他ファイルのisDateLike_と同じ方針）。 */
+  function isDateLike_(value) {
+    return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
+  }
+
+  /*
+   * dateを指定timezoneの暦日として'YYYY-MM-DD'へ変換する（Issue #270）。
+   * 当日判定はブラウザのローカルtimezone・GAS実行環境timezoneに依存させず、
+   * 必ずこの関数でconfig.timezone（既定Asia/Tokyo）基準に統一する。
+   * getAvailability（このファイル）とcreateBooking（Booking.gsが
+   * BookingAvailability.formatDateInTimezoneとして再利用する）の両方で共有する。
+   * timezoneが不正でIntlが例外を投げた場合はnullを返す（呼び出し側でfail-closedに扱う）。
+   */
+  function formatDateInTimezone(date, timezone) {
+    if (!isDateLike_(date)) return null;
+    try {
+      var parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit'
+      }).formatToParts(date);
+      var result = {};
+      parts.forEach(function (part) { if (part.type !== 'literal') result[part.type] = part.value; });
+      if (!result.year || !result.month || !result.day) return null;
+      return result.year + '-' + result.month + '-' + result.day;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /*
+   * dateを指定timezoneの「00:00からの経過分」（0〜1439）へ変換する（Issue #270）。
+   * getAvailability「当日は現在時刻以前の開始時刻を返さない」、createBooking
+   * 「当日は現在時刻以前の開始時刻をSAME_DAY_START_TIME_PASSEDで拒否する」の両方が
+   * この関数を共有するテスト可能な共通ヘルパー。ブラウザのローカルtimezone・
+   * GAS実行環境timezoneに依存しない。timezoneが不正な場合はnullを返す
+   * （呼び出し側でfail-closedに扱う）。
+   */
+  function getCurrentMinutesInTimezone(date, timezone) {
+    if (!isDateLike_(date)) return null;
+    try {
+      var parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+      }).formatToParts(date);
+      var hour = null;
+      var minute = null;
+      parts.forEach(function (part) {
+        if (part.type === 'hour') hour = parseInt(part.value, 10);
+        if (part.type === 'minute') minute = parseInt(part.value, 10);
+      });
+      if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+      return hour * 60 + minute;
+    } catch (e) {
+      return null;
+    }
   }
 
   function isNonNegativeInteger_(value) {
@@ -110,15 +171,22 @@ var BookingAvailability = (function () {
    * どの拡張区間とも重ならない場合だけ予約可能とする。
    * 営業開始・終業の境界自体には拡張を適用しないため、08:00開始・23:00終了に
    * 前後マージンは要求されない。
+   *
+   * minimumStartMinutes（Issue #270で追加。省略可）: 指定した場合、
+   * start <= minimumStartMinutes（現在時刻ちょうど含む）の候補を除外する。
+   * getAvailabilityが「当日は現在時刻以前の開始時刻を返さない」ために使う
+   * （省略時は既存どおり全候補を返す。customerTypeルールはここに一切持ち込まない）。
    */
-  function computeBookableStartTimes(durationMinutes, busyIntervals, config) {
+  function computeBookableStartTimes(durationMinutes, busyIntervals, config, minimumStartMinutes) {
     var openMinutes = parseTimeToMinutes_(config.openTime);
     var closeMinutes = parseTimeToMinutes_(config.closeTime);
     var step = config.slotStepMinutes;
     var blockedRanges = computeBlockedRanges_(busyIntervals, config.bufferMinutes);
+    var floor = typeof minimumStartMinutes === 'number' ? minimumStartMinutes : -Infinity;
 
     var bookable = [];
     for (var start = openMinutes; start + durationMinutes <= closeMinutes; start += step) {
+      if (start <= floor) continue;
       if (isRangeFree_(start, start + durationMinutes, blockedRanges)) bookable.push(minutesToTime_(start));
     }
     return bookable;
@@ -149,11 +217,14 @@ var BookingAvailability = (function () {
    * request: { date, durationMinutes, brand }
    * busyIntervals: CalendarRepository.getBusyIntervalsForDateの戻り値
    * config: BookingConfig.getAvailabilityConfig()の戻り値
+   * now: 現在時刻（Date）。省略時は現在時刻。当日の過去時刻除外に使う（Issue #270）。
    *
    * 戻り値にはイベントタイトル・説明・参加者・氏名・メール等のPIIを一切含めない。
    * brandは表示・流入元識別のためにエコーバックするだけで、判定ロジックには使わない。
+   * customerTypeはgetAvailabilityの引数・応答のいずれにも登場しない
+   * （当日+初回利用の可否判定はBooking.gs/createBookingの責務。Issue #270レビュー対応）。
    */
-  function getAvailability(request, busyIntervals, config) {
+  function getAvailability(request, busyIntervals, config, now) {
     var date = request && request.date;
     var durationMinutes = request && request.durationMinutes;
     var brand = (request && request.brand) || null;
@@ -163,7 +234,30 @@ var BookingAvailability = (function () {
       return { success: false, error: validationError };
     }
 
-    var bookableStartTimes = computeBookableStartTimes(durationMinutes, busyIntervals, config);
+    var receivedAt = isDateLike_(now) ? now : new Date();
+    var todayString = formatDateInTimezone(receivedAt, config.timezone);
+    if (!todayString) {
+      return { success: false, error: { code: 'INVALID_CONFIG', message: '営業時間・予約ルールの設定が正しくありません。' } };
+    }
+
+    /*
+     * 過去日はfail-closedに拒否する（2回目レビュー指摘対応）。createBooking
+     * （Booking.validateCreateBookingInput）と同じ判定・同じerror.code/messageに揃え、
+     * API間で意味を統一する。当日・翌日以降の判定はこの下で従来どおり行う。
+     */
+    if (date < todayString) {
+      return { success: false, error: { code: 'INVALID_DATE', message: '過去の日付は指定できません。' } };
+    }
+
+    var minimumStartMinutes = null;
+    if (date === todayString) {
+      minimumStartMinutes = getCurrentMinutesInTimezone(receivedAt, config.timezone);
+      if (minimumStartMinutes === null) {
+        return { success: false, error: { code: 'INVALID_CONFIG', message: '営業時間・予約ルールの設定が正しくありません。' } };
+      }
+    }
+
+    var bookableStartTimes = computeBookableStartTimes(durationMinutes, busyIntervals, config, minimumStartMinutes);
 
     return {
       success: true,
@@ -178,6 +272,8 @@ var BookingAvailability = (function () {
     isValidDateString: isValidDateString,
     isValidTimeString: isValidTimeString,
     parseTimeToMinutes: parseTimeToMinutes_,
+    formatDateInTimezone: formatDateInTimezone,
+    getCurrentMinutesInTimezone: getCurrentMinutesInTimezone,
     validateInput: validateInput,
     computeBookableStartTimes: computeBookableStartTimes,
     isStartTimeBookable: isStartTimeBookable,

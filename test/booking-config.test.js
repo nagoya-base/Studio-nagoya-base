@@ -85,3 +85,30 @@ test('数値項目は先頭0を持たない/持つ通常の整数文字列なら
   assert.strictEqual(config.bufferMinutes, 0);
   assert.strictEqual(config.slotStepMinutes, 30);
 });
+
+test('getTtlConfig: Script Propertiesが空でも固定仕様のデフォルト値が使われる（Issue #270でminHoldHours/timezoneを追加）', function () {
+  var BookingConfig = loadConfig({});
+  var config = BookingConfig.getTtlConfig();
+  assert.deepEqual(config, {
+    ttlHours: 24,
+    minHoursBeforeStart: 2,
+    minHoldHours: 2,
+    timezone: 'Asia/Tokyo'
+  });
+});
+
+test('getTtlConfig: PENDING_TTL_MIN_HOLD_HOURSはScript Propertiesで変更でき、誤設定（数値以外・0以下）は例外にせずデフォルトへフォールバックする（Issue #270）', function () {
+  var overridden = loadConfig({ PENDING_TTL_MIN_HOLD_HOURS: '3' }).getTtlConfig();
+  assert.strictEqual(overridden.minHoldHours, 3);
+
+  ['abc', '0', '-1', ''].forEach(function (rawValue) {
+    var config = loadConfig({ PENDING_TTL_MIN_HOLD_HOURS: rawValue }).getTtlConfig();
+    assert.strictEqual(config.minHoldHours, 2, JSON.stringify(rawValue) + ' はデフォルト値(2)へフォールバックするべき');
+  });
+});
+
+test('getTtlConfig: timezoneはTIMEZONEプロパティと共有される（expirePendingBookingsの当日判定に使う）', function () {
+  var BookingConfig = loadConfig({ TIMEZONE: 'Asia/Tokyo' });
+  assert.strictEqual(BookingConfig.getTtlConfig().timezone, 'Asia/Tokyo');
+  assert.strictEqual(BookingConfig.getAvailabilityConfig().timezone, 'Asia/Tokyo');
+});

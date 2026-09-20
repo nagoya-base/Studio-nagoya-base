@@ -27,14 +27,42 @@ function callDoGet(sandbox, params) {
   return JSON.parse(output.text);
 }
 
+/* dateをAsia/Tokyo基準の'YYYY-MM-DD'へ変換する（テスト専用。本番Code.gs/Availability.gsの
+   formatDateInTimezoneとは独立した実装だが、同じ変換規則を使う）。 */
+function formatJstDate_(date) {
+  var parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(date);
+  var out = {};
+  parts.forEach(function (part) { if (part.type !== 'literal') out[part.type] = part.value; });
+  return out.year + '-' + out.month + '-' + out.day;
+}
+
+/*
+ * doGet（Code.gs handleGetAvailability_）はnowを注入できず、実行時の実時刻(new Date())を
+ * 基準に過去日拒否を行う（Issue #270 2回目レビュー対応）。そのため、正常系テストで
+ * 利用日を固定文字列（例: '2026-10-01'）にすると、実行日がその日付を過ぎた時点で
+ * 一斉にINVALID_DATEへ変わり自然故障する。実行時刻から動的に30日後を算出した
+ * FUTURE_DATE（Asia/Tokyo基準）を利用日として使い、実行日から独立させる
+ * （Issue #270 3回目レビュー指摘対応）。FUTURE_DATE_NEXTはその翌日
+ * （終日イベントが日をまたぐテスト用）。 */
+var FUTURE_BASE_MILLIS = Date.now() + 30 * 24 * 3600000;
+var FUTURE_DATE = formatJstDate_(new Date(FUTURE_BASE_MILLIS));
+var FUTURE_DATE_NEXT = formatJstDate_(new Date(FUTURE_BASE_MILLIS + 24 * 3600000));
+
+/* FUTURE_DATE上の'HH:mm'をJSTのDateへ変換する（Calendarイベントのstart/end用）。 */
+function atFutureTime_(hhmm) {
+  return new Date(FUTURE_DATE + 'T' + hhmm + ':00+09:00');
+}
+
 test('doGet: 正常なリクエストでbookableStartTimesを返す（既存予約を正しく塞ぐ）', function () {
   var event = stubs.createEventStub({
-    start: new Date('2026-10-01T10:00:00+09:00'),
-    end: new Date('2026-10-01T12:00:00+09:00'),
+    start: atFutureTime_('10:00'),
+    end: atFutureTime_('12:00'),
     isAllDay: false
   });
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [event] } });
-  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120', brand: 'studio_x' });
+  var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120', brand: 'studio_x' });
 
   assert.strictEqual(body.success, true);
   assert.strictEqual(body.brand, 'studio_x');
@@ -46,38 +74,38 @@ test('doGet: 正常なリクエストでbookableStartTimesを返す（既存予�
 
 test('doGet: 管理者が手入力したイベントも同様に塞ぐ（同じCalendar上の予定を種別で区別しない）', function () {
   var adminBlock = stubs.createEventStub({
-    start: new Date('2026-10-01T13:00:00+09:00'),
-    end: new Date('2026-10-01T15:00:00+09:00'),
+    start: atFutureTime_('13:00'),
+    end: atFutureTime_('15:00'),
     isAllDay: false
   });
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [adminBlock] } });
-  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120', brand: 'mens' });
+  var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120', brand: 'mens' });
   assert.strictEqual(body.bookableStartTimes.indexOf('13:00'), -1);
   assert.strictEqual(body.bookableStartTimes.indexOf('12:00'), -1, '12:00-14:00は13:00開始の予定と重なる');
 });
 
 test('doGet: SNB / mens / Studio Xで同じCalendarを参照するため空き結果が一致する', function () {
   var event = stubs.createEventStub({
-    start: new Date('2026-10-01T10:00:00+09:00'),
-    end: new Date('2026-10-01T12:00:00+09:00'),
+    start: atFutureTime_('10:00'),
+    end: atFutureTime_('12:00'),
     isAllDay: false
   });
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [event] } });
-  var snb = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120', brand: 'snb' });
-  var mens = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120', brand: 'mens' });
-  var studioX = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120', brand: 'studio_x' });
+  var snb = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120', brand: 'snb' });
+  var mens = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120', brand: 'mens' });
+  var studioX = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120', brand: 'studio_x' });
   assert.deepStrictEqual(snb.bookableStartTimes, mens.bookableStartTimes);
   assert.deepStrictEqual(mens.bookableStartTimes, studioX.bookableStartTimes);
 });
 
 test('doGet: 終日イベントのみの日は空き枠を占有しない', function () {
   var allDayEvent = stubs.createEventStub({
-    start: new Date('2026-10-01T00:00:00+09:00'),
-    end: new Date('2026-10-02T00:00:00+09:00'),
+    start: atFutureTime_('00:00'),
+    end: new Date(FUTURE_DATE_NEXT + 'T00:00:00+09:00'),
     isAllDay: true
   });
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [allDayEvent] } });
-  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120', brand: 'studio_x' });
+  var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120', brand: 'studio_x' });
   assert.ok(body.bookableStartTimes.indexOf('08:00') !== -1);
   assert.ok(body.bookableStartTimes.indexOf('21:00') !== -1);
 });
@@ -194,12 +222,12 @@ test('doGet: レスポンスはJSON MIMEタイプで返す', function () {
 
 test('doGet: レスポンスにイベント詳細やPIIを含む余分なキーがない', function () {
   var event = stubs.createEventStub({
-    start: new Date('2026-10-01T10:00:00+09:00'),
-    end: new Date('2026-10-01T12:00:00+09:00'),
+    start: atFutureTime_('10:00'),
+    end: atFutureTime_('12:00'),
     isAllDay: false
   });
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [event] } });
-  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120', brand: 'studio_x' });
+  var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120', brand: 'studio_x' });
   var allowedKeys = ['success', 'date', 'durationMinutes', 'brand', 'bookableStartTimes'];
   Object.keys(body).forEach(function (key) {
     assert.ok(allowedKeys.indexOf(key) !== -1, '想定外のキーが含まれている: ' + key);
@@ -208,7 +236,7 @@ test('doGet: レスポンスにイベント詳細やPIIを含む余分なキー�
 
 test('doGet: getAvailabilityの配線はIssue #268実装後も変化しない（既存フォーム・既存挙動を壊さない）', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
-  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120', brand: 'studio_x' });
+  var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120', brand: 'studio_x' });
   assert.strictEqual(body.success, true);
 });
 
@@ -220,4 +248,44 @@ test('doGet: getAvailabilityの配線はIssue #268実装後も変化しない（
 test('doPost: Issue #268でcreateBooking用のdoPostが追加されている', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
   assert.strictEqual(typeof sandbox.doPost, 'function');
+});
+
+/*
+ * doGet（getAvailability）は本番実行時、内部でnow省略時デフォルト（現在時刻）を使う
+ * ため、固定nowを直接注入するテストはBookingAvailability.getAvailability自体に対して
+ * test/booking-availability.test.jsで行う。ここでは、doGetの配線自体が壊れていないこと
+ * （実行時点から十分未来の日付では当日フィルタが働かず、従来どおり08:00から候補が
+ * 出ること）だけを確認する（Issue #270レビュー対応。日付はFUTURE_DATEで動的に算出し、
+ * 実行日から独立させる。3回目レビュー指摘対応）。
+ */
+test('doGet: 実行時点から十分未来の日付を指定した場合は、当日フィルタが働かず従来どおり08:00から候補が出る', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
+  var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120' });
+  assert.strictEqual(body.success, true);
+  assert.ok(body.bookableStartTimes.indexOf('08:00') !== -1);
+});
+
+/*
+ * 過去日はINVALID_DATEで拒否し、bookableStartTimesを返さない（2回目レビュー指摘対応）。
+ * doGet（Code.gs）はnowを注入できないため、実行時の実時刻を基準に「確実に過去」と
+ * 言える日付（2020-01-01固定）を使う。handleGetAvailability_がCalendarを取得する前に
+ * 拒否することも、Calendar呼び出し有無を検知するスタブで併せて確認する。
+ */
+test('doGet: 過去日はINVALID_DATEで拒否し、bookableStartTimesを返さない。Calendar取得前に拒否する（handleGetAvailability_のCalendar呼び出し前チェック）', function () {
+  var calendarQueried = false;
+  var calendarsById = {
+    cal1: {
+      get events() {
+        calendarQueried = true;
+        return [];
+      }
+    }
+  };
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, calendarsById);
+  var body = callDoGet(sandbox, { date: '2020-01-01', durationMinutes: '120', brand: 'snb' });
+
+  assert.strictEqual(body.success, false);
+  assert.strictEqual(body.error.code, 'INVALID_DATE');
+  assert.strictEqual(body.bookableStartTimes, undefined);
+  assert.strictEqual(calendarQueried, false, '過去日はCalendarへ問い合わせる前に拒否するべき');
 });

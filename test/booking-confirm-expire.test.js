@@ -32,6 +32,23 @@ var FILES = [
 var CALENDAR_ID = 'cal1';
 var SPREADSHEET_ID = 'ss1';
 
+/* Asia/Tokyo基準で実行時刻からdaysAhead日後の'YYYY-MM-DD'を返す（Issue #270 3回目
+   レビュー指摘対応）。createBookingはnow省略時に実時刻で過去日拒否を行うため、
+   validPayload()の既定dateを固定文字列にすると実行日がその日付を過ぎた時点で
+   now省略呼び出し（createPending経由を含む）が一斉にINVALID_DATEへ変わり自然故障する。 */
+function futureDateJst_(daysAhead) {
+  var d = new Date(Date.now() + daysAhead * 24 * 3600000);
+  var parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(d);
+  var out = {};
+  parts.forEach(function (part) { if (part.type !== 'literal') out[part.type] = part.value; });
+  return out.year + '-' + out.month + '-' + out.day;
+}
+
+/* 「当日/翌日/過去日」という時間条件そのものを検証していない一般テスト用の既定日付。 */
+var DEFAULT_FUTURE_DATE = futureDateJst_(60);
+
 function setup(options) {
   var opts = options || {};
   var calendarsById = opts.calendarsById || { cal1: { events: [] } };
@@ -59,7 +76,8 @@ function validPayload(overrides) {
   return Object.assign(
     {
       brand: 'studio_x',
-      date: '2026-10-01',
+      customerType: 'returning',
+      date: DEFAULT_FUTURE_DATE,
       startTime: '10:00',
       durationMinutes: 120,
       name: '山田太郎',
@@ -251,7 +269,7 @@ test('confirmBooking: Lock取得に失敗した場合はLOCK_TIMEOUTを返す', 
 
 test('expirePendingBookings: 受付から24時間経過したPENDINGはEXPIREDになり、Calendarイベントも削除される', function () {
   var ctx = setup();
-  var bookingId = createPending(ctx, { date: '2026-10-05', startTime: '10:00' });
+  var bookingId = createPending(ctx, { date: futureDateJst_(65), startTime: '10:00' });
 
   var justBefore = new Date(Date.now());
   /* createdAtを25時間前に書き換えて「24時間経過」をシミュレートする */
@@ -276,7 +294,7 @@ test('expirePendingBookings: 24時間未満でも、利用開始2時間前を過
   /* date/startTimeは営業時間内の値であれば何でもよい（後でstartAtを直接上書きするため）。
      実際の判定に使うのはstartAt（更新後の値）。 */
   var bookingId = createPending(ctx, {
-    date: '2026-12-01',
+    date: futureDateJst_(70),
     startTime: '10:00',
     durationMinutes: 120
   });
@@ -303,6 +321,74 @@ test('expirePendingBookings: TTL・開始2時間前のいずれにも該当し�
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.strictEqual(found.record.status, 'PENDING');
   assert.strictEqual(ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length, 1);
+});
+
+/* ---------- PENDING TTLと当日予約の整合（Issue #270） ---------- */
+
+test('expirePendingBookings: 当日受付・利用開始まで2時間未満の予約は、作成直後にexpirePendingBookingsを実行しても即EXPIREDにならない（graceによる猶予）', function () {
+  var ctx = setup();
+  /* JST 2026-10-01 20:00に受付。開始は21:00（1時間後 < minHoursBeforeStart既定2時間）で、
+     利用日(date)も受付と同じ2026-10-01（＝当日受付）。 */
+  var receivedAt = new Date('2026-10-01T20:00:00+09:00');
+  var created = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'returning', date: '2026-10-01', startTime: '21:00', durationMinutes: 120 }),
+    receivedAt
+  );
+  assert.strictEqual(created.success, true, '当日+利用経験ありはPENDING作成に成功する前提');
+
+  /* 受付5分後にTTL失効処理を実行しても、まだEXPIREDにならないべき
+     （#268時点の計算式のままだと、開始2時間前(19:00)は受付時刻より過去のため即EXPIREDになっていた）。 */
+  var justAfter = new Date(receivedAt.getTime() + 5 * 60000);
+  var result = ctx.sandbox.expirePendingBookings(justAfter);
+  assert.strictEqual(result.expiredCount, 0, '作成直後に即EXPIREDになってはいけない');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(created.bookingId);
+  assert.strictEqual(found.record.status, 'PENDING');
+  assert.strictEqual(ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length, 1);
+});
+
+test('expirePendingBookings: 当日受付・利用開始まで2時間未満の予約は、利用開始時刻を過ぎればEXPIREDになる（graceは利用開始時刻を上限とするため、開始後までPENDINGが残らない）', function () {
+  var ctx = setup();
+  var receivedAt = new Date('2026-10-01T20:00:00+09:00');
+  var startAt = new Date('2026-10-01T21:00:00+09:00');
+  var created = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'returning', date: '2026-10-01', startTime: '21:00', durationMinutes: 120 }),
+    receivedAt
+  );
+  assert.strictEqual(created.success, true);
+
+  /* 利用開始（21:00）の1分前はまだPENDINGのままであるべき */
+  var justBeforeStart = new Date(startAt.getTime() - 60000);
+  var beforeResult = ctx.sandbox.expirePendingBookings(justBeforeStart);
+  assert.strictEqual(beforeResult.expiredCount, 0, '利用開始前はまだEXPIREDにしてはいけない');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(created.bookingId).record.status, 'PENDING');
+
+  /* 利用開始（21:00）の1分後にはEXPIREDになっているべき（利用開始後までPENDINGが残らない） */
+  var justAfterStart = new Date(startAt.getTime() + 60000);
+  var afterResult = ctx.sandbox.expirePendingBookings(justAfterStart);
+  assert.strictEqual(afterResult.expiredCount, 1, '利用開始後はEXPIREDになるべき（無期限PENDINGにも利用開始後残留にもしない）');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(created.bookingId);
+  assert.strictEqual(found.record.status, 'EXPIRED');
+});
+
+test('expirePendingBookings: 受付日と利用日(date)が一致しない予約（＝当日受付ではない）はPENDING_TTL_MIN_HOLD_HOURSの対象外のまま、#268時点と同じ計算式でTTLが決まる（既存の翌日以降TTLへの影響なし）', function () {
+  var ctx = setup();
+  /* 営業時間（08:00〜23:00）の制約上、実際の「翌日以降」予約は受付から開始まで
+     必ず数時間以上の余裕がある（当日をまたいで直後に開始する翌日予約は存在し得ない）ため、
+     ここでは既存のTTLテスト（このファイルの他のテスト）と同じ方法で、createdAt/startAtを
+     直接上書きして「date列と受付日が一致しない」状態を作る。 */
+  var bookingId = createPending(ctx, { date: futureDateJst_(120), startTime: '10:00', durationMinutes: 120 });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, {
+    createdAt: new Date('2026-11-05T10:00:00+09:00'),
+    startAt: new Date('2026-11-05T10:30:00+09:00') /* 受付から30分後に開始（2時間未満） */
+  });
+
+  /* record.date（futureDateJst_(120)。実行時刻から120日後のため2026-11-05とは一致しない）と
+     受付日(2026-11-05)が一致しないため isSameDayBooking=false。
+     #268時点と同じ計算式のまま（開始2時間前 < 受付時刻）で、受付1分後にはもうEXPIREDになる。 */
+  var result = ctx.sandbox.expirePendingBookings(new Date('2026-11-05T10:01:00+09:00'));
+  assert.strictEqual(result.expiredCount, 1, '当日受付でない場合はminHoldHoursの保護対象外のまま（既存仕様どおり）');
 });
 
 test('expirePendingBookings: 正式関数名 expirePendingBookings() がグローバルに存在する（時間主導トリガー用）', function () {
@@ -408,8 +494,8 @@ test('expirePendingBookings: EXPIRE_SHEETS_UPDATE_FAILED後、Sheets保存先の
 
 test('expirePendingBookings: 1件のSheets更新失敗が他の失効対象の処理を止めない（バッチ内の障害分離）', function () {
   var ctx = setup();
-  var failingBookingId = createPending(ctx, { date: '2026-11-01', startTime: '10:00', email: 'a@example.com' });
-  var okBookingId = createPending(ctx, { date: '2026-11-02', startTime: '10:00', email: 'b@example.com' });
+  var failingBookingId = createPending(ctx, { date: futureDateJst_(80), startTime: '10:00', email: 'a@example.com' });
+  var okBookingId = createPending(ctx, { date: futureDateJst_(81), startTime: '10:00', email: 'b@example.com' });
 
   var oldCreatedAt = new Date(Date.now() - 25 * 3600000);
   ctx.sandbox.SpreadsheetRepository.updateBookingFields(failingBookingId, { createdAt: oldCreatedAt });

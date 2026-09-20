@@ -27,6 +27,28 @@ var FILES = [
 var CALENDAR_ID = 'cal1';
 var SPREADSHEET_ID = 'ss1';
 
+/* Asia/Tokyo基準で実行時刻からdaysAhead日後の'YYYY-MM-DD'を返す（Issue #270 3回目
+   レビュー指摘対応）。createBookingはnow省略時に実時刻で過去日拒否を行うため、
+   validPayload()の既定dateを固定文字列にすると実行日がその日付を過ぎた時点で
+   now省略呼び出しが一斉にINVALID_DATEへ変わり自然故障する。 */
+function futureDateJst_(daysAhead) {
+  var d = new Date(Date.now() + daysAhead * 24 * 3600000);
+  var parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(d);
+  var out = {};
+  parts.forEach(function (part) { if (part.type !== 'literal') out[part.type] = part.value; });
+  return out.year + '-' + out.month + '-' + out.day;
+}
+
+/* 「当日/翌日/過去日」という時間条件そのものを検証していない一般テスト用の既定日付。 */
+var DEFAULT_FUTURE_DATE = futureDateJst_(60);
+
+/* DEFAULT_FUTURE_DATE上の'HH:mm'をJSTのDateへ変換する（Calendarイベントのstart/end用）。 */
+function atDefaultDate_(hhmm) {
+  return new Date(DEFAULT_FUTURE_DATE + 'T' + hhmm + ':00+09:00');
+}
+
 function setup(options) {
   var opts = options || {};
   var calendarsById = opts.calendarsById || { cal1: { events: [] } };
@@ -54,7 +76,8 @@ function validPayload(overrides) {
   return Object.assign(
     {
       brand: 'studio_x',
-      date: '2026-10-01',
+      customerType: 'returning',
+      date: DEFAULT_FUTURE_DATE,
       startTime: '10:00',
       durationMinutes: 120,
       name: '山田太郎',
@@ -69,6 +92,14 @@ function validPayload(overrides) {
     overrides || {}
   );
 }
+
+/*
+ * 当日利用ルール（Issue #270）のテスト用固定時刻。createBookingはnow引数を受け取れるため、
+ * JST 2026-10-01 12:00に受け付けたことにし、'2026-10-01'を当日、'2026-10-02'を翌日として扱う。
+ * ブラウザのローカルtimezoneではなく、availabilityConfig.timezone（既定Asia/Tokyo）基準で
+ * 当日判定が行われることを、この固定時刻とテスト対象日を一致させることで検証する。
+ */
+var NOW = new Date('2026-10-01T12:00:00+09:00');
 
 test('createBooking: 正常な入力でPENDINGの予約が作成される（送信即CONFIRMEDにならない）', function () {
   var ctx = setup();
@@ -219,15 +250,15 @@ test('#267との境界: getAvailabilityでは空きだったのに、その後Ca
   var ctx = setup();
 
   /* 1. フロントでgetAvailability相当を呼んだ時点では空き（イベント無し） */
-  var busyBefore = ctx.sandbox.CalendarRepository.getBusyIntervalsForDate(CALENDAR_ID, '2026-10-01', 'Asia/Tokyo');
+  var busyBefore = ctx.sandbox.CalendarRepository.getBusyIntervalsForDate(CALENDAR_ID, DEFAULT_FUTURE_DATE, 'Asia/Tokyo');
   assert.strictEqual(busyBefore.length, 0);
 
   /* 2. その後、スペースマーケット由来の同一Calendar上の予定が直接追加される
         （タイトルに一切依存しないことを示すため、あえてSM専用の接頭辞を付けない） */
   ctx.calendarsById.cal1.events.push(
     stubs.createEventStub({
-      start: new Date('2026-10-01T10:30:00+09:00'),
-      end: new Date('2026-10-01T11:30:00+09:00'),
+      start: atDefaultDate_('10:30'),
+      end: atDefaultDate_('11:30'),
       isAllDay: false,
       title: '【予約完了】スペースマーケット由来の予定'
     })
@@ -249,8 +280,8 @@ test('#267との境界: 管理者手入力・自社予約由来の占有もタ�
     var ctx = setup();
     ctx.calendarsById.cal1.events.push(
       stubs.createEventStub({
-        start: new Date('2026-10-01T10:30:00+09:00'),
-        end: new Date('2026-10-01T11:30:00+09:00'),
+        start: atDefaultDate_('10:30'),
+        end: atDefaultDate_('11:30'),
         isAllDay: false,
         title: title
       })
@@ -269,7 +300,7 @@ test('LockService: createBooking中はLockを取得し、成功・失敗いず�
   assert.strictEqual(lockService._isHeld(), false, '成功後はLockが解放されているべき');
 
   ctx.calendarsById.cal1.events.push(
-    stubs.createEventStub({ start: new Date('2026-10-01T10:30:00+09:00'), end: new Date('2026-10-01T11:30:00+09:00'), isAllDay: false })
+    stubs.createEventStub({ start: atDefaultDate_('10:30'), end: atDefaultDate_('11:30'), isAllDay: false })
   );
   ctx.sandbox.BookingRepository.createBooking(validPayload({ startTime: '10:00', durationMinutes: 120, email: 'other@example.com' }));
   assert.strictEqual(lockService._isHeld(), false, '競合で失敗した場合もLockが解放されているべき');
@@ -298,11 +329,152 @@ test('同時createBooking: 同時刻・重複する2件を続けて送ると、2
   assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 1);
 });
 
+/* ---------- 当日利用ルール（Issue #270） ---------- */
+
+test('createBooking: 当日(2026-10-01) + 初回利用(first_time)はSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEで拒否し、Calendar/Sheetsに何も作らず、bookingIdも発行・永続化しない', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'first_time', date: '2026-10-01', startTime: '13:00' }),
+    NOW
+  );
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME');
+  assert.strictEqual(result.bookingId, undefined, '拒否時はbookingIdを返さない');
+  assert.strictEqual(ctx.calendarsById.cal1.events.length, 0, 'Calendarイベントを作らない');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 0, 'Sheets行を作らない');
+});
+
+test('createBooking: 当日(2026-10-01) + 利用経験あり(returning)は通常どおりPENDINGを作成できる', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'returning', date: '2026-10-01', startTime: '13:00' }),
+    NOW
+  );
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.status, 'PENDING', '当日予約も送信時点ではPENDINGのまま（自動確定しない）');
+  assert.ok(result.bookingId);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.strictEqual(found.record.status, 'PENDING');
+  assert.strictEqual(found.record.customerType, 'returning', 'SheetsのcustomerType列に正しい利用区分が保存されるべき');
+
+  var event = ctx.calendarsById.cal1.events[0];
+  assert.strictEqual(event.getTag('status'), 'PENDING');
+});
+
+test('createBooking: 翌日(2026-10-02)は初回利用/利用経験ありのどちらも通常どおり作成できる', function () {
+  ['first_time', 'returning'].forEach(function (customerType) {
+    var ctx = setup();
+    var result = ctx.sandbox.BookingRepository.createBooking(
+      validPayload({ customerType: customerType, date: '2026-10-02', startTime: '13:00', email: customerType + '@example.com' }),
+      NOW
+    );
+    assert.strictEqual(result.success, true, customerType);
+    assert.strictEqual(result.status, 'PENDING');
+  });
+});
+
+test('createBooking: 当日+初回利用の拒否・当日+利用経験ありの許可は、snb/mens/studio_xのいずれのbrandでも同じ挙動になる（brandで分岐させない。Issue #270）', function () {
+  ['snb', 'mens', 'studio_x'].forEach(function (brand) {
+    var blockedCtx = setup();
+    var blocked = blockedCtx.sandbox.BookingRepository.createBooking(
+      validPayload({ brand: brand, customerType: 'first_time', date: '2026-10-01', startTime: '13:00' }),
+      NOW
+    );
+    assert.strictEqual(blocked.success, false, brand + ': 当日+初回利用は拒否されるべき');
+    assert.strictEqual(blocked.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', brand);
+
+    var allowedCtx = setup();
+    var allowed = allowedCtx.sandbox.BookingRepository.createBooking(
+      validPayload({ brand: brand, customerType: 'returning', date: '2026-10-01', startTime: '13:00' }),
+      NOW
+    );
+    assert.strictEqual(allowed.success, true, brand + ': 当日+利用経験ありは許可されるべき');
+    var found = allowedCtx.sandbox.SpreadsheetRepository.findRowByBookingId(allowed.bookingId);
+    assert.strictEqual(found.record.brand, brand);
+    assert.strictEqual(found.record.customerType, 'returning');
+  });
+});
+
+test('createBooking: customerType未指定・不正値はINVALID_CUSTOMER_TYPEでfail-closedに拒否し、Calendar/Sheetsに何も作らない（フロント改変での当日制限回避を防ぐ）', function () {
+  [undefined, null, '', 'member', 'FIRST_TIME'].forEach(function (customerType) {
+    var ctx = setup();
+    var payload = validPayload({ customerType: customerType, date: '2026-10-02' });
+    var result = ctx.sandbox.BookingRepository.createBooking(payload, NOW);
+    assert.strictEqual(result.success, false, JSON.stringify(customerType));
+    assert.strictEqual(result.error.code, 'INVALID_CUSTOMER_TYPE');
+    assert.strictEqual(ctx.calendarsById.cal1.events.length, 0);
+    assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 0);
+  });
+});
+
+test('createBooking: 過去日はcustomerTypeを問わずINVALID_DATEで拒否する（当日判定はAsia/Tokyo基準。ブラウザのローカルtimezoneに依存しない）', function () {
+  ['first_time', 'returning'].forEach(function (customerType) {
+    var ctx = setup();
+    var result = ctx.sandbox.BookingRepository.createBooking(
+      validPayload({ customerType: customerType, date: '2026-09-30', startTime: '13:00' }),
+      NOW
+    );
+    assert.strictEqual(result.success, false, customerType);
+    assert.strictEqual(result.error.code, 'INVALID_DATE');
+  });
+});
+
+test('createBooking: 当日+利用経験ありで、開始時刻が現在時刻以前（受付NOW=12:00に対し09:00開始）はAPI直呼びでもSAME_DAY_START_TIME_PASSEDで拒否し、Calendar/Sheetsに何も作らない', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'returning', date: '2026-10-01', startTime: '09:00' }),
+    NOW
+  );
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'SAME_DAY_START_TIME_PASSED');
+  assert.strictEqual(result.bookingId, undefined);
+  assert.strictEqual(ctx.calendarsById.cal1.events.length, 0);
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 0);
+});
+
+test('createBooking: 当日+利用経験ありで、開始時刻が現在時刻より後（受付NOW=12:00に対し13:00開始）なら他条件が正常な限り成功する', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'returning', date: '2026-10-01', startTime: '13:00' }),
+    NOW
+  );
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.status, 'PENDING');
+});
+
+test('createBooking: 当日+初回利用は、開始時刻が現在時刻より後であってもSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEが先に返る（優先順位の確認）', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'first_time', date: '2026-10-01', startTime: '13:00' }),
+    NOW
+  );
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME');
+});
+
+test('createBooking: snb/mens/studio_xのいずれのbrandでも当日の過去開始時刻拒否は同じ挙動になる（brandで分岐させない）', function () {
+  ['snb', 'mens', 'studio_x'].forEach(function (brand) {
+    var ctx = setup();
+    var result = ctx.sandbox.BookingRepository.createBooking(
+      validPayload({ brand: brand, customerType: 'returning', date: '2026-10-01', startTime: '09:00' }),
+      NOW
+    );
+    assert.strictEqual(result.success, false, brand);
+    assert.strictEqual(result.error.code, 'SAME_DAY_START_TIME_PASSED', brand);
+  });
+});
+
 test('rate limit: 同一メール10分以内3件を超えるとRATE_LIMITEDで拒否する', function () {
   var ctx = setup();
   var now = Date.parse('2026-09-20T00:00:00+09:00');
   var originalNow = Date.now;
-  var dates = ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'];
+  /* createBookingはnow省略時に実時刻を使うため、日付は固定文字列ではなく動的に算出する
+     （Issue #270 3回目レビュー指摘対応）。日付を分けるのはSLOT_CONFLICTを避けるためだけで、
+     具体的な値自体はテストの意図に無関係。 */
+  var dates = [futureDateJst_(61), futureDateJst_(62), futureDateJst_(63), futureDateJst_(64)];
   try {
     for (var i = 0; i < 3; i++) {
       Date.now = function () { return now + i * 1000; };

@@ -16,10 +16,14 @@
 'use strict';
 
 /* 正式関数: expirePendingBookings()（Issue #268本文どおりのグローバル関数名）。
-   時間主導トリガーのハンドラ関数名としてそのまま指定する。 */
-function expirePendingBookings() {
+   時間主導トリガーのハンドラ関数名としてそのまま指定する。
+   now引数は省略可能（時間主導トリガーからは常に引数なしで呼ばれ、
+   BookingRepository.expirePendingBookings側で現在時刻へフォールバックする）。
+   テストコードから受付時刻を固定して当日判定・TTLを検証できるよう、そのまま
+   BookingRepository.expirePendingBookingsへ受け渡す（Issue #270）。 */
+function expirePendingBookings(now) {
   try {
-    var result = BookingRepository.expirePendingBookings();
+    var result = BookingRepository.expirePendingBookings(now);
     Logger.log('expirePendingBookings: ' + JSON.stringify(result));
     return result;
   } catch (e) {

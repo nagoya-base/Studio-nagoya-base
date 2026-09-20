@@ -12,6 +12,13 @@
 var SpreadsheetRepository = (function () {
   var SHEET_NAME_ = 'Bookings';
 
+  /*
+   * 列を追加する場合は必ずこの配列の末尾へ追記すること（Issue #270のcustomerType追加時の方針）。
+   * rowToRecord_は行の配列インデックスをこのHEADERS_の並び順で読むため、途中に挿入すると
+   * 既存行（過去にappendBookingした実際のセルの並び）の列がずれて誤読される。末尾追記であれば、
+   * 既存行はcustomerType列が空（undefined→rowToRecord_で''相当）になるだけで、他の列は
+   * これまでどおり正しく読める。
+   */
   var HEADERS_ = [
     'bookingId',
     'createdAt',
@@ -32,7 +39,8 @@ var SpreadsheetRepository = (function () {
     'confirmedAt',
     'expiredAt',
     'cancelledAt',
-    'updatedAt'
+    'updatedAt',
+    'customerType'
   ];
 
   function getSpreadsheet_() {
