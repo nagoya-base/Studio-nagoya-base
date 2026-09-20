@@ -22,12 +22,30 @@ function loadBooking() {
   return sandbox.Booking;
 }
 
+/* Asia/Tokyo基準で実行時刻からdaysAhead日後の'YYYY-MM-DD'を返す。validInput()の既定dateに
+   使う（Issue #270 3回目レビュー指摘対応）。validateCreateBookingInputはnow省略時に
+   実時刻を使って過去日拒否を行うため、既定dateを固定文字列にすると実行日がその日付を
+   過ぎた時点でnow省略の呼び出しが一斉にINVALID_DATEへ変わり自然故障する。 */
+function futureDateJst_(daysAhead) {
+  var d = new Date(Date.now() + daysAhead * 24 * 3600000);
+  var parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(d);
+  var out = {};
+  parts.forEach(function (part) { if (part.type !== 'literal') out[part.type] = part.value; });
+  return out.year + '-' + out.month + '-' + out.day;
+}
+
+/* 「当日/翌日/過去日」という時間条件そのものを検証していない一般テスト用の既定日付。
+   実行時刻から60日後（Asia/Tokyo基準）を動的に算出し、固定日付に依存しない。 */
+var DEFAULT_FUTURE_DATE = futureDateJst_(60);
+
 function validInput(overrides) {
   return Object.assign(
     {
       brand: 'studio_x',
       customerType: 'returning',
-      date: '2026-10-01',
+      date: DEFAULT_FUTURE_DATE,
       startTime: '10:00',
       durationMinutes: 120,
       name: '山田太郎',

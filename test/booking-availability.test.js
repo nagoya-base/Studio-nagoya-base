@@ -17,6 +17,16 @@ var DEFAULT_CONFIG = {
   slotStepMinutes: 15
 };
 
+/*
+ * このファイルの日付リテラル（'2026-10-01'等）はすべてこのGENERIC_NOWより未来の
+ * 固定値であり、実行時の実時刻には一切依存しない（Issue #270 3回目レビュー指摘対応）。
+ * 「今日/過去/翌日」という時間条件そのものを検証していない一般テストでも、
+ * getAvailability()へは必ずこの固定nowを明示的に渡すこと。now省略（＝実時刻依存）は、
+ * 「nowを省略した場合は現在時刻を使う」ことそのものを検証する1ケースのみに限定する
+ * （そのケースでは実行時刻から動的に十分未来の日付を算出し、固定日付を使わない）。
+ */
+var GENERIC_NOW = new Date('2026-01-01T00:00:00+09:00');
+
 function busy(startMinutes, endMinutes) {
   return { startMinutes: startMinutes, endMinutes: endMinutes, isAllDay: false };
 }
@@ -128,9 +138,9 @@ test('brand違いでも空き判定結果は分岐しない（同一室のため
   var BookingAvailability = loadAvailability();
   var events = [busy(600, 720)];
   var request = { date: '2026-10-01', durationMinutes: 120, brand: null };
-  var forSnb = BookingAvailability.getAvailability(Object.assign({}, request, { brand: 'snb' }), events, DEFAULT_CONFIG);
-  var forMens = BookingAvailability.getAvailability(Object.assign({}, request, { brand: 'mens' }), events, DEFAULT_CONFIG);
-  var forStudioX = BookingAvailability.getAvailability(Object.assign({}, request, { brand: 'studio_x' }), events, DEFAULT_CONFIG);
+  var forSnb = BookingAvailability.getAvailability(Object.assign({}, request, { brand: 'snb' }), events, DEFAULT_CONFIG, GENERIC_NOW);
+  var forMens = BookingAvailability.getAvailability(Object.assign({}, request, { brand: 'mens' }), events, DEFAULT_CONFIG, GENERIC_NOW);
+  var forStudioX = BookingAvailability.getAvailability(Object.assign({}, request, { brand: 'studio_x' }), events, DEFAULT_CONFIG, GENERIC_NOW);
   assert.deepStrictEqual(forSnb.bookableStartTimes, forMens.bookableStartTimes);
   assert.deepStrictEqual(forMens.bookableStartTimes, forStudioX.bookableStartTimes);
   assert.strictEqual(forSnb.brand, 'snb');
@@ -149,7 +159,7 @@ test('無効な日付はエラーになる', function () {
 
 test('120分未満（最低利用時間未満）はエラーになる', function () {
   var BookingAvailability = loadAvailability();
-  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 60 }, [], DEFAULT_CONFIG);
+  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 60 }, [], DEFAULT_CONFIG, GENERIC_NOW);
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'DURATION_TOO_SHORT');
 });
@@ -157,7 +167,7 @@ test('120分未満（最低利用時間未満）はエラーになる', function
 test('durationMinutesが非数値・非整数・0以下の場合はINVALID_DURATIONになる', function () {
   var BookingAvailability = loadAvailability();
   [NaN, '120', 120.9, 0, -120, undefined, null, {}, []].forEach(function (invalidDuration) {
-    var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: invalidDuration }, [], DEFAULT_CONFIG);
+    var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: invalidDuration }, [], DEFAULT_CONFIG, GENERIC_NOW);
     assert.strictEqual(result.success, false, JSON.stringify(invalidDuration) + ' は無効な利用時間として扱われるべき');
     assert.strictEqual(result.error.code, 'INVALID_DURATION');
   });
@@ -183,7 +193,7 @@ test('Script Propertiesの誤設定はfail-closedにINVALID_CONFIGを返す（�
   ];
 
   invalidConfigs.forEach(function (config) {
-    var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], config);
+    var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], config, GENERIC_NOW);
     assert.strictEqual(result.success, false, JSON.stringify(config) + ' はINVALID_CONFIGとして拒否されるべき');
     assert.strictEqual(result.error.code, 'INVALID_CONFIG');
   });
@@ -192,14 +202,14 @@ test('Script Propertiesの誤設定はfail-closedにINVALID_CONFIGを返す（�
 test('BUFFER_MINUTES:0 / SLOT_STEP_MINUTES最小値等、正常な境界値のconfigは拒否しない', function () {
   var BookingAvailability = loadAvailability();
   var config = Object.assign({}, DEFAULT_CONFIG, { bufferMinutes: 0, slotStepMinutes: 1, minBookingMinutes: 1 });
-  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], config);
+  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], config, GENERIC_NOW);
   assert.strictEqual(result.success, true);
 });
 
 test('23:00を超える利用時間は、エラーにはせず空き枠0件を返す', function () {
   var BookingAvailability = loadAvailability();
   // 営業時間(08:00-23:00=900分)を超える901分では、どの開始時刻でも23:00に収まらない。
-  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 901 }, [], DEFAULT_CONFIG);
+  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 901 }, [], DEFAULT_CONFIG, GENERIC_NOW);
   assert.strictEqual(result.success, true);
   /* result はvmサンドボックス（別realm）で生成された配列のため、reference-equalまで見る
      deepStrictEqualではなく内容ベースの非strict deepEqualで比較する。 */
@@ -208,7 +218,7 @@ test('23:00を超える利用時間は、エラーにはせず空き枠0件を�
 
 test('getAvailabilityのレスポンスにPIIやイベント詳細を一切含めない', function () {
   var BookingAvailability = loadAvailability();
-  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120, brand: 'studio_x' }, [busy(600, 720)], DEFAULT_CONFIG);
+  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120, brand: 'studio_x' }, [busy(600, 720)], DEFAULT_CONFIG, GENERIC_NOW);
   var allowedKeys = ['success', 'date', 'durationMinutes', 'brand', 'bookableStartTimes'];
   Object.keys(result).forEach(function (key) {
     assert.ok(allowedKeys.indexOf(key) !== -1, '想定外のキーが含まれている: ' + key);
@@ -279,11 +289,14 @@ test('getAvailability: 過去日（date < today）はINVALID_DATEでfail-closed�
   assert.strictEqual(result.error.message, '過去の日付は指定できません。');
 });
 
-test('getAvailability: nowを省略した場合は現在時刻を使う（デフォルト引数。過去の固定日付では当日フィルタが働かず従来どおり全候補になる）', function () {
+test('getAvailability: nowを省略した場合は現在時刻を使う（デフォルト引数）。日付は実行時刻から動的に算出した十分未来の日付を使い、固定日付には依存しない（Issue #270 3回目レビュー指摘対応）', function () {
   var BookingAvailability = loadAvailability();
-  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], DEFAULT_CONFIG);
+  var future = new Date(Date.now() + 30 * 24 * 3600000);
+  var futureDate = BookingAvailability.formatDateInTimezone(future, 'Asia/Tokyo');
+
+  var result = BookingAvailability.getAvailability({ date: futureDate, durationMinutes: 120 }, [], DEFAULT_CONFIG);
   assert.strictEqual(result.success, true);
-  assert.ok(result.bookableStartTimes.indexOf('08:00') !== -1, '実行時の現在日付が2026-10-01と一致しない限り当日フィルタは働かない');
+  assert.ok(result.bookableStartTimes.indexOf('08:00') !== -1, '30日後は当日ではないため当日フィルタが誤適用されず、従来どおり08:00から候補が出るべき');
 });
 
 test('getAvailability: 当日+現在時刻ちょうどの候補も除外する（現在時刻ちょうどは不可）', function () {

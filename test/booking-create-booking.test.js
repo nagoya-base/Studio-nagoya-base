@@ -27,6 +27,28 @@ var FILES = [
 var CALENDAR_ID = 'cal1';
 var SPREADSHEET_ID = 'ss1';
 
+/* Asia/Tokyo基準で実行時刻からdaysAhead日後の'YYYY-MM-DD'を返す（Issue #270 3回目
+   レビュー指摘対応）。createBookingはnow省略時に実時刻で過去日拒否を行うため、
+   validPayload()の既定dateを固定文字列にすると実行日がその日付を過ぎた時点で
+   now省略呼び出しが一斉にINVALID_DATEへ変わり自然故障する。 */
+function futureDateJst_(daysAhead) {
+  var d = new Date(Date.now() + daysAhead * 24 * 3600000);
+  var parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(d);
+  var out = {};
+  parts.forEach(function (part) { if (part.type !== 'literal') out[part.type] = part.value; });
+  return out.year + '-' + out.month + '-' + out.day;
+}
+
+/* 「当日/翌日/過去日」という時間条件そのものを検証していない一般テスト用の既定日付。 */
+var DEFAULT_FUTURE_DATE = futureDateJst_(60);
+
+/* DEFAULT_FUTURE_DATE上の'HH:mm'をJSTのDateへ変換する（Calendarイベントのstart/end用）。 */
+function atDefaultDate_(hhmm) {
+  return new Date(DEFAULT_FUTURE_DATE + 'T' + hhmm + ':00+09:00');
+}
+
 function setup(options) {
   var opts = options || {};
   var calendarsById = opts.calendarsById || { cal1: { events: [] } };
@@ -55,7 +77,7 @@ function validPayload(overrides) {
     {
       brand: 'studio_x',
       customerType: 'returning',
-      date: '2026-10-01',
+      date: DEFAULT_FUTURE_DATE,
       startTime: '10:00',
       durationMinutes: 120,
       name: '山田太郎',
@@ -228,15 +250,15 @@ test('#267との境界: getAvailabilityでは空きだったのに、その後Ca
   var ctx = setup();
 
   /* 1. フロントでgetAvailability相当を呼んだ時点では空き（イベント無し） */
-  var busyBefore = ctx.sandbox.CalendarRepository.getBusyIntervalsForDate(CALENDAR_ID, '2026-10-01', 'Asia/Tokyo');
+  var busyBefore = ctx.sandbox.CalendarRepository.getBusyIntervalsForDate(CALENDAR_ID, DEFAULT_FUTURE_DATE, 'Asia/Tokyo');
   assert.strictEqual(busyBefore.length, 0);
 
   /* 2. その後、スペースマーケット由来の同一Calendar上の予定が直接追加される
         （タイトルに一切依存しないことを示すため、あえてSM専用の接頭辞を付けない） */
   ctx.calendarsById.cal1.events.push(
     stubs.createEventStub({
-      start: new Date('2026-10-01T10:30:00+09:00'),
-      end: new Date('2026-10-01T11:30:00+09:00'),
+      start: atDefaultDate_('10:30'),
+      end: atDefaultDate_('11:30'),
       isAllDay: false,
       title: '【予約完了】スペースマーケット由来の予定'
     })
@@ -258,8 +280,8 @@ test('#267との境界: 管理者手入力・自社予約由来の占有もタ�
     var ctx = setup();
     ctx.calendarsById.cal1.events.push(
       stubs.createEventStub({
-        start: new Date('2026-10-01T10:30:00+09:00'),
-        end: new Date('2026-10-01T11:30:00+09:00'),
+        start: atDefaultDate_('10:30'),
+        end: atDefaultDate_('11:30'),
         isAllDay: false,
         title: title
       })
@@ -278,7 +300,7 @@ test('LockService: createBooking中はLockを取得し、成功・失敗いず�
   assert.strictEqual(lockService._isHeld(), false, '成功後はLockが解放されているべき');
 
   ctx.calendarsById.cal1.events.push(
-    stubs.createEventStub({ start: new Date('2026-10-01T10:30:00+09:00'), end: new Date('2026-10-01T11:30:00+09:00'), isAllDay: false })
+    stubs.createEventStub({ start: atDefaultDate_('10:30'), end: atDefaultDate_('11:30'), isAllDay: false })
   );
   ctx.sandbox.BookingRepository.createBooking(validPayload({ startTime: '10:00', durationMinutes: 120, email: 'other@example.com' }));
   assert.strictEqual(lockService._isHeld(), false, '競合で失敗した場合もLockが解放されているべき');
@@ -449,7 +471,10 @@ test('rate limit: 同一メール10分以内3件を超えるとRATE_LIMITEDで�
   var ctx = setup();
   var now = Date.parse('2026-09-20T00:00:00+09:00');
   var originalNow = Date.now;
-  var dates = ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'];
+  /* createBookingはnow省略時に実時刻を使うため、日付は固定文字列ではなく動的に算出する
+     （Issue #270 3回目レビュー指摘対応）。日付を分けるのはSLOT_CONFLICTを避けるためだけで、
+     具体的な値自体はテストの意図に無関係。 */
+  var dates = [futureDateJst_(61), futureDateJst_(62), futureDateJst_(63), futureDateJst_(64)];
   try {
     for (var i = 0; i < 3; i++) {
       Date.now = function () { return now + i * 1000; };

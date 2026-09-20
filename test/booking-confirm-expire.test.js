@@ -32,6 +32,23 @@ var FILES = [
 var CALENDAR_ID = 'cal1';
 var SPREADSHEET_ID = 'ss1';
 
+/* Asia/Tokyo基準で実行時刻からdaysAhead日後の'YYYY-MM-DD'を返す（Issue #270 3回目
+   レビュー指摘対応）。createBookingはnow省略時に実時刻で過去日拒否を行うため、
+   validPayload()の既定dateを固定文字列にすると実行日がその日付を過ぎた時点で
+   now省略呼び出し（createPending経由を含む）が一斉にINVALID_DATEへ変わり自然故障する。 */
+function futureDateJst_(daysAhead) {
+  var d = new Date(Date.now() + daysAhead * 24 * 3600000);
+  var parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(d);
+  var out = {};
+  parts.forEach(function (part) { if (part.type !== 'literal') out[part.type] = part.value; });
+  return out.year + '-' + out.month + '-' + out.day;
+}
+
+/* 「当日/翌日/過去日」という時間条件そのものを検証していない一般テスト用の既定日付。 */
+var DEFAULT_FUTURE_DATE = futureDateJst_(60);
+
 function setup(options) {
   var opts = options || {};
   var calendarsById = opts.calendarsById || { cal1: { events: [] } };
@@ -60,7 +77,7 @@ function validPayload(overrides) {
     {
       brand: 'studio_x',
       customerType: 'returning',
-      date: '2026-10-01',
+      date: DEFAULT_FUTURE_DATE,
       startTime: '10:00',
       durationMinutes: 120,
       name: '山田太郎',
@@ -252,7 +269,7 @@ test('confirmBooking: Lock取得に失敗した場合はLOCK_TIMEOUTを返す', 
 
 test('expirePendingBookings: 受付から24時間経過したPENDINGはEXPIREDになり、Calendarイベントも削除される', function () {
   var ctx = setup();
-  var bookingId = createPending(ctx, { date: '2026-10-05', startTime: '10:00' });
+  var bookingId = createPending(ctx, { date: futureDateJst_(65), startTime: '10:00' });
 
   var justBefore = new Date(Date.now());
   /* createdAtを25時間前に書き換えて「24時間経過」をシミュレートする */
@@ -277,7 +294,7 @@ test('expirePendingBookings: 24時間未満でも、利用開始2時間前を過
   /* date/startTimeは営業時間内の値であれば何でもよい（後でstartAtを直接上書きするため）。
      実際の判定に使うのはstartAt（更新後の値）。 */
   var bookingId = createPending(ctx, {
-    date: '2026-12-01',
+    date: futureDateJst_(70),
     startTime: '10:00',
     durationMinutes: 120
   });
@@ -361,13 +378,14 @@ test('expirePendingBookings: 受付日と利用日(date)が一致しない予約
      必ず数時間以上の余裕がある（当日をまたいで直後に開始する翌日予約は存在し得ない）ため、
      ここでは既存のTTLテスト（このファイルの他のテスト）と同じ方法で、createdAt/startAtを
      直接上書きして「date列と受付日が一致しない」状態を作る。 */
-  var bookingId = createPending(ctx, { date: '2026-12-01', startTime: '10:00', durationMinutes: 120 });
+  var bookingId = createPending(ctx, { date: futureDateJst_(120), startTime: '10:00', durationMinutes: 120 });
   ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, {
     createdAt: new Date('2026-11-05T10:00:00+09:00'),
     startAt: new Date('2026-11-05T10:30:00+09:00') /* 受付から30分後に開始（2時間未満） */
   });
 
-  /* record.date('2026-12-01') と受付日(2026-11-05)が一致しないため isSameDayBooking=false。
+  /* record.date（futureDateJst_(120)。実行時刻から120日後のため2026-11-05とは一致しない）と
+     受付日(2026-11-05)が一致しないため isSameDayBooking=false。
      #268時点と同じ計算式のまま（開始2時間前 < 受付時刻）で、受付1分後にはもうEXPIREDになる。 */
   var result = ctx.sandbox.expirePendingBookings(new Date('2026-11-05T10:01:00+09:00'));
   assert.strictEqual(result.expiredCount, 1, '当日受付でない場合はminHoldHoursの保護対象外のまま（既存仕様どおり）');
@@ -476,8 +494,8 @@ test('expirePendingBookings: EXPIRE_SHEETS_UPDATE_FAILED後、Sheets保存先の
 
 test('expirePendingBookings: 1件のSheets更新失敗が他の失効対象の処理を止めない（バッチ内の障害分離）', function () {
   var ctx = setup();
-  var failingBookingId = createPending(ctx, { date: '2026-11-01', startTime: '10:00', email: 'a@example.com' });
-  var okBookingId = createPending(ctx, { date: '2026-11-02', startTime: '10:00', email: 'b@example.com' });
+  var failingBookingId = createPending(ctx, { date: futureDateJst_(80), startTime: '10:00', email: 'a@example.com' });
+  var okBookingId = createPending(ctx, { date: futureDateJst_(81), startTime: '10:00', email: 'b@example.com' });
 
   var oldCreatedAt = new Date(Date.now() - 25 * 3600000);
   ctx.sandbox.SpreadsheetRepository.updateBookingFields(failingBookingId, { createdAt: oldCreatedAt });
