@@ -58,6 +58,7 @@ function addBookingAdminMenu() {
     .createMenu('予約管理')
     .addItem('アクティブ行のbookingIdを確定（confirmBooking）', 'confirmActiveRowBooking_')
     .addItem('bookingIdを入力して確定（confirmBooking）', 'confirmBookingByPrompt_')
+    .addItem('予約メールを再送（予約ID指定・強制再送）', 'resendBookingMailByPrompt_')
     .addToUi();
 }
 
@@ -102,6 +103,63 @@ function runConfirmAndAlert_(bookingId) {
       ui.alert(result.alreadyConfirmed ? 'すでに確定済みです: ' + bookingId : '確定しました: ' + bookingId);
     } else {
       ui.alert('確定できませんでした（' + bookingId + '）: ' + (result.error && result.error.message));
+    }
+  } catch (e) {
+    ui.alert('エラーが発生しました（' + bookingId + '）: ' + (e && e.message));
+  }
+}
+
+/*
+ * 予約メールの個別再送（Issue #271「19. 管理者の個別再送」）。
+ * bookingIdとmail typeをそれぞれ別のダイアログで入力させ、明示的なforce resend
+ * （{ force: true }）としてBookingMailer.send*ForBookingを呼ぶ。SentAtを先に消す方式は
+ * 使わない。ただし状態条件（PENDING mail→PENDINGのみ、等）はforceでも無視しない
+ * （BookingMailer.gs側で必ず再確認する）。
+ */
+var RESEND_MAIL_HANDLERS_ = {
+  PENDING: function (bookingId, options) { return BookingMailer.sendPendingMailForBooking(bookingId, options); },
+  CONFIRMED: function (bookingId, options) { return BookingMailer.sendConfirmedMailForBooking(bookingId, options); },
+  CANCELLED: function (bookingId, options) { return BookingMailer.sendCancelledMailForBooking(bookingId, options); },
+  REMINDER: function (bookingId, options) { return BookingMailer.sendReminderMailForBooking(bookingId, options); }
+};
+
+function resendBookingMailByPrompt_() {
+  var ui = SpreadsheetApp.getUi();
+  var idResponse = ui.prompt('再送するbookingIdを入力してください', ui.ButtonSet.OK_CANCEL);
+  if (idResponse.getSelectedButton() !== ui.Button.OK) return;
+  var bookingId = (idResponse.getResponseText() || '').trim();
+  if (!bookingId) {
+    ui.alert('bookingIdを入力してください。');
+    return;
+  }
+
+  var typeResponse = ui.prompt(
+    '再送するメール種別を入力してください（PENDING / CONFIRMED / CANCELLED / REMINDER）',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (typeResponse.getSelectedButton() !== ui.Button.OK) return;
+  var mailType = (typeResponse.getResponseText() || '').trim().toUpperCase();
+
+  runResendMailAndAlert_(bookingId, mailType);
+}
+
+function runResendMailAndAlert_(bookingId, mailType) {
+  var ui = SpreadsheetApp.getUi();
+  var sendFn = RESEND_MAIL_HANDLERS_[mailType];
+  if (!sendFn) {
+    ui.alert('未知のメール種別です: ' + mailType + '（PENDING / CONFIRMED / CANCELLED / REMINDERのいずれかを指定してください）');
+    return;
+  }
+  try {
+    var result = sendFn(bookingId, { force: true });
+    if (result.success && !result.skipped) {
+      ui.alert('再送しました（' + mailType + '）: ' + bookingId);
+    } else if (result.skipped) {
+      ui.alert(
+        '送信条件を満たさないためスキップしました（' + mailType + '）: ' + bookingId + ' / ' + (result.error && result.error.message)
+      );
+    } else {
+      ui.alert('再送に失敗しました（' + mailType + '）: ' + bookingId + ' / ' + (result.error && result.error.message));
     }
   } catch (e) {
     ui.alert('エラーが発生しました（' + bookingId + '）: ' + (e && e.message));

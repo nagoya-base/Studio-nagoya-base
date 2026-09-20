@@ -137,6 +137,12 @@ var BookingRepository = (function () {
       lock.releaseLock();
     }
 
+    /*
+     * 利用者向けPENDINGメール・管理者通知はいずれもbooking Lockの外・best effortで行う
+     * （Issue #271「11. createBookingへの接続」）。どちらかが失敗してもcreateBooking自体は
+     * success:trueのまま返す。
+     */
+    notifyCustomerPendingBestEffort_(record);
     notifyAdminBestEffort_(record);
 
     return {
@@ -148,6 +154,16 @@ var BookingRepository = (function () {
       durationMinutes: input.durationMinutes,
       brand: input.brand
     };
+  }
+
+  /* 送信失敗はcreateBooking自体の成否に影響させない（BookingMailer側で既にSentAt確認・
+     lastMailError記録まで行うため、ここでは想定外の例外だけをLoggerへ残す）。 */
+  function notifyCustomerPendingBestEffort_(record) {
+    try {
+      BookingMailer.sendPendingMailForBooking(record.bookingId);
+    } catch (mailError) {
+      Logger.log('BookingRepository: PENDINGメール送信中に予期しない例外: ' + describeError_(mailError));
+    }
   }
 
   /* Calendar成功 / Sheets失敗の部分失敗補償。Calendarイベントの削除を試み、
@@ -237,62 +253,112 @@ var BookingRepository = (function () {
       return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
     }
 
+    var outcome;
     try {
-      var found = SpreadsheetRepository.findRowByBookingId(bookingId);
-      if (!found) {
-        return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
-      }
-
-      var record = found.record;
-      if (record.status === Booking.STATUS.CONFIRMED) {
-        return { success: true, alreadyConfirmed: true, bookingId: bookingId, status: Booking.STATUS.CONFIRMED };
-      }
-      if (!Booking.canTransition(record.status, Booking.STATUS.CONFIRMED)) {
-        return {
-          success: false,
-          error: { code: 'INVALID_TRANSITION', message: record.status + ' から CONFIRMED へは遷移できません。' }
-        };
-      }
-
-      var calendarId = BookingConfig.getCalendarId();
-      var event = CalendarRepository.getEventById(calendarId, record.calendarEventId);
-      if (!event) {
-        try {
-          RecoveryRepository.recordFailure({
-            bookingId: bookingId,
-            failureType: 'CONFIRM_CALENDAR_EVENT_MISSING',
-            occurredAt: new Date(),
-            calendarEventId: record.calendarEventId,
-            status: record.status,
-            errorMessage: 'confirmBooking時にCalendarイベントが見つかりませんでした。',
-            recoveryState: 'OPEN',
-            resolvedAt: ''
-          });
-        } catch (recoveryError) {
-          Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
-        }
-        return {
-          success: false,
-          error: { code: 'CALENDAR_EVENT_MISSING', message: '対応するCalendarイベントが見つかりません。Recoveryシートを確認してください。' }
-        };
-      }
-
-      CalendarRepository.setEventStatus(calendarId, record.calendarEventId, Booking.STATUS.CONFIRMED, bookingId);
-
-      var confirmedAt = new Date();
-      try {
-        SpreadsheetRepository.updateBookingFields(bookingId, {
-          status: Booking.STATUS.CONFIRMED,
-          confirmedAt: confirmedAt,
-          updatedAt: confirmedAt
-        });
-      } catch (sheetsError) {
-        return handleConfirmSheetsUpdateFailure_(calendarId, bookingId, record.calendarEventId, sheetsError);
-      }
-
-      return { success: true, bookingId: bookingId, status: Booking.STATUS.CONFIRMED };
+      outcome = confirmBookingLocked_(bookingId);
     } finally {
       lock.releaseLock();
+    }
+
+    /*
+     * 利用者向けCONFIRMEDメールはbooking状態変更のLockの外で送る（Issue #271
+     * 「12. confirmBookingへの接続」）。メール送信の成否はconfirmBookingの成否に
+     * 影響させず、success:falseにはしない（補助情報としてmailSent/mailErrorを添える）。
+     */
+    if (outcome.shouldTryMail) {
+      notifyCustomerConfirmedBestEffort_(bookingId, outcome.response);
+    }
+
+    return outcome.response;
+  }
+
+  /* confirmBookingのLock保持区間の本体。戻り値: { response, shouldTryMail }。
+     shouldTryMailは「CalendarとSheetsが正常な状態（新規確定 or 確定済みでメール未送信）」
+     の場合のみtrueにし、確定処理自体が失敗した場合はfalseにする（Lockを保持したまま
+     メール送信を行わないための分離）。 */
+  function confirmBookingLocked_(bookingId) {
+    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+    if (!found) {
+      return {
+        response: { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } },
+        shouldTryMail: false
+      };
+    }
+
+    var record = found.record;
+    if (record.status === Booking.STATUS.CONFIRMED) {
+      /* 既にCONFIRMED済みでも、confirmedMailSentAtが空ならメールだけ再試行させる
+         （Issue #271本文どおり。状態自体はここでは一切変更しない）。 */
+      return {
+        response: { success: true, alreadyConfirmed: true, bookingId: bookingId, status: Booking.STATUS.CONFIRMED },
+        shouldTryMail: !record.confirmedMailSentAt
+      };
+    }
+    if (!Booking.canTransition(record.status, Booking.STATUS.CONFIRMED)) {
+      return {
+        response: {
+          success: false,
+          error: { code: 'INVALID_TRANSITION', message: record.status + ' から CONFIRMED へは遷移できません。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    var calendarId = BookingConfig.getCalendarId();
+    var event = CalendarRepository.getEventById(calendarId, record.calendarEventId);
+    if (!event) {
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'CONFIRM_CALENDAR_EVENT_MISSING',
+          occurredAt: new Date(),
+          calendarEventId: record.calendarEventId,
+          status: record.status,
+          errorMessage: 'confirmBooking時にCalendarイベントが見つかりませんでした。',
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return {
+        response: {
+          success: false,
+          error: { code: 'CALENDAR_EVENT_MISSING', message: '対応するCalendarイベントが見つかりません。Recoveryシートを確認してください。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    CalendarRepository.setEventStatus(calendarId, record.calendarEventId, Booking.STATUS.CONFIRMED, bookingId);
+
+    var confirmedAt = new Date();
+    try {
+      SpreadsheetRepository.updateBookingFields(bookingId, {
+        status: Booking.STATUS.CONFIRMED,
+        confirmedAt: confirmedAt,
+        updatedAt: confirmedAt
+      });
+    } catch (sheetsError) {
+      return { response: handleConfirmSheetsUpdateFailure_(calendarId, bookingId, record.calendarEventId, sheetsError), shouldTryMail: false };
+    }
+
+    return { response: { success: true, bookingId: bookingId, status: Booking.STATUS.CONFIRMED }, shouldTryMail: true };
+  }
+
+  /* response（confirmBookingの戻り値オブジェクト）へmailSent/mailErrorを補助情報として
+     追加する。メール失敗はここでもconfirmBooking自体の成功可否には影響させない。 */
+  function notifyCustomerConfirmedBestEffort_(bookingId, response) {
+    try {
+      var mailResult = BookingMailer.sendConfirmedMailForBooking(bookingId);
+      response.mailSent = !!(mailResult && mailResult.success && !mailResult.skipped);
+      if (!mailResult || !mailResult.success) {
+        response.mailError = mailResult && mailResult.error;
+      }
+    } catch (mailError) {
+      Logger.log('BookingRepository: CONFIRMEDメール送信中に予期しない例外: ' + describeError_(mailError));
+      response.mailSent = false;
+      response.mailError = { code: 'UNEXPECTED_ERROR', message: describeError_(mailError) };
     }
   }
 
