@@ -192,10 +192,10 @@
       <p class="mens-ogp-hero-price">2時間から <strong>平日 ¥4,000</strong> / <strong>土日祝 ¥5,000</strong></p>
 
       <div class="mens-ogp-hero-actions">
-        <a class="btn-primary" href="#calendar" data-analytics-event="cta_click" data-analytics-location="mens_hero" data-analytics-type="calendar" data-analytics-destination="calendar">空き状況を確認する</a>
+        <a class="btn-primary" href="{{ '/mens/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="mens_hero" data-analytics-type="booking_app" data-analytics-destination="booking_app">空き状況を確認する</a>
         <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="mens_hero">利用前に相談する</a>
       </div>
-      <p class="hero-note">カレンダーで空きを確認後、ページ内フォームからお申し込みください。</p>
+      <p class="hero-note">予約ページで空き状況を確認し、そのまま仮予約を送信できます。はじめての方は翌日以降、ご利用経験のある方は当日のご予約も可能です。</p>
     </div>
   </div>
 </section>
@@ -228,13 +228,14 @@
     <p class="section-subtitle">Reservation Calendar</p>
 
     {% include calendar_embed.html %}
+    <p class="calendar-note">最新の空き状況確認と直接予約は、<a href="{{ '/mens/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="mens_calendar_embed" data-analytics-type="booking_app" data-analytics-destination="booking_app">新しい予約ページ</a>をご利用ください。</p>
 
-    <p class="calendar-note">カレンダーで希望日時の空きをご確認のうえ、下の「予約を申し込む」からお知らせください。<br>ご予約は<strong>前日まで</strong>受け付けています。通常は24時間以内に返信します。当方からの予約確定連絡をもって予約成立となります。</p>
-    <p class="calendar-note">予約窓口：ページ内フォーム　／　相談窓口：ページ内フォーム</p>
-    <p class="calendar-note">※ ご予約の際は、予約フォームの「連絡事項」欄に「メンズページを見た」とご記入ください。直接予約に限り、3時間以上のご利用と延長料金に会員料金を適用します。</p>
+    <p class="calendar-note">予約ページで希望日時の空きをご確認のうえ、そのまま仮予約を送信してください。<br>はじめての方は<strong>翌日以降</strong>、ご利用経験のある方は<strong>当日</strong>のご予約もお申し込みいただけます（会員登録の有無は当日予約の条件ではありません）。通常は24時間以内に返信します。当方からの予約確定連絡をもって予約成立となります。</p>
+    <p class="calendar-note">予約窓口：予約ページ　／　相談窓口：ページ内フォーム</p>
+    <p class="calendar-note">※ ご予約の際は、予約ページの「連絡事項」欄に「メンズページを見た」とご記入ください。直接予約に限り、3時間以上のご利用と延長料金に会員料金を適用します。</p>
 
     <div class="btn-group">
-      <a class="btn-primary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-location="mens_calendar" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む</a>
+      <a class="btn-primary" href="{{ '/mens/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="mens_calendar" data-analytics-type="booking_app" data-analytics-destination="booking_app">予約ページへ進む</a>
       <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="mens_calendar">利用前に相談する</a>
     </div>
   </div>
@@ -352,7 +353,7 @@
       <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">@nagoyabase2023</a>
     </p>
     <div class="section-cta">
-      <a class="btn-primary" href="#calendar">このスタジオの空き状況を確認する</a>
+      <a class="btn-primary" href="{{ '/mens/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="mens_gallery" data-analytics-type="booking_app" data-analytics-destination="booking_app">このスタジオの空き状況を確認する</a>
     </div>
   </div>
 </section>
@@ -643,8 +644,8 @@
       完全個室・無人入室のレンタルスペースです。<br>空き状況を確認して、ご希望日時をお知らせください。
     </p>
     <div class="hero-buttons">
-      <a class="btn-primary" href="#calendar" data-analytics-event="cta_click" data-analytics-location="mens_final_cta" data-analytics-type="calendar" data-analytics-destination="calendar">空き状況を確認する</a>
-      <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-location="mens_final_cta" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む</a>
+      <a class="btn-primary" href="{{ '/mens/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="mens_final_cta" data-analytics-type="booking_app" data-analytics-destination="booking_app">空き状況を確認する</a>
+      <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-location="mens_final_cta" data-analytics-type="consult" data-analytics-destination="reservation_form">利用前に相談する</a>
     </div>
     <p class="cta-hint" style="margin-top:20px;">X（旧Twitter）でも最新の作例・空き情報を発信しています → <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">@nagoyabase2023</a></p>
   </div>
@@ -676,7 +677,7 @@
 
 
 
-<button class="floating-booking-btn" id="floatingBookingBtn" aria-label="予約カレンダーに移動">📅</button>
+<a class="floating-booking-btn" id="floatingBookingBtn" href="{{ '/mens/booking/' | relative_url }}" aria-label="予約ページへ移動" data-analytics-event="cta_click" data-analytics-location="floating_button" data-analytics-type="booking_app" data-analytics-destination="booking_app">📅</a>
 
 
 <div id="imageModal" class="image-modal">

@@ -181,10 +181,10 @@
     </p>
 
     <div class="hero-buttons">
-      <a class="btn-primary" href="#calendar" data-analytics-event="cta_click" data-analytics-location="hero" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
+      <a class="btn-primary" href="{{ '/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="hero" data-analytics-type="booking_app" data-analytics-destination="booking_app">空き確認・予約を申し込む</a>
       <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="hero">利用内容を事前に相談する</a>
     </div>
-    <p class="hero-ad-note">カレンダーで空きを確認後、はじめての方は予約申込フォーム、ご利用経験のある方はメールまたはXのDMからお申し込みください。1〜4名まで同一料金。緊縛や作品撮りに関する打ち合わせにも利用できます。</p>
+    <p class="hero-ad-note">予約ページで空き状況を確認し、そのまま仮予約を送信できます。はじめての方は翌日以降、ご利用経験のある方は当日のご予約も可能です。1〜4名まで同一料金。緊縛や作品撮りに関する打ち合わせにも利用できます。</p>
   </div>
 </section>
 
@@ -198,7 +198,7 @@
     <p class="show-practice-highlight"><strong>仕事帰りに、本番前の通し練習を。</strong><br>平日夜は、2〜3時間のリハーサルにも使いやすい料金設定です。</p>
 
     <div class="section-cta">
-      <a class="btn-primary" href="#calendar" data-analytics-event="cta_click" data-analytics-location="show_practice" data-analytics-type="calendar" data-analytics-destination="calendar">空きを確認する</a>
+      <a class="btn-primary" href="{{ '/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="show_practice" data-analytics-type="booking_app" data-analytics-destination="booking_app">空きを確認する</a>
     </div>
   </div>
 </section>
@@ -234,32 +234,35 @@
     <p class="section-subtitle">Reservation Calendar</p>
 
     {% include calendar_embed.html %}
+    <p class="calendar-note">最新の空き状況確認と直接予約は、<a href="{{ '/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="calendar_embed" data-analytics-type="booking_app" data-analytics-destination="booking_app">新しい予約ページ</a>をご利用ください。</p>
 
     <ol class="reservation-steps">
-      <li><span class="reservation-steps-num">1</span>カレンダーで空きを確認</li>
-      <li><span class="reservation-steps-num">2</span>はじめての方はフォーム、ご利用経験のある方はメール・DMで希望を送信</li>
+      <li><span class="reservation-steps-num">1</span>予約ページで空き状況を確認</li>
+      <li><span class="reservation-steps-num">2</span>はじめての方は翌日以降、ご利用経験のある方は当日も、予約ページから仮予約を送信</li>
       <li><span class="reservation-steps-num">3</span>運営からの確定連絡で予約成立</li>
     </ol>
 
-    <p class="calendar-note"><strong>フォーム送信・メール・DMのいずれも、送信だけでは予約確定ではありません。</strong>ご予約は<strong>前日まで</strong>受け付けています。通常は24時間以内に運営から確定のご連絡をお送りし、この連絡をもって予約成立となります。</p>
+    <p class="calendar-note"><strong>予約ページ・フォーム・メール・DMのいずれも、送信だけでは予約確定ではありません。</strong>はじめてご利用の方は翌日以降のご予約、ご利用経験のある方は当日のご予約も予約ページから直接お申し込みいただけます（会員登録の有無は当日予約の条件ではありません）。通常は24時間以内に運営から確定のご連絡をお送りし、この連絡をもって予約成立となります。</p>
 
     <div class="reservation-path-grid">
       <div class="reservation-path-card">
         <h3 class="reservation-path-label">はじめてご利用の方</h3>
-        <p class="reservation-path-desc">予約申込フォームから、利用目的・安全ルールへのご同意とあわせてお申し込みください。</p>
+        <p class="reservation-path-desc">予約ページから、利用目的・安全ルールへのご同意とあわせてお申し込みください（翌日以降のご予約となります）。</p>
         <div class="btn-group">
-          <a class="btn-primary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む</a>
+          <a class="btn-primary" href="{{ '/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="booking_app" data-analytics-destination="booking_app">予約ページへ進む</a>
           <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="calendar">利用内容を事前に相談する</a>
         </div>
       </div>
       <div class="reservation-path-card">
         <h3 class="reservation-path-label">ご利用経験のある方</h3>
-        <p class="reservation-path-desc">希望日・開始時刻・利用時間を、前回のやり取りへのメール返信、またはXのDMでお送りください。下のボタンでXのプロフィールを開き、DMからご連絡いただけます。</p>
+        <p class="reservation-path-desc">当日のご利用を含め、予約ページから直接空き状況を確認し、そのまま仮予約を申し込めます。</p>
+        <div class="btn-group">
+          <a class="btn-primary" href="{{ '/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="booking_app" data-analytics-destination="booking_app">予約ページで空き状況を確認する</a>
+        </div>
+        <p class="reservation-path-note">予約内容のご相談や、既存予約の変更連絡は、前回のやり取りへのメール返信、またはXのDMをご利用ください。</p>
         <div class="btn-group">
           <a class="btn-secondary" href="https://x.com/nagoyabase2023" target="_blank" rel="noopener noreferrer" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="repeat_dm" data-analytics-destination="x_dm">Xプロフィールを開く（@nagoyabase2023）</a>
         </div>
-        <p class="reservation-path-note">DMを送れない場合は、はじめての方向けの予約申込フォームをご利用ください。</p>
-        <p class="reservation-path-note">※ はじめてご利用の場合は、内容を確認のうえ予約申込フォームをご案内します。</p>
       </div>
     </div>
   </div>
@@ -367,7 +370,7 @@
       </div>
     </div>
     <div class="section-cta">
-      <a class="btn-primary" href="#calendar" data-analytics-event="cta_click" data-analytics-location="features" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
+      <a class="btn-primary" href="{{ '/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="features" data-analytics-type="booking_app" data-analytics-destination="booking_app">空き確認・予約を申し込む</a>
     </div>
   </div>
 </section>
@@ -403,7 +406,7 @@
     </div>
 
     <div class="section-cta">
-      <a class="btn-primary" href="#calendar" data-analytics-event="cta_click" data-analytics-location="usage" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
+      <a class="btn-primary" href="{{ '/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="usage" data-analytics-type="booking_app" data-analytics-destination="booking_app">空き確認・予約を申し込む</a>
     </div>
   </div>
 </section>
@@ -437,7 +440,7 @@
 
     <p class="pricing-note"><a href="{{ '/how-to/' | relative_url }}#equipment">全設備・備品一覧はこちら →</a></p>
     <div class="section-cta">
-      <a class="btn-primary" href="#calendar" data-analytics-event="cta_click" data-analytics-location="equipment" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
+      <a class="btn-primary" href="{{ '/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="equipment" data-analytics-type="booking_app" data-analytics-destination="booking_app">空き確認・予約を申し込む</a>
     </div>
   </div>
 </section>
@@ -632,7 +635,7 @@
     <p class="pricing-note">※ カード決済をご希望の場合は、予約確定後にお送りする案内からお支払いください。</p>
     <div class="section-cta-sm">
       <div class="btn-group" style="justify-content: center;">
-        <a class="btn-primary" href="#calendar" data-analytics-event="cta_click" data-analytics-location="pricing" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
+        <a class="btn-primary" href="{{ '/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="pricing" data-analytics-type="booking_app" data-analytics-destination="booking_app">空き確認・予約を申し込む</a>
         <a class="btn-secondary" href="https://buy.stripe.com/cNi3cwb5seVgc2Tgsw9k40a" target="_blank" rel="noopener noreferrer" data-analytics-event="booking_platform_click" data-analytics-provider="stripe" data-analytics-location="pricing">予約確定済みの方：カードで支払う</a>
       </div>
     </div>
@@ -760,7 +763,7 @@
 
 
 
-<button class="floating-booking-btn" id="floatingBookingBtn" aria-label="予約カレンダーに移動">📅</button>
+<a class="floating-booking-btn" id="floatingBookingBtn" href="{{ '/booking/' | relative_url }}" aria-label="予約ページへ移動" data-analytics-event="cta_click" data-analytics-location="floating_button" data-analytics-type="booking_app" data-analytics-destination="booking_app">📅</a>
 
 
 <div id="imageModal" class="image-modal">

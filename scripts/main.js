@@ -67,15 +67,13 @@
   });
 })();
 
-/* Floating booking button */
+/* Floating booking button (Issue #273: real link to the booking page. Visibility still
+   syncs against #calendar so the button hides once the legacy calendar section, kept for
+   rollback, scrolls into view). */
 (function () {
   var btn             = document.getElementById('floatingBookingBtn');
   var calendarSection = document.getElementById('calendar');
   if (!btn || !calendarSection) return;
-
-  btn.addEventListener('click', function () {
-    calendarSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
 
   function syncVisibility() {
     var calendarTop  = calendarSection.getBoundingClientRect().top;

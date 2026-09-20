@@ -2,7 +2,7 @@
   <div class="container reservation-container">
     <h2 id="reservation-form-title" class="section-title">予約・相談を申し込む</h2>
     <p class="section-subtitle">Reservation &amp; Consultation Request</p>
-    <p class="reservation-intro">はじめてご利用の方は、日程が決まっている場合はカレンダーで空きをご確認のうえ、決まっていない場合はそのままご相談ください。<br>ご利用経験のある方は、<a href="#calendar">メールまたはXのDM</a>でも希望日・開始時刻・利用時間をお送りいただけます。もちろんこのフォームからのお申し込みも可能です。<br>予約の場合、フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内にご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
+    <p class="reservation-intro">日程が決まっている直接予約は、新しい予約ページから空き状況を確認し、そのまま仮予約を申し込めます。このフォームは、予約前のご相談や、ご利用経験のある方のメール・XのDMでのご連絡（既存予約の変更連絡等）に引き続きご利用いただけます。<br>予約の場合、フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内にご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
 
     <div id="reservation-success" class="reservation-status reservation-status--success" role="status" aria-live="polite" tabindex="-1" hidden>
       <h3 id="reservation-success-title">予約申込を受け付けました</h3>
@@ -90,7 +90,7 @@
           <div class="reservation-field">
             <label for="reservation-date">希望日 <span class="field-badge field-badge--required" id="reservation-date-badge">必須</span></label>
             <input type="date" id="reservation-date" name="希望日" data-required-if-booking="true" aria-describedby="reservation-date-help reservation-date-error">
-            <p id="reservation-date-help" class="field-help">ご予約は前日まで受け付けています。</p>
+            <p id="reservation-date-help" class="field-help">初めてご利用の方は翌日以降のご予約となります。ご利用経験のある方の当日のご予約は、新しい予約ページから直接お申し込みいただけます。</p>
             <p id="reservation-date-error" class="field-error" hidden></p>
           </div>
 
