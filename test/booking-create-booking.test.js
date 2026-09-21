@@ -157,6 +157,22 @@ test('doPost診断: INVALID_JSONにもrequestIdを返し、同一IDをログへ�
   );
 });
 
+test('doPost診断: Repositoryがnullを返してもTypeErrorへ化けず、requestId付きINTERNAL_ERRORを返す', function () {
+  var ctx = setup();
+  ctx.sandbox.BookingRepository.createBooking = function () { return null; };
+
+  var result = callDoPost(ctx.sandbox, validPayload());
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'INTERNAL_ERROR');
+  assert.ok(result.requestId);
+  assert.ok(
+    ctx.globals.Logger._logs.indexOf(
+      'requestId=' + result.requestId + ' createBooking=result error.code=INTERNAL_ERROR'
+    ) !== -1
+  );
+});
+
 test('createBooking: bookingIdはCalendarイベントのタグとSheets行の両方に同じ値で保存される', function () {
   var ctx = setup();
   var result = ctx.sandbox.BookingRepository.createBooking(validPayload());
