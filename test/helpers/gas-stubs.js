@@ -5,8 +5,9 @@
  */
 'use strict';
 
-function createPropertiesServiceStub(initialProperties) {
+function createPropertiesServiceStub(initialProperties, options) {
   var store = {};
+  var opts = options || {};
   Object.keys(initialProperties || {}).forEach(function (key) {
     store[key] = initialProperties[key];
   });
@@ -17,10 +18,12 @@ function createPropertiesServiceStub(initialProperties) {
           return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
         },
         setProperty: function (key, value) {
+          if (opts.setPropertyError) throw opts.setPropertyError;
           store[key] = value;
         }
       };
-    }
+    },
+    _store: store
   };
 }
 
