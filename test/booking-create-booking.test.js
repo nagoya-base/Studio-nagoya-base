@@ -61,7 +61,7 @@ function setup(options) {
   var properties = Object.assign({ CALENDAR_ID: CALENDAR_ID, SPREADSHEET_ID: SPREADSHEET_ID }, opts.properties || {});
 
   var globals = {
-    PropertiesService: stubs.createPropertiesServiceStub(properties),
+    PropertiesService: opts.propertiesService || stubs.createPropertiesServiceStub(properties),
     CalendarApp: stubs.createCalendarAppStub(calendarsById),
     Utilities: stubs.createUtilitiesStub(),
     LockService: opts.lockService || stubs.createLockServiceStub(),
@@ -676,6 +676,148 @@ test('Issue #273診断: Recovery記録失敗も同じrequestIdでsanitizedログ
     /requestId=request-recovery-failure handleSheetsSaveFailure recoveryRecord=failure error=recovery failed for \[REDACTED_EMAIL\]/
   );
   assert.strictEqual(logs.indexOf('diagnostic-secret@example.com'), -1);
+});
+
+test('Issue #273診断: Sheets失敗時はPII・内部IDを含まない診断プロパティを保存する', function () {
+  var ctx = setup();
+  var payload = validPayload({
+    name: '診断秘密太郎',
+    email: 'diagnostic-secret@example.com',
+    phone: '090-9999-9999',
+    note: '診断秘密メモ'
+  });
+  var failedBookingId;
+  var failedEventId;
+  ctx.sandbox.SpreadsheetRepository.appendBooking = function (record) {
+    failedBookingId = record.bookingId;
+    failedEventId = record.calendarEventId;
+    throw new Error([
+      'sheets failed for diagnostic-secret@example.com',
+      record.bookingId,
+      record.calendarEventId,
+      CALENDAR_ID,
+      SPREADSHEET_ID,
+      payload.name,
+      payload.phone,
+      payload.note
+    ].join(' / '));
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(payload, undefined, 'request-property-success');
+
+  assert.strictEqual(result.error.code, 'BOOKING_SAVE_FAILED');
+  var raw = ctx.globals.PropertiesService.getScriptProperties()
+    .getProperty('BOOKING_DIAG_request-property-success');
+  var diagnostic = JSON.parse(raw);
+  assert.deepStrictEqual(
+    Object.keys(diagnostic).sort(),
+    ['calendarCompensation', 'occurredAt', 'recoveryRecord', 'requestId', 'sheetsError'].sort()
+  );
+  assert.strictEqual(diagnostic.requestId, 'request-property-success');
+  assert.match(diagnostic.occurredAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.strictEqual(diagnostic.calendarCompensation, 'success');
+  assert.strictEqual(diagnostic.recoveryRecord, 'success');
+  assert.match(diagnostic.sheetsError, /sheets failed for \[REDACTED_EMAIL\]/);
+  [
+    failedBookingId,
+    failedEventId,
+    CALENDAR_ID,
+    SPREADSHEET_ID,
+    payload.name,
+    payload.email,
+    payload.phone,
+    payload.note
+  ].forEach(function (secret) {
+    assert.strictEqual(raw.indexOf(secret), -1, '診断プロパティへPII・内部IDを保存してはいけない: ' + secret);
+  });
+  assert.strictEqual(raw.indexOf('bookingId'), -1);
+});
+
+test('Issue #273診断: Calendar補償失敗とRecovery成功を診断プロパティへ保存する', function () {
+  var ctx = setup();
+  ctx.sandbox.SpreadsheetRepository.appendBooking = function () {
+    throw new Error('simulated sheets failure');
+  };
+  ctx.sandbox.CalendarRepository.deleteEventById = function () {
+    throw new Error('simulated calendar delete failure');
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload(), undefined, 'request-calendar-failure'
+  );
+
+  assert.strictEqual(result.error.code, 'BOOKING_SAVE_FAILED');
+  var diagnostic = JSON.parse(ctx.globals.PropertiesService.getScriptProperties()
+    .getProperty('BOOKING_DIAG_request-calendar-failure'));
+  assert.strictEqual(diagnostic.calendarCompensation, 'failure');
+  assert.strictEqual(diagnostic.recoveryRecord, 'success');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(diagnostic, 'recoveryError'), false);
+});
+
+test('Issue #273診断: Recovery失敗とsanitize済みrecoveryErrorを診断プロパティへ保存する', function () {
+  var ctx = setup();
+  ctx.sandbox.SpreadsheetRepository.appendBooking = function () {
+    throw new Error('simulated sheets failure');
+  };
+  ctx.sandbox.RecoveryRepository.recordFailure = function () {
+    throw new Error('recovery failed for diagnostic-secret@example.com');
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload(), undefined, 'request-recovery-property-failure'
+  );
+
+  assert.strictEqual(result.error.code, 'BOOKING_SAVE_FAILED');
+  var raw = ctx.globals.PropertiesService.getScriptProperties()
+    .getProperty('BOOKING_DIAG_request-recovery-property-failure');
+  var diagnostic = JSON.parse(raw);
+  assert.strictEqual(diagnostic.calendarCompensation, 'success');
+  assert.strictEqual(diagnostic.recoveryRecord, 'failure');
+  assert.strictEqual(diagnostic.recoveryError, 'recovery failed for [REDACTED_EMAIL]');
+  assert.strictEqual(raw.indexOf('diagnostic-secret@example.com'), -1);
+});
+
+test('Issue #273診断: 診断プロパティ保存失敗でも既存のBOOKING_SAVE_FAILEDを維持する', function () {
+  var properties = { CALENDAR_ID: CALENDAR_ID, SPREADSHEET_ID: SPREADSHEET_ID };
+  var failingPropertiesService = stubs.createPropertiesServiceStub(properties, {
+    setPropertyError: new Error('diagnostic property write failed')
+  });
+  var ctx = setup({ propertiesService: failingPropertiesService });
+  ctx.sandbox.SpreadsheetRepository.appendBooking = function () {
+    throw new Error('simulated sheets failure');
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload(), undefined, 'request-property-write-failure'
+  );
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
+    success: false,
+    error: {
+      code: 'BOOKING_SAVE_FAILED',
+      message: '予約の保存に失敗しました。しばらくしてから再度お試しください。'
+    }
+  });
+  assert.strictEqual(
+    failingPropertiesService.getScriptProperties().getProperty('BOOKING_DIAG_request-property-write-failure'),
+    null
+  );
+});
+
+test('Issue #273診断: debugReadBookingDiagnosticは指定requestIdの1キーだけをLoggerへ出す', function () {
+  var ctx = setup();
+  ctx.globals.PropertiesService.getScriptProperties().setProperty(
+    'BOOKING_DIAG_request-to-read',
+    '{"requestId":"request-to-read"}'
+  );
+  ctx.globals.PropertiesService.getScriptProperties().setProperty(
+    'BOOKING_DIAG_other-request',
+    '{"requestId":"other-request"}'
+  );
+
+  ctx.sandbox.debugReadBookingDiagnostic('request-to-read');
+
+  assert.deepStrictEqual(ctx.globals.Logger._logs, ['{"requestId":"request-to-read"}']);
 });
 
 test('部分失敗補償: Calendar成功・Sheets失敗・Calendar補償削除も失敗した場合はNEEDS_MANUAL_RECOVERYとしてrecoveryへ残す', function () {
