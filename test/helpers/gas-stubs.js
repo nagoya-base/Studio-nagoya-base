@@ -8,6 +8,7 @@
 function createPropertiesServiceStub(initialProperties, options) {
   var store = {};
   var opts = options || {};
+  var successfulSetPropertyCount = 0;
   Object.keys(initialProperties || {}).forEach(function (key) {
     store[key] = initialProperties[key];
   });
@@ -18,8 +19,14 @@ function createPropertiesServiceStub(initialProperties, options) {
           return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
         },
         setProperty: function (key, value) {
-          if (opts.setPropertyError) throw opts.setPropertyError;
+          if (
+            opts.setPropertyError &&
+            (typeof opts.setPropertyErrorAfter !== 'number' || successfulSetPropertyCount >= opts.setPropertyErrorAfter)
+          ) {
+            throw opts.setPropertyError;
+          }
           store[key] = value;
+          successfulSetPropertyCount += 1;
         }
       };
     },
