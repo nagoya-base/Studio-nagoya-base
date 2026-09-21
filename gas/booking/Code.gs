@@ -28,22 +28,48 @@ function doPost(e) {
    createBooking内部・依存先で想定外の例外が発生した場合も、スタックトレースや内部エラー
    文言を外部レスポンスへ出さず、汎用のINTERNAL_ERRORとして返す（詳細はLoggerへのみ残す）。 */
 function handleCreateBooking_(e) {
+  /* Issue #273の一時診断用。ブラウザが受け取った応答とGAS実行ログを、PIIを
+     記録せずに同一リクエストとして突合できるようにする。 */
+  var requestId = Utilities.getUuid();
+  Logger.log('requestId=' + requestId + ' createBooking=start');
+
   var payload;
   try {
     payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
   } catch (parseError) {
-    return { success: false, error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' } };
+    Logger.log('requestId=' + requestId + ' createBooking=result error.code=INVALID_JSON');
+    return {
+      success: false,
+      error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' },
+      requestId: requestId
+    };
   }
 
   try {
-    return BookingRepository.createBooking(payload);
+    var result = BookingRepository.createBooking(payload, undefined, requestId);
+    if (result && result.success) {
+      Logger.log('requestId=' + requestId + ' createBooking=result success');
+    } else {
+      var errorCode = result && result.error && result.error.code;
+      Logger.log('requestId=' + requestId + ' createBooking=result error.code=' + sanitizeErrorCode_(errorCode));
+    }
+    result.requestId = requestId;
+    return result;
   } catch (unexpectedError) {
-    Logger.log('createBooking unexpected error: ' + (unexpectedError && unexpectedError.message));
+    /* 例外messageには入力値や設定値が混入し得るため、診断ログには出さない。 */
+    Logger.log('requestId=' + requestId + ' createBooking=result error.code=INTERNAL_ERROR');
     return {
       success: false,
-      error: { code: 'INTERNAL_ERROR', message: '予約処理中にエラーが発生しました。しばらくしてから再度お試しください。' }
+      error: { code: 'INTERNAL_ERROR', message: '予約処理中にエラーが発生しました。しばらくしてから再度お試しください。' },
+      requestId: requestId
     };
   }
+}
+
+/* error.codeは固定の識別子だけをログへ出す。想定外の文字列はPII混入を避けて伏せる。 */
+function sanitizeErrorCode_(errorCode) {
+  var value = String(errorCode || 'UNKNOWN_ERROR');
+  return /^[A-Z][A-Z0-9_]*$/.test(value) ? value : 'UNKNOWN_ERROR';
 }
 
 /* params: { date, durationMinutes, brand }（すべて文字列。GASのdoGetクエリパラメータのため） */
