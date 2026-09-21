@@ -386,8 +386,16 @@
     if (els.submitError) els.submitError.hidden = true;
   }
 
-  function showSubmitError(code) {
-    var message = Logic.messageForErrorCode(code);
+  /* Issue #273の一時診断用。失敗レスポンスとGASログを突合できるよう、サーバーが
+     発行した安全なrequestIdだけを表示する。診断完了後にこの追記は撤去する。 */
+  function appendDiagnosticRequestId_(message, requestId) {
+    var value = String(requestId || '');
+    if (!/^[A-Za-z0-9-]{1,64}$/.test(value)) return message;
+    return message + '\n診断ID: ' + value;
+  }
+
+  function showSubmitError(code, requestId) {
+    var message = appendDiagnosticRequestId_(Logic.messageForErrorCode(code), requestId);
     var action = Logic.recoveryActionForErrorCode(code);
 
     /* 'reselect-time'/'edit-details' は別ステップへ移動するため、移動先でも
@@ -468,7 +476,7 @@
           if (!body || body.success !== true) {
             els.submit.disabled = false;
             els.submit.textContent = 'この内容で仮予約を送信する';
-            showSubmitError(body && body.error && body.error.code);
+            showSubmitError(body && body.error && body.error.code, body && body.requestId);
             return;
           }
           hasSubmittedSuccessfully = true;

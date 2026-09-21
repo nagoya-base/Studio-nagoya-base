@@ -44,7 +44,7 @@ var BookingRepository = (function () {
   var LOCK_TIMEOUT_MS_ = 10000;
   var EXPIRE_LOCK_TIMEOUT_MS_ = 5000;
 
-  function createBooking(rawInput, now) {
+  function createBooking(rawInput, now, requestId) {
     now = isDateLike_(now) ? now : new Date();
 
     var availabilityConfig = BookingConfig.getAvailabilityConfig();
@@ -133,7 +133,7 @@ var BookingRepository = (function () {
       try {
         SpreadsheetRepository.appendBooking(record);
       } catch (sheetsError) {
-        return handleSheetsSaveFailure_(calendarId, bookingId, eventId, sheetsError);
+        return handleSheetsSaveFailure_(calendarId, bookingId, eventId, sheetsError, requestId, input);
       }
     } finally {
       lock.releaseLock();
@@ -172,7 +172,14 @@ var BookingRepository = (function () {
 
   /* Calendar成功 / Sheets失敗の部分失敗補償。Calendarイベントの削除を試み、
      成功/失敗いずれの場合もrecoveryへ記録して人が追跡できるようにする。 */
-  function handleSheetsSaveFailure_(calendarId, bookingId, eventId, sheetsError) {
+  function handleSheetsSaveFailure_(calendarId, bookingId, eventId, sheetsError, requestId, input) {
+    var safeRequestId = sanitizeRequestId_(requestId);
+    var diagnosticRedactions = buildDiagnosticRedactions_(calendarId, bookingId, eventId, input);
+    Logger.log(
+      'requestId=' + safeRequestId +
+      ' handleSheetsSaveFailure sheetsError=' + sanitizeDiagnosticError_(sheetsError, diagnosticRedactions)
+    );
+
     var compensated = false;
     var compensationError = null;
     try {
@@ -181,7 +188,13 @@ var BookingRepository = (function () {
     } catch (deleteError) {
       compensationError = deleteError;
     }
+    Logger.log(
+      'requestId=' + safeRequestId +
+      ' handleSheetsSaveFailure calendarCompensation=' + (compensated ? 'success' : 'failure') +
+      (compensationError ? ' error=' + sanitizeDiagnosticError_(compensationError, diagnosticRedactions) : '')
+    );
 
+    var recoveryRecorded = false;
     try {
       RecoveryRepository.recordFailure({
         bookingId: bookingId,
@@ -193,10 +206,18 @@ var BookingRepository = (function () {
         recoveryState: compensated ? 'RESOLVED' : 'OPEN',
         resolvedAt: compensated ? new Date() : ''
       });
+      recoveryRecorded = true;
     } catch (recoveryError) {
       /* recovery記録自体の失敗は最後の砦としてLoggerへ残すのみ（ここで例外を投げると
          利用者への応答自体が失敗するため、必ず握りつぶす）。 */
-      Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      Logger.log(
+        'requestId=' + safeRequestId +
+        ' handleSheetsSaveFailure recoveryRecord=failure error=' +
+        sanitizeDiagnosticError_(recoveryError, diagnosticRedactions)
+      );
+    }
+    if (recoveryRecorded) {
+      Logger.log('requestId=' + safeRequestId + ' handleSheetsSaveFailure recoveryRecord=success');
     }
 
     return {
@@ -229,6 +250,41 @@ var BookingRepository = (function () {
 
   function describeError_(error) {
     return String((error && error.message) || error);
+  }
+
+  /* requestIdはWeb App入口でUtilities.getUuid()から生成した値だけを想定する。
+     診断関数を直接呼ばれた場合も、任意文字列をログへ流さない。 */
+  function sanitizeRequestId_(requestId) {
+    var value = String(requestId || 'unavailable');
+    return /^[A-Za-z0-9-]{1,64}$/.test(value) ? value : 'invalid';
+  }
+
+  /* Sheets/Calendar例外に入力値や内部IDが含まれてもログへ残さないため、今回の
+     リクエストで把握できるPII・識別子を追加redaction対象にする。 */
+  function buildDiagnosticRedactions_(calendarId, bookingId, eventId, input) {
+    var values = [calendarId, bookingId, eventId];
+    if (input) {
+      values = values.concat([
+        input.name,
+        input.email,
+        input.phone,
+        input.people,
+        input.purpose,
+        input.paymentMethod,
+        input.note,
+        input.source
+      ]);
+    }
+    try {
+      values.push(BookingConfig.getSpreadsheetId());
+    } catch (ignoredError) {
+      /* 元のSheets失敗原因を診断する経路なので、設定再取得の失敗は無視する。 */
+    }
+    return values.filter(function (value) { return value !== null && value !== undefined && String(value) !== ''; });
+  }
+
+  function sanitizeDiagnosticError_(error, extraRedactions) {
+    return BookingMailer.sanitizeErrorMessage(describeError_(error), extraRedactions);
   }
 
   /* instanceof Dateではなくダックタイピングで判定する。Spreadsheetの日時セルは
