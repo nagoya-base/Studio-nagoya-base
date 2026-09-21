@@ -24,6 +24,28 @@ function doPost(e) {
   return jsonOutput_(handleCreateBooking_(e));
 }
 
+/* Issue #273解決後に削除する一時関数。Booking Web Appのデプロイ所有者に
+   Spreadsheet / CalendarのOAuth認可を明示的に求めるため、エディタから手動実行する。 */
+function authorizeBookingWebAppScopes() {
+  var properties = PropertiesService.getScriptProperties();
+  var spreadsheetId = properties.getProperty('SPREADSHEET_ID');
+  var calendarId = properties.getProperty('CALENDAR_ID');
+
+  if (!spreadsheetId || !calendarId) {
+    throw new Error('SPREADSHEET_ID または CALENDAR_ID が設定されていません。');
+  }
+
+  SpreadsheetApp.openById(spreadsheetId).getId();
+
+  var calendar = CalendarApp.getCalendarById(calendarId);
+  if (!calendar) {
+    throw new Error('Calendarを取得できません。');
+  }
+  calendar.getId();
+
+  Logger.log('Booking Web App authorization check: OK');
+}
+
 /* e.postData.contentsをJSONとしてパースし、BookingRepository.createBookingへ渡す。
    createBooking内部・依存先で想定外の例外が発生した場合も、スタックトレースや内部エラー
    文言を外部レスポンスへ出さず、汎用のINTERNAL_ERRORとして返す（詳細はLoggerへのみ残す）。 */
