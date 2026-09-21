@@ -47,6 +47,14 @@ function handleCreateBooking_(e) {
 
   try {
     var result = BookingRepository.createBooking(payload, undefined, requestId);
+    /* 診断中にRepositoryが想定外のnull/undefined等を返しても、requestId付与時の
+       TypeErrorへ原因をすり替えず、相関可能なINTERNAL_ERRORとして返す。 */
+    if (!result || typeof result !== 'object') {
+      result = {
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: '予約処理中にエラーが発生しました。しばらくしてから再度お試しください。' }
+      };
+    }
     if (result && result.success) {
       Logger.log('requestId=' + requestId + ' createBooking=result success');
     } else {
