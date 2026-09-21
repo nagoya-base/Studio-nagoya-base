@@ -25,7 +25,7 @@ function doPost(e) {
 }
 
 /* Issue #273解決後に削除する一時関数。Booking Web Appのデプロイ所有者に
-   Spreadsheet / CalendarのOAuth認可を明示的に求めるため、エディタから手動実行する。 */
+   Spreadsheet / Calendar / MailAppのOAuth認可を明示的に求めるため、エディタから手動実行する。 */
 function authorizeBookingWebAppScopes() {
   var properties = PropertiesService.getScriptProperties();
   var spreadsheetId = properties.getProperty('SPREADSHEET_ID');
@@ -42,6 +42,9 @@ function authorizeBookingWebAppScopes() {
     throw new Error('Calendarを取得できません。');
   }
   calendar.getId();
+
+  /* 実メールを送信せず、MailAppのOAuth scopeだけを要求する。 */
+  MailApp.getRemainingDailyQuota();
 
   Logger.log('Booking Web App authorization check: OK');
 }
