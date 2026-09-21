@@ -733,6 +733,63 @@ test('Issue #273診断: Sheets失敗時はPII・内部IDを含まない診断プ
   assert.strictEqual(raw.indexOf('bookingId'), -1);
 });
 
+test('Issue #273診断: Sheets例外直後にCalendar補償前の暫定診断を保存する', function () {
+  var propertiesService = stubs.createPropertiesServiceStub({
+    CALENDAR_ID: CALENDAR_ID,
+    SPREADSHEET_ID: SPREADSHEET_ID
+  });
+  var ctx = setup({ propertiesService: propertiesService });
+  var diagnosticBeforeCalendar;
+  ctx.sandbox.SpreadsheetRepository.appendBooking = function () {
+    throw new Error('early sheets failure for diagnostic-secret@example.com');
+  };
+  ctx.sandbox.CalendarRepository.deleteEventById = function () {
+    diagnosticBeforeCalendar = JSON.parse(propertiesService.getScriptProperties()
+      .getProperty('BOOKING_DIAG_request-before-calendar'));
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload(), undefined, 'request-before-calendar'
+  );
+
+  assert.strictEqual(result.error.code, 'BOOKING_SAVE_FAILED');
+  assert.deepStrictEqual(diagnosticBeforeCalendar, {
+    requestId: 'request-before-calendar',
+    occurredAt: diagnosticBeforeCalendar.occurredAt,
+    sheetsError: 'early sheets failure for [REDACTED_EMAIL]',
+    calendarCompensation: 'not_attempted',
+    recoveryRecord: 'not_attempted'
+  });
+  assert.match(diagnosticBeforeCalendar.occurredAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test('Issue #273診断: 初回保存後に後続更新が停止してもsanitized暫定診断が残る', function () {
+  var propertiesService = stubs.createPropertiesServiceStub(
+    { CALENDAR_ID: CALENDAR_ID, SPREADSHEET_ID: SPREADSHEET_ID },
+    {
+      setPropertyError: new Error('simulated diagnostic update interruption'),
+      setPropertyErrorAfter: 1
+    }
+  );
+  var ctx = setup({ propertiesService: propertiesService });
+  ctx.sandbox.SpreadsheetRepository.appendBooking = function () {
+    throw new Error('interrupted sheets failure for diagnostic-secret@example.com');
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload(), undefined, 'request-interrupted-after-initial'
+  );
+
+  assert.strictEqual(result.error.code, 'BOOKING_SAVE_FAILED');
+  var raw = propertiesService.getScriptProperties()
+    .getProperty('BOOKING_DIAG_request-interrupted-after-initial');
+  var diagnostic = JSON.parse(raw);
+  assert.strictEqual(diagnostic.sheetsError, 'interrupted sheets failure for [REDACTED_EMAIL]');
+  assert.strictEqual(diagnostic.calendarCompensation, 'not_attempted');
+  assert.strictEqual(diagnostic.recoveryRecord, 'not_attempted');
+  assert.strictEqual(raw.indexOf('diagnostic-secret@example.com'), -1);
+});
+
 test('Issue #273診断: Calendar補償失敗とRecovery成功を診断プロパティへ保存する', function () {
   var ctx = setup();
   ctx.sandbox.SpreadsheetRepository.appendBooking = function () {
