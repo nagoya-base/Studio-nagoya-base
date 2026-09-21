@@ -1559,7 +1559,6 @@ html[data-theme="kuro"] .calendar-wrapper iframe {
   box-shadow: 0 4px 16px rgba(200, 169, 110, 0.3);
   transition: all 0.3s ease;
   z-index: 50;
-  text-decoration: none;
 }
 
 .floating-booking-btn:hover {
