@@ -176,6 +176,14 @@ var BookingRepository = (function () {
     var safeRequestId = sanitizeRequestId_(requestId);
     var diagnosticRedactions = buildDiagnosticRedactions_(calendarId, bookingId, eventId, input);
     var sanitizedSheetsError = sanitizeDiagnosticError_(sheetsError, diagnosticRedactions);
+    var bookingDiagnostic = {
+      requestId: safeRequestId,
+      occurredAt: new Date().toISOString(),
+      sheetsError: sanitizedSheetsError,
+      calendarCompensation: 'not_attempted',
+      recoveryRecord: 'not_attempted'
+    };
+    persistBookingDiagnosticBestEffort_(safeRequestId, bookingDiagnostic);
     Logger.log(
       'requestId=' + safeRequestId +
       ' handleSheetsSaveFailure sheetsError=' + sanitizedSheetsError
@@ -194,6 +202,8 @@ var BookingRepository = (function () {
       ' handleSheetsSaveFailure calendarCompensation=' + (compensated ? 'success' : 'failure') +
       (compensationError ? ' error=' + sanitizeDiagnosticError_(compensationError, diagnosticRedactions) : '')
     );
+    bookingDiagnostic.calendarCompensation = compensated ? 'success' : 'failure';
+    persistBookingDiagnosticBestEffort_(safeRequestId, bookingDiagnostic);
 
     var recoveryRecorded = false;
     var recoveryError = null;
@@ -223,16 +233,11 @@ var BookingRepository = (function () {
       Logger.log('requestId=' + safeRequestId + ' handleSheetsSaveFailure recoveryRecord=success');
     }
 
-    persistBookingDiagnosticBestEffort_(safeRequestId, {
-      requestId: safeRequestId,
-      occurredAt: new Date().toISOString(),
-      sheetsError: sanitizedSheetsError,
-      calendarCompensation: compensated ? 'success' : 'failure',
-      recoveryRecord: recoveryRecorded ? 'success' : 'failure',
-      recoveryError: recoveryError
-        ? sanitizeDiagnosticError_(recoveryError, diagnosticRedactions)
-        : undefined
-    });
+    bookingDiagnostic.recoveryRecord = recoveryRecorded ? 'success' : 'failure';
+    if (recoveryError) {
+      bookingDiagnostic.recoveryError = sanitizeDiagnosticError_(recoveryError, diagnosticRedactions);
+    }
+    persistBookingDiagnosticBestEffort_(safeRequestId, bookingDiagnostic);
 
     return {
       success: false,
