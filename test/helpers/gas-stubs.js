@@ -5,8 +5,10 @@
  */
 'use strict';
 
-function createPropertiesServiceStub(initialProperties) {
+function createPropertiesServiceStub(initialProperties, options) {
   var store = {};
+  var opts = options || {};
+  var successfulSetPropertyCount = 0;
   Object.keys(initialProperties || {}).forEach(function (key) {
     store[key] = initialProperties[key];
   });
@@ -17,10 +19,18 @@ function createPropertiesServiceStub(initialProperties) {
           return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
         },
         setProperty: function (key, value) {
+          if (
+            opts.setPropertyError &&
+            (typeof opts.setPropertyErrorAfter !== 'number' || successfulSetPropertyCount >= opts.setPropertyErrorAfter)
+          ) {
+            throw opts.setPropertyError;
+          }
           store[key] = value;
+          successfulSetPropertyCount += 1;
         }
       };
-    }
+    },
+    _store: store
   };
 }
 

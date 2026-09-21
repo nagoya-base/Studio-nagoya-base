@@ -175,9 +175,18 @@ var BookingRepository = (function () {
   function handleSheetsSaveFailure_(calendarId, bookingId, eventId, sheetsError, requestId, input) {
     var safeRequestId = sanitizeRequestId_(requestId);
     var diagnosticRedactions = buildDiagnosticRedactions_(calendarId, bookingId, eventId, input);
+    var sanitizedSheetsError = sanitizeDiagnosticError_(sheetsError, diagnosticRedactions);
+    var bookingDiagnostic = {
+      requestId: safeRequestId,
+      occurredAt: new Date().toISOString(),
+      sheetsError: sanitizedSheetsError,
+      calendarCompensation: 'not_attempted',
+      recoveryRecord: 'not_attempted'
+    };
+    persistBookingDiagnosticBestEffort_(safeRequestId, bookingDiagnostic);
     Logger.log(
       'requestId=' + safeRequestId +
-      ' handleSheetsSaveFailure sheetsError=' + sanitizeDiagnosticError_(sheetsError, diagnosticRedactions)
+      ' handleSheetsSaveFailure sheetsError=' + sanitizedSheetsError
     );
 
     var compensated = false;
@@ -193,8 +202,11 @@ var BookingRepository = (function () {
       ' handleSheetsSaveFailure calendarCompensation=' + (compensated ? 'success' : 'failure') +
       (compensationError ? ' error=' + sanitizeDiagnosticError_(compensationError, diagnosticRedactions) : '')
     );
+    bookingDiagnostic.calendarCompensation = compensated ? 'success' : 'failure';
+    persistBookingDiagnosticBestEffort_(safeRequestId, bookingDiagnostic);
 
     var recoveryRecorded = false;
+    var recoveryError = null;
     try {
       RecoveryRepository.recordFailure({
         bookingId: bookingId,
@@ -207,23 +219,51 @@ var BookingRepository = (function () {
         resolvedAt: compensated ? new Date() : ''
       });
       recoveryRecorded = true;
-    } catch (recoveryError) {
+    } catch (recordFailureError) {
+      recoveryError = recordFailureError;
       /* recovery記録自体の失敗は最後の砦としてLoggerへ残すのみ（ここで例外を投げると
          利用者への応答自体が失敗するため、必ず握りつぶす）。 */
       Logger.log(
         'requestId=' + safeRequestId +
         ' handleSheetsSaveFailure recoveryRecord=failure error=' +
-        sanitizeDiagnosticError_(recoveryError, diagnosticRedactions)
+        sanitizeDiagnosticError_(recordFailureError, diagnosticRedactions)
       );
     }
     if (recoveryRecorded) {
       Logger.log('requestId=' + safeRequestId + ' handleSheetsSaveFailure recoveryRecord=success');
     }
 
+    bookingDiagnostic.recoveryRecord = recoveryRecorded ? 'success' : 'failure';
+    if (recoveryError) {
+      bookingDiagnostic.recoveryError = sanitizeDiagnosticError_(recoveryError, diagnosticRedactions);
+    }
+    persistBookingDiagnosticBestEffort_(safeRequestId, bookingDiagnostic);
+
     return {
       success: false,
       error: { code: 'BOOKING_SAVE_FAILED', message: '予約の保存に失敗しました。しばらくしてから再度お試しください。' }
     };
+  }
+
+  /* Issue #273の一時診断。保存失敗は予約処理へ影響させず、Loggerにも内部値を出さない。 */
+  function persistBookingDiagnosticBestEffort_(safeRequestId, diagnostic) {
+    if (safeRequestId === 'invalid' || safeRequestId === 'unavailable') return;
+    try {
+      var value = {
+        requestId: diagnostic.requestId,
+        occurredAt: diagnostic.occurredAt,
+        sheetsError: diagnostic.sheetsError,
+        calendarCompensation: diagnostic.calendarCompensation,
+        recoveryRecord: diagnostic.recoveryRecord
+      };
+      if (diagnostic.recoveryError) value.recoveryError = diagnostic.recoveryError;
+      PropertiesService.getScriptProperties().setProperty(
+        'BOOKING_DIAG_' + safeRequestId,
+        JSON.stringify(value)
+      );
+    } catch (diagnosticSaveError) {
+      /* best effort: BOOKING_SAVE_FAILEDの既存レスポンスと補償処理を変えない。 */
+    }
   }
 
   function notifyAdminBestEffort_(record) {
@@ -938,3 +978,14 @@ var BookingRepository = (function () {
     cancelBookingAdmin: cancelBookingAdmin
   };
 })();
+
+/* Issue #273の診断終了後に削除する一時関数。
+   指定requestIdに対応する診断プロパティだけをLoggerへ出す。 */
+function debugReadBookingDiagnostic(requestId) {
+  var safeRequestId = String(requestId || '');
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(safeRequestId)) {
+    throw new Error('有効なrequestIdを指定してください。');
+  }
+  var value = PropertiesService.getScriptProperties().getProperty('BOOKING_DIAG_' + safeRequestId);
+  Logger.log(value || 'BOOKING_DIAGNOSTIC_NOT_FOUND');
+}
