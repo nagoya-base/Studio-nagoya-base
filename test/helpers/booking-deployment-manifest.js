@@ -8,6 +8,11 @@
  * 再送・PENDING TTL失効がReferenceErrorなく動くことを検証する（Issue #273回帰テスト）。
  *
  * .gsファイルを追加・削除した場合は、この一覧とREADME.mdの表の両方を更新すること。
+ * この「両方を更新すること」というルール自体がドリフトしていないかは、
+ * test/booking-deployment-manifest-sync.test.jsがREADME.mdの表を直接パースして機械的に検証する
+ * （PR #288レビュー対応）。両リストとも`appsscript.json`は含めない（.gsファイルではなく、
+ * README.mdの表ではWeb App列にのみ✓が付く行として別管理されているため。sync検証側でも
+ * 比較対象から明示的に除外している）。
  */
 'use strict';
 
