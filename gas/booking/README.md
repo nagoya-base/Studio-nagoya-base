@@ -1139,7 +1139,7 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 | ファイル | Booking Web App（スタンドアロン） | Booking Admin（コンテナバインド） |
 | --- | :---: | :---: |
 | `Code.gs` | ✓ | – |
-| `Availability.gs` | ✓ | – |
+| `Availability.gs` | ✓ | ✓ |
 | `Config.gs` | ✓ | ✓ |
 | `CalendarRepository.gs` | ✓ | ✓ |
 | `Booking.gs` | ✓ | ✓ |
@@ -1155,16 +1155,27 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 | `BookingReminderTriggers.gs`（Issue #271） | – | ✓ |
 | `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい） |
 
-`BookingRepository.gs`の`confirmBooking`・`expirePendingBookings`・`cancelBookingAdmin`
-（Issue #272）が実際に参照するファイルは`Config.gs`/`Booking.gs`/`CalendarRepository.gs`/
-`SpreadsheetRepository.gs`/`RecoveryRepository.gs`/`BookingMailTemplates.gs`/
-`BookingMailer.gs`のみ（`createBooking`が使う`Availability.gs`/`RateLimiter.gs`/
-`AdminNotifier.gs`はBooking Adminプロジェクトでは呼び出されない）。ただし、コピー漏れに
-よる将来の機能追加時の事故を避けるため、上表のとおり
-「`Code.gs`/`Availability.gs`/`RateLimiter.gs`/`AdminNotifier.gs`/`BookingReminderTriggers.gs`
-以外の全ファイル」をBooking Adminプロジェクトにも配布することを推奨する
-（`BookingMailTemplates.gs`/`BookingMailer.gs`はcreateBooking側のPENDINGメール送信でも
-使うため、両プロジェクトへの配布が必須）。**`cancelBookingAdmin`はBooking Admin側の
+**`Availability.gs`はBooking Adminプロジェクトへの配布が必須。**
+`BookingRepository.gs`の`expirePendingBookings`は、候補ごとに`Booking.formatDateInTimezone`
+（実体は`BookingAvailability.formatDateInTimezone`）を無条件に呼んで受付日と利用日が
+一致するか判定する（Issue #270のTTL grace判定）ため、PENDINGの予約が1件でもある状態で
+時間主導トリガーが実行されると`Availability.gs`を読み込んでいなければ即座に失敗する。
+`BookingMailTemplates.gs`（`formatTimeInTimezone`）・`BookingReminderTriggers.gs`
+（`formatDateInTimezone`）も同様に`BookingAvailability`を参照するため、`BookingAdmin.gs`
+の「予約メールを再送」メニューからのPENDING/CONFIRMED/CANCELLED/REMINDER再送も同じ理由で
+失敗する。**（Issue #273で発覚・修正。それまでは`confirmBooking`/`cancelBookingAdmin`
+自体が直接参照するファイルだけを基準に「`Availability.gs`は`createBooking`専用で
+Booking Adminには不要」と誤って判断しており、上表・本節からAvailability.gsが漏れていた。
+本番Booking Adminで、既存PENDINGメールの再送を実行すると
+`ReferenceError: BookingAvailability is not defined`になっていた。
+`test/booking-admin-deployment.test.js`で、上表のBooking Admin列が✓の全ファイル
+（`test/helpers/booking-deployment-manifest.js`のBOOKING_ADMIN_FILES）だけを読み込んで
+再送・TTL失効の両方を実行し、この回帰を検証している）。**
+`RateLimiter.gs`/`AdminNotifier.gs`/`Code.gs`は`createBooking`（Booking Web App専用）
+でのみ使うため、引き続きBooking Adminプロジェクトには配布しない。
+コピー漏れによる将来の機能追加時の事故を避けるため、上表のとおり
+「`Code.gs`/`RateLimiter.gs`/`AdminNotifier.gs`以外の全ファイル」をBooking Admin
+プロジェクトへ配布することを推奨する。**`cancelBookingAdmin`はBooking Admin側の
 みで公開し、Booking Web Appプロジェクト（`Code.gs`）にはキャンセル用エンドポイントを
 一切追加しない**（`BookingRepository.gs`自体は両プロジェクトへ配布されるが、
 `cancelBookingAdmin`を呼び出すグローバル関数は`BookingAdmin.gs`側にしか無いため、
@@ -1532,11 +1543,11 @@ Issue #270時点で`customerType`に指定できるのは`first_time` / `returni
 1. `SPREADSHEET_ID`で指定したGoogle Spreadsheetを開く。
 2. メニュー「拡張機能」→「Apps Script」を選択する（このSpreadsheetにコンテナバインドした
    新規プロジェクトが作成される）。
-3. 「GASプロジェクトへのデプロイ対象ファイル」の表にある**Booking Admin列が✓のファイル**
-   （`Config.gs` / `CalendarRepository.gs` / `Booking.gs` / `SpreadsheetRepository.gs` /
-   `RecoveryRepository.gs` / `BookingRepository.gs` / `BookingMailTemplates.gs` /
-   `BookingMailer.gs` / `BookingAdmin.gs` / `BookingTriggers.gs` /
-   `BookingReminderTriggers.gs`）をコピーする。
+3. 「GASプロジェクトへのデプロイ対象ファイル」の表にある**Booking Admin列が✓の
+   ファイルすべて**（`Availability.gs`を含む）をコピーする。個別のファイル名は
+   上表を参照し、ここには重複して書き出さない（この手順側のリストだけを更新して
+   上表の更新を忘れる、という依存ファイル追加漏れを防ぐため。上表と実際の配布
+   ファイルセットの整合は`test/booking-admin-deployment.test.js`で検証している）。
 4. このプロジェクトのScript Propertiesに `CALENDAR_ID` / `SPREADSHEET_ID` /
    `PENDING_TTL_HOURS` / `PENDING_TTL_MIN_HOURS_BEFORE_START` /
    `PENDING_TTL_MIN_HOLD_HOURS`（Issue #270で追加） / `BOOKING_MAIL_DISPLAY_NAME` /
@@ -1668,9 +1679,8 @@ Booking Adminプロジェクト（コンテナバインド）はWeb Appとして
 ## セットアップ手順
 
 1. **Booking Web App**: 新規のスタンドアロンGoogle Apps Scriptプロジェクトを作成し、
-   「GASプロジェクトへのデプロイ対象ファイル」表のBooking Web App列が✓のファイル
-   （`BookingAdmin.gs`・`BookingTriggers.gs`・`BookingReminderTriggers.gs`を除く全
-   `.gs`ファイルと`appsscript.json`）をコピーする。
+   「GASプロジェクトへのデプロイ対象ファイル」表の**Booking Web App列が✓のファイル
+   すべて**（`appsscript.json`を含む）をコピーする。個別のファイル名は上表を参照する。
 2. Script Propertiesを設定する（最低限 `CALENDAR_ID` / `SPREADSHEET_ID`。
    利用者向けPENDINGメールを送る場合は`BOOKING_MAIL_DISPLAY_NAME` /
    `BOOKING_MAIL_REPLY_TO` / `BOOKING_CONTACT_EMAIL`もここに設定する（Issue #271）。
@@ -2045,6 +2055,21 @@ Issue #272で追加・更新:
   **PRレビュー2回目対応で追加**: シートスタブに`_setValuesCalls`（`{row, col, numRows,
   numCols}`の呼び出し履歴）を追加し、`updateBookingCancellationStateAtomic`の書き込み
   range自体をテストからassertできるようにした（既存の`setValues`の挙動には影響しない）
+
+Issue #273で追加（`Availability.gs`がBooking Admin配布ファイル一覧から漏れていた
+不具合の修正）:
+
+- `test/helpers/booking-deployment-manifest.js`（新規） — README.mdの「GASプロジェクトへの
+  デプロイ対象ファイル」表と同期させる、Booking Admin / Booking Web Appそれぞれの実際の
+  配布ファイル名一覧（`BOOKING_ADMIN_FILES`/`BOOKING_WEB_APP_FILES`）。テスト専用（GASへは
+  配布しない）
+- `test/booking-admin-deployment.test.js`（新規） — `BOOKING_ADMIN_FILES`（`Availability.gs`
+  を含む、上表のBooking Admin列が✓の全ファイル）だけをvmへ読み込み、本番のBooking Admin
+  プロジェクトと同じ実行セットで、(1) `BookingAdmin.gs`の「予約メールを再送」メニュー経由の
+  PENDINGメール再送、(2) 時間主導トリガーの`expirePendingBookings`によるPENDING TTL失効の
+  両方がReferenceErrorなく成功することを検証する。`Availability.gs`を一覧から意図的に
+  除くとこの2つがいずれも`ReferenceError: BookingAvailability is not defined`で失敗する
+  ことを確認済み（回帰テストとして機能することの確認）
 
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに
