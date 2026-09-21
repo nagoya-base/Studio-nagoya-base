@@ -1546,8 +1546,11 @@ Issue #270時点で`customerType`に指定できるのは`first_time` / `returni
 3. 「GASプロジェクトへのデプロイ対象ファイル」の表にある**Booking Admin列が✓の
    ファイルすべて**（`Availability.gs`を含む）をコピーする。個別のファイル名は
    上表を参照し、ここには重複して書き出さない（この手順側のリストだけを更新して
-   上表の更新を忘れる、という依存ファイル追加漏れを防ぐため。上表と実際の配布
-   ファイルセットの整合は`test/booking-admin-deployment.test.js`で検証している）。
+   上表の更新を忘れる、という依存ファイル追加漏れを防ぐため）。上表と
+   `test/helpers/booking-deployment-manifest.js`の`BOOKING_ADMIN_FILES`/
+   `BOOKING_WEB_APP_FILES`が一致していることは`test/booking-deployment-manifest-sync.test.js`
+   が機械的に検証し、その配布ファイルセットで実際に既存PENDINGメール再送・PENDING TTL失効が
+   ReferenceErrorなく動くことは`test/booking-admin-deployment.test.js`が検証している。
 4. このプロジェクトのScript Propertiesに `CALENDAR_ID` / `SPREADSHEET_ID` /
    `PENDING_TTL_HOURS` / `PENDING_TTL_MIN_HOURS_BEFORE_START` /
    `PENDING_TTL_MIN_HOLD_HOURS`（Issue #270で追加） / `BOOKING_MAIL_DISPLAY_NAME` /
@@ -2070,6 +2073,15 @@ Issue #273で追加（`Availability.gs`がBooking Admin配布ファイル一覧�
   両方がReferenceErrorなく成功することを検証する。`Availability.gs`を一覧から意図的に
   除くとこの2つがいずれも`ReferenceError: BookingAvailability is not defined`で失敗する
   ことを確認済み（回帰テストとして機能することの確認）
+- `test/booking-deployment-manifest-sync.test.js`（新規・PRレビュー対応で追加） —
+  README.mdの「GASプロジェクトへのデプロイ対象ファイル」表をパースし、Booking Admin列/
+  Booking Web App列がそれぞれ✓の`.gs`ファイル集合が`BOOKING_ADMIN_FILES`/
+  `BOOKING_WEB_APP_FILES`と一致することを検証する。表とmanifestを「同期させる」という
+  人手ルールだけでは、今回のように片方だけの更新漏れ（表側からの`Availability.gs`漏れ）を
+  検出できないため、このテストで両者のドリフトを機械的に検出する。`appsscript.json`は
+  `.gs`ファイルではなくmanifest側も`.gs`専用のため、比較対象から明示的に除外する。
+  表側・manifest側それぞれを個別に改変し、両方向のドリフトで実際にこのテストが失敗する
+  ことを確認済み
 
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに
