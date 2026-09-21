@@ -76,9 +76,10 @@ Studio Nagoya Base の静的サイト一式です。GitHub Pages で公開する
 - 旧フォーム本体・Formspree送信先（`studio-x/reservation/`）はいずれも削除していない。
   問題があれば主要CTAのhrefを旧フォームへ戻すだけでロールバックできるよう、Stage Aの
   CTA切替・`BASE_URL`設定は1つのcutover commitへまとめている。
-- `_includes/calendar_embed.html`（旧Calendar埋め込み）は削除していない。3箇所
-  （`index.html` / `mens/index.html` / `studio-x/reservation/index.html`）とも維持し、
-  埋め込み直下に新しい予約ページへの案内文を追加した。
+- `_includes/calendar_embed.html`（旧Calendar埋め込み）は削除していない。Stage Aの
+  時点では3箇所（`index.html` / `mens/index.html` / `studio-x/reservation/index.html`）
+  とも維持し、埋め込み直下に新しい予約ページへの案内文を追加した（後日、下記
+  「Calendar embedの最終方針」のとおり通常公開導線からは撤去している）。
 - 当日予約に関する古い文言（「ご予約は前日まで」「当日利用は会員のお客様に限り」等、
   `#270`と矛盾する記述）を、`#270`の仕様（初回利用は当日不可・利用経験があれば当日可・
   会員登録の有無では判定しない）に合わせて修正した。
@@ -117,10 +118,24 @@ API ready確認が完了するまでmainへマージしない**）
    従来どおり表示されること）
 8. 3ブランドのUI経由での実地受入テスト（専用テスト日時を使用。本予約・SpaceMarket予約は
    削除・変更しない）
-9. ロールバック実地確認（新UI停止→旧フォーム復帰→再度新UIへ戻す）
-10. 旧Calendar embedの最終方針（削除 / 参考表示への格下げ / 新UIリンクへの置換）を確定
+9. ロールバック実地確認（新UI停止→旧フォーム復帰→再度新UIへ戻す。`#289`で実施、`#290`で
+   新UIへロールフォワード確認済み）
+10. 旧Calendar embedの最終方針を確定（下記「Calendar embedの最終方針」参照。通常公開導線
+    からは撤去し、ロールバック資産としてファイルのみ保持する方針で確定）
 11. 上記すべてが完了した時点で、Issue #273へ結果を記録し、`Closes #273`を付けたPRまたは
     cutover完了commitでclose
+
+#### Calendar embedの最終方針（確定）
+
+- 新予約UI（`/booking/` / `/mens/booking/` / `/studio-x/booking/`）を、通常時の**唯一の
+  正式な空き確認・直接予約導線**とする
+- `_includes/calendar_embed.html`を利用していた3箇所（`index.html` / `mens/index.html` /
+  `studio-x/reservation/index.html`）は、通常公開導線からCalendar embedの表示を撤去した
+- `_includes/calendar_embed.html`自体は削除せず、本番障害時のロールバック資産として
+  リポジトリに残す（通常ページからはincludeしない）
+- 旧予約フォーム（`_includes/reservation_form_ja.html` / `studio-x/reservation/`）は、
+  相談・問い合わせ導線、および障害時ロールバック用として引き続き保持する
+- ロールバック実地確認（`#289`）・ロールフォワード確認（`#290`）は完了済み
 
 #### 本番導入チェックリスト（PR #282をmainへマージする前に、上記1〜6の完了として確認）
 
@@ -149,7 +164,11 @@ API ready確認が完了するまでmainへマージしない**）
 5. SpaceMarket側には一切変更を加えない
 6. 旧Formspreeフォーム（Studio X）・旧`reservation_form_ja.html`フォームが送信可能な
    ままであることを確認する
-7. 旧Calendar埋め込みが従来どおり表示できることを確認する
+7. `_includes/calendar_embed.html`はファイルとして保持されているため、必要であれば
+   `index.html` / `mens/index.html` / `studio-x/reservation/index.html`へ
+   `{% include calendar_embed.html %}`を再度追加することで表示を復元できる（Calendar
+   embed最終方針により、通常運用では公開導線から撤去済みのため、CTA差し戻しだけでは
+   自動的に復元されない）
 
 ## 編集ポイント
 
