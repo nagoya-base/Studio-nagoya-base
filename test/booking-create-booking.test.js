@@ -23,7 +23,8 @@ var FILES = [
   'AdminNotifier.gs',
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
-  'BookingRepository.gs'
+  'BookingRepository.gs',
+  'Code.gs'
 ];
 
 var CALENDAR_ID = 'cal1';
@@ -67,7 +68,8 @@ function setup(options) {
     CacheService: opts.cacheService || stubs.createCacheServiceStub(),
     SpreadsheetApp: stubs.createSpreadsheetAppStub(spreadsheetsById),
     MailApp: opts.mailApp || stubs.createMailAppStub(),
-    Logger: stubs.createLoggerStub()
+    Logger: stubs.createLoggerStub(),
+    ContentService: stubs.createContentServiceStub()
   };
 
   var sandbox = loadBookingSandbox(FILES, globals);
@@ -95,6 +97,11 @@ function validPayload(overrides) {
   );
 }
 
+function callDoPost(sandbox, payload) {
+  var contents = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  return JSON.parse(sandbox.doPost({ postData: { contents: contents } }).text);
+}
+
 /*
  * 当日利用ルール（Issue #270）のテスト用固定時刻。createBookingはnow引数を受け取れるため、
  * JST 2026-10-01 12:00に受け付けたことにし、'2026-10-01'を当日、'2026-10-02'を翌日として扱う。
@@ -110,6 +117,44 @@ test('createBooking: 正常な入力でPENDINGの予約が作成される（送�
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.status, 'PENDING');
   assert.ok(result.bookingId);
+});
+
+test('doPost診断: successレスポンスと開始・終了ログに同一requestIdを含める', function () {
+  var ctx = setup();
+  var result = callDoPost(ctx.sandbox, validPayload());
+
+  assert.strictEqual(result.success, true);
+  assert.match(result.requestId, /^[A-Za-z0-9-]+$/);
+  assert.ok(ctx.globals.Logger._logs.indexOf('requestId=' + result.requestId + ' createBooking=start') !== -1);
+  assert.ok(ctx.globals.Logger._logs.indexOf('requestId=' + result.requestId + ' createBooking=result success') !== -1);
+});
+
+test('doPost診断: validation failureレスポンスとログに同一requestId・error.codeを含める', function () {
+  var ctx = setup();
+  var result = callDoPost(ctx.sandbox, validPayload({ customerType: 'invalid' }));
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'INVALID_CUSTOMER_TYPE');
+  assert.ok(result.requestId);
+  assert.ok(
+    ctx.globals.Logger._logs.indexOf(
+      'requestId=' + result.requestId + ' createBooking=result error.code=INVALID_CUSTOMER_TYPE'
+    ) !== -1
+  );
+});
+
+test('doPost診断: INVALID_JSONにもrequestIdを返し、同一IDをログへ残す', function () {
+  var ctx = setup();
+  var result = callDoPost(ctx.sandbox, '{invalid json');
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'INVALID_JSON');
+  assert.ok(result.requestId);
+  assert.ok(
+    ctx.globals.Logger._logs.indexOf(
+      'requestId=' + result.requestId + ' createBooking=result error.code=INVALID_JSON'
+    ) !== -1
+  );
 });
 
 test('createBooking: bookingIdはCalendarイベントのタグとSheets行の両方に同じ値で保存される', function () {
@@ -559,6 +604,64 @@ test('部分失敗補償: Calendar成功・Sheets失敗時はCalendarイベン�
   ctx.sandbox.SpreadsheetRepository.appendBooking = originalAppend;
 });
 
+test('Issue #273診断: Sheets失敗時はrequestId・sanitized error・Calendar補償・Recovery記録の成否をログへ残す', function () {
+  var ctx = setup();
+  var payload = validPayload({
+    name: '診断秘密太郎',
+    email: 'diagnostic-secret@example.com',
+    phone: '090-9999-9999',
+    note: '診断秘密メモ'
+  });
+  var failedBookingId;
+  ctx.sandbox.SpreadsheetRepository.appendBooking = function (record) {
+    failedBookingId = record.bookingId;
+    throw new Error([
+      'simulated sheets failure',
+      record.bookingId,
+      payload.name,
+      payload.email,
+      payload.phone,
+      payload.note,
+      CALENDAR_ID,
+      SPREADSHEET_ID
+    ].join(' / '));
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(payload, undefined, 'request-273');
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'BOOKING_SAVE_FAILED');
+  var logs = ctx.globals.Logger._logs.join('\n');
+  assert.match(logs, /requestId=request-273 handleSheetsSaveFailure sheetsError=simulated sheets failure/);
+  assert.match(logs, /requestId=request-273 handleSheetsSaveFailure calendarCompensation=success/);
+  assert.match(logs, /requestId=request-273 handleSheetsSaveFailure recoveryRecord=success/);
+  assert.ok(failedBookingId);
+  assert.strictEqual(logs.indexOf(failedBookingId), -1, '診断ログへbookingIdを出してはいけない');
+  [payload.name, payload.email, payload.phone, payload.note, CALENDAR_ID, SPREADSHEET_ID].forEach(function (secret) {
+    assert.strictEqual(logs.indexOf(secret), -1, '診断ログへPII・設定値を出してはいけない: ' + secret);
+  });
+});
+
+test('Issue #273診断: Recovery記録失敗も同じrequestIdでsanitizedログへ残す', function () {
+  var ctx = setup();
+  ctx.sandbox.SpreadsheetRepository.appendBooking = function () {
+    throw new Error('simulated sheets failure');
+  };
+  ctx.sandbox.RecoveryRepository.recordFailure = function () {
+    throw new Error('recovery failed for diagnostic-secret@example.com');
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload(), undefined, 'request-recovery-failure');
+
+  assert.strictEqual(result.success, false);
+  var logs = ctx.globals.Logger._logs.join('\n');
+  assert.match(
+    logs,
+    /requestId=request-recovery-failure handleSheetsSaveFailure recoveryRecord=failure error=recovery failed for \[REDACTED_EMAIL\]/
+  );
+  assert.strictEqual(logs.indexOf('diagnostic-secret@example.com'), -1);
+});
+
 test('部分失敗補償: Calendar成功・Sheets失敗・Calendar補償削除も失敗した場合はNEEDS_MANUAL_RECOVERYとしてrecoveryへ残す', function () {
   var ctx = setup();
   ctx.sandbox.SpreadsheetRepository.appendBooking = function () {
@@ -568,7 +671,7 @@ test('部分失敗補償: Calendar成功・Sheets失敗・Calendar補償削除�
     throw new Error('simulated calendar delete failure');
   };
 
-  var result = ctx.sandbox.BookingRepository.createBooking(validPayload());
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload(), undefined, 'request-compensation-failure');
 
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'BOOKING_SAVE_FAILED');
@@ -579,6 +682,10 @@ test('部分失敗補償: Calendar成功・Sheets失敗・Calendar補償削除�
   assert.strictEqual(recovered[0].recoveryState, 'OPEN');
   assert.match(recovered[0].errorMessage, /simulated sheets failure/);
   assert.match(recovered[0].errorMessage, /simulated calendar delete failure/);
+  assert.match(
+    ctx.globals.Logger._logs.join('\n'),
+    /requestId=request-compensation-failure handleSheetsSaveFailure calendarCompensation=failure error=simulated calendar delete failure/
+  );
 });
 
 test('通知失敗: 管理者通知が失敗しても予約自体は成功のままであり、recoveryへ情報として記録される', function () {
