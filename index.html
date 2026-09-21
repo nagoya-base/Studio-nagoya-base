@@ -184,7 +184,7 @@
       <a class="btn-primary" href="#calendar" data-analytics-event="cta_click" data-analytics-location="hero" data-analytics-type="calendar" data-analytics-destination="calendar">空き確認・予約を申し込む</a>
       <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="hero">利用内容を事前に相談する</a>
     </div>
-    <p class="hero-ad-note">予約ページで空き状況を確認し、そのまま仮予約を送信できます。はじめての方は翌日以降、ご利用経験のある方は当日のご予約も可能です。1〜4名まで同一料金。緊縛や作品撮りに関する打ち合わせにも利用できます。</p>
+    <p class="hero-ad-note">カレンダーで空き状況を確認し、予約申込フォームまたはメール・XのDMからお申し込みいただけます。はじめての方は翌日以降、ご利用経験のある方は当日のご予約も可能です。1〜4名まで同一料金。緊縛や作品撮りに関する打ち合わせにも利用できます。</p>
   </div>
 </section>
 
@@ -234,20 +234,20 @@
     <p class="section-subtitle">Reservation Calendar</p>
 
     {% include calendar_embed.html %}
-    <p class="calendar-note">最新の空き状況確認と直接予約は、<a href="{{ '/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="calendar_embed" data-analytics-type="booking_app" data-analytics-destination="booking_app">新しい予約ページ</a>をご利用ください。</p>
+    <p class="calendar-note">最新の空き状況確認・直接予約は、下記の予約申込フォーム、またはメール・XのDMをご利用ください。</p>
 
     <ol class="reservation-steps">
-      <li><span class="reservation-steps-num">1</span>予約ページで空き状況を確認</li>
-      <li><span class="reservation-steps-num">2</span>はじめての方は翌日以降、ご利用経験のある方は当日も、予約ページから仮予約を送信</li>
+      <li><span class="reservation-steps-num">1</span>カレンダーで空き状況を確認</li>
+      <li><span class="reservation-steps-num">2</span>はじめての方は翌日以降、ご利用経験のある方は当日も、予約申込フォームまたはメール・DMで仮予約を送信</li>
       <li><span class="reservation-steps-num">3</span>運営からの確定連絡で予約成立</li>
     </ol>
 
-    <p class="calendar-note"><strong>予約ページ・フォーム・メール・DMのいずれも、送信だけでは予約確定ではありません。</strong>はじめてご利用の方は翌日以降のご予約、ご利用経験のある方は当日のご予約も予約ページから直接お申し込みいただけます（会員登録の有無は当日予約の条件ではありません）。通常は24時間以内に運営から確定のご連絡をお送りし、この連絡をもって予約成立となります。</p>
+    <p class="calendar-note"><strong>予約申込フォーム・メール・DMのいずれも、送信だけでは予約確定ではありません。</strong>はじめてご利用の方は翌日以降のご予約、ご利用経験のある方は当日のご予約も予約申込フォームまたはメール・XのDMから直接お申し込みいただけます（会員登録の有無は当日予約の条件ではありません）。通常は24時間以内に運営から確定のご連絡をお送りし、この連絡をもって予約成立となります。</p>
 
     <div class="reservation-path-grid">
       <div class="reservation-path-card">
         <h3 class="reservation-path-label">はじめてご利用の方</h3>
-        <p class="reservation-path-desc">予約ページから、利用目的・安全ルールへのご同意とあわせてお申し込みください（翌日以降のご予約となります）。</p>
+        <p class="reservation-path-desc">予約申込フォームから、利用目的・安全ルールへのご同意とあわせてお申し込みください（翌日以降のご予約となります）。</p>
         <div class="btn-group">
           <a class="btn-primary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="form" data-analytics-destination="reservation_form">予約申込フォームへ進む</a>
           <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="calendar">利用内容を事前に相談する</a>
@@ -255,7 +255,7 @@
       </div>
       <div class="reservation-path-card">
         <h3 class="reservation-path-label">ご利用経験のある方</h3>
-        <p class="reservation-path-desc">当日のご利用を含め、予約ページから直接空き状況を確認し、そのまま仮予約を申し込めます。</p>
+        <p class="reservation-path-desc">当日のご利用を含め、希望日・開始時刻・利用時間を、前回のやり取りへのメール返信、またはXのDMでお送りください。下のボタンでXのプロフィールを開き、DMからご連絡いただけます。</p>
         <div class="btn-group">
           <a class="btn-secondary" href="https://x.com/nagoyabase2023" target="_blank" rel="noopener noreferrer" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="repeat_dm" data-analytics-destination="x_dm">Xプロフィールを開く（@nagoyabase2023）</a>
         </div>

@@ -6,13 +6,16 @@
  * 別のCalendarを用意することはしない。
  *
  * このファイルは全ブランドの予約ページから共通で読み込まれる、接続先を切り替える
- * ための唯一の場所。#269時点ではBooking Web Appの本番デプロイをまだ行っていないため、
- * BASE_URLはプレースホルダのままにしてある（本番デプロイ・URL差し替えは#273の責務。
- * gas/booking/README.md「デプロイ後の接続手順」参照）。
+ * ための唯一の場所。
+ *
+ * #273 Stage B ロールバック実地確認: 本番Booking Web Appは既に稼働済みで、既存
+ * `/exec` URLも確認済みだが、ロールバック実地確認のため一時的にBASE_URLを空にし、
+ * 共通予約UI（/booking/ /mens/booking/ /studio-x/booking/）を停止状態にしている。
+ * backend側の本番GASプロジェクト自体は停止・削除していない。ロールフォワード
+ * （新UIへの復帰）時には、既存の本番`/exec` URLへBASE_URLを戻す。
  */
 window.BookingApiConfig = {
-  /* デプロイ後のBooking Web App URL（例: https://script.google.com/macros/s/XXXX/exec）
-     に差し替えること。空のままだと共通予約UIはAPI未接続として案内を表示し、
+  /* ロールバック中は空のまま。共通予約UIはAPI未接続として案内を表示し、
      getAvailability/createBookingを呼ばない（誤って空文字へfetchしない安全策）。 */
   BASE_URL: ''
 };
