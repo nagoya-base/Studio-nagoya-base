@@ -6,18 +6,13 @@
  * 別のCalendarを用意することはしない。
  *
  * このファイルは全ブランドの予約ページから共通で読み込まれる、接続先を切り替える
- * ための唯一の場所。
- *
- * #273 Stage A: BASE_URLには、Issue #267の実環境確認コメント
- * （https://github.com/nagoya-base/Studio-nagoya-base/issues/267#issuecomment-5738576390）
- * に記録済みの、既存Booking Web Appプロジェクト（studio_nagoya_base_booking。
- * Execute as: Me / Access: Anyone）の本番`/exec` URLを設定している。新規デプロイは
- * 行っていない。ただしこのGASプロジェクトへ#268〜#272のコード（createBooking・
- * confirmBooking・キャンセル・通知メール等）を反映するのはStage Bの責務であり
- * （gas/booking/README.md「デプロイ後の接続手順」参照）、本PRの時点では未反映の
- * 可能性がある。mainへマージ・GitHub Pagesへ反映されるまでは実際のAPI呼び出しは
- * 発生しない。
+ * ための唯一の場所。#269時点ではBooking Web Appの本番デプロイをまだ行っていないため、
+ * BASE_URLはプレースホルダのままにしてある（本番デプロイ・URL差し替えは#273の責務。
+ * gas/booking/README.md「デプロイ後の接続手順」参照）。
  */
 window.BookingApiConfig = {
-  BASE_URL: 'https://script.google.com/macros/s/AKfycby9Tso_3ksDjMZhoKIFr6KR_JA6XlDufLB8Twmo-BEBbAzzzdWfLSAIF7iP3D2a0EkXnA/exec'
+  /* デプロイ後のBooking Web App URL（例: https://script.google.com/macros/s/XXXX/exec）
+     に差し替えること。空のままだと共通予約UIはAPI未接続として案内を表示し、
+     getAvailability/createBookingを呼ばない（誤って空文字へfetchしない安全策）。 */
+  BASE_URL: ''
 };
