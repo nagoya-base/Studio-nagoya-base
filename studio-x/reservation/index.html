@@ -53,7 +53,7 @@
     <header class="subpage-hero">
       <p class="section-kicker">RESERVATION &amp; CONSULTATION</p>
       <h1>予約・撮影相談<br>フォーム</h1>
-      <p class="subpage-lead">空き状況を確認しての予約、撮影内容・設備のご相談、当日利用の確認、見学・下見のご相談まで、このフォームから承ります。フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内にご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
+      <p class="subpage-lead">撮影内容・設備のご相談、当日利用の確認、見学・下見のご相談や下見プランのお申し込みは、このフォームから承ります。内容を確認後、通常24時間以内にご連絡します。下見プランのお申し込みは、フォーム送信時点では確定しておらず、当方からの確定連絡をもって成立となります。</p>
     </header>
 
     <div class="notice">
@@ -71,8 +71,8 @@
       <div id="reservation-complete" class="reservation-complete" role="status" aria-live="polite" tabindex="-1" hidden>
         <div class="reservation-complete-icon" aria-hidden="true">&#10003;</div>
         <h2>送信を受け付けました</h2>
-        <p>お問い合わせ・予約申込ありがとうございます。内容を確認後、通常24時間以内に、ご指定の返信方法でご連絡します。</p>
-        <p>予約申込の場合、フォーム送信時点では予約は確定していません。当方からの予約確定連絡をもって予約成立となります。</p>
+        <p>お問い合わせ・お申し込みありがとうございます。内容を確認後、通常24時間以内に、ご指定の返信方法でご連絡します。</p>
+        <p>下見プランのお申し込みの場合、フォーム送信時点では確定していません。当方からの確定連絡をもって成立となります。</p>
         <p>24時間を過ぎても返信がない場合は、メールの迷惑メールフォルダやXのDM受信設定をご確認ください。</p>
         <div class="reservation-complete-actions">
           <a class="button button-primary" href="../">Studio Xトップへ戻る</a>
@@ -108,7 +108,10 @@
           <fieldset class="reservation-choice-group">
             <legend>ご希望の内容 <span class="field-badge field-badge--required">必須</span></legend>
             <div class="reservation-choices">
-              <label><input type="radio" name="お問い合わせ種別" value="空き状況を確認して予約したい" data-intent="booking" required aria-describedby="reservation-intent-error"> <span>空き状況を確認して予約したい</span></label>
+              <!-- #273: 通常のスタジオ予約は新予約UI（../booking/）が唯一の直接予約導線のため、
+                   このbooking intentは非表示・選択不可にしている。rollback資産としてフィールド・
+                   JSロジック（applyIntentMode等）・?intent=booking相当の扱いは削除せず残す。 -->
+              <label hidden><input type="radio" name="お問い合わせ種別" value="空き状況を確認して予約したい" data-intent="booking" disabled aria-describedby="reservation-intent-error"> <span>空き状況を確認して予約したい</span></label>
               <label><input type="radio" name="お問い合わせ種別" value="撮影内容・設備について相談したい" data-intent="consult" aria-describedby="reservation-intent-error"> <span>撮影内容・設備について相談したい</span></label>
               <label><input type="radio" name="お問い合わせ種別" value="当日利用について確認したい" data-intent="same-day" aria-describedby="reservation-intent-error"> <span>当日利用について確認したい</span></label>
               <label><input type="radio" name="お問い合わせ種別" value="見学・下見について相談したい" data-intent="tour" aria-describedby="reservation-intent-error"> <span>見学・下見について相談したい</span></label>

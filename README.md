@@ -135,6 +135,13 @@ API ready確認が完了するまでmainへマージしない**）
   リポジトリに残す（通常ページからはincludeしない）
 - 旧予約フォーム（`_includes/reservation_form_ja.html` / `studio-x/reservation/`）は、
   相談・問い合わせ導線、および障害時ロールバック用として引き続き保持する
+- 旧予約フォーム内の「日程を決めて予約する」（SNB / mens）・「空き状況を確認して予約したい」
+  （Studio X）という`booking` intentの選択肢も、通常公開では非表示・選択不可にした
+  （`hidden` + `disabled`、Studio X側は`?intent=booking`のプリフィルも無効化）。
+  `consult` / `same-day` / `tour` / `preview` / `other`は引き続き利用可能。
+  booking用のフィールド・JSロジック（`applyIntentMode`等）自体は削除しておらず、
+  旧bookingフォームを復元する場合は、この変更をrevertするか、`hidden`/`disabled`属性と
+  `?intent=booking`プリフィルのマップを元に戻すことで復元できる
 - ロールバック実地確認（`#289`）・ロールフォワード確認（`#290`）は完了済み
 
 #### 本番導入チェックリスト（PR #282をmainへマージする前に、上記1〜6の完了として確認）
@@ -162,8 +169,11 @@ API ready確認が完了するまでmainへマージしない**）
 3. Calendar / Sheetsに既に作成済みの予約は削除・変更しない
 4. Booking Adminの既存CONFIRMED/CANCELLED管理・通知メールはそのまま維持する
 5. SpaceMarket側には一切変更を加えない
-6. 旧Formspreeフォーム（Studio X）・旧`reservation_form_ja.html`フォームが送信可能な
-   ままであることを確認する
+6. 旧Formspreeフォーム（Studio X）・旧`reservation_form_ja.html`フォームが、`consult`等の
+   非bookingの問い合わせ種別で送信可能なままであることを確認する（`booking` intentの
+   選択肢は本PR以降、通常公開では非表示・選択不可のままである点に注意。旧bookingフォーム
+   自体を復元する場合は、本PRのrevert、または`hidden`/`disabled`属性・
+   `?intent=booking`プリフィルのマップを個別に元へ戻す）
 7. `_includes/calendar_embed.html`はファイルとして保持されているため、必要であれば
    `index.html` / `mens/index.html` / `studio-x/reservation/index.html`へ
    `{% include calendar_embed.html %}`を再度追加することで表示を復元できる（Calendar

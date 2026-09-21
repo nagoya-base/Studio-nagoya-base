@@ -59,8 +59,11 @@
 
   if (dateInput) dateInput.min = tomorrowInJapan();
 
-  /* ── 遷移元からの問い合わせ種別プリフィル（未知の値は安全に無視） ── */
-  var INTENT_QUERY_MAP = { booking: 'booking', consult: 'consult', 'same-day': 'same-day', tour: 'tour', preview: 'preview' };
+  /* ── 遷移元からの問い合わせ種別プリフィル（未知の値は安全に無視） ──
+     #273: 通常公開ではbooking intentを選択不可にしているため、?intent=bookingは
+     意図的にマップから外し、他の未知の値と同様に無視する（rollback時はここへ
+     booking: 'booking' を戻す）。 */
+  var INTENT_QUERY_MAP = { consult: 'consult', 'same-day': 'same-day', tour: 'tour', preview: 'preview' };
   /* 相談・見学目的の来訪者には、空き状況カレンダーの閲覧を強制しない */
   var CALENDAR_HIDDEN_INTENTS = { consult: true, tour: true };
   /* ── イベント特設ページからの流入（?event=...&source=...）の識別・記録 ── */
