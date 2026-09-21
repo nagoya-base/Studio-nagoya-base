@@ -27,6 +27,48 @@ function callDoGet(sandbox, params) {
   return JSON.parse(output.text);
 }
 
+test('authorizeBookingWebAppScopes: 実メールを送信せずMailApp scopeを要求し、固定のOKログだけを出す', function () {
+  var spreadsheetIds = [];
+  var calendarIds = [];
+  var quotaCalls = 0;
+  var sendEmailCalls = 0;
+  var logger = stubs.createLoggerStub();
+  var sandbox = loadBookingSandbox(['Code.gs'], {
+    PropertiesService: stubs.createPropertiesServiceStub({
+      SPREADSHEET_ID: 'spreadsheet-id-for-test',
+      CALENDAR_ID: 'calendar-id-for-test'
+    }),
+    SpreadsheetApp: {
+      openById: function (id) {
+        spreadsheetIds.push(id);
+        return { getId: function () { return id; } };
+      }
+    },
+    CalendarApp: {
+      getCalendarById: function (id) {
+        calendarIds.push(id);
+        return { getId: function () { return id; } };
+      }
+    },
+    MailApp: {
+      getRemainingDailyQuota: function () {
+        quotaCalls += 1;
+        return 100;
+      },
+      sendEmail: function () { sendEmailCalls += 1; }
+    },
+    Logger: logger
+  });
+
+  sandbox.authorizeBookingWebAppScopes();
+
+  assert.deepStrictEqual(spreadsheetIds, ['spreadsheet-id-for-test']);
+  assert.deepStrictEqual(calendarIds, ['calendar-id-for-test']);
+  assert.strictEqual(quotaCalls, 1);
+  assert.strictEqual(sendEmailCalls, 0);
+  assert.deepStrictEqual(logger._logs, ['Booking Web App authorization check: OK']);
+});
+
 /* dateをAsia/Tokyo基準の'YYYY-MM-DD'へ変換する（テスト専用。本番Code.gs/Availability.gsの
    formatDateInTimezoneとは独立した実装だが、同じ変換規則を使う）。 */
 function formatJstDate_(date) {
