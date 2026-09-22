@@ -347,25 +347,33 @@
        ガードのみ）。 */
     var loadRequestSeq = 0;
 
-    /* onDone: 一覧の再取得・再描画が完了した後に呼ばれるコールバック（省略可）。
+    /* onDone: このloadBookings呼び出し自身の応答が返ってきた時点で必ず呼ばれる
+       コールバック（省略可。応答が古くてstate反映をスキップした場合も呼ぶ）。
        confirm/cancel直後はこのコールバック内でbusy状態を解除することで、
-       最新一覧が反映されるまでボタンをdisableし続ける。 */
+       「自分の呼び出しに対する一覧再取得が完了するまで」ボタンをdisableし続ける。
+       ここでonDoneの呼び出し自体を古い応答か否かのガードでskipすると、後発の
+       loadBookings呼び出しに追い越された古い呼び出し側のbusyIdsがいつまでも
+       残り、該当ボタンが永久にdisableのままになってしまう（PRレビュー対応）。 */
     function loadBookings(onDone) {
       setStatusLine('読み込み中…');
       loadRequestSeq += 1;
       var requestId = loadRequestSeq;
       google.script.run
         .withSuccessHandler(function (result) {
-          if (requestId !== loadRequestSeq) return;
-          state.bookings = (result && result.bookings) || [];
-          state.todayJst = result && result.todayJst;
-          setStatusLine('');
-          render();
+          /* 「今なお最新の呼び出しか」はstateへの反映・再描画だけをスキップする条件で、
+             onDone（busy解除）は呼び出し元に関わらず必ず実行する。 */
+          if (requestId === loadRequestSeq) {
+            state.bookings = (result && result.bookings) || [];
+            state.todayJst = result && result.todayJst;
+            setStatusLine('');
+            render();
+          }
           if (typeof onDone === 'function') onDone();
         })
         .withFailureHandler(function (error) {
-          if (requestId !== loadRequestSeq) return;
-          setStatusLine('読み込みに失敗しました: ' + (error && error.message ? error.message : error));
+          if (requestId === loadRequestSeq) {
+            setStatusLine('読み込みに失敗しました: ' + (error && error.message ? error.message : error));
+          }
           if (typeof onDone === 'function') onDone();
         })
         .getAdminBookings();

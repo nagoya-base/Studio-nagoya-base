@@ -2258,11 +2258,16 @@ Issue #305（Booking Admin Web UI化）で追加:
   一覧の各要素が最小フィールドのみで`email`/`phone`/`note`等のPIIを含まないこと、
   `getAdminBookingDetail(bookingId)`が詳細フィールド一式を返すこと・存在しない
   bookingIdで`NOT_FOUND`を返すことを検証。**PRレビュー対応で追加**:
-  `getAdminBookings`/`getAdminBookingDetail`の`startAt`/`endAt`・各SentAt系フィールドが
-  Dateオブジェクトではなく正規化された文字列で返ること、`todayJst`がAsia/Tokyo基準で
-  計算されること、メール送信に失敗した場合は`hasMailError:true`になり
+  `getAdminBookings`/`getAdminBookingDetail`の`date`/`startAt`/`endAt`・各SentAt系
+  フィールドがDateオブジェクトではなく正規化された文字列で返ること（`date`が
+  Spreadsheet側の挙動でDate値として保存されているケースを含む）、`todayJst`が
+  Asia/Tokyo基準で計算されること、メール送信に失敗した場合は`hasMailError:true`になり
   `lastMailErrorAt`/`lastMailErrorType`/`lastMailErrorMessage`の詳細はレスポンスに
-  含まれないことを検証
+  含まれないことを検証。**再レビュー対応で追加**: `loadBookings()`の応答が
+  `loadRequestSeq`比較で古いと判定されstateへの反映をスキップした場合でも、
+  呼び出し元へ渡された`onDone`コールバック（busy解除用）は必ず実行されること
+  （BookingAdmin.html側の修正。連続してconfirm/cancelを実行した際に一部の
+  bookingIdのボタンが解除されないまま残る不具合の修正）
 - `test/helpers/booking-deployment-manifest.js`（更新） — `BOOKING_ADMIN_FILES`へ
   `BookingAdminWeb.gs`を追加（`test/booking-admin-deployment.test.js`/
   `test/booking-deployment-manifest-sync.test.js`が引き続き通ることで、本番Booking

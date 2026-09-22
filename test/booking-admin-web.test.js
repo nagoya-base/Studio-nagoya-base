@@ -219,6 +219,8 @@ test('getAdminBookings: { todayJst, bookings }を返し、一覧の各要素は�
   assert.strictEqual(item.status, 'PENDING');
   assert.strictEqual(item.brand, 'studio_x');
   assert.strictEqual(item.customerType, 'returning');
+  assert.strictEqual(typeof item.date, 'string', 'dateはDateオブジェクトのまま返してはいけない');
+  assert.strictEqual(item.date, DEFAULT_FUTURE_DATE);
 
   var allowedKeys = ['bookingId', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status'];
   assert.deepStrictEqual(Object.keys(item).sort(), allowedKeys.slice().sort());
@@ -257,6 +259,43 @@ test('getAdminBookings: startAt/endAtはDateオブジェクトではなくWeb UI
   assert.strictEqual(item.endAt, '21:00');
 });
 
+test('getAdminBookings/getAdminBookingDetail: dateがDate値として保存されていてもYYYY-MM-DDの文字列として返る（Sheetsが日付らしい文字列をDateへ自動変換した場合への備え）', function () {
+  var ctx = setup();
+  /* BookingRepository.createBookingは常にdateを文字列として保存するため、この
+     ケース（dateがDateとして保存されている状態）はSpreadsheetRepository.appendBookingを
+     直接呼んで模擬する。Google Sheetsは日付らしい文字列をセルへ書き込むと、読み込み時に
+     Date値として返すことがあるため、record.dateが実際にDateになっていても
+     formatAdminDate_が正しく'YYYY-MM-DD'へ正規化することを確認する。 */
+  var record = {
+    bookingId: 'SX-20261001-AAAAAAAA',
+    createdAt: new Date('2026-09-01T09:00:00+09:00'),
+    date: new Date('2026-10-01T00:00:00+09:00'),
+    startAt: new Date('2026-10-01T19:00:00+09:00'),
+    endAt: new Date('2026-10-01T21:00:00+09:00'),
+    brand: 'studio_x',
+    name: '山田太郎',
+    email: 'taro@example.com',
+    phone: '090-0000-0000',
+    people: '2名',
+    purpose: 'テスト',
+    paymentMethod: '現金',
+    status: 'PENDING',
+    calendarEventId: 'event-1',
+    source: 'test',
+    note: '',
+    customerType: 'returning'
+  };
+  ctx.sandbox.SpreadsheetRepository.appendBooking(record);
+
+  var listResult = ctx.sandbox.getAdminBookings();
+  assert.strictEqual(typeof listResult.bookings[0].date, 'string', 'getAdminBookingsのdateはDateオブジェクトのまま返してはいけない');
+  assert.strictEqual(listResult.bookings[0].date, '2026-10-01');
+
+  var detailResult = ctx.sandbox.getAdminBookingDetail(record.bookingId);
+  assert.strictEqual(typeof detailResult.booking.date, 'string', 'getAdminBookingDetailのdateはDateオブジェクトのまま返してはいけない');
+  assert.strictEqual(detailResult.booking.date, '2026-10-01');
+});
+
 test('getAdminBookings: todayJstはAsia/Tokyo基準で計算される（端末timezoneに依存しない）', function () {
   var ctx = setup();
 
@@ -287,6 +326,8 @@ test('getAdminBookingDetail: 詳細表示に必要な全フィールド（email/
   assert.strictEqual(result.booking.note, '詳細確認用備考');
   assert.strictEqual(result.booking.status, 'PENDING');
 
+  assert.strictEqual(typeof result.booking.date, 'string', 'dateはDateオブジェクトのまま返してはいけない');
+  assert.strictEqual(result.booking.date, DEFAULT_FUTURE_DATE);
   assert.strictEqual(typeof result.booking.startAt, 'string', 'startAtはDateオブジェクトのまま返してはいけない');
   assert.strictEqual(typeof result.booking.endAt, 'string', 'endAtはDateオブジェクトのまま返してはいけない');
   assert.strictEqual(result.booking.startAt, DEFAULT_FUTURE_DATE + ' 19:00');

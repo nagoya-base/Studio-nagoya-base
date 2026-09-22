@@ -59,6 +59,18 @@ function formatAdminTime_(value, timezone) {
   return BookingAvailability.formatTimeInTimezone(value, timezone) || '';
 }
 
+/*
+ * Date値のみ'YYYY-MM-DD'へ変換する。Date以外（''や既存の文字列）はそのまま返す。
+ * Bookingsシートの`date`列は本来文字列として保存しているが、Google Sheets側の
+ * セル書式・入力補完によって日付らしい文字列がDate値として保存・読み込まれる場合が
+ * あるため、`record.date`もstartAt/endAt等と同じくduck-typingでDateかどうかを確認し、
+ * Web UIへは必ず'YYYY-MM-DD'の文字列として返す。
+ */
+function formatAdminDate_(value, timezone) {
+  if (!isAdminWebDateLike_(value)) return value === undefined || value === null ? '' : value;
+  return BookingAvailability.formatDateInTimezone(value, timezone) || '';
+}
+
 /* Date値のみ'YYYY-MM-DD HH:mm'へ変換する。Date以外（''や既存の文字列）はそのまま返す。 */
 function formatAdminDateTime_(value, timezone) {
   if (!isAdminWebDateLike_(value)) return value === undefined || value === null ? '' : value;
@@ -87,7 +99,7 @@ function getAdminBookings() {
     var record = item.record;
     return {
       bookingId: record.bookingId,
-      date: record.date,
+      date: formatAdminDate_(record.date, timezone),
       startAt: formatAdminTime_(record.startAt, timezone),
       endAt: formatAdminTime_(record.endAt, timezone),
       brand: record.brand,
@@ -119,7 +131,7 @@ function getAdminBookingDetail(bookingId) {
     success: true,
     booking: {
       bookingId: record.bookingId,
-      date: record.date,
+      date: formatAdminDate_(record.date, timezone),
       startAt: formatAdminDateTime_(record.startAt, timezone),
       endAt: formatAdminDateTime_(record.endAt, timezone),
       brand: record.brand,
