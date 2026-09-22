@@ -40,10 +40,10 @@
  */
 'use strict';
 
-/* Web Appエントリポイント。BookingAdmin.html（同一プロジェクトへ配布するHTMLファイル）を
+/* Web Appエントリポイント。BookingAdminPage.html（同一プロジェクトへ配布するHTMLファイル）を
    そのまま返すだけで、業務ロジックはここに一切持たない。 */
 function doGet() {
-  return HtmlService.createHtmlOutputFromFile('BookingAdmin')
+  return HtmlService.createHtmlOutputFromFile('BookingAdminPage')
     .setTitle('Booking Admin')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
