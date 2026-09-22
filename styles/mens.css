@@ -349,7 +349,4 @@
   .mens-flow-list {
     grid-template-columns: 1fr;
   }
-=======
-  background: rgba(var(--accent-rgb), 0.12);
->>>>>>> 74e37ef (Add SNB theme switcher)
 }
