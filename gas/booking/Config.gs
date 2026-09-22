@@ -65,6 +65,18 @@ var BookingConfig = (function () {
     return PropertiesService.getScriptProperties().getProperty('ADMIN_NOTIFICATION_EMAIL') || '';
   }
 
+  /*
+   * 管理者通知メールに載せるBooking Adminへのリンク用URL（Issue #311）。
+   * createBooking（Booking Web App側）でのみ使うため、getAdminNotificationEmailと同じく
+   * Booking Web AppプロジェクトのScript Propertiesに設定する（Booking Adminプロジェクト側に
+   * 設定しても効果がない）。値はBooking Adminプロジェクトのデプロイ（/exec）URL。
+   * 未設定時は空文字を返し、AdminNotifier.gs側でリンク行を出さないfail-closed判定に使う
+   * （未設定でもcreateBooking・管理者通知自体は失敗させない）。
+   */
+  function getBookingAdminUrl() {
+    return PropertiesService.getScriptProperties().getProperty('BOOKING_ADMIN_URL') || '';
+  }
+
   var POSITIVE_INTEGER_STRICT_PATTERN_ = /^\d+$/;
 
   /* readIntegerProperty_と異なり、不正値・0以下は例外にもNaNにもせずdefaultValueへフォールバックする
@@ -177,6 +189,7 @@ var BookingConfig = (function () {
     getAvailabilityConfig: getAvailabilityConfig,
     getSpreadsheetId: getSpreadsheetId,
     getAdminNotificationEmail: getAdminNotificationEmail,
+    getBookingAdminUrl: getBookingAdminUrl,
     getTtlConfig: getTtlConfig,
     getRateLimitConfig: getRateLimitConfig,
     getMailConfig: getMailConfig,

@@ -49,6 +49,23 @@ test('CALENDAR_IDが設定されていれば取得できる', function () {
   assert.strictEqual(BookingConfig.getCalendarId(), 'test-calendar-id@group.calendar.google.com');
 });
 
+/* getBookingAdminUrl（Issue #311）: AdminNotifier.gsが管理者通知メールへBooking Adminリンクを
+   載せるかどうかの判定に使う。ADMIN_NOTIFICATION_EMAIL等と同じくfail-closed（未設定なら空文字）。 */
+test('getBookingAdminUrl: BOOKING_ADMIN_URLが未設定なら空文字を返す', function () {
+  var BookingConfig = loadConfig({});
+  assert.strictEqual(BookingConfig.getBookingAdminUrl(), '');
+});
+
+test('getBookingAdminUrl: BOOKING_ADMIN_URLが設定されていればそのまま返す', function () {
+  var BookingConfig = loadConfig({
+    BOOKING_ADMIN_URL: 'https://script.google.com/macros/s/EXAMPLE_ADMIN_DEPLOY_ID/exec'
+  });
+  assert.strictEqual(
+    BookingConfig.getBookingAdminUrl(),
+    'https://script.google.com/macros/s/EXAMPLE_ADMIN_DEPLOY_ID/exec'
+  );
+});
+
 test('数値項目の誤設定はConfig.gs自体では例外にせずNaNとして返す（fail-closed判定はAvailability.gs側のvalidateInputが担う）', function () {
   var BookingConfig = loadConfig({ BUFFER_MINUTES: 'abc', SLOT_STEP_MINUTES: '0' });
   var config = BookingConfig.getAvailabilityConfig();

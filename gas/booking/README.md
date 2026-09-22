@@ -1333,6 +1333,7 @@ Booking Web App側からは呼び出せない）。
 | `RATE_LIMIT_GLOBAL_WINDOW_MINUTES` | - | 省略時 `1` |
 | `RATE_LIMIT_DUPLICATE_WINDOW_MINUTES` | - | 省略時 `2`。同一内容の連投とみなす時間窓 |
 | `ADMIN_NOTIFICATION_EMAIL` | - | 省略時は管理者通知を送らない（未設定でもcreateBooking自体は失敗しない） |
+| `BOOKING_ADMIN_URL`（Issue #311） | - | 管理者通知メールに載せるBooking Adminへのリンク先URL。`createBooking`（**Booking Web App側**）でのみ使うため`ADMIN_NOTIFICATION_EMAIL`と同じく**Booking Web AppプロジェクトのScript Propertiesに設定する**（Booking Adminプロジェクト側に設定しても効果がない）。値は**Booking Adminプロジェクトの**デプロイ（`/exec`）URL（別プロジェクトの値をコピーしてくる点に注意）。省略時はメール本文にBooking Adminリンクを出さず、従来どおりSpreadsheetの管理メニューへの案内のまま（未設定でもcreateBooking・管理者通知自体は失敗しない） |
 | `BOOKING_MAIL_DISPLAY_NAME`（Issue #271） | - | 利用者向けメールの送信者表示名。**未設定の場合、PENDING/CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗として扱う**（予約状態は維持） |
 | `BOOKING_MAIL_REPLY_TO`（Issue #271） | - | 利用者向けメールのreply-toアドレス。未設定時の扱いは`BOOKING_MAIL_DISPLAY_NAME`と同じ |
 | `BOOKING_CONTACT_EMAIL`（Issue #271） | - | 利用者向けメール本文に載せる問い合わせ先。未設定時の扱いは`BOOKING_MAIL_DISPLAY_NAME`と同じ |
@@ -1367,8 +1368,10 @@ Spreadsheetを参照してしまう）。
 
 `PENDING_TTL_HOURS`/`PENDING_TTL_MIN_HOURS_BEFORE_START`/`PENDING_TTL_MIN_HOLD_HOURS`は
 `expirePendingBookings`が使うため、**Booking Adminプロジェクト側に設定する**
-（Booking Web App側は不要）。`RATE_LIMIT_*`/`ADMIN_NOTIFICATION_EMAIL`は
-`createBooking`のみが使うため、**Booking Web App側に設定する**（Booking Admin側は不要）。
+（Booking Web App側は不要）。`RATE_LIMIT_*`/`ADMIN_NOTIFICATION_EMAIL`/`BOOKING_ADMIN_URL`
+（Issue #311）は`createBooking`のみが使うため、**Booking Web App側に設定する**
+（Booking Admin側は不要）。`BOOKING_ADMIN_URL`の値自体はBooking Adminプロジェクトの
+デプロイURLだが、それを読み出すのは`createBooking`（Booking Web App側）であることに注意。
 
 **`BOOKING_MAIL_DISPLAY_NAME`/`BOOKING_MAIL_REPLY_TO`/`BOOKING_CONTACT_EMAIL`（Issue #271）は
 両方のプロジェクトに設定する。** Booking Web App側は`createBooking`のPENDINGメールで、

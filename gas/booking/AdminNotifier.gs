@@ -11,6 +11,19 @@
  * この関数はBookingRepository.createBookingからLock解放後・かつtry/catchで
  * 包まれた状態で呼ばれる。ここで例外を投げても予約自体はロールバックされない
  * （通知失敗を予約失敗として扱わない、というIssue #268の要件を満たすための設計）。
+ *
+ * Issue #311での変更点:
+ * - 利用日にBookingAvailability.formatDateWithWeekday（Availability.gs）で曜日を付ける。
+ *   record.dateはタイムゾーン正規化済みの'YYYY-MM-DD'文字列のため、
+ *   new Date(record.date).getDay()のようなGAS実行環境のローカルtimezoneに依存する
+ *   変換は使わない。
+ * - 本文から`Calendar Event ID`表示を削除する（calendarEventId自体の内部保持・
+ *   Spreadsheet/Calendar連携ロジックは変更しない。この関数はメール本文を組み立てる
+ *   だけで、record.calendarEventIdの値そのものには触れない）。
+ * - BookingConfig.getBookingAdminUrl()（Booking Web App側のBOOKING_ADMIN_URL）が
+ *   設定されている場合のみ、Booking Adminへのリンクを本文末尾に追加し、確認方法の案内も
+ *   「Booking Adminから確定してください」に切り替える。未設定時は従来どおり
+ *   Spreadsheetの管理メニューへの案内のまま据え置く。
  */
 'use strict';
 
@@ -19,18 +32,27 @@ var AdminNotifier = (function () {
     var adminEmail = BookingConfig.getAdminNotificationEmail();
     if (!adminEmail) return;
 
+    var adminUrl = BookingConfig.getBookingAdminUrl();
+    var confirmInstruction = adminUrl
+      ? '内容を確認し、問題なければBooking Adminから確定してください。'
+      : '内容を確認し、問題なければSpreadsheetの管理メニューから確定してください。';
+
     var subject = '[' + Booking.getBrandLabel(record.brand) + '] 仮予約を受け付けました: ' + record.bookingId;
-    var body = [
-      '新しい仮予約（PENDING）が届きました。内容を確認し、問題なければSpreadsheetの管理メニューから確定してください。',
+    var lines = [
+      '新しい仮予約（PENDING）が届きました。' + confirmInstruction,
       '',
       'bookingId: ' + record.bookingId,
-      '利用日: ' + record.date,
-      'Calendar Event ID: ' + record.calendarEventId,
-      '',
-      '※このメールにはお客様の氏名・連絡先は含めていません。詳細はSpreadsheet台帳（bookingIdで検索）を確認してください。'
-    ].join('\n');
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date)
+    ];
+    if (adminUrl) {
+      lines.push('');
+      lines.push('Booking Admin:');
+      lines.push(adminUrl);
+    }
+    lines.push('');
+    lines.push('※このメールにはお客様の氏名・連絡先は含めていません。詳細はSpreadsheet台帳（bookingIdで検索）を確認してください。');
 
-    MailApp.sendEmail(adminEmail, subject, body);
+    MailApp.sendEmail(adminEmail, subject, lines.join('\n'));
   }
 
   return {

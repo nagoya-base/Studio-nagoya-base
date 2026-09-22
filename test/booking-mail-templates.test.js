@@ -161,3 +161,31 @@ test('brandラベル: snb/mens/studio_xで同じロジックを使い、表示�
     });
   });
 });
+
+/*
+ * 利用日の曜日表示（Issue #311）。BookingAvailability.formatDateWithWeekday（Availability.gs）
+ * を共通で使い、'YYYY-MM-DD（曜）'形式で表示することを、利用者向け4テンプレート
+ * （仮予約受付・予約確定・キャンセル・前日リマインド）すべてで確認する。
+ * sampleRecord()の既定date '2026-10-01' は木曜日。
+ */
+test('利用日の曜日表示: buildPendingMail/buildConfirmedMail/buildCancelledMail/buildReminderMailすべてで利用日に曜日が付く', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord();
+
+  var pending = templates.buildPendingMail(record, CONFIG);
+  var confirmed = templates.buildConfirmedMail(record, CONFIG);
+  var cancelled = templates.buildCancelledMail(record, CONFIG);
+  var reminder = templates.buildReminderMail(record, CONFIG, DUMMY_ACCESS_GUIDE);
+
+  [pending, confirmed, cancelled, reminder].forEach(function (mail) {
+    assert.match(mail.body, /利用日: 2026-10-01（木）/);
+  });
+});
+
+test('利用日の曜日表示: 別の曜日（2026-10-05は月曜日）でも正しく表示される', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ date: '2026-10-05' });
+
+  var mail = templates.buildConfirmedMail(record, CONFIG);
+  assert.match(mail.body, /利用日: 2026-10-05（月）/);
+});

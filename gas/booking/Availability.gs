@@ -47,6 +47,27 @@ var BookingAvailability = (function () {
     return true;
   }
 
+  var WEEKDAY_LABELS_JA_ = ['日', '月', '火', '水', '木', '金', '土'];
+
+  /*
+   * dateString（'YYYY-MM-DD'）に日本語の曜日を付けて'YYYY-MM-DD（月）'形式にする（Issue #311）。
+   * record.dateはformatDateInTimezoneで正規化済みの文字列でありDate型ではないため、
+   * new Date(dateString).getDay()のようなGAS実行環境のローカルtimezoneに依存する変換は使わず、
+   * isValidDateStringと同じDate.UTC構築方式（Date.UTC(y, m-1, d) + getUTCDay()）で曜日を
+   * 算出する。dateStringが不正な場合はそのまま返す（fail-closedに例外を投げて通知メール
+   * 自体を止めない）。AdminNotifier.gs / BookingMailTemplates.gsの両方がこの関数を共有し、
+   * 曜日変換ロジックを二重実装しない。
+   */
+  function formatDateWithWeekday(dateString) {
+    if (!isValidDateString(dateString)) return dateString;
+    var parts = dateString.split('-');
+    var year = parseInt(parts[0], 10);
+    var month = parseInt(parts[1], 10);
+    var day = parseInt(parts[2], 10);
+    var weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    return dateString + '（' + WEEKDAY_LABELS_JA_[weekday] + '）';
+  }
+
   /* config.openTime / config.closeTime のような 'HH:mm' 文字列の形式検証。
      Script Propertiesの入力ミスでも判定が壊れないようにする。 */
   function isValidTimeString_(value) {
@@ -294,6 +315,7 @@ var BookingAvailability = (function () {
 
   return {
     isValidDateString: isValidDateString,
+    formatDateWithWeekday: formatDateWithWeekday,
     isValidTimeString: isValidTimeString,
     parseTimeToMinutes: parseTimeToMinutes_,
     formatDateInTimezone: formatDateInTimezone,
