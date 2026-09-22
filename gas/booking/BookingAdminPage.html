@@ -55,18 +55,20 @@
 
     .tabs {
       display: flex;
-      gap: 8px;
+      gap: 6px;
     }
 
     .tab-button {
       flex: 1;
+      min-width: 0;
       min-height: 40px;
       border: 1px solid var(--color-border);
       background: var(--color-bg);
       color: var(--color-text);
       border-radius: 8px;
-      font-size: 14px;
-      padding: 8px 4px;
+      font-size: 12px;
+      padding: 8px 1px;
+      white-space: nowrap;
     }
 
     .tab-button.active {
@@ -223,6 +225,7 @@
     <div class="tabs">
       <button type="button" class="tab-button active" data-filter="today">今日</button>
       <button type="button" class="tab-button" data-filter="upcoming">今後</button>
+      <button type="button" class="tab-button" data-filter="cancelled">キャンセル</button>
       <button type="button" class="tab-button" data-filter="all">すべて</button>
     </div>
   </header>
@@ -286,14 +289,17 @@
 
     /* 「今日/今後」の判定はstate.todayJst（サーバーがAsia/Tokyo基準で計算した値。
        getAdminBookingsの応答に含まれる）とbooking.date（同じくJST基準の
-       'YYYY-MM-DD'）の単純な文字列比較で行う。端末のtimezone設定には一切依存しない。 */
+       'YYYY-MM-DD'）の単純な文字列比較で行う。端末のtimezone設定には一切依存しない。
+       CANCELLEDは「今日」「今後」には出さず、日付を問わず「キャンセル」タブへ集約する
+       （EXPIREDはここに含めない。「すべて」で確認できれば十分という要件のため）。 */
     function visibleBookings() {
       var today = state.todayJst;
       return state.bookings.filter(function (b) {
         if (state.filter === 'all') return true;
+        if (state.filter === 'cancelled') return b.status === 'CANCELLED';
         if (!today) return true;
-        if (state.filter === 'today') return b.date === today;
-        if (state.filter === 'upcoming') return b.date >= today;
+        if (state.filter === 'today') return b.date === today && b.status !== 'CANCELLED';
+        if (state.filter === 'upcoming') return b.date >= today && b.status !== 'CANCELLED';
         return true;
       });
     }
