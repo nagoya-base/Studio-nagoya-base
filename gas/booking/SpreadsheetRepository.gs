@@ -105,6 +105,19 @@ var SpreadsheetRepository = (function () {
     return null;
   }
 
+  /* 全行をstatus問わず返す（Issue #305 Booking Admin Web UIの一覧表示用）。
+     個人管理用途で件数が小規模な前提のため、getAllPendingBookings等と同じ
+     「全行取得してから絞り込む」方針をそのまま踏襲する（専用の検索APIは作らない）。 */
+  function getAllBookings() {
+    var sheet = ensureBookingsSheet_();
+    var values = sheet.getDataRange().getValues();
+    var result = [];
+    for (var i = 1; i < values.length; i++) {
+      result.push({ rowNumber: i + 1, record: rowToRecord_(values[i]) });
+    }
+    return result;
+  }
+
   /* status===PENDINGの全行を返す（expirePendingBookings用）。件数が多くなる想定は
      Phase 1ではないため、全行取得→フィルタというシンプルな実装にしている。 */
   function getAllPendingBookings() {
@@ -217,6 +230,7 @@ var SpreadsheetRepository = (function () {
     HEADERS: HEADERS_,
     appendBooking: appendBooking,
     findRowByBookingId: findRowByBookingId,
+    getAllBookings: getAllBookings,
     getAllPendingBookings: getAllPendingBookings,
     getConfirmedBookingsForDate: getConfirmedBookingsForDate,
     updateBookingFields: updateBookingFields,

@@ -30,6 +30,13 @@ Epic #265の一部として以下を実装済み。
   Calendar/Sheetsの部分失敗のRecovery記録・Sheets行が無い場合のCalendar診断を
   実装した。Booking Admin側のみに追加し、公開Web Appにはキャンセルエンドポイントを
   一切公開しない（詳細は「Issue #272: 管理者キャンセルでCalendar / Sheetsを一貫更新する」参照）
+- **Issue #305**: Booking Adminを個人用のシンプルなWeb UI（`BookingAdminWeb.gs` +
+  `BookingAdmin.html`）化した。新しい予約管理ロジックは作らず、既存の
+  `confirmBooking(bookingId)`/`cancelBookingAdmin(bookingId)`（いずれも変更なし）への
+  薄いラッパーのみを追加し、一覧・詳細はSpreadsheetRepository.gsの読み取り専用関数
+  （新規`getAllBookings()`）を使う。Booking Adminプロジェクトを従来のSpreadsheet UI拡張＋
+  時間主導トリガーに加えてWeb Appとしてもデプロイする（Execute as: Me / Only myself。
+  詳細は「Issue #305: Booking Admin Web UI化（個人用シンプルMVP）」参照）
 
 このディレクトリは自社予約システム専用のApps Scriptプロジェクトの元になるソース一式
 （複数プロジェクトへ配布するファイル群）として運用し、`gas/ataru_survey_public` 等の
@@ -1005,6 +1012,67 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
   （書き込み対象rangeをテストから直接assertできるようにするため。既存の挙動には
   影響しない）
 
+## Issue #305: Booking Admin Web UI化（個人用シンプルMVP）
+
+現在Spreadsheetのカスタムメニューから行っていたBooking Admin操作（`confirmBooking`/
+`cancelBookingAdmin`）を、スマホから使いやすい**管理者本人専用**のWeb UIでも行えるように
+した。個人管理ツールのため、高機能化・過剰な抽象化・将来拡張前提の複雑な設計は避け、
+新しい予約管理ロジックは一切作らず、既存の正式処理をそのまま再利用している。
+
+### このIssueで実装した範囲
+
+- `BookingAdminWeb.gs`（新規） — Web Appエントリポイント`doGet()`と、既存処理への
+  薄いラッパー4関数（`getAdminBookings()` / `getAdminBookingDetail(bookingId)` /
+  `adminConfirmBooking(bookingId)` / `adminCancelBooking(bookingId)`）。
+  `adminConfirmBooking`/`adminCancelBooking`は、それぞれ既存の正式関数
+  `confirmBooking(bookingId)`/`cancelBookingAdmin(bookingId)`（BookingAdmin.gs。
+  いずれも本Issueで変更していない）を1行で呼ぶだけで、業務ロジック・Lock・Calendar/
+  Sheets/Mail/Recovery処理は一切コピーしていない。`getAdminBookings()`/
+  `getAdminBookingDetail()`は、Bookingsシート上のDate値をgoogle.script.run越しに
+  そのまま渡さず、既存の`BookingAvailability.formatDateInTimezone`/
+  `formatTimeInTimezone`（Availability.gs。メール本文生成等でも使っている既存の
+  純粋関数）でAsia/Tokyo基準の文字列へ正規化してから返す。`getAdminBookings()`は
+  一覧と一緒に、同じくAsia/Tokyo基準で計算した`todayJst`（今日の日付文字列）も返し、
+  クライアント側の「今日/今後」判定が端末のtimezone設定に依存しないようにしている。
+  `getAdminBookingDetail()`は`lastMailErrorAt`/`lastMailErrorType`/
+  `lastMailErrorMessage`の詳細は返さず、`hasMailError`（あり/なし）のみ返す
+  （障害調査はSpreadsheetを直接確認する運用のまま）
+- `BookingAdmin.html`（新規） — 1ページのみのモバイル優先UI。今日/今後/すべてタブ・
+  カード形式の一覧・モーダルでの詳細表示・確定/キャンセルボタンを持つ。CSS/JSはすべて
+  インラインで、別ファイルへは分割していない
+- `SpreadsheetRepository.gs`（拡張） — 一覧取得用に読み取り専用の`getAllBookings()`を
+  追加（既存の`getAllPendingBookings()`と同じ「全行取得→呼び出し側で絞り込む」方針。
+  `HEADERS_`・他の既存関数は無変更）
+- Booking Adminプロジェクトを、従来の「Spreadsheet UI拡張＋時間主導トリガー」に加えて
+  **Web Appとしてもデプロイする**（Execute as: Me / Who has access: Only myself。
+  管理者本人のみアクセス可能。詳細は「Booking Admin Web UI（Issue #305）のセットアップ・
+  使い方」参照）
+
+### 現行READMEとの関係（実装前の確認事項）
+
+このIssue以前のREADMEには「Booking Adminプロジェクト（コンテナバインド）はWeb App
+としてデプロイしない（Spreadsheetを開いたときのUI拡張として動くだけでよい）」という
+記述があった（Issue #268〜#272時点ではBooking AdminをWeb App化する要件が無かったため）。
+本Issueはこの記述を明示的に更新するものであり、既存バックエンドのロジック
+（`confirmBooking`/`cancelBookingAdmin`/`expirePendingBookings`本体・状態遷移・
+Lock/Calendar/Sheets/Mail/Recovery処理）自体には一切手を入れていない。
+
+Web App化してもLock設計は変わらない: `LockService.getScriptLock()`はスクリプト
+プロジェクト単位の排他であり、呼び出し元が`onOpen`メニューだろうとWeb App
+（`doGet`/`google.script.run`）だろうと同じLockを取得する。そのため
+`confirmBooking`/`cancelBookingAdmin`/`expirePendingBookings`の3者間の排他は
+今までどおり保たれる。
+
+### 意図的にMVP非対象としたもの（Issue本文どおり）
+
+新規予約作成・予約内容編集・statusの直接編集・COMPLETED/paymentStatus追加・売上集計・
+金額管理・支払確認・管理メモ編集・Recovery/trigger/Script Properties管理UI・
+Calendar直接編集・メールforce resend・一括確定/一括キャンセル・ページネーション・
+複雑な検索・過剰なダッシュボード・新規DBは実装していない。EXPIREDへの手動変更ボタンも
+作らず、`expirePendingBookings()`と時間主導トリガーの責務をそのまま維持している。
+一覧はカード表示に必要な最小フィールドのみを返し、`email`/`phone`/`note`等のPIIは
+詳細取得（`getAdminBookingDetail`）でのみ返す。
+
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
 | 項目 | 値 |
@@ -1129,6 +1197,19 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 - `BookingMailer.gs` — **変更なし**（既存の`sendCancelledMailForBooking`をそのまま利用。
   新規failureTypeのerrorMessageサニタイズにも既存の`sanitizeErrorMessage`を再利用）
 
+### Issue #305（Booking Admin Web UI化で追加）
+
+- `BookingAdminWeb.gs`（新規） — `doGet()`・`getAdminBookings()`・
+  `getAdminBookingDetail(bookingId)`・`adminConfirmBooking(bookingId)`・
+  `adminCancelBooking(bookingId)`。confirm/cancelは既存の`confirmBooking`/
+  `cancelBookingAdmin`への1行の委譲のみ。**Booking Adminプロジェクト
+  （コンテナバインド）専用**
+- `BookingAdmin.html`（新規） — Web UI本体（1ページ）。**Booking Adminプロジェクト
+  （コンテナバインド）専用**。`.gs`ファイルではないため「GASプロジェクトへの
+  デプロイ対象ファイル」表には含めない（次節の注記を参照）
+- `SpreadsheetRepository.gs`（拡張） — 一覧取得用の`getAllBookings()`を追加
+  （既存関数・`HEADERS_`は無変更）
+
 ## GASプロジェクトへのデプロイ対象ファイル
 
 上記の理由（カスタムメニューはコンテナバインドスクリプトでしか作成できない）により、
@@ -1152,8 +1233,24 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 | `BookingMailer.gs`（Issue #271） | ✓ | ✓ |
 | `BookingTriggers.gs` | – | ✓ |
 | `BookingAdmin.gs` | – | ✓ |
+| `BookingAdminWeb.gs`（Issue #305） | – | ✓ |
 | `BookingReminderTriggers.gs`（Issue #271） | – | ✓ |
-| `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい） |
+| `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい。ただしWeb App自体のデプロイ設定は必要。後述） |
+
+**`BookingAdmin.html`（Issue #305）は`.gs`ファイルではないため、上表には含めない。**
+Booking AdminプロジェクトのスクリプトエディタからHTMLファイルとして`BookingAdmin.html`を
+追加し、内容をそのままコピーする（`test/booking-deployment-manifest-sync.test.js`は
+README.mdの上表を機械的にパースして`test/helpers/booking-deployment-manifest.js`の
+`BOOKING_ADMIN_FILES`/`BOOKING_WEB_APP_FILES`（いずれも`.gs`ファイル名のみを保持する）と
+突き合わせるため、`.html`ファイルを誤って上表の✓行に追加すると、このテストが機械的に
+失敗する。HTMLファイルの配布は上表ではなく、この段落での案内のみとすること）。
+
+**Booking AdminプロジェクトをWeb Appとしてデプロイする場合は、コードを更新するたびに
+新しいバージョンとして再デプロイすること（Issue #305）。**「予約管理」カスタムメニュー・
+時間主導トリガー（`expirePendingBookings`/`sendNextDayReminders`）は常に最新の保存済み
+コードで動く一方、Web Appのデプロイは「デプロイした時点のコードのスナップショット」を
+固定して配信する。再デプロイを忘れると、スマホのWeb UIだけ古いバージョンの
+`BookingAdminWeb.gs`/`BookingAdmin.html`のまま動き続ける不整合が起こり得る。
 
 **`Availability.gs`はBooking Adminプロジェクトへの配布が必須。**
 `BookingRepository.gs`の`expirePendingBookings`は、候補ごとに`Booking.formatDateInTimezone`
@@ -1566,8 +1663,11 @@ Issue #270時点で`customerType`に指定できるのは`first_time` / `returni
    （または手動でトリガーを作成する）。前日リマインドを運用する場合は、同様に
    「前日リマインド用トリガーの作成」（Issue #271）に従って`createNextDayReminderTrigger`
    も実行する。
-7. Web Appとしてのデプロイは不要（このプロジェクトはSpreadsheetのUI拡張＋時間主導
-   トリガーとしてのみ使う）。
+7. **（Issue #305以降）** スマホからの確定・キャンセル用Web UIを使う場合は、この
+   Booking AdminプロジェクトをWeb Appとしてもデプロイする。手順は「Booking Admin
+   Web UI（Issue #305）のセットアップ・使い方」を参照（`BookingAdmin.html`の追加コピー・
+   Execute as: Me / Only myselfでのデプロイが必要）。Web UIを使わない場合、この手順は
+   スキップしてよい（Spreadsheetカスタムメニューだけで従来どおり運用できる）。
 
 ### LockServiceの共有について
 
@@ -1666,6 +1766,63 @@ Booking Web Appプロジェクトのスクリプトエディタではない点�
 `expiredAt`を記録する。Calendar削除に失敗した場合も`Recovery`シートへ記録した上で
 Sheets側はEXPIREDへ進める（PENDINGのまま放置しない）。
 
+## Booking Admin Web UI（Issue #305）のセットアップ・使い方
+
+「1人で使うBooking Adminを、スマホから確定・キャンセルしやすくする最低限のUI」。
+一般公開のWebアプリではなく、管理者本人専用。公開Booking Web App（利用者向け予約UI）
+とは完全に別物で、公開側から本UIへのリンクも追加していない。
+
+### セットアップ手順
+
+1. 「管理メニュー用GASプロジェクト（Booking Admin）のセットアップ」の手順1〜6を
+   先に完了させる（`.gs`ファイル一式のコピー・Script Properties設定・
+   カスタムメニュー・PENDING TTL失効トリガー）。
+2. Booking Adminプロジェクトのスクリプトエディタで、ファイル追加からHTMLファイルとして
+   `BookingAdmin.html`を作成し、このリポジトリの`gas/booking/BookingAdmin.html`の内容を
+   そのままコピーする。
+3. 「デプロイ」→「新しいデプロイ」→種類「ウェブアプリ」を選択する。
+4. デプロイ設定を以下のとおりにする（管理者本人のみアクセス可能にするため）。
+   - **実行ユーザー（Execute as）**: Me（自分）
+   - **アクセスできるユーザー（Who has access）**: Only myself
+     （個人のGoogleアカウントでも設定できる。Google Workspace限定の設定ではない）
+5. デプロイ後に発行されるWeb App URLを、自分のスマホのホーム画面等に保存しておく
+   （公開サイトのどこにもリンクを置かない）。
+6. コードを更新した場合は、手順3のデプロイ画面から「新しいバージョン」として
+   再デプロイすること（「GASプロジェクトへのデプロイ対象ファイル」節の注記を参照。
+   再デプロイを忘れるとWeb UIだけ古いコードのまま動き続ける）。
+
+### 画面構成
+
+1ページのみ。上部に「今日 / 今後 / すべて」タブ、その下に予約一覧をカード形式で表示する
+（`getAdminBookings()`で全件取得し、タブの絞り込みはクライアント側で行う。個人管理用途で
+件数が小規模な前提のため、専用の検索APIは作っていない。「今日」の判定は
+`getAdminBookings()`が一緒に返すAsia/Tokyo基準の`todayJst`を使い、端末のtimezone設定には
+依存しない）。カードから「詳細」を押すとモーダルで全項目を表示する
+（`getAdminBookingDetail(bookingId)`。メール送信失敗の詳細（内容・種別・日時）は表示せず、
+「メールエラー: あり/なし」のみ表示する）。
+
+- PENDING: 「詳細」「確定」「キャンセル」
+- CONFIRMED: 「詳細」「キャンセル」
+- CANCELLED / EXPIRED: 「詳細」のみ（読み取り専用）
+
+「確定」は`adminConfirmBooking(bookingId)`（内部で既存`confirmBooking(bookingId)`を
+そのまま呼ぶ）、「キャンセル」は実行前に確認ダイアログを挟んだうえで
+`adminCancelBooking(bookingId)`（内部で既存`cancelBookingAdmin(bookingId)`をそのまま
+呼ぶ）を実行する。いずれも処理中はボタンをdisableして二重操作を防ぎ、完了後は必ず
+サーバーから一覧を再取得する（クライアント側でstatusを推測して書き換えない）。
+ボタンのdisableは確定/キャンセルの処理自体が終わっただけでは解除せず、その後の一覧再取得・
+再描画が完了するまで維持する（再取得中に古い一覧のまま同じ予約を再操作できてしまう隙を
+なくすため）。一覧の再取得はタブ切替や確定/キャンセルのたびに都度呼ばれるため、連打等で
+複数の呼び出しが重なった場合は、それぞれの呼び出しに採番したIDで「今なお最新の呼び出しか」
+を確認し、後から返ってきた古い応答で新しい表示を上書きしないようにしている。
+
+### このWeb UIでできないこと（意図的にMVP非対象）
+
+新規予約作成・予約内容編集・statusの直接編集・EXPIREDへの手動変更・メールforce resend・
+一括確定/一括キャンセル・売上集計・金額管理・支払確認・管理メモ編集は、このWeb UIからは
+できない。これらが必要な場合は、従来どおりSpreadsheetカスタムメニュー（またはSpreadsheet
+を直接確認すること）を使う。既存のカスタムメニューはこのIssueでも削除・変更していない。
+
 ## デプロイ設定（Booking Web Appプロジェクト）
 
 Booking Adminプロジェクト（コンテナバインド）はWeb Appとしてデプロイしない
@@ -1729,6 +1886,15 @@ Booking Adminプロジェクト（コンテナバインド）はWeb Appとして
   `BookingAdmin.gs`にキャンセルメニューが無い版等）へ手動で戻すか、Booking Admin
   プロジェクト自体を削除する。`cancelBookingAdmin`は新しいScript Propertyを追加
   していないため、ロールバック時にプロパティの削除は不要。
+- **Issue #305（Booking Admin Web UI化）分**: このPRは`BookingAdminWeb.gs`/
+  `BookingAdmin.html`の追加と`SpreadsheetRepository.gs`への読み取り専用関数追加のみで、
+  既存の`confirmBooking`/`cancelBookingAdmin`/`expirePendingBookings`本体・状態遷移・
+  Script Properties・Bookings列は一切変更していないため、コードをrevertするだけで
+  元の状態（Spreadsheetカスタムメニューのみ）に戻る。Booking AdminプロジェクトをWeb App
+  としてデプロイ済みの場合は、Apps Scriptのデプロイ管理からそのデプロイを無効化するか
+  削除すればWeb UIへアクセスできなくなる（カスタムメニュー・時間主導トリガーには
+  影響しない。同一プロジェクト内でも別々に管理できる）。新しいScript Propertyは
+  追加していないため、ロールバック時にプロパティの削除は不要。
 
 ## 設計判断メモ（レビュー時にご確認ください）
 
@@ -2083,6 +2249,30 @@ Issue #273で追加（`Availability.gs`がBooking Admin配布ファイル一覧�
   表側・manifest側それぞれを個別に改変し、両方向のドリフトで実際にこのテストが失敗する
   ことを確認済み
 
+Issue #305（Booking Admin Web UI化）で追加:
+
+- `test/booking-admin-web.test.js`（新規） — `BookingAdminWeb.gs`の統合テスト。
+  `adminConfirmBooking`/`adminCancelBooking`が実際に既存`confirmBooking`/
+  `cancelBookingAdmin`（Calendar/Sheets/Lockを含む本物の処理）を実行し、独自の状態遷移
+  ロジックを持たないこと、`getAdminBookings()`が`{ todayJst, bookings }`を返し
+  一覧の各要素が最小フィールドのみで`email`/`phone`/`note`等のPIIを含まないこと、
+  `getAdminBookingDetail(bookingId)`が詳細フィールド一式を返すこと・存在しない
+  bookingIdで`NOT_FOUND`を返すことを検証。**PRレビュー対応で追加**:
+  `getAdminBookings`/`getAdminBookingDetail`の`date`/`startAt`/`endAt`・各SentAt系
+  フィールドがDateオブジェクトではなく正規化された文字列で返ること（`date`が
+  Spreadsheet側の挙動でDate値として保存されているケースを含む）、`todayJst`が
+  Asia/Tokyo基準で計算されること、メール送信に失敗した場合は`hasMailError:true`になり
+  `lastMailErrorAt`/`lastMailErrorType`/`lastMailErrorMessage`の詳細はレスポンスに
+  含まれないことを検証。**再レビュー対応で追加**: `loadBookings()`の応答が
+  `loadRequestSeq`比較で古いと判定されstateへの反映をスキップした場合でも、
+  呼び出し元へ渡された`onDone`コールバック（busy解除用）は必ず実行されること
+  （BookingAdmin.html側の修正。連続してconfirm/cancelを実行した際に一部の
+  bookingIdのボタンが解除されないまま残る不具合の修正）
+- `test/helpers/booking-deployment-manifest.js`（更新） — `BOOKING_ADMIN_FILES`へ
+  `BookingAdminWeb.gs`を追加（`test/booking-admin-deployment.test.js`/
+  `test/booking-deployment-manifest-sync.test.js`が引き続き通ることで、本番Booking
+  Adminへの配布ファイルセットとして矛盾がないことを機械的に確認している）
+
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに
 差し替えており、実際のGoogle Calendar・Spreadsheet・Script Propertiesにはアクセスしない
@@ -2206,6 +2396,28 @@ Issue #272（管理者キャンセルでCalendar / Sheetsを一貫更新する�
       `CANCEL_CALENDAR_LOOKUP_FAILED`が記録され、`Bookings`シートの`status`・
       Calendarのいずれも変更されないこと（設定を元に戻してから同じbookingIdで
       再実行すれば正常にキャンセルできること）
+
+Issue #305（Booking Admin Web UI化）の追加確認:
+
+- [ ] Booking AdminプロジェクトをWeb Appとしてデプロイし、「Execute as: Me / Only
+      myself」設定で、管理者本人以外のGoogleアカウントからアクセスすると認可エラーに
+      なること
+- [ ] iPhone Safariから管理者本人のURLを開くと、横スクロールなしで予約一覧が
+      カード表示されること
+- [ ] 「今日 / 今後 / すべて」タブでそれぞれ絞り込めること
+- [ ] カードの「詳細」から、Bookingsの値がそのまま（編集不可で）表示されること
+- [ ] PENDING予約の「確定」を実行すると、実際に`confirmBooking`と同じ結果（Calendar
+      確定・Sheets `CONFIRMED`・確定メール）になり、完了後に一覧が最新状態へ
+      再取得されること
+- [ ] PENDING/CONFIRMED予約の「キャンセル」で確認ダイアログが表示され、キャンセルすると
+      実際に`cancelBookingAdmin`と同じ結果（Calendar削除・Sheets `CANCELLED`・
+      キャンセルメール）になること
+- [ ] 確定・キャンセル処理中はボタンがdisableされ、連打しても二重実行されないこと
+- [ ] CANCELLED/EXPIREDの予約には「確定」「キャンセル」ボタンが表示されないこと
+- [ ] Web UIからの操作後も、Spreadsheetカスタムメニュー（「予約管理」）が従来どおり
+      表示・動作すること
+- [ ] 公開Booking Web App（利用者向け予約UI）に、確定・キャンセル等の管理機能が
+      一切追加されていないこと
 
 Phase 0のゲート確認（スペースマーケットとの同一Calendar共存の実環境確認）は
 Issue #267で完了（PASS, 2026-09-19）。確認手順・記録は
