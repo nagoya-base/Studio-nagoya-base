@@ -338,6 +338,68 @@ test('getAdminBookings: createdAtがDate値として保存されていてもWeb 
   assert.strictEqual(item.createdAt, '2026-09-01 09:30');
 });
 
+/*
+ * createdAtの正規化（PRレビュー対応: normalizeAdminCreatedAt_）。formatAdminDateTime_は
+ * Date値以外（文字列）をそのまま素通りさせるため、Sheetsの読み込み結果がDate値ではなく
+ * 不揃いな文字列だった場合に予約順ソートが崩れうる。normalizeAdminCreatedAt_はDate値・
+ * 既に正規形式の文字列・別形式だが解釈可能な文字列のいずれも同じ'YYYY-MM-DD HH:mm'形式へ
+ * 揃え、解釈不能な値は例外を投げず''へ落とすことを確認する。
+ */
+function appendBookingWithCreatedAt_(ctx, bookingId, createdAt) {
+  ctx.sandbox.SpreadsheetRepository.appendBooking({
+    bookingId: bookingId,
+    createdAt: createdAt,
+    date: futureDateJst_(30),
+    startAt: new Date('2026-10-31T19:00:00+09:00'),
+    endAt: new Date('2026-10-31T21:00:00+09:00'),
+    brand: 'studio_x',
+    name: '山田太郎',
+    email: 'taro@example.com',
+    phone: '090-0000-0000',
+    people: '2名',
+    purpose: 'テスト',
+    paymentMethod: '現金',
+    status: 'PENDING',
+    calendarEventId: 'event-' + bookingId,
+    source: 'test',
+    note: '',
+    customerType: 'returning'
+  });
+}
+
+function createdAtOf_(ctx, bookingId) {
+  var result = ctx.sandbox.getAdminBookings();
+  var item = result.bookings.filter(function (b) { return b.bookingId === bookingId; })[0];
+  assert.ok(item, bookingId + 'が一覧に見つかるべき');
+  return item.createdAt;
+}
+
+test('getAdminBookings: createdAtが既に"YYYY-MM-DD HH:mm"形式の文字列ならそのまま返る', function () {
+  var ctx = setup();
+  appendBookingWithCreatedAt_(ctx, 'SX-20261001-CCCCCCCC', '2026-09-01 09:30');
+
+  assert.strictEqual(createdAtOf_(ctx, 'SX-20261001-CCCCCCCC'), '2026-09-01 09:30');
+});
+
+test('getAdminBookings: createdAtが別形式の文字列（ISO 8601）でも比較可能な"YYYY-MM-DD HH:mm"へ統一される', function () {
+  var ctx = setup();
+  appendBookingWithCreatedAt_(ctx, 'SX-20261001-DDDDDDDD', '2026-09-01T09:30:00+09:00');
+
+  assert.strictEqual(createdAtOf_(ctx, 'SX-20261001-DDDDDDDD'), '2026-09-01 09:30');
+});
+
+test('getAdminBookings: createdAtが解釈不能な値でも例外にならず、安全な空文字列を返す', function () {
+  var ctx = setup();
+  appendBookingWithCreatedAt_(ctx, 'SX-20261001-EEEEEEEE', 'not-a-date');
+  appendBookingWithCreatedAt_(ctx, 'SX-20261001-FFFFFFFF', '');
+  appendBookingWithCreatedAt_(ctx, 'SX-20261001-GGGGGGGG', undefined);
+
+  assert.doesNotThrow(function () { ctx.sandbox.getAdminBookings(); });
+  assert.strictEqual(createdAtOf_(ctx, 'SX-20261001-EEEEEEEE'), '', '解釈不能な文字列はcreatedAtの形式を推測せず空文字列へ落とすべき');
+  assert.strictEqual(createdAtOf_(ctx, 'SX-20261001-FFFFFFFF'), '');
+  assert.strictEqual(createdAtOf_(ctx, 'SX-20261001-GGGGGGGG'), '');
+});
+
 test('getAdminBookings: todayJstはAsia/Tokyo基準で計算される（端末timezoneに依存しない）', function () {
   var ctx = setup();
 

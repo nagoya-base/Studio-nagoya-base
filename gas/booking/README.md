@@ -1086,10 +1086,16 @@ confirm/cancel/Calendar/Mail/trigger/Script Propertiesはこの変更で一切�
 - `getAdminBookings()`のレスポンスへ`createdAt`を追加した（既存の`bookingId`/`date`/
   `startAt`/`endAt`/`brand`/`name`/`people`/`customerType`/`purpose`/`paymentMethod`/
   `status`に加えて返す）。他のDate値と同じくgoogle.script.run越しにDateオブジェクトの
-  まま返さず、既存の`formatAdminDateTime_`（本Issueで新規追加はしていない、
-  `getAdminBookingDetail`のSentAt系フィールドで既に使っていた関数）でWeb UI用の
-  比較可能な文字列（`'YYYY-MM-DD HH:mm'`）へ正規化してから返す。カード表示には使わず、
-  ソート専用のフィールドとして扱う
+  まま返さない。正規化には`normalizeAdminCreatedAt_`（本機能で新規追加。
+  `BookingAdminWeb.gs`）を使う。`date`/`startAt`/`endAt`が使う既存の`formatAdminDate_`/
+  `formatAdminTime_`/`formatAdminDateTime_`はDate値のみを変換し文字列はそのまま
+  素通りさせる（カード表示用途では、Bookingsシートの列が元々文字列である前提のため
+  それで十分だった）が、`createdAt`は予約順ソートのキーとして使うため文字列で
+  渡ってきた場合も必ず比較可能な形式へ揃える必要がある。そのため`normalizeAdminCreatedAt_`
+  はDate値・既に`'YYYY-MM-DD HH:mm'`形式の文字列・それ以外でDateとして解釈可能な文字列
+  （ISO文字列等）のいずれも同じ`'YYYY-MM-DD HH:mm'`形式へ統一し、解釈不能な値
+  （空文字列・null/undefined・解釈不能な文字列等）は形式を推測せず`''`へ安全に落とす
+  （例外は投げない）。カード表示には使わず、ソート専用のフィールドとして扱う
 - `BookingAdminPage.html`側は`state.sort`（`'date'` | `'reservation'`、既定`'date'`）を
   追加し、タブ切り替え時のフィルタ結果（`filteredBookings()`）に対して
   `sortBookings()`を適用してから描画する（要件どおりfilter→sortの順）。ソートUIは
