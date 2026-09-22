@@ -1073,6 +1073,35 @@ Calendar直接編集・メールforce resend・一括確定/一括キャンセ�
 一覧はカード表示に必要な最小フィールドのみを返し、`email`/`phone`/`note`等のPIIは
 詳細取得（`getAdminBookingDetail`）でのみ返す。
 
+### 追加: 一覧ソート機能（日付順 / 予約順）
+
+Booking Admin Web UIの各タブ（今日/今後/キャンセル/すべて）の一覧に、「日付順 / 予約順」の
+並び替えを追加した。タブ構成・フィルタ条件（today/upcoming/cancelled/allの絞り込み仕様）・
+confirm/cancel/Calendar/Mail/trigger/Script Propertiesはこの変更で一切変更していない。
+新しいAPI・Spreadsheet列も追加していない。
+
+- **日付順（デフォルト）**: `date`昇順、同一日は`startAt`昇順
+- **予約順**: `createdAt`降順（新しく予約されたものを上）。`createdAt`が同値の場合は
+  `bookingId`昇順で安定させる
+- `getAdminBookings()`のレスポンスへ`createdAt`を追加した（既存の`bookingId`/`date`/
+  `startAt`/`endAt`/`brand`/`name`/`people`/`customerType`/`purpose`/`paymentMethod`/
+  `status`に加えて返す）。他のDate値と同じくgoogle.script.run越しにDateオブジェクトの
+  まま返さない。正規化には`normalizeAdminCreatedAt_`（本機能で新規追加。
+  `BookingAdminWeb.gs`）を使う。`date`/`startAt`/`endAt`が使う既存の`formatAdminDate_`/
+  `formatAdminTime_`/`formatAdminDateTime_`はDate値のみを変換し文字列はそのまま
+  素通りさせる（カード表示用途では、Bookingsシートの列が元々文字列である前提のため
+  それで十分だった）が、`createdAt`は予約順ソートのキーとして使うため文字列で
+  渡ってきた場合も必ず比較可能な形式へ揃える必要がある。そのため`normalizeAdminCreatedAt_`
+  はDate値・既に`'YYYY-MM-DD HH:mm'`形式の文字列・それ以外でDateとして解釈可能な文字列
+  （ISO文字列等）のいずれも同じ`'YYYY-MM-DD HH:mm'`形式へ統一し、解釈不能な値
+  （空文字列・null/undefined・解釈不能な文字列等）は形式を推測せず`''`へ安全に落とす
+  （例外は投げない）。カード表示には使わず、ソート専用のフィールドとして扱う
+- `BookingAdminPage.html`側は`state.sort`（`'date'` | `'reservation'`、既定`'date'`）を
+  追加し、タブ切り替え時のフィルタ結果（`filteredBookings()`）に対して
+  `sortBookings()`を適用してから描画する（要件どおりfilter→sortの順）。ソートUIは
+  ヘッダーの`<select id="sort-select">`のみの最小構成で、既存のタブUI・カードデザインは
+  変更していない
+
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
 | 項目 | 値 |

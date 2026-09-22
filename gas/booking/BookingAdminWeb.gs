@@ -80,6 +80,29 @@ function formatAdminDateTime_(value, timezone) {
 }
 
 /*
+ * createdAt専用の正規化関数（PRレビュー対応）。createdAtは一覧の「予約順」ソートの
+ * キーとして使うため、他のDate列（date/startAt等。formatAdminDateTime_が「Date値以外は
+ * そのまま返す」のでよい）と異なり、文字列で渡ってきた場合も含めて必ず比較可能な
+ * 'YYYY-MM-DD HH:mm'形式へ揃える必要がある。素通りさせると、Sheetsの読み込み結果が
+ * Date値ではなく不揃いな文字列だった場合に予約順ソートが崩れうるため：
+ * - Date値 → formatAdminDateTime_と同じくAsia/Tokyo基準で'YYYY-MM-DD HH:mm'へ変換
+ * - 既に'YYYY-MM-DD HH:mm'形式の文字列 → そのまま返す（余計な再変換をしない）
+ * - それ以外の文字列でDateとして解釈できるもの（ISO文字列等）→ 同じ形式へ変換する
+ * - 上記のいずれでもない値（空文字列・null/undefined・解釈不能な文字列・数値等）は
+ *   形式を推測せず''へ落とす（例外を投げない。ソート側は空文字列同士なら
+ *   bookingIdでの安定ソートにフォールバックする）
+ */
+function normalizeAdminCreatedAt_(value, timezone) {
+  if (isAdminWebDateLike_(value)) return formatAdminDateTime_(value, timezone);
+  if (typeof value !== 'string') return '';
+  var trimmed = value.trim();
+  if (trimmed === '') return '';
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(trimmed)) return trimmed;
+  var parsed = new Date(trimmed);
+  return isAdminWebDateLike_(parsed) ? formatAdminDateTime_(parsed, timezone) : '';
+}
+
+/*
  * 一覧取得（Issue #305「読み取り」節どおり、全件取得→UI側で今日/今後/すべてを絞り込む）。
  * 個人管理用途で件数が小規模な前提のため、専用の検索API・ページネーションは作らない。
  *
@@ -91,6 +114,13 @@ function formatAdminDateTime_(value, timezone) {
  * PIIを一般公開しないため、一覧カードの表示に不要なフィールド（email/phone/note/
  * mail SentAt系/lastMailError系等）はここでは返さない。それらは詳細取得
  * （getAdminBookingDetail）でのみ返す。
+ *
+ * createdAtは一覧の「予約順」ソート（クライアント側でcreatedAt降順に並べ替える）のために
+ * 返す。カード表示には使わない（BookingAdminPage.html参照）。他のDate値と同じく
+ * google.script.run越しにDateオブジェクトをそのまま渡さない。ソートキーとして
+ * 比較可能な形式が必須なため、Date値だけを変換して文字列はそのまま素通りさせる
+ * formatAdminDateTime_ではなく、文字列も含めて必ず'YYYY-MM-DD HH:mm'形式へ揃える
+ * normalizeAdminCreatedAt_を使う（詳細は同関数のコメント参照）。
  */
 function getAdminBookings() {
   var timezone = BookingConfig.getAvailabilityConfig().timezone;
@@ -99,6 +129,7 @@ function getAdminBookings() {
     var record = item.record;
     return {
       bookingId: record.bookingId,
+      createdAt: normalizeAdminCreatedAt_(record.createdAt, timezone),
       date: formatAdminDate_(record.date, timezone),
       startAt: formatAdminTime_(record.startAt, timezone),
       endAt: formatAdminTime_(record.endAt, timezone),

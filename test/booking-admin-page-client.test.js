@@ -184,3 +184,90 @@ test('visibleBookings: todayJst未取得時（初回描画）は今日/今後タ
   sandbox.state.filter = 'upcoming';
   assert.strictEqual(sandbox.visibleBookings().length, 1);
 });
+
+/* ---------- sort（日付順 / 予約順） ---------- */
+
+test('visibleBookings: デフォルトは日付順（date昇順、同一日はstartAt昇順）', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.filter = 'all';
+  assert.strictEqual(sandbox.state.sort, 'date', 'デフォルトのソートは日付順であるべき');
+  sandbox.state.bookings = [
+    booking({ bookingId: 'b-late', date: TOMORROW, startAt: '10:00', createdAt: '2026-09-20 10:00' }),
+    booking({ bookingId: 'a-early-late-time', date: TODAY, startAt: '18:00', createdAt: '2026-09-21 10:00' }),
+    booking({ bookingId: 'a-early-early-time', date: TODAY, startAt: '09:00', createdAt: '2026-09-19 10:00' })
+  ];
+
+  var result = sandbox.visibleBookings();
+
+  assert.deepStrictEqual(result.map(function (b) { return b.bookingId; }), [
+    'a-early-early-time',
+    'a-early-late-time',
+    'b-late'
+  ]);
+});
+
+test('visibleBookings: 「予約順」はcreatedAt降順（新しく予約されたものが上）', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.filter = 'all';
+  sandbox.state.sort = 'reservation';
+  sandbox.state.bookings = [
+    booking({ bookingId: 'oldest', date: TODAY, createdAt: '2026-09-19 10:00' }),
+    booking({ bookingId: 'newest', date: TOMORROW, createdAt: '2026-09-21 10:00' }),
+    booking({ bookingId: 'middle', date: YESTERDAY, createdAt: '2026-09-20 10:00' })
+  ];
+
+  var result = sandbox.visibleBookings();
+
+  assert.deepStrictEqual(result.map(function (b) { return b.bookingId; }), ['newest', 'middle', 'oldest']);
+});
+
+test('visibleBookings: 「予約順」でcreatedAtが同じ場合はbookingIdで安定ソートされる', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.filter = 'all';
+  sandbox.state.sort = 'reservation';
+  sandbox.state.bookings = [
+    booking({ bookingId: 'z-same', date: TODAY, createdAt: '2026-09-20 10:00' }),
+    booking({ bookingId: 'a-same', date: TODAY, createdAt: '2026-09-20 10:00' })
+  ];
+
+  var result = sandbox.visibleBookings();
+
+  assert.deepStrictEqual(result.map(function (b) { return b.bookingId; }), ['a-same', 'z-same']);
+});
+
+test('visibleBookings: 各タブのフィルタ後にソートされる（「今後」タブ＋日付順）', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.filter = 'upcoming';
+  sandbox.state.sort = 'date';
+  sandbox.state.bookings = [
+    booking({ bookingId: 'upcoming-late', date: TOMORROW, startAt: '20:00', status: 'CONFIRMED' }),
+    booking({ bookingId: 'upcoming-early', date: TODAY, startAt: '09:00', status: 'PENDING' }),
+    booking({ bookingId: 'excluded-cancelled', date: TODAY, startAt: '08:00', status: 'CANCELLED' }),
+    booking({ bookingId: 'excluded-past', date: YESTERDAY, startAt: '08:00', status: 'CONFIRMED' })
+  ];
+
+  var result = sandbox.visibleBookings();
+
+  assert.deepStrictEqual(result.map(function (b) { return b.bookingId; }), ['upcoming-early', 'upcoming-late']);
+});
+
+test('visibleBookings: 各タブのフィルタ後にソートされる（「キャンセル」タブ＋予約順、CANCELLEDタブ分離仕様は壊れていない）', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.filter = 'cancelled';
+  sandbox.state.sort = 'reservation';
+  sandbox.state.bookings = [
+    booking({ bookingId: 'cancelled-old', date: YESTERDAY, status: 'CANCELLED', createdAt: '2026-09-18 10:00' }),
+    booking({ bookingId: 'cancelled-new', date: TOMORROW, status: 'CANCELLED', createdAt: '2026-09-20 10:00' }),
+    booking({ bookingId: 'not-cancelled', date: TODAY, status: 'PENDING', createdAt: '2026-09-21 10:00' }),
+    booking({ bookingId: 'expired', date: YESTERDAY, status: 'EXPIRED', createdAt: '2026-09-22 10:00' })
+  ];
+
+  var result = sandbox.visibleBookings();
+
+  assert.deepStrictEqual(result.map(function (b) { return b.bookingId; }), ['cancelled-new', 'cancelled-old']);
+});
