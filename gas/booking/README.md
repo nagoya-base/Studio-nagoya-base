@@ -1777,9 +1777,10 @@ Sheets側はEXPIREDへ進める（PENDINGのまま放置しない）。
 1. 「管理メニュー用GASプロジェクト（Booking Admin）のセットアップ」の手順1〜6を
    先に完了させる（`.gs`ファイル一式のコピー・Script Properties設定・
    カスタムメニュー・PENDING TTL失効トリガー）。
-2. Booking Adminプロジェクトのスクリプトエディタで、ファイル追加からHTMLファイルとして
-   `BookingAdminPage.html`を作成し、このリポジトリの`gas/booking/BookingAdminPage.html`の内容を
-   そのままコピーする。
+2. Booking Adminプロジェクトのスクリプトエディタで、ファイル追加 → HTML を選択し、
+   ファイル名には `BookingAdminPage`（`.html`は入力しない）と入力する。Apps Script側で
+   `BookingAdminPage.html`として作成される。このリポジトリの
+   `gas/booking/BookingAdminPage.html`の内容をそのままコピーする。
 3. 「デプロイ」→「新しいデプロイ」→種類「ウェブアプリ」を選択する。
 4. デプロイ設定を以下のとおりにする（管理者本人のみアクセス可能にするため）。
    - **実行ユーザー（Execute as）**: Me（自分）
