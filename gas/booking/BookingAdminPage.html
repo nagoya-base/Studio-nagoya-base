@@ -78,6 +78,31 @@
       font-weight: bold;
     }
 
+    .sort-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .sort-label {
+      font-size: 12px;
+      color: var(--color-text-sub);
+      white-space: nowrap;
+    }
+
+    #sort-select {
+      flex: 1;
+      min-width: 0;
+      min-height: 32px;
+      border: 1px solid var(--color-border);
+      background: var(--color-card-bg);
+      color: var(--color-text);
+      border-radius: 8px;
+      font-size: 13px;
+      padding: 4px 6px;
+    }
+
     main {
       padding: 12px 16px 32px;
       max-width: 480px;
@@ -228,6 +253,13 @@
       <button type="button" class="tab-button" data-filter="cancelled">キャンセル</button>
       <button type="button" class="tab-button" data-filter="all">すべて</button>
     </div>
+    <div class="sort-row">
+      <label class="sort-label" for="sort-select">並び順</label>
+      <select id="sort-select">
+        <option value="date">日付順</option>
+        <option value="reservation">予約順</option>
+      </select>
+    </div>
   </header>
 
   <main>
@@ -248,6 +280,7 @@
       bookings: [],
       todayJst: null,
       filter: 'today',
+      sort: 'date',
       busyIds: {}
     };
 
@@ -292,7 +325,7 @@
        'YYYY-MM-DD'）の単純な文字列比較で行う。端末のtimezone設定には一切依存しない。
        CANCELLEDは「今日」「今後」には出さず、日付を問わず「キャンセル」タブへ集約する
        （EXPIREDはここに含めない。「すべて」で確認できれば十分という要件のため）。 */
-    function visibleBookings() {
+    function filteredBookings() {
       var today = state.todayJst;
       return state.bookings.filter(function (b) {
         if (state.filter === 'all') return true;
@@ -302,6 +335,36 @@
         if (state.filter === 'upcoming') return b.date >= today && b.status !== 'CANCELLED';
         return true;
       });
+    }
+
+    /* 「日付順」: date昇順、同一日はstartAt昇順（デフォルト）。date/startAtはいずれも
+       サーバー側で'YYYY-MM-DD'/'HH:mm'の文字列へ正規化済みのため、単純な文字列比較で
+       時系列順になる。 */
+    function compareByDate_(a, b) {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      if (a.startAt !== b.startAt) return a.startAt < b.startAt ? -1 : 1;
+      return 0;
+    }
+
+    /* 「予約順」: createdAt降順（新しく予約されたものを上）。createdAtが同じ場合は
+       bookingIdの昇順で安定させる（要件どおり、createdAt同値の順序はbookingIdで決めてよい）。 */
+    function compareByReservation_(a, b) {
+      var aCreatedAt = a.createdAt || '';
+      var bCreatedAt = b.createdAt || '';
+      if (aCreatedAt !== bCreatedAt) return aCreatedAt < bCreatedAt ? 1 : -1;
+      if (a.bookingId !== b.bookingId) return a.bookingId < b.bookingId ? -1 : 1;
+      return 0;
+    }
+
+    function sortBookings(bookings) {
+      var comparator = state.sort === 'reservation' ? compareByReservation_ : compareByDate_;
+      return bookings.slice().sort(comparator);
+    }
+
+    /* filter → sortの順（要件どおり）。タブ切り替え・ソート切り替えの双方でrender()から
+       この関数だけを呼べばよいようにしている。 */
+    function visibleBookings() {
+      return sortBookings(filteredBookings());
     }
 
     function setStatusLine(message) {
@@ -486,6 +549,11 @@
       if (action === 'detail') openDetail(bookingId);
       if (action === 'confirm') runConfirm(bookingId);
       if (action === 'cancel') runCancel(bookingId);
+    });
+
+    document.getElementById('sort-select').addEventListener('change', function (event) {
+      state.sort = event.target.value;
+      render();
     });
 
     document.getElementById('modal-close').addEventListener('click', closeModal);

@@ -222,7 +222,7 @@ test('getAdminBookings: { todayJst, bookings }を返し、一覧の各要素は�
   assert.strictEqual(typeof item.date, 'string', 'dateはDateオブジェクトのまま返してはいけない');
   assert.strictEqual(item.date, DEFAULT_FUTURE_DATE);
 
-  var allowedKeys = ['bookingId', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status'];
+  var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status'];
   assert.deepStrictEqual(Object.keys(item).sort(), allowedKeys.slice().sort());
 
   ['email', 'phone', 'note', 'pendingMailSentAt', 'lastMailErrorMessage'].forEach(function (piiField) {
@@ -294,6 +294,48 @@ test('getAdminBookings/getAdminBookingDetail: dateがDate値として保存さ�
   var detailResult = ctx.sandbox.getAdminBookingDetail(record.bookingId);
   assert.strictEqual(typeof detailResult.booking.date, 'string', 'getAdminBookingDetailのdateはDateオブジェクトのまま返してはいけない');
   assert.strictEqual(detailResult.booking.date, '2026-10-01');
+});
+
+test('getAdminBookings: createdAtはDateオブジェクトではなくWeb UI用の比較可能な文字列として返る（一覧の予約順ソート用）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+
+  var result = ctx.sandbox.getAdminBookings();
+  var item = result.bookings[0];
+
+  assert.strictEqual(item.bookingId, bookingId);
+  assert.strictEqual(typeof item.createdAt, 'string', 'createdAtはDateオブジェクトのまま返してはいけない');
+  assert.match(item.createdAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, 'createdAtは日付順で単純比較できる文字列であるべき');
+});
+
+test('getAdminBookings: createdAtがDate値として保存されていてもWeb UI用の文字列として返る', function () {
+  var ctx = setup();
+  var record = {
+    bookingId: 'SX-20261001-BBBBBBBB',
+    createdAt: new Date('2026-09-01T09:30:00+09:00'),
+    date: futureDateJst_(30),
+    startAt: new Date('2026-10-31T19:00:00+09:00'),
+    endAt: new Date('2026-10-31T21:00:00+09:00'),
+    brand: 'studio_x',
+    name: '山田太郎',
+    email: 'taro@example.com',
+    phone: '090-0000-0000',
+    people: '2名',
+    purpose: 'テスト',
+    paymentMethod: '現金',
+    status: 'PENDING',
+    calendarEventId: 'event-2',
+    source: 'test',
+    note: '',
+    customerType: 'returning'
+  };
+  ctx.sandbox.SpreadsheetRepository.appendBooking(record);
+
+  var result = ctx.sandbox.getAdminBookings();
+  var item = result.bookings.filter(function (b) { return b.bookingId === record.bookingId; })[0];
+
+  assert.strictEqual(typeof item.createdAt, 'string', 'createdAtはDateオブジェクトのまま返してはいけない');
+  assert.strictEqual(item.createdAt, '2026-09-01 09:30');
 });
 
 test('getAdminBookings: todayJstはAsia/Tokyo基準で計算される（端末timezoneに依存しない）', function () {

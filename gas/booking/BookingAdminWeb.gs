@@ -91,6 +91,11 @@ function formatAdminDateTime_(value, timezone) {
  * PIIを一般公開しないため、一覧カードの表示に不要なフィールド（email/phone/note/
  * mail SentAt系/lastMailError系等）はここでは返さない。それらは詳細取得
  * （getAdminBookingDetail）でのみ返す。
+ *
+ * createdAtは一覧の「予約順」ソート（クライアント側でcreatedAt降順に並べ替える）のために
+ * 返す。カード表示には使わない（BookingAdminPage.html参照）。他のDate値と同じく
+ * google.script.run越しにDateオブジェクトをそのまま渡さず、formatAdminDateTime_で
+ * Web UI用の比較可能な文字列（'YYYY-MM-DD HH:mm'）へ正規化してから返す。
  */
 function getAdminBookings() {
   var timezone = BookingConfig.getAvailabilityConfig().timezone;
@@ -99,6 +104,7 @@ function getAdminBookings() {
     var record = item.record;
     return {
       bookingId: record.bookingId,
+      createdAt: formatAdminDateTime_(record.createdAt, timezone),
       date: formatAdminDate_(record.date, timezone),
       startAt: formatAdminTime_(record.startAt, timezone),
       endAt: formatAdminTime_(record.endAt, timezone),
