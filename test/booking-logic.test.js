@@ -304,6 +304,43 @@ test('isSameDayFirstTimeBlocked: English UIでも当日+初回利用の判定結
   assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-05', 'returning', today), false);
 });
 
+/* ── 確認画面表示専用ラベル（Issue #297 PR #300再レビュー対応） ──
+   people/purpose/paymentMethodの内部value・保存値は変更しない。ここは確認画面へ
+   表示する文字列だけをlocaleで切り替える表示専用関数のテスト。 */
+
+test('peopleLabel: locale="en"は英語ラベル、locale未指定・ja/未知の内部valueは元のvalueをそのまま返す（内部value不変）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.peopleLabel('2名', 'en'), '2 guests');
+  assert.strictEqual(Logic.peopleLabel('1名', 'en'), '1 guest');
+  assert.strictEqual(Logic.peopleLabel('5名以上・要相談', 'en'), '5 or more (please contact us)');
+  /* locale未指定は既存どおり内部valueをそのまま表示（後方互換） */
+  assert.strictEqual(Logic.peopleLabel('2名'), '2名');
+  assert.strictEqual(Logic.peopleLabel('2名', 'ja'), '2名');
+  /* 未知のvalueでも例外を投げず、そのまま返す */
+  assert.strictEqual(Logic.peopleLabel('10名', 'en'), '10名');
+});
+
+test('purposeLabel: locale="en"は英語ラベル、"その他"は自由記述と結合して"Other: "を使う（保存値のbuildPurposeValueとは別処理）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.purposeLabel('ポートレート撮影', '', 'en'), 'Portrait photography');
+  assert.strictEqual(Logic.purposeLabel('その他', 'Cosplay shoot', 'en'), 'Other: Cosplay shoot');
+  /* locale未指定・jaは既存どおり日本語表示（後方互換） */
+  assert.strictEqual(Logic.purposeLabel('ポートレート撮影', ''), 'ポートレート撮影');
+  assert.strictEqual(Logic.purposeLabel('その他', 'コスプレ撮影', 'ja'), 'その他：コスプレ撮影');
+  /* buildPurposeValue()自体（保存値の仕様）は変更されていないことを併せて確認 */
+  assert.strictEqual(Logic.buildPurposeValue('その他', 'Cosplay shoot'), 'その他：Cosplay shoot');
+});
+
+test('paymentMethodLabel: locale="en"は英語ラベル、locale未指定・jaは内部valueをそのまま返す（内部value不変）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.paymentMethodLabel('現金', 'en'), 'Cash');
+  assert.strictEqual(Logic.paymentMethodLabel('PayPay', 'en'), 'PayPay');
+  assert.strictEqual(Logic.paymentMethodLabel('オンラインクレジットカード', 'en'), 'Online credit card');
+  assert.strictEqual(Logic.paymentMethodLabel('未定', 'en'), 'Undecided');
+  assert.strictEqual(Logic.paymentMethodLabel('現金'), '現金');
+  assert.strictEqual(Logic.paymentMethodLabel('現金', 'ja'), '現金');
+});
+
 test('todayInJapan: 日本時間での「今日」をYYYY-MM-DD形式で返す（日付入力の下限と、isSameDayFirstTimeBlockedへ渡す当日判定の基準の両方に使う。Issue #270）', function () {
   var Logic = loadLogic();
   /* 2026-09-19 12:00 UTC は JST 2026-09-19 21:00 → 今日は2026-09-19 */

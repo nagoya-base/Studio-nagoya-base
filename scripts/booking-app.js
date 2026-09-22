@@ -417,9 +417,12 @@
     els.confirmName.textContent = state.name;
     els.confirmEmail.textContent = state.email;
     els.confirmPhone.textContent = state.phone || UI_TEXT.phoneUnset;
-    els.confirmPeople.textContent = state.people;
-    els.confirmPurpose.textContent = Logic.buildPurposeValue(state.purpose, state.purposeOther);
-    els.confirmPayment.textContent = state.paymentMethod;
+    /* 確認画面の表示のみlocale別ラベルへ変換する。送信payload（buildCreateBookingPayload）
+       は引き続きstate.people/purpose/paymentMethodの内部valueをそのまま使う（Issue #297
+       PR #300再レビュー対応：表示とpayloadは別物）。 */
+    els.confirmPeople.textContent = Logic.peopleLabel(state.people, locale);
+    els.confirmPurpose.textContent = Logic.purposeLabel(state.purpose, state.purposeOther, locale);
+    els.confirmPayment.textContent = Logic.paymentMethodLabel(state.paymentMethod, locale);
     els.confirmNote.textContent = state.note || UI_TEXT.noteUnset;
   }
 

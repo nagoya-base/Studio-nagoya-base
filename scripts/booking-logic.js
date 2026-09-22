@@ -289,6 +289,67 @@
     return purpose;
   }
 
+  /* ── 確認画面（Step4）表示専用のラベル変換（Issue #297 PR #300再レビュー対応） ──
+     people/purpose/paymentMethodの内部value・保存値（buildCreateBookingPayload/
+     buildPurposeValueの出力）はここでは一切変更しない。既存日本語呼び出し・
+     buildPurposeValue自体の仕様も変更しない。ここは確認画面へ出す文字列だけを
+     localeで切り替える表示専用マップで、ja（未指定含む）は既存どおり内部valueを
+     そのまま返す（後方互換）。 */
+  var PEOPLE_LABELS_EN = {
+    '1名': '1 guest',
+    '2名': '2 guests',
+    '3名': '3 guests',
+    '4名': '4 guests',
+    '5名以上・要相談': '5 or more (please contact us)'
+  };
+
+  function peopleLabel(value, locale) {
+    if (normalizeLocale(locale) === 'en' && Object.prototype.hasOwnProperty.call(PEOPLE_LABELS_EN, value)) {
+      return PEOPLE_LABELS_EN[value];
+    }
+    return value || '';
+  }
+
+  var PURPOSE_LABELS_EN = {
+    '緊縛・ロープ表現の自主練習': 'Rope practice',
+    'コスプレ撮影': 'Cosplay photography',
+    'ポートレート撮影': 'Portrait photography',
+    'セルフ撮影': 'Self-photography',
+    '作品撮り': 'Creative shoot',
+    '商品・物撮り': 'Product photography',
+    '動画撮影': 'Video shoot',
+    '講習会・ワークショップ': 'Workshop / class',
+    'その他': 'Other'
+  };
+
+  /* purposeLabel(value, purposeOther, locale) — 確認画面表示専用。保存値を組み立てる
+     buildPurposeValue()とは別関数であり、そちらの仕様（'その他：'+自由記述、Sheets/mail/
+     admin互換のための日本語プレフィックス固定）は変更しない。 */
+  function purposeLabel(value, purposeOther, locale) {
+    var loc = normalizeLocale(locale);
+    if (value === 'その他' && isNonEmpty(purposeOther)) {
+      return (loc === 'en' ? 'Other: ' : 'その他：') + purposeOther.trim();
+    }
+    if (loc === 'en' && Object.prototype.hasOwnProperty.call(PURPOSE_LABELS_EN, value)) {
+      return PURPOSE_LABELS_EN[value];
+    }
+    return value || '';
+  }
+
+  var PAYMENT_METHOD_LABELS_EN = {
+    '現金': 'Cash',
+    'PayPay': 'PayPay',
+    'オンラインクレジットカード': 'Online credit card',
+    '未定': 'Undecided'
+  };
+
+  function paymentMethodLabel(value, locale) {
+    if (normalizeLocale(locale) === 'en' && Object.prototype.hasOwnProperty.call(PAYMENT_METHOD_LABELS_EN, value)) {
+      return PAYMENT_METHOD_LABELS_EN[value];
+    }
+    return value || '';
+  }
+
   /*
    * state: { brand, customerType, date, startTime, durationMinutes, name, email, phone,
    *          people, purpose, purposeOther, paymentMethod, note }
@@ -365,6 +426,9 @@
     computeEndTime: computeEndTime,
     validateDetailsForm: validateDetailsForm,
     buildPurposeValue: buildPurposeValue,
+    peopleLabel: peopleLabel,
+    purposeLabel: purposeLabel,
+    paymentMethodLabel: paymentMethodLabel,
     buildCreateBookingPayload: buildCreateBookingPayload,
     todayInJapan: todayInJapan
   };
