@@ -293,6 +293,10 @@
 .is-preview-only[hidden],
 .is-booking-or-preview[hidden] { display: none; }
 
+.reservation-choices label[hidden] {
+  display: none !important;
+}
+
 @media (max-width: 768px) {
   .reservation-fields--compact { grid-template-columns: 1fr; }
 }
