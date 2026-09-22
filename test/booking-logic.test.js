@@ -197,6 +197,113 @@ test('buildCreateBookingPayload: 未知のbrandでもsourceは"unknown"になり
   assert.strictEqual(payload.source, 'unknown');
 });
 
+/* ── English locale対応（Issue #297） ── */
+
+test('normalizeLocale: 未指定・未知のlocaleはjaへfallbackし、enはenのまま返す', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.normalizeLocale(undefined), 'ja');
+  assert.strictEqual(Logic.normalizeLocale(''), 'ja');
+  assert.strictEqual(Logic.normalizeLocale('fr'), 'ja');
+  assert.strictEqual(Logic.normalizeLocale('en'), 'en');
+  assert.strictEqual(Logic.normalizeLocale('ja'), 'ja');
+});
+
+test('messageForErrorCode: locale="en"は英語、locale未指定は既存どおり日本語を返す（後方互換）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME'), '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付を選択してください。');
+  assert.strictEqual(
+    Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', 'en'),
+    'First-time guests cannot book for the same day. Please choose a date from tomorrow onward.'
+  );
+  /* 未知のlocaleはjaへfallback */
+  assert.strictEqual(Logic.messageForErrorCode('BOOKING_SAVE_FAILED', 'fr'), '予約の保存に失敗しました。しばらくしてから再度お試しください。');
+  /* 未知のcodeでも空文字にならない（locale別の汎用メッセージ） */
+  assert.ok(Logic.messageForErrorCode('SOMETHING_NEW', 'en').length > 0);
+  assert.notStrictEqual(Logic.messageForErrorCode('SOMETHING_NEW', 'en'), Logic.messageForErrorCode('SOMETHING_NEW', 'ja'));
+});
+
+test('customerTypeLabel: locale="en"は英語ラベル、locale未指定は日本語ラベル（内部valueはfirst_time/returningのまま不変）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.customerTypeLabel('first_time'), '初回利用');
+  assert.strictEqual(Logic.customerTypeLabel('returning'), '利用経験あり');
+  assert.strictEqual(Logic.customerTypeLabel('first_time', 'en'), 'First-time guest');
+  assert.strictEqual(Logic.customerTypeLabel('returning', 'en'), 'Returning guest');
+  /* 内部value自体はlocaleに関わらずfirst_time/returningの2つだけ */
+  assert.deepEqual(Logic.ALLOWED_CUSTOMER_TYPES, ['first_time', 'returning']);
+});
+
+test('validateDetailsForm: locale="en"は英語のフィールドエラー、locale未指定は既存どおり日本語（後方互換・判定結果は同一）', function () {
+  var Logic = loadLogic();
+  var invalid = { name: '', email: 'not-an-email', people: '', purpose: '', paymentMethod: '' };
+
+  var jaErrors = Logic.validateDetailsForm(invalid);
+  var enErrors = Logic.validateDetailsForm(invalid, 'en');
+
+  /* エラーになるフィールド集合はlocaleに関わらず同一（判定ロジックは分岐しない） */
+  assert.deepEqual(Object.keys(jaErrors).sort(), Object.keys(enErrors).sort());
+
+  assert.strictEqual(jaErrors.name, 'お名前を入力してください。');
+  assert.strictEqual(enErrors.name, 'Please enter your name.');
+  assert.strictEqual(jaErrors.email, 'メールアドレスの形式が正しくありません。');
+  assert.strictEqual(enErrors.email, 'Please enter a valid email address.');
+});
+
+test('validateDetailsForm: purpose="その他"の判定はlocaleに関わらず日本語固定値で行う（Issue #297: purpose内部value無変更）', function () {
+  var Logic = loadLogic();
+  var base = { name: 'John Smith', email: 'john@example.com', people: '2名', purpose: 'その他', paymentMethod: '現金' };
+  var enErrors = Logic.validateDetailsForm(Object.assign({}, base, { purposeOther: '' }), 'en');
+  assert.strictEqual(enErrors.purposeOther, 'Please describe the purpose of your visit.');
+  assert.deepEqual(Logic.validateDetailsForm(Object.assign({}, base, { purposeOther: 'Cosplay shoot' }), 'en'), {});
+});
+
+test('networkErrorMessage/apiNotConfiguredMessage: locale="en"は英語、未指定は既存定数（ja）と一致', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.networkErrorMessage(), Logic.NETWORK_ERROR_MESSAGE);
+  assert.strictEqual(Logic.apiNotConfiguredMessage(), Logic.API_NOT_CONFIGURED_MESSAGE);
+  assert.strictEqual(Logic.networkErrorMessage('en'), 'Please check your connection and try again in a moment.');
+  assert.strictEqual(Logic.apiNotConfiguredMessage('en'), 'Online booking is currently being prepared. Please try again later.');
+});
+
+test('buildCreateBookingPayload: localeに関わらずpayloadのkey/valueは変わらない（brandはsnbのまま）', function () {
+  var Logic = loadLogic();
+  var payload = Logic.buildCreateBookingPayload({
+    brand: 'snb',
+    customerType: 'first_time',
+    date: '2026-10-05',
+    startTime: '10:00',
+    durationMinutes: 120,
+    name: 'John Smith',
+    email: 'john@example.com',
+    phone: '',
+    people: '2名',
+    purpose: 'ポートレート撮影',
+    paymentMethod: 'PayPay',
+    note: ''
+  });
+  assert.deepEqual(payload, {
+    brand: 'snb',
+    customerType: 'first_time',
+    date: '2026-10-05',
+    startTime: '10:00',
+    durationMinutes: 120,
+    name: 'John Smith',
+    email: 'john@example.com',
+    phone: '',
+    people: '2名',
+    purpose: 'ポートレート撮影',
+    paymentMethod: 'PayPay',
+    note: '',
+    source: 'snb-booking-app'
+  });
+});
+
+test('isSameDayFirstTimeBlocked: English UIでも当日+初回利用の判定結果は日本語版と同一（localeを取らない業務ロジック）', function () {
+  var Logic = loadLogic();
+  var today = '2026-10-05';
+  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-05', 'first_time', today), true);
+  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-05', 'returning', today), false);
+});
+
 test('todayInJapan: 日本時間での「今日」をYYYY-MM-DD形式で返す（日付入力の下限と、isSameDayFirstTimeBlockedへ渡す当日判定の基準の両方に使う。Issue #270）', function () {
   var Logic = loadLogic();
   /* 2026-09-19 12:00 UTC は JST 2026-09-19 21:00 → 今日は2026-09-19 */

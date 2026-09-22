@@ -28,7 +28,52 @@
   var brand = root.getAttribute('data-brand');
   var brandMeta = Logic.getBrandMeta(brand);
   var backUrl = root.getAttribute('data-back-url') || '/';
-  var backLabel = root.getAttribute('data-back-label') || 'トップへ戻る';
+
+  /* 表示文言のlocale切り替え（Issue #297）。#booking-app[data-locale]を読み、
+     未指定・未知値はjaへfallbackする。API呼び出し・状態管理・step遷移・submit処理は
+     localeで分岐させず、ここに定義する表示文言のみを切り替える。 */
+  var locale = Logic.normalizeLocale(root.getAttribute('data-locale'));
+
+  var UI_TEXT = {
+    ja: {
+      backLabelDefault: 'トップへ戻る',
+      invalidBrandTitle: Logic.messageForErrorCode('INVALID_BRAND', 'ja'),
+      dateRequired: '利用日を選択してください。',
+      durationRequired: '利用時間を1時間以上の整数で入力してください。',
+      customerTypeRequired: '利用区分を選択してください。',
+      startTimeSummary: function (date, hours) { return date + '　' + hours + '時間利用'; },
+      back: '戻る',
+      reselectDateTime: '日付・利用時間を選び直す',
+      retryCheck: 'もう一度確認する',
+      confirmTime: function (startTime, endTime, hours) { return startTime + '〜' + endTime + '（' + hours + '時間）'; },
+      phoneUnset: '（未入力）',
+      noteUnset: '（なし）',
+      consentRequired: '予約成立条件の確認が必要です。',
+      submitting: '送信中…',
+      submitLabel: 'この内容で仮予約を送信する',
+      diagnosticIdLabel: '\n診断ID: '
+    },
+    en: {
+      backLabelDefault: 'Back to Studio Nagoya Base',
+      invalidBrandTitle: Logic.messageForErrorCode('INVALID_BRAND', 'en'),
+      dateRequired: 'Please select a date.',
+      durationRequired: 'Please enter a duration of 1 hour or more (whole numbers only).',
+      customerTypeRequired: 'Please select a customer type.',
+      startTimeSummary: function (date, hours) { return date + ' · ' + hours + (hours === 1 ? ' hour' : ' hours'); },
+      back: 'Back',
+      reselectDateTime: 'Choose date & duration again',
+      retryCheck: 'Check again',
+      confirmTime: function (startTime, endTime, hours) { return startTime + '–' + endTime + ' (' + hours + (hours === 1 ? ' hour)' : ' hours)'); },
+      phoneUnset: '(not provided)',
+      noteUnset: '(none)',
+      consentRequired: 'Please confirm the pending booking condition.',
+      submitting: 'Submitting…',
+      submitLabel: 'Submit Pending Booking',
+      diagnosticIdLabel: '\nDiagnostic ID: '
+    }
+  }[locale];
+
+  var backLabel = root.getAttribute('data-back-label') || UI_TEXT.backLabelDefault;
 
   var API_BASE_URL = (window.BookingApiConfig && window.BookingApiConfig.BASE_URL) || '';
 
@@ -113,7 +158,7 @@
   /* brandが未知の場合、フロントの表示に関わらずサーバー側でも拒否されるが、
      ここでも防御的にAPIを一切呼ばず案内のみ表示する（brand偽装対策の多層防御）。 */
   if (!brandMeta) {
-    showGlobalError('このページの予約設定に問題があります。お手数ですがページを開き直してください。', []);
+    showGlobalError(UI_TEXT.invalidBrandTitle, []);
     setStepDisabled_(els.step1Next, true);
     return;
   }
@@ -193,9 +238,9 @@
       var durationMinutes = Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
       var customerType = checkedCustomerType();
 
-      setFieldError_(els.date, els.dateError, dateValue ? '' : '利用日を選択してください。');
-      setFieldError_(els.duration, els.durationError, durationMinutes ? '' : '利用時間を1時間以上の整数で入力してください。');
-      setFieldError_(null, els.customerTypeError, customerType ? '' : '利用区分を選択してください。');
+      setFieldError_(els.date, els.dateError, dateValue ? '' : UI_TEXT.dateRequired);
+      setFieldError_(els.duration, els.durationError, durationMinutes ? '' : UI_TEXT.durationRequired);
+      setFieldError_(null, els.customerTypeError, customerType ? '' : UI_TEXT.customerTypeRequired);
       if (!dateValue || !durationMinutes || !customerType) return;
 
       /*
@@ -206,7 +251,7 @@
        * 拒否される（BookingRepository.gs参照）。
        */
       if (Logic.isSameDayFirstTimeBlocked(dateValue, customerType, Logic.todayInJapan())) {
-        setFieldError_(els.date, els.dateError, Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME'));
+        setFieldError_(els.date, els.dateError, Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', locale));
         return;
       }
 
@@ -225,7 +270,7 @@
     if (isFetchingAvailability) return;
     isFetchingAvailability = true;
 
-    els.startTimeSummary.textContent = state.date + '　' + (state.durationMinutes / 60) + '時間利用';
+    els.startTimeSummary.textContent = UI_TEXT.startTimeSummary(state.date, state.durationMinutes / 60);
     els.startTimeLoading.hidden = false;
     els.startTimeGrid.hidden = true;
     els.startTimeGrid.innerHTML = '';
@@ -235,7 +280,7 @@
     if (!API_BASE_URL) {
       isFetchingAvailability = false;
       els.startTimeLoading.hidden = true;
-      showGlobalError(Logic.API_NOT_CONFIGURED_MESSAGE, [{ label: '戻る', onClick: function () { goToStep('datetime'); } }]);
+      showGlobalError(Logic.apiNotConfiguredMessage(locale), [{ label: UI_TEXT.back, onClick: function () { goToStep('datetime'); } }]);
       return;
     }
 
@@ -252,8 +297,8 @@
         els.startTimeLoading.hidden = true;
         if (!body || body.success !== true) {
           var code = body && body.error && body.error.code;
-          showGlobalError(Logic.messageForErrorCode(code), [
-            { label: '日付・利用時間を選び直す', onClick: function () { goToStep('datetime'); } }
+          showGlobalError(Logic.messageForErrorCode(code, locale), [
+            { label: UI_TEXT.reselectDateTime, onClick: function () { goToStep('datetime'); } }
           ]);
           return;
         }
@@ -262,8 +307,8 @@
       .catch(function () {
         isFetchingAvailability = false;
         els.startTimeLoading.hidden = true;
-        showGlobalError(Logic.NETWORK_ERROR_MESSAGE, [
-          { label: 'もう一度確認する', onClick: fetchAvailability }
+        showGlobalError(Logic.networkErrorMessage(locale), [
+          { label: UI_TEXT.retryCheck, onClick: fetchAvailability }
         ]);
       });
   }
@@ -335,7 +380,7 @@
         paymentMethod: checkedPaymentMethod(),
         note: els.note.value
       };
-      var errors = Logic.validateDetailsForm(fields);
+      var errors = Logic.validateDetailsForm(fields, locale);
 
       setFieldError_(els.name, els.nameError, errors.name);
       setFieldError_(els.email, els.emailError, errors.email);
@@ -366,16 +411,16 @@
   function renderConfirmSummary() {
     var endTime = Logic.computeEndTime(state.startTime, state.durationMinutes);
     els.confirmBrand.textContent = brandMeta.displayName;
-    els.confirmCustomerType.textContent = Logic.customerTypeLabel(state.customerType);
+    els.confirmCustomerType.textContent = Logic.customerTypeLabel(state.customerType, locale);
     els.confirmDate.textContent = state.date;
-    els.confirmTime.textContent = state.startTime + '〜' + endTime + '（' + (state.durationMinutes / 60) + '時間）';
+    els.confirmTime.textContent = UI_TEXT.confirmTime(state.startTime, endTime, state.durationMinutes / 60);
     els.confirmName.textContent = state.name;
     els.confirmEmail.textContent = state.email;
-    els.confirmPhone.textContent = state.phone || '（未入力）';
+    els.confirmPhone.textContent = state.phone || UI_TEXT.phoneUnset;
     els.confirmPeople.textContent = state.people;
     els.confirmPurpose.textContent = Logic.buildPurposeValue(state.purpose, state.purposeOther);
     els.confirmPayment.textContent = state.paymentMethod;
-    els.confirmNote.textContent = state.note || '（なし）';
+    els.confirmNote.textContent = state.note || UI_TEXT.noteUnset;
   }
 
   if (els.step4Back) {
@@ -391,11 +436,11 @@
   function appendDiagnosticRequestId_(message, requestId) {
     var value = String(requestId || '');
     if (!/^[A-Za-z0-9-]{1,64}$/.test(value)) return message;
-    return message + '\n診断ID: ' + value;
+    return message + UI_TEXT.diagnosticIdLabel + value;
   }
 
   function showSubmitError(code, requestId) {
-    var message = appendDiagnosticRequestId_(Logic.messageForErrorCode(code), requestId);
+    var message = appendDiagnosticRequestId_(Logic.messageForErrorCode(code, locale), requestId);
     var action = Logic.recoveryActionForErrorCode(code);
 
     /* 'reselect-time'/'edit-details' は別ステップへ移動するため、移動先でも
@@ -434,11 +479,11 @@
       if (isSubmitting || hasSubmittedSuccessfully) return;
 
       hideSubmitError();
-      setFieldError_(els.consent, els.consentError, els.consent.checked ? '' : '予約成立条件の確認が必要です。');
+      setFieldError_(els.consent, els.consentError, els.consent.checked ? '' : UI_TEXT.consentRequired);
       if (!els.consent.checked) return;
 
       if (!API_BASE_URL) {
-        els.submitError.textContent = Logic.API_NOT_CONFIGURED_MESSAGE;
+        els.submitError.textContent = Logic.apiNotConfiguredMessage(locale);
         els.submitError.hidden = false;
         els.submitError.focus();
         return;
@@ -446,7 +491,7 @@
 
       isSubmitting = true;
       els.submit.disabled = true;
-      els.submit.textContent = '送信中…';
+      els.submit.textContent = UI_TEXT.submitting;
 
       var payload = Logic.buildCreateBookingPayload({
         brand: brand,
@@ -475,7 +520,7 @@
           isSubmitting = false;
           if (!body || body.success !== true) {
             els.submit.disabled = false;
-            els.submit.textContent = 'この内容で仮予約を送信する';
+            els.submit.textContent = UI_TEXT.submitLabel;
             showSubmitError(body && body.error && body.error.code, body && body.requestId);
             return;
           }
@@ -488,8 +533,8 @@
         .catch(function () {
           isSubmitting = false;
           els.submit.disabled = false;
-          els.submit.textContent = 'この内容で仮予約を送信する';
-          els.submitError.textContent = Logic.NETWORK_ERROR_MESSAGE;
+          els.submit.textContent = UI_TEXT.submitLabel;
+          els.submitError.textContent = Logic.networkErrorMessage(locale);
           els.submitError.hidden = false;
           els.submitError.focus();
         });

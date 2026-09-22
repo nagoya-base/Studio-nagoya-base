@@ -1,0 +1,91 @@
+---
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Booking Request | Studio Nagoya Base</title>
+
+<!-- SEO -->
+<meta name="description" content="Book Studio Nagoya Base in Kamimaezu, Nagoya. Choose your date, duration and available start time, then submit a pending booking request.">
+<meta name="robots" content="noindex, follow">
+<link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/booking/en.html">
+
+<!-- Favicon -->
+<link rel="icon" href="../images/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="../images/apple-touch-icon.png">
+
+<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-6TWDLEFWJT');
+</script>
+
+<link rel="stylesheet" href="../styles/common.css">
+<link rel="stylesheet" href="../styles/booking.css">
+</head>
+
+<body data-page-type="booking" data-site-section="studio_main">
+
+<a href="#main-content" class="skip-link">Skip to main content</a>
+
+<nav class="site-nav" aria-label="Site navigation">
+  <div class="nav-inner">
+    <a href="../en.html" class="nav-logo">
+      <div class="logo-mark">N</div>
+      <div class="logo-text">
+        <span class="logo-name">Studio Nagoya Base</span>
+        <span class="logo-en">KAMIMAEZU · NAGOYA</span>
+      </div>
+    </a>
+    <ul class="nav-links">
+      <li><a href="../en.html">Top</a></li>
+      <li><a href="../how-to/en.html">How to Use</a></li>
+      <li><a href="../legal/en.html">Terms of Use</a></li>
+    </ul>
+  </div>
+</nav>
+
+<main id="main-content">
+
+<section id="booking" class="bg-section">
+  <div class="container">
+    <a href="../en.html" class="legal-back-link">← Back to Studio Top</a>
+    <h1 class="section-title">Booking Request</h1>
+    <p class="section-subtitle">Reservation Request</p>
+
+    {% assign booking_back_url = "/en.html" | relative_url %}
+    {% include booking_app_en.html
+      brand="snb"
+      back_url=booking_back_url
+      back_label="Back to Studio Nagoya Base"
+      intro_note="This form is for Studio Nagoya Base only. Please also review the equipment and pricing information on our top page."
+    %}
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <p>STUDIO NAGOYA BASE</p>
+  <p>Private rope &amp; photography studio in Kamimaezu, Nagoya</p>
+  <nav aria-label="Footer navigation">
+    <a href="../en.html">Top</a>
+    <a href="../legal/en.html#terms">Terms of Use</a>
+    <a href="../legal/en.html#privacy">Privacy Policy</a>
+  </nav>
+  <p class="footer-copy">&copy; Studio Nagoya Base. All rights reserved.</p>
+</footer>
+
+<script src="../scripts/booking-logic.js"></script>
+<script src="../scripts/booking-config.js"></script>
+<script src="../scripts/booking-app.js"></script>
+<script src="../scripts/analytics.js"></script>
+
+</body>
+</html>

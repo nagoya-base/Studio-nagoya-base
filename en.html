@@ -143,7 +143,7 @@
       <li><a href="#pricing">Pricing</a></li>
       <li><a href="#safety">Safety</a></li>
       <li><a href="#access">Access</a></li>
-      <li><a href="#calendar">Book</a></li>
+      <li><a href="booking/en.html">Book</a></li>
       <li><a href="index.html" class="nav-link-accent">JP</a></li>
     </ul>
 
@@ -161,7 +161,7 @@
   <a href="#pricing" class="nav-mobile-link">Pricing</a>
   <a href="#safety"  class="nav-mobile-link">Safety</a>
   <a href="#access"  class="nav-mobile-link">Access</a>
-  <a href="#calendar" class="nav-mobile-link">Book</a>
+  <a href="booking/en.html" class="nav-mobile-link">Book</a>
   <a href="index.html" class="nav-mobile-link nav-link-accent">JP</a>
 </div>
 
@@ -177,7 +177,7 @@
     </div>
     <p class="hero-adults-note">Adults 18+ only</p>
     <div class="hero-buttons">
-      <a class="btn-primary" href="#calendar">Check Availability &amp; Book</a>
+      <a class="btn-primary" href="booking/en.html">Choose a Date &amp; Book</a>
       <a class="btn-secondary" href="#pricing">View Pricing</a>
     </div>
   </div>
@@ -255,7 +255,7 @@
     </div>
     <div class="section-cta-sm">
       <div class="btn-group" style="justify-content: center;">
-        <a class="btn-primary" href="#calendar">Check Availability &amp; Book</a>
+        <a class="btn-primary" href="booking/en.html">Choose a Date &amp; Book</a>
       </div>
     </div>
   </div>
@@ -306,9 +306,17 @@
 
 <section id="calendar" class="reservation-section" aria-labelledby="reservation-form-title">
   <div class="container reservation-container">
-    <h2 id="reservation-form-title" class="section-title">Booking Form</h2>
+    <h2 id="reservation-form-title" class="section-title">Online Booking</h2>
     <p class="section-subtitle">Reservation Request</p>
-    <p class="reservation-intro">Please review the information above, then submit a request below.<br>Submitting this form does not immediately confirm your booking. We will contact you after reviewing availability and booking details.</p>
+    <p class="reservation-intro">Choose your date, duration and available start time on our booking page.</p>
+    <div class="btn-group" style="justify-content: center;">
+      <a class="btn-primary" href="booking/en.html">Open Booking Page</a>
+    </div>
+
+    <!-- Issue #297: 旧English Booking Form（Formspree）は通常導線から外し、rollback資産として
+         保持する。フォーム本体・Formspree endpoint・field name/value・id="calendar"・
+         scripts/reservation-form-en.jsは変更しない。PR revertで旧運用へ戻せるようにする。 -->
+    <div class="reservation-legacy-rollback" hidden>
 
     <div id="reservation-success" class="reservation-status reservation-status--success" role="status" aria-live="polite" tabindex="-1" hidden>
       <h3>Your booking request has been received</h3>
@@ -463,6 +471,8 @@
         <p id="reservation-submit-state" class="reservation-submit-state" role="status" aria-live="polite">We will contact you at the email address you provide after reviewing your request.</p>
       </fieldset>
     </form>
+
+    </div>
   </div>
 </section>
 
@@ -508,7 +518,7 @@
   <p class="footer-copy">&copy; Studio Nagoya Base. All rights reserved.</p>
 </footer>
 
-<button class="floating-booking-btn" id="floatingBookingBtn" aria-label="Go to booking form">🕐</button>
+<a class="floating-booking-btn" id="floatingBookingBtn" href="booking/en.html" aria-label="Go to booking page">🕐</a>
 
 <div id="imageModal" class="image-modal">
   <div class="modal-overlay"></div>
