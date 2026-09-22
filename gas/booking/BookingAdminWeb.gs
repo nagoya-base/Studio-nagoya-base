@@ -30,6 +30,13 @@
  * このファイルはHtmlService/SpreadsheetApp.openByIdに依存するため、GAS実行環境でのみ
  * 動作する。node --testではdoGet以外（getAdminBookings/getAdminBookingDetail/
  * adminConfirmBooking/adminCancelBooking）をSpreadsheetApp等のスタブ経由で検証する。
+ *
+ * 【日時の扱いについて】Bookingsシートのstartat/endAt等はSpreadsheet上のDate値だが、
+ * google.script.runをまたいでDateオブジェクトをそのまま返すと、クライアント側での扱いが
+ * 実行環境依存になりやすい。ここでは既存のBookingAvailability.formatDateInTimezone/
+ * formatTimeInTimezone（Availability.gs。他の管理者向け表示・メール本文でも使っている
+ * 既存の純粋関数）を再利用し、Web UIへ渡す前に必ずAsia/Tokyo（Script Propertiesの
+ * TIMEZONE）基準の文字列へ正規化する。新しい日時ロジックは追加していない。
  */
 'use strict';
 
@@ -41,22 +48,48 @@ function doGet() {
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
+/* Booking.gs/BookingRepository.gs等と同じduck-typingでDateかどうかを判定する。 */
+function isAdminWebDateLike_(value) {
+  return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
+}
+
+/* Date値のみ'HH:mm'へ変換する。Date以外（''や既存の文字列）はそのまま返す。 */
+function formatAdminTime_(value, timezone) {
+  if (!isAdminWebDateLike_(value)) return value === undefined || value === null ? '' : value;
+  return BookingAvailability.formatTimeInTimezone(value, timezone) || '';
+}
+
+/* Date値のみ'YYYY-MM-DD HH:mm'へ変換する。Date以外（''や既存の文字列）はそのまま返す。 */
+function formatAdminDateTime_(value, timezone) {
+  if (!isAdminWebDateLike_(value)) return value === undefined || value === null ? '' : value;
+  var datePart = BookingAvailability.formatDateInTimezone(value, timezone);
+  var timePart = BookingAvailability.formatTimeInTimezone(value, timezone);
+  return datePart && timePart ? datePart + ' ' + timePart : '';
+}
+
 /*
  * 一覧取得（Issue #305「読み取り」節どおり、全件取得→UI側で今日/今後/すべてを絞り込む）。
  * 個人管理用途で件数が小規模な前提のため、専用の検索API・ページネーションは作らない。
+ *
+ * 「今日」判定を端末のtimezoneに依存させないため、サーバー側（Asia/Tokyo基準）で
+ * 計算した`todayJst`を一覧と一緒に返す。クライアント側はこの文字列とbooking.date
+ * （既にJST基準の'YYYY-MM-DD'）を単純比較するだけで、端末のtimezone設定に関わらず
+ * 常に正しく「今日/今後」を判定できる。
  *
  * PIIを一般公開しないため、一覧カードの表示に不要なフィールド（email/phone/note/
  * mail SentAt系/lastMailError系等）はここでは返さない。それらは詳細取得
  * （getAdminBookingDetail）でのみ返す。
  */
 function getAdminBookings() {
-  return SpreadsheetRepository.getAllBookings().map(function (item) {
+  var timezone = BookingConfig.getAvailabilityConfig().timezone;
+  var todayJst = BookingAvailability.formatDateInTimezone(new Date(), timezone);
+  var bookings = SpreadsheetRepository.getAllBookings().map(function (item) {
     var record = item.record;
     return {
       bookingId: record.bookingId,
       date: record.date,
-      startAt: record.startAt,
-      endAt: record.endAt,
+      startAt: formatAdminTime_(record.startAt, timezone),
+      endAt: formatAdminTime_(record.endAt, timezone),
       brand: record.brand,
       name: record.name,
       people: record.people,
@@ -66,15 +99,48 @@ function getAdminBookings() {
       status: record.status
     };
   });
+  return { todayJst: todayJst, bookings: bookings };
 }
 
-/* 詳細取得。Bookingsの当該行をそのまま返す（値そのものは一切加工・編集しない）。 */
+/*
+ * 詳細取得。Bookingsの当該行の値を編集はしないが、Date値はWeb UI用の文字列へ正規化して
+ * 返す（google.script.run越しにDateオブジェクトをそのまま渡さない）。lastMailError*の
+ * 詳細（エラー内容・種別・日時）はWeb UIへは出さず、`hasMailError`（あり/なし）のみ返す
+ * （障害調査はSpreadsheetを直接確認する運用のまま）。
+ */
 function getAdminBookingDetail(bookingId) {
   var found = SpreadsheetRepository.findRowByBookingId(bookingId);
   if (!found) {
     return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
   }
-  return { success: true, booking: found.record };
+  var timezone = BookingConfig.getAvailabilityConfig().timezone;
+  var record = found.record;
+  return {
+    success: true,
+    booking: {
+      bookingId: record.bookingId,
+      date: record.date,
+      startAt: formatAdminDateTime_(record.startAt, timezone),
+      endAt: formatAdminDateTime_(record.endAt, timezone),
+      brand: record.brand,
+      status: record.status,
+      name: record.name,
+      email: record.email,
+      phone: record.phone,
+      people: record.people,
+      customerType: record.customerType,
+      purpose: record.purpose,
+      paymentMethod: record.paymentMethod,
+      source: record.source,
+      note: record.note,
+      pendingMailSentAt: formatAdminDateTime_(record.pendingMailSentAt, timezone),
+      confirmedMailSentAt: formatAdminDateTime_(record.confirmedMailSentAt, timezone),
+      cancelMailSentAt: formatAdminDateTime_(record.cancelMailSentAt, timezone),
+      reminderSentAt: formatAdminDateTime_(record.reminderSentAt, timezone),
+      accessGuideSentAt: formatAdminDateTime_(record.accessGuideSentAt, timezone),
+      hasMailError: !!record.lastMailErrorAt
+    }
+  };
 }
 
 /* 確定。既存の正式関数confirmBooking(bookingId)（BookingAdmin.gs）へそのまま委譲する。

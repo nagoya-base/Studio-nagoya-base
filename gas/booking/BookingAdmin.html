@@ -243,10 +243,14 @@
   <script>
     var state = {
       bookings: [],
+      todayJst: null,
       filter: 'today',
       busyIds: {}
     };
 
+    /* サーバー側（BookingAdminWeb.gs）がAsia/Tokyo基準で正規化した文字列をそのまま
+       表示する。startAt/endAtは一覧では'HH:mm'、詳細では'YYYY-MM-DD HH:mm'として
+       既にサーバー側で整形済み（google.script.run越しにDateオブジェクトを渡さない）。 */
     var DETAIL_FIELDS = [
       ['bookingId', 'bookingId'],
       ['date', '利用日'],
@@ -268,41 +272,26 @@
       ['cancelMailSentAt', 'キャンセルメール送信'],
       ['reminderSentAt', '前日リマインド送信'],
       ['accessGuideSentAt', '来場案内送信'],
-      ['lastMailErrorAt', '直近メールエラー日時'],
-      ['lastMailErrorType', '直近メールエラー種別'],
-      ['lastMailErrorMessage', '直近メールエラー内容']
+      ['hasMailError', 'メールエラー']
     ];
 
-    function formatDateTime(value) {
-      if (!value) return '';
-      var d = value instanceof Date ? value : new Date(value);
-      if (isNaN(d.getTime())) return String(value);
-      var mm = d.getMonth() + 1;
-      var dd = d.getDate();
-      var hh = ('0' + d.getHours()).slice(-2);
-      var mi = ('0' + d.getMinutes()).slice(-2);
-      return mm + '/' + dd + ' ' + hh + ':' + mi;
-    }
-
-    function formatValue(value) {
+    /* hasMailErrorのみ真偽値、それ以外はサーバー側で整形済みの文字列（空文字列＝未設定）。
+       lastMailError*の詳細（内容・種別・日時）はWeb UIへは出さない（障害調査は
+       Spreadsheetを直接確認する運用のまま。BookingAdminWeb.gs参照）。 */
+    function formatValue(key, value) {
+      if (key === 'hasMailError') return value ? 'あり' : 'なし';
       if (value === null || value === undefined || value === '') return '（未設定）';
-      if (value instanceof Date || (value && typeof value.getTime === 'function')) {
-        return formatDateTime(value);
-      }
       return String(value);
     }
 
-    function todayString() {
-      var d = new Date();
-      var mm = ('0' + (d.getMonth() + 1)).slice(-2);
-      var dd = ('0' + d.getDate()).slice(-2);
-      return d.getFullYear() + '-' + mm + '-' + dd;
-    }
-
+    /* 「今日/今後」の判定はstate.todayJst（サーバーがAsia/Tokyo基準で計算した値。
+       getAdminBookingsの応答に含まれる）とbooking.date（同じくJST基準の
+       'YYYY-MM-DD'）の単純な文字列比較で行う。端末のtimezone設定には一切依存しない。 */
     function visibleBookings() {
-      var today = todayString();
+      var today = state.todayJst;
       return state.bookings.filter(function (b) {
         if (state.filter === 'all') return true;
+        if (!today) return true;
         if (state.filter === 'today') return b.date === today;
         if (state.filter === 'upcoming') return b.date >= today;
         return true;
@@ -335,7 +324,7 @@
 
         return (
           '<div class="card">' +
-            '<div class="card-datetime">' + escapeHtml(b.date) + ' ' + escapeHtml(formatDateTime(b.startAt)).split(' ').pop() + '-' + escapeHtml(formatDateTime(b.endAt)).split(' ').pop() + '</div>' +
+            '<div class="card-datetime">' + escapeHtml(b.date) + ' ' + escapeHtml(b.startAt) + '-' + escapeHtml(b.endAt) + '</div>' +
             '<div class="card-brand">' + escapeHtml(b.brand) + '</div>' +
             '<div class="card-name">' + escapeHtml(b.name) + '</div>' +
             '<div class="card-meta">' + escapeHtml(b.people) + ' / ' + escapeHtml(b.customerType) + '</div>' +
@@ -351,16 +340,33 @@
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    function loadBookings() {
+    /* loadRequestSeqは呼び出しごとに採番し、応答が返ってきた時点で「今なお最新の
+       呼び出しか」を確認してから反映する。連打等で複数のgetAdminBookings呼び出しが
+       飛び、ネットワークの都合で応答が逆順に返ってきても、古い応答でstateを
+       上書きしないようにするためのガード（新しい機能ではなく、単なる採番による
+       ガードのみ）。 */
+    var loadRequestSeq = 0;
+
+    /* onDone: 一覧の再取得・再描画が完了した後に呼ばれるコールバック（省略可）。
+       confirm/cancel直後はこのコールバック内でbusy状態を解除することで、
+       最新一覧が反映されるまでボタンをdisableし続ける。 */
+    function loadBookings(onDone) {
       setStatusLine('読み込み中…');
+      loadRequestSeq += 1;
+      var requestId = loadRequestSeq;
       google.script.run
-        .withSuccessHandler(function (bookings) {
-          state.bookings = bookings || [];
+        .withSuccessHandler(function (result) {
+          if (requestId !== loadRequestSeq) return;
+          state.bookings = (result && result.bookings) || [];
+          state.todayJst = result && result.todayJst;
           setStatusLine('');
           render();
+          if (typeof onDone === 'function') onDone();
         })
         .withFailureHandler(function (error) {
+          if (requestId !== loadRequestSeq) return;
           setStatusLine('読み込みに失敗しました: ' + (error && error.message ? error.message : error));
+          if (typeof onDone === 'function') onDone();
         })
         .getAdminBookings();
     }
@@ -387,7 +393,7 @@
       body.innerHTML = DETAIL_FIELDS.map(function (pair) {
         var key = pair[0];
         var label = pair[1];
-        return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(booking[key])) + '</dd>';
+        return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
       }).join('');
       document.getElementById('modal-overlay').classList.add('open');
     }
@@ -405,23 +411,22 @@
       render();
     }
 
+    /* 確定処理そのものが終わってもbookingIdのbusyはすぐには解除しない。
+       loadBookings()が最新一覧を取得・再描画し終えたコールバック内で初めて解除する
+       （途中で古い一覧のまま再度「確定」を押せてしまう隙をなくすため）。 */
     function runConfirm(bookingId) {
       setBusy(bookingId, true);
       setStatusLine('確定処理中…');
       google.script.run
         .withSuccessHandler(function (result) {
-          setStatusLine('');
-          setBusy(bookingId, false);
           if (!result || !result.success) {
             alert('確定できませんでした: ' + (result && result.error && result.error.message));
           }
-          loadBookings();
+          loadBookings(function () { setBusy(bookingId, false); });
         })
         .withFailureHandler(function (error) {
-          setStatusLine('');
-          setBusy(bookingId, false);
           alert('確定でエラーが発生しました: ' + (error && error.message ? error.message : error));
-          loadBookings();
+          loadBookings(function () { setBusy(bookingId, false); });
         })
         .adminConfirmBooking(bookingId);
     }
@@ -438,18 +443,14 @@
       setStatusLine('キャンセル処理中…');
       google.script.run
         .withSuccessHandler(function (result) {
-          setStatusLine('');
-          setBusy(bookingId, false);
           if (!result || !result.success) {
             alert('キャンセルできませんでした: ' + (result && result.error && result.error.message));
           }
-          loadBookings();
+          loadBookings(function () { setBusy(bookingId, false); });
         })
         .withFailureHandler(function (error) {
-          setStatusLine('');
-          setBusy(bookingId, false);
           alert('キャンセルでエラーが発生しました: ' + (error && error.message ? error.message : error));
-          loadBookings();
+          loadBookings(function () { setBusy(bookingId, false); });
         })
         .adminCancelBooking(bookingId);
     }

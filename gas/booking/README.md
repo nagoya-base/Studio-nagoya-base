@@ -1027,7 +1027,16 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
   `adminConfirmBooking`/`adminCancelBooking`は、それぞれ既存の正式関数
   `confirmBooking(bookingId)`/`cancelBookingAdmin(bookingId)`（BookingAdmin.gs。
   いずれも本Issueで変更していない）を1行で呼ぶだけで、業務ロジック・Lock・Calendar/
-  Sheets/Mail/Recovery処理は一切コピーしていない
+  Sheets/Mail/Recovery処理は一切コピーしていない。`getAdminBookings()`/
+  `getAdminBookingDetail()`は、Bookingsシート上のDate値をgoogle.script.run越しに
+  そのまま渡さず、既存の`BookingAvailability.formatDateInTimezone`/
+  `formatTimeInTimezone`（Availability.gs。メール本文生成等でも使っている既存の
+  純粋関数）でAsia/Tokyo基準の文字列へ正規化してから返す。`getAdminBookings()`は
+  一覧と一緒に、同じくAsia/Tokyo基準で計算した`todayJst`（今日の日付文字列）も返し、
+  クライアント側の「今日/今後」判定が端末のtimezone設定に依存しないようにしている。
+  `getAdminBookingDetail()`は`lastMailErrorAt`/`lastMailErrorType`/
+  `lastMailErrorMessage`の詳細は返さず、`hasMailError`（あり/なし）のみ返す
+  （障害調査はSpreadsheetを直接確認する運用のまま）
 - `BookingAdmin.html`（新規） — 1ページのみのモバイル優先UI。今日/今後/すべてタブ・
   カード形式の一覧・モーダルでの詳細表示・確定/キャンセルボタンを持つ。CSS/JSはすべて
   インラインで、別ファイルへは分割していない
@@ -1786,8 +1795,11 @@ Sheets側はEXPIREDへ進める（PENDINGのまま放置しない）。
 
 1ページのみ。上部に「今日 / 今後 / すべて」タブ、その下に予約一覧をカード形式で表示する
 （`getAdminBookings()`で全件取得し、タブの絞り込みはクライアント側で行う。個人管理用途で
-件数が小規模な前提のため、専用の検索APIは作っていない）。カードから「詳細」を押すと
-モーダルで全項目を表示する（`getAdminBookingDetail(bookingId)`）。
+件数が小規模な前提のため、専用の検索APIは作っていない。「今日」の判定は
+`getAdminBookings()`が一緒に返すAsia/Tokyo基準の`todayJst`を使い、端末のtimezone設定には
+依存しない）。カードから「詳細」を押すとモーダルで全項目を表示する
+（`getAdminBookingDetail(bookingId)`。メール送信失敗の詳細（内容・種別・日時）は表示せず、
+「メールエラー: あり/なし」のみ表示する）。
 
 - PENDING: 「詳細」「確定」「キャンセル」
 - CONFIRMED: 「詳細」「キャンセル」
@@ -1798,6 +1810,11 @@ Sheets側はEXPIREDへ進める（PENDINGのまま放置しない）。
 `adminCancelBooking(bookingId)`（内部で既存`cancelBookingAdmin(bookingId)`をそのまま
 呼ぶ）を実行する。いずれも処理中はボタンをdisableして二重操作を防ぎ、完了後は必ず
 サーバーから一覧を再取得する（クライアント側でstatusを推測して書き換えない）。
+ボタンのdisableは確定/キャンセルの処理自体が終わっただけでは解除せず、その後の一覧再取得・
+再描画が完了するまで維持する（再取得中に古い一覧のまま同じ予約を再操作できてしまう隙を
+なくすため）。一覧の再取得はタブ切替や確定/キャンセルのたびに都度呼ばれるため、連打等で
+複数の呼び出しが重なった場合は、それぞれの呼び出しに採番したIDで「今なお最新の呼び出しか」
+を確認し、後から返ってきた古い応答で新しい表示を上書きしないようにしている。
 
 ### このWeb UIでできないこと（意図的にMVP非対象）
 
@@ -2237,9 +2254,15 @@ Issue #305（Booking Admin Web UI化）で追加:
 - `test/booking-admin-web.test.js`（新規） — `BookingAdminWeb.gs`の統合テスト。
   `adminConfirmBooking`/`adminCancelBooking`が実際に既存`confirmBooking`/
   `cancelBookingAdmin`（Calendar/Sheets/Lockを含む本物の処理）を実行し、独自の状態遷移
-  ロジックを持たないこと、`getAdminBookings()`が一覧に必要な最小フィールドのみを返し
-  `email`/`phone`/`note`等のPIIを含まないこと、`getAdminBookingDetail(bookingId)`が
-  詳細フィールド一式を返すこと・存在しないbookingIdで`NOT_FOUND`を返すことを検証
+  ロジックを持たないこと、`getAdminBookings()`が`{ todayJst, bookings }`を返し
+  一覧の各要素が最小フィールドのみで`email`/`phone`/`note`等のPIIを含まないこと、
+  `getAdminBookingDetail(bookingId)`が詳細フィールド一式を返すこと・存在しない
+  bookingIdで`NOT_FOUND`を返すことを検証。**PRレビュー対応で追加**:
+  `getAdminBookings`/`getAdminBookingDetail`の`startAt`/`endAt`・各SentAt系フィールドが
+  Dateオブジェクトではなく正規化された文字列で返ること、`todayJst`がAsia/Tokyo基準で
+  計算されること、メール送信に失敗した場合は`hasMailError:true`になり
+  `lastMailErrorAt`/`lastMailErrorType`/`lastMailErrorMessage`の詳細はレスポンスに
+  含まれないことを検証
 - `test/helpers/booking-deployment-manifest.js`（更新） — `BOOKING_ADMIN_FILES`へ
   `BookingAdminWeb.gs`を追加（`test/booking-admin-deployment.test.js`/
   `test/booking-deployment-manifest-sync.test.js`が引き続き通ることで、本番Booking

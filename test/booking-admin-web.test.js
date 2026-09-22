@@ -10,6 +10,12 @@
  *
  * あわせて、getAdminBookings()が一覧表示に不要なPII（email/phone/note等）を含まないこと、
  * getAdminBookingDetail(bookingId)が詳細表示に必要な全フィールドを返すことを検証する。
+ *
+ * PRレビュー対応で追加: getAdminBookings/getAdminBookingDetailがDateオブジェクトを
+ * そのまま返さずWeb UI用の文字列へ正規化していること（google.script.run越しにDateを
+ * そのまま渡さない）、「今日」判定に使うtodayJstがAsia/Tokyo基準で計算されていること、
+ * lastMailError*の詳細（内容・種別・日時）を返さずhasMailError（あり/なし）のみ返すことを
+ * 追加で検証する。
  */
 'use strict';
 
@@ -201,14 +207,14 @@ test('adminCancelBooking: EXPIREDからのキャンセルはcancelBookingAdmin�
 
 /* ---------- getAdminBookings ---------- */
 
-test('getAdminBookings: 一覧表示に必要な最小フィールドのみを返し、email/phone/note等のPIIを含まない', function () {
+test('getAdminBookings: { todayJst, bookings }を返し、一覧の各要素は最小フィールドのみでemail/phone/note等のPIIを含まない', function () {
   var ctx = setup();
   var bookingId = createPending(ctx);
 
-  var list = ctx.sandbox.getAdminBookings();
+  var result = ctx.sandbox.getAdminBookings();
 
-  assert.strictEqual(list.length, 1);
-  var item = list[0];
+  assert.strictEqual(result.bookings.length, 1);
+  var item = result.bookings[0];
   assert.strictEqual(item.bookingId, bookingId);
   assert.strictEqual(item.status, 'PENDING');
   assert.strictEqual(item.brand, 'studio_x');
@@ -228,21 +234,49 @@ test('getAdminBookings: 複数件・複数statusをすべて返す（サーバ�
   var confirmedId = createPending(ctx, { date: futureDateJst_(20) });
   ctx.sandbox.adminConfirmBooking(confirmedId);
 
-  var list = ctx.sandbox.getAdminBookings();
+  var result = ctx.sandbox.getAdminBookings();
   /* Array.from()を明示的にmain realmのArrayコンストラクタで呼ぶことで、vmサンドボックス
      （別realm）から返った配列に対する.map()がそのrealmのArrayを返してしまい、
      assert.deepStrictEqualが「構造は同じだがreference-equalではない」で
      失敗する問題を避ける（test/helpers/gas-sandbox.jsのrealm分離による既知の注意点）。 */
-  var ids = Array.from(list, function (item) { return item.bookingId; }).sort();
+  var ids = Array.from(result.bookings, function (item) { return item.bookingId; }).sort();
 
   assert.deepStrictEqual(ids, [confirmedId, pendingId].sort());
 });
 
+test('getAdminBookings: startAt/endAtはDateオブジェクトではなくWeb UI用の文字列（HH:mm）として返る', function () {
+  var ctx = setup();
+  createPending(ctx, { startTime: '19:00', durationMinutes: 120 });
+
+  var result = ctx.sandbox.getAdminBookings();
+  var item = result.bookings[0];
+
+  assert.strictEqual(typeof item.startAt, 'string', 'startAtはDateオブジェクトのまま返してはいけない');
+  assert.strictEqual(typeof item.endAt, 'string', 'endAtはDateオブジェクトのまま返してはいけない');
+  assert.strictEqual(item.startAt, '19:00');
+  assert.strictEqual(item.endAt, '21:00');
+});
+
+test('getAdminBookings: todayJstはAsia/Tokyo基準で計算される（端末timezoneに依存しない）', function () {
+  var ctx = setup();
+
+  var result = ctx.sandbox.getAdminBookings();
+
+  assert.strictEqual(result.todayJst, futureDateJst_(0), 'todayJstはAsia/Tokyo基準の「今日」の日付文字列であるべき');
+});
+
 /* ---------- getAdminBookingDetail ---------- */
 
-test('getAdminBookingDetail: 詳細表示に必要な全フィールド（email/phone/note等を含む）をそのまま返す', function () {
+test('getAdminBookingDetail: 詳細表示に必要な全フィールド（email/phone/note等を含む）を返す。日時はWeb UI用の文字列へ正規化する', function () {
   var ctx = setup();
-  var bookingId = createPending(ctx, { email: 'detail@example.com', phone: '090-9999-9999', note: '詳細確認用備考' });
+  var bookingId = createPending(ctx, {
+    email: 'detail@example.com',
+    phone: '090-9999-9999',
+    note: '詳細確認用備考',
+    date: DEFAULT_FUTURE_DATE,
+    startTime: '19:00',
+    durationMinutes: 120
+  });
 
   var result = ctx.sandbox.getAdminBookingDetail(bookingId);
 
@@ -252,6 +286,51 @@ test('getAdminBookingDetail: 詳細表示に必要な全フィールド（email/
   assert.strictEqual(result.booking.phone, '090-9999-9999');
   assert.strictEqual(result.booking.note, '詳細確認用備考');
   assert.strictEqual(result.booking.status, 'PENDING');
+
+  assert.strictEqual(typeof result.booking.startAt, 'string', 'startAtはDateオブジェクトのまま返してはいけない');
+  assert.strictEqual(typeof result.booking.endAt, 'string', 'endAtはDateオブジェクトのまま返してはいけない');
+  assert.strictEqual(result.booking.startAt, DEFAULT_FUTURE_DATE + ' 19:00');
+  assert.strictEqual(result.booking.endAt, DEFAULT_FUTURE_DATE + ' 21:00');
+
+  assert.strictEqual(result.booking.hasMailError, false, 'メール送信に失敗していなければhasMailErrorはfalse');
+  ['lastMailErrorAt', 'lastMailErrorType', 'lastMailErrorMessage'].forEach(function (key) {
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(result.booking, key), false, key + 'はWeb UIレスポンスに含めてはいけない（hasMailErrorのみ返す）');
+  });
+});
+
+test('getAdminBookingDetail: 未送信のSentAt系フィールドは空文字列のまま、送信済みのSentAt系フィールドはDateではなく文字列で返る', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+
+  var result = ctx.sandbox.getAdminBookingDetail(bookingId);
+
+  /* createBooking自体が仮予約受付メールをbest effortで送るため、pendingMailSentAtは
+     このテスト前提（完全なメール設定）では既に送信済みになる。Dateではなく
+     'YYYY-MM-DD HH:mm'形式の文字列で返ることを確認する（Date正規化の検証）。 */
+  assert.strictEqual(typeof result.booking.pendingMailSentAt, 'string');
+  assert.match(result.booking.pendingMailSentAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+
+  /* confirm/cancel/リマインドはまだ行っていないため、これらは未送信のまま空文字列のはず。 */
+  ['confirmedMailSentAt', 'cancelMailSentAt', 'reminderSentAt', 'accessGuideSentAt'].forEach(function (key) {
+    assert.strictEqual(result.booking[key], '', key + 'は未送信のため空文字列であるべき');
+  });
+});
+
+test('getAdminBookingDetail: メール送信に失敗した場合はhasMailError:trueになり、lastMailError*の詳細はレスポンスに含めない', function () {
+  var ctx = setup({
+    properties: { BOOKING_MAIL_DISPLAY_NAME: '', BOOKING_MAIL_REPLY_TO: '', BOOKING_CONTACT_EMAIL: '' }
+  });
+  var bookingId = createPending(ctx);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.ok(found.record.lastMailErrorAt, 'テスト前提としてメール設定不足でlastMailErrorAtが記録されているべき');
+
+  var result = ctx.sandbox.getAdminBookingDetail(bookingId);
+
+  assert.strictEqual(result.booking.hasMailError, true);
+  ['lastMailErrorAt', 'lastMailErrorType', 'lastMailErrorMessage'].forEach(function (key) {
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(result.booking, key), false, key + 'はWeb UIレスポンスに含めてはいけない（hasMailErrorのみ返す）');
+  });
 });
 
 test('getAdminBookingDetail: 存在しないbookingIdはNOT_FOUNDを返す', function () {
