@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<!--
+  BookingAdmin.html — 個人用Booking Admin Web UI（Issue #305）。
+  1ページのみ。詳細はモーダルで表示する（別ページを増やさない）。
+  データ取得・確定・キャンセルはすべてgoogle.script.run経由でBookingAdminWeb.gsを呼ぶ。
+  クライアント側でstatusを推測・書き換えることはしない（操作後は必ずサーバーから再取得する）。
+-->
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    :root {
+      color-scheme: light;
+      --color-bg: #f4f4f5;
+      --color-card-bg: #ffffff;
+      --color-border: #e2e2e5;
+      --color-text: #1c1c1e;
+      --color-text-sub: #6b6b70;
+      --color-primary: #2563eb;
+      --color-danger: #dc2626;
+      --color-pending: #b45309;
+      --color-pending-bg: #fef3c7;
+      --color-confirmed: #15803d;
+      --color-confirmed-bg: #dcfce7;
+      --color-closed: #52525b;
+      --color-closed-bg: #e4e4e7;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--color-bg);
+      color: var(--color-text);
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Segoe UI", sans-serif;
+      overflow-x: hidden;
+      width: 100%;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      background: var(--color-card-bg);
+      border-bottom: 1px solid var(--color-border);
+      padding: 12px 16px;
+      z-index: 10;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .tab-button {
+      flex: 1;
+      min-height: 40px;
+      border: 1px solid var(--color-border);
+      background: var(--color-bg);
+      color: var(--color-text);
+      border-radius: 8px;
+      font-size: 14px;
+      padding: 8px 4px;
+    }
+
+    .tab-button.active {
+      background: var(--color-primary);
+      border-color: var(--color-primary);
+      color: #fff;
+      font-weight: bold;
+    }
+
+    main {
+      padding: 12px 16px 32px;
+      max-width: 480px;
+      margin: 0 auto;
+    }
+
+    #status-line {
+      color: var(--color-text-sub);
+      font-size: 13px;
+      margin: 4px 0 12px;
+      min-height: 1.2em;
+    }
+
+    .card {
+      background: var(--color-card-bg);
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      word-break: break-word;
+    }
+
+    .card-datetime {
+      font-size: 15px;
+      font-weight: bold;
+    }
+
+    .card-brand {
+      color: var(--color-text-sub);
+      font-size: 13px;
+      margin-top: 2px;
+    }
+
+    .card-name {
+      font-size: 15px;
+      margin-top: 6px;
+    }
+
+    .card-meta {
+      color: var(--color-text-sub);
+      font-size: 13px;
+      margin-top: 2px;
+    }
+
+    .badge {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .badge-PENDING { color: var(--color-pending); background: var(--color-pending-bg); }
+    .badge-CONFIRMED { color: var(--color-confirmed); background: var(--color-confirmed-bg); }
+    .badge-CANCELLED, .badge-EXPIRED { color: var(--color-closed); background: var(--color-closed-bg); }
+
+    .card-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    button.action {
+      flex: 1;
+      min-height: 44px;
+      border-radius: 8px;
+      border: 1px solid var(--color-border);
+      background: #fff;
+      font-size: 14px;
+    }
+
+    button.action:disabled {
+      opacity: 0.5;
+    }
+
+    button.detail { color: var(--color-text); }
+    button.confirm { color: #fff; background: var(--color-primary); border-color: var(--color-primary); }
+    button.cancel { color: #fff; background: var(--color-danger); border-color: var(--color-danger); }
+
+    .empty {
+      color: var(--color-text-sub);
+      text-align: center;
+      padding: 32px 0;
+      font-size: 14px;
+    }
+
+    #modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      z-index: 20;
+      padding: 16px;
+      overflow-y: auto;
+    }
+
+    #modal-overlay.open {
+      display: block;
+    }
+
+    #modal {
+      background: #fff;
+      border-radius: 12px;
+      max-width: 480px;
+      margin: 40px auto;
+      padding: 16px;
+      word-break: break-word;
+    }
+
+    #modal h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+    }
+
+    #modal dl {
+      margin: 0;
+    }
+
+    #modal dt {
+      color: var(--color-text-sub);
+      font-size: 12px;
+      margin-top: 10px;
+    }
+
+    #modal dd {
+      margin: 2px 0 0;
+      font-size: 14px;
+    }
+
+    #modal-close {
+      width: 100%;
+      min-height: 44px;
+      margin-top: 16px;
+      border-radius: 8px;
+      border: 1px solid var(--color-border);
+      background: var(--color-bg);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Booking Admin</h1>
+    <div class="tabs">
+      <button type="button" class="tab-button active" data-filter="today">今日</button>
+      <button type="button" class="tab-button" data-filter="upcoming">今後</button>
+      <button type="button" class="tab-button" data-filter="all">すべて</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="status-line"></div>
+    <div id="list"></div>
+  </main>
+
+  <div id="modal-overlay">
+    <div id="modal">
+      <h2>予約詳細</h2>
+      <dl id="modal-body"></dl>
+      <button type="button" id="modal-close">閉じる</button>
+    </div>
+  </div>
+
+  <script>
+    var state = {
+      bookings: [],
+      filter: 'today',
+      busyIds: {}
+    };
+
+    var DETAIL_FIELDS = [
+      ['bookingId', 'bookingId'],
+      ['date', '利用日'],
+      ['startAt', '開始'],
+      ['endAt', '終了'],
+      ['brand', 'ブランド'],
+      ['status', 'ステータス'],
+      ['name', '氏名'],
+      ['email', 'メール'],
+      ['phone', '電話'],
+      ['people', '人数'],
+      ['customerType', '利用区分'],
+      ['purpose', '利用目的'],
+      ['paymentMethod', '支払方法'],
+      ['source', '受付経路'],
+      ['note', '備考'],
+      ['pendingMailSentAt', '仮予約メール送信'],
+      ['confirmedMailSentAt', '確定メール送信'],
+      ['cancelMailSentAt', 'キャンセルメール送信'],
+      ['reminderSentAt', '前日リマインド送信'],
+      ['accessGuideSentAt', '来場案内送信'],
+      ['lastMailErrorAt', '直近メールエラー日時'],
+      ['lastMailErrorType', '直近メールエラー種別'],
+      ['lastMailErrorMessage', '直近メールエラー内容']
+    ];
+
+    function formatDateTime(value) {
+      if (!value) return '';
+      var d = value instanceof Date ? value : new Date(value);
+      if (isNaN(d.getTime())) return String(value);
+      var mm = d.getMonth() + 1;
+      var dd = d.getDate();
+      var hh = ('0' + d.getHours()).slice(-2);
+      var mi = ('0' + d.getMinutes()).slice(-2);
+      return mm + '/' + dd + ' ' + hh + ':' + mi;
+    }
+
+    function formatValue(value) {
+      if (value === null || value === undefined || value === '') return '（未設定）';
+      if (value instanceof Date || (value && typeof value.getTime === 'function')) {
+        return formatDateTime(value);
+      }
+      return String(value);
+    }
+
+    function todayString() {
+      var d = new Date();
+      var mm = ('0' + (d.getMonth() + 1)).slice(-2);
+      var dd = ('0' + d.getDate()).slice(-2);
+      return d.getFullYear() + '-' + mm + '-' + dd;
+    }
+
+    function visibleBookings() {
+      var today = todayString();
+      return state.bookings.filter(function (b) {
+        if (state.filter === 'all') return true;
+        if (state.filter === 'today') return b.date === today;
+        if (state.filter === 'upcoming') return b.date >= today;
+        return true;
+      });
+    }
+
+    function setStatusLine(message) {
+      document.getElementById('status-line').textContent = message || '';
+    }
+
+    function render() {
+      var list = document.getElementById('list');
+      var bookings = visibleBookings();
+      if (bookings.length === 0) {
+        list.innerHTML = '<div class="empty">該当する予約がありません</div>';
+        return;
+      }
+
+      list.innerHTML = bookings.map(function (b) {
+        var busy = !!state.busyIds[b.bookingId];
+        var canConfirm = b.status === 'PENDING';
+        var canCancel = b.status === 'PENDING' || b.status === 'CONFIRMED';
+        var actions = '<button type="button" class="action detail" data-action="detail" data-id="' + b.bookingId + '">詳細</button>';
+        if (canConfirm) {
+          actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + b.bookingId + '"' + (busy ? ' disabled' : '') + '>確定</button>';
+        }
+        if (canCancel) {
+          actions += '<button type="button" class="action cancel" data-action="cancel" data-id="' + b.bookingId + '"' + (busy ? ' disabled' : '') + '>キャンセル</button>';
+        }
+
+        return (
+          '<div class="card">' +
+            '<div class="card-datetime">' + escapeHtml(b.date) + ' ' + escapeHtml(formatDateTime(b.startAt)).split(' ').pop() + '-' + escapeHtml(formatDateTime(b.endAt)).split(' ').pop() + '</div>' +
+            '<div class="card-brand">' + escapeHtml(b.brand) + '</div>' +
+            '<div class="card-name">' + escapeHtml(b.name) + '</div>' +
+            '<div class="card-meta">' + escapeHtml(b.people) + ' / ' + escapeHtml(b.customerType) + '</div>' +
+            '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>' +
+            '<div class="card-actions">' + actions + '</div>' +
+          '</div>'
+        );
+      }).join('');
+    }
+
+    function escapeHtml(value) {
+      return String(value === null || value === undefined ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function loadBookings() {
+      setStatusLine('読み込み中…');
+      google.script.run
+        .withSuccessHandler(function (bookings) {
+          state.bookings = bookings || [];
+          setStatusLine('');
+          render();
+        })
+        .withFailureHandler(function (error) {
+          setStatusLine('読み込みに失敗しました: ' + (error && error.message ? error.message : error));
+        })
+        .getAdminBookings();
+    }
+
+    function openDetail(bookingId) {
+      setStatusLine('詳細を取得中…');
+      google.script.run
+        .withSuccessHandler(function (result) {
+          setStatusLine('');
+          if (!result || !result.success) {
+            alert('詳細を取得できませんでした: ' + (result && result.error && result.error.message));
+            return;
+          }
+          showDetailModal(result.booking);
+        })
+        .withFailureHandler(function (error) {
+          setStatusLine('詳細の取得に失敗しました: ' + (error && error.message ? error.message : error));
+        })
+        .getAdminBookingDetail(bookingId);
+    }
+
+    function showDetailModal(booking) {
+      var body = document.getElementById('modal-body');
+      body.innerHTML = DETAIL_FIELDS.map(function (pair) {
+        var key = pair[0];
+        var label = pair[1];
+        return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(booking[key])) + '</dd>';
+      }).join('');
+      document.getElementById('modal-overlay').classList.add('open');
+    }
+
+    function closeModal() {
+      document.getElementById('modal-overlay').classList.remove('open');
+    }
+
+    function setBusy(bookingId, busy) {
+      if (busy) {
+        state.busyIds[bookingId] = true;
+      } else {
+        delete state.busyIds[bookingId];
+      }
+      render();
+    }
+
+    function runConfirm(bookingId) {
+      setBusy(bookingId, true);
+      setStatusLine('確定処理中…');
+      google.script.run
+        .withSuccessHandler(function (result) {
+          setStatusLine('');
+          setBusy(bookingId, false);
+          if (!result || !result.success) {
+            alert('確定できませんでした: ' + (result && result.error && result.error.message));
+          }
+          loadBookings();
+        })
+        .withFailureHandler(function (error) {
+          setStatusLine('');
+          setBusy(bookingId, false);
+          alert('確定でエラーが発生しました: ' + (error && error.message ? error.message : error));
+          loadBookings();
+        })
+        .adminConfirmBooking(bookingId);
+    }
+
+    function runCancel(bookingId) {
+      var confirmed = window.confirm(
+        'この予約をキャンセルします。\n\n' +
+        'Calendarの予約枠を削除し、利用者へキャンセルメールを送信します。\n\n' +
+        '実行しますか？'
+      );
+      if (!confirmed) return;
+
+      setBusy(bookingId, true);
+      setStatusLine('キャンセル処理中…');
+      google.script.run
+        .withSuccessHandler(function (result) {
+          setStatusLine('');
+          setBusy(bookingId, false);
+          if (!result || !result.success) {
+            alert('キャンセルできませんでした: ' + (result && result.error && result.error.message));
+          }
+          loadBookings();
+        })
+        .withFailureHandler(function (error) {
+          setStatusLine('');
+          setBusy(bookingId, false);
+          alert('キャンセルでエラーが発生しました: ' + (error && error.message ? error.message : error));
+          loadBookings();
+        })
+        .adminCancelBooking(bookingId);
+    }
+
+    document.querySelectorAll('.tab-button').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.tab-button').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        state.filter = btn.getAttribute('data-filter');
+        render();
+      });
+    });
+
+    document.getElementById('list').addEventListener('click', function (event) {
+      var target = event.target.closest('button[data-action]');
+      if (!target) return;
+      var action = target.getAttribute('data-action');
+      var bookingId = target.getAttribute('data-id');
+      if (action === 'detail') openDetail(bookingId);
+      if (action === 'confirm') runConfirm(bookingId);
+      if (action === 'cancel') runCancel(bookingId);
+    });
+
+    document.getElementById('modal-close').addEventListener('click', closeModal);
+    document.getElementById('modal-overlay').addEventListener('click', function (event) {
+      if (event.target.id === 'modal-overlay') closeModal();
+    });
+
+    loadBookings();
+  </script>
+</body>
+</html>

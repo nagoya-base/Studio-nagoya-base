@@ -27,6 +27,7 @@ var BOOKING_ADMIN_FILES = [
   'BookingMailer.gs',
   'BookingRepository.gs',
   'BookingAdmin.gs',
+  'BookingAdminWeb.gs',
   'BookingTriggers.gs',
   'BookingReminderTriggers.gs'
 ];
