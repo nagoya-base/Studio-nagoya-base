@@ -112,6 +112,23 @@ test('durationHoursToMinutes: 8時間を超える長時間利用もUI側で上�
   /* 営業時間内に収まるかどうかの最終判定はcreateBooking/getAvailability側（INVALID_START_TIME等）が行う */
 });
 
+test('isDurationAtLeastUiMinimum: 120分未満をNG、120分以上をOKとするUI側UX guard（Issue #301）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.isDurationAtLeastUiMinimum(60), false);
+  assert.strictEqual(Logic.isDurationAtLeastUiMinimum(120), true);
+  assert.strictEqual(Logic.isDurationAtLeastUiMinimum(180), true);
+  assert.strictEqual(Logic.isDurationAtLeastUiMinimum(1440), true);
+  assert.strictEqual(Logic.isDurationAtLeastUiMinimum(null), false);
+});
+
+test('isDurationAtLeastUiMinimum: durationHoursToMinutesの変換責務とは独立している（1時間の変換自体は60分のまま）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.durationHoursToMinutes('1'), 60);
+  assert.strictEqual(Logic.durationHoursToMinutes('2'), 120);
+  assert.strictEqual(Logic.isDurationAtLeastUiMinimum(Logic.durationHoursToMinutes('1')), false);
+  assert.strictEqual(Logic.isDurationAtLeastUiMinimum(Logic.durationHoursToMinutes('2')), true);
+});
+
 test('computeEndTime: 開始時刻＋利用時間（分）を表示用に加算する', function () {
   var Logic = loadLogic();
   assert.strictEqual(Logic.computeEndTime('10:00', 120), '12:00');
