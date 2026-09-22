@@ -34,7 +34,7 @@
 
   <ol class="ba-progress" id="ba-progress" aria-label="予約手続きの進み具合">
     <li data-step="datetime">1. 利用日・時間</li>
-    <li data-step="start-time">2. 空き開始時刻</li>
+    <li data-step="start-time">2. 開始時刻</li>
     <li data-step="details">3. 利用者情報</li>
     <li data-step="confirm">4. 内容確認</li>
     <li data-step="complete">5. 完了</li>
@@ -80,18 +80,18 @@
     </fieldset>
 
     <div class="ba-actions">
-      <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">空き時間を確認する</button>
+      <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">予約できる時間を表示</button>
     </div>
   </section>
 
-  <!-- Step 2: 空き開始時刻 -->
+  <!-- Step 2: 開始時刻 -->
   <section class="ba-step" id="ba-step-start-time" data-step="start-time" hidden>
-    <h2>空き開始時刻を選択</h2>
+    <h2>開始時刻を選択</h2>
     <p class="ba-step-desc" id="ba-start-time-summary"></p>
 
-    <div id="ba-start-time-loading" class="ba-loading">空き状況を確認しています…</div>
-    <div id="ba-start-time-grid" class="ba-time-grid" role="group" aria-label="空き開始時刻" hidden></div>
-    <p id="ba-start-time-empty" class="ba-time-empty" hidden>この条件で空いている時間帯がありません。日付・利用時間を変更してお試しください。</p>
+    <div id="ba-start-time-loading" class="ba-loading">予約できる時間を確認しています…</div>
+    <div id="ba-start-time-grid" class="ba-time-grid" role="group" aria-label="開始時刻" hidden></div>
+    <p id="ba-start-time-empty" class="ba-time-empty" hidden>この日時では予約できる開始時刻がありません。日付・利用時間を変更してお試しください。</p>
 
     <div class="ba-actions">
       <button type="button" class="ba-btn ba-btn-ghost" id="ba-step-start-time-back">戻る</button>
