@@ -220,7 +220,7 @@
     });
   }
 
-  /* ── Step 2: 空き開始時刻 ── */
+  /* ── Step 2: 開始時刻 ── */
   function fetchAvailability() {
     if (isFetchingAvailability) return;
     isFetchingAvailability = true;

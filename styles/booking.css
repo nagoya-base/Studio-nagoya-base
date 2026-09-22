@@ -202,7 +202,7 @@
 
 .ba-choice input { flex: 0 0 auto; width: 18px; height: 18px; accent-color: var(--ba-accent); }
 
-/* ── 空き開始時刻の選択 ── */
+/* ── 開始時刻の選択 ── */
 .ba-time-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
