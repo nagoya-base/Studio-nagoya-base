@@ -24,6 +24,16 @@
     return BRAND_META[brand] || null;
   }
 
+  /* 対応locale（Issue #297）。表示文言のみをlocaleで切り替え、空き判定・当日予約条件・
+     送信payload・エラーaction判定等の業務ルールはlocaleで分岐させない。
+     未指定・未知のlocaleは常にjaへfallbackする。 */
+  var DEFAULT_LOCALE = 'ja';
+  var SUPPORTED_LOCALES = ['ja', 'en'];
+
+  function normalizeLocale(locale) {
+    return SUPPORTED_LOCALES.indexOf(locale) !== -1 ? locale : DEFAULT_LOCALE;
+  }
+
   /*
    * 利用区分（Issue #270）。「会員かどうか」ではなく、SNB / SNB mens / Studio Xという
    * 同一施設を過去に利用した経験があるかどうかで当日予約可否を判定する。
@@ -32,14 +42,19 @@
    */
   var CUSTOMER_TYPES = { FIRST_TIME: 'first_time', RETURNING: 'returning' };
   var ALLOWED_CUSTOMER_TYPES = [CUSTOMER_TYPES.FIRST_TIME, CUSTOMER_TYPES.RETURNING];
-  var CUSTOMER_TYPE_LABELS = { first_time: '初回利用', returning: '利用経験あり' };
+  var CUSTOMER_TYPE_LABELS = {
+    ja: { first_time: '初回利用', returning: '利用経験あり' },
+    en: { first_time: 'First-time guest', returning: 'Returning guest' }
+  };
 
   function isAllowedCustomerType(value) {
     return ALLOWED_CUSTOMER_TYPES.indexOf(value) !== -1;
   }
 
-  function customerTypeLabel(value) {
-    return CUSTOMER_TYPE_LABELS[value] || '';
+  /* customerTypeLabel(value, locale) — localeは任意。未指定・未知値はja。 */
+  function customerTypeLabel(value, locale) {
+    var labels = CUSTOMER_TYPE_LABELS[normalizeLocale(locale)];
+    return labels[value] || '';
   }
 
   /* dateValue/todayValueは'YYYY-MM-DD'。当日（dateValue===todayValue）かつ初回利用の
@@ -50,39 +65,94 @@
   }
 
   /* createBooking / getAvailability が返すerror.codeの文言。
-     gas/booking/README.md「API仕様」のerror.code一覧と対応させること。 */
+     gas/booking/README.md「API仕様」のerror.code一覧と対応させること。
+     locale別の表示文言のみを持ち、error.code自体・判定ロジックはlocaleで分岐させない（Issue #297）。 */
   var ERROR_MESSAGES = {
-    INVALID_BRAND: 'このページの予約設定に問題があります。お手数ですがページを開き直してください。',
-    INVALID_CONFIG: '現在オンライン予約を受け付けられません。恐れ入りますが、時間をおいて再度お試しください。',
-    INVALID_DATE: '日付の指定が正しくありません。',
-    INVALID_DURATION: '利用時間の指定が正しくありません。',
-    DURATION_TOO_SHORT: '選択した利用時間は短すぎます。別の利用時間を選択してください。',
-    INVALID_START_TIME: '開始時刻が正しくありません。空き時間を選び直してください。',
-    START_TIME_NOT_ALIGNED: '開始時刻の指定が正しくありません。空き時間を選び直してください。',
-    SLOT_CONFLICT: '選択した時間帯は、たった今埋まってしまいました。お手数ですが別の時間を選び直してください。',
-    INVALID_NAME: 'お名前を入力してください。',
-    INVALID_EMAIL: 'メールアドレスの形式が正しくありません。',
-    INVALID_PHONE: '電話番号の形式が正しくありません。',
-    INVALID_PEOPLE: '利用人数を選択してください。',
-    INVALID_PURPOSE: '利用目的を選択してください。',
-    INVALID_PAYMENT_METHOD: '支払方法を選択してください。',
-    INVALID_NOTE: '連絡事項は1000文字以内で入力してください。',
-    INVALID_SOURCE: '送信元の情報が正しくありません。お手数ですがページを開き直してください。',
-    INVALID_CUSTOMER_TYPE: '利用区分（初回利用／利用経験あり）を選択してください。',
-    SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME: '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付を選択してください。',
-    SAME_DAY_START_TIME_PASSED: '指定した開始時刻はすでに過ぎています。現在時刻より後の開始時刻を選択してください。',
-    RATE_LIMITED: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。',
-    LOCK_TIMEOUT: '一時的に混み合っています。もう一度お試しください。',
-    BOOKING_SAVE_FAILED: '予約の保存に失敗しました。しばらくしてから再度お試しください。',
-    INVALID_JSON: '送信内容の形式が正しくありませんでした。もう一度お試しください。',
-    INTERNAL_ERROR: '予約処理中にエラーが発生しました。しばらくしてから再度お試しください。'
+    ja: {
+      INVALID_BRAND: 'このページの予約設定に問題があります。お手数ですがページを開き直してください。',
+      INVALID_CONFIG: '現在オンライン予約を受け付けられません。恐れ入りますが、時間をおいて再度お試しください。',
+      INVALID_DATE: '日付の指定が正しくありません。',
+      INVALID_DURATION: '利用時間の指定が正しくありません。',
+      DURATION_TOO_SHORT: '選択した利用時間は短すぎます。別の利用時間を選択してください。',
+      INVALID_START_TIME: '開始時刻が正しくありません。空き時間を選び直してください。',
+      START_TIME_NOT_ALIGNED: '開始時刻の指定が正しくありません。空き時間を選び直してください。',
+      SLOT_CONFLICT: '選択した時間帯は、たった今埋まってしまいました。お手数ですが別の時間を選び直してください。',
+      INVALID_NAME: 'お名前を入力してください。',
+      INVALID_EMAIL: 'メールアドレスの形式が正しくありません。',
+      INVALID_PHONE: '電話番号の形式が正しくありません。',
+      INVALID_PEOPLE: '利用人数を選択してください。',
+      INVALID_PURPOSE: '利用目的を選択してください。',
+      INVALID_PAYMENT_METHOD: '支払方法を選択してください。',
+      INVALID_NOTE: '連絡事項は1000文字以内で入力してください。',
+      INVALID_SOURCE: '送信元の情報が正しくありません。お手数ですがページを開き直してください。',
+      INVALID_CUSTOMER_TYPE: '利用区分（初回利用／利用経験あり）を選択してください。',
+      SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME: '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付を選択してください。',
+      SAME_DAY_START_TIME_PASSED: '指定した開始時刻はすでに過ぎています。現在時刻より後の開始時刻を選択してください。',
+      RATE_LIMITED: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。',
+      LOCK_TIMEOUT: '一時的に混み合っています。もう一度お試しください。',
+      BOOKING_SAVE_FAILED: '予約の保存に失敗しました。しばらくしてから再度お試しください。',
+      INVALID_JSON: '送信内容の形式が正しくありませんでした。もう一度お試しください。',
+      INTERNAL_ERROR: '予約処理中にエラーが発生しました。しばらくしてから再度お試しください。'
+    },
+    en: {
+      INVALID_BRAND: 'There is a problem with this page’s booking settings. Please reload the page and try again.',
+      INVALID_CONFIG: 'Online booking is not available right now. Please try again later.',
+      INVALID_DATE: 'The date you entered is not valid.',
+      INVALID_DURATION: 'The duration you entered is not valid.',
+      DURATION_TOO_SHORT: 'The selected duration is too short. Please choose a different duration.',
+      INVALID_START_TIME: 'The start time is not valid. Please choose an available start time again.',
+      START_TIME_NOT_ALIGNED: 'The start time is not valid. Please choose an available start time again.',
+      SLOT_CONFLICT: 'The selected time slot was just booked by someone else. Please choose another start time.',
+      INVALID_NAME: 'Please enter your name.',
+      INVALID_EMAIL: 'Please enter a valid email address.',
+      INVALID_PHONE: 'Please enter a valid phone number.',
+      INVALID_PEOPLE: 'Please select the number of guests.',
+      INVALID_PURPOSE: 'Please select the purpose of your visit.',
+      INVALID_PAYMENT_METHOD: 'Please select a payment method.',
+      INVALID_NOTE: 'Notes must be 1000 characters or fewer.',
+      INVALID_SOURCE: 'There is a problem with the request source. Please reload the page and try again.',
+      INVALID_CUSTOMER_TYPE: 'Please select your customer type (first-time guest or returning guest).',
+      SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME: 'First-time guests cannot book for the same day. Please choose a date from tomorrow onward.',
+      SAME_DAY_START_TIME_PASSED: 'The selected start time has already passed. Please choose a start time later than the current time.',
+      RATE_LIMITED: 'Too many requests have been submitted. Please wait a moment and try again.',
+      LOCK_TIMEOUT: 'The system is currently busy. Please try again.',
+      BOOKING_SAVE_FAILED: 'We couldn’t save your booking. Please try again in a moment.',
+      INVALID_JSON: 'Your submission could not be read correctly. Please try again.',
+      INTERNAL_ERROR: 'An error occurred while processing your request. Please try again in a moment.'
+    }
   };
 
-  var NETWORK_ERROR_MESSAGE = '通信状況をご確認のうえ、時間を置いて再度お試しください。';
-  var API_NOT_CONFIGURED_MESSAGE = '現在オンライン予約の準備中です。恐れ入りますが、しばらくしてから再度お試しください。';
+  var GENERIC_ERROR_MESSAGE = {
+    ja: 'エラーが発生しました。しばらくしてから再度お試しください。',
+    en: 'An error occurred. Please try again in a moment.'
+  };
 
-  function messageForErrorCode(code) {
-    return ERROR_MESSAGES[code] || 'エラーが発生しました。しばらくしてから再度お試しください。';
+  var NETWORK_ERROR_MESSAGES = {
+    ja: '通信状況をご確認のうえ、時間を置いて再度お試しください。',
+    en: 'Please check your connection and try again in a moment.'
+  };
+  var API_NOT_CONFIGURED_MESSAGES = {
+    ja: '現在オンライン予約の準備中です。恐れ入りますが、しばらくしてから再度お試しください。',
+    en: 'Online booking is currently being prepared. Please try again later.'
+  };
+
+  /* 既存呼び出し（scripts/booking-app.js旧実装・他ブランドのインライン利用等）との
+     後方互換のため、ja固定の文字列としても引き続き公開する。 */
+  var NETWORK_ERROR_MESSAGE = NETWORK_ERROR_MESSAGES.ja;
+  var API_NOT_CONFIGURED_MESSAGE = API_NOT_CONFIGURED_MESSAGES.ja;
+
+  /* messageForErrorCode(code, locale) — localeは任意。未指定・未知値はja（既存呼び出しとの後方互換）。 */
+  function messageForErrorCode(code, locale) {
+    var loc = normalizeLocale(locale);
+    return ERROR_MESSAGES[loc][code] || GENERIC_ERROR_MESSAGE[loc];
+  }
+
+  function networkErrorMessage(locale) {
+    return NETWORK_ERROR_MESSAGES[normalizeLocale(locale)];
+  }
+
+  function apiNotConfiguredMessage(locale) {
+    return API_NOT_CONFIGURED_MESSAGES[normalizeLocale(locale)];
   }
 
   /* SLOT_CONFLICTのみ「空き時間の選び直し」に誘導し、それ以外の入力系エラー
@@ -153,29 +223,61 @@
     return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
   }
 
+  /* Step3の必須項目チェックメッセージ。判定ロジック（何が不正か）はlocaleで分岐させず、
+     表示文言のみをlocaleで切り替える。「その他」を検出するpurpose値自体は言語を問わず
+     buildPurposeValueと同じ日本語固定値のまま（Issue #297: purpose内部value無変更）。 */
+  var DETAILS_VALIDATION_MESSAGES = {
+    ja: {
+      nameRequired: 'お名前を入力してください。',
+      nameTooLong: 'お名前は100文字以内で入力してください。',
+      emailRequired: 'メールアドレスを入力してください。',
+      emailInvalid: 'メールアドレスの形式が正しくありません。',
+      phoneInvalid: '電話番号の形式が正しくありません。',
+      peopleRequired: '利用人数を選択してください。',
+      purposeRequired: '利用目的を選択してください。',
+      purposeOtherRequired: '利用目的の詳細を入力してください。',
+      paymentMethodRequired: '支払方法を選択してください。',
+      noteTooLong: '連絡事項は1000文字以内で入力してください。'
+    },
+    en: {
+      nameRequired: 'Please enter your name.',
+      nameTooLong: 'Name must be 100 characters or fewer.',
+      emailRequired: 'Please enter your email address.',
+      emailInvalid: 'Please enter a valid email address.',
+      phoneInvalid: 'Please enter a valid phone number.',
+      peopleRequired: 'Please select the number of guests.',
+      purposeRequired: 'Please select the purpose of your visit.',
+      purposeOtherRequired: 'Please describe the purpose of your visit.',
+      paymentMethodRequired: 'Please select a payment method.',
+      noteTooLong: 'Notes must be 1000 characters or fewer.'
+    }
+  };
+
   /* fields: { name, email, phone, people, purpose, purposeOther, paymentMethod, note }
+     locale: 任意。未指定・未知値はja（既存呼び出し・test/booking-logic.test.jsとの後方互換）。
      戻り値: フィールド名をキーとするエラーメッセージのオブジェクト（空オブジェクト = 検証OK）。
      ここでの検証は一次チェックに過ぎず、最終的な正はcreateBookingのサーバー側検証。 */
-  function validateDetailsForm(fields) {
+  function validateDetailsForm(fields, locale) {
     var f = fields || {};
+    var m = DETAILS_VALIDATION_MESSAGES[normalizeLocale(locale)];
     var errors = {};
 
-    if (!isNonEmpty(f.name)) errors.name = 'お名前を入力してください。';
-    else if (f.name.length > 100) errors.name = 'お名前は100文字以内で入力してください。';
+    if (!isNonEmpty(f.name)) errors.name = m.nameRequired;
+    else if (f.name.length > 100) errors.name = m.nameTooLong;
 
-    if (!isNonEmpty(f.email)) errors.email = 'メールアドレスを入力してください。';
-    else if (!isValidEmail(f.email)) errors.email = 'メールアドレスの形式が正しくありません。';
+    if (!isNonEmpty(f.email)) errors.email = m.emailRequired;
+    else if (!isValidEmail(f.email)) errors.email = m.emailInvalid;
 
-    if (!isValidPhone(f.phone)) errors.phone = '電話番号の形式が正しくありません。';
+    if (!isValidPhone(f.phone)) errors.phone = m.phoneInvalid;
 
-    if (!isNonEmpty(f.people)) errors.people = '利用人数を選択してください。';
-    if (!isNonEmpty(f.purpose)) errors.purpose = '利用目的を選択してください。';
+    if (!isNonEmpty(f.people)) errors.people = m.peopleRequired;
+    if (!isNonEmpty(f.purpose)) errors.purpose = m.purposeRequired;
     if (f.purpose === 'その他' && !isNonEmpty(f.purposeOther)) {
-      errors.purposeOther = '利用目的の詳細を入力してください。';
+      errors.purposeOther = m.purposeOtherRequired;
     }
-    if (!isNonEmpty(f.paymentMethod)) errors.paymentMethod = '支払方法を選択してください。';
+    if (!isNonEmpty(f.paymentMethod)) errors.paymentMethod = m.paymentMethodRequired;
 
-    if (f.note && f.note.length > 1000) errors.note = '連絡事項は1000文字以内で入力してください。';
+    if (f.note && f.note.length > 1000) errors.note = m.noteTooLong;
 
     return errors;
   }
@@ -185,6 +287,67 @@
       return 'その他：' + purposeOther.trim();
     }
     return purpose;
+  }
+
+  /* ── 確認画面（Step4）表示専用のラベル変換（Issue #297 PR #300再レビュー対応） ──
+     people/purpose/paymentMethodの内部value・保存値（buildCreateBookingPayload/
+     buildPurposeValueの出力）はここでは一切変更しない。既存日本語呼び出し・
+     buildPurposeValue自体の仕様も変更しない。ここは確認画面へ出す文字列だけを
+     localeで切り替える表示専用マップで、ja（未指定含む）は既存どおり内部valueを
+     そのまま返す（後方互換）。 */
+  var PEOPLE_LABELS_EN = {
+    '1名': '1 guest',
+    '2名': '2 guests',
+    '3名': '3 guests',
+    '4名': '4 guests',
+    '5名以上・要相談': '5 or more (please contact us)'
+  };
+
+  function peopleLabel(value, locale) {
+    if (normalizeLocale(locale) === 'en' && Object.prototype.hasOwnProperty.call(PEOPLE_LABELS_EN, value)) {
+      return PEOPLE_LABELS_EN[value];
+    }
+    return value || '';
+  }
+
+  var PURPOSE_LABELS_EN = {
+    '緊縛・ロープ表現の自主練習': 'Rope practice',
+    'コスプレ撮影': 'Cosplay photography',
+    'ポートレート撮影': 'Portrait photography',
+    'セルフ撮影': 'Self-photography',
+    '作品撮り': 'Creative shoot',
+    '商品・物撮り': 'Product photography',
+    '動画撮影': 'Video shoot',
+    '講習会・ワークショップ': 'Workshop / class',
+    'その他': 'Other'
+  };
+
+  /* purposeLabel(value, purposeOther, locale) — 確認画面表示専用。保存値を組み立てる
+     buildPurposeValue()とは別関数であり、そちらの仕様（'その他：'+自由記述、Sheets/mail/
+     admin互換のための日本語プレフィックス固定）は変更しない。 */
+  function purposeLabel(value, purposeOther, locale) {
+    var loc = normalizeLocale(locale);
+    if (value === 'その他' && isNonEmpty(purposeOther)) {
+      return (loc === 'en' ? 'Other: ' : 'その他：') + purposeOther.trim();
+    }
+    if (loc === 'en' && Object.prototype.hasOwnProperty.call(PURPOSE_LABELS_EN, value)) {
+      return PURPOSE_LABELS_EN[value];
+    }
+    return value || '';
+  }
+
+  var PAYMENT_METHOD_LABELS_EN = {
+    '現金': 'Cash',
+    'PayPay': 'PayPay',
+    'オンラインクレジットカード': 'Online credit card',
+    '未定': 'Undecided'
+  };
+
+  function paymentMethodLabel(value, locale) {
+    if (normalizeLocale(locale) === 'en' && Object.prototype.hasOwnProperty.call(PAYMENT_METHOD_LABELS_EN, value)) {
+      return PAYMENT_METHOD_LABELS_EN[value];
+    }
+    return value || '';
   }
 
   /*
@@ -241,6 +404,9 @@
   }
 
   var api = {
+    DEFAULT_LOCALE: DEFAULT_LOCALE,
+    SUPPORTED_LOCALES: SUPPORTED_LOCALES,
+    normalizeLocale: normalizeLocale,
     getBrandMeta: getBrandMeta,
     CUSTOMER_TYPES: CUSTOMER_TYPES,
     ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,
@@ -251,6 +417,8 @@
     recoveryActionForErrorCode: recoveryActionForErrorCode,
     NETWORK_ERROR_MESSAGE: NETWORK_ERROR_MESSAGE,
     API_NOT_CONFIGURED_MESSAGE: API_NOT_CONFIGURED_MESSAGE,
+    networkErrorMessage: networkErrorMessage,
+    apiNotConfiguredMessage: apiNotConfiguredMessage,
     isNonEmpty: isNonEmpty,
     isValidEmail: isValidEmail,
     isValidPhone: isValidPhone,
@@ -258,6 +426,9 @@
     computeEndTime: computeEndTime,
     validateDetailsForm: validateDetailsForm,
     buildPurposeValue: buildPurposeValue,
+    peopleLabel: peopleLabel,
+    purposeLabel: purposeLabel,
+    paymentMethodLabel: paymentMethodLabel,
     buildCreateBookingPayload: buildCreateBookingPayload,
     todayInJapan: todayInJapan
   };

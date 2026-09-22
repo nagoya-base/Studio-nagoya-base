@@ -1,0 +1,229 @@
+<!--
+  _includes/booking_app_en.html — 共通予約UI（Issue #269）の英語版include（Issue #297）。
+
+  _includes/booking_app_ja.html とDOM契約（id / name / 内部value）を完全一致させること。
+  表示ラベルのみ英語にし、customerType / paymentMethod / people / purpose の内部valueは
+  日本語版と同一の値を維持する（backend・Sheets・mail・admin処理への影響を出さないため）。
+
+  必須パラメータ:
+    include.brand      — 'snb' | 'mens' | 'studio_x'
+    include.back_url    — 完了画面・トップリンクの遷移先（relative_url済みの値を渡すこと）
+    include.back_label  — 上記リンクのラベル
+  任意パラメータ:
+    include.intro_note  — ステップ1の上に表示する案内文（ブランド固有の一言。任意）
+-->
+<div
+  id="booking-app"
+  class="booking-app"
+  data-brand="{{ include.brand }}"
+  data-back-url="{{ include.back_url }}"
+  data-back-label="{{ include.back_label }}"
+  data-locale="en">
+
+  {% if include.intro_note %}
+  <p class="ba-banner ba-banner--notice">{{ include.intro_note }}</p>
+  {% endif %}
+
+  <p class="ba-banner ba-banner--notice">
+    This form submits a pending booking request. <strong>Your booking is not confirmed yet.</strong>
+    Your booking becomes confirmed only after we send you a confirmation.
+  </p>
+
+  <ol class="ba-progress" id="ba-progress" aria-label="Booking progress">
+    <li data-step="datetime">1. Date &amp; Duration</li>
+    <li data-step="start-time">2. Start Time</li>
+    <li data-step="details">3. Your Details</li>
+    <li data-step="confirm">4. Review</li>
+    <li data-step="complete">5. Complete</li>
+  </ol>
+
+  <div id="ba-global-error" class="ba-banner ba-banner--error" role="alert" aria-live="assertive" tabindex="-1" hidden>
+    <p id="ba-global-error-message"></p>
+    <div class="ba-banner-actions" id="ba-global-error-actions"></div>
+  </div>
+
+  <!-- Step 1: 利用日・利用時間 -->
+  <section class="ba-step" id="ba-step-datetime" data-step="datetime">
+    <h2>Choose Date &amp; Duration</h2>
+    <p class="ba-step-desc">Please select your preferred date and duration.</p>
+
+    <div class="ba-field">
+      <label for="ba-date">Date<span class="ba-required">Required</span></label>
+      <input type="date" id="ba-date" name="date" autocomplete="off">
+      <p class="ba-field-error" id="ba-date-error" hidden></p>
+    </div>
+
+    <div class="ba-field">
+      <label for="ba-duration">Duration (hours)<span class="ba-required">Required</span></label>
+      <input type="number" id="ba-duration" name="durationHours" inputmode="numeric" min="1" step="1" placeholder="e.g. 3">
+      <p class="ba-field-help">We'll show the minimum duration and available start times together with real availability on the next screen. Long sessions can be entered here too.</p>
+      <p class="ba-field-error" id="ba-duration-error" hidden></p>
+    </div>
+
+    <fieldset class="ba-fieldset">
+      <legend>Customer Type<span class="ba-required">Required</span></legend>
+      <div class="ba-choices" id="ba-customer-type-choices">
+        <label class="ba-choice"><input type="radio" name="customerType" value="first_time"> <span>First-time guest</span></label>
+        <label class="ba-choice"><input type="radio" name="customerType" value="returning"> <span>Returning guest (you have previously used SNB, SNB mens or Studio X)</span></label>
+      </div>
+      <p class="ba-field-help">Whichever brand you used before — SNB, SNB mens, or Studio X — please select "Returning guest." First-time guests cannot book for the same day. Returning guests may book for the same day.</p>
+      <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
+    </fieldset>
+
+    <div class="ba-actions">
+      <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">Show Available Start Times</button>
+    </div>
+  </section>
+
+  <!-- Step 2: 開始時刻 -->
+  <section class="ba-step" id="ba-step-start-time" data-step="start-time" hidden>
+    <h2>Choose a Start Time</h2>
+    <p class="ba-step-desc" id="ba-start-time-summary"></p>
+
+    <div id="ba-start-time-loading" class="ba-loading">Checking available start times…</div>
+    <div id="ba-start-time-grid" class="ba-time-grid" role="group" aria-label="Start time" hidden></div>
+    <p id="ba-start-time-empty" class="ba-time-empty" hidden>No bookable start times are available for this date and duration. Please choose another date or duration.</p>
+
+    <div class="ba-actions">
+      <button type="button" class="ba-btn ba-btn-ghost" id="ba-step-start-time-back">Back</button>
+      <button type="button" class="ba-btn ba-btn-primary" id="ba-step-start-time-next" disabled>Continue</button>
+    </div>
+  </section>
+
+  <!-- Step 3: 利用者情報 -->
+  <section class="ba-step" id="ba-step-details" data-step="details" hidden>
+    <h2>Your Details</h2>
+    <p class="ba-step-desc">We'll use this to confirm your booking and get in touch.</p>
+
+    <div class="ba-field">
+      <label for="ba-name">Name<span class="ba-required">Required</span></label>
+      <input type="text" id="ba-name" name="name" autocomplete="name" maxlength="100">
+      <p class="ba-field-error" id="ba-name-error" hidden></p>
+    </div>
+
+    <div class="ba-field">
+      <label for="ba-email">Email Address<span class="ba-required">Required</span></label>
+      <input type="email" id="ba-email" name="email" autocomplete="email" inputmode="email" maxlength="254">
+      <p class="ba-field-help">Please use an address where you can receive our confirmation.</p>
+      <p class="ba-field-error" id="ba-email-error" hidden></p>
+    </div>
+
+    <div class="ba-field">
+      <label for="ba-phone">Phone Number<span class="ba-optional">Optional</span></label>
+      <input type="tel" id="ba-phone" name="phone" autocomplete="tel" inputmode="tel" maxlength="20">
+      <p class="ba-field-error" id="ba-phone-error" hidden></p>
+    </div>
+
+    <div class="ba-field">
+      <label for="ba-people">Number of Guests<span class="ba-required">Required</span></label>
+      <select id="ba-people" name="people">
+        <option value="">Select</option>
+        <option value="1名">1 guest</option>
+        <option value="2名">2 guests</option>
+        <option value="3名">3 guests</option>
+        <option value="4名">4 guests</option>
+        <option value="5名以上・要相談">5 or more (please contact us)</option>
+      </select>
+      <p class="ba-field-error" id="ba-people-error" hidden></p>
+    </div>
+
+    <div class="ba-field">
+      <label for="ba-purpose">Purpose<span class="ba-required">Required</span></label>
+      <select id="ba-purpose" name="purpose">
+        <option value="">Select</option>
+        <option value="緊縛・ロープ表現の自主練習">Rope practice</option>
+        <option value="コスプレ撮影">Cosplay photography</option>
+        <option value="ポートレート撮影">Portrait photography</option>
+        <option value="セルフ撮影">Self-photography</option>
+        <option value="作品撮り">Creative shoot</option>
+        <option value="商品・物撮り">Product photography</option>
+        <option value="動画撮影">Video shoot</option>
+        <option value="講習会・ワークショップ">Workshop / class</option>
+        <option value="その他">Other</option>
+      </select>
+      <p class="ba-field-error" id="ba-purpose-error" hidden></p>
+    </div>
+
+    <div class="ba-field" id="ba-purpose-other-wrap" hidden>
+      <label for="ba-purpose-other">Please describe<span class="ba-required">Required if "Other"</span></label>
+      <input type="text" id="ba-purpose-other" name="purposeOther" maxlength="150">
+      <p class="ba-field-error" id="ba-purpose-other-error" hidden></p>
+    </div>
+
+    <fieldset class="ba-fieldset">
+      <legend>Preferred Payment Method<span class="ba-required">Required</span></legend>
+      <div class="ba-choices" id="ba-payment-choices">
+        <label class="ba-choice"><input type="radio" name="paymentMethod" value="現金"> <span>Cash</span></label>
+        <label class="ba-choice"><input type="radio" name="paymentMethod" value="PayPay"> <span>PayPay</span></label>
+        <label class="ba-choice"><input type="radio" name="paymentMethod" value="オンラインクレジットカード"> <span>Online credit card</span></label>
+        <label class="ba-choice"><input type="radio" name="paymentMethod" value="未定"> <span>Undecided</span></label>
+      </div>
+      <p class="ba-field-error" id="ba-payment-error" hidden></p>
+    </fieldset>
+
+    <div class="ba-field">
+      <label for="ba-note">Notes<span class="ba-optional">Optional</span></label>
+      <textarea id="ba-note" name="note" maxlength="1000" rows="4"></textarea>
+      <p class="ba-field-help">Please let us know about any equipment you plan to bring, or anything else you'd like to confirm.</p>
+      <p class="ba-field-error" id="ba-note-error" hidden></p>
+    </div>
+
+    <div class="ba-actions">
+      <button type="button" class="ba-btn ba-btn-ghost" id="ba-step-details-back">Back</button>
+      <button type="button" class="ba-btn ba-btn-primary" id="ba-step-details-next">Review Booking</button>
+    </div>
+  </section>
+
+  <!-- Step 4: 内容確認 -->
+  <section class="ba-step" id="ba-step-confirm" data-step="confirm" hidden>
+    <h2>Review &amp; Submit</h2>
+
+    <table class="ba-summary">
+      <tbody>
+        <tr><th>Brand</th><td id="ba-confirm-brand"></td></tr>
+        <tr><th>Customer Type</th><td id="ba-confirm-customer-type"></td></tr>
+        <tr><th>Date</th><td id="ba-confirm-date"></td></tr>
+        <tr><th>Time</th><td id="ba-confirm-time"></td></tr>
+        <tr><th>Name</th><td id="ba-confirm-name"></td></tr>
+        <tr><th>Email Address</th><td id="ba-confirm-email"></td></tr>
+        <tr><th>Phone Number</th><td id="ba-confirm-phone"></td></tr>
+        <tr><th>Number of Guests</th><td id="ba-confirm-people"></td></tr>
+        <tr><th>Purpose</th><td id="ba-confirm-purpose"></td></tr>
+        <tr><th>Payment Method</th><td id="ba-confirm-payment"></td></tr>
+        <tr><th>Notes</th><td id="ba-confirm-note"></td></tr>
+      </tbody>
+    </table>
+
+    <p class="ba-banner ba-banner--notice">
+      Submitting this form does not confirm your booking. <strong>Your booking is not confirmed yet.</strong>
+      Your booking is confirmed only after we review your request and send you a confirmation.
+    </p>
+
+    <label class="ba-choice" style="align-items: flex-start;">
+      <input type="checkbox" id="ba-confirm-consent">
+      <span>I understand that submitting this form does not confirm my booking, and that my booking is confirmed only once I receive a confirmation.<span class="ba-required">Required</span></span>
+    </label>
+    <p class="ba-field-error" id="ba-consent-error" hidden></p>
+
+    <div id="ba-submit-error" class="ba-banner ba-banner--error" role="alert" aria-live="assertive" hidden></div>
+
+    <div class="ba-actions">
+      <button type="button" class="ba-btn ba-btn-ghost" id="ba-step-confirm-back">Edit Details</button>
+      <button type="button" class="ba-btn ba-btn-primary" id="ba-submit">Submit Pending Booking</button>
+    </div>
+  </section>
+
+  <!-- Step 5: 完了 -->
+  <section class="ba-step ba-complete" id="ba-step-complete" data-step="complete" hidden>
+    <div class="ba-complete-icon" aria-hidden="true">&#10003;</div>
+    <h2>Your booking request has been received</h2>
+    <p>Booking ID: <span class="ba-booking-id" id="ba-complete-booking-id"></span></p>
+
+    <div class="ba-complete-pending-notice">
+      <strong>Your booking is not confirmed yet.</strong><br>
+      Your booking is confirmed only after we review your request and send you a confirmation. We normally contact you within 24 hours.
+    </div>
+
+    <p id="ba-complete-back-link-wrap"><a class="ba-btn ba-btn-primary" id="ba-complete-back-link" href="#"></a></p>
+  </section>
+</div>
