@@ -31,7 +31,7 @@ Epic #265の一部として以下を実装済み。
   実装した。Booking Admin側のみに追加し、公開Web Appにはキャンセルエンドポイントを
   一切公開しない（詳細は「Issue #272: 管理者キャンセルでCalendar / Sheetsを一貫更新する」参照）
 - **Issue #305**: Booking Adminを個人用のシンプルなWeb UI（`BookingAdminWeb.gs` +
-  `BookingAdmin.html`）化した。新しい予約管理ロジックは作らず、既存の
+  `BookingAdminPage.html`）化した。新しい予約管理ロジックは作らず、既存の
   `confirmBooking(bookingId)`/`cancelBookingAdmin(bookingId)`（いずれも変更なし）への
   薄いラッパーのみを追加し、一覧・詳細はSpreadsheetRepository.gsの読み取り専用関数
   （新規`getAllBookings()`）を使う。Booking Adminプロジェクトを従来のSpreadsheet UI拡張＋
@@ -1037,7 +1037,7 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
   `getAdminBookingDetail()`は`lastMailErrorAt`/`lastMailErrorType`/
   `lastMailErrorMessage`の詳細は返さず、`hasMailError`（あり/なし）のみ返す
   （障害調査はSpreadsheetを直接確認する運用のまま）
-- `BookingAdmin.html`（新規） — 1ページのみのモバイル優先UI。今日/今後/すべてタブ・
+- `BookingAdminPage.html`（新規） — 1ページのみのモバイル優先UI。今日/今後/すべてタブ・
   カード形式の一覧・モーダルでの詳細表示・確定/キャンセルボタンを持つ。CSS/JSはすべて
   インラインで、別ファイルへは分割していない
 - `SpreadsheetRepository.gs`（拡張） — 一覧取得用に読み取り専用の`getAllBookings()`を
@@ -1204,7 +1204,7 @@ Calendar直接編集・メールforce resend・一括確定/一括キャンセ�
   `adminCancelBooking(bookingId)`。confirm/cancelは既存の`confirmBooking`/
   `cancelBookingAdmin`への1行の委譲のみ。**Booking Adminプロジェクト
   （コンテナバインド）専用**
-- `BookingAdmin.html`（新規） — Web UI本体（1ページ）。**Booking Adminプロジェクト
+- `BookingAdminPage.html`（新規） — Web UI本体（1ページ）。**Booking Adminプロジェクト
   （コンテナバインド）専用**。`.gs`ファイルではないため「GASプロジェクトへの
   デプロイ対象ファイル」表には含めない（次節の注記を参照）
 - `SpreadsheetRepository.gs`（拡張） — 一覧取得用の`getAllBookings()`を追加
@@ -1237,8 +1237,8 @@ Calendar直接編集・メールforce resend・一括確定/一括キャンセ�
 | `BookingReminderTriggers.gs`（Issue #271） | – | ✓ |
 | `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい。ただしWeb App自体のデプロイ設定は必要。後述） |
 
-**`BookingAdmin.html`（Issue #305）は`.gs`ファイルではないため、上表には含めない。**
-Booking AdminプロジェクトのスクリプトエディタからHTMLファイルとして`BookingAdmin.html`を
+**`BookingAdminPage.html`（Issue #305）は`.gs`ファイルではないため、上表には含めない。**
+Booking AdminプロジェクトのスクリプトエディタからHTMLファイルとして`BookingAdminPage.html`を
 追加し、内容をそのままコピーする（`test/booking-deployment-manifest-sync.test.js`は
 README.mdの上表を機械的にパースして`test/helpers/booking-deployment-manifest.js`の
 `BOOKING_ADMIN_FILES`/`BOOKING_WEB_APP_FILES`（いずれも`.gs`ファイル名のみを保持する）と
@@ -1250,7 +1250,7 @@ README.mdの上表を機械的にパースして`test/helpers/booking-deployment
 時間主導トリガー（`expirePendingBookings`/`sendNextDayReminders`）は常に最新の保存済み
 コードで動く一方、Web Appのデプロイは「デプロイした時点のコードのスナップショット」を
 固定して配信する。再デプロイを忘れると、スマホのWeb UIだけ古いバージョンの
-`BookingAdminWeb.gs`/`BookingAdmin.html`のまま動き続ける不整合が起こり得る。
+`BookingAdminWeb.gs`/`BookingAdminPage.html`のまま動き続ける不整合が起こり得る。
 
 **`Availability.gs`はBooking Adminプロジェクトへの配布が必須。**
 `BookingRepository.gs`の`expirePendingBookings`は、候補ごとに`Booking.formatDateInTimezone`
@@ -1665,7 +1665,7 @@ Issue #270時点で`customerType`に指定できるのは`first_time` / `returni
    も実行する。
 7. **（Issue #305以降）** スマホからの確定・キャンセル用Web UIを使う場合は、この
    Booking AdminプロジェクトをWeb Appとしてもデプロイする。手順は「Booking Admin
-   Web UI（Issue #305）のセットアップ・使い方」を参照（`BookingAdmin.html`の追加コピー・
+   Web UI（Issue #305）のセットアップ・使い方」を参照（`BookingAdminPage.html`の追加コピー・
    Execute as: Me / Only myselfでのデプロイが必要）。Web UIを使わない場合、この手順は
    スキップしてよい（Spreadsheetカスタムメニューだけで従来どおり運用できる）。
 
@@ -1777,9 +1777,10 @@ Sheets側はEXPIREDへ進める（PENDINGのまま放置しない）。
 1. 「管理メニュー用GASプロジェクト（Booking Admin）のセットアップ」の手順1〜6を
    先に完了させる（`.gs`ファイル一式のコピー・Script Properties設定・
    カスタムメニュー・PENDING TTL失効トリガー）。
-2. Booking Adminプロジェクトのスクリプトエディタで、ファイル追加からHTMLファイルとして
-   `BookingAdmin.html`を作成し、このリポジトリの`gas/booking/BookingAdmin.html`の内容を
-   そのままコピーする。
+2. Booking Adminプロジェクトのスクリプトエディタで、ファイル追加 → HTML を選択し、
+   ファイル名には `BookingAdminPage`（`.html`は入力しない）と入力する。Apps Script側で
+   `BookingAdminPage.html`として作成される。このリポジトリの
+   `gas/booking/BookingAdminPage.html`の内容をそのままコピーする。
 3. 「デプロイ」→「新しいデプロイ」→種類「ウェブアプリ」を選択する。
 4. デプロイ設定を以下のとおりにする（管理者本人のみアクセス可能にするため）。
    - **実行ユーザー（Execute as）**: Me（自分）
@@ -1887,7 +1888,7 @@ Booking Adminプロジェクト（コンテナバインド）はWeb Appとして
   プロジェクト自体を削除する。`cancelBookingAdmin`は新しいScript Propertyを追加
   していないため、ロールバック時にプロパティの削除は不要。
 - **Issue #305（Booking Admin Web UI化）分**: このPRは`BookingAdminWeb.gs`/
-  `BookingAdmin.html`の追加と`SpreadsheetRepository.gs`への読み取り専用関数追加のみで、
+  `BookingAdminPage.html`の追加と`SpreadsheetRepository.gs`への読み取り専用関数追加のみで、
   既存の`confirmBooking`/`cancelBookingAdmin`/`expirePendingBookings`本体・状態遷移・
   Script Properties・Bookings列は一切変更していないため、コードをrevertするだけで
   元の状態（Spreadsheetカスタムメニューのみ）に戻る。Booking AdminプロジェクトをWeb App
@@ -2266,7 +2267,7 @@ Issue #305（Booking Admin Web UI化）で追加:
   含まれないことを検証。**再レビュー対応で追加**: `loadBookings()`の応答が
   `loadRequestSeq`比較で古いと判定されstateへの反映をスキップした場合でも、
   呼び出し元へ渡された`onDone`コールバック（busy解除用）は必ず実行されること
-  （BookingAdmin.html側の修正。連続してconfirm/cancelを実行した際に一部の
+  （BookingAdminPage.html側の修正。連続してconfirm/cancelを実行した際に一部の
   bookingIdのボタンが解除されないまま残る不具合の修正）
 - `test/helpers/booking-deployment-manifest.js`（更新） — `BOOKING_ADMIN_FILES`へ
   `BookingAdminWeb.gs`を追加（`test/booking-admin-deployment.test.js`/
