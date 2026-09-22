@@ -19,5 +19,5 @@
  * 発生しない。
  */
 window.BookingApiConfig = {
-  BASE_URL: 'https://script.google.com/macros/s/AKfycby9Tso_3ksDjMZhoKIFr6KR_JA6XlDufLB8Twmo-BEBbAzzzdWfLSAIF7iP3D2a0EkXnA/exec'
+  BASE_URL: 'https://script.google.com/macros/s/AKfycbwSHD2SyJBQ_99k32h9RF_Bb8bzcPfiI7QOcL5u7x0mvOC41uzV0XY70aPP-AvPJDtCtA/exec'
 };
