@@ -270,11 +270,13 @@ function setupFullFlow(locale) {
   };
 
   var windowStub = { BookingApiConfig: { BASE_URL: 'https://example.invalid/exec' } };
+  var fetchCallCount = 0;
 
   loadFrontendSandbox(['booking-logic.js', 'booking-app.js'], {
     document: documentStub,
     window: windowStub,
     fetch: function (url, options) {
+      fetchCallCount += 1;
       if (options && options.method === 'POST') {
         requests.push({ url: url, body: JSON.parse(options.body) });
         return Promise.resolve({ json: function () {
@@ -292,7 +294,8 @@ function setupFullFlow(locale) {
     startTimeButtons: startTimeButtons,
     setCustomerType: function (v) { selectedCustomerType = v; },
     setPaymentMethod: function (v) { selectedPaymentMethod = v; },
-    requests: requests
+    requests: requests,
+    getFetchCallCount: function () { return fetchCallCount; }
   };
 }
 
@@ -361,4 +364,68 @@ test('PR #300再レビュー: 日本語locale（未指定）では確認画面�
   assert.strictEqual(ctx.elements['ba-confirm-people'].textContent, '2名');
   assert.strictEqual(ctx.elements['ba-confirm-purpose'].textContent, 'その他：コスプレ撮影');
   assert.strictEqual(ctx.elements['ba-confirm-payment'].textContent, '現金');
+});
+
+/* ── Issue #301: 新予約UIのStep 1で2時間未満を即時拒否する。
+   setupFullFlow(locale)でStep1のclick handlerを実際に通し、durationMinutesの計算だけでなく
+   getAvailability呼び出し（fetch）自体が起きていないことまで確認する。 */
+test('Issue #301: 日本語（locale未指定）でduration=1はStep 1で止まり、field errorを表示してgetAvailabilityを呼ばない', async function () {
+  var ctx = setupFullFlow(null);
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '1';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-duration-error'].textContent, '利用時間を2時間以上の整数で入力してください。');
+  assert.strictEqual(ctx.elements['ba-duration-error'].hidden, false);
+  assert.strictEqual(ctx.startTimeButtons.length, 0, 'Step 2の開始時刻選択肢が描画されないこと');
+  assert.strictEqual(ctx.getFetchCallCount(), 0, 'getAvailabilityが呼ばれないこと');
+});
+
+test('Issue #301: 日本語（locale未指定）でduration=2は通常どおりStep 2へ進みavailabilityを取得する', async function () {
+  var ctx = setupFullFlow(null);
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-duration-error'].hidden, true);
+  assert.strictEqual(ctx.getFetchCallCount(), 1, 'getAvailabilityが1回呼ばれること');
+  assert.ok(ctx.startTimeButtons.length > 0, '開始時刻の選択肢が描画されること');
+});
+
+test('Issue #301: locale="en"でduration=1はStep 1で止まり、英語field errorを表示してgetAvailabilityを呼ばない', async function () {
+  var ctx = setupFullFlow('en');
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '1';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(
+    ctx.elements['ba-duration-error'].textContent,
+    'Please enter a duration of 2 hours or more (whole numbers only).'
+  );
+  assert.strictEqual(ctx.elements['ba-duration-error'].hidden, false);
+  assert.strictEqual(ctx.startTimeButtons.length, 0, 'Step 2の開始時刻選択肢が描画されないこと');
+  assert.strictEqual(ctx.getFetchCallCount(), 0, 'getAvailabilityが呼ばれないこと');
+});
+
+test('Issue #301: locale="en"でduration=2は通常どおりStep 2へ進みavailabilityを取得する', async function () {
+  var ctx = setupFullFlow('en');
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-duration-error'].hidden, true);
+  assert.strictEqual(ctx.getFetchCallCount(), 1, 'getAvailabilityが1回呼ばれること');
+  assert.ok(ctx.startTimeButtons.length > 0, '開始時刻の選択肢が描画されること');
 });

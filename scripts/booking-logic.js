@@ -211,6 +211,16 @@
     return n * 60;
   }
 
+  /* 新予約UIのStep 1で1時間入力を止めるためのUX guard（Issue #301）。
+     120はUIが把握している最低受付時間の目安に過ぎず、予約可否の正はGAS側
+     （gas/booking/Config.gs の MIN_BOOKING_MINUTES）。ここでの値をサーバー側の
+     設定値の複製・代替として扱わないこと。 */
+  var UI_MIN_BOOKING_MINUTES = 120;
+
+  function isDurationAtLeastUiMinimum(durationMinutes) {
+    return Number(durationMinutes) >= UI_MIN_BOOKING_MINUTES;
+  }
+
   /* 表示専用。'10:00' + 120分 → '12:00'。日をまたぐ場合も表示上は24時間表記で丸める
      （営業時間内であることの保証はサーバー側の入力検証が行う）。 */
   function computeEndTime(startTime, durationMinutes) {
@@ -423,6 +433,8 @@
     isValidEmail: isValidEmail,
     isValidPhone: isValidPhone,
     durationHoursToMinutes: durationHoursToMinutes,
+    UI_MIN_BOOKING_MINUTES: UI_MIN_BOOKING_MINUTES,
+    isDurationAtLeastUiMinimum: isDurationAtLeastUiMinimum,
     computeEndTime: computeEndTime,
     validateDetailsForm: validateDetailsForm,
     buildPurposeValue: buildPurposeValue,

@@ -39,7 +39,7 @@
       backLabelDefault: 'トップへ戻る',
       invalidBrandTitle: Logic.messageForErrorCode('INVALID_BRAND', 'ja'),
       dateRequired: '利用日を選択してください。',
-      durationRequired: '利用時間を1時間以上の整数で入力してください。',
+      durationRequired: '利用時間を2時間以上の整数で入力してください。',
       customerTypeRequired: '利用区分を選択してください。',
       startTimeSummary: function (date, hours) { return date + '　' + hours + '時間利用'; },
       back: '戻る',
@@ -57,7 +57,7 @@
       backLabelDefault: 'Back to Studio Nagoya Base',
       invalidBrandTitle: Logic.messageForErrorCode('INVALID_BRAND', 'en'),
       dateRequired: 'Please select a date.',
-      durationRequired: 'Please enter a duration of 1 hour or more (whole numbers only).',
+      durationRequired: 'Please enter a duration of 2 hours or more (whole numbers only).',
       customerTypeRequired: 'Please select a customer type.',
       startTimeSummary: function (date, hours) { return date + ' · ' + hours + (hours === 1 ? ' hour' : ' hours'); },
       back: 'Back',
@@ -236,12 +236,15 @@
     els.step1Next.addEventListener('click', function () {
       var dateValue = els.date ? els.date.value : '';
       var durationMinutes = Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
+      /* Issue #301: 1時間はStep 1で止める（UX guard）。最終判定の正はGAS側
+         MIN_BOOKING_MINUTESであり、ここではUI側の入力を早期に拒否するだけ。 */
+      var durationValid = Logic.isDurationAtLeastUiMinimum(durationMinutes);
       var customerType = checkedCustomerType();
 
       setFieldError_(els.date, els.dateError, dateValue ? '' : UI_TEXT.dateRequired);
-      setFieldError_(els.duration, els.durationError, durationMinutes ? '' : UI_TEXT.durationRequired);
+      setFieldError_(els.duration, els.durationError, durationValid ? '' : UI_TEXT.durationRequired);
       setFieldError_(null, els.customerTypeError, customerType ? '' : UI_TEXT.customerTypeRequired);
-      if (!dateValue || !durationMinutes || !customerType) return;
+      if (!dateValue || !durationValid || !customerType) return;
 
       /*
        * 初回利用＋当日はここで空き時間取得（getAvailability）へ進ませない（Issue #270）。
