@@ -1037,8 +1037,8 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
   `getAdminBookingDetail()`は`lastMailErrorAt`/`lastMailErrorType`/
   `lastMailErrorMessage`の詳細は返さず、`hasMailError`（あり/なし）のみ返す
   （障害調査はSpreadsheetを直接確認する運用のまま）
-- `BookingAdminPage.html`（新規） — 1ページのみのモバイル優先UI。今日/今後/すべてタブ・
-  カード形式の一覧・モーダルでの詳細表示・確定/キャンセルボタンを持つ。CSS/JSはすべて
+- `BookingAdminPage.html`（新規） — 1ページのみのモバイル優先UI。今日/今後/キャンセル/すべて
+  タブ・カード形式の一覧・モーダルでの詳細表示・確定/キャンセルボタンを持つ。CSS/JSはすべて
   インラインで、別ファイルへは分割していない
 - `SpreadsheetRepository.gs`（拡張） — 一覧取得用に読み取り専用の`getAllBookings()`を
   追加（既存の`getAllPendingBookings()`と同じ「全行取得→呼び出し側で絞り込む」方針。
@@ -1794,11 +1794,14 @@ Sheets側はEXPIREDへ進める（PENDINGのまま放置しない）。
 
 ### 画面構成
 
-1ページのみ。上部に「今日 / 今後 / すべて」タブ、その下に予約一覧をカード形式で表示する
-（`getAdminBookings()`で全件取得し、タブの絞り込みはクライアント側で行う。個人管理用途で
-件数が小規模な前提のため、専用の検索APIは作っていない。「今日」の判定は
+1ページのみ。上部に「今日 / 今後 / キャンセル / すべて」タブ、その下に予約一覧をカード形式で
+表示する（`getAdminBookings()`で全件取得し、タブの絞り込みはクライアント側で行う。個人管理
+用途で件数が小規模な前提のため、専用の検索APIは作っていない。「今日」の判定は
 `getAdminBookings()`が一緒に返すAsia/Tokyo基準の`todayJst`を使い、端末のtimezone設定には
-依存しない）。カードから「詳細」を押すとモーダルで全項目を表示する
+依存しない）。「今日」「今後」はCANCELLEDを除外して表示し、CANCELLEDは日付を問わず
+「キャンセル」タブへ集約する（EXPIREDは「キャンセル」には含めず、従来どおり「すべて」で
+確認する）。「すべて」はstatus・日付を問わず全件表示する。カードから「詳細」を押すと
+モーダルで全項目を表示する
 （`getAdminBookingDetail(bookingId)`。メール送信失敗の詳細（内容・種別・日時）は表示せず、
 「メールエラー: あり/なし」のみ表示する）。
 
