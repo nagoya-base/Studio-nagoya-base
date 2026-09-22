@@ -985,3 +985,75 @@ test('管理者通知 (Issue #269): 通知件名にはbrandの表示名が入り
   assert.strictEqual(mailApp._sentEmails.length, 1);
   assert.match(mailApp._sentEmails[0].subject, /SNB mens/);
 });
+
+/*
+ * 管理者通知メールの利用日・Calendar Event ID・Booking Adminリンク（Issue #311）。
+ * DEFAULT_FUTURE_DATEは実行時刻依存で動的に算出される（このファイル冒頭のfutureDateJst_
+ * 参照）ため、期待する曜日ラベルも固定文字列で決め打ちせず、AdminNotifier.gs本体と同じ
+ * BookingAvailability.formatDateWithWeekdayで算出した値と比較する（曜日算出ロジック自体の
+ * 正しさはtest/booking-availability.test.jsで別途検証済み）。
+ */
+test('管理者通知 (Issue #311): 利用日に「YYYY-MM-DD（曜）」形式で曜日が付与される（new Date(record.date).getDay()のようなtimezone依存実装は使わない）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' }, mailApp: mailApp });
+
+  ctx.sandbox.BookingRepository.createBooking(validPayload());
+
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+  var expectedDateLine = '利用日: ' + ctx.sandbox.BookingAvailability.formatDateWithWeekday(DEFAULT_FUTURE_DATE);
+  assert.ok(
+    mailApp._sentEmails[0].body.indexOf(expectedDateLine) !== -1,
+    '期待する利用日行が本文に見つからない: ' + JSON.stringify(mailApp._sentEmails[0].body)
+  );
+});
+
+test('管理者通知 (Issue #311): 本文に「Calendar Event ID」という文字列が一切含まれない（calendarEventId自体の内部保持・Spreadsheet/Calendar連携ロジックは変更していない）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' }, mailApp: mailApp });
+
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload());
+
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+  assert.strictEqual(mailApp._sentEmails[0].body.indexOf('Calendar Event ID'), -1);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.ok(found.record.calendarEventId, 'calendarEventId自体はSpreadsheet台帳から削除していない');
+});
+
+test('管理者通知 (Issue #311): BOOKING_ADMIN_URL未設定時はBooking Adminリンク行が本文に出ず、従来どおりSpreadsheet案内のまま', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' }, mailApp: mailApp });
+
+  ctx.sandbox.BookingRepository.createBooking(validPayload());
+
+  var body = mailApp._sentEmails[0].body;
+  assert.strictEqual(body.indexOf('Booking Admin'), -1);
+  assert.match(body, /Spreadsheetの管理メニューから確定してください/);
+});
+
+test('管理者通知 (Issue #311): BOOKING_ADMIN_URL設定時はBooking Adminリンクが本文に出て、案内文もBooking Admin誘導に切り替わる', function () {
+  var mailApp = stubs.createMailAppStub();
+  var adminUrl = 'https://script.google.com/macros/s/EXAMPLE_ADMIN_DEPLOY_ID/exec';
+  var ctx = setup({
+    properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com', BOOKING_ADMIN_URL: adminUrl },
+    mailApp: mailApp
+  });
+
+  ctx.sandbox.BookingRepository.createBooking(validPayload());
+
+  var body = mailApp._sentEmails[0].body;
+  assert.match(body, /Booking Admin:/);
+  assert.ok(body.indexOf(adminUrl) !== -1);
+  assert.match(body, /Booking Adminから確定してください/);
+  assert.strictEqual(body.indexOf('Spreadsheetの管理メニューから確定してください'), -1);
+});
+
+test('管理者通知 (Issue #311): BOOKING_ADMIN_URL未設定でもcreateBooking・管理者通知自体は成功する', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' }, mailApp: mailApp });
+
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload());
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+});

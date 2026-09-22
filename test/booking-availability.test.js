@@ -322,3 +322,42 @@ test('getCurrentMinutesInTimezone/formatDateInTimezone: 不正なtimezoneはnull
   assert.strictEqual(BookingAvailability.formatDateInTimezone(new Date(), 'Not/A_Timezone'), null);
   assert.strictEqual(BookingAvailability.getCurrentMinutesInTimezone(new Date('2026-10-01T01:07:00Z'), 'Asia/Tokyo'), 10 * 60 + 7);
 });
+
+/*
+ * formatDateWithWeekday（Issue #311）。AdminNotifier.gs/BookingMailTemplates.gsが
+ * 管理者通知メール・利用者向けメールの利用日表示に共通で使う純粋関数。
+ * new Date(dateString).getDay()のようなGAS実行環境のローカルtimezoneに依存する変換ではなく、
+ * isValidDateStringと同じDate.UTC構築方式で曜日を算出していることを確認する。
+ */
+test('formatDateWithWeekday: 各曜日が日本語で正しく付与される（2026-09-28は月曜〜2026-10-04は日曜の週）', function () {
+  var BookingAvailability = loadAvailability();
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('2026-09-28'), '2026-09-28（月）');
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('2026-09-29'), '2026-09-29（火）');
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('2026-09-30'), '2026-09-30（水）');
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('2026-10-01'), '2026-10-01（木）');
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('2026-10-02'), '2026-10-02（金）');
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('2026-10-03'), '2026-10-03（土）');
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('2026-10-04'), '2026-10-04（日）');
+});
+
+test('formatDateWithWeekday: Issue #311本文の例（2026-10-05は月曜日）と一致する', function () {
+  var BookingAvailability = loadAvailability();
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('2026-10-05'), '2026-10-05（月）');
+});
+
+test('formatDateWithWeekday: 実行環境のローカルtimezoneに依存しない（Date.UTC構築方式。UTC-11〜UTC+14相当でずれても結果が変わらないことを、日付境界に近い時刻を含むUTC基準の入力で確認する）', function () {
+  var BookingAvailability = loadAvailability();
+  /* 月をまたぐ・UTCとローカルの日付がずれやすい年末年始の境界日でも、文字列のcalendar dateだけで
+     曜日を決めていることを確認する（実行環境のtimezoneが何であっても結果は同じでなければならない）。 */
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('2026-12-31'), '2026-12-31（木）');
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('2027-01-01'), '2027-01-01（金）');
+});
+
+test('formatDateWithWeekday: 不正なdateStringはそのまま返す（fail-closedに例外を投げて通知メール送信自体を止めない）', function () {
+  var BookingAvailability = loadAvailability();
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('2026-13-01'), '2026-13-01');
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday('not-a-date'), 'not-a-date');
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday(''), '');
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday(null), null);
+  assert.strictEqual(BookingAvailability.formatDateWithWeekday(undefined), undefined);
+});

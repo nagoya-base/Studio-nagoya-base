@@ -17,6 +17,11 @@
  *   accessGuideの秘密値（keyboxNumber/unlockCode）が空の場合、本文にはその旨を示す
  *   プレースホルダを出すのみで、値を偽装・省略の判断はBookingMailer.gs側（fail-safe:
  *   前日案内を成功扱いにしない）に委ねる。
+ *
+ * 利用日の曜日表示（Issue #311）: record.dateはタイムゾーン正規化済みの'YYYY-MM-DD'文字列
+ * のため、BookingAvailability.formatDateWithWeekday（Availability.gs）で曜日を付ける。
+ * new Date(record.date).getDay()のようなGAS実行環境のローカルtimezoneに依存する変換は
+ * 使わない（AdminNotifier.gsと同じ共通関数を使い、曜日変換ロジックを二重実装しない）。
  */
 'use strict';
 
@@ -63,7 +68,7 @@ var BookingMailTemplates = (function () {
       '※このメールの時点ではご予約はまだ確定しておりません。管理者が内容を確認のうえ、確定のご連絡を改めてお送りします。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + record.date,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
       '開始時刻: ' + startTime,
       '終了時刻: ' + endTime,
       duration ? '利用時間: ' + duration : '',
@@ -95,7 +100,7 @@ var BookingMailTemplates = (function () {
       'ご予約が確定しましたのでお知らせいたします。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + record.date,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
       '開始時刻: ' + startTime,
       '終了時刻: ' + endTime,
       duration ? '利用時間: ' + duration : '',
@@ -130,7 +135,7 @@ var BookingMailTemplates = (function () {
       '下記のご予約はキャンセルされました。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + record.date,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
       '開始時刻: ' + startTime,
       '終了時刻: ' + endTime,
       'ブランド: ' + brandLabel,
@@ -168,7 +173,7 @@ var BookingMailTemplates = (function () {
       '明日のご予約について、来場方法をご案内します。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + record.date,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
       '開始時刻: ' + startTime,
       '終了時刻: ' + endTime,
       'ブランド: ' + brandLabel,
