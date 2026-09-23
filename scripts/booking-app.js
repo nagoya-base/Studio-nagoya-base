@@ -104,6 +104,18 @@
     customerTypeError: document.getElementById('ba-customer-type-error'),
     step1Next: document.getElementById('ba-step-datetime-next'),
 
+    calendarHint: document.getElementById('ba-calendar-hint'),
+    calendarBody: document.getElementById('ba-calendar-body'),
+    calendarPrev: document.getElementById('ba-calendar-prev'),
+    calendarNext: document.getElementById('ba-calendar-next'),
+    calendarMonthLabel: document.getElementById('ba-calendar-month-label'),
+    calendarLoading: document.getElementById('ba-calendar-loading'),
+    calendarError: document.getElementById('ba-calendar-error'),
+    calendarErrorMessage: document.getElementById('ba-calendar-error-message'),
+    calendarRetry: document.getElementById('ba-calendar-retry'),
+    calendarGridBody: document.getElementById('ba-calendar-grid-body'),
+    calendarSelected: document.getElementById('ba-calendar-selected'),
+
     stepStartTime: document.getElementById('ba-step-start-time'),
     startTimeSummary: document.getElementById('ba-start-time-summary'),
     startTimeLoading: document.getElementById('ba-start-time-loading'),
@@ -230,6 +242,273 @@
   function checkedCustomerType() {
     var checked = root.querySelector('input[name="customerType"]:checked');
     return checked ? checked.value : '';
+  }
+
+  /*
+   * ── 月間空き状況カレンダー（Issue #318） ──
+   * 単一日付入力（#ba-date。type="hidden"）を、1か月表示のカレンダーから選ぶ形へ
+   * 置き換える。#ba-dateの値自体は引き続きこのカレンダーが書き込み、Step1の
+   * 「次へ」押下時の検証（上のclickハンドラ）・SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME
+   * チェックは一切変更しない（既存の開始時刻選択以降のフローをそのまま再利用する）。
+   *
+   * 利用時間・利用区分を先に確定してからカレンダーを描画・取得する（Issue #318追記の
+   * 仕様）。月間取得はGAS側 getMonthlyAvailability(year, month, durationMinutes, brand)
+   * へのHTTPリクエスト1回（表示中の月ぶんのみ。31回連続アクセスはしない）。
+   * 取得済みの月はcalendarCacheに保持し、duration変更時は表示中の月だけを再取得する
+   * （cacheキーにdurationMinutesを含めるため、変更前のdurationの月データは
+   * そのまま保持され、無駄な再取得や巻き戻り時の取りこぼしを起こさない）。
+   */
+  var calendarMonth = null; /* { year, month } | null（duration/customerType未確定の間はnull） */
+  var calendarCache = {}; /* key: 'year-month-durationMinutes' -> { status: 'success'|'error', days, message } */
+  var calendarInFlight = {}; /* key -> true。同一キーへの重複fetchを防ぐ（PRレビュー対応。
+    duration入力への'input'/'change'双方のリスナーが短時間に連続発火しても、最初の
+    リクエストが解決するまでは同じキーの2回目のfetchを起こさない）。 */
+
+  /*
+   * 応答を描画してよいのは、その応答が対象とするyear/month/durationMinutesが
+   * 「今まさに表示すべき月・duration」と一致する場合だけにする（2回目のPRレビュー
+   * 対応）。以前はグローバルな連番トークンで「一番最後に発行したfetchの応答だけ」を
+   * 採用していたが、これだと月A→月B→月Aと素早く往復した際、月Aの古い応答は
+   * トークン不一致で捨てられる一方、月Bの（月Aへ戻った後に届く）応答がトークン一致の
+   * まま月Aのグリッドへ誤って描画されてしまう競合があった（キー別in-flight管理と
+   * グローバルトークンの単一採用ルールが噛み合っていなかったため）。
+   * 「今のcalendarMonth/durationと一致するかどうか」で判定すれば、応答の到着順に
+   * 関わらず、常に現在表示すべき月のデータだけが描画される。キャッシュへの保存自体は
+   * 表示中かどうかに関わらず常に行うため、月を往復しても無駄な再取得は起きない。
+   */
+  function isCalendarKeyCurrent_(year, month, durationMinutes) {
+    return !!calendarMonth && calendarMonth.year === year && calendarMonth.month === month &&
+      durationMinutes === currentCalendarDurationMinutes_();
+  }
+
+  function showCalendarLoadingState_() {
+    if (els.calendarLoading) els.calendarLoading.hidden = false;
+    if (els.calendarError) els.calendarError.hidden = true;
+    if (els.calendarGridBody) els.calendarGridBody.innerHTML = '';
+  }
+
+  function currentCalendarDurationMinutes_() {
+    return Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
+  }
+
+  function calendarCacheKey_(year, month, durationMinutes) {
+    return year + '-' + month + '-' + durationMinutes;
+  }
+
+  function isCalendarReady_() {
+    return Logic.isDurationAtLeastUiMinimum(currentCalendarDurationMinutes_()) && !!checkedCustomerType();
+  }
+
+  function handleCalendarPrereqChange_() {
+    if (!isCalendarReady_()) {
+      if (els.calendarBody) els.calendarBody.hidden = true;
+      if (els.calendarHint) els.calendarHint.hidden = false;
+      return;
+    }
+    if (els.calendarHint) els.calendarHint.hidden = true;
+    if (els.calendarBody) els.calendarBody.hidden = false;
+    if (!calendarMonth) calendarMonth = Logic.yearMonthFromDateValue(Logic.todayInJapan());
+    ensureCalendarMonthLoaded_();
+  }
+
+  function renderCalendarMonthLabel_() {
+    if (els.calendarMonthLabel && calendarMonth) {
+      els.calendarMonthLabel.textContent = Logic.monthLabel(calendarMonth.year, calendarMonth.month, locale);
+    }
+  }
+
+  function ensureCalendarMonthLoaded_() {
+    if (!calendarMonth) return;
+    var durationMinutes = currentCalendarDurationMinutes_();
+    if (!Logic.isDurationAtLeastUiMinimum(durationMinutes)) return;
+
+    renderCalendarMonthLabel_();
+
+    var key = calendarCacheKey_(calendarMonth.year, calendarMonth.month, durationMinutes);
+    var cached = calendarCache[key];
+    if (cached) {
+      /* 別の月（例: 月B）を読み込み中に月Aへ戻ってキャッシュがヒットした場合、
+         月Bのために出したローディング表示が残ったままにならないようにする
+         （PRレビュー対応）。 */
+      if (els.calendarLoading) els.calendarLoading.hidden = true;
+      renderCalendarGrid_(cached);
+      return;
+    }
+    if (calendarInFlight[key]) {
+      /* 同じキーへのfetchが既に進行中（例: 月A→月B→月Aと戻ってきた場合の月A）。
+         ここで新たにfetchはしないが、表示だけは「読み込み中」へ揃える。応答が
+         届いたときにisCalendarKeyCurrent_で現在表示中と判定されれば描画される。 */
+      showCalendarLoadingState_();
+      return;
+    }
+    fetchCalendarMonth_(calendarMonth.year, calendarMonth.month, durationMinutes, key);
+  }
+
+  function calendarMonthlyUrl_(year, month, durationMinutes) {
+    return API_BASE_URL +
+      (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') +
+      'action=monthly' +
+      '&year=' + encodeURIComponent(String(year)) +
+      '&month=' + encodeURIComponent(String(month)) +
+      '&durationMinutes=' + encodeURIComponent(String(durationMinutes)) +
+      '&brand=' + encodeURIComponent(brand);
+  }
+
+  /*
+   * 月間空き状況の取得に失敗した場合、空いているように見せない（fail-open禁止。
+   * Issue #318要件）。取得失敗時はグリッドを描画せずエラー表示のみとし、
+   * どの日も選択できない状態にする。
+   */
+  function fetchCalendarMonth_(year, month, durationMinutes, key) {
+    if (!API_BASE_URL) {
+      var notConfigured = { status: 'error', message: Logic.apiNotConfiguredMessage(locale) };
+      calendarCache[key] = notConfigured;
+      renderCalendarGridIfCurrent_(year, month, durationMinutes, notConfigured);
+      return;
+    }
+
+    calendarInFlight[key] = true;
+    showCalendarLoadingState_();
+
+    fetch(calendarMonthlyUrl_(year, month, durationMinutes), { method: 'GET' })
+      .then(function (response) { return response.json(); })
+      .then(function (body) {
+        delete calendarInFlight[key];
+        var entry;
+        if (!body || body.success !== true) {
+          var code = body && body.error && body.error.code;
+          entry = { status: 'error', message: Logic.messageForErrorCode(code, locale) };
+        } else {
+          entry = { status: 'success', days: body.days || {} };
+        }
+        /* 表示中かどうかに関わらずキャッシュへは常に保存する（月を往復した際、
+           後からこのキーへ戻ってきたときに再取得せず使えるようにするため）。 */
+        calendarCache[key] = entry;
+        renderCalendarGridIfCurrent_(year, month, durationMinutes, entry);
+      })
+      .catch(function () {
+        delete calendarInFlight[key];
+        var networkErrorEntry = { status: 'error', message: Logic.networkErrorMessage(locale) };
+        calendarCache[key] = networkErrorEntry;
+        renderCalendarGridIfCurrent_(year, month, durationMinutes, networkErrorEntry);
+      });
+  }
+
+  /* この応答が今まさに表示すべき月・durationのものである場合だけ描画する
+     （2回目のPRレビュー対応。詳細はisCalendarKeyCurrent_のコメント参照）。 */
+  function renderCalendarGridIfCurrent_(year, month, durationMinutes, entry) {
+    if (!isCalendarKeyCurrent_(year, month, durationMinutes)) return;
+    if (els.calendarLoading) els.calendarLoading.hidden = true;
+    renderCalendarGrid_(entry);
+  }
+
+  function renderCalendarGrid_(entry) {
+    if (!calendarMonth || !els.calendarGridBody) return;
+
+    if (!entry || entry.status !== 'success') {
+      els.calendarGridBody.innerHTML = '';
+      if (els.calendarError) {
+        els.calendarErrorMessage.textContent = (entry && entry.message) || Logic.networkErrorMessage(locale);
+        els.calendarError.hidden = false;
+      }
+      return;
+    }
+    if (els.calendarError) els.calendarError.hidden = true;
+
+    var todayValue = Logic.todayInJapan();
+    var customerType = checkedCustomerType();
+    var selectedDate = els.date ? els.date.value : '';
+
+    /*
+     * duration・利用区分の変更後、以前選択した日付が新しい条件では選択不可になって
+     * いる場合、選択を解除する（PRレビュー対応）。解除しないと、hiddenの#ba-dateに
+     * 予約不可になった日付が残ったままStep1「次へ」を通過できてしまい、「予約不可日は
+     * 選択できない」という受入条件に反する（例: 2時間で10/5を選択→6時間へ変更→
+     * 10/5がFULLになった場合。returning+当日を選択→first_timeへ変更した場合も同様）。
+     * 判定は現在描画中の月（＝entry.daysが対象とする月）に選択日が含まれる場合のみ行う
+     * （別の月を選んだままduration等を変えても、その月の最新データが無ければここでは
+     * 判定できないため、実際にその月を再描画するタイミングで改めて判定する）。
+     */
+    var monthPrefix = calendarMonth.year + '-' + (calendarMonth.month < 10 ? '0' : '') + calendarMonth.month + '-';
+    if (selectedDate && selectedDate.indexOf(monthPrefix) === 0) {
+      var selectedDayInfo = entry.days[selectedDate];
+      var selectedStatus = selectedDayInfo ? selectedDayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
+      if (!Logic.isCalendarDaySelectable(selectedDate, selectedStatus, customerType, todayValue)) {
+        els.date.value = '';
+        selectedDate = '';
+        if (els.calendarSelected) els.calendarSelected.textContent = '';
+      }
+    }
+
+    var weeks = Logic.buildMonthMatrix(calendarMonth.year, calendarMonth.month);
+
+    els.calendarGridBody.innerHTML = '';
+    weeks.forEach(function (week) {
+      var row = document.createElement('tr');
+      week.forEach(function (cell) {
+        var td = document.createElement('td');
+        if (!cell) {
+          row.appendChild(td);
+          return;
+        }
+        var dayInfo = entry.days[cell.dateValue];
+        var status = dayInfo ? dayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
+        var selectable = Logic.isCalendarDaySelectable(cell.dateValue, status, customerType, todayValue);
+
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'ba-cal-day';
+        button.textContent = cell.day + Logic.dayStatusSymbol(status);
+        button.setAttribute('data-date', cell.dateValue);
+        button.setAttribute('aria-label', Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale));
+        button.disabled = !selectable;
+        button.setAttribute('aria-pressed', cell.dateValue === selectedDate ? 'true' : 'false');
+        if (selectable) {
+          button.addEventListener('click', function () {
+            els.date.value = cell.dateValue;
+            setFieldError_(els.date, els.dateError, '');
+            hideGlobalError();
+            if (els.calendarSelected) {
+              els.calendarSelected.textContent = Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale);
+            }
+            renderCalendarGrid_(entry);
+          });
+        }
+        td.appendChild(button);
+        row.appendChild(td);
+      });
+      els.calendarGridBody.appendChild(row);
+    });
+  }
+
+  if (els.duration) {
+    els.duration.addEventListener('input', handleCalendarPrereqChange_);
+    els.duration.addEventListener('change', handleCalendarPrereqChange_);
+  }
+  root.querySelectorAll('input[name="customerType"]').forEach(function (radio) {
+    radio.addEventListener('change', handleCalendarPrereqChange_);
+  });
+  if (els.calendarPrev) {
+    els.calendarPrev.addEventListener('click', function () {
+      if (!calendarMonth) return;
+      calendarMonth = Logic.shiftMonth(calendarMonth.year, calendarMonth.month, -1);
+      ensureCalendarMonthLoaded_();
+    });
+  }
+  if (els.calendarNext) {
+    els.calendarNext.addEventListener('click', function () {
+      if (!calendarMonth) return;
+      calendarMonth = Logic.shiftMonth(calendarMonth.year, calendarMonth.month, 1);
+      ensureCalendarMonthLoaded_();
+    });
+  }
+  if (els.calendarRetry) {
+    els.calendarRetry.addEventListener('click', function () {
+      if (!calendarMonth) return;
+      var durationMinutes = currentCalendarDurationMinutes_();
+      delete calendarCache[calendarCacheKey_(calendarMonth.year, calendarMonth.month, durationMinutes)];
+      ensureCalendarMonthLoaded_();
+    });
   }
 
   if (els.step1Next) {

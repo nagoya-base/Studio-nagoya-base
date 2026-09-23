@@ -45,13 +45,7 @@
   <!-- Step 1: 利用日・利用時間 -->
   <section class="ba-step" id="ba-step-datetime" data-step="datetime">
     <h2>Choose Date &amp; Duration</h2>
-    <p class="ba-step-desc">Please select your preferred date and duration.</p>
-
-    <div class="ba-field">
-      <label for="ba-date">Date<span class="ba-required">Required</span></label>
-      <input type="date" id="ba-date" name="date" autocomplete="off">
-      <p class="ba-field-error" id="ba-date-error" hidden></p>
-    </div>
+    <p class="ba-step-desc">First choose a duration and customer type. An availability calendar will then appear.</p>
 
     <div class="ba-field">
       <label for="ba-duration">Duration (hours)<span class="ba-required">Required</span></label>
@@ -69,6 +63,59 @@
       <p class="ba-field-help">Whichever brand you used before — SNB, SNB mens, or Studio X — please select "Returning guest." First-time guests cannot book for the same day. Returning guests may book for the same day.</p>
       <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
     </fieldset>
+
+    <!-- Monthly availability calendar (Issue #318). #ba-date stays type="hidden";
+         clicking a calendar day writes its value. Step1 "Next" validation is unchanged. -->
+    <div class="ba-field">
+      <span class="ba-field-label-like" id="ba-calendar-label">Date<span class="ba-required">Required</span></span>
+      <input type="hidden" id="ba-date" name="date" autocomplete="off">
+      <div class="ba-calendar" aria-labelledby="ba-calendar-label">
+        <p class="ba-calendar-hint" id="ba-calendar-hint">Choose a duration and customer type to see the availability calendar.</p>
+        <div id="ba-calendar-body" hidden>
+          <div class="ba-calendar-nav">
+            <button type="button" class="ba-btn ba-btn-ghost ba-calendar-nav-btn" id="ba-calendar-prev" aria-label="Previous month">‹ Prev</button>
+            <span class="ba-calendar-month" id="ba-calendar-month-label" aria-live="polite"></span>
+            <button type="button" class="ba-btn ba-btn-ghost ba-calendar-nav-btn" id="ba-calendar-next" aria-label="Next month">Next ›</button>
+          </div>
+
+          <div id="ba-calendar-loading" class="ba-loading" hidden>Checking availability…</div>
+
+          <div id="ba-calendar-error" class="ba-banner ba-banner--error" role="alert" aria-live="assertive" hidden>
+            <p id="ba-calendar-error-message"></p>
+            <div class="ba-banner-actions">
+              <button type="button" class="ba-btn ba-btn-ghost" id="ba-calendar-retry">Reload</button>
+            </div>
+          </div>
+
+          <table class="ba-calendar-grid">
+            <caption class="ba-sr-only">Monthly availability calendar</caption>
+            <thead>
+              <tr>
+                <th class="ba-cal-sun" scope="col">Sun</th>
+                <th scope="col">Mon</th>
+                <th scope="col">Tue</th>
+                <th scope="col">Wed</th>
+                <th scope="col">Thu</th>
+                <th scope="col">Fri</th>
+                <th class="ba-cal-sat" scope="col">Sat</th>
+              </tr>
+            </thead>
+            <tbody id="ba-calendar-grid-body"></tbody>
+          </table>
+
+          <ul class="ba-calendar-legend">
+            <li><span aria-hidden="true">◎</span> Plenty of availability</li>
+            <li><span aria-hidden="true">○</span> Available</li>
+            <li><span aria-hidden="true">△</span> Limited availability</li>
+            <li><span aria-hidden="true">×</span> Fully booked</li>
+            <li><span aria-hidden="true">－</span> Not available</li>
+          </ul>
+
+          <p class="ba-calendar-selected" id="ba-calendar-selected" aria-live="polite"></p>
+        </div>
+      </div>
+      <p class="ba-field-error" id="ba-date-error" hidden></p>
+    </div>
 
     <div class="ba-actions">
       <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">Show Available Start Times</button>

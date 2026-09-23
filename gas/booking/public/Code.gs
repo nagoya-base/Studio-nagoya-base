@@ -17,6 +17,9 @@
 
 function doGet(e) {
   var params = (e && e.parameter) || {};
+  if (params.action === 'monthly') {
+    return jsonOutput_(handleGetMonthlyAvailability_(params));
+  }
   return jsonOutput_(handleGetAvailability_(params));
 }
 
@@ -142,14 +145,54 @@ function handleGetAvailability_(params) {
   return BookingAvailability.getAvailability(request, busyIntervals, config, receivedAt);
 }
 
+/*
+ * 月間空き状況（Issue #318）。paramsは { year, month, durationMinutes, brand }
+ * （すべて文字列。GASのdoGetクエリパラメータのため）。
+ *
+ * 月間取得はHTTPリクエスト1回・Calendar.getEvents()も月内で1回に集約する
+ * （CalendarRepository.getBusyIntervalsForRangeが対象月の全日付ぶんを1回のgetEvents()で
+ * まとめて取得する。Issue #318追記のレビュー対応）。日ごとのステータス判定自体は
+ * BookingAvailability.getMonthlyAvailabilityへ委譲し、ここでは配線のみを行う。
+ */
+function handleGetMonthlyAvailability_(params) {
+  var config = BookingConfig.getAvailabilityConfig();
+
+  var year = parsePositiveIntegerParam_(params.year);
+  var month = parsePositiveIntegerParam_(params.month);
+  var durationMinutes = parseDurationParam_(params.durationMinutes);
+  var brand = params.brand || null;
+
+  var request = { year: year, month: month, durationMinutes: durationMinutes, brand: brand };
+  var validationError = BookingAvailability.validateMonthlyInput(year, month, durationMinutes, config);
+  if (validationError) {
+    return { success: false, error: validationError };
+  }
+
+  var monthString = year + '-' + (month < 10 ? '0' : '') + month;
+  var lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  var startDate = monthString + '-01';
+  var endDate = monthString + '-' + (lastDay < 10 ? '0' : '') + lastDay;
+
+  var calendarId = BookingConfig.getCalendarId();
+  var busyIntervalsByDate = CalendarRepository.getBusyIntervalsForRange(calendarId, startDate, endDate, config.timezone);
+
+  return BookingAvailability.getMonthlyAvailability(request, busyIntervalsByDate, config, new Date());
+}
+
 /* 公開Web APIのため、"120abc"や"120.9"のような部分一致をparseIntで緩く受理しない。
    文字列全体が先頭0を持たない正の整数のときだけ数値化し、それ以外はNaNにする
-   （Availability.gs側のバリデーションに判定を委ねる。マージ前レビュー指摘対応）。 */
+   （Availability.gs側のバリデーションに判定を委ねる。マージ前レビュー指摘対応）。
+   year/month（Issue #318のgetMonthlyAvailability）も同じ形式のクエリパラメータのため、
+   同じパターン・同じ関数を共有する。 */
 var POSITIVE_INTEGER_PATTERN_ = /^[1-9]\d*$/;
 
-function parseDurationParam_(value) {
+function parsePositiveIntegerParam_(value) {
   if (typeof value !== 'string' || !POSITIVE_INTEGER_PATTERN_.test(value)) return NaN;
   return parseInt(value, 10);
+}
+
+function parseDurationParam_(value) {
+  return parsePositiveIntegerParam_(value);
 }
 
 function jsonOutput_(obj) {

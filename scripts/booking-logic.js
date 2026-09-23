@@ -396,6 +396,173 @@
   }
 
   /*
+   * ── 月間空き状況カレンダー（Issue #318） ──
+   * gas/booking/shared/Availability.gsのgetMonthlyAvailabilityが返すDAY_STATUS（5値）を
+   * 記号・aria-label・選択可否へ変換する、DOM非依存の純粋ロジック。
+   * 空き判定そのもの（何件あれば◎/○/△/×か）はGAS側（Availability.gsのgetMonthlyAvailability）
+   * が正であり、ここではGASが返したstatus文字列をどう見せるかだけを扱う
+   * （判定ロジックの再実装・複製はしない）。
+   */
+  var DAY_STATUSES = {
+    AVAILABLE_HIGH: 'AVAILABLE_HIGH',
+    AVAILABLE: 'AVAILABLE',
+    LIMITED: 'LIMITED',
+    FULL: 'FULL',
+    OUT_OF_RANGE: 'OUT_OF_RANGE'
+  };
+
+  /* ○/◎/△は選択可能、×/－（予約可能枠なし・対象外）は選択不可。
+     「今日＋初回利用」は別途isSameDayFirstTimeBlockedで上書きする（下記参照）。 */
+  var SELECTABLE_DAY_STATUSES_ = [DAY_STATUSES.AVAILABLE_HIGH, DAY_STATUSES.AVAILABLE, DAY_STATUSES.LIMITED];
+
+  function isBookableDayStatus(status) {
+    return SELECTABLE_DAY_STATUSES_.indexOf(status) !== -1;
+  }
+
+  var DAY_STATUS_SYMBOLS_ = {
+    AVAILABLE_HIGH: '◎',
+    AVAILABLE: '○',
+    LIMITED: '△',
+    FULL: '×',
+    OUT_OF_RANGE: '－'
+  };
+
+  /* 記号だけに依存しないアクセシビリティ対応（Issue #318要件）のため、aria-label用の
+     文言を別途用意する。色・記号を見なくても状態が分かるようにする。 */
+  var DAY_STATUS_LABELS_ = {
+    ja: {
+      AVAILABLE_HIGH: '空き時間が十分あります',
+      AVAILABLE: '空きあります',
+      LIMITED: '残り枠が少ないです',
+      FULL: '予約可能枠がありません',
+      OUT_OF_RANGE: '予約対象外です'
+    },
+    en: {
+      AVAILABLE_HIGH: 'Plenty of availability',
+      AVAILABLE: 'Available',
+      LIMITED: 'Limited availability',
+      FULL: 'Fully booked',
+      OUT_OF_RANGE: 'Not available'
+    }
+  };
+
+  function dayStatusSymbol(status) {
+    return DAY_STATUS_SYMBOLS_[status] || '';
+  }
+
+  function dayStatusLabel(status, locale) {
+    var labels = DAY_STATUS_LABELS_[normalizeLocale(locale)];
+    return labels[status] || '';
+  }
+
+  /*
+   * カレンダー上のセルが選択可能かどうか。GASのstatus判定に加えて、当日＋初回利用の
+   * 組み合わせは（getAvailability自体がcustomerTypeを見ないため）ここで上書きして
+   * 選択不可にする（Issue #318追記のテスト要件: 「今日」セルが初回利用選択時は
+   * 選択不可／警告になることを再現する）。最終的な可否の正はcreateBookingの
+   * サーバー側検証であり、ここはUX目的の一次チェック（既存のisSameDayFirstTimeBlockedと
+   * 同じ位置づけ）。
+   */
+  function isCalendarDaySelectable(dateValue, status, customerType, todayValue) {
+    if (!isBookableDayStatus(status)) return false;
+    if (isSameDayFirstTimeBlocked(dateValue, customerType, todayValue)) return false;
+    return true;
+  }
+
+  var MONTH_NAMES_EN_ = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  function pad2_(n) {
+    return (n < 10 ? '0' : '') + n;
+  }
+
+  /* year/month（数値）を画面見出し用に整形する。例: ja '2026年10月' / en 'October 2026'。 */
+  function monthLabel(year, month, locale) {
+    if (normalizeLocale(locale) === 'en') return MONTH_NAMES_EN_[month - 1] + ' ' + year;
+    return year + '年' + month + '月';
+  }
+
+  /* dateValue（'YYYY-MM-DD'）を日単位の見出し用に整形する。例: ja '10月5日' / en 'October 5'。
+     aria-labelの先頭（「10月5日 空きあり」等）に使う。 */
+  function formatCalendarDayLabel(dateValue, locale) {
+    var parts = (dateValue || '').split('-');
+    var month = parseInt(parts[1], 10);
+    var day = parseInt(parts[2], 10);
+    if (normalizeLocale(locale) === 'en') return MONTH_NAMES_EN_[month - 1] + ' ' + day;
+    return month + '月' + day + '日';
+  }
+
+  /* カレンダーの日セルのaria-label。記号・色だけに依存しないアクセシビリティ対応
+     （Issue #318要件）。「今日＋初回利用」の場合はSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEの
+     メッセージをそのまま使い、通常のstatusラベルとメッセージを二重に定義しない。 */
+  function dayAriaLabel(dateValue, status, customerType, todayValue, locale) {
+    var loc = normalizeLocale(locale);
+    var dayLabel = formatCalendarDayLabel(dateValue, loc);
+    if (isSameDayFirstTimeBlocked(dateValue, customerType, todayValue)) {
+      return dayLabel + '　' + messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', loc);
+    }
+    return dayLabel + '　' + dayStatusLabel(status, loc);
+  }
+
+  function daysInCalendarMonth_(year, month) {
+    return new Date(Date.UTC(year, month, 0)).getUTCDate();
+  }
+
+  function firstWeekdayOfCalendarMonth_(year, month) {
+    return new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  }
+
+  /*
+   * year/month（数値）の月間カレンダーを、7列（日〜土）×5〜6週の2次元配列として返す。
+   * 各セルはnull（月外の空白セル）か { day, dateValue } のいずれか。
+   * 月初の曜日位置・月末までの週数（28〜31日、5〜6週）を実行環境のローカルtimezoneに
+   * 依存せずDate.UTC構築方式で計算する（gas/booking/shared/Availability.gsの
+   * isValidDateString等と同じ方針）。
+   */
+  function buildMonthMatrix(year, month) {
+    var totalDays = daysInCalendarMonth_(year, month);
+    var startWeekday = firstWeekdayOfCalendarMonth_(year, month);
+    var monthPrefix = year + '-' + pad2_(month) + '-';
+
+    var cells = [];
+    for (var i = 0; i < startWeekday; i++) cells.push(null);
+    for (var day = 1; day <= totalDays; day++) {
+      cells.push({ day: day, dateValue: monthPrefix + pad2_(day) });
+    }
+    while (cells.length % 7 !== 0) cells.push(null);
+
+    var weeks = [];
+    for (var w = 0; w < cells.length; w += 7) weeks.push(cells.slice(w, w + 7));
+    return weeks;
+  }
+
+  /* year/month（数値）をdelta ヶ月分ずらした{year, month}を返す（年跨ぎ対応）。
+     例: shiftMonth(2026, 12, 1) → {year: 2027, month: 1}、shiftMonth(2026, 1, -1) → {year: 2025, month: 12}。 */
+  function shiftMonth(year, month, delta) {
+    var totalMonths = year * 12 + (month - 1) + delta;
+    var newYear = Math.floor(totalMonths / 12);
+    var newMonth = (totalMonths % 12) + 1;
+    return { year: newYear, month: newMonth };
+  }
+
+  /* dateValue（'YYYY-MM-DD'）から{year, month}（数値）を取り出す。カレンダー初期表示月
+     （Logic.todayInJapan()の月）を求めるために使う。 */
+  function yearMonthFromDateValue(dateValue) {
+    var parts = (dateValue || '').split('-');
+    return { year: parseInt(parts[0], 10), month: parseInt(parts[1], 10) };
+  }
+
+  /* 曜日インデックス（0=日〜6=土）から表示色分け用のクラス名を返す（日曜:赤系、土曜:青系、
+     平日:通常色。Issue #318要件）。 */
+  function weekdayColumnClass(index) {
+    if (index === 0) return 'ba-cal-sun';
+    if (index === 6) return 'ba-cal-sat';
+    return 'ba-cal-weekday';
+  }
+
+  /*
    * JST（日本時間）での「今日」を'YYYY-MM-DD'で返す。日付入力の下限（過去日を選べなくする）と、
    * isSameDayFirstTimeBlockedへ渡す「当日かどうか」の判定基準の両方に使う（Issue #270）。
    * ブラウザのローカルtimezoneには依存せず、常にAsia/Tokyo基準で計算する。
@@ -442,7 +609,19 @@
     purposeLabel: purposeLabel,
     paymentMethodLabel: paymentMethodLabel,
     buildCreateBookingPayload: buildCreateBookingPayload,
-    todayInJapan: todayInJapan
+    todayInJapan: todayInJapan,
+    DAY_STATUSES: DAY_STATUSES,
+    isBookableDayStatus: isBookableDayStatus,
+    dayStatusSymbol: dayStatusSymbol,
+    dayStatusLabel: dayStatusLabel,
+    isCalendarDaySelectable: isCalendarDaySelectable,
+    monthLabel: monthLabel,
+    formatCalendarDayLabel: formatCalendarDayLabel,
+    dayAriaLabel: dayAriaLabel,
+    buildMonthMatrix: buildMonthMatrix,
+    shiftMonth: shiftMonth,
+    yearMonthFromDateValue: yearMonthFromDateValue,
+    weekdayColumnClass: weekdayColumnClass
   };
 
   global.BookingLogic = api;

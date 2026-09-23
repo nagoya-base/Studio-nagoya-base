@@ -48,16 +48,11 @@
   <!-- Step 1: 利用日・利用時間 -->
   <section class="ba-step" id="ba-step-datetime" data-step="datetime">
     <h2>利用日・利用時間を選択</h2>
-    <p class="ba-step-desc">希望する利用日と利用時間（長さ）を選択してください。</p>
-
-    <div class="ba-field">
-      <label for="ba-date">利用日<span class="ba-required">必須</span></label>
-      <input type="date" id="ba-date" name="date" autocomplete="off">
-      <p class="ba-field-error" id="ba-date-error" hidden></p>
-    </div>
+    <p class="ba-step-desc">まず利用時間と利用区分を選んでください。空き状況カレンダーが表示されます。</p>
 
     <!-- 利用時間の上限をUI側で決め打ちしない（長時間利用もサーバー側の判定に委ねる。
-         最低利用時間・15分刻み・営業時間内かどうかはgetAvailability/createBookingが正）。 -->
+         最低利用時間・15分刻み・営業時間内かどうかはgetAvailability/createBookingが正）。
+         Issue #318: 利用時間・利用区分を先に確定してからカレンダーを描画・取得する。 -->
     <div class="ba-field">
       <label for="ba-duration">利用時間（時間単位）<span class="ba-required">必須</span></label>
       <input type="number" id="ba-duration" name="durationHours" inputmode="numeric" min="2" step="1" placeholder="例：3">
@@ -67,8 +62,8 @@
 
     <!-- 利用区分（Issue #270）: 「会員かどうか」ではなく、SNB／SNB mens／Studio Xという
          同一施設の利用経験の有無で当日予約可否を判定する。当日+初回利用の組み合わせは
-         このあと空き時間取得へ進ませず、翌日以降の日付を選び直すよう案内する（UX目的の
-         一次チェック。最終的な可否の正はcreateBookingのサーバー側検証）。 -->
+         カレンダー上でも選択不可にする（Issue #318。getAvailability自体はcustomerTypeを
+         見ないためフロント側のガード。最終的な可否の正はcreateBookingのサーバー側検証）。 -->
     <fieldset class="ba-fieldset">
       <legend>利用区分<span class="ba-required">必須</span></legend>
       <div class="ba-choices" id="ba-customer-type-choices">
@@ -78,6 +73,60 @@
       <p class="ba-field-help">ブランドを問わず、この施設をご利用いただいたことがあれば「利用経験あり」を選択してください。初回利用の方は当日のご予約を受け付けていません。</p>
       <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
     </fieldset>
+
+    <!-- 月間空き状況カレンダー（Issue #318）。#ba-dateはtype="hidden"のまま維持し、
+         カレンダーの日セルクリックがこの値を書き込む（Step1「次へ」の検証・送信先は
+         従来どおり#ba-dateの値を見るだけで変更しない）。 -->
+    <div class="ba-field">
+      <span class="ba-field-label-like" id="ba-calendar-label">利用日<span class="ba-required">必須</span></span>
+      <input type="hidden" id="ba-date" name="date" autocomplete="off">
+      <div class="ba-calendar" aria-labelledby="ba-calendar-label">
+        <p class="ba-calendar-hint" id="ba-calendar-hint">利用時間と利用区分を選択すると、空き状況カレンダーが表示されます。</p>
+        <div id="ba-calendar-body" hidden>
+          <div class="ba-calendar-nav">
+            <button type="button" class="ba-btn ba-btn-ghost ba-calendar-nav-btn" id="ba-calendar-prev" aria-label="前月へ">‹ 前月</button>
+            <span class="ba-calendar-month" id="ba-calendar-month-label" aria-live="polite"></span>
+            <button type="button" class="ba-btn ba-btn-ghost ba-calendar-nav-btn" id="ba-calendar-next" aria-label="翌月へ">翌月 ›</button>
+          </div>
+
+          <div id="ba-calendar-loading" class="ba-loading" hidden>空き状況を確認しています…</div>
+
+          <div id="ba-calendar-error" class="ba-banner ba-banner--error" role="alert" aria-live="assertive" hidden>
+            <p id="ba-calendar-error-message"></p>
+            <div class="ba-banner-actions">
+              <button type="button" class="ba-btn ba-btn-ghost" id="ba-calendar-retry">再読み込み</button>
+            </div>
+          </div>
+
+          <table class="ba-calendar-grid">
+            <caption class="ba-sr-only">月間空き状況カレンダー</caption>
+            <thead>
+              <tr>
+                <th class="ba-cal-sun" scope="col">日</th>
+                <th scope="col">月</th>
+                <th scope="col">火</th>
+                <th scope="col">水</th>
+                <th scope="col">木</th>
+                <th scope="col">金</th>
+                <th class="ba-cal-sat" scope="col">土</th>
+              </tr>
+            </thead>
+            <tbody id="ba-calendar-grid-body"></tbody>
+          </table>
+
+          <ul class="ba-calendar-legend">
+            <li><span aria-hidden="true">◎</span> 空き時間が十分あります</li>
+            <li><span aria-hidden="true">○</span> 空きあります</li>
+            <li><span aria-hidden="true">△</span> 残り枠が少ないです</li>
+            <li><span aria-hidden="true">×</span> 予約可能枠がありません</li>
+            <li><span aria-hidden="true">－</span> 予約対象外です</li>
+          </ul>
+
+          <p class="ba-calendar-selected" id="ba-calendar-selected" aria-live="polite"></p>
+        </div>
+      </div>
+      <p class="ba-field-error" id="ba-date-error" hidden></p>
+    </div>
 
     <div class="ba-actions">
       <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">予約できる時間を表示</button>

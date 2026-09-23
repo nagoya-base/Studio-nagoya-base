@@ -368,3 +368,149 @@ test('todayInJapan: 日本時間での「今日」をYYYY-MM-DD形式で返す�
   var result2 = Logic.todayInJapan(new Date('2026-09-19T20:00:00Z'));
   assert.strictEqual(result2, '2026-09-20');
 });
+
+/* ── 月間空き状況カレンダー（Issue #318） ── */
+
+test('isBookableDayStatus: AVAILABLE_HIGH/AVAILABLE/LIMITEDのみtrue、FULL/OUT_OF_RANGEはfalse', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.isBookableDayStatus('AVAILABLE_HIGH'), true);
+  assert.strictEqual(Logic.isBookableDayStatus('AVAILABLE'), true);
+  assert.strictEqual(Logic.isBookableDayStatus('LIMITED'), true);
+  assert.strictEqual(Logic.isBookableDayStatus('FULL'), false);
+  assert.strictEqual(Logic.isBookableDayStatus('OUT_OF_RANGE'), false);
+  assert.strictEqual(Logic.isBookableDayStatus('SOMETHING_UNKNOWN'), false);
+});
+
+test('dayStatusSymbol: 5値それぞれに対応する記号を返す（◎/○/△/×/－）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.dayStatusSymbol('AVAILABLE_HIGH'), '◎');
+  assert.strictEqual(Logic.dayStatusSymbol('AVAILABLE'), '○');
+  assert.strictEqual(Logic.dayStatusSymbol('LIMITED'), '△');
+  assert.strictEqual(Logic.dayStatusSymbol('FULL'), '×');
+  assert.strictEqual(Logic.dayStatusSymbol('OUT_OF_RANGE'), '－');
+});
+
+test('dayStatusLabel: 記号だけに依存しない文言をja/enそれぞれ返す', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.dayStatusLabel('AVAILABLE_HIGH', 'ja'), '空き時間が十分あります');
+  assert.strictEqual(Logic.dayStatusLabel('FULL', 'en'), 'Fully booked');
+  /* locale未指定はja */
+  assert.strictEqual(Logic.dayStatusLabel('LIMITED'), '残り枠が少ないです');
+});
+
+test('isCalendarDaySelectable: FULL/OUT_OF_RANGEは選択不可、それ以外は選択可能', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.isCalendarDaySelectable('2026-10-05', 'AVAILABLE_HIGH', 'returning', '2026-10-01'), true);
+  assert.strictEqual(Logic.isCalendarDaySelectable('2026-10-05', 'LIMITED', 'returning', '2026-10-01'), true);
+  assert.strictEqual(Logic.isCalendarDaySelectable('2026-10-05', 'FULL', 'returning', '2026-10-01'), false);
+  assert.strictEqual(Logic.isCalendarDaySelectable('2026-10-05', 'OUT_OF_RANGE', 'returning', '2026-10-01'), false);
+});
+
+test('isCalendarDaySelectable: 初回利用＋当日は、GAS側のstatusが予約可でも選択不可になる（getAvailability自体はcustomerTypeを見ないため、フロント側ガードの再現）', function () {
+  var Logic = loadLogic();
+  var today = '2026-10-01';
+  assert.strictEqual(Logic.isCalendarDaySelectable(today, 'AVAILABLE_HIGH', 'first_time', today), false, '今日＋初回利用は選択不可');
+  assert.strictEqual(Logic.isCalendarDaySelectable(today, 'AVAILABLE_HIGH', 'returning', today), true, '今日＋利用経験ありは選択可能');
+  assert.strictEqual(Logic.isCalendarDaySelectable('2026-10-02', 'AVAILABLE_HIGH', 'first_time', today), true, '翌日＋初回利用は選択可能');
+});
+
+test('dayAriaLabel: 記号ではなく日付＋状態の文言をaria-label用に返す（ja/en）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.dayAriaLabel('2026-10-05', 'AVAILABLE', 'returning', '2026-10-01', 'ja'), '10月5日　空きあります');
+  assert.strictEqual(Logic.dayAriaLabel('2026-10-05', 'AVAILABLE', 'returning', '2026-10-01', 'en'), 'October 5　Available');
+});
+
+test('dayAriaLabel: 今日＋初回利用は、通常のstatusラベルではなくSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEの案内文になる', function () {
+  var Logic = loadLogic();
+  var today = '2026-10-01';
+  var label = Logic.dayAriaLabel(today, 'AVAILABLE_HIGH', 'first_time', today, 'ja');
+  assert.ok(label.indexOf('初回利用の方は当日のご予約を受け付けていません') !== -1, label);
+});
+
+test('monthLabel: ja "2026年10月" / en "October 2026"', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.monthLabel(2026, 10, 'ja'), '2026年10月');
+  assert.strictEqual(Logic.monthLabel(2026, 10, 'en'), 'October 2026');
+  assert.strictEqual(Logic.monthLabel(2027, 1, 'en'), 'January 2027');
+});
+
+test('formatCalendarDayLabel: ja "10月5日" / en "October 5"', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.formatCalendarDayLabel('2026-10-05', 'ja'), '10月5日');
+  assert.strictEqual(Logic.formatCalendarDayLabel('2026-10-05', 'en'), 'October 5');
+});
+
+test('buildMonthMatrix: 7列×週の2次元配列を返し、月初の曜日位置が正しい（2026年10月は木曜始まり）', function () {
+  var Logic = loadLogic();
+  var weeks = Logic.buildMonthMatrix(2026, 10);
+  weeks.forEach(function (week) { assert.strictEqual(week.length, 7, '各週は7列であること'); });
+
+  /* 2026-10-01は木曜日（index 4）なので、最初の週は日〜水が空白セル */
+  assert.strictEqual(weeks[0][0], null);
+  assert.strictEqual(weeks[0][3], null);
+  assert.deepEqual(weeks[0][4], { day: 1, dateValue: '2026-10-01' });
+  assert.deepEqual(weeks[0][6], { day: 3, dateValue: '2026-10-03' });
+
+  /* 31日ぶんすべてのセルが1回ずつ現れる */
+  var allDays = [];
+  weeks.forEach(function (week) {
+    week.forEach(function (cell) { if (cell) allDays.push(cell.day); });
+  });
+  assert.deepStrictEqual(allDays, Array.from({ length: 31 }, function (_, i) { return i + 1; }));
+});
+
+test('buildMonthMatrix: 月初が日曜の月は先頭セルから空白なしで始まる（2026年11月は日曜始まり）', function () {
+  var Logic = loadLogic();
+  var weeks = Logic.buildMonthMatrix(2026, 11);
+  assert.deepEqual(weeks[0][0], { day: 1, dateValue: '2026-11-01' });
+});
+
+test('buildMonthMatrix: 28/29/30/31日の月それぞれで正しい日数のセルになる', function () {
+  var Logic = loadLogic();
+  function countDays(year, month) {
+    var count = 0;
+    Logic.buildMonthMatrix(year, month).forEach(function (week) {
+      week.forEach(function (cell) { if (cell) count += 1; });
+    });
+    return count;
+  }
+  assert.strictEqual(countDays(2026, 2), 28, '2026年2月（平年）');
+  assert.strictEqual(countDays(2028, 2), 29, '2028年2月（閏年）');
+  assert.strictEqual(countDays(2026, 4), 30, '2026年4月');
+  assert.strictEqual(countDays(2026, 1), 31, '2026年1月');
+});
+
+test('buildMonthMatrix: 4〜6週の範囲に収まる（月初の曜日と日数の組み合わせにより、日曜始まり28日の月だけ例外的に4週になる）', function () {
+  var Logic = loadLogic();
+  for (var month = 1; month <= 12; month++) {
+    var weekCount = Logic.buildMonthMatrix(2026, month).length;
+    assert.ok(weekCount >= 4 && weekCount <= 6, month + '月は' + weekCount + '週（4〜6週の範囲外）');
+  }
+});
+
+test('shiftMonth: 通常の月内移動', function () {
+  var Logic = loadLogic();
+  assert.deepEqual(Logic.shiftMonth(2026, 5, 1), { year: 2026, month: 6 });
+  assert.deepEqual(Logic.shiftMonth(2026, 5, -1), { year: 2026, month: 4 });
+});
+
+test('shiftMonth: 年跨ぎ（12月→1月、1月→12月）を正しく処理する', function () {
+  var Logic = loadLogic();
+  assert.deepEqual(Logic.shiftMonth(2026, 12, 1), { year: 2027, month: 1 });
+  assert.deepEqual(Logic.shiftMonth(2026, 1, -1), { year: 2025, month: 12 });
+});
+
+test('yearMonthFromDateValue: YYYY-MM-DDから{year, month}を取り出す', function () {
+  var Logic = loadLogic();
+  assert.deepEqual(Logic.yearMonthFromDateValue('2026-10-05'), { year: 2026, month: 10 });
+  assert.deepEqual(Logic.yearMonthFromDateValue('2027-01-31'), { year: 2027, month: 1 });
+});
+
+test('weekdayColumnClass: 日曜は赤系・土曜は青系・平日は通常色のクラス名を返す', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.weekdayColumnClass(0), 'ba-cal-sun');
+  assert.strictEqual(Logic.weekdayColumnClass(6), 'ba-cal-sat');
+  for (var i = 1; i <= 5; i++) {
+    assert.strictEqual(Logic.weekdayColumnClass(i), 'ba-cal-weekday');
+  }
+});

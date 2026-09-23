@@ -160,7 +160,9 @@
 .booking-app select:focus-visible,
 .booking-app textarea:focus-visible,
 .ba-choice label:focus-within,
-.ba-time-slot:focus-visible {
+.ba-time-slot:focus-visible,
+.ba-cal-day:focus-visible,
+.ba-calendar-nav-btn:focus-visible {
   outline: 2px solid var(--ba-accent);
   outline-offset: 2px;
 }
@@ -201,6 +203,136 @@
 }
 
 .ba-choice input { flex: 0 0 auto; width: 18px; height: 18px; accent-color: var(--ba-accent); }
+
+/* ── スクリーンリーダー専用（視覚的には非表示だがaria-labelledbyの対象として読める） ── */
+.ba-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ba-field-label-like {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--ba-text);
+}
+
+/* ── 月間空き状況カレンダー（Issue #318） ── */
+.ba-calendar-hint {
+  margin: 0;
+  padding: 14px;
+  color: var(--ba-muted);
+  font-size: 0.84rem;
+  line-height: 1.7;
+  border: 1px dashed var(--ba-border);
+  border-radius: var(--ba-radius);
+}
+
+.ba-calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.ba-calendar-nav-btn {
+  min-height: 40px;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  flex: 0 0 auto;
+}
+
+.ba-calendar-month {
+  font-size: 0.94rem;
+  font-weight: 800;
+  color: var(--ba-text);
+}
+
+/* テーブルレイアウト（table-layout: fixed）で7列を等幅にし、スマートフォンでも
+   横スクロールを必要としないようにする（Issue #318要件）。 */
+.ba-calendar-grid {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+}
+
+.ba-calendar-grid th {
+  padding: 6px 2px;
+  color: var(--ba-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* 曜日表示: 日曜は赤系、土曜は青系、平日は通常色（Issue #318要件）。
+   記号・色だけに依存しないよう、選択可否・状態自体はbuttonのaria-labelで別途示す。 */
+.ba-calendar-grid th.ba-cal-sun { color: #c0392b; }
+.ba-calendar-grid th.ba-cal-sat { color: #2c5aa0; }
+
+.ba-calendar-grid td {
+  padding: 2px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ba-cal-day {
+  width: 100%;
+  min-height: 44px;
+  padding: 4px 2px;
+  border: 1px solid var(--ba-border);
+  border-radius: var(--ba-radius);
+  background: var(--ba-surface-2);
+  color: var(--ba-text);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.ba-cal-day:hover:not(:disabled) { border-color: var(--ba-accent); }
+
+.ba-cal-day[aria-pressed="true"] {
+  border-color: var(--ba-accent);
+  background: var(--ba-accent);
+  color: var(--ba-bg);
+}
+
+.ba-cal-day:disabled {
+  color: var(--ba-muted);
+  background: transparent;
+  border-style: dashed;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.ba-calendar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  color: var(--ba-muted);
+  font-size: 0.76rem;
+}
+
+.ba-calendar-selected {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--ba-text);
+}
 
 /* ── 開始時刻の選択 ── */
 .ba-time-grid {
@@ -376,4 +508,8 @@
   .ba-actions .ba-btn { width: 100%; }
   .ba-summary th { width: 40%; }
   .ba-time-grid { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); }
+  /* table-layout: fixedで既に7列固定幅のため横スクロールは発生しないが、
+     セル内余白・文字サイズを狭幅端末向けにさらに詰める（Issue #318要件）。 */
+  .ba-cal-day { min-height: 38px; padding: 3px 1px; font-size: 0.72rem; }
+  .ba-calendar-nav-btn { padding: 8px 10px; font-size: 0.76rem; }
 }

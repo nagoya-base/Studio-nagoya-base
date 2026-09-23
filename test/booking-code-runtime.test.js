@@ -282,6 +282,76 @@ test('doGet: getAvailabilityの配線はIssue #268実装後も変化しない（
   assert.strictEqual(body.success, true);
 });
 
+/*
+ * doGet: action=monthly（Issue #318 getMonthlyAvailability）の配線テスト。
+ * 日ごとのステータス判定自体はtest/booking-monthly-availability.test.jsで検証済みのため、
+ * ここではCode.gsの配線（action分岐・calendar.getEvents()が月内で1回だけ・
+ * バリデーション・JSON出力）だけを確認する。
+ */
+test('doGet: action=monthlyでgetMonthlyAvailabilityへ配線される。calendar.getEvents()は月内で1回だけ', function () {
+  var getEventsCallCount = 0;
+  var calendarsById = {
+    cal1: {
+      get events() {
+        getEventsCallCount += 1;
+        return [];
+      }
+    }
+  };
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, calendarsById);
+  var body = callDoGet(sandbox, { action: 'monthly', year: '2026', month: '10', durationMinutes: '120', brand: 'studio_x' });
+
+  assert.strictEqual(body.success, true);
+  assert.strictEqual(body.month, '2026-10');
+  assert.strictEqual(body.brand, 'studio_x');
+  assert.strictEqual(Object.keys(body.days).length, 31);
+  assert.strictEqual(getEventsCallCount, 1, '月間取得でCalendar.getEvents()は1回だけ呼ばれるべき（31回連続アクセス禁止）');
+});
+
+test('doGet: action=monthlyは無効な年月・利用時間をバリデーションエラーとして返し、Calendarへ問い合わせない', function () {
+  var calendarQueried = false;
+  var calendarsById = {
+    cal1: {
+      get events() {
+        calendarQueried = true;
+        return [];
+      }
+    }
+  };
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, calendarsById);
+
+  var badMonth = callDoGet(sandbox, { action: 'monthly', year: '2026', month: '13', durationMinutes: '120' });
+  assert.strictEqual(badMonth.success, false);
+  assert.strictEqual(badMonth.error.code, 'INVALID_MONTH');
+
+  var badDuration = callDoGet(sandbox, { action: 'monthly', year: '2026', month: '10', durationMinutes: '60' });
+  assert.strictEqual(badDuration.success, false);
+  assert.strictEqual(badDuration.error.code, 'DURATION_TOO_SHORT');
+
+  assert.strictEqual(calendarQueried, false, 'バリデーションエラー時はCalendar APIを呼ばない');
+});
+
+test('doGet: action=monthlyは既存の空きを正しく塞ぐ（単日getAvailabilityと同じCalendarデータを参照する）', function () {
+  var event = stubs.createEventStub({
+    start: atFutureTime_('10:00'),
+    end: atFutureTime_('12:00'),
+    isAllDay: false
+  });
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [event] } });
+  var parts = FUTURE_DATE.split('-');
+  var body = callDoGet(sandbox, {
+    action: 'monthly', year: parts[0], month: String(parseInt(parts[1], 10)), durationMinutes: '120', brand: 'snb'
+  });
+  assert.strictEqual(body.success, true);
+  assert.ok(body.days[FUTURE_DATE].availableStartTimes < 53, '既存予約があるため完全空き日より件数が減るべき');
+});
+
+test('doGet: レスポンスはJSON MIMEタイプで返す（action=monthly）', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
+  var output = sandbox.doGet({ parameter: { action: 'monthly', year: '2026', month: '10', durationMinutes: '120' } });
+  assert.strictEqual(output.mimeType, 'JSON');
+});
+
 /* doPost(createBooking)自体の配線・部分失敗補償・rate limit等はBooking関連の
    全ファイルを読み込むtest/booking-create-booking.test.js側で検証する。
    このファイル（Config/CalendarRepository/Availability/Codeのみ読み込み）では、
