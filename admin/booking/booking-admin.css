@@ -87,6 +87,73 @@ h1 {
   white-space: nowrap;
 }
 
+/* Issue #322: ヘッダーの最終更新時刻・手動更新ボタン。要素自体はbooking-admin.js
+   （initHeaderUi_）がDOM生成する。BookingAdminPage.htmlは変更していない。 */
+.header-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.last-updated {
+  font-size: 12px;
+  color: var(--color-text-sub);
+}
+
+.refresh-button {
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-card-bg);
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.refresh-button:disabled {
+  opacity: 0.5;
+}
+
+/* Issue #322: 予約サマリー（今日/仮受付/確定/全件）。検索クエリの影響を受けず
+   全件ベースで計算した件数を表示する（booking-admin.js: computeSummaryCounts）。 */
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--color-bg);
+  border-radius: 8px;
+  padding: 6px 2px;
+}
+
+.summary-label {
+  font-size: 11px;
+  color: var(--color-text-sub);
+}
+
+.summary-count {
+  font-size: 16px;
+  font-weight: bold;
+  margin-top: 2px;
+}
+
+/* Issue #322: 各タブの件数（booking-admin.js: computeTabCounts）。 */
+.tab-count {
+  display: block;
+  font-size: 10px;
+  font-weight: normal;
+  margin-top: 2px;
+}
+
 #sort-select {
   flex: 1;
   min-width: 0;
@@ -105,6 +172,22 @@ main {
   margin: 0 auto;
 }
 
+/* Issue #322: クライアント側検索欄。要素自体はbooking-admin.js（initSearchUi_）が
+   一度だけDOM生成し、render()のたびに再生成しない（入力中のフォーカス・IME変換
+   状態を壊さないための要件どおりの実装）。 */
+.search-input {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  margin-bottom: 10px;
+  background: var(--color-card-bg);
+  color: var(--color-text);
+}
+
 #status-line {
   color: var(--color-text-sub);
   font-size: 13px;
@@ -121,15 +204,22 @@ main {
   word-break: break-word;
 }
 
+/* Issue #322: ブランド・ステータスをカード上部にまとめて表示する（要件5）。 */
+.card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .card-datetime {
   font-size: 15px;
   font-weight: bold;
+  margin-top: 6px;
 }
 
 .card-brand {
   color: var(--color-text-sub);
   font-size: 13px;
-  margin-top: 2px;
 }
 
 .card-name {
@@ -143,9 +233,22 @@ main {
   margin-top: 2px;
 }
 
+/* Issue #322: 支払方法・利用目的（要件5の最低限表示項目）。 */
+.card-sub {
+  color: var(--color-text-sub);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+/* Issue #322: bookingId（要件5の最低限表示項目）。 */
+.card-id {
+  color: var(--color-text-sub);
+  font-size: 11px;
+  margin-top: 4px;
+}
+
 .badge {
   display: inline-block;
-  margin-top: 8px;
   padding: 2px 10px;
   border-radius: 999px;
   font-size: 12px;
@@ -214,8 +317,14 @@ button.cancel { color: #fff; background: var(--color-danger); border-color: var(
   font-size: 16px;
 }
 
+/* Issue #322: 既存の詳細項目（DETAIL_FIELDS）は維持しつつ、ラベル・値を2カラムで
+   並べて読みやすくする（要件7）。項目自体・順序はbooking-admin.js側のまま変えない。 */
 #modal dl {
   margin: 0;
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 0 10px;
+  align-items: baseline;
 }
 
 #modal dt {
@@ -225,7 +334,8 @@ button.cancel { color: #fff; background: var(--color-danger); border-color: var(
 }
 
 #modal dd {
-  margin: 2px 0 0;
+  margin: 0;
+  margin-top: 10px;
   font-size: 14px;
 }
 

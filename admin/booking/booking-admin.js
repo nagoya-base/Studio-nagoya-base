@@ -13,12 +13,21 @@
  * 表示文言・カードUI・ソートUI等、通常のフロントエンド変更はこのファイルと
  * booking-admin.cssの更新のみで反映でき、GAS Web Appの再デプロイは不要
  * （BookingAdminPage.html自体・google.script.run APIを変更しない限り）。
+ *
+ * Issue #322で、個人運用しやすいダッシュボードUI（ヘッダー・件数サマリー・
+ * タブ件数・クライアント側検索・カードレイアウト刷新）を追加した。
+ * BookingAdminPage.htmlはこのIssueでも変更していないため、ヘッダー内の見出し・
+ * 最終更新表示・更新ボタン・件数サマリー・検索欄は、いずれもこのファイルが
+ * 起動時にDOM要素を生成してheader/main配下へ挿入する（固定HTML側にはid/要素を
+ * 追加していない）。google.script.run APIは追加していない（最終更新時刻は
+ * 端末ローカル時刻をそのまま表示するだけで、JST統一のための新規呼び出しはしない）。
  */
 var state = {
   bookings: [],
   todayJst: null,
   filter: 'today',
   sort: 'date',
+  searchQuery: '',
   busyIds: {}
 };
 
@@ -58,32 +67,65 @@ function customerTypeLabel(value) {
   return value || '';
 }
 
-/* hasMailErrorのみ真偽値、customerTypeのみ表示用ラベルへ変換、それ以外は
-   サーバー側で整形済みの文字列（空文字列＝未設定）。
+/* brand（Booking.gs側の内部値）を表示用の日本語/英語ラベルへ変換するだけの関数
+   （Issue #322 要件5）。customerTypeLabelと同じ方針で、内部値・保存値・APIレス
+   ポンスは変更せず、表示直前にのみ変換する。未知の値は例外にせず元値を返す。 */
+function brandLabel(value) {
+  if (value === 'snb') return 'SNB';
+  if (value === 'mens') return 'SNB mens';
+  if (value === 'studio_x') return 'Studio X';
+  return value || '';
+}
+
+/* statusの内部値（PENDING/CONFIRMED/CANCELLED/EXPIRED）を表示用の日本語ラベルへ
+   変換するだけの関数（Issue #322 要件5）。customerTypeLabel/brandLabelと同じ方針。
+   バッジのCSSクラス（badge-PENDING等）は内部値のまま使うため、ここでは表示文言のみ
+   変える。 */
+function statusLabel(value) {
+  if (value === 'PENDING') return '仮受付';
+  if (value === 'CONFIRMED') return '確定';
+  if (value === 'CANCELLED') return 'キャンセル';
+  if (value === 'EXPIRED') return '期限切れ';
+  return value || '';
+}
+
+/* hasMailErrorのみ真偽値、customerType/brand/statusのみ表示用ラベルへ変換、
+   それ以外はサーバー側で整形済みの文字列（空文字列＝未設定）。
    lastMailError*の詳細（内容・種別・日時）はWeb UIへは出さない（障害調査は
    Spreadsheetを直接確認する運用のまま。BookingAdminWeb.gs参照）。 */
 function formatValue(key, value) {
   if (key === 'hasMailError') return value ? 'あり' : 'なし';
   if (key === 'customerType') return customerTypeLabel(value) || '（未設定）';
+  if (key === 'brand') return brandLabel(value) || '（未設定）';
+  if (key === 'status') return statusLabel(value) || '（未設定）';
   if (value === null || value === undefined || value === '') return '（未設定）';
   return String(value);
 }
 
-/* 「今日/今後」の判定はstate.todayJst（サーバーがAsia/Tokyo基準で計算した値。
+/* 「今日/今後」の判定はtodayJst（サーバーがAsia/Tokyo基準で計算した値。
    getAdminBookingsの応答に含まれる）とbooking.date（同じくJST基準の
    'YYYY-MM-DD'）の単純な文字列比較で行う。端末のtimezone設定には一切依存しない。
    CANCELLEDは「今日」「今後」には出さず、日付を問わず「キャンセル」タブへ集約する
-   （EXPIREDはここに含めない。「すべて」で確認できれば十分という要件のため）。 */
-function filteredBookings() {
-  var today = state.todayJst;
-  return state.bookings.filter(function (b) {
-    if (state.filter === 'all') return true;
-    if (state.filter === 'cancelled') return b.status === 'CANCELLED';
+   （EXPIREDはここに含めない。「すべて」で確認できれば十分という要件のため）。
+   Issue #322で件数サマリー・タブ件数（computeSummaryCounts/computeTabCounts）にも
+   同じ判定を使うため、stateに依存しない純粋関数として切り出した（DOM操作からも
+   分離しているため、この関数単体を直接テストできる）。 */
+function filterBookingsByTab(bookings, filter, todayJst) {
+  var today = todayJst;
+  return bookings.filter(function (b) {
+    if (filter === 'all') return true;
+    if (filter === 'cancelled') return b.status === 'CANCELLED';
     if (!today) return true;
-    if (state.filter === 'today') return b.date === today && b.status !== 'CANCELLED';
-    if (state.filter === 'upcoming') return b.date >= today && b.status !== 'CANCELLED';
+    if (filter === 'today') return b.date === today && b.status !== 'CANCELLED';
+    if (filter === 'upcoming') return b.date >= today && b.status !== 'CANCELLED';
     return true;
   });
+}
+
+/* 現在のstate（filter/todayJst）に対してfilterBookingsByTabを適用するだけの
+   薄いラッパー。既存の呼び出し側（visibleBookings）はこの関数名のまま使い続ける。 */
+function filteredBookings() {
+  return filterBookingsByTab(state.bookings, state.filter, state.todayJst);
 }
 
 /* 「日付順」: date昇順、同一日はstartAt昇順（デフォルト）。date/startAtはいずれも
@@ -110,17 +152,109 @@ function sortBookings(bookings) {
   return bookings.slice().sort(comparator);
 }
 
-/* filter → sortの順（要件どおり）。タブ切り替え・ソート切り替えの双方でrender()から
-   この関数だけを呼べばよいようにしている。 */
+/* Issue #322のクライアント側検索。対象候補は氏名/bookingId/利用目的/日付/ブランド/
+   customerType/支払方法/status（要件どおり。サーバーAPI・Spreadsheet検索APIは
+   追加しない、クライアント側のみの単純な部分一致）。ブランド/customerType/status
+   は内部値だけでなく表示ラベル（brandLabel/customerTypeLabel/statusLabel）でも
+   一致させる。カード・詳細モーダルに表示されるのはラベルのため、画面に見えている
+   文字列で検索できないと使いづらいことに対応するだけで、対象フィールド自体は
+   要件の候補から増やしていない。 */
+function normalizeSearchText_(value) {
+  return String(value === null || value === undefined ? '' : value).toLowerCase();
+}
+
+function bookingSearchHaystack_(b) {
+  return [
+    b.bookingId,
+    b.name,
+    b.purpose,
+    b.date,
+    b.brand,
+    brandLabel(b.brand),
+    b.customerType,
+    customerTypeLabel(b.customerType),
+    b.paymentMethod,
+    b.status,
+    statusLabel(b.status)
+  ].map(normalizeSearchText_).join(' ');
+}
+
+/* DOM（検索input）から分離した純粋関数。空・空白のみのqueryは絞り込みなし
+   （元のbookingsをそのまま返す）。 */
+function filterBySearch(bookings, query) {
+  var q = normalizeSearchText_(query).trim();
+  if (!q) return bookings;
+  return bookings.filter(function (b) {
+    return bookingSearchHaystack_(b).indexOf(q) !== -1;
+  });
+}
+
+/* filter → search → sortの順（要件どおり）。タブ切り替え・検索入力・ソート切り替え
+   のいずれからもrender()経由でこの関数だけを呼べばよいようにしている。
+   件数サマリー・タブ件数（computeSummaryCounts/computeTabCounts）は検索クエリの
+   影響を受けない仕様のため、意図的にstate.bookings全件を別ルートで集計する
+   （このvisibleBookings()の結果を使い回さない）。 */
 function visibleBookings() {
-  return sortBookings(filteredBookings());
+  return sortBookings(filterBySearch(filteredBookings(), state.searchQuery));
+}
+
+/* 予約サマリー（要件2: 今日/仮受付(PENDING)/確定(CONFIRMED)/全件）の集計。
+   検索クエリ・現在のタブ選択のいずれにも影響されず、常にbookings全件ベースで
+   計算する（要件どおり）。DOM操作から分離した純粋関数として実装し、直接テスト
+   できるようにしている。 */
+function computeSummaryCounts(bookings, todayJst) {
+  var list = bookings || [];
+  return {
+    today: filterBookingsByTab(list, 'today', todayJst).length,
+    pending: list.filter(function (b) { return b.status === 'PENDING'; }).length,
+    confirmed: list.filter(function (b) { return b.status === 'CONFIRMED'; }).length,
+    all: list.length
+  };
+}
+
+/* 既存4タブ（今日/今後/キャンセル/すべて）それぞれの件数。サマリーと同様、
+   検索クエリの影響を受けず全件ベースで計算する純粋関数。 */
+function computeTabCounts(bookings, todayJst) {
+  return {
+    today: filterBookingsByTab(bookings, 'today', todayJst).length,
+    upcoming: filterBookingsByTab(bookings, 'upcoming', todayJst).length,
+    cancelled: filterBookingsByTab(bookings, 'cancelled', todayJst).length,
+    all: filterBookingsByTab(bookings, 'all', todayJst).length
+  };
 }
 
 function setStatusLine(message) {
   document.getElementById('status-line').textContent = message || '';
 }
 
+function setElementText_(id, text) {
+  document.getElementById(id).textContent = text;
+}
+
+/* 予約サマリー（要件2）のDOM反映のみを担当。集計自体はcomputeSummaryCountsで行う。 */
+function renderSummary() {
+  var counts = computeSummaryCounts(state.bookings, state.todayJst);
+  setElementText_('summary-today-count', String(counts.today));
+  setElementText_('summary-pending-count', String(counts.pending));
+  setElementText_('summary-confirmed-count', String(counts.confirmed));
+  setElementText_('summary-all-count', String(counts.all));
+}
+
+/* 各タブの件数（要件3）のDOM反映のみを担当。集計自体はcomputeTabCountsで行う。
+   タブ本体（ボタン要素）はBookingAdminPage.html側の固定DOMのため、件数表示用の
+   子要素はinitTabCountsUi()が初回に生成する。 */
+function renderTabCounts() {
+  var counts = computeTabCounts(state.bookings, state.todayJst);
+  setElementText_('tab-count-today', String(counts.today));
+  setElementText_('tab-count-upcoming', String(counts.upcoming));
+  setElementText_('tab-count-cancelled', String(counts.cancelled));
+  setElementText_('tab-count-all', String(counts.all));
+}
+
 function render() {
+  renderSummary();
+  renderTabCounts();
+
   var list = document.getElementById('list');
   var bookings = visibleBookings();
   if (bookings.length === 0) {
@@ -142,11 +276,15 @@ function render() {
 
     return (
       '<div class="card">' +
+        '<div class="card-top">' +
+          '<span class="card-brand">' + escapeHtml(brandLabel(b.brand)) + '</span>' +
+          '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(statusLabel(b.status)) + '</span>' +
+        '</div>' +
         '<div class="card-datetime">' + escapeHtml(b.date) + ' ' + escapeHtml(b.startAt) + '-' + escapeHtml(b.endAt) + '</div>' +
-        '<div class="card-brand">' + escapeHtml(b.brand) + '</div>' +
         '<div class="card-name">' + escapeHtml(b.name) + '</div>' +
         '<div class="card-meta">' + escapeHtml(b.people) + ' / ' + escapeHtml(customerTypeLabel(b.customerType)) + '</div>' +
-        '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>' +
+        '<div class="card-sub">' + escapeHtml(b.paymentMethod) + ' ・ ' + escapeHtml(b.purpose) + '</div>' +
+        '<div class="card-id">' + escapeHtml(b.bookingId) + '</div>' +
         '<div class="card-actions">' + actions + '</div>' +
       '</div>'
     );
@@ -156,6 +294,17 @@ function render() {
 function escapeHtml(value) {
   return String(value === null || value === undefined ? '' : value)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/* 端末ローカル時刻をそのまま'HH:mm:ss'で表示するだけ（要件: 最終更新時刻は端末
+   ローカル時刻でよく、JST統一のための新規API呼び出しは追加しない）。 */
+function formatLocalTime_(date) {
+  function pad(n) { return n < 10 ? '0' + n : String(n); }
+  return pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+}
+
+function updateLastUpdatedNow_() {
+  setElementText_('last-updated', '最終更新: ' + formatLocalTime_(new Date()));
 }
 
 /* loadRequestSeqは呼び出しごとに採番し、応答が返ってきた時点で「今なお最新の
@@ -171,19 +320,22 @@ var loadRequestSeq = 0;
    「自分の呼び出しに対する一覧再取得が完了するまで」ボタンをdisableし続ける。
    ここでonDoneの呼び出し自体を古い応答か否かのガードでskipすると、後発の
    loadBookings呼び出しに追い越された古い呼び出し側のbusyIdsがいつまでも
-   残り、該当ボタンが永久にdisableのままになってしまう（PRレビュー対応）。 */
+   残り、該当ボタンが永久にdisableのままになってしまう（PRレビュー対応）。
+   手動更新ボタン（Issue #322）もこの関数をそのまま呼ぶだけで、新しいAPI呼び出しは
+   追加していない。 */
 function loadBookings(onDone) {
   setStatusLine('読み込み中…');
   loadRequestSeq += 1;
   var requestId = loadRequestSeq;
   google.script.run
     .withSuccessHandler(function (result) {
-      /* 「今なお最新の呼び出しか」はstateへの反映・再描画だけをスキップする条件で、
-         onDone（busy解除）は呼び出し元に関わらず必ず実行する。 */
+      /* 「今なお最新の呼び出しか」はstateへの反映・再描画・最終更新時刻の更新だけを
+         スキップする条件で、onDone（busy解除）は呼び出し元に関わらず必ず実行する。 */
       if (requestId === loadRequestSeq) {
         state.bookings = (result && result.bookings) || [];
         state.todayJst = result && result.todayJst;
         setStatusLine('');
+        updateLastUpdatedNow_();
         render();
       }
       if (typeof onDone === 'function') onDone();
@@ -296,6 +448,84 @@ function runCancel(bookingId) {
     .adminCancelBooking(bookingId);
 }
 
+/* Issue #322: ヘッダー（要件1）・件数サマリー（要件2）・タブ件数（要件3）・
+   検索欄（要件4）は、いずれもBookingAdminPage.html側には存在しない要素のため、
+   このファイルの初回実行時にDOM要素を生成してheader/main配下へ挿入する
+   （BookingAdminPage.htmlは変更しない制約のため）。
+   検索input要素は、ここで一度だけ生成してイベントを登録する。render()は
+   このinput自体を再生成・再挿入しない（入力中のフォーカス・IME変換状態を
+   壊さないための要件どおりの実装）。 */
+function initHeaderUi_() {
+  var header = document.querySelector('header');
+  var h1 = document.querySelector('header h1');
+  if (h1) h1.textContent = 'Studio Nagoya Base / 予約管理';
+
+  var metaRow = document.createElement('div');
+  metaRow.className = 'header-meta';
+
+  var lastUpdated = document.createElement('span');
+  lastUpdated.id = 'last-updated';
+  lastUpdated.className = 'last-updated';
+  metaRow.appendChild(lastUpdated);
+
+  var refreshButton = document.createElement('button');
+  refreshButton.type = 'button';
+  refreshButton.id = 'refresh-button';
+  refreshButton.className = 'refresh-button';
+  refreshButton.textContent = '更新';
+  metaRow.appendChild(refreshButton);
+
+  var summaryRow = document.createElement('div');
+  summaryRow.className = 'summary';
+  summaryRow.innerHTML =
+    '<div class="summary-item"><span class="summary-label">今日</span><span class="summary-count" id="summary-today-count">0</span></div>' +
+    '<div class="summary-item"><span class="summary-label">仮受付</span><span class="summary-count" id="summary-pending-count">0</span></div>' +
+    '<div class="summary-item"><span class="summary-label">確定</span><span class="summary-count" id="summary-confirmed-count">0</span></div>' +
+    '<div class="summary-item"><span class="summary-label">全件</span><span class="summary-count" id="summary-all-count">0</span></div>';
+
+  var tabsDiv = document.querySelector('.tabs');
+  header.insertBefore(metaRow, tabsDiv);
+  header.insertBefore(summaryRow, tabsDiv);
+
+  refreshButton.addEventListener('click', function () {
+    refreshButton.disabled = true;
+    loadBookings(function () {
+      refreshButton.disabled = false;
+    });
+  });
+}
+
+/* 既存4タブ（今日/今後/キャンセル/すべて）の各ボタンへ、件数表示用の子要素だけを
+   追加する（要件3: 可能なら各タブに件数を表示する）。タブボタン本体・タブ切替
+   ロジックはBookingAdminPage.html/既存のクリックハンドラのまま変更しない。 */
+function initTabCountsUi_() {
+  document.querySelectorAll('.tab-button').forEach(function (btn) {
+    var filter = btn.getAttribute('data-filter');
+    var span = document.createElement('span');
+    span.className = 'tab-count';
+    span.id = 'tab-count-' + filter;
+    btn.appendChild(span);
+  });
+}
+
+function initSearchUi_() {
+  var main = document.querySelector('main');
+  var statusLine = document.getElementById('status-line');
+
+  var input = document.createElement('input');
+  input.type = 'search';
+  input.id = 'search-input';
+  input.className = 'search-input';
+  input.placeholder = '氏名・bookingID・利用目的・日付・ブランド・利用区分・支払方法・statusで検索';
+  input.value = state.searchQuery;
+  main.insertBefore(input, statusLine);
+
+  input.addEventListener('input', function (event) {
+    state.searchQuery = event.target.value;
+    render();
+  });
+}
+
 document.querySelectorAll('.tab-button').forEach(function (btn) {
   btn.addEventListener('click', function () {
     document.querySelectorAll('.tab-button').forEach(function (b) { b.classList.remove('active'); });
@@ -324,5 +554,9 @@ document.getElementById('modal-close').addEventListener('click', closeModal);
 document.getElementById('modal-overlay').addEventListener('click', function (event) {
   if (event.target.id === 'modal-overlay') closeModal();
 });
+
+initHeaderUi_();
+initTabCountsUi_();
+initSearchUi_();
 
 loadBookings();
