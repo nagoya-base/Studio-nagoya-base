@@ -48,49 +48,16 @@
   <!-- Step 1: 利用日・利用時間 -->
   <section class="ba-step" id="ba-step-datetime" data-step="datetime">
     <h2>利用日・利用時間を選択</h2>
-    <p class="ba-step-desc">まず利用時間と利用区分を選んでください。空き状況カレンダーが表示されます。</p>
-
-    <!-- 利用時間の上限をUI側で決め打ちしない（長時間利用もサーバー側の判定に委ねる。
-         最低利用時間・15分刻み・営業時間内かどうかはgetAvailability/createBookingが正）。
-         Issue #318: 利用時間・利用区分を先に確定してからカレンダーを描画・取得する。 -->
-    <div class="ba-field">
-      <label for="ba-duration">利用時間（時間単位）<span class="ba-required">必須</span></label>
-      <input type="number" id="ba-duration" name="durationHours" inputmode="numeric" min="2" step="1" placeholder="例：3">
-      <p class="ba-field-help">最低利用時間は2時間です。長時間のご利用も入力できます。</p>
-      <p class="ba-field-error" id="ba-duration-error" hidden></p>
-    </div>
-
-    <!-- 利用区分（Issue #270）: 「会員かどうか」ではなく、SNB／SNB mens／Studio Xという
-         同一施設の利用経験の有無で当日予約可否を判定する。当日+初回利用の組み合わせは
-         カレンダー上でも選択不可にする（Issue #318。getAvailability自体はcustomerTypeを
-         見ないためフロント側のガード。最終的な可否の正はcreateBookingのサーバー側検証）。 -->
-    <fieldset class="ba-fieldset">
-      <legend>利用区分<span class="ba-required">必須</span></legend>
-      <div class="ba-choices" id="ba-customer-type-choices">
-        <label class="ba-choice"><input type="radio" name="customerType" value="first_time"> <span>初回利用</span></label>
-        <label class="ba-choice"><input type="radio" name="customerType" value="returning"> <span>利用経験あり（SNB／SNB mens／Studio Xのいずれかで利用したことがある）</span></label>
-      </div>
-      <p class="ba-field-help">ブランドを問わず、この施設をご利用いただいたことがあれば「利用経験あり」を選択してください。初回利用の方は当日のご予約を受け付けていません。</p>
-      <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
-    </fieldset>
-
-    <!-- 希望時間帯（Issue #324）。既定は「指定なし（all）」をchecked。この選択は
-         月間カレンダーの記号判定・Step2の開始時刻一覧の絞り込みにのみ使う一次フィルタで、
-         単日getAvailability/createBookingの仕様は変更しない。 -->
-    <fieldset class="ba-fieldset">
-      <legend>希望時間帯</legend>
-      <div class="ba-choices" id="ba-time-band-choices">
-        <label class="ba-choice"><input type="radio" name="timeBand" value="all" checked> <span>指定なし</span></label>
-        <label class="ba-choice"><input type="radio" name="timeBand" value="morning"> <span>午前</span></label>
-        <label class="ba-choice"><input type="radio" name="timeBand" value="daytime"> <span>昼</span></label>
-        <label class="ba-choice"><input type="radio" name="timeBand" value="evening"> <span>夜</span></label>
-      </div>
-      <p class="ba-field-help">希望する時間帯を選ぶと、月間カレンダーの空き状況をその時間帯の開始時刻だけで再計算します。</p>
-    </fieldset>
+    <p class="ba-step-desc">まず空き状況をご確認ください。初期表示は「2時間・初回利用・指定なし」です。条件を変更するとカレンダーが更新されます。</p>
 
     <!-- 月間空き状況カレンダー（Issue #318）。#ba-dateはtype="hidden"のまま維持し、
          カレンダーの日セルクリックがこの値を書き込む（Step1「次へ」の検証・送信先は
-         従来どおり#ba-dateの値を見るだけで変更しない）。 -->
+         従来どおり#ba-dateの値を見るだけで変更しない）。
+         初期表示改善: 下の利用時間・利用区分・希望時間帯には初期値（2時間・初回利用・
+         指定なし）が入っており、ページ読み込み直後にその条件で現在月のカレンダーを
+         自動取得・表示する（handleCalendarPrereqChange_の初期呼び出し。JS側参照）。
+         このカレンダー自体は見た目上いちばん上に置くが、選択可否の判定は引き続き
+         下の利用時間・利用区分・希望時間帯の値を見て行う。 -->
     <div class="ba-field">
       <span class="ba-field-label-like" id="ba-calendar-label">利用日<span class="ba-required">必須</span></span>
       <input type="hidden" id="ba-date" name="date" autocomplete="off">
@@ -141,6 +108,46 @@
       </div>
       <p class="ba-field-error" id="ba-date-error" hidden></p>
     </div>
+
+    <!-- 利用時間の上限をUI側で決め打ちしない（長時間利用もサーバー側の判定に委ねる。
+         最低利用時間・15分刻み・営業時間内かどうかはgetAvailability/createBookingが正）。
+         Issue #318: 利用時間・利用区分を先に確定してからカレンダーを描画・取得する。
+         初期値は2時間（value="2"）。 -->
+    <div class="ba-field">
+      <label for="ba-duration">利用時間（時間単位）<span class="ba-required">必須</span></label>
+      <input type="number" id="ba-duration" name="durationHours" inputmode="numeric" min="2" step="1" placeholder="例：3" value="2">
+      <p class="ba-field-help">最低利用時間は2時間です。長時間のご利用も入力できます。</p>
+      <p class="ba-field-error" id="ba-duration-error" hidden></p>
+    </div>
+
+    <!-- 利用区分（Issue #270）: 「会員かどうか」ではなく、SNB／SNB mens／Studio Xという
+         同一施設の利用経験の有無で当日予約可否を判定する。当日+初回利用の組み合わせは
+         カレンダー上でも選択不可にする（Issue #318。getAvailability自体はcustomerTypeを
+         見ないためフロント側のガード。最終的な可否の正はcreateBookingのサーバー側検証）。
+         初期値は初回利用（checked）。 -->
+    <fieldset class="ba-fieldset">
+      <legend>利用区分<span class="ba-required">必須</span></legend>
+      <div class="ba-choices" id="ba-customer-type-choices">
+        <label class="ba-choice"><input type="radio" name="customerType" value="first_time" checked> <span>初回利用</span></label>
+        <label class="ba-choice"><input type="radio" name="customerType" value="returning"> <span>利用経験あり（SNB／SNB mens／Studio Xのいずれかで利用したことがある）</span></label>
+      </div>
+      <p class="ba-field-help">ブランドを問わず、この施設をご利用いただいたことがあれば「利用経験あり」を選択してください。初回利用の方は当日のご予約を受け付けていません。</p>
+      <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
+    </fieldset>
+
+    <!-- 希望時間帯（Issue #324）。既定は「指定なし（all）」をchecked。この選択は
+         月間カレンダーの記号判定・Step2の開始時刻一覧の絞り込みにのみ使う一次フィルタで、
+         単日getAvailability/createBookingの仕様は変更しない。 -->
+    <fieldset class="ba-fieldset">
+      <legend>希望時間帯</legend>
+      <div class="ba-choices" id="ba-time-band-choices">
+        <label class="ba-choice"><input type="radio" name="timeBand" value="all" checked> <span>指定なし</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="morning"> <span>午前</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="daytime"> <span>昼</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="evening"> <span>夜</span></label>
+      </div>
+      <p class="ba-field-help">希望する時間帯を選ぶと、月間カレンダーの空き状況をその時間帯の開始時刻だけで再計算します。</p>
+    </fieldset>
 
     <div class="ba-actions">
       <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">予約できる時間を表示</button>

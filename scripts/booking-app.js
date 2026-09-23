@@ -539,6 +539,19 @@
     });
   }
 
+  /*
+   * 予約フォーム初期表示改善: HTML側で利用時間・利用区分・希望時間帯に初期値
+   * （2時間・初回利用・指定なし）を入れてあるため、ページ読み込み直後の時点で
+   * isCalendarReady_()は既にtrueになる。ユーザーの入力を待たず、この時点で
+   * handleCalendarPrereqChange_を1回呼び、現在月のカレンダーを自動取得・表示する。
+   * duration/利用区分/希望時間帯を変更した場合の再取得（同じ関数を再利用）・
+   * 初回利用+当日ガード（isCalendarDaySelectable経由）・cache/in-flight/retry/
+   * current-response判定は、このイベントリスナー群と共通のため変更しない。
+   * 初期値がまだ整っていない（テストのDOMスタブ等）場合はisCalendarReady_()が
+   * falseのままなので、この呼び出しは何もしない。
+   */
+  handleCalendarPrereqChange_();
+
   if (els.step1Next) {
     els.step1Next.addEventListener('click', function () {
       var dateValue = els.date ? els.date.value : '';

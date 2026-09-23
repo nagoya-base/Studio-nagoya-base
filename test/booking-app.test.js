@@ -59,6 +59,20 @@ function setup(responseBody) {
     getBrandMeta: function () { return { displayName: 'Studio Nagoya Base' }; },
     todayInJapan: function () { return '2026-09-21'; },
     buildCreateBookingPayload: function () { return {}; },
+    /* 初期表示改善（Issue #328想定）: ページ読み込み直後にhandleCalendarPrereqChange_を
+       1回呼ぶようになったため、このテストのDOMスタブ（ba-durationは既定で空文字、
+       customerTypeは未選択）でもLogic側の判定関数を最低限本物と同じ挙動で用意しておく
+       必要がある（未確定のためカレンダーは表示されず、このテスト自体の検証内容には
+       影響しない）。 */
+    durationHoursToMinutes: function (hours) {
+      var n = Number(hours);
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return null;
+      return n * 60;
+    },
+    isDurationAtLeastUiMinimum: function (durationMinutes) { return Number(durationMinutes) >= 120; },
+    normalizeTimeBand: function (value) {
+      return (value === 'morning' || value === 'daytime' || value === 'evening') ? value : 'all';
+    },
     messageForErrorCode: function () { return '予約の保存に失敗しました。'; },
     recoveryActionForErrorCode: function () { return 'retry'; },
     customerTypeLabel: function () { return ''; },
