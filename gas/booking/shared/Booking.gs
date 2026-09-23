@@ -38,6 +38,11 @@ var Booking = (function () {
     EXPIRED: 'EXPIRED'
   };
 
+  var PAYMENT_STATUS = {
+    UNPAID: 'unpaid',
+    PAID: 'paid'
+  };
+
   /* 予約作成できるbrandはこの3つのみ（Issue #269）。brand偽装で未知のbrandから
      予約を作れないよう、フロントの表示に関わらずサーバー側でこの一覧のみ許可する。 */
   var ALLOWED_BOOKING_BRANDS = ['snb', 'mens', 'studio_x'];
@@ -349,6 +354,7 @@ var Booking = (function () {
 
   return {
     STATUS: STATUS,
+    PAYMENT_STATUS: PAYMENT_STATUS,
     ALLOWED_BOOKING_BRANDS: ALLOWED_BOOKING_BRANDS,
     CUSTOMER_TYPES: CUSTOMER_TYPES,
     ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,
