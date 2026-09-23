@@ -1,30 +1,17 @@
 /*
- * booking-admin.js — Booking Admin Web UI（Issue #305）のクライアント側ロジック。
- * Issue #317でBookingAdminPage.html（gas/booking/admin/）のインラインJavaScriptから
- * このファイルへ外部化した。GitHub Pages（admin/booking/booking-admin.js）から配信し、
- * BookingAdminPage.html側のローダーが実行時にキャッシュ回避クエリ付きで動的に読み込む。
- *
- * BookingAdminPage.html（GAS HtmlService）が提供するDOM（header/tabs/sort-select/
- * main/list/modal-overlay等。id/class名は変更していない）とgoogle.script.run
- * （getAdminBookings/getAdminBookingDetail/adminConfirmBooking/adminCancelBooking。
- * いずれも既存のBookingAdminWeb.gs API）にのみ依存する。ロジック自体はIssue #305時点から
- * 変更していない（customerTypeの表示ラベル変換を含む）。
- *
- * 表示文言・カードUI・ソートUI等、通常のフロントエンド変更はこのファイルと
- * booking-admin.cssの更新のみで反映でき、GAS Web Appの再デプロイは不要
- * （BookingAdminPage.html自体・google.script.run APIを変更しない限り）。
+ * booking-admin.js — Booking Admin Web UI.
+ * Issue #317でGitHub Pages側へ外部化済み。
+ * このファイルの更新だけで通常のフロントUI変更を反映できる。
  */
 var state = {
   bookings: [],
   todayJst: null,
   filter: 'today',
   sort: 'date',
+  query: '',
   busyIds: {}
 };
 
-/* サーバー側（BookingAdminWeb.gs）がAsia/Tokyo基準で正規化した文字列をそのまま
-   表示する。startAt/endAtは一覧では'HH:mm'、詳細では'YYYY-MM-DD HH:mm'として
-   既にサーバー側で整形済み（google.script.run越しにDateオブジェクトを渡さない）。 */
 var DETAIL_FIELDS = [
   ['bookingId', 'bookingId'],
   ['date', '利用日'],
@@ -49,54 +36,73 @@ var DETAIL_FIELDS = [
   ['hasMailError', 'メールエラー']
 ];
 
-/* customerTypeの内部値（Booking.gsのCUSTOMER_TYPES）を表示用の日本語ラベルへ
-   変換するだけの関数。内部値・Spreadsheet保存値・APIレスポンスは変更しない
-   （表示直前にのみ変換する）。未知の値が来ても例外にせず元値をそのまま返す。 */
 function customerTypeLabel(value) {
   if (value === 'first_time') return '初回利用';
   if (value === 'returning') return '利用経験あり';
   return value || '';
 }
 
-/* hasMailErrorのみ真偽値、customerTypeのみ表示用ラベルへ変換、それ以外は
-   サーバー側で整形済みの文字列（空文字列＝未設定）。
-   lastMailError*の詳細（内容・種別・日時）はWeb UIへは出さない（障害調査は
-   Spreadsheetを直接確認する運用のまま。BookingAdminWeb.gs参照）。 */
+function statusLabel(value) {
+  if (value === 'PENDING') return '仮受付';
+  if (value === 'CONFIRMED') return '確定';
+  if (value === 'CANCELLED') return 'キャンセル';
+  if (value === 'EXPIRED') return '期限切れ';
+  return value || '';
+}
+
+function brandLabel(value) {
+  if (value === 'snb') return 'SNB';
+  if (value === 'mens') return 'SNB mens';
+  if (value === 'studio_x') return 'Studio X';
+  return value || '';
+}
+
 function formatValue(key, value) {
   if (key === 'hasMailError') return value ? 'あり' : 'なし';
   if (key === 'customerType') return customerTypeLabel(value) || '（未設定）';
+  if (key === 'status') return statusLabel(value) || '（未設定）';
+  if (key === 'brand') return brandLabel(value) || '（未設定）';
   if (value === null || value === undefined || value === '') return '（未設定）';
   return String(value);
 }
 
-/* 「今日/今後」の判定はstate.todayJst（サーバーがAsia/Tokyo基準で計算した値。
-   getAdminBookingsの応答に含まれる）とbooking.date（同じくJST基準の
-   'YYYY-MM-DD'）の単純な文字列比較で行う。端末のtimezone設定には一切依存しない。
-   CANCELLEDは「今日」「今後」には出さず、日付を問わず「キャンセル」タブへ集約する
-   （EXPIREDはここに含めない。「すべて」で確認できれば十分という要件のため）。 */
 function filteredBookings() {
   var today = state.todayJst;
   return state.bookings.filter(function (b) {
-    if (state.filter === 'all') return true;
-    if (state.filter === 'cancelled') return b.status === 'CANCELLED';
-    if (!today) return true;
-    if (state.filter === 'today') return b.date === today && b.status !== 'CANCELLED';
-    if (state.filter === 'upcoming') return b.date >= today && b.status !== 'CANCELLED';
+    if (state.filter === 'cancelled' && b.status !== 'CANCELLED') return false;
+    if (state.filter === 'today' && today && !(b.date === today && b.status !== 'CANCELLED')) return false;
+    if (state.filter === 'upcoming' && today && !(b.date >= today && b.status !== 'CANCELLED')) return false;
     return true;
   });
 }
 
-/* 「日付順」: date昇順、同一日はstartAt昇順（デフォルト）。date/startAtはいずれも
-   サーバー側で'YYYY-MM-DD'/'HH:mm'の文字列へ正規化済みのため、単純な文字列比較で
-   時系列順になる。 */
+function searchedBookings(bookings) {
+  var q = String(state.query || '').trim().toLowerCase();
+  if (!q) return bookings;
+  return bookings.filter(function (b) {
+    return [
+      b.bookingId,
+      b.date,
+      b.startAt,
+      b.endAt,
+      b.name,
+      brandLabel(b.brand),
+      customerTypeLabel(b.customerType),
+      b.purpose,
+      b.paymentMethod,
+      statusLabel(b.status)
+    ].some(function (value) {
+      return String(value || '').toLowerCase().indexOf(q) !== -1;
+    });
+  });
+}
+
 function compareByDate_(a, b) {
   if (a.date !== b.date) return a.date < b.date ? -1 : 1;
   if (a.startAt !== b.startAt) return a.startAt < b.startAt ? -1 : 1;
   return 0;
 }
 
-/* 「予約順」: createdAt降順（新しく予約されたものを上）。createdAtが同じ場合は
-   bookingIdの昇順で安定させる（要件どおり、createdAt同値の順序はbookingIdで決めてよい）。 */
 function compareByReservation_(a, b) {
   var aCreatedAt = a.createdAt || '';
   var bCreatedAt = b.createdAt || '';
@@ -110,47 +116,8 @@ function sortBookings(bookings) {
   return bookings.slice().sort(comparator);
 }
 
-/* filter → sortの順（要件どおり）。タブ切り替え・ソート切り替えの双方でrender()から
-   この関数だけを呼べばよいようにしている。 */
 function visibleBookings() {
-  return sortBookings(filteredBookings());
-}
-
-function setStatusLine(message) {
-  document.getElementById('status-line').textContent = message || '';
-}
-
-function render() {
-  var list = document.getElementById('list');
-  var bookings = visibleBookings();
-  if (bookings.length === 0) {
-    list.innerHTML = '<div class="empty">該当する予約がありません</div>';
-    return;
-  }
-
-  list.innerHTML = bookings.map(function (b) {
-    var busy = !!state.busyIds[b.bookingId];
-    var canConfirm = b.status === 'PENDING';
-    var canCancel = b.status === 'PENDING' || b.status === 'CONFIRMED';
-    var actions = '<button type="button" class="action detail" data-action="detail" data-id="' + b.bookingId + '">詳細</button>';
-    if (canConfirm) {
-      actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + b.bookingId + '"' + (busy ? ' disabled' : '') + '>確定</button>';
-    }
-    if (canCancel) {
-      actions += '<button type="button" class="action cancel" data-action="cancel" data-id="' + b.bookingId + '"' + (busy ? ' disabled' : '') + '>キャンセル</button>';
-    }
-
-    return (
-      '<div class="card">' +
-        '<div class="card-datetime">' + escapeHtml(b.date) + ' ' + escapeHtml(b.startAt) + '-' + escapeHtml(b.endAt) + '</div>' +
-        '<div class="card-brand">' + escapeHtml(b.brand) + '</div>' +
-        '<div class="card-name">' + escapeHtml(b.name) + '</div>' +
-        '<div class="card-meta">' + escapeHtml(b.people) + ' / ' + escapeHtml(customerTypeLabel(b.customerType)) + '</div>' +
-        '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>' +
-        '<div class="card-actions">' + actions + '</div>' +
-      '</div>'
-    );
-  }).join('');
+  return sortBookings(searchedBookings(filteredBookings()));
 }
 
 function escapeHtml(value) {
@@ -158,33 +125,116 @@ function escapeHtml(value) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/* loadRequestSeqは呼び出しごとに採番し、応答が返ってきた時点で「今なお最新の
-   呼び出しか」を確認してから反映する。連打等で複数のgetAdminBookings呼び出しが
-   飛び、ネットワークの都合で応答が逆順に返ってきても、古い応答でstateを
-   上書きしないようにするためのガード（新しい機能ではなく、単なる採番による
-   ガードのみ）。 */
+function setStatusLine(message) {
+  document.getElementById('status-line').textContent = message || '';
+}
+
+function countByStatus(status) {
+  return state.bookings.filter(function (b) { return b.status === status; }).length;
+}
+
+function updateOverview() {
+  var overview = document.getElementById('admin-overview');
+  if (overview) {
+    var todayCount = state.bookings.filter(function (b) {
+      return b.date === state.todayJst && b.status !== 'CANCELLED';
+    }).length;
+    overview.innerHTML =
+      '<div class="metric"><span class="metric-label">今日</span><strong>' + todayCount + '</strong></div>' +
+      '<div class="metric metric-pending"><span class="metric-label">仮受付</span><strong>' + countByStatus('PENDING') + '</strong></div>' +
+      '<div class="metric metric-confirmed"><span class="metric-label">確定</span><strong>' + countByStatus('CONFIRMED') + '</strong></div>' +
+      '<div class="metric"><span class="metric-label">全件</span><strong>' + state.bookings.length + '</strong></div>';
+  }
+
+  var tabButtons = document.querySelectorAll('.tab-button');
+  if (tabButtons && tabButtons.forEach) {
+    tabButtons.forEach(function (btn) {
+      var filter = btn.getAttribute('data-filter');
+      var count = state.bookings.length;
+      if (filter === 'today') {
+        count = state.bookings.filter(function (b) {
+          return b.date === state.todayJst && b.status !== 'CANCELLED';
+        }).length;
+      } else if (filter === 'upcoming') {
+        count = state.bookings.filter(function (b) {
+          return !state.todayJst || (b.date >= state.todayJst && b.status !== 'CANCELLED');
+        }).length;
+      } else if (filter === 'cancelled') {
+        count = countByStatus('CANCELLED');
+      }
+      var base = filter === 'today' ? '今日' : filter === 'upcoming' ? '今後' : filter === 'cancelled' ? 'キャンセル' : 'すべて';
+      btn.textContent = base + ' ' + count;
+    });
+  }
+}
+
+function render() {
+  updateOverview();
+  var list = document.getElementById('list');
+  var bookings = visibleBookings();
+
+  if (bookings.length === 0) {
+    list.innerHTML =
+      '<div class="empty">' +
+        '<div class="empty-icon">⌕</div>' +
+        '<strong>該当する予約がありません</strong>' +
+        '<span>条件を変えて確認してください</span>' +
+      '</div>';
+    return;
+  }
+
+  list.innerHTML = bookings.map(function (b) {
+    var busy = !!state.busyIds[b.bookingId];
+    var canConfirm = b.status === 'PENDING';
+    var canCancel = b.status === 'PENDING' || b.status === 'CONFIRMED';
+
+    var actions = '<button type="button" class="action detail" data-action="detail" data-id="' + escapeHtml(b.bookingId) + '">詳細</button>';
+    if (canConfirm) {
+      actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>予約を確定</button>';
+    }
+    if (canCancel) {
+      actions += '<button type="button" class="action cancel" data-action="cancel" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>キャンセル</button>';
+    }
+
+    return (
+      '<article class="card status-' + escapeHtml(String(b.status || '').toLowerCase()) + '">' +
+        '<div class="card-topline">' +
+          '<span class="brand-chip">' + escapeHtml(brandLabel(b.brand)) + '</span>' +
+          '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(statusLabel(b.status)) + '</span>' +
+        '</div>' +
+        '<div class="card-datetime">' +
+          '<span class="card-date">' + escapeHtml(b.date) + '</span>' +
+          '<span class="card-time">' + escapeHtml(b.startAt) + '–' + escapeHtml(b.endAt) + '</span>' +
+        '</div>' +
+        '<div class="card-name">' + escapeHtml(b.name) + '</div>' +
+        '<div class="card-meta">' +
+          '<span>' + escapeHtml(b.people) + '</span>' +
+          '<span>' + escapeHtml(customerTypeLabel(b.customerType)) + '</span>' +
+          (b.paymentMethod ? '<span>' + escapeHtml(b.paymentMethod) + '</span>' : '') +
+        '</div>' +
+        (b.purpose ? '<div class="card-purpose">' + escapeHtml(b.purpose) + '</div>' : '') +
+        '<div class="card-id">' + escapeHtml(b.bookingId) + '</div>' +
+        '<div class="card-actions">' + actions + '</div>' +
+      '</article>'
+    );
+  }).join('');
+}
+
 var loadRequestSeq = 0;
 
-/* onDone: このloadBookings呼び出し自身の応答が返ってきた時点で必ず呼ばれる
-   コールバック（省略可。応答が古くてstate反映をスキップした場合も呼ぶ）。
-   confirm/cancel直後はこのコールバック内でbusy状態を解除することで、
-   「自分の呼び出しに対する一覧再取得が完了するまで」ボタンをdisableし続ける。
-   ここでonDoneの呼び出し自体を古い応答か否かのガードでskipすると、後発の
-   loadBookings呼び出しに追い越された古い呼び出し側のbusyIdsがいつまでも
-   残り、該当ボタンが永久にdisableのままになってしまう（PRレビュー対応）。 */
 function loadBookings(onDone) {
-  setStatusLine('読み込み中…');
+  setStatusLine('予約を読み込んでいます…');
   loadRequestSeq += 1;
   var requestId = loadRequestSeq;
   google.script.run
     .withSuccessHandler(function (result) {
-      /* 「今なお最新の呼び出しか」はstateへの反映・再描画だけをスキップする条件で、
-         onDone（busy解除）は呼び出し元に関わらず必ず実行する。 */
       if (requestId === loadRequestSeq) {
         state.bookings = (result && result.bookings) || [];
         state.todayJst = result && result.todayJst;
         setStatusLine('');
         render();
+        var stamp = document.getElementById('last-updated');
+        if (stamp) stamp.textContent = '更新 ' + new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
       }
       if (typeof onDone === 'function') onDone();
     })
@@ -219,7 +269,7 @@ function showDetailModal(booking) {
   body.innerHTML = DETAIL_FIELDS.map(function (pair) {
     var key = pair[0];
     var label = pair[1];
-    return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
+    return '<div class="detail-row"><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd></div>';
   }).join('');
   document.getElementById('modal-overlay').classList.add('open');
 }
@@ -229,17 +279,11 @@ function closeModal() {
 }
 
 function setBusy(bookingId, busy) {
-  if (busy) {
-    state.busyIds[bookingId] = true;
-  } else {
-    delete state.busyIds[bookingId];
-  }
+  if (busy) state.busyIds[bookingId] = true;
+  else delete state.busyIds[bookingId];
   render();
 }
 
-/* 確定処理そのものが終わってもbookingIdのbusyはすぐには解除しない。
-   loadBookings()が最新一覧を取得・再描画し終えたコールバック内で初めて解除する
-   （途中で古い一覧のまま再度「確定」を押せてしまう隙をなくすため）。 */
 function runConfirm(bookingId) {
   var booking = state.bookings.find(function (b) { return b.bookingId === bookingId; });
   var confirmed = window.confirm(
@@ -247,7 +291,7 @@ function runConfirm(bookingId) {
       ? '予約ID: ' + booking.bookingId + '\n' +
         '利用日: ' + booking.date + ' ' + booking.startAt + '-' + booking.endAt + '\n' +
         '利用者名: ' + booking.name + '\n' +
-        'ブランド: ' + booking.brand + '\n' +
+        'ブランド: ' + brandLabel(booking.brand) + '\n' +
         '支払方法: ' + booking.paymentMethod + '\n\n'
       : '') +
     'この予約を確定します。\n\n' +
@@ -296,6 +340,50 @@ function runCancel(bookingId) {
     .adminCancelBooking(bookingId);
 }
 
+function mountManagementUi() {
+  if (typeof document.querySelector !== 'function') return;
+  var header = document.querySelector('header');
+  var main = document.querySelector('main');
+  if (!header || !main) return;
+
+  var title = header.querySelector('h1');
+  if (title) title.innerHTML = '<span class="title-eyebrow">Studio Nagoya Base</span><span class="title-main">予約管理</span>';
+
+  if (!document.getElementById('header-meta')) {
+    var meta = document.createElement('div');
+    meta.id = 'header-meta';
+    meta.className = 'header-meta';
+    meta.innerHTML = '<span id="last-updated">未更新</span><button type="button" id="refresh-button" class="refresh-button" aria-label="予約一覧を更新">↻ 更新</button>';
+    header.insertBefore(meta, header.querySelector('.tabs'));
+  }
+
+  if (!document.getElementById('admin-overview')) {
+    var overview = document.createElement('section');
+    overview.id = 'admin-overview';
+    overview.className = 'overview';
+    main.insertBefore(overview, main.firstChild);
+  }
+
+  if (!document.getElementById('booking-search')) {
+    var toolbar = document.createElement('div');
+    toolbar.className = 'toolbar';
+    toolbar.innerHTML = '<label class="search-field"><span>検索</span><input id="booking-search" type="search" autocomplete="off" placeholder="名前・予約ID・目的で検索"></label>';
+    var statusLine = document.getElementById('status-line');
+    main.insertBefore(toolbar, statusLine);
+  }
+
+  var search = document.getElementById('booking-search');
+  if (search) {
+    search.addEventListener('input', function (event) {
+      state.query = event.target.value || '';
+      render();
+    });
+  }
+
+  var refresh = document.getElementById('refresh-button');
+  if (refresh) refresh.addEventListener('click', function () { loadBookings(); });
+}
+
 document.querySelectorAll('.tab-button').forEach(function (btn) {
   btn.addEventListener('click', function () {
     document.querySelectorAll('.tab-button').forEach(function (b) { b.classList.remove('active'); });
@@ -325,4 +413,5 @@ document.getElementById('modal-overlay').addEventListener('click', function (eve
   if (event.target.id === 'modal-overlay') closeModal();
 });
 
+mountManagementUi();
 loadBookings();
