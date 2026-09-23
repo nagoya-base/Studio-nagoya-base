@@ -310,3 +310,94 @@ test('カレンダーで選択した日付は、既存のStep1「次へ」→Ste
   assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, true, 'Step1が終わりStep2へ進んでいる');
   assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, false);
 });
+
+/* ── PRレビュー対応: duration/利用区分の変更で選択済み日付が新条件で選択不可になった
+   場合、#ba-dateの選択を解除する（解除しないと、hiddenの#ba-dateに予約不可な日付が
+   残ったままStep1「次へ」を通過できてしまい、「予約不可日は選択できない」という
+   受入条件に反する）。 ── */
+
+test('2時間で日付選択→duration変更→その日がFULLになった場合、選択が解除されStep1を通過できない', async function () {
+  var ctx = setup({
+    monthlyResponder: function (year, month, params) {
+      var status = params.durationMinutes === '360' ? 'FULL' : 'AVAILABLE';
+      return { success: true, month: year + '-' + pad2(month), days: buildDaysForMonth(year, month, status) };
+    }
+  });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+
+  var today = ctx.Logic.todayInJapan();
+  var button = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  assert.strictEqual(button.disabled, false, '2時間ならAVAILABLEで選択可能');
+  button._listeners.click();
+  assert.strictEqual(ctx.elements['ba-date'].value, today);
+
+  /* 6時間へ変更すると、同じ日がFULLになる想定 */
+  ctx.setDuration('6');
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-date'].value, '', '新条件でFULLになった選択日はクリアされるべき');
+  assert.strictEqual(ctx.elements['ba-calendar-selected'].textContent, '', '選択サマリー表示もクリアされるべき');
+
+  var todayButtonAfter = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  assert.strictEqual(todayButtonAfter.disabled, true, '6時間ではFULLのため選択不可になっているべき');
+  assert.strictEqual(todayButtonAfter.getAttribute('aria-pressed'), 'false');
+
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-date-error'].hidden, false, '日付未選択としてStep1のエラーが出るべき');
+  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true, 'Step2（開始時刻取得）へは進めない');
+});
+
+test('利用経験ありで当日選択→初回利用へ変更→当日の選択状態が残らない', async function () {
+  var ctx = setup({}); /* 既定のmonthlyResponderは常にAVAILABLE（当日はcustomerType側のガードのみで判定される） */
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+
+  var today = ctx.Logic.todayInJapan();
+  var button = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  button._listeners.click();
+  assert.strictEqual(ctx.elements['ba-date'].value, today);
+
+  var fetchCountBeforeSwitch = ctx.fetchCalls.length;
+  ctx.setCustomerType('first_time');
+  ctx.triggerCustomerTypeChange();
+
+  assert.strictEqual(ctx.fetchCalls.length, fetchCountBeforeSwitch, '選択可否の再判定だけでは再取得しない');
+  assert.strictEqual(ctx.elements['ba-date'].value, '', '初回利用へ変更後、当日の選択状態は残らないべき');
+  assert.strictEqual(ctx.elements['ba-calendar-selected'].textContent, '');
+
+  var todayButtonAfter = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  assert.strictEqual(todayButtonAfter.disabled, true, '初回利用+当日は選択不可');
+
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-date-error'].hidden, false, '日付未選択としてStep1のエラーが出るべき');
+  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true, 'Step2（開始時刻取得）へは進めない');
+});
+
+test('duration変更時に短時間でinput/changeが連続発火しても、同じ月・同じdurationのfetchは1回だけ（in-flightキーで重複を抑止）', async function () {
+  var ctx = setup({});
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  assert.strictEqual(ctx.fetchCalls.length, 1);
+
+  /* durationを変更したうえで、fetchの解決前にinput/changeが連続発火するケースを再現する
+     （setDurationはinputイベントのみを発火するため、直後にchangeも手動で発火させる）。 */
+  ctx.elements['ba-duration'].value = '4';
+  ctx.elements['ba-duration']._listeners.input();
+  ctx.elements['ba-duration']._listeners.change();
+
+  assert.strictEqual(ctx.fetchCalls.length, 2, 'fetch解決前の連続発火では、同じキーへの2回目のfetchは起きないべき');
+
+  await flushPromises();
+  assert.strictEqual(ctx.fetchCalls.length, 2, 'fetch解決後も重複していないこと');
+});

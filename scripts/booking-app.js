@@ -261,6 +261,9 @@
   var calendarMonth = null; /* { year, month } | null（duration/customerType未確定の間はnull） */
   var calendarCache = {}; /* key: 'year-month-durationMinutes' -> { status: 'success'|'error', days, message } */
   var calendarFetchToken = 0; /* 古い月・古いdurationの応答が後から返って上書きしないためのトークン */
+  var calendarInFlight = {}; /* key -> true。同一キーへの重複fetchを防ぐ（PRレビュー対応。
+    duration入力への'input'/'change'双方のリスナーが短時間に連続発火しても、最初の
+    リクエストが解決するまでは同じキーの2回目のfetchを起こさない）。 */
 
   function currentCalendarDurationMinutes_() {
     return Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
@@ -305,6 +308,7 @@
       renderCalendarGrid_(cached);
       return;
     }
+    if (calendarInFlight[key]) return;
     fetchCalendarMonth_(calendarMonth.year, calendarMonth.month, durationMinutes, key);
   }
 
@@ -332,6 +336,7 @@
     }
 
     var token = ++calendarFetchToken;
+    calendarInFlight[key] = true;
     if (els.calendarLoading) els.calendarLoading.hidden = false;
     if (els.calendarError) els.calendarError.hidden = true;
     if (els.calendarGridBody) els.calendarGridBody.innerHTML = '';
@@ -339,6 +344,7 @@
     fetch(calendarMonthlyUrl_(year, month, durationMinutes), { method: 'GET' })
       .then(function (response) { return response.json(); })
       .then(function (body) {
+        delete calendarInFlight[key];
         if (token !== calendarFetchToken) return;
         if (els.calendarLoading) els.calendarLoading.hidden = true;
         if (!body || body.success !== true) {
@@ -353,6 +359,7 @@
         renderCalendarGrid_(successEntry);
       })
       .catch(function () {
+        delete calendarInFlight[key];
         if (token !== calendarFetchToken) return;
         if (els.calendarLoading) els.calendarLoading.hidden = true;
         var networkErrorEntry = { status: 'error', message: Logic.networkErrorMessage(locale) };
@@ -374,10 +381,32 @@
     }
     if (els.calendarError) els.calendarError.hidden = true;
 
-    var weeks = Logic.buildMonthMatrix(calendarMonth.year, calendarMonth.month);
     var todayValue = Logic.todayInJapan();
     var customerType = checkedCustomerType();
     var selectedDate = els.date ? els.date.value : '';
+
+    /*
+     * duration・利用区分の変更後、以前選択した日付が新しい条件では選択不可になって
+     * いる場合、選択を解除する（PRレビュー対応）。解除しないと、hiddenの#ba-dateに
+     * 予約不可になった日付が残ったままStep1「次へ」を通過できてしまい、「予約不可日は
+     * 選択できない」という受入条件に反する（例: 2時間で10/5を選択→6時間へ変更→
+     * 10/5がFULLになった場合。returning+当日を選択→first_timeへ変更した場合も同様）。
+     * 判定は現在描画中の月（＝entry.daysが対象とする月）に選択日が含まれる場合のみ行う
+     * （別の月を選んだままduration等を変えても、その月の最新データが無ければここでは
+     * 判定できないため、実際にその月を再描画するタイミングで改めて判定する）。
+     */
+    var monthPrefix = calendarMonth.year + '-' + (calendarMonth.month < 10 ? '0' : '') + calendarMonth.month + '-';
+    if (selectedDate && selectedDate.indexOf(monthPrefix) === 0) {
+      var selectedDayInfo = entry.days[selectedDate];
+      var selectedStatus = selectedDayInfo ? selectedDayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
+      if (!Logic.isCalendarDaySelectable(selectedDate, selectedStatus, customerType, todayValue)) {
+        els.date.value = '';
+        selectedDate = '';
+        if (els.calendarSelected) els.calendarSelected.textContent = '';
+      }
+    }
+
+    var weeks = Logic.buildMonthMatrix(calendarMonth.year, calendarMonth.month);
 
     els.calendarGridBody.innerHTML = '';
     weeks.forEach(function (week) {
