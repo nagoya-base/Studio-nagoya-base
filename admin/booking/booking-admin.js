@@ -2,6 +2,13 @@
  * booking-admin.js — Booking Admin Web UI.
  * Issue #317でGitHub Pages側へ外部化済み。
  * このファイルの更新だけで通常のフロントUI変更を反映できる。
+ *
+ * 【重要な依存契約】
+ * BookingAdminPage.html（GAS HtmlService）が提供する既存DOM構造
+ * （header / tabs / sort-select / main / list / modal-overlay 等）と、
+ * google.script.run の既存API
+ * （getAdminBookings / getAdminBookingDetail / adminConfirmBooking / adminCancelBooking）
+ * にのみ依存する。GAS側DOM契約やAPI名をこのフロント変更の都合で勝手に変更しない。
  */
 var state = {
   bookings: [],
@@ -220,6 +227,16 @@ function render() {
   }).join('');
 }
 
+/*
+ * loadRequestSeqは呼び出しごとに採番し、応答が返った時点で「今なお最新の呼び出しか」を
+ * 確認してからstateへ反映する。連打などで複数のgetAdminBookingsが飛び、
+ * 応答が逆順に返っても古い結果で一覧を上書きしないためのガード。
+ *
+ * 【重要】onDoneは古い応答でもスキップせず必ず呼ぶ。
+ * confirm/cancel直後はonDone内でbusy状態を解除しているため、古い応答だからと
+ * onDoneまで省略すると、そのbookingIdのbusyIdsが残り、操作ボタンが永久に
+ * disabledになる。過去のPRレビューで確認済みの地雷なので、この性質を維持すること。
+ */
 var loadRequestSeq = 0;
 
 function loadBookings(onDone) {
