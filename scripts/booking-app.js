@@ -82,6 +82,7 @@
     durationMinutes: null,
     startTime: null,
     customerType: '',
+    timeBand: 'all',
     name: '', email: '', phone: '', people: '', purpose: '', purposeOther: '',
     paymentMethod: '', note: ''
   };
@@ -245,6 +246,16 @@
   }
 
   /*
+   * 希望時間帯（Issue #324）。未選択・DOM未配線（テストスタブ等）はLogic.normalizeTimeBand
+   * によりallへフォールバックする（デフォルトはallでchecked。isCalendarReady_の判定条件
+   * には含めない＝時間帯未選択でもカレンダー自体は表示する）。
+   */
+  function checkedTimeBand() {
+    var checked = root.querySelector('input[name="timeBand"]:checked');
+    return Logic.normalizeTimeBand(checked ? checked.value : '');
+  }
+
+  /*
    * ── 月間空き状況カレンダー（Issue #318） ──
    * 単一日付入力（#ba-date。type="hidden"）を、1か月表示のカレンダーから選ぶ形へ
    * 置き換える。#ba-dateの値自体は引き続きこのカレンダーが書き込み、Step1の
@@ -252,21 +263,22 @@
    * チェックは一切変更しない（既存の開始時刻選択以降のフローをそのまま再利用する）。
    *
    * 利用時間・利用区分を先に確定してからカレンダーを描画・取得する（Issue #318追記の
-   * 仕様）。月間取得はGAS側 getMonthlyAvailability(year, month, durationMinutes, brand)
-   * へのHTTPリクエスト1回（表示中の月ぶんのみ。31回連続アクセスはしない）。
-   * 取得済みの月はcalendarCacheに保持し、duration変更時は表示中の月だけを再取得する
-   * （cacheキーにdurationMinutesを含めるため、変更前のdurationの月データは
-   * そのまま保持され、無駄な再取得や巻き戻り時の取りこぼしを起こさない）。
+   * 仕様）。月間取得はGAS側 getMonthlyAvailability(year, month, durationMinutes, brand,
+   * timeBand)へのHTTPリクエスト1回（表示中の月ぶんのみ。31回連続アクセスはしない）。
+   * 取得済みの月はcalendarCacheに保持し、duration/希望時間帯変更時は表示中の月だけを
+   * 再取得する（cacheキーにdurationMinutes・timeBandを含めるため、変更前の組み合わせの
+   * 月データはそのまま保持され、無駄な再取得や巻き戻り時の取りこぼしを起こさない。
+   * Issue #324でtimeBandをキーへ追加）。
    */
   var calendarMonth = null; /* { year, month } | null（duration/customerType未確定の間はnull） */
-  var calendarCache = {}; /* key: 'year-month-durationMinutes' -> { status: 'success'|'error', days, message } */
+  var calendarCache = {}; /* key: 'year-month-durationMinutes-timeBand' -> { status: 'success'|'error', days, message } */
   var calendarInFlight = {}; /* key -> true。同一キーへの重複fetchを防ぐ（PRレビュー対応。
     duration入力への'input'/'change'双方のリスナーが短時間に連続発火しても、最初の
     リクエストが解決するまでは同じキーの2回目のfetchを起こさない）。 */
 
   /*
-   * 応答を描画してよいのは、その応答が対象とするyear/month/durationMinutesが
-   * 「今まさに表示すべき月・duration」と一致する場合だけにする（2回目のPRレビュー
+   * 応答を描画してよいのは、その応答が対象とするyear/month/durationMinutes/timeBandが
+   * 「今まさに表示すべき月・duration・timeBand」と一致する場合だけにする（2回目のPRレビュー
    * 対応）。以前はグローバルな連番トークンで「一番最後に発行したfetchの応答だけ」を
    * 採用していたが、これだと月A→月B→月Aと素早く往復した際、月Aの古い応答は
    * トークン不一致で捨てられる一方、月Bの（月Aへ戻った後に届く）応答がトークン一致の
@@ -276,9 +288,10 @@
    * 関わらず、常に現在表示すべき月のデータだけが描画される。キャッシュへの保存自体は
    * 表示中かどうかに関わらず常に行うため、月を往復しても無駄な再取得は起きない。
    */
-  function isCalendarKeyCurrent_(year, month, durationMinutes) {
+  function isCalendarKeyCurrent_(year, month, durationMinutes, timeBand) {
     return !!calendarMonth && calendarMonth.year === year && calendarMonth.month === month &&
-      durationMinutes === currentCalendarDurationMinutes_();
+      durationMinutes === currentCalendarDurationMinutes_() &&
+      timeBand === currentTimeBand_();
   }
 
   function showCalendarLoadingState_() {
@@ -291,8 +304,12 @@
     return Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
   }
 
-  function calendarCacheKey_(year, month, durationMinutes) {
-    return year + '-' + month + '-' + durationMinutes;
+  function currentTimeBand_() {
+    return checkedTimeBand();
+  }
+
+  function calendarCacheKey_(year, month, durationMinutes, timeBand) {
+    return year + '-' + month + '-' + durationMinutes + '-' + timeBand;
   }
 
   function isCalendarReady_() {
@@ -321,10 +338,11 @@
     if (!calendarMonth) return;
     var durationMinutes = currentCalendarDurationMinutes_();
     if (!Logic.isDurationAtLeastUiMinimum(durationMinutes)) return;
+    var timeBand = currentTimeBand_();
 
     renderCalendarMonthLabel_();
 
-    var key = calendarCacheKey_(calendarMonth.year, calendarMonth.month, durationMinutes);
+    var key = calendarCacheKey_(calendarMonth.year, calendarMonth.month, durationMinutes, timeBand);
     var cached = calendarCache[key];
     if (cached) {
       /* 別の月（例: 月B）を読み込み中に月Aへ戻ってキャッシュがヒットした場合、
@@ -341,17 +359,18 @@
       showCalendarLoadingState_();
       return;
     }
-    fetchCalendarMonth_(calendarMonth.year, calendarMonth.month, durationMinutes, key);
+    fetchCalendarMonth_(calendarMonth.year, calendarMonth.month, durationMinutes, timeBand, key);
   }
 
-  function calendarMonthlyUrl_(year, month, durationMinutes) {
+  function calendarMonthlyUrl_(year, month, durationMinutes, timeBand) {
     return API_BASE_URL +
       (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') +
       'action=monthly' +
       '&year=' + encodeURIComponent(String(year)) +
       '&month=' + encodeURIComponent(String(month)) +
       '&durationMinutes=' + encodeURIComponent(String(durationMinutes)) +
-      '&brand=' + encodeURIComponent(brand);
+      '&brand=' + encodeURIComponent(brand) +
+      '&timeBand=' + encodeURIComponent(String(timeBand));
   }
 
   /*
@@ -359,18 +378,18 @@
    * Issue #318要件）。取得失敗時はグリッドを描画せずエラー表示のみとし、
    * どの日も選択できない状態にする。
    */
-  function fetchCalendarMonth_(year, month, durationMinutes, key) {
+  function fetchCalendarMonth_(year, month, durationMinutes, timeBand, key) {
     if (!API_BASE_URL) {
       var notConfigured = { status: 'error', message: Logic.apiNotConfiguredMessage(locale) };
       calendarCache[key] = notConfigured;
-      renderCalendarGridIfCurrent_(year, month, durationMinutes, notConfigured);
+      renderCalendarGridIfCurrent_(year, month, durationMinutes, timeBand, notConfigured);
       return;
     }
 
     calendarInFlight[key] = true;
     showCalendarLoadingState_();
 
-    fetch(calendarMonthlyUrl_(year, month, durationMinutes), { method: 'GET' })
+    fetch(calendarMonthlyUrl_(year, month, durationMinutes, timeBand), { method: 'GET' })
       .then(function (response) { return response.json(); })
       .then(function (body) {
         delete calendarInFlight[key];
@@ -384,20 +403,21 @@
         /* 表示中かどうかに関わらずキャッシュへは常に保存する（月を往復した際、
            後からこのキーへ戻ってきたときに再取得せず使えるようにするため）。 */
         calendarCache[key] = entry;
-        renderCalendarGridIfCurrent_(year, month, durationMinutes, entry);
+        renderCalendarGridIfCurrent_(year, month, durationMinutes, timeBand, entry);
       })
       .catch(function () {
         delete calendarInFlight[key];
         var networkErrorEntry = { status: 'error', message: Logic.networkErrorMessage(locale) };
         calendarCache[key] = networkErrorEntry;
-        renderCalendarGridIfCurrent_(year, month, durationMinutes, networkErrorEntry);
+        renderCalendarGridIfCurrent_(year, month, durationMinutes, timeBand, networkErrorEntry);
       });
   }
 
-  /* この応答が今まさに表示すべき月・durationのものである場合だけ描画する
-     （2回目のPRレビュー対応。詳細はisCalendarKeyCurrent_のコメント参照）。 */
-  function renderCalendarGridIfCurrent_(year, month, durationMinutes, entry) {
-    if (!isCalendarKeyCurrent_(year, month, durationMinutes)) return;
+  /* この応答が今まさに表示すべき月・duration・timeBandのものである場合だけ描画する
+     （2回目のPRレビュー対応。詳細はisCalendarKeyCurrent_のコメント参照。timeBandも
+     Issue #324で判定条件へ追加した）。 */
+  function renderCalendarGridIfCurrent_(year, month, durationMinutes, timeBand, entry) {
+    if (!isCalendarKeyCurrent_(year, month, durationMinutes, timeBand)) return;
     if (els.calendarLoading) els.calendarLoading.hidden = true;
     renderCalendarGrid_(entry);
   }
@@ -488,6 +508,13 @@
   root.querySelectorAll('input[name="customerType"]').forEach(function (radio) {
     radio.addEventListener('change', handleCalendarPrereqChange_);
   });
+  /* 希望時間帯（Issue #324）。isCalendarReady_の判定条件には含めないため、
+     duration/利用区分と同じhandleCalendarPrereqChange_をそのまま再利用できる
+     （未確定ならカレンダー非表示のまま、確定済みならensureCalendarMonthLoaded_が
+     新しいtimeBand込みのキーで表示中の月だけを再取得する）。 */
+  root.querySelectorAll('input[name="timeBand"]').forEach(function (radio) {
+    radio.addEventListener('change', handleCalendarPrereqChange_);
+  });
   if (els.calendarPrev) {
     els.calendarPrev.addEventListener('click', function () {
       if (!calendarMonth) return;
@@ -506,7 +533,8 @@
     els.calendarRetry.addEventListener('click', function () {
       if (!calendarMonth) return;
       var durationMinutes = currentCalendarDurationMinutes_();
-      delete calendarCache[calendarCacheKey_(calendarMonth.year, calendarMonth.month, durationMinutes)];
+      var timeBand = currentTimeBand_();
+      delete calendarCache[calendarCacheKey_(calendarMonth.year, calendarMonth.month, durationMinutes, timeBand)];
       ensureCalendarMonthLoaded_();
     });
   }
@@ -540,6 +568,7 @@
       state.date = dateValue;
       state.durationMinutes = durationMinutes;
       state.customerType = customerType;
+      state.timeBand = checkedTimeBand();
       state.startTime = null;
 
       goToStep('start-time');
@@ -584,7 +613,10 @@
           ]);
           return;
         }
-        renderStartTimes(body.bookableStartTimes || []);
+        /* Step2の開始時刻一覧も、月間カレンダーで選んだ日と同じtimeBandで絞り込む
+           （Issue #324本文レビュー追記2）。GAS側の単日getAvailability自体・
+           このリクエストURLは変更しない（フロント側フィルタのみ）。 */
+        renderStartTimes(Logic.filterStartTimesByTimeBand(body.bookableStartTimes || [], state.timeBand));
       })
       .catch(function () {
         isFetchingAvailability = false;

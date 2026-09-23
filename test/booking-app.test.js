@@ -230,11 +230,16 @@ test('English locale: createBooking送信payloadのbrand/customerType/people/pur
    root.querySelectorをcustomerType/paymentMethodのラジオ選択の代わりに、
    ba-start-time-gridのappendChildを描画された開始時刻ボタンの捕捉に、それぞれ
    差し替える。 */
-function setupFullFlow(locale) {
+function setupFullFlow(locale, options) {
+  var opts = options || {};
   var elements = {};
   var startTimeButtons = [];
   var selectedCustomerType = null;
   var selectedPaymentMethod = null;
+  /* 希望時間帯（Issue #324）。未選択はDOM上「どのラジオもchecked情報を持たない」を
+     querySelector(':checked')がnullを返すことで再現し、checkedTimeBand()がallへ
+     フォールバックすることを既存フロー（他のテスト）でも確認できるようにする。 */
+  var selectedTimeBand = null;
   var requests = [];
 
   var root = createElement('booking-app');
@@ -252,6 +257,9 @@ function setupFullFlow(locale) {
     }
     if (selector === 'input[name="paymentMethod"]:checked') {
       return selectedPaymentMethod ? { value: selectedPaymentMethod } : null;
+    }
+    if (selector === 'input[name="timeBand"]:checked') {
+      return selectedTimeBand ? { value: selectedTimeBand } : null;
     }
     return null;
   };
@@ -284,7 +292,7 @@ function setupFullFlow(locale) {
         } });
       }
       return Promise.resolve({ json: function () {
-        return Promise.resolve({ success: true, bookableStartTimes: ['10:00', '11:00'] });
+        return Promise.resolve({ success: true, bookableStartTimes: opts.bookableStartTimes || ['10:00', '11:00'] });
       } });
     }
   });
@@ -294,6 +302,7 @@ function setupFullFlow(locale) {
     startTimeButtons: startTimeButtons,
     setCustomerType: function (v) { selectedCustomerType = v; },
     setPaymentMethod: function (v) { selectedPaymentMethod = v; },
+    setTimeBand: function (v) { selectedTimeBand = v; },
     requests: requests,
     getFetchCallCount: function () { return fetchCallCount; }
   };
@@ -428,4 +437,50 @@ test('Issue #301: locale="en"でduration=2は通常どおりStep 2へ進みavail
   assert.strictEqual(ctx.elements['ba-duration-error'].hidden, true);
   assert.strictEqual(ctx.getFetchCallCount(), 1, 'getAvailabilityが1回呼ばれること');
   assert.ok(ctx.startTimeButtons.length > 0, '開始時刻の選択肢が描画されること');
+});
+
+/* ── Issue #324: Step2（単日開始時刻一覧）は、月間カレンダーと同じ希望時間帯(timeBand)で
+   絞り込んで表示する。GAS側getAvailability自体・そのリクエストURLは変更しない
+   （フロント側でbookableStartTimesをフィルタするだけ）。 */
+test('Issue #324: Step1で希望時間帯「午前」を選ぶと、Step2にはその時間帯の開始時刻だけが描画される', async function () {
+  var ctx = setupFullFlow(null, { bookableStartTimes: ['08:00', '10:00', '13:00', '19:00'] });
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.setTimeBand('morning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  var renderedTimes = ctx.startTimeButtons.map(function (button) { return button.textContent; });
+  assert.deepStrictEqual(renderedTimes, ['08:00', '10:00'], '午前(08:00〜11:45開始)の候補だけが描画されるべき');
+  assert.strictEqual(ctx.getFetchCallCount(), 1, 'getAvailabilityの呼び出し回数自体は変わらない（フロント側フィルタのみ）');
+});
+
+test('Issue #324: 希望時間帯が未選択（DOM未配線含む）の場合はallとして扱われ、既存どおり全開始時刻が描画される（後方互換）', async function () {
+  var ctx = setupFullFlow(null, { bookableStartTimes: ['08:00', '13:00', '19:00'] });
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  var renderedTimes = ctx.startTimeButtons.map(function (button) { return button.textContent; });
+  assert.deepStrictEqual(renderedTimes, ['08:00', '13:00', '19:00']);
+});
+
+test('Issue #324: 希望時間帯「夜」でStep2に該当候補が無い場合、既存の「開始時刻がありません」表示になる', async function () {
+  var ctx = setupFullFlow(null, { bookableStartTimes: ['08:00', '09:00'] });
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.setTimeBand('evening');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.startTimeButtons.length, 0);
+  assert.strictEqual(ctx.elements['ba-start-time-empty'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-start-time-grid'].hidden, true);
 });

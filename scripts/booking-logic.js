@@ -469,6 +469,68 @@
     return true;
   }
 
+  /*
+   * ── 希望時間帯フィルタ（Issue #324） ──
+   * gas/booking/shared/Availability.gsのfilterStartTimesByTimeBand/normalizeTimeBandと
+   * 同じ4値・同じ境界値をフロント側でも持つ（GASとブラウザは別ランタイムのため共有
+   * importはできない。DAY_STATUSES等、既存の月間カレンダー機能と同じ方針で複製する）。
+   * ここでの絞り込みはStep2（単日開始時刻一覧）表示専用。月間カレンダーの記号判定
+   * そのものはGAS側getMonthlyAvailabilityが正で、ここでは再実装しない。
+   */
+  var TIME_BANDS = {
+    ALL: 'all',
+    MORNING: 'morning',
+    DAYTIME: 'daytime',
+    EVENING: 'evening'
+  };
+  var ALLOWED_TIME_BANDS_ = [TIME_BANDS.ALL, TIME_BANDS.MORNING, TIME_BANDS.DAYTIME, TIME_BANDS.EVENING];
+
+  /* 未指定・不正値はallへフォールバックする（Issue #324本文レビュー追記4と同じ方針。
+     GAS側normalizeTimeBandと同じ規則）。 */
+  function normalizeTimeBand(value) {
+    return ALLOWED_TIME_BANDS_.indexOf(value) !== -1 ? value : TIME_BANDS.ALL;
+  }
+
+  var TIME_BAND_LABELS_ = {
+    ja: { all: '指定なし', morning: '午前', daytime: '昼', evening: '夜' },
+    en: { all: 'Any time', morning: 'Morning', daytime: 'Afternoon', evening: 'Evening' }
+  };
+
+  function timeBandLabel(value, locale) {
+    var labels = TIME_BAND_LABELS_[normalizeLocale(locale)];
+    return labels[normalizeTimeBand(value)];
+  }
+
+  var TIME_BAND_MORNING_START_MIN_ = 8 * 60;      /* 08:00 */
+  var TIME_BAND_MORNING_END_MIN_ = 11 * 60 + 45;  /* 11:45 */
+  var TIME_BAND_DAYTIME_START_MIN_ = 12 * 60;     /* 12:00 */
+  var TIME_BAND_DAYTIME_END_MIN_ = 17 * 60 + 45;  /* 17:45 */
+  var TIME_BAND_EVENING_START_MIN_ = 18 * 60;     /* 18:00 */
+
+  function timeStringToMinutes_(hhmm) {
+    var parts = (typeof hhmm === 'string' ? hhmm : '').split(':');
+    return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+  }
+
+  function isStartTimeInTimeBand_(hhmm, band) {
+    var minutes = timeStringToMinutes_(hhmm);
+    if (band === TIME_BANDS.MORNING) return minutes >= TIME_BAND_MORNING_START_MIN_ && minutes <= TIME_BAND_MORNING_END_MIN_;
+    if (band === TIME_BANDS.DAYTIME) return minutes >= TIME_BAND_DAYTIME_START_MIN_ && minutes <= TIME_BAND_DAYTIME_END_MIN_;
+    if (band === TIME_BANDS.EVENING) return minutes >= TIME_BAND_EVENING_START_MIN_;
+    return true; /* all */
+  }
+
+  /*
+   * Step2（単日開始時刻一覧）を、月間カレンダーで選んだ日と同じtimeBandで絞り込む
+   * （Issue #324本文レビュー追記2）。GAS側の単日getAvailability自体は変更しない。
+   */
+  function filterStartTimesByTimeBand(times, timeBand) {
+    var band = normalizeTimeBand(timeBand);
+    var list = times || [];
+    if (band === TIME_BANDS.ALL) return list.slice();
+    return list.filter(function (time) { return isStartTimeInTimeBand_(time, band); });
+  }
+
   var MONTH_NAMES_EN_ = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
@@ -615,6 +677,10 @@
     dayStatusSymbol: dayStatusSymbol,
     dayStatusLabel: dayStatusLabel,
     isCalendarDaySelectable: isCalendarDaySelectable,
+    TIME_BANDS: TIME_BANDS,
+    normalizeTimeBand: normalizeTimeBand,
+    timeBandLabel: timeBandLabel,
+    filterStartTimesByTimeBand: filterStartTimesByTimeBand,
     monthLabel: monthLabel,
     formatCalendarDayLabel: formatCalendarDayLabel,
     dayAriaLabel: dayAriaLabel,

@@ -161,8 +161,13 @@ function handleGetMonthlyAvailability_(params) {
   var month = parsePositiveIntegerParam_(params.month);
   var durationMinutes = parseDurationParam_(params.durationMinutes);
   var brand = params.brand || null;
+  /* timeBand未指定・不正値はBookingAvailability.getMonthlyAvailability内の
+     normalizeTimeBandがfail-closedにせずallへフォールバックする（Issue #324）。
+     ここではparams.timeBandをそのまま渡すだけで、バリデーション・正規化を
+     重複実装しない。 */
+  var timeBand = params.timeBand;
 
-  var request = { year: year, month: month, durationMinutes: durationMinutes, brand: brand };
+  var request = { year: year, month: month, durationMinutes: durationMinutes, brand: brand, timeBand: timeBand };
   var validationError = BookingAvailability.validateMonthlyInput(year, month, durationMinutes, config);
   if (validationError) {
     return { success: false, error: validationError };

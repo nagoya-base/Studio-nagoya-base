@@ -217,6 +217,169 @@ test('getMonthlyAvailabilityのレスポンスにPIIやイベント詳細を一�
   });
 });
 
+/*
+ * ── 希望時間帯フィルタ（Issue #324） ──
+ * DEFAULT_CONFIG（08:00〜23:00, 15分刻み）でduration=120分の場合、全く空きが無い日
+ * （busyIntervals=[]）の候補数は既存テストのとおり53件。境界値（開始時刻基準）で
+ * 手計算した内訳は以下（いずれも15分刻みで両端含む）:
+ *   morning  08:00〜11:45 → (705-480)/15+1 = 16件
+ *   daytime  12:00〜17:45 → (1065-720)/15+1 = 24件
+ *   evening  18:00〜      → (1260-1080)/15+1 = 13件（21:00開始が最後の候補）
+ *   16+24+13 = 53（allの総数と一致）
+ */
+var MORNING_FREE_DAY_COUNT = 16;
+var DAYTIME_FREE_DAY_COUNT = 24;
+var EVENING_FREE_DAY_COUNT = 13;
+
+test('timeBand=allは現在の月間判定（timeBand未指定）と完全に一致する（後方互換）', function () {
+  var BookingAvailability = loadAvailability();
+  var busyIntervalsByDate = { '2026-10-01': [busy(480, 1380)], '2026-10-02': [busy(600, 720)] };
+
+  var withoutTimeBand = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120 }, busyIntervalsByDate, DEFAULT_CONFIG, NOW
+  );
+  var withAll = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120, timeBand: 'all' }, busyIntervalsByDate, DEFAULT_CONFIG, NOW
+  );
+
+  assert.deepStrictEqual(withAll.days, withoutTimeBand.days);
+});
+
+test('timeBand未指定・不正値はallへフォールバックする（デプロイ過渡期の旧フロント互換）', function () {
+  var BookingAvailability = loadAvailability();
+  var withAll = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120, timeBand: 'all' }, {}, DEFAULT_CONFIG, NOW
+  );
+  [undefined, null, '', 'bogus', 'MORNING', 'Morning'].forEach(function (value) {
+    var result = BookingAvailability.getMonthlyAvailability(
+      { year: 2026, month: 10, durationMinutes: 120, timeBand: value }, {}, DEFAULT_CONFIG, NOW
+    );
+    assert.strictEqual(result.success, true, 'timeBand=' + JSON.stringify(value) + ' はエラーにならないべき');
+    assert.deepStrictEqual(result.days, withAll.days, 'timeBand=' + JSON.stringify(value) + ' はallと同じ結果になるべき');
+  });
+});
+
+test('timeBand=morningは午前(08:00〜11:45開始)の候補のみで日別ステータスを判定する', function () {
+  var BookingAvailability = loadAvailability();
+  var result = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120, timeBand: 'morning' }, { '2026-10-01': [] }, DEFAULT_CONFIG, NOW
+  );
+  assert.strictEqual(result.days['2026-10-01'].availableStartTimes, MORNING_FREE_DAY_COUNT);
+  assert.strictEqual(result.days['2026-10-01'].status, 'AVAILABLE_HIGH');
+});
+
+test('timeBand=daytimeは昼(12:00〜17:45開始)の候補のみで日別ステータスを判定する', function () {
+  var BookingAvailability = loadAvailability();
+  var result = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120, timeBand: 'daytime' }, { '2026-10-01': [] }, DEFAULT_CONFIG, NOW
+  );
+  assert.strictEqual(result.days['2026-10-01'].availableStartTimes, DAYTIME_FREE_DAY_COUNT);
+  assert.strictEqual(result.days['2026-10-01'].status, 'AVAILABLE_HIGH');
+});
+
+test('timeBand=eveningは夜(18:00以降開始)の候補のみで日別ステータスを判定する', function () {
+  var BookingAvailability = loadAvailability();
+  var result = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120, timeBand: 'evening' }, { '2026-10-01': [] }, DEFAULT_CONFIG, NOW
+  );
+  assert.strictEqual(result.days['2026-10-01'].availableStartTimes, EVENING_FREE_DAY_COUNT);
+  assert.strictEqual(result.days['2026-10-01'].status, 'AVAILABLE_HIGH');
+});
+
+test('maxPossible（分母）も同じtimeBandで絞り込まれる。band対象外の時間帯だけを埋めても、band内が全て空きならAVAILABLE_HIGHのまま', function () {
+  /* もしmaxPossibleを絞らず1日分（53件）のままにすると、16/53≈0.30でLIMITEDに
+     誤判定される（Issue #324本文レビュー追記1が指摘する不具合）。正しくは
+     分母も同じmorning内（16件）に絞るため、16/16=1でAVAILABLE_HIGHになるべき。 */
+  var BookingAvailability = loadAvailability();
+  /* 14:00〜23:00を埋める（bufferMinutes=15を差し引いても午前の最終候補11:45の占有区間
+     [11:45,13:45)より後ろにするため、午前枠には一切影響しない）。 */
+  var busyOutsideMorning = [busy(14 * 60, 23 * 60)];
+  var result = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120, timeBand: 'morning' },
+    { '2026-10-01': busyOutsideMorning },
+    DEFAULT_CONFIG,
+    NOW
+  );
+  assert.strictEqual(result.days['2026-10-01'].availableStartTimes, MORNING_FREE_DAY_COUNT, '午前枠はまったく埋まっていないため件数は変わらない');
+  assert.strictEqual(result.days['2026-10-01'].status, 'AVAILABLE_HIGH', '分母も午前だけに絞られていればAVAILABLE_HIGHになるべき');
+});
+
+test('境界値: 11:45開始は午前、12:00開始は昼として扱われる（開始時刻の総数で検証）', function () {
+  var BookingAvailability = loadAvailability();
+  var morning = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120, timeBand: 'morning' }, { '2026-10-01': [] }, DEFAULT_CONFIG, NOW
+  );
+  var daytime = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120, timeBand: 'daytime' }, { '2026-10-01': [] }, DEFAULT_CONFIG, NOW
+  );
+  /* 11:45（705分）を含めば16件、12:00（720分）を含めなければ16件のまま。
+     逆にdaytimeが12:00を含み11:45を含まなければ24件になる。手計算値との一致で
+     境界を間接検証する（直接の時刻文字列はfilterStartTimesByTimeBandの
+     単体テストで検証する）。 */
+  assert.strictEqual(morning.days['2026-10-01'].availableStartTimes, 16);
+  assert.strictEqual(daytime.days['2026-10-01'].availableStartTimes, 24);
+});
+
+test('境界値: 17:45開始は昼、18:00開始は夜として扱われる（開始時刻の総数で検証）', function () {
+  var BookingAvailability = loadAvailability();
+  var daytime = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120, timeBand: 'daytime' }, { '2026-10-01': [] }, DEFAULT_CONFIG, NOW
+  );
+  var evening = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120, timeBand: 'evening' }, { '2026-10-01': [] }, DEFAULT_CONFIG, NOW
+  );
+  assert.strictEqual(daytime.days['2026-10-01'].availableStartTimes, 24);
+  assert.strictEqual(evening.days['2026-10-01'].availableStartTimes, 13);
+});
+
+test('長時間利用でband内の候補が0件ならFULLになる（Issue本文の例: 6時間利用+夜）', function () {
+  var BookingAvailability = loadAvailability();
+  /* 6時間(360分)利用の全日最終開始は17:00（1020分）。evening(18:00〜)には
+     1件も収まらない。 */
+  var result = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 360, timeBand: 'evening' }, { '2026-10-01': [] }, DEFAULT_CONFIG, NOW
+  );
+  assert.strictEqual(result.days['2026-10-01'].availableStartTimes, 0);
+  assert.strictEqual(result.days['2026-10-01'].status, 'FULL');
+});
+
+test('当日かつ選択中の時間帯がすでに過ぎている場合、count・maxPossibleの双方が0件でFULLになる（14:00にmorningを選択）', function () {
+  var BookingAvailability = loadAvailability();
+  var now = new Date('2026-10-15T14:00:00+09:00');
+  var result = BookingAvailability.getMonthlyAvailability(
+    { year: 2026, month: 10, durationMinutes: 120, timeBand: 'morning' }, {}, DEFAULT_CONFIG, now
+  );
+  assert.strictEqual(result.days['2026-10-15'].availableStartTimes, 0);
+  assert.strictEqual(result.days['2026-10-15'].status, 'FULL');
+});
+
+test('filterStartTimesByTimeBand/normalizeTimeBandが公開されている（フロント側と同じ4値）', function () {
+  var BookingAvailability = loadAvailability();
+  assert.deepStrictEqual(Object.keys(BookingAvailability.TIME_BANDS).sort(), ['ALL', 'DAYTIME', 'EVENING', 'MORNING']);
+  assert.strictEqual(BookingAvailability.TIME_BANDS.ALL, 'all');
+  assert.strictEqual(BookingAvailability.TIME_BANDS.MORNING, 'morning');
+  assert.strictEqual(BookingAvailability.TIME_BANDS.DAYTIME, 'daytime');
+  assert.strictEqual(BookingAvailability.TIME_BANDS.EVENING, 'evening');
+  assert.strictEqual(BookingAvailability.normalizeTimeBand('bogus'), 'all');
+  assert.strictEqual(BookingAvailability.normalizeTimeBand('evening'), 'evening');
+  assert.deepStrictEqual(
+    BookingAvailability.filterStartTimesByTimeBand(['08:00', '11:45', '12:00', '17:45', '18:00'], 'morning'),
+    ['08:00', '11:45']
+  );
+  assert.deepStrictEqual(
+    BookingAvailability.filterStartTimesByTimeBand(['08:00', '11:45', '12:00', '17:45', '18:00'], 'daytime'),
+    ['12:00', '17:45']
+  );
+  assert.deepStrictEqual(
+    BookingAvailability.filterStartTimesByTimeBand(['08:00', '11:45', '12:00', '17:45', '18:00'], 'evening'),
+    ['18:00']
+  );
+  assert.deepStrictEqual(
+    BookingAvailability.filterStartTimesByTimeBand(['08:00', '11:45', '12:00', '17:45', '18:00'], 'all'),
+    ['08:00', '11:45', '12:00', '17:45', '18:00']
+  );
+});
+
 test('日ごとの空き判定は、月間表示でも単日getAvailabilityと一致する（不整合を作らない）', function () {
   var BookingAvailability = loadAvailability();
   var busyIntervalsByDate = {

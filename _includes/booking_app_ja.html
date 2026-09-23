@@ -74,6 +74,20 @@
       <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
     </fieldset>
 
+    <!-- 希望時間帯（Issue #324）。既定は「指定なし（all）」をchecked。この選択は
+         月間カレンダーの記号判定・Step2の開始時刻一覧の絞り込みにのみ使う一次フィルタで、
+         単日getAvailability/createBookingの仕様は変更しない。 -->
+    <fieldset class="ba-fieldset">
+      <legend>希望時間帯</legend>
+      <div class="ba-choices" id="ba-time-band-choices">
+        <label class="ba-choice"><input type="radio" name="timeBand" value="all" checked> <span>指定なし</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="morning"> <span>午前</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="daytime"> <span>昼</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="evening"> <span>夜</span></label>
+      </div>
+      <p class="ba-field-help">希望する時間帯を選ぶと、月間カレンダーの空き状況をその時間帯の開始時刻だけで再計算します。</p>
+    </fieldset>
+
     <!-- 月間空き状況カレンダー（Issue #318）。#ba-dateはtype="hidden"のまま維持し、
          カレンダーの日セルクリックがこの値を書き込む（Step1「次へ」の検証・送信先は
          従来どおり#ba-dateの値を見るだけで変更しない）。 -->

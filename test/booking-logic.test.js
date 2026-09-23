@@ -514,3 +514,64 @@ test('weekdayColumnClass: 日曜は赤系・土曜は青系・平日は通常色
     assert.strictEqual(Logic.weekdayColumnClass(i), 'ba-cal-weekday');
   }
 });
+
+/* ── 希望時間帯フィルタ（Issue #324） ── */
+
+test('normalizeTimeBand: all/morning/daytime/eveningはそのまま、それ以外・未指定はallへフォールバックする', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.normalizeTimeBand('all'), 'all');
+  assert.strictEqual(Logic.normalizeTimeBand('morning'), 'morning');
+  assert.strictEqual(Logic.normalizeTimeBand('daytime'), 'daytime');
+  assert.strictEqual(Logic.normalizeTimeBand('evening'), 'evening');
+  [undefined, null, '', 'bogus', 'MORNING', 'Morning'].forEach(function (value) {
+    assert.strictEqual(Logic.normalizeTimeBand(value), 'all', 'normalizeTimeBand(' + JSON.stringify(value) + ')はallになるべき');
+  });
+});
+
+test('timeBandLabel: 日本語「指定なし/午前/昼/夜」、英語「Any time/Morning/Afternoon/Evening」を返す（Issue #324本文レビュー追記5）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.timeBandLabel('all', 'ja'), '指定なし');
+  assert.strictEqual(Logic.timeBandLabel('morning', 'ja'), '午前');
+  assert.strictEqual(Logic.timeBandLabel('daytime', 'ja'), '昼');
+  assert.strictEqual(Logic.timeBandLabel('evening', 'ja'), '夜');
+  assert.strictEqual(Logic.timeBandLabel('all', 'en'), 'Any time');
+  assert.strictEqual(Logic.timeBandLabel('morning', 'en'), 'Morning');
+  assert.strictEqual(Logic.timeBandLabel('daytime', 'en'), 'Afternoon');
+  assert.strictEqual(Logic.timeBandLabel('evening', 'en'), 'Evening');
+  assert.strictEqual(Logic.timeBandLabel('bogus', 'ja'), '指定なし', '不正値はja/en問わずallのラベルになる');
+});
+
+test('filterStartTimesByTimeBand: allは絞り込みなし（後方互換）で、元配列と同じ内容の新しい配列を返す', function () {
+  var Logic = loadLogic();
+  var times = ['08:00', '12:00', '18:00'];
+  var result = Logic.filterStartTimesByTimeBand(times, 'all');
+  assert.deepStrictEqual(result, times);
+  assert.notStrictEqual(result, times, '呼び出し元の配列を書き換えず、新しい配列を返すべき');
+});
+
+test('filterStartTimesByTimeBand: 境界値（11:45は午前・12:00は昼・17:45は昼・18:00は夜）をGAS側と同じ規則で判定する', function () {
+  var Logic = loadLogic();
+  var times = ['07:45', '08:00', '11:45', '12:00', '17:45', '18:00', '22:45'];
+  assert.deepStrictEqual(Logic.filterStartTimesByTimeBand(times, 'morning'), ['08:00', '11:45']);
+  assert.deepStrictEqual(Logic.filterStartTimesByTimeBand(times, 'daytime'), ['12:00', '17:45']);
+  assert.deepStrictEqual(Logic.filterStartTimesByTimeBand(times, 'evening'), ['18:00', '22:45']);
+});
+
+test('filterStartTimesByTimeBand: 対象時間帯の候補が1件も無い場合は空配列を返す', function () {
+  var Logic = loadLogic();
+  assert.deepStrictEqual(Logic.filterStartTimesByTimeBand(['08:00', '09:00'], 'evening'), []);
+});
+
+test('filterStartTimesByTimeBand: timeBand未指定・不正値はallとして扱う（絞り込みなし）', function () {
+  var Logic = loadLogic();
+  var times = ['08:00', '13:00', '20:00'];
+  assert.deepStrictEqual(Logic.filterStartTimesByTimeBand(times, undefined), times);
+  assert.deepStrictEqual(Logic.filterStartTimesByTimeBand(times, 'bogus'), times);
+});
+
+test('filterStartTimesByTimeBand: times未指定はエラーにせず空配列を返す', function () {
+  var Logic = loadLogic();
+  var result = Logic.filterStartTimesByTimeBand(undefined, 'morning');
+  assert.ok(Array.isArray(result));
+  assert.strictEqual(result.length, 0);
+});

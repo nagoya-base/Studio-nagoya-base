@@ -1240,6 +1240,99 @@ busyIntervalsに対して呼び出し、件数を閾値でバケット分けす�
   取得失敗時のfail-open禁止・前月/翌月・duration変更時の再取得・既存の
   開始時刻選択フローへの接続）を検証。
 
+## Issue #324: 月間カレンダー希望時間帯フィルタ
+
+「Issue #318: 月間空き状況カレンダー」の月間カレンダーへ、希望時間帯フィルタ
+（指定なし/午前/昼/夜）を追加した。3ブランド（SNB / SNB mens / Studio X）とも
+既存の共通予約UIをそのまま拡張しただけで、別実装は作っていない。Booking Admin・
+決済・Spreadsheet構造・Calendar構造・Script Properties・既存の単日`getAvailability`/
+`createBooking`の仕様はいずれも変更していない。既存のGAS `/exec` URL
+（`scripts/booking-config.js`）もそのまま。
+
+### 時間帯定義（開始時刻基準）
+
+- `all`: 指定なし（絞り込みなし）
+- `morning`: 08:00〜11:45開始
+- `daytime`: 12:00〜17:45開始
+- `evening`: 18:00以降開始
+
+最終的な開始可能時刻は、既存の営業時間・利用時間・バッファ・予約重複判定
+（`computeBookableStartTimes`）を正とする。例えば6時間利用で夜を選び、営業時間内に
+収まる開始候補が0件なら`FULL`（×）になる。
+
+### API/GAS側
+
+- `gas/booking/shared/Availability.gs`: `TIME_BANDS`（4値のenum）・
+  `normalizeTimeBand(value)`（未指定・不正値はallへフォールバック）・
+  `filterStartTimesByTimeBand(startTimes, timeBand)`（`computeBookableStartTimes`が
+  返す`'HH:mm'`配列を開始時刻基準で絞り込む）を追加した。`getMonthlyAvailability`は
+  `count`・`maxPossible`の両方に`filterStartTimesByTimeBand`を適用してから
+  `classifyDayStatus_`へ渡す（分母のmaxPossibleも同じtimeBandで絞り込む。分母を
+  絞らないと記号判定が実態より悪く出るため）。`computeBookableStartTimes`自体・
+  スロット生成/重複判定ロジックは一切変更していない。
+- `gas/booking/public/Code.gs`: `handleGetMonthlyAvailability_`が`params.timeBand`を
+  そのまま`BookingAvailability.getMonthlyAvailability`へ渡すだけの配線を追加した
+  （バリデーション・正規化は`normalizeTimeBand`側で行うため重複実装しない）。
+  単日`getAvailability`（`handleGetAvailability_`）は無変更。
+
+### フロントエンド（共通予約UI）
+
+- `scripts/booking-logic.js`: DOM非依存の純粋ロジックとして、GAS側と同じ4値・
+  同じ境界値の`TIME_BANDS`・`normalizeTimeBand`・`timeBandLabel`（ja/en表示文言）・
+  `filterStartTimesByTimeBand`（Step2の開始時刻一覧を月間カレンダーと同じtimeBandで
+  絞り込むための純粋関数）を追加した。GASとブラウザは別ランタイムのため、
+  `DAY_STATUSES`等の既存機能と同じ方針で定義を複製している（判定結果の正はGAS側）。
+- `scripts/booking-app.js`: Step 1に希望時間帯ラジオ（`input[name="timeBand"]`。
+  既定`all`がchecked）を追加した。`durationMinutes`をキー生成・URL生成・現在性判定に
+  使っていた既存箇所（`calendarCacheKey_`・`calendarMonthlyUrl_`・
+  `isCalendarKeyCurrent_`・`renderCalendarGridIfCurrent_`・
+  `ensureCalendarMonthLoaded_`内のkey生成・`ba-calendar-retry`クリックハンドラ）の
+  すべてへ、同じ`timeBand`を漏れなく追加している（`ba-calendar-retry`も含め、
+  既存どおり共通の`calendarCacheKey_`を経由し、インライン重複実装はしていない）。
+  `timeBand`変更時は表示中の月だけを再取得する（duration変更時と同じ仕組みを
+  そのまま再利用。`isCalendarReady_`の判定条件自体は変更しない＝時間帯未選択でも
+  利用時間・利用区分が揃っていればカレンダーは表示する）。以前選択した日付が
+  新しいtimeBandで予約不可になった場合の選択解除は、既存のIssue #318のロジック
+  （`renderCalendarGrid_`内の再判定）がそのまま働く（timeBand専用の分岐は追加して
+  いない）。Step2（`fetchAvailability`）は、GAS側の単日`getAvailability`レスポンス
+  （`bookableStartTimes`）を`Logic.filterStartTimesByTimeBand`でStep1と同じtimeBandに
+  絞り込んでから`renderStartTimes`へ渡す（単日`getAvailability`へのリクエストURL・
+  GAS側仕様は変更しない。フロント側フィルタのみ）。
+- `_includes/booking_app_ja.html` / `_includes/booking_app_en.html`: Step 1の順序を
+  「利用時間 → 利用区分 → 希望時間帯 → 月間カレンダー」にし、希望時間帯の
+  ラジオボタン（指定なし/午前/昼/夜。日本語版・英語版でDOM契約(id/name/value)を
+  一致させている）を追加した。既存の`.ba-fieldset`/`.ba-choices`（`styles/booking.css`。
+  `flex-wrap: wrap`で既にモバイル幅に対応済み）をそのまま再利用しており、
+  スタイルの追加・変更は行っていない。
+
+### `all`の後方互換性
+
+`timeBand=all`（またはtimeBand未指定・不正値からのフォールバック後）は、
+`filterStartTimesByTimeBand`が絞り込みを行わずそのまま返すため、
+`getMonthlyAvailability`のcount/maxPossible/日別ステータスは、timeBand導入前と
+完全に同一の結果になる（`test/booking-monthly-availability.test.js`の
+「timeBand=allは現在の月間判定（timeBand未指定）と完全に一致する」で直接検証）。
+
+### テスト
+
+- `test/booking-monthly-availability.test.js`: `all`の後方互換性・timeBand未指定/
+  不正値のallフォールバック・morning/daytime/eveningそれぞれの絞り込み・
+  境界値（11:45/12:00, 17:45/18:00）・maxPossible側も同じtimeBandで絞られること・
+  長時間利用でband内候補が0件の場合のFULL・当日かつ選択中の時間帯が過ぎている
+  場合のFULL・`filterStartTimesByTimeBand`/`normalizeTimeBand`の単体動作を検証。
+- `test/booking-code-runtime.test.js`: `doGet`の`action=monthly`が`timeBand`クエリ
+  パラメータを配線すること・timeBand未指定/不正値のallフォールバックを検証。
+- `test/booking-logic.test.js`: `normalizeTimeBand`/`timeBandLabel`（ja/en）/
+  `filterStartTimesByTimeBand`（境界値・all後方互換・未指定/不正値のフォールバック）を検証。
+- `test/booking-calendar-ui.test.js`: 既定timeBand(all)がURLへ含まれること・
+  timeBand変更時に表示中の月だけを再取得すること・cache keyがtimeBand別になること・
+  timeBand変更後に選択済み日付がFULLになれば選択解除されること・duration/利用区分
+  未確定時はtimeBand変更でもfetchしないこと・再読み込みボタンが現在のtimeBandの
+  キャッシュを削除して再取得することを検証。
+- `test/booking-app.test.js`: Step1で選んだtimeBandがStep2の開始時刻一覧の絞り込みに
+  反映されること・timeBand未選択時はallとして全開始時刻が表示されること（後方互換）・
+  該当候補が無い場合は既存の「開始時刻がありません」表示になることを検証。
+
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
 | 項目 | 値 |
@@ -1722,8 +1815,8 @@ brandで判定を分岐させないため、この値は表示・流入元識別
 }
 ```
 
-### `GET ?action=monthly&year=2026&month=10&durationMinutes=120&brand=studio_x`
-（getMonthlyAvailability。Issue #318で追加）
+### `GET ?action=monthly&year=2026&month=10&durationMinutes=120&brand=studio_x&timeBand=all`
+（getMonthlyAvailability。Issue #318で追加、Issue #324で`timeBand`を追加）
 
 月間空き状況カレンダー用。対象月の全日付ぶんのステータスを1回のリクエストで返す
 （31日分を1日ごとにリクエストする実装は不可。「Issue #318: 月間空き状況カレンダー」参照）。
@@ -1732,6 +1825,23 @@ brandで判定を分岐させないため、この値は表示・流入元識別
 渡さないこと）。`durationMinutes`は必須（利用時間によって日ごとの空き判定結果が
 変わるため。「Step 1のUI順序」参照）。`brand`は表示・流入元識別のみに使い、
 判定ロジックはbrandで分岐させない（`getAvailability`と同じ方針）。
+
+`timeBand`（Issue #324で追加。任意）は、日別ステータスの判定対象となる開始時刻候補を
+開始時刻基準で絞り込む希望時間帯フィルタ。有効値は以下の4種類:
+
+| timeBand | 意味 | 開始時刻の範囲 |
+| --- | --- | --- |
+| `all` | 指定なし（絞り込みなし） | — |
+| `morning` | 午前 | 08:00〜11:45開始 |
+| `daytime` | 昼 | 12:00〜17:45開始 |
+| `evening` | 夜 | 18:00以降開始 |
+
+未指定、またはこの4値以外の値（例: 空文字・大文字・タイプミス）を受け取った場合は
+エラーにせず`all`へフォールバックする（`BookingAvailability.normalizeTimeBand`）。
+GitHub PagesとBooking GASは別々にデプロイされるため、デプロイ過渡期に「`timeBand`を
+送らない旧フロント」×「新GAS」の組み合わせが一時的に発生し得ることへの対応。
+単日`getAvailability`（`action`未指定のリクエスト）の仕様・パラメータは変更していない
+（`timeBand`は`action=monthly`のみで使う）。
 
 成功時：
 
@@ -1763,31 +1873,42 @@ brandで判定を分岐させないため、この値は表示・流入元識別
 
 `FULL`/`LIMITED`/`AVAILABLE`/`AVAILABLE_HIGH`の判定は、既存の`computeBookableStartTimes`
 （`getAvailability`と同一関数。スロット生成ロジックの再実装はしていない）を日ごとの
-busyIntervalsへ適用した結果件数を、以下の閾値でバケット分けするだけで求める
-（`Availability.gs`の`classifyDayStatus_`にのみ定義。他ファイルへ分散させていない）:
+busyIntervalsへ適用した結果を、`timeBand`で絞り込んだうえで件数を以下の閾値で
+バケット分けするだけで求める（`Availability.gs`の`classifyDayStatus_`にのみ定義。
+他ファイルへ分散させていない）:
 
-- `count`: その日にcomputeBookableStartTimesで実際に得られた開始時刻の件数
+- `count`: その日にcomputeBookableStartTimesで実際に得られた開始時刻を、
+  `filterStartTimesByTimeBand`で`timeBand`により絞り込んだ後の件数
 - `maxPossible`: 同じ日・同じduration・同じ当日フィルタ条件で、既存予約が一切
-  無かった場合に得られる件数（＝その日の理論上の最大件数。営業時間・最低利用時間・
-  15分刻みという既存の固定仕様から機械的に決まる）
+  無かった場合に得られる開始時刻を、**同じ`timeBand`で絞り込んだ後**の件数
+  （＝その日・そのtimeBandにおける理論上の最大件数。分母も同じ`timeBand`で
+  絞り込むこと。分母を絞らずに1日分のままにすると、band選択時の記号判定が
+  実態より悪く出てしまう）
 - `ratio = count / maxPossible`
-- `count === 0`（または`maxPossible === 0`。その利用時間では1件も入らない日）→ `FULL`
+- `count === 0`（または`maxPossible === 0`。その利用時間・timeBandでは1件も
+  入らない日）→ `FULL`
 - `ratio <= 1/3` → `LIMITED`
 - `ratio >= 2/3` → `AVAILABLE_HIGH`
 - それ以外 → `AVAILABLE`
 
 絶対件数ではなく理論上の最大件数に対する割合で判定するのは、利用時間が長いほど
 1日に入り得る枠数自体が少なくなり、絶対件数だけで閾値を決めると利用時間ごとに
-「十分空いている」の意味が変わってしまうため。
+「十分空いている」の意味が変わってしまうため。`timeBand=all`（既定）は絞り込みを
+行わないため、現在の全日判定（timeBand導入前と同一のcount/maxPossible）と完全に
+一致する。
 
 当日（Asia/Tokyo基準）は`getAvailability`と同じく、現在時刻以前（ちょうど含む）の
 開始時刻を候補から除外したうえで`count`/`maxPossible`を計算する（`minimumStartMinutes`）。
-過去日は`computeBookableStartTimes`を呼ばず、常に`OUT_OF_RANGE`・`availableStartTimes: 0`
-を返す。`customerType`はgetAvailabilityと同じくここにも一切登場しない（「今日＋初回利用」の
-カレンダー上のガードはフロント側の責務。「Issue #318: 月間空き状況カレンダー」参照）。
+選択中の時間帯がすでに過ぎている場合（例: 現在14:00に`timeBand=morning`を指定）は、
+`count`・`maxPossible`の両方が0件になり`FULL`になる。過去日は`computeBookableStartTimes`を
+呼ばず、常に`OUT_OF_RANGE`・`availableStartTimes: 0`を返す。`customerType`はgetAvailabilityと
+同じくここにも一切登場しない（「今日＋初回利用」のカレンダー上のガードはフロント側の責務。
+「Issue #318: 月間空き状況カレンダー」参照）。
 
 失敗時のerror.codeは`getAvailability`と共通のもの（`INVALID_CONFIG`/`INVALID_DURATION`/
 `DURATION_TOO_SHORT`）に加えて、`INVALID_MONTH`（`year`/`month`が不正）を返す。
+`timeBand`が不正・未指定の場合はエラーにせず`all`へフォールバックするため、
+`timeBand`単独でエラーになることはない。
 
 Calendar側は`CalendarRepository.getBusyIntervalsForRange(calendarId, startDate, endDate,
 timezone)`が対象月全体を`calendar.getEvents()`の呼び出し1回だけで取得し、日ごとの
@@ -2637,6 +2758,30 @@ Issue #318で追加・更新:
   エラー表示のみにすること（fail-open禁止）・前月/翌月ボタンでの再取得とキャッシュ・
   duration変更時の再取得・カレンダー選択後に既存のStep1「次へ」→Step2の開始時刻
   取得フローへ接続できることを検証
+
+Issue #324で追加・更新:
+
+- `test/booking-monthly-availability.test.js`（更新） — 希望時間帯フィルタ
+  （`timeBand`）。`all`が現在の月間判定（timeBand未指定）と完全に一致すること・
+  timeBand未指定/不正値のallフォールバック・morning/daytime/eveningそれぞれの
+  絞り込み・境界値（11:45/12:00開始、17:45/18:00開始）・maxPossible（分母）も
+  同じtimeBandで絞られること・長時間利用でband内候補が0件の場合のFULL・当日かつ
+  選択中の時間帯が過ぎている場合のFULL・`filterStartTimesByTimeBand`/
+  `normalizeTimeBand`の単体動作を追加
+- `test/booking-code-runtime.test.js`（更新） — `doGet`の`action=monthly`が
+  `timeBand`クエリパラメータを`getMonthlyAvailability`へ配線すること・timeBand
+  未指定/不正値のallフォールバックを追加
+- `test/booking-logic.test.js`（更新） — `normalizeTimeBand`（allへのフォールバック）・
+  `timeBandLabel`（ja/en）・`filterStartTimesByTimeBand`（境界値・all後方互換・
+  未指定/不正値のフォールバック）を追加
+- `test/booking-calendar-ui.test.js`（更新） — 既定timeBand(all)がURLへ含まれること・
+  timeBand変更時に表示中の月だけを再取得すること・cache keyがtimeBand別になること・
+  timeBand変更後に選択済み日付がFULLになれば選択解除されること・duration/利用区分
+  未確定時はtimeBand変更でもfetchしないこと・再読み込みボタンが現在のtimeBandの
+  キャッシュを削除して再取得することを追加
+- `test/booking-app.test.js`（更新） — Step1で選んだtimeBandがStep2の開始時刻一覧の
+  絞り込みに反映されること・timeBand未選択時はallとして全開始時刻が表示されること
+  （後方互換）・該当候補が無い場合は既存の「開始時刻がありません」表示になることを追加
 
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに
