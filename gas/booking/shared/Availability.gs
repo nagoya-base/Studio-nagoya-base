@@ -313,6 +313,148 @@ var BookingAvailability = (function () {
     };
   }
 
+  /*
+   * 月間空き状況（Issue #318）の日次ステータス5値。GAS/フロント(scripts/booking-logic.js)の
+   * 両方でこの5文字列をそのまま使う（表示記号・文言への変換はフロント側の責務）。
+   * OUT_OF_RANGE: 過去日など予約対象外。それ以外は当日以降の日について、
+   * computeBookableStartTimesの件数を閾値でバケット分けしたもの。
+   */
+  var DAY_STATUS = {
+    AVAILABLE_HIGH: 'AVAILABLE_HIGH',
+    AVAILABLE: 'AVAILABLE',
+    LIMITED: 'LIMITED',
+    FULL: 'FULL',
+    OUT_OF_RANGE: 'OUT_OF_RANGE'
+  };
+
+  /*
+   * 閾値定義（Issue #318追記対応。ハードコードを分散させず、ここに一元化する）。
+   * count: その日にcomputeBookableStartTimesで実際に得られた開始時刻の件数。
+   * maxPossible: 同じ日・同じduration・同じminimumStartMinutes（当日なら現在時刻フィルタも
+   *   同条件）で、既存予約が一切無かった場合に得られる件数（＝その日に理論上あり得る
+   *   最大件数。営業時間・最低利用時間・15分刻みという既存の固定仕様から機械的に決まる）。
+   * ratio = count / maxPossible を使い、既存予約でどれだけ枠が埋まっているかの割合で
+   * 判定する（絶対件数だけで判定すると、利用時間が長いほど分母となる総枠数自体が
+   * 少なくなり、閾値の意味が利用時間ごとに変わってしまうため）。
+   *
+   * - count === 0（またはmaxPossible === 0＝その利用時間では1件も入らない日）→ FULL
+   * - ratio <= 1/3（残り枠が理論上の1/3以下）→ LIMITED（△ 残り枠が少ない）
+   * - ratio >= 2/3（理論上の2/3以上が空いている）→ AVAILABLE_HIGH（◎ 十分ある）
+   * - それ以外 → AVAILABLE（○ 空きあり）
+   */
+  var LIMITED_RATIO_THRESHOLD_ = 1 / 3;
+  var HIGH_RATIO_THRESHOLD_ = 2 / 3;
+
+  function classifyDayStatus_(count, maxPossible) {
+    if (count <= 0 || maxPossible <= 0) return DAY_STATUS.FULL;
+    var ratio = count / maxPossible;
+    if (ratio <= LIMITED_RATIO_THRESHOLD_) return DAY_STATUS.LIMITED;
+    if (ratio >= HIGH_RATIO_THRESHOLD_) return DAY_STATUS.AVAILABLE_HIGH;
+    return DAY_STATUS.AVAILABLE;
+  }
+
+  function isValidYearMonth_(year, month) {
+    return Number.isInteger(year) && year >= 2000 && year <= 3000 &&
+      Number.isInteger(month) && month >= 1 && month <= 12;
+  }
+
+  function validateMonthlyInput(year, month, durationMinutes, config) {
+    if (!isValidYearMonth_(year, month)) {
+      return { code: 'INVALID_MONTH', message: '年月の指定が正しくありません。' };
+    }
+    if (!isValidConfig_(config)) {
+      return { code: 'INVALID_CONFIG', message: '営業時間・予約ルールの設定が正しくありません。' };
+    }
+    if (!isPositiveInteger_(durationMinutes)) {
+      return { code: 'INVALID_DURATION', message: '利用時間（分）が正しくありません。' };
+    }
+    if (durationMinutes < config.minBookingMinutes) {
+      return {
+        code: 'DURATION_TOO_SHORT',
+        message: '最低利用時間（' + config.minBookingMinutes + '分）未満です。'
+      };
+    }
+    return null;
+  }
+
+  function daysInMonth_(year, month) {
+    return new Date(Date.UTC(year, month, 0)).getUTCDate();
+  }
+
+  function pad2_(n) {
+    return (n < 10 ? '0' : '') + n;
+  }
+
+  /*
+   * request: { year, month, durationMinutes, brand }
+   * busyIntervalsByDate: CalendarRepository.getBusyIntervalsForRangeの戻り値
+   *   （{ 'YYYY-MM-DD': busyIntervals, ... }。対象月の全日付ぶんを含むこと）
+   * config: BookingConfig.getAvailabilityConfig()の戻り値
+   * now: 現在時刻（Date）。省略時は現在時刻。
+   *
+   * 日ごとのステータスは、既存のcomputeBookableStartTimes（getAvailabilityと同一関数）を
+   * 日ごとのbusyIntervalsに対して呼び出し、件数を閾値でバケット分けするだけで求める
+   * （スロット生成ロジック自体の再実装はしない。Issue #318追記のレビュー対応）。
+   * 当日は既存のgetAvailabilityと同じくminimumStartMinutesで現在時刻以前を除外し、
+   * 過去日はOUT_OF_RANGEとしてcomputeBookableStartTimesを呼ばない。
+   * 戻り値にはイベントタイトル・説明・参加者等のPIIを一切含めない（getAvailabilityと同じ方針）。
+   */
+  function getMonthlyAvailability(request, busyIntervalsByDate, config, now) {
+    var year = request && request.year;
+    var month = request && request.month;
+    var durationMinutes = request && request.durationMinutes;
+    var brand = (request && request.brand) || null;
+
+    var validationError = validateMonthlyInput(year, month, durationMinutes, config);
+    if (validationError) {
+      return { success: false, error: validationError };
+    }
+
+    var receivedAt = isDateLike_(now) ? now : new Date();
+    var todayString = formatDateInTimezone(receivedAt, config.timezone);
+    if (!todayString) {
+      return { success: false, error: { code: 'INVALID_CONFIG', message: '営業時間・予約ルールの設定が正しくありません。' } };
+    }
+
+    var monthString = year + '-' + pad2_(month);
+    var totalDays = daysInMonth_(year, month);
+    var days = {};
+
+    for (var day = 1; day <= totalDays; day++) {
+      var dateString = monthString + '-' + pad2_(day);
+
+      if (dateString < todayString) {
+        days[dateString] = { status: DAY_STATUS.OUT_OF_RANGE, availableStartTimes: 0 };
+        continue;
+      }
+
+      var minimumStartMinutes = null;
+      if (dateString === todayString) {
+        minimumStartMinutes = getCurrentMinutesInTimezone(receivedAt, config.timezone);
+        if (minimumStartMinutes === null) {
+          return { success: false, error: { code: 'INVALID_CONFIG', message: '営業時間・予約ルールの設定が正しくありません。' } };
+        }
+      }
+
+      var busyIntervals = (busyIntervalsByDate && busyIntervalsByDate[dateString]) || [];
+      var bookable = computeBookableStartTimes(durationMinutes, busyIntervals, config, minimumStartMinutes);
+      var maxPossible = computeBookableStartTimes(durationMinutes, [], config, minimumStartMinutes);
+
+      days[dateString] = {
+        status: classifyDayStatus_(bookable.length, maxPossible.length),
+        availableStartTimes: bookable.length
+      };
+    }
+
+    return {
+      success: true,
+      month: monthString,
+      durationMinutes: durationMinutes,
+      brand: brand,
+      days: days
+    };
+  }
+
   return {
     isValidDateString: isValidDateString,
     formatDateWithWeekday: formatDateWithWeekday,
@@ -324,6 +466,9 @@ var BookingAvailability = (function () {
     validateInput: validateInput,
     computeBookableStartTimes: computeBookableStartTimes,
     isStartTimeBookable: isStartTimeBookable,
-    getAvailability: getAvailability
+    getAvailability: getAvailability,
+    DAY_STATUS: DAY_STATUS,
+    validateMonthlyInput: validateMonthlyInput,
+    getMonthlyAvailability: getMonthlyAvailability
   };
 })();

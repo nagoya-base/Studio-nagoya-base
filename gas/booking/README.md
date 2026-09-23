@@ -1129,6 +1129,109 @@ confirm/cancel/Calendar/Mail/trigger/Script Propertiesはこの変更で一切�
   ヘッダーの`<select id="sort-select">`のみの最小構成で、既存のタブUI・カードデザインは
   変更していない
 
+## Issue #318: 月間空き状況カレンダー
+
+共通予約UI（SNB / SNB mens / Studio X）のStep 1の日付選択を、単一日付入力から
+1か月表示の空き状況カレンダーへ変更した。3ブランドとも別実装を作らず、既存の
+共通予約UI（`_includes/booking_app_ja.html` / `_includes/booking_app_en.html` /
+`scripts/booking-app.js` / `scripts/booking-logic.js` / `styles/booking.css`）を
+拡張しただけで、Booking Admin・決済・Spreadsheet構造・予約ステータス設計は
+一切変更していない。既存のGAS `/exec` URL（`scripts/booking-config.js`）もそのまま。
+
+### API/GAS側
+
+- `gas/booking/shared/CalendarRepository.gs`: `getBusyIntervalsForRange(calendarId,
+  startDate, endDate, timezone)`を追加。対象月全体を`calendar.getEvents()`の
+  呼び出し**1回**だけで取得し、日ごとのbusyIntervalsへ振り分ける（1日ごとに
+  `getEvents()`を呼ぶ実装は不可）。既存の`getBusyIntervalsForDate`は無変更。
+- `gas/booking/shared/Availability.gs`: `DAY_STATUS`（5値のenum。
+  `AVAILABLE_HIGH`/`AVAILABLE`/`LIMITED`/`FULL`/`OUT_OF_RANGE`）と
+  `getMonthlyAvailability(request, busyIntervalsByDate, config, now)`を追加。
+  日ごとのステータスは既存の`computeBookableStartTimes`（`getAvailability`と
+  同一関数）の結果件数を閾値でバケット分けするだけで求め、スロット生成ロジック
+  自体は一切再実装していない（閾値の定義は「API仕様」節参照）。既存の
+  `getAvailability`・`computeBookableStartTimes`は無変更。
+- `gas/booking/public/Code.gs`: `doGet`に`action=monthly`の分岐を追加し、
+  `handleGetMonthlyAvailability_`から`CalendarRepository.getBusyIntervalsForRange`→
+  `BookingAvailability.getMonthlyAvailability`へ配線した。`action`未指定時は
+  従来どおり`handleGetAvailability_`（単日`getAvailability`）のまま（後方互換）。
+
+### durationを月間取得のパラメータに含める（追記レビュー対応）
+
+`getMonthlyAvailability`は`durationMinutes`必須（`getMonthlyAvailability(year, month,
+durationMinutes, brand)`）。共通予約UIのStep 1は「利用時間・利用区分を先に確定 →
+その値でカレンダーを描画・取得」という順序にし、日付入力を最初に置かない（duration
+未確定のままでは「何時間分の空き状況か」が定義できず、日別空き判定と表示が
+食い違うため）。利用時間を変更した場合は、表示中の月だけを再取得する
+（`scripts/booking-app.js`のキャッシュキーに`durationMinutes`を含めるため、
+duration変更時は自然に該当月だけがキャッシュミスして再取得され、他の月を
+先読みし直すことはしない）。
+
+### Calendar APIは月内で1回に集約する
+
+`getBusyIntervalsForRange`が対象月全体を1回の`calendar.getEvents()`で取得してから
+日ごとに振り分ける（GAS内部でも1日ごとに`getEvents()`を呼ぶ実装は不可というレビュー
+指摘への対応）。`test/booking-calendar-repository.test.js`・
+`test/booking-code-runtime.test.js`で、月間取得時のgetEvents()呼び出し回数が
+1回であることを直接検証している。
+
+### スロット判定ロジックは再利用する
+
+日ごとのステータスは`Availability.gs`の既存`computeBookableStartTimes`を日ごとの
+busyIntervalsに対して呼び出し、件数を閾値でバケット分けするだけ。スロット生成
+ロジックの再実装はしていない（`test/booking-monthly-availability.test.js`の
+「日ごとの空き判定は、月間表示でも単日getAvailabilityと一致する」で、月間表示と
+単日`getAvailability`の件数が一致することを直接検証している）。
+
+### 祝日表示はスコープ外
+
+`package.json`はゼロ依存が方針のため、祝日ライブラリ追加・静的リストの保守は
+このIssueでは行っていない。日曜（赤系）・土曜（青系）・平日（通常色）の3色のみ
+実装した。祝日対応は別Issueで扱う。
+
+### フロントエンド（共通予約UI）
+
+- `scripts/booking-logic.js`: DOM非依存の純粋ロジックとして、`DAY_STATUSES`・
+  `dayStatusSymbol`/`dayStatusLabel`（記号とaria-label文言。記号・色だけに依存しない
+  アクセシビリティ対応）・`isCalendarDaySelectable`（GASのstatusに加えて、当日＋
+  初回利用はフロント側でも選択不可にする。getAvailability自体はcustomerTypeを
+  見ないため）・`buildMonthMatrix`（7列×週の2次元配列。月初の曜日位置・
+  28〜31日の月・年またぎを実行環境のtimezoneに依存せず計算）・`shiftMonth`
+  （前月/翌月の年またぎ計算）等を追加した。
+- `scripts/booking-app.js`: Step 1の`#ba-date`（`type="hidden"`のまま維持）を、
+  カレンダーの日セルクリックが書き込む形にした。Step 1「次へ」の検証・
+  `SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`チェック・Step 2以降（開始時刻選択・
+  `getAvailability`呼び出し・確認・送信）は一切変更していない（既存フローの再利用）。
+  duration・利用区分が両方確定してから`action=monthly`のGETリクエストを送り、
+  表示月ごとに結果をキャッシュする（取得済みの月へ戻る場合は再取得しない）。
+  取得失敗時はグリッドを描画せずエラー表示のみとし、どの日も選択できない状態にする
+  （fail-open禁止）。
+- `_includes/booking_app_ja.html` / `_includes/booking_app_en.html`: Step 1の
+  順序を「利用時間 → 利用区分 → カレンダー」に変更し、単一の`<input type="date">`を
+  カレンダー（`<table>` + 日セルの`<button>`。前月/翌月ボタン・ローディング表示・
+  エラー表示・凡例を含む）に置き換えた。日本語版・英語版でDOM契約（id）を一致させている。
+- `styles/booking.css`: `table-layout: fixed`で7列を固定幅にし、スマートフォン幅
+  （375px前後）でも横スクロールを必要としない。日曜・土曜の曜日ヘッダーに色分けを
+  追加し、選択不可の日セルは`disabled`＋破線枠で視覚的に区別する（色だけに依存しない
+  よう、選択可否・状態自体は各日セルの`aria-label`で示す）。
+
+### テスト
+
+- `test/booking-calendar-repository.test.js`: `getBusyIntervalsForRange`の
+  getEvents()呼び出し回数（1回）・日ごとの振り分け・日をまたぐイベントのクランプ・
+  終日イベントの扱いを検証。
+- `test/booking-monthly-availability.test.js`: `getMonthlyAvailability`の
+  ステータス分類・過去日/当日の扱い・28/29/30/31日の月・年またぎ・不正入力・
+  単日`getAvailability`との整合性を検証。
+- `test/booking-code-runtime.test.js`: `doGet`の`action=monthly`配線・
+  getEvents()呼び出し回数・バリデーションを検証。
+- `test/booking-logic.test.js`: カレンダー用の純粋ロジック（記号・aria-label・
+  選択可否・月マトリクス生成・月移動）を検証。
+- `test/booking-calendar-ui.test.js`: `scripts/booking-app.js`のDOM配線
+  （duration/利用区分確定後のfetch・グリッド描画・当日＋初回利用のガード・
+  取得失敗時のfail-open禁止・前月/翌月・duration変更時の再取得・既存の
+  開始時刻選択フローへの接続）を検証。
+
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
 | 項目 | 値 |
@@ -1602,6 +1705,78 @@ brandで判定を分岐させないため、この値は表示・流入元識別
   "bookableStartTimes": ["08:00", "08:15", "..."]
 }
 ```
+
+### `GET ?action=monthly&year=2026&month=10&durationMinutes=120&brand=studio_x`
+（getMonthlyAvailability。Issue #318で追加）
+
+月間空き状況カレンダー用。対象月の全日付ぶんのステータスを1回のリクエストで返す
+（31日分を1日ごとにリクエストする実装は不可。「Issue #318: 月間空き状況カレンダー」参照）。
+`year`/`month`/`durationMinutes`は`getAvailability`の`durationMinutes`と同じ形式
+（先頭0を持たない正の整数の文字列のみ受理。`month`に`09`のような先頭0付き文字列は
+渡さないこと）。`durationMinutes`は必須（利用時間によって日ごとの空き判定結果が
+変わるため。「Step 1のUI順序」参照）。`brand`は表示・流入元識別のみに使い、
+判定ロジックはbrandで分岐させない（`getAvailability`と同じ方針）。
+
+成功時：
+
+```json
+{
+  "success": true,
+  "month": "2026-10",
+  "durationMinutes": 120,
+  "brand": "studio_x",
+  "days": {
+    "2026-10-01": { "status": "AVAILABLE_HIGH", "availableStartTimes": 53 },
+    "2026-10-02": { "status": "LIMITED", "availableStartTimes": 4 },
+    "2026-10-03": { "status": "FULL", "availableStartTimes": 0 },
+    "2026-09-30": { "status": "OUT_OF_RANGE", "availableStartTimes": 0 }
+  }
+}
+```
+
+`days`は対象月の全日付ぶんのキーを必ず含む。`status`は5値のenum
+（`gas/booking/shared/Availability.gs`の`BookingAvailability.DAY_STATUS`）:
+
+| status | 意味 | フロント表示 |
+| --- | --- | --- |
+| `AVAILABLE_HIGH` | 空き時間が十分ある | ◎ |
+| `AVAILABLE` | 空きあり | ○ |
+| `LIMITED` | 残り枠が少ない | △ |
+| `FULL` | 予約可能枠なし（既存予約で埋まっている、またはその利用時間では元々1件も入らない） | × |
+| `OUT_OF_RANGE` | 予約対象外（過去日） | － |
+
+`FULL`/`LIMITED`/`AVAILABLE`/`AVAILABLE_HIGH`の判定は、既存の`computeBookableStartTimes`
+（`getAvailability`と同一関数。スロット生成ロジックの再実装はしていない）を日ごとの
+busyIntervalsへ適用した結果件数を、以下の閾値でバケット分けするだけで求める
+（`Availability.gs`の`classifyDayStatus_`にのみ定義。他ファイルへ分散させていない）:
+
+- `count`: その日にcomputeBookableStartTimesで実際に得られた開始時刻の件数
+- `maxPossible`: 同じ日・同じduration・同じ当日フィルタ条件で、既存予約が一切
+  無かった場合に得られる件数（＝その日の理論上の最大件数。営業時間・最低利用時間・
+  15分刻みという既存の固定仕様から機械的に決まる）
+- `ratio = count / maxPossible`
+- `count === 0`（または`maxPossible === 0`。その利用時間では1件も入らない日）→ `FULL`
+- `ratio <= 1/3` → `LIMITED`
+- `ratio >= 2/3` → `AVAILABLE_HIGH`
+- それ以外 → `AVAILABLE`
+
+絶対件数ではなく理論上の最大件数に対する割合で判定するのは、利用時間が長いほど
+1日に入り得る枠数自体が少なくなり、絶対件数だけで閾値を決めると利用時間ごとに
+「十分空いている」の意味が変わってしまうため。
+
+当日（Asia/Tokyo基準）は`getAvailability`と同じく、現在時刻以前（ちょうど含む）の
+開始時刻を候補から除外したうえで`count`/`maxPossible`を計算する（`minimumStartMinutes`）。
+過去日は`computeBookableStartTimes`を呼ばず、常に`OUT_OF_RANGE`・`availableStartTimes: 0`
+を返す。`customerType`はgetAvailabilityと同じくここにも一切登場しない（「今日＋初回利用」の
+カレンダー上のガードはフロント側の責務。「Issue #318: 月間空き状況カレンダー」参照）。
+
+失敗時のerror.codeは`getAvailability`と共通のもの（`INVALID_CONFIG`/`INVALID_DURATION`/
+`DURATION_TOO_SHORT`）に加えて、`INVALID_MONTH`（`year`/`month`が不正）を返す。
+
+Calendar側は`CalendarRepository.getBusyIntervalsForRange(calendarId, startDate, endDate,
+timezone)`が対象月全体を`calendar.getEvents()`の呼び出し1回だけで取得し、日ごとの
+busyIntervalsへ振り分ける（`getBusyIntervalsForDate`と同じ「日をまたぐイベントは対象日の
+範囲へクランプする」「終日イベントはisAllDay:trueにする」規則を、区間全体に対して適用する）。
 
 ### `POST`（createBooking。#268でstudio_x限定として追加、#269でsnb/mensへ拡張、
 #270でcustomerTypeを必須項目として追加）
@@ -2343,18 +2518,51 @@ Issue #305（Booking Admin Web UI化）で追加:
   `test/booking-deployment-manifest-sync.test.js`が引き続き通ることで、本番Booking
   Adminへの配布ファイルセットとして矛盾がないことを機械的に確認している）
 
+Issue #318で追加・更新:
+
+- `test/booking-calendar-repository.test.js`（更新） — `CalendarRepository.gs`の
+  `getBusyIntervalsForRange`（対象月全体でgetEvents()呼び出しが1回だけであること・
+  区間内の全日付ぶんのキーを返すこと・日をまたぐイベントのクランプ・終日イベントの
+  扱い・存在しないCalendar IDでの例外）を追加
+- `test/booking-monthly-availability.test.js`（新規） — `Availability.gs`の
+  `getMonthlyAvailability`/`DAY_STATUS`。閾値どおりのステータス分類（FULL/LIMITED/
+  AVAILABLE/AVAILABLE_HIGH）・過去日のOUT_OF_RANGE・当日のminimumStartMinutes適用・
+  28/29/30/31日の月・年またぎ（12月→1月）・不正な年月/duration/configの拒否・
+  応答にPIIを含めないこと・単日`getAvailability`との判定一致を検証
+- `test/booking-code-runtime.test.js`（更新） — `doGet`の`action=monthly`配線
+  （`handleGetMonthlyAvailability_`）。calendar.getEvents()呼び出しが月内で1回だけ
+  であること・バリデーションエラー時にCalendarへ問い合わせないこと・JSON出力を追加
+- `test/booking-logic.test.js`（更新） — カレンダー用の純粋ロジック
+  （`isBookableDayStatus`/`dayStatusSymbol`/`dayStatusLabel`/`isCalendarDaySelectable`
+  （初回利用＋当日のガード再現を含む）/`dayAriaLabel`/`monthLabel`/
+  `formatCalendarDayLabel`/`buildMonthMatrix`（月初の曜日位置・28〜31日の月・
+  5〜6週の範囲）/`shiftMonth`（年またぎ）/`yearMonthFromDateValue`/
+  `weekdayColumnClass`）を追加
+- `test/booking-calendar-ui.test.js`（新規） — `scripts/booking-app.js`の
+  カレンダーDOM配線。duration/利用区分が両方確定するまでfetchしないこと・
+  `action=monthly`へのリクエストが1回であること・グリッド描画と日付選択の
+  `#ba-date`への反映・初回利用＋当日のセルが選択不可になること（利用経験ありへの
+  切り替えは再取得なしで選択可能になること）・取得失敗時にグリッドを描画せず
+  エラー表示のみにすること（fail-open禁止）・前月/翌月ボタンでの再取得とキャッシュ・
+  duration変更時の再取得・カレンダー選択後に既存のStep1「次へ」→Step2の開始時刻
+  取得フローへ接続できることを検証
+
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに
 差し替えており、実際のGoogle Calendar・Spreadsheet・Script Propertiesにはアクセスしない
 （`test/helpers/gas-stubs.js`）。実Calendarへ直接書き込むテストは、通常の自動テストとして
 実装していない（Issue #268本文の要件どおり）。
 
-共通予約UIのDOM配線（`scripts/booking-app.js`）自体はnode --testの対象外で、
-Playwright（Chromium）を使ったローカルブラウザでの手動確認で検証した
+共通予約UIのDOM配線（`scripts/booking-app.js`）は、大部分がnode --testの対象外で
+Playwright（Chromium）を使ったローカルブラウザでの手動確認で検証している
 （3ブランドとも375px幅で横スクロールなし・ステップ遷移・`getAvailability`/
 `createBooking`のモック応答に対するSLOT_CONFLICT/RATE_LIMITED/INTERNAL_ERROR等の
 表示・二重送信防止・成功後の再送信不可を確認済み。実Calendar/Spreadsheetへは
-アクセスしていない）。
+アクセスしていない）。Issue #318のカレンダー配線のみ、素朴なDOMスタブ
+（`test/booking-calendar-ui.test.js`）でnode --testからも検証できるようにした
+うえで、上記と同じ方針でPlaywright（日本語/英語・モバイル幅375px/デスクトップ幅・
+初回利用＋当日のセル無効化・duration変更・月移動・選択日のStep2への接続）でも
+実ブラウザ表示を確認済み。
 
 ## デプロイ後の手動確認（実Calendar・実Spreadsheet・実デプロイが前提のため、コードレビュー時点では確認不能）
 

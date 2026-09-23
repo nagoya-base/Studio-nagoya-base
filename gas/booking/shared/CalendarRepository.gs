@@ -81,6 +81,81 @@ var CalendarRepository = (function () {
   }
 
   /*
+   * calendarId: Script Propertiesで管理するCalendar ID
+   * startDate/endDate: 'YYYY-MM-DD'（timezoneでの暦日。両端を含む区間）
+   * timezone: 例 'Asia/Tokyo'
+   *
+   * 月間空き状況（Issue #318）のために、[startDate, endDate]区間全体を
+   * calendar.getEvents()の呼び出し1回だけで取得し、日ごとのbusyIntervalsへ振り分ける。
+   * 1日ごとにgetEvents()を呼ぶ実装は不可（Issue #318追記のレビュー対応）。
+   *
+   * 戻り値: { 'YYYY-MM-DD': [{ startMinutes, endMinutes, isAllDay }], ... }
+   * （区間内の全日付ぶんのキーを必ず含む。該当イベントが無い日は空配列）
+   * 各日の値の形はgetBusyIntervalsForDateの戻り値と同一（呼び出し側のAvailability.gsが
+   * 同じ形として扱えるようにするため。日をまたぐイベントの対象日クランプ規則も同じ）。
+   */
+  function getBusyIntervalsForRange(calendarId, startDate, endDate, timezone) {
+    var rangeStart = parseDateTime(startDate, '00:00', timezone);
+    var rangeEnd = new Date(parseDateTime(endDate, '00:00', timezone).getTime() + MINUTES_PER_DAY * 60 * 1000);
+
+    var calendar = getCalendarOrThrow_(calendarId);
+    var events = calendar.getEvents(rangeStart, rangeEnd);
+
+    var result = {};
+    buildDateRange_(startDate, endDate).forEach(function (dateString) {
+      var dayStart = parseDateTime(dateString, '00:00', timezone);
+      var dayEnd = new Date(dayStart.getTime() + MINUTES_PER_DAY * 60 * 1000);
+
+      result[dateString] = events
+        .filter(function (event) {
+          return event.getStartTime().getTime() < dayEnd.getTime() && event.getEndTime().getTime() > dayStart.getTime();
+        })
+        .map(function (event) {
+          if (event.isAllDayEvent()) {
+            return { startMinutes: 0, endMinutes: 0, isAllDay: true };
+          }
+          var startMinutes = Math.round((event.getStartTime().getTime() - dayStart.getTime()) / 60000);
+          var endMinutes = Math.round((event.getEndTime().getTime() - dayStart.getTime()) / 60000);
+          return {
+            startMinutes: Math.max(0, startMinutes),
+            endMinutes: Math.min(MINUTES_PER_DAY, endMinutes),
+            isAllDay: false
+          };
+        });
+    });
+    return result;
+  }
+
+  /* startDate〜endDate（両端含む、'YYYY-MM-DD'）の日付文字列を1日刻みで列挙する。
+     Date.UTC構築方式（Availability.gsのisValidDateString等と同じ方針）で、
+     実行環境のローカルtimezoneに依存しない。 */
+  function buildDateRange_(startDate, endDate) {
+    var start = parseYmd_(startDate);
+    var end = parseYmd_(endDate);
+    var cursor = Date.UTC(start.year, start.month - 1, start.day);
+    var last = Date.UTC(end.year, end.month - 1, end.day);
+    var dates = [];
+    while (cursor <= last) {
+      dates.push(formatYmd_(cursor));
+      cursor += MINUTES_PER_DAY * 60 * 1000;
+    }
+    return dates;
+  }
+
+  function parseYmd_(dateString) {
+    var parts = dateString.split('-');
+    return { year: parseInt(parts[0], 10), month: parseInt(parts[1], 10), day: parseInt(parts[2], 10) };
+  }
+
+  function formatYmd_(utcMillis) {
+    var d = new Date(utcMillis);
+    var year = d.getUTCFullYear();
+    var month = d.getUTCMonth() + 1;
+    var day = d.getUTCDate();
+    return year + '-' + (month < 10 ? '0' : '') + month + '-' + (day < 10 ? '0' : '') + day;
+  }
+
+  /*
    * PENDING状態のCalendarイベントを作成する（createBooking用）。
    * params: { date, startTime, durationMinutes, timezone, bookingId, brand }
    * 戻り値: 作成したイベントのCalendar Event ID（Sheets台帳との照合キー）。
@@ -150,6 +225,7 @@ var CalendarRepository = (function () {
 
   return {
     getBusyIntervalsForDate: getBusyIntervalsForDate,
+    getBusyIntervalsForRange: getBusyIntervalsForRange,
     parseDateTime: parseDateTime,
     createBookingEvent: createBookingEvent,
     getEventById: getEventById,

@@ -104,6 +104,18 @@
     customerTypeError: document.getElementById('ba-customer-type-error'),
     step1Next: document.getElementById('ba-step-datetime-next'),
 
+    calendarHint: document.getElementById('ba-calendar-hint'),
+    calendarBody: document.getElementById('ba-calendar-body'),
+    calendarPrev: document.getElementById('ba-calendar-prev'),
+    calendarNext: document.getElementById('ba-calendar-next'),
+    calendarMonthLabel: document.getElementById('ba-calendar-month-label'),
+    calendarLoading: document.getElementById('ba-calendar-loading'),
+    calendarError: document.getElementById('ba-calendar-error'),
+    calendarErrorMessage: document.getElementById('ba-calendar-error-message'),
+    calendarRetry: document.getElementById('ba-calendar-retry'),
+    calendarGridBody: document.getElementById('ba-calendar-grid-body'),
+    calendarSelected: document.getElementById('ba-calendar-selected'),
+
     stepStartTime: document.getElementById('ba-step-start-time'),
     startTimeSummary: document.getElementById('ba-start-time-summary'),
     startTimeLoading: document.getElementById('ba-start-time-loading'),
@@ -230,6 +242,210 @@
   function checkedCustomerType() {
     var checked = root.querySelector('input[name="customerType"]:checked');
     return checked ? checked.value : '';
+  }
+
+  /*
+   * ── 月間空き状況カレンダー（Issue #318） ──
+   * 単一日付入力（#ba-date。type="hidden"）を、1か月表示のカレンダーから選ぶ形へ
+   * 置き換える。#ba-dateの値自体は引き続きこのカレンダーが書き込み、Step1の
+   * 「次へ」押下時の検証（上のclickハンドラ）・SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME
+   * チェックは一切変更しない（既存の開始時刻選択以降のフローをそのまま再利用する）。
+   *
+   * 利用時間・利用区分を先に確定してからカレンダーを描画・取得する（Issue #318追記の
+   * 仕様）。月間取得はGAS側 getMonthlyAvailability(year, month, durationMinutes, brand)
+   * へのHTTPリクエスト1回（表示中の月ぶんのみ。31回連続アクセスはしない）。
+   * 取得済みの月はcalendarCacheに保持し、duration変更時は表示中の月だけを再取得する
+   * （cacheキーにdurationMinutesを含めるため、変更前のdurationの月データは
+   * そのまま保持され、無駄な再取得や巻き戻り時の取りこぼしを起こさない）。
+   */
+  var calendarMonth = null; /* { year, month } | null（duration/customerType未確定の間はnull） */
+  var calendarCache = {}; /* key: 'year-month-durationMinutes' -> { status: 'success'|'error', days, message } */
+  var calendarFetchToken = 0; /* 古い月・古いdurationの応答が後から返って上書きしないためのトークン */
+
+  function currentCalendarDurationMinutes_() {
+    return Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
+  }
+
+  function calendarCacheKey_(year, month, durationMinutes) {
+    return year + '-' + month + '-' + durationMinutes;
+  }
+
+  function isCalendarReady_() {
+    return Logic.isDurationAtLeastUiMinimum(currentCalendarDurationMinutes_()) && !!checkedCustomerType();
+  }
+
+  function handleCalendarPrereqChange_() {
+    if (!isCalendarReady_()) {
+      if (els.calendarBody) els.calendarBody.hidden = true;
+      if (els.calendarHint) els.calendarHint.hidden = false;
+      return;
+    }
+    if (els.calendarHint) els.calendarHint.hidden = true;
+    if (els.calendarBody) els.calendarBody.hidden = false;
+    if (!calendarMonth) calendarMonth = Logic.yearMonthFromDateValue(Logic.todayInJapan());
+    ensureCalendarMonthLoaded_();
+  }
+
+  function renderCalendarMonthLabel_() {
+    if (els.calendarMonthLabel && calendarMonth) {
+      els.calendarMonthLabel.textContent = Logic.monthLabel(calendarMonth.year, calendarMonth.month, locale);
+    }
+  }
+
+  function ensureCalendarMonthLoaded_() {
+    if (!calendarMonth) return;
+    var durationMinutes = currentCalendarDurationMinutes_();
+    if (!Logic.isDurationAtLeastUiMinimum(durationMinutes)) return;
+
+    renderCalendarMonthLabel_();
+
+    var key = calendarCacheKey_(calendarMonth.year, calendarMonth.month, durationMinutes);
+    var cached = calendarCache[key];
+    if (cached) {
+      renderCalendarGrid_(cached);
+      return;
+    }
+    fetchCalendarMonth_(calendarMonth.year, calendarMonth.month, durationMinutes, key);
+  }
+
+  function calendarMonthlyUrl_(year, month, durationMinutes) {
+    return API_BASE_URL +
+      (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') +
+      'action=monthly' +
+      '&year=' + encodeURIComponent(String(year)) +
+      '&month=' + encodeURIComponent(String(month)) +
+      '&durationMinutes=' + encodeURIComponent(String(durationMinutes)) +
+      '&brand=' + encodeURIComponent(brand);
+  }
+
+  /*
+   * 月間空き状況の取得に失敗した場合、空いているように見せない（fail-open禁止。
+   * Issue #318要件）。取得失敗時はグリッドを描画せずエラー表示のみとし、
+   * どの日も選択できない状態にする。
+   */
+  function fetchCalendarMonth_(year, month, durationMinutes, key) {
+    if (!API_BASE_URL) {
+      var notConfigured = { status: 'error', message: Logic.apiNotConfiguredMessage(locale) };
+      calendarCache[key] = notConfigured;
+      renderCalendarGrid_(notConfigured);
+      return;
+    }
+
+    var token = ++calendarFetchToken;
+    if (els.calendarLoading) els.calendarLoading.hidden = false;
+    if (els.calendarError) els.calendarError.hidden = true;
+    if (els.calendarGridBody) els.calendarGridBody.innerHTML = '';
+
+    fetch(calendarMonthlyUrl_(year, month, durationMinutes), { method: 'GET' })
+      .then(function (response) { return response.json(); })
+      .then(function (body) {
+        if (token !== calendarFetchToken) return;
+        if (els.calendarLoading) els.calendarLoading.hidden = true;
+        if (!body || body.success !== true) {
+          var code = body && body.error && body.error.code;
+          var errorEntry = { status: 'error', message: Logic.messageForErrorCode(code, locale) };
+          calendarCache[key] = errorEntry;
+          renderCalendarGrid_(errorEntry);
+          return;
+        }
+        var successEntry = { status: 'success', days: body.days || {} };
+        calendarCache[key] = successEntry;
+        renderCalendarGrid_(successEntry);
+      })
+      .catch(function () {
+        if (token !== calendarFetchToken) return;
+        if (els.calendarLoading) els.calendarLoading.hidden = true;
+        var networkErrorEntry = { status: 'error', message: Logic.networkErrorMessage(locale) };
+        calendarCache[key] = networkErrorEntry;
+        renderCalendarGrid_(networkErrorEntry);
+      });
+  }
+
+  function renderCalendarGrid_(entry) {
+    if (!calendarMonth || !els.calendarGridBody) return;
+
+    if (!entry || entry.status !== 'success') {
+      els.calendarGridBody.innerHTML = '';
+      if (els.calendarError) {
+        els.calendarErrorMessage.textContent = (entry && entry.message) || Logic.networkErrorMessage(locale);
+        els.calendarError.hidden = false;
+      }
+      return;
+    }
+    if (els.calendarError) els.calendarError.hidden = true;
+
+    var weeks = Logic.buildMonthMatrix(calendarMonth.year, calendarMonth.month);
+    var todayValue = Logic.todayInJapan();
+    var customerType = checkedCustomerType();
+    var selectedDate = els.date ? els.date.value : '';
+
+    els.calendarGridBody.innerHTML = '';
+    weeks.forEach(function (week) {
+      var row = document.createElement('tr');
+      week.forEach(function (cell) {
+        var td = document.createElement('td');
+        if (!cell) {
+          row.appendChild(td);
+          return;
+        }
+        var dayInfo = entry.days[cell.dateValue];
+        var status = dayInfo ? dayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
+        var selectable = Logic.isCalendarDaySelectable(cell.dateValue, status, customerType, todayValue);
+
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'ba-cal-day';
+        button.textContent = cell.day + Logic.dayStatusSymbol(status);
+        button.setAttribute('data-date', cell.dateValue);
+        button.setAttribute('aria-label', Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale));
+        button.disabled = !selectable;
+        button.setAttribute('aria-pressed', cell.dateValue === selectedDate ? 'true' : 'false');
+        if (selectable) {
+          button.addEventListener('click', function () {
+            els.date.value = cell.dateValue;
+            setFieldError_(els.date, els.dateError, '');
+            hideGlobalError();
+            if (els.calendarSelected) {
+              els.calendarSelected.textContent = Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale);
+            }
+            renderCalendarGrid_(entry);
+          });
+        }
+        td.appendChild(button);
+        row.appendChild(td);
+      });
+      els.calendarGridBody.appendChild(row);
+    });
+  }
+
+  if (els.duration) {
+    els.duration.addEventListener('input', handleCalendarPrereqChange_);
+    els.duration.addEventListener('change', handleCalendarPrereqChange_);
+  }
+  root.querySelectorAll('input[name="customerType"]').forEach(function (radio) {
+    radio.addEventListener('change', handleCalendarPrereqChange_);
+  });
+  if (els.calendarPrev) {
+    els.calendarPrev.addEventListener('click', function () {
+      if (!calendarMonth) return;
+      calendarMonth = Logic.shiftMonth(calendarMonth.year, calendarMonth.month, -1);
+      ensureCalendarMonthLoaded_();
+    });
+  }
+  if (els.calendarNext) {
+    els.calendarNext.addEventListener('click', function () {
+      if (!calendarMonth) return;
+      calendarMonth = Logic.shiftMonth(calendarMonth.year, calendarMonth.month, 1);
+      ensureCalendarMonthLoaded_();
+    });
+  }
+  if (els.calendarRetry) {
+    els.calendarRetry.addEventListener('click', function () {
+      if (!calendarMonth) return;
+      var durationMinutes = currentCalendarDurationMinutes_();
+      delete calendarCache[calendarCacheKey_(calendarMonth.year, calendarMonth.month, durationMinutes)];
+      ensureCalendarMonthLoaded_();
+    });
   }
 
   if (els.step1Next) {
