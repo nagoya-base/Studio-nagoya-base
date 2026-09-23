@@ -311,11 +311,22 @@
       ['hasMailError', 'メールエラー']
     ];
 
-    /* hasMailErrorのみ真偽値、それ以外はサーバー側で整形済みの文字列（空文字列＝未設定）。
+    /* customerTypeの内部値（Booking.gsのCUSTOMER_TYPES）を表示用の日本語ラベルへ
+       変換するだけの関数。内部値・Spreadsheet保存値・APIレスポンスは変更しない
+       （表示直前にのみ変換する）。未知の値が来ても例外にせず元値をそのまま返す。 */
+    function customerTypeLabel(value) {
+      if (value === 'first_time') return '初回利用';
+      if (value === 'returning') return '利用経験あり';
+      return value || '';
+    }
+
+    /* hasMailErrorのみ真偽値、customerTypeのみ表示用ラベルへ変換、それ以外は
+       サーバー側で整形済みの文字列（空文字列＝未設定）。
        lastMailError*の詳細（内容・種別・日時）はWeb UIへは出さない（障害調査は
        Spreadsheetを直接確認する運用のまま。BookingAdminWeb.gs参照）。 */
     function formatValue(key, value) {
       if (key === 'hasMailError') return value ? 'あり' : 'なし';
+      if (key === 'customerType') return customerTypeLabel(value) || '（未設定）';
       if (value === null || value === undefined || value === '') return '（未設定）';
       return String(value);
     }
@@ -396,7 +407,7 @@
             '<div class="card-datetime">' + escapeHtml(b.date) + ' ' + escapeHtml(b.startAt) + '-' + escapeHtml(b.endAt) + '</div>' +
             '<div class="card-brand">' + escapeHtml(b.brand) + '</div>' +
             '<div class="card-name">' + escapeHtml(b.name) + '</div>' +
-            '<div class="card-meta">' + escapeHtml(b.people) + ' / ' + escapeHtml(b.customerType) + '</div>' +
+            '<div class="card-meta">' + escapeHtml(b.people) + ' / ' + escapeHtml(customerTypeLabel(b.customerType)) + '</div>' +
             '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>' +
             '<div class="card-actions">' + actions + '</div>' +
           '</div>'
