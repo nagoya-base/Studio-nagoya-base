@@ -260,10 +260,32 @@
    */
   var calendarMonth = null; /* { year, month } | null（duration/customerType未確定の間はnull） */
   var calendarCache = {}; /* key: 'year-month-durationMinutes' -> { status: 'success'|'error', days, message } */
-  var calendarFetchToken = 0; /* 古い月・古いdurationの応答が後から返って上書きしないためのトークン */
   var calendarInFlight = {}; /* key -> true。同一キーへの重複fetchを防ぐ（PRレビュー対応。
     duration入力への'input'/'change'双方のリスナーが短時間に連続発火しても、最初の
     リクエストが解決するまでは同じキーの2回目のfetchを起こさない）。 */
+
+  /*
+   * 応答を描画してよいのは、その応答が対象とするyear/month/durationMinutesが
+   * 「今まさに表示すべき月・duration」と一致する場合だけにする（2回目のPRレビュー
+   * 対応）。以前はグローバルな連番トークンで「一番最後に発行したfetchの応答だけ」を
+   * 採用していたが、これだと月A→月B→月Aと素早く往復した際、月Aの古い応答は
+   * トークン不一致で捨てられる一方、月Bの（月Aへ戻った後に届く）応答がトークン一致の
+   * まま月Aのグリッドへ誤って描画されてしまう競合があった（キー別in-flight管理と
+   * グローバルトークンの単一採用ルールが噛み合っていなかったため）。
+   * 「今のcalendarMonth/durationと一致するかどうか」で判定すれば、応答の到着順に
+   * 関わらず、常に現在表示すべき月のデータだけが描画される。キャッシュへの保存自体は
+   * 表示中かどうかに関わらず常に行うため、月を往復しても無駄な再取得は起きない。
+   */
+  function isCalendarKeyCurrent_(year, month, durationMinutes) {
+    return !!calendarMonth && calendarMonth.year === year && calendarMonth.month === month &&
+      durationMinutes === currentCalendarDurationMinutes_();
+  }
+
+  function showCalendarLoadingState_() {
+    if (els.calendarLoading) els.calendarLoading.hidden = false;
+    if (els.calendarError) els.calendarError.hidden = true;
+    if (els.calendarGridBody) els.calendarGridBody.innerHTML = '';
+  }
 
   function currentCalendarDurationMinutes_() {
     return Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
@@ -308,7 +330,13 @@
       renderCalendarGrid_(cached);
       return;
     }
-    if (calendarInFlight[key]) return;
+    if (calendarInFlight[key]) {
+      /* 同じキーへのfetchが既に進行中（例: 月A→月B→月Aと戻ってきた場合の月A）。
+         ここで新たにfetchはしないが、表示だけは「読み込み中」へ揃える。応答が
+         届いたときにisCalendarKeyCurrent_で現在表示中と判定されれば描画される。 */
+      showCalendarLoadingState_();
+      return;
+    }
     fetchCalendarMonth_(calendarMonth.year, calendarMonth.month, durationMinutes, key);
   }
 
@@ -331,41 +359,43 @@
     if (!API_BASE_URL) {
       var notConfigured = { status: 'error', message: Logic.apiNotConfiguredMessage(locale) };
       calendarCache[key] = notConfigured;
-      renderCalendarGrid_(notConfigured);
+      renderCalendarGridIfCurrent_(year, month, durationMinutes, notConfigured);
       return;
     }
 
-    var token = ++calendarFetchToken;
     calendarInFlight[key] = true;
-    if (els.calendarLoading) els.calendarLoading.hidden = false;
-    if (els.calendarError) els.calendarError.hidden = true;
-    if (els.calendarGridBody) els.calendarGridBody.innerHTML = '';
+    showCalendarLoadingState_();
 
     fetch(calendarMonthlyUrl_(year, month, durationMinutes), { method: 'GET' })
       .then(function (response) { return response.json(); })
       .then(function (body) {
         delete calendarInFlight[key];
-        if (token !== calendarFetchToken) return;
-        if (els.calendarLoading) els.calendarLoading.hidden = true;
+        var entry;
         if (!body || body.success !== true) {
           var code = body && body.error && body.error.code;
-          var errorEntry = { status: 'error', message: Logic.messageForErrorCode(code, locale) };
-          calendarCache[key] = errorEntry;
-          renderCalendarGrid_(errorEntry);
-          return;
+          entry = { status: 'error', message: Logic.messageForErrorCode(code, locale) };
+        } else {
+          entry = { status: 'success', days: body.days || {} };
         }
-        var successEntry = { status: 'success', days: body.days || {} };
-        calendarCache[key] = successEntry;
-        renderCalendarGrid_(successEntry);
+        /* 表示中かどうかに関わらずキャッシュへは常に保存する（月を往復した際、
+           後からこのキーへ戻ってきたときに再取得せず使えるようにするため）。 */
+        calendarCache[key] = entry;
+        renderCalendarGridIfCurrent_(year, month, durationMinutes, entry);
       })
       .catch(function () {
         delete calendarInFlight[key];
-        if (token !== calendarFetchToken) return;
-        if (els.calendarLoading) els.calendarLoading.hidden = true;
         var networkErrorEntry = { status: 'error', message: Logic.networkErrorMessage(locale) };
         calendarCache[key] = networkErrorEntry;
-        renderCalendarGrid_(networkErrorEntry);
+        renderCalendarGridIfCurrent_(year, month, durationMinutes, networkErrorEntry);
       });
+  }
+
+  /* この応答が今まさに表示すべき月・durationのものである場合だけ描画する
+     （2回目のPRレビュー対応。詳細はisCalendarKeyCurrent_のコメント参照）。 */
+  function renderCalendarGridIfCurrent_(year, month, durationMinutes, entry) {
+    if (!isCalendarKeyCurrent_(year, month, durationMinutes)) return;
+    if (els.calendarLoading) els.calendarLoading.hidden = true;
+    renderCalendarGrid_(entry);
   }
 
   function renderCalendarGrid_(entry) {

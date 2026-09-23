@@ -105,6 +105,11 @@ function setup(options) {
     return { success: true, month: year + '-' + pad2(month), days: buildDaysForMonth(year, month, 'AVAILABLE') };
   };
 
+  /* opts.deferMonthly: trueの場合、action=monthlyのfetchは即resolveせず、
+     resolvePendingMonthly()で明示的に応答するまで保留する（月をまたいだ
+     競合・応答順の入れ替えを再現するテスト用）。 */
+  var pendingMonthly = [];
+
   function fetchStub(url, fetchOptions) {
     fetchCalls.push({ url: url, options: fetchOptions });
     if (url.indexOf('action=monthly') !== -1) {
@@ -113,6 +118,16 @@ function setup(options) {
         var parts = pair.split('=');
         params[decodeURIComponent(parts[0])] = decodeURIComponent(parts[1] || '');
       });
+      if (opts.deferMonthly) {
+        return new Promise(function (resolve) {
+          pendingMonthly.push({
+            year: parseInt(params.year, 10),
+            month: parseInt(params.month, 10),
+            durationMinutes: params.durationMinutes,
+            resolve: resolve
+          });
+        });
+      }
       var body = monthlyResponder(parseInt(params.year, 10), parseInt(params.month, 10), params);
       return Promise.resolve({ json: function () { return Promise.resolve(body); } });
     }
@@ -138,6 +153,18 @@ function setup(options) {
       elements['ba-duration'] = elements['ba-duration'] || createElement('ba-duration');
       elements['ba-duration'].value = String(hours);
       elements['ba-duration']._listeners.input();
+    },
+    pendingMonthlyCount: function () { return pendingMonthly.length; },
+    resolvePendingMonthly: function (year, month, durationMinutes, body) {
+      var index = pendingMonthly.findIndex(function (p) {
+        return p.year === year && p.month === month && p.durationMinutes === String(durationMinutes);
+      });
+      if (index === -1) {
+        throw new Error('保留中のmonthlyリクエストが見つかりません: ' + year + '-' + month + '-' + durationMinutes);
+      }
+      var pending = pendingMonthly[index];
+      pendingMonthly.splice(index, 1);
+      pending.resolve({ json: function () { return Promise.resolve(body); } });
     }
   };
 }
@@ -400,4 +427,64 @@ test('duration変更時に短時間でinput/changeが連続発火しても、同
 
   await flushPromises();
   assert.strictEqual(ctx.fetchCalls.length, 2, 'fetch解決後も重複していないこと');
+});
+
+/* ── 2回目のPRレビュー対応: 月A→月B→月Aと素早く往復した場合、後から届いた
+   月Bの応答で月Aのグリッドを上書きしてはいけない。以前はグローバルな連番トークンで
+   「最後に発行したfetchの応答だけ」を採用していたため、月Aの古い応答（正しいデータ）が
+   トークン不一致で捨てられる一方、月Bの応答がトークン一致のまま月Aのグリッドへ
+   誤って描画されてしまっていた。応答は「今表示すべき月・duration」と一致する場合
+   だけ描画するよう修正した。 ── */
+test('月A→月B→月Aと素早く往復し、応答順が入れ替わっても、現在表示中の月に別月のデータを描画せず、最終的に月Aの正しいデータが表示される', async function () {
+  var ctx = setup({ deferMonthly: true });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+
+  var today = ctx.Logic.todayInJapan();
+  var monthA = ctx.Logic.yearMonthFromDateValue(today);
+  var monthB = ctx.Logic.shiftMonth(monthA.year, monthA.month, 1);
+
+  /* 月A（当月）のfetchが未解決のまま翌月（月B）へ移動 → 月Bのfetchも開始される */
+  ctx.elements['ba-calendar-next']._listeners.click();
+  /* 月Bのfetchも未解決のまま、直ちに前月（月A）へ戻る */
+  ctx.elements['ba-calendar-prev']._listeners.click();
+
+  assert.strictEqual(ctx.fetchCalls.length, 2, '月A・月Bでそれぞれ1回ずつfetchが開始されている（月Aへ戻った時点では新規fetchしない）');
+  assert.strictEqual(ctx.pendingMonthlyCount(), 2);
+  assert.strictEqual(
+    ctx.elements['ba-calendar-month-label'].textContent,
+    ctx.Logic.monthLabel(monthA.year, monthA.month, null),
+    '表示は月Aへ戻っているべき'
+  );
+
+  /* 応答順を入れ替える: 先に月B（表示していない方）の応答を返す */
+  ctx.resolvePendingMonthly(monthB.year, monthB.month, 120, {
+    success: true,
+    month: monthB.year + '-' + pad2(monthB.month),
+    days: buildDaysForMonth(monthB.year, monthB.month, 'AVAILABLE_HIGH')
+  });
+  await flushPromises();
+
+  assert.strictEqual(
+    ctx.elements['ba-calendar-grid-body'].children.length,
+    0,
+    '現在表示中は月Aのため、先に届いた月Bの応答でグリッドを描画してはいけない'
+  );
+
+  /* 続いて月A（現在表示中）の応答を返す */
+  ctx.resolvePendingMonthly(monthA.year, monthA.month, 120, {
+    success: true,
+    month: monthA.year + '-' + pad2(monthA.month),
+    days: buildDaysForMonth(monthA.year, monthA.month, 'AVAILABLE_HIGH')
+  });
+  await flushPromises();
+
+  var todayButton = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  assert.ok(todayButton, '最終的に月Aの正しいデータが描画され、当日のセルが見つかるべき');
+  assert.strictEqual(todayButton.disabled, false);
+  assert.strictEqual(
+    ctx.elements['ba-calendar-month-label'].textContent,
+    ctx.Logic.monthLabel(monthA.year, monthA.month, null)
+  );
 });
