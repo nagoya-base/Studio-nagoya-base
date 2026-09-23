@@ -12,6 +12,20 @@ var vm = require('vm');
 
 var BOOKING_DIR = path.join(__dirname, '..', '..', 'gas', 'booking');
 
+/* gas/booking/ 配下は shared/（Booking Web App・Booking Admin共通）・public/
+   （Booking Web App固有）・admin/（Booking Admin固有）へ役割ごとに分かれている
+   （GASプロジェクト自体はファイルをフラットに配置するため、テストからは
+   ファイル名だけで参照し、どのサブディレクトリにあるかはここで解決する）。 */
+var BOOKING_SUBDIRS = ['shared', 'public', 'admin'];
+
+function resolveBookingFilePath(file) {
+  for (var i = 0; i < BOOKING_SUBDIRS.length; i++) {
+    var candidate = path.join(BOOKING_DIR, BOOKING_SUBDIRS[i], file);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error('gas/booking/{shared,public,admin}のいずれにも見つからないファイル: ' + file);
+}
+
 /*
  * files: 読み込む.gsファイル名の配列（この順にvm実行される。依存順に並べること）
  * globals: サンドボックスへ事前に注入するグローバル（CalendarApp等のスタブ）
@@ -23,7 +37,7 @@ function loadBookingSandbox(files, globals) {
   });
   vm.createContext(sandbox);
   files.forEach(function (file) {
-    var filePath = path.join(BOOKING_DIR, file);
+    var filePath = resolveBookingFilePath(file);
     vm.runInContext(fs.readFileSync(filePath, 'utf8'), sandbox, { filename: filePath });
   });
   return sandbox;

@@ -1,7 +1,7 @@
 /*
  * scripts/booking-logic.js — 共通予約UI（Issue #269）のDOM非依存な純粋ロジック。
  *
- * gas/booking/Booking.gs 等と同じ方針で、CalendarApp相当のブラウザAPI（DOM操作・fetch）
+ * gas/booking/shared/Booking.gs 等と同じ方針で、CalendarApp相当のブラウザAPI（DOM操作・fetch）
  * に一切依存しない部分だけをここに切り出し、node --test でそのままテストできるようにする
  * （scripts/booking-app.js がDOM配線・fetch呼び出しを担当し、ここの関数を呼ぶだけにする）。
  *
@@ -12,7 +12,7 @@
 (function (global) {
   'use strict';
 
-  /* ブランド表示専用のメタ情報。brand識別子はgas/booking/Booking.gsのALLOWED_BOOKING_BRANDS
+  /* ブランド表示専用のメタ情報。brand識別子はgas/booking/shared/Booking.gsのALLOWED_BOOKING_BRANDS
      と一致させること（snb / mens / studio_x）。空き判定・予約可否の権限はここにはない。 */
   var BRAND_META = {
     snb: { brand: 'snb', displayName: 'Studio Nagoya Base', source: 'snb-booking-app' },
@@ -37,7 +37,7 @@
   /*
    * 利用区分（Issue #270）。「会員かどうか」ではなく、SNB / SNB mens / Studio Xという
    * 同一施設を過去に利用した経験があるかどうかで当日予約可否を判定する。
-   * 内部値はgas/booking/Booking.gsのCUSTOMER_TYPESと一致させること（first_time/returning）。
+   * 内部値はgas/booking/shared/Booking.gsのCUSTOMER_TYPESと一致させること（first_time/returning）。
    * 表示文言と内部値を混同しない（表示はCUSTOMER_TYPE_LABELS経由のみ）。
    */
   var CUSTOMER_TYPES = { FIRST_TIME: 'first_time', RETURNING: 'returning' };
@@ -213,7 +213,7 @@
 
   /* 新予約UIのStep 1で1時間入力を止めるためのUX guard（Issue #301）。
      120はUIが把握している最低受付時間の目安に過ぎず、予約可否の正はGAS側
-     （gas/booking/Config.gs の MIN_BOOKING_MINUTES）。ここでの値をサーバー側の
+     （gas/booking/shared/Config.gs の MIN_BOOKING_MINUTES）。ここでの値をサーバー側の
      設定値の複製・代替として扱わないこと。 */
   var UI_MIN_BOOKING_MINUTES = 120;
 
@@ -390,7 +390,7 @@
 
   function isDateLike_(value) {
     /* instanceof Dateではなくダックタイピングで判定する（別realm・vmサンドボックスを
-       またぐテストでinstanceof Dateが偽陰性になるため。gas/booking/BookingRepository.gsの
+       またぐテストでinstanceof Dateが偽陰性になるため。gas/booking/shared/BookingRepository.gsの
        isDateLike_と同じ方針）。 */
     return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
   }
@@ -400,7 +400,7 @@
    * isSameDayFirstTimeBlockedへ渡す「当日かどうか」の判定基準の両方に使う（Issue #270）。
    * ブラウザのローカルtimezoneには依存せず、常にAsia/Tokyo基準で計算する。
    * ここでの判定はあくまでUI側の一次チェック（UX目的）であり、最終的な当日予約可否の正は
-   * createBookingのサーバー側検証（gas/booking/Booking.gsのformatDateInTimezoneも同じ方針で
+   * createBookingのサーバー側検証（gas/booking/shared/Booking.gsのformatDateInTimezoneも同じ方針で
    * availabilityConfig.timezone基準の暦日を計算する）。
    */
   function todayInJapan(now) {

@@ -61,6 +61,33 @@ PENDING→EXPIREDが同時に進んでCalendar/Sheetsが不整合になる競合
 加えたため、この3関数の間では常に1つの状態遷移だけが成立する（詳細は
 「Issue #272: 管理者キャンセルでCalendar / Sheetsを一貫更新する」参照）。
 
+## ディレクトリ構成
+
+このリポジトリ内で、`gas/booking/`配下は配布先のGASプロジェクトごとに
+サブディレクトリへ分けて管理している。
+
+```text
+gas/booking/
+  shared/   Booking Web App・Booking Adminの両方が使う共通コード
+  public/   Booking Web App（利用者向け・スタンドアロン）固有のコード
+  admin/    Booking Admin（コンテナバインド）固有のコード
+  README.md
+```
+
+| プロジェクト | 配布元 | 配置先 |
+| --- | --- | --- |
+| **Booking Web App** | `public/` + `shared/`の指定ファイル | 同一のGASプロジェクトへまとめて配置 |
+| **Booking Admin** | `admin/` + `shared/`の指定ファイル | 同一のGASプロジェクトへまとめて配置 |
+
+**注意: Apps Scriptエディタ内にはGitHubのフォルダ構造は再現されない。**
+`clasp`等のデプロイ自動化は本リポジトリに未導入で、現状はいずれも手動コピーで
+デプロイしており、各GASプロジェクト内ではファイル名の重複さえなければ
+`shared/`・`public/`・`admin/`という区別に関わらずファイルがフラットに
+（サブフォルダなしで）並ぶ。このリポジトリ側のディレクトリ分けは、あくまで
+「どのファイルをどちらのGASプロジェクトへコピーするか」を管理しやすくするための
+ソース管理上の整理であり、GAS側の実行結果・ファイル名・関数名には一切影響しない
+（具体的な配布ファイル一覧は次節「GASプロジェクトへのデプロイ対象ファイル」参照）。
+
 ## このIssue（#268）で実装した範囲
 
 - `createBooking`（Studio Xのみ。POST専用API）
@@ -1246,27 +1273,32 @@ confirm/cancel/Calendar/Mail/trigger/Script Propertiesはこの変更で一切�
 **Booking Admin**（`SPREADSHEET_ID`のSpreadsheetへコンテナバインド）という
 2つの独立したApps Scriptプロジェクトへ配布する。
 
-| ファイル | Booking Web App（スタンドアロン） | Booking Admin（コンテナバインド） |
-| --- | :---: | :---: |
-| `Code.gs` | ✓ | – |
-| `Availability.gs` | ✓ | ✓ |
-| `Config.gs` | ✓ | ✓ |
-| `CalendarRepository.gs` | ✓ | ✓ |
-| `Booking.gs` | ✓ | ✓ |
-| `RateLimiter.gs` | ✓ | – |
-| `SpreadsheetRepository.gs` | ✓ | ✓ |
-| `RecoveryRepository.gs` | ✓ | ✓ |
-| `BookingRepository.gs` | ✓ | ✓ |
-| `AdminNotifier.gs` | ✓ | – |
-| `BookingMailTemplates.gs`（Issue #271） | ✓ | ✓ |
-| `BookingMailer.gs`（Issue #271） | ✓ | ✓ |
-| `BookingTriggers.gs` | – | ✓ |
-| `BookingAdmin.gs` | – | ✓ |
-| `BookingAdminWeb.gs`（Issue #305） | – | ✓ |
-| `BookingReminderTriggers.gs`（Issue #271） | – | ✓ |
-| `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい。ただしWeb App自体のデプロイ設定は必要。後述） |
+| ファイル | Booking Web App（スタンドアロン） | Booking Admin（コンテナバインド） | このリポジトリでの配置 |
+| --- | :---: | :---: | --- |
+| `Code.gs` | ✓ | – | `gas/booking/public/Code.gs` |
+| `Availability.gs` | ✓ | ✓ | `gas/booking/shared/Availability.gs` |
+| `Config.gs` | ✓ | ✓ | `gas/booking/shared/Config.gs` |
+| `CalendarRepository.gs` | ✓ | ✓ | `gas/booking/shared/CalendarRepository.gs` |
+| `Booking.gs` | ✓ | ✓ | `gas/booking/shared/Booking.gs` |
+| `RateLimiter.gs` | ✓ | – | `gas/booking/public/RateLimiter.gs` |
+| `SpreadsheetRepository.gs` | ✓ | ✓ | `gas/booking/shared/SpreadsheetRepository.gs` |
+| `RecoveryRepository.gs` | ✓ | ✓ | `gas/booking/shared/RecoveryRepository.gs` |
+| `BookingRepository.gs` | ✓ | ✓ | `gas/booking/shared/BookingRepository.gs` |
+| `AdminNotifier.gs` | ✓ | – | `gas/booking/public/AdminNotifier.gs` |
+| `BookingMailTemplates.gs`（Issue #271） | ✓ | ✓ | `gas/booking/shared/BookingMailTemplates.gs` |
+| `BookingMailer.gs`（Issue #271） | ✓ | ✓ | `gas/booking/shared/BookingMailer.gs` |
+| `BookingTriggers.gs` | – | ✓ | `gas/booking/admin/BookingTriggers.gs` |
+| `BookingAdmin.gs` | – | ✓ | `gas/booking/admin/BookingAdmin.gs` |
+| `BookingAdminWeb.gs`（Issue #305） | – | ✓ | `gas/booking/admin/BookingAdminWeb.gs` |
+| `BookingReminderTriggers.gs`（Issue #271） | – | ✓ | `gas/booking/admin/BookingReminderTriggers.gs` |
+| `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい。ただしWeb App自体のデプロイ設定は必要。後述） | `gas/booking/public/appsscript.json` |
 
-**`BookingAdminPage.html`（Issue #305）は`.gs`ファイルではないため、上表には含めない。**
+**このリポジトリでの配置（`shared/`/`public/`/`admin/`）は、あくまでソース管理上の
+整理であり、各GASプロジェクトへコピーする際はファイルをフラットに配置する
+（「ディレクトリ構成」節参照）。**
+
+**`BookingAdminPage.html`（Issue #305。`gas/booking/admin/BookingAdminPage.html`）は
+`.gs`ファイルではないため、上表には含めない。**
 Booking AdminプロジェクトのスクリプトエディタからHTMLファイルとして`BookingAdminPage.html`を
 追加し、内容をそのままコピーする（`test/booking-deployment-manifest-sync.test.js`は
 README.mdの上表を機械的にパースして`test/helpers/booking-deployment-manifest.js`の
@@ -1673,7 +1705,8 @@ Issue #270時点で`customerType`に指定できるのは`first_time` / `returni
 2. メニュー「拡張機能」→「Apps Script」を選択する（このSpreadsheetにコンテナバインドした
    新規プロジェクトが作成される）。
 3. 「GASプロジェクトへのデプロイ対象ファイル」の表にある**Booking Admin列が✓の
-   ファイルすべて**（`Availability.gs`を含む）をコピーする。個別のファイル名は
+   ファイルすべて**（`Availability.gs`を含む。実体は`gas/booking/admin/`と
+   `gas/booking/shared/`の指定ファイル）をコピーする。個別のファイル名は
    上表を参照し、ここには重複して書き出さない（この手順側のリストだけを更新して
    上表の更新を忘れる、という依存ファイル追加漏れを防ぐため）。上表と
    `test/helpers/booking-deployment-manifest.js`の`BOOKING_ADMIN_FILES`/
@@ -1812,7 +1845,7 @@ Sheets側はEXPIREDへ進める（PENDINGのまま放置しない）。
 2. Booking Adminプロジェクトのスクリプトエディタで、ファイル追加 → HTML を選択し、
    ファイル名には `BookingAdminPage`（`.html`は入力しない）と入力する。Apps Script側で
    `BookingAdminPage.html`として作成される。このリポジトリの
-   `gas/booking/BookingAdminPage.html`の内容をそのままコピーする。
+   `gas/booking/admin/BookingAdminPage.html`の内容をそのままコピーする。
 3. 「デプロイ」→「新しいデプロイ」→種類「ウェブアプリ」を選択する。
 4. デプロイ設定を以下のとおりにする（管理者本人のみアクセス可能にするため）。
    - **実行ユーザー（Execute as）**: Me（自分）
@@ -1876,7 +1909,8 @@ Booking Adminプロジェクト（コンテナバインド）はWeb Appとして
 
 1. **Booking Web App**: 新規のスタンドアロンGoogle Apps Scriptプロジェクトを作成し、
    「GASプロジェクトへのデプロイ対象ファイル」表の**Booking Web App列が✓のファイル
-   すべて**（`appsscript.json`を含む）をコピーする。個別のファイル名は上表を参照する。
+   すべて**（`appsscript.json`を含む。実体は`gas/booking/public/`と`gas/booking/shared/`の
+   指定ファイル）をコピーする。個別のファイル名は上表を参照する。
 2. Script Propertiesを設定する（最低限 `CALENDAR_ID` / `SPREADSHEET_ID`。
    利用者向けPENDINGメールを送る場合は`BOOKING_MAIL_DISPLAY_NAME` /
    `BOOKING_MAIL_REPLY_TO` / `BOOKING_CONTACT_EMAIL`もここに設定する（Issue #271）。

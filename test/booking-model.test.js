@@ -1,5 +1,5 @@
 /*
- * gas/booking/Booking.gs（予約状態・入力検証・bookingId・TTL算出の純粋ロジック）のテスト。
+ * gas/booking/shared/Booking.gs（予約状態・入力検証・bookingId・TTL算出の純粋ロジック）のテスト。
  * Availability.gs（BookingAvailability）に依存するため、両方をvmへ読み込む。
  */
 'use strict';

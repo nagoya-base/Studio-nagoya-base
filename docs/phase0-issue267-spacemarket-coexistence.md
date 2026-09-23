@@ -28,9 +28,9 @@ Issue #267 は「スペースマーケットと自社予約システムが、同
 
 - `CalendarRepository.gs` の `getBusyIntervalsForDate` は `event.getTitle()` を一切呼ばず、
   `getStartTime()` / `getEndTime()` / `isAllDayEvent()` のみを読む
-  （`gas/booking/CalendarRepository.gs:36-47`）。
+  （`gas/booking/shared/CalendarRepository.gs:36-47`）。
 - `Availability.gs` の `computeBookableStartTimes` もタイトル文字列を一切参照せず、
-  占有区間（分単位の開始・終了）だけで判定する（`gas/booking/Availability.gs:104-125`）。
+  占有区間（分単位の開始・終了）だけで判定する（`gas/booking/shared/Availability.gs:104-125`）。
 - したがって `[SM]` / `[BLOCK]` / `[WEB]` 等の接頭辞の有無・規約準拠に関わらず、
   Calendar上で時間を占有する予定はすべて占有枠として扱われる。
   → Issue #267「イベントタイトル」節の要件を満たす。
@@ -47,7 +47,7 @@ Issue #267 は「スペースマーケットと自社予約システムが、同
 ### 1-3. APIレスポンスにPII・イベント詳細を含めない
 
 - `Availability.gs` の `getAvailability` は `success` / `date` / `durationMinutes` /
-  `brand` / `bookableStartTimes` / `error` のみを返す（`gas/booking/Availability.gs:147-153`）。
+  `brand` / `bookableStartTimes` / `error` のみを返す（`gas/booking/shared/Availability.gs:147-153`）。
 - `CalendarRepository.gs` はイベントの `startMinutes` / `endMinutes` / `isAllDay`
   以外を一切取り出さない（タイトル・説明・参加者・主催者には触れない）。
 - `test/booking-code-runtime.test.js` で `doGet` 配線全体のレスポンス形式を検証済み。

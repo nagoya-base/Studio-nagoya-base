@@ -1,5 +1,5 @@
 /*
- * gas/booking/Config.gs のテスト。PropertiesServiceはスタブする。
+ * gas/booking/shared/Config.gs のテスト。PropertiesServiceはスタブする。
  */
 'use strict';
 
