@@ -488,3 +488,42 @@ test('月A→月B→月Aと素早く往復し、応答順が入れ替わって�
     ctx.Logic.monthLabel(monthA.year, monthA.month, null)
   );
 });
+
+/* ── 3回目のPRレビュー対応（軽微なUI不整合）: 取得済みの月Aから未取得の月Bへ移動すると
+   ローディング表示になる。月Bの取得完了前に月Aへ戻った場合、月Aはキャッシュから
+   即描画されるが、月Bのために出したローディング表示を消し忘れると、カレンダーは
+   表示されているのに「読み込み中…」が残ったままになってしまう。 ── */
+test('取得済みの月へキャッシュヒットで戻った場合、別の月のために出していたローディング表示が残らない', async function () {
+  var ctx = setup({ deferMonthly: true });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+
+  var today = ctx.Logic.todayInJapan();
+  var monthA = ctx.Logic.yearMonthFromDateValue(today);
+  var monthB = ctx.Logic.shiftMonth(monthA.year, monthA.month, 1);
+
+  /* 月A（当月）を取得済みにしておく */
+  ctx.resolvePendingMonthly(monthA.year, monthA.month, 120, {
+    success: true,
+    month: monthA.year + '-' + pad2(monthA.month),
+    days: buildDaysForMonth(monthA.year, monthA.month, 'AVAILABLE_HIGH')
+  });
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-calendar-loading'].hidden, true, '月Aの取得完了後はローディングが消えているべき');
+
+  /* 未取得の月Bへ移動 → ローディング表示になる（月Bの応答はまだ返さない） */
+  ctx.elements['ba-calendar-next']._listeners.click();
+  assert.strictEqual(ctx.elements['ba-calendar-loading'].hidden, false, '未取得の月Bへ移動した直後はローディング表示になるべき');
+
+  /* 月Bの取得完了前に、取得済みの月Aへ戻る（キャッシュヒット） */
+  ctx.elements['ba-calendar-prev']._listeners.click();
+
+  assert.strictEqual(
+    ctx.elements['ba-calendar-loading'].hidden,
+    true,
+    'キャッシュヒットで即描画される月Aでは、月Bのために出していたローディング表示が残ってはいけない'
+  );
+  var todayButton = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  assert.ok(todayButton, '月Aのグリッドがキャッシュから描画されているべき');
+});

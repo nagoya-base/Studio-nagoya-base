@@ -327,6 +327,10 @@
     var key = calendarCacheKey_(calendarMonth.year, calendarMonth.month, durationMinutes);
     var cached = calendarCache[key];
     if (cached) {
+      /* 別の月（例: 月B）を読み込み中に月Aへ戻ってキャッシュがヒットした場合、
+         月Bのために出したローディング表示が残ったままにならないようにする
+         （PRレビュー対応）。 */
+      if (els.calendarLoading) els.calendarLoading.hidden = true;
       renderCalendarGrid_(cached);
       return;
     }
