@@ -45,41 +45,16 @@
   <!-- Step 1: 利用日・利用時間 -->
   <section class="ba-step" id="ba-step-datetime" data-step="datetime">
     <h2>Choose Date &amp; Duration</h2>
-    <p class="ba-step-desc">First choose a duration and customer type. An availability calendar will then appear.</p>
-
-    <div class="ba-field">
-      <label for="ba-duration">Duration (hours)<span class="ba-required">Required</span></label>
-      <input type="number" id="ba-duration" name="durationHours" inputmode="numeric" min="2" step="1" placeholder="e.g. 3">
-      <p class="ba-field-help">Minimum duration is 2 hours. Long sessions can be entered here too.</p>
-      <p class="ba-field-error" id="ba-duration-error" hidden></p>
-    </div>
-
-    <fieldset class="ba-fieldset">
-      <legend>Customer Type<span class="ba-required">Required</span></legend>
-      <div class="ba-choices" id="ba-customer-type-choices">
-        <label class="ba-choice"><input type="radio" name="customerType" value="first_time"> <span>First-time guest</span></label>
-        <label class="ba-choice"><input type="radio" name="customerType" value="returning"> <span>Returning guest (you have previously used SNB, SNB mens or Studio X)</span></label>
-      </div>
-      <p class="ba-field-help">Whichever brand you used before — SNB, SNB mens, or Studio X — please select "Returning guest." First-time guests cannot book for the same day. Returning guests may book for the same day.</p>
-      <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
-    </fieldset>
-
-    <!-- Preferred time of day (Issue #324). Defaults to "Any time" (all) checked.
-         This selection only filters the monthly calendar symbols and the Step2 start
-         time list; it does not change the single-day getAvailability/createBooking spec. -->
-    <fieldset class="ba-fieldset">
-      <legend>Preferred Time of Day</legend>
-      <div class="ba-choices" id="ba-time-band-choices">
-        <label class="ba-choice"><input type="radio" name="timeBand" value="all" checked> <span>Any time</span></label>
-        <label class="ba-choice"><input type="radio" name="timeBand" value="morning"> <span>Morning</span></label>
-        <label class="ba-choice"><input type="radio" name="timeBand" value="daytime"> <span>Afternoon</span></label>
-        <label class="ba-choice"><input type="radio" name="timeBand" value="evening"> <span>Evening</span></label>
-      </div>
-      <p class="ba-field-help">Choosing a time of day recalculates the monthly calendar using only start times within that range.</p>
-    </fieldset>
+    <p class="ba-step-desc">Start by checking availability below. The calendar initially shows results for a 2-hour stay, first-time guest, and any time of day — change any of these to refresh it.</p>
 
     <!-- Monthly availability calendar (Issue #318). #ba-date stays type="hidden";
-         clicking a calendar day writes its value. Step1 "Next" validation is unchanged. -->
+         clicking a calendar day writes its value. Step1 "Next" validation is unchanged.
+         Initial display improvement: Duration / Customer Type / Preferred Time of Day
+         below start out pre-filled (2 hours / first-time guest / any time), and the
+         calendar for the current month loads automatically right after the page loads
+         using those defaults (see handleCalendarPrereqChange_'s initial call in the JS).
+         This calendar block is placed first visually, but which days are selectable is
+         still decided by the Duration / Customer Type / Preferred Time of Day fields below. -->
     <div class="ba-field">
       <span class="ba-field-label-like" id="ba-calendar-label">Date<span class="ba-required">Required</span></span>
       <input type="hidden" id="ba-date" name="date" autocomplete="off">
@@ -130,6 +105,39 @@
       </div>
       <p class="ba-field-error" id="ba-date-error" hidden></p>
     </div>
+
+    <!-- Initial value: 2 hours. -->
+    <div class="ba-field">
+      <label for="ba-duration">Duration (hours)<span class="ba-required">Required</span></label>
+      <input type="number" id="ba-duration" name="durationHours" inputmode="numeric" min="2" step="1" placeholder="e.g. 3" value="2">
+      <p class="ba-field-help">Minimum duration is 2 hours. Long sessions can be entered here too.</p>
+      <p class="ba-field-error" id="ba-duration-error" hidden></p>
+    </div>
+
+    <!-- Initial value: First-time guest (checked). -->
+    <fieldset class="ba-fieldset">
+      <legend>Customer Type<span class="ba-required">Required</span></legend>
+      <div class="ba-choices" id="ba-customer-type-choices">
+        <label class="ba-choice"><input type="radio" name="customerType" value="first_time" checked> <span>First-time guest</span></label>
+        <label class="ba-choice"><input type="radio" name="customerType" value="returning"> <span>Returning guest (you have previously used SNB, SNB mens or Studio X)</span></label>
+      </div>
+      <p class="ba-field-help">Whichever brand you used before — SNB, SNB mens, or Studio X — please select "Returning guest." First-time guests cannot book for the same day. Returning guests may book for the same day.</p>
+      <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
+    </fieldset>
+
+    <!-- Preferred time of day (Issue #324). Defaults to "Any time" (all) checked.
+         This selection only filters the monthly calendar symbols and the Step2 start
+         time list; it does not change the single-day getAvailability/createBooking spec. -->
+    <fieldset class="ba-fieldset">
+      <legend>Preferred Time of Day</legend>
+      <div class="ba-choices" id="ba-time-band-choices">
+        <label class="ba-choice"><input type="radio" name="timeBand" value="all" checked> <span>Any time</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="morning"> <span>Morning</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="daytime"> <span>Afternoon</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="evening"> <span>Evening</span></label>
+      </div>
+      <p class="ba-field-help">Choosing a time of day recalculates the monthly calendar using only start times within that range.</p>
+    </fieldset>
 
     <div class="ba-actions">
       <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">Show Available Start Times</button>

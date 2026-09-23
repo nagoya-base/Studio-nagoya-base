@@ -99,6 +99,17 @@ function setup(options) {
   var startTimeGrid = createElement('ba-start-time-grid');
   elements['ba-start-time-grid'] = startTimeGrid;
 
+  /* opts.initialDurationHours: 予約フォーム初期表示改善のテスト用。実際のHTMLは
+     #ba-durationにvalue="2"を入れて配信するため、documentStub.getElementByIdが
+     script読み込み時（handleCalendarPrereqChange_の初期呼び出しより前）に返す
+     #ba-duration要素へ、あらかじめその値を持たせておく（createElement直後は
+     value: ''のため、指定が無ければ従来どおり未入力を再現する）。 */
+  if (opts.initialDurationHours) {
+    var durationEl = createElement('ba-duration');
+    durationEl.value = String(opts.initialDurationHours);
+    elements['ba-duration'] = durationEl;
+  }
+
   var documentStub = {
     getElementById: function (id) {
       if (!elements[id]) elements[id] = createElement(id);
@@ -659,4 +670,92 @@ test('取得済みの月へキャッシュヒットで戻った場合、別の�
   );
   var todayButton = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
   assert.ok(todayButton, '月Aのグリッドがキャッシュから描画されているべき');
+});
+
+/* ── 予約フォーム初期表示改善: 実際のHTML（_includes/booking_app_ja.html /
+   booking_app_en.html）は#ba-durationにvalue="2"、customerType="first_time"に
+   checked、timeBand="all"にcheckedを持たせて配信する。ユーザー操作なしで
+   ページ読み込み直後にその初期値のまま当月のgetMonthlyAvailabilityが自動で
+   呼ばれ、カレンダーが表示されることを検証する（GAS側・月間API・timeBand仕様は
+   変更していないため、setup()のopts.initialDurationHours/initialCustomerType/
+   initialTimeBandでHTML側の初期値を再現するだけでよい）。 ── */
+
+test('初期表示: ユーザー操作なしで、HTML初期値（2時間・初回利用・指定なし）のまま当月のカレンダーが自動取得・表示される', async function () {
+  var ctx = setup({ initialDurationHours: '2', initialCustomerType: 'first_time', initialTimeBand: 'all' });
+
+  /* setDuration/triggerCustomerTypeChangeなど、ユーザー操作を模す呼び出しは一切行わない。
+     handleCalendarPrereqChange_の初期呼び出しだけでfetchが起きることを確認する。 */
+  assert.strictEqual(ctx.fetchCalls.length, 1, 'ページ読み込み直後、ユーザー操作なしで当月のgetMonthlyAvailabilityが1回呼ばれるべき');
+  var url = ctx.fetchCalls[0].url;
+  assert.ok(url.indexOf('action=monthly') !== -1);
+  assert.ok(url.indexOf('durationMinutes=120') !== -1, '初期値の2時間（120分）で取得するべき');
+  assert.ok(url.indexOf('timeBand=all') !== -1, '初期値の指定なし（all）で取得するべき');
+
+  var today = ctx.Logic.todayInJapan();
+  var ym = ctx.Logic.yearMonthFromDateValue(today);
+  assert.ok(url.indexOf('year=' + ym.year) !== -1);
+  assert.ok(url.indexOf('month=' + ym.month) !== -1, '初期表示は現在月であるべき');
+
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-calendar-body'].hidden, false, '初期表示のままカレンダー本体が表示されているべき');
+  assert.strictEqual(ctx.elements['ba-calendar-hint'].hidden, true);
+  assert.ok(ctx.elements['ba-calendar-grid-body'].children.length > 0, '当月のグリッドが描画されているべき');
+});
+
+test('初期表示: 初回利用＋当日の既存ガードは、ユーザー操作なしの初期表示時にも維持される', async function () {
+  var ctx = setup({ initialDurationHours: '2', initialCustomerType: 'first_time', initialTimeBand: 'all' });
+  await flushPromises();
+
+  var today = ctx.Logic.todayInJapan();
+  var todayButton = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  assert.ok(todayButton, '当日のセルが初期表示の時点で描画されているべき');
+  assert.strictEqual(todayButton.disabled, true, '初期値が初回利用のため、当日は初期表示時点から選択不可であるべき');
+});
+
+test('初期表示後に利用時間を変更すると、既存仕様どおり表示中の月を新しいdurationで再取得する', async function () {
+  var ctx = setup({ initialDurationHours: '2', initialCustomerType: 'first_time', initialTimeBand: 'all' });
+  assert.strictEqual(ctx.fetchCalls.length, 1, '初期表示で1回取得済み');
+
+  ctx.setDuration('3');
+  await flushPromises();
+
+  assert.strictEqual(ctx.fetchCalls.length, 2, 'duration変更時は表示中の月を再取得する（既存仕様）');
+  assert.ok(ctx.fetchCalls[1].url.indexOf('durationMinutes=180') !== -1);
+});
+
+test('初期表示後に利用区分を変更すると、既存仕様どおり再取得なしで選択可否だけが切り替わる', async function () {
+  var ctx = setup({ initialDurationHours: '2', initialCustomerType: 'first_time', initialTimeBand: 'all' });
+  assert.strictEqual(ctx.fetchCalls.length, 1, '初期表示で1回取得済み');
+  await flushPromises();
+
+  /* 利用区分はcalendarCacheKey_に含まれないため、切り替えだけでは再取得しない
+     （既存仕様。「初回利用＋当日は…」テストで検証済みの挙動を初期表示後に確認する）。 */
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+
+  assert.strictEqual(ctx.fetchCalls.length, 1, '利用区分の切り替えだけでは再取得しない（既存仕様）');
+
+  var today = ctx.Logic.todayInJapan();
+  var todayButton = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  assert.strictEqual(todayButton.disabled, false, '利用経験ありへ変更後は当日も選択可能になるべき');
+});
+
+test('初期表示後に希望時間帯を変更すると、既存仕様どおり表示中の月を再取得する', async function () {
+  var ctx = setup({ initialDurationHours: '2', initialCustomerType: 'first_time', initialTimeBand: 'all' });
+  assert.strictEqual(ctx.fetchCalls.length, 1, '初期表示で1回取得済み（timeBand=all）');
+
+  ctx.setTimeBand('evening');
+  ctx.triggerTimeBandChange();
+  await flushPromises();
+
+  assert.strictEqual(ctx.fetchCalls.length, 2, '希望時間帯変更時は表示中の月を再取得する（既存仕様）');
+  assert.ok(ctx.fetchCalls[1].url.indexOf('timeBand=evening') !== -1);
+  assert.ok(ctx.fetchCalls[1].url.indexOf('durationMinutes=120') !== -1, 'durationMinutesは初期値のまま送られるべき');
+});
+
+test('初期表示: HTML側に初期値が無い場合（フォールバック）は従来どおり自動取得しない', async function () {
+  var ctx = setup({});
+  assert.strictEqual(ctx.fetchCalls.length, 0, '初期値が入っていない場合はページ読み込みだけではfetchしない（回帰なし）');
+  assert.strictEqual(ctx.elements['ba-calendar-body'].hidden, true);
 });
