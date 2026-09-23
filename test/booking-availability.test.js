@@ -1,5 +1,5 @@
 /*
- * gas/booking/Availability.gs（getAvailabilityの空き判定ロジック本体）のテスト。
+ * gas/booking/shared/Availability.gs（getAvailabilityの空き判定ロジック本体）のテスト。
  * Issue #266の受入条件・テスト観点を1:1でカバーする。
  */
 'use strict';

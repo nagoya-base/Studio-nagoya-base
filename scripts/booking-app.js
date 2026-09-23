@@ -6,14 +6,14 @@
  * data-brand属性・data-back-url属性・data-back-label属性のみ）。
  *
  * 空き判定・最低利用時間・15分刻み・競合判定などの業務ルールはここに実装しない。
- * getAvailability/createBooking（gas/booking/）の応答をそのまま画面へ反映するだけで、
+ * getAvailability/createBooking（gas/booking/shared/, gas/booking/public/）の応答をそのまま画面へ反映するだけで、
  * GAS側を正とする。
  *
  * createBookingへのPOSTはContent-Type: text/plain;charset=utf-8で送る。GAS Web Appは
  * application/jsonを付けるとブラウザがCORSプリフライト(OPTIONS)を送り、doOptionsを
  * 実装していないApps ScriptのWeb Appでは失敗するため、CORSセーフリストに含まれる
  * text/plainで送りつつ、本文自体は引き続きJSON文字列にする
- * （gas/booking/Code.gsのhandleCreateBooking_はcontentsを常にJSON.parseするため
+ * （gas/booking/public/Code.gsのhandleCreateBooking_はcontentsを常にJSON.parseするため
  *   Content-Typeの値そのものはGAS側の処理に影響しない）。
  */
 (function () {

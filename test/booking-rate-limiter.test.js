@@ -1,5 +1,5 @@
 /*
- * gas/booking/RateLimiter.gs のテスト。CacheServiceはメモリ上のスタブに差し替える。
+ * gas/booking/public/RateLimiter.gs のテスト。CacheServiceはメモリ上のスタブに差し替える。
  */
 'use strict';
 

@@ -1,5 +1,5 @@
 /*
- * gas/booking/SpreadsheetRepository.gs / RecoveryRepository.gs のテスト。
+ * gas/booking/shared/SpreadsheetRepository.gs / RecoveryRepository.gs のテスト。
  * SpreadsheetAppはメモリ上のシートスタブに差し替える。
  */
 'use strict';

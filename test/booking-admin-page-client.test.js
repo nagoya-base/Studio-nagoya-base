@@ -19,7 +19,7 @@ var fs = require('fs');
 var path = require('path');
 var vm = require('vm');
 
-var PAGE_PATH = path.join(__dirname, '..', 'gas', 'booking', 'BookingAdminPage.html');
+var PAGE_PATH = path.join(__dirname, '..', 'gas', 'booking', 'admin', 'BookingAdminPage.html');
 
 function createElementStub() {
   return {

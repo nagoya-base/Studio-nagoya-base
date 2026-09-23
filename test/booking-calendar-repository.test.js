@@ -1,5 +1,5 @@
 /*
- * gas/booking/CalendarRepository.gs のテスト。CalendarApp / Utilitiesはスタブする
+ * gas/booking/shared/CalendarRepository.gs のテスト。CalendarApp / Utilitiesはスタブする
  * （実際のGoogle Calendarにはアクセスしない）。
  */
 'use strict';
