@@ -266,12 +266,12 @@ function render() {
     var busy = !!state.busyIds[b.bookingId];
     var canConfirm = b.status === 'PENDING';
     var canCancel = b.status === 'PENDING' || b.status === 'CONFIRMED';
-    var actions = '<button type="button" class="action detail" data-action="detail" data-id="' + b.bookingId + '">詳細</button>';
+    var actions = '<button type="button" class="action detail" data-action="detail" data-id="' + escapeHtml(b.bookingId) + '">詳細</button>';
     if (canConfirm) {
-      actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + b.bookingId + '"' + (busy ? ' disabled' : '') + '>確定</button>';
+      actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>確定</button>';
     }
     if (canCancel) {
-      actions += '<button type="button" class="action cancel" data-action="cancel" data-id="' + b.bookingId + '"' + (busy ? ' disabled' : '') + '>キャンセル</button>';
+      actions += '<button type="button" class="action cancel" data-action="cancel" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>キャンセル</button>';
     }
 
     return (
