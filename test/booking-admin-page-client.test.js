@@ -1,13 +1,16 @@
 /*
- * BookingAdminPage.html のクライアント側フィルタ（visibleBookings()）のテスト。
+ * admin/booking/booking-admin.js（Booking Admin Web UIの外部化されたクライアント側
+ * ロジック。Issue #317）のvisibleBookings()等のテスト。
  *
  * 要件: 「今日」「今後」タブにCANCELLEDを表示しない・CANCELLEDは新しい「キャンセル」
  * タブへ集約する・EXPIREDは「キャンセル」に含めない・「すべて」は従来どおり全件表示する。
  *
- * BookingAdminPage.html内の<script>をそのままvmで実行し（ロジックを別途Node用に
- * 書き写さない。test/helpers/gas-sandbox.jsと同じ方針）、DOM/google.script.runは
- * トップレベルの同期実行（イベント登録・初回loadBookings()呼び出し）が例外を
- * 投げない最小限のスタブのみ用意する。loadBookings()の応答は待たず、
+ * Issue #317でBookingAdminPage.html内のインライン<script>をadmin/booking/booking-admin.js
+ * （GitHub Pagesから配信する実ファイル）へ外部化したため、このテストもBookingAdminPage.html
+ * からの正規表現抽出をやめ、booking-admin.jsを直接vmで実行する（ロジックを別途Node用に
+ * 書き写さない。test/helpers/frontend-sandbox.js・gas-sandbox.jsと同じ方針）。
+ * DOM/google.script.runは、トップレベルの同期実行（イベント登録・初回loadBookings()
+ * 呼び出し）が例外を投げない最小限のスタブのみ用意する。loadBookings()の応答は待たず、
  * state.bookings/state.todayJst/state.filterはテストから直接差し替えて
  * visibleBookings()の絞り込みだけを検証する。
  */
@@ -19,7 +22,7 @@ var fs = require('fs');
 var path = require('path');
 var vm = require('vm');
 
-var PAGE_PATH = path.join(__dirname, '..', 'gas', 'booking', 'admin', 'BookingAdminPage.html');
+var CLIENT_JS_PATH = path.join(__dirname, '..', 'admin', 'booking', 'booking-admin.js');
 
 function createElementStub() {
   return {
@@ -31,10 +34,7 @@ function createElementStub() {
 }
 
 function loadClientSandbox() {
-  var html = fs.readFileSync(PAGE_PATH, 'utf8');
-  var match = html.match(/<script>([\s\S]*)<\/script>/);
-  assert.ok(match, 'BookingAdminPage.htmlに<script>ブロックが見つかるべき');
-  var scriptSrc = match[1];
+  var scriptSrc = fs.readFileSync(CLIENT_JS_PATH, 'utf8');
 
   var scriptRunStub = {
     withSuccessHandler: function () { return scriptRunStub; },
@@ -61,7 +61,7 @@ function loadClientSandbox() {
     alert: function () {}
   };
   vm.createContext(sandbox);
-  vm.runInContext(scriptSrc, sandbox, { filename: PAGE_PATH });
+  vm.runInContext(scriptSrc, sandbox, { filename: CLIENT_JS_PATH });
   return sandbox;
 }
 

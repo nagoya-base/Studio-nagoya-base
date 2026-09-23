@@ -37,6 +37,14 @@ Epic #265の一部として以下を実装済み。
   （新規`getAllBookings()`）を使う。Booking Adminプロジェクトを従来のSpreadsheet UI拡張＋
   時間主導トリガーに加えてWeb Appとしてもデプロイする（Execute as: Me / Only myself。
   詳細は「Issue #305: Booking Admin Web UI化（個人用シンプルMVP）」参照）
+- **Issue #317**: Booking Admin Web UIのフロントエンド（CSS/JavaScript）をGitHub Pages
+  （`admin/booking/booking-admin.css` / `admin/booking/booking-admin.js`）へ外部化し、
+  `gas/booking/admin/BookingAdminPage.html`を薄いローダーにした。通常のフロントエンド
+  変更（表示文言・カードUI・ソートUI等）はGitHub Pages側の更新のみで反映でき、GAS Web App
+  の再デプロイは不要になった。バックエンド（`BookingAdminWeb.gs`・既存4つの
+  `google.script.run` API・confirm/cancel/expire/reminder等の業務ロジック）は無変更。
+  `customerType`の表示（`first_time`→「初回利用」/`returning`→「利用経験あり」）も
+  あわせて修正した（詳細は「Booking Adminフロントエンドの外部化（Issue #317）」参照）
 
 このディレクトリは自社予約システム専用のApps Scriptプロジェクトの元になるソース一式
 （複数プロジェクトへ配布するファイル群）として運用し、`gas/ataru_survey_public` 等の
@@ -1306,6 +1314,14 @@ README.mdの上表を機械的にパースして`test/helpers/booking-deployment
 突き合わせるため、`.html`ファイルを誤って上表の✓行に追加すると、このテストが機械的に
 失敗する。HTMLファイルの配布は上表ではなく、この段落での案内のみとすること）。
 
+**Issue #317でBookingAdminPage.htmlは薄いローダーになった。** 実際のCSS/JavaScript
+（`admin/booking/booking-admin.css` / `admin/booking/booking-admin.js`）はGitHub Pages側で
+管理し、上記の`.gs`ファイル一式・GASプロジェクトへのコピー対象には含まれない。
+**通常のフロントエンド変更（表示文言・カードUI・ソートUI等）はGitHub Pages側のJS/CSS更新の
+みで反映され、GAS Web App再デプロイは不要。GAS側コードまたはローダー
+（`BookingAdminPage.html`）変更時のみWeb App更新が必要。**詳細は
+「Booking Adminフロントエンドの外部化（Issue #317）」節を参照。
+
 **Booking AdminプロジェクトをWeb Appとしてデプロイする場合は、コードを更新するたびに
 新しいバージョンとして再デプロイすること（Issue #305）。**「予約管理」カスタムメニュー・
 時間主導トリガー（`expirePendingBookings`/`sendNextDayReminders`）は常に最新の保存済み
@@ -1891,6 +1907,81 @@ Sheets側はEXPIREDへ進める（PENDINGのまま放置しない）。
 一括確定/一括キャンセル・売上集計・金額管理・支払確認・管理メモ編集は、このWeb UIからは
 できない。これらが必要な場合は、従来どおりSpreadsheetカスタムメニュー（またはSpreadsheet
 を直接確認すること）を使う。既存のカスタムメニューはこのIssueでも削除・変更していない。
+
+## Booking Adminフロントエンドの外部化（Issue #317）
+
+Issue #305時点では、Booking Admin Web UIの表示文言・カードUI・ソートUI等の
+フロントエンドだけの変更でも、`gas/booking/admin/BookingAdminPage.html`に
+HTML/CSS/JavaScriptを内包していたため、GAS Web Appの新バージョン再デプロイが
+必要だった（例: `customerType`の表示を`first_time`→「初回利用」へ直す程度の変更でも
+再デプロイが必要）。Issue #317でこれを解消し、Booking Adminのフロントエンドを
+GitHub Pages側へ分離した。
+
+**通常のフロントエンド変更はGitHub Pages側のJS/CSS更新のみで反映され、GAS Web App
+再デプロイは不要。GAS側コードまたはローダー（`BookingAdminPage.html`）変更時のみ
+Web App更新が必要。**
+
+### 構成
+
+| ファイル | 役割 | 配置先 |
+| --- | --- | --- |
+| `gas/booking/admin/BookingAdminPage.html` | 薄いbootstrap/loader。DOM（header/tabs/sort-select/main/list/modal-overlay等）と、外部CSS/JSを動的に読み込むインラインローダー<script>のみを持つ | Booking AdminプロジェクトへHTMLファイルとしてコピー（従来と同じ手順。「Booking Admin Web UI（Issue #305）のセットアップ・使い方」参照） |
+| `admin/booking/booking-admin.css` | 見た目・レイアウト（Issue #305時点のインラインCSSをそのまま外部化） | GitHub Pagesで配信（`https://nagoya-base.github.io/Studio-nagoya-base/admin/booking/booking-admin.css`） |
+| `admin/booking/booking-admin.js` | クライアント側ロジック（フィルタ・ソート・render・詳細モーダル・`google.script.run`呼び出し配線・`customerType`表示ラベル変換等。Issue #305時点のインラインJavaScriptをそのまま外部化） | GitHub Pagesで配信（`https://nagoya-base.github.io/Studio-nagoya-base/admin/booking/booking-admin.js`） |
+
+`BookingAdminPage.html`はJekyllのビルド対象外（GAS HtmlServiceが配信する）のため、
+外部CSS/JSのURLは相対パス・`{{ site.baseurl }}`ではなく絶対URL固定で参照する。
+
+### キャッシュ対策
+
+フロントエンド更新後に古いJS/CSSが長時間残らないよう、`BookingAdminPage.html`末尾の
+インラインローダー<script>が、`<link>`/`<script>`タグを実行時に動的生成し、`src`/`href`へ
+リクエストごとに変わるクエリ文字列（`?t=` + `Date.now()`）を付与してからDOM
+（`document.head`/`document.body`）へ挿入する。固定の`<script src="...">`/
+`<link href="...">`をHTMLに直書きしないため、キャッシュバスターの値を変えるためだけに
+`BookingAdminPage.html`自体を変更する必要はない。
+
+外部JSの読み込み・DOM操作・`google.script.run`呼び出しは、Issue #305時点から変わらず
+`<body>`末尾（`</body>`直前）で行う（`<head>`側での読み込みは不可。DOM未生成／
+初期化タイミングの問題のため）。
+
+### 変更していないこと
+
+- `BookingAdminWeb.gs`・既存の`google.script.run` 4 API（`getAdminBookings()` /
+  `getAdminBookingDetail(bookingId)` / `adminConfirmBooking(bookingId)` /
+  `adminCancelBooking(bookingId)`）は無変更。
+- confirm/cancel/expire/reminder・Calendar・Spreadsheet・Mail・Recoveryの業務ロジックは
+  無変更。Spreadsheetの列構成・Script Properties・trigger仕様も無変更。
+- 管理者Web Appの本人限定アクセス（Execute as: Me / Who has access: Only myself）は維持。
+- GitHub Pagesから管理APIを直接`fetch`する方式には変更していない（`google.script.run`の
+  実行コンテキストはHtmlService内のままで、認証を回避する仕組みは作っていない）。
+- APIキー・Script Properties・秘密値は`admin/booking/booking-admin.css`/
+  `booking-admin.js`のいずれにも含めていない。
+
+### `customerType`表示修正
+
+一覧カード・詳細モーダルの利用区分表示を、内部値・保存値・API値は変更せず表示時のみ
+以下へ変換する（`admin/booking/booking-admin.js`の`customerTypeLabel`）。
+
+- `first_time` → `初回利用`
+- `returning` → `利用経験あり`
+
+未知の値は例外にせず、元値をそのまま表示する。
+
+### 移行時の注意（最初の1回のみ）
+
+この構成へ移行する最初の1回のみ、薄いローダー版`BookingAdminPage.html`を含む
+GAS Web Appの新バージョン反映が必要（既存のBooking Adminプロジェクトへ、
+更新後の`BookingAdminPage.html`の内容を上書きコピーし、新しいデプロイとして
+再デプロイする）。以後は、通常のフロントエンド変更はGitHub Pages側
+（`admin/booking/`）の更新だけで反映できる。
+
+### テスト
+
+`test/booking-admin-page-client.test.js`は`admin/booking/booking-admin.js`を直接
+vmへ読み込んでテストする（`test/helpers/frontend-sandbox.js`と同じ、実際に配信する
+ファイルそのものを実行する方針）。Issue #305時点にあった、`BookingAdminPage.html`内の
+インライン`<script>...</script>`を正規表現で抽出する方式は廃止した。
 
 ## デプロイ設定（Booking Web Appプロジェクト）
 
