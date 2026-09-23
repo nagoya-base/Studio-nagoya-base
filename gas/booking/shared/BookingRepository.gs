@@ -124,6 +124,7 @@ var BookingRepository = (function () {
         people: input.people,
         purpose: input.purpose,
         paymentMethod: input.paymentMethod,
+        paymentStatus: Booking.PAYMENT_STATUS.UNPAID,
         status: Booking.STATUS.PENDING,
         calendarEventId: eventId,
         source: input.source,

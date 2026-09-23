@@ -492,6 +492,21 @@
        loadBookings()が最新一覧を取得・再描画し終えたコールバック内で初めて解除する
        （途中で古い一覧のまま再度「確定」を押せてしまう隙をなくすため）。 */
     function runConfirm(bookingId) {
+      var booking = state.bookings.find(function (b) { return b.bookingId === bookingId; });
+      var confirmed = window.confirm(
+        (booking
+          ? '予約ID: ' + booking.bookingId + '\n' +
+            '利用日: ' + booking.date + ' ' + booking.startAt + '-' + booking.endAt + '\n' +
+            '利用者名: ' + booking.name + '\n' +
+            'ブランド: ' + booking.brand + '\n' +
+            '支払方法: ' + booking.paymentMethod + '\n\n'
+          : '') +
+        'この予約を確定します。\n\n' +
+        'Calendarへ確定反映し、利用者へ予約確定メールを送信します。\n\n' +
+        '実行しますか？'
+      );
+      if (!confirmed) return;
+
       setBusy(bookingId, true);
       setStatusLine('確定処理中…');
       google.script.run

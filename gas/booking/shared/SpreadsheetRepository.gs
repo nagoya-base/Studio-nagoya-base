@@ -52,7 +52,8 @@ var SpreadsheetRepository = (function () {
     'accessGuideSentAt',
     'lastMailErrorAt',
     'lastMailErrorType',
-    'lastMailErrorMessage'
+    'lastMailErrorMessage',
+    'paymentStatus'
   ];
 
   function getSpreadsheet_() {
