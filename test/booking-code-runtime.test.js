@@ -352,6 +352,33 @@ test('doGet: レスポンスはJSON MIMEタイプで返す（action=monthly）',
   assert.strictEqual(output.mimeType, 'JSON');
 });
 
+/*
+ * doGet: action=monthlyのtimeBandパラメータ配線テスト（Issue #324）。
+ * timeBandの絞り込みロジック自体はtest/booking-monthly-availability.test.jsで
+ * 検証済みのため、ここではparams.timeBandがhandleGetMonthlyAvailability_を経由して
+ * 実際にBookingAvailability.getMonthlyAvailabilityへ渡ることだけを確認する。
+ */
+test('doGet: action=monthlyはtimeBandクエリパラメータをgetMonthlyAvailabilityへ渡す（6時間利用+eveningは0件でFULL）', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
+  var body = callDoGet(sandbox, {
+    action: 'monthly', year: '2026', month: '10', durationMinutes: '360', brand: 'studio_x', timeBand: 'evening'
+  });
+  assert.strictEqual(body.success, true);
+  assert.strictEqual(body.days['2026-10-01'].status, 'FULL');
+  assert.strictEqual(body.days['2026-10-01'].availableStartTimes, 0);
+});
+
+test('doGet: action=monthlyはtimeBand未指定・不正値をallへフォールバックする（デプロイ過渡期の旧フロント互換）', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
+  var withoutTimeBand = callDoGet(sandbox, { action: 'monthly', year: '2026', month: '10', durationMinutes: '120' });
+  var withExplicitAll = callDoGet(sandbox, { action: 'monthly', year: '2026', month: '10', durationMinutes: '120', timeBand: 'all' });
+  var withInvalidTimeBand = callDoGet(sandbox, { action: 'monthly', year: '2026', month: '10', durationMinutes: '120', timeBand: 'bogus' });
+
+  assert.strictEqual(withoutTimeBand.success, true);
+  assert.deepStrictEqual(withoutTimeBand.days, withExplicitAll.days);
+  assert.deepStrictEqual(withInvalidTimeBand.days, withExplicitAll.days);
+});
+
 /* doPost(createBooking)自体の配線・部分失敗補償・rate limit等はBooking関連の
    全ファイルを読み込むtest/booking-create-booking.test.js側で検証する。
    このファイル（Config/CalendarRepository/Availability/Codeのみ読み込み）では、

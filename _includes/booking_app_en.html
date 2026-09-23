@@ -64,6 +64,20 @@
       <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
     </fieldset>
 
+    <!-- Preferred time of day (Issue #324). Defaults to "Any time" (all) checked.
+         This selection only filters the monthly calendar symbols and the Step2 start
+         time list; it does not change the single-day getAvailability/createBooking spec. -->
+    <fieldset class="ba-fieldset">
+      <legend>Preferred Time of Day</legend>
+      <div class="ba-choices" id="ba-time-band-choices">
+        <label class="ba-choice"><input type="radio" name="timeBand" value="all" checked> <span>Any time</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="morning"> <span>Morning</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="daytime"> <span>Afternoon</span></label>
+        <label class="ba-choice"><input type="radio" name="timeBand" value="evening"> <span>Evening</span></label>
+      </div>
+      <p class="ba-field-help">Choosing a time of day recalculates the monthly calendar using only start times within that range.</p>
+    </fieldset>
+
     <!-- Monthly availability calendar (Issue #318). #ba-date stays type="hidden";
          clicking a calendar day writes its value. Step1 "Next" validation is unchanged. -->
     <div class="ba-field">

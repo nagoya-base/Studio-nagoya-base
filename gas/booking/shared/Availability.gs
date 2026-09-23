@@ -353,6 +353,67 @@ var BookingAvailability = (function () {
     return DAY_STATUS.AVAILABLE;
   }
 
+  /*
+   * 希望時間帯フィルタ（Issue #324）。月間空き状況カレンダーの記号判定対象となる
+   * 開始時刻候補を、開始時刻基準で4値に絞り込む。単日getAvailabilityの仕様・
+   * スロット生成/重複判定ロジック（computeBookableStartTimes）は一切変更しない。
+   *
+   * - all: 絞り込みなし（現在の全日判定と同一結果になること）
+   * - morning: 08:00〜11:45開始
+   * - daytime: 12:00〜17:45開始
+   * - evening: 18:00以降開始
+   *
+   * timeBandが未指定、またはこの4値以外の場合はエラーにせずallへフォールバックする
+   * （normalizeTimeBand）。GitHub PagesとBooking GASは別々にデプロイされるため、
+   * デプロイ過渡期に「timeBandを送らない旧フロント」×「新GAS」の組み合わせが
+   * 一時的に発生し得ることへの対応（Issue #324本文レビュー追記4）。
+   */
+  var TIME_BANDS = {
+    ALL: 'all',
+    MORNING: 'morning',
+    DAYTIME: 'daytime',
+    EVENING: 'evening'
+  };
+  var ALLOWED_TIME_BANDS_ = [TIME_BANDS.ALL, TIME_BANDS.MORNING, TIME_BANDS.DAYTIME, TIME_BANDS.EVENING];
+
+  function normalizeTimeBand(value) {
+    return ALLOWED_TIME_BANDS_.indexOf(value) !== -1 ? value : TIME_BANDS.ALL;
+  }
+
+  var MORNING_START_MINUTES_ = 8 * 60;        /* 08:00 */
+  var MORNING_END_MINUTES_ = 11 * 60 + 45;    /* 11:45 */
+  var DAYTIME_START_MINUTES_ = 12 * 60;       /* 12:00 */
+  var DAYTIME_END_MINUTES_ = 17 * 60 + 45;    /* 17:45 */
+  var EVENING_START_MINUTES_ = 18 * 60;       /* 18:00 */
+
+  function isStartMinutesInTimeBand_(startMinutes, timeBand) {
+    if (timeBand === TIME_BANDS.MORNING) {
+      return startMinutes >= MORNING_START_MINUTES_ && startMinutes <= MORNING_END_MINUTES_;
+    }
+    if (timeBand === TIME_BANDS.DAYTIME) {
+      return startMinutes >= DAYTIME_START_MINUTES_ && startMinutes <= DAYTIME_END_MINUTES_;
+    }
+    if (timeBand === TIME_BANDS.EVENING) {
+      return startMinutes >= EVENING_START_MINUTES_;
+    }
+    return true; /* all */
+  }
+
+  /*
+   * startTimes（computeBookableStartTimesが返す'HH:mm'配列）をtimeBandで絞り込む。
+   * classifyDayStatus_へ渡すcount・maxPossibleの両方に同じ関数を適用し、分母
+   * （maxPossible）も同じtimeBandで絞り込むこと（Issue #324本文レビュー追記1。
+   * 分母を絞らないと記号判定が実態より悪く出る）。
+   */
+  function filterStartTimesByTimeBand(startTimes, timeBand) {
+    var band = normalizeTimeBand(timeBand);
+    var list = startTimes || [];
+    if (band === TIME_BANDS.ALL) return list.slice();
+    return list.filter(function (time) {
+      return isStartMinutesInTimeBand_(parseTimeToMinutes_(time), band);
+    });
+  }
+
   function isValidYearMonth_(year, month) {
     return Number.isInteger(year) && year >= 2000 && year <= 3000 &&
       Number.isInteger(month) && month >= 1 && month <= 12;
@@ -404,6 +465,7 @@ var BookingAvailability = (function () {
     var month = request && request.month;
     var durationMinutes = request && request.durationMinutes;
     var brand = (request && request.brand) || null;
+    var timeBand = normalizeTimeBand(request && request.timeBand);
 
     var validationError = validateMonthlyInput(year, month, durationMinutes, config);
     if (validationError) {
@@ -437,8 +499,14 @@ var BookingAvailability = (function () {
       }
 
       var busyIntervals = (busyIntervalsByDate && busyIntervalsByDate[dateString]) || [];
-      var bookable = computeBookableStartTimes(durationMinutes, busyIntervals, config, minimumStartMinutes);
-      var maxPossible = computeBookableStartTimes(durationMinutes, [], config, minimumStartMinutes);
+      var bookable = filterStartTimesByTimeBand(
+        computeBookableStartTimes(durationMinutes, busyIntervals, config, minimumStartMinutes),
+        timeBand
+      );
+      var maxPossible = filterStartTimesByTimeBand(
+        computeBookableStartTimes(durationMinutes, [], config, minimumStartMinutes),
+        timeBand
+      );
 
       days[dateString] = {
         status: classifyDayStatus_(bookable.length, maxPossible.length),
@@ -468,6 +536,9 @@ var BookingAvailability = (function () {
     isStartTimeBookable: isStartTimeBookable,
     getAvailability: getAvailability,
     DAY_STATUS: DAY_STATUS,
+    TIME_BANDS: TIME_BANDS,
+    normalizeTimeBand: normalizeTimeBand,
+    filterStartTimesByTimeBand: filterStartTimesByTimeBand,
     validateMonthlyInput: validateMonthlyInput,
     getMonthlyAvailability: getMonthlyAvailability
   };

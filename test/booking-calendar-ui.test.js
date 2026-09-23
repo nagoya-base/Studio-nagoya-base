@@ -65,6 +65,9 @@ function setup(options) {
   var opts = options || {};
   var elements = {};
   var selectedCustomerType = opts.initialCustomerType || null;
+  /* timeBandは既定「指定なし（all）」がchecked（Issue #324本文レビュー追記3）。
+     DOM上でも常にどれか1つがcheckedのラジオ群を模し、未選択という状態は作らない。 */
+  var selectedTimeBand = opts.initialTimeBand || 'all';
   var fetchCalls = [];
 
   var root = createElement('booking-app');
@@ -76,13 +79,18 @@ function setup(options) {
     return null;
   };
   var customerTypeRadio = createElement('customerType-radio');
+  var timeBandRadio = createElement('timeBand-radio');
   root.querySelectorAll = function (selector) {
     if (selector === 'input[name="customerType"]') return [customerTypeRadio];
+    if (selector === 'input[name="timeBand"]') return [timeBandRadio];
     return [];
   };
   root.querySelector = function (selector) {
     if (selector === 'input[name="customerType"]:checked') {
       return selectedCustomerType ? { value: selectedCustomerType } : null;
+    }
+    if (selector === 'input[name="timeBand"]:checked') {
+      return { value: selectedTimeBand };
     }
     return null;
   };
@@ -149,6 +157,8 @@ function setup(options) {
     fetchCalls: fetchCalls,
     setCustomerType: function (v) { selectedCustomerType = v; },
     triggerCustomerTypeChange: function () { customerTypeRadio._listeners.change(); },
+    setTimeBand: function (v) { selectedTimeBand = v; },
+    triggerTimeBandChange: function () { timeBandRadio._listeners.change(); },
     setDuration: function (hours) {
       elements['ba-duration'] = elements['ba-duration'] || createElement('ba-duration');
       elements['ba-duration'].value = String(hours);
@@ -493,6 +503,129 @@ test('月A→月B→月Aと素早く往復し、応答順が入れ替わって�
    ローディング表示になる。月Bの取得完了前に月Aへ戻った場合、月Aはキャッシュから
    即描画されるが、月Bのために出したローディング表示を消し忘れると、カレンダーは
    表示されているのに「読み込み中…」が残ったままになってしまう。 ── */
+/* ── 希望時間帯フィルタ（Issue #324） ── */
+
+test('duration・利用区分確定時、既定の希望時間帯(all)がURLに含まれる（後方互換のデフォルト値）', async function () {
+  var ctx = setup({});
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+
+  assert.strictEqual(ctx.fetchCalls.length, 1);
+  assert.ok(ctx.fetchCalls[0].url.indexOf('timeBand=all') !== -1, '既定は指定なし(all)を送るべき');
+});
+
+test('希望時間帯を変更すると、表示中の月だけを新しいtimeBandで再取得する', async function () {
+  var ctx = setup({});
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  assert.strictEqual(ctx.fetchCalls.length, 1);
+
+  ctx.setTimeBand('morning');
+  ctx.triggerTimeBandChange();
+  await flushPromises();
+
+  assert.strictEqual(ctx.fetchCalls.length, 2, 'timeBand変更時は表示中の月を再取得する');
+  assert.ok(ctx.fetchCalls[1].url.indexOf('timeBand=morning') !== -1);
+  assert.ok(ctx.fetchCalls[1].url.indexOf('durationMinutes=120') !== -1, 'durationMinutesは変更前のまま送られるべき');
+
+  var today = ctx.Logic.todayInJapan();
+  var ym = ctx.Logic.yearMonthFromDateValue(today);
+  assert.ok(ctx.fetchCalls[1].url.indexOf('year=' + ym.year) !== -1, '取得し直すのは表示中の月のみであるべき');
+  assert.ok(ctx.fetchCalls[1].url.indexOf('month=' + ym.month) !== -1);
+});
+
+test('cache keyはtimeBand別になる。allへ戻ると再取得せずキャッシュを使う', async function () {
+  var ctx = setup({});
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  assert.strictEqual(ctx.fetchCalls.length, 1, 'all（既定）は1回取得済み');
+
+  ctx.setTimeBand('evening');
+  ctx.triggerTimeBandChange();
+  await flushPromises();
+  assert.strictEqual(ctx.fetchCalls.length, 2, 'eveningは未取得のため新たに1回取得する');
+
+  ctx.setTimeBand('all');
+  ctx.triggerTimeBandChange();
+  await flushPromises();
+  assert.strictEqual(ctx.fetchCalls.length, 2, '取得済みのall（duration=120と同じキー）へ戻る場合は再取得しない');
+
+  ctx.setTimeBand('evening');
+  ctx.triggerTimeBandChange();
+  await flushPromises();
+  assert.strictEqual(ctx.fetchCalls.length, 2, '取得済みのeveningへ戻る場合も再取得しない');
+});
+
+test('timeBand変更後、選択済み日付が新条件でFULLになれば選択が解除されStep1を通過できない', async function () {
+  var ctx = setup({
+    monthlyResponder: function (year, month, params) {
+      var status = params.timeBand === 'evening' ? 'FULL' : 'AVAILABLE';
+      return { success: true, month: year + '-' + pad2(month), days: buildDaysForMonth(year, month, status) };
+    }
+  });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+
+  var today = ctx.Logic.todayInJapan();
+  var button = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  assert.strictEqual(button.disabled, false, 'allではAVAILABLEで選択可能');
+  button._listeners.click();
+  assert.strictEqual(ctx.elements['ba-date'].value, today);
+
+  ctx.setTimeBand('evening');
+  ctx.triggerTimeBandChange();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-date'].value, '', '新条件（evening）でFULLになった選択日はクリアされるべき');
+  assert.strictEqual(ctx.elements['ba-calendar-selected'].textContent, '');
+
+  var todayButtonAfter = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  assert.strictEqual(todayButtonAfter.disabled, true, 'eveningではFULLのため選択不可になっているべき');
+
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-date-error'].hidden, false, '日付未選択としてStep1のエラーが出るべき');
+  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true, 'Step2（開始時刻取得）へは進めない');
+});
+
+test('duration・利用区分未確定の間はtimeBandを変更してもgetMonthlyAvailabilityを呼ばない（isCalendarReady_の判定条件は変更しない）', async function () {
+  var ctx = setup({});
+  ctx.setDuration('2');
+  ctx.setTimeBand('morning');
+  ctx.triggerTimeBandChange();
+  await flushPromises();
+  assert.strictEqual(ctx.fetchCalls.length, 0, '利用区分が未確定の間はtimeBand変更でもfetchしない');
+  assert.strictEqual(ctx.elements['ba-calendar-body'].hidden, true);
+});
+
+test('再読み込みボタンは現在のtimeBandのキャッシュを削除してから再取得する', async function () {
+  var ctx = setup({});
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+
+  ctx.setTimeBand('daytime');
+  ctx.triggerTimeBandChange();
+  await flushPromises();
+  assert.strictEqual(ctx.fetchCalls.length, 2);
+
+  ctx.elements['ba-calendar-retry']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.fetchCalls.length, 3, '再読み込みは現在のtimeBand(daytime)キーを再取得するべき');
+  assert.ok(ctx.fetchCalls[2].url.indexOf('timeBand=daytime') !== -1);
+});
+
 test('取得済みの月へキャッシュヒットで戻った場合、別の月のために出していたローディング表示が残らない', async function () {
   var ctx = setup({ deferMonthly: true });
   ctx.setDuration('2');
