@@ -45,8 +45,12 @@ function loadClientSandbox() {
     adminCancelBooking: function () {}
   };
 
+  var elementsById = {};
   var documentStub = {
-    getElementById: function () { return createElementStub(); },
+    getElementById: function (id) {
+      if (!elementsById[id]) elementsById[id] = createElementStub();
+      return elementsById[id];
+    },
     querySelectorAll: function () { return []; }
   };
 
@@ -253,6 +257,69 @@ test('visibleBookings: 各タブのフィルタ後にソートされる（「今
   var result = sandbox.visibleBookings();
 
   assert.deepStrictEqual(result.map(function (b) { return b.bookingId; }), ['upcoming-early', 'upcoming-late']);
+});
+
+/* ---------- customerTypeLabel / formatValue（表示専用の日本語ラベル変換） ---------- */
+
+test('customerTypeLabel: first_time は「初回利用」に変換される', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.customerTypeLabel('first_time'), '初回利用');
+});
+
+test('customerTypeLabel: returning は「利用経験あり」に変換される', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.customerTypeLabel('returning'), '利用経験あり');
+});
+
+test('customerTypeLabel: 未知の値は例外にせず元値をそのまま返す', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.customerTypeLabel('unknown_value'), 'unknown_value');
+});
+
+test('customerTypeLabel: 空・未設定は空文字を返す（formatValue側で「（未設定）」に変換される）', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.customerTypeLabel(''), '');
+  assert.strictEqual(sandbox.customerTypeLabel(null), '');
+  assert.strictEqual(sandbox.customerTypeLabel(undefined), '');
+});
+
+test('formatValue: key=customerTypeはcustomerTypeLabel経由で日本語ラベルへ変換される（表示ロジックの一元化）', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.formatValue('customerType', 'first_time'), '初回利用');
+  assert.strictEqual(sandbox.formatValue('customerType', 'returning'), '利用経験あり');
+  assert.strictEqual(sandbox.formatValue('customerType', ''), '（未設定）');
+  assert.strictEqual(sandbox.formatValue('customerType', 'unknown_value'), 'unknown_value');
+});
+
+test('render: 一覧カードにcustomerTypeの内部値がそのまま出ず、日本語ラベルで出る', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.filter = 'all';
+  sandbox.state.bookings = [
+    booking({ bookingId: 'a', customerType: 'first_time' }),
+    booking({ bookingId: 'b', customerType: 'returning' })
+  ];
+
+  var list = sandbox.document.getElementById('list');
+  sandbox.render();
+
+  assert.ok(list.innerHTML.indexOf('初回利用') !== -1, '一覧カードに「初回利用」が出るべき');
+  assert.ok(list.innerHTML.indexOf('利用経験あり') !== -1, '一覧カードに「利用経験あり」が出るべき');
+  assert.ok(list.innerHTML.indexOf('first_time') === -1, '一覧カードにfirst_timeが直接出てはいけない');
+  assert.ok(list.innerHTML.indexOf('returning') === -1, '一覧カードにreturningが直接出てはいけない');
+});
+
+test('showDetailModal: 詳細モーダルにcustomerTypeの内部値がそのまま出ず、日本語ラベルで出る', function () {
+  var sandbox = loadClientSandbox();
+  var body = sandbox.document.getElementById('modal-body');
+
+  sandbox.showDetailModal(booking({ customerType: 'first_time' }));
+  assert.ok(body.innerHTML.indexOf('初回利用') !== -1, '詳細モーダルに「初回利用」が出るべき');
+  assert.ok(body.innerHTML.indexOf('first_time') === -1, '詳細モーダルにfirst_timeが直接出てはいけない');
+
+  sandbox.showDetailModal(booking({ customerType: 'returning' }));
+  assert.ok(body.innerHTML.indexOf('利用経験あり') !== -1, '詳細モーダルに「利用経験あり」が出るべき');
+  assert.ok(body.innerHTML.indexOf('returning') === -1, '詳細モーダルにreturningが直接出てはいけない');
 });
 
 test('visibleBookings: 各タブのフィルタ後にソートされる（「キャンセル」タブ＋予約順、CANCELLEDタブ分離仕様は壊れていない）', function () {
