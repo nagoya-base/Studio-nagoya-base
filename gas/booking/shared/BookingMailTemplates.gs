@@ -49,6 +49,32 @@ var BookingMailTemplates = (function () {
   }
 
   /*
+   * オンラインクレジットカードの支払い期限行（Issue #326）。EXPIRED判定
+   * （BookingRepository.expirePendingBookings）と必ず同じ純粋関数
+   * Booking.computeCardPendingExpiryMillisを、同じrecord.createdAt/startAtから
+   * 計算する（メール側で別計算・別定数を持たない）。JST（config.timezone）で
+   * 分単位に切り捨てて表示する（BookingAvailability.formatDateTimeInTimezone参照）。
+   * 現金/PayPay/未定/想定外の値では、この行を一切出さない
+   * （「クレジットカード支払い期限」としては表示しない）。
+   */
+  function paymentDueLines_(record, config) {
+    if (!Booking.isCardPaymentMethod(record.paymentMethod)) return [];
+    var ttlConfig = config.ttlConfig || {};
+    var expiryMillis = Booking.computeCardPendingExpiryMillis(
+      record.createdAt.getTime(),
+      record.startAt.getTime(),
+      ttlConfig.cardHoursFromCreated,
+      ttlConfig.cardHoursBeforeStart,
+      ttlConfig.minHoldHours
+    );
+    var expiryText = BookingAvailability.formatDateTimeInTimezone(new Date(expiryMillis), config.timezone);
+    return [
+      'お支払い期限: ' + expiryText,
+      'お支払い方法は別途ご案内します'
+    ];
+  }
+
+  /*
    * PENDING（仮予約受付メール）。
    * 「このメール時点では予約未確定」「管理者確認後に確定連絡を送る」旨を必ず含む。
    * キーボックス番号・解錠コード等は一切含めない（accessGuideを引数に取らない）。
@@ -74,10 +100,11 @@ var BookingMailTemplates = (function () {
       duration ? '利用時間: ' + duration : '',
       'ブランド: ' + brandLabel,
       '利用人数: ' + record.people,
-      record.paymentMethod ? '支払方法: ' + record.paymentMethod : '',
+      record.paymentMethod ? '支払方法: ' + record.paymentMethod : ''
+    ].concat(paymentDueLines_(record, config)).concat([
       '',
       contactLine_(config)
-    ]);
+    ]));
 
     return { subject: subject, body: body };
   }

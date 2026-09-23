@@ -541,9 +541,14 @@ var BookingRepository = (function () {
        */
       var createdDateString = Booking.formatDateInTimezone(new Date(createdAtMillis), ttlConfig.timezone);
       var isSameDayBooking = !!createdDateString && record.date === createdDateString;
-      var minHoldHours = isSameDayBooking ? ttlConfig.minHoldHours : 0;
 
-      if (!Booking.isExpired(createdAtMillis, startAtMillis, ttlConfig.ttlHours, ttlConfig.minHoursBeforeStart, now.getTime(), minHoldHours)) {
+      /*
+       * Issue #326: 支払方法別のPENDING期限判定はBooking.isPendingExpiredへ集約する
+       * （オンラインクレジットカード/現金・PayPay・未定・想定外の値の分岐をここへ
+       * ベタ書きしない）。isSameDayBookingは現金等のminHoldHours（当日grace）にのみ
+       * 使い、オンラインクレジットカードの計算式では参照されない。
+       */
+      if (!Booking.isPendingExpired(record.paymentMethod, createdAtMillis, startAtMillis, ttlConfig, now.getTime(), isSameDayBooking)) {
         return; /* まだ有効 */
       }
 

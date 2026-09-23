@@ -604,7 +604,8 @@ test('競合: cancelが先にCANCELLED → confirmはINVALID_TRANSITIONを返す
 test('競合: expireが先にEXPIRED → cancelはINVALID_TRANSITIONを返す', function () {
   var ctx = setup();
   var bookingId = createPending(ctx);
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 25 * 3600000) });
+  /* 現金の基本TTLはIssue #326で48時間になったため、49時間前を使う。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 49 * 3600000) });
 
   var expireResult = ctx.sandbox.expirePendingBookings();
   assert.strictEqual(expireResult.expiredCount, 1);

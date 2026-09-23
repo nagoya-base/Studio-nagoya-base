@@ -15,6 +15,11 @@ function loadTemplates() {
   return loadBookingSandbox(FILES, {}).BookingMailTemplates;
 }
 
+/* Issue #326のテストがBooking.computeCardPendingExpiryMillis/BookingAvailability.
+   formatDateTimeInTimezoneを期待値の計算に使うための共有サンドボックス
+   （buildPendingMail自体はこれらを直接エクスポートしないため）。 */
+var SHARED_SANDBOX = loadBookingSandbox(FILES, {});
+
 var CONFIG = { timezone: 'Asia/Tokyo', contactEmail: 'contact@example.com' };
 
 function sampleRecord(overrides) {
@@ -22,6 +27,7 @@ function sampleRecord(overrides) {
     {
       bookingId: 'SX-20261001-AAAAAAAA',
       date: '2026-10-01',
+      createdAt: new Date('2026-09-30T10:00:00+09:00'),
       startAt: new Date('2026-10-01T10:00:00+09:00'),
       endAt: new Date('2026-10-01T12:00:00+09:00'),
       brand: 'studio_x',
@@ -75,6 +81,64 @@ test('buildPendingMail: キーボックス番号・解錠コードを一切含�
   assert.strictEqual(mail.body.indexOf('TEST-CODE'), -1);
   assert.strictEqual(typeof templates.buildPendingMail.length, 'number');
   assert.strictEqual(templates.buildPendingMail.length, 2, 'buildPendingMailはrecordとconfigの2引数のみを取る（accessGuideを受け取らない）');
+});
+
+/* ---------- オンラインクレジットカードの支払い期限表示（Issue #326） ---------- */
+
+var TTL_CONFIG = { cardHoursFromCreated: 72, cardHoursBeforeStart: 24, cashHours: 48, minHoursBeforeStart: 2, minHoldHours: 2 };
+
+function cardConfig(overrides) {
+  return Object.assign({}, CONFIG, { ttlConfig: TTL_CONFIG }, overrides || {});
+}
+
+test('buildPendingMail: オンラインクレジットカードのPENDINGメールには、EXPIRED判定と同じBooking.computeCardPendingExpiryMillisで計算した支払い期限がJST（分単位切り捨て）で表示される', function () {
+  var templates = loadTemplates();
+  var createdAt = new Date('2026-09-30T10:00:00+09:00');
+  var startAt = new Date('2026-10-05T10:00:00+09:00'); /* 十分先の開始のため、受付72時間後が支払い期限になる */
+  var record = sampleRecord({ paymentMethod: 'オンラインクレジットカード', createdAt: createdAt, startAt: startAt });
+
+  var mail = templates.buildPendingMail(record, cardConfig());
+
+  var expectedMillis = SHARED_SANDBOX.Booking.computeCardPendingExpiryMillis(createdAt.getTime(), startAt.getTime(), 72, 24, 2);
+  var expectedText = SHARED_SANDBOX.BookingAvailability.formatDateTimeInTimezone(new Date(expectedMillis), 'Asia/Tokyo');
+  assert.match(mail.body, /お支払い期限: /);
+  assert.ok(mail.body.indexOf('お支払い期限: ' + expectedText) !== -1, mail.body);
+});
+
+test('buildPendingMail: オンラインクレジットカードのPENDINGメールに「お支払い方法は別途ご案内します」が1行追加される', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ paymentMethod: 'オンラインクレジットカード' });
+  var mail = templates.buildPendingMail(record, cardConfig());
+  assert.match(mail.body, /お支払い方法は別途ご案内します/);
+});
+
+['現金', 'PayPay', '未定'].forEach(function (paymentMethod) {
+  test('buildPendingMail: paymentMethod=' + JSON.stringify(paymentMethod) + ' には「クレジットカード支払い期限」としては表示しない（お支払い期限行を出さない）', function () {
+    var templates = loadTemplates();
+    var record = sampleRecord({ paymentMethod: paymentMethod });
+    var mail = templates.buildPendingMail(record, cardConfig());
+    assert.strictEqual(mail.body.indexOf('お支払い期限'), -1, mail.body);
+    assert.strictEqual(mail.body.indexOf('お支払い方法は別途ご案内します'), -1, mail.body);
+  });
+});
+
+test('buildPendingMail: メールに表示する支払い期限とEXPIRED判定の期限は、同一のrecord.createdAt/startAtから同一の純粋関数(Booking.computeCardPendingExpiryMillis)で計算され、ミリ秒値として一致する', function () {
+  var templates = loadTemplates();
+  var createdAt = new Date('2026-10-01T15:00:00+09:00');
+  var startAt = new Date('2026-10-02T10:00:00+09:00'); /* 前日受付・翌日開始（floorが効くケース） */
+  var record = sampleRecord({ paymentMethod: 'オンラインクレジットカード', createdAt: createdAt, startAt: startAt });
+
+  /* メール側の計算（buildPendingMail内部）と、EXPIRED判定側の計算を、
+     同じttlConfig値を使って独立に呼び出し、millis値が一致することを確認する。 */
+  var expiryForMail = SHARED_SANDBOX.Booking.computeCardPendingExpiryMillis(createdAt.getTime(), startAt.getTime(), 72, 24, 2);
+  var expiryForExpireCheck = SHARED_SANDBOX.Booking.computePendingExpiryMillis(
+    'オンラインクレジットカード', createdAt.getTime(), startAt.getTime(), TTL_CONFIG, false
+  );
+  assert.strictEqual(expiryForMail, expiryForExpireCheck, 'メール表示用とEXPIRED判定用の期限計算は同一ミリ秒値であるべき');
+
+  var mail = templates.buildPendingMail(record, cardConfig());
+  var expectedText = SHARED_SANDBOX.BookingAvailability.formatDateTimeInTimezone(new Date(expiryForMail), 'Asia/Tokyo');
+  assert.ok(mail.body.indexOf('お支払い期限: ' + expectedText) !== -1, mail.body);
 });
 
 test('buildConfirmedMail: 件名で予約確定が分かる', function () {

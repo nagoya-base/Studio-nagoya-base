@@ -352,6 +352,65 @@ var Booking = (function () {
     return nowMillis >= computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, minHoldHours);
   }
 
+  /* Issue #326固定仕様: PENDINGの支払方法のうち、この文字列に完全一致する場合のみ
+     オンラインクレジットカード専用のTTL計算式を使う。それ以外（現金/PayPay/未定/
+     想定外の値）はすべて現金等と同じ48時間ベースの計算式にフォールバックする。 */
+  var CARD_PAYMENT_METHOD_ = 'オンラインクレジットカード';
+
+  function isCardPaymentMethod(paymentMethod) {
+    return paymentMethod === CARD_PAYMENT_METHOD_;
+  }
+
+  /*
+   * オンラインクレジットカードの支払い期限 / PENDING期限（ミリ秒epoch）を計算する
+   * 唯一の純粋関数（Issue #326固定仕様）。EXPIRED判定（BookingRepository.
+   * expirePendingBookings）とPENDINGメールの支払い期限表示（BookingMailTemplates.
+   * buildPendingMail）の両方がこの関数だけを経由し、別計算・別定数を持たない。
+   *
+   *   baseExpiry = min(createdAt + hoursFromCreated, startAt - hoursBeforeStart)
+   *   expiry     = min(startAt, max(baseExpiry, createdAt + minFloorHours))
+   *
+   * 現金/PayPay/未定のminHoldHours（当日grace）と異なり、「受付日＝利用日」の同日
+   * ゲートは適用しない。前日受付・利用開始直前の受付を含め、常にminFloorHoursぶんの
+   * 支払い猶予を最低限確保しつつ（max）、利用開始時刻(startAtMillis)を必ず上限とする
+   * （min。expiry <= startAtを保証し、利用開始後までPENDINGを保持しない）。
+   */
+  function computeCardPendingExpiryMillis(createdAtMillis, startAtMillis, hoursFromCreated, hoursBeforeStart, minFloorHours) {
+    var fromCreatedExpiry = createdAtMillis + hoursFromCreated * 3600000;
+    var beforeStartLimit = startAtMillis - hoursBeforeStart * 3600000;
+    var baseExpiry = Math.min(fromCreatedExpiry, beforeStartLimit);
+    var floorExpiry = createdAtMillis + minFloorHours * 3600000;
+    return Math.min(startAtMillis, Math.max(baseExpiry, floorExpiry));
+  }
+
+  /*
+   * 支払方法別のPENDING失効時刻（ミリ秒epoch）を計算する唯一の分岐点（Issue #326）。
+   * expirePendingBookings()側に支払方法ごとの条件分岐を直接ベタ書きしないよう、
+   * ここへ集約する。
+   * - オンラインクレジットカード: computeCardPendingExpiryMillis（同日ゲートなし。
+   *   ttlConfig.cardHoursFromCreated/cardHoursBeforeStart/minHoldHoursを使う）
+   * - それ以外（現金/PayPay/未定/想定外の値）: 既存のcomputeTtlExpiryMillis
+   *   （ttlConfig.cashHoursを基本TTLとし、既存のminHoursBeforeStart・当日grace
+   *   (isSameDayBookingのときのみminHoldHours)をそのまま維持する）
+   */
+  function computePendingExpiryMillis(paymentMethod, createdAtMillis, startAtMillis, ttlConfig, isSameDayBooking) {
+    if (isCardPaymentMethod(paymentMethod)) {
+      return computeCardPendingExpiryMillis(
+        createdAtMillis,
+        startAtMillis,
+        ttlConfig.cardHoursFromCreated,
+        ttlConfig.cardHoursBeforeStart,
+        ttlConfig.minHoldHours
+      );
+    }
+    var minHoldHours = isSameDayBooking ? ttlConfig.minHoldHours : 0;
+    return computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlConfig.cashHours, ttlConfig.minHoursBeforeStart, minHoldHours);
+  }
+
+  function isPendingExpired(paymentMethod, createdAtMillis, startAtMillis, ttlConfig, nowMillis, isSameDayBooking) {
+    return nowMillis >= computePendingExpiryMillis(paymentMethod, createdAtMillis, startAtMillis, ttlConfig, isSameDayBooking);
+  }
+
   return {
     STATUS: STATUS,
     PAYMENT_STATUS: PAYMENT_STATUS,
@@ -367,6 +426,10 @@ var Booking = (function () {
     validateCreateBookingInput: validateCreateBookingInput,
     generateBookingId: generateBookingId,
     computeTtlExpiryMillis: computeTtlExpiryMillis,
-    isExpired: isExpired
+    isExpired: isExpired,
+    isCardPaymentMethod: isCardPaymentMethod,
+    computeCardPendingExpiryMillis: computeCardPendingExpiryMillis,
+    computePendingExpiryMillis: computePendingExpiryMillis,
+    isPendingExpired: isPendingExpired
   };
 })();

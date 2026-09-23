@@ -118,6 +118,44 @@ test('sendPendingMailForBooking: PENDING予約に1通送り、pendingMailSentAt�
   assert.ok(stubs.isDateLike(found.record.pendingMailSentAt));
 });
 
+/* Issue #326: オンラインクレジットカードのPENDINGメールには支払い期限を載せる。
+   BookingConfig.getTtlConfig()（expirePendingBookingsのEXPIRED判定と同じ設定値）が
+   実際にBookingMailTemplates.buildPendingMailまで配線されていることを確認する。 */
+test('sendPendingMailForBooking: オンラインクレジットカードのPENDINGメールに、BookingConfig.getTtlConfig()から計算した支払い期限が実際に載る', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({
+    properties: Object.assign({}, COMPLETE_MAIL_PROPERTIES, {
+      PENDING_TTL_CARD_HOURS_FROM_CREATED: '72',
+      PENDING_TTL_CARD_HOURS_BEFORE_START: '24',
+      PENDING_TTL_MIN_HOLD_HOURS: '2'
+    }),
+    mailApp: mailApp
+  });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    paymentMethod: 'オンラインクレジットカード',
+    createdAt: new Date('2026-09-28T10:00:00+09:00'),
+    startAt: new Date('2026-10-05T10:00:00+09:00')
+  });
+
+  var result = ctx.sandbox.BookingMailer.sendPendingMailForBooking(bookingId);
+  assert.strictEqual(result.success, true);
+  /* baseExpiry = min(受付+72h=2026-10-01T10:00, 開始-24h=2026-10-04T10:00) = 2026-10-01T10:00
+     （72h側が先）。floor(受付+2h)より後なのでそのまま採用される。 */
+  assert.match(mailApp._sentEmails[0].body, /お支払い期限: 2026\/10\/01 10:00/);
+  assert.match(mailApp._sentEmails[0].body, /お支払い方法は別途ご案内します/);
+});
+
+test('sendPendingMailForBooking: 現金のPENDINGメールには支払い期限を載せない（クレジットカード専用の表示）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: '現金' });
+
+  var result = ctx.sandbox.BookingMailer.sendPendingMailForBooking(bookingId);
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(mailApp._sentEmails[0].body.indexOf('お支払い期限'), -1);
+});
+
 test('sendPendingMailForBooking: TIMEZONEをUTC等へ変更しても、その設定に従って本文の時刻表示が変わる（config.timezoneが実際にBookingMailTemplatesへ渡っていることの確認）', function () {
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ properties: Object.assign({}, COMPLETE_MAIL_PROPERTIES, { TIMEZONE: 'UTC' }), mailApp: mailApp });

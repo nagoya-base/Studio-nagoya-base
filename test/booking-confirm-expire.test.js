@@ -215,7 +215,8 @@ test('confirmBookingとexpirePendingBookingsは同一Booking Adminプロジェ�
   var lockService = stubs.createLockServiceStub();
   var ctx = setup({ lockService: lockService });
   var bookingId = createPending(ctx);
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 25 * 3600000) });
+  /* 現金の基本TTLはIssue #326で48時間になったため、49時間前を使う。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 49 * 3600000) });
 
   /* 別プロセス(例えば同時に実行された時間主導トリガー)がLockを保持している状況を模擬する */
   var externalLock = lockService.getScriptLock();
@@ -305,14 +306,14 @@ test('confirmBooking: Lock取得に失敗した場合はLOCK_TIMEOUTを返す', 
 
 /* ---------- expirePendingBookings ---------- */
 
-test('expirePendingBookings: 受付から24時間経過したPENDINGはEXPIREDになり、Calendarイベントも削除される', function () {
+test('expirePendingBookings: 現金は受付から48時間経過したPENDINGがEXPIREDになり、Calendarイベントも削除される（Issue #326で現金/PayPay/未定の基本TTLは48時間）', function () {
   var ctx = setup();
-  var bookingId = createPending(ctx, { date: futureDateJst_(65), startTime: '10:00' });
+  var bookingId = createPending(ctx, { date: futureDateJst_(65), startTime: '10:00', paymentMethod: '現金' });
 
   var justBefore = new Date(Date.now());
-  /* createdAtを25時間前に書き換えて「24時間経過」をシミュレートする */
-  var createdAt25hAgo = new Date(Date.now() - 25 * 3600000);
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: createdAt25hAgo });
+  /* createdAtを49時間前に書き換えて「48時間経過」をシミュレートする */
+  var createdAt49hAgo = new Date(Date.now() - 49 * 3600000);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: createdAt49hAgo });
 
   var result = ctx.sandbox.expirePendingBookings();
   assert.strictEqual(result.expiredCount, 1);
@@ -323,6 +324,133 @@ test('expirePendingBookings: 受付から24時間経過したPENDINGはEXPIRED�
 
   assert.strictEqual(ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length, 0);
   void justBefore;
+});
+
+test('expirePendingBookings: 現金は受付から48時間未満（47時間）ではまだEXPIREDにならない（境界時刻の直前）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { date: futureDateJst_(65), startTime: '10:00', paymentMethod: '現金' });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 47 * 3600000) });
+
+  var result = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(result.expiredCount, 0, '48時間に達していないためまだ失効しないべき');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'PENDING');
+});
+
+/* ---------- PayPay/未定/想定外paymentMethodの48時間フォールバック（Issue #326） ---------- */
+
+['PayPay', '未定', '銀行振込（想定外の値）'].forEach(function (paymentMethod) {
+  test('expirePendingBookings: paymentMethod=' + JSON.stringify(paymentMethod) + ' は現金と同じ48時間ベースのTTLになる（想定外の値も48時間ルールへフォールバック）', function () {
+    var ctx = setup();
+    var bookingId = createPending(ctx, { date: futureDateJst_(65), startTime: '10:00', paymentMethod: paymentMethod });
+    ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 47 * 3600000) });
+
+    var notYet = ctx.sandbox.expirePendingBookings();
+    assert.strictEqual(notYet.expiredCount, 0, '47時間ではまだ失効しないべき');
+
+    ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 49 * 3600000) });
+    var expired = ctx.sandbox.expirePendingBookings();
+    assert.strictEqual(expired.expiredCount, 1, '49時間経過後は失効するべき');
+
+    var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+    assert.strictEqual(found.record.status, 'EXPIRED');
+  });
+});
+
+/* ---------- オンラインクレジットカードのPENDING期限（Issue #326） ---------- */
+
+test('expirePendingBookings: オンラインクレジットカードは、受付72時間後より利用開始24時間前が先ならその時点でEXPIRED対象になる', function () {
+  var ctx = setup();
+  /* 開始を36時間後に固定し、開始24時間前(12時間後)を受付72時間後より先に来させる */
+  var receivedAt = new Date(Date.now());
+  var startAt = new Date(receivedAt.getTime() + 36 * 3600000);
+  var bookingId = createPending(ctx, {
+    date: futureDateJst_(65),
+    startTime: '10:00',
+    paymentMethod: 'オンラインクレジットカード'
+  });
+  /* createPendingはnowを渡せないため、createdAtを直接receivedAtへ上書きする。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: receivedAt, startAt: startAt });
+
+  var expiryBoundary = new Date(startAt.getTime() - 24 * 3600000);
+
+  var beforeResult = ctx.sandbox.expirePendingBookings(new Date(expiryBoundary.getTime() - 60000));
+  assert.strictEqual(beforeResult.expiredCount, 0, '開始24時間前の1分前はまだ失効しないべき');
+
+  var afterResult = ctx.sandbox.expirePendingBookings(new Date(expiryBoundary.getTime()));
+  assert.strictEqual(afterResult.expiredCount, 1, '開始24時間前ちょうどで失効するべき');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'EXPIRED');
+});
+
+test('expirePendingBookings: オンラインクレジットカードは、利用開始24時間前より受付72時間後が先ならその時点でEXPIRED対象になる', function () {
+  var ctx = setup();
+  /* 開始を十分先（120日後）にして、受付72時間後が開始24時間前より先に来るようにする */
+  var receivedAt = new Date(Date.now());
+  var bookingId = createPending(ctx, {
+    date: futureDateJst_(120),
+    startTime: '10:00',
+    paymentMethod: 'オンラインクレジットカード'
+  });
+  /* createPendingはnowを渡せないため、createdAtを直接receivedAtへ上書きする。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: receivedAt });
+
+  var expiryBoundary = new Date(receivedAt.getTime() + 72 * 3600000);
+
+  var beforeResult = ctx.sandbox.expirePendingBookings(new Date(expiryBoundary.getTime() - 60000));
+  assert.strictEqual(beforeResult.expiredCount, 0, '受付72時間後の1分前はまだ失効しないべき');
+
+  var afterResult = ctx.sandbox.expirePendingBookings(new Date(expiryBoundary.getTime()));
+  assert.strictEqual(afterResult.expiredCount, 1, '受付72時間後ちょうどで失効するべき');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'EXPIRED');
+});
+
+test('expirePendingBookings: オンラインクレジットカードは前日受付・利用24時間直前でも最低2時間の支払い猶予が保証される（前日受付でも同日ゲートなし）', function () {
+  var ctx = setup();
+  /* 前日15:00に受付、翌10:00開始（19時間後）。開始24時間前は受付5時間前に相当し、
+     受付時刻より前になるため、下限（受付+2h=17:00）が採用されるべき。 */
+  var receivedAt = new Date('2026-10-01T15:00:00+09:00');
+  var startAt = new Date('2026-10-02T10:00:00+09:00');
+  var created = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-02', startTime: '10:00', durationMinutes: 120 }),
+    receivedAt
+  );
+  assert.strictEqual(created.success, true);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(created.bookingId, { startAt: startAt });
+
+  var floorBoundary = new Date(receivedAt.getTime() + 2 * 3600000); /* 17:00 */
+
+  var beforeResult = ctx.sandbox.expirePendingBookings(new Date(floorBoundary.getTime() - 60000));
+  assert.strictEqual(beforeResult.expiredCount, 0, '受付+2h（17:00）未満はまだ失効しないべき');
+
+  var afterResult = ctx.sandbox.expirePendingBookings(new Date(floorBoundary.getTime()));
+  assert.strictEqual(afterResult.expiredCount, 1, '受付+2h（17:00）ちょうどで失効するべき');
+});
+
+test('expirePendingBookings: オンラインクレジットカードは利用開始まで2時間未満の受付でも、利用開始時刻(startAt)を過ぎるまでEXPIREDにならない', function () {
+  var ctx = setup();
+  var receivedAt = new Date('2026-10-01T20:00:00+09:00');
+  var startAt = new Date('2026-10-01T21:00:00+09:00'); /* 1時間後開始（当日） */
+  var created = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'returning', paymentMethod: 'オンラインクレジットカード', date: '2026-10-01', startTime: '21:00', durationMinutes: 120 }),
+    receivedAt
+  );
+  assert.strictEqual(created.success, true);
+
+  var justBeforeStart = new Date(startAt.getTime() - 60000);
+  var beforeResult = ctx.sandbox.expirePendingBookings(justBeforeStart);
+  assert.strictEqual(beforeResult.expiredCount, 0, '利用開始前はまだEXPIREDにしてはいけない');
+
+  var justAfterStart = new Date(startAt.getTime() + 60000);
+  var afterResult = ctx.sandbox.expirePendingBookings(justAfterStart);
+  assert.strictEqual(afterResult.expiredCount, 1, '利用開始後はEXPIREDになるべき（無期限PENDINGにも利用開始後残留にもしない）');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(created.bookingId);
+  assert.strictEqual(found.record.status, 'EXPIRED');
 });
 
 test('expirePendingBookings: 24時間未満でも、利用開始2時間前を過ぎたPENDINGはEXPIREDになる（start-2h上限）', function () {
@@ -437,7 +565,8 @@ test('expirePendingBookings: 正式関数名 expirePendingBookings() がグロ�
 test('expirePendingBookings: 二重実行しても壊れない（2回目は対象0件で冪等）', function () {
   var ctx = setup();
   var bookingId = createPending(ctx);
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 25 * 3600000) });
+  /* 現金の基本TTLはIssue #326で48時間になったため、49時間前を使う。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 49 * 3600000) });
 
   var first = ctx.sandbox.expirePendingBookings();
   assert.strictEqual(first.expiredCount, 1);
@@ -452,7 +581,8 @@ test('expirePendingBookings: 二重実行しても壊れない（2回目は対�
 test('expirePendingBookings: Calendarイベント削除に失敗してもSheets側はEXPIREDへ進め、recoveryへ記録する', function () {
   var ctx = setup();
   var bookingId = createPending(ctx);
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 25 * 3600000) });
+  /* 現金の基本TTLはIssue #326で48時間になったため、49時間前を使う。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 49 * 3600000) });
 
   ctx.sandbox.CalendarRepository.deleteEventById = function () {
     throw new Error('simulated calendar delete failure');
@@ -472,7 +602,8 @@ test('expirePendingBookings: Calendarイベント削除に失敗してもSheets�
 test('expirePendingBookings: Calendar削除成功・Sheets EXPIRED更新失敗の場合はrecoveryへ記録し、Sheets側はPENDINGのまま残す', function () {
   var ctx = setup();
   var bookingId = createPending(ctx);
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 25 * 3600000) });
+  /* 現金の基本TTLはIssue #326で48時間になったため、49時間前を使う。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 49 * 3600000) });
 
   var originalUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
   ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
@@ -504,7 +635,8 @@ test('expirePendingBookings: Calendar削除成功・Sheets EXPIRED更新失敗�
 test('expirePendingBookings: EXPIRE_SHEETS_UPDATE_FAILED後、Sheets保存先の障害が解消してから再実行すると、Calendarは既に削除済みとして再記録しつつSheets側は正しくEXPIREDになる（README「部分失敗・recoveryの確認手順」記載の再実行手順の裏付け）', function () {
   var ctx = setup();
   var bookingId = createPending(ctx);
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 25 * 3600000) });
+  /* 現金の基本TTLはIssue #326で48時間になったため、49時間前を使う。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 49 * 3600000) });
 
   var originalUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
   ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
@@ -535,7 +667,8 @@ test('expirePendingBookings: 1件のSheets更新失敗が他の失効対象の�
   var failingBookingId = createPending(ctx, { date: futureDateJst_(80), startTime: '10:00', email: 'a@example.com' });
   var okBookingId = createPending(ctx, { date: futureDateJst_(81), startTime: '10:00', email: 'b@example.com' });
 
-  var oldCreatedAt = new Date(Date.now() - 25 * 3600000);
+  /* 現金の基本TTLはIssue #326で48時間になったため、49時間前を使う。 */
+  var oldCreatedAt = new Date(Date.now() - 49 * 3600000);
   ctx.sandbox.SpreadsheetRepository.updateBookingFields(failingBookingId, { createdAt: oldCreatedAt });
   ctx.sandbox.SpreadsheetRepository.updateBookingFields(okBookingId, { createdAt: oldCreatedAt });
 

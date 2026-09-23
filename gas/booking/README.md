@@ -392,6 +392,14 @@ brand文字列・prefix・表示名は`Booking.gs`の`ALLOWED_BOOKING_BRANDS` /
 
 ### PENDING TTLの変更内容と理由
 
+> **Issue #326での変更点（先読み）**: このセクションは#268〜#270時点の設計記録
+> （現金/PayPay/未定/想定外の値に今も適用される計算式そのもの）だが、
+> `PENDING_TTL_HOURS`（受付からの時間・既定24時間）はIssue #326で**廃止**され、
+> `PENDING_TTL_CASH_HOURS`（既定48時間）に置き換わった。オンラインクレジット
+> カードだけは別の確定式（`Booking.computeCardPendingExpiryMillis`）を使う。
+> 詳細は「Issue #326: PENDING期限を支払方法別に見直し、EXPIREDを今後/今日
+> タブから除外する」を参照。
+
 **背景（#268時点の課題）**: PENDING TTLは「受付から`PENDING_TTL_HOURS`時間後」と
 「利用開始時刻の`PENDING_TTL_MIN_HOURS_BEFORE_START`時間前」の早い方
 （`normalExpiry = min(受付+ttlHours, 開始-minHoursBeforeStart)`）。利用経験ありの
@@ -1333,6 +1341,138 @@ busyIntervalsに対して呼び出し、件数を閾値でバケット分けす�
   反映されること・timeBand未選択時はallとして全開始時刻が表示されること（後方互換）・
   該当候補が無い場合は既存の「開始時刻がありません」表示になることを検証。
 
+## Issue #326: PENDING期限を支払方法別に見直し、EXPIREDを今後/今日タブから除外する
+
+### 背景と目的
+
+現行（#268〜#270時点）のPENDING TTLは支払方法によらず一律だった（既定24時間）。
+しかし運用上、支払方法によってPENDINGの意味が異なる。
+
+- オンラインクレジットカード: 支払い完了後に管理者が確定させる運用のため、
+  決済待ちとして24時間では短すぎる一方、未払いのまま予約枠だけを長期間
+  占有させないよう、利用開始時刻を必ず上限にする必要がある。
+- 現金 / PayPay: 管理者確認後に先にCONFIRMEDへ進める運用のため、24時間では
+  短く、48時間程度の保持時間が欲しい。
+
+また、EXPIREDになった予約がBooking Adminの「今日」「今後」タブに残り続け、
+運用上見づらいという課題があった。
+
+### 支払方法別のPENDING期限
+
+`gas/booking/shared/Booking.gs`の`computePendingExpiryMillis(paymentMethod,
+createdAtMillis, startAtMillis, ttlConfig, isSameDayBooking)`が、支払方法に応じて
+以下のいずれかへ分岐する唯一の関数（`expirePendingBookings`側に条件分岐を
+ベタ書きしない）。
+
+**1. オンラインクレジットカード**（`paymentMethod === 'オンラインクレジットカード'`
+に完全一致する場合のみ）:
+
+```
+baseExpiry = min(createdAt + PENDING_TTL_CARD_HOURS_FROM_CREATED(既定72h), startAt - PENDING_TTL_CARD_HOURS_BEFORE_START(既定24h))
+expiry     = min(startAt, max(baseExpiry, createdAt + PENDING_TTL_MIN_HOLD_HOURS(既定2h)))
+```
+
+実体は`Booking.computeCardPendingExpiryMillis`という1つの純粋関数。「受付日＝
+利用日」の同日ゲートは適用しない（前日受付・利用開始直前の受付を含め、常に
+`PENDING_TTL_MIN_HOLD_HOURS`ぶんの支払い猶予の下限を保証する）。利用開始時刻
+(`startAt`)を必ず上限とする（`expiry <= startAt`を保証。既存の当日grace設計と同じ
+考え方）。この関数はEXPIRED判定（`expirePendingBookings`）とPENDINGメールの
+支払い期限表示（`BookingMailTemplates.buildPendingMail`）の両方から呼ばれ、
+別計算・別定数を持たない。
+
+**2. 現金 / PayPay / 未定 / 想定外の値**（上記1に一致しないすべての支払方法。
+フォールバックとして扱う）:
+
+受付から`PENDING_TTL_CASH_HOURS`（既定48時間）を基本TTLとし、既存の
+`PENDING_TTL_MIN_HOURS_BEFORE_START`（利用開始直前保護）・
+`PENDING_TTL_MIN_HOLD_HOURS`（当日grace。「PENDING TTLの変更内容と理由」
+参照）の考え方はそのまま維持する（実体は既存の`Booking.computeTtlExpiryMillis`
+を`ttlHours=PENDING_TTL_CASH_HOURS`で呼ぶだけで、計算式自体は#268/#270から
+変更していない）。
+
+想定外の`paymentMethod`（フォームが送り得る現金/PayPay/オンラインクレジット
+カード/未定の4値以外の文字列）も、fail-closedにこの48時間ルールへ
+フォールバックする（未知の支払方法だからといって無期限PENDINGにはしない）。
+
+### オンラインクレジットカードPENDINGメールの支払い期限表示
+
+オンラインクレジットカードを選択したPENDING予約の利用者向け仮予約受付メール
+（PENDINGメール）には、実際に計算した支払い期限を追記する。
+
+```
+お支払い期限: 2026/10/01 20:00
+お支払い方法は別途ご案内します
+```
+
+- 表示する期限は`Booking.computeCardPendingExpiryMillis`（EXPIRED判定と同じ
+  関数）を、同じBookings行の`createdAt`/`startAt`から計算する。メール側で
+  別計算・別定数は持たない。
+- JST（`Asia/Tokyo`）で分単位に切り捨てて表示する（`BookingAvailability.
+  formatDateTimeInTimezone`。`Intl.DateTimeFormat`が秒未満の情報を保持しない
+  ことで自然に切り捨てになる）。
+- 現金 / PayPay / 未定（および想定外の値）には、この「お支払い期限」行を
+  一切表示しない。
+- 既存のPENDINGメールの主要項目（予約ID / 利用日 / 時間 / ブランド / 人数 /
+  支払方法 / 問い合わせ先）は変更していない。
+
+**Script Propertiesの配置に関する注意**: PENDINGメール送信（`sendPendingMailForBooking`）
+は`createBooking`と同じ**Booking Web Appプロジェクト**から呼ばれるため、
+支払い期限の表示に必要な`PENDING_TTL_CARD_HOURS_FROM_CREATED` /
+`PENDING_TTL_CARD_HOURS_BEFORE_START` / `PENDING_TTL_MIN_HOLD_HOURS`は、
+**Booking Web Appプロジェクト側にも設定する必要がある**（`expirePendingBookings`
+用にBooking Admin側だけへ設定していた#268〜#270時点から変更。両プロジェクトで
+同じ値を設定しないと、メール表示の期限とEXPIRED判定の期限がずれる）。
+`PENDING_TTL_CASH_HOURS`・`PENDING_TTL_MIN_HOURS_BEFORE_START`はPENDINGメール
+の表示には使わないため、従来どおりBooking Admin側（`expirePendingBookings`）
+にのみ設定すればよい。
+
+### Booking AdminのEXPIRED表示
+
+`admin/booking/booking-admin.js`の`filterBookingsByTab`を最小変更した。
+
+| タブ | 表示するstatus |
+| --- | --- |
+| 今日 | PENDING / CONFIRMED（CANCELLED / EXPIREDは除外） |
+| 今後 | PENDING / CONFIRMED（CANCELLED / EXPIREDは除外） |
+| キャンセル | CANCELLEDのみ |
+| すべて | PENDING / CONFIRMED / CANCELLED / EXPIREDすべて |
+
+「今日」「今後」の絞り込み条件へ`b.status !== 'EXPIRED'`を追加しただけで、
+検索・ソート・サマリー集計（`computeSummaryCounts`）・タブ件数集計
+（`computeTabCounts`）はいずれも同じ`filterBookingsByTab`を経由するため
+自動的に同じ除外ルールに従う。EXPIRED表示のためだけの新しいAPI・新しい
+データ取得処理は追加していない（`getAdminBookings`は#305時点から変更なく、
+全件返した上でクライアント側だけで絞り込む設計のまま）。
+
+### 設定値（Script Properties / Config.gs）
+
+- `PENDING_TTL_CARD_HOURS_FROM_CREATED`（新規）: 既定`72`
+- `PENDING_TTL_CARD_HOURS_BEFORE_START`（新規）: 既定`24`
+- `PENDING_TTL_CASH_HOURS`（新規）: 既定`48`
+- `PENDING_TTL_MIN_HOURS_BEFORE_START`: 既存のまま維持（既定`2`）
+- `PENDING_TTL_MIN_HOLD_HOURS`: 既存のまま維持（既定`2`。現金等の当日grace・
+  オンラインクレジットカードの支払い猶予下限の両方で再利用する）
+- `PENDING_TTL_HOURS`: **廃止**。後方互換フォールバックとしても使わない
+  （設定してあっても`BookingConfig.getTtlConfig()`はこの値を一切参照しない）
+
+### 既存PENDINGへの遡及適用
+
+TTLは保存済みの固定値ではなく、`createdAt`/`startAt`/`paymentMethod`から
+都度動的に計算するため、本番反映時点で既に存在するPENDING予約にも新しい
+ルールがそのまま遡及適用される。これはIssue #326で意図された挙動であり、
+移行用の一括書き換え処理・Migrationスクリプトの類は追加していない。
+時間主導トリガーの実行間隔により、実際にEXPIREDへ更新される時刻は計算上の
+`expiry`から最大1トリガー間隔ぶん遅れ得る点は#268/#270時点から変更なし。
+
+### 範囲外（このIssueで対応していないもの）
+
+クレジットカードの支払い順序は「PENDING受付 → 支払い案内 → 支払い完了 →
+CONFIRMED」を正とする。現行legal（`_includes/legal_ja.html` /
+`studio-x/legal/index.html`）にある「予約確定後に支払い案内」という文言は
+この仕様と矛盾するが、その文言修正は別Issue（#327）で行い、本Issueの
+実装には含まない。本番GASへのコピー・Apps Scriptデプロイ・本番Script
+Propertiesの変更も、この実装PRの対象外（コードのみ実装）。
+
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
 | 項目 | 値 |
@@ -1568,9 +1708,11 @@ Booking Web App側からは呼び出せない）。
 | `MIN_BOOKING_MINUTES` | - | 省略時 `120` |
 | `BUFFER_MINUTES` | - | 省略時 `15`（予約間マージン） |
 | `SLOT_STEP_MINUTES` | - | 省略時 `15`（getAvailabilityの候補生成刻み） |
-| `PENDING_TTL_HOURS` | - | 省略時 `24`。PENDINGを受付から何時間保持するか |
-| `PENDING_TTL_MIN_HOURS_BEFORE_START` | - | 省略時 `2`。利用開始の何時間前を超えて保持しないか |
-| `PENDING_TTL_MIN_HOLD_HOURS`（Issue #270で追加） | - | 省略時 `2`。当日受付の予約について、受付から少なくとも何時間はPENDINGを保持するか（「PENDING TTLの変更内容と理由」参照） |
+| `PENDING_TTL_CARD_HOURS_FROM_CREATED`（Issue #326で追加） | - | 省略時 `72`。オンラインクレジットカードのPENDING期限式`min(受付+この値, 開始-PENDING_TTL_CARD_HOURS_BEFORE_START)`の「受付から何時間後」 |
+| `PENDING_TTL_CARD_HOURS_BEFORE_START`（Issue #326で追加） | - | 省略時 `24`。同じ式の「利用開始の何時間前」 |
+| `PENDING_TTL_CASH_HOURS`（Issue #326で追加） | - | 省略時 `48`。現金/PayPay/未定/想定外の値のPENDINGを受付から何時間保持するか（#268時点の`PENDING_TTL_HOURS`を置き換え） |
+| `PENDING_TTL_MIN_HOURS_BEFORE_START` | - | 省略時 `2`。現金/PayPay/未定/想定外の値について、利用開始の何時間前を超えて保持しないか（オンラインクレジットカードは`PENDING_TTL_CARD_HOURS_BEFORE_START`を使う） |
+| `PENDING_TTL_MIN_HOLD_HOURS`（Issue #270で追加。Issue #326でオンラインクレジットカードの支払い猶予下限にも再利用） | - | 省略時 `2`。現金/PayPay/未定/想定外の値では、当日受付の予約について受付から少なくとも何時間はPENDINGを保持するか（「PENDING TTLの変更内容と理由」参照）。オンラインクレジットカードでは、同日ゲートなしに常にこの時間ぶんの支払い猶予の下限として使う |
 | `RATE_LIMIT_EMAIL_COUNT` | - | 省略時 `3` |
 | `RATE_LIMIT_EMAIL_WINDOW_MINUTES` | - | 省略時 `10` |
 | `RATE_LIMIT_GLOBAL_COUNT` | - | 省略時 `20` |
@@ -1610,12 +1752,21 @@ Booking Adminは別プロジェクトのため、`CALENDAR_ID`・`SPREADSHEET_ID
 `createBooking`/`confirmBooking`/`expirePendingBookings`のいずれかが誤ったCalendar/
 Spreadsheetを参照してしまう）。
 
-`PENDING_TTL_HOURS`/`PENDING_TTL_MIN_HOURS_BEFORE_START`/`PENDING_TTL_MIN_HOLD_HOURS`は
-`expirePendingBookings`が使うため、**Booking Adminプロジェクト側に設定する**
-（Booking Web App側は不要）。`RATE_LIMIT_*`/`ADMIN_NOTIFICATION_EMAIL`/`BOOKING_ADMIN_URL`
+`PENDING_TTL_CASH_HOURS`/`PENDING_TTL_MIN_HOURS_BEFORE_START`は`expirePendingBookings`
+のみが使うため、**Booking Adminプロジェクト側にのみ設定する**（Booking Web App側は
+不要）。`RATE_LIMIT_*`/`ADMIN_NOTIFICATION_EMAIL`/`BOOKING_ADMIN_URL`
 （Issue #311）は`createBooking`のみが使うため、**Booking Web App側に設定する**
 （Booking Admin側は不要）。`BOOKING_ADMIN_URL`の値自体はBooking Adminプロジェクトの
 デプロイURLだが、それを読み出すのは`createBooking`（Booking Web App側）であることに注意。
+
+**`PENDING_TTL_CARD_HOURS_FROM_CREATED`/`PENDING_TTL_CARD_HOURS_BEFORE_START`/
+`PENDING_TTL_MIN_HOLD_HOURS`（Issue #326）は両方のプロジェクトに設定する。**
+`expirePendingBookings`（Booking Admin側）のEXPIRED判定だけでなく、`createBooking`
+（Booking Web App側）が送るPENDINGメールのオンラインクレジットカード支払い期限表示
+（`BookingMailer.sendPendingMailForBooking`）でも同じ3つの値を使うため。両プロジェクトで
+値がずれると、メールに表示される支払い期限とEXPIRED判定の期限が一致しなくなる
+（詳細は「Issue #326: PENDING期限を支払方法別に見直し、EXPIREDを今後/今日タブから
+除外する」参照）。
 
 **`BOOKING_MAIL_DISPLAY_NAME`/`BOOKING_MAIL_REPLY_TO`/`BOOKING_CONTACT_EMAIL`（Issue #271）は
 両方のプロジェクトに設定する。** Booking Web App側は`createBooking`のPENDINGメールで、
@@ -2026,11 +2177,16 @@ Issue #270時点で`customerType`に指定できるのは`first_time` / `returni
    が機械的に検証し、その配布ファイルセットで実際に既存PENDINGメール再送・PENDING TTL失効が
    ReferenceErrorなく動くことは`test/booking-admin-deployment.test.js`が検証している。
 4. このプロジェクトのScript Propertiesに `CALENDAR_ID` / `SPREADSHEET_ID` /
-   `PENDING_TTL_HOURS` / `PENDING_TTL_MIN_HOURS_BEFORE_START` /
-   `PENDING_TTL_MIN_HOLD_HOURS`（Issue #270で追加） / `BOOKING_MAIL_DISPLAY_NAME` /
+   `PENDING_TTL_CASH_HOURS` / `PENDING_TTL_CARD_HOURS_FROM_CREATED` /
+   `PENDING_TTL_CARD_HOURS_BEFORE_START` / `PENDING_TTL_MIN_HOURS_BEFORE_START` /
+   `PENDING_TTL_MIN_HOLD_HOURS`（Issue #270で追加。Issue #326でオンラインクレジット
+   カードにも再利用） / `BOOKING_MAIL_DISPLAY_NAME` /
    `BOOKING_MAIL_REPLY_TO` / `BOOKING_CONTACT_EMAIL` / `ACCESS_GUIDE_*`一式
    （Issue #271で追加。「Script Properties」節参照）を設定する
    （`CALENDAR_ID`/`SPREADSHEET_ID`/`BOOKING_MAIL_*`はBooking Web App側と同じ値。
+   `PENDING_TTL_CARD_HOURS_FROM_CREATED`/`PENDING_TTL_CARD_HOURS_BEFORE_START`/
+   `PENDING_TTL_MIN_HOLD_HOURS`はBooking Web App側にも同じ値を設定すること
+   （Issue #326。PENDINGメールの支払い期限表示にも使うため）。
    `TIMEZONE`を既定値`Asia/Tokyo`から変更している場合はここにも同じ値を設定すること）。
 5. 保存してSpreadsheetを再読み込みする。コンテナバインドスクリプトの`onOpen()`単純トリガーが
    自動的に発火し、「予約管理」メニューが表示される（installable trigger等の追加設定は
@@ -2133,12 +2289,23 @@ Booking Web Appプロジェクトのスクリプトエディタではない点�
   イベントのソース: 時間主導型 / 時間ベースのタイマー: 分ベースのタイマー（例: 15分おき）を
   選択して保存する。
 
-失効判定は「受付から`PENDING_TTL_HOURS`時間後」と「利用開始時刻の
-`PENDING_TTL_MIN_HOURS_BEFORE_START`時間前」の早い方。ただし当日受付の予約
-（受付日と利用日`date`が一致する予約）については、受付から少なくとも
-`PENDING_TTL_MIN_HOLD_HOURS`時間はPENDINGを保持する下限が働く（Issue #270。
-詳細は「Issue #270: 当日利用ルールと利用経験判定」の「PENDING TTLの変更内容と理由」
-参照。翌日以降に受け付けた予約の判定式は#268時点から変更していない）。
+失効判定は支払方法（`paymentMethod`）により異なる（Issue #326。実体は
+`Booking.computePendingExpiryMillis`）。
+
+- オンラインクレジットカード: 「受付から`PENDING_TTL_CARD_HOURS_FROM_CREATED`
+  時間後」と「利用開始時刻の`PENDING_TTL_CARD_HOURS_BEFORE_START`時間前」の
+  早い方を基本に、受付から少なくとも`PENDING_TTL_MIN_HOLD_HOURS`時間の支払い
+  猶予を保証しつつ、利用開始時刻を必ず上限とする（同日ゲートなし）。
+- 現金 / PayPay / 未定 / 想定外の値: 「受付から`PENDING_TTL_CASH_HOURS`時間後」と
+  「利用開始時刻の`PENDING_TTL_MIN_HOURS_BEFORE_START`時間前」の早い方。ただし
+  当日受付の予約（受付日と利用日`date`が一致する予約）については、受付から
+  少なくとも`PENDING_TTL_MIN_HOLD_HOURS`時間はPENDINGを保持する下限が働く
+  （Issue #270からの計算式は変更していない。基本TTLの値だけが
+  `PENDING_TTL_HOURS`から`PENDING_TTL_CASH_HOURS`へ変わった）。
+
+詳細は「Issue #326: PENDING期限を支払方法別に見直し、EXPIREDを今後/今日タブから
+除外する」・「Issue #270: 当日利用ルールと利用経験判定」の「PENDING TTLの変更内容と
+理由」参照。
 失効したPENDINGはCalendarイベントを削除し、Sheets側の`status`を`EXPIRED`にして
 `expiredAt`を記録する。Calendar削除に失敗した場合も`Recovery`シートへ記録した上で
 Sheets側はEXPIREDへ進める（PENDINGのまま放置しない）。
@@ -2782,6 +2949,37 @@ Issue #324で追加・更新:
 - `test/booking-app.test.js`（更新） — Step1で選んだtimeBandがStep2の開始時刻一覧の
   絞り込みに反映されること・timeBand未選択時はallとして全開始時刻が表示されること
   （後方互換）・該当候補が無い場合は既存の「開始時刻がありません」表示になることを追加
+
+Issue #326で追加・更新:
+
+- `test/booking-config.test.js`（更新） — `getTtlConfig`の戻り値を支払方法別TTL
+  設定（`cardHoursFromCreated`/`cardHoursBeforeStart`/`cashHours`/
+  `minHoursBeforeStart`/`minHoldHours`/`timezone`）へ更新。新しい3プロパティの
+  誤設定フォールバック・廃止された`PENDING_TTL_HOURS`を設定しても一切参照されない
+  ことを追加
+- `test/booking-model.test.js`（更新） — `Booking.gs`に追加した`isCardPaymentMethod`/
+  `computeCardPendingExpiryMillis`/`computePendingExpiryMillis`/`isPendingExpired`。
+  確定式の72h側/24h側それぞれがexpiryになるケース・前日受付/利用開始24時間5分前
+  でも最低2時間保持されること・利用開始2時間未満でstartAtが上限になること・
+  想定外paymentMethodの48時間フォールバック・現金等の既存同日grace回帰なしを検証
+- `test/booking-confirm-expire.test.js`（更新） — `expirePendingBookings`の基本TTLを
+  48時間（現金/PayPay/未定/想定外の値）に更新（既存の24時間前提のテストを49時間に
+  修正）。加えてオンラインクレジットカードの72h側/24h側それぞれの境界・前日受付の
+  最低2時間保証・利用開始2時間未満のケース、PayPay/未定/想定外paymentMethodの
+  48時間フォールバックを追加
+- `test/booking-cancel.test.js`（更新） — Lock競合テストの前提createdAtを
+  48時間TTLに合わせて49時間前へ修正
+- `test/booking-mail-templates.test.js`（更新） — `buildPendingMail`のオンライン
+  クレジットカード支払い期限表示（JST・分単位切り捨て・EXPIRED判定と同一ミリ秒値）・
+  「お支払い方法は別途ご案内します」の追記・現金/PayPay/未定には支払い期限を
+  表示しないことを追加
+- `test/booking-mailer.test.js`（更新） — `sendPendingMailForBooking`が
+  `BookingConfig.getTtlConfig()`をオンラインクレジットカードの支払い期限表示まで
+  実際に配線していること・現金では支払い期限を表示しないことを追加
+- `test/booking-admin-page-client.test.js`（更新） — `filterBookingsByTab`/
+  `computeTabCounts`が、今日/未来日付のEXPIREDも「今日」「今後」タブと件数から
+  除外すること（過去日のEXPIREDだけでなく、日付比較では区別できないケースを
+  明示的に検証）を追加
 
 CalendarApp / PropertiesService / Utilities / ContentService / LockService /
 CacheService / SpreadsheetApp / MailApp / ScriptApp はいずれもテスト用スタブに

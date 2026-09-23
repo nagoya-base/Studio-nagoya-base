@@ -103,11 +103,13 @@ test('数値項目は先頭0を持たない/持つ通常の整数文字列なら
   assert.strictEqual(config.slotStepMinutes, 30);
 });
 
-test('getTtlConfig: Script Propertiesが空でも固定仕様のデフォルト値が使われる（Issue #270でminHoldHours/timezoneを追加）', function () {
+test('getTtlConfig: Script Propertiesが空でも固定仕様のデフォルト値が使われる（Issue #270でminHoldHours/timezoneを追加、Issue #326で支払方法別のTTL設定へ変更）', function () {
   var BookingConfig = loadConfig({});
   var config = BookingConfig.getTtlConfig();
   assert.deepEqual(config, {
-    ttlHours: 24,
+    cardHoursFromCreated: 72,
+    cardHoursBeforeStart: 24,
+    cashHours: 48,
     minHoursBeforeStart: 2,
     minHoldHours: 2,
     timezone: 'Asia/Tokyo'
@@ -122,6 +124,36 @@ test('getTtlConfig: PENDING_TTL_MIN_HOLD_HOURSはScript Propertiesで変更で�
     var config = loadConfig({ PENDING_TTL_MIN_HOLD_HOURS: rawValue }).getTtlConfig();
     assert.strictEqual(config.minHoldHours, 2, JSON.stringify(rawValue) + ' はデフォルト値(2)へフォールバックするべき');
   });
+});
+
+/* Issue #326: 支払方法別のPENDING期限設定。 */
+
+test('getTtlConfig: PENDING_TTL_CARD_HOURS_FROM_CREATED/PENDING_TTL_CARD_HOURS_BEFORE_START/PENDING_TTL_CASH_HOURSはScript Propertiesで変更でき、誤設定は例外にせずデフォルトへフォールバックする', function () {
+  var overridden = loadConfig({
+    PENDING_TTL_CARD_HOURS_FROM_CREATED: '96',
+    PENDING_TTL_CARD_HOURS_BEFORE_START: '12',
+    PENDING_TTL_CASH_HOURS: '72'
+  }).getTtlConfig();
+  assert.strictEqual(overridden.cardHoursFromCreated, 96);
+  assert.strictEqual(overridden.cardHoursBeforeStart, 12);
+  assert.strictEqual(overridden.cashHours, 72);
+
+  ['abc', '0', '-1', ''].forEach(function (rawValue) {
+    var config = loadConfig({
+      PENDING_TTL_CARD_HOURS_FROM_CREATED: rawValue,
+      PENDING_TTL_CARD_HOURS_BEFORE_START: rawValue,
+      PENDING_TTL_CASH_HOURS: rawValue
+    }).getTtlConfig();
+    assert.strictEqual(config.cardHoursFromCreated, 72, JSON.stringify(rawValue));
+    assert.strictEqual(config.cardHoursBeforeStart, 24, JSON.stringify(rawValue));
+    assert.strictEqual(config.cashHours, 48, JSON.stringify(rawValue));
+  });
+});
+
+test('getTtlConfig: PENDING_TTL_HOURSはIssue #326で廃止され、設定しても一切参照されない（後方互換フォールバックとしても使わない）', function () {
+  var config = loadConfig({ PENDING_TTL_HOURS: '999' }).getTtlConfig();
+  assert.strictEqual(config.cashHours, 48, '廃止されたPENDING_TTL_HOURSを設定してもcashHoursの既定値のまま');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(config, 'ttlHours'), false, '戻り値にttlHoursフィールドは存在しない');
 });
 
 test('getTtlConfig: timezoneはTIMEZONEプロパティと共有される（expirePendingBookingsの当日判定に使う）', function () {

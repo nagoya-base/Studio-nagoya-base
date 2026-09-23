@@ -89,20 +89,32 @@ var BookingConfig = (function () {
     return parsed > 0 ? parsed : defaultValue;
   }
 
-  /* PENDING TTLの既定値（Issue #268固定仕様 + Issue #270で追加）:
-     - PENDING_TTL_HOURS: 受付から24時間
+  /* PENDING TTLの既定値（Issue #268固定仕様 + Issue #270で追加 + Issue #326で支払方法別へ変更）:
+     - PENDING_TTL_CARD_HOURS_FROM_CREATED（Issue #326で追加）: オンラインクレジットカードの
+       支払い期限計算式 `min(受付+72h, 開始-24h)` の「72h」。既定72時間。
+     - PENDING_TTL_CARD_HOURS_BEFORE_START（Issue #326で追加）: 同じ式の「24h」。既定24時間。
+     - PENDING_TTL_CASH_HOURS（Issue #326で追加）: 現金/PayPay/未定/想定外の値の基本TTL。
+       既定48時間（Issue #268時点のPENDING_TTL_HOURS=24時間から変更。この設定値は廃止し、
+       後方互換フォールバックとしても使わない）。
      - PENDING_TTL_MIN_HOURS_BEFORE_START: 利用開始時刻の2時間前を超えて保持しない
-     - PENDING_TTL_MIN_HOLD_HOURS（Issue #270で追加。レビュー対応で意味を再定義）:
-       「利用開始まで2時間未満で受け付けた当日予約」で通常TTL計算式が受付時刻以前に
-       なってしまう場合にだけ使う最大猶予（grace）。既定2時間。「受付から少なくとも
-       この時間は必ず保持する」という下限ではなく、利用開始時刻を必ず上限とする
-       （expiry<=startAtを保証。Booking.gsのcomputeTtlExpiryMillisコメント参照）。
+       （現金/PayPay/未定/想定外の値にのみ適用。オンラインクレジットカードは
+       PENDING_TTL_CARD_HOURS_BEFORE_STARTを使う）。
+     - PENDING_TTL_MIN_HOLD_HOURS（Issue #270で追加。レビュー対応で意味を再定義。Issue #326で
+       オンラインクレジットカードの支払い猶予の下限にも同じ設定値を再利用する）:
+       現金/PayPay/未定/想定外の値では、「利用開始まで2時間未満で受け付けた当日予約」で
+       通常TTL計算式が受付時刻以前になってしまう場合にだけ使う最大猶予（grace）。既定2時間。
+       「受付から少なくともこの時間は必ず保持する」という下限ではなく、利用開始時刻を
+       必ず上限とする（expiry<=startAtを保証。Booking.gsのcomputeTtlExpiryMillisコメント参照）。
+       オンラインクレジットカードでは、同日ゲートなしに常にこの時間ぶんの支払い猶予の
+       下限として使う（Booking.gsのcomputeCardPendingExpiryMillis参照）。
      - timezone（Issue #270で追加）: expirePendingBookingsが「当日受付かどうか」を
        Asia/Tokyo基準で判定するために使う（Availability設定のTIMEZONEと同じ値を共有する）。
      いずれもScript Propertiesで変更可能。 */
   function getTtlConfig() {
     return {
-      ttlHours: readPositiveIntegerProperty_('PENDING_TTL_HOURS', 24),
+      cardHoursFromCreated: readPositiveIntegerProperty_('PENDING_TTL_CARD_HOURS_FROM_CREATED', 72),
+      cardHoursBeforeStart: readPositiveIntegerProperty_('PENDING_TTL_CARD_HOURS_BEFORE_START', 24),
+      cashHours: readPositiveIntegerProperty_('PENDING_TTL_CASH_HOURS', 48),
       minHoursBeforeStart: readPositiveIntegerProperty_('PENDING_TTL_MIN_HOURS_BEFORE_START', 2),
       minHoldHours: readPositiveIntegerProperty_('PENDING_TTL_MIN_HOLD_HOURS', 2),
       timezone: readProperty_('TIMEZONE')

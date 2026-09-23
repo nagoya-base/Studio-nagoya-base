@@ -244,10 +244,17 @@ var BookingMailer = (function () {
     }
   }
 
+  /*
+   * Issue #326: オンラインクレジットカードのPENDINGメールに載せる支払い期限は、
+   * expirePendingBookingsのEXPIRED判定と同じBookingConfig.getTtlConfig()を
+   * そのままconfig.ttlConfigとして渡す（メール側で別のTTL設定・別計算を持たない）。
+   * 現金/PayPay/未定ではBookingMailTemplates.buildPendingMail側でこの値を使わない。
+   */
   function sendPendingMailForBooking(bookingId, options) {
     var opts = options || {};
     return withBookingLock_(MAIL_TYPES.PENDING, bookingId, Booking.STATUS.PENDING, ['pendingMailSentAt'], !!opts.force, function (record) {
       var config = ensureMailConfigComplete_();
+      config.ttlConfig = BookingConfig.getTtlConfig();
       return BookingMailTemplates.buildPendingMail(record, config);
     });
   }

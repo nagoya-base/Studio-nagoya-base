@@ -505,6 +505,137 @@ test('isExpired: 失効時刻ちょうど・その後はtrue、前はfalse', fun
   assert.strictEqual(Booking.isExpired(createdAt, startAt, 24, 2, expiryMillis + 1), true);
 });
 
+/*
+ * computeCardPendingExpiryMillis / computePendingExpiryMillis / isPendingExpired
+ * （Issue #326: PENDING期限の支払方法別見直し）。
+ *
+ * オンラインクレジットカードの確定式:
+ *   baseExpiry = min(createdAt + cardHoursFromCreated, startAt - cardHoursBeforeStart)
+ *   expiry     = min(startAt, max(baseExpiry, createdAt + minFloorHours))
+ * 「受付日＝利用日」の同日ゲートは適用しない（現金等のminHoldHoursと異なり常に適用する）。
+ */
+
+test('isCardPaymentMethod: "オンラインクレジットカード"の完全一致のみtrue、それ以外・未指定はfalse', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.isCardPaymentMethod('オンラインクレジットカード'), true);
+  ['現金', 'PayPay', '未定', '', 'クレジットカード', 'card', undefined, null].forEach(function (value) {
+    assert.strictEqual(Booking.isCardPaymentMethod(value), false, JSON.stringify(value));
+  });
+});
+
+test('computeCardPendingExpiryMillis: 受付から72時間後が開始24時間前より早ければ、72時間後がexpiryになる', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T00:00:00+09:00').getTime();
+  var startAt = new Date('2026-10-10T00:00:00+09:00').getTime(); /* 9日後: 72h/24hのどちらの上限からも十分遠い */
+  var expiry = Booking.computeCardPendingExpiryMillis(createdAt, startAt, 72, 24, 2);
+  assert.strictEqual(expiry, createdAt + 72 * 3600000, '受付72時間後が先に来るケースでは72時間後がexpiryになるべき');
+});
+
+test('computeCardPendingExpiryMillis: 利用開始24時間前が受付72時間後より早ければ、開始24時間前がexpiryになる', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T00:00:00+09:00').getTime();
+  var startAt = new Date('2026-10-02T12:00:00+09:00').getTime(); /* 36時間後開始 */
+  var expiry = Booking.computeCardPendingExpiryMillis(createdAt, startAt, 72, 24, 2);
+  assert.strictEqual(expiry, startAt - 24 * 3600000, '開始24時間前が先に来るケースでは開始24時間前がexpiryになるべき');
+});
+
+test('computeCardPendingExpiryMillis: 前日15:00受付・翌10:00開始（19時間後開始）は、最低2時間の支払い猶予（受付+2h=17:00）が保証される（前日受付でも同日ゲートなしに猶予を確保する）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T15:00:00+09:00').getTime();
+  var startAt = new Date('2026-10-02T10:00:00+09:00').getTime();
+  var expiry = Booking.computeCardPendingExpiryMillis(createdAt, startAt, 72, 24, 2);
+  assert.strictEqual(expiry, createdAt + 2 * 3600000, '前日受付でも受付+2h（17:00）が保証されるべき');
+  assert.strictEqual(new Date(expiry).toISOString(), new Date('2026-10-01T17:00:00+09:00').toISOString());
+});
+
+test('computeCardPendingExpiryMillis: 利用開始24時間5分前の受付でも最低2時間保持される（受付+2hが開始24時間前を上回るケース）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T00:00:00+09:00').getTime();
+  var startAt = createdAt + (24 * 60 + 5) * 60000; /* 24時間5分後開始 */
+  var expiry = Booking.computeCardPendingExpiryMillis(createdAt, startAt, 72, 24, 2);
+  assert.strictEqual(expiry, createdAt + 2 * 3600000, '開始24時間前(受付+5分)より受付+2hの下限のほうが大きいため、受付+2hが採用されるべき');
+});
+
+test('computeCardPendingExpiryMillis: 利用開始まで2時間未満の受付では、利用開始時刻(startAt)が上限になる', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T00:00:00+09:00').getTime();
+  var startAt = createdAt + 1 * 3600000; /* 1時間後開始 */
+  var expiry = Booking.computeCardPendingExpiryMillis(createdAt, startAt, 72, 24, 2);
+  assert.strictEqual(expiry, startAt, '利用開始まで2時間未満なら、下限(受付+2h)より利用開始時刻が先に来るためstartAtが上限になるべき');
+});
+
+test('computeCardPendingExpiryMillis: いかなるケースでもexpiry <= startAtが成り立つ（利用開始後までPENDINGを保持しない）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T00:00:00+09:00').getTime();
+  [30, 60, 90, 119, 120, 121, 180, 1440, 4320].forEach(function (minutesUntilStart) {
+    var startAt = createdAt + minutesUntilStart * 60000;
+    var expiry = Booking.computeCardPendingExpiryMillis(createdAt, startAt, 72, 24, 2);
+    assert.ok(expiry <= startAt, minutesUntilStart + '分後開始: expiry(' + expiry + ') <= startAt(' + startAt + ')であるべき');
+  });
+});
+
+test('computePendingExpiryMillis: オンラインクレジットカードはisSameDayBookingの値に関わらずcomputeCardPendingExpiryMillisと同じ結果になる（同日ゲートなし）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T15:00:00+09:00').getTime();
+  var startAt = new Date('2026-10-02T10:00:00+09:00').getTime();
+  var ttlConfig = { cardHoursFromCreated: 72, cardHoursBeforeStart: 24, cashHours: 48, minHoursBeforeStart: 2, minHoldHours: 2 };
+  var expected = Booking.computeCardPendingExpiryMillis(createdAt, startAt, 72, 24, 2);
+
+  assert.strictEqual(Booking.computePendingExpiryMillis('オンラインクレジットカード', createdAt, startAt, ttlConfig, false), expected);
+  assert.strictEqual(Booking.computePendingExpiryMillis('オンラインクレジットカード', createdAt, startAt, ttlConfig, true), expected);
+});
+
+/* 現金/PayPay/未定/想定外の値はいずれも同じ48時間ベースの計算式へフォールバックする（Issue #326）。 */
+test('computePendingExpiryMillis: 現金/PayPay/未定/想定外の値はいずれもcomputeTtlExpiryMillis(cashHours=48)と同じ結果になる（想定外paymentMethodのフォールバック含む）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T09:00:00+09:00').getTime();
+  var startAt = new Date('2026-10-04T09:00:00+09:00').getTime();
+  var ttlConfig = { cardHoursFromCreated: 72, cardHoursBeforeStart: 24, cashHours: 48, minHoursBeforeStart: 2, minHoldHours: 2 };
+  var expected = Booking.computeTtlExpiryMillis(createdAt, startAt, 48, 2, 0);
+
+  ['現金', 'PayPay', '未定', '', '銀行振込', undefined, null].forEach(function (paymentMethod) {
+    var actual = Booking.computePendingExpiryMillis(paymentMethod, createdAt, startAt, ttlConfig, false);
+    assert.strictEqual(actual, expected, JSON.stringify(paymentMethod) + ' は48時間ベースの計算式になるべき');
+  });
+});
+
+test('computePendingExpiryMillis: 現金/PayPay/未定/想定外の値は、当日受付(isSameDayBooking=true)なら既存のminHoldHours(grace)がそのまま適用される（既存同日graceの回帰なし）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T09:00:00+09:00').getTime();
+  var startAt = new Date('2026-10-01T09:30:00+09:00').getTime(); /* 当日30分後開始 */
+  var ttlConfig = { cardHoursFromCreated: 72, cardHoursBeforeStart: 24, cashHours: 48, minHoursBeforeStart: 2, minHoldHours: 2 };
+  var expectedWithGrace = Booking.computeTtlExpiryMillis(createdAt, startAt, 48, 2, 2);
+  var expectedWithoutGrace = Booking.computeTtlExpiryMillis(createdAt, startAt, 48, 2, 0);
+
+  ['現金', 'PayPay', '未定', '想定外の値'].forEach(function (paymentMethod) {
+    assert.strictEqual(
+      Booking.computePendingExpiryMillis(paymentMethod, createdAt, startAt, ttlConfig, true),
+      expectedWithGrace,
+      JSON.stringify(paymentMethod) + ': 当日受付はgraceが適用されるべき'
+    );
+    assert.strictEqual(
+      Booking.computePendingExpiryMillis(paymentMethod, createdAt, startAt, ttlConfig, false),
+      expectedWithoutGrace,
+      JSON.stringify(paymentMethod) + ': 当日受付でなければgraceは適用されないべき'
+    );
+  });
+  assert.strictEqual(expectedWithGrace, startAt, '当日直前予約はgraceにより開始時刻が上限になるべき（#268/#270からの回帰なし）');
+});
+
+test('isPendingExpired: computePendingExpiryMillisちょうど・その後はtrue、前はfalse（支払方法を問わず一貫する）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T09:00:00+09:00').getTime();
+  var startAt = createdAt + 5 * 3600000;
+  var ttlConfig = { cardHoursFromCreated: 72, cardHoursBeforeStart: 24, cashHours: 48, minHoursBeforeStart: 2, minHoldHours: 2 };
+
+  ['オンラインクレジットカード', '現金'].forEach(function (paymentMethod) {
+    var expiryMillis = Booking.computePendingExpiryMillis(paymentMethod, createdAt, startAt, ttlConfig, false);
+    assert.strictEqual(Booking.isPendingExpired(paymentMethod, createdAt, startAt, ttlConfig, expiryMillis - 1, false), false, paymentMethod);
+    assert.strictEqual(Booking.isPendingExpired(paymentMethod, createdAt, startAt, ttlConfig, expiryMillis, false), true, paymentMethod);
+    assert.strictEqual(Booking.isPendingExpired(paymentMethod, createdAt, startAt, ttlConfig, expiryMillis + 1, false), true, paymentMethod);
+  });
+});
+
 test('isAllowedBrand: Issue #269でsnb/mens/studio_xの3ブランドを許可し、未知のbrandは拒否する', function () {
   var Booking = loadBooking();
   assert.strictEqual(Booking.isAllowedBrand('studio_x'), true);

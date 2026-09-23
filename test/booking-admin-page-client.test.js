@@ -187,6 +187,74 @@ test('visibleBookings: 「すべて」にはCANCELLED・EXPIREDを含む全件�
   assert.ok(idsOf(result).indexOf('past-expired') !== -1);
 });
 
+/*
+ * Issue #326: EXPIREDになった予約が「今日」「今後」タブに残り続けて見づらいという
+ * 運用課題への対応。past-expired（YESTERDAY）は日付比較だけでも今日/今後から
+ * 自然に除外されるため、ここでは今日付・未来日付のEXPIREDを別途用意し、
+ * 「日付が一致/未来であってもstatus=EXPIREDなら除外される」ことを明示的に検証する。
+ */
+function setupStateWithExpiredToday(sandbox, filter) {
+  setupState(sandbox, filter);
+  sandbox.state.bookings = sandbox.state.bookings.concat([
+    booking({ bookingId: 'today-expired', date: TODAY, status: 'EXPIRED' }),
+    booking({ bookingId: 'future-expired', date: TOMORROW, status: 'EXPIRED' })
+  ]);
+}
+
+test('visibleBookings: 「今日」タブは今日日付であってもEXPIREDを除外する（Issue #326）', function () {
+  var sandbox = loadClientSandbox();
+  setupStateWithExpiredToday(sandbox, 'today');
+
+  var result = sandbox.visibleBookings();
+
+  assert.deepStrictEqual(idsOf(result), ['today-confirmed', 'today-pending']);
+  assert.strictEqual(idsOf(result).indexOf('today-expired'), -1, '今日日付のEXPIREDは「今日」タブに出てはいけない');
+});
+
+test('visibleBookings: 「今後」タブは未来日付であってもEXPIREDを除外する（Issue #326）', function () {
+  var sandbox = loadClientSandbox();
+  setupStateWithExpiredToday(sandbox, 'upcoming');
+
+  var result = sandbox.visibleBookings();
+
+  assert.strictEqual(idsOf(result).indexOf('today-expired'), -1, '今日日付のEXPIREDは「今後」タブに出てはいけない');
+  assert.strictEqual(idsOf(result).indexOf('future-expired'), -1, '未来日付のEXPIREDは「今後」タブに出てはいけない');
+  assert.deepStrictEqual(idsOf(result), ['future-confirmed', 'today-confirmed', 'today-pending'].sort());
+});
+
+test('visibleBookings: 「キャンセル」タブは今日/未来日付のEXPIREDも含めない（CANCELLEDのみ）', function () {
+  var sandbox = loadClientSandbox();
+  setupStateWithExpiredToday(sandbox, 'cancelled');
+
+  var result = sandbox.visibleBookings();
+
+  assert.strictEqual(idsOf(result).indexOf('today-expired'), -1);
+  assert.strictEqual(idsOf(result).indexOf('future-expired'), -1);
+  assert.deepStrictEqual(idsOf(result), ['future-cancelled', 'past-cancelled', 'today-cancelled'].sort());
+});
+
+test('visibleBookings: 「すべて」は今日/未来日付のEXPIREDも含めて全件表示する', function () {
+  var sandbox = loadClientSandbox();
+  setupStateWithExpiredToday(sandbox, 'all');
+
+  var result = sandbox.visibleBookings();
+
+  assert.strictEqual(result.length, sandbox.state.bookings.length);
+  assert.ok(idsOf(result).indexOf('today-expired') !== -1);
+  assert.ok(idsOf(result).indexOf('future-expired') !== -1);
+});
+
+test('computeTabCounts: 今日/今後タブの件数は今日・未来日付のEXPIREDを数えない（Issue #326）', function () {
+  var sandbox = loadClientSandbox();
+  setupStateWithExpiredToday(sandbox, 'all');
+
+  var counts = sandbox.computeTabCounts(sandbox.state.bookings, TODAY);
+  assert.strictEqual(counts.today, 2, '今日タブの件数にtoday-expiredを含めてはいけない');
+  assert.strictEqual(counts.upcoming, 3, '今後タブの件数にtoday-expired/future-expiredを含めてはいけない（today-pending, today-confirmed, future-confirmed）');
+  assert.strictEqual(counts.cancelled, 3, 'キャンセルタブの件数にEXPIREDを含めない');
+  assert.strictEqual(counts.all, sandbox.state.bookings.length, 'すべてタブは追加したEXPIRED 2件も含む');
+});
+
 test('visibleBookings: 既存のtoday/upcoming判定（日付比較）は壊れていない', function () {
   var sandbox = loadClientSandbox();
   setupState(sandbox, 'today');

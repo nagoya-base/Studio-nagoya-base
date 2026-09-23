@@ -158,6 +158,20 @@ var BookingAvailability = (function () {
     }
   }
 
+  /*
+   * dateを指定timezoneの'YYYY/MM/DD HH:mm'へ変換する（Issue #326。オンラインクレジット
+   * カードのPENDINGメールに載せる支払い期限表示用）。formatDateInTimezone/
+   * formatTimeInTimezoneをそのまま組み合わせるだけで、分単位への切り捨ては
+   * Intl.DateTimeFormatが秒未満の情報を保持しないことで自然に実現される（新たな
+   * 丸め処理を実装しない）。timezoneが不正な場合はnullを返す（呼び出し側でfail-closedに扱う）。
+   */
+  function formatDateTimeInTimezone(date, timezone) {
+    var datePart = formatDateInTimezone(date, timezone);
+    var timePart = formatTimeInTimezone(date, timezone);
+    if (!datePart || !timePart) return null;
+    return datePart.replace(/-/g, '/') + ' ' + timePart;
+  }
+
   function isNonNegativeInteger_(value) {
     return typeof value === 'number' && Number.isInteger(value) && value >= 0;
   }
@@ -530,6 +544,7 @@ var BookingAvailability = (function () {
     parseTimeToMinutes: parseTimeToMinutes_,
     formatDateInTimezone: formatDateInTimezone,
     formatTimeInTimezone: formatTimeInTimezone,
+    formatDateTimeInTimezone: formatDateTimeInTimezone,
     getCurrentMinutesInTimezone: getCurrentMinutesInTimezone,
     validateInput: validateInput,
     computeBookableStartTimes: computeBookableStartTimes,

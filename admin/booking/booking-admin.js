@@ -105,8 +105,11 @@ function formatValue(key, value) {
 /* 「今日/今後」の判定はtodayJst（サーバーがAsia/Tokyo基準で計算した値。
    getAdminBookingsの応答に含まれる）とbooking.date（同じくJST基準の
    'YYYY-MM-DD'）の単純な文字列比較で行う。端末のtimezone設定には一切依存しない。
-   CANCELLEDは「今日」「今後」には出さず、日付を問わず「キャンセル」タブへ集約する
-   （EXPIREDはここに含めない。「すべて」で確認できれば十分という要件のため）。
+   CANCELLEDは「今日」「今後」には出さず、日付を問わず「キャンセル」タブへ集約する。
+   EXPIREDも「今日」「今後」には出さない（Issue #326。EXPIREDになった予約が
+   今日/今後タブに残り続けて見づらいという運用課題への対応）。「キャンセル」タブは
+   CANCELLEDのみ（EXPIREDは含めない）。EXPIREDは「すべて」タブでのみ確認できれば
+   よいという要件のため、絞り込み条件からは除外し続ける。
    Issue #322で件数サマリー・タブ件数（computeSummaryCounts/computeTabCounts）にも
    同じ判定を使うため、stateに依存しない純粋関数として切り出した（DOM操作からも
    分離しているため、この関数単体を直接テストできる）。 */
@@ -116,8 +119,8 @@ function filterBookingsByTab(bookings, filter, todayJst) {
     if (filter === 'all') return true;
     if (filter === 'cancelled') return b.status === 'CANCELLED';
     if (!today) return true;
-    if (filter === 'today') return b.date === today && b.status !== 'CANCELLED';
-    if (filter === 'upcoming') return b.date >= today && b.status !== 'CANCELLED';
+    if (filter === 'today') return b.date === today && b.status !== 'CANCELLED' && b.status !== 'EXPIRED';
+    if (filter === 'upcoming') return b.date >= today && b.status !== 'CANCELLED' && b.status !== 'EXPIRED';
     return true;
   });
 }
