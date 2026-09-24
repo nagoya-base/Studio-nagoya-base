@@ -907,6 +907,136 @@ test('sendPaymentLinkMailForBooking: 2回目の履歴保存だけが失敗した
   assert.strictEqual(mailApp._sentEmails.length, 1, '競合したタブBからは送信されないべき（二重送信していない）');
 });
 
+/*
+ * 第3回PRレビュー対応: paymentLinkMetadataInconsistentAtが記録されている間は、
+ * 送信履歴の照合・補正（resolvePaymentLinkMetadataInconsistency）が完了するまで、
+ * 通常送信・明示的な再送のいずれも拒否する（METADATA_INCONSISTENT。forceでも
+ * 無視しない）。以前は「別の送信が成功しただけ」で不整合フラグがクリアされてしまい、
+ * 実際の送信回数と台帳上の送信回数の差が隠れる問題があったため、これを修正した。
+ */
+test('sendPaymentLinkMailForBooking: paymentLinkMetadataInconsistentAtが記録された予約は、画面を最新化した（stale判定に引っかからない）通常送信・明示的な再送のいずれもMETADATA_INCONSISTENTで拒否する（不整合の解消が完了するまで）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+
+  var restore = stubMetadataWriteFailure_(ctx);
+  var firstAttempt = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, BEFORE_DUE);
+  restore();
+  assert.strictEqual(firstAttempt.success, true, JSON.stringify(firstAttempt));
+  assert.strictEqual(firstAttempt.metadataInconsistent, true, '前提: 2回目の履歴保存が失敗しているべき');
+
+  /* 「画面を最新化した」＝expectedSendCount/expectedSentAtVersionのstale判定には
+     引っかからない、最新の状態を正しく見ている操作を想定する。それでも
+     METADATA_INCONSISTENTで拒否されるべき（SEND_HISTORY_CONFLICTとは別の理由）。 */
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  var freshOptions = {
+    expectedSendCount: Number(found.record.paymentLinkSendCount) || 0,
+    expectedSentAtVersion: found.record.paymentLinkSentAt.getTime()
+  };
+
+  var normalAttempt = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({}, freshOptions, BEFORE_DUE)
+  );
+  assert.strictEqual(normalAttempt.success, false);
+  assert.strictEqual(normalAttempt.skipped, true);
+  assert.strictEqual(normalAttempt.error.code, 'METADATA_INCONSISTENT');
+
+  var forcedAttempt = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ force: true }, freshOptions, BEFORE_DUE)
+  );
+  assert.strictEqual(forcedAttempt.success, false);
+  assert.strictEqual(forcedAttempt.error.code, 'METADATA_INCONSISTENT', 'forceでも記録不整合の間は送信できないべき');
+
+  assert.strictEqual(mailApp._sentEmails.length, 1, '不整合が解消されていない間は追加の送信が起きてはいけない');
+
+  var afterAttempts = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.ok(afterAttempts.paymentLinkMetadataInconsistentAt, '不整合フラグはこの拒否によって変化しない');
+});
+
+/*
+ * resolvePaymentLinkMetadataInconsistency（送信履歴の補正）。
+ */
+test('resolvePaymentLinkMetadataInconsistency: 記録不整合の予約に対し、確認済みの送信回数へ補正し、paymentLinkMetadataInconsistentAtをクリアして送信を再び許可する', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+
+  var restore = stubMetadataWriteFailure_(ctx);
+  ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, BEFORE_DUE);
+  restore();
+  var beforeResolve = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.ok(beforeResolve.paymentLinkMetadataInconsistentAt, '前提: 記録不整合が発生しているべき');
+  assert.strictEqual(Number(beforeResolve.paymentLinkSendCount) || 0, 0);
+
+  /* 管理者が実際の送信状況を確認し、本来の送信回数（1回）を確認済みとして補正する。 */
+  var resolveResult = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 1);
+  assert.strictEqual(resolveResult.success, true, JSON.stringify(resolveResult));
+  assert.strictEqual(resolveResult.paymentLinkSendCount, 1);
+
+  var afterResolve = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(Number(afterResolve.paymentLinkSendCount) || 0, 1);
+  assert.ok(!afterResolve.paymentLinkMetadataInconsistentAt, '補正後は不整合フラグがクリアされるべき');
+
+  var resolvedRecoveries = ctx.sandbox.RecoveryRepository.listAll().filter(function (r) {
+    return r.bookingId === bookingId && r.failureType === 'PAYMENT_LINK_METADATA_RESOLVED';
+  });
+  assert.strictEqual(resolvedRecoveries.length, 1);
+  assert.strictEqual(resolvedRecoveries[0].recoveryState, 'RESOLVED');
+
+  /* 補正後は送信が再び許可される（明示的な再送でなくてもよい。paymentLinkSentAtは
+     既に記録済みのため通常送信はALREADY_SENTになるが、force resendは成功するべき）。 */
+  var forcedAfterResolve = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ force: true }, BEFORE_DUE)
+  );
+  assert.strictEqual(forcedAfterResolve.success, true, JSON.stringify(forcedAfterResolve));
+  assert.strictEqual(mailApp._sentEmails.length, 2);
+});
+
+test('resolvePaymentLinkMetadataInconsistency: 記録不整合ではない予約に対してはNOT_INCONSISTENTで拒否し、送信履歴を書き換えない（対象の限定）', function () {
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+
+  var result = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 5);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'NOT_INCONSISTENT');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(Number(found.paymentLinkSendCount) || 0, 0);
+});
+
+test('resolvePaymentLinkMetadataInconsistency: 補正値が現在の記録より小さい場合はCONFIRMED_SEND_COUNT_TOO_LOWで拒否し、既存の送信履歴を消してしまわない', function () {
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    paymentMethod: 'オンラインクレジットカード',
+    paymentLinkSendCount: 3,
+    paymentLinkMetadataInconsistentAt: new Date('2026-10-01T10:00:00+09:00')
+  });
+
+  var result = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 2);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'CONFIRMED_SEND_COUNT_TOO_LOW');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(Number(found.record.paymentLinkSendCount) || 0, 3, '拒否された場合は既存の記録を変更しない');
+  assert.ok(found.record.paymentLinkMetadataInconsistentAt, '拒否された場合は不整合フラグもクリアしない');
+});
+
+test('resolvePaymentLinkMetadataInconsistency: 補正値が0以上の整数でない場合はINVALID_CONFIRMED_SEND_COUNTで拒否する', function () {
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    paymentMethod: 'オンラインクレジットカード',
+    paymentLinkMetadataInconsistentAt: new Date('2026-10-01T10:00:00+09:00')
+  });
+
+  [-1, 1.5, NaN, 'abc'].forEach(function (invalidValue) {
+    var result = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, invalidValue);
+    assert.strictEqual(result.success, false, JSON.stringify(invalidValue));
+    assert.strictEqual(result.error.code, 'INVALID_CONFIRMED_SEND_COUNT', JSON.stringify(invalidValue));
+  });
+});
+
 test('sendPaymentLinkMailForBooking: expectedSendCount・expectedSentAtVersionのいずれも渡さない場合は競合チェック自体を行わない（既存挙動を維持。省略時は省略前と同じ結果になる）', function () {
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });

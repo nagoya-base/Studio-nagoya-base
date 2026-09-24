@@ -96,6 +96,7 @@ function createScriptRunStub() {
     'adminCancelBooking',
     'adminReviveExpiredBooking',
     'adminSendCardPaymentLink',
+    'adminResolvePaymentLinkMetadataInconsistency',
     'diagnoseReminderEligibility',
     'previewReminderMail',
     'sendReminderTestMail'
@@ -1386,14 +1387,110 @@ test('showDetailModal: 送信履行が未確認（paymentLinkSendUnconfirmedAt�
   assert.match(sandbox.paymentLinkUi_.statusEl.innerHTML, /送信結果未確認/);
 });
 
-test('showDetailModal: paymentLinkMetadataInconsistentAtがある場合は「記録不整合」の行を表示する（第2回PRレビュー対応。送信自体は完了しているため送信操作は無効化しない）', function () {
+test('showDetailModal: paymentLinkMetadataInconsistentAtがある場合は「記録不整合」の行を表示し、送信履歴の照合・補正が完了するまで送信操作を無効化する（第3回PRレビュー対応）', function () {
   var sandbox = loadClientSandbox();
   sandbox.showDetailModal(paymentLinkDetailBooking({
     paymentLinkSentAt: '2026-10-01 10:00',
     paymentLinkMetadataInconsistentAt: '2026-10-01 10:00'
   }));
   assert.match(sandbox.paymentLinkUi_.statusEl.innerHTML, /記録不整合/);
-  assert.strictEqual(sandbox.paymentLinkUi_.sendButton.disabled, false, '送信履行自体は確定しているため送信操作は無効化しない（再送は可能なまま）');
+  assert.strictEqual(sandbox.paymentLinkUi_.sendButton.disabled, true, '記録不整合が解消されるまで通常送信・明示的な再送のいずれも無効化するべき');
+  assert.match(sandbox.paymentLinkUi_.sendButton.textContent, /記録不整合/);
+  assert.strictEqual(sandbox.paymentLinkUi_.urlInput.disabled, true);
+  assert.strictEqual(sandbox.paymentLinkUi_.resolveButton.classList.contains('hidden'), false, '「送信履歴を補正」ボタンを表示するべき');
+});
+
+test('showDetailModal: paymentLinkMetadataInconsistentAtがない場合は「送信履歴を補正」ボタンを隠す', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(paymentLinkDetailBooking());
+  assert.strictEqual(sandbox.paymentLinkUi_.resolveButton.classList.contains('hidden'), true);
+});
+
+test('paymentLinkBlockedByMetadataInconsistency_: paymentLinkMetadataInconsistentAtの有無で真偽を返す', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.paymentLinkBlockedByMetadataInconsistency_(paymentLinkDetailBooking()), false);
+  assert.strictEqual(sandbox.paymentLinkBlockedByMetadataInconsistency_(paymentLinkDetailBooking({ paymentLinkMetadataInconsistentAt: '2026-10-01 10:00' })), true);
+  assert.strictEqual(sandbox.paymentLinkBlockedByMetadataInconsistency_(null), false);
+});
+
+test('parseConfirmedSendCount_: 0以上の整数の文字列のみ受理し、それ以外はnullを返す', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.parseConfirmedSendCount_('3'), 3);
+  assert.strictEqual(sandbox.parseConfirmedSendCount_('0'), 0);
+  assert.strictEqual(sandbox.parseConfirmedSendCount_(' 3 '), 3);
+  assert.strictEqual(sandbox.parseConfirmedSendCount_('-1'), null);
+  assert.strictEqual(sandbox.parseConfirmedSendCount_('1.5'), null);
+  assert.strictEqual(sandbox.parseConfirmedSendCount_('abc'), null);
+  assert.strictEqual(sandbox.parseConfirmedSendCount_(''), null);
+  assert.strictEqual(sandbox.parseConfirmedSendCount_(null), null);
+});
+
+test('runSendPaymentLink_: 記録不整合の予約ではボタンクリック相当の呼び出しでもgoogle.script.runを呼ばない（サーバー呼び出し自体を行わない）', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var booking = paymentLinkDetailBooking({ paymentLinkMetadataInconsistentAt: '2026-10-01 10:00' });
+  sandbox.showDetailModal(booking);
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
+test('runResolvePaymentLinkMetadataInconsistency_: プロンプトで確認済みの送信回数を入力し、確認ダイアログの後にadminResolvePaymentLinkMetadataInconsistencyを呼ぶ', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var booking = paymentLinkDetailBooking({ paymentLinkSentAt: '2026-10-01 10:00', paymentLinkMetadataInconsistentAt: '2026-10-01 10:00', paymentLinkSendCount: 2 });
+  sandbox.showDetailModal(booking);
+  sandbox.window.prompt = function () { return '3'; };
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runResolvePaymentLinkMetadataInconsistency_();
+
+  var calls = sandbox.google.script.run.calls;
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].name, 'adminResolvePaymentLinkMetadataInconsistency');
+  assert.deepStrictEqual(calls[0].args, [booking.bookingId, 3]);
+});
+
+test('runResolvePaymentLinkMetadataInconsistency_: プロンプトをキャンセルした場合は何も呼ばない', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var booking = paymentLinkDetailBooking({ paymentLinkMetadataInconsistentAt: '2026-10-01 10:00', paymentLinkSendCount: 2 });
+  sandbox.showDetailModal(booking);
+  sandbox.window.prompt = function () { return null; };
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runResolvePaymentLinkMetadataInconsistency_();
+
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
+test('runResolvePaymentLinkMetadataInconsistency_: 現在の記録より小さい値・不正な値を入力した場合はalertのみでgoogle.script.runを呼ばない', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var booking = paymentLinkDetailBooking({ paymentLinkMetadataInconsistentAt: '2026-10-01 10:00', paymentLinkSendCount: 2 });
+  sandbox.showDetailModal(booking);
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  sandbox.google.script.run.calls.length = 0;
+
+  ['1', 'abc', '-1', ''].forEach(function (rawInput) {
+    sandbox.window.prompt = function () { return rawInput; };
+    sandbox.runResolvePaymentLinkMetadataInconsistency_();
+  });
+
+  assert.strictEqual(alerts.length, 4);
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
+test('runResolvePaymentLinkMetadataInconsistency_: 確認ダイアログでキャンセルした場合は呼ばない', function () {
+  var sandbox = loadClientSandbox({ confirmResult: false });
+  var booking = paymentLinkDetailBooking({ paymentLinkMetadataInconsistentAt: '2026-10-01 10:00', paymentLinkSendCount: 2 });
+  sandbox.showDetailModal(booking);
+  sandbox.window.prompt = function () { return '3'; };
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runResolvePaymentLinkMetadataInconsistency_();
+
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
 });
 
 test('showDetailModal: カード決済でもPENDING以外は入力・送信ボタンを無効化する（対象外への送信を防ぐ表示制御）', function () {

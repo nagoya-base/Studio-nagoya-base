@@ -438,6 +438,16 @@ function paymentLinkRequiresExplicitResend_(booking) {
 }
 
 /*
+ * 第3回PRレビュー対応: 送信履歴に記録不整合（paymentLinkMetadataInconsistentAt）がある間は、
+ * 送信履歴の照合・補正（「送信履歴を補正」操作）が完了するまで、通常送信・明示的な再送の
+ * いずれも送信できない（GAS側のevaluatePaymentLinkEligibility_のMETADATA_INCONSISTENT判定と
+ * 同じ方針。forceでも無視しない）。
+ */
+function paymentLinkBlockedByMetadataInconsistency_(booking) {
+  return !!(booking && booking.paymentLinkMetadataInconsistentAt);
+}
+
+/*
  * GAS側（Booking.gs のisValidStripePaymentLinkUrl）と同じ正規表現。フロント側は
  * 即時フィードバックのための事前チェックのみで、送信可否の正はGAS側の再検証とする
  * （Issue #334本文「フロント側でも入力チェックして構いませんが、GAS側の検証を
@@ -485,7 +495,9 @@ var paymentLinkUi_ = {
   statusEl: null,
   urlInput: null,
   sendButton: null,
-  sendInFlight: false
+  sendInFlight: false,
+  resolveButton: null,
+  resolveInFlight: false
 };
 
 function initPaymentLinkUi_() {
@@ -503,6 +515,16 @@ function initPaymentLinkUi_() {
   statusEl.id = 'payment-link-status';
   container.appendChild(statusEl);
 
+  /* 第3回PRレビュー対応: 送信履歴の記録不整合（paymentLinkMetadataInconsistentAt）を
+     解消するための専用ボタン。通常の送信ボタンとは別に用意し、記録不整合が解消される
+     まで表示する（renderPaymentLinkSection_参照）。 */
+  var resolveButton = document.createElement('button');
+  resolveButton.type = 'button';
+  resolveButton.id = 'payment-link-resolve-button';
+  resolveButton.textContent = '送信履歴を補正';
+  resolveButton.classList.add('hidden');
+  container.appendChild(resolveButton);
+
   var urlLabel = document.createElement('label');
   urlLabel.textContent = 'Stripe決済リンクURL';
   var urlInput = document.createElement('input');
@@ -519,11 +541,13 @@ function initPaymentLinkUi_() {
 
   modal.insertBefore(container, closeButton);
   sendButton.addEventListener('click', runSendPaymentLink_);
+  resolveButton.addEventListener('click', runResolvePaymentLinkMetadataInconsistency_);
 
   paymentLinkUi_.container = container;
   paymentLinkUi_.statusEl = statusEl;
   paymentLinkUi_.urlInput = urlInput;
   paymentLinkUi_.sendButton = sendButton;
+  paymentLinkUi_.resolveButton = resolveButton;
 }
 
 /* 決済リンク送信欄の表示内容の更新のみを担当する（DOM生成はinitPaymentLinkUi_で1回のみ）。
@@ -557,12 +581,22 @@ function renderPaymentLinkSection_(booking) {
     warningRowIndexes[statusRows.length] = true;
     statusRows.push(['要確認', '前回（' + booking.paymentLinkSendUnconfirmedAt + '）の送信結果が未確認です。実際に届いているか確認したうえで、必要であれば再送してください。']);
   }
-  /* 第2回PRレビュー対応: 送信履行は確定している（二重送信のおそれはない）が、続くURL/
-     送信先/送信回数の記録が失敗し、送信回数等の記録が古いままの可能性がある状態を
-     別行で案内する。 */
-  if (booking.paymentLinkMetadataInconsistentAt) {
+  /*
+   * 第2回→第3回PRレビュー対応: 送信履行は確定している（二重送信のおそれはない）が、
+   * 続くURL/送信先/送信回数の記録が失敗し、送信回数等の記録が古いままの可能性がある
+   * 状態を別行で案内する。第3回レビュー対応で、この状態の間は送信履歴の照合・補正が
+   * 完了するまで送信操作自体を禁止する方針に変更したため、文言も「送信履歴の確認・
+   * 補正が必要」であることを明示するよう更新した。
+   */
+  var blockedByInconsistency = paymentLinkBlockedByMetadataInconsistency_(booking);
+  if (blockedByInconsistency) {
     warningRowIndexes[statusRows.length] = true;
-    statusRows.push(['記録不整合', '前回（' + booking.paymentLinkMetadataInconsistentAt + '）の送信で、送信回数・URL等の記録更新に失敗しました。送信自体は完了していますが、送信回数が実際より少なく表示されている可能性があります。Bookingsシートを確認してください。']);
+    statusRows.push([
+      '記録不整合',
+      '前回（' + booking.paymentLinkMetadataInconsistentAt + '）の送信で、送信回数・URL等の記録更新に失敗しました。' +
+        '送信回数が実際より少なく表示されている可能性があります。送信履歴の確認・補正が完了するまで送信できません。' +
+        '下の「送信履歴を補正」から、確認した正しい送信回数へ補正してください。'
+    ]);
   }
   ui.statusEl.innerHTML = statusRows.map(function (pair, index) {
     var rowClass = 'payment-link-status-row' + (warningRowIndexes[index] ? ' payment-link-status-row-warning' : '');
@@ -571,12 +605,25 @@ function renderPaymentLinkSection_(booking) {
 
   ui.urlInput.value = booking.stripePaymentLinkUrl || '';
 
-  var sendable = canSendPaymentLink(booking);
+  /* 第3回PRレビュー対応: 記録不整合が解消されるまでは、canSendPaymentLink（カード×
+     PENDING）を満たしていても送信操作自体を禁止する。 */
+  var sendable = canSendPaymentLink(booking) && !blockedByInconsistency;
   ui.urlInput.disabled = !sendable;
   ui.sendButton.disabled = !sendable || ui.sendInFlight;
-  ui.sendButton.textContent = sendable
-    ? (paymentLinkRequiresExplicitResend_(booking) ? '決済リンクを再送' : '決済リンクを送信')
-    : ('送信不可（' + statusLabel(booking.status) + '）');
+  ui.sendButton.textContent = !canSendPaymentLink(booking)
+    ? ('送信不可（' + statusLabel(booking.status) + '）')
+    : (blockedByInconsistency
+      ? '送信不可（記録不整合。補正が必要）'
+      : (paymentLinkRequiresExplicitResend_(booking) ? '決済リンクを再送' : '決済リンクを送信'));
+
+  /* 記録不整合が解消されるまでは「送信履歴を補正」ボタンを表示する。カード決済であれば
+     現在のstatusを問わない（送信操作とは別の、履歴データの補正操作のため）。 */
+  if (blockedByInconsistency) {
+    ui.resolveButton.classList.remove('hidden');
+    ui.resolveButton.disabled = ui.resolveInFlight;
+  } else {
+    ui.resolveButton.classList.add('hidden');
+  }
 }
 
 /*
@@ -591,7 +638,10 @@ function renderPaymentLinkSection_(booking) {
  */
 function runSendPaymentLink_() {
   var booking = currentDetailBooking_;
-  if (!booking || !canSendPaymentLink(booking)) return;
+  /* 第3回PRレビュー対応: 記録不整合が解消されるまでは、送信ボタンが押されても
+     GASを呼び出さない（ボタン自体はrenderPaymentLinkSection_で無効化されるが、
+     画面が最新化される前の古いbooking情報からの呼び出しにも備える）。 */
+  if (!booking || !canSendPaymentLink(booking) || paymentLinkBlockedByMetadataInconsistency_(booking)) return;
   if (paymentLinkUi_.sendInFlight) return;
 
   /*
@@ -651,6 +701,10 @@ function runSendPaymentLink_() {
         alert('送信結果を確認できませんでした（メールは送信された可能性があります）: ' + (result.error && result.error.message));
       } else if (result && result.error && result.error.code === 'SEND_HISTORY_CONFLICT') {
         alert('他の画面から既に操作された可能性があります。最新の状態を確認してください: ' + result.error.message);
+      } else if (result && result.error && result.error.code === 'METADATA_INCONSISTENT') {
+        /* 第3回PRレビュー対応: 送信履歴の記録不整合が解消されるまで送信できない。
+           「送信履歴を補正」操作を案内する。 */
+        alert('送信履歴に記録不整合があるため送信できません。下の「送信履歴を補正」から、確認した正しい送信回数へ補正してください。');
       } else if (result && result.skipped) {
         alert('送信条件を満たさないため送信しませんでした: ' + (result.error && result.error.message));
       } else {
@@ -666,6 +720,73 @@ function runSendPaymentLink_() {
       refreshOpenDetail_(booking.bookingId);
     })
     .adminSendCardPaymentLink(booking.bookingId, url, isResend, expectedSendCount, expectedSentAtVersion);
+}
+
+/*
+ * 第3回PRレビュー対応: 送信履歴の記録不整合（paymentLinkMetadataInconsistentAt）を
+ * 解消する。GAS側（BookingMailer.resolvePaymentLinkMetadataInconsistency）の再検証
+ * （対象が本当に記録不整合の状態か・補正値が現在の記録より小さくないか）に依存し、
+ * このファイル側では入力値の形式チェックのみ行う。メールは送信しない（送信履歴の
+ * 記録のみを補正する操作）。
+ */
+function parseConfirmedSendCount_(rawInput) {
+  if (rawInput === null || rawInput === undefined) return null;
+  var trimmed = String(rawInput).trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  return parseInt(trimmed, 10);
+}
+
+function runResolvePaymentLinkMetadataInconsistency_() {
+  var booking = currentDetailBooking_;
+  if (!booking || !paymentLinkBlockedByMetadataInconsistency_(booking)) return;
+  if (paymentLinkUi_.resolveInFlight) return;
+
+  var currentCount = booking.paymentLinkSendCount;
+  var rawInput = window.prompt(
+    '決済リンクの送信回数が実際より少なく記録されている可能性があります（現在の記録: ' + currentCount + '回）。\n' +
+    'Bookingsシート・Recoveryシート（PAYMENT_LINK_METADATA_UPDATE_FAILED）・実際のメール送信状況を確認したうえで、\n' +
+    '正しい送信回数を入力してください（' + currentCount + '回以上の整数）。',
+    String(currentCount)
+  );
+  if (rawInput === null) return;
+
+  var confirmedCount = parseConfirmedSendCount_(rawInput);
+  if (confirmedCount === null || confirmedCount < currentCount) {
+    alert('送信回数は' + currentCount + '回以上の整数で入力してください。');
+    return;
+  }
+
+  var confirmed = window.confirm(
+    '予約ID: ' + booking.bookingId + '\n' +
+    '送信回数を ' + currentCount + '回 → ' + confirmedCount + '回 へ補正します。\n\n' +
+    'この操作は送信履歴の記録のみを補正します。メールは送信されません。\n\n' +
+    '実行しますか？'
+  );
+  if (!confirmed) return;
+
+  paymentLinkUi_.resolveInFlight = true;
+  paymentLinkUi_.resolveButton.disabled = true;
+  setStatusLine('送信履歴を補正中…');
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      paymentLinkUi_.resolveInFlight = false;
+      setStatusLine('');
+      if (result && result.success) {
+        alert('送信履歴を補正しました（送信回数: ' + result.paymentLinkSendCount + '）。');
+      } else {
+        alert('補正できませんでした: ' + (result && result.error && result.error.message));
+      }
+      refreshOpenDetail_(booking.bookingId);
+      loadBookings();
+    })
+    .withFailureHandler(function (error) {
+      paymentLinkUi_.resolveInFlight = false;
+      setStatusLine('');
+      alert('補正でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      refreshOpenDetail_(booking.bookingId);
+    })
+    .adminResolvePaymentLinkMetadataInconsistency(booking.bookingId, confirmedCount);
 }
 
 /* 送信後、開いたままの詳細モーダルを最新状態へ更新する（サーバーから再取得したもので

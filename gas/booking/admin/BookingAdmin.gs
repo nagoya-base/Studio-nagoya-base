@@ -77,6 +77,15 @@ function sendCardPaymentLinkMail(bookingId, paymentLinkUrl, options) {
   return BookingMailer.sendPaymentLinkMailForBooking(bookingId, paymentLinkUrl, options);
 }
 
+/* 正式関数: resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount)
+   （第3回PRレビュー対応）。paymentLinkMetadataInconsistentAtが記録された予約の送信履歴
+   （paymentLinkSendCount）を、管理者が確認した正しい値へ明示的に補正する。Booking Admin
+   側のみで公開する（Booking Web Appには追加しない）。メール送信・Calendar操作は行わない。
+   スクリプトエディタから直接実行することもできる。 */
+function resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount) {
+  return BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount);
+}
+
 /* 単純トリガー。このファイルをSPREADSHEET_IDのSpreadsheetへコンテナバインドした
    Apps Scriptプロジェクトへデプロイしていれば、そのSpreadsheetを開くたびに
    自動発火し、追加のトリガー設定なしで「予約管理」メニューが表示される。 */

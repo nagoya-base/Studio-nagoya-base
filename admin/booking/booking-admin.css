@@ -437,6 +437,24 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
   opacity: 0.5;
 }
 
+/* 第3回PRレビュー対応: 送信履歴の記録不整合を補正するボタン。誤って通常の送信ボタンと
+   混同しないよう、送信ボタン（primary色）とは異なる警告色にする。 */
+#payment-link-resolve-button {
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-danger);
+  background: #fff;
+  color: var(--color-danger);
+  font-size: 14px;
+  font-weight: bold;
+}
+
+#payment-link-resolve-button:disabled {
+  opacity: 0.5;
+}
+
 #modal-close {
   width: 100%;
   min-height: 44px;

@@ -795,3 +795,91 @@ test('adminSendCardPaymentLink: 2回目の履歴保存だけが失敗した状�
   var paymentLinkMails = mailApp._sentEmails.filter(function (mail) { return mail.subject && mail.subject.indexOf('お支払い') !== -1; });
   assert.strictEqual(paymentLinkMails.length, 1, '競合したタブからは送信されないべき（二重送信していない）');
 });
+
+/*
+ * 第3回PRレビュー対応: paymentLinkMetadataInconsistentAtが記録されている間は、
+ * 画面を最新化した（stale判定には引っかからない）操作であっても、通常送信・
+ * 明示的な再送のいずれもMETADATA_INCONSISTENTで拒否されることをWeb UI層で確認する。
+ */
+test('adminSendCardPaymentLink: paymentLinkMetadataInconsistentAtが記録された予約は、最新のexpectedSendCount・expectedSentAtVersionを渡しても通常送信・明示的な再送のいずれもMETADATA_INCONSISTENTで拒否する', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+  var url = 'https://buy.stripe.com/test_ABC123';
+
+  var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (Object.prototype.hasOwnProperty.call(fields, 'paymentLinkSendCount')) {
+      throw new Error('simulated Sheets outage while recording paymentLinkSendCount/URL/sentTo');
+    }
+    return original(id, fields);
+  };
+  ctx.sandbox.adminSendCardPaymentLink(bookingId, url, false, 0, 0);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = original;
+
+  var detail = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.ok(detail.booking.paymentLinkMetadataInconsistentAt, '前提: 記録不整合が発生しているべき');
+
+  var freshNormal = ctx.sandbox.adminSendCardPaymentLink(
+    bookingId, url, false, detail.booking.paymentLinkSendCount, detail.booking.paymentLinkSentAtVersion
+  );
+  assert.strictEqual(freshNormal.success, false);
+  assert.strictEqual(freshNormal.error.code, 'METADATA_INCONSISTENT');
+
+  var freshForced = ctx.sandbox.adminSendCardPaymentLink(
+    bookingId, url, true, detail.booking.paymentLinkSendCount, detail.booking.paymentLinkSentAtVersion
+  );
+  assert.strictEqual(freshForced.success, false);
+  assert.strictEqual(freshForced.error.code, 'METADATA_INCONSISTENT', '最新の前提でもforceは記録不整合を無視できないべき');
+
+  var paymentLinkMails = mailApp._sentEmails.filter(function (mail) { return mail.subject && mail.subject.indexOf('お支払い') !== -1; });
+  assert.strictEqual(paymentLinkMails.length, 1, '記録不整合が解消されるまで追加の送信は起きないべき');
+});
+
+/*
+ * adminResolvePaymentLinkMetadataInconsistency（送信履歴の補正）。既存の正式関数
+ * resolveCardPaymentLinkMetadataInconsistency（BookingAdmin.gs）へそのまま委譲していることを
+ * 確認する（独自ロジックを持たない）。
+ */
+test('adminResolvePaymentLinkMetadataInconsistency: 記録不整合を補正すると、送信回数が更新され、送信が再び許可される', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+  var url = 'https://buy.stripe.com/test_ABC123';
+
+  var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (Object.prototype.hasOwnProperty.call(fields, 'paymentLinkSendCount')) {
+      throw new Error('simulated Sheets outage while recording paymentLinkSendCount/URL/sentTo');
+    }
+    return original(id, fields);
+  };
+  ctx.sandbox.adminSendCardPaymentLink(bookingId, url, false, 0, 0);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = original;
+
+  var beforeResolve = ctx.sandbox.getAdminBookingDetail(bookingId).booking;
+  assert.ok(beforeResolve.paymentLinkMetadataInconsistentAt);
+  assert.strictEqual(beforeResolve.paymentLinkSendCount, 0);
+
+  var resolveResult = ctx.sandbox.adminResolvePaymentLinkMetadataInconsistency(bookingId, 1);
+  assert.strictEqual(resolveResult.success, true, JSON.stringify(resolveResult));
+
+  var afterResolve = ctx.sandbox.getAdminBookingDetail(bookingId).booking;
+  assert.strictEqual(afterResolve.paymentLinkSendCount, 1);
+  assert.strictEqual(afterResolve.paymentLinkMetadataInconsistentAt, '', '補正後は詳細でも不整合フラグが解消されているべき');
+
+  var forcedAfterResolve = ctx.sandbox.adminSendCardPaymentLink(bookingId, url, true);
+  assert.strictEqual(forcedAfterResolve.success, true, JSON.stringify(forcedAfterResolve));
+});
+
+test('adminResolvePaymentLinkMetadataInconsistency: 記録不整合ではない予約に対してはNOT_INCONSISTENTで拒否する（対象の限定。無関係な予約の送信履歴を書き換えられない）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+
+  var result = ctx.sandbox.adminResolvePaymentLinkMetadataInconsistency(bookingId, 5);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'NOT_INCONSISTENT');
+
+  var detail = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.strictEqual(detail.booking.paymentLinkSendCount, 0, '拒否された場合は送信履歴を書き換えない');
+});

@@ -1793,11 +1793,15 @@ PR-A（GAS側の期限管理・失効通知・手動復活）・PR-B（利用者
 本文が確定仕様として優先される。** 台帳の列追加はPR-Aの`expiredMailSentAt`の**後ろ**に
 末尾追記した。
 
-**PR #337レビュー対応（4点）を本節に反映済み**: ①メール送信後の送信履歴（Sheets）保存
-失敗時の扱い（履行未確認の二重送信防止）、②同時再送の競合防止（画面のバージョンと
+**PR #337レビュー対応（4点。1回目）を本節に反映済み**: ①メール送信後の送信履歴（Sheets）
+保存失敗時の扱い（履行未確認の二重送信防止）、②同時再送の競合防止（画面のバージョンと
 Lock取得後の最新履歴の比較）、③支払期限の設定（`BookingConfig.getTtlConfig()`）の
 受け渡し漏れの修正、④Stripe URLの前後空白の扱いの統一（GAS側と同じfail-closedな
-検証へ統一）。詳細は各節参照。
+検証へ統一）。**2回目**: ①の競合検知（`expectedSendCount`のみの比較）が送信履歴の
+2回目の書き込みだけが失敗するケースをすり抜ける問題の修正（`expectedSentAtVersion`の
+追加）。**3回目**: 2回目対応で導入した`paymentLinkMetadataInconsistentAt`が、その後の
+送信成功だけでクリアされてしまい記録の食い違いが隠れる問題の修正（送信履歴の照合・
+補正が完了するまで送信自体を禁止し、専用の補正操作でのみ解消する）。詳細は各節参照。
 
 ### 確定仕様（PR-C）
 
@@ -2010,6 +2014,78 @@ paymentLinkUrl, force, expectedSendCount, expectedSentAtVersion)`が
 からの明示的な再送が`SEND_HISTORY_CONFLICT`で拒否されることを検証した
 （既存の通常送信・明示的な再送のテストは変更せずすべて維持している）。
 
+#### 第3回レビュー対応: 記録不整合フラグが送信成功だけでクリアされてしまう問題の修正
+
+第2回対応で導入した`paymentLinkMetadataInconsistentAt`（送信履行は確定しているが、続く
+URL/送信先/送信回数の記録に失敗した状態）には、次の問題が残っていた: **その後の
+明示的な再送が（両方の書き込みに）成功しただけで、このフラグが自動的にクリアされてしまう。**
+このとき`paymentLinkSendCount`は「直前の記録値+1」として更新されるが、直前の記録値
+自体が既に実際の送信回数より少ないまま（不整合の原因そのものは未解消）だったため、
+台帳上の送信回数は実際の送信回数より少ないまま固定され、しかも不整合を示す手がかり
+（フラグ）が消えてしまうため、この食い違いに誰も気付けなくなる。
+
+これを次の3点で修正した:
+
+1. **記録不整合の間は送信自体を禁止する**: `evaluatePaymentLinkEligibility_`に
+   `METADATA_INCONSISTENT`判定を追加し、`paymentLinkMetadataInconsistentAt`が空でない
+   間は通常送信・明示的な再送のいずれも拒否する。**`force`でも無視しない**（他の拒否
+   理由と異なり、送信履歴の照合・補正が完了するまでは、管理者の「送信済みでも送る」
+   という意思表示だけでは通過させてはいけないため）。
+2. **送信成功だけでフラグをクリアしない**: `sendPaymentLinkMailForBooking`の成功パスの
+   `updateBookingFields`呼び出しから`paymentLinkMetadataInconsistentAt: ''`を削除した
+   （そもそも1.の判定により、この書き込みに到達する時点でこの列は既に空であることが
+   保証されている）。このフラグをクリアできるのは、次の専用の補正関数のみとする。
+3. **専用の補正操作を新設する**: `BookingMailer.resolvePaymentLinkMetadataInconsistency
+   (bookingId, confirmedSendCount)`。管理者がBookingsシート・Recoveryシート
+   （`PAYMENT_LINK_METADATA_UPDATE_FAILED`）・実際のメール送信状況を確認し、正しい
+   送信回数を確認したうえで呼び出す、Sheetsの記録のみを補正する関数（メール送信・
+   Calendar操作は行わない）。
+
+**対象・操作権限・確認手順の限定**（既存の履歴を誤って上書きしないための制約）:
+
+- **対象の限定**: `paymentLinkMetadataInconsistentAt`が現在記録されている予約のみを
+  受け付ける。空の予約に対しては`NOT_INCONSISTENT`として拒否し、無関係な予約の送信
+  履歴を誤って書き換えられないようにする。
+- **書き込み方向の限定**: `confirmedSendCount`は0以上の整数のみ許可し（`INVALID_
+  CONFIRMED_SEND_COUNT`）、**現在記録されている`paymentLinkSendCount`より小さい値へは
+  補正できない**（`CONFIRMED_SEND_COUNT_TOO_LOW`）。記録不整合は常に「実際の送信回数を
+  過少に記録する」方向にのみ発生するため、正しい補正値は現在値以上になるはずであり、
+  それより小さい値の指定は入力ミス・既存履歴の意図しない消去である可能性が高いため
+  fail-closedに拒否する。
+- **操作権限の限定**: `resolveCardPaymentLinkMetadataInconsistency`
+  （`BookingAdmin.gs`）・`adminResolvePaymentLinkMetadataInconsistency`
+  （`BookingAdminWeb.gs`）ともBooking Admin側のみで公開し、Booking Web Appには追加
+  しない。Booking Adminプロジェクト自体が「Execute as: Me / Who has access: Only
+  myself」で運用する前提（「Booking Admin Web UI（Issue #305）のセットアップ」参照）
+  であり、この補正操作もその単一管理者アクセスの範囲内でのみ実行できる。Spreadsheet
+  カスタムメニューへは追加していない（Booking Admin予約詳細のUIからのみ実行する）。
+- **確認手順の限定**: 実行前の内容確認（現在の送信回数の表示・`window.prompt`での
+  補正値の入力・`window.confirm`での最終確認）はすべてHTML側（クライアント）で行う
+  （他の管理操作と同じ方針）。クライアント側の`parseConfirmedSendCount_`が0以上の
+  整数形式・現在値以上であることを事前チェックするが、送信可否の正はあくまでGAS側の
+  検証とする。
+
+補正に成功すると、`paymentLinkMetadataInconsistentAt`が空へ戻り送信が再び許可される
+ことに加え、補正の実施自体をRecoveryへ`failureType: 'PAYMENT_LINK_METADATA_RESOLVED'`・
+`recoveryState: 'RESOLVED'`として記録する（元の`PAYMENT_LINK_METADATA_UPDATE_FAILED`
+のOPEN行自体は、既存の他の失敗記録と同じく運用者が手動で`recoveryState`/`resolvedAt`を
+記録する方針のまま変更しない。この`RESOLVED`行は補正操作が実際に行われたことを示す
+別の記録）。
+
+Booking Admin UIには、記録不整合の間だけ表示される専用の「送信履歴を補正」ボタン
+（`admin/booking/booking-admin.js`の`initPaymentLinkUi_`/`renderPaymentLinkSection_`/
+`runResolvePaymentLinkMetadataInconsistency_`）を追加した。送信ボタン・URL入力欄は
+記録不整合の間は無効化され、ボタンの文言も「送信不可（記録不整合。補正が必要）」に
+変わる。
+
+`test/booking-mailer.test.js`・`test/booking-admin-web.test.js`・
+`test/booking-admin-page-client.test.js`に、（a）2回目の履歴保存失敗後、画面を最新化
+した（stale判定には引っかからない）操作であっても通常送信・明示的な再送のいずれも
+`METADATA_INCONSISTENT`で拒否されること、（b）`resolvePaymentLinkMetadataInconsistency`
+による補正後は送信が再び許可されること、（c）対象外の予約・不正な補正値・現在値より
+小さい補正値がそれぞれ適切に拒否され既存の記録を書き換えないこと、を検証するテストを
+追加した。
+
 ### 送信履歴・エラー管理（Bookingsシートへの列追加）
 
 `SpreadsheetRepository.gs`の`HEADERS_`へ、`expiredMailSentAt`（Issue #334 PR-A）の
@@ -2040,8 +2116,10 @@ paymentLinkUrl, force, expectedSendCount, expectedSentAtVersion)`が
   `paymentLinkSentAt`の単独更新には成功した（＝送信履行・二重送信防止は確定済み）が、
   続く`stripePaymentLinkUrl`/`paymentLinkSentTo`/`paymentLinkSendCount`等の2回目の
   更新が失敗し、これらの記録内容が古い・不正確なままの可能性がある場合の日時。
-  送信可否の判定には使わない（表示専用。詳細は「二重送信防止と明示的な再送」節
-  「第2回レビュー対応」参照）。次に両方の更新が成功すると自動的に空へ戻る。
+  **空でない間は通常送信・明示的な再送のいずれも`METADATA_INCONSISTENT`として拒否する
+  （`force`でも無視しない。3回目対応。詳細は「二重送信防止と明示的な再送」節
+  「第3回レビュー対応」参照）。** 他の送信が成功しただけでは自動的にクリアされない。
+  クリアできるのは専用の補正関数`resolvePaymentLinkMetadataInconsistency`のみ。
 - 送信失敗時はRecoveryシートへ`failureType: 'PAYMENT_LINK_MAIL_FAILED'`（メール送信
   自体の失敗）・`'PAYMENT_LINK_SEND_HISTORY_UPDATE_FAILED'`（メール送信は成功したが
   `paymentLinkSentAt`単独更新の失敗で履行の記録に失敗）・
@@ -2159,9 +2237,13 @@ paymentLinkUrl, force, expectedSendCount, expectedSentAtVersion)`が
   得る（これは「連打・同時操作による重複送信の防止」ではなく、Issue #334本文が許容する
   「明示的な再送は管理者の判断による操作」の範囲内）。
 - `paymentLinkMetadataInconsistentAt`が記録された場合、`paymentLinkSendCount`の表示は
-  実際の送信回数より少ない可能性がある。正確な送信回数はRecoveryシートの
-  `PAYMENT_LINK_METADATA_UPDATE_FAILED`記録（`errorMessage`に本来の送信回数を含む）と
-  実際のメール送信履歴（利用者への到達確認等）から手動で確認すること。
+  実際の送信回数より少ない可能性がある。空でない間は通常送信・明示的な再送とも
+  拒否される（3回目対応。「二重送信防止と明示的な再送」節「第3回レビュー対応」参照）。
+  正確な送信回数はRecoveryシートの`PAYMENT_LINK_METADATA_UPDATE_FAILED`記録
+  （`errorMessage`に本来の送信回数を含む）と実際のメール送信履歴（利用者への到達確認等）
+  から手動で確認したうえで、Booking Admin予約詳細の「送信履歴を補正」操作
+  （`resolvePaymentLinkMetadataInconsistency`。「部分失敗・recoveryの確認手順」節
+  項18参照）で解消すること。
 - `paymentLinkSentAt`単独更新の失敗時のフォールバック書き込み（`paymentLinkSendUnconfirmedAt`
   または`paymentLinkMetadataInconsistentAt`）自体が失敗した場合
   （Spreadsheet全体へのアクセスが完全に失われている等）は、
@@ -2611,7 +2693,8 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 | `MAIL_REMINDER_FAILED`（Issue #271） | 前日リマインド（来場案内含む）の送信に失敗。解錠コード等の秘密値未設定によるfail-safeな拒否もここに含む。`status`はCONFIRMEDのまま変更しない |
 | `PAYMENT_LINK_MAIL_FAILED`（Issue #334 PR-C） | Booking AdminからのStripe決済リンク送信メールに失敗（設定不足によるfail-closedな拒否を含む）。予約自体・`status`（PENDING）は変更しない。`Bookings`シートの`paymentLinkLastErrorAt`/`paymentLinkLastErrorMessage`（他メール種別と共有する`lastMailError*`とは別の専用列）にも同時記録する |
 | `PAYMENT_LINK_SEND_HISTORY_UPDATE_FAILED`（PR #337レビュー対応・1回目） | Booking AdminからのStripe決済リンク送信で、MailApp.sendEmail自体は成功したが、直後の`paymentLinkSentAt`（二重送信防止の要となる列）の記録に失敗した（メールが届いている可能性がある。要確認）。予約自体・`status`（PENDING）は変更しない。`Bookings`シートの`paymentLinkSendUnconfirmedAt`にも同時記録し、この値が空でない間は通常送信（forceなし）を拒否する |
-| `PAYMENT_LINK_METADATA_UPDATE_FAILED`（PR #337レビュー対応・2回目） | Booking AdminからのStripe決済リンク送信で、MailApp.sendEmail・`paymentLinkSentAt`の記録には成功した（＝送信履行・二重送信防止は確定済み）が、続く`stripePaymentLinkUrl`/`paymentLinkSentTo`/`paymentLinkSendCount`の記録に失敗した。`paymentLinkSendCount`の表示が実際の送信回数より少ない可能性がある（`errorMessage`に本来の送信回数を記載）。予約自体・`status`（PENDING）は変更せず、メール自体の再送も自動実行しない。`Bookings`シートの`paymentLinkMetadataInconsistentAt`にも同時記録する |
+| `PAYMENT_LINK_METADATA_UPDATE_FAILED`（PR #337レビュー対応・2回目） | Booking AdminからのStripe決済リンク送信で、MailApp.sendEmail・`paymentLinkSentAt`の記録には成功した（＝送信履行・二重送信防止は確定済み）が、続く`stripePaymentLinkUrl`/`paymentLinkSentTo`/`paymentLinkSendCount`の記録に失敗した。`paymentLinkSendCount`の表示が実際の送信回数より少ない可能性がある（`errorMessage`に本来の送信回数を記載）。予約自体・`status`（PENDING）は変更せず、メール自体の再送も自動実行しない。`Bookings`シートの`paymentLinkMetadataInconsistentAt`にも同時記録し、この値が空でない間は通常送信・明示的な再送とも`force`でも拒否する（3回目対応。他の送信が成功しただけでは自動的にクリアされない。解消手順は「部分失敗・recoveryの確認手順」項18参照） |
+| `PAYMENT_LINK_METADATA_RESOLVED`（PR #337レビュー対応・3回目） | 運用者がBooking Admin予約詳細の「送信履歴を補正」操作（`resolvePaymentLinkMetadataInconsistency`）で`paymentLinkMetadataInconsistentAt`を解消したことを示す記録。`recoveryState: 'RESOLVED'`で即時記録される（元の`PAYMENT_LINK_METADATA_UPDATE_FAILED`のOPEN行とは別の記録で、そちらの`recoveryState`/`resolvedAt`は運用者が別途手動記録する）。`errorMessage`に補正前後の`paymentLinkSendCount`を記載する |
 
 ## 部分失敗・recoveryの確認手順（運用者向け）
 
@@ -2721,11 +2804,40 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
       `Bookings`シートの`paymentLinkSendCount`の表示を突き合わせ、必要であれば
       `paymentLinkSendCount`・`stripePaymentLinkUrl`・`paymentLinkSentTo`を運用判断で
       手動修正する（Sheets保存先の一時的な障害が解消していることを確認したうえで行う）。
-    - `paymentLinkMetadataInconsistentAt`はBooking Admin予約詳細でも「記録不整合」として
-      表示されるが、送信操作自体は無効化されない（送信履行が既に確定しているため）。
-      次に送信（明示的な再送）に成功すると、URL/送信先/送信回数とともに自動的に空へ戻る。
+    - `paymentLinkMetadataInconsistentAt`が記録されている間、Booking Admin予約詳細では
+      「記録不整合」と表示され、**通常送信・明示的な再送とも送信ボタン自体が無効化される**
+      （3回目対応。`force`でも通過しない。他の予約への通常の送信操作は影響を受けない）。
+      送信履行自体は既に確定しているため、メール自体を重複して再送する必要はない。
+    - このフラグは、次に別の送信が成功しただけでは**自動的にクリアされない**（3回目対応。
+      これは送信回数の食い違いを隠さないための意図的な仕様）。解消するには次項18の手順で
+      専用の補正操作を実行する。
     - `Bookings`シートの`status`（PENDING）・Calendar/Sheetsの予約データ本体は
-      変更されていない。メール自体を重複して再送する必要はない。
+      変更されていない。
+18. `failureType`が`PAYMENT_LINK_METADATA_UPDATE_FAILED`を`paymentLinkMetadataInconsistentAt`
+    経由で解消する場合（PR #337レビュー対応・3回目で新設した手順）:
+    - まずRecoveryの`errorMessage`に記載された本来の送信回数（`intendedSendCount`相当）と、
+      実際のメール送信履歴（利用者への到達確認・MailAppの送信ログ等）を突き合わせ、
+      正しい送信回数を確認する（前項17と同じ確認作業。ここまでは`Bookings`シートを
+      直接編集しない）。
+    - 正しい送信回数を確認できたら、Booking Admin予約詳細の決済リンク送信欄に表示される
+      「送信履歴を補正」ボタン（記録不整合の間のみ表示される）を押し、
+      `window.prompt`で確認済みの送信回数を入力し、`window.confirm`で最終確認する
+      （Booking Adminプロジェクト自体が「Execute as: Me / Who has access: Only myself」
+      運用のため、この操作もその単一管理者アクセスの範囲内に限られる）。
+    - 内部的には`resolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount)`が
+      呼ばれ、`paymentLinkMetadataInconsistentAt`が現在記録されている予約のみを受け付け
+      （対象外は`NOT_INCONSISTENT`で拒否）、`confirmedSendCount`が0以上の整数かつ
+      現在の`paymentLinkSendCount`以上であることを検証したうえで（`INVALID_
+      CONFIRMED_SEND_COUNT`/`CONFIRMED_SEND_COUNT_TOO_LOW`で拒否）、
+      `paymentLinkSendCount`を補正値へ更新し`paymentLinkMetadataInconsistentAt`を空に戻す
+      （Sheetsの記録のみを補正する。メール送信・Calendar操作は行わない）。
+    - 補正が完了すると、Recoveryへ`failureType: 'PAYMENT_LINK_METADATA_RESOLVED'`・
+      `recoveryState: 'RESOLVED'`として補正の実施内容が記録される（元の`PAYMENT_LINK_
+      METADATA_UPDATE_FAILED`のOPEN行自体は、他の失敗記録と同じく運用者が手動で
+      `recoveryState`/`resolvedAt`を記録する。前項6参照）。補正後は送信（通常送信・
+      明示的な再送）が再び許可される。
+    - `Bookings`シートの`status`（PENDING）・Calendar/Sheetsの予約データ本体は
+      変更されていない。
 
 ## API仕様
 
