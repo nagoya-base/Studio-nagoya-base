@@ -3,3 +3,8 @@ _site/
 .jekyll-metadata
 .bundle/
 vendor/
+
+# clasp / GAS production deployment (never commit credentials or project IDs)
+.clasprc.json
+.clasp.json
+.gas-deploy/
