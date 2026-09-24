@@ -548,13 +548,23 @@ function renderReminderDiagnosisResult_(result) {
   );
 }
 
-/* previewReminderMailのレスポンスから結果表示欄のHTMLを組み立てる純粋関数。 */
+/*
+ * previewReminderMailのレスポンスから結果表示欄のHTMLを組み立てる純粋関数。
+ * 「プレビューの生成に成功したこと」（success）と「本番なら実際に送信対象であること」
+ * （eligible/reasonCode）は別物のため、対象外の予約でもプレビュー自体は表示しつつ、
+ * 見出しで両者をはっきり区別する（Issue #330 PRレビュー対応）。
+ */
 function renderReminderPreviewResult_(result) {
   if (!result || !result.success) {
     return '<p class="reminder-diag-error">プレビューできませんでした: ' + escapeHtml((result && result.error && result.error.message) || '') + '</p>';
   }
+  var eligibilityLine = typeof result.eligible === 'boolean'
+    ? '<dt>送信対象</dt><dd>' + escapeHtml(result.eligible ? '対象（本番なら送信されます）' : '対象外（' + reminderReasonLabel(result.reasonCode) + '）') + '</dd>'
+    : '';
   return (
+    '<p class="reminder-diag-success">プレビューを生成しました（対象日: ' + escapeHtml(result.targetDate || '') + '）</p>' +
     '<dl class="reminder-diag-dl">' +
+    eligibilityLine +
     '<dt>予約者宛</dt><dd>' + escapeHtml(result.recipientEmail || '（未登録）') + '</dd>' +
     '<dt>テスト送信先</dt><dd>' + escapeHtml(result.testRecipientEmail || '（未設定）') + '</dd>' +
     '<dt>件名</dt><dd>' + escapeHtml(result.subject || '') + '</dd>' +
@@ -584,6 +594,16 @@ function renderReminderSendResult_(result) {
  * 一切発生しないため、成功後にloadBookings()を呼び直す必要はない。
  */
 var reminderDiagState_ = { overlay: null, resultEl: null, bookingIdInput: null, baseDateInput: null, revealInput: null };
+
+/*
+ * google.script.runのwithFailureHandlerは、サーバー関数が想定外の例外を投げた
+ * 場合に呼ばれる（診断3関数は通常、想定内のエラーは例外を投げず戻り値として
+ * 返すため、これは主にネットワーク断・GASランタイム側の障害等への保険）。
+ * error.messageをそのまま画面へ出すと、HTMLエスケープしていても秘密値の
+ * redactionにはならない（エスケープは表示上の安全対策であって値の削除ではない）
+ * ため、クライアント側でも固定の安全な文言のみを表示する（Issue #330 PRレビュー
+ * 対応。error自体は使わない）。 */
+var REMINDER_DIAG_GENERIC_FAILURE_RESULT_ = { success: false, error: { message: '通信エラーが発生しました。時間をおいて再度お試しください。' } };
 
 function buildReminderDiagnosticsModal_() {
   var overlay = document.createElement('div');
@@ -671,7 +691,7 @@ function buildReminderDiagnosticsModal_() {
     resultEl.innerHTML = '判定中…';
     google.script.run
       .withSuccessHandler(function (result) { resultEl.innerHTML = renderReminderDiagnosisResult_(result); })
-      .withFailureHandler(function (error) { resultEl.innerHTML = renderReminderDiagnosisResult_({ success: false, error: error }); })
+      .withFailureHandler(function () { resultEl.innerHTML = renderReminderDiagnosisResult_(REMINDER_DIAG_GENERIC_FAILURE_RESULT_); })
       .diagnoseReminderEligibility(input.bookingId, input.baseDateString);
   });
 
@@ -680,7 +700,7 @@ function buildReminderDiagnosticsModal_() {
     resultEl.innerHTML = 'プレビュー生成中…';
     google.script.run
       .withSuccessHandler(function (result) { resultEl.innerHTML = renderReminderPreviewResult_(result); })
-      .withFailureHandler(function (error) { resultEl.innerHTML = renderReminderPreviewResult_({ success: false, error: error }); })
+      .withFailureHandler(function () { resultEl.innerHTML = renderReminderPreviewResult_(REMINDER_DIAG_GENERIC_FAILURE_RESULT_); })
       .previewReminderMail(input.bookingId, { baseDateString: input.baseDateString, reveal: input.reveal });
   });
 
@@ -696,9 +716,13 @@ function buildReminderDiagnosticsModal_() {
     resultEl.innerHTML = 'テスト送信中…';
     google.script.run
       .withSuccessHandler(function (result) { resultEl.innerHTML = renderReminderSendResult_(result); })
-      .withFailureHandler(function (error) { resultEl.innerHTML = renderReminderSendResult_({ success: false, error: error }); })
+      .withFailureHandler(function () { resultEl.innerHTML = renderReminderSendResult_(REMINDER_DIAG_GENERIC_FAILURE_RESULT_); })
       .sendReminderTestMail(input.bookingId, input.baseDateString);
   });
+
+  /* Issue #330 PRレビュー対応: 予約IDを変えたら、前回入力に対する結果（解錠コードを
+     表示していた場合はその本文も含む）を残さない。表示状態は既定（マスク）へ戻す。 */
+  bookingIdInput.addEventListener('input', resetReminderDiagDisplay_);
 
   closeButton.addEventListener('click', closeReminderDiagnostics_);
   overlay.addEventListener('click', function (event) {
@@ -712,9 +736,18 @@ function buildReminderDiagnosticsModal_() {
   reminderDiagState_.revealInput = revealInput;
 }
 
+/* Issue #330 PRレビュー対応: 前回の判定・プレビュー結果（解錠コード表示中の本文を
+   含む）をクリアし、「解錠コードを表示する」チェックを既定（オフ＝マスク）へ戻す。
+   予約IDを変えたとき・モーダルを閉じたときの両方から呼ぶ共通処理。 */
+function resetReminderDiagDisplay_() {
+  if (!reminderDiagState_.overlay) return;
+  reminderDiagState_.resultEl.innerHTML = '';
+  reminderDiagState_.revealInput.checked = false;
+}
+
 function openReminderDiagnostics_() {
   if (!reminderDiagState_.overlay) buildReminderDiagnosticsModal_();
-  reminderDiagState_.resultEl.innerHTML = '';
+  resetReminderDiagDisplay_();
   if (!reminderDiagState_.baseDateInput.value) {
     reminderDiagState_.baseDateInput.value = state.todayJst || '';
   }
@@ -722,7 +755,9 @@ function openReminderDiagnostics_() {
 }
 
 function closeReminderDiagnostics_() {
-  if (reminderDiagState_.overlay) reminderDiagState_.overlay.classList.remove('open');
+  if (!reminderDiagState_.overlay) return;
+  reminderDiagState_.overlay.classList.remove('open');
+  resetReminderDiagDisplay_();
 }
 
 /* 既存4タブ（今日/今後/キャンセル/すべて）の各ボタンへ、件数表示用の子要素だけを

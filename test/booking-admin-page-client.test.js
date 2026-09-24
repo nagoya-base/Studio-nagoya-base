@@ -759,3 +759,88 @@ test('openReminderDiagnostics_: 初回クリックで診断モーダルをDOM生
   /* 2回目のクリックでもDOMを再生成せず例外を投げない。 */
   assert.doesNotThrow(function () { sandbox.openReminderDiagnostics_(); });
 });
+
+/* ---------- PRレビュー対応: 想定外例外時にerror.messageを描画しない ---------- */
+
+test('REMINDER_DIAG_GENERIC_FAILURE_RESULT_: 固定の安全な文言のみを持ち、渡された例外由来の情報を含まない', function () {
+  var sandbox = loadClientSandbox();
+  var fixed = sandbox.REMINDER_DIAG_GENERIC_FAILURE_RESULT_;
+
+  assert.strictEqual(fixed.success, false);
+  assert.strictEqual(typeof fixed.error.message, 'string');
+  assert.ok(fixed.error.message.length > 0);
+});
+
+test('renderReminderDiagnosisResult_/renderReminderPreviewResult_/renderReminderSendResult_: withFailureHandler相当（REMINDER_DIAG_GENERIC_FAILURE_RESULT_）を渡しても固定文言のみ表示し例外を投げない', function () {
+  var sandbox = loadClientSandbox();
+  var fixed = sandbox.REMINDER_DIAG_GENERIC_FAILURE_RESULT_;
+
+  assert.doesNotThrow(function () {
+    assert.match(sandbox.renderReminderDiagnosisResult_(fixed), /通信エラー/);
+    assert.match(sandbox.renderReminderPreviewResult_(fixed), /通信エラー/);
+    assert.match(sandbox.renderReminderSendResult_(fixed), /通信エラー/);
+  });
+});
+
+/* ---------- PRレビュー対応: プレビュー成功と送信対象の区別・秘密値表示状態のリセット ---------- */
+
+test('renderReminderPreviewResult_: eligible:falseの場合は「プレビュー成功」と「対象外」を区別して表示する', function () {
+  var sandbox = loadClientSandbox();
+  var html = sandbox.renderReminderPreviewResult_({
+    success: true,
+    targetDate: '2026-10-02',
+    subject: 'subject',
+    body: 'body',
+    recipientEmail: 'taro@example.com',
+    testRecipientEmail: 'admin@example.com',
+    revealed: false,
+    eligible: false,
+    reasonCode: 'NOT_NEXT_DAY'
+  });
+
+  assert.match(html, /プレビューを生成しました/, 'プレビュー自体の成功を示す文言');
+  assert.match(html, /対象外/);
+  assert.match(html, /翌日対象外/, 'reasonCodeのラベルも表示する');
+});
+
+test('renderReminderPreviewResult_: eligible:trueの場合は「対象」と表示する', function () {
+  var sandbox = loadClientSandbox();
+  var html = sandbox.renderReminderPreviewResult_({
+    success: true,
+    targetDate: '2026-10-02',
+    subject: 'subject',
+    body: 'body',
+    recipientEmail: 'taro@example.com',
+    testRecipientEmail: 'admin@example.com',
+    revealed: false,
+    eligible: true,
+    reasonCode: 'ELIGIBLE'
+  });
+
+  assert.match(html, /プレビューを生成しました/);
+  assert.match(html, /対象（本番なら送信されます）/);
+});
+
+test('resetReminderDiagDisplay_: 結果表示と「解錠コードを表示する」チェックをリセットする', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.openReminderDiagnostics_();
+  sandbox.reminderDiagState_.resultEl.innerHTML = '<p>前回の結果（解錠コード表示中）</p>';
+  sandbox.reminderDiagState_.revealInput.checked = true;
+
+  sandbox.resetReminderDiagDisplay_();
+
+  assert.strictEqual(sandbox.reminderDiagState_.resultEl.innerHTML, '');
+  assert.strictEqual(sandbox.reminderDiagState_.revealInput.checked, false);
+});
+
+test('closeReminderDiagnostics_: モーダルを閉じると表示状態もリセットされる（次回開いたときに前回の解錠コード表示が残らない）', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.openReminderDiagnostics_();
+  sandbox.reminderDiagState_.resultEl.innerHTML = '<p>前回の結果（解錠コード表示中）</p>';
+  sandbox.reminderDiagState_.revealInput.checked = true;
+
+  sandbox.closeReminderDiagnostics_();
+
+  assert.strictEqual(sandbox.reminderDiagState_.resultEl.innerHTML, '');
+  assert.strictEqual(sandbox.reminderDiagState_.revealInput.checked, false);
+});

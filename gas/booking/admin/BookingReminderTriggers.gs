@@ -63,7 +63,14 @@ function sendNextDayReminders(now) {
   candidates.forEach(function (item) {
     summary.processedCount++;
     try {
-      var result = BookingMailer.sendReminderMailForBooking(item.record.bookingId);
+      /*
+       * targetDateString（Issue #330レビュー対応）: 候補抽出（getConfirmedBookingsForDate）
+       * で既に翌日日付に絞り込まれているため、通常はここで不一致になることはないが、
+       * BookingMailer.evaluateReminderEligibilityのNOT_NEXT_DAY判定を本番でも
+       * 実際に経由させ、ロック取得後の最新レコードに対する防御的な再確認にする
+       * （本番と診断が同じ共通判定関数を呼ぶという受入条件に対応）。
+       */
+      var result = BookingMailer.sendReminderMailForBooking(item.record.bookingId, { targetDateString: tomorrowDateString });
       if (!result.success) {
         summary.failedCount++;
         /*
