@@ -1,0 +1,139 @@
+name: Deploy Booking GAS to production
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Existing GAS project to update
+        required: true
+        type: choice
+        options:
+          - public
+          - admin
+
+permissions:
+  contents: read
+
+concurrency:
+  group: booking-gas-production-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test main
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the selected main commit
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run repository tests
+        run: npm test
+
+  deploy:
+    name: Update existing ${{ inputs.target }} deployment
+    needs: test
+    runs-on: ubuntu-latest
+    environment: booking-production
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
+      PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
+      ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
+      ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
+    steps:
+      - name: Check out the approved main commit
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned clasp
+        run: npm install --global @google/clasp@3.4.1
+      - name: Update the existing deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "${{ inputs.target }}" in
+            public)
+              script_id="$PUBLIC_SCRIPT_ID"
+              deployment_id="$PUBLIC_DEPLOYMENT_ID"
+              ;;
+            admin)
+              script_id="$ADMIN_SCRIPT_ID"
+              deployment_id="$ADMIN_DEPLOYMENT_ID"
+              ;;
+            *)
+              echo "Unsupported target" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ -z "$CLASPRC_JSON" || -z "$script_id" || -z "$deployment_id" ]]; then
+            echo "Required booking-production secrets are not configured." >&2
+            exit 1
+          fi
+
+          auth_file="$RUNNER_TEMP/.clasprc.json"
+          remote_dir="$RUNNER_TEMP/booking-gas-remote"
+          deploy_dir="$RUNNER_TEMP/booking-gas-deploy"
+          mkdir -p "$remote_dir"
+
+          AUTH_FILE="$auth_file" PROJECT_DIR="$remote_dir" SCRIPT_ID="$script_id" node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          JSON.parse(process.env.CLASPRC_JSON);
+          fs.writeFileSync(process.env.AUTH_FILE, process.env.CLASPRC_JSON, { mode: 0o600 });
+          fs.writeFileSync(
+            path.join(process.env.PROJECT_DIR, '.clasp.json'),
+            JSON.stringify({ scriptId: process.env.SCRIPT_ID, rootDir: '.' })
+          );
+          NODE
+
+          cd "$remote_dir"
+          deployments_before="$(clasp --auth "$auth_file" list-deployments)"
+          if ! grep -Fq -- "$deployment_id" <<<"$deployments_before"; then
+            echo "Configured deployment ID does not belong to the selected existing GAS project." >&2
+            exit 1
+          fi
+
+          clasp --auth "$auth_file" pull
+          if [[ ! -f appsscript.json ]]; then
+            echo "Existing GAS project did not return appsscript.json; refusing to push." >&2
+            exit 1
+          fi
+
+          cd "$GITHUB_WORKSPACE"
+          manifest_path="$remote_dir/appsscript.json"
+          if [[ "${{ inputs.target }}" == "public" ]]; then
+            # The public manifest is version-controlled. The admin manifest is
+            # intentionally preserved from its existing container-bound project.
+            manifest_path="$GITHUB_WORKSPACE/gas/booking/public/appsscript.json"
+          fi
+          node scripts/prepare-booking-gas-project.js \
+            "${{ inputs.target }}" "$deploy_dir" "$manifest_path"
+
+          PROJECT_DIR="$deploy_dir" SCRIPT_ID="$script_id" node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          fs.writeFileSync(
+            path.join(process.env.PROJECT_DIR, '.clasp.json'),
+            JSON.stringify({ scriptId: process.env.SCRIPT_ID, rootDir: '.' })
+          );
+          NODE
+
+          cd "$deploy_dir"
+          clasp --auth "$auth_file" show-file-status
+          clasp --auth "$auth_file" push --force
+          clasp --auth "$auth_file" update-deployment "$deployment_id" \
+            --description "main ${GITHUB_SHA}"
+
+          deployments_after="$(clasp --auth "$auth_file" list-deployments)"
+          if ! grep -Fq -- "$deployment_id" <<<"$deployments_after"; then
+            echo "Existing deployment could not be verified after update." >&2
+            exit 1
+          fi
