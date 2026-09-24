@@ -477,10 +477,19 @@ var BookingMailer = (function () {
     });
   }
 
+  /*
+   * PENDING仮受付メール。カード決済のみ、支払期限日時の計算に必要な
+   * minHoursBeforeStart（既存のPENDING_TTL_MIN_HOURS_BEFORE_START）をconfig.ttlConfigとして
+   * 追加で渡す（Issue #334 PR-B。Booking Admin表示のcomputeAdminCardPaymentDueAt_
+   * ―gas/booking/admin/BookingAdminWeb.gs―と同じくBooking.computeCardPaymentDueMillisのみを
+   * 正として使い、期限の計算式をここで複製しない）。buildPendingMailの引数はrecordと
+   * configの2つのみで変えない（既存テストの引数個数チェックに合わせる）。
+   */
   function sendPendingMailForBooking(bookingId, options) {
     var opts = options || {};
     return withBookingLock_(MAIL_TYPES.PENDING, bookingId, Booking.STATUS.PENDING, ['pendingMailSentAt'], !!opts.force, function (record) {
       var config = ensureMailConfigComplete_();
+      config.ttlConfig = BookingConfig.getTtlConfig();
       return BookingMailTemplates.buildPendingMail(record, config);
     });
   }

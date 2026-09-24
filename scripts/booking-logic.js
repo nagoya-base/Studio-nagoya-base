@@ -401,6 +401,136 @@
   }
 
   /*
+   * ── カード決済の96時間受付条件・支払期限表示（Issue #334 PR-B） ──
+   * ここでの判定・表示はあくまでフォーム側の事前チェック・目安表示であり、実際の受付可否・
+   * 支払期限の正はgas/booking/shared/Booking.gs（CARD_MIN_HOURS_BEFORE_START/CARD_TTL_HOURS/
+   * computeCardPaymentDueMillis）。しきい値・TTLはそちらと値を一致させること。ここを
+   * すり抜けても、サーバー側のvalidateCreateBookingInputがfail-closedに拒否する
+   * （CARD_PAYMENT_TOO_CLOSE_TO_START。既にERROR_MESSAGES/recoveryActionForErrorCodeへ
+   * 対応済み）。
+   */
+  var CARD_PAYMENT_METHOD_VALUE = 'オンラインクレジットカード';
+  var CARD_MIN_HOURS_BEFORE_START = 96;
+  var CARD_TTL_HOURS = 72;
+
+  function isCardPaymentMethodValue(value) {
+    return value === CARD_PAYMENT_METHOD_VALUE;
+  }
+
+  /*
+   * dateValue（'YYYY-MM-DD'）とtimeValue（'HH:mm'）をAsia/Tokyo基準の壁時計時刻として
+   * 解釈し、その瞬間のUTC epoch msを返す（PRレビュー対応: 以前は「今日からの暦日差 × 1440分
+   * + 分単位に切り捨てたstartMinutes/nowMinutes」で分単位の判定をしていたため、
+   * 現在時刻の秒が切り捨てられる分だけ実際の残り時間より最大59秒長く見積もる方向の
+   * バイアスがあり、96時間未満の申込を誤って受け付け可能と判定しうる不具合があった。
+   * Asia/Tokyoは夏時間の無い固定UTC+9オフセットのtimezoneのため、Date.UTC(...)の月・日を
+   * そのまま使い、時をUTC+9分だけ引くだけで正しい絶対時刻（epoch ms）が一意に求まる
+   * （タイムゾーンデータベースへの依存なしに秒単位で正確）。この関数はミリ秒精度を返す
+   * ため、以降の比較はdaysBetweenDateStrings_やcurrentMinutesInJapan_のような分単位の
+   * 中間表現を経由しない。 */
+  function jstWallClockToUtcMillis_(dateValue, timeValue) {
+    var dateParts = (dateValue || '').split('-');
+    var timeParts = (timeValue || '').split(':');
+    var year = parseInt(dateParts[0], 10);
+    var month = parseInt(dateParts[1], 10);
+    var day = parseInt(dateParts[2], 10);
+    var hour = parseInt(timeParts[0], 10);
+    var minute = parseInt(timeParts[1], 10);
+    return Date.UTC(year, month - 1, day, hour - 9, minute, 0, 0);
+  }
+
+  /*
+   * カード決済を選べるかどうかの事前判定。dateValue/startTimeValueが未確定の間は
+   * true（まだ判定できる材料がないため選択肢を塞がない）。日時が確定した時点
+   * （Step2→Step3遷移時、および最終送信直前）で呼び出し側が再評価する
+   * （PRレビュー対応: 確認画面を開いたまま96時間の受付期限をまたいだ場合に備え、
+   * scripts/booking-app.jsのsubmitハンドラでも送信直前に呼び直す）。
+   * gas/booking/shared/Booking.gsのvalidateCreateBookingInput（`< CARD_MIN_HOURS_BEFORE_START`
+   * で拒否＝ちょうど96時間は許可）と同じ境界（>=で許可）をミリ秒精度で判定する。
+   */
+  function isCardPaymentEligible(dateValue, startTimeValue, now) {
+    if (!isNonEmpty(dateValue) || !isNonEmpty(startTimeValue)) return true;
+    var base = isDateLike_(now) ? now : new Date();
+    var startMillis = jstWallClockToUtcMillis_(dateValue, startTimeValue);
+    var msUntilStart = startMillis - base.getTime();
+    return msUntilStart >= CARD_MIN_HOURS_BEFORE_START * 3600000;
+  }
+
+  var WEEKDAY_LABELS_JA_ = ['日', '月', '火', '水', '木', '金', '土'];
+
+  /* Date（絶対時刻）をAsia/Tokyo基準の'YYYY-MM-DD（曜）HH:mm'へ整形する。
+     gas/booking/shared/Availability.gsのformatDateWithWeekdayと表示体裁を揃える。 */
+  function formatDateTimeWithWeekdayInJapan_(date) {
+    var parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    }).formatToParts(date);
+    var result = {};
+    parts.forEach(function (part) { if (part.type !== 'literal') result[part.type] = part.value; });
+    var weekdayIndex = new Date(Date.UTC(
+      parseInt(result.year, 10), parseInt(result.month, 10) - 1, parseInt(result.day, 10)
+    )).getUTCDay();
+    return result.year + '-' + result.month + '-' + result.day +
+      '（' + WEEKDAY_LABELS_JA_[weekdayIndex] + '） ' + result.hour + ':' + result.minute;
+  }
+
+  /*
+   * カード決済の支払期限の「目安」表示（フォーム送信前のみ使う）。実際の支払期限は
+   * サーバー側の申込日時（createdAt）を起点に計算されるため、送信後は仮受付メールに
+   * 記載される正式な期限を必ず確認するよう案内する（cardPaymentNoticeLines参照）。
+   */
+  function cardPaymentDueDisplay(now) {
+    var base = isDateLike_(now) ? now : new Date();
+    var due = new Date(base.getTime() + CARD_TTL_HOURS * 3600000);
+    return formatDateTimeWithWeekdayInJapan_(due);
+  }
+
+  var CARD_PAYMENT_INELIGIBLE_NOTICE = {
+    ja: 'カード事前決済は利用開始の4日前までのお申し込みです。直前のご予約は現金・PayPay（現地決済）をお選びください。',
+    en: 'Card prepayment is only available up to 4 days before your start time. For last-minute bookings, please choose cash or PayPay (pay on site).'
+  };
+
+  function cardPaymentIneligibleNotice(locale) {
+    return CARD_PAYMENT_INELIGIBLE_NOTICE[normalizeLocale(locale)];
+  }
+
+  /* フォーム（支払方法欄・確認画面）で使うカード決済の注意書き本文（Issue #334本文の
+     引用ブロックと一致させる）。仮受付メール側（gas/booking/shared/BookingMailTemplates.gsの
+     buildCardPendingNotice_）は、この末尾行と重複する既存の仮受付案内が別にあるため、
+     その行を省いた独自の組み立てを別途持つ（テキストの正はこちら1か所ではなく、
+     フォーム/メールそれぞれの文脈に応じて必要な行だけを使う）。 */
+  var CARD_PAYMENT_NOTICE_TEXT_ = {
+    ja: {
+      title: '【クレジットカード決済のご案内】',
+      linkTiming: '決済リンクは、お申し込みから24時間以内にメールでお送りします。',
+      dueLabel: function (dueDisplay) { return 'お支払い期限：お申し込みから72時間後（' + dueDisplay + '）'; },
+      expiry: '期限までにお支払いのうえ、予約確定のご案内をお待ちください。期限までに予約が確定しなかった場合は、予約が自動的に失効します。',
+      reapply: '失効後もご利用を希望される場合は、改めて予約フォームからお申し込みください。',
+      alreadyPaid: 'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。',
+      pendingNote: '※お申し込み時点では仮受付です。入金確認後、当施設の承認をもって予約確定となります。'
+    },
+    en: {
+      title: '[Credit Card Payment]',
+      linkTiming: 'We will email you a payment link within 24 hours of your request.',
+      dueLabel: function (dueDisplay) { return 'Payment due: 72 hours after your request (' + dueDisplay + ')'; },
+      expiry: 'Please complete payment before the deadline and wait for booking confirmation. If the booking is not confirmed by the deadline, it will expire automatically.',
+      reapply: 'If you still wish to book after it expires, please submit a new request through the booking form.',
+      alreadyPaid: 'If you have already paid, please contact us instead of submitting a new request or paying again.',
+      pendingNote: 'Your request is only a provisional hold at this point. The booking is confirmed only after we verify payment and approve it.'
+    }
+  };
+
+  /* dueDisplay/localeに加え、options.omitPendingNote:trueで末尾の「仮受付です」行を省く
+     （仮受付メール本文で既存の仮受付案内と重複させないため。フォーム表示側は省かない）。 */
+  function cardPaymentNoticeLines(dueDisplay, locale, options) {
+    var t = CARD_PAYMENT_NOTICE_TEXT_[normalizeLocale(locale)];
+    var opts = options || {};
+    var lines = [t.title, t.linkTiming, t.dueLabel(dueDisplay), t.expiry, t.reapply, t.alreadyPaid];
+    if (!opts.omitPendingNote) lines.push(t.pendingNote);
+    return lines;
+  }
+
+  /*
    * ── 月間空き状況カレンダー（Issue #318） ──
    * gas/booking/shared/Availability.gsのgetMonthlyAvailabilityが返すDAY_STATUS（5値）を
    * 記号・aria-label・選択可否へ変換する、DOM非依存の純粋ロジック。
@@ -692,7 +822,15 @@
     buildMonthMatrix: buildMonthMatrix,
     shiftMonth: shiftMonth,
     yearMonthFromDateValue: yearMonthFromDateValue,
-    weekdayColumnClass: weekdayColumnClass
+    weekdayColumnClass: weekdayColumnClass,
+    CARD_PAYMENT_METHOD_VALUE: CARD_PAYMENT_METHOD_VALUE,
+    CARD_MIN_HOURS_BEFORE_START: CARD_MIN_HOURS_BEFORE_START,
+    CARD_TTL_HOURS: CARD_TTL_HOURS,
+    isCardPaymentMethodValue: isCardPaymentMethodValue,
+    isCardPaymentEligible: isCardPaymentEligible,
+    cardPaymentDueDisplay: cardPaymentDueDisplay,
+    cardPaymentIneligibleNotice: cardPaymentIneligibleNotice,
+    cardPaymentNoticeLines: cardPaymentNoticeLines
   };
 
   global.BookingLogic = api;

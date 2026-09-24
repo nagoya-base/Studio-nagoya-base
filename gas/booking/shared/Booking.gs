@@ -93,23 +93,6 @@ var Booking = (function () {
     return String(paymentMethod || '').trim() === PAYMENT_METHOD_CARD;
   }
 
-  /* 'YYYY-MM-DD'同士の暦日差（日数）を返す。Date.UTCベースで計算するため実行環境の
-     ローカルtimezoneに依存しない（gas/booking/shared/CalendarRepository.gsの
-     buildDateRange_内のparseYmd_と同じ方針。Booking.gsはGASサービス非依存を保つため
-     ここに同等のロジックを複製する）。 */
-  function parseYmdParts_(dateString) {
-    var parts = String(dateString || '').split('-');
-    return { year: parseInt(parts[0], 10), month: parseInt(parts[1], 10), day: parseInt(parts[2], 10) };
-  }
-
-  function daysBetweenDateStrings_(fromDateString, toDateString) {
-    var from = parseYmdParts_(fromDateString);
-    var to = parseYmdParts_(toDateString);
-    var fromUtc = Date.UTC(from.year, from.month - 1, from.day);
-    var toUtc = Date.UTC(to.year, to.month - 1, to.day);
-    return Math.round((toUtc - fromUtc) / 86400000);
-  }
-
   /* Calendarタイトル・管理者通知メール等、人が読む表示にのみ使うブランド名。
      空き判定・状態判定のロジックはこのラベルに一切依存しない。 */
   var BRAND_LABELS_ = { snb: 'SNB', mens: 'SNB mens', studio_x: 'Studio X' };
@@ -330,21 +313,26 @@ var Booking = (function () {
     /*
      * カード決済の最低リードタイム（Issue #334）: 利用開始まで96時間（4日）未満の申込は
      * GAS側で拒否する（フロントの選択肢非表示に依存しないfail-closedな検証。フロント側の
-     * 表示制御自体はPR-Bで対応する）。ここでのみ使うためcurrentMinutesは独立に計算する
-     * （上のisSameDayBooking分岐内のcurrentMinutesとは別変数。既存の当日判定ロジックには
-     * 一切手を入れない）。
-     * 「開始まで96時間」は日数(daysBetweenDateStrings_)と分単位(startMinutes/currentMinutes)を
-     * 組み合わせた分単位の比較で判定する。Asia/Tokyoは夏時間が無い固定オフセットのtimezoneの
-     * ため、暦日の差分と時刻(分)の差分を単純加算するだけで経過時間（分）と一致する。
+     * 表示制御自体はPR-Bで対応する）。
+     *
+     * PR-Bレビュー対応: 以前は「今日からの暦日差×1440分＋分単位に丸めたstartMinutes/
+     * 現在時刻」という分単位の中間表現で比較していたため、96時間ちょうど付近の秒・
+     * ミリ秒単位の境界でフロント側（scripts/booking-logic.jsのisCardPaymentEligible。
+     * 同じくミリ秒精度）の判定とずれうる不具合があった。ここではBookingAvailability.
+     * zonedDateTimeToUtcMillisで利用開始日時をavailabilityConfig.timezone基準の絶対時刻
+     * （UTC epoch ms）へ変換し、receivedAt（Dateとして既にミリ秒精度の絶対時刻）との差分を
+     * そのままミリ秒で比較する。CARD_MIN_HOURS_BEFORE_START=96はそのまま維持し、
+     * 新しいScript Propertiesは追加しない。
      */
     if (isCardPaymentMethod(input.paymentMethod)) {
-      var cardNowMinutes = BookingAvailability.getCurrentMinutesInTimezone(receivedAt, availabilityConfig.timezone);
-      if (cardNowMinutes === null) {
+      var cardStartAtMillis = BookingAvailability.zonedDateTimeToUtcMillis(
+        input.date, input.startTime, availabilityConfig.timezone
+      );
+      if (cardStartAtMillis === null) {
         return { valid: false, error: err_('INVALID_CONFIG', '営業時間・予約ルールの設定が正しくありません。') };
       }
-      var daysUntilStart = daysBetweenDateStrings_(todayString, input.date);
-      var minutesUntilStart = daysUntilStart * 1440 + startMinutes - cardNowMinutes;
-      if (minutesUntilStart < CARD_MIN_HOURS_BEFORE_START * 60) {
+      var msUntilStart = cardStartAtMillis - receivedAt.getTime();
+      if (msUntilStart < CARD_MIN_HOURS_BEFORE_START * 3600000) {
         return {
           valid: false,
           error: err_(

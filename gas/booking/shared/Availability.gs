@@ -158,6 +158,64 @@ var BookingAvailability = (function () {
     }
   }
 
+  /*
+   * 指定timezoneが、instantMillis時点でUTCから何msずれているか（例: Asia/Tokyoは常に
+   * +32400000＝+9時間）を、Intl.DateTimeFormatでの実測により求める（Issue #334 PR-B
+   * レビュー対応。zonedDateTimeToUtcMillis専用の内部ヘルパー）。timezoneが不正な場合は
+   * nullを返す。
+   */
+  function timezoneOffsetMillisAt_(instantMillis, timezone) {
+    try {
+      var parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone, hourCycle: 'h23',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).formatToParts(new Date(instantMillis));
+      var result = {};
+      parts.forEach(function (part) { if (part.type !== 'literal') result[part.type] = part.value; });
+      if (!result.year || !result.month || !result.day || !result.hour || !result.minute || !result.second) return null;
+      var asUtcMillis = Date.UTC(
+        parseInt(result.year, 10), parseInt(result.month, 10) - 1, parseInt(result.day, 10),
+        parseInt(result.hour, 10), parseInt(result.minute, 10), parseInt(result.second, 10)
+      );
+      return asUtcMillis - instantMillis;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /*
+   * dateString（'YYYY-MM-DD'）とtimeString（'HH:mm'）を、指定timezoneの壁時計時刻として
+   * 解釈し、その瞬間の絶対時刻（UTC epoch ms）へ変換する（Issue #334 PR-Bレビュー対応）。
+   *
+   * カード決済の96時間受付判定（Booking.gsのvalidateCreateBookingInput）を、フロント側
+   * （scripts/booking-logic.jsのisCardPaymentEligible）とミリ秒精度で一致させるために追加した。
+   * 以前のBooking.gs側の実装は「今日からの暦日差×1440分＋分単位の開始時刻・現在時刻」という
+   * 分単位の中間表現を経由していたため、96時間ちょうど付近の秒・ミリ秒単位の境界で
+   * フロント側の判定とずれうる不具合があった。
+   *
+   * timezoneOffsetMillisAt_で実測したオフセットを使うため、Asia/Tokyoのような夏時間のない
+   * 固定オフセットのtimezoneに限らず、一般のIANA timezone名でも正しく変換できる
+   * （このリポジトリのTIMEZONE設定は既定Asia/Tokyoで固定運用しているが、値そのものを
+   * ハードコードしない）。dateString/timeStringの形式が不正、またはtimezoneが不正な場合は
+   * nullを返す（呼び出し側でfail-closedに扱う）。
+   */
+  function zonedDateTimeToUtcMillis(dateString, timeString, timezone) {
+    if (!isValidDateString(dateString) || !isValidTimeString_(timeString)) return null;
+    var dateParts = dateString.split('-');
+    var timeParts = timeString.split(':');
+    var year = parseInt(dateParts[0], 10);
+    var month = parseInt(dateParts[1], 10);
+    var day = parseInt(dateParts[2], 10);
+    var hour = parseInt(timeParts[0], 10);
+    var minute = parseInt(timeParts[1], 10);
+
+    var utcGuessMillis = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+    var offsetMillis = timezoneOffsetMillisAt_(utcGuessMillis, timezone);
+    if (offsetMillis === null) return null;
+    return utcGuessMillis - offsetMillis;
+  }
+
   function isNonNegativeInteger_(value) {
     return typeof value === 'number' && Number.isInteger(value) && value >= 0;
   }
@@ -531,6 +589,7 @@ var BookingAvailability = (function () {
     formatDateInTimezone: formatDateInTimezone,
     formatTimeInTimezone: formatTimeInTimezone,
     getCurrentMinutesInTimezone: getCurrentMinutesInTimezone,
+    zonedDateTimeToUtcMillis: zonedDateTimeToUtcMillis,
     validateInput: validateInput,
     computeBookableStartTimes: computeBookableStartTimes,
     isStartTimeBookable: isStartTimeBookable,

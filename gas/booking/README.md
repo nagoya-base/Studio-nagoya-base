@@ -1752,6 +1752,40 @@ PR #335（本PR-A）のレビュー対応で調査した結果、PR #328は以�
 - 本PR-Aは`Closes #334`を付けていない（Issue #334本文どおり、最後にマージするPRのみ
   `Closes`を付ける）。
 
+### フォーム表示・仮受付メールの文言（PR-B）
+
+PR-Aの期限管理・失効通知・手動復活の業務ロジックはこのPRでは一切変更していない。
+
+- `_includes/booking_app_ja.html`／`scripts/booking-logic.js`／`scripts/booking-app.js`に、
+  カード決済（`Booking.PAYMENT_METHOD_CARD`と同じ内部value）の**利用開始96時間未満は
+  選択不可**にするフロント側の事前チェックを追加した（`Logic.CARD_MIN_HOURS_BEFORE_START`
+  =96・`Logic.isCardPaymentEligible`）。しきい値はGAS側の`Booking.CARD_MIN_HOURS_BEFORE_START`
+  と値を一致させているが、正はあくまでGAS側の`validateCreateBookingInput`
+  （`CARD_PAYMENT_TOO_CLOSE_TO_START`）であり、フロント側はUXのための事前ガードに過ぎない。
+  Step2→Step3遷移のたびに再評価するため、一度カードを選んだ後に日時を変更して96時間未満に
+  なった場合も選択が解除される。
+- カード選択時のみ、支払方法欄付近・予約確認画面（`#ba-confirm-payment`の下）・完了画面に
+  支払期限つきの注意書き（決済リンクの送信予定・支払期限・自動失効・再申し込み方法・
+  二重決済防止の連絡先）を表示する。フォーム上の支払期限は「今、送信したら」の目安
+  （申込時点+72時間。`Logic.cardPaymentDueDisplay`）であり、実際の期限はGAS側の
+  `createdAt`起点で計算され仮受付メールに記載される。
+- `BookingMailTemplates.gs`の`buildPendingMail`は、カード決済のときのみ
+  `Booking.computeCardPaymentDueMillis`（Booking Admin表示と同じ1関数）で計算した実際の
+  支払期限を本文へ追加する。呼び出し元の`BookingMailer.sendPendingMailForBooking`が
+  `BookingConfig.getTtlConfig()`の`minHoursBeforeStart`を`config.ttlConfig`として渡す
+  （`buildPendingMail(record, config)`の引数は2つのまま変更していない）。冒頭の既存仮受付案内
+  （「このメールの時点では…」）と重複する「※お申し込み時点では仮受付です…」の行は、
+  メール本文では省いている（フォーム・確認画面側は省いていない）。現金・PayPay・未定には
+  この案内を一切追加しない。
+- `_includes/legal_ja.html`／`studio-x/legal/index.html`／`how-to/index.html`／
+  `mens/how-to/index.html`／`index.html`／`mens/index.html`／`studio-x/booking/index.html`の、
+  カード決済の支払タイミングが「予約確定後」であるかのような矛盾した旧文言、および
+  「通常24時間以内にご連絡します」がカードの確定連絡タイミングとして誤解されうる箇所を
+  更新した。現金・PayPay・未定の24時間ルールの文言・挙動は変更していない。対象は
+  SNB／SNB mens／Studio Xの直接予約ページのみで、相談フォーム・スペースマーケット経由・
+  英語版ページ（`booking_app_en.html`等）は対象外。
+- Stripeの決済リンクそのものはメールに含めない（PR-Cで運営がBooking Adminから別途送信する）。
+
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
 | 項目 | 値 |

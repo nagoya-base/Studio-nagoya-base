@@ -204,6 +204,10 @@
 
 .ba-choice input { flex: 0 0 auto; width: 18px; height: 18px; accent-color: var(--ba-accent); }
 
+/* カード決済が96時間未満で選択不可の間の見た目（Issue #334 PR-B）。 */
+.ba-choice--disabled { opacity: 0.5; cursor: not-allowed; }
+.ba-choice--disabled input { cursor: not-allowed; }
+
 /* ── スクリーンリーダー専用（視覚的には非表示だがaria-labelledbyの対象として読める） ── */
 .ba-sr-only {
   position: absolute;

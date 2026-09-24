@@ -77,6 +77,71 @@ test('buildPendingMail: キーボックス番号・解錠コードを一切含�
   assert.strictEqual(templates.buildPendingMail.length, 2, 'buildPendingMailはrecordとconfigの2引数のみを取る（accessGuideを受け取らない）');
 });
 
+/* ── カード決済の仮受付メール案内（Issue #334 PR-B「3. 仮受付メール」） ── */
+
+test('buildPendingMail: カード決済のみ、決済リンクの送信予定・実際の支払期限日時・自動失効・再申し込み方法を含む', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({
+    paymentMethod: 'オンラインクレジットカード',
+    createdAt: new Date('2026-09-28T10:00:00+09:00'),
+    startAt: new Date('2026-10-05T10:00:00+09:00')
+  });
+  var config = Object.assign({}, CONFIG, { ttlConfig: { minHoursBeforeStart: 2 } });
+  var mail = templates.buildPendingMail(record, config);
+
+  assert.match(mail.body, /【クレジットカード決済のご案内】/);
+  assert.match(mail.body, /決済リンクは、お申し込みから24時間以内にメールでお送りします。/);
+  /* 支払期限はBooking.computeCardPaymentDueMillis（createdAt+72時間。利用開始2時間前の
+     上限には掛からない）に基づく実際の日時が入る。フォーム上の「目安」表示
+     （scripts/booking-logic.jsのcardPaymentDueDisplay）とは別に、ここでは必ず
+     createdAt/startAtから計算したサーバー側の値を使う。 */
+  assert.match(mail.body, /お支払い期限：お申し込みから72時間後（2026-10-01（木） 10:00）/);
+  assert.match(mail.body, /期限までに予約が確定しなかった場合は、予約が自動的に失効します。/);
+  assert.match(mail.body, /改めて予約フォームからお申し込みください。/);
+  assert.match(mail.body, /すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。/);
+});
+
+test('buildPendingMail: カード決済の注意書きは、冒頭の既存仮受付案内と重複する「仮受付です」の行を含まない（重複整理）', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({
+    paymentMethod: 'オンラインクレジットカード',
+    createdAt: new Date('2026-09-28T10:00:00+09:00'),
+    startAt: new Date('2026-10-05T10:00:00+09:00')
+  });
+  var config = Object.assign({}, CONFIG, { ttlConfig: { minHoursBeforeStart: 2 } });
+  var mail = templates.buildPendingMail(record, config);
+
+  /* 冒頭の既存案内（「このメールの時点では…」）は残る */
+  assert.match(mail.body, /このメールの時点ではご予約はまだ確定しておりません/);
+  /* カード注意書き側の末尾「仮受付です」の重複行は出さない */
+  var occurrences = (mail.body.match(/仮受付/g) || []).length;
+  assert.strictEqual(occurrences, 1, '「仮受付」を含む文言は冒頭の既存案内1回のみであるべき');
+});
+
+test('buildPendingMail: 現金・PayPay・未定にはカード専用の注意書きが一切混入しない', function () {
+  var templates = loadTemplates();
+  ['現金', 'PayPay', '未定'].forEach(function (paymentMethod) {
+    var templatesEach = loadTemplates();
+    var record = sampleRecord({
+      paymentMethod: paymentMethod,
+      createdAt: new Date('2026-09-28T10:00:00+09:00')
+    });
+    var config = Object.assign({}, CONFIG, { ttlConfig: { minHoursBeforeStart: 2 } });
+    var mail = templatesEach.buildPendingMail(record, config);
+    assert.strictEqual(mail.body.indexOf('クレジットカード決済のご案内'), -1, paymentMethod + 'にカード案内が混入しないこと');
+    assert.strictEqual(mail.body.indexOf('決済リンク'), -1, paymentMethod + 'に決済リンク文言が混入しないこと');
+  });
+});
+
+test('buildPendingMail: カード決済でもcreatedAt/startAtが欠けている場合は例外を投げず、括弧内の日時なしで案内文だけ出す', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ paymentMethod: 'オンラインクレジットカード', createdAt: undefined });
+  var config = Object.assign({}, CONFIG, { ttlConfig: { minHoursBeforeStart: 2 } });
+  var mail = templates.buildPendingMail(record, config);
+  assert.match(mail.body, /【クレジットカード決済のご案内】/);
+  assert.match(mail.body, /お支払い期限：お申し込みから72時間後/);
+});
+
 test('buildConfirmedMail: 件名で予約確定が分かる', function () {
   var templates = loadTemplates();
   var mail = templates.buildConfirmedMail(sampleRecord(), CONFIG);

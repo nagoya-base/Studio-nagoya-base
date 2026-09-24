@@ -7,6 +7,8 @@
 
 var test = require('node:test');
 var assert = require('node:assert');
+var fs = require('node:fs');
+var path = require('node:path');
 var loadFrontendSandbox = require('./helpers/frontend-sandbox').loadFrontendSandbox;
 
 function createElement(id) {
@@ -81,7 +83,12 @@ function setup(responseBody) {
     purposeLabel: function (v) { return v; },
     paymentMethodLabel: function (v) { return v; },
     networkErrorMessage: function () { return '通信状況をご確認のうえ、時間を置いて再度お試しください。'; },
-    apiNotConfiguredMessage: function () { return '現在オンライン予約の準備中です。恐れ入りますが、しばらくしてから再度お試しください。'; }
+    apiNotConfiguredMessage: function () { return '現在オンライン予約の準備中です。恐れ入りますが、しばらくしてから再度お試しください。'; },
+    /* Issue #334 PR-B: 送信成功ハンドラがカード決済かどうかを毎回判定するため、
+       このstubでも最低限の実装を用意する（このテスト群はstate.paymentMethodが
+       常に空文字のため、常にfalseを返す形で足りる）。 */
+    CARD_PAYMENT_METHOD_VALUE: 'オンラインクレジットカード',
+    isCardPaymentMethodValue: function (v) { return v === 'オンラインクレジットカード'; }
   };
 
   var sandbox = loadFrontendSandbox(['booking-app.js'], {
@@ -497,4 +504,468 @@ test('Issue #324: 希望時間帯「夜」でStep2に該当候補が無い場合
   assert.strictEqual(ctx.startTimeButtons.length, 0);
   assert.strictEqual(ctx.elements['ba-start-time-empty'].hidden, false);
   assert.strictEqual(ctx.elements['ba-start-time-grid'].hidden, true);
+});
+
+/* ── Issue #334 PR-B: カード決済の96時間受付条件・注意書き（実ロジック結合） ──
+   setupFullFlowをベースに、カード決済ラジオ（input[name="paymentMethod"][value="…"]）と
+   支払方法欄・確認画面・完了画面の注意書き要素を、実際にdisabled/checked/表示テキストを
+   検証できるスタブへ差し替える。日付は実行時刻からの相対日数で計算し、実行タイミングに
+   依存して96時間の境界をまたがないようにする（offsetDays=10なら常に96時間超、
+   offsetDays=1なら常に96時間未満になる）。 */
+var CARD_VALUE = 'オンラインクレジットカード';
+
+function jstDateString(offsetDays) {
+  var d = new Date(Date.now() + offsetDays * 86400000);
+  var parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(d);
+  var result = {};
+  parts.forEach(function (p) { if (p.type !== 'literal') result[p.type] = p.value; });
+  return result.year + '-' + result.month + '-' + result.day;
+}
+
+function setupCardFlow(locale, options) {
+  var opts = options || {};
+  var elements = {};
+  var startTimeButtons = [];
+  var selectedCustomerType = null;
+  var selectedPaymentMethod = null;
+  var selectedTimeBand = null;
+  var requests = [];
+
+  var cardLabelEl = {
+    classList: {
+      classes: {},
+      toggle: function (cls, force) { this.classes[cls] = !!force; },
+      contains: function (cls) { return !!this.classes[cls]; }
+    }
+  };
+  var cardRadioEl = {
+    name: 'paymentMethod',
+    value: CARD_VALUE,
+    disabled: false,
+    checked: false,
+    closest: function (selector) { return selector === 'label' ? cardLabelEl : null; }
+  };
+
+  var root = createElement('booking-app');
+  root.getAttribute = function (name) {
+    if (name === 'data-brand') return 'snb';
+    if (name === 'data-back-url') return '/';
+    if (name === 'data-back-label') return null;
+    if (name === 'data-locale') return locale;
+    return null;
+  };
+  root.querySelectorAll = function () { return []; };
+  root.querySelector = function (selector) {
+    if (selector === 'input[name="customerType"]:checked') {
+      return selectedCustomerType ? { value: selectedCustomerType } : null;
+    }
+    if (selector === 'input[name="paymentMethod"]:checked') {
+      if (selectedPaymentMethod === CARD_VALUE) {
+        return cardRadioEl.checked ? { value: CARD_VALUE } : null;
+      }
+      return selectedPaymentMethod ? { value: selectedPaymentMethod } : null;
+    }
+    if (selector === 'input[name="paymentMethod"][value="' + CARD_VALUE + '"]') {
+      return cardRadioEl;
+    }
+    if (selector === 'input[name="timeBand"]:checked') {
+      return selectedTimeBand ? { value: selectedTimeBand } : null;
+    }
+    return null;
+  };
+  elements['booking-app'] = root;
+
+  var startTimeGrid = createElement('ba-start-time-grid');
+  startTimeGrid.appendChild = function (child) { startTimeButtons.push(child); };
+  elements['ba-start-time-grid'] = startTimeGrid;
+
+  /* renderMultilineNotice_（scripts/booking-app.js）が積むテキストノード（{nodeValue}）と
+     <br>要素（document.createElementのid='br'スタブ、nodeValueを持たない）を見分けて
+     結合し、実際に画面へ表示される文言を1本の文字列として取り出せるようにする。 */
+  function createNoticeElement(id) {
+    var el = createElement(id);
+    var parts = [];
+    el.appendChild = function (child) { parts.push(child); };
+    el.renderedText = function () {
+      return parts
+        .filter(function (p) { return p && typeof p.nodeValue === 'string'; })
+        .map(function (p) { return p.nodeValue; })
+        .join('\n');
+    };
+    return el;
+  }
+  [
+    'ba-card-ineligible-notice',
+    'ba-card-payment-notice',
+    'ba-confirm-card-payment-notice',
+    'ba-complete-card-payment-notice'
+  ].forEach(function (id) { elements[id] = createNoticeElement(id); });
+
+  var documentStub = {
+    getElementById: function (id) {
+      if (!elements[id]) elements[id] = createElement(id);
+      return elements[id];
+    },
+    createElement: createElement,
+    createTextNode: function (text) { return { nodeValue: text }; }
+  };
+
+  var windowStub = { BookingApiConfig: { BASE_URL: 'https://example.invalid/exec' } };
+  var fetchCallCount = 0;
+
+  loadFrontendSandbox(['booking-logic.js', 'booking-app.js'], {
+    document: documentStub,
+    window: windowStub,
+    fetch: function (url, fetchOptions) {
+      fetchCallCount += 1;
+      if (fetchOptions && fetchOptions.method === 'POST') {
+        requests.push({ url: url, body: JSON.parse(fetchOptions.body) });
+        return Promise.resolve({ json: function () {
+          return Promise.resolve({ success: true, bookingId: 'SNB-CARD-TEST', requestId: 'req-card' });
+        } });
+      }
+      return Promise.resolve({ json: function () {
+        return Promise.resolve({ success: true, bookableStartTimes: opts.bookableStartTimes || ['10:00', '11:00'] });
+      } });
+    }
+  });
+
+  return {
+    elements: elements,
+    startTimeButtons: startTimeButtons,
+    cardRadio: cardRadioEl,
+    cardLabel: cardLabelEl,
+    /* 実際にvmへ読み込まれたLogic（scripts/booking-logic.js）そのもの。送信直前の
+       再判定テストで、Logic.isCardPaymentEligibleを一時的に差し替えて「確認画面を
+       開いている間に受付期限が過ぎた」状況を再現するために公開する。 */
+    Logic: windowStub.BookingLogic,
+    setCustomerType: function (v) { selectedCustomerType = v; },
+    /* カードを選ぶ操作をシミュレートする。cardRadioEl.checkedも連動させ、後段の
+       updateCardPaymentGating()がradio.checked = falseへ戻した場合に
+       checkedPaymentMethod()側でも選択解除が反映されるようにする（実DOMでの
+       「disabled化されたラジオはchecked状態も失う」を模したテスト用の配線）。 */
+    setPaymentMethod: function (v) {
+      selectedPaymentMethod = v;
+      if (v === CARD_VALUE) cardRadioEl.checked = true;
+    },
+    triggerPaymentMethodChange: function () {
+      root._listeners.change({ target: { name: 'paymentMethod' } });
+    },
+    setTimeBand: function (v) { selectedTimeBand = v; },
+    requests: requests,
+    getFetchCallCount: function () { return fetchCallCount; }
+  };
+}
+
+function fillStep3RequiredFields(ctx) {
+  ctx.elements['ba-name'].value = '山田太郎';
+  ctx.elements['ba-email'].value = 'taro@example.com';
+  ctx.elements['ba-people'].value = '2名';
+  ctx.elements['ba-purpose'].value = 'セルフ撮影';
+}
+
+test('Issue #334 PR-B: 利用開始まで96時間ちょうどはカード決済を選択できる（disabledにならない）', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  assert.strictEqual(ctx.cardRadio.disabled, false);
+  assert.strictEqual(ctx.elements['ba-card-ineligible-notice'].hidden, true);
+});
+
+test('Issue #334 PR-B: 利用開始まで96時間未満ではカード決済を選択できない（disabled）', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(1);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  assert.strictEqual(ctx.cardRadio.disabled, true);
+  /* 案内文自体は_includes/booking_app_ja.html側の静的テキストとして配信され、
+     JSはhidden切り替えのみを行う（wordingの検証はHTML側の別テストで行う）。 */
+  assert.strictEqual(ctx.elements['ba-card-ineligible-notice'].hidden, false);
+});
+
+test('Issue #334 PR-B: 日時変更によって96時間未満になった場合、カード選択が解除され送信できない', async function () {
+  var ctx = setupCardFlow(null);
+
+  /* 1回目: 96時間以上先の日程でStep3へ進み、カードを選択する */
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+  assert.strictEqual(ctx.cardRadio.disabled, false);
+  ctx.setPaymentMethod(CARD_VALUE);
+  assert.strictEqual(ctx.cardRadio.checked, true);
+
+  /* Step3→Step2→Step1と戻り、96時間未満の日程へ変更してStep3へ再度進む */
+  ctx.elements['ba-step-details-back']._listeners.click();
+  ctx.elements['ba-step-start-time-back']._listeners.click();
+  ctx.elements['ba-date'].value = jstDateString(1);
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  assert.strictEqual(ctx.cardRadio.disabled, true, '96時間未満になったらdisabledへ戻ること');
+  assert.strictEqual(ctx.cardRadio.checked, false, '選択も解除されること');
+
+  /* 送信直前のバリデーションでも、支払方法未選択として弾かれ、確認画面へ進めない */
+  fillStep3RequiredFields(ctx);
+  ctx.elements['ba-step-details-next']._listeners.click();
+  assert.strictEqual(ctx.elements['ba-step-confirm'].hidden, true, '確認画面へ進めないこと');
+  assert.strictEqual(ctx.elements['ba-payment-error'].hidden, false);
+});
+
+/* ── PRレビュー対応: 予約確認画面を開いたまま96時間の受付期限を過ぎた場合の
+   最終送信直前の再判定（Issue #334 PR-B）。実際の壁時計を4日以上進めることはできないため、
+   Step2→Step3遷移時点では現実のLogic.isCardPaymentEligibleで「適格」判定を通したあと、
+   確認画面へ進んでから送信直前だけLogic.isCardPaymentEligibleを一時的に差し替えて
+   「その間に期限が過ぎた」状況を再現する（呼び出し回数・呼び出し時の引数も確認する）。 ── */
+test('Issue #334 PR-B: 確認画面を開いたまま受付期限を過ぎた場合、最終送信直前の再判定で送信を中止し、現地決済を案内する', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+  assert.strictEqual(ctx.cardRadio.disabled, false, 'Step3進入時点ではまだ96時間以上先で選択できる');
+
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.elements['ba-step-details-next']._listeners.click();
+  assert.strictEqual(ctx.elements['ba-step-confirm'].hidden, false, '確認画面まで進めること（この時点ではまだ適格）');
+
+  /* 確認画面を開いている間に受付期限を過ぎた状況を再現する */
+  var eligibilityCalls = [];
+  var originalIsEligible = ctx.Logic.isCardPaymentEligible;
+  ctx.Logic.isCardPaymentEligible = function (dateValue, startTimeValue) {
+    eligibilityCalls.push([dateValue, startTimeValue]);
+    return false;
+  };
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+
+  ctx.Logic.isCardPaymentEligible = originalIsEligible;
+
+  assert.strictEqual(ctx.requests.length, 0, 'fetch自体が発生せず送信は中止されること');
+  /* 送信ハンドラの判定自体で1回、その後の選択解除（updateCardPaymentGating）内でも
+     同じ判定を再利用するため1回、計2回呼ばれる。いずれも同じ引数であること。 */
+  assert.ok(eligibilityCalls.length >= 1);
+  eligibilityCalls.forEach(function (call) {
+    assert.deepStrictEqual(call, [ctx.elements['ba-date'].value, ctx.startTimeButtons[0].textContent]);
+  });
+  assert.strictEqual(ctx.elements['ba-step-details'].hidden, false, 'Step3（利用者情報）へ戻ること');
+  assert.strictEqual(ctx.elements['ba-step-confirm'].hidden, true);
+  assert.strictEqual(ctx.cardRadio.disabled, true, '戻った時点でカードは選択不可へ更新されること');
+  assert.strictEqual(ctx.cardRadio.checked, false);
+  assert.strictEqual(ctx.elements['ba-global-error'].hidden, false, '現地決済への案内が表示されること');
+  assert.match(
+    ctx.elements['ba-global-error-message'].textContent,
+    /カード事前決済は利用開始の4日前までのお申し込みです。直前のご予約は現金・PayPay（現地決済）をお選びください。/
+  );
+});
+
+test('Issue #334 PR-B: 送信直前もなお受付期限内であれば、通常どおり送信できる（回帰なし）', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.requests.length, 1);
+  assert.strictEqual(ctx.elements['ba-step-complete'].hidden, false);
+});
+
+test('Issue #334 PR-B: カード選択時のみ、支払方法欄付近に支払期限つきの注意書きが表示される', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.triggerPaymentMethodChange();
+
+  var text = ctx.elements['ba-card-payment-notice'].renderedText();
+  assert.strictEqual(ctx.elements['ba-card-payment-notice'].hidden, false);
+  assert.match(text, /【クレジットカード決済のご案内】/);
+  assert.match(text, /24時間以内にメールでお送りします/);
+  assert.match(text, /お支払い期限：お申し込みから72時間後/);
+  assert.match(text, /自動的に失効/);
+
+  /* 現金へ切り替えると即座に消える（現金・PayPay・未定にカード専用文言を混入させない） */
+  ctx.setPaymentMethod('現金');
+  ctx.triggerPaymentMethodChange();
+  assert.strictEqual(ctx.elements['ba-card-payment-notice'].hidden, true);
+});
+
+test('Issue #334 PR-B: 現金・PayPay・未定を選んでも支払方法欄の注意書きは一度も表示されない', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  ['現金', 'PayPay', '未定'].forEach(function (method) {
+    ctx.setPaymentMethod(method);
+    ctx.triggerPaymentMethodChange();
+    assert.strictEqual(ctx.elements['ba-card-payment-notice'].hidden, true, method + 'では注意書きが出ないこと');
+  });
+});
+
+test('Issue #334 PR-B: 予約確認画面にもカード選択時のみ支払期限つきの注意書きが表示される', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  assert.strictEqual(ctx.elements['ba-step-confirm'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-confirm-card-payment-notice'].hidden, false);
+  assert.match(ctx.elements['ba-confirm-card-payment-notice'].renderedText(), /お支払い期限：お申し込みから72時間後/);
+});
+
+test('Issue #334 PR-B: 現金決済では予約確認画面のカード注意書きが表示されない（既存の仮予約バナーのみ）', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod('現金');
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  assert.strictEqual(ctx.elements['ba-confirm-card-payment-notice'].hidden, true);
+});
+
+test('Issue #334 PR-B: 仮予約送信成功後、カード決済のみ完了画面のカード注意書きが表示され、既存の24時間案内は隠れる', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-step-complete'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-complete-generic-notice'].hidden, true, '既存の「通常24時間以内にご連絡します」は隠れること');
+  assert.strictEqual(ctx.elements['ba-complete-card-payment-notice'].hidden, false);
+  assert.match(ctx.elements['ba-complete-card-payment-notice'].renderedText(), /お支払い期限：お申し込みから72時間後/);
+});
+
+test('Issue #334 PR-B: 仮予約送信成功後、現金決済では完了画面は既存どおり（回帰なし）', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod('現金');
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-complete-generic-notice'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-complete-card-payment-notice'].hidden, true);
+});
+
+test('Issue #334 PR-B: 96時間以上先の日程でカード決済を選んだ場合は通常どおり送信できる（既存の予約確定処理に回帰がない）', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.requests.length, 1);
+  assert.strictEqual(ctx.requests[0].body.paymentMethod, CARD_VALUE);
+  assert.strictEqual(ctx.elements['ba-complete-booking-id'].textContent, 'SNB-CARD-TEST');
+});
+
+/* ── Issue #334 PR-B: _includes/booking_app_ja.htmlの静的な文言・要素IDの確認。
+   JSはhidden切り替えのみを行うため、案内文そのものの正しさはHTMLの生テキストを
+   直接検証する（DOMスタブ越しでは静的textContentを再現できないため）。 ── */
+test('_includes/booking_app_ja.html: カード決済不可時の案内文・各注意書きコンテナのIDが存在する', function () {
+  var html = fs.readFileSync(path.join(__dirname, '..', '_includes', 'booking_app_ja.html'), 'utf8');
+
+  assert.match(
+    html,
+    /id="ba-card-ineligible-notice"[^>]*>カード事前決済は利用開始の4日前までのお申し込みです。直前のご予約は現金・PayPay（現地決済）をお選びください。/
+  );
+  assert.match(html, /id="ba-card-payment-notice"/);
+  assert.match(html, /id="ba-confirm-card-payment-notice"/);
+  assert.match(html, /id="ba-complete-generic-notice"/);
+  assert.match(html, /id="ba-complete-card-payment-notice"/);
 });
