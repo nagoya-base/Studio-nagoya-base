@@ -852,6 +852,127 @@ test('confirmBooking: reviveExpiredBookingではなく既存confirmBookingを直
   assert.strictEqual(record.status, 'EXPIRED', 'confirmBooking経由での復活は起きないべき（reviveExpiredBooking専用）');
 });
 
+/*
+ * ---------- PRレビュー対応: reviveExpiredBookingのCalendar作成・ステータス変更・
+ * 補償削除それぞれの失敗ケース ----------
+ */
+
+test('reviveExpiredBooking: Calendarイベントの新規作成自体が失敗した場合はREVIVE_CALENDAR_FAILEDで拒否し、EXPIREDのまま変更しない（補償対象なし）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00'
+  });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  ctx.sandbox.expirePendingBookings();
+
+  ctx.calendarsById.cal1.failCreateEvent = new Error('simulated calendar create failure');
+  mailApp._sentEmails.length = 0;
+
+  var result = ctx.sandbox.reviveExpiredBooking(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'REVIVE_CALENDAR_FAILED');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.status, 'EXPIRED', 'Calendar作成自体が失敗した場合、台帳はEXPIREDのまま変更しない');
+  assert.strictEqual(ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length, 0, 'イベントは作成されていないため補償削除の対象は無い');
+  assert.strictEqual(mailApp._sentEmails.length, 0, '確定メールを送信してはいけない');
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].failureType, 'REVIVE_CALENDAR_CREATE_FAILED');
+  assert.strictEqual(recovered[0].recoveryState, 'OPEN');
+});
+
+test('reviveExpiredBooking: Calendarイベント新規作成成功後にsetEventStatusが失敗した場合、新規作成したイベントを補償削除し、EXPIREDのまま維持してrecoveryへRESOLVED記録する（Sheetsは更新しない）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00'
+  });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  ctx.sandbox.expirePendingBookings();
+
+  var originalSetEventStatus = ctx.sandbox.CalendarRepository.setEventStatus;
+  ctx.sandbox.CalendarRepository.setEventStatus = function () {
+    throw new Error('simulated setEventStatus failure');
+  };
+  var originalUpdateBookingFields = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  var sheetsUpdateCalled = false;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    sheetsUpdateCalled = true;
+    return originalUpdateBookingFields(id, fields);
+  };
+  mailApp._sentEmails.length = 0;
+
+  var result = ctx.sandbox.reviveExpiredBooking(bookingId);
+  ctx.sandbox.CalendarRepository.setEventStatus = originalSetEventStatus;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = originalUpdateBookingFields;
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'REVIVE_CALENDAR_STATUS_FAILED');
+  assert.strictEqual(sheetsUpdateCalled, false, 'setEventStatus失敗時点ではSheetsへの更新を一切実行してはいけない');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.status, 'EXPIRED', 'setEventStatus失敗時は予約をEXPIREDのまま維持する');
+  assert.strictEqual(ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length, 0, '新規作成したCalendarイベントは補償削除されるべき');
+  assert.strictEqual(mailApp._sentEmails.length, 0, '確定メールを送信してはいけない');
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].failureType, 'REVIVE_CALENDAR_STATUS_FAILED_ROLLED_BACK');
+  assert.strictEqual(recovered[0].recoveryState, 'RESOLVED');
+  assert.strictEqual(recovered[0].status, 'EXPIRED');
+});
+
+test('reviveExpiredBooking: setEventStatus失敗＋補償削除も失敗した場合は孤立イベントとしてrecoveryへOPEN記録し、EXPIREDのまま維持する（Sheetsは更新しない）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00'
+  });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  ctx.sandbox.expirePendingBookings();
+
+  ctx.sandbox.CalendarRepository.setEventStatus = function () {
+    throw new Error('simulated setEventStatus failure');
+  };
+  ctx.sandbox.CalendarRepository.deleteEventById = function () {
+    throw new Error('simulated compensation delete failure');
+  };
+  var originalUpdateBookingFields = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  var sheetsUpdateCalled = false;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    sheetsUpdateCalled = true;
+    return originalUpdateBookingFields(id, fields);
+  };
+  mailApp._sentEmails.length = 0;
+
+  var result = ctx.sandbox.reviveExpiredBooking(bookingId);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = originalUpdateBookingFields;
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'REVIVE_CALENDAR_STATUS_FAILED');
+  assert.strictEqual(sheetsUpdateCalled, false, '補償削除にも失敗した場合もSheetsへの更新を実行してはいけない');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.status, 'EXPIRED', '補償削除に失敗した場合も予約をEXPIREDのまま維持する');
+  assert.strictEqual(ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length, 1, '補償削除に失敗した場合、孤立イベントがCalendarに残る');
+  assert.strictEqual(mailApp._sentEmails.length, 0, '確定メールを送信してはいけない');
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].failureType, 'REVIVE_CALENDAR_STATUS_FAILED_ORPHANED');
+  assert.strictEqual(recovered[0].recoveryState, 'OPEN');
+  assert.strictEqual(recovered[0].status, 'EXPIRED');
+});
+
 test('reviveExpiredBooking: Calendar成功・Sheets失敗の場合は新規作成したCalendarイベントを補償削除し、recoveryへ記録する（既存Recovery方式と同じ形）', function () {
   var ctx = setup();
   var bookingId = createPending(ctx, {

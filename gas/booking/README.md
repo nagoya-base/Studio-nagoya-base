@@ -1599,6 +1599,39 @@ Booking AdminからStripe決済リンクを送信してカード決済を案内�
 （#326案では48時間）が#334本文と異なる。#334本文が最新仕様として優先されるため、
 本PR-Aは#326/PR #328のアプローチを採用せず、#334本文どおりに実装した。
 
+PR #335（本PR-A）のレビュー対応で調査した結果、PR #328は以下の点で本PR-Aと
+具体的に競合する（現時点でも`mergeable_state: dirty`＝現在のmainに対して
+そのままはマージできない状態）:
+
+- `gas/booking/shared/Booking.gs`: 両PRとも`Booking.isCardPaymentMethod`という
+  同名関数を追加している（値は同じ`'オンラインクレジットカード'`判定だが、実装・
+  内部定数名が異なる）。挿入位置が異なるため単純なgit mergeではテキスト衝突には
+  ならないが、同一スコープに同名の関数宣言が2つ並ぶ状態になり、後勝ちで
+  片方が黙って上書きされる（構文エラーにならないため気付きにくい）。
+- `gas/booking/shared/BookingRepository.gs`: `expirePendingBookings`内の
+  失効判定の同一行（`if (!Booking.isExpired(...))` を、本PR-Aは支払方法別TTL分岐へ、
+  PR #328は`Booking.isPendingExpired(...)`へ、それぞれ書き換えている。ここは
+  git上も明確な行レベルの衝突になる。
+- `gas/booking/shared/Config.gs`: PR #328は`PENDING_TTL_HOURS`を廃止し
+  `PENDING_TTL_CARD_HOURS_FROM_CREATED`/`PENDING_TTL_CARD_HOURS_BEFORE_START`/
+  `PENDING_TTL_CASH_HOURS`へ置き換える。本PR-AはConfig.gsを変更していないが、
+  `expirePendingBookings`の現金/PayPay/未定側は`BookingConfig.getTtlConfig().ttlHours`
+  （＝`PENDING_TTL_HOURS`）に依存しているため、PR #328のConfig.gs変更が先に
+  マージされると本PR-Aのロジックが壊れる。
+- 同じ理由で`gas/booking/README.md`・`test/booking-model.test.js`・
+  `test/booking-confirm-expire.test.js`・`test/booking-mail-templates.test.js`・
+  `test/booking-mailer.test.js`・`admin/booking/booking-admin.js`も両PRが重ねて
+  編集しており、特にテストファイルは「#326案の計算式を前提にしたテスト」と
+  「#334本文の計算式を前提にしたテスト」が同居すると、実装がどちらか一方に
+  決まった時点でもう一方のテスト集合が必ず失敗する。
+
+**必要な対応（オーナー判断が必要なため、本PR-Aではコード変更していない）**: 本PR-A
+（Issue #334本文どおりの実装）がマージされた後、PR #328／Issue #326は#334に
+実質的に包含・上書きされるため、オーナーの判断でPR #328をクローズするか、
+#334の確定仕様（カード72h固定・96時間受付条件・現金等24h維持）に合わせて
+全面的に書き直す必要がある。少なくとも、PR #328を先に（あるいは無調整のまま）
+マージすることは避けるべきである。
+
 ### 確定仕様（PR-A）
 
 - カード決済（`paymentMethod === 'オンラインクレジットカード'`。`Booking.PAYMENT_METHOD_CARD`
@@ -1650,10 +1683,21 @@ Booking AdminからStripe決済リンクを送信してカード決済を案内�
   `sendConfirmedMailForBooking`（既存）による確定メール送信。メール失敗で確定を
   巻き戻さない。
 - 枠が埋まっている場合は`SLOT_UNAVAILABLE`、利用開始後は`REVIVE_AFTER_START_NOT_ALLOWED`
-  で拒否する。Calendar成功・Sheets失敗の部分失敗は、新規作成したCalendarイベントを
-  補償削除し、既存の`CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE`/
+  で拒否する。
+- **Calendarイベント新規作成（`createBookingEvent`）とCONFIRMEDへのステータス変更
+  （`setEventStatus`）は別のtry/catchで扱う**（PRレビュー対応）。`createBookingEvent`
+  自体の失敗はイベント未作成のため補償対象が無く、`REVIVE_CALENDAR_FAILED`で拒否する
+  （`REVIVE_CALENDAR_CREATE_FAILED`をRecoveryへ記録）。`createBookingEvent`成功後に
+  `setEventStatus`が失敗した場合は、この時点でSheetsを一切更新していないため予約を
+  EXPIREDのまま維持し、`REVIVE_CALENDAR_STATUS_FAILED`で拒否する。新規作成した
+  イベントの補償削除を試み、成功すれば`REVIVE_CALENDAR_STATUS_FAILED_ROLLED_BACK`
+  （RESOLVED）、削除にも失敗し孤立イベントが残る場合は
+  `REVIVE_CALENDAR_STATUS_FAILED_ORPHANED`（OPEN）としてRecoveryへ記録する
+  （いずれもSheetsは更新せず、確定メールも送信しない）。
+- Calendar成功（`setEventStatus`まで成功）・Sheets失敗の部分失敗は、新規作成した
+  Calendarイベントを補償削除し、既存の`CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE`/
   `SHEETS_FAILURE_CALENDAR_ORPHANED`（Recoveryの既存failureType）で記録する
-  （`createBooking`のCalendar成功/Sheets失敗補償と同じ形。新規failureTypeは追加していない）。
+  （`createBooking`のCalendar成功/Sheets失敗補償と同じ形）。
 - `BookingAdmin.gs`のSpreadsheetメニューに「アクティブ行のbookingIdを復活」
   「bookingIdを入力して復活」を追加し、実行前にYES/NO確認を必須にした
   （キャンセルと同じ誤操作防止の方針）。`BookingAdminWeb.gs`の

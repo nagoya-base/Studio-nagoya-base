@@ -814,7 +814,10 @@ var BookingRepository = (function () {
 
     /* 空きがあればCONFIRMEDのCalendarイベントを新規作成する（Issue #334本文どおり）。
        createBookingEventは常にPENDINGタイトル/タグで作成するため、直後にsetEventStatusで
-       CONFIRMEDへ更新する（CalendarRepository.gs自体は変更しない）。 */
+       CONFIRMEDへ更新する（CalendarRepository.gs自体は変更しない）。
+       createBookingEvent自体の失敗（イベント未作成）とsetEventStatusの失敗（イベントは
+       作成済みだがCONFIRMEDへ更新できない）は、補償対象・記録すべき内容が異なるため
+       別のtry/catchに分ける（PRレビュー対応）。 */
     var eventId;
     try {
       eventId = CalendarRepository.createBookingEvent(calendarId, {
@@ -825,16 +828,16 @@ var BookingRepository = (function () {
         bookingId: bookingId,
         brand: record.brand
       });
-      CalendarRepository.setEventStatus(calendarId, eventId, Booking.STATUS.CONFIRMED, bookingId);
-    } catch (calendarError) {
+    } catch (createError) {
+      /* イベント自体が作成されていないため、補償（削除）対象は無い。 */
       try {
         RecoveryRepository.recordFailure({
           bookingId: bookingId,
           failureType: 'REVIVE_CALENDAR_CREATE_FAILED',
           occurredAt: new Date(),
-          calendarEventId: eventId || '',
+          calendarEventId: '',
           status: record.status,
-          errorMessage: describeError_(calendarError),
+          errorMessage: describeError_(createError),
           recoveryState: 'OPEN',
           resolvedAt: ''
         });
@@ -848,6 +851,16 @@ var BookingRepository = (function () {
         },
         shouldTryMail: false
       };
+    }
+
+    try {
+      CalendarRepository.setEventStatus(calendarId, eventId, Booking.STATUS.CONFIRMED, bookingId);
+    } catch (statusError) {
+      /* イベントは新規作成済み（PENDINGタイトル/タグのまま）だが、CONFIRMEDへの更新に
+         失敗した状態（PRレビュー対応: Calendarイベント新規作成成功後にsetEventStatusが
+         失敗した場合の補償）。この時点ではSheetsを一切更新していないため、予約は
+         EXPIREDのまま維持し、新規作成したイベントの補償削除を試みる。 */
+      return { response: handleReviveEventStatusFailure_(calendarId, bookingId, eventId, statusError, record.status), shouldTryMail: false };
     }
 
     var confirmedAt = new Date();
@@ -864,6 +877,47 @@ var BookingRepository = (function () {
     }
 
     return { response: { success: true, bookingId: bookingId, status: Booking.STATUS.CONFIRMED }, shouldTryMail: true };
+  }
+
+  /*
+   * Calendarイベント新規作成成功 → setEventStatus（CONFIRMEDへの更新）失敗の部分失敗補償
+   * （PRレビュー対応）。この時点でSheetsは一切更新していない（Sheets書き込みより前段階の
+   * 失敗のため）ため、Sheetsへの更新は行わず、予約はEXPIREDのまま維持する。新規作成した
+   * イベントの補償削除を試み、成功すれば「作成しなかった状態」へ完全に戻る（イベントは
+   * 存在しない・SheetsはEXPIREDのまま＝復活試行前と同じ状態）。削除にも失敗した場合は
+   * PENDINGタイトル/タグのまま残る孤立イベントとしてRecoveryへOPENで記録する
+   * （handleReviveSheetsUpdateFailure_と対になる、より早い段階の失敗ケース）。
+   */
+  function handleReviveEventStatusFailure_(calendarId, bookingId, eventId, statusError, bookingStatus) {
+    var compensated = false;
+    var compensationError = null;
+    try {
+      CalendarRepository.deleteEventById(calendarId, eventId);
+      compensated = true;
+    } catch (deleteError) {
+      compensationError = deleteError;
+    }
+
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: compensated ? 'REVIVE_CALENDAR_STATUS_FAILED_ROLLED_BACK' : 'REVIVE_CALENDAR_STATUS_FAILED_ORPHANED',
+        occurredAt: new Date(),
+        calendarEventId: eventId,
+        /* Sheetsは一切更新していないため、予約の実際のstatusは常にEXPIREDのまま。 */
+        status: bookingStatus,
+        errorMessage: describeError_(statusError) + (compensationError ? ' / compensation error: ' + describeError_(compensationError) : ''),
+        recoveryState: compensated ? 'RESOLVED' : 'OPEN',
+        resolvedAt: compensated ? new Date() : ''
+      });
+    } catch (recoveryError) {
+      Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+    }
+
+    return {
+      success: false,
+      error: { code: 'REVIVE_CALENDAR_STATUS_FAILED', message: 'Calendarの確定状態への更新に失敗しました。Recoveryシートを確認してください。' }
+    };
   }
 
   /*

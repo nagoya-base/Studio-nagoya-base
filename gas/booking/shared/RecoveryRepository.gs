@@ -81,6 +81,18 @@ var RecoveryRepository = (function () {
    * - CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED（Issue #272 PRレビュー対応）: Sheets行が
    *   無い場合の診断中にCalendarRepository.findBookingEventsByBookingId自体が例外を
    *   投げた（診断そのものが失敗。Calendarは変更しない）
+   * - REVIVE_CALENDAR_CREATE_FAILED（Issue #334）: reviveExpiredBooking時にCalendarイベントの
+   *   新規作成自体が失敗した（イベント未作成のため補償対象は無い。Sheetsは変更せずEXPIREDのまま）
+   * - REVIVE_CALENDAR_STATUS_FAILED_ROLLED_BACK（Issue #334 PRレビュー対応）:
+   *   reviveExpiredBooking時にCalendarイベントは新規作成できたが、CONFIRMEDへのsetEventStatusが
+   *   失敗→補償削除に成功（Sheetsは一切更新せずEXPIREDのまま）
+   * - REVIVE_CALENDAR_STATUS_FAILED_ORPHANED（Issue #334 PRレビュー対応）: 同上で補償削除も
+   *   失敗（PENDINGタイトル/タグのままのCalendarイベントが孤立して残る。要手動対応。
+   *   Sheetsは一切更新せずEXPIREDのまま）
+   * - CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE / SHEETS_FAILURE_CALENDAR_ORPHANED は
+   *   reviveExpiredBookingのCalendar成功→Sheets失敗（setEventStatus成功後の段階）でも
+   *   同じ意味で再利用する（上記のcreateBookingと共通のfailureType。詳細は
+   *   BookingRepository.gsのhandleReviveSheetsUpdateFailure_参照）
    */
   function recordFailure(record) {
     var sheet = ensureRecoverySheet_();
