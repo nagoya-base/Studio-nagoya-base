@@ -613,7 +613,14 @@ var reminderDiagState_ = {
  * 発行時のrequestIdを比較し、一致しなければ（＝その後に別の変更・別のリクエストが
  * あった＝古い応答）resultElへ反映しない。GASのgoogle.script.runには応答順序の
  * 保証がないため、後から発行したリクエストの応答が先に、先に発行したリクエストの
- * 応答が後から返ってくることがあり得る。 */
+ * 応答が後から返ってくることがあり得る。
+ *
+ * 予約ID・基準日の変更、「解錠コードを表示する」チェックの変更、モーダルを
+ * 閉じる操作は、連番を進めることに加えてresultEl.innerHTMLも即座にクリアする
+ * （PRレビュー再対応）。プレビューで解錠コード・キーボックス番号の実値を
+ * 表示済みの状態のまま、連番だけを進めて古い応答の反映だけを防いでも、
+ * 既に画面に表示済みの実値そのものは残ってしまうため、表示中の秘密値を
+ * 即時に消去する必要がある。 */
 var reminderDiagRequestSeq_ = 0;
 
 function bumpReminderDiagRequestSeq_() {
@@ -790,12 +797,22 @@ function buildReminderDiagnosticsModal_() {
     resetReminderDiagDisplay_();
   });
 
-  /* 基準日・「解錠コードを表示する」チェックの変更も、変更前に発行済みの応答を
-     無効化する（Issue #330 PRレビュー対応）。予約ID変更と異なり、表示中の結果を
-     即座に消すことまでは要件にしていない（次の判定/プレビュー/テスト送信の結果で
-     上書きされる）。 */
-  baseDateInput.addEventListener('input', bumpReminderDiagRequestSeq_);
-  revealInput.addEventListener('change', bumpReminderDiagRequestSeq_);
+  /*
+   * 基準日・「解錠コードを表示する」チェックの変更（Issue #330 PRレビュー再対応）。
+   * 連番を進めて変更前に発行済みの応答を無効化するだけでは不十分で、reveal:trueの
+   * プレビューで解錠コード・キーボックス番号の実値が既にresultEl.innerHTMLへ
+   * 表示済みの場合、チェックをOFFにしても実値が画面に残ったままになってしまう
+   * （基準日変更で古い判定結果・秘密値が残る場合も同様）。そのため、連番を
+   * 進めることに加えてresultElも即座にクリアする。これによりチェックを
+   * 再度ONに戻しても以前の結果が復活することはない（表示は完全に消えており、
+   * 次に判定/プレビュー/テスト送信を実行するまで何も表示されない）。
+   */
+  function invalidateReminderDiagDisplay_() {
+    bumpReminderDiagRequestSeq_();
+    resultEl.innerHTML = '';
+  }
+  baseDateInput.addEventListener('input', invalidateReminderDiagDisplay_);
+  revealInput.addEventListener('change', invalidateReminderDiagDisplay_);
 
   closeButton.addEventListener('click', closeReminderDiagnostics_);
   overlay.addEventListener('click', function (event) {

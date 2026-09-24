@@ -966,7 +966,7 @@ test('診断（判定）: 古いリクエストの失敗応答（withFailureHand
   assert.strictEqual(state.resultEl.innerHTML, beforeReject);
 });
 
-test('診断（プレビュー）: 基準日の変更後に古いプレビュー応答が返っても表示を上書きしない', function () {
+test('診断（プレビュー）: 基準日を変更すると結果欄が即座にクリアされ、その後に古いプレビュー応答が返っても再表示されない', function () {
   var sandbox = loadClientSandbox();
   sandbox.openReminderDiagnostics_();
   sandbox.google.script.run.calls.length = 0;
@@ -977,23 +977,24 @@ test('診断（プレビュー）: 基準日の変更後に古いプレビュー
   state.baseDateInput.value = '2026-10-01';
   state.previewButton.fire('click');
   assert.strictEqual(scriptRun.calls.length, 1);
-  var placeholderWhilePending = state.resultEl.innerHTML;
 
-  /* 基準日を変更（表示は即座にはクリアされない仕様。リクエスト連番だけが進む）。 */
+  /* 基準日を変更すると、応答を待たずに即座に結果欄がクリアされる（PRレビュー
+     再対応。以前は連番だけ進めて表示はそのまま残していたが、解錠コード入りの
+     プレビューを表示済みの状態だと実値が画面に残ってしまうため仕様変更した）。 */
   state.baseDateInput.value = '2026-10-05';
   state.baseDateInput.fire('input');
+  assert.strictEqual(state.resultEl.innerHTML, '', '基準日変更で結果欄が即座にクリアされるべき');
 
-  /* 変更前に発行したプレビュー応答が返っても、表示（読み込み中プレースホルダ）を
-     上書きしてはいけない。 */
+  /* 変更前に発行したプレビュー応答が後から返っても、再表示されない。 */
   scriptRun.resolveCall(0, {
     success: true, targetDate: '2026-10-02', subject: 'stale subject', body: 'stale body',
     recipientEmail: 'x@example.com', testRecipientEmail: 'admin@example.com', revealed: false,
     eligible: true, reasonCode: 'ELIGIBLE'
   });
-  assert.strictEqual(state.resultEl.innerHTML, placeholderWhilePending, '基準日変更前の古い応答で表示を更新してはいけない');
+  assert.strictEqual(state.resultEl.innerHTML, '', '基準日変更前の古い応答で表示を更新してはいけない');
 });
 
-test('診断（プレビュー）: 「解錠コードを表示する」チェックの変更後に古いプレビュー応答が返っても表示を上書きしない', function () {
+test('診断（プレビュー）: 「解錠コードを表示する」チェックの変更後に古いプレビュー応答が返っても表示を上書きしない（結果欄は即座にクリアされる）', function () {
   var sandbox = loadClientSandbox();
   sandbox.openReminderDiagnostics_();
   sandbox.google.script.run.calls.length = 0;
@@ -1003,17 +1004,139 @@ test('診断（プレビュー）: 「解錠コードを表示する」チェッ
   state.bookingIdInput.value = 'SX-BOOKING';
   state.baseDateInput.value = '2026-10-01';
   state.previewButton.fire('click');
-  var placeholderWhilePending = state.resultEl.innerHTML;
 
   state.revealInput.checked = true;
   state.revealInput.fire('change');
+  assert.strictEqual(state.resultEl.innerHTML, '', 'reveal変更で結果欄が即座にクリアされるべき');
 
   scriptRun.resolveCall(0, {
     success: true, targetDate: '2026-10-02', subject: 'stale', body: 'stale (masked)',
     recipientEmail: 'x@example.com', testRecipientEmail: 'admin@example.com', revealed: false,
     eligible: true, reasonCode: 'ELIGIBLE'
   });
-  assert.strictEqual(state.resultEl.innerHTML, placeholderWhilePending, 'reveal変更前の古い応答で表示を更新してはいけない');
+  assert.strictEqual(state.resultEl.innerHTML, '', 'reveal変更前の古い応答で表示を更新してはいけない');
+});
+
+/* ---------- PRレビュー再対応: 表示済みの秘密値の即時消去 ---------- */
+
+test('プレビューで解錠コードを表示済みの状態から「表示する」チェックをOFFにすると、実値が即座にDOMから消える', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var scriptRun = sandbox.google.script.run;
+
+  state.bookingIdInput.value = 'SX-BOOKING';
+  state.baseDateInput.value = '2026-10-01';
+  state.revealInput.checked = true;
+  state.previewButton.fire('click');
+
+  scriptRun.resolveCall(0, {
+    success: true, targetDate: '2026-10-02', subject: '【Studio X】明日のご利用案内',
+    body: 'キーボックス番号: REAL-KEYBOX\n解錠コード: REAL-CODE',
+    recipientEmail: 'taro@example.com', testRecipientEmail: 'admin@example.com', revealed: true,
+    eligible: true, reasonCode: 'ELIGIBLE'
+  });
+  assert.match(state.resultEl.innerHTML, /REAL-KEYBOX/, '前提: 実値入りのプレビューが表示されていること');
+  assert.match(state.resultEl.innerHTML, /REAL-CODE/);
+
+  /* チェックをOFFにする。 */
+  state.revealInput.checked = false;
+  state.revealInput.fire('change');
+
+  assert.strictEqual(state.resultEl.innerHTML.indexOf('REAL-KEYBOX'), -1, 'チェックOFF後にキーボックス番号の実値がDOMに残ってはいけない');
+  assert.strictEqual(state.resultEl.innerHTML.indexOf('REAL-CODE'), -1, 'チェックOFF後に解錠コードの実値がDOMに残ってはいけない');
+  assert.strictEqual(state.resultEl.innerHTML, '');
+});
+
+test('プレビューで解錠コードを表示済みの状態から基準日を変更すると、古い本文（実値を含む）が即座に消える', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var scriptRun = sandbox.google.script.run;
+
+  state.bookingIdInput.value = 'SX-BOOKING';
+  state.baseDateInput.value = '2026-10-01';
+  state.revealInput.checked = true;
+  state.previewButton.fire('click');
+
+  scriptRun.resolveCall(0, {
+    success: true, targetDate: '2026-10-02', subject: 'subject',
+    body: 'キーボックス番号: REAL-KEYBOX\n解錠コード: REAL-CODE',
+    recipientEmail: 'taro@example.com', testRecipientEmail: 'admin@example.com', revealed: true,
+    eligible: true, reasonCode: 'ELIGIBLE'
+  });
+  assert.match(state.resultEl.innerHTML, /REAL-CODE/, '前提: 実値入りのプレビューが表示されていること');
+
+  state.baseDateInput.value = '2026-10-08';
+  state.baseDateInput.fire('input');
+
+  assert.strictEqual(state.resultEl.innerHTML.indexOf('REAL-KEYBOX'), -1, '基準日変更後にキーボックス番号の実値が残ってはいけない');
+  assert.strictEqual(state.resultEl.innerHTML.indexOf('REAL-CODE'), -1, '基準日変更後に解錠コードの実値が残ってはいけない');
+  assert.strictEqual(state.resultEl.innerHTML, '');
+});
+
+test('実値入りのプレビュー表示後にrevealをOFFにし、その後に古い（表示済みと同じ）応答が届いても秘密値は再表示されない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var scriptRun = sandbox.google.script.run;
+
+  state.bookingIdInput.value = 'SX-BOOKING';
+  state.baseDateInput.value = '2026-10-01';
+  state.revealInput.checked = true;
+  state.previewButton.fire('click'); /* calls[0]: reveal=true */
+
+  var staleResult = {
+    success: true, targetDate: '2026-10-02', subject: 'subject',
+    body: 'キーボックス番号: REAL-KEYBOX\n解錠コード: REAL-CODE',
+    recipientEmail: 'taro@example.com', testRecipientEmail: 'admin@example.com', revealed: true,
+    eligible: true, reasonCode: 'ELIGIBLE'
+  };
+
+  /* チェックをOFFにしてから、直前のリクエスト（reveal=trueで発行済み）の
+     応答が遅れて届いたと仮定する。 */
+  state.revealInput.checked = false;
+  state.revealInput.fire('change');
+  scriptRun.resolveCall(0, staleResult);
+
+  assert.strictEqual(state.resultEl.innerHTML.indexOf('REAL-KEYBOX'), -1, '古い応答で秘密値が再表示されてはいけない');
+  assert.strictEqual(state.resultEl.innerHTML.indexOf('REAL-CODE'), -1);
+  assert.strictEqual(state.resultEl.innerHTML, '');
+});
+
+test('チェックを再度ONにしても、以前（OFFにする前）の結果は復活しない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var scriptRun = sandbox.google.script.run;
+
+  state.bookingIdInput.value = 'SX-BOOKING';
+  state.baseDateInput.value = '2026-10-01';
+  state.revealInput.checked = true;
+  state.previewButton.fire('click');
+  scriptRun.resolveCall(0, {
+    success: true, targetDate: '2026-10-02', subject: 'subject',
+    body: 'キーボックス番号: REAL-KEYBOX\n解錠コード: REAL-CODE',
+    recipientEmail: 'taro@example.com', testRecipientEmail: 'admin@example.com', revealed: true,
+    eligible: true, reasonCode: 'ELIGIBLE'
+  });
+  assert.match(state.resultEl.innerHTML, /REAL-CODE/);
+
+  state.revealInput.checked = false;
+  state.revealInput.fire('change');
+  assert.strictEqual(state.resultEl.innerHTML, '');
+
+  /* 再度ONにしても、新しいプレビューを実行していない限り何も表示されない
+     （以前の結果がキャッシュ等から復活しない）。 */
+  state.revealInput.checked = true;
+  state.revealInput.fire('change');
+
+  assert.strictEqual(state.resultEl.innerHTML, '', 'チェックを再度ONにしただけで以前の結果が復活してはいけない');
+  assert.strictEqual(state.resultEl.innerHTML.indexOf('REAL-CODE'), -1);
 });
 
 test('診断: モーダルを閉じた後に発行済みリクエストの応答が返っても表示を更新しない', function () {
