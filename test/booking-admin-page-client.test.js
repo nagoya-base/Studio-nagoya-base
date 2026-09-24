@@ -74,7 +74,12 @@ function loadClientSandbox() {
       return elementsBySelector[selector];
     },
     querySelectorAll: function () { return []; },
-    createElement: function () { return createElementStub(); }
+    createElement: function () { return createElementStub(); },
+    /* Issue #330: buildReminderDiagnosticsModal_がdocument.body.appendChild/
+       document.createTextNodeを使うため追加した（他の要素はheader/main配下へ挿入する
+       initHeaderUi_/initSearchUi_と異なり、診断モーダルはdocument.body直下へ追加するため）。 */
+    body: createElementStub(),
+    createTextNode: function (text) { return { nodeType: 3, textContent: text }; }
   };
 
   var sandbox = {
@@ -654,4 +659,103 @@ test('render: 検索結果が0件でも空表示になり例外を投げない�
   var list = sandbox.document.getElementById('list');
   assert.ok(list.innerHTML.indexOf('該当する予約がありません') !== -1);
   assert.strictEqual(sandbox.document.getElementById('summary-all-count').textContent, '8');
+});
+
+/* ---------- Issue #330: 前日リマインド診断 ---------- */
+
+test('reminderReasonLabel: 理由コードを日本語ラベルへ変換する。未知の値はそのまま返す', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.reminderReasonLabel('ELIGIBLE'), '送信対象');
+  assert.strictEqual(sandbox.reminderReasonLabel('NOT_NEXT_DAY'), '翌日対象外');
+  assert.strictEqual(sandbox.reminderReasonLabel('INVALID_STATUS'), '対象外ステータス');
+  assert.strictEqual(sandbox.reminderReasonLabel('ALREADY_SENT'), '送信済み');
+  assert.strictEqual(sandbox.reminderReasonLabel('EMAIL_MISSING'), 'メール未登録');
+  assert.strictEqual(sandbox.reminderReasonLabel('MAIL_NOT_READY'), '設定不足');
+  assert.strictEqual(sandbox.reminderReasonLabel('SOMETHING_UNKNOWN'), 'SOMETHING_UNKNOWN');
+});
+
+test('renderReminderDiagnosisResult_: 成功時は判定・対象日・予約者メールを表示する', function () {
+  var sandbox = loadClientSandbox();
+  var html = sandbox.renderReminderDiagnosisResult_({
+    success: true,
+    eligible: true,
+    reasonCode: 'ELIGIBLE',
+    targetDate: '2026-10-02',
+    message: '送信対象です。',
+    booking: { brand: 'studio_x', status: 'CONFIRMED', date: '2026-10-02', email: 'taro@example.com' }
+  });
+
+  assert.match(html, /送信対象/);
+  assert.match(html, /2026-10-02/);
+  assert.match(html, /taro@example\.com/);
+});
+
+test('renderReminderDiagnosisResult_: 失敗時はエラーメッセージを表示する', function () {
+  var sandbox = loadClientSandbox();
+  var html = sandbox.renderReminderDiagnosisResult_({ success: false, error: { message: 'bookingIdが見つかりません' } });
+
+  assert.match(html, /判定できませんでした/);
+  assert.match(html, /bookingIdが見つかりません/);
+});
+
+test('renderReminderPreviewResult_: 成功時は宛先2種・件名・本文を表示し、マスク中は注意書きを出す', function () {
+  var sandbox = loadClientSandbox();
+  var html = sandbox.renderReminderPreviewResult_({
+    success: true,
+    subject: '【Studio X】明日のご利用案内',
+    body: 'キーボックス番号: ••••••',
+    recipientEmail: 'taro@example.com',
+    testRecipientEmail: 'admin@example.com',
+    revealed: false
+  });
+
+  assert.match(html, /taro@example\.com/);
+  assert.match(html, /admin@example\.com/);
+  assert.match(html, /明日のご利用案内/);
+  assert.match(html, /マスクしています/);
+});
+
+test('renderReminderPreviewResult_: revealed:trueの場合はマスク注意書きを出さない', function () {
+  var sandbox = loadClientSandbox();
+  var html = sandbox.renderReminderPreviewResult_({
+    success: true,
+    subject: 'subject',
+    body: 'body',
+    recipientEmail: 'taro@example.com',
+    testRecipientEmail: 'admin@example.com',
+    revealed: true
+  });
+
+  assert.strictEqual(html.indexOf('マスクしています'), -1);
+});
+
+test('renderReminderSendResult_: 成功時は送信先を表示する', function () {
+  var sandbox = loadClientSandbox();
+  var html = sandbox.renderReminderSendResult_({ success: true, sentTo: 'admin@example.com' });
+
+  assert.match(html, /テスト送信しました/);
+  assert.match(html, /admin@example\.com/);
+});
+
+test('renderReminderSendResult_: 対象外の場合は理由コードのラベルを表示する', function () {
+  var sandbox = loadClientSandbox();
+  var html = sandbox.renderReminderSendResult_({
+    success: false,
+    reasonCode: 'ALREADY_SENT',
+    error: { message: '前日リマインドは送信済みです。' }
+  });
+
+  assert.match(html, /送信済み/);
+});
+
+test('openReminderDiagnostics_: 初回クリックで診断モーダルをDOM生成し、例外を投げない（BookingAdminPage.html自体は変更しない設計の確認）', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = '2026-09-22';
+
+  assert.doesNotThrow(function () { sandbox.openReminderDiagnostics_(); });
+  assert.strictEqual(sandbox.reminderDiagState_.bookingIdInput.id, 'reminder-diag-booking-id');
+  assert.strictEqual(sandbox.reminderDiagState_.baseDateInput.value, '2026-09-22', '基準日の初期値はstate.todayJst');
+
+  /* 2回目のクリックでもDOMを再生成せず例外を投げない。 */
+  assert.doesNotThrow(function () { sandbox.openReminderDiagnostics_(); });
 });

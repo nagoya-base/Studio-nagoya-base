@@ -493,6 +493,236 @@ function initHeaderUi_() {
       refreshButton.disabled = false;
     });
   });
+
+  /* Issue #330: 前日リマインド診断を開くボタン。一覧・確定・キャンセルとは独立した
+     機能のため、既存のsummary/tabsとは別に更新ボタンの隣へ追加するのみで、
+     既存要素・既存のgoogle.script.run呼び出し配線は変更しない。 */
+  var reminderDiagButton = document.createElement('button');
+  reminderDiagButton.type = 'button';
+  reminderDiagButton.id = 'reminder-diag-open-button';
+  reminderDiagButton.className = 'refresh-button';
+  reminderDiagButton.textContent = '前日リマインド診断';
+  metaRow.appendChild(reminderDiagButton);
+
+  reminderDiagButton.addEventListener('click', openReminderDiagnostics_);
+}
+
+/*
+ * Issue #330: 前日リマインド診断の理由コード（BookingMailer.gsの
+ * REMINDER_REASON_CODESと同じ値）を表示用の日本語ラベルへ変換するだけの関数
+ * （customerTypeLabel/brandLabel/statusLabelと同じ方針。内部値・APIレスポンスは
+ * 変更せず、表示直前にのみ変換する）。未知の値は例外にせず元値を返す。
+ */
+function reminderReasonLabel(code) {
+  var labels = {
+    ELIGIBLE: '送信対象',
+    NOT_NEXT_DAY: '翌日対象外',
+    INVALID_STATUS: '対象外ステータス',
+    ALREADY_SENT: '送信済み',
+    EMAIL_MISSING: 'メール未登録',
+    MAIL_NOT_READY: '設定不足'
+  };
+  return labels[code] || code || '';
+}
+
+/*
+ * 診断結果（diagnoseReminderEligibilityのレスポンス）から結果表示欄のHTMLを組み立てる
+ * 純粋関数（DOM操作から分離し、単体テスト可能にする）。宛先表示は予約者の
+ * メールアドレスとテスト送信先を区別する要件（Issue #330）のため、それぞれ別の行で表示する。
+ */
+function renderReminderDiagnosisResult_(result) {
+  if (!result || !result.success) {
+    return '<p class="reminder-diag-error">判定できませんでした: ' + escapeHtml((result && result.error && result.error.message) || '') + '</p>';
+  }
+  var booking = result.booking || {};
+  return (
+    '<dl class="reminder-diag-dl">' +
+    '<dt>判定</dt><dd>' + escapeHtml(result.eligible ? '送信対象' : '対象外') + '（' + escapeHtml(reminderReasonLabel(result.reasonCode)) + '）</dd>' +
+    '<dt>翌日（対象日）</dt><dd>' + escapeHtml(result.targetDate || '') + '</dd>' +
+    '<dt>ブランド</dt><dd>' + escapeHtml(brandLabel(booking.brand)) + '</dd>' +
+    '<dt>ステータス</dt><dd>' + escapeHtml(statusLabel(booking.status)) + '</dd>' +
+    '<dt>利用日</dt><dd>' + escapeHtml(booking.date || '') + '</dd>' +
+    '<dt>予約者メール</dt><dd>' + escapeHtml(booking.email || '（未登録）') + '</dd>' +
+    '</dl>' +
+    '<p class="reminder-diag-message">' + escapeHtml(result.message || '') + '</p>'
+  );
+}
+
+/* previewReminderMailのレスポンスから結果表示欄のHTMLを組み立てる純粋関数。 */
+function renderReminderPreviewResult_(result) {
+  if (!result || !result.success) {
+    return '<p class="reminder-diag-error">プレビューできませんでした: ' + escapeHtml((result && result.error && result.error.message) || '') + '</p>';
+  }
+  return (
+    '<dl class="reminder-diag-dl">' +
+    '<dt>予約者宛</dt><dd>' + escapeHtml(result.recipientEmail || '（未登録）') + '</dd>' +
+    '<dt>テスト送信先</dt><dd>' + escapeHtml(result.testRecipientEmail || '（未設定）') + '</dd>' +
+    '<dt>件名</dt><dd>' + escapeHtml(result.subject || '') + '</dd>' +
+    '</dl>' +
+    '<pre class="reminder-diag-body">' + escapeHtml(result.body || '') + '</pre>' +
+    (result.revealed ? '' : '<p class="reminder-diag-note">解錠コード・キーボックス番号はマスクしています。「解錠コードを表示する」を選んでから再度プレビューしてください。</p>')
+  );
+}
+
+/* sendReminderTestMailのレスポンスから結果表示欄のHTMLを組み立てる純粋関数。 */
+function renderReminderSendResult_(result) {
+  if (!result || !result.success) {
+    var reason = result && result.reasonCode ? '（' + reminderReasonLabel(result.reasonCode) + '）' : '';
+    return '<p class="reminder-diag-error">テスト送信できませんでした' + reason + ': ' + escapeHtml((result && result.error && result.error.message) || '') + '</p>';
+  }
+  return '<p class="reminder-diag-success">テスト送信しました宛先: ' + escapeHtml(result.sentTo || '') + '</p>';
+}
+
+/*
+ * 前日リマインド診断モーダル（Issue #330）。BookingAdminPage.htmlは変更しない制約の
+ * ため、既存の#modal-overlay/#modalとは別に、このファイルの初回実行時に専用の
+ * オーバーレイをDOM生成する（initHeaderUi_/initSearchUi_と同じ方針）。
+ * サーバー側API（diagnoseReminderEligibility/previewReminderMail/
+ * sendReminderTestMail。いずれもgas/booking/admin/BookingReminderDiagnostics.gs）は
+ * 読み取り専用の判定・プレビューと、管理者宛（ADMIN_NOTIFICATION_EMAIL固定）への
+ * テスト送信のみを行い、予約者への送信・SentAt更新・一覧再取得の必要な状態変更は
+ * 一切発生しないため、成功後にloadBookings()を呼び直す必要はない。
+ */
+var reminderDiagState_ = { overlay: null, resultEl: null, bookingIdInput: null, baseDateInput: null, revealInput: null };
+
+function buildReminderDiagnosticsModal_() {
+  var overlay = document.createElement('div');
+  overlay.id = 'reminder-diag-overlay';
+
+  var modal = document.createElement('div');
+  modal.id = 'reminder-diag-modal';
+  overlay.appendChild(modal);
+
+  var heading = document.createElement('h2');
+  heading.textContent = '前日リマインド診断';
+  modal.appendChild(heading);
+
+  var description = document.createElement('p');
+  description.className = 'reminder-diag-description';
+  description.textContent = '既存予約IDと基準日（今日扱い。その翌日が対象日になります）を指定して、本番と同じ判定・テンプレートを確認できます。本番予約データは変更されません。';
+  modal.appendChild(description);
+
+  var bookingIdLabel = document.createElement('label');
+  bookingIdLabel.textContent = '予約ID';
+  var bookingIdInput = document.createElement('input');
+  bookingIdInput.type = 'text';
+  bookingIdInput.id = 'reminder-diag-booking-id';
+  bookingIdLabel.appendChild(bookingIdInput);
+  modal.appendChild(bookingIdLabel);
+
+  var baseDateLabel = document.createElement('label');
+  baseDateLabel.textContent = '基準日（今日扱い）';
+  var baseDateInput = document.createElement('input');
+  baseDateInput.type = 'date';
+  baseDateInput.id = 'reminder-diag-base-date';
+  baseDateLabel.appendChild(baseDateInput);
+  modal.appendChild(baseDateLabel);
+
+  var revealLabel = document.createElement('label');
+  revealLabel.className = 'reminder-diag-reveal-label';
+  var revealInput = document.createElement('input');
+  revealInput.type = 'checkbox';
+  revealInput.id = 'reminder-diag-reveal';
+  revealLabel.appendChild(revealInput);
+  revealLabel.appendChild(document.createTextNode('プレビューで解錠コード・キーボックス番号を表示する'));
+  modal.appendChild(revealLabel);
+
+  var actions = document.createElement('div');
+  actions.className = 'reminder-diag-actions';
+  modal.appendChild(actions);
+
+  var evaluateButton = document.createElement('button');
+  evaluateButton.type = 'button';
+  evaluateButton.textContent = '判定';
+  actions.appendChild(evaluateButton);
+
+  var previewButton = document.createElement('button');
+  previewButton.type = 'button';
+  previewButton.textContent = 'プレビュー';
+  actions.appendChild(previewButton);
+
+  var sendTestButton = document.createElement('button');
+  sendTestButton.type = 'button';
+  sendTestButton.textContent = 'テスト送信';
+  actions.appendChild(sendTestButton);
+
+  var resultEl = document.createElement('div');
+  resultEl.id = 'reminder-diag-result';
+  modal.appendChild(resultEl);
+
+  var closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.id = 'reminder-diag-close';
+  closeButton.textContent = '閉じる';
+  modal.appendChild(closeButton);
+
+  document.body.appendChild(overlay);
+
+  function currentInput_() {
+    return {
+      bookingId: (bookingIdInput.value || '').trim(),
+      baseDateString: baseDateInput.value || '',
+      reveal: !!revealInput.checked
+    };
+  }
+
+  evaluateButton.addEventListener('click', function () {
+    var input = currentInput_();
+    resultEl.innerHTML = '判定中…';
+    google.script.run
+      .withSuccessHandler(function (result) { resultEl.innerHTML = renderReminderDiagnosisResult_(result); })
+      .withFailureHandler(function (error) { resultEl.innerHTML = renderReminderDiagnosisResult_({ success: false, error: error }); })
+      .diagnoseReminderEligibility(input.bookingId, input.baseDateString);
+  });
+
+  previewButton.addEventListener('click', function () {
+    var input = currentInput_();
+    resultEl.innerHTML = 'プレビュー生成中…';
+    google.script.run
+      .withSuccessHandler(function (result) { resultEl.innerHTML = renderReminderPreviewResult_(result); })
+      .withFailureHandler(function (error) { resultEl.innerHTML = renderReminderPreviewResult_({ success: false, error: error }); })
+      .previewReminderMail(input.bookingId, { baseDateString: input.baseDateString, reveal: input.reveal });
+  });
+
+  sendTestButton.addEventListener('click', function () {
+    var input = currentInput_();
+    var confirmed = window.confirm(
+      '管理者宛テストメール（ADMIN_NOTIFICATION_EMAIL）を送信します。\n' +
+      '予約ID: ' + input.bookingId + '\n' +
+      '基準日: ' + input.baseDateString + '\n\n' +
+      '実予約者へは送信されません。実行しますか？'
+    );
+    if (!confirmed) return;
+    resultEl.innerHTML = 'テスト送信中…';
+    google.script.run
+      .withSuccessHandler(function (result) { resultEl.innerHTML = renderReminderSendResult_(result); })
+      .withFailureHandler(function (error) { resultEl.innerHTML = renderReminderSendResult_({ success: false, error: error }); })
+      .sendReminderTestMail(input.bookingId, input.baseDateString);
+  });
+
+  closeButton.addEventListener('click', closeReminderDiagnostics_);
+  overlay.addEventListener('click', function (event) {
+    if (event.target === overlay) closeReminderDiagnostics_();
+  });
+
+  reminderDiagState_.overlay = overlay;
+  reminderDiagState_.resultEl = resultEl;
+  reminderDiagState_.bookingIdInput = bookingIdInput;
+  reminderDiagState_.baseDateInput = baseDateInput;
+  reminderDiagState_.revealInput = revealInput;
+}
+
+function openReminderDiagnostics_() {
+  if (!reminderDiagState_.overlay) buildReminderDiagnosticsModal_();
+  reminderDiagState_.resultEl.innerHTML = '';
+  if (!reminderDiagState_.baseDateInput.value) {
+    reminderDiagState_.baseDateInput.value = state.todayJst || '';
+  }
+  reminderDiagState_.overlay.classList.add('open');
+}
+
+function closeReminderDiagnostics_() {
+  if (reminderDiagState_.overlay) reminderDiagState_.overlay.classList.remove('open');
 }
 
 /* 既存4タブ（今日/今後/キャンセル/すべて）の各ボタンへ、件数表示用の子要素だけを

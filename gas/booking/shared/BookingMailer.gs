@@ -142,6 +142,118 @@ var BookingMailer = (function () {
   }
 
   /*
+   * status/SentAt確認のみを行う副作用のない判定（Issue #330）。withBookingLock_から
+   * 抽出した純粋関数で、本番の4メール種別すべてがここを通る。record.statusが
+   * requiredStatusと一致しない場合はINVALID_STATUS、sentAtFieldsのいずれかが
+   * 既に埋まっていてforceでない場合はALREADY_SENTを返す。それ以外はok:trueを返す。
+   * Issue #330の診断側（BookingReminderDiagnostics.gs）もevaluateReminderEligibility_
+   * 経由でこの関数をそのまま再利用し、REMINDER向けの判定ロジックを複製しない。
+   */
+  function evaluateStatusAndSentAt_(record, requiredStatus, sentAtFields, force) {
+    if (record.status !== requiredStatus) {
+      return { ok: false, reasonCode: 'INVALID_STATUS' };
+    }
+    var alreadySent = sentAtFields.some(function (field) { return !!record[field]; });
+    if (alreadySent && !force) {
+      return { ok: false, reasonCode: 'ALREADY_SENT' };
+    }
+    return { ok: true };
+  }
+
+  /* REMINDERのsentAtFields（reminderSentAt/accessGuideSentAt）。sendReminderMailForBooking
+     （本番）とevaluateReminderEligibility_（診断）の両方がこの1箇所だけを参照する
+     （Issue #330。値を2箇所に書かない）。 */
+  var REMINDER_SENT_AT_FIELDS_ = ['reminderSentAt', 'accessGuideSentAt'];
+
+  /* Issue #330の診断UI・テストで固定して使う理由コード。ELIGIBLE以外はすべて
+     「送信しない理由」を表す。優先順位（上から順に判定。複数該当する場合は最初に
+     一致したものを返す）はevaluateReminderEligibility_のコメントを参照。 */
+  var REMINDER_REASON_CODES = {
+    NOT_NEXT_DAY: 'NOT_NEXT_DAY',
+    INVALID_STATUS: 'INVALID_STATUS',
+    ALREADY_SENT: 'ALREADY_SENT',
+    EMAIL_MISSING: 'EMAIL_MISSING',
+    MAIL_NOT_READY: 'MAIL_NOT_READY',
+    ELIGIBLE: 'ELIGIBLE'
+  };
+
+  /*
+   * 前日リマインドの対象判定・設定不足判定を1箇所へ集約した副作用のない判定関数
+   * （Issue #330本文「必須設計：本番判定との共通化」）。
+   *
+   * - targetDateStringを渡した場合のみNOT_NEXT_DAYを判定する（省略時はこの判定を
+   *   スキップする）。本番の自動送信（sendNextDayReminders）はSpreadsheetRepository.
+   *   getConfirmedBookingsForDateの時点で既に翌日のCONFIRMED予約だけに絞り込まれて
+   *   おり、また管理者の個別再送（BookingAdmin.gsの「予約メールを再送」）は特定の日
+   *   だけを対象にしない既存機能のため、いずれもtargetDateStringを渡さない
+   *   （＝この判定を経由しない。外部挙動を変更しないための対応）。診断
+   *   （BookingReminderDiagnostics.gs）は必ず基準日から計算した翌日日付を渡す。
+   * - status/SentAt判定はevaluateStatusAndSentAt_（withBookingLock_と共通）を使う。
+   * - メール本文に予約者のメールアドレスが必須なため、EMAIL_MISSINGを診断専用の
+   *   追加チェックとして持つ（本番のcreateBooking入力検証で通常は空にならないが、
+   *   診断は任意のbookingIdを直接指定できるため、フェイルセーフとして判定に含める）。
+   * - 設定不足判定は、本番のbuildTemplateFn内で使っている既存のensureMailConfigComplete_/
+   *   ensureAccessGuideComplete_をそのまま呼ぶ（例外をtry/catchしてMAIL_NOT_READYへ
+   *   変換するのみで、判定条件自体は複製しない）。
+   */
+  function evaluateReminderEligibility_(record, targetDateString) {
+    if (targetDateString && record.date !== targetDateString) {
+      return {
+        eligible: false,
+        reasonCode: REMINDER_REASON_CODES.NOT_NEXT_DAY,
+        message: '利用日（' + (record.date || '未設定') + '）が翌日（' + targetDateString + '）ではありません。'
+      };
+    }
+
+    var basicEligibility = evaluateStatusAndSentAt_(record, Booking.STATUS.CONFIRMED, REMINDER_SENT_AT_FIELDS_, false);
+    if (!basicEligibility.ok && basicEligibility.reasonCode === 'INVALID_STATUS') {
+      return {
+        eligible: false,
+        reasonCode: REMINDER_REASON_CODES.INVALID_STATUS,
+        message: (record.status || '未設定') + ' の予約には前日リマインドを送信できません（CONFIRMEDのみ対象）。'
+      };
+    }
+    if (!basicEligibility.ok && basicEligibility.reasonCode === 'ALREADY_SENT') {
+      return {
+        eligible: false,
+        reasonCode: REMINDER_REASON_CODES.ALREADY_SENT,
+        message: '前日リマインドは送信済みです。'
+      };
+    }
+
+    if (!record.email) {
+      return {
+        eligible: false,
+        reasonCode: REMINDER_REASON_CODES.EMAIL_MISSING,
+        message: '予約者のメールアドレスが登録されていません。'
+      };
+    }
+
+    try {
+      ensureMailConfigComplete_();
+    } catch (mailConfigError) {
+      return {
+        eligible: false,
+        reasonCode: REMINDER_REASON_CODES.MAIL_NOT_READY,
+        message: sanitizeErrorMessage_(describeError_(mailConfigError))
+      };
+    }
+
+    var guide = BookingConfig.getAccessGuideConfig();
+    try {
+      ensureAccessGuideComplete_(guide);
+    } catch (guideError) {
+      return {
+        eligible: false,
+        reasonCode: REMINDER_REASON_CODES.MAIL_NOT_READY,
+        message: sanitizeErrorMessage_(describeError_(guideError), [guide.keyboxNumber, guide.unlockCode])
+      };
+    }
+
+    return { eligible: true, reasonCode: REMINDER_REASON_CODES.ELIGIBLE, message: '送信対象です。' };
+  }
+
+  /*
    * mailType: MAIL_TYPESのいずれか
    * requiredStatus: このstatusの予約にだけ送信できる（Booking.STATUS参照）
    * sentAtFields: 送信済み判定・成功時に同時更新するSheetsフィールド名の配列
@@ -177,7 +289,8 @@ var BookingMailer = (function () {
       }
       var record = found.record;
 
-      if (record.status !== requiredStatus) {
+      var basicEligibility = evaluateStatusAndSentAt_(record, requiredStatus, sentAtFields, force);
+      if (!basicEligibility.ok && basicEligibility.reasonCode === 'INVALID_STATUS') {
         return {
           success: false,
           skipped: true,
@@ -189,9 +302,7 @@ var BookingMailer = (function () {
           }
         };
       }
-
-      var alreadySent = sentAtFields.some(function (field) { return !!record[field]; });
-      if (alreadySent && !force) {
+      if (!basicEligibility.ok && basicEligibility.reasonCode === 'ALREADY_SENT') {
         return { success: true, skipped: true, reason: 'ALREADY_SENT', bookingId: bookingId, mailType: mailType };
       }
 
@@ -288,7 +399,7 @@ var BookingMailer = (function () {
       MAIL_TYPES.REMINDER,
       bookingId,
       Booking.STATUS.CONFIRMED,
-      ['reminderSentAt', 'accessGuideSentAt'],
+      REMINDER_SENT_AT_FIELDS_,
       !!opts.force,
       function (record) {
         var config = ensureMailConfigComplete_();
@@ -311,6 +422,12 @@ var BookingMailer = (function () {
     sendReminderMailForBooking: sendReminderMailForBooking,
     /* BookingRepository.gs等、利用者メール経路の他ファイルからも同じredaction方針で
        Loggerへ出力できるよう公開する（PRレビュー対応）。 */
-    sanitizeErrorMessage: sanitizeErrorMessage_
+    sanitizeErrorMessage: sanitizeErrorMessage_,
+    /* Issue #330: 前日リマインド診断（BookingReminderDiagnostics.gs。Booking Admin専用）が
+       本番と同じ判定を再利用するための公開API。判定ロジック自体はここでのみ定義し、
+       診断側では複製しない。 */
+    REMINDER_SENT_AT_FIELDS: REMINDER_SENT_AT_FIELDS_,
+    REMINDER_REASON_CODES: REMINDER_REASON_CODES,
+    evaluateReminderEligibility: evaluateReminderEligibility_
   };
 })();
