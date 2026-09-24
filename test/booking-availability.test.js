@@ -324,6 +324,37 @@ test('getCurrentMinutesInTimezone/formatDateInTimezone: 不正なtimezoneはnull
 });
 
 /*
+ * zonedDateTimeToUtcMillis（Issue #334 PR-Bレビュー対応で追加）。カード決済の96時間受付
+ * 判定（Booking.gsのvalidateCreateBookingInput）を、フロント側（scripts/booking-logic.js
+ * のisCardPaymentEligible）とミリ秒精度で一致させるために使う、壁時計時刻→絶対時刻の
+ * 変換関数。
+ */
+test('zonedDateTimeToUtcMillis: Asia/Tokyoの壁時計時刻を絶対時刻（UTC epoch ms）へ正しく変換する', function () {
+  var BookingAvailability = loadAvailability();
+  var millis = BookingAvailability.zonedDateTimeToUtcMillis('2026-10-05', '10:00', 'Asia/Tokyo');
+  assert.strictEqual(millis, new Date('2026-10-05T10:00:00+09:00').getTime());
+});
+
+test('zonedDateTimeToUtcMillis: Asia/Tokyo以外のtimezoneでも、ハードコードせず指定どおりに変換する', function () {
+  var BookingAvailability = loadAvailability();
+  assert.strictEqual(
+    BookingAvailability.zonedDateTimeToUtcMillis('2026-10-05', '10:00', 'UTC'),
+    new Date('2026-10-05T10:00:00Z').getTime()
+  );
+  assert.strictEqual(
+    BookingAvailability.zonedDateTimeToUtcMillis('2026-10-05', '10:00', 'America/New_York'),
+    new Date('2026-10-05T10:00:00-04:00').getTime() /* 10月上旬は夏時間(EDT, UTC-4)適用中 */
+  );
+});
+
+test('zonedDateTimeToUtcMillis: 不正な日付・時刻・timezoneはnullを返す（fail-closed）', function () {
+  var BookingAvailability = loadAvailability();
+  assert.strictEqual(BookingAvailability.zonedDateTimeToUtcMillis('2026-13-01', '10:00', 'Asia/Tokyo'), null);
+  assert.strictEqual(BookingAvailability.zonedDateTimeToUtcMillis('2026-10-05', '25:00', 'Asia/Tokyo'), null);
+  assert.strictEqual(BookingAvailability.zonedDateTimeToUtcMillis('2026-10-05', '10:00', 'Not/A_Timezone'), null);
+});
+
+/*
  * formatDateWithWeekday（Issue #311）。AdminNotifier.gs/BookingMailTemplates.gsが
  * 管理者通知メール・利用者向けメールの利用日表示に共通で使う純粋関数。
  * new Date(dateString).getDay()のようなGAS実行環境のローカルtimezoneに依存する変換ではなく、

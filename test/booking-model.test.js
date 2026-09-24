@@ -620,6 +620,47 @@ test('validateCreateBookingInput: カード決済×利用開始まで97時間・
   assert.strictEqual(rejected.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
 });
 
+/*
+ * PRレビュー対応（Issue #334 PR-B #336）: 以前の実装は「今日からの暦日差×1440分＋
+ * 分単位に丸めたstartMinutes/現在時刻」という分単位の中間表現で96時間ルールを判定して
+ * いたため、96時間ちょうど付近の秒・ミリ秒単位の境界でフロント側
+ * （scripts/booking-logic.jsのisCardPaymentEligible。ミリ秒精度）とずれうる不具合が
+ * あった。ここではinput.startTime（'HH:mm'。秒は表現できない）を固定し、receivedAt
+ * （now引数）側をミリ秒単位でずらすことで、96時間ちょうど・1秒前・1秒後・1ミリ秒未満の
+ * 境界をBookingAvailability.zonedDateTimeToUtcMillis経由のミリ秒比較で検証する。
+ */
+test('validateCreateBookingInput: カード決済×96時間の境界をミリ秒単位で判定する（96時間ちょうど／1秒前／1秒後／1ミリ秒未満。PRレビュー対応）', function () {
+  var Booking = loadBooking();
+  var input = validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '12:00' });
+  var startAtMillis = new Date('2026-10-05T12:00:00+09:00').getTime();
+  var exactly96hBeforeMillis = startAtMillis - 96 * 3600000;
+
+  var exactly96h = Booking.validateCreateBookingInput(input, DEFAULT_CONFIG, new Date(exactly96hBeforeMillis));
+  assert.strictEqual(exactly96h.valid, true, '96時間ちょうどは許可される（境界を含む）: ' + JSON.stringify(exactly96h.error));
+
+  var oneSecondOfExtraMargin = Booking.validateCreateBookingInput(
+    input, DEFAULT_CONFIG, new Date(exactly96hBeforeMillis - 1000)
+  );
+  assert.strictEqual(oneSecondOfExtraMargin.valid, true, '96時間より1秒余裕がある（96時間+1秒前）は許可される');
+
+  var oneSecondShort = Booking.validateCreateBookingInput(
+    input, DEFAULT_CONFIG, new Date(exactly96hBeforeMillis + 1000)
+  );
+  assert.strictEqual(oneSecondShort.valid, false, '96時間に1秒足りない（96時間-1秒前）は拒否される');
+  assert.strictEqual(oneSecondShort.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
+
+  var oneMillisecondShort = Booking.validateCreateBookingInput(
+    input, DEFAULT_CONFIG, new Date(exactly96hBeforeMillis + 1)
+  );
+  assert.strictEqual(oneMillisecondShort.valid, false, '96時間に1ミリ秒足りない場合も拒否される');
+  assert.strictEqual(oneMillisecondShort.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
+
+  var oneMillisecondOfExtraMargin = Booking.validateCreateBookingInput(
+    input, DEFAULT_CONFIG, new Date(exactly96hBeforeMillis - 1)
+  );
+  assert.strictEqual(oneMillisecondOfExtraMargin.valid, true, '96時間より1ミリ秒でも余裕があれば許可される');
+});
+
 test('validateCreateBookingInput: 現金/PayPay/未定は96時間ルールの対象外（直前でも通常どおり許可される。Issue #334の回帰要件）', function () {
   var Booking = loadBooking();
   ['現金', 'PayPay', '未定'].forEach(function (paymentMethod) {
