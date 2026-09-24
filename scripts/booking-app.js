@@ -906,6 +906,18 @@
       setFieldError_(els.consent, els.consentError, els.consent.checked ? '' : UI_TEXT.consentRequired);
       if (!els.consent.checked) return;
 
+      /* PRレビュー対応（Issue #334 PR-B）: 予約確認画面を開いたまま96時間の受付期限を
+         過ぎた場合、Step3→Step4遷移時点のチェックだけでは検知できないため、送信直前にも
+         必ず再評価する。期限を過ぎていれば送信自体を中止し、Step3へ戻して現地決済への
+         切り替えを案内する（サーバー側のCARD_PAYMENT_TOO_CLOSE_TO_START拒否と合わせた
+         多層防御。ここで止められればfetch自体を発生させない）。 */
+      if (Logic.isCardPaymentMethodValue(state.paymentMethod) && !Logic.isCardPaymentEligible(state.date, state.startTime)) {
+        updateCardPaymentGating();
+        goToStep('details');
+        showGlobalError(Logic.cardPaymentIneligibleNotice(locale), []);
+        return;
+      }
+
       if (!API_BASE_URL) {
         els.submitError.textContent = Logic.apiNotConfiguredMessage(locale);
         els.submitError.hidden = false;

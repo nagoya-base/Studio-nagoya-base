@@ -637,6 +637,10 @@ function setupCardFlow(locale, options) {
     startTimeButtons: startTimeButtons,
     cardRadio: cardRadioEl,
     cardLabel: cardLabelEl,
+    /* 実際にvmへ読み込まれたLogic（scripts/booking-logic.js）そのもの。送信直前の
+       再判定テストで、Logic.isCardPaymentEligibleを一時的に差し替えて「確認画面を
+       開いている間に受付期限が過ぎた」状況を再現するために公開する。 */
+    Logic: windowStub.BookingLogic,
     setCustomerType: function (v) { selectedCustomerType = v; },
     /* カードを選ぶ操作をシミュレートする。cardRadioEl.checkedも連動させ、後段の
        updateCardPaymentGating()がradio.checked = falseへ戻した場合に
@@ -726,6 +730,80 @@ test('Issue #334 PR-B: 日時変更によって96時間未満になった場合�
   ctx.elements['ba-step-details-next']._listeners.click();
   assert.strictEqual(ctx.elements['ba-step-confirm'].hidden, true, '確認画面へ進めないこと');
   assert.strictEqual(ctx.elements['ba-payment-error'].hidden, false);
+});
+
+/* ── PRレビュー対応: 予約確認画面を開いたまま96時間の受付期限を過ぎた場合の
+   最終送信直前の再判定（Issue #334 PR-B）。実際の壁時計を4日以上進めることはできないため、
+   Step2→Step3遷移時点では現実のLogic.isCardPaymentEligibleで「適格」判定を通したあと、
+   確認画面へ進んでから送信直前だけLogic.isCardPaymentEligibleを一時的に差し替えて
+   「その間に期限が過ぎた」状況を再現する（呼び出し回数・呼び出し時の引数も確認する）。 ── */
+test('Issue #334 PR-B: 確認画面を開いたまま受付期限を過ぎた場合、最終送信直前の再判定で送信を中止し、現地決済を案内する', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+  assert.strictEqual(ctx.cardRadio.disabled, false, 'Step3進入時点ではまだ96時間以上先で選択できる');
+
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.elements['ba-step-details-next']._listeners.click();
+  assert.strictEqual(ctx.elements['ba-step-confirm'].hidden, false, '確認画面まで進めること（この時点ではまだ適格）');
+
+  /* 確認画面を開いている間に受付期限を過ぎた状況を再現する */
+  var eligibilityCalls = [];
+  var originalIsEligible = ctx.Logic.isCardPaymentEligible;
+  ctx.Logic.isCardPaymentEligible = function (dateValue, startTimeValue) {
+    eligibilityCalls.push([dateValue, startTimeValue]);
+    return false;
+  };
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+
+  ctx.Logic.isCardPaymentEligible = originalIsEligible;
+
+  assert.strictEqual(ctx.requests.length, 0, 'fetch自体が発生せず送信は中止されること');
+  /* 送信ハンドラの判定自体で1回、その後の選択解除（updateCardPaymentGating）内でも
+     同じ判定を再利用するため1回、計2回呼ばれる。いずれも同じ引数であること。 */
+  assert.ok(eligibilityCalls.length >= 1);
+  eligibilityCalls.forEach(function (call) {
+    assert.deepStrictEqual(call, [ctx.elements['ba-date'].value, ctx.startTimeButtons[0].textContent]);
+  });
+  assert.strictEqual(ctx.elements['ba-step-details'].hidden, false, 'Step3（利用者情報）へ戻ること');
+  assert.strictEqual(ctx.elements['ba-step-confirm'].hidden, true);
+  assert.strictEqual(ctx.cardRadio.disabled, true, '戻った時点でカードは選択不可へ更新されること');
+  assert.strictEqual(ctx.cardRadio.checked, false);
+  assert.strictEqual(ctx.elements['ba-global-error'].hidden, false, '現地決済への案内が表示されること');
+  assert.match(
+    ctx.elements['ba-global-error-message'].textContent,
+    /カード事前決済は利用開始の4日前までのお申し込みです。直前のご予約は現金・PayPay（現地決済）をお選びください。/
+  );
+});
+
+test('Issue #334 PR-B: 送信直前もなお受付期限内であれば、通常どおり送信できる（回帰なし）', async function () {
+  var ctx = setupCardFlow(null);
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.requests.length, 1);
+  assert.strictEqual(ctx.elements['ba-step-complete'].hidden, false);
 });
 
 test('Issue #334 PR-B: カード選択時のみ、支払方法欄付近に支払期限つきの注意書きが表示される', async function () {

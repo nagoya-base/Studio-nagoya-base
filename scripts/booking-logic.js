@@ -417,43 +417,43 @@
     return value === CARD_PAYMENT_METHOD_VALUE;
   }
 
-  /* 'YYYY-MM-DD'同士の暦日差（日数）。gas/booking/shared/Booking.gsの
-     daysBetweenDateStrings_と同じ計算方式（Date.UTCベースでローカルtimezoneに依存しない）。 */
-  function daysBetweenDateStrings_(fromDateString, toDateString) {
-    var from = (fromDateString || '').split('-');
-    var to = (toDateString || '').split('-');
-    var fromUtc = Date.UTC(parseInt(from[0], 10), parseInt(from[1], 10) - 1, parseInt(from[2], 10));
-    var toUtc = Date.UTC(parseInt(to[0], 10), parseInt(to[1], 10) - 1, parseInt(to[2], 10));
-    return Math.round((toUtc - fromUtc) / 86400000);
-  }
-
-  function currentMinutesInJapan_(now) {
-    var base = isDateLike_(now) ? now : new Date();
-    var parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
-    }).formatToParts(base);
-    var hour = null;
-    var minute = null;
-    parts.forEach(function (part) {
-      if (part.type === 'hour') hour = part.value;
-      if (part.type === 'minute') minute = part.value;
-    });
-    return parseInt(hour, 10) * 60 + parseInt(minute, 10);
+  /*
+   * dateValue（'YYYY-MM-DD'）とtimeValue（'HH:mm'）をAsia/Tokyo基準の壁時計時刻として
+   * 解釈し、その瞬間のUTC epoch msを返す（PRレビュー対応: 以前は「今日からの暦日差 × 1440分
+   * + 分単位に切り捨てたstartMinutes/nowMinutes」で分単位の判定をしていたため、
+   * 現在時刻の秒が切り捨てられる分だけ実際の残り時間より最大59秒長く見積もる方向の
+   * バイアスがあり、96時間未満の申込を誤って受け付け可能と判定しうる不具合があった。
+   * Asia/Tokyoは夏時間の無い固定UTC+9オフセットのtimezoneのため、Date.UTC(...)の月・日を
+   * そのまま使い、時をUTC+9分だけ引くだけで正しい絶対時刻（epoch ms）が一意に求まる
+   * （タイムゾーンデータベースへの依存なしに秒単位で正確）。この関数はミリ秒精度を返す
+   * ため、以降の比較はdaysBetweenDateStrings_やcurrentMinutesInJapan_のような分単位の
+   * 中間表現を経由しない。 */
+  function jstWallClockToUtcMillis_(dateValue, timeValue) {
+    var dateParts = (dateValue || '').split('-');
+    var timeParts = (timeValue || '').split(':');
+    var year = parseInt(dateParts[0], 10);
+    var month = parseInt(dateParts[1], 10);
+    var day = parseInt(dateParts[2], 10);
+    var hour = parseInt(timeParts[0], 10);
+    var minute = parseInt(timeParts[1], 10);
+    return Date.UTC(year, month - 1, day, hour - 9, minute, 0, 0);
   }
 
   /*
    * カード決済を選べるかどうかの事前判定。dateValue/startTimeValueが未確定の間は
    * true（まだ判定できる材料がないため選択肢を塞がない）。日時が確定した時点
-   * （Step2→Step3遷移時）で呼び出し側が再評価する。
+   * （Step2→Step3遷移時、および最終送信直前）で呼び出し側が再評価する
+   * （PRレビュー対応: 確認画面を開いたまま96時間の受付期限をまたいだ場合に備え、
+   * scripts/booking-app.jsのsubmitハンドラでも送信直前に呼び直す）。
+   * gas/booking/shared/Booking.gsのvalidateCreateBookingInput（`< CARD_MIN_HOURS_BEFORE_START`
+   * で拒否＝ちょうど96時間は許可）と同じ境界（>=で許可）をミリ秒精度で判定する。
    */
   function isCardPaymentEligible(dateValue, startTimeValue, now) {
     if (!isNonEmpty(dateValue) || !isNonEmpty(startTimeValue)) return true;
-    var todayValue = todayInJapan(now);
-    var daysUntilStart = daysBetweenDateStrings_(todayValue, dateValue);
-    var startMinutes = timeStringToMinutes_(startTimeValue);
-    var nowMinutes = currentMinutesInJapan_(now);
-    var minutesUntilStart = daysUntilStart * 1440 + startMinutes - nowMinutes;
-    return minutesUntilStart >= CARD_MIN_HOURS_BEFORE_START * 60;
+    var base = isDateLike_(now) ? now : new Date();
+    var startMillis = jstWallClockToUtcMillis_(dateValue, startTimeValue);
+    var msUntilStart = startMillis - base.getTime();
+    return msUntilStart >= CARD_MIN_HOURS_BEFORE_START * 3600000;
   }
 
   var WEEKDAY_LABELS_JA_ = ['日', '月', '火', '水', '木', '金', '土'];

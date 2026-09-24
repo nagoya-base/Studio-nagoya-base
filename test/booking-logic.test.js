@@ -614,6 +614,51 @@ test('isCardPaymentEligible: 96時間に1分でも満たない場合は選択で
   assert.strictEqual(Logic.isCardPaymentEligible('2026-10-05', '09:59', now), false);
 });
 
+/*
+ * PRレビュー対応: 以前の実装は現在時刻を分単位（秒を切り捨て）で丸めてから
+ * 「暦日差×1440分 + 分」で比較していたため、実際の残り時間より最大59秒長く見積もる
+ * バイアスがあり、96時間未満の申込を誤って選択可能と判定しうる不具合があった。
+ * 固定時刻を使い、96時間ちょうど／1秒前（96時間01秒前＝許可）／1秒後（95時間59分59秒前＝
+ * 不許可）の境界をミリ秒精度で検証する（gas/booking/shared/Booking.gsの
+ * `minutesUntilStart < CARD_MIN_HOURS_BEFORE_START * 60`とちょうど96時間が一致する
+ * よう、`>=`で許可する境界を秒単位で崩さないことを保証する）。
+ */
+test('isCardPaymentEligible: 96時間の境界を秒単位で判定する（96時間ちょうど／1秒前／1秒後）', function () {
+  var Logic = loadLogic();
+  var startAt = new Date('2026-10-05T10:00:00+09:00').getTime();
+  var exactly96hBefore = new Date(startAt - 96 * 3600000);
+  var oneSecondBeforeThat = new Date(exactly96hBefore.getTime() - 1000); /* 96時間01秒前 */
+  var oneSecondAfterThat = new Date(exactly96hBefore.getTime() + 1000); /* 95時間59分59秒前 */
+
+  assert.strictEqual(
+    Logic.isCardPaymentEligible('2026-10-05', '10:00', exactly96hBefore),
+    true,
+    '96時間ちょうどは許可（境界を含む）'
+  );
+  assert.strictEqual(
+    Logic.isCardPaymentEligible('2026-10-05', '10:00', oneSecondBeforeThat),
+    true,
+    '96時間01秒前（96時間を1秒超えて余裕がある）は許可'
+  );
+  assert.strictEqual(
+    Logic.isCardPaymentEligible('2026-10-05', '10:00', oneSecondAfterThat),
+    false,
+    '95時間59分59秒前（96時間に1秒足りない）は不許可'
+  );
+});
+
+test('isCardPaymentEligible: 分の境目をまたぐ1秒でも、秒単位で正しく判定する（分単位への丸めによる誤判定がないことの確認）', function () {
+  var Logic = loadLogic();
+  /* now=10:00:59（分としては10:00扱いされていた旧実装だと、本来95時間59分1秒しか
+     余裕が無いのに96時間ちょうど余裕があるかのように誤って許可されうるケース）。 */
+  var now = new Date('2026-10-01T10:00:59+09:00');
+  assert.strictEqual(
+    Logic.isCardPaymentEligible('2026-10-05', '10:00', now),
+    false,
+    '96時間まで59秒足りないため不許可であるべき（分単位への丸めで許可されてはいけない）'
+  );
+});
+
 test('isCardPaymentEligible: 96時間を十分に超えていれば選択できる', function () {
   var Logic = loadLogic();
   var now = new Date('2026-10-01T10:00:00+09:00');
