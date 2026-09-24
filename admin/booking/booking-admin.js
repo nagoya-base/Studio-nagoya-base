@@ -418,14 +418,37 @@ function canSendPaymentLink(booking) {
   return !!booking && !!booking.isCardPayment && booking.status === 'PENDING';
 }
 
+/*
+ * PRレビュー対応: MailApp送信自体は成功したがpaymentLinkSentAtの記録に失敗し、送信済みか
+ * どうか確定できていない「履行未確認」状態を、通常の「未送信」より優先して表示する
+ * （admin側に必ず気付いてもらう必要があるため）。GAS側（BookingMailer.gsの
+ * evaluatePaymentLinkEligibility_）も同じ優先順位（ALREADY_SENT→SEND_UNCONFIRMED）で
+ * 通常送信を拒否する。 */
 function paymentLinkStatusLabel_(booking) {
-  return booking && booking.paymentLinkSentAt ? '送信済み' : '未送信';
+  if (!booking) return '未送信';
+  if (booking.paymentLinkSendUnconfirmedAt) return '送信結果未確認（要確認）';
+  return booking.paymentLinkSentAt ? '送信済み' : '未送信';
 }
 
-/* GAS側（Booking.gs のisValidStripePaymentLinkUrl）と同じ正規表現。フロント側は
-   即時フィードバックのための事前チェックのみで、送信可否の正はGAS側の再検証とする
-   （Issue #334本文「フロント側でも入力チェックして構いませんが、GAS側の検証を
-   必須としてください」）。 */
+/* 通常送信（forceなし）がGAS側で拒否される状態（送信済み、または履行未確認）かどうか。
+   この状態では、ボタンラベルを「再送」に変え、確認ダイアログ・GAS呼び出しの両方を
+   明示的な再送として扱う（isResend）。 */
+function paymentLinkRequiresExplicitResend_(booking) {
+  return !!(booking && (booking.paymentLinkSentAt || booking.paymentLinkSendUnconfirmedAt));
+}
+
+/*
+ * GAS側（Booking.gs のisValidStripePaymentLinkUrl）と同じ正規表現。フロント側は
+ * 即時フィードバックのための事前チェックのみで、送信可否の正はGAS側の再検証とする
+ * （Issue #334本文「フロント側でも入力チェックして構いませんが、GAS側の検証を
+ * 必須としてください」）。
+ *
+ * PRレビュー対応（前後の空白の扱いを統一）: GAS側のBooking.isValidStripePaymentLinkUrlは
+ * 値をtrimせず、生の値をそのまま`^...$`の正規表現へ通すfail-closedな検証にしている
+ * （前後に空白がある入力は形式エラーとして拒否する）。このクライアント側の事前チェックも
+ * 同じ方針に統一する（呼び出し側でtrimしてから検証・送信すると、前後に空白のある入力を
+ * 気付かれないまま黙って受理してしまい、GAS側の方針と食い違う）。
+ */
 var STRIPE_PAYMENT_LINK_URL_PATTERN_CLIENT_ = /^https:\/\/buy\.stripe\.com\/[A-Za-z0-9_-]+$/;
 
 function isValidStripePaymentLinkUrlClient(url) {
@@ -520,14 +543,23 @@ function renderPaymentLinkSection_(booking) {
   var lastErrorLine = booking.paymentLinkLastErrorMessage
     ? booking.paymentLinkLastErrorMessage + '（' + (booking.paymentLinkLastErrorAt || '') + '）'
     : 'なし';
-  ui.statusEl.innerHTML = [
+  var statusRows = [
     ['状態', paymentLinkStatusLabel_(booking)],
     ['送信日時', booking.paymentLinkSentAt || '（未送信）'],
     ['送信先', booking.paymentLinkSentTo || '（未送信）'],
     ['送信回数', String(booking.paymentLinkSendCount || 0)],
     ['最終送信エラー', lastErrorLine]
-  ].map(function (pair) {
-    return '<div class="payment-link-status-row"><span>' + escapeHtml(pair[0]) + '</span>' + escapeHtml(pair[1]) + '</div>';
+  ];
+  /* PRレビュー対応: 履行未確認（MailApp送信は成功したが送信履歴の記録に失敗した）状態を
+     専用の行として表示し、実際の到達確認と明示的な再送が必要であることを案内する。 */
+  var hasUnconfirmedRow = !!booking.paymentLinkSendUnconfirmedAt;
+  if (hasUnconfirmedRow) {
+    statusRows.push(['要確認', '前回（' + booking.paymentLinkSendUnconfirmedAt + '）の送信結果が未確認です。実際に届いているか確認したうえで、必要であれば再送してください。']);
+  }
+  ui.statusEl.innerHTML = statusRows.map(function (pair, index) {
+    var isUnconfirmedRow = hasUnconfirmedRow && index === statusRows.length - 1;
+    var rowClass = 'payment-link-status-row' + (isUnconfirmedRow ? ' payment-link-status-row-warning' : '');
+    return '<div class="' + rowClass + '"><span>' + escapeHtml(pair[0]) + '</span>' + escapeHtml(pair[1]) + '</div>';
   }).join('');
 
   ui.urlInput.value = booking.stripePaymentLinkUrl || '';
@@ -536,7 +568,7 @@ function renderPaymentLinkSection_(booking) {
   ui.urlInput.disabled = !sendable;
   ui.sendButton.disabled = !sendable || ui.sendInFlight;
   ui.sendButton.textContent = sendable
-    ? (booking.paymentLinkSentAt ? '決済リンクを再送' : '決済リンクを送信')
+    ? (paymentLinkRequiresExplicitResend_(booking) ? '決済リンクを再送' : '決済リンクを送信')
     : ('送信不可（' + statusLabel(booking.status) + '）');
 }
 
@@ -555,17 +587,25 @@ function runSendPaymentLink_() {
   if (!booking || !canSendPaymentLink(booking)) return;
   if (paymentLinkUi_.sendInFlight) return;
 
-  var url = (paymentLinkUi_.urlInput.value || '').trim();
-  if (!url) {
+  /*
+   * PRレビュー対応（前後の空白の扱いを統一）: 以前はここでtrim()した値を検証・送信して
+   * いたため、前後に空白を含む入力が黙って除去されたうえで送信されてしまい、GAS側
+   * （trimせずに検証するfail-closedな方針）と扱いが食い違っていた。ここではtrimせず
+   * 生の入力値をそのまま検証し、空白を含む・形式に一致しない入力はすべて入力エラーとして
+   * 案内する（送信もしない）。
+   */
+  var rawUrl = paymentLinkUi_.urlInput.value || '';
+  if (!rawUrl.trim()) {
     alert('Stripeの決済リンクURLを入力してください。');
     return;
   }
-  if (!isValidStripePaymentLinkUrlClient(url)) {
-    alert('URLの形式が正しくありません。buy.stripe.com の決済リンクをそのまま貼り付けてください（クエリ・フラグメント・末尾の余分な文字は不可）。');
+  if (!isValidStripePaymentLinkUrlClient(rawUrl)) {
+    alert('URLの形式が正しくありません。前後に空白が入っていないか確認し、buy.stripe.com の決済リンクをそのまま貼り付けてください（クエリ・フラグメント・末尾の余分な文字は不可）。');
     return;
   }
+  var url = rawUrl;
 
-  var isResend = !!booking.paymentLinkSentAt;
+  var isResend = paymentLinkRequiresExplicitResend_(booking);
   var confirmed = window.confirm(buildPaymentLinkConfirmMessage_(booking, url, isResend));
   if (!confirmed) return;
 
@@ -573,16 +613,30 @@ function runSendPaymentLink_() {
   paymentLinkUi_.sendButton.disabled = true;
   setStatusLine('決済リンクを送信中…');
 
+  /*
+   * PRレビュー対応（同時再送の競合防止）: この画面が最後に取得したpaymentLinkSendCount
+   * （=画面が把握している送信履歴のバージョン）をexpectedSendCountとしてそのまま渡す。
+   * GAS側（BookingMailer.gsのcheckSendHistoryVersion_）が、Lock取得後の最新値と比較し、
+   * 別タブ・別端末が先に送信していればこのリクエストをSEND_HISTORY_CONFLICTとして拒否する。
+   */
+  var expectedSendCount = booking.paymentLinkSendCount;
+
   google.script.run
     .withSuccessHandler(function (result) {
       paymentLinkUi_.sendInFlight = false;
       setStatusLine('');
-      if (!result || !result.success) {
-        alert('送信できませんでした: ' + (result && result.error && result.error.message));
-      } else if (result.skipped) {
-        alert('送信済みのため送信しませんでした: ' + (result.error && result.error.message));
-      } else {
+      if (result && result.success) {
         alert('送信しました（送信回数: ' + result.sendCount + '）');
+      } else if (result && result.requiresManualConfirmation) {
+        /* PRレビュー対応: メール自体は送信された可能性があるが、送信履歴の記録に失敗し
+           二重送信防止の状態が確定できていない。管理者に実際の到達確認を促す。 */
+        alert('送信結果を確認できませんでした（メールは送信された可能性があります）: ' + (result.error && result.error.message));
+      } else if (result && result.error && result.error.code === 'SEND_HISTORY_CONFLICT') {
+        alert('他の画面から既に操作された可能性があります。最新の状態を確認してください: ' + result.error.message);
+      } else if (result && result.skipped) {
+        alert('送信条件を満たさないため送信しませんでした: ' + (result.error && result.error.message));
+      } else {
+        alert('送信できませんでした: ' + (result && result.error && result.error.message));
       }
       refreshOpenDetail_(booking.bookingId);
       loadBookings();
@@ -593,7 +647,7 @@ function runSendPaymentLink_() {
       alert('送信でエラーが発生しました: ' + (error && error.message ? error.message : error));
       refreshOpenDetail_(booking.bookingId);
     })
-    .adminSendCardPaymentLink(booking.bookingId, url, isResend);
+    .adminSendCardPaymentLink(booking.bookingId, url, isResend, expectedSendCount);
 }
 
 /* 送信後、開いたままの詳細モーダルを最新状態へ更新する（サーバーから再取得したもので

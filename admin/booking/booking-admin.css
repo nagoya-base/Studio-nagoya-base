@@ -388,6 +388,17 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
   color: var(--color-text-sub);
 }
 
+/* PRレビュー対応: 送信履行未確認（メールは送信された可能性があるが履歴記録に失敗した）
+   状態の行を強調表示し、管理者が見落とさないようにする。 */
+.payment-link-status-row-warning {
+  color: var(--color-danger);
+  font-weight: bold;
+}
+
+.payment-link-status-row-warning span {
+  color: var(--color-danger);
+}
+
 #payment-link-section label {
   display: block;
   font-size: 12px;

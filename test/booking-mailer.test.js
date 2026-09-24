@@ -658,6 +658,174 @@ test('sendPaymentLinkMailForBooking: LockService.getScriptLock()を取得し、�
   assert.strictEqual(result.error.code, 'LOCK_TIMEOUT');
 });
 
+/*
+ * PRレビュー対応①: 送信履行未確認（MailApp送信は成功したが、直後のpaymentLinkSentAtの
+ * 記録が失敗した）状態の二重送信防止。SpreadsheetRepository.updateBookingFieldsを
+ * paymentLinkSentAtのみの呼び出し時にだけ失敗させ、その他の呼び出しは元の実装へ委譲する
+ * ラッパーで模擬する（BookingMailer.gsが「paymentLinkSentAtを単独で先に書き込む」設計に
+ * なっているため、この1フィールド呼び出しだけを失敗させれば「メール送信成功→履行未確認」の
+ * 部分失敗を再現できる）。
+ */
+function stubCriticalSentAtWriteFailure_(ctx) {
+  var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    var keys = Object.keys(fields);
+    if (keys.length === 1 && keys[0] === 'paymentLinkSentAt') {
+      throw new Error('simulated Sheets outage while recording paymentLinkSentAt');
+    }
+    return original(id, fields);
+  };
+  return function restore() {
+    ctx.sandbox.SpreadsheetRepository.updateBookingFields = original;
+  };
+}
+
+test('sendPaymentLinkMailForBooking: MailApp送信成功後にpaymentLinkSentAtの記録が失敗した場合、success:false・mailSent:true・requiresManualConfirmation:trueを返し、Recoveryへ記録する', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+  var restore = stubCriticalSentAtWriteFailure_(ctx);
+
+  var result = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, BEFORE_DUE);
+  restore();
+
+  assert.strictEqual(result.success, false, JSON.stringify(result));
+  assert.strictEqual(result.mailSent, true, 'メール自体は送信されているため、admin側に「送信された可能性がある」ことを伝える必要がある');
+  assert.strictEqual(result.requiresManualConfirmation, true);
+  assert.strictEqual(result.error.code, 'PAYMENT_LINK_HISTORY_UPDATE_FAILED');
+  assert.strictEqual(mailApp._sentEmails.length, 1, 'メール自体は1通送信されているべき');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.ok(!found.record.paymentLinkSentAt, '記録に失敗したためpaymentLinkSentAtは空のまま');
+  assert.ok(found.record.paymentLinkSendUnconfirmedAt, 'paymentLinkSendUnconfirmedAtへ未確認の送信時刻が記録されるべき');
+
+  var recoveries = ctx.sandbox.RecoveryRepository.listAll().filter(function (r) { return r.bookingId === bookingId; });
+  assert.strictEqual(recoveries.length, 1);
+  assert.strictEqual(recoveries[0].failureType, 'PAYMENT_LINK_SEND_HISTORY_UPDATE_FAILED');
+  assert.strictEqual(recoveries[0].status, 'PENDING');
+  assert.strictEqual(recoveries[0].recoveryState, 'OPEN');
+});
+
+test('sendPaymentLinkMailForBooking: 送信履行が未確認の予約は、通常送信（forceなし）では無条件に再送できない（二重送信防止）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+  var restore = stubCriticalSentAtWriteFailure_(ctx);
+  ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, BEFORE_DUE);
+  restore();
+  assert.strictEqual(mailApp._sentEmails.length, 1, '前提: 1回目でメールは送信済み');
+
+  var retryNormal = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, BEFORE_DUE);
+  assert.strictEqual(retryNormal.skipped, true);
+  assert.strictEqual(retryNormal.error.code, 'SEND_UNCONFIRMED');
+  assert.strictEqual(mailApp._sentEmails.length, 1, '履行未確認の状態では通常送信で再送してはいけない');
+});
+
+test('sendPaymentLinkMailForBooking: 送信履行が未確認の予約でも、明示的な再送（force:true）なら送信でき、成功時にpaymentLinkSendUnconfirmedAtをクリアする', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+  var restore = stubCriticalSentAtWriteFailure_(ctx);
+  ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, BEFORE_DUE);
+  restore();
+
+  var forceOptions = Object.assign({ force: true }, BEFORE_DUE);
+  var forced = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, forceOptions);
+  assert.strictEqual(forced.success, true, JSON.stringify(forced));
+  assert.strictEqual(mailApp._sentEmails.length, 2);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.ok(found.record.paymentLinkSentAt, '再送成功後はpaymentLinkSentAtが記録される');
+  assert.ok(!found.record.paymentLinkSendUnconfirmedAt, '再送成功後は未確認フラグがクリアされるべき');
+});
+
+/*
+ * PRレビュー対応②: 同時再送の競合防止。管理画面が最後に取得したpaymentLinkSendCount
+ * （expectedSendCount）と、Lock取得後の最新値が一致しない場合はSEND_HISTORY_CONFLICTで
+ * 拒否する。通常送信・明示的な再送の両方について検証する。
+ */
+test('sendPaymentLinkMailForBooking: 通常送信でも、expectedSendCountが別タブの先行送信で古くなっている場合はSEND_HISTORY_CONFLICTで拒否し、二重送信しない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+
+  /* タブA: expectedSendCount:0（未送信の前提）で送信し、成功する。 */
+  var tabA = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ expectedSendCount: 0 }, BEFORE_DUE)
+  );
+  assert.strictEqual(tabA.success, true, JSON.stringify(tabA));
+
+  /* タブB: 画面を再取得しておらず、依然expectedSendCount:0のまま送信しようとする。 */
+  var tabB = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ expectedSendCount: 0 }, BEFORE_DUE)
+  );
+  assert.strictEqual(tabB.success, false);
+  assert.strictEqual(tabB.error.code, 'SEND_HISTORY_CONFLICT');
+  assert.strictEqual(mailApp._sentEmails.length, 1, '競合したタブBからは送信されないべき');
+});
+
+test('sendPaymentLinkMailForBooking: 明示的な再送（force:true）でも、expectedSendCountが別タブの先行再送で古くなっている場合はSEND_HISTORY_CONFLICTで拒否する（forceは古い前提での送信までは許可しない）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+
+  /* 前提: 1回目の送信（count 0→1）を両タブが把握している。 */
+  ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ expectedSendCount: 0 }, BEFORE_DUE)
+  );
+
+  /* タブA: expectedSendCount:1（両タブ共通の前提）で明示的な再送を行い、成功する（count 1→2）。 */
+  var tabA = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ force: true, expectedSendCount: 1 }, BEFORE_DUE)
+  );
+  assert.strictEqual(tabA.success, true, JSON.stringify(tabA));
+  assert.strictEqual(tabA.sendCount, 2);
+
+  /* タブB: 画面を再取得しておらず、依然expectedSendCount:1のまま明示的な再送を行おうとする。 */
+  var tabB = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ force: true, expectedSendCount: 1 }, BEFORE_DUE)
+  );
+  assert.strictEqual(tabB.success, false);
+  assert.strictEqual(tabB.error.code, 'SEND_HISTORY_CONFLICT');
+  assert.strictEqual(mailApp._sentEmails.length, 2, '競合したタブBからのforce再送では送信されないべき（forceは古い前提での送信までは許可しない）');
+});
+
+test('sendPaymentLinkMailForBooking: expectedSendCountを渡さない場合は競合チェック自体を行わない（既存挙動を維持。省略時は省略前と同じ結果になる）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+
+  var result = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, BEFORE_DUE);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+});
+
+/*
+ * PRレビュー対応③: 支払期限の設定統一。buildPaymentLinkMailへBookingConfig.getTtlConfig()を
+ * 渡し忘れていたため、決済リンクメール本文の支払期限が常に「（お問い合わせください）」に
+ * なってしまう不具合があった（送信可否判定自体はevaluatePaymentLinkEligibility_が独自に
+ * BookingConfig.getTtlConfig()を呼ぶため影響を受けず、この回帰は見つかりにくかった）。
+ * Booking Admin表示（computeAdminCardPaymentDueAt_）・仮受付メール（buildPendingMail）と
+ * 同じ実際の支払期限日時が本文に入ることを確認する。
+ */
+test('sendPaymentLinkMailForBooking: buildPaymentLinkMailへBookingConfig.getTtlConfig()を渡し、Booking Admin表示・仮受付メールと同じ実際の支払期限日時が本文に入る（設定の受け渡し漏れの回帰確認）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    paymentMethod: 'オンラインクレジットカード',
+    createdAt: new Date('2026-09-28T10:00:00+09:00'),
+    startAt: new Date('2026-10-05T10:00:00+09:00')
+  });
+
+  var result = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, { now: new Date('2026-09-28T12:00:00+09:00') }
+  );
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  /* createdAt+72h = 2026-10-01 10:00（buildPendingMailの同条件テスト・
+     booking-mail-templates.test.jsのbuildPaymentLinkMailテストと同じ計算結果）。 */
+  assert.match(mailApp._sentEmails[0].body, /お支払い期限: 2026-10-01（木） 10:00/);
+});
+
 /* ---------- REMINDER ---------- */
 
 test('sendReminderMailForBooking: CONFIRMED予約に1通送り、reminderSentAtとaccessGuideSentAtを同時に記録する', function () {

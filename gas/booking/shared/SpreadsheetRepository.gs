@@ -78,13 +78,20 @@ var SpreadsheetRepository = (function () {
      *   Booking Admin予約詳細で専用の送信状態（未送信/送信済み・送信回数・最終送信
      *   エラー）を表示する要件があり、他メール種別のエラーと混在させると誤表示になるため。
      *   次回の送信に成功すると自動的に空へ戻す（既存のlastMailError*と同じ方針）。
+     * - paymentLinkSendUnconfirmedAt（PRレビュー対応で追加）: MailApp.sendEmailには
+     *   成功したが、直後のpaymentLinkSentAt単独更新が失敗し、送信済みかどうかを
+     *   確定できない場合の日時。空でない間は、他のSentAt列と同じ二重送信防止の
+     *   仕組みにより通常送信（forceなし）を拒否する（BookingMailer.gsの
+     *   evaluatePaymentLinkEligibility_のSEND_UNCONFIRMED判定）。次に送信履行が
+     *   確定（paymentLinkSentAtの単独更新に成功）すると自動的に空へ戻す。
      */
     'stripePaymentLinkUrl',
     'paymentLinkSentAt',
     'paymentLinkSentTo',
     'paymentLinkSendCount',
     'paymentLinkLastErrorAt',
-    'paymentLinkLastErrorMessage'
+    'paymentLinkLastErrorMessage',
+    'paymentLinkSendUnconfirmedAt'
   ];
 
   function getSpreadsheet_() {

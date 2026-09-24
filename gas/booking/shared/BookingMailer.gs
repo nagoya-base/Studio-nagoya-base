@@ -597,6 +597,11 @@ var BookingMailer = (function () {
     INVALID_STATUS: 'INVALID_STATUS',
     NOT_CARD_PAYMENT: 'NOT_CARD_PAYMENT',
     ALREADY_SENT: 'ALREADY_SENT',
+    /* PRレビュー対応（履行未確認の二重送信防止）: MailApp送信自体は成功したが、
+       その直後のpaymentLinkSentAt記録に失敗し、送信済みかどうかを確定できない状態。
+       ALREADY_SENTと同じくforceがない限り通常送信を拒否する。詳細は
+       sendPaymentLinkMailForBookingのコメント参照。 */
+    SEND_UNCONFIRMED: 'SEND_UNCONFIRMED',
     EMAIL_MISSING: 'EMAIL_MISSING',
     PAYMENT_DUE_UNKNOWN: 'PAYMENT_DUE_UNKNOWN',
     PAYMENT_DUE_PASSED: 'PAYMENT_DUE_PASSED'
@@ -604,12 +609,13 @@ var BookingMailer = (function () {
 
   /*
    * 送信可否の判定（副作用なし）。判定順序（最初に一致したものを返す）:
-   *   INVALID_STATUS → NOT_CARD_PAYMENT → ALREADY_SENT → EMAIL_MISSING →
-   *   PAYMENT_DUE_UNKNOWN → PAYMENT_DUE_PASSED → eligible
+   *   INVALID_STATUS → NOT_CARD_PAYMENT → ALREADY_SENT → SEND_UNCONFIRMED →
+   *   EMAIL_MISSING → PAYMENT_DUE_UNKNOWN → PAYMENT_DUE_PASSED → eligible
    * - 対象は「支払方法がカードのPENDING予約」のみ（Issue #334本文）。UIでの表示制御に
    *   依存せず、送信時にここで必ず再検証する。
-   * - ALREADY_SENTはforce（管理者の明示的な再送）で無視できるが、status/paymentMethodの
-   *   不一致はforceでも無視しない（既存のreminderEligibilityCheck_と同じ方針）。
+   * - ALREADY_SENT/SEND_UNCONFIRMEDはforce（管理者の明示的な再送）で無視できるが、
+   *   status/paymentMethodの不一致はforceでも無視しない（既存の
+   *   reminderEligibilityCheck_と同じ方針）。
    * - 支払期限（Booking.computeCardPaymentDueMillis）を過ぎている場合は送信を拒否する
    *   （Issue #334本文「期限未到来を再検証」）。createdAt/startAtが揃っていない
    *   （データ不備）場合は期限を計算できないためfail-closedに拒否する。
@@ -636,6 +642,13 @@ var BookingMailer = (function () {
         eligible: false,
         reasonCode: PAYMENT_LINK_REASON_CODES_.ALREADY_SENT,
         message: '決済リンクは送信済みです。再送する場合は明示的に再送操作を選んでください。'
+      };
+    }
+    if (record.paymentLinkSendUnconfirmedAt && !opts.force) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.SEND_UNCONFIRMED,
+        message: '前回の送信でメールが届いたか確認できていません。実際の送信状況を確認したうえで、必要であれば明示的に再送してください。'
       };
     }
     if (!record.email) {
@@ -702,19 +715,87 @@ var BookingMailer = (function () {
   }
 
   /*
+   * PRレビュー対応（履行未確認の二重送信防止）: MailApp.sendEmailは成功したが、直後の
+   * paymentLinkSentAt記録（二重送信防止の要となる列）の書き込み自体が失敗し、
+   * 「メールが届いている可能性があるが、その履行を記録できていない」状態になった場合の
+   * Recovery記録。既存のrecordPaymentLinkMailFailure_（送信そのものの失敗。lastMailError*
+   * 相当の専用列へ記録）とは意味が異なるため、別関数・別failureTypeとして分離する。
+   */
+  function recordPaymentLinkSendUnconfirmed_(bookingId, status) {
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: 'PAYMENT_LINK_SEND_HISTORY_UPDATE_FAILED',
+        occurredAt: new Date(),
+        status: status,
+        errorMessage: 'MailApp.sendEmailは成功したが、直後のpaymentLinkSentAt（送信履歴）の記録に失敗した。メールが届いている可能性があるため、実際の到達を確認したうえで、必要であれば管理者が明示的に再送すること。',
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (recoveryError) {
+      Logger.log('BookingMailer: RecoveryRepository.recordFailure失敗（決済リンク送信の履行未確認記録）: ' + sanitizeErrorMessage_(describeError_(recoveryError)));
+    }
+  }
+
+  /*
+   * PRレビュー対応（同時再送の競合防止）: 管理画面が最後に取得した予約詳細の
+   * paymentLinkSendCount（=「画面が知っている送信履歴のバージョン」）と、Lock取得後に
+   * 再読込した最新のpaymentLinkSendCountを比較する。両者が一致しない場合、別タブ・
+   * 別端末が管理画面を再取得しないうちに先に送信（通常送信・明示的な再送のいずれも）を
+   * 行ったと判断し、古い画面からのこのリクエストを拒否する。通常送信・明示的な再送
+   * （force）のいずれにも適用する（forceは「送信済みでも送る」ことの許可であり、
+   * 「古い前提のまま送る」ことの許可ではないため、forceでもこの競合チェックは無視しない）。
+   * expectedSendCountを渡さない呼び出し（省略時）は、この競合チェック自体を行わない
+   * （新しいクライアントのみが検知できる追加の安全策のため、省略時に既存挙動を壊さない）。
+   */
+  function checkSendHistoryVersion_(record, expectedSendCount) {
+    if (expectedSendCount === undefined || expectedSendCount === null) {
+      return { ok: true };
+    }
+    var actualCount = Number(record.paymentLinkSendCount) || 0;
+    if (Number(expectedSendCount) !== actualCount) {
+      return {
+        ok: false,
+        message: '他の画面から既にこの予約の決済リンクが送信された可能性があります。最新の予約詳細を再取得してから、必要であれば改めて操作してください。'
+      };
+    }
+    return { ok: true };
+  }
+
+  /*
    * options:
-   *   force（省略可。既定false）: trueの場合、送信済み（paymentLinkSentAtが既にある）
-   *     でも送信する。管理者の明示的な再送操作からのみ渡すこと（Issue #334本文
-   *     「再送は履歴と明示的な確認を伴う管理者操作に限る」）。status/paymentMethod
-   *     不一致・期限切れはforceでも無視しない。
+   *   force（省略可。既定false）: trueの場合、送信済み（paymentLinkSentAtが既にある）・
+   *     履行未確認（paymentLinkSendUnconfirmedAtが既にある）でも送信する。管理者の
+   *     明示的な再送操作からのみ渡すこと（Issue #334本文「再送は履歴と明示的な確認を
+   *     伴う管理者操作に限る」）。status/paymentMethod不一致・期限切れ・
+   *     expectedSendCountの不一致（後述）はforceでも無視しない。
    *   now（省略可。テスト用）: 期限判定の基準時刻。省略時は現在時刻。
+   *   expectedSendCount（省略可。PRレビュー対応）: 呼び出し元（Booking Admin画面）が
+   *     最後に取得した予約詳細のpaymentLinkSendCount。Lock取得後の最新値と一致しない
+   *     場合はSEND_HISTORY_CONFLICTとして拒否する（checkSendHistoryVersion_参照）。
    *
-   * 処理順序: Lock取得 → 最新レコード再読込 → URL形式検証 → 事前判定
-   *   （evaluatePaymentLinkEligibility_） → MailApp送信 → 成功: stripePaymentLinkUrl /
-   *   paymentLinkSentAt / paymentLinkSentTo / paymentLinkSendCountを更新し、
-   *   paymentLinkLastError*をクリア → Lock解除。
+   * 処理順序: Lock取得 → 最新レコード再読込 → 競合チェック（checkSendHistoryVersion_）→
+   *   事前判定（evaluatePaymentLinkEligibility_） → URL形式検証 → MailApp送信 →
+   *   成功: まずpaymentLinkSentAtのみを単独で更新（二重送信防止の要となる列を
+   *   isolateして書き込み、他フィールドの書き込み失敗に巻き込まれないようにする）→
+   *   その書き込みに成功した場合のみstripePaymentLinkUrl/paymentLinkSentTo/
+   *   paymentLinkSendCount/エラー系列を更新 → Lock解除。
    * 送信失敗（設定不足・MailApp例外のいずれも）でも予約のstatusは一切変更しない
    * （Issue #334本文どおり。PENDINGのまま維持し、管理者が原因解消後に再送できる）。
+   *
+   * PRレビュー対応（履行未確認の二重送信防止）: 従来はpaymentLinkSentAtを含む6フィールドを
+   * 1回のupdateBookingFields呼び出しで更新し、その呼び出し全体が失敗した場合は
+   * Loggerへ記録するだけでsuccess:trueを返していた。これには次の問題があった:
+   * - MailApp.sendEmailに成功した直後にSheets書き込みが失敗すると、paymentLinkSentAtが
+   *   空のまま残る。次回、管理者が「通常の送信」ボタン（forceなし）を押すと、
+   *   ALREADY_SENT判定に引っかからずに再送してしまい、二重送信になり得る。
+   * - 失敗が起きたこと自体もBooking Admin側からは分からない（ログのみ）。
+   * そのため、paymentLinkSentAtの書き込みを他のフィールドから分離し、単独で失敗した
+   * 場合は「送信済みかもしれないが未確認」の状態としてpaymentLinkSendUnconfirmedAtへ
+   * 記録し、Recoveryにも記録する。この状態はALREADY_SENTと同じくforceがない限り
+   * 通常送信を拒否する（evaluatePaymentLinkEligibility_のSEND_UNCONFIRMED判定）。
+   * 呼び出し元にはsuccess:falseかつrequiresManualConfirmation:trueを返し、管理者に
+   * 実際の到達確認を促す。
    */
   function sendPaymentLinkMailForBooking(bookingId, paymentLinkUrl, options) {
     var opts = options || {};
@@ -730,6 +811,17 @@ var BookingMailer = (function () {
     }
 
     return withLockedBookingRecord_(bookingId, function (record) {
+      var versionCheck = checkSendHistoryVersion_(record, opts.expectedSendCount);
+      if (!versionCheck.ok) {
+        return {
+          success: false,
+          skipped: true,
+          bookingId: bookingId,
+          mailType: MAIL_TYPES.PAYMENT_LINK,
+          error: { code: 'SEND_HISTORY_CONFLICT', message: versionCheck.message }
+        };
+      }
+
       var evaluation = evaluatePaymentLinkEligibility_(record, { force: !!opts.force, now: opts.now });
       if (!evaluation.eligible) {
         var reasonCode = evaluation.reasonCode;
@@ -749,6 +841,11 @@ var BookingMailer = (function () {
       var mail;
       try {
         mailConfig = ensureMailConfigComplete_();
+        /* PRレビュー対応: sendPendingMailForBookingと同じく、支払期限の計算に必要な
+           minHoursBeforeStartをconfig.ttlConfigとして追加で渡す（このコールを忘れると
+           buildPaymentLinkMail側でttlConfig.minHoursBeforeStartがundefinedになり、
+           支払期限が計算できず本文の期限表示が欠落する）。 */
+        mailConfig.ttlConfig = BookingConfig.getTtlConfig();
         mail = BookingMailTemplates.buildPaymentLinkMail(record, mailConfig, paymentLinkUrl);
       } catch (buildError) {
         recordPaymentLinkMailFailure_(bookingId, buildError, record.status);
@@ -769,21 +866,53 @@ var BookingMailer = (function () {
       }
 
       var sentAt = new Date();
+
+      /* 二重送信防止の要となる列を単独で更新する。他のフィールド（URL/送信先/送信回数等）と
+         同じ呼び出しにまとめないのは、1回のupdateBookingFields呼び出しが複数フィールドを
+         順に書き込む実装のため、途中のフィールドで例外が起きるとpaymentLinkSentAtの書き込み
+         成否があいまいになるのを避けるため（このファイル冒頭のコメント参照）。 */
+      var criticalWriteFailed = false;
+      try {
+        SpreadsheetRepository.updateBookingFields(bookingId, { paymentLinkSentAt: sentAt });
+      } catch (criticalError) {
+        criticalWriteFailed = true;
+      }
+
+      if (criticalWriteFailed) {
+        try {
+          SpreadsheetRepository.updateBookingFields(bookingId, { paymentLinkSendUnconfirmedAt: sentAt });
+        } catch (fallbackError) {
+          Logger.log('BookingMailer: paymentLinkSendUnconfirmedAtの記録にも失敗しました: ' + sanitizeErrorMessage_(describeError_(fallbackError)));
+        }
+        recordPaymentLinkSendUnconfirmed_(bookingId, record.status);
+        return {
+          success: false,
+          mailSent: true,
+          requiresManualConfirmation: true,
+          bookingId: bookingId,
+          mailType: MAIL_TYPES.PAYMENT_LINK,
+          error: {
+            code: 'PAYMENT_LINK_HISTORY_UPDATE_FAILED',
+            message: 'メールは送信された可能性がありますが、送信履歴の記録に失敗しました。実際に届いているか確認したうえで、必要であれば管理者が明示的に再送してください。'
+          }
+        };
+      }
+
       var nextSendCount = (Number(record.paymentLinkSendCount) || 0) + 1;
       try {
         SpreadsheetRepository.updateBookingFields(bookingId, {
           stripePaymentLinkUrl: paymentLinkUrl,
-          paymentLinkSentAt: sentAt,
           paymentLinkSentTo: record.email,
           paymentLinkSendCount: nextSendCount,
+          paymentLinkSendUnconfirmedAt: '',
           paymentLinkLastErrorAt: '',
           paymentLinkLastErrorMessage: ''
         });
       } catch (sheetsError) {
-        /* メール送信自体は成功済み。既存sentAtFields更新失敗時と同じ方針で例外を投げず
-           Loggerへ残す（次回自動判定はまだpaymentLinkSentAtが空のため再送されうる旨は
-           README「制約」節に明記する）。 */
-        Logger.log('BookingMailer: paymentLinkSentAt等の更新に失敗しました（メール送信自体は成功）: ' + sanitizeErrorMessage_(describeError_(sheetsError)));
+        /* 二重送信防止の要となるpaymentLinkSentAtは既に記録済みのため、ここでの失敗は
+           URL・送信先・送信回数等の付随情報が更新されないだけで、二重送信にはつながらない。
+           既存の他メール種別と同じ方針でLoggerへ残すのみとする。 */
+        Logger.log('BookingMailer: 決済リンク送信の付随情報（URL/送信先/送信回数/エラー系列のクリア）の更新に失敗しました（送信・二重送信防止用のpaymentLinkSentAtの記録自体は成功済み）: ' + sanitizeErrorMessage_(describeError_(sheetsError)));
       }
 
       return {

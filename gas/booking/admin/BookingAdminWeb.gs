@@ -216,7 +216,11 @@ function getAdminBookingDetail(bookingId) {
       paymentLinkSentTo: record.paymentLinkSentTo || '',
       paymentLinkSendCount: Number(record.paymentLinkSendCount) || 0,
       paymentLinkLastErrorAt: formatAdminDateTime_(record.paymentLinkLastErrorAt, timezone),
-      paymentLinkLastErrorMessage: record.paymentLinkLastErrorMessage || ''
+      paymentLinkLastErrorMessage: record.paymentLinkLastErrorMessage || '',
+      /* PRレビュー対応: 送信履行が未確認（MailApp送信は成功したがpaymentLinkSentAtの
+         記録に失敗した）状態を予約詳細へ表示するための項目。空でなければ、通常送信
+         （forceなし）はGAS側で拒否される（BookingMailer.gs参照）。 */
+      paymentLinkSendUnconfirmedAt: formatAdminDateTime_(record.paymentLinkSendUnconfirmedAt, timezone)
     }
   };
 }
@@ -246,7 +250,12 @@ function adminReviveExpiredBooking(bookingId) {
  * 期限の再検証・二重送信防止・送信履歴の記録）はコピーしない。送信前の内容確認
  * ダイアログ（予約者名・メール・利用日時・支払期限・送信するURLの表示）と、
  * 「明示的な再送」かどうかの判断はHTML側（クライアント）で行い、forceのみここへ渡す。
+ *
+ * expectedSendCount（PRレビュー対応。同時再送の競合防止）: クライアントが最後に
+ * 取得した予約詳細のpaymentLinkSendCountをそのまま渡す。BookingMailer.gsの
+ * checkSendHistoryVersion_が、Lock取得後の最新値と比較し、別タブ・別端末による
+ * 先行送信が既にあれば古い画面からのこの呼び出しをSEND_HISTORY_CONFLICTとして拒否する。
  */
-function adminSendCardPaymentLink(bookingId, paymentLinkUrl, force) {
-  return sendCardPaymentLinkMail(bookingId, paymentLinkUrl, { force: !!force });
+function adminSendCardPaymentLink(bookingId, paymentLinkUrl, force, expectedSendCount) {
+  return sendCardPaymentLinkMail(bookingId, paymentLinkUrl, { force: !!force, expectedSendCount: expectedSendCount });
 }

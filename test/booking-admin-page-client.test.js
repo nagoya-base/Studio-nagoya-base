@@ -1284,7 +1284,8 @@ function paymentLinkDetailBooking(overrides) {
       paymentLinkSentTo: '',
       paymentLinkSendCount: 0,
       paymentLinkLastErrorAt: '',
-      paymentLinkLastErrorMessage: ''
+      paymentLinkLastErrorMessage: '',
+      paymentLinkSendUnconfirmedAt: ''
     },
     overrides || {}
   );
@@ -1313,6 +1314,28 @@ test('paymentLinkStatusLabel_: paymentLinkSentAtの有無で「送信済み」�
   var sandbox = loadClientSandbox();
   assert.strictEqual(sandbox.paymentLinkStatusLabel_(paymentLinkDetailBooking()), '未送信');
   assert.strictEqual(sandbox.paymentLinkStatusLabel_(paymentLinkDetailBooking({ paymentLinkSentAt: '2026-10-01 10:00' })), '送信済み');
+});
+
+test('paymentLinkStatusLabel_: paymentLinkSendUnconfirmedAtがある場合は「送信済み」より優先して「送信結果未確認（要確認）」を返す（PRレビュー対応）', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(
+    sandbox.paymentLinkStatusLabel_(paymentLinkDetailBooking({ paymentLinkSendUnconfirmedAt: '2026-10-01 10:00' })),
+    '送信結果未確認（要確認）'
+  );
+  assert.strictEqual(
+    sandbox.paymentLinkStatusLabel_(paymentLinkDetailBooking({
+      paymentLinkSentAt: '2026-09-30 10:00',
+      paymentLinkSendUnconfirmedAt: '2026-10-01 10:00'
+    })),
+    '送信結果未確認（要確認）'
+  );
+});
+
+test('paymentLinkRequiresExplicitResend_: paymentLinkSentAt・paymentLinkSendUnconfirmedAtのいずれかがあればtrue（PRレビュー対応。通常送信ではなく明示的な再送として扱う判定）', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.paymentLinkRequiresExplicitResend_(paymentLinkDetailBooking()), false);
+  assert.strictEqual(sandbox.paymentLinkRequiresExplicitResend_(paymentLinkDetailBooking({ paymentLinkSentAt: '2026-10-01 10:00' })), true);
+  assert.strictEqual(sandbox.paymentLinkRequiresExplicitResend_(paymentLinkDetailBooking({ paymentLinkSendUnconfirmedAt: '2026-10-01 10:00' })), true);
 });
 
 test('buildPaymentLinkConfirmMessage_: 予約者名・メール・利用開始/終了・支払期限・Stripe URLを含む（Issue #334本文の送信前確認要件）', function () {
@@ -1354,6 +1377,13 @@ test('showDetailModal: カード決済PENDINGは送信欄を表示し、未送�
   assert.strictEqual(sandbox.paymentLinkUi_.urlInput.value, 'https://buy.stripe.com/test_ABC123');
 });
 
+test('showDetailModal: 送信履行が未確認（paymentLinkSendUnconfirmedAtのみ）の場合も「決済リンクを再送」を表示する（PRレビュー対応。通常の未送信として送信させない）', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(paymentLinkDetailBooking({ paymentLinkSendUnconfirmedAt: '2026-10-01 10:00' }));
+  assert.strictEqual(sandbox.paymentLinkUi_.sendButton.textContent, '決済リンクを再送');
+  assert.match(sandbox.paymentLinkUi_.statusEl.innerHTML, /送信結果未確認/);
+});
+
 test('showDetailModal: カード決済でもPENDING以外は入力・送信ボタンを無効化する（対象外への送信を防ぐ表示制御）', function () {
   var sandbox = loadClientSandbox();
   sandbox.showDetailModal(paymentLinkDetailBooking({ status: 'CONFIRMED' }));
@@ -1393,6 +1423,56 @@ test('runSendPaymentLink_: buy.stripe.com形式に一致しないURLはalertの�
   assert.strictEqual(sandbox.google.script.run.calls.length, 0);
 });
 
+/*
+ * PRレビュー対応（前後の空白の扱いを統一）: 以前はtrim()した値を検証・送信していたため、
+ * 前後に空白を含む入力が黙って除去されたうえで送信されてしまっていた。GAS側
+ * （Booking.isValidStripePaymentLinkUrl）はtrimせずに検証するため、ここでも同じ方針に
+ * 統一し、空白を含む入力はそのまま送信せず入力エラーとして案内する。
+ */
+test('runSendPaymentLink_: 前後に空白のあるURLはtrimして送信せず、入力エラーとしてalertのみでgoogle.script.runを呼ばない（GAS側と同じURL検証方針への統一）', function () {
+  var sandbox = loadClientSandbox();
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  sandbox.showDetailModal(paymentLinkDetailBooking());
+  sandbox.paymentLinkUi_.urlInput.value = ' https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  assert.strictEqual(alerts.length, 1);
+  assert.match(alerts[0], /空白/);
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0, '空白を含む入力をtrimして送信してはいけない');
+});
+
+test('runSendPaymentLink_: 末尾に空白のあるURLも同様に入力エラーとして拒否する', function () {
+  var sandbox = loadClientSandbox();
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  sandbox.showDetailModal(paymentLinkDetailBooking());
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123 ';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  assert.strictEqual(alerts.length, 1);
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
+test('runSendPaymentLink_: 空白のみの入力は「URLを入力してください」の案内になる（入力エラーの文言を区別する）', function () {
+  var sandbox = loadClientSandbox();
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  sandbox.showDetailModal(paymentLinkDetailBooking());
+  sandbox.paymentLinkUi_.urlInput.value = '   ';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  assert.strictEqual(alerts.length, 1);
+  assert.match(alerts[0], /入力してください/);
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
 test('runSendPaymentLink_: 確認ダイアログでキャンセルした場合は送信しない', function () {
   var sandbox = loadClientSandbox({ confirmResult: false });
   sandbox.showDetailModal(paymentLinkDetailBooking());
@@ -1416,7 +1496,7 @@ test('runSendPaymentLink_: 確認後にbookingId・URL・isResend(false)を渡�
   var calls = sandbox.google.script.run.calls;
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0].name, 'adminSendCardPaymentLink');
-  assert.deepStrictEqual(calls[0].args, [booking.bookingId, 'https://buy.stripe.com/test_ABC123', false]);
+  assert.deepStrictEqual(calls[0].args, [booking.bookingId, 'https://buy.stripe.com/test_ABC123', false, booking.paymentLinkSendCount]);
   assert.strictEqual(sandbox.paymentLinkUi_.sendButton.disabled, true, '送信中はボタンを無効化する');
 });
 
@@ -1431,6 +1511,82 @@ test('runSendPaymentLink_: 送信済みの予約では isResend(true) を渡す�
 
   var calls = sandbox.google.script.run.calls;
   assert.strictEqual(calls[0].args[2], true);
+});
+
+test('runSendPaymentLink_: 送信履行が未確認（paymentLinkSendUnconfirmedAtのみ）の予約でも isResend(true) を渡す', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var booking = paymentLinkDetailBooking({ paymentLinkSendUnconfirmedAt: '2026-10-01 10:00' });
+  sandbox.showDetailModal(booking);
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  var calls = sandbox.google.script.run.calls;
+  assert.strictEqual(calls[0].args[2], true);
+});
+
+/*
+ * PRレビュー対応（同時再送の競合防止）: 画面が把握しているpaymentLinkSendCount
+ * （expectedSendCount）を第4引数としてそのままadminSendCardPaymentLinkへ渡すことを確認する。
+ * 実際の競合判定・拒否自体はGAS側（BookingMailer.gsのcheckSendHistoryVersion_）の責務のため、
+ * test/booking-mailer.test.js・test/booking-admin-web.test.jsで検証する。ここでは配線のみ確認する。
+ */
+test('runSendPaymentLink_: 画面が把握しているpaymentLinkSendCountをexpectedSendCountとして第4引数へ渡す', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var booking = paymentLinkDetailBooking({ paymentLinkSentAt: '2026-10-01 10:00', paymentLinkSendCount: 3 });
+  sandbox.showDetailModal(booking);
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  var calls = sandbox.google.script.run.calls;
+  assert.strictEqual(calls[0].args[3], 3);
+});
+
+test('runSendPaymentLink_: requiresManualConfirmation:trueの応答では「送信結果を確認できませんでした」の案内を出し、詳細・一覧を再取得する', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  var booking = paymentLinkDetailBooking();
+  sandbox.showDetailModal(booking);
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+  sandbox.google.script.run.resolveCall(0, {
+    success: false,
+    mailSent: true,
+    requiresManualConfirmation: true,
+    error: { code: 'PAYMENT_LINK_HISTORY_UPDATE_FAILED', message: '送信履歴の記録に失敗しました。' }
+  });
+
+  assert.strictEqual(alerts.length, 1);
+  assert.match(alerts[0], /送信結果を確認できませんでした/);
+  var callNames = sandbox.google.script.run.calls.map(function (c) { return c.name; });
+  assert.ok(callNames.indexOf('getAdminBookingDetail') !== -1, '詳細を再取得するべき');
+  assert.ok(callNames.indexOf('getAdminBookings') !== -1, '一覧を再取得するべき');
+});
+
+test('runSendPaymentLink_: SEND_HISTORY_CONFLICTの応答では「他の画面から既に操作された可能性」の案内を出す', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  var booking = paymentLinkDetailBooking();
+  sandbox.showDetailModal(booking);
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+  sandbox.google.script.run.resolveCall(0, {
+    success: false,
+    skipped: true,
+    error: { code: 'SEND_HISTORY_CONFLICT', message: '他の画面から既に送信された可能性があります。' }
+  });
+
+  assert.strictEqual(alerts.length, 1);
+  assert.match(alerts[0], /他の画面から既に操作された可能性/);
 });
 
 test('runSendPaymentLink_: 応答待ちの間に連打しても、二重にgoogle.script.runを呼ばない（連打・同時操作による重複送信防止）', function () {

@@ -1793,6 +1793,12 @@ PR-A（GAS側の期限管理・失効通知・手動復活）・PR-B（利用者
 本文が確定仕様として優先される。** 台帳の列追加はPR-Aの`expiredMailSentAt`の**後ろ**に
 末尾追記した。
 
+**PR #337レビュー対応（4点）を本節に反映済み**: ①メール送信後の送信履歴（Sheets）保存
+失敗時の扱い（履行未確認の二重送信防止）、②同時再送の競合防止（画面のバージョンと
+Lock取得後の最新履歴の比較）、③支払期限の設定（`BookingConfig.getTtlConfig()`）の
+受け渡し漏れの修正、④Stripe URLの前後空白の扱いの統一（GAS側と同じfail-closedな
+検証へ統一）。詳細は各節参照。
+
 ### 確定仕様（PR-C）
 
 - 対象は**支払方法がオンラインクレジットカード（`Booking.PAYMENT_METHOD_CARD`）かつ
@@ -1820,9 +1826,16 @@ PR-A（GAS側の期限管理・失効通知・手動復活）・PR-B（利用者
   許可しない正規表現）と同じ方針で、**trimしてから緩く検証するのではなく、生の値を
   そのまま`^...$`へ通すfail-closedな検証**にした。空白を含む入力はGAS側で
   `INVALID_PAYMENT_LINK_URL`として拒否される。
-- フロント側（`admin/booking/booking-admin.js`の`isValidStripePaymentLinkUrlClient`）にも
-  同じ正規表現で即時フィードバック用の事前チェックを入れているが、送信可否の正は必ず
-  GAS側の`sendPaymentLinkMailForBooking`とする（フロント側のチェックをバイパスしても
+- **PR #337レビュー対応（前後の空白の扱いを統一）**: フロント側（`admin/booking/
+  booking-admin.js`の`isValidStripePaymentLinkUrlClient`／`runSendPaymentLink_`）も、
+  以前は入力値を`trim()`してから検証・送信していたため、前後に空白を含む入力が
+  黙って除去されたうえで送信されてしまい、GAS側の「trimせずに検証する」方針と
+  食い違っていた。これを修正し、フロント側も**trimせず生の入力値のまま**検証する
+  よう統一した。前後に空白を含む入力・空文字（空白のみを含む）は、そのまま送信せず
+  それぞれ専用の案内文で入力エラーとして案内する（空文字・空白のみ→「URLを入力
+  してください」、空白を含む・形式不一致→「URLの形式が正しくありません。前後に
+  空白が入っていないか確認し…」）。送信可否の正は変わらずGAS側の
+  `sendPaymentLinkMailForBooking`とする（フロント側のチェックをバイパスしても
   GAS側で必ず拒否される）。
 - Stripe APIによるリンク生成・Stripe Webhookの実装はこのPRの対象外。
 
@@ -1836,7 +1849,19 @@ PR-A（GAS側の期限管理・失効通知・手動復活）・PR-B（利用者
 - 支払期限は`Booking.computeCardPaymentDueMillis`のみを正として計算する
   （`BookingAdminWeb.gs`の`computeAdminCardPaymentDueAt_`・`BookingMailTemplates.
   buildPendingMail`の仮受付カード案内と同じ1関数。表示用・判定用・メール文面用で
-  別計算・別定数を持たない）。
+  別計算・別定数を持たない）。**PR #337レビュー対応（設定の受け渡し漏れの修正）**:
+  当初、`BookingMailer.sendPaymentLinkMailForBooking`が`ensureMailConfigComplete_()`の
+  戻り値（displayName/replyTo/contactEmail/timezoneのみ）をそのまま
+  `BookingMailTemplates.buildPaymentLinkMail`へ渡し、`sendPendingMailForBooking`が行っている
+  `config.ttlConfig = BookingConfig.getTtlConfig();`の1行を渡し忘れていた。この結果、
+  `buildPaymentLinkMail`側で`ttlConfig.minHoursBeforeStart`が`undefined`になり支払期限が
+  計算できず、本文が常に「支払期限:（お問い合わせください）」になってしまう不具合が
+  あった（送信可否判定の`evaluatePaymentLinkEligibility_`は独自に
+  `BookingConfig.getTtlConfig()`を呼ぶため影響を受けず、この回帰はテストで見つかりに
+  くかった）。`sendPaymentLinkMailForBooking`にも同じ1行を追加し、送信可否判定・
+  Booking Admin表示・仮受付メール・決済リンクメールのすべてが同じ
+  `Booking.computeCardPaymentDueMillis`と`BookingConfig.getTtlConfig()`を使う状態に
+  揃えた（`test/booking-mailer.test.js`に配線の回帰確認テストを追加）。
 - 料金は表示しない（Bookings台帳に確定料金列がないため。Stripeの決済リンク自体の画面で
   確認する運用）。文面は日本語で、既存Bookingメールテンプレート（`joinNonEmpty_`・
   `contactLine_`・曜日表示等）の構造をそのまま使う。
@@ -1860,34 +1885,118 @@ PR-A（GAS側の期限管理・失効通知・手動復活）・PR-B（利用者
   （失敗時に予約statusを変更しないため、原因解消後は管理者が明示的な再送操作で
   再試行する）。
 
+#### PR #337レビュー対応①: メール送信後の送信履歴（Sheets）保存失敗時の扱い（履行未確認の二重送信防止）
+
+当初の実装は、`MailApp.sendEmail`成功後に`stripePaymentLinkUrl`/`paymentLinkSentAt`/
+`paymentLinkSentTo`/`paymentLinkSendCount`/エラー系列クリアの6フィールドを1回の
+`updateBookingFields`呼び出しでまとめて更新し、その呼び出し自体が失敗した場合は
+Loggerへ記録するだけで`success:true`を返していた。これには次の問題があった:
+
+- メールは送信済みなのに、二重送信防止の要となる`paymentLinkSentAt`が空のまま残る。
+- 次に管理者が「通常の送信」ボタン（forceなし）を押すと、`ALREADY_SENT`判定に
+  引っかからずにそのまま再送してしまい、二重送信になり得る。
+- 失敗が起きたこと自体がBooking Admin側からは分からない（ログのみ）。
+
+これを修正し、`sendPaymentLinkMailForBooking`は次の手順で書き込む:
+
+1. `paymentLinkSentAt`のみを**単独**の`updateBookingFields`呼び出しで先に更新する
+   （他のフィールドと同じ呼び出しにまとめない。1回の`updateBookingFields`呼び出しは
+   複数フィールドを順に書き込む実装のため、途中のフィールドで例外が起きると
+   `paymentLinkSentAt`の書き込み成否があいまいになるのを避けるため）。
+2. この単独更新が**失敗**した場合、「メールは送信された可能性があるが、履行を確定
+   できない」状態と判断し、`paymentLinkSendUnconfirmedAt`（新規列。後述）へ同じ送信
+   時刻を記録（このフォールバック書き込み自体が失敗してもLoggerへ記録して処理は
+   続ける）し、Recoveryへ`failureType: 'PAYMENT_LINK_SEND_HISTORY_UPDATE_FAILED'`で
+   記録する。呼び出し元には`success:false`・`mailSent:true`・
+   `requiresManualConfirmation:true`（`error.code: 'PAYMENT_LINK_HISTORY_UPDATE_FAILED'`）
+   を返し、Booking Adminは「送信結果を確認できませんでした（メールは送信された
+   可能性があります）」と案内する。
+3. `paymentLinkSendUnconfirmedAt`が空でない間は、`evaluatePaymentLinkEligibility_`が
+   `SEND_UNCONFIRMED`として**通常送信（forceなし）を拒否する**（`ALREADY_SENT`と同じ
+   優先順位・同じくforceで無視できる）。つまり履行未確認の予約は、他のSentAt列と
+   同じ「空の場合だけ通常送信の対象になる」二重送信防止の仕組みにそのまま乗る。
+4. この単独更新が**成功**した場合のみ、URL・送信先・送信回数・
+   `paymentLinkSendUnconfirmedAt`のクリア・エラー系列のクリアを2回目の
+   `updateBookingFields`呼び出しでまとめて更新する。この2回目が失敗しても、二重送信
+   防止の要となる`paymentLinkSentAt`は既に記録済みのため、Loggerへ記録するのみで
+   `success:true`を返す（送信回数等の付随情報が更新されないだけで、二重送信には
+   つながらない）。
+5. 明示的な再送（force）に成功すると、`paymentLinkSendUnconfirmedAt`は自動的に空へ
+   戻る。
+
+`test/booking-mailer.test.js`に、`SpreadsheetRepository.updateBookingFields`を
+`paymentLinkSentAt`単独呼び出し時にのみ失敗させるスタブ（`stubCriticalSentAtWriteFailure_`）
+を使った部分失敗テストを追加した（履行未確認状態への遷移・Recovery記録・通常送信の
+拒否・明示的な再送での復旧の4点を検証）。
+
+#### PR #337レビュー対応②: 同時再送の競合防止
+
+別タブ・別端末から同じ予約に対して同時に操作した場合、`LockService`はGAS実行の直列化
+（互いに待たせる）はするが、それぞれが独立に「送信してよい」と判断して`force:true`を
+渡してくる場合まではブロックしない（例: 両方が同じ`paymentLinkSendCount`を見た状態で
+明示的な再送を選ぶと、直列化はされるが両方とも実際に送信されてしまう）。
+
+これを防ぐため、Booking Adminの画面が最後に取得した`paymentLinkSendCount`
+（＝「画面が知っている送信履歴のバージョン」）を`expectedSendCount`としてサーバーへ渡し、
+`BookingMailer.gs`の`checkSendHistoryVersion_`が、Lock取得後に再読込した最新の
+`paymentLinkSendCount`と比較する。一致しない場合は、別タブ・別端末が既に送信操作を
+行ったと判断し、`error.code: 'SEND_HISTORY_CONFLICT'`として拒否する（メール送信・
+Sheets更新のいずれも行わない）。この競合チェックは**通常送信・明示的な再送の両方に
+適用する**（`force`は「送信済みでも送る」ことの許可であり、「古い前提のまま送る」
+ことの許可ではないため、`force`でもこの競合チェックは無視しない）。
+`expectedSendCount`を渡さない呼び出し（省略時）は、この競合チェック自体を行わない
+（新しいクライアントのみが検知できる追加の安全策のため、省略時に既存挙動を壊さない）。
+
+配線: `admin/booking/booking-admin.js`の`runSendPaymentLink_`が、開いている詳細
+（`currentDetailBooking_.paymentLinkSendCount`）をそのまま`adminSendCardPaymentLink`の
+第4引数へ渡す → `BookingAdminWeb.gs`の`adminSendCardPaymentLink(bookingId, paymentLinkUrl,
+force, expectedSendCount)`が`options.expectedSendCount`としてそのまま
+`sendCardPaymentLinkMail`（`BookingAdmin.gs`）→`BookingMailer.sendPaymentLinkMailForBooking`
+へ渡す（いずれも値を変換・検証せずそのまま中継するだけで、競合判定自体は
+`checkSendHistoryVersion_`の1箇所に集約する）。
+
+`test/booking-mailer.test.js`・`test/booking-admin-web.test.js`の両方に、通常送信・
+明示的な再送それぞれについて「タブA（先行）は成功し、タブB（画面を再取得していない
+古い前提）は`SEND_HISTORY_CONFLICT`で拒否される」形の競合テストを追加した。
+
 ### 送信履歴・エラー管理（Bookingsシートへの列追加）
 
 `SpreadsheetRepository.gs`の`HEADERS_`へ、`expiredMailSentAt`（Issue #334 PR-A）の
-**後ろ**に次の6列を末尾追記した（既存列の順番は変更していない）:
+**後ろ**に次の7列を末尾追記した（既存列の順番は変更していない。7列目
+`paymentLinkSendUnconfirmedAt`はPR #337レビュー対応で追加した）:
 
 - `stripePaymentLinkUrl`: 管理者が最後に入力・送信したStripe Payment Link URL。
-- `paymentLinkSentAt`: 決済リンクメールの送信に成功した直近の日時。空の場合だけ通常送信
-  の対象になる（二重送信防止の基準列。他のSentAt列と同じ方式）。
+- `paymentLinkSentAt`: 決済リンクメールの送信に成功し、かつその履行を記録できた直近の
+  日時。空の場合だけ通常送信の対象になる（二重送信防止の基準列。他のSentAt列と同じ方式）。
 - `paymentLinkSentTo`: 直近の送信に成功した宛先メールアドレス（送信時点の`record.email`）。
 - `paymentLinkSendCount`: 決済リンクメールの送信成功回数（初回送信・明示的な再送を問わず、
-  成功するたびに1加算する）。
+  履行を確定できた送信が成功するたびに1加算する）。Booking Admin画面が「送信履歴の
+  バージョン」として保持し、同時再送の競合検知（`expectedSendCount`）にも使う
+  （「二重送信防止と明示的な再送」節「PR #337レビュー対応②」参照）。
 - `paymentLinkLastErrorAt` / `paymentLinkLastErrorMessage`: 決済リンクメールの直近の送信
   失敗時刻・エラー内容（`BookingMailer.sanitizeErrorMessage`でredaction済み）。**既存の
   `lastMailErrorAt`/`lastMailErrorType`/`lastMailErrorMessage`（他のメール種別が共有する
   列）とは別の専用列とする。** Booking Admin予約詳細で決済リンク送信専用の送信状態
   （未送信/送信済み・送信回数・最終送信エラー）を表示する要件があり、他メール種別の
   エラーと混在させると誤表示になるため。次回の送信に成功すると自動的に空へ戻す。
-- 送信失敗時はRecoveryシートへ`failureType: 'PAYMENT_LINK_MAIL_FAILED'`として記録する
-  （`status`列には呼び出し時点の予約status＝PENDINGを記録する。他の`MAIL_*_FAILED`と
-  同じ記録方式）。
-- 送信失敗時は予約statusを一切変更しない（PENDINGのまま維持する）。管理者が
-  `paymentLinkLastErrorMessage`・Recoveryシートで失敗内容を確認し、原因解消後に
-  Booking Admin予約詳細から安全に再試行（明示的な再送）できる。
+- `paymentLinkSendUnconfirmedAt`（PR #337レビュー対応で追加）: MailApp.sendEmailは成功
+  したが、直後の`paymentLinkSentAt`単独更新が失敗し、送信済みかどうかを確定できない
+  場合の日時。空でない間は、`paymentLinkSentAt`と同じ二重送信防止の仕組みにより
+  **通常送信（forceなし）を拒否する**（詳細は「二重送信防止と明示的な再送」節
+  「PR #337レビュー対応①」参照）。次に送信履行が確定すると自動的に空へ戻る。
+- 送信失敗時はRecoveryシートへ`failureType: 'PAYMENT_LINK_MAIL_FAILED'`（メール送信
+  自体の失敗）または`'PAYMENT_LINK_SEND_HISTORY_UPDATE_FAILED'`（メール送信は成功したが
+  履行の記録に失敗）として記録する（`status`列には呼び出し時点の予約status＝PENDINGを
+  記録する。他の`MAIL_*_FAILED`と同じ記録方式）。
+- いずれの失敗でも予約statusを一切変更しない（PENDINGのまま維持する）。管理者が
+  `paymentLinkLastErrorMessage`・`paymentLinkSendUnconfirmedAt`・Recoveryシートで内容を
+  確認し、原因解消後・実際の到達確認後にBooking Admin予約詳細から安全に再試行
+  （明示的な再送）できる。
 
 **本番反映時の注意（本PRでは実施しない）**: 台帳に新規列（`stripePaymentLinkUrl`〜
-`paymentLinkLastErrorMessage`の6列）を追加したため、本番反映時は既存Booking Admin
+`paymentLinkSendUnconfirmedAt`の7列）を追加したため、本番反映時は既存Booking Admin
 デプロイをnew versionで更新し、既存`/exec` URLを維持したうえで、**本番Bookingsシートの
-ヘッダー行へこの6列を`expiredMailSentAt`の後ろに手動で追記**すること（ヘッダー行は
+ヘッダー行へこの7列を`expiredMailSentAt`の後ろに手動で追記**すること（ヘッダー行は
 シートが空のときしか自動で書かれないため。詳細は「Spreadsheet構成」節参照）。
 
 ### Booking Admin UIの変更
@@ -1895,12 +2004,13 @@ PR-A（GAS側の期限管理・失効通知・手動復活）・PR-B（利用者
 - `BookingAdminWeb.gs`の`getAdminBookingDetail`が、決済リンク送信欄の表示制御・送信状態
   表示用に`isCardPayment`（`Booking.isCardPaymentMethod`と同じ判定の真偽値）・
   `stripePaymentLinkUrl`・`paymentLinkSentAt`・`paymentLinkSentTo`・`paymentLinkSendCount`・
-  `paymentLinkLastErrorAt`・`paymentLinkLastErrorMessage`を追加で返す。既存の
-  `getAdminBookings`（一覧）・`hasMailError`の扱い（詳細フィールドを一覧へ出さない方針）は
-  変更していない。
+  `paymentLinkLastErrorAt`・`paymentLinkLastErrorMessage`・`paymentLinkSendUnconfirmedAt`
+  （PR #337レビュー対応で追加）を追加で返す。既存の`getAdminBookings`（一覧）・
+  `hasMailError`の扱い（詳細フィールドを一覧へ出さない方針）は変更していない。
 - `BookingAdmin.gs`に正式関数`sendCardPaymentLinkMail(bookingId, paymentLinkUrl, options)`
   （`BookingMailer.sendPaymentLinkMailForBooking`へそのまま委譲）を追加した。
-  `BookingAdminWeb.gs`の`adminSendCardPaymentLink(bookingId, paymentLinkUrl, force)`が
+  `BookingAdminWeb.gs`の`adminSendCardPaymentLink(bookingId, paymentLinkUrl, force,
+  expectedSendCount)`（第4引数はPR #337レビュー対応で追加。同時再送の競合検知用）が
   Web UIから同じ関数へ委譲する（confirm/cancel/reviveと同じ「独自ロジックを持たない
   薄いラッパー」の方針）。Spreadsheetカスタムメニューへは追加していない
   （Issue #334本文が対象とするのはBooking Admin予約詳細のUIのみのため）。
@@ -1925,15 +2035,29 @@ PR-A（GAS側の期限管理・失効通知・手動復活）・PR-B（利用者
   明示的な再送（force）・force下でもstatus等の不一致は無視しないこと・メール送信失敗時に
   status不変かつ専用のpaymentLinkLastError*へ記録されRecoveryへも記録されること・送信
   成功でエラーがクリアされること・メールアドレス未登録拒否・LockService連携を検証する。
+  **PR #337レビュー対応で追加**: `paymentLinkSentAt`単独更新の失敗（履行未確認）時に
+  `requiresManualConfirmation:true`を返しRecoveryへ記録すること・履行未確認の間は通常
+  送信を拒否し明示的な再送でのみ復旧できること（部分失敗テスト）、通常送信・明示的な
+  再送それぞれについて`expectedSendCount`が古い場合に`SEND_HISTORY_CONFLICT`で拒否する
+  こと（競合テスト）、`buildPaymentLinkMail`へ`BookingConfig.getTtlConfig()`が実際に
+  渡り、Booking Admin表示・仮受付メールと同じ支払期限が本文に入ること（配線の回帰確認）。
 - `test/booking-admin-web.test.js` — `getAdminBookingDetail`の`isCardPayment`・決済リンク
-  関連フィールドの初期値、`adminSendCardPaymentLink`が`sendCardPaymentLinkMail`へ委譲して
-  いること（送信成功・二重送信防止・明示的な再送・対象外拒否・不正URL拒否）を検証する。
+  関連フィールド（`paymentLinkSendUnconfirmedAt`を含む）の初期値、`adminSendCardPaymentLink`
+  が`sendCardPaymentLinkMail`へ委譲していること（送信成功・二重送信防止・明示的な再送・
+  対象外拒否・不正URL拒否）を検証する。**PR #337レビュー対応で追加**:
+  `expectedSendCount`（第4引数）を渡した競合検知（通常送信・明示的な再送の両方）、
+  履行未確認状態がWeb UI層まで正しく伝わること（`requiresManualConfirmation`・
+  `paymentLinkSendUnconfirmedAt`・通常送信の拒否）。
 - `test/booking-admin-page-client.test.js` — `canSendPaymentLink`・
   `isValidStripePaymentLinkUrlClient`・`paymentLinkStatusLabel_`・
+  `paymentLinkRequiresExplicitResend_`（PR #337レビュー対応で追加）・
   `buildPaymentLinkConfirmMessage_`（純粋関数）、`showDetailModal`での送信欄の表示制御
-  （カード以外は非表示、PENDING以外は入力・送信を無効化）、`runSendPaymentLink_`の
-  入力検証・確認ダイアログキャンセル時の非送信・送信中の連打防止・成功時のbusy解除を
-  検証する。
+  （カード以外は非表示、PENDING以外は入力・送信を無効化、履行未確認でも「再送」表示に
+  なること）、`runSendPaymentLink_`の入力検証（**PR #337レビュー対応**: 前後に空白を
+  含む・空白のみの入力を、trimして送信せず入力エラーとして拒否すること）・確認ダイアログ
+  キャンセル時の非送信・送信中の連打防止・成功時のbusy解除・`expectedSendCount`を
+  第4引数へ渡すこと・`requiresManualConfirmation`/`SEND_HISTORY_CONFLICT`応答時の案内
+  文言を検証する。
 - 全テスト（`npm test`）は本番メール送信・本番予約・実Calendar/Sheets・実Stripe APIを
   一切使わず、既存のGASサービススタブ（`test/helpers/gas-stubs.js`）とフロントエンド用
   スタブ（`test/booking-admin-page-client.test.js`内の`createScriptRunStub`等）のみで
@@ -1943,14 +2067,20 @@ PR-A（GAS側の期限管理・失効通知・手動復活）・PR-B（利用者
 
 - 本番の時間主導トリガー・実際のStripe Payment Link発行・実際のメール送信キューは
   リポジトリのテストからは確認できない（PR-Aと同様、運営が別途本番環境で確認すること）。
-- 台帳に新規列（`stripePaymentLinkUrl`〜`paymentLinkLastErrorMessage`の6列）を追加した
+- 台帳に新規列（`stripePaymentLinkUrl`〜`paymentLinkSendUnconfirmedAt`の7列）を追加した
   ため、本番反映時は「送信履歴・エラー管理」節の手順（既存デプロイのnew version更新・
   本番Bookingsシートのヘッダー行への手動追記）が必要（本PRでは実施しない）。
-- 同一予約に対する複数管理者・複数タブからの**同時**の明示的な再送は、それぞれが
-  `force:true`を渡すため、意図どおり複数回の再送として成立し得る（LockServiceは
-  直列化のみを行い、明示的な再送同士の重複を防ぐ設計ではない。Issue #334本文の
-  「連打・同時操作による重複送信の防止」は、通常送信（forceなし）の二重送信防止と、
-  単一操作内の連打防止を指すものとして実装した）。
+- **PR #337レビュー対応で解消**: 同一予約に対する同時の明示的な再送は、
+  `expectedSendCount`による競合検知（「二重送信防止と明示的な再送」節「PR #337レビュー
+  対応②」参照）により、画面を再取得していない古いタブ・端末からの再送は
+  `SEND_HISTORY_CONFLICT`で拒否されるようになった。ただし、画面を再取得して
+  `expectedSendCount`を最新化した**別々の明示的な再送操作**は、それぞれ独立した管理者の
+  判断による操作として引き続き成立し得る（これは「連打・同時操作による重複送信の防止」
+  ではなく、Issue #334本文が許容する「明示的な再送は管理者の判断による操作」の範囲内）。
+- `paymentLinkSentAt`単独更新の失敗時のフォールバック書き込み（`paymentLinkSendUnconfirmedAt`）
+  自体が失敗した場合（Spreadsheet全体へのアクセスが完全に失われている等）は、
+  Recoveryへの記録も失敗する可能性があり、その場合はLoggerのみに記録が残る
+  （既存の他の失敗記録経路と同じ限界。「部分失敗・recoveryの確認手順」節参照）。
 - Stripe APIによる決済リンク自動生成・Stripe Webhookによる入金確認・予約の自動確定は
   実装していない（Issue #334本文の対象外）。
 
@@ -2326,7 +2456,8 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 （いずれもIssue #271で追加） / `paymentStatus`（Issue #314で追加。本PR-A #334時点では
 未使用のまま`unpaid`固定） / `expiredMailSentAt`（Issue #334 PR-Aで追加） /
 `stripePaymentLinkUrl` / `paymentLinkSentAt` / `paymentLinkSentTo` / `paymentLinkSendCount` /
-`paymentLinkLastErrorAt` / `paymentLinkLastErrorMessage`（いずれもIssue #334 PR-Cで追加）
+`paymentLinkLastErrorAt` / `paymentLinkLastErrorMessage` / `paymentLinkSendUnconfirmedAt`
+（いずれもIssue #334 PR-Cで追加。`paymentLinkSendUnconfirmedAt`はPR #337レビュー対応で追加）
 
 - `customerType`はIssue #270で20列目として**末尾に追記**した。既存行との互換性を保つため
   途中に挿入していない（既存行はこの列が空のまま＝利用区分不明として扱われる）。
@@ -2345,11 +2476,14 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
     日時。他のSentAt列と同じく空の場合だけ自動送信の対象になる（二重送信防止）。詳細は
     「Issue #334: カード決済の期限・失効通知・手動復活」参照。
   - `stripePaymentLinkUrl`/`paymentLinkSentAt`/`paymentLinkSentTo`/`paymentLinkSendCount`/
-    `paymentLinkLastErrorAt`/`paymentLinkLastErrorMessage`（Issue #334 PR-C）は、Booking
-    AdminからのStripe決済リンク送信の履歴・エラー記録用の列。`paymentLinkLastError*`は
-    他のメール種別が共有する`lastMailError*`とは別の専用列（決済リンク送信専用の送信状態を
-    Booking Admin予約詳細で表示するため）。詳細は「Issue #334: Booking AdminからのStripe
-    決済リンク送信（PR-C）」参照。
+    `paymentLinkLastErrorAt`/`paymentLinkLastErrorMessage`/`paymentLinkSendUnconfirmedAt`
+    （Issue #334 PR-C。最後の1列はPR #337レビュー対応で追加）は、Booking AdminからのStripe
+    決済リンク送信の履歴・エラー記録用の列。`paymentLinkLastError*`は他のメール種別が
+    共有する`lastMailError*`とは別の専用列（決済リンク送信専用の送信状態をBooking Admin
+    予約詳細で表示するため）。`paymentLinkSendUnconfirmedAt`は、メール送信自体は成功したが
+    `paymentLinkSentAt`の記録に失敗し履行が未確定な状態を表し、空でない間は
+    `paymentLinkSentAt`と同じく通常送信（forceなし）を拒否する。詳細は「Issue #334:
+    Booking AdminからのStripe決済リンク送信（PR-C）」参照。
 - `status`は`PENDING` / `CONFIRMED` / `CANCELLED` / `EXPIRED`のいずれか。
   **このセルを直接手編集するのは正式運用ではない。** 確定は必ず`confirmBooking(bookingId)`
   （カスタムメニュー経由）を使うこと。TTL失効・キャンセルも将来的に専用関数経由のみとする。
@@ -2386,6 +2520,7 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 | `CANCEL_DIAGNOSTIC_CALENDAR_LOOKUP_FAILED`（Issue #272 PRレビュー対応） | Sheets行なし診断中に`findBookingEventsByBookingId`自体が例外を投げた（診断そのものが失敗。Calendarは変更しない・**要手動対応**） |
 | `MAIL_REMINDER_FAILED`（Issue #271） | 前日リマインド（来場案内含む）の送信に失敗。解錠コード等の秘密値未設定によるfail-safeな拒否もここに含む。`status`はCONFIRMEDのまま変更しない |
 | `PAYMENT_LINK_MAIL_FAILED`（Issue #334 PR-C） | Booking AdminからのStripe決済リンク送信メールに失敗（設定不足によるfail-closedな拒否を含む）。予約自体・`status`（PENDING）は変更しない。`Bookings`シートの`paymentLinkLastErrorAt`/`paymentLinkLastErrorMessage`（他メール種別と共有する`lastMailError*`とは別の専用列）にも同時記録する |
+| `PAYMENT_LINK_SEND_HISTORY_UPDATE_FAILED`（PR #337レビュー対応） | Booking AdminからのStripe決済リンク送信で、MailApp.sendEmail自体は成功したが、直後の`paymentLinkSentAt`（二重送信防止の要となる列）の記録に失敗した（メールが届いている可能性がある。要確認）。予約自体・`status`（PENDING）は変更しない。`Bookings`シートの`paymentLinkSendUnconfirmedAt`にも同時記録し、この値が空でない間は通常送信（forceなし）を拒否する |
 
 ## 部分失敗・recoveryの確認手順（運用者向け）
 
@@ -2472,6 +2607,20 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
     から**明示的な再送**として再試行する（自動では再送されない。`stripePaymentLinkUrl`は
     前回入力したURLが入力欄へ復元されるため、そのまま再送するか、必要なら新しいURLへ
     差し替えてから送信する）。
+16. `failureType`が`PAYMENT_LINK_SEND_HISTORY_UPDATE_FAILED`（PR #337レビュー対応）の
+    場合、MailApp.sendEmail自体は成功しているため、**利用者へ決済リンクメールが実際に
+    届いている可能性がある**（送信直後のSheets書き込みだけが失敗している）。まず
+    `stripePaymentLinkUrl`・利用者への問い合わせ等でメールが実際に届いているかを確認する。
+    - 届いている場合: 重複してリンクを再送する必要はない。`Bookings`シートの
+      `paymentLinkSentAt`・`paymentLinkSendCount`を運用判断で手動修正するか、そのまま
+      `paymentLinkSendUnconfirmedAt`を残し、次に必要になった時点でBooking Admin予約詳細
+      から**明示的な再送**（force）を行う（このAtが空でない間は通常送信が拒否されるため、
+      誤って重複送信される心配はない）。
+    - 届いていない場合、または確認できない場合: Sheets保存先の一時的な障害が解消した
+      ことを確認したうえで、Booking Admin予約詳細から**明示的な再送**を行う
+      （`paymentLinkSendUnconfirmedAt`が空でなくても、明示的な再送はforceで実行できる）。
+    - いずれの場合も`Bookings`シートの`status`（PENDING）・Calendar/Sheetsの予約データ
+      本体は変更されていない。
 
 ## API仕様
 
