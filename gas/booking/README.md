@@ -1492,6 +1492,34 @@ message/stackを出さず、関数名とbookingIdのみを残す。既知のエ�
   表示する」チェックも既定（オフ＝マスク）へ戻す（`resetReminderDiagDisplay_`。
   PRレビュー「追加確認」対応）。
 
+### 診断モーダルの非同期レスポンス制御・二重実行防止（PRレビュー追加対応）
+
+`google.script.run`は応答順序を保証しないため、判定・プレビュー・テスト送信を
+連続して実行したり、応答待ちの間に予約ID・基準日・「解錠コードを表示する」
+チェックを変更したりすると、後から発行したリクエストより先に古いリクエストの
+応答が返ってくることがあり得る。これをそのまま`resultEl`へ反映すると、最新の
+入力に対する結果を古い結果で上書きしてしまう事故につながる。
+
+- `reminderDiagRequestSeq_`（一覧取得の`loadRequestSeq`と同じ方針の連番）を
+  診断モーダル専用に持ち、判定/プレビュー/テスト送信を実行するたび、また
+  予約ID・基準日・「解錠コードを表示する」チェックの変更・モーダルを閉じる
+  操作のいずれかが起きるたびに1つ進める。
+- 3つの`google.script.run`呼び出しはいずれも、発行時点の連番値を`requestId`として
+  クロージャに保持し、`withSuccessHandler`/`withFailureHandler`の両方で、応答が
+  返ってきた時点の連番と一致する場合のみ`resultEl`を更新する（一致しない＝
+  その後に別の変更・別のリクエストがあった＝古い応答のため無視する）。
+- 基準日・「解錠コードを表示する」チェックの変更は連番だけを進め、表示中の
+  結果はその場では消さない（次の判定/プレビュー/テスト送信の結果で自然に
+  上書きされる）。予約IDの変更・モーダルを閉じる操作は、従来どおり
+  `resetReminderDiagDisplay_`で表示自体もクリアしたうえで連番を進める。
+- テスト送信（`sendReminderTestMail`）は実際にメールを送信するため、二重実行を
+  避ける必要がある。応答が返るまで`reminderDiagState_.sendTestInFlight`を`true`にし
+  ボタンを`disabled`にすることでクリックを無視し、成功・失敗（想定外の例外を
+  含む）のいずれでも必ず`sendTestInFlight`とボタンの`disabled`を解除して、次回
+  実行できる状態へ戻す。このbusy状態の解除は、`resultEl`への反映（連番判定）とは
+  独立して常に行う（そうしないと、他の操作で連番が進んだ場合にテスト送信
+  ボタンが永久にdisabledのままになってしまうため）。
+
 ### サーバー側の認可について
 
 Booking Adminの既存Web App（`BookingAdminWeb.gs`。`getAdminBookings`/
@@ -1544,8 +1572,17 @@ Booking Web App側にしか設定していない場合、**Booking Adminプロ�
   「プレビュー成功」と「送信対象可否」を区別して表示すること、想定外失敗時に
   固定の安全な文言（`REMINDER_DIAG_GENERIC_FAILURE_RESULT_`）のみを表示すること、
   `resetReminderDiagDisplay_`/`closeReminderDiagnostics_`が表示状態・解錠コード
-  表示チェックをリセットすること、診断モーダルの初回生成が例外を投げないことを
-  検証する。
+  表示チェックをリセットすること、診断モーダルの初回生成が例外を投げないことに加え、
+  **リクエスト連番による非同期レスポンス制御**（判定/プレビューで古いリクエストの
+  成功・失敗いずれの応答も新しいリクエストの表示を上書きしないこと、予約ID/基準日/
+  「解錠コードを表示する」チェックの変更やモーダルを閉じた後の古い応答が無視される
+  こと）と、**テスト送信の二重実行防止**（応答が返るまでボタンがdisabledになり
+  連打しても1回しか実行されないこと、成功・失敗いずれでもbusy状態が解除され
+  再実行できる状態へ戻ること、確認ダイアログでキャンセルした場合はリクエスト自体を
+  発行しないこと）を検証する。これらのテストのため、テストヘルパーの
+  `google.script.run`スタブを、応答を任意の順序で明示的に解決できる仕組み
+  （`calls`/`resolveCall`/`rejectCall`）へ、`document.createElement`が返す
+  スタブ要素を実際にイベント発火できる仕組み（`fire`）へ、それぞれ拡張した。
 - `test/booking-deployment-manifest-sync.test.js`・
   `test/booking-admin-deployment.test.js` — `BookingReminderDiagnostics.gs`を
   manifest/README表へ追加した後も、Booking Admin配布ファイルセットが
@@ -1718,8 +1755,12 @@ Booking Web App側にしか設定していない場合、**Booking Adminプロ�
   `diagnoseReminderEligibility`/`previewReminderMail`/`sendReminderTestMail`への
   `google.script.run`呼び出し、結果表示の純粋関数（`reminderReasonLabel`/
   `renderReminderDiagnosisResult_`/`renderReminderPreviewResult_`/
-  `renderReminderSendResult_`）を追加。既存のgoogle.script.run API
-  （`getAdminBookings`等）・一覧/確定/キャンセルのロジックは無変更
+  `renderReminderSendResult_`）を追加。**PRレビュー追加対応** — 診断モーダル専用の
+  リクエスト連番（`reminderDiagRequestSeq_`/`bumpReminderDiagRequestSeq_`）による
+  非同期レスポンス制御と、テスト送信の二重実行防止（`sendTestInFlight`）を追加
+  （詳細は「診断モーダルの非同期レスポンス制御・二重実行防止」節を参照）。
+  既存のgoogle.script.run API（`getAdminBookings`等）・一覧/確定/キャンセルの
+  ロジックは無変更
 - `admin/booking/booking-admin.css`（拡張。GitHub Pages配信） — 診断モーダル用の
   スタイル（`#reminder-diag-*`/`.reminder-diag-*`）を追加。既存クラスは無変更
 

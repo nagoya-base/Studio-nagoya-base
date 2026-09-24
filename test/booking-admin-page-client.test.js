@@ -31,7 +31,14 @@ var CLIENT_JS_PATH = path.join(__dirname, '..', 'admin', 'booking', 'booking-adm
  * 最小限のスタブを追加した。実DOM上の親子関係を正しく再現する必要はなく
  * （render()から見えるのはgetElementById経由のtextContent/innerHTMLのみ）、
  * 「例外を投げない」ことだけを保証する。 */
+/*
+ * addEventListenerは実際にハンドラを_listenersへ保持する（Issue #330 PRレビュー
+ * 対応で追加した非同期レスポンス制御・二重実行防止のテストのため、fireメソッドで
+ * テストからイベント発火をシミュレートできるようにした）。他のプロパティ・
+ * メソッドは従来どおり「例外を投げない」ことだけを保証する最小限のスタブ。
+ */
 function createElementStub() {
+  var listeners = {};
   return {
     id: '',
     type: '',
@@ -39,10 +46,17 @@ function createElementStub() {
     placeholder: '',
     className: '',
     disabled: false,
+    checked: false,
     textContent: '',
     innerHTML: '',
     classList: { add: function () {}, remove: function () {} },
-    addEventListener: function () {},
+    addEventListener: function (type, handler) {
+      if (!listeners[type]) listeners[type] = [];
+      listeners[type].push(handler);
+    },
+    fire: function (type, eventArg) {
+      (listeners[type] || []).forEach(function (handler) { handler(eventArg || {}); });
+    },
     appendChild: function () {},
     insertBefore: function () {},
     getAttribute: function () { return null; },
@@ -50,17 +64,61 @@ function createElementStub() {
   };
 }
 
-function loadClientSandbox() {
+/*
+ * google.script.runのスタブ。実際のGASと同じく、withSuccessHandler/
+ * withFailureHandlerで登録したハンドラは即座には呼ばれず、対応するAPIメソッド
+ * （例: diagnoseReminderEligibility(...)）が呼ばれた時点で呼び出しを`calls`へ
+ * キューし、テスト側が`resolveCall(index, result)`/`rejectCall(index, error)`で
+ * 明示的に・任意の順序で解決できるようにする（Issue #330 PRレビュー対応:
+ * リクエスト連番による非同期レスポンス制御のテストのため。応答順序が発行順と
+ * 一致しない＝古いリクエストの応答が新しいリクエストの応答より後に返るケースを
+ * 再現できる）。既存のgetAdminBookings等も同じ仕組みに統一したが、戻り値・
+ * 呼び出し可否は従来と変わらない（呼んでも例外を投げないだけで、解決するか
+ * どうかは各テストの任意）。
+ */
+function createScriptRunStub() {
+  var calls = [];
+  var pendingSuccess = null;
+  var pendingFailure = null;
+  var API_METHODS = [
+    'getAdminBookings',
+    'getAdminBookingDetail',
+    'adminConfirmBooking',
+    'adminCancelBooking',
+    'diagnoseReminderEligibility',
+    'previewReminderMail',
+    'sendReminderTestMail'
+  ];
+
+  var stub = {
+    calls: calls,
+    withSuccessHandler: function (fn) { pendingSuccess = fn; return stub; },
+    withFailureHandler: function (fn) { pendingFailure = fn; return stub; },
+    resolveCall: function (index, result) { calls[index].onSuccess && calls[index].onSuccess(result); },
+    rejectCall: function (index, error) { calls[index].onFailure && calls[index].onFailure(error); }
+  };
+
+  API_METHODS.forEach(function (name) {
+    stub[name] = function () {
+      calls.push({
+        name: name,
+        args: Array.prototype.slice.call(arguments),
+        onSuccess: pendingSuccess,
+        onFailure: pendingFailure
+      });
+      pendingSuccess = null;
+      pendingFailure = null;
+    };
+  });
+
+  return stub;
+}
+
+function loadClientSandbox(options) {
+  var opts = options || {};
   var scriptSrc = fs.readFileSync(CLIENT_JS_PATH, 'utf8');
 
-  var scriptRunStub = {
-    withSuccessHandler: function () { return scriptRunStub; },
-    withFailureHandler: function () { return scriptRunStub; },
-    getAdminBookings: function () {},
-    getAdminBookingDetail: function () {},
-    adminConfirmBooking: function () {},
-    adminCancelBooking: function () {}
-  };
+  var scriptRunStub = createScriptRunStub();
 
   var elementsById = {};
   var elementsBySelector = {};
@@ -85,7 +143,10 @@ function loadClientSandbox() {
   var sandbox = {
     document: documentStub,
     google: { script: { run: scriptRunStub } },
-    window: {},
+    /* window.confirm: 既定はtrue（テスト送信の確認ダイアログを常に「実行する」扱いにする）。
+       確認ダイアログでキャンセルする挙動を検証したいテストはoptions.confirmResultに
+       falseを渡す（Issue #330 PRレビュー対応の二重実行防止テストのため追加）。 */
+    window: { confirm: function () { return opts.confirmResult !== false; } },
     alert: function () {}
   };
   vm.createContext(sandbox);
@@ -843,4 +904,228 @@ test('closeReminderDiagnostics_: モーダルを閉じると表示状態もリ�
 
   assert.strictEqual(sandbox.reminderDiagState_.resultEl.innerHTML, '');
   assert.strictEqual(sandbox.reminderDiagState_.revealInput.checked, false);
+});
+
+/* ---------- PRレビュー対応: 診断モーダルの非同期レスポンス制御・二重実行防止 ---------- */
+
+test('診断（判定）: 古いリクエストの成功応答が後から返っても、新しいリクエストの表示を上書きしない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var calls = sandbox.google.script.run.calls;
+
+  state.bookingIdInput.value = 'BOOKING-A';
+  state.evaluateButton.fire('click');
+  assert.strictEqual(calls.length, 1);
+
+  /* 予約IDを変更（リクエスト連番が進み、表示もクリアされる）。 */
+  state.bookingIdInput.value = 'BOOKING-B';
+  state.bookingIdInput.fire('input');
+  state.evaluateButton.fire('click');
+  assert.strictEqual(calls.length, 2);
+  assert.strictEqual(calls[0].args[0], 'BOOKING-A');
+  assert.strictEqual(calls[1].args[0], 'BOOKING-B');
+
+  /* 新しい方（BOOKING-B）の応答が先に返る。 */
+  sandbox.google.script.run.resolveCall(1, {
+    success: true, eligible: true, reasonCode: 'ELIGIBLE', targetDate: '2026-10-02',
+    message: 'ok', booking: { brand: 'studio_x', status: 'CONFIRMED', date: '2026-10-02', email: 'b@example.com' }
+  });
+  assert.match(state.resultEl.innerHTML, /b@example\.com/);
+
+  /* 古い方（BOOKING-A）の応答が後から返っても、表示は上書きされない。 */
+  sandbox.google.script.run.resolveCall(0, {
+    success: true, eligible: true, reasonCode: 'ELIGIBLE', targetDate: '2026-10-02',
+    message: 'ok', booking: { brand: 'studio_x', status: 'CONFIRMED', date: '2026-10-02', email: 'a@example.com' }
+  });
+  assert.match(state.resultEl.innerHTML, /b@example\.com/, '古いリクエストの応答で上書きされてはいけない');
+  assert.strictEqual(state.resultEl.innerHTML.indexOf('a@example.com'), -1);
+});
+
+test('診断（判定）: 古いリクエストの失敗応答（withFailureHandler相当）が後から返っても、新しいリクエストの表示を上書きしない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var scriptRun = sandbox.google.script.run;
+
+  state.bookingIdInput.value = 'BOOKING-A';
+  state.evaluateButton.fire('click');
+  state.bookingIdInput.value = 'BOOKING-B';
+  state.bookingIdInput.fire('input');
+  state.evaluateButton.fire('click');
+
+  scriptRun.resolveCall(1, { success: false, error: { code: 'NOT_FOUND', message: 'not found' } });
+  assert.match(state.resultEl.innerHTML, /判定できませんでした/);
+
+  /* 古いリクエスト（0番目）が想定外の例外でwithFailureHandlerを呼んでも、
+     resultElは新しい応答の表示のまま変わらない。 */
+  var beforeReject = state.resultEl.innerHTML;
+  scriptRun.rejectCall(0, { message: 'leak@example.com should not appear' });
+  assert.strictEqual(state.resultEl.innerHTML, beforeReject);
+});
+
+test('診断（プレビュー）: 基準日の変更後に古いプレビュー応答が返っても表示を上書きしない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var scriptRun = sandbox.google.script.run;
+
+  state.bookingIdInput.value = 'SX-BOOKING';
+  state.baseDateInput.value = '2026-10-01';
+  state.previewButton.fire('click');
+  assert.strictEqual(scriptRun.calls.length, 1);
+  var placeholderWhilePending = state.resultEl.innerHTML;
+
+  /* 基準日を変更（表示は即座にはクリアされない仕様。リクエスト連番だけが進む）。 */
+  state.baseDateInput.value = '2026-10-05';
+  state.baseDateInput.fire('input');
+
+  /* 変更前に発行したプレビュー応答が返っても、表示（読み込み中プレースホルダ）を
+     上書きしてはいけない。 */
+  scriptRun.resolveCall(0, {
+    success: true, targetDate: '2026-10-02', subject: 'stale subject', body: 'stale body',
+    recipientEmail: 'x@example.com', testRecipientEmail: 'admin@example.com', revealed: false,
+    eligible: true, reasonCode: 'ELIGIBLE'
+  });
+  assert.strictEqual(state.resultEl.innerHTML, placeholderWhilePending, '基準日変更前の古い応答で表示を更新してはいけない');
+});
+
+test('診断（プレビュー）: 「解錠コードを表示する」チェックの変更後に古いプレビュー応答が返っても表示を上書きしない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var scriptRun = sandbox.google.script.run;
+
+  state.bookingIdInput.value = 'SX-BOOKING';
+  state.baseDateInput.value = '2026-10-01';
+  state.previewButton.fire('click');
+  var placeholderWhilePending = state.resultEl.innerHTML;
+
+  state.revealInput.checked = true;
+  state.revealInput.fire('change');
+
+  scriptRun.resolveCall(0, {
+    success: true, targetDate: '2026-10-02', subject: 'stale', body: 'stale (masked)',
+    recipientEmail: 'x@example.com', testRecipientEmail: 'admin@example.com', revealed: false,
+    eligible: true, reasonCode: 'ELIGIBLE'
+  });
+  assert.strictEqual(state.resultEl.innerHTML, placeholderWhilePending, 'reveal変更前の古い応答で表示を更新してはいけない');
+});
+
+test('診断: モーダルを閉じた後に発行済みリクエストの応答が返っても表示を更新しない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var scriptRun = sandbox.google.script.run;
+
+  state.bookingIdInput.value = 'SX-BOOKING';
+  state.baseDateInput.value = '2026-10-01';
+  state.evaluateButton.fire('click');
+
+  sandbox.closeReminderDiagnostics_();
+  assert.strictEqual(state.resultEl.innerHTML, '', '閉じた時点でリセットされている');
+
+  scriptRun.resolveCall(0, {
+    success: true, eligible: true, reasonCode: 'ELIGIBLE', targetDate: '2026-10-02',
+    message: 'ok', booking: { brand: 'studio_x', status: 'CONFIRMED', date: '2026-10-02', email: 'late@example.com' }
+  });
+  assert.strictEqual(state.resultEl.innerHTML, '', '閉じた後に返った応答で表示を更新してはいけない');
+});
+
+test('テスト送信: 応答が返るまではボタンがdisabledのまま二重実行できず、成功後に再度実行できる状態へ復旧する', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var scriptRun = sandbox.google.script.run;
+
+  state.bookingIdInput.value = 'SX-BOOKING';
+  state.baseDateInput.value = '2026-10-01';
+
+  state.sendTestButton.fire('click');
+  assert.strictEqual(scriptRun.calls.length, 1, '1回目は実行される');
+  assert.strictEqual(state.sendTestButton.disabled, true, '応答が返るまではdisabledにする');
+  assert.strictEqual(state.sendTestInFlight, true);
+
+  /* 応答が返る前に連打しても2回目は実行されない（二重実行防止）。 */
+  state.sendTestButton.fire('click');
+  assert.strictEqual(scriptRun.calls.length, 1, '応答が返るまでは2回目のクリックを無視する');
+
+  scriptRun.resolveCall(0, { success: true, sentTo: 'admin@example.com' });
+
+  assert.strictEqual(state.sendTestButton.disabled, false, '応答が返ったら再度実行できる状態へ戻す');
+  assert.match(state.resultEl.innerHTML, /admin@example\.com/);
+
+  /* busy状態が解除されているため、再度クリックすれば新しいリクエストが発行される。 */
+  state.sendTestButton.fire('click');
+  assert.strictEqual(scriptRun.calls.length, 2, '完了後は再度実行できる');
+});
+
+test('テスト送信: 想定外の失敗（withFailureHandler相当）が返ってもbusyを解除し、再度実行できる状態へ復旧する', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var scriptRun = sandbox.google.script.run;
+
+  state.bookingIdInput.value = 'SX-BOOKING';
+  state.baseDateInput.value = '2026-10-01';
+  state.sendTestButton.fire('click');
+  assert.strictEqual(state.sendTestButton.disabled, true);
+
+  scriptRun.rejectCall(0, { message: 'unexpected failure' });
+
+  assert.strictEqual(state.sendTestButton.disabled, false, '失敗時もbusyを解除して再実行できるようにする');
+  assert.match(state.resultEl.innerHTML, /テスト送信できませんでした/);
+
+  state.sendTestButton.fire('click');
+  assert.strictEqual(scriptRun.calls.length, 2);
+});
+
+test('テスト送信: 確認ダイアログでキャンセルした場合はリクエストを発行せず、busyにもしない', function () {
+  var sandbox = loadClientSandbox({ confirmResult: false });
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+
+  state.bookingIdInput.value = 'SX-BOOKING';
+  state.baseDateInput.value = '2026-10-01';
+  state.sendTestButton.fire('click');
+
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+  assert.strictEqual(state.sendTestButton.disabled, false);
+});
+
+test('テスト送信: 古いテスト送信応答が返っても、その間に発行された判定の表示を上書きしない', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  sandbox.openReminderDiagnostics_();
+  sandbox.google.script.run.calls.length = 0;
+  var state = sandbox.reminderDiagState_;
+  var scriptRun = sandbox.google.script.run;
+
+  state.bookingIdInput.value = 'SX-BOOKING';
+  state.baseDateInput.value = '2026-10-01';
+  state.sendTestButton.fire('click');
+  assert.strictEqual(scriptRun.calls.length, 1);
+
+  /* テスト送信の応答を待っている間に、判定を実行する（別のリクエスト）。 */
+  state.evaluateButton.fire('click');
+  assert.strictEqual(scriptRun.calls.length, 2);
+
+  scriptRun.resolveCall(1, {
+    success: true, eligible: true, reasonCode: 'ELIGIBLE', targetDate: '2026-10-02',
+    message: 'ok', booking: { brand: 'studio_x', status: 'CONFIRMED', date: '2026-10-02', email: 'new@example.com' }
+  });
+  assert.match(state.resultEl.innerHTML, /new@example\.com/);
+
+  /* テスト送信（古い方）の応答が後から返っても、判定結果の表示を上書きしない。
+     ただしbusy状態自体はこの応答で正しく解除される。 */
+  scriptRun.resolveCall(0, { success: true, sentTo: 'admin@example.com' });
+  assert.match(state.resultEl.innerHTML, /new@example\.com/, 'テスト送信の古い応答で判定結果を上書きしてはいけない');
+  assert.strictEqual(state.sendTestButton.disabled, false, 'テスト送信自体のbusyは応答が返った時点で解除する');
 });

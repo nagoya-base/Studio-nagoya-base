@@ -593,7 +593,32 @@ function renderReminderSendResult_(result) {
  * テスト送信のみを行い、予約者への送信・SentAt更新・一覧再取得の必要な状態変更は
  * 一切発生しないため、成功後にloadBookings()を呼び直す必要はない。
  */
-var reminderDiagState_ = { overlay: null, resultEl: null, bookingIdInput: null, baseDateInput: null, revealInput: null };
+var reminderDiagState_ = {
+  overlay: null,
+  resultEl: null,
+  bookingIdInput: null,
+  baseDateInput: null,
+  revealInput: null,
+  evaluateButton: null,
+  previewButton: null,
+  sendTestButton: null,
+  sendTestInFlight: false
+};
+
+/*
+ * 診断モーダルのリクエスト連番（Issue #330 PRレビュー対応。loadRequestSeqと同じ方針）。
+ * 判定/プレビュー/テスト送信のいずれかを実行するたび、また予約ID・基準日・
+ * 「解錠コードを表示する」チェック・モーダル終了のいずれかが変化するたびに1増やす。
+ * 各google.script.runのsuccess/failureハンドラは、応答が返ってきた時点でこの値と
+ * 発行時のrequestIdを比較し、一致しなければ（＝その後に別の変更・別のリクエストが
+ * あった＝古い応答）resultElへ反映しない。GASのgoogle.script.runには応答順序の
+ * 保証がないため、後から発行したリクエストの応答が先に、先に発行したリクエストの
+ * 応答が後から返ってくることがあり得る。 */
+var reminderDiagRequestSeq_ = 0;
+
+function bumpReminderDiagRequestSeq_() {
+  reminderDiagRequestSeq_ += 1;
+}
 
 /*
  * google.script.runのwithFailureHandlerは、サーバー関数が想定外の例外を投げた
@@ -688,23 +713,44 @@ function buildReminderDiagnosticsModal_() {
 
   evaluateButton.addEventListener('click', function () {
     var input = currentInput_();
+    bumpReminderDiagRequestSeq_();
+    var requestId = reminderDiagRequestSeq_;
     resultEl.innerHTML = '判定中…';
     google.script.run
-      .withSuccessHandler(function (result) { resultEl.innerHTML = renderReminderDiagnosisResult_(result); })
-      .withFailureHandler(function () { resultEl.innerHTML = renderReminderDiagnosisResult_(REMINDER_DIAG_GENERIC_FAILURE_RESULT_); })
+      .withSuccessHandler(function (result) {
+        if (requestId !== reminderDiagRequestSeq_) return;
+        resultEl.innerHTML = renderReminderDiagnosisResult_(result);
+      })
+      .withFailureHandler(function () {
+        if (requestId !== reminderDiagRequestSeq_) return;
+        resultEl.innerHTML = renderReminderDiagnosisResult_(REMINDER_DIAG_GENERIC_FAILURE_RESULT_);
+      })
       .diagnoseReminderEligibility(input.bookingId, input.baseDateString);
   });
 
   previewButton.addEventListener('click', function () {
     var input = currentInput_();
+    bumpReminderDiagRequestSeq_();
+    var requestId = reminderDiagRequestSeq_;
     resultEl.innerHTML = 'プレビュー生成中…';
     google.script.run
-      .withSuccessHandler(function (result) { resultEl.innerHTML = renderReminderPreviewResult_(result); })
-      .withFailureHandler(function () { resultEl.innerHTML = renderReminderPreviewResult_(REMINDER_DIAG_GENERIC_FAILURE_RESULT_); })
+      .withSuccessHandler(function (result) {
+        if (requestId !== reminderDiagRequestSeq_) return;
+        resultEl.innerHTML = renderReminderPreviewResult_(result);
+      })
+      .withFailureHandler(function () {
+        if (requestId !== reminderDiagRequestSeq_) return;
+        resultEl.innerHTML = renderReminderPreviewResult_(REMINDER_DIAG_GENERIC_FAILURE_RESULT_);
+      })
       .previewReminderMail(input.bookingId, { baseDateString: input.baseDateString, reveal: input.reveal });
   });
 
+  /* テスト送信は実際にメールを送るため、応答が返るまで二重実行を防止する
+     （Issue #330 PRレビュー対応）。busyの間はクリックを無視し、成功・失敗の
+     いずれでも必ずbusyを解除してボタンを再度押せる状態へ戻す（このbusy解除は
+     表示の新旧に関わらず常に行う。resultElへの反映のみリクエスト連番で判定する）。 */
   sendTestButton.addEventListener('click', function () {
+    if (reminderDiagState_.sendTestInFlight) return;
     var input = currentInput_();
     var confirmed = window.confirm(
       '管理者宛テストメール（ADMIN_NOTIFICATION_EMAIL）を送信します。\n' +
@@ -713,16 +759,43 @@ function buildReminderDiagnosticsModal_() {
       '実予約者へは送信されません。実行しますか？'
     );
     if (!confirmed) return;
+
+    bumpReminderDiagRequestSeq_();
+    var requestId = reminderDiagRequestSeq_;
+    reminderDiagState_.sendTestInFlight = true;
+    sendTestButton.disabled = true;
     resultEl.innerHTML = 'テスト送信中…';
     google.script.run
-      .withSuccessHandler(function (result) { resultEl.innerHTML = renderReminderSendResult_(result); })
-      .withFailureHandler(function () { resultEl.innerHTML = renderReminderSendResult_(REMINDER_DIAG_GENERIC_FAILURE_RESULT_); })
+      .withSuccessHandler(function (result) {
+        reminderDiagState_.sendTestInFlight = false;
+        sendTestButton.disabled = false;
+        if (requestId !== reminderDiagRequestSeq_) return;
+        resultEl.innerHTML = renderReminderSendResult_(result);
+      })
+      .withFailureHandler(function () {
+        reminderDiagState_.sendTestInFlight = false;
+        sendTestButton.disabled = false;
+        if (requestId !== reminderDiagRequestSeq_) return;
+        resultEl.innerHTML = renderReminderSendResult_(REMINDER_DIAG_GENERIC_FAILURE_RESULT_);
+      })
       .sendReminderTestMail(input.bookingId, input.baseDateString);
   });
 
   /* Issue #330 PRレビュー対応: 予約IDを変えたら、前回入力に対する結果（解錠コードを
-     表示していた場合はその本文も含む）を残さない。表示状態は既定（マスク）へ戻す。 */
-  bookingIdInput.addEventListener('input', resetReminderDiagDisplay_);
+     表示していた場合はその本文も含む）を残さない。表示状態は既定（マスク）へ戻す。
+     あわせてリクエスト連番を進め、変更前に発行された判定・プレビュー・テスト送信の
+     応答が後から返ってきても画面を更新しないようにする。 */
+  bookingIdInput.addEventListener('input', function () {
+    bumpReminderDiagRequestSeq_();
+    resetReminderDiagDisplay_();
+  });
+
+  /* 基準日・「解錠コードを表示する」チェックの変更も、変更前に発行済みの応答を
+     無効化する（Issue #330 PRレビュー対応）。予約ID変更と異なり、表示中の結果を
+     即座に消すことまでは要件にしていない（次の判定/プレビュー/テスト送信の結果で
+     上書きされる）。 */
+  baseDateInput.addEventListener('input', bumpReminderDiagRequestSeq_);
+  revealInput.addEventListener('change', bumpReminderDiagRequestSeq_);
 
   closeButton.addEventListener('click', closeReminderDiagnostics_);
   overlay.addEventListener('click', function (event) {
@@ -734,6 +807,9 @@ function buildReminderDiagnosticsModal_() {
   reminderDiagState_.bookingIdInput = bookingIdInput;
   reminderDiagState_.baseDateInput = baseDateInput;
   reminderDiagState_.revealInput = revealInput;
+  reminderDiagState_.evaluateButton = evaluateButton;
+  reminderDiagState_.previewButton = previewButton;
+  reminderDiagState_.sendTestButton = sendTestButton;
 }
 
 /* Issue #330 PRレビュー対応: 前回の判定・プレビュー結果（解錠コード表示中の本文を
@@ -758,6 +834,13 @@ function closeReminderDiagnostics_() {
   if (!reminderDiagState_.overlay) return;
   reminderDiagState_.overlay.classList.remove('open');
   resetReminderDiagDisplay_();
+  /* Issue #330 PRレビュー対応: モーダルを閉じた後に、閉じる前に発行した判定・
+     プレビュー・テスト送信の応答が返ってきても画面を更新しないようにする
+     （次に開いたときに古い結果が一瞬表示されるのを防ぐ）。テスト送信の
+     busy状態（sendTestInFlight/ボタンのdisabled）はここではリセットしない
+     （実際のMailApp送信はキャンセルできないため、応答が返るまではbusyのままにし、
+     二重送信防止を優先する）。 */
+  bumpReminderDiagRequestSeq_();
 }
 
 /* 既存4タブ（今日/今後/キャンセル/すべて）の各ボタンへ、件数表示用の子要素だけを
