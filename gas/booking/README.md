@@ -1588,6 +1588,126 @@ Booking Web App側にしか設定していない場合、**Booking Adminプロ�
   manifest/README表へ追加した後も、Booking Admin配布ファイルセットが
   ReferenceErrorなく動作することを確認済み。
 
+## Issue #334: カード決済の期限・失効通知・手動復活・Stripeリンク送信UI（PR-A）
+
+Booking AdminからStripe決済リンクを送信してカード決済を案内する運用（PR-C）・
+利用者向け文言（PR-B）に先立ち、まずGAS側の期限管理・失効通知・手動復活を実装した
+（このREADME追記はPR-Aの範囲のみ。PR-C/PR-Bは別PRで追記する）。
+
+**注意（重要）**: Issue #326（PR #328。未マージ）は本Issue #334と重なる領域
+（PENDING TTL・Admin表示）を扱っているが、TTL計算式・現金/PayPay/未定のTTL値
+（#326案では48時間）が#334本文と異なる。#334本文が最新仕様として優先されるため、
+本PR-Aは#326/PR #328のアプローチを採用せず、#334本文どおりに実装した。
+
+### 確定仕様（PR-A）
+
+- カード決済（`paymentMethod === 'オンラインクレジットカード'`。`Booking.PAYMENT_METHOD_CARD`
+  として一元管理）のPENDINGのみ、失効時刻を**受付（`createdAt`）+ 72時間固定**
+  （`Booking.CARD_TTL_HOURS`）とする。既存の「利用開始の
+  `PENDING_TTL_MIN_HOURS_BEFORE_START`時間前を超えない」上限（Script Properties由来。
+  既定2時間）は維持する。当日受付グレース（`minHoldHours`）はカードには適用しない
+  （96時間ルールにより通常発生しないため）。
+- 現金/PayPay/未定のTTL（Script Properties `PENDING_TTL_HOURS`。既定24時間）・
+  当日受付グレードの挙動は一切変更していない。
+- カード決済は**利用開始まで96時間（4日）未満の申込を`createBooking`（GAS側）で拒否**する。
+  しきい値は`Booking.CARD_MIN_HOURS_BEFORE_START = 96`として1か所で管理し、
+  `validateCreateBookingInput`が新エラーコード`CARD_PAYMENT_TOO_CLOSE_TO_START`を返す
+  （日本語・英語メッセージは`scripts/booking-logic.js`の`ERROR_MESSAGES`に追加）。
+  96時間ちょうどは許可、96時間未満は拒否する境界仕様。
+- Script Propertiesは変更していない（カードTTL・96時間しきい値はいずれも
+  `Booking.gs`のコード定数）。
+
+### 自動失効通知（EXPIRED専用メール）
+
+- `expirePendingBookings`（`BookingRepository.gs`）は、支払方法ごとにTTLを分岐する
+  （カード=72h固定、それ以外=既存どおり）。その回の実行で実際にPENDING→EXPIREDへ
+  更新した**カード決済の行のみ**を対象に、Lock外・best effortで`sendExpiredMailForBooking`
+  （`BookingMailer.gs`。新規）を呼ぶ。送信失敗でもEXPIRED状態は取り消さない。
+- `expiredMailSentAt`（Bookings台帳の末尾列。新規）が空の行にのみ送信し、二重送信を防ぐ
+  （他のメール種別と同じSentAt方式）。過去にEXPIREDだった行（このループのcandidatesに
+  含まれない）へ遡って送ることはない。
+- 件名・本文は`BookingMailTemplates.buildExpiredMail`（新規。管理者キャンセル用
+  `buildCancelledMail`は流用しない）。「期限までに承認が確認できず失効したこと」
+  「予約ページから再申し込み」「支払い済みの場合は運営へ連絡・再申込みや二重決済はしない」
+  の3点を含み、入金の有無をシステムが自動確認したかのような断定表現は使わない
+  （失効判定は入金の自動検知ではなく管理者による承認の有無に基づくため）。
+- `BookingAdmin.gs`の`RESEND_MAIL_HANDLERS_`に`EXPIRED`を追加し、既存の個別再送導線
+  （bookingId・メール種別指定・強制再送）から失効通知も再送できるようにした。
+
+### 手動復活（`reviveExpiredBooking`）
+
+- `BookingRepository.reviveExpiredBooking(bookingId, now)`（新規。`now`は省略可・
+  テスト用）。既存`confirmBooking`は変更せず、EXPIREDの拒否を維持する
+  （`Booking.ALLOWED_TRANSITIONS`にEXPIRED→CONFIRMEDを追加したが、
+  `confirmBookingLocked_`に明示ガードを追加し、この遷移を実行できるのは
+  `reviveExpiredBooking`のみとした）。
+- 処理順: Lock取得 → 最新レコード再読込（status===EXPIRED・利用開始前を確認）→
+  Lock内で`BookingAvailability.isStartTimeBookable`により枠の競合を再確認 →
+  空きがあればCalendarへCONFIRMEDイベントを新規作成（失効時に旧イベントは削除済みの
+  ため、`createBooking`と同様に新規作成する。`confirmBooking`のような既存イベントの
+  status更新ではない）→ 台帳のstatus/calendarEventId/confirmedAt/updatedAtを更新
+  （`expiredAt`は履歴として保持し上書きしない）→ Lock解除 → Lock外で
+  `sendConfirmedMailForBooking`（既存）による確定メール送信。メール失敗で確定を
+  巻き戻さない。
+- 枠が埋まっている場合は`SLOT_UNAVAILABLE`、利用開始後は`REVIVE_AFTER_START_NOT_ALLOWED`
+  で拒否する。Calendar成功・Sheets失敗の部分失敗は、新規作成したCalendarイベントを
+  補償削除し、既存の`CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE`/
+  `SHEETS_FAILURE_CALENDAR_ORPHANED`（Recoveryの既存failureType）で記録する
+  （`createBooking`のCalendar成功/Sheets失敗補償と同じ形。新規failureTypeは追加していない）。
+- `BookingAdmin.gs`のSpreadsheetメニューに「アクティブ行のbookingIdを復活」
+  「bookingIdを入力して復活」を追加し、実行前にYES/NO確認を必須にした
+  （キャンセルと同じ誤操作防止の方針）。`BookingAdminWeb.gs`の
+  `adminReviveExpiredBooking(bookingId)`が同じ関数へ委譲し、Web UI（EXPIRED行の
+  「復活」ボタン。`admin/booking/booking-admin.js`）からも呼べる。
+
+### Booking Adminのカード支払期限表示
+
+- `BookingAdminWeb.gs`の`getAdminBookings`/`getAdminBookingDetail`が、カード決済のみ
+  `cardPaymentDueAt`（読み取り専用。`YYYY-MM-DD HH:mm`のJST文字列）を返す。
+  `expirePendingBookings`の失効判定と同じ`Booking.computeCardPaymentDueMillis`
+  （`computeTtlExpiryMillis`をCARD_TTL_HOURS固定・minHoldHours=0で呼ぶ薄いラッパー）
+  から計算するため、表示用と判定用で計算がずれない。現金/PayPay/未定は常に空文字列。
+- `admin/booking/booking-admin.js`／`booking-admin.css`がカード予約カードへ支払期限行を、
+  詳細モーダルへ`カード支払期限`項目を追加した（GAS Web Appの再デプロイ不要。
+  「Booking Adminフロントエンドの外部化（Issue #317）」参照）。
+
+### テスト（PR-A）
+
+- `test/booking-model.test.js` — カード96時間ルールの境界（ちょうど96時間は許可、
+  1分未満は拒否）、現金/PayPay/未定は96時間ルールの対象外（回帰）、
+  `computeCardPaymentDueMillis`が`computeTtlExpiryMillis`（CARD_TTL_HOURS固定・
+  minHoldHours=0）と一致すること、`canTransition('EXPIRED','CONFIRMED')`が
+  trueになったこと（`booking-model.test.js:399`付近を更新）。
+- `test/booking-confirm-expire.test.js` — カードPENDINGの72時間TTL境界、現金/PayPay/
+  未定が24時間TTLのまま変わらないこと（回帰）、新規失効したカード予約のみへの
+  EXPIRED通知・二重送信防止・送信失敗時もEXPIRED維持・過去のEXPIRED行への不通知、
+  `reviveExpiredBooking`の成功/枠競合(`SLOT_UNAVAILABLE`)/開始後拒否/
+  対象外status拒否/Calendar成功・Sheets失敗のRecovery記録、既存`confirmBooking`が
+  引き続きEXPIREDを拒否すること、Spreadsheetメニューへの復活項目追加を検証する。
+- `test/booking-mail-templates.test.js`・`test/booking-mailer.test.js` —
+  `buildExpiredMail`の文面（キャンセルメールを流用しないこと・入金自動確認を
+  断定しないこと）、`sendExpiredMailForBooking`のstatus限定・二重送信防止・
+  送信失敗時のlastMailError記録・force再送を検証する。
+- `test/booking-admin-web.test.js` — `cardPaymentDueAt`がカードのみ非空で
+  一覧・詳細で同一値になること、`adminReviveExpiredBooking`が
+  `reviveExpiredBooking`へ委譲していることを検証する。
+- `test/booking-logic.test.js` — `CARD_PAYMENT_TOO_CLOSE_TO_START`のja/en専用メッセージ・
+  `recoveryActionForErrorCode`の振り分けを検証する。
+- 全テスト（`npm test`）は本番メール送信・本番予約・実Calendar/Sheetsを一切使わず、
+  既存のGASサービススタブ（`test/helpers/gas-stubs.js`）のみで完結する。
+
+### 未検証事項・本番反映時の注意（PR-A）
+
+- 本番の時間主導トリガー（`expirePendingBookings`の実行間隔）の実稼働はリポジトリから
+  確認できないため、運営が別途確認すること。
+- 台帳に新規列（`expiredMailSentAt`）を追加したため、本番反映時は既存Booking Admin
+  デプロイをnew versionで更新し、既存`/exec` URLを維持したうえで、**本番Bookingsシートの
+  ヘッダー行へ`expiredMailSentAt`を手動で追記**すること（ヘッダー行はシートが空のときしか
+  自動で書かれないため）。既存のScript Properties・実予約データ・トリガー・デプロイ設定は
+  このPRでは一切変更していない。
+- 本PR-Aは`Closes #334`を付けていない（Issue #334本文どおり、最後にマージするPRのみ
+  `Closes`を付ける）。
+
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
 | 項目 | 値 |
@@ -1957,7 +2077,8 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 `customerType`（Issue #270で追加。`first_time`または`returning`） /
 `pendingMailSentAt` / `confirmedMailSentAt` / `cancelMailSentAt` / `reminderSentAt` /
 `accessGuideSentAt` / `lastMailErrorAt` / `lastMailErrorType` / `lastMailErrorMessage`
-（いずれもIssue #271で追加）
+（いずれもIssue #271で追加） / `paymentStatus`（Issue #314で追加。本PR-A #334時点では
+未使用のまま`unpaid`固定） / `expiredMailSentAt`（Issue #334で追加）
 
 - `customerType`はIssue #270で20列目として**末尾に追記**した。既存行との互換性を保つため
   途中に挿入していない（既存行はこの列が空のまま＝利用区分不明として扱われる）。
@@ -1972,6 +2093,9 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
   - `lastMailErrorAt`/`lastMailErrorType`/`lastMailErrorMessage`は直近のメール送信失敗
     （設定不足によるfail-closedな拒否を含む）の記録。次回同種メールの送信に成功すると
     自動的に空へ戻す。
+  - `expiredMailSentAt`（Issue #334）はカード決済PENDINGの失効通知メールを送信した日時。
+    他のSentAt列と同じく空の場合だけ自動送信の対象になる（二重送信防止）。詳細は
+    「Issue #334: カード決済の期限・失効通知・手動復活」参照。
 - `status`は`PENDING` / `CONFIRMED` / `CANCELLED` / `EXPIRED`のいずれか。
   **このセルを直接手編集するのは正式運用ではない。** 確定は必ず`confirmBooking(bookingId)`
   （カスタムメニュー経由）を使うこと。TTL失効・キャンセルも将来的に専用関数経由のみとする。
@@ -2284,7 +2408,10 @@ fail-closed） / `INVALID_DATE`（過去日を含む） /
 以前）/ `INVALID_DURATION` / `DURATION_TOO_SHORT` /
 `INVALID_START_TIME` / `START_TIME_NOT_ALIGNED`（開始時刻が`SLOT_STEP_MINUTES`刻みでない）/
 `INVALID_NAME` / `INVALID_EMAIL` / `INVALID_PHONE` / `INVALID_PEOPLE` / `INVALID_PURPOSE` /
-`INVALID_PAYMENT_METHOD` / `INVALID_NOTE` / `INVALID_SOURCE` / `RATE_LIMITED`
+`INVALID_PAYMENT_METHOD` / `INVALID_NOTE` / `INVALID_SOURCE` /
+`CARD_PAYMENT_TOO_CLOSE_TO_START`（Issue #334で追加。`paymentMethod`が
+`オンラインクレジットカード`かつ利用開始まで`CARD_MIN_HOURS_BEFORE_START`（96時間）
+未満の申込を拒否する） / `RATE_LIMITED`
 （`error.reason`に`EMAIL_RATE_LIMIT`/`GLOBAL_RATE_LIMIT`/`DUPLICATE_SUBMISSION`のいずれか）/
 `LOCK_TIMEOUT` / `SLOT_CONFLICT` / `BOOKING_SAVE_FAILED` / `INVALID_JSON` /
 `INTERNAL_ERROR`

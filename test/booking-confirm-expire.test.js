@@ -556,6 +556,343 @@ test('expirePendingBookings: 1件のSheets更新失敗が他の失効対象の�
   assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(okBookingId).record.status, 'EXPIRED');
 });
 
+/* ---------- Issue #334: カード決済専用TTL（72時間）・現地決済の回帰 ---------- */
+
+test('expirePendingBookings: カード決済のPENDINGは受付から72時間経過でEXPIREDになる（受付+72hが利用開始-2hより早いケース）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00'
+  });
+  var createdAt73hAgo = new Date(Date.now() - 73 * 3600000);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: createdAt73hAgo });
+
+  var result = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(result.expiredCount, 1);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'EXPIRED');
+});
+
+test('expirePendingBookings: カード決済のPENDINGは受付から72時間経過前はEXPIREDにならない（71時間経過時点ではまだ有効）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00'
+  });
+  var createdAt71hAgo = new Date(Date.now() - 71 * 3600000);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: createdAt71hAgo });
+
+  var result = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(result.expiredCount, 0, '72時間に達していないカードPENDINGを失効させてはいけない');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'PENDING');
+});
+
+test('expirePendingBookings: 現金/PayPay/未定は引き続き24時間でEXPIREDになる（カードの72時間TTLへ引きずられない回帰確認）', function () {
+  var ctx = setup();
+  ['現金', 'PayPay', '未定'].forEach(function (paymentMethod, index) {
+    var bookingId = createPending(ctx, {
+      paymentMethod: paymentMethod,
+      date: futureDateJst_(30 + index),
+      startTime: '10:00',
+      email: 'regression-' + index + '@example.com'
+    });
+    /* 30時間前＝24時間は超えているが72時間には遠く満たない。カードTTLが漏れ込んでいれば
+       まだPENDINGのままになってしまう。 */
+    ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 30 * 3600000) });
+
+    var result = ctx.sandbox.expirePendingBookings();
+    var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+    assert.strictEqual(found.record.status, 'EXPIRED', paymentMethod + ' は24時間TTLのままEXPIREDになるべき');
+    void result;
+  });
+});
+
+/* ---------- Issue #334: カード決済失効通知メール ---------- */
+
+test('expirePendingBookings: カード決済が新規に失効した回だけEXPIRED専用メールを1通送る。現金等は送らない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+
+  var cardId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00',
+    email: 'card@example.com'
+  });
+  var cashId = createPending(ctx, {
+    paymentMethod: '現金',
+    date: futureDateJst_(31),
+    startTime: '10:00',
+    email: 'cash@example.com'
+  });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(cardId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(cashId, { createdAt: new Date(Date.now() - 25 * 3600000) });
+  /* createPending()自体がPENDINGメールを送るため、失効通知の検証対象からは除外する
+     （ここから先に送られるメールだけを数える）。 */
+  mailApp._sentEmails.length = 0;
+
+  var result = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(result.expiredCount, 2);
+
+  assert.strictEqual(mailApp._sentEmails.length, 1, 'EXPIRED通知はカード決済の1通のみであるべき');
+  assert.strictEqual(mailApp._sentEmails[0].to, 'card@example.com');
+  assert.match(mailApp._sentEmails[0].subject, /期限切れ/);
+
+  var cardRecord = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(cardId).record;
+  assert.ok(stubs.isDateLike(cardRecord.expiredMailSentAt), 'カード予約はexpiredMailSentAtが記録されるべき');
+
+  var cashRecord = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(cashId).record;
+  assert.ok(!cashRecord.expiredMailSentAt, '現金予約にはEXPIRED通知を送らない（expiredMailSentAtは空のまま）');
+});
+
+test('expirePendingBookings: expiredMailSentAtが空の過去のEXPIRED行には遡って通知しない（今回の実行でPENDING→EXPIREDへ更新した行のみが対象）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+
+  /* 事前にEXPIRED状態の行を直接作る（=このexpirePendingBookings呼び出しより前に
+     何らかの理由で失効していた想定。expiredMailSentAtは空のまま）。 */
+  var pastExpiredId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00',
+    email: 'past-expired@example.com'
+  });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(pastExpiredId, {
+    status: 'EXPIRED',
+    expiredAt: new Date(Date.now() - 100 * 3600000),
+    createdAt: new Date(Date.now() - 200 * 3600000)
+  });
+  /* createPending()自体が送ったPENDINGメールを検証対象から除外する。 */
+  mailApp._sentEmails.length = 0;
+
+  var result = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(result.expiredCount, 0, '既にEXPIREDの行はcandidatesに含まれない（getAllPendingBookingsはstatus===PENDINGのみ）');
+  assert.strictEqual(mailApp._sentEmails.length, 0, '過去のEXPIRED行には遡って通知してはいけない');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(pastExpiredId).record;
+  assert.ok(!record.expiredMailSentAt);
+});
+
+test('expirePendingBookings: EXPIRED通知メールの送信失敗でもEXPIRED状態は維持される', function () {
+  var mailApp = stubs.createMailAppStub({ throwError: new Error('simulated mail send failure') });
+  var ctx = setup({ mailApp: mailApp });
+
+  var bookingId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00'
+  });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+
+  var result = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(result.expiredCount, 1, 'メール送信が失敗してもexpirePendingBookings自体は失効処理を完了しているべき');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.status, 'EXPIRED', 'メール送信失敗でEXPIRED状態を取り消してはいけない');
+  assert.ok(!record.expiredMailSentAt, '送信に失敗した場合はexpiredMailSentAtを記録しない');
+});
+
+test('expirePendingBookings→sendExpiredMailForBooking(手動再送): 二重送信しない（同一実行内でのSentAt冪等性）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+
+  var bookingId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00'
+  });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  /* createPending()自体が送ったPENDINGメールを検証対象から除外する。 */
+  mailApp._sentEmails.length = 0;
+
+  ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+
+  /* BookingAdmin.gsの個別再送導線と同じforce無しの手動呼び出し。expiredMailSentAtが
+     既にあるため再送されないべき（他のメール種別と同じSentAt方式の二重送信防止）。 */
+  var resendResult = ctx.sandbox.BookingMailer.sendExpiredMailForBooking(bookingId);
+  assert.strictEqual(resendResult.skipped, true);
+  assert.strictEqual(resendResult.reason, 'ALREADY_SENT');
+  assert.strictEqual(mailApp._sentEmails.length, 1, '二重送信してはいけない');
+
+  /* 明示的なforce:true（管理者の個別再送）でのみ再送できる。 */
+  var forced = ctx.sandbox.BookingMailer.sendExpiredMailForBooking(bookingId, { force: true });
+  assert.strictEqual(forced.success, true);
+  assert.strictEqual(mailApp._sentEmails.length, 2);
+});
+
+/* ---------- Issue #334: reviveExpiredBooking（手動復活） ---------- */
+
+test('reviveExpiredBooking: EXPIRED→CONFIRMEDへ復活し、Calendarへ新規CONFIRMEDイベントを作成し、確定メールを送る', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+
+  var bookingId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00',
+    durationMinutes: 120,
+    email: 'revive@example.com'
+  });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  var expireResult = ctx.sandbox.expirePendingBookings();
+  assert.strictEqual(expireResult.expiredCount, 1);
+  assert.strictEqual(ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length, 0, '失効時に旧イベントは削除されている前提');
+
+  var beforeExpiredAt = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.expiredAt;
+  /* createPending()のPENDINGメール・expirePendingBookings()のEXPIRED通知メールを
+     検証対象から除外し、reviveExpiredBookingが送る確定メールだけを数える。 */
+  mailApp._sentEmails.length = 0;
+
+  var result = ctx.sandbox.reviveExpiredBooking(bookingId);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(result.status, 'CONFIRMED');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.status, 'CONFIRMED');
+  assert.ok(stubs.isDateLike(record.confirmedAt));
+  assert.strictEqual(String(record.expiredAt), String(beforeExpiredAt), 'expiredAtは履歴として残すべき（上書きしない）');
+
+  var liveEvents = ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); });
+  assert.strictEqual(liveEvents.length, 1, 'Calendarに新規CONFIRMEDイベントが作成されるべき');
+  assert.strictEqual(liveEvents[0].getTag('status'), 'CONFIRMED');
+  assert.strictEqual(record.calendarEventId, liveEvents[0].getId(), '台帳のcalendarEventIdは新しいイベントIDへ更新されるべき');
+
+  /* 確定メール（既存sendConfirmedMailForBookingをそのまま使う）がLock外で送られる。 */
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+  assert.strictEqual(mailApp._sentEmails[0].to, 'revive@example.com');
+});
+
+test('reviveExpiredBooking: 枠が別予約で埋まっている場合はSLOT_UNAVAILABLEで拒否し、EXPIREDのまま変更しない', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00',
+    durationMinutes: 120
+  });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  ctx.sandbox.expirePendingBookings();
+
+  /* 失効で枠が空いた後、別の予約が同じ時間帯を埋める（RateLimiterの重複送信検知を
+     避けるため、emailを変えて別内容の送信として扱わせる）。 */
+  createPending(ctx, {
+    date: futureDateJst_(30),
+    startTime: '10:00',
+    durationMinutes: 120,
+    paymentMethod: '現金',
+    email: 'other-booking@example.com'
+  });
+
+  var result = ctx.sandbox.reviveExpiredBooking(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'SLOT_UNAVAILABLE');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.status, 'EXPIRED', '復活に失敗した場合はEXPIREDのまま変更しない');
+});
+
+test('reviveExpiredBooking: 利用開始時刻を過ぎている場合は拒否する', function () {
+  var ctx = setup();
+  var startAt = new Date('2026-10-01T10:00:00+09:00');
+  var created = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-01', startTime: '10:00', durationMinutes: 120 }),
+    new Date('2026-09-20T09:00:00+09:00')
+  );
+  assert.strictEqual(created.success, true);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(created.bookingId, {
+    status: 'EXPIRED',
+    expiredAt: new Date('2026-09-27T09:00:00+09:00')
+  });
+
+  var afterStart = new Date(startAt.getTime() + 60000);
+  var result = ctx.sandbox.reviveExpiredBooking(created.bookingId, afterStart);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'REVIVE_AFTER_START_NOT_ALLOWED');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(created.bookingId).record;
+  assert.strictEqual(record.status, 'EXPIRED');
+});
+
+test('reviveExpiredBooking: PENDING/CONFIRMED/CANCELLEDはINVALID_TRANSITIONで拒否する（EXPIREDのみ対象）', function () {
+  var ctx = setup();
+  ['PENDING', 'CONFIRMED', 'CANCELLED'].forEach(function (status, index) {
+    var bookingId = createPending(ctx, { date: futureDateJst_(40 + index), startTime: '10:00' });
+    ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { status: status });
+
+    var result = ctx.sandbox.reviveExpiredBooking(bookingId);
+    assert.strictEqual(result.success, false, status);
+    assert.strictEqual(result.error.code, 'INVALID_TRANSITION', status);
+
+    var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+    assert.strictEqual(record.status, status, status + 'のまま変更されないべき');
+  });
+});
+
+test('confirmBooking: reviveExpiredBookingではなく既存confirmBookingを直接呼んだ場合、EXPIREDは引き続き拒否される（Issue #334の回帰要件）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00'
+  });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  ctx.sandbox.expirePendingBookings();
+
+  var result = ctx.sandbox.confirmBooking(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'INVALID_TRANSITION');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.status, 'EXPIRED', 'confirmBooking経由での復活は起きないべき（reviveExpiredBooking専用）');
+});
+
+test('reviveExpiredBooking: Calendar成功・Sheets失敗の場合は新規作成したCalendarイベントを補償削除し、recoveryへ記録する（既存Recovery方式と同じ形）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, {
+    paymentMethod: 'オンラインクレジットカード',
+    date: futureDateJst_(30),
+    startTime: '10:00'
+  });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  ctx.sandbox.expirePendingBookings();
+
+  var originalUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (id === bookingId && fields.status === 'CONFIRMED') {
+      throw new Error('simulated sheets confirm update failure');
+    }
+    return originalUpdate(id, fields);
+  };
+
+  var result = ctx.sandbox.reviveExpiredBooking(bookingId);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = originalUpdate;
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'REVIVE_SAVE_FAILED');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.status, 'EXPIRED', 'Sheets更新に失敗した場合、台帳側はEXPIREDのまま（誤ってCONFIRMEDと表示させない）');
+
+  assert.strictEqual(ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length, 0, '新規作成したCalendarイベントは補償削除されるべき');
+
+  var recovered = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovered.length, 1);
+  assert.strictEqual(recovered[0].failureType, 'CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE');
+});
+
+test('reviveExpiredBooking: 存在しないbookingIdはNOT_FOUNDを返す', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.reviveExpiredBooking('SX-NOT-EXIST');
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'NOT_FOUND');
+});
+
 test('createExpirePendingBookingsTrigger: トリガーを作成し、二重作成しない', function () {
   var scriptApp = stubs.createScriptAppStub();
   var ctx = setup({ scriptApp: scriptApp });
@@ -589,6 +926,17 @@ test('addBookingAdminMenu: 「予約管理」メニューにconfirmBooking用の
   var functionNames = ui._menus[0].items.map(function (item) { return item.functionName; });
   assert.ok(functionNames.indexOf('confirmActiveRowBooking_') !== -1);
   assert.ok(functionNames.indexOf('confirmBookingByPrompt_') !== -1);
+});
+
+test('addBookingAdminMenu: 「予約管理」メニューにreviveExpiredBooking用の2項目を追加する（Issue #334）', function () {
+  var ui = stubs.createSpreadsheetUiStub();
+  var ctx = setup({ ui: ui });
+
+  ctx.sandbox.addBookingAdminMenu();
+
+  var functionNames = ui._menus[0].items.map(function (item) { return item.functionName; });
+  assert.ok(functionNames.indexOf('reviveActiveRowBooking_') !== -1);
+  assert.ok(functionNames.indexOf('reviveBookingByPrompt_') !== -1);
 });
 
 test('onOpen: container-boundスクリプトの単純トリガーとしてaddBookingAdminMenuと同じメニューを追加する（このファイルをSpreadsheetへコンテナバインドしたときの唯一の正式手順）', function () {

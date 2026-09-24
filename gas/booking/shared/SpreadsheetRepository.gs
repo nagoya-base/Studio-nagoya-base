@@ -53,7 +53,12 @@ var SpreadsheetRepository = (function () {
     'lastMailErrorAt',
     'lastMailErrorType',
     'lastMailErrorMessage',
-    'paymentStatus'
+    'paymentStatus',
+    /*
+     * ここから先はIssue #334（カード決済の期限・失効通知・手動復活）で追加した列。
+     * customerType/mail列追加時と同じく末尾追記の方針を踏襲する。
+     */
+    'expiredMailSentAt'
   ];
 
   function getSpreadsheet_() {

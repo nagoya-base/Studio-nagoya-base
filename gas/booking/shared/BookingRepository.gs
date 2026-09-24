@@ -395,6 +395,23 @@ var BookingRepository = (function () {
         shouldTryMail: !record.confirmedMailSentAt
       };
     }
+    /*
+     * Issue #334: Booking.ALLOWED_TRANSITIONSにEXPIRED→CONFIRMEDを追加したが、
+     * それを実行できるのは専用のreviveExpiredBooking（このファイル下部）のみとする。
+     * confirmBookingは既存どおりEXPIREDを拒否し続ける（reviveExpiredBookingはLock内での
+     * 枠競合再確認・Calendarイベント新規作成・expiredAt保持等、confirmBookingLocked_には
+     * 無い専用の復活処理を行うため、canTransitionの表が一般にtrueを返すようになったことを
+     * 理由にこの関数へその処理を委ねさせない）。
+     */
+    if (record.status === Booking.STATUS.EXPIRED) {
+      return {
+        response: {
+          success: false,
+          error: { code: 'INVALID_TRANSITION', message: record.status + ' から CONFIRMED へは遷移できません。' }
+        },
+        shouldTryMail: false
+      };
+    }
     if (!Booking.canTransition(record.status, Booking.STATUS.CONFIRMED)) {
       return {
         response: {
@@ -519,6 +536,12 @@ var BookingRepository = (function () {
     var candidates = SpreadsheetRepository.getAllPendingBookings();
     var expiredCount = 0;
     var skippedCount = 0;
+    /* Issue #334: 今回の実行でPENDING→EXPIREDへ実際に更新したカード予約のbookingIdだけを
+       集め、forEachループ（＝全候補のLock取得・解放）が終わったあとにLock外でまとめて
+       通知する。expiredMailSentAtが空の過去のEXPIRED行（＝このループのcandidatesに
+       含まれない、既にstatus!==PENDINGな行）はここに入らないため、過去分へ遡って
+       送ることはない。 */
+    var newlyExpiredCardBookingIds = [];
 
     candidates.forEach(function (item) {
       var record = item.record;
@@ -531,19 +554,37 @@ var BookingRepository = (function () {
       }
 
       /*
-       * Issue #270（レビュー対応）: 「利用開始まで2時間未満で受け付けた当日予約」が
-       * 作成直後に即EXPIREDになる事故を防ぐため、受付時刻(createdAt)の暦日(Asia/Tokyo基準)と
-       * 予約の利用日(date)が一致する場合のみ、Booking.computeTtlExpiryMillisのgrace
-       * （通常TTLが受付時刻以前になる直前当日予約にだけ使う最大猶予。利用開始時刻を
-       * 必ず上限とする＝expiry<=startAtを保証する）を適用する。一致しない（＝翌日以降に
-       * 通常の余裕を持って受け付けた）予約はminHoldHours=0のまま#268時点と完全に同じ
-       * TTL計算になる（既存の翌日以降予約のTTLへの影響なし）。
+       * Issue #334: カード決済のPENDINGのみCARD_TTL_HOURS（72時間・受付起点）を使う。
+       * 現金/PayPay/未定はScript Properties由来のttlConfig.ttlHours（既定24時間）のまま
+       * 一切変更しない（Issue #334本文「現金・PayPay・未定の失効挙動（24時間）は変更しない」）。
+       * カードはvalidateCreateBookingInputで96時間未満の申込自体を拒否しているため、
+       * 「利用開始まで2時間未満で受け付けた当日予約」のgrace（minHoldHours）は通常発生しない。
+       * 96時間ルール導入前に作成された既存のカードPENDING行に対する安全策として
+       * minHoldHoursは適用せず0固定にし、「利用開始の2時間前を超えない」上限
+       * （minHoursBeforeStart。既存のPENDING_TTL_MIN_HOURS_BEFORE_START）だけは
+       * 維持する（Booking.computeCardPaymentDueMillis参照）。
        */
-      var createdDateString = Booking.formatDateInTimezone(new Date(createdAtMillis), ttlConfig.timezone);
-      var isSameDayBooking = !!createdDateString && record.date === createdDateString;
-      var minHoldHours = isSameDayBooking ? ttlConfig.minHoldHours : 0;
+      var isCard = Booking.isCardPaymentMethod(record.paymentMethod);
+      var ttlHours = isCard ? Booking.CARD_TTL_HOURS : ttlConfig.ttlHours;
+      var minHoldHours;
+      if (isCard) {
+        minHoldHours = 0;
+      } else {
+        /*
+         * Issue #270（レビュー対応）: 「利用開始まで2時間未満で受け付けた当日予約」が
+         * 作成直後に即EXPIREDになる事故を防ぐため、受付時刻(createdAt)の暦日(Asia/Tokyo基準)と
+         * 予約の利用日(date)が一致する場合のみ、Booking.computeTtlExpiryMillisのgrace
+         * （通常TTLが受付時刻以前になる直前当日予約にだけ使う最大猶予。利用開始時刻を
+         * 必ず上限とする＝expiry<=startAtを保証する）を適用する。一致しない（＝翌日以降に
+         * 通常の余裕を持って受け付けた）予約はminHoldHours=0のまま#268時点と完全に同じ
+         * TTL計算になる（既存の翌日以降予約のTTLへの影響なし）。
+         */
+        var createdDateString = Booking.formatDateInTimezone(new Date(createdAtMillis), ttlConfig.timezone);
+        var isSameDayBooking = !!createdDateString && record.date === createdDateString;
+        minHoldHours = isSameDayBooking ? ttlConfig.minHoldHours : 0;
+      }
 
-      if (!Booking.isExpired(createdAtMillis, startAtMillis, ttlConfig.ttlHours, ttlConfig.minHoursBeforeStart, now.getTime(), minHoldHours)) {
+      if (!Booking.isExpired(createdAtMillis, startAtMillis, ttlHours, ttlConfig.minHoursBeforeStart, now.getTime(), minHoldHours)) {
         return; /* まだ有効 */
       }
 
@@ -588,6 +629,12 @@ var BookingRepository = (function () {
             updatedAt: expiredAt
           });
           expiredCount++;
+          /* Issue #334: Sheets側のEXPIRED更新が実際に成功した行だけを通知対象にする
+             （Sheets更新が失敗した行はPENDINGのまま残り、次回トリガーで再評価されるため、
+             ここで通知してしまうと台帳の状態と矛盾する）。 */
+          if (isCard) {
+            newlyExpiredCardBookingIds.push(record.bookingId);
+          }
         } catch (sheetsError) {
           /* Calendar側は削除済み（または削除失敗をrecovery記録済み）だが、Sheets側の
              statusをEXPIREDへ更新できなかった場合の不整合をrecoveryへ記録する。
@@ -615,7 +662,250 @@ var BookingRepository = (function () {
       }
     });
 
+    /*
+     * Issue #334: 失効通知メールはLock外・best effortで送る（送信失敗でもEXPIRED状態は
+     * 取り消さない。既にSheets側はEXPIREDへ更新済みのため、ここで例外が起きても
+     * expiredCount/skippedCountの集計・関数の戻り値には影響させない）。
+     */
+    newlyExpiredCardBookingIds.forEach(function (bookingId) {
+      notifyCustomerExpiredBestEffort_(bookingId);
+    });
+
     return { expiredCount: expiredCount, skippedCount: skippedCount, candidateCount: candidates.length };
+  }
+
+  /* 送信失敗はexpirePendingBookings自体の成否・戻り値に影響させない（Issue #334本文
+     「送信失敗でもEXPIREDを維持する」）。createBooking側のnotifyCustomerPendingBestEffort_と
+     同じredaction方針でLoggerへ記録する。 */
+  function notifyCustomerExpiredBestEffort_(bookingId) {
+    try {
+      BookingMailer.sendExpiredMailForBooking(bookingId);
+    } catch (mailError) {
+      Logger.log('BookingRepository: EXPIREDメール送信中に予期しない例外: ' + BookingMailer.sanitizeErrorMessage(describeError_(mailError)));
+    }
+  }
+
+  /*
+   * reviveExpiredBooking(bookingId) — EXPIRED予約の手動復活（Issue #334）。
+   * 入金確認後の承認が期限に間に合わずEXPIREDになったが、実際には支払い済みだったと
+   * 判明した場合に、Booking Admin（Spreadsheetメニュー／Web UI）から呼ぶ専用の復活手順。
+   *
+   * 既存confirmBookingは変更せず（EXPIREDを引き続き拒否する。confirmBookingLocked_の
+   * 明示ガード参照）、この専用関数でのみEXPIRED→CONFIRMEDを行う。confirmBooking/
+   * expirePendingBookings/cancelBookingAdminと同じBooking Adminプロジェクトに属し、
+   * 同じLockService.getScriptLock()を取得するため、これらと同時に同じbookingIdを
+   * 処理することはない。
+   *
+   * 処理順（Issue #334本文どおり）:
+   *   1. Lock取得
+   *   2. 最新レコード再読込 → status===EXPIRED かつ 利用開始時刻より前であることを確認
+   *   3. Lock内で枠の競合を再確認（BookingAvailability.isStartTimeBookable）
+   *   4. 空きがあればCalendarにCONFIRMEDイベントを新規作成
+   *      （失効時に旧イベントは削除済みのため、confirmBookingのようにイベントのstatusを
+   *      更新するのではなく、createBooking同様に新規作成する）
+   *   5. 台帳のstatus/calendarEventId/confirmedAt/updatedAtを更新（expiredAtは履歴として残す）
+   *   6. Lock解除
+   *   7. Lock外で確定メール（既存sendConfirmedMailForBookingをそのまま使う。
+   *      confirmBookingのnotifyCustomerConfirmedBestEffort_を再利用し、メール処理を複製しない）
+   *
+   * now引数は省略可能（Booking Adminメニュー・Web UIからは常に引数なしで呼ばれ、現在時刻へ
+   * フォールバックする）。expirePendingBookings(now)と同じく、テストから「利用開始時刻を
+   * 過ぎているか」を固定時刻で検証できるようにするためだけの引数。
+   */
+  function reviveExpiredBooking(bookingId, now) {
+    if (!bookingId) {
+      return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
+    }
+    now = isDateLike_(now) ? now : new Date();
+
+    var lock = LockService.getScriptLock();
+    var gotLock = lock.tryLock(LOCK_TIMEOUT_MS_);
+    if (!gotLock) {
+      return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
+    }
+
+    var outcome;
+    try {
+      outcome = reviveExpiredBookingLocked_(bookingId, now);
+    } finally {
+      lock.releaseLock();
+    }
+
+    /* confirmBookingと同じくLockの外・best effortで確定メールを送る。メールの成否は
+       reviveExpiredBooking自体の成否には影響させない（Issue #334本文
+       「メール失敗で予約確定を巻き戻さない」）。既存のnotifyCustomerConfirmedBestEffort_を
+       そのまま再利用する（メール送信処理を複製しない）。 */
+    if (outcome.shouldTryMail) {
+      notifyCustomerConfirmedBestEffort_(bookingId, outcome.response);
+    }
+
+    return outcome.response;
+  }
+
+  function reviveExpiredBookingLocked_(bookingId, now) {
+    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+    if (!found) {
+      return {
+        response: { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } },
+        shouldTryMail: false
+      };
+    }
+
+    var record = found.record;
+
+    /* 復活の対象はEXPIREDのみ（支払方法は問わない。Issue #334本文どおり）。
+       PENDING/CONFIRMED/CANCELLEDはここでは一切扱わない（それぞれ既存の
+       confirmBooking/cancelBookingAdminの対象）。 */
+    if (record.status !== Booking.STATUS.EXPIRED) {
+      return {
+        response: {
+          success: false,
+          error: { code: 'INVALID_TRANSITION', message: record.status + ' から CONFIRMED への復活はできません（EXPIREDのみ対象）。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    var startAtMillis = isDateLike_(record.startAt) ? record.startAt.getTime() : NaN;
+    if (isNaN(startAtMillis) || now.getTime() >= startAtMillis) {
+      return {
+        response: {
+          success: false,
+          error: { code: 'REVIVE_AFTER_START_NOT_ALLOWED', message: '利用開始時刻を過ぎているため復活できません。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    /*
+     * Lock内で枠の競合を再確認する（Issue #334本文「Lock内で枠の競合を再確認し」）。
+     * 失効時にCalendarイベントは削除済みのため自分自身のイベントと衝突することはなく、
+     * createBookingと同じisStartTimeBookableをそのまま使える。dateString/startTimeString/
+     * durationMinutesはSheets台帳のstartAt/endAt（実データ）から復元する
+     * （record.dateの型ゆれに依存しない。BookingAdminWeb.gsのformatAdminDate_と同じ注意点）。
+     */
+    var availabilityConfig = BookingConfig.getAvailabilityConfig();
+    var calendarId = BookingConfig.getCalendarId();
+    var dateString = BookingAvailability.formatDateInTimezone(record.startAt, availabilityConfig.timezone);
+    var startTimeString = BookingAvailability.formatTimeInTimezone(record.startAt, availabilityConfig.timezone);
+    if (!dateString || !startTimeString || !isDateLike_(record.endAt)) {
+      return {
+        response: {
+          success: false,
+          error: { code: 'INVALID_CONFIG', message: '予約データの日時が不正なため復活できません。' }
+        },
+        shouldTryMail: false
+      };
+    }
+    var durationMinutes = Math.round((record.endAt.getTime() - record.startAt.getTime()) / 60000);
+    var startMinutes = BookingAvailability.parseTimeToMinutes(startTimeString);
+
+    var busyIntervals = CalendarRepository.getBusyIntervalsForDate(calendarId, dateString, availabilityConfig.timezone);
+    var bookable = BookingAvailability.isStartTimeBookable(startMinutes, durationMinutes, busyIntervals, availabilityConfig.bufferMinutes);
+    if (!bookable) {
+      return {
+        response: {
+          success: false,
+          error: { code: 'SLOT_UNAVAILABLE', message: 'この枠は既に埋まっているため復活できません。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    /* 空きがあればCONFIRMEDのCalendarイベントを新規作成する（Issue #334本文どおり）。
+       createBookingEventは常にPENDINGタイトル/タグで作成するため、直後にsetEventStatusで
+       CONFIRMEDへ更新する（CalendarRepository.gs自体は変更しない）。 */
+    var eventId;
+    try {
+      eventId = CalendarRepository.createBookingEvent(calendarId, {
+        date: dateString,
+        startTime: startTimeString,
+        durationMinutes: durationMinutes,
+        timezone: availabilityConfig.timezone,
+        bookingId: bookingId,
+        brand: record.brand
+      });
+      CalendarRepository.setEventStatus(calendarId, eventId, Booking.STATUS.CONFIRMED, bookingId);
+    } catch (calendarError) {
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'REVIVE_CALENDAR_CREATE_FAILED',
+          occurredAt: new Date(),
+          calendarEventId: eventId || '',
+          status: record.status,
+          errorMessage: describeError_(calendarError),
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return {
+        response: {
+          success: false,
+          error: { code: 'REVIVE_CALENDAR_FAILED', message: 'Calendarへの復活登録に失敗しました。Recoveryシートを確認してください。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    var confirmedAt = new Date();
+    try {
+      /* expiredAtは履歴として残す（Issue #334本文どおり。ここでは触らない）。 */
+      SpreadsheetRepository.updateBookingFields(bookingId, {
+        status: Booking.STATUS.CONFIRMED,
+        calendarEventId: eventId,
+        confirmedAt: confirmedAt,
+        updatedAt: confirmedAt
+      });
+    } catch (sheetsError) {
+      return { response: handleReviveSheetsUpdateFailure_(calendarId, bookingId, eventId, sheetsError), shouldTryMail: false };
+    }
+
+    return { response: { success: true, bookingId: bookingId, status: Booking.STATUS.CONFIRMED }, shouldTryMail: true };
+  }
+
+  /*
+   * Calendar成功（新規CONFIRMEDイベント作成）→ Sheets失敗（statusをCONFIRMEDへ更新できない）の
+   * 部分失敗補償（Issue #334本文「Calendar成功／Sheets失敗時は既存Recovery方式に合わせる」）。
+   * confirmBookingのhandleConfirmSheetsUpdateFailure_はイベントのstatusをPENDINGへ戻す
+   * （元々PENDINGのイベントだったため）が、reviveExpiredBookingは失効時に削除済みだった
+   * イベントを新規作成しているため、「無かった状態」へ戻すには削除が正しい補償である。
+   * これはcreateBookingのhandleSheetsSaveFailure_（Calendar成功→Sheets失敗→Calendar補償削除）と
+   * 同じ形であり、RecoveryRepository.gsに既存のfailureType定数
+   * （CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE / SHEETS_FAILURE_CALENDAR_ORPHANED）を
+   * そのまま再利用する（新規のfailureTypeを増やさない）。
+   */
+  function handleReviveSheetsUpdateFailure_(calendarId, bookingId, eventId, sheetsError) {
+    var compensated = false;
+    var compensationError = null;
+    try {
+      CalendarRepository.deleteEventById(calendarId, eventId);
+      compensated = true;
+    } catch (deleteError) {
+      compensationError = deleteError;
+    }
+
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: compensated ? 'CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE' : 'SHEETS_FAILURE_CALENDAR_ORPHANED',
+        occurredAt: new Date(),
+        calendarEventId: eventId,
+        status: compensated ? 'EXPIRED' : 'CONFIRMED',
+        errorMessage: describeError_(sheetsError) + (compensationError ? ' / compensation error: ' + describeError_(compensationError) : ''),
+        recoveryState: compensated ? 'RESOLVED' : 'OPEN',
+        resolvedAt: compensated ? new Date() : ''
+      });
+    } catch (recoveryError) {
+      Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+    }
+
+    return {
+      success: false,
+      error: { code: 'REVIVE_SAVE_FAILED', message: '復活内容の保存に失敗しました。Recoveryシートを確認してください。' }
+    };
   }
 
   /*
@@ -976,6 +1266,7 @@ var BookingRepository = (function () {
     createBooking: createBooking,
     confirmBooking: confirmBooking,
     expirePendingBookings: expirePendingBookings,
+    reviveExpiredBooking: reviveExpiredBooking,
     cancelBookingAdmin: cancelBookingAdmin
   };
 })();

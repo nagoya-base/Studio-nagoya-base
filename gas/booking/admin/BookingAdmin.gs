@@ -60,6 +60,14 @@ function cancelBookingAdmin(bookingId) {
   return BookingRepository.cancelBookingAdmin(bookingId);
 }
 
+/* 正式関数: reviveExpiredBooking(bookingId)（Issue #334本文どおりのグローバル関数名）。
+   EXPIRED予約の手動復活。Booking Admin側のみで公開する（Booking Web Appには追加しない）。
+   スクリプトエディタから直接実行することもできる。now引数は省略可能（テストから固定時刻で
+   「利用開始時刻を過ぎているか」を検証するためだけの引数。メニュー・Web UIからは渡さない）。 */
+function reviveExpiredBooking(bookingId, now) {
+  return BookingRepository.reviveExpiredBooking(bookingId, now);
+}
+
 /* 単純トリガー。このファイルをSPREADSHEET_IDのSpreadsheetへコンテナバインドした
    Apps Scriptプロジェクトへデプロイしていれば、そのSpreadsheetを開くたびに
    自動発火し、追加のトリガー設定なしで「予約管理」メニューが表示される。 */
@@ -75,6 +83,8 @@ function addBookingAdminMenu() {
     .addItem('bookingIdを入力して確定（confirmBooking）', 'confirmBookingByPrompt_')
     .addItem('アクティブ行のbookingIdをキャンセル（cancelBookingAdmin）', 'cancelActiveRowBooking_')
     .addItem('bookingIdを入力してキャンセル（cancelBookingAdmin）', 'cancelBookingByPrompt_')
+    .addItem('アクティブ行のbookingIdを復活（reviveExpiredBooking）', 'reviveActiveRowBooking_')
+    .addItem('bookingIdを入力して復活（reviveExpiredBooking）', 'reviveBookingByPrompt_')
     .addItem('予約メールを再送（予約ID指定・強制再送）', 'resendBookingMailByPrompt_')
     .addToUi();
 }
@@ -198,6 +208,72 @@ function runCancelAndAlert_(bookingId) {
 }
 
 /*
+ * 復活導線（Issue #334）。confirm/cancelと対称に、アクティブ行選択とbookingId直接入力の
+ * 2通りを用意する。実行直前に必ずYES/NO確認を挟み、NOなら何も変更しない
+ * （誤操作防止。confirmBookingにこの確認を追加していないのと同じ整理で、復活は
+ * キャンセルと同じく元に戻しにくい操作のため確認を必須にする）。
+ */
+function reviveActiveRowBooking_() {
+  var ui = SpreadsheetApp.getUi();
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var activeRange = sheet.getActiveRange();
+  if (!activeRange) {
+    ui.alert('復活したい予約の行を選択してから実行してください。');
+    return;
+  }
+  var row = activeRange.getRow();
+  if (row <= 1) {
+    ui.alert('見出し行ではなく、bookingIdの行を選択してください。');
+    return;
+  }
+  var bookingId = sheet.getRange(row, 1).getValue();
+  if (!bookingId) {
+    ui.alert('選択した行にbookingIdがありません。');
+    return;
+  }
+  confirmAndRunRevive_(bookingId);
+}
+
+function reviveBookingByPrompt_() {
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.prompt('復活するbookingIdを入力してください', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+  var bookingId = (response.getResponseText() || '').trim();
+  if (!bookingId) {
+    ui.alert('bookingIdを入力してください。');
+    return;
+  }
+  confirmAndRunRevive_(bookingId);
+}
+
+/* 実行直前の誤操作防止確認。NOならreviveExpiredBooking自体を呼ばない。 */
+function confirmAndRunRevive_(bookingId) {
+  var ui = SpreadsheetApp.getUi();
+  var confirmed = ui.alert(
+    '予約 ' + bookingId + ' をEXPIREDからCONFIRMEDへ復活します。\n' +
+      '枠の空きを再確認したうえでCalendarへ確定予定を作成し、利用者へ予約確定メールを送信します。\n' +
+      'よろしいですか？',
+    ui.ButtonSet.YES_NO
+  );
+  if (confirmed !== ui.Button.YES) return;
+  runReviveAndAlert_(bookingId);
+}
+
+function runReviveAndAlert_(bookingId) {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    var result = reviveExpiredBooking(bookingId);
+    if (result.success) {
+      ui.alert('復活しました: ' + bookingId);
+    } else {
+      ui.alert('復活できませんでした（' + bookingId + '）: ' + (result.error && result.error.message));
+    }
+  } catch (e) {
+    ui.alert('エラーが発生しました（' + bookingId + '）: ' + (e && e.message));
+  }
+}
+
+/*
  * 予約メールの個別再送（Issue #271「19. 管理者の個別再送」）。
  * bookingIdとmail typeをそれぞれ別のダイアログで入力させ、明示的なforce resend
  * （{ force: true }）としてBookingMailer.send*ForBookingを呼ぶ。SentAtを先に消す方式は
@@ -208,7 +284,9 @@ var RESEND_MAIL_HANDLERS_ = {
   PENDING: function (bookingId, options) { return BookingMailer.sendPendingMailForBooking(bookingId, options); },
   CONFIRMED: function (bookingId, options) { return BookingMailer.sendConfirmedMailForBooking(bookingId, options); },
   CANCELLED: function (bookingId, options) { return BookingMailer.sendCancelledMailForBooking(bookingId, options); },
-  REMINDER: function (bookingId, options) { return BookingMailer.sendReminderMailForBooking(bookingId, options); }
+  REMINDER: function (bookingId, options) { return BookingMailer.sendReminderMailForBooking(bookingId, options); },
+  /* Issue #334: カード決済PENDING失効通知の個別再送・手動送信に使う。 */
+  EXPIRED: function (bookingId, options) { return BookingMailer.sendExpiredMailForBooking(bookingId, options); }
 };
 
 function resendBookingMailByPrompt_() {
@@ -222,7 +300,7 @@ function resendBookingMailByPrompt_() {
   }
 
   var typeResponse = ui.prompt(
-    '再送するメール種別を入力してください（PENDING / CONFIRMED / CANCELLED / REMINDER）',
+    '再送するメール種別を入力してください（PENDING / CONFIRMED / CANCELLED / REMINDER / EXPIRED）',
     ui.ButtonSet.OK_CANCEL
   );
   if (typeResponse.getSelectedButton() !== ui.Button.OK) return;
@@ -235,7 +313,7 @@ function runResendMailAndAlert_(bookingId, mailType) {
   var ui = SpreadsheetApp.getUi();
   var sendFn = RESEND_MAIL_HANDLERS_[mailType];
   if (!sendFn) {
-    ui.alert('未知のメール種別です: ' + mailType + '（PENDING / CONFIRMED / CANCELLED / REMINDERのいずれかを指定してください）');
+    ui.alert('未知のメール種別です: ' + mailType + '（PENDING / CONFIRMED / CANCELLED / REMINDER / EXPIREDのいずれかを指定してください）');
     return;
   }
   try {

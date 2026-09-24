@@ -88,6 +88,7 @@
       INVALID_CUSTOMER_TYPE: '利用区分（初回利用／利用経験あり）を選択してください。',
       SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME: '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付を選択してください。',
       SAME_DAY_START_TIME_PASSED: '指定した開始時刻はすでに過ぎています。現在時刻より後の開始時刻を選択してください。',
+      CARD_PAYMENT_TOO_CLOSE_TO_START: 'カード事前決済は利用開始の4日前（96時間前）までのお申し込みに限ります。直前のご予約は現金・PayPay（現地決済）をお選びください。',
       RATE_LIMITED: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。',
       LOCK_TIMEOUT: '一時的に混み合っています。もう一度お試しください。',
       BOOKING_SAVE_FAILED: '予約の保存に失敗しました。しばらくしてから再度お試しください。',
@@ -114,6 +115,7 @@
       INVALID_CUSTOMER_TYPE: 'Please select your customer type (first-time guest or returning guest).',
       SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME: 'First-time guests cannot book for the same day. Please choose a date from tomorrow onward.',
       SAME_DAY_START_TIME_PASSED: 'The selected start time has already passed. Please choose a start time later than the current time.',
+      CARD_PAYMENT_TOO_CLOSE_TO_START: 'Card prepayment is only available up to 96 hours (4 days) before your start time. For last-minute bookings, please choose cash or PayPay (pay on site).',
       RATE_LIMITED: 'Too many requests have been submitted. Please wait a moment and try again.',
       LOCK_TIMEOUT: 'The system is currently busy. Please try again.',
       BOOKING_SAVE_FAILED: 'We couldn’t save your booking. Please try again in a moment.',
@@ -180,7 +182,10 @@
       code === 'INVALID_PEOPLE' ||
       code === 'INVALID_PURPOSE' ||
       code === 'INVALID_PAYMENT_METHOD' ||
-      code === 'INVALID_NOTE'
+      code === 'INVALID_NOTE' ||
+      /* Issue #334: 支払方法を現地決済へ変更するか、日程を選び直せば解消するため、
+         支払方法系のエラーと同じedit-detailsへ誘導する。 */
+      code === 'CARD_PAYMENT_TOO_CLOSE_TO_START'
     ) {
       return 'edit-details';
     }

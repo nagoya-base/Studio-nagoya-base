@@ -222,8 +222,12 @@ test('getAdminBookings: { todayJst, bookings }を返し、一覧の各要素は�
   assert.strictEqual(typeof item.date, 'string', 'dateはDateオブジェクトのまま返してはいけない');
   assert.strictEqual(item.date, DEFAULT_FUTURE_DATE);
 
-  var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status'];
+  /* Issue #334: cardPaymentDueAtは一覧レスポンスの許可フィールドに追加された
+     読み取り専用項目（カード予約のみ非空。ここでは支払方法が現金のためcardPaymentDueAtは
+     空文字になることをこのテスト自体では検証しないが、キー自体は常に含まれる）。 */
+  var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status', 'cardPaymentDueAt'];
   assert.deepStrictEqual(Object.keys(item).sort(), allowedKeys.slice().sort());
+  assert.strictEqual(item.cardPaymentDueAt, '', '現金等カード以外の支払方法ではcardPaymentDueAtは空文字であるべき');
 
   ['email', 'phone', 'note', 'pendingMailSentAt', 'lastMailErrorMessage'].forEach(function (piiField) {
     assert.strictEqual(Object.prototype.hasOwnProperty.call(item, piiField), false, '一覧レスポンスに' + piiField + 'を含めてはいけない');
@@ -455,8 +459,8 @@ test('getAdminBookingDetail: 未送信のSentAt系フィールドは空文字列
   assert.strictEqual(typeof result.booking.pendingMailSentAt, 'string');
   assert.match(result.booking.pendingMailSentAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
 
-  /* confirm/cancel/リマインドはまだ行っていないため、これらは未送信のまま空文字列のはず。 */
-  ['confirmedMailSentAt', 'cancelMailSentAt', 'reminderSentAt', 'accessGuideSentAt'].forEach(function (key) {
+  /* confirm/cancel/失効/リマインドはまだ行っていないため、これらは未送信のまま空文字列のはず。 */
+  ['confirmedMailSentAt', 'cancelMailSentAt', 'expiredMailSentAt', 'reminderSentAt', 'accessGuideSentAt'].forEach(function (key) {
     assert.strictEqual(result.booking[key], '', key + 'は未送信のため空文字列であるべき');
   });
 });
@@ -485,4 +489,71 @@ test('getAdminBookingDetail: 存在しないbookingIdはNOT_FOUNDを返す', fun
 
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'NOT_FOUND');
+});
+
+/* ---------- Issue #334: カード支払期限の読み取り専用表示 ---------- */
+
+test('getAdminBookings/getAdminBookingDetail: カード決済のみcardPaymentDueAtが非空になり、Booking.computeCardPaymentDueMillisと同じ値をJST文字列で返す', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+
+  var listResult = ctx.sandbox.getAdminBookings();
+  var listItem = listResult.bookings.find(function (b) { return b.bookingId === bookingId; });
+  assert.ok(listItem.cardPaymentDueAt, '一覧でもカード予約はcardPaymentDueAtが非空であるべき');
+  assert.match(listItem.cardPaymentDueAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+
+  var detailResult = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.strictEqual(detailResult.booking.cardPaymentDueAt, listItem.cardPaymentDueAt, '一覧と詳細で同じ値であるべき（同一関数由来）');
+
+  /* expirePendingBookingsの失効判定と同じBooking.computeCardPaymentDueMillisから計算した
+     期待値と一致することを確認する（表示用と判定用で別計算・別定数を持たない）。 */
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  var ttlConfig = ctx.sandbox.BookingConfig.getTtlConfig();
+  var expectedMillis = ctx.sandbox.Booking.computeCardPaymentDueMillis(record.createdAt.getTime(), record.startAt.getTime(), ttlConfig.minHoursBeforeStart);
+  var expectedString = ctx.sandbox.BookingAvailability.formatDateInTimezone(new Date(expectedMillis), 'Asia/Tokyo') + ' ' +
+    ctx.sandbox.BookingAvailability.formatTimeInTimezone(new Date(expectedMillis), 'Asia/Tokyo');
+  assert.strictEqual(listItem.cardPaymentDueAt, expectedString);
+});
+
+test('getAdminBookings/getAdminBookingDetail: 現金/PayPay/未定はcardPaymentDueAtが常に空文字列', function () {
+  var ctx = setup();
+  var startTimes = ['10:00', '13:00', '16:00'];
+  ['現金', 'PayPay', '未定'].forEach(function (paymentMethod, index) {
+    var bookingId = createPending(ctx, { paymentMethod: paymentMethod, email: 'due-' + index + '@example.com', startTime: startTimes[index] });
+
+    var listItem = ctx.sandbox.getAdminBookings().bookings.find(function (b) { return b.bookingId === bookingId; });
+    assert.strictEqual(listItem.cardPaymentDueAt, '', paymentMethod);
+
+    var detail = ctx.sandbox.getAdminBookingDetail(bookingId);
+    assert.strictEqual(detail.booking.cardPaymentDueAt, '', paymentMethod);
+  });
+});
+
+/* ---------- Issue #334: adminReviveExpiredBooking ---------- */
+
+test('adminReviveExpiredBooking: 既存reviveExpiredBookingと同じ結果になる（EXPIRED→CONFIRMED、独自ロジックを持たない）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+  /* status列を直接書き換えるだけでは失効時のCalendarイベント削除が再現できず、
+     復活時に自分自身の旧イベントとSLOT_UNAVAILABLEで衝突してしまう。実際の
+     expirePendingBookings（Calendar削除を含む）を通す。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  var expireResult = ctx.sandbox.BookingRepository.expirePendingBookings();
+  assert.strictEqual(expireResult.expiredCount, 1, 'テスト前提としてEXPIRED化に成功しているべき');
+
+  var result = ctx.sandbox.adminReviveExpiredBooking(bookingId);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(result.status, 'CONFIRMED');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.status, 'CONFIRMED');
+});
+
+test('adminReviveExpiredBooking: PENDINGからの復活はreviveExpiredBookingと同じくINVALID_TRANSITIONで拒否される', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+
+  var result = ctx.sandbox.adminReviveExpiredBooking(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'INVALID_TRANSITION');
 });

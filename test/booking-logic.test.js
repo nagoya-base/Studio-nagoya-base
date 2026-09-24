@@ -36,7 +36,7 @@ test('messageForErrorCode: createBooking/getAvailabilityのerror.code一覧を�
     'INVALID_START_TIME', 'START_TIME_NOT_ALIGNED', 'SLOT_CONFLICT', 'INVALID_NAME', 'INVALID_EMAIL',
     'INVALID_PHONE', 'INVALID_PEOPLE', 'INVALID_PURPOSE', 'INVALID_PAYMENT_METHOD', 'INVALID_NOTE',
     'INVALID_SOURCE', 'INVALID_CUSTOMER_TYPE', 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME',
-    'SAME_DAY_START_TIME_PASSED',
+    'SAME_DAY_START_TIME_PASSED', 'CARD_PAYMENT_TOO_CLOSE_TO_START',
     'RATE_LIMITED', 'LOCK_TIMEOUT', 'BOOKING_SAVE_FAILED', 'INVALID_JSON', 'INTERNAL_ERROR'
   ];
   codes.forEach(function (code) {
@@ -57,6 +57,7 @@ test('recoveryActionForErrorCode: SLOT_CONFLICT系は時間の選び直し、入
   assert.strictEqual(Logic.recoveryActionForErrorCode('SLOT_CONFLICT'), 'reselect-time');
   assert.strictEqual(Logic.recoveryActionForErrorCode('START_TIME_NOT_ALIGNED'), 'reselect-time');
   assert.strictEqual(Logic.recoveryActionForErrorCode('SAME_DAY_START_TIME_PASSED'), 'reselect-time', '当日の過去開始時刻はStep2へ戻し空き時間を再取得する（Issue #270レビュー対応）');
+  assert.strictEqual(Logic.recoveryActionForErrorCode('CARD_PAYMENT_TOO_CLOSE_TO_START'), 'edit-details', 'カード96時間未満は支払方法変更/日程変更で解消するためedit-detailsへ誘導する（Issue #334）');
   assert.strictEqual(Logic.recoveryActionForErrorCode('INVALID_EMAIL'), 'edit-details');
   assert.strictEqual(Logic.recoveryActionForErrorCode('INVALID_PAYMENT_METHOD'), 'edit-details');
   assert.strictEqual(Logic.recoveryActionForErrorCode('RATE_LIMITED'), 'retry');
@@ -237,6 +238,19 @@ test('messageForErrorCode: locale="en"は英語、locale未指定は既存どお
   /* 未知のcodeでも空文字にならない（locale別の汎用メッセージ） */
   assert.ok(Logic.messageForErrorCode('SOMETHING_NEW', 'en').length > 0);
   assert.notStrictEqual(Logic.messageForErrorCode('SOMETHING_NEW', 'en'), Logic.messageForErrorCode('SOMETHING_NEW', 'ja'));
+});
+
+test('messageForErrorCode: CARD_PAYMENT_TOO_CLOSE_TO_START（Issue #334の新エラーコード）はja/enとも汎用メッセージにフォールバックせず専用文言を返す', function () {
+  var Logic = loadLogic();
+  var ja = Logic.messageForErrorCode('CARD_PAYMENT_TOO_CLOSE_TO_START');
+  var en = Logic.messageForErrorCode('CARD_PAYMENT_TOO_CLOSE_TO_START', 'en');
+  assert.match(ja, /96時間/);
+  assert.match(ja, /現金・PayPay/);
+  assert.match(en, /96 hours/);
+  assert.match(en, /cash or PayPay/);
+  /* 汎用メッセージ（未知のcode用）へフォールバックしていないことを確認する */
+  assert.notStrictEqual(ja, Logic.messageForErrorCode('SOMETHING_UNKNOWN'));
+  assert.notStrictEqual(en, Logic.messageForErrorCode('SOMETHING_UNKNOWN', 'en'));
 });
 
 test('customerTypeLabel: locale="en"は英語ラベル、locale未指定は日本語ラベル（内部valueはfirst_time/returningのまま不変）', function () {

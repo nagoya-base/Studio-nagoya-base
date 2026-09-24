@@ -72,6 +72,44 @@ var Booking = (function () {
      （既発行のbookingId・運用ドキュメントとの整合のため）。 */
   var BRAND_ID_PREFIX_ = { snb: 'SNB', mens: 'MENS', studio_x: 'SX' };
 
+  /*
+   * カード決済まわりの固定仕様値（Issue #334）。Script Propertiesではなくこの定数で
+   * 一元管理する（Issue #334本文「Script Propertiesは変更しない」「しきい値は定数1か所で
+   * 管理する」に従う）。
+   * - PAYMENT_METHOD_CARD: 予約フォームのpaymentMethod値と一致させる唯一の正
+   *   （_includes/booking_app_ja.htmlのvalue="オンラインクレジットカード"と一致させること）。
+   * - CARD_TTL_HOURS: カード予約のみに適用するPENDING TTL（受付から72時間）。
+   *   現金/PayPay/未定の基本TTL（Script PropertiesのPENDING_TTL_HOURS。既定24時間）は
+   *   このIssueでは変更しない。
+   * - CARD_MIN_HOURS_BEFORE_START: カード決済を受け付ける最低リードタイム（96時間）。
+   *   これ未満の申込はvalidateCreateBookingInputで拒否する（GAS側のfail-closedな検証。
+   *   フロント側の選択肢非表示はPR-Bの対象）。
+   */
+  var PAYMENT_METHOD_CARD = 'オンラインクレジットカード';
+  var CARD_TTL_HOURS = 72;
+  var CARD_MIN_HOURS_BEFORE_START = 96;
+
+  function isCardPaymentMethod(paymentMethod) {
+    return String(paymentMethod || '').trim() === PAYMENT_METHOD_CARD;
+  }
+
+  /* 'YYYY-MM-DD'同士の暦日差（日数）を返す。Date.UTCベースで計算するため実行環境の
+     ローカルtimezoneに依存しない（gas/booking/shared/CalendarRepository.gsの
+     buildDateRange_内のparseYmd_と同じ方針。Booking.gsはGASサービス非依存を保つため
+     ここに同等のロジックを複製する）。 */
+  function parseYmdParts_(dateString) {
+    var parts = String(dateString || '').split('-');
+    return { year: parseInt(parts[0], 10), month: parseInt(parts[1], 10), day: parseInt(parts[2], 10) };
+  }
+
+  function daysBetweenDateStrings_(fromDateString, toDateString) {
+    var from = parseYmdParts_(fromDateString);
+    var to = parseYmdParts_(toDateString);
+    var fromUtc = Date.UTC(from.year, from.month - 1, from.day);
+    var toUtc = Date.UTC(to.year, to.month - 1, to.day);
+    return Math.round((toUtc - fromUtc) / 86400000);
+  }
+
   /* Calendarタイトル・管理者通知メール等、人が読む表示にのみ使うブランド名。
      空き判定・状態判定のロジックはこのラベルに一切依存しない。 */
   var BRAND_LABELS_ = { snb: 'SNB', mens: 'SNB mens', studio_x: 'Studio X' };
@@ -86,9 +124,18 @@ var Booking = (function () {
    * CANCELLED/EXPIREDはいずれも終端状態のまま（CANCELLED→CANCELLEDの二重実行は
    * この関数ではなくcancelBookingAdmin側でalreadyCancelledとして冪等に処理する）。
    */
+  /*
+   * EXPIRED→CONFIRMED（Issue #334の手動復活）はここに追加するが、実際にこの遷移を
+   * 実行できるのは専用のBookingRepository.reviveExpiredBookingのみとする。
+   * 既存のconfirmBooking（confirmBookingLocked_）はEXPIREDを拒否し続ける
+   * （canTransitionが一般に「その遷移が制度として存在するか」を表す表であるのに対し、
+   * confirmBookingは「その関数が実際に受け付ける遷移」をさらに絞り込む別の関数だと
+   * 整理する。confirmBookingLocked_側に明示ガードを追加している理由はそこにある）。
+   */
   var ALLOWED_TRANSITIONS = {
     PENDING: [STATUS.CONFIRMED, STATUS.CANCELLED, STATUS.EXPIRED],
-    CONFIRMED: [STATUS.CANCELLED]
+    CONFIRMED: [STATUS.CANCELLED],
+    EXPIRED: [STATUS.CONFIRMED]
   };
 
   function canTransition(fromStatus, toStatus) {
@@ -279,6 +326,35 @@ var Booking = (function () {
     if (!isNonEmptyString_(input.paymentMethod, 50)) {
       return { valid: false, error: err_('INVALID_PAYMENT_METHOD', '支払方法を選択してください。') };
     }
+
+    /*
+     * カード決済の最低リードタイム（Issue #334）: 利用開始まで96時間（4日）未満の申込は
+     * GAS側で拒否する（フロントの選択肢非表示に依存しないfail-closedな検証。フロント側の
+     * 表示制御自体はPR-Bで対応する）。ここでのみ使うためcurrentMinutesは独立に計算する
+     * （上のisSameDayBooking分岐内のcurrentMinutesとは別変数。既存の当日判定ロジックには
+     * 一切手を入れない）。
+     * 「開始まで96時間」は日数(daysBetweenDateStrings_)と分単位(startMinutes/currentMinutes)を
+     * 組み合わせた分単位の比較で判定する。Asia/Tokyoは夏時間が無い固定オフセットのtimezoneの
+     * ため、暦日の差分と時刻(分)の差分を単純加算するだけで経過時間（分）と一致する。
+     */
+    if (isCardPaymentMethod(input.paymentMethod)) {
+      var cardNowMinutes = BookingAvailability.getCurrentMinutesInTimezone(receivedAt, availabilityConfig.timezone);
+      if (cardNowMinutes === null) {
+        return { valid: false, error: err_('INVALID_CONFIG', '営業時間・予約ルールの設定が正しくありません。') };
+      }
+      var daysUntilStart = daysBetweenDateStrings_(todayString, input.date);
+      var minutesUntilStart = daysUntilStart * 1440 + startMinutes - cardNowMinutes;
+      if (minutesUntilStart < CARD_MIN_HOURS_BEFORE_START * 60) {
+        return {
+          valid: false,
+          error: err_(
+            'CARD_PAYMENT_TOO_CLOSE_TO_START',
+            'カード事前決済は利用開始の4日前（96時間前）までのお申し込みに限ります。直前のご予約は現金・PayPay（現地決済）をお選びください。'
+          )
+        };
+      }
+    }
+
     if (input.note !== undefined && input.note !== null && (typeof input.note !== 'string' || input.note.length > 1000)) {
       return { valid: false, error: err_('INVALID_NOTE', '連絡事項は1000文字以内で入力してください。') };
     }
@@ -352,12 +428,30 @@ var Booking = (function () {
     return nowMillis >= computeTtlExpiryMillis(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, minHoldHours);
   }
 
+  /*
+   * カード予約の支払期限（＝PENDING TTL失効時刻）をミリ秒epochで返す（Issue #334）。
+   * expirePendingBookings（失効判定）とBooking Admin表示（支払期限表示）の両方が
+   * 必ずこの1関数だけを経由する（表示用と判定用で別計算・別定数を持たない）。
+   * 内部はcomputeTtlExpiryMillisをCARD_TTL_HOURS固定・minHoldHours=0（当日受付グレースは
+   * 適用しない。カードは96時間未満の申込自体をvalidateCreateBookingInputで拒否している
+   * ため、通常運用でminHoldHoursのgraceが必要になるケースはそもそも発生しない）で
+   * 呼び出すだけの薄いラッパー。minHoursBeforeStartは既存のPENDING_TTL_MIN_HOURS_BEFORE_START
+   * （既定2時間。Script Properties経由。Issue #334で変更しない）をそのまま渡す。
+   */
+  function computeCardPaymentDueMillis(createdAtMillis, startAtMillis, minHoursBeforeStart) {
+    return computeTtlExpiryMillis(createdAtMillis, startAtMillis, CARD_TTL_HOURS, minHoursBeforeStart, 0);
+  }
+
   return {
     STATUS: STATUS,
     PAYMENT_STATUS: PAYMENT_STATUS,
     ALLOWED_BOOKING_BRANDS: ALLOWED_BOOKING_BRANDS,
     CUSTOMER_TYPES: CUSTOMER_TYPES,
     ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,
+    PAYMENT_METHOD_CARD: PAYMENT_METHOD_CARD,
+    CARD_TTL_HOURS: CARD_TTL_HOURS,
+    CARD_MIN_HOURS_BEFORE_START: CARD_MIN_HOURS_BEFORE_START,
+    isCardPaymentMethod: isCardPaymentMethod,
     getBrandLabel: getBrandLabel,
     getCustomerTypeLabel: getCustomerTypeLabel,
     canTransition: canTransition,
@@ -367,6 +461,7 @@ var Booking = (function () {
     validateCreateBookingInput: validateCreateBookingInput,
     generateBookingId: generateBookingId,
     computeTtlExpiryMillis: computeTtlExpiryMillis,
+    computeCardPaymentDueMillis: computeCardPaymentDueMillis,
     isExpired: isExpired
   };
 })();

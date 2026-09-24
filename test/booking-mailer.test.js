@@ -356,6 +356,73 @@ test('#271ではキャンセルへの状態遷移自体（cancelBooking相当）
   assert.strictEqual(typeof ctx.sandbox.cancelBooking, 'undefined');
 });
 
+/* ---------- EXPIRED（Issue #334: カード決済PENDING失効通知） ---------- */
+
+test('sendExpiredMailForBooking: EXPIRED予約にのみ送信でき、expiredMailSentAtを記録する', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'EXPIRED', paymentMethod: 'オンラインクレジットカード' });
+
+  var result = ctx.sandbox.BookingMailer.sendExpiredMailForBooking(bookingId);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+  assert.match(mailApp._sentEmails[0].subject, /期限切れ/);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.ok(stubs.isDateLike(found.record.expiredMailSentAt));
+});
+
+test('sendExpiredMailForBooking: 二重送信しない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'EXPIRED', paymentMethod: 'オンラインクレジットカード' });
+
+  ctx.sandbox.BookingMailer.sendExpiredMailForBooking(bookingId);
+  var second = ctx.sandbox.BookingMailer.sendExpiredMailForBooking(bookingId);
+  assert.strictEqual(second.skipped, true);
+  assert.strictEqual(second.reason, 'ALREADY_SENT');
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+});
+
+test('sendExpiredMailForBooking: PENDING/CONFIRMED/CANCELLEDには送らない', function () {
+  ['PENDING', 'CONFIRMED', 'CANCELLED'].forEach(function (status) {
+    var mailApp = stubs.createMailAppStub();
+    var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+    var bookingId = seedBooking(ctx, { status: status, bookingId: 'SX-' + status, paymentMethod: 'オンラインクレジットカード' });
+
+    var result = ctx.sandbox.BookingMailer.sendExpiredMailForBooking(bookingId);
+    assert.strictEqual(result.success, false, status);
+    assert.strictEqual(result.error.code, 'INVALID_STATUS', status);
+    assert.strictEqual(mailApp._sentEmails.length, 0, status);
+  });
+});
+
+test('sendExpiredMailForBooking: MailApp失敗でもEXPIRED状態は維持され、lastMailError*に記録される', function () {
+  var mailApp = stubs.createMailAppStub({ throwError: new Error('simulated mail send failure') });
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'EXPIRED', paymentMethod: 'オンラインクレジットカード' });
+
+  var result = ctx.sandbox.BookingMailer.sendExpiredMailForBooking(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'MAIL_SEND_FAILED');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'EXPIRED', 'メール送信失敗でEXPIRED状態を書き換えてはいけない');
+  assert.ok(!found.record.expiredMailSentAt);
+  assert.ok(found.record.lastMailErrorAt, 'lastMailError*へ記録されるべき');
+});
+
+test('sendExpiredMailForBooking: force:trueならexpiredMailSentAtが既にあっても再送できる', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'EXPIRED', paymentMethod: 'オンラインクレジットカード' });
+
+  ctx.sandbox.BookingMailer.sendExpiredMailForBooking(bookingId);
+  var forced = ctx.sandbox.BookingMailer.sendExpiredMailForBooking(bookingId, { force: true });
+  assert.strictEqual(forced.success, true);
+  assert.strictEqual(mailApp._sentEmails.length, 2);
+});
+
 /* ---------- REMINDER ---------- */
 
 test('sendReminderMailForBooking: CONFIRMED予約に1通送り、reminderSentAtとaccessGuideSentAtを同時に記録する', function () {
