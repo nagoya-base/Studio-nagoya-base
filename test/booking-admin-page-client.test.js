@@ -39,6 +39,11 @@ var CLIENT_JS_PATH = path.join(__dirname, '..', 'admin', 'booking', 'booking-adm
  */
 function createElementStub() {
   var listeners = {};
+  /* Issue #334 PR-C: 決済リンク送信欄の表示/非表示（.hiddenクラスの付け外し）を
+     テストから検証できるよう、classList.add/removeが実際にクラス名を保持する
+     ようにする（Issue #330時点までは「例外を投げない」ことのみを保証する
+     no-opで十分だったが、このIssueではclassListの状態自体を検証したいため拡張した）。 */
+  var classes = {};
   return {
     id: '',
     type: '',
@@ -49,7 +54,11 @@ function createElementStub() {
     checked: false,
     textContent: '',
     innerHTML: '',
-    classList: { add: function () {}, remove: function () {} },
+    classList: {
+      add: function (name) { classes[name] = true; },
+      remove: function (name) { delete classes[name]; },
+      contains: function (name) { return !!classes[name]; }
+    },
     addEventListener: function (type, handler) {
       if (!listeners[type]) listeners[type] = [];
       listeners[type].push(handler);
@@ -85,6 +94,8 @@ function createScriptRunStub() {
     'getAdminBookingDetail',
     'adminConfirmBooking',
     'adminCancelBooking',
+    'adminReviveExpiredBooking',
+    'adminSendCardPaymentLink',
     'diagnoseReminderEligibility',
     'previewReminderMail',
     'sendReminderTestMail'
@@ -1251,4 +1262,200 @@ test('テスト送信: 古いテスト送信応答が返っても、その間に
   scriptRun.resolveCall(0, { success: true, sentTo: 'admin@example.com' });
   assert.match(state.resultEl.innerHTML, /new@example\.com/, 'テスト送信の古い応答で判定結果を上書きしてはいけない');
   assert.strictEqual(state.sendTestButton.disabled, false, 'テスト送信自体のbusyは応答が返った時点で解除する');
+});
+
+/* ---------- Issue #334 PR-C: Stripe決済リンク送信欄 ---------- */
+
+function paymentLinkDetailBooking(overrides) {
+  return Object.assign(
+    {
+      bookingId: 'SX-20261001-AAAAAAAA',
+      name: '山田太郎',
+      email: 'taro@example.com',
+      date: '2026-10-05',
+      startAt: '2026-10-05 10:00',
+      endAt: '2026-10-05 12:00',
+      status: 'PENDING',
+      paymentMethod: 'オンラインクレジットカード',
+      isCardPayment: true,
+      cardPaymentDueAt: '2026-10-02 08:00',
+      stripePaymentLinkUrl: '',
+      paymentLinkSentAt: '',
+      paymentLinkSentTo: '',
+      paymentLinkSendCount: 0,
+      paymentLinkLastErrorAt: '',
+      paymentLinkLastErrorMessage: ''
+    },
+    overrides || {}
+  );
+}
+
+test('canSendPaymentLink: カード決済かつPENDINGのみtrue。カード以外・PENDING以外・booking未指定はfalse', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking()), true);
+  assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ isCardPayment: false })), false);
+  assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ status: 'CONFIRMED' })), false);
+  assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ status: 'EXPIRED' })), false);
+  assert.strictEqual(sandbox.canSendPaymentLink(null), false);
+});
+
+test('isValidStripePaymentLinkUrlClient: GAS側（Booking.isValidStripePaymentLinkUrl）と同じ正規表現で判定する', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.isValidStripePaymentLinkUrlClient('https://buy.stripe.com/test_ABC123'), true);
+  assert.strictEqual(sandbox.isValidStripePaymentLinkUrlClient('http://buy.stripe.com/test_ABC123'), false);
+  assert.strictEqual(sandbox.isValidStripePaymentLinkUrlClient('https://buy.stripe.com/test_ABC123?x=1'), false);
+  assert.strictEqual(sandbox.isValidStripePaymentLinkUrlClient('https://evil.example/buy.stripe.com/x'), false);
+  assert.strictEqual(sandbox.isValidStripePaymentLinkUrlClient(''), false);
+  assert.strictEqual(sandbox.isValidStripePaymentLinkUrlClient(null), false);
+});
+
+test('paymentLinkStatusLabel_: paymentLinkSentAtの有無で「送信済み」「未送信」を返す', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.paymentLinkStatusLabel_(paymentLinkDetailBooking()), '未送信');
+  assert.strictEqual(sandbox.paymentLinkStatusLabel_(paymentLinkDetailBooking({ paymentLinkSentAt: '2026-10-01 10:00' })), '送信済み');
+});
+
+test('buildPaymentLinkConfirmMessage_: 予約者名・メール・利用開始/終了・支払期限・Stripe URLを含む（Issue #334本文の送信前確認要件）', function () {
+  var sandbox = loadClientSandbox();
+  var booking = paymentLinkDetailBooking();
+  var message = sandbox.buildPaymentLinkConfirmMessage_(booking, 'https://buy.stripe.com/test_ABC123', false);
+  assert.match(message, /山田太郎/);
+  assert.match(message, /taro@example\.com/);
+  assert.match(message, /2026-10-05 10:00/);
+  assert.match(message, /2026-10-05 12:00/);
+  assert.match(message, /2026-10-02 08:00/);
+  assert.match(message, /https:\/\/buy\.stripe\.com\/test_ABC123/);
+  assert.doesNotMatch(message, /既に送信済み/, '初回送信では再送の文言を含めない');
+});
+
+test('buildPaymentLinkConfirmMessage_: isResend:trueの場合は明示的な再送であることを文面に含める', function () {
+  var sandbox = loadClientSandbox();
+  var message = sandbox.buildPaymentLinkConfirmMessage_(paymentLinkDetailBooking(), 'https://buy.stripe.com/test_ABC123', true);
+  assert.match(message, /既に送信済みです/);
+  assert.match(message, /再送します/);
+});
+
+test('showDetailModal: カード決済以外はStripe決済リンク送信欄を隠す', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(paymentLinkDetailBooking({ isCardPayment: false, paymentMethod: '現金' }));
+  assert.strictEqual(sandbox.paymentLinkUi_.container.classList.contains('hidden'), true);
+});
+
+test('showDetailModal: カード決済PENDINGは送信欄を表示し、未送信なら「決済リンクを送信」・送信済みなら「決済リンクを再送」をボタンに表示する', function () {
+  var sandbox = loadClientSandbox();
+
+  sandbox.showDetailModal(paymentLinkDetailBooking());
+  assert.strictEqual(sandbox.paymentLinkUi_.container.classList.contains('hidden'), false);
+  assert.strictEqual(sandbox.paymentLinkUi_.sendButton.disabled, false);
+  assert.strictEqual(sandbox.paymentLinkUi_.sendButton.textContent, '決済リンクを送信');
+
+  sandbox.showDetailModal(paymentLinkDetailBooking({ paymentLinkSentAt: '2026-10-01 10:00', stripePaymentLinkUrl: 'https://buy.stripe.com/test_ABC123' }));
+  assert.strictEqual(sandbox.paymentLinkUi_.sendButton.textContent, '決済リンクを再送');
+  assert.strictEqual(sandbox.paymentLinkUi_.urlInput.value, 'https://buy.stripe.com/test_ABC123');
+});
+
+test('showDetailModal: カード決済でもPENDING以外は入力・送信ボタンを無効化する（対象外への送信を防ぐ表示制御）', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(paymentLinkDetailBooking({ status: 'CONFIRMED' }));
+  assert.strictEqual(sandbox.paymentLinkUi_.urlInput.disabled, true);
+  assert.strictEqual(sandbox.paymentLinkUi_.sendButton.disabled, true);
+  assert.match(sandbox.paymentLinkUi_.sendButton.textContent, /送信不可/);
+});
+
+test('runSendPaymentLink_: URL未入力の場合はalertのみでgoogle.script.runを呼ばない', function () {
+  var sandbox = loadClientSandbox();
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  sandbox.showDetailModal(paymentLinkDetailBooking());
+  sandbox.paymentLinkUi_.urlInput.value = '';
+  /* 起動時のloadBookings()が既に1回getAdminBookingsを呼んでいるため、ここでリセットする
+     （既存の診断モーダルのテストと同じ方針。docs参照: test内のcalls.length = 0）。 */
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  assert.strictEqual(alerts.length, 1);
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
+test('runSendPaymentLink_: buy.stripe.com形式に一致しないURLはalertのみでgoogle.script.runを呼ばない（GAS側の検証を必須とし、ここでは即時フィードバックのみ）', function () {
+  var sandbox = loadClientSandbox();
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  sandbox.showDetailModal(paymentLinkDetailBooking());
+  sandbox.paymentLinkUi_.urlInput.value = 'https://evil.example/not-stripe';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  assert.strictEqual(alerts.length, 1);
+  assert.match(alerts[0], /URLの形式/);
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
+test('runSendPaymentLink_: 確認ダイアログでキャンセルした場合は送信しない', function () {
+  var sandbox = loadClientSandbox({ confirmResult: false });
+  sandbox.showDetailModal(paymentLinkDetailBooking());
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
+test('runSendPaymentLink_: 確認後にbookingId・URL・isResend(false)を渡してadminSendCardPaymentLinkを呼ぶ（初回送信）', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var booking = paymentLinkDetailBooking();
+  sandbox.showDetailModal(booking);
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  var calls = sandbox.google.script.run.calls;
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].name, 'adminSendCardPaymentLink');
+  assert.deepStrictEqual(calls[0].args, [booking.bookingId, 'https://buy.stripe.com/test_ABC123', false]);
+  assert.strictEqual(sandbox.paymentLinkUi_.sendButton.disabled, true, '送信中はボタンを無効化する');
+});
+
+test('runSendPaymentLink_: 送信済みの予約では isResend(true) を渡す（明示的な再送であることをサーバー側のforceヒントとして伝える）', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var booking = paymentLinkDetailBooking({ paymentLinkSentAt: '2026-10-01 10:00' });
+  sandbox.showDetailModal(booking);
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  var calls = sandbox.google.script.run.calls;
+  assert.strictEqual(calls[0].args[2], true);
+});
+
+test('runSendPaymentLink_: 応答待ちの間に連打しても、二重にgoogle.script.runを呼ばない（連打・同時操作による重複送信防止）', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  sandbox.showDetailModal(paymentLinkDetailBooking());
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+  sandbox.runSendPaymentLink_();
+  sandbox.runSendPaymentLink_();
+
+  assert.strictEqual(sandbox.google.script.run.calls.length, 1, '応答が返るまでは1回しか送信してはいけない');
+});
+
+test('runSendPaymentLink_: 成功応答が返るとsendInFlightを解除し、再度送信できる状態へ戻す', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  sandbox.showDetailModal(paymentLinkDetailBooking());
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.alert = function () {};
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+  assert.strictEqual(sandbox.paymentLinkUi_.sendInFlight, true);
+
+  sandbox.google.script.run.resolveCall(0, { success: true, sendCount: 1 });
+  assert.strictEqual(sandbox.paymentLinkUi_.sendInFlight, false);
 });

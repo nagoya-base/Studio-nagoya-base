@@ -382,18 +382,233 @@ function openDetail(bookingId) {
     .getAdminBookingDetail(bookingId);
 }
 
+/* Issue #334 PR-C: 予約詳細モーダルに表示中のbooking（getAdminBookingDetailの
+   応答そのもの）。決済リンク送信ボタンのクリック時・送信後の詳細再取得時に、
+   どの予約に対する操作かを判断するために保持する。モーダルを閉じたらnullへ戻す。 */
+var currentDetailBooking_ = null;
+var detailModalOpen_ = false;
+
 function showDetailModal(booking) {
+  currentDetailBooking_ = booking;
+  detailModalOpen_ = true;
+
   var body = document.getElementById('modal-body');
   body.innerHTML = DETAIL_FIELDS.map(function (pair) {
     var key = pair[0];
     var label = pair[1];
     return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
   }).join('');
+  renderPaymentLinkSection_(booking);
   document.getElementById('modal-overlay').classList.add('open');
 }
 
 function closeModal() {
   document.getElementById('modal-overlay').classList.remove('open');
+  currentDetailBooking_ = null;
+  detailModalOpen_ = false;
+}
+
+/*
+ * Stripe決済リンク送信欄（Issue #334 PR-C）。対象は「支払方法がオンラインクレジット
+ * カードのPENDING予約のみ」（Issue #334本文）。isCardPaymentはgetAdminBookingDetail
+ * （BookingAdminWeb.gs）がBooking.isCardPaymentMethodで判定した値をそのまま使い、
+ * 支払方法の内部文字列（'オンラインクレジットカード'）をこのファイルに複製しない。
+ */
+function canSendPaymentLink(booking) {
+  return !!booking && !!booking.isCardPayment && booking.status === 'PENDING';
+}
+
+function paymentLinkStatusLabel_(booking) {
+  return booking && booking.paymentLinkSentAt ? '送信済み' : '未送信';
+}
+
+/* GAS側（Booking.gs のisValidStripePaymentLinkUrl）と同じ正規表現。フロント側は
+   即時フィードバックのための事前チェックのみで、送信可否の正はGAS側の再検証とする
+   （Issue #334本文「フロント側でも入力チェックして構いませんが、GAS側の検証を
+   必須としてください」）。 */
+var STRIPE_PAYMENT_LINK_URL_PATTERN_CLIENT_ = /^https:\/\/buy\.stripe\.com\/[A-Za-z0-9_-]+$/;
+
+function isValidStripePaymentLinkUrlClient(url) {
+  return typeof url === 'string' && STRIPE_PAYMENT_LINK_URL_PATTERN_CLIENT_.test(url);
+}
+
+/*
+ * 送信直前の確認ダイアログの文面（DOM操作から分離した純粋関数。単体テスト可能にする）。
+ * Issue #334本文「送信前には、予約者名・メールアドレス・利用日時・支払期限・送信する
+ * Stripe URLを確認できるようにしてください」に対応する。金額は表示しない
+ * （Bookings台帳に確定料金列がないため）。isResendがtrueの場合、明示的な再送であることを
+ * 文面で明示する（「通常の送信操作」と「明示的な再送」を管理者が混同しないようにする）。
+ */
+function buildPaymentLinkConfirmMessage_(booking, url, isResend) {
+  return (
+    '予約ID: ' + booking.bookingId + '\n' +
+    '氏名: ' + booking.name + '\n' +
+    'メール: ' + booking.email + '\n' +
+    '利用開始: ' + booking.startAt + '\n' +
+    '利用終了: ' + booking.endAt + '\n' +
+    '支払期限: ' + (booking.cardPaymentDueAt || '（未設定）') + '\n' +
+    'Stripe URL: ' + url + '\n\n' +
+    (isResend
+      ? '既に送信済みです。決済リンクメールを再送します。\n\n'
+      : '決済リンクメールを送信します。\n\n') +
+    '実行しますか？'
+  );
+}
+
+/* Issue #334 PR-C: 決済リンク送信欄のDOM（#modal内。#modal-bodyのdlとは別に、
+   初回のみ生成して以後は内容だけを更新する。入力中の値を毎回破棄しないため）。 */
+var paymentLinkUi_ = {
+  container: null,
+  statusEl: null,
+  urlInput: null,
+  sendButton: null,
+  sendInFlight: false
+};
+
+function initPaymentLinkUi_() {
+  var modal = document.getElementById('modal');
+  var closeButton = document.getElementById('modal-close');
+
+  var container = document.createElement('div');
+  container.id = 'payment-link-section';
+
+  var heading = document.createElement('h3');
+  heading.textContent = 'Stripe決済リンク送信';
+  container.appendChild(heading);
+
+  var statusEl = document.createElement('div');
+  statusEl.id = 'payment-link-status';
+  container.appendChild(statusEl);
+
+  var urlLabel = document.createElement('label');
+  urlLabel.textContent = 'Stripe決済リンクURL';
+  var urlInput = document.createElement('input');
+  urlInput.type = 'url';
+  urlInput.id = 'payment-link-url-input';
+  urlInput.placeholder = 'https://buy.stripe.com/...';
+  urlLabel.appendChild(urlInput);
+  container.appendChild(urlLabel);
+
+  var sendButton = document.createElement('button');
+  sendButton.type = 'button';
+  sendButton.id = 'payment-link-send-button';
+  container.appendChild(sendButton);
+
+  modal.insertBefore(container, closeButton);
+  sendButton.addEventListener('click', runSendPaymentLink_);
+
+  paymentLinkUi_.container = container;
+  paymentLinkUi_.statusEl = statusEl;
+  paymentLinkUi_.urlInput = urlInput;
+  paymentLinkUi_.sendButton = sendButton;
+}
+
+/* 決済リンク送信欄の表示内容の更新のみを担当する（DOM生成はinitPaymentLinkUi_で1回のみ）。
+   カード決済以外はセクション自体を隠す。カード決済でもPENDING以外（送信後にCONFIRMED/
+   CANCELLED/EXPIREDへ進んだ場合等）は、履歴（URL・送信状況・送信回数・最終エラー）は
+   読み取り専用で表示しつつ、入力・送信操作は無効化する。 */
+function renderPaymentLinkSection_(booking) {
+  var ui = paymentLinkUi_;
+  if (!ui.container) return;
+
+  if (!booking || !booking.isCardPayment) {
+    ui.container.classList.add('hidden');
+    return;
+  }
+  ui.container.classList.remove('hidden');
+
+  var lastErrorLine = booking.paymentLinkLastErrorMessage
+    ? booking.paymentLinkLastErrorMessage + '（' + (booking.paymentLinkLastErrorAt || '') + '）'
+    : 'なし';
+  ui.statusEl.innerHTML = [
+    ['状態', paymentLinkStatusLabel_(booking)],
+    ['送信日時', booking.paymentLinkSentAt || '（未送信）'],
+    ['送信先', booking.paymentLinkSentTo || '（未送信）'],
+    ['送信回数', String(booking.paymentLinkSendCount || 0)],
+    ['最終送信エラー', lastErrorLine]
+  ].map(function (pair) {
+    return '<div class="payment-link-status-row"><span>' + escapeHtml(pair[0]) + '</span>' + escapeHtml(pair[1]) + '</div>';
+  }).join('');
+
+  ui.urlInput.value = booking.stripePaymentLinkUrl || '';
+
+  var sendable = canSendPaymentLink(booking);
+  ui.urlInput.disabled = !sendable;
+  ui.sendButton.disabled = !sendable || ui.sendInFlight;
+  ui.sendButton.textContent = sendable
+    ? (booking.paymentLinkSentAt ? '決済リンクを再送' : '決済リンクを送信')
+    : ('送信不可（' + statusLabel(booking.status) + '）');
+}
+
+/*
+ * 決済リンク送信ボタンの実処理。二重クリック・連打による重複送信は、クライアント側
+ * （sendInFlightガード＋送信中はボタンをdisabled）とGAS側（LockService.getScriptLock()に
+ * よる直列化＋paymentLinkSentAtの二重送信防止）の両方で防ぐ（Issue #334本文
+ * 「既存のLockServiceとメール送信管理の実装を確認し、それに整合する方式を採用してください」）。
+ * 「明示的な再送」（isResend）かどうかはpaymentLinkSentAtの有無から判断し、確認ダイアログの
+ * 文面・GAS側へ渡すforceフラグの両方に反映する。ただし送信可否の最終判定は必ずGAS側
+ * （BookingMailer.sendPaymentLinkMailForBooking）で行い、ここでのisResend判定はUI文面と
+ * forceフラグの初期値にのみ使う。
+ */
+function runSendPaymentLink_() {
+  var booking = currentDetailBooking_;
+  if (!booking || !canSendPaymentLink(booking)) return;
+  if (paymentLinkUi_.sendInFlight) return;
+
+  var url = (paymentLinkUi_.urlInput.value || '').trim();
+  if (!url) {
+    alert('Stripeの決済リンクURLを入力してください。');
+    return;
+  }
+  if (!isValidStripePaymentLinkUrlClient(url)) {
+    alert('URLの形式が正しくありません。buy.stripe.com の決済リンクをそのまま貼り付けてください（クエリ・フラグメント・末尾の余分な文字は不可）。');
+    return;
+  }
+
+  var isResend = !!booking.paymentLinkSentAt;
+  var confirmed = window.confirm(buildPaymentLinkConfirmMessage_(booking, url, isResend));
+  if (!confirmed) return;
+
+  paymentLinkUi_.sendInFlight = true;
+  paymentLinkUi_.sendButton.disabled = true;
+  setStatusLine('決済リンクを送信中…');
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      paymentLinkUi_.sendInFlight = false;
+      setStatusLine('');
+      if (!result || !result.success) {
+        alert('送信できませんでした: ' + (result && result.error && result.error.message));
+      } else if (result.skipped) {
+        alert('送信済みのため送信しませんでした: ' + (result.error && result.error.message));
+      } else {
+        alert('送信しました（送信回数: ' + result.sendCount + '）');
+      }
+      refreshOpenDetail_(booking.bookingId);
+      loadBookings();
+    })
+    .withFailureHandler(function (error) {
+      paymentLinkUi_.sendInFlight = false;
+      setStatusLine('');
+      alert('送信でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      refreshOpenDetail_(booking.bookingId);
+    })
+    .adminSendCardPaymentLink(booking.bookingId, url, isResend);
+}
+
+/* 送信後、開いたままの詳細モーダルを最新状態へ更新する（サーバーから再取得したもので
+   置き換える。クライアント側でpaymentLinkSentAt等を推測して書き換えることはしない。
+   既存のconfirm/cancel/revive直後にloadBookings()で一覧を再取得する方針と同じ）。 */
+function refreshOpenDetail_(bookingId) {
+  if (!detailModalOpen_ || !currentDetailBooking_ || currentDetailBooking_.bookingId !== bookingId) return;
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (result && result.success && detailModalOpen_ && currentDetailBooking_ && currentDetailBooking_.bookingId === bookingId) {
+        showDetailModal(result.booking);
+      }
+    })
+    .withFailureHandler(function () {})
+    .getAdminBookingDetail(bookingId);
 }
 
 function setBusy(bookingId, busy) {
@@ -977,5 +1192,6 @@ document.getElementById('modal-overlay').addEventListener('click', function (eve
 initHeaderUi_();
 initTabCountsUi_();
 initSearchUi_();
+initPaymentLinkUi_();
 
 loadBookings();

@@ -232,6 +232,70 @@ var BookingMailTemplates = (function () {
     return { subject: subject, body: body };
   }
 
+  /*
+   * PAYMENT_LINK（Stripe決済リンクのご案内。Issue #334 PR-C）。
+   * BookingMailer.sendPaymentLinkMailForBookingが、管理者がBooking Adminで入力・確認した
+   * Stripe決済リンクURLをカード決済PENDINGの予約者へ送るときに使う。管理者キャンセル・
+   * 仮受付・確定・失効通知のいずれの既存テンプレートも流用しない専用テンプレート。
+   *
+   * 必須内容（Issue #334本文どおり）:
+   * - 予約者名・予約ID・利用日・開始/終了時刻
+   * - Stripe決済リンク（paymentLinkUrl。呼び出し側でBooking.isValidStripePaymentLinkUrlに
+   *   より検証済みのURLのみが渡される想定。ここでは検証しない）
+   * - 実際の支払期限日時（Booking.computeCardPaymentDueMillis。Booking Admin表示・
+   *   仮受付メールのカード案内と同じ1関数で計算し、期限の表示がずれないようにする）
+   * - 期限までに支払い、確定の連絡を待つ旨（このメール送信だけでは予約は確定しない）
+   * - 支払い済みなのに予約が失効した場合は、二重決済・再申し込みをせず運営へ連絡する旨
+   * - 問い合わせ先
+   *
+   * 金額は本文へ出さない（Bookings台帳に確定料金列がないため。Issue #334本文「料金は
+   * 確認画面・メールに表示しない」。実際の金額はStripeの決済リンク自体の画面で確認する
+   * 運用）。
+   */
+  function buildPaymentLinkMail(record, config, paymentLinkUrl) {
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var timezone = config.timezone;
+    var startTime = formatTime_(record.startAt, timezone);
+    var endTime = formatTime_(record.endAt, timezone);
+    var ttlConfig = (config && config.ttlConfig) || {};
+
+    var dueDisplay = '';
+    if (isDateLike_(record.createdAt) && isDateLike_(record.startAt)) {
+      var dueMillis = Booking.computeCardPaymentDueMillis(
+        record.createdAt.getTime(),
+        record.startAt.getTime(),
+        ttlConfig.minHoursBeforeStart
+      );
+      var dueDate = new Date(dueMillis);
+      var dueDateString = BookingAvailability.formatDateInTimezone(dueDate, timezone);
+      var dueTimeString = formatTime_(dueDate, timezone);
+      dueDisplay = dueDateString ? BookingAvailability.formatDateWithWeekday(dueDateString) + ' ' + dueTimeString : '';
+    }
+
+    var subject = '【' + brandLabel + '】お支払いのご案内（決済リンク）';
+    var body = joinNonEmpty_([
+      record.name + ' 様',
+      '',
+      'ご予約のお支払い方法として、下記のStripe決済リンクをご案内いたします。',
+      '',
+      '予約ID: ' + record.bookingId,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '開始時刻: ' + startTime,
+      '終了時刻: ' + endTime,
+      'ブランド: ' + brandLabel,
+      '',
+      '決済リンク: ' + paymentLinkUrl,
+      'お支払い期限: ' + (dueDisplay || '（お問い合わせください）'),
+      '',
+      '期限までにお支払いのうえ、予約確定のご連絡をお待ちください。このメールの送信のみでは予約は確定しておりません。',
+      '期限までに確定のご連絡ができなかった場合、予約は自動的に失効いたします。',
+      'すでにお支払いが完了しているにもかかわらず予約が失効した場合は、再度のお申し込みや二重のお支払いをせず、下記までご連絡ください。',
+      contactLine_(config)
+    ]);
+
+    return { subject: subject, body: body };
+  }
+
   /* accessGuideの秘密値（keyboxNumber/unlockCode）が空の場合はプレースホルダを出す。
      値の要否判定・成功/失敗の扱いはBookingMailer.gs側の責務（このテンプレートは常に
      渡された値をそのまま出力するだけ）。 */
@@ -287,6 +351,7 @@ var BookingMailTemplates = (function () {
     buildConfirmedMail: buildConfirmedMail,
     buildCancelledMail: buildCancelledMail,
     buildExpiredMail: buildExpiredMail,
-    buildReminderMail: buildReminderMail
+    buildReminderMail: buildReminderMail,
+    buildPaymentLinkMail: buildPaymentLinkMail
   };
 })();

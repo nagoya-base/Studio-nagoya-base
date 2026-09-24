@@ -200,7 +200,23 @@ function getAdminBookingDetail(bookingId) {
       accessGuideSentAt: formatAdminDateTime_(record.accessGuideSentAt, timezone),
       hasMailError: !!record.lastMailErrorAt,
       /* Issue #334: カード予約のみ非空（読み取り専用の支払期限表示用）。 */
-      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone)
+      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone),
+      /*
+       * Issue #334 PR-C: Stripe決済リンク送信欄の表示制御・送信状態表示用。
+       * isCardPaymentは「支払方法がオンラインクレジットカード」の判定を、Web UI側で
+       * 内部文字列（'オンラインクレジットカード'）を複製せずBooking.gs 1箇所に
+       * 委ねるための真偽値（Booking.isCardPaymentMethodと同じ判定）。
+       * paymentLinkLastErrorMessageは、hasMailError（他メール種別と共有・真偽値のみ）と
+       * 異なり、決済リンク送信専用の「最終送信エラー」表示のためsanitize済みの本文を
+       * そのまま返す（Issue #334本文の管理画面要件どおり）。
+       */
+      isCardPayment: Booking.isCardPaymentMethod(record.paymentMethod),
+      stripePaymentLinkUrl: record.stripePaymentLinkUrl || '',
+      paymentLinkSentAt: formatAdminDateTime_(record.paymentLinkSentAt, timezone),
+      paymentLinkSentTo: record.paymentLinkSentTo || '',
+      paymentLinkSendCount: Number(record.paymentLinkSendCount) || 0,
+      paymentLinkLastErrorAt: formatAdminDateTime_(record.paymentLinkLastErrorAt, timezone),
+      paymentLinkLastErrorMessage: record.paymentLinkLastErrorMessage || ''
     }
   };
 }
@@ -222,4 +238,15 @@ function adminCancelBooking(bookingId) {
    ダイアログはHTML側（クライアント）で行う。 */
 function adminReviveExpiredBooking(bookingId) {
   return reviveExpiredBooking(bookingId);
+}
+
+/*
+ * Stripe決済リンクの送信（Issue #334 PR-C）。既存の正式関数sendCardPaymentLinkMail
+ * （BookingAdmin.gs）へそのまま委譲する。業務ロジック（URL検証・予約状態/支払方法/
+ * 期限の再検証・二重送信防止・送信履歴の記録）はコピーしない。送信前の内容確認
+ * ダイアログ（予約者名・メール・利用日時・支払期限・送信するURLの表示）と、
+ * 「明示的な再送」かどうかの判断はHTML側（クライアント）で行い、forceのみここへ渡す。
+ */
+function adminSendCardPaymentLink(bookingId, paymentLinkUrl, force) {
+  return sendCardPaymentLinkMail(bookingId, paymentLinkUrl, { force: !!force });
 }

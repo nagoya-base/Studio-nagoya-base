@@ -58,7 +58,33 @@ var SpreadsheetRepository = (function () {
      * ここから先はIssue #334（カード決済の期限・失効通知・手動復活）で追加した列。
      * customerType/mail列追加時と同じく末尾追記の方針を踏襲する。
      */
-    'expiredMailSentAt'
+    'expiredMailSentAt',
+    /*
+     * ここから先はIssue #334 PR-C（Booking AdminからのStripe決済リンク送信）で追加した列。
+     * 同じく末尾追記の方針を踏襲する（本番反映時は既存Bookingsシートのヘッダー行へ
+     * 手動で追記が必要。README.md「Spreadsheet構成」参照）。
+     * - stripePaymentLinkUrl: 管理者が最後に入力・送信したStripe Payment Link URL。
+     * - paymentLinkSentAt: 決済リンクメールの送信に成功した直近の日時。他のSentAt列と
+     *   同じ方式で、空の場合だけ「通常送信」の対象になる（二重送信防止。明示的な再送は
+     *   force指定でこの値の有無を無視する）。送信するたびに最新の送信時刻へ更新する。
+     * - paymentLinkSentTo: 直近の送信に成功した宛先メールアドレス（送信時点の
+     *   record.emailをそのまま記録。予約者のメールアドレスが後で変わっても送信時点の
+     *   宛先を追跡できるようにするため）。
+     * - paymentLinkSendCount: 決済リンクメールの送信成功回数（初回送信・明示的な再送の
+     *   いずれも成功するたびに1加算する）。
+     * - paymentLinkLastErrorAt / paymentLinkLastErrorMessage: 決済リンクメールの直近の
+     *   送信失敗時刻・エラー内容（sanitizeErrorMessage_で redaction済み）。既存の
+     *   lastMailError*（他のメール種別と共有）とは別の専用列とする。決済リンク送信は
+     *   Booking Admin予約詳細で専用の送信状態（未送信/送信済み・送信回数・最終送信
+     *   エラー）を表示する要件があり、他メール種別のエラーと混在させると誤表示になるため。
+     *   次回の送信に成功すると自動的に空へ戻す（既存のlastMailError*と同じ方針）。
+     */
+    'stripePaymentLinkUrl',
+    'paymentLinkSentAt',
+    'paymentLinkSentTo',
+    'paymentLinkSendCount',
+    'paymentLinkLastErrorAt',
+    'paymentLinkLastErrorMessage'
   ];
 
   function getSpreadsheet_() {

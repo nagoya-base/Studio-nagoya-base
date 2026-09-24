@@ -557,3 +557,91 @@ test('adminReviveExpiredBooking: PENDINGからの復活はreviveExpiredBooking�
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'INVALID_TRANSITION');
 });
+
+/* ---------- Issue #334 PR-C: Stripe決済リンク送信欄 ---------- */
+
+test('getAdminBookingDetail: カード決済PENDINGはisCardPayment:trueで、決済リンク送信欄用のフィールドは未送信の初期状態（空文字/0）を返す', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+
+  var result = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.strictEqual(result.booking.isCardPayment, true);
+  assert.strictEqual(result.booking.stripePaymentLinkUrl, '');
+  assert.strictEqual(result.booking.paymentLinkSentAt, '');
+  assert.strictEqual(result.booking.paymentLinkSentTo, '');
+  assert.strictEqual(result.booking.paymentLinkSendCount, 0);
+  assert.strictEqual(result.booking.paymentLinkLastErrorAt, '');
+  assert.strictEqual(result.booking.paymentLinkLastErrorMessage, '');
+});
+
+test('getAdminBookingDetail: 現金・PayPay・未定はisCardPayment:falseを返す（決済リンク送信欄を表示しないための判定用）', function () {
+  var ctx = setup();
+  var startTimes = ['10:00', '13:00', '16:00'];
+  ['現金', 'PayPay', '未定'].forEach(function (paymentMethod, index) {
+    var bookingId = createPending(ctx, { paymentMethod: paymentMethod, email: 'not-card-' + index + '@example.com', startTime: startTimes[index] });
+    var result = ctx.sandbox.getAdminBookingDetail(bookingId);
+    assert.strictEqual(result.booking.isCardPayment, false, paymentMethod);
+  });
+});
+
+test('adminSendCardPaymentLink: 既存sendCardPaymentLinkMailと同じ結果になり、送信後のgetAdminBookingDetailに送信状態が反映される（独自ロジックを持たない）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード', email: 'payer@example.com' });
+
+  var result = ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+
+  var paymentLinkMails = mailApp._sentEmails.filter(function (mail) { return mail.subject && mail.subject.indexOf('お支払い') !== -1; });
+  assert.strictEqual(paymentLinkMails.length, 1, '決済リンクメールが1通送られるべき（sendCardPaymentLinkMailへの委譲が実際に効いていることの確認）');
+
+  var detail = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.strictEqual(detail.booking.stripePaymentLinkUrl, 'https://buy.stripe.com/test_ABC123');
+  assert.ok(detail.booking.paymentLinkSentAt, 'paymentLinkSentAtが記録されるべき');
+  assert.strictEqual(detail.booking.paymentLinkSentTo, 'payer@example.com');
+  assert.strictEqual(detail.booking.paymentLinkSendCount, 1);
+});
+
+test('adminSendCardPaymentLink: forceなしの2回目はスキップされ、二重送信しない。forceを明示的に渡した場合のみ再送でき、送信回数が増える', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+  var url = 'https://buy.stripe.com/test_ABC123';
+
+  ctx.sandbox.adminSendCardPaymentLink(bookingId, url);
+  var second = ctx.sandbox.adminSendCardPaymentLink(bookingId, url);
+  assert.strictEqual(second.skipped, true);
+  assert.strictEqual(second.reason, 'ALREADY_SENT');
+
+  var afterSecond = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.strictEqual(afterSecond.booking.paymentLinkSendCount, 1, '明示的な再送でなければ送信回数は増えない');
+
+  var forced = ctx.sandbox.adminSendCardPaymentLink(bookingId, url, true);
+  assert.strictEqual(forced.success, true, JSON.stringify(forced));
+
+  var afterForced = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.strictEqual(afterForced.booking.paymentLinkSendCount, 2, '明示的な再送では送信回数が増える');
+});
+
+test('adminSendCardPaymentLink: カード決済以外・PENDING以外には送信できない（sendCardPaymentLinkMail/BookingMailer側の再検証がそのまま効く）', function () {
+  var ctx = setup();
+  var cashBookingId = createPending(ctx);
+  var cashResult = ctx.sandbox.adminSendCardPaymentLink(cashBookingId, 'https://buy.stripe.com/test_ABC123');
+  assert.strictEqual(cashResult.success, false);
+  assert.strictEqual(cashResult.error.code, 'NOT_CARD_PAYMENT');
+
+  var confirmedBookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード', email: 'confirmed@example.com', startTime: '13:00' });
+  ctx.sandbox.adminConfirmBooking(confirmedBookingId);
+  var confirmedResult = ctx.sandbox.adminSendCardPaymentLink(confirmedBookingId, 'https://buy.stripe.com/test_ABC123');
+  assert.strictEqual(confirmedResult.success, false);
+  assert.strictEqual(confirmedResult.error.code, 'INVALID_STATUS');
+});
+
+test('adminSendCardPaymentLink: 不正なURLはINVALID_PAYMENT_LINK_URLで拒否される（GAS側の検証が必須で、クライアント側の事前チェックに依存しない）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+
+  var result = ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://evil.example/not-stripe');
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'INVALID_PAYMENT_LINK_URL');
+});

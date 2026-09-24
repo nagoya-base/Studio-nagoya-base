@@ -695,3 +695,49 @@ test('computeCardPaymentDueMillis: 「利用開始のminHoursBeforeStart時間�
   assert.strictEqual(due, startAt - 2 * 3600000);
   assert.ok(due <= startAt);
 });
+
+/* ---------- isValidStripePaymentLinkUrl（Issue #334 PR-C） ---------- */
+
+test('isValidStripePaymentLinkUrl: buy.stripe.com配下の英数字・アンダースコア・ハイフンのみのパスは許可する', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://buy.stripe.com/test_a1B2c3'), true);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://buy.stripe.com/a-b_c-D9'), true);
+});
+
+test('isValidStripePaymentLinkUrl: http（httpsでない）は拒否する', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('http://buy.stripe.com/test_a1B2c3'), false);
+});
+
+test('isValidStripePaymentLinkUrl: buy.stripe.com以外のホスト（他ドメイン・サブドメイン偽装含む）は拒否する', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://stripe.com/test_a1B2c3'), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://buy.stripe.com.evil.example/test_a1B2c3'), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://evil.example/buy.stripe.com/test_a1B2c3'), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://notbuy.stripe.com/test_a1B2c3'), false);
+});
+
+test('isValidStripePaymentLinkUrl: userinfo・ポート指定は拒否する（ホスト部分の偽装対策）', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://user@buy.stripe.com/test_a1B2c3'), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://buy.stripe.com:443/test_a1B2c3'), false);
+});
+
+test('isValidStripePaymentLinkUrl: クエリ・フラグメント・末尾スラッシュ・パス無しは拒否する', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://buy.stripe.com/test_a1B2c3?foo=bar'), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://buy.stripe.com/test_a1B2c3#section'), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://buy.stripe.com/test_a1B2c3/'), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://buy.stripe.com/'), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://buy.stripe.com'), false);
+});
+
+test('isValidStripePaymentLinkUrl: 前後に空白を含む・空文字・非文字列は拒否する（fail-closed。emailと同じ方針でtrimしてから緩く検証しない）', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl(' https://buy.stripe.com/test_a1B2c3'), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl('https://buy.stripe.com/test_a1B2c3 '), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl(''), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl(null), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl(undefined), false);
+  assert.strictEqual(Booking.isValidStripePaymentLinkUrl(123), false);
+});

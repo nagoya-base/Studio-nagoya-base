@@ -29,7 +29,9 @@ var BookingMailer = (function () {
     CONFIRMED: 'CONFIRMED',
     CANCELLED: 'CANCELLED',
     REMINDER: 'REMINDER',
-    EXPIRED: 'EXPIRED'
+    EXPIRED: 'EXPIRED',
+    /* Issue #334 PR-C: 管理者がBooking AdminからStripe決済リンクを送信するメール種別。 */
+    PAYMENT_LINK: 'PAYMENT_LINK'
   };
 
   function describeError_(error) {
@@ -573,6 +575,228 @@ var BookingMailer = (function () {
     );
   }
 
+  /*
+   * PAYMENT_LINK（Booking AdminからのStripe決済リンク送信。Issue #334 PR-C）。
+   *
+   * 既存のwithBookingLock_（status/SentAtのみを見る汎用判定＋成功時にsentAtFieldsだけを
+   * 更新する仕組み）は、この送信では次の理由により流用しない:
+   * - 送信ごとに入力されるpaymentLinkUrl（可変の引数）を検証・記録する必要がある
+   * - 成功時にstripePaymentLinkUrl/paymentLinkSentTo/paymentLinkSendCountという、
+   *   他のメール種別にはない専用フィールドを合わせて更新する必要がある
+   * - 失敗時の記録先が、他メール種別と共有するlastMailError*ではなく専用列
+   *   （paymentLinkLastErrorAt/paymentLinkLastErrorMessage）である
+   * そのため、Lock取得・最新レコード再読込・Lock解除という配線本体は既存の
+   * withLockedBookingRecord_をそのまま再利用し（LockService.getScriptLock()を
+   * 複製しない）、事前判定・送信・記録のみをこの関数専用に実装する。
+   */
+  function isDateLike_(value) {
+    return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
+  }
+
+  var PAYMENT_LINK_REASON_CODES_ = {
+    INVALID_STATUS: 'INVALID_STATUS',
+    NOT_CARD_PAYMENT: 'NOT_CARD_PAYMENT',
+    ALREADY_SENT: 'ALREADY_SENT',
+    EMAIL_MISSING: 'EMAIL_MISSING',
+    PAYMENT_DUE_UNKNOWN: 'PAYMENT_DUE_UNKNOWN',
+    PAYMENT_DUE_PASSED: 'PAYMENT_DUE_PASSED'
+  };
+
+  /*
+   * 送信可否の判定（副作用なし）。判定順序（最初に一致したものを返す）:
+   *   INVALID_STATUS → NOT_CARD_PAYMENT → ALREADY_SENT → EMAIL_MISSING →
+   *   PAYMENT_DUE_UNKNOWN → PAYMENT_DUE_PASSED → eligible
+   * - 対象は「支払方法がカードのPENDING予約」のみ（Issue #334本文）。UIでの表示制御に
+   *   依存せず、送信時にここで必ず再検証する。
+   * - ALREADY_SENTはforce（管理者の明示的な再送）で無視できるが、status/paymentMethodの
+   *   不一致はforceでも無視しない（既存のreminderEligibilityCheck_と同じ方針）。
+   * - 支払期限（Booking.computeCardPaymentDueMillis）を過ぎている場合は送信を拒否する
+   *   （Issue #334本文「期限未到来を再検証」）。createdAt/startAtが揃っていない
+   *   （データ不備）場合は期限を計算できないためfail-closedに拒否する。
+   */
+  function evaluatePaymentLinkEligibility_(record, options) {
+    var opts = options || {};
+
+    if (record.status !== Booking.STATUS.PENDING) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.INVALID_STATUS,
+        message: (record.status || '未設定') + ' の予約には決済リンクメールを送信できません（PENDINGのみ対象）。'
+      };
+    }
+    if (!Booking.isCardPaymentMethod(record.paymentMethod)) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.NOT_CARD_PAYMENT,
+        message: '支払方法がオンラインクレジットカードの予約のみ決済リンクを送信できます。'
+      };
+    }
+    if (record.paymentLinkSentAt && !opts.force) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.ALREADY_SENT,
+        message: '決済リンクは送信済みです。再送する場合は明示的に再送操作を選んでください。'
+      };
+    }
+    if (!record.email) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.EMAIL_MISSING,
+        message: '予約者のメールアドレスが登録されていません。'
+      };
+    }
+    if (!isDateLike_(record.createdAt) || !isDateLike_(record.startAt)) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.PAYMENT_DUE_UNKNOWN,
+        message: '支払期限を計算できないため送信できません（申込日時・利用開始日時を確認してください）。'
+      };
+    }
+    var ttlConfig = BookingConfig.getTtlConfig();
+    var dueMillis = Booking.computeCardPaymentDueMillis(
+      record.createdAt.getTime(),
+      record.startAt.getTime(),
+      ttlConfig.minHoursBeforeStart
+    );
+    var nowMillis = isDateLike_(opts.now) ? opts.now.getTime() : Date.now();
+    if (nowMillis >= dueMillis) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.PAYMENT_DUE_PASSED,
+        message: '支払期限を過ぎているため送信できません。'
+      };
+    }
+
+    return { eligible: true, dueMillis: dueMillis };
+  }
+
+  /*
+   * 決済リンクメール専用の失敗記録（Issue #334 PR-C）。既存のrecordMailFailure_
+   * （lastMailError*・他メール種別と共有）とは書き込み先を分ける（このファイル冒頭の
+   * コメント参照）。Recoveryへの記録は既存と同じ形式（failureType/status/errorMessage/
+   * recoveryState/resolvedAt）を使う。 */
+  function recordPaymentLinkMailFailure_(bookingId, error, status) {
+    var now = new Date();
+    var message = sanitizeErrorMessage_(describeError_(error));
+    try {
+      SpreadsheetRepository.updateBookingFields(bookingId, {
+        paymentLinkLastErrorAt: now,
+        paymentLinkLastErrorMessage: message
+      });
+    } catch (sheetsError) {
+      Logger.log('BookingMailer: paymentLinkLastError更新に失敗しました: ' + sanitizeErrorMessage_(describeError_(sheetsError)));
+    }
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: 'PAYMENT_LINK_MAIL_FAILED',
+        occurredAt: now,
+        status: status,
+        errorMessage: message,
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (recoveryError) {
+      Logger.log('BookingMailer: RecoveryRepository.recordFailure失敗: ' + sanitizeErrorMessage_(describeError_(recoveryError)));
+    }
+  }
+
+  /*
+   * options:
+   *   force（省略可。既定false）: trueの場合、送信済み（paymentLinkSentAtが既にある）
+   *     でも送信する。管理者の明示的な再送操作からのみ渡すこと（Issue #334本文
+   *     「再送は履歴と明示的な確認を伴う管理者操作に限る」）。status/paymentMethod
+   *     不一致・期限切れはforceでも無視しない。
+   *   now（省略可。テスト用）: 期限判定の基準時刻。省略時は現在時刻。
+   *
+   * 処理順序: Lock取得 → 最新レコード再読込 → URL形式検証 → 事前判定
+   *   （evaluatePaymentLinkEligibility_） → MailApp送信 → 成功: stripePaymentLinkUrl /
+   *   paymentLinkSentAt / paymentLinkSentTo / paymentLinkSendCountを更新し、
+   *   paymentLinkLastError*をクリア → Lock解除。
+   * 送信失敗（設定不足・MailApp例外のいずれも）でも予約のstatusは一切変更しない
+   * （Issue #334本文どおり。PENDINGのまま維持し、管理者が原因解消後に再送できる）。
+   */
+  function sendPaymentLinkMailForBooking(bookingId, paymentLinkUrl, options) {
+    var opts = options || {};
+
+    if (!Booking.isValidStripePaymentLinkUrl(paymentLinkUrl)) {
+      return {
+        success: false,
+        error: {
+          code: 'INVALID_PAYMENT_LINK_URL',
+          message: 'Stripeの決済リンクURL（https://buy.stripe.com/で始まる形式）を正しく入力してください。'
+        }
+      };
+    }
+
+    return withLockedBookingRecord_(bookingId, function (record) {
+      var evaluation = evaluatePaymentLinkEligibility_(record, { force: !!opts.force, now: opts.now });
+      if (!evaluation.eligible) {
+        var reasonCode = evaluation.reasonCode;
+        if (reasonCode === PAYMENT_LINK_REASON_CODES_.ALREADY_SENT) {
+          return { success: true, skipped: true, reason: 'ALREADY_SENT', bookingId: bookingId, mailType: MAIL_TYPES.PAYMENT_LINK };
+        }
+        return {
+          success: false,
+          skipped: true,
+          bookingId: bookingId,
+          mailType: MAIL_TYPES.PAYMENT_LINK,
+          error: { code: reasonCode, message: evaluation.message }
+        };
+      }
+
+      var mailConfig;
+      var mail;
+      try {
+        mailConfig = ensureMailConfigComplete_();
+        mail = BookingMailTemplates.buildPaymentLinkMail(record, mailConfig, paymentLinkUrl);
+      } catch (buildError) {
+        recordPaymentLinkMailFailure_(bookingId, buildError, record.status);
+        return { success: false, error: { code: 'MAIL_NOT_READY', message: describeError_(buildError) } };
+      }
+
+      try {
+        MailApp.sendEmail({
+          to: record.email,
+          subject: mail.subject,
+          body: mail.body,
+          name: mailConfig.displayName,
+          replyTo: mailConfig.replyTo
+        });
+      } catch (sendError) {
+        recordPaymentLinkMailFailure_(bookingId, sendError, record.status);
+        return { success: false, error: { code: 'MAIL_SEND_FAILED', message: describeError_(sendError) } };
+      }
+
+      var sentAt = new Date();
+      var nextSendCount = (Number(record.paymentLinkSendCount) || 0) + 1;
+      try {
+        SpreadsheetRepository.updateBookingFields(bookingId, {
+          stripePaymentLinkUrl: paymentLinkUrl,
+          paymentLinkSentAt: sentAt,
+          paymentLinkSentTo: record.email,
+          paymentLinkSendCount: nextSendCount,
+          paymentLinkLastErrorAt: '',
+          paymentLinkLastErrorMessage: ''
+        });
+      } catch (sheetsError) {
+        /* メール送信自体は成功済み。既存sentAtFields更新失敗時と同じ方針で例外を投げず
+           Loggerへ残す（次回自動判定はまだpaymentLinkSentAtが空のため再送されうる旨は
+           README「制約」節に明記する）。 */
+        Logger.log('BookingMailer: paymentLinkSentAt等の更新に失敗しました（メール送信自体は成功）: ' + sanitizeErrorMessage_(describeError_(sheetsError)));
+      }
+
+      return {
+        success: true,
+        bookingId: bookingId,
+        mailType: MAIL_TYPES.PAYMENT_LINK,
+        sentAt: sentAt,
+        sentTo: record.email,
+        sendCount: nextSendCount
+      };
+    });
+  }
+
   return {
     MAIL_TYPES: MAIL_TYPES,
     sendPendingMailForBooking: sendPendingMailForBooking,
@@ -580,6 +804,7 @@ var BookingMailer = (function () {
     sendCancelledMailForBooking: sendCancelledMailForBooking,
     sendExpiredMailForBooking: sendExpiredMailForBooking,
     sendReminderMailForBooking: sendReminderMailForBooking,
+    sendPaymentLinkMailForBooking: sendPaymentLinkMailForBooking,
     /* BookingRepository.gs等、利用者メール経路の他ファイルからも同じredaction方針で
        Loggerへ出力できるよう公開する（PRレビュー対応）。 */
     sanitizeErrorMessage: sanitizeErrorMessage_,

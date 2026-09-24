@@ -350,6 +350,82 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
   font-size: 14px;
 }
 
+.hidden {
+  display: none !important;
+}
+
+/*
+ * Issue #334 PR-C: Stripe決済リンク送信欄。#modal-body（DETAIL_FIELDSのdl）とは別に
+ * booking-admin.js（initPaymentLinkUi_）が#modal内へ1回だけDOM生成する
+ * （#modal-close直前に挿入。BookingAdminPage.html自体は変更しない設計のため、
+ * 既存の前日リマインド診断モーダルと同じ方針）。カード決済以外の予約詳細では
+ * .hiddenを付けて非表示にする。
+ */
+#payment-link-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+#payment-link-section h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+#payment-link-status {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin-bottom: 10px;
+}
+
+.payment-link-status-row {
+  margin-bottom: 2px;
+}
+
+.payment-link-status-row span {
+  display: inline-block;
+  min-width: 88px;
+  color: var(--color-text-sub);
+}
+
+#payment-link-section label {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin-bottom: 10px;
+}
+
+#payment-link-url-input {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  margin-top: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  background: var(--color-card-bg);
+  color: var(--color-text);
+}
+
+#payment-link-url-input:disabled {
+  opacity: 0.5;
+}
+
+#payment-link-send-button {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 14px;
+}
+
+#payment-link-send-button:disabled {
+  opacity: 0.5;
+}
+
 #modal-close {
   width: 100%;
   min-height: 44px;
