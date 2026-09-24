@@ -1333,6 +1333,261 @@ busyIntervalsに対して呼び出し、件数を閾値でバケット分けす�
   反映されること・timeBand未選択時はallとして全開始時刻が表示されること（後方互換）・
   該当候補が無い場合は既存の「開始時刻がありません」表示になることを検証。
 
+## Issue #330: 前日リマインドの任意時刻デバッグ・管理者宛テスト送信
+
+前日リマインドの定期実行は毎日18時台の1回のみのため、メール本文・送信対象判定の
+修正結果を確認するには翌日まで待つか、本番予約データを使って手動で確認するしか
+なかった。Booking Admin Web UI（Issue #305/#317/#322）へ「前日リマインド診断」を
+追加し、既存予約IDと基準日（今日扱い）を指定するだけで、任意の時刻に対象判定・
+本番テンプレートのプレビュー・管理者宛テスト送信を確認できるようにした。
+予約者への手動送信・一括送信・送信済みフラグのリセットは対象外。
+
+### 対象判定・設定不足判定の共通化
+
+本番の前日リマインドは、翌日日付計算（`sendNextDayReminders`）・status/SentAt判定
+（`BookingMailer.gs`の`withBookingLock_`）・メール設定/来場案内の設定検証
+（`buildTemplateFn`内の`ensureMailConfigComplete_`/`ensureAccessGuideComplete_`）に
+分散していた。これらを次の2つの共通関数へ集約し、**本番の実送信経路（`sendReminderMailForBooking`）
+と診断の両方が実際に同じ関数を呼ぶ**ようにした（PRレビュー対応。初版では診断からしか
+`evaluateReminderEligibility`を呼んでおらず、この受入条件が未達だった）。
+
+- `computeNextDayDateString_(baseDate, timezone)`（`BookingReminderTriggers.gs`） —
+  `baseDate`の翌日を`timezone`基準の`'YYYY-MM-DD'`へ変換する。元は
+  `sendNextDayReminders`内のインライン計算だったものを抽出しただけで、計算式自体は
+  変更していない。本番は`now`（実行時刻）を、診断は管理者が指定した基準日を渡す。
+- `BookingMailer.evaluateReminderEligibility(record, options)`
+  （`BookingMailer.gs`） — 副作用のない判定関数。`options = { targetDateString, force }`。
+  `targetDateString`を渡した場合のみ`NOT_NEXT_DAY`を判定し（省略時はスキップ）、続けて
+  `evaluateStatusAndSentAt_`（`withBookingLock_`の既定の事前判定から抽出した純粋関数。
+  本番の4メール種別すべてがここを通る）を`force`付きで呼んで`INVALID_STATUS`/
+  `ALREADY_SENT`を判定し、その後`EMAIL_MISSING`（予約者メール未登録）、最後に本番と
+  同じ`ensureMailConfigComplete_`/`ensureAccessGuideComplete_`（例外をtry/catchして
+  `MAIL_NOT_READY`へ変換するのみで検証条件自体は複製しない）で設定不足を判定する。
+  すべて通れば`ELIGIBLE`を返す。`record.date`がSheetsの自動型変換でDate値になっていても
+  timezone基準の`'YYYY-MM-DD'`へ正規化してから比較する（`normalizeReminderDate_`）。
+
+判定コード・優先順位（上から順に判定し、最初に一致したものを返す）:
+
+| 優先順位 | コード | 意味 |
+| --- | --- | --- |
+| 1 | `NOT_NEXT_DAY` | 利用日が指定した基準日の翌日ではない（`targetDateString`省略時は判定しない） |
+| 2 | `INVALID_STATUS` | 予約statusがCONFIRMEDではない |
+| 3 | `ALREADY_SENT` | `reminderSentAt`/`accessGuideSentAt`のいずれかが送信済み（`force`指定時は無視） |
+| 4 | `EMAIL_MISSING` | 予約者のメールアドレスが未登録 |
+| 5 | `MAIL_NOT_READY` | メール送信設定・来場案内の設定不足 |
+| - | `ELIGIBLE` | 上記いずれにも該当しない（送信対象） |
+
+**本番`sendReminderMailForBooking`は、`withBookingLock_`の事前判定（第8引数
+`eligibilityCheckFn`）へ`reminderEligibilityCheck_`（`evaluateReminderEligibility`を
+使う判定）を渡すことで、実際にこの共通関数を経由する。**
+`withBookingLock_`自体は、Lock取得・最新レコード再読込・事前判定・
+（`buildTemplateFn`によるテンプレート生成・`MailApp`送信・SentAt更新）という配線
+（`withLockedBookingRecord_`）を、事前判定を差し替え可能にしただけで、PENDING/
+CONFIRMED/CANCELLEDの3種別は従来どおり`defaultMailEligibilityCheck_`
+（status/SentAtのみを見る、Issue #330より前と全く同じ判定＋レスポンス）を使うため
+挙動は変わらない。
+
+- `NOT_NEXT_DAY`・`INVALID_STATUS`・`ALREADY_SENT`は、既存のwithBookingLock_と
+  完全に同じレスポンス形（`skipped:true`等）へ変換する。`INVALID_STATUS`/
+  `ALREADY_SENT`は失敗記録（`recordMailFailure_`）を呼ばない、という既存の扱いも
+  そのまま維持する。
+- `EMAIL_MISSING`/`MAIL_NOT_READY`は、実際に送信できない状態を表す失敗として、
+  既存の`MAIL_NOT_READY`/`MAIL_SEND_FAILED`と同じく`recordMailFailure_`で
+  `lastMailError*`・`Recovery`へ記録する（`EMAIL_MISSING`はIssue #330で新規に
+  追加した失敗理由のため、記録するかどうかは既存挙動になかった判断だが、
+  他の送信失敗と同じ扱いに揃えた）。
+- `sendNextDayReminders`は`targetDateString`（計算済みの翌日日付）を
+  `sendReminderMailForBooking`へ渡す。候補抽出（`getConfirmedBookingsForDate`）の
+  時点で既に翌日のCONFIRMED予約だけに絞り込まれているため、通常は`NOT_NEXT_DAY`に
+  なることはなく、ロック取得後の最新レコードに対する防御的な再確認という位置づけ。
+- 既存の管理者個別再送（`BookingAdmin.gs`「予約メールを再送」メニュー。
+  `force:true`）は`targetDateString`を渡さない（＝`NOT_NEXT_DAY`判定を経由しない）。
+  この既存機能は特定の日付だけを対象にしない仕様のため、ここへ`NOT_NEXT_DAY`判定を
+  持ち込むと壊れてしまうことを確認したうえで、意図的に対象外とした。
+
+`test/booking-reminders.test.js`・`test/booking-mailer.test.js`は無改変のまま全件
+通過することを確認済み（外部挙動が変わっていないことの回帰確認）。
+
+### 診断専用のサーバー側処理（`BookingReminderDiagnostics.gs`。新規）
+
+Booking Adminプロジェクト専用の新規ファイル。以下の3関数のみを公開する。
+
+- `diagnoseReminderEligibility(bookingId, baseDateString)` — 対象判定のみ
+  （`SpreadsheetRepository.findRowByBookingId`による読み取りのみ。副作用なし）。
+  `baseDateString`は必須（後述）。
+- `previewReminderMail(bookingId, { baseDateString, reveal })` — 本番と同じ
+  `BookingMailTemplates.buildReminderMail`を使い、件名・本文をプレビューする。
+  `baseDateString`は必須（後述）。`reveal`が`false`（既定）の間はキーボックス番号・
+  解錠コードをマスクした来場案内を渡して生成し、`reveal:true`のときだけ実値で
+  生成する（テンプレート関数自体は複製していない。マスクの有無に関わらず本番と
+  同じScript Propertiesの値を使うため、実際に管理者宛テスト送信した場合と
+  同じ内容になる）。対象外（`eligible:false`）の予約でもプレビュー自体は生成して
+  返す（件名・本文を確認したい診断ニーズのため）。「プレビューの生成に成功したこと」
+  （`success`）と「本番なら実際に送信対象であること」（`eligible`/`reasonCode`）は
+  別物のため、レスポンスは両方を別項目で返し、UIも両者を区別して表示する
+  （PRレビュー対応③）。
+- `sendReminderTestMail(bookingId, baseDateString)` — `evaluateReminderEligibility`
+  が`eligible:true`を返した場合のみ、`MailApp.sendEmail`をこのファイルから直接呼び、
+  件名の先頭に`[TEST] `を付けてScript Property `ADMIN_NOTIFICATION_EMAIL`固定の
+  宛先へ送信する。`ADMIN_NOTIFICATION_EMAIL`が未設定・形式不正の場合は送信しない
+  （fail-closed）。宛先を画面から入力・変更する機能は設けていない。
+
+**基準日（`baseDateString`）は3関数とも必須**（PRレビュー対応③）。未入力・不正な
+形式（例: `2026/10/01`）・実在しない日付（例: `2026-02-30`）はいずれも
+`INVALID_BASE_DATE`として処理を止める（`previewReminderMail`も以前は不正値を
+無視して`targetDateString`なしのまま判定し、成功扱いになり得たため修正した）。
+`TIMEZONE`設定自体が不正で翌日計算に失敗した場合は`INVALID_CONFIG`を返す。
+この検証（`resolveDiagnosticsTargetDate_`）は3関数で共有し、複製していない。
+
+**この3関数はいずれも次の本番専用の関数を一切呼ばない**（診断から本番データ更新
+経路を分離するIssue #330の必須要件）: `BookingMailer.gs`内部の`withBookingLock_`
+（非公開のため呼びようがない）、`SpreadsheetRepository.updateBookingFields`、
+`RecoveryRepository.recordFailure`。読み取りは`SpreadsheetRepository.
+findRowByBookingId`のみ。そのため、診断・プレビュー・テスト送信のいずれを何度
+実行しても、予約行（`status`/`SentAt`系/`lastMailError*`）・`Recovery`シートは
+一切変化しない（`test/booking-reminder-diagnostics.test.js`で成功・失敗いずれの
+パターンも検証している）。
+
+`sendReminderTestMail`は既存の管理者個別再送（`force:true`）と異なり、`eligible`が
+`false`の対象を強制送信する経路を持たない。「本番なら実際に送信されるはずの
+組み合わせだけをテスト送信できる」という設計にすることで、対象外の予約を無視して
+送ってしまう事故を防いでいる。
+
+### 想定外の例外の境界（PRレビュー対応②）
+
+`diagnoseReminderEligibility`/`previewReminderMail`/`sendReminderTestMail`は、
+それぞれ本体を`_impl_`関数へ分離し、`findRowByBookingId`・`BookingConfig.get*Config`・
+`BookingMailer.evaluateReminderEligibility`等が想定外の例外を投げた場合、公開関数側の
+`try/catch`でこれを捕捉し、固定の安全なメッセージ（`DIAGNOSTICS_GENERIC_ERROR_MESSAGE_`。
+例外のmessageは一切含めない）と`INTERNAL_ERROR`コードのみを返す。Loggerにも例外の
+message/stackを出さず、関数名とbookingIdのみを残す。既知のエラー（`NOT_FOUND`/
+`INVALID_BASE_DATE`/`INVALID_STATUS`等）は例外を投げず通常の戻り値として返している
+ため、この境界の影響を受けない。
+
+これは、想定外の例外がgoogle.script.runの`withFailureHandler`へ生の`error.message`
+として渡ると、クライアント側でHTMLエスケープしても秘密値のredactionにはならない
+（エスケープは表示上の安全対策であって値の削除ではない）ため。クライアント側
+（`admin/booking/booking-admin.js`）でも、3つの`withFailureHandler`は`error`を
+描画に使わず、固定の安全な文言（`REMINDER_DIAG_GENERIC_FAILURE_RESULT_`）のみを
+表示する（二重の防御）。
+
+### 解錠情報の保護
+
+- 診断ログは**Apps ScriptのLogger.logのみ**（別シート・Recoveryシート・新規永続
+  ストアは作らない）。記録するのは`bookingId`・基準日/対象日・判定コード・送信成否
+  のみで、メール本文・キーボックス番号・解錠コード・予約者のメールアドレスは一切
+  記録しない。
+- 画面プレビュー（`previewReminderMail`）は既定でキーボックス番号・解錠コードを
+  `••••••（「表示する」を選択すると表示されます）`へマスクする。管理者が明示的に
+  「解錠コードを表示する」を選んだ場合のみ実値を表示する。マスク状態に関わらず、
+  管理者宛テストメール（`sendReminderTestMail`）は常に本番相当（実値）の内容で
+  送信する。
+- 表示・ログ・返却するエラーメッセージは既存の`BookingMailer.sanitizeErrorMessage`
+  （メールアドレス形式を自動redactする）を使い、`ACCESS_GUIDE_KEYBOX_NUMBER`/
+  `ACCESS_GUIDE_UNLOCK_CODE`の実値を`extraRedactions`として追加でredactする。
+  例外オブジェクトの生の`message`をそのままUI/ログへ出す箇所はない（想定内の
+  失敗経路。想定外の例外は前述「想定外の例外の境界」のとおり固定文言のみ返す）。
+- 予約IDを変更したとき・診断モーダルを閉じたときは、前回の判定・プレビュー結果
+  （解錠コードを表示していた場合はその本文も含む）を画面から消し、「解錠コードを
+  表示する」チェックも既定（オフ＝マスク）へ戻す（`resetReminderDiagDisplay_`。
+  PRレビュー「追加確認」対応）。
+
+### 診断モーダルの非同期レスポンス制御・二重実行防止（PRレビュー追加対応）
+
+`google.script.run`は応答順序を保証しないため、判定・プレビュー・テスト送信を
+連続して実行したり、応答待ちの間に予約ID・基準日・「解錠コードを表示する」
+チェックを変更したりすると、後から発行したリクエストより先に古いリクエストの
+応答が返ってくることがあり得る。これをそのまま`resultEl`へ反映すると、最新の
+入力に対する結果を古い結果で上書きしてしまう事故につながる。
+
+- `reminderDiagRequestSeq_`（一覧取得の`loadRequestSeq`と同じ方針の連番）を
+  診断モーダル専用に持ち、判定/プレビュー/テスト送信を実行するたび、また
+  予約ID・基準日・「解錠コードを表示する」チェックの変更・モーダルを閉じる
+  操作のいずれかが起きるたびに1つ進める。
+- 3つの`google.script.run`呼び出しはいずれも、発行時点の連番値を`requestId`として
+  クロージャに保持し、`withSuccessHandler`/`withFailureHandler`の両方で、応答が
+  返ってきた時点の連番と一致する場合のみ`resultEl`を更新する（一致しない＝
+  その後に別の変更・別のリクエストがあった＝古い応答のため無視する）。
+- 基準日・「解錠コードを表示する」チェックの変更は連番だけを進め、表示中の
+  結果はその場では消さない（次の判定/プレビュー/テスト送信の結果で自然に
+  上書きされる）。予約IDの変更・モーダルを閉じる操作は、従来どおり
+  `resetReminderDiagDisplay_`で表示自体もクリアしたうえで連番を進める。
+- テスト送信（`sendReminderTestMail`）は実際にメールを送信するため、二重実行を
+  避ける必要がある。応答が返るまで`reminderDiagState_.sendTestInFlight`を`true`にし
+  ボタンを`disabled`にすることでクリックを無視し、成功・失敗（想定外の例外を
+  含む）のいずれでも必ず`sendTestInFlight`とボタンの`disabled`を解除して、次回
+  実行できる状態へ戻す。このbusy状態の解除は、`resultEl`への反映（連番判定）とは
+  独立して常に行う（そうしないと、他の操作で連番が進んだ場合にテスト送信
+  ボタンが永久にdisabledのままになってしまうため）。
+
+### サーバー側の認可について
+
+Booking Adminの既存Web App（`BookingAdminWeb.gs`。`getAdminBookings`/
+`adminConfirmBooking`/`adminCancelBooking`等）を調査した結果、**呼び出しユーザーを
+コード内で識別・比較するチェックは存在しない**。認可はデプロイ設定
+（Execute as: Me / Who has access: Only myself）にのみ依存しており、これはGoogle側の
+ログイン認証がアクセス制御そのものを担う設計になっているため。`Session.
+getEffectiveUser()`は「Execute as: Me」でデプロイされたWeb Appでは常にスクリプト
+所有者を返すだけで、実際にリクエストを送ってきた個人を識別する用途には使えない
+（Issue #330本文の指摘どおり）。
+
+このIssueで追加した3関数（`diagnoseReminderEligibility`/`previewReminderMail`/
+`sendReminderTestMail`）も、既存関数と全く同じBooking Admin Web Appデプロイの内側に
+追加するグローバル関数であり、新たなSession判定・新たな公開エンドポイント
+（別プロジェクトとしてのデプロイ、匿名アクセス可能な`doGet`パラメータでの分岐等）は
+一切追加していない。既存の認可（デプロイ設定への依存）をそのまま引き継ぐ形にした。
+これにより、Only myselfのデプロイ設定が維持されている限り、管理者以外がこの3関数を
+呼び出す経路は存在しない。
+
+### Script Propertiesの追加要件
+
+新しいScript Propertyは追加していない。既存の`ADMIN_NOTIFICATION_EMAIL`
+（Config.gs）をテスト送信先として再利用する。ただしScript Propertiesは
+プロジェクトごとに独立しているため、これまで`ADMIN_NOTIFICATION_EMAIL`を
+Booking Web App側にしか設定していない場合、**Booking Adminプロジェクト側にも
+別途同じ値を設定する必要がある**（詳細は「Script Properties」節を参照）。
+
+### テスト
+
+- `test/booking-reminder-diagnostics.test.js`（新規） — 診断3関数の正常系
+  （ELIGIBLE）・異常系（NOT_NEXT_DAY/INVALID_STATUS/ALREADY_SENT/EMAIL_MISSING/
+  MAIL_NOT_READY/NOT_FOUND/INVALID_BASE_DATE/ADMIN_EMAIL_NOT_CONFIGURED）、
+  基準日の検証（空文字・不正形式・実在しない日付・有効な日付）、プレビューの
+  マスク/reveal・対象外予約でも生成できること、テスト送信の宛先固定・
+  fail-closed・[TEST]件名、診断のいずれの経路でも予約行・Recoveryシートが
+  変化しないことに加え、**本番`sendReminderMailForBooking`が
+  `evaluateReminderEligibility`を実際に使うこと**（NOT_NEXT_DAY/EMAIL_MISSING/
+  MAIL_NOT_READY/通常送信/force再送/status不一致の各ケースで既存のレスポンス形・
+  失敗記録が維持されること）、`record.date`がDate値でも実Repository経由で正しく
+  比較できること、診断と本番が同一レコードで同じ理由コードへたどり着くこと、
+  想定外の例外（`findRowByBookingId`/`BookingConfig.getAccessGuideConfig`/
+  `BookingMailer.evaluateReminderEligibility`/`MailApp.sendEmail`が秘密値を含む
+  例外を投げるケース）でUI・レスポンス・Loggerに秘密値が漏れず、`SentAt`/
+  `lastMailError*`/Recoveryが不変であることを検証する。
+- `test/booking-mailer.test.js`・`test/booking-reminders.test.js` — **無改変のまま**
+  全件通過することを確認済み（本番の外部挙動が変わっていないことの回帰確認）。
+- `test/booking-admin-page-client.test.js`（拡張） — 前日リマインド診断UIの純粋関数
+  （`reminderReasonLabel`/`renderReminderDiagnosisResult_`/
+  `renderReminderPreviewResult_`/`renderReminderSendResult_`）、プレビュー結果で
+  「プレビュー成功」と「送信対象可否」を区別して表示すること、想定外失敗時に
+  固定の安全な文言（`REMINDER_DIAG_GENERIC_FAILURE_RESULT_`）のみを表示すること、
+  `resetReminderDiagDisplay_`/`closeReminderDiagnostics_`が表示状態・解錠コード
+  表示チェックをリセットすること、診断モーダルの初回生成が例外を投げないことに加え、
+  **リクエスト連番による非同期レスポンス制御**（判定/プレビューで古いリクエストの
+  成功・失敗いずれの応答も新しいリクエストの表示を上書きしないこと、予約ID/基準日/
+  「解錠コードを表示する」チェックの変更やモーダルを閉じた後の古い応答が無視される
+  こと）と、**テスト送信の二重実行防止**（応答が返るまでボタンがdisabledになり
+  連打しても1回しか実行されないこと、成功・失敗いずれでもbusy状態が解除され
+  再実行できる状態へ戻ること、確認ダイアログでキャンセルした場合はリクエスト自体を
+  発行しないこと）を検証する。これらのテストのため、テストヘルパーの
+  `google.script.run`スタブを、応答を任意の順序で明示的に解決できる仕組み
+  （`calls`/`resolveCall`/`rejectCall`）へ、`document.createElement`が返す
+  スタブ要素を実際にイベント発火できる仕組み（`fire`）へ、それぞれ拡張した。
+- `test/booking-deployment-manifest-sync.test.js`・
+  `test/booking-admin-deployment.test.js` — `BookingReminderDiagnostics.gs`を
+  manifest/README表へ追加した後も、Booking Admin配布ファイルセットが
+  ReferenceErrorなく動作することを確認済み。
+
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
 | 項目 | 値 |
@@ -1470,6 +1725,45 @@ busyIntervalsに対して呼び出し、件数を閾値でバケット分けす�
 - `SpreadsheetRepository.gs`（拡張） — 一覧取得用の`getAllBookings()`を追加
   （既存関数・`HEADERS_`は無変更）
 
+### Issue #330（前日リマインドの任意時刻デバッグ・管理者宛テスト送信で追加）
+
+- `BookingMailer.gs`（拡張） — `withBookingLock_`の事前判定を差し替え可能にし
+  （第8引数`eligibilityCheckFn`。省略時は従来どおりの`defaultMailEligibilityCheck_`）、
+  Lock取得〜レコード再読込の配線を`withLockedBookingRecord_`として抽出。
+  `sendReminderMailForBooking`は`reminderEligibilityCheck_`（`evaluateReminderEligibility`
+  を使う事前判定）を渡すようになり、**本番のREMINDER送信も実際に共通判定関数を
+  経由する**（PRレビュー対応。初版では診断からのみ呼ばれていた）。
+  `evaluateReminderEligibility(record, options)`・`REMINDER_SENT_AT_FIELDS`・
+  `REMINDER_REASON_CODES`を新たに公開。`sendPendingMailForBooking`/
+  `sendConfirmedMailForBooking`/`sendCancelledMailForBooking`・
+  `ensureMailConfigComplete_`/`ensureAccessGuideComplete_`自体・PENDING/CONFIRMED/
+  CANCELLEDの事前判定（`defaultMailEligibilityCheck_`）は無変更
+- `BookingReminderTriggers.gs`（拡張） — 翌日日付計算を`computeNextDayDateString_
+  (baseDate, timezone)`として抽出し、`sendNextDayReminders`はこれを呼ぶように
+  変更（計算式・戻り値は無変更）
+- `BookingReminderDiagnostics.gs`（新規） — `diagnoseReminderEligibility(bookingId,
+  baseDateString)`・`previewReminderMail(bookingId, options)`・
+  `sendReminderTestMail(bookingId, baseDateString)`。**Booking Adminプロジェクト
+  （コンテナバインド）専用**。詳細は「Issue #330」節を参照
+- `BookingAdminPage.html`（無変更） — 前日リマインド診断のUI（起動用ボタン・
+  モーダル）は既存のBookingAdminPage.html自体を変更せず、`admin/booking/
+  booking-admin.js`が起動時にDOM生成する（Issue #322のヘッダー/検索欄追加と
+  同じ方針。「Booking Adminフロントエンドの外部化（Issue #317）」節参照）
+- `admin/booking/booking-admin.js`（拡張。GitHub Pages配信） —
+  「前日リマインド診断」ボタン・診断モーダルのDOM生成とイベント配線
+  （`buildReminderDiagnosticsModal_`/`openReminderDiagnostics_`）、
+  `diagnoseReminderEligibility`/`previewReminderMail`/`sendReminderTestMail`への
+  `google.script.run`呼び出し、結果表示の純粋関数（`reminderReasonLabel`/
+  `renderReminderDiagnosisResult_`/`renderReminderPreviewResult_`/
+  `renderReminderSendResult_`）を追加。**PRレビュー追加対応** — 診断モーダル専用の
+  リクエスト連番（`reminderDiagRequestSeq_`/`bumpReminderDiagRequestSeq_`）による
+  非同期レスポンス制御と、テスト送信の二重実行防止（`sendTestInFlight`）を追加
+  （詳細は「診断モーダルの非同期レスポンス制御・二重実行防止」節を参照）。
+  既存のgoogle.script.run API（`getAdminBookings`等）・一覧/確定/キャンセルの
+  ロジックは無変更
+- `admin/booking/booking-admin.css`（拡張。GitHub Pages配信） — 診断モーダル用の
+  スタイル（`#reminder-diag-*`/`.reminder-diag-*`）を追加。既存クラスは無変更
+
 ## GASプロジェクトへのデプロイ対象ファイル
 
 上記の理由（カスタムメニューはコンテナバインドスクリプトでしか作成できない）により、
@@ -1495,6 +1789,7 @@ busyIntervalsに対して呼び出し、件数を閾値でバケット分けす�
 | `BookingAdmin.gs` | – | ✓ | `gas/booking/admin/BookingAdmin.gs` |
 | `BookingAdminWeb.gs`（Issue #305） | – | ✓ | `gas/booking/admin/BookingAdminWeb.gs` |
 | `BookingReminderTriggers.gs`（Issue #271） | – | ✓ | `gas/booking/admin/BookingReminderTriggers.gs` |
+| `BookingReminderDiagnostics.gs`（Issue #330） | – | ✓ | `gas/booking/admin/BookingReminderDiagnostics.gs` |
 | `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい。ただしWeb App自体のデプロイ設定は必要。後述） | `gas/booking/public/appsscript.json` |
 
 **このリポジトリでの配置（`shared/`/`public/`/`admin/`）は、あくまでソース管理上の
@@ -1612,10 +1907,19 @@ Spreadsheetを参照してしまう）。
 
 `PENDING_TTL_HOURS`/`PENDING_TTL_MIN_HOURS_BEFORE_START`/`PENDING_TTL_MIN_HOLD_HOURS`は
 `expirePendingBookings`が使うため、**Booking Adminプロジェクト側に設定する**
-（Booking Web App側は不要）。`RATE_LIMIT_*`/`ADMIN_NOTIFICATION_EMAIL`/`BOOKING_ADMIN_URL`
-（Issue #311）は`createBooking`のみが使うため、**Booking Web App側に設定する**
-（Booking Admin側は不要）。`BOOKING_ADMIN_URL`の値自体はBooking Adminプロジェクトの
-デプロイURLだが、それを読み出すのは`createBooking`（Booking Web App側）であることに注意。
+（Booking Web App側は不要）。`RATE_LIMIT_*`/`BOOKING_ADMIN_URL`（Issue #311）は
+`createBooking`のみが使うため、**Booking Web App側に設定する**（Booking Admin側は不要）。
+`BOOKING_ADMIN_URL`の値自体はBooking Adminプロジェクトのデプロイ URLだが、それを
+読み出すのは`createBooking`（Booking Web App側）であることに注意。
+
+**`ADMIN_NOTIFICATION_EMAIL`はIssue #330から両方のプロジェクトで使われ得る。**
+`createBooking`（Booking Web App側。管理者への新規予約通知）に加えて、Booking Admin
+プロジェクト側の前日リマインド診断（`sendReminderTestMail`。「Issue #330」節参照）が
+管理者宛テストメールの固定送信先として同じプロパティ名を読む。**Script Properties は
+Apps Scriptプロジェクトごとに独立している**（本節冒頭）ため、診断のテスト送信を
+使うにはBooking Adminプロジェクト側にも`ADMIN_NOTIFICATION_EMAIL`を別途設定する
+必要がある（Booking Web App側の値は自動的には共有されない）。診断のテスト送信は
+未設定・形式不正の場合は送信しない（fail-closed）。
 
 **`BOOKING_MAIL_DISPLAY_NAME`/`BOOKING_MAIL_REPLY_TO`/`BOOKING_CONTACT_EMAIL`（Issue #271）は
 両方のプロジェクトに設定する。** Booking Web App側は`createBooking`のPENDINGメールで、

@@ -17,6 +17,20 @@ function isReminderNowDateLike_(value) {
 }
 
 /*
+ * baseDateの「翌日」をtimezone基準の'YYYY-MM-DD'へ変換する（Issue #330で共通化）。
+ * 元はsendNextDayReminders内にインライン実装していた翌日日付計算そのもの
+ * （baseDateへ24時間加算してformatDateInTimezoneするだけ）。本番の自動送信
+ * （sendNextDayReminders）と、Booking Admin診断（BookingReminderDiagnostics.gsの
+ * diagnoseReminderEligibility等。管理者が指定した「基準日（今日扱い）」から翌日を
+ * 求める）の両方がこの関数だけを呼び、翌日計算ロジックを複製しない。
+ * timezoneが不正でIntlが解釈できない場合はnullを返す（呼び出し側でfail-closedに扱う）。
+ */
+function computeNextDayDateString_(baseDate, timezone) {
+  var nextDay = new Date(baseDate.getTime() + 24 * 3600000);
+  return BookingAvailability.formatDateInTimezone(nextDay, timezone);
+}
+
+/*
  * 正式関数: sendNextDayReminders(now)（Issue #271本文どおりのグローバル関数名）。
  * now引数は省略可能（本番の時間主導トリガーからは常に引数なしで呼ばれる。テストコードから
  * 受付時刻を固定して「翌日」を検証できるようにするため、Booking.gs/BookingRepository.gsの
@@ -35,8 +49,7 @@ function sendNextDayReminders(now) {
   now = isReminderNowDateLike_(now) ? now : new Date();
 
   var timezone = BookingConfig.getAvailabilityConfig().timezone;
-  var tomorrow = new Date(now.getTime() + 24 * 3600000);
-  var tomorrowDateString = BookingAvailability.formatDateInTimezone(tomorrow, timezone);
+  var tomorrowDateString = computeNextDayDateString_(now, timezone);
 
   var summary = { processedCount: 0, sentCount: 0, skippedCount: 0, failedCount: 0 };
 
@@ -50,7 +63,14 @@ function sendNextDayReminders(now) {
   candidates.forEach(function (item) {
     summary.processedCount++;
     try {
-      var result = BookingMailer.sendReminderMailForBooking(item.record.bookingId);
+      /*
+       * targetDateString（Issue #330レビュー対応）: 候補抽出（getConfirmedBookingsForDate）
+       * で既に翌日日付に絞り込まれているため、通常はここで不一致になることはないが、
+       * BookingMailer.evaluateReminderEligibilityのNOT_NEXT_DAY判定を本番でも
+       * 実際に経由させ、ロック取得後の最新レコードに対する防御的な再確認にする
+       * （本番と診断が同じ共通判定関数を呼ぶという受入条件に対応）。
+       */
+      var result = BookingMailer.sendReminderMailForBooking(item.record.bookingId, { targetDateString: tomorrowDateString });
       if (!result.success) {
         summary.failedCount++;
         /*
