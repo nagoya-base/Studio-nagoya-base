@@ -28,7 +28,8 @@ var BookingMailer = (function () {
     PENDING: 'PENDING',
     CONFIRMED: 'CONFIRMED',
     CANCELLED: 'CANCELLED',
-    REMINDER: 'REMINDER'
+    REMINDER: 'REMINDER',
+    EXPIRED: 'EXPIRED'
   };
 
   function describeError_(error) {
@@ -506,6 +507,23 @@ var BookingMailer = (function () {
   }
 
   /*
+   * EXPIRED（カード決済PENDING失効通知。Issue #334）。
+   * expirePendingBookings（BookingRepository.gs）が、その回の実行でPENDING→EXPIREDへ
+   * 更新した「カード決済の」行のみに対してLock外・best effortで呼ぶ想定。
+   * requiredStatus=EXPIREDのため、過去にEXPIREDへ更新済みの行へ誤って複数回送っても
+   * expiredMailSentAtの既存値がある限りALREADY_SENTでスキップされる（withBookingLock_の
+   * 既定の事前判定＝defaultMailEligibilityCheck_をそのまま使う。他のメール種別と同じ
+   * SentAt方式の二重送信防止をここでも複製しない）。
+   */
+  function sendExpiredMailForBooking(bookingId, options) {
+    var opts = options || {};
+    return withBookingLock_(MAIL_TYPES.EXPIRED, bookingId, Booking.STATUS.EXPIRED, ['expiredMailSentAt'], !!opts.force, function (record) {
+      var config = ensureMailConfigComplete_();
+      return BookingMailTemplates.buildExpiredMail(record, config);
+    });
+  }
+
+  /*
    * 前日リマインド + 来場案内を1通にまとめて送る。reminderSentAt/accessGuideSentAtの
    * 両方が空の場合のみ送信対象とし、成功時は両方を同じ時刻で更新する。
    *
@@ -551,6 +569,7 @@ var BookingMailer = (function () {
     sendPendingMailForBooking: sendPendingMailForBooking,
     sendConfirmedMailForBooking: sendConfirmedMailForBooking,
     sendCancelledMailForBooking: sendCancelledMailForBooking,
+    sendExpiredMailForBooking: sendExpiredMailForBooking,
     sendReminderMailForBooking: sendReminderMailForBooking,
     /* BookingRepository.gs等、利用者メール経路の他ファイルからも同じredaction方針で
        Loggerへ出力できるよう公開する（PRレビュー対応）。 */

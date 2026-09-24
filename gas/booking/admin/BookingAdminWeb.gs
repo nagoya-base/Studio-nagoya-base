@@ -122,6 +122,20 @@ function normalizeAdminCreatedAt_(value, timezone) {
  * formatAdminDateTime_ではなく、文字列も含めて必ず'YYYY-MM-DD HH:mm'形式へ揃える
  * normalizeAdminCreatedAt_を使う（詳細は同関数のコメント参照）。
  */
+/*
+ * カード予約の支払期限（Issue #334）。createdAt/startAtが揃っている場合のみ
+ * Booking.computeCardPaymentDueMillis（expirePendingBookingsの失効判定と同じ1関数）で
+ * 計算し、Web UI用に'YYYY-MM-DD HH:mm'へ整形する。カード以外・データ不備の場合は
+ * 空文字を返す（読み取り専用表示。台帳の値を書き換えることはしない）。
+ */
+function computeAdminCardPaymentDueAt_(record, timezone) {
+  if (!Booking.isCardPaymentMethod(record.paymentMethod)) return '';
+  if (!isAdminWebDateLike_(record.createdAt) || !isAdminWebDateLike_(record.startAt)) return '';
+  var ttlConfig = BookingConfig.getTtlConfig();
+  var dueMillis = Booking.computeCardPaymentDueMillis(record.createdAt.getTime(), record.startAt.getTime(), ttlConfig.minHoursBeforeStart);
+  return formatAdminDateTime_(new Date(dueMillis), timezone);
+}
+
 function getAdminBookings() {
   var timezone = BookingConfig.getAvailabilityConfig().timezone;
   var todayJst = BookingAvailability.formatDateInTimezone(new Date(), timezone);
@@ -139,7 +153,9 @@ function getAdminBookings() {
       customerType: record.customerType,
       purpose: record.purpose,
       paymentMethod: record.paymentMethod,
-      status: record.status
+      status: record.status,
+      /* Issue #334: カード予約のみ非空（読み取り専用の支払期限表示用）。 */
+      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone)
     };
   });
   return { todayJst: todayJst, bookings: bookings };
@@ -179,9 +195,12 @@ function getAdminBookingDetail(bookingId) {
       pendingMailSentAt: formatAdminDateTime_(record.pendingMailSentAt, timezone),
       confirmedMailSentAt: formatAdminDateTime_(record.confirmedMailSentAt, timezone),
       cancelMailSentAt: formatAdminDateTime_(record.cancelMailSentAt, timezone),
+      expiredMailSentAt: formatAdminDateTime_(record.expiredMailSentAt, timezone),
       reminderSentAt: formatAdminDateTime_(record.reminderSentAt, timezone),
       accessGuideSentAt: formatAdminDateTime_(record.accessGuideSentAt, timezone),
-      hasMailError: !!record.lastMailErrorAt
+      hasMailError: !!record.lastMailErrorAt,
+      /* Issue #334: カード予約のみ非空（読み取り専用の支払期限表示用）。 */
+      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone)
     }
   };
 }
@@ -196,4 +215,11 @@ function adminConfirmBooking(bookingId) {
    委譲する。業務ロジックはコピーしない。実行前の確認ダイアログはHTML側（クライアント）で行う。 */
 function adminCancelBooking(bookingId) {
   return cancelBookingAdmin(bookingId);
+}
+
+/* EXPIRED予約の復活（Issue #334）。既存の正式関数reviveExpiredBooking(bookingId)
+   （BookingAdmin.gs）へそのまま委譲する。業務ロジックはコピーしない。実行前の確認
+   ダイアログはHTML側（クライアント）で行う。 */
+function adminReviveExpiredBooking(bookingId) {
+  return reviveExpiredBooking(bookingId);
 }

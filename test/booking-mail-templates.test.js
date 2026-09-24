@@ -118,6 +118,47 @@ test('buildCancelledMail: キャンセル済みであること・予約ID・元�
   assert.match(mail.body, /Studio X/);
 });
 
+/*
+ * buildExpiredMail（Issue #334: カード決済PENDING失効通知）。
+ * 管理者キャンセル文面（buildCancelledMail）を流用せず、失効判定が「入金の自動検知」ではなく
+ * 「管理者による承認の有無」であることを前提に、支払い済みの可能性を否定しない文言のみを
+ * 使う（「未払いのため」「お支払いが確認できなかったため」のような、入金を自動確認したかの
+ * ような断定表現を含めない）。
+ */
+test('buildExpiredMail: 件名/本文に「期限切れ」「要再申込み」が明記され、キャンセルメールの文面（buildCancelledMail）を流用しない', function () {
+  var templates = loadTemplates();
+  var mail = templates.buildExpiredMail(sampleRecord({ paymentMethod: 'オンラインクレジットカード' }), CONFIG);
+  assert.match(mail.subject, /期限切れ/);
+  assert.match(mail.body, /予約ページから再度お申し込み/);
+  assert.doesNotMatch(mail.body, /下記のご予約はキャンセルされました/, 'buildCancelledMailの文面を流用してはいけない');
+});
+
+test('buildExpiredMail: 予約ID/利用日/開始/終了/ブランドを含み、再申込み案内と支払い済みの場合の連絡案内の両方を含む', function () {
+  var templates = loadTemplates();
+  var mail = templates.buildExpiredMail(sampleRecord({ paymentMethod: 'オンラインクレジットカード' }), CONFIG);
+  assert.match(mail.body, /SX-20261001-AAAAAAAA/);
+  assert.match(mail.body, /2026-10-01/);
+  assert.match(mail.body, /10:00/);
+  assert.match(mail.body, /12:00/);
+  assert.match(mail.body, /Studio X/);
+  assert.match(mail.body, /再度お申し込み/, '再申込みの案内を含むべき');
+  assert.match(mail.body, /二重のお支払い/, '支払い済みの場合は運営へ連絡し、再申込み・二重決済をしない旨を含むべき');
+  assert.match(mail.body, /contact@example\.com/);
+});
+
+test('buildExpiredMail: 入金の有無をシステムが自動確認したかのような断定表現を含まない（Issue #334本文の必須要件）', function () {
+  var templates = loadTemplates();
+  var mail = templates.buildExpiredMail(sampleRecord({ paymentMethod: 'オンラインクレジットカード' }), CONFIG);
+  assert.doesNotMatch(mail.body, /お支払いが確認できなかった/);
+  assert.doesNotMatch(mail.body, /未払いのため/);
+  assert.doesNotMatch(mail.body, /入金が確認できません/);
+});
+
+test('buildExpiredMail: キーボックス番号・解錠コードを一切含まない（accessGuideを引数に取らない構造。buildPendingMail/buildConfirmedMailと同方針）', function () {
+  var templates = loadTemplates();
+  assert.strictEqual(templates.buildExpiredMail.length, 2);
+});
+
 test('buildReminderMail: 「明日」の案内であることが分かり、来場方法一式を含む', function () {
   var templates = loadTemplates();
   var mail = templates.buildReminderMail(sampleRecord(), CONFIG, DUMMY_ACCESS_GUIDE);

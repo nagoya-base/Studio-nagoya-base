@@ -50,9 +50,12 @@ var DETAIL_FIELDS = [
   ['paymentMethod', '支払方法'],
   ['source', '受付経路'],
   ['note', '備考'],
+  /* Issue #334: カード予約のみサーバー側で非空（読み取り専用）。 */
+  ['cardPaymentDueAt', 'カード支払期限'],
   ['pendingMailSentAt', '仮予約メール送信'],
   ['confirmedMailSentAt', '確定メール送信'],
   ['cancelMailSentAt', 'キャンセルメール送信'],
+  ['expiredMailSentAt', '失効通知メール送信'],
   ['reminderSentAt', '前日リマインド送信'],
   ['accessGuideSentAt', '来場案内送信'],
   ['hasMailError', 'メールエラー']
@@ -266,6 +269,9 @@ function render() {
     var busy = !!state.busyIds[b.bookingId];
     var canConfirm = b.status === 'PENDING';
     var canCancel = b.status === 'PENDING' || b.status === 'CONFIRMED';
+    /* Issue #334: EXPIREDのみ復活可能（利用開始後かどうか・枠の空きはサーバー側
+       （reviveExpiredBooking）が最終判定する。ここでは表示上の出し分けのみ）。 */
+    var canRevive = b.status === 'EXPIRED';
     var actions = '<button type="button" class="action detail" data-action="detail" data-id="' + escapeHtml(b.bookingId) + '">詳細</button>';
     if (canConfirm) {
       actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>確定</button>';
@@ -273,6 +279,15 @@ function render() {
     if (canCancel) {
       actions += '<button type="button" class="action cancel" data-action="cancel" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>キャンセル</button>';
     }
+    if (canRevive) {
+      actions += '<button type="button" class="action revive" data-action="revive" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>復活</button>';
+    }
+
+    /* Issue #334: カード予約のPENDINGのみサーバー側でcardPaymentDueAtが非空になる
+       （computeAdminCardPaymentDueAt_参照）。読み取り専用表示のみで、値の編集はしない。 */
+    var cardDueLine = b.cardPaymentDueAt
+      ? '<div class="card-due">カード支払期限: ' + escapeHtml(b.cardPaymentDueAt) + '</div>'
+      : '';
 
     return (
       '<div class="card">' +
@@ -284,6 +299,7 @@ function render() {
         '<div class="card-name">' + escapeHtml(b.name) + '</div>' +
         '<div class="card-meta">' + escapeHtml(b.people) + ' / ' + escapeHtml(customerTypeLabel(b.customerType)) + '</div>' +
         '<div class="card-sub">' + escapeHtml(b.paymentMethod) + ' ・ ' + escapeHtml(b.purpose) + '</div>' +
+        cardDueLine +
         '<div class="card-id">' + escapeHtml(b.bookingId) + '</div>' +
         '<div class="card-actions">' + actions + '</div>' +
       '</div>'
@@ -422,6 +438,43 @@ function runConfirm(bookingId) {
       loadBookings(function () { setBusy(bookingId, false); });
     })
     .adminConfirmBooking(bookingId);
+}
+
+/*
+ * EXPIRED予約の復活（Issue #334）。runConfirm/runCancelと同じ配線
+ * （window.confirmでYES/NO確認 → google.script.run → 成否問わずloadBookings()で
+ * 最新一覧を再取得してから該当bookingIdのbusyを解除）。枠の空き・利用開始後かどうかの
+ * 最終判定はサーバー側（adminReviveExpiredBooking→reviveExpiredBooking）が行う。
+ */
+function runRevive(bookingId) {
+  var booking = state.bookings.find(function (b) { return b.bookingId === bookingId; });
+  var confirmed = window.confirm(
+    (booking
+      ? '予約ID: ' + booking.bookingId + '\n' +
+        '利用日: ' + booking.date + ' ' + booking.startAt + '-' + booking.endAt + '\n' +
+        '利用者名: ' + booking.name + '\n' +
+        'ブランド: ' + booking.brand + '\n\n'
+      : '') +
+    'この失効した予約をCONFIRMEDへ復活します。\n\n' +
+    '枠の空きを再確認したうえでCalendarへ確定予定を作成し、利用者へ予約確定メールを送信します。\n\n' +
+    '実行しますか？'
+  );
+  if (!confirmed) return;
+
+  setBusy(bookingId, true);
+  setStatusLine('復活処理中…');
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result || !result.success) {
+        alert('復活できませんでした: ' + (result && result.error && result.error.message));
+      }
+      loadBookings(function () { setBusy(bookingId, false); });
+    })
+    .withFailureHandler(function (error) {
+      alert('復活でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      loadBookings(function () { setBusy(bookingId, false); });
+    })
+    .adminReviveExpiredBooking(bookingId);
 }
 
 function runCancel(bookingId) {
@@ -908,6 +961,7 @@ document.getElementById('list').addEventListener('click', function (event) {
   if (action === 'detail') openDetail(bookingId);
   if (action === 'confirm') runConfirm(bookingId);
   if (action === 'cancel') runCancel(bookingId);
+  if (action === 'revive') runRevive(bookingId);
 });
 
 document.getElementById('sort-select').addEventListener('change', function (event) {

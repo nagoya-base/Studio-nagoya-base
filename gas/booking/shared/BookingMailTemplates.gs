@@ -147,6 +147,41 @@ var BookingMailTemplates = (function () {
     return { subject: subject, body: body };
   }
 
+  /*
+   * EXPIRED（カード決済のPENDING失効通知。Issue #334）。
+   * 管理者キャンセル文面（buildCancelledMail）は流用しない専用テンプレート。
+   * 「失効判定は入金の自動検知ではなく管理者による承認の有無に基づく」（Issue #334本文）ため、
+   * 入金の有無をシステムが自動確認したかのような文言は書かない。必ず次の3点を含める:
+   * - 期限までに承認が確認できず失効したこと（入金の有無を断定しない）
+   * - 利用希望なら予約ページから再度申し込むこと
+   * - 支払い済みの場合は再申込・二重決済をせず運営へ連絡すること
+   */
+  function buildExpiredMail(record, config) {
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var timezone = config.timezone;
+    var startTime = formatTime_(record.startAt, timezone);
+    var endTime = formatTime_(record.endAt, timezone);
+
+    var subject = '【' + brandLabel + '】ご予約が期限切れになりました（要再申込み）';
+    var body = joinNonEmpty_([
+      record.name + ' 様',
+      '',
+      '下記のご予約は、お支払い期限までに運営による確認ができなかったため、失効いたしました。',
+      '',
+      '予約ID: ' + record.bookingId,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '開始時刻: ' + startTime,
+      '終了時刻: ' + endTime,
+      'ブランド: ' + brandLabel,
+      '',
+      '改めてご利用をご希望の場合は、お手数ですが予約ページから再度お申し込みください。',
+      'すでにお支払いが完了している場合は、再度のお申し込みや二重のお支払いをせず、下記までご連絡ください。',
+      contactLine_(config)
+    ]);
+
+    return { subject: subject, body: body };
+  }
+
   /* accessGuideの秘密値（keyboxNumber/unlockCode）が空の場合はプレースホルダを出す。
      値の要否判定・成功/失敗の扱いはBookingMailer.gs側の責務（このテンプレートは常に
      渡された値をそのまま出力するだけ）。 */
@@ -201,6 +236,7 @@ var BookingMailTemplates = (function () {
     buildPendingMail: buildPendingMail,
     buildConfirmedMail: buildConfirmedMail,
     buildCancelledMail: buildCancelledMail,
+    buildExpiredMail: buildExpiredMail,
     buildReminderMail: buildReminderMail
   };
 })();

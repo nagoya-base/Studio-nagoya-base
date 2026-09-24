@@ -396,8 +396,23 @@ test('canTransition: PENDINGからのみ CONFIRMED/CANCELLED/EXPIRED へ遷移�
   assert.strictEqual(Booking.canTransition('PENDING', 'CANCELLED'), true);
   assert.strictEqual(Booking.canTransition('CONFIRMED', 'CONFIRMED'), false, '確定済みからの再確定は特別扱い(呼び出し側で判定)。canTransition自体はfalseを返す');
   assert.strictEqual(Booking.canTransition('CANCELLED', 'CONFIRMED'), false);
-  assert.strictEqual(Booking.canTransition('EXPIRED', 'CONFIRMED'), false);
   assert.strictEqual(Booking.canTransition('PENDING', 'PENDING'), false);
+});
+
+/*
+ * Issue #334: EXPIRED→CONFIRMED（手動復活）はALLOWED_TRANSITIONSの一般的な表としては
+ * 許可されるようになったが、実際にこの遷移を実行できるのはBookingRepository.
+ * reviveExpiredBookingのみ（既存confirmBookingは引き続き拒否する。
+ * test/booking-confirm-expire.test.jsの
+ * 「confirmBooking: CANCELLED/EXPIREDからの確定は不正な状態遷移として拒否する」で
+ * confirmBooking側の拒否は別途検証している）。
+ */
+test('canTransition: EXPIREDからCONFIRMEDへの遷移は許可される（Issue #334の手動復活のため。実行できるのはreviveExpiredBookingのみ）', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.canTransition('EXPIRED', 'CONFIRMED'), true);
+  assert.strictEqual(Booking.canTransition('EXPIRED', 'CANCELLED'), false);
+  assert.strictEqual(Booking.canTransition('EXPIRED', 'PENDING'), false);
+  assert.strictEqual(Booking.canTransition('EXPIRED', 'EXPIRED'), false);
 });
 
 test('computeTtlExpiryMillis: 受付24時間後と開始2時間前の早い方を採用する', function () {
@@ -526,4 +541,116 @@ test('isAllowedCustomerType/getCustomerTypeLabel: first_time/returningのみ許�
   assert.strictEqual(Booking.getCustomerTypeLabel('returning'), '利用経験あり');
 
   assert.deepEqual(Booking.CUSTOMER_TYPES, { FIRST_TIME: 'first_time', RETURNING: 'returning' });
+});
+
+/*
+ * ---------- Issue #334: カード決済の96時間ルール・カード専用TTL定数 ----------
+ * NOW_CARD = JST 2026-10-01 12:00固定。96時間後はJST 2026-10-05 12:00ちょうど。
+ */
+var NOW_CARD = new Date('2026-10-01T12:00:00+09:00');
+
+test('Booking定数: PAYMENT_METHOD_CARD/CARD_TTL_HOURS/CARD_MIN_HOURS_BEFORE_STARTが公開されている（Issue #334）', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.PAYMENT_METHOD_CARD, 'オンラインクレジットカード');
+  assert.strictEqual(Booking.CARD_TTL_HOURS, 72);
+  assert.strictEqual(Booking.CARD_MIN_HOURS_BEFORE_START, 96);
+});
+
+test('isCardPaymentMethod: カード決済の文字列のみtrue。前後空白はtrim、他の支払方法・空値はfalse（Issue #334）', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.isCardPaymentMethod('オンラインクレジットカード'), true);
+  assert.strictEqual(Booking.isCardPaymentMethod(' オンラインクレジットカード '), true);
+  assert.strictEqual(Booking.isCardPaymentMethod('現金'), false);
+  assert.strictEqual(Booking.isCardPaymentMethod('PayPay'), false);
+  assert.strictEqual(Booking.isCardPaymentMethod('未定'), false);
+  assert.strictEqual(Booking.isCardPaymentMethod(''), false);
+  assert.strictEqual(Booking.isCardPaymentMethod(undefined), false);
+  assert.strictEqual(Booking.isCardPaymentMethod(null), false);
+});
+
+test('validateCreateBookingInput: カード決済×利用開始ちょうど96時間前は許可される（境界。Issue #334）', function () {
+  var Booking = loadBooking();
+  var result = Booking.validateCreateBookingInput(
+    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '12:00' }),
+    DEFAULT_CONFIG,
+    NOW_CARD
+  );
+  assert.strictEqual(result.valid, true, JSON.stringify(result.error));
+  assert.strictEqual(result.normalized.paymentMethod, 'オンラインクレジットカード');
+});
+
+test('validateCreateBookingInput: カード決済×利用開始96時間前を1分でも切ると拒否される（境界。Issue #334）', function () {
+  var Booking = loadBooking();
+  var result = Booking.validateCreateBookingInput(
+    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '11:45' }),
+    DEFAULT_CONFIG,
+    NOW_CARD
+  );
+  assert.strictEqual(result.valid, false);
+  assert.strictEqual(result.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
+});
+
+test('validateCreateBookingInput: カード決済×利用開始96時間前を1分でも超えれば許可される（境界。Issue #334）', function () {
+  var Booking = loadBooking();
+  var result = Booking.validateCreateBookingInput(
+    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '12:15' }),
+    DEFAULT_CONFIG,
+    NOW_CARD
+  );
+  assert.strictEqual(result.valid, true, JSON.stringify(result.error));
+});
+
+test('validateCreateBookingInput: カード決済×利用開始まで97時間・95時間の境界外テスト（Issue #334受入条件）', function () {
+  var Booking = loadBooking();
+  /* 97時間後（2026-10-05 13:00）は許可される */
+  var allowed = Booking.validateCreateBookingInput(
+    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '13:00' }),
+    DEFAULT_CONFIG,
+    NOW_CARD
+  );
+  assert.strictEqual(allowed.valid, true, JSON.stringify(allowed.error));
+
+  /* 95時間後（2026-10-05 11:00）は拒否される */
+  var rejected = Booking.validateCreateBookingInput(
+    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '11:00' }),
+    DEFAULT_CONFIG,
+    NOW_CARD
+  );
+  assert.strictEqual(rejected.valid, false);
+  assert.strictEqual(rejected.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
+});
+
+test('validateCreateBookingInput: 現金/PayPay/未定は96時間ルールの対象外（直前でも通常どおり許可される。Issue #334の回帰要件）', function () {
+  var Booking = loadBooking();
+  ['現金', 'PayPay', '未定'].forEach(function (paymentMethod) {
+    var result = Booking.validateCreateBookingInput(
+      /* 開始まで15分後（96時間はおろか2時間の下限にも満たない極端な直前値）。
+         96時間ルールがカード以外へ誤って波及していないことを確認する。 */
+      validInput({ paymentMethod: paymentMethod, customerType: 'returning', date: '2026-10-01', startTime: '12:15' }),
+      DEFAULT_CONFIG,
+      NOW_CARD
+    );
+    assert.strictEqual(result.valid, true, paymentMethod + ': ' + JSON.stringify(result.error));
+  });
+});
+
+test('computeCardPaymentDueMillis: computeTtlExpiryMillisをCARD_TTL_HOURS(72)固定・minHoldHours=0で呼び出した結果と一致する（Issue #334）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T09:00:00+09:00').getTime();
+  var startAt = new Date('2026-10-10T09:00:00+09:00').getTime();
+
+  var due = Booking.computeCardPaymentDueMillis(createdAt, startAt, 2);
+  var expected = Booking.computeTtlExpiryMillis(createdAt, startAt, 72, 2, 0);
+  assert.strictEqual(due, expected);
+  assert.strictEqual(due, createdAt + 72 * 3600000);
+});
+
+test('computeCardPaymentDueMillis: 「利用開始のminHoursBeforeStart時間前を超えない」上限は維持される（Issue #334）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T09:00:00+09:00').getTime();
+  /* 開始が受付+72hより前（受付+10h後）の極端なケース。上限(開始-2h)が72h側より先に来る。 */
+  var startAt = createdAt + 10 * 3600000;
+  var due = Booking.computeCardPaymentDueMillis(createdAt, startAt, 2);
+  assert.strictEqual(due, startAt - 2 * 3600000);
+  assert.ok(due <= startAt);
 });

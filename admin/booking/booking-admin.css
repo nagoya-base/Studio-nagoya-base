@@ -281,6 +281,17 @@ button.action:disabled {
 button.detail { color: var(--color-text); }
 button.confirm { color: #fff; background: var(--color-primary); border-color: var(--color-primary); }
 button.cancel { color: #fff; background: var(--color-danger); border-color: var(--color-danger); }
+/* Issue #334: EXPIRED専用の復活ボタン。CONFIRMEDへ戻す操作のため確定(confirm)に近い
+   色ではなく、要確認の操作であることが分かるpending系の色を使う。 */
+button.revive { color: #fff; background: var(--color-pending); border-color: var(--color-pending); }
+
+/* Issue #334: カード予約のみ非空で表示する支払期限（読み取り専用）。 */
+.card-due {
+  color: var(--color-pending);
+  font-size: 13px;
+  font-weight: bold;
+  margin-top: 4px;
+}
 
 .empty {
   color: var(--color-text-sub);
