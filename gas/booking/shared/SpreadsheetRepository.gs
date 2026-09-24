@@ -84,6 +84,14 @@ var SpreadsheetRepository = (function () {
      *   仕組みにより通常送信（forceなし）を拒否する（BookingMailer.gsの
      *   evaluatePaymentLinkEligibility_のSEND_UNCONFIRMED判定）。次に送信履行が
      *   確定（paymentLinkSentAtの単独更新に成功）すると自動的に空へ戻す。
+     * - paymentLinkMetadataInconsistentAt（第2回PRレビュー対応で追加）:
+     *   paymentLinkSentAtの単独更新には成功した（＝送信履行は確定済み。二重送信の
+     *   おそれはない）が、続くstripePaymentLinkUrl/paymentLinkSentTo/
+     *   paymentLinkSendCount等の2回目の更新が失敗し、これらの記録内容が古い・不正確な
+     *   状態のまま残っている可能性がある場合の日時。送信可否の判定には使わない
+     *   （二重送信防止はpaymentLinkSentAt/paymentLinkSendUnconfirmedAtで既に確定して
+     *   いるため）。Booking Admin予約詳細で「送信回数等の記録に不整合の可能性」を
+     *   案内するための表示専用の列。次に両方の更新が成功すると自動的に空へ戻る。
      */
     'stripePaymentLinkUrl',
     'paymentLinkSentAt',
@@ -91,7 +99,8 @@ var SpreadsheetRepository = (function () {
     'paymentLinkSendCount',
     'paymentLinkLastErrorAt',
     'paymentLinkLastErrorMessage',
-    'paymentLinkSendUnconfirmedAt'
+    'paymentLinkSendUnconfirmedAt',
+    'paymentLinkMetadataInconsistentAt'
   ];
 
   function getSpreadsheet_() {

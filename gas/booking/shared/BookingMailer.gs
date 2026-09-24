@@ -738,28 +738,81 @@ var BookingMailer = (function () {
   }
 
   /*
-   * PRレビュー対応（同時再送の競合防止）: 管理画面が最後に取得した予約詳細の
-   * paymentLinkSendCount（=「画面が知っている送信履歴のバージョン」）と、Lock取得後に
-   * 再読込した最新のpaymentLinkSendCountを比較する。両者が一致しない場合、別タブ・
-   * 別端末が管理画面を再取得しないうちに先に送信（通常送信・明示的な再送のいずれも）を
-   * 行ったと判断し、古い画面からのこのリクエストを拒否する。通常送信・明示的な再送
-   * （force）のいずれにも適用する（forceは「送信済みでも送る」ことの許可であり、
-   * 「古い前提のまま送る」ことの許可ではないため、forceでもこの競合チェックは無視しない）。
-   * expectedSendCountを渡さない呼び出し（省略時）は、この競合チェック自体を行わない
-   * （新しいクライアントのみが検知できる追加の安全策のため、省略時に既存挙動を壊さない）。
+   * PRレビュー対応（同時再送の競合防止。第2回レビュー対応で拡張）: 管理画面が最後に
+   * 取得した予約詳細のpaymentLinkSendCount・paymentLinkSentAt（=「画面が知っている
+   * 送信履歴のバージョン」）と、Lock取得後に再読込した最新値をそれぞれ比較する。
+   * いずれか一方でも一致しない場合、別タブ・別端末が管理画面を再取得しないうちに先に
+   * 送信（通常送信・明示的な再送のいずれも）を行ったと判断し、古い画面からのこの
+   * リクエストを拒否する。通常送信・明示的な再送（force）のいずれにも適用する
+   * （forceは「送信済みでも送る」ことの許可であり、「古い前提のまま送る」ことの許可
+   * ではないため、forceでもこの競合チェックは無視しない）。
+   *
+   * paymentLinkSentAtも比較する理由（第2回レビュー対応）: sendPaymentLinkMailForBookingは
+   * paymentLinkSentAtを単独で先に書き込み、URL/送信先/paymentLinkSendCount等は2回目の
+   * 呼び出しで書き込む（このファイルの他の箇所のコメント参照）。この2回目の書き込みだけが
+   * 失敗すると、paymentLinkSentAtは新しい送信時刻に更新される一方でpaymentLinkSendCountは
+   * 古い値のまま残る。この状態で、2回目の失敗が起きる**前**の画面（古いpaymentLinkSentAt・
+   * かつ古いpaymentLinkSendCountを見ている）から明示的な再送を行うと、
+   * paymentLinkSendCountだけを比較する版の競合チェックでは一致してしまい
+   * （書き込みが failed のため実際にはcountが変化していないため）、競合を検知できずに
+   * 通過してしまう。paymentLinkSentAtも独立して比較することで、この抜け道を防ぐ。
+   *
+   * expectedSendCount・expectedSentAtVersionはそれぞれ独立に判定する（両方渡された場合は
+   * いずれか一方でも不一致ならSEND_HISTORY_CONFLICTとする）。省略した項目はその項目の
+   * チェック自体を行わない（新しいクライアントのみが検知できる追加の安全策のため、
+   * 省略時に既存挙動を壊さない）。
+   *
+   * expectedSentAtVersion: paymentLinkSentAtの内部表現（Dateのepoch ms。未送信は0）。
+   * Booking Admin画面（getAdminBookingDetailのpaymentLinkSentAtVersion）が返す値を、
+   * クライアントが変換・解釈せずそのまま往復させるだけの内部トークンとして扱う
+   * （表示用の'YYYY-MM-DD HH:mm'文字列は分単位で丸められており、同一分内の複数回の
+   * 書き込みを区別できないため、表示用文字列ではなくミリ秒精度の内部値を使う）。
    */
-  function checkSendHistoryVersion_(record, expectedSendCount) {
-    if (expectedSendCount === undefined || expectedSendCount === null) {
-      return { ok: true };
+  function checkSendHistoryVersion_(record, expectedSendCount, expectedSentAtVersion) {
+    if (expectedSendCount !== undefined && expectedSendCount !== null) {
+      var actualCount = Number(record.paymentLinkSendCount) || 0;
+      if (Number(expectedSendCount) !== actualCount) {
+        return {
+          ok: false,
+          message: '他の画面から既にこの予約の決済リンクが送信された可能性があります（送信回数が変わっています）。最新の予約詳細を再取得してから、必要であれば改めて操作してください。'
+        };
+      }
     }
-    var actualCount = Number(record.paymentLinkSendCount) || 0;
-    if (Number(expectedSendCount) !== actualCount) {
-      return {
-        ok: false,
-        message: '他の画面から既にこの予約の決済リンクが送信された可能性があります。最新の予約詳細を再取得してから、必要であれば改めて操作してください。'
-      };
+    if (expectedSentAtVersion !== undefined && expectedSentAtVersion !== null) {
+      var actualSentAtVersion = isDateLike_(record.paymentLinkSentAt) ? record.paymentLinkSentAt.getTime() : 0;
+      if (Number(expectedSentAtVersion) !== actualSentAtVersion) {
+        return {
+          ok: false,
+          message: '他の画面から既にこの予約の決済リンクが送信された可能性があります（送信日時が変わっています）。最新の予約詳細を再取得してから、必要であれば改めて操作してください。'
+        };
+      }
     }
     return { ok: true };
+  }
+
+  /*
+   * PRレビュー対応（第2回。送信履歴2回目の書き込み失敗の記録）: MailApp.sendEmailにも
+   * paymentLinkSentAtの単独書き込みにも成功した（＝二重送信防止の要は確定済み）が、
+   * 続くURL・送信先・送信回数（paymentLinkSendCount）等の2回目の書き込みが失敗し、
+   * これらの記録が実際の送信回数より少ない・古いURL/宛先のままになっている可能性がある
+   * 状態のRecovery記録。recordPaymentLinkSendUnconfirmed_（履行そのものが未確認）とは
+   * 意味が異なる（履行は確定している。記録内容の一部が古いだけ）ため、別関数・
+   * 別failureTypeとして分離する。
+   */
+  function recordPaymentLinkMetadataInconsistent_(bookingId, status, intendedSendCount) {
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: 'PAYMENT_LINK_METADATA_UPDATE_FAILED',
+        occurredAt: new Date(),
+        status: status,
+        errorMessage: '決済リンクメールの送信自体・paymentLinkSentAtの記録には成功したが、続くstripePaymentLinkUrl/paymentLinkSentTo/paymentLinkSendCountの更新に失敗した。paymentLinkSendCountは実際より少ない値のまま残っている可能性がある（本来の送信回数: ' + intendedSendCount + '）。Bookingsシートの内容を確認し、必要であれば手動で補正すること。',
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (recoveryError) {
+      Logger.log('BookingMailer: RecoveryRepository.recordFailure失敗（決済リンク送信の記録不整合）: ' + sanitizeErrorMessage_(describeError_(recoveryError)));
+    }
   }
 
   /*
@@ -773,6 +826,11 @@ var BookingMailer = (function () {
    *   expectedSendCount（省略可。PRレビュー対応）: 呼び出し元（Booking Admin画面）が
    *     最後に取得した予約詳細のpaymentLinkSendCount。Lock取得後の最新値と一致しない
    *     場合はSEND_HISTORY_CONFLICTとして拒否する（checkSendHistoryVersion_参照）。
+   *   expectedSentAtVersion（省略可。第2回レビュー対応）: 呼び出し元が最後に取得した
+   *     予約詳細のpaymentLinkSentAtVersion（epoch ms。未送信は0）。expectedSendCountと
+   *     独立に判定し、いずれか一方でも最新値と一致しなければSEND_HISTORY_CONFLICTとする
+   *     （2回目の書き込みだけが失敗してpaymentLinkSendCountが変化しないケースを、
+   *     expectedSendCountだけの比較では検知できないため。checkSendHistoryVersion_参照）。
    *
    * 処理順序: Lock取得 → 最新レコード再読込 → 競合チェック（checkSendHistoryVersion_）→
    *   事前判定（evaluatePaymentLinkEligibility_） → URL形式検証 → MailApp送信 →
@@ -811,7 +869,7 @@ var BookingMailer = (function () {
     }
 
     return withLockedBookingRecord_(bookingId, function (record) {
-      var versionCheck = checkSendHistoryVersion_(record, opts.expectedSendCount);
+      var versionCheck = checkSendHistoryVersion_(record, opts.expectedSendCount, opts.expectedSentAtVersion);
       if (!versionCheck.ok) {
         return {
           success: false,
@@ -899,29 +957,51 @@ var BookingMailer = (function () {
       }
 
       var nextSendCount = (Number(record.paymentLinkSendCount) || 0) + 1;
+      var metadataWriteFailed = false;
       try {
         SpreadsheetRepository.updateBookingFields(bookingId, {
           stripePaymentLinkUrl: paymentLinkUrl,
           paymentLinkSentTo: record.email,
           paymentLinkSendCount: nextSendCount,
           paymentLinkSendUnconfirmedAt: '',
+          paymentLinkMetadataInconsistentAt: '',
           paymentLinkLastErrorAt: '',
           paymentLinkLastErrorMessage: ''
         });
       } catch (sheetsError) {
-        /* 二重送信防止の要となるpaymentLinkSentAtは既に記録済みのため、ここでの失敗は
-           URL・送信先・送信回数等の付随情報が更新されないだけで、二重送信にはつながらない。
-           既存の他メール種別と同じ方針でLoggerへ残すのみとする。 */
+        /*
+         * PRレビュー対応（第2回）: 二重送信防止の要となるpaymentLinkSentAtは既に
+         * 記録済みのため、二重送信にはつながらない。しかしURL・送信先・送信回数
+         * （paymentLinkSendCount）が更新されないまま残るため、「送信は完了しているが
+         * 送信回数等の記録が実際より少ない・古いままになっている」という記録不整合が
+         * 発生する。単にLoggerへ残すだけでは管理者が気付けないため、
+         * paymentLinkMetadataInconsistentAt（フォールバックの単独書き込み）とRecoveryの
+         * 両方へ記録し、呼び出し元にもmetadataInconsistent:trueで伝える。メール自体を
+         * 自動で再送することはしない（成功済みの送信をここから再試行しない）。
+         */
+        metadataWriteFailed = true;
+        try {
+          SpreadsheetRepository.updateBookingFields(bookingId, { paymentLinkMetadataInconsistentAt: sentAt });
+        } catch (fallbackError) {
+          Logger.log('BookingMailer: paymentLinkMetadataInconsistentAtの記録にも失敗しました: ' + sanitizeErrorMessage_(describeError_(fallbackError)));
+        }
+        recordPaymentLinkMetadataInconsistent_(bookingId, record.status, nextSendCount);
         Logger.log('BookingMailer: 決済リンク送信の付随情報（URL/送信先/送信回数/エラー系列のクリア）の更新に失敗しました（送信・二重送信防止用のpaymentLinkSentAtの記録自体は成功済み）: ' + sanitizeErrorMessage_(describeError_(sheetsError)));
       }
 
+      /* metadataWriteFailedの場合、paymentLinkSendCountは実際には更新されていないため、
+         「送信できた（と管理者が信じてよい）回数」としてsendCountには更新前の実際の値を
+         返す（nextSendCountをそのまま返すと、実際には記録されていない値を成功扱いで
+         伝えてしまう）。管理者へは意図した回数（intendedSendCount）も併せて伝える。 */
       return {
         success: true,
         bookingId: bookingId,
         mailType: MAIL_TYPES.PAYMENT_LINK,
         sentAt: sentAt,
         sentTo: record.email,
-        sendCount: nextSendCount
+        sendCount: metadataWriteFailed ? (Number(record.paymentLinkSendCount) || 0) : nextSendCount,
+        metadataInconsistent: metadataWriteFailed,
+        intendedSendCount: metadataWriteFailed ? nextSendCount : undefined
       };
     });
   }

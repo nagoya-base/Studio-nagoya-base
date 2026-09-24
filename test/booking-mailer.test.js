@@ -790,12 +790,140 @@ test('sendPaymentLinkMailForBooking: 明示的な再送（force:true）でも、
   assert.strictEqual(mailApp._sentEmails.length, 2, '競合したタブBからのforce再送では送信されないべき（forceは古い前提での送信までは許可しない）');
 });
 
-test('sendPaymentLinkMailForBooking: expectedSendCountを渡さない場合は競合チェック自体を行わない（既存挙動を維持。省略時は省略前と同じ結果になる）', function () {
+/*
+ * PRレビュー対応②（第2回。送信履歴の部分失敗が競合検知をすり抜ける問題の修正）:
+ * sendPaymentLinkMailForBookingはpaymentLinkSentAtを単独で先に書き込み、
+ * paymentLinkSendCount等は2回目の呼び出しで書き込む。2回目だけが失敗すると
+ * paymentLinkSentAtは新しくなるがpaymentLinkSendCountは古いまま残るため、
+ * expectedSendCountだけの比較では、この状態を見ていない古い画面からの再送を
+ * 検知できない。expectedSentAtVersion（paymentLinkSentAtのepoch ms）も独立に
+ * 比較することで、送信回数が変わっていなくても送信日時が変わっていれば
+ * SEND_HISTORY_CONFLICTとして拒否できることを確認する。
+ */
+test('sendPaymentLinkMailForBooking: expectedSendCountが一致していても、expectedSentAtVersionがpaymentLinkSentAtの最新値と一致しない場合は通常送信・明示的な再送のいずれもSEND_HISTORY_CONFLICTで拒否する', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+
+  var first = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ expectedSendCount: 0, expectedSentAtVersion: 0 }, BEFORE_DUE)
+  );
+  assert.strictEqual(first.success, true, JSON.stringify(first));
+  var staleSentAtVersion = first.sentAt.getTime();
+
+  /* paymentLinkSentAtだけを直接進める（paymentLinkSendCountは変えない）。2回目の
+     書き込みだけが失敗した状態を、この時点までの結果として模擬する。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { paymentLinkSentAt: new Date(staleSentAtVersion + 5000) });
+
+  var normalAttempt = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL,
+    Object.assign({ expectedSendCount: 1, expectedSentAtVersion: staleSentAtVersion }, BEFORE_DUE)
+  );
+  assert.strictEqual(normalAttempt.success, false);
+  assert.strictEqual(normalAttempt.error.code, 'SEND_HISTORY_CONFLICT', '送信回数(expectedSendCount:1)は一致していても、送信日時が変わっているため競合として拒否するべき');
+
+  var forcedAttempt = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL,
+    Object.assign({ force: true, expectedSendCount: 1, expectedSentAtVersion: staleSentAtVersion }, BEFORE_DUE)
+  );
+  assert.strictEqual(forcedAttempt.success, false);
+  assert.strictEqual(forcedAttempt.error.code, 'SEND_HISTORY_CONFLICT', 'forceでも、送信日時の古い前提での再送は拒否するべき');
+  assert.strictEqual(mailApp._sentEmails.length, 1, '競合したリクエストからは送信されないべき');
+});
+
+/*
+ * PRレビュー対応①・③（第2回。2回目の履歴保存失敗時の記録不整合と、それによる
+ * 競合検知のすり抜けを再現するテスト）: paymentLinkSentAtの単独更新には成功するが、
+ * 続くstripePaymentLinkUrl/paymentLinkSentTo/paymentLinkSendCount等の2回目の
+ * updateBookingFields呼び出しだけを失敗させるスタブ（stubMetadataWriteFailure_）を
+ * 使う。paymentLinkSendCountを一意に識別できる呼び出しのみを対象にすることで、
+ * paymentLinkSentAt単独呼び出し・paymentLinkSendUnconfirmedAt/
+ * paymentLinkMetadataInconsistentAtの単独フォールバック呼び出しには影響しない。
+ */
+function stubMetadataWriteFailure_(ctx) {
+  var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (Object.prototype.hasOwnProperty.call(fields, 'paymentLinkSendCount')) {
+      throw new Error('simulated Sheets outage while recording paymentLinkSendCount/URL/sentTo');
+    }
+    return original(id, fields);
+  };
+  return function restore() {
+    ctx.sandbox.SpreadsheetRepository.updateBookingFields = original;
+  };
+}
+
+test('sendPaymentLinkMailForBooking: 2回目の履歴保存（URL/送信先/送信回数）だけが失敗した場合、success:trueのまま実際に記録された送信回数を返し、metadataInconsistent:true・paymentLinkMetadataInconsistentAt・Recoveryへ記録し、メール自体は再送しない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+  var restore = stubMetadataWriteFailure_(ctx);
+
+  var result = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, BEFORE_DUE);
+  restore();
+
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(result.metadataInconsistent, true);
+  assert.strictEqual(result.sendCount, 0, '2回目の書き込みが失敗しているため、実際に記録された（従来からの）送信回数を返すべき');
+  assert.strictEqual(result.intendedSendCount, 1, '本来記録されるはずだった送信回数も併せて返す');
+  assert.strictEqual(mailApp._sentEmails.length, 1, 'メール自体は1通のみ送信されるべき（自動再送しない）');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.ok(stubs.isDateLike(found.record.paymentLinkSentAt), '二重送信防止の要となるpaymentLinkSentAtは記録済みであるべき');
+  assert.strictEqual(Number(found.record.paymentLinkSendCount) || 0, 0, 'paymentLinkSendCountは実際には更新されていないはず');
+  assert.ok(found.record.paymentLinkMetadataInconsistentAt, 'paymentLinkMetadataInconsistentAtへ記録されるべき');
+
+  var recoveries = ctx.sandbox.RecoveryRepository.listAll().filter(function (r) { return r.bookingId === bookingId; });
+  assert.strictEqual(recoveries.length, 1);
+  assert.strictEqual(recoveries[0].failureType, 'PAYMENT_LINK_METADATA_UPDATE_FAILED');
+});
+
+test('sendPaymentLinkMailForBooking: 2回目の履歴保存だけが失敗した状態を再現し、その状態を見ていない別タブの古いpaymentLinkSentAtVersion・paymentLinkSendCountからの明示的な再送はSEND_HISTORY_CONFLICTで拒否される（part4: 競合検知のすり抜け防止の再現テスト）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+
+  /* タブA・タブBともに、まだ何も送信されていない状態（expectedSendCount:0・
+     expectedSentAtVersion:0）を見ている。 */
+  var restore = stubMetadataWriteFailure_(ctx);
+  var firstAttempt = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ expectedSendCount: 0, expectedSentAtVersion: 0 }, BEFORE_DUE)
+  );
+  restore();
+  assert.strictEqual(firstAttempt.success, true, JSON.stringify(firstAttempt));
+  assert.strictEqual(firstAttempt.metadataInconsistent, true, '前提: 2回目の履歴保存が失敗しているべき');
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+
+  /* タブB: 2回目の履歴保存の失敗を知らず、送信前と同じ古い前提
+     （expectedSendCount:0・expectedSentAtVersion:0）のまま明示的な再送を試みる。
+     paymentLinkSendCountは実際には更新されていないため0のままだが、
+     paymentLinkSentAtは既に更新されているため、expectedSentAtVersionの不一致で
+     競合として検知されるべき（expectedSendCountだけの比較ではすり抜けてしまう）。 */
+  var staleTabBForced = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ force: true, expectedSendCount: 0, expectedSentAtVersion: 0 }, BEFORE_DUE)
+  );
+  assert.strictEqual(staleTabBForced.success, false);
+  assert.strictEqual(staleTabBForced.error.code, 'SEND_HISTORY_CONFLICT', 'expectedSendCountが実際の値(0)と一致していても、送信日時が変わっているため競合として拒否するべき');
+  assert.strictEqual(mailApp._sentEmails.length, 1, '競合したタブBからは送信されないべき（二重送信していない）');
+});
+
+test('sendPaymentLinkMailForBooking: expectedSendCount・expectedSentAtVersionのいずれも渡さない場合は競合チェック自体を行わない（既存挙動を維持。省略時は省略前と同じ結果になる）', function () {
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
   var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
 
   var result = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, BEFORE_DUE);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+});
+
+test('sendPaymentLinkMailForBooking: expectedSendCountのみ渡した場合はexpectedSentAtVersionの不一致チェックを行わない（各項目は独立に省略できる）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+
+  var result = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ expectedSendCount: 0 }, BEFORE_DUE)
+  );
   assert.strictEqual(result.success, true, JSON.stringify(result));
 });
 

@@ -573,6 +573,8 @@ test('getAdminBookingDetail: カード決済PENDINGはisCardPayment:trueで、�
   assert.strictEqual(result.booking.paymentLinkLastErrorAt, '');
   assert.strictEqual(result.booking.paymentLinkLastErrorMessage, '');
   assert.strictEqual(result.booking.paymentLinkSendUnconfirmedAt, '');
+  assert.strictEqual(result.booking.paymentLinkMetadataInconsistentAt, '');
+  assert.strictEqual(result.booking.paymentLinkSentAtVersion, 0, '未送信のpaymentLinkSentAtVersionは0であるべき');
 });
 
 test('getAdminBookingDetail: 現金・PayPay・未定はisCardPayment:falseを返す（決済リンク送信欄を表示しないための判定用）', function () {
@@ -722,4 +724,74 @@ test('adminSendCardPaymentLink→getAdminBookingDetail: 送信履行が未確認
   var retryNormal = ctx.sandbox.adminSendCardPaymentLink(bookingId, url);
   assert.strictEqual(retryNormal.skipped, true);
   assert.strictEqual(retryNormal.error.code, 'SEND_UNCONFIRMED', '履行未確認の間は通常送信を無効化する');
+});
+
+/*
+ * 第2回PRレビュー対応: 送信履歴の2回目の書き込み（URL/送信先/送信回数）だけが失敗すると、
+ * paymentLinkSentAtは新しくなるがpaymentLinkSendCountは古いまま残るため、
+ * expectedSendCountだけの比較では、この状態を見ていない古い画面からの再送を検知
+ * できない。adminSendCardPaymentLinkの第5引数expectedSentAtVersionが
+ * BookingMailer.gsのcheckSendHistoryVersion_へ正しく伝わっていることをWeb UI層で
+ * 確認する（独自ロジックを持たない）。
+ */
+test('adminSendCardPaymentLink: expectedSendCountが一致していても、expectedSentAtVersion（第5引数）がpaymentLinkSentAtVersionと一致しない場合はSEND_HISTORY_CONFLICTで拒否する', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+  var url = 'https://buy.stripe.com/test_ABC123';
+
+  var first = ctx.sandbox.adminSendCardPaymentLink(bookingId, url, false, 0, 0);
+  assert.strictEqual(first.success, true, JSON.stringify(first));
+  var staleSentAtVersion = ctx.sandbox.getAdminBookingDetail(bookingId).booking.paymentLinkSentAtVersion;
+
+  /* paymentLinkSentAtだけを直接進める（paymentLinkSendCountは変えない）。2回目の
+     書き込みだけが失敗した状態を模擬する。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { paymentLinkSentAt: new Date(staleSentAtVersion + 5000) });
+
+  var staleTabForced = ctx.sandbox.adminSendCardPaymentLink(bookingId, url, true, 1, staleSentAtVersion);
+  assert.strictEqual(staleTabForced.success, false);
+  assert.strictEqual(staleTabForced.error.code, 'SEND_HISTORY_CONFLICT', 'expectedSendCount(1)は実際の値と一致していても、送信日時が変わっているため競合として拒否するべき');
+
+  var paymentLinkMails = mailApp._sentEmails.filter(function (mail) { return mail.subject && mail.subject.indexOf('お支払い') !== -1; });
+  assert.strictEqual(paymentLinkMails.length, 1, '競合したリクエストからは送信されないべき');
+});
+
+/*
+ * 第2回PRレビュー対応（part4の再現テスト）: 2回目の履歴保存だけが失敗した状態を
+ * adminSendCardPaymentLink経由で再現し、その状態を見ていない別タブの古い前提
+ * （expectedSendCount・expectedSentAtVersionのいずれも送信前の値のまま）からの
+ * 明示的な再送がSEND_HISTORY_CONFLICTで拒否されることを確認する。
+ */
+test('adminSendCardPaymentLink: 2回目の履歴保存だけが失敗した状態を再現し、別タブの古い詳細画面（expectedSendCount・expectedSentAtVersionとも送信前の値）からの明示的な再送はSEND_HISTORY_CONFLICTで拒否される', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+  var url = 'https://buy.stripe.com/test_ABC123';
+
+  var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (Object.prototype.hasOwnProperty.call(fields, 'paymentLinkSendCount')) {
+      throw new Error('simulated Sheets outage while recording paymentLinkSendCount/URL/sentTo');
+    }
+    return original(id, fields);
+  };
+  var firstAttempt = ctx.sandbox.adminSendCardPaymentLink(bookingId, url, false, 0, 0);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = original;
+
+  assert.strictEqual(firstAttempt.success, true, JSON.stringify(firstAttempt));
+  assert.strictEqual(firstAttempt.metadataInconsistent, true, '前提: 2回目の履歴保存が失敗しているべき');
+
+  var detail = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.strictEqual(detail.booking.paymentLinkSendCount, 0, '2回目の書き込みが失敗しているため送信回数は更新されていないはず');
+  assert.ok(detail.booking.paymentLinkMetadataInconsistentAt, 'paymentLinkMetadataInconsistentAtが詳細へ反映されるべき');
+
+  /* 別タブ: 送信前と同じ古い前提（expectedSendCount:0・expectedSentAtVersion:0）のまま
+     明示的な再送を試みる。paymentLinkSendCountは実際にも0のままだが、
+     paymentLinkSentAtVersionは既に更新されているため競合として検知されるべき。 */
+  var staleTabForced = ctx.sandbox.adminSendCardPaymentLink(bookingId, url, true, 0, 0);
+  assert.strictEqual(staleTabForced.success, false);
+  assert.strictEqual(staleTabForced.error.code, 'SEND_HISTORY_CONFLICT');
+
+  var paymentLinkMails = mailApp._sentEmails.filter(function (mail) { return mail.subject && mail.subject.indexOf('お支払い') !== -1; });
+  assert.strictEqual(paymentLinkMails.length, 1, '競合したタブからは送信されないべき（二重送信していない）');
 });

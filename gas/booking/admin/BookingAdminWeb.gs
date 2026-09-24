@@ -220,7 +220,21 @@ function getAdminBookingDetail(bookingId) {
       /* PRレビュー対応: 送信履行が未確認（MailApp送信は成功したがpaymentLinkSentAtの
          記録に失敗した）状態を予約詳細へ表示するための項目。空でなければ、通常送信
          （forceなし）はGAS側で拒否される（BookingMailer.gs参照）。 */
-      paymentLinkSendUnconfirmedAt: formatAdminDateTime_(record.paymentLinkSendUnconfirmedAt, timezone)
+      paymentLinkSendUnconfirmedAt: formatAdminDateTime_(record.paymentLinkSendUnconfirmedAt, timezone),
+      /*
+       * 第2回PRレビュー対応: paymentLinkSentAtの単独更新には成功したが、続くURL/送信先/
+       * paymentLinkSendCount等の更新が失敗し、これらの記録内容が古いままの可能性がある
+       * ことを予約詳細へ表示するための項目（送信可否には影響しない。表示専用）。
+       */
+      paymentLinkMetadataInconsistentAt: formatAdminDateTime_(record.paymentLinkMetadataInconsistentAt, timezone),
+      /*
+       * 第2回PRレビュー対応（同時再送の競合防止の拡張）: paymentLinkSentAtの内部表現
+       * （epoch ms。未送信は0）。表示用のpaymentLinkSentAt（'YYYY-MM-DD HH:mm'。分単位）
+       * とは別に、ミリ秒精度で送信履歴のバージョンをクライアントへ渡す。クライアントは
+       * この値を解釈・加工せず、adminSendCardPaymentLinkの呼び出しへそのまま往復させる
+       * だけの内部トークンとして扱う（BookingMailer.gsのcheckSendHistoryVersion_参照）。
+       */
+      paymentLinkSentAtVersion: isAdminWebDateLike_(record.paymentLinkSentAt) ? record.paymentLinkSentAt.getTime() : 0
     }
   };
 }
@@ -255,7 +269,15 @@ function adminReviveExpiredBooking(bookingId) {
  * 取得した予約詳細のpaymentLinkSendCountをそのまま渡す。BookingMailer.gsの
  * checkSendHistoryVersion_が、Lock取得後の最新値と比較し、別タブ・別端末による
  * 先行送信が既にあれば古い画面からのこの呼び出しをSEND_HISTORY_CONFLICTとして拒否する。
+ * expectedSentAtVersion（第2回PRレビュー対応）: クライアントが最後に取得した予約詳細の
+ * paymentLinkSentAtVersion（epoch ms）をそのまま渡す。expectedSendCountとは独立に
+ * 判定し、送信履歴2回目の書き込みだけが失敗してpaymentLinkSendCountが変化しない
+ * ケースでも競合を検知できるようにする（checkSendHistoryVersion_参照）。
  */
-function adminSendCardPaymentLink(bookingId, paymentLinkUrl, force, expectedSendCount) {
-  return sendCardPaymentLinkMail(bookingId, paymentLinkUrl, { force: !!force, expectedSendCount: expectedSendCount });
+function adminSendCardPaymentLink(bookingId, paymentLinkUrl, force, expectedSendCount, expectedSentAtVersion) {
+  return sendCardPaymentLinkMail(bookingId, paymentLinkUrl, {
+    force: !!force,
+    expectedSendCount: expectedSendCount,
+    expectedSentAtVersion: expectedSentAtVersion
+  });
 }

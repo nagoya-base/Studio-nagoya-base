@@ -552,13 +552,20 @@ function renderPaymentLinkSection_(booking) {
   ];
   /* PRレビュー対応: 履行未確認（MailApp送信は成功したが送信履歴の記録に失敗した）状態を
      専用の行として表示し、実際の到達確認と明示的な再送が必要であることを案内する。 */
-  var hasUnconfirmedRow = !!booking.paymentLinkSendUnconfirmedAt;
-  if (hasUnconfirmedRow) {
+  var warningRowIndexes = {};
+  if (booking.paymentLinkSendUnconfirmedAt) {
+    warningRowIndexes[statusRows.length] = true;
     statusRows.push(['要確認', '前回（' + booking.paymentLinkSendUnconfirmedAt + '）の送信結果が未確認です。実際に届いているか確認したうえで、必要であれば再送してください。']);
   }
+  /* 第2回PRレビュー対応: 送信履行は確定している（二重送信のおそれはない）が、続くURL/
+     送信先/送信回数の記録が失敗し、送信回数等の記録が古いままの可能性がある状態を
+     別行で案内する。 */
+  if (booking.paymentLinkMetadataInconsistentAt) {
+    warningRowIndexes[statusRows.length] = true;
+    statusRows.push(['記録不整合', '前回（' + booking.paymentLinkMetadataInconsistentAt + '）の送信で、送信回数・URL等の記録更新に失敗しました。送信自体は完了していますが、送信回数が実際より少なく表示されている可能性があります。Bookingsシートを確認してください。']);
+  }
   ui.statusEl.innerHTML = statusRows.map(function (pair, index) {
-    var isUnconfirmedRow = hasUnconfirmedRow && index === statusRows.length - 1;
-    var rowClass = 'payment-link-status-row' + (isUnconfirmedRow ? ' payment-link-status-row-warning' : '');
+    var rowClass = 'payment-link-status-row' + (warningRowIndexes[index] ? ' payment-link-status-row-warning' : '');
     return '<div class="' + rowClass + '"><span>' + escapeHtml(pair[0]) + '</span>' + escapeHtml(pair[1]) + '</div>';
   }).join('');
 
@@ -618,14 +625,25 @@ function runSendPaymentLink_() {
    * （=画面が把握している送信履歴のバージョン）をexpectedSendCountとしてそのまま渡す。
    * GAS側（BookingMailer.gsのcheckSendHistoryVersion_）が、Lock取得後の最新値と比較し、
    * 別タブ・別端末が先に送信していればこのリクエストをSEND_HISTORY_CONFLICTとして拒否する。
+   *
+   * 第2回PRレビュー対応: paymentLinkSendCountだけでは、送信履歴2回目の書き込みだけが
+   * 失敗して送信回数が変化しないケースの競合を検知できないため、
+   * paymentLinkSentAtVersion（epoch ms。getAdminBookingDetailが返す内部トークン）も
+   * 独立に渡す。値の意味を解釈・加工せず、そのまま往復させるだけでよい。
    */
   var expectedSendCount = booking.paymentLinkSendCount;
+  var expectedSentAtVersion = booking.paymentLinkSentAtVersion;
 
   google.script.run
     .withSuccessHandler(function (result) {
       paymentLinkUi_.sendInFlight = false;
       setStatusLine('');
-      if (result && result.success) {
+      if (result && result.success && result.metadataInconsistent) {
+        /* 第2回PRレビュー対応: 送信自体・二重送信防止用の記録は成功しているが、
+           送信回数等の付随情報の記録に失敗している。メール自体は再送しない
+           （送信は既に完了している）。管理者にBookingsシートの確認を促す。 */
+        alert('送信しました。ただし送信回数等の記録更新に失敗しました（送信回数の表示が実際より少ない可能性があります。Bookingsシートを確認してください）。');
+      } else if (result && result.success) {
         alert('送信しました（送信回数: ' + result.sendCount + '）');
       } else if (result && result.requiresManualConfirmation) {
         /* PRレビュー対応: メール自体は送信された可能性があるが、送信履歴の記録に失敗し
@@ -647,7 +665,7 @@ function runSendPaymentLink_() {
       alert('送信でエラーが発生しました: ' + (error && error.message ? error.message : error));
       refreshOpenDetail_(booking.bookingId);
     })
-    .adminSendCardPaymentLink(booking.bookingId, url, isResend, expectedSendCount);
+    .adminSendCardPaymentLink(booking.bookingId, url, isResend, expectedSendCount, expectedSentAtVersion);
 }
 
 /* 送信後、開いたままの詳細モーダルを最新状態へ更新する（サーバーから再取得したもので

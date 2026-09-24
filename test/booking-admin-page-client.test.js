@@ -1285,7 +1285,9 @@ function paymentLinkDetailBooking(overrides) {
       paymentLinkSendCount: 0,
       paymentLinkLastErrorAt: '',
       paymentLinkLastErrorMessage: '',
-      paymentLinkSendUnconfirmedAt: ''
+      paymentLinkSendUnconfirmedAt: '',
+      paymentLinkMetadataInconsistentAt: '',
+      paymentLinkSentAtVersion: 0
     },
     overrides || {}
   );
@@ -1382,6 +1384,16 @@ test('showDetailModal: 送信履行が未確認（paymentLinkSendUnconfirmedAt�
   sandbox.showDetailModal(paymentLinkDetailBooking({ paymentLinkSendUnconfirmedAt: '2026-10-01 10:00' }));
   assert.strictEqual(sandbox.paymentLinkUi_.sendButton.textContent, '決済リンクを再送');
   assert.match(sandbox.paymentLinkUi_.statusEl.innerHTML, /送信結果未確認/);
+});
+
+test('showDetailModal: paymentLinkMetadataInconsistentAtがある場合は「記録不整合」の行を表示する（第2回PRレビュー対応。送信自体は完了しているため送信操作は無効化しない）', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(paymentLinkDetailBooking({
+    paymentLinkSentAt: '2026-10-01 10:00',
+    paymentLinkMetadataInconsistentAt: '2026-10-01 10:00'
+  }));
+  assert.match(sandbox.paymentLinkUi_.statusEl.innerHTML, /記録不整合/);
+  assert.strictEqual(sandbox.paymentLinkUi_.sendButton.disabled, false, '送信履行自体は確定しているため送信操作は無効化しない（再送は可能なまま）');
 });
 
 test('showDetailModal: カード決済でもPENDING以外は入力・送信ボタンを無効化する（対象外への送信を防ぐ表示制御）', function () {
@@ -1496,7 +1508,7 @@ test('runSendPaymentLink_: 確認後にbookingId・URL・isResend(false)を渡�
   var calls = sandbox.google.script.run.calls;
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0].name, 'adminSendCardPaymentLink');
-  assert.deepStrictEqual(calls[0].args, [booking.bookingId, 'https://buy.stripe.com/test_ABC123', false, booking.paymentLinkSendCount]);
+  assert.deepStrictEqual(calls[0].args, [booking.bookingId, 'https://buy.stripe.com/test_ABC123', false, booking.paymentLinkSendCount, booking.paymentLinkSentAtVersion]);
   assert.strictEqual(sandbox.paymentLinkUi_.sendButton.disabled, true, '送信中はボタンを無効化する');
 });
 
@@ -1543,6 +1555,45 @@ test('runSendPaymentLink_: 画面が把握しているpaymentLinkSendCountをexp
 
   var calls = sandbox.google.script.run.calls;
   assert.strictEqual(calls[0].args[3], 3);
+});
+
+/*
+ * 第2回PRレビュー対応: paymentLinkSendCountだけでは、送信履歴2回目の書き込みだけが
+ * 失敗して送信回数が変化しないケースの競合を検知できないため、
+ * paymentLinkSentAtVersion（getAdminBookingDetailが返す内部トークン）も第5引数として
+ * そのまま渡すことを確認する。実際の競合判定自体はGAS側（BookingMailer.gsの
+ * checkSendHistoryVersion_）の責務のため、test/booking-mailer.test.js・
+ * test/booking-admin-web.test.jsで検証する。ここでは配線のみ確認する。
+ */
+test('runSendPaymentLink_: 画面が把握しているpaymentLinkSentAtVersionをexpectedSentAtVersionとして第5引数へ渡す', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var booking = paymentLinkDetailBooking({ paymentLinkSentAt: '2026-10-01 10:00', paymentLinkSentAtVersion: 1759302000000 });
+  sandbox.showDetailModal(booking);
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+
+  var calls = sandbox.google.script.run.calls;
+  assert.strictEqual(calls[0].args[4], 1759302000000);
+});
+
+test('runSendPaymentLink_: metadataInconsistent:trueの成功応答では「送信回数等の記録更新に失敗した」旨の案内を出す（メール自体は再送しない）', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  var booking = paymentLinkDetailBooking();
+  sandbox.showDetailModal(booking);
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+  sandbox.google.script.run.resolveCall(0, { success: true, sendCount: 0, metadataInconsistent: true });
+
+  assert.strictEqual(alerts.length, 1);
+  assert.match(alerts[0], /記録更新に失敗/);
+  var sendCalls = sandbox.google.script.run.calls.filter(function (c) { return c.name === 'adminSendCardPaymentLink'; });
+  assert.strictEqual(sendCalls.length, 1, 'メール自体を自動で再送してはいけない（追加のadminSendCardPaymentLink呼び出しがないこと）');
 });
 
 test('runSendPaymentLink_: requiresManualConfirmation:trueの応答では「送信結果を確認できませんでした」の案内を出し、詳細・一覧を再取得する', function () {
