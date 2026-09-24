@@ -589,3 +589,104 @@ test('filterStartTimesByTimeBand: times未指定はエラーにせず空配列�
   assert.ok(Array.isArray(result));
   assert.strictEqual(result.length, 0);
 });
+
+/* ── カード決済の96時間受付条件・支払期限表示（Issue #334 PR-B） ── */
+
+test('isCardPaymentMethodValue: 内部value「オンラインクレジットカード」のみtrue', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.isCardPaymentMethodValue('オンラインクレジットカード'), true);
+  assert.strictEqual(Logic.isCardPaymentMethodValue('現金'), false);
+  assert.strictEqual(Logic.isCardPaymentMethodValue('PayPay'), false);
+  assert.strictEqual(Logic.isCardPaymentMethodValue('未定'), false);
+  assert.strictEqual(Logic.isCardPaymentMethodValue(''), false);
+  assert.strictEqual(Logic.isCardPaymentMethodValue(undefined), false);
+});
+
+test('isCardPaymentEligible: 利用開始まで96時間ちょうどは選択できる（境界を含む。gas/booking/shared/Booking.gsのCARD_MIN_HOURS_BEFORE_START=96と同じ境界）', function () {
+  var Logic = loadLogic();
+  var now = new Date('2026-10-01T10:00:00+09:00');
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-05', '10:00', now), true);
+});
+
+test('isCardPaymentEligible: 96時間に1分でも満たない場合は選択できない', function () {
+  var Logic = loadLogic();
+  var now = new Date('2026-10-01T10:00:00+09:00');
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-05', '09:59', now), false);
+});
+
+test('isCardPaymentEligible: 96時間を十分に超えていれば選択できる', function () {
+  var Logic = loadLogic();
+  var now = new Date('2026-10-01T10:00:00+09:00');
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-10', '10:00', now), true);
+});
+
+test('isCardPaymentEligible: 利用開始が過去・現在時刻より前でも例外を投げず、96時間未満としてfalseを返す（fail-closed）', function () {
+  var Logic = loadLogic();
+  var now = new Date('2026-10-05T10:00:00+09:00');
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-01', '10:00', now), false);
+});
+
+test('isCardPaymentEligible: 日付・開始時刻がまだ未確定（空文字）の間は選択肢を塞がずtrueを返す', function () {
+  var Logic = loadLogic();
+  var now = new Date('2026-10-01T10:00:00+09:00');
+  assert.strictEqual(Logic.isCardPaymentEligible('', '', now), true);
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-05', '', now), true);
+  assert.strictEqual(Logic.isCardPaymentEligible('', '10:00', now), true);
+});
+
+test('cardPaymentDueDisplay: 「今から72時間後」をAsia/Tokyo基準の日付（曜日つき）・時刻で返す', function () {
+  var Logic = loadLogic();
+  var now = new Date('2026-10-01T10:00:00+09:00'); /* 木曜 */
+  assert.strictEqual(Logic.cardPaymentDueDisplay(now), '2026-10-04（日） 10:00');
+});
+
+test('cardPaymentDueDisplay: 72時間後に日付だけでなく曜日も正しく繰り上がる', function () {
+  var Logic = loadLogic();
+  var now = new Date('2026-10-29T23:30:00+09:00'); /* 木曜 */
+  assert.strictEqual(Logic.cardPaymentDueDisplay(now), '2026-11-01（日） 23:30');
+});
+
+test('cardPaymentIneligibleNotice: Issue #334本文どおりの案内文をja/enで返す', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(
+    Logic.cardPaymentIneligibleNotice('ja'),
+    'カード事前決済は利用開始の4日前までのお申し込みです。直前のご予約は現金・PayPay（現地決済）をお選びください。'
+  );
+  assert.match(Logic.cardPaymentIneligibleNotice('en'), /4 days/);
+});
+
+test('cardPaymentNoticeLines: 決済リンクの送信予定（24時間以内）・支払期限（72時間後の実際の日時）・自動失効・再申し込み方法・決済済みの場合の連絡先をすべて含む', function () {
+  var Logic = loadLogic();
+  var due = '2026-10-04（日） 10:00';
+  var lines = Logic.cardPaymentNoticeLines(due, 'ja');
+  var body = lines.join('\n');
+  assert.match(body, /24時間以内にメールでお送りします/);
+  assert.match(body, /72時間後（2026-10-04（日） 10:00）/);
+  assert.match(body, /自動的に失効/);
+  assert.match(body, /改めて予約フォームからお申し込み/);
+  assert.match(body, /二重決済をせず、運営までご連絡/);
+});
+
+test('cardPaymentNoticeLines: options.omitPendingNoteを指定すると「仮受付です」の行を省く（仮受付メールとの重複整理用）', function () {
+  var Logic = loadLogic();
+  var withNote = Logic.cardPaymentNoticeLines('2026-10-04（日） 10:00', 'ja').join('\n');
+  var withoutNote = Logic.cardPaymentNoticeLines('2026-10-04（日） 10:00', 'ja', { omitPendingNote: true }).join('\n');
+  assert.match(withNote, /仮受付です/);
+  assert.doesNotMatch(withoutNote, /仮受付です/);
+});
+
+test('cardPaymentNoticeLines: locale="en"では英語の案内文を返す', function () {
+  var Logic = loadLogic();
+  var lines = Logic.cardPaymentNoticeLines('2026-10-04 10:00', 'en');
+  var body = lines.join('\n');
+  assert.match(body, /24 hours/);
+  assert.match(body, /72 hours/);
+  assert.match(body, /expire automatically/);
+});
+
+test('CARD_MIN_HOURS_BEFORE_START/CARD_TTL_HOURS/CARD_PAYMENT_METHOD_VALUE: gas/booking/shared/Booking.gsの値と一致する定数を公開する', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.CARD_MIN_HOURS_BEFORE_START, 96);
+  assert.strictEqual(Logic.CARD_TTL_HOURS, 72);
+  assert.strictEqual(Logic.CARD_PAYMENT_METHOD_VALUE, 'オンラインクレジットカード');
+});

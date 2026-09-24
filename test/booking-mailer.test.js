@@ -118,6 +118,36 @@ test('sendPendingMailForBooking: PENDING予約に1通送り、pendingMailSentAt�
   assert.ok(stubs.isDateLike(found.record.pendingMailSentAt));
 });
 
+test('sendPendingMailForBooking: カード決済は、Booking.computeCardPaymentDueMillisで計算した実際の支払期限日時が本文に入る（Issue #334 PR-B。フォーム側の目安表示ではなくサーバー側の値）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
+
+  var result = ctx.sandbox.BookingMailer.sendPendingMailForBooking(bookingId);
+  assert.strictEqual(result.success, true);
+  var body = mailApp._sentEmails[0].body;
+  assert.match(body, /【クレジットカード決済のご案内】/);
+  /* createdAt=2026-09-30T10:00+09:00・startAt=2026-10-01T10:00+09:00・
+     PENDING_TTL_MIN_HOURS_BEFORE_START未設定（既定2時間）のとき、
+     Booking.computeTtlExpiryMillisはmin(createdAt+72h, startAt-2h)=2026-10-01 08:00となる
+     （gas/booking/shared/Booking.gsのcomputeCardPaymentDueMillisと同じ計算。ここを
+     複製せず実際にBookingMailer経由で正しく呼ばれていることを確認する）。 */
+  assert.match(body, /お支払い期限：お申し込みから72時間後（2026-10-01（木） 08:00）/);
+});
+
+test('sendPendingMailForBooking: 現金・PayPay・未定にはカード専用の注意書きが混入しない（既存の仮受付メールとの回帰確認）', function () {
+  ['現金', 'PayPay', '未定'].forEach(function (paymentMethod) {
+    var mailApp = stubs.createMailAppStub();
+    var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+    var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: paymentMethod });
+
+    var result = ctx.sandbox.BookingMailer.sendPendingMailForBooking(bookingId);
+    assert.strictEqual(result.success, true);
+    var body = mailApp._sentEmails[0].body;
+    assert.strictEqual(body.indexOf('クレジットカード決済のご案内'), -1, paymentMethod + 'にカード案内が混入しないこと');
+  });
+});
+
 test('sendPendingMailForBooking: TIMEZONEをUTC等へ変更しても、その設定に従って本文の時刻表示が変わる（config.timezoneが実際にBookingMailTemplatesへ渡っていることの確認）', function () {
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ properties: Object.assign({}, COMPLETE_MAIL_PROPERTIES, { TIMEZONE: 'UTC' }), mailApp: mailApp });

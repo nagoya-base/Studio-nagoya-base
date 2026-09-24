@@ -237,7 +237,9 @@
         <label class="ba-choice"><input type="radio" name="paymentMethod" value="オンラインクレジットカード"> <span>オンラインクレジットカード</span></label>
         <label class="ba-choice"><input type="radio" name="paymentMethod" value="未定"> <span>未定</span></label>
       </div>
+      <p class="ba-field-help" id="ba-card-ineligible-notice" hidden>カード事前決済は利用開始の4日前までのお申し込みです。直前のご予約は現金・PayPay（現地決済）をお選びください。</p>
       <p class="ba-field-error" id="ba-payment-error" hidden></p>
+      <p class="ba-banner ba-banner--notice" id="ba-card-payment-notice" hidden></p>
     </fieldset>
 
     <div class="ba-field">
@@ -273,6 +275,8 @@
       </tbody>
     </table>
 
+    <p class="ba-banner ba-banner--notice" id="ba-confirm-card-payment-notice" hidden></p>
+
     <p class="ba-banner ba-banner--notice">
       送信すると「仮予約（PENDING）」として受け付けます。<strong>この時点では予約は確定していません。</strong>
       当方が内容を確認し、確定のご連絡をした時点で予約成立となります。
@@ -298,10 +302,12 @@
     <h2>仮予約の送信を受け付けました</h2>
     <p>受付番号: <span class="ba-booking-id" id="ba-complete-booking-id"></span></p>
 
-    <div class="ba-complete-pending-notice">
+    <div class="ba-complete-pending-notice" id="ba-complete-generic-notice">
       <strong>まだ予約は確定していません。</strong><br>
       当方が内容を確認し、確定のご連絡をした時点ではじめて予約成立となります。通常24時間以内にご連絡します。
     </div>
+
+    <p class="ba-banner ba-banner--notice" id="ba-complete-card-payment-notice" hidden></p>
 
     <p id="ba-complete-back-link-wrap"><a class="ba-btn ba-btn-primary" id="ba-complete-back-link" href="#"></a></p>
   </section>

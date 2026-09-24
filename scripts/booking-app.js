@@ -140,6 +140,8 @@
     purposeOther: document.getElementById('ba-purpose-other'),
     purposeOtherError: document.getElementById('ba-purpose-other-error'),
     paymentError: document.getElementById('ba-payment-error'),
+    cardIneligibleNotice: document.getElementById('ba-card-ineligible-notice'),
+    cardPaymentNotice: document.getElementById('ba-card-payment-notice'),
     note: document.getElementById('ba-note'),
     noteError: document.getElementById('ba-note-error'),
     step3Back: document.getElementById('ba-step-details-back'),
@@ -156,6 +158,7 @@
     confirmPeople: document.getElementById('ba-confirm-people'),
     confirmPurpose: document.getElementById('ba-confirm-purpose'),
     confirmPayment: document.getElementById('ba-confirm-payment'),
+    confirmCardPaymentNotice: document.getElementById('ba-confirm-card-payment-notice'),
     confirmNote: document.getElementById('ba-confirm-note'),
     consent: document.getElementById('ba-confirm-consent'),
     consentError: document.getElementById('ba-consent-error'),
@@ -165,6 +168,8 @@
 
     stepComplete: document.getElementById('ba-step-complete'),
     completeBookingId: document.getElementById('ba-complete-booking-id'),
+    completeGenericNotice: document.getElementById('ba-complete-generic-notice'),
+    completeCardPaymentNotice: document.getElementById('ba-complete-card-payment-notice'),
     completeBackLink: document.getElementById('ba-complete-back-link')
   };
 
@@ -225,6 +230,25 @@
 
   function hideGlobalError() {
     if (els.globalError) els.globalError.hidden = true;
+  }
+
+  /* linesの各要素をテキストノードとして<br>区切りで流し込む（Issue #334 PR-B）。
+     innerHTMLへ文字列連結しない（linesはLogic.cardPaymentNoticeLines等が返す固定文言と
+     こちらで計算した支払期限表示のみで、利用者入力は含まれないが、念のためXSS経路を
+     作らない構造にする）。linesが空・未指定ならhiddenへ戻す。 */
+  function renderMultilineNotice_(el, lines) {
+    if (!el) return;
+    if (!lines || !lines.length) {
+      el.hidden = true;
+      el.textContent = '';
+      return;
+    }
+    el.innerHTML = '';
+    lines.forEach(function (line, index) {
+      if (index > 0) el.appendChild(document.createElement('br'));
+      el.appendChild(document.createTextNode(line));
+    });
+    el.hidden = false;
   }
 
   function setFieldError_(inputEl, errorEl, message) {
@@ -673,6 +697,7 @@
   if (els.step2Next) {
     els.step2Next.addEventListener('click', function () {
       if (!state.startTime) return;
+      updateCardPaymentGating();
       goToStep('details');
     });
   }
@@ -691,6 +716,57 @@
     return checked ? checked.value : '';
   }
 
+  function cardPaymentRadio_() {
+    return root.querySelector('input[name="paymentMethod"][value="' + Logic.CARD_PAYMENT_METHOD_VALUE + '"]');
+  }
+
+  /*
+   * カード決済の96時間受付条件（Issue #334 PR-B「1. カード決済の受付条件」）。
+   * Step2→Step3遷移時（利用日時が確定した直後）に必ず呼び直す。これにより、
+   * 一度カードを選んだ後に戻って日時を変更し、96時間未満になった場合も、次にStep3へ
+   * 進んだ時点で選択が解除される（「送信できない状態にする」の実装は、最終的には
+   * サーバー側のCARD_PAYMENT_TOO_CLOSE_TO_START拒否が担保する多層防御の一つ）。
+   */
+  function updateCardPaymentGating() {
+    var radio = cardPaymentRadio_();
+    if (!radio) return;
+    var eligible = Logic.isCardPaymentEligible(state.date, state.startTime);
+    radio.disabled = !eligible;
+    /* radio.closestはDOM本体では常に使えるが、テストの最小DOMスタブには実装されていない
+       ことがあるため、存在確認してから使う（見た目のdisabled表現のみに関わる処理であり、
+       欠けても選択不可自体はradio.disabledで担保される）。 */
+    var label = typeof radio.closest === 'function' ? radio.closest('label') : null;
+    if (label && label.classList) label.classList.toggle('ba-choice--disabled', !eligible);
+    if (!eligible && radio.checked) {
+      radio.checked = false;
+    }
+    if (els.cardIneligibleNotice) els.cardIneligibleNotice.hidden = eligible;
+    updateCardPaymentNoticeVisibility();
+  }
+
+  /* 支払方法欄付近のカード注意書き（Issue #334 PR-B「2. カード決済の注意書き」）。
+     カードが選択されている間のみ表示し、他の支払方法へ切り替えると即座に消える
+     （現金・PayPay・未定にカード専用文言を混入させないため）。 */
+  function updateCardPaymentNoticeVisibility() {
+    if (!els.cardPaymentNotice) return;
+    var isCard = Logic.isCardPaymentMethodValue(checkedPaymentMethod());
+    if (!isCard) {
+      renderMultilineNotice_(els.cardPaymentNotice, null);
+      return;
+    }
+    renderMultilineNotice_(els.cardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale));
+  }
+
+  /* name="paymentMethod"のラジオが切り替わるたびにカード注意書きの表示を更新する。
+     ラジオ個々にリスナーを付けず、root（#booking-app）へのイベント委任にする
+     （Step2以前ではまだ存在しない前提のコードを書かないため、かつテストの最小DOMスタブが
+     closest()を実装していなくても動くようにするため）。 */
+  root.addEventListener('change', function (event) {
+    if (event.target && event.target.name === 'paymentMethod') {
+      updateCardPaymentNoticeVisibility();
+    }
+  });
+
   if (els.step3Back) {
     els.step3Back.addEventListener('click', function () { goToStep('start-time'); });
   }
@@ -708,6 +784,15 @@
         note: els.note.value
       };
       var errors = Logic.validateDetailsForm(fields, locale);
+
+      /* 二重チェック（Issue #334 PR-B）: updateCardPaymentGating()は通常Step2→Step3遷移時に
+         カード選択を解除済みだが、Step3に長時間滞在して96時間未満へ状態が変わった場合等に
+         備え、送信直前にも再評価する。サーバー側のCARD_PAYMENT_TOO_CLOSE_TO_START拒否と
+         合わせた多層防御であり、ここでの拒否メッセージも同じ案内文を使う。 */
+      if (Logic.isCardPaymentMethodValue(fields.paymentMethod) && !Logic.isCardPaymentEligible(state.date, state.startTime)) {
+        errors.paymentMethod = Logic.cardPaymentIneligibleNotice(locale);
+        updateCardPaymentGating();
+      }
 
       setFieldError_(els.name, els.nameError, errors.name);
       setFieldError_(els.email, els.emailError, errors.email);
@@ -751,6 +836,15 @@
     els.confirmPurpose.textContent = Logic.purposeLabel(state.purpose, state.purposeOther, locale);
     els.confirmPayment.textContent = Logic.paymentMethodLabel(state.paymentMethod, locale);
     els.confirmNote.textContent = state.note || UI_TEXT.noteUnset;
+
+    /* 予約確認画面のカード注意書き（Issue #334 PR-B「2. カード決済の注意書き」）。
+       支払期限はここでも改めて「今、確認画面を開いた時点+72時間」で再計算する
+       （送信前の目安表示。実際の期限は仮受付メールに記載されるサーバー側の値が正）。 */
+    if (Logic.isCardPaymentMethodValue(state.paymentMethod)) {
+      renderMultilineNotice_(els.confirmCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale));
+    } else {
+      renderMultilineNotice_(els.confirmCardPaymentNotice, null);
+    }
   }
 
   if (els.step4Back) {
@@ -858,6 +952,18 @@
           els.completeBookingId.textContent = body.bookingId || '';
           els.completeBackLink.href = backUrl;
           els.completeBackLink.textContent = backLabel;
+          /* 完了画面（Issue #334 PR-B）: 既存の「通常24時間以内にご連絡します」は
+             確定連絡そのものが24時間以内に届くという前提の文言のため、カード決済では
+             出さない（実際の確定連絡は入金確認後の承認を経るため、72時間後の支払期限まで
+             届かない可能性がある）。代わりにカード注意書きを表示する。現金・PayPay・
+             未定は既存文言のまま変更しない。 */
+          if (Logic.isCardPaymentMethodValue(state.paymentMethod)) {
+            if (els.completeGenericNotice) els.completeGenericNotice.hidden = true;
+            renderMultilineNotice_(els.completeCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale));
+          } else {
+            if (els.completeGenericNotice) els.completeGenericNotice.hidden = false;
+            renderMultilineNotice_(els.completeCardPaymentNotice, null);
+          }
           goToStep('complete');
         })
         .catch(function () {
