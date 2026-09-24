@@ -5,6 +5,12 @@ var fs = require('fs');
 var path = require('path');
 var manifest = require('../test/helpers/booking-deployment-manifest');
 
+/* READMEの配布表は.gsだけを管理するため、GASで必要なHTMLはここで明示する。 */
+var TARGET_ASSET_FILES = {
+  public: [],
+  admin: ['BookingAdminPage.html']
+};
+
 function usage() {
   throw new Error(
     'Usage: node scripts/prepare-booking-gas-project.js ' +
@@ -33,9 +39,10 @@ function prepareProject(target, outputDirectory, manifestPath) {
   var repositoryRoot = path.resolve(__dirname, '..');
   var output = path.resolve(outputDirectory);
   var sourceManifest = path.resolve(manifestPath);
-  var files = target === 'public'
+  var scriptFiles = target === 'public'
     ? manifest.BOOKING_WEB_APP_FILES
     : manifest.BOOKING_ADMIN_FILES;
+  var files = scriptFiles.concat(TARGET_ASSET_FILES[target]);
 
   if (!fs.existsSync(sourceManifest)) {
     throw new Error('Apps Script manifest not found: ' + sourceManifest);

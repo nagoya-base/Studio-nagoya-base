@@ -44,7 +44,13 @@ test('admin GAS bundle preserves the supplied existing-project manifest', functi
 
     assert.deepStrictEqual(
       files,
-      deploymentManifest.BOOKING_ADMIN_FILES.concat(['appsscript.json']).sort()
+      deploymentManifest.BOOKING_ADMIN_FILES
+        .concat(['BookingAdminPage.html', 'appsscript.json'])
+        .sort()
+    );
+    assert.ok(
+      fs.readFileSync(path.join(output, 'BookingAdminPage.html'), 'utf8').includes('booking-admin.js'),
+      'BookingAdminPage.htmlのローダーがAdmin配布物に含まれること'
     );
     assert.deepStrictEqual(
       JSON.parse(fs.readFileSync(path.join(output, 'appsscript.json'), 'utf8')),

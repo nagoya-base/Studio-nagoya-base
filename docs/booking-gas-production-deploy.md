@@ -8,6 +8,10 @@ GitHub `main`を唯一のソースとして、既存のBooking GASプロジェ�
 - `public`: Booking Web App（利用者向け。既存`/exec` URLを維持）
 - `admin`: Booking Admin（既存のコンテナバインドGAS／既存デプロイ）
 
+Admin配布物には`.gs`許可リストに加え、Web UIのエントリポイントである
+`BookingAdminPage.html`を必ず含める。これは`BookingAdminWeb.gs`の
+`HtmlService.createHtmlOutputFromFile('BookingAdminPage')`が参照する必須ファイルである。
+
 ワークフローはGASコードと`appsscript.json`だけを更新する。公開Web Appのmanifestは
 mainの`gas/booking/public/appsscript.json`を正とし、コンテナ固有設定を持つBooking Adminの
 manifestは既存プロジェクトから取得して維持する。Script Properties、
