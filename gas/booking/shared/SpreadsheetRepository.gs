@@ -238,6 +238,20 @@ var SpreadsheetRepository = (function () {
     return found.rowNumber;
   }
 
+  /* Issue #344: 日時3列だけを1回のsetValuesで更新する。メール・決済・status列は触れない。 */
+  function updateBookingScheduleAtomic(bookingId, date, startAt, endAt) {
+    var found = findRowByBookingId(bookingId);
+    if (!found) throw new Error('bookingIdが見つかりません: ' + bookingId);
+    if (!startAt || !endAt || typeof startAt.getTime !== 'function' ||
+        typeof endAt.getTime !== 'function' || startAt.getTime() >= endAt.getTime()) {
+      throw new Error('予約日時が不正です。');
+    }
+    var sheet = ensureBookingsSheet_();
+    sheet.getRange(found.rowNumber, HEADERS_.indexOf('date') + 1, 1, 3)
+      .setValues([[date, startAt, endAt]]);
+    return found.rowNumber;
+  }
+
   /* cancelBookingAdminのatomic更新で触ってよいフィールドのみを列挙する（下記参照）。 */
   var CANCELLATION_ATOMIC_FIELDS_ = ['status', 'cancelledAt', 'updatedAt'];
 
@@ -302,6 +316,7 @@ var SpreadsheetRepository = (function () {
     getAllPendingBookings: getAllPendingBookings,
     getConfirmedBookingsForDate: getConfirmedBookingsForDate,
     updateBookingFields: updateBookingFields,
+    updateBookingScheduleAtomic: updateBookingScheduleAtomic,
     updateBookingCancellationStateAtomic: updateBookingCancellationStateAtomic
   };
 })();
