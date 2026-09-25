@@ -536,6 +536,41 @@
   }
 
   /*
+   * Stripe Checkoutへの遷移導線（Issue #341 PR-B）の文言。startCardCheckout（GAS側の
+   * BookingRepository.beginCardCheckout）がcheckoutUrlを返した場合にのみ、完了画面へ
+   * この案内とボタンを追加表示する（本番ではキルスイッチが既定で無効のため、
+   * checkoutUrlが返らず表示自体が行われない）。
+   *
+   * PR-Cで署名検証済みWebhookによる自動確定が実装されるまでは、「決済完了＝予約確定」を
+   * 一切約束しない（Issue #341本文「Checkoutから戻った際の成功画面では...未実装の自動確定を
+   * 利用者に約束しないでください」）。決済ページへの遷移前・遷移後（成功/中断いずれの
+   * 戻り先でも）、確定は当店側の確認を経てから案内する、という現状の運用を正直に伝える。
+   */
+  var CARD_CHECKOUT_REDIRECT_TEXT_ = {
+    ja: {
+      title: '【クレジットカード決済へ進む】',
+      body: 'このあと表示される決済ページ（Stripe）でお支払い手続きを行ってください。',
+      confirmationNote: '決済ページでの操作が完了しても、その画面だけでは予約確定とはなりません。当店にて内容を確認のうえ、あらためて予約確定のご連絡をいたします。',
+      buttonLabel: '決済ページへ進む'
+    },
+    en: {
+      title: '[Proceed to Card Payment]',
+      body: 'You will be taken to a secure payment page (Stripe) to complete your payment.',
+      confirmationNote: 'Completing payment there does not confirm your booking by itself. We will review your request and send a separate confirmation.',
+      buttonLabel: 'Proceed to payment'
+    }
+  };
+
+  function cardCheckoutRedirectNoticeLines(locale) {
+    var t = CARD_CHECKOUT_REDIRECT_TEXT_[normalizeLocale(locale)];
+    return [t.title, t.body, t.confirmationNote];
+  }
+
+  function cardCheckoutButtonLabel(locale) {
+    return CARD_CHECKOUT_REDIRECT_TEXT_[normalizeLocale(locale)].buttonLabel;
+  }
+
+  /*
    * ── 月間空き状況カレンダー（Issue #318） ──
    * gas/booking/shared/Availability.gsのgetMonthlyAvailabilityが返すDAY_STATUS（5値）を
    * 記号・aria-label・選択可否へ変換する、DOM非依存の純粋ロジック。
@@ -885,6 +920,8 @@
     cardPaymentDueDisplay: cardPaymentDueDisplay,
     cardPaymentIneligibleNotice: cardPaymentIneligibleNotice,
     cardPaymentNoticeLines: cardPaymentNoticeLines,
+    cardCheckoutRedirectNoticeLines: cardCheckoutRedirectNoticeLines,
+    cardCheckoutButtonLabel: cardCheckoutButtonLabel,
     brandShowsMemberOption: brandShowsMemberOption,
     formatJpyAmount: formatJpyAmount,
     priceComputingLabel: priceComputingLabel,

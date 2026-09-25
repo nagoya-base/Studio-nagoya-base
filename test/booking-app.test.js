@@ -869,7 +869,8 @@ function setupCardFlow(locale, options) {
     'ba-card-ineligible-notice',
     'ba-card-payment-notice',
     'ba-confirm-card-payment-notice',
-    'ba-complete-card-payment-notice'
+    'ba-complete-card-payment-notice',
+    'ba-complete-checkout-notice'
   ].forEach(function (id) { elements[id] = createNoticeElement(id); });
 
   var documentStub = {
@@ -891,6 +892,18 @@ function setupCardFlow(locale, options) {
       fetchCallCount += 1;
       if (fetchOptions && fetchOptions.method === 'POST') {
         requests.push({ url: url, body: JSON.parse(fetchOptions.body) });
+        /*
+         * Issue #341 PR-B: createBooking成功後、カード決済は追加でstartCardCheckoutを
+         * 呼ぶ（action=startCardCheckoutをURLクエリへ付与する。scripts/booking-app.jsの
+         * attemptCardCheckout_参照）。既定ではopts.checkoutResponseを指定しない限り
+         * success:falseを返し、attemptCardCheckout_がnullへ丸めて既存の「決済リンクを
+         * 後日送付」フォールバックへ進む（既存テストの回帰なし）。
+         */
+        if (typeof url === 'string' && url.indexOf('action=startCardCheckout') !== -1) {
+          return Promise.resolve({ json: function () {
+            return Promise.resolve(opts.checkoutResponse || { success: false, error: { code: 'CHECKOUT_DISABLED' } });
+          } });
+        }
         return Promise.resolve({ json: function () {
           return Promise.resolve({ success: true, bookingId: 'SNB-CARD-TEST', requestId: 'req-card' });
         } });
@@ -1071,7 +1084,15 @@ test('Issue #334 PR-B: 送信直前もなお受付期限内であれば、通常
   ctx.elements['ba-submit']._listeners.click();
   await flushPromises();
 
-  assert.strictEqual(ctx.requests.length, 1);
+  /*
+   * Issue #341 PR-B: createBooking成功後、カード決済のみ追加でstartCardCheckoutを
+   * 呼ぶため2件になる（このテストのfetchスタブはURLを問わずsuccess:trueを返すが
+   * checkoutUrlを含まないため、attemptCardCheckout_はnullへ丸めて既存の「決済リンクを
+   * 後日送付」案内フォールバックへ進む。回帰なし）。
+   */
+  assert.strictEqual(ctx.requests.length, 2);
+  assert.match(ctx.requests[1].url, /action=startCardCheckout/);
+  assert.strictEqual(ctx.requests[1].body.bookingId, 'SNB-CARD-TEST');
   assert.strictEqual(ctx.elements['ba-step-complete'].hidden, false);
 });
 
@@ -1178,6 +1199,43 @@ test('Issue #334 PR-B: 仮予約送信成功後、カード決済のみ完了画
   assert.match(ctx.elements['ba-complete-card-payment-notice'].renderedText(), /お支払い期限：お申し込みから72時間後/);
 });
 
+test('Issue #341 PR-B: startCardCheckoutがcheckoutUrlを返した場合、旧「決済リンクを後日送付」案内の代わりにStripe決済ボタンを表示する', async function () {
+  var ctx = setupCardFlow(null, {
+    checkoutResponse: {
+      success: true,
+      checkoutUrl: 'https://checkout.stripe.com/pay/cs_test_abc',
+      amount: 8000,
+      currency: 'JPY'
+    }
+  });
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-step-complete'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-complete-card-payment-notice'].hidden, true, '旧「決済リンクを後日送付」案内は表示しない');
+  assert.strictEqual(ctx.elements['ba-complete-checkout-notice'].hidden, false);
+  assert.match(
+    ctx.elements['ba-complete-checkout-notice'].renderedText(),
+    /決済ページでの操作が完了しても、その画面だけでは予約確定とはなりません/,
+    'PR-Cのwebhook自動確定が実装されるまでは、この画面で確定を約束しない'
+  );
+  assert.strictEqual(ctx.elements['ba-complete-checkout-wrap'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-complete-checkout-link'].href, 'https://checkout.stripe.com/pay/cs_test_abc');
+});
+
 test('Issue #334 PR-B: 仮予約送信成功後、現金決済では完了画面は既存どおり（回帰なし）', async function () {
   var ctx = setupCardFlow(null);
   ctx.elements['ba-date'].value = jstDateString(10);
@@ -1218,7 +1276,8 @@ test('Issue #334 PR-B: 96時間以上先の日程でカード決済を選んだ�
   ctx.elements['ba-submit']._listeners.click();
   await flushPromises();
 
-  assert.strictEqual(ctx.requests.length, 1);
+  /* Issue #341 PR-B: createBooking成功後にstartCardCheckoutが追加で1回呼ばれる（上記コメント参照）。 */
+  assert.strictEqual(ctx.requests.length, 2);
   assert.strictEqual(ctx.requests[0].body.paymentMethod, CARD_VALUE);
   assert.strictEqual(ctx.elements['ba-complete-booking-id'].textContent, 'SNB-CARD-TEST');
 });

@@ -189,6 +189,9 @@
     completeStatus: document.getElementById('ba-complete-status'),
     completeGenericNotice: document.getElementById('ba-complete-generic-notice'),
     completeCardPaymentNotice: document.getElementById('ba-complete-card-payment-notice'),
+    completeCheckoutNotice: document.getElementById('ba-complete-checkout-notice'),
+    completeCheckoutWrap: document.getElementById('ba-complete-checkout-wrap'),
+    completeCheckoutLink: document.getElementById('ba-complete-checkout-link'),
     completeBackLink: document.getElementById('ba-complete-back-link')
   };
 
@@ -1103,6 +1106,31 @@
     els.submitError.focus();
   }
 
+  /*
+   * Stripe Checkout Session発行（Issue #341 PR-B）。createBooking成功後、カード決済のみ
+   * 追加で呼ぶ。本番では既定でGAS側のキルスイッチ（BookingConfig.getStripeConfig().
+   * checkoutEnabled）が無効なため、通常はsuccess:falseが返り、この関数はnullを返す
+   * （呼び出し元は既存の「決済リンクを後日送付」案内へそのままフォールバックする）。
+   * ネットワーク障害・タイムアウトを含め、失敗はすべてnullへ丸めてrejectしない
+   * （このリクエストの失敗が仮予約受付自体の完了表示を止めてはならないため）。
+   */
+  function attemptCardCheckout_(bookingId) {
+    if (!API_BASE_URL || !bookingId) return Promise.resolve(null);
+    var checkoutEndpoint = API_BASE_URL + (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') + 'action=startCardCheckout';
+    return fetch(checkoutEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ bookingId: bookingId })
+    })
+      .then(function (response) { return response.json(); })
+      .then(function (result) {
+        return result && result.success === true && result.checkoutUrl ? result : null;
+      })
+      .catch(function () {
+        return null;
+      });
+  }
+
   if (els.submit) {
     els.submit.addEventListener('click', function () {
       /* 二重送信防止: 送信中・成功後はここで必ず止める（サーバー側のrate limit・
@@ -1205,12 +1233,36 @@
              未定は既存文言のまま変更しない。 */
           if (Logic.isCardPaymentMethodValue(state.paymentMethod)) {
             if (els.completeGenericNotice) els.completeGenericNotice.hidden = true;
-            renderMultilineNotice_(els.completeCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale));
+            /*
+             * Issue #341 PR-B: startCardCheckoutを追加で試みる。checkoutUrlが得られた場合
+             * のみ（＝GAS側のキルスイッチが有効化されている場合のみ）、旧「決済リンクを
+             * 後日送付」案内をStripe Checkoutへの遷移導線に差し替える。取得できなかった
+             * 場合（本番の既定状態を含む）は、既存の案内文のままフォールバックする
+             * （新しい決済リンクは本番では有効化されていないため、ここで一切約束しない）。
+             */
+            attemptCardCheckout_(body.bookingId).then(function (checkout) {
+              if (checkout && checkout.checkoutUrl) {
+                renderMultilineNotice_(els.completeCardPaymentNotice, null);
+                renderMultilineNotice_(els.completeCheckoutNotice, Logic.cardCheckoutRedirectNoticeLines(locale));
+                if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = false;
+                if (els.completeCheckoutLink) {
+                  els.completeCheckoutLink.href = checkout.checkoutUrl;
+                  els.completeCheckoutLink.textContent = Logic.cardCheckoutButtonLabel(locale);
+                }
+              } else {
+                renderMultilineNotice_(els.completeCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale));
+                renderMultilineNotice_(els.completeCheckoutNotice, null);
+                if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = true;
+              }
+              goToStep('complete');
+            });
           } else {
             if (els.completeGenericNotice) els.completeGenericNotice.hidden = false;
             renderMultilineNotice_(els.completeCardPaymentNotice, null);
+            renderMultilineNotice_(els.completeCheckoutNotice, null);
+            if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = true;
+            goToStep('complete');
           }
-          goToStep('complete');
         })
         .catch(function () {
           isSubmitting = false;

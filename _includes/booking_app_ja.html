@@ -350,6 +350,12 @@
 
     <p class="ba-banner ba-banner--notice" id="ba-complete-card-payment-notice" hidden></p>
 
+    <!-- Issue #341 PR-B: Stripe Checkoutへの遷移導線。startCardCheckoutがcheckoutUrlを
+         返した場合のみJSがhiddenを解除する（本番ではキルスイッチが既定で無効のため、
+         通常はこの要素は表示されず、上のba-complete-card-payment-noticeのみが表示される）。 -->
+    <p class="ba-banner ba-banner--notice" id="ba-complete-checkout-notice" hidden></p>
+    <p id="ba-complete-checkout-wrap" hidden><a class="ba-btn ba-btn-primary" id="ba-complete-checkout-link" href="#" rel="noopener"></a></p>
+
     <p id="ba-complete-back-link-wrap"><a class="ba-btn ba-btn-primary" id="ba-complete-back-link" href="#"></a></p>
   </section>
 </div>

@@ -591,6 +591,90 @@ var BookingRepository = (function () {
    * 二重処理を防ぐ）。Calendarイベント削除に失敗した場合もrecoveryへ記録した上でSheets側は
    * EXPIREDへ進める（削除失敗を理由にPENDINGのまま放置しない）。
    */
+  /*
+   * Issue #341 PR-B「5. 仮押さえと期限切れ」: checkout_pending（Stripe Checkout Session
+   * 発行済み）のカード予約が仮押さえ期限（paymentHoldExpiresAt）を過ぎた場合、
+   * expirePendingBookings（枠解放）がそのまま従来のTTL計算・削除処理へ進む前に、
+   * Stripe側の実際のSession状態を確認する。「Stripe側で決済できるSessionが残っている間に
+   * GASだけが枠を解放しない」「決済が成立している可能性がある場合は、未払いと決めつけて
+   * 枠を解放しない」を満たすための唯一のゲート。
+   *
+   * 戻り値のsafeToExpire:trueだけが、この後の既存の枠解放処理（Calendar削除→
+   * status:EXPIRED）へ進んでよいことを意味する。false（Stripe側がopen＝まだ決済可能、
+   * complete/paid＝決済済みの可能性、API失敗・解析不能のいずれか）の場合、このトリガー
+   * 実行ではこの予約をスキップする（次回のトリガー実行で再評価する。README「仮押さえの
+   * 解放とStripe側の失効確認」参照）。
+   */
+  function verifyCheckoutHoldSafeToExpire_(record, now) {
+    if (!record.stripeCheckoutSessionId) {
+      recordPaymentEvidenceAuditBestEffort_(
+        record.bookingId, record, 'PAYMENT_EVIDENCE_MISSING',
+        '仮押さえ期限を過ぎたcheckout_pending予約にstripeCheckoutSessionIdが記録されていません。枠を解放せずスキップしました。',
+        now
+      );
+      return { safeToExpire: false };
+    }
+
+    var stripeConfig = BookingConfig.getStripeConfig();
+    var result = StripeGateway.retrieveCheckoutSession(stripeConfig, record.stripeCheckoutSessionId);
+    if (!result.ok) {
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: record.bookingId,
+          failureType: 'EXPIRE_STRIPE_SESSION_STATUS_UNKNOWN',
+          occurredAt: now,
+          calendarEventId: record.calendarEventId || '',
+          status: record.status || '',
+          errorMessage: '仮押さえ期限を過ぎたCheckout Sessionの状態確認に失敗しました（' + result.errorType + '）: ' + (result.message || ''),
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return { safeToExpire: false };
+    }
+
+    var session = result.session;
+    if (session.status === 'expired' && session.paymentStatus === 'unpaid') {
+      return { safeToExpire: true };
+    }
+    if (session.status === 'complete' || session.paymentStatus === 'paid') {
+      recordPaymentRecoveryBestEffort_(
+        record.bookingId, record, 'CHECKOUT_HOLD_EXPIRY_PAYMENT_MAYBE_SUCCEEDED',
+        '仮押さえ期限を過ぎたためこの予約の枠解放を検討しましたが、Stripe Checkout Session（' +
+          record.stripeCheckoutSessionId + '）が決済済みと報告されたため、枠を解放せず自動処理を停止しました。' +
+          '至急Stripe管理画面で入金を確認してください。',
+        now
+      );
+      return { safeToExpire: false };
+    }
+    /*
+     * session.status==='open'（Stripe実際のexpires_atにはSTRIPE_SESSION_EXPIRY_BUFFER_
+     * MINUTES分の安全マージンが乗っているため、GAS側のpaymentHoldExpiresAtを過ぎていても
+     * Stripe側ではまだ数分間open=決済可能な場合がある。README「仮押さえの解放とStripe側の
+     * 失効確認」参照）を含め、上記いずれにも該当しない場合は安全側に倒し、次回トリガーで
+     * 再評価する。
+     */
+    if (session.status !== 'open') {
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: record.bookingId,
+          failureType: 'EXPIRE_STRIPE_SESSION_STATUS_UNKNOWN',
+          occurredAt: now,
+          calendarEventId: record.calendarEventId || '',
+          status: record.status || '',
+          errorMessage: 'Checkout Sessionの状態を判定できませんでした（status=' + session.status + ', payment_status=' + session.paymentStatus + '）。',
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+    }
+    return { safeToExpire: false };
+  }
+
   function expirePendingBookings(now) {
     now = isDateLike_(now) ? now : new Date();
     var ttlConfig = BookingConfig.getTtlConfig();
@@ -604,6 +688,9 @@ var BookingRepository = (function () {
        含まれない、既にstatus!==PENDINGな行）はここに入らないため、過去分へ遡って
        送ることはない。 */
     var newlyExpiredCardBookingIds = [];
+    /* Issue #341 PR-B: 仮押さえ失効によりEXPIREDへ進めたcheckout_pending予約のbookingId。
+       Lock解放後にapplyPaymentStateUpdate(FAILED)をまとめて呼ぶ（上記コメント参照）。 */
+    var newlyFailedCheckoutHoldBookingIds = [];
 
     candidates.forEach(function (item) {
       var record = item.record;
@@ -627,27 +714,72 @@ var BookingRepository = (function () {
        * 維持する（Booking.computeCardPaymentDueMillis参照）。
        */
       var isCard = Booking.isCardPaymentMethod(record.paymentMethod);
-      var ttlHours = isCard ? Booking.CARD_TTL_HOURS : ttlConfig.ttlHours;
-      var minHoldHours;
-      if (isCard) {
-        minHoldHours = 0;
+
+      /*
+       * Issue #341 PR-B: Stripe Checkout Session発行済み（paymentStatus===checkout_pending）
+       * のカード予約は、旧来のCARD_TTL_HOURS（72時間・受付起点）ではなく、実際にStripeへ
+       * 送ったexpires_atを保存し直したpaymentHoldExpiresAt（仮押さえ期限。目安30分）を
+       * 使う別クロックで判定する（Issue #341本文「旧『申込+72時間』のTTLはこのPENDINGには
+       * 適用しない」）。Checkout Sessionを一度も発行していないカード予約（paymentStatusが
+       * not_started/failedのまま。新フロー自体が無効・未使用の場合を含む）は、以下の
+       * elseブロックで従来どおりCARD_TTL_HOURSのまま扱う（既存予約・旧Payment Link方式との
+       * 互換性維持）。
+       */
+      var isCheckoutPendingHold = isCard &&
+        Booking.normalizePaymentStatus(record.paymentStatus) === Booking.PAYMENT_STATUS.CHECKOUT_PENDING &&
+        isDateLike_(record.paymentHoldExpiresAt);
+
+      if (isCheckoutPendingHold) {
+        if (now.getTime() < record.paymentHoldExpiresAt.getTime()) {
+          return; /* まだ仮押さえ有効 */
+        }
+        /*
+         * Stripe側の確認はLock取得前（ネットワーク呼び出しをLockの外で行う。
+         * reservePaymentAttempt_と同じ理由）。verifyCheckoutHoldSafeToExpire_が
+         * safeToExpire:falseを返した場合はこの回のトリガー実行ではスキップし、次回の
+         * トリガー実行で再評価する（Stripe側がまだopenの場合や、API呼び出し自体が
+         * 失敗した場合を含む。「決済できるSessionが残っている間にGASだけが枠を解放
+         * しない」「決済結果が不明な場合は無条件に解放しない」を満たす）。
+         */
+        var verification = verifyCheckoutHoldSafeToExpire_(record, now);
+        if (!verification.safeToExpire) {
+          skippedCount++;
+          return;
+        }
       } else {
         /*
-         * Issue #270（レビュー対応）: 「利用開始まで2時間未満で受け付けた当日予約」が
-         * 作成直後に即EXPIREDになる事故を防ぐため、受付時刻(createdAt)の暦日(Asia/Tokyo基準)と
-         * 予約の利用日(date)が一致する場合のみ、Booking.computeTtlExpiryMillisのgrace
-         * （通常TTLが受付時刻以前になる直前当日予約にだけ使う最大猶予。利用開始時刻を
-         * 必ず上限とする＝expiry<=startAtを保証する）を適用する。一致しない（＝翌日以降に
-         * 通常の余裕を持って受け付けた）予約はminHoldHours=0のまま#268時点と完全に同じ
-         * TTL計算になる（既存の翌日以降予約のTTLへの影響なし）。
+         * Issue #334: カード決済のPENDINGのみCARD_TTL_HOURS（72時間・受付起点）を使う。
+         * 現金/PayPay/未定はScript Properties由来のttlConfig.ttlHours（既定24時間）のまま
+         * 一切変更しない（Issue #334本文「現金・PayPay・未定の失効挙動（24時間）は変更しない」）。
+         * カードはvalidateCreateBookingInputで96時間未満の申込自体を拒否しているため、
+         * 「利用開始まで2時間未満で受け付けた当日予約」のgrace（minHoldHours）は通常発生しない。
+         * 96時間ルール導入前に作成された既存のカードPENDING行に対する安全策として
+         * minHoldHoursは適用せず0固定にし、「利用開始の2時間前を超えない」上限
+         * （minHoursBeforeStart。既存のPENDING_TTL_MIN_HOURS_BEFORE_START）だけは
+         * 維持する（Booking.computeCardPaymentDueMillis参照）。
          */
-        var createdDateString = Booking.formatDateInTimezone(new Date(createdAtMillis), ttlConfig.timezone);
-        var isSameDayBooking = !!createdDateString && record.date === createdDateString;
-        minHoldHours = isSameDayBooking ? ttlConfig.minHoldHours : 0;
-      }
+        var ttlHours = isCard ? Booking.CARD_TTL_HOURS : ttlConfig.ttlHours;
+        var minHoldHours;
+        if (isCard) {
+          minHoldHours = 0;
+        } else {
+          /*
+           * Issue #270（レビュー対応）: 「利用開始まで2時間未満で受け付けた当日予約」が
+           * 作成直後に即EXPIREDになる事故を防ぐため、受付時刻(createdAt)の暦日(Asia/Tokyo基準)と
+           * 予約の利用日(date)が一致する場合のみ、Booking.computeTtlExpiryMillisのgrace
+           * （通常TTLが受付時刻以前になる直前当日予約にだけ使う最大猶予。利用開始時刻を
+           * 必ず上限とする＝expiry<=startAtを保証する）を適用する。一致しない（＝翌日以降に
+           * 通常の余裕を持って受け付けた）予約はminHoldHours=0のまま#268時点と完全に同じ
+           * TTL計算になる（既存の翌日以降予約のTTLへの影響なし）。
+           */
+          var createdDateString = Booking.formatDateInTimezone(new Date(createdAtMillis), ttlConfig.timezone);
+          var isSameDayBooking = !!createdDateString && record.date === createdDateString;
+          minHoldHours = isSameDayBooking ? ttlConfig.minHoldHours : 0;
+        }
 
-      if (!Booking.isExpired(createdAtMillis, startAtMillis, ttlHours, ttlConfig.minHoursBeforeStart, now.getTime(), minHoldHours)) {
-        return; /* まだ有効 */
+        if (!Booking.isExpired(createdAtMillis, startAtMillis, ttlHours, ttlConfig.minHoursBeforeStart, now.getTime(), minHoldHours)) {
+          return; /* まだ有効 */
+        }
       }
 
       var lock = LockService.getScriptLock();
@@ -662,6 +794,18 @@ var BookingRepository = (function () {
         var latest = SpreadsheetRepository.findRowByBookingId(record.bookingId);
         if (!latest || latest.record.status !== Booking.STATUS.PENDING) {
           return; /* confirmBooking等で既に処理済み */
+        }
+
+        /*
+         * Issue #341 PR-B: Lock取得前のStripe確認（verifyCheckoutHoldSafeToExpire_）から
+         * Lock取得までの間に、他プロセス（将来のWebhookハンドラ等）がpaymentStatusを
+         * 進めている可能性がある。Lock内で最新のpaymentStatusを再確認し、既に
+         * checkout_pendingでなくなっていれば（PAID等へ進んでいれば）枠を解放せず処理を
+         * スキップする（README「仮押さえの解放とStripe側の失効確認」の3条件どおり、
+         * 仮押さえ解放とpaymentStatus遷移は別物だが、解放前の最終確認としてここで見る）。
+         */
+        if (isCheckoutPendingHold && Booking.normalizePaymentStatus(latest.record.paymentStatus) !== Booking.PAYMENT_STATUS.CHECKOUT_PENDING) {
+          return;
         }
 
         try {
@@ -697,6 +841,17 @@ var BookingRepository = (function () {
           if (isCard) {
             newlyExpiredCardBookingIds.push(record.bookingId);
           }
+          /*
+           * Issue #341 PR-B: 仮押さえ解放（status側）とpaymentStatus遷移は別物のまま
+           * （README「仮押さえの解放とStripe側の失効確認」参照）。applyPaymentStateUpdate
+           * 自体もLockService.getScriptLock()を取得するため、この関数（expirePendingBookings）
+           * が既に保持しているlockの内側から呼ぶと同一スクリプト内で二重にロックを取ろうと
+           * してしまう。そのためbookingIdだけを集め、この候補のlock解放後（finally節の外）に
+           * まとめて呼び出す（notifyCustomerExpiredBestEffort_と同じパターン）。
+           */
+          if (isCheckoutPendingHold) {
+            newlyFailedCheckoutHoldBookingIds.push(record.bookingId);
+          }
         } catch (sheetsError) {
           /* Calendar側は削除済み（または削除失敗をrecovery記録済み）だが、Sheets側の
              statusをEXPIREDへ更新できなかった場合の不整合をrecoveryへ記録する。
@@ -731,6 +886,22 @@ var BookingRepository = (function () {
      */
     newlyExpiredCardBookingIds.forEach(function (bookingId) {
       notifyCustomerExpiredBestEffort_(bookingId);
+    });
+
+    /*
+     * Issue #341 PR-B: 仮押さえ失効で枠を解放したcheckout_pending予約のpaymentStatusを
+     * failedへ進める（best effort。失敗してもexpirePendingBookings自体の戻り値
+     * ―expiredCount等―には影響させない。枠解放自体は既に完了しているため、この遷移が
+     * 失敗してもEXPIREDを取り消さない。次回このbookingIdへ新しい決済試行が行われる際は
+     * reservePaymentAttempt_がpaymentStatus:not_startedのまま残っていた場合と同様に安全に
+     * 扱われる想定だが、paymentStatusがcheckout_pendingのまま残ってしまうため、この
+     * best effort呼び出し自体の失敗はLoggerで検知できるようにする）。
+     */
+    newlyFailedCheckoutHoldBookingIds.forEach(function (bookingId) {
+      var failResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, {}, now);
+      if (!failResult.success) {
+        Logger.log('expirePendingBookings: 仮押さえ失効後のpaymentStatus:failed遷移に失敗しました: ' + bookingId + ' ' + JSON.stringify(failResult.error));
+      }
     });
 
     return { expiredCount: expiredCount, skippedCount: skippedCount, candidateCount: candidates.length };
@@ -1974,6 +2145,391 @@ var BookingRepository = (function () {
     });
   }
 
+  /*
+   * ============================================================================
+   * Issue #341 PR-B: Stripe Checkout Sessionの発行・仮押さえ（CardPayment.gs/
+   * StripeGateway.gs/applyPaymentStateUpdateを組み合わせるオーケストレーション本体）
+   * ============================================================================
+   *
+   * beginCardCheckout(bookingId, now)がBooking Web App（Code.gs）から呼ばれる唯一の
+   * 公開入口。PR-B/C/DはSpreadsheetRepositoryの低レベル関数を直接呼ばず、決済状態・
+   * 決済付随情報の更新には必ずapplyPaymentStateUpdateを、決済試行IDの発行には必ず
+   * reservePaymentAttempt_（このファイル内）を経由すること。
+   *
+   * ## 二重決済防止の設計（Issue #341本文「4. 二重決済の防止」）
+   *
+   * 「StripeでSession生成に成功した後、GASへのSession ID保存に失敗した場合でも、
+   * 新しいSessionを無条件に発行しない」を満たすため、Stripe呼び出しの**前**に必ず
+   * paymentAttemptId（Stripeへ渡すIdempotency-Keyそのもの）を台帳へ永続化してから
+   * Stripeを呼ぶ（reservePaymentAttempt_）。
+   *
+   * - reservePaymentAttempt_は短時間のLockのみを保持し、Stripeへのネットワーク呼び出しは
+   *   Lockの外で行う（LockService.getScriptLock()はスクリプト全体で共有される単一の
+   *   ミューテックスであり、低速な外部HTTP呼び出しの間保持すると無関係な他の予約の処理まで
+   *   直列化してしまうため）。
+   * - 同一bookingIdへの並行呼び出し（二重クリック等）は、reservePaymentAttempt_のLock内で
+   *   同じpaymentAttemptId（1つ目の呼び出しが発行・永続化した値）へ収束させ、以後は両方が
+   *   同じIdempotency-KeyでStripeを呼ぶ。Stripe側のIdempotency-Key保証により、実際に
+   *   作成されるCheckout Sessionは1つだけになる（GAS側でネットワーク呼び出しをまたぐ長い
+   *   Lockを取らずに済む、Stripe推奨のパターン）。
+   * - Stripe呼び出し後にapplyPaymentStateUpdateでのCHECKOUT_PENDINGへの証跡コミットが
+   *   失敗した場合（PAYMENT_DETAIL_WRITE_FAILED等）も、既にpaymentAttemptIdは台帳に
+   *   永続化済みのため、呼び出し元（利用者のフォーム再送信）は同じpaymentAttemptIdを
+   *   再利用してStripeを再度呼び出せる。Stripeは同一Idempotency-Key・同一パラメータの
+   *   再試行に対して、最初に作成したSessionをそのまま返す（新しいSessionを作らない）。
+   * - Stripe呼び出し自体がタイムアウト・5xx等で結果不明（AMBIGUOUS/NETWORK）な場合は、
+   *   新しい決済試行IDを発行せず、同じpaymentAttemptIdでの再試行のみを許可する
+   *   （呼び出し元にエラーを返し、フロントから同じbookingIdで再試行させる）。
+   */
+
+  var CHECKOUT_LOCK_TIMEOUT_MS_ = 10000;
+
+  /*
+   * bookingIdの決済試行ID（Stripeへ渡すIdempotency-Key）を予約・永続化する。
+   *
+   * - currentPaymentStatusがFAILED（前回の試行が確定的に不成立で終わった）の場合は、
+   *   Booking.gsの設計どおり必ず新しいpaymentAttemptIdを発行する。
+   * - currentPaymentStatusがNOT_STARTEDで、かつ台帳に既にpaymentAttemptIdが記録されている
+   *   場合（前回このLock内でpaymentAttemptIdだけ永続化した直後にStripe呼び出しや
+   *   コミットで失敗した、または実行がタイムアウトした等）は、その既存の値をそのまま
+   *   再利用する（新しい値を発行しない）。stripeCheckoutSessionIdが既に記録されている
+   *   状態でpaymentStatusがNOT_STARTEDのままということは起こり得ない
+   *   （CHECKOUT_PENDINGへの証跡付き書き込みが両方成功していればpaymentStatus自体も
+   *   進んでいるはずであり、詳細だけ書けてpaymentStatus側が書けなかった場合は
+   *   applyPaymentStateUpdateがpaymentRecoveryRequiredAtを立てるため、呼び出し元
+   *   （beginCardCheckout）がその時点で既に処理を停止している）。
+   */
+  function reservePaymentAttempt_(bookingId, now) {
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(CHECKOUT_LOCK_TIMEOUT_MS_)) {
+      return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
+    }
+    try {
+      var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+      if (!found) {
+        return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
+      }
+      var record = found.record;
+      if (record.paymentRecoveryRequiredAt) {
+        return { success: false, error: { code: 'PAYMENT_RECOVERY_REQUIRED', message: 'この予約の決済状態は要復旧のため、自動処理を停止しています。' } };
+      }
+      var currentPaymentStatus = Booking.normalizePaymentStatus(record.paymentStatus);
+      if (currentPaymentStatus === Booking.PAYMENT_STATUS.NOT_STARTED && record.paymentAttemptId) {
+        return { success: true, paymentAttemptId: record.paymentAttemptId, reused: true };
+      }
+
+      var paymentAttemptId = CardPayment.generatePaymentAttemptId(bookingId, Utilities.getUuid());
+      try {
+        SpreadsheetRepository.updateBookingPaymentStateAtomic(bookingId, { paymentAttemptId: paymentAttemptId });
+      } catch (writeError) {
+        Logger.log('reservePaymentAttempt_: paymentAttemptIdの保存に失敗しました: ' + bookingId + ' ' + describeError_(writeError));
+        return { success: false, error: { code: 'PAYMENT_DETAIL_WRITE_FAILED', message: '決済処理の準備に失敗しました。もう一度お試しください。' } };
+      }
+      return { success: true, paymentAttemptId: paymentAttemptId, reused: false };
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  /* Stripe Checkout Session作成呼び出し自体が失敗した場合の分岐（Issue #341本文
+     「Stripe側で決済済みかどうか不明な場合は、新規発行を停止してRecoveryに記録」）。 */
+  function handleCheckoutCreateFailure_(bookingId, record, createResult, now) {
+    if (createResult.errorType === 'STRIPE_ERROR') {
+      /*
+       * Stripeが明確にリクエストを拒否した（4xx）。この回のリクエストは処理されていない
+       * ことが確定しているため、FAILEDへ進めて次回は新しい決済試行IDを発行させる
+       * （Booking.gs「新しいpaymentAttemptIdでの再試行時のみCHECKOUT_PENDINGへ戻れる」）。
+       */
+      var failResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, {}, now);
+      if (!failResult.success) {
+        return { success: false, error: failResult.error };
+      }
+      return {
+        success: false,
+        error: { code: 'STRIPE_REQUEST_ERROR', message: '決済処理を開始できませんでした。時間をおいて再度お試しください。' }
+      };
+    }
+
+    /*
+     * NETWORK/AMBIGUOUS/NOT_CONFIGURED: Stripe側で実際にSessionが作成された可能性を
+     * 否定できない（あるいはそもそも呼び出せていない）。paymentStatusをFAILEDへ進めず
+     * （＝次回もreservePaymentAttempt_が同じpaymentAttemptIdを再利用する）、監査記録のみ
+     * 残して呼び出し元へ再試行を促す。
+     */
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: 'STRIPE_CHECKOUT_SESSION_CREATE_UNKNOWN',
+        occurredAt: now,
+        calendarEventId: record.calendarEventId || '',
+        status: record.status || '',
+        errorMessage: 'Checkout Session作成の結果が確認できませんでした（' + createResult.errorType + '）: ' + (createResult.message || ''),
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (recoveryError) {
+      Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+    }
+    return {
+      success: false,
+      error: { code: 'PAYMENT_STATUS_UNKNOWN', message: '決済処理の状況を確認できませんでした。しばらくしてから再度お試しください。' },
+      retryable: true
+    };
+  }
+
+  /* NOT_STARTED/FAILEDから新しい決済試行を開始する（Checkout Session発行→証跡コミット）。 */
+  function startNewCheckoutAttempt_(bookingId, stripeConfig, now) {
+    var reserveResult = reservePaymentAttempt_(bookingId, now);
+    if (!reserveResult.success) return reserveResult;
+    var paymentAttemptId = reserveResult.paymentAttemptId;
+
+    var latest = SpreadsheetRepository.findRowByBookingId(bookingId);
+    if (!latest) {
+      return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
+    }
+    var record = latest.record;
+
+    /*
+     * Checkout発行時点の金額確定（Issue #341本文「金額は既存の料金計算を正とし、
+     * クライアントから送られた金額を信用しないこと」）。この関数はbookingId以外の入力を
+     * 一切受け取らないため、クライアントが金額を主張する余地自体が無い
+     * （CardPayment.verifyPaymentAmountの出番はクライアント由来の金額と突き合わせる場合の
+     * ものであり、ここでは常にcomputeExpectedPaymentAmountの計算結果のみを使う）。
+     */
+    var expected = CardPayment.computeExpectedPaymentAmount(record);
+    if (!expected.valid) {
+      return { success: false, error: expected.error };
+    }
+
+    var nowMillis = now.getTime();
+    var expiresAtSeconds = CardPayment.computeStripeSessionExpiresAtSeconds(nowMillis);
+
+    var createResult = StripeGateway.createCheckoutSession(stripeConfig, {
+      amountJpy: expected.amountJpy,
+      currency: expected.currency,
+      bookingId: bookingId,
+      brand: record.brand,
+      paymentAttemptId: paymentAttemptId,
+      expiresAtSeconds: expiresAtSeconds,
+      successUrl: stripeConfig.successUrl,
+      cancelUrl: stripeConfig.cancelUrl,
+      customerEmail: record.email,
+      lineItemName: Booking.getBrandLabel(record.brand) + ' ご利用料金（' + bookingId + '）'
+    }, paymentAttemptId);
+
+    if (!createResult.ok) {
+      return handleCheckoutCreateFailure_(bookingId, record, createResult, now);
+    }
+
+    var session = createResult.session;
+    /*
+     * Issue #341本文「Session expires_atをこの仮押さえ期限と一致させる」を、Stripeの
+     * レスポンスに含まれる実際のexpires_atをpaymentHoldExpiresAtへそのまま保存し直す
+     * ことで実現する（CardPayment.gsファイル冒頭コメント・README「Issue #341」節参照。
+     * GAS側で別途計算した値と後から突き合わせない）。
+     */
+    var paymentHoldExpiresAt = new Date(session.expiresAtSeconds * 1000);
+
+    var commitResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.CHECKOUT_PENDING, {
+      paymentAttemptId: paymentAttemptId,
+      stripeCheckoutSessionId: session.id,
+      paymentHoldExpiresAt: paymentHoldExpiresAt,
+      stripeAmount: expected.amountJpy,
+      stripeCurrency: expected.currency
+    }, now);
+
+    if (!commitResult.success) {
+      /* paymentAttemptIdは既に永続化済みのため、呼び出し元の再試行は同じIdempotency-Keyで
+         Stripeへ到達し、同じSessionがそのまま返る（新しいSessionは作られない）。 */
+      return { success: false, error: commitResult.error, retryable: true };
+    }
+
+    return {
+      success: true,
+      bookingId: bookingId,
+      checkoutUrl: session.url,
+      paymentHoldExpiresAt: paymentHoldExpiresAt,
+      amount: expected.amountJpy,
+      currency: expected.currency
+    };
+  }
+
+  /*
+   * currentPaymentStatus===CHECKOUT_PENDING（既にCheckout Sessionを発行済み）の予約への
+   * 再アクセス。Issue #341本文「既存のSessionが有効なら再利用し、失効が確認できた場合
+   * だけ、安全な新規試行を許可」「Stripe側で決済済みかどうか不明な場合は、新規発行を
+   * 停止してRecoveryに記録」を、Stripe側の実際のSession状態を確認してから分岐することで
+   * 満たす。
+   */
+  function resumeExistingCheckout_(record, stripeConfig, now) {
+    var bookingId = record.bookingId;
+    if (!record.stripeCheckoutSessionId) {
+      /* applyPaymentStateUpdateの証跡検証によりCHECKOUT_PENDINGはstripeCheckoutSessionId
+         を必ず伴うはずであり、通常到達しない防御的分岐。台帳側の不整合として扱う。 */
+      recordPaymentRecoveryBestEffort_(
+        bookingId, record, 'PAYMENT_EVIDENCE_MISSING',
+        '決済状態はcheckout_pendingですが、stripeCheckoutSessionIdが記録されていません。Bookingsを直接確認してください。',
+        now
+      );
+      return { success: false, error: { code: 'PAYMENT_EVIDENCE_MISSING', message: '決済状態が不整合のため処理を停止しました。管理者の確認が必要です。' } };
+    }
+
+    var retrieveResult = StripeGateway.retrieveCheckoutSession(stripeConfig, record.stripeCheckoutSessionId);
+    if (!retrieveResult.ok) {
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'STRIPE_SESSION_STATUS_UNKNOWN',
+          occurredAt: now,
+          calendarEventId: record.calendarEventId || '',
+          status: record.status || '',
+          errorMessage: 'Checkout Session状態の確認に失敗しました（' + retrieveResult.errorType + '）: ' + (retrieveResult.message || ''),
+          recoveryState: 'OPEN',
+          resolvedAt: ''
+        });
+      } catch (recoveryError) {
+        Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+      }
+      return {
+        success: false,
+        error: { code: 'PAYMENT_STATUS_UNKNOWN', message: '決済状況を確認できませんでした。しばらくしてから再度お試しください。' },
+        retryable: true
+      };
+    }
+
+    var session = retrieveResult.session;
+
+    if (session.status === 'open') {
+      /* まだ決済可能なSessionが残っている。新しいSessionを発行せずこれを再利用する。 */
+      return {
+        success: true,
+        bookingId: bookingId,
+        checkoutUrl: session.url,
+        paymentHoldExpiresAt: isDateLike_(record.paymentHoldExpiresAt) ? record.paymentHoldExpiresAt : new Date(session.expiresAtSeconds * 1000),
+        reused: true
+      };
+    }
+
+    if (session.status === 'complete' || session.paymentStatus === 'paid') {
+      /*
+       * 決済が完了している可能性がある。署名検証済みWebhookによる自動確定（PR-C）は
+       * まだ存在しないため、ここで自動的に予約を確定させることはしない。新しいSessionも
+       * 発行せず、恒久の要復旧ゲートを立てて管理者の確認を必須にする（Issue #341本文
+       * 「決済が成立している可能性がある場合は、未払いと決めつけて枠を解放しない」の
+       * 精神を、Session再利用の場面にも適用する）。
+       */
+      recordPaymentRecoveryBestEffort_(
+        bookingId, record, 'CHECKOUT_SESSION_ALREADY_COMPLETED',
+        'Stripe Checkout Session（' + record.stripeCheckoutSessionId + '）が既に完了/決済済みと報告されましたが、' +
+          'Webhookによる自動確定（PR-C）が未実装のため自動処理を停止しました。Stripe管理画面で入金を確認し、' +
+          '必要であれば手動で予約を確定してください。',
+        now
+      );
+      return {
+        success: false,
+        error: { code: 'PAYMENT_POSSIBLY_COMPLETED', message: '決済が完了している可能性があります。しばらくしてからページを再読み込みいただくか、当店へお問い合わせください。' }
+      };
+    }
+
+    if (session.status === 'expired' && session.paymentStatus === 'unpaid') {
+      /* Stripe側で確実に未払いのまま失効したことを確認できた。安全に新しい試行へ進める。 */
+      var failResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, {}, now);
+      if (!failResult.success) {
+        return { success: false, error: failResult.error };
+      }
+      return startNewCheckoutAttempt_(bookingId, stripeConfig, now);
+    }
+
+    /* 上記いずれにも該当しない（例: expiredだが決済状態が読み取れない）場合は安全側に倒し、
+       新規発行を行わず監査記録のみ残す。 */
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: 'STRIPE_SESSION_STATUS_UNKNOWN',
+        occurredAt: now,
+        calendarEventId: record.calendarEventId || '',
+        status: record.status || '',
+        errorMessage: 'Checkout Sessionの状態を判定できませんでした（status=' + session.status + ', payment_status=' + session.paymentStatus + '）。',
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (recoveryError) {
+      Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+    }
+    return {
+      success: false,
+      error: { code: 'PAYMENT_STATUS_UNKNOWN', message: '決済状況を確認できませんでした。しばらくしてから再度お試しください。' },
+      retryable: true
+    };
+  }
+
+  /*
+   * beginCardCheckout(bookingId, now) — Booking Web App（Code.gs）から呼ばれる、カード
+   * 決済のCheckout Session発行の唯一の公開入口（Issue #341 PR-B）。
+   *
+   * 対象は既にcreateBookingでPENDING作成済みのカード決済予約のみ。フォーム送信自体
+   * （PENDING作成）は既存のcreateBookingのまま変更しない（Issue #341本文の「既存予約との
+   * 互換性確保」）。stripeConfig.checkoutEnabledが有効化されていない環境（既定＝本番）では
+   * 常にCHECKOUT_DISABLEDを返し、呼び出し元（フロントエンド）は既存の「決済リンクを
+   * 後日送付」フロー（Issue #334）へフォールバックする。
+   */
+  function beginCardCheckout(bookingId, now) {
+    now = isDateLike_(now) ? now : new Date();
+
+    if (!bookingId || typeof bookingId !== 'string') {
+      return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
+    }
+
+    var stripeConfig = BookingConfig.getStripeConfig();
+    if (!stripeConfig.checkoutEnabled) {
+      return { success: false, error: { code: 'CHECKOUT_DISABLED', message: '現在オンライン決済でのお申し込みは受け付けていません。' } };
+    }
+    if (!stripeConfig.secretKey || !stripeConfig.successUrl || !stripeConfig.cancelUrl) {
+      return { success: false, error: { code: 'STRIPE_NOT_CONFIGURED', message: '決済機能が設定されていません。当店へお問い合わせください。' } };
+    }
+
+    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+    if (!found) {
+      return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
+    }
+    var record = found.record;
+
+    if (!Booking.isCardPaymentMethod(record.paymentMethod)) {
+      return { success: false, error: { code: 'NOT_CARD_PAYMENT', message: 'カード決済の予約ではありません。' } };
+    }
+    if (record.status !== Booking.STATUS.PENDING) {
+      return { success: false, error: { code: 'BOOKING_NOT_PENDING', message: 'この予約は決済待ちの状態ではありません。' } };
+    }
+    if (record.paymentRecoveryRequiredAt) {
+      return { success: false, error: { code: 'PAYMENT_RECOVERY_REQUIRED', message: 'この予約は要復旧のため、自動処理を停止しています。当店へお問い合わせください。' } };
+    }
+
+    var currentPaymentStatus = Booking.normalizePaymentStatus(record.paymentStatus);
+    if (currentPaymentStatus === null) {
+      recordPaymentRecoveryBestEffort_(
+        bookingId, record, 'UNKNOWN_PAYMENT_STATUS',
+        'paymentStatus列に既知のいずれの値とも一致しない値が入っています。Bookingsを直接確認してください。',
+        now
+      );
+      return { success: false, error: { code: 'UNKNOWN_PAYMENT_STATUS', message: '決済状態が不明なため処理を停止しました。' } };
+    }
+
+    if (
+      currentPaymentStatus === Booking.PAYMENT_STATUS.PAID ||
+      currentPaymentStatus === Booking.PAYMENT_STATUS.REFUND_PENDING ||
+      currentPaymentStatus === Booking.PAYMENT_STATUS.REFUNDED
+    ) {
+      return { success: false, error: { code: 'ALREADY_PAID', message: 'この予約は既に決済処理が完了しています。' } };
+    }
+
+    if (currentPaymentStatus === Booking.PAYMENT_STATUS.CHECKOUT_PENDING) {
+      return resumeExistingCheckout_(record, stripeConfig, now);
+    }
+
+    /* NOT_STARTED または FAILED */
+    return startNewCheckoutAttempt_(bookingId, stripeConfig, now);
+  }
+
   return {
     createBooking: createBooking,
     confirmBooking: confirmBooking,
@@ -1981,7 +2537,8 @@ var BookingRepository = (function () {
     reviveExpiredBooking: reviveExpiredBooking,
     cancelBookingAdmin: cancelBookingAdmin,
     updateBookingPrice: updateBookingPrice,
-    applyPaymentStateUpdate: applyPaymentStateUpdate
+    applyPaymentStateUpdate: applyPaymentStateUpdate,
+    beginCardCheckout: beginCardCheckout
   };
 })();
 

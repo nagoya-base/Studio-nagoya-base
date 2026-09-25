@@ -4,10 +4,17 @@
  * doGet: action未指定=getAvailability・action=monthly=getMonthlyAvailability・
  *   action=estimatePrice=利用料金の見積り（Issue #342）。いずれも読み取り専用でPIIを
  *   含まない。
- * doPost: createBooking（Issue #268で追加）。個人情報を書き込むAPIのため、GETではなく
- *   POST専用にしている（GETクエリパラメータや閲覧履歴にPIIが残る事故を避けるため）。
+ * doPost: action未指定=createBooking（Issue #268で追加）・action=startCardCheckout=
+ *   Stripe Checkout Session発行（Issue #341 PR-B）。いずれも個人情報を書き込む/参照する
+ *   APIのため、GETではなくPOST専用にしている（GETクエリパラメータや閲覧履歴にPIIが
+ *   残る事故を避けるため。actionの判定自体はURLクエリパラメータe.parameterで行う
+ *   ―doGetのaction振り分けと同じ方式―が、実際の入力本体はcreateBookingと同様に
+ *   POST bodyから読む）。
  *   createBooking自体もBookingPricing.computeBookingPriceで金額を必ず再計算する
  *   （estimatePriceが返す見積り値はフロント表示専用で、確定金額の正本ではない）。
+ *   startCardCheckoutもBookingRepository.beginCardCheckout内でCardPayment.
+ *   computeExpectedPaymentAmount経由の金額を必ず再計算し、bookingId以外の入力を
+ *   受け取らない（クライアントから金額を送らせる余地自体を作らない）。
  *
  * デプロイ設定（README.md参照）:
  *   Execute as: Me
@@ -31,6 +38,10 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  var params = (e && e.parameter) || {};
+  if (params.action === 'startCardCheckout') {
+    return jsonOutput_(handleStartCardCheckout_(e));
+  }
   return jsonOutput_(handleCreateBooking_(e));
 }
 
@@ -113,6 +124,66 @@ function handleCreateBooking_(e) {
 function sanitizeErrorCode_(errorCode) {
   var value = String(errorCode || 'UNKNOWN_ERROR');
   return /^[A-Z][A-Z0-9_]*$/.test(value) ? value : 'UNKNOWN_ERROR';
+}
+
+/*
+ * Stripe Checkout Session発行（Issue #341 PR-B）。e.postData.contentsを{bookingId}のみを
+ * 受け取るJSONとしてパースし、BookingRepository.beginCardCheckoutへ渡す。金額・ブランド等
+ * bookingId以外のフィールドは一切受け取らない（クライアントに金額を主張させる余地自体を
+ * 作らない。beginCardCheckout内部でCardPayment.computeExpectedPaymentAmount経由の
+ * サーバー計算額のみを使う）。handleCreateBooking_と同じ方針で、想定外の例外は
+ * スタックトレース・内部エラー文言を外部へ出さず汎用のINTERNAL_ERRORとして返す。
+ */
+function handleStartCardCheckout_(e) {
+  var requestId = Utilities.getUuid();
+  Logger.log('requestId=' + requestId + ' startCardCheckout=start');
+
+  var payload;
+  try {
+    payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (parseError) {
+    Logger.log('requestId=' + requestId + ' startCardCheckout=result error.code=INVALID_JSON');
+    return {
+      success: false,
+      error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' },
+      requestId: requestId
+    };
+  }
+
+  var bookingId = payload && typeof payload.bookingId === 'string' ? payload.bookingId : '';
+  if (!bookingId || bookingId.length > 64) {
+    Logger.log('requestId=' + requestId + ' startCardCheckout=result error.code=INVALID_BOOKING_ID');
+    return {
+      success: false,
+      error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' },
+      requestId: requestId
+    };
+  }
+
+  try {
+    var result = BookingRepository.beginCardCheckout(bookingId);
+    if (!result || typeof result !== 'object') {
+      result = {
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: '決済処理中にエラーが発生しました。しばらくしてから再度お試しください。' }
+      };
+    }
+    if (result && result.success) {
+      Logger.log('requestId=' + requestId + ' startCardCheckout=result success');
+    } else {
+      var errorCode = result && result.error && result.error.code;
+      Logger.log('requestId=' + requestId + ' startCardCheckout=result error.code=' + sanitizeErrorCode_(errorCode));
+    }
+    result.requestId = requestId;
+    return result;
+  } catch (unexpectedError) {
+    Logger.log('requestId=' + requestId + ' startCardCheckout=result error.code=INTERNAL_ERROR');
+    return {
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: '決済処理中にエラーが発生しました。しばらくしてから再度お試しください。' },
+      requestId: requestId
+    };
+  }
 }
 
 /* params: { date, durationMinutes, brand }（すべて文字列。GASのdoGetクエリパラメータのため） */

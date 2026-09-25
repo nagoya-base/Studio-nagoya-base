@@ -2995,6 +2995,7 @@ Issue #342（予約料金の自動計算）・PR #343時点では、`BookingPric
 | `CalendarRepository.gs` | ✓ | ✓ | `gas/booking/shared/CalendarRepository.gs` |
 | `Booking.gs` | ✓ | ✓ | `gas/booking/shared/Booking.gs` |
 | `CardPayment.gs`（Issue #341 PR-A） | ✓ | ✓ | `gas/booking/shared/CardPayment.gs` |
+| `StripeGateway.gs`（Issue #341 PR-B。Stripe REST APIへのUrlFetchApp呼び出し。Booking Adminは`expirePendingBookings`の仮押さえ失効確認でのみ使用） | ✓ | ✓ | `gas/booking/shared/StripeGateway.gs` |
 | `JapaneseHolidays.gs`（Issue #346／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | `gas/booking/shared/JapaneseHolidays.gs` |
 | `BookingPricing.gs`（Issue #342／Issue #346で祝日判定を追加／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | `gas/booking/shared/BookingPricing.gs` |
 | `RateLimiter.gs` | ✓ | – | `gas/booking/public/RateLimiter.gs` |
@@ -3108,6 +3109,17 @@ Booking Web App側からは呼び出せない）。
 | `ACCESS_GUIDE_UNLOCK_CODE`（Issue #271。秘密値） | - | 解錠コード。同上 |
 | `ACCESS_GUIDE_URL`（Issue #271） | - | 利用案内ページURL。同上 |
 | `ACCESS_GUIDE_PDF_URL`（Issue #271） | - | キーボックス案内PDF等のURL。**これだけは任意**（「必要に応じて」の項目のため未設定でも送信は失敗にしない） |
+| `STRIPE_SECRET_KEY`（Issue #341 PR-B。秘密値） | - | StripeのAPI秘密鍵。**未設定または`STRIPE_CHECKOUT_ENABLED`が`'true'`でない限り、`beginCardCheckout`は`CHECKOUT_DISABLED`/`STRIPE_NOT_CONFIGURED`を返し、Stripe APIを一切呼ばない**（fail-closed。本番はオーナーの明示承認まで意図的に未設定/無効のままにする）。実値はGitHub・台帳・ログへ一切記載しない。テスト時はStripeのテストモードのキー（`sk_test_...`）のみ使用する |
+| `STRIPE_CHECKOUT_ENABLED`（Issue #341 PR-B） | - | 新しいCheckout即時決済導線のキルスイッチ。**値が厳密に`'true'`の文字列である場合のみ有効化**（他のいずれの値・未設定も無効。`BookingConfig.getStripeConfig`）。本番でこれを`true`にするのは、PR-C（Webhook自動確定）と連携可能になった後、オーナーの明示承認を得てから行う運用上の切り替えであり、**本PR-Bの実装自体はこの値を変更しない** |
+| `STRIPE_CHECKOUT_SUCCESS_URL` / `STRIPE_CHECKOUT_CANCEL_URL`（Issue #341 PR-B） | - | Checkout Session（`success_url`/`cancel_url`）の戻り先URL。いずれか未設定の場合も`beginCardCheckout`は`STRIPE_NOT_CONFIGURED`でfail-closedに拒否する |
+
+これら4つ（`STRIPE_*`）は`beginCardCheckout`（`Code.gs`のdoPost経由）が使うため
+**Booking Web AppプロジェクトのScript Propertiesに設定する**。`STRIPE_SECRET_KEY`は
+`expirePendingBookings`（Booking Adminプロジェクト）の仮押さえ失効確認（`StripeGateway.
+retrieveCheckoutSession`）でも使うため、**Booking Adminプロジェクト側にも同じ値を設定する**
+（Booking Web App側の値は自動的には共有されない。他のScript Propertiesと同じ注意）。
+`STRIPE_CHECKOUT_ENABLED`/`STRIPE_CHECKOUT_SUCCESS_URL`/`STRIPE_CHECKOUT_CANCEL_URL`は
+Booking Admin側の失効確認処理では使わないため、Booking Admin側には設定不要。
 
 TTL・レート制限の数値プロパティは、誤設定（数値以外・0以下）の場合でも例外にせず
 安全な既定値へフォールバックする（fail-openでレート制限が無効化される事故を防ぐため。
@@ -3636,6 +3648,199 @@ Webhookは、枠の空き有無で分岐する」「空いていれば自動でC
 | `PAYMENT_LINK_METADATA_UPDATE_FAILED`（PR #337レビュー対応・2回目） | Booking AdminからのStripe決済リンク送信で、MailApp.sendEmail・`paymentLinkSentAt`の記録には成功した（＝送信履行・二重送信防止は確定済み）が、続く`stripePaymentLinkUrl`/`paymentLinkSentTo`/`paymentLinkSendCount`の記録に失敗した。`paymentLinkSendCount`の表示が実際の送信回数より少ない可能性がある（`errorMessage`に本来の送信回数を記載）。予約自体・`status`（PENDING）は変更せず、メール自体の再送も自動実行しない。`Bookings`シートの`paymentLinkMetadataInconsistentAt`にも同時記録し、この値が空でない間は通常送信・明示的な再送とも`force`でも拒否する（3回目対応。他の送信が成功しただけでは自動的にクリアされない。解消手順は「部分失敗・recoveryの確認手順」項18参照） |
 | `PAYMENT_LINK_METADATA_RESOLVED`（PR #337レビュー対応・3回目。5回目でURL・送信先も対象に） | 運用者がBooking Admin予約詳細の「送信履歴を補正」操作（`resolvePaymentLinkMetadataInconsistency`）で`stripePaymentLinkUrl`/`paymentLinkSentTo`/`paymentLinkSendCount`を確認済みの値へ補正し、`paymentLinkMetadataInconsistentAt`を解消したことを示す記録。`recoveryState: 'RESOLVED'`で即時記録される（元の`PAYMENT_LINK_METADATA_UPDATE_FAILED`のOPEN行とは別の記録で、そちらの`recoveryState`/`resolvedAt`は運用者が別途手動記録する）。`errorMessage`に補正前後の送信回数・確認済みのURL・送信先を記載する |
 | `PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`（PR #337レビュー対応・4回目。5回目で対象・案内文言を拡張） | `resolvePaymentLinkMetadataInconsistency`実行時、URL・送信先・送信回数の補正、または不整合フラグのクリアのいずれかが実際に反映されたことを確認できず、補正の試行自体が完了しなかった。`paymentLinkMetadataInconsistentAt`は原則維持されており、送信（通常送信・明示的な再送）は引き続き`METADATA_INCONSISTENT`で拒否される。ただし不整合フラグのクリア操作後の最終確認の再取得自体が失敗した場合（`RESOLVE_RESULT_UNKNOWN`。5回目対応）は、クリア操作自体は成功していた可能性があり、`errorMessage`も「フラグが実際にクリアされているかどうかは不明」である旨を記載する（「維持されている」と断定しない）。それ以外の場合（`RESOLVE_FIELDS_NOT_CONFIRMED`/`RESOLVE_FLAG_CLEAR_NOT_CONFIRMED`）は`errorMessage`に、どの段階（URL・送信先・送信回数の反映／不整合フラグのクリアの反映）を確認できなかったかを文章で記載する |
+| `STRIPE_CHECKOUT_SESSION_CREATE_UNKNOWN`（Issue #341 PR-B） | `beginCardCheckout`: Checkout Session作成APIの呼び出し結果が不明（タイムアウト・5xx・解析不能な応答）。**要手動対応ではない**（`paymentRecoveryRequiredAt`は立てない）。台帳には既に`paymentAttemptId`（Idempotency-Key）が永続化済みのため、利用者が再試行すれば同じ決済試行として安全に再開できる |
+| `STRIPE_SESSION_STATUS_UNKNOWN`（Issue #341 PR-B） | `beginCardCheckout`（checkout_pending再開時）: 既存Checkout SessionのStripe側の状態確認（`retrieveCheckoutSession`）に失敗。同上、要手動対応ではなく利用者の再試行で解決し得る |
+| `EXPIRE_STRIPE_SESSION_STATUS_UNKNOWN`（Issue #341 PR-B） | `expirePendingBookings`: checkout_pendingの仮押さえ失効確認でStripe側の状態確認に失敗、またはStripeがopen/expired/complete以外の判定不能な状態を返した。この回のトリガー実行では枠を解放せずスキップし、次回のトリガー実行で再評価する（要手動対応ではない） |
+| `CHECKOUT_SESSION_ALREADY_COMPLETED`（Issue #341 PR-B） | `beginCardCheckout`（checkout_pending再開時）: Stripe Checkout Sessionが既に完了/決済済みと報告された。署名検証済みWebhookによる自動確定（PR-C）が未実装のため自動処理を停止し、**要手動対応**（`paymentRecoveryRequiredAt`を立てる）。Stripe管理画面で入金を確認し、必要であれば手動で予約を確定すること |
+| `CHECKOUT_HOLD_EXPIRY_PAYMENT_MAYBE_SUCCEEDED`（Issue #341 PR-B） | `expirePendingBookings`: 仮押さえ期限を過ぎた予約の枠解放を検討したが、Stripe Checkout Sessionが決済済みと報告されたため枠を解放せず停止した。**要手動対応**。至急Stripe管理画面で入金を確認すること |
+
+## Issue #341: Stripe API即時決済による予約自動確定・自動返金・鍵承認ゲートへ移行（PR-B）
+
+**PR-A（決済状態の設計・サーバー側料金検証・台帳移行）を土台に、Stripe Checkout Session生成・
+決済中の枠の仮押さえ・決済画面への遷移・Checkoutの中断・期限切れ処理・既存予約との互換性確保を
+実装した。署名検証済みWebhookによる決済成功確認・予約自動確定・自動返金・鍵承認ゲート・Booking
+Adminの新UIは対象外（PR-C/PR-D）。**
+
+### 実装内容
+
+- `gas/booking/shared/StripeGateway.gs`（新規） — Stripe REST API（Checkout Session作成・
+  取得）へのUrlFetchApp呼び出しのみを行う薄いラッパー。金額の正当性検証・冪等性の判断・台帳
+  更新は一切行わない。Stripeからの応答を`NOT_CONFIGURED`/`INVALID_REQUEST`/`NETWORK`/
+  `STRIPE_ERROR`/`AMBIGUOUS`の5種類に分類し、呼び出し元（`BookingRepository.gs`）が
+  「新しいSessionを発行してよいか」を判断できるようにする。
+- `gas/booking/shared/BookingRepository.gs` — `beginCardCheckout(bookingId, now)`（Booking
+  Web Appから呼ばれる唯一の公開入口）・`reservePaymentAttempt_`（決済試行ID＝Stripe
+  Idempotency-Keyの予約・永続化）・`startNewCheckoutAttempt_`・`resumeExistingCheckout_`・
+  `handleCheckoutCreateFailure_`を追加。`expirePendingBookings`にcheckout_pendingの仮押さえ
+  失効分岐（`verifyCheckoutHoldSafeToExpire_`）を追加した（既存の72h TTL経路は無変更）。
+- `gas/booking/shared/Booking.gs` — `PAYMENT_STATUS_TRANSITIONS_`に`NOT_STARTED→FAILED`を
+  追加（下記「PR-Aとの差分」参照）。
+- `gas/booking/shared/Config.gs` — `getStripeConfig()`（`STRIPE_SECRET_KEY`/
+  `STRIPE_CHECKOUT_ENABLED`/`STRIPE_CHECKOUT_SUCCESS_URL`/`STRIPE_CHECKOUT_CANCEL_URL`。
+  「Script Properties」節参照）。
+- `gas/booking/public/Code.gs` — `doPost`に`action=startCardCheckout`を追加（既存の
+  action未指定=createBookingは無変更）。`handleStartCardCheckout_`は`{bookingId}`のみを
+  受け取り、`BookingRepository.beginCardCheckout`へ委譲する。
+- `gas/booking/public/appsscript.json` — `script.external_request`スコープを追加
+  （UrlFetchAppを実際に呼ぶのはこのPR-Bから）。
+- `scripts/booking-logic.js`／`scripts/booking-app.js`／`_includes/booking_app_ja.html`／
+  `_includes/booking_app_en.html` — フォーム側の配線（下記「利用者向けフォーム」参照）。
+
+### 二重決済の防止（本PRの最重要条件）
+
+Issue #341本文「StripeでSession生成に成功した後、GASへのSession ID保存に失敗した場合でも、
+新しいSessionを無条件に発行しない」を、次の設計で満たす。
+
+1. **Stripe呼び出しの前に、必ず決済試行ID（`paymentAttemptId`）を台帳へ永続化する**
+   （`reservePaymentAttempt_`）。この`paymentAttemptId`をStripeへ送る`Idempotency-Key`
+   としてそのまま使う。永続化のみの短時間Lock（`LockService.getScriptLock()`。
+   `CHECKOUT_LOCK_TIMEOUT_MS_=10秒`）を使い、**低速な外部HTTP呼び出しはLockの外**で行う
+   （スクリプト全体で共有される単一のミューテックスを、ネットワーク呼び出しの間保持して
+   無関係な他予約の処理まで直列化する事故を避けるため）。
+2. **Stripe呼び出しに成功した後の証跡コミット（`applyPaymentStateUpdate`によるCHECKOUT_
+   PENDINGへの遷移）が失敗しても、`paymentAttemptId`は既に台帳にある。** 呼び出し元
+   （利用者のフォーム再送信）が同じ`bookingId`へ再試行すると、`reservePaymentAttempt_`が
+   既存の`paymentAttemptId`を再利用し、Stripeを**同じIdempotency-Key**で再度呼ぶ。
+   Stripeは同一キー・同一パラメータの再試行に対して、最初に作成したSessionをそのまま返す
+   （新しいSessionを作らない）。
+3. **同一bookingIdへの並行呼び出し（二重クリック）も同じ仕組みで収束する**: 両方の呼び出しが
+   `reservePaymentAttempt_`のLock内で同じ`paymentAttemptId`を得るため、両方が同じ
+   Idempotency-KeyでStripeを呼び、実際に作成されるSessionは1つだけになる（GAS側で
+   ネットワーク呼び出しをまたぐ長いLockを取らずに済む、Stripe推奨のパターン）。
+4. **Stripe呼び出し自体がタイムアウト・5xx等で結果不明（`AMBIGUOUS`/`NETWORK`）な場合は、
+   新しい決済試行IDを発行せず、監査記録のみ残して同じ`paymentAttemptId`での再試行のみを
+   許可する。** Stripeが明確に4xxを返した場合（`STRIPE_ERROR`。この回のリクエストが
+   処理されていないと確定できる）は`paymentStatus:failed`へ進め、次回は新しい決済試行IDを
+   発行する。
+5. `test/booking-card-checkout.test.js`に、Stripe Session生成成功後にGAS保存
+   （`applyPaymentStateUpdate`の証跡コミット）が失敗しても再試行が同じIdempotency-Keyを
+   再利用すること、二重クリックが同じキーへ収束すること、結果不明な失敗が新しいSessionを
+   発行しないことのモックテストを追加した。
+
+### PR-Aとの差分（`Booking.PAYMENT_STATUS_TRANSITIONS_`への`NOT_STARTED→FAILED`追加）
+
+PR-Aが設計した遷移表は`NOT_STARTED→CHECKOUT_PENDING`のみを許可していた（`FAILED`は
+`CHECKOUT_PENDING`からのみ到達可能）。実際にStripe呼び出しを実装したところ、Checkout
+Session作成そのものがStripe側に明確に拒否された場合（不正なリクエスト等。`CHECKOUT_
+PENDING`へは一度も到達していない）に、`FAILED`へ進めて次回の決済試行に新しい
+`paymentAttemptId`を発行させる必要があることが判明した（`NOT_STARTED`のまま同じ
+Idempotency-Keyを無条件に再利用し続けると、Stripe側の同じエラーを繰り返すだけになる）。
+`REQUIRED_EVIDENCE_FOR_STATUS_[FAILED]`は変更していない（追加の必須証跡なしのまま）。
+
+### 仮押さえと期限切れ
+
+- `CardPayment.CHECKOUT_HOLD_MINUTES=30`・`STRIPE_SESSION_EXPIRY_BUFFER_MINUTES=5`
+  （PR-Aで確定済み）をそのまま使う。`startNewCheckoutAttempt_`はCheckout Session作成に
+  **成功した後**、Stripeのレスポンスに含まれる実際の`expires_at`を`paymentHoldExpiresAt`へ
+  保存し直す（2つの期限を別々に計算して後から突き合わせるのではなく、常に一致する構造）。
+- `expirePendingBookings`は、`paymentStatus===checkout_pending`かつ`paymentHoldExpiresAt`が
+  設定されているカード予約についてのみ、旧`CARD_TTL_HOURS`（72h）ではなく
+  `paymentHoldExpiresAt`を基準に判定する（**旧Payment Link方式の予約
+  ―`paymentStatus`が`not_started`のまま―は引き続き旧TTLで失効する。既存互換性を維持**）。
+- `paymentHoldExpiresAt`を過ぎても、Stripe側の実際のSession状態
+  （`verifyCheckoutHoldSafeToExpire_`）を確認するまで枠を解放しない:
+  - Stripe側が`status===open`（`STRIPE_SESSION_EXPIRY_BUFFER_MINUTES`分の安全マージンにより、
+    GAS側の期限を過ぎてもまだ数分間open=決済可能な場合がある）→ この回のトリガー実行では
+    スキップし、次回のトリガー実行で再評価する。
+  - Stripe側が`status===expired && payment_status===unpaid`（確実に未払いで失効）→
+    枠を解放し（Calendar削除→`status:EXPIRED`）、決済付随情報列（`paymentAttemptId`・
+    `stripeCheckoutSessionId`等）は消去・上書きしない。`paymentStatus`を`failed`へ進める
+    （Lock解放後のbest effort。枠解放自体（`status`側）とは別クロックのまま）。
+  - Stripe側が`status===complete`または`payment_status===paid`（決済済みの可能性）→
+    未払いと決めつけず枠を解放しない。**要手動対応**として`paymentRecoveryRequiredAt`を
+    立てる（`CHECKOUT_HOLD_EXPIRY_PAYMENT_MAYBE_SUCCEEDED`）。
+  - Stripe API呼び出し自体が失敗・応答が解析不能→ 未払いと決めつけず枠を解放しない（次回の
+    トリガー実行で再評価。要手動対応ではない）。
+- `test/booking-card-checkout.test.js`に、上記すべての分岐（open/expired-unpaid/complete/
+  API失敗）・決済付随情報が消去されないこと・旧方式のカード予約と現地払い予約が
+  Stripeを一切呼ばずに既存どおり失効することのモックテストを追加した。
+
+### 利用者向けフォーム
+
+- `scripts/booking-app.js`: `createBooking`（既存。無変更）が成功した後、カード決済の
+  場合のみ追加で`action=startCardCheckout`（`{bookingId}`のみ）を呼ぶ（`attemptCardCheckout_`。
+  ネットワーク障害・`success:false`はすべてnullへ丸め、rejectしない）。`checkoutUrl`が
+  得られた場合のみ、既存の「決済リンクを後日送付」案内を、Checkoutへの遷移導線
+  （案内文＋ボタン。`Logic.cardCheckoutRedirectNoticeLines`/`cardCheckoutButtonLabel`）へ
+  差し替える。得られなかった場合（本番の既定状態を含む）は既存の案内文のままフォールバック
+  する。
+- 予約内容・料金は既存の完了画面（`ba-complete-summary`。createBookingのレスポンスの値。
+  Issue #342）でそのまま確認できるため、Checkoutへの遷移導線もこの画面に追加した
+  （別画面を新設していない）。
+- **Checkoutから戻った際の成功画面では、ブラウザの戻り先だけで決済済み・予約確定と判断
+  しない設計にしている。** 本PRは`success_url`/`cancel_url`（`STRIPE_CHECKOUT_SUCCESS_URL`/
+  `STRIPE_CHECKOUT_CANCEL_URL`）の戻り先ページ自体は実装していない（Script Propertiesで
+  設定する任意のURL。本PR-Bのスコープは「Checkoutへ遷移させる」ことまでであり、戻り先での
+  表示はPR-Cが自動確定を実装した後に設計する）。遷移前の案内文（`cardCheckoutRedirectNotice
+  Lines`）自体も「決済ページでの操作が完了しても、その画面だけでは予約確定とはなりません。
+  当店にて内容を確認のうえ、あらためて予約確定のご連絡をいたします。」と明記し、未実装の
+  自動確定を利用者に約束しない。
+- PayPay・現金は`Logic.isCardPaymentMethodValue`がfalseのため`attemptCardCheckout_`自体を
+  呼ばず、従来の予約受付フローを維持する（無変更）。
+- `test/booking-app.test.js`・`test/booking-code-checkout.test.js`に、`checkoutUrl`が
+  返った場合のボタン表示・返らなかった場合の既存フォールバック・クライアントが送った
+  `amount`/`currency`が無視されることのテストを追加した。
+
+### 本番で新しいカード決済導線を有効化しない設計（キルスイッチ）
+
+`STRIPE_CHECKOUT_ENABLED`が厳密に`'true'`でない限り（既定＝未設定＝無効）、
+`beginCardCheckout`は`CHECKOUT_DISABLED`を返しStripe APIを一切呼ばない。本PR-Bのマージ・
+デプロイ自体はこの値を変更しないため、**本番では従来どおり旧Payment Link方式（Issue #334）
+のみが動作し続ける**。新しいカード決済導線を有効化するのは、PR-C（署名検証済みWebhookに
+よる自動確定）と連携可能になった後、オーナーの明示承認を得てからの別作業とする。
+
+### 旧Payment Link方式・現地払いとの互換性
+
+- カード決済の受付条件（利用開始96時間以上前のみ）・PayPay・現金の受付・管理者承認・
+  失効条件はいずれも変更していない（`Booking.CARD_MIN_HOURS_BEFORE_START`等、PR-Aから
+  変更なし）。
+- 既存の`createBooking`（PENDING作成・Calendar/Sheets保存・仮受付メール）は無変更。
+  `beginCardCheckout`は既存のPENDING行に対して追加で呼ばれる別ステップであり、
+  `createBooking`自体の入出力・検証ロジックには一切手を入れていない。
+- 旧Payment Link方式で受付済みの予約（`paymentStatus`が`not_started`のまま）は、
+  `expirePendingBookings`の分岐（上記「仮押さえと期限切れ」）により引き続き旧TTL
+  （`CARD_TTL_HOURS=72h`）・既存の失効通知メールで処理される。管理者によるStripe決済
+  リンク送信（Issue #334 PR-C。`BookingAdmin.gs`/`BookingAdminWeb.gs`）も無変更のまま
+  利用できる。
+
+### 本PR-Bで意図的に行わなかったこと（PR-C/PR-Dへの引き継ぎ）
+
+- 署名検証済みWebhook受信基盤（Cloud Run等の中継）・自動確定・遅延Webhookの分岐処理・
+  Stripeイベントの冪等性台帳・Recovery連携（PR-C）。PR-Cは決済状態の更新に必ず
+  `applyPaymentStateUpdate`を、金額照合に`CardPayment.verifyPaymentAgainstSnapshot`を
+  使うこと（PR-A/PR-Bの契約と同じ）。
+- `paymentRecoveryRequiredAt`が立った予約（`CHECKOUT_SESSION_ALREADY_COMPLETED`/
+  `CHECKOUT_HOLD_EXPIRY_PAYMENT_MAYBE_SUCCEEDED`を含む）を管理者が確認・解除する手段は
+  未実装（PR-D）。
+- Stripe返金API・「取消（自動返金）」ボタン・鍵承認ゲート・「来場案内を再送」ボタン・
+  前日リマインドの鍵承認ゲート条件・メール文言更新（PR-D）。
+- `success_url`/`cancel_url`の戻り先ページの実装（本PR-Bはこれらの遷移先URLをScript
+  Propertiesで設定できるようにしたのみ）。
+- 本番Bookingsシートの列追加・Stripe本番APIキー設定・GAS/Cloud Run本番デプロイ・
+  既存`/exec` URLの変更・`STRIPE_CHECKOUT_ENABLED`の本番有効化（いずれもオーナーの
+  明示的な承認後、別途実施）。
+
+### Booking AdminプロジェクトのOAuthスコープ追加（手動対応が必要）
+
+`expirePendingBookings`（Booking Adminプロジェクト）が仮押さえ失効確認で`StripeGateway.
+retrieveCheckoutSession`（UrlFetchApp）を呼ぶようになったため、**Booking Adminプロジェクト
+側にも`script.external_request`スコープの許可が必要**になる。Booking Adminはコンテナ
+バインドのスクリプトで、このリポジトリには`appsscript.json`をコミットしていない
+（`clasp`等のデプロイ自動化を導入していないため、マニフェストはApps Scriptエディタ上で
+手動管理している。「GASプロジェクトへのデプロイ対象ファイル」節冒頭参照）。デプロイ時は
+Apps Scriptエディタの「プロジェクトの設定」→「'appsscript.json' マニフェスト ファイルを
+エディタで表示する」を有効化し、`oauthScopes`へ`https://www.googleapis.com/auth/
+script.external_request`を追記した上で、次回の関数実行時に追加のOAuth認可を承認すること。
+
+### テスト結果
+
+`node --test`: 総計1098件すべてpass（既存1064件＋本PR-Bで追加した34件。`test/stripe-gateway.
+test.js`8件・`test/booking-card-checkout.test.js`20件・`test/booking-code-checkout.test.js`
+5件・`test/booking-app.test.js`へ追加した1件。既存の`test/booking-app.test.js`のうち、
+カード決済成功時に`startCardCheckout`が追加で1回呼ばれるようになった影響で
+fetch呼び出し回数の期待値を1→2へ更新した既存テスト2件を含む）。既存の管理者承認・
+Calendar・日程変更精算・Booking Admin・現地払い・旧Payment Link方式の回帰テストもすべて
+pass。実際の本番決済を伴う自動テストは行っていない。
 
 ## 部分失敗・recoveryの確認手順（運用者向け）
 

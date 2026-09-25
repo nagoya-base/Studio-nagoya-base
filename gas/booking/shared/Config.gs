@@ -183,6 +183,28 @@ var BookingConfig = (function () {
     };
   }
 
+  /*
+   * Stripe Checkout関連の設定（Issue #341 PR-B）。APIキーはソースコード・台帳・ログへ
+   * 一切記載せず、必ずScript Propertiesから読む。
+   *
+   * checkoutEnabled: 新しいCheckout即時決済導線の有効/無効を切り替えるキルスイッチ。
+   * 未設定・'true'以外の値はすべて無効（fail-closed）として扱う。Issue #341本文
+   * 「PR-Bだけを本番公開すると決済完了後の自動確定ができないため、PR-C以降と連携可能に
+   * なるまで、新しいカード決済導線は本番で有効化しない」という要求を、コードの分岐ではなく
+   * この既定値（未設定＝無効）で満たす。本番でこの値をtrueにするのは、Webhook自動確定
+   * （PR-C）と連携可能になった後、オーナーの明示承認を得てから行う運用上の切り替えとする。
+   * テスト・開発時のみScript Propertiesで明示的に'true'を設定して有効化する。
+   */
+  function getStripeConfig() {
+    var properties = PropertiesService.getScriptProperties();
+    return {
+      secretKey: properties.getProperty('STRIPE_SECRET_KEY') || '',
+      checkoutEnabled: properties.getProperty('STRIPE_CHECKOUT_ENABLED') === 'true',
+      successUrl: properties.getProperty('STRIPE_CHECKOUT_SUCCESS_URL') || '',
+      cancelUrl: properties.getProperty('STRIPE_CHECKOUT_CANCEL_URL') || ''
+    };
+  }
+
   return {
     DEFAULTS: DEFAULTS,
     getCalendarId: getCalendarId,
@@ -193,6 +215,7 @@ var BookingConfig = (function () {
     getTtlConfig: getTtlConfig,
     getRateLimitConfig: getRateLimitConfig,
     getMailConfig: getMailConfig,
-    getAccessGuideConfig: getAccessGuideConfig
+    getAccessGuideConfig: getAccessGuideConfig,
+    getStripeConfig: getStripeConfig
   };
 })();

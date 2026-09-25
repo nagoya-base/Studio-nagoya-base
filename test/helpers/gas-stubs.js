@@ -388,6 +388,49 @@ function createScriptAppStub() {
   };
 }
 
+/*
+ * UrlFetchApp.fetch相当（Issue #341 PR-B。StripeGateway.gsのテスト用）。
+ * responder: function(url, options) -> { responseCode, contentText } または例外を投げる関数。
+ * 呼び出しごとの引数はすべて_callsへ記録する（Authorizationヘッダ・Idempotency-Key・
+ * 送信payload等をテストからassertできるようにする。実際のAPIキーはテストのダミー値のみで、
+ * 本物のAPIキーはこのスタブにも一切渡さない）。
+ * options.sequence: [respFn, respFn, ...] を渡すと呼び出し順に消費する（同じsessionIdへの
+ * リトライで異なる応答を返す等のテスト用）。
+ */
+function createUrlFetchAppStub(responder) {
+  var calls = [];
+  var sequence = typeof responder === 'object' && responder && Array.isArray(responder.sequence) ? responder.sequence.slice() : null;
+  var fixedResponder = typeof responder === 'function' ? responder : null;
+
+  function buildResponse(result) {
+    if (result && result.thrown) {
+      throw result.thrown;
+    }
+    var contentText = typeof result.contentText === 'string' ? result.contentText : JSON.stringify(result.body || {});
+    return {
+      getResponseCode: function () { return result.responseCode || 200; },
+      getContentText: function () { return contentText; }
+    };
+  }
+
+  return {
+    fetch: function (url, options) {
+      calls.push({ url: url, options: options });
+      var result;
+      if (sequence) {
+        result = sequence.shift();
+        if (result === undefined) throw new Error('UrlFetchApp stub: sequenceが呼び出し回数より少ない');
+      } else if (fixedResponder) {
+        result = fixedResponder(url, options);
+      } else {
+        result = { responseCode: 200, body: {} };
+      }
+      return buildResponse(result);
+    },
+    _calls: calls
+  };
+}
+
 /* Logger.log相当。呼び出し内容をそのまま保持するだけで、標準出力へは書かない。 */
 function createLoggerStub() {
   var logs = [];
@@ -417,5 +460,6 @@ module.exports = {
   createSpreadsheetAppStub: createSpreadsheetAppStub,
   createSpreadsheetUiStub: createSpreadsheetUiStub,
   createMailAppStub: createMailAppStub,
-  createScriptAppStub: createScriptAppStub
+  createScriptAppStub: createScriptAppStub,
+  createUrlFetchAppStub: createUrlFetchAppStub
 };
