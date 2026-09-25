@@ -148,7 +148,7 @@ var BookingReschedule = (function () {
       try {
         check.own.setTime(check.startAt, check.endAt);
       } catch (calendarError) {
-        sheet.getRange(rowNumber, 12).setValue('FAILED');
+        sheet.getRange(rowNumber, 12).setValue('CHANGE_FAILED');
         return error_('CALENDAR_UPDATE_FAILED', 'Calendar更新に失敗しました。');
       }
       try {
@@ -224,6 +224,7 @@ var BookingReschedule = (function () {
       var config = BookingConfig.getMailConfig();
       if (!config.displayName || !config.replyTo || !config.contactEmail ||
           !BookingAvailability.formatDateInTimezone(new Date(), config.timezone) || !found.record.email) {
+        change.sheet.getRange(change.rowNumber, 12).setValue('FAILED');
         return error_('MAIL_NOT_READY', 'メール設定または宛先が未設定です。');
       }
       var oldStart = BookingAvailability.formatTimeInTimezone(row[4], config.timezone);
