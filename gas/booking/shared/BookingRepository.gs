@@ -1621,14 +1621,22 @@ var BookingRepository = (function () {
       if (currentPaymentStatus === toPaymentStatus) {
         /*
          * 3回目レビュー対応・項目1: 「既に目的の状態」というだけでalreadyApplied:trueに
-         * せず、まずこの状態に必要な証跡がそもそも揃っているか（fields・台帳のどちらかに
-         * あればよい）を確認する。台帳が既に'paid'等を名乗っていても、必須の決済識別子が
-         * 一つも記録されていなければ、それ自体が台帳側の不整合（正しく記録されないまま
-         * 状態だけが進んだ疑い）であるため、恒久の要復旧ゲートを立てて停止する
-         * （findMissingPaymentEvidence_はPR-A時点では新規遷移の検証にのみ使っていたが、
-         * 「既に目的の状態」の経路をすり抜けて検証されないままだった穴を塞ぐ）。
+         * せず、まずこの状態に必要な証跡が**台帳に保存済みの値だけで**揃っているかを
+         * 確認する。台帳が既に'paid'等を名乗っていても、必須の決済識別子が一つも
+         * 記録されていなければ、それ自体が台帳側の不整合（正しく記録されないまま状態
+         * だけが進んだ疑い）であるため、恒久の要復旧ゲートを立てて停止する。
+         *
+         * 4回目レビュー対応: findMissingPaymentEvidence_（fieldsを台帳より優先して
+         * マージする、新規遷移用の関数）をここでも流用していたため、この分岐では
+         * 何もBookingsへ書き込まないにもかかわらず、今回の呼び出しがfieldsへ正しい値
+         * （例: lastStripeEventId）を渡しさえすれば検証を通過し、台帳自体の証跡欠落を
+         * 見逃したままalreadyApplied:trueに到達できてしまう抜け穴があった。「既に
+         * 目的の状態」の経路は台帳を更新しないため、判定は必ず台帳に**現に保存されている
+         * 値だけ**（findMissingPaymentEvidenceAtRest_。fieldsを一切見ない）で行う。
+         * 新規遷移（このifブロックの外、これから書き込みを行う経路）では、書き込み後の
+         * 状態を予測するfindMissingPaymentEvidence_（fields優先のマージ）を従来どおり使う。
          */
-        var missingEvidenceAtRest = findMissingPaymentEvidence_(record, safeFields, toPaymentStatus);
+        var missingEvidenceAtRest = findMissingPaymentEvidenceAtRest_(record, toPaymentStatus);
         if (missingEvidenceAtRest.length > 0) {
           recordPaymentRecoveryBestEffort_(
             bookingId, record, 'PAYMENT_EVIDENCE_MISSING',
@@ -1894,17 +1902,40 @@ var BookingRepository = (function () {
   REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.FAILED] = [];
 
   /*
-   * 今回のfieldsと台帳の現在値を合わせても、toPaymentStatusに必要な証跡
-   * （REQUIRED_EVIDENCE_FOR_STATUS_）が揃わないキーの一覧を返す（空配列なら不足なし）。
-   * fieldsで指定された値を優先し、指定が無いキーは台帳の現在値を見る
-   * （前段のcheckout_pending遷移で記録済みの識別子を、後段のpaid遷移で再送させる
-   * 必要はないため）。
+   * **新規遷移専用**（currentPaymentStatus !== toPaymentStatusで、これから
+   * updateBookingPaymentStateAtomicへの書き込みを行う経路のみで使うこと）。今回のfields
+   * と台帳の現在値を合わせても、toPaymentStatusに必要な証跡（REQUIRED_EVIDENCE_FOR_
+   * STATUS_）が揃わないキーの一覧を返す（空配列なら不足なし）。fieldsで指定された値を
+   * 優先し、指定が無いキーは台帳の現在値を見る（前段のcheckout_pending遷移で記録済みの
+   * 識別子を、後段のpaid遷移で再送させる必要はないため）。ここでの判定はこの直後に
+   * fieldsを実際に書き込むことが前提であり、fieldsを書き込まない「既に目的の状態」の
+   * 経路（currentPaymentStatus===toPaymentStatus）では絶対に使わないこと
+   * （findMissingPaymentEvidenceAtRest_を使う。4回目レビュー対応で発覚した抜け穴の
+   * 原因はまさにこの関数をその経路へ誤用していたことだった）。
    */
   function findMissingPaymentEvidence_(record, safeFields, toPaymentStatus) {
     var required = REQUIRED_EVIDENCE_FOR_STATUS_[toPaymentStatus] || [];
     return required.filter(function (key) {
       var merged = Object.prototype.hasOwnProperty.call(safeFields, key) ? safeFields[key] : record[key];
       return merged === undefined || merged === null || merged === '';
+    });
+  }
+
+  /*
+   * **「既に目的の状態」専用**（4回目レビュー対応で追加）。currentPaymentStatus===
+   * toPaymentStatusの経路はBookingsへ一切書き込まないため、toPaymentStatusに必要な証跡
+   * （REQUIRED_EVIDENCE_FOR_STATUS_）が揃っているかどうかは、**台帳に現に保存されている
+   * 値だけ**で判定しなければならない。今回の呼び出しのfieldsに正しい値が含まれていても、
+   * それは書き込まれない（＝台帳の状態は変わらない）ため判定材料にしない。
+   * findMissingPaymentEvidence_（fieldsを台帳より優先してマージする、新規遷移専用）を
+   * この経路で使うと、fieldsさえ渡せば台帳自体の証跡欠落を隠したままalreadyApplied:true
+   * に到達できてしまう（4回目レビュー対応で修正した抜け穴）。
+   */
+  function findMissingPaymentEvidenceAtRest_(record, toPaymentStatus) {
+    var required = REQUIRED_EVIDENCE_FOR_STATUS_[toPaymentStatus] || [];
+    return required.filter(function (key) {
+      var value = record[key];
+      return value === undefined || value === null || value === '';
     });
   }
 

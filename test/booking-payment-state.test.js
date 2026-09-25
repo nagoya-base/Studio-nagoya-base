@@ -175,6 +175,41 @@ test('applyPaymentStateUpdate: paidでPaymentIntent ID等の必須証跡が台�
 });
 
 /*
+ * 4回目レビュー対応: 「既に目的の状態」の経路は台帳を一切書き込まないため、
+ * この経路の証跡検証は台帳に**現に保存されている値だけ**で行わなければならない。
+ * 3回目対応時点の実装は、この経路でもfindMissingPaymentEvidence_（fieldsを台帳より
+ * 優先してマージする、新規遷移用の関数）を誤って使っていたため、台帳自体は
+ * lastStripeEventIdを欠いたまま（証跡不備）でも、今回の呼び出しがfieldsに正しい
+ * lastStripeEventIdを渡しさえすれば検証を通過し、alreadyApplied:trueに到達できて
+ * しまっていた（＝台帳の不整合を検知できないまま隠してしまう）。この抜け穴を検証する。
+ */
+test('applyPaymentStateUpdate: paidの台帳でlastStripeEventIdが欠落している場合、再実行時のfieldsに正しいlastStripeEventIdを渡してもalreadyApplied:trueにならない（台帳の証跡欠落を今回の入力で覆い隠さない）', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx, {
+    paymentStatus: 'paid', paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_1',
+    stripePaymentIntentId: 'pi_1'
+    // lastStripeEventIdのみ意図的に未設定。stripePaymentIntentIdは記録済みという、
+    // 一部の証跡だけが欠けた状態を模す。
+  });
+
+  // 再実行時のfieldsには正しいlastStripeEventIdを渡すが、台帳自体には保存されていない。
+  var result = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'paid', {
+    stripePaymentIntentId: 'pi_1', lastStripeEventId: 'evt_1'
+  });
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'PAYMENT_EVIDENCE_MISSING');
+  assert.notStrictEqual(result.alreadyApplied, true, '今回のfieldsに正しい値を渡しても、台帳自体の証跡欠落をalreadyApplied:trueで覆い隠してはならない');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.lastStripeEventId, '', 'この経路はBookingsへ一切書き込まない（fieldsのlastStripeEventIdが台帳へ漏れて反映されていないこと）');
+  assert.ok(found.record.paymentRecoveryRequiredAt, '台帳側の証跡欠落として恒久ゲートを立てる');
+
+  var recovery = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovery.length, 1);
+  assert.strictEqual(recovery[0].failureType, 'PAYMENT_EVIDENCE_MISSING');
+});
+
+/*
  * 再実行時の整合性検証（Issue #341 PR-Aレビュー対応・項目1）: 既に目的の状態へ到達済みの
  * 場合は書き込みを一切行わずalreadyApplied:trueで成功を返す。Stripe Webhookの重複配信・
  * 呼び出し元の重複リトライを安全に吸収する。

@@ -3417,16 +3417,28 @@ updateBookingPaymentStateAtomic`/`updateBookingFields({paymentStatus: ...})`を�
    現在値と食い違う場合は、alreadyApplied:trueへ丸めず`PAYMENT_IDENTITY_MISMATCH`として
    要復旧フラグを立てる（別の決済試行が同じ目標状態を主張している＝二重決済等の可能性が
    あるため）。
-6. **決済証跡の整合性検証**（2回目レビュー対応、3回目レビュー対応で「既に目的の状態」の
-   経路にも適用するよう拡張）: `toPaymentStatus`ごとに、PR-B/PR-Cが実際にその遷移で
-   得るはずの識別子（`REQUIRED_EVIDENCE_FOR_STATUS_`）を定義し、`fields`とその時点の
-   台帳の値を合わせても必須項目が揃わない場合は、遷移が許可された組でも、また**既に
-   その状態へ到達済みの場合でも**、書き込み（または冪等成功扱い）を拒否する
-   （`PAYMENT_EVIDENCE_MISSING`。「`paid`と主張されているのにStripeの決済識別子が一つも
-   無い」といった証跡の欠落した成功報告を無条件に信用しない）。**2回目対応時点では
-   `currentPaymentStatus===toPaymentStatus`の分岐がこの検証を経由しないままalreadyApplied:
-   trueへ到達できてしまう抜け穴があったため、3回目レビュー対応でこの分岐にも同じ検証を
-   追加した。**
+6. **決済証跡の整合性検証**（2回目レビュー対応、3回目・4回目レビュー対応で「既に目的の
+   状態」の経路の検証方法を修正）: `toPaymentStatus`ごとに、PR-B/PR-Cが実際にその遷移で
+   得るはずの識別子（`REQUIRED_EVIDENCE_FOR_STATUS_`）を定義し、必須項目が揃わない場合は
+   書き込み（または冪等成功扱い）を拒否する（`PAYMENT_EVIDENCE_MISSING`。「`paid`と
+   主張されているのにStripeの決済識別子が一つも無い」といった証跡の欠落した成功報告を
+   無条件に信用しない）。ただし**検証対象は経路によって異なる**（4回目レビュー対応で
+   明確化。3回目対応時点では両方の経路が同じ関数を使っており、後述の抜け穴があった）:
+
+   - **新規遷移**（`currentPaymentStatus !== toPaymentStatus`。これから
+     `updateBookingPaymentStateAtomic`で`fields`を書き込む経路）: `findMissingPaymentEvidence_`
+     が`fields`（これから書き込む値）を台帳の現在値より優先してマージした結果で判定する
+     （前段の遷移で記録済みの識別子を、後段の遷移で再送させる必要はないため）。
+   - **「既に目的の状態」**（`currentPaymentStatus === toPaymentStatus`。台帳を一切
+     書き込まない経路）: `findMissingPaymentEvidenceAtRest_`が**台帳に現に保存されている
+     値だけ**で判定する。`fields`は一切見ない。**2回目対応時点ではこの分岐がどんな証跡
+     検証も経由せずalreadyApplied:trueへ到達できる抜け穴があり、3回目レビュー対応で
+     検証を追加したが、その際に新規遷移用の`findMissingPaymentEvidence_`（`fields`優先の
+     マージ）を誤って流用してしまっていた。この経路は`fields`を書き込まないため、
+     今回の呼び出しが`fields`に正しい値（例：`lastStripeEventId`）を渡しさえすれば
+     検証を通過でき、台帳自体の証跡欠落（本当に修正すべき不整合）を検出できないまま
+     隠してしまう抜け穴が残っていた。4回目レビュー対応で`findMissingPaymentEvidenceAtRest_`
+     （台帳の値のみを見る、別関数）に切り替えて修正した。**
 
    | 目標状態 | 必須の決済証跡 |
    | --- | --- |
