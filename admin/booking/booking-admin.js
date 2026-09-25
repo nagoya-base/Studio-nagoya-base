@@ -886,12 +886,12 @@ function renderPriceNoticeSection_(booking) {
   ui.container.classList.remove('hidden');
 
   var sent = !!booking.priceUpdateMailSentAt;
-  var warning = booking.priceUpdateNeeded ? '⚠ 案内が必要です。' : '';
-  ui.statusEl.textContent = warning + (sent ? '送信済み: ' + booking.priceUpdateMailSentAt : '未送信');
+  var warning = booking.priceUpdateNeeded ? '⚠ 最新の料金修正について案内が必要です。' : '';
+  ui.statusEl.textContent = warning + (sent && !booking.priceUpdateNeeded ? '送信済み: ' + booking.priceUpdateMailSentAt : '未送信');
 
   var sendable = booking.status === 'PENDING' && !ui.sendInFlight;
   ui.sendButton.disabled = !sendable;
-  ui.sendButton.textContent = sent ? '訂正案内を再送' : '訂正案内を送信';
+  ui.sendButton.textContent = sent && !booking.priceUpdateNeeded ? '訂正案内を再送' : '訂正案内を送信';
 }
 
 function runSendPriceUpdateNotice_() {
@@ -899,7 +899,7 @@ function runSendPriceUpdateNotice_() {
   if (!booking || !booking.priceOverrideAt || booking.status !== 'PENDING') return;
   if (priceNoticeUi_.sendInFlight) return;
 
-  var isResend = !!booking.priceUpdateMailSentAt;
+  var isResend = !!booking.priceUpdateMailSentAt && !booking.priceUpdateNeeded;
   var confirmed = window.confirm(
     '予約ID: ' + booking.bookingId + '\n' +
     '訂正後の金額: ' + (formatYen_(booking.effectivePriceAmount) || '（未計算）') + '\n\n' +
