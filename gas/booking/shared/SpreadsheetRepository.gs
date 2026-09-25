@@ -228,10 +228,17 @@ var SpreadsheetRepository = (function () {
      * - paymentHoldExpiresAt: 決済中の仮押さえ期限（CardPayment.
      *   computeCheckoutHoldExpiryMillis。既定30分。既存のカードTTL
      *   Booking.CARD_TTL_HOURS=72hとは別クロック。詳細はCardPayment.gs参照）。
-     * - stripeAmount / stripeCurrency: Stripeが実際に処理した金額・通貨（監査用。
-     *   確定に使う金額の正はあくまでBooking.getEffectivePriceAmount側であり、
-     *   この列の値で予約金額を決定しない。CardPayment.verifyPaymentAmountで両者を
-     *   突き合わせる）。
+     * - stripeAmount / stripeCurrency: **Checkout Session発行時点（PR-B）に確定した
+     *   請求金額・通貨のスナップショット**（Issue #341 PR-Aレビュー対応・項目3）。
+     *   単なる監査記録ではなく、PR-CのWebhook検証が参照する金額の正となる。PR-Bは
+     *   CardPayment.verifyPaymentAmount（その時点のBooking.getEffectivePriceAmount）で
+     *   検証した金額をそのままこの列へ保存し、PR-CはCardPayment.
+     *   verifyPaymentAgainstSnapshotでWebhookの金額とこの列を突き合わせる（Webhook到達
+     *   時点の「現在の」確定金額を再計算して比較しない）。Session発行**後**に管理者が
+     *   料金を修正しても、既に発行済みのSession・既に処理された決済の検証結果には
+     *   一切影響しない（料金変更後のWebhookで正常な決済が誤ってAMOUNT_MISMATCHになる
+     *   事故を防ぐ設計。詳細はCardPayment.gsのverifyPaymentAgainstSnapshotコメントおよび
+     *   README「Issue #341」節参照）。
      * - paymentConfirmedAt: 署名検証済みWebhookで決済成功を確認した日時。予約確定
      *   （confirmedAt）とは独立した列として持つ（Issue #341本文「決済状態を独立して
      *   扱う」。通常は自動確定と同時刻になるが、遅延Webhookで枠が埋まっていた場合は

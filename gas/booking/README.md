@@ -3368,17 +3368,83 @@ Webhook受信・自動返金・鍵承認UI（いずれもPR-B/C/D）は実装し
 `FAILED_NEEDS_RECOVERY`と同じ設計思想）。
 
 既存本番行はすべて`'unpaid'`のまま保存されているため、読み取り側は必ず
-`Booking.normalizePaymentStatus(rawValue)`を経由すること。空文字・未設定・旧`'unpaid'`・
-未知の値はすべてfail-closedに`not_started`へ正規化される（「支払済みと誤認しない」方向）。
+`Booking.normalizePaymentStatus(rawValue)`を経由すること。空文字・未設定・旧`'unpaid'`は
+後方互換のため`not_started`へ正規化されるが、**それ以外の未知の値は`not_started`へ
+丸めず`null`を返す**（PR-Aレビュー対応・項目2。「読み取れない値だから未決済だろう」と
+決めつけて処理を進めると、決済処理の途中で想定外の値が書き込まれた異常を握りつぶし、
+二重決済や誤った自動確定につながりかねないため）。決済処理系（後述の
+`applyPaymentStateUpdate`）はこの`null`を検知したら必ず処理を停止し、要復旧として扱う。
+
+### 決済状態の整合性保証（`applyPaymentStateUpdate`。PR-Aレビュー対応・項目1）
+
+`paymentAttemptId`〜`paymentRecoveryReason`（15列。`updateBookingPaymentStateAtomic`）と
+`paymentStatus`（30列目。`updateBookingFields`）は、既存の無関係な25列を巻き込まないため
+意図的に別々のRange.setValues呼び出しへ分けている（前述の設計どおり変更しない）。
+2回に分かれる書き込みが片方だけ成功する部分失敗に備え、`BookingRepository.
+applyPaymentStateUpdate(bookingId, toPaymentStatus, fields, now)`という共通処理を追加した。
+PR-B/PR-C/PR-Dは、決済状態・決済付随情報を更新する際に`SpreadsheetRepository.
+updateBookingPaymentStateAtomic`/`updateBookingFields({paymentStatus: ...})`を直接
+呼ばず、必ずこの関数を経由すること。
+
+設計:
+
+1. **排他制御**: `LockService.getScriptLock()`（`LOCK_TIMEOUT_MS_=10秒`。`confirmBooking`
+   等と共通）。
+2. **更新順序の固定**: 決済付随情報15列（1回のRange.setValues）を**先に**、
+   `paymentStatus`単独を**後に**書き込む。詳細情報（Stripeの識別子・`lastStripeEventId`
+   等の証跡）が先に確定してから状態のまとめ（`paymentStatus`）が最後に確定する向きに
+   することで、後半の書き込みだけが失敗しても「詳細情報はあるのに状態だけ古い」という
+   検出しやすい不整合にとどまる（逆向きだと、証跡を伴わないまま`paymentStatus`だけが
+   決済成功を騙る状態になり、同一Webhookイベントの重複配信を`lastStripeEventId`で
+   検出できないまま`paymentStatus`側の遷移チェックだけに頼る不安定な設計になる）。
+3. **部分失敗時のRecovery記録**: 決済付随情報の書き込み自体が失敗した場合はこの呼び出しで
+   何も変化していないため、要復旧フラグは立てず`PAYMENT_DETAIL_WRITE_FAILED`を返す
+   （呼び出し元が最初からやり直せばよい）。決済付随情報の書き込みには成功したのに
+   `paymentStatus`側の書き込みだけが失敗した場合は、`paymentRecoveryRequiredAt`/
+   `paymentRecoveryReason`を立て、`RecoveryRepository`にも記録し、以後この関数への
+   すべての呼び出しを`PAYMENT_RECOVERY_REQUIRED`として拒否する
+   （`PAYMENT_STATUS_WRITE_FAILED_AFTER_DETAIL_COMMIT`。`feeRecoveryRequiredAt`と同じ
+   「要復旧フラグが立っている間は自動処理を止め、明示的な補正を待つ」設計を踏襲する。
+   実際に管理者が確認・解除する手段（`resolveFeeRecovery`相当）はPR-D側で用意する）。
+4. **再実行時の整合性検証**: 現在の`paymentStatus`が既に`toPaymentStatus`と一致している
+   場合は何も書き込まず`alreadyApplied:true`で成功を返す（Webhookの重複配信・呼び出し元の
+   重複リトライを安全に吸収する）。現在の`paymentStatus`が`Booking.
+   normalizePaymentStatus`で`null`（未知の値）と判定された場合は「未決済だろう」と
+   決めつけず即座に停止する（`UNKNOWN_PAYMENT_STATUS`。前述の項目2と対応）。要復旧
+   フラグが既に立っている予約は、遷移の妥当性を判定するまでもなく先頭で即座に拒否する。
+
+PR-A時点ではこの関数を呼び出す実際の決済処理（Checkout Session発行・Webhook確認・
+自動返金）は存在しない。`test/booking-payment-state.test.js`で、LockService/Recovery記録・
+更新順序・部分失敗・冪等な再実行・未知の`paymentStatus`検知をモックで検証している。
 
 ### サーバー側の料金検証
 
 `gas/booking/shared/CardPayment.gs`（新規）が、`Booking.getEffectivePriceAmount`
 （Issue #342/#343の既存料金基盤）を経由してStripeへ請求すべき金額を一意に決定する
-（`computeExpectedPaymentAmount`）。クライアントやStripe側から得られた金額・通貨との
-突合は`verifyPaymentAmount`で行い、不一致・金額未計算はいずれもfail-closedに拒否する。
-PR-B（Checkout Session発行時の金額指定）・PR-C（Webhook受信時の金額検証）の両方が
-この1つの関数を再利用する想定で、金額計算・検証ロジックを複数箇所に重複実装しない。
+（`computeExpectedPaymentAmount`）。**この関数・および現在値との照合を行う
+`verifyPaymentAmount`は、Checkout Session発行時点（PR-B）専用**である（後述の理由で
+Webhook検証には使わない）。
+
+**Checkout発行時点の金額の確定・保存とWebhook検証の照合方法（PR-Aレビュー対応・項目3）**:
+Session発行**後**・Webhook到達**前**に管理者が料金を修正した場合（`priceOverrideAmount`の
+更新等）、Webhook処理時点で「現在の」確定金額を再計算してStripeの決済結果と比較すると、
+Stripeが実際に請求・収受した金額（Session発行時点のまま）と食い違い、**正常に完了した
+決済が誤ってAMOUNT_MISMATCHになり、自動確定が止まってしまう事故**が起こり得る。これを
+防ぐため、次の2段階で金額の正を分離する:
+
+1. **PR-B（Checkout発行時点）**: `verifyPaymentAmount`でその時点の確定金額を検証した後、
+   その値を`stripeAmount`/`stripeCurrency`列へ**スナップショットとして保存**する
+   （`updateBookingPaymentStateAtomic`経由）。以後、料金が修正されてもこの列は変化しない。
+2. **PR-C（Webhook検証時点）**: `CardPayment.verifyPaymentAgainstSnapshot(record,
+   claimedAmountJpy, claimedCurrency)`で、Webhookの金額を**この列（スナップショット）**と
+   突き合わせる。`verifyPaymentAmount`（現在の確定金額と照合する関数）を使わない。
+   スナップショットが記録されていない（PR-Bが未実行）予約は`SNAPSHOT_NOT_AVAILABLE`で
+   fail-closedに拒否する。
+
+`test/card-payment.test.js`に、同一の「Session発行後に料金が9000円へ修正された」入力を
+`verifyPaymentAmount`（誤ってAMOUNT_MISMATCHになる）と`verifyPaymentAgainstSnapshot`
+（スナップショット8000円と一致するため正しくvalid:trueになる）の両方に通す対比テストを
+含めた。
 
 ### Stripe Checkout SessionのTTL・仮押さえ時間について（要確認事項への回答）
 
@@ -3405,20 +3471,68 @@ Stripeのレスポンスに含まれる実際の`expires_at`を内部の仮押�
 実装にすること（Issue #341本文「Session expires_atをこの仮押さえ期限と一致させる」を、
 2つの期限を別々に計算して後から突き合わせるのではなく、常に一致する構造で実現する）。
 
+#### 仮押さえの解放とStripe側の失効確認（PR-Aレビュー対応・項目4）
+
+`computeStripeSessionExpiresAtSeconds`はStripeの30分下限に対する安全マージンとして
+`STRIPE_SESSION_EXPIRY_BUFFER_MINUTES=5`分を上乗せする。**この上乗せ分だけ、Stripeの
+Checkout Sessionは「GASが素朴に計算した仮押さえ期限（`CHECKOUT_HOLD_MINUTES=30`分）」を
+過ぎた後も、最大で数分間は決済可能なまま残り得る。** 前述のとおりPR-B側が
+Stripe実際の`expires_at`を`paymentHoldExpiresAt`へ保存し直すことで、GAS側の仮押さえ期限
+自体はStripe側の実際の境界と一致させられるが、それでもなお次の理由でズレは残り得る:
+
+- 失効判定・枠解放を行うバッチ処理（既存`expirePendingBookings`と同様、一定間隔の
+  時間主導トリガーになる見込み）は、`paymentHoldExpiresAt`ちょうどではなく**次回の
+  トリガー実行時刻**まで遅延して枠を解放する（既存の15分間隔トリガーと同じ性質の遅延）。
+- 逆に、Stripe側の実際の期限直前に利用者が決済操作を開始していた場合、GAS側が
+  ほぼ同時刻に枠を解放しても、Stripe側では決済処理が完了して**Webhookが後から**届く
+  ことがある。
+
+これらはIssue #341本文が既に想定している正常系（「仮押さえ期限を過ぎてからの遅延
+Webhookは、枠の空き有無で分岐する」「空いていれば自動でCONFIRMED化」「埋まっていれば
+自動返金」）で吸収する設計になっているが、PR-B/PR-Cの実装が満たすべき条件として
+明文化する:
+
+1. **仮押さえ期限を過ぎて枠を解放する処理（PENDING→EXPIRED等）は、`paymentAttemptId`・
+   `stripeCheckoutSessionId`・`stripePaymentIntentId`・`stripeAmount`/`stripeCurrency`
+   等の決済付随情報列を消去・上書きしてはならない。** 後から届くWebhookがこの予約行を
+   再び特定し、金額照合（`verifyPaymentAgainstSnapshot`）を行うために必要な情報である。
+2. **Webhookハンドラは、対象予約の現在の`status`（PENDING/EXPIRED/CONFIRMED/CANCELLED）を
+   「この決済は無視してよいか」の判定に使ってはならない。** 常に「現在の空き枠の有無」
+   （既存の空き判定ロジック）を再確認し、空いていれば自動確定、埋まっていれば自動返金という
+   Issue #341本文の分岐へ進むこと。`status===EXPIRED`だからといって決済成功のWebhookを
+   黙って捨てると、Stripe側は実際に入金しているのに予約もCalendarも確保されず、返金も
+   実行されない「回収不能な入金」が発生する。
+3. 上記の整理から、**仮押さえ解放処理と決済状態（`paymentStatus`）の遷移は別物である**
+   ことを改めて明確にする：仮押さえ解放は予約状態（`status`）側の処理であり、
+   `paymentStatus`は`applyPaymentStateUpdate`が管理する別クロックのまま
+   （`CHECKOUT_PENDING`のままでよい）。遅延Webhookが到達した時点で初めて
+   `applyPaymentStateUpdate`により`paymentStatus`を`PAID`→（枠が埋まっていれば）
+   `REFUND_PENDING`→`REFUNDED`へ進める。
+
 ### 本PR-Aで意図的に行わなかったこと（PR-B/C/Dへの引き継ぎ）
 
-- Checkout Session生成・仮押さえ処理の実配線・フォーム遷移（PR-B）。
+- Checkout Session生成・仮押さえ処理の実配線・フォーム遷移（PR-B）。PR-Bは決済状態・
+  決済付随情報の更新に必ず`BookingRepository.applyPaymentStateUpdate`を経由し、
+  Checkout発行時点の金額確定には`CardPayment.verifyPaymentAmount`を使って
+  `stripeAmount`/`stripeCurrency`へスナップショット保存すること。
 - `script.external_request`スコープの追加（UrlFetchAppを実際に呼ぶPR-Bで追加する。
   本PR-Aは一切のStripe API呼び出しを行わないため、未使用のスコープを先行追加しない）。
 - 署名検証Webhook受信基盤（Cloud Run等の中継）・自動確定・遅延Webhookの分岐処理・
   Stripeイベントの冪等性台帳（`FeeSettlementRepository.gs`の設計パターンを踏襲した
-  専用シートを想定）・Recovery連携（PR-C）。
+  専用シートを想定）・Recovery連携（PR-C）。PR-CはWebhookの金額照合に
+  `CardPayment.verifyPaymentAgainstSnapshot`（`verifyPaymentAmount`ではない）を使い、
+  決済状態の更新には`applyPaymentStateUpdate`を経由すること。
+- `paymentRecoveryRequiredAt`が立った予約を管理者が確認・解除する手段（
+  `BookingReschedule.resolveFeeRecovery`相当の関数・Booking Admin UI）は用意していない。
+  この列は`applyPaymentStateUpdate`が立てるのみで、解除する経路は現状存在しない
+  （PR-D。実際の解除条件は、PR-B/PR-Cで決済処理の実装が固まってから設計する）。
 - Booking Adminの「取消（自動返金）」ボタン・「鍵承認」ボタン・「来場案内を再送」ボタン・
   前日リマインドの鍵承認ゲート条件・メール文言更新（PR-D）。
 - `expirePendingBookings`を新しい`paymentHoldExpiresAt`クロックへ対応させる変更
   （既存のカードTTL`Booking.CARD_TTL_HOURS`＝72hによる失効処理は本PR-Aでは変更しない。
   Issue #341本文の「既存予約や旧Payment Link利用中予約は旧方式で完了できる移行期間」を
-  どう設計するかは、実際にCheckout Sessionフローを導入するPR-Bで判断する）。
+  どう設計するかは、実際にCheckout Sessionフローを導入するPR-Bで判断する。仮押さえ解放
+  処理を新設する際は、前述「仮押さえの解放とStripe側の失効確認」の3条件を満たすこと）。
 - 本番Bookingsシートの列追加・Stripe本番APIキー設定・GAS/Cloud Run本番デプロイ・
   既存`/exec` URLの変更（いずれもオーナーの明示的な承認後、別途実施）。
 

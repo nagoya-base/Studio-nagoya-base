@@ -471,12 +471,29 @@ test('normalizePaymentStatus: 新定義の6値はそのまま通す（Issue #341
   });
 });
 
-test('normalizePaymentStatus: 空文字・未設定・旧unpaid・未知の値はすべてfail-closedにNOT_STARTEDへ正規化される（Issue #341）', function () {
+test('normalizePaymentStatus: 空文字・未設定・旧unpaidのみ後方互換でNOT_STARTEDへ正規化される（Issue #341）', function () {
   var Booking = loadBooking();
-  [undefined, null, '', 'unpaid', 'UNPAID', 'garbage', 0].forEach(function (raw) {
+  [undefined, null, '', 'unpaid'].forEach(function (raw) {
     assert.strictEqual(
       Booking.normalizePaymentStatus(raw), Booking.PAYMENT_STATUS.NOT_STARTED,
       JSON.stringify(raw) + ' はNOT_STARTEDへ正規化されるべき'
+    );
+  });
+});
+
+/*
+ * Issue #341 PR-Aレビュー対応: 未知の値を「未決済（NOT_STARTED）」とみなして丸めてしまうと、
+ * 決済処理の途中で想定外の値が書き込まれた異常を握りつぶし、二重決済や誤った自動確定に
+ * つながりかねない。旧unpaid等の正当な後方互換値と、正体不明の値は明確に区別し、
+ * 後者はnullを返して呼び出し側（BookingRepository.applyPaymentStateUpdate）に処理停止を
+ * 促す。
+ */
+test('normalizePaymentStatus: 未知の文字列・型はNOT_STARTEDとみなさずnullを返す（決済処理停止のため。Issue #341 PR-Aレビュー対応）', function () {
+  var Booking = loadBooking();
+  ['UNPAID', 'garbage', 'Paid', 'NOT_STARTED', 0, 1, false, true, {}, []].forEach(function (raw) {
+    assert.strictEqual(
+      Booking.normalizePaymentStatus(raw), null,
+      JSON.stringify(raw) + ' はNOT_STARTEDへ丸めず、nullで未知値であることを示すべき'
     );
   });
 });

@@ -1456,13 +1456,190 @@ var BookingRepository = (function () {
     }
   }
 
+  /*
+   * Issue #341 PR-Aレビュー対応: 決済状態（paymentStatus）の整合性を保証する共通更新処理。
+   * 実際にStripe API・Webhookを呼ぶPR-B/PR-Cが、この関数を経由してのみpaymentStatus・
+   * 決済付随情報（paymentAttemptId〜paymentRecoveryReasonの15列）を更新することを想定する
+   * （SpreadsheetRepository.updateBookingPaymentStateAtomic/updateBookingFieldsを個別に
+   * 直接呼ばせない）。PR-A時点ではこの関数を呼び出す実際の決済処理（Checkout Session発行・
+   * Webhook確認・自動返金）は存在しない。
+   *
+   * 設計上の要点:
+   * 1. LockService.getScriptLock()で排他制御する（confirmBooking等と同じ
+   *    LOCK_TIMEOUT_MS_=10秒。呼び出し元のGASプロジェクトのLockと共有される）。
+   * 2. 更新順序を固定する：**先に決済付随情報の15列（updateBookingPaymentStateAtomic。
+   *    HEADERS_上で連続する1回のRange.setValues）、その後にpaymentStatus単独
+   *    （updateBookingFields）の順**。paymentStatus（30列目）は15列の範囲と連続して
+   *    いないため、レビュー対応前は「無関係な既存25列を巻き込む1回の書き込み」に
+   *    まとめる案もあったが、それは他プロセスの並行更新を上書きする事故を招くため採用
+   *    しない（PR-Aの元設計のまま。updateBookingPaymentStateAtomicのコメント参照）。
+   *    2回に分かれる書き込みの順序をこの向きに固定する理由：詳細情報（Stripeの
+   *    PaymentIntent id・lastStripeEventId等の証跡）が先に確定してからpaymentStatusという
+   *    「状態のまとめ」が最後に確定する向きにすることで、万一paymentStatus側の書き込みだけが
+   *    失敗しても「詳細情報はあるのに状態だけ古い」という検出しやすい不整合にとどまる。
+   *    逆向き（先にpaymentStatusをPAID等へ進めてから詳細情報を書く）だと、詳細情報
+   *    （特にlastStripeEventId）が伴わないままpaymentStatusだけが「決済成功」を騙る状態が
+   *    生じ、同一Webhookイベントの重複配信をlastStripeEventIdで検出できないまま
+   *    paymentStatus側の遷移チェックだけがそれを弾こうとする不安定な状態になる。
+   * 3. 部分失敗時のRecovery記録：詳細情報の書き込み自体が失敗した場合は、この呼び出しでは
+   *    何も変化していないため（1回のRange.setValuesが失敗すれば部分列だけ反映される
+   *    ことはない）、要復旧フラグは立てず、呼び出し元が最初からやり直せばよいという
+   *    扱いにする（PAYMENT_DETAIL_WRITE_FAILED）。一方、詳細情報の書き込みには成功した
+   *    のにpaymentStatus側の書き込みだけが失敗した場合は、台帳が「詳細情報は新しいが
+   *    状態は古い」という不整合な状態のまま残るため、paymentRecoveryRequiredAt/
+   *    paymentRecoveryReasonを立て、RecoveryRepositoryにも記録し、以後のこの関数の呼び出し
+   *    をすべて拒否する（PAYMENT_STATUS_WRITE_FAILED_AFTER_DETAIL_COMMIT。
+   *    BookingReschedule.commit/feeRecoveryRequiredAtと同じ「要復旧フラグが立っている間は
+   *    自動処理を止め、明示的な補正を待つ」設計を踏襲する。実際の補正手段（管理者による
+   *    確認・解除）はPR-D側で用意する）。
+   * 4. 再実行時の整合性検証：この関数自体は「現在のpaymentStatusが既にtoPaymentStatusと
+   *    一致している」場合、何も書き込まずalreadyApplied:trueで成功を返す（Stripeの
+   *    Webhook再送・呼び出し元の重複リトライを安全に吸収する）。現在のpaymentStatusが
+   *    未知の値（Booking.normalizePaymentStatusがnullを返す）の場合は「未決済だろう」と
+   *    決めつけて処理を進めず、即座に要復旧として停止する（Issue #341 PR-Aレビュー対応・
+   *    項目2）。要復旧フラグが既に立っている予約は、詳細を再判定するまでもなく先頭で
+   *    即座に拒否する。
+   *
+   * fields: SpreadsheetRepository.updateBookingPaymentStateAtomicが受け付ける15列の
+   *   部分集合（省略・空オブジェクト可。例えばFAILED→CHECKOUT_PENDINGの再試行のように
+   *   付随情報を伴わない遷移もある）。
+   * 戻り値: { success: true } / { success: true, alreadyApplied: true } /
+   *   { success: false, error: { code, message } }
+   */
+  function applyPaymentStateUpdate(bookingId, toPaymentStatus, fields, now) {
+    if (!bookingId) {
+      return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
+    }
+    var effectiveNow = isDateLike_(now) ? now : new Date();
+
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS_)) {
+      return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
+    }
+
+    try {
+      var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+      if (!found) {
+        return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
+      }
+      var record = found.record;
+
+      if (record.paymentRecoveryRequiredAt) {
+        return {
+          success: false,
+          error: { code: 'PAYMENT_RECOVERY_REQUIRED', message: 'この予約の決済状態は要復旧のため、自動処理を停止しています。管理者の確認が必要です。' }
+        };
+      }
+
+      var currentPaymentStatus = Booking.normalizePaymentStatus(record.paymentStatus);
+      if (currentPaymentStatus === null) {
+        recordPaymentRecoveryBestEffort_(
+          bookingId, record, 'UNKNOWN_PAYMENT_STATUS',
+          'paymentStatus列に既知のいずれの値とも一致しない値が入っています（生値は診断のため' +
+            'Loggerにのみ出力）。Bookingsを直接確認し、実際の決済状況（Stripe管理画面等）と' +
+            '照合したうえで、正しいpaymentStatus値へ手動で修正し、この復旧フラグを解除して' +
+            'ください。',
+          effectiveNow
+        );
+        Logger.log('applyPaymentStateUpdate: 未知のpaymentStatus値を検出しました: ' + bookingId + ' rawValue=' + JSON.stringify(record.paymentStatus));
+        return {
+          success: false,
+          error: { code: 'UNKNOWN_PAYMENT_STATUS', message: '決済状態が不明なため処理を停止しました。管理者の確認が必要です。' }
+        };
+      }
+
+      if (currentPaymentStatus === toPaymentStatus) {
+        return { success: true, alreadyApplied: true };
+      }
+
+      if (!Booking.canTransitionPaymentStatus(currentPaymentStatus, toPaymentStatus)) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_PAYMENT_TRANSITION',
+            message: '決済状態を' + currentPaymentStatus + 'から' + toPaymentStatus + 'へ変更することはできません。'
+          }
+        };
+      }
+
+      var safeFields = fields || {};
+      if (Object.keys(safeFields).length > 0) {
+        try {
+          SpreadsheetRepository.updateBookingPaymentStateAtomic(bookingId, safeFields);
+        } catch (detailError) {
+          Logger.log('applyPaymentStateUpdate: 決済付随情報の書き込みに失敗しました: ' + bookingId + ' ' + detailError);
+          return {
+            success: false,
+            error: { code: 'PAYMENT_DETAIL_WRITE_FAILED', message: '決済付随情報の保存に失敗しました。最初からやり直してください。' }
+          };
+        }
+      }
+
+      try {
+        SpreadsheetRepository.updateBookingFields(bookingId, { paymentStatus: toPaymentStatus });
+      } catch (statusError) {
+        recordPaymentRecoveryBestEffort_(
+          bookingId, record, 'PAYMENT_STATUS_WRITE_FAILED_AFTER_DETAIL_COMMIT',
+          '決済付随情報（paymentAttemptId等）の保存後、paymentStatus（目標値: ' + toPaymentStatus +
+            '）の更新に失敗しました: ' + describeError_(statusError) + '。台帳の決済付随情報と' +
+            '実際のStripe側の状況を確認し、paymentStatusを手動で正しい値へ修正してから' +
+            'この復旧フラグを解除してください。',
+          effectiveNow
+        );
+        return {
+          success: false,
+          error: {
+            code: 'PAYMENT_STATUS_WRITE_FAILED_AFTER_DETAIL_COMMIT',
+            message: '決済付随情報は保存されましたが、決済状態の更新に失敗しました。管理者の確認が必要です。'
+          }
+        };
+      }
+
+      return { success: true };
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  /*
+   * paymentRecoveryRequiredAt/paymentRecoveryReasonの設定とRecoveryRepositoryへの記録を
+   * best effortで行う（既存のRecovery記録と同じ方針：記録自体の失敗はLoggerにのみ残し、
+   * 呼び出し元へは投げない）。この関数の呼び出し後、applyPaymentStateUpdateは以後この
+   * bookingIdへのすべての呼び出しをPAYMENT_RECOVERY_REQUIREDとして拒否する。
+   */
+  function recordPaymentRecoveryBestEffort_(bookingId, record, failureType, reason, now) {
+    try {
+      SpreadsheetRepository.updateBookingFields(bookingId, {
+        paymentRecoveryRequiredAt: now,
+        paymentRecoveryReason: reason
+      });
+    } catch (e) {
+      Logger.log('paymentRecoveryRequiredAtの記録に失敗しました: ' + bookingId + ' ' + e);
+    }
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: failureType,
+        occurredAt: now,
+        calendarEventId: (record && record.calendarEventId) || '',
+        status: (record && record.status) || '',
+        errorMessage: reason,
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (e) {
+      Logger.log('Recovery記録に失敗しました: ' + bookingId + ' ' + failureType + ' ' + e);
+    }
+  }
+
   return {
     createBooking: createBooking,
     confirmBooking: confirmBooking,
     expirePendingBookings: expirePendingBookings,
     reviveExpiredBooking: reviveExpiredBooking,
     cancelBookingAdmin: cancelBookingAdmin,
-    updateBookingPrice: updateBookingPrice
+    updateBookingPrice: updateBookingPrice,
+    applyPaymentStateUpdate: applyPaymentStateUpdate
   };
 })();
 

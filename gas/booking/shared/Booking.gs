@@ -74,11 +74,25 @@ var Booking = (function () {
     FAILED: 'failed'
   };
 
+  /* Issue #314〜Issue #334時点でBookings台帳に実際に書き込まれていた固定値。
+     normalizePaymentStatusの後方互換分岐でのみ参照する（新規コードはこの値を書き込まない）。 */
+  var LEGACY_PAYMENT_STATUS_UNPAID_ = 'unpaid';
+
   /*
-   * Bookings台帳から読み取ったpaymentStatusの生値を、上記PAYMENT_STATUSのいずれかへ
-   * 正規化する。空文字・未設定・旧'unpaid'・未知の値はすべてfail-closedにNOT_STARTEDへ
-   * 倒す（「支払済みと誤認しない」方向。既存本番行は全てこの分岐を通る）。旧'paid'
-   * （実際に書き込まれた実績はないが念のため）はそのままPAIDへ通す。
+   * Bookings台帳から読み取ったpaymentStatusの生値を正規化する。
+   *
+   * - 既に上記PAYMENT_STATUSのいずれかの値であれば、そのまま返す（旧'paid'は実際に
+   *   書き込まれた実績はないが、新定義のPAIDと文字列表現が一致するためこの分岐で
+   *   自然に通る）。
+   * - 空文字・null・undefined・旧'unpaid'（Issue #314〜#334時点の固定値。既存本番行は
+   *   全てこれ）は後方互換のためNOT_STARTEDへ正規化する。
+   * - **上記のいずれにも一致しない値（未知の文字列・型）はnullを返す。**
+   *   Issue #341 PR-Aレビュー対応：「読み取れない値だから決済フロー未着手だろう」と
+   *   決めつけてNOT_STARTEDへ丸めると、実際には決済処理の途中で想定外の値が書き込まれた
+   *   （バグ・手動編集・複合障害等）可能性を握りつぶしてしまい、二重決済や誤った自動確定
+   *   につながりかねない。空欄・既知の旧値と、正体不明の値を同じ既定値へ丸めないのが
+   *   この関数の主眼であり、呼び出し側（特にBookingRepository.applyPaymentStateUpdate等の
+   *   決済処理系）はnullを検知したら必ず処理を停止し、要復旧として扱うこと。
    */
   function normalizePaymentStatus(rawValue) {
     var known = [
@@ -86,7 +100,10 @@ var Booking = (function () {
       PAYMENT_STATUS.REFUND_PENDING, PAYMENT_STATUS.REFUNDED, PAYMENT_STATUS.FAILED
     ];
     if (known.indexOf(rawValue) !== -1) return rawValue;
-    return PAYMENT_STATUS.NOT_STARTED;
+    if (rawValue === '' || rawValue === null || rawValue === undefined || rawValue === LEGACY_PAYMENT_STATUS_UNPAID_) {
+      return PAYMENT_STATUS.NOT_STARTED;
+    }
+    return null;
   }
 
   /*

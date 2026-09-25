@@ -105,10 +105,11 @@ var CardPayment = (function () {
   }
 
   /*
-   * StripeのCheckout Session／PaymentIntent／Webhookから得られた金額・通貨が、サーバー側の
-   * 確定金額と一致するかを検証する。PR-Cは署名検証済みWebhookを受けた直後に必ずこれを
-   * 通し、不一致であれば自動確定しない（Issue #341受入条件「料金はサーバー計算と一致し、
-   * クライアント改ざんが無効」）。
+   * **Checkout Session発行時点（PR-B）専用**の金額検証。渡された金額・通貨が、その時点の
+   * サーバー側の確定金額（computeExpectedPaymentAmount。Booking.getEffectivePriceAmountの
+   * 現在値）と一致するかを検証する。PR-BがStripeへ送信する金額を決定・防御的に再確認する
+   * 用途であり、**PR-CのWebhook検証にはこの関数を使わないこと**（下記
+   * verifyPaymentAgainstSnapshotのコメント参照。Issue #341 PR-Aレビュー対応・項目3）。
    */
   function verifyPaymentAmount(record, claimedAmountJpy, claimedCurrency) {
     var expected = computeExpectedPaymentAmount(record);
@@ -120,6 +121,45 @@ var CardPayment = (function () {
       return { valid: false, error: err_('AMOUNT_MISMATCH', '決済金額がサーバー計算額と一致しません。') };
     }
     return { valid: true, amountJpy: expected.amountJpy, currency: expected.currency };
+  }
+
+  /*
+   * **Webhook受信時点（PR-C）専用**の金額検証（Issue #341 PR-Aレビュー対応・項目3）。
+   *
+   * verifyPaymentAmount/computeExpectedPaymentAmountは常に「その時点で」有効な確定金額
+   * （priceAmount/priceOverrideAmount）を参照する。もしPR-Cのwebhook処理がこれを
+   * そのまま使って決済結果を検証すると、Checkout Session発行**後**・Webhook到達**前**に
+   * 管理者が料金を修正した場合（priceOverrideAmountの更新等）、Stripeが実際に請求・
+   * 収受した金額（Session発行時点の金額のまま）と、Webhook処理時点で再計算した「現在の」
+   * 確定金額が食い違い、**正常に完了した決済が誤ってAMOUNT_MISMATCHになってしまう**
+   * （正当な決済を拒否し、自動確定を止めてしまう事故）。
+   *
+   * これを防ぐため、金額の正はCheckout Session発行**時点**で1回だけ確定し、
+   * その値をBookings台帳の`stripeAmount`/`stripeCurrency`列へスナップショットとして
+   * 保存する（PR-Bの責務。verifyPaymentAmountで検証した直後の値をそのまま
+   * updateBookingPaymentStateAtomicで保存する）。PR-CのWebhook検証は、**その時点の
+   * 確定金額を再計算するのではなく**、この関数でスナップショット（`record.stripeAmount`/
+   * `record.stripeCurrency`）とWebhookの金額を突き合わせる。料金がその後修正されても、
+   * 既に発行済みのSession・既に処理された決済の検証結果には一切影響しない。
+   *
+   * スナップショットが記録されていない予約（PR-Bがまだ実装されていない、または
+   * Checkout Session発行前の予約）はfail-closedにvalid:falseを返す。
+   */
+  function verifyPaymentAgainstSnapshot(record, claimedAmountJpy, claimedCurrency) {
+    var r = record || {};
+    var snapshotAmount = r.stripeAmount;
+    var snapshotCurrency = r.stripeCurrency;
+    if (snapshotAmount === '' || snapshotAmount === null || snapshotAmount === undefined ||
+        !snapshotCurrency || !isFinitePositiveInteger_(Number(snapshotAmount))) {
+      return { valid: false, error: err_('SNAPSHOT_NOT_AVAILABLE', 'Checkout Session発行時点の金額スナップショットが記録されていません。') };
+    }
+    if (claimedCurrency !== snapshotCurrency) {
+      return { valid: false, error: err_('CURRENCY_MISMATCH', '決済通貨がCheckout Session発行時点のスナップショットと一致しません。') };
+    }
+    if (Number(claimedAmountJpy) !== Number(snapshotAmount)) {
+      return { valid: false, error: err_('AMOUNT_MISMATCH', '決済金額がCheckout Session発行時点のスナップショットと一致しません。') };
+    }
+    return { valid: true, amountJpy: Number(snapshotAmount), currency: snapshotCurrency };
   }
 
   /*
@@ -143,6 +183,7 @@ var CardPayment = (function () {
     computeStripeSessionExpiresAtSeconds: computeStripeSessionExpiresAtSeconds,
     computeExpectedPaymentAmount: computeExpectedPaymentAmount,
     verifyPaymentAmount: verifyPaymentAmount,
+    verifyPaymentAgainstSnapshot: verifyPaymentAgainstSnapshot,
     generatePaymentAttemptId: generatePaymentAttemptId
   };
 })();

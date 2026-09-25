@@ -124,6 +124,67 @@ test('verifyPaymentAmount: サーバー計算額自体が無い場合はPRICE_NO
 });
 
 /*
+ * verifyPaymentAgainstSnapshot（Issue #341 PR-Aレビュー対応・項目3）: Webhook検証（PR-C）は
+ * その時点の「現在の」確定金額（priceAmount/priceOverrideAmount）ではなく、Checkout
+ * Session発行時点でstripeAmount/stripeCurrencyへ保存したスナップショットと突き合わせる。
+ * こうすることで、Session発行後・Webhook到達前に管理者が料金を修正しても、既に完了した
+ * 決済の検証結果には影響しない（正常な決済が誤ってAMOUNT_MISMATCHになる事故を防ぐ）。
+ */
+function snapshotRecord(overrides) {
+  return Object.assign(
+    { priceAmount: 8000, priceOverrideAmount: '', priceOverrideAt: '', stripeAmount: 8000, stripeCurrency: 'JPY' },
+    overrides || {}
+  );
+}
+
+test('verifyPaymentAgainstSnapshot: stripeAmount/stripeCurrencyのスナップショットと一致すればvalid:trueを返す', function () {
+  var CardPayment = loadCardPayment();
+  var result = CardPayment.verifyPaymentAgainstSnapshot(snapshotRecord(), 8000, 'JPY');
+  assert.strictEqual(result.valid, true);
+  assert.strictEqual(result.amountJpy, 8000);
+});
+
+test('verifyPaymentAgainstSnapshot: Session発行後に料金が修正されても、スナップショット（Session発行時点の金額）との一致だけを見るため正常な決済は不一致にならない', function () {
+  var CardPayment = loadCardPayment();
+  // priceAmountは9000へ変わっているが、stripeAmount（Session発行時点のスナップショット）は8000のまま。
+  var record = snapshotRecord({ priceAmount: 9000, stripeAmount: 8000 });
+  var result = CardPayment.verifyPaymentAgainstSnapshot(record, 8000, 'JPY');
+  assert.strictEqual(result.valid, true, 'Session発行後の料金修正で、既に完了した決済の検証結果が変わってはならない');
+});
+
+test('verifyPaymentAgainstSnapshot: 参考として、同じ入力をverifyPaymentAmount（現在の確定金額と照合）に通すと誤ってAMOUNT_MISMATCHになることを確認する（だからこそPR-CはverifyPaymentAgainstSnapshotを使う）', function () {
+  var CardPayment = loadCardPayment();
+  var record = snapshotRecord({ priceAmount: 9000, stripeAmount: 8000 });
+  var result = CardPayment.verifyPaymentAmount(record, 8000, 'JPY');
+  assert.strictEqual(result.valid, false);
+  assert.strictEqual(result.error.code, 'AMOUNT_MISMATCH');
+});
+
+test('verifyPaymentAgainstSnapshot: 金額・通貨がスナップショットと異なればそれぞれAMOUNT_MISMATCH/CURRENCY_MISMATCHで拒否する', function () {
+  var CardPayment = loadCardPayment();
+  var amountResult = CardPayment.verifyPaymentAgainstSnapshot(snapshotRecord(), 7999, 'JPY');
+  assert.strictEqual(amountResult.valid, false);
+  assert.strictEqual(amountResult.error.code, 'AMOUNT_MISMATCH');
+
+  var currencyResult = CardPayment.verifyPaymentAgainstSnapshot(snapshotRecord(), 8000, 'USD');
+  assert.strictEqual(currencyResult.valid, false);
+  assert.strictEqual(currencyResult.error.code, 'CURRENCY_MISMATCH');
+});
+
+test('verifyPaymentAgainstSnapshot: スナップショット未記録（Checkout Session未発行）の予約はSNAPSHOT_NOT_AVAILABLEで拒否する', function () {
+  var CardPayment = loadCardPayment();
+  [
+    snapshotRecord({ stripeAmount: '' }),
+    snapshotRecord({ stripeCurrency: '' }),
+    {}
+  ].forEach(function (record) {
+    var result = CardPayment.verifyPaymentAgainstSnapshot(record, 8000, 'JPY');
+    assert.strictEqual(result.valid, false, JSON.stringify(record) + ' はスナップショット未記録として拒否されるべき');
+    assert.strictEqual(result.error.code, 'SNAPSHOT_NOT_AVAILABLE');
+  });
+});
+
+/*
  * generatePaymentAttemptId: bookingIdと同じくuuidの一部を混ぜる方式
  * （Booking.generateBookingIdと同方針）。Checkout Session発行時の冪等キーや
  * Webhook metadataとの照合に使う想定（PR-B/PR-C）。
