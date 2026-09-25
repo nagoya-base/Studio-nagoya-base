@@ -116,6 +116,26 @@ test('sendNextDayReminders: JST基準で翌日(2026-10-02)のCONFIRMED予約だ�
   assert.ok(stubs.isDateLike(found.record.accessGuideSentAt));
 });
 
+/*
+ * Issue #349の回帰テスト: Sheets由来のrecord.dateがDate値の場合、以前は
+ * SpreadsheetRepository.getConfirmedBookingsForDateの`record.date === dateString`比較が
+ * 型の違いだけで常に不一致になり、候補が0件（processedCount=0）になっていた
+ * （本番で前日リマインドが送信されなかった障害）。
+ */
+test('sendNextDayReminders: 利用日がDate型で保存されている予約にも正しく前日リマインドを送信する（Issue #349）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_ACCESS_GUIDE_PROPERTIES, mailApp: mailApp });
+  seedBooking(ctx, { bookingId: 'DATE-TYPE-1', date: new Date('2026-10-02T00:00:00+09:00') });
+  seedBooking(ctx, { bookingId: 'DATE-TYPE-2', date: new Date('2026-10-02T10:00:00+09:00') });
+
+  var summary = ctx.sandbox.sendNextDayReminders(NOW);
+  assert.strictEqual(summary.processedCount, 2);
+  assert.strictEqual(summary.sentCount, 2);
+  assert.strictEqual(summary.skippedCount, 0);
+  assert.strictEqual(summary.failedCount, 0);
+  assert.strictEqual(mailApp._sentEmails.length, 2);
+});
+
 test('sendNextDayReminders: 今日・翌々日の予約は対象にしない', function () {
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ properties: COMPLETE_ACCESS_GUIDE_PROPERTIES, mailApp: mailApp });
