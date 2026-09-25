@@ -367,11 +367,15 @@
 
   /*
    * state: { brand, customerType, date, startTime, durationMinutes, name, email, phone,
-   *          people, purpose, purposeOther, paymentMethod, note }
+   *          people, purpose, purposeOther, paymentMethod, note, isMember }
    * 戻り値: createBooking（POST）へそのまま渡せるペイロード。
    * sourceはブランドごとに固定の値をBRAND_METAから補う（利用者が触れる余地を与えない）。
    * customerTypeはサーバー側（Booking.validateCreateBookingInput）でも必須検証・fail-closedに
    * 拒否されるため、ここで未指定・不正値を補正することはしない（そのまま渡す）。
+   * isMember（Issue #342）: 会員自己申告。true以外（未指定・不正値含む）はすべてfalseへ
+   * 正規化する（gas/booking/shared/Booking.gsのisMember正規化と同じfail-closed方針。
+   * ここで送る値は最終的な会員資格の判定ではなく自己申告に過ぎず、サーバー側
+   * （BookingPricing.gs）がブランドに応じて上書き・再計算する）。
    */
   function buildCreateBookingPayload(state) {
     var s = state || {};
@@ -389,7 +393,8 @@
       purpose: buildPurposeValue(s.purpose, s.purposeOther),
       paymentMethod: s.paymentMethod || '',
       note: s.note ? String(s.note).trim() : '',
-      source: brandMeta ? brandMeta.source : 'unknown'
+      source: brandMeta ? brandMeta.source : 'unknown',
+      isMember: s.isMember === true
     };
   }
 
@@ -777,6 +782,55 @@
     return result.year + '-' + result.month + '-' + result.day;
   }
 
+  /*
+   * ── 利用料金表示（Issue #342） ──
+   * ここに置くのは金額の整形・会員自己申告欄を出すブランドの判定のみ。料金表
+   * （レートテーブル）自体はここに置かず、複製しない。金額は必ずGAS側
+   * （estimatePrice/createBooking。gas/booking/shared/BookingPricing.gs）から取得する。
+   */
+
+  /* snb/studio_xは会員自己申告欄を出す（PR #343レビュー対応。ブランド分離基準書v1.1に
+     よりstudio_xの直接予約にもSNB共通の会員基準を適用するため）。mensは常に会員相当の
+     価格が適用されるため自己申告欄を出さない（BookingPricing.gsのresolveTier_と同じ
+     分岐。ここでは表示制御のみ）。 */
+  var MEMBER_OPTION_BRANDS_ = ['snb', 'studio_x'];
+
+  function brandShowsMemberOption(brand) {
+    return MEMBER_OPTION_BRANDS_.indexOf(brand) !== -1;
+  }
+
+  /* amount（数値）を'¥4,000'へ整形する。数値化できない場合は空文字を返す
+     （呼び出し側はこれを「金額が確定できない」の判定に使う）。ja/en共通の表記にする
+     （施設の料金は常に日本円のため、locale別の通貨表記は設けない）。 */
+  function formatJpyAmount(amount) {
+    /* Number(null)は0になってしまう（JSの仕様）ため、null/undefinedは先に弾く
+       （「金額が未計算」と「0円」を区別するため。GAS側のBooking.getEffectivePriceAmount
+       等と同じ「null/undefined/空文字は値なし」という前提を踏襲する）。 */
+    if (amount === null || amount === undefined || amount === '') return '';
+    var value = Number(amount);
+    if (!Number.isFinite(value)) return '';
+    return '¥' + value.toLocaleString('en-US');
+  }
+
+  var PRICE_STATUS_LABELS_ = {
+    ja: {
+      computing: '料金を計算しています…',
+      unavailable: '現在、料金を確認できません。時間をおいて再度お試しください。'
+    },
+    en: {
+      computing: 'Calculating price…',
+      unavailable: 'Price is currently unavailable. Please try again in a moment.'
+    }
+  };
+
+  function priceComputingLabel(locale) {
+    return PRICE_STATUS_LABELS_[normalizeLocale(locale)].computing;
+  }
+
+  function priceUnavailableLabel(locale) {
+    return PRICE_STATUS_LABELS_[normalizeLocale(locale)].unavailable;
+  }
+
   var api = {
     DEFAULT_LOCALE: DEFAULT_LOCALE,
     SUPPORTED_LOCALES: SUPPORTED_LOCALES,
@@ -830,7 +884,11 @@
     isCardPaymentEligible: isCardPaymentEligible,
     cardPaymentDueDisplay: cardPaymentDueDisplay,
     cardPaymentIneligibleNotice: cardPaymentIneligibleNotice,
-    cardPaymentNoticeLines: cardPaymentNoticeLines
+    cardPaymentNoticeLines: cardPaymentNoticeLines,
+    brandShowsMemberOption: brandShowsMemberOption,
+    formatJpyAmount: formatJpyAmount,
+    priceComputingLabel: priceComputingLabel,
+    priceUnavailableLabel: priceUnavailableLabel
   };
 
   global.BookingLogic = api;

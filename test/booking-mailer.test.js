@@ -341,6 +341,111 @@ test('sendConfirmedMailForBooking: MailApp失敗でもCONFIRMED状態は維持�
   assert.strictEqual(found.record.status, 'CONFIRMED');
 });
 
+/* ---------- PRICE_UPDATE（管理者による金額修正の利用者案内。PR #343レビュー対応） ---------- */
+
+test('sendPriceUpdateMailForBooking: 金額修正済み（priceOverrideAt非空）のPENDING予約に1通送り、priceUpdateMailSentAtを記録する', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    priceAmount: 4000,
+    priceOverrideAmount: 3500,
+    priceOverrideAt: new Date('2026-09-30T12:00:00+09:00')
+  });
+
+  var result = ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId);
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+  assert.match(mailApp._sentEmails[0].subject, /訂正/);
+  assert.match(mailApp._sentEmails[0].body, /3,500円（税込）/);
+  assert.doesNotMatch(mailApp._sentEmails[0].body, /4,000円/, '訂正前の自動計算額ではなく修正後の実効金額を案内するべき');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.ok(stubs.isDateLike(found.record.priceUpdateMailSentAt));
+});
+
+test('sendPriceUpdateMailForBooking: 金額修正がまだない予約（priceOverrideAtが空）はNO_PRICE_OVERRIDEでスキップし、メールを送らない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'PENDING' });
+
+  var result = ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.skipped, true);
+  assert.strictEqual(result.error.code, 'NO_PRICE_OVERRIDE');
+  assert.strictEqual(mailApp._sentEmails.length, 0);
+});
+
+test('sendPriceUpdateMailForBooking: PENDING以外（CONFIRMED/CANCELLED/EXPIRED）には送らない（updateBookingPrice自体がPENDING限定のため）', function () {
+  var mailApp = stubs.createMailAppStub();
+  ['CONFIRMED', 'CANCELLED', 'EXPIRED'].forEach(function (status) {
+    var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+    var bookingId = seedBooking(ctx, {
+      status: status,
+      priceAmount: 4000,
+      priceOverrideAmount: 3500,
+      priceOverrideAt: new Date('2026-09-30T12:00:00+09:00')
+    });
+
+    var result = ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId);
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error.code, 'INVALID_STATUS', status + ' には送れないべき');
+  });
+});
+
+test('sendPriceUpdateMailForBooking: 二重実行しても再送しない。force:trueなら再送できる', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    priceAmount: 4000,
+    priceOverrideAmount: 3500,
+    priceOverrideAt: new Date('2026-09-30T12:00:00+09:00')
+  });
+
+  ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId);
+  var second = ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId);
+  assert.strictEqual(second.skipped, true);
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+
+  var forced = ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId, { force: true });
+  assert.strictEqual(forced.success, true);
+  assert.strictEqual(mailApp._sentEmails.length, 2);
+});
+
+test('sendPriceUpdateMailForBooking: MailApp失敗でも予約状態は変更されず、priceUpdateMailSentAtも記録されない', function () {
+  var mailApp = stubs.createMailAppStub({ throwError: new Error('mail server down') });
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    priceAmount: 4000,
+    priceOverrideAmount: 3500,
+    priceOverrideAt: new Date('2026-09-30T12:00:00+09:00')
+  });
+
+  var result = ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId);
+  assert.strictEqual(result.success, false);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'PENDING');
+  assert.strictEqual(found.record.priceUpdateMailSentAt, '');
+});
+
+test('sendPriceUpdateMailForBooking: 設定不足（BOOKING_MAIL_*未設定）はfail-closedに拒否し、メールを送らない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: {}, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    priceAmount: 4000,
+    priceOverrideAmount: 3500,
+    priceOverrideAt: new Date('2026-09-30T12:00:00+09:00')
+  });
+
+  var result = ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(mailApp._sentEmails.length, 0);
+});
+
 /* ---------- CANCELLED ---------- */
 
 test('sendCancelledMailForBooking: CANCELLED予約にのみ送信でき、cancelMailSentAtを記録する', function () {
@@ -1655,4 +1760,24 @@ test('存在しないbookingIdはNOT_FOUNDを返す', function () {
   var result = ctx.sandbox.BookingMailer.sendPendingMailForBooking('SX-NOT-EXIST');
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'NOT_FOUND');
+});
+
+test('PRICE_UPDATE: 過去の案内後の再修正はforceなしで再送し、最新の修正日時より後に送信時刻を記録する', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { priceAmount: 4000, priceOverrideAmount: 3500, priceOverrideAt: new Date(Date.now() - 120000) });
+
+  var first = ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId);
+  assert.strictEqual(first.success, true);
+  var sentAt = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.priceUpdateMailSentAt;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, {
+    priceOverrideAmount: 3000,
+    priceOverrideAt: new Date(sentAt.getTime() + 1)
+  });
+  var second = ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId);
+  assert.strictEqual(second.success, true);
+  assert.strictEqual(mailApp._sentEmails.length, 2);
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.ok(record.priceUpdateMailSentAt.getTime() > record.priceOverrideAt.getTime());
+  assert.strictEqual(ctx.sandbox.Booking.needsPriceUpdateNotice(record), false);
 });

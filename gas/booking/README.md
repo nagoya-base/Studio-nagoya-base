@@ -24,53 +24,91 @@
 - テスト: `node --test test/booking-reschedule.test.js`。
   本番GAS・Calendar・Stripeへの接続テストは行わず、レビューと管理者の本番テスト後に反映する。
 
-### Issue #344追記: 料金差額の自動計算（2026-09-25 承認方針。実装レビュー中）
+### Issue #344追記: 料金差額の自動計算（PR #345レビュー対応で再設計。実装レビュー中）
 
-上記の日程変更機能に、料金差額の自動計算を追加した。新規ファイル
-`gas/booking/shared/JapanHolidays.gs`（祝日判定）・`gas/booking/shared/FeeMasterRepository.gs`
-（バージョン付き料金マスタ。`FeeMaster`シート）・`gas/booking/shared/FeeCalculator.gs`
-（30分刻み補間・キャンセル規定との突合の純粋関数）を追加し、`BookingReschedule.gs`・
-`SpreadsheetRepository.gs`（Bookings末尾に料金関連列を追加）・`BookingAdminWeb.gs`・
-`admin/booking/booking-admin.js`/`.css`を拡張した。**いずれもBooking Adminプロジェクトのみ
-（公開Booking Web Appには追加しない）。**
+上記の日程変更機能に、料金差額の自動計算を追加した。**初版（レビュー前）はここに独自の
+料金表・祝日判定（`FeeMasterRepository.gs`のバージョン付き`FeeMaster`シート・
+`JapanHolidays.gs`）を持っていたが、PR #345レビューで次の指摘を受け、再設計した:**
 
-- **30分刻みの補間式はissue本文の「暫定案」をv1として承認・実装したもの**
-  （2h/3h/4h/延長1hの4点間を線形補間、4h超は延長単価の半額を30分ごとに加算、
-  30分未満の端数は切上げ）。`FeeMasterRepository`のv1金額は2026-09-25時点の
-  `index.html#pricing`・`mens/index.html#pricing`・`studio-x/index.html#price`を転記した
-  もので、mens×通常・studio_x×会員は公開ページに料金表が無いため意図的に未定義のまま
-  （該当する組み合わせは自動算出せず、管理者の手動入力を必須にする＝フェイルクローズ）。
-- **既存予約は金額が未記録のため、日程変更を確定する前に必ず`setFeeBaseline`
-  （`adminSetBookingFeeBaseline`）で元の確定料金・支払済み額・価格区分（会員/通常）を
-  管理者が照合して入力する必要がある。** 未確認のままでは`commit`（`adminRescheduleBooking`）
-  自体が`FEE_BASELINE_REQUIRED`で失敗する（Web UIの「基準料金」欄から入力する）。
-- 差額の扱い（`FeeCalculator.assessScheduleChangeFee`）:
-  - 新料金が高い場合は単純な追加請求（`ADDITIONAL_CHARGE_REQUIRED`）。キャンセル規定は関係ない。
-  - 新料金が安く、かつ「今回が初めての日程変更」かつ「変更前利用日の前日まで」の場合のみ、
-    キャンセル料なしの返金候補を自動算出する（`CANDIDATE`）。
-  - それ以外の減額（2回目以降・当日）は、「一部時間短縮をキャンセルと同一視するか」
-    「差額のどの部分にキャンセル料を掛けるか」が規約に明記が無く、issue本文が
-    「実装で決めず管理者承認または規約改定を待つ」と明示しているため、**自動では一切
-    金額を作らない**（`PENDING_POLICY_DECISION`）。管理者が金額（0〜差額/未返金額の
-    範囲）と理由を明示的に入力しない限り`commit`は`FEE_REFUND_DECISION_REQUIRED`で
-    失敗する。免除特例（災害等）もこの同じ仕組みで管理者が個別に金額と理由を入力する
-    （専用の自動判定は作っていない）。
-  - 料金表に定義が無い組み合わせ（mens×通常等）も同様に、管理者が
-    `manualNewFeeAmount`/`manualNewFeeNote`で金額と理由を明示しない限り確定できない。
-- `commit`は確定直前に料金マスタの版を再取得し、previewで見た版
-  （`expectedFeeMasterVersion`）と異なれば`FEE_VERSION_MISMATCH`で拒否する
-  （料金マスタは管理者がいつでも新versionを追記できるため）。
-- 料金の確定と資金移動は分離している。`commit`は確定金額・返金候補（または管理者承認額）を
-  Bookings/BookingChangesへ記録し、`feeSettlementState`を`PENDING_CHARGE`/`PENDING_REFUND`
-  へ更新するだけで、Stripe等への自動請求・自動返金は一切行わない。実際の入出金を管理者が
-  確認した後に`recordFeeSettlement`（`adminRecordRescheduleFeeSettlement`）で
-  `feePaidAmount`/`feeRefundedAmount`/`feeSettlementState`を更新する（Web UIの「精算の記録」欄）。
+- Issue #344とは別に、Issue #342/#343（新規予約の料金自動計算）・Issue #346/#347
+  （日本の祝日・振替休日・国民の休日判定）が並行してmainへマージされており、
+  `gas/booking/shared/BookingPricing.gs`・`gas/booking/shared/JapaneseHolidays.gs`という
+  レビュー済み・テスト済みの正本が既に存在していた。日程変更専用に別の料金表・祝日判定を
+  持つことは「料金表はここ1箇所のみに定義する」というBookingPricing.gsの設計方針に反し、
+  改定時に食い違うリスクがある（`FeeMasterRepository`と`JapaneseHolidays`との重複）。
+- 旧`FeeMasterRepository`の`effectiveAt='2020-01-01'`は、実際にいつから有効だったか
+  確認できないのに2020年からと決め打ちしていた、根拠のない偽装だった。
+
+**再設計の結果、`FeeMasterRepository.gs`・`JapanHolidays.gs`は削除し、料金の正本は
+`BookingPricing.gs`・祝日判定の正本は`JapaneseHolidays.gs`に一本化した。** この2ファイルを
+Booking Adminにも追加し（従来はBooking Web App専用）、新規ファイル
+`gas/booking/shared/FeeCalculator.gs`（30分刻みへの丸め・差額判定・キャンセル規定との突合の
+純粋関数のみ）・`gas/booking/shared/FeeSettlementRepository.gs`（精算の冪等性台帳。
+`FeeSettlements`シート）を追加し、`BookingReschedule.gs`・`SpreadsheetRepository.gs`
+（Bookings末尾に列を追加）・`BookingAdminWeb.gs`・`admin/booking/booking-admin.js`/`.css`を
+拡張した。**いずれもBooking Adminプロジェクトのみ（公開Booking Web Appには追加しない。
+ただしBookingPricing.gs/JapaneseHolidays.gsは既存どおりBooking Web Appにも必要）。**
+
+**現在の確定金額・価格区分は独自の列を持たず、Issue #342/#343の料金基盤
+（`priceAmount`/`priceTier`/`priceOverrideAmount`/`priceOverrideAt`/
+`Booking.getEffectivePriceAmount`）をそのまま再利用する。** 日程変更で価格が変わった場合は
+`priceOverrideAmount`/`priceOverrideAt`を更新する（PENDING予約の確定前金額修正
+[`updateBookingPrice`]と同じ「現在の実効金額」の仕組みを、CONFIRMED予約の日程変更にも
+再利用する形。`needsPriceUpdateNotice`はPENDING限定の判定のため干渉しない）。
+
+- **30分刻みの丸めは承認済みの方針（30分単位で計算・変更確定時点の最新料金表を適用）
+  だが、2.5h/3.5h等の半端な時間の具体的な金額をどう補間するかは未承認のまま。**
+  `FeeCalculator.quoteFee`は、丸め後の時間が整数時間（2h/3h/4h、またはそれを超える整数時間）
+  に一致する場合のみ`BookingPricing.computeBookingPrice`（唯一の正本）へ委譲して金額を返す。
+  半端な30分単位になる場合は`HALF_HOUR_RATE_UNCONFIRMED`を返し、**金額を一切自動算出しない**
+  （管理者が`manualNewFeeAmount`/`manualNewFeeNote`で金額と理由を明示しない限り確定できない）。
+  料金表に定義が無い組み合わせ（mens×通常・studio_x×会員等）も同じ扱い。
+- **既存予約は金額が未記録のため（Issue #342以前に作成された予約）、日程変更を確定する前に
+  必ず`backfillOriginalPrice`（`adminBackfillOriginalPrice`）で元の確定料金・価格区分
+  （会員/通常）を管理者が照合して入力する必要がある。** `Booking.getEffectivePriceAmount`が
+  nullを返す間は`commit`（`adminRescheduleBooking`）自体が`FEE_BASELINE_REQUIRED`で失敗する
+  （Web UIの「基準料金」欄から入力する）。Issue #342以降に作成された予約は`priceAmount`が
+  自動的に記録済みのため、この手順は不要。
+- 差額の扱い（`FeeCalculator.assessScheduleChangeFee`）は変更なし: 増額は単純な追加請求。
+  「初めての日程変更」かつ「変更前利用日の前日まで」の減額のみキャンセル料なしの返金候補を
+  自動算出する。それ以外の減額（2回目以降・当日）は、規約上どちらとも決められないため
+  **自動では一切金額を作らず**、管理者が金額（0〜差額/未返金額の範囲）と理由を明示的に
+  入力しない限り`commit`は`FEE_REFUND_DECISION_REQUIRED`で失敗する。
+- **料金マスタの「版」概念は廃止した。** `BookingPricing.gs`の料金表はデプロイされた
+  コードに焼き込まれた定数であり、実行時にスプレッドシート等を編集して書き換える経路が
+  無いため、「previewで見た版と確定直前の版が食い違う」という事態はコード構造上
+  発生し得ない（新しい価格を反映するには新しいコードのデプロイが必要で、GASは
+  デプロイ後の全実行に新バージョンを一貫して適用する）。旧`expectedFeeMasterVersion`・
+  `FEE_VERSION_MISMATCH`は削除した。
+- **日時更新後の料金関連フィールド（現在の確定金額・変更回数・精算状態）は
+  `SpreadsheetRepository.updateBookingRescheduleFeeAtomic`で1回の`Range.setValues`として
+  更新する（PR #345レビュー必須修正1）。** この書き込みが失敗した場合、`commit`は
+  `success:false`（`FEE_UPDATE_FAILED_RECOVERY_REQUIRED`）を返し、`feeRecoveryRequiredAt`を
+  立てて以降の`commit`/`recordFeeSettlement`を一律ブロックする（「成功扱いで握りつぶす」
+  「変更回数だけ旧値のまま残る」ことを構造的に禁止する）。日時自体の変更（Calendar/
+  Bookingsのdate/startAt/endAt）はこの障害が起きても元に戻さない（既に完了した物理的な
+  予定変更を、料金台帳の失敗を理由に再度ロールバックするとさらなる失敗のリスクを重ねる
+  ため）。ブロックされた予約は`resolveFeeRecovery`（`adminResolveFeeRecovery`）で、管理者が
+  Bookings・BookingChanges・Google Calendarを直接確認したうえで正しい値を入力し、
+  復旧する。
+- **`recordFeeSettlement`にLock・精算ID（`settlementId`）・精算履歴
+  （`FeeSettlementRepository.gs`の`FeeSettlements`シート）を追加した（PR #345レビュー
+  必須修正2）。** 同一`settlementId`の再送・二重クリック・通信エラー後の再実行は、内容が
+  完全一致する限り安全（二重加算しない。既存のFeeSettlements行の結果をそのまま返す）。
+  内容が異なれば`SETTLEMENT_ID_CONFLICT`で拒否する。`changeId`を指定した場合はそれが
+  対象の`bookingId`に属することを検証する（`INVALID_CHANGE_ID`）。返金額は未返金の実入金額
+  （`feePaidAmount - feeRefundedAmount`）を超えられない（`REFUND_EXCEEDS_UNREFUNDED`）。
+  Bookings側への反映に失敗した場合はFeeSettlements行を`FAILED_NEEDS_RECOVERY`にし、
+  `feeRecoveryRequiredAt`で予約をロックする（精算履歴と台帳の片方だけが更新された状態を
+  放置しない）。
+- 料金の確定と資金移動は引き続き分離している。Stripe等への自動請求・自動返金は一切行わない。
 - 変更通知メールに、元料金・新料金・差額・返金/追加請求の状況（試算か承認済みかを明記）を
   追記した。
-- テスト: `node --test test/japan-holidays.test.js test/fee-calculator.test.js
-  test/fee-master-repository.test.js test/booking-reschedule.test.js
-  test/booking-admin-page-client.test.js`。本番GAS・Calendar・Stripeへの接続テスト、
-  既存予約への一括金額埋めは別途指示まで行わない。
+- テスト: `node --test`（`test/japanese-holidays.test.js`・`test/booking-pricing.test.js`
+  ・`test/fee-calculator.test.js`・`test/fee-settlement-repository.test.js`・
+  `test/booking-reschedule.test.js`・`test/booking-admin-page-client.test.js`に今回分を
+  含む）。本番GAS・Calendar・Stripeへの接続テスト、既存予約への一括金額埋めは
+  別途指示まで行わない。
 - 実装前の規約上の未決定事項（30分料金の正式な数値、2回目以降の日程変更・当日短縮への
   キャンセル料の掛け方、有料機材・キャンペーン・会員パスの返金取扱い）は、上記の
   フェイルクローズな仕組みで「管理者が都度判断する」形にとどめており、コード側で
@@ -1273,7 +1311,14 @@ busyIntervalsに対して呼び出し、件数を閾値でバケット分けす�
 
 `package.json`はゼロ依存が方針のため、祝日ライブラリ追加・静的リストの保守は
 このIssueでは行っていない。日曜（赤系）・土曜（青系）・平日（通常色）の3色のみ
-実装した。祝日対応は別Issueで扱う。
+実装した。
+
+**Issue #346で追記:** 予約料金の曜日区分判定（`BookingPricing.gs`。「Issue #346:
+予約料金の日本の祝日・振替休日判定」節参照）には、`JapaneseHolidays.gs`による
+祝日・振替休日・国民の休日の判定を実装済み。ただし本節が指す月間カレンダーの
+日セル色分け（このセクションの対象）は依然として日曜/土曜/平日の3色のみで、
+祝日を別色で強調する表示は行っていない（表示上の強調はスコープ外のまま。
+料金計算自体は祝日を正しく土日祝料金へ分類する）。
 
 ### フロントエンド（共通予約UI）
 
@@ -2464,6 +2509,91 @@ Web UI層・クライアント層でのURL・送信先の配線・検証・プ�
 - Stripe APIによる決済リンク自動生成・Stripe Webhookによる入金確認・予約の自動確定は
   実装していない（Issue #334本文の対象外）。
 
+## Issue #346: 予約料金の日本の祝日・振替休日判定
+
+Issue #342（予約料金の自動計算）・PR #343時点では、`BookingPricing.gs`の
+`resolveDayType_`が土曜・日曜のみを`WEEKEND_HOLIDAY`に分類しており、**月〜金の
+日本の祝日・振替休日・国民の休日には平日料金が適用される**既知の制限があった
+（旧README「祝日対応は別Issueで扱う」）。本Issueでこの制限を解消した。
+
+### 実装方針
+
+- `gas/booking/shared/JapaneseHolidays.gs`を新設し、祝日・振替休日・国民の休日の
+  判定ロジックをここへ分離した（`BookingPricing.gs`の`resolveDayType_`が土曜/日曜
+  以外の日について`JapaneseHolidays.classify(dateString)`へ委譲する）。
+- **データソース・アルゴリズム**（`package.json`のゼロ依存方針を維持するため、npm
+  パッケージは追加していない。GAS実行環境にnpm依存を持ち込む構成変更自体が本Issueの
+  対象外でもある）:
+  - 根拠法令は「国民の祝日に関する法律」（内閣府 https://www8.cao.go.jp/shukujitsu/gaiyou.html ）。
+  - 固定日の祝日（元日・建国記念の日・天皇誕生日・昭和の日・憲法記念日・みどりの日・
+    こどもの日・山の日・文化の日・勤労感謝の日）は日付を直接列挙する。
+  - ハッピーマンデー対象（成人の日・海の日・敬老の日・スポーツの日）は年ごとの日付を
+    列挙せず、「第n月曜」を毎年計算で求める。
+  - 春分の日・秋分の日は、平均太陽年の長さとグレゴリオ暦のうるう年周期から導かれる
+    天文計算の近似式（1980〜2099年の範囲で有効）で算出する（年ごとの手書きテーブル
+    ではない）。国立天文台は毎年2月1日に「暦要項」で**翌年分**の確定日のみを公示する
+    ため、本Issueの対応年（2020〜2099年）のほとんどは政府がまだ公式に確定日を発表
+    していない将来年であり、この式が返す値は**天文計算に基づく予測**であって法的な
+    確定日そのものではない。式の算出結果は、既に公示済みの年（2000年・2020年・
+    2021年・2023年・2024年など）については実際の公示日と一致することを確認している
+    が、未公示の将来年については想定する周期性が今後も変わらない前提での外挿である
+    ため、暦要項の公示のたびに当年・翌年分を照合し、食い違いがあれば個別の例外として
+    追加すること（詳細・保守手順は`JapaneseHolidays.gs`ファイル冒頭コメント参照）。
+  - 2020年・2021年の海の日・スポーツの日・山の日のみ、東京オリンピック・パラリンピック
+    特別措置法による一回限りの法改正のため、アルゴリズムで導出できず明示的な例外として
+    個別に列挙している。
+  - 振替休日（祝日が日曜のとき、その後の最初の非祝日を休日とする。2007年改正による
+    祝日連続時のカスケードも含む）・国民の休日（前後を祝日に挟まれた祝日でない平日）は、
+    法律の定義どおりのアルゴリズムで計算する（固定リストの手書き列挙で済ませていない）。
+  - 実装の詳細・保守方法は`JapaneseHolidays.gs`ファイル冒頭のコメントに記載。
+- **対応年の範囲**: 2020〜2099年（`JapaneseHolidays.MIN_SUPPORTED_YEAR`/
+  `MAX_SUPPORTED_YEAR`）。下限は天皇誕生日が2/23（令和）になった年、上限は春分・秋分
+  近似式が前提とするグレゴリオ暦のうるう年周期が単純に成り立つ範囲の上限（2100年は
+  「100で割り切れ400で割り切れない」うるう年の例外に当たり式の前提が崩れる。2099年
+  まで政府が確定日を公示済みという意味ではない）。予約は将来日付のみが対象のため、
+  現行の運用では問題にならない。国立天文台の暦要項公示のたびに近似式の算出結果と
+  照合し、2090年代に入ったらうるう年周期の前提が引き続き成り立つか・上限の延伸要否を
+  判断すること。国会が祝日法を改正した場合（2020/2021のような一時的特例、恒久的な
+  祝日の追加・変更のいずれも）は、`JapaneseHolidays.gs`内の該当箇所を追記・修正すること。
+- **タイムゾーン**: 施設タイムゾーン（`Asia/Tokyo`）基準に正規化済みの`YYYY-MM-DD`
+  文字列を前提とする（`BookingPricing.gs`の既存方針をそのまま踏襲。ブラウザ/GAS実行
+  環境のローカルタイムゾーンには依存しない）。
+- **判定不能時はfail-closed（PR #347レビュー対応で強化）**: 対応年の範囲外など、
+  `JapaneseHolidays.classify`が祝日区分を確定できない場合、`resolveDayType_`は黙って
+  `WEEKDAY`にフォールバックせず、`computeBookingPrice`が`valid: false`を返す。この
+  検証は**曜日を問わず必ず先に**行う（`resolveDayType_`が先に土曜/日曜判定を済ませて
+  しまうと、対応年範囲外の土曜・日曜だけが祝日判定の検証を経由せず「たまたま」成功し、
+  同じ範囲外の月〜金だけがエラーになるという非対称なfail-closedになってしまうため）。
+  `estimatePrice`（Code.gs）・`createBooking`（BookingRepository.gs）はいずれも既存の
+  `priceResult.valid`チェックがそのままこのエラーを見積り・予約作成エラーとして扱う
+  （過少請求を避ける。新しい分岐を追加する必要はなかった）。
+- 料金表の正本は引き続き`BookingPricing.gs`1箇所のみ。フロントエンド側に祝日・料金表の
+  別実装は作っていない。`estimatePrice`と`createBooking`は同じ`computeBookingPrice`→
+  `resolveDayType_`→`JapaneseHolidays.classify`を呼ぶため、見積り金額と仮予約保存金額の
+  曜日区分・金額は常に一致する。
+- 既存予約の`priceAmount`・`priceDayType`は再計算・書き換えしていない（本Issueの対象外。
+  管理者の金額修正・訂正案内フローは無変更）。
+
+### デプロイ対象ファイル
+
+`JapaneseHolidays.gs`は`BookingPricing.gs`のresolveDayType_内でのみ参照される依存
+ファイルのため、`BookingPricing.gs`と同じくBooking Web App専用として追加した
+（「GASプロジェクトへのデプロイ対象ファイル」節の表・
+`test/helpers/booking-deployment-manifest.js`を同期済み）。
+
+### テスト
+
+- `test/japanese-holidays.test.js`: `JapaneseHolidays.classify`単体のテスト。固定日の
+  祝日・ハッピーマンデー・2020/2021年特例・春分/秋分・振替休日（カスケード含む）・
+  国民の休日・年またぎ・対応年範囲の境界・範囲外のfail-closedエラーを検証する。
+- `test/booking-pricing.test.js`: `computeBookingPrice`が祝日・振替休日・国民の休日を
+  `WEEKEND_HOLIDAY`へ正しく反映すること、判定不能時にfail-closedでエラーを返すことを
+  検証する（祝日判定アルゴリズム自体の網羅的な検証は上記`japanese-holidays.test.js`側）。
+  対応年範囲外は土曜・日曜であってもエラーになること（PR #347レビュー対応。曜日判定を
+  祝日判定より先に済ませて非対称なfail-closedにならないことの回帰テスト）も含む。
+- 既存の`test/booking-estimate-price.test.js`・`test/booking-create-booking.test.js`等は
+  `JapaneseHolidays.gs`を依存ファイルとして読み込むよう更新した（ロジック自体は無変更）。
+
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
 | 項目 | 値 |
@@ -2654,6 +2784,8 @@ Web UI層・クライアント層でのURL・送信先の配線・検証・プ�
 | `Config.gs` | ✓ | ✓ | `gas/booking/shared/Config.gs` |
 | `CalendarRepository.gs` | ✓ | ✓ | `gas/booking/shared/CalendarRepository.gs` |
 | `Booking.gs` | ✓ | ✓ | `gas/booking/shared/Booking.gs` |
+| `JapaneseHolidays.gs`（Issue #346／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | `gas/booking/shared/JapaneseHolidays.gs` |
+| `BookingPricing.gs`（Issue #342／Issue #346で祝日判定を追加／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | `gas/booking/shared/BookingPricing.gs` |
 | `RateLimiter.gs` | ✓ | – | `gas/booking/public/RateLimiter.gs` |
 | `SpreadsheetRepository.gs` | ✓ | ✓ | `gas/booking/shared/SpreadsheetRepository.gs` |
 | `RecoveryRepository.gs` | ✓ | ✓ | `gas/booking/shared/RecoveryRepository.gs` |
@@ -2666,9 +2798,8 @@ Web UI層・クライアント層でのURL・送信先の配線・検証・プ�
 | `BookingAdminWeb.gs`（Issue #305） | – | ✓ | `gas/booking/admin/BookingAdminWeb.gs` |
 | `BookingReminderTriggers.gs`（Issue #271） | – | ✓ | `gas/booking/admin/BookingReminderTriggers.gs` |
 | `BookingReminderDiagnostics.gs`（Issue #330） | – | ✓ | `gas/booking/admin/BookingReminderDiagnostics.gs` |
-| `JapanHolidays.gs`（Issue #344追記） | – | ✓ | `gas/booking/shared/JapanHolidays.gs` |
-| `FeeMasterRepository.gs`（Issue #344追記） | – | ✓ | `gas/booking/shared/FeeMasterRepository.gs` |
 | `FeeCalculator.gs`（Issue #344追記） | – | ✓ | `gas/booking/shared/FeeCalculator.gs` |
+| `FeeSettlementRepository.gs`（Issue #344追記） | – | ✓ | `gas/booking/shared/FeeSettlementRepository.gs` |
 | `BookingReschedule.gs`（Issue #344） | – | ✓ | `gas/booking/admin/BookingReschedule.gs` |
 | `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい。ただしWeb App自体のデプロイ設定は必要。後述） | `gas/booking/public/appsscript.json` |
 
@@ -2842,7 +2973,9 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 `stripePaymentLinkUrl` / `paymentLinkSentAt` / `paymentLinkSentTo` / `paymentLinkSendCount` /
 `paymentLinkLastErrorAt` / `paymentLinkLastErrorMessage` / `paymentLinkSendUnconfirmedAt` /
 `paymentLinkMetadataInconsistentAt`（いずれもIssue #334 PR-Cで追加。`paymentLinkSendUnconfirmedAt`
-はPR #337レビュー対応・1回目、`paymentLinkMetadataInconsistentAt`は2回目で追加）
+はPR #337レビュー対応・1回目、`paymentLinkMetadataInconsistentAt`は2回目で追加） /
+`priceAmount` / `priceTier` / `priceDayType` / `priceIsMember` / `priceComputedAt` /
+`priceOverrideAmount` / `priceOverrideAt` / `priceUpdateMailSentAt`（Issue #342・PR #343で追加）
 
 - `customerType`はIssue #270で20列目として**末尾に追記**した。既存行との互換性を保つため
   途中に挿入していない（既存行はこの列が空のまま＝利用区分不明として扱われる）。
@@ -2875,8 +3008,45 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 - `status`は`PENDING` / `CONFIRMED` / `CANCELLED` / `EXPIRED`のいずれか。
   **このセルを直接手編集するのは正式運用ではない。** 確定は必ず`confirmBooking(bookingId)`
   （カスタムメニュー経由）を使うこと。TTL失効・キャンセルも将来的に専用関数経由のみとする。
-- 料金列は持たない（Phase 1では自動料金計算をしないため。Issue #271の確定メールでも
-  料金は本文へ出さない）。
+- Issue #342・PR #343で末尾に追加した8列の用途:
+  - `priceAmount`は仮予約作成時にGASが計算・保存した税込金額（円）。後の料金表変更では再計算しない。
+  - `priceTier`（`GENERAL`/`MEMBER`）、`priceDayType`（`WEEKDAY`/`WEEKEND_HOLIDAY`）、
+    `priceIsMember`（実際に適用した会員区分）、`priceComputedAt`（計算日時）は計算時点の条件。
+  - `priceOverrideAmount`と`priceOverrideAt`はPENDING中の管理者による金額修正値・修正日時。
+    自動計算値は上書きしない。実際の案内額は`Booking.getEffectivePriceAmount`で判定する。
+  - `priceUpdateMailSentAt`は訂正案内メールの送信成功日時。未送信または送信後に料金を再修正した場合は
+    `Booking.needsPriceUpdateNotice`により未案内と判定し、訂正案内が完了するまで予約確定を拒否する。
+  - 料金関連列が空の既存予約は「未計算」として扱う。確定メール・Stripe決済リンクメールには、
+    引き続き料金を表示しない（訂正案内メールは別途送信する）。
+
+### Issue #342・PR #343 本番`Bookings`シートのヘッダー追記手順
+
+**既存の本番シートはヘッダーが自動更新されない。** Web App・Booking Admin両方の更新前に、
+本番`Bookings`シートの1行目と`SpreadsheetRepository.gs`の`HEADERS_`を照合すること。
+
+1. 既存データをバックアップする。`paymentLinkMetadataInconsistentAt`が現在の最終ヘッダーであることを確認する。
+   もし既に今回の列が一部存在する場合は、重複追加せず`HEADERS_`の順序と突き合わせて不足分のみを補う。
+2. **既存列の途中へ挿入せず**、`paymentLinkMetadataInconsistentAt`の右隣から、次の8列を
+   **この順番のまま**1行目へ追記する（列名は完全一致させる）。
+
+   ```text
+   priceAmount
+   priceTier
+   priceDayType
+   priceIsMember
+   priceComputedAt
+   priceOverrideAmount
+   priceOverrideAt
+   priceUpdateMailSentAt
+   ```
+
+3. 既存行の新規8列は空欄のままにする。値を一括補完・再計算しない。
+   1行目に列名の重複・欠落・順序違いがないことを、`HEADERS_`と照合して確認する。
+4. その後に既存のBooking Web AppとBooking Adminの**両プロジェクト**へ対象ファイルを反映する。
+   本番デプロイを更新する場合は既存デプロイID・`/exec` URLを維持する。
+   新規予約の金額保存、管理画面の料金表示、金額修正→訂正案内→予約確定の動作を確認する。
+
+この手順は本番反映時の作業指示であり、PR #343では本番のシート編集・GASデプロイを行わない。
 
 ### `Recovery`シート（部分失敗・不整合記録）列構成
 

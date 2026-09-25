@@ -1,23 +1,26 @@
 /* Issue #344: Booking Admin専用。公開Booking Web Appへ配置しない。
  *
- * Issue #344追記（Phase 1/2）: 料金差額の自動計算を追加した。既存Bookingsに金額が
- * 記録されていない予約があるため、日程変更を確定するには必ず先にsetFeeBaseline()で
- * 「元の確定料金・支払額・適用区分（会員／通常）」を管理者が照合・入力しておく必要がある
- * （未確認のままでは確定ボタンに相当するcommit()自体が失敗する。Phase 2「元料金未確認は
- * 確定ボタンを無効にする」）。
- *
- * 料金差額そのものの扱い（FeeCalculator.assessScheduleChangeFee参照）:
- * - 新料金が高い場合は単純な追加請求（ADDITIONAL_CHARGE_REQUIRED）。
- * - 新料金が安く、かつ「今回が初めての日程変更」かつ「変更前利用日の前日まで」の場合のみ、
- *   キャンセル料なしの返金候補を自動算出する（CANDIDATE）。
- * - それ以外の減額（2回目以降・当日）は規約上どちらとも決められないため
- *   （PENDING_POLICY_DECISION）、管理者が金額と理由を明示的に入力しない限り確定できない
- *   （commit()のfeeConfirmation.manualRefundDecision。自動では一切金額を作らない）。
- * - 料金マスタに定義が無い組み合わせ（mens×general、studio_x×member等）も同様に、
- *   管理者がfeeConfirmation.manualNewFeeAmount/manualNewFeeNoteで金額と理由を明示しない
- *   限り確定できない。
- * - 資金移動（実際の入出金）は料金確定とは別。recordFeeSettlement()で、管理者が
- *   Stripe/PayPay/現金の入出金を確認した後にのみ反映する（自動決済は一切行わない）。
+ * Issue #344追記（料金差額の自動計算。PR #345レビュー対応で再設計）:
+ * - 料金の正本はBookingPricing.gs（Issue #342/#343）・祝日判定の正本はJapaneseHolidays.gs
+ *   （Issue #346/#347）に一本化した。「現在の確定金額・価格区分」は独自の列を持たず、
+ *   Booking.getEffectivePriceAmount/record.priceTier（PR #343の料金基盤）をそのまま
+ *   再利用する。既存予約は金額が未記録のため、日程変更を確定する前に必ず
+ *   backfillOriginalPrice()で「元の確定料金・価格区分」を管理者が照合・入力しておく必要が
+ *   ある（未確認のままではcommit()自体が失敗する）。
+ * - 料金差額の扱い（FeeCalculator.assessScheduleChangeFee参照）: 新料金が高い場合は単純な
+ *   追加請求。新料金が安く、かつ「今回が初めての日程変更」かつ「変更前利用日の前日まで」の
+ *   場合のみ、キャンセル料なしの返金候補を自動算出する。それ以外の減額（2回目以降・当日）と
+ *   30分刻みの端数（2.5h/3.5h等。未承認の補間ルール）は、規約上・料金表上どちらとも
+ *   決められないため自動では一切金額を作らず、管理者が金額と理由を明示的に入力しない限り
+ *   確定できない。
+ * - 日時更新後の料金関連フィールド（現在の確定金額・変更回数・精算状態）は
+ *   updateBookingRescheduleFeeAtomicで1回のRange.setValuesとして更新する。この書き込みが
+ *   失敗した場合はfeeRecoveryRequiredAtを立てて以降のcommit/recordFeeSettlementを
+ *   ブロックし、「成功扱いで握りつぶす」ことを構造的に防ぐ（PR #345レビュー対応）。
+ * - 資金移動（実際の入出金）は料金確定とは別。recordFeeSettlementは、Lock・精算ID
+ *   （settlementId）・FeeSettlementRepository.gsの精算履歴により、同一精算IDの再送・
+ *   二重クリック・通信エラー後の再実行で入金額・返金額を二重加算しない（PR #345レビュー
+ *   対応）。
  */
 'use strict';
 
@@ -26,12 +29,12 @@ var BookingReschedule = (function () {
   var HISTORY_HEADERS_ = [
     'changeId', 'bookingId', 'changedAt', 'oldDate', 'oldStartAt', 'oldEndAt',
     'newDate', 'newStartAt', 'newEndAt', 'reason', 'feeNote', 'mailState', 'mailAt', 'mailError',
-    /* Issue #344追記（Phase 1）で追加した列。末尾追記の方針は既存Bookings/BookingChanges列と同じ。 */
-    'oldFeeAmount', 'newFeeAmount', 'feeDifference', 'feeMasterVersion', 'cancellationPolicyCategory',
+    'oldFeeAmount', 'newFeeAmount', 'feeDifference', 'cancellationPolicyCategory',
     'refundStatus', 'refundCandidateAmount', 'refundApprovedAmount', 'refundApprovedAt',
     'refundPendingReason', 'settlementStateAtChange', 'feeDetailsJson'
   ];
-  var VALID_PRICE_CATEGORIES_ = ['general', 'member'];
+  var VALID_PRICE_TIERS_ = ['GENERAL', 'MEMBER'];
+  var VALID_SETTLEMENT_STATES_ = ['SETTLED', 'PENDING_CHARGE', 'PENDING_REFUND', 'PENDING_DECISION'];
 
   function error_(code, message) {
     return { success: false, error: { code: code, message: message } };
@@ -66,6 +69,11 @@ var BookingReschedule = (function () {
     } catch (e) {
       Logger.log('BookingReschedule: Recovery記録失敗');
     }
+  }
+
+  function dateStringOf_(value, timezone) {
+    if (isDate_(value)) return BookingAvailability.formatDateInTimezone(value, timezone);
+    return value;
   }
 
   function parse_(bookingId, input, expectedVersion, now) {
@@ -131,43 +139,45 @@ var BookingReschedule = (function () {
     };
   }
 
-  /* Issue #344追記: Bookingsの料金関連フィールドを読み取り、既定値を補う。 */
+  /* Issue #344追記: 「現在の確定金額・価格区分」はPR #343の料金基盤
+     （Booking.getEffectivePriceAmount/record.priceTier）をそのまま読む。 */
   function feeBaseline_(record) {
     return {
-      priceCategory: record.priceCategory || '',
-      priceCategoryBasis: record.priceCategoryBasis || '',
-      confirmedFeeAmount: isFiniteNumber_(record.confirmedFeeAmount) ? Number(record.confirmedFeeAmount) : null,
+      oldAmount: Booking.getEffectivePriceAmount(record),
+      priceTier: record.priceTier || '',
+      scheduleChangeCount: isFiniteNumber_(record.scheduleChangeCount) ? Number(record.scheduleChangeCount) : 0,
       feePaidAmount: isFiniteNumber_(record.feePaidAmount) ? Number(record.feePaidAmount) : 0,
       feeRefundedAmount: isFiniteNumber_(record.feeRefundedAmount) ? Number(record.feeRefundedAmount) : 0,
-      feeMasterVersion: isFiniteNumber_(record.feeMasterVersion) ? Number(record.feeMasterVersion) : null,
-      feeInitializedAt: isDate_(record.feeInitializedAt) ? record.feeInitializedAt : null,
-      scheduleChangeCount: isFiniteNumber_(record.scheduleChangeCount) ? Number(record.scheduleChangeCount) : 0,
       feeSettlementState: record.feeSettlementState || ''
     };
   }
 
+  function isInFeeRecovery_(record) {
+    return isDate_(record.feeRecoveryRequiredAt);
+  }
+
   /*
    * Issue #344追記: 新しい日時の料金見積り・差額判定をまとめて行う。
-   * baseline未確認・料金表未定義の場合はready:falseで返し、金額は一切作らない
+   * baseline未確認・料金算出不可の場合はready:falseで返し、金額は一切作らない
    * （呼び出し側=commit()が、その状態のまま確定させるかどうかを判断する）。
    */
   function computeFeeContext_(record, newDurationMinutes, newDateString, todayDateString, timezone) {
     var baseline = feeBaseline_(record);
-    if (!baseline.feeInitializedAt || !baseline.priceCategory || baseline.confirmedFeeAmount === null) {
+    if (baseline.oldAmount === null || !baseline.priceTier) {
       return { ready: false, status: 'BASELINE_REQUIRED', baseline: baseline };
     }
     var quote = FeeCalculator.quoteFee({
-      brand: record.brand, priceCategory: baseline.priceCategory,
-      durationMinutes: newDurationMinutes, dateString: newDateString, asOfDateString: todayDateString
+      brand: record.brand, priceTier: baseline.priceTier,
+      durationMinutes: newDurationMinutes, dateString: newDateString
     });
     if (!quote.supported) {
-      return { ready: false, status: quote.reason, baseline: baseline, quote: quote };
+      return { ready: false, status: quote.reason, message: quote.message, baseline: baseline, quote: quote };
     }
-    var oldDateString = BookingAvailability.formatDateInTimezone(record.startAt, timezone);
+    var oldDateString = dateStringOf_(record.startAt, timezone);
     var cancellationCategory = FeeCalculator.classifyCancellationPolicy(oldDateString, todayDateString);
     var unrefunded = Math.max(0, baseline.feePaidAmount - baseline.feeRefundedAmount);
     var assessment = FeeCalculator.assessScheduleChangeFee({
-      oldAmount: baseline.confirmedFeeAmount, newAmount: quote.amount, unrefundedPaidAmount: unrefunded,
+      oldAmount: baseline.oldAmount, newAmount: quote.amount, unrefundedPaidAmount: unrefunded,
       scheduleChangeCount: baseline.scheduleChangeCount, cancellationPolicyCategory: cancellationCategory
     });
     return {
@@ -176,64 +186,61 @@ var BookingReschedule = (function () {
     };
   }
 
-  function feeStatusMessage_(status) {
+  function feeStatusMessage_(status, fallbackMessage) {
     if (status === 'BASELINE_REQUIRED') return '元の確定料金が未確認です。先に基準料金を設定してください。';
-    if (status === 'NO_PRICE_DATA') return 'この予約区分（ブランド×会員/通常）の料金表が未整備です。管理者が金額を確認してください。';
-    if (status === 'DURATION_TOO_SHORT') return '利用時間が短すぎるため自動算出できません。';
+    if (fallbackMessage) return fallbackMessage;
     return '新しい日時の料金を自動算出できません。管理者が確認してください。';
   }
 
   /*
-   * Issue #344追記: 元の確定料金・支払額・適用区分（会員/通常）を管理者が照合して入力する
-   * （Phase 1「初回変更時に元の確定料金…を管理者が照合して入力する」）。既存予約は金額が
-   * 未記録のため必須。何度でも呼び直して補正できる（誤入力の訂正用）。日程変更そのものは
-   * 行わない。
+   * Issue #344追記: 元の確定料金・価格区分（会員/通常）を管理者が照合して入力する
+   * （既存予約は金額が未記録のため必須）。何度でも呼び直して補正できる。日程変更そのものは
+   * 行わない。PR #343の料金基盤（priceAmount/priceTier/priceDayType/priceIsMember/
+   * priceComputedAt）をそのまま書き込む（日程変更専用の列は持たない）。
    */
-  function setFeeBaseline(bookingId, priceCategory, confirmedFeeAmount, paidAmount, basisNote) {
+  function backfillOriginalPrice(bookingId, priceTier, amount, note) {
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
     if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
-    if (found.record.status !== Booking.STATUS.CONFIRMED) {
+    var record = found.record;
+    if (record.status !== Booking.STATUS.CONFIRMED) {
       return error_('INVALID_STATUS', '確定済みの予約のみ基準料金を設定できます。');
     }
-    if (VALID_PRICE_CATEGORIES_.indexOf(priceCategory) === -1) {
-      return error_('INVALID_PRICE_CATEGORY', '価格区分はgeneral/memberのいずれかで指定してください。');
+    if (isInFeeRecovery_(record)) {
+      return error_('FEE_RECOVERY_REQUIRED', 'この予約は料金の整合性確認が必要な状態です。resolveFeeRecoveryで解消してから操作してください。');
     }
-    if (!isFiniteNumber_(confirmedFeeAmount) || confirmedFeeAmount < 0) {
-      return error_('INVALID_AMOUNT', '確定料金は0以上の金額で指定してください。');
+    if (VALID_PRICE_TIERS_.indexOf(priceTier) === -1) {
+      return error_('INVALID_PRICE_TIER', '価格区分はGENERAL/MEMBERのいずれかで指定してください。');
     }
-    if (!isFiniteNumber_(paidAmount) || paidAmount < 0) {
-      return error_('INVALID_AMOUNT', '支払済み額は0以上の金額で指定してください。');
+    if (!isFiniteNumber_(amount) || amount <= 0 || Math.floor(amount) !== amount) {
+      return error_('INVALID_AMOUNT', '確定料金は1円以上の整数で指定してください。');
     }
-    if (typeof basisNote !== 'string' || !basisNote.trim()) {
-      return error_('BASIS_REQUIRED', '価格区分の確認根拠を入力してください。');
+    if (typeof note !== 'string' || !note.trim()) {
+      return error_('BASIS_REQUIRED', '価格区分・金額の確認根拠を入力してください。');
     }
     var timezone = BookingConfig.getAvailabilityConfig().timezone;
-    var today = BookingAvailability.formatDateInTimezone(new Date(), timezone);
-    var version;
-    try {
-      version = FeeMasterRepository.getActiveTable(today).version;
-    } catch (e) {
-      return error_('FEE_MASTER_UNAVAILABLE', '料金マスタを取得できません。');
+    var dateString = dateStringOf_(record.date, timezone);
+    var dayTypeResult = FeeCalculator.resolveDayType(dateString);
+    if (!dayTypeResult.ok) {
+      return error_(dayTypeResult.error.code, dayTypeResult.error.message);
     }
     try {
       SpreadsheetRepository.updateBookingFields(bookingId, {
-        priceCategory: priceCategory,
-        priceCategoryBasis: basisNote.trim().slice(0, 500),
-        confirmedFeeAmount: confirmedFeeAmount,
-        feePaidAmount: paidAmount,
-        feeMasterVersion: version,
-        feeInitializedAt: new Date()
+        priceAmount: amount, priceTier: priceTier, priceDayType: dayTypeResult.dayType,
+        priceIsMember: priceTier === 'MEMBER', priceComputedAt: new Date()
       });
     } catch (e) {
       return error_('UPDATE_FAILED', '基準料金の保存に失敗しました。');
     }
-    return { success: true, bookingId: bookingId, priceCategory: priceCategory, confirmedFeeAmount: confirmedFeeAmount };
+    return { success: true, bookingId: bookingId, priceTier: priceTier, amount: amount };
   }
 
   function preview(bookingId, input, expectedVersion) {
     try {
       var check = parse_(bookingId, input, expectedVersion, new Date());
       if (!check.success) return check;
+      if (isInFeeRecovery_(check.record)) {
+        return error_('FEE_RECOVERY_REQUIRED', 'この予約は料金の整合性確認が必要な状態です。resolveFeeRecoveryで解消してから操作してください。');
+      }
       var today = BookingAvailability.formatDateInTimezone(new Date(), check.timezone);
       var feeCtx = computeFeeContext_(check.record, check.durationMinutes, check.date, today, check.timezone);
       var result = {
@@ -243,18 +250,16 @@ var BookingReschedule = (function () {
         oldEndTime: BookingAvailability.formatTimeInTimezone(check.record.endAt, check.timezone),
         newDate: check.date, newStartTime: input.startTime, newEndTime: input.endTime,
         durationMinutes: check.durationMinutes,
-        feeNotice: '料金差額は自動計算されません。変更確定前に管理者が確認してください。',
         feeReady: feeCtx.ready,
         feeStatus: feeCtx.status,
-        feeStatusMessage: feeCtx.ready ? '' : feeStatusMessage_(feeCtx.status),
-        priceCategory: feeCtx.baseline.priceCategory,
-        oldFeeAmount: feeCtx.baseline.confirmedFeeAmount,
+        feeStatusMessage: feeCtx.ready ? '' : feeStatusMessage_(feeCtx.status, feeCtx.message),
+        priceTier: feeCtx.baseline.priceTier,
+        oldFeeAmount: feeCtx.baseline.oldAmount,
         feeSettlementState: feeCtx.baseline.feeSettlementState,
         scheduleChangeCount: feeCtx.baseline.scheduleChangeCount
       };
       if (feeCtx.ready) {
         result.newFeeAmount = feeCtx.quote.amount;
-        result.feeMasterVersion = feeCtx.quote.version;
         result.dayType = feeCtx.quote.dayType;
         result.roundedMinutes = feeCtx.quote.roundedMinutes;
         result.feeDifference = feeCtx.assessment.feeDifference;
@@ -265,7 +270,7 @@ var BookingReschedule = (function () {
         result.unrefundedPaidAmount = feeCtx.unrefunded;
         result.requiresManualRefundDecision = feeCtx.assessment.refundStatus === 'PENDING_POLICY_DECISION';
       } else {
-        result.requiresManualNewFee = feeCtx.status === 'NO_PRICE_DATA' || feeCtx.status === 'DURATION_TOO_SHORT';
+        result.requiresManualNewFee = feeCtx.status !== 'BASELINE_REQUIRED';
       }
       return result;
     } catch (e) {
@@ -285,30 +290,29 @@ var BookingReschedule = (function () {
       var manualNote = feeConfirmation.manualNewFeeNote;
       if (!isFiniteNumber_(manualAmount) || manualAmount < 0 ||
           typeof manualNote !== 'string' || !manualNote.trim()) {
-        return { blocked: error_('FEE_NOT_AVAILABLE', feeStatusMessage_(feeCtx.status)) };
+        return { blocked: error_('FEE_NOT_AVAILABLE', feeStatusMessage_(feeCtx.status, feeCtx.message)) };
       }
       var baseline = feeCtx.baseline;
       var unrefunded = Math.max(0, baseline.feePaidAmount - baseline.feeRefundedAmount);
       var assessment = FeeCalculator.assessScheduleChangeFee({
-        oldAmount: baseline.confirmedFeeAmount, newAmount: manualAmount, unrefundedPaidAmount: unrefunded,
+        oldAmount: baseline.oldAmount, newAmount: manualAmount, unrefundedPaidAmount: unrefunded,
         scheduleChangeCount: baseline.scheduleChangeCount, cancellationPolicyCategory: 'SAME_DAY'
       });
-      /* 料金表が無い組み合わせは自動算出そのものが不可能なため、キャンセル規定の
-         「前日まで無料」判定も安全側（SAME_DAY扱い＝要決定）に倒す。減額の場合は
-         下のPENDING_POLICY_DECISION処理へ必ず合流させ、manualRefundDecisionも必須にする。 */
+      /* 料金を自動算出できない組み合わせ・端数のため、キャンセル規定の「前日まで無料」
+         判定も安全側（SAME_DAY扱い＝要決定）に倒す。減額の場合は下のPENDING_POLICY_DECISION
+         処理へ必ず合流させ、manualRefundDecisionも必須にする。 */
       return finalizeFeeDecision_(
-        { version: null, dayType: null, roundedMinutes: null, amount: manualAmount, manual: true, manualNote: manualNote.trim().slice(0, 500) },
-        assessment, feeConfirmation, unrefunded, 'MANUAL_NO_PRICE_DATA'
+        {
+          dayType: feeCtx.quote && feeCtx.quote.dayType, roundedMinutes: feeCtx.quote && feeCtx.quote.roundedMinutes,
+          amount: manualAmount, manual: true, manualNote: manualNote.trim().slice(0, 500)
+        },
+        assessment, feeConfirmation, unrefunded, 'MANUAL_UNSUPPORTED'
       );
     }
     return finalizeFeeDecision_(feeCtx.quote, feeCtx.assessment, feeConfirmation, feeCtx.unrefunded, feeCtx.cancellationCategory);
   }
 
   function finalizeFeeDecision_(quote, assessment, feeConfirmation, unrefunded, cancellationCategory) {
-    if (feeConfirmation.expectedFeeMasterVersion !== undefined && quote.version !== null &&
-        feeConfirmation.expectedFeeMasterVersion !== quote.version) {
-      return { blocked: error_('FEE_VERSION_MISMATCH', '料金マスタが更新されています。内容を再確認してください。') };
-    }
     var refundStatus = assessment.refundStatus;
     var refundAmount = assessment.refundCandidateAmount;
     var refundApprovedAmount = null;
@@ -334,8 +338,29 @@ var BookingReschedule = (function () {
     };
   }
 
-  /* 日時・予約IDを保持する。変更記録の生成失敗時には予定と台帳を戻す。
+  /*
+   * 日時・予約IDを保持する。変更記録の生成失敗時には予定と台帳を戻す。
    * Web AppのcreateBookingとはscript lock非共有のため、確定直前にもCalendarを取得する。
+   *
+   * 更新順序（PR #345レビュー対応: CalendarとSheetsは完全な分散トランザクションに
+   * できないため、順序・コミット状態・復旧方法を明示する）:
+   *   1. BookingChanges履歴行を作成（旧料金・新料金は既にこの時点で確定済みの値を書く。
+   *      以降のCalendar/Sheets更新の成否に関わらずここは変えない）。
+   *   2. Calendarイベントの開始・終了を更新。失敗したら旧日時へロールバックを試み、
+   *      失敗の場合はCALENDAR_UPDATE_FAILED（Recoveryへ記録）で確定を中止する。
+   *   3. Bookingsのdate/startAt/endAtを更新。失敗したらCalendarを旧日時へロールバックし、
+   *      SHEETS_UPDATE_FAILEDで確定を中止する。ここまで成功すれば「日時変更」自体は完了。
+   *   4. Bookingsのメタデータ（updatedAt・前日リマインド等のクリア）を更新。失敗しても
+   *      日時変更自体は成立済みのため確定は中止しない（Recoveryへ記録し処理を続ける）。
+   *   5. Bookingsの料金関連フィールド（現在の確定金額・変更回数・精算状態）を
+   *      updateBookingRescheduleFeeAtomicで1回のRange.setValuesとして更新する。
+   *      **ここが失敗した場合はロールバックしない**（3の日時変更を再度ロールバックすると
+   *      別の失敗を重ねるリスクがあるため）。代わりにfeeRecoveryRequiredAtを立てて
+   *      この予約の以降のcommit/recordFeeSettlementを一律ブロックし、戻り値の
+   *      successをfalseにする（「成功扱いで握りつぶす」ことを構造的に禁止する。
+   *      変更回数が更新されないまま次回も「初回変更」と誤判定される事故を防ぐ）。
+   *   6. 変更通知メールを送信（日時変更の事実は5の成否に関わらず利用者へ知らせる必要が
+   *      あるため、5が失敗していても送信は試みる）。
    */
   function commit(bookingId, input, expectedVersion, reason, feeNote, feeConfirmation) {
     var lock = LockService.getScriptLock();
@@ -345,12 +370,15 @@ var BookingReschedule = (function () {
       var check = parse_(bookingId, input, expectedVersion, new Date());
       if (!check.success) return check;
       var record = check.record;
+      if (isInFeeRecovery_(record)) {
+        return error_('FEE_RECOVERY_REQUIRED', 'この予約は料金の整合性確認が必要な状態です。resolveFeeRecoveryで解消してから操作してください。');
+      }
       var today = BookingAvailability.formatDateInTimezone(new Date(), check.timezone);
       var feeCtx = computeFeeContext_(record, check.durationMinutes, check.date, today, check.timezone);
       var feeResolution = resolveFeeForCommit_(feeCtx, feeConfirmation);
       if (feeResolution.blocked) return feeResolution.blocked;
 
-      var oldDate = BookingAvailability.formatDateInTimezone(record.startAt, check.timezone);
+      var oldDate = dateStringOf_(record.startAt, check.timezone);
       var oldStartAt = record.startAt;
       var oldEndAt = record.endAt;
       var changeId = Utilities.getUuid();
@@ -359,7 +387,7 @@ var BookingReschedule = (function () {
       var safeReason = String(reason || '').slice(0, 500);
       var safeFeeNote = String(feeNote || '料金差額がある場合は運営から別途ご案内します。').slice(0, 500);
       var feeDetails = {
-        priceCategory: feeCtx.baseline.priceCategory,
+        priceTier: feeCtx.baseline.priceTier,
         brand: record.brand,
         dayType: feeResolution.quote.dayType,
         roundedMinutes: feeResolution.quote.roundedMinutes,
@@ -370,8 +398,8 @@ var BookingReschedule = (function () {
       sheet.appendRow([
         changeId, bookingId, new Date(), oldDate, oldStartAt, oldEndAt,
         check.date, check.startAt, check.endAt, safeReason, safeFeeNote, 'PREPARED', '', '',
-        feeCtx.baseline.confirmedFeeAmount, feeResolution.quote.amount, feeResolution.assessment.feeDifference,
-        feeResolution.quote.version, feeResolution.cancellationCategory,
+        feeCtx.baseline.oldAmount, feeResolution.quote.amount, feeResolution.assessment.feeDifference,
+        feeResolution.cancellationCategory,
         feeResolution.refundStatus, feeResolution.refundCandidateAmount,
         feeResolution.refundApprovedAmount, feeResolution.refundApprovedAt,
         feeResolution.pendingReason, '', JSON.stringify(feeDetails)
@@ -420,19 +448,30 @@ var BookingReschedule = (function () {
       } catch (metadataError) {
         logFailure_(bookingId, 'RESCHEDULE_METADATA_UPDATE_FAILED', record.status);
       }
+
+      var settlementState = feeResolution.refundStatus === 'ADDITIONAL_CHARGE_REQUIRED' ? 'PENDING_CHARGE'
+        : (feeResolution.refundCandidateAmount > 0 ? 'PENDING_REFUND' : feeCtx.baseline.feeSettlementState);
+      var feeUpdateFailed = false;
       try {
-        var settlementState = feeResolution.refundStatus === 'ADDITIONAL_CHARGE_REQUIRED' ? 'PENDING_CHARGE'
-          : (feeResolution.refundCandidateAmount > 0 ? 'PENDING_REFUND' : feeCtx.baseline.feeSettlementState);
-        SpreadsheetRepository.updateBookingFields(bookingId, {
-          confirmedFeeAmount: feeResolution.quote.amount,
-          feeMasterVersion: feeResolution.quote.version === null ? feeCtx.baseline.feeMasterVersion : feeResolution.quote.version,
-          feeBreakdownJson: JSON.stringify(feeDetails),
+        SpreadsheetRepository.updateBookingRescheduleFeeAtomic(bookingId, {
+          priceOverrideAmount: feeResolution.quote.amount,
+          priceOverrideAt: new Date(),
           scheduleChangeCount: feeCtx.baseline.scheduleChangeCount + 1,
           feeSettlementState: settlementState
         });
-      } catch (feeMetadataError) {
-        logFailure_(bookingId, 'RESCHEDULE_FEE_METADATA_UPDATE_FAILED', record.status);
+      } catch (feeUpdateError) {
+        feeUpdateFailed = true;
+        logFailure_(bookingId, 'RESCHEDULE_FEE_ATOMIC_UPDATE_FAILED', record.status);
+        try {
+          SpreadsheetRepository.updateBookingFields(bookingId, {
+            feeRecoveryRequiredAt: new Date(),
+            feeRecoveryReason: '日時変更確定後の料金・変更回数・精算状態の更新に失敗しました。台帳を確認し、resolveFeeRecoveryで復旧してから次の日時変更・精算操作を行ってください。'
+          });
+        } catch (flagError) {
+          logFailure_(bookingId, 'RESCHEDULE_FEE_RECOVERY_FLAG_FAILED', record.status);
+        }
       }
+
       try {
         sheet.getRange(rowNumber, 12).setValue('PENDING');
       } catch (historyError) {
@@ -441,11 +480,17 @@ var BookingReschedule = (function () {
           mailSent: false, warning: '日時は変更されましたが履歴更新に失敗しました。通知は送らずRecoveryを確認してください。' };
       }
       outcome = {
-        success: true, bookingId: bookingId, changeId: changeId, mailSent: false,
-        oldFeeAmount: feeCtx.baseline.confirmedFeeAmount, newFeeAmount: feeResolution.quote.amount,
+        success: !feeUpdateFailed, bookingId: bookingId, changeId: changeId, mailSent: false,
+        oldFeeAmount: feeCtx.baseline.oldAmount, newFeeAmount: feeResolution.quote.amount,
         feeDifference: feeResolution.assessment.feeDifference, refundStatus: feeResolution.refundStatus,
         refundAmount: feeResolution.refundApprovedAmount !== null ? feeResolution.refundApprovedAmount : feeResolution.refundCandidateAmount
       };
+      if (feeUpdateFailed) {
+        outcome.error = {
+          code: 'FEE_UPDATE_FAILED_RECOVERY_REQUIRED',
+          message: '日時の変更自体は完了しましたが、料金・変更回数・精算状態の更新に失敗しました。台帳とRecoveryを確認し、resolveFeeRecoveryで復旧してください。復旧するまでこの予約の日時変更・精算操作はブロックされます。'
+        };
+      }
     } catch (e) {
       return error_('RESCHEDULE_FAILED', '日時変更に失敗しました。Recoveryと予約台帳を確認してください。');
     } finally {
@@ -470,9 +515,9 @@ var BookingReschedule = (function () {
     var oldFee = row[14];
     var newFee = row[15];
     var diff = row[16];
-    var refundStatus = row[19];
-    var refundCandidate = row[20];
-    var refundApproved = row[21];
+    var refundStatus = row[18];
+    var refundCandidate = row[19];
+    var refundApproved = row[20];
     if (!isFiniteNumber_(oldFee) || !isFiniteNumber_(newFee)) return [];
     var lines = ['元料金: ' + oldFee + '円', '新料金: ' + newFee + '円', '差額: ' + diff + '円'];
     if (refundStatus === 'ADDITIONAL_CHARGE_REQUIRED') {
@@ -573,58 +618,195 @@ var BookingReschedule = (function () {
         oldFeeAmount: isFiniteNumber_(row[14]) ? row[14] : null,
         newFeeAmount: isFiniteNumber_(row[15]) ? row[15] : null,
         feeDifference: isFiniteNumber_(row[16]) ? row[16] : null,
-        refundStatus: row[19] || '',
-        refundCandidateAmount: isFiniteNumber_(row[20]) ? row[20] : null,
-        refundApprovedAmount: isFiniteNumber_(row[21]) ? row[21] : null,
-        refundPendingReason: row[23] || '',
-        settlementStateAtChange: row[24] || ''
+        refundStatus: row[18] || '',
+        refundCandidateAmount: isFiniteNumber_(row[19]) ? row[19] : null,
+        refundApprovedAmount: isFiniteNumber_(row[20]) ? row[20] : null,
+        refundPendingReason: row[22] || '',
+        settlementStateAtChange: row[23] || ''
       };
     }).reverse();
   }
 
   /*
-   * Issue #344追記（Phase 2「料金の確定と資金移動を分離」）: 実際のStripe/PayPay/現金の
+   * Issue #344追記（精算の冪等性。PR #345レビュー対応）: 実際のStripe/PayPay/現金の
    * 入出金を管理者が確認した後にのみ呼び出す。自動決済・自動判定は一切行わない。
-   * paidAmountDelta/refundedAmountDeltaは今回の入出金額（累計への加算分）。
+   * settlementIdは呼び出し側（Web UI）が生成・保持する冪等性キー。同一IDの再送は
+   * 内容が完全一致する限り安全（二重加算しない）。内容が異なれば拒否する。changeIdを
+   * 指定した場合は、それがbookingIdに属することを検証する。
    */
-  function recordFeeSettlement(bookingId, changeId, settlementState, paidAmountDelta, refundedAmountDelta, note) {
-    var VALID_STATES = ['SETTLED', 'PENDING_CHARGE', 'PENDING_REFUND', 'PENDING_DECISION'];
-    if (VALID_STATES.indexOf(settlementState) === -1) {
+  function recordFeeSettlement(bookingId, changeId, settlementId, settlementState, paidAmountDelta, refundedAmountDelta, note) {
+    if (typeof settlementId !== 'string' || !settlementId.trim()) {
+      return error_('SETTLEMENT_ID_REQUIRED', '精算IDを指定してください。');
+    }
+    if (VALID_SETTLEMENT_STATES_.indexOf(settlementState) === -1) {
       return error_('INVALID_STATE', '精算状態が不正です。');
     }
-    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
-    if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
-    var paidDelta = isFiniteNumber_(paidAmountDelta) ? paidAmountDelta : 0;
-    var refundedDelta = isFiniteNumber_(refundedAmountDelta) ? refundedAmountDelta : 0;
-    if (paidDelta < 0 || refundedDelta < 0) {
-      return error_('INVALID_AMOUNT', '入出金額は0以上で指定してください。');
+    var paidDelta = Number(paidAmountDelta);
+    var refundedDelta = Number(refundedAmountDelta);
+    if (!isFiniteNumber_(paidDelta) || paidDelta < 0 || !isFiniteNumber_(refundedDelta) || refundedDelta < 0) {
+      return error_('INVALID_AMOUNT', '入出金額は0以上の数値で指定してください。');
     }
-    var baseline = feeBaseline_(found.record);
+
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(10000)) return error_('LOCK_TIMEOUT', '処理中です。再試行してください。');
     try {
-      SpreadsheetRepository.updateBookingFields(bookingId, {
-        feePaidAmount: baseline.feePaidAmount + paidDelta,
-        feeRefundedAmount: baseline.feeRefundedAmount + refundedDelta,
-        feeSettlementState: settlementState,
-        feeSettlementNote: String(note || '').slice(0, 500),
+      var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+      if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
+      if (isInFeeRecovery_(found.record)) {
+        return error_('FEE_RECOVERY_REQUIRED', 'この予約は料金の整合性確認が必要な状態です。resolveFeeRecoveryで解消してから精算を記録してください。');
+      }
+      if (changeId) {
+        var change = findChange_(changeId);
+        if (!change || change.row[1] !== bookingId) {
+          return error_('INVALID_CHANGE_ID', '指定した変更IDはこの予約のものではありません。');
+        }
+      }
+
+      var existing = FeeSettlementRepository.findBySettlementId(settlementId);
+      if (existing) {
+        var sameRequest = existing.record.bookingId === bookingId &&
+          String(existing.record.changeId || '') === String(changeId || '') &&
+          existing.record.settlementState === settlementState &&
+          Number(existing.record.paidDelta) === paidDelta &&
+          Number(existing.record.refundedDelta) === refundedDelta;
+        if (!sameRequest) {
+          return error_('SETTLEMENT_ID_CONFLICT', 'この精算IDは既に異なる内容で使用されています。新しい精算IDを発行してください。');
+        }
+        if (existing.record.applyStatus === 'APPLIED') {
+          return {
+            success: true, bookingId: bookingId, settlementState: settlementState,
+            resultPaidAmount: Number(existing.record.resultPaidAmount),
+            resultRefundedAmount: Number(existing.record.resultRefundedAmount),
+            replay: true
+          };
+        }
+        if (existing.record.applyStatus === 'FAILED_NEEDS_RECOVERY') {
+          return error_('SETTLEMENT_RECOVERY_REQUIRED', 'この精算は前回反映に失敗しました。台帳とFeeSettlementsシートを確認し、resolveFeeRecoveryで復旧してから再度実行してください。');
+        }
+        // PENDING_APPLY: 前回試行がBookings反映前に中断された可能性がある。同じ内容の
+        // リクエストなので、同じ行を使ってBookingsへの反映だけを再試行する。
+        return applySettlement_(found, existing.rowNumber, settlementState, paidDelta, refundedDelta, note);
+      }
+
+      var currentPaid = isFiniteNumber_(found.record.feePaidAmount) ? found.record.feePaidAmount : 0;
+      var currentRefunded = isFiniteNumber_(found.record.feeRefundedAmount) ? found.record.feeRefundedAmount : 0;
+      var unrefunded = Math.max(0, currentPaid - currentRefunded);
+      if (refundedDelta > unrefunded) {
+        return error_('REFUND_EXCEEDS_UNREFUNDED', '返金額は未返金の入金額（' + unrefunded + '円）を超えられません。');
+      }
+      var rowNumber = FeeSettlementRepository.appendPending({
+        settlementId: settlementId, bookingId: bookingId, changeId: changeId || '',
+        settlementState: settlementState, paidDelta: paidDelta, refundedDelta: refundedDelta, note: note || ''
+      });
+      return applySettlement_(found, rowNumber, settlementState, paidDelta, refundedDelta, note);
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  /* 精算リクエストをBookingsへ反映する。FeeSettlements行は既に（PENDING_APPLYとして）
+     記録済みであることが前提。反映の成否をFeeSettlements行にも書き戻す。 */
+  function applySettlement_(found, settlementRowNumber, settlementState, paidDelta, refundedDelta, note) {
+    var record = found.record;
+    var currentPaid = isFiniteNumber_(record.feePaidAmount) ? record.feePaidAmount : 0;
+    var currentRefunded = isFiniteNumber_(record.feeRefundedAmount) ? record.feeRefundedAmount : 0;
+    var newPaid = currentPaid + paidDelta;
+    var newRefunded = currentRefunded + refundedDelta;
+    try {
+      SpreadsheetRepository.updateBookingRescheduleFeeAtomic(record.bookingId, {
+        feePaidAmount: newPaid, feeRefundedAmount: newRefunded,
+        feeSettlementState: settlementState, feeSettlementNote: String(note || '').slice(0, 500),
         feeSettlementUpdatedAt: new Date()
       });
     } catch (e) {
-      return error_('UPDATE_FAILED', '精算状態の保存に失敗しました。');
-    }
-    if (changeId) {
+      try { FeeSettlementRepository.markFailedNeedsRecovery(settlementRowNumber); } catch (e2) { /* best effort */ }
       try {
-        var change = findChange_(changeId);
-        if (change) change.sheet.getRange(change.rowNumber, 25).setValue(settlementState);
-      } catch (e) {
-        logFailure_(bookingId, 'RESCHEDULE_SETTLEMENT_HISTORY_UPDATE_FAILED', found.record.status);
+        SpreadsheetRepository.updateBookingFields(record.bookingId, {
+          feeRecoveryRequiredAt: new Date(),
+          feeRecoveryReason: '精算記録（入出金）の台帳反映に失敗しました。FeeSettlementsシートとBookingsを確認し、resolveFeeRecoveryで復旧してください。'
+        });
+      } catch (e3) {
+        logFailure_(record.bookingId, 'RESCHEDULE_FEE_RECOVERY_FLAG_FAILED', record.status);
       }
+      logFailure_(record.bookingId, 'RESCHEDULE_SETTLEMENT_APPLY_FAILED', record.status);
+      return error_('SETTLEMENT_APPLY_FAILED', '精算の記録に失敗しました。台帳を確認してください（要復旧の状態になっています）。');
     }
-    return { success: true, bookingId: bookingId, settlementState: settlementState };
+    try {
+      FeeSettlementRepository.markApplied(settlementRowNumber, newPaid, newRefunded);
+    } catch (e) {
+      /* Bookings側は既に正しく反映されているが、FeeSettlements側の状態更新が失敗した。
+         この行がPENDING_APPLYのまま残ると、同じsettlementIdの再送がBookingsへ差分を
+         再度加算しかねない（二重計上）。それを避けるため、Bookings側をロックして
+         管理者の手動確認を必須にする。 */
+      logFailure_(record.bookingId, 'RESCHEDULE_SETTLEMENT_MARK_APPLIED_FAILED', record.status);
+      try {
+        SpreadsheetRepository.updateBookingFields(record.bookingId, {
+          feeRecoveryRequiredAt: new Date(),
+          feeRecoveryReason: '精算はBookingsへ反映されましたが、FeeSettlements台帳の状態更新に失敗しました。二重計上を避けるため操作をブロックしています。resolveFeeRecoveryで復旧してください。'
+        });
+      } catch (e2) {
+        logFailure_(record.bookingId, 'RESCHEDULE_FEE_RECOVERY_FLAG_FAILED', record.status);
+      }
+      return error_('SETTLEMENT_STATE_UNKNOWN', '精算はおそらく記録されましたが、精算台帳の状態確認に失敗しました。二重実行を避けるため予約をロックしました。Recoveryを確認してください。');
+    }
+    return { success: true, bookingId: record.bookingId, settlementState: settlementState, resultPaidAmount: newPaid, resultRefundedAmount: newRefunded };
+  }
+
+  /*
+   * Issue #344追記（PR #345レビュー対応）: commit/recordFeeSettlementの部分失敗で
+   * feeRecoveryRequiredAtが立った予約を、管理者が実際の台帳・Calendar・FeeSettlementsを
+   * 確認したうえで復旧する。correctionsに指定したフィールドだけを上書きし、それ以外は
+   * 現在値を維持する（既存のpaymentLinkMetadataInconsistentAt系の補正関数と同じ設計）。
+   */
+  function resolveFeeRecovery(bookingId, corrections) {
+    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+    if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
+    if (!isInFeeRecovery_(found.record)) return error_('NOT_IN_RECOVERY', 'この予約は要復旧の状態ではありません。');
+    corrections = corrections || {};
+    var fields = { feeRecoveryRequiredAt: '', feeRecoveryReason: '' };
+    if (corrections.priceOverrideAmount !== undefined) {
+      if (!isFiniteNumber_(corrections.priceOverrideAmount) || corrections.priceOverrideAmount < 0) {
+        return error_('INVALID_AMOUNT', '確定金額は0以上の数値で指定してください。');
+      }
+      fields.priceOverrideAmount = corrections.priceOverrideAmount;
+      fields.priceOverrideAt = new Date();
+    }
+    if (corrections.scheduleChangeCount !== undefined) {
+      if (!isFiniteNumber_(corrections.scheduleChangeCount) || corrections.scheduleChangeCount < 0) {
+        return error_('INVALID_AMOUNT', '変更回数は0以上の整数で指定してください。');
+      }
+      fields.scheduleChangeCount = corrections.scheduleChangeCount;
+    }
+    if (corrections.feeSettlementState !== undefined) {
+      if (corrections.feeSettlementState !== '' && VALID_SETTLEMENT_STATES_.indexOf(corrections.feeSettlementState) === -1) {
+        return error_('INVALID_STATE', '精算状態が不正です。');
+      }
+      fields.feeSettlementState = corrections.feeSettlementState;
+    }
+    if (corrections.feePaidAmount !== undefined) {
+      if (!isFiniteNumber_(corrections.feePaidAmount) || corrections.feePaidAmount < 0) {
+        return error_('INVALID_AMOUNT', '支払済み額は0以上の数値で指定してください。');
+      }
+      fields.feePaidAmount = corrections.feePaidAmount;
+    }
+    if (corrections.feeRefundedAmount !== undefined) {
+      if (!isFiniteNumber_(corrections.feeRefundedAmount) || corrections.feeRefundedAmount < 0) {
+        return error_('INVALID_AMOUNT', '返金済み額は0以上の数値で指定してください。');
+      }
+      fields.feeRefundedAmount = corrections.feeRefundedAmount;
+    }
+    try {
+      SpreadsheetRepository.updateBookingRescheduleFeeAtomic(bookingId, fields);
+    } catch (e) {
+      return error_('UPDATE_FAILED', '復旧の保存に失敗しました。');
+    }
+    return { success: true, bookingId: bookingId };
   }
 
   return {
     preview: preview, commit: commit, sendMail: sendMail, getChanges: getChanges,
-    setFeeBaseline: setFeeBaseline, recordFeeSettlement: recordFeeSettlement
+    backfillOriginalPrice: backfillOriginalPrice, recordFeeSettlement: recordFeeSettlement,
+    resolveFeeRecovery: resolveFeeRecovery
   };
 })();
 
@@ -641,9 +823,12 @@ function adminResendRescheduleMail(changeId) {
 function adminGetBookingChanges(bookingId) {
   return BookingReschedule.getChanges(bookingId);
 }
-function adminSetBookingFeeBaseline(bookingId, priceCategory, confirmedFeeAmount, paidAmount, basisNote) {
-  return BookingReschedule.setFeeBaseline(bookingId, priceCategory, confirmedFeeAmount, paidAmount, basisNote);
+function adminBackfillOriginalPrice(bookingId, priceTier, amount, note) {
+  return BookingReschedule.backfillOriginalPrice(bookingId, priceTier, amount, note);
 }
-function adminRecordRescheduleFeeSettlement(bookingId, changeId, settlementState, paidAmountDelta, refundedAmountDelta, note) {
-  return BookingReschedule.recordFeeSettlement(bookingId, changeId, settlementState, paidAmountDelta, refundedAmountDelta, note);
+function adminRecordRescheduleFeeSettlement(bookingId, changeId, settlementId, settlementState, paidAmountDelta, refundedAmountDelta, note) {
+  return BookingReschedule.recordFeeSettlement(bookingId, changeId, settlementId, settlementState, paidAmountDelta, refundedAmountDelta, note);
+}
+function adminResolveFeeRecovery(bookingId, corrections) {
+  return BookingReschedule.resolveFeeRecovery(bookingId, corrections);
 }

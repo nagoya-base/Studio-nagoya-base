@@ -6,9 +6,10 @@ var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
 
 var FILES = [
-  'Config.gs', 'JapanHolidays.gs', 'FeeMasterRepository.gs', 'FeeCalculator.gs',
+  'Config.gs', 'JapaneseHolidays.gs', 'BookingPricing.gs', 'FeeCalculator.gs',
   'CalendarRepository.gs', 'Availability.gs', 'Booking.gs',
-  'SpreadsheetRepository.gs', 'RecoveryRepository.gs', 'BookingReschedule.gs'
+  'SpreadsheetRepository.gs', 'RecoveryRepository.gs', 'FeeSettlementRepository.gs',
+  'BookingReschedule.gs'
 ];
 
 function dateStringForOffset_(daysAhead) {
@@ -21,16 +22,16 @@ function dateStringForOffset_(daysAhead) {
   return out.year + '-' + out.month + '-' + out.day;
 }
 
-function futureDateJst_(daysAhead) {
-  return dateStringForOffset_(daysAhead);
-}
-
 /* wantWeekendHoliday: true→土日祝, false→平日の直近の日付を探す（テストの決定性のため、
    実行日に依存せず「平日/土日祝」を明示的に選べるようにする）。 */
-function findDateOfDayType_(japanHolidays, startDaysAhead, wantWeekendHoliday) {
+function findDateOfDayType_(sandbox, startDaysAhead, wantWeekendHoliday) {
   for (var i = startDaysAhead; i < startDaysAhead + 21; i++) {
     var d = dateStringForOffset_(i);
-    if (japanHolidays.isWeekendOrHoliday(d) === wantWeekendHoliday) return d;
+    var classified = sandbox.JapaneseHolidays.classify(d);
+    if (!classified.ok) continue;
+    var weekday = new Date(d + 'T00:00:00Z').getUTCDay();
+    var isWeekendOrHoliday = weekday === 0 || weekday === 6 || classified.isHoliday;
+    if (isWeekendOrHoliday === wantWeekendHoliday) return d;
   }
   throw new Error('条件に合う日付が見つかりません');
 }
@@ -55,7 +56,7 @@ function setup(options) {
     MailApp: mail
   };
   var sandbox = loadBookingSandbox(FILES, globals);
-  var date = findDateOfDayType_(sandbox.JapanHolidays, 35, false); // 平日固定（既存テストの決定性を保つ）
+  var date = findDateOfDayType_(sandbox, 35, false); // 平日固定（既存テストの決定性を保つ）
   var start = sandbox.CalendarRepository.parseDateTime(date, '10:00', 'Asia/Tokyo');
   var end = sandbox.CalendarRepository.parseDateTime(date, '12:00', 'Asia/Tokyo');
   var event = globals.CalendarApp.getCalendarById('cal1').createEvent('booking', start, end);
@@ -69,41 +70,45 @@ function setup(options) {
     name: '予約者', email: 'customer@example.com', paymentMethod: 'PayPay',
     paymentStatus: 'PAID', confirmedMailSentAt: new Date()
   };
-  if (options.withFeeBaseline !== false) {
-    var priceCategory = options.priceCategory || 'general';
-    var quote = sandbox.FeeCalculator.quoteFee({
-      brand: brand, priceCategory: priceCategory, durationMinutes: 120, dateString: date, asOfDateString: date
+  if (options.withPrice !== false) {
+    var priceTier = options.priceTier || 'GENERAL';
+    var quote = sandbox.BookingPricing.computeBookingPrice({
+      brand: brand, date: date, durationMinutes: 120, isMember: priceTier === 'MEMBER'
     });
-    record.priceCategory = priceCategory;
-    record.confirmedFeeAmount = options.confirmedFeeAmount !== undefined ? options.confirmedFeeAmount : quote.amount;
-    record.feePaidAmount = options.feePaidAmount !== undefined ? options.feePaidAmount : record.confirmedFeeAmount;
-    record.feeRefundedAmount = options.feeRefundedAmount || 0;
-    record.feeMasterVersion = quote.version;
-    record.feeInitializedAt = new Date();
-    record.scheduleChangeCount = options.scheduleChangeCount || 0;
+    record.priceAmount = options.priceAmount !== undefined ? options.priceAmount : quote.price.amount;
+    record.priceTier = priceTier;
+    record.priceDayType = quote.price.dayType;
+    record.priceIsMember = priceTier === 'MEMBER';
+    record.priceComputedAt = new Date();
+    if (options.feePaidAmount !== undefined) record.feePaidAmount = options.feePaidAmount;
+    else record.feePaidAmount = record.priceAmount;
+    if (options.feeRefundedAmount !== undefined) record.feeRefundedAmount = options.feeRefundedAmount;
+    if (options.scheduleChangeCount !== undefined) record.scheduleChangeCount = options.scheduleChangeCount;
   }
   sandbox.SpreadsheetRepository.appendBooking(record);
   return { sandbox: sandbox, date: date, event: event, mail: mail, globals: globals, sheets: sheets };
 }
 
+function version_(f) {
+  return f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
+}
+
 test('preview excludes own event but detects a different booking and buffer', function () {
   var f = setup();
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
   var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
-  assert.equal(f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version).success, true);
+  assert.equal(f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version_(f)).success, true);
   var otherStart = f.sandbox.CalendarRepository.parseDateTime(f.date, '15:10', 'Asia/Tokyo');
   var otherEnd = f.sandbox.CalendarRepository.parseDateTime(f.date, '17:10', 'Asia/Tokyo');
   f.globals.CalendarApp.getCalendarById('cal1').createEvent('other booking', otherStart, otherEnd);
-  var conflict = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version);
+  var conflict = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version_(f));
   assert.equal(conflict.success, false);
   assert.equal(conflict.error.code, 'SLOT_CONFLICT');
 });
 
 test('preview reports the fee comparison (same duration/day-type ⇒ no difference)', function () {
   var f = setup();
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
   var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
-  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version);
+  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version_(f));
   assert.equal(preview.feeReady, true);
   assert.equal(preview.oldFeeAmount, preview.newFeeAmount);
   assert.equal(preview.feeDifference, 0);
@@ -111,12 +116,12 @@ test('preview reports the fee comparison (same duration/day-type ⇒ no differen
   assert.equal(preview.requiresManualRefundDecision, false);
 });
 
-test('commit retains booking ID/payment state, moves existing event and sends one change mail', function () {
+test('commit retains booking ID/payment state, moves existing event, updates the effective price and sends one change mail', function () {
   var f = setup();
   var oldEventId = f.event.getId();
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
   var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
-  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version, '利用者希望', '差額なし');
+  var originalVersion = version_(f);
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, originalVersion, '利用者希望', '差額なし');
   assert.equal(result.success, true);
   assert.equal(result.mailSent, true);
   assert.equal(result.refundStatus, 'NONE');
@@ -125,13 +130,14 @@ test('commit retains booking ID/payment state, moves existing event and sends on
   assert.equal(record.status, 'CONFIRMED');
   assert.equal(record.paymentStatus, 'PAID');
   assert.equal(record.scheduleChangeCount, 1);
+  assert.equal(f.sandbox.Booking.getEffectivePriceAmount(record), result.newFeeAmount);
   assert.equal(f.sandbox.BookingAvailability.formatTimeInTimezone(record.startAt, 'Asia/Tokyo'), '13:00');
   assert.equal(f.event.getStartTime().getTime(), record.startAt.getTime());
   assert.equal(f.mail._sentEmails.length, 1);
   assert.match(f.mail._sentEmails[0].body, /差額なし/);
   assert.match(f.mail._sentEmails[0].body, /元料金/);
   assert.equal(f.sandbox.adminGetBookingChanges('SNB-TEST-1')[0].mailState, 'SENT');
-  var stale = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version, '', '差額なし');
+  var stale = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, originalVersion, '', '差額なし');
   assert.equal(stale.success, false);
   assert.equal(stale.error.code, 'STALE_BOOKING');
 });
@@ -139,9 +145,8 @@ test('commit retains booking ID/payment state, moves existing event and sends on
 test('definite mail failure leaves the schedule changed and supports explicit retry', function () {
   var mailOptions = { throwError: new Error('test mail failure') };
   var f = setup({ mailOptions: mailOptions });
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
   var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
-    { date: f.date, startTime: '13:00', endTime: '15:00' }, version, '', '別途精算');
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version_(f), '', '別途精算');
   assert.equal(result.success, true);
   assert.equal(result.mailSent, false);
   assert.equal(f.sandbox.adminGetBookingChanges('SNB-TEST-1')[0].mailState, 'FAILED');
@@ -153,13 +158,12 @@ test('definite mail failure leaves the schedule changed and supports explicit re
 
 test('Calendar update failure rolls the event back and leaves booking/booking sheet untouched', function () {
   var f = setup();
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
   var oldStart = f.event.getStartTime();
   var oldEnd = f.event.getEndTime();
   var originalSetTime = f.event.setTime;
   f.event.setTime = function () { throw new Error('Calendar API error'); };
   var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
-    { date: f.date, startTime: '13:00', endTime: '15:00' }, version, '', '別途精算');
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version_(f), '', '別途精算');
   assert.equal(result.success, false);
   assert.equal(result.error.code, 'CALENDAR_UPDATE_FAILED');
   f.event.setTime = originalSetTime;
@@ -168,15 +172,15 @@ test('Calendar update failure rolls the event back and leaves booking/booking sh
   var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
   assert.equal(record.startAt.getTime(), oldStart.getTime());
   assert.equal(record.endAt.getTime(), oldEnd.getTime());
+  assert.equal(record.scheduleChangeCount || 0, 0);
   assert.equal(f.mail._sentEmails.length, 0);
 });
 
 test('Calendar update failure with a failed rollback still returns without exception and does not send mail', function () {
   var f = setup();
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
   f.event.setTime = function () { throw new Error('Calendar API error'); };
   var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
-    { date: f.date, startTime: '13:00', endTime: '15:00' }, version, '', '別途精算');
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version_(f), '', '別途精算');
   assert.equal(result.success, false);
   assert.equal(result.error.code, 'CALENDAR_UPDATE_FAILED');
   assert.match(result.error.message, /不明/);
@@ -185,13 +189,12 @@ test('Calendar update failure with a failed rollback still returns without excep
 
 test('Sheets update failure rolls the Calendar event back to the original time', function () {
   var f = setup();
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
   var oldStart = f.event.getStartTime();
   var oldEnd = f.event.getEndTime();
   var originalUpdate = f.sandbox.SpreadsheetRepository.updateBookingScheduleAtomic;
   f.sandbox.SpreadsheetRepository.updateBookingScheduleAtomic = function () { throw new Error('Sheets API error'); };
   var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
-    { date: f.date, startTime: '13:00', endTime: '15:00' }, version, '', '別途精算');
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version_(f), '', '別途精算');
   f.sandbox.SpreadsheetRepository.updateBookingScheduleAtomic = originalUpdate;
   assert.equal(result.success, false);
   assert.equal(result.error.code, 'SHEETS_UPDATE_FAILED');
@@ -202,62 +205,128 @@ test('Sheets update failure rolls the Calendar event back to the original time',
   assert.equal(f.mail._sentEmails.length, 0);
 });
 
-/* ---- Issue #344追記: 料金差額の自動計算 ---- */
+/* ---- 日時・料金更新の一貫性（PR #345レビュー必須修正1） ---- */
 
-test('commit is blocked until the original confirmed fee has been backfilled via setFeeBaseline', function () {
-  var f = setup({ withFeeBaseline: false });
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
-  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
-    { date: f.date, startTime: '13:00', endTime: '15:00' }, version, '', '別途精算');
+test('date/Calendar update succeeds but the fee atomic update fails: commit reports failure, does not silently succeed, and locks the booking into recovery', function () {
+  var f = setup();
+  var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
+  var original = f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = function () { throw new Error('Sheets API error'); };
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '別途精算');
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = original;
+
+  // 日時変更自体は完了しているが、successはtrueにならない（成功扱いで握りつぶさない）。
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'FEE_UPDATE_FAILED_RECOVERY_REQUIRED');
+  assert.equal(f.event.getStartTime().getTime(), f.sandbox.CalendarRepository.parseDateTime(f.date, '13:00', 'Asia/Tokyo').getTime());
+
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  // 変更回数・現在の確定金額は「両方とも」更新前の値のまま（一部だけ更新された中途半端な
+  // 状態にならない。1回のatomic writeが丸ごと失敗したため）。
+  assert.equal(record.scheduleChangeCount || 0, 0);
+  assert.equal(f.sandbox.Booking.getEffectivePriceAmount(record), record.priceAmount);
+  assert.ok(record.feeRecoveryRequiredAt);
+  assert.ok(record.feeRecoveryReason);
+
+  // 復旧が必要な予約は、次の日時変更・精算操作を停止する。
+  var blockedReschedule = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '16:00', endTime: '18:00' },
+    record.startAt.getTime() + ':' + record.endAt.getTime(), '', '別途精算');
+  assert.equal(blockedReschedule.success, false);
+  assert.equal(blockedReschedule.error.code, 'FEE_RECOVERY_REQUIRED');
+
+  var blockedSettlement = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 'settle-x', 'SETTLED', 0, 0, '');
+  assert.equal(blockedSettlement.success, false);
+  assert.equal(blockedSettlement.error.code, 'FEE_RECOVERY_REQUIRED');
+
+  var blockedPreview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1',
+    { date: f.date, startTime: '16:00', endTime: '18:00' }, record.startAt.getTime() + ':' + record.endAt.getTime());
+  assert.equal(blockedPreview.success, false);
+  assert.equal(blockedPreview.error.code, 'FEE_RECOVERY_REQUIRED');
+
+  // resolveFeeRecoveryで管理者が確認した値を入力すれば復旧し、次回変更は「2回目」と正しく扱われる。
+  var resolved = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', {
+    priceOverrideAmount: record.priceAmount, scheduleChangeCount: 1, feeSettlementState: ''
+  });
+  assert.equal(resolved.success, true);
+  var afterResolve = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(afterResolve.feeRecoveryRequiredAt, '');
+  assert.equal(afterResolve.scheduleChangeCount, 1);
+
+  var afterResult = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '16:00', endTime: '18:00' },
+    afterResolve.startAt.getTime() + ':' + afterResolve.endAt.getTime(), '', '別途精算');
+  assert.equal(afterResult.success, true);
+  var finalRecord = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(finalRecord.scheduleChangeCount, 2); // 1（復旧確認済み）→2（今回）で「初回」に戻っていない
+});
+
+test('resolveFeeRecovery refuses when the booking is not actually in a recovery state', function () {
+  var f = setup();
+  var result = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', { scheduleChangeCount: 5 });
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'NOT_IN_RECOVERY');
+});
+
+/* ---- 基準料金（既存予約の遡及登録） ---- */
+
+test('commit is blocked until the original confirmed price has been backfilled via backfillOriginalPrice', function () {
+  var f = setup({ withPrice: false });
+  var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '別途精算');
   assert.equal(result.success, false);
   assert.equal(result.error.code, 'FEE_BASELINE_REQUIRED');
   var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
   assert.equal(record.startAt.getTime(), f.event.getStartTime().getTime());
 
-  var baseline = f.sandbox.adminSetBookingFeeBaseline('SNB-TEST-1', 'general', 4000, 4000, '過去の請求メールで確認');
-  assert.equal(baseline.success, true);
-  var afterBaseline = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
-    { date: f.date, startTime: '13:00', endTime: '15:00' }, version, '', '別途精算');
-  assert.equal(afterBaseline.success, true);
+  var backfill = f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '過去の請求メールで確認');
+  assert.equal(backfill.success, true);
+  var afterBackfill = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(afterBackfill.priceAmount, 4000);
+  assert.equal(afterBackfill.priceTier, 'GENERAL');
+  assert.ok(afterBackfill.priceDayType);
+
+  var afterBackfillResult = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '別途精算');
+  assert.equal(afterBackfillResult.success, true);
 });
 
-test('setFeeBaseline validates its inputs (category, amount, basis note)', function () {
-  var f = setup({ withFeeBaseline: false });
-  assert.equal(f.sandbox.adminSetBookingFeeBaseline('SNB-TEST-1', 'vip', 4000, 4000, '根拠').error.code, 'INVALID_PRICE_CATEGORY');
-  assert.equal(f.sandbox.adminSetBookingFeeBaseline('SNB-TEST-1', 'general', -1, 0, '根拠').error.code, 'INVALID_AMOUNT');
-  assert.equal(f.sandbox.adminSetBookingFeeBaseline('SNB-TEST-1', 'general', 4000, 4000, '  ').error.code, 'BASIS_REQUIRED');
-  assert.equal(f.sandbox.adminSetBookingFeeBaseline('UNKNOWN', 'general', 4000, 4000, '根拠').error.code, 'NOT_FOUND');
+test('backfillOriginalPrice validates its inputs (tier, amount, basis note)', function () {
+  var f = setup({ withPrice: false });
+  assert.equal(f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'vip', 4000, '根拠').error.code, 'INVALID_PRICE_TIER');
+  assert.equal(f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', -1, '根拠').error.code, 'INVALID_AMOUNT');
+  assert.equal(f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '  ').error.code, 'BASIS_REQUIRED');
+  assert.equal(f.sandbox.adminBackfillOriginalPrice('UNKNOWN', 'GENERAL', 4000, '根拠').error.code, 'NOT_FOUND');
 });
+
+/* ---- 料金差額の判定（増額・初回減額・2回目以降・端数） ---- */
 
 test('a same-duration reschedule to a different day-type (weekday→weekend) charges the additional amount, no ambiguity', function () {
-  var f = setup(); // 平日2h、confirmedFeeAmount=平日料金で登録済み
-  var weekendDate = findDateOfDayType_(f.sandbox.JapanHolidays, 40, true);
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
+  var f = setup(); // 平日2h、priceAmount=平日料金で登録済み
+  var weekendDate = findDateOfDayType_(f.sandbox, 40, true);
   var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1',
-    { date: weekendDate, startTime: '10:00', endTime: '12:00' }, version);
+    { date: weekendDate, startTime: '10:00', endTime: '12:00' }, version_(f));
   assert.equal(preview.feeReady, true);
-  assert.equal(preview.dayType, 'weekend_holiday');
+  assert.equal(preview.dayType, 'WEEKEND_HOLIDAY');
   assert.ok(preview.feeDifference > 0);
   assert.equal(preview.refundStatus, 'ADDITIONAL_CHARGE_REQUIRED');
 
   var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
-    { date: weekendDate, startTime: '10:00', endTime: '12:00' }, version, '', '差額は別途請求');
+    { date: weekendDate, startTime: '10:00', endTime: '12:00' }, version_(f), '', '差額は別途請求');
   assert.equal(result.success, true);
   assert.equal(result.refundStatus, 'ADDITIONAL_CHARGE_REQUIRED');
   var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
-  assert.equal(record.confirmedFeeAmount, preview.newFeeAmount);
+  assert.equal(f.sandbox.Booking.getEffectivePriceAmount(record), preview.newFeeAmount);
   assert.equal(record.feeSettlementState, 'PENDING_CHARGE');
 });
 
 test('a first, before-the-day-before shortening auto-refunds up to the paid amount with no cancellation fee', function () {
-  var f = setup({ confirmedFeeAmount: 8000, feePaidAmount: 8000 }); // 4hぶん支払済みとして登録
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
+  var f = setup({ priceAmount: 8000, feePaidAmount: 8000 }); // 4hぶん支払済みとして登録
   var input = { date: f.date, startTime: '13:00', endTime: '15:00' }; // 同日2hへ短縮
-  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version);
+  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version_(f));
   assert.equal(preview.refundStatus, 'CANDIDATE');
   assert.equal(preview.refundCandidateAmount, 8000 - preview.newFeeAmount);
 
-  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version, '', '返金予定');
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '返金予定');
   assert.equal(result.success, true);
   assert.equal(result.refundStatus, 'CANDIDATE');
   assert.equal(result.refundAmount, 8000 - result.newFeeAmount);
@@ -266,20 +335,19 @@ test('a first, before-the-day-before shortening auto-refunds up to the paid amou
 });
 
 test('a second schedule change that reduces the fee is blocked until the admin enters an explicit refund decision', function () {
-  var f = setup({ confirmedFeeAmount: 8000, feePaidAmount: 8000, scheduleChangeCount: 1 });
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
+  var f = setup({ priceAmount: 8000, feePaidAmount: 8000, scheduleChangeCount: 1 });
   var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
-  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version);
+  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version_(f));
   assert.equal(preview.refundStatus, 'PENDING_POLICY_DECISION');
   assert.equal(preview.requiresManualRefundDecision, true);
 
-  var blocked = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version, '', '要確認');
+  var blocked = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '要確認');
   assert.equal(blocked.success, false);
   assert.equal(blocked.error.code, 'FEE_REFUND_DECISION_REQUIRED');
   var stillOld = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
   assert.equal(stillOld.startAt.getTime(), f.event.getStartTime().getTime());
 
-  var decided = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version, '', '要確認', {
+  var decided = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '要確認', {
     manualRefundDecision: { approvedAmount: 1000, note: '規約解釈に基づき運営判断で一部返金' }
   });
   assert.equal(decided.success, true);
@@ -291,62 +359,107 @@ test('a second schedule change that reduces the fee is blocked until the admin e
 });
 
 test('a manual refund decision above the unrefunded/difference cap is rejected', function () {
-  var f = setup({ confirmedFeeAmount: 8000, feePaidAmount: 8000, scheduleChangeCount: 1 });
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
+  var f = setup({ priceAmount: 8000, feePaidAmount: 8000, scheduleChangeCount: 1 });
   var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
-  var overshoot = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version, '', '要確認', {
+  var overshoot = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '要確認', {
     manualRefundDecision: { approvedAmount: 999999, note: '上限超え' }
   });
   assert.equal(overshoot.success, false);
   assert.equal(overshoot.error.code, 'FEE_REFUND_DECISION_REQUIRED');
 });
 
-test('commit rejects a stale fee master version captured at preview time', function () {
+test('a half-hour (non-whole-hour) rounded duration is not auto-priced (unapproved 30-minute interpolation) and requires a manual fee entry', function () {
   var f = setup();
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
-  var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
-  var mismatch = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version, '', '差額なし', {
-    expectedFeeMasterVersion: 999
-  });
-  assert.equal(mismatch.success, false);
-  assert.equal(mismatch.error.code, 'FEE_VERSION_MISMATCH');
-});
-
-test('a brand/price-category combination without a published table requires a manual fee entry', function () {
-  var f = setup({ brand: 'mens', priceCategory: 'member' });
-  // mens×generalへ後から取り違えて設定された想定（料金表未定義の組み合わせ）。
-  f.sandbox.adminSetBookingFeeBaseline('SNB-TEST-1', 'general', 5000, 5000, 'テスト用の想定外区分');
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
-  var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
-  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version);
+  var input = { date: f.date, startTime: '13:00', endTime: '15:20' }; // 140分 -> 30分丸めで150分(2.5h)
+  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version_(f));
   assert.equal(preview.feeReady, false);
-  assert.equal(preview.feeStatus, 'NO_PRICE_DATA');
+  assert.equal(preview.feeStatus, 'HALF_HOUR_RATE_UNCONFIRMED');
   assert.equal(preview.requiresManualNewFee, true);
 
-  var blocked = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version, '', '要確認');
+  var blocked = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '要確認');
   assert.equal(blocked.success, false);
   assert.equal(blocked.error.code, 'FEE_NOT_AVAILABLE');
 
-  var manual = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version, '', '要確認', {
-    manualNewFeeAmount: 5000, manualNewFeeNote: '据え置きで運営確認済み'
+  var manual = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '要確認', {
+    manualNewFeeAmount: 5000, manualNewFeeNote: '2.5h相当として運営確認済み'
   });
   assert.equal(manual.success, true);
   assert.equal(manual.newFeeAmount, 5000);
-  assert.equal(manual.refundStatus, 'NONE');
+  assert.equal(manual.refundStatus, 'ADDITIONAL_CHARGE_REQUIRED');
 });
 
+/* ---- 精算の冪等性（PR #345レビュー必須修正2） ---- */
+
 test('recordFeeSettlement records actual money movement without touching the fee amount itself', function () {
-  var f = setup({ confirmedFeeAmount: 8000, feePaidAmount: 8000 });
-  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
+  var f = setup({ priceAmount: 8000, feePaidAmount: 8000 });
   var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
-  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version, '', '返金予定');
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '返金予定');
   assert.equal(result.success, true);
   var settlement = f.sandbox.adminRecordRescheduleFeeSettlement(
-    'SNB-TEST-1', result.changeId, 'SETTLED', 0, result.refundAmount, 'PayPayで返金済み'
+    'SNB-TEST-1', result.changeId, 'settle-1', 'SETTLED', 0, result.refundAmount, 'PayPayで返金済み'
   );
   assert.equal(settlement.success, true);
   var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
   assert.equal(record.feeRefundedAmount, result.refundAmount);
   assert.equal(record.feeSettlementState, 'SETTLED');
-  assert.equal(record.confirmedFeeAmount, result.newFeeAmount);
+  assert.equal(f.sandbox.Booking.getEffectivePriceAmount(record), result.newFeeAmount);
+});
+
+test('resubmitting the exact same settlementId is a safe no-op (no double counting)', function () {
+  var f = setup({ priceAmount: 8000, feePaidAmount: 8000 });
+  f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version_(f), '', '返金予定');
+  var first = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 'settle-dup', 'PENDING_REFUND', 0, 1000, '一部返金');
+  assert.equal(first.success, true);
+  var second = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 'settle-dup', 'PENDING_REFUND', 0, 1000, '一部返金');
+  assert.equal(second.success, true);
+  assert.equal(second.replay, true);
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(record.feeRefundedAmount, 1000); // 2000ではない（二重加算していない）
+});
+
+test('reusing a settlementId with different content is rejected', function () {
+  var f = setup({ priceAmount: 8000, feePaidAmount: 8000 });
+  f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version_(f), '', '返金予定');
+  f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 'settle-conflict', 'PENDING_REFUND', 0, 1000, 'メモA');
+  var conflict = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 'settle-conflict', 'PENDING_REFUND', 0, 2000, 'メモB');
+  assert.equal(conflict.success, false);
+  assert.equal(conflict.error.code, 'SETTLEMENT_ID_CONFLICT');
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(record.feeRefundedAmount, 1000); // 拒否されたリクエストは反映されない
+});
+
+test('a changeId that belongs to a different booking is rejected', function () {
+  var f = setup({ priceAmount: 8000, feePaidAmount: 8000 });
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version_(f), '', '返金予定');
+  var other = f.sandbox.adminRecordRescheduleFeeSettlement('OTHER-BOOKING-ID', result.changeId, 'settle-x2', 'SETTLED', 0, 0, '');
+  assert.equal(other.success, false);
+  assert.equal(other.error.code, 'NOT_FOUND'); // OTHER-BOOKING-ID自体が存在しない
+});
+
+test('a refund exceeding the unrefunded paid amount is rejected', function () {
+  var f = setup({ priceAmount: 8000, feePaidAmount: 1000 });
+  var result = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 'settle-over', 'PENDING_REFUND', 0, 2000, '');
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'REFUND_EXCEEDS_UNREFUNDED');
+});
+
+test('a Bookings-side apply failure after the settlement ledger row is recorded locks the booking for recovery instead of double counting on retry', function () {
+  var f = setup({ priceAmount: 8000, feePaidAmount: 8000 });
+  var original = f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = function () { throw new Error('Sheets API error'); };
+  var failed = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 'settle-fail', 'PENDING_REFUND', 0, 500, '');
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = original;
+  assert.equal(failed.success, false);
+  assert.equal(failed.error.code, 'SETTLEMENT_APPLY_FAILED');
+
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.ok(record.feeRecoveryRequiredAt);
+
+  // 復旧するまでは同じIDでの再送も拒否される。
+  var retry = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 'settle-fail', 'PENDING_REFUND', 0, 500, '');
+  assert.equal(retry.success, false);
+  assert.equal(retry.error.code, 'FEE_RECOVERY_REQUIRED');
 });

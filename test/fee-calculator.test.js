@@ -3,70 +3,66 @@
 var test = require('node:test');
 var assert = require('node:assert/strict');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
-var stubs = require('./helpers/gas-stubs');
 
-var FILES = ['Config.gs', 'JapanHolidays.gs', 'FeeMasterRepository.gs', 'FeeCalculator.gs'];
+var FILES = ['JapaneseHolidays.gs', 'BookingPricing.gs', 'FeeCalculator.gs'];
 
 function setup() {
-  var sheets = {};
-  var globals = {
-    PropertiesService: stubs.createPropertiesServiceStub({ SPREADSHEET_ID: 'ss1' }),
-    SpreadsheetApp: stubs.createSpreadsheetAppStub({ ss1: sheets })
-  };
-  var sandbox = loadBookingSandbox(FILES, globals);
-  return { sandbox: sandbox, sheets: sheets };
+  return loadBookingSandbox(FILES, {});
 }
 
-test('quoteFee returns the published base amounts for 2/3/4h and 1h extension (SNB general)', function () {
-  var f = setup().sandbox;
-  var weekday = f.FeeCalculator.quoteFee({ brand: 'snb', priceCategory: 'general', durationMinutes: 120, dateString: '2026-09-25', asOfDateString: '2026-09-25' });
+test('quoteFee delegates whole-hour durations to BookingPricing (single source of truth)', function () {
+  var f = setup();
+  var weekday = f.FeeCalculator.quoteFee({ brand: 'snb', priceTier: 'GENERAL', durationMinutes: 120, dateString: '2026-09-25' });
   assert.equal(weekday.supported, true);
-  assert.equal(weekday.dayType, 'weekday');
+  assert.equal(weekday.dayType, 'WEEKDAY');
   assert.equal(weekday.amount, 4000);
 
-  var weekend = f.FeeCalculator.quoteFee({ brand: 'snb', priceCategory: 'general', durationMinutes: 180, dateString: '2026-09-26', asOfDateString: '2026-09-26' });
-  assert.equal(weekend.dayType, 'weekend_holiday');
+  var weekend = f.FeeCalculator.quoteFee({ brand: 'snb', priceTier: 'GENERAL', durationMinutes: 180, dateString: '2026-09-26' });
+  assert.equal(weekend.dayType, 'WEEKEND_HOLIDAY');
   assert.equal(weekend.amount, 7500);
 
-  var holiday = f.FeeCalculator.quoteFee({ brand: 'snb', priceCategory: 'general', durationMinutes: 240, dateString: '2026-01-01', asOfDateString: '2026-01-01' });
-  assert.equal(holiday.dayType, 'weekend_holiday');
+  var holiday = f.FeeCalculator.quoteFee({ brand: 'snb', priceTier: 'GENERAL', durationMinutes: 240, dateString: '2026-01-01' });
+  assert.equal(holiday.dayType, 'WEEKEND_HOLIDAY');
   assert.equal(holiday.amount, 10000);
-});
 
-test('quoteFee interpolates 30-minute increments and extends beyond 4h at half the extension rate', function () {
-  var f = setup().sandbox;
-  var q = function (minutes) {
-    return f.FeeCalculator.quoteFee({ brand: 'snb', priceCategory: 'general', durationMinutes: minutes, dateString: '2026-09-25', asOfDateString: '2026-09-25' }).amount;
-  };
-  assert.equal(q(120), 4000);
-  assert.equal(q(150), 5000); // (4000+6000)/2
-  assert.equal(q(180), 6000);
-  assert.equal(q(210), 7000); // (6000+8000)/2
-  assert.equal(q(240), 8000);
-  assert.equal(q(270), 9000); // 8000 + 2000/2
-  assert.equal(q(300), 10000); // 8000 + 2000/2*2
+  var extension = f.FeeCalculator.quoteFee({ brand: 'snb', priceTier: 'GENERAL', durationMinutes: 300, dateString: '2026-09-25' });
+  assert.equal(extension.amount, 8000 + 2000); // 4h + 1h延長
 });
 
 test('quoteFee rounds a duration with a sub-30-minute remainder up before pricing', function () {
-  var f = setup().sandbox;
-  var q135 = f.FeeCalculator.quoteFee({ brand: 'snb', priceCategory: 'general', durationMinutes: 135, dateString: '2026-09-25', asOfDateString: '2026-09-25' });
-  assert.equal(q135.roundedMinutes, 150);
-  assert.equal(q135.amount, 5000);
+  var f = setup();
+  var q125 = f.FeeCalculator.quoteFee({ brand: 'snb', priceTier: 'GENERAL', durationMinutes: 125, dateString: '2026-09-25' });
+  assert.equal(q125.roundedMinutes, 150);
 });
 
-test('quoteFee is fail-closed for combinations without a published price table', function () {
-  var f = setup().sandbox;
-  var mensGeneral = f.FeeCalculator.quoteFee({ brand: 'mens', priceCategory: 'general', durationMinutes: 120, dateString: '2026-09-25', asOfDateString: '2026-09-25' });
-  assert.equal(mensGeneral.supported, false);
-  assert.equal(mensGeneral.reason, 'NO_PRICE_DATA');
+test('quoteFee refuses to auto-price a half-hour (non-whole-hour) rounded duration (unapproved interpolation)', function () {
+  var f = setup();
+  var half = f.FeeCalculator.quoteFee({ brand: 'snb', priceTier: 'GENERAL', durationMinutes: 150, dateString: '2026-09-25' });
+  assert.equal(half.supported, false);
+  assert.equal(half.reason, 'HALF_HOUR_RATE_UNCONFIRMED');
+  assert.equal(half.roundedMinutes, 150);
+  assert.equal(half.dayType, 'WEEKDAY');
 
-  var studioXMember = f.FeeCalculator.quoteFee({ brand: 'studio_x', priceCategory: 'member', durationMinutes: 120, dateString: '2026-09-25', asOfDateString: '2026-09-25' });
-  assert.equal(studioXMember.supported, false);
-  assert.equal(studioXMember.reason, 'NO_PRICE_DATA');
+  var half35 = f.FeeCalculator.quoteFee({ brand: 'snb', priceTier: 'GENERAL', durationMinutes: 210, dateString: '2026-09-25' });
+  assert.equal(half35.supported, false);
+  assert.equal(half35.reason, 'HALF_HOUR_RATE_UNCONFIRMED');
+});
+
+test('quoteFee propagates BookingPricing/JapaneseHolidays fail-closed errors (invalid brand, unsupported holiday year)', function () {
+  var f = setup();
+  var invalidBrand = f.FeeCalculator.quoteFee({ brand: 'unknown', priceTier: 'GENERAL', durationMinutes: 120, dateString: '2026-09-25' });
+  assert.equal(invalidBrand.supported, false);
+  // dayType判定（JapaneseHolidays）は日付が有効なら先に成功するため、brand不正の場合は
+  // BookingPricing.computeBookingPriceのINVALID_BRANDが返る。
+  assert.equal(invalidBrand.reason, 'INVALID_BRAND');
+
+  var yearOutOfRange = f.FeeCalculator.quoteFee({ brand: 'snb', priceTier: 'GENERAL', durationMinutes: 120, dateString: '2101-01-10' });
+  assert.equal(yearOutOfRange.supported, false);
+  assert.equal(yearOutOfRange.reason, 'HOLIDAY_YEAR_UNSUPPORTED');
 });
 
 test('classifyCancellationPolicy maps day differences to the existing cancellation policy boundaries', function () {
-  var f = setup().sandbox;
+  var f = setup();
   assert.equal(f.FeeCalculator.classifyCancellationPolicy('2026-10-05', '2026-10-01'), 'TWO_DAYS_PLUS');
   assert.equal(f.FeeCalculator.classifyCancellationPolicy('2026-10-05', '2026-10-04'), 'DAY_BEFORE');
   assert.equal(f.FeeCalculator.classifyCancellationPolicy('2026-10-05', '2026-10-05'), 'SAME_DAY');
@@ -74,7 +70,7 @@ test('classifyCancellationPolicy maps day differences to the existing cancellati
 });
 
 test('assessScheduleChangeFee: price increase is always a plain additional charge, cancellation policy irrelevant', function () {
-  var f = setup().sandbox;
+  var f = setup();
   var result = f.FeeCalculator.assessScheduleChangeFee({
     oldAmount: 4000, newAmount: 6000, unrefundedPaidAmount: 4000,
     scheduleChangeCount: 3, cancellationPolicyCategory: 'SAME_DAY'
@@ -85,7 +81,7 @@ test('assessScheduleChangeFee: price increase is always a plain additional charg
 });
 
 test('assessScheduleChangeFee: first-ever change before the day of use is a fee-free refund candidate', function () {
-  var f = setup().sandbox;
+  var f = setup();
   var result = f.FeeCalculator.assessScheduleChangeFee({
     oldAmount: 8000, newAmount: 4000, unrefundedPaidAmount: 8000,
     scheduleChangeCount: 0, cancellationPolicyCategory: 'DAY_BEFORE'
@@ -96,7 +92,7 @@ test('assessScheduleChangeFee: first-ever change before the day of use is a fee-
 });
 
 test('assessScheduleChangeFee: refund candidate never exceeds the unrefunded paid amount', function () {
-  var f = setup().sandbox;
+  var f = setup();
   var result = f.FeeCalculator.assessScheduleChangeFee({
     oldAmount: 8000, newAmount: 4000, unrefundedPaidAmount: 1000,
     scheduleChangeCount: 0, cancellationPolicyCategory: 'TWO_DAYS_PLUS'
@@ -105,7 +101,7 @@ test('assessScheduleChangeFee: refund candidate never exceeds the unrefunded pai
 });
 
 test('assessScheduleChangeFee: second change or same-day reduction is left as a policy decision (no auto-refund amount)', function () {
-  var f = setup().sandbox;
+  var f = setup();
   var secondChange = f.FeeCalculator.assessScheduleChangeFee({
     oldAmount: 8000, newAmount: 4000, unrefundedPaidAmount: 8000,
     scheduleChangeCount: 1, cancellationPolicyCategory: 'TWO_DAYS_PLUS'
@@ -124,7 +120,7 @@ test('assessScheduleChangeFee: second change or same-day reduction is left as a 
 });
 
 test('assessScheduleChangeFee: never invents a refund amount for pending-decision cases regardless of extra flags', function () {
-  var f = setup().sandbox;
+  var f = setup();
   var result = f.FeeCalculator.assessScheduleChangeFee({
     oldAmount: 8000, newAmount: 4000, unrefundedPaidAmount: 8000,
     scheduleChangeCount: 2, cancellationPolicyCategory: 'SAME_DAY'
@@ -134,7 +130,7 @@ test('assessScheduleChangeFee: never invents a refund amount for pending-decisio
 });
 
 test('assessScheduleChangeFee: no amount change requires no billing action', function () {
-  var f = setup().sandbox;
+  var f = setup();
   var result = f.FeeCalculator.assessScheduleChangeFee({
     oldAmount: 6000, newAmount: 6000, unrefundedPaidAmount: 6000,
     scheduleChangeCount: 0, cancellationPolicyCategory: 'TWO_DAYS_PLUS'

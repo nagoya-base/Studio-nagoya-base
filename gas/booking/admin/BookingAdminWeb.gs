@@ -191,6 +191,7 @@ function getAdminBookings() {
   var todayJst = BookingAvailability.formatDateInTimezone(new Date(), timezone);
   var bookings = SpreadsheetRepository.getAllBookings().map(function (item) {
     var record = item.record;
+    var priceSummary = buildAdminPriceSummary_(record);
     return {
       bookingId: record.bookingId,
       createdAt: normalizeAdminCreatedAt_(record.createdAt, timezone),
@@ -205,10 +206,44 @@ function getAdminBookings() {
       paymentMethod: record.paymentMethod,
       status: record.status,
       /* Issue #334: カード予約のみ非空（読み取り専用の支払期限表示用）。 */
-      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone)
+      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone),
+      /*
+       * Issue #342: 利用料金。一覧では「実際に案内すべき金額」（自動計算値・修正値の
+       * いずれか）と「修正済みかどうか」だけを返し、詳細な区分（tier/dayType等）は
+       * getAdminBookingDetailでのみ返す。キー名はeffectivePriceAmountとし、
+       * getAdminBookingDetailが返すpriceAmount（＝予約時点の自動計算値。修正の有無に
+       * 関わらず不変）と混同しないようにする。priceUpdateNeeded（PR #343レビュー対応）は
+       * 「金額修正済みだが利用者への訂正案内がまだ」の案内漏れを一覧でも見えるようにする。
+       */
+      effectivePriceAmount: priceSummary.effectiveAmount,
+      priceOverridden: priceSummary.overridden,
+      priceUpdateNeeded: priceSummary.updateNeeded
     };
   });
   return { todayJst: todayJst, bookings: bookings };
+}
+
+/*
+ * 利用料金の表示用サマリ（Issue #342。priceUpdateNeededはPR #343レビュー対応で追加）。
+ * effectiveAmountはBooking.getEffectivePriceAmount（priceOverrideAtが空でなければ
+ * priceOverrideAmountを優先）そのもので、「案内すべき実効金額」の判定ロジックをここで
+ * 複製しない。料金データを持たない過去の予約ではeffectiveAmountがnullになる（Web UI側は
+ * nullを「未計算」として表示する）。
+ * priceUpdateNeeded: 管理者が金額を修正した（priceOverrideAtが非空）のに、その訂正案内
+ * （BookingMailer.sendPriceUpdateMailForBooking）をまだ送っていない（priceUpdateMailSentAt
+ * が未送信、または最後の修正より古い）PENDING予約だけtrueになる。一覧・詳細の両方でこのフラグを使い、「案内漏れ」を
+ * 管理者が見落とさないようにする（PR #343レビュー「管理画面で案内漏れを防げるように」）。
+ */
+function needsPriceUpdateNotice_(record) {
+  return record.status === Booking.STATUS.PENDING && Booking.needsPriceUpdateNotice(record);
+}
+
+function buildAdminPriceSummary_(record) {
+  return {
+    effectiveAmount: Booking.getEffectivePriceAmount(record),
+    overridden: !!record.priceOverrideAt,
+    updateNeeded: needsPriceUpdateNotice_(record)
+  };
 }
 
 /*
@@ -287,24 +322,57 @@ function getAdminBookingDetail(bookingId) {
        */
       paymentLinkSentAtVersion: isAdminWebDateLike_(record.paymentLinkSentAt) ? record.paymentLinkSentAt.getTime() : 0,
       /*
-       * Issue #344追記（料金差額の自動計算）: 日程変更フォームの「基準料金」表示・
-       * 「元料金未確認」判定に使う。priceCategoryが空、またはconfirmedFeeAmountが
-       * 数値でない間はfeeBaselineReady:falseとし、Web UI側はsetFeeBaseline（管理者が
-       * 元の確定料金・支払額・価格区分を照合して入力する専用フォーム）を先に案内する
-       * （BookingReschedule.gsのfeeBaseline_/computeFeeContext_と同じ判定基準）。
+       * 利用料金の詳細（Issue #342）。priceAmountは予約時点の自動計算値（変更しない）、
+       * priceOverrideAmount/priceOverrideAtは管理者による修正値・修正日時（未修正なら
+       * それぞれnull/空文字）、effectivePriceAmountはBooking.getEffectivePriceAmountが
+       * 返す「実際に案内すべき金額」。canEditPrice（PENDINGのみtrue）はUI側の編集フォーム
+       * 表示制御用（実際の可否はBookingRepository.updateBookingPrice側で最終判定するため、
+       * ここは表示制御のヒントに過ぎない）。
        */
-      priceCategory: record.priceCategory || '',
-      priceCategoryBasis: record.priceCategoryBasis || '',
-      confirmedFeeAmount: typeof record.confirmedFeeAmount === 'number' && isFinite(record.confirmedFeeAmount) ? record.confirmedFeeAmount : null,
+      priceAmount: Number.isFinite(Number(record.priceAmount)) && record.priceAmount !== '' ? Number(record.priceAmount) : null,
+      priceTier: record.priceTier || '',
+      priceDayType: record.priceDayType || '',
+      priceIsMember: record.priceIsMember === true,
+      priceComputedAt: formatAdminDateTime_(record.priceComputedAt, timezone),
+      priceOverrideAmount: record.priceOverrideAt && Number.isFinite(Number(record.priceOverrideAmount))
+        ? Number(record.priceOverrideAmount)
+        : null,
+      priceOverrideAt: formatAdminDateTime_(record.priceOverrideAt, timezone),
+      effectivePriceAmount: Booking.getEffectivePriceAmount(record),
+      canEditPrice: record.status === Booking.STATUS.PENDING,
+      /*
+       * PR #343レビュー対応: 金額修正の利用者案内（訂正案内メール）の送信状況。
+       * priceUpdateMailSentAtは他のメールSentAt列と同じ「空＝未送信」の慣習。
+       * priceUpdateNeededは「修正済みだが案内がまだ」のときだけtrueになり、Web UI側が
+       * 送信ボタンの強調表示（案内漏れの警告）に使う（buildAdminPriceSummary_参照）。
+       */
+      priceUpdateMailSentAt: formatAdminDateTime_(record.priceUpdateMailSentAt, timezone),
+      priceUpdateNeeded: buildAdminPriceSummary_(record).updateNeeded,
+      /*
+       * Issue #344追記（料金差額の自動計算。PR #345レビュー対応で再設計）: 日程変更フォームの
+       * 「基準料金」表示・「元料金未確認」判定に使う。PR #343の料金基盤（priceAmount/
+       * priceTier/effectivePriceAmount）をそのまま再利用し、日程変更専用の「現在の確定金額」
+       * 列は別途持たない。feeBaselineReadyは「実効金額が判明していて（getEffectivePriceAmount
+       * !== null）、かつ会員区分（priceTier）も判明している」場合のみtrueになる
+       * （BookingReschedule.gsのfeeBaseline_/computeFeeContext_と同じ判定基準）。
+       * 既存予約（#342以前に作成された予約でpriceAmountが空）はfalseのままとなり、
+       * BookingReschedule.backfillOriginalPriceで管理者が照合して入力する必要がある。
+       */
+      feeBaselineReady: Booking.getEffectivePriceAmount(record) !== null && !!record.priceTier,
+      scheduleChangeCount: typeof record.scheduleChangeCount === 'number' && isFinite(record.scheduleChangeCount) ? record.scheduleChangeCount : 0,
       feePaidAmount: typeof record.feePaidAmount === 'number' && isFinite(record.feePaidAmount) ? record.feePaidAmount : 0,
       feeRefundedAmount: typeof record.feeRefundedAmount === 'number' && isFinite(record.feeRefundedAmount) ? record.feeRefundedAmount : 0,
-      feeMasterVersion: typeof record.feeMasterVersion === 'number' && isFinite(record.feeMasterVersion) ? record.feeMasterVersion : null,
-      feeBaselineReady: !!(record.priceCategory && typeof record.confirmedFeeAmount === 'number' && isFinite(record.confirmedFeeAmount) && isAdminWebDateLike_(record.feeInitializedAt)),
-      feeInitializedAt: formatAdminDateTime_(record.feeInitializedAt, timezone),
-      scheduleChangeCount: typeof record.scheduleChangeCount === 'number' && isFinite(record.scheduleChangeCount) ? record.scheduleChangeCount : 0,
       feeSettlementState: record.feeSettlementState || '',
       feeSettlementNote: record.feeSettlementNote || '',
-      feeSettlementUpdatedAt: formatAdminDateTime_(record.feeSettlementUpdatedAt, timezone)
+      feeSettlementUpdatedAt: formatAdminDateTime_(record.feeSettlementUpdatedAt, timezone),
+      /*
+       * PR #345レビュー対応: 料金関連フィールドの部分更新失敗により整合性が保証できない
+       * 場合のブロック状態（BookingReschedule.gsのfeeRecoveryRequiredAt参照）。空でなければ
+       * Web UI側は日程変更・精算記録のいずれのフォームも操作不能にし、要復旧である旨と
+       * 理由を表示する。
+       */
+      feeRecoveryRequiredAt: formatAdminDateTime_(record.feeRecoveryRequiredAt, timezone),
+      feeRecoveryReason: record.feeRecoveryReason || ''
     }
   };
 }
@@ -372,4 +440,23 @@ function adminSendCardPaymentLink(bookingId, paymentLinkUrl, force, expectedSend
  */
 function adminResolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo) {
   return sanitizeForClient_(resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo));
+}
+
+/* 料金修正（Issue #342）。既存の正式関数updateBookingPrice（BookingAdmin.gs）へ
+   そのまま委譲する。業務ロジック（PENDING限定・金額の妥当性検証）はコピーしない。
+   実行前の確認ダイアログ（自動計算値と修正後の金額の表示）はHTML側（クライアント）で行う。 */
+function adminUpdateBookingPrice(bookingId, newAmountJpy) {
+  return updateBookingPrice(bookingId, newAmountJpy);
+}
+
+/*
+ * 金額修正の利用者案内送信（PR #343レビュー対応）。既存の正式関数sendPriceUpdateMail
+ * （BookingAdmin.gs）へそのまま委譲する。業務ロジック（金額修正済み・PENDING限定・
+ * 二重送信防止）はコピーしない。実行前の確認ダイアログ（修正後の金額の表示）は
+ * HTML側（クライアント）で行う。
+ * 戻り値にはsentAt（Dateオブジェクト）を含みうるため、adminSendCardPaymentLinkと同じ理由で
+ * sanitizeForClient_を通してから返す。
+ */
+function adminSendPriceUpdateMail(bookingId, options) {
+  return sanitizeForClient_(sendPriceUpdateMail(bookingId, options));
 }

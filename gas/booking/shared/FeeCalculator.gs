@@ -1,20 +1,32 @@
 /*
- * FeeCalculator.gs — 料金差額の自動計算エンジン（Issue #344追記 Phase 1）。
+ * FeeCalculator.gs — 料金差額の自動計算エンジン（Issue #344追記。PR #345レビュー対応で
+ * BookingPricing.gs/JapaneseHolidays.gsを単一の正本として再設計）。
  *
- * SNB / SNB mens / Studio X 直接予約向け。外部予約サイト（スペースマーケット等）は対象外
- * （FeeMasterRepository.gs参照）。丸め・端数処理・会員適用・祝日判定を純粋関数として
- * 分離し、Spreadsheet/CalendarApp等のGAS依存を持たない（FeeMasterRepositoryの
- * 料金表取得だけがSpreadsheetApp依存）。
+ * 当初（PR #345初版）はここに独自の料金表・祝日判定（FeeMasterRepository.gs/
+ * JapanHolidays.gs）を持っていたが、PR #345レビューで以下を指摘され、廃止した:
+ * - 料金表の二重管理（BookingPricing.gsが「料金表はここ1箇所のみに定義する」と
+ *   明記しているのに、日程変更用に別の表を持つと改定時の食い違いリスクがある）。
+ * - FeeMasterRepositoryのeffectiveAt='2020-01-01'は根拠のない偽装だった
+ *   （実際にいつから有効だったか確認できないのに2020年からとしていた）。
+ * このファイルは、料金の正本をBookingPricing.gs（Issue #342/#343）・祝日判定の正本を
+ * JapaneseHolidays.gs（Issue #346/#347）に一本化し、日程変更特有の「30分刻みへの丸め」
+ * 「差額の判定」「キャンセル規定との突合」だけをここに置く。
  *
- * 30分刻み料金の算出方法（Issue #344追記の「暫定案」を2026-09-25にv1として承認・実装）:
- *   公開されている料金表は2h/3h/4h/延長1hの4点のみ。中間の2.5h/3.5hは隣接する2点の
- *   単純平均（線形補間）、4h超は「延長1h単価の半額」を30分ごとに加算する。
- *   30分未満の端数は常に切り上げる（roundUpToStepMinutes_）。平均で1円未満の端数が
- *   生じた場合はMath.round（四捨五入）で円単位に丸める（v1の実際の金額はすべて
- *   割り切れるため、現時点でこの丸めが実際に発生することはない。将来の料金改定で
- *   端数が生じる場合は、この四捨五入ルール自体をFeeMasterのnote等に明記して変更すること）。
+ * 30分刻み料金の扱い（承認済み方針とレビュー指摘の反映）:
+ *   承認済みの方針は「30分単位で計算する」「変更確定時点の最新料金表を適用する」の2点。
+ *   ただし、2.5時間・3.5時間等（30分刻みの丸め後の時間が整数時間にならないケース）の
+ *   具体的な金額を隣接する整数時間からどう補間するかは**未承認**（PR #345レビュー
+ *   「2.5時間・3.5時間の具体的な料金を線形補間すること…は未承認」）。そのため、
+ *   このモジュールは以下の2ケースだけを扱う:
+ *   - 丸め後の時間が整数時間（2h/3h/4h、または4hを超える整数時間）に一致する場合のみ、
+ *     BookingPricing.computeBookingPrice（唯一の正本）へそのまま委譲して金額を返す
+ *     （二重管理なし。祝日判定も含めてBookingPricing.gs内部で一貫して行われる）。
+ *   - 丸め後の時間が半端な30分単位（2.5h/3.5h等）の場合は、金額を一切自動算出せず
+ *     `supported:false`（reason: 'HALF_HOUR_RATE_UNCONFIRMED'）を返す。呼び出し側
+ *     （BookingReschedule.gs）は、管理者が金額と理由を明示的に入力しない限り確定
+ *     できないfail-closedな扱いにする（未承認の事業ルールを実装で決めない）。
  *
- * キャンセル規定との関係（Issue #344追記の「確定した運用方針」）:
+ * キャンセル規定との関係（承認済みの運用方針）:
  *   既存のキャンセル規定は「2日前まで無料／前日50%／当日100%」と「日程変更は前日まで
  *   1回無料、2回目以降はキャンセル扱い」。しかし「一部時間短縮をキャンセルと同一視するか」
  *   「差額のどの部分にキャンセル料を掛けるか」は規約に明記が無く、issue本文が
@@ -26,10 +38,10 @@
  *   2. 新料金が旧料金未満（差額<0）で、かつ「今回がこの予約で初めての日程変更」かつ
  *      「変更前の利用日の前日までの申し出」: 規約の「前日まで1回無料」に該当するため、
  *      キャンセル料を掛けずに差額全額を返金候補とする（CANDIDATE）。
- *   上記以外の減額（2回目以降、または当日の変更。免除特例の適用判断を含む）は
- *   PENDING_POLICY_DECISION とし、このモジュールは金額を一切自動算出しない。
- *   管理者が個別に金額と理由を判断して確定する処理はBookingReschedule.gs側の責務とする
- *   （このモジュールは「規約上どちらとも決められない」ことを検出するだけに留める）。
+ *   上記以外の減額（2回目以降、または当日の変更）はPENDING_POLICY_DECISION。このモジュールは
+ *   金額を一切自動算出しない。管理者が個別に金額と理由を判断して確定する処理は
+ *   BookingReschedule.gs側の責務とする（このモジュールは「規約上どちらとも決められない」
+ *   ことを検出するだけに留める）。
  */
 'use strict';
 
@@ -40,46 +52,60 @@ var FeeCalculator = (function () {
     return Math.ceil(minutes / step) * step;
   }
 
-  /* entry: FeeMasterRepositoryの1行（hour2Amount/hour3Amount/hour4Amount/extensionHourAmount）。
-     roundedMinutesは30分刻みに切り上げ済みの値であること（120以上）。 */
-  function computeAmountForEntry_(entry, roundedMinutes) {
-    if (roundedMinutes < 120) return null;
-    if (roundedMinutes === 120) return entry.hour2Amount;
-    if (roundedMinutes === 150) return Math.round((entry.hour2Amount + entry.hour3Amount) / 2);
-    if (roundedMinutes === 180) return entry.hour3Amount;
-    if (roundedMinutes === 210) return Math.round((entry.hour3Amount + entry.hour4Amount) / 2);
-    if (roundedMinutes === 240) return entry.hour4Amount;
-    var extraSteps = (roundedMinutes - 240) / STEP_MINUTES_;
-    return entry.hour4Amount + Math.round(entry.extensionHourAmount / 2 * extraSteps);
+  /*
+   * dateStringの曜日区分（'WEEKDAY'|'WEEKEND_HOLIDAY'）を判定する。BookingPricing.gsの
+   * resolveDayType_と全く同じ順序・ロジック（PR #347レビュー対応: 対応年範囲外の
+   * 土日だけがJapaneseHolidays.classifyの検証を経由せず「たまたま」成功する非対称な
+   * fail-closedを避けるため、必ず先にclassifyの成否を確認する）。
+   * 戻り値: { ok: true, dayType } または { ok: false, error }。
+   */
+  function resolveDayType_(dateString) {
+    var classified = JapaneseHolidays.classify(dateString);
+    if (!classified.ok) return { ok: false, error: classified.error };
+    var parts = dateString.split('-');
+    var weekday = new Date(Date.UTC(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10))).getUTCDay();
+    var isWeekendOrHoliday = weekday === 0 || weekday === 6 || classified.isHoliday;
+    return { ok: true, dayType: isWeekendOrHoliday ? BookingPricing.DAY_TYPE.WEEKEND_HOLIDAY : BookingPricing.DAY_TYPE.WEEKDAY };
   }
 
   /*
-   * params: { brand, priceCategory, durationMinutes, dateString, asOfDateString }
-   * dateStringは利用日（'YYYY-MM-DD'。土日祝判定に使う）、asOfDateStringは料金表の
-   * バージョン判定に使う基準日（プレビュー時・確定直前時でそれぞれ「今日」を渡す）。
-   * 戻り値: { supported: true, version, effectiveAt, dayType, roundedMinutes, amount, entry }
-   *      | { supported: false, version, effectiveAt, dayType, roundedMinutes, reason }
+   * params: { brand, priceTier ('GENERAL'|'MEMBER'), durationMinutes, dateString }
+   * dateStringは変更後の利用日（'YYYY-MM-DD'。土日祝判定に使う）。
+   * 戻り値:
+   *   { supported: true, amount, dayType, tier, roundedMinutes, billableHours }
+   * | { supported: false, reason, message, roundedMinutes, dayType }
+   *     reason: 'HALF_HOUR_RATE_UNCONFIRMED' | BookingPricing/JapaneseHolidaysのerror.code
+   *             （'INVALID_BRAND'|'INVALID_DATE'|'INVALID_DURATION'|'HOLIDAY_YEAR_UNSUPPORTED'）
    */
   function quoteFee(params) {
-    var dayType = JapanHolidays.isWeekendOrHoliday(params.dateString) ? 'weekend_holiday' : 'weekday';
-    var roundedMinutes = roundUpToStepMinutes_(params.durationMinutes, STEP_MINUTES_);
-    var found = FeeMasterRepository.findEntry(params.asOfDateString, params.brand, params.priceCategory, dayType);
-    if (!found.entry) {
+    var roundedMinutes = roundUpToStepMinutes_(Number(params.durationMinutes), STEP_MINUTES_);
+    var dayTypeResult = resolveDayType_(params.dateString);
+    if (!dayTypeResult.ok) {
       return {
-        supported: false, version: found.version, effectiveAt: found.effectiveAt,
-        dayType: dayType, roundedMinutes: roundedMinutes, reason: 'NO_PRICE_DATA'
+        supported: false, reason: dayTypeResult.error.code, message: dayTypeResult.error.message,
+        roundedMinutes: roundedMinutes, dayType: null
       };
     }
-    var amount = computeAmountForEntry_(found.entry, roundedMinutes);
-    if (amount === null) {
+    if (roundedMinutes % 60 !== 0) {
       return {
-        supported: false, version: found.version, effectiveAt: found.effectiveAt,
-        dayType: dayType, roundedMinutes: roundedMinutes, reason: 'DURATION_TOO_SHORT'
+        supported: false, reason: 'HALF_HOUR_RATE_UNCONFIRMED',
+        message: '30分刻みの端数（' + (roundedMinutes / 60) + '時間）の金額は承認された料金表にないため、自動算出できません。管理者が金額を確認してください。',
+        roundedMinutes: roundedMinutes, dayType: dayTypeResult.dayType
+      };
+    }
+    var priceResult = BookingPricing.computeBookingPrice({
+      brand: params.brand, date: params.dateString, durationMinutes: roundedMinutes,
+      isMember: params.priceTier === 'MEMBER'
+    });
+    if (!priceResult.valid) {
+      return {
+        supported: false, reason: priceResult.error.code, message: priceResult.error.message,
+        roundedMinutes: roundedMinutes, dayType: dayTypeResult.dayType
       };
     }
     return {
-      supported: true, version: found.version, effectiveAt: found.effectiveAt,
-      dayType: dayType, roundedMinutes: roundedMinutes, amount: amount, entry: found.entry
+      supported: true, amount: priceResult.price.amount, dayType: priceResult.price.dayType,
+      tier: priceResult.price.tier, roundedMinutes: roundedMinutes, billableHours: priceResult.price.billableHours
     };
   }
 
@@ -141,7 +167,7 @@ var FeeCalculator = (function () {
 
   return {
     roundUpToStepMinutes: roundUpToStepMinutes_,
-    computeAmountForEntry: computeAmountForEntry_,
+    resolveDayType: resolveDayType_,
     quoteFee: quoteFee,
     classifyCancellationPolicy: classifyCancellationPolicy,
     assessScheduleChangeFee: assessScheduleChangeFee

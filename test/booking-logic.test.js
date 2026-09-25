@@ -205,7 +205,19 @@ test('buildCreateBookingPayload: createBookingへ渡すペイロードを組み�
     purpose: 'その他：ヘアメイク撮影',
     paymentMethod: '現金',
     note: '',
-    source: 'mens-booking-app'
+    source: 'mens-booking-app',
+    isMember: false
+  });
+});
+
+test('buildCreateBookingPayload: isMemberはtrue以外すべてfalseへ正規化する（fail-closed）', function () {
+  var Logic = loadLogic();
+  [true, false, undefined, null, '', 'true', 1].forEach(function (rawIsMember) {
+    var payload = Logic.buildCreateBookingPayload({
+      brand: 'snb', name: 'x', email: 'x@example.com', people: '1名', purpose: 'その他', paymentMethod: '現金',
+      isMember: rawIsMember
+    });
+    assert.strictEqual(payload.isMember, rawIsMember === true, JSON.stringify(rawIsMember) + ' の正規化結果が不正');
   });
 });
 
@@ -324,7 +336,8 @@ test('buildCreateBookingPayload: localeに関わらずpayloadのkey/valueは変�
     purpose: 'ポートレート撮影',
     paymentMethod: 'PayPay',
     note: '',
-    source: 'snb-booking-app'
+    source: 'snb-booking-app',
+    isMember: false
   });
 });
 
@@ -734,4 +747,36 @@ test('CARD_MIN_HOURS_BEFORE_START/CARD_TTL_HOURS/CARD_PAYMENT_METHOD_VALUE: gas/
   assert.strictEqual(Logic.CARD_MIN_HOURS_BEFORE_START, 96);
   assert.strictEqual(Logic.CARD_TTL_HOURS, 72);
   assert.strictEqual(Logic.CARD_PAYMENT_METHOD_VALUE, 'オンラインクレジットカード');
+});
+
+/* ── 利用料金表示（Issue #342） ── */
+
+test('brandShowsMemberOption: snb/studio_xはtrue、mens/未知のbrandはfalse（PR #343レビュー対応: studio_xも会員基準の対象）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.brandShowsMemberOption('snb'), true);
+  assert.strictEqual(Logic.brandShowsMemberOption('studio_x'), true);
+  assert.strictEqual(Logic.brandShowsMemberOption('mens'), false);
+  assert.strictEqual(Logic.brandShowsMemberOption('ataru'), false);
+  assert.strictEqual(Logic.brandShowsMemberOption(undefined), false);
+});
+
+test('formatJpyAmount: 数値を"¥"+3桁区切りへ整形する。数値化できない値は空文字を返す', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.formatJpyAmount(4000), '¥4,000');
+  assert.strictEqual(Logic.formatJpyAmount(10000), '¥10,000');
+  assert.strictEqual(Logic.formatJpyAmount('4000'), '¥4,000');
+  assert.strictEqual(Logic.formatJpyAmount(0), '¥0');
+  assert.strictEqual(Logic.formatJpyAmount(undefined), '');
+  assert.strictEqual(Logic.formatJpyAmount(null), '');
+  assert.strictEqual(Logic.formatJpyAmount('abc'), '');
+  assert.strictEqual(Logic.formatJpyAmount(NaN), '');
+});
+
+test('priceComputingLabel/priceUnavailableLabel: locale="en"は英語、未指定は日本語を返す', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.priceComputingLabel(), '料金を計算しています…');
+  assert.strictEqual(Logic.priceComputingLabel('en'), 'Calculating price…');
+  assert.notStrictEqual(Logic.priceUnavailableLabel(), Logic.priceUnavailableLabel('en'));
+  assert.ok(Logic.priceUnavailableLabel().length > 0);
+  assert.ok(Logic.priceUnavailableLabel('en').length > 0);
 });
