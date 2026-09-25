@@ -2086,6 +2086,59 @@ Booking Admin UIには、記録不整合の間だけ表示される専用の「�
 小さい補正値がそれぞれ適切に拒否され既存の記録を書き換えないこと、を検証するテストを
 追加した。
 
+#### 第4回レビュー対応: resolvePaymentLinkMetadataInconsistency自体の部分失敗対策
+
+第3回対応で新設した`resolvePaymentLinkMetadataInconsistency`には、次の問題が残っていた:
+送信回数の補正（`paymentLinkSendCount`）と不整合フラグのクリア（
+`paymentLinkMetadataInconsistentAt: ''`）を、1回の`updateBookingFields`呼び出しへ
+まとめて渡していた。`updateBookingFields`は渡されたフィールドを内部でループして
+1つずつ書き込む実装のため（このファイルの他の箇所と同じ制約。「送信履歴・エラー管理」節
+参照）、途中の書き込みだけが失敗すると「送信回数の補正が反映されていないのに、
+不整合フラグだけが先に（またはたまたま）クリアされてしまう」おそれがあった。これは
+第3回対応が防いだはずの「食い違いを隠す方向の失敗」を、補正操作自体が新たに持ち込んで
+しまうことになる。
+
+これを次のように修正した:
+
+1. **書き込みを分離する**: `paymentLinkSendCount`の更新と`paymentLinkMetadataInconsistentAt`
+   のクリアを、それぞれ単独の`updateBookingFields`呼び出しに分離した（送信回数の
+   補正を先に行い、不整合フラグはまだ触らない）。
+2. **実際に保存されたことを確認してから次へ進む**: 送信回数の更新後、`findRowByBookingId`で
+   最新レコードを再取得し、`paymentLinkSendCount`が確認済みの値どおりに反映された
+   ことを検証する。この検証は、更新呼び出しが例外を投げた場合だけでなく、**例外が
+   起きなかった場合にも同様に行う**（Sheets側が例外を投げずに書き込みに失敗する
+   可能性もゼロではないため、例外の有無だけを信用しない。このファイルの他の箇所
+   （`criticalWriteFailed`等）と同じ方針）。反映を確認できて初めて、続く
+   `paymentLinkMetadataInconsistentAt`のクリアへ進む。
+3. **途中で失敗した場合は不整合の警告を維持する**: 送信回数の更新が反映されたことを
+   確認できない場合は`RESOLVE_SEND_COUNT_NOT_CONFIRMED`、送信回数の反映は確認できたが
+   続くフラグのクリアが反映されたことを確認できない場合は`RESOLVE_FLAG_CLEAR_NOT_
+   CONFIRMED`として失敗を返す。いずれの場合も`paymentLinkMetadataInconsistentAt`は
+   維持され（クリアされていないことを再取得で確認済み）、送信は
+   `evaluatePaymentLinkEligibility_`のMETADATA_INCONSISTENT判定により引き続き拒否
+   される（既存の96時間受付条件・72時間支払期限・送信履歴の競合検知・Stripe URL検証
+   はいずれも変更していない）。呼び出し元には`requiresManualConfirmation: true`を
+   返し、補正が完了していないことを伝える。
+4. **補正の試行状況をRecoveryへ記録する**: 上記のいずれかで補正が完了しなかった場合、
+   `recordPaymentLinkResolveIncomplete_`が`failureType: 'PAYMENT_LINK_METADATA_
+   RESOLVE_INCOMPLETE'`・`recoveryState: 'OPEN'`としてRecoveryへ記録する（元の
+   `PAYMENT_LINK_METADATA_UPDATE_FAILED`のOPEN行＝送信時点で発生した最初の不整合とは
+   別の記録。「補正を試みたが完了しなかった」ことを区別できるようにする）。
+   `failureType: 'PAYMENT_LINK_METADATA_RESOLVED'`（成功）は、送信回数の反映・
+   フラグのクリアの両方を再取得で確認できた場合のみ記録される。
+
+`SpreadsheetRepository.gs`の`paymentLinkMetadataInconsistentAt`列の説明コメントも、
+「次に両方の更新が成功すると自動的に空へ戻る」という古い（第3回対応より前の）記述を、
+現在の「補正完了（送信回数の反映確認→フラグのクリア確認の両方）まで送信を拒否し続け、
+専用の補正関数のみがクリアできる」という仕様に合わせて更新した。
+
+`test/booking-mailer.test.js`に、送信回数の補正書き込みが（a）例外で失敗した場合、
+（b）例外を投げずに反映されなかった場合（silentな失敗。再取得による検証が必要である
+ことの確認）、（c）送信回数の補正は保存できたが続くフラグのクリアだけが失敗した場合、
+のそれぞれについて、`resolvePaymentLinkMetadataInconsistency`が適切なエラーコードを
+返し不整合フラグを維持したままRecoveryへ記録し、その後の通常送信・明示的な再送
+（force）とも依然`METADATA_INCONSISTENT`で拒否されることを検証するテストを追加した。
+
 ### 送信履歴・エラー管理（Bookingsシートへの列追加）
 
 `SpreadsheetRepository.gs`の`HEADERS_`へ、`expiredMailSentAt`（Issue #334 PR-A）の
@@ -2243,7 +2296,10 @@ Booking Admin UIには、記録不整合の間だけ表示される専用の「�
   （`errorMessage`に本来の送信回数を含む）と実際のメール送信履歴（利用者への到達確認等）
   から手動で確認したうえで、Booking Admin予約詳細の「送信履歴を補正」操作
   （`resolvePaymentLinkMetadataInconsistency`。「部分失敗・recoveryの確認手順」節
-  項18参照）で解消すること。
+  項18参照）で解消すること。この補正操作自体も内部で2段階の書き込み（送信回数の補正→
+  フラグのクリア）を行い、それぞれ再取得で反映を確認する（4回目対応）。いずれかの
+  反映を確認できない場合は`PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`としてRecoveryへ
+  記録され、不整合フラグは維持されたまま（誤って解除されない）補正を再試行できる。
 - `paymentLinkSentAt`単独更新の失敗時のフォールバック書き込み（`paymentLinkSendUnconfirmedAt`
   または`paymentLinkMetadataInconsistentAt`）自体が失敗した場合
   （Spreadsheet全体へのアクセスが完全に失われている等）は、
@@ -2695,6 +2751,7 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 | `PAYMENT_LINK_SEND_HISTORY_UPDATE_FAILED`（PR #337レビュー対応・1回目） | Booking AdminからのStripe決済リンク送信で、MailApp.sendEmail自体は成功したが、直後の`paymentLinkSentAt`（二重送信防止の要となる列）の記録に失敗した（メールが届いている可能性がある。要確認）。予約自体・`status`（PENDING）は変更しない。`Bookings`シートの`paymentLinkSendUnconfirmedAt`にも同時記録し、この値が空でない間は通常送信（forceなし）を拒否する |
 | `PAYMENT_LINK_METADATA_UPDATE_FAILED`（PR #337レビュー対応・2回目） | Booking AdminからのStripe決済リンク送信で、MailApp.sendEmail・`paymentLinkSentAt`の記録には成功した（＝送信履行・二重送信防止は確定済み）が、続く`stripePaymentLinkUrl`/`paymentLinkSentTo`/`paymentLinkSendCount`の記録に失敗した。`paymentLinkSendCount`の表示が実際の送信回数より少ない可能性がある（`errorMessage`に本来の送信回数を記載）。予約自体・`status`（PENDING）は変更せず、メール自体の再送も自動実行しない。`Bookings`シートの`paymentLinkMetadataInconsistentAt`にも同時記録し、この値が空でない間は通常送信・明示的な再送とも`force`でも拒否する（3回目対応。他の送信が成功しただけでは自動的にクリアされない。解消手順は「部分失敗・recoveryの確認手順」項18参照） |
 | `PAYMENT_LINK_METADATA_RESOLVED`（PR #337レビュー対応・3回目） | 運用者がBooking Admin予約詳細の「送信履歴を補正」操作（`resolvePaymentLinkMetadataInconsistency`）で`paymentLinkMetadataInconsistentAt`を解消したことを示す記録。`recoveryState: 'RESOLVED'`で即時記録される（元の`PAYMENT_LINK_METADATA_UPDATE_FAILED`のOPEN行とは別の記録で、そちらの`recoveryState`/`resolvedAt`は運用者が別途手動記録する）。`errorMessage`に補正前後の`paymentLinkSendCount`を記載する |
+| `PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`（PR #337レビュー対応・4回目） | `resolvePaymentLinkMetadataInconsistency`実行時、送信回数の補正（`paymentLinkSendCount`）または不整合フラグのクリア（`paymentLinkMetadataInconsistentAt`）のいずれかが実際に反映されたことを再取得で確認できず、補正の試行自体が完了しなかった。`paymentLinkMetadataInconsistentAt`は維持されており、送信（通常送信・明示的な再送）は引き続き`METADATA_INCONSISTENT`で拒否される。`errorMessage`に補正前後の`paymentLinkSendCount`と、未確認の書き込み箇所（`SEND_COUNT_WRITE`/`FLAG_CLEAR`）を記載する |
 
 ## 部分失敗・recoveryの確認手順（運用者向け）
 
@@ -2827,15 +2884,32 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
     - 内部的には`resolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount)`が
       呼ばれ、`paymentLinkMetadataInconsistentAt`が現在記録されている予約のみを受け付け
       （対象外は`NOT_INCONSISTENT`で拒否）、`confirmedSendCount`が0以上の整数かつ
-      現在の`paymentLinkSendCount`以上であることを検証したうえで（`INVALID_
-      CONFIRMED_SEND_COUNT`/`CONFIRMED_SEND_COUNT_TOO_LOW`で拒否）、
-      `paymentLinkSendCount`を補正値へ更新し`paymentLinkMetadataInconsistentAt`を空に戻す
-      （Sheetsの記録のみを補正する。メール送信・Calendar操作は行わない）。
-    - 補正が完了すると、Recoveryへ`failureType: 'PAYMENT_LINK_METADATA_RESOLVED'`・
-      `recoveryState: 'RESOLVED'`として補正の実施内容が記録される（元の`PAYMENT_LINK_
-      METADATA_UPDATE_FAILED`のOPEN行自体は、他の失敗記録と同じく運用者が手動で
-      `recoveryState`/`resolvedAt`を記録する。前項6参照）。補正後は送信（通常送信・
-      明示的な再送）が再び許可される。
+      現在の`paymentLinkSendCount`以上であることを検証する（`INVALID_
+      CONFIRMED_SEND_COUNT`/`CONFIRMED_SEND_COUNT_TOO_LOW`で拒否）。
+    - 検証を通過すると、**まず`paymentLinkSendCount`のみを補正値へ更新し、最新レコードを
+      再取得してその値が実際に反映されたことを確認したうえで、続けて
+      `paymentLinkMetadataInconsistentAt`のみを空へ更新し、再度最新レコードを再取得して
+      両方の値が確認済みの状態になっていることを確認する**（PR #337レビュー対応・4回目。
+      いずれかの反映を確認できない場合は`RESOLVE_SEND_COUNT_NOT_CONFIRMED`/
+      `RESOLVE_FLAG_CLEAR_NOT_CONFIRMED`として失敗を返し、`paymentLinkMetadataInconsistentAt`
+      は維持される＝送信は引き続き拒否される。Sheetsの記録のみを補正する。メール送信・
+      Calendar操作は行わない）。
+    - 補正が完了する（両方の反映を確認できる）と、Recoveryへ
+      `failureType: 'PAYMENT_LINK_METADATA_RESOLVED'`・`recoveryState: 'RESOLVED'`として
+      補正の実施内容が記録される（元の`PAYMENT_LINK_METADATA_UPDATE_FAILED`のOPEN行自体は、
+      他の失敗記録と同じく運用者が手動で`recoveryState`/`resolvedAt`を記録する。前項6参照）。
+      補正後は送信（通常送信・明示的な再送）が再び許可される。
+    - `failureType`が`PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`（PR #337レビュー対応・
+      4回目）として記録された場合、上記の補正の試行自体が完了しなかったことを示す
+      （`paymentLinkMetadataInconsistentAt`は維持されており、送信は依然拒否される）。
+      `errorMessage`に記載された未確認の書き込み箇所（`SEND_COUNT_WRITE`は送信回数の
+      補正が反映されたか確認できなかったことを示し、この場合`Bookings`シートの
+      `paymentLinkSendCount`は補正前のまま残っている可能性が高い。`FLAG_CLEAR`は送信回数の
+      補正自体は反映されたが続くフラグのクリアが反映されたか確認できなかったことを示す）を
+      確認し、`Bookings`シートの実際の値と食い違いがないかを確認する。Sheets保存先の
+      一時的な障害が解消したことを確認できれば、同じ`bookingId`・確認済みの送信回数で
+      「送信履歴を補正」を再試行する（`confirmedSendCount`は現在の`paymentLinkSendCount`
+      以上であれば再実行できるため、`SEND_COUNT_WRITE`で失敗した場合も安全に再試行できる）。
     - `Bookings`シートの`status`（PENDING）・Calendar/Sheetsの予約データ本体は
       変更されていない。
 

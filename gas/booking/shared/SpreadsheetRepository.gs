@@ -88,10 +88,23 @@ var SpreadsheetRepository = (function () {
      *   paymentLinkSentAtの単独更新には成功した（＝送信履行は確定済み。二重送信の
      *   おそれはない）が、続くstripePaymentLinkUrl/paymentLinkSentTo/
      *   paymentLinkSendCount等の2回目の更新が失敗し、これらの記録内容が古い・不正確な
-     *   状態のまま残っている可能性がある場合の日時。送信可否の判定には使わない
-     *   （二重送信防止はpaymentLinkSentAt/paymentLinkSendUnconfirmedAtで既に確定して
-     *   いるため）。Booking Admin予約詳細で「送信回数等の記録に不整合の可能性」を
-     *   案内するための表示専用の列。次に両方の更新が成功すると自動的に空へ戻る。
+     *   状態のまま残っている可能性がある場合の日時。**空でない間は通常送信・明示的な
+     *   再送のいずれも送信可否の判定でforceでも拒否される**（第3回PRレビュー対応。
+     *   BookingMailer.gsのevaluatePaymentLinkEligibility_のMETADATA_INCONSISTENT判定。
+     *   送信履行そのものの二重送信防止はpaymentLinkSentAt/paymentLinkSendUnconfirmedAtで
+     *   別途確定済みだが、送信回数等の記録が信頼できるまでは追加の送信自体を止める）。
+     *   **他の送信が成功しただけでは自動的にクリアされない**（第3回PRレビュー対応。
+     *   以前は次の送信成功時に自動的に空へ戻していたが、これだと送信回数の食い違いを
+     *   解消せずに隠してしまうため廃止した）。クリアできるのは、管理者が正しい送信回数を
+     *   確認したうえで呼び出す専用の補正関数
+     *   BookingMailer.resolvePaymentLinkMetadataInconsistencyのみ。この関数は
+     *   paymentLinkSendCountの補正とこの列のクリアを**それぞれ別のupdateBookingFields
+     *   呼び出しで順に行い、都度最新レコードを再取得して実際に反映されたかを検証する**
+     *   （第4回PRレビュー対応。1回の呼び出しに複数フィールドを渡すと内部でループして
+     *   順に書き込むため、途中の書き込みだけが失敗すると送信回数の補正が反映されていない
+     *   のにこのフラグだけが先にクリアされてしまう恐れがある。検証に失敗した場合は
+     *   このフラグを維持し、Recoveryへ`PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`として
+     *   記録する）。
      */
     'stripePaymentLinkUrl',
     'paymentLinkSentAt',

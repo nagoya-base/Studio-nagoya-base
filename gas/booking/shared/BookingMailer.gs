@@ -837,6 +837,33 @@ var BookingMailer = (function () {
   }
 
   /*
+   * 第4回PRレビュー対応: resolvePaymentLinkMetadataInconsistencyの書き込み
+   * （送信回数の補正・不整合フラグのクリア）のいずれかが実際に反映されたことを
+   * 確認できず、補正の試行自体が完了しなかった場合のRecovery記録。既存の
+   * OPEN記録（recordPaymentLinkMetadataInconsistent_が書いた
+   * PAYMENT_LINK_METADATA_UPDATE_FAILED。元の送信時点の不整合そのもの）とは別の
+   * failureTypeとして分離し、「補正を試みたが完了しなかった」ことを区別できるように
+   * する。不整合フラグはこの時点でも維持されており、送信は引き続き拒否される
+   * （呼び出し元がこの状態でも通常送信・明示的な再送を試みても、
+   * evaluatePaymentLinkEligibility_のMETADATA_INCONSISTENT判定で拒否される）。
+   */
+  function recordPaymentLinkResolveIncomplete_(bookingId, status, currentCount, confirmedCount, stage) {
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: 'PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE',
+        occurredAt: new Date(),
+        status: status,
+        errorMessage: '管理者による決済リンク送信回数の補正（' + currentCount + '回→' + confirmedCount + '回）の反映を確認できず、補正が完了しませんでした（未確認の書き込み: ' + stage + '）。記録不整合フラグは維持されており、送信は引き続き拒否されます。Bookingsシートの実際の値を確認し、必要であれば補正を再試行してください。',
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (recoveryError) {
+      Logger.log('BookingMailer: RecoveryRepository.recordFailure失敗（決済リンク記録不整合の補正未完了記録）: ' + sanitizeErrorMessage_(describeError_(recoveryError)));
+    }
+  }
+
+  /*
    * options:
    *   force（省略可。既定false）: trueの場合、送信済み（paymentLinkSentAtが既にある）・
    *     履行未確認（paymentLinkSendUnconfirmedAtが既にある）でも送信する。管理者の
@@ -1069,6 +1096,32 @@ var BookingMailer = (function () {
    * 記録する（既存のOPEN記録＝`recordPaymentLinkMetadataInconsistent_`が書いた行は
    * 運用者が手動でrecoveryState/resolvedAtを記録する既存方針のまま変更しない。
    * このRESOLVED行は補正の実施そのものを示す別の記録）。
+   *
+   * 第4回PRレビュー対応（この関数自体の部分失敗対策）: 送信回数の補正
+   * （paymentLinkSendCount）と不整合フラグのクリア（paymentLinkMetadataInconsistentAt）を、
+   * 以前は1回のupdateBookingFields呼び出しにまとめて渡していた。updateBookingFieldsは
+   * 渡されたフィールドを内部でループして1つずつ書き込む実装のため、途中の書き込みだけが
+   * 失敗すると「送信回数の補正は反映されていないのに、不整合フラグだけが先に（または
+   * たまたま）クリアされてしまう」おそれがあった。これは「送信成功だけでフラグを
+   * クリアしない」という第3回対応の趣旨に反する（食い違いを隠す方向の失敗になるため）。
+   * そのため次のように書き込みを分離し、要件どおり「実際に保存されたことを確認してから
+   * 次へ進む」よう変更した:
+   *   1. paymentLinkSendCountのみを単独で更新する（不整合フラグはまだ触らない）。
+   *   2. 最新レコードを再取得し、paymentLinkSendCountが確認済みの値どおりに反映された
+   *      ことを検証する（try/catchで例外を検知した場合だけでなく、例外が起きなかった
+   *      場合も同様に再取得して検証する。Sheets側が例外を投げずに書き込みに失敗する
+   *      可能性もゼロではないため、例外の有無だけを信用しない）。反映を確認できない場合は
+   *      `RESOLVE_SEND_COUNT_NOT_CONFIRMED`として失敗を返し、不整合フラグは維持したまま
+   *      Recoveryへ`PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`（OPEN）を記録する。
+   *   3. 送信回数の反映を確認できてから、paymentLinkMetadataInconsistentAtのみを
+   *      単独で空へ更新する。
+   *   4. 再度最新レコードを再取得し、フラグが実際に空になったこと・送信回数が確認済みの
+   *      値のままであることを検証する。確認できない場合は
+   *      `RESOLVE_FLAG_CLEAR_NOT_CONFIRMED`として失敗を返す（送信回数自体は補正済みの
+   *      可能性が高いが、不整合フラグは維持され送信は引き続き拒否される。この場合も
+   *      `PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`をRecoveryへ記録する）。
+   * `PAYMENT_LINK_METADATA_RESOLVED`（成功）を記録するのは、上記4.の検証まで通過した
+   * 場合のみ。
    */
   function resolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount) {
     return withLockedBookingRecord_(bookingId, function (record) {
@@ -1098,15 +1151,62 @@ var BookingMailer = (function () {
       }
 
       var now = new Date();
+
+      /* Step 1: 送信回数のみを単独で更新する（不整合フラグはまだ触らない）。例外が
+         起きても、実際に反映されたかどうかはStep 2の再取得で判定するため、ここでは
+         即時returnしない（例外の有無だけを信用しない）。 */
       try {
-        SpreadsheetRepository.updateBookingFields(bookingId, {
-          paymentLinkSendCount: confirmed,
-          paymentLinkMetadataInconsistentAt: ''
-        });
-      } catch (sheetsError) {
+        SpreadsheetRepository.updateBookingFields(bookingId, { paymentLinkSendCount: confirmed });
+      } catch (countWriteError) {
+        Logger.log('BookingMailer: resolvePaymentLinkMetadataInconsistency Step1（paymentLinkSendCount更新）で例外: ' + sanitizeErrorMessage_(describeError_(countWriteError)));
+      }
+
+      /* Step 2: 実際に反映されたかを再取得して検証する。 */
+      var afterCountWrite;
+      try {
+        afterCountWrite = SpreadsheetRepository.findRowByBookingId(bookingId);
+      } catch (refetchError) {
+        Logger.log('BookingMailer: resolvePaymentLinkMetadataInconsistency Step2（再取得）で例外: ' + sanitizeErrorMessage_(describeError_(refetchError)));
+      }
+      if (!afterCountWrite || Number(afterCountWrite.record.paymentLinkSendCount) !== confirmed) {
+        recordPaymentLinkResolveIncomplete_(bookingId, record.status, currentCount, confirmed, 'SEND_COUNT_WRITE');
         return {
           success: false,
-          error: { code: 'RESOLVE_UPDATE_FAILED', message: describeError_(sheetsError) }
+          requiresManualConfirmation: true,
+          bookingId: bookingId,
+          error: {
+            code: 'RESOLVE_SEND_COUNT_NOT_CONFIRMED',
+            message: '送信回数の補正が実際に保存されたことを確認できませんでした。記録不整合の警告は維持されています。Bookingsシート・Recoveryシートを確認し、必要であれば補正を再試行してください。'
+          }
+        };
+      }
+
+      /* Step 3: 送信回数の反映を確認できてから、不整合フラグを単独で空へ更新する。 */
+      try {
+        SpreadsheetRepository.updateBookingFields(bookingId, { paymentLinkMetadataInconsistentAt: '' });
+      } catch (clearError) {
+        Logger.log('BookingMailer: resolvePaymentLinkMetadataInconsistency Step3（paymentLinkMetadataInconsistentAtクリア）で例外: ' + sanitizeErrorMessage_(describeError_(clearError)));
+      }
+
+      /* Step 4: フラグが実際にクリアされ、送信回数も確認済みの値のままであることを
+         再取得して検証する。 */
+      var afterClear;
+      try {
+        afterClear = SpreadsheetRepository.findRowByBookingId(bookingId);
+      } catch (finalRefetchError) {
+        Logger.log('BookingMailer: resolvePaymentLinkMetadataInconsistency Step4（再取得）で例外: ' + sanitizeErrorMessage_(describeError_(finalRefetchError)));
+      }
+      if (!afterClear || afterClear.record.paymentLinkMetadataInconsistentAt || Number(afterClear.record.paymentLinkSendCount) !== confirmed) {
+        recordPaymentLinkResolveIncomplete_(bookingId, record.status, currentCount, confirmed, 'FLAG_CLEAR');
+        return {
+          success: false,
+          requiresManualConfirmation: true,
+          bookingId: bookingId,
+          paymentLinkSendCount: confirmed,
+          error: {
+            code: 'RESOLVE_FLAG_CLEAR_NOT_CONFIRMED',
+            message: '送信回数の補正は保存できましたが、記録不整合フラグのクリアが実際に保存されたことを確認できませんでした。フラグは維持されており、送信は引き続き拒否されます。Bookingsシート・Recoveryシートを確認し、必要であれば補正を再試行してください。'
+          }
         };
       }
 
