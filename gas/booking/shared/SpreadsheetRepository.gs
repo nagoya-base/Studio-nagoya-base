@@ -233,15 +233,36 @@ var SpreadsheetRepository = (function () {
     return result;
   }
 
+  /*
+   * record.dateをtimezone基準の'YYYY-MM-DD'へ正規化してから比較できるようにする
+   * （Issue #349）。Sheetsの`getValues()`は日付らしい文字列をセルへ書き込むと読み込み時に
+   * Date値として返すことがあり（BookingMailer.gsのnormalizeReminderDate_と同じ既知の
+   * 注意点）、record.dateがDate値の場合に文字列のdateStringとの`===`比較が型の違いだけで
+   * 常にfalseになり、CONFIRMED予約が0件と誤検知される事故（前日リマインド未送信）を防ぐ。
+   * 無効なDate・空欄はどちらの分岐でも元の値のままdateStringと一致しないため対象外になる。
+   * record自体（戻り値・Sheetのセル）は書き換えない（比較用の一時変数としてのみ使う）。
+   */
+  function normalizeBookingDateForComparison_(value, timezone) {
+    if (value && typeof value.getTime === 'function' && !isNaN(value.getTime())) {
+      return BookingAvailability.formatDateInTimezone(value, timezone) || '';
+    }
+    return value || '';
+  }
+
   /* status===CONFIRMEDかつdate===dateStringの全行を返す（前日リマインド抽出用。Issue #271）。
-     reminderSentAt等の判定はBookingMailer側の責務とし、ここではstatus/dateのみで絞り込む。 */
+     reminderSentAt等の判定はBookingMailer側の責務とし、ここではstatus/dateのみで絞り込む。
+     dateの比較はnormalizeBookingDateForComparison_で正規化してから行う（Issue #349）。 */
   function getConfirmedBookingsForDate(dateString) {
     var sheet = ensureBookingsSheet_();
     var values = sheet.getDataRange().getValues();
+    var timezone = BookingConfig.getAvailabilityConfig().timezone;
     var result = [];
     for (var i = 1; i < values.length; i++) {
       var record = rowToRecord_(values[i]);
-      if (record.status === 'CONFIRMED' && record.date === dateString) {
+      if (
+        record.status === 'CONFIRMED' &&
+        normalizeBookingDateForComparison_(record.date, timezone) === dateString
+      ) {
         result.push({ rowNumber: i + 1, record: record });
       }
     }
