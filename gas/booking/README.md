@@ -2770,6 +2770,45 @@ Issue #342（予約料金の自動計算）・PR #343時点では、`BookingPric
 - `admin/booking/booking-admin.css`（拡張。GitHub Pages配信） — 診断モーダル用の
   スタイル（`#reminder-diag-*`/`.reminder-diag-*`）を追加。既存クラスは無変更
 
+### Issue #349（前日リマインドの確定予約抽出でDate型の利用日を正規化）
+
+- **障害の原因**: `SpreadsheetRepository.getConfirmedBookingsForDate(dateString)`が
+  `record.date === dateString`という文字列の完全一致で候補を絞り込んでいたが、
+  Google SheetsのSpreadsheetApp `getValues()`は日付らしい文字列を書き込んだセルを
+  読み込み時に`Date`オブジェクトとして返すことがある（`BookingMailer.gs`の
+  `normalizeReminderDate_`が既に対処していた既知の注意点と同じ）。このため
+  `record.date`が`Date`型の行は、実際には同じ利用日でも型の違いだけで常に不一致となり、
+  本番の時間主導トリガー`sendNextDayReminders`が翌日のCONFIRMED予約を0件としてしまい、
+  前日リマインドメールが送信されなかった（Booking Adminの診断・管理者宛テスト送信は
+  別経路で正常に動作していたため、この不具合には気付きにくかった）。
+- `SpreadsheetRepository.gs`（修正） — `getConfirmedBookingsForDate`内に
+  `normalizeBookingDateForComparison_(value, timezone)`を追加。`record.date`が
+  `Date`値（`typeof value.getTime === 'function' && !isNaN(value.getTime())`で判定。
+  無効な`Date`はこの分岐に該当せず後段で比較しても一致しないため自動的に除外される）の
+  場合は`BookingConfig.getAvailabilityConfig().timezone`（既定`Asia/Tokyo`）基準の
+  `'YYYY-MM-DD'`へ正規化してから`dateString`と比較し、それ以外（既存の`yyyy-MM-dd`文字列・
+  空欄）はそのまま比較する。`record`自体・Sheetの実際のセル値は書き換えない（比較用の
+  一時変数としてのみ使う）。ステータスを`CONFIRMED`に限定する既存条件、戻り値
+  `{rowNumber, record}`・行番号・元のレコード値、`sendNextDayReminders`側の
+  二重送信防止（`evaluateReminderEligibility_`のALREADY_SENT判定）・1件失敗時の
+  バッチ内障害分離は無変更
+- テスト（`test/booking-spreadsheet-repository.test.js`・`test/booking-reminders.test.js`）
+  — `getConfirmedBookingsForDate`単体に対して、Date型の利用日を持つCONFIRMED予約2件が
+  取得できること、既存の文字列型も引き続き取得できること、別日・CONFIRMED以外の
+  ステータス・無効な`Date`・空欄は対象外になること、UTC日付とJST日付がずれる日付境界
+  （`2026-09-25T15:30:00Z` = JST `2026-09-26T00:30:00`）でJST基準に正しく判定することを
+  追加。`sendNextDayReminders`側にも、Date型の利用日を持つ予約2件に実際にメールが
+  送信されるところまでの回帰テストを追加（修正前はこのテストが`processedCount=0`で
+  失敗することを確認済み）
+- 調査時に一時的に追加していた「全確定予約の日付・型を逐次ログ出力する」デバッグ用の
+  `Logger.log`は正式反映にあたって削除した（メールアドレス・氏名・解錠情報等の
+  個人情報・秘密値をログへ残さない既存方針に合わせる）
+- **本番反映時の注意**: 2026-09-26利用分の確定予約2件は、本番Apps Script
+  エディタ上で本修正相当の暫定コードを一時的に実行した際に既に前日リマインドを
+  送信済みのため、本修正の反映・デプロイに伴って再送しないこと。また前日リマインドの
+  時間主導トリガー（`createNextDayReminderTrigger`）は既存のものをそのまま使い、
+  作り直す（削除して再作成する）必要はない
+
 ## GASプロジェクトへのデプロイ対象ファイル
 
 上記の理由（カスタムメニューはコンテナバインドスクリプトでしか作成できない）により、
