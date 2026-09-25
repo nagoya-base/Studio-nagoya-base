@@ -148,8 +148,21 @@ var BookingReschedule = (function () {
       try {
         check.own.setTime(check.startAt, check.endAt);
       } catch (calendarError) {
-        sheet.getRange(rowNumber, 12).setValue('CHANGE_FAILED');
-        return error_('CALENDAR_UPDATE_FAILED', 'Calendar更新に失敗しました。');
+        var calendarRollbackOK = false;
+        try {
+          check.own.setTime(oldStartAt, oldEndAt);
+          calendarRollbackOK = true;
+        } catch (rollbackError) {
+          logFailure_(bookingId, 'RESCHEDULE_CALENDAR_ROLLBACK_FAILED', record.status);
+        }
+        try {
+          sheet.getRange(rowNumber, 12).setValue(calendarRollbackOK ? 'CHANGE_FAILED' : 'RECOVERY_REQUIRED');
+        } catch (historyError) {
+          logFailure_(bookingId, 'RESCHEDULE_HISTORY_UPDATE_FAILED', record.status);
+        }
+        return error_('CALENDAR_UPDATE_FAILED', calendarRollbackOK
+          ? 'Calendar更新に失敗したため元の日時を再設定しました。台帳を確認してください。'
+          : 'Calendar更新結果が不明です。Recoveryと台帳を確認し、再実行しないでください。');
       }
       try {
         SpreadsheetRepository.updateBookingScheduleAtomic(bookingId, check.date, check.startAt, check.endAt);
