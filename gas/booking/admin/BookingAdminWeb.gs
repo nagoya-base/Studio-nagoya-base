@@ -231,11 +231,11 @@ function getAdminBookings() {
  * nullを「未計算」として表示する）。
  * priceUpdateNeeded: 管理者が金額を修正した（priceOverrideAtが非空）のに、その訂正案内
  * （BookingMailer.sendPriceUpdateMailForBooking）をまだ送っていない（priceUpdateMailSentAt
- * が空）PENDING予約だけtrueになる。一覧・詳細の両方でこのフラグを使い、「案内漏れ」を
+ * が未送信、または最後の修正より古い）PENDING予約だけtrueになる。一覧・詳細の両方でこのフラグを使い、「案内漏れ」を
  * 管理者が見落とさないようにする（PR #343レビュー「管理画面で案内漏れを防げるように」）。
  */
 function needsPriceUpdateNotice_(record) {
-  return record.status === Booking.STATUS.PENDING && !!record.priceOverrideAt && !record.priceUpdateMailSentAt;
+  return record.status === Booking.STATUS.PENDING && Booking.needsPriceUpdateNotice(record);
 }
 
 function buildAdminPriceSummary_(record) {
