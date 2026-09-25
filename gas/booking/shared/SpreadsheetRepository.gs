@@ -136,14 +136,20 @@ var SpreadsheetRepository = (function () {
      *   無視して常にtrueに固定される。snb/studio_xは自己申告どおり。BookingPricing.gs参照）。
      * - priceComputedAt: priceAmountを計算した日時（createBooking時のnowと同じ）。
      * - priceOverrideAmount / priceOverrideAt: 管理者がBooking
-     *   Admin（BookingRepository.updateBookingPrice。PENDING限定）で金額を修正した場合の
-     *   修正後の金額・修正日時。priceAmount自体は上書きしない（自動計算値と修正後の値を
-     *   区別できるようにするため）。「案内すべき実効金額」はBooking.getEffectivePriceAmount
-     *   （priceOverrideAtが空でなければpriceOverrideAmountを優先）で一元的に判定する。
+     *   Admin（BookingRepository.updateBookingPrice。PENDING限定。またはIssue #344の
+     *   BookingReschedule.commit。CONFIRMED予約の日程変更に伴う再計算）で金額を修正した
+     *   場合の修正後の金額・修正日時。priceAmount自体は上書きしない（自動計算値と修正後の
+     *   値を区別できるようにするため）。「案内すべき実効金額」はBooking.
+     *   getEffectivePriceAmount（priceOverrideAtが空でなければpriceOverrideAmountを
+     *   優先）で一元的に判定する。BookingReschedule側もこの関数を再利用し、日程変更専用の
+     *   「現在の確定金額」列を別途持たない（Issue #344追記レビュー対応: PR #343の料金基盤と
+     *   同じ列を再利用し、料金の二重管理を避ける）。
      * - priceUpdateMailSentAt（PR #343レビュー対応で追加）: 管理者による金額修正
      *   （priceOverrideAt）を利用者へ案内するメール（BookingMailer.
      *   sendPriceUpdateMailForBooking）の直近の送信成功日時。他のメールSentAt列と同じ
-     *   「空＝未送信」の慣習に従う。
+     *   「空＝未送信」の慣習に従う。needsPriceUpdateNotice/priceUpdateNeeded_はPENDINGの
+     *   予約にのみ適用されるため、BookingReschedule（CONFIRMED予約のみ対象）が
+     *   priceOverrideAt/priceOverrideAmountを更新してもこの案内フローとは干渉しない。
      */
     'priceAmount',
     'priceTier',
@@ -152,7 +158,47 @@ var SpreadsheetRepository = (function () {
     'priceComputedAt',
     'priceOverrideAmount',
     'priceOverrideAt',
-    'priceUpdateMailSentAt'
+    'priceUpdateMailSentAt',
+    /*
+     * ここから先はIssue #344追記（管理者による日程変更時の料金差額自動計算。PR #345
+     * レビュー対応で再設計）で追加した列。customerType/mail列追加時と同じく末尾追記の
+     * 方針を踏襲する（本番反映時は既存Bookingsシートのヘッダー行へ手動で追記が必要）。
+     * 「現在の確定金額・価格区分・曜日区分」は独自の列を持たず、上記のPR #343料金基盤
+     * （priceAmount/priceTier/priceDayType/priceIsMember/priceOverrideAmount/
+     * priceOverrideAt/Booking.getEffectivePriceAmount）をそのまま再利用する
+     * （二重管理の解消。旧設計のpriceCategory/confirmedFeeAmount/feeMasterVersion/
+     * feeInitializedAt/feeBreakdownJsonは廃止した）。
+     * - scheduleChangeCount: この予約でこれまでに確定した日程変更の回数。「前日まで1回無料、
+     *   2回目以降はキャンセル扱い」の判定に使う（FeeCalculator.assessScheduleChangeFee）。
+     * - feePaidAmount / feeRefundedAmount: 実際に入金済み・返金済みの累計額（円）。
+     *   自動請求・自動返金は行わないため、これらは常に管理者の手入力・確認による更新のみ
+     *   （Stripe・PayPay・現金の入出金を確認した後にBookingReschedule.recordFeeSettlement
+     *   経由で更新する。冪等性・精算履歴はFeeSettlementsシート＝FeeSettlementRepository.gs
+     *   側で管理する）。
+     * - feeSettlementState: ''|'SETTLED'|'PENDING_CHARGE'|'PENDING_REFUND'|'PENDING_DECISION'。
+     *   料金の確定と資金移動を分離するための精算状態。
+     * - feeSettlementNote / feeSettlementUpdatedAt: 精算状態の備考・最終更新日時。
+     * - feeRecoveryRequiredAt / feeRecoveryReason: 日時更新後の料金関連フィールド更新が
+     *   途中失敗し、Bookingsの状態（価格・変更回数・精算状態）の整合性が保証できない
+     *   場合に設定する（PR #345レビュー対応「復旧が必要な予約は、次の日時変更・精算操作を
+     *   停止してください」）。空でない間はBookingReschedule.commit/recordFeeSettlementの
+     *   いずれも新規の変更を拒否する。既存のpaymentLinkMetadataInconsistentAtと同じ
+     *   「明示的な補正関数でのみクリアできる」設計（BookingReschedule.resolveFeeRecovery）。
+     * - scheduleChangeCount/feePaidAmount/feeRefundedAmount/feeSettlementState/
+     *   feeSettlementNote/feeSettlementUpdatedAt/feeRecoveryRequiredAt/feeRecoveryReasonは
+     *   priceOverrideAmount/priceOverrideAtと合わせて、BookingReschedule.commitが
+     *   updateBookingRescheduleFeeAtomicで**1回のRange.setValues呼び出しとして**書き込む
+     *   （priceUpdateMailSentAtも範囲を連続させるため現在値のまま含めて書き込む）。
+     *   このため上記の列はHEADERS_内で連続している必要がある（途中に他の列を挿入しない）。
+     */
+    'scheduleChangeCount',
+    'feePaidAmount',
+    'feeRefundedAmount',
+    'feeSettlementState',
+    'feeSettlementNote',
+    'feeSettlementUpdatedAt',
+    'feeRecoveryRequiredAt',
+    'feeRecoveryReason'
   ];
 
   function getSpreadsheet_() {
@@ -291,6 +337,104 @@ var SpreadsheetRepository = (function () {
     return found.rowNumber;
   }
 
+  /* Issue #344: 日時3列だけを1回のsetValuesで更新する。メール・決済・status列は触れない。 */
+  function updateBookingScheduleAtomic(bookingId, date, startAt, endAt) {
+    var found = findRowByBookingId(bookingId);
+    if (!found) throw new Error('bookingIdが見つかりません: ' + bookingId);
+    if (!startAt || !endAt || typeof startAt.getTime !== 'function' ||
+        typeof endAt.getTime !== 'function' || startAt.getTime() >= endAt.getTime()) {
+      throw new Error('予約日時が不正です。');
+    }
+    var sheet = ensureBookingsSheet_();
+    sheet.getRange(found.rowNumber, HEADERS_.indexOf('date') + 1, 1, 3)
+      .setValues([[date, startAt, endAt]]);
+    return found.rowNumber;
+  }
+
+  /*
+   * BookingReschedule.commit/recordFeeSettlement専用のatomic更新（Issue #344追記
+   * PR #345レビュー対応）。HEADERS_上で連続する'priceOverrideAmount'〜'feeRecoveryReason'
+   * の列範囲（priceUpdateMailSentAt/priceOverrideAt含む）に対する1回のsetValuesで、
+   * 日程変更に伴う「現在の確定金額（priceOverrideAmount/priceOverrideAt）・変更回数・
+   * 精算状態・要復旧フラグ」をまとめて更新する。updateBookingCancellationStateAtomicと
+   * 同じ設計（呼び出し元が指定しないキーは既存値のまま書き戻す。範囲外の列は一切触らない）。
+   * この関数が「1回のRange.setValues呼び出し」であること自体が、日時更新後に料金側の
+   * 一部フィールドだけが更新される中途半端な状態（変更回数だけ旧値のまま残る等）を
+   * 構造的に防ぐ（PR #345レビュー対応「Bookingsの日時・確定料金・料金版・変更回数・
+   * 精算状態を一貫して更新」）。書き込み自体が失敗した場合は、呼び出し元
+   * （BookingReschedule.gs）がfeeRecoveryRequiredAtを立てて以降の操作をブロックする。
+   */
+  var RESCHEDULE_FEE_ATOMIC_FIELDS_ = [
+    'priceOverrideAmount', 'priceOverrideAt', 'priceUpdateMailSentAt',
+    'scheduleChangeCount', 'feePaidAmount', 'feeRefundedAmount',
+    'feeSettlementState', 'feeSettlementNote', 'feeSettlementUpdatedAt',
+    'feeRecoveryRequiredAt', 'feeRecoveryReason'
+  ];
+
+  function updateBookingRescheduleFeeAtomic(bookingId, fields) {
+    var found = findRowByBookingId(bookingId);
+    if (!found) {
+      throw new Error('bookingIdが見つかりません: ' + bookingId);
+    }
+    Object.keys(fields).forEach(function (key) {
+      if (RESCHEDULE_FEE_ATOMIC_FIELDS_.indexOf(key) === -1) {
+        throw new Error('日程変更の料金atomic更新で許可されていないフィールドです: ' + key);
+      }
+    });
+
+    var startIndex = HEADERS_.indexOf('priceOverrideAmount');
+    var endIndex = HEADERS_.indexOf('feeRecoveryReason');
+    var values = [];
+    for (var i = startIndex; i <= endIndex; i++) {
+      var header = HEADERS_[i];
+      var hasOverride = Object.prototype.hasOwnProperty.call(fields, header);
+      var value = hasOverride ? fields[header] : found.record[header];
+      values.push(value !== undefined && value !== null ? value : '');
+    }
+
+    var sheet = ensureBookingsSheet_();
+    sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    return found.rowNumber;
+  }
+
+  /*
+   * BookingReschedule.backfillOriginalPrice専用のatomic更新（PR #345再レビュー対応・
+   * 7回目）。HEADERS_上で連続する'priceAmount'〜'priceComputedAt'の5列（基準料金：
+   * 自動計算値・価格区分・曜日区分・会員区分・計算日時）に対する1回のsetValuesで
+   * まとめて更新する。updateBookingRescheduleFeeAtomicと同じ設計（呼び出し元が
+   * 指定しないキーは既存値のまま書き戻す。範囲外の列——priceOverrideAmount等の
+   * 日程変更専用フィールドや精算累計額——には一切触れない）。この関数が「1回の
+   * Range.setValues呼び出し」であることが、途中失敗による「価格区分だけ新しいが
+   * 金額は古いまま」のような半端な基準料金状態を構造的に防ぐ。
+   */
+  var PRICE_BASELINE_ATOMIC_FIELDS_ = ['priceAmount', 'priceTier', 'priceDayType', 'priceIsMember', 'priceComputedAt'];
+
+  function updateBookingPriceBaselineAtomic(bookingId, fields) {
+    var found = findRowByBookingId(bookingId);
+    if (!found) {
+      throw new Error('bookingIdが見つかりません: ' + bookingId);
+    }
+    Object.keys(fields).forEach(function (key) {
+      if (PRICE_BASELINE_ATOMIC_FIELDS_.indexOf(key) === -1) {
+        throw new Error('基準料金のatomic更新で許可されていないフィールドです: ' + key);
+      }
+    });
+
+    var startIndex = HEADERS_.indexOf('priceAmount');
+    var endIndex = HEADERS_.indexOf('priceComputedAt');
+    var values = [];
+    for (var i = startIndex; i <= endIndex; i++) {
+      var header = HEADERS_[i];
+      var hasOverride = Object.prototype.hasOwnProperty.call(fields, header);
+      var value = hasOverride ? fields[header] : found.record[header];
+      values.push(value !== undefined && value !== null ? value : '');
+    }
+
+    var sheet = ensureBookingsSheet_();
+    sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    return found.rowNumber;
+  }
+
   /* cancelBookingAdminのatomic更新で触ってよいフィールドのみを列挙する（下記参照）。 */
   var CANCELLATION_ATOMIC_FIELDS_ = ['status', 'cancelledAt', 'updatedAt'];
 
@@ -355,6 +499,9 @@ var SpreadsheetRepository = (function () {
     getAllPendingBookings: getAllPendingBookings,
     getConfirmedBookingsForDate: getConfirmedBookingsForDate,
     updateBookingFields: updateBookingFields,
+    updateBookingScheduleAtomic: updateBookingScheduleAtomic,
+    updateBookingRescheduleFeeAtomic: updateBookingRescheduleFeeAtomic,
+    updateBookingPriceBaselineAtomic: updateBookingPriceBaselineAtomic,
     updateBookingCancellationStateAtomic: updateBookingCancellationStateAtomic
   };
 })();

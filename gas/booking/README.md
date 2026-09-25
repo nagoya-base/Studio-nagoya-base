@@ -1,3 +1,290 @@
+
+## Issue #344: 管理者による確定済み予約の日時変更（実装レビュー中）
+
+- 対象は **Booking Adminプロジェクトのみ**（管理者用Web App: Execute as Me / Only myself）。
+  `gas/booking/admin/BookingReschedule.gs`を同プロジェクトへ追加し、
+  `gas/booking/shared/SpreadsheetRepository.gs`と
+  `gas/booking/admin/BookingAdminWeb.gs`を更新する。
+  GitHub Pages側の`admin/booking/booking-admin.js`・`booking-admin.css`も同時に反映する。
+  **GASコード追加時は既存Booking Adminのデプロイを更新し、現在の`/exec` URLを維持する。**
+  公開Booking Web Appへ`BookingReschedule.gs`を追加しない。
+- 予約詳細から変更日・開始・終了を入力し、空き確認→変更前後の比較→管理者確認→変更確定。
+  既存の予約ID、決済状態、CalendarイベントIDを維持し、Calendarイベントの開始・終了と
+  Bookingsのdate/startAt/endAtを更新する。対象はCONFIRMEDのみ。
+  当日変更は変更後の開始が現在より未来の場合のみ許可する。
+- 変更対象自身のみ重複判定から除外し、他のCalendarイベントとの前後バッファを確認する。
+  確定時はLock内で再確認する。ただし公開Booking Web Appや外部Calendar書き込みとは
+  スクリプトLockが共有されないため、完全な競合排除は保証しない。
+- `BookingChanges`シートを自動作成し、変更前後の日時、変更理由（任意）、管理者入力の
+  精算案内、変更日時、メール送信状態を保存する。変更メールは変更後の状態を再確認して送る。
+  失敗が確認されたメール（FAILED）のみ管理画面から明示的に再送できる。
+  SENDING等の結果不明状態は二重送信防止のため自動再送しない。
+- 変更後の日付が変わった場合、前日リマインドと来場案内のSentAtをクリアする。
+  元の確定メールSentAtや支払履歴は変更しない。
+- テスト: `node --test test/booking-reschedule.test.js`。
+  本番GAS・Calendar・Stripeへの接続テストは行わず、レビューと管理者の本番テスト後に反映する。
+
+### Issue #344追記: 料金差額の自動計算（PR #345レビュー対応で再設計。実装レビュー中）
+
+上記の日程変更機能に、料金差額の自動計算を追加した。**初版（レビュー前）はここに独自の
+料金表・祝日判定（`FeeMasterRepository.gs`のバージョン付き`FeeMaster`シート・
+`JapanHolidays.gs`）を持っていたが、PR #345レビューで次の指摘を受け、再設計した:**
+
+- Issue #344とは別に、Issue #342/#343（新規予約の料金自動計算）・Issue #346/#347
+  （日本の祝日・振替休日・国民の休日判定）が並行してmainへマージされており、
+  `gas/booking/shared/BookingPricing.gs`・`gas/booking/shared/JapaneseHolidays.gs`という
+  レビュー済み・テスト済みの正本が既に存在していた。日程変更専用に別の料金表・祝日判定を
+  持つことは「料金表はここ1箇所のみに定義する」というBookingPricing.gsの設計方針に反し、
+  改定時に食い違うリスクがある（`FeeMasterRepository`と`JapaneseHolidays`との重複）。
+- 旧`FeeMasterRepository`の`effectiveAt='2020-01-01'`は、実際にいつから有効だったか
+  確認できないのに2020年からと決め打ちしていた、根拠のない偽装だった。
+
+**再設計の結果、`FeeMasterRepository.gs`・`JapanHolidays.gs`は削除し、料金の正本は
+`BookingPricing.gs`・祝日判定の正本は`JapaneseHolidays.gs`に一本化した。** この2ファイルを
+Booking Adminにも追加し（従来はBooking Web App専用）、新規ファイル
+`gas/booking/shared/FeeCalculator.gs`（30分刻みへの丸め・差額判定・キャンセル規定との突合の
+純粋関数のみ）・`gas/booking/shared/FeeSettlementRepository.gs`（精算の冪等性台帳。
+`FeeSettlements`シート）を追加し、`BookingReschedule.gs`・`SpreadsheetRepository.gs`
+（Bookings末尾に列を追加）・`BookingAdminWeb.gs`・`admin/booking/booking-admin.js`/`.css`を
+拡張した。**いずれもBooking Adminプロジェクトのみ（公開Booking Web Appには追加しない。
+ただしBookingPricing.gs/JapaneseHolidays.gsは既存どおりBooking Web Appにも必要）。**
+
+**現在の確定金額・価格区分は独自の列を持たず、Issue #342/#343の料金基盤
+（`priceAmount`/`priceTier`/`priceOverrideAmount`/`priceOverrideAt`/
+`Booking.getEffectivePriceAmount`）をそのまま再利用する。** 日程変更で価格が変わった場合は
+`priceOverrideAmount`/`priceOverrideAt`を更新する（PENDING予約の確定前金額修正
+[`updateBookingPrice`]と同じ「現在の実効金額」の仕組みを、CONFIRMED予約の日程変更にも
+再利用する形。`needsPriceUpdateNotice`はPENDING限定の判定のため干渉しない）。
+
+- **30分刻みの丸めは承認済みの方針（30分単位で計算・変更確定時点の最新料金表を適用）
+  だが、2.5h/3.5h等の半端な時間の具体的な金額をどう補間するかは未承認のまま。**
+  `FeeCalculator.quoteFee`は、丸め後の時間が整数時間（2h/3h/4h、またはそれを超える整数時間）
+  に一致する場合のみ`BookingPricing.computeBookingPrice`（唯一の正本）へ委譲して金額を返す。
+  半端な30分単位になる場合は`HALF_HOUR_RATE_UNCONFIRMED`を返し、**金額を一切自動算出しない**
+  （管理者が`manualNewFeeAmount`/`manualNewFeeNote`で金額と理由を明示しない限り確定できない）。
+  料金表に定義が無い組み合わせ（mens×通常・studio_x×会員等）も同じ扱い。
+- **既存予約は金額が未記録のため（Issue #342以前に作成された予約）、日程変更を確定する前に
+  必ず`backfillOriginalPrice`（`adminBackfillOriginalPrice`）で元の確定料金・価格区分
+  （会員/通常）を管理者が照合して入力する必要がある。** `Booking.getEffectivePriceAmount`が
+  nullを返す間は`commit`（`adminRescheduleBooking`）自体が`FEE_BASELINE_REQUIRED`で失敗する
+  （Web UIの「基準料金」欄から入力する）。Issue #342以降に作成された予約は`priceAmount`が
+  自動的に記録済みのため、この手順は不要。
+- 差額の扱い（`FeeCalculator.assessScheduleChangeFee`）は変更なし: 増額は単純な追加請求。
+  「初めての日程変更」かつ「変更前利用日の前日まで」の減額のみキャンセル料なしの返金候補を
+  自動算出する。それ以外の減額（2回目以降・当日）は、規約上どちらとも決められないため
+  **自動では一切金額を作らず**、管理者が金額（0〜差額/未返金額の範囲）と理由を明示的に
+  入力しない限り`commit`は`FEE_REFUND_DECISION_REQUIRED`で失敗する。
+- **料金マスタの「版」概念は廃止した。** `BookingPricing.gs`の料金表はデプロイされた
+  コードに焼き込まれた定数であり、実行時にスプレッドシート等を編集して書き換える経路が
+  無いため、「previewで見た版と確定直前の版が食い違う」という事態はコード構造上
+  発生し得ない（新しい価格を反映するには新しいコードのデプロイが必要で、GASは
+  デプロイ後の全実行に新バージョンを一貫して適用する）。旧`expectedFeeMasterVersion`・
+  `FEE_VERSION_MISMATCH`は削除した。
+- **日時更新後の料金関連フィールド（現在の確定金額・変更回数・精算状態）は
+  `SpreadsheetRepository.updateBookingRescheduleFeeAtomic`で1回の`Range.setValues`として
+  更新する（PR #345レビュー必須修正1）。** この書き込みが失敗した場合、`commit`は
+  `success:false`（`FEE_UPDATE_FAILED_RECOVERY_REQUIRED`）を返し、`feeRecoveryRequiredAt`を
+  立てて以降の`commit`/`recordFeeSettlement`を一律ブロックする（「成功扱いで握りつぶす」
+  「変更回数だけ旧値のまま残る」ことを構造的に禁止する）。日時自体の変更（Calendar/
+  Bookingsのdate/startAt/endAt）はこの障害が起きても元に戻さない（既に完了した物理的な
+  予定変更を、料金台帳の失敗を理由に再度ロールバックするとさらなる失敗のリスクを重ねる
+  ため）。ブロックされた予約は`resolveFeeRecovery`（`adminResolveFeeRecovery`）で、管理者が
+  Bookings・BookingChanges・Google Calendarを直接確認したうえで正しい値を入力し、
+  復旧する。
+- **`recordFeeSettlement`にLock・精算ID（`settlementId`）・精算履歴
+  （`FeeSettlementRepository.gs`の`FeeSettlements`シート）を追加した（PR #345レビュー
+  必須修正2）。** 同一`settlementId`の再送・二重クリック・通信エラー後の再実行は、内容が
+  完全一致する限り安全（二重加算しない。既存のFeeSettlements行の結果をそのまま返す）。
+  内容が異なれば`SETTLEMENT_ID_CONFLICT`で拒否する。`changeId`を指定した場合はそれが
+  対象の`bookingId`に属することを検証する（`INVALID_CHANGE_ID`）。返金額は未返金の実入金額
+  （`feePaidAmount - feeRefundedAmount`）を超えられない（`REFUND_EXCEEDS_UNREFUNDED`）。
+  Bookings側への反映に失敗した場合はFeeSettlements行を`FAILED_NEEDS_RECOVERY`にし、
+  `feeRecoveryRequiredAt`で予約をロックする（精算履歴と台帳の片方だけが更新された状態を
+  放置しない）。
+- 料金の確定と資金移動は引き続き分離している。Stripe等への自動請求・自動返金は一切行わない。
+- 変更通知メールに、元料金・新料金・差額・返金/追加請求の状況（試算か承認済みかを明記）を
+  追記した。
+- テスト: `node --test`（`test/japanese-holidays.test.js`・`test/booking-pricing.test.js`
+  ・`test/fee-calculator.test.js`・`test/fee-settlement-repository.test.js`・
+  `test/booking-reschedule.test.js`・`test/booking-admin-page-client.test.js`に今回分を
+  含む）。本番GAS・Calendar・Stripeへの接続テスト、既存予約への一括金額埋めは
+  別途指示まで行わない。
+- 実装前の規約上の未決定事項（30分料金の正式な数値、2回目以降の日程変更・当日短縮への
+  キャンセル料の掛け方、有料機材・キャンペーン・会員パスの返金取扱い）は、上記の
+  フェイルクローズな仕組みで「管理者が都度判断する」形にとどめており、コード側で
+  仮の事業ルールとして決定していない。
+
+#### PR #345再レビュー対応（複合障害・冪等性の強化）
+
+上記の必須修正1・2に対する再レビューで、想定より深刻な複合障害（片方の永続化に成功し、
+もう片方が失敗するケース）が繰り返し指摘され、そのたびに以下を追加で対応した:
+
+- **`recordFeeSettlement`のPENDING_APPLY/ABANDONEDからの再適用は、実際にBookingsへ
+  反映される直前に必ず`FeeSettlementRepository.markPendingApply`で状態を
+  「反映結果未確定」に戻してから進む。** Bookingsへの書き込みに成功した直後、精算履歴の
+  状態遷移・`feeRecoveryRequiredAt`の保存が両方失敗しても、この行はABANDONEDのまま
+  （＝未反映を騙ったまま）残らず、無条件の自動再試行を禁止する既存のPENDING_APPLY
+  安全策がそのまま働く。
+- **`feeRecoveryRequiredAt`（Bookings側）の保存自体が失敗しても、`commit`・
+  `recordFeeSettlement`・`backfillOriginalPrice`は`FeeSettlementRepository.
+  hasUnresolvedSettlement`（未確定精算の有無）を独立した第二の停止条件として必ず確認する
+  （`isBlockedForFeeRecovery_`）。** `resolveFeeRecovery`の受付判定もこれと同じ基準に
+  統一し、フラグが立っていないケースで復旧要求そのものが拒否される
+  （＝ブロックされているのに誰も解除できない）デッドロックを防いでいる。
+- **`resolveFeeRecovery`の`settlementResolution`は、対象`settlementId`が既に
+  `APPLIED`/`ABANDONED`の場合、反対の結果へ変更する操作を`SETTLEMENT_STATE_MISMATCH`で
+  拒否する。** 既に確定済みの精算を復旧操作で書き換えられると、その後の再送で二重計上に
+  つながるため。ただし「精算履歴の確定には成功したがBookingsの反映が失敗し、同じ内容で
+  `resolveFeeRecovery`を再実行する」という正規の複合障害リカバリ経路は、同一outcome・
+  同一確定累計値の冪等な再実行として引き続き許可する。
+- **精算金額（`recordFeeSettlement`のdelta、`resolveFeeRecovery`の累計額）は、有限・
+  整数（円単位）・安全な整数範囲内であることに加え、返金済み額が支払済み額を超えないことを
+  検証する。** 既存の累計額自体が壊れている（非整数・返金超過）場合は0円扱いにして計算を
+  続けず、`FEE_RECOVERY_REQUIRED`で止めて人による照合を要求する。
+
+#### 基準料金5列の書込み結果が不明になる複合障害への対応（「書く前にintentを確保する」設計）
+
+`backfillOriginalPrice`（基準料金5列: `priceAmount`/`priceTier`/`priceDayType`/
+`priceIsMember`/`priceComputedAt`の一括書込み）は、Lock保護・`isBlockedForFeeRecovery_`
+によるガード・`updateBookingPriceBaselineAtomic`（`SpreadsheetRepository.gs`。5列を
+1回の`Range.setValues`で更新）を使う。**最初の実装では「書込みが失敗してから復旧記録を
+残す」順序だったため、Bookings側の`feeRecoveryRequiredAt`保存まで失敗する複合障害では
+どこにも痕跡が残らず、次回リクエストを自動でブロックできない問題があった。さらにその場を
+「失敗後にRecoveryへ記録し、それも失敗したらScript Propertiesへ退避する」という
+多段フォールバックで塞ごうとしたが、レビューで「同じ障害への対処を何層も増やすのではなく、
+更新前に復旧記録を確保する順序へ設計を変更する」よう指摘され、そちらへ置き換えた。**
+
+現在の設計は次の順序で進む（`RecoveryRepository.gs`の既存`Recovery`シート・`HEADERS_`を
+そのまま使う。列は変更しない）:
+
+1. **基準料金5列に一切触れる前に**、`RecoveryRepository.recordFailure`で
+   `failureType: 'BASELINE_WRITE_UNCERTAIN'`, `recoveryState: 'OPEN'`の行（intent）を
+   記録する。`appendRow`の応答を信頼せず、`hasOpenBaselineRecovery`で読み直して
+   確認する。
+2. intentの記録・確認ができなければ、**危険な書込みそのものを開始せず**Bookingsを
+   一切変更しないまま`RECOVERY_INTENT_UNCONFIRMED`で中止する。
+3. intentが確認できた場合のみ、`updateBookingPriceBaselineAtomic`で5列を書き込み、
+   再取得して5列すべてが期待値と一致するか検証する。書込みが例外を投げた場合・
+   一致しない場合は、intent（Recovery OPEN）をそのまま残す（`feeRecoveryRequiredAt`の
+   設定は管理画面表示用にbest effortで試みるが、ブロック判定の必須条件ではない）。
+4. 書込み・検証に成功した場合のみ、`RecoveryRepository.resolveBaselineRecovery`で
+   intentを`RESOLVED`にする。この解消自体が失敗した場合もOPENを残し、要復旧のまま
+   維持する（`updateBookingPriceBaselineAtomic`は絶対値の上書きなので、同じ内容で
+   `resolveBaselinePriceRecovery`を再実行すれば安全に解消できる）。
+
+この設計により、「基準料金の書込み結果が不明、かつ復旧記録も残せない」という組合せは
+発生し得ない（intentを先に確保・確認できなければ、そもそも危険な書込みを始めないため）。
+`isBlockedForFeeRecovery_`は`feeRecoveryRequiredAt`／`FeeSettlements`の未確定精算／
+`RecoveryRepository.hasOpenBaselineRecovery`のいずれかが真であればブロックし、これらの
+判定自体が例外を投げた場合もフェイルクローズ（ブロックする）で返す。`commit`・
+`recordFeeSettlement`・`backfillOriginalPrice`・`resolveFeeRecovery`の全ガードをこれに
+揃えている。
+
+復旧は`resolveFeeRecovery`（`priceOverrideAmount`等、日程変更専用のBookings列）とは別の
+専用API`resolveBaselinePriceRecovery`（`adminResolveBaselinePriceRecovery`）で行う。
+`backfillOriginalPrice`は基準料金5列と確認済み入出金額2列（`feePaidAmount`/
+`feeRefundedAmount`）を別々のRangeへ書き込むため、片方だけが保存された状態が起こり得る。
+そのため復旧APIも`backfillOriginalPrice`と同じ入力（価格区分・金額・確認根拠`note`・
+`confirmedPaidAmount`（必須）・`confirmedRefundedAmount`（省略時0円））を必須とし、
+7項目を再書込み（絶対値の上書き）・再取得して**7項目すべての一致**を確認し、さらに
+確認根拠の監査行（`BASELINE_PRICE_CONFIRMED`）の保存を読み戻して確認できた場合に
+のみ`RecoveryRepository.resolveBaselineRecovery`でintentを解消する（基準料金5列だけが
+一致しても、入出金額が未反映のままなら`UPDATE_FAILED`で要復旧のまま維持する）。基準料金の要復旧が
+唯一の原因で`feeRecoveryRequiredAt`が立っていた場合は、これに合わせてクリアする（他に
+未確定精算が残っていれば触らない）。
+
+テスト: `test/booking-reschedule.test.js`（intentの記録前にBookingsへ触れないこと、
+intent確認前に書込みを開始しないこと、書込み失敗・不一致時にintentがOPENのまま残ること、
+Recovery読取自体の例外に対するフェイルクローズ、`resolveBaselinePriceRecovery`の
+正常系・異常系、基準料金は保存済みで入出金額の保存だけが失敗した場合に入出金額を照合する
+まで解消しないこと、入出金額・確認根拠の必須検証）・`test/booking-spreadsheet-repository.test.js`（`RecoveryRepository.
+hasOpenBaselineRecovery`/`resolveBaselineRecovery`の単体テスト）・
+`test/booking-admin-web.test.js`（`getAdminBookingDetail`の`baselineRecoveryNeedsAttention`）。
+
+#### previewとcommitの料金算出結果の照合（`feeQuoteToken`）
+
+管理画面は`preview`（`adminPreviewBookingReschedule`）で料金差額・返金候補を表示し、
+管理者が内容を確認してから`commit`（`adminRescheduleBooking`）で確定する2段階の流れに
+なっている。この間に他の変更（別の日程変更・精算記録・基準料金の復旧など）が入ると、
+画面に表示されていた料金情報と実際に確定される料金情報がずれてしまう可能性があった。
+
+これを防ぐため、`buildFeeQuoteToken_`が料金判定に使う主要な値（`feeReady`/`feeStatus`/
+`priceTier`/`oldFeeAmount`/`scheduleChangeCount`、算出できた場合は`newFeeAmount`/
+`dayType`/`roundedMinutes`/`feeDifference`/`refundStatus`/`refundCandidateAmount`/
+`cancellationPolicyCategory`）だけをJSON文字列化した「見積りトークン」を組み立てる。
+`preview`はこのトークンを`feeQuoteToken`として結果に含め、管理画面はこれを保持したまま
+`commit`（`adminRescheduleBooking`の7番目の引数`expectedFeeQuoteToken`）へ渡す。
+`commit`はコミット直前に同じ入力から`feeQuoteToken`を再計算し、渡された値と完全一致
+（文字列比較）しなければ、Calendar・Bookings・履歴のいずれにも触れずに
+`FEE_QUOTE_MISMATCH`で拒否する（手動の料金/返金決定が併せて渡されていても同様に拒否する。
+古い前提のまま決定を通してしまわないため）。`expectedFeeQuoteToken`はサーバー側でも
+必須で、省略・空文字・文字列以外の場合は照合をスキップせず、Calendar・Bookings・履歴の
+いずれにも触れずに`FEE_QUOTE_TOKEN_REQUIRED`で拒否する（previewを経ない呼び出し経路を
+塞ぐため）。暗号学的なハッシュではなく、
+あくまで「プレビュー時点と同じ計算結果か」を確認するための一致チェックである。
+
+管理画面（`admin/booking/booking-admin.js`）は`preview.feeQuoteToken`を保持し、確定操作の
+たびに渡す。`FEE_QUOTE_MISMATCH`を受け取った場合は「プレビュー時点から料金情報が変わった」
+旨を表示し、確定ボタンを無効化して再プレビューを促す。
+
+テスト: `test/booking-reschedule.test.js`（`feeQuoteToken`を伴う正常なcommit、
+プレビュー後に料金コンテキストが変化した場合の`FEE_QUOTE_MISMATCH`、手動の料金/返金決定が
+併せて渡されていても古いトークンでは拒否されること、トークン省略時の
+`FEE_QUOTE_TOKEN_REQUIRED`）。
+
+#### `backfillOriginalPrice`の確認済み支払済み/返金済み額の必須化と監査ログ
+
+`backfillOriginalPrice`は元々、基準料金5列（確定料金・区分・日タイプ等）だけを設定し、
+支払済み額・返金済み額は別途「精算の記録」（`recordFeeSettlement`）で入力する想定だった。
+しかし、旧仕様の予約（基準料金・入出金額とも未設定のまま残っている既存予約）を移行する際、
+`recordFeeSettlement`は差分（delta）方式のため、実際にはすでに支払われている額を
+「今回新たに入金された額」として計上してしまうと二重計上になる。かといって基準料金だけ
+設定して支払済み額を0円のまま放置すると、その後の日程変更で「未確認のまま0円として扱う」
+ことになり、実際に支払われた金額が返金候補の計算から漏れてしまう。
+
+このため、`backfillOriginalPrice`は`confirmedPaidAmount`（必須）・
+`confirmedRefundedAmount`（省略時は0円）を新たな引数として受け取るようにした:
+
+- `confirmedPaidAmount`は0以上の安全な整数（円単位）であることを必須とする
+  （`CONFIRMED_PAID_AMOUNT_REQUIRED`）。省略・不正値を「未確認＝0円」と黙って
+  解釈することはない。
+- `confirmedRefundedAmount`（省略時0円）も0以上の整数であることを検証し、
+  `confirmedPaidAmount`を超える場合は`REFUND_EXCEEDS_UNREFUNDED`で拒否する。
+- 検証済みの2値は、基準料金5列と同じLock・同じRecovery intentの下で
+  `updateBookingRescheduleFeeAtomic`（`feePaidAmount`/`feeRefundedAmount`の絶対値上書き）
+  により書き込む。`recordFeeSettlement`/`FeeSettlementRepository.appendPending`は経由
+  しないため、この移行操作によってFeeSettlementsに「新たな入金があった」かのような行が
+  作られることはない。
+- 基準料金5列・`feePaidAmount`・`feeRefundedAmount`の計7項目すべてが再取得後に一致した
+  場合のみ成功とする（一方の書込みが例外を投げても、もう一方は独立して試行したうえで、
+  最終的な検証は7項目すべてを対象にする）。不一致の場合は既存の複合障害対応と同じ経路で
+  `feeRecoveryRequiredAt`のbest effort設定・Recovery intent（OPEN）維持により後続操作を
+  ブロックする。
+- 保存が成功した場合、管理者が入力した確認根拠（`note`）と確認した金額を
+  `RecoveryRepository.recordFailure`へ`failureType: 'BASELINE_PRICE_CONFIRMED'`,
+  `recoveryState: 'INFO'`として記録する（ブロックには使わない、監査用の追記のみ）。
+  検証が終わったからといってこの根拠を捨てず、誰が・いつ・何を根拠にいくらと確認したかを
+  Recoveryシートに残す。**監査行は`RecoveryRepository.hasRecord`で読み戻して保存を
+  確認し、確認できるまでは処理を完了扱いにしない。** 保存を確認できない場合（書込みの
+  例外、例外なしで保存されない、読み戻し自体の失敗）は`AUDIT_RECORD_UNCONFIRMED`を返し、
+  保存済みの基準料金・入出金額は取り消さずに、書込み前に確保したRecovery intent（OPEN）を
+  残して後続操作をブロックする。管理者は`resolveBaselinePriceRecovery`へ同じ内容と
+  確認根拠を渡して記録を再試行し、監査行の保存を確認できた時点でintentが解消される。
+
+管理画面（`admin/booking/booking-admin.js`の`renderFeeBaselineSection_`）は基準料金の
+設定・修正フォームに「確認した支払済み額」「確認した返金済み額」の入力欄を追加し、
+`adminBackfillOriginalPrice`へ渡す。基準料金の要復旧フォーム（`renderBaselineRecoverySection_`）
+にも同じ「確認した支払済み額」「確認した返金済み額」「確認根拠」の入力欄を設け、
+`adminResolveBaselinePriceRecovery`へ渡す（支払済み額の空欄は0円ではなく未入力として
+サーバー側で拒否させる）。
+
+テスト: `test/booking-reschedule.test.js`（`confirmedPaidAmount`省略・負数・小数の拒否、
+`confirmedRefundedAmount`が`confirmedPaidAmount`を超える場合の拒否、省略時に0円扱いに
+なること、書込み後の`feePaidAmount`/`feeRefundedAmount`確認、`BASELINE_PRICE_CONFIRMED`
+監査行の記録内容、基準料金移行後の予約が次回日程変更の返金候補計算に正しく反映されること、
+監査行の保存失敗・例外なしの未保存・読み戻し失敗で`AUDIT_RECORD_UNCONFIRMED`になり
+要復旧のまま維持されること、`resolveBaselinePriceRecovery`での監査記録の再試行）。
+
 # gas/booking（自社予約システム）
 
 Epic #265の一部として以下を実装済み。
@@ -2707,8 +2994,8 @@ Issue #342（予約料金の自動計算）・PR #343時点では、`BookingPric
 | `Config.gs` | ✓ | ✓ | `gas/booking/shared/Config.gs` |
 | `CalendarRepository.gs` | ✓ | ✓ | `gas/booking/shared/CalendarRepository.gs` |
 | `Booking.gs` | ✓ | ✓ | `gas/booking/shared/Booking.gs` |
-| `JapaneseHolidays.gs`（Issue #346） | ✓ | – | `gas/booking/shared/JapaneseHolidays.gs` |
-| `BookingPricing.gs`（Issue #342／Issue #346で祝日判定を追加） | ✓ | – | `gas/booking/shared/BookingPricing.gs` |
+| `JapaneseHolidays.gs`（Issue #346／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | `gas/booking/shared/JapaneseHolidays.gs` |
+| `BookingPricing.gs`（Issue #342／Issue #346で祝日判定を追加／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | `gas/booking/shared/BookingPricing.gs` |
 | `RateLimiter.gs` | ✓ | – | `gas/booking/public/RateLimiter.gs` |
 | `SpreadsheetRepository.gs` | ✓ | ✓ | `gas/booking/shared/SpreadsheetRepository.gs` |
 | `RecoveryRepository.gs` | ✓ | ✓ | `gas/booking/shared/RecoveryRepository.gs` |
@@ -2721,6 +3008,9 @@ Issue #342（予約料金の自動計算）・PR #343時点では、`BookingPric
 | `BookingAdminWeb.gs`（Issue #305） | – | ✓ | `gas/booking/admin/BookingAdminWeb.gs` |
 | `BookingReminderTriggers.gs`（Issue #271） | – | ✓ | `gas/booking/admin/BookingReminderTriggers.gs` |
 | `BookingReminderDiagnostics.gs`（Issue #330） | – | ✓ | `gas/booking/admin/BookingReminderDiagnostics.gs` |
+| `FeeCalculator.gs`（Issue #344追記） | – | ✓ | `gas/booking/shared/FeeCalculator.gs` |
+| `FeeSettlementRepository.gs`（Issue #344追記） | – | ✓ | `gas/booking/shared/FeeSettlementRepository.gs` |
+| `BookingReschedule.gs`（Issue #344） | – | ✓ | `gas/booking/admin/BookingReschedule.gs` |
 | `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい。ただしWeb App自体のデプロイ設定は必要。後述） | `gas/booking/public/appsscript.json` |
 
 **このリポジトリでの配置（`shared/`/`public/`/`admin/`）は、あくまでソース管理上の

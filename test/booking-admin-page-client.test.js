@@ -2049,6 +2049,114 @@ test('runSendPaymentLink_: ALREADY_SENTの応答では送信回数:undefinedを�
   assert.strictEqual(sendCalls.length, 1, 'ALREADY_SENT応答を受けて自動で再送してはいけない');
 });
 
+/*
+ * Issue #344追記（料金差額の自動計算）: feeStatusSummaryText_/buildFeeConfirmation_の
+ * ユニットテスト。いずれもDOM操作から分離した（buildFeeConfirmation_はsection.querySelector
+ * だけに依存する）純粋関数に近い形にしており、この2つだけを対象に、サーバー側
+ * （BookingReschedule.gs）が返すpreview形状に対して正しい文言・feeConfirmationを
+ * 組み立てることを検証する。
+ */
+function fakeSection(fieldsBySelector) {
+  return {
+    querySelector: function (selector) {
+      return fieldsBySelector[selector] || createElementStub();
+    }
+  };
+}
+
+test('feeStatusSummaryText_: feeReady:falseの場合はfeeStatusMessageをそのまま返す', function () {
+  var sandbox = loadClientSandbox();
+  var text = sandbox.feeStatusSummaryText_({ feeReady: false, feeStatusMessage: '元の確定料金が未確認です。' });
+  assert.strictEqual(text, '元の確定料金が未確認です。');
+});
+
+test('feeStatusSummaryText_: ADDITIONAL_CHARGE_REQUIREDは追加請求が必要な旨を含む', function () {
+  var sandbox = loadClientSandbox();
+  var text = sandbox.feeStatusSummaryText_({
+    feeReady: true, oldFeeAmount: 4000, newFeeAmount: 5000, feeDifference: 1000,
+    dayType: 'weekend_holiday', roundedMinutes: 120, refundStatus: 'ADDITIONAL_CHARGE_REQUIRED'
+  });
+  assert.match(text, /4000円 → 新料金: 5000円/);
+  assert.match(text, /追加請求が必要/);
+});
+
+test('feeStatusSummaryText_: PENDING_POLICY_DECISIONはrefundPendingReasonを含む', function () {
+  var sandbox = loadClientSandbox();
+  var text = sandbox.feeStatusSummaryText_({
+    feeReady: true, oldFeeAmount: 8000, newFeeAmount: 4000, feeDifference: -4000,
+    dayType: 'weekday', roundedMinutes: 120, refundStatus: 'PENDING_POLICY_DECISION',
+    refundPendingReason: '2回目以降の日程変更はキャンセル規定の適用方法が規約上未確定のため…'
+  });
+  assert.match(text, /要判断: 2回目以降/);
+});
+
+test('buildFeeConfirmation_: feeReadyかつ返金判断が不要なら空のconfirmationを返す', function () {
+  var sandbox = loadClientSandbox();
+  var section = fakeSection({});
+  var confirmation = sandbox.buildFeeConfirmation_(section, {
+    feeReady: true, requiresManualRefundDecision: false
+  });
+  assert.deepStrictEqual(Object.keys(confirmation), []);
+});
+
+test('buildFeeConfirmation_: 返金要判断で理由が空ならnullを返す（送信をブロックする）', function () {
+  var sandbox = loadClientSandbox();
+  var amountField = createElementStub(); amountField.value = '1000';
+  var noteField = createElementStub(); noteField.value = '   ';
+  var section = fakeSection({ '#reschedule-refund-amount': amountField, '#reschedule-refund-note': noteField });
+  var confirmation = sandbox.buildFeeConfirmation_(section, {
+    feeReady: true, requiresManualRefundDecision: true, unrefundedPaidAmount: 8000
+  });
+  assert.strictEqual(confirmation, null);
+});
+
+test('buildFeeConfirmation_: 返金要判断で上限超えの金額はnullを返す', function () {
+  var sandbox = loadClientSandbox();
+  var amountField = createElementStub(); amountField.value = '9999';
+  var noteField = createElementStub(); noteField.value = '運営判断';
+  var section = fakeSection({ '#reschedule-refund-amount': amountField, '#reschedule-refund-note': noteField });
+  var confirmation = sandbox.buildFeeConfirmation_(section, {
+    feeReady: true, requiresManualRefundDecision: true, unrefundedPaidAmount: 8000
+  });
+  assert.strictEqual(confirmation, null);
+});
+
+test('buildFeeConfirmation_: 返金要判断で妥当な入力ならmanualRefundDecisionを含めて返す', function () {
+  var sandbox = loadClientSandbox();
+  var amountField = createElementStub(); amountField.value = '1000';
+  var noteField = createElementStub(); noteField.value = '運営判断で一部返金';
+  var section = fakeSection({ '#reschedule-refund-amount': amountField, '#reschedule-refund-note': noteField });
+  var confirmation = sandbox.buildFeeConfirmation_(section, {
+    feeReady: true, requiresManualRefundDecision: true, unrefundedPaidAmount: 8000
+  });
+  assert.strictEqual(confirmation.manualRefundDecision.approvedAmount, 1000);
+  assert.strictEqual(confirmation.manualRefundDecision.note, '運営判断で一部返金');
+});
+
+test('buildFeeConfirmation_: 料金表未定義（feeReady:false）は手動入力が必須で、未入力ならnull', function () {
+  var sandbox = loadClientSandbox();
+  var section = fakeSection({});
+  var confirmation = sandbox.buildFeeConfirmation_(section, { feeReady: false, requiresManualNewFee: true });
+  assert.strictEqual(confirmation, null);
+});
+
+test('buildFeeConfirmation_: 料金表未定義で手動入力があればmanualNewFeeAmount/Noteを返す', function () {
+  var sandbox = loadClientSandbox();
+  var amountField = createElementStub(); amountField.value = '5000';
+  var noteField = createElementStub(); noteField.value = '据え置きで運営確認済み';
+  var section = fakeSection({ '#reschedule-manual-fee-amount': amountField, '#reschedule-manual-fee-note': noteField });
+  var confirmation = sandbox.buildFeeConfirmation_(section, { feeReady: false, requiresManualNewFee: true });
+  assert.strictEqual(confirmation.manualNewFeeAmount, 5000);
+  assert.strictEqual(confirmation.manualNewFeeNote, '据え置きで運営確認済み');
+});
+
+test('buildFeeConfirmation_: 基準料金未設定（BASELINE_REQUIRED）は画面からは解決できずnullを返す', function () {
+  var sandbox = loadClientSandbox();
+  var section = fakeSection({});
+  var confirmation = sandbox.buildFeeConfirmation_(section, { feeReady: false, requiresManualNewFee: false });
+  assert.strictEqual(confirmation, null);
+});
+
 /* ---------- 利用料金の表示・修正（Issue #342） ---------- */
 
 function priceDetailBooking(overrides) {

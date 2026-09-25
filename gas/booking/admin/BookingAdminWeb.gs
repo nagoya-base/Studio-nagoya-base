@@ -263,6 +263,7 @@ function getAdminBookingDetail(bookingId) {
     success: true,
     booking: {
       bookingId: record.bookingId,
+      rescheduleVersion: isAdminWebDateLike_(record.startAt) && isAdminWebDateLike_(record.endAt) ? record.startAt.getTime() + ':' + record.endAt.getTime() : '',
       date: formatAdminDate_(record.date, timezone),
       startAt: formatAdminDateTime_(record.startAt, timezone),
       endAt: formatAdminDateTime_(record.endAt, timezone),
@@ -346,7 +347,49 @@ function getAdminBookingDetail(bookingId) {
        * 送信ボタンの強調表示（案内漏れの警告）に使う（buildAdminPriceSummary_参照）。
        */
       priceUpdateMailSentAt: formatAdminDateTime_(record.priceUpdateMailSentAt, timezone),
-      priceUpdateNeeded: buildAdminPriceSummary_(record).updateNeeded
+      priceUpdateNeeded: buildAdminPriceSummary_(record).updateNeeded,
+      /*
+       * Issue #344追記（料金差額の自動計算。PR #345レビュー対応で再設計）: 日程変更フォームの
+       * 「基準料金」表示・「元料金未確認」判定に使う。PR #343の料金基盤（priceAmount/
+       * priceTier/effectivePriceAmount）をそのまま再利用し、日程変更専用の「現在の確定金額」
+       * 列は別途持たない。feeBaselineReadyは「実効金額が判明していて（getEffectivePriceAmount
+       * !== null）、かつ会員区分（priceTier）も判明している」場合のみtrueになる
+       * （BookingReschedule.gsのfeeBaseline_/computeFeeContext_と同じ判定基準）。
+       * 既存予約（#342以前に作成された予約でpriceAmountが空）はfalseのままとなり、
+       * BookingReschedule.backfillOriginalPriceで管理者が照合して入力する必要がある。
+       */
+      feeBaselineReady: Booking.getEffectivePriceAmount(record) !== null && !!record.priceTier,
+      scheduleChangeCount: typeof record.scheduleChangeCount === 'number' && isFinite(record.scheduleChangeCount) ? record.scheduleChangeCount : 0,
+      feePaidAmount: typeof record.feePaidAmount === 'number' && isFinite(record.feePaidAmount) ? record.feePaidAmount : 0,
+      feeRefundedAmount: typeof record.feeRefundedAmount === 'number' && isFinite(record.feeRefundedAmount) ? record.feeRefundedAmount : 0,
+      feeSettlementState: record.feeSettlementState || '',
+      feeSettlementNote: record.feeSettlementNote || '',
+      feeSettlementUpdatedAt: formatAdminDateTime_(record.feeSettlementUpdatedAt, timezone),
+      /*
+       * PR #345レビュー対応: 料金関連フィールドの部分更新失敗により整合性が保証できない
+       * 場合のブロック状態（BookingReschedule.gsのfeeRecoveryRequiredAt参照）。空でなければ
+       * Web UI側は日程変更・精算記録のいずれのフォームも操作不能にし、要復旧である旨と
+       * 理由を表示する。
+       */
+      feeRecoveryRequiredAt: formatAdminDateTime_(record.feeRecoveryRequiredAt, timezone),
+      feeRecoveryReason: record.feeRecoveryReason || '',
+      /*
+       * PR #345再レビュー対応（4回目）: feeRecoveryRequiredAtの保存自体が失敗する複合障害が
+       * 起きると、フラグが立たないままFeeSettlementsにPENDING_APPLY/FAILED_NEEDS_RECOVERY
+       * の行だけが残ることがある。BookingReschedule.gs側はfeeRecoveryRequiredAtの有無に
+       * かかわらずこの状態をブロックするため、Web UI側もfeeRecoveryRequiredAtだけでなく
+       * こちらを見て復旧導線（renderFeeRecoverySection_）を出す。resolveFeeRecoveryへの
+       * 入り口も同じ判定（isInFeeRecovery_ OR hasUnresolvedSettlement）を使っている。
+       */
+      feeSettlementNeedsAttention: FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null),
+      /*
+       * PR #345再レビュー対応（8回目）: 基準料金5列（priceAmount等）の書込み結果が
+       * 不明のまま残っている予約かどうか。feeRecoveryRequiredAtの保存自体が失敗する
+       * 複合障害が起きると、フラグだけでは検出できない（BookingReschedule.
+       * isBaselineRecoveryBlocked参照）。Web UI側は専用の要復旧表示・
+       * resolveBaselinePriceRecovery呼び出し導線を出す。
+       */
+      baselineRecoveryNeedsAttention: BookingReschedule.isBaselineRecoveryBlocked(bookingId)
     }
   };
 }

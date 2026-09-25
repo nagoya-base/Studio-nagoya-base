@@ -109,9 +109,79 @@ var RecoveryRepository = (function () {
     return result;
   }
 
+  /*
+   * PR #345再レビュー対応（8回目）: BookingReschedule.backfillOriginalPriceが基準料金
+   * （priceAmount等5列）の書込み結果を確認できなかった場合の、予約別の永続的な停止条件。
+   * feeRecoveryRequiredAt（Bookings側）の保存自体が失敗しても、こちらのRecoveryシートへの
+   * 記録が成功していれば、次回以降のbackfillOriginalPrice/commit/recordFeeSettlementを
+   * 引き続きブロックできる（isBlockedForFeeRecovery_参照）。既存のHEADERS_・recordFailure
+   * をそのまま使い、failureTypeにBASELINE_WRITE_UNCERTAIN_FAILURE_TYPEを指定した行を
+   * OPEN/RESOLVEDで管理する。
+   */
+  var BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE = 'BASELINE_WRITE_UNCERTAIN';
+
+  function hasOpenBaselineRecovery(bookingId) {
+    var sheet = ensureRecoverySheet_();
+    var values = sheet.getDataRange().getValues();
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(values[i]);
+      if (record.bookingId === bookingId &&
+          record.failureType === BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE &&
+          record.recoveryState === 'OPEN') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /*
+   * 管理者が基準料金5列を確認・再保存し、検証にも成功した後にのみ呼ぶこと
+   * （BookingReschedule.resolveBaselinePriceRecovery参照）。この予約のOPENな
+   * BASELINE_WRITE_UNCERTAIN行をすべてRESOLVEDにする（複数回の複合障害でOPENが
+   * 複数残っていた場合も、基準料金自体は1つの正しい値に確定しているため全件解消してよい）。
+   */
+  function resolveBaselineRecovery(bookingId) {
+    var sheet = ensureRecoverySheet_();
+    var values = sheet.getDataRange().getValues();
+    var recoveryStateIndex = HEADERS_.indexOf('recoveryState');
+    var resolvedAtIndex = HEADERS_.indexOf('resolvedAt');
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(values[i]);
+      if (record.bookingId === bookingId &&
+          record.failureType === BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE &&
+          record.recoveryState === 'OPEN') {
+        sheet.getRange(i + 1, recoveryStateIndex + 1, 1, 1).setValues([['RESOLVED']]);
+        sheet.getRange(i + 1, resolvedAtIndex + 1, 1, 1).setValues([[new Date()]]);
+      }
+    }
+  }
+
+  /*
+   * PR #345再レビュー対応（完了条件C）: 基準料金の確認根拠（BASELINE_PRICE_CONFIRMED）の
+   * 監査行が実際に保存されたかを読み戻して確認する。appendRowの応答は信頼せず、
+   * bookingId・failureType・errorMessage（確認時刻を含む一意な文字列）の完全一致で判定する。
+   */
+  function hasRecord(bookingId, failureType, errorMessage) {
+    var sheet = ensureRecoverySheet_();
+    var values = sheet.getDataRange().getValues();
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(values[i]);
+      if (record.bookingId === bookingId &&
+          record.failureType === failureType &&
+          record.errorMessage === errorMessage) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   return {
     HEADERS: HEADERS_,
+    hasRecord: hasRecord,
     recordFailure: recordFailure,
-    listAll: listAll
+    listAll: listAll,
+    BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE: BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE,
+    hasOpenBaselineRecovery: hasOpenBaselineRecovery,
+    resolveBaselineRecovery: resolveBaselineRecovery
   };
 })();
