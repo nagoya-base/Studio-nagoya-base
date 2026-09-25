@@ -464,6 +464,23 @@ var BookingRepository = (function () {
       };
     }
 
+    /*
+     * 料金修正の訂正案内が未完了なら、Calendar/Sheetsを変更する前に確定を止める。
+     * Web管理画面とSpreadsheetメニューは同じconfirmBookingを経由する。
+     */
+    if (Booking.needsPriceUpdateNotice(record)) {
+      return {
+        response: {
+          success: false,
+          error: {
+            code: 'PRICE_UPDATE_NOTICE_REQUIRED',
+            message: '修正後の利用料金をまだ案内していません。訂正案内メールを送信してから予約を確定してください。'
+          }
+        },
+        shouldTryMail: false
+      };
+    }
+
     var calendarId = BookingConfig.getCalendarId();
     var event = CalendarRepository.getEventById(calendarId, record.calendarEventId);
     if (!event) {
@@ -1413,6 +1430,13 @@ var BookingRepository = (function () {
       }
 
       var effectiveNow = isDateLike_(now) ? now : new Date();
+      /* 同一ミリ秒に送信→再修正しても、最新の修正を送信済みと誤判定しない。 */
+      if (record.priceUpdateMailSentAt) {
+        var previousSentAt = new Date(record.priceUpdateMailSentAt).getTime();
+        if (Number.isFinite(previousSentAt) && effectiveNow.getTime() <= previousSentAt) {
+          effectiveNow = new Date(previousSentAt + 1);
+        }
+      }
       SpreadsheetRepository.updateBookingFields(bookingId, {
         priceOverrideAmount: amount,
         priceOverrideAt: effectiveNow
