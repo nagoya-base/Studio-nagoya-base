@@ -1505,12 +1505,46 @@ var BookingRepository = (function () {
    *   付随情報を伴わない遷移もある）。
    * 戻り値: { success: true } / { success: true, alreadyApplied: true } /
    *   { success: false, error: { code, message } }
+   *
+   * 2回目レビュー対応で追加した冪等性・証跡検証:
+   * 5. **alreadyAppliedの判定は決済状態の一致だけに頼らない**。IDENTITY_FIELDS_
+   *    （paymentAttemptId/stripeCheckoutSessionId/stripePaymentIntentId）のうち、
+   *    呼び出し元が`fields`で明示的に主張した項目を、台帳の現在値と突き合わせる。
+   *    現在のpaymentStatusが既にtoPaymentStatusと一致していても、主張した識別子の
+   *    いずれかが台帳の値と食い違えば「別の決済試行が同じ目標状態を主張している」
+   *    可能性があるため、alreadyApplied:trueで安全側に丸めず、要復旧として停止する
+   *    （PAYMENT_IDENTITY_MISMATCH）。呼び出し元が識別子を何も主張しない場合
+   *    （fieldsを省略、またはIDENTITY_FIELDS_に該当するキーを含まない）は、従来どおり
+   *    状態の一致のみでalreadyApplied:trueとする（判定材料が無い以上、状態の一致を
+   *    信頼する以外にできることがないため）。
+   * 6. **決済証跡の整合性検証**：toPaymentStatusごとに、PR-B/PR-Cが実際にその遷移で
+   *    得るはずの識別子（REQUIRED_EVIDENCE_FOR_STATUS_）を定義し、`fields`とその時点の
+   *    台帳の値を合わせても必須項目が揃わない場合は、遷移を許可された組（
+   *    canTransitionPaymentStatus）であっても書き込みを行わず拒否する
+   *    （PAYMENT_EVIDENCE_MISSING）。「PAIDと主張されているのにStripeの決済識別子が
+   *    一つも無い」といった証跡の欠落した成功報告を無条件に信用しない。
+   *    PR-A時点では実際にStripe APIを呼ばないため、ここでの「必須」はPR-B/PR-Cが
+   *    その状態に遷移する際に実際に得られるはずの値をコード上の約束として先取りした
+   *    ものであり、値そのものの真正性（Stripe側との実照合）はPR-C側の署名検証・
+   *    verifyPaymentAgainstSnapshotの責務のまま変わらない。
+   *
+   * 要復旧ゲート（PAYMENT_RECOVERY_REQUIRED）を立てるかどうかは検知内容ごとに分ける:
+   * - PAYMENT_IDENTITY_MISMATCH／PAYMENT_STATUS_WRITE_FAILED_AFTER_DETAIL_COMMIT／
+   *   UNKNOWN_PAYMENT_STATUSは、台帳側の記録そのものが既に不整合（または不整合の疑いが
+   *   ある）状態のため、恒久ゲートを立てて以後の自動呼び出しをすべて拒否し、管理者の
+   *   確認を必須にする。
+   * - PAYMENT_EVIDENCE_MISSINGはこの回の呼び出しを拒否した時点で台帳は一切変更しておらず
+   *   （検証はBookingsへの書き込みより前に行う）、単に今回の呼び出しが証跡を渡し忘れた
+   *   可能性が高いため、恒久ゲートは立てない。RecoveryRepositoryへは監査記録として残す
+   *   （recordPaymentEvidenceAuditBestEffort_）が、正しい証跡を添えれば同じbookingIdへ
+   *   即座に再試行できる。
    */
   function applyPaymentStateUpdate(bookingId, toPaymentStatus, fields, now) {
     if (!bookingId) {
       return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
     }
     var effectiveNow = isDateLike_(now) ? now : new Date();
+    var safeFields = fields || {};
 
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(LOCK_TIMEOUT_MS_)) {
@@ -1549,7 +1583,25 @@ var BookingRepository = (function () {
       }
 
       if (currentPaymentStatus === toPaymentStatus) {
-        return { success: true, alreadyApplied: true };
+        if (paymentIdentityMatches_(record, safeFields)) {
+          return { success: true, alreadyApplied: true };
+        }
+        recordPaymentRecoveryBestEffort_(
+          bookingId, record, 'PAYMENT_IDENTITY_MISMATCH',
+          '決済状態は既に' + toPaymentStatus + 'ですが、今回の呼び出しが主張する決済試行ID・' +
+            'Stripe識別子が台帳の記録と一致しません。別の決済試行を同一予約の完了済み処理と' +
+            '誤認しないよう自動処理を停止しました。実際のStripe側の記録（決済試行ごとの' +
+            'PaymentIntent/Checkout Session）を確認し、二重決済や取り違えがないか調査した' +
+            'うえで復旧してください。',
+          effectiveNow
+        );
+        return {
+          success: false,
+          error: {
+            code: 'PAYMENT_IDENTITY_MISMATCH',
+            message: '決済状態は既に' + toPaymentStatus + 'ですが、決済試行の識別子が一致しないため処理を停止しました。管理者の確認が必要です。'
+          }
+        };
       }
 
       if (!Booking.canTransitionPaymentStatus(currentPaymentStatus, toPaymentStatus)) {
@@ -1562,7 +1614,36 @@ var BookingRepository = (function () {
         };
       }
 
-      var safeFields = fields || {};
+      var missingEvidence = findMissingPaymentEvidence_(record, safeFields, toPaymentStatus);
+      if (missingEvidence.length > 0) {
+        /*
+         * ここでは何もBookingsへ書き込んでいない（このifブロックに到達した時点で台帳は
+         * 未変更）ため、recordPaymentRecoveryBestEffort_（paymentRecoveryRequiredAtの
+         * 恒久ゲートを立てる）ではなく、監査記録のみのrecordPaymentEvidenceAuditBestEffort_
+         * を使う。証跡欠落は「呼び出し元がこの回の呼び出しで必要な情報を渡し忘れた」
+         * だけの可能性が高く、正しい証跡を添えて再試行すれば足りるため、以後この
+         * bookingIdへのすべての呼び出しを恒久的に禁止するのは過剰（PAYMENT_IDENTITY_
+         * MISMATCH・PAYMENT_STATUS_WRITE_FAILED_AFTER_DETAIL_COMMITとは異なり、台帳側は
+         * 何も不整合を起こしていない）。それでも「証跡の無い決済成功・返金の報告」自体は
+         * 監査に値するためRecoveryへは記録する。
+         */
+        recordPaymentEvidenceAuditBestEffort_(
+          bookingId, record, 'PAYMENT_EVIDENCE_MISSING',
+          '決済状態を' + toPaymentStatus + 'へ進めるために必要な決済証跡（' + missingEvidence.join('、') +
+            '）が揃っていないため、この回の呼び出しを拒否しました（台帳は未変更）。証跡の無い' +
+            '決済成功・返金の報告を無条件に信用しないための検証です。正しい識別子を添えて' +
+            '再試行してください。',
+          effectiveNow
+        );
+        return {
+          success: false,
+          error: {
+            code: 'PAYMENT_EVIDENCE_MISSING',
+            message: '決済状態を' + toPaymentStatus + 'へ進めるために必要な決済証跡（' + missingEvidence.join('、') + '）が不足しています。'
+          }
+        };
+      }
+
       if (Object.keys(safeFields).length > 0) {
         try {
           SpreadsheetRepository.updateBookingPaymentStateAtomic(bookingId, safeFields);
@@ -1630,6 +1711,91 @@ var BookingRepository = (function () {
     } catch (e) {
       Logger.log('Recovery記録に失敗しました: ' + bookingId + ' ' + failureType + ' ' + e);
     }
+  }
+
+  /*
+   * PAYMENT_EVIDENCE_MISSING専用（2回目レビュー対応・項目2）：Bookingsへは何も書き込んで
+   * いない（この回の呼び出しを拒否しただけ）ため、paymentRecoveryRequiredAtの恒久ゲートは
+   * 立てず、RecoveryRepositoryへの監査記録のみをbest effortで行う。呼び出し元は正しい
+   * 証跡を添えて同じbookingIdへ再試行できる。
+   */
+  function recordPaymentEvidenceAuditBestEffort_(bookingId, record, failureType, reason, now) {
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: failureType,
+        occurredAt: now,
+        calendarEventId: (record && record.calendarEventId) || '',
+        status: (record && record.status) || '',
+        errorMessage: reason,
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (e) {
+      Logger.log('Recovery記録に失敗しました: ' + bookingId + ' ' + failureType + ' ' + e);
+    }
+  }
+
+  /*
+   * applyPaymentStateUpdateの冪等性判定（2回目レビュー対応・項目1）が参照する識別子。
+   * 呼び出し元が`fields`でこれらのキーを明示的に主張した場合のみ、台帳の現在値と
+   * 突き合わせる（主張していないキーは判定に使わない＝比較対象にしない）。
+   */
+  var IDENTITY_FIELDS_ = ['paymentAttemptId', 'stripeCheckoutSessionId', 'stripePaymentIntentId'];
+
+  /*
+   * 現在のpaymentStatusが既にtoPaymentStatusと一致している場合に、今回の呼び出しが
+   * 「本当に同じ決済試行の重複処理（冪等な再送）」か、「別の決済試行が同じ目標状態を
+   * 主張している」かを判定する。
+   *
+   * safeFieldsがIDENTITY_FIELDS_のいずれのキーも含まない場合（呼び出し元が識別子を
+   * 何も主張していない）は、判定材料が無いためtrue（同一とみなす）を返す。含む場合は、
+   * 主張された値すべてが台帳の現在値と一致して初めてtrueを返す。1つでも食い違えば
+   * false（別の決済試行の可能性あり）。
+   */
+  function paymentIdentityMatches_(record, safeFields) {
+    return !IDENTITY_FIELDS_.some(function (key) {
+      if (!Object.prototype.hasOwnProperty.call(safeFields, key)) return false;
+      var claimed = safeFields[key];
+      if (claimed === undefined || claimed === null || claimed === '') return false;
+      return record[key] !== claimed;
+    });
+  }
+
+  /*
+   * toPaymentStatusへ遷移するために最低限揃っているべき決済証跡（2回目レビュー対応・
+   * 項目2）。PR-A時点ではStripe APIを呼ばないため、ここでの「必須」はPR-B/PR-Cが
+   * その状態へ実際に遷移する際に得られるはずの値をコード上の約束として先取りしたもの。
+   * - CHECKOUT_PENDING: Checkout Session発行時にPR-Bが必ず持つはずの決済試行ID・
+   *   Session id。
+   * - PAID: Webhookが伝えるPaymentIntent id、および同一イベントの重複処理を防ぐ
+   *   lastStripeEventId（Issue #341本文「イベントID・決済試行IDで重複処理を防ぐ」）。
+   * - REFUND_PENDING / REFUNDED: Stripe返金APIの呼び出しで得られる返金id
+   *   （Issue #341本文の運用フローでは、REFUND_PENDINGは返金APIを呼び出した直後に
+   *   遷移する想定であり、その時点で既にStripeからidが返っているはず）。
+   * - FAILED: 追加の必須証跡なし（Session期限切れ等、PaymentIntentが発行される前に
+   *   失敗する経路もあるため）。
+   */
+  var REQUIRED_EVIDENCE_FOR_STATUS_ = {};
+  REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.CHECKOUT_PENDING] = ['paymentAttemptId', 'stripeCheckoutSessionId'];
+  REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.PAID] = ['stripePaymentIntentId', 'lastStripeEventId'];
+  REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.REFUND_PENDING] = ['stripeRefundId'];
+  REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.REFUNDED] = ['stripeRefundId'];
+  REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.FAILED] = [];
+
+  /*
+   * 今回のfieldsと台帳の現在値を合わせても、toPaymentStatusに必要な証跡
+   * （REQUIRED_EVIDENCE_FOR_STATUS_）が揃わないキーの一覧を返す（空配列なら不足なし）。
+   * fieldsで指定された値を優先し、指定が無いキーは台帳の現在値を見る
+   * （前段のcheckout_pending遷移で記録済みの識別子を、後段のpaid遷移で再送させる
+   * 必要はないため）。
+   */
+  function findMissingPaymentEvidence_(record, safeFields, toPaymentStatus) {
+    var required = REQUIRED_EVIDENCE_FOR_STATUS_[toPaymentStatus] || [];
+    return required.filter(function (key) {
+      var merged = Object.prototype.hasOwnProperty.call(safeFields, key) ? safeFields[key] : record[key];
+      return merged === undefined || merged === null || merged === '';
+    });
   }
 
   return {

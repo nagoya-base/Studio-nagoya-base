@@ -3406,16 +3406,44 @@ updateBookingPaymentStateAtomic`/`updateBookingFields({paymentStatus: ...})`を�
    （`PAYMENT_STATUS_WRITE_FAILED_AFTER_DETAIL_COMMIT`。`feeRecoveryRequiredAt`と同じ
    「要復旧フラグが立っている間は自動処理を止め、明示的な補正を待つ」設計を踏襲する。
    実際に管理者が確認・解除する手段（`resolveFeeRecovery`相当）はPR-D側で用意する）。
-4. **再実行時の整合性検証**: 現在の`paymentStatus`が既に`toPaymentStatus`と一致している
-   場合は何も書き込まず`alreadyApplied:true`で成功を返す（Webhookの重複配信・呼び出し元の
-   重複リトライを安全に吸収する）。現在の`paymentStatus`が`Booking.
-   normalizePaymentStatus`で`null`（未知の値）と判定された場合は「未決済だろう」と
-   決めつけず即座に停止する（`UNKNOWN_PAYMENT_STATUS`。前述の項目2と対応）。要復旧
-   フラグが既に立っている予約は、遷移の妥当性を判定するまでもなく先頭で即座に拒否する。
+4. **再実行時の整合性検証**: 現在の`paymentStatus`が`Booking.normalizePaymentStatus`で
+   `null`（未知の値）と判定された場合は「未決済だろう」と決めつけず即座に停止する
+   （`UNKNOWN_PAYMENT_STATUS`。前述の項目2と対応）。要復旧フラグが既に立っている予約は、
+   遷移の妥当性を判定するまでもなく先頭で即座に拒否する。
+5. **alreadyAppliedの判定は決済状態の一致だけに頼らない**（2回目レビュー対応）。現在の
+   `paymentStatus`が既に`toPaymentStatus`と一致していても、呼び出し元が`fields`で
+   `paymentAttemptId`/`stripeCheckoutSessionId`/`stripePaymentIntentId`（IDENTITY_FIELDS_）
+   のいずれかを主張しており、かつその値が台帳の現在値と食い違う場合は、alreadyApplied:
+   trueへ丸めず`PAYMENT_IDENTITY_MISMATCH`として要復旧フラグを立てる（別の決済試行が
+   同じ目標状態を主張している＝二重決済等の可能性があるため）。識別子を何も主張しない
+   呼び出しは、従来どおり状態の一致のみで`alreadyApplied:true`とする（判定材料が無い
+   以上、状態の一致を信頼する以外にできることがないため）。
+6. **決済証跡の整合性検証**（2回目レビュー対応）: `toPaymentStatus`ごとに、PR-B/PR-Cが
+   実際にその遷移で得るはずの識別子（`REQUIRED_EVIDENCE_FOR_STATUS_`）を定義し、`fields`
+   とその時点の台帳の値を合わせても必須項目が揃わない場合は、遷移が許可された組でも
+   書き込みを拒否する（`PAYMENT_EVIDENCE_MISSING`。「`paid`と主張されているのにStripeの
+   決済識別子が一つも無い」といった証跡の欠落した成功報告を無条件に信用しない）。
+
+   | 目標状態 | 必須の決済証跡 |
+   | --- | --- |
+   | `checkout_pending` | `paymentAttemptId`, `stripeCheckoutSessionId` |
+   | `paid` | `stripePaymentIntentId`, `lastStripeEventId` |
+   | `refund_pending` | `stripeRefundId` |
+   | `refunded` | `stripeRefundId` |
+   | `failed` | （追加の必須証跡なし。Session期限切れ等、PaymentIntent発行前に失敗する経路もあるため） |
+
+   `PAYMENT_IDENTITY_MISMATCH`/`UNKNOWN_PAYMENT_STATUS`/`PAYMENT_STATUS_WRITE_FAILED_
+   AFTER_DETAIL_COMMIT`は台帳側の記録そのものが不整合（またはその疑いがある）ため恒久の
+   要復旧ゲートを立てるが、`PAYMENT_EVIDENCE_MISSING`はこの回の呼び出しを拒否した時点で
+   台帳を一切変更していない（検証はBookingsへの書き込みより前に行う）ため恒久ゲートは
+   立てない。`RecoveryRepository`への監査記録のみ行い、正しい証跡を添えれば同じ
+   `bookingId`へ即座に再試行できる。
 
 PR-A時点ではこの関数を呼び出す実際の決済処理（Checkout Session発行・Webhook確認・
 自動返金）は存在しない。`test/booking-payment-state.test.js`で、LockService/Recovery記録・
-更新順序・部分失敗・冪等な再実行・未知の`paymentStatus`検知をモックで検証している。
+更新順序・部分失敗・冪等な再実行（同一決済試行IDでの重複処理・異なる決済試行IDの拒否）・
+未知の`paymentStatus`検知・決済証跡欠落の検知・要復旧ゲート後の自動処理停止をモックで
+検証している。
 
 ### サーバー側の料金検証
 

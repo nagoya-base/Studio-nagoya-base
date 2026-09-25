@@ -106,16 +106,38 @@ test('applyPaymentStateUpdate: NOT_STARTED→CHECKOUT_PENDINGへ、決済付随�
 
 test('applyPaymentStateUpdate: fieldsを渡さない遷移（例: FAILED→CHECKOUT_PENDINGの再試行）はpaymentStatusのみ1回書き込む', function () {
   var ctx = setup();
-  var bookingId = createBookingRow(ctx, { paymentStatus: 'failed' });
+  // FAILEDは必須証跡なし（REQUIRED_EVIDENCE_FOR_STATUS_）のため、fields省略でも
+  // PAYMENT_EVIDENCE_MISSINGにならない遷移として checkout_pending→failed を使う
+  // （Session期限切れ等、PaymentIntentが発行される前に失敗する経路もあるため）。
+  var bookingId = createBookingRow(ctx, {
+    paymentStatus: 'checkout_pending', paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_1'
+  });
 
-  var result = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'checkout_pending');
+  var result = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'failed');
   assert.strictEqual(result.success, true);
 
   var sheet = ctx.globals.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
   assert.strictEqual(sheet._setValuesCalls.length, 1, 'fields省略時は決済付随情報の書き込みをスキップする');
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.paymentStatus, 'failed');
+});
+
+test('applyPaymentStateUpdate: FAILED→CHECKOUT_PENDINGの再試行は、新しい決済試行ID・Session idをfieldsで主張する必要がある（証跡なしのCHECKOUT_PENDINGは許可しない）', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx, { paymentStatus: 'failed' });
+
+  var withoutEvidence = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'checkout_pending');
+  assert.strictEqual(withoutEvidence.success, false);
+  assert.strictEqual(withoutEvidence.error.code, 'PAYMENT_EVIDENCE_MISSING');
+
+  var withEvidence = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'checkout_pending', {
+    paymentAttemptId: 'PAY-2', stripeCheckoutSessionId: 'cs_2'
+  });
+  assert.strictEqual(withEvidence.success, true);
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.strictEqual(found.record.paymentStatus, 'checkout_pending');
+  assert.strictEqual(found.record.paymentAttemptId, 'PAY-2', '再試行では新しい決済試行IDに更新される');
 });
 
 /*
@@ -133,6 +155,124 @@ test('applyPaymentStateUpdate: 既にtoPaymentStatusと同じ場合は何も書�
 
   var sheet = ctx.globals.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
   assert.strictEqual(sheet._setValuesCalls.length, 0, '既に目的の状態なら一切書き込まない');
+});
+
+/*
+ * 2回目レビュー対応・項目1: alreadyAppliedの判定条件の厳格化。
+ * 決済状態の一致だけでなく、呼び出し元が主張する決済試行ID・Stripe識別子
+ * （IDENTITY_FIELDS_）が台帳の記録と一致することまで確認する。
+ */
+test('applyPaymentStateUpdate: 同じ決済試行ID（paymentAttemptId/stripeCheckoutSessionId/stripePaymentIntentId）による重複処理は冪等に成功する', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx, {
+    paymentStatus: 'paid', paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_1', stripePaymentIntentId: 'pi_1'
+  });
+
+  // Webhookの重複配信を模し、同一の決済試行IDを主張して同じ'paid'への遷移を再送する。
+  var result = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'paid', {
+    paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_1', stripePaymentIntentId: 'pi_1'
+  });
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.alreadyApplied, true);
+
+  var sheet = ctx.globals.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
+  assert.strictEqual(sheet._setValuesCalls.length, 0, '同一の決済試行と確認できたので何も書き込まない');
+});
+
+test('applyPaymentStateUpdate: 異なる決済試行ID（paymentAttemptId）を主張する呼び出しは、決済状態が同じでも処理済みとして扱わずPAYMENT_IDENTITY_MISMATCHで停止する', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx, {
+    paymentStatus: 'paid', paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_1', stripePaymentIntentId: 'pi_1'
+  });
+
+  // 別の決済試行（例えば別のCheckout Session由来のWebhook）が、同じ'paid'を主張してきたケース。
+  var result = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'paid', {
+    paymentAttemptId: 'PAY-2', stripeCheckoutSessionId: 'cs_2', stripePaymentIntentId: 'pi_2'
+  });
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'PAYMENT_IDENTITY_MISMATCH');
+  assert.notStrictEqual(result.alreadyApplied, true, '別の決済試行を完了済みとして扱ってはならない');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.paymentAttemptId, 'PAY-1', '台帳の記録を上書きしない');
+  assert.ok(found.record.paymentRecoveryRequiredAt, '別の決済試行の可能性があるため要復旧フラグを立てる（二重決済等の疑いを人が確認するまで自動処理を止める）');
+
+  var recovery = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovery.length, 1);
+  assert.strictEqual(recovery[0].failureType, 'PAYMENT_IDENTITY_MISMATCH');
+});
+
+/*
+ * 2回目レビュー対応・項目3（要復旧となった予約への自動処理再実行禁止）:
+ * PAYMENT_IDENTITY_MISMATCHで要復旧になった予約は、その後どんな（本来なら正当な）
+ * 呼び出しが来てもPAYMENT_RECOVERY_REQUIREDで即座に拒否され、台帳へは一切書き込まれない。
+ */
+test('applyPaymentStateUpdate: PAYMENT_IDENTITY_MISMATCHで要復旧になった予約は、以後の正当な呼び出しも含めて自動処理が再実行されない', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx, {
+    paymentStatus: 'paid', paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_1', stripePaymentIntentId: 'pi_1'
+  });
+
+  ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'paid', {
+    paymentAttemptId: 'PAY-2', stripeCheckoutSessionId: 'cs_2', stripePaymentIntentId: 'pi_2'
+  });
+
+  // 要復旧後、たとえ正しい（PAY-1の）識別子を主張する呼び出しであっても再実行されない。
+  var retry = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'refund_pending', {
+    stripeRefundId: 're_1'
+  });
+  assert.strictEqual(retry.success, false);
+  assert.strictEqual(retry.error.code, 'PAYMENT_RECOVERY_REQUIRED');
+
+  var sheet = ctx.globals.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
+  var setValuesCallsAfterMismatch = sheet._setValuesCalls.length;
+  ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'paid', {
+    paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_1', stripePaymentIntentId: 'pi_1'
+  });
+  assert.strictEqual(
+    sheet._setValuesCalls.length, setValuesCallsAfterMismatch,
+    '要復旧ゲートが立っている間はいかなる呼び出しも台帳へ書き込まない'
+  );
+});
+
+test('applyPaymentStateUpdate: 決済試行IDを主張しない呼び出し（識別子の主張なし）は、従来どおり状態の一致のみでalreadyApplied:trueになる', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx, { paymentStatus: 'paid', paymentAttemptId: 'PAY-1' });
+
+  var result = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'paid', { paymentConfirmedAt: new Date() });
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.alreadyApplied, true);
+});
+
+/*
+ * 2回目レビュー対応・項目2: 決済証跡の整合性検証。
+ * paidへの遷移にはstripePaymentIntentId・lastStripeEventIdが必須（REQUIRED_EVIDENCE_FOR_STATUS_）。
+ */
+test('applyPaymentStateUpdate: 決済状態をpaidへ進めようとしても、必要な決済証跡（stripePaymentIntentId等）が欠落していればPAYMENT_EVIDENCE_MISSINGで処理を停止する', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx, {
+    paymentStatus: 'checkout_pending', paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_1'
+  });
+
+  // stripePaymentIntentId・lastStripeEventIdのいずれも渡さない、証跡の無い「決済成功」報告。
+  var result = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'paid', { paymentConfirmedAt: new Date() });
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'PAYMENT_EVIDENCE_MISSING');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.paymentStatus, 'checkout_pending', '証跡が無いため決済状態は進めない');
+  assert.strictEqual(found.record.paymentConfirmedAt, '', '台帳は一切変更しない');
+
+  var recovery = ctx.sandbox.RecoveryRepository.listAll();
+  assert.strictEqual(recovery.length, 1, '証跡欠落の監査記録は残す');
+  assert.strictEqual(recovery[0].failureType, 'PAYMENT_EVIDENCE_MISSING');
+
+  // 証跡が欠けていただけで台帳側の不整合ではないため、恒久ゲートは立てない
+  // （正しい証跡を添えれば同じbookingIdへ即座に再試行できる）。
+  var retryWithEvidence = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'paid', {
+    stripePaymentIntentId: 'pi_1', lastStripeEventId: 'evt_1'
+  });
+  assert.strictEqual(retryWithEvidence.success, true, '正しい証跡を添えた再試行は成功する（恒久ゲートは立っていない）');
 });
 
 test('applyPaymentStateUpdate: Booking.canTransitionPaymentStatusで許可されない遷移はINVALID_PAYMENT_TRANSITIONを返し、何も書き込まない', function () {
@@ -234,7 +374,9 @@ test('applyPaymentStateUpdate: 決済付随情報の書き込みが失敗した�
     throw new Error('simulated sheets failure');
   };
 
-  var result = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'checkout_pending', { paymentAttemptId: 'PAY-1' });
+  var result = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'checkout_pending', {
+    paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_1'
+  });
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'PAYMENT_DETAIL_WRITE_FAILED');
 
