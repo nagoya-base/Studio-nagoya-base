@@ -914,6 +914,30 @@ var BookingReschedule = (function () {
             (corrections.feePaidAmount === undefined || corrections.feeRefundedAmount === undefined)) {
           return error_('INVALID_AMOUNT', 'この精算を「反映済み」として確定するには、支払済み額・返金済み額の両方を指定してください。');
         }
+        /*
+         * 再レビュー対応（5回目）: settlementResolutionは「反映結果が確定していない
+         * （PENDING_APPLY/FAILED_NEEDS_RECOVERY）」精算を確定するためのものであり、
+         * 既に確定済み（APPLIED/ABANDONED）の精算を反対の結果へ書き換える手段では
+         * ない。既にAPPLIEDの精算をCONFIRMED_NOT_APPLIEDでABANDONEDに書き換えられると、
+         * その後の同一settlementIdの再送がABANDONED分岐から「初めての適用」として
+         * 再加算し、二重計上になる（ABANDONEDをCONFIRMED_APPLIEDで戻す場合も同様に
+         * 危険）。ただし「FeeSettlementsの確定には成功したがBookingsのatomic更新が
+         * 失敗し、同じ内容でresolveFeeRecoveryを再実行する」既存の復旧経路は、
+         * 直前の呼び出しで既にAPPLIED/ABANDONEDへ遷移済みの状態から再送されるため、
+         * 同一outcome・同一確定値の冪等な再実行だけは許可する。
+         */
+        if (settlementRow.record.applyStatus === 'APPLIED') {
+          var sameApplied = outcome === 'CONFIRMED_APPLIED' &&
+            Number(settlementRow.record.resultPaidAmount) === Number(corrections.feePaidAmount) &&
+            Number(settlementRow.record.resultRefundedAmount) === Number(corrections.feeRefundedAmount);
+          if (!sameApplied) {
+            return error_('SETTLEMENT_STATE_MISMATCH', 'この精算IDは既に「反映済み」として確定されています。異なる確定結果へは変更できません。内容に誤りがある場合はFeeSettlementsシートを直接確認し、手動で照合してください。');
+          }
+        } else if (settlementRow.record.applyStatus === 'ABANDONED') {
+          if (outcome !== 'CONFIRMED_NOT_APPLIED') {
+            return error_('SETTLEMENT_STATE_MISMATCH', 'この精算IDは既に「未反映」として確定されています。異なる確定結果へは変更できません。内容に誤りがある場合はFeeSettlementsシートを直接確認し、手動で照合してください。');
+          }
+        }
       }
 
       var fields = { feeRecoveryRequiredAt: '', feeRecoveryReason: '' };
