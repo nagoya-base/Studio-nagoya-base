@@ -415,6 +415,94 @@ test('canTransition: EXPIREDからCONFIRMEDへの遷移は許可される（Issu
   assert.strictEqual(Booking.canTransition('EXPIRED', 'EXPIRED'), false);
 });
 
+/*
+ * Issue #341 PR-A: paymentStatus転用の状態設計。予約状態（STATUS）とは独立した
+ * PAYMENT_STATUS/canTransitionPaymentStatus/normalizePaymentStatusを検証する。
+ */
+test('PAYMENT_STATUS: 6つの決済状態が公開されている（Issue #341）', function () {
+  var Booking = loadBooking();
+  /* Booking.PAYMENT_STATUSはvmサンドボックス（別realm）由来のオブジェクトのため、
+     assert.deepStrictEqualではなくキー・値を個別に比較する（cross-realmな
+     プレーンオブジェクトはプロトタイプが異なりdeepStrictEqualが失敗するため。
+     test/booking-monthly-availability.test.jsのDAY_STATUS比較と同じ方針）。 */
+  assert.deepStrictEqual(Object.keys(Booking.PAYMENT_STATUS).sort(), [
+    'CHECKOUT_PENDING', 'FAILED', 'NOT_STARTED', 'PAID', 'REFUNDED', 'REFUND_PENDING'
+  ]);
+  assert.strictEqual(Booking.PAYMENT_STATUS.NOT_STARTED, 'not_started');
+  assert.strictEqual(Booking.PAYMENT_STATUS.CHECKOUT_PENDING, 'checkout_pending');
+  assert.strictEqual(Booking.PAYMENT_STATUS.PAID, 'paid');
+  assert.strictEqual(Booking.PAYMENT_STATUS.REFUND_PENDING, 'refund_pending');
+  assert.strictEqual(Booking.PAYMENT_STATUS.REFUNDED, 'refunded');
+  assert.strictEqual(Booking.PAYMENT_STATUS.FAILED, 'failed');
+});
+
+test('canTransitionPaymentStatus: NOT_STARTED→CHECKOUT_PENDING→PAID→REFUND_PENDING→REFUNDEDの正常系が許可される（Issue #341）', function () {
+  var Booking = loadBooking();
+  var S = Booking.PAYMENT_STATUS;
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.NOT_STARTED, S.CHECKOUT_PENDING), true);
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.CHECKOUT_PENDING, S.PAID), true);
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.PAID, S.REFUND_PENDING), true);
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.REFUND_PENDING, S.REFUNDED), true);
+});
+
+test('canTransitionPaymentStatus: CHECKOUT_PENDING→FAILED、FAILEDからの再試行（→CHECKOUT_PENDING）が許可される（Issue #341）', function () {
+  var Booking = loadBooking();
+  var S = Booking.PAYMENT_STATUS;
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.CHECKOUT_PENDING, S.FAILED), true);
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.FAILED, S.CHECKOUT_PENDING), true);
+});
+
+test('canTransitionPaymentStatus: REFUNDEDは終端状態で、NOT_STARTEDからPAID/REFUNDEDへの直接遷移など不正な遷移は不可（Issue #341）', function () {
+  var Booking = loadBooking();
+  var S = Booking.PAYMENT_STATUS;
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.REFUNDED, S.NOT_STARTED), false);
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.REFUNDED, S.PAID), false);
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.NOT_STARTED, S.PAID), false, 'CHECKOUT_PENDINGを経由せずPAIDへは遷移できない');
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.NOT_STARTED, S.REFUNDED), false);
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.PAID, S.FAILED), false, '決済成功後にFAILEDへ戻ることはない');
+  assert.strictEqual(Booking.canTransitionPaymentStatus('unknown', S.CHECKOUT_PENDING), false, '未知の状態からの遷移表引きはfalseを返す（例外にしない）');
+});
+
+test('normalizePaymentStatus: 新定義の6値はそのまま通す（Issue #341）', function () {
+  var Booking = loadBooking();
+  Object.keys(Booking.PAYMENT_STATUS).forEach(function (key) {
+    var value = Booking.PAYMENT_STATUS[key];
+    assert.strictEqual(Booking.normalizePaymentStatus(value), value);
+  });
+});
+
+test('normalizePaymentStatus: 空文字・未設定・旧unpaidのみ後方互換でNOT_STARTEDへ正規化される（Issue #341）', function () {
+  var Booking = loadBooking();
+  [undefined, null, '', 'unpaid'].forEach(function (raw) {
+    assert.strictEqual(
+      Booking.normalizePaymentStatus(raw), Booking.PAYMENT_STATUS.NOT_STARTED,
+      JSON.stringify(raw) + ' はNOT_STARTEDへ正規化されるべき'
+    );
+  });
+});
+
+/*
+ * Issue #341 PR-Aレビュー対応: 未知の値を「未決済（NOT_STARTED）」とみなして丸めてしまうと、
+ * 決済処理の途中で想定外の値が書き込まれた異常を握りつぶし、二重決済や誤った自動確定に
+ * つながりかねない。旧unpaid等の正当な後方互換値と、正体不明の値は明確に区別し、
+ * 後者はnullを返して呼び出し側（BookingRepository.applyPaymentStateUpdate）に処理停止を
+ * 促す。
+ */
+test('normalizePaymentStatus: 未知の文字列・型はNOT_STARTEDとみなさずnullを返す（決済処理停止のため。Issue #341 PR-Aレビュー対応）', function () {
+  var Booking = loadBooking();
+  ['UNPAID', 'garbage', 'Paid', 'NOT_STARTED', 0, 1, false, true, {}, []].forEach(function (raw) {
+    assert.strictEqual(
+      Booking.normalizePaymentStatus(raw), null,
+      JSON.stringify(raw) + ' はNOT_STARTEDへ丸めず、nullで未知値であることを示すべき'
+    );
+  });
+});
+
+test('normalizePaymentStatus: 旧paid（書き込まれた実績はないが念のため）はPAIDへ通す（Issue #341）', function () {
+  var Booking = loadBooking();
+  assert.strictEqual(Booking.normalizePaymentStatus('paid'), Booking.PAYMENT_STATUS.PAID);
+});
+
 test('computeTtlExpiryMillis: 受付24時間後と開始2時間前の早い方を採用する', function () {
   var Booking = loadBooking();
   var createdAt = new Date('2026-10-01T09:00:00+09:00').getTime();

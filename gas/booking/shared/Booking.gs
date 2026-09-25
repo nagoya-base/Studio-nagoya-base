@@ -38,10 +38,102 @@ var Booking = (function () {
     EXPIRED: 'EXPIRED'
   };
 
+  /*
+   * 決済状態（Issue #341。既存paymentStatus列を転用）。予約状態（STATUS）とは完全に
+   * 独立したフィールドであり、互いを直接書き換えない（Issue #341本文「決済の成功・失敗・
+   * 返金が既存予約の状態を不正に変更しない構造にする」）。実際にこの状態機械を遷移させる
+   * のはカード決済のみ。現金・PayPayの予約は作成時のNOT_STARTEDのまま変化しない
+   * （現地払いは従来どおりstatus側のconfirmBooking/cancelBookingAdminのみで管理し、
+   * この状態機械には一切関与しない）。
+   *
+   * - NOT_STARTED: 決済フロー未着手（現金・PayPayは常にこのまま。カードもCheckout
+   *   Session発行前はこの状態）。
+   * - CHECKOUT_PENDING: Stripe Checkout Sessionを発行済み・決済結果待ち（PR-B）。
+   * - PAID: 署名検証済みWebhookでStripeの決済成功を確認済み（PR-C）。
+   * - REFUND_PENDING: 返金APIを呼び出し済み・完了確認待ち。Issue #341本文「枠解放と
+   *   Calendar/台帳のCANCELLED更新は返金APIの成功を待たずに行う」ため、予約側のstatus
+   *   更新とこの遷移は非同期に進み得る（PR-D）。
+   * - REFUNDED: 返金完了を確認済み（終端状態）。
+   * - FAILED: 決済が成立しなかった（カード拒否・Checkout Session期限切れ等）。新しい
+   *   paymentAttemptIdでの再試行時のみCHECKOUT_PENDINGへ戻れる。
+   *
+   * 旧定義（Issue #314で追加。Issue #334時点では'unpaid'固定のまま未使用で、'paid'は
+   * どこからも書き込まれていなかった。BookingRepository.gs/SpreadsheetRepository.gs
+   * ともに現状の書き込み・参照箇所はcreateBooking内の1箇所のみとPR-A調査で確認済み）
+   * から値を差し替える。既存本番行はすべて'unpaid'のまま保存されているため、
+   * 読み取り側は必ずnormalizePaymentStatus経由で正規化すること（このファイルを直接
+   * 経由しない古いコードが万一'unpaid'/'paid'をそのまま比較しても、'paid'の文字列表現は
+   * 新定義のPAIDと一致するため実害はない）。
+   */
   var PAYMENT_STATUS = {
-    UNPAID: 'unpaid',
-    PAID: 'paid'
+    NOT_STARTED: 'not_started',
+    CHECKOUT_PENDING: 'checkout_pending',
+    PAID: 'paid',
+    REFUND_PENDING: 'refund_pending',
+    REFUNDED: 'refunded',
+    FAILED: 'failed'
   };
+
+  /* Issue #314〜Issue #334時点でBookings台帳に実際に書き込まれていた固定値。
+     normalizePaymentStatusの後方互換分岐でのみ参照する（新規コードはこの値を書き込まない）。 */
+  var LEGACY_PAYMENT_STATUS_UNPAID_ = 'unpaid';
+
+  /*
+   * Bookings台帳から読み取ったpaymentStatusの生値を正規化する。
+   *
+   * - 既に上記PAYMENT_STATUSのいずれかの値であれば、そのまま返す（旧'paid'は実際に
+   *   書き込まれた実績はないが、新定義のPAIDと文字列表現が一致するためこの分岐で
+   *   自然に通る）。
+   * - 空文字・null・undefined・旧'unpaid'（Issue #314〜#334時点の固定値。既存本番行は
+   *   全てこれ）は後方互換のためNOT_STARTEDへ正規化する。
+   * - **上記のいずれにも一致しない値（未知の文字列・型）はnullを返す。**
+   *   Issue #341 PR-Aレビュー対応：「読み取れない値だから決済フロー未着手だろう」と
+   *   決めつけてNOT_STARTEDへ丸めると、実際には決済処理の途中で想定外の値が書き込まれた
+   *   （バグ・手動編集・複合障害等）可能性を握りつぶしてしまい、二重決済や誤った自動確定
+   *   につながりかねない。空欄・既知の旧値と、正体不明の値を同じ既定値へ丸めないのが
+   *   この関数の主眼であり、呼び出し側（特にBookingRepository.applyPaymentStateUpdate等の
+   *   決済処理系）はnullを検知したら必ず処理を停止し、要復旧として扱うこと。
+   */
+  function normalizePaymentStatus(rawValue) {
+    var known = [
+      PAYMENT_STATUS.NOT_STARTED, PAYMENT_STATUS.CHECKOUT_PENDING, PAYMENT_STATUS.PAID,
+      PAYMENT_STATUS.REFUND_PENDING, PAYMENT_STATUS.REFUNDED, PAYMENT_STATUS.FAILED
+    ];
+    if (known.indexOf(rawValue) !== -1) return rawValue;
+    if (rawValue === '' || rawValue === null || rawValue === undefined || rawValue === LEGACY_PAYMENT_STATUS_UNPAID_) {
+      return PAYMENT_STATUS.NOT_STARTED;
+    }
+    return null;
+  }
+
+  /*
+   * PAYMENT_STATUSの許可された遷移（Issue #341）。STATUSのALLOWED_TRANSITIONS/
+   * canTransitionと同じ設計方針を踏襲する：この表は「制度として存在する遷移」の一覧で
+   * あり、実際にどの関数がその遷移を実行してよいかは呼び出し側（PR-B/C/D）が個別に
+   * 絞り込む。返金失敗はこの表では遷移として表現しない（REFUND_PENDINGに留まり続ける
+   * ことが「未解決」を表し、失敗の記録は専用のエラー列で行う想定。confirmBookingの
+   * EXPIRED拒否ガードと同じく、表がその遷移を許すことと、ある関数が実際にそれを実行する
+   * ことは別問題として扱う）。
+   *
+   * キーはPAYMENT_STATUSの識別子名ではなく**値**（'not_started'等）にすること。
+   * STATUS/ALLOWED_TRANSITIONSは値と識別子名がどちらも同じ大文字表記だったため
+   * この違いが問題にならなかったが、PAYMENT_STATUSは値がsnake_caseのため、裸の
+   * 識別子（NOT_STARTED:等）で書くとcanTransitionPaymentStatusの引数（実際の値
+   * 'not_started'等）と一致せずルックアップが常に失敗する。計算されたプロパティ名
+   * （[PAYMENT_STATUS.NOT_STARTED]:のように角括弧で値を明示）で定義する。
+   */
+  var PAYMENT_STATUS_TRANSITIONS_ = {};
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.NOT_STARTED] = [PAYMENT_STATUS.CHECKOUT_PENDING];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.CHECKOUT_PENDING] = [PAYMENT_STATUS.PAID, PAYMENT_STATUS.FAILED];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.FAILED] = [PAYMENT_STATUS.CHECKOUT_PENDING];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.PAID] = [PAYMENT_STATUS.REFUND_PENDING];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.REFUND_PENDING] = [PAYMENT_STATUS.REFUNDED];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.REFUNDED] = [];
+
+  function canTransitionPaymentStatus(fromPaymentStatus, toPaymentStatus) {
+    var allowedTargets = PAYMENT_STATUS_TRANSITIONS_[fromPaymentStatus];
+    return !!allowedTargets && allowedTargets.indexOf(toPaymentStatus) !== -1;
+  }
 
   /* 予約作成できるbrandはこの3つのみ（Issue #269）。brand偽装で未知のbrandから
      予約を作れないよう、フロントの表示に関わらずサーバー側でこの一覧のみ許可する。 */
@@ -488,6 +580,8 @@ var Booking = (function () {
   return {
     STATUS: STATUS,
     PAYMENT_STATUS: PAYMENT_STATUS,
+    normalizePaymentStatus: normalizePaymentStatus,
+    canTransitionPaymentStatus: canTransitionPaymentStatus,
     ALLOWED_BOOKING_BRANDS: ALLOWED_BOOKING_BRANDS,
     CUSTOMER_TYPES: CUSTOMER_TYPES,
     ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,
