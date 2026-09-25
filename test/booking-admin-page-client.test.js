@@ -265,6 +265,72 @@ test('visibleBookings: 「すべて」にはCANCELLED・EXPIREDを含む全件�
   assert.ok(idsOf(result).indexOf('past-expired') !== -1);
 });
 
+/* ---------- filterBookingsByTab: 「今日」「今後」からEXPIREDを除外する（管理画面改善） ---------- */
+
+function expiredTabBookingSet() {
+  return [
+    booking({ bookingId: 'today-pending', date: TODAY, status: 'PENDING' }),
+    booking({ bookingId: 'today-confirmed', date: TODAY, status: 'CONFIRMED' }),
+    booking({ bookingId: 'today-expired', date: TODAY, status: 'EXPIRED' }),
+    booking({ bookingId: 'future-confirmed', date: TOMORROW, status: 'CONFIRMED' }),
+    booking({ bookingId: 'future-expired', date: TOMORROW, status: 'EXPIRED' }),
+    booking({ bookingId: 'past-expired', date: YESTERDAY, status: 'EXPIRED' })
+  ];
+}
+
+test('filterBookingsByTab: 「今日」タブにEXPIREDは出ない', function () {
+  var sandbox = loadClientSandbox();
+  var result = sandbox.filterBookingsByTab(expiredTabBookingSet(), 'today', TODAY);
+
+  assert.deepStrictEqual(idsOf(result), ['today-confirmed', 'today-pending']);
+  assert.ok(idsOf(result).indexOf('today-expired') === -1, '当日のEXPIREDは「今日」タブに出てはいけない');
+});
+
+test('filterBookingsByTab: 「今後」タブにEXPIREDは出ない', function () {
+  var sandbox = loadClientSandbox();
+  var result = sandbox.filterBookingsByTab(expiredTabBookingSet(), 'upcoming', TODAY);
+
+  assert.deepStrictEqual(idsOf(result), ['future-confirmed', 'today-confirmed', 'today-pending'].sort());
+  ['today-expired', 'future-expired'].forEach(function (id) {
+    assert.ok(idsOf(result).indexOf(id) === -1, id + 'は「今後」タブに出てはいけない');
+  });
+});
+
+test('filterBookingsByTab: 「キャンセル」タブにEXPIREDは出ない（従来どおり）', function () {
+  var sandbox = loadClientSandbox();
+  var result = sandbox.filterBookingsByTab(expiredTabBookingSet(), 'cancelled', TODAY);
+
+  assert.deepStrictEqual(result, []);
+});
+
+test('filterBookingsByTab: 「すべて」にはEXPIREDを含む全件が出る（確認可能性は維持）', function () {
+  var sandbox = loadClientSandbox();
+  var result = sandbox.filterBookingsByTab(expiredTabBookingSet(), 'all', TODAY);
+
+  assert.strictEqual(result.length, expiredTabBookingSet().length);
+  ['today-expired', 'future-expired', 'past-expired'].forEach(function (id) {
+    assert.ok(idsOf(result).indexOf(id) !== -1, id + 'は「すべて」タブで確認できなければならない');
+  });
+});
+
+test('visibleBookings（state経由）: 「今日」「今後」タブにEXPIREDは出ないが「すべて」では確認できる', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.bookings = expiredTabBookingSet();
+
+  sandbox.state.filter = 'today';
+  assert.ok(idsOf(sandbox.visibleBookings()).indexOf('today-expired') === -1);
+
+  sandbox.state.filter = 'upcoming';
+  var upcomingIds = idsOf(sandbox.visibleBookings());
+  assert.ok(upcomingIds.indexOf('today-expired') === -1);
+  assert.ok(upcomingIds.indexOf('future-expired') === -1);
+
+  sandbox.state.filter = 'all';
+  assert.ok(idsOf(sandbox.visibleBookings()).indexOf('today-expired') !== -1);
+  assert.ok(idsOf(sandbox.visibleBookings()).indexOf('future-expired') !== -1);
+});
+
 test('visibleBookings: 既存のtoday/upcoming判定（日付比較）は壊れていない', function () {
   var sandbox = loadClientSandbox();
   setupState(sandbox, 'today');
@@ -700,6 +766,20 @@ test('computeSummaryCounts/computeTabCounts: 検索クエリの影響を受け�
   var tabCounts = sandbox.computeTabCounts(sandbox.state.bookings, sandbox.state.todayJst);
   assert.strictEqual(summary.all, 8, 'サマリーは検索クエリの影響を受けず全件ベースのまま');
   assert.strictEqual(tabCounts.today, 2, 'タブ件数は検索クエリの影響を受けず全件ベースのまま');
+});
+
+test('computeSummaryCounts/computeTabCounts: 今日/今後の件数にEXPIREDを含めないが、すべての件数には含める', function () {
+  var sandbox = loadClientSandbox();
+  var bookings = expiredTabBookingSet();
+
+  var summary = sandbox.computeSummaryCounts(bookings, TODAY);
+  assert.strictEqual(summary.today, 2, '今日はtoday-pending, today-confirmedのみ（today-expiredを含めない）');
+  assert.strictEqual(summary.all, bookings.length, '全件にはEXPIREDも含む');
+
+  var tabCounts = sandbox.computeTabCounts(bookings, TODAY);
+  assert.strictEqual(tabCounts.today, 2, '今日タブ件数にtoday-expiredを含めない');
+  assert.strictEqual(tabCounts.upcoming, 3, '今後タブ件数（today-pending, today-confirmed, future-confirmed）にfuture-expiredを含めない');
+  assert.strictEqual(tabCounts.all, bookings.length, 'すべてタブ件数にはEXPIREDも含む');
 });
 
 /* ---------- render()がsummary/タブ件数用のDOM要素を更新し、例外を投げないこと ---------- */
