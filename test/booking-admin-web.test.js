@@ -543,7 +543,7 @@ test('getAdminBookingDetail: baselineRecoveryNeedsAttentionはbackfillOriginalPr
 
   var original = ctx.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic;
   ctx.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = function () { throw new Error('write failed'); };
-  ctx.sandbox.adminBackfillOriginalPrice(bookingId, 'GENERAL', 4000, '根拠');
+  ctx.sandbox.adminBackfillOriginalPrice(bookingId, 'GENERAL', 4000, '根拠', 4000);
   ctx.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = original;
 
   var afterFailure = ctx.sandbox.getAdminBookingDetail(bookingId);

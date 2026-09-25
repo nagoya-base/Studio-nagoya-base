@@ -142,61 +142,128 @@ Booking Adminにも追加し（従来はBooking Web App専用）、新規ファ�
   検証する。** 既存の累計額自体が壊れている（非整数・返金超過）場合は0円扱いにして計算を
   続けず、`FEE_RECOVERY_REQUIRED`で止めて人による照合を要求する。
 
-#### 基準料金5列の書込み結果不明＋復旧フラグ保存失敗という複合障害への対応
+#### 基準料金5列の書込み結果が不明になる複合障害への対応（「書く前にintentを確保する」設計）
 
 `backfillOriginalPrice`（基準料金5列: `priceAmount`/`priceTier`/`priceDayType`/
-`priceIsMember`/`priceComputedAt`の一括書込み）についても、Lock保護・
-`isBlockedForFeeRecovery_`によるガード・`updateBookingPriceBaselineAtomic`
-（`SpreadsheetRepository.gs`。5列を1回の`Range.setValues`で更新）・書込み例外時の
-再取得検証を追加した。**しかし「書込み結果が不明、かつBookings側の`feeRecoveryRequiredAt`
-保存も失敗する」複合障害では、フラグにも`FeeSettlements`にも痕跡が残らず、次回リクエストを
-自動でブロックできなくなる。** この穴を塞ぐため、`backfillOriginalPrice`の書込み失敗時は
-次の順で独立した停止条件を試みる（`isBaselineRecoveryBlocking_`が`OR`で確認する）:
+`priceIsMember`/`priceComputedAt`の一括書込み）は、Lock保護・`isBlockedForFeeRecovery_`
+によるガード・`updateBookingPriceBaselineAtomic`（`SpreadsheetRepository.gs`。5列を
+1回の`Range.setValues`で更新）を使う。**最初の実装では「書込みが失敗してから復旧記録を
+残す」順序だったため、Bookings側の`feeRecoveryRequiredAt`保存まで失敗する複合障害では
+どこにも痕跡が残らず、次回リクエストを自動でブロックできない問題があった。さらにその場を
+「失敗後にRecoveryへ記録し、それも失敗したらScript Propertiesへ退避する」という
+多段フォールバックで塞ごうとしたが、レビューで「同じ障害への対処を何層も増やすのではなく、
+更新前に復旧記録を確保する順序へ設計を変更する」よう指摘され、そちらへ置き換えた。**
 
-1. **`RecoveryRepository`への記録**（`Recovery`シートに`failureType:
-   'BASELINE_WRITE_UNCERTAIN'`, `recoveryState: 'OPEN'`の行を追加し、`appendRow`の応答を
-   信頼せず`hasOpenBaselineRecovery`で読み直して確認する）。
-2. 1が失敗した場合、**Script Propertiesの予約別マーカー**（`BASELINE_RECOVERY_BLOCK_
-   <bookingId>`キー。設定後に読み直して確認する）。
-3. `feeRecoveryRequiredAt`の設定も引き続きbest effortで試みる（管理画面の既存の要復旧表示に
-   載せるためで、ブロック判定の必須条件ではない）。
+現在の設計は次の順序で進む（`RecoveryRepository.gs`の既存`Recovery`シート・`HEADERS_`を
+そのまま使う。列は変更しない）:
 
-1か2のいずれかが確認できれば、`commit`/`recordFeeSettlement`/`backfillOriginalPrice`の
-冒頭ガード（Recovery読取自体が例外を投げた場合もフェイルクローズでブロックする）に
-そのまま反映され、`feeRecoveryRequiredAt`の有無によらず次回リクエストを止め続ける。
-復旧は`resolveFeeRecovery`（`priceOverrideAmount`等、日程変更専用のBookings列）とは
-別の専用API`resolveBaselinePriceRecovery`（`adminResolveBaselinePriceRecovery`）で行う。
+1. **基準料金5列に一切触れる前に**、`RecoveryRepository.recordFailure`で
+   `failureType: 'BASELINE_WRITE_UNCERTAIN'`, `recoveryState: 'OPEN'`の行（intent）を
+   記録する。`appendRow`の応答を信頼せず、`hasOpenBaselineRecovery`で読み直して
+   確認する。
+2. intentの記録・確認ができなければ、**危険な書込みそのものを開始せず**Bookingsを
+   一切変更しないまま`RECOVERY_INTENT_UNCONFIRMED`で中止する。
+3. intentが確認できた場合のみ、`updateBookingPriceBaselineAtomic`で5列を書き込み、
+   再取得して5列すべてが期待値と一致するか検証する。書込みが例外を投げた場合・
+   一致しない場合は、intent（Recovery OPEN）をそのまま残す（`feeRecoveryRequiredAt`の
+   設定は管理画面表示用にbest effortで試みるが、ブロック判定の必須条件ではない）。
+4. 書込み・検証に成功した場合のみ、`RecoveryRepository.resolveBaselineRecovery`で
+   intentを`RESOLVED`にする。この解消自体が失敗した場合もOPENを残し、要復旧のまま
+   維持する（`updateBookingPriceBaselineAtomic`は絶対値の上書きなので、同じ内容で
+   `resolveBaselinePriceRecovery`を再実行すれば安全に解消できる）。
+
+この設計により、「基準料金の書込み結果が不明、かつ復旧記録も残せない」という組合せは
+発生し得ない（intentを先に確保・確認できなければ、そもそも危険な書込みを始めないため）。
+`isBlockedForFeeRecovery_`は`feeRecoveryRequiredAt`／`FeeSettlements`の未確定精算／
+`RecoveryRepository.hasOpenBaselineRecovery`のいずれかが真であればブロックし、これらの
+判定自体が例外を投げた場合もフェイルクローズ（ブロックする）で返す。`commit`・
+`recordFeeSettlement`・`backfillOriginalPrice`・`resolveFeeRecovery`の全ガードをこれに
+揃えている。
+
+復旧は`resolveFeeRecovery`（`priceOverrideAmount`等、日程変更専用のBookings列）とは別の
+専用API`resolveBaselinePriceRecovery`（`adminResolveBaselinePriceRecovery`）で行う。
 管理者が確認した価格区分・金額で基準料金5列を再書込みし、再取得で一致を確認できた場合に
-のみ`RecoveryRepository.resolveBaselineRecovery`とScript Propertiesマーカーを解消する
-（どちらか一方でも解消できなければ要復旧のまま維持し、同じ内容での再実行を促す）。
+のみ`RecoveryRepository.resolveBaselineRecovery`でintentを解消する。基準料金の要復旧が
+唯一の原因で`feeRecoveryRequiredAt`が立っていた場合は、これに合わせてクリアする（他に
+未確定精算が残っていれば触らない）。
 
-**1・2の両方が失敗する最悪のケース（Recoveryシートへの書込みもScript Propertiesへの
-書込みも失敗する）は、どのファイルにも次回リクエストを自動でブロックできる痕跡を
-一切残せない。** この場合`backfillOriginalPrice`は通常のエラーと区別できる
-`RECOVERY_PERSISTENCE_UNKNOWN`を返すが、**「必ず自動停止する」という保証はできない。**
-このコードが`RECOVERY_PERSISTENCE_UNKNOWN`を返した場合、運用者は以下の手動対応を
-行うこと:
+テスト: `test/booking-reschedule.test.js`（intentの記録前にBookingsへ触れないこと、
+intent確認前に書込みを開始しないこと、書込み失敗・不一致時にintentがOPENのまま残ること、
+Recovery読取自体の例外に対するフェイルクローズ、`resolveBaselinePriceRecovery`の
+正常系・異常系）・`test/booking-spreadsheet-repository.test.js`（`RecoveryRepository.
+hasOpenBaselineRecovery`/`resolveBaselineRecovery`の単体テスト）・
+`test/booking-admin-web.test.js`（`getAdminBookingDetail`の`baselineRecoveryNeedsAttention`）。
 
-1. 対象予約のBookingsシートを直接開き、`priceAmount`/`priceTier`/`priceDayType`/
-   `priceIsMember`/`priceComputedAt`の5列が意図した値になっているか確認する。
-2. `Recovery`シートに`BASELINE_WRITE_UNCERTAIN`/`OPEN`の行を手動で追加し
-   （`bookingId`・`occurredAt`・`status`は対象予約に合わせ、`recoveryState`は`OPEN`）、
-   以降の自動ブロックを効かせる。もしくはBookingsシートの`feeRecoveryRequiredAt`セルに
-   直接日時を入力する。
-3. Spreadsheet自体への書込みが継続的に失敗している場合（クォータ超過・権限エラー等）は、
-   GAS/Spreadsheetの状態を復旧するまで、この予約に限らずBooking Admin全体の日程変更・
-   精算記録を一時的に手動で止める（管理者間の運用上の申し合わせ。コード側の自動停止は
-   保証されない）。
-4. 原因解消後、`resolveBaselinePriceRecovery`（またはBookingsシートの直接編集）で正しい
-   基準料金を確定し、手動で追加した`Recovery`行の`recoveryState`を`RESOLVED`にする。
+#### previewとcommitの料金算出結果の照合（`feeQuoteToken`）
 
-テスト: `test/booking-reschedule.test.js`（基準料金書込み失敗＋復旧フラグ保存失敗の複合、
-Recovery記録も失敗した場合のScript Propertiesマーカーへのフォールバック、両方失敗時の
-`RECOVERY_PERSISTENCE_UNKNOWN`、Recovery読取自体の例外に対するフェイルクローズ、
-`resolveBaselinePriceRecovery`の正常系・異常系）・`test/booking-spreadsheet-repository.
-test.js`（`RecoveryRepository.hasOpenBaselineRecovery`/`resolveBaselineRecovery`の単体
-テスト）・`test/booking-admin-web.test.js`（`getAdminBookingDetail`の
-`baselineRecoveryNeedsAttention`）。
+管理画面は`preview`（`adminPreviewBookingReschedule`）で料金差額・返金候補を表示し、
+管理者が内容を確認してから`commit`（`adminRescheduleBooking`）で確定する2段階の流れに
+なっている。この間に他の変更（別の日程変更・精算記録・基準料金の復旧など）が入ると、
+画面に表示されていた料金情報と実際に確定される料金情報がずれてしまう可能性があった。
+
+これを防ぐため、`buildFeeQuoteToken_`が料金判定に使う主要な値（`feeReady`/`feeStatus`/
+`priceTier`/`oldFeeAmount`/`scheduleChangeCount`、算出できた場合は`newFeeAmount`/
+`dayType`/`roundedMinutes`/`feeDifference`/`refundStatus`/`refundCandidateAmount`/
+`cancellationPolicyCategory`）だけをJSON文字列化した「見積りトークン」を組み立てる。
+`preview`はこのトークンを`feeQuoteToken`として結果に含め、管理画面はこれを保持したまま
+`commit`（`adminRescheduleBooking`の7番目の引数`expectedFeeQuoteToken`）へ渡す。
+`commit`はコミット直前に同じ入力から`feeQuoteToken`を再計算し、渡された値と完全一致
+（文字列比較）しなければ、Calendar・Bookings・履歴のいずれにも触れずに
+`FEE_QUOTE_MISMATCH`で拒否する（手動の料金/返金決定が併せて渡されていても同様に拒否する。
+古い前提のまま決定を通してしまわないため）。`expectedFeeQuoteToken`を渡さない呼び出し
+（省略・`undefined`）は後方互換のため従来どおり照合しない。暗号学的なハッシュではなく、
+あくまで「プレビュー時点と同じ計算結果か」を確認するための一致チェックである。
+
+管理画面（`admin/booking/booking-admin.js`）は`preview.feeQuoteToken`を保持し、確定操作の
+たびに渡す。`FEE_QUOTE_MISMATCH`を受け取った場合は「プレビュー時点から料金情報が変わった」
+旨を表示し、確定ボタンを無効化して再プレビューを促す。
+
+テスト: `test/booking-reschedule.test.js`（`feeQuoteToken`を伴う正常なcommit、
+プレビュー後に料金コンテキストが変化した場合の`FEE_QUOTE_MISMATCH`、手動の料金/返金決定が
+併せて渡されていても古いトークンでは拒否されること）。
+
+#### `backfillOriginalPrice`の確認済み支払済み/返金済み額の必須化と監査ログ
+
+`backfillOriginalPrice`は元々、基準料金5列（確定料金・区分・日タイプ等）だけを設定し、
+支払済み額・返金済み額は別途「精算の記録」（`recordFeeSettlement`）で入力する想定だった。
+しかし、旧仕様の予約（基準料金・入出金額とも未設定のまま残っている既存予約）を移行する際、
+`recordFeeSettlement`は差分（delta）方式のため、実際にはすでに支払われている額を
+「今回新たに入金された額」として計上してしまうと二重計上になる。かといって基準料金だけ
+設定して支払済み額を0円のまま放置すると、その後の日程変更で「未確認のまま0円として扱う」
+ことになり、実際に支払われた金額が返金候補の計算から漏れてしまう。
+
+このため、`backfillOriginalPrice`は`confirmedPaidAmount`（必須）・
+`confirmedRefundedAmount`（省略時は0円）を新たな引数として受け取るようにした:
+
+- `confirmedPaidAmount`は0以上の安全な整数（円単位）であることを必須とする
+  （`CONFIRMED_PAID_AMOUNT_REQUIRED`）。省略・不正値を「未確認＝0円」と黙って
+  解釈することはない。
+- `confirmedRefundedAmount`（省略時0円）も0以上の整数であることを検証し、
+  `confirmedPaidAmount`を超える場合は`REFUND_EXCEEDS_UNREFUNDED`で拒否する。
+- 検証済みの2値は、基準料金5列と同じLock・同じRecovery intentの下で
+  `updateBookingRescheduleFeeAtomic`（`feePaidAmount`/`feeRefundedAmount`の絶対値上書き）
+  により書き込む。`recordFeeSettlement`/`FeeSettlementRepository.appendPending`は経由
+  しないため、この移行操作によってFeeSettlementsに「新たな入金があった」かのような行が
+  作られることはない。
+- 基準料金5列・`feePaidAmount`・`feeRefundedAmount`の計7項目すべてが再取得後に一致した
+  場合のみ成功とする（一方の書込みが例外を投げても、もう一方は独立して試行したうえで、
+  最終的な検証は7項目すべてを対象にする）。不一致の場合は既存の複合障害対応と同じ経路で
+  `feeRecoveryRequiredAt`のbest effort設定・Recovery intent（OPEN）維持により後続操作を
+  ブロックする。
+- 保存が成功した場合、管理者が入力した確認根拠（`note`）と確認した金額を
+  `RecoveryRepository.recordFailure`へ`failureType: 'BASELINE_PRICE_CONFIRMED'`,
+  `recoveryState: 'INFO'`として記録する（ブロックには使わない、監査用の追記のみ）。
+  検証が終わったからといってこの根拠を捨てず、誰が・いつ・何を根拠にいくらと確認したかを
+  Recoveryシートに残す。
+
+管理画面（`admin/booking/booking-admin.js`の`renderFeeBaselineSection_`）は基準料金の
+設定・修正フォームに「確認した支払済み額」「確認した返金済み額」の入力欄を追加し、
+`adminBackfillOriginalPrice`へ渡す。
+
+テスト: `test/booking-reschedule.test.js`（`confirmedPaidAmount`省略・負数・小数の拒否、
+`confirmedRefundedAmount`が`confirmedPaidAmount`を超える場合の拒否、省略時に0円扱いに
+なること、書込み後の`feePaidAmount`/`feeRefundedAmount`確認、`BASELINE_PRICE_CONFIRMED`
+監査行の記録内容、基準料金移行後の予約が次回日程変更の返金候補計算に正しく反映されること）。
 
 # gas/booking（自社予約システム）
 

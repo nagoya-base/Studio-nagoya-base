@@ -666,6 +666,10 @@ function renderFeeBaselineSection_(booking) {
     '</select></label>' +
     '<label>確定料金（円） <input id="fee-baseline-amount" type="number" min="1" step="1" value="' +
       (booking.effectivePriceAmount !== null && booking.effectivePriceAmount !== undefined ? booking.effectivePriceAmount : '') + '"></label>' +
+    '<label>確認した支払済み額（円・必須） <input id="fee-baseline-confirmed-paid" type="number" min="0" step="1" value="' +
+      (booking.feePaidAmount || 0) + '"></label>' +
+    '<label>確認した返金済み額（円） <input id="fee-baseline-confirmed-refunded" type="number" min="0" step="1" value="' +
+      (booking.feeRefundedAmount || 0) + '"></label>' +
     '<label>確認根拠（必須）<textarea id="fee-baseline-note" maxlength="500" rows="2"></textarea></label>' +
     '<button type="button" id="fee-baseline-save">基準料金を保存</button>' +
     '<div id="fee-baseline-result" role="status" aria-live="polite"></div>' +
@@ -678,10 +682,13 @@ function renderFeeBaselineSection_(booking) {
   section.querySelector('#fee-baseline-save').addEventListener('click', function () {
     var tier = section.querySelector('#fee-baseline-tier').value;
     var amount = Number(section.querySelector('#fee-baseline-amount').value);
+    var confirmedPaidAmount = Number(section.querySelector('#fee-baseline-confirmed-paid').value);
+    var confirmedRefundedAmount = Number(section.querySelector('#fee-baseline-confirmed-refunded').value);
     var note = section.querySelector('#fee-baseline-note').value;
     var resultArea = section.querySelector('#fee-baseline-result');
     if (!window.confirm('予約ID: ' + booking.bookingId + '\n価格区分: ' + (tier === 'MEMBER' ? '会員' : '通常') +
-      '\n確定料金: ' + amount + '円\n\nこの内容で基準料金を保存しますか？')) return;
+      '\n確定料金: ' + amount + '円\n確認した支払済み額: ' + confirmedPaidAmount + '円\n確認した返金済み額: ' + confirmedRefundedAmount +
+      '円\n\nこの内容で基準料金を保存しますか？')) return;
     resultArea.textContent = '保存中…';
     google.script.run
       .withSuccessHandler(function (result) {
@@ -689,13 +696,13 @@ function renderFeeBaselineSection_(booking) {
           resultArea.textContent = '保存できませんでした: ' + (result && result.error && result.error.message);
           return;
         }
-        resultArea.textContent = '保存しました。支払済み額は「精算の記録」から入力してください。';
+        resultArea.textContent = '保存しました。';
         refreshOpenDetail_(booking.bookingId);
       })
       .withFailureHandler(function (error) {
         resultArea.textContent = '保存に失敗しました: ' + (error && error.message ? error.message : error);
       })
-      .adminBackfillOriginalPrice(booking.bookingId, tier, amount, note);
+      .adminBackfillOriginalPrice(booking.bookingId, tier, amount, note, confirmedPaidAmount, confirmedRefundedAmount);
   });
 }
 
@@ -984,6 +991,15 @@ function previewReschedule_(booking, section) {
                 refreshOpenDetail_(booking.bookingId);
                 return;
               }
+              if (outcome && outcome.error && outcome.error.code === 'FEE_QUOTE_MISMATCH') {
+                /* PR #345再レビュー対応（完了条件B）: previewからcommitまでの間に料金算出結果が
+                   変わった（コードのデプロイ切替・日付変更等）。何も変更されていないので、
+                   最初から再プレビューしてもらう。 */
+                resultArea.textContent = 'プレビュー時点から料金情報が変わったため確定できませんでした。もう一度「空き状況を確認」からやり直してください。';
+                apply.disabled = true;
+                button.disabled = false;
+                return;
+              }
               resultArea.textContent = '変更できませんでした: ' + (outcome && outcome.error && outcome.error.message);
               button.disabled = false;
               return;
@@ -998,7 +1014,7 @@ function previewReschedule_(booking, section) {
               (error && error.message ? error.message : '');
           })
           .adminRescheduleBooking(booking.bookingId, input, preview.expectedVersion,
-            section.querySelector('#reschedule-reason').value, feeNote, feeConfirmation);
+            section.querySelector('#reschedule-reason').value, feeNote, feeConfirmation, preview.feeQuoteToken);
       });
     })
     .withFailureHandler(function (error) {
