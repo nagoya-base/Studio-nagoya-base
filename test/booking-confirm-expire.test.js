@@ -1146,3 +1146,39 @@ test('BookingAdmin.updateBookingPrice: BookingRepository.updateBookingPriceへ�
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.priceOverrideAmount, 3000);
 });
+
+/* ---------- PR #343 再レビュー：料金訂正未案内の確定防止 ---------- */
+
+test('confirmBooking: 最新の料金修正が未案内ならCalendar/Sheetsを変更せず確定を拒否する', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+  var changed = ctx.sandbox.updateBookingPrice(bookingId, 3500);
+  assert.strictEqual(changed.success, true);
+
+  var blocked = ctx.sandbox.confirmBooking(bookingId);
+  assert.strictEqual(blocked.success, false);
+  assert.strictEqual(blocked.error.code, 'PRICE_UPDATE_NOTICE_REQUIRED');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'PENDING');
+  assert.strictEqual(ctx.calendarsById.cal1.events[0].getTag('status'), 'PENDING');
+
+  var sent = ctx.sandbox.sendPriceUpdateMail(bookingId);
+  assert.strictEqual(sent.success, true);
+  var confirmed = ctx.sandbox.confirmBooking(bookingId);
+  assert.strictEqual(confirmed.success, true);
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'CONFIRMED');
+});
+
+test('confirmBooking: 訂正案内後の再修正は再び未案内として拒否する', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+  assert.strictEqual(ctx.sandbox.updateBookingPrice(bookingId, 3500).success, true);
+  assert.strictEqual(ctx.sandbox.sendPriceUpdateMail(bookingId).success, true);
+  assert.strictEqual(ctx.sandbox.updateBookingPrice(bookingId, 3000).success, true);
+
+  var blocked = ctx.sandbox.confirmBooking(bookingId);
+  assert.strictEqual(blocked.success, false);
+  assert.strictEqual(blocked.error.code, 'PRICE_UPDATE_NOTICE_REQUIRED');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'PENDING');
+  assert.strictEqual(ctx.sandbox.sendPriceUpdateMail(bookingId).success, true, 'forceなしで最新の金額を再案内できる');
+  assert.strictEqual(ctx.sandbox.confirmBooking(bookingId).success, true);
+});
