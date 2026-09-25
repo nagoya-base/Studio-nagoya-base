@@ -227,6 +227,8 @@ var BookingReschedule = (function () {
         change.sheet.getRange(change.rowNumber, 12).setValue('FAILED');
         return error_('MAIL_NOT_READY', 'メール設定または宛先が未設定です。');
       }
+      var oldDateText = BookingAvailability.formatDateInTimezone(row[4], config.timezone);
+      var newDateText = BookingAvailability.formatDateInTimezone(row[7], config.timezone);
       var oldStart = BookingAvailability.formatTimeInTimezone(row[4], config.timezone);
       var oldEnd = BookingAvailability.formatTimeInTimezone(row[5], config.timezone);
       var newStart = BookingAvailability.formatTimeInTimezone(row[7], config.timezone);
@@ -238,8 +240,8 @@ var BookingReschedule = (function () {
         body: [
           found.record.name + ' 様', '', 'ご予約の日時変更が確定しました。',
           '予約ID: ' + row[1],
-          '変更前: ' + row[3] + ' ' + oldStart + '〜' + oldEnd,
-          '変更後: ' + row[6] + ' ' + newStart + '〜' + newEnd,
+          '変更前: ' + oldDateText + ' ' + oldStart + '〜' + oldEnd,
+          '変更後: ' + newDateText + ' ' + newStart + '〜' + newEnd,
           '利用時間: ' + Math.round((row[8].getTime() - row[7].getTime()) / 60000) + '分',
           '料金・精算: ' + row[10], '', 'お問い合わせ: ' + config.contactEmail
         ].join('\n'),
@@ -278,7 +280,9 @@ var BookingReschedule = (function () {
     return values.slice(1).filter(function (row) { return row[1] === bookingId; }).map(function (row) {
       return {
         changeId: row[0], changedAt: isDate_(row[2]) ? row[2].toISOString() : '',
-        oldDate: row[3], newDate: row[6], mailState: row[11],
+        oldDate: isDate_(row[4]) ? BookingAvailability.formatDateInTimezone(row[4], BookingConfig.getAvailabilityConfig().timezone) : '',
+        newDate: isDate_(row[7]) ? BookingAvailability.formatDateInTimezone(row[7], BookingConfig.getAvailabilityConfig().timezone) : '',
+        mailState: row[11],
         feeNote: row[10]
       };
     }).reverse();
