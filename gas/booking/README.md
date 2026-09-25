@@ -3412,17 +3412,21 @@ updateBookingPaymentStateAtomic`/`updateBookingFields({paymentStatus: ...})`を�
    遷移の妥当性を判定するまでもなく先頭で即座に拒否する。
 5. **alreadyAppliedの判定は決済状態の一致だけに頼らない**（2回目レビュー対応）。現在の
    `paymentStatus`が既に`toPaymentStatus`と一致していても、呼び出し元が`fields`で
-   `paymentAttemptId`/`stripeCheckoutSessionId`/`stripePaymentIntentId`（IDENTITY_FIELDS_）
-   のいずれかを主張しており、かつその値が台帳の現在値と食い違う場合は、alreadyApplied:
-   trueへ丸めず`PAYMENT_IDENTITY_MISMATCH`として要復旧フラグを立てる（別の決済試行が
-   同じ目標状態を主張している＝二重決済等の可能性があるため）。識別子を何も主張しない
-   呼び出しは、従来どおり状態の一致のみで`alreadyApplied:true`とする（判定材料が無い
-   以上、状態の一致を信頼する以外にできることがないため）。
-6. **決済証跡の整合性検証**（2回目レビュー対応）: `toPaymentStatus`ごとに、PR-B/PR-Cが
-   実際にその遷移で得るはずの識別子（`REQUIRED_EVIDENCE_FOR_STATUS_`）を定義し、`fields`
-   とその時点の台帳の値を合わせても必須項目が揃わない場合は、遷移が許可された組でも
-   書き込みを拒否する（`PAYMENT_EVIDENCE_MISSING`。「`paid`と主張されているのにStripeの
-   決済識別子が一つも無い」といった証跡の欠落した成功報告を無条件に信用しない）。
+   `IDENTITY_FIELDS_`（`paymentAttemptId`/`stripeCheckoutSessionId`/`stripePaymentIntentId`/
+   `lastStripeEventId`/`stripeRefundId`）のいずれかを主張しており、かつその値が台帳の
+   現在値と食い違う場合は、alreadyApplied:trueへ丸めず`PAYMENT_IDENTITY_MISMATCH`として
+   要復旧フラグを立てる（別の決済試行が同じ目標状態を主張している＝二重決済等の可能性が
+   あるため）。
+6. **決済証跡の整合性検証**（2回目レビュー対応、3回目レビュー対応で「既に目的の状態」の
+   経路にも適用するよう拡張）: `toPaymentStatus`ごとに、PR-B/PR-Cが実際にその遷移で
+   得るはずの識別子（`REQUIRED_EVIDENCE_FOR_STATUS_`）を定義し、`fields`とその時点の
+   台帳の値を合わせても必須項目が揃わない場合は、遷移が許可された組でも、また**既に
+   その状態へ到達済みの場合でも**、書き込み（または冪等成功扱い）を拒否する
+   （`PAYMENT_EVIDENCE_MISSING`。「`paid`と主張されているのにStripeの決済識別子が一つも
+   無い」といった証跡の欠落した成功報告を無条件に信用しない）。**2回目対応時点では
+   `currentPaymentStatus===toPaymentStatus`の分岐がこの検証を経由しないままalreadyApplied:
+   trueへ到達できてしまう抜け穴があったため、3回目レビュー対応でこの分岐にも同じ検証を
+   追加した。**
 
    | 目標状態 | 必須の決済証跡 |
    | --- | --- |
@@ -3432,12 +3436,34 @@ updateBookingPaymentStateAtomic`/`updateBookingFields({paymentStatus: ...})`を�
    | `refunded` | `stripeRefundId` |
    | `failed` | （追加の必須証跡なし。Session期限切れ等、PaymentIntent発行前に失敗する経路もあるため） |
 
-   `PAYMENT_IDENTITY_MISMATCH`/`UNKNOWN_PAYMENT_STATUS`/`PAYMENT_STATUS_WRITE_FAILED_
-   AFTER_DETAIL_COMMIT`は台帳側の記録そのものが不整合（またはその疑いがある）ため恒久の
-   要復旧ゲートを立てるが、`PAYMENT_EVIDENCE_MISSING`はこの回の呼び出しを拒否した時点で
-   台帳を一切変更していない（検証はBookingsへの書き込みより前に行う）ため恒久ゲートは
-   立てない。`RecoveryRepository`への監査記録のみ行い、正しい証跡を添えれば同じ
-   `bookingId`へ即座に再試行できる。
+7. **資金移動を伴う状態の同一性確認**（3回目レビュー対応）: `paid`/`refund_pending`/
+   `refunded`（`MONETARY_IDENTITY_CONFIRMATION_FIELDS_`）へ「既に到達済み」の予約を
+   再確認する場合、項目5の食い違いチェック（`paymentIdentityMatches_`。主張された値が
+   食い違わないかだけを見る）に加えて、呼び出し元がその状態を裏付ける識別子
+   （上表の必須証跡と同じ集合）を**実際に主張し、かつ台帳と一致すること**まで要求する
+   （`paymentIdentityConfirmed_`）。識別子を一つも主張しない呼び出しは、証跡自体が
+   台帳に揃っていても`PAYMENT_IDENTITY_UNCONFIRMED`で拒否する。**「食い違いが無い」ことと
+   「同一の処理であると確認できる」ことは異なる**という考え方（前者は主張が無ければ
+   自動的に満たされてしまうが、後者は主張そのものを要求する）。`checkout_pending`/
+   `failed`は資金移動を伴わないため対象外とし、従来どおり項目5の食い違いチェックのみで
+   判定する（識別子を主張しない呼び出しは状態の一致のみで`alreadyApplied:true`）。
+
+   **PR-B/PR-Cの契約**: `paid`/`refund_pending`/`refunded`への呼び出しは、初回遷移・
+   同じ状態への再送のいずれであっても、上表の必須証跡を毎回`fields`へ含めること。
+   省略すると（証跡自体は台帳にあっても）`PAYMENT_IDENTITY_UNCONFIRMED`で拒否される。
+   実務上はWebhookペイロードから得られる`stripePaymentIntentId`/`lastStripeEventId`/
+   `stripeRefundId`をそのまま渡せば足りる。
+
+   要復旧ゲート（`PAYMENT_RECOVERY_REQUIRED`）を立てるかどうかは検知内容ごとに分ける:
+   - `PAYMENT_IDENTITY_MISMATCH`／`UNKNOWN_PAYMENT_STATUS`／`PAYMENT_STATUS_WRITE_FAILED_
+     AFTER_DETAIL_COMMIT`／**「既に目的の状態」の経路で検知した`PAYMENT_EVIDENCE_
+     MISSING`**は、台帳側の記録そのものが既に不整合（またはその疑いがある）状態のため、
+     恒久ゲートを立てて以後の自動呼び出しをすべて拒否する。
+   - **新規遷移時**に検知した`PAYMENT_EVIDENCE_MISSING`と、`PAYMENT_IDENTITY_UNCONFIRMED`
+     は、この回の呼び出しを拒否した時点で台帳を一切変更しておらず、単に今回の呼び出しが
+     証跡・識別子を渡し忘れただけの可能性が高いため、恒久ゲートは立てない
+     （`RecoveryRepository`への監査記録のみ）。正しい証跡・識別子を添えれば同じ
+     `bookingId`へ即座に再試行できる。
 
 PR-A時点ではこの関数を呼び出す実際の決済処理（Checkout Session発行・Webhook確認・
 自動返金）は存在しない。`test/booking-payment-state.test.js`で、LockService/Recovery記録・
