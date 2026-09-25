@@ -104,3 +104,54 @@ test('definite mail failure leaves the schedule changed and supports explicit re
   assert.equal(f.mail._sentEmails.length, 1);
   assert.equal(f.sandbox.adminResendRescheduleMail(result.changeId).success, false);
 });
+
+test('Calendar update failure rolls the event back and leaves booking/booking sheet untouched', function () {
+  var f = setup();
+  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
+  var oldStart = f.event.getStartTime();
+  var oldEnd = f.event.getEndTime();
+  var originalSetTime = f.event.setTime;
+  f.event.setTime = function () { throw new Error('Calendar API error'); };
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version, '', '別途精算');
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'CALENDAR_UPDATE_FAILED');
+  f.event.setTime = originalSetTime;
+  assert.equal(f.event.getStartTime().getTime(), oldStart.getTime());
+  assert.equal(f.event.getEndTime().getTime(), oldEnd.getTime());
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(record.startAt.getTime(), oldStart.getTime());
+  assert.equal(record.endAt.getTime(), oldEnd.getTime());
+  assert.equal(f.mail._sentEmails.length, 0);
+});
+
+test('Calendar update failure with a failed rollback still returns without exception and does not send mail', function () {
+  var f = setup();
+  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
+  f.event.setTime = function () { throw new Error('Calendar API error'); };
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version, '', '別途精算');
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'CALENDAR_UPDATE_FAILED');
+  assert.match(result.error.message, /不明/);
+  assert.equal(f.mail._sentEmails.length, 0);
+});
+
+test('Sheets update failure rolls the Calendar event back to the original time', function () {
+  var f = setup();
+  var version = f.event.getStartTime().getTime() + ':' + f.event.getEndTime().getTime();
+  var oldStart = f.event.getStartTime();
+  var oldEnd = f.event.getEndTime();
+  var originalUpdate = f.sandbox.SpreadsheetRepository.updateBookingScheduleAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingScheduleAtomic = function () { throw new Error('Sheets API error'); };
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version, '', '別途精算');
+  f.sandbox.SpreadsheetRepository.updateBookingScheduleAtomic = originalUpdate;
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'SHEETS_UPDATE_FAILED');
+  assert.equal(f.event.getStartTime().getTime(), oldStart.getTime());
+  assert.equal(f.event.getEndTime().getTime(), oldEnd.getTime());
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(record.startAt.getTime(), oldStart.getTime());
+  assert.equal(f.mail._sentEmails.length, 0);
+});
