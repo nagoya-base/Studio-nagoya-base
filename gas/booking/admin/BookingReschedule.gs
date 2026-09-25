@@ -169,13 +169,46 @@ var BookingReschedule = (function () {
     return isInFeeRecovery_(record) || FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null);
   }
 
-  /* 現在の未返金額（支払済み額 - 返金済み額。0未満にはしない）。recordFeeSettlementで
-     返金上限を検証する箇所すべてから、常に最新のrecordを渡して呼ぶこと（PR #345
-     再レビュー対応: ABANDONEDからの再適用など、経路によって検証が抜けないようにする）。 */
-  function unrefundedAmount_(record) {
-    var paid = isFiniteNumber_(record.feePaidAmount) ? record.feePaidAmount : 0;
-    var refunded = isFiniteNumber_(record.feeRefundedAmount) ? record.feeRefundedAmount : 0;
-    return Math.max(0, paid - refunded);
+  /* 円単位の金額として安全か（有限・整数・安全な整数範囲内）。GASのNumber.isSafeInteger
+     互換性を気にせず書けるよう、isFiniteNumber_とMath.floorの組み合わせで判定する
+     （PR #345再レビュー対応・7回目）。 */
+  function isSafeMoneyInteger_(value) {
+    return isFiniteNumber_(value) && Math.floor(value) === value && Math.abs(value) <= Number.MAX_SAFE_INTEGER;
+  }
+
+  /*
+   * 精算の入出金計算（recordFeeSettlement／applySettlement_）で、実際にBookingsへ
+   * 書き込む前に必ず通す検証（PR #345再レビュー対応・7回目）。
+   * 1. 現在の累計額（record.feePaidAmount/feeRefundedAmount）自体が「安全な整数・
+   *    0以上・返金済み<=支払済み」でなければ、0扱いにして計算を続けたりせず、
+   *    既存台帳が壊れているとみなしてFEE_RECOVERY_REQUIRED（要・人の照合）で止める。
+   * 2. 今回のdelta（呼び出し側で既に安全な整数・0以上であることを検証済み）を
+   *    足した結果（newPaid/newRefunded）も同じ基準（安全な整数・返金済み<=支払済み）を
+   *    満たさなければ拒否する。
+   * 新規精算・ABANDONEDからの再適用・applySettlement_の書込み直前のいずれからも、
+   * 常にこの関数を通して同じ基準で検証すること。
+   */
+  function validateSettlementArithmetic_(record, paidDelta, refundedDelta) {
+    var currentPaid = record.feePaidAmount === '' || record.feePaidAmount === undefined || record.feePaidAmount === null
+      ? 0 : Number(record.feePaidAmount);
+    var currentRefunded = record.feeRefundedAmount === '' || record.feeRefundedAmount === undefined || record.feeRefundedAmount === null
+      ? 0 : Number(record.feeRefundedAmount);
+    if (!isSafeMoneyInteger_(currentPaid) || currentPaid < 0 ||
+        !isSafeMoneyInteger_(currentRefunded) || currentRefunded < 0 || currentRefunded > currentPaid) {
+      return {
+        ok: false, code: 'FEE_RECOVERY_REQUIRED',
+        message: 'この予約の入出金累計額（支払済み額・返金済み額）が不正です（整数円でない、または返金済み額が支払済み額を超えています）。resolveFeeRecoveryで台帳を確認・修正してから精算を記録してください。'
+      };
+    }
+    var newPaid = currentPaid + paidDelta;
+    var newRefunded = currentRefunded + refundedDelta;
+    if (!isSafeMoneyInteger_(newPaid) || !isSafeMoneyInteger_(newRefunded) || newRefunded > newPaid) {
+      return {
+        ok: false, code: 'REFUND_EXCEEDS_UNREFUNDED',
+        message: '返金額は未返金の入金額（' + Math.max(0, currentPaid - currentRefunded) + '円）を超えられません。'
+      };
+    }
+    return { ok: true, currentPaid: currentPaid, currentRefunded: currentRefunded, newPaid: newPaid, newRefunded: newRefunded };
   }
 
   /*
@@ -219,17 +252,24 @@ var BookingReschedule = (function () {
    * （既存予約は金額が未記録のため必須）。何度でも呼び直して補正できる。日程変更そのものは
    * 行わない。PR #343の料金基盤（priceAmount/priceTier/priceDayType/priceIsMember/
    * priceComputedAt）をそのまま書き込む（日程変更専用の列は持たない）。
+   *
+   * 再レビュー対応（7回目）:
+   * - 入力値の静的検証（tier・正の整数円・根拠メモ）を済ませてからLockを取得し、
+   *   commit/recordFeeSettlementと同じisBlockedForFeeRecovery_（feeRecoveryRequiredAt
+   *   の有無に加え、FeeSettlementsの未確定精算の有無も見る）で予約を再取得・再判定する。
+   *   Lockを取らずisInFeeRecovery_のみで判定していた旧実装は、commitとの競合や
+   *   復旧フラグが立っていない未確定精算を見落とす恐れがあった。
+   * - 基準料金5列（priceAmount/priceTier/priceDayType/priceIsMember/priceComputedAt）は
+   *   1列ずつ逐次setValuesするupdateBookingFieldsではなく、1回のRange.setValuesで
+   *   まとめて書き込むupdateBookingPriceBaselineAtomicを使う（SpreadsheetRepository.gs）。
+   * - 書込みが例外を投げた場合、実際に反映されたかどうかを断定せず、予約を再取得して
+   *   5列すべてが期待値と一致するかを検証する。一致すれば成功として扱い、一致しない・
+   *   再取得自体に失敗した場合はfeeRecoveryRequiredAtを立てて以降のcommit/
+   *   recordFeeSettlement/backfillOriginalPriceをブロックする
+   *   （feeRecoveryRequiredAtの保存自体が失敗するケースも、次回以降の
+   *   isBlockedForFeeRecovery_のFeeSettlements側の確認とは独立に、まずログへ残す）。
    */
   function backfillOriginalPrice(bookingId, priceTier, amount, note) {
-    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
-    if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
-    var record = found.record;
-    if (record.status !== Booking.STATUS.CONFIRMED) {
-      return error_('INVALID_STATUS', '確定済みの予約のみ基準料金を設定できます。');
-    }
-    if (isInFeeRecovery_(record)) {
-      return error_('FEE_RECOVERY_REQUIRED', 'この予約は料金の整合性確認が必要な状態です。resolveFeeRecoveryで解消してから操作してください。');
-    }
     if (VALID_PRICE_TIERS_.indexOf(priceTier) === -1) {
       return error_('INVALID_PRICE_TIER', '価格区分はGENERAL/MEMBERのいずれかで指定してください。');
     }
@@ -239,21 +279,67 @@ var BookingReschedule = (function () {
     if (typeof note !== 'string' || !note.trim()) {
       return error_('BASIS_REQUIRED', '価格区分・金額の確認根拠を入力してください。');
     }
-    var timezone = BookingConfig.getAvailabilityConfig().timezone;
-    var dateString = dateStringOf_(record.date, timezone);
-    var dayTypeResult = FeeCalculator.resolveDayType(dateString);
-    if (!dayTypeResult.ok) {
-      return error_(dayTypeResult.error.code, dayTypeResult.error.message);
-    }
+
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(10000)) return error_('LOCK_TIMEOUT', '処理中です。再試行してください。');
     try {
-      SpreadsheetRepository.updateBookingFields(bookingId, {
-        priceAmount: amount, priceTier: priceTier, priceDayType: dayTypeResult.dayType,
-        priceIsMember: priceTier === 'MEMBER', priceComputedAt: new Date()
-      });
-    } catch (e) {
-      return error_('UPDATE_FAILED', '基準料金の保存に失敗しました。');
+      var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+      if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
+      var record = found.record;
+      if (record.status !== Booking.STATUS.CONFIRMED) {
+        return error_('INVALID_STATUS', '確定済みの予約のみ基準料金を設定できます。');
+      }
+      if (isBlockedForFeeRecovery_(bookingId, record)) {
+        return error_('FEE_RECOVERY_REQUIRED', 'この予約は料金の整合性確認が必要な状態です。resolveFeeRecoveryで解消してから操作してください。');
+      }
+      var timezone = BookingConfig.getAvailabilityConfig().timezone;
+      var dateString = dateStringOf_(record.date, timezone);
+      var dayTypeResult = FeeCalculator.resolveDayType(dateString);
+      if (!dayTypeResult.ok) {
+        return error_(dayTypeResult.error.code, dayTypeResult.error.message);
+      }
+      var computedAt = new Date();
+      var isMember = priceTier === 'MEMBER';
+      try {
+        SpreadsheetRepository.updateBookingPriceBaselineAtomic(bookingId, {
+          priceAmount: amount, priceTier: priceTier, priceDayType: dayTypeResult.dayType,
+          priceIsMember: isMember, priceComputedAt: computedAt
+        });
+      } catch (writeError) {
+        // 書込みが実際に反映されたか不明。再取得して5列すべてが期待値と一致するかを
+        // 確認したうえで、一致しない・再取得自体に失敗した場合のみ要復旧として止める
+        // （曖昧なまま成功扱いにも失敗扱いにも倒さない）。
+        var verifiedRecord = null;
+        try {
+          var reFound = SpreadsheetRepository.findRowByBookingId(bookingId);
+          verifiedRecord = reFound ? reFound.record : null;
+        } catch (verifyError) {
+          verifiedRecord = null;
+        }
+        var matches = !!verifiedRecord &&
+          verifiedRecord.priceAmount === amount &&
+          verifiedRecord.priceTier === priceTier &&
+          verifiedRecord.priceDayType === dayTypeResult.dayType &&
+          verifiedRecord.priceIsMember === isMember &&
+          isDate_(verifiedRecord.priceComputedAt) &&
+          verifiedRecord.priceComputedAt.getTime() === computedAt.getTime();
+        if (matches) {
+          return { success: true, bookingId: bookingId, priceTier: priceTier, amount: amount };
+        }
+        try {
+          SpreadsheetRepository.updateBookingFields(bookingId, {
+            feeRecoveryRequiredAt: new Date(),
+            feeRecoveryReason: '基準料金の保存結果が確認できません。Bookingsを直接確認し、resolveFeeRecoveryで復旧してから操作してください。'
+          });
+        } catch (flagError) {
+          logFailure_(bookingId, 'RESCHEDULE_FEE_RECOVERY_FLAG_FAILED', record.status);
+        }
+        return error_('UPDATE_FAILED', '基準料金の保存結果が確認できません。台帳を確認し、resolveFeeRecoveryで復旧してから再度実行してください。');
+      }
+      return { success: true, bookingId: bookingId, priceTier: priceTier, amount: amount };
+    } finally {
+      lock.releaseLock();
     }
-    return { success: true, bookingId: bookingId, priceTier: priceTier, amount: amount };
   }
 
   function preview(bookingId, input, expectedVersion) {
@@ -689,8 +775,8 @@ var BookingReschedule = (function () {
     }
     var paidDelta = Number(paidAmountDelta);
     var refundedDelta = Number(refundedAmountDelta);
-    if (!isFiniteNumber_(paidDelta) || paidDelta < 0 || !isFiniteNumber_(refundedDelta) || refundedDelta < 0) {
-      return error_('INVALID_AMOUNT', '入出金額は0以上の数値で指定してください。');
+    if (!isSafeMoneyInteger_(paidDelta) || paidDelta < 0 || !isSafeMoneyInteger_(refundedDelta) || refundedDelta < 0) {
+      return error_('INVALID_AMOUNT', '入出金額は0以上の整数（円単位）で指定してください。');
     }
 
     var lock = LockService.getScriptLock();
@@ -741,9 +827,11 @@ var BookingReschedule = (function () {
           // 管理者がresolveFeeRecoveryで「この精算IDは未反映」と確認・確定した後の再送。
           // 同じ行を使って初めて適用する。ただし、確定から今回の再送までの間に別の
           // 精算が記録され、未返金額が変わっている可能性があるため、新規精算と
-          // 同じ返金上限チェックを必ず通す（PR #345再レビュー対応）。
-          if (refundedDelta > unrefundedAmount_(found.record)) {
-            return error_('REFUND_EXCEEDS_UNREFUNDED', '返金額は未返金の入金額（' + unrefundedAmount_(found.record) + '円）を超えられません。');
+          // 同じ金額整合性チェック（安全な整数・返金済み<=支払済み）を必ず通す
+          // （PR #345再レビュー対応）。
+          var abandonedArithmetic = validateSettlementArithmetic_(found.record, paidDelta, refundedDelta);
+          if (!abandonedArithmetic.ok) {
+            return error_(abandonedArithmetic.code, abandonedArithmetic.message);
           }
           // ABANDONEDのまま直接適用を試みると、Bookingsへの書き込みに成功した直後に
           // markApplied自体が失敗する複合障害で、この行がABANDONEDのまま（＝「未反映」に
@@ -773,8 +861,9 @@ var BookingReschedule = (function () {
         return error_('SETTLEMENT_RECOVERY_REQUIRED', 'この精算IDは前回の処理が中断され、反映済みかどうか確定できません。台帳とFeeSettlementsシートを確認し、resolveFeeRecoveryで復旧してから再度実行してください。');
       }
 
-      if (refundedDelta > unrefundedAmount_(found.record)) {
-        return error_('REFUND_EXCEEDS_UNREFUNDED', '返金額は未返金の入金額（' + unrefundedAmount_(found.record) + '円）を超えられません。');
+      var newSettlementArithmetic = validateSettlementArithmetic_(found.record, paidDelta, refundedDelta);
+      if (!newSettlementArithmetic.ok) {
+        return error_(newSettlementArithmetic.code, newSettlementArithmetic.message);
       }
       var rowNumber = FeeSettlementRepository.appendPending({
         settlementId: settlementId, bookingId: bookingId, changeId: changeId || '',
@@ -790,10 +879,17 @@ var BookingReschedule = (function () {
      記録済みであることが前提。反映の成否をFeeSettlements行にも書き戻す。 */
   function applySettlement_(found, settlementRowNumber, settlementState, paidDelta, refundedDelta, note) {
     var record = found.record;
-    var currentPaid = isFiniteNumber_(record.feePaidAmount) ? record.feePaidAmount : 0;
-    var currentRefunded = isFiniteNumber_(record.feeRefundedAmount) ? record.feeRefundedAmount : 0;
-    var newPaid = currentPaid + paidDelta;
-    var newRefunded = currentRefunded + refundedDelta;
+    /* 呼び出し元（recordFeeSettlement）で既に検証済みのはずだが、書込み直前にも
+       同じ基準で再検証する（PR #345再レビュー対応・7回目。将来的にこの関数が
+       recordFeeSettlement以外から呼ばれても、Bookingsへ壊れた金額を書き込まない
+       ための防御）。失敗時はappendPending／markPendingApplyで既に作られた
+       PENDING_APPLY行を残したまま、Bookingsには一切書き込まない。 */
+    var arithmetic = validateSettlementArithmetic_(record, paidDelta, refundedDelta);
+    if (!arithmetic.ok) {
+      return error_(arithmetic.code, arithmetic.message);
+    }
+    var newPaid = arithmetic.newPaid;
+    var newRefunded = arithmetic.newRefunded;
     try {
       SpreadsheetRepository.updateBookingRescheduleFeeAtomic(record.bookingId, {
         feePaidAmount: newPaid, feeRefundedAmount: newRefunded,
@@ -961,13 +1057,13 @@ var BookingReschedule = (function () {
         fields.feeSettlementState = corrections.feeSettlementState;
       }
       if (corrections.feePaidAmount !== undefined) {
-        if (!isFiniteNumber_(corrections.feePaidAmount) || corrections.feePaidAmount < 0 || Math.floor(corrections.feePaidAmount) !== corrections.feePaidAmount) {
+        if (!isSafeMoneyInteger_(corrections.feePaidAmount) || corrections.feePaidAmount < 0) {
           return error_('INVALID_AMOUNT', '支払済み額は0以上の整数（円単位）で指定してください。');
         }
         fields.feePaidAmount = corrections.feePaidAmount;
       }
       if (corrections.feeRefundedAmount !== undefined) {
-        if (!isFiniteNumber_(corrections.feeRefundedAmount) || corrections.feeRefundedAmount < 0 || Math.floor(corrections.feeRefundedAmount) !== corrections.feeRefundedAmount) {
+        if (!isSafeMoneyInteger_(corrections.feeRefundedAmount) || corrections.feeRefundedAmount < 0) {
           return error_('INVALID_AMOUNT', '返金済み額は0以上の整数（円単位）で指定してください。');
         }
         fields.feeRefundedAmount = corrections.feeRefundedAmount;

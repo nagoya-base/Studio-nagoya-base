@@ -397,6 +397,44 @@ var SpreadsheetRepository = (function () {
     return found.rowNumber;
   }
 
+  /*
+   * BookingReschedule.backfillOriginalPrice専用のatomic更新（PR #345再レビュー対応・
+   * 7回目）。HEADERS_上で連続する'priceAmount'〜'priceComputedAt'の5列（基準料金：
+   * 自動計算値・価格区分・曜日区分・会員区分・計算日時）に対する1回のsetValuesで
+   * まとめて更新する。updateBookingRescheduleFeeAtomicと同じ設計（呼び出し元が
+   * 指定しないキーは既存値のまま書き戻す。範囲外の列——priceOverrideAmount等の
+   * 日程変更専用フィールドや精算累計額——には一切触れない）。この関数が「1回の
+   * Range.setValues呼び出し」であることが、途中失敗による「価格区分だけ新しいが
+   * 金額は古いまま」のような半端な基準料金状態を構造的に防ぐ。
+   */
+  var PRICE_BASELINE_ATOMIC_FIELDS_ = ['priceAmount', 'priceTier', 'priceDayType', 'priceIsMember', 'priceComputedAt'];
+
+  function updateBookingPriceBaselineAtomic(bookingId, fields) {
+    var found = findRowByBookingId(bookingId);
+    if (!found) {
+      throw new Error('bookingIdが見つかりません: ' + bookingId);
+    }
+    Object.keys(fields).forEach(function (key) {
+      if (PRICE_BASELINE_ATOMIC_FIELDS_.indexOf(key) === -1) {
+        throw new Error('基準料金のatomic更新で許可されていないフィールドです: ' + key);
+      }
+    });
+
+    var startIndex = HEADERS_.indexOf('priceAmount');
+    var endIndex = HEADERS_.indexOf('priceComputedAt');
+    var values = [];
+    for (var i = startIndex; i <= endIndex; i++) {
+      var header = HEADERS_[i];
+      var hasOverride = Object.prototype.hasOwnProperty.call(fields, header);
+      var value = hasOverride ? fields[header] : found.record[header];
+      values.push(value !== undefined && value !== null ? value : '');
+    }
+
+    var sheet = ensureBookingsSheet_();
+    sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    return found.rowNumber;
+  }
+
   /* cancelBookingAdminのatomic更新で触ってよいフィールドのみを列挙する（下記参照）。 */
   var CANCELLATION_ATOMIC_FIELDS_ = ['status', 'cancelledAt', 'updatedAt'];
 
@@ -463,6 +501,7 @@ var SpreadsheetRepository = (function () {
     updateBookingFields: updateBookingFields,
     updateBookingScheduleAtomic: updateBookingScheduleAtomic,
     updateBookingRescheduleFeeAtomic: updateBookingRescheduleFeeAtomic,
+    updateBookingPriceBaselineAtomic: updateBookingPriceBaselineAtomic,
     updateBookingCancellationStateAtomic: updateBookingCancellationStateAtomic
   };
 })();

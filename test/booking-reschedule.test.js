@@ -876,6 +876,123 @@ test('backfillOriginalPrice validates its inputs (tier, amount, basis note)', fu
   assert.equal(f.sandbox.adminBackfillOriginalPrice('UNKNOWN', 'GENERAL', 4000, '根拠').error.code, 'NOT_FOUND');
 });
 
+/* ---- PR #345再レビュー対応（7回目）: backfillOriginalPriceのLock・atomic書込み・検証 ---- */
+
+test('backfillOriginalPrice refuses when an unresolved settlement is left dangling even though feeRecoveryRequiredAt itself is not set', function () {
+  var f = setup({ withPrice: false });
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-baseline-orphan', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 500, refundedDelta: 0, note: ''
+  });
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRecoveryRequiredAt, '');
+
+  var result = f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠');
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'FEE_RECOVERY_REQUIRED');
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.ok(!record.priceAmount, '基準料金は書き込まれていないこと');
+});
+
+test('backfillOriginalPrice returns LOCK_TIMEOUT when the script lock is already held (e.g. a concurrent commit)', function () {
+  var f = setup({ withPrice: false });
+  var externalLock = f.sandbox.LockService.getScriptLock();
+  assert.equal(externalLock.tryLock(), true);
+  var result = f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠');
+  externalLock.releaseLock();
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'LOCK_TIMEOUT');
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.ok(!record.priceAmount);
+});
+
+test('backfillOriginalPrice re-reads the booking after acquiring the lock, seeing a status change made just before the call', function () {
+  var f = setup({ withPrice: false });
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', { status: 'CANCELLED' });
+  var result = f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠');
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'INVALID_STATUS');
+});
+
+test('backfillOriginalPrice sets feeRecoveryRequiredAt and does not silently succeed when the price-baseline write fails and the old values are confirmed still in place', function () {
+  var f = setup({ withPrice: false });
+  var original = f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = function () { throw new Error('Sheets API error'); };
+  var result = f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠');
+  f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = original;
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'UPDATE_FAILED');
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.ok(!record.priceAmount, '書込みは実際に行われていない（半端な状態にもなっていない）');
+  assert.ok(record.feeRecoveryRequiredAt, '結果不明のため要復旧にする');
+
+  var blockedReschedule = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version_(f), '', '別途精算');
+  assert.equal(blockedReschedule.success, false);
+  assert.equal(blockedReschedule.error.code, 'FEE_RECOVERY_REQUIRED');
+});
+
+test('backfillOriginalPrice treats the write as successful when verification shows all 5 baseline columns already match, even though the write call itself threw afterward', function () {
+  var f = setup({ withPrice: false });
+  var original = f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = function (bid, fields) {
+    original(bid, fields); // 実際の書込みは成功させる
+    throw new Error('confirmation lost after a successful write (e.g. request timeout)');
+  };
+  var result = f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠');
+  f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = original;
+
+  assert.equal(result.success, true);
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(record.priceAmount, 4000);
+  assert.equal(record.priceTier, 'GENERAL');
+  assert.equal(record.feeRecoveryRequiredAt, '', '実際には書き込めていたので要復旧にしない');
+});
+
+/* ---- PR #345再レビュー対応（7回目）: recordFeeSettlementの円単位整数検証・既存累計額の破損検知 ---- */
+
+test('recordFeeSettlement rejects non-integer paidAmountDelta/refundedAmountDelta (fractional yen), without creating a FeeSettlements row', function () {
+  var f = setup();
+  var before = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount;
+
+  var badPaid = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-frac-1', 'SETTLED', 1000.5, 0, '');
+  assert.equal(badPaid.success, false);
+  assert.equal(badPaid.error.code, 'INVALID_AMOUNT');
+
+  var badRefund = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-frac-2', 'SETTLED', 0, 0.5, '');
+  assert.equal(badRefund.success, false);
+  assert.equal(badRefund.error.code, 'INVALID_AMOUNT');
+
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount, before);
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-frac-1'), null);
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-frac-2'), null);
+});
+
+test('recordFeeSettlement refuses a brand-new settlement when the booking existing cumulative amounts are already corrupt, instead of silently treating them as zero', function () {
+  var f = setup();
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', { feePaidAmount: 1000.5 });
+
+  var result = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-corrupt-1', 'SETTLED', 100, 0, '');
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'FEE_RECOVERY_REQUIRED');
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-corrupt-1'), null, '検証前に台帳へ行を作らない');
+});
+
+test('recordFeeSettlement refuses an ABANDONED reapply too when the current cumulative amounts are corrupt (refunded > paid)', function () {
+  var f = setup();
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-corrupt-2', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 500, refundedDelta: 0, note: ''
+  });
+  f.sandbox.FeeSettlementRepository.markAbandoned(f.sandbox.FeeSettlementRepository.findBySettlementId('s-corrupt-2').rowNumber);
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', { feeRefundedAmount: 999999999 });
+
+  var result = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-corrupt-2', 'SETTLED', 500, 0, '');
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'FEE_RECOVERY_REQUIRED');
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-corrupt-2').record.applyStatus, 'ABANDONED', 'PENDING_APPLYへ戻していない（検証で弾かれたため）');
+});
+
 /* ---- 料金差額の判定（増額・初回減額・2回目以降・端数） ---- */
 
 test('a same-duration reschedule to a different day-type (weekday→weekend) charges the additional amount, no ambiguity', function () {

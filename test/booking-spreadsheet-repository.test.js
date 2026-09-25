@@ -159,6 +159,80 @@ test('updateBookingCancellationStateAtomic: status/cancelledAt/updatedAt以外�
   assert.strictEqual(found.record.status, 'PENDING', '例外発生時は行を書き換えない（範囲書き込み前にフィールド名を検証するため）');
 });
 
+/*
+ * updateBookingPriceBaselineAtomic（PR #345再レビュー対応・7回目。BookingReschedule.
+ * backfillOriginalPrice専用）: priceAmount〜priceComputedAtの5列だけを、HEADERS_上で
+ * 連続する範囲に対する1回のsetValuesで更新する。updateBookingCancellationStateAtomicと
+ * 同じ設計で、範囲外（priceOverrideAmount等の日程変更専用フィールドや精算累計額）へは
+ * 一切書き込まない。
+ */
+test('updateBookingPriceBaselineAtomic: priceAmount〜priceComputedAtの5列だけを1回の書き込みで更新し、範囲外のpriceOverrideAmount等は変化しない', function () {
+  var sandbox = loadRepos();
+  sandbox.SpreadsheetRepository.appendBooking(sampleRecord({ status: 'CONFIRMED' }));
+  sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic('SX-20261001-AAAAAAAA', {
+    priceOverrideAmount: 9999, priceOverrideAt: new Date('2026-09-20T00:00:00+09:00'),
+    scheduleChangeCount: 1, feePaidAmount: 5000
+  });
+
+  var computedAt = new Date('2026-10-01T09:00:00+09:00');
+  sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic('SX-20261001-AAAAAAAA', {
+    priceAmount: 8000, priceTier: 'MEMBER', priceDayType: 'WEEKEND_HOLIDAY',
+    priceIsMember: true, priceComputedAt: computedAt
+  });
+
+  var found = sandbox.SpreadsheetRepository.findRowByBookingId('SX-20261001-AAAAAAAA');
+  assert.strictEqual(found.record.priceAmount, 8000);
+  assert.strictEqual(found.record.priceTier, 'MEMBER');
+  assert.strictEqual(found.record.priceDayType, 'WEEKEND_HOLIDAY');
+  assert.strictEqual(found.record.priceIsMember, true);
+  assert.strictEqual(found.record.priceComputedAt.getTime(), computedAt.getTime());
+  // 範囲外（priceOverrideAmount以降）は変化しない。
+  assert.strictEqual(found.record.priceOverrideAmount, 9999);
+  assert.strictEqual(found.record.scheduleChangeCount, 1);
+  assert.strictEqual(found.record.feePaidAmount, 5000);
+
+  var sheet = sandbox.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
+  var lastCall = sheet._setValuesCalls[sheet._setValuesCalls.length - 1];
+  assert.strictEqual(lastCall.col, sandbox.SpreadsheetRepository.HEADERS.indexOf('priceAmount') + 1);
+  assert.strictEqual(lastCall.numCols, 5, 'priceAmount〜priceComputedAtの5列だけを1回で書く');
+  assert.strictEqual(lastCall.numRows, 1);
+});
+
+test('updateBookingPriceBaselineAtomic: 指定しなかった列は既存値のまま維持される', function () {
+  var sandbox = loadRepos();
+  sandbox.SpreadsheetRepository.appendBooking(sampleRecord({
+    status: 'CONFIRMED', priceAmount: 6000, priceTier: 'GENERAL',
+    priceDayType: 'WEEKDAY', priceIsMember: false, priceComputedAt: new Date('2026-09-01T00:00:00+09:00')
+  }));
+
+  sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic('SX-20261001-AAAAAAAA', { priceAmount: 7000 });
+
+  var found = sandbox.SpreadsheetRepository.findRowByBookingId('SX-20261001-AAAAAAAA');
+  assert.strictEqual(found.record.priceAmount, 7000);
+  assert.strictEqual(found.record.priceTier, 'GENERAL', '指定していないフィールドは元値のまま維持される');
+  assert.strictEqual(found.record.priceDayType, 'WEEKDAY');
+  assert.strictEqual(found.record.priceIsMember, false);
+});
+
+test('updateBookingPriceBaselineAtomic: 存在しないbookingIdは例外を投げる（書き込み自体を行わない）', function () {
+  var sandbox = loadRepos();
+  assert.throws(function () {
+    sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic('NOT-EXIST', { priceAmount: 1000 });
+  });
+});
+
+test('updateBookingPriceBaselineAtomic: priceAmount〜priceComputedAt以外のフィールドは例外を投げ、行自体を書き換えない', function () {
+  var sandbox = loadRepos();
+  sandbox.SpreadsheetRepository.appendBooking(sampleRecord({ status: 'CONFIRMED', priceAmount: 6000 }));
+
+  assert.throws(function () {
+    sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic('SX-20261001-AAAAAAAA', { priceOverrideAmount: 1000 });
+  });
+
+  var found = sandbox.SpreadsheetRepository.findRowByBookingId('SX-20261001-AAAAAAAA');
+  assert.strictEqual(found.record.priceAmount, 6000, '例外発生時は行を書き換えない（範囲書き込み前にフィールド名を検証するため）');
+});
+
 test('getAllPendingBookings: PENDINGの行のみ抽出する', function () {
   var sandbox = loadRepos();
   sandbox.SpreadsheetRepository.appendBooking(sampleRecord({ bookingId: 'SX-1', status: 'PENDING' }));
