@@ -597,3 +597,29 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
   background: var(--color-bg);
   font-size: 14px;
 }
+
+
+/* Issue #344: 管理者向け日時変更フォーム。既存の詳細モーダル内へ挿入する。 */
+.reschedule-section {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-card-bg);
+}
+.reschedule-section h3 { margin: 0 0 8px; font-size: 16px; }
+.reschedule-section p { color: var(--color-text-sub); font-size: 13px; line-height: 1.6; }
+.reschedule-section label { display: block; margin: 10px 0; font-size: 13px; }
+.reschedule-section input, .reschedule-section textarea {
+  display: block; width: 100%; min-height: 40px; margin-top: 4px;
+  padding: 8px; border: 1px solid var(--color-border); border-radius: 8px;
+  background: #fff; color: var(--color-text); font: inherit;
+}
+.reschedule-section button {
+  min-height: 42px; margin: 6px 6px 6px 0; padding: 8px 12px;
+  border: 0; border-radius: 8px; color: #fff; background: var(--color-primary);
+}
+.reschedule-section button:disabled { opacity: .5; }
+#reschedule-result { white-space: pre-line; line-height: 1.6; margin-top: 10px; font-size: 13px; }
+#reschedule-history { margin-top: 14px; font-size: 12px; }
+.reschedule-history-item { border-top: 1px solid var(--color-border); padding: 8px 0; }
