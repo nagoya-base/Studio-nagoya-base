@@ -48,6 +48,16 @@ var DETAIL_FIELDS = [
   ['customerType', '利用区分'],
   ['purpose', '利用目的'],
   ['paymentMethod', '支払方法'],
+  /*
+   * Issue #342: 利用料金。priceAmountは予約時点の自動計算値（管理者が金額を修正しても
+   * 変わらない）、effectivePriceAmountは実際に案内すべき金額（自動計算値・修正値の
+   * いずれか。Booking.getEffectivePriceAmountと同じ判定をサーバー側で行った結果）。
+   * 金額の修正操作自体は下の「利用料金の修正」欄（renderPriceEditSection_）で行う。
+   */
+  ['priceAmount', '自動計算金額（税込）'],
+  ['priceTier', '料金区分'],
+  ['priceDayType', '曜日区分'],
+  ['effectivePriceAmount', '案内する金額（税込）'],
   ['source', '受付経路'],
   ['note', '備考'],
   /* Issue #334: カード予約のみサーバー側で非空（読み取り専用）。 */
@@ -92,15 +102,48 @@ function statusLabel(value) {
   return value || '';
 }
 
+/* priceTier/priceDayTypeの内部値（BookingPricing.gs）を表示用ラベルへ変換するだけの
+   関数。customerTypeLabel/brandLabelと同じ方針で、内部値・保存値・APIレスポンスは
+   変更せず、表示直前にのみ変換する。 */
+function priceTierLabel_(value) {
+  if (value === 'GENERAL') return '一般';
+  if (value === 'MEMBER') return '会員';
+  return value || '';
+}
+
+function priceDayTypeLabel_(value) {
+  if (value === 'WEEKDAY') return '平日';
+  if (value === 'WEEKEND_HOLIDAY') return '土日祝';
+  return value || '';
+}
+
+/* 金額（数値）を'¥4,000'へ整形する。数値化できない値（null・undefined・空文字含む）は
+   空文字を返す（呼び出し側のformatValueが「（未設定）」表示にフォールバックする）。 */
+function formatYen_(amount) {
+  /* Number(null)/Number('')は0になってしまうため、先に弾く（料金データを持たない
+     過去の予約を「¥0」と誤表示しないため。BookingAdminWeb.gsはpriceAmount等が
+     未計算の場合、常にnullを返す）。 */
+  if (amount === null || amount === undefined || amount === '') return '';
+  var value = Number(amount);
+  return Number.isFinite(value) ? '¥' + value.toLocaleString('en-US') : '';
+}
+
 /* hasMailErrorのみ真偽値、customerType/brand/statusのみ表示用ラベルへ変換、
    それ以外はサーバー側で整形済みの文字列（空文字列＝未設定）。
    lastMailError*の詳細（内容・種別・日時）はWeb UIへは出さない（障害調査は
-   Spreadsheetを直接確認する運用のまま。BookingAdminWeb.gs参照）。 */
+   Spreadsheetを直接確認する運用のまま。BookingAdminWeb.gs参照）。
+   Issue #342: priceAmount/effectivePriceAmountは金額として整形し、priceTier/
+   priceDayTypeはラベル変換する。 */
 function formatValue(key, value) {
   if (key === 'hasMailError') return value ? 'あり' : 'なし';
   if (key === 'customerType') return customerTypeLabel(value) || '（未設定）';
   if (key === 'brand') return brandLabel(value) || '（未設定）';
   if (key === 'status') return statusLabel(value) || '（未設定）';
+  if (key === 'priceTier') return priceTierLabel_(value) || '（未設定）';
+  if (key === 'priceDayType') return priceDayTypeLabel_(value) || '（未設定）';
+  if (key === 'priceAmount' || key === 'effectivePriceAmount' || key === 'priceOverrideAmount') {
+    return formatYen_(value) || '（未計算。過去の予約データ等）';
+  }
   if (value === null || value === undefined || value === '') return '（未設定）';
   return String(value);
 }
@@ -292,6 +335,14 @@ function render() {
       ? '<div class="card-due">カード支払期限: ' + escapeHtml(b.cardPaymentDueAt) + '</div>'
       : '';
 
+    /* Issue #342: 一覧では「実際に案内すべき金額」（effectivePriceAmount）だけを見せ、
+       自動計算値との内訳はモーダル詳細（DETAIL_FIELDS）でのみ表示する。
+       未計算（過去の予約データ等でformatYen_が空文字を返す場合）は行自体を出さない。 */
+    var formattedPrice = formatYen_(b.effectivePriceAmount);
+    var priceLine = formattedPrice
+      ? '<div class="card-price">利用料金: ' + escapeHtml(formattedPrice) + (b.priceOverridden ? '（修正済み）' : '') + '</div>'
+      : '';
+
     return (
       '<div class="card">' +
         '<div class="card-top">' +
@@ -302,6 +353,7 @@ function render() {
         '<div class="card-name">' + escapeHtml(b.name) + '</div>' +
         '<div class="card-meta">' + escapeHtml(b.people) + ' / ' + escapeHtml(customerTypeLabel(b.customerType)) + '</div>' +
         '<div class="card-sub">' + escapeHtml(b.paymentMethod) + ' ・ ' + escapeHtml(b.purpose) + '</div>' +
+        priceLine +
         cardDueLine +
         '<div class="card-id">' + escapeHtml(b.bookingId) + '</div>' +
         '<div class="card-actions">' + actions + '</div>' +
@@ -402,6 +454,7 @@ function showDetailModal(booking) {
     return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
   }).join('');
   renderPaymentLinkSection_(booking);
+  renderPriceEditSection_(booking);
   document.getElementById('modal-overlay').classList.add('open');
 }
 
@@ -640,6 +693,132 @@ function renderPaymentLinkSection_(booking) {
   } else {
     ui.resolveButton.classList.add('hidden');
   }
+}
+
+/*
+ * ── 利用料金の修正（Issue #342） ──
+ * 予約確定前（PENDING）の予約のみ、管理者が自動計算金額を修正できる。決済リンク送信欄
+ * （initPaymentLinkUi_/renderPaymentLinkSection_）と同じ方針で、DOM生成は初回のみ
+ * （initPriceEditUi_）、内容更新はshowDetailModalのたびに呼ぶ（renderPriceEditSection_）。
+ * PENDING以外での可否の最終判定はサーバー側（BookingRepository.updateBookingPrice）が
+ * 行う。ここでのcanEditPriceによる無効化は表示上のヒントに過ぎない。
+ */
+var priceEditUi_ = {
+  container: null,
+  statusEl: null,
+  amountInput: null,
+  updateButton: null,
+  updateInFlight: false
+};
+
+function initPriceEditUi_() {
+  var modal = document.getElementById('modal');
+  var closeButton = document.getElementById('modal-close');
+
+  var container = document.createElement('div');
+  container.id = 'price-edit-section';
+
+  var heading = document.createElement('h3');
+  heading.textContent = '利用料金の修正';
+  container.appendChild(heading);
+
+  var statusEl = document.createElement('div');
+  statusEl.id = 'price-edit-status';
+  container.appendChild(statusEl);
+
+  var amountLabel = document.createElement('label');
+  amountLabel.textContent = '修正後の金額（円）';
+  var amountInput = document.createElement('input');
+  amountInput.type = 'number';
+  amountInput.id = 'price-edit-amount-input';
+  amountInput.min = '1';
+  amountInput.step = '1';
+  amountLabel.appendChild(amountInput);
+  container.appendChild(amountLabel);
+
+  var updateButton = document.createElement('button');
+  updateButton.type = 'button';
+  updateButton.id = 'price-edit-update-button';
+  updateButton.textContent = '金額を修正';
+  container.appendChild(updateButton);
+
+  modal.insertBefore(container, closeButton);
+  updateButton.addEventListener('click', runUpdatePrice_);
+
+  priceEditUi_.container = container;
+  priceEditUi_.statusEl = statusEl;
+  priceEditUi_.amountInput = amountInput;
+  priceEditUi_.updateButton = updateButton;
+}
+
+/* 表示内容の更新のみを担当する（DOM生成はinitPriceEditUi_で1回のみ）。
+   priceOverrideAmountが設定されていれば、自動計算額からの修正内容を併記する。 */
+function renderPriceEditSection_(booking) {
+  var ui = priceEditUi_;
+  if (!ui.container) return;
+  if (!booking) {
+    ui.container.classList.add('hidden');
+    return;
+  }
+  ui.container.classList.remove('hidden');
+
+  var effective = formatYen_(booking.effectivePriceAmount) || '（未計算）';
+  var overrideNote = (booking.priceOverrideAmount !== null && booking.priceOverrideAmount !== undefined)
+    ? '（自動計算額 ' + (formatYen_(booking.priceAmount) || '（未計算）') + ' から修正済み）'
+    : '';
+  ui.statusEl.textContent = '現在案内する金額: ' + effective + overrideNote;
+
+  ui.amountInput.disabled = !booking.canEditPrice;
+  ui.updateButton.disabled = !booking.canEditPrice;
+  ui.updateButton.textContent = booking.canEditPrice ? '金額を修正' : '修正不可（' + statusLabel(booking.status) + '）';
+}
+
+var PRICE_AMOUNT_INPUT_PATTERN_ = /^[1-9]\d*$/;
+
+function runUpdatePrice_() {
+  var booking = currentDetailBooking_;
+  if (!booking || !booking.canEditPrice) return;
+  if (priceEditUi_.updateInFlight) return;
+
+  var rawAmount = (priceEditUi_.amountInput.value || '').trim();
+  if (!PRICE_AMOUNT_INPUT_PATTERN_.test(rawAmount)) {
+    alert('金額は1円以上の整数で入力してください。');
+    return;
+  }
+  var amount = parseInt(rawAmount, 10);
+
+  var confirmed = window.confirm(
+    '予約ID: ' + booking.bookingId + '\n' +
+    '自動計算額: ' + (formatYen_(booking.priceAmount) || '（未計算）') + '\n' +
+    '修正後の金額: ' + formatYen_(amount) + '\n\n' +
+    'この内容で金額を修正しますか？'
+  );
+  if (!confirmed) return;
+
+  priceEditUi_.updateInFlight = true;
+  priceEditUi_.updateButton.disabled = true;
+  setStatusLine('金額を修正中…');
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      priceEditUi_.updateInFlight = false;
+      setStatusLine('');
+      if (!result || !result.success) {
+        alert('修正できませんでした: ' + (result && result.error && result.error.message));
+        refreshOpenDetail_(booking.bookingId);
+        return;
+      }
+      alert('金額を修正しました。');
+      refreshOpenDetail_(booking.bookingId);
+      loadBookings();
+    })
+    .withFailureHandler(function (error) {
+      priceEditUi_.updateInFlight = false;
+      setStatusLine('');
+      alert('修正でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      refreshOpenDetail_(booking.bookingId);
+    })
+    .adminUpdateBookingPrice(booking.bookingId, amount);
 }
 
 /*
@@ -1495,5 +1674,6 @@ initHeaderUi_();
 initTabCountsUi_();
 initSearchUi_();
 initPaymentLinkUi_();
+initPriceEditUi_();
 
 loadBookings();

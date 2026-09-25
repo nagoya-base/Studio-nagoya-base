@@ -88,7 +88,18 @@ function setup(responseBody) {
        このstubでも最低限の実装を用意する（このテスト群はstate.paymentMethodが
        常に空文字のため、常にfalseを返す形で足りる）。 */
     CARD_PAYMENT_METHOD_VALUE: 'オンラインクレジットカード',
-    isCardPaymentMethodValue: function (v) { return v === 'オンラインクレジットカード'; }
+    isCardPaymentMethodValue: function (v) { return v === 'オンラインクレジットカード'; },
+    /* Issue #342: 料金見積り表示の配線用スタブ。このテスト群はstate.date等が常に
+       未設定（Step1へ進んでいない）ため、実際に見積りfetchが発生することはないが、
+       モジュール読み込み時点（brandShowsMemberOptionの呼び出し）で例外にならないよう
+       最低限の実装を用意する。 */
+    brandShowsMemberOption: function (b) { return b === 'snb'; },
+    formatJpyAmount: function (amount) {
+      var value = Number(amount);
+      return Number.isFinite(value) ? '¥' + value.toLocaleString('en-US') : '';
+    },
+    priceComputingLabel: function () { return '料金を計算しています…'; },
+    priceUnavailableLabel: function () { return '現在、料金を確認できません。時間をおいて再度お試しください。'; }
   };
 
   var sandbox = loadFrontendSandbox(['booking-app.js'], {
@@ -154,6 +165,96 @@ test('Issue #273診断: createBooking成功時はrequestIdを画面へ表示し�
   assert.strictEqual(ctx.elements['ba-submit-error'].hidden, true);
   assert.strictEqual(ctx.elements['ba-complete-booking-id'].textContent, 'SNB-20260921-TEST');
   assert.strictEqual(ctx.elements['ba-complete-booking-id'].textContent.indexOf('success-request-id'), -1);
+});
+
+/*
+ * Issue #342: 仮予約完了画面は、createBookingのレスポンス（GASがcreateBooking時点で
+ * 確定・保存した値）だけを使って予約内容・利用料金を表示する。フォーム側の見積り値は
+ * 一切使わない（このテストのfetchスタブは常にresponseBodyのみを返すため、完了画面の
+ * 表示がresponseBody以外の値に依存していないことも間接的に確認できる）。
+ */
+test('Issue #342: 仮予約完了画面はcreateBookingレスポンスのprice等を使って予約内容を表示する', async function () {
+  var ctx = setup({
+    success: true,
+    bookingId: 'SNB-20260921-PRICE',
+    requestId: 'req-price',
+    date: '2026-10-05',
+    durationMinutes: 120,
+    brand: 'snb',
+    people: '2名',
+    paymentMethod: '現金',
+    status: 'PENDING',
+    price: { amount: 4000, currency: 'JPY', tier: 'GENERAL', isMember: false, dayType: 'WEEKDAY' }
+  });
+
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-complete-brand'].textContent, 'Studio Nagoya Base');
+  assert.strictEqual(ctx.elements['ba-complete-date'].textContent, '2026-10-05');
+  assert.strictEqual(ctx.elements['ba-complete-people'].textContent, '2名');
+  assert.strictEqual(ctx.elements['ba-complete-price'].textContent, '利用料金: ¥4,000（税込）');
+  assert.strictEqual(ctx.elements['ba-complete-payment'].textContent, '現金');
+  assert.strictEqual(ctx.elements['ba-complete-status'].textContent, '仮予約受付（未確定）');
+});
+
+test('Issue #342: createBookingが金額を返せなかった場合、完了画面は金額不明の案内を表示し例外を投げない', async function () {
+  var ctx = setup({
+    success: true,
+    bookingId: 'SNB-20260921-NOPRICE',
+    requestId: 'req-noprice',
+    date: '2026-10-05',
+    durationMinutes: 120,
+    brand: 'snb',
+    people: '2名',
+    paymentMethod: '現金',
+    status: 'PENDING'
+  });
+
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-complete-price'].textContent, '現在、料金を確認できません。時間をおいて再度お試しください。');
+});
+
+/*
+ * Issue #342: 会員自己申告欄はSNBのみ表示する。mens/studio_xでは常に非表示のまま
+ * （BookingPricing.gsのresolveTier_と同じ分岐をUI側でも表示制御として反映する）。
+ * 実際のscripts/booking-logic.jsを読み込み、brandShowsMemberOptionの結合を検証する。
+ */
+function setupForBrand(brand) {
+  var elements = {};
+  var root = createElement('booking-app');
+  root.getAttribute = function (name) {
+    if (name === 'data-brand') return brand;
+    if (name === 'data-back-url') return '/';
+    if (name === 'data-back-label') return null;
+    return null;
+  };
+  root.querySelectorAll = function () { return []; };
+  elements['booking-app'] = root;
+
+  var documentStub = {
+    getElementById: function (id) {
+      if (!elements[id]) elements[id] = createElement(id);
+      return elements[id];
+    },
+    createElement: createElement
+  };
+
+  loadFrontendSandbox(['booking-logic.js', 'booking-app.js'], {
+    document: documentStub,
+    window: { BookingApiConfig: { BASE_URL: 'https://example.invalid/exec' } },
+    fetch: function () { return Promise.resolve({ json: function () { return Promise.resolve({ success: true }); } }); }
+  });
+
+  return { elements: elements };
+}
+
+test('Issue #342: 会員自己申告欄はsnbのみ表示し、mens/studio_xでは非表示のまま', function () {
+  assert.strictEqual(setupForBrand('snb').elements['ba-member-field'].hidden, false);
+  assert.strictEqual(setupForBrand('mens').elements['ba-member-field'].hidden, true);
+  assert.strictEqual(setupForBrand('studio_x').elements['ba-member-field'].hidden, true);
 });
 
 /* ── English locale（Issue #297）: 実際のscripts/booking-logic.jsをbooking-app.jsと
@@ -304,7 +405,17 @@ function setupFullFlow(locale, options) {
   loadFrontendSandbox(['booking-logic.js', 'booking-app.js'], {
     document: documentStub,
     window: windowStub,
+    /* Issue #342: 利用料金の見積り（action=estimatePrice）もGETで呼ばれるようになったが、
+       getFetchCallCountは既存どおり「getAvailabilityが呼ばれた回数」を数える指標として
+       使うため、estimatePriceへのリクエストはこのカウントに含めない（別のAPI呼び出し
+       であり、getAvailabilityの呼び出し回数自体には影響しないことを検証する既存テストの
+       前提を壊さないため）。 */
     fetch: function (url, options) {
+      if (url.indexOf('action=estimatePrice') !== -1) {
+        return Promise.resolve({ json: function () {
+          return Promise.resolve({ success: true, price: { amount: 4000, currency: 'JPY', tier: 'GENERAL', isMember: false, dayType: 'WEEKDAY' } });
+        } });
+      }
       fetchCallCount += 1;
       if (options && options.method === 'POST') {
         requests.push({ url: url, body: JSON.parse(options.body) });
@@ -412,6 +523,21 @@ test('Issue #301: 日本語（locale未指定）でduration=1はStep 1で止ま�
   assert.strictEqual(ctx.elements['ba-duration-error'].hidden, false);
   assert.strictEqual(ctx.startTimeButtons.length, 0, 'Step 2の開始時刻選択肢が描画されないこと');
   assert.strictEqual(ctx.getFetchCallCount(), 0, 'getAvailabilityが呼ばれないこと');
+});
+
+test('Issue #342: 利用日・利用時間が揃うとStep1/Step2の両方に見積り金額が表示される', async function () {
+  var ctx = setupFullFlow(null);
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-price-line'].textContent, '利用料金: ¥4,000（税込）');
+  assert.strictEqual(ctx.elements['ba-price-line'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-start-time-price-line'].textContent, '利用料金: ¥4,000（税込）');
+  assert.strictEqual(ctx.elements['ba-start-time-price-line'].hidden, false);
 });
 
 test('Issue #301: 日本語（locale未指定）でduration=2は通常どおりStep 2へ進みavailabilityを取得する', async function () {

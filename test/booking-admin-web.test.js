@@ -29,6 +29,7 @@ var FILES = [
   'CalendarRepository.gs',
   'Availability.gs',
   'Booking.gs',
+  'BookingPricing.gs',
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
@@ -224,10 +225,14 @@ test('getAdminBookings: { todayJst, bookings }を返し、一覧の各要素は�
 
   /* Issue #334: cardPaymentDueAtは一覧レスポンスの許可フィールドに追加された
      読み取り専用項目（カード予約のみ非空。ここでは支払方法が現金のためcardPaymentDueAtは
-     空文字になることをこのテスト自体では検証しないが、キー自体は常に含まれる）。 */
-  var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status', 'cardPaymentDueAt'];
+     空文字になることをこのテスト自体では検証しないが、キー自体は常に含まれる）。
+     Issue #342: effectivePriceAmount（実効金額。Booking.getEffectivePriceAmount）・
+     priceOverridden（管理者による修正済みかどうか）も同様に一覧の許可フィールドへ追加。 */
+  var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status', 'cardPaymentDueAt', 'effectivePriceAmount', 'priceOverridden'];
   assert.deepStrictEqual(Object.keys(item).sort(), allowedKeys.slice().sort());
   assert.strictEqual(item.cardPaymentDueAt, '', '現金等カード以外の支払方法ではcardPaymentDueAtは空文字であるべき');
+  assert.strictEqual(item.priceOverridden, false, '未修正の予約はpriceOverridden:falseであるべき');
+  assert.strictEqual(typeof item.effectivePriceAmount, 'number', 'effectivePriceAmountは自動計算済みの数値であるべき');
 
   ['email', 'phone', 'note', 'pendingMailSentAt', 'lastMailErrorMessage'].forEach(function (piiField) {
     assert.strictEqual(Object.prototype.hasOwnProperty.call(item, piiField), false, '一覧レスポンスに' + piiField + 'を含めてはいけない');
@@ -1062,4 +1067,38 @@ test('sanitizeForClient_: null/プリミティブ/空オブジェクトはその
      比較すると[[Prototype]]の不一致で失敗する（このファイル冒頭近くの同種のコメント参照）。
      キーが1つも無いことで代わりに確認する。 */
   assert.deepStrictEqual(Object.keys(ctx.sandbox.sanitizeForClient_({})), []);
+});
+
+/* ---------- Issue #342: 料金データを持たない過去の予約との後方互換性 ---------- */
+
+test('getAdminBookingDetail/getAdminBookings: 料金列が空文字（過去の予約データ）でも例外を投げず、未計算として扱う', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+
+  /* HEADERS_の「列は末尾へ追記する」方針どおり、過去の予約は新設した料金列が
+     空文字のまま残る。ここではその状態を直接再現する（createPendingは常に
+     価格計算済みのため、既存予約データとの後方互換をこの操作で明示的に検証する）。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, {
+    priceAmount: '',
+    priceTier: '',
+    priceDayType: '',
+    priceIsMember: '',
+    priceComputedAt: '',
+    priceOverrideAmount: '',
+    priceOverrideAt: ''
+  });
+
+  var listResult = ctx.sandbox.getAdminBookings();
+  var item = listResult.bookings.filter(function (b) { return b.bookingId === bookingId; })[0];
+  assert.strictEqual(item.effectivePriceAmount, null);
+  assert.strictEqual(item.priceOverridden, false);
+
+  var detailResult = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.strictEqual(detailResult.success, true);
+  assert.strictEqual(detailResult.booking.priceAmount, null);
+  assert.strictEqual(detailResult.booking.priceOverrideAmount, null);
+  assert.strictEqual(detailResult.booking.effectivePriceAmount, null);
+  assert.strictEqual(detailResult.booking.priceTier, '');
+  assert.strictEqual(detailResult.booking.priceDayType, '');
+  assert.strictEqual(detailResult.booking.canEditPrice, true, 'PENDINGのままなら金額修正自体は引き続き可能であるべき');
 });

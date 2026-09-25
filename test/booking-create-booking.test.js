@@ -17,6 +17,7 @@ var FILES = [
   'CalendarRepository.gs',
   'Availability.gs',
   'Booking.gs',
+  'BookingPricing.gs',
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
@@ -224,6 +225,108 @@ test('createBooking (Issue #269): snb/mens/studio_xの3ブランドすべてでP
     assert.strictEqual(calendarEvent.getTag('brand'), brand, 'Calendarのbrandタグに正しいbrandが保存されるべき');
     assert.strictEqual(calendarEvent.getTag('bookingId'), result.bookingId);
   });
+});
+
+/*
+ * ── 利用料金の自動計算・保存（Issue #342） ──
+ * DEFAULT_FUTURE_DATEはテスト実行日から動的に算出されるため（実行日に応じて曜日が
+ * 変わってしまう）、料金の平日/土日祝判定に依存するテストでは使わず、遠い未来の
+ * 固定日付（2099-01-05=月曜/平日、2099-01-03=土曜/2099-01-04=日曜=いずれも土日祝。
+ * date -d で確認済み）を使う。
+ */
+var FIXED_WEEKDAY_DATE = '2099-01-05';
+var FIXED_SATURDAY_DATE = '2099-01-03';
+
+test('createBooking: 利用料金をGAS側で計算し、Sheetsへ保存する（studio_x・平日3時間）', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 })
+  );
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.price.amount, 6000);
+  assert.strictEqual(result.price.tier, 'GENERAL');
+  assert.strictEqual(result.price.dayType, 'WEEKDAY');
+  assert.strictEqual(result.price.currency, 'JPY');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.strictEqual(found.record.priceAmount, 6000, '保存された金額はレスポンスと一致するべき');
+  assert.strictEqual(found.record.priceTier, 'GENERAL');
+  assert.strictEqual(found.record.priceDayType, 'WEEKDAY');
+  assert.strictEqual(found.record.priceIsMember, false);
+  assert.ok(found.record.priceComputedAt, 'priceComputedAtが記録されるべき');
+});
+
+test('createBooking: mensはisMember未送信でも常に会員料金で保存される（studio_xは常に一般料金のまま）', function () {
+  var mensCtx = setup();
+  var mensResult = mensCtx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'mens', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 })
+  );
+  assert.strictEqual(mensResult.price.amount, 5500, 'mensは常に会員料金（5,500円）');
+  assert.strictEqual(mensResult.price.tier, 'MEMBER');
+  var mensFound = mensCtx.sandbox.SpreadsheetRepository.findRowByBookingId(mensResult.bookingId);
+  assert.strictEqual(mensFound.record.priceIsMember, true);
+
+  var studioCtx = setup();
+  var studioResult = studioCtx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180, isMember: true })
+  );
+  assert.strictEqual(studioResult.price.amount, 6000, 'studio_xはisMember:trueでも一般料金のまま');
+  assert.strictEqual(studioResult.price.tier, 'GENERAL');
+});
+
+test('createBooking: snbはisMember:trueを送ると会員料金で保存される', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'snb', date: FIXED_WEEKDAY_DATE, durationMinutes: 180, isMember: true })
+  );
+  assert.strictEqual(result.price.amount, 5500);
+  assert.strictEqual(result.price.tier, 'MEMBER');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.strictEqual(found.record.priceTier, 'MEMBER');
+  assert.strictEqual(found.record.priceIsMember, true);
+});
+
+test('createBooking: 土曜・日曜はいずれも土日祝料金として保存される', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'studio_x', date: FIXED_SATURDAY_DATE, durationMinutes: 120 })
+  );
+  assert.strictEqual(result.price.amount, 5000);
+  assert.strictEqual(result.price.dayType, 'WEEKEND_HOLIDAY');
+});
+
+test('createBooking: フロントエンドから送られた金額・料金関連フィールドは一切信用せず、常にGAS側で再計算する（改ざん対策）', function () {
+  var ctx = setup();
+  var tamperedPayload = validPayload({
+    brand: 'studio_x',
+    date: FIXED_WEEKDAY_DATE,
+    durationMinutes: 180
+  });
+  /* フロントは本来これらのフィールドを送らないが、悪意ある呼び出し元が直接POSTした
+     場合を想定し、それらしいキー名を混入させても結果に一切影響しないことを確認する。 */
+  tamperedPayload.price = { amount: 1 };
+  tamperedPayload.priceAmount = 1;
+  tamperedPayload.amount = 1;
+
+  var result = ctx.sandbox.BookingRepository.createBooking(tamperedPayload);
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.price.amount, 6000, '改ざんされた金額(1円)ではなく、サーバー計算値(6,000円)が使われるべき');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.strictEqual(found.record.priceAmount, 6000);
+});
+
+test('createBooking: 予約完了画面が使うレスポンスのpriceは、Sheetsへ保存された金額と一致する', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'mens', date: FIXED_SATURDAY_DATE, durationMinutes: 240 })
+  );
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.strictEqual(result.price.amount, found.record.priceAmount);
+  assert.strictEqual(result.people, found.record.people);
+  assert.strictEqual(result.paymentMethod, found.record.paymentMethod);
 });
 
 test('createBooking (Issue #269): bookingId prefixはブランドごとに異なり、studio_xの既存prefix "SX" は変更しない', function () {
@@ -974,6 +1077,20 @@ test('管理者通知: ADMIN_NOTIFICATION_EMAIL設定時は氏名・メール等
   assert.strictEqual(sent.to, 'admin@example.com');
   assert.strictEqual(sent.body.indexOf('極秘太郎'), -1);
   assert.strictEqual(sent.body.indexOf('himitsu@example.com'), -1);
+});
+
+test('管理者通知 (Issue #342): 利用者向け仮予約受付メールと同じ利用料金を含む（PIIではないため表示してよい）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' }, mailApp: mailApp });
+
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 })
+  );
+
+  var adminMail = mailApp._sentEmails.filter(function (m) { return m.to === 'admin@example.com'; })[0];
+  assert.ok(adminMail, '管理者通知メールが送られるべき');
+  assert.match(adminMail.body, /利用料金: 6,000円（税込）/);
+  assert.match(adminMail.body, new RegExp(result.bookingId));
 });
 
 test('管理者通知 (Issue #269): 通知件名にはbrandの表示名が入り、ブランドごとに区別できる', function () {

@@ -20,6 +20,7 @@ var FILES = [
   'CalendarRepository.gs',
   'Availability.gs',
   'Booking.gs',
+  'BookingPricing.gs',
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
@@ -1068,4 +1069,80 @@ test('onOpen: container-boundスクリプトの単純トリガーとしてaddBoo
 
   assert.strictEqual(ui._menus.length, 1);
   assert.strictEqual(ui._menus[0].name, '予約管理');
+});
+
+/* ---------- updateBookingPrice（Issue #342: 管理者による予約確定前の金額修正） ---------- */
+
+test('updateBookingPrice: PENDINGの予約は金額を修正でき、priceAmountは変えずpriceOverrideAmount/priceOverrideAtへ記録する', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { brand: 'studio_x', durationMinutes: 180 });
+  var before = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(before.priceAmount, 6000);
+
+  var result = ctx.sandbox.BookingRepository.updateBookingPrice(bookingId, 5000);
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.priceAmount, 6000, '自動計算値（修正前）を参考情報として返す');
+  assert.strictEqual(result.priceOverrideAmount, 5000);
+
+  var after = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(after.priceAmount, 6000, '自動計算値そのものは変更しない');
+  assert.strictEqual(after.priceOverrideAmount, 5000);
+  assert.ok(after.priceOverrideAt, 'priceOverrideAtが記録されるべき');
+  assert.strictEqual(ctx.sandbox.Booking.getEffectivePriceAmount(after), 5000, '実効金額は修正後の値になるべき');
+});
+
+test('updateBookingPrice: CONFIRMED/CANCELLED/EXPIREDの予約は修正できない（fail-closed）', function () {
+  var ctx = setup();
+
+  var confirmedId = createPending(ctx, { date: futureDateJst_(10) });
+  ctx.sandbox.confirmBooking(confirmedId);
+  var confirmedResult = ctx.sandbox.BookingRepository.updateBookingPrice(confirmedId, 5000);
+  assert.strictEqual(confirmedResult.success, false);
+  assert.strictEqual(confirmedResult.error.code, 'INVALID_STATUS_FOR_PRICE_OVERRIDE');
+
+  var cancelledId = createPending(ctx, { date: futureDateJst_(11) });
+  ctx.sandbox.cancelBookingAdmin(cancelledId);
+  var cancelledResult = ctx.sandbox.BookingRepository.updateBookingPrice(cancelledId, 5000);
+  assert.strictEqual(cancelledResult.success, false);
+  assert.strictEqual(cancelledResult.error.code, 'INVALID_STATUS_FOR_PRICE_OVERRIDE');
+
+  /* 修正が拒否された場合、既存の金額データは一切書き換わっていないべき */
+  var confirmedRecord = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(confirmedId).record;
+  assert.strictEqual(confirmedRecord.priceOverrideAmount, '');
+});
+
+test('updateBookingPrice: 不正な金額（0以下・非整数・非数値・上限超過）はfail-closedに拒否し、既存データを変更しない', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+
+  [0, -100, 1.5, 'abc', null, undefined, 1000001].forEach(function (badAmount) {
+    var result = ctx.sandbox.BookingRepository.updateBookingPrice(bookingId, badAmount);
+    assert.strictEqual(result.success, false, JSON.stringify(badAmount) + ' は拒否されるべき');
+    assert.strictEqual(result.error.code, 'INVALID_PRICE_AMOUNT');
+  });
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.priceOverrideAmount, '', '拒否された修正は一切反映されないべき');
+});
+
+test('updateBookingPrice: 存在しないbookingIdはNOT_FOUNDを返す', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.updateBookingPrice('SX-99999999-NOTFOUND', 5000);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'NOT_FOUND');
+});
+
+test('Booking.getEffectivePriceAmount: 料金データを持たない過去の予約（列が空文字）でも例外を投げずnullを返す', function () {
+  var ctx = setup();
+  var legacyRecord = { bookingId: 'SX-20200101-LEGACY', priceAmount: '', priceOverrideAmount: '', priceOverrideAt: '' };
+  assert.strictEqual(ctx.sandbox.Booking.getEffectivePriceAmount(legacyRecord), null);
+  assert.strictEqual(ctx.sandbox.Booking.getEffectivePriceAmount({}), null);
+});
+
+test('BookingAdmin.updateBookingPrice: BookingRepository.updateBookingPriceへそのまま委譲する（Booking Admin側のみで公開）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+  var result = ctx.sandbox.updateBookingPrice(bookingId, 3000);
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.priceOverrideAmount, 3000);
 });

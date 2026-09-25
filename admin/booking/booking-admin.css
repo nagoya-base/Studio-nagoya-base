@@ -293,6 +293,14 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
   margin-top: 4px;
 }
 
+/* Issue #342: 一覧カードの利用料金（実効金額）。 */
+.card-price {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: bold;
+  margin-top: 4px;
+}
+
 .empty {
   color: var(--color-text-sub);
   text-align: center;
@@ -452,6 +460,63 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 }
 
 #payment-link-resolve-button:disabled {
+  opacity: 0.5;
+}
+
+/* Issue #342: 利用料金の修正欄。決済リンク送信欄（#payment-link-section）と同じ
+   デザインパターンを踏襲する。 */
+#price-edit-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+#price-edit-section h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+#price-edit-status {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin-bottom: 10px;
+}
+
+#price-edit-section label {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin-bottom: 10px;
+}
+
+#price-edit-amount-input {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  margin-top: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  background: var(--color-card-bg);
+  color: var(--color-text);
+}
+
+#price-edit-amount-input:disabled {
+  opacity: 0.5;
+}
+
+#price-edit-update-button {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 14px;
+}
+
+#price-edit-update-button:disabled {
   opacity: 0.5;
 }
 

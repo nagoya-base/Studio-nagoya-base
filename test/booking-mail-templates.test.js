@@ -68,6 +68,39 @@ test('buildPendingMail: 予約ID/氏名/利用日/開始/終了/利用時間/人
   assert.match(mail.body, /contact@example\.com/);
 });
 
+/* ── 利用料金の表示（Issue #342） ── */
+
+test('buildPendingMail: record.priceAmountがある場合、「利用料金: X円（税込）」を含む', function () {
+  var templates = loadTemplates();
+  var mail = templates.buildPendingMail(sampleRecord({ priceAmount: 4000 }), CONFIG);
+  assert.match(mail.body, /利用料金: 4,000円（税込）/);
+});
+
+test('buildPendingMail: priceAmountが未設定・空文字・数値化できない過去の予約データでも例外を投げず、料金の行を出さない', function () {
+  var templates = loadTemplates();
+  [undefined, '', null, 'abc'].forEach(function (badPrice) {
+    var mail = templates.buildPendingMail(sampleRecord({ priceAmount: badPrice }), CONFIG);
+    assert.doesNotMatch(mail.body, /利用料金/, JSON.stringify(badPrice) + ' では利用料金の行を出さないべき');
+  });
+});
+
+test('buildPendingMail: priceAmount:0は数値として有効なため「0円」と表示する（未計算の空文字とは区別する）', function () {
+  var templates = loadTemplates();
+  var mail = templates.buildPendingMail(sampleRecord({ priceAmount: 0 }), CONFIG);
+  assert.match(mail.body, /利用料金: 0円（税込）/);
+});
+
+test('buildConfirmedMail/buildPaymentLinkMail: priceAmountがあっても金額を一切表示しない（既存方針を維持し、案内金額の齟齬を避ける）', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ priceAmount: 4000 });
+  var confirmed = templates.buildConfirmedMail(record, CONFIG);
+  var paymentLink = templates.buildPaymentLinkMail(record, CONFIG, 'https://buy.stripe.com/test_ABC123');
+  assert.doesNotMatch(confirmed.body, /利用料金/);
+  assert.doesNotMatch(confirmed.body, /4,000円/);
+  assert.doesNotMatch(paymentLink.body, /利用料金/);
+  assert.doesNotMatch(paymentLink.body, /4,000円/);
+});
+
 test('buildPendingMail: キーボックス番号・解錠コードを一切含まない（accessGuideを引数に取らない構造）', function () {
   var templates = loadTemplates();
   var mail = templates.buildPendingMail(sampleRecord(), CONFIG);

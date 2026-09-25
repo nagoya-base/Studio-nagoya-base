@@ -205,10 +205,32 @@ function getAdminBookings() {
       paymentMethod: record.paymentMethod,
       status: record.status,
       /* Issue #334: カード予約のみ非空（読み取り専用の支払期限表示用）。 */
-      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone)
+      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone),
+      /*
+       * Issue #342: 利用料金。一覧では「実際に案内すべき金額」（自動計算値・修正値の
+       * いずれか）と「修正済みかどうか」だけを返し、詳細な区分（tier/dayType等）は
+       * getAdminBookingDetailでのみ返す。キー名はeffectivePriceAmountとし、
+       * getAdminBookingDetailが返すpriceAmount（＝予約時点の自動計算値。修正の有無に
+       * 関わらず不変）と混同しないようにする。
+       */
+      effectivePriceAmount: buildAdminPriceSummary_(record).effectiveAmount,
+      priceOverridden: buildAdminPriceSummary_(record).overridden
     };
   });
   return { todayJst: todayJst, bookings: bookings };
+}
+
+/*
+ * 利用料金の表示用サマリ（Issue #342）。effectiveAmountはBooking.getEffectivePriceAmount
+ * （priceOverrideAtが空でなければpriceOverrideAmountを優先）そのもので、「案内すべき
+ * 実効金額」の判定ロジックをここで複製しない。料金データを持たない過去の予約では
+ * effectiveAmountがnullになる（Web UI側はnullを「未計算」として表示する）。
+ */
+function buildAdminPriceSummary_(record) {
+  return {
+    effectiveAmount: Booking.getEffectivePriceAmount(record),
+    overridden: !!record.priceOverrideAt
+  };
 }
 
 /*
@@ -284,7 +306,26 @@ function getAdminBookingDetail(bookingId) {
        * この値を解釈・加工せず、adminSendCardPaymentLinkの呼び出しへそのまま往復させる
        * だけの内部トークンとして扱う（BookingMailer.gsのcheckSendHistoryVersion_参照）。
        */
-      paymentLinkSentAtVersion: isAdminWebDateLike_(record.paymentLinkSentAt) ? record.paymentLinkSentAt.getTime() : 0
+      paymentLinkSentAtVersion: isAdminWebDateLike_(record.paymentLinkSentAt) ? record.paymentLinkSentAt.getTime() : 0,
+      /*
+       * 利用料金の詳細（Issue #342）。priceAmountは予約時点の自動計算値（変更しない）、
+       * priceOverrideAmount/priceOverrideAtは管理者による修正値・修正日時（未修正なら
+       * それぞれnull/空文字）、effectivePriceAmountはBooking.getEffectivePriceAmountが
+       * 返す「実際に案内すべき金額」。canEditPrice（PENDINGのみtrue）はUI側の編集フォーム
+       * 表示制御用（実際の可否はBookingRepository.updateBookingPrice側で最終判定するため、
+       * ここは表示制御のヒントに過ぎない）。
+       */
+      priceAmount: Number.isFinite(Number(record.priceAmount)) && record.priceAmount !== '' ? Number(record.priceAmount) : null,
+      priceTier: record.priceTier || '',
+      priceDayType: record.priceDayType || '',
+      priceIsMember: record.priceIsMember === true,
+      priceComputedAt: formatAdminDateTime_(record.priceComputedAt, timezone),
+      priceOverrideAmount: record.priceOverrideAt && Number.isFinite(Number(record.priceOverrideAmount))
+        ? Number(record.priceOverrideAmount)
+        : null,
+      priceOverrideAt: formatAdminDateTime_(record.priceOverrideAt, timezone),
+      effectivePriceAmount: Booking.getEffectivePriceAmount(record),
+      canEditPrice: record.status === Booking.STATUS.PENDING
     }
   };
 }
@@ -352,4 +393,11 @@ function adminSendCardPaymentLink(bookingId, paymentLinkUrl, force, expectedSend
  */
 function adminResolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo) {
   return sanitizeForClient_(resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo));
+}
+
+/* 料金修正（Issue #342）。既存の正式関数updateBookingPrice（BookingAdmin.gs）へ
+   そのまま委譲する。業務ロジック（PENDING限定・金額の妥当性検証）はコピーしない。
+   実行前の確認ダイアログ（自動計算値と修正後の金額の表示）はHTML側（クライアント）で行う。 */
+function adminUpdateBookingPrice(bookingId, newAmountJpy) {
+  return updateBookingPrice(bookingId, newAmountJpy);
 }

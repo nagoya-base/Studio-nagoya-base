@@ -49,6 +49,28 @@ var BookingMailTemplates = (function () {
   }
 
   /*
+   * 利用料金の表示行（Issue #342）。record.priceAmountが数値化できない場合（列自体を
+   * 持たない過去の予約、または想定外の空値）は空文字を返し、joinNonEmpty_により行自体を
+   * 出さない（料金データがないことをエラーにせず、既存予約との後方互換を保つ）。
+   * 表示する金額は必ずcreateBooking時点でGASが確定・保存した値（record.priceAmount。
+   * 予約時点の料金表のスナップショット）であり、フォーム側の一時的な見積り値ではない。
+   */
+  function formatJpyAmount_(amount) {
+    /* Number('')/Number(null)は0になってしまう（JSの仕様）ため、空文字・null・
+       undefinedは先に弾く。過去の予約データ（priceAmount列が空文字）を「0円」と
+       誤表示しないため（正しくは行自体を出さない）。 */
+    if (amount === '' || amount === null || amount === undefined) return '';
+    var value = Number(amount);
+    if (!Number.isFinite(value)) return '';
+    return value.toLocaleString('ja-JP') + '円';
+  }
+
+  function priceLine_(record) {
+    var formatted = formatJpyAmount_(record.priceAmount);
+    return formatted ? '利用料金: ' + formatted + '（税込）' : '';
+  }
+
+  /*
    * カード決済選択時のみ仮受付メールへ追加する案内（Issue #334 PR-B「3. 仮受付メール」）。
    * 現金・PayPay・未定にはこのブロックを一切混入させない（buildPendingMail側の
    * isCardPaymentMethod分岐でのみ呼ぶ）。
@@ -100,6 +122,10 @@ var BookingMailTemplates = (function () {
    * PENDING（仮予約受付メール）。
    * 「このメール時点では予約未確定」「管理者確認後に確定連絡を送る」旨を必ず含む。
    * キーボックス番号・解錠コード等は一切含めない（accessGuideを引数に取らない）。
+   * 利用料金（Issue #342。priceLine_）はcreateBooking時点でGASが確定・保存した
+   * record.priceAmountを表示する。カード決済の場合でも、この金額表示だけで自動的に
+   * 決済完了・予約確定として扱われることはない（既存どおり、確定は管理者の確認・
+   * confirmBooking経由のみ）。
    */
   function buildPendingMail(record, config) {
     var brandLabel = Booking.getBrandLabel(record.brand);
@@ -123,6 +149,7 @@ var BookingMailTemplates = (function () {
       duration ? '利用時間: ' + duration : '',
       'ブランド: ' + brandLabel,
       '利用人数: ' + record.people,
+      priceLine_(record),
       record.paymentMethod ? '支払方法: ' + record.paymentMethod : '',
       '',
       isCard ? buildCardPendingNotice_(record, config) : '',
@@ -134,7 +161,11 @@ var BookingMailTemplates = (function () {
 
   /*
    * CONFIRMED（予約確定メール）。件名で確定が分かるようにする。
-   * 現行Bookings台帳に確定料金列がないため、料金は本文へ出さない（Issue #271本文の指示どおり）。
+   * 料金は本文へ出さない（Issue #271本文の指示どおり据え置き。Issue #342で仮予約受付
+   * メール（buildPendingMail）へ料金を追加したが、確定メールには追加しない方針にした:
+   * 管理者がPENDING時点でBookingRepository.updateBookingPriceにより金額を修正できる
+   * ため、送信タイミングによって仮予約時と確定時で異なる金額が案内される事故を避ける。
+   * 金額を確認したい場合はBooking Admin（実効金額はBooking.getEffectivePriceAmount）を見る運用とする）。
    */
   function buildConfirmedMail(record, config) {
     var brandLabel = Booking.getBrandLabel(record.brand);
@@ -248,9 +279,10 @@ var BookingMailTemplates = (function () {
    * - 支払い済みなのに予約が失効した場合は、二重決済・再申し込みをせず運営へ連絡する旨
    * - 問い合わせ先
    *
-   * 金額は本文へ出さない（Bookings台帳に確定料金列がないため。Issue #334本文「料金は
-   * 確認画面・メールに表示しない」。実際の金額はStripeの決済リンク自体の画面で確認する
-   * 運用）。
+   * 金額は本文へ出さない（Issue #334本文「料金は確認画面・メールに表示しない」を据え置き。
+   * Issue #342でBookings台帳に料金列を追加したが、このメールへは追加しない: 実際の
+   * 決済金額はStripeの決済リンク自体の画面で確認する運用であり、GAS側の自動計算値・
+   * 管理者の修正値と表示がずれるリスクを構造的に避けるため）。
    */
   function buildPaymentLinkMail(record, config, paymentLinkUrl) {
     var brandLabel = Booking.getBrandLabel(record.brand);

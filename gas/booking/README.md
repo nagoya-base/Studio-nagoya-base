@@ -2576,6 +2576,7 @@ Web UI層・クライアント層でのURL・送信先の配線・検証・プ�
 | `Config.gs` | ✓ | ✓ | `gas/booking/shared/Config.gs` |
 | `CalendarRepository.gs` | ✓ | ✓ | `gas/booking/shared/CalendarRepository.gs` |
 | `Booking.gs` | ✓ | ✓ | `gas/booking/shared/Booking.gs` |
+| `BookingPricing.gs`（Issue #342） | ✓ | – | `gas/booking/shared/BookingPricing.gs` |
 | `RateLimiter.gs` | ✓ | – | `gas/booking/public/RateLimiter.gs` |
 | `SpreadsheetRepository.gs` | ✓ | ✓ | `gas/booking/shared/SpreadsheetRepository.gs` |
 | `RecoveryRepository.gs` | ✓ | ✓ | `gas/booking/shared/RecoveryRepository.gs` |

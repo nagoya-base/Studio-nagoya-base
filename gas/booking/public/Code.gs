@@ -1,9 +1,13 @@
 /*
- * Code.gs — 自社予約システム Web App エントリポイント（Issue #266: getAvailability / Issue #268: createBooking）。
+ * Code.gs — 自社予約システム Web App エントリポイント（Issue #266: getAvailability / Issue #268: createBooking / Issue #342: estimatePrice）。
  *
- * doGet: getAvailability（読み取り専用の空き判定）のみ。Issue #266のまま変更していない。
+ * doGet: action未指定=getAvailability・action=monthly=getMonthlyAvailability・
+ *   action=estimatePrice=利用料金の見積り（Issue #342）。いずれも読み取り専用でPIIを
+ *   含まない。
  * doPost: createBooking（Issue #268で追加）。個人情報を書き込むAPIのため、GETではなく
  *   POST専用にしている（GETクエリパラメータや閲覧履歴にPIIが残る事故を避けるため）。
+ *   createBooking自体もBookingPricing.computeBookingPriceで金額を必ず再計算する
+ *   （estimatePriceが返す見積り値はフロント表示専用で、確定金額の正本ではない）。
  *
  * デプロイ設定（README.md参照）:
  *   Execute as: Me
@@ -19,6 +23,9 @@ function doGet(e) {
   var params = (e && e.parameter) || {};
   if (params.action === 'monthly') {
     return jsonOutput_(handleGetMonthlyAvailability_(params));
+  }
+  if (params.action === 'estimatePrice') {
+    return jsonOutput_(handleEstimatePrice_(params));
   }
   return jsonOutput_(handleGetAvailability_(params));
 }
@@ -182,6 +189,63 @@ function handleGetMonthlyAvailability_(params) {
   var busyIntervalsByDate = CalendarRepository.getBusyIntervalsForRange(calendarId, startDate, endDate, config.timezone);
 
   return BookingAvailability.getMonthlyAvailability(request, busyIntervalsByDate, config, new Date());
+}
+
+/*
+ * 利用料金の見積り（Issue #342）。予約フォームがStep2/3で日時・利用時間が揃った時点で
+ * 呼ぶ、読み取り専用のGETエンドポイント。Calendar/Sheetsへは一切アクセスしない
+ * （空き状況の再確認はgetAvailability側の責務であり、ここでは行わない）。
+ *
+ * ここで返す金額はあくまで見積りであり、実際に予約として保存される金額の正本ではない。
+ * BookingRepository.createBookingは予約作成時に必ず同じBookingPricing.
+ * computeBookingPriceで金額を再計算するため、フロントエンドはこの見積り値を「確定金額」
+ * として送信・信用してはならない（createBookingのレスポンスに含まれるpriceが最終値）。
+ *
+ * params: { brand, date, durationMinutes, isMember }（すべて文字列。GASのdoGetクエリ
+ * パラメータのため）。いずれもPIIを含まないため、GET・クエリパラメータで問題ない
+ * （handleGetAvailability_と同じ方針）。
+ */
+function handleEstimatePrice_(params) {
+  var config = BookingConfig.getAvailabilityConfig();
+
+  if (!Booking.isAllowedBrand(params.brand)) {
+    return { success: false, error: { code: 'INVALID_BRAND', message: 'このブランドではオンライン予約を受け付けていません。' } };
+  }
+
+  var durationMinutes = parseDurationParam_(params.durationMinutes);
+  var validationError = BookingAvailability.validateInput(params.date, durationMinutes, config);
+  if (validationError) {
+    return { success: false, error: validationError };
+  }
+
+  var priceResult = BookingPricing.computeBookingPrice({
+    brand: params.brand,
+    date: params.date,
+    durationMinutes: durationMinutes,
+    isMember: parseBooleanParam_(params.isMember)
+  });
+  if (!priceResult.valid) {
+    return { success: false, error: priceResult.error };
+  }
+
+  return {
+    success: true,
+    brand: params.brand,
+    date: params.date,
+    durationMinutes: durationMinutes,
+    price: priceResult.price
+  };
+}
+
+/*
+ * '1'・'true'（大文字小文字を問わない）だけをtrueとして受理する。それ以外（未指定・
+ * 'false'・不正な文字列等）はすべてfalseにするfail-closedな変換
+ * （Booking.gsのisMember正規化=input.isMember === trueと同じ「会員特典を誤って
+ * 適用しない」方向。GETクエリパラメータは常に文字列のため、Boolean('false')が
+ * trueになってしまう素朴な変換は使わない）。
+ */
+function parseBooleanParam_(value) {
+  return value === '1' || String(value).toLowerCase() === 'true';
 }
 
 /* 公開Web APIのため、"120abc"や"120.9"のような部分一致をparseIntで緩く受理しない。

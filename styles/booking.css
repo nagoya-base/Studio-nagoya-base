@@ -186,6 +186,30 @@
   line-height: 1.6;
 }
 
+/* 利用料金の見積り表示（Issue #342）。Step1・Step2で共通のクラスを使う。 */
+.ba-price-box {
+  margin: 18px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--ba-border);
+  border-radius: 8px;
+  background: var(--ba-surface);
+}
+
+.ba-price-line {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ba-text);
+}
+
+.ba-price-note {
+  margin: 0;
+  color: var(--ba-muted);
+  font-size: 0.82rem;
+}
+
+.ba-price-note:empty { display: none; }
+
 .ba-fieldset { border: 0; padding: 0; margin: 0 0 18px; }
 .ba-choices { display: flex; flex-wrap: wrap; gap: 10px; }
 

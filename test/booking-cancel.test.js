@@ -20,6 +20,7 @@ var FILES = [
   'CalendarRepository.gs',
   'Availability.gs',
   'Booking.gs',
+  'BookingPricing.gs',
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',

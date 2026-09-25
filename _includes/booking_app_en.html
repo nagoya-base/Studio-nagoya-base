@@ -139,6 +139,29 @@
       <p class="ba-field-help">Choosing a time of day recalculates the monthly calendar using only start times within that range.</p>
     </fieldset>
 
+    <!-- Member self-declaration (Issue #342). Shown by JS only for SNB
+         (brandShowsMemberOption). Studio X has no member concept, and SNB mens always
+         applies the member rate, so neither shows this field. Actual membership is
+         confirmed by staff before the booking is finalized (self-declaration alone does
+         not finalize it). -->
+    <div class="ba-field" id="ba-member-field" hidden>
+      <label class="ba-choice">
+        <input type="checkbox" id="ba-is-member" name="isMember">
+        <span>I am a member (approved by the facility)</span>
+      </label>
+      <p class="ba-field-help">We'll confirm membership before finalizing your booking. If it turns out you are not a member, the price may be corrected.</p>
+    </div>
+
+    <!-- Price estimate (Issue #342). Shown once date, duration (and member
+         self-declaration) are available, via GAS's estimatePrice. The rate table itself
+         is never duplicated here; the displayed value always comes from GAS
+         (see scripts/booking-app.js). While loading or on failure, the previous amount is
+         never shown as final. -->
+    <div class="ba-price-box" id="ba-price-box" aria-live="polite">
+      <p class="ba-price-line" id="ba-price-line" hidden></p>
+      <p class="ba-price-note" id="ba-price-note"></p>
+    </div>
+
     <div class="ba-actions">
       <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">Show Available Start Times</button>
     </div>
@@ -148,6 +171,8 @@
   <section class="ba-step" id="ba-step-start-time" data-step="start-time" hidden>
     <h2>Choose a Start Time</h2>
     <p class="ba-step-desc" id="ba-start-time-summary"></p>
+    <p class="ba-price-line" id="ba-start-time-price-line" hidden></p>
+    <p class="ba-price-note" id="ba-start-time-price-note"></p>
 
     <div id="ba-start-time-loading" class="ba-loading">Checking available start times…</div>
     <div id="ba-start-time-grid" class="ba-time-grid" role="group" aria-label="Start time" hidden></div>
@@ -253,6 +278,7 @@
         <tr><th>Customer Type</th><td id="ba-confirm-customer-type"></td></tr>
         <tr><th>Date</th><td id="ba-confirm-date"></td></tr>
         <tr><th>Time</th><td id="ba-confirm-time"></td></tr>
+        <tr><th>Price</th><td id="ba-confirm-price"></td></tr>
         <tr><th>Name</th><td id="ba-confirm-name"></td></tr>
         <tr><th>Email Address</th><td id="ba-confirm-email"></td></tr>
         <tr><th>Phone Number</th><td id="ba-confirm-phone"></td></tr>
@@ -287,6 +313,23 @@
     <div class="ba-complete-icon" aria-hidden="true">&#10003;</div>
     <h2>Your booking request has been received</h2>
     <p>Booking ID: <span class="ba-booking-id" id="ba-complete-booking-id"></span></p>
+
+    <!-- Issue #342: booking summary and price. The amount shown here is never the
+         form's temporary estimate — it is the value GAS computed and saved at
+         createBooking time (from the createBooking response). This screen is always a
+         "pending booking received" screen and never uses the word "confirmed" for the
+         booking itself. -->
+    <table class="ba-summary" id="ba-complete-summary">
+      <tbody>
+        <tr><th>Brand</th><td id="ba-complete-brand"></td></tr>
+        <tr><th>Date</th><td id="ba-complete-date"></td></tr>
+        <tr><th>Time</th><td id="ba-complete-time"></td></tr>
+        <tr><th>Number of Guests</th><td id="ba-complete-people"></td></tr>
+        <tr><th>Price</th><td id="ba-complete-price"></td></tr>
+        <tr><th>Payment Method</th><td id="ba-complete-payment"></td></tr>
+        <tr><th>Pending Status</th><td id="ba-complete-status"></td></tr>
+      </tbody>
+    </table>
 
     <div class="ba-complete-pending-notice">
       <strong>Your booking is not confirmed yet.</strong><br>

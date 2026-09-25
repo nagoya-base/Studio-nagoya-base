@@ -149,6 +149,28 @@
       <p class="ba-field-help">希望する時間帯を選ぶと、月間カレンダーの空き状況をその時間帯の開始時刻だけで再計算します。</p>
     </fieldset>
 
+    <!-- 会員自己申告（Issue #342）。SNBのみJS側で表示する（brandShowsMemberOption）。
+         Studio Xは会員概念がなく、SNB mensは常に会員相当の価格が適用されるため、
+         いずれもこの項目自体を表示しない（HTML自体は3ブランド共通のため、非表示は
+         JS側で行う）。実際の会員資格の確認は予約確定前に管理者が行う（自己申告のみで
+         確定はしない）。 -->
+    <div class="ba-field" id="ba-member-field" hidden>
+      <label class="ba-choice">
+        <input type="checkbox" id="ba-is-member" name="isMember">
+        <span>会員です（当施設が承認した会員の方のみチェックしてください）</span>
+      </label>
+      <p class="ba-field-help">会員資格は予約確定前に確認します。実際には会員でない場合、料金が修正されることがあります。</p>
+    </div>
+
+    <!-- 利用料金の見積り（Issue #342）。利用日・利用時間（・会員自己申告）が揃った時点で
+         GASのestimatePriceを呼んで表示する。料金表自体はここに置かず、必ずGAS側の値を
+         表示する（scripts/booking-app.js参照）。計算中・取得失敗時は古い金額を確定料金
+         として出さない。 -->
+    <div class="ba-price-box" id="ba-price-box" aria-live="polite">
+      <p class="ba-price-line" id="ba-price-line" hidden></p>
+      <p class="ba-price-note" id="ba-price-note"></p>
+    </div>
+
     <div class="ba-actions">
       <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">予約できる時間を表示</button>
     </div>
@@ -158,6 +180,8 @@
   <section class="ba-step" id="ba-step-start-time" data-step="start-time" hidden>
     <h2>開始時刻を選択</h2>
     <p class="ba-step-desc" id="ba-start-time-summary"></p>
+    <p class="ba-price-line" id="ba-start-time-price-line" hidden></p>
+    <p class="ba-price-note" id="ba-start-time-price-note"></p>
 
     <div id="ba-start-time-loading" class="ba-loading">予約できる時間を確認しています…</div>
     <div id="ba-start-time-grid" class="ba-time-grid" role="group" aria-label="開始時刻" hidden></div>
@@ -265,6 +289,7 @@
         <tr><th>利用区分</th><td id="ba-confirm-customer-type"></td></tr>
         <tr><th>利用日</th><td id="ba-confirm-date"></td></tr>
         <tr><th>利用時間</th><td id="ba-confirm-time"></td></tr>
+        <tr><th>利用料金</th><td id="ba-confirm-price"></td></tr>
         <tr><th>お名前</th><td id="ba-confirm-name"></td></tr>
         <tr><th>メールアドレス</th><td id="ba-confirm-email"></td></tr>
         <tr><th>電話番号</th><td id="ba-confirm-phone"></td></tr>
@@ -301,6 +326,22 @@
     <div class="ba-complete-icon" aria-hidden="true">&#10003;</div>
     <h2>仮予約の送信を受け付けました</h2>
     <p>受付番号: <span class="ba-booking-id" id="ba-complete-booking-id"></span></p>
+
+    <!-- Issue #342: 予約内容・利用料金の表示。金額はフォーム側の見積り値ではなく、
+         GASがcreateBooking時点で確定・保存した値（createBookingレスポンスのprice）を使う。
+         「仮予約受付」であることは上の見出し・下の案内文で明確にし、ここでは
+         「予約確定」という語を一切使わない。 -->
+    <table class="ba-summary" id="ba-complete-summary">
+      <tbody>
+        <tr><th>ブランド</th><td id="ba-complete-brand"></td></tr>
+        <tr><th>利用日</th><td id="ba-complete-date"></td></tr>
+        <tr><th>利用時間</th><td id="ba-complete-time"></td></tr>
+        <tr><th>利用人数</th><td id="ba-complete-people"></td></tr>
+        <tr><th>利用料金</th><td id="ba-complete-price"></td></tr>
+        <tr><th>支払方法</th><td id="ba-complete-payment"></td></tr>
+        <tr><th>仮予約ステータス</th><td id="ba-complete-status"></td></tr>
+      </tbody>
+    </table>
 
     <div class="ba-complete-pending-notice" id="ba-complete-generic-notice">
       <strong>まだ予約は確定していません。</strong><br>
