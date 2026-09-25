@@ -643,6 +643,63 @@ function renderPaymentLinkSection_(booking) {
 }
 
 /*
+ * adminSendCardPaymentLinkの応答（google.script.run経由）から、管理者へ表示するアラート
+ * 文言を組み立てる純粋関数（不具合修正: 送信直後に「送信できませんでした: null」と
+ * 表示される問題）。
+ *
+ * GAS側（BookingAdminWeb.gs sanitizeForClient_）でDateオブジェクト・明示的なundefined
+ * プロパティは既に取り除いているはずだが、それでもresultがnull/undefined、または
+ * success/error/skipped/requiresManualConfirmationのいずれの既知フィールドも
+ * 持たない想定外の形で届く可能性を完全には排除できない（実行環境依存のシリアライズ
+ * 不具合・将来のサーバー側戻り値仕様変更の考慮漏れ等）。MailApp.sendEmailの送信自体は
+ * この関数に届く前（サーバー側）で完了しているため、「戻り値を正しく解釈できない」ことは
+ * 「送信していない」ことの証拠にはならない。このため、既知の失敗パターン
+ * （result.errorが存在する等）に一致しない場合は「送信できませんでした」と断定せず、
+ * 送信済みの可能性を案内して予約詳細の再取得を促す（呼び出し元は常に
+ * refreshOpenDetail_/loadBookingsで最新状態を取得し直す）。この関数はアラート文言を
+ * 返すだけで、再送を含むいかなるgoogle.script.run呼び出しも行わない（自動再送はしない）。
+ */
+function describePaymentLinkSendResult_(result) {
+  if (result && result.success && result.metadataInconsistent) {
+    /* 第2回PRレビュー対応: 送信自体・二重送信防止用の記録は成功しているが、
+       送信回数等の付随情報の記録に失敗している。メール自体は再送しない
+       （送信は既に完了している）。管理者にBookingsシートの確認を促す。 */
+    return '送信しました。ただし送信回数等の記録更新に失敗しました（送信回数の表示が実際より少ない可能性があります。Bookingsシートを確認してください）。';
+  }
+  if (result && result.success) {
+    return '送信しました（送信回数: ' + result.sendCount + '）';
+  }
+  if (result && result.requiresManualConfirmation) {
+    /* PRレビュー対応: メール自体は送信された可能性があるが、送信履歴の記録に失敗し
+       二重送信防止の状態が確定できていない。管理者に実際の到達確認を促す。 */
+    return '送信結果を確認できませんでした（メールは送信された可能性があります）: ' + (result.error && result.error.message);
+  }
+  if (result && result.error && result.error.code === 'SEND_HISTORY_CONFLICT') {
+    return '他の画面から既に操作された可能性があります。最新の状態を確認してください: ' + result.error.message;
+  }
+  if (result && result.error && result.error.code === 'METADATA_INCONSISTENT') {
+    /* 第3回PRレビュー対応: 送信履歴の記録不整合が解消されるまで送信できない。
+       「送信履歴を補正」操作を案内する。 */
+    return '送信履歴に記録不整合があるため送信できません。下の「送信履歴を補正」から、確認した正しい送信回数へ補正してください。';
+  }
+  if (result && result.skipped) {
+    return '送信条件を満たさないため送信しませんでした: ' + (result.error && result.error.message);
+  }
+  if (result && result.error && result.error.message) {
+    /* success:falseかつ既知のerror.codeブランチに一致しない場合（INVALID_PAYMENT_LINK_URL・
+       MAIL_NOT_READY・MAIL_SEND_FAILED等）。これらはいずれもMailApp.sendEmailを呼ぶ前、
+       またはメール本文の組み立てに失敗した時点のエラーであり、メールは送信されて
+       いないと断定してよい。 */
+    return '送信できませんでした: ' + result.error.message;
+  }
+  /* 不具合修正: resultがnull/undefined、または上記いずれのパターンにも一致しない想定外の
+     形の場合。メールは既に送信されている可能性があるため「送信できませんでした」とは
+     断定せず、予約詳細を再取得して送信回数・最終送信日時を確認するよう案内する。
+     自動での再送は行わない。 */
+  return '送信結果を確認できませんでした。メールは送信済みの可能性があります。予約詳細を再取得し、送信回数・最終送信日時を確認してください。必要であれば「決済リンクを再送」から再送してください。';
+}
+
+/*
  * 決済リンク送信ボタンの実処理。二重クリック・連打による重複送信は、クライアント側
  * （sendInFlightガード＋送信中はボタンをdisabled）とGAS側（LockService.getScriptLock()に
  * よる直列化＋paymentLinkSentAtの二重送信防止）の両方で防ぐ（Issue #334本文
@@ -704,28 +761,7 @@ function runSendPaymentLink_() {
     .withSuccessHandler(function (result) {
       paymentLinkUi_.sendInFlight = false;
       setStatusLine('');
-      if (result && result.success && result.metadataInconsistent) {
-        /* 第2回PRレビュー対応: 送信自体・二重送信防止用の記録は成功しているが、
-           送信回数等の付随情報の記録に失敗している。メール自体は再送しない
-           （送信は既に完了している）。管理者にBookingsシートの確認を促す。 */
-        alert('送信しました。ただし送信回数等の記録更新に失敗しました（送信回数の表示が実際より少ない可能性があります。Bookingsシートを確認してください）。');
-      } else if (result && result.success) {
-        alert('送信しました（送信回数: ' + result.sendCount + '）');
-      } else if (result && result.requiresManualConfirmation) {
-        /* PRレビュー対応: メール自体は送信された可能性があるが、送信履歴の記録に失敗し
-           二重送信防止の状態が確定できていない。管理者に実際の到達確認を促す。 */
-        alert('送信結果を確認できませんでした（メールは送信された可能性があります）: ' + (result.error && result.error.message));
-      } else if (result && result.error && result.error.code === 'SEND_HISTORY_CONFLICT') {
-        alert('他の画面から既に操作された可能性があります。最新の状態を確認してください: ' + result.error.message);
-      } else if (result && result.error && result.error.code === 'METADATA_INCONSISTENT') {
-        /* 第3回PRレビュー対応: 送信履歴の記録不整合が解消されるまで送信できない。
-           「送信履歴を補正」操作を案内する。 */
-        alert('送信履歴に記録不整合があるため送信できません。下の「送信履歴を補正」から、確認した正しい送信回数へ補正してください。');
-      } else if (result && result.skipped) {
-        alert('送信条件を満たさないため送信しませんでした: ' + (result.error && result.error.message));
-      } else {
-        alert('送信できませんでした: ' + (result && result.error && result.error.message));
-      }
+      alert(describePaymentLinkSendResult_(result));
       refreshOpenDetail_(booking.bookingId);
       loadBookings();
     })
