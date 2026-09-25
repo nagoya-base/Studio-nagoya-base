@@ -1,3 +1,32 @@
+
+## Issue #344: 管理者による確定済み予約の日時変更（実装レビュー中）
+
+- 対象は **Booking Adminプロジェクトのみ**（管理者用Web App: Execute as Me / Only myself）。
+  `gas/booking/admin/BookingReschedule.gs`を同プロジェクトへ追加し、
+  `gas/booking/shared/SpreadsheetRepository.gs`と
+  `gas/booking/admin/BookingAdminWeb.gs`を更新する。
+  GitHub Pages側の`admin/booking/booking-admin.js`・`booking-admin.css`も同時に反映する。
+  **GASコード追加時は既存Booking Adminのデプロイを更新し、現在の`/exec` URLを維持する。**
+  公開Booking Web Appへ`BookingReschedule.gs`を追加しない。
+- 予約詳細から変更日・開始・終了を入力し、空き確認→変更前後の比較→管理者確認→変更確定。
+  既存の予約ID、決済状態、CalendarイベントIDを維持し、Calendarイベントの開始・終了と
+  Bookingsのdate/startAt/endAtを更新する。対象はCONFIRMEDのみ。
+  当日変更は変更後の開始が現在より未来の場合のみ許可する。
+- 変更対象自身のみ重複判定から除外し、他のCalendarイベントとの前後バッファを確認する。
+  確定時はLock内で再確認する。ただし公開Booking Web Appや外部Calendar書き込みとは
+  スクリプトLockが共有されないため、完全な競合排除は保証しない。
+- `BookingChanges`シートを自動作成し、変更前後の日時、変更理由（任意）、管理者入力の
+  精算案内、変更日時、メール送信状態を保存する。変更メールは変更後の状態を再確認して送る。
+  失敗が確認されたメール（FAILED）のみ管理画面から明示的に再送できる。
+  SENDING等の結果不明状態は二重送信防止のため自動再送しない。
+- 変更後の日付が変わった場合、前日リマインドと来場案内のSentAtをクリアする。
+  元の確定メールSentAtや支払履歴は変更しない。
+- **現行Bookings台帳に確定料金／決済済み金額の列がないため、料金差額の自動計算、
+  自動請求・自動返金は実装していない。** 管理者が確認した精算案内を入力し、
+  利用者向け変更メールへ記載する。実際の差額処理は別途行う。
+- テスト: `node --test test/booking-reschedule.test.js`。
+  本番GAS・Calendar・Stripeへの接続テストは行わず、レビューと管理者の本番テスト後に反映する。
+
 # gas/booking（自社予約システム）
 
 Epic #265の一部として以下を実装済み。
