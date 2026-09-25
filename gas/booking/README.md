@@ -21,11 +21,60 @@
   SENDING等の結果不明状態は二重送信防止のため自動再送しない。
 - 変更後の日付が変わった場合、前日リマインドと来場案内のSentAtをクリアする。
   元の確定メールSentAtや支払履歴は変更しない。
-- **現行Bookings台帳に確定料金／決済済み金額の列がないため、料金差額の自動計算、
-  自動請求・自動返金は実装していない。** 管理者が確認した精算案内を入力し、
-  利用者向け変更メールへ記載する。実際の差額処理は別途行う。
 - テスト: `node --test test/booking-reschedule.test.js`。
   本番GAS・Calendar・Stripeへの接続テストは行わず、レビューと管理者の本番テスト後に反映する。
+
+### Issue #344追記: 料金差額の自動計算（2026-09-25 承認方針。実装レビュー中）
+
+上記の日程変更機能に、料金差額の自動計算を追加した。新規ファイル
+`gas/booking/shared/JapanHolidays.gs`（祝日判定）・`gas/booking/shared/FeeMasterRepository.gs`
+（バージョン付き料金マスタ。`FeeMaster`シート）・`gas/booking/shared/FeeCalculator.gs`
+（30分刻み補間・キャンセル規定との突合の純粋関数）を追加し、`BookingReschedule.gs`・
+`SpreadsheetRepository.gs`（Bookings末尾に料金関連列を追加）・`BookingAdminWeb.gs`・
+`admin/booking/booking-admin.js`/`.css`を拡張した。**いずれもBooking Adminプロジェクトのみ
+（公開Booking Web Appには追加しない）。**
+
+- **30分刻みの補間式はissue本文の「暫定案」をv1として承認・実装したもの**
+  （2h/3h/4h/延長1hの4点間を線形補間、4h超は延長単価の半額を30分ごとに加算、
+  30分未満の端数は切上げ）。`FeeMasterRepository`のv1金額は2026-09-25時点の
+  `index.html#pricing`・`mens/index.html#pricing`・`studio-x/index.html#price`を転記した
+  もので、mens×通常・studio_x×会員は公開ページに料金表が無いため意図的に未定義のまま
+  （該当する組み合わせは自動算出せず、管理者の手動入力を必須にする＝フェイルクローズ）。
+- **既存予約は金額が未記録のため、日程変更を確定する前に必ず`setFeeBaseline`
+  （`adminSetBookingFeeBaseline`）で元の確定料金・支払済み額・価格区分（会員/通常）を
+  管理者が照合して入力する必要がある。** 未確認のままでは`commit`（`adminRescheduleBooking`）
+  自体が`FEE_BASELINE_REQUIRED`で失敗する（Web UIの「基準料金」欄から入力する）。
+- 差額の扱い（`FeeCalculator.assessScheduleChangeFee`）:
+  - 新料金が高い場合は単純な追加請求（`ADDITIONAL_CHARGE_REQUIRED`）。キャンセル規定は関係ない。
+  - 新料金が安く、かつ「今回が初めての日程変更」かつ「変更前利用日の前日まで」の場合のみ、
+    キャンセル料なしの返金候補を自動算出する（`CANDIDATE`）。
+  - それ以外の減額（2回目以降・当日）は、「一部時間短縮をキャンセルと同一視するか」
+    「差額のどの部分にキャンセル料を掛けるか」が規約に明記が無く、issue本文が
+    「実装で決めず管理者承認または規約改定を待つ」と明示しているため、**自動では一切
+    金額を作らない**（`PENDING_POLICY_DECISION`）。管理者が金額（0〜差額/未返金額の
+    範囲）と理由を明示的に入力しない限り`commit`は`FEE_REFUND_DECISION_REQUIRED`で
+    失敗する。免除特例（災害等）もこの同じ仕組みで管理者が個別に金額と理由を入力する
+    （専用の自動判定は作っていない）。
+  - 料金表に定義が無い組み合わせ（mens×通常等）も同様に、管理者が
+    `manualNewFeeAmount`/`manualNewFeeNote`で金額と理由を明示しない限り確定できない。
+- `commit`は確定直前に料金マスタの版を再取得し、previewで見た版
+  （`expectedFeeMasterVersion`）と異なれば`FEE_VERSION_MISMATCH`で拒否する
+  （料金マスタは管理者がいつでも新versionを追記できるため）。
+- 料金の確定と資金移動は分離している。`commit`は確定金額・返金候補（または管理者承認額）を
+  Bookings/BookingChangesへ記録し、`feeSettlementState`を`PENDING_CHARGE`/`PENDING_REFUND`
+  へ更新するだけで、Stripe等への自動請求・自動返金は一切行わない。実際の入出金を管理者が
+  確認した後に`recordFeeSettlement`（`adminRecordRescheduleFeeSettlement`）で
+  `feePaidAmount`/`feeRefundedAmount`/`feeSettlementState`を更新する（Web UIの「精算の記録」欄）。
+- 変更通知メールに、元料金・新料金・差額・返金/追加請求の状況（試算か承認済みかを明記）を
+  追記した。
+- テスト: `node --test test/japan-holidays.test.js test/fee-calculator.test.js
+  test/fee-master-repository.test.js test/booking-reschedule.test.js
+  test/booking-admin-page-client.test.js`。本番GAS・Calendar・Stripeへの接続テスト、
+  既存予約への一括金額埋めは別途指示まで行わない。
+- 実装前の規約上の未決定事項（30分料金の正式な数値、2回目以降の日程変更・当日短縮への
+  キャンセル料の掛け方、有料機材・キャンペーン・会員パスの返金取扱い）は、上記の
+  フェイルクローズな仕組みで「管理者が都度判断する」形にとどめており、コード側で
+  仮の事業ルールとして決定していない。
 
 # gas/booking（自社予約システム）
 
@@ -2617,6 +2666,10 @@ Web UI層・クライアント層でのURL・送信先の配線・検証・プ�
 | `BookingAdminWeb.gs`（Issue #305） | – | ✓ | `gas/booking/admin/BookingAdminWeb.gs` |
 | `BookingReminderTriggers.gs`（Issue #271） | – | ✓ | `gas/booking/admin/BookingReminderTriggers.gs` |
 | `BookingReminderDiagnostics.gs`（Issue #330） | – | ✓ | `gas/booking/admin/BookingReminderDiagnostics.gs` |
+| `JapanHolidays.gs`（Issue #344追記） | – | ✓ | `gas/booking/shared/JapanHolidays.gs` |
+| `FeeMasterRepository.gs`（Issue #344追記） | – | ✓ | `gas/booking/shared/FeeMasterRepository.gs` |
+| `FeeCalculator.gs`（Issue #344追記） | – | ✓ | `gas/booking/shared/FeeCalculator.gs` |
+| `BookingReschedule.gs`（Issue #344） | – | ✓ | `gas/booking/admin/BookingReschedule.gs` |
 | `appsscript.json` | ✓（Web App設定を含む） | 不要（新規プロジェクト作成時の既定のままでよい。ただしWeb App自体のデプロイ設定は必要。後述） | `gas/booking/public/appsscript.json` |
 
 **このリポジトリでの配置（`shared/`/`public/`/`admin/`）は、あくまでソース管理上の

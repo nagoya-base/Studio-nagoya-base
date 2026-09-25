@@ -30,7 +30,11 @@ var BOOKING_ADMIN_FILES = [
   'BookingAdminWeb.gs',
   'BookingTriggers.gs',
   'BookingReminderTriggers.gs',
-  'BookingReminderDiagnostics.gs'
+  'BookingReminderDiagnostics.gs',
+  'JapanHolidays.gs',
+  'FeeMasterRepository.gs',
+  'FeeCalculator.gs',
+  'BookingReschedule.gs'
 ];
 
 /* Code.gs/RateLimiter.gs/AdminNotifier.gsはcreateBooking専用のためBooking Adminには

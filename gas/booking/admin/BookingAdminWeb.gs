@@ -285,7 +285,26 @@ function getAdminBookingDetail(bookingId) {
        * この値を解釈・加工せず、adminSendCardPaymentLinkの呼び出しへそのまま往復させる
        * だけの内部トークンとして扱う（BookingMailer.gsのcheckSendHistoryVersion_参照）。
        */
-      paymentLinkSentAtVersion: isAdminWebDateLike_(record.paymentLinkSentAt) ? record.paymentLinkSentAt.getTime() : 0
+      paymentLinkSentAtVersion: isAdminWebDateLike_(record.paymentLinkSentAt) ? record.paymentLinkSentAt.getTime() : 0,
+      /*
+       * Issue #344追記（料金差額の自動計算）: 日程変更フォームの「基準料金」表示・
+       * 「元料金未確認」判定に使う。priceCategoryが空、またはconfirmedFeeAmountが
+       * 数値でない間はfeeBaselineReady:falseとし、Web UI側はsetFeeBaseline（管理者が
+       * 元の確定料金・支払額・価格区分を照合して入力する専用フォーム）を先に案内する
+       * （BookingReschedule.gsのfeeBaseline_/computeFeeContext_と同じ判定基準）。
+       */
+      priceCategory: record.priceCategory || '',
+      priceCategoryBasis: record.priceCategoryBasis || '',
+      confirmedFeeAmount: typeof record.confirmedFeeAmount === 'number' && isFinite(record.confirmedFeeAmount) ? record.confirmedFeeAmount : null,
+      feePaidAmount: typeof record.feePaidAmount === 'number' && isFinite(record.feePaidAmount) ? record.feePaidAmount : 0,
+      feeRefundedAmount: typeof record.feeRefundedAmount === 'number' && isFinite(record.feeRefundedAmount) ? record.feeRefundedAmount : 0,
+      feeMasterVersion: typeof record.feeMasterVersion === 'number' && isFinite(record.feeMasterVersion) ? record.feeMasterVersion : null,
+      feeBaselineReady: !!(record.priceCategory && typeof record.confirmedFeeAmount === 'number' && isFinite(record.confirmedFeeAmount) && isAdminWebDateLike_(record.feeInitializedAt)),
+      feeInitializedAt: formatAdminDateTime_(record.feeInitializedAt, timezone),
+      scheduleChangeCount: typeof record.scheduleChangeCount === 'number' && isFinite(record.scheduleChangeCount) ? record.scheduleChangeCount : 0,
+      feeSettlementState: record.feeSettlementState || '',
+      feeSettlementNote: record.feeSettlementNote || '',
+      feeSettlementUpdatedAt: formatAdminDateTime_(record.feeSettlementUpdatedAt, timezone)
     }
   };
 }

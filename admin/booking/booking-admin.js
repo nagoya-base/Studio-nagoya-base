@@ -402,12 +402,144 @@ function showDetailModal(booking) {
     return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
   }).join('');
   renderPaymentLinkSection_(booking);
+  /* いずれもmodal-bodyの直後へinsertAdjacentElement('afterend', ...)で挿入するため、
+     画面上の表示順（基準料金→日程変更→精算記録）にしたい場合は逆順で呼び出す
+     （後から挿入したものほどmodal-bodyに近い位置に来る）。 */
+  renderFeeSettlementSection_(booking);
   renderRescheduleSection_(booking);
+  renderFeeBaselineSection_(booking);
   document.getElementById('modal-overlay').classList.add('open');
 }
 
-/* Issue #344: 変更のプレビュー・確定をサーバー側の同じ検証へ通す。
-   料金は現行Bookingsに金額が無いため手動確認。 */
+/*
+ * Issue #344追記: 元の確定料金・支払額・価格区分（会員/通常）を管理者が照合して入力する
+ * フォーム。既存予約は金額が未記録のため、日程変更を確定する前に必ずこれを済ませる
+ * 必要がある（BookingReschedule.commitがFEE_BASELINE_REQUIREDで拒否する）。何度でも
+ * 開き直して補正できる。
+ */
+function renderFeeBaselineSection_(booking) {
+  var modalBody = document.getElementById('modal-body');
+  if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
+  var existing = document.getElementById('fee-baseline-section');
+  if (existing) existing.remove();
+  if (booking.status !== 'CONFIRMED') return;
+  var section = document.createElement('section');
+  section.id = 'fee-baseline-section';
+  section.className = 'reschedule-section';
+  var summary = booking.feeBaselineReady
+    ? '現在の確定料金: ' + booking.confirmedFeeAmount + '円（' +
+      (booking.priceCategory === 'member' ? '会員' : '通常') + '）／支払済み: ' + booking.feePaidAmount +
+      '円／返金済み: ' + booking.feeRefundedAmount + '円'
+    : '元の確定料金が未確認です。日程変更を行う前に、管理者が照合して入力してください。';
+  section.innerHTML =
+    '<h3>基準料金（元の確定料金）</h3>' +
+    '<p>' + escapeHtml(summary) + '</p>' +
+    '<button type="button" id="fee-baseline-toggle">' + (booking.feeBaselineReady ? '基準料金を修正' : '基準料金を設定') + '</button>' +
+    '<div id="fee-baseline-form" class="hidden">' +
+    '<label>価格区分 <select id="fee-baseline-category">' +
+    '<option value="general"' + (booking.priceCategory !== 'member' ? ' selected' : '') + '>通常</option>' +
+    '<option value="member"' + (booking.priceCategory === 'member' ? ' selected' : '') + '>会員</option>' +
+    '</select></label>' +
+    '<label>確定料金（円） <input id="fee-baseline-amount" type="number" min="0" step="1" value="' +
+      (booking.confirmedFeeAmount !== null && booking.confirmedFeeAmount !== undefined ? booking.confirmedFeeAmount : '') + '"></label>' +
+    '<label>支払済み額（円） <input id="fee-baseline-paid" type="number" min="0" step="1" value="' + (booking.feePaidAmount || 0) + '"></label>' +
+    '<label>確認根拠（必須）<textarea id="fee-baseline-basis" maxlength="500" rows="2">' + escapeHtml(booking.priceCategoryBasis || '') + '</textarea></label>' +
+    '<button type="button" id="fee-baseline-save">基準料金を保存</button>' +
+    '<div id="fee-baseline-result" role="status" aria-live="polite"></div>' +
+    '</div>';
+  modalBody.insertAdjacentElement('afterend', section);
+  var form = section.querySelector('#fee-baseline-form');
+  section.querySelector('#fee-baseline-toggle').addEventListener('click', function () {
+    form.classList.toggle('hidden');
+  });
+  section.querySelector('#fee-baseline-save').addEventListener('click', function () {
+    var category = section.querySelector('#fee-baseline-category').value;
+    var amount = Number(section.querySelector('#fee-baseline-amount').value);
+    var paid = Number(section.querySelector('#fee-baseline-paid').value);
+    var basis = section.querySelector('#fee-baseline-basis').value;
+    var resultArea = section.querySelector('#fee-baseline-result');
+    if (!window.confirm('予約ID: ' + booking.bookingId + '\n価格区分: ' + (category === 'member' ? '会員' : '通常') +
+      '\n確定料金: ' + amount + '円\n支払済み額: ' + paid + '円\n\nこの内容で基準料金を保存しますか？')) return;
+    resultArea.textContent = '保存中…';
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (!result || !result.success) {
+          resultArea.textContent = '保存できませんでした: ' + (result && result.error && result.error.message);
+          return;
+        }
+        resultArea.textContent = '保存しました。';
+        refreshOpenDetail_(booking.bookingId);
+      })
+      .withFailureHandler(function (error) {
+        resultArea.textContent = '保存に失敗しました: ' + (error && error.message ? error.message : error);
+      })
+      .adminSetBookingFeeBaseline(booking.bookingId, category, amount, paid, basis);
+  });
+}
+
+/*
+ * Issue #344追記（Phase 2「料金の確定と資金移動を分離」）: 実際のStripe/PayPay/現金の
+ * 入出金を管理者が確認した後にのみ記録する。精算不要（feeSettlementStateが空/SETTLED）の
+ * 間は表示しない。特定のBookingChanges行に紐付けず、予約単位の現在の精算状態のみを
+ * 更新する（recordFeeSettlementのchangeIdはnullで呼ぶ）。
+ */
+function renderFeeSettlementSection_(booking) {
+  var modalBody = document.getElementById('modal-body');
+  if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
+  var existing = document.getElementById('fee-settlement-section');
+  if (existing) existing.remove();
+  var pendingStates = ['PENDING_CHARGE', 'PENDING_REFUND', 'PENDING_DECISION'];
+  if (booking.status !== 'CONFIRMED' || pendingStates.indexOf(booking.feeSettlementState) === -1) return;
+  var section = document.createElement('section');
+  section.id = 'fee-settlement-section';
+  section.className = 'reschedule-section';
+  var stateLabel = {
+    PENDING_CHARGE: '追加請求が未精算です',
+    PENDING_REFUND: '返金が未精算です',
+    PENDING_DECISION: '精算方法が未確定です'
+  }[booking.feeSettlementState] || booking.feeSettlementState;
+  section.innerHTML =
+    '<h3>精算の記録</h3>' +
+    '<p>' + escapeHtml(stateLabel) + '。実際の入出金を確認したうえで記録してください（自動決済は行いません）。</p>' +
+    '<label>精算状態 <select id="settlement-state">' +
+    '<option value="SETTLED">精算済み</option>' +
+    '<option value="PENDING_CHARGE">追加請求 未精算</option>' +
+    '<option value="PENDING_REFUND">返金 未精算</option>' +
+    '<option value="PENDING_DECISION">方法未確定</option>' +
+    '</select></label>' +
+    '<label>今回の入金額（円） <input id="settlement-paid-delta" type="number" min="0" step="1" value="0"></label>' +
+    '<label>今回の返金額（円） <input id="settlement-refunded-delta" type="number" min="0" step="1" value="0"></label>' +
+    '<label>備考<textarea id="settlement-note" maxlength="500" rows="2"></textarea></label>' +
+    '<button type="button" id="settlement-save">精算状況を記録</button>' +
+    '<div id="settlement-result" role="status" aria-live="polite"></div>';
+  modalBody.insertAdjacentElement('afterend', section);
+  section.querySelector('#settlement-state').value = booking.feeSettlementState;
+  section.querySelector('#settlement-save').addEventListener('click', function () {
+    var state = section.querySelector('#settlement-state').value;
+    var paidDelta = Number(section.querySelector('#settlement-paid-delta').value);
+    var refundedDelta = Number(section.querySelector('#settlement-refunded-delta').value);
+    var note = section.querySelector('#settlement-note').value;
+    var resultArea = section.querySelector('#settlement-result');
+    if (!window.confirm('予約ID: ' + booking.bookingId + '\n精算状態: ' + state +
+      '\n入金: ' + paidDelta + '円\n返金: ' + refundedDelta + '円\n\nこの内容で記録しますか？')) return;
+    resultArea.textContent = '記録中…';
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (!result || !result.success) {
+          resultArea.textContent = '記録できませんでした: ' + (result && result.error && result.error.message);
+          return;
+        }
+        resultArea.textContent = '記録しました。';
+        refreshOpenDetail_(booking.bookingId);
+      })
+      .withFailureHandler(function (error) {
+        resultArea.textContent = '記録に失敗しました: ' + (error && error.message ? error.message : error);
+      })
+      .adminRecordRescheduleFeeSettlement(booking.bookingId, null, state, paidDelta, refundedDelta, note);
+  });
+}
+
+/* Issue #344: 変更のプレビュー・確定をサーバー側の同じ検証へ通す。 */
 function renderRescheduleSection_(booking) {
   var modalBody = document.getElementById('modal-body');
   if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
@@ -421,15 +553,15 @@ function renderRescheduleSection_(booking) {
   var end = (booking.endAt || '').split(' ')[1] || '';
   section.innerHTML =
     '<h3>予約日時の変更</h3>' +
-    '<p>変更後の日時を入力し、空き確認後に確定します。料金・差額は管理者が別途確認してください。</p>' +
+    '<p>変更後の日時を入力し、空き確認後に確定します。料金差額は自動算出し、規約上未確定の場合のみ管理者の判断を求めます。</p>' +
     '<label>利用日 <input id="reschedule-date" type="date" value="' + escapeHtml(booking.date) + '"></label>' +
     '<label>開始 <input id="reschedule-start" type="time" step="900" value="' + escapeHtml(start) + '"></label>' +
     '<label>終了 <input id="reschedule-end" type="time" step="900" value="' + escapeHtml(end) + '"></label>' +
     '<label>変更理由（任意）<textarea id="reschedule-reason" maxlength="500" rows="2"></textarea></label>' +
     '<label>料金・精算案内（メールへ記載）<textarea id="reschedule-fee-note" maxlength="500" rows="2">料金差額がある場合は運営から別途ご案内します。</textarea></label>' +
-    '<label><input id="reschedule-fee-checked" type="checkbox">料金・差額を確認しました（必要な精算は別途対応）</label>' +
     '<button type="button" id="reschedule-preview">空き状況を確認</button>' +
     '<div id="reschedule-result" role="status" aria-live="polite"></div>' +
+    '<div id="reschedule-fee-detail"></div>' +
     '<div id="reschedule-history"></div>';
   modalBody.insertAdjacentElement('afterend', section);
   var previewButton = section.querySelector('#reschedule-preview');
@@ -438,6 +570,7 @@ function renderRescheduleSection_(booking) {
     field.addEventListener('input', function () {
       var result = section.querySelector('#reschedule-result');
       result.textContent = '入力内容が変わりました。再度空き状況を確認してください。';
+      section.querySelector('#reschedule-fee-detail').innerHTML = '';
       var commit = section.querySelector('#reschedule-commit');
       if (commit) commit.remove();
     });
@@ -484,12 +617,76 @@ function rescheduleInput_(section) {
   };
 }
 
+/* refundStatus別の表示文言（Issue #344追記）。PENDING_POLICY_DECISIONのみ、
+   管理者の明示的な入力（承認額・理由）が無いと確定できない。 */
+function feeStatusSummaryText_(preview) {
+  if (!preview.feeReady) {
+    return preview.feeStatusMessage || '料金を自動算出できません。';
+  }
+  var lines = [
+    '元料金: ' + preview.oldFeeAmount + '円 → 新料金: ' + preview.newFeeAmount + '円（差額: ' + preview.feeDifference + '円）',
+    '区分: ' + (preview.dayType === 'weekend_holiday' ? '土日祝' : '平日') + '／' + preview.roundedMinutes + '分'
+  ];
+  if (preview.refundStatus === 'NONE') lines.push('料金差額はありません。');
+  else if (preview.refundStatus === 'ADDITIONAL_CHARGE_REQUIRED') lines.push('追加請求が必要です（自動決済はしません）。');
+  else if (preview.refundStatus === 'CANDIDATE') lines.push('返金候補（キャンセル料なし・前日までの初回変更）: ' + preview.refundCandidateAmount + '円');
+  else if (preview.refundStatus === 'PENDING_POLICY_DECISION') lines.push('要判断: ' + preview.refundPendingReason);
+  return lines.join('\n');
+}
+
+/* Issue #344追記: 自動算出できない／規約上未確定な場合に必要な追加入力欄を組み立てる。
+   いずれも「管理者が金額と理由を明示しない限り確定できない」という方針を画面側にも反映する。 */
+function renderFeeDetail_(section, preview) {
+  var area = section.querySelector('#reschedule-fee-detail');
+  var html = '<div class="reschedule-fee-summary">' + escapeHtml(feeStatusSummaryText_(preview)).replace(/\n/g, '<br>') + '</div>';
+  if (!preview.feeReady && preview.requiresManualNewFee) {
+    html += '<label>新料金を手動入力（円） <input id="reschedule-manual-fee-amount" type="number" min="0" step="1"></label>' +
+      '<label>入力理由（必須）<textarea id="reschedule-manual-fee-note" maxlength="500" rows="2"></textarea></label>';
+  }
+  if (preview.feeReady && preview.requiresManualRefundDecision) {
+    html += '<label>承認する返金額（0〜' + preview.unrefundedPaidAmount + '円） <input id="reschedule-refund-amount" type="number" min="0" max="' +
+      preview.unrefundedPaidAmount + '" step="1" value="0"></label>' +
+      '<label>判断理由（必須）<textarea id="reschedule-refund-note" maxlength="500" rows="2"></textarea></label>';
+  }
+  area.innerHTML = html;
+}
+
+/* previewの内容から、adminRescheduleBookingへ渡すfeeConfirmationを組み立てる。
+   入力不足はnullを返し、呼び出し側でユーザーに知らせる（サーバー側でも同じ検証を行うため
+   二重の安全策）。 */
+function buildFeeConfirmation_(section, preview) {
+  var confirmation = {};
+  if (preview.feeReady) {
+    confirmation.expectedFeeMasterVersion = preview.feeMasterVersion;
+    if (preview.requiresManualRefundDecision) {
+      var amountField = section.querySelector('#reschedule-refund-amount');
+      var noteField = section.querySelector('#reschedule-refund-note');
+      var amount = Number(amountField.value);
+      var note = noteField.value.trim();
+      if (!note || !(amount >= 0) || amount > preview.unrefundedPaidAmount) return null;
+      confirmation.manualRefundDecision = { approvedAmount: amount, note: note };
+    }
+  } else if (preview.requiresManualNewFee) {
+    var feeField = section.querySelector('#reschedule-manual-fee-amount');
+    var feeNoteField = section.querySelector('#reschedule-manual-fee-note');
+    var feeAmount = Number(feeField.value);
+    var feeReason = feeNoteField.value.trim();
+    if (!feeReason || !(feeAmount >= 0)) return null;
+    confirmation.manualNewFeeAmount = feeAmount;
+    confirmation.manualNewFeeNote = feeReason;
+  } else {
+    return null; // BASELINE_REQUIRED等、画面からは解決できない状態
+  }
+  return confirmation;
+}
+
 function previewReschedule_(booking, section) {
   var input = rescheduleInput_(section);
   var resultArea = section.querySelector('#reschedule-result');
   var button = section.querySelector('#reschedule-preview');
   button.disabled = true;
   resultArea.textContent = '空き状況を確認中…';
+  section.querySelector('#reschedule-fee-detail').innerHTML = '';
   google.script.run
     .withSuccessHandler(function (preview) {
       button.disabled = false;
@@ -500,7 +697,8 @@ function previewReschedule_(booking, section) {
       }
       resultArea.textContent = '変更前: ' + preview.oldDate + ' ' + preview.oldStartTime + '〜' + preview.oldEndTime +
         ' ／ 変更後: ' + preview.newDate + ' ' + preview.newStartTime + '〜' + preview.newEndTime +
-        '（' + preview.durationMinutes + '分）\n' + preview.feeNotice;
+        '（' + preview.durationMinutes + '分）';
+      renderFeeDetail_(section, preview);
       var apply = document.createElement('button');
       apply.type = 'button';
       apply.id = 'reschedule-commit';
@@ -512,20 +710,24 @@ function previewReschedule_(booking, section) {
           resultArea.textContent = '入力内容が変わりました。再度確認してください。';
           return;
         }
-        if (!section.querySelector('#reschedule-fee-checked').checked) {
-          alert('料金・差額を確認したうえでチェックしてください。');
-          return;
-        }
         var feeNote = section.querySelector('#reschedule-fee-note').value.trim();
         if (!feeNote) {
           alert('料金・精算案内を入力してください。');
+          return;
+        }
+        var feeConfirmation = buildFeeConfirmation_(section, preview);
+        if (feeConfirmation === null) {
+          alert(preview.feeReady
+            ? '返金額と判断理由を入力してください。'
+            : (preview.requiresManualNewFee ? '新料金と入力理由を入力してください。' : '先に基準料金を設定してください。'));
           return;
         }
         if (!window.confirm(
           '予約ID: ' + booking.bookingId + '\n' +
           '変更前: ' + preview.oldDate + ' ' + preview.oldStartTime + '〜' + preview.oldEndTime + '\n' +
           '変更後: ' + preview.newDate + ' ' + preview.newStartTime + '〜' + preview.newEndTime + '\n' +
-          '料金・精算: ' + feeNote + '\n\n変更を確定し、利用者へメールを送りますか？'
+          feeStatusSummaryText_(preview) + '\n' +
+          '料金・精算案内: ' + feeNote + '\n\n変更を確定し、利用者へメールを送りますか？'
         )) return;
         apply.disabled = true;
         button.disabled = true;
@@ -547,7 +749,7 @@ function previewReschedule_(booking, section) {
               (error && error.message ? error.message : '');
           })
           .adminRescheduleBooking(booking.bookingId, input, preview.expectedVersion,
-            section.querySelector('#reschedule-reason').value, feeNote);
+            section.querySelector('#reschedule-reason').value, feeNote, feeConfirmation);
       });
     })
     .withFailureHandler(function (error) {

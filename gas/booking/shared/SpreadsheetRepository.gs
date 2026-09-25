@@ -120,7 +120,45 @@ var SpreadsheetRepository = (function () {
     'paymentLinkLastErrorAt',
     'paymentLinkLastErrorMessage',
     'paymentLinkSendUnconfirmedAt',
-    'paymentLinkMetadataInconsistentAt'
+    'paymentLinkMetadataInconsistentAt',
+    /*
+     * ここから先はIssue #344追記（管理者による日程変更時の料金差額自動計算。Phase 1）で
+     * 追加した列。customerType/mail列追加時と同じく末尾追記の方針を踏襲する（本番反映時は
+     * 既存Bookingsシートのヘッダー行へ手動で追記が必要）。
+     * - priceCategory / priceCategoryBasis: 会員資格はcustomerTypeとは別軸のため、
+     *   customerTypeや閲覧ページから推測せず、管理者が明示的に確定した値のみを保存する
+     *   （''|'general'|'member'。未設定は''）。priceCategoryBasisはその根拠（自由記述）。
+     * - confirmedFeeAmount: 現在の確定金額（円）。既存予約は未設定（''）のままで、
+     *   BookingReschedule初回変更時に管理者が照合して入力する（Phase 1「初回変更時に
+     *   元の確定料金…を管理者が照合して入力する」）。以後は変更確定のたびに新料金へ
+     *   更新する（BookingChanges側に旧料金は履歴として残るため、ここは「現在値」のみ）。
+     * - feePaidAmount / feeRefundedAmount: 実際に入金済み・返金済みの累計額（円）。
+     *   自動請求・自動返金は行わないため、これらは常に管理者の手入力・確認による更新のみ
+     *   （Stripe・PayPay・現金の入出金を確認した後にBookingReschedule.recordFeeSettlement
+     *   経由で更新する）。
+     * - feeMasterVersion: confirmedFeeAmountの算出に使ったFeeMasterのversion。
+     * - feeInitializedAt: 上記の料金基準（confirmedFeeAmount等）を最初に確定した日時。
+     *   空の間は「未確認」を意味し、日程変更確定（料金差額の計算を伴う）はブロックされる。
+     * - feeBreakdownJson: 直近の料金算出の内訳（brand/priceCategory/dayType/roundedMinutes/
+     *   基礎金額等）をJSON文字列で保持する監査用スナップショット。
+     * - scheduleChangeCount: この予約でこれまでに確定した日程変更の回数。「前日まで1回無料、
+     *   2回目以降はキャンセル扱い」の判定に使う（FeeCalculator.assessScheduleChangeFee）。
+     * - feeSettlementState: ''|'SETTLED'|'PENDING_CHARGE'|'PENDING_REFUND'|'PENDING_DECISION'。
+     *   料金の確定と資金移動を分離するための精算状態（Phase 2「料金の確定と資金移動を分離」）。
+     * - feeSettlementNote / feeSettlementUpdatedAt: 精算状態の備考・最終更新日時。
+     */
+    'priceCategory',
+    'priceCategoryBasis',
+    'confirmedFeeAmount',
+    'feePaidAmount',
+    'feeRefundedAmount',
+    'feeMasterVersion',
+    'feeInitializedAt',
+    'feeBreakdownJson',
+    'scheduleChangeCount',
+    'feeSettlementState',
+    'feeSettlementNote',
+    'feeSettlementUpdatedAt'
   ];
 
   function getSpreadsheet_() {

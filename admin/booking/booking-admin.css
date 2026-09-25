@@ -610,7 +610,7 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 .reschedule-section h3 { margin: 0 0 8px; font-size: 16px; }
 .reschedule-section p { color: var(--color-text-sub); font-size: 13px; line-height: 1.6; }
 .reschedule-section label { display: block; margin: 10px 0; font-size: 13px; }
-.reschedule-section input, .reschedule-section textarea {
+.reschedule-section input, .reschedule-section textarea, .reschedule-section select {
   display: block; width: 100%; min-height: 40px; margin-top: 4px;
   padding: 8px; border: 1px solid var(--color-border); border-radius: 8px;
   background: #fff; color: var(--color-text); font: inherit;
@@ -625,3 +625,7 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 .reschedule-history-item { border-top: 1px solid var(--color-border); padding: 8px 0; }
 
 .reschedule-section input[type="checkbox"] { display: inline-block; width: auto; min-height: 0; margin: 0 6px 0 0; }
+
+/* Issue #344追記: 料金差額の自動計算まわり（基準料金・料金プレビュー・精算記録）。
+   .reschedule-sectionの見た目をそのまま流用する。 */
+.reschedule-fee-summary { white-space: pre-line; line-height: 1.6; font-size: 13px; margin-top: 8px; }
