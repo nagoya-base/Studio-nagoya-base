@@ -623,3 +623,5 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 #reschedule-result { white-space: pre-line; line-height: 1.6; margin-top: 10px; font-size: 13px; }
 #reschedule-history { margin-top: 14px; font-size: 12px; }
 .reschedule-history-item { border-top: 1px solid var(--color-border); padding: 8px 0; }
+
+.reschedule-section input[type="checkbox"] { display: inline-block; width: auto; min-height: 0; margin: 0 6px 0 0; }
