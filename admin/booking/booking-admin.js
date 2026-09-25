@@ -409,6 +409,8 @@ function showDetailModal(booking) {
 /* Issue #344: 変更のプレビュー・確定をサーバー側の同じ検証へ通す。
    料金は現行Bookingsに金額が無いため手動確認。 */
 function renderRescheduleSection_(booking) {
+  var modalBody = document.getElementById('modal-body');
+  if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
   var existing = document.getElementById('reschedule-section');
   if (existing) existing.remove();
   if (booking.status !== 'CONFIRMED') return;
@@ -428,7 +430,7 @@ function renderRescheduleSection_(booking) {
     '<button type="button" id="reschedule-preview">空き状況を確認</button>' +
     '<div id="reschedule-result" role="status" aria-live="polite"></div>' +
     '<div id="reschedule-history"></div>';
-  document.getElementById('modal-body').insertAdjacentElement('afterend', section);
+  modalBody.insertAdjacentElement('afterend', section);
   var previewButton = section.querySelector('#reschedule-preview');
   previewButton.addEventListener('click', function () { previewReschedule_(booking, section); });
   section.querySelectorAll('input, textarea').forEach(function (field) {
