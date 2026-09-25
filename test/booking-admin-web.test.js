@@ -923,3 +923,143 @@ test('adminResolvePaymentLinkMetadataInconsistency: confirmedUrl・confirmedSent
   assert.strictEqual(afterInvalidAttempts.paymentLinkSendCount, 0, '拒否された場合は送信回数を書き換えない');
   assert.ok(afterInvalidAttempts.paymentLinkMetadataInconsistentAt, '拒否された場合は不整合フラグもクリアしない');
 });
+
+/*
+ * 不具合修正の回帰テスト: 送信直後にBooking Adminで「送信できませんでした: null」と
+ * 表示される問題（メールは送信され、送信回数・最終送信エラーも正しく記録されているのに、
+ * 画面には失敗したかのように表示される）。
+ *
+ * 原因: BookingMailer.sendPaymentLinkMailForBookingの成功時戻り値に含まれる
+ * sentAt（Dateオブジェクト）を、adminSendCardPaymentLinkがgoogle.script.run経由で
+ * そのままHTML側へ返していた。google.script.runの戻り値にDateオブジェクト（や、
+ * intendedSendCount: undefinedのような明示的なundefinedプロパティ）が含まれると、
+ * 実行環境によってはHTML側のwithSuccessHandlerがnullを受け取ることがある
+ * （admin/booking/booking-admin.jsのdescribePaymentLinkSendResult_のコメント参照）。
+ *
+ * ここではGAS側の戻り値自体を検証する。sendPaymentLinkMailForBooking自体
+ * （test/booking-mailer.test.js）はDateオブジェクトを返す契約のまま変更していないため、
+ * adminSendCardPaymentLink（BookingAdminWeb.gs sanitizeForClient_）の層でDateオブジェクトが
+ * 確実に取り除かれていることを確認する。
+ */
+test('adminSendCardPaymentLink: 送信成功時の戻り値にDateオブジェクトが含まれない（sentAtはISO 8601文字列になっている）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード', email: 'payer@example.com' });
+
+  var result = ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+
+  assert.strictEqual(typeof result.sentAt, 'string', 'sentAtはDateオブジェクトのまま返してはいけない');
+  assert.match(result.sentAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/, 'sentAtはISO 8601文字列であるべき');
+  assert.ok(!isNaN(new Date(result.sentAt).getTime()), 'sentAtは有効な日時文字列であるべき');
+
+  /*
+   * JSON.stringify/parseを介しても内容が失われない（=google.script.runが安全に受け渡せる
+   * 形式である）ことの簡易確認。resultはvmサンドボックス（別realm）が構築したオブジェクトの
+   * ため、JSON.parseがこのテストファイル側（main realm）で作る素のオブジェクトと
+   * assert.deepStrictEqualで直接比較すると、構造が同じでも[[Prototype]]の不一致で
+   * 失敗する（test/helpers/gas-sandbox.jsのrealm分離による既知の注意点。このファイルの
+   * getAdminBookingsのテストにある同種のコメント参照）。キー集合とJSON文字列表現の
+   * 一致で確認する。
+   */
+  var serialized = JSON.stringify(result);
+  assert.deepStrictEqual(Object.keys(JSON.parse(serialized)).sort(), Object.keys(result).sort(), 'JSON経由でキーが失われないべき');
+  assert.strictEqual(JSON.stringify(JSON.parse(serialized)), serialized, 'JSON往復で内容が変化しないべき');
+});
+
+/*
+ * intendedSendCountは、2回目の履歴保存（URL/送信先/送信回数）が失敗した場合のみ意図した
+ * 送信回数として設定され、それ以外（このテストのような通常の全項目成功時）は
+ * `metadataWriteFailed ? nextSendCount : undefined`によりundefinedになる
+ * （BookingMailer.gsのsendPaymentLinkMailForBookingコメント参照）。この通常成功時の
+ * 明示的なundefinedプロパティが、sanitizeForClient_によってキーごと省略されることを確認する。
+ */
+test('adminSendCardPaymentLink: 送信成功時（全項目の記録に成功）の戻り値にundefinedのプロパティが残らない（intendedSendCount等）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+  var url = 'https://buy.stripe.com/test_ABC123';
+
+  var result = ctx.sandbox.adminSendCardPaymentLink(bookingId, url);
+
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(result.metadataInconsistent, false, '前提: このテストでは履歴保存はすべて成功しているべき');
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(result, 'intendedSendCount'), false,
+    'intendedSendCount: undefinedのようなプロパティはキーごと省略されるべき（google.script.runの戻り値全体がnullになる既知の問題を防ぐため）'
+  );
+  Object.keys(result).forEach(function (key) {
+    assert.notStrictEqual(result[key], undefined, 'キー"' + key + '"の値がundefinedのまま残っている');
+  });
+});
+
+test('adminSendCardPaymentLink: 送信失敗（履行未確認）時の戻り値にもDateオブジェクト・undefinedが残らない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+  var url = 'https://buy.stripe.com/test_ABC123';
+
+  var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    var keys = Object.keys(fields);
+    if (keys.length === 1 && keys[0] === 'paymentLinkSentAt') {
+      throw new Error('simulated Sheets outage while recording paymentLinkSentAt');
+    }
+    return original(id, fields);
+  };
+  var result = ctx.sandbox.adminSendCardPaymentLink(bookingId, url);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = original;
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.requiresManualConfirmation, true);
+  /* realm分離下でのdeepStrictEqualの注意点は前のテストのコメント参照。ここでもキー集合と
+     JSON文字列表現の一致で「JSON往復しても内容が変化しない」ことを確認する。 */
+  var serialized = JSON.stringify(result);
+  assert.deepStrictEqual(Object.keys(JSON.parse(serialized)).sort(), Object.keys(result).sort(), 'JSON経由でキーが失われないべき');
+  assert.strictEqual(JSON.stringify(JSON.parse(serialized)), serialized, '履行未確認の戻り値もJSON往復で内容が変化しないべき');
+});
+
+/*
+ * sanitizeForClient_（不具合修正: google.script.runでHTML側へ返す直前の最終防波堤）の
+ * 単体テスト。
+ */
+test('sanitizeForClient_: DateオブジェクトのみをtoISOString()した文字列へ変換し、他の値はそのまま返す', function () {
+  var ctx = setup();
+  var date = new Date('2026-01-02T03:04:05.678Z');
+  var input = {
+    success: true,
+    sentAt: date,
+    sendCount: 2,
+    sentTo: 'payer@example.com',
+    metadataInconsistent: false,
+    intendedSendCount: undefined,
+    nested: { deeper: date, keepMe: 'x', dropMe: undefined },
+    list: [date, undefined, 'y']
+  };
+
+  var output = ctx.sandbox.sanitizeForClient_(input);
+
+  assert.strictEqual(output.sentAt, date.toISOString());
+  assert.strictEqual(output.sendCount, 2);
+  assert.strictEqual(output.sentTo, 'payer@example.com');
+  assert.strictEqual(output.metadataInconsistent, false);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(output, 'intendedSendCount'), false);
+  assert.strictEqual(output.nested.deeper, date.toISOString());
+  assert.strictEqual(output.nested.keepMe, 'x');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(output.nested, 'dropMe'), false);
+  assert.deepStrictEqual(output.list, [date.toISOString(), null, 'y'], '配列内のundefinedはnullへ置き換え、添字はずらさない');
+});
+
+test('sanitizeForClient_: null/プリミティブ/空オブジェクトはそのまま扱う', function () {
+  var ctx = setup();
+  assert.strictEqual(ctx.sandbox.sanitizeForClient_(null), null);
+  assert.strictEqual(ctx.sandbox.sanitizeForClient_(undefined), undefined);
+  assert.strictEqual(ctx.sandbox.sanitizeForClient_('x'), 'x');
+  assert.strictEqual(ctx.sandbox.sanitizeForClient_(0), 0);
+  assert.strictEqual(ctx.sandbox.sanitizeForClient_(false), false);
+  /* sanitizeForClient_が返す{}はvmサンドボックス（別realm）内で構築されるオブジェクトの
+     ため、このテストファイル側（main realm）の{}リテラルとassert.deepStrictEqualで直接
+     比較すると[[Prototype]]の不一致で失敗する（このファイル冒頭近くの同種のコメント参照）。
+     キーが1つも無いことで代わりに確認する。 */
+  assert.deepStrictEqual(Object.keys(ctx.sandbox.sanitizeForClient_({})), []);
+});

@@ -53,6 +53,56 @@ function isAdminWebDateLike_(value) {
   return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
 }
 
+/*
+ * google.script.runでHTML側へ返す直前の最終防波堤（不具合修正: Stripe決済リンク送信）。
+ *
+ * getAdminBookings/getAdminBookingDetailはフィールドごとに手動でformatAdminDateTime_等を
+ * 呼び、Date値を文字列へ正規化したうえで個別に組み立てたオブジェクトを返している
+ * （このファイル冒頭のコメント「日時の扱いについて」参照）。一方adminSendCardPaymentLink等は
+ * BookingMailer.gs（共有ロジック）の戻り値をそのままHTML側へ委譲する設計であり
+ * （「独自ロジックを持たない」という既存の設計方針。このファイルの他のadmin*関数と同じ）、
+ * BookingMailer.sendPaymentLinkMailForBookingの成功時の戻り値にはsentAt（Dateオブジェクト）が
+ * 含まれる。sendPaymentLinkMailForBooking自体はtest/booking-mailer.test.jsやスクリプト
+ * エディタからの直接呼び出しでもDateオブジェクトのまま扱われる前提のAPIであるため、
+ * BookingMailer.gs側の戻り値の型は変更せず、HTML側へ返す直前のこの層でのみ変換する。
+ *
+ * - Dateオブジェクト（isAdminWebDateLike_）→ ISO 8601文字列（toISOString()）。
+ *   Booking Admin画面はこの値を人が読む表示には使わず（表示用は既存のformatAdminDateTime_
+ *   済み文字列のみ）、成功アラートの文言にも含めないため、タイムゾーン変換は不要。
+ * - 値がundefinedのプロパティ → キーごと省略する。sendPaymentLinkMailForBookingは
+ *   `intendedSendCount: metadataWriteFailed ? nextSendCount : undefined`のように成功時
+ *   オブジェクトへ明示的にundefinedを持つプロパティを含めることがある。JSON.stringifyは
+ *   これをキーごと省略するが、google.script.runの内部シリアライズはJSON.stringifyと
+ *   同一の実装ではなく、オブジェクト中に明示的なundefinedプロパティが残っていると
+ *   戻り値全体のシリアライズに失敗し、HTML側のwithSuccessHandlerへ結果の代わりにnullが
+ *   渡ることがある（送信自体・履歴の記録は成功しているのに、画面には
+ *   「送信できませんでした: null」とだけ表示される不具合の原因）。この関数はArray同様、
+ *   undefinedを含む値を必ず取り除いてから返す。
+ * - Array → 要素ごとに再帰する（要素がundefinedになった場合はnullへ置き換え、配列の
+ *   添字がずれないようにする。JSON.stringifyの配列に対する挙動と揃える）。
+ * - プレーンオブジェクト → キーごとに再帰し、変換結果がundefinedのキーは省略する。
+ * - 上記以外（string/number/boolean/null）はそのまま返す。
+ */
+function sanitizeForClient_(value) {
+  if (value === undefined || value === null) return value;
+  if (isAdminWebDateLike_(value)) return value.toISOString();
+  if (Array.isArray(value)) {
+    return value.map(function (item) {
+      var sanitized = sanitizeForClient_(item);
+      return sanitized === undefined ? null : sanitized;
+    });
+  }
+  if (typeof value === 'object') {
+    var result = {};
+    Object.keys(value).forEach(function (key) {
+      var sanitized = sanitizeForClient_(value[key]);
+      if (sanitized !== undefined) result[key] = sanitized;
+    });
+    return result;
+  }
+  return value;
+}
+
 /* Date値のみ'HH:mm'へ変換する。Date以外（''や既存の文字列）はそのまま返す。 */
 function formatAdminTime_(value, timezone) {
   if (!isAdminWebDateLike_(value)) return value === undefined || value === null ? '' : value;
@@ -273,13 +323,19 @@ function adminReviveExpiredBooking(bookingId) {
  * paymentLinkSentAtVersion（epoch ms）をそのまま渡す。expectedSendCountとは独立に
  * 判定し、送信履歴2回目の書き込みだけが失敗してpaymentLinkSendCountが変化しない
  * ケースでも競合を検知できるようにする（checkSendHistoryVersion_参照）。
+ *
+ * 不具合修正（送信直後に「送信できませんでした: null」と表示される問題）: 業務ロジック
+ * 自体はsendCardPaymentLinkMail（ひいてはBookingMailer.sendPaymentLinkMailForBooking）
+ * へ委譲したまま変更しないが、その戻り値（成功時はsentAt。Dateオブジェクト）を
+ * google.script.run経由でHTML側へ返す直前にsanitizeForClient_へ通し、Dateオブジェクトを
+ * ISO 8601文字列へ変換する（詳細はsanitizeForClient_のコメント参照）。
  */
 function adminSendCardPaymentLink(bookingId, paymentLinkUrl, force, expectedSendCount, expectedSentAtVersion) {
-  return sendCardPaymentLinkMail(bookingId, paymentLinkUrl, {
+  return sanitizeForClient_(sendCardPaymentLinkMail(bookingId, paymentLinkUrl, {
     force: !!force,
     expectedSendCount: expectedSendCount,
     expectedSentAtVersion: expectedSentAtVersion
-  });
+  }));
 }
 
 /*
@@ -288,7 +344,12 @@ function adminSendCardPaymentLink(bookingId, paymentLinkUrl, force, expectedSend
  * （BookingAdmin.gs）へそのまま委譲する。業務ロジック（対象の限定・補正値の検証・
  * Recovery記録）はコピーしない。実行前の内容確認（現在の送信回数・URL・送信先の表示、
  * 補正後の値の表示）はHTML側（クライアント）で行う。
+ *
+ * 不具合修正: adminSendCardPaymentLinkと同じ理由で、戻り値をsanitizeForClient_へ通してから
+ * 返す（この関数の戻り値には現時点でDateオブジェクトは含まれないが、委譲先の
+ * resolvePaymentLinkMetadataInconsistency（BookingMailer.gs）の戻り値をそのまま返す設計は
+ * adminSendCardPaymentLinkと同じであるため、将来の変更で同種の問題が再発しないよう揃える）。
  */
 function adminResolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo) {
-  return resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo);
+  return sanitizeForClient_(resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo));
 }

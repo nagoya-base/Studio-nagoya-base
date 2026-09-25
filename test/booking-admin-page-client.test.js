@@ -1906,3 +1906,143 @@ test('runSendPaymentLink_: 成功応答が返るとsendInFlightを解除し、�
   sandbox.google.script.run.resolveCall(0, { success: true, sendCount: 1 });
   assert.strictEqual(sandbox.paymentLinkUi_.sendInFlight, false);
 });
+
+/*
+ * 不具合修正の回帰テスト: 送信直後にBooking Adminで「送信できませんでした: null」と
+ * 表示される問題（メールは送信され、送信回数・最終送信エラーも正しく記録されているのに、
+ * 画面には失敗したかのように表示される）。
+ *
+ * GAS側（BookingAdminWeb.gs sanitizeForClient_）でDate/undefinedは取り除いたが、
+ * 万一withSuccessHandlerにresultとしてnull・想定外の形が渡っても、describePaymentLinkSendResult_
+ * （旧・runSendPaymentLink_のwithSuccessHandler内のif/elseチェーン）が「送信できませんでした」と
+ * 断定しないこと、確認できるまでは再送を促さないことを確認する。
+ *
+ * 第2回PRレビュー対応: この不明なケースでは「再送してください」のような、確認前の再送を
+ * 促す文言を含めてはいけない（送信済みかどうか自体が確認できていない状態で再送を促すと、
+ * 既に送信済みのメールを誤って再送してしまう引き金になりかねないため）。送信回数・
+ * 最終送信日時・実際に届いたメールを確認するよう案内するにとどめる。
+ */
+test('describePaymentLinkSendResult_: resultがnullの場合は「送信できませんでした」と断定せず、確認前の再送を促さない', function () {
+  var sandbox = loadClientSandbox();
+  var message = sandbox.describePaymentLinkSendResult_(null);
+
+  assert.doesNotMatch(message, /^送信できませんでした/);
+  assert.doesNotMatch(message, /再送してください/, '送信済みかどうか確認できていない段階で再送を促してはいけない');
+  assert.match(message, /送信回数/);
+  assert.match(message, /確認/);
+});
+
+test('describePaymentLinkSendResult_: resultがundefinedの場合も同様に断定せず、確認前の再送を促さない', function () {
+  var sandbox = loadClientSandbox();
+  var message = sandbox.describePaymentLinkSendResult_(undefined);
+
+  assert.doesNotMatch(message, /^送信できませんでした/);
+  assert.doesNotMatch(message, /再送してください/);
+});
+
+test('describePaymentLinkSendResult_: 既知のいずれのフィールドも持たない想定外の形の場合も断定せず、確認前の再送を促さない', function () {
+  var sandbox = loadClientSandbox();
+  var message = sandbox.describePaymentLinkSendResult_({ unexpectedField: 'foo' });
+
+  assert.doesNotMatch(message, /^送信できませんでした/);
+  assert.doesNotMatch(message, /再送してください/);
+});
+
+test('describePaymentLinkSendResult_: success:trueの場合は送信回数を含めて「送信しました」を返す', function () {
+  var sandbox = loadClientSandbox();
+  assert.match(sandbox.describePaymentLinkSendResult_({ success: true, sendCount: 3 }), /^送信しました（送信回数: 3）$/);
+});
+
+/*
+ * 第2回PRレビュー対応の回帰テスト: success:true, skipped:true, reason:'ALREADY_SENT'
+ * （通常送信が「既に送信済みのため何もしない」で正常終了したケース。BookingMailer.gsの
+ * evaluatePaymentLinkEligibility_のALREADY_SENT判定。sendCountを含まない）が、
+ * success:trueにのみ反応する通常成功ブランチより先に判定されることを確認する。
+ * 先に判定しないと「送信しました（送信回数: undefined）」のように、今回は送信して
+ * いないのに送信したかのような表示になり、かつsendCountがundefinedのまま表示されてしまう。
+ */
+test('describePaymentLinkSendResult_: success:true, skipped:true, reason:ALREADY_SENTの場合は「送信していない」ことを案内し、送信回数:undefinedを表示しない', function () {
+  var sandbox = loadClientSandbox();
+  var message = sandbox.describePaymentLinkSendResult_({
+    success: true,
+    skipped: true,
+    reason: 'ALREADY_SENT',
+    bookingId: 'SX-20261124-00000001',
+    mailType: 'PAYMENT_LINK'
+  });
+
+  assert.doesNotMatch(message, /undefined/, 'sendCountを含まないALREADY_SENT応答からundefinedを表示してはいけない');
+  assert.match(message, /送信していません|送信しませんでした/, '今回は新たなメールを送信していないことを案内するべき');
+});
+
+test('describePaymentLinkSendResult_: success:falseかつ既知のerror.codeに一致しないがerror.messageがある場合は「送信できませんでした」と明示する（実際にメールが送信されていない失敗のみ断定してよい）', function () {
+  var sandbox = loadClientSandbox();
+  var message = sandbox.describePaymentLinkSendResult_({
+    success: false,
+    error: { code: 'MAIL_SEND_FAILED', message: '送信エラーです。' }
+  });
+
+  assert.match(message, /^送信できませんでした: 送信エラーです。$/);
+});
+
+test('runSendPaymentLink_: withSuccessHandlerにnullが渡っても「送信できませんでした」と断定せず、確認前の再送を促さず、自動でも再送しない。予約詳細・一覧は再取得する', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  var booking = paymentLinkDetailBooking();
+  sandbox.showDetailModal(booking);
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+  sandbox.google.script.run.resolveCall(0, null);
+
+  assert.strictEqual(alerts.length, 1);
+  assert.doesNotMatch(alerts[0], /^送信できませんでした/, '戻り値がnullというだけで「送信できませんでした」と断定してはいけない（メールは既に送信済みの可能性があるため）');
+  /* 第2回PRレビュー対応: 送信済みかどうか確認できていない段階で「再送してください」と
+     案内してはいけない（既に送信済みのメールを誤って再送してしまう引き金になりかねない）。
+     送信回数・最終送信日時・実際に届いたメールを確認するよう案内するにとどめる。 */
+  assert.doesNotMatch(alerts[0], /再送してください/);
+  assert.match(alerts[0], /送信回数/);
+
+  var sendCalls = sandbox.google.script.run.calls.filter(function (c) { return c.name === 'adminSendCardPaymentLink'; });
+  assert.strictEqual(sendCalls.length, 1, '戻り値がnullであっても、自動で再送してはいけない（送信済みメールの二重送信防止）');
+
+  var callNames = sandbox.google.script.run.calls.map(function (c) { return c.name; });
+  assert.ok(callNames.indexOf('getAdminBookingDetail') !== -1, '予約詳細の再取得を促すため、詳細を再取得するべき');
+  assert.ok(callNames.indexOf('getAdminBookings') !== -1, '一覧も再取得するべき');
+
+  assert.strictEqual(sandbox.paymentLinkUi_.sendInFlight, false, 'nullが返ってもsendInFlightは解除し、再操作できる状態へ戻すべき');
+});
+
+/*
+ * 第2回PRレビュー対応の回帰テスト（結線確認）: adminSendCardPaymentLinkが
+ * success:true, skipped:true, reason:'ALREADY_SENT'（sendCountを含まない）を返した場合、
+ * runSendPaymentLink_のアラートに「undefined」を表示せず、今回は送信していないことを
+ * 案内すること、かつ自動で再送しないことを確認する。
+ */
+test('runSendPaymentLink_: ALREADY_SENTの応答では送信回数:undefinedを表示せず、送信していないことを案内する', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  var booking = paymentLinkDetailBooking({ paymentLinkSentAt: '2026-10-01 10:00' });
+  sandbox.showDetailModal(booking);
+  sandbox.paymentLinkUi_.urlInput.value = 'https://buy.stripe.com/test_ABC123';
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPaymentLink_();
+  sandbox.google.script.run.resolveCall(0, {
+    success: true,
+    skipped: true,
+    reason: 'ALREADY_SENT',
+    bookingId: booking.bookingId,
+    mailType: 'PAYMENT_LINK'
+  });
+
+  assert.strictEqual(alerts.length, 1);
+  assert.doesNotMatch(alerts[0], /undefined/);
+  assert.match(alerts[0], /送信していません|送信しませんでした/);
+
+  var sendCalls = sandbox.google.script.run.calls.filter(function (c) { return c.name === 'adminSendCardPaymentLink'; });
+  assert.strictEqual(sendCalls.length, 1, 'ALREADY_SENT応答を受けて自動で再送してはいけない');
+});

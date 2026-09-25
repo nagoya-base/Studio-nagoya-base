@@ -643,6 +643,87 @@ function renderPaymentLinkSection_(booking) {
 }
 
 /*
+ * adminSendCardPaymentLinkの応答（google.script.run経由）から、管理者へ表示するアラート
+ * 文言を組み立てる純粋関数（不具合修正: 送信直後に「送信できませんでした: null」と
+ * 表示される問題）。
+ *
+ * GAS側（BookingAdminWeb.gs sanitizeForClient_）でDateオブジェクト・明示的なundefined
+ * プロパティは既に取り除いているはずだが、それでもresultがnull/undefined、または
+ * success/error/skipped/requiresManualConfirmationのいずれの既知フィールドも
+ * 持たない想定外の形で届く可能性を完全には排除できない（実行環境依存のシリアライズ
+ * 不具合・将来のサーバー側戻り値仕様変更の考慮漏れ等）。MailApp.sendEmailの送信自体は
+ * この関数に届く前（サーバー側）で完了しているため、「戻り値を正しく解釈できない」ことは
+ * 「送信していない」ことの証拠にはならない。このため、既知の失敗パターン
+ * （result.errorが存在する等）に一致しない場合は「送信できませんでした」と断定しない。
+ * 第2回PRレビュー対応: この不明なケースでは、確認前に安易な再送を促さない。送信済みか
+ * どうか自体が確認できていない状態でまで「再送してください」と案内すると、既に送信済みの
+ * メールを管理者が誤って再送してしまう引き金になりかねないため、予約詳細の送信回数・
+ * 最終送信日時と、実際に届いたメールを確認するよう案内するにとどめ、確認できるまでは
+ * 再送しないことを明示する（呼び出し元は常にrefreshOpenDetail_/loadBookingsで最新状態を
+ * 取得し直す）。この関数はアラート文言を返すだけで、再送を含むいかなるgoogle.script.run
+ * 呼び出しも行わない（自動再送はしない）。
+ */
+function describePaymentLinkSendResult_(result) {
+  if (result && result.success && result.skipped && result.reason === 'ALREADY_SENT') {
+    /*
+     * 第2回PRレビュー対応: 通常送信（forceなし）が「既に送信済みのため何もしない」で
+     * 正常終了したケース（BookingMailer.gsのevaluatePaymentLinkEligibility_の
+     * ALREADY_SENT判定。sendPaymentLinkMailForBookingは
+     * `{ success: true, skipped: true, reason: 'ALREADY_SENT', ... }`を返し、
+     * sendCountを含まない）。success:trueではあるが今回は新たなメールを送信していない
+     * ため、この判定を通常の送信成功ブランチ（sendCountを表示する）より先に行わないと、
+     * success:trueにだけ反応する下のブランチに先に一致してしまい
+     * 「送信しました（送信回数: undefined）」のように、今回送信していないのに送信した
+     * かのような表示になり、かつsendCountがundefinedのまま表示されてしまう。
+     */
+    return '既に送信済みのため、今回は新たにメールを送信していません。';
+  }
+  if (result && result.success && result.metadataInconsistent) {
+    /* 第2回PRレビュー対応: 送信自体・二重送信防止用の記録は成功しているが、
+       送信回数等の付随情報の記録に失敗している。メール自体は再送しない
+       （送信は既に完了している）。管理者にBookingsシートの確認を促す。 */
+    return '送信しました。ただし送信回数等の記録更新に失敗しました（送信回数の表示が実際より少ない可能性があります。Bookingsシートを確認してください）。';
+  }
+  if (result && result.success) {
+    return '送信しました（送信回数: ' + result.sendCount + '）';
+  }
+  if (result && result.requiresManualConfirmation) {
+    /* PRレビュー対応: メール自体は送信された可能性があるが、送信履歴の記録に失敗し
+       二重送信防止の状態が確定できていない。管理者に実際の到達確認を促す。 */
+    return '送信結果を確認できませんでした（メールは送信された可能性があります）: ' + (result.error && result.error.message);
+  }
+  if (result && result.error && result.error.code === 'SEND_HISTORY_CONFLICT') {
+    return '他の画面から既に操作された可能性があります。最新の状態を確認してください: ' + result.error.message;
+  }
+  if (result && result.error && result.error.code === 'METADATA_INCONSISTENT') {
+    /* 第3回PRレビュー対応: 送信履歴の記録不整合が解消されるまで送信できない。
+       「送信履歴を補正」操作を案内する。 */
+    return '送信履歴に記録不整合があるため送信できません。下の「送信履歴を補正」から、確認した正しい送信回数へ補正してください。';
+  }
+  if (result && result.skipped) {
+    return '送信条件を満たさないため送信しませんでした: ' + (result.error && result.error.message);
+  }
+  if (result && result.error && result.error.message) {
+    /* success:falseかつ既知のerror.codeブランチに一致しない場合（INVALID_PAYMENT_LINK_URL・
+       MAIL_NOT_READY・MAIL_SEND_FAILED等）。これらはいずれもMailApp.sendEmailを呼ぶ前、
+       またはメール本文の組み立てに失敗した時点のエラーであり、メールは送信されて
+       いないと断定してよい。 */
+    return '送信できませんでした: ' + result.error.message;
+  }
+  /*
+   * 不具合修正: resultがnull/undefined、または上記いずれのパターンにも一致しない想定外の
+   * 形の場合。メールは既に送信されている可能性があるため「送信できませんでした」とは
+   * 断定しない。
+   * 第2回PRレビュー対応: この時点では送信済みかどうか自体が確認できていないため、
+   * 「再送してください」とは案内しない（確認前に再送を促すと、既に送信済みのメールを
+   * 誤って再送してしまう引き金になりかねない）。送信回数・最終送信日時と、実際に届いた
+   * メールを確認すること、確認できるまでは再送しないことを案内するにとどめる。
+   * 自動での再送は行わない。
+   */
+  return '送信結果を確認できませんでした。予約詳細の送信回数・最終送信日時と、実際に届いたメールを確認してください。送信済みかどうか確認できるまでは再送しないでください。';
+}
+
+/*
  * 決済リンク送信ボタンの実処理。二重クリック・連打による重複送信は、クライアント側
  * （sendInFlightガード＋送信中はボタンをdisabled）とGAS側（LockService.getScriptLock()に
  * よる直列化＋paymentLinkSentAtの二重送信防止）の両方で防ぐ（Issue #334本文
@@ -704,28 +785,7 @@ function runSendPaymentLink_() {
     .withSuccessHandler(function (result) {
       paymentLinkUi_.sendInFlight = false;
       setStatusLine('');
-      if (result && result.success && result.metadataInconsistent) {
-        /* 第2回PRレビュー対応: 送信自体・二重送信防止用の記録は成功しているが、
-           送信回数等の付随情報の記録に失敗している。メール自体は再送しない
-           （送信は既に完了している）。管理者にBookingsシートの確認を促す。 */
-        alert('送信しました。ただし送信回数等の記録更新に失敗しました（送信回数の表示が実際より少ない可能性があります。Bookingsシートを確認してください）。');
-      } else if (result && result.success) {
-        alert('送信しました（送信回数: ' + result.sendCount + '）');
-      } else if (result && result.requiresManualConfirmation) {
-        /* PRレビュー対応: メール自体は送信された可能性があるが、送信履歴の記録に失敗し
-           二重送信防止の状態が確定できていない。管理者に実際の到達確認を促す。 */
-        alert('送信結果を確認できませんでした（メールは送信された可能性があります）: ' + (result.error && result.error.message));
-      } else if (result && result.error && result.error.code === 'SEND_HISTORY_CONFLICT') {
-        alert('他の画面から既に操作された可能性があります。最新の状態を確認してください: ' + result.error.message);
-      } else if (result && result.error && result.error.code === 'METADATA_INCONSISTENT') {
-        /* 第3回PRレビュー対応: 送信履歴の記録不整合が解消されるまで送信できない。
-           「送信履歴を補正」操作を案内する。 */
-        alert('送信履歴に記録不整合があるため送信できません。下の「送信履歴を補正」から、確認した正しい送信回数へ補正してください。');
-      } else if (result && result.skipped) {
-        alert('送信条件を満たさないため送信しませんでした: ' + (result.error && result.error.message));
-      } else {
-        alert('送信できませんでした: ' + (result && result.error && result.error.message));
-      }
+      alert(describePaymentLinkSendResult_(result));
       refreshOpenDetail_(booking.bookingId);
       loadBookings();
     })
