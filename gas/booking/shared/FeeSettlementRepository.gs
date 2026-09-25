@@ -25,7 +25,12 @@
  *   （「精算履歴と台帳の片方だけが更新された場合も復旧可能にする」要件への対応）。
  * - ABANDONED: 管理者がresolveFeeRecoveryで「この精算IDはBookingsへ反映されていない」と
  *   確認・確定した状態。この状態の行は、同じsettlementIdで再送された場合に初めて
- *   Bookingsへの反映を試みてよい（未反映であることを人が確認済みのため）。
+ *   Bookingsへの反映を試みてよい（未反映であることを人が確認済みのため）。ただし
+ *   BookingReschedule.gsは、実際にBookingsへの反映を試みる直前に必ずmarkPendingApply
+ *   でPENDING_APPLYへ戻してから進む（PR #345再レビュー対応・3回目）。ABANDONEDのまま
+ *   反映を試みると、Bookingsへの書き込みに成功した直後にAPPLIEDへの状態遷移自体が
+ *   失敗する複合障害が起きたとき、この行がABANDONEDのまま（＝「未反映」に見えたまま）
+ *   残ってしまい、次の再送が再びここに入って二重加算しかねないため。
  *
  * 同一settlementIdで既存行が見つかった場合の扱いはBookingReschedule.gs側の責務
  * （このリポジトリはCRUDのみを提供する）:
@@ -122,6 +127,21 @@ var FeeSettlementRepository = (function () {
   }
 
   /*
+   * ABANDONED（未反映確定）の行に対して、Bookingsへの反映を試みる直前に呼ぶ
+   * （PR #345再レビュー対応・3回目）。ABANDONEDのまま直接適用を試みると、Bookingsへの
+   * 書き込みに成功した直後にmarkApplied自体が失敗する複合障害が起きたとき、この行は
+   * ABANDONEDのまま（＝「未反映」に見えたまま）残ってしまい、同一settlementIdの再送が
+   * 再びABANDONED分岐に入って二重に加算しかねない。適用を試みる前に必ずこの関数で
+   * PENDING_APPLYへ戻しておけば、その後どこで失敗しても既存のPENDING_APPLY処理
+   * （無条件の自動再試行を禁止しFAILED_NEEDS_RECOVERYへ倒す）がそのまま安全に働く。
+   */
+  function markPendingApply(rowNumber) {
+    var sheet = ensureSheet_();
+    var startIndex = HEADERS_.indexOf('applyStatus');
+    sheet.getRange(rowNumber, startIndex + 1, 1, 4).setValues([['PENDING_APPLY', '', '', '']]);
+  }
+
+  /*
    * bookingIdに紐づく行のうち、まだ「反映済み／未反映」を確定していない
    * （applyStatusがPENDING_APPLYまたはFAILED_NEEDS_RECOVERYの）ものが、
    * excludeSettlementId以外に残っていないか調べる（PR #345再レビュー対応）。
@@ -148,6 +168,7 @@ var FeeSettlementRepository = (function () {
     markApplied: markApplied,
     markFailedNeedsRecovery: markFailedNeedsRecovery,
     markAbandoned: markAbandoned,
+    markPendingApply: markPendingApply,
     hasUnresolvedSettlement: hasUnresolvedSettlement
   };
 })();

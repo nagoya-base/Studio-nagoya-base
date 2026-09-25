@@ -531,6 +531,88 @@ test('recordFeeSettlement re-validates the refund cap against the current balanc
   assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRefundedAmount, fullPaid);
 });
 
+/* ---- PR #345再レビュー対応（3回目）: ABANDONED再適用の複合障害・孤立した未確定精算 ---- */
+
+test('a compound failure right after the Bookings write on an ABANDONED replay (history + recovery flag both fail to save) is caught by resetting to PENDING_APPLY first, so a retry cannot double count', function () {
+  var f = setup();
+  var originalPaid = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount;
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-abandon-compound', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 1000, refundedDelta: 0, note: ''
+  });
+  var row = f.sandbox.FeeSettlementRepository.findBySettlementId('s-abandon-compound').rowNumber;
+  f.sandbox.FeeSettlementRepository.markAbandoned(row);
+
+  // Bookingsへの加算自体は成功するが、精算履歴をAPPLIEDにする処理と、復旧フラグを
+  // 立てるフォールバックの両方が失敗する複合障害を再現する。
+  var originalMarkApplied = f.sandbox.FeeSettlementRepository.markApplied;
+  var originalUpdateBookingFields = f.sandbox.SpreadsheetRepository.updateBookingFields;
+  f.sandbox.FeeSettlementRepository.markApplied = function () { throw new Error('markApplied failed'); };
+  f.sandbox.SpreadsheetRepository.updateBookingFields = function () { throw new Error('flag save failed'); };
+  var first = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-abandon-compound', 'SETTLED', 1000, 0, '');
+  f.sandbox.FeeSettlementRepository.markApplied = originalMarkApplied;
+  f.sandbox.SpreadsheetRepository.updateBookingFields = originalUpdateBookingFields;
+
+  assert.equal(first.success, false);
+  assert.equal(first.error.code, 'SETTLEMENT_STATE_UNKNOWN');
+  // ABANDONEDのまま残らず、適用を試みる前にPENDING_APPLYへ戻してあるため、
+  // 状態遷移が両方失敗してもこの行はPENDING_APPLYのまま（「未反映」を騙らない）。
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-abandon-compound').record.applyStatus, 'PENDING_APPLY');
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount, originalPaid + 1000);
+
+  // 同じsettlementIdを再送しても、PENDING_APPLYの安全策（絶対に自動再試行しない）が
+  // 効くため、二重加算されない。
+  var retried = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-abandon-compound', 'SETTLED', 1000, 0, '');
+  assert.equal(retried.success, false);
+  assert.equal(retried.error.code, 'SETTLEMENT_RECOVERY_REQUIRED');
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount, originalPaid + 1000);
+  assert.ok(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRecoveryRequiredAt);
+});
+
+test('commit refuses to reschedule when an unresolved settlement is left dangling even though feeRecoveryRequiredAt itself failed to save', function () {
+  var f = setup();
+  var recordBefore = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  // 複合障害の再現: 精算行はPENDING_APPLYのまま残っているが、復旧フラグの保存自体は
+  // 失敗した状態（feeRecoveryRequiredAtは立っていない）。
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-orphan-commit', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 500, refundedDelta: 0, note: ''
+  });
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRecoveryRequiredAt, '');
+
+  var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '別途精算');
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'FEE_RECOVERY_REQUIRED');
+  // 日時・料金など何も変わっていないこと。
+  assert.equal(f.event.getStartTime().getTime(), recordBefore.startAt.getTime());
+  var recordAfter = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(recordAfter.scheduleChangeCount || 0, recordBefore.scheduleChangeCount || 0);
+});
+
+test('recordFeeSettlement refuses a different settlementId while another settlement on the same booking is unresolved, even without feeRecoveryRequiredAt, but still lets the stuck id itself resubmit through its normal handling', function () {
+  var f = setup();
+  var originalPaid = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount;
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-orphan-settlement', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 500, refundedDelta: 0, note: ''
+  });
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRecoveryRequiredAt, '');
+
+  // 別のsettlementIdによる新規精算は、復旧フラグが立っていなくても拒否される。
+  var blockedDifferent = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-brand-new', 'SETTLED', 100, 0, '');
+  assert.equal(blockedDifferent.success, false);
+  assert.equal(blockedDifferent.error.code, 'FEE_RECOVERY_REQUIRED');
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount, originalPaid);
+
+  // 一方、当の未確定settlementId自身の再送は、この新しいチェックで弾かれず、
+  // 既存のPENDING_APPLY処理（要復旧へ倒す）にそのまま進む。
+  var sameId = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-orphan-settlement', 'SETTLED', 500, 0, '');
+  assert.equal(sameId.success, false);
+  assert.equal(sameId.error.code, 'SETTLEMENT_RECOVERY_REQUIRED');
+  assert.ok(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRecoveryRequiredAt);
+});
+
 /* ---- 基準料金（既存予約の遡及登録） ---- */
 
 test('commit is blocked until the original confirmed price has been backfilled via backfillOriginalPrice', function () {

@@ -156,6 +156,19 @@ var BookingReschedule = (function () {
     return isDate_(record.feeRecoveryRequiredAt);
   }
 
+  /*
+   * feeRecoveryRequiredAtに加えて、FeeSettlementsに未確定（PENDING_APPLY/
+   * FAILED_NEEDS_RECOVERY）の行が残っていないかも確認する（PR #345再レビュー対応・
+   * 3回目）。feeRecoveryRequiredAtの保存自体が失敗する複合障害が起きると、フラグが
+   * 立たないまま未確定の精算だけが残ることがある。その状態でcommit/recordFeeSettlement
+   * が別のsettlementId・別の日程変更を通してしまうと、未確定精算の照合前に残高や
+   * 確定料金・変更回数が変わってしまい、後から復旧するときの判断材料が壊れる。
+   * commit・recordFeeSettlementの冒頭（Lock取得後）から必ずこちらを呼ぶこと。
+   */
+  function isBlockedForFeeRecovery_(bookingId, record) {
+    return isInFeeRecovery_(record) || FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null);
+  }
+
   /* 現在の未返金額（支払済み額 - 返金済み額。0未満にはしない）。recordFeeSettlementで
      返金上限を検証する箇所すべてから、常に最新のrecordを渡して呼ぶこと（PR #345
      再レビュー対応: ABANDONEDからの再適用など、経路によって検証が抜けないようにする）。 */
@@ -379,7 +392,7 @@ var BookingReschedule = (function () {
       var check = parse_(bookingId, input, expectedVersion, new Date());
       if (!check.success) return check;
       var record = check.record;
-      if (isInFeeRecovery_(record)) {
+      if (isBlockedForFeeRecovery_(bookingId, record)) {
         return error_('FEE_RECOVERY_REQUIRED', 'この予約は料金の整合性確認が必要な状態です。resolveFeeRecoveryで解消してから操作してください。');
       }
       var today = BookingAvailability.formatDateInTimezone(new Date(), check.timezone);
@@ -688,6 +701,14 @@ var BookingReschedule = (function () {
       if (isInFeeRecovery_(found.record)) {
         return error_('FEE_RECOVERY_REQUIRED', 'この予約は料金の整合性確認が必要な状態です。resolveFeeRecoveryで解消してから精算を記録してください。');
       }
+      // feeRecoveryRequiredAtの保存自体が失敗する複合障害が起きると、フラグが立たない
+      // まま未確定の精算だけが残ることがある。今回のsettlementId以外にまだ「反映済み／
+      // 未反映」を確定していない精算が残っている場合は、フラグの有無によらずここで
+      // 拒否する（PR #345再レビュー対応・3回目。この精算ID自身の再送は除外し、下の
+      // 既存ロジックにそのまま処理させる）。
+      if (FeeSettlementRepository.hasUnresolvedSettlement(bookingId, settlementId)) {
+        return error_('FEE_RECOVERY_REQUIRED', 'この予約には確認が完了していない別の精算IDが残っています。resolveFeeRecoveryで解消してから精算を記録してください。');
+      }
       if (changeId) {
         var change = findChange_(changeId);
         if (!change || change.row[1] !== bookingId) {
@@ -723,6 +744,17 @@ var BookingReschedule = (function () {
           // 同じ返金上限チェックを必ず通す（PR #345再レビュー対応）。
           if (refundedDelta > unrefundedAmount_(found.record)) {
             return error_('REFUND_EXCEEDS_UNREFUNDED', '返金額は未返金の入金額（' + unrefundedAmount_(found.record) + '円）を超えられません。');
+          }
+          // ABANDONEDのまま直接適用を試みると、Bookingsへの書き込みに成功した直後に
+          // markApplied自体が失敗する複合障害で、この行がABANDONEDのまま（＝「未反映」に
+          // 見えたまま）残ってしまい、次の再送が再びここに入って二重加算しかねない
+          // （PR #345再レビュー対応・3回目）。適用を試みる前に必ずPENDING_APPLYへ
+          // 戻しておけば、以降どこで失敗しても既存のPENDING_APPLY処理（無条件の自動
+          // 再試行を禁止しFAILED_NEEDS_RECOVERYへ倒す）がそのまま安全に働く。
+          try {
+            FeeSettlementRepository.markPendingApply(existing.rowNumber);
+          } catch (e) {
+            return error_('SETTLEMENT_UPDATE_FAILED', '精算履歴の更新に失敗しました。Bookingsは更新していません。');
           }
           return applySettlement_(found, existing.rowNumber, settlementState, paidDelta, refundedDelta, note);
         }

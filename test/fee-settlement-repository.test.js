@@ -88,6 +88,22 @@ test('markAbandoned clears result amounts and records an abandonedAt timestamp (
   assert.equal(found.record.paidDelta, 1000); // 元のリクエスト内容は変わらない
 });
 
+test('markPendingApply resets an ABANDONED row back to PENDING_APPLY, clearing result amounts, without touching the original request fields', function () {
+  var f = setup().sandbox;
+  f.FeeSettlementRepository.appendPending({
+    settlementId: 'settle-5', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 700, refundedDelta: 0, note: ''
+  });
+  f.FeeSettlementRepository.markAbandoned(2);
+  f.FeeSettlementRepository.markPendingApply(2);
+  var found = f.FeeSettlementRepository.findBySettlementId('settle-5');
+  assert.equal(found.record.applyStatus, 'PENDING_APPLY');
+  assert.equal(found.record.appliedAt, '');
+  assert.equal(found.record.resultPaidAmount, '');
+  assert.equal(found.record.resultRefundedAmount, '');
+  assert.equal(found.record.paidDelta, 700);
+});
+
 test('hasUnresolvedSettlement finds PENDING_APPLY/FAILED_NEEDS_RECOVERY rows for a booking, ignores other bookings and resolved rows, and can exclude a given id', function () {
   var f = setup().sandbox;
   assert.equal(f.FeeSettlementRepository.hasUnresolvedSettlement('SNB-TEST-1'), false);
