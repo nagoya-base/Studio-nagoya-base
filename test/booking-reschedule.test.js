@@ -56,6 +56,18 @@ function setup(options) {
     MailApp: mail
   };
   var sandbox = loadBookingSandbox(FILES, globals);
+  // commitはfeeQuoteTokenを必須とする（完了条件B）。既存テストの大半は日程変更の
+  // 本体を検証するものなので、トークンを省略した呼び出しは管理画面と同じく直前の
+  // previewが返したトークンを渡す。トークン省略時の拒否はrawAdminRescheduleBookingで検証する。
+  var rawAdminRescheduleBooking = sandbox.adminRescheduleBooking;
+  sandbox.rawAdminRescheduleBooking = rawAdminRescheduleBooking;
+  sandbox.adminRescheduleBooking = function (bookingId, input, expectedVersion, reason, feeNote, feeConfirmation, expectedFeeQuoteToken) {
+    if (arguments.length < 7) {
+      var preview = sandbox.adminPreviewBookingReschedule(bookingId, input, expectedVersion);
+      expectedFeeQuoteToken = preview && preview.feeQuoteToken;
+    }
+    return rawAdminRescheduleBooking(bookingId, input, expectedVersion, reason, feeNote, feeConfirmation, expectedFeeQuoteToken);
+  };
   var date = findDateOfDayType_(sandbox, 35, false); // 平日固定（既存テストの決定性を保つ）
   var start = sandbox.CalendarRepository.parseDateTime(date, '10:00', 'Asia/Tokyo');
   var end = sandbox.CalendarRepository.parseDateTime(date, '12:00', 'Asia/Tokyo');
@@ -1040,7 +1052,7 @@ test('a compound failure (baseline write unconfirmed AND feeRecoveryRequiredAt s
   assert.ok(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'), '誤った経路では解消されない');
 
   // 基準料金専用の復旧パスを使えば安全に復旧できる。
-  var resolved = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4500);
+  var resolved = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4500, 'Bookingsと請求記録を照合', 4000);
   assert.equal(resolved.success, true);
   assert.equal(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'), false);
   var afterResolve = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
@@ -1090,7 +1102,7 @@ test('isBlockedForFeeRecovery_ fails closed (blocks) when reading the Recovery s
 
 test('resolveBaselinePriceRecovery refuses when there is no open baseline recovery', function () {
   var f = setup();
-  var result = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000);
+  var result = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000, '根拠', 4000);
   assert.equal(result.success, false);
   assert.equal(result.error.code, 'NOT_IN_RECOVERY');
 });
@@ -1112,13 +1124,13 @@ test('resolveBaselinePriceRecovery keeps the recovery open and reports UPDATE_FA
   f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = function () { throw new Error('x'); };
   f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠', 4000);
 
-  var failedResolve = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4200);
+  var failedResolve = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4200, '根拠', 4000);
   assert.equal(failedResolve.success, false);
   assert.equal(failedResolve.error.code, 'UPDATE_FAILED');
   assert.ok(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'), '失敗時はOPENのまま維持する');
 
   f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = originalAtomic;
-  var resolved = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4200);
+  var resolved = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4200, '根拠', 4000);
   assert.equal(resolved.success, true);
   assert.equal(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'), false);
 });
@@ -1412,4 +1424,182 @@ test('a Bookings-side apply failure after the settlement ledger row is recorded 
   var retry = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 'settle-fail', 'PENDING_REFUND', 0, 500, '');
   assert.equal(retry.success, false);
   assert.equal(retry.error.code, 'FEE_RECOVERY_REQUIRED');
+});
+
+/* ---- PR #345再レビュー対応（完了条件A）: 基準料金の復旧で確認済み入出金額も照合する ---- */
+
+test('backfillOriginalPrice: baseline columns saved but the confirmed paid/refunded write fails -> resolveBaselinePriceRecovery must also restore and verify feePaidAmount/feeRefundedAmount before clearing the recovery', function () {
+  var f = setup({ withPrice: false });
+  var originalFee = f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = function () { throw new Error('Sheets API error'); };
+  var result = f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠', 4000, 500);
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'BASELINE_RECOVERY_REQUIRED');
+  var afterBackfill = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(afterBackfill.priceAmount, 4000, '基準料金5列は保存されている');
+  assert.ok(!afterBackfill.feePaidAmount, '確認済み入金額は未反映のまま');
+  assert.ok(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'));
+
+  // 入出金額の書込みが引き続き失敗する間は、基準料金5列が一致していても復旧を完了させない。
+  var stillFailing = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000, '請求記録と入金履歴を照合', 4000, 500);
+  assert.equal(stillFailing.success, false);
+  assert.equal(stillFailing.error.code, 'UPDATE_FAILED');
+  assert.ok(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'), '入出金額が未反映のままRecoveryを解消しない');
+  var blockedCommit = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version_(f), '', '別途精算');
+  assert.equal(blockedCommit.success, false);
+  assert.equal(blockedCommit.error.code, 'FEE_RECOVERY_REQUIRED', '入出金額が未反映のまま通常操作を再開できない');
+
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = originalFee;
+  var resolved = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000, '請求記録と入金履歴を照合', 4000, 500);
+  assert.equal(resolved.success, true);
+  assert.equal(resolved.confirmedPaidAmount, 4000);
+  assert.equal(resolved.confirmedRefundedAmount, 500);
+  var afterResolve = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(afterResolve.feePaidAmount, 4000);
+  assert.equal(afterResolve.feeRefundedAmount, 500);
+  assert.equal(afterResolve.feeRecoveryRequiredAt, '');
+  assert.equal(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'), false);
+});
+
+test('resolveBaselinePriceRecovery keeps the recovery open when the paid/refunded columns read back different from what the admin confirmed (e.g. a stale value left by the failed backfill)', function () {
+  var f = setup({ withPrice: false });
+  var originalFee = f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = function () { throw new Error('x'); };
+  f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠', 4000);
+  // 書込み自体は例外を投げずに終わるが、実際には別の値が残っている（部分反映など）状況
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = function (bid) {
+    originalFee(bid, { feePaidAmount: 1000, feeRefundedAmount: 0 });
+  };
+  var result = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000, '根拠', 4000);
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = originalFee;
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'UPDATE_FAILED');
+  assert.ok(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'));
+});
+
+test('resolveBaselinePriceRecovery requires the confirmed paid amount and a confirmation note (same validation as backfillOriginalPrice)', function () {
+  var f = setup({ withPrice: false });
+  var original = f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = function () { throw new Error('x'); };
+  f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠', 4000);
+  f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = original;
+
+  assert.equal(f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000).error.code, 'BASIS_REQUIRED');
+  assert.equal(f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000, '根拠').error.code, 'CONFIRMED_PAID_AMOUNT_REQUIRED');
+  assert.equal(f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000, '根拠', null).error.code, 'CONFIRMED_PAID_AMOUNT_REQUIRED');
+  assert.equal(f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000, '根拠', 1000, 2000).error.code, 'REFUND_EXCEEDS_UNREFUNDED');
+  assert.ok(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'), '入力不備では解消されない');
+});
+
+/* ---- PR #345再レビュー対応（完了条件C）: 確認根拠の監査記録を確認できるまで完了扱いにしない ---- */
+
+function failAuditWrites_(f, mode) {
+  var original = f.sandbox.RecoveryRepository.recordFailure;
+  f.sandbox.RecoveryRepository.recordFailure = function (record) {
+    if (record.failureType === 'BASELINE_PRICE_CONFIRMED') {
+      if (mode === 'silent') return; // 例外を投げずに保存されない（応答を信頼しないことの確認）
+      throw new Error('Recovery sheet write failed');
+    }
+    return original(record);
+  };
+  return function restore() { f.sandbox.RecoveryRepository.recordFailure = original; };
+}
+
+function auditRows_(f) {
+  return f.sandbox.RecoveryRepository.listAll().filter(function (row) {
+    return row.bookingId === 'SNB-TEST-1' && row.failureType === 'BASELINE_PRICE_CONFIRMED';
+  });
+}
+
+test('backfillOriginalPrice does not report success when the BASELINE_PRICE_CONFIRMED audit row cannot be saved; keeps the saved amounts, blocks operations, and lets resolveBaselinePriceRecovery retry the audit', function () {
+  var f = setup({ withPrice: false });
+  var restore = failAuditWrites_(f, 'throw');
+  var result = f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '過去の請求メールで確認', 4000, 1000);
+  restore();
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'AUDIT_RECORD_UNCONFIRMED');
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(record.priceAmount, 4000, '保存済みの基準料金は取り消さない');
+  assert.equal(record.feePaidAmount, 4000);
+  assert.equal(record.feeRefundedAmount, 1000);
+  assert.equal(auditRows_(f).length, 0);
+  assert.ok(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'), '記録完了まで要復旧のまま');
+  assert.equal(f.sandbox.BookingReschedule.isBaselineRecoveryBlocked('SNB-TEST-1'), true, '管理画面に復旧導線が出る');
+
+  var blockedCommit = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version_(f), '', '別途精算');
+  assert.equal(blockedCommit.success, false);
+  assert.equal(blockedCommit.error.code, 'FEE_RECOVERY_REQUIRED');
+
+  var retried = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000, '過去の請求メールで確認', 4000, 1000);
+  assert.equal(retried.success, true);
+  var audit = auditRows_(f);
+  assert.equal(audit.length, 1);
+  assert.match(audit[0].errorMessage, /過去の請求メールで確認/);
+  assert.match(audit[0].errorMessage, /復旧/);
+  assert.equal(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'), false);
+
+  var afterCommit = f.sandbox.adminRescheduleBooking('SNB-TEST-1',
+    { date: f.date, startTime: '13:00', endTime: '15:00' }, version_(f), '', '別途精算');
+  assert.equal(afterCommit.success, true);
+});
+
+test('backfillOriginalPrice reads the audit row back instead of trusting the append call (a silently dropped audit row is still AUDIT_RECORD_UNCONFIRMED)', function () {
+  var f = setup({ withPrice: false });
+  var restore = failAuditWrites_(f, 'silent');
+  var result = f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠', 4000);
+  restore();
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'AUDIT_RECORD_UNCONFIRMED');
+  assert.ok(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'));
+});
+
+test('backfillOriginalPrice treats a failure to read the audit row back as unconfirmed (fail closed)', function () {
+  var f = setup({ withPrice: false });
+  var original = f.sandbox.RecoveryRepository.hasRecord;
+  f.sandbox.RecoveryRepository.hasRecord = function () { throw new Error('read failed'); };
+  var result = f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠', 4000);
+  f.sandbox.RecoveryRepository.hasRecord = original;
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'AUDIT_RECORD_UNCONFIRMED');
+  assert.ok(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'));
+});
+
+test('resolveBaselinePriceRecovery also keeps the recovery open when its own audit row cannot be saved, and succeeds on a same-content retry', function () {
+  var f = setup({ withPrice: false });
+  var original = f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = function () { throw new Error('x'); };
+  f.sandbox.adminBackfillOriginalPrice('SNB-TEST-1', 'GENERAL', 4000, '根拠', 4000);
+  f.sandbox.SpreadsheetRepository.updateBookingPriceBaselineAtomic = original;
+
+  var restore = failAuditWrites_(f, 'throw');
+  var failed = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000, '復旧根拠', 4000);
+  restore();
+  assert.equal(failed.success, false);
+  assert.equal(failed.error.code, 'AUDIT_RECORD_UNCONFIRMED');
+  assert.ok(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'));
+
+  var retried = f.sandbox.adminResolveBaselinePriceRecovery('SNB-TEST-1', 'GENERAL', 4000, '復旧根拠', 4000);
+  assert.equal(retried.success, true);
+  assert.equal(auditRows_(f).length, 1);
+  assert.equal(f.sandbox.RecoveryRepository.hasOpenBaselineRecovery('SNB-TEST-1'), false);
+});
+
+/* ---- PR #345再レビュー対応（完了条件B）: commitはfeeQuoteTokenをサーバー側でも必須にする ---- */
+
+test('commit rejects a call without a feeQuoteToken (missing, empty, or non-string) before touching history/Calendar/Bookings', function () {
+  var f = setup();
+  var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
+  var originalStart = f.event.getStartTime().getTime();
+  [undefined, '', null, 123].forEach(function (token) {
+    var result = f.sandbox.rawAdminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '別途精算', undefined, token);
+    assert.equal(result.success, false);
+    assert.equal(result.error.code, 'FEE_QUOTE_TOKEN_REQUIRED');
+  });
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(record.startAt.getTime(), originalStart, 'Bookingsは変更されない');
+  assert.equal(f.event.getStartTime().getTime(), originalStart, 'Calendarは変更されない');
+  assert.ok(!f.sheets.BookingChanges || f.sheets.BookingChanges.getLastRow() <= 1, '履歴行は作られない');
 });

@@ -587,7 +587,9 @@ function renderFeeRecoverySection_(booking) {
  * baselineRecoveryNeedsAttentionがtrueなら表示する（Recoveryシート・停止マーカーに
  * よる複合障害対策。renderFeeRecoverySection_のcorrections（priceOverrideAmount等）は
  * 日程変更専用のBookings列のためここでは使わない。基準料金5列は
- * adminResolveBaselinePriceRecovery専用に復旧する）。
+ * adminResolveBaselinePriceRecovery専用に復旧する）。基準料金5列と入出金額2列は
+ * 別々に保存されるため、復旧時も確認した支払済み額・返金済み額と確認根拠を必須で
+ * 入力させ、7項目と監査記録がすべて確認できた場合のみ要復旧が解消される。
  */
 function renderBaselineRecoverySection_(booking) {
   var modalBody = document.getElementById('modal-body');
@@ -608,13 +610,23 @@ function renderBaselineRecoverySection_(booking) {
     '<option value="MEMBER">会員</option>' +
     '</select></label>' +
     '<label>確定料金（円） <input id="baseline-recovery-amount" type="number" min="1" step="1"></label>' +
+    '<label>確認した支払済み額（円・必須） <input id="baseline-recovery-confirmed-paid" type="number" min="0" step="1"></label>' +
+    '<label>確認した返金済み額（円） <input id="baseline-recovery-confirmed-refunded" type="number" min="0" step="1" value="0"></label>' +
+    '<label>確認根拠（必須）<textarea id="baseline-recovery-note" maxlength="500" rows="2"></textarea></label>' +
     '<button type="button" id="baseline-recovery-save">確認した内容で復旧する</button>' +
     '<div id="baseline-recovery-result" role="status" aria-live="polite"></div>';
   modalBody.insertAdjacentElement('afterend', section);
   section.querySelector('#baseline-recovery-save').addEventListener('click', function () {
     var priceTier = section.querySelector('#baseline-recovery-tier').value;
     var amount = Number(section.querySelector('#baseline-recovery-amount').value);
-    if (!window.confirm('予約ID: ' + booking.bookingId + '\n確認した基準料金で復旧します。よろしいですか？')) return;
+    var paidInput = section.querySelector('#baseline-recovery-confirmed-paid').value;
+    // 空欄をNumber('')=0として送ると「未確認」が「0円と確認済み」にすり替わるため、nullで送りサーバー側で拒否させる。
+    var confirmedPaidAmount = paidInput === '' ? null : Number(paidInput);
+    var confirmedRefundedAmount = Number(section.querySelector('#baseline-recovery-confirmed-refunded').value);
+    var note = section.querySelector('#baseline-recovery-note').value;
+    if (!window.confirm('予約ID: ' + booking.bookingId + '\n価格区分: ' + (priceTier === 'MEMBER' ? '会員' : '通常') +
+      '\n確定料金: ' + amount + '円\n確認した支払済み額: ' + confirmedPaidAmount + '円\n確認した返金済み額: ' + confirmedRefundedAmount +
+      '円\n\n確認した基準料金・入出金額で復旧します。よろしいですか？')) return;
     var resultArea = section.querySelector('#baseline-recovery-result');
     resultArea.textContent = '復旧中…';
     google.script.run
@@ -629,7 +641,7 @@ function renderBaselineRecoverySection_(booking) {
       .withFailureHandler(function (error) {
         resultArea.textContent = '復旧に失敗しました: ' + (error && error.message ? error.message : error);
       })
-      .adminResolveBaselinePriceRecovery(booking.bookingId, priceTier, amount);
+      .adminResolveBaselinePriceRecovery(booking.bookingId, priceTier, amount, note, confirmedPaidAmount, confirmedRefundedAmount);
   });
 }
 
@@ -694,6 +706,11 @@ function renderFeeBaselineSection_(booking) {
       .withSuccessHandler(function (result) {
         if (!result || !result.success) {
           resultArea.textContent = '保存できませんでした: ' + (result && result.error && result.error.message);
+          // 保存結果・確認根拠の記録が未確認の場合は要復旧フォーム（renderBaselineRecoverySection_）を出すため再読込する。
+          var code = result && result.error && result.error.code;
+          if (code === 'AUDIT_RECORD_UNCONFIRMED' || code === 'BASELINE_RECOVERY_REQUIRED' || code === 'RECOVERY_UPDATE_FAILED') {
+            refreshOpenDetail_(booking.bookingId);
+          }
           return;
         }
         resultArea.textContent = '保存しました。';

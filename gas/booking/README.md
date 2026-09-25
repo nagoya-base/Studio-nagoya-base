@@ -182,15 +182,22 @@ Booking Adminにも追加し（従来はBooking Web App専用）、新規ファ�
 
 復旧は`resolveFeeRecovery`（`priceOverrideAmount`等、日程変更専用のBookings列）とは別の
 専用API`resolveBaselinePriceRecovery`（`adminResolveBaselinePriceRecovery`）で行う。
-管理者が確認した価格区分・金額で基準料金5列を再書込みし、再取得で一致を確認できた場合に
-のみ`RecoveryRepository.resolveBaselineRecovery`でintentを解消する。基準料金の要復旧が
+`backfillOriginalPrice`は基準料金5列と確認済み入出金額2列（`feePaidAmount`/
+`feeRefundedAmount`）を別々のRangeへ書き込むため、片方だけが保存された状態が起こり得る。
+そのため復旧APIも`backfillOriginalPrice`と同じ入力（価格区分・金額・確認根拠`note`・
+`confirmedPaidAmount`（必須）・`confirmedRefundedAmount`（省略時0円））を必須とし、
+7項目を再書込み（絶対値の上書き）・再取得して**7項目すべての一致**を確認し、さらに
+確認根拠の監査行（`BASELINE_PRICE_CONFIRMED`）の保存を読み戻して確認できた場合に
+のみ`RecoveryRepository.resolveBaselineRecovery`でintentを解消する（基準料金5列だけが
+一致しても、入出金額が未反映のままなら`UPDATE_FAILED`で要復旧のまま維持する）。基準料金の要復旧が
 唯一の原因で`feeRecoveryRequiredAt`が立っていた場合は、これに合わせてクリアする（他に
 未確定精算が残っていれば触らない）。
 
 テスト: `test/booking-reschedule.test.js`（intentの記録前にBookingsへ触れないこと、
 intent確認前に書込みを開始しないこと、書込み失敗・不一致時にintentがOPENのまま残ること、
 Recovery読取自体の例外に対するフェイルクローズ、`resolveBaselinePriceRecovery`の
-正常系・異常系）・`test/booking-spreadsheet-repository.test.js`（`RecoveryRepository.
+正常系・異常系、基準料金は保存済みで入出金額の保存だけが失敗した場合に入出金額を照合する
+まで解消しないこと、入出金額・確認根拠の必須検証）・`test/booking-spreadsheet-repository.test.js`（`RecoveryRepository.
 hasOpenBaselineRecovery`/`resolveBaselineRecovery`の単体テスト）・
 `test/booking-admin-web.test.js`（`getAdminBookingDetail`の`baselineRecoveryNeedsAttention`）。
 
@@ -210,8 +217,10 @@ hasOpenBaselineRecovery`/`resolveBaselineRecovery`の単体テスト）・
 `commit`はコミット直前に同じ入力から`feeQuoteToken`を再計算し、渡された値と完全一致
 （文字列比較）しなければ、Calendar・Bookings・履歴のいずれにも触れずに
 `FEE_QUOTE_MISMATCH`で拒否する（手動の料金/返金決定が併せて渡されていても同様に拒否する。
-古い前提のまま決定を通してしまわないため）。`expectedFeeQuoteToken`を渡さない呼び出し
-（省略・`undefined`）は後方互換のため従来どおり照合しない。暗号学的なハッシュではなく、
+古い前提のまま決定を通してしまわないため）。`expectedFeeQuoteToken`はサーバー側でも
+必須で、省略・空文字・文字列以外の場合は照合をスキップせず、Calendar・Bookings・履歴の
+いずれにも触れずに`FEE_QUOTE_TOKEN_REQUIRED`で拒否する（previewを経ない呼び出し経路を
+塞ぐため）。暗号学的なハッシュではなく、
 あくまで「プレビュー時点と同じ計算結果か」を確認するための一致チェックである。
 
 管理画面（`admin/booking/booking-admin.js`）は`preview.feeQuoteToken`を保持し、確定操作の
@@ -220,7 +229,8 @@ hasOpenBaselineRecovery`/`resolveBaselineRecovery`の単体テスト）・
 
 テスト: `test/booking-reschedule.test.js`（`feeQuoteToken`を伴う正常なcommit、
 プレビュー後に料金コンテキストが変化した場合の`FEE_QUOTE_MISMATCH`、手動の料金/返金決定が
-併せて渡されていても古いトークンでは拒否されること）。
+併せて渡されていても古いトークンでは拒否されること、トークン省略時の
+`FEE_QUOTE_TOKEN_REQUIRED`）。
 
 #### `backfillOriginalPrice`の確認済み支払済み/返金済み額の必須化と監査ログ
 
@@ -254,16 +264,26 @@ hasOpenBaselineRecovery`/`resolveBaselineRecovery`の単体テスト）・
   `RecoveryRepository.recordFailure`へ`failureType: 'BASELINE_PRICE_CONFIRMED'`,
   `recoveryState: 'INFO'`として記録する（ブロックには使わない、監査用の追記のみ）。
   検証が終わったからといってこの根拠を捨てず、誰が・いつ・何を根拠にいくらと確認したかを
-  Recoveryシートに残す。
+  Recoveryシートに残す。**監査行は`RecoveryRepository.hasRecord`で読み戻して保存を
+  確認し、確認できるまでは処理を完了扱いにしない。** 保存を確認できない場合（書込みの
+  例外、例外なしで保存されない、読み戻し自体の失敗）は`AUDIT_RECORD_UNCONFIRMED`を返し、
+  保存済みの基準料金・入出金額は取り消さずに、書込み前に確保したRecovery intent（OPEN）を
+  残して後続操作をブロックする。管理者は`resolveBaselinePriceRecovery`へ同じ内容と
+  確認根拠を渡して記録を再試行し、監査行の保存を確認できた時点でintentが解消される。
 
 管理画面（`admin/booking/booking-admin.js`の`renderFeeBaselineSection_`）は基準料金の
 設定・修正フォームに「確認した支払済み額」「確認した返金済み額」の入力欄を追加し、
-`adminBackfillOriginalPrice`へ渡す。
+`adminBackfillOriginalPrice`へ渡す。基準料金の要復旧フォーム（`renderBaselineRecoverySection_`）
+にも同じ「確認した支払済み額」「確認した返金済み額」「確認根拠」の入力欄を設け、
+`adminResolveBaselinePriceRecovery`へ渡す（支払済み額の空欄は0円ではなく未入力として
+サーバー側で拒否させる）。
 
 テスト: `test/booking-reschedule.test.js`（`confirmedPaidAmount`省略・負数・小数の拒否、
 `confirmedRefundedAmount`が`confirmedPaidAmount`を超える場合の拒否、省略時に0円扱いに
 なること、書込み後の`feePaidAmount`/`feeRefundedAmount`確認、`BASELINE_PRICE_CONFIRMED`
-監査行の記録内容、基準料金移行後の予約が次回日程変更の返金候補計算に正しく反映されること）。
+監査行の記録内容、基準料金移行後の予約が次回日程変更の返金候補計算に正しく反映されること、
+監査行の保存失敗・例外なしの未保存・読み戻し失敗で`AUDIT_RECORD_UNCONFIRMED`になり
+要復旧のまま維持されること、`resolveBaselinePriceRecovery`での監査記録の再試行）。
 
 # gas/booking（自社予約システム）
 

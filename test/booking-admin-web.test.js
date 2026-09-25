@@ -549,7 +549,7 @@ test('getAdminBookingDetail: baselineRecoveryNeedsAttentionはbackfillOriginalPr
   var afterFailure = ctx.sandbox.getAdminBookingDetail(bookingId);
   assert.strictEqual(afterFailure.booking.baselineRecoveryNeedsAttention, true);
 
-  var resolved = ctx.sandbox.adminResolveBaselinePriceRecovery(bookingId, 'GENERAL', 4200);
+  var resolved = ctx.sandbox.adminResolveBaselinePriceRecovery(bookingId, 'GENERAL', 4200, '根拠', 4000);
   assert.strictEqual(resolved.success, true);
   var afterResolve = ctx.sandbox.getAdminBookingDetail(bookingId);
   assert.strictEqual(afterResolve.booking.baselineRecoveryNeedsAttention, false);

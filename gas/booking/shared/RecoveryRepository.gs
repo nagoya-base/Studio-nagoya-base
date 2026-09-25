@@ -156,8 +156,28 @@ var RecoveryRepository = (function () {
     }
   }
 
+  /*
+   * PR #345再レビュー対応（完了条件C）: 基準料金の確認根拠（BASELINE_PRICE_CONFIRMED）の
+   * 監査行が実際に保存されたかを読み戻して確認する。appendRowの応答は信頼せず、
+   * bookingId・failureType・errorMessage（確認時刻を含む一意な文字列）の完全一致で判定する。
+   */
+  function hasRecord(bookingId, failureType, errorMessage) {
+    var sheet = ensureRecoverySheet_();
+    var values = sheet.getDataRange().getValues();
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(values[i]);
+      if (record.bookingId === bookingId &&
+          record.failureType === failureType &&
+          record.errorMessage === errorMessage) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   return {
     HEADERS: HEADERS_,
+    hasRecord: hasRecord,
     recordFailure: recordFailure,
     listAll: listAll,
     BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE: BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE,
