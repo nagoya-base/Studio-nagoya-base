@@ -472,6 +472,19 @@ var Booking = (function () {
     return Number.isFinite(amount) ? amount : null;
   }
 
+  /*
+   * 最新の金額修正が利用者へ案内済みかを共通判定する。
+   * Sheetsの日時は通常Dateだが、過去データ等で不正な日時があれば未案内側へ倒す。
+   */
+  function needsPriceUpdateNotice(record) {
+    var r = record || {};
+    if (!r.priceOverrideAt) return false;
+    if (!r.priceUpdateMailSentAt) return true;
+    var changedAt = new Date(r.priceOverrideAt).getTime();
+    var sentAt = new Date(r.priceUpdateMailSentAt).getTime();
+    return !Number.isFinite(changedAt) || !Number.isFinite(sentAt) || changedAt > sentAt;
+  }
+
   return {
     STATUS: STATUS,
     PAYMENT_STATUS: PAYMENT_STATUS,
@@ -498,6 +511,7 @@ var Booking = (function () {
     computeTtlExpiryMillis: computeTtlExpiryMillis,
     computeCardPaymentDueMillis: computeCardPaymentDueMillis,
     isExpired: isExpired,
-    getEffectivePriceAmount: getEffectivePriceAmount
+    getEffectivePriceAmount: getEffectivePriceAmount,
+    needsPriceUpdateNotice: needsPriceUpdateNotice
   };
 })();
