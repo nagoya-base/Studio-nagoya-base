@@ -466,6 +466,14 @@ var BookingMailer = (function () {
       }
 
       var sentAt = new Date();
+      /* 同一ミリ秒での再修正・送信でも時系列を厳密に保つ。
+         メール送信に成功した最新の訂正は、必ずその修正日時より後に記録する。 */
+      if (mailType === MAIL_TYPES.PRICE_UPDATE) {
+        var overrideMillis = new Date(record.priceOverrideAt).getTime();
+        if (Number.isFinite(overrideMillis) && sentAt.getTime() <= overrideMillis) {
+          sentAt = new Date(overrideMillis + 1);
+        }
+      }
       var updateFields = { lastMailErrorAt: '', lastMailErrorType: '', lastMailErrorMessage: '' };
       sentAtFields.forEach(function (field) { updateFields[field] = sentAt; });
       try {
