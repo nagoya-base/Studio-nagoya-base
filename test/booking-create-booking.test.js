@@ -257,7 +257,7 @@ test('createBooking: 利用料金をGAS側で計算し、Sheetsへ保存する�
   assert.ok(found.record.priceComputedAt, 'priceComputedAtが記録されるべき');
 });
 
-test('createBooking: mensはisMember未送信でも常に会員料金で保存される（studio_xは常に一般料金のまま）', function () {
+test('createBooking: mensはisMember未送信でも常に会員料金で保存される', function () {
   var mensCtx = setup();
   var mensResult = mensCtx.sandbox.BookingRepository.createBooking(
     validPayload({ brand: 'mens', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 })
@@ -266,13 +266,24 @@ test('createBooking: mensはisMember未送信でも常に会員料金で保存�
   assert.strictEqual(mensResult.price.tier, 'MEMBER');
   var mensFound = mensCtx.sandbox.SpreadsheetRepository.findRowByBookingId(mensResult.bookingId);
   assert.strictEqual(mensFound.record.priceIsMember, true);
+});
 
+test('createBooking: studio_xの直接予約もisMember:trueで会員料金になる（PR #343レビュー対応: ブランド分離基準書v1.1）', function () {
   var studioCtx = setup();
-  var studioResult = studioCtx.sandbox.BookingRepository.createBooking(
+  var studioMemberResult = studioCtx.sandbox.BookingRepository.createBooking(
     validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180, isMember: true })
   );
-  assert.strictEqual(studioResult.price.amount, 6000, 'studio_xはisMember:trueでも一般料金のまま');
-  assert.strictEqual(studioResult.price.tier, 'GENERAL');
+  assert.strictEqual(studioMemberResult.price.amount, 5500, 'studio_xもisMember:trueなら会員料金になるべき');
+  assert.strictEqual(studioMemberResult.price.tier, 'MEMBER');
+  var studioMemberFound = studioCtx.sandbox.SpreadsheetRepository.findRowByBookingId(studioMemberResult.bookingId);
+  assert.strictEqual(studioMemberFound.record.priceIsMember, true);
+
+  var studioGeneralCtx = setup();
+  var studioGeneralResult = studioGeneralCtx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 })
+  );
+  assert.strictEqual(studioGeneralResult.price.amount, 6000, 'isMember未送信は一般料金のまま（fail-closed）');
+  assert.strictEqual(studioGeneralResult.price.tier, 'GENERAL');
 });
 
 test('createBooking: snbはisMember:trueを送ると会員料金で保存される', function () {

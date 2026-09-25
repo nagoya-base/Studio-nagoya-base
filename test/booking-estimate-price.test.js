@@ -40,6 +40,15 @@ test('doGet: action=estimatePriceは料金計算を返す（studio_x・平日3�
   assert.strictEqual(body.price.dayType, 'WEEKDAY');
 });
 
+test('doGet: action=estimatePriceはisMember=1のときstudio_xも会員料金にする（PR #343レビュー対応: ブランド分離基準書v1.1）', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' });
+  var member = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: '180', isMember: '1' });
+  assert.strictEqual(member.price.tier, 'MEMBER');
+  assert.strictEqual(member.price.amount, 5500);
+  var general = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: '180' });
+  assert.strictEqual(general.price.tier, 'GENERAL');
+});
+
 test('doGet: action=estimatePriceはisMember=1のときsnbを会員料金にする。0/未指定/不正値はGENERALのまま', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' });
 

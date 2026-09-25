@@ -751,11 +751,11 @@ test('CARD_MIN_HOURS_BEFORE_START/CARD_TTL_HOURS/CARD_PAYMENT_METHOD_VALUE: gas/
 
 /* ── 利用料金表示（Issue #342） ── */
 
-test('brandShowsMemberOption: snbのみtrue。mens/studio_x/未知のbrandはfalse', function () {
+test('brandShowsMemberOption: snb/studio_xはtrue、mens/未知のbrandはfalse（PR #343レビュー対応: studio_xも会員基準の対象）', function () {
   var Logic = loadLogic();
   assert.strictEqual(Logic.brandShowsMemberOption('snb'), true);
+  assert.strictEqual(Logic.brandShowsMemberOption('studio_x'), true);
   assert.strictEqual(Logic.brandShowsMemberOption('mens'), false);
-  assert.strictEqual(Logic.brandShowsMemberOption('studio_x'), false);
   assert.strictEqual(Logic.brandShowsMemberOption('ataru'), false);
   assert.strictEqual(Logic.brandShowsMemberOption(undefined), false);
 });

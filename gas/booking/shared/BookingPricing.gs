@@ -12,17 +12,22 @@
  *
  * 料金表の出典（Issue #342調査結果。値はサイト掲載価格をそのまま転記）:
  * - GENERAL（一般/直接予約）: SNB本体（index.html）の「通常価格」表・Studio X
- *   （studio-x/index.html）の掲載価格と一致（Studio Xには会員概念自体が存在しない）。
+ *   （studio-x/index.html）の掲載価格と一致。
  * - MEMBER（会員）: SNB本体の「会員価格」表・SNB mens（mens/index.html）の掲載価格
  *   （mensページは常にこの表のみを掲載しており、通常価格表はページ上に存在しない）と一致。
  *
- * 会員区分（tier）の決定方針（Issue #342でユーザー確認済み）:
- * - studio_x: 会員概念が存在しないため、isMember入力を無視して常にGENERAL。
+ * 会員区分（tier）の決定方針（Issue #342のユーザー確認、およびPR #343レビュー
+ * （ブランド分離基準書v1.1）を反映。studio_xの扱いをPR #343レビューで修正）:
+ * - studio_x: ブランド分離基準書v1.1により、直接予約（このGAS予約フォーム経由の予約。
+ *   スペースマーケット等の外部プラットフォーム予約はそもそもこの経路を通らない）には
+ *   SNB本体と共通の会員基準を適用する。snbと同じくisMember入力でGENERAL/MEMBERを
+ *   決める（当初Issue #342時点では「Studio Xに会員概念なし」としてisMember入力を
+ *   無視し常にGENERALにしていたが、PR #343レビューでこれは誤りと判明したため修正した）。
  * - mens: ランディングページが常に会員相当の価格のみを掲載しているため、isMember入力を
  *   無視して常にMEMBER（現行の「メンズページを見た」自己申告による割引運用をそのまま
  *   自動化したもの）。
- * - snb: 予約フォームの自己申告（isMember）でGENERAL/MEMBERを決める。未指定・不正値は
- *   fail-closedでGENERAL（会員特典を誤って適用しない方向へ倒す）。
+ * - snb / studio_x: いずれも予約フォームの自己申告（isMember）でGENERAL/MEMBERを決める。
+ *   未指定・不正値はfail-closedでGENERAL（会員特典を誤って適用しない方向へ倒す）。
  * 実際に会員資格が本物かどうかの最終確認は、既存どおり管理者が予約確定前に行い、
  * 必要であればBookingRepository.updateBookingPriceで金額を補正する（このファイルの
  * 責務ではない）。
@@ -58,8 +63,10 @@ var BookingPricing = (function () {
     }
   };
 
+  /* mensのみisMember入力を無視して常にMEMBERへ固定する。snb/studio_xはいずれも
+     自己申告（isMember）でGENERAL/MEMBERを決める（PR #343レビュー対応。ブランド
+     分離基準書v1.1によりstudio_xの直接予約にもSNB共通の会員基準を適用する）。 */
   function resolveTier_(brand, isMemberInput) {
-    if (brand === 'studio_x') return TIER.GENERAL;
     if (brand === 'mens') return TIER.MEMBER;
     return isMemberInput === true ? TIER.MEMBER : TIER.GENERAL;
   }
@@ -135,9 +142,9 @@ var BookingPricing = (function () {
         currency: CURRENCY_,
         brand: brand,
         tier: tier,
-        /* mens/studio_xではisMemberInputを無視して上書きした結果（実際に適用されたtier）
-           を返す。呼び出し側はこの値をSheetsへ保存し、入力値ではなく「実際に何が
-           適用されたか」を後から追跡できるようにする。 */
+        /* mensではisMemberInputを無視して上書きした結果（実際に適用されたtier）を返す。
+           呼び出し側はこの値をSheetsへ保存し、入力値ではなく「実際に何が適用されたか」を
+           後から追跡できるようにする。 */
         isMember: tier === TIER.MEMBER,
         dayType: dayType,
         billableHours: hours,

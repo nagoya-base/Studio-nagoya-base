@@ -98,6 +98,7 @@ function createScriptRunStub() {
     'adminSendCardPaymentLink',
     'adminResolvePaymentLinkMetadataInconsistency',
     'adminUpdateBookingPrice',
+    'adminSendPriceUpdateMail',
     'diagnoseReminderEligibility',
     'previewReminderMail',
     'sendReminderTestMail'
@@ -2235,4 +2236,142 @@ test('runUpdatePrice_: サーバー側が失敗を返した場合はalertで案�
   var callNames = sandbox.google.script.run.calls.map(function (c) { return c.name; });
   assert.ok(callNames.indexOf('getAdminBookingDetail') !== -1, '失敗時も最新状態を確認するため詳細を再取得するべき');
   assert.strictEqual(callNames.indexOf('getAdminBookings'), -1, '失敗時は一覧を再取得しない');
+});
+
+/* ---------- 利用者への金額訂正案内（PR #343レビュー対応） ---------- */
+
+test('renderPriceNoticeSection_: 金額修正がない予約（priceOverrideAtが空）ではセクション自体を隠す', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(priceDetailBooking({ priceOverrideAt: '', priceUpdateNeeded: false }));
+  assert.strictEqual(sandbox.priceNoticeUi_.container.classList.contains('hidden'), true);
+});
+
+test('renderPriceNoticeSection_: 金額修正済み・未送信では警告つきで表示され、送信ボタンは「訂正案内を送信」になる', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(priceDetailBooking({
+    priceOverrideAmount: 3500, priceOverrideAt: '2026-10-01 09:00', effectivePriceAmount: 3500,
+    priceUpdateMailSentAt: '', priceUpdateNeeded: true
+  }));
+  assert.strictEqual(sandbox.priceNoticeUi_.container.classList.contains('hidden'), false);
+  assert.match(sandbox.priceNoticeUi_.statusEl.textContent, /案内が必要/);
+  assert.match(sandbox.priceNoticeUi_.statusEl.textContent, /未送信/);
+  assert.strictEqual(sandbox.priceNoticeUi_.sendButton.textContent, '訂正案内を送信');
+  assert.strictEqual(sandbox.priceNoticeUi_.sendButton.disabled, false);
+});
+
+test('renderPriceNoticeSection_: 送信済みでは「送信済み: 日時」を表示し、送信ボタンは「訂正案内を再送」になる', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(priceDetailBooking({
+    priceOverrideAmount: 3500, priceOverrideAt: '2026-10-01 09:00', effectivePriceAmount: 3500,
+    priceUpdateMailSentAt: '2026-10-01 10:00', priceUpdateNeeded: false
+  }));
+  assert.doesNotMatch(sandbox.priceNoticeUi_.statusEl.textContent, /案内が必要/);
+  assert.match(sandbox.priceNoticeUi_.statusEl.textContent, /送信済み: 2026-10-01 10:00/);
+  assert.strictEqual(sandbox.priceNoticeUi_.sendButton.textContent, '訂正案内を再送');
+});
+
+test('renderPriceNoticeSection_: PENDING以外（例: CONFIRMED）では送信ボタンを無効化する', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(priceDetailBooking({
+    status: 'CONFIRMED', priceOverrideAmount: 3500, priceOverrideAt: '2026-10-01 09:00', effectivePriceAmount: 3500
+  }));
+  assert.strictEqual(sandbox.priceNoticeUi_.sendButton.disabled, true);
+});
+
+test('runSendPriceUpdateNotice_: 確認ダイアログでキャンセルした場合はGASを呼ばない', function () {
+  var sandbox = loadClientSandbox({ confirmResult: false });
+  sandbox.showDetailModal(priceDetailBooking({ priceOverrideAmount: 3500, priceOverrideAt: '2026-10-01 09:00', effectivePriceAmount: 3500 }));
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPriceUpdateNotice_();
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
+test('runSendPriceUpdateNotice_: PENDING以外・金額修正がない予約では呼び出し自体を行わない', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+
+  sandbox.showDetailModal(priceDetailBooking({ priceOverrideAt: '' }));
+  sandbox.google.script.run.calls.length = 0;
+  sandbox.runSendPriceUpdateNotice_();
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0, '金額修正がない予約では呼ばない');
+
+  sandbox.showDetailModal(priceDetailBooking({ status: 'CONFIRMED', priceOverrideAmount: 3500, priceOverrideAt: '2026-10-01 09:00' }));
+  sandbox.google.script.run.calls.length = 0;
+  sandbox.runSendPriceUpdateNotice_();
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0, 'PENDING以外では呼ばない');
+});
+
+test('runSendPriceUpdateNotice_: 未送信からの送信はforce:falseで呼び、成功後に詳細・一覧を再取得する', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  var target = priceDetailBooking({
+    priceOverrideAmount: 3500, priceOverrideAt: '2026-10-01 09:00', effectivePriceAmount: 3500,
+    priceUpdateMailSentAt: '', priceUpdateNeeded: true
+  });
+  sandbox.showDetailModal(target);
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPriceUpdateNotice_();
+
+  assert.strictEqual(sandbox.google.script.run.calls.length, 1);
+  assert.strictEqual(sandbox.google.script.run.calls[0].name, 'adminSendPriceUpdateMail');
+  // vmサンドボックス（別realm）で生成されたオブジェクトのため、非strict deepEqualで比較する（test/booking-calendar-repository.test.jsと同じ方針）
+  assert.deepEqual(sandbox.google.script.run.calls[0].args, [target.bookingId, { force: false }]);
+
+  sandbox.google.script.run.resolveCall(0, { success: true, bookingId: target.bookingId, sentAt: '2026-10-01T01:00:00.000Z' });
+
+  assert.strictEqual(alerts.length, 1);
+  assert.match(alerts[0], /送信しました/);
+  var callNames = sandbox.google.script.run.calls.map(function (c) { return c.name; });
+  assert.ok(callNames.indexOf('getAdminBookingDetail') !== -1);
+  assert.ok(callNames.indexOf('getAdminBookings') !== -1);
+});
+
+test('runSendPriceUpdateNotice_: 送信済みからの再送はforce:trueで呼ぶ', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var target = priceDetailBooking({
+    priceOverrideAmount: 3500, priceOverrideAt: '2026-10-01 09:00', effectivePriceAmount: 3500,
+    priceUpdateMailSentAt: '2026-09-30 10:00', priceUpdateNeeded: false
+  });
+  sandbox.showDetailModal(target);
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPriceUpdateNotice_();
+
+  assert.strictEqual(sandbox.google.script.run.calls[0].name, 'adminSendPriceUpdateMail');
+  // vmサンドボックス（別realm）で生成されたオブジェクトのため、非strict deepEqualで比較する（test/booking-calendar-repository.test.jsと同じ方針）
+  assert.deepEqual(sandbox.google.script.run.calls[0].args, [target.bookingId, { force: true }]);
+});
+
+test('runSendPriceUpdateNotice_: サーバー側がスキップを返した場合はその理由をalertで案内する', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  var target = priceDetailBooking({ priceOverrideAmount: 3500, priceOverrideAt: '2026-10-01 09:00', effectivePriceAmount: 3500 });
+  sandbox.showDetailModal(target);
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runSendPriceUpdateNotice_();
+  sandbox.google.script.run.resolveCall(0, {
+    success: false, skipped: true, error: { code: 'NO_PRICE_OVERRIDE', message: 'この予約は管理者による金額修正がまだ行われていません。' }
+  });
+
+  assert.strictEqual(alerts.length, 1);
+  assert.match(alerts[0], /スキップしました/);
+});
+
+test('render: 一覧カードは金額修正済み・未送信の予約にのみ「金額訂正の案内が未送信です」の警告行を出す', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.filter = 'all';
+  sandbox.state.bookings = [
+    booking({ bookingId: 'needs-notice', priceUpdateNeeded: true }),
+    booking({ bookingId: 'no-notice-needed', priceUpdateNeeded: false })
+  ];
+
+  var list = sandbox.document.getElementById('list');
+  sandbox.render();
+
+  assert.ok(list.innerHTML.indexOf('金額訂正の案内が未送信です') !== -1);
 });

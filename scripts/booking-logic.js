@@ -789,13 +789,14 @@
    * （estimatePrice/createBooking。gas/booking/shared/BookingPricing.gs）から取得する。
    */
 
-  /* SNBのみ会員自己申告欄を出す（Issue #342方針決定）。studio_xは会員概念が存在せず、
-     mensは常に会員相当の価格が適用されるため、いずれも自己申告欄を出さない
-     （BookingPricing.gsのresolveTier_と同じ分岐。ここでは表示制御のみ）。 */
-  var MEMBER_OPTION_BRAND_ = 'snb';
+  /* snb/studio_xは会員自己申告欄を出す（PR #343レビュー対応。ブランド分離基準書v1.1に
+     よりstudio_xの直接予約にもSNB共通の会員基準を適用するため）。mensは常に会員相当の
+     価格が適用されるため自己申告欄を出さない（BookingPricing.gsのresolveTier_と同じ
+     分岐。ここでは表示制御のみ）。 */
+  var MEMBER_OPTION_BRANDS_ = ['snb', 'studio_x'];
 
   function brandShowsMemberOption(brand) {
-    return brand === MEMBER_OPTION_BRAND_;
+    return MEMBER_OPTION_BRANDS_.indexOf(brand) !== -1;
   }
 
   /* amount（数値）を'¥4,000'へ整形する。数値化できない場合は空文字を返す

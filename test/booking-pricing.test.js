@@ -55,12 +55,24 @@ test('computeBookingPrice: studio_xの土日祝料金（2h/3h/4h・延長）', f
   });
 });
 
-test('computeBookingPrice: studio_xはisMember:trueを送っても会員料金にならない（会員概念がないため常にGENERAL）', function () {
+test('computeBookingPrice: studio_xはisMember:trueを送ると会員料金になる（PR #343レビュー対応: ブランド分離基準書v1.1によりSNB共通の会員基準を適用）', function () {
   var Pricing = loadPricing();
-  var result = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true });
-  assert.strictEqual(result.price.tier, 'GENERAL');
-  assert.strictEqual(result.price.isMember, false);
-  assert.strictEqual(result.price.amount, 6000, '一般料金（会員料金5,500ではない）のまま');
+  var member = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true });
+  assert.strictEqual(member.price.tier, 'MEMBER');
+  assert.strictEqual(member.price.isMember, true);
+  assert.strictEqual(member.price.amount, 5500, '会員料金（一般料金6,000ではない）になる');
+
+  var general = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: false });
+  assert.strictEqual(general.price.tier, 'GENERAL');
+  assert.strictEqual(general.price.amount, 6000);
+});
+
+test('computeBookingPrice: studio_xのisMember未指定・不正値はfail-closedでGENERAL（会員割引を誤って適用しない）', function () {
+  var Pricing = loadPricing();
+  [undefined, null, 'true', 1, {}].forEach(function (rawIsMember) {
+    var result = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: rawIsMember });
+    assert.strictEqual(result.price.tier, 'GENERAL', JSON.stringify(rawIsMember) + ' はGENERALへfail-closedされるべき');
+  });
 });
 
 test('computeBookingPrice: mensはisMember:falseを送っても常に会員（MEMBER）料金になる', function () {

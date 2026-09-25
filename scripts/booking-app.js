@@ -206,9 +206,9 @@
   if (els.date) els.date.min = Logic.todayInJapan();
 
   /*
-   * 会員自己申告欄（Issue #342）はSNBのみ表示する（Logic.brandShowsMemberOption。
-   * Studio Xは会員概念がなく、SNB mensは常に会員相当の価格が適用されるため）。
-   * HTML自体は3ブランド共通のため、表示制御だけをここで行う。
+   * 会員自己申告欄（Issue #342。PR #343レビュー対応でstudio_xも対象に追加）はsnb/
+   * studio_xで表示する（Logic.brandShowsMemberOption）。SNB mensは常に会員相当の価格が
+   * 適用されるため表示しない。HTML自体は3ブランド共通のため、表示制御だけをここで行う。
    */
   if (els.memberField) els.memberField.hidden = !Logic.brandShowsMemberOption(brand);
 
@@ -566,7 +566,7 @@
 
   /*
    * ── 利用料金の見積り（Issue #342） ──
-   * 利用日・利用時間（・SNBのみ会員自己申告）が揃った時点でGASのestimatePriceを呼ぶ。
+   * 利用日・利用時間（・snb/studio_xのみ会員自己申告）が揃った時点でGASのestimatePriceを呼ぶ。
    * 料金表そのものはここに置かず、必ずGAS側（BookingPricing.gs）の値を表示する。
    * 実際に予約として保存される金額はcreateBookingのレスポンス（送信成功時のみ確定）で、
    * ここで表示する値はあくまで見積りに過ぎない（submitハンドラ参照）。
@@ -644,10 +644,21 @@
     return formatted ? UI_TEXT.priceLine(formatted) : Logic.priceUnavailableLabel(locale);
   }
 
+  /*
+   * PRレビュー対応（Issue #342）: Step4確認画面の料金表示（els.confirmPrice）も
+   * ここへ含める。以前はrenderConfirmSummary()内で一度だけ（Step4表示時点の
+   * latestPriceEntryを読んで）設定していたが、その後に見積りAPIの応答が届いても
+   * els.confirmPriceは更新されず、Step4に古い「計算中」表示や別条件の金額が
+   * 残り続める不具合があった。ここへ含めることで、Step4表示中・表示前を問わず、
+   * 応答が「今の入力条件と一致する場合だけ」（renderPriceEverywhereIfCurrent_）
+   * Step4の表示も含めて常に最新化される。els.confirmPriceが存在しない（まだStep4に
+   * 到達していない）場合はrenderPriceEntryInto_同様に何もしない。
+   */
   function renderPriceEverywhere_(entry) {
     latestPriceEntry = entry;
     renderPriceEntryInto_(els.priceLine, els.priceNote, entry);
     renderPriceEntryInto_(els.startTimePriceLine, els.startTimePriceNote, entry);
+    if (els.confirmPrice) els.confirmPrice.textContent = priceDisplayText_(entry);
   }
 
   function renderPriceEverywhereIfCurrent_(key, entry) {
@@ -1013,13 +1024,15 @@
     els.confirmDate.textContent = state.date;
     els.confirmTime.textContent = UI_TEXT.confirmTime(state.startTime, endTime, state.durationMinutes / 60);
     /*
-     * 利用料金（Issue #342）。ここではlatestPriceEntry（Step1/2で取得済みの見積り）を
-     * そのまま表示する。日付・利用時間・会員自己申告はStep1確定後に変わらないため、
-     * 通常はここに来る前に取得済みだが、念のため確認画面表示直前にも再確認する
-     * （取得中・キャッシュ済みいずれの場合も安全にno-opまたは即時反映される）。
+     * 利用料金（Issue #342。PRレビュー対応）。ここでは表示更新のトリガーとして
+     * refreshPriceEstimate_()を呼ぶだけで、els.confirmPriceへの実際の書き込みは
+     * renderPriceEverywhere_（refreshPriceEstimate_から同期的または非同期に呼ばれる）に
+     * 一元化している。日付・利用時間・会員自己申告はStep1確定後に変わらないため、
+     * 通常はここに来る前に取得済み（キャッシュヒットで即時反映）だが、万一まだ
+     * 取得中・未取得の場合でも、renderPriceEverywhereが応答到着時にStep4の表示を
+     * 含めて自動的に最新化する（古い金額のまま固定される問題の修正）。
      */
     refreshPriceEstimate_();
-    if (els.confirmPrice) els.confirmPrice.textContent = priceDisplayText_(latestPriceEntry);
     els.confirmName.textContent = state.name;
     els.confirmEmail.textContent = state.email;
     els.confirmPhone.textContent = state.phone || UI_TEXT.phoneUnset;

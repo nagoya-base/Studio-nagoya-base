@@ -251,10 +251,10 @@ function setupForBrand(brand) {
   return { elements: elements };
 }
 
-test('Issue #342: 会員自己申告欄はsnbのみ表示し、mens/studio_xでは非表示のまま', function () {
+test('Issue #342: 会員自己申告欄はsnb/studio_xで表示し、mensでは非表示のまま（PR #343レビュー対応）', function () {
   assert.strictEqual(setupForBrand('snb').elements['ba-member-field'].hidden, false);
+  assert.strictEqual(setupForBrand('studio_x').elements['ba-member-field'].hidden, false);
   assert.strictEqual(setupForBrand('mens').elements['ba-member-field'].hidden, true);
-  assert.strictEqual(setupForBrand('studio_x').elements['ba-member-field'].hidden, true);
 });
 
 /* ── English locale（Issue #297）: 実際のscripts/booking-logic.jsをbooking-app.jsと
@@ -439,6 +439,149 @@ function setupFullFlow(locale, options) {
     getFetchCallCount: function () { return fetchCallCount; }
   };
 }
+
+/*
+ * PR #343レビュー対応の回帰テスト用セットアップ: setupFullFlowとほぼ同じだが、
+ * action=estimatePriceへのfetchだけ即座には解決させず、テスト側が任意のタイミングで
+ * resolvePriceFetch(responseBody)を呼ぶまで待たせる。「Step4表示後に見積もりAPIの
+ * 応答が届いた場合、確認画面の料金が更新されること」を検証するために、応答到着の
+ * タイミングをテストから制御できるようにする。 */
+function setupFullFlowWithDeferredPrice(locale, options) {
+  var opts = options || {};
+  var elements = {};
+  var startTimeButtons = [];
+  var selectedCustomerType = null;
+  var selectedPaymentMethod = null;
+  var priceFetchResolvers = [];
+
+  var root = createElement('booking-app');
+  root.getAttribute = function (name) {
+    if (name === 'data-brand') return opts.brand || 'snb';
+    if (name === 'data-back-url') return '/';
+    if (name === 'data-back-label') return null;
+    if (name === 'data-locale') return locale;
+    return null;
+  };
+  root.querySelectorAll = function () { return []; };
+  root.querySelector = function (selector) {
+    if (selector === 'input[name="customerType"]:checked') {
+      return selectedCustomerType ? { value: selectedCustomerType } : null;
+    }
+    if (selector === 'input[name="paymentMethod"]:checked') {
+      return selectedPaymentMethod ? { value: selectedPaymentMethod } : null;
+    }
+    return null;
+  };
+  elements['booking-app'] = root;
+
+  var startTimeGrid = createElement('ba-start-time-grid');
+  startTimeGrid.appendChild = function (child) { startTimeButtons.push(child); };
+  elements['ba-start-time-grid'] = startTimeGrid;
+
+  var documentStub = {
+    getElementById: function (id) {
+      if (!elements[id]) elements[id] = createElement(id);
+      return elements[id];
+    },
+    createElement: createElement
+  };
+
+  loadFrontendSandbox(['booking-logic.js', 'booking-app.js'], {
+    document: documentStub,
+    window: { BookingApiConfig: { BASE_URL: 'https://example.invalid/exec' } },
+    fetch: function (url) {
+      if (url.indexOf('action=estimatePrice') !== -1) {
+        return new Promise(function (resolve) {
+          priceFetchResolvers.push(function (responseBody) {
+            resolve({ json: function () { return Promise.resolve(responseBody); } });
+          });
+        });
+      }
+      return Promise.resolve({ json: function () {
+        return Promise.resolve({ success: true, bookableStartTimes: opts.bookableStartTimes || ['10:00', '11:00'] });
+      } });
+    }
+  });
+
+  return {
+    elements: elements,
+    startTimeButtons: startTimeButtons,
+    setCustomerType: function (v) { selectedCustomerType = v; },
+    setPaymentMethod: function (v) { selectedPaymentMethod = v; },
+    /* 現在待機中（未解決）の見積りfetch呼び出し数。 */
+    pendingPriceFetchCount: function () { return priceFetchResolvers.length; },
+    /* 最も古い（最初の）未解決の見積りfetchを指定の応答で解決する。 */
+    resolveOldestPriceFetch: function (responseBody) {
+      var resolver = priceFetchResolvers.shift();
+      if (resolver) resolver(responseBody);
+    },
+    /* すべての未解決の見積りfetchを指定の応答で解決する（同一条件の重複呼び出し等）。 */
+    resolveAllPriceFetches: function (responseBody) {
+      var resolvers = priceFetchResolvers.splice(0, priceFetchResolvers.length);
+      resolvers.forEach(function (resolver) { resolver(responseBody); });
+    }
+  };
+}
+
+test('PR #343レビュー対応: Step4表示後に見積りAPIの応答が届くと、確認画面の料金が「計算中」から更新される（古い表示のまま固定されない）', async function () {
+  var ctx = setupFullFlowWithDeferredPrice(null);
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  /* Step1→Step2遷移時点では見積りfetchはまだ未解決のまま（Step1のisMember変更等での
+     再発火を含め複数回リクエストされている可能性があるため、件数は問わず「1件以上
+     保留中」であることだけを確認する）。 */
+  assert.ok(ctx.pendingPriceFetchCount() >= 1, '見積りfetchが保留中であるべき');
+
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  ctx.elements['ba-name'].value = '山田太郎';
+  ctx.elements['ba-email'].value = 'taro@example.com';
+  ctx.elements['ba-people'].value = '2名';
+  ctx.elements['ba-purpose'].value = 'セルフ撮影';
+  ctx.setPaymentMethod('現金');
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  /* Step4表示直後: 見積りはまだ届いていないため「計算中」等の表示で、確定した金額
+     （¥4,000等）は一切表示されないべき（古い/未確定の金額を確定料金として出さない）。 */
+  assert.doesNotMatch(ctx.elements['ba-confirm-price'].textContent, /¥/, 'まだ確定金額を表示してはいけない');
+
+  /* Step4表示後に、ようやく見積りAPIの応答が届いたケースを再現する。 */
+  ctx.resolveAllPriceFetches({ success: true, price: { amount: 6000, currency: 'JPY', tier: 'GENERAL', isMember: false, dayType: 'WEEKDAY' } });
+  await flushPromises();
+
+  assert.match(ctx.elements['ba-confirm-price'].textContent, /¥6,000/, 'Step4表示中でも、後から届いた見積りで料金表示が更新されるべき');
+});
+
+test('PR #343レビュー対応: Step4表示中に見積りAPIが失敗した場合も、古い金額のまま固定されず失敗理由を表示する', async function () {
+  var ctx = setupFullFlowWithDeferredPrice(null);
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  ctx.elements['ba-name'].value = '山田太郎';
+  ctx.elements['ba-email'].value = 'taro@example.com';
+  ctx.elements['ba-people'].value = '2名';
+  ctx.elements['ba-purpose'].value = 'セルフ撮影';
+  ctx.setPaymentMethod('現金');
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  ctx.resolveAllPriceFetches({ success: false, error: { code: 'INTERNAL_ERROR', message: '予約処理中にエラーが発生しました。' } });
+  await flushPromises();
+
+  assert.doesNotMatch(ctx.elements['ba-confirm-price'].textContent, /¥/, '失敗時に金額を表示してはいけない');
+});
 
 test('PR #300再レビュー: English localeの確認画面はpeople/purpose/paymentMethodを英語ラベルで表示し、送信payloadは日本語の既存内部valueのまま送る', async function () {
   var ctx = setupFullFlow('en');

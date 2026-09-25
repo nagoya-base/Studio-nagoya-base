@@ -95,6 +95,15 @@ function resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCou
   return BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo);
 }
 
+/* 正式関数: sendPriceUpdateMail(bookingId, options)（PR #343レビュー対応）。
+   管理者がupdateBookingPriceで金額を修正した予約について、修正後の金額を利用者へ
+   案内するメールを送信する。Booking Admin側のみで公開する（Booking Web Appには
+   追加しない）。options.forceは管理者の明示的な再送のみで渡すこと（Web UI側でも同様に
+   扱う）。スクリプトエディタから直接実行することもできる。 */
+function sendPriceUpdateMail(bookingId, options) {
+  return BookingMailer.sendPriceUpdateMailForBooking(bookingId, options);
+}
+
 /* 単純トリガー。このファイルをSPREADSHEET_IDのSpreadsheetへコンテナバインドした
    Apps Scriptプロジェクトへデプロイしていれば、そのSpreadsheetを開くたびに
    自動発火し、追加のトリガー設定なしで「予約管理」メニューが表示される。 */
@@ -314,7 +323,9 @@ var RESEND_MAIL_HANDLERS_ = {
   CANCELLED: function (bookingId, options) { return BookingMailer.sendCancelledMailForBooking(bookingId, options); },
   REMINDER: function (bookingId, options) { return BookingMailer.sendReminderMailForBooking(bookingId, options); },
   /* Issue #334: カード決済PENDING失効通知の個別再送・手動送信に使う。 */
-  EXPIRED: function (bookingId, options) { return BookingMailer.sendExpiredMailForBooking(bookingId, options); }
+  EXPIRED: function (bookingId, options) { return BookingMailer.sendExpiredMailForBooking(bookingId, options); },
+  /* PR #343レビュー対応: 管理者による金額修正の利用者案内の個別再送・手動送信に使う。 */
+  PRICE_UPDATE: function (bookingId, options) { return BookingMailer.sendPriceUpdateMailForBooking(bookingId, options); }
 };
 
 function resendBookingMailByPrompt_() {
@@ -328,7 +339,7 @@ function resendBookingMailByPrompt_() {
   }
 
   var typeResponse = ui.prompt(
-    '再送するメール種別を入力してください（PENDING / CONFIRMED / CANCELLED / REMINDER / EXPIRED）',
+    '再送するメール種別を入力してください（PENDING / CONFIRMED / CANCELLED / REMINDER / EXPIRED / PRICE_UPDATE）',
     ui.ButtonSet.OK_CANCEL
   );
   if (typeResponse.getSelectedButton() !== ui.Button.OK) return;
@@ -341,7 +352,7 @@ function runResendMailAndAlert_(bookingId, mailType) {
   var ui = SpreadsheetApp.getUi();
   var sendFn = RESEND_MAIL_HANDLERS_[mailType];
   if (!sendFn) {
-    ui.alert('未知のメール種別です: ' + mailType + '（PENDING / CONFIRMED / CANCELLED / REMINDER / EXPIREDのいずれかを指定してください）');
+    ui.alert('未知のメール種別です: ' + mailType + '（PENDING / CONFIRMED / CANCELLED / REMINDER / EXPIRED / PRICE_UPDATEのいずれかを指定してください）');
     return;
   }
   try {

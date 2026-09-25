@@ -132,14 +132,18 @@ var SpreadsheetRepository = (function () {
      *   （Issue #342本文「既存予約の金額が変動しないようにする」）。
      * - priceTier: 適用された料金区分（'GENERAL'|'MEMBER'）。
      * - priceDayType: 適用された曜日区分（'WEEKDAY'|'WEEKEND_HOLIDAY'）。
-     * - priceIsMember: 実際に適用された会員区分（true/false。mens/studio_xでは
-     *   予約者の自己申告を無視して固定された値。BookingPricing.gs参照）。
+     * - priceIsMember: 実際に適用された会員区分（true/false。mensでは予約者の自己申告を
+     *   無視して常にtrueに固定される。snb/studio_xは自己申告どおり。BookingPricing.gs参照）。
      * - priceComputedAt: priceAmountを計算した日時（createBooking時のnowと同じ）。
      * - priceOverrideAmount / priceOverrideAt: 管理者がBooking
      *   Admin（BookingRepository.updateBookingPrice。PENDING限定）で金額を修正した場合の
      *   修正後の金額・修正日時。priceAmount自体は上書きしない（自動計算値と修正後の値を
      *   区別できるようにするため）。「案内すべき実効金額」はBooking.getEffectivePriceAmount
      *   （priceOverrideAtが空でなければpriceOverrideAmountを優先）で一元的に判定する。
+     * - priceUpdateMailSentAt（PR #343レビュー対応で追加）: 管理者による金額修正
+     *   （priceOverrideAt）を利用者へ案内するメール（BookingMailer.
+     *   sendPriceUpdateMailForBooking）の直近の送信成功日時。他のメールSentAt列と同じ
+     *   「空＝未送信」の慣習に従う。
      */
     'priceAmount',
     'priceTier',
@@ -147,7 +151,8 @@ var SpreadsheetRepository = (function () {
     'priceIsMember',
     'priceComputedAt',
     'priceOverrideAmount',
-    'priceOverrideAt'
+    'priceOverrideAt',
+    'priceUpdateMailSentAt'
   ];
 
   function getSpreadsheet_() {

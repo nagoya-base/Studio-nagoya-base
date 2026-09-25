@@ -378,12 +378,63 @@ var BookingMailTemplates = (function () {
     return { subject: subject, body: body };
   }
 
+  /*
+   * PRICE_UPDATE（管理者による金額修正の案内。PR #343レビュー対応）。
+   *
+   * 仮予約受付メール（buildPendingMail）で案内した金額を、管理者が予約確定前に
+   * BookingRepository.updateBookingPriceで修正した場合、利用者へ修正後の金額を
+   * 改めて案内するための専用テンプレート。既存の仮予約受付・確定・決済リンクの
+   * いずれのテンプレートも流用しない（それぞれの既存方針・秘密情報の扱いに影響を
+   * 与えないため）。
+   *
+   * 表示する金額は必ずBooking.getEffectivePriceAmount（priceOverrideAmountが優先）を
+   * 使う。呼び出し側（BookingMailer.sendPriceUpdateMailForBooking）は、修正
+   * （priceOverrideAt）が実際に存在する予約に対してのみこの関数を呼ぶ想定だが、
+   * 万一存在しない状態で呼ばれても、ここでは例外を投げて呼び出し側にfail-closedな
+   * 失敗として扱わせる（金額不明のまま「訂正後の金額」と称するメールを送らないため）。
+   *
+   * 予約確定前であることは引き続き明記し、「確定」という語は使わない（既存の
+   * buildPendingMail/仮予約完了画面と同じ方針。Issue #342本文「仮予約受付と予約確定を
+   * 明確に区別する」）。
+   */
+  function buildPriceUpdateMail(record, config) {
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var timezone = config.timezone;
+    var startTime = formatTime_(record.startAt, timezone);
+    var endTime = formatTime_(record.endAt, timezone);
+    var formattedAmount = formatJpyAmount_(Booking.getEffectivePriceAmount(record));
+    if (!formattedAmount) {
+      throw new Error('利用料金が確定していないため、訂正案内メールを送信できません。');
+    }
+
+    var subject = '【' + brandLabel + '】ご予約の利用料金の訂正について';
+    var body = joinNonEmpty_([
+      record.name + ' 様',
+      '',
+      'ご予約の利用料金について、当初お送りした仮予約受付メールの金額から訂正がございましたので、改めてご案内いたします。',
+      '※このメールの時点でもご予約はまだ確定しておりません。内容をご確認ください。',
+      '',
+      '予約ID: ' + record.bookingId,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '開始時刻: ' + startTime,
+      '終了時刻: ' + endTime,
+      'ブランド: ' + brandLabel,
+      '訂正後の利用料金: ' + formattedAmount + '（税込）',
+      '',
+      'このままお申し込みを続けられる場合、改めてのご連絡は不要です。ご不明点やお申し込みを取りやめたい場合は下記までご連絡ください。',
+      contactLine_(config)
+    ]);
+
+    return { subject: subject, body: body };
+  }
+
   return {
     buildPendingMail: buildPendingMail,
     buildConfirmedMail: buildConfirmedMail,
     buildCancelledMail: buildCancelledMail,
     buildExpiredMail: buildExpiredMail,
     buildReminderMail: buildReminderMail,
-    buildPaymentLinkMail: buildPaymentLinkMail
+    buildPaymentLinkMail: buildPaymentLinkMail,
+    buildPriceUpdateMail: buildPriceUpdateMail
   };
 })();

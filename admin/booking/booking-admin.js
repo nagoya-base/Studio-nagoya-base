@@ -343,6 +343,13 @@ function render() {
       ? '<div class="card-price">利用料金: ' + escapeHtml(formattedPrice) + (b.priceOverridden ? '（修正済み）' : '') + '</div>'
       : '';
 
+    /* PR #343レビュー対応: 「金額を修正したのに利用者への訂正案内をまだ送っていない」
+       予約を一覧の時点で見落とさないよう、目立つ警告行を出す（詳細を開かなくても
+       気付けるようにする）。送信済み・修正なしの場合はこの行自体を出さない。 */
+    var priceUpdateWarningLine = b.priceUpdateNeeded
+      ? '<div class="card-price-warning">⚠ 金額訂正の案内が未送信です</div>'
+      : '';
+
     return (
       '<div class="card">' +
         '<div class="card-top">' +
@@ -354,6 +361,7 @@ function render() {
         '<div class="card-meta">' + escapeHtml(b.people) + ' / ' + escapeHtml(customerTypeLabel(b.customerType)) + '</div>' +
         '<div class="card-sub">' + escapeHtml(b.paymentMethod) + ' ・ ' + escapeHtml(b.purpose) + '</div>' +
         priceLine +
+        priceUpdateWarningLine +
         cardDueLine +
         '<div class="card-id">' + escapeHtml(b.bookingId) + '</div>' +
         '<div class="card-actions">' + actions + '</div>' +
@@ -455,6 +463,7 @@ function showDetailModal(booking) {
   }).join('');
   renderPaymentLinkSection_(booking);
   renderPriceEditSection_(booking);
+  renderPriceNoticeSection_(booking);
   document.getElementById('modal-overlay').classList.add('open');
 }
 
@@ -819,6 +828,108 @@ function runUpdatePrice_() {
       refreshOpenDetail_(booking.bookingId);
     })
     .adminUpdateBookingPrice(booking.bookingId, amount);
+}
+
+/*
+ * ── 金額修正の利用者案内（PR #343レビュー対応） ──
+ * 仮予約メールで案内した金額を管理者が修正した場合、利用者へ修正後の金額を改めて
+ * 案内できるようにする欄。「利用料金の修正」欄（price-edit-section）と同じDOM生成
+ * 方針（初回のみinitPriceNoticeUi_、内容更新はshowDetailModalのたびにrenderPriceNoticeSection_）
+ * を踏襲する。priceOverrideAt（金額修正）が存在する予約でのみ表示し、修正がない予約
+ * （通常の大半）ではセクション自体を隠す。
+ */
+var priceNoticeUi_ = {
+  container: null,
+  statusEl: null,
+  sendButton: null,
+  sendInFlight: false
+};
+
+function initPriceNoticeUi_() {
+  var modal = document.getElementById('modal');
+  var closeButton = document.getElementById('modal-close');
+
+  var container = document.createElement('div');
+  container.id = 'price-notice-section';
+
+  var heading = document.createElement('h3');
+  heading.textContent = '利用者への金額訂正案内';
+  container.appendChild(heading);
+
+  var statusEl = document.createElement('div');
+  statusEl.id = 'price-notice-status';
+  container.appendChild(statusEl);
+
+  var sendButton = document.createElement('button');
+  sendButton.type = 'button';
+  sendButton.id = 'price-notice-send-button';
+  container.appendChild(sendButton);
+
+  modal.insertBefore(container, closeButton);
+  sendButton.addEventListener('click', runSendPriceUpdateNotice_);
+
+  priceNoticeUi_.container = container;
+  priceNoticeUi_.statusEl = statusEl;
+  priceNoticeUi_.sendButton = sendButton;
+}
+
+/* 表示内容の更新のみを担当する（DOM生成はinitPriceNoticeUi_で1回のみ）。
+   booking.priceOverrideAt（金額修正）が存在しない予約ではセクション自体を隠す
+   （案内すべき訂正がそもそも無いため）。 */
+function renderPriceNoticeSection_(booking) {
+  var ui = priceNoticeUi_;
+  if (!ui.container) return;
+  if (!booking || !booking.priceOverrideAt) {
+    ui.container.classList.add('hidden');
+    return;
+  }
+  ui.container.classList.remove('hidden');
+
+  var sent = !!booking.priceUpdateMailSentAt;
+  var warning = booking.priceUpdateNeeded ? '⚠ 案内が必要です。' : '';
+  ui.statusEl.textContent = warning + (sent ? '送信済み: ' + booking.priceUpdateMailSentAt : '未送信');
+
+  var sendable = booking.status === 'PENDING' && !ui.sendInFlight;
+  ui.sendButton.disabled = !sendable;
+  ui.sendButton.textContent = sent ? '訂正案内を再送' : '訂正案内を送信';
+}
+
+function runSendPriceUpdateNotice_() {
+  var booking = currentDetailBooking_;
+  if (!booking || !booking.priceOverrideAt || booking.status !== 'PENDING') return;
+  if (priceNoticeUi_.sendInFlight) return;
+
+  var isResend = !!booking.priceUpdateMailSentAt;
+  var confirmed = window.confirm(
+    '予約ID: ' + booking.bookingId + '\n' +
+    '訂正後の金額: ' + (formatYen_(booking.effectivePriceAmount) || '（未計算）') + '\n\n' +
+    (isResend ? 'この内容で訂正案内を再送しますか？' : 'この内容で訂正案内を送信しますか？')
+  );
+  if (!confirmed) return;
+
+  priceNoticeUi_.sendInFlight = true;
+  priceNoticeUi_.sendButton.disabled = true;
+  setStatusLine('訂正案内を送信中…');
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      priceNoticeUi_.sendInFlight = false;
+      setStatusLine('');
+      if (!result || !result.success) {
+        alert((result && result.skipped ? '送信条件を満たさないためスキップしました: ' : '送信できませんでした: ') + (result && result.error && result.error.message));
+      } else {
+        alert('訂正案内を送信しました。');
+      }
+      refreshOpenDetail_(booking.bookingId);
+      loadBookings();
+    })
+    .withFailureHandler(function (error) {
+      priceNoticeUi_.sendInFlight = false;
+      setStatusLine('');
+      alert('送信でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      refreshOpenDetail_(booking.bookingId);
+    })
+    .adminSendPriceUpdateMail(booking.bookingId, { force: isResend });
 }
 
 /*
@@ -1675,5 +1786,6 @@ initTabCountsUi_();
 initSearchUi_();
 initPaymentLinkUi_();
 initPriceEditUi_();
+initPriceNoticeUi_();
 
 loadBookings();

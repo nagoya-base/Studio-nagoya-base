@@ -191,6 +191,7 @@ function getAdminBookings() {
   var todayJst = BookingAvailability.formatDateInTimezone(new Date(), timezone);
   var bookings = SpreadsheetRepository.getAllBookings().map(function (item) {
     var record = item.record;
+    var priceSummary = buildAdminPriceSummary_(record);
     return {
       bookingId: record.bookingId,
       createdAt: normalizeAdminCreatedAt_(record.createdAt, timezone),
@@ -211,25 +212,37 @@ function getAdminBookings() {
        * いずれか）と「修正済みかどうか」だけを返し、詳細な区分（tier/dayType等）は
        * getAdminBookingDetailでのみ返す。キー名はeffectivePriceAmountとし、
        * getAdminBookingDetailが返すpriceAmount（＝予約時点の自動計算値。修正の有無に
-       * 関わらず不変）と混同しないようにする。
+       * 関わらず不変）と混同しないようにする。priceUpdateNeeded（PR #343レビュー対応）は
+       * 「金額修正済みだが利用者への訂正案内がまだ」の案内漏れを一覧でも見えるようにする。
        */
-      effectivePriceAmount: buildAdminPriceSummary_(record).effectiveAmount,
-      priceOverridden: buildAdminPriceSummary_(record).overridden
+      effectivePriceAmount: priceSummary.effectiveAmount,
+      priceOverridden: priceSummary.overridden,
+      priceUpdateNeeded: priceSummary.updateNeeded
     };
   });
   return { todayJst: todayJst, bookings: bookings };
 }
 
 /*
- * 利用料金の表示用サマリ（Issue #342）。effectiveAmountはBooking.getEffectivePriceAmount
- * （priceOverrideAtが空でなければpriceOverrideAmountを優先）そのもので、「案内すべき
- * 実効金額」の判定ロジックをここで複製しない。料金データを持たない過去の予約では
- * effectiveAmountがnullになる（Web UI側はnullを「未計算」として表示する）。
+ * 利用料金の表示用サマリ（Issue #342。priceUpdateNeededはPR #343レビュー対応で追加）。
+ * effectiveAmountはBooking.getEffectivePriceAmount（priceOverrideAtが空でなければ
+ * priceOverrideAmountを優先）そのもので、「案内すべき実効金額」の判定ロジックをここで
+ * 複製しない。料金データを持たない過去の予約ではeffectiveAmountがnullになる（Web UI側は
+ * nullを「未計算」として表示する）。
+ * priceUpdateNeeded: 管理者が金額を修正した（priceOverrideAtが非空）のに、その訂正案内
+ * （BookingMailer.sendPriceUpdateMailForBooking）をまだ送っていない（priceUpdateMailSentAt
+ * が空）PENDING予約だけtrueになる。一覧・詳細の両方でこのフラグを使い、「案内漏れ」を
+ * 管理者が見落とさないようにする（PR #343レビュー「管理画面で案内漏れを防げるように」）。
  */
+function needsPriceUpdateNotice_(record) {
+  return record.status === Booking.STATUS.PENDING && !!record.priceOverrideAt && !record.priceUpdateMailSentAt;
+}
+
 function buildAdminPriceSummary_(record) {
   return {
     effectiveAmount: Booking.getEffectivePriceAmount(record),
-    overridden: !!record.priceOverrideAt
+    overridden: !!record.priceOverrideAt,
+    updateNeeded: needsPriceUpdateNotice_(record)
   };
 }
 
@@ -325,7 +338,15 @@ function getAdminBookingDetail(bookingId) {
         : null,
       priceOverrideAt: formatAdminDateTime_(record.priceOverrideAt, timezone),
       effectivePriceAmount: Booking.getEffectivePriceAmount(record),
-      canEditPrice: record.status === Booking.STATUS.PENDING
+      canEditPrice: record.status === Booking.STATUS.PENDING,
+      /*
+       * PR #343レビュー対応: 金額修正の利用者案内（訂正案内メール）の送信状況。
+       * priceUpdateMailSentAtは他のメールSentAt列と同じ「空＝未送信」の慣習。
+       * priceUpdateNeededは「修正済みだが案内がまだ」のときだけtrueになり、Web UI側が
+       * 送信ボタンの強調表示（案内漏れの警告）に使う（buildAdminPriceSummary_参照）。
+       */
+      priceUpdateMailSentAt: formatAdminDateTime_(record.priceUpdateMailSentAt, timezone),
+      priceUpdateNeeded: buildAdminPriceSummary_(record).updateNeeded
     }
   };
 }
@@ -400,4 +421,16 @@ function adminResolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCo
    実行前の確認ダイアログ（自動計算値と修正後の金額の表示）はHTML側（クライアント）で行う。 */
 function adminUpdateBookingPrice(bookingId, newAmountJpy) {
   return updateBookingPrice(bookingId, newAmountJpy);
+}
+
+/*
+ * 金額修正の利用者案内送信（PR #343レビュー対応）。既存の正式関数sendPriceUpdateMail
+ * （BookingAdmin.gs）へそのまま委譲する。業務ロジック（金額修正済み・PENDING限定・
+ * 二重送信防止）はコピーしない。実行前の確認ダイアログ（修正後の金額の表示）は
+ * HTML側（クライアント）で行う。
+ * 戻り値にはsentAt（Dateオブジェクト）を含みうるため、adminSendCardPaymentLinkと同じ理由で
+ * sanitizeForClient_を通してから返す。
+ */
+function adminSendPriceUpdateMail(bookingId, options) {
+  return sanitizeForClient_(sendPriceUpdateMail(bookingId, options));
 }

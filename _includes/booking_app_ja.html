@@ -149,11 +149,11 @@
       <p class="ba-field-help">希望する時間帯を選ぶと、月間カレンダーの空き状況をその時間帯の開始時刻だけで再計算します。</p>
     </fieldset>
 
-    <!-- 会員自己申告（Issue #342）。SNBのみJS側で表示する（brandShowsMemberOption）。
-         Studio Xは会員概念がなく、SNB mensは常に会員相当の価格が適用されるため、
-         いずれもこの項目自体を表示しない（HTML自体は3ブランド共通のため、非表示は
-         JS側で行う）。実際の会員資格の確認は予約確定前に管理者が行う（自己申告のみで
-         確定はしない）。 -->
+    <!-- 会員自己申告（Issue #342。PR #343レビュー対応でstudio_xも対象に追加）。
+         snb/studio_xでJS側が表示する（brandShowsMemberOption）。SNB mensは常に会員相当の
+         価格が適用されるため、この項目自体を表示しない（HTML自体は3ブランド共通のため、
+         表示制御はJS側で行う）。実際の会員資格の確認は予約確定前に管理者が行う（自己申告
+         のみで確定はしない）。 -->
     <div class="ba-field" id="ba-member-field" hidden>
       <label class="ba-choice">
         <input type="checkbox" id="ba-is-member" name="isMember">

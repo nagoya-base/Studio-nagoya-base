@@ -227,11 +227,14 @@ test('getAdminBookings: { todayJst, bookings }を返し、一覧の各要素は�
      読み取り専用項目（カード予約のみ非空。ここでは支払方法が現金のためcardPaymentDueAtは
      空文字になることをこのテスト自体では検証しないが、キー自体は常に含まれる）。
      Issue #342: effectivePriceAmount（実効金額。Booking.getEffectivePriceAmount）・
-     priceOverridden（管理者による修正済みかどうか）も同様に一覧の許可フィールドへ追加。 */
-  var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status', 'cardPaymentDueAt', 'effectivePriceAmount', 'priceOverridden'];
+     priceOverridden（管理者による修正済みかどうか）も同様に一覧の許可フィールドへ追加。
+     PR #343レビュー対応: priceUpdateNeeded（修正済みだが利用者への訂正案内がまだ、の
+     案内漏れ警告フラグ）も追加。 */
+  var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status', 'cardPaymentDueAt', 'effectivePriceAmount', 'priceOverridden', 'priceUpdateNeeded'];
   assert.deepStrictEqual(Object.keys(item).sort(), allowedKeys.slice().sort());
   assert.strictEqual(item.cardPaymentDueAt, '', '現金等カード以外の支払方法ではcardPaymentDueAtは空文字であるべき');
   assert.strictEqual(item.priceOverridden, false, '未修正の予約はpriceOverridden:falseであるべき');
+  assert.strictEqual(item.priceUpdateNeeded, false, '未修正の予約はpriceUpdateNeeded:falseであるべき');
   assert.strictEqual(typeof item.effectivePriceAmount, 'number', 'effectivePriceAmountは自動計算済みの数値であるべき');
 
   ['email', 'phone', 'note', 'pendingMailSentAt', 'lastMailErrorMessage'].forEach(function (piiField) {
@@ -1101,4 +1104,60 @@ test('getAdminBookingDetail/getAdminBookings: 料金列が空文字（過去の�
   assert.strictEqual(detailResult.booking.priceTier, '');
   assert.strictEqual(detailResult.booking.priceDayType, '');
   assert.strictEqual(detailResult.booking.canEditPrice, true, 'PENDINGのままなら金額修正自体は引き続き可能であるべき');
+});
+
+/* ---------- 管理者による金額修正後の利用者案内（PR #343レビュー対応） ---------- */
+
+test('priceUpdateNeeded: 金額修正直後はtrue（一覧・詳細とも）。訂正案内メール送信後はfalseへ戻る', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { brand: 'studio_x', durationMinutes: 180 });
+
+  var beforeList = ctx.sandbox.getAdminBookings().bookings.filter(function (b) { return b.bookingId === bookingId; })[0];
+  assert.strictEqual(beforeList.priceUpdateNeeded, false, '修正前はfalse');
+
+  ctx.sandbox.updateBookingPrice(bookingId, 5000);
+
+  var afterOverrideList = ctx.sandbox.getAdminBookings().bookings.filter(function (b) { return b.bookingId === bookingId; })[0];
+  assert.strictEqual(afterOverrideList.priceUpdateNeeded, true, '修正済み・案内未送信はtrue');
+  var afterOverrideDetail = ctx.sandbox.getAdminBookingDetail(bookingId).booking;
+  assert.strictEqual(afterOverrideDetail.priceUpdateNeeded, true);
+  assert.strictEqual(afterOverrideDetail.priceUpdateMailSentAt, '');
+
+  var sendResult = ctx.sandbox.adminSendPriceUpdateMail(bookingId);
+  assert.strictEqual(sendResult.success, true);
+
+  var afterSendList = ctx.sandbox.getAdminBookings().bookings.filter(function (b) { return b.bookingId === bookingId; })[0];
+  assert.strictEqual(afterSendList.priceUpdateNeeded, false, '案内送信後はfalseへ戻るべき');
+  var afterSendDetail = ctx.sandbox.getAdminBookingDetail(bookingId).booking;
+  assert.ok(afterSendDetail.priceUpdateMailSentAt, '送信日時が記録されるべき');
+});
+
+test('adminSendPriceUpdateMail: 金額修正がまだない予約ではNO_PRICE_OVERRIDEでスキップする', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+
+  var result = ctx.sandbox.adminSendPriceUpdateMail(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'NO_PRICE_OVERRIDE');
+});
+
+test('adminSendPriceUpdateMail: 戻り値のsentAt（Dateオブジェクト）はISO 8601文字列へ変換されて返る（sanitizeForClient_）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+  ctx.sandbox.updateBookingPrice(bookingId, 5000);
+
+  var result = ctx.sandbox.adminSendPriceUpdateMail(bookingId);
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(typeof result.sentAt, 'string');
+  assert.ok(!isNaN(Date.parse(result.sentAt)));
+});
+
+test('BookingAdmin.sendPriceUpdateMail: BookingMailer.sendPriceUpdateMailForBookingへそのまま委譲する（Booking Admin側のみで公開）', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+  ctx.sandbox.updateBookingPrice(bookingId, 5000);
+
+  var result = ctx.sandbox.sendPriceUpdateMail(bookingId);
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(ctx.globals.MailApp._sentEmails.length, 2, '仮予約受付メール＋訂正案内メールの2通');
 });
