@@ -10,20 +10,31 @@
  * Bookingsへ反映する。
  *
  * 状態遷移（applyStatus）:
- * - PENDING_APPLY: settlementId行を記録した直後、Bookingsへの反映がまだ完了していない。
+ * - PENDING_APPLY: settlementId行を記録した直後、Bookingsへの反映結果が確定していない。
+ *   **この状態のまま同じsettlementIdで再送されても、BookingReschedule.gsは絶対に
+ *   Bookingsへの反映を再試行しない**（PR #345再レビュー対応）。Bookingsへの書き込みに
+ *   成功した直後にAPPLIED/FAILED_NEEDS_RECOVERYへの状態遷移自体が失敗する複合障害が
+ *   起きると、実際には反映済みなのにPENDING_APPLYのまま見えることがあり、ここで
+ *   無条件に再適用すると二重加算になる。そのためPENDING_APPLYで見つかった行は
+ *   FAILED_NEEDS_RECOVERYへ倒し、管理者にresolveFeeRecoveryでの確認・確定を必須にする。
  * - APPLIED: Bookingsへの反映が完了した（resultPaidAmount/resultRefundedAmountに
  *   反映後の累計額を記録する）。
- * - FAILED_NEEDS_RECOVERY: Bookingsへの反映に失敗した。この状態のまま同じsettlementIdで
- *   再送されても自動リトライはせず、Bookings側のfeeRecoveryRequiredAtと合わせて
- *   管理者の確認を要求する（「精算履歴と台帳の片方だけが更新された場合も復旧可能にする」
- *   要件への対応。この行が「入金/返金の意図はあったが、台帳へ反映されたかどうか
- *   確定できない」ことの証跡になる）。
+ * - FAILED_NEEDS_RECOVERY: Bookingsへの反映に失敗した、または反映結果が確定できない
+ *   状態で中断された。この状態のまま同じsettlementIdで再送されても自動リトライはせず、
+ *   Bookings側のfeeRecoveryRequiredAtと合わせて管理者の確認を要求する
+ *   （「精算履歴と台帳の片方だけが更新された場合も復旧可能にする」要件への対応）。
+ * - ABANDONED: 管理者がresolveFeeRecoveryで「この精算IDはBookingsへ反映されていない」と
+ *   確認・確定した状態。この状態の行は、同じsettlementIdで再送された場合に初めて
+ *   Bookingsへの反映を試みてよい（未反映であることを人が確認済みのため）。
  *
  * 同一settlementIdで既存行が見つかった場合の扱いはBookingReschedule.gs側の責務
  * （このリポジトリはCRUDのみを提供する）:
  * - 既存行の内容（bookingId/changeId/settlementState/paidDelta/refundedDelta）が
- *   今回のリクエストと完全一致 → 安全な再送とみなし、既存行の結果をそのまま返す。
+ *   今回のリクエストと完全一致し、かつapplyStatusがAPPLIED → 安全な再送とみなし、
+ *   既存行の結果をそのまま返す。
  * - 内容が異なる → 拒否する（同じIDを異なる金額で使い回すことを防ぐ）。
+ * - PENDING_APPLY/FAILED_NEEDS_RECOVERY → 要復旧として拒否する（自動リトライしない）。
+ * - ABANDONED → Bookingsへの反映を試みる（管理者が未反映と確認済みのため）。
  */
 'use strict';
 
@@ -92,18 +103,29 @@ var FeeSettlementRepository = (function () {
       .setValues([['APPLIED', new Date(), resultPaidAmount, resultRefundedAmount]]);
   }
 
-  /* Bookingsへの反映に失敗した場合に呼ぶ。resultPaidAmount/resultRefundedAmountは
-     空のまま（反映できていないことを示す）。 */
+  /* Bookingsへの反映に失敗した、または反映結果が確定できない状態で中断された場合に呼ぶ。
+     resultPaidAmount/resultRefundedAmountは空のまま（反映できたかどうか不明であることを
+     示す）。 */
   function markFailedNeedsRecovery(rowNumber) {
     var sheet = ensureSheet_();
     var startIndex = HEADERS_.indexOf('applyStatus');
     sheet.getRange(rowNumber, startIndex + 1, 1, 4).setValues([['FAILED_NEEDS_RECOVERY', '', '', '']]);
   }
 
+  /* 管理者がresolveFeeRecoveryで「この精算IDはBookingsへ反映されていない」と確認・確定した
+     場合に呼ぶ（PR #345再レビュー対応）。以後、同じsettlementIdでの再送は初めての適用として
+     扱ってよい。 */
+  function markAbandoned(rowNumber) {
+    var sheet = ensureSheet_();
+    var startIndex = HEADERS_.indexOf('applyStatus');
+    sheet.getRange(rowNumber, startIndex + 1, 1, 4).setValues([['ABANDONED', new Date(), '', '']]);
+  }
+
   return {
     findBySettlementId: findBySettlementId,
     appendPending: appendPending,
     markApplied: markApplied,
-    markFailedNeedsRecovery: markFailedNeedsRecovery
+    markFailedNeedsRecovery: markFailedNeedsRecovery,
+    markAbandoned: markAbandoned
   };
 })();

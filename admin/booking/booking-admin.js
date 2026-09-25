@@ -518,6 +518,16 @@ function renderFeeRecoverySection_(booking) {
     '<option value="PENDING_REFUND"' + (booking.feeSettlementState === 'PENDING_REFUND' ? ' selected' : '') + '>返金 未精算</option>' +
     '<option value="PENDING_DECISION"' + (booking.feeSettlementState === 'PENDING_DECISION' ? ' selected' : '') + '>方法未確定</option>' +
     '</select></label>' +
+    '<h4>この要復旧の原因が特定の精算ID（settlementId）にある場合</h4>' +
+    '<p>FeeSettlementsシートでPENDING_APPLY／FAILED_NEEDS_RECOVERYになっている行があれば、' +
+    'その精算IDと、実際にBookingsへ反映されていたかどうかの確認結果を入力してください（任意）。</p>' +
+    '<label>精算ID（settlementId） <input id="fee-recovery-settlement-id" type="text"></label>' +
+    '<label>確認結果 <select id="fee-recovery-settlement-outcome">' +
+    '<option value="">（この精算IDは復旧しない）</option>' +
+    '<option value="CONFIRMED_APPLIED">実際にBookingsへ反映済みだった</option>' +
+    '<option value="CONFIRMED_NOT_APPLIED">実際には反映されていなかった</option>' +
+    '</select></label>' +
+    '<p class="reschedule-fee-summary">「反映済みだった」を選ぶ場合は、上の支払済み額・返金済み額に確認した反映後の累計額を入力してください。「反映されていなかった」を選ぶ場合は、その精算IDは未反映の状態として記録され、同じIDで安全に再送できるようになります。</p>' +
     '<button type="button" id="fee-recovery-save">確認した内容で復旧する</button>' +
     '<div id="fee-recovery-result" role="status" aria-live="polite"></div>';
   modalBody.insertAdjacentElement('afterend', section);
@@ -531,6 +541,18 @@ function renderFeeRecoverySection_(booking) {
     };
     if (priceRaw !== '') corrections.priceOverrideAmount = Number(priceRaw);
     if (countRaw !== '') corrections.scheduleChangeCount = Number(countRaw);
+
+    var settlementId = section.querySelector('#fee-recovery-settlement-id').value.trim();
+    var outcome = section.querySelector('#fee-recovery-settlement-outcome').value;
+    var settlementResolution = null;
+    if (outcome) {
+      if (!settlementId) {
+        alert('確認結果を選んだ場合は精算ID（settlementId）も入力してください。');
+        return;
+      }
+      settlementResolution = { settlementId: settlementId, outcome: outcome };
+    }
+
     if (!window.confirm('予約ID: ' + booking.bookingId + '\n確認した内容で復旧します。よろしいですか？')) return;
     var resultArea = section.querySelector('#fee-recovery-result');
     resultArea.textContent = '復旧中…';
@@ -546,7 +568,7 @@ function renderFeeRecoverySection_(booking) {
       .withFailureHandler(function (error) {
         resultArea.textContent = '復旧に失敗しました: ' + (error && error.message ? error.message : error);
       })
-      .adminResolveFeeRecovery(booking.bookingId, corrections);
+      .adminResolveFeeRecovery(booking.bookingId, corrections, settlementResolution);
   });
 }
 
@@ -672,6 +694,10 @@ function renderFeeSettlementSection_(booking) {
         button.disabled = false;
         if (!result || !result.success) {
           resultArea.textContent = '記録できませんでした: ' + (result && result.error && result.error.message);
+          // 要復旧・要確認系のエラーは詳細を再取得し、要復旧の警告をその場で表示させる。
+          if (result && result.error && /RECOVERY/.test(result.error.code || '')) {
+            refreshOpenDetail_(booking.bookingId);
+          }
           return;
         }
         settlementId = generateIdempotencyKey_(); // 成功したら次回用に新しいIDを用意する
@@ -680,10 +706,12 @@ function renderFeeSettlementSection_(booking) {
       })
       .withFailureHandler(function (error) {
         button.disabled = false;
-        // 通信エラー等で結果不明の場合は同じsettlementIdのまま維持し、次のクリックが
-        // 安全な再送（二重加算なし）になるようにする。
-        resultArea.textContent = '記録結果を確認できません。もう一度同じ内容で送信してください（二重加算はされません）: ' +
+        // 通信エラー等で結果不明の場合は同じsettlementIdのまま維持する。再送は必ず
+        // 「安全な再送成功」か「要復旧の拒否」のいずれかになり、絶対に二重加算はされない
+        // （再レビュー対応。反映結果が確定できない場合は自動リトライせず要復旧にする）。
+        resultArea.textContent = '記録結果を確認できません。もう一度同じ内容で送信してください（二重加算はされません。反映結果が確定できない場合は「要復旧」と表示されます）: ' +
           (error && error.message ? error.message : error);
+        refreshOpenDetail_(booking.bookingId);
       })
       .adminRecordRescheduleFeeSettlement(booking.bookingId, null, settlementId, state, paidDelta, refundedDelta, note);
   });
@@ -884,6 +912,17 @@ function previewReschedule_(booking, section) {
         google.script.run
           .withSuccessHandler(function (outcome) {
             if (!outcome || !outcome.success) {
+              /* 再レビュー対応（必須修正3）: FEE_UPDATE_FAILED_RECOVERY_REQUIREDは
+                 「日時変更自体は完了したが料金側の更新が失敗し要復旧」という部分成功で、
+                 単なる「変更できませんでした」とは区別する。予約詳細を再取得し、
+                 要復旧の警告（renderFeeRecoverySection_）をその場で表示させる。 */
+              if (outcome && outcome.error && outcome.error.code === 'FEE_UPDATE_FAILED_RECOVERY_REQUIRED') {
+                resultArea.textContent = '日時は変更されましたが、料金の確定処理が失敗しました（要復旧）: ' + outcome.error.message;
+                alert('日時の変更自体は完了しましたが、料金・変更回数・精算状態の更新に失敗しました。この予約は復旧が完了するまで日時変更・精算操作ができません。詳細の「要復旧」欄を確認してください。');
+                loadBookings();
+                refreshOpenDetail_(booking.bookingId);
+                return;
+              }
               resultArea.textContent = '変更できませんでした: ' + (outcome && outcome.error && outcome.error.message);
               button.disabled = false;
               return;

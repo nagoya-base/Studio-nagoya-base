@@ -268,6 +268,174 @@ test('resolveFeeRecovery refuses when the booking is not actually in a recovery 
   assert.equal(result.error.code, 'NOT_IN_RECOVERY');
 });
 
+/* ---- PR #345再レビュー対応（精算冪等性の複合障害・復旧・メール抑制） ---- */
+
+test('recordFeeSettlement refuses to retry a settlement stuck in PENDING_APPLY instead of silently re-applying it (複合障害でBookingsへの反映結果が確定できない場合)', function () {
+  var f = setup();
+  var before = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount;
+  // 前回、Bookingsへの反映結果自体を記録する処理が中断し、PENDING_APPLYのまま残った状態を再現する。
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-stuck-1', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 1000, refundedDelta: 0, note: ''
+  });
+
+  var result = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-stuck-1', 'SETTLED', 1000, 0, '');
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'SETTLEMENT_RECOVERY_REQUIRED');
+
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  // 反映されたかどうか確定できない以上、二重加算を避けるため今回は一切反映しない。
+  assert.equal(record.feePaidAmount, before);
+  assert.ok(record.feeRecoveryRequiredAt);
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-stuck-1').record.applyStatus, 'FAILED_NEEDS_RECOVERY');
+
+  // 復旧前にもう一度同じIDで再送しても、やはり反映しない（自動リトライしない）。
+  // 予約自体が既にfeeRecoveryRequiredAtで止まっているため、settlementの状態を見るより先に
+  // FEE_RECOVERY_REQUIREDでブロックされる（resolveFeeRecoveryを経ない限り抜けられない）。
+  var retryBeforeRecovery = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-stuck-1', 'SETTLED', 1000, 0, '');
+  assert.equal(retryBeforeRecovery.success, false);
+  assert.equal(retryBeforeRecovery.error.code, 'FEE_RECOVERY_REQUIRED');
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount, before);
+});
+
+test('resolveFeeRecovery(CONFIRMED_NOT_APPLIED) unlocks a stuck settlement so the same settlementId can be applied exactly once, not twice', function () {
+  var f = setup();
+  var before = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount;
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-stuck-2', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 1000, refundedDelta: 0, note: ''
+  });
+  f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-stuck-2', 'SETTLED', 1000, 0, '');
+  assert.ok(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRecoveryRequiredAt);
+
+  // 管理者が実際の入出金を確認した結果「未反映だった」と確定する。
+  var resolved = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', {}, { settlementId: 's-stuck-2', outcome: 'CONFIRMED_NOT_APPLIED' });
+  assert.equal(resolved.success, true);
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-stuck-2').record.applyStatus, 'ABANDONED');
+  var afterResolve = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(afterResolve.feeRecoveryRequiredAt, '');
+  assert.equal(afterResolve.feePaidAmount, before); // 未反映確定なので金額はまだ動かさない
+
+  // 未反映と確定済みなので、同じIDでの再送は初めての適用として反映してよい。
+  var applied = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-stuck-2', 'SETTLED', 1000, 0, '');
+  assert.equal(applied.success, true);
+  assert.equal(applied.resultPaidAmount, before + 1000);
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount, before + 1000);
+
+  // さらに同じIDで再送しても安全な再送（replay）として扱われ、二重加算しない。
+  var replay = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-stuck-2', 'SETTLED', 1000, 0, '');
+  assert.equal(replay.success, true);
+  assert.equal(replay.replay, true);
+  assert.equal(replay.resultPaidAmount, before + 1000);
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount, before + 1000);
+});
+
+test('resolveFeeRecovery(CONFIRMED_APPLIED) reconciles a settlement that actually reached Bookings before the ledger update failed, without double-counting on resubmission', function () {
+  var f = setup();
+  var originalPaid = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount;
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-stuck-3', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 1000, refundedDelta: 0, note: ''
+  });
+  // Bookingsへの反映自体は実際に成功していたが、その直後に状態遷移の記録が失敗した状況を再現する。
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic('SNB-TEST-1', {
+    feePaidAmount: originalPaid + 1000, feeRefundedAmount: 0,
+    feeSettlementState: 'SETTLED', feeSettlementNote: '', feeSettlementUpdatedAt: new Date()
+  });
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', {
+    feeRecoveryRequiredAt: new Date(), feeRecoveryReason: '複合障害テスト'
+  });
+
+  // 管理者が実際の入出金・Bookingsの累計額を確認し「反映済みだった」と確定する。
+  var resolved = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1',
+    { feePaidAmount: originalPaid + 1000, feeRefundedAmount: 0 },
+    { settlementId: 's-stuck-3', outcome: 'CONFIRMED_APPLIED' });
+  assert.equal(resolved.success, true);
+  var ledger = f.sandbox.FeeSettlementRepository.findBySettlementId('s-stuck-3').record;
+  assert.equal(ledger.applyStatus, 'APPLIED');
+  assert.equal(Number(ledger.resultPaidAmount), originalPaid + 1000);
+  assert.equal(Number(ledger.resultRefundedAmount), 0);
+  var afterResolve = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(afterResolve.feeRecoveryRequiredAt, '');
+  assert.equal(afterResolve.feePaidAmount, originalPaid + 1000);
+
+  // 反映済みと確定済みのため、同じIDでの再送はreplayとして扱われ、二重加算しない。
+  var replay = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-stuck-3', 'SETTLED', 1000, 0, '');
+  assert.equal(replay.success, true);
+  assert.equal(replay.replay, true);
+  assert.equal(replay.resultPaidAmount, originalPaid + 1000);
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount, originalPaid + 1000);
+});
+
+test('resolveFeeRecovery validates settlementResolution input before touching any ledger or booking state', function () {
+  var f = setup();
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', {
+    feeRecoveryRequiredAt: new Date(), feeRecoveryReason: 'バリデーションテスト'
+  });
+
+  var missingId = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', {}, { outcome: 'CONFIRMED_APPLIED' });
+  assert.equal(missingId.success, false);
+  assert.equal(missingId.error.code, 'SETTLEMENT_ID_REQUIRED');
+
+  var invalidOutcome = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', {}, { settlementId: 's-x', outcome: 'BOGUS' });
+  assert.equal(invalidOutcome.success, false);
+  assert.equal(invalidOutcome.error.code, 'INVALID_SETTLEMENT_OUTCOME');
+
+  var notFound = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', {}, { settlementId: 'does-not-exist', outcome: 'CONFIRMED_APPLIED' });
+  assert.equal(notFound.success, false);
+  assert.equal(notFound.error.code, 'SETTLEMENT_NOT_FOUND');
+
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-needs-amount', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 500, refundedDelta: 0, note: ''
+  });
+  var missingAmount = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', {}, { settlementId: 's-needs-amount', outcome: 'CONFIRMED_APPLIED' });
+  assert.equal(missingAmount.success, false);
+  assert.equal(missingAmount.error.code, 'INVALID_AMOUNT');
+
+  // どのバリデーションエラーもBookings側の復旧状態を変えていない。
+  assert.ok(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRecoveryRequiredAt);
+});
+
+test('a reschedule that fails to record the new fee sends a mail that hides the (unconfirmed) fee amounts', function () {
+  var f = setup();
+  var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
+  var original = f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = function () { throw new Error('Sheets API error'); };
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '別途精算');
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = original;
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'FEE_UPDATE_FAILED_RECOVERY_REQUIRED');
+  assert.equal(result.mailSent, true);
+  assert.equal(f.mail._sentEmails.length, 1);
+  var body = f.mail._sentEmails[0].body;
+  assert.ok(body.indexOf('料金の確定処理は現在確認中です') !== -1);
+  assert.equal(body.indexOf('元料金'), -1);
+  assert.equal(body.indexOf('新料金'), -1);
+  assert.equal(body.indexOf('差額'), -1);
+});
+
+test('a reschedule where the fee update AND the notification mail both fail still locks the booking into recovery and reports the mail failure', function () {
+  var f = setup({ mailOptions: { throwError: new Error('mail down') } });
+  var input = { date: f.date, startTime: '13:00', endTime: '15:00' };
+  var original = f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = function () { throw new Error('Sheets API error'); };
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '別途精算');
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = original;
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'FEE_UPDATE_FAILED_RECOVERY_REQUIRED');
+  assert.equal(result.mailSent, false);
+  assert.ok(result.warning);
+  assert.equal(f.mail._sentEmails.length, 0);
+
+  var record = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.ok(record.feeRecoveryRequiredAt);
+  var changes = f.sandbox.adminGetBookingChanges('SNB-TEST-1');
+  assert.equal(changes[0].mailState, 'FAILED');
+});
+
 /* ---- 基準料金（既存予約の遡及登録） ---- */
 
 test('commit is blocked until the original confirmed price has been backfilled via backfillOriginalPrice', function () {

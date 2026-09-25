@@ -472,8 +472,14 @@ var BookingReschedule = (function () {
         }
       }
 
+      /* 再レビュー対応（必須修正3）: 料金更新が失敗した変更は、通知メールに確定した
+         料金・返金情報を載せない（feeDetailsJson.feeConfirmed=falseとしてsendMail側へ
+         伝える。BookingChangesの列構成は変えず、append時点で確定していなかった
+         「料金が実際に確定したか」だけをここで確定させて書き戻す）。 */
+      feeDetails.feeConfirmed = !feeUpdateFailed;
       try {
         sheet.getRange(rowNumber, 12).setValue('PENDING');
+        sheet.getRange(rowNumber, HISTORY_HEADERS_.indexOf('feeDetailsJson') + 1).setValue(JSON.stringify(feeDetails));
       } catch (historyError) {
         logFailure_(bookingId, 'RESCHEDULE_HISTORY_UPDATE_FAILED', record.status);
         return { success: true, bookingId: bookingId, changeId: changeId,
@@ -511,6 +517,18 @@ var BookingReschedule = (function () {
     return null;
   }
 
+  /* feeDetailsJson（最終列）を安全にパースする。壊れている/古い形式（feeConfirmedが
+     無い）行はfeeConfirmed:trueとして扱う（再レビュー対応前に確定した既存行の挙動を
+     変えないため）。 */
+  function parseFeeDetails_(row) {
+    try {
+      var parsed = JSON.parse(row[row.length - 1]);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
   function feeSummaryLines_(row) {
     var oldFee = row[14];
     var newFee = row[15];
@@ -519,6 +537,12 @@ var BookingReschedule = (function () {
     var refundCandidate = row[19];
     var refundApproved = row[20];
     if (!isFiniteNumber_(oldFee) || !isFiniteNumber_(newFee)) return [];
+    /* 再レビュー対応（必須修正3）: 日時更新後の料金・変更回数・精算状態の更新が失敗した
+       変更は、金額・返金状況が台帳に正しく反映されているか確認できていないため、確定
+       したかのような文言を利用者へ送らない。 */
+    if (parseFeeDetails_(row).feeConfirmed === false) {
+      return ['料金の確定処理は現在確認中です。確定次第、運営から別途ご案内します。'];
+    }
     var lines = ['元料金: ' + oldFee + '円', '新料金: ' + newFee + '円', '差額: ' + diff + '円'];
     if (refundStatus === 'ADDITIONAL_CHARGE_REQUIRED') {
       lines.push('追加のご請求が必要です。別途ご案内します。');
@@ -683,9 +707,24 @@ var BookingReschedule = (function () {
         if (existing.record.applyStatus === 'FAILED_NEEDS_RECOVERY') {
           return error_('SETTLEMENT_RECOVERY_REQUIRED', 'この精算は前回反映に失敗しました。台帳とFeeSettlementsシートを確認し、resolveFeeRecoveryで復旧してから再度実行してください。');
         }
-        // PENDING_APPLY: 前回試行がBookings反映前に中断された可能性がある。同じ内容の
-        // リクエストなので、同じ行を使ってBookingsへの反映だけを再試行する。
-        return applySettlement_(found, existing.rowNumber, settlementState, paidDelta, refundedDelta, note);
+        if (existing.record.applyStatus === 'ABANDONED') {
+          // 管理者がresolveFeeRecoveryで「この精算IDは未反映」と確認・確定した後の再送。
+          // 同じ行を使って初めて適用する。
+          return applySettlement_(found, existing.rowNumber, settlementState, paidDelta, refundedDelta, note);
+        }
+        // PENDING_APPLY: Bookingsへの反映結果が確定していない（前回、Bookings書き込み後に
+        // 状態遷移の記録自体が失敗した可能性がある。PR #345再レビュー対応）。反映済みかどうか
+        // 確認せずに再適用すると二重加算の恐れがあるため、絶対に自動再試行しない。
+        try { FeeSettlementRepository.markFailedNeedsRecovery(existing.rowNumber); } catch (e) { /* best effort */ }
+        try {
+          SpreadsheetRepository.updateBookingFields(bookingId, {
+            feeRecoveryRequiredAt: new Date(),
+            feeRecoveryReason: '精算ID「' + settlementId + '」が反映済みかどうか確定できない状態で中断されました。実際の入出金とBookingsの累計額を確認し、resolveFeeRecoveryでこの精算IDの状態（反映済み／未反映）を確定してください。'
+          });
+        } catch (flagError) {
+          logFailure_(bookingId, 'RESCHEDULE_FEE_RECOVERY_FLAG_FAILED', found.record.status);
+        }
+        return error_('SETTLEMENT_RECOVERY_REQUIRED', 'この精算IDは前回の処理が中断され、反映済みかどうか確定できません。台帳とFeeSettlementsシートを確認し、resolveFeeRecoveryで復旧してから再度実行してください。');
       }
 
       var currentPaid = isFiniteNumber_(found.record.feePaidAmount) ? found.record.feePaidAmount : 0;
@@ -753,16 +792,53 @@ var BookingReschedule = (function () {
   }
 
   /*
-   * Issue #344追記（PR #345レビュー対応）: commit/recordFeeSettlementの部分失敗で
-   * feeRecoveryRequiredAtが立った予約を、管理者が実際の台帳・Calendar・FeeSettlementsを
-   * 確認したうえで復旧する。correctionsに指定したフィールドだけを上書きし、それ以外は
-   * 現在値を維持する（既存のpaymentLinkMetadataInconsistentAt系の補正関数と同じ設計）。
+   * Issue #344追記（PR #345レビュー対応。再レビュー対応でsettlementResolutionを追加）:
+   * commit/recordFeeSettlementの部分失敗でfeeRecoveryRequiredAtが立った予約を、管理者が
+   * 実際の台帳・Calendar・FeeSettlementsを確認したうえで復旧する。correctionsに指定した
+   * フィールドだけを上書きし、それ以外は現在値を維持する（既存の
+   * paymentLinkMetadataInconsistentAt系の補正関数と同じ設計）。
+   *
+   * settlementResolution（任意）: { settlementId, outcome }。要復旧の原因が特定の
+   * FeeSettlements行（PENDING_APPLY/FAILED_NEEDS_RECOVERY）にある場合、管理者が実際の
+   * 入出金・Bookingsの累計額を照合して確認した結果をここで確定する
+   * （再レビュー対応「復旧処理がFeeSettlementsの状態を解消しない」への対応。Bookings側の
+   * 数値だけ補正してFeeSettlements側を放置すると、その精算IDが二度と使えなくなる、
+   * または将来同じIDが再送されたときの扱いが不定になる）。
+   * - outcome: 'CONFIRMED_APPLIED'（実際にBookingsへ反映済みだったと確認した）。
+   *   corrections.feePaidAmount/feeRefundedAmountが必須（確認した反映後の累計額を
+   *   そのままFeeSettlements側のresult*にも記録する）。
+   * - outcome: 'CONFIRMED_NOT_APPLIED'（実際にはBookingsへ反映されていなかったと確認した）。
+   *   FeeSettlements行をABANDONEDにし、同じsettlementIdでの再送を今後は初めての適用として
+   *   扱えるようにする。
+   * FeeSettlementsの更新はBookings側の更新より先に行い、それが失敗した場合はBookingsを
+   * 一切書き換えずに返す（部分的な復旧状態を作らない）。
    */
-  function resolveFeeRecovery(bookingId, corrections) {
+  function resolveFeeRecovery(bookingId, corrections, settlementResolution) {
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
     if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
     if (!isInFeeRecovery_(found.record)) return error_('NOT_IN_RECOVERY', 'この予約は要復旧の状態ではありません。');
     corrections = corrections || {};
+
+    var settlementRow = null;
+    if (settlementResolution) {
+      var settlementId = settlementResolution.settlementId;
+      var outcome = settlementResolution.outcome;
+      if (typeof settlementId !== 'string' || !settlementId.trim()) {
+        return error_('SETTLEMENT_ID_REQUIRED', '精算IDを指定してください。');
+      }
+      if (outcome !== 'CONFIRMED_APPLIED' && outcome !== 'CONFIRMED_NOT_APPLIED') {
+        return error_('INVALID_SETTLEMENT_OUTCOME', 'settlementResolution.outcomeはCONFIRMED_APPLIED/CONFIRMED_NOT_APPLIEDのいずれかで指定してください。');
+      }
+      settlementRow = FeeSettlementRepository.findBySettlementId(settlementId);
+      if (!settlementRow || settlementRow.record.bookingId !== bookingId) {
+        return error_('SETTLEMENT_NOT_FOUND', '指定した精算IDがこの予約に見つかりません。');
+      }
+      if (outcome === 'CONFIRMED_APPLIED' &&
+          (corrections.feePaidAmount === undefined || corrections.feeRefundedAmount === undefined)) {
+        return error_('INVALID_AMOUNT', 'この精算を「反映済み」として確定するには、支払済み額・返金済み額の両方を指定してください。');
+      }
+    }
+
     var fields = { feeRecoveryRequiredAt: '', feeRecoveryReason: '' };
     if (corrections.priceOverrideAmount !== undefined) {
       if (!isFiniteNumber_(corrections.priceOverrideAmount) || corrections.priceOverrideAmount < 0) {
@@ -795,10 +871,23 @@ var BookingReschedule = (function () {
       }
       fields.feeRefundedAmount = corrections.feeRefundedAmount;
     }
+    if (settlementRow) {
+      // FeeSettlementsの確定はBookingsの更新より先に行う。ここが失敗した場合はBookingsを
+      // 一切書き換えず、部分的な復旧状態を作らない。
+      try {
+        if (settlementResolution.outcome === 'CONFIRMED_APPLIED') {
+          FeeSettlementRepository.markApplied(settlementRow.rowNumber, corrections.feePaidAmount, corrections.feeRefundedAmount);
+        } else {
+          FeeSettlementRepository.markAbandoned(settlementRow.rowNumber);
+        }
+      } catch (e) {
+        return error_('SETTLEMENT_UPDATE_FAILED', '精算履歴の復旧に失敗しました。Bookingsは更新していません。');
+      }
+    }
     try {
       SpreadsheetRepository.updateBookingRescheduleFeeAtomic(bookingId, fields);
     } catch (e) {
-      return error_('UPDATE_FAILED', '復旧の保存に失敗しました。');
+      return error_('UPDATE_FAILED', '復旧の保存に失敗しました（精算履歴側は既に更新済みの可能性があります）。');
     }
     return { success: true, bookingId: bookingId };
   }
@@ -829,6 +918,6 @@ function adminBackfillOriginalPrice(bookingId, priceTier, amount, note) {
 function adminRecordRescheduleFeeSettlement(bookingId, changeId, settlementId, settlementState, paidAmountDelta, refundedAmountDelta, note) {
   return BookingReschedule.recordFeeSettlement(bookingId, changeId, settlementId, settlementState, paidAmountDelta, refundedAmountDelta, note);
 }
-function adminResolveFeeRecovery(bookingId, corrections) {
-  return BookingReschedule.resolveFeeRecovery(bookingId, corrections);
+function adminResolveFeeRecovery(bookingId, corrections, settlementResolution) {
+  return BookingReschedule.resolveFeeRecovery(bookingId, corrections, settlementResolution);
 }
