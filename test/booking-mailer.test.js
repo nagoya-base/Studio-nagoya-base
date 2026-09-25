@@ -1761,3 +1761,23 @@ test('存在しないbookingIdはNOT_FOUNDを返す', function () {
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'NOT_FOUND');
 });
+
+test('PRICE_UPDATE: 過去の案内後の再修正はforceなしで再送し、最新の修正日時より後に送信時刻を記録する', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { priceAmount: 4000, priceOverrideAmount: 3500, priceOverrideAt: new Date(Date.now() - 120000) });
+
+  var first = ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId);
+  assert.strictEqual(first.success, true);
+  var sentAt = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.priceUpdateMailSentAt;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, {
+    priceOverrideAmount: 3000,
+    priceOverrideAt: new Date(sentAt.getTime() + 1)
+  });
+  var second = ctx.sandbox.BookingMailer.sendPriceUpdateMailForBooking(bookingId);
+  assert.strictEqual(second.success, true);
+  assert.strictEqual(mailApp._sentEmails.length, 2);
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.ok(record.priceUpdateMailSentAt.getTime() > record.priceOverrideAt.getTime());
+  assert.strictEqual(ctx.sandbox.Booking.needsPriceUpdateNotice(record), false);
+});
