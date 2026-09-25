@@ -34,6 +34,7 @@ var FILES = [
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
+  'FeeSettlementRepository.gs',
   'AdminNotifier.gs',
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
@@ -498,6 +499,36 @@ test('getAdminBookingDetail: 存在しないbookingIdはNOT_FOUNDを返す', fun
 
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'NOT_FOUND');
+});
+
+/*
+ * PR #345再レビュー対応（4回目）: feeRecoveryRequiredAtの保存自体が失敗する複合障害が
+ * 起きると、フラグが立たないままFeeSettlementsに未確定の精算だけが残ることがある。
+ * その状態でもWeb UI側が復旧導線を出せるよう、getAdminBookingDetailは
+ * feeSettlementNeedsAttentionを別途返す。
+ */
+test('getAdminBookingDetail: feeRecoveryRequiredAtが未設定でも、FeeSettlementsに未確定の精算が残っていればfeeSettlementNeedsAttention:trueを返す', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx);
+  ctx.sandbox.adminConfirmBooking(bookingId);
+
+  var before = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.strictEqual(before.booking.feeRecoveryRequiredAt, '');
+  assert.strictEqual(before.booking.feeSettlementNeedsAttention, false);
+
+  ctx.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 'orphan-1', bookingId: bookingId, changeId: '',
+    settlementState: 'SETTLED', paidDelta: 500, refundedDelta: 0, note: ''
+  });
+
+  var afterPending = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.strictEqual(afterPending.booking.feeRecoveryRequiredAt, '', '復旧フラグ自体は立っていない前提');
+  assert.strictEqual(afterPending.booking.feeSettlementNeedsAttention, true);
+
+  var row = ctx.sandbox.FeeSettlementRepository.findBySettlementId('orphan-1').rowNumber;
+  ctx.sandbox.FeeSettlementRepository.markApplied(row, 500, 0);
+  var afterApplied = ctx.sandbox.getAdminBookingDetail(bookingId);
+  assert.strictEqual(afterApplied.booking.feeSettlementNeedsAttention, false, 'APPLIEDになれば未確定ではない');
 });
 
 /* ---------- Issue #334: カード支払期限の読み取り専用表示 ---------- */

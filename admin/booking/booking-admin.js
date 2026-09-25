@@ -486,24 +486,32 @@ function generateIdempotencyKey_() {
 }
 
 /*
- * Issue #344追記（PR #345レビュー対応）: commit/recordFeeSettlementの部分失敗で
- * feeRecoveryRequiredAtが立っている間は、基準料金・日程変更・精算記録のいずれのフォームも
- * 表示せず（サーバー側がどのみち拒否するため）、復旧専用の案内とresolveFeeRecovery呼び出し
- * だけを表示する。
+ * Issue #344追記（PR #345レビュー対応。再レビュー対応4回目でfeeSettlementNeedsAttention
+ * を追加）: commit/recordFeeSettlementの部分失敗でfeeRecoveryRequiredAtが立っている間、
+ * または（フラグの保存自体が失敗する複合障害により）フラグは立っていなくても
+ * FeeSettlementsに未確定の精算（PENDING_APPLY/FAILED_NEEDS_RECOVERY）が残っている間は、
+ * 基準料金・日程変更・精算記録のいずれのフォームも表示せず（サーバー側がどのみち
+ * 拒否するため）、復旧専用の案内とresolveFeeRecovery呼び出しだけを表示する。
+ * feeRecoveryRequiredAtが未設定の場合はresolveFeeRecovery呼び出し時にサーバー側の
+ * FeeSettlementRepository.hasUnresolvedSettlementが同じ判定を行うため、この画面表示条件
+ * とサーバー側の受付条件は一致している。
  */
 function renderFeeRecoverySection_(booking) {
   var modalBody = document.getElementById('modal-body');
   if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
   var existing = document.getElementById('fee-recovery-section');
   if (existing) existing.remove();
-  if (!booking.feeRecoveryRequiredAt) return;
+  if (!booking.feeRecoveryRequiredAt && !booking.feeSettlementNeedsAttention) return;
   var section = document.createElement('section');
   section.id = 'fee-recovery-section';
   section.className = 'reschedule-section reschedule-section-danger';
   section.innerHTML =
     '<h3>要復旧: 料金の整合性を確認してください</h3>' +
-    '<p>' + escapeHtml(booking.feeRecoveryReason || '料金・変更回数・精算状態の更新が一部失敗しました。') +
-    '（' + escapeHtml(booking.feeRecoveryRequiredAt) + '）</p>' +
+    '<p>' + escapeHtml(booking.feeRecoveryReason ||
+      (booking.feeRecoveryRequiredAt
+        ? '料金・変更回数・精算状態の更新が一部失敗しました。'
+        : '復旧フラグの保存自体に失敗したため理由は記録されていませんが、確認が完了していない精算（FeeSettlements）が残っています。')) +
+    (booking.feeRecoveryRequiredAt ? '（' + escapeHtml(booking.feeRecoveryRequiredAt) + '）' : '') + '</p>' +
     '<p>Bookings・BookingChanges・FeeSettlementsシートとGoogle Calendarを直接確認し、' +
     '正しい値を入力してから復旧してください。復旧するまで日程変更・精算記録は操作できません。</p>' +
     '<label>確定金額（円・不明なら空欄） <input id="fee-recovery-price" type="number" min="0" step="1" value="' +
@@ -586,7 +594,7 @@ function renderFeeBaselineSection_(booking) {
   if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
   var existing = document.getElementById('fee-baseline-section');
   if (existing) existing.remove();
-  if (booking.status !== 'CONFIRMED' || booking.feeRecoveryRequiredAt) return;
+  if (booking.status !== 'CONFIRMED' || booking.feeRecoveryRequiredAt || booking.feeSettlementNeedsAttention) return;
   var section = document.createElement('section');
   section.id = 'fee-baseline-section';
   section.className = 'reschedule-section';
@@ -655,7 +663,7 @@ function renderFeeSettlementSection_(booking) {
   if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
   var existing = document.getElementById('fee-settlement-section');
   if (existing) existing.remove();
-  if (booking.status !== 'CONFIRMED' || !booking.feeBaselineReady || booking.feeRecoveryRequiredAt) return;
+  if (booking.status !== 'CONFIRMED' || !booking.feeBaselineReady || booking.feeRecoveryRequiredAt || booking.feeSettlementNeedsAttention) return;
   var section = document.createElement('section');
   section.id = 'fee-settlement-section';
   section.className = 'reschedule-section';
@@ -723,7 +731,7 @@ function renderRescheduleSection_(booking) {
   if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
   var existing = document.getElementById('reschedule-section');
   if (existing) existing.remove();
-  if (booking.status !== 'CONFIRMED' || booking.feeRecoveryRequiredAt) return;
+  if (booking.status !== 'CONFIRMED' || booking.feeRecoveryRequiredAt || booking.feeSettlementNeedsAttention) return;
   var section = document.createElement('section');
   section.id = 'reschedule-section';
   section.className = 'reschedule-section';

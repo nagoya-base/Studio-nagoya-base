@@ -872,6 +872,17 @@ var BookingReschedule = (function () {
    *   騙って（あるいは未反映のまま）台帳とBookingsの不一致を隠してしまう。1回の呼び出しで
    *   確定できるのは1件のsettlementIdのみなので、複数残っている場合は1件ずつ確定し、
    *   最後の1件を確定した呼び出しでBookingsの復旧が完了する。
+   *
+   * 再レビュー対応（4回目）:
+   * - feeRecoveryRequiredAtの保存自体が失敗する複合障害が起きると、フラグが立たない
+   *   まま未確定の精算（PENDING_APPLY/FAILED_NEEDS_RECOVERY）だけが残ることがある。
+   *   commit/recordFeeSettlementはisBlockedForFeeRecovery_によりフラグの有無に
+   *   かかわらずこの状態をブロックするが、resolveFeeRecovery側がisInFeeRecovery_
+   *   だけで「復旧対象かどうか」を判定していると、admin自身がNOT_IN_RECOVERYで
+   *   弾かれてしまい、誰も復旧できなくなる（ブロックされているのに復旧手段がない
+   *   デッドロック）。そのためresolveFeeRecoveryへの入り口も、isInFeeRecovery_に加えて
+   *   FeeSettlementRepository.hasUnresolvedSettlementを確認し、どちらか一方でも
+   *   真であれば復旧対象として受け付ける。
    */
   function resolveFeeRecovery(bookingId, corrections, settlementResolution) {
     var lock = LockService.getScriptLock();
@@ -879,7 +890,9 @@ var BookingReschedule = (function () {
     try {
       var found = SpreadsheetRepository.findRowByBookingId(bookingId);
       if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
-      if (!isInFeeRecovery_(found.record)) return error_('NOT_IN_RECOVERY', 'この予約は要復旧の状態ではありません。');
+      if (!isInFeeRecovery_(found.record) && !FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null)) {
+        return error_('NOT_IN_RECOVERY', 'この予約は要復旧の状態ではありません。');
+      }
       corrections = corrections || {};
 
       var settlementRow = null;

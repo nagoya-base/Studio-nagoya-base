@@ -372,7 +372,16 @@ function getAdminBookingDetail(bookingId) {
        * 理由を表示する。
        */
       feeRecoveryRequiredAt: formatAdminDateTime_(record.feeRecoveryRequiredAt, timezone),
-      feeRecoveryReason: record.feeRecoveryReason || ''
+      feeRecoveryReason: record.feeRecoveryReason || '',
+      /*
+       * PR #345再レビュー対応（4回目）: feeRecoveryRequiredAtの保存自体が失敗する複合障害が
+       * 起きると、フラグが立たないままFeeSettlementsにPENDING_APPLY/FAILED_NEEDS_RECOVERY
+       * の行だけが残ることがある。BookingReschedule.gs側はfeeRecoveryRequiredAtの有無に
+       * かかわらずこの状態をブロックするため、Web UI側もfeeRecoveryRequiredAtだけでなく
+       * こちらを見て復旧導線（renderFeeRecoverySection_）を出す。resolveFeeRecoveryへの
+       * 入り口も同じ判定（isInFeeRecovery_ OR hasUnresolvedSettlement）を使っている。
+       */
+      feeSettlementNeedsAttention: FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null)
     }
   };
 }
