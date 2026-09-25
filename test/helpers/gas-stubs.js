@@ -75,6 +75,7 @@ function createEventStub(event) {
     isAllDayEvent: function () { return !!event.isAllDay; },
     getTitle: function () { return event.title || ''; },
     setTitle: function (title) { event.title = title; return self; },
+    setTime: function (start, end) { event.start = start; event.end = end; return self; },
     setTag: function (key, value) { tags[key] = value; return self; },
     getTag: function (key) { return Object.prototype.hasOwnProperty.call(tags, key) ? tags[key] : null; },
     deleteEvent: function () {
@@ -217,6 +218,10 @@ function createSheetStub(name) {
             out.push(line);
           }
           return out;
+        },
+        setValue: function (value) {
+          setValuesCalls.push({ row: row, col: col, numRows: 1, numCols: 1 });
+          rows[row - 1][col - 1] = value;
         },
         setValues: function (values) {
           setValuesCalls.push({ row: row, col: col, numRows: numRows, numCols: numCols });
