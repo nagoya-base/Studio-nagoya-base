@@ -36,9 +36,17 @@
  * - Studio Xの下見プラン充当・SNBの平日6時間パス（継続利用者向け月額）・
  *   機材レンタルオプション（会員限定DM申告）。いずれも予約フォームに対応する入力項目が
  *   なく、自動計算の対象にできないため、管理者が確定前の金額修正機能で個別対応する。
- * - 祝日判定。既存の月間カレンダー（Availability.gs）と同じく祝日ライブラリを追加せず、
- *   土曜/日曜のみを「土日祝」として扱う（README「祝日対応は別Issueで扱う」という
- *   既存方針を継承した既知の制限。祝日に平日料金が適用される）。
+ *
+ * 曜日区分（DAY_TYPE）の判定（Issue #346で拡張。旧Issue #342時点では土曜/日曜のみを
+ * 「土日祝」としていたが、月〜金の日本の祝日・振替休日・国民の休日に平日料金が
+ * 適用されてしまう既知の制限があった）:
+ * - resolveDayType_は、対象日が土曜・日曜であれば無条件にWEEKEND_HOLIDAY。それ以外は
+ *   JapaneseHolidays.classify（gas/booking/shared/JapaneseHolidays.gs。国民の祝日・
+ *   振替休日・国民の休日を判定する）へ委譲する。
+ * - JapaneseHolidays.classifyが対応年の範囲外等で判定を確定できない場合、resolveDayType_は
+ *   黙って平日（WEEKDAY）にフォールバックせず、computeBookingPriceをvalid:falseで
+ *   返させる（見積り・予約作成の両方が明示的なエラーになる。過少請求を避ける方針。
+ *   詳細はJapaneseHolidays.gsのファイル冒頭コメント参照）。
  */
 'use strict';
 
@@ -75,16 +83,29 @@ var BookingPricing = (function () {
     return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
   }
 
-  /* dateStringは呼び出し側（Booking.gs/Availability.gsの既存パースと同じ方針）で
-     施設のtimezone基準に正規化済みの'YYYY-MM-DD'であることを前提とする。ブラウザの
-     ローカルtimezoneに依存しないよう、常にDate.UTC構築方式で曜日を求める。 */
+  /*
+   * dateStringは呼び出し側（Booking.gs/Availability.gsの既存パースと同じ方針）で
+   * 施設のtimezone基準に正規化済みの'YYYY-MM-DD'であることを前提とする。ブラウザの
+   * ローカルtimezoneに依存しないよう、常にDate.UTC構築方式で曜日を求める。
+   *
+   * 戻り値: { ok: true, dayType } または { ok: false, error }（Issue #346。
+   * JapaneseHolidays.classifyが対応年範囲外等で祝日判定を確定できなかった場合）。
+   */
   function resolveDayType_(dateString) {
     var parts = dateString.split('-');
     var year = parseInt(parts[0], 10);
     var month = parseInt(parts[1], 10);
     var day = parseInt(parts[2], 10);
     var weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-    return (weekday === 0 || weekday === 6) ? DAY_TYPE.WEEKEND_HOLIDAY : DAY_TYPE.WEEKDAY;
+    if (weekday === 0 || weekday === 6) {
+      return { ok: true, dayType: DAY_TYPE.WEEKEND_HOLIDAY };
+    }
+
+    var holiday = JapaneseHolidays.classify(dateString);
+    if (!holiday.ok) {
+      return { ok: false, error: holiday.error };
+    }
+    return { ok: true, dayType: holiday.isHoliday ? DAY_TYPE.WEEKEND_HOLIDAY : DAY_TYPE.WEEKDAY };
   }
 
   /*
@@ -131,7 +152,11 @@ var BookingPricing = (function () {
     }
 
     var tier = resolveTier_(brand, params.isMember === true);
-    var dayType = resolveDayType_(date);
+    var dayTypeResult = resolveDayType_(date);
+    if (!dayTypeResult.ok) {
+      return { valid: false, error: dayTypeResult.error };
+    }
+    var dayType = dayTypeResult.dayType;
     var hours = billableHours_(durationMinutes);
     var amount = computeAmount_(tier, dayType, hours);
 

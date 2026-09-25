@@ -39,12 +39,15 @@ var BOOKING_ADMIN_FILES = [
    BookingRepository.gs内でBookingPricingを実際に参照するのはcreateBooking（Web App側の
    み呼ぶ）とupdateBookingPrice（金額の妥当性検証自体はBookingPricingに依存しない）のみ
    であり、AdminNotifier.gsと同じ「Booking AdminはcreateBookingを一切呼ばない」という
-   既存の切り分け方針にそのまま従う。 */
+   既存の切り分け方針にそのまま従う。JapaneseHolidays.gs（Issue #346）はBookingPricing.gs
+   がresolveDayType_内でのみ参照する依存ファイルのため、BookingPricing.gsと同じくBooking
+   Web App専用にする。 */
 var BOOKING_WEB_APP_FILES = [
   'Config.gs',
   'CalendarRepository.gs',
   'Availability.gs',
   'Booking.gs',
+  'JapaneseHolidays.gs',
   'BookingPricing.gs',
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',

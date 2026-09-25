@@ -17,6 +17,7 @@ var FILES = [
   'CalendarRepository.gs',
   'Availability.gs',
   'Booking.gs',
+  'JapaneseHolidays.gs',
   'BookingPricing.gs',
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',
@@ -306,6 +307,38 @@ test('createBooking: 土曜・日曜はいずれも土日祝料金として保�
   );
   assert.strictEqual(result.price.amount, 5000);
   assert.strictEqual(result.price.dayType, 'WEEKEND_HOLIDAY');
+});
+
+test('createBooking: 平日に当たる祝日も土日祝料金として保存される（Issue #346）', function () {
+  var ctx = setup();
+  /* 2099-11-23（勤労感謝の日）は月曜（date -d で確認済み。他のテストと同じくFIXED_
+     WEEKDAY_DATE/FIXED_SATURDAY_DATEに合わせて2099年を使い、実行時刻に依存しない）。 */
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'studio_x', date: '2099-11-23', durationMinutes: 120 })
+  );
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.price.amount, 5000);
+  assert.strictEqual(result.price.dayType, 'WEEKEND_HOLIDAY');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.strictEqual(found.record.priceAmount, 5000, '保存された金額は祝日料金であるべき');
+  assert.strictEqual(found.record.priceDayType, 'WEEKEND_HOLIDAY');
+});
+
+test('createBooking: 祝日判定に対応していない年（対応範囲外）はCalendar/Sheetsに何も作らずエラーを返す（Issue #346。過少請求防止のfail-closed）', function () {
+  var ctx = setup();
+  /* 過去日拒否（Booking.validateCreateBookingInput）に引っかからないよう、
+     対応範囲外の日付(2019-12-25)より前の時刻を受付時刻(now)として明示する。 */
+  var pastNow = new Date('2019-12-01T00:00:00+09:00');
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'studio_x', date: '2019-12-25', durationMinutes: 120, customerType: 'returning' }),
+    pastNow
+  );
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'HOLIDAY_YEAR_UNSUPPORTED');
+  assert.strictEqual(ctx.calendarsById.cal1.events.length, 0, '祝日判定エラー時はCalendarに何も作らない');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 0, '祝日判定エラー時はSheetsに何も保存しない');
 });
 
 test('createBooking: フロントエンドから送られた金額・料金関連フィールドは一切信用せず、常にGAS側で再計算する（改ざん対策）', function () {

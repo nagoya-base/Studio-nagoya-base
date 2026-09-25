@@ -1195,7 +1195,14 @@ busyIntervalsに対して呼び出し、件数を閾値でバケット分けす�
 
 `package.json`はゼロ依存が方針のため、祝日ライブラリ追加・静的リストの保守は
 このIssueでは行っていない。日曜（赤系）・土曜（青系）・平日（通常色）の3色のみ
-実装した。祝日対応は別Issueで扱う。
+実装した。
+
+**Issue #346で追記:** 予約料金の曜日区分判定（`BookingPricing.gs`。「Issue #346:
+予約料金の日本の祝日・振替休日判定」節参照）には、`JapaneseHolidays.gs`による
+祝日・振替休日・国民の休日の判定を実装済み。ただし本節が指す月間カレンダーの
+日セル色分け（このセクションの対象）は依然として日曜/土曜/平日の3色のみで、
+祝日を別色で強調する表示は行っていない（表示上の強調はスコープ外のまま。
+料金計算自体は祝日を正しく土日祝料金へ分類する）。
 
 ### フロントエンド（共通予約UI）
 
@@ -2386,6 +2393,75 @@ Web UI層・クライアント層でのURL・送信先の配線・検証・プ�
 - Stripe APIによる決済リンク自動生成・Stripe Webhookによる入金確認・予約の自動確定は
   実装していない（Issue #334本文の対象外）。
 
+## Issue #346: 予約料金の日本の祝日・振替休日判定
+
+Issue #342（予約料金の自動計算）・PR #343時点では、`BookingPricing.gs`の
+`resolveDayType_`が土曜・日曜のみを`WEEKEND_HOLIDAY`に分類しており、**月〜金の
+日本の祝日・振替休日・国民の休日には平日料金が適用される**既知の制限があった
+（旧README「祝日対応は別Issueで扱う」）。本Issueでこの制限を解消した。
+
+### 実装方針
+
+- `gas/booking/shared/JapaneseHolidays.gs`を新設し、祝日・振替休日・国民の休日の
+  判定ロジックをここへ分離した（`BookingPricing.gs`の`resolveDayType_`が土曜/日曜
+  以外の日について`JapaneseHolidays.classify(dateString)`へ委譲する）。
+- **データソース・アルゴリズム**（`package.json`のゼロ依存方針を維持するため、npm
+  パッケージは追加していない。GAS実行環境にnpm依存を持ち込む構成変更自体が本Issueの
+  対象外でもある）:
+  - 根拠法令は「国民の祝日に関する法律」（内閣府 https://www8.cao.go.jp/shukujitsu/gaiyou.html ）。
+  - 固定日の祝日（元日・建国記念の日・天皇誕生日・昭和の日・憲法記念日・みどりの日・
+    こどもの日・山の日・文化の日・勤労感謝の日）は日付を直接列挙する。
+  - ハッピーマンデー対象（成人の日・海の日・敬老の日・スポーツの日）は年ごとの日付を
+    列挙せず、「第n月曜」を毎年計算で求める。
+  - 春分の日・秋分の日は、国立天文台の実測値と1980〜2099年の範囲で一致することが
+    広く確認されている天文計算の近似式で算出する（年ごとの手書きテーブルではない）。
+  - 2020年・2021年の海の日・スポーツの日・山の日のみ、東京オリンピック・パラリンピック
+    特別措置法による一回限りの法改正のため、アルゴリズムで導出できず明示的な例外として
+    個別に列挙している。
+  - 振替休日（祝日が日曜のとき、その後の最初の非祝日を休日とする。2007年改正による
+    祝日連続時のカスケードも含む）・国民の休日（前後を祝日に挟まれた祝日でない平日）は、
+    法律の定義どおりのアルゴリズムで計算する（固定リストの手書き列挙で済ませていない）。
+  - 実装の詳細・保守方法は`JapaneseHolidays.gs`ファイル冒頭のコメントに記載。
+- **対応年の範囲**: 2020〜2099年（`JapaneseHolidays.MIN_SUPPORTED_YEAR`/
+  `MAX_SUPPORTED_YEAR`）。下限は天皇誕生日が2/23（令和）になった年、上限は春分・秋分
+  近似式の精度が確認できている範囲。予約は将来日付のみが対象のため、現行の運用では
+  問題にならない。2090年代に入ったら近似式の精度を再確認し、上限の延伸要否を判断する
+  こと。国会が祝日法を改正した場合（2020/2021のような一時的特例、恒久的な祝日の
+  追加・変更のいずれも）は、`JapaneseHolidays.gs`内の該当箇所を追記・修正すること。
+- **タイムゾーン**: 施設タイムゾーン（`Asia/Tokyo`）基準に正規化済みの`YYYY-MM-DD`
+  文字列を前提とする（`BookingPricing.gs`の既存方針をそのまま踏襲。ブラウザ/GAS実行
+  環境のローカルタイムゾーンには依存しない）。
+- **判定不能時はfail-closed**: 対応年の範囲外など、`JapaneseHolidays.classify`が
+  祝日区分を確定できない場合、`resolveDayType_`は黙って`WEEKDAY`にフォールバックせず、
+  `computeBookingPrice`が`valid: false`を返す。`estimatePrice`（Code.gs）・
+  `createBooking`（BookingRepository.gs）はいずれも既存の`priceResult.valid`チェックが
+  そのままこのエラーを見積り・予約作成エラーとして扱う（過少請求を避ける。新しい
+  分岐を追加する必要はなかった）。
+- 料金表の正本は引き続き`BookingPricing.gs`1箇所のみ。フロントエンド側に祝日・料金表の
+  別実装は作っていない。`estimatePrice`と`createBooking`は同じ`computeBookingPrice`→
+  `resolveDayType_`→`JapaneseHolidays.classify`を呼ぶため、見積り金額と仮予約保存金額の
+  曜日区分・金額は常に一致する。
+- 既存予約の`priceAmount`・`priceDayType`は再計算・書き換えしていない（本Issueの対象外。
+  管理者の金額修正・訂正案内フローは無変更）。
+
+### デプロイ対象ファイル
+
+`JapaneseHolidays.gs`は`BookingPricing.gs`のresolveDayType_内でのみ参照される依存
+ファイルのため、`BookingPricing.gs`と同じくBooking Web App専用として追加した
+（「GASプロジェクトへのデプロイ対象ファイル」節の表・
+`test/helpers/booking-deployment-manifest.js`を同期済み）。
+
+### テスト
+
+- `test/japanese-holidays.test.js`: `JapaneseHolidays.classify`単体のテスト。固定日の
+  祝日・ハッピーマンデー・2020/2021年特例・春分/秋分・振替休日（カスケード含む）・
+  国民の休日・年またぎ・対応年範囲の境界・範囲外のfail-closedエラーを検証する。
+- `test/booking-pricing.test.js`: `computeBookingPrice`が祝日・振替休日・国民の休日を
+  `WEEKEND_HOLIDAY`へ正しく反映すること、判定不能時にfail-closedでエラーを返すことを
+  検証する（祝日判定アルゴリズム自体の網羅的な検証は上記`japanese-holidays.test.js`側）。
+- 既存の`test/booking-estimate-price.test.js`・`test/booking-create-booking.test.js`等は
+  `JapaneseHolidays.gs`を依存ファイルとして読み込むよう更新した（ロジック自体は無変更）。
+
 ## 固定仕様（空き判定。Issue #265/#266から変更なし）
 
 | 項目 | 値 |
@@ -2576,7 +2652,8 @@ Web UI層・クライアント層でのURL・送信先の配線・検証・プ�
 | `Config.gs` | ✓ | ✓ | `gas/booking/shared/Config.gs` |
 | `CalendarRepository.gs` | ✓ | ✓ | `gas/booking/shared/CalendarRepository.gs` |
 | `Booking.gs` | ✓ | ✓ | `gas/booking/shared/Booking.gs` |
-| `BookingPricing.gs`（Issue #342） | ✓ | – | `gas/booking/shared/BookingPricing.gs` |
+| `JapaneseHolidays.gs`（Issue #346） | ✓ | – | `gas/booking/shared/JapaneseHolidays.gs` |
+| `BookingPricing.gs`（Issue #342／Issue #346で祝日判定を追加） | ✓ | – | `gas/booking/shared/BookingPricing.gs` |
 | `RateLimiter.gs` | ✓ | – | `gas/booking/public/RateLimiter.gs` |
 | `SpreadsheetRepository.gs` | ✓ | ✓ | `gas/booking/shared/SpreadsheetRepository.gs` |
 | `RecoveryRepository.gs` | ✓ | ✓ | `gas/booking/shared/RecoveryRepository.gs` |
