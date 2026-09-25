@@ -436,6 +436,101 @@ test('a reschedule where the fee update AND the notification mail both fail stil
   assert.equal(changes[0].mailState, 'FAILED');
 });
 
+/* ---- PR #345再レビュー対応（2回目）: 復旧処理自体の整合性・返金上限の再検証 ---- */
+
+test('resolveFeeRecovery does not clear the recovery flag if Bookings fails right after the settlement ledger was confirmed, and a same-content retry safely finishes the job', function () {
+  var f = setup();
+  var originalPaid = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feePaidAmount;
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-half-1', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 1000, refundedDelta: 0, note: ''
+  });
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', {
+    feeRecoveryRequiredAt: new Date(), feeRecoveryReason: '複合障害テスト'
+  });
+
+  var originalAtomic = f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic;
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = function () { throw new Error('Sheets API error'); };
+  var corrections = { feePaidAmount: originalPaid + 1000, feeRefundedAmount: 0 };
+  var resolution = { settlementId: 's-half-1', outcome: 'CONFIRMED_APPLIED' };
+  var failed = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', corrections, resolution);
+  f.sandbox.SpreadsheetRepository.updateBookingRescheduleFeeAtomic = originalAtomic;
+
+  assert.equal(failed.success, false);
+  assert.equal(failed.error.code, 'UPDATE_FAILED');
+  // 精算履歴側は既に確定しているが、Bookings側が終わるまで予約はブロックされたまま。
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-half-1').record.applyStatus, 'APPLIED');
+  var stillRecovering = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.ok(stillRecovering.feeRecoveryRequiredAt);
+  assert.equal(stillRecovering.feePaidAmount, originalPaid); // Bookings側はまだ一切変わっていない
+
+  // 同一settlementId・同一内容で再送すれば、精算履歴側は冪等に上書きされるだけで、
+  // 今度はBookings側も正しく反映されて復旧が完了する。
+  var retried = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', corrections, resolution);
+  assert.equal(retried.success, true);
+  var afterRetry = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(afterRetry.feeRecoveryRequiredAt, '');
+  assert.equal(afterRetry.feePaidAmount, originalPaid + 1000);
+  assert.equal(Number(f.sandbox.FeeSettlementRepository.findBySettlementId('s-half-1').record.resultPaidAmount), originalPaid + 1000);
+});
+
+test('resolveFeeRecovery refuses to clear the recovery flag while another settlement on the same booking is still unresolved, but lets each be confirmed one at a time', function () {
+  var f = setup();
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-multi-a', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 500, refundedDelta: 0, note: ''
+  });
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-multi-b', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 300, refundedDelta: 0, note: ''
+  });
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', {
+    feeRecoveryRequiredAt: new Date(), feeRecoveryReason: '複数精算が未確定'
+  });
+
+  // 1件目を確定しても、2件目がまだ残っているのでBookingsの復旧（フラグ解除）は完了しない。
+  var first = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', {}, { settlementId: 's-multi-a', outcome: 'CONFIRMED_NOT_APPLIED' });
+  assert.equal(first.success, false);
+  assert.equal(first.error.code, 'OTHER_SETTLEMENT_UNRESOLVED');
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-multi-a').record.applyStatus, 'ABANDONED');
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-multi-b').record.applyStatus, 'PENDING_APPLY');
+  assert.ok(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRecoveryRequiredAt);
+
+  // 残りの1件を確定すれば、今度こそ復旧が完了する。
+  var second = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', {}, { settlementId: 's-multi-b', outcome: 'CONFIRMED_NOT_APPLIED' });
+  assert.equal(second.success, true);
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-multi-b').record.applyStatus, 'ABANDONED');
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRecoveryRequiredAt, '');
+});
+
+test('recordFeeSettlement re-validates the refund cap against the current balance when replaying an ABANDONED settlement, not just at first submission', function () {
+  var f = setup();
+  var before = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  var fullPaid = before.feePaidAmount;
+
+  // s-refund-1は「未反映」と確定済み（ABANDONED）で、次の再送で初めて適用されるはずだった。
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-refund-1', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 0, refundedDelta: fullPaid, note: ''
+  });
+  var abandonRow = f.sandbox.FeeSettlementRepository.findBySettlementId('s-refund-1').rowNumber;
+  f.sandbox.FeeSettlementRepository.markAbandoned(abandonRow);
+
+  // ところが実際にはその間に、別の精算で既にfullPaid分の返金が記録済みだったとする
+  // （復旧確認から今回の再送までの間に残高が変わったケース）。
+  var settled = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-refund-2', 'SETTLED', 0, fullPaid, '');
+  assert.equal(settled.success, true);
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRefundedAmount, fullPaid);
+
+  // この状態でs-refund-1（返金額=fullPaid）を再送すると、未返金額は既に0のため拒否されるべき
+  // （ABANDONEDからの再適用でも、新規精算と同じ返金上限チェックを必ず通す）。
+  var retried = f.sandbox.adminRecordRescheduleFeeSettlement('SNB-TEST-1', null, 's-refund-1', 'SETTLED', 0, fullPaid, '');
+  assert.equal(retried.success, false);
+  assert.equal(retried.error.code, 'REFUND_EXCEEDS_UNREFUNDED');
+  // 拒否された以上、返金額が二重に積み増されていないこと。
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRefundedAmount, fullPaid);
+});
+
 /* ---- 基準料金（既存予約の遡及登録） ---- */
 
 test('commit is blocked until the original confirmed price has been backfilled via backfillOriginalPrice', function () {

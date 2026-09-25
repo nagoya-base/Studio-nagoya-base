@@ -121,11 +121,33 @@ var FeeSettlementRepository = (function () {
     sheet.getRange(rowNumber, startIndex + 1, 1, 4).setValues([['ABANDONED', new Date(), '', '']]);
   }
 
+  /*
+   * bookingIdに紐づく行のうち、まだ「反映済み／未反映」を確定していない
+   * （applyStatusがPENDING_APPLYまたはFAILED_NEEDS_RECOVERYの）ものが、
+   * excludeSettlementId以外に残っていないか調べる（PR #345再レビュー対応）。
+   * resolveFeeRecoveryが、指定したsettlementId以外の未確定な精算を見落として
+   * feeRecoveryRequiredAtを解除してしまうと、その見落とした精算がBookingsに
+   * 実際に反映されているかどうか分からないまま「復旧済み」に見えてしまう。
+   * これを防ぐため、resolveFeeRecoveryはこの関数がfalseを返すまで復旧を完了しない。
+   */
+  function hasUnresolvedSettlement(bookingId, excludeSettlementId) {
+    var sheet = ensureSheet_();
+    var values = sheet.getDataRange().getValues();
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(values[i]);
+      if (record.bookingId !== bookingId) continue;
+      if (excludeSettlementId && record.settlementId === excludeSettlementId) continue;
+      if (record.applyStatus === 'PENDING_APPLY' || record.applyStatus === 'FAILED_NEEDS_RECOVERY') return true;
+    }
+    return false;
+  }
+
   return {
     findBySettlementId: findBySettlementId,
     appendPending: appendPending,
     markApplied: markApplied,
     markFailedNeedsRecovery: markFailedNeedsRecovery,
-    markAbandoned: markAbandoned
+    markAbandoned: markAbandoned,
+    hasUnresolvedSettlement: hasUnresolvedSettlement
   };
 })();

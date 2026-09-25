@@ -156,6 +156,15 @@ var BookingReschedule = (function () {
     return isDate_(record.feeRecoveryRequiredAt);
   }
 
+  /* 現在の未返金額（支払済み額 - 返金済み額。0未満にはしない）。recordFeeSettlementで
+     返金上限を検証する箇所すべてから、常に最新のrecordを渡して呼ぶこと（PR #345
+     再レビュー対応: ABANDONEDからの再適用など、経路によって検証が抜けないようにする）。 */
+  function unrefundedAmount_(record) {
+    var paid = isFiniteNumber_(record.feePaidAmount) ? record.feePaidAmount : 0;
+    var refunded = isFiniteNumber_(record.feeRefundedAmount) ? record.feeRefundedAmount : 0;
+    return Math.max(0, paid - refunded);
+  }
+
   /*
    * Issue #344追記: 新しい日時の料金見積り・差額判定をまとめて行う。
    * baseline未確認・料金算出不可の場合はready:falseで返し、金額は一切作らない
@@ -709,7 +718,12 @@ var BookingReschedule = (function () {
         }
         if (existing.record.applyStatus === 'ABANDONED') {
           // 管理者がresolveFeeRecoveryで「この精算IDは未反映」と確認・確定した後の再送。
-          // 同じ行を使って初めて適用する。
+          // 同じ行を使って初めて適用する。ただし、確定から今回の再送までの間に別の
+          // 精算が記録され、未返金額が変わっている可能性があるため、新規精算と
+          // 同じ返金上限チェックを必ず通す（PR #345再レビュー対応）。
+          if (refundedDelta > unrefundedAmount_(found.record)) {
+            return error_('REFUND_EXCEEDS_UNREFUNDED', '返金額は未返金の入金額（' + unrefundedAmount_(found.record) + '円）を超えられません。');
+          }
           return applySettlement_(found, existing.rowNumber, settlementState, paidDelta, refundedDelta, note);
         }
         // PENDING_APPLY: Bookingsへの反映結果が確定していない（前回、Bookings書き込み後に
@@ -727,11 +741,8 @@ var BookingReschedule = (function () {
         return error_('SETTLEMENT_RECOVERY_REQUIRED', 'この精算IDは前回の処理が中断され、反映済みかどうか確定できません。台帳とFeeSettlementsシートを確認し、resolveFeeRecoveryで復旧してから再度実行してください。');
       }
 
-      var currentPaid = isFiniteNumber_(found.record.feePaidAmount) ? found.record.feePaidAmount : 0;
-      var currentRefunded = isFiniteNumber_(found.record.feeRefundedAmount) ? found.record.feeRefundedAmount : 0;
-      var unrefunded = Math.max(0, currentPaid - currentRefunded);
-      if (refundedDelta > unrefunded) {
-        return error_('REFUND_EXCEEDS_UNREFUNDED', '返金額は未返金の入金額（' + unrefunded + '円）を超えられません。');
+      if (refundedDelta > unrefundedAmount_(found.record)) {
+        return error_('REFUND_EXCEEDS_UNREFUNDED', '返金額は未返金の入金額（' + unrefundedAmount_(found.record) + '円）を超えられません。');
       }
       var rowNumber = FeeSettlementRepository.appendPending({
         settlementId: settlementId, bookingId: bookingId, changeId: changeId || '',
@@ -812,84 +823,124 @@ var BookingReschedule = (function () {
    *   扱えるようにする。
    * FeeSettlementsの更新はBookings側の更新より先に行い、それが失敗した場合はBookingsを
    * 一切書き換えずに返す（部分的な復旧状態を作らない）。
+   *
+   * 再レビュー対応（2回目）:
+   * - 全体をLockで保護する。resolveFeeRecoveryとrecordFeeSettlement/commitが並行実行され、
+   *   復旧の途中経過を他の処理が読んでしまうことを防ぐ。
+   * - FeeSettlementsの確定（markApplied/markAbandoned）に成功した直後、Bookings側の
+   *   atomic更新が失敗した場合はfeeRecoveryRequiredAtを維持したまま（＝ブロック状態を
+   *   保ったまま）エラーを返す。corrections/settlementResolutionが同じ内容である限り、
+   *   Bookings側のatomic更新は絶対値での上書きであり、markApplied/markAbandonedも
+   *   同じ内容の再実行なら冪等なため、同じ呼び出しを再実行すれば安全に両方が揃う。
+   * - 指定したsettlementIdを確定した後、この予約に他にもまだ「反映済み／未反映」を
+   *   確定していない精算（PENDING_APPLY/FAILED_NEEDS_RECOVERY）が残っている場合は、
+   *   Bookings側の復旧（feeRecoveryRequiredAtの解除）を完了させない。これを許すと、
+   *   見落とした精算が実際にBookingsへ反映されているかどうか不明なまま復旧完了と
+   *   見なしてしまい、後から見落としたsettlementIdが再送されたときに「反映済み」を
+   *   騙って（あるいは未反映のまま）台帳とBookingsの不一致を隠してしまう。1回の呼び出しで
+   *   確定できるのは1件のsettlementIdのみなので、複数残っている場合は1件ずつ確定し、
+   *   最後の1件を確定した呼び出しでBookingsの復旧が完了する。
    */
   function resolveFeeRecovery(bookingId, corrections, settlementResolution) {
-    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
-    if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
-    if (!isInFeeRecovery_(found.record)) return error_('NOT_IN_RECOVERY', 'この予約は要復旧の状態ではありません。');
-    corrections = corrections || {};
-
-    var settlementRow = null;
-    if (settlementResolution) {
-      var settlementId = settlementResolution.settlementId;
-      var outcome = settlementResolution.outcome;
-      if (typeof settlementId !== 'string' || !settlementId.trim()) {
-        return error_('SETTLEMENT_ID_REQUIRED', '精算IDを指定してください。');
-      }
-      if (outcome !== 'CONFIRMED_APPLIED' && outcome !== 'CONFIRMED_NOT_APPLIED') {
-        return error_('INVALID_SETTLEMENT_OUTCOME', 'settlementResolution.outcomeはCONFIRMED_APPLIED/CONFIRMED_NOT_APPLIEDのいずれかで指定してください。');
-      }
-      settlementRow = FeeSettlementRepository.findBySettlementId(settlementId);
-      if (!settlementRow || settlementRow.record.bookingId !== bookingId) {
-        return error_('SETTLEMENT_NOT_FOUND', '指定した精算IDがこの予約に見つかりません。');
-      }
-      if (outcome === 'CONFIRMED_APPLIED' &&
-          (corrections.feePaidAmount === undefined || corrections.feeRefundedAmount === undefined)) {
-        return error_('INVALID_AMOUNT', 'この精算を「反映済み」として確定するには、支払済み額・返金済み額の両方を指定してください。');
-      }
-    }
-
-    var fields = { feeRecoveryRequiredAt: '', feeRecoveryReason: '' };
-    if (corrections.priceOverrideAmount !== undefined) {
-      if (!isFiniteNumber_(corrections.priceOverrideAmount) || corrections.priceOverrideAmount < 0) {
-        return error_('INVALID_AMOUNT', '確定金額は0以上の数値で指定してください。');
-      }
-      fields.priceOverrideAmount = corrections.priceOverrideAmount;
-      fields.priceOverrideAt = new Date();
-    }
-    if (corrections.scheduleChangeCount !== undefined) {
-      if (!isFiniteNumber_(corrections.scheduleChangeCount) || corrections.scheduleChangeCount < 0) {
-        return error_('INVALID_AMOUNT', '変更回数は0以上の整数で指定してください。');
-      }
-      fields.scheduleChangeCount = corrections.scheduleChangeCount;
-    }
-    if (corrections.feeSettlementState !== undefined) {
-      if (corrections.feeSettlementState !== '' && VALID_SETTLEMENT_STATES_.indexOf(corrections.feeSettlementState) === -1) {
-        return error_('INVALID_STATE', '精算状態が不正です。');
-      }
-      fields.feeSettlementState = corrections.feeSettlementState;
-    }
-    if (corrections.feePaidAmount !== undefined) {
-      if (!isFiniteNumber_(corrections.feePaidAmount) || corrections.feePaidAmount < 0) {
-        return error_('INVALID_AMOUNT', '支払済み額は0以上の数値で指定してください。');
-      }
-      fields.feePaidAmount = corrections.feePaidAmount;
-    }
-    if (corrections.feeRefundedAmount !== undefined) {
-      if (!isFiniteNumber_(corrections.feeRefundedAmount) || corrections.feeRefundedAmount < 0) {
-        return error_('INVALID_AMOUNT', '返金済み額は0以上の数値で指定してください。');
-      }
-      fields.feeRefundedAmount = corrections.feeRefundedAmount;
-    }
-    if (settlementRow) {
-      // FeeSettlementsの確定はBookingsの更新より先に行う。ここが失敗した場合はBookingsを
-      // 一切書き換えず、部分的な復旧状態を作らない。
-      try {
-        if (settlementResolution.outcome === 'CONFIRMED_APPLIED') {
-          FeeSettlementRepository.markApplied(settlementRow.rowNumber, corrections.feePaidAmount, corrections.feeRefundedAmount);
-        } else {
-          FeeSettlementRepository.markAbandoned(settlementRow.rowNumber);
-        }
-      } catch (e) {
-        return error_('SETTLEMENT_UPDATE_FAILED', '精算履歴の復旧に失敗しました。Bookingsは更新していません。');
-      }
-    }
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(10000)) return error_('LOCK_TIMEOUT', '処理中です。再試行してください。');
     try {
-      SpreadsheetRepository.updateBookingRescheduleFeeAtomic(bookingId, fields);
-    } catch (e) {
-      return error_('UPDATE_FAILED', '復旧の保存に失敗しました（精算履歴側は既に更新済みの可能性があります）。');
+      var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+      if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
+      if (!isInFeeRecovery_(found.record)) return error_('NOT_IN_RECOVERY', 'この予約は要復旧の状態ではありません。');
+      corrections = corrections || {};
+
+      var settlementRow = null;
+      var settlementId = null;
+      if (settlementResolution) {
+        settlementId = settlementResolution.settlementId;
+        var outcome = settlementResolution.outcome;
+        if (typeof settlementId !== 'string' || !settlementId.trim()) {
+          return error_('SETTLEMENT_ID_REQUIRED', '精算IDを指定してください。');
+        }
+        if (outcome !== 'CONFIRMED_APPLIED' && outcome !== 'CONFIRMED_NOT_APPLIED') {
+          return error_('INVALID_SETTLEMENT_OUTCOME', 'settlementResolution.outcomeはCONFIRMED_APPLIED/CONFIRMED_NOT_APPLIEDのいずれかで指定してください。');
+        }
+        settlementRow = FeeSettlementRepository.findBySettlementId(settlementId);
+        if (!settlementRow || settlementRow.record.bookingId !== bookingId) {
+          return error_('SETTLEMENT_NOT_FOUND', '指定した精算IDがこの予約に見つかりません。');
+        }
+        if (outcome === 'CONFIRMED_APPLIED' &&
+            (corrections.feePaidAmount === undefined || corrections.feeRefundedAmount === undefined)) {
+          return error_('INVALID_AMOUNT', 'この精算を「反映済み」として確定するには、支払済み額・返金済み額の両方を指定してください。');
+        }
+      }
+
+      var fields = { feeRecoveryRequiredAt: '', feeRecoveryReason: '' };
+      if (corrections.priceOverrideAmount !== undefined) {
+        if (!isFiniteNumber_(corrections.priceOverrideAmount) || corrections.priceOverrideAmount < 0) {
+          return error_('INVALID_AMOUNT', '確定金額は0以上の数値で指定してください。');
+        }
+        fields.priceOverrideAmount = corrections.priceOverrideAmount;
+        fields.priceOverrideAt = new Date();
+      }
+      if (corrections.scheduleChangeCount !== undefined) {
+        if (!isFiniteNumber_(corrections.scheduleChangeCount) || corrections.scheduleChangeCount < 0) {
+          return error_('INVALID_AMOUNT', '変更回数は0以上の整数で指定してください。');
+        }
+        fields.scheduleChangeCount = corrections.scheduleChangeCount;
+      }
+      if (corrections.feeSettlementState !== undefined) {
+        if (corrections.feeSettlementState !== '' && VALID_SETTLEMENT_STATES_.indexOf(corrections.feeSettlementState) === -1) {
+          return error_('INVALID_STATE', '精算状態が不正です。');
+        }
+        fields.feeSettlementState = corrections.feeSettlementState;
+      }
+      if (corrections.feePaidAmount !== undefined) {
+        if (!isFiniteNumber_(corrections.feePaidAmount) || corrections.feePaidAmount < 0) {
+          return error_('INVALID_AMOUNT', '支払済み額は0以上の数値で指定してください。');
+        }
+        fields.feePaidAmount = corrections.feePaidAmount;
+      }
+      if (corrections.feeRefundedAmount !== undefined) {
+        if (!isFiniteNumber_(corrections.feeRefundedAmount) || corrections.feeRefundedAmount < 0) {
+          return error_('INVALID_AMOUNT', '返金済み額は0以上の数値で指定してください。');
+        }
+        fields.feeRefundedAmount = corrections.feeRefundedAmount;
+      }
+      if (settlementRow) {
+        // FeeSettlementsの確定はBookingsの更新より先に行う。ここが失敗した場合はBookingsを
+        // 一切書き換えず、feeRecoveryRequiredAtも維持する（部分的な復旧状態を作らない）。
+        try {
+          if (settlementResolution.outcome === 'CONFIRMED_APPLIED') {
+            FeeSettlementRepository.markApplied(settlementRow.rowNumber, corrections.feePaidAmount, corrections.feeRefundedAmount);
+          } else {
+            FeeSettlementRepository.markAbandoned(settlementRow.rowNumber);
+          }
+        } catch (e) {
+          return error_('SETTLEMENT_UPDATE_FAILED', '精算履歴の復旧に失敗しました。Bookingsは更新していません。');
+        }
+      }
+
+      // 今回指定した精算は確定できたが、この予約に他にもまだ「反映済み／未反映」を
+      // 確定していない精算が残っている場合は、Bookings側の復旧（feeRecoveryRequiredAtの
+      // 解除）を完了させない（再レビュー対応。上記コメント参照）。指定した精算自体の
+      // 確定は既に反映済みなので、残りの精算をsettlementResolutionで確定してから
+      // 最後にこの関数を呼べば復旧が完了する。
+      if (FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null)) {
+        return error_('OTHER_SETTLEMENT_UNRESOLVED', settlementRow
+          ? '指定した精算ID「' + settlementId + '」は確定しましたが、この予約には確認が完了していない別の精算IDがまだ残っています。残りの精算IDについてもsettlementResolutionで確定してから、最後にBookingsの復旧を完了してください。'
+          : 'この予約には、確認が完了していない精算IDが残っています。settlementResolutionでその精算IDを指定して確定してから、Bookingsの復旧を完了してください。');
+      }
+
+      try {
+        SpreadsheetRepository.updateBookingRescheduleFeeAtomic(bookingId, fields);
+      } catch (e) {
+        // 精算履歴側は既に確定済みの可能性があるが、Bookings側の復旧が完了するまでは
+        // feeRecoveryRequiredAtを解除しない（＝ブロック状態を維持する）。この呼び出しを
+        // 同じ内容で再実行すれば、精算履歴側は冪等に上書きされるだけなので安全に
+        // やり直せる。
+        return error_('UPDATE_FAILED', 'Bookingsの復旧保存に失敗しました（精算履歴側は既に更新済みの可能性があります）。予約は要復旧のままです。同じ内容でもう一度実行してください。');
+      }
+      return { success: true, bookingId: bookingId };
+    } finally {
+      lock.releaseLock();
     }
-    return { success: true, bookingId: bookingId };
   }
 
   return {
