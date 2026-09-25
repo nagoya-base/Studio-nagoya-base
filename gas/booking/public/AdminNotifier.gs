@@ -28,6 +28,21 @@
 'use strict';
 
 var AdminNotifier = (function () {
+  /*
+   * 利用料金の表示行（Issue #342）。record.priceAmountが数値化できない場合
+   * （過去の予約データ等）は空文字を返し、joinNonEmptyLines_により行自体を出さない。
+   * 利用者向け仮予約受付メール（BookingMailTemplates.buildPendingMail）と同じ値
+   * （record.priceAmount）を使い、表示のずれを避ける（書式はここで独立して組み立てる。
+   * BookingMailTemplates.gsはこのファイルに依存させない既存方針を保つ）。
+   */
+  function formatAdminPriceLine_(priceAmount) {
+    /* Number('')/Number(null)は0になってしまうため、空文字・null・undefinedは
+       先に弾く（過去の予約データを「0円」と誤表示しないため）。 */
+    if (priceAmount === '' || priceAmount === null || priceAmount === undefined) return '';
+    var value = Number(priceAmount);
+    return Number.isFinite(value) ? '利用料金: ' + value.toLocaleString('ja-JP') + '円（税込）' : '';
+  }
+
   function notifyNewPendingBooking(record) {
     var adminEmail = BookingConfig.getAdminNotificationEmail();
     if (!adminEmail) return;
@@ -44,6 +59,8 @@ var AdminNotifier = (function () {
       'bookingId: ' + record.bookingId,
       '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date)
     ];
+    var priceLine = formatAdminPriceLine_(record.priceAmount);
+    if (priceLine) lines.push(priceLine);
     if (adminUrl) {
       lines.push('');
       lines.push('Booking Admin:');

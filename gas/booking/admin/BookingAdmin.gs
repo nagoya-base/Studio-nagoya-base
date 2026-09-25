@@ -68,6 +68,13 @@ function reviveExpiredBooking(bookingId, now) {
   return BookingRepository.reviveExpiredBooking(bookingId, now);
 }
 
+/* 正式関数: updateBookingPrice(bookingId, newAmountJpy)（Issue #342）。予約確定前
+   （PENDING）の予約のみ金額を修正できる。Booking Admin側のみで公開する
+   （Booking Web Appには追加しない）。スクリプトエディタから直接実行することもできる。 */
+function updateBookingPrice(bookingId, newAmountJpy) {
+  return BookingRepository.updateBookingPrice(bookingId, newAmountJpy);
+}
+
 /* 正式関数: sendCardPaymentLinkMail(bookingId, paymentLinkUrl, options)（Issue #334 PR-C）。
    カード決済PENDING予約者へ、管理者がBooking Adminで入力したStripe決済リンクをメール
    送信する。Booking Admin側のみで公開する（Booking Web Appには追加しない）。
@@ -88,6 +95,15 @@ function resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCou
   return BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo);
 }
 
+/* 正式関数: sendPriceUpdateMail(bookingId, options)（PR #343レビュー対応）。
+   管理者がupdateBookingPriceで金額を修正した予約について、修正後の金額を利用者へ
+   案内するメールを送信する。Booking Admin側のみで公開する（Booking Web Appには
+   追加しない）。options.forceは管理者の明示的な再送のみで渡すこと（Web UI側でも同様に
+   扱う）。スクリプトエディタから直接実行することもできる。 */
+function sendPriceUpdateMail(bookingId, options) {
+  return BookingMailer.sendPriceUpdateMailForBooking(bookingId, options);
+}
+
 /* 単純トリガー。このファイルをSPREADSHEET_IDのSpreadsheetへコンテナバインドした
    Apps Scriptプロジェクトへデプロイしていれば、そのSpreadsheetを開くたびに
    自動発火し、追加のトリガー設定なしで「予約管理」メニューが表示される。 */
@@ -106,6 +122,7 @@ function addBookingAdminMenu() {
     .addItem('アクティブ行のbookingIdを復活（reviveExpiredBooking）', 'reviveActiveRowBooking_')
     .addItem('bookingIdを入力して復活（reviveExpiredBooking）', 'reviveBookingByPrompt_')
     .addItem('予約メールを再送（予約ID指定・強制再送）', 'resendBookingMailByPrompt_')
+    .addItem('bookingIdと金額を入力して料金を修正（updateBookingPrice）', 'updateBookingPriceByPrompt_')
     .addToUi();
 }
 
@@ -306,7 +323,9 @@ var RESEND_MAIL_HANDLERS_ = {
   CANCELLED: function (bookingId, options) { return BookingMailer.sendCancelledMailForBooking(bookingId, options); },
   REMINDER: function (bookingId, options) { return BookingMailer.sendReminderMailForBooking(bookingId, options); },
   /* Issue #334: カード決済PENDING失効通知の個別再送・手動送信に使う。 */
-  EXPIRED: function (bookingId, options) { return BookingMailer.sendExpiredMailForBooking(bookingId, options); }
+  EXPIRED: function (bookingId, options) { return BookingMailer.sendExpiredMailForBooking(bookingId, options); },
+  /* PR #343レビュー対応: 管理者による金額修正の利用者案内の個別再送・手動送信に使う。 */
+  PRICE_UPDATE: function (bookingId, options) { return BookingMailer.sendPriceUpdateMailForBooking(bookingId, options); }
 };
 
 function resendBookingMailByPrompt_() {
@@ -320,7 +339,7 @@ function resendBookingMailByPrompt_() {
   }
 
   var typeResponse = ui.prompt(
-    '再送するメール種別を入力してください（PENDING / CONFIRMED / CANCELLED / REMINDER / EXPIRED）',
+    '再送するメール種別を入力してください（PENDING / CONFIRMED / CANCELLED / REMINDER / EXPIRED / PRICE_UPDATE）',
     ui.ButtonSet.OK_CANCEL
   );
   if (typeResponse.getSelectedButton() !== ui.Button.OK) return;
@@ -333,7 +352,7 @@ function runResendMailAndAlert_(bookingId, mailType) {
   var ui = SpreadsheetApp.getUi();
   var sendFn = RESEND_MAIL_HANDLERS_[mailType];
   if (!sendFn) {
-    ui.alert('未知のメール種別です: ' + mailType + '（PENDING / CONFIRMED / CANCELLED / REMINDER / EXPIREDのいずれかを指定してください）');
+    ui.alert('未知のメール種別です: ' + mailType + '（PENDING / CONFIRMED / CANCELLED / REMINDER / EXPIRED / PRICE_UPDATEのいずれかを指定してください）');
     return;
   }
   try {
@@ -346,6 +365,43 @@ function runResendMailAndAlert_(bookingId, mailType) {
       );
     } else {
       ui.alert('再送に失敗しました（' + mailType + '）: ' + bookingId + ' / ' + (result.error && result.error.message));
+    }
+  } catch (e) {
+    ui.alert('エラーが発生しました（' + bookingId + '）: ' + (e && e.message));
+  }
+}
+
+/*
+ * 料金修正（Issue #342）。bookingIdと修正後の金額（円・整数）をそれぞれ別のダイアログで
+ * 入力させる。confirm/cancel/reviveと異なりCalendar操作・メール送信を一切行わないため、
+ * 実行前のYES/NO確認は必須にしない（updateBookingPrice自体がPENDING限定・fail-closedな
+ * 金額検証を行う）。
+ */
+function updateBookingPriceByPrompt_() {
+  var ui = SpreadsheetApp.getUi();
+  var idResponse = ui.prompt('金額を修正するbookingIdを入力してください', ui.ButtonSet.OK_CANCEL);
+  if (idResponse.getSelectedButton() !== ui.Button.OK) return;
+  var bookingId = (idResponse.getResponseText() || '').trim();
+  if (!bookingId) {
+    ui.alert('bookingIdを入力してください。');
+    return;
+  }
+
+  var amountResponse = ui.prompt('修正後の利用料金（円・整数）を入力してください', ui.ButtonSet.OK_CANCEL);
+  if (amountResponse.getSelectedButton() !== ui.Button.OK) return;
+  var amountText = (amountResponse.getResponseText() || '').trim();
+
+  runUpdateBookingPriceAndAlert_(bookingId, amountText);
+}
+
+function runUpdateBookingPriceAndAlert_(bookingId, amountText) {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    var result = updateBookingPrice(bookingId, Number(amountText));
+    if (result.success) {
+      ui.alert('金額を修正しました: ' + bookingId + ' → ' + result.priceOverrideAmount + '円');
+    } else {
+      ui.alert('修正できませんでした（' + bookingId + '）: ' + (result.error && result.error.message));
     }
   } catch (e) {
     ui.alert('エラーが発生しました（' + bookingId + '）: ' + (e && e.message));

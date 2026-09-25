@@ -51,7 +51,9 @@
       consentRequired: '予約成立条件の確認が必要です。',
       submitting: '送信中…',
       submitLabel: 'この内容で仮予約を送信する',
-      diagnosticIdLabel: '\n診断ID: '
+      diagnosticIdLabel: '\n診断ID: ',
+      pendingStatusLabel: '仮予約受付（未確定）',
+      priceLine: function (amount) { return '利用料金: ' + amount + '（税込）'; }
     },
     en: {
       backLabelDefault: 'Back to Studio Nagoya Base',
@@ -69,7 +71,9 @@
       consentRequired: 'Please confirm the pending booking condition.',
       submitting: 'Submitting…',
       submitLabel: 'Submit Pending Booking',
-      diagnosticIdLabel: '\nDiagnostic ID: '
+      diagnosticIdLabel: '\nDiagnostic ID: ',
+      pendingStatusLabel: 'Pending — not confirmed yet',
+      priceLine: function (amount) { return 'Price: ' + amount + ' (tax included)'; }
     }
   }[locale];
 
@@ -83,6 +87,7 @@
     startTime: null,
     customerType: '',
     timeBand: 'all',
+    isMember: false,
     name: '', email: '', phone: '', people: '', purpose: '', purposeOther: '',
     paymentMethod: '', note: ''
   };
@@ -103,6 +108,10 @@
     duration: document.getElementById('ba-duration'),
     durationError: document.getElementById('ba-duration-error'),
     customerTypeError: document.getElementById('ba-customer-type-error'),
+    memberField: document.getElementById('ba-member-field'),
+    isMember: document.getElementById('ba-is-member'),
+    priceLine: document.getElementById('ba-price-line'),
+    priceNote: document.getElementById('ba-price-note'),
     step1Next: document.getElementById('ba-step-datetime-next'),
 
     calendarHint: document.getElementById('ba-calendar-hint'),
@@ -119,6 +128,8 @@
 
     stepStartTime: document.getElementById('ba-step-start-time'),
     startTimeSummary: document.getElementById('ba-start-time-summary'),
+    startTimePriceLine: document.getElementById('ba-start-time-price-line'),
+    startTimePriceNote: document.getElementById('ba-start-time-price-note'),
     startTimeLoading: document.getElementById('ba-start-time-loading'),
     startTimeGrid: document.getElementById('ba-start-time-grid'),
     startTimeEmpty: document.getElementById('ba-start-time-empty'),
@@ -152,6 +163,7 @@
     confirmCustomerType: document.getElementById('ba-confirm-customer-type'),
     confirmDate: document.getElementById('ba-confirm-date'),
     confirmTime: document.getElementById('ba-confirm-time'),
+    confirmPrice: document.getElementById('ba-confirm-price'),
     confirmName: document.getElementById('ba-confirm-name'),
     confirmEmail: document.getElementById('ba-confirm-email'),
     confirmPhone: document.getElementById('ba-confirm-phone'),
@@ -168,6 +180,13 @@
 
     stepComplete: document.getElementById('ba-step-complete'),
     completeBookingId: document.getElementById('ba-complete-booking-id'),
+    completeBrand: document.getElementById('ba-complete-brand'),
+    completeDate: document.getElementById('ba-complete-date'),
+    completeTime: document.getElementById('ba-complete-time'),
+    completePeople: document.getElementById('ba-complete-people'),
+    completePrice: document.getElementById('ba-complete-price'),
+    completePayment: document.getElementById('ba-complete-payment'),
+    completeStatus: document.getElementById('ba-complete-status'),
     completeGenericNotice: document.getElementById('ba-complete-generic-notice'),
     completeCardPaymentNotice: document.getElementById('ba-complete-card-payment-notice'),
     completeBackLink: document.getElementById('ba-complete-back-link')
@@ -185,6 +204,17 @@
      （初回利用+当日の禁止）は、日付・利用区分の両方が決まるStep1の「次へ」押下時に
      Logic.isSameDayFirstTimeBlockedで判定する（Issue #270）。 */
   if (els.date) els.date.min = Logic.todayInJapan();
+
+  /*
+   * 会員自己申告欄（Issue #342。PR #343レビュー対応でstudio_xも対象に追加）はsnb/
+   * studio_xで表示する（Logic.brandShowsMemberOption）。SNB mensは常に会員相当の価格が
+   * 適用されるため表示しない。HTML自体は3ブランド共通のため、表示制御だけをここで行う。
+   */
+  if (els.memberField) els.memberField.hidden = !Logic.brandShowsMemberOption(brand);
+
+  function isMemberChecked_() {
+    return Logic.brandShowsMemberOption(brand) && !!(els.isMember && els.isMember.checked);
+  }
 
   /* ── ステップ切り替え ── */
   var STEP_ORDER = ['datetime', 'start-time', 'details', 'confirm', 'complete'];
@@ -341,6 +371,14 @@
   }
 
   function handleCalendarPrereqChange_() {
+    /* Issue #342: 利用時間の変更は利用料金にも影響するため、ここから呼ぶ
+       （duration/利用区分/希望時間帯のいずれの変更もこの関数を経由するが、
+       refreshPriceEstimate_自体は日付・利用時間・会員自己申告だけで見積りキーを
+       決めるため、利用区分・希望時間帯の変更では実質キャッシュヒットしfetchは
+       起きない）。els.durationへ2つ目のリスナーを追加しない理由: このリポジトリの
+       DOMスタブ（test/helpers）はaddEventListenerを「同じイベント名は1つだけ」保持する
+       前提で実装されており、2つ目を追加すると1つ目を上書きしてしまうため。 */
+    refreshPriceEstimate_();
     if (!isCalendarReady_()) {
       if (els.calendarBody) els.calendarBody.hidden = true;
       if (els.calendarHint) els.calendarHint.hidden = false;
@@ -516,6 +554,7 @@
               els.calendarSelected.textContent = Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale);
             }
             renderCalendarGrid_(entry);
+            refreshPriceEstimate_();
           });
         }
         td.appendChild(button);
@@ -525,9 +564,164 @@
     });
   }
 
+  /*
+   * ── 利用料金の見積り（Issue #342） ──
+   * 利用日・利用時間（・snb/studio_xのみ会員自己申告）が揃った時点でGASのestimatePriceを呼ぶ。
+   * 料金表そのものはここに置かず、必ずGAS側（BookingPricing.gs）の値を表示する。
+   * 実際に予約として保存される金額はcreateBookingのレスポンス（送信成功時のみ確定）で、
+   * ここで表示する値はあくまで見積りに過ぎない（submitハンドラ参照）。
+   *
+   * 月間カレンダー（calendarCache/calendarInFlight/isCalendarKeyCurrent_）と同じ設計:
+   * キャッシュに条件をキーとして保持し、応答が「今まさに表示すべき条件」と一致する
+   * 場合だけ描画する。これにより、入力を素早く変更しても古い金額が確定値のように
+   * 表示され続けることはない（変更した瞬間に必ず「計算中」へ切り替える）。
+   */
+  var priceEstimateCache = {}; /* key -> {status:'success', price} | {status:'error', message} */
+  var priceEstimateInFlight = {};
+
+  function priceEstimateKey_(dateValue, durationMinutes, memberFlag) {
+    return dateValue + '|' + durationMinutes + '|' + (memberFlag ? '1' : '0');
+  }
+
+  function currentPriceEstimateKey_() {
+    var dateValue = els.date ? els.date.value : '';
+    return priceEstimateKey_(dateValue, currentCalendarDurationMinutes_(), isMemberChecked_());
+  }
+
+  function priceEstimateUrl_(dateValue, durationMinutes, memberFlag) {
+    return API_BASE_URL +
+      (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') +
+      'action=estimatePrice' +
+      '&brand=' + encodeURIComponent(brand) +
+      '&date=' + encodeURIComponent(dateValue) +
+      '&durationMinutes=' + encodeURIComponent(String(durationMinutes)) +
+      '&isMember=' + (memberFlag ? '1' : '0');
+  }
+
+  /* lineEl/noteElの組へ、現在の見積り状態を描画する。取得中・失敗時はlineElを必ず
+     隠し、noteElへ理由を表示する（古い金額を確定料金として出さないための唯一の描画元）。 */
+  function renderPriceEntryInto_(lineEl, noteEl, entry) {
+    if (!lineEl && !noteEl) return;
+    if (!entry || entry.status === 'unset') {
+      if (lineEl) lineEl.hidden = true;
+      if (noteEl) noteEl.textContent = '';
+      return;
+    }
+    if (entry.status === 'loading') {
+      if (lineEl) lineEl.hidden = true;
+      if (noteEl) noteEl.textContent = Logic.priceComputingLabel(locale);
+      return;
+    }
+    if (entry.status === 'error') {
+      if (lineEl) lineEl.hidden = true;
+      if (noteEl) noteEl.textContent = entry.message || Logic.priceUnavailableLabel(locale);
+      return;
+    }
+    var formatted = Logic.formatJpyAmount(entry.price && entry.price.amount);
+    if (!formatted) {
+      if (lineEl) lineEl.hidden = true;
+      if (noteEl) noteEl.textContent = Logic.priceUnavailableLabel(locale);
+      return;
+    }
+    if (noteEl) noteEl.textContent = '';
+    if (lineEl) {
+      lineEl.textContent = UI_TEXT.priceLine(formatted);
+      lineEl.hidden = false;
+    }
+  }
+
+  /* latestPriceEntryはStep4確認画面（renderConfirmSummary）・送信直前の再確認からも
+     参照する共有状態（「今わかっている最新の見積り」）。 */
+  var latestPriceEntry = { status: 'unset' };
+
+  /* Step4確認画面の<td>のような、hidden切り替えを持たないプレーンなテキスト表示先で使う。
+     Step1に到達済みであれば通常'unset'/'loading'にはならないが、念のため
+     「計算中」表示にフォールバックする（古い金額を出さないための同じ方針）。 */
+  function priceDisplayText_(entry) {
+    if (!entry || entry.status === 'unset' || entry.status === 'loading') return Logic.priceComputingLabel(locale);
+    if (entry.status === 'error') return entry.message || Logic.priceUnavailableLabel(locale);
+    var formatted = Logic.formatJpyAmount(entry.price && entry.price.amount);
+    return formatted ? UI_TEXT.priceLine(formatted) : Logic.priceUnavailableLabel(locale);
+  }
+
+  /*
+   * PRレビュー対応（Issue #342）: Step4確認画面の料金表示（els.confirmPrice）も
+   * ここへ含める。以前はrenderConfirmSummary()内で一度だけ（Step4表示時点の
+   * latestPriceEntryを読んで）設定していたが、その後に見積りAPIの応答が届いても
+   * els.confirmPriceは更新されず、Step4に古い「計算中」表示や別条件の金額が
+   * 残り続める不具合があった。ここへ含めることで、Step4表示中・表示前を問わず、
+   * 応答が「今の入力条件と一致する場合だけ」（renderPriceEverywhereIfCurrent_）
+   * Step4の表示も含めて常に最新化される。els.confirmPriceが存在しない（まだStep4に
+   * 到達していない）場合はrenderPriceEntryInto_同様に何もしない。
+   */
+  function renderPriceEverywhere_(entry) {
+    latestPriceEntry = entry;
+    renderPriceEntryInto_(els.priceLine, els.priceNote, entry);
+    renderPriceEntryInto_(els.startTimePriceLine, els.startTimePriceNote, entry);
+    if (els.confirmPrice) els.confirmPrice.textContent = priceDisplayText_(entry);
+  }
+
+  function renderPriceEverywhereIfCurrent_(key, entry) {
+    if (key !== currentPriceEstimateKey_()) return;
+    renderPriceEverywhere_(entry);
+  }
+
+  function refreshPriceEstimate_() {
+    var dateValue = els.date ? els.date.value : '';
+    var durationMinutes = currentCalendarDurationMinutes_();
+    var memberFlag = isMemberChecked_();
+
+    if (!dateValue || !Logic.isDurationAtLeastUiMinimum(durationMinutes)) {
+      renderPriceEverywhere_({ status: 'unset' });
+      return;
+    }
+
+    var key = priceEstimateKey_(dateValue, durationMinutes, memberFlag);
+    var cached = priceEstimateCache[key];
+    if (cached) {
+      renderPriceEverywhere_(cached);
+      return;
+    }
+
+    renderPriceEverywhere_({ status: 'loading' });
+
+    if (!API_BASE_URL) {
+      var notConfigured = { status: 'error', message: Logic.apiNotConfiguredMessage(locale) };
+      priceEstimateCache[key] = notConfigured;
+      renderPriceEverywhereIfCurrent_(key, notConfigured);
+      return;
+    }
+    if (priceEstimateInFlight[key]) return;
+    priceEstimateInFlight[key] = true;
+
+    fetch(priceEstimateUrl_(dateValue, durationMinutes, memberFlag), { method: 'GET' })
+      .then(function (response) { return response.json(); })
+      .then(function (body) {
+        delete priceEstimateInFlight[key];
+        var entry;
+        if (!body || body.success !== true) {
+          var code = body && body.error && body.error.code;
+          entry = { status: 'error', message: Logic.messageForErrorCode(code, locale) };
+        } else {
+          entry = { status: 'success', price: body.price };
+        }
+        priceEstimateCache[key] = entry;
+        renderPriceEverywhereIfCurrent_(key, entry);
+      })
+      .catch(function () {
+        delete priceEstimateInFlight[key];
+        var networkErrorEntry = { status: 'error', message: Logic.networkErrorMessage(locale) };
+        priceEstimateCache[key] = networkErrorEntry;
+        renderPriceEverywhereIfCurrent_(key, networkErrorEntry);
+      });
+  }
+
   if (els.duration) {
     els.duration.addEventListener('input', handleCalendarPrereqChange_);
     els.duration.addEventListener('change', handleCalendarPrereqChange_);
+  }
+  if (els.isMember) {
+    els.isMember.addEventListener('change', refreshPriceEstimate_);
   }
   root.querySelectorAll('input[name="customerType"]').forEach(function (radio) {
     radio.addEventListener('change', handleCalendarPrereqChange_);
@@ -575,6 +769,7 @@
    * falseのままなので、この呼び出しは何もしない。
    */
   handleCalendarPrereqChange_();
+  refreshPriceEstimate_();
 
   if (els.step1Next) {
     els.step1Next.addEventListener('click', function () {
@@ -606,10 +801,12 @@
       state.durationMinutes = durationMinutes;
       state.customerType = customerType;
       state.timeBand = checkedTimeBand();
+      state.isMember = isMemberChecked_();
       state.startTime = null;
 
       goToStep('start-time');
       fetchAvailability();
+      refreshPriceEstimate_();
     });
   }
 
@@ -826,6 +1023,16 @@
     els.confirmCustomerType.textContent = Logic.customerTypeLabel(state.customerType, locale);
     els.confirmDate.textContent = state.date;
     els.confirmTime.textContent = UI_TEXT.confirmTime(state.startTime, endTime, state.durationMinutes / 60);
+    /*
+     * 利用料金（Issue #342。PRレビュー対応）。ここでは表示更新のトリガーとして
+     * refreshPriceEstimate_()を呼ぶだけで、els.confirmPriceへの実際の書き込みは
+     * renderPriceEverywhere_（refreshPriceEstimate_から同期的または非同期に呼ばれる）に
+     * 一元化している。日付・利用時間・会員自己申告はStep1確定後に変わらないため、
+     * 通常はここに来る前に取得済み（キャッシュヒットで即時反映）だが、万一まだ
+     * 取得中・未取得の場合でも、renderPriceEverywhereが応答到着時にStep4の表示を
+     * 含めて自動的に最新化する（古い金額のまま固定される問題の修正）。
+     */
+    refreshPriceEstimate_();
     els.confirmName.textContent = state.name;
     els.confirmEmail.textContent = state.email;
     els.confirmPhone.textContent = state.phone || UI_TEXT.phoneUnset;
@@ -942,7 +1149,8 @@
         purpose: state.purpose,
         purposeOther: state.purposeOther,
         paymentMethod: state.paymentMethod,
-        note: state.note
+        note: state.note,
+        isMember: state.isMember
       });
 
       fetch(API_BASE_URL, {
@@ -964,6 +1172,32 @@
           els.completeBookingId.textContent = body.bookingId || '';
           els.completeBackLink.href = backUrl;
           els.completeBackLink.textContent = backLabel;
+
+          /*
+           * 予約内容・利用料金の表示（Issue #342）。フォーム側の見積り（latestPriceEntry）
+           * ではなく、createBookingのレスポンス（body）が返す値だけを使う。これは
+           * GASがcreateBooking時点で確定・保存した金額であり、予約データへ保存された
+           * priceAmountと同じ値になる。「仮予約受付」と「予約確定」の区別は
+           * pendingStatusLabel（常にPENDING）と、この画面・上の見出しが一貫して
+           * 「送信を受け付けました」としか言わないことで保つ（「確定」という語を
+           * ここでは一切使わない）。
+           */
+          if (els.completeBrand) els.completeBrand.textContent = brandMeta.displayName;
+          if (els.completeDate) els.completeDate.textContent = body.date || '';
+          if (els.completeTime) {
+            els.completeTime.textContent = body.startTime
+              ? UI_TEXT.confirmTime(body.startTime, Logic.computeEndTime(body.startTime, body.durationMinutes), Number(body.durationMinutes) / 60)
+              : '';
+          }
+          if (els.completePeople) els.completePeople.textContent = Logic.peopleLabel(body.people, locale);
+          if (els.completePrice) {
+            var completeAmount = Logic.formatJpyAmount(body.price && body.price.amount);
+            els.completePrice.textContent = completeAmount ? UI_TEXT.priceLine(completeAmount) : Logic.priceUnavailableLabel(locale);
+          }
+          if (els.completePayment) els.completePayment.textContent = Logic.paymentMethodLabel(body.paymentMethod, locale);
+          if (els.completeStatus) {
+            els.completeStatus.textContent = body.status === 'PENDING' ? UI_TEXT.pendingStatusLabel : (body.status || '');
+          }
           /* 完了画面（Issue #334 PR-B）: 既存の「通常24時間以内にご連絡します」は
              確定連絡そのものが24時間以内に届くという前提の文言のため、カード決済では
              出さない（実際の確定連絡は入金確認後の承認を経るため、72時間後の支払期限まで

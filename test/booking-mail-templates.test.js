@@ -68,6 +68,39 @@ test('buildPendingMail: 予約ID/氏名/利用日/開始/終了/利用時間/人
   assert.match(mail.body, /contact@example\.com/);
 });
 
+/* ── 利用料金の表示（Issue #342） ── */
+
+test('buildPendingMail: record.priceAmountがある場合、「利用料金: X円（税込）」を含む', function () {
+  var templates = loadTemplates();
+  var mail = templates.buildPendingMail(sampleRecord({ priceAmount: 4000 }), CONFIG);
+  assert.match(mail.body, /利用料金: 4,000円（税込）/);
+});
+
+test('buildPendingMail: priceAmountが未設定・空文字・数値化できない過去の予約データでも例外を投げず、料金の行を出さない', function () {
+  var templates = loadTemplates();
+  [undefined, '', null, 'abc'].forEach(function (badPrice) {
+    var mail = templates.buildPendingMail(sampleRecord({ priceAmount: badPrice }), CONFIG);
+    assert.doesNotMatch(mail.body, /利用料金/, JSON.stringify(badPrice) + ' では利用料金の行を出さないべき');
+  });
+});
+
+test('buildPendingMail: priceAmount:0は数値として有効なため「0円」と表示する（未計算の空文字とは区別する）', function () {
+  var templates = loadTemplates();
+  var mail = templates.buildPendingMail(sampleRecord({ priceAmount: 0 }), CONFIG);
+  assert.match(mail.body, /利用料金: 0円（税込）/);
+});
+
+test('buildConfirmedMail/buildPaymentLinkMail: priceAmountがあっても金額を一切表示しない（既存方針を維持し、案内金額の齟齬を避ける）', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ priceAmount: 4000 });
+  var confirmed = templates.buildConfirmedMail(record, CONFIG);
+  var paymentLink = templates.buildPaymentLinkMail(record, CONFIG, 'https://buy.stripe.com/test_ABC123');
+  assert.doesNotMatch(confirmed.body, /利用料金/);
+  assert.doesNotMatch(confirmed.body, /4,000円/);
+  assert.doesNotMatch(paymentLink.body, /利用料金/);
+  assert.doesNotMatch(paymentLink.body, /4,000円/);
+});
+
 test('buildPendingMail: キーボックス番号・解錠コードを一切含まない（accessGuideを引数に取らない構造）', function () {
   var templates = loadTemplates();
   var mail = templates.buildPendingMail(sampleRecord(), CONFIG);
@@ -266,7 +299,7 @@ test('buildPaymentLinkMail: 期限内の支払い・確定連絡待ちの旨、�
   assert.match(mail.body, /二重のお支払いをせず/);
 });
 
-test('buildPaymentLinkMail: 料金を一切表示しない（Bookings台帳に確定料金列がないため）', function () {
+test('buildPaymentLinkMail: 料金を一切表示しない（Issue #334本文の既存方針を維持。Issue #342で料金列を追加した後も変更しない）', function () {
   var templates = loadTemplates();
   var record = sampleRecord({ paymentMethod: 'オンラインクレジットカード' });
   var mail = templates.buildPaymentLinkMail(record, CONFIG, SAMPLE_PAYMENT_LINK_URL);
@@ -284,6 +317,57 @@ test('buildPaymentLinkMail: createdAt/startAtが欠けている場合も例外�
 test('buildPaymentLinkMail: キーボックス番号・解錠コードを一切含まない（accessGuideを引数に取らない構造。他の利用者向けテンプレートと同方針）', function () {
   var templates = loadTemplates();
   assert.strictEqual(templates.buildPaymentLinkMail.length, 3, 'buildPaymentLinkMailはrecord/config/paymentLinkUrlの3引数のみを取る');
+});
+
+/*
+ * buildPriceUpdateMail（管理者による金額修正の利用者案内。PR #343レビュー対応）。
+ * 表示する金額は必ずBooking.getEffectivePriceAmount（priceOverrideAmountがあれば優先）
+ * 経由の値であることを検証する。
+ */
+test('buildPriceUpdateMail: 予約ID/氏名/利用日時/ブランド/修正後の金額（実効金額）/問い合わせ先を含み、「確定」という語は使わない', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ priceAmount: 4000, priceOverrideAmount: 3500, priceOverrideAt: new Date('2026-09-30T12:00:00+09:00') });
+  var mail = templates.buildPriceUpdateMail(record, CONFIG);
+  assert.match(mail.subject, /訂正/);
+  assert.match(mail.body, /SX-20261001-AAAAAAAA/);
+  assert.match(mail.body, /山田太郎/);
+  assert.match(mail.body, /2026-10-01/);
+  assert.match(mail.body, /Studio X/);
+  assert.match(mail.body, /訂正後の利用料金: 3,500円（税込）/);
+  assert.match(mail.body, /contact@example\.com/);
+  assert.match(mail.body, /まだ確定しておりません/, '予約確定前であることを明記するべき（buildPendingMailと同方針）');
+});
+
+test('buildPriceUpdateMail: 自動計算額（priceAmount）ではなく修正後の実効金額（priceOverrideAmount）を表示する', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ priceAmount: 4000, priceOverrideAmount: 3500, priceOverrideAt: new Date('2026-09-30T12:00:00+09:00') });
+  var mail = templates.buildPriceUpdateMail(record, CONFIG);
+  assert.doesNotMatch(mail.body, /4,000円/);
+});
+
+test('buildPriceUpdateMail: 予約確定前であることを明記する', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ priceAmount: 4000, priceOverrideAmount: 3500, priceOverrideAt: new Date('2026-09-30T12:00:00+09:00') });
+  var mail = templates.buildPriceUpdateMail(record, CONFIG);
+  assert.match(mail.body, /まだ確定しておりません/);
+});
+
+test('buildPriceUpdateMail: 案内できる金額が一切ない（priceAmount/priceOverrideAmountともに未設定）場合は例外を投げる（呼び出し側でfail-closedに扱わせる）', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({});
+  assert.throws(function () { templates.buildPriceUpdateMail(record, CONFIG); });
+});
+
+test('buildPriceUpdateMail: priceOverrideAtが空でもpriceAmount（自動計算値）があれば、それを実効金額として表示する（「修正があること」自体の必須チェックはBookingMailer側の責務）', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ priceAmount: 4000 });
+  var mail = templates.buildPriceUpdateMail(record, CONFIG);
+  assert.match(mail.body, /4,000円（税込）/);
+});
+
+test('buildPriceUpdateMail: キーボックス番号・解錠コードを一切含まない（accessGuideを引数に取らない構造。他の利用者向けテンプレートと同方針）', function () {
+  var templates = loadTemplates();
+  assert.strictEqual(templates.buildPriceUpdateMail.length, 2, 'buildPriceUpdateMailはrecordとconfigの2引数のみを取る');
 });
 
 test('buildReminderMail: 「明日」の案内であることが分かり、来場方法一式を含む', function () {

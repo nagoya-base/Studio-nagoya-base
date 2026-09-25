@@ -369,6 +369,14 @@ var Booking = (function () {
       normalized: {
         brand: input.brand,
         customerType: input.customerType,
+        /*
+         * 会員区分の自己申告（Issue #342）。任意項目・fail-closedでデフォルトfalse
+         * （未指定・不正値は「会員ではない」＝一般料金側へ倒す。会員特典を誤って
+         * 適用しないための方向）。実際に適用されるtier（studio_x/mensではこの値を
+         * 無視して固定される）はBookingPricing.computeBookingPriceの責務であり、
+         * ここでは入力をそのまま真偽値へ正規化するだけ。
+         */
+        isMember: input.isMember === true,
         date: input.date,
         startTime: input.startTime,
         durationMinutes: durationMinutes,
@@ -444,6 +452,39 @@ var Booking = (function () {
     return computeTtlExpiryMillis(createdAtMillis, startAtMillis, CARD_TTL_HOURS, minHoursBeforeStart, 0);
   }
 
+  /*
+   * 予約の「実際に案内すべき利用料金」（Issue #342）。管理者が確定前に金額を修正して
+   * いれば（priceOverrideAtが空でない）その修正値（priceOverrideAmount）を優先し、
+   * なければ予約時にBookingPricingで自動計算した値（priceAmount）を返す。
+   * 「上書きの有無」の判定はpriceOverrideAtの有無（他のSentAt系列と同じ、空文字=未実施の
+   * 慣習）で行う。金額そのもの（priceOverrideAmountの値）で判定しないのは、0円という
+   * 有効な上書き値と「上書きなし」を区別できるようにするため。
+   * 呼び出し側（Booking Admin表示等）は必ずこの関数経由で「案内する金額」を決め、
+   * priceAmount/priceOverrideAmountを個別に参照して食い違う事故を防ぐ。
+   * 料金データを持たない過去の予約（列が空）ではnullを返す（例外を投げない）。
+   */
+  function getEffectivePriceAmount(record) {
+    var r = record || {};
+    var hasOverride = r.priceOverrideAt !== '' && r.priceOverrideAt !== null && r.priceOverrideAt !== undefined;
+    var raw = hasOverride ? r.priceOverrideAmount : r.priceAmount;
+    if (raw === '' || raw === null || raw === undefined) return null;
+    var amount = Number(raw);
+    return Number.isFinite(amount) ? amount : null;
+  }
+
+  /*
+   * 最新の金額修正が利用者へ案内済みかを共通判定する。
+   * Sheetsの日時は通常Dateだが、過去データ等で不正な日時があれば未案内側へ倒す。
+   */
+  function needsPriceUpdateNotice(record) {
+    var r = record || {};
+    if (!r.priceOverrideAt) return false;
+    if (!r.priceUpdateMailSentAt) return true;
+    var changedAt = new Date(r.priceOverrideAt).getTime();
+    var sentAt = new Date(r.priceUpdateMailSentAt).getTime();
+    return !Number.isFinite(changedAt) || !Number.isFinite(sentAt) || changedAt > sentAt;
+  }
+
   return {
     STATUS: STATUS,
     PAYMENT_STATUS: PAYMENT_STATUS,
@@ -469,6 +510,8 @@ var Booking = (function () {
     generateBookingId: generateBookingId,
     computeTtlExpiryMillis: computeTtlExpiryMillis,
     computeCardPaymentDueMillis: computeCardPaymentDueMillis,
-    isExpired: isExpired
+    isExpired: isExpired,
+    getEffectivePriceAmount: getEffectivePriceAmount,
+    needsPriceUpdateNotice: needsPriceUpdateNotice
   };
 })();

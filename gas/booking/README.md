@@ -2576,6 +2576,7 @@ Web UI層・クライアント層でのURL・送信先の配線・検証・プ�
 | `Config.gs` | ✓ | ✓ | `gas/booking/shared/Config.gs` |
 | `CalendarRepository.gs` | ✓ | ✓ | `gas/booking/shared/CalendarRepository.gs` |
 | `Booking.gs` | ✓ | ✓ | `gas/booking/shared/Booking.gs` |
+| `BookingPricing.gs`（Issue #342） | ✓ | – | `gas/booking/shared/BookingPricing.gs` |
 | `RateLimiter.gs` | ✓ | – | `gas/booking/public/RateLimiter.gs` |
 | `SpreadsheetRepository.gs` | ✓ | ✓ | `gas/booking/shared/SpreadsheetRepository.gs` |
 | `RecoveryRepository.gs` | ✓ | ✓ | `gas/booking/shared/RecoveryRepository.gs` |
@@ -2760,7 +2761,9 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 `stripePaymentLinkUrl` / `paymentLinkSentAt` / `paymentLinkSentTo` / `paymentLinkSendCount` /
 `paymentLinkLastErrorAt` / `paymentLinkLastErrorMessage` / `paymentLinkSendUnconfirmedAt` /
 `paymentLinkMetadataInconsistentAt`（いずれもIssue #334 PR-Cで追加。`paymentLinkSendUnconfirmedAt`
-はPR #337レビュー対応・1回目、`paymentLinkMetadataInconsistentAt`は2回目で追加）
+はPR #337レビュー対応・1回目、`paymentLinkMetadataInconsistentAt`は2回目で追加） /
+`priceAmount` / `priceTier` / `priceDayType` / `priceIsMember` / `priceComputedAt` /
+`priceOverrideAmount` / `priceOverrideAt` / `priceUpdateMailSentAt`（Issue #342・PR #343で追加）
 
 - `customerType`はIssue #270で20列目として**末尾に追記**した。既存行との互換性を保つため
   途中に挿入していない（既存行はこの列が空のまま＝利用区分不明として扱われる）。
@@ -2793,8 +2796,45 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 - `status`は`PENDING` / `CONFIRMED` / `CANCELLED` / `EXPIRED`のいずれか。
   **このセルを直接手編集するのは正式運用ではない。** 確定は必ず`confirmBooking(bookingId)`
   （カスタムメニュー経由）を使うこと。TTL失効・キャンセルも将来的に専用関数経由のみとする。
-- 料金列は持たない（Phase 1では自動料金計算をしないため。Issue #271の確定メールでも
-  料金は本文へ出さない）。
+- Issue #342・PR #343で末尾に追加した8列の用途:
+  - `priceAmount`は仮予約作成時にGASが計算・保存した税込金額（円）。後の料金表変更では再計算しない。
+  - `priceTier`（`GENERAL`/`MEMBER`）、`priceDayType`（`WEEKDAY`/`WEEKEND_HOLIDAY`）、
+    `priceIsMember`（実際に適用した会員区分）、`priceComputedAt`（計算日時）は計算時点の条件。
+  - `priceOverrideAmount`と`priceOverrideAt`はPENDING中の管理者による金額修正値・修正日時。
+    自動計算値は上書きしない。実際の案内額は`Booking.getEffectivePriceAmount`で判定する。
+  - `priceUpdateMailSentAt`は訂正案内メールの送信成功日時。未送信または送信後に料金を再修正した場合は
+    `Booking.needsPriceUpdateNotice`により未案内と判定し、訂正案内が完了するまで予約確定を拒否する。
+  - 料金関連列が空の既存予約は「未計算」として扱う。確定メール・Stripe決済リンクメールには、
+    引き続き料金を表示しない（訂正案内メールは別途送信する）。
+
+### Issue #342・PR #343 本番`Bookings`シートのヘッダー追記手順
+
+**既存の本番シートはヘッダーが自動更新されない。** Web App・Booking Admin両方の更新前に、
+本番`Bookings`シートの1行目と`SpreadsheetRepository.gs`の`HEADERS_`を照合すること。
+
+1. 既存データをバックアップする。`paymentLinkMetadataInconsistentAt`が現在の最終ヘッダーであることを確認する。
+   もし既に今回の列が一部存在する場合は、重複追加せず`HEADERS_`の順序と突き合わせて不足分のみを補う。
+2. **既存列の途中へ挿入せず**、`paymentLinkMetadataInconsistentAt`の右隣から、次の8列を
+   **この順番のまま**1行目へ追記する（列名は完全一致させる）。
+
+   ```text
+   priceAmount
+   priceTier
+   priceDayType
+   priceIsMember
+   priceComputedAt
+   priceOverrideAmount
+   priceOverrideAt
+   priceUpdateMailSentAt
+   ```
+
+3. 既存行の新規8列は空欄のままにする。値を一括補完・再計算しない。
+   1行目に列名の重複・欠落・順序違いがないことを、`HEADERS_`と照合して確認する。
+4. その後に既存のBooking Web AppとBooking Adminの**両プロジェクト**へ対象ファイルを反映する。
+   本番デプロイを更新する場合は既存デプロイID・`/exec` URLを維持する。
+   新規予約の金額保存、管理画面の料金表示、金額修正→訂正案内→予約確定の動作を確認する。
+
+この手順は本番反映時の作業指示であり、PR #343では本番のシート編集・GASデプロイを行わない。
 
 ### `Recovery`シート（部分失敗・不整合記録）列構成
 

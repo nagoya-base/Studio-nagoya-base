@@ -6,28 +6,32 @@
  * このファイル自体は1つだが、実際にどの関数がどのGASプロジェクトから呼ばれるかは
  * プロジェクトによって異なる（README「GASプロジェクトへのデプロイ対象ファイル」参照）:
  * - createBooking: Booking Web Appプロジェクト（Code.gsのdoPostから）
- * - confirmBooking / expirePendingBookings / cancelBookingAdmin: Booking Adminプロジェクト
- *   （BookingAdmin.gs / BookingTriggers.gsから。3関数とも同じプロジェクト内で動くため、
- *   LockService.getScriptLock()を共有し、互いに直列化される。3回目レビューで
- *   confirmBookingとexpirePendingBookingsを同一プロジェクトへ統合し、この2つの間の
- *   Lock非共有によるCalendar/Sheets不整合の可能性を構造的に解消した。Issue #272で
- *   cancelBookingAdminも同じプロジェクト・同じLockServiceへ加えた。公開Web App側には
- *   cancelBookingAdminを一切公開しない）
+ * - confirmBooking / expirePendingBookings / cancelBookingAdmin / updateBookingPrice:
+ *   Booking Adminプロジェクト（BookingAdmin.gs / BookingTriggers.gsから。各関数とも同じ
+ *   プロジェクト内で動くため、LockService.getScriptLock()を共有し、互いに直列化される。
+ *   3回目レビューでconfirmBookingとexpirePendingBookingsを同一プロジェクトへ統合し、
+ *   この2つの間のLock非共有によるCalendar/Sheets不整合の可能性を構造的に解消した。
+ *   Issue #272でcancelBookingAdminも同じプロジェクト・同じLockServiceへ加えた。
+ *   Issue #342で追加したupdateBookingPriceも同様（Calendar操作は行わないが、金額の
+ *   読み取り→書き込みの一貫性のためLockを使う）。公開Web App側にはcancelBookingAdmin・
+ *   updateBookingPriceのいずれも公開しない）
  *
- * createBookingの処理順（Issue #268本文どおり）:
+ * createBookingの処理順（Issue #268本文どおり。Issue #342で料金計算を追加）:
  *   1. サーバー側入力検証        → Booking.validateCreateBookingInput
- *   2. abuse / rate limit確認    → RateLimiter.evaluate（Lockの外。ここで弾けばLock不要なため）
- *   3. LockService取得
- *   4. Calendarを最新状態で再取得 → CalendarRepository.getBusyIntervalsForDate
- *   5. 競合チェック              → BookingAvailability.isStartTimeBookable
- *   6. bookingId発行
- *   7. CalendarにPENDINGイベント作成
- *   8. Spreadsheet台帳へ保存
- *   9. Lock解除
- *  10. 管理者通知（Lockの外。通知失敗は予約失敗として扱わない）
+ *   2. 利用料金の自動計算        → BookingPricing.computeBookingPrice（Lockの外。
+ *      副作用が一切ない時点で行うことで、失敗時にCalendar/Sheetsへ何も作らずに済む）
+ *   3. abuse / rate limit確認    → RateLimiter.evaluate（Lockの外。ここで弾けばLock不要なため）
+ *   4. LockService取得
+ *   5. Calendarを最新状態で再取得 → CalendarRepository.getBusyIntervalsForDate
+ *   6. 競合チェック              → BookingAvailability.isStartTimeBookable
+ *   7. bookingId発行
+ *   8. CalendarにPENDINGイベント作成
+ *   9. Spreadsheet台帳へ保存（計算済みの料金を含む）
+ *  10. Lock解除
+ *  11. 管理者通知（Lockの外。通知失敗は予約失敗として扱わない）
  *
- * クリティカルセクション（Lockで保護する範囲）は4〜8のみ。入力検証・rate limit確認・
- * 通知はLockの外。
+ * クリティカルセクション（Lockで保護する範囲）は5〜9のみ。入力検証・料金計算・
+ * rate limit確認・通知はLockの外。
  *
  * 注意（README/PRにも明記）: LockServiceはこのGASプロジェクト内の同時実行同士の排他
  * だけを提供する。スペースマーケット側からの外部Calendar書き込みまではロックできない。
@@ -53,6 +57,25 @@ var BookingRepository = (function () {
       return { success: false, error: validation.error };
     }
     var input = validation.normalized;
+
+    /*
+     * 利用料金の自動計算（Issue #342）。フロントエンドから金額が送られてきても一切
+     * 信用せず、GAS側でBookingPricingを使って必ず再計算する（input.isMemberは
+     * validateCreateBookingInputで既にfail-closed正規化済みの真偽値）。
+     * Lock取得・Calendar/Sheets書き込みより前（副作用が一切ない時点）で行うことで、
+     * 想定外の不整合（brand/date/durationMinutesはBooking.validateCreateBookingInputで
+     * 既に検証済みのため通常は発生しない）で失敗した場合でもCalendarイベント等を
+     * 一切作らずに済む。
+     */
+    var priceResult = BookingPricing.computeBookingPrice({
+      brand: input.brand,
+      date: input.date,
+      durationMinutes: input.durationMinutes,
+      isMember: input.isMember
+    });
+    if (!priceResult.valid) {
+      return { success: false, error: priceResult.error };
+    }
 
     var rateLimitConfig = BookingConfig.getRateLimitConfig();
     var rateLimitResult = RateLimiter.evaluate(input, rateLimitConfig, now.getTime());
@@ -128,7 +151,12 @@ var BookingRepository = (function () {
         status: Booking.STATUS.PENDING,
         calendarEventId: eventId,
         source: input.source,
-        note: input.note
+        note: input.note,
+        priceAmount: priceResult.price.amount,
+        priceTier: priceResult.price.tier,
+        priceDayType: priceResult.price.dayType,
+        priceIsMember: priceResult.price.isMember,
+        priceComputedAt: now
       };
 
       try {
@@ -155,7 +183,21 @@ var BookingRepository = (function () {
       date: input.date,
       startTime: input.startTime,
       durationMinutes: input.durationMinutes,
-      brand: input.brand
+      brand: input.brand,
+      people: input.people,
+      paymentMethod: input.paymentMethod,
+      /*
+       * 仮予約完了画面（Issue #342）はこのpriceを使う。フォーム側が送信直前に取得した
+       * 見積り値ではなく、GASがcreateBooking内で確定・保存した金額（record.priceAmount
+       * と同じ値）を必ず返す。
+       */
+      price: {
+        amount: priceResult.price.amount,
+        currency: priceResult.price.currency,
+        tier: priceResult.price.tier,
+        isMember: priceResult.price.isMember,
+        dayType: priceResult.price.dayType
+      }
     };
   }
 
@@ -417,6 +459,23 @@ var BookingRepository = (function () {
         response: {
           success: false,
           error: { code: 'INVALID_TRANSITION', message: record.status + ' から CONFIRMED へは遷移できません。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    /*
+     * 料金修正の訂正案内が未完了なら、Calendar/Sheetsを変更する前に確定を止める。
+     * Web管理画面とSpreadsheetメニューは同じconfirmBookingを経由する。
+     */
+    if (Booking.needsPriceUpdateNotice(record)) {
+      return {
+        response: {
+          success: false,
+          error: {
+            code: 'PRICE_UPDATE_NOTICE_REQUIRED',
+            message: '修正後の利用料金をまだ案内していません。訂正案内メールを送信してから予約を確定してください。'
+          }
         },
         shouldTryMail: false
       };
@@ -1316,12 +1375,91 @@ var BookingRepository = (function () {
     }
   }
 
+  /*
+   * 予約確定前の金額修正（Issue #342 管理者向け機能）。管理者が確認した金額が
+   * priceAmount（予約時点の自動計算値）と異なる場合に使う（例: 自己申告の会員区分が
+   * 実際には誤っていた等）。priceAmount自体は上書きせず、priceOverrideAmount/
+   * priceOverrideAtへ別途記録することで、自動計算値と修正後の値を区別できるようにする
+   * （Issue #342本文「元の自動計算金額と修正後の金額を区別できるようにする」）。
+   * 実際に案内すべき金額（自動計算値 or 上書き値）はBooking.getEffectivePriceAmountに
+   * 一元化する（ここでは書き込みのみを行い、読み取り側の判定ロジックを複製しない）。
+   *
+   * 対象はPENDINGのみ（Issue #342本文「予約確定前に金額を修正できる」）。CONFIRMED/
+   * CANCELLED/EXPIREDでは拒否する（fail-closed。確定後の金額変更は既存の確定メール・
+   * 決済案内との整合が取れなくなるため、この関数の対象外とする）。
+   * confirmBooking/cancelBookingAdmin等と異なりCalendar操作・メール送信を一切行わない
+   * ため、Lockは金額の読み取り→書き込みの一貫性を保証するためだけに保持する。
+   */
+  var MAX_PRICE_OVERRIDE_JPY_ = 1000000;
+
+  function updateBookingPrice(bookingId, newAmountJpy, now) {
+    if (!bookingId) {
+      return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
+    }
+    var amount = Number(newAmountJpy);
+    if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount <= 0 || amount > MAX_PRICE_OVERRIDE_JPY_) {
+      return {
+        success: false,
+        error: {
+          code: 'INVALID_PRICE_AMOUNT',
+          message: '金額は1円以上' + MAX_PRICE_OVERRIDE_JPY_ + '円以下の整数で指定してください。'
+        }
+      };
+    }
+
+    var lock = LockService.getScriptLock();
+    var gotLock = lock.tryLock(LOCK_TIMEOUT_MS_);
+    if (!gotLock) {
+      return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
+    }
+
+    try {
+      var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+      if (!found) {
+        return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
+      }
+      var record = found.record;
+      if (record.status !== Booking.STATUS.PENDING) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_STATUS_FOR_PRICE_OVERRIDE',
+            message: '予約確定前（PENDING）の予約のみ金額を修正できます（現在のstatus: ' + record.status + '）。'
+          }
+        };
+      }
+
+      var effectiveNow = isDateLike_(now) ? now : new Date();
+      /* 同一ミリ秒に送信→再修正しても、最新の修正を送信済みと誤判定しない。 */
+      if (record.priceUpdateMailSentAt) {
+        var previousSentAt = new Date(record.priceUpdateMailSentAt).getTime();
+        if (Number.isFinite(previousSentAt) && effectiveNow.getTime() <= previousSentAt) {
+          effectiveNow = new Date(previousSentAt + 1);
+        }
+      }
+      SpreadsheetRepository.updateBookingFields(bookingId, {
+        priceOverrideAmount: amount,
+        priceOverrideAt: effectiveNow
+      });
+
+      return {
+        success: true,
+        bookingId: bookingId,
+        priceAmount: record.priceAmount,
+        priceOverrideAmount: amount
+      };
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
   return {
     createBooking: createBooking,
     confirmBooking: confirmBooking,
     expirePendingBookings: expirePendingBookings,
     reviveExpiredBooking: reviveExpiredBooking,
-    cancelBookingAdmin: cancelBookingAdmin
+    cancelBookingAdmin: cancelBookingAdmin,
+    updateBookingPrice: updateBookingPrice
   };
 })();
 

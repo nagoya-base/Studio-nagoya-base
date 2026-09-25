@@ -293,6 +293,24 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
   margin-top: 4px;
 }
 
+/* Issue #342: 一覧カードの利用料金（実効金額）。 */
+.card-price {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: bold;
+  margin-top: 4px;
+}
+
+/* PR #343レビュー対応: 金額修正済みだが利用者への訂正案内がまだの予約を、一覧の時点で
+   見落とさないための警告行。決済リンクの「要確認」表示（payment-link-status-row-warning）
+   と同じ警告色を使う。 */
+.card-price-warning {
+  color: var(--color-danger);
+  font-size: 13px;
+  font-weight: bold;
+  margin-top: 4px;
+}
+
 .empty {
   color: var(--color-text-sub);
   text-align: center;
@@ -452,6 +470,97 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 }
 
 #payment-link-resolve-button:disabled {
+  opacity: 0.5;
+}
+
+/* Issue #342: 利用料金の修正欄。決済リンク送信欄（#payment-link-section）と同じ
+   デザインパターンを踏襲する。 */
+#price-edit-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+#price-edit-section h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+#price-edit-status {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin-bottom: 10px;
+}
+
+#price-edit-section label {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin-bottom: 10px;
+}
+
+#price-edit-amount-input {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  margin-top: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  background: var(--color-card-bg);
+  color: var(--color-text);
+}
+
+#price-edit-amount-input:disabled {
+  opacity: 0.5;
+}
+
+#price-edit-update-button {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 14px;
+}
+
+#price-edit-update-button:disabled {
+  opacity: 0.5;
+}
+
+/* PR #343レビュー対応: 利用者への金額訂正案内欄。#price-edit-sectionと同じ
+   デザインパターンを踏襲する。 */
+#price-notice-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+#price-notice-section h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+#price-notice-status {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin-bottom: 10px;
+  font-weight: bold;
+}
+
+#price-notice-send-button {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 14px;
+}
+
+#price-notice-send-button:disabled {
   opacity: 0.5;
 }
 

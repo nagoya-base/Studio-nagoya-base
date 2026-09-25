@@ -34,12 +34,18 @@ var BOOKING_ADMIN_FILES = [
 ];
 
 /* Code.gs/RateLimiter.gs/AdminNotifier.gsはcreateBooking専用のためBooking Adminには
-   含めない（Booking AdminはcreateBookingを一切呼ばない。README.mdの表を参照）。 */
+   含めない（Booking AdminはcreateBookingを一切呼ばない。README.mdの表を参照）。
+   BookingPricing.gs（Issue #342）も同じ理由でBooking Web App専用にする:
+   BookingRepository.gs内でBookingPricingを実際に参照するのはcreateBooking（Web App側の
+   み呼ぶ）とupdateBookingPrice（金額の妥当性検証自体はBookingPricingに依存しない）のみ
+   であり、AdminNotifier.gsと同じ「Booking AdminはcreateBookingを一切呼ばない」という
+   既存の切り分け方針にそのまま従う。 */
 var BOOKING_WEB_APP_FILES = [
   'Config.gs',
   'CalendarRepository.gs',
   'Availability.gs',
   'Booking.gs',
+  'BookingPricing.gs',
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',

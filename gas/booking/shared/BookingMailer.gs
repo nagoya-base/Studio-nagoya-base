@@ -31,7 +31,9 @@ var BookingMailer = (function () {
     REMINDER: 'REMINDER',
     EXPIRED: 'EXPIRED',
     /* Issue #334 PR-C: 管理者がBooking AdminからStripe決済リンクを送信するメール種別。 */
-    PAYMENT_LINK: 'PAYMENT_LINK'
+    PAYMENT_LINK: 'PAYMENT_LINK',
+    /* PR #343レビュー対応: 管理者による金額修正を利用者へ案内するメール種別。 */
+    PRICE_UPDATE: 'PRICE_UPDATE'
   };
 
   function describeError_(error) {
@@ -464,6 +466,14 @@ var BookingMailer = (function () {
       }
 
       var sentAt = new Date();
+      /* 同一ミリ秒での再修正・送信でも時系列を厳密に保つ。
+         メール送信に成功した最新の訂正は、必ずその修正日時より後に記録する。 */
+      if (mailType === MAIL_TYPES.PRICE_UPDATE) {
+        var overrideMillis = new Date(record.priceOverrideAt).getTime();
+        if (Number.isFinite(overrideMillis) && sentAt.getTime() <= overrideMillis) {
+          sentAt = new Date(overrideMillis + 1);
+        }
+      }
       var updateFields = { lastMailErrorAt: '', lastMailErrorType: '', lastMailErrorMessage: '' };
       sentAtFields.forEach(function (field) { updateFields[field] = sentAt; });
       try {
@@ -502,6 +512,61 @@ var BookingMailer = (function () {
       var config = ensureMailConfigComplete_();
       return BookingMailTemplates.buildConfirmedMail(record, config);
     });
+  }
+
+  /*
+   * PRICE_UPDATE（管理者による金額修正の利用者案内。PR #343レビュー対応）。
+   *
+   * 仮予約メールで案内した金額を管理者が修正した場合に、利用者へ改めて案内するための
+   * 送信関数。対象はPENDINGのみ（BookingRepository.updateBookingPrice自体がPENDING
+   * 限定のため、CONFIRMED後にこの案内が必要になることはない。確定メール・決済リンクは
+   * 既存どおり金額を表示しない方針のまま変更しない＝整合性を維持する）。
+   *
+   * 通常のwithBookingLock_（status/SentAtのみを見るdefaultMailEligibilityCheck_）に
+   * 加えて、「実際に金額修正（priceOverrideAt）が行われている予約にだけ送れる」という
+   * 条件をpriceUpdateEligibilityCheck_で追加する。修正がまだない予約に対して誤って
+   * 呼ばれても、NO_PRICE_OVERRIDEとしてスキップするだけで例外にはしない。
+   *
+   * force（既存の他メール種別と同じ）: 管理者が複数回金額を修正した場合等、
+   * 既にpriceUpdateMailSentAtがあっても明示的に再送したいケースのために使う。
+   */
+  function priceUpdateEligibilityCheck_(mailType, bookingId, requiredStatus, sentAtFields, force, record) {
+    var hasOverride = record.priceOverrideAt !== '' && record.priceOverrideAt !== null && record.priceOverrideAt !== undefined;
+    if (!hasOverride) {
+      return {
+        ok: false,
+        outcome: {
+          success: false,
+          skipped: true,
+          bookingId: bookingId,
+          mailType: mailType,
+          error: {
+            code: 'NO_PRICE_OVERRIDE',
+            message: 'この予約は管理者による金額修正がまだ行われていないため、訂正案内を送信できません。'
+          }
+        }
+      };
+    }
+    /* 過去に送信済みでも、その後の料金再修正は新しい案内として送信する。 */
+    return defaultMailEligibilityCheck_(mailType, bookingId, requiredStatus, sentAtFields,
+      force || Booking.needsPriceUpdateNotice(record), record);
+  }
+
+  function sendPriceUpdateMailForBooking(bookingId, options) {
+    var opts = options || {};
+    return withBookingLock_(
+      MAIL_TYPES.PRICE_UPDATE,
+      bookingId,
+      Booking.STATUS.PENDING,
+      ['priceUpdateMailSentAt'],
+      !!opts.force,
+      function (record) {
+        var config = ensureMailConfigComplete_();
+        return BookingMailTemplates.buildPriceUpdateMail(record, config);
+      },
+      null,
+      priceUpdateEligibilityCheck_
+    );
   }
 
   /*
@@ -1318,6 +1383,8 @@ var BookingMailer = (function () {
     sendReminderMailForBooking: sendReminderMailForBooking,
     sendPaymentLinkMailForBooking: sendPaymentLinkMailForBooking,
     resolvePaymentLinkMetadataInconsistency: resolvePaymentLinkMetadataInconsistency,
+    /* PR #343レビュー対応: 管理者による金額修正を利用者へ案内する送信関数。 */
+    sendPriceUpdateMailForBooking: sendPriceUpdateMailForBooking,
     /* BookingRepository.gs等、利用者メール経路の他ファイルからも同じredaction方針で
        Loggerへ出力できるよう公開する（PRレビュー対応）。 */
     sanitizeErrorMessage: sanitizeErrorMessage_,

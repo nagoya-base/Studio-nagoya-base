@@ -120,7 +120,39 @@ var SpreadsheetRepository = (function () {
     'paymentLinkLastErrorAt',
     'paymentLinkLastErrorMessage',
     'paymentLinkSendUnconfirmedAt',
-    'paymentLinkMetadataInconsistentAt'
+    'paymentLinkMetadataInconsistentAt',
+    /*
+     * ここから先はIssue #342（予約料金の自動計算・仮予約時表示）で追加した列。
+     * customerType/mail列追加時と同じく末尾追記の方針を踏襲する（本番反映時は既存
+     * Bookingsシートのヘッダー行へ手動で追記が必要。README.md「Spreadsheet構成」参照）。
+     * 料金データを持たない過去の予約はこれらの列が空のままになるが、
+     * Booking.getEffectivePriceAmount等の読み取り側はnull/空文字を前提にエラーにしない。
+     * - priceAmount: createBooking時点でBookingPricing.computeBookingPriceが計算した
+     *   利用料金（税込・円）。後日の料金表変更で自動的に再計算・上書きされることはない
+     *   （Issue #342本文「既存予約の金額が変動しないようにする」）。
+     * - priceTier: 適用された料金区分（'GENERAL'|'MEMBER'）。
+     * - priceDayType: 適用された曜日区分（'WEEKDAY'|'WEEKEND_HOLIDAY'）。
+     * - priceIsMember: 実際に適用された会員区分（true/false。mensでは予約者の自己申告を
+     *   無視して常にtrueに固定される。snb/studio_xは自己申告どおり。BookingPricing.gs参照）。
+     * - priceComputedAt: priceAmountを計算した日時（createBooking時のnowと同じ）。
+     * - priceOverrideAmount / priceOverrideAt: 管理者がBooking
+     *   Admin（BookingRepository.updateBookingPrice。PENDING限定）で金額を修正した場合の
+     *   修正後の金額・修正日時。priceAmount自体は上書きしない（自動計算値と修正後の値を
+     *   区別できるようにするため）。「案内すべき実効金額」はBooking.getEffectivePriceAmount
+     *   （priceOverrideAtが空でなければpriceOverrideAmountを優先）で一元的に判定する。
+     * - priceUpdateMailSentAt（PR #343レビュー対応で追加）: 管理者による金額修正
+     *   （priceOverrideAt）を利用者へ案内するメール（BookingMailer.
+     *   sendPriceUpdateMailForBooking）の直近の送信成功日時。他のメールSentAt列と同じ
+     *   「空＝未送信」の慣習に従う。
+     */
+    'priceAmount',
+    'priceTier',
+    'priceDayType',
+    'priceIsMember',
+    'priceComputedAt',
+    'priceOverrideAmount',
+    'priceOverrideAt',
+    'priceUpdateMailSentAt'
   ];
 
   function getSpreadsheet_() {
