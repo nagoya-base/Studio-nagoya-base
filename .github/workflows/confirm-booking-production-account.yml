@@ -1,0 +1,62 @@
+name: Confirm booking-production Google account
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  confirm-account:
+    runs-on: ubuntu-latest
+    environment: booking-production
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - name: Report Google account email
+        shell: bash
+        run: |
+          node <<'NODE'
+          (async () => {
+            const fail = (reason) => {
+              console.log('Google account email: unconfirmed (' + reason + ')');
+              process.exitCode = 1;
+            };
+            try {
+              if (!process.env.CLASPRC_JSON) return fail('CLASPRC_JSON is not configured');
+              const auth = JSON.parse(process.env.CLASPRC_JSON);
+              const token = auth.token || auth;
+              const refreshToken = token.refresh_token;
+              const clientId = auth.oauth2ClientSettings?.clientId || auth.client_id || token.client_id;
+              const clientSecret = auth.oauth2ClientSettings?.clientSecret || auth.client_secret || token.client_secret;
+              if (!refreshToken || !clientId || !clientSecret) {
+                return fail('required OAuth fields are unavailable');
+              }
+              const refresh = await fetch('https://oauth2.googleapis.com/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                  grant_type: 'refresh_token',
+                  refresh_token: refreshToken,
+                  client_id: clientId,
+                  client_secret: clientSecret
+                })
+              });
+              if (!refresh.ok) return fail('OAuth token refresh failed');
+              const refreshed = await refresh.json();
+              if (!refreshed.access_token) return fail('OAuth token refresh failed');
+              const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: { Authorization: 'Bearer ' + refreshed.access_token }
+              });
+              if (response.status === 403) return fail('OAuth scope does not permit email lookup');
+              if (!response.ok) return fail('Google account lookup failed');
+              const profile = await response.json();
+              if (typeof profile.email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email)) {
+                return fail('OAuth scope does not permit email lookup');
+              }
+              console.log('Google account email: ' + profile.email);
+            } catch {
+              fail('account lookup could not be completed');
+            }
+          })();
+          NODE
