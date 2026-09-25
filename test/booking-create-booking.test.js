@@ -190,6 +190,36 @@ test('createBooking: bookingIdはCalendarイベントのタグとSheets行の両
   assert.strictEqual(found.record.calendarEventId, calendarEvent.getId());
 });
 
+/*
+ * Issue #341 PR-A: paymentStatusの書き込み値をBooking.PAYMENT_STATUS.UNPAID（'unpaid'固定。
+ * Issue #314〜#334時点の実装）からBooking.PAYMENT_STATUS.NOT_STARTED（'not_started'。
+ * Issue #341で転用した新しい決済状態のenum）へ移行したことを検証する。カード・現地払い
+ * いずれの支払方法でも、作成直後は決済フロー未着手のためNOT_STARTED固定になる
+ * （カードのみ後続PR-Bでcheckout_pending等へ遷移し得る。現地払いはこの列を以後も
+ * 更新しない設計。gas/booking/README.md「Issue #341」節参照）。
+ */
+test('createBooking: paymentStatusはPAYMENT_STATUS.NOT_STARTED（Issue #341で転用した新しい決済状態）で保存される', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload({ paymentMethod: '現金' }));
+  assert.strictEqual(result.success, true);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.strictEqual(found.record.paymentStatus, ctx.sandbox.Booking.PAYMENT_STATUS.NOT_STARTED);
+  assert.strictEqual(found.record.paymentStatus, 'not_started');
+});
+
+test('createBooking: カード決済（オンラインクレジットカード）でもpaymentStatusは作成直後NOT_STARTEDで保存される（Checkout Session発行前）', function () {
+  var ctx = setup();
+  var cardDate = futureDateJst_(10);
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload({
+    paymentMethod: 'オンラインクレジットカード', date: cardDate, startTime: '10:00'
+  }));
+  assert.strictEqual(result.success, true);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.strictEqual(found.record.paymentStatus, 'not_started');
+});
+
 test('createBooking: Calendarイベントのタイトル・説明に氏名・メール等のPIIを含めない', function () {
   var ctx = setup();
   ctx.sandbox.BookingRepository.createBooking(validPayload({ name: '極秘太郎', email: 'himitsu@example.com' }));

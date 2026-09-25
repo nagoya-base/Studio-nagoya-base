@@ -198,7 +198,80 @@ var SpreadsheetRepository = (function () {
     'feeSettlementNote',
     'feeSettlementUpdatedAt',
     'feeRecoveryRequiredAt',
-    'feeRecoveryReason'
+    'feeRecoveryReason',
+    /*
+     * ここから先はIssue #341（Stripe API即時決済による予約自動確定・自動返金・鍵承認
+     * ゲートへ移行。PR-A: 決済状態の設計・台帳移行）で追加した列。customerType/mail列
+     * 追加時と同じく末尾追記の方針を踏襲する（本番反映時は既存Bookingsシートのヘッダー
+     * 行へ手動で追記が必要。README.md「Spreadsheet構成」参照）。
+     *
+     * 'paymentAttemptId'〜'paymentRecoveryReason'の15列はHEADERS_上で連続させ、
+     * updateBookingPaymentStateAtomicによる1回のRange.setValuesでの一括更新を可能にする
+     * （updateBookingCancellationStateAtomic/updateBookingRescheduleFeeAtomicと同じ
+     * パターン）。'accessApprovedAt'だけはこの連続範囲に含めない（Issue #341本文
+     * 「鍵承認は予約確定とは独立させる」ため、決済状態の一括更新とは別の書き込み経路
+     * （通常のupdateBookingFields）を使う設計とする）。
+     *
+     * このPR-A時点では、CardPayment.gs（純粋ロジック）とこれらの列・
+     * updateBookingPaymentStateAtomicのみを追加し、実際にこれらの列へ値を書き込む
+     * 処理（Checkout Session発行・Webhook受信・自動確定・自動返金。PR-B/PR-C/PR-D）は
+     * 実装しない。既存予約（この列が空の行）は「カード決済フローを一度も開始していない」
+     * として扱われ、読み取り側もこれを前提にfail-closedに解釈すること
+     * （paymentStatus自体は既存どおりBooking.normalizePaymentStatusで正規化する）。
+     *
+     * - paymentAttemptId: 現在（または直近）の決済試行の一意なID
+     *   （CardPayment.generatePaymentAttemptId）。Stripe Checkout Session発行時の
+     *   冪等キーやWebhook metadataとの照合に使う想定（PR-B/PR-C）。再試行のたびに
+     *   新しいIDへ更新される。
+     * - stripeCheckoutSessionId / stripePaymentIntentId: Stripe側の識別子（PR-Bで
+     *   Checkout Session発行時に記録）。
+     * - paymentHoldExpiresAt: 決済中の仮押さえ期限（CardPayment.
+     *   computeCheckoutHoldExpiryMillis。既定30分。既存のカードTTL
+     *   Booking.CARD_TTL_HOURS=72hとは別クロック。詳細はCardPayment.gs参照）。
+     * - stripeAmount / stripeCurrency: Stripeが実際に処理した金額・通貨（監査用。
+     *   確定に使う金額の正はあくまでBooking.getEffectivePriceAmount側であり、
+     *   この列の値で予約金額を決定しない。CardPayment.verifyPaymentAmountで両者を
+     *   突き合わせる）。
+     * - paymentConfirmedAt: 署名検証済みWebhookで決済成功を確認した日時。予約確定
+     *   （confirmedAt）とは独立した列として持つ（Issue #341本文「決済状態を独立して
+     *   扱う」。通常は自動確定と同時刻になるが、遅延Webhookで枠が埋まっていた場合は
+     *   confirmedAtが付かないままpaymentConfirmedAtだけが記録され得る）。
+     * - lastStripeEventId: この予約に対して最後に適用したStripe Webhookイベントの
+     *   id。イベントの重複配信・順序逆転の検出に使う想定（PR-C）。
+     * - stripeRefundId / refundRequestedAt / refundedAt: 自動返金の識別子・返金API
+     *   呼び出し日時・返金完了確認日時。
+     * - paymentLastErrorAt / paymentLastErrorMessage: Stripe関連処理（Checkout Session
+     *   発行・Webhook処理・返金）の直近の失敗記録。既存のlastMailError*（メール専用）・
+     *   paymentLinkLastError*（決済リンク送信専用）とは別の専用列とする（Booking
+     *   AdminのStripe決済状態表示で、メール送信の失敗と混同させないため。
+     *   BookingMailer.gsの既存の専用エラー列の方針を踏襲）。
+     * - paymentRecoveryRequiredAt / paymentRecoveryReason: 決済状態の更新処理が途中
+     *   失敗し、この15列の整合性が保証できない場合に設定する（PR #345レビュー対応の
+     *   feeRecoveryRequiredAt/feeRecoveryReasonと同じ「明示的な補正関数でのみ
+     *   クリアできる」設計を踏襲する想定。空でない間は以後の自動的な決済状態遷移を
+     *   停止する。実際の遷移処理自体はPR-B/PR-Cで実装する）。
+     * - accessApprovedAt: 鍵・来場案内の開示承認日時（Issue #341本文の鍵承認ゲート）。
+     *   空＝未承認。status・paymentStatusのいずれとも独立しており、この列の更新だけでは
+     *   予約状態を一切変更しない。カード決済かつ当日予約でない予約にのみ意味を持つ
+     *   （対象外の予約では常に空のまま）。この列を承認済みにする操作自体はメール送信を
+     *   一切トリガーしない（Issue #341受入条件）。
+     */
+    'paymentAttemptId',
+    'stripeCheckoutSessionId',
+    'stripePaymentIntentId',
+    'paymentHoldExpiresAt',
+    'stripeAmount',
+    'stripeCurrency',
+    'paymentConfirmedAt',
+    'lastStripeEventId',
+    'stripeRefundId',
+    'refundRequestedAt',
+    'refundedAt',
+    'paymentLastErrorAt',
+    'paymentLastErrorMessage',
+    'paymentRecoveryRequiredAt',
+    'paymentRecoveryReason',
+    'accessApprovedAt'
   ];
 
   function getSpreadsheet_() {
@@ -491,6 +564,67 @@ var SpreadsheetRepository = (function () {
     return found.rowNumber;
   }
 
+  var PAYMENT_STATE_ATOMIC_FIELDS_ = [
+    'paymentAttemptId', 'stripeCheckoutSessionId', 'stripePaymentIntentId',
+    'paymentHoldExpiresAt', 'stripeAmount', 'stripeCurrency', 'paymentConfirmedAt',
+    'lastStripeEventId', 'stripeRefundId', 'refundRequestedAt', 'refundedAt',
+    'paymentLastErrorAt', 'paymentLastErrorMessage', 'paymentRecoveryRequiredAt',
+    'paymentRecoveryReason'
+  ];
+
+  /*
+   * Issue #341 PR-A: Stripe決済状態の付随情報のatomic更新（updateBookingCancellationStateAtomic/
+   * updateBookingRescheduleFeeAtomicと同じパターン）。HEADERS_上で実際に連続する
+   * 'paymentAttemptId'〜'paymentRecoveryReason'（末尾15列）の範囲に対する1回のsetValuesで
+   * まとめて更新する。
+   *
+   * 既存の'paymentStatus'（30列目。Issue #271由来の既存列を転用）はこの15列と
+   * HEADERS_上で連続していない（間にexpiredMailSentAt〜feeRecoveryReasonという無関係な
+   * 既存25列が挟まる）ため、意図的にこの関数の対象に含めない。同じRange.setValuesへ
+   * 含めてしまうと、その25列を他プロセス（決済リンク送信・料金修正・日程変更等）が
+   * 並行更新した直後にこの関数がfound.record（呼び出し開始時点のスナップショット）の
+   * 古い値で丸ごと書き戻し、その更新を消してしまう恐れがある（updateBookingCancellation
+   * StateAtomicが「21列目以降には触れない」設計にした理由と同種の事故。このファイルの
+   * 同関数のコメント参照）。'paymentStatus'自体の更新は呼び出し側が別途
+   * updateBookingFields(bookingId, {paymentStatus: ...})で単独更新する（2回の書き込みに
+   * 分かれるため呼び出し間で一瞬だけ不整合な組み合わせが観測され得るが、無関係な25列を
+   * 巻き込むより安全という判断。将来的に両者の完全な同時更新が必要になれば、台帳側の
+   * 列順を見直すか専用の復旧フラグで補う）。
+   *
+   * 実際にこの関数を呼び出して決済状態一式を遷移させる処理（Checkout Session発行・
+   * Webhook確認・自動返金）はPR-B/PR-C/PR-Dで実装する。本PR-Aでは関数の提供と
+   * モックテストによる書き込み範囲の検証のみを行う。
+   *
+   * PAYMENT_STATE_ATOMIC_FIELDS_以外のキーが渡された場合は例外を投げる（mail列・
+   * 予約日時列等への誤用を防ぐfail-closed）。bookingIdが見つからない場合も例外を投げる。
+   */
+  function updateBookingPaymentStateAtomic(bookingId, fields) {
+    var found = findRowByBookingId(bookingId);
+    if (!found) {
+      throw new Error('bookingIdが見つかりません: ' + bookingId);
+    }
+
+    Object.keys(fields).forEach(function (key) {
+      if (PAYMENT_STATE_ATOMIC_FIELDS_.indexOf(key) === -1) {
+        throw new Error('決済状態atomic更新で許可されていないフィールドです: ' + key);
+      }
+    });
+
+    var startIndex = HEADERS_.indexOf('paymentAttemptId');
+    var endIndex = HEADERS_.indexOf('paymentRecoveryReason');
+    var values = [];
+    for (var i = startIndex; i <= endIndex; i++) {
+      var header = HEADERS_[i];
+      var hasOverride = Object.prototype.hasOwnProperty.call(fields, header);
+      var value = hasOverride ? fields[header] : found.record[header];
+      values.push(value !== undefined && value !== null ? value : '');
+    }
+
+    var sheet = ensureBookingsSheet_();
+    sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    return found.rowNumber;
+  }
+
   return {
     HEADERS: HEADERS_,
     appendBooking: appendBooking,
@@ -502,6 +636,7 @@ var SpreadsheetRepository = (function () {
     updateBookingScheduleAtomic: updateBookingScheduleAtomic,
     updateBookingRescheduleFeeAtomic: updateBookingRescheduleFeeAtomic,
     updateBookingPriceBaselineAtomic: updateBookingPriceBaselineAtomic,
-    updateBookingCancellationStateAtomic: updateBookingCancellationStateAtomic
+    updateBookingCancellationStateAtomic: updateBookingCancellationStateAtomic,
+    updateBookingPaymentStateAtomic: updateBookingPaymentStateAtomic
   };
 })();

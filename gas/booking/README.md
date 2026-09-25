@@ -2994,6 +2994,7 @@ Issue #342（予約料金の自動計算）・PR #343時点では、`BookingPric
 | `Config.gs` | ✓ | ✓ | `gas/booking/shared/Config.gs` |
 | `CalendarRepository.gs` | ✓ | ✓ | `gas/booking/shared/CalendarRepository.gs` |
 | `Booking.gs` | ✓ | ✓ | `gas/booking/shared/Booking.gs` |
+| `CardPayment.gs`（Issue #341 PR-A） | ✓ | ✓ | `gas/booking/shared/CardPayment.gs` |
 | `JapaneseHolidays.gs`（Issue #346／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | `gas/booking/shared/JapaneseHolidays.gs` |
 | `BookingPricing.gs`（Issue #342／Issue #346で祝日判定を追加／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | `gas/booking/shared/BookingPricing.gs` |
 | `RateLimiter.gs` | ✓ | – | `gas/booking/public/RateLimiter.gs` |
@@ -3178,14 +3179,25 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
 `customerType`（Issue #270で追加。`first_time`または`returning`） /
 `pendingMailSentAt` / `confirmedMailSentAt` / `cancelMailSentAt` / `reminderSentAt` /
 `accessGuideSentAt` / `lastMailErrorAt` / `lastMailErrorType` / `lastMailErrorMessage`
-（いずれもIssue #271で追加） / `paymentStatus`（Issue #314で追加。本PR-A #334時点では
-未使用のまま`unpaid`固定） / `expiredMailSentAt`（Issue #334 PR-Aで追加） /
+（いずれもIssue #271で追加） / `paymentStatus`（Issue #314で追加。Issue #334時点までは
+未使用のまま`unpaid`固定。**Issue #341 PR-AでStripe決済状態を表す列へ転用した**。
+下記「Issue #341」節参照） / `expiredMailSentAt`（Issue #334 PR-Aで追加） /
 `stripePaymentLinkUrl` / `paymentLinkSentAt` / `paymentLinkSentTo` / `paymentLinkSendCount` /
 `paymentLinkLastErrorAt` / `paymentLinkLastErrorMessage` / `paymentLinkSendUnconfirmedAt` /
 `paymentLinkMetadataInconsistentAt`（いずれもIssue #334 PR-Cで追加。`paymentLinkSendUnconfirmedAt`
 はPR #337レビュー対応・1回目、`paymentLinkMetadataInconsistentAt`は2回目で追加） /
 `priceAmount` / `priceTier` / `priceDayType` / `priceIsMember` / `priceComputedAt` /
-`priceOverrideAmount` / `priceOverrideAt` / `priceUpdateMailSentAt`（Issue #342・PR #343で追加）
+`priceOverrideAmount` / `priceOverrideAt` / `priceUpdateMailSentAt`（Issue #342・PR #343で追加） /
+`scheduleChangeCount` / `feePaidAmount` / `feeRefundedAmount` / `feeSettlementState` /
+`feeSettlementNote` / `feeSettlementUpdatedAt` / `feeRecoveryRequiredAt` / `feeRecoveryReason`
+（いずれもIssue #344追記・PR #345/#352で追加。日程変更に伴う料金差額精算専用の列で、
+下記「Issue #341」節が追加する決済関連列とは別の仕組み。混同しないこと） /
+`paymentAttemptId` / `stripeCheckoutSessionId` / `stripePaymentIntentId` /
+`paymentHoldExpiresAt` / `stripeAmount` / `stripeCurrency` / `paymentConfirmedAt` /
+`lastStripeEventId` / `stripeRefundId` / `refundRequestedAt` / `refundedAt` /
+`paymentLastErrorAt` / `paymentLastErrorMessage` / `paymentRecoveryRequiredAt` /
+`paymentRecoveryReason` / `accessApprovedAt`（いずれもIssue #341 PR-Aで追加。詳細は
+下記「Issue #341: Stripe API即時決済移行」節参照）
 
 - `customerType`はIssue #270で20列目として**末尾に追記**した。既存行との互換性を保つため
   途中に挿入していない（既存行はこの列が空のまま＝利用区分不明として扱われる）。
@@ -3257,6 +3269,158 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
    新規予約の金額保存、管理画面の料金表示、金額修正→訂正案内→予約確定の動作を確認する。
 
 この手順は本番反映時の作業指示であり、PR #343では本番のシート編集・GASデプロイを行わない。
+
+### Issue #341 PR-A 本番`Bookings`シートのヘッダー追記手順
+
+**既存の本番シートはヘッダーが自動更新されない。** Web App・Booking Admin両方の更新前に、
+本番`Bookings`シートの1行目と`SpreadsheetRepository.gs`の`HEADERS_`を照合すること。
+
+1. 既存データをバックアップする。実際の本番ヘッダーの最終列を確認し、この手順時点で
+   `feeRecoveryReason`（Issue #344追記・PR #345/#352）までしか反映されていないか、
+   `paymentLinkMetadataInconsistentAt`（Issue #334 PR-C）までしか反映されていないかを
+   `HEADERS_`の順序と突き合わせて確認する。もし`scheduleChangeCount`〜`feeRecoveryReason`
+   （Issue #344追記の8列）が未反映の場合は、本手順の前にそちらを先に追記すること
+   （このリポジトリのREADMEには現時点でその8列専用の追記手順節が無い。`HEADERS_`の
+   実際の並び順どおりに追記すれば足りる）。
+2. **既存列の途中へ挿入せず**、本番シートの現在の最終列（通常は`feeRecoveryReason`）の
+   右隣から、次の16列を**この順番のまま**1行目へ追記する（列名は完全一致させる）。
+
+   ```text
+   paymentAttemptId
+   stripeCheckoutSessionId
+   stripePaymentIntentId
+   paymentHoldExpiresAt
+   stripeAmount
+   stripeCurrency
+   paymentConfirmedAt
+   lastStripeEventId
+   stripeRefundId
+   refundRequestedAt
+   refundedAt
+   paymentLastErrorAt
+   paymentLastErrorMessage
+   paymentRecoveryRequiredAt
+   paymentRecoveryReason
+   accessApprovedAt
+   ```
+
+3. 既存行の新規16列は空欄のままにする。値を一括補完・再計算しない。
+   1行目に列名の重複・欠落・順序違いがないことを、`HEADERS_`と照合して確認する。
+4. **既存の`paymentStatus`列（30列目）はこの手順では追加しない（既存列を転用するのみ）。**
+   ただし本番の既存行はすべて`unpaid`のまま保存されているため、`Booking.
+   normalizePaymentStatus`が読み取り時に`NOT_STARTED`へ正規化する前提を崩さないこと
+   （新しい文字列表現へ本番シートの既存値を一括置換する必要はない）。
+5. その後に既存のBooking Web AppとBooking Adminの**両プロジェクト**へ対象ファイル
+   （`CardPayment.gs`を含む）を反映する。本番デプロイを更新する場合は既存デプロイID・
+   `/exec` URLを維持する。
+
+この手順は本番反映時の作業指示であり、PR-Aでは本番のシート編集・GAS/Cloud Runデプロイ・
+Stripe本番APIキー設定のいずれも行わない（オーナーの明示的な承認を得てから、本Issueの
+後続PRの反映と合わせて実施する）。
+
+## Issue #341: Stripe API即時決済による予約自動確定・自動返金・鍵承認ゲートへ移行（PR-A）
+
+**従来の「カード決済後に管理者が予約確定する方式」（Issue #334）から、「Stripe Checkout
+即時決済→署名検証済みWebhookで自動確定」方式へ移行する。本PR-Aは調査・状態設計・
+サーバー側の料金検証・台帳移行・モックテストのみを行い、Checkout Session発行・
+Webhook受信・自動返金・鍵承認UI（いずれもPR-B/C/D）は実装しない。**
+
+### 実装前調査で判明した事項
+
+- **Issue #326／PR #328（旧TTL案）はCLOSEDのままMERGEDされていない。** 現行コードは
+  Issue #334方式（`Booking.CARD_TTL_HOURS`固定72h等）のみで統一されており、#326の
+  別TTL計算式（`min(createdAt+72h, startAt-24h)`等）と衝突する実装は存在しない。
+- **`paymentStatus`列（Issue #314で追加）は事実上使われていない死んだ列だった。**
+  書き込み箇所は`BookingRepository.createBooking`の1箇所のみで、常に`'unpaid'`固定。
+  `'paid'`へ更新する箇所はコードベース全体に存在せず、Web UI（`getAdminBookingDetail`/
+  `getAdminBookings`）にも一切露出していなかった。このためIssue #341本文が指示する
+  「既存paymentStatus列の転用」は、実質的に空の列へ新しい意味を持たせる作業であり、
+  読み取り側の互換性を壊す既存利用箇所は無い（このPRでの変更範囲・影響範囲の調査結論）。
+- **Issue #344/#345（日程変更の料金差額精算）とは列・ロジックを分離した。**
+  `scheduleChangeCount`/`feePaidAmount`/`feeRefundedAmount`/`feeSettlementState`等
+  （Issue #344追記）は「金額は計算するが資金移動は人間が確認する」設計であり、本Issueの
+  「Stripe自動決済・自動返金」とは別の仕組みとして併存させる（Issue #341本文の指示どおり、
+  台帳列・精算ロジックを統合しない）。
+- `gas/booking/public/appsscript.json`に`script.external_request`スコープが無いことを
+  確認した。UrlFetchAppでStripe APIを呼ぶPR-Bで追加する（本PR-Aでは追加しない。
+  下記「本PR-Aで意図的に行わなかったこと」参照）。
+
+### 決済状態（`paymentStatus`）の設計
+
+既存の`paymentStatus`列を、予約状態（`status`）とは完全に独立した決済状態の管理に転用した
+（`gas/booking/shared/Booking.gs`）。
+
+| 値 | 意味 |
+| --- | --- |
+| `not_started` | 決済フロー未着手。現金・PayPayの予約は常にこのまま。カード予約もCheckout Session発行前はこの状態 |
+| `checkout_pending` | Stripe Checkout Sessionを発行済み・決済結果待ち（PR-B） |
+| `paid` | 署名検証済みWebhookで決済成功を確認済み（PR-C） |
+| `refund_pending` | 返金APIを呼び出し済み・完了確認待ち |
+| `refunded` | 返金完了を確認済み（終端状態） |
+| `failed` | 決済不成立（カード拒否・Session期限切れ等）。新しい決済試行IDでのみ`checkout_pending`へ戻れる |
+
+許可された遷移は`Booking.canTransitionPaymentStatus`で判定する（`Booking.canTransition`
+（予約状態用）と同じ設計方針。「制度として存在する遷移」の一覧であり、実際にどの関数が
+実行するかはPR-B/C/Dが個別に絞り込む）。返金失敗はこの表では遷移として表現せず、
+`refund_pending`に留まったまま専用のエラー列（`paymentLastErrorAt`/
+`paymentLastErrorMessage`）と要復旧フラグ（`paymentRecoveryRequiredAt`/
+`paymentRecoveryReason`）で追跡する想定（`FeeSettlementRepository`の
+`FAILED_NEEDS_RECOVERY`と同じ設計思想）。
+
+既存本番行はすべて`'unpaid'`のまま保存されているため、読み取り側は必ず
+`Booking.normalizePaymentStatus(rawValue)`を経由すること。空文字・未設定・旧`'unpaid'`・
+未知の値はすべてfail-closedに`not_started`へ正規化される（「支払済みと誤認しない」方向）。
+
+### サーバー側の料金検証
+
+`gas/booking/shared/CardPayment.gs`（新規）が、`Booking.getEffectivePriceAmount`
+（Issue #342/#343の既存料金基盤）を経由してStripeへ請求すべき金額を一意に決定する
+（`computeExpectedPaymentAmount`）。クライアントやStripe側から得られた金額・通貨との
+突合は`verifyPaymentAmount`で行い、不一致・金額未計算はいずれもfail-closedに拒否する。
+PR-B（Checkout Session発行時の金額指定）・PR-C（Webhook受信時の金額検証）の両方が
+この1つの関数を再利用する想定で、金額計算・検証ロジックを複数箇所に重複実装しない。
+
+### Stripe Checkout SessionのTTL・仮押さえ時間について（要確認事項への回答）
+
+Issue #341本文は仮押さえ時間の目安を30分としている。Stripe Checkout Session
+（`mode=payment`）の`expires_at`は、公式ドキュメント上「Session作成時刻から30分後〜
+24時間後」の範囲でのみ指定できる。**この実装作業を行ったサンドボックス環境では、
+ネットワークポリシーにより`docs.stripe.com`へのアウトバウンド接続がブロックされており、
+公式ドキュメントでの最終確認ができなかった。** 既知の仕様として記載しているが、
+**PR-B着手前に、ネットワークアクセス可能な環境で必ず公式ドキュメントを再確認すること。**
+
+30分「ちょうど」をそのまま仮押さえ時間として採用すると、PENDING作成からCheckout Session
+発行までの処理遅延（Lock待ち・リトライ・ネットワーク往復）により、Stripeへ送る
+`expires_at`が実際のSession作成時刻から30分未満になり、Stripe API側のバリデーション
+エラーになるおそれがある。そのため`CardPayment.gs`では:
+
+- 内部の仮押さえ期限（PENDING保持・空き枠ロック解除の基準）を計算する
+  `computeCheckoutHoldExpiryMillis`（`CHECKOUT_HOLD_MINUTES=30`固定）と、
+- Stripeへ実際に送る`expires_at`を計算する`computeStripeSessionExpiresAtSeconds`
+  （`CHECKOUT_HOLD_MINUTES`に`STRIPE_SESSION_EXPIRY_BUFFER_MINUTES=5`分の安全マージンを
+  上乗せ）
+
+を別関数として分離した。さらに、PR-B側はCheckout Session作成に**成功した後**、
+Stripeのレスポンスに含まれる実際の`expires_at`を内部の仮押さえ期限として**保存し直す**
+実装にすること（Issue #341本文「Session expires_atをこの仮押さえ期限と一致させる」を、
+2つの期限を別々に計算して後から突き合わせるのではなく、常に一致する構造で実現する）。
+
+### 本PR-Aで意図的に行わなかったこと（PR-B/C/Dへの引き継ぎ）
+
+- Checkout Session生成・仮押さえ処理の実配線・フォーム遷移（PR-B）。
+- `script.external_request`スコープの追加（UrlFetchAppを実際に呼ぶPR-Bで追加する。
+  本PR-Aは一切のStripe API呼び出しを行わないため、未使用のスコープを先行追加しない）。
+- 署名検証Webhook受信基盤（Cloud Run等の中継）・自動確定・遅延Webhookの分岐処理・
+  Stripeイベントの冪等性台帳（`FeeSettlementRepository.gs`の設計パターンを踏襲した
+  専用シートを想定）・Recovery連携（PR-C）。
+- Booking Adminの「取消（自動返金）」ボタン・「鍵承認」ボタン・「来場案内を再送」ボタン・
+  前日リマインドの鍵承認ゲート条件・メール文言更新（PR-D）。
+- `expirePendingBookings`を新しい`paymentHoldExpiresAt`クロックへ対応させる変更
+  （既存のカードTTL`Booking.CARD_TTL_HOURS`＝72hによる失効処理は本PR-Aでは変更しない。
+  Issue #341本文の「既存予約や旧Payment Link利用中予約は旧方式で完了できる移行期間」を
+  どう設計するかは、実際にCheckout Sessionフローを導入するPR-Bで判断する）。
+- 本番Bookingsシートの列追加・Stripe本番APIキー設定・GAS/Cloud Run本番デプロイ・
+  既存`/exec` URLの変更（いずれもオーナーの明示的な承認後、別途実施）。
 
 ### `Recovery`シート（部分失敗・不整合記録）列構成
 

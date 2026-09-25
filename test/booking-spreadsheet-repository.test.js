@@ -410,3 +410,82 @@ test('BookingsシートとRecoveryシートは独立している（同じSpreads
   assert.strictEqual(sandbox.SpreadsheetRepository.getAllPendingBookings().length, 1);
   assert.strictEqual(sandbox.RecoveryRepository.listAll().length, 1);
 });
+
+/*
+ * updateBookingPaymentStateAtomic（Issue #341 PR-A）: 'paymentAttemptId'〜
+ * 'paymentRecoveryReason'の末尾15列だけを1回のsetValuesで更新する。updateBooking
+ * CancellationStateAtomic/updateBookingPriceBaselineAtomicと同じ設計で、'paymentStatus'
+ * （30列目。この15列とHEADERS_上で連続していない）や間に挟まる決済リンク送信・料金・
+ * 日程変更精算関連の既存列は一切書き込まない。
+ */
+test('updateBookingPaymentStateAtomic: paymentAttemptId〜paymentRecoveryReasonの15列だけを1回の書き込みで更新し、paymentStatusと中間の既存列は変化しない', function () {
+  var sandbox = loadRepos();
+  sandbox.SpreadsheetRepository.appendBooking(sampleRecord({
+    paymentMethod: 'オンラインクレジットカード',
+    paymentStatus: 'not_started',
+    priceOverrideAmount: 9999,
+    stripePaymentLinkUrl: 'https://buy.stripe.com/test_existing'
+  }));
+
+  var holdExpiresAt = new Date('2026-10-01T08:30:00+09:00');
+  sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic('SX-20261001-AAAAAAAA', {
+    paymentAttemptId: 'PAY-SX-20261001-AAAAAAAA-ABC123',
+    stripeCheckoutSessionId: 'cs_test_1',
+    paymentHoldExpiresAt: holdExpiresAt
+  });
+
+  var found = sandbox.SpreadsheetRepository.findRowByBookingId('SX-20261001-AAAAAAAA');
+  assert.strictEqual(found.record.paymentAttemptId, 'PAY-SX-20261001-AAAAAAAA-ABC123');
+  assert.strictEqual(found.record.stripeCheckoutSessionId, 'cs_test_1');
+  assert.strictEqual(found.record.paymentHoldExpiresAt.getTime(), holdExpiresAt.getTime());
+  assert.strictEqual(found.record.stripePaymentIntentId, '', '範囲内だが指定していないフィールドは空のまま維持される');
+  // 範囲外（'paymentStatus'・その間の決済リンク送信・料金関連の既存列）は変化しない。
+  assert.strictEqual(found.record.paymentStatus, 'not_started', 'paymentStatusはこの関数の対象外');
+  assert.strictEqual(found.record.priceOverrideAmount, 9999);
+  assert.strictEqual(found.record.stripePaymentLinkUrl, 'https://buy.stripe.com/test_existing');
+
+  var sheet = sandbox.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
+  var lastCall = sheet._setValuesCalls[sheet._setValuesCalls.length - 1];
+  assert.strictEqual(lastCall.col, sandbox.SpreadsheetRepository.HEADERS.indexOf('paymentAttemptId') + 1);
+  assert.strictEqual(lastCall.numCols, 15, 'paymentAttemptId〜paymentRecoveryReasonの15列だけを1回で書く');
+  assert.strictEqual(lastCall.numRows, 1);
+});
+
+test('updateBookingPaymentStateAtomic: 指定しなかった列は既存値のまま維持される', function () {
+  var sandbox = loadRepos();
+  sandbox.SpreadsheetRepository.appendBooking(sampleRecord());
+  sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic('SX-20261001-AAAAAAAA', {
+    paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_1'
+  });
+
+  sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic('SX-20261001-AAAAAAAA', {
+    stripePaymentIntentId: 'pi_1'
+  });
+
+  var found = sandbox.SpreadsheetRepository.findRowByBookingId('SX-20261001-AAAAAAAA');
+  assert.strictEqual(found.record.paymentAttemptId, 'PAY-1', '前回書き込んだ値が維持される');
+  assert.strictEqual(found.record.stripeCheckoutSessionId, 'cs_1');
+  assert.strictEqual(found.record.stripePaymentIntentId, 'pi_1');
+});
+
+test('updateBookingPaymentStateAtomic: 存在しないbookingIdは例外を投げる（書き込み自体を行わない）', function () {
+  var sandbox = loadRepos();
+  assert.throws(function () {
+    sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic('NOT-EXIST', { paymentAttemptId: 'PAY-1' });
+  });
+});
+
+test('updateBookingPaymentStateAtomic: 許可されていないフィールド（paymentStatus等）は例外を投げ、行自体を書き換えない', function () {
+  var sandbox = loadRepos();
+  sandbox.SpreadsheetRepository.appendBooking(sampleRecord());
+
+  assert.throws(function () {
+    sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic('SX-20261001-AAAAAAAA', { paymentStatus: 'paid' });
+  });
+  assert.throws(function () {
+    sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic('SX-20261001-AAAAAAAA', { accessApprovedAt: new Date() });
+  }, '鍵承認(accessApprovedAt)はこのatomic更新の対象外（Issue #341本文「鍵承認は予約確定とは独立させる」）');
+
+  var found = sandbox.SpreadsheetRepository.findRowByBookingId('SX-20261001-AAAAAAAA');
+  assert.strictEqual(found.record.paymentAttemptId, '', '例外発生時は行を書き換えない（範囲書き込み前にフィールド名を検証するため）');
+});

@@ -38,10 +38,85 @@ var Booking = (function () {
     EXPIRED: 'EXPIRED'
   };
 
+  /*
+   * 決済状態（Issue #341。既存paymentStatus列を転用）。予約状態（STATUS）とは完全に
+   * 独立したフィールドであり、互いを直接書き換えない（Issue #341本文「決済の成功・失敗・
+   * 返金が既存予約の状態を不正に変更しない構造にする」）。実際にこの状態機械を遷移させる
+   * のはカード決済のみ。現金・PayPayの予約は作成時のNOT_STARTEDのまま変化しない
+   * （現地払いは従来どおりstatus側のconfirmBooking/cancelBookingAdminのみで管理し、
+   * この状態機械には一切関与しない）。
+   *
+   * - NOT_STARTED: 決済フロー未着手（現金・PayPayは常にこのまま。カードもCheckout
+   *   Session発行前はこの状態）。
+   * - CHECKOUT_PENDING: Stripe Checkout Sessionを発行済み・決済結果待ち（PR-B）。
+   * - PAID: 署名検証済みWebhookでStripeの決済成功を確認済み（PR-C）。
+   * - REFUND_PENDING: 返金APIを呼び出し済み・完了確認待ち。Issue #341本文「枠解放と
+   *   Calendar/台帳のCANCELLED更新は返金APIの成功を待たずに行う」ため、予約側のstatus
+   *   更新とこの遷移は非同期に進み得る（PR-D）。
+   * - REFUNDED: 返金完了を確認済み（終端状態）。
+   * - FAILED: 決済が成立しなかった（カード拒否・Checkout Session期限切れ等）。新しい
+   *   paymentAttemptIdでの再試行時のみCHECKOUT_PENDINGへ戻れる。
+   *
+   * 旧定義（Issue #314で追加。Issue #334時点では'unpaid'固定のまま未使用で、'paid'は
+   * どこからも書き込まれていなかった。BookingRepository.gs/SpreadsheetRepository.gs
+   * ともに現状の書き込み・参照箇所はcreateBooking内の1箇所のみとPR-A調査で確認済み）
+   * から値を差し替える。既存本番行はすべて'unpaid'のまま保存されているため、
+   * 読み取り側は必ずnormalizePaymentStatus経由で正規化すること（このファイルを直接
+   * 経由しない古いコードが万一'unpaid'/'paid'をそのまま比較しても、'paid'の文字列表現は
+   * 新定義のPAIDと一致するため実害はない）。
+   */
   var PAYMENT_STATUS = {
-    UNPAID: 'unpaid',
-    PAID: 'paid'
+    NOT_STARTED: 'not_started',
+    CHECKOUT_PENDING: 'checkout_pending',
+    PAID: 'paid',
+    REFUND_PENDING: 'refund_pending',
+    REFUNDED: 'refunded',
+    FAILED: 'failed'
   };
+
+  /*
+   * Bookings台帳から読み取ったpaymentStatusの生値を、上記PAYMENT_STATUSのいずれかへ
+   * 正規化する。空文字・未設定・旧'unpaid'・未知の値はすべてfail-closedにNOT_STARTEDへ
+   * 倒す（「支払済みと誤認しない」方向。既存本番行は全てこの分岐を通る）。旧'paid'
+   * （実際に書き込まれた実績はないが念のため）はそのままPAIDへ通す。
+   */
+  function normalizePaymentStatus(rawValue) {
+    var known = [
+      PAYMENT_STATUS.NOT_STARTED, PAYMENT_STATUS.CHECKOUT_PENDING, PAYMENT_STATUS.PAID,
+      PAYMENT_STATUS.REFUND_PENDING, PAYMENT_STATUS.REFUNDED, PAYMENT_STATUS.FAILED
+    ];
+    if (known.indexOf(rawValue) !== -1) return rawValue;
+    return PAYMENT_STATUS.NOT_STARTED;
+  }
+
+  /*
+   * PAYMENT_STATUSの許可された遷移（Issue #341）。STATUSのALLOWED_TRANSITIONS/
+   * canTransitionと同じ設計方針を踏襲する：この表は「制度として存在する遷移」の一覧で
+   * あり、実際にどの関数がその遷移を実行してよいかは呼び出し側（PR-B/C/D）が個別に
+   * 絞り込む。返金失敗はこの表では遷移として表現しない（REFUND_PENDINGに留まり続ける
+   * ことが「未解決」を表し、失敗の記録は専用のエラー列で行う想定。confirmBookingの
+   * EXPIRED拒否ガードと同じく、表がその遷移を許すことと、ある関数が実際にそれを実行する
+   * ことは別問題として扱う）。
+   *
+   * キーはPAYMENT_STATUSの識別子名ではなく**値**（'not_started'等）にすること。
+   * STATUS/ALLOWED_TRANSITIONSは値と識別子名がどちらも同じ大文字表記だったため
+   * この違いが問題にならなかったが、PAYMENT_STATUSは値がsnake_caseのため、裸の
+   * 識別子（NOT_STARTED:等）で書くとcanTransitionPaymentStatusの引数（実際の値
+   * 'not_started'等）と一致せずルックアップが常に失敗する。計算されたプロパティ名
+   * （[PAYMENT_STATUS.NOT_STARTED]:のように角括弧で値を明示）で定義する。
+   */
+  var PAYMENT_STATUS_TRANSITIONS_ = {};
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.NOT_STARTED] = [PAYMENT_STATUS.CHECKOUT_PENDING];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.CHECKOUT_PENDING] = [PAYMENT_STATUS.PAID, PAYMENT_STATUS.FAILED];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.FAILED] = [PAYMENT_STATUS.CHECKOUT_PENDING];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.PAID] = [PAYMENT_STATUS.REFUND_PENDING];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.REFUND_PENDING] = [PAYMENT_STATUS.REFUNDED];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.REFUNDED] = [];
+
+  function canTransitionPaymentStatus(fromPaymentStatus, toPaymentStatus) {
+    var allowedTargets = PAYMENT_STATUS_TRANSITIONS_[fromPaymentStatus];
+    return !!allowedTargets && allowedTargets.indexOf(toPaymentStatus) !== -1;
+  }
 
   /* 予約作成できるbrandはこの3つのみ（Issue #269）。brand偽装で未知のbrandから
      予約を作れないよう、フロントの表示に関わらずサーバー側でこの一覧のみ許可する。 */
@@ -488,6 +563,8 @@ var Booking = (function () {
   return {
     STATUS: STATUS,
     PAYMENT_STATUS: PAYMENT_STATUS,
+    normalizePaymentStatus: normalizePaymentStatus,
+    canTransitionPaymentStatus: canTransitionPaymentStatus,
     ALLOWED_BOOKING_BRANDS: ALLOWED_BOOKING_BRANDS,
     CUSTOMER_TYPES: CUSTOMER_TYPES,
     ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,

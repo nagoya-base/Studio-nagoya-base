@@ -147,7 +147,10 @@ var BookingRepository = (function () {
         people: input.people,
         purpose: input.purpose,
         paymentMethod: input.paymentMethod,
-        paymentStatus: Booking.PAYMENT_STATUS.UNPAID,
+        /* Issue #341でpaymentStatusの意味を転用。作成直後はカード・現地払いいずれも
+           決済フロー未着手のためNOT_STARTED（カードのみPR-B以降でCHECKOUT_PENDING等へ
+           遷移し得る。現地払いは以後もこの列を更新しない）。 */
+        paymentStatus: Booking.PAYMENT_STATUS.NOT_STARTED,
         status: Booking.STATUS.PENDING,
         calendarEventId: eventId,
         source: input.source,

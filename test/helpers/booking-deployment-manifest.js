@@ -21,6 +21,12 @@ var BOOKING_ADMIN_FILES = [
   'CalendarRepository.gs',
   'Availability.gs',
   'Booking.gs',
+  /*
+   * Issue #341 PR-A（Stripe API即時決済移行）で追加。CardPayment.gsはBooking.gsの
+   * PAYMENT_STATUS/getEffectivePriceAmountに依存する純粋ロジックのため、Booking.gsの
+   * 直後・SpreadsheetRepository.gsより前に置く（依存順）。
+   */
+  'CardPayment.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
   'BookingMailTemplates.gs',
@@ -57,6 +63,7 @@ var BOOKING_WEB_APP_FILES = [
   'CalendarRepository.gs',
   'Availability.gs',
   'Booking.gs',
+  'CardPayment.gs',
   'JapaneseHolidays.gs',
   'BookingPricing.gs',
   'RateLimiter.gs',
