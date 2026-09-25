@@ -40,9 +40,14 @@
  * 曜日区分（DAY_TYPE）の判定（Issue #346で拡張。旧Issue #342時点では土曜/日曜のみを
  * 「土日祝」としていたが、月〜金の日本の祝日・振替休日・国民の休日に平日料金が
  * 適用されてしまう既知の制限があった）:
- * - resolveDayType_は、対象日が土曜・日曜であれば無条件にWEEKEND_HOLIDAY。それ以外は
- *   JapaneseHolidays.classify（gas/booking/shared/JapaneseHolidays.gs。国民の祝日・
- *   振替休日・国民の休日を判定する）へ委譲する。
+ * - resolveDayType_は、対象日について必ずJapaneseHolidays.classify（
+ *   gas/booking/shared/JapaneseHolidays.gs。国民の祝日・振替休日・国民の休日を判定
+ *   する）を呼んでから、その結果と土曜・日曜かどうかを合わせてWEEKEND_HOLIDAY/WEEKDAY
+ *   を決める。JapaneseHolidays.classifyの呼び出しを土日判定より後回しにしない
+ *   （PR #347レビュー対応。先に土日判定を済ませてしまうと、対応年範囲外の土曜・日曜が
+ *   祝日判定の検証を経由せず「たまたま」料金計算に成功する一方、同じ日付範囲の月〜金
+ *   だけがエラーになるという非対称なfail-closedになってしまうため、曜日を問わず一律で
+ *   まずJapaneseHolidays.classifyの成否を確認する）。
  * - JapaneseHolidays.classifyが対応年の範囲外等で判定を確定できない場合、resolveDayType_は
  *   黙って平日（WEEKDAY）にフォールバックせず、computeBookingPriceをvalid:falseで
  *   返させる（見積り・予約作成の両方が明示的なエラーになる。過少請求を避ける方針。
@@ -90,6 +95,12 @@ var BookingPricing = (function () {
    *
    * 戻り値: { ok: true, dayType } または { ok: false, error }（Issue #346。
    * JapaneseHolidays.classifyが対応年範囲外等で祝日判定を確定できなかった場合）。
+   *
+   * PR #347レビュー対応: 対応年範囲の検証（JapaneseHolidays.classify呼び出し）を
+   * 土曜/日曜の判定より先に行う。土日判定を先に行ってしまうと、対応年範囲外の
+   * 土曜・日曜だけがJapaneseHolidays側の検証を経由せず「たまたま」料金計算に成功して
+   * しまい、同じ日付の月〜金だけが明示的なエラーになるという非対称なfail-closedに
+   * なる。祝日判定を確定できない日付は、曜日を問わず一律でエラーにする。
    */
   function resolveDayType_(dateString) {
     var parts = dateString.split('-');
@@ -97,15 +108,13 @@ var BookingPricing = (function () {
     var month = parseInt(parts[1], 10);
     var day = parseInt(parts[2], 10);
     var weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-    if (weekday === 0 || weekday === 6) {
-      return { ok: true, dayType: DAY_TYPE.WEEKEND_HOLIDAY };
-    }
 
     var holiday = JapaneseHolidays.classify(dateString);
     if (!holiday.ok) {
       return { ok: false, error: holiday.error };
     }
-    return { ok: true, dayType: holiday.isHoliday ? DAY_TYPE.WEEKEND_HOLIDAY : DAY_TYPE.WEEKDAY };
+    var isWeekendOrHoliday = weekday === 0 || weekday === 6 || holiday.isHoliday;
+    return { ok: true, dayType: isWeekendOrHoliday ? DAY_TYPE.WEEKEND_HOLIDAY : DAY_TYPE.WEEKDAY };
   }
 
   /*

@@ -239,13 +239,15 @@ test('computeBookingPrice: 祝日判定に対応していない年（対応範�
   assert.strictEqual(tooFar.error.code, 'HOLIDAY_YEAR_UNSUPPORTED');
 });
 
-test('computeBookingPrice: 対応年範囲外でも土曜・日曜は祝日判定を経由せずWEEKEND_HOLIDAYになる（Issue #346）', function () {
+test('computeBookingPrice: 対応年範囲外は土曜・日曜であってもfail-closedでエラーになる（PR #347レビュー対応）', function () {
   var Pricing = loadPricing();
-  /* 2019-12-28は土曜（date -d で確認済み）。祝日判定に到達する前に土日判定で
-     WEEKEND_HOLIDAYが確定するため、対応年範囲外でもエラーにならない。 */
+  /* 2019-12-28は土曜（date -d で確認済み）。土日判定を祝日判定より先に済ませて
+     しまうと、この日付だけ対応年範囲外でも「たまたま」成功してしまう
+     （同じ範囲外の月〜金だけがエラーになる非対称な挙動）ため、曜日を問わず
+     一律でJapaneseHolidays.classifyの成否を先に確認しなければならない。 */
   var result = Pricing.computeBookingPrice({ brand: 'studio_x', date: '2019-12-28', durationMinutes: 120 });
-  assert.strictEqual(result.valid, true);
-  assert.strictEqual(result.price.dayType, 'WEEKEND_HOLIDAY');
+  assert.strictEqual(result.valid, false);
+  assert.strictEqual(result.error.code, 'HOLIDAY_YEAR_UNSUPPORTED');
 });
 
 test('computeBookingPrice: 年またぎ（大晦日→元日）でも正しく判定する（Issue #346）', function () {
