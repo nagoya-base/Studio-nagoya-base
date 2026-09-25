@@ -753,6 +753,99 @@ test('resolveFeeRecovery still allows a same-content CONFIRMED_APPLIED idempoten
   assert.equal(afterRetry.feePaidAmount, originalPaid + 1000);
 });
 
+/* ---- PR #345再レビュー対応（6回目）: 復旧時に返金済み額が支払済み額を超える不整合を防ぐ ---- */
+
+test('resolveFeeRecovery rejects corrections where feeRefundedAmount exceeds feePaidAmount, leaving Bookings and FeeSettlements untouched', function () {
+  var f = setup();
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', {
+    feeRecoveryRequiredAt: new Date(), feeRecoveryReason: 'テスト'
+  });
+  var before = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+
+  var result = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', { feePaidAmount: 1000, feeRefundedAmount: 2000 });
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'REFUND_EXCEEDS_PAID');
+
+  var after = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(after.feePaidAmount, before.feePaidAmount, 'Bookingsは変更されていないこと');
+  assert.equal(after.feeRefundedAmount, before.feeRefundedAmount, 'Bookingsは変更されていないこと');
+  assert.ok(after.feeRecoveryRequiredAt, '検証失敗時は要復旧状態を維持すること');
+});
+
+test('resolveFeeRecovery rejects when only one of feePaidAmount/feeRefundedAmount is corrected and the resulting combination (with the other falling back to the current Bookings value) would violate refunded<=paid', function () {
+  var f = setup({ feePaidAmount: 1000, feeRefundedAmount: 1000 });
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', {
+    feeRecoveryRequiredAt: new Date(), feeRecoveryReason: 'テスト'
+  });
+
+  // feeRefundedAmountを補正せず、feePaidAmountだけを現在の返金済み額未満に下げようとすると、
+  // 最終的な組み合わせ（新feePaidAmount, 現在のfeeRefundedAmount=1000）が不整合になる。
+  var result = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', { feePaidAmount: 500 });
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'REFUND_EXCEEDS_PAID');
+  var after = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(after.feePaidAmount, 1000, 'Bookingsは変更されていないこと');
+});
+
+test('resolveFeeRecovery rejects non-integer feePaidAmount/feeRefundedAmount corrections', function () {
+  var f = setup();
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', {
+    feeRecoveryRequiredAt: new Date(), feeRecoveryReason: 'テスト'
+  });
+
+  var badPaid = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', { feePaidAmount: 1000.5 });
+  assert.equal(badPaid.success, false);
+  assert.equal(badPaid.error.code, 'INVALID_AMOUNT');
+
+  var badRefunded = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', { feeRefundedAmount: 500.5 });
+  assert.equal(badRefunded.success, false);
+  assert.equal(badRefunded.error.code, 'INVALID_AMOUNT');
+});
+
+test('resolveFeeRecovery(CONFIRMED_APPLIED) rejects a settlement resolution whose result amounts would make feeRefundedAmount exceed feePaidAmount, without touching FeeSettlements', function () {
+  var f = setup();
+  f.sandbox.FeeSettlementRepository.appendPending({
+    settlementId: 's-inconsistent-applied', bookingId: 'SNB-TEST-1', changeId: '',
+    settlementState: 'SETTLED', paidDelta: 1000, refundedDelta: 0, note: ''
+  });
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', {
+    feeRecoveryRequiredAt: new Date(), feeRecoveryReason: 'テスト'
+  });
+
+  var result = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1',
+    { feePaidAmount: 1000, feeRefundedAmount: 2000 },
+    { settlementId: 's-inconsistent-applied', outcome: 'CONFIRMED_APPLIED' });
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'REFUND_EXCEEDS_PAID');
+
+  // FeeSettlements側もBookings側も一切書き換えられていないこと（要復旧状態も維持）。
+  assert.equal(f.sandbox.FeeSettlementRepository.findBySettlementId('s-inconsistent-applied').record.applyStatus, 'PENDING_APPLY');
+  assert.ok(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.feeRecoveryRequiredAt);
+});
+
+test('resolveFeeRecovery accepts a valid feePaidAmount/feeRefundedAmount combination and a same-content retry after that still succeeds', function () {
+  var f = setup();
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', {
+    feeRecoveryRequiredAt: new Date(), feeRecoveryReason: 'テスト'
+  });
+
+  var corrections = { feePaidAmount: 2000, feeRefundedAmount: 1000 };
+  var resolved = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', corrections);
+  assert.equal(resolved.success, true);
+  var after = f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record;
+  assert.equal(after.feePaidAmount, 2000);
+  assert.equal(after.feeRefundedAmount, 1000);
+  assert.equal(after.feeRecoveryRequiredAt, '');
+
+  // 復旧完了後にBookingsのatomic更新が失敗した場合でも、同一内容のリトライは
+  // 引き続き成功する（既存のロジックに新しい検証を追加しただけであることの確認）。
+  f.sandbox.SpreadsheetRepository.updateBookingFields('SNB-TEST-1', {
+    feeRecoveryRequiredAt: new Date(), feeRecoveryReason: '別原因のテスト'
+  });
+  var retried = f.sandbox.adminResolveFeeRecovery('SNB-TEST-1', corrections);
+  assert.equal(retried.success, true);
+});
+
 /* ---- 基準料金（既存予約の遡及登録） ---- */
 
 test('commit is blocked until the original confirmed price has been backfilled via backfillOriginalPrice', function () {

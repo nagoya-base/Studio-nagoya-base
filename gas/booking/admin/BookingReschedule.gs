@@ -961,16 +961,36 @@ var BookingReschedule = (function () {
         fields.feeSettlementState = corrections.feeSettlementState;
       }
       if (corrections.feePaidAmount !== undefined) {
-        if (!isFiniteNumber_(corrections.feePaidAmount) || corrections.feePaidAmount < 0) {
-          return error_('INVALID_AMOUNT', '支払済み額は0以上の数値で指定してください。');
+        if (!isFiniteNumber_(corrections.feePaidAmount) || corrections.feePaidAmount < 0 || Math.floor(corrections.feePaidAmount) !== corrections.feePaidAmount) {
+          return error_('INVALID_AMOUNT', '支払済み額は0以上の整数（円単位）で指定してください。');
         }
         fields.feePaidAmount = corrections.feePaidAmount;
       }
       if (corrections.feeRefundedAmount !== undefined) {
-        if (!isFiniteNumber_(corrections.feeRefundedAmount) || corrections.feeRefundedAmount < 0) {
-          return error_('INVALID_AMOUNT', '返金済み額は0以上の数値で指定してください。');
+        if (!isFiniteNumber_(corrections.feeRefundedAmount) || corrections.feeRefundedAmount < 0 || Math.floor(corrections.feeRefundedAmount) !== corrections.feeRefundedAmount) {
+          return error_('INVALID_AMOUNT', '返金済み額は0以上の整数（円単位）で指定してください。');
         }
         fields.feeRefundedAmount = corrections.feeRefundedAmount;
+      }
+      /*
+       * 再レビュー対応（6回目）: feePaidAmount/feeRefundedAmountはそれぞれ単独では
+       * 「0以上の整数」として妥当でも、両者の関係（返金済み額は支払済み額を超えては
+       * いけない）は検証していなかった。指定されなかった項目は現在のBookingsの値を
+       * そのまま使う（updateBookingRescheduleFeeAtomicの挙動と同じ）ため、復旧後に
+       * 実際にBookingsへ書き込まれる「最終的な累計額」を組み立てたうえで検証する。
+       * CONFIRMED_APPLIEDの場合、corrections.feePaidAmount/feeRefundedAmountは
+       * FeeSettlementsのresultPaidAmount/resultRefundedAmountにもそのまま記録される
+       * ため、この検証は精算履歴側の整合性も同時に保証する。検証に失敗した場合は
+       * Bookings・FeeSettlementsのどちらにも一切書き込まない（要復旧状態を維持する）。
+       */
+      var finalPaidAmount = corrections.feePaidAmount !== undefined
+        ? corrections.feePaidAmount
+        : (isFiniteNumber_(found.record.feePaidAmount) ? found.record.feePaidAmount : 0);
+      var finalRefundedAmount = corrections.feeRefundedAmount !== undefined
+        ? corrections.feeRefundedAmount
+        : (isFiniteNumber_(found.record.feeRefundedAmount) ? found.record.feeRefundedAmount : 0);
+      if (finalRefundedAmount > finalPaidAmount) {
+        return error_('REFUND_EXCEEDS_PAID', '返金済み額（' + finalRefundedAmount + '円）が支払済み額（' + finalPaidAmount + '円）を超えています。支払済み額・返金済み額を見直してから復旧してください。');
       }
       if (settlementRow) {
         // FeeSettlementsの確定はBookingsの更新より先に行う。ここが失敗した場合はBookingsを
