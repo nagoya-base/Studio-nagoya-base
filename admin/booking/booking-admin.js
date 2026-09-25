@@ -402,7 +402,152 @@ function showDetailModal(booking) {
     return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
   }).join('');
   renderPaymentLinkSection_(booking);
+  renderRescheduleSection_(booking);
   document.getElementById('modal-overlay').classList.add('open');
+}
+
+/* Issue #344: 変更のプレビュー・確定をサーバー側の同じ検証へ通す。
+   料金は現行Bookingsに金額が無いため手動確認。 */
+function renderRescheduleSection_(booking) {
+  var existing = document.getElementById('reschedule-section');
+  if (existing) existing.remove();
+  if (booking.status !== 'CONFIRMED') return;
+  var section = document.createElement('section');
+  section.id = 'reschedule-section';
+  section.className = 'reschedule-section';
+  var start = (booking.startAt || '').split(' ')[1] || '';
+  var end = (booking.endAt || '').split(' ')[1] || '';
+  section.innerHTML =
+    '<h3>予約日時の変更</h3>' +
+    '<p>変更後の日時を入力し、空き確認後に確定します。料金・差額は管理者が別途確認してください。</p>' +
+    '<label>利用日 <input id="reschedule-date" type="date" value="' + escapeHtml(booking.date) + '"></label>' +
+    '<label>開始 <input id="reschedule-start" type="time" step="900" value="' + escapeHtml(start) + '"></label>' +
+    '<label>終了 <input id="reschedule-end" type="time" step="900" value="' + escapeHtml(end) + '"></label>' +
+    '<label>変更理由（任意）<textarea id="reschedule-reason" maxlength="500" rows="2"></textarea></label>' +
+    '<label>料金・精算案内（メールへ記載）<textarea id="reschedule-fee-note" maxlength="500" rows="2">料金差額がある場合は運営から別途ご案内します。</textarea></label>' +
+    '<button type="button" id="reschedule-preview">空き状況を確認</button>' +
+    '<div id="reschedule-result" role="status" aria-live="polite"></div>' +
+    '<div id="reschedule-history"></div>';
+  document.getElementById('modal-body').insertAdjacentElement('afterend', section);
+  var previewButton = section.querySelector('#reschedule-preview');
+  previewButton.addEventListener('click', function () { previewReschedule_(booking, section); });
+  section.querySelectorAll('input, textarea').forEach(function (field) {
+    field.addEventListener('input', function () {
+      var result = section.querySelector('#reschedule-result');
+      result.textContent = '入力内容が変わりました。再度空き状況を確認してください。';
+      var commit = section.querySelector('#reschedule-commit');
+      if (commit) commit.remove();
+    });
+  });
+  google.script.run
+    .withSuccessHandler(function (history) {
+      if (!section.isConnected || !Array.isArray(history)) return;
+      var area = section.querySelector('#reschedule-history');
+      if (!history.length) return;
+      area.innerHTML = '<h4>変更履歴</h4>' + history.map(function (item) {
+        var canRetry = item.mailState === 'FAILED';
+        return '<div class="reschedule-history-item">' +
+          escapeHtml(item.oldDate) + ' → ' + escapeHtml(item.newDate) +
+          ' ／ 通知: ' + escapeHtml(item.mailState) +
+          (canRetry ? ' <button type="button" data-change-id="' + escapeHtml(item.changeId) + '">通知を再送</button>' : '') +
+          '</div>';
+      }).join('');
+      area.querySelectorAll('button[data-change-id]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          if (!window.confirm('送信失敗が確認されたメールだけ再送します。実行しますか？')) return;
+          button.disabled = true;
+          google.script.run
+            .withSuccessHandler(function (outcome) {
+              alert(outcome && outcome.success ? '通知を再送しました。' :
+                '再送できませんでした: ' + (outcome && outcome.error && outcome.error.message));
+              refreshOpenDetail_(booking.bookingId);
+            })
+            .withFailureHandler(function (error) {
+              button.disabled = false;
+              alert('再送に失敗しました: ' + (error && error.message ? error.message : error));
+            }).adminResendRescheduleMail(item.changeId);
+        });
+      });
+    })
+    .withFailureHandler(function () {})
+    .adminGetBookingChanges(booking.bookingId);
+}
+
+function rescheduleInput_(section) {
+  return {
+    date: section.querySelector('#reschedule-date').value,
+    startTime: section.querySelector('#reschedule-start').value,
+    endTime: section.querySelector('#reschedule-end').value
+  };
+}
+
+function previewReschedule_(booking, section) {
+  var input = rescheduleInput_(section);
+  var resultArea = section.querySelector('#reschedule-result');
+  var button = section.querySelector('#reschedule-preview');
+  button.disabled = true;
+  resultArea.textContent = '空き状況を確認中…';
+  google.script.run
+    .withSuccessHandler(function (preview) {
+      button.disabled = false;
+      if (!section.isConnected || !currentDetailBooking_ || currentDetailBooking_.bookingId !== booking.bookingId) return;
+      if (!preview || !preview.success) {
+        resultArea.textContent = '変更できません: ' + (preview && preview.error && preview.error.message);
+        return;
+      }
+      resultArea.textContent = '変更前: ' + preview.oldDate + ' ' + preview.oldStartTime + '〜' + preview.oldEndTime +
+        ' ／ 変更後: ' + preview.newDate + ' ' + preview.newStartTime + '〜' + preview.newEndTime +
+        '（' + preview.durationMinutes + '分）\n' + preview.feeNotice;
+      var apply = document.createElement('button');
+      apply.type = 'button';
+      apply.id = 'reschedule-commit';
+      apply.textContent = '変更を確定して通知';
+      resultArea.appendChild(apply);
+      apply.addEventListener('click', function () {
+        var current = rescheduleInput_(section);
+        if (JSON.stringify(current) !== JSON.stringify(input)) {
+          resultArea.textContent = '入力内容が変わりました。再度確認してください。';
+          return;
+        }
+        var feeNote = section.querySelector('#reschedule-fee-note').value.trim();
+        if (!feeNote) {
+          alert('料金・精算案内を入力してください。');
+          return;
+        }
+        if (!window.confirm(
+          '予約ID: ' + booking.bookingId + '\n' +
+          '変更前: ' + preview.oldDate + ' ' + preview.oldStartTime + '〜' + preview.oldEndTime + '\n' +
+          '変更後: ' + preview.newDate + ' ' + preview.newStartTime + '〜' + preview.newEndTime + '\n' +
+          '料金・精算: ' + feeNote + '\n\n変更を確定し、利用者へメールを送りますか？'
+        )) return;
+        apply.disabled = true;
+        button.disabled = true;
+        resultArea.textContent = '変更処理中…';
+        google.script.run
+          .withSuccessHandler(function (outcome) {
+            if (!outcome || !outcome.success) {
+              resultArea.textContent = '変更できませんでした: ' + (outcome && outcome.error && outcome.error.message);
+              button.disabled = false;
+              return;
+            }
+            alert('予約日時を変更しました。' + (outcome.mailSent ? '利用者へ通知しました。' :
+              '通知は未完了です。' + (outcome.warning || '変更履歴を確認してください。')));
+            loadBookings();
+            refreshOpenDetail_(booking.bookingId);
+          })
+          .withFailureHandler(function (error) {
+            resultArea.textContent = '処理結果を確認できません。台帳とCalendarを確認し、二重実行しないでください。' +
+              (error && error.message ? error.message : '');
+          })
+          .adminRescheduleBooking(booking.bookingId, input, preview.expectedVersion,
+            section.querySelector('#reschedule-reason').value, feeNote);
+      });
+    })
+    .withFailureHandler(function (error) {
+      button.disabled = false;
+      resultArea.textContent = '確認に失敗しました: ' + (error && error.message ? error.message : error);
+    })
+    .adminPreviewBookingReschedule(booking.bookingId, input, booking.rescheduleVersion);
 }
 
 function closeModal() {
