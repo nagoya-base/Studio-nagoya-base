@@ -1,0 +1,28 @@
+name: PR booking tests
+
+on:
+  push:
+    branches:
+      - claude/nagoya-booking-price-calc-7ck27i
+  pull_request:
+    paths:
+      - 'gas/booking/**'
+      - 'scripts/booking-*.js'
+      - 'admin/booking/**'
+      - '_includes/booking_app_*.html'
+      - 'test/**'
+      - '.github/workflows/booking-pr-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run all Node tests
+        run: node --test
