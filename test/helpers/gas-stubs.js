@@ -59,7 +59,10 @@ function createUtilitiesStub() {
       var hex = uuidCounter.toString(16);
       while (hex.length < 8) hex = '0' + hex;
       return hex + '-mock-uuid-' + hex;
-    }
+    },
+    /* BookingRepository.appendBookingWithRetry_のリトライ待機用。テストを遅くしないため
+       実際には待たないno-op（本番のUtilities.sleepと異なり同期的に即座に返る）。 */
+    sleep: function () {}
   };
 }
 

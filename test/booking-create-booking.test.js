@@ -741,6 +741,51 @@ test('rate limit: 同一内容(email+date+startTime+durationMinutes)の連投は
   assert.strictEqual(duplicate.error.reason, 'DUPLICATE_SUBMISSION');
 });
 
+test('Sheets再試行: appendBookingが一時的に失敗しても、有限回の再試行で成功すればBOOKING_SAVE_FAILEDにならない', function () {
+  var ctx = setup();
+  var originalAppend = ctx.sandbox.SpreadsheetRepository.appendBooking;
+  var callCount = 0;
+  ctx.sandbox.SpreadsheetRepository.appendBooking = function (record) {
+    callCount += 1;
+    if (callCount < 3) {
+      throw new Error('Service Spreadsheets failed while accessing document');
+    }
+    return originalAppend(record);
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload(), undefined, 'request-transient-retry');
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(callCount, 3);
+  var logs = ctx.globals.Logger._logs.join('\n');
+  assert.match(logs, /requestId=request-transient-retry createBooking sheetsAppend failed attempt=1 retrying/);
+  assert.match(logs, /requestId=request-transient-retry createBooking sheetsAppend failed attempt=2 retrying/);
+  assert.match(logs, /requestId=request-transient-retry createBooking sheetsAppend succeeded after retry attempt=3/);
+
+  var saved = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.ok(saved, '再試行後に成功した保存内容がSheetsへ実際に残っているべき');
+});
+
+test('Sheets再試行: appendBookingが再試行の上限まで常に失敗する場合は、従来どおりBOOKING_SAVE_FAILEDを返す', function () {
+  var ctx = setup();
+  var callCount = 0;
+  ctx.sandbox.SpreadsheetRepository.appendBooking = function () {
+    callCount += 1;
+    throw new Error('simulated permanent sheets failure');
+  };
+
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload(), undefined, 'request-permanent-failure');
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'BOOKING_SAVE_FAILED');
+  assert.strictEqual(callCount, 3, '再試行の上限（合計3回）で打ち切られるべき');
+  assert.strictEqual(
+    ctx.calendarsById.cal1.events.filter(function (e) { return !e.isDeleted(); }).length,
+    0,
+    '再試行後も失敗した場合はCalendarイベントが補償削除されているべき'
+  );
+});
+
 test('部分失敗補償: Calendar成功・Sheets失敗時はCalendarイベントを補償削除し、recoveryへCOMPENSATED記録を残す', function () {
   var ctx = setup();
   /* SpreadsheetRepository.appendBookingを強制的に失敗させる */

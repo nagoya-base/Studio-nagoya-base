@@ -26,7 +26,8 @@
  *   6. 競合チェック              → BookingAvailability.isStartTimeBookable
  *   7. bookingId発行
  *   8. CalendarにPENDINGイベント作成
- *   9. Spreadsheet台帳へ保存（計算済みの料金を含む）
+ *   9. Spreadsheet台帳へ保存（計算済みの料金を含む。一時的なSpreadsheetサービス不調は
+ *      appendBookingWithRetry_が有限回再試行して吸収する）
  *  10. Lock解除
  *  11. 管理者通知（Lockの外。通知失敗は予約失敗として扱わない）
  *
@@ -47,6 +48,40 @@
 var BookingRepository = (function () {
   var LOCK_TIMEOUT_MS_ = 10000;
   var EXPIRE_LOCK_TIMEOUT_MS_ = 5000;
+
+  /*
+   * 本番調査（診断ID 17d9f7a7-d34e-4f05-a306-e879e8587e99）対応: SpreadsheetRepository.
+   * appendBookingは、Google側のSpreadsheetサービス一時的な不調（"Service Spreadsheets
+   * failed while accessing document"等）でも、SPREADSHEET_ID未設定・アクセス権限なしの
+   * ような恒久的な設定不備でも、同じ形の例外を投げる（呼び出し側からは区別できない）。
+   * Lockを保持している間に短い間隔を空けて有限回だけ再試行することで、恒久的な設定不備は
+   * 従来どおりBOOKING_SAVE_FAILEDとして扱いつつ、一時的な不調だけを利用者に見せずに
+   * 吸収する。再試行してもなお失敗する場合の挙動（Calendar補償・Recovery記録・診断保存）は
+   * 一切変更しない。待機はUtilities.sleepで最大1秒程度に収め、LOCK_TIMEOUT_MS_で
+   * 待っている他のリクエストを長時間ブロックしない範囲に留める。
+   */
+  var SHEETS_APPEND_RETRY_DELAYS_MS_ = [300, 700];
+
+  function appendBookingWithRetry_(record, requestId) {
+    var lastError;
+    var maxAttempts = SHEETS_APPEND_RETRY_DELAYS_MS_.length + 1;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        SpreadsheetRepository.appendBooking(record);
+        if (attempt > 1) {
+          Logger.log('requestId=' + sanitizeRequestId_(requestId) + ' createBooking sheetsAppend succeeded after retry attempt=' + attempt);
+        }
+        return;
+      } catch (error) {
+        lastError = error;
+        var delayMs = SHEETS_APPEND_RETRY_DELAYS_MS_[attempt - 1];
+        if (delayMs === undefined) break;
+        Logger.log('requestId=' + sanitizeRequestId_(requestId) + ' createBooking sheetsAppend failed attempt=' + attempt + ' retrying');
+        Utilities.sleep(delayMs);
+      }
+    }
+    throw lastError;
+  }
 
   function createBooking(rawInput, now, requestId) {
     now = isDateLike_(now) ? now : new Date();
@@ -160,7 +195,7 @@ var BookingRepository = (function () {
       };
 
       try {
-        SpreadsheetRepository.appendBooking(record);
+        appendBookingWithRetry_(record, requestId);
       } catch (sheetsError) {
         return handleSheetsSaveFailure_(calendarId, bookingId, eventId, sheetsError, requestId, input);
       }

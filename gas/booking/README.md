@@ -3177,6 +3177,27 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
       で拒否され、まだ残っていれば通常どおり補正できる）。
     - `Bookings`シートの`status`（PENDING）・Calendar/Sheetsの予約データ本体は
       変更されていない。
+19. 利用者が`BOOKING_SAVE_FAILED`（「予約の保存に失敗しました。しばらくしてから
+    再度お試しください。」）を見た場合、まずcreateBookingは`appendBookingWithRetry_`
+    （`BookingRepository.gs`）により、Sheets保存の一時的な不調は最大3回まで
+    （初回失敗後300ms・700ms間隔で）自動的に再試行してから失敗を確定させる仕様に
+    なっている（本番調査・診断ID`17d9f7a7-d34e-4f05-a306-e879e8587e99`対応。Google側の
+    "Service Spreadsheets failed while accessing document"のような一時的な不調は
+    この再試行で吸収され、利用者にはそもそも表示されない）。それでも表示された場合は
+    恒久的な原因（`SPREADSHEET_ID`未設定・対象Spreadsheetへのアクセス権限なし等）の
+    可能性が高い。
+    - レスポンスJSONの`requestId`（画面の「診断ID」表示と同じ値）を控え、**Booking
+      Web App（`public`）プロジェクト**のGASエディタで`debugReadBookingDiagnostic
+      (requestId)`を実行し、「表示」→「ログ」でサニタイズ済みの実際の例外メッセージを
+      確認する（PII・Calendar/Spreadsheet ID等は redaction 済み）。診断プロパティは
+      `PropertiesService.getScriptProperties()`（`BOOKING_DIAG_<requestId>`キー）に
+      保存されるため、**Booking Admin（`admin`）プロジェクトのエディタから実行しても
+      Script Propertiesが別プロジェクトのため見つからない**点に注意する。
+    - `Recovery`シートで同時刻の`SHEETS_FAILURE_CALENDAR_ORPHANED`（要手動対応。Calendar
+      側にPENDINGイベントが残っている）または`CALENDAR_ROLLED_BACK_AFTER_SHEETS_FAILURE`
+      （自動補償済み）の行を確認し、上記2.の手順に従う。
+    - 診断メッセージの内容に応じて、`SPREADSHEET_ID`（Script Properties）の設定・
+      対象Spreadsheetの共有設定・OAuth再承認要否（前項参照）を確認する。
 
 ## API仕様
 
