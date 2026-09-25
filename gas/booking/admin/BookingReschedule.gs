@@ -157,16 +157,61 @@ var BookingReschedule = (function () {
   }
 
   /*
+   * 基準料金5列（backfillOriginalPrice）の書込み結果が不明な場合の、Bookingsの
+   * feeRecoveryRequiredAtとは独立した第二・第三の停止条件（PR #345再レビュー対応・
+   * 8回目）。feeRecoveryRequiredAtの保存自体が失敗しても、(1)Recoveryシートへの記録
+   * （RecoveryRepository.hasOpenBaselineRecovery）、それも失敗した場合は(2)Script
+   * Propertiesの予約別マーカーのいずれかが残っていれば、次回以降のbackfillOriginalPrice/
+   * commit/recordFeeSettlementを引き続きブロックできる。判定自体が例外を投げた場合は
+   * 「未検出」ではなくフェイルクローズ（true=ブロックする）で返す。
+   */
+  function baselineRecoveryPropertyKey_(bookingId) {
+    return 'BASELINE_RECOVERY_BLOCK_' + bookingId;
+  }
+  function isBaselineRecoveryPropertyMarkerSet_(bookingId) {
+    return !!PropertiesService.getScriptProperties().getProperty(baselineRecoveryPropertyKey_(bookingId));
+  }
+  /* 設定した後にgetPropertyで読み直して確認し、実際に永続化できたかどうかを返す
+     （appendRow/setPropertyの応答だけを信頼しない）。 */
+  function setBaselineRecoveryPropertyMarker_(bookingId, reason) {
+    var key = baselineRecoveryPropertyKey_(bookingId);
+    PropertiesService.getScriptProperties().setProperty(key, JSON.stringify({ reason: reason, occurredAt: new Date().toISOString() }));
+    return isBaselineRecoveryPropertyMarkerSet_(bookingId);
+  }
+  /* 削除した後に読み直し、実際に消えたことを確認して返す。呼び出し側は戻り値がfalseの
+     場合、マーカーが残っている（＝まだブロックされ続ける）ものとして扱うこと。 */
+  function clearBaselineRecoveryPropertyMarker_(bookingId) {
+    PropertiesService.getScriptProperties().deleteProperty(baselineRecoveryPropertyKey_(bookingId));
+    return !isBaselineRecoveryPropertyMarkerSet_(bookingId);
+  }
+  function isBaselineRecoveryBlocking_(bookingId) {
+    try {
+      return RecoveryRepository.hasOpenBaselineRecovery(bookingId) || isBaselineRecoveryPropertyMarkerSet_(bookingId);
+    } catch (e) {
+      return true;
+    }
+  }
+
+  /*
    * feeRecoveryRequiredAtに加えて、FeeSettlementsに未確定（PENDING_APPLY/
-   * FAILED_NEEDS_RECOVERY）の行が残っていないかも確認する（PR #345再レビュー対応・
-   * 3回目）。feeRecoveryRequiredAtの保存自体が失敗する複合障害が起きると、フラグが
-   * 立たないまま未確定の精算だけが残ることがある。その状態でcommit/recordFeeSettlement
-   * が別のsettlementId・別の日程変更を通してしまうと、未確定精算の照合前に残高や
-   * 確定料金・変更回数が変わってしまい、後から復旧するときの判断材料が壊れる。
-   * commit・recordFeeSettlementの冒頭（Lock取得後）から必ずこちらを呼ぶこと。
+   * FAILED_NEEDS_RECOVERY）の行が残っていないか、基準料金の書込み結果が不明なまま
+   * 残っていないかも確認する（PR #345再レビュー対応・3回目/8回目）。
+   * feeRecoveryRequiredAtの保存自体が失敗する複合障害が起きると、フラグが立たない
+   * まま未確定の精算・基準料金だけが残ることがある。その状態でcommit/
+   * recordFeeSettlementが別のsettlementId・別の日程変更を通してしまうと、未確定分の
+   * 照合前に残高や確定料金・変更回数が変わってしまい、後から復旧するときの判断材料が
+   * 壊れる。commit・recordFeeSettlement・backfillOriginalPriceの冒頭（Lock取得後）から
+   * 必ずこちらを呼ぶこと。判定自体（FeeSettlements/Recoveryの読取）が例外を投げた場合も
+   * 「未検出」として素通りさせず、フェイルクローズ（true=ブロックする）で返す。
    */
   function isBlockedForFeeRecovery_(bookingId, record) {
-    return isInFeeRecovery_(record) || FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null);
+    try {
+      return isInFeeRecovery_(record) ||
+        FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null) ||
+        isBaselineRecoveryBlocking_(bookingId);
+    } catch (e) {
+      return true;
+    }
   }
 
   /* 円単位の金額として安全か（有限・整数・安全な整数範囲内）。GASのNumber.isSafeInteger
@@ -326,15 +371,155 @@ var BookingReschedule = (function () {
         if (matches) {
           return { success: true, bookingId: bookingId, priceTier: priceTier, amount: amount };
         }
+        /*
+         * 再レビュー対応（8回目）: 基準料金の書込み結果が不明な場合、Bookingsの
+         * feeRecoveryRequiredAtの保存だけに頼ると、それ自体が失敗したときに次回以降の
+         * backfillOriginalPrice/commit/recordFeeSettlementを止められなくなる
+         * （復旧フラグとFeeSettlementsの未確定行のどちらも見当たらないため）。
+         * そこでRecoveryRepositoryへの記録を第一の永続的な停止条件とし、それ自体が
+         * 確認できない場合はScript Propertiesの予約別マーカーを第二の停止条件とする。
+         * feeRecoveryRequiredAtの保存はこれらに加えて引き続きbest effortで試みる
+         * （管理画面の既存の要復旧表示に載せるため）が、成否はブロック判定の必須条件では
+         * ない。
+         */
+        var recoveryRecorded = false;
+        try {
+          RecoveryRepository.recordFailure({
+            bookingId: bookingId,
+            failureType: RecoveryRepository.BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE,
+            occurredAt: new Date(),
+            calendarEventId: record.calendarEventId || '',
+            status: record.status,
+            errorMessage: '基準料金5列（priceAmount等）の保存結果が未確認です。Bookingsを照合し、resolveBaselinePriceRecoveryで復旧してください。',
+            recoveryState: 'OPEN',
+            resolvedAt: ''
+          });
+          recoveryRecorded = RecoveryRepository.hasOpenBaselineRecovery(bookingId);
+        } catch (recoveryError) {
+          recoveryRecorded = false;
+        }
+        var markerRecorded = false;
+        if (!recoveryRecorded) {
+          try {
+            markerRecorded = setBaselineRecoveryPropertyMarker_(bookingId, '基準料金5列の保存結果が未確認（Recoveryへの記録も失敗）。');
+          } catch (markerError) {
+            markerRecorded = false;
+          }
+        }
         try {
           SpreadsheetRepository.updateBookingFields(bookingId, {
             feeRecoveryRequiredAt: new Date(),
-            feeRecoveryReason: '基準料金の保存結果が確認できません。Bookingsを直接確認し、resolveFeeRecoveryで復旧してから操作してください。'
+            feeRecoveryReason: '基準料金の保存結果が確認できません。Bookingsを直接確認し、resolveBaselinePriceRecoveryで復旧してから操作してください。'
           });
         } catch (flagError) {
           logFailure_(bookingId, 'RESCHEDULE_FEE_RECOVERY_FLAG_FAILED', record.status);
         }
-        return error_('UPDATE_FAILED', '基準料金の保存結果が確認できません。台帳を確認し、resolveFeeRecoveryで復旧してから再度実行してください。');
+        if (recoveryRecorded || markerRecorded) {
+          return error_('BASELINE_RECOVERY_REQUIRED', '基準料金の保存結果が確認できません。台帳を確認し、resolveBaselinePriceRecoveryで復旧してから再度実行してください。');
+        }
+        // Recovery・Script Propertiesのどちらにも永続的な停止条件を記録できなかった
+        // 最悪のケース。次回以降のリクエストを自動的にブロックできる保証がないため、
+        // 通常のエラーと区別できる専用のコードを返し、管理者に手動での確認・運用停止を
+        // 促す（gas/booking/README.mdの「基準料金の複合障害時の手動復旧手順」参照）。
+        logFailure_(bookingId, 'RESCHEDULE_FEE_RECOVERY_FLAG_FAILED', record.status);
+        return error_('RECOVERY_PERSISTENCE_UNKNOWN', '基準料金の保存結果が不明な上、自動的な操作停止の記録にも失敗しました。次回以降の操作が自動でブロックされる保証がありません。管理者がBookings・Recoveryシートを直接確認し、必要であれば手動でこの予約の操作を停止してください（gas/booking/README.md参照）。');
+      }
+      return { success: true, bookingId: bookingId, priceTier: priceTier, amount: amount };
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  /*
+   * 基準料金5列（priceAmount/priceTier/priceDayType/priceIsMember/priceComputedAt）の
+   * 書込み結果が不明になった予約専用の復旧パス（PR #345再レビュー対応・8回目）。
+   * resolveFeeRecoveryのcorrections（priceOverrideAmount等、日程変更に伴う「現在の
+   * 確定金額」用のBookings列）を基準料金5列の復旧に代用しない。管理者が実際のBookings・
+   * 過去の請求記録等を照合した価格区分・金額を指定し、Lock下で基準料金5列を再計算・
+   * 再書込みしたうえで、再取得して5列すべてが一致することを確認できた場合にのみ
+   * RecoveryのOPEN行と停止マーカー（Script Properties）を解消する。どちらか一方でも
+   * 解消できなければ要復旧のまま維持し、同じ内容でもう一度実行するよう促す。
+   */
+  function resolveBaselinePriceRecovery(bookingId, priceTier, amount) {
+    if (VALID_PRICE_TIERS_.indexOf(priceTier) === -1) {
+      return error_('INVALID_PRICE_TIER', '価格区分はGENERAL/MEMBERのいずれかで指定してください。');
+    }
+    if (!isFiniteNumber_(amount) || amount <= 0 || Math.floor(amount) !== amount) {
+      return error_('INVALID_AMOUNT', '確定料金は1円以上の整数で指定してください。');
+    }
+
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(10000)) return error_('LOCK_TIMEOUT', '処理中です。再試行してください。');
+    try {
+      var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+      if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
+      var record = found.record;
+      if (record.status !== Booking.STATUS.CONFIRMED) {
+        return error_('INVALID_STATUS', '確定済みの予約のみ基準料金を設定できます。');
+      }
+      if (!isBaselineRecoveryBlocking_(bookingId)) {
+        return error_('NOT_IN_RECOVERY', 'この予約に基準料金の要復旧はありません。');
+      }
+      var timezone = BookingConfig.getAvailabilityConfig().timezone;
+      var dateString = dateStringOf_(record.date, timezone);
+      var dayTypeResult = FeeCalculator.resolveDayType(dateString);
+      if (!dayTypeResult.ok) {
+        return error_(dayTypeResult.error.code, dayTypeResult.error.message);
+      }
+      var computedAt = new Date();
+      var isMember = priceTier === 'MEMBER';
+      try {
+        SpreadsheetRepository.updateBookingPriceBaselineAtomic(bookingId, {
+          priceAmount: amount, priceTier: priceTier, priceDayType: dayTypeResult.dayType,
+          priceIsMember: isMember, priceComputedAt: computedAt
+        });
+      } catch (writeError) {
+        return error_('UPDATE_FAILED', '基準料金の復旧保存に失敗しました。要復旧のまま維持します。同じ内容でもう一度実行してください。');
+      }
+      var verifiedRecord = null;
+      try {
+        var reFound = SpreadsheetRepository.findRowByBookingId(bookingId);
+        verifiedRecord = reFound ? reFound.record : null;
+      } catch (verifyError) {
+        verifiedRecord = null;
+      }
+      var matches = !!verifiedRecord &&
+        verifiedRecord.priceAmount === amount &&
+        verifiedRecord.priceTier === priceTier &&
+        verifiedRecord.priceDayType === dayTypeResult.dayType &&
+        verifiedRecord.priceIsMember === isMember &&
+        isDate_(verifiedRecord.priceComputedAt) &&
+        verifiedRecord.priceComputedAt.getTime() === computedAt.getTime();
+      if (!matches) {
+        return error_('UPDATE_FAILED', '基準料金の復旧結果が確認できません。要復旧のまま維持します。同じ内容でもう一度実行してください。');
+      }
+      try {
+        RecoveryRepository.resolveBaselineRecovery(bookingId);
+      } catch (recoveryError) {
+        return error_('RECOVERY_UPDATE_FAILED', '基準料金は補正できましたが、Recoveryの解消に失敗しました。もう一度実行してください。');
+      }
+      try {
+        if (!clearBaselineRecoveryPropertyMarker_(bookingId)) {
+          return error_('RECOVERY_UPDATE_FAILED', '基準料金・Recoveryは解消できましたが、内部の停止マーカーの解除を確認できません。もう一度実行してください。');
+        }
+      } catch (markerError) {
+        return error_('RECOVERY_UPDATE_FAILED', '基準料金・Recoveryは解消できましたが、内部の停止マーカー解除に失敗しました。もう一度実行してください。');
+      }
+      if (isBaselineRecoveryBlocking_(bookingId)) {
+        // 解消したはずが、まだブロック中と判定される場合は安全側に倒して要復旧のまま返す。
+        return error_('RECOVERY_UPDATE_FAILED', '基準料金の復旧を保存しましたが、要復旧状態の解消を確認できません。もう一度実行してください。');
+      }
+      // 基準料金の要復旧が唯一の原因でfeeRecoveryRequiredAtが立っていた場合は、
+      // ここで合わせてクリアする（best effort）。他にまだ未確定の精算が残っている場合は
+      // 触らない（そちらはresolveFeeRecoveryで解消する）。失敗してもここでは
+      // エラーにしない（Recovery・停止マーカーは既に解消済みで、基準料金自体の
+      // 整合性は保証されているため）。
+      if (isInFeeRecovery_(verifiedRecord) && !FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null)) {
+        try {
+          SpreadsheetRepository.updateBookingFields(bookingId, { feeRecoveryRequiredAt: '', feeRecoveryReason: '' });
+        } catch (flagClearError) {
+          logFailure_(bookingId, 'RESCHEDULE_FEE_RECOVERY_FLAG_FAILED', record.status);
+        }
       }
       return { success: true, bookingId: bookingId, priceTier: priceTier, amount: amount };
     } finally {
@@ -787,6 +972,12 @@ var BookingReschedule = (function () {
       if (isInFeeRecovery_(found.record)) {
         return error_('FEE_RECOVERY_REQUIRED', 'この予約は料金の整合性確認が必要な状態です。resolveFeeRecoveryで解消してから精算を記録してください。');
       }
+      // 基準料金5列の書込み結果が不明なまま残っている場合も、feeRecoveryRequiredAtの
+      // 保存自体が失敗していれば見た目上はブロックされない。Recovery/停止マーカーの
+      // どちらかが残っていれば拒否する（PR #345再レビュー対応・8回目）。
+      if (isBaselineRecoveryBlocking_(bookingId)) {
+        return error_('FEE_RECOVERY_REQUIRED', 'この予約は基準料金の整合性確認が必要な状態です。resolveBaselinePriceRecoveryで解消してから精算を記録してください。');
+      }
       // feeRecoveryRequiredAtの保存自体が失敗する複合障害が起きると、フラグが立たない
       // まま未確定の精算だけが残ることがある。今回のsettlementId以外にまだ「反映済み／
       // 未反映」を確定していない精算が残っている場合は、フラグの有無によらずここで
@@ -986,7 +1177,9 @@ var BookingReschedule = (function () {
     try {
       var found = SpreadsheetRepository.findRowByBookingId(bookingId);
       if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
-      if (!isInFeeRecovery_(found.record) && !FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null)) {
+      // 判定はisBlockedForFeeRecovery_と同じ基準（フラグ／未確定精算／基準料金の
+      // 停止条件のいずれか）に統一する（PR #345再レビュー対応・8回目）。
+      if (!isBlockedForFeeRecovery_(bookingId, found.record)) {
         return error_('NOT_IN_RECOVERY', 'この予約は要復旧の状態ではありません。');
       }
       corrections = corrections || {};
@@ -1103,14 +1296,17 @@ var BookingReschedule = (function () {
       }
 
       // 今回指定した精算は確定できたが、この予約に他にもまだ「反映済み／未反映」を
-      // 確定していない精算が残っている場合は、Bookings側の復旧（feeRecoveryRequiredAtの
-      // 解除）を完了させない（再レビュー対応。上記コメント参照）。指定した精算自体の
-      // 確定は既に反映済みなので、残りの精算をsettlementResolutionで確定してから
-      // 最後にこの関数を呼べば復旧が完了する。
-      if (FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null)) {
+      // 確定していない精算、または基準料金の書込み結果が不明なまま残っている場合は、
+      // Bookings側の復旧（feeRecoveryRequiredAtの解除）を完了させない（再レビュー対応。
+      // 8回目：基準料金の復旧は専用のresolveBaselinePriceRecoveryで行う。ここの
+      // corrections.priceOverrideAmount等では基準料金5列を代用しない）。指定した精算
+      // 自体の確定は既に反映済みなので、残りの精算をsettlementResolutionで確定し、
+      // 基準料金が未確定ならresolveBaselinePriceRecoveryで確定してから、最後にこの
+      // 関数を呼べば復旧が完了する。
+      if (FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null) || isBaselineRecoveryBlocking_(bookingId)) {
         return error_('OTHER_SETTLEMENT_UNRESOLVED', settlementRow
-          ? '指定した精算ID「' + settlementId + '」は確定しましたが、この予約には確認が完了していない別の精算IDがまだ残っています。残りの精算IDについてもsettlementResolutionで確定してから、最後にBookingsの復旧を完了してください。'
-          : 'この予約には、確認が完了していない精算IDが残っています。settlementResolutionでその精算IDを指定して確定してから、Bookingsの復旧を完了してください。');
+          ? '指定した精算ID「' + settlementId + '」は確定しましたが、この予約には確認が完了していない別の精算ID、または基準料金の未確定がまだ残っています。残りの精算IDはsettlementResolutionで、基準料金はresolveBaselinePriceRecoveryで確定してから、最後にBookingsの復旧を完了してください。'
+          : 'この予約には、確認が完了していない精算ID、または基準料金の未確定が残っています。settlementResolution／resolveBaselinePriceRecoveryでそれぞれ確定してから、Bookingsの復旧を完了してください。');
       }
 
       try {
@@ -1131,7 +1327,11 @@ var BookingReschedule = (function () {
   return {
     preview: preview, commit: commit, sendMail: sendMail, getChanges: getChanges,
     backfillOriginalPrice: backfillOriginalPrice, recordFeeSettlement: recordFeeSettlement,
-    resolveFeeRecovery: resolveFeeRecovery
+    resolveFeeRecovery: resolveFeeRecovery, resolveBaselinePriceRecovery: resolveBaselinePriceRecovery,
+    /* getAdminBookingDetail（BookingAdminWeb.gs）専用。基準料金5列の書込み結果が
+       不明な予約かどうかを、feeRecoveryRequiredAtの有無とは独立に判定する
+       （PR #345再レビュー対応・8回目）。 */
+    isBaselineRecoveryBlocked: isBaselineRecoveryBlocking_
   };
 })();
 
@@ -1156,4 +1356,7 @@ function adminRecordRescheduleFeeSettlement(bookingId, changeId, settlementId, s
 }
 function adminResolveFeeRecovery(bookingId, corrections, settlementResolution) {
   return BookingReschedule.resolveFeeRecovery(bookingId, corrections, settlementResolution);
+}
+function adminResolveBaselinePriceRecovery(bookingId, priceTier, amount) {
+  return BookingReschedule.resolveBaselinePriceRecovery(bookingId, priceTier, amount);
 }

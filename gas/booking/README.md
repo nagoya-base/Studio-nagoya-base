@@ -114,6 +114,90 @@ Booking Adminにも追加し（従来はBooking Web App専用）、新規ファ�
   フェイルクローズな仕組みで「管理者が都度判断する」形にとどめており、コード側で
   仮の事業ルールとして決定していない。
 
+#### PR #345再レビュー対応（複合障害・冪等性の強化）
+
+上記の必須修正1・2に対する再レビューで、想定より深刻な複合障害（片方の永続化に成功し、
+もう片方が失敗するケース）が繰り返し指摘され、そのたびに以下を追加で対応した:
+
+- **`recordFeeSettlement`のPENDING_APPLY/ABANDONEDからの再適用は、実際にBookingsへ
+  反映される直前に必ず`FeeSettlementRepository.markPendingApply`で状態を
+  「反映結果未確定」に戻してから進む。** Bookingsへの書き込みに成功した直後、精算履歴の
+  状態遷移・`feeRecoveryRequiredAt`の保存が両方失敗しても、この行はABANDONEDのまま
+  （＝未反映を騙ったまま）残らず、無条件の自動再試行を禁止する既存のPENDING_APPLY
+  安全策がそのまま働く。
+- **`feeRecoveryRequiredAt`（Bookings側）の保存自体が失敗しても、`commit`・
+  `recordFeeSettlement`・`backfillOriginalPrice`は`FeeSettlementRepository.
+  hasUnresolvedSettlement`（未確定精算の有無）を独立した第二の停止条件として必ず確認する
+  （`isBlockedForFeeRecovery_`）。** `resolveFeeRecovery`の受付判定もこれと同じ基準に
+  統一し、フラグが立っていないケースで復旧要求そのものが拒否される
+  （＝ブロックされているのに誰も解除できない）デッドロックを防いでいる。
+- **`resolveFeeRecovery`の`settlementResolution`は、対象`settlementId`が既に
+  `APPLIED`/`ABANDONED`の場合、反対の結果へ変更する操作を`SETTLEMENT_STATE_MISMATCH`で
+  拒否する。** 既に確定済みの精算を復旧操作で書き換えられると、その後の再送で二重計上に
+  つながるため。ただし「精算履歴の確定には成功したがBookingsの反映が失敗し、同じ内容で
+  `resolveFeeRecovery`を再実行する」という正規の複合障害リカバリ経路は、同一outcome・
+  同一確定累計値の冪等な再実行として引き続き許可する。
+- **精算金額（`recordFeeSettlement`のdelta、`resolveFeeRecovery`の累計額）は、有限・
+  整数（円単位）・安全な整数範囲内であることに加え、返金済み額が支払済み額を超えないことを
+  検証する。** 既存の累計額自体が壊れている（非整数・返金超過）場合は0円扱いにして計算を
+  続けず、`FEE_RECOVERY_REQUIRED`で止めて人による照合を要求する。
+
+#### 基準料金5列の書込み結果不明＋復旧フラグ保存失敗という複合障害への対応
+
+`backfillOriginalPrice`（基準料金5列: `priceAmount`/`priceTier`/`priceDayType`/
+`priceIsMember`/`priceComputedAt`の一括書込み）についても、Lock保護・
+`isBlockedForFeeRecovery_`によるガード・`updateBookingPriceBaselineAtomic`
+（`SpreadsheetRepository.gs`。5列を1回の`Range.setValues`で更新）・書込み例外時の
+再取得検証を追加した。**しかし「書込み結果が不明、かつBookings側の`feeRecoveryRequiredAt`
+保存も失敗する」複合障害では、フラグにも`FeeSettlements`にも痕跡が残らず、次回リクエストを
+自動でブロックできなくなる。** この穴を塞ぐため、`backfillOriginalPrice`の書込み失敗時は
+次の順で独立した停止条件を試みる（`isBaselineRecoveryBlocking_`が`OR`で確認する）:
+
+1. **`RecoveryRepository`への記録**（`Recovery`シートに`failureType:
+   'BASELINE_WRITE_UNCERTAIN'`, `recoveryState: 'OPEN'`の行を追加し、`appendRow`の応答を
+   信頼せず`hasOpenBaselineRecovery`で読み直して確認する）。
+2. 1が失敗した場合、**Script Propertiesの予約別マーカー**（`BASELINE_RECOVERY_BLOCK_
+   <bookingId>`キー。設定後に読み直して確認する）。
+3. `feeRecoveryRequiredAt`の設定も引き続きbest effortで試みる（管理画面の既存の要復旧表示に
+   載せるためで、ブロック判定の必須条件ではない）。
+
+1か2のいずれかが確認できれば、`commit`/`recordFeeSettlement`/`backfillOriginalPrice`の
+冒頭ガード（Recovery読取自体が例外を投げた場合もフェイルクローズでブロックする）に
+そのまま反映され、`feeRecoveryRequiredAt`の有無によらず次回リクエストを止め続ける。
+復旧は`resolveFeeRecovery`（`priceOverrideAmount`等、日程変更専用のBookings列）とは
+別の専用API`resolveBaselinePriceRecovery`（`adminResolveBaselinePriceRecovery`）で行う。
+管理者が確認した価格区分・金額で基準料金5列を再書込みし、再取得で一致を確認できた場合に
+のみ`RecoveryRepository.resolveBaselineRecovery`とScript Propertiesマーカーを解消する
+（どちらか一方でも解消できなければ要復旧のまま維持し、同じ内容での再実行を促す）。
+
+**1・2の両方が失敗する最悪のケース（Recoveryシートへの書込みもScript Propertiesへの
+書込みも失敗する）は、どのファイルにも次回リクエストを自動でブロックできる痕跡を
+一切残せない。** この場合`backfillOriginalPrice`は通常のエラーと区別できる
+`RECOVERY_PERSISTENCE_UNKNOWN`を返すが、**「必ず自動停止する」という保証はできない。**
+このコードが`RECOVERY_PERSISTENCE_UNKNOWN`を返した場合、運用者は以下の手動対応を
+行うこと:
+
+1. 対象予約のBookingsシートを直接開き、`priceAmount`/`priceTier`/`priceDayType`/
+   `priceIsMember`/`priceComputedAt`の5列が意図した値になっているか確認する。
+2. `Recovery`シートに`BASELINE_WRITE_UNCERTAIN`/`OPEN`の行を手動で追加し
+   （`bookingId`・`occurredAt`・`status`は対象予約に合わせ、`recoveryState`は`OPEN`）、
+   以降の自動ブロックを効かせる。もしくはBookingsシートの`feeRecoveryRequiredAt`セルに
+   直接日時を入力する。
+3. Spreadsheet自体への書込みが継続的に失敗している場合（クォータ超過・権限エラー等）は、
+   GAS/Spreadsheetの状態を復旧するまで、この予約に限らずBooking Admin全体の日程変更・
+   精算記録を一時的に手動で止める（管理者間の運用上の申し合わせ。コード側の自動停止は
+   保証されない）。
+4. 原因解消後、`resolveBaselinePriceRecovery`（またはBookingsシートの直接編集）で正しい
+   基準料金を確定し、手動で追加した`Recovery`行の`recoveryState`を`RESOLVED`にする。
+
+テスト: `test/booking-reschedule.test.js`（基準料金書込み失敗＋復旧フラグ保存失敗の複合、
+Recovery記録も失敗した場合のScript Propertiesマーカーへのフォールバック、両方失敗時の
+`RECOVERY_PERSISTENCE_UNKNOWN`、Recovery読取自体の例外に対するフェイルクローズ、
+`resolveBaselinePriceRecovery`の正常系・異常系）・`test/booking-spreadsheet-repository.
+test.js`（`RecoveryRepository.hasOpenBaselineRecovery`/`resolveBaselineRecovery`の単体
+テスト）・`test/booking-admin-web.test.js`（`getAdminBookingDetail`の
+`baselineRecoveryNeedsAttention`）。
+
 # gas/booking（自社予約システム）
 
 Epic #265の一部として以下を実装済み。

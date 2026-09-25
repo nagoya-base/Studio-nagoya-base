@@ -381,7 +381,15 @@ function getAdminBookingDetail(bookingId) {
        * こちらを見て復旧導線（renderFeeRecoverySection_）を出す。resolveFeeRecoveryへの
        * 入り口も同じ判定（isInFeeRecovery_ OR hasUnresolvedSettlement）を使っている。
        */
-      feeSettlementNeedsAttention: FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null)
+      feeSettlementNeedsAttention: FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null),
+      /*
+       * PR #345再レビュー対応（8回目）: 基準料金5列（priceAmount等）の書込み結果が
+       * 不明のまま残っている予約かどうか。feeRecoveryRequiredAtの保存自体が失敗する
+       * 複合障害が起きると、フラグだけでは検出できない（BookingReschedule.
+       * isBaselineRecoveryBlocked参照）。Web UI側は専用の要復旧表示・
+       * resolveBaselinePriceRecovery呼び出し導線を出す。
+       */
+      baselineRecoveryNeedsAttention: BookingReschedule.isBaselineRecoveryBlocked(bookingId)
     }
   };
 }

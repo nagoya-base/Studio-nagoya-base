@@ -328,6 +328,71 @@ test('RecoveryRepository.recordFailure: Recoveryシートへ部分失敗を記�
   assert.strictEqual(all[0].failureType, 'SHEETS_FAILURE_CALENDAR_ORPHANED');
 });
 
+/*
+ * hasOpenBaselineRecovery/resolveBaselineRecovery（PR #345再レビュー対応・8回目。
+ * BookingReschedule.backfillOriginalPriceが基準料金5列の書込み結果を確認できなかった
+ * 場合の、予約別の永続的な停止条件）。
+ */
+test('hasOpenBaselineRecovery: BASELINE_WRITE_UNCERTAINかつOPENの行があればtrue、他の予約・他のfailureType・RESOLVEDは対象外', function () {
+  var sandbox = loadRepos();
+  assert.strictEqual(sandbox.RecoveryRepository.hasOpenBaselineRecovery('SX-1'), false);
+
+  sandbox.RecoveryRepository.recordFailure({
+    bookingId: 'SX-1', failureType: sandbox.RecoveryRepository.BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE,
+    occurredAt: new Date(), calendarEventId: '', status: 'CONFIRMED',
+    errorMessage: 'uncertain', recoveryState: 'OPEN', resolvedAt: ''
+  });
+  assert.strictEqual(sandbox.RecoveryRepository.hasOpenBaselineRecovery('SX-1'), true);
+  assert.strictEqual(sandbox.RecoveryRepository.hasOpenBaselineRecovery('SX-2'), false, '別の予約は無関係');
+
+  sandbox.RecoveryRepository.recordFailure({
+    bookingId: 'SX-3', failureType: 'ADMIN_NOTIFICATION_FAILED',
+    occurredAt: new Date(), calendarEventId: '', status: 'CONFIRMED',
+    errorMessage: 'x', recoveryState: 'OPEN', resolvedAt: ''
+  });
+  assert.strictEqual(sandbox.RecoveryRepository.hasOpenBaselineRecovery('SX-3'), false, '別のfailureTypeは対象外');
+});
+
+test('resolveBaselineRecovery: この予約のOPENなBASELINE_WRITE_UNCERTAIN行だけをRESOLVEDにし、他の予約・他のfailureTypeには触れない', function () {
+  var sandbox = loadRepos();
+  sandbox.RecoveryRepository.recordFailure({
+    bookingId: 'SX-1', failureType: sandbox.RecoveryRepository.BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE,
+    occurredAt: new Date(), calendarEventId: '', status: 'CONFIRMED',
+    errorMessage: 'uncertain 1', recoveryState: 'OPEN', resolvedAt: ''
+  });
+  sandbox.RecoveryRepository.recordFailure({
+    bookingId: 'SX-1', failureType: sandbox.RecoveryRepository.BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE,
+    occurredAt: new Date(), calendarEventId: '', status: 'CONFIRMED',
+    errorMessage: 'uncertain 2（複合障害で2回目が起きたケース）', recoveryState: 'OPEN', resolvedAt: ''
+  });
+  sandbox.RecoveryRepository.recordFailure({
+    bookingId: 'SX-2', failureType: sandbox.RecoveryRepository.BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE,
+    occurredAt: new Date(), calendarEventId: '', status: 'CONFIRMED',
+    errorMessage: '別予約', recoveryState: 'OPEN', resolvedAt: ''
+  });
+  sandbox.RecoveryRepository.recordFailure({
+    bookingId: 'SX-1', failureType: 'ADMIN_NOTIFICATION_FAILED',
+    occurredAt: new Date(), calendarEventId: '', status: 'CONFIRMED',
+    errorMessage: '別種別', recoveryState: 'OPEN', resolvedAt: ''
+  });
+
+  sandbox.RecoveryRepository.resolveBaselineRecovery('SX-1');
+
+  assert.strictEqual(sandbox.RecoveryRepository.hasOpenBaselineRecovery('SX-1'), false, 'SX-1のBASELINE_WRITE_UNCERTAINは全てRESOLVEDになる');
+  assert.strictEqual(sandbox.RecoveryRepository.hasOpenBaselineRecovery('SX-2'), true, '別の予約のOPENは影響を受けない');
+
+  var all = sandbox.RecoveryRepository.listAll();
+  var sx1Baseline = all.filter(function (r) { return r.bookingId === 'SX-1' && r.failureType === sandbox.RecoveryRepository.BASELINE_WRITE_UNCERTAIN_FAILURE_TYPE; });
+  assert.strictEqual(sx1Baseline.length, 2);
+  sx1Baseline.forEach(function (r) {
+    assert.strictEqual(r.recoveryState, 'RESOLVED');
+    assert.ok(r.resolvedAt);
+  });
+  var sx1Other = all.filter(function (r) { return r.bookingId === 'SX-1' && r.failureType === 'ADMIN_NOTIFICATION_FAILED'; });
+  assert.strictEqual(sx1Other.length, 1);
+  assert.strictEqual(sx1Other[0].recoveryState, 'OPEN', '別のfailureTypeは解消しない');
+});
+
 test('BookingsシートとRecoveryシートは独立している（同じSpreadsheet内の別シート）', function () {
   var sandbox = loadRepos();
   sandbox.SpreadsheetRepository.appendBooking(sampleRecord());

@@ -474,6 +474,7 @@ function showDetailModal(booking) {
   renderRescheduleSection_(booking);
   renderFeeBaselineSection_(booking);
   renderFeeRecoverySection_(booking);
+  renderBaselineRecoverySection_(booking);
   renderPriceNoticeSection_(booking);
   renderPriceEditSection_(booking);
   document.getElementById('modal-overlay').classList.add('open');
@@ -581,6 +582,58 @@ function renderFeeRecoverySection_(booking) {
 }
 
 /*
+ * PR #345再レビュー対応（8回目）: 基準料金5列（priceAmount等）の書込み結果が不明の
+ * まま残っている予約専用の復旧フォーム。feeRecoveryRequiredAtが立っていなくても
+ * baselineRecoveryNeedsAttentionがtrueなら表示する（Recoveryシート・停止マーカーに
+ * よる複合障害対策。renderFeeRecoverySection_のcorrections（priceOverrideAmount等）は
+ * 日程変更専用のBookings列のためここでは使わない。基準料金5列は
+ * adminResolveBaselinePriceRecovery専用に復旧する）。
+ */
+function renderBaselineRecoverySection_(booking) {
+  var modalBody = document.getElementById('modal-body');
+  if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
+  var existing = document.getElementById('baseline-recovery-section');
+  if (existing) existing.remove();
+  if (!booking.baselineRecoveryNeedsAttention) return;
+  var section = document.createElement('section');
+  section.id = 'baseline-recovery-section';
+  section.className = 'reschedule-section reschedule-section-danger';
+  section.innerHTML =
+    '<h3>要復旧: 基準料金の保存結果を確認してください</h3>' +
+    '<p>基準料金（自動計算値・価格区分等）の保存結果が確認できませんでした。Bookingsシートと' +
+    '過去の請求記録を直接確認し、正しい価格区分・金額を入力してから復旧してください。' +
+    '復旧するまで基準料金の登録・日時変更・精算記録は操作できません。</p>' +
+    '<label>価格区分 <select id="baseline-recovery-tier">' +
+    '<option value="GENERAL">通常</option>' +
+    '<option value="MEMBER">会員</option>' +
+    '</select></label>' +
+    '<label>確定料金（円） <input id="baseline-recovery-amount" type="number" min="1" step="1"></label>' +
+    '<button type="button" id="baseline-recovery-save">確認した内容で復旧する</button>' +
+    '<div id="baseline-recovery-result" role="status" aria-live="polite"></div>';
+  modalBody.insertAdjacentElement('afterend', section);
+  section.querySelector('#baseline-recovery-save').addEventListener('click', function () {
+    var priceTier = section.querySelector('#baseline-recovery-tier').value;
+    var amount = Number(section.querySelector('#baseline-recovery-amount').value);
+    if (!window.confirm('予約ID: ' + booking.bookingId + '\n確認した基準料金で復旧します。よろしいですか？')) return;
+    var resultArea = section.querySelector('#baseline-recovery-result');
+    resultArea.textContent = '復旧中…';
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (!result || !result.success) {
+          resultArea.textContent = '復旧できませんでした: ' + (result && result.error && result.error.message);
+          return;
+        }
+        resultArea.textContent = '復旧しました。';
+        refreshOpenDetail_(booking.bookingId);
+      })
+      .withFailureHandler(function (error) {
+        resultArea.textContent = '復旧に失敗しました: ' + (error && error.message ? error.message : error);
+      })
+      .adminResolveBaselinePriceRecovery(booking.bookingId, priceTier, amount);
+  });
+}
+
+/*
  * Issue #344追記（PR #345レビュー対応で再設計）: 元の確定料金・価格区分（会員/通常）を
  * 管理者が照合して入力するフォーム。PR #343の料金基盤（priceAmount/priceTier）を
  * そのまま書き込む（日程変更専用の「現在の確定金額」列は別途持たない）。既存予約は
@@ -594,7 +647,7 @@ function renderFeeBaselineSection_(booking) {
   if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
   var existing = document.getElementById('fee-baseline-section');
   if (existing) existing.remove();
-  if (booking.status !== 'CONFIRMED' || booking.feeRecoveryRequiredAt || booking.feeSettlementNeedsAttention) return;
+  if (booking.status !== 'CONFIRMED' || booking.feeRecoveryRequiredAt || booking.feeSettlementNeedsAttention || booking.baselineRecoveryNeedsAttention) return;
   var section = document.createElement('section');
   section.id = 'fee-baseline-section';
   section.className = 'reschedule-section';
@@ -663,7 +716,7 @@ function renderFeeSettlementSection_(booking) {
   if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
   var existing = document.getElementById('fee-settlement-section');
   if (existing) existing.remove();
-  if (booking.status !== 'CONFIRMED' || !booking.feeBaselineReady || booking.feeRecoveryRequiredAt || booking.feeSettlementNeedsAttention) return;
+  if (booking.status !== 'CONFIRMED' || !booking.feeBaselineReady || booking.feeRecoveryRequiredAt || booking.feeSettlementNeedsAttention || booking.baselineRecoveryNeedsAttention) return;
   var section = document.createElement('section');
   section.id = 'fee-settlement-section';
   section.className = 'reschedule-section';
@@ -731,7 +784,7 @@ function renderRescheduleSection_(booking) {
   if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
   var existing = document.getElementById('reschedule-section');
   if (existing) existing.remove();
-  if (booking.status !== 'CONFIRMED' || booking.feeRecoveryRequiredAt || booking.feeSettlementNeedsAttention) return;
+  if (booking.status !== 'CONFIRMED' || booking.feeRecoveryRequiredAt || booking.feeSettlementNeedsAttention || booking.baselineRecoveryNeedsAttention) return;
   var section = document.createElement('section');
   section.id = 'reschedule-section';
   section.className = 'reschedule-section';

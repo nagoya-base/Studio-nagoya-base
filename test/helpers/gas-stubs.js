@@ -27,6 +27,10 @@ function createPropertiesServiceStub(initialProperties, options) {
           }
           store[key] = value;
           successfulSetPropertyCount += 1;
+        },
+        deleteProperty: function (key) {
+          if (opts.deletePropertyError) throw opts.deletePropertyError;
+          delete store[key];
         }
       };
     },
