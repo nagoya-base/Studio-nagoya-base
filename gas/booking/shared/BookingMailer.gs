@@ -539,7 +539,9 @@ var BookingMailer = (function () {
         }
       };
     }
-    return defaultMailEligibilityCheck_(mailType, bookingId, requiredStatus, sentAtFields, force, record);
+    /* 過去に送信済みでも、その後の料金再修正は新しい案内として送信する。 */
+    return defaultMailEligibilityCheck_(mailType, bookingId, requiredStatus, sentAtFields,
+      force || Booking.needsPriceUpdateNotice(record), record);
   }
 
   function sendPriceUpdateMailForBooking(bookingId, options) {
