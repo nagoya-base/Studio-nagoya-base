@@ -427,6 +427,7 @@ function renderRescheduleSection_(booking) {
     '<label>終了 <input id="reschedule-end" type="time" step="900" value="' + escapeHtml(end) + '"></label>' +
     '<label>変更理由（任意）<textarea id="reschedule-reason" maxlength="500" rows="2"></textarea></label>' +
     '<label>料金・精算案内（メールへ記載）<textarea id="reschedule-fee-note" maxlength="500" rows="2">料金差額がある場合は運営から別途ご案内します。</textarea></label>' +
+    '<label><input id="reschedule-fee-checked" type="checkbox">料金・差額を確認しました（必要な精算は別途対応）</label>' +
     '<button type="button" id="reschedule-preview">空き状況を確認</button>' +
     '<div id="reschedule-result" role="status" aria-live="polite"></div>' +
     '<div id="reschedule-history"></div>';
@@ -509,6 +510,10 @@ function previewReschedule_(booking, section) {
         var current = rescheduleInput_(section);
         if (JSON.stringify(current) !== JSON.stringify(input)) {
           resultArea.textContent = '入力内容が変わりました。再度確認してください。';
+          return;
+        }
+        if (!section.querySelector('#reschedule-fee-checked').checked) {
+          alert('料金・差額を確認したうえでチェックしてください。');
           return;
         }
         var feeNote = section.querySelector('#reschedule-fee-note').value.trim();
