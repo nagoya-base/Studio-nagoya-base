@@ -200,7 +200,41 @@ function getAdminBookingDetail(bookingId) {
       accessGuideSentAt: formatAdminDateTime_(record.accessGuideSentAt, timezone),
       hasMailError: !!record.lastMailErrorAt,
       /* Issue #334: カード予約のみ非空（読み取り専用の支払期限表示用）。 */
-      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone)
+      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone),
+      /*
+       * Issue #334 PR-C: Stripe決済リンク送信欄の表示制御・送信状態表示用。
+       * isCardPaymentは「支払方法がオンラインクレジットカード」の判定を、Web UI側で
+       * 内部文字列（'オンラインクレジットカード'）を複製せずBooking.gs 1箇所に
+       * 委ねるための真偽値（Booking.isCardPaymentMethodと同じ判定）。
+       * paymentLinkLastErrorMessageは、hasMailError（他メール種別と共有・真偽値のみ）と
+       * 異なり、決済リンク送信専用の「最終送信エラー」表示のためsanitize済みの本文を
+       * そのまま返す（Issue #334本文の管理画面要件どおり）。
+       */
+      isCardPayment: Booking.isCardPaymentMethod(record.paymentMethod),
+      stripePaymentLinkUrl: record.stripePaymentLinkUrl || '',
+      paymentLinkSentAt: formatAdminDateTime_(record.paymentLinkSentAt, timezone),
+      paymentLinkSentTo: record.paymentLinkSentTo || '',
+      paymentLinkSendCount: Number(record.paymentLinkSendCount) || 0,
+      paymentLinkLastErrorAt: formatAdminDateTime_(record.paymentLinkLastErrorAt, timezone),
+      paymentLinkLastErrorMessage: record.paymentLinkLastErrorMessage || '',
+      /* PRレビュー対応: 送信履行が未確認（MailApp送信は成功したがpaymentLinkSentAtの
+         記録に失敗した）状態を予約詳細へ表示するための項目。空でなければ、通常送信
+         （forceなし）はGAS側で拒否される（BookingMailer.gs参照）。 */
+      paymentLinkSendUnconfirmedAt: formatAdminDateTime_(record.paymentLinkSendUnconfirmedAt, timezone),
+      /*
+       * 第2回PRレビュー対応: paymentLinkSentAtの単独更新には成功したが、続くURL/送信先/
+       * paymentLinkSendCount等の更新が失敗し、これらの記録内容が古いままの可能性がある
+       * ことを予約詳細へ表示するための項目（送信可否には影響しない。表示専用）。
+       */
+      paymentLinkMetadataInconsistentAt: formatAdminDateTime_(record.paymentLinkMetadataInconsistentAt, timezone),
+      /*
+       * 第2回PRレビュー対応（同時再送の競合防止の拡張）: paymentLinkSentAtの内部表現
+       * （epoch ms。未送信は0）。表示用のpaymentLinkSentAt（'YYYY-MM-DD HH:mm'。分単位）
+       * とは別に、ミリ秒精度で送信履歴のバージョンをクライアントへ渡す。クライアントは
+       * この値を解釈・加工せず、adminSendCardPaymentLinkの呼び出しへそのまま往復させる
+       * だけの内部トークンとして扱う（BookingMailer.gsのcheckSendHistoryVersion_参照）。
+       */
+      paymentLinkSentAtVersion: isAdminWebDateLike_(record.paymentLinkSentAt) ? record.paymentLinkSentAt.getTime() : 0
     }
   };
 }
@@ -222,4 +256,39 @@ function adminCancelBooking(bookingId) {
    ダイアログはHTML側（クライアント）で行う。 */
 function adminReviveExpiredBooking(bookingId) {
   return reviveExpiredBooking(bookingId);
+}
+
+/*
+ * Stripe決済リンクの送信（Issue #334 PR-C）。既存の正式関数sendCardPaymentLinkMail
+ * （BookingAdmin.gs）へそのまま委譲する。業務ロジック（URL検証・予約状態/支払方法/
+ * 期限の再検証・二重送信防止・送信履歴の記録）はコピーしない。送信前の内容確認
+ * ダイアログ（予約者名・メール・利用日時・支払期限・送信するURLの表示）と、
+ * 「明示的な再送」かどうかの判断はHTML側（クライアント）で行い、forceのみここへ渡す。
+ *
+ * expectedSendCount（PRレビュー対応。同時再送の競合防止）: クライアントが最後に
+ * 取得した予約詳細のpaymentLinkSendCountをそのまま渡す。BookingMailer.gsの
+ * checkSendHistoryVersion_が、Lock取得後の最新値と比較し、別タブ・別端末による
+ * 先行送信が既にあれば古い画面からのこの呼び出しをSEND_HISTORY_CONFLICTとして拒否する。
+ * expectedSentAtVersion（第2回PRレビュー対応）: クライアントが最後に取得した予約詳細の
+ * paymentLinkSentAtVersion（epoch ms）をそのまま渡す。expectedSendCountとは独立に
+ * 判定し、送信履歴2回目の書き込みだけが失敗してpaymentLinkSendCountが変化しない
+ * ケースでも競合を検知できるようにする（checkSendHistoryVersion_参照）。
+ */
+function adminSendCardPaymentLink(bookingId, paymentLinkUrl, force, expectedSendCount, expectedSentAtVersion) {
+  return sendCardPaymentLinkMail(bookingId, paymentLinkUrl, {
+    force: !!force,
+    expectedSendCount: expectedSendCount,
+    expectedSentAtVersion: expectedSentAtVersion
+  });
+}
+
+/*
+ * 送信履歴の記録不整合の補正（第3回PRレビュー対応。confirmedUrl/confirmedSentToは
+ * 第5回PRレビュー対応で追加）。既存の正式関数resolveCardPaymentLinkMetadataInconsistency
+ * （BookingAdmin.gs）へそのまま委譲する。業務ロジック（対象の限定・補正値の検証・
+ * Recovery記録）はコピーしない。実行前の内容確認（現在の送信回数・URL・送信先の表示、
+ * 補正後の値の表示）はHTML側（クライアント）で行う。
+ */
+function adminResolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo) {
+  return resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo);
 }

@@ -382,18 +382,472 @@ function openDetail(bookingId) {
     .getAdminBookingDetail(bookingId);
 }
 
+/* Issue #334 PR-C: 予約詳細モーダルに表示中のbooking（getAdminBookingDetailの
+   応答そのもの）。決済リンク送信ボタンのクリック時・送信後の詳細再取得時に、
+   どの予約に対する操作かを判断するために保持する。モーダルを閉じたらnullへ戻す。 */
+var currentDetailBooking_ = null;
+var detailModalOpen_ = false;
+
 function showDetailModal(booking) {
+  currentDetailBooking_ = booking;
+  detailModalOpen_ = true;
+
   var body = document.getElementById('modal-body');
   body.innerHTML = DETAIL_FIELDS.map(function (pair) {
     var key = pair[0];
     var label = pair[1];
     return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
   }).join('');
+  renderPaymentLinkSection_(booking);
   document.getElementById('modal-overlay').classList.add('open');
 }
 
 function closeModal() {
   document.getElementById('modal-overlay').classList.remove('open');
+  currentDetailBooking_ = null;
+  detailModalOpen_ = false;
+}
+
+/*
+ * Stripe決済リンク送信欄（Issue #334 PR-C）。対象は「支払方法がオンラインクレジット
+ * カードのPENDING予約のみ」（Issue #334本文）。isCardPaymentはgetAdminBookingDetail
+ * （BookingAdminWeb.gs）がBooking.isCardPaymentMethodで判定した値をそのまま使い、
+ * 支払方法の内部文字列（'オンラインクレジットカード'）をこのファイルに複製しない。
+ */
+function canSendPaymentLink(booking) {
+  return !!booking && !!booking.isCardPayment && booking.status === 'PENDING';
+}
+
+/*
+ * PRレビュー対応: MailApp送信自体は成功したがpaymentLinkSentAtの記録に失敗し、送信済みか
+ * どうか確定できていない「履行未確認」状態を、通常の「未送信」より優先して表示する
+ * （admin側に必ず気付いてもらう必要があるため）。GAS側（BookingMailer.gsの
+ * evaluatePaymentLinkEligibility_）も同じ優先順位（ALREADY_SENT→SEND_UNCONFIRMED）で
+ * 通常送信を拒否する。 */
+function paymentLinkStatusLabel_(booking) {
+  if (!booking) return '未送信';
+  if (booking.paymentLinkSendUnconfirmedAt) return '送信結果未確認（要確認）';
+  return booking.paymentLinkSentAt ? '送信済み' : '未送信';
+}
+
+/* 通常送信（forceなし）がGAS側で拒否される状態（送信済み、または履行未確認）かどうか。
+   この状態では、ボタンラベルを「再送」に変え、確認ダイアログ・GAS呼び出しの両方を
+   明示的な再送として扱う（isResend）。 */
+function paymentLinkRequiresExplicitResend_(booking) {
+  return !!(booking && (booking.paymentLinkSentAt || booking.paymentLinkSendUnconfirmedAt));
+}
+
+/*
+ * 第3回PRレビュー対応: 送信履歴に記録不整合（paymentLinkMetadataInconsistentAt）がある間は、
+ * 送信履歴の照合・補正（「送信履歴を補正」操作）が完了するまで、通常送信・明示的な再送の
+ * いずれも送信できない（GAS側のevaluatePaymentLinkEligibility_のMETADATA_INCONSISTENT判定と
+ * 同じ方針。forceでも無視しない）。
+ */
+function paymentLinkBlockedByMetadataInconsistency_(booking) {
+  return !!(booking && booking.paymentLinkMetadataInconsistentAt);
+}
+
+/*
+ * GAS側（Booking.gs のisValidStripePaymentLinkUrl）と同じ正規表現。フロント側は
+ * 即時フィードバックのための事前チェックのみで、送信可否の正はGAS側の再検証とする
+ * （Issue #334本文「フロント側でも入力チェックして構いませんが、GAS側の検証を
+ * 必須としてください」）。
+ *
+ * PRレビュー対応（前後の空白の扱いを統一）: GAS側のBooking.isValidStripePaymentLinkUrlは
+ * 値をtrimせず、生の値をそのまま`^...$`の正規表現へ通すfail-closedな検証にしている
+ * （前後に空白がある入力は形式エラーとして拒否する）。このクライアント側の事前チェックも
+ * 同じ方針に統一する（呼び出し側でtrimしてから検証・送信すると、前後に空白のある入力を
+ * 気付かれないまま黙って受理してしまい、GAS側の方針と食い違う）。
+ */
+var STRIPE_PAYMENT_LINK_URL_PATTERN_CLIENT_ = /^https:\/\/buy\.stripe\.com\/[A-Za-z0-9_-]+$/;
+
+function isValidStripePaymentLinkUrlClient(url) {
+  return typeof url === 'string' && STRIPE_PAYMENT_LINK_URL_PATTERN_CLIENT_.test(url);
+}
+
+/*
+ * 第5回PRレビュー対応: 記録不整合の補正（runResolvePaymentLinkMetadataInconsistency_）で
+ * confirmedSentToを事前チェックするための、GAS側（Booking.gsのisValidEmail_）と同じ
+ * 正規表現。予約作成時のメールアドレス検証と同じ形式検証で、trimせず生の値のまま
+ * 検証する（isValidStripePaymentLinkUrlClientと同じ方針。送信可否の正はGAS側の
+ * 再検証とする）。
+ */
+var EMAIL_PATTERN_CLIENT_ = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmailClient_(value) {
+  return typeof value === 'string' && value.length <= 254 && EMAIL_PATTERN_CLIENT_.test(value);
+}
+
+/*
+ * 送信直前の確認ダイアログの文面（DOM操作から分離した純粋関数。単体テスト可能にする）。
+ * Issue #334本文「送信前には、予約者名・メールアドレス・利用日時・支払期限・送信する
+ * Stripe URLを確認できるようにしてください」に対応する。金額は表示しない
+ * （Bookings台帳に確定料金列がないため）。isResendがtrueの場合、明示的な再送であることを
+ * 文面で明示する（「通常の送信操作」と「明示的な再送」を管理者が混同しないようにする）。
+ */
+function buildPaymentLinkConfirmMessage_(booking, url, isResend) {
+  return (
+    '予約ID: ' + booking.bookingId + '\n' +
+    '氏名: ' + booking.name + '\n' +
+    'メール: ' + booking.email + '\n' +
+    '利用開始: ' + booking.startAt + '\n' +
+    '利用終了: ' + booking.endAt + '\n' +
+    '支払期限: ' + (booking.cardPaymentDueAt || '（未設定）') + '\n' +
+    'Stripe URL: ' + url + '\n\n' +
+    (isResend
+      ? '既に送信済みです。決済リンクメールを再送します。\n\n'
+      : '決済リンクメールを送信します。\n\n') +
+    '実行しますか？'
+  );
+}
+
+/* Issue #334 PR-C: 決済リンク送信欄のDOM（#modal内。#modal-bodyのdlとは別に、
+   初回のみ生成して以後は内容だけを更新する。入力中の値を毎回破棄しないため）。 */
+var paymentLinkUi_ = {
+  container: null,
+  statusEl: null,
+  urlInput: null,
+  sendButton: null,
+  sendInFlight: false,
+  resolveButton: null,
+  resolveInFlight: false
+};
+
+function initPaymentLinkUi_() {
+  var modal = document.getElementById('modal');
+  var closeButton = document.getElementById('modal-close');
+
+  var container = document.createElement('div');
+  container.id = 'payment-link-section';
+
+  var heading = document.createElement('h3');
+  heading.textContent = 'Stripe決済リンク送信';
+  container.appendChild(heading);
+
+  var statusEl = document.createElement('div');
+  statusEl.id = 'payment-link-status';
+  container.appendChild(statusEl);
+
+  /* 第3回PRレビュー対応: 送信履歴の記録不整合（paymentLinkMetadataInconsistentAt）を
+     解消するための専用ボタン。通常の送信ボタンとは別に用意し、記録不整合が解消される
+     まで表示する（renderPaymentLinkSection_参照）。 */
+  var resolveButton = document.createElement('button');
+  resolveButton.type = 'button';
+  resolveButton.id = 'payment-link-resolve-button';
+  resolveButton.textContent = '送信履歴を補正';
+  resolveButton.classList.add('hidden');
+  container.appendChild(resolveButton);
+
+  var urlLabel = document.createElement('label');
+  urlLabel.textContent = 'Stripe決済リンクURL';
+  var urlInput = document.createElement('input');
+  urlInput.type = 'url';
+  urlInput.id = 'payment-link-url-input';
+  urlInput.placeholder = 'https://buy.stripe.com/...';
+  urlLabel.appendChild(urlInput);
+  container.appendChild(urlLabel);
+
+  var sendButton = document.createElement('button');
+  sendButton.type = 'button';
+  sendButton.id = 'payment-link-send-button';
+  container.appendChild(sendButton);
+
+  modal.insertBefore(container, closeButton);
+  sendButton.addEventListener('click', runSendPaymentLink_);
+  resolveButton.addEventListener('click', runResolvePaymentLinkMetadataInconsistency_);
+
+  paymentLinkUi_.container = container;
+  paymentLinkUi_.statusEl = statusEl;
+  paymentLinkUi_.urlInput = urlInput;
+  paymentLinkUi_.sendButton = sendButton;
+  paymentLinkUi_.resolveButton = resolveButton;
+}
+
+/* 決済リンク送信欄の表示内容の更新のみを担当する（DOM生成はinitPaymentLinkUi_で1回のみ）。
+   カード決済以外はセクション自体を隠す。カード決済でもPENDING以外（送信後にCONFIRMED/
+   CANCELLED/EXPIREDへ進んだ場合等）は、履歴（URL・送信状況・送信回数・最終エラー）は
+   読み取り専用で表示しつつ、入力・送信操作は無効化する。 */
+function renderPaymentLinkSection_(booking) {
+  var ui = paymentLinkUi_;
+  if (!ui.container) return;
+
+  if (!booking || !booking.isCardPayment) {
+    ui.container.classList.add('hidden');
+    return;
+  }
+  ui.container.classList.remove('hidden');
+
+  var lastErrorLine = booking.paymentLinkLastErrorMessage
+    ? booking.paymentLinkLastErrorMessage + '（' + (booking.paymentLinkLastErrorAt || '') + '）'
+    : 'なし';
+  var statusRows = [
+    ['状態', paymentLinkStatusLabel_(booking)],
+    ['送信日時', booking.paymentLinkSentAt || '（未送信）'],
+    ['送信先', booking.paymentLinkSentTo || '（未送信）'],
+    ['送信回数', String(booking.paymentLinkSendCount || 0)],
+    ['最終送信エラー', lastErrorLine]
+  ];
+  /* PRレビュー対応: 履行未確認（MailApp送信は成功したが送信履歴の記録に失敗した）状態を
+     専用の行として表示し、実際の到達確認と明示的な再送が必要であることを案内する。 */
+  var warningRowIndexes = {};
+  if (booking.paymentLinkSendUnconfirmedAt) {
+    warningRowIndexes[statusRows.length] = true;
+    statusRows.push(['要確認', '前回（' + booking.paymentLinkSendUnconfirmedAt + '）の送信結果が未確認です。実際に届いているか確認したうえで、必要であれば再送してください。']);
+  }
+  /*
+   * 第2回→第3回PRレビュー対応: 送信履行は確定している（二重送信のおそれはない）が、
+   * 続くURL/送信先/送信回数の記録が失敗し、送信回数等の記録が古いままの可能性がある
+   * 状態を別行で案内する。第3回レビュー対応で、この状態の間は送信履歴の照合・補正が
+   * 完了するまで送信操作自体を禁止する方針に変更したため、文言も「送信履歴の確認・
+   * 補正が必要」であることを明示するよう更新した。
+   */
+  var blockedByInconsistency = paymentLinkBlockedByMetadataInconsistency_(booking);
+  if (blockedByInconsistency) {
+    warningRowIndexes[statusRows.length] = true;
+    statusRows.push([
+      '記録不整合',
+      '前回（' + booking.paymentLinkMetadataInconsistentAt + '）の送信で、送信回数・URL等の記録更新に失敗しました。' +
+        '送信回数が実際より少なく表示されている可能性があります。送信履歴の確認・補正が完了するまで送信できません。' +
+        '下の「送信履歴を補正」から、確認した正しい送信回数へ補正してください。'
+    ]);
+  }
+  ui.statusEl.innerHTML = statusRows.map(function (pair, index) {
+    var rowClass = 'payment-link-status-row' + (warningRowIndexes[index] ? ' payment-link-status-row-warning' : '');
+    return '<div class="' + rowClass + '"><span>' + escapeHtml(pair[0]) + '</span>' + escapeHtml(pair[1]) + '</div>';
+  }).join('');
+
+  ui.urlInput.value = booking.stripePaymentLinkUrl || '';
+
+  /* 第3回PRレビュー対応: 記録不整合が解消されるまでは、canSendPaymentLink（カード×
+     PENDING）を満たしていても送信操作自体を禁止する。 */
+  var sendable = canSendPaymentLink(booking) && !blockedByInconsistency;
+  ui.urlInput.disabled = !sendable;
+  ui.sendButton.disabled = !sendable || ui.sendInFlight;
+  ui.sendButton.textContent = !canSendPaymentLink(booking)
+    ? ('送信不可（' + statusLabel(booking.status) + '）')
+    : (blockedByInconsistency
+      ? '送信不可（記録不整合。補正が必要）'
+      : (paymentLinkRequiresExplicitResend_(booking) ? '決済リンクを再送' : '決済リンクを送信'));
+
+  /* 記録不整合が解消されるまでは「送信履歴を補正」ボタンを表示する。カード決済であれば
+     現在のstatusを問わない（送信操作とは別の、履歴データの補正操作のため）。 */
+  if (blockedByInconsistency) {
+    ui.resolveButton.classList.remove('hidden');
+    ui.resolveButton.disabled = ui.resolveInFlight;
+  } else {
+    ui.resolveButton.classList.add('hidden');
+  }
+}
+
+/*
+ * 決済リンク送信ボタンの実処理。二重クリック・連打による重複送信は、クライアント側
+ * （sendInFlightガード＋送信中はボタンをdisabled）とGAS側（LockService.getScriptLock()に
+ * よる直列化＋paymentLinkSentAtの二重送信防止）の両方で防ぐ（Issue #334本文
+ * 「既存のLockServiceとメール送信管理の実装を確認し、それに整合する方式を採用してください」）。
+ * 「明示的な再送」（isResend）かどうかはpaymentLinkSentAtの有無から判断し、確認ダイアログの
+ * 文面・GAS側へ渡すforceフラグの両方に反映する。ただし送信可否の最終判定は必ずGAS側
+ * （BookingMailer.sendPaymentLinkMailForBooking）で行い、ここでのisResend判定はUI文面と
+ * forceフラグの初期値にのみ使う。
+ */
+function runSendPaymentLink_() {
+  var booking = currentDetailBooking_;
+  /* 第3回PRレビュー対応: 記録不整合が解消されるまでは、送信ボタンが押されても
+     GASを呼び出さない（ボタン自体はrenderPaymentLinkSection_で無効化されるが、
+     画面が最新化される前の古いbooking情報からの呼び出しにも備える）。 */
+  if (!booking || !canSendPaymentLink(booking) || paymentLinkBlockedByMetadataInconsistency_(booking)) return;
+  if (paymentLinkUi_.sendInFlight) return;
+
+  /*
+   * PRレビュー対応（前後の空白の扱いを統一）: 以前はここでtrim()した値を検証・送信して
+   * いたため、前後に空白を含む入力が黙って除去されたうえで送信されてしまい、GAS側
+   * （trimせずに検証するfail-closedな方針）と扱いが食い違っていた。ここではtrimせず
+   * 生の入力値をそのまま検証し、空白を含む・形式に一致しない入力はすべて入力エラーとして
+   * 案内する（送信もしない）。
+   */
+  var rawUrl = paymentLinkUi_.urlInput.value || '';
+  if (!rawUrl.trim()) {
+    alert('Stripeの決済リンクURLを入力してください。');
+    return;
+  }
+  if (!isValidStripePaymentLinkUrlClient(rawUrl)) {
+    alert('URLの形式が正しくありません。前後に空白が入っていないか確認し、buy.stripe.com の決済リンクをそのまま貼り付けてください（クエリ・フラグメント・末尾の余分な文字は不可）。');
+    return;
+  }
+  var url = rawUrl;
+
+  var isResend = paymentLinkRequiresExplicitResend_(booking);
+  var confirmed = window.confirm(buildPaymentLinkConfirmMessage_(booking, url, isResend));
+  if (!confirmed) return;
+
+  paymentLinkUi_.sendInFlight = true;
+  paymentLinkUi_.sendButton.disabled = true;
+  setStatusLine('決済リンクを送信中…');
+
+  /*
+   * PRレビュー対応（同時再送の競合防止）: この画面が最後に取得したpaymentLinkSendCount
+   * （=画面が把握している送信履歴のバージョン）をexpectedSendCountとしてそのまま渡す。
+   * GAS側（BookingMailer.gsのcheckSendHistoryVersion_）が、Lock取得後の最新値と比較し、
+   * 別タブ・別端末が先に送信していればこのリクエストをSEND_HISTORY_CONFLICTとして拒否する。
+   *
+   * 第2回PRレビュー対応: paymentLinkSendCountだけでは、送信履歴2回目の書き込みだけが
+   * 失敗して送信回数が変化しないケースの競合を検知できないため、
+   * paymentLinkSentAtVersion（epoch ms。getAdminBookingDetailが返す内部トークン）も
+   * 独立に渡す。値の意味を解釈・加工せず、そのまま往復させるだけでよい。
+   */
+  var expectedSendCount = booking.paymentLinkSendCount;
+  var expectedSentAtVersion = booking.paymentLinkSentAtVersion;
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      paymentLinkUi_.sendInFlight = false;
+      setStatusLine('');
+      if (result && result.success && result.metadataInconsistent) {
+        /* 第2回PRレビュー対応: 送信自体・二重送信防止用の記録は成功しているが、
+           送信回数等の付随情報の記録に失敗している。メール自体は再送しない
+           （送信は既に完了している）。管理者にBookingsシートの確認を促す。 */
+        alert('送信しました。ただし送信回数等の記録更新に失敗しました（送信回数の表示が実際より少ない可能性があります。Bookingsシートを確認してください）。');
+      } else if (result && result.success) {
+        alert('送信しました（送信回数: ' + result.sendCount + '）');
+      } else if (result && result.requiresManualConfirmation) {
+        /* PRレビュー対応: メール自体は送信された可能性があるが、送信履歴の記録に失敗し
+           二重送信防止の状態が確定できていない。管理者に実際の到達確認を促す。 */
+        alert('送信結果を確認できませんでした（メールは送信された可能性があります）: ' + (result.error && result.error.message));
+      } else if (result && result.error && result.error.code === 'SEND_HISTORY_CONFLICT') {
+        alert('他の画面から既に操作された可能性があります。最新の状態を確認してください: ' + result.error.message);
+      } else if (result && result.error && result.error.code === 'METADATA_INCONSISTENT') {
+        /* 第3回PRレビュー対応: 送信履歴の記録不整合が解消されるまで送信できない。
+           「送信履歴を補正」操作を案内する。 */
+        alert('送信履歴に記録不整合があるため送信できません。下の「送信履歴を補正」から、確認した正しい送信回数へ補正してください。');
+      } else if (result && result.skipped) {
+        alert('送信条件を満たさないため送信しませんでした: ' + (result.error && result.error.message));
+      } else {
+        alert('送信できませんでした: ' + (result && result.error && result.error.message));
+      }
+      refreshOpenDetail_(booking.bookingId);
+      loadBookings();
+    })
+    .withFailureHandler(function (error) {
+      paymentLinkUi_.sendInFlight = false;
+      setStatusLine('');
+      alert('送信でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      refreshOpenDetail_(booking.bookingId);
+    })
+    .adminSendCardPaymentLink(booking.bookingId, url, isResend, expectedSendCount, expectedSentAtVersion);
+}
+
+/*
+ * 第3回PRレビュー対応: 送信履歴の記録不整合（paymentLinkMetadataInconsistentAt）を
+ * 解消する。GAS側（BookingMailer.resolvePaymentLinkMetadataInconsistency）の再検証
+ * （対象が本当に記録不整合の状態か・補正値が現在の記録より小さくないか・URL/送信先の
+ * 形式が正しいか）に依存し、このファイル側では入力値の形式チェックのみ行う。メールは
+ * 送信しない（送信履歴の記録のみを補正する操作）。
+ *
+ * 第5回PRレビュー対応: 記録不整合の原因となった書き込みはpaymentLinkSendCountだけでなく
+ * stripePaymentLinkUrl・paymentLinkSentToも対象のため、送信回数だけを確認・補正すると
+ * URL・送信先が古いまま（実際に送信したものと食い違ったまま）不整合フラグだけが解除
+ * されてしまう。そのため送信回数に加えてURL・送信先も管理者に確認・入力してもらう
+ * （既定値は現在Bookingsシートに記録されている値。実際の送信履歴と一致していれば
+ * そのまま確定でよい）。
+ */
+function parseConfirmedSendCount_(rawInput) {
+  if (rawInput === null || rawInput === undefined) return null;
+  var trimmed = String(rawInput).trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  return parseInt(trimmed, 10);
+}
+
+function runResolvePaymentLinkMetadataInconsistency_() {
+  var booking = currentDetailBooking_;
+  if (!booking || !paymentLinkBlockedByMetadataInconsistency_(booking)) return;
+  if (paymentLinkUi_.resolveInFlight) return;
+
+  var currentCount = booking.paymentLinkSendCount;
+  var rawCountInput = window.prompt(
+    '決済リンクの送信回数が実際より少なく記録されている可能性があります（現在の記録: ' + currentCount + '回）。\n' +
+    'Bookingsシート・Recoveryシート（PAYMENT_LINK_METADATA_UPDATE_FAILED）・実際のメール送信状況を確認したうえで、\n' +
+    '正しい送信回数を入力してください（' + currentCount + '回以上の整数）。',
+    String(currentCount)
+  );
+  if (rawCountInput === null) return;
+
+  var confirmedCount = parseConfirmedSendCount_(rawCountInput);
+  if (confirmedCount === null || confirmedCount < currentCount) {
+    alert('送信回数は' + currentCount + '回以上の整数で入力してください。');
+    return;
+  }
+
+  var currentUrl = booking.stripePaymentLinkUrl || '';
+  var rawUrlInput = window.prompt(
+    '実際に送信したStripe決済リンクURLを確認してください（現在の記録: ' + (currentUrl || '（未記録）') + '）。\n' +
+    '正しいURL（https://buy.stripe.com/で始まる形式）を入力してください。',
+    currentUrl
+  );
+  if (rawUrlInput === null) return;
+  if (!isValidStripePaymentLinkUrlClient(rawUrlInput)) {
+    alert('Stripeの決済リンクURL（https://buy.stripe.com/で始まる形式）を正しく入力してください（前後の空白も不可）。');
+    return;
+  }
+
+  var currentSentTo = booking.paymentLinkSentTo || booking.email || '';
+  var rawSentToInput = window.prompt(
+    '実際の送信先メールアドレスを確認してください（現在の記録: ' + (currentSentTo || '（未記録）') + '）。\n' +
+    '正しいメールアドレスを入力してください。',
+    currentSentTo
+  );
+  if (rawSentToInput === null) return;
+  if (!isValidEmailClient_(rawSentToInput)) {
+    alert('送信先メールアドレスを正しい形式で入力してください（前後の空白も不可）。');
+    return;
+  }
+
+  var confirmed = window.confirm(
+    '予約ID: ' + booking.bookingId + '\n' +
+    '送信回数を ' + currentCount + '回 → ' + confirmedCount + '回 へ補正します。\n' +
+    'URL: ' + rawUrlInput + '\n' +
+    '送信先: ' + rawSentToInput + '\n\n' +
+    'この操作は送信履歴の記録のみを補正します。メールは送信されません。\n\n' +
+    '実行しますか？'
+  );
+  if (!confirmed) return;
+
+  paymentLinkUi_.resolveInFlight = true;
+  paymentLinkUi_.resolveButton.disabled = true;
+  setStatusLine('送信履歴を補正中…');
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      paymentLinkUi_.resolveInFlight = false;
+      setStatusLine('');
+      if (result && result.success) {
+        alert('送信履歴を補正しました（送信回数: ' + result.paymentLinkSendCount + '）。');
+      } else {
+        alert('補正できませんでした: ' + (result && result.error && result.error.message));
+      }
+      refreshOpenDetail_(booking.bookingId);
+      loadBookings();
+    })
+    .withFailureHandler(function (error) {
+      paymentLinkUi_.resolveInFlight = false;
+      setStatusLine('');
+      alert('補正でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      refreshOpenDetail_(booking.bookingId);
+    })
+    .adminResolvePaymentLinkMetadataInconsistency(booking.bookingId, confirmedCount, rawUrlInput, rawSentToInput);
+}
+
+/* 送信後、開いたままの詳細モーダルを最新状態へ更新する（サーバーから再取得したもので
+   置き換える。クライアント側でpaymentLinkSentAt等を推測して書き換えることはしない。
+   既存のconfirm/cancel/revive直後にloadBookings()で一覧を再取得する方針と同じ）。 */
+function refreshOpenDetail_(bookingId) {
+  if (!detailModalOpen_ || !currentDetailBooking_ || currentDetailBooking_.bookingId !== bookingId) return;
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (result && result.success && detailModalOpen_ && currentDetailBooking_ && currentDetailBooking_.bookingId === bookingId) {
+        showDetailModal(result.booking);
+      }
+    })
+    .withFailureHandler(function () {})
+    .getAdminBookingDetail(bookingId);
 }
 
 function setBusy(bookingId, busy) {
@@ -977,5 +1431,6 @@ document.getElementById('modal-overlay').addEventListener('click', function (eve
 initHeaderUi_();
 initTabCountsUi_();
 initSearchUi_();
+initPaymentLinkUi_();
 
 loadBookings();

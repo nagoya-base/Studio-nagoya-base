@@ -58,7 +58,69 @@ var SpreadsheetRepository = (function () {
      * ここから先はIssue #334（カード決済の期限・失効通知・手動復活）で追加した列。
      * customerType/mail列追加時と同じく末尾追記の方針を踏襲する。
      */
-    'expiredMailSentAt'
+    'expiredMailSentAt',
+    /*
+     * ここから先はIssue #334 PR-C（Booking AdminからのStripe決済リンク送信）で追加した列。
+     * 同じく末尾追記の方針を踏襲する（本番反映時は既存Bookingsシートのヘッダー行へ
+     * 手動で追記が必要。README.md「Spreadsheet構成」参照）。
+     * - stripePaymentLinkUrl: 管理者が最後に入力・送信したStripe Payment Link URL。
+     * - paymentLinkSentAt: 決済リンクメールの送信に成功した直近の日時。他のSentAt列と
+     *   同じ方式で、空の場合だけ「通常送信」の対象になる（二重送信防止。明示的な再送は
+     *   force指定でこの値の有無を無視する）。送信するたびに最新の送信時刻へ更新する。
+     * - paymentLinkSentTo: 直近の送信に成功した宛先メールアドレス（送信時点の
+     *   record.emailをそのまま記録。予約者のメールアドレスが後で変わっても送信時点の
+     *   宛先を追跡できるようにするため）。
+     * - paymentLinkSendCount: 決済リンクメールの送信成功回数（初回送信・明示的な再送の
+     *   いずれも成功するたびに1加算する）。
+     * - paymentLinkLastErrorAt / paymentLinkLastErrorMessage: 決済リンクメールの直近の
+     *   送信失敗時刻・エラー内容（sanitizeErrorMessage_で redaction済み）。既存の
+     *   lastMailError*（他のメール種別と共有）とは別の専用列とする。決済リンク送信は
+     *   Booking Admin予約詳細で専用の送信状態（未送信/送信済み・送信回数・最終送信
+     *   エラー）を表示する要件があり、他メール種別のエラーと混在させると誤表示になるため。
+     *   次回の送信に成功すると自動的に空へ戻す（既存のlastMailError*と同じ方針）。
+     * - paymentLinkSendUnconfirmedAt（PRレビュー対応で追加）: MailApp.sendEmailには
+     *   成功したが、直後のpaymentLinkSentAt単独更新が失敗し、送信済みかどうかを
+     *   確定できない場合の日時。空でない間は、他のSentAt列と同じ二重送信防止の
+     *   仕組みにより通常送信（forceなし）を拒否する（BookingMailer.gsの
+     *   evaluatePaymentLinkEligibility_のSEND_UNCONFIRMED判定）。次に送信履行が
+     *   確定（paymentLinkSentAtの単独更新に成功）すると自動的に空へ戻す。
+     * - paymentLinkMetadataInconsistentAt（第2回PRレビュー対応で追加）:
+     *   paymentLinkSentAtの単独更新には成功した（＝送信履行は確定済み。二重送信の
+     *   おそれはない）が、続くstripePaymentLinkUrl/paymentLinkSentTo/
+     *   paymentLinkSendCount等の2回目の更新が失敗し、これらの記録内容が古い・不正確な
+     *   状態のまま残っている可能性がある場合の日時。**空でない間は通常送信・明示的な
+     *   再送のいずれも送信可否の判定でforceでも拒否される**（第3回PRレビュー対応。
+     *   BookingMailer.gsのevaluatePaymentLinkEligibility_のMETADATA_INCONSISTENT判定。
+     *   送信履行そのものの二重送信防止はpaymentLinkSentAt/paymentLinkSendUnconfirmedAtで
+     *   別途確定済みだが、送信回数等の記録が信頼できるまでは追加の送信自体を止める）。
+     *   **他の送信が成功しただけでは自動的にクリアされない**（第3回PRレビュー対応。
+     *   以前は次の送信成功時に自動的に空へ戻していたが、これだと送信回数の食い違いを
+     *   解消せずに隠してしまうため廃止した）。クリアできるのは、管理者が実際の送信履歴と
+     *   照合したstripePaymentLinkUrl・paymentLinkSentTo・paymentLinkSendCountの3項目を
+     *   確認したうえで呼び出す専用の補正関数
+     *   BookingMailer.resolvePaymentLinkMetadataInconsistencyのみ（第5回PRレビュー対応で
+     *   補正対象をpaymentLinkSendCountのみから3項目へ拡張した。URL・送信先が古いまま
+     *   このフラグだけが解除されることを防ぐため）。この関数は3項目の補正とこの列の
+     *   クリアを**それぞれ別のupdateBookingFields呼び出しで順に行い、都度最新レコードを
+     *   再取得して実際に反映されたかを検証する**（第4回PRレビュー対応。1回の呼び出しに
+     *   複数フィールドを渡すと内部でループして順に書き込むため、途中の書き込みだけが
+     *   失敗すると補正が反映されていないのにこのフラグだけが先にクリアされてしまう
+     *   恐れがある。検証に失敗した場合はこのフラグを維持し、Recoveryへ
+     *   `PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`として記録する）。このクリア操作後の
+     *   最終確認の再取得自体が失敗した場合（第5回PRレビュー対応）は、クリア操作自体が
+     *   実際には成功していた可能性があり、このフラグが今どちらの状態かを断定できない
+     *   ため、「維持されている」と断定せず確認不能として案内する
+     *   （`RESOLVE_RESULT_UNKNOWN`。この場合も`PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`を
+     *   Recoveryへ記録する）。
+     */
+    'stripePaymentLinkUrl',
+    'paymentLinkSentAt',
+    'paymentLinkSentTo',
+    'paymentLinkSendCount',
+    'paymentLinkLastErrorAt',
+    'paymentLinkLastErrorMessage',
+    'paymentLinkSendUnconfirmedAt',
+    'paymentLinkMetadataInconsistentAt'
   ];
 
   function getSpreadsheet_() {

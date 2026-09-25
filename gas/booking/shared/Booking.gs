@@ -93,6 +93,20 @@ var Booking = (function () {
     return String(paymentMethod || '').trim() === PAYMENT_METHOD_CARD;
   }
 
+  /*
+   * Stripe決済リンクURLの検証（Issue #334 PR-C）。GASには`URL`クラスがないため、
+   * 正規表現による厳密な完全一致（`^...$`）で判定する。email検証（EMAIL_PATTERN_）と
+   * 同じ方針で、前後の空白・クエリ・フラグメント・ポート・userinfo・他ホストは
+   * 一切許可しない。呼び出し側（BookingMailer.sendPaymentLinkMailForBooking）は
+   * email検証と同じく、渡された値をtrimせずそのままここへ通す（trimしてから緩く
+   * 検証すると、前後に空白を含む入力を誤って受理してしまうため）。
+   */
+  var STRIPE_PAYMENT_LINK_URL_PATTERN_ = /^https:\/\/buy\.stripe\.com\/[A-Za-z0-9_-]+$/;
+
+  function isValidStripePaymentLinkUrl(url) {
+    return typeof url === 'string' && STRIPE_PAYMENT_LINK_URL_PATTERN_.test(url);
+  }
+
   /* Calendarタイトル・管理者通知メール等、人が読む表示にのみ使うブランド名。
      空き判定・状態判定のロジックはこのラベルに一切依存しない。 */
   var BRAND_LABELS_ = { snb: 'SNB', mens: 'SNB mens', studio_x: 'Studio X' };
@@ -440,6 +454,11 @@ var Booking = (function () {
     CARD_TTL_HOURS: CARD_TTL_HOURS,
     CARD_MIN_HOURS_BEFORE_START: CARD_MIN_HOURS_BEFORE_START,
     isCardPaymentMethod: isCardPaymentMethod,
+    isValidStripePaymentLinkUrl: isValidStripePaymentLinkUrl,
+    /* PR #337レビュー対応（5回目）: resolvePaymentLinkMetadataInconsistencyが
+       確認済みの送信先メールアドレス（confirmedSentTo）を検証する際、
+       validateCreateBookingInputと同じ形式検証を再利用するための公開API。 */
+    isValidEmail: isValidEmail_,
     getBrandLabel: getBrandLabel,
     getCustomerTypeLabel: getCustomerTypeLabel,
     canTransition: canTransition,

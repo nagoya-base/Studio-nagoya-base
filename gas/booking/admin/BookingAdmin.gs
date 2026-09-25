@@ -68,6 +68,26 @@ function reviveExpiredBooking(bookingId, now) {
   return BookingRepository.reviveExpiredBooking(bookingId, now);
 }
 
+/* 正式関数: sendCardPaymentLinkMail(bookingId, paymentLinkUrl, options)（Issue #334 PR-C）。
+   カード決済PENDING予約者へ、管理者がBooking Adminで入力したStripe決済リンクをメール
+   送信する。Booking Admin側のみで公開する（Booking Web Appには追加しない）。
+   options.forceは管理者の明示的な再送のみで渡すこと（Web UI側でも同様に扱う）。
+   スクリプトエディタから直接実行することもできる。 */
+function sendCardPaymentLinkMail(bookingId, paymentLinkUrl, options) {
+  return BookingMailer.sendPaymentLinkMailForBooking(bookingId, paymentLinkUrl, options);
+}
+
+/* 正式関数: resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount,
+   confirmedUrl, confirmedSentTo)（第3回PRレビュー対応。confirmedUrl/confirmedSentToは
+   第5回PRレビュー対応で追加）。paymentLinkMetadataInconsistentAtが記録された予約の
+   送信履歴（stripePaymentLinkUrl・paymentLinkSentTo・paymentLinkSendCount）を、管理者が
+   確認した正しい値へ明示的に補正する。Booking Admin側のみで公開する（Booking Web Appには
+   追加しない）。メール送信・Calendar操作は行わない。
+   スクリプトエディタから直接実行することもできる。 */
+function resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo) {
+  return BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo);
+}
+
 /* 単純トリガー。このファイルをSPREADSHEET_IDのSpreadsheetへコンテナバインドした
    Apps Scriptプロジェクトへデプロイしていれば、そのSpreadsheetを開くたびに
    自動発火し、追加のトリガー設定なしで「予約管理」メニューが表示される。 */

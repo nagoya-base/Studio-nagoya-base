@@ -29,7 +29,9 @@ var BookingMailer = (function () {
     CONFIRMED: 'CONFIRMED',
     CANCELLED: 'CANCELLED',
     REMINDER: 'REMINDER',
-    EXPIRED: 'EXPIRED'
+    EXPIRED: 'EXPIRED',
+    /* Issue #334 PR-C: 管理者がBooking AdminからStripe決済リンクを送信するメール種別。 */
+    PAYMENT_LINK: 'PAYMENT_LINK'
   };
 
   function describeError_(error) {
@@ -573,6 +575,740 @@ var BookingMailer = (function () {
     );
   }
 
+  /*
+   * PAYMENT_LINK（Booking AdminからのStripe決済リンク送信。Issue #334 PR-C）。
+   *
+   * 既存のwithBookingLock_（status/SentAtのみを見る汎用判定＋成功時にsentAtFieldsだけを
+   * 更新する仕組み）は、この送信では次の理由により流用しない:
+   * - 送信ごとに入力されるpaymentLinkUrl（可変の引数）を検証・記録する必要がある
+   * - 成功時にstripePaymentLinkUrl/paymentLinkSentTo/paymentLinkSendCountという、
+   *   他のメール種別にはない専用フィールドを合わせて更新する必要がある
+   * - 失敗時の記録先が、他メール種別と共有するlastMailError*ではなく専用列
+   *   （paymentLinkLastErrorAt/paymentLinkLastErrorMessage）である
+   * そのため、Lock取得・最新レコード再読込・Lock解除という配線本体は既存の
+   * withLockedBookingRecord_をそのまま再利用し（LockService.getScriptLock()を
+   * 複製しない）、事前判定・送信・記録のみをこの関数専用に実装する。
+   */
+  function isDateLike_(value) {
+    return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
+  }
+
+  var PAYMENT_LINK_REASON_CODES_ = {
+    INVALID_STATUS: 'INVALID_STATUS',
+    NOT_CARD_PAYMENT: 'NOT_CARD_PAYMENT',
+    /*
+     * 第3回PRレビュー対応: paymentLinkMetadataInconsistentAtが記録されている
+     * （送信履行は確定しているが、続くURL/送信先/送信回数の記録に失敗し、記録内容が
+     * 古い・不正確なままの可能性がある）間は、送信履歴の照合・補正
+     * （BookingMailer.resolvePaymentLinkMetadataInconsistency）が完了するまで
+     * **通常送信・明示的な再送のいずれも拒否する**。ALREADY_SENT/SEND_UNCONFIRMEDと
+     * 異なり、forceでも無視しない（force resendが「不整合を抱えたまま送信回数を
+     * さらに進めてしまう」ことを防ぐため。詳細はevaluatePaymentLinkEligibility_の
+     * コメント参照）。
+     */
+    METADATA_INCONSISTENT: 'METADATA_INCONSISTENT',
+    ALREADY_SENT: 'ALREADY_SENT',
+    /* PRレビュー対応（履行未確認の二重送信防止）: MailApp送信自体は成功したが、
+       その直後のpaymentLinkSentAt記録に失敗し、送信済みかどうかを確定できない状態。
+       ALREADY_SENTと同じくforceがない限り通常送信を拒否する。詳細は
+       sendPaymentLinkMailForBookingのコメント参照。 */
+    SEND_UNCONFIRMED: 'SEND_UNCONFIRMED',
+    EMAIL_MISSING: 'EMAIL_MISSING',
+    PAYMENT_DUE_UNKNOWN: 'PAYMENT_DUE_UNKNOWN',
+    PAYMENT_DUE_PASSED: 'PAYMENT_DUE_PASSED'
+  };
+
+  /*
+   * 送信可否の判定（副作用なし）。判定順序（最初に一致したものを返す）:
+   *   INVALID_STATUS → NOT_CARD_PAYMENT → METADATA_INCONSISTENT → ALREADY_SENT →
+   *   SEND_UNCONFIRMED → EMAIL_MISSING → PAYMENT_DUE_UNKNOWN → PAYMENT_DUE_PASSED →
+   *   eligible
+   * - 対象は「支払方法がカードのPENDING予約」のみ（Issue #334本文）。UIでの表示制御に
+   *   依存せず、送信時にここで必ず再検証する。
+   * - METADATA_INCONSISTENTは**forceでも無視しない**（第3回PRレビュー対応。他の
+   *   拒否理由と違い、送信履歴の照合・補正が完了するまで送信操作自体を止める必要が
+   *   あるため）。ALREADY_SENT/SEND_UNCONFIRMEDはforce（管理者の明示的な再送）で
+   *   無視できるが、status/paymentMethodの不一致もforceでも無視しない（既存の
+   *   reminderEligibilityCheck_と同じ方針）。
+   * - 支払期限（Booking.computeCardPaymentDueMillis）を過ぎている場合は送信を拒否する
+   *   （Issue #334本文「期限未到来を再検証」）。createdAt/startAtが揃っていない
+   *   （データ不備）場合は期限を計算できないためfail-closedに拒否する。
+   */
+  function evaluatePaymentLinkEligibility_(record, options) {
+    var opts = options || {};
+
+    if (record.status !== Booking.STATUS.PENDING) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.INVALID_STATUS,
+        message: (record.status || '未設定') + ' の予約には決済リンクメールを送信できません（PENDINGのみ対象）。'
+      };
+    }
+    if (!Booking.isCardPaymentMethod(record.paymentMethod)) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.NOT_CARD_PAYMENT,
+        message: '支払方法がオンラインクレジットカードの予約のみ決済リンクを送信できます。'
+      };
+    }
+    if (record.paymentLinkMetadataInconsistentAt) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.METADATA_INCONSISTENT,
+        message: '送信履歴に記録不整合があるため送信できません。Bookingsシート・Recoveryシート（PAYMENT_LINK_METADATA_UPDATE_FAILED）を確認し、Booking Admin予約詳細から送信履歴を補正してください。'
+      };
+    }
+    if (record.paymentLinkSentAt && !opts.force) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.ALREADY_SENT,
+        message: '決済リンクは送信済みです。再送する場合は明示的に再送操作を選んでください。'
+      };
+    }
+    if (record.paymentLinkSendUnconfirmedAt && !opts.force) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.SEND_UNCONFIRMED,
+        message: '前回の送信でメールが届いたか確認できていません。実際の送信状況を確認したうえで、必要であれば明示的に再送してください。'
+      };
+    }
+    if (!record.email) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.EMAIL_MISSING,
+        message: '予約者のメールアドレスが登録されていません。'
+      };
+    }
+    if (!isDateLike_(record.createdAt) || !isDateLike_(record.startAt)) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.PAYMENT_DUE_UNKNOWN,
+        message: '支払期限を計算できないため送信できません（申込日時・利用開始日時を確認してください）。'
+      };
+    }
+    var ttlConfig = BookingConfig.getTtlConfig();
+    var dueMillis = Booking.computeCardPaymentDueMillis(
+      record.createdAt.getTime(),
+      record.startAt.getTime(),
+      ttlConfig.minHoursBeforeStart
+    );
+    var nowMillis = isDateLike_(opts.now) ? opts.now.getTime() : Date.now();
+    if (nowMillis >= dueMillis) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.PAYMENT_DUE_PASSED,
+        message: '支払期限を過ぎているため送信できません。'
+      };
+    }
+
+    return { eligible: true, dueMillis: dueMillis };
+  }
+
+  /*
+   * 決済リンクメール専用の失敗記録（Issue #334 PR-C）。既存のrecordMailFailure_
+   * （lastMailError*・他メール種別と共有）とは書き込み先を分ける（このファイル冒頭の
+   * コメント参照）。Recoveryへの記録は既存と同じ形式（failureType/status/errorMessage/
+   * recoveryState/resolvedAt）を使う。 */
+  function recordPaymentLinkMailFailure_(bookingId, error, status) {
+    var now = new Date();
+    var message = sanitizeErrorMessage_(describeError_(error));
+    try {
+      SpreadsheetRepository.updateBookingFields(bookingId, {
+        paymentLinkLastErrorAt: now,
+        paymentLinkLastErrorMessage: message
+      });
+    } catch (sheetsError) {
+      Logger.log('BookingMailer: paymentLinkLastError更新に失敗しました: ' + sanitizeErrorMessage_(describeError_(sheetsError)));
+    }
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: 'PAYMENT_LINK_MAIL_FAILED',
+        occurredAt: now,
+        status: status,
+        errorMessage: message,
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (recoveryError) {
+      Logger.log('BookingMailer: RecoveryRepository.recordFailure失敗: ' + sanitizeErrorMessage_(describeError_(recoveryError)));
+    }
+  }
+
+  /*
+   * PRレビュー対応（履行未確認の二重送信防止）: MailApp.sendEmailは成功したが、直後の
+   * paymentLinkSentAt記録（二重送信防止の要となる列）の書き込み自体が失敗し、
+   * 「メールが届いている可能性があるが、その履行を記録できていない」状態になった場合の
+   * Recovery記録。既存のrecordPaymentLinkMailFailure_（送信そのものの失敗。lastMailError*
+   * 相当の専用列へ記録）とは意味が異なるため、別関数・別failureTypeとして分離する。
+   */
+  function recordPaymentLinkSendUnconfirmed_(bookingId, status) {
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: 'PAYMENT_LINK_SEND_HISTORY_UPDATE_FAILED',
+        occurredAt: new Date(),
+        status: status,
+        errorMessage: 'MailApp.sendEmailは成功したが、直後のpaymentLinkSentAt（送信履歴）の記録に失敗した。メールが届いている可能性があるため、実際の到達を確認したうえで、必要であれば管理者が明示的に再送すること。',
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (recoveryError) {
+      Logger.log('BookingMailer: RecoveryRepository.recordFailure失敗（決済リンク送信の履行未確認記録）: ' + sanitizeErrorMessage_(describeError_(recoveryError)));
+    }
+  }
+
+  /*
+   * PRレビュー対応（同時再送の競合防止。第2回レビュー対応で拡張）: 管理画面が最後に
+   * 取得した予約詳細のpaymentLinkSendCount・paymentLinkSentAt（=「画面が知っている
+   * 送信履歴のバージョン」）と、Lock取得後に再読込した最新値をそれぞれ比較する。
+   * いずれか一方でも一致しない場合、別タブ・別端末が管理画面を再取得しないうちに先に
+   * 送信（通常送信・明示的な再送のいずれも）を行ったと判断し、古い画面からのこの
+   * リクエストを拒否する。通常送信・明示的な再送（force）のいずれにも適用する
+   * （forceは「送信済みでも送る」ことの許可であり、「古い前提のまま送る」ことの許可
+   * ではないため、forceでもこの競合チェックは無視しない）。
+   *
+   * paymentLinkSentAtも比較する理由（第2回レビュー対応）: sendPaymentLinkMailForBookingは
+   * paymentLinkSentAtを単独で先に書き込み、URL/送信先/paymentLinkSendCount等は2回目の
+   * 呼び出しで書き込む（このファイルの他の箇所のコメント参照）。この2回目の書き込みだけが
+   * 失敗すると、paymentLinkSentAtは新しい送信時刻に更新される一方でpaymentLinkSendCountは
+   * 古い値のまま残る。この状態で、2回目の失敗が起きる**前**の画面（古いpaymentLinkSentAt・
+   * かつ古いpaymentLinkSendCountを見ている）から明示的な再送を行うと、
+   * paymentLinkSendCountだけを比較する版の競合チェックでは一致してしまい
+   * （書き込みが failed のため実際にはcountが変化していないため）、競合を検知できずに
+   * 通過してしまう。paymentLinkSentAtも独立して比較することで、この抜け道を防ぐ。
+   *
+   * expectedSendCount・expectedSentAtVersionはそれぞれ独立に判定する（両方渡された場合は
+   * いずれか一方でも不一致ならSEND_HISTORY_CONFLICTとする）。省略した項目はその項目の
+   * チェック自体を行わない（新しいクライアントのみが検知できる追加の安全策のため、
+   * 省略時に既存挙動を壊さない）。
+   *
+   * expectedSentAtVersion: paymentLinkSentAtの内部表現（Dateのepoch ms。未送信は0）。
+   * Booking Admin画面（getAdminBookingDetailのpaymentLinkSentAtVersion）が返す値を、
+   * クライアントが変換・解釈せずそのまま往復させるだけの内部トークンとして扱う
+   * （表示用の'YYYY-MM-DD HH:mm'文字列は分単位で丸められており、同一分内の複数回の
+   * 書き込みを区別できないため、表示用文字列ではなくミリ秒精度の内部値を使う）。
+   */
+  function checkSendHistoryVersion_(record, expectedSendCount, expectedSentAtVersion) {
+    if (expectedSendCount !== undefined && expectedSendCount !== null) {
+      var actualCount = Number(record.paymentLinkSendCount) || 0;
+      if (Number(expectedSendCount) !== actualCount) {
+        return {
+          ok: false,
+          message: '他の画面から既にこの予約の決済リンクが送信された可能性があります（送信回数が変わっています）。最新の予約詳細を再取得してから、必要であれば改めて操作してください。'
+        };
+      }
+    }
+    if (expectedSentAtVersion !== undefined && expectedSentAtVersion !== null) {
+      var actualSentAtVersion = isDateLike_(record.paymentLinkSentAt) ? record.paymentLinkSentAt.getTime() : 0;
+      if (Number(expectedSentAtVersion) !== actualSentAtVersion) {
+        return {
+          ok: false,
+          message: '他の画面から既にこの予約の決済リンクが送信された可能性があります（送信日時が変わっています）。最新の予約詳細を再取得してから、必要であれば改めて操作してください。'
+        };
+      }
+    }
+    return { ok: true };
+  }
+
+  /*
+   * PRレビュー対応（第2回。送信履歴2回目の書き込み失敗の記録）: MailApp.sendEmailにも
+   * paymentLinkSentAtの単独書き込みにも成功した（＝二重送信防止の要は確定済み）が、
+   * 続くURL・送信先・送信回数（paymentLinkSendCount）等の2回目の書き込みが失敗し、
+   * これらの記録が実際の送信回数より少ない・古いURL/宛先のままになっている可能性がある
+   * 状態のRecovery記録。recordPaymentLinkSendUnconfirmed_（履行そのものが未確認）とは
+   * 意味が異なる（履行は確定している。記録内容の一部が古いだけ）ため、別関数・
+   * 別failureTypeとして分離する。
+   */
+  function recordPaymentLinkMetadataInconsistent_(bookingId, status, intendedSendCount) {
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: 'PAYMENT_LINK_METADATA_UPDATE_FAILED',
+        occurredAt: new Date(),
+        status: status,
+        errorMessage: '決済リンクメールの送信自体・paymentLinkSentAtの記録には成功したが、続くstripePaymentLinkUrl/paymentLinkSentTo/paymentLinkSendCountの更新に失敗した。paymentLinkSendCountは実際より少ない値のまま残っている可能性がある（本来の送信回数: ' + intendedSendCount + '）。Bookingsシートの内容を確認し、必要であれば手動で補正すること。',
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (recoveryError) {
+      Logger.log('BookingMailer: RecoveryRepository.recordFailure失敗（決済リンク送信の記録不整合）: ' + sanitizeErrorMessage_(describeError_(recoveryError)));
+    }
+  }
+
+  /*
+   * 第4回PRレビュー対応: resolvePaymentLinkMetadataInconsistencyの書き込み
+   * （送信回数・URL・送信先の補正・不整合フラグのクリア）のいずれかが実際に
+   * 反映されたことを確認できず、補正の試行自体が完了しなかった場合のRecovery記録。
+   * 既存のOPEN記録（recordPaymentLinkMetadataInconsistent_が書いた
+   * PAYMENT_LINK_METADATA_UPDATE_FAILED。元の送信時点の不整合そのもの）とは別の
+   * failureTypeとして分離し、「補正を試みたが完了しなかった」ことを区別できるように
+   * する。
+   *
+   * 第5回PRレビュー対応: errorMessageは呼び出し元がそのまま渡す（固定テンプレートを
+   * 廃止した）。理由: 「送信回数・URL・送信先の反映を確認できなかった」場合と、
+   * 「これらの反映は確認できたが、続く不整合フラグのクリア操作自体の結果（実際に
+   * クリアされたか）を確認できなかった」場合とで、フラグの状態について言える確実性が
+   * 異なる。前者はフラグのクリアをまだ試みていないため「フラグは維持されている」と
+   * 断定してよいが、後者はクリア操作後の最終的な再取得そのものが失敗しており、
+   * フラグが実際にクリアされたかどうかは不明である（クリア操作自体は成功していた
+   * 可能性がある）。この場合に「フラグは維持されている」と断定した案内を返すと、
+   * 実際の台帳の状態と食い違う可能性があるため、呼び出し元ごとに正確な文面を
+   * 個別に用意する。
+   */
+  function recordPaymentLinkResolveIncomplete_(bookingId, status, errorMessage) {
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: 'PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE',
+        occurredAt: new Date(),
+        status: status,
+        errorMessage: errorMessage,
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (recoveryError) {
+      Logger.log('BookingMailer: RecoveryRepository.recordFailure失敗（決済リンク記録不整合の補正未完了記録）: ' + sanitizeErrorMessage_(describeError_(recoveryError)));
+    }
+  }
+
+  /*
+   * options:
+   *   force（省略可。既定false）: trueの場合、送信済み（paymentLinkSentAtが既にある）・
+   *     履行未確認（paymentLinkSendUnconfirmedAtが既にある）でも送信する。管理者の
+   *     明示的な再送操作からのみ渡すこと（Issue #334本文「再送は履歴と明示的な確認を
+   *     伴う管理者操作に限る」）。status/paymentMethod不一致・期限切れ・
+   *     expectedSendCountの不一致（後述）はforceでも無視しない。
+   *   now（省略可。テスト用）: 期限判定の基準時刻。省略時は現在時刻。
+   *   expectedSendCount（省略可。PRレビュー対応）: 呼び出し元（Booking Admin画面）が
+   *     最後に取得した予約詳細のpaymentLinkSendCount。Lock取得後の最新値と一致しない
+   *     場合はSEND_HISTORY_CONFLICTとして拒否する（checkSendHistoryVersion_参照）。
+   *   expectedSentAtVersion（省略可。第2回レビュー対応）: 呼び出し元が最後に取得した
+   *     予約詳細のpaymentLinkSentAtVersion（epoch ms。未送信は0）。expectedSendCountと
+   *     独立に判定し、いずれか一方でも最新値と一致しなければSEND_HISTORY_CONFLICTとする
+   *     （2回目の書き込みだけが失敗してpaymentLinkSendCountが変化しないケースを、
+   *     expectedSendCountだけの比較では検知できないため。checkSendHistoryVersion_参照）。
+   *
+   * 処理順序: Lock取得 → 最新レコード再読込 → 競合チェック（checkSendHistoryVersion_）→
+   *   事前判定（evaluatePaymentLinkEligibility_） → URL形式検証 → MailApp送信 →
+   *   成功: まずpaymentLinkSentAtのみを単独で更新（二重送信防止の要となる列を
+   *   isolateして書き込み、他フィールドの書き込み失敗に巻き込まれないようにする）→
+   *   その書き込みに成功した場合のみstripePaymentLinkUrl/paymentLinkSentTo/
+   *   paymentLinkSendCount/エラー系列を更新 → Lock解除。
+   * 送信失敗（設定不足・MailApp例外のいずれも）でも予約のstatusは一切変更しない
+   * （Issue #334本文どおり。PENDINGのまま維持し、管理者が原因解消後に再送できる）。
+   *
+   * PRレビュー対応（履行未確認の二重送信防止）: 従来はpaymentLinkSentAtを含む6フィールドを
+   * 1回のupdateBookingFields呼び出しで更新し、その呼び出し全体が失敗した場合は
+   * Loggerへ記録するだけでsuccess:trueを返していた。これには次の問題があった:
+   * - MailApp.sendEmailに成功した直後にSheets書き込みが失敗すると、paymentLinkSentAtが
+   *   空のまま残る。次回、管理者が「通常の送信」ボタン（forceなし）を押すと、
+   *   ALREADY_SENT判定に引っかからずに再送してしまい、二重送信になり得る。
+   * - 失敗が起きたこと自体もBooking Admin側からは分からない（ログのみ）。
+   * そのため、paymentLinkSentAtの書き込みを他のフィールドから分離し、単独で失敗した
+   * 場合は「送信済みかもしれないが未確認」の状態としてpaymentLinkSendUnconfirmedAtへ
+   * 記録し、Recoveryにも記録する。この状態はALREADY_SENTと同じくforceがない限り
+   * 通常送信を拒否する（evaluatePaymentLinkEligibility_のSEND_UNCONFIRMED判定）。
+   * 呼び出し元にはsuccess:falseかつrequiresManualConfirmation:trueを返し、管理者に
+   * 実際の到達確認を促す。
+   */
+  function sendPaymentLinkMailForBooking(bookingId, paymentLinkUrl, options) {
+    var opts = options || {};
+
+    if (!Booking.isValidStripePaymentLinkUrl(paymentLinkUrl)) {
+      return {
+        success: false,
+        error: {
+          code: 'INVALID_PAYMENT_LINK_URL',
+          message: 'Stripeの決済リンクURL（https://buy.stripe.com/で始まる形式）を正しく入力してください。'
+        }
+      };
+    }
+
+    return withLockedBookingRecord_(bookingId, function (record) {
+      var versionCheck = checkSendHistoryVersion_(record, opts.expectedSendCount, opts.expectedSentAtVersion);
+      if (!versionCheck.ok) {
+        return {
+          success: false,
+          skipped: true,
+          bookingId: bookingId,
+          mailType: MAIL_TYPES.PAYMENT_LINK,
+          error: { code: 'SEND_HISTORY_CONFLICT', message: versionCheck.message }
+        };
+      }
+
+      var evaluation = evaluatePaymentLinkEligibility_(record, { force: !!opts.force, now: opts.now });
+      if (!evaluation.eligible) {
+        var reasonCode = evaluation.reasonCode;
+        if (reasonCode === PAYMENT_LINK_REASON_CODES_.ALREADY_SENT) {
+          return { success: true, skipped: true, reason: 'ALREADY_SENT', bookingId: bookingId, mailType: MAIL_TYPES.PAYMENT_LINK };
+        }
+        return {
+          success: false,
+          skipped: true,
+          bookingId: bookingId,
+          mailType: MAIL_TYPES.PAYMENT_LINK,
+          error: { code: reasonCode, message: evaluation.message }
+        };
+      }
+
+      var mailConfig;
+      var mail;
+      try {
+        mailConfig = ensureMailConfigComplete_();
+        /* PRレビュー対応: sendPendingMailForBookingと同じく、支払期限の計算に必要な
+           minHoursBeforeStartをconfig.ttlConfigとして追加で渡す（このコールを忘れると
+           buildPaymentLinkMail側でttlConfig.minHoursBeforeStartがundefinedになり、
+           支払期限が計算できず本文の期限表示が欠落する）。 */
+        mailConfig.ttlConfig = BookingConfig.getTtlConfig();
+        mail = BookingMailTemplates.buildPaymentLinkMail(record, mailConfig, paymentLinkUrl);
+      } catch (buildError) {
+        recordPaymentLinkMailFailure_(bookingId, buildError, record.status);
+        return { success: false, error: { code: 'MAIL_NOT_READY', message: describeError_(buildError) } };
+      }
+
+      try {
+        MailApp.sendEmail({
+          to: record.email,
+          subject: mail.subject,
+          body: mail.body,
+          name: mailConfig.displayName,
+          replyTo: mailConfig.replyTo
+        });
+      } catch (sendError) {
+        recordPaymentLinkMailFailure_(bookingId, sendError, record.status);
+        return { success: false, error: { code: 'MAIL_SEND_FAILED', message: describeError_(sendError) } };
+      }
+
+      var sentAt = new Date();
+
+      /* 二重送信防止の要となる列を単独で更新する。他のフィールド（URL/送信先/送信回数等）と
+         同じ呼び出しにまとめないのは、1回のupdateBookingFields呼び出しが複数フィールドを
+         順に書き込む実装のため、途中のフィールドで例外が起きるとpaymentLinkSentAtの書き込み
+         成否があいまいになるのを避けるため（このファイル冒頭のコメント参照）。 */
+      var criticalWriteFailed = false;
+      try {
+        SpreadsheetRepository.updateBookingFields(bookingId, { paymentLinkSentAt: sentAt });
+      } catch (criticalError) {
+        criticalWriteFailed = true;
+      }
+
+      if (criticalWriteFailed) {
+        try {
+          SpreadsheetRepository.updateBookingFields(bookingId, { paymentLinkSendUnconfirmedAt: sentAt });
+        } catch (fallbackError) {
+          Logger.log('BookingMailer: paymentLinkSendUnconfirmedAtの記録にも失敗しました: ' + sanitizeErrorMessage_(describeError_(fallbackError)));
+        }
+        recordPaymentLinkSendUnconfirmed_(bookingId, record.status);
+        return {
+          success: false,
+          mailSent: true,
+          requiresManualConfirmation: true,
+          bookingId: bookingId,
+          mailType: MAIL_TYPES.PAYMENT_LINK,
+          error: {
+            code: 'PAYMENT_LINK_HISTORY_UPDATE_FAILED',
+            message: 'メールは送信された可能性がありますが、送信履歴の記録に失敗しました。実際に届いているか確認したうえで、必要であれば管理者が明示的に再送してください。'
+          }
+        };
+      }
+
+      var nextSendCount = (Number(record.paymentLinkSendCount) || 0) + 1;
+      var metadataWriteFailed = false;
+      try {
+        /*
+         * 第3回PRレビュー対応: ここではpaymentLinkMetadataInconsistentAtを書き込まない
+         * （クリアしない）。この書き込みに到達する時点で、直前のevaluatePaymentLinkEligibility_
+         * のMETADATA_INCONSISTENT判定により、既にこの列が空であることは保証されている
+         * （空でなければここへ到達する前に拒否されている）ため、通常はクリア操作自体が
+         * 意味を持たない。加えて、「別の送信が成功しただけで不整合フラグをクリアしない」
+         * ことを明示するため、このフィールドをこの書き込みの対象から意図的に外している
+         * （不整合の解消は、専用のresolvePaymentLinkMetadataInconsistencyのみが行う）。
+         */
+        SpreadsheetRepository.updateBookingFields(bookingId, {
+          stripePaymentLinkUrl: paymentLinkUrl,
+          paymentLinkSentTo: record.email,
+          paymentLinkSendCount: nextSendCount,
+          paymentLinkSendUnconfirmedAt: '',
+          paymentLinkLastErrorAt: '',
+          paymentLinkLastErrorMessage: ''
+        });
+      } catch (sheetsError) {
+        /*
+         * PRレビュー対応（第2回）: 二重送信防止の要となるpaymentLinkSentAtは既に
+         * 記録済みのため、二重送信にはつながらない。しかしURL・送信先・送信回数
+         * （paymentLinkSendCount）が更新されないまま残るため、「送信は完了しているが
+         * 送信回数等の記録が実際より少ない・古いままになっている」という記録不整合が
+         * 発生する。単にLoggerへ残すだけでは管理者が気付けないため、
+         * paymentLinkMetadataInconsistentAt（フォールバックの単独書き込み）とRecoveryの
+         * 両方へ記録し、呼び出し元にもmetadataInconsistent:trueで伝える。メール自体を
+         * 自動で再送することはしない（成功済みの送信をここから再試行しない）。
+         * 第3回PRレビュー対応: この不整合フラグは、以後この関数の通常の成功パスでは
+         * 二度とクリアしない（上記の分岐参照）。専用のresolvePaymentLinkMetadataInconsistency
+         * による明示的な補正のみがクリアする。
+         */
+        metadataWriteFailed = true;
+        try {
+          SpreadsheetRepository.updateBookingFields(bookingId, { paymentLinkMetadataInconsistentAt: sentAt });
+        } catch (fallbackError) {
+          Logger.log('BookingMailer: paymentLinkMetadataInconsistentAtの記録にも失敗しました: ' + sanitizeErrorMessage_(describeError_(fallbackError)));
+        }
+        recordPaymentLinkMetadataInconsistent_(bookingId, record.status, nextSendCount);
+        Logger.log('BookingMailer: 決済リンク送信の付随情報（URL/送信先/送信回数/エラー系列のクリア）の更新に失敗しました（送信・二重送信防止用のpaymentLinkSentAtの記録自体は成功済み）: ' + sanitizeErrorMessage_(describeError_(sheetsError)));
+      }
+
+      /* metadataWriteFailedの場合、paymentLinkSendCountは実際には更新されていないため、
+         「送信できた（と管理者が信じてよい）回数」としてsendCountには更新前の実際の値を
+         返す（nextSendCountをそのまま返すと、実際には記録されていない値を成功扱いで
+         伝えてしまう）。管理者へは意図した回数（intendedSendCount）も併せて伝える。 */
+      return {
+        success: true,
+        bookingId: bookingId,
+        mailType: MAIL_TYPES.PAYMENT_LINK,
+        sentAt: sentAt,
+        sentTo: record.email,
+        sendCount: metadataWriteFailed ? (Number(record.paymentLinkSendCount) || 0) : nextSendCount,
+        metadataInconsistent: metadataWriteFailed,
+        intendedSendCount: metadataWriteFailed ? nextSendCount : undefined
+      };
+    });
+  }
+
+  /*
+   * 第3回PRレビュー対応: paymentLinkMetadataInconsistentAtが記録された予約の、
+   * 送信履歴（paymentLinkSendCount）の明示的な補正。管理者がBookingsシート・
+   * Recoveryシート（PAYMENT_LINK_METADATA_UPDATE_FAILED）・実際のメール送信状況を
+   * 確認し、正しい送信回数を確認したうえで呼び出す想定（Booking Admin予約詳細の
+   * 「送信履歴を補正」操作からのみ呼ぶ。既存のconfirmBooking等と同じくメール送信・
+   * Calendar操作は一切行わない、Sheetsの記録のみを補正する関数）。
+   *
+   * 第5回PRレビュー対応: 補正対象をpaymentLinkSendCountのみから、この不整合フラグが
+   * 立つ原因となった書き込み（PAYMENT_LINK_METADATA_UPDATE_FAILED）の対象3項目
+   * すべて（stripePaymentLinkUrl・paymentLinkSentTo・paymentLinkSendCount）へ拡張した。
+   * 以前はpaymentLinkSendCountだけを補正すればフラグをクリアできたため、
+   * stripePaymentLinkUrl・paymentLinkSentToが古いまま（実際に送信したURL・宛先と
+   * 食い違ったまま）でも不整合フラグだけが解除されてしまう設計になっていた。
+   * confirmedUrl・confirmedSentToを新設し、管理者に実際の送信履歴と照合した値を
+   * 明示的に確認・入力してもらったうえで、3項目すべての反映を確認できてからのみ
+   * フラグをクリアする（1項目でも未確認のままフラグだけを解除しない）。
+   *
+   * 対象・操作の限定（Issue #334 PR-C・PR #337レビュー対応）:
+   * - 対象: `paymentLinkMetadataInconsistentAt`が現在記録されている予約のみ
+   *   （空の予約に対しては`NOT_INCONSISTENT`として拒否し、無関係な予約の送信履歴を
+   *   誤って書き換えられないようにする）。
+   * - confirmedSendCountは0以上の整数のみ許可し、**現在記録されているpaymentLinkSendCount
+   *   より小さい値へは補正できない**（`CONFIRMED_SEND_COUNT_TOO_LOW`。記録不整合は
+   *   常に「実際の送信回数を過少に記録する」方向にのみ発生するため、正しい補正は
+   *   現在値以上になるはずであり、それより小さい値の指定は入力ミス・既存履歴の
+   *   意図しない消去である可能性が高いためfail-closedに拒否する）。
+   * - confirmedUrl（第5回対応で追加）は`Booking.isValidStripePaymentLinkUrl`による
+   *   検証（送信時と同じ正規表現・trimなしのfail-closedな検証）を通らなければ
+   *   `INVALID_CONFIRMED_URL`として拒否する。
+   * - confirmedSentTo（第5回対応で追加）は`Booking.isValidEmail`（予約作成時の
+   *   メールアドレス検証と同じ形式検証）を通らなければ`INVALID_CONFIRMED_SENT_TO`
+   *   として拒否する。
+   * - 操作権限: Booking Adminプロジェクトは「Execute as: Me / Who has access:
+   *   Only myself」で運用する前提（README「Booking Admin Web UI」参照）であり、
+   *   この関数もBooking Adminプロジェクト内でのみ公開する（Booking Web Appには
+   *   追加しない）。追加の権限チェックは設けていない。
+   * - 確認手順: 実行前の内容確認（現在の送信回数・URL・送信先の表示、補正後の値の
+   *   表示・確認）はHTML側（クライアント）のwindow.prompt/window.confirmで行う
+   *   （他の管理操作と同じ方針）。
+   *
+   * 補正に成功すると、paymentLinkMetadataInconsistentAtを空へ戻し、送信を再び
+   * 許可する（evaluatePaymentLinkEligibility_のMETADATA_INCONSISTENT判定を通過する
+   * ようになる）。補正の実施自体をRecoveryへ`recoveryState: 'RESOLVED'`として
+   * 記録する（既存のOPEN記録＝`recordPaymentLinkMetadataInconsistent_`が書いた行は
+   * 運用者が手動でrecoveryState/resolvedAtを記録する既存方針のまま変更しない。
+   * このRESOLVED行は補正の実施そのものを示す別の記録）。
+   *
+   * 第4回PRレビュー対応（この関数自体の部分失敗対策）: 補正対象の書き込みと不整合
+   * フラグのクリアを、以前は1回のupdateBookingFields呼び出しにまとめて渡していた。
+   * updateBookingFieldsは渡されたフィールドを内部でループして1つずつ書き込む実装の
+   * ため、途中の書き込みだけが失敗すると「補正が反映されていないのに、不整合フラグ
+   * だけが先に（またはたまたま）クリアされてしまう」おそれがあった。これは「送信
+   * 成功だけでフラグをクリアしない」という第3回対応の趣旨に反する（食い違いを隠す
+   * 方向の失敗になるため）。そのため次のように書き込みを分離し、「実際に保存された
+   * ことを確認してから次へ進む」よう変更した:
+   *   1. stripePaymentLinkUrl・paymentLinkSentTo・paymentLinkSendCountの3項目を
+   *      まとめて更新する（不整合フラグはまだ触らない）。
+   *   2. 最新レコードを再取得し、3項目すべてが確認済みの値どおりに反映された
+   *      ことを検証する（try/catchで例外を検知した場合だけでなく、例外が起きなかった
+   *      場合も同様に再取得して検証する。Sheets側が例外を投げずに書き込みに失敗する
+   *      可能性もゼロではないため、例外の有無だけを信用しない）。1項目でも反映を
+   *      確認できない場合は`RESOLVE_FIELDS_NOT_CONFIRMED`として失敗を返し、不整合
+   *      フラグは維持したまま（この時点ではまだクリア操作自体を行っていないため、
+   *      「フラグは維持されている」と断定してよい）Recoveryへ
+   *      `PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`（OPEN）を記録する。
+   *   3. 3項目すべての反映を確認できてから、paymentLinkMetadataInconsistentAtのみを
+   *      単独で空へ更新する。
+   *   4. 再度最新レコードを再取得する。
+   *      - 再取得自体が失敗した場合（第5回対応）: クリア操作自体は成功していた可能性
+   *        があり、フラグが実際にクリアされたかどうかは**不明**である。「フラグは
+   *        維持されている」と断定せず、`RESOLVE_RESULT_UNKNOWN`として失敗を返し、
+   *        Bookingsシートを直接確認するよう案内する（3項目の補正自体は1.2.で確認済み
+   *        であるため、その旨も併せて伝える）。
+   *      - 再取得に成功したがフラグがまだ空になっていない場合: 確実に未解消のため
+   *        `RESOLVE_FLAG_CLEAR_NOT_CONFIRMED`として失敗を返す。
+   *      - いずれの場合も`PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`をRecoveryへ記録する。
+   * `PAYMENT_LINK_METADATA_RESOLVED`（成功）を記録するのは、再取得によりフラグが
+   * 実際に空になったことを確認できた場合のみ。
+   */
+  function resolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo) {
+    return withLockedBookingRecord_(bookingId, function (record) {
+      if (!record.paymentLinkMetadataInconsistentAt) {
+        return {
+          success: false,
+          error: { code: 'NOT_INCONSISTENT', message: 'この予約は送信履歴の記録不整合の状態ではありません。' }
+        };
+      }
+
+      var currentCount = Number(record.paymentLinkSendCount) || 0;
+      var confirmed = Number(confirmedSendCount);
+      if (!isFinite(confirmed) || Math.floor(confirmed) !== confirmed || confirmed < 0) {
+        return {
+          success: false,
+          error: { code: 'INVALID_CONFIRMED_SEND_COUNT', message: '送信回数は0以上の整数で指定してください。' }
+        };
+      }
+      if (confirmed < currentCount) {
+        return {
+          success: false,
+          error: {
+            code: 'CONFIRMED_SEND_COUNT_TOO_LOW',
+            message: '送信回数は現在の記録（' + currentCount + '回）より小さい値へは補正できません（既存の送信履歴を誤って消してしまうことを防ぐため）。'
+          }
+        };
+      }
+      if (!Booking.isValidStripePaymentLinkUrl(confirmedUrl)) {
+        return {
+          success: false,
+          error: { code: 'INVALID_CONFIRMED_URL', message: 'Stripeの決済リンクURL（https://buy.stripe.com/で始まる形式）を正しく入力してください。' }
+        };
+      }
+      if (!Booking.isValidEmail(confirmedSentTo)) {
+        return {
+          success: false,
+          error: { code: 'INVALID_CONFIRMED_SENT_TO', message: '送信先メールアドレスを正しい形式で入力してください。' }
+        };
+      }
+
+      var now = new Date();
+      var summary = '送信回数: ' + currentCount + '回→' + confirmed + '回、URL: ' + confirmedUrl + '、送信先: ' + confirmedSentTo;
+
+      /* Step 1: stripePaymentLinkUrl・paymentLinkSentTo・paymentLinkSendCountの3項目を
+         まとめて更新する（不整合フラグはまだ触らない）。例外が起きても、実際に反映
+         されたかどうかはStep 2の再取得で判定するため、ここでは即時returnしない
+         （例外の有無だけを信用しない）。 */
+      try {
+        SpreadsheetRepository.updateBookingFields(bookingId, {
+          stripePaymentLinkUrl: confirmedUrl,
+          paymentLinkSentTo: confirmedSentTo,
+          paymentLinkSendCount: confirmed
+        });
+      } catch (fieldsWriteError) {
+        Logger.log('BookingMailer: resolvePaymentLinkMetadataInconsistency Step1（URL/送信先/送信回数の更新）で例外: ' + sanitizeErrorMessage_(describeError_(fieldsWriteError)));
+      }
+
+      /* Step 2: 実際に反映されたかを再取得して検証する。3項目のうち1つでも一致しなければ
+         未確認として扱う（この時点ではまだ不整合フラグのクリアを試みていないため、
+         フラグが維持されていることは確実に言える）。 */
+      var afterFieldsWrite;
+      try {
+        afterFieldsWrite = SpreadsheetRepository.findRowByBookingId(bookingId);
+      } catch (refetchError) {
+        Logger.log('BookingMailer: resolvePaymentLinkMetadataInconsistency Step2（再取得）で例外: ' + sanitizeErrorMessage_(describeError_(refetchError)));
+      }
+      var fieldsConfirmed = !!afterFieldsWrite &&
+        afterFieldsWrite.record.stripePaymentLinkUrl === confirmedUrl &&
+        afterFieldsWrite.record.paymentLinkSentTo === confirmedSentTo &&
+        Number(afterFieldsWrite.record.paymentLinkSendCount) === confirmed;
+      if (!fieldsConfirmed) {
+        var fieldsIncompleteMessage = '管理者による決済リンク送信履歴の補正（' + summary + '）のうち、URL・送信先・送信回数のいずれかが実際に保存されたことを確認できませんでした。記録不整合フラグはまだクリア操作を行っていないため維持されており、送信は引き続き拒否されます。Bookingsシート・Recoveryシートを確認し、必要であれば補正を再試行してください。';
+        recordPaymentLinkResolveIncomplete_(bookingId, record.status, fieldsIncompleteMessage);
+        return {
+          success: false,
+          requiresManualConfirmation: true,
+          bookingId: bookingId,
+          error: { code: 'RESOLVE_FIELDS_NOT_CONFIRMED', message: fieldsIncompleteMessage }
+        };
+      }
+
+      /* Step 3: URL・送信先・送信回数の反映を確認できてから、不整合フラグを単独で
+         空へ更新する。 */
+      try {
+        SpreadsheetRepository.updateBookingFields(bookingId, { paymentLinkMetadataInconsistentAt: '' });
+      } catch (clearError) {
+        Logger.log('BookingMailer: resolvePaymentLinkMetadataInconsistency Step3（paymentLinkMetadataInconsistentAtクリア）で例外: ' + sanitizeErrorMessage_(describeError_(clearError)));
+      }
+
+      /* Step 4: フラグが実際に空になったことを再取得して検証する。
+         第5回PRレビュー対応: この再取得自体が失敗した場合、クリア操作（Step 3）が
+         実際には成功していた可能性があり、フラグが今どちらの状態かを確定できない。
+         「フラグは維持されている」と断定せず、確認不能であることを明示する
+         （RESOLVE_RESULT_UNKNOWN）。再取得に成功した場合のみ、その内容を根拠に
+         成功・未解消のいずれかを確定的に判定する。 */
+      var afterClear;
+      var finalRefetchFailed = false;
+      try {
+        afterClear = SpreadsheetRepository.findRowByBookingId(bookingId);
+      } catch (finalRefetchError) {
+        finalRefetchFailed = true;
+        Logger.log('BookingMailer: resolvePaymentLinkMetadataInconsistency Step4（再取得）で例外: ' + sanitizeErrorMessage_(describeError_(finalRefetchError)));
+      }
+
+      if (finalRefetchFailed || !afterClear) {
+        var unknownMessage = '管理者による決済リンク送信履歴の補正（' + summary + '）のうち、URL・送信先・送信回数の保存は確認できましたが、続く記録不整合フラグのクリア操作の結果を確認できませんでした（Bookingsシートの再取得に失敗）。クリア操作自体は成功していた可能性があり、フラグが実際にクリアされているかどうかは不明です。Bookingsシートの`paymentLinkMetadataInconsistentAt`列を直接確認し、必要な対応を行ってください。';
+        recordPaymentLinkResolveIncomplete_(bookingId, record.status, unknownMessage);
+        return {
+          success: false,
+          requiresManualConfirmation: true,
+          bookingId: bookingId,
+          paymentLinkSendCount: confirmed,
+          stripePaymentLinkUrl: confirmedUrl,
+          paymentLinkSentTo: confirmedSentTo,
+          error: { code: 'RESOLVE_RESULT_UNKNOWN', message: unknownMessage }
+        };
+      }
+
+      if (afterClear.record.paymentLinkMetadataInconsistentAt) {
+        var flagStillSetMessage = '管理者による決済リンク送信履歴の補正（' + summary + '）のうち、URL・送信先・送信回数の保存は確認できましたが、続く記録不整合フラグのクリアが実際に保存されたことを確認できませんでした。フラグは維持されており、送信は引き続き拒否されます。Bookingsシート・Recoveryシートを確認し、必要であれば補正を再試行してください。';
+        recordPaymentLinkResolveIncomplete_(bookingId, record.status, flagStillSetMessage);
+        return {
+          success: false,
+          requiresManualConfirmation: true,
+          bookingId: bookingId,
+          paymentLinkSendCount: confirmed,
+          stripePaymentLinkUrl: confirmedUrl,
+          paymentLinkSentTo: confirmedSentTo,
+          error: { code: 'RESOLVE_FLAG_CLEAR_NOT_CONFIRMED', message: flagStillSetMessage }
+        };
+      }
+
+      try {
+        RecoveryRepository.recordFailure({
+          bookingId: bookingId,
+          failureType: 'PAYMENT_LINK_METADATA_RESOLVED',
+          occurredAt: now,
+          status: record.status,
+          errorMessage: '管理者が決済リンクの送信履歴を手動補正し、記録不整合を解消した（' + summary + '）。',
+          recoveryState: 'RESOLVED',
+          resolvedAt: now
+        });
+      } catch (recoveryError) {
+        Logger.log('BookingMailer: RecoveryRepository.recordFailure失敗（決済リンク記録不整合の解消記録）: ' + sanitizeErrorMessage_(describeError_(recoveryError)));
+      }
+
+      return {
+        success: true,
+        bookingId: bookingId,
+        paymentLinkSendCount: confirmed,
+        stripePaymentLinkUrl: confirmedUrl,
+        paymentLinkSentTo: confirmedSentTo
+      };
+    });
+  }
+
   return {
     MAIL_TYPES: MAIL_TYPES,
     sendPendingMailForBooking: sendPendingMailForBooking,
@@ -580,6 +1316,8 @@ var BookingMailer = (function () {
     sendCancelledMailForBooking: sendCancelledMailForBooking,
     sendExpiredMailForBooking: sendExpiredMailForBooking,
     sendReminderMailForBooking: sendReminderMailForBooking,
+    sendPaymentLinkMailForBooking: sendPaymentLinkMailForBooking,
+    resolvePaymentLinkMetadataInconsistency: resolvePaymentLinkMetadataInconsistency,
     /* BookingRepository.gs等、利用者メール経路の他ファイルからも同じredaction方針で
        Loggerへ出力できるよう公開する（PRレビュー対応）。 */
     sanitizeErrorMessage: sanitizeErrorMessage_,

@@ -224,6 +224,68 @@ test('buildExpiredMail: キーボックス番号・解錠コードを一切含�
   assert.strictEqual(templates.buildExpiredMail.length, 2);
 });
 
+/*
+ * buildPaymentLinkMail（Issue #334 PR-C: Booking AdminからのStripe決済リンク送信）。
+ * 管理者キャンセル・仮受付・確定・失効通知のいずれのテンプレートも流用しない専用テンプレート。
+ */
+var SAMPLE_PAYMENT_LINK_URL = 'https://buy.stripe.com/test_ABC123';
+
+test('buildPaymentLinkMail: 予約者名/予約ID/利用日・開始・終了時刻/決済リンク/問い合わせ先を含む', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ paymentMethod: 'オンラインクレジットカード' });
+  var mail = templates.buildPaymentLinkMail(record, CONFIG, SAMPLE_PAYMENT_LINK_URL);
+  assert.match(mail.body, /山田太郎/);
+  assert.match(mail.body, /SX-20261001-AAAAAAAA/);
+  assert.match(mail.body, /利用日: 2026-10-01（木）/);
+  assert.match(mail.body, /10:00/);
+  assert.match(mail.body, /12:00/);
+  assert.match(mail.body, new RegExp(SAMPLE_PAYMENT_LINK_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(mail.body, /contact@example\.com/);
+});
+
+test('buildPaymentLinkMail: 実際の支払期限日時（Booking.computeCardPaymentDueMillis）を、Booking Admin表示・仮受付メールと同じ計算式で含む', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({
+    paymentMethod: 'オンラインクレジットカード',
+    createdAt: new Date('2026-09-28T10:00:00+09:00'),
+    startAt: new Date('2026-10-05T10:00:00+09:00')
+  });
+  var config = Object.assign({}, CONFIG, { ttlConfig: { minHoursBeforeStart: 2 } });
+  var mail = templates.buildPaymentLinkMail(record, config, SAMPLE_PAYMENT_LINK_URL);
+  /* createdAt+72h = 2026-10-01 10:00（buildPendingMailの同条件テストと同じ計算結果）。 */
+  assert.match(mail.body, /お支払い期限: 2026-10-01（木） 10:00/);
+});
+
+test('buildPaymentLinkMail: 期限内の支払い・確定連絡待ちの旨、および支払い済みで失効した場合は二重決済・再申し込みをせず運営へ連絡する旨を含む', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ paymentMethod: 'オンラインクレジットカード' });
+  var mail = templates.buildPaymentLinkMail(record, CONFIG, SAMPLE_PAYMENT_LINK_URL);
+  assert.match(mail.body, /期限までにお支払いのうえ、予約確定のご連絡をお待ちください/);
+  assert.match(mail.body, /このメールの送信のみでは予約は確定しておりません/);
+  assert.match(mail.body, /自動的に失効/);
+  assert.match(mail.body, /二重のお支払いをせず/);
+});
+
+test('buildPaymentLinkMail: 料金を一切表示しない（Bookings台帳に確定料金列がないため）', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ paymentMethod: 'オンラインクレジットカード' });
+  var mail = templates.buildPaymentLinkMail(record, CONFIG, SAMPLE_PAYMENT_LINK_URL);
+  assert.strictEqual(mail.body.indexOf('料金'), -1);
+  assert.strictEqual(mail.body.indexOf('円'), -1);
+});
+
+test('buildPaymentLinkMail: createdAt/startAtが欠けている場合も例外を投げず、期限なしの文言で案内する', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({ paymentMethod: 'オンラインクレジットカード', createdAt: undefined });
+  var mail = templates.buildPaymentLinkMail(record, CONFIG, SAMPLE_PAYMENT_LINK_URL);
+  assert.match(mail.body, /お問い合わせください/);
+});
+
+test('buildPaymentLinkMail: キーボックス番号・解錠コードを一切含まない（accessGuideを引数に取らない構造。他の利用者向けテンプレートと同方針）', function () {
+  var templates = loadTemplates();
+  assert.strictEqual(templates.buildPaymentLinkMail.length, 3, 'buildPaymentLinkMailはrecord/config/paymentLinkUrlの3引数のみを取る');
+});
+
 test('buildReminderMail: 「明日」の案内であることが分かり、来場方法一式を含む', function () {
   var templates = loadTemplates();
   var mail = templates.buildReminderMail(sampleRecord(), CONFIG, DUMMY_ACCESS_GUIDE);
