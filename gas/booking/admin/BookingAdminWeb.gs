@@ -283,11 +283,12 @@ function adminSendCardPaymentLink(bookingId, paymentLinkUrl, force, expectedSend
 }
 
 /*
- * 送信履歴の記録不整合の補正（第3回PRレビュー対応）。既存の正式関数
- * resolveCardPaymentLinkMetadataInconsistency（BookingAdmin.gs）へそのまま委譲する。
- * 業務ロジック（対象の限定・補正値の検証・Recovery記録）はコピーしない。実行前の
- * 内容確認（現在の送信回数・補正後の送信回数の表示）はHTML側（クライアント）で行う。
+ * 送信履歴の記録不整合の補正（第3回PRレビュー対応。confirmedUrl/confirmedSentToは
+ * 第5回PRレビュー対応で追加）。既存の正式関数resolveCardPaymentLinkMetadataInconsistency
+ * （BookingAdmin.gs）へそのまま委譲する。業務ロジック（対象の限定・補正値の検証・
+ * Recovery記録）はコピーしない。実行前の内容確認（現在の送信回数・URL・送信先の表示、
+ * 補正後の値の表示）はHTML側（クライアント）で行う。
  */
-function adminResolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount) {
-  return resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount);
+function adminResolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo) {
+  return resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo);
 }

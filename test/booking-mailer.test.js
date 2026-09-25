@@ -457,6 +457,14 @@ test('sendExpiredMailForBooking: force:trueならexpiredMailSentAtが既にあ�
 
 var SAMPLE_PAYMENT_LINK_URL = 'https://buy.stripe.com/test_ABC123';
 
+/* resolvePaymentLinkMetadataInconsistency（第5回PRレビュー対応）が確認済みの補正値
+   として渡すStripe URL・送信先メールアドレス。実際に送信したURL・宛先を管理者が
+   確認したうえで入力する値を想定し、記録済みのSAMPLE_PAYMENT_LINK_URL・
+   予約者メールアドレス（'taro@example.com'）とは別の値にしている（補正操作が実際に
+   これらの値へ書き換えることをテストで確認できるようにするため）。 */
+var CONFIRMED_PAYMENT_LINK_URL = 'https://buy.stripe.com/test_CONFIRMED456';
+var CONFIRMED_SENT_TO = 'confirmed-sent-to@example.com';
+
 /* seedBookingの既定createdAt=2026-09-30T10:00+09:00・startAt=2026-10-01T10:00+09:00の場合、
    支払期限(computeCardPaymentDueMillis)は2026-10-01 08:00になる（buildPendingMailの
    カード案内テストと同じ計算）。期限判定を実行時刻に依存させないため、各テストでは
@@ -954,9 +962,10 @@ test('sendPaymentLinkMailForBooking: paymentLinkMetadataInconsistentAtが記録�
 });
 
 /*
- * resolvePaymentLinkMetadataInconsistency（送信履歴の補正）。
+ * resolvePaymentLinkMetadataInconsistency（送信履歴の補正。第5回PRレビュー対応で
+ * confirmedUrl・confirmedSentToを追加）。
  */
-test('resolvePaymentLinkMetadataInconsistency: 記録不整合の予約に対し、確認済みの送信回数へ補正し、paymentLinkMetadataInconsistentAtをクリアして送信を再び許可する', function () {
+test('resolvePaymentLinkMetadataInconsistency: 記録不整合の予約に対し、確認済みの送信回数・URL・送信先へ補正し、paymentLinkMetadataInconsistentAtをクリアして送信を再び許可する', function () {
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
   var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
@@ -967,15 +976,23 @@ test('resolvePaymentLinkMetadataInconsistency: 記録不整合の予約に対し
   var beforeResolve = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
   assert.ok(beforeResolve.paymentLinkMetadataInconsistentAt, '前提: 記録不整合が発生しているべき');
   assert.strictEqual(Number(beforeResolve.paymentLinkSendCount) || 0, 0);
+  assert.strictEqual(beforeResolve.stripePaymentLinkUrl, '', '前提: 2回目の書き込みが失敗しているためURLも記録されていないべき');
+  assert.strictEqual(beforeResolve.paymentLinkSentTo, '', '前提: 2回目の書き込みが失敗しているため送信先も記録されていないべき');
 
-  /* 管理者が実際の送信状況を確認し、本来の送信回数（1回）を確認済みとして補正する。 */
-  var resolveResult = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 1);
+  /* 管理者が実際の送信状況（送信回数・実際に送信したURL・宛先）を確認し、補正する。 */
+  var resolveResult = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(
+    bookingId, 1, CONFIRMED_PAYMENT_LINK_URL, CONFIRMED_SENT_TO
+  );
   assert.strictEqual(resolveResult.success, true, JSON.stringify(resolveResult));
   assert.strictEqual(resolveResult.paymentLinkSendCount, 1);
+  assert.strictEqual(resolveResult.stripePaymentLinkUrl, CONFIRMED_PAYMENT_LINK_URL);
+  assert.strictEqual(resolveResult.paymentLinkSentTo, CONFIRMED_SENT_TO);
 
   var afterResolve = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
   assert.strictEqual(Number(afterResolve.paymentLinkSendCount) || 0, 1);
-  assert.ok(!afterResolve.paymentLinkMetadataInconsistentAt, '補正後は不整合フラグがクリアされるべき');
+  assert.strictEqual(afterResolve.stripePaymentLinkUrl, CONFIRMED_PAYMENT_LINK_URL, 'URLも確認済みの値へ補正されるべき');
+  assert.strictEqual(afterResolve.paymentLinkSentTo, CONFIRMED_SENT_TO, '送信先も確認済みの値へ補正されるべき');
+  assert.ok(!afterResolve.paymentLinkMetadataInconsistentAt, '3項目すべての補正を確認できたので不整合フラグがクリアされるべき');
 
   var resolvedRecoveries = ctx.sandbox.RecoveryRepository.listAll().filter(function (r) {
     return r.bookingId === bookingId && r.failureType === 'PAYMENT_LINK_METADATA_RESOLVED';
@@ -996,7 +1013,7 @@ test('resolvePaymentLinkMetadataInconsistency: 記録不整合ではない予約
   var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES });
   var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
 
-  var result = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 5);
+  var result = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 5, CONFIRMED_PAYMENT_LINK_URL, CONFIRMED_SENT_TO);
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'NOT_INCONSISTENT');
 
@@ -1013,7 +1030,7 @@ test('resolvePaymentLinkMetadataInconsistency: 補正値が現在の記録より
     paymentLinkMetadataInconsistentAt: new Date('2026-10-01T10:00:00+09:00')
   });
 
-  var result = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 2);
+  var result = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 2, CONFIRMED_PAYMENT_LINK_URL, CONFIRMED_SENT_TO);
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'CONFIRMED_SEND_COUNT_TOO_LOW');
 
@@ -1031,27 +1048,83 @@ test('resolvePaymentLinkMetadataInconsistency: 補正値が0以上の整数で�
   });
 
   [-1, 1.5, NaN, 'abc'].forEach(function (invalidValue) {
-    var result = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, invalidValue);
+    var result = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, invalidValue, CONFIRMED_PAYMENT_LINK_URL, CONFIRMED_SENT_TO);
     assert.strictEqual(result.success, false, JSON.stringify(invalidValue));
     assert.strictEqual(result.error.code, 'INVALID_CONFIRMED_SEND_COUNT', JSON.stringify(invalidValue));
   });
 });
 
 /*
- * 第4回PRレビュー対応: resolvePaymentLinkMetadataInconsistency自体が、送信回数の補正と
+ * 第5回PRレビュー対応: 補正対象がpaymentLinkSendCountだけでは不十分で、この不整合フラグの
+ * 原因となった書き込みが対象とするstripePaymentLinkUrl・paymentLinkSentToも補正・確認
+ * できなければ、URL・送信先が古いままフラグだけが解除されてしまう。confirmedUrl・
+ * confirmedSentToの形式検証を追加した。
+ */
+test('resolvePaymentLinkMetadataInconsistency: confirmedUrlがStripe決済リンクURLの形式でない場合はINVALID_CONFIRMED_URLで拒否し、既存の記録を書き換えない', function () {
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    paymentMethod: 'オンラインクレジットカード',
+    stripePaymentLinkUrl: SAMPLE_PAYMENT_LINK_URL,
+    paymentLinkSentTo: 'taro@example.com',
+    paymentLinkSendCount: 1,
+    paymentLinkMetadataInconsistentAt: new Date('2026-10-01T10:00:00+09:00')
+  });
+
+  ['not-a-url', 'https://example.com/not-stripe', ' ' + CONFIRMED_PAYMENT_LINK_URL, ''].forEach(function (invalidUrl) {
+    var result = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 1, invalidUrl, CONFIRMED_SENT_TO);
+    assert.strictEqual(result.success, false, JSON.stringify(invalidUrl));
+    assert.strictEqual(result.error.code, 'INVALID_CONFIRMED_URL', JSON.stringify(invalidUrl));
+  });
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(found.stripePaymentLinkUrl, SAMPLE_PAYMENT_LINK_URL, '拒否された場合は既存のURLを書き換えない');
+  assert.ok(found.paymentLinkMetadataInconsistentAt, '拒否された場合は不整合フラグもクリアしない');
+});
+
+test('resolvePaymentLinkMetadataInconsistency: confirmedSentToがメールアドレスの形式でない場合はINVALID_CONFIRMED_SENT_TOで拒否し、既存の記録を書き換えない', function () {
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    paymentMethod: 'オンラインクレジットカード',
+    stripePaymentLinkUrl: SAMPLE_PAYMENT_LINK_URL,
+    paymentLinkSentTo: 'taro@example.com',
+    paymentLinkSendCount: 1,
+    paymentLinkMetadataInconsistentAt: new Date('2026-10-01T10:00:00+09:00')
+  });
+
+  ['not-an-email', 'missing-domain@', ' ' + CONFIRMED_SENT_TO, ''].forEach(function (invalidSentTo) {
+    var result = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 1, CONFIRMED_PAYMENT_LINK_URL, invalidSentTo);
+    assert.strictEqual(result.success, false, JSON.stringify(invalidSentTo));
+    assert.strictEqual(result.error.code, 'INVALID_CONFIRMED_SENT_TO', JSON.stringify(invalidSentTo));
+  });
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(found.paymentLinkSentTo, 'taro@example.com', '拒否された場合は既存の送信先を書き換えない');
+  assert.ok(found.paymentLinkMetadataInconsistentAt, '拒否された場合は不整合フラグもクリアしない');
+});
+
+/*
+ * 第4回PRレビュー対応: resolvePaymentLinkMetadataInconsistency自体が、補正対象の書き込みと
  * 不整合フラグのクリアという2つの書き込みを1回のupdateBookingFields呼び出しに
- * まとめていたため、片方だけが失敗すると「送信回数の補正が反映されていないのに
- * フラグだけがクリアされる」おそれがあった。以下のスタブは、送信回数の更新・
- * フラグのクリアのそれぞれを単独で狙って失敗させる（resolvePaymentLinkMetadataInconsistencyが
+ * まとめていたため、片方だけが失敗すると「補正が反映されていないのにフラグだけが
+ * クリアされる」おそれがあった。以下のスタブは、補正対象（URL/送信先/送信回数の3項目）
+ * の更新・フラグのクリアのそれぞれを単独で狙って失敗させる（resolvePaymentLinkMetadataInconsistencyが
  * この2つを別々のupdateBookingFields呼び出しに分離した場合のみ、それぞれを個別に
  * 制御できる）。
  */
-function stubResolveSendCountWriteFailure_(ctx) {
+function isFieldsCorrectionCall_(fields) {
+  var keys = Object.keys(fields);
+  return keys.indexOf('stripePaymentLinkUrl') !== -1 &&
+    keys.indexOf('paymentLinkSentTo') !== -1 &&
+    keys.indexOf('paymentLinkSendCount') !== -1;
+}
+
+function stubResolveFieldsWriteFailure_(ctx) {
   var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
   ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
-    var keys = Object.keys(fields);
-    if (keys.length === 1 && keys[0] === 'paymentLinkSendCount') {
-      throw new Error('simulated Sheets outage while writing corrected paymentLinkSendCount');
+    if (isFieldsCorrectionCall_(fields)) {
+      throw new Error('simulated Sheets outage while writing corrected stripePaymentLinkUrl/paymentLinkSentTo/paymentLinkSendCount');
     }
     return original(id, fields);
   };
@@ -1062,11 +1135,10 @@ function stubResolveSendCountWriteFailure_(ctx) {
 
 /* 例外を投げずに「書き込んだつもりだが実際には反映されない」silentな失敗を再現する
    （try/catchの成否だけでなく、再取得による検証が必要であることを確認するため）。 */
-function stubResolveSendCountSilentFailure_(ctx) {
+function stubResolveFieldsSilentFailure_(ctx) {
   var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
   ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
-    var keys = Object.keys(fields);
-    if (keys.length === 1 && keys[0] === 'paymentLinkSendCount') {
+    if (isFieldsCorrectionCall_(fields)) {
       return id;
     }
     return original(id, fields);
@@ -1090,7 +1162,59 @@ function stubResolveFlagClearWriteFailure_(ctx) {
   };
 }
 
-test('resolvePaymentLinkMetadataInconsistency: 送信回数の補正書き込みが例外で失敗した場合、RESOLVE_SEND_COUNT_NOT_CONFIRMEDを返し不整合フラグを維持したままRecoveryへ記録する（フラグが送信回数の補正未反映のまま誤って解除されない）', function () {
+/*
+ * 第5回PRレビュー対応: URL・送信先・送信回数の3項目のうち1項目（ここではpaymentLinkSendCount）
+ * だけの書き込みが失敗するケースを再現する。updateBookingFieldsは渡されたフィールドを
+ * 内部でループして1つずつ書き込む実装のため、複数フィールドを1回の呼び出しに渡した場合、
+ * 途中の1項目だけが失敗し他の項目は実際に書き込まれる、という部分的な失敗が起こり得る
+ * （このファイルの他のスタブ（stubMetadataWriteFailure_等）は呼び出し全体を即座に失敗させる
+ * だけなので、この「一部の項目だけが古いまま」という状態は再現できない）。
+ */
+function stubResolveFieldsPartialWriteFailure_(ctx, failOnKey) {
+  var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (!isFieldsCorrectionCall_(fields)) {
+      return original(id, fields);
+    }
+    var keys = Object.keys(fields);
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      if (key === failOnKey) {
+        throw new Error('simulated partial write failure while writing: ' + key);
+      }
+      var singleKeyFields = {};
+      singleKeyFields[key] = fields[key];
+      original(id, singleKeyFields);
+    }
+    return id;
+  };
+  return function restore() {
+    ctx.sandbox.SpreadsheetRepository.updateBookingFields = original;
+  };
+}
+
+/*
+ * 第5回PRレビュー対応: 不整合フラグのクリア操作（Step 3のupdateBookingFields）自体は
+ * 実際に成功するが、その直後の最終確認の再取得（Step 4のfindRowByBookingId）だけが
+ * 失敗するケースを再現する。呼び出し回数ではなく「フラグが実際に空になった直後の
+ * 読み取りかどうか」で判定するため、内部の呼び出し順序（updateBookingFields自体も
+ * 内部でfindRowByBookingIdを呼ぶ）が変わっても、意図した箇所だけを狙って失敗させられる。
+ */
+function stubFinalRefetchFailureAfterFlagCleared_(ctx) {
+  var original = ctx.sandbox.SpreadsheetRepository.findRowByBookingId;
+  ctx.sandbox.SpreadsheetRepository.findRowByBookingId = function (id) {
+    var found = original(id);
+    if (found && !found.record.paymentLinkMetadataInconsistentAt) {
+      throw new Error('simulated Sheets outage while re-fetching right after clearing paymentLinkMetadataInconsistentAt');
+    }
+    return found;
+  };
+  return function restore() {
+    ctx.sandbox.SpreadsheetRepository.findRowByBookingId = original;
+  };
+}
+
+test('resolvePaymentLinkMetadataInconsistency: URL・送信先・送信回数の補正書き込みが例外で失敗した場合、RESOLVE_FIELDS_NOT_CONFIRMEDを返し不整合フラグを維持したままRecoveryへ記録する（補正が未反映のままフラグが誤って解除されない）', function () {
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
   var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
@@ -1101,17 +1225,18 @@ test('resolvePaymentLinkMetadataInconsistency: 送信回数の補正書き込み
   var beforeResolve = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
   assert.ok(beforeResolve.paymentLinkMetadataInconsistentAt, '前提: 記録不整合が発生しているべき');
 
-  var restoreResolveFailure = stubResolveSendCountWriteFailure_(ctx);
-  var resolveResult = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 1);
+  var restoreResolveFailure = stubResolveFieldsWriteFailure_(ctx);
+  var resolveResult = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 1, CONFIRMED_PAYMENT_LINK_URL, CONFIRMED_SENT_TO);
   restoreResolveFailure();
 
   assert.strictEqual(resolveResult.success, false, JSON.stringify(resolveResult));
-  assert.strictEqual(resolveResult.error.code, 'RESOLVE_SEND_COUNT_NOT_CONFIRMED');
+  assert.strictEqual(resolveResult.error.code, 'RESOLVE_FIELDS_NOT_CONFIRMED');
   assert.strictEqual(resolveResult.requiresManualConfirmation, true);
 
   var afterResolve = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
   assert.strictEqual(Number(afterResolve.paymentLinkSendCount) || 0, 0, '送信回数の補正は反映されていないべき');
-  assert.ok(afterResolve.paymentLinkMetadataInconsistentAt, '送信回数の補正が確認できない間は不整合フラグを維持するべき（誤って解除されない）');
+  assert.strictEqual(afterResolve.stripePaymentLinkUrl, '', 'URLの補正も反映されていないべき');
+  assert.ok(afterResolve.paymentLinkMetadataInconsistentAt, '補正が確認できない間は不整合フラグを維持するべき（誤って解除されない）');
 
   var incompleteRecoveries = ctx.sandbox.RecoveryRepository.listAll().filter(function (r) {
     return r.bookingId === bookingId && r.failureType === 'PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE';
@@ -1133,7 +1258,7 @@ test('resolvePaymentLinkMetadataInconsistency: 送信回数の補正書き込み
   assert.strictEqual(mailApp._sentEmails.length, 1, '不整合が解消されていない間は追加の送信が起きてはいけない');
 });
 
-test('resolvePaymentLinkMetadataInconsistency: 送信回数の補正書き込みが例外を投げずに反映されなかった場合（silentな失敗）でも、再取得による検証でRESOLVE_SEND_COUNT_NOT_CONFIRMEDとして拒否し不整合フラグを維持する', function () {
+test('resolvePaymentLinkMetadataInconsistency: URL・送信先・送信回数の補正書き込みが例外を投げずに反映されなかった場合（silentな失敗）でも、再取得による検証でRESOLVE_FIELDS_NOT_CONFIRMEDとして拒否し不整合フラグを維持する', function () {
   var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES });
   var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
 
@@ -1141,19 +1266,67 @@ test('resolvePaymentLinkMetadataInconsistency: 送信回数の補正書き込み
   ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, BEFORE_DUE);
   restoreMetadataFailure();
 
-  var restoreSilentFailure = stubResolveSendCountSilentFailure_(ctx);
-  var resolveResult = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 1);
+  var restoreSilentFailure = stubResolveFieldsSilentFailure_(ctx);
+  var resolveResult = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 1, CONFIRMED_PAYMENT_LINK_URL, CONFIRMED_SENT_TO);
   restoreSilentFailure();
 
   assert.strictEqual(resolveResult.success, false, JSON.stringify(resolveResult));
-  assert.strictEqual(resolveResult.error.code, 'RESOLVE_SEND_COUNT_NOT_CONFIRMED', '例外が起きなくても、再取得した実際の値が確認済みの値と一致しない場合は失敗として扱うべき');
+  assert.strictEqual(resolveResult.error.code, 'RESOLVE_FIELDS_NOT_CONFIRMED', '例外が起きなくても、再取得した実際の値が確認済みの値と一致しない場合は失敗として扱うべき');
 
   var afterResolve = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
   assert.strictEqual(Number(afterResolve.paymentLinkSendCount) || 0, 0);
   assert.ok(afterResolve.paymentLinkMetadataInconsistentAt, '不整合フラグは維持されるべき');
 });
 
-test('resolvePaymentLinkMetadataInconsistency: 送信回数の補正は保存できたが、続く不整合フラグのクリアだけが失敗した場合、RESOLVE_FLAG_CLEAR_NOT_CONFIRMEDを返し不整合フラグを維持したまま送信を拒否し続ける', function () {
+test('resolvePaymentLinkMetadataInconsistency: URL・送信先はすでに正しく、送信回数だけが古い状態でも、送信回数の補正書き込みが失敗した場合は不整合フラグを解除せず、再試行で正しく解除できる（一部フィールドだけが古い状態の再現）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    paymentMethod: 'オンラインクレジットカード',
+    stripePaymentLinkUrl: CONFIRMED_PAYMENT_LINK_URL,
+    paymentLinkSentTo: CONFIRMED_SENT_TO,
+    paymentLinkSendCount: 1,
+    paymentLinkMetadataInconsistentAt: new Date('2026-10-01T10:00:00+09:00')
+  });
+
+  /* URL・送信先はすでに確認済みの値と一致しているが、送信回数（1回→2回）だけがまだ
+     古い。この補正の書き込み中、paymentLinkSendCountの更新だけが失敗する状況を再現する
+     （URL・送信先は既に同じ値のため書き込み自体は成功するが、送信回数だけが反映されない）。 */
+  var restorePartialFailure = stubResolveFieldsPartialWriteFailure_(ctx, 'paymentLinkSendCount');
+  var firstAttempt = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(
+    bookingId, 2, CONFIRMED_PAYMENT_LINK_URL, CONFIRMED_SENT_TO
+  );
+  restorePartialFailure();
+
+  assert.strictEqual(firstAttempt.success, false, JSON.stringify(firstAttempt));
+  assert.strictEqual(firstAttempt.error.code, 'RESOLVE_FIELDS_NOT_CONFIRMED');
+
+  var afterFirstAttempt = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(Number(afterFirstAttempt.paymentLinkSendCount) || 0, 1, '送信回数の補正はまだ反映されていないべき');
+  assert.strictEqual(afterFirstAttempt.stripePaymentLinkUrl, CONFIRMED_PAYMENT_LINK_URL);
+  assert.strictEqual(afterFirstAttempt.paymentLinkSentTo, CONFIRMED_SENT_TO);
+  assert.ok(afterFirstAttempt.paymentLinkMetadataInconsistentAt, 'URL・送信先は既に正しくても、送信回数の反映を確認できない間は不整合フラグを維持するべき（補正完了前にフラグが解除されない）');
+
+  var forcedAttempt = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(
+    bookingId, SAMPLE_PAYMENT_LINK_URL, Object.assign({ force: true }, BEFORE_DUE)
+  );
+  assert.strictEqual(forcedAttempt.success, false);
+  assert.strictEqual(forcedAttempt.error.code, 'METADATA_INCONSISTENT');
+  assert.strictEqual(mailApp._sentEmails.length, 0, '不整合が解消されていない間は送信できてはいけない');
+
+  /* 部分失敗を起こさずに再試行すると、3項目すべての反映を確認できて不整合が解消される。 */
+  var retryResult = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(
+    bookingId, 2, CONFIRMED_PAYMENT_LINK_URL, CONFIRMED_SENT_TO
+  );
+  assert.strictEqual(retryResult.success, true, JSON.stringify(retryResult));
+
+  var finalRecord = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(Number(finalRecord.paymentLinkSendCount) || 0, 2);
+  assert.ok(!finalRecord.paymentLinkMetadataInconsistentAt, '補正完了後は不整合フラグが解除されるべき');
+});
+
+test('resolvePaymentLinkMetadataInconsistency: URL・送信先・送信回数の補正は保存できたが、続く不整合フラグのクリアだけが失敗した場合、RESOLVE_FLAG_CLEAR_NOT_CONFIRMEDを返し不整合フラグを維持したまま送信を拒否し続ける', function () {
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
   var bookingId = seedBooking(ctx, { status: 'PENDING', paymentMethod: 'オンラインクレジットカード' });
@@ -1163,16 +1336,19 @@ test('resolvePaymentLinkMetadataInconsistency: 送信回数の補正は保存で
   restoreMetadataFailure();
 
   var restoreFlagFailure = stubResolveFlagClearWriteFailure_(ctx);
-  var resolveResult = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 1);
+  var resolveResult = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, 1, CONFIRMED_PAYMENT_LINK_URL, CONFIRMED_SENT_TO);
   restoreFlagFailure();
 
   assert.strictEqual(resolveResult.success, false, JSON.stringify(resolveResult));
   assert.strictEqual(resolveResult.error.code, 'RESOLVE_FLAG_CLEAR_NOT_CONFIRMED');
   assert.strictEqual(resolveResult.requiresManualConfirmation, true);
   assert.strictEqual(resolveResult.paymentLinkSendCount, 1, '送信回数自体の補正は保存できているはず');
+  assert.strictEqual(resolveResult.stripePaymentLinkUrl, CONFIRMED_PAYMENT_LINK_URL);
+  assert.strictEqual(resolveResult.paymentLinkSentTo, CONFIRMED_SENT_TO);
 
   var afterResolve = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
   assert.strictEqual(Number(afterResolve.paymentLinkSendCount) || 0, 1, '送信回数の補正は保存されているべき');
+  assert.strictEqual(afterResolve.stripePaymentLinkUrl, CONFIRMED_PAYMENT_LINK_URL);
   assert.ok(afterResolve.paymentLinkMetadataInconsistentAt, '不整合フラグのクリアが確認できない間はフラグを維持するべき（誤って解除されない）');
 
   var incompleteRecoveries = ctx.sandbox.RecoveryRepository.listAll().filter(function (r) {
@@ -1186,7 +1362,7 @@ test('resolvePaymentLinkMetadataInconsistency: 送信回数の補正は保存で
   });
   assert.strictEqual(resolvedRecoveries.length, 0, '補正が完了していないためRESOLVEDは記録されないべき');
 
-  /* フラグのクリアが確認できていない間は、送信回数が既に正しく補正済みであっても、
+  /* フラグのクリアが確認できていない間は、補正対象の値が既に正しく保存済みであっても、
      通常送信・明示的な再送とも依然拒否されるべき。 */
   var normalAttempt = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, BEFORE_DUE);
   assert.strictEqual(normalAttempt.success, false);
@@ -1198,6 +1374,54 @@ test('resolvePaymentLinkMetadataInconsistency: 送信回数の補正は保存で
   assert.strictEqual(forcedAttempt.success, false);
   assert.strictEqual(forcedAttempt.error.code, 'METADATA_INCONSISTENT');
   assert.strictEqual(mailApp._sentEmails.length, 1, '不整合が解消されていない間は追加の送信が起きてはいけない');
+});
+
+/*
+ * 第5回PRレビュー対応: 不整合フラグのクリア操作自体は成功しているが、その直後の
+ * 最終確認の再取得だけが失敗した場合、resolvePaymentLinkMetadataInconsistencyは
+ * 「フラグは維持されている」と断定してはいけない（実際にはクリアされている可能性が
+ * あるため）。この場合はRESOLVE_RESULT_UNKNOWNを返し、Bookingsシートを直接確認するよう
+ * 案内する。
+ */
+test('resolvePaymentLinkMetadataInconsistency: 不整合フラグのクリア操作後、最終確認の再取得自体が失敗した場合はRESOLVE_RESULT_UNKNOWNを返し、フラグが維持されているとは断定しない', function () {
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES });
+  var bookingId = seedBooking(ctx, {
+    status: 'PENDING',
+    paymentMethod: 'オンラインクレジットカード',
+    paymentLinkSendCount: 1,
+    paymentLinkMetadataInconsistentAt: new Date('2026-10-01T10:00:00+09:00')
+  });
+
+  var restore = stubFinalRefetchFailureAfterFlagCleared_(ctx);
+  var resolveResult = ctx.sandbox.BookingMailer.resolvePaymentLinkMetadataInconsistency(
+    bookingId, 2, CONFIRMED_PAYMENT_LINK_URL, CONFIRMED_SENT_TO
+  );
+  restore();
+
+  assert.strictEqual(resolveResult.success, false, JSON.stringify(resolveResult));
+  assert.strictEqual(resolveResult.error.code, 'RESOLVE_RESULT_UNKNOWN');
+  assert.doesNotMatch(resolveResult.error.message, /フラグは維持されて/, '再取得自体が失敗した場合は、フラグが維持されていると断定する文言を含めるべきではない');
+  assert.match(resolveResult.error.message, /不明/, '確認できない状態であることを案内するべき');
+
+  /* 実際にはクリア操作自体は成功しており（再取得だけが失敗した状況を再現したもの）、
+     Bookingsシート上のフラグは既にクリアされている。resolvePaymentLinkMetadataInconsistencyの
+     戻り値だけからは「維持されている」と断定できないことを裏付ける（台帳の実際の状態は
+     戻り値の推測と異なり得るため、案内文は「確認できない」で止めるべきという設計）。 */
+  var actualRecord = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.ok(!actualRecord.paymentLinkMetadataInconsistentAt, '実際にはフラグはクリアされているはず（再取得の失敗だけを再現したため）');
+  assert.strictEqual(Number(actualRecord.paymentLinkSendCount) || 0, 2);
+  assert.strictEqual(actualRecord.stripePaymentLinkUrl, CONFIRMED_PAYMENT_LINK_URL);
+
+  var incompleteRecoveries = ctx.sandbox.RecoveryRepository.listAll().filter(function (r) {
+    return r.bookingId === bookingId && r.failureType === 'PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE';
+  });
+  assert.strictEqual(incompleteRecoveries.length, 1);
+  assert.strictEqual(incompleteRecoveries[0].recoveryState, 'OPEN');
+
+  var resolvedRecoveries = ctx.sandbox.RecoveryRepository.listAll().filter(function (r) {
+    return r.bookingId === bookingId && r.failureType === 'PAYMENT_LINK_METADATA_RESOLVED';
+  });
+  assert.strictEqual(resolvedRecoveries.length, 0, '結果を確認できていないためRESOLVEDは記録されないべき');
 });
 
 test('sendPaymentLinkMailForBooking: expectedSendCount・expectedSentAtVersionのいずれも渡さない場合は競合チェック自体を行わない（既存挙動を維持。省略時は省略前と同じ結果になる）', function () {

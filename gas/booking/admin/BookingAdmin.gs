@@ -77,13 +77,15 @@ function sendCardPaymentLinkMail(bookingId, paymentLinkUrl, options) {
   return BookingMailer.sendPaymentLinkMailForBooking(bookingId, paymentLinkUrl, options);
 }
 
-/* 正式関数: resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount)
-   （第3回PRレビュー対応）。paymentLinkMetadataInconsistentAtが記録された予約の送信履歴
-   （paymentLinkSendCount）を、管理者が確認した正しい値へ明示的に補正する。Booking Admin
-   側のみで公開する（Booking Web Appには追加しない）。メール送信・Calendar操作は行わない。
+/* 正式関数: resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount,
+   confirmedUrl, confirmedSentTo)（第3回PRレビュー対応。confirmedUrl/confirmedSentToは
+   第5回PRレビュー対応で追加）。paymentLinkMetadataInconsistentAtが記録された予約の
+   送信履歴（stripePaymentLinkUrl・paymentLinkSentTo・paymentLinkSendCount）を、管理者が
+   確認した正しい値へ明示的に補正する。Booking Admin側のみで公開する（Booking Web Appには
+   追加しない）。メール送信・Calendar操作は行わない。
    スクリプトエディタから直接実行することもできる。 */
-function resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount) {
-  return BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount);
+function resolveCardPaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo) {
+  return BookingMailer.resolvePaymentLinkMetadataInconsistency(bookingId, confirmedSendCount, confirmedUrl, confirmedSentTo);
 }
 
 /* 単純トリガー。このファイルをSPREADSHEET_IDのSpreadsheetへコンテナバインドした

@@ -1313,6 +1313,18 @@ test('isValidStripePaymentLinkUrlClient: GAS側（Booking.isValidStripePaymentLi
   assert.strictEqual(sandbox.isValidStripePaymentLinkUrlClient(null), false);
 });
 
+/* 第5回PRレビュー対応: resolvePaymentLinkMetadataInconsistencyのconfirmedSentTo入力を
+   事前チェックするための、GAS側（Booking.isValidEmail）と同じ正規表現。 */
+test('isValidEmailClient_: GAS側（Booking.isValidEmail）と同じ正規表現で判定する', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.isValidEmailClient_('taro@example.com'), true);
+  assert.strictEqual(sandbox.isValidEmailClient_('not-an-email'), false);
+  assert.strictEqual(sandbox.isValidEmailClient_('missing-domain@'), false);
+  assert.strictEqual(sandbox.isValidEmailClient_(' taro@example.com'), false, '前後の空白は不可（trimしない）');
+  assert.strictEqual(sandbox.isValidEmailClient_(''), false);
+  assert.strictEqual(sandbox.isValidEmailClient_(null), false);
+});
+
 test('paymentLinkStatusLabel_: paymentLinkSentAtの有無で「送信済み」「未送信」を返す', function () {
   var sandbox = loadClientSandbox();
   assert.strictEqual(sandbox.paymentLinkStatusLabel_(paymentLinkDetailBooking()), '未送信');
@@ -1437,11 +1449,20 @@ test('runSendPaymentLink_: 記録不整合の予約ではボタンクリック�
   assert.strictEqual(sandbox.google.script.run.calls.length, 0);
 });
 
-test('runResolvePaymentLinkMetadataInconsistency_: プロンプトで確認済みの送信回数を入力し、確認ダイアログの後にadminResolvePaymentLinkMetadataInconsistencyを呼ぶ', function () {
+/* 第5回PRレビュー対応: window.promptが送信回数・URL・送信先の3回、順番に呼ばれる
+   ようになったため、順番に値を返すキュー形式のモックへ統一する。 */
+function queuedPrompt_(responses) {
+  var queue = responses.slice();
+  return function () {
+    return queue.length ? queue.shift() : null;
+  };
+}
+
+test('runResolvePaymentLinkMetadataInconsistency_: プロンプトで確認済みの送信回数・URL・送信先を入力し、確認ダイアログの後にadminResolvePaymentLinkMetadataInconsistencyを呼ぶ', function () {
   var sandbox = loadClientSandbox({ confirmResult: true });
   var booking = paymentLinkDetailBooking({ paymentLinkSentAt: '2026-10-01 10:00', paymentLinkMetadataInconsistentAt: '2026-10-01 10:00', paymentLinkSendCount: 2 });
   sandbox.showDetailModal(booking);
-  sandbox.window.prompt = function () { return '3'; };
+  sandbox.window.prompt = queuedPrompt_(['3', 'https://buy.stripe.com/test_CONFIRMED456', 'confirmed@example.com']);
   sandbox.google.script.run.calls.length = 0;
 
   sandbox.runResolvePaymentLinkMetadataInconsistency_();
@@ -1449,22 +1470,29 @@ test('runResolvePaymentLinkMetadataInconsistency_: プロンプトで確認済�
   var calls = sandbox.google.script.run.calls;
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0].name, 'adminResolvePaymentLinkMetadataInconsistency');
-  assert.deepStrictEqual(calls[0].args, [booking.bookingId, 3]);
+  assert.deepStrictEqual(calls[0].args, [booking.bookingId, 3, 'https://buy.stripe.com/test_CONFIRMED456', 'confirmed@example.com']);
 });
 
-test('runResolvePaymentLinkMetadataInconsistency_: プロンプトをキャンセルした場合は何も呼ばない', function () {
-  var sandbox = loadClientSandbox({ confirmResult: true });
+test('runResolvePaymentLinkMetadataInconsistency_: 送信回数・URL・送信先いずれのプロンプトをキャンセルしても何も呼ばない', function () {
   var booking = paymentLinkDetailBooking({ paymentLinkMetadataInconsistentAt: '2026-10-01 10:00', paymentLinkSendCount: 2 });
-  sandbox.showDetailModal(booking);
-  sandbox.window.prompt = function () { return null; };
-  sandbox.google.script.run.calls.length = 0;
 
-  sandbox.runResolvePaymentLinkMetadataInconsistency_();
+  [
+    [null],
+    ['3', null],
+    ['3', 'https://buy.stripe.com/test_CONFIRMED456', null]
+  ].forEach(function (responses) {
+    var sandbox = loadClientSandbox({ confirmResult: true });
+    sandbox.showDetailModal(booking);
+    sandbox.window.prompt = queuedPrompt_(responses);
+    sandbox.google.script.run.calls.length = 0;
 
-  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+    sandbox.runResolvePaymentLinkMetadataInconsistency_();
+
+    assert.strictEqual(sandbox.google.script.run.calls.length, 0, JSON.stringify(responses));
+  });
 });
 
-test('runResolvePaymentLinkMetadataInconsistency_: 現在の記録より小さい値・不正な値を入力した場合はalertのみでgoogle.script.runを呼ばない', function () {
+test('runResolvePaymentLinkMetadataInconsistency_: 現在の記録より小さい値・不正な値の送信回数を入力した場合はalertのみでgoogle.script.runを呼ばない', function () {
   var sandbox = loadClientSandbox({ confirmResult: true });
   var booking = paymentLinkDetailBooking({ paymentLinkMetadataInconsistentAt: '2026-10-01 10:00', paymentLinkSendCount: 2 });
   sandbox.showDetailModal(booking);
@@ -1473,7 +1501,7 @@ test('runResolvePaymentLinkMetadataInconsistency_: 現在の記録より小さ�
   sandbox.google.script.run.calls.length = 0;
 
   ['1', 'abc', '-1', ''].forEach(function (rawInput) {
-    sandbox.window.prompt = function () { return rawInput; };
+    sandbox.window.prompt = queuedPrompt_([rawInput]);
     sandbox.runResolvePaymentLinkMetadataInconsistency_();
   });
 
@@ -1481,11 +1509,46 @@ test('runResolvePaymentLinkMetadataInconsistency_: 現在の記録より小さ�
   assert.strictEqual(sandbox.google.script.run.calls.length, 0);
 });
 
+/*
+ * 第5回PRレビュー対応: URL・送信先の形式チェック（isValidStripePaymentLinkUrlClient・
+ * isValidEmailClient_）がそれぞれ機能し、不正な値のときはgoogle.script.runを呼ばずに
+ * alertのみで止まることを確認する。
+ */
+test('runResolvePaymentLinkMetadataInconsistency_: 不正な形式のURLを入力した場合はalertのみでgoogle.script.runを呼ばない', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var booking = paymentLinkDetailBooking({ paymentLinkMetadataInconsistentAt: '2026-10-01 10:00', paymentLinkSendCount: 2 });
+  sandbox.showDetailModal(booking);
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  sandbox.window.prompt = queuedPrompt_(['3', 'not-a-stripe-url']);
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runResolvePaymentLinkMetadataInconsistency_();
+
+  assert.strictEqual(alerts.length, 1);
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
+test('runResolvePaymentLinkMetadataInconsistency_: 不正な形式の送信先メールアドレスを入力した場合はalertのみでgoogle.script.runを呼ばない', function () {
+  var sandbox = loadClientSandbox({ confirmResult: true });
+  var booking = paymentLinkDetailBooking({ paymentLinkMetadataInconsistentAt: '2026-10-01 10:00', paymentLinkSendCount: 2 });
+  sandbox.showDetailModal(booking);
+  var alerts = [];
+  sandbox.alert = function (message) { alerts.push(message); };
+  sandbox.window.prompt = queuedPrompt_(['3', 'https://buy.stripe.com/test_CONFIRMED456', 'not-an-email']);
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runResolvePaymentLinkMetadataInconsistency_();
+
+  assert.strictEqual(alerts.length, 1);
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
 test('runResolvePaymentLinkMetadataInconsistency_: 確認ダイアログでキャンセルした場合は呼ばない', function () {
   var sandbox = loadClientSandbox({ confirmResult: false });
   var booking = paymentLinkDetailBooking({ paymentLinkMetadataInconsistentAt: '2026-10-01 10:00', paymentLinkSendCount: 2 });
   sandbox.showDetailModal(booking);
-  sandbox.window.prompt = function () { return '3'; };
+  sandbox.window.prompt = queuedPrompt_(['3', 'https://buy.stripe.com/test_CONFIRMED456', 'confirmed@example.com']);
   sandbox.google.script.run.calls.length = 0;
 
   sandbox.runResolvePaymentLinkMetadataInconsistency_();

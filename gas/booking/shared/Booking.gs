@@ -455,6 +455,10 @@ var Booking = (function () {
     CARD_MIN_HOURS_BEFORE_START: CARD_MIN_HOURS_BEFORE_START,
     isCardPaymentMethod: isCardPaymentMethod,
     isValidStripePaymentLinkUrl: isValidStripePaymentLinkUrl,
+    /* PR #337レビュー対応（5回目）: resolvePaymentLinkMetadataInconsistencyが
+       確認済みの送信先メールアドレス（confirmedSentTo）を検証する際、
+       validateCreateBookingInputと同じ形式検証を再利用するための公開API。 */
+    isValidEmail: isValidEmail_,
     getBrandLabel: getBrandLabel,
     getCustomerTypeLabel: getCustomerTypeLabel,
     canTransition: canTransition,

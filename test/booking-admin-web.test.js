@@ -861,11 +861,13 @@ test('adminResolvePaymentLinkMetadataInconsistency: 記録不整合を補正す�
   assert.ok(beforeResolve.paymentLinkMetadataInconsistentAt);
   assert.strictEqual(beforeResolve.paymentLinkSendCount, 0);
 
-  var resolveResult = ctx.sandbox.adminResolvePaymentLinkMetadataInconsistency(bookingId, 1);
+  var resolveResult = ctx.sandbox.adminResolvePaymentLinkMetadataInconsistency(bookingId, 1, url, 'confirmed-sent-to@example.com');
   assert.strictEqual(resolveResult.success, true, JSON.stringify(resolveResult));
 
   var afterResolve = ctx.sandbox.getAdminBookingDetail(bookingId).booking;
   assert.strictEqual(afterResolve.paymentLinkSendCount, 1);
+  assert.strictEqual(afterResolve.stripePaymentLinkUrl, url, '補正後は詳細でもURLが補正済みの値になっているべき');
+  assert.strictEqual(afterResolve.paymentLinkSentTo, 'confirmed-sent-to@example.com', '補正後は詳細でも送信先が補正済みの値になっているべき');
   assert.strictEqual(afterResolve.paymentLinkMetadataInconsistentAt, '', '補正後は詳細でも不整合フラグが解消されているべき');
 
   var forcedAfterResolve = ctx.sandbox.adminSendCardPaymentLink(bookingId, url, true);
@@ -876,10 +878,48 @@ test('adminResolvePaymentLinkMetadataInconsistency: 記録不整合ではない�
   var ctx = setup();
   var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
 
-  var result = ctx.sandbox.adminResolvePaymentLinkMetadataInconsistency(bookingId, 5);
+  var result = ctx.sandbox.adminResolvePaymentLinkMetadataInconsistency(bookingId, 5, 'https://buy.stripe.com/test_ABC123', 'confirmed-sent-to@example.com');
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'NOT_INCONSISTENT');
 
   var detail = ctx.sandbox.getAdminBookingDetail(bookingId);
   assert.strictEqual(detail.booking.paymentLinkSendCount, 0, '拒否された場合は送信履歴を書き換えない');
+});
+
+/*
+ * 第5回PRレビュー対応: 補正対象がpaymentLinkSendCountのみから、URL・送信先を含む
+ * 3項目に拡張されたことをWeb UI層でも確認する（confirmedUrl/confirmedSentToの検証を
+ * 素通りさせず、GAS側のBooking.isValidStripePaymentLinkUrl/Booking.isValidEmailまで
+ * 正しく配線されていること）。
+ */
+test('adminResolvePaymentLinkMetadataInconsistency: confirmedUrl・confirmedSentToが不正な形式の場合はそれぞれINVALID_CONFIRMED_URL・INVALID_CONFIRMED_SENT_TOで拒否し、既存の記録を書き換えない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+  var url = 'https://buy.stripe.com/test_ABC123';
+
+  var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (Object.prototype.hasOwnProperty.call(fields, 'paymentLinkSendCount')) {
+      throw new Error('simulated Sheets outage while recording paymentLinkSendCount/URL/sentTo');
+    }
+    return original(id, fields);
+  };
+  ctx.sandbox.adminSendCardPaymentLink(bookingId, url, false, 0, 0);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = original;
+
+  var beforeResolve = ctx.sandbox.getAdminBookingDetail(bookingId).booking;
+  assert.ok(beforeResolve.paymentLinkMetadataInconsistentAt, '前提: 記録不整合が発生しているべき');
+
+  var invalidUrlResult = ctx.sandbox.adminResolvePaymentLinkMetadataInconsistency(bookingId, 1, 'not-a-stripe-url', 'confirmed-sent-to@example.com');
+  assert.strictEqual(invalidUrlResult.success, false);
+  assert.strictEqual(invalidUrlResult.error.code, 'INVALID_CONFIRMED_URL');
+
+  var invalidSentToResult = ctx.sandbox.adminResolvePaymentLinkMetadataInconsistency(bookingId, 1, url, 'not-an-email');
+  assert.strictEqual(invalidSentToResult.success, false);
+  assert.strictEqual(invalidSentToResult.error.code, 'INVALID_CONFIRMED_SENT_TO');
+
+  var afterInvalidAttempts = ctx.sandbox.getAdminBookingDetail(bookingId).booking;
+  assert.strictEqual(afterInvalidAttempts.paymentLinkSendCount, 0, '拒否された場合は送信回数を書き換えない');
+  assert.ok(afterInvalidAttempts.paymentLinkMetadataInconsistentAt, '拒否された場合は不整合フラグもクリアしない');
 });

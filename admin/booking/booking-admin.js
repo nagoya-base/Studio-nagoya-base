@@ -466,6 +466,19 @@ function isValidStripePaymentLinkUrlClient(url) {
 }
 
 /*
+ * 第5回PRレビュー対応: 記録不整合の補正（runResolvePaymentLinkMetadataInconsistency_）で
+ * confirmedSentToを事前チェックするための、GAS側（Booking.gsのisValidEmail_）と同じ
+ * 正規表現。予約作成時のメールアドレス検証と同じ形式検証で、trimせず生の値のまま
+ * 検証する（isValidStripePaymentLinkUrlClientと同じ方針。送信可否の正はGAS側の
+ * 再検証とする）。
+ */
+var EMAIL_PATTERN_CLIENT_ = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmailClient_(value) {
+  return typeof value === 'string' && value.length <= 254 && EMAIL_PATTERN_CLIENT_.test(value);
+}
+
+/*
  * 送信直前の確認ダイアログの文面（DOM操作から分離した純粋関数。単体テスト可能にする）。
  * Issue #334本文「送信前には、予約者名・メールアドレス・利用日時・支払期限・送信する
  * Stripe URLを確認できるようにしてください」に対応する。金額は表示しない
@@ -725,9 +738,16 @@ function runSendPaymentLink_() {
 /*
  * 第3回PRレビュー対応: 送信履歴の記録不整合（paymentLinkMetadataInconsistentAt）を
  * 解消する。GAS側（BookingMailer.resolvePaymentLinkMetadataInconsistency）の再検証
- * （対象が本当に記録不整合の状態か・補正値が現在の記録より小さくないか）に依存し、
- * このファイル側では入力値の形式チェックのみ行う。メールは送信しない（送信履歴の
- * 記録のみを補正する操作）。
+ * （対象が本当に記録不整合の状態か・補正値が現在の記録より小さくないか・URL/送信先の
+ * 形式が正しいか）に依存し、このファイル側では入力値の形式チェックのみ行う。メールは
+ * 送信しない（送信履歴の記録のみを補正する操作）。
+ *
+ * 第5回PRレビュー対応: 記録不整合の原因となった書き込みはpaymentLinkSendCountだけでなく
+ * stripePaymentLinkUrl・paymentLinkSentToも対象のため、送信回数だけを確認・補正すると
+ * URL・送信先が古いまま（実際に送信したものと食い違ったまま）不整合フラグだけが解除
+ * されてしまう。そのため送信回数に加えてURL・送信先も管理者に確認・入力してもらう
+ * （既定値は現在Bookingsシートに記録されている値。実際の送信履歴と一致していれば
+ * そのまま確定でよい）。
  */
 function parseConfirmedSendCount_(rawInput) {
   if (rawInput === null || rawInput === undefined) return null;
@@ -742,23 +762,49 @@ function runResolvePaymentLinkMetadataInconsistency_() {
   if (paymentLinkUi_.resolveInFlight) return;
 
   var currentCount = booking.paymentLinkSendCount;
-  var rawInput = window.prompt(
+  var rawCountInput = window.prompt(
     '決済リンクの送信回数が実際より少なく記録されている可能性があります（現在の記録: ' + currentCount + '回）。\n' +
     'Bookingsシート・Recoveryシート（PAYMENT_LINK_METADATA_UPDATE_FAILED）・実際のメール送信状況を確認したうえで、\n' +
     '正しい送信回数を入力してください（' + currentCount + '回以上の整数）。',
     String(currentCount)
   );
-  if (rawInput === null) return;
+  if (rawCountInput === null) return;
 
-  var confirmedCount = parseConfirmedSendCount_(rawInput);
+  var confirmedCount = parseConfirmedSendCount_(rawCountInput);
   if (confirmedCount === null || confirmedCount < currentCount) {
     alert('送信回数は' + currentCount + '回以上の整数で入力してください。');
     return;
   }
 
+  var currentUrl = booking.stripePaymentLinkUrl || '';
+  var rawUrlInput = window.prompt(
+    '実際に送信したStripe決済リンクURLを確認してください（現在の記録: ' + (currentUrl || '（未記録）') + '）。\n' +
+    '正しいURL（https://buy.stripe.com/で始まる形式）を入力してください。',
+    currentUrl
+  );
+  if (rawUrlInput === null) return;
+  if (!isValidStripePaymentLinkUrlClient(rawUrlInput)) {
+    alert('Stripeの決済リンクURL（https://buy.stripe.com/で始まる形式）を正しく入力してください（前後の空白も不可）。');
+    return;
+  }
+
+  var currentSentTo = booking.paymentLinkSentTo || booking.email || '';
+  var rawSentToInput = window.prompt(
+    '実際の送信先メールアドレスを確認してください（現在の記録: ' + (currentSentTo || '（未記録）') + '）。\n' +
+    '正しいメールアドレスを入力してください。',
+    currentSentTo
+  );
+  if (rawSentToInput === null) return;
+  if (!isValidEmailClient_(rawSentToInput)) {
+    alert('送信先メールアドレスを正しい形式で入力してください（前後の空白も不可）。');
+    return;
+  }
+
   var confirmed = window.confirm(
     '予約ID: ' + booking.bookingId + '\n' +
-    '送信回数を ' + currentCount + '回 → ' + confirmedCount + '回 へ補正します。\n\n' +
+    '送信回数を ' + currentCount + '回 → ' + confirmedCount + '回 へ補正します。\n' +
+    'URL: ' + rawUrlInput + '\n' +
+    '送信先: ' + rawSentToInput + '\n\n' +
     'この操作は送信履歴の記録のみを補正します。メールは送信されません。\n\n' +
     '実行しますか？'
   );
@@ -786,7 +832,7 @@ function runResolvePaymentLinkMetadataInconsistency_() {
       alert('補正でエラーが発生しました: ' + (error && error.message ? error.message : error));
       refreshOpenDetail_(booking.bookingId);
     })
-    .adminResolvePaymentLinkMetadataInconsistency(booking.bookingId, confirmedCount);
+    .adminResolvePaymentLinkMetadataInconsistency(booking.bookingId, confirmedCount, rawUrlInput, rawSentToInput);
 }
 
 /* 送信後、開いたままの詳細モーダルを最新状態へ更新する（サーバーから再取得したもので

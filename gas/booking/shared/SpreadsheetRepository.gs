@@ -95,16 +95,23 @@ var SpreadsheetRepository = (function () {
      *   別途確定済みだが、送信回数等の記録が信頼できるまでは追加の送信自体を止める）。
      *   **他の送信が成功しただけでは自動的にクリアされない**（第3回PRレビュー対応。
      *   以前は次の送信成功時に自動的に空へ戻していたが、これだと送信回数の食い違いを
-     *   解消せずに隠してしまうため廃止した）。クリアできるのは、管理者が正しい送信回数を
+     *   解消せずに隠してしまうため廃止した）。クリアできるのは、管理者が実際の送信履歴と
+     *   照合したstripePaymentLinkUrl・paymentLinkSentTo・paymentLinkSendCountの3項目を
      *   確認したうえで呼び出す専用の補正関数
-     *   BookingMailer.resolvePaymentLinkMetadataInconsistencyのみ。この関数は
-     *   paymentLinkSendCountの補正とこの列のクリアを**それぞれ別のupdateBookingFields
-     *   呼び出しで順に行い、都度最新レコードを再取得して実際に反映されたかを検証する**
-     *   （第4回PRレビュー対応。1回の呼び出しに複数フィールドを渡すと内部でループして
-     *   順に書き込むため、途中の書き込みだけが失敗すると送信回数の補正が反映されていない
-     *   のにこのフラグだけが先にクリアされてしまう恐れがある。検証に失敗した場合は
-     *   このフラグを維持し、Recoveryへ`PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`として
-     *   記録する）。
+     *   BookingMailer.resolvePaymentLinkMetadataInconsistencyのみ（第5回PRレビュー対応で
+     *   補正対象をpaymentLinkSendCountのみから3項目へ拡張した。URL・送信先が古いまま
+     *   このフラグだけが解除されることを防ぐため）。この関数は3項目の補正とこの列の
+     *   クリアを**それぞれ別のupdateBookingFields呼び出しで順に行い、都度最新レコードを
+     *   再取得して実際に反映されたかを検証する**（第4回PRレビュー対応。1回の呼び出しに
+     *   複数フィールドを渡すと内部でループして順に書き込むため、途中の書き込みだけが
+     *   失敗すると補正が反映されていないのにこのフラグだけが先にクリアされてしまう
+     *   恐れがある。検証に失敗した場合はこのフラグを維持し、Recoveryへ
+     *   `PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`として記録する）。このクリア操作後の
+     *   最終確認の再取得自体が失敗した場合（第5回PRレビュー対応）は、クリア操作自体が
+     *   実際には成功していた可能性があり、このフラグが今どちらの状態かを断定できない
+     *   ため、「維持されている」と断定せず確認不能として案内する
+     *   （`RESOLVE_RESULT_UNKNOWN`。この場合も`PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`を
+     *   Recoveryへ記録する）。
      */
     'stripePaymentLinkUrl',
     'paymentLinkSentAt',
