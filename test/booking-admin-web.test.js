@@ -1161,3 +1161,21 @@ test('BookingAdmin.sendPriceUpdateMail: BookingMailer.sendPriceUpdateMailForBook
   assert.strictEqual(result.success, true);
   assert.strictEqual(ctx.globals.MailApp._sentEmails.length, 2, '仮予約受付メール＋訂正案内メールの2通');
 });
+
+test('priceUpdateNeeded: 訂正案内送信後に再修正した場合は一覧・詳細とも再び未送信になる', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { brand: 'studio_x', durationMinutes: 180 });
+  assert.strictEqual(ctx.sandbox.updateBookingPrice(bookingId, 5000).success, true);
+  assert.strictEqual(ctx.sandbox.adminSendPriceUpdateMail(bookingId).success, true);
+
+  assert.strictEqual(ctx.sandbox.updateBookingPrice(bookingId, 4500).success, true);
+  var list = ctx.sandbox.getAdminBookings().bookings.filter(function (b) { return b.bookingId === bookingId; })[0];
+  var detail = ctx.sandbox.getAdminBookingDetail(bookingId).booking;
+  assert.strictEqual(list.priceUpdateNeeded, true);
+  assert.strictEqual(detail.priceUpdateNeeded, true);
+  assert.strictEqual(detail.effectivePriceAmount, 4500);
+
+  var resent = ctx.sandbox.adminSendPriceUpdateMail(bookingId);
+  assert.strictEqual(resent.success, true, '二回目の料金修正はforce指定なしで再案内できる');
+  assert.strictEqual(ctx.sandbox.getAdminBookingDetail(bookingId).booking.priceUpdateNeeded, false);
+});
