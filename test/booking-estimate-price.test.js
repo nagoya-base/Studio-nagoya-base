@@ -11,7 +11,7 @@ var assert = require('node:assert');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
 
-var FILES = ['Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Booking.gs', 'BookingPricing.gs', 'Code.gs'];
+var FILES = ['Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Booking.gs', 'JapaneseHolidays.gs', 'BookingPricing.gs', 'Code.gs'];
 
 function loadCode(properties) {
   return loadBookingSandbox(FILES, {
@@ -73,6 +73,22 @@ test('doGet: action=estimatePriceはmensブランドで常に会員料金を返�
   assert.strictEqual(body.price.tier, 'MEMBER');
   assert.strictEqual(body.price.amount, 9000);
   assert.strictEqual(body.price.dayType, 'WEEKEND_HOLIDAY');
+});
+
+test('doGet: action=estimatePriceは平日に当たる祝日も土日祝料金として返す（Issue #346）', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' });
+  /* 2026-11-23（勤労感謝の日）は月曜（date -d で確認済み）。 */
+  var body = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: '2026-11-23', durationMinutes: '120' });
+  assert.strictEqual(body.success, true);
+  assert.strictEqual(body.price.dayType, 'WEEKEND_HOLIDAY');
+  assert.strictEqual(body.price.amount, 5000);
+});
+
+test('doGet: action=estimatePriceは祝日判定に対応していない年（対応範囲外）を明示的なエラーとして返す（Issue #346。黙って平日料金にしない）', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' });
+  var body = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: '2019-12-25', durationMinutes: '120' });
+  assert.strictEqual(body.success, false);
+  assert.strictEqual(body.error.code, 'HOLIDAY_YEAR_UNSUPPORTED');
 });
 
 test('doGet: action=estimatePriceは不正なbrandをINVALID_BRANDとして拒否する', function () {
