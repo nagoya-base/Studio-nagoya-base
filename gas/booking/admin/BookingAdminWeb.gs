@@ -228,6 +228,7 @@ function getAdminBookingDetail(bookingId) {
     success: true,
     booking: {
       bookingId: record.bookingId,
+      rescheduleVersion: isAdminWebDateLike_(record.startAt) && isAdminWebDateLike_(record.endAt) ? record.startAt.getTime() + ':' + record.endAt.getTime() : '',
       date: formatAdminDate_(record.date, timezone),
       startAt: formatAdminDateTime_(record.startAt, timezone),
       endAt: formatAdminDateTime_(record.endAt, timezone),
