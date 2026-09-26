@@ -40,9 +40,15 @@ function createPropertiesServiceStub(initialProperties, options) {
 
 /* Utilities.parseDate相当。テストではAsia/Tokyo（DSTなし・常に+09:00）のみ対応する
    （getAvailabilityConfig()のTIMEZONEデフォルトかつIssue #266固定仕様のため）。
-   getUuid()は呼び出しごとに異なる値を返し、bookingId生成の一意性を検証できるようにする。 */
+   getUuid()は呼び出しごとに異なる値を返し、bookingId生成の一意性を検証できるようにする。
+   computeHmacSha256Signature（Issue #341 PR-C。StripeWebhookAuth.gs用）はNode組み込みの
+   cryptoモジュールで実際にHMAC-SHA256を計算し、実際のGAS Utilities.
+   computeHmacSha256Signatureと同じ「符号付きバイト配列（-128〜127）」形式で返す
+   （ダミー値を返すだけのスタブにせず、中継基盤側（Node.js）が16進で計算した値と
+   GAS側の16進変換ロジックが実際に一致することをテストで検証できるようにするため）。 */
 function createUtilitiesStub() {
   var uuidCounter = 0;
+  var crypto = require('crypto');
   return {
     parseDate: function (dateTimeString, timezone, format) {
       if (timezone !== 'Asia/Tokyo') {
@@ -63,6 +69,15 @@ function createUtilitiesStub() {
       var hex = uuidCounter.toString(16);
       while (hex.length < 8) hex = '0' + hex;
       return hex + '-mock-uuid-' + hex;
+    },
+    computeHmacSha256Signature: function (value, key) {
+      var digest = crypto.createHmac('sha256', key).update(value, 'utf8').digest();
+      var bytes = [];
+      for (var i = 0; i < digest.length; i++) {
+        var unsigned = digest[i];
+        bytes.push(unsigned > 127 ? unsigned - 256 : unsigned);
+      }
+      return bytes;
     }
   };
 }

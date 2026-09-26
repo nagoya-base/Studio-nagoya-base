@@ -85,7 +85,45 @@ var BOOKING_WEB_APP_FILES = [
   'Code.gs'
 ];
 
+/*
+ * BOOKING_WEBHOOK_FILESは、Issue #341 PR-C（レビュー対応・1回目で新設）の
+ * **独立した**Booking Webhookプロジェクトへ実際にコピーするファイルの一覧。
+ * confirmBooking/expirePendingBookings（Booking Admin）とは別のスクリプトプロジェクトの
+ * ため、LockService.getScriptLock()は共有されない（StripeWebhookHandler.gs冒頭コメント
+ * 「失効処理（expirePendingBookings）との競合について」参照）。
+ *
+ * 意図的に含めないファイル: `BookingAdmin.gs`/`BookingAdminWeb.gs`/`BookingTriggers.gs`/
+ * `BookingReminderTriggers.gs`/`BookingReminderDiagnostics.gs`（管理者専用UI・トリガー。
+ * `doGet`や`getAdminBookings`/`adminConfirmBooking`/`adminCancelBooking`等の管理者向け
+ * サーバー関数を一切含めないことで、このプロジェクトの「Anyone」公開デプロイから
+ * 管理者機能へ到達できない構成を保証する。`test/booking-webhook-deployment.test.js`で
+ * 検証）、`Code.gs`/`RateLimiter.gs`/`AdminNotifier.gs`（Booking Web App専用の
+ * createBooking関連）、`JapaneseHolidays.gs`/`BookingPricing.gs`/`FeeCalculator.gs`/
+ * `FeeSettlementRepository.gs`/`BookingReschedule.gs`（日程変更精算専用。Webhook処理は
+ * 一切関与しない）。
+ */
+var BOOKING_WEBHOOK_FILES = [
+  'Config.gs',
+  'CalendarRepository.gs',
+  'Availability.gs',
+  'Booking.gs',
+  'CardPayment.gs',
+  'StripeGateway.gs',
+  'StripeWebhookAuth.gs',
+  'StripeEventRepository.gs',
+  'SpreadsheetRepository.gs',
+  'RecoveryRepository.gs',
+  'BookingMailTemplates.gs',
+  'BookingMailer.gs',
+  'BookingRepository.gs',
+  /* BookingRepository.applyPaymentStateUpdate/confirmBookingを呼ぶため、それらより後に置く
+     （依存順）。 */
+  'StripeWebhookHandler.gs',
+  'BookingWebhookEndpoint.gs'
+];
+
 module.exports = {
   BOOKING_ADMIN_FILES: BOOKING_ADMIN_FILES,
-  BOOKING_WEB_APP_FILES: BOOKING_WEB_APP_FILES
+  BOOKING_WEB_APP_FILES: BOOKING_WEB_APP_FILES,
+  BOOKING_WEBHOOK_FILES: BOOKING_WEBHOOK_FILES
 };

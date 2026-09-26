@@ -8,3 +8,8 @@ vendor/
 .clasprc.json
 .clasp.json
 .gas-deploy/
+
+# Node dependencies (e.g. cloud-run/stripe-webhook-relay/). Never commit secrets/env files.
+node_modules/
+.env
+.env.*
