@@ -3297,11 +3297,13 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
    （このリポジトリのREADMEには現時点でその8列専用の追記手順節が無い。`HEADERS_`の
    実際の並び順どおりに追記すれば足りる）。
 2. **既存列の途中へ挿入せず**、本番シートの現在の最終列（通常は`feeRecoveryReason`）の
-   右隣から、次の17列を**この順番のまま**1行目へ追記する（列名は完全一致させる。
-   `stripeCheckoutRequestSnapshot`はPR #354レビュー対応・2回目で追加した列）。
+   右隣から、次の18列を**この順番のまま**1行目へ追記する（列名は完全一致させる。
+   `stripeCheckoutRequestSnapshot`はPR #354レビュー対応・2回目、`paymentAttemptResolvedAt`は
+   同・3回目で追加した列）。
 
    ```text
    paymentAttemptId
+   paymentAttemptResolvedAt
    stripeCheckoutSessionId
    stripePaymentIntentId
    paymentHoldExpiresAt
@@ -3320,7 +3322,7 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
    accessApprovedAt
    ```
 
-3. 既存行の新規17列は空欄のままにする。値を一括補完・再計算しない。
+3. 既存行の新規18列は空欄のままにする。値を一括補完・再計算しない。
    1行目に列名の重複・欠落・順序違いがないことを、`HEADERS_`と照合して確認する。
 4. **既存の`paymentStatus`列（30列目）はこの手順では追加しない（既存列を転用するのみ）。**
    ただし本番の既存行はすべて`unpaid`のまま保存されているため、`Booking.
@@ -3338,9 +3340,9 @@ Stripe本番APIキー設定のいずれも行わない（オーナーの明示�
 
 PR-Bの初版（マージ済みPR #353後）に対するレビュー対応で、bookingIdだけでのCheckout
 Session取得を防ぐ決済開始トークン用に1列（`checkoutAccessToken`）を追加した。上記
-「Issue #341 PR-A」の17列がすでに反映済みであることを前提に、その右隣へ追記する。
+「Issue #341 PR-A」の18列がすでに反映済みであることを前提に、その右隣へ追記する。
 
-1. 本番シートの現在の最終列が`accessApprovedAt`（Issue #341 PR-Aの17列の末尾）であることを
+1. 本番シートの現在の最終列が`accessApprovedAt`（Issue #341 PR-Aの18列の末尾）であることを
    確認する。
 2. その右隣へ、次の1列を追記する。
 
@@ -3684,6 +3686,7 @@ Webhookは、枠の空き有無で分岐する」「空いていれば自動でC
 | `EXPIRE_STRIPE_SESSION_STATUS_UNKNOWN`（Issue #341 PR-B） | `expirePendingBookings`: checkout_pendingの仮押さえ失効確認でStripe側の状態確認に失敗、またはStripeがopen/expired/complete以外の判定不能な状態を返した。この回のトリガー実行では枠を解放せずスキップし、次回のトリガー実行で再評価する（要手動対応ではない） |
 | `CHECKOUT_SESSION_ALREADY_COMPLETED`（Issue #341 PR-B） | `beginCardCheckout`（checkout_pending再開時）: Stripe Checkout Sessionが既に完了/決済済みと報告された。署名検証済みWebhookによる自動確定（PR-C）が未実装のため自動処理を停止し、**要手動対応**（`paymentRecoveryRequiredAt`を立てる）。Stripe管理画面で入金を確認し、必要であれば手動で予約を確定すること |
 | `CHECKOUT_HOLD_EXPIRY_PAYMENT_MAYBE_SUCCEEDED`（Issue #341 PR-B） | `expirePendingBookings`: 仮押さえ期限を過ぎた予約の枠解放を検討したが、Stripe Checkout Sessionが決済済みと報告されたため枠を解放せず停止した。**要手動対応**。至急Stripe管理画面で入金を確認すること |
+| `STALE_CHECKOUT_ATTEMPT_RESPONSE`（PR #354レビュー対応・3回目） | `beginCardCheckout`: Checkout Session作成応答（確定的な失敗、または作成成功）を受け取った時点で、台帳の現在の`paymentAttemptId`が既に別の決済試行へ進んでいた（この応答が発行された後に、何らかの経路で新しい決済試行が予約・解決済みになっていた）。この古い応答をそのまま適用すると新しい決済試行の証跡を上書きしてしまうため、**要手動対応**として停止した（`paymentRecoveryRequiredAt`を立てる。この応答は一切書き込んでいない）。Stripe管理画面で`errorMessage`記載の決済試行ID（Idempotency-Key）に対応するCheckout Sessionの有無・内容を確認し、台帳の現在の決済試行と重複や取り違えがないか調査したうえで復旧すること |
 
 ## Issue #341: Stripe API即時決済による予約自動確定・自動返金・鍵承認ゲートへ移行（PR-B）
 
@@ -3841,8 +3844,8 @@ Idempotency-Keyを無条件に再利用し続けると、Stripe側の同じエ�
   `applyPaymentStateUpdate`を、金額照合に`CardPayment.verifyPaymentAgainstSnapshot`を
   使うこと（PR-A/PR-Bの契約と同じ）。
 - `paymentRecoveryRequiredAt`が立った予約（`CHECKOUT_SESSION_ALREADY_COMPLETED`/
-  `CHECKOUT_HOLD_EXPIRY_PAYMENT_MAYBE_SUCCEEDED`を含む）を管理者が確認・解除する手段は
-  未実装（PR-D）。
+  `CHECKOUT_HOLD_EXPIRY_PAYMENT_MAYBE_SUCCEEDED`/`STRIPE_IDEMPOTENCY_CONFLICT`/
+  `STALE_CHECKOUT_ATTEMPT_RESPONSE`を含む）を管理者が確認・解除する手段は未実装（PR-D）。
 - Stripe返金API・「取消（自動返金）」ボタン・鍵承認ゲート・「来場案内を再送」ボタン・
   前日リマインドの鍵承認ゲート条件・メール文言更新（PR-D）。
 - `success_url`/`cancel_url`の戻り先ページの実装（本PR-Bはこれらの遷移先URLをScript
@@ -4030,6 +4033,99 @@ test.js`に項目4・5のテスト7件を追加。既存テストのうち、`st
 追加した既存テスト2件の更新を含む）。既存の管理者承認・Calendar・日程変更精算・Booking
 Admin・現地払い・旧Payment Link方式の回帰テストもすべてpass。実際の本番決済を伴う
 自動テストは行っていない。
+
+### PRレビュー対応（PR #354・3回目）
+
+2回目対応後、オーナーから`reservePaymentAttempt_`のFAILED状態における並行再試行について
+追加で指摘を受けて対応した。
+
+#### 6. reservePaymentAttempt_のFAILED状態における並行再試行
+
+**指摘**: FAILEDの予約について、決済試行IDを新しく保存した後も`paymentStatus`が
+`failed`のままなので、後続のリクエストが再度新しいIDを発行できてしまう。
+
+**原因**: `reservePaymentAttempt_`の「既存の決済試行を再利用するか、新しく発行するか」の
+判定が`currentPaymentStatus===NOT_STARTED && record.paymentAttemptId`という条件だけに
+限定されていた。`startNewCheckoutAttempt_`はStripe呼び出しに成功して
+`applyPaymentStateUpdate`で`checkout_pending`へコミットするまでの間、`paymentStatus`を
+`failed`のまま変更しない。そのため、FAILEDの予約へ複数のリクエストがほぼ同時に到達すると
+（1つ目が新しい`paymentAttemptId`・スナップショットを予約してLockを解放した直後、
+まだStripe呼び出し・コミットが終わっていない間に2つ目が到達する等）、
+`currentPaymentStatus`は依然`failed`のままであるため2つ目も「新しい試行」の分岐へ入って
+しまい、1つ目の予約を上書きして**別の`paymentAttemptId`・別のIdempotency-Keyで2回目の
+Stripe呼び出し**を行ってしまう（二重のCheckout Session発行につながる）。
+
+**対応**: `paymentStatus`とは独立した、決済試行そのものの「未解決／解決済み」を表す
+新しい列`paymentAttemptResolvedAt`を追加した。
+
+- 空＝この`paymentAttemptId`はまだ未解決（Stripe呼び出し中、または結果不明で保留中）。
+  `reservePaymentAttempt_`はこの列が空である限り、`currentPaymentStatus`が
+  `not_started`／`failed`のどちらであっても新しいIDを発行せず、既存の
+  `paymentAttemptId`とスナップショットをそのまま再利用する
+  （`hasUnresolvedPaymentAttempt_`。旧来の`NOT_STARTED`限定の条件を置き換えた）。
+- 新しい決済試行を予約する（`reservePaymentAttempt_`が新しい`paymentAttemptId`を発行する）
+  たびに、この列を必ず空へ戻してから予約する（前の試行の終端状態を引き継がない）。
+- ある決済試行が確定的な結果（Stripeが明確に拒否＝`failed`への遷移、または
+  Checkout Session発行成功＝`checkout_pending`への遷移）に到達した時点で、
+  この列へ現在時刻を書き込んで解決済みにする。書き込み箇所は次の4か所：
+  1. `handleCheckoutCreateFailure_`の`STRIPE_ERROR`分岐（`settlePaymentAttemptResolved_`
+     による専用のLock付き書き込み。`applyPaymentStateUpdate`が`failed→failed`の
+     「既に目的の状態」経路（fields書き込みをスキップする設計）に入るケース―
+     `resumeExistingCheckout_`が明示的に`failed`へ進めた直後に`startNewCheckoutAttempt_`
+     が呼ばれ、その新しい試行も`STRIPE_ERROR`になる場合―でも確実に書き込むため、
+     `applyPaymentStateUpdate`のfields経由ではなく専用の書き込みにした）。
+  2. `startNewCheckoutAttempt_`の成功コミット（`checkout_pending`への新規遷移のfieldsに
+     `paymentAttemptResolvedAt`を含め、既存の1回のRange.setValuesにまとめた）。
+  3. `expirePendingBookings`の仮押さえ失効による`failed`遷移（新規遷移のfieldsに含める）。
+  4. `resumeExistingCheckout_`のexpired/unpaid確認による`failed`遷移（新規遷移のfieldsに
+     含める）。
+- **前回のFAILED試行と、新たに予約済みの未解決試行の区別**: 2.〜4.のいずれで解決済みに
+  するかに関わらず、`paymentAttemptId`が変わらない限り同じ決済試行として扱われる。新しい
+  決済試行を予約する時点で必ず新しい`paymentAttemptId`とともにこの列を空へリセットする
+  ため、「新しく予約済みで未解決」（空）と「以前の試行が確定的に終わった後の空き状態」
+  （値が入っている）が`paymentStatus`の値に関わらず区別できる。
+- **以前の決済試行から遅れて届いた応答が、新しい試行の証跡を上書きしない**: 上記1.（`
+  handleCheckoutCreateFailure_`）と`startNewCheckoutAttempt_`の成功コミットの直前で、
+  台帳の現在の`paymentAttemptId`がこの呼び出しがStripeへ送ったIDのままかを確認する
+  （`settlePaymentAttemptResolved_`のLock内チェック、または直前の`findRowByBookingId`に
+  よる読み取りチェック）。一致しない場合（応答を受け取るまでの間に、別のリクエストが既に
+  新しい決済試行を予約・解決していた）は、`failed`への遷移も`checkout_pending`への
+  コミットも行わず、`STALE_CHECKOUT_ATTEMPT_RESPONSE`として要復旧で停止する。
+  `resumeExistingCheckout_`のexpired/unpaid確認分岐についても同様に、`failed`へ進める
+  直前に台帳の現在の`stripeCheckoutSessionId`・`paymentAttemptId`がこの確認の元になった
+  値のままかを確認し、既に変わっていた場合は何も書き込まず、呼び出し元へ再試行を促す
+  `PAYMENT_STATUS_UNKNOWN`（retryable）を返す（こちらは、もう一方のリクエストが既に
+  新しい決済試行を開始・成功させている可能性が高い平常のケースであり、記録先を要復旧に
+  限定せず、呼び出し元の再試行で正しい最新状態へ自然に収束させる設計にした）。
+- **試行予約状態の導入と既存の整合性**: `paymentAttemptResolvedAt`は`paymentStatus`とは
+  完全に独立な列とし、`Booking.PAYMENT_STATUS_TRANSITIONS_`・`REQUIRED_EVIDENCE_FOR_
+  STATUS_`・Recoveryの設計（`applyPaymentStateUpdate`が唯一の決済状態更新の入口である
+  という既存の原則）はいずれも変更していない。`paymentAttemptResolvedAt`の読み書きは
+  すべて`BookingRepository.gs`内に閉じており（`updateBookingPaymentStateAtomic`が
+  受け付ける17列の一部として追加）、決済状態の遷移そのものはこれまでどおり
+  `applyPaymentStateUpdate`を経由する。
+
+これに伴い、Bookings台帳のヘッダーに`paymentAttemptResolvedAt`列を追加した（既存の決済
+状態アトミック書き込み範囲内・`paymentAttemptId`の右隣に挿入。書き込み範囲は列名から
+動的に算出されるため、追加による他コードへの影響はない）。README「PR-A本番移行手順」の
+列挙を17列→18列へ更新済み。**本番Bookingsシートへの列追加が別途必要**（README参照）。
+
+`test/booking-card-checkout.test.js`に、FAILEDから2件のリクエストがほぼ同時に到達しても
+同じ決済試行ID・同じリクエスト内容へ収束すること（1つ目がLockを解放しStripe呼び出し中の
+間に2つ目が到達するケースを、Stripeモックの応答コールバック内で2つ目の呼び出しを入れ子に
+実行することで再現）、および`resumeExistingCheckout_`で同一予約への2件のリクエストが
+ほぼ同時にexpired/unpaidを確認しても片方だけが新しい決済試行を開始し、もう片方は古い
+確認結果でその証跡を上書きしない（安全な再試行可能エラーで停止する）ことのテストを
+2件追加した。
+
+### テスト結果（3回目レビュー対応後）
+
+`node --test`: 総計1132件すべてpass（2回目対応後1130件＋3回目レビュー対応で追加した
+2件。`test/booking-card-checkout.test.js`に項目6のテスト2件を追加。既存テストのうち、
+`paymentAttemptResolvedAt`列の追加に伴い`updateBookingPaymentStateAtomic`のatomic
+書き込み範囲が16列→17列に広がったことを反映した既存テスト3件の期待値更新を含む）。
+既存の管理者承認・Calendar・日程変更精算・Booking Admin・現地払い・旧Payment Link方式の
+回帰テストもすべてpass。実際の本番決済を伴う自動テストは行っていない。
 
 ## 部分失敗・recoveryの確認手順（運用者向け）
 

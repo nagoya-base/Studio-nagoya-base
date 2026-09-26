@@ -2,7 +2,7 @@
  * BookingRepository.applyPaymentStateUpdate のテスト（Issue #341 PR-Aレビュー対応）。
  *
  * 実際のStripe API・Webhookは呼ばない（PR-B/PR-Cの責務）。ここではLockServiceによる
- * 排他制御・更新順序（決済付随情報16列→paymentStatus単独の順）・部分失敗時のRecovery
+ * 排他制御・更新順序（決済付随情報17列→paymentStatus単独の順）・部分失敗時のRecovery
  * 記録・要復旧ゲート・冪等な再実行（既に目的の状態ならalreadyApplied:trueで成功扱い）・
  * 未知のpaymentStatus値の検知で処理を停止する挙動を、モックのLockService/SpreadsheetApp
  * を使って検証する。
@@ -92,7 +92,7 @@ test('applyPaymentStateUpdate: NOT_STARTED→CHECKOUT_PENDINGへ、決済付随�
   var sheet = ctx.globals.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
   var calls = sheet._setValuesCalls;
   assert.strictEqual(calls.length, 2, '決済付随情報の一括書き込みとpaymentStatus単独書き込みの2回だけ');
-  assert.strictEqual(calls[0].numCols, 16, '1回目は決済付随情報16列の一括書き込み（PR #354レビュー対応・2回目でstripeCheckoutRequestSnapshotを追加）');
+  assert.strictEqual(calls[0].numCols, 17, '1回目は決済付随情報17列の一括書き込み（PR #354レビュー対応・3回目でpaymentAttemptResolvedAtを追加）');
   assert.strictEqual(
     calls[0].col, ctx.sandbox.SpreadsheetRepository.HEADERS.indexOf('paymentAttemptId') + 1,
     '1回目はpaymentAttemptIdから始まる'

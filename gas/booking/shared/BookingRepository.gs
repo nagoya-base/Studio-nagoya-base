@@ -916,9 +916,15 @@ var BookingRepository = (function () {
      * reservePaymentAttempt_がpaymentStatus:not_startedのまま残っていた場合と同様に安全に
      * 扱われる想定だが、paymentStatusがcheckout_pendingのまま残ってしまうため、この
      * best effort呼び出し自体の失敗はLoggerで検知できるようにする）。
+     *
+     * PR #354レビュー対応・3回目: この予約が持つ（失効したSessionの）paymentAttemptIdを
+     * ここで同時にpaymentAttemptResolvedAtへ確定させる。これを怠ると、次回この予約へ
+     * 新しい決済試行を予約するreservePaymentAttempt_が、失効済みの古いpaymentAttemptIdを
+     * 「まだ未解決」と誤認して再利用してしまい（古い期限切れのexpires_atのまま新しい
+     * Checkout Sessionを作ろうとする等）、新しい仮押さえが正しく発行されない事故になる。
      */
     newlyFailedCheckoutHoldBookingIds.forEach(function (bookingId) {
-      var failResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, {}, now);
+      var failResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, { paymentAttemptResolvedAt: now }, now);
       if (!failResult.success) {
         Logger.log('expirePendingBookings: 仮押さえ失効後のpaymentStatus:failed遷移に失敗しました: ' + bookingId + ' ' + JSON.stringify(failResult.error));
       }
@@ -1650,7 +1656,7 @@ var BookingRepository = (function () {
   /*
    * Issue #341 PR-Aレビュー対応: 決済状態（paymentStatus）の整合性を保証する共通更新処理。
    * 実際にStripe API・Webhookを呼ぶPR-B/PR-Cが、この関数を経由してのみpaymentStatus・
-   * 決済付随情報（paymentAttemptId〜paymentRecoveryReasonの16列）を更新することを想定する
+   * 決済付随情報（paymentAttemptId〜paymentRecoveryReasonの17列）を更新することを想定する
    * （SpreadsheetRepository.updateBookingPaymentStateAtomic/updateBookingFieldsを個別に
    * 直接呼ばせない）。PR-A時点ではこの関数を呼び出す実際の決済処理（Checkout Session発行・
    * Webhook確認・自動返金）は存在しない。
@@ -1658,9 +1664,9 @@ var BookingRepository = (function () {
    * 設計上の要点:
    * 1. LockService.getScriptLock()で排他制御する（confirmBooking等と同じ
    *    LOCK_TIMEOUT_MS_=10秒。呼び出し元のGASプロジェクトのLockと共有される）。
-   * 2. 更新順序を固定する：**先に決済付随情報の16列（updateBookingPaymentStateAtomic。
+   * 2. 更新順序を固定する：**先に決済付随情報の17列（updateBookingPaymentStateAtomic。
    *    HEADERS_上で連続する1回のRange.setValues）、その後にpaymentStatus単独
-   *    （updateBookingFields）の順**。paymentStatus（30列目）は16列の範囲と連続して
+   *    （updateBookingFields）の順**。paymentStatus（30列目）は17列の範囲と連続して
    *    いないため、レビュー対応前は「無関係な既存25列を巻き込む1回の書き込み」に
    *    まとめる案もあったが、それは他プロセスの並行更新を上書きする事故を招くため採用
    *    しない（PR-Aの元設計のまま。updateBookingPaymentStateAtomicのコメント参照）。
@@ -1691,7 +1697,7 @@ var BookingRepository = (function () {
    *    項目2）。要復旧フラグが既に立っている予約は、詳細を再判定するまでもなく先頭で
    *    即座に拒否する。
    *
-   * fields: SpreadsheetRepository.updateBookingPaymentStateAtomicが受け付ける16列の
+   * fields: SpreadsheetRepository.updateBookingPaymentStateAtomicが受け付ける17列の
    *   部分集合（省略・空オブジェクト可。例えばFAILED→CHECKOUT_PENDINGの再試行のように
    *   付随情報を伴わない遷移もある）。
    * 戻り値: { success: true } / { success: true, alreadyApplied: true } /
@@ -2256,19 +2262,42 @@ var BookingRepository = (function () {
    * startNewCheckoutAttempt_は独自にCardPayment.computeExpectedPaymentAmount等を
    * 呼び直さず、record.email・stripeConfig.successUrl/cancelUrlも再取得しない）。
    *
-   * - currentPaymentStatusがFAILED（前回の試行が確定的に不成立で終わった）の場合は、
-   *   Booking.gsの設計どおり必ず新しいpaymentAttemptId・新しいスナップショットを発行する
-   *   （前回の内容を引き継がない。料金・successUrl等が変わっていればこの時点の最新値になる）。
-   * - currentPaymentStatusがNOT_STARTEDで、かつ台帳に既にpaymentAttemptIdが記録されている
-   *   場合（前回このLock内で予約情報だけ永続化した直後にStripe呼び出しやコミットで失敗した、
-   *   または実行がタイムアウトした等）は、その既存のスナップショット（checkoutParams全体）
-   *   をそのまま再利用する（新しい値を発行・再計算しない）。**その間に管理者が料金を修正・
-   *   Script Propertiesのsuccess/cancel URLを変更していても、この再試行では反映しない**
-   *   （Stripeへは初回と同じ内容を送る必要があるため。変更を反映した新しい決済試行は、
-   *   この試行がFAILED等で終わってからのみ行われる）。保存済みのスナップショットを
-   *   安全に復元できない場合（JSON解析失敗・必須項目欠落・bookingId/paymentAttemptId
-   *   不一致等）は、新しいSessionを発行せず要復旧として停止する。
+   * - 台帳に既にpaymentAttemptIdが記録されており、かつその決済試行が**まだ解決していない**
+   *   （paymentAttemptResolvedAtが空。PR #354レビュー対応・3回目）場合は、currentPaymentStatus
+   *   がNOT_STARTED・FAILEDのいずれであっても、その既存のスナップショット（checkoutParams
+   *   全体）をそのまま再利用する（新しい値を発行・再計算しない）。**その間に管理者が料金を
+   *   修正・Script Propertiesのsuccess/cancel URLを変更していても、この再試行では反映しない**
+   *   （Stripeへは初回と同じ内容を送る必要があるため）。保存済みのスナップショットを安全に
+   *   復元できない場合（JSON解析失敗・必須項目欠落・bookingId/paymentAttemptId不一致等）は、
+   *   新しいSessionを発行せず要復旧として停止する。
+   *
+   *   3回目レビュー対応の要点: 以前はこの再利用判定をcurrentPaymentStatus===NOT_STARTED
+   *   （+paymentAttemptId存在）に限定していた。しかしFAILEDから新しい試行を開始する処理
+   *   （このファイルの後述のstartNewCheckoutAttempt_）は、Stripe呼び出しに成功して
+   *   applyPaymentStateUpdateでCHECKOUT_PENDINGへコミットするまでの間、paymentStatusを
+   *   FAILEDのまま変更しない。そのため、FAILEDの予約へ複数リクエストがほぼ同時に到達すると
+   *   （1つ目がここで新しいpaymentAttemptId・スナップショットを予約してLockを解放した直後、
+   *   まだStripeを呼んでいる／コミットが終わっていない間に2つ目がこの関数へ入る等）、
+   *   旧判定ではcurrentPaymentStatusが依然FAILEDのままであるため2つ目も「新しい試行」の
+   *   分岐へ入ってしまい、2つ目が1つ目の予約を上書きして**別のpaymentAttemptId・別の
+   *   Idempotency-Keyで2回目のStripe呼び出し**を行ってしまう（二重のCheckout Session発行に
+   *   つながる）。
+   *
+   *   paymentAttemptResolvedAtは、paymentStatusとは独立に「この決済試行が最終的な結果
+   *   （failedへの確定、またはcheckout_pendingへの成功コミット）に到達したか」だけを表す
+   *   フラグである。新しい決済試行を予約するたびに必ず空へ戻し（このLock内の1回の
+   *   Range.setValuesでpaymentAttemptId等と同時に書く）、その決済試行のStripe呼び出しが
+   *   確定的な結果に至った時点で初めてapplyPaymentStateUpdateの呼び出し元
+   *   （handleCheckoutCreateFailure_のSTRIPE_ERROR分岐・startNewCheckoutAttempt_の成功時
+   *   コミット）が現在時刻を書き込む。この結果、「新しく予約済みで未解決」（空のまま）と
+   *   「以前の試行が確定的に終わった後の空き状態」（値が入っている）をpaymentStatusの値に
+   *   関わらず区別できるようになり、Lockが本来意図するとおり「1つ目が予約を確定するまで
+   *   2つ目は同じ予約を読む」という排他が正しく機能する。
    */
+  function hasUnresolvedPaymentAttempt_(record) {
+    return !!record.paymentAttemptId && !record.paymentAttemptResolvedAt;
+  }
+
   function reservePaymentAttempt_(bookingId, stripeConfig, now) {
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(CHECKOUT_LOCK_TIMEOUT_MS_)) {
@@ -2283,8 +2312,7 @@ var BookingRepository = (function () {
       if (record.paymentRecoveryRequiredAt) {
         return { success: false, error: { code: 'PAYMENT_RECOVERY_REQUIRED', message: 'この予約の決済状態は要復旧のため、自動処理を停止しています。' } };
       }
-      var currentPaymentStatus = Booking.normalizePaymentStatus(record.paymentStatus);
-      if (currentPaymentStatus === Booking.PAYMENT_STATUS.NOT_STARTED && record.paymentAttemptId) {
+      if (hasUnresolvedPaymentAttempt_(record)) {
         var snapshot = safeJsonParse_(record.stripeCheckoutRequestSnapshot);
         if (!isValidCheckoutRequestSnapshot_(snapshot, bookingId, record.paymentAttemptId)) {
           /* 通常到達しない防御的分岐（このLock内で常にpaymentAttemptIdと同時に書くため）。
@@ -2329,6 +2357,9 @@ var BookingRepository = (function () {
       try {
         SpreadsheetRepository.updateBookingPaymentStateAtomic(bookingId, {
           paymentAttemptId: paymentAttemptId,
+          /* 前の決済試行の終端状態を引き継がない。この新しい試行が確定的な結果に
+             至るまでは必ず空のままにする（PR #354レビュー対応・3回目）。 */
+          paymentAttemptResolvedAt: '',
           stripeAmount: expected.amountJpy,
           stripeCurrency: expected.currency,
           paymentHoldExpiresAt: new Date(expiresAtSeconds * 1000),
@@ -2365,8 +2396,67 @@ var BookingRepository = (function () {
    *   （あるいはそもそも呼び出せていない）。paymentStatusをFAILEDへ進めず、新しい決済
    *   試行IDも発行しない（＝次回もreservePaymentAttempt_が同じpaymentAttemptId・同じ
    *   スナップショットを再利用する）。監査記録のみ残して呼び出し元へ再試行を促す。
+   *
+   * paymentAttemptId: この呼び出しがStripeへ送った（＝reservePaymentAttempt_がこの回の
+   *   呼び出しのために予約・返した）決済試行ID。PR #354レビュー対応・3回目: STRIPE_ERROR
+   *   （確定的失敗）でpaymentStatusをFAILEDへ進める直前に、settlePaymentAttemptResolved_で
+   *   台帳の現在のpaymentAttemptIdがまだこのIDのままかをLock内で再確認したうえで
+   *   paymentAttemptResolvedAtへ現在時刻を書き込む。一致しない場合（この応答が発行された
+   *   後に何らかの経路で既に新しい決済試行が予約されている等）は、ここでFAILEDへ進めると
+   *   新しい試行の証跡を古い応答で上書きしてしまう恐れがあるため、遷移を行わず要復旧として
+   *   停止する（「以前の決済試行から遅れて届いた応答が、新しい試行の証跡を上書きしない」
+   *   という設計要件）。
    */
-  function handleCheckoutCreateFailure_(bookingId, record, createResult, now) {
+  /*
+   * paymentAttemptIdが指す決済試行を「解決済み」にする（paymentAttemptResolvedAtへ現在
+   * 時刻を書き込む）。reservePaymentAttempt_と同じCHECKOUT_LOCK_TIMEOUT_MS_のLockで
+   * 「現在のpaymentAttemptIdがまだこのIDのままか」の確認と書き込みを一体化することで、
+   * 確認と書き込みの間に別の予約が割り込む余地をなくす（TOCTOU回避）。
+   *
+   * 戻り値のstale:trueは、この呼び出しがStripeへ送った決済試行IDが、応答を受け取った
+   * 時点で既に台帳の「現在の」決済試行ではなくなっていたことを意味する（PR #354レビュー
+   * 対応・3回目）。この場合は解決済みマークを書き込まず、呼び出し元は台帳への以後の書き込み
+   * （paymentStatusの遷移等）を一切行ってはならない。
+   */
+  function settlePaymentAttemptResolved_(bookingId, paymentAttemptId, now) {
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(CHECKOUT_LOCK_TIMEOUT_MS_)) {
+      Logger.log('settlePaymentAttemptResolved_: Lock取得に失敗しました: ' + bookingId);
+      return { stale: false, lockFailed: true };
+    }
+    try {
+      var latest = SpreadsheetRepository.findRowByBookingId(bookingId);
+      if (!latest || latest.record.paymentAttemptId !== paymentAttemptId) {
+        return { stale: true };
+      }
+      try {
+        SpreadsheetRepository.updateBookingPaymentStateAtomic(bookingId, { paymentAttemptResolvedAt: now });
+      } catch (writeError) {
+        Logger.log('settlePaymentAttemptResolved_: 書き込みに失敗しました: ' + bookingId + ' ' + describeError_(writeError));
+      }
+      return { stale: false };
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  function recordStalePaymentAttemptResponse_(bookingId, record, paymentAttemptId, context, now) {
+    recordPaymentRecoveryBestEffort_(
+      bookingId, record, 'STALE_CHECKOUT_ATTEMPT_RESPONSE',
+      context + '（決済試行ID: ' + (paymentAttemptId || '不明') + '）が届いた時点で、台帳の' +
+        '現在の決済試行は既に別のIDへ進んでいました。この応答をそのまま適用すると、新しい' +
+        '決済試行の証跡を古い応答で上書きしてしまう恐れがあるため、自動処理を停止しました。' +
+        'Stripe管理画面でこの決済試行IDに対応するCheckout Sessionの有無・内容を確認し、' +
+        '台帳の現在の決済試行と重複や取り違えがないか調査したうえで復旧してください。',
+      now
+    );
+    return {
+      success: false,
+      error: { code: 'PAYMENT_RECOVERY_REQUIRED', message: 'この予約の決済状態は要復旧のため、自動処理を停止しています。' }
+    };
+  }
+
+  function handleCheckoutCreateFailure_(bookingId, record, createResult, paymentAttemptId, now) {
     if (createResult.errorType === 'IDEMPOTENCY_CONFLICT') {
       recordPaymentRecoveryBestEffort_(
         bookingId, record, 'STRIPE_IDEMPOTENCY_CONFLICT',
@@ -2391,6 +2481,13 @@ var BookingRepository = (function () {
        * いるため、FAILEDへ進めて次回は新しい決済試行IDを発行させる（Booking.gs「新しい
        * paymentAttemptIdでの再試行時のみCHECKOUT_PENDINGへ戻れる」）。
        */
+      var settled = settlePaymentAttemptResolved_(bookingId, paymentAttemptId, now);
+      if (settled.stale) {
+        return recordStalePaymentAttemptResponse_(
+          bookingId, record, paymentAttemptId,
+          'Stripeからの確定的な失敗応答（' + createResult.errorType + '）', now
+        );
+      }
       var failResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, {}, now);
       if (!failResult.success) {
         return { success: false, error: failResult.error };
@@ -2453,7 +2550,7 @@ var BookingRepository = (function () {
     var createResult = StripeGateway.createCheckoutSession(stripeConfig, checkoutParams, paymentAttemptId);
 
     if (!createResult.ok) {
-      return handleCheckoutCreateFailure_(bookingId, record, createResult, now);
+      return handleCheckoutCreateFailure_(bookingId, record, createResult, paymentAttemptId, now);
     }
 
     var session = createResult.session;
@@ -2466,8 +2563,28 @@ var BookingRepository = (function () {
      */
     var paymentHoldExpiresAt = new Date(session.expiresAtSeconds * 1000);
 
+    /*
+     * PR #354レビュー対応・3回目: Stripe呼び出しから結果が返るまでの間に、台帳の現在の
+     * paymentAttemptIdが既に別の決済試行へ進んでいないかをcommit前に確認する（本来は
+     * 起こらない想定だが、防御的に検知する）。確認せずCHECKOUT_PENDINGへコミットすると、
+     * 新しい決済試行の証跡をこの古い応答（実際にはStripe側にSessionが作成済みで、
+     * bookingId・paymentAttemptIdとしては孤立してしまう）で上書きしてしまう。stale
+     * （既に別の決済試行IDへ進んでいる）の場合はコミットせず要復旧として停止する。
+     */
+    var latestBeforeCommit = SpreadsheetRepository.findRowByBookingId(bookingId);
+    if (!latestBeforeCommit || latestBeforeCommit.record.paymentAttemptId !== paymentAttemptId) {
+      return recordStalePaymentAttemptResponse_(
+        bookingId, record, paymentAttemptId,
+        'Checkout Session作成成功の応答（Stripe Session ID: ' + session.id + '）', now
+      );
+    }
+
     var commitResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.CHECKOUT_PENDING, {
       paymentAttemptId: paymentAttemptId,
+      /* この決済試行はcheckout_pendingへ進む結果に確定した。以後reservePaymentAttempt_が
+         このIDを「未解決」として誤って再利用しないよう、コミットと同じ書き込みで確定させる
+         （PR #354レビュー対応・3回目）。 */
+      paymentAttemptResolvedAt: now,
       stripeCheckoutSessionId: session.id,
       paymentHoldExpiresAt: paymentHoldExpiresAt,
       stripeAmount: checkoutParams.amountJpy,
@@ -2569,8 +2686,40 @@ var BookingRepository = (function () {
     }
 
     if (session.status === 'expired' && session.paymentStatus === 'unpaid') {
-      /* Stripe側で確実に未払いのまま失効したことを確認できた。安全に新しい試行へ進める。 */
-      var failResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, {}, now);
+      /*
+       * Stripe側で確実に未払いのまま失効したことを確認できた。安全に新しい試行へ進める。
+       *
+       * PR #354レビュー対応・3回目（その1）: この失効したSessionのpaymentAttemptIdを、
+       * failedへの遷移と同時にpaymentAttemptResolvedAtへ確定させる。これをしないと、
+       * 直後に呼ぶstartNewCheckoutAttempt_（reservePaymentAttempt_）が、この古い
+       * paymentAttemptIdを「まだ未解決」と誤認してそのまま再利用してしまう
+       * （expirePendingBookings側の同種の失効遷移と同じ理由）。
+       *
+       * PR #354レビュー対応・3回目（その2）: 同一予約への2件のリクエストがほぼ同時に
+       * ここへ到達し、両方がこの同じ古いSessionをStripeへ確認して両方とも「確実に
+       * 未払いのまま失効」と判定するケースがある。retrieveCheckoutSessionの呼び出しから
+       * 応答が返るまでの間に、もう一方が既にこの予約をfailedへ進めて新しい決済試行を
+       * 開始・成功させている可能性があるため、failedへ遷移する直前に台帳の現在の
+       * stripeCheckoutSessionId・paymentAttemptIdが、この応答の元になった値のまま
+       * （＝まだ誰も先に進めていない）ことを確認する。既に変わっていた場合、ここで
+       * failedへ進めると、もう一方が新しく開始した決済試行の証跡をこの古い確認結果で
+       * 上書きしてしまう。何も書き込まずに呼び出し元へ再試行を促し、呼び出し元が最新の
+       * 状態を読み直せば正しく分岐する（もう一方が開始した新しいSessionを再利用する等）。
+       */
+      var latestBeforeFail = SpreadsheetRepository.findRowByBookingId(bookingId);
+      if (
+        !latestBeforeFail ||
+        latestBeforeFail.record.stripeCheckoutSessionId !== record.stripeCheckoutSessionId ||
+        latestBeforeFail.record.paymentAttemptId !== record.paymentAttemptId
+      ) {
+        return {
+          success: false,
+          error: { code: 'PAYMENT_STATUS_UNKNOWN', message: '決済状況を確認できませんでした。しばらくしてから再度お試しください。' },
+          retryable: true
+        };
+      }
+
+      var failResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, { paymentAttemptResolvedAt: now }, now);
       if (!failResult.success) {
         return { success: false, error: failResult.error };
       }

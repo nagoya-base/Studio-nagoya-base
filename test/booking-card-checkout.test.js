@@ -336,7 +336,7 @@ test('reservePaymentAttempt_: paymentAttemptId・stripeAmount・stripeCurrency�
      atomic範囲への1回の書き込み）、2回目がapplyPaymentStateUpdateの証跡コミット
      （同じ15列への2回目の書き込み）、3回目がpaymentStatus単独の書き込み。 */
   assert.strictEqual(sheet._setValuesCalls.length, 3);
-  assert.strictEqual(sheet._setValuesCalls[0].numCols, 16, '予約時点で16列のatomic範囲へまとめて書く');
+  assert.strictEqual(sheet._setValuesCalls[0].numCols, 17, '予約時点で17列のatomic範囲へまとめて書く（PR #354レビュー対応・3回目でpaymentAttemptResolvedAtを追加）');
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.strictEqual(found.record.stripeAmount, 9000);
@@ -656,6 +656,118 @@ test('reservePaymentAttempt_: 保存済みのリクエストスナップショ�
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.ok(found.record.paymentRecoveryRequiredAt);
+});
+
+/*
+ * ============================================================================
+ * PR #354レビュー対応・3回目: reservePaymentAttempt_のFAILED状態における並行再試行
+ *
+ * 修正前は、FAILEDの予約へ複数のリクエストがほぼ同時に到達すると、1つ目が新しい
+ * paymentAttemptId・スナップショットを予約してLockを解放した直後（まだpaymentStatusは
+ * failedのまま・Stripe呼び出し・証跡コミットが終わっていない間）に2つ目が到達した場合、
+ * 2つ目もcurrentPaymentStatus===failedのまま「新しい試行」の分岐へ入ってしまい、1つ目の
+ * 予約を上書きして別のpaymentAttemptId・別のIdempotency-Keyで2回目のStripe呼び出しを
+ * 行ってしまっていた（二重のCheckout Session発行につながる）。
+ *
+ * paymentAttemptResolvedAt（paymentStatusとは独立に「この決済試行が確定的な結果に到達
+ * したか」だけを表すフラグ）を導入し、reservePaymentAttempt_の再利用判定をpaymentStatus
+ * ではなくこのフラグで行うことで、両方のリクエストが同じ決済試行へ収束するようにした。
+ * ============================================================================
+ */
+
+test('reservePaymentAttempt_: FAILEDから2件のリクエストがほぼ同時に到達しても、同じ決済試行ID・同じリクエスト内容へ収束する（二重のCheckout Session発行を防ぐ）', function () {
+  var ctx;
+  var bookingId;
+  var secondResult;
+  var nested = false;
+  var urlFetchApp = stubs.createUrlFetchAppStub(function (url, options) {
+    if (options.method === 'post' && !nested) {
+      nested = true;
+      /*
+       * 1つ目のリクエスト（A）がreservePaymentAttempt_で新しい決済試行を予約しLockを
+       * 解放した直後、実際にStripeへHTTP呼び出し中（paymentStatusはまだfailedのまま・
+       * 証跡コミット前）に、別プロセス（B）が同じbookingIdへほぼ同時に到達したことを
+       * シミュレートする。
+       */
+      secondResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+    }
+    return defaultStripeResponder(url, options);
+  });
+  ctx = setup({ urlFetchApp: urlFetchApp });
+  bookingId = createBookingRow(ctx, {
+    paymentStatus: 'failed',
+    paymentAttemptId: 'PAY-OLD-RESOLVED',
+    paymentAttemptResolvedAt: new Date('2026-09-20T00:00:00+09:00'),
+    stripeCheckoutRequestSnapshot: ''
+  });
+
+  var firstResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+
+  assert.strictEqual(secondResult.success, true, 'B: ' + JSON.stringify(secondResult));
+  assert.strictEqual(firstResult.success, true, 'A: ' + JSON.stringify(firstResult));
+  assert.strictEqual(firstResult.checkoutUrl, secondResult.checkoutUrl, 'AとBは同じSessionへ収束する');
+
+  var createCalls = urlFetchApp._calls.filter(function (c) { return c.options.method === 'post'; });
+  assert.strictEqual(createCalls.length, 2, 'AとB両方がStripeへ到達する（Stripe側のIdempotency-Key保証で1つのSessionへ収束する設計）');
+  assert.strictEqual(
+    createCalls[0].options.headers['Idempotency-Key'],
+    createCalls[1].options.headers['Idempotency-Key'],
+    '同じIdempotency-Keyへ収束する（別々のpaymentAttemptIdを発行しない）'
+  );
+  assert.strictEqual(createCalls[0].options.payload, createCalls[1].options.payload, '送信するリクエスト内容も完全に一致する');
+  assert.notStrictEqual(createCalls[0].options.headers['Idempotency-Key'], 'PAY-OLD-RESOLVED', '解決済みの前回の試行IDを再利用してはいけない（新しいIDを発行する）');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.paymentStatus, 'checkout_pending');
+  assert.strictEqual(found.record.paymentAttemptId, createCalls[0].options.headers['Idempotency-Key']);
+});
+
+test('resumeExistingCheckout_: 同一予約への2件のリクエストがほぼ同時にexpired/unpaidを確認しても、片方だけが新しい決済試行を開始し、もう片方は古い確認結果でその証跡を上書きしない', function () {
+  var ctx;
+  var bookingId;
+  var secondResult;
+  var nested = false;
+  var urlFetchApp = stubs.createUrlFetchAppStub(function (url, options) {
+    if (options.method === 'get') {
+      if (!nested) {
+        nested = true;
+        /*
+         * 1つ目のリクエスト（A）が古いSession（cs_old）の状態確認（retrieveCheckoutSession）
+         * のためにStripeへHTTP呼び出し中（まだ何も台帳へ書き込んでいない）に、別プロセス
+         * （B）が同じbookingIdへほぼ同時に到達し、同じ古いSessionを確認して先にfailedへの
+         * 遷移・新しい決済試行の開始・成功までを完了させたことをシミュレートする。
+         */
+        secondResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+      }
+      return { responseCode: 200, body: { id: 'cs_old', status: 'expired', payment_status: 'unpaid', expires_at: 1 } };
+    }
+    return defaultStripeResponder(url, options);
+  });
+  ctx = setup({ urlFetchApp: urlFetchApp });
+  bookingId = createBookingRow(ctx, {
+    paymentStatus: 'checkout_pending', paymentAttemptId: 'PAY-OLD', stripeCheckoutSessionId: 'cs_old'
+  });
+
+  var firstResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+
+  assert.strictEqual(secondResult.success, true, 'B: ' + JSON.stringify(secondResult));
+  /*
+   * A（1つ目）は、応答を受け取った時点で台帳の現在の決済試行が既にBの新しい試行へ
+   * 進んでいることを検知し、古い確認結果でBの証跡を上書きせず、安全に再試行可能な
+   * エラーとして停止する（新しいpaymentAttemptIdを発行しない・failedへも進めない）。
+   */
+  assert.strictEqual(firstResult.success, false, 'A: ' + JSON.stringify(firstResult));
+  assert.strictEqual(firstResult.error.code, 'PAYMENT_STATUS_UNKNOWN');
+  assert.strictEqual(firstResult.retryable, true);
+
+  var createCalls = urlFetchApp._calls.filter(function (c) { return c.options.method === 'post'; });
+  assert.strictEqual(createCalls.length, 1, '新しいCheckout Session作成はBの1回だけ（Aは新しい試行を発行しない）');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.paymentStatus, 'checkout_pending', 'Bが開始した新しい決済試行がそのまま残る');
+  assert.notStrictEqual(found.record.paymentAttemptId, 'PAY-OLD', '新しい決済試行IDへ進んでいる');
+  assert.strictEqual(found.record.paymentAttemptId, createCalls[0].options.headers['Idempotency-Key']);
+  assert.strictEqual(found.record.stripeCheckoutSessionId, secondResult.checkoutUrl.split('/pay/')[1], 'Bが作成したSessionのまま（Aによって上書きされていない）');
 });
 
 /*
