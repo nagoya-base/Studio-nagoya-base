@@ -571,6 +571,31 @@
   }
 
   /*
+   * PR #354レビュー対応・項目3: startCardCheckoutの結果が「確実にCheckout未着手」
+   * （CHECKOUT_DISABLED等）と判断できるコード以外（Session作成結果不明・台帳保存失敗・
+   * 決済済みの可能性・通信エラー等）だった場合の専用案内。旧「決済リンクを後日送付」
+   * 案内へ誘導しない（Stripe側で決済試行が既に進んでいる可能性がある予約に対し、後日
+   * 別経路の決済リンクでも支払わせてしまうと二重決済につながるため）。「確定」「まもなく
+   * ご案内」等、状況が解決したかのような文言を含めない。
+   */
+  var CARD_CHECKOUT_UNCERTAIN_TEXT_ = {
+    ja: [
+      '【決済手続きの開始状況を確認できませんでした】',
+      '恐れ入りますが、しばらくしてからこのページを再読み込みいただくか、受付番号を添えて当店までお問い合わせください。',
+      'このまま新しいお申し込みや別の決済方法でのお支払いをされないようお願いいたします。'
+    ],
+    en: [
+      '[We could not confirm the payment setup status]',
+      'Please reload this page in a moment, or contact us with your booking ID above.',
+      'Please do not submit a new request or pay by another method in the meantime.'
+    ]
+  };
+
+  function cardCheckoutUncertainNoticeLines(locale) {
+    return CARD_CHECKOUT_UNCERTAIN_TEXT_[normalizeLocale(locale)];
+  }
+
+  /*
    * ── 月間空き状況カレンダー（Issue #318） ──
    * gas/booking/shared/Availability.gsのgetMonthlyAvailabilityが返すDAY_STATUS（5値）を
    * 記号・aria-label・選択可否へ変換する、DOM非依存の純粋ロジック。
@@ -922,6 +947,7 @@
     cardPaymentNoticeLines: cardPaymentNoticeLines,
     cardCheckoutRedirectNoticeLines: cardCheckoutRedirectNoticeLines,
     cardCheckoutButtonLabel: cardCheckoutButtonLabel,
+    cardCheckoutUncertainNoticeLines: cardCheckoutUncertainNoticeLines,
     brandShowsMemberOption: brandShowsMemberOption,
     formatJpyAmount: formatJpyAmount,
     priceComputingLabel: priceComputingLabel,

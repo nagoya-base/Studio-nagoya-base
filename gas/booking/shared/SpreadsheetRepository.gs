@@ -278,7 +278,18 @@ var SpreadsheetRepository = (function () {
     'paymentLastErrorMessage',
     'paymentRecoveryRequiredAt',
     'paymentRecoveryReason',
-    'accessApprovedAt'
+    'accessApprovedAt',
+    /*
+     * PR #354レビュー対応（Issue #341 PR-B）で追加。カード決済予約のcreateBooking時に
+     * 発行する、推測困難な決済開始トークン（Utilities.getUuid()。現金・PayPay予約は
+     * 常に空文字のまま）。bookingId（ブランド+日付+uuidの一部8桁のみで構成され、
+     * 総当たりに対して十分な強度を持たない）だけではCheckout Sessionの発行・取得を
+     * 一切許可しない設計にするため、BookingRepository.beginCardCheckoutは必ずこの列と
+     * 呼び出し元が渡す値が一致することを要求する（tokensMatch_。定数時間比較）。
+     * createBookingのレスポンスで一度だけ本人（送信したブラウザ）へ返し、以後は
+     * ブラウザ側が保持する。台帳・ログ・PRには実値を記載しない。
+     */
+    'checkoutAccessToken'
   ];
 
   function getSpreadsheet_() {

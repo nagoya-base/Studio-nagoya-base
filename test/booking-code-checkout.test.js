@@ -32,6 +32,7 @@ var FILES = [
 
 var SPREADSHEET_ID = 'ss1';
 var CALENDAR_ID = 'cal1';
+var TOKEN = 'test-checkout-access-token-0001';
 
 function setup(options) {
   var opts = options || {};
@@ -99,7 +100,8 @@ function sampleRecord(overrides) {
       paymentStatus: 'not_started',
       priceAmount: 8000,
       priceOverrideAmount: '',
-      priceOverrideAt: ''
+      priceOverrideAt: '',
+      checkoutAccessToken: TOKEN
     },
     overrides || {}
   );
@@ -120,11 +122,11 @@ function postJson(sandbox, action, body) {
   return JSON.parse(output.text);
 }
 
-test('doPost action=startCardCheckout: bookingIdだけを渡した正常系はCheckout URLを返す', function () {
+test('doPost action=startCardCheckout: bookingId+正しいcheckoutAccessTokenを渡した正常系はCheckout URLを返す', function () {
   var ctx = setup();
   var bookingId = createBookingRow(ctx);
 
-  var result = postJson(ctx.sandbox, 'startCardCheckout', { bookingId: bookingId });
+  var result = postJson(ctx.sandbox, 'startCardCheckout', { bookingId: bookingId, checkoutAccessToken: TOKEN });
   assert.strictEqual(result.success, true, JSON.stringify(result));
   assert.ok(result.checkoutUrl.indexOf('checkout.stripe.com') !== -1);
   assert.ok(result.requestId);
@@ -134,7 +136,7 @@ test('doPost action=startCardCheckout: bookingId以外にamount/currencyを送�
   var ctx = setup();
   var bookingId = createBookingRow(ctx, { priceAmount: 9500 });
 
-  var result = postJson(ctx.sandbox, 'startCardCheckout', { bookingId: bookingId, amountJpy: 1, currency: 'USD' });
+  var result = postJson(ctx.sandbox, 'startCardCheckout', { bookingId: bookingId, checkoutAccessToken: TOKEN, amountJpy: 1, currency: 'USD' });
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.amount, 9500, 'クライアントが送ったamountJpy(1)は一切使われない');
   assert.strictEqual(result.currency, 'JPY', 'クライアントが送ったcurrency(USD)は一切使われない');
@@ -142,10 +144,54 @@ test('doPost action=startCardCheckout: bookingId以外にamount/currencyを送�
 
 test('doPost action=startCardCheckout: bookingId未指定はINVALID_BOOKING_IDを返し、BookingRepositoryを一切呼ばない', function () {
   var ctx = setup();
-  var result = postJson(ctx.sandbox, 'startCardCheckout', {});
+  var result = postJson(ctx.sandbox, 'startCardCheckout', { checkoutAccessToken: TOKEN });
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'INVALID_BOOKING_ID');
   assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
+});
+
+test('doPost action=startCardCheckout: checkoutAccessToken未指定はFORBIDDENを返し、BookingRepositoryを一切呼ばない（PR #354レビュー対応・項目1）', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx);
+
+  var result = postJson(ctx.sandbox, 'startCardCheckout', { bookingId: bookingId });
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'FORBIDDEN');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
+});
+
+test('doPost action=startCardCheckout: 間違ったcheckoutAccessTokenはFORBIDDENを返し、bookingIdだけでは第三者がCheckout URLを取得できない', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx);
+
+  var result = postJson(ctx.sandbox, 'startCardCheckout', { bookingId: bookingId, checkoutAccessToken: 'wrong-token' });
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'FORBIDDEN');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
+});
+
+test('doPost action未指定は、カード決済のcreateBookingレスポンスにcheckoutAccessTokenを含める（フロントがstartCardCheckoutを呼ぶために必要）', function () {
+  var ctx = setup();
+  var e = {
+    parameter: {},
+    postData: {
+      contents: JSON.stringify({
+        brand: 'studio_x', customerType: 'returning', date: '2026-10-05', startTime: '10:00',
+        durationMinutes: 120, name: 'テスト太郎', email: 'test@example.com', phone: '',
+        people: '2名', purpose: '練習', paymentMethod: 'オンラインクレジットカード'
+      })
+    }
+  };
+  var result = JSON.parse(ctx.sandbox.doPost(e).text);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(typeof result.checkoutAccessToken, 'string');
+  assert.ok(result.checkoutAccessToken.length > 0);
+
+  /* 実際にこのトークンでstartCardCheckoutが呼べることを確認する（発行と検証の整合性）。 */
+  var checkoutResult = postJson(ctx.sandbox, 'startCardCheckout', {
+    bookingId: result.bookingId, checkoutAccessToken: result.checkoutAccessToken
+  });
+  assert.strictEqual(checkoutResult.success, true, JSON.stringify(checkoutResult));
 });
 
 test('doPost action=startCardCheckout: 不正なJSON本文はINVALID_JSONを返す', function () {

@@ -127,12 +127,17 @@ function sanitizeErrorCode_(errorCode) {
 }
 
 /*
- * Stripe Checkout Session発行（Issue #341 PR-B）。e.postData.contentsを{bookingId}のみを
- * 受け取るJSONとしてパースし、BookingRepository.beginCardCheckoutへ渡す。金額・ブランド等
- * bookingId以外のフィールドは一切受け取らない（クライアントに金額を主張させる余地自体を
- * 作らない。beginCardCheckout内部でCardPayment.computeExpectedPaymentAmount経由の
- * サーバー計算額のみを使う）。handleCreateBooking_と同じ方針で、想定外の例外は
- * スタックトレース・内部エラー文言を外部へ出さず汎用のINTERNAL_ERRORとして返す。
+ * Stripe Checkout Session発行（Issue #341 PR-B）。e.postData.contentsを{bookingId,
+ * checkoutAccessToken}のみを受け取るJSONとしてパースし、BookingRepository.
+ * beginCardCheckoutへ渡す。金額・ブランド等bookingId以外のフィールドは一切受け取らない
+ * （クライアントに金額を主張させる余地自体を作らない。beginCardCheckout内部で
+ * CardPayment.computeExpectedPaymentAmount経由のサーバー計算額のみを使う）。
+ * handleCreateBooking_と同じ方針で、想定外の例外はスタックトレース・内部エラー文言を
+ * 外部へ出さず汎用のINTERNAL_ERRORとして返す。
+ *
+ * checkoutAccessToken（PR #354レビュー対応・項目1）: bookingIdだけでは第三者が
+ * Checkout URLを取得できてしまうため、createBooking（カード決済のみ）が発行し送信元
+ * ブラウザへ返した推測困難なトークンの一致をbeginCardCheckoutへ必須で検証させる。
  */
 function handleStartCardCheckout_(e) {
   var requestId = Utilities.getUuid();
@@ -160,8 +165,20 @@ function handleStartCardCheckout_(e) {
     };
   }
 
+  /* トークン自体の値はログへ一切出力しない（形式チェックのみ。実際の一致判定は
+     BookingRepository.beginCardCheckout側で行う）。 */
+  var checkoutAccessToken = payload && typeof payload.checkoutAccessToken === 'string' ? payload.checkoutAccessToken : '';
+  if (!checkoutAccessToken || checkoutAccessToken.length > 100) {
+    Logger.log('requestId=' + requestId + ' startCardCheckout=result error.code=FORBIDDEN');
+    return {
+      success: false,
+      error: { code: 'FORBIDDEN', message: '予約が見つからないか、操作の権限がありません。' },
+      requestId: requestId
+    };
+  }
+
   try {
-    var result = BookingRepository.beginCardCheckout(bookingId);
+    var result = BookingRepository.beginCardCheckout(bookingId, checkoutAccessToken);
     if (!result || typeof result !== 'object') {
       result = {
         success: false,

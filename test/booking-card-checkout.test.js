@@ -4,8 +4,11 @@
  *
  * 受入条件（PRチェックリスト）との対応:
  * - 正しいサーバー計算額・通貨でSessionが生成される
+ * - bookingIdだけでは第三者がCheckout URLを取得できない（PR #354レビュー対応・項目1）
  * - 二重クリック・並行申込で二重Session生成が起きない（Idempotency-Keyの再利用）
- * - Stripe生成成功後にGAS保存が失敗しても、再試行で新しいSessionを無条件に生成しない
+ * - Stripe生成成功後にGAS保存が失敗しても、再試行で新しいSessionを無条件に生成しない。
+ *   その際、Stripeへ送るリクエスト内容（金額・通貨・expires_at）が初回と食い違わない
+ *   （PR #354レビュー対応・項目2）
  * - タイムアウト・中断・期限切れ・失効確認失敗を安全に扱える
  * - Stripe側の有効期限とGAS側の仮押さえ期限が整合する
  * - 旧Payment Link方式（CARD_TTL_HOURS）の予約・現地払い予約を壊さない
@@ -42,6 +45,10 @@ var DEFAULT_MAIL_PROPERTIES = {
 
 var SPREADSHEET_ID = 'ss1';
 var CALENDAR_ID = 'cal1';
+
+/* 予約者本人が保持している前提の決済開始トークン（PR #354レビュー対応・項目1）。
+   sampleRecordの既定値と一致させ、正規の呼び出しはこの値を渡す。 */
+var TOKEN = 'test-checkout-access-token-0001';
 
 function setup(options) {
   var opts = options || {};
@@ -118,7 +125,8 @@ function sampleRecord(overrides) {
       paymentStatus: 'not_started',
       priceAmount: 8000,
       priceOverrideAmount: '',
-      priceOverrideAt: ''
+      priceOverrideAt: '',
+      checkoutAccessToken: TOKEN
     },
     overrides || {}
   );
@@ -130,11 +138,103 @@ function createBookingRow(ctx, overrides) {
   return record.bookingId;
 }
 
+function parseFormPayload_(payload) {
+  var out = {};
+  String(payload || '').split('&').forEach(function (pair) {
+    if (!pair) return;
+    var idx = pair.indexOf('=');
+    var key = decodeURIComponent(pair.slice(0, idx));
+    var value = decodeURIComponent(pair.slice(idx + 1));
+    out[key] = value;
+  });
+  return out;
+}
+
+/*
+ * ============================================================================
+ * PR #354レビュー対応・項目1: bookingIdだけでは第三者がCheckout Session発行・
+ * 再取得ができないこと（決済開始トークンの検証）
+ * ============================================================================
+ */
+
+test('beginCardCheckout: 正しいトークンを渡した場合のみCheckout Sessionを発行する', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx);
+
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+});
+
+test('beginCardCheckout: bookingIdのみ（トークン省略）ではFORBIDDENで拒否し、Stripeを一切呼ばない', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx);
+
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, undefined);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'FORBIDDEN');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 0, '第三者がbookingIdだけでCheckout URLを取得できてはならない');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.paymentStatus, 'not_started', '認可されていない呼び出しでは台帳を一切変更しない');
+});
+
+test('beginCardCheckout: 推測した/間違ったトークンではFORBIDDENで拒否し、Stripeを一切呼ばない', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx);
+
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, 'guessed-wrong-token');
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'FORBIDDEN');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
+});
+
+test('beginCardCheckout: 空文字トークンは、現地払い予約（checkoutAccessTokenが常に空文字）を装う攻撃にも使えない', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx, { paymentMethod: 'PayPay', checkoutAccessToken: '' });
+
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, '');
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'FORBIDDEN', '空文字同士を一致させてはならない');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
+});
+
+test('beginCardCheckout: 存在しないbookingIdも、トークン不一致と同じFORBIDDENで返す（存在有無のオラクルにしない）', function () {
+  var ctx = setup();
+  createBookingRow(ctx); // 別のbookingIdを1件作っておく
+
+  var notFoundResult = ctx.sandbox.BookingRepository.beginCardCheckout('SX-99999999-ZZZZZZZZ', TOKEN);
+  var wrongTokenResult = ctx.sandbox.BookingRepository.beginCardCheckout('SX-20261001-AAAAAAAA', 'wrong-token');
+
+  assert.strictEqual(notFoundResult.success, false);
+  assert.strictEqual(wrongTokenResult.success, false);
+  assert.strictEqual(notFoundResult.error.code, wrongTokenResult.error.code, 'bookingId不在とトークン不一致を区別しない');
+  assert.strictEqual(notFoundResult.error.message, wrongTokenResult.error.message);
+});
+
+test('beginCardCheckout: 他の予約のトークンでは自分の予約であってもCheckout Sessionを取得できない', function () {
+  var ctx = setup();
+  createBookingRow(ctx, { bookingId: 'SX-20261001-AAAAAAAA', checkoutAccessToken: 'token-for-booking-a' });
+  createBookingRow(ctx, { bookingId: 'SX-20261002-BBBBBBBB', checkoutAccessToken: 'token-for-booking-b' });
+
+  var crossResult = ctx.sandbox.BookingRepository.beginCardCheckout('SX-20261001-AAAAAAAA', 'token-for-booking-b');
+  assert.strictEqual(crossResult.success, false);
+  assert.strictEqual(crossResult.error.code, 'FORBIDDEN');
+
+  var correctResult = ctx.sandbox.BookingRepository.beginCardCheckout('SX-20261001-AAAAAAAA', 'token-for-booking-a');
+  assert.strictEqual(correctResult.success, true);
+});
+
+/*
+ * ============================================================================
+ * 正常系・金額
+ * ============================================================================
+ */
+
 test('beginCardCheckout: 正しいサーバー計算額(priceAmount)・通貨JPYでCheckout Sessionを生成し、stripeAmount/stripeCurrencyへスナップショット保存する', function () {
   var ctx = setup();
   var bookingId = createBookingRow(ctx, { priceAmount: 12000 });
 
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(result.success, true, JSON.stringify(result));
   assert.strictEqual(result.amount, 12000);
   assert.strictEqual(result.currency, 'JPY');
@@ -155,18 +255,18 @@ test('beginCardCheckout: 管理者の確定前修正(priceOverrideAmount)があ�
     priceAmount: 8000, priceOverrideAmount: 7000, priceOverrideAt: new Date('2026-09-21T00:00:00+09:00')
   });
 
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.amount, 7000, 'priceOverrideAmountが優先される（Booking.getEffectivePriceAmount経由）');
 });
 
-test('beginCardCheckout: bookingIdしか受け取らないため、クライアントが金額を主張する余地が無い', function () {
+test('beginCardCheckout: bookingId・トークン以外の入力経路が無いため、クライアントが金額を主張する余地が無い', function () {
   var ctx = setup();
   var bookingId = createBookingRow(ctx, { priceAmount: 8000 });
 
-  /* 呼び出し側（Code.gs）がbookingId以外を渡しても、この関数のシグネチャ自体が
-     bookingIdしか受け取らないため無視される（改ざんの入力経路が存在しない）。 */
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, undefined, { amountJpy: 1 });
+  /* 呼び出し側（Code.gs）がbookingId/token以外を渡しても、この関数のシグネチャ自体が
+     それらを受け取らないため無視される（改ざんの入力経路が存在しない）。 */
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN, undefined, { amountJpy: 1 });
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.amount, 8000, '余分な引数があっても常にサーバー計算額(8000)が使われる');
 });
@@ -175,7 +275,7 @@ test('beginCardCheckout: Stripeの実際のexpires_atをpaymentHoldExpiresAtへ�
   var ctx = setup();
   var bookingId = createBookingRow(ctx);
 
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.paymentHoldExpiresAt.getTime(), 1999999999 * 1000);
 
@@ -199,7 +299,7 @@ test('beginCardCheckout: 二重クリック（同一bookingIdへの連続呼び�
   var ctx = setup({ urlFetchApp: urlFetchApp });
   var bookingId = createBookingRow(ctx);
 
-  var first = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var first = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(first.success, true);
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   var attemptId = found.record.paymentAttemptId;
@@ -207,7 +307,7 @@ test('beginCardCheckout: 二重クリック（同一bookingIdへの連続呼び�
   /* 1回目で既にcheckout_pendingへ進んでいるため、2回目の呼び出しはresumeExistingCheckout_
      （Stripe側のSession状態を確認して再利用する）経路へ入る。まだopenのため新しいSessionは
      作らずそのまま返す。 */
-  var second = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var second = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(second.success, true);
   assert.strictEqual(second.checkoutUrl, first.checkoutUrl, '同じSessionがそのまま返る');
 
@@ -217,50 +317,171 @@ test('beginCardCheckout: 二重クリック（同一bookingIdへの連続呼び�
   assert.strictEqual(createCalls[0].options.headers['Idempotency-Key'], attemptId);
 });
 
-test('beginCardCheckout: Stripe Session生成に成功した直後にGASの証跡コミット(applyPaymentStateUpdate)が失敗しても、再試行は同じIdempotency-Keyを再利用し新しいSessionを無条件に発行しない', function () {
+/*
+ * ============================================================================
+ * PR #354レビュー対応・項目2: Stripe冪等キーとリクエスト内容の一致
+ * ============================================================================
+ */
+
+test('reservePaymentAttempt_: paymentAttemptId・stripeAmount・stripeCurrency・paymentHoldExpiresAtを1回のRange.setValuesでまとめて予約する', function () {
   var ctx = setup();
-  var bookingId = createBookingRow(ctx);
+  var bookingId = createBookingRow(ctx, { priceAmount: 9000 });
+
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+
+  var sheet = ctx.globals.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
+  /* 1回目のsetValues呼び出しがreservePaymentAttempt_によるスナップショット予約
+     （paymentAttemptId・stripeAmount・stripeCurrency・paymentHoldExpiresAtを含む15列の
+     atomic範囲への1回の書き込み）、2回目がapplyPaymentStateUpdateの証跡コミット
+     （同じ15列への2回目の書き込み）、3回目がpaymentStatus単独の書き込み。 */
+  assert.strictEqual(sheet._setValuesCalls.length, 3);
+  assert.strictEqual(sheet._setValuesCalls[0].numCols, 15, '予約時点で15列のatomic範囲へまとめて書く');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.stripeAmount, 9000);
+  assert.strictEqual(found.record.stripeCurrency, 'JPY');
+  assert.ok(found.record.paymentHoldExpiresAt instanceof Date || typeof found.record.paymentHoldExpiresAt.getTime === 'function');
+});
+
+test('reservePaymentAttempt_: GAS保存（証跡コミット）失敗後の再試行は、初回と完全に同一の金額・通貨・expires_atをStripeへ送る', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx, { priceAmount: 8000 });
 
   var callCount = 0;
   var realAtomicUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic;
   ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic = function (id, fields) {
     callCount++;
-    /* 1回目の呼び出しはreservePaymentAttempt_によるpaymentAttemptIdだけの永続化（成功させる）。
-       2回目の呼び出しがapplyPaymentStateUpdateによる証跡コミット（ここを失敗させる＝
-       「Stripe側は成功したがGASへの保存に失敗した」状況を再現する）。 */
+    /* 1回目はreservePaymentAttempt_のスナップショット予約（成功させる）。2回目が
+       applyPaymentStateUpdateの証跡コミット（ここを失敗させ、Stripe成功後のGAS保存
+       失敗を再現する）。 */
     if (callCount === 2) {
       throw new Error('simulated sheets failure right after Stripe succeeded');
     }
     return realAtomicUpdate(id, fields);
   };
 
-  var firstResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var firstResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(firstResult.success, false);
   assert.strictEqual(firstResult.error.code, 'PAYMENT_DETAIL_WRITE_FAILED');
-  assert.strictEqual(firstResult.retryable, true);
 
-  var afterFirst = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
-  assert.strictEqual(afterFirst.record.paymentStatus, 'not_started', 'コミット失敗時はpaymentStatusを進めない');
-  var reservedAttemptId = afterFirst.record.paymentAttemptId;
-  assert.ok(reservedAttemptId, 'paymentAttemptIdはStripe呼び出し前に既に永続化されている');
-
-  assert.strictEqual(ctx.urlFetchApp._calls.length, 1, 'Stripeへの呼び出しは1回目の試行で既に行われている');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 1);
+  var firstPayload = parseFormPayload_(ctx.urlFetchApp._calls[0].options.payload);
   var firstIdempotencyKey = ctx.urlFetchApp._calls[0].options.headers['Idempotency-Key'];
-  assert.strictEqual(firstIdempotencyKey, reservedAttemptId);
 
-  /* 修正後（Sheets障害が解消した想定）で再試行する。 */
   ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic = realAtomicUpdate;
-  var secondResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var secondResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(secondResult.success, true, JSON.stringify(secondResult));
 
-  assert.strictEqual(ctx.urlFetchApp._calls.length, 2, '再試行でもう一度Stripeを呼ぶ（同じキーでの冪等な呼び出し）');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 2);
+  var secondPayload = parseFormPayload_(ctx.urlFetchApp._calls[1].options.payload);
   var secondIdempotencyKey = ctx.urlFetchApp._calls[1].options.headers['Idempotency-Key'];
-  assert.strictEqual(secondIdempotencyKey, firstIdempotencyKey, '新しい決済試行IDを発行せず、同じIdempotency-Keyを再利用する');
 
-  var finalRecord = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
-  assert.strictEqual(finalRecord.paymentStatus, 'checkout_pending');
-  assert.strictEqual(finalRecord.paymentAttemptId, reservedAttemptId);
+  assert.strictEqual(secondIdempotencyKey, firstIdempotencyKey, '同じIdempotency-Keyを再利用する');
+  assert.strictEqual(secondPayload['line_items[0][price_data][unit_amount]'], firstPayload['line_items[0][price_data][unit_amount]'], '金額が初回と食い違わない');
+  assert.strictEqual(secondPayload['line_items[0][price_data][currency]'], firstPayload['line_items[0][price_data][currency]'], '通貨が初回と食い違わない');
+  assert.strictEqual(secondPayload.expires_at, firstPayload.expires_at, 'expires_atが初回と食い違わない');
 });
+
+test('reservePaymentAttempt_: Stripe APIタイムアウト後の再試行も、初回と完全に同一のリクエスト内容を送る', function () {
+  var attempt = 0;
+  var urlFetchApp = stubs.createUrlFetchAppStub(function (url, options) {
+    attempt++;
+    if (attempt === 1) {
+      return { thrown: new Error('simulated timeout') };
+    }
+    return defaultStripeResponder(url, options);
+  });
+  var ctx = setup({ urlFetchApp: urlFetchApp });
+  var bookingId = createBookingRow(ctx, { priceAmount: 8000 });
+
+  var firstResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(firstResult.success, false);
+  assert.strictEqual(firstResult.error.code, 'PAYMENT_STATUS_UNKNOWN');
+
+  var firstPayload = parseFormPayload_(urlFetchApp._calls[0].options.payload);
+  var firstIdempotencyKey = urlFetchApp._calls[0].options.headers['Idempotency-Key'];
+
+  var secondResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(secondResult.success, true, JSON.stringify(secondResult));
+
+  var secondPayload = parseFormPayload_(urlFetchApp._calls[1].options.payload);
+  var secondIdempotencyKey = urlFetchApp._calls[1].options.headers['Idempotency-Key'];
+
+  assert.strictEqual(secondIdempotencyKey, firstIdempotencyKey);
+  assert.strictEqual(secondPayload['line_items[0][price_data][unit_amount]'], firstPayload['line_items[0][price_data][unit_amount]']);
+  assert.strictEqual(secondPayload.expires_at, firstPayload.expires_at);
+});
+
+test('reservePaymentAttempt_: 予約後・未解決の間に料金が修正されても、再試行はスナップショット時点の金額を使い続ける（新しい金額を反映しない）', function () {
+  var attempt = 0;
+  var urlFetchApp = stubs.createUrlFetchAppStub(function (url, options) {
+    attempt++;
+    if (attempt === 1) {
+      return { thrown: new Error('simulated timeout') };
+    }
+    return defaultStripeResponder(url, options);
+  });
+  var ctx = setup({ urlFetchApp: urlFetchApp });
+  var bookingId = createBookingRow(ctx, { priceAmount: 8000 });
+
+  var firstResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(firstResult.success, false);
+
+  /* 1回目の失敗（未解決の決済試行が残ったまま）と2回目の再試行の間に、管理者が
+     priceOverrideAmountで金額を修正したことを再現する。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, {
+    priceOverrideAmount: 3000,
+    priceOverrideAt: new Date('2026-09-21T00:00:00+09:00')
+  });
+
+  var secondResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(secondResult.success, true, JSON.stringify(secondResult));
+  assert.strictEqual(secondResult.amount, 8000, '未解決の決済試行の再試行は、料金修正後でも予約時点のスナップショット額のまま');
+
+  var secondPayload = parseFormPayload_(urlFetchApp._calls[1].options.payload);
+  assert.strictEqual(secondPayload['line_items[0][price_data][unit_amount]'], '8000');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.stripeAmount, 8000);
+});
+
+test('reservePaymentAttempt_: FAILEDから新しい決済試行を開始する場合は、その時点の最新料金を新しいスナップショットとして使う', function () {
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 400, body: { error: { code: 'parameter_invalid_integer', message: 'invalid' } } };
+  });
+  var ctx = setup({ urlFetchApp: urlFetchApp });
+  var bookingId = createBookingRow(ctx, { priceAmount: 8000 });
+
+  var failedResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(failedResult.success, false);
+  assert.strictEqual(failedResult.error.code, 'STRIPE_REQUEST_ERROR');
+
+  var afterFail = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(afterFail.record.paymentStatus, 'failed');
+  var firstAttemptId = afterFail.record.paymentAttemptId;
+
+  /* FAILED確定後に料金が修正された想定。新しい決済試行はこの新しい金額を使ってよい
+     （前のtestの「未解決の間は変えない」とは異なるケース）。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, {
+    priceOverrideAmount: 6000,
+    priceOverrideAt: new Date('2026-09-21T00:00:00+09:00')
+  });
+
+  ctx.globals.UrlFetchApp.fetch = stubs.createUrlFetchAppStub(defaultStripeResponder).fetch;
+  var retryResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(retryResult.success, true, JSON.stringify(retryResult));
+  assert.strictEqual(retryResult.amount, 6000, '新しい決済試行では最新の料金を使う');
+
+  var afterRetry = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.notStrictEqual(afterRetry.record.paymentAttemptId, firstAttemptId);
+});
+
+/*
+ * ============================================================================
+ * その他の分岐（回帰確認）
+ * ============================================================================
+ */
 
 test('beginCardCheckout: Stripe呼び出し自体がタイムアウト/ネットワークエラーの場合は新しいSessionを発行せず、再試行可能なエラーを返す', function () {
   var urlFetchApp = stubs.createUrlFetchAppStub(function () {
@@ -269,7 +490,7 @@ test('beginCardCheckout: Stripe呼び出し自体がタイムアウト/ネット
   var ctx = setup({ urlFetchApp: urlFetchApp });
   var bookingId = createBookingRow(ctx);
 
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'PAYMENT_STATUS_UNKNOWN');
   assert.strictEqual(result.retryable, true);
@@ -287,7 +508,7 @@ test('beginCardCheckout: Stripeが明確な4xxエラーを返した場合はFAIL
   var ctx = setup({ urlFetchApp: urlFetchApp });
   var bookingId = createBookingRow(ctx);
 
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'STRIPE_REQUEST_ERROR');
 
@@ -297,7 +518,7 @@ test('beginCardCheckout: Stripeが明確な4xxエラーを返した場合はFAIL
 
   /* 設定を修正した想定で正常応答へ差し替えて再試行する。 */
   ctx.globals.UrlFetchApp.fetch = stubs.createUrlFetchAppStub(defaultStripeResponder).fetch;
-  var retry = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var retry = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(retry.success, true, JSON.stringify(retry));
 
   var afterRetry = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
@@ -311,7 +532,7 @@ test('beginCardCheckout: 既にpaidの予約は新しいSessionを発行しな�
     stripePaymentIntentId: 'pi_1', lastStripeEventId: 'evt_1'
   });
 
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'ALREADY_PAID');
   assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
@@ -321,7 +542,7 @@ test('beginCardCheckout: checkoutEnabledがfalse（既定値）の場合はCHECK
   var ctx = setup({ properties: { STRIPE_CHECKOUT_ENABLED: '' } });
   var bookingId = createBookingRow(ctx);
 
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'CHECKOUT_DISABLED');
   assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
@@ -329,9 +550,9 @@ test('beginCardCheckout: checkoutEnabledがfalse（既定値）の場合はCHECK
 
 test('beginCardCheckout: 現地払い(paymentMethod!==card)の予約はNOT_CARD_PAYMENTで拒否し、Stripeを呼ばない', function () {
   var ctx = setup();
-  var bookingId = createBookingRow(ctx, { paymentMethod: 'PayPay' });
+  var bookingId = createBookingRow(ctx, { paymentMethod: 'PayPay', checkoutAccessToken: TOKEN });
 
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'NOT_CARD_PAYMENT');
   assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
@@ -347,7 +568,7 @@ test('beginCardCheckout: checkout_pendingでStripe側が既にcomplete/決済済
     paymentStatus: 'checkout_pending', paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_existing'
   });
 
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'PAYMENT_POSSIBLY_COMPLETED');
 
@@ -373,7 +594,7 @@ test('beginCardCheckout: checkout_pendingでStripe側が確実にexpired/unpaid�
     paymentStatus: 'checkout_pending', paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_old'
   });
 
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.ok(retrieveDone);
   assert.strictEqual(result.success, true, JSON.stringify(result));
 
@@ -393,7 +614,7 @@ test('beginCardCheckout: checkout_pendingでStripe側の状態確認自体が失
     paymentStatus: 'checkout_pending', paymentAttemptId: 'PAY-1', stripeCheckoutSessionId: 'cs_old'
   });
 
-  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId);
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'PAYMENT_STATUS_UNKNOWN');
   assert.strictEqual(result.retryable, true);

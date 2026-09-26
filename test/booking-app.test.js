@@ -870,7 +870,8 @@ function setupCardFlow(locale, options) {
     'ba-card-payment-notice',
     'ba-confirm-card-payment-notice',
     'ba-complete-card-payment-notice',
-    'ba-complete-checkout-notice'
+    'ba-complete-checkout-notice',
+    'ba-complete-checkout-uncertain-notice'
   ].forEach(function (id) { elements[id] = createNoticeElement(id); });
 
   var documentStub = {
@@ -900,12 +901,18 @@ function setupCardFlow(locale, options) {
          * 後日送付」フォールバックへ進む（既存テストの回帰なし）。
          */
         if (typeof url === 'string' && url.indexOf('action=startCardCheckout') !== -1) {
+          if (opts.checkoutFetchThrows) {
+            return Promise.reject(new Error('simulated network failure'));
+          }
           return Promise.resolve({ json: function () {
             return Promise.resolve(opts.checkoutResponse || { success: false, error: { code: 'CHECKOUT_DISABLED' } });
           } });
         }
         return Promise.resolve({ json: function () {
-          return Promise.resolve({ success: true, bookingId: 'SNB-CARD-TEST', requestId: 'req-card' });
+          /* PR #354レビュー対応・項目1: checkoutAccessTokenもcreateBookingのレスポンスに
+             含める（実際のGAS応答と同じ。これがないとattemptCardCheckout_がfetch自体を
+             呼ばずfallback扱いへ短絡してしまい、opts.checkoutResponseの検証ができない）。 */
+          return Promise.resolve({ success: true, bookingId: 'SNB-CARD-TEST', checkoutAccessToken: 'test-token-for-snb-card-test', requestId: 'req-card' });
         } });
       }
       return Promise.resolve({ json: function () {
@@ -1234,6 +1241,82 @@ test('Issue #341 PR-B: startCardCheckoutがcheckoutUrlを返した場合、旧�
   );
   assert.strictEqual(ctx.elements['ba-complete-checkout-wrap'].hidden, false);
   assert.strictEqual(ctx.elements['ba-complete-checkout-link'].href, 'https://checkout.stripe.com/pay/cs_test_abc');
+});
+
+/*
+ * PR #354レビュー対応・項目3: startCardCheckoutの結果コード別に、正しい画面へ振り分けること
+ * を検証する。CHECKOUT_DISABLED（確実に未着手）だけが旧「決済リンクを後日送付」案内へ
+ * フォールバックしてよく、それ以外はすべて専用の「確認できません」エラー画面を表示し、
+ * 旧方式へは絶対に誘導しない（二重決済防止）。
+ */
+[
+  { code: 'CHECKOUT_DISABLED', expectedNotice: 'fallback' },
+  { code: 'STRIPE_NOT_CONFIGURED', expectedNotice: 'fallback' },
+  { code: 'PAYMENT_STATUS_UNKNOWN', expectedNotice: 'uncertain' },
+  { code: 'PAYMENT_DETAIL_WRITE_FAILED', expectedNotice: 'uncertain' },
+  { code: 'PAYMENT_POSSIBLY_COMPLETED', expectedNotice: 'uncertain' },
+  { code: 'FORBIDDEN', expectedNotice: 'uncertain' },
+  { code: 'STRIPE_REQUEST_ERROR', expectedNotice: 'uncertain' }
+].forEach(function (testCase) {
+  test('startCardCheckoutがerror.code=' + testCase.code + 'を返した場合、' +
+    (testCase.expectedNotice === 'fallback' ? '旧「決済リンクを後日送付」案内を表示する' : '旧方式へ誘導せず専用のエラー案内を表示する'), async function () {
+    var ctx = setupCardFlow(null, {
+      checkoutResponse: { success: false, error: { code: testCase.code, message: 'test message' } }
+    });
+    ctx.elements['ba-date'].value = jstDateString(10);
+    ctx.elements['ba-duration'].value = '2';
+    ctx.setCustomerType('returning');
+    ctx.elements['ba-step-datetime-next']._listeners.click();
+    await flushPromises();
+    ctx.startTimeButtons[0]._listeners.click();
+    ctx.elements['ba-step-start-time-next']._listeners.click();
+
+    fillStep3RequiredFields(ctx);
+    ctx.setPaymentMethod(CARD_VALUE);
+    ctx.elements['ba-step-details-next']._listeners.click();
+
+    ctx.elements['ba-confirm-consent'].checked = true;
+    ctx.elements['ba-submit']._listeners.click();
+    await flushPromises();
+
+    assert.strictEqual(ctx.elements['ba-step-complete'].hidden, false);
+    if (testCase.expectedNotice === 'fallback') {
+      assert.strictEqual(ctx.elements['ba-complete-card-payment-notice'].hidden, false, '確実に未着手のコードは旧案内を表示してよい');
+      assert.strictEqual(ctx.elements['ba-complete-checkout-uncertain-notice'].hidden, true);
+      assert.strictEqual(ctx.elements['ba-complete-checkout-wrap'].hidden, true);
+    } else {
+      assert.strictEqual(ctx.elements['ba-complete-card-payment-notice'].hidden, true, '結果不明・要対応のコードでは旧「決済リンクを後日送付」案内を絶対に表示しない（二重決済防止）');
+      assert.strictEqual(ctx.elements['ba-complete-checkout-uncertain-notice'].hidden, false);
+      assert.strictEqual(ctx.elements['ba-complete-checkout-wrap'].hidden, true);
+      assert.match(
+        ctx.elements['ba-complete-checkout-uncertain-notice'].renderedText(),
+        /確認できませんでした/
+      );
+    }
+  });
+});
+
+test('startCardCheckout自体のfetchが失敗（ネットワーク断・タイムアウト）した場合も、旧方式へ誘導せず専用のエラー案内を表示する', async function () {
+  var ctx = setupCardFlow(null, { checkoutFetchThrows: true });
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-step-complete'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-complete-card-payment-notice'].hidden, true, 'fetch自体の失敗も旧方式へフォールバックしない');
+  assert.strictEqual(ctx.elements['ba-complete-checkout-uncertain-notice'].hidden, false);
 });
 
 test('Issue #334 PR-B: 仮予約送信成功後、現金決済では完了画面は既存どおり（回帰なし）', async function () {

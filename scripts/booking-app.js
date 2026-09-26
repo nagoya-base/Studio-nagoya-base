@@ -192,6 +192,7 @@
     completeCheckoutNotice: document.getElementById('ba-complete-checkout-notice'),
     completeCheckoutWrap: document.getElementById('ba-complete-checkout-wrap'),
     completeCheckoutLink: document.getElementById('ba-complete-checkout-link'),
+    completeCheckoutUncertainNotice: document.getElementById('ba-complete-checkout-uncertain-notice'),
     completeBackLink: document.getElementById('ba-complete-back-link')
   };
 
@@ -1107,27 +1108,53 @@
   }
 
   /*
-   * Stripe Checkout Session発行（Issue #341 PR-B）。createBooking成功後、カード決済のみ
-   * 追加で呼ぶ。本番では既定でGAS側のキルスイッチ（BookingConfig.getStripeConfig().
-   * checkoutEnabled）が無効なため、通常はsuccess:falseが返り、この関数はnullを返す
-   * （呼び出し元は既存の「決済リンクを後日送付」案内へそのままフォールバックする）。
-   * ネットワーク障害・タイムアウトを含め、失敗はすべてnullへ丸めてrejectしない
-   * （このリクエストの失敗が仮予約受付自体の完了表示を止めてはならないため）。
+   * PR #354レビュー対応・項目3: 「Stripe Checkoutが開始されていないと確実に判断できる」
+   * エラーコードだけを、旧「決済リンクを後日送付」フローへのフォールバック対象とする。
+   * これ以外（Session作成結果が確認できない、台帳への保存が失敗した、決済済みの可能性が
+   * ある等）を安易に「これから決済リンクを送ります」という案内へ丸めてしまうと、既に
+   * Stripe側で決済試行が進んでいるかもしれない予約について、後日さらに別経路（旧
+   * Payment Link）でも支払わせてしまい、二重決済につながる恐れがある。
+   * CHECKOUT_DISABLED: キルスイッチが無効（本番の既定状態）。STRIPE_NOT_CONFIGURED:
+   * 決済機能自体が未設定。いずれもGAS側がStripe APIを一切呼んでいないと確定できる。
    */
-  function attemptCardCheckout_(bookingId) {
-    if (!API_BASE_URL || !bookingId) return Promise.resolve(null);
+  var CHECKOUT_SAFE_FALLBACK_CODES_ = ['CHECKOUT_DISABLED', 'STRIPE_NOT_CONFIGURED'];
+
+  /*
+   * Stripe Checkout Session発行（Issue #341 PR-B）。createBooking成功後、カード決済のみ
+   * 追加で呼ぶ。戻り値は必ず次のいずれか（rejectしない。このリクエストの失敗が仮予約
+   * 受付自体の完了表示を止めてはならないため）:
+   * - { status: 'success', checkoutUrl }: Checkout Sessionを発行できた。
+   * - { status: 'fallback', code }: CHECKOUT_SAFE_FALLBACK_CODES_のいずれか。Checkoutは
+   *   確実に未着手のため、既存の「決済リンクを後日送付」案内を表示してよい。
+   * - { status: 'uncertain', code }: 上記以外のすべて（ネットワーク障害・タイムアウト・
+   *   応答の解析失敗を含む）。Checkoutが実際に開始された可能性を否定できないため、
+   *   旧方式へは誘導せず専用のエラー・再試行案内を表示する。
+   */
+  function attemptCardCheckout_(bookingId, checkoutAccessToken) {
+    if (!API_BASE_URL || !bookingId || !checkoutAccessToken) {
+      return Promise.resolve({ status: 'fallback', code: 'CHECKOUT_DISABLED' });
+    }
     var checkoutEndpoint = API_BASE_URL + (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') + 'action=startCardCheckout';
     return fetch(checkoutEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ bookingId: bookingId })
+      body: JSON.stringify({ bookingId: bookingId, checkoutAccessToken: checkoutAccessToken })
     })
       .then(function (response) { return response.json(); })
       .then(function (result) {
-        return result && result.success === true && result.checkoutUrl ? result : null;
+        if (result && result.success === true && result.checkoutUrl) {
+          return { status: 'success', checkoutUrl: result.checkoutUrl };
+        }
+        var code = result && result.error && result.error.code;
+        if (CHECKOUT_SAFE_FALLBACK_CODES_.indexOf(code) !== -1) {
+          return { status: 'fallback', code: code };
+        }
+        return { status: 'uncertain', code: code || 'UNKNOWN' };
       })
       .catch(function () {
-        return null;
+        /* fetch自体の失敗（オフライン・タイムアウト等）はGAS側で何が起きたか一切分からない
+           ため、安全側のuncertain扱いとする（旧方式へは絶対にフォールバックしない）。 */
+        return { status: 'uncertain', code: 'NETWORK_ERROR' };
       });
   }
 
@@ -1234,25 +1261,34 @@
           if (Logic.isCardPaymentMethodValue(state.paymentMethod)) {
             if (els.completeGenericNotice) els.completeGenericNotice.hidden = true;
             /*
-             * Issue #341 PR-B: startCardCheckoutを追加で試みる。checkoutUrlが得られた場合
-             * のみ（＝GAS側のキルスイッチが有効化されている場合のみ）、旧「決済リンクを
-             * 後日送付」案内をStripe Checkoutへの遷移導線に差し替える。取得できなかった
-             * 場合（本番の既定状態を含む）は、既存の案内文のままフォールバックする
-             * （新しい決済リンクは本番では有効化されていないため、ここで一切約束しない）。
+             * Issue #341 PR-B / PR #354レビュー対応・項目3: startCardCheckoutを追加で
+             * 試みる。結果は3通りに分岐する（attemptCardCheckout_のコメント参照）:
+             * - success: Stripe Checkoutへの遷移導線を表示する。
+             * - fallback: Checkoutが確実に未着手（キルスイッチ無効等）の場合のみ、
+             *   既存の「決済リンクを後日送付」案内をそのまま表示する。
+             * - uncertain: それ以外すべて。旧方式へは絶対に誘導せず（二重決済の恐れが
+             *   あるため）、専用のエラー・再試行案内を表示する。
              */
-            attemptCardCheckout_(body.bookingId).then(function (checkout) {
-              if (checkout && checkout.checkoutUrl) {
+            attemptCardCheckout_(body.bookingId, body.checkoutAccessToken).then(function (checkout) {
+              if (checkout.status === 'success') {
                 renderMultilineNotice_(els.completeCardPaymentNotice, null);
+                renderMultilineNotice_(els.completeCheckoutUncertainNotice, null);
                 renderMultilineNotice_(els.completeCheckoutNotice, Logic.cardCheckoutRedirectNoticeLines(locale));
                 if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = false;
                 if (els.completeCheckoutLink) {
                   els.completeCheckoutLink.href = checkout.checkoutUrl;
                   els.completeCheckoutLink.textContent = Logic.cardCheckoutButtonLabel(locale);
                 }
-              } else {
+              } else if (checkout.status === 'fallback') {
+                renderMultilineNotice_(els.completeCheckoutNotice, null);
+                renderMultilineNotice_(els.completeCheckoutUncertainNotice, null);
+                if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = true;
                 renderMultilineNotice_(els.completeCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale));
+              } else {
+                renderMultilineNotice_(els.completeCardPaymentNotice, null);
                 renderMultilineNotice_(els.completeCheckoutNotice, null);
                 if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = true;
+                renderMultilineNotice_(els.completeCheckoutUncertainNotice, Logic.cardCheckoutUncertainNoticeLines(locale));
               }
               goToStep('complete');
             });
@@ -1260,6 +1296,7 @@
             if (els.completeGenericNotice) els.completeGenericNotice.hidden = false;
             renderMultilineNotice_(els.completeCardPaymentNotice, null);
             renderMultilineNotice_(els.completeCheckoutNotice, null);
+            renderMultilineNotice_(els.completeCheckoutUncertainNotice, null);
             if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = true;
             goToStep('complete');
           }
