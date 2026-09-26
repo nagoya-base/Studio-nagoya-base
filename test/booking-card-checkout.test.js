@@ -772,6 +772,160 @@ test('resumeExistingCheckout_: 同一予約への2件のリクエストがほぼ
 
 /*
  * ============================================================================
+ * PR #354レビュー対応・4回目: handleCheckoutCreateFailure_の確定的失敗処理を
+ * 「対象paymentAttemptIdの一致検証」「paymentAttemptResolvedAtの更新」
+ * 「paymentStatusのFAILEDへの遷移」の一連の処理として1回のLock取得にまとめる
+ * （failConfirmedCheckoutAttempt_）。3回目時点の実装は、この3つを2回の別々のLock取得
+ * （settlePaymentAttemptResolved_→applyPaymentStateUpdate）に分けていたため、
+ * その間に他のリクエストの新しい決済試行の予約が割り込めていた。
+ * ============================================================================
+ */
+
+/*
+ * LockService.getScriptLock()のtryLock成功→releaseLockの完結した回数を数えるLockService
+ * スタブ（通常のcreateLockServiceStubと異なり、1回のacquire→releaseサイクルごとに
+ * カウンタを1つ進める）。「一致検証・解決済みマークの更新・FAILEDへの遷移」が本当に
+ * 1回のLock取得にまとまっているか（間で解放・再取得していないか）を、外部から観測できる
+ * 唯一の手がかりとして使う。
+ */
+function createLockCycleCountingStub() {
+  var held = false;
+  var completedCycles = 0;
+  return {
+    getScriptLock: function () {
+      return {
+        tryLock: function () {
+          if (held) return false;
+          held = true;
+          return true;
+        },
+        releaseLock: function () {
+          held = false;
+          completedCycles++;
+        }
+      };
+    },
+    _completedCycles: function () { return completedCycles; }
+  };
+}
+
+test('handleCheckoutCreateFailure_: 確定的失敗時の「対象paymentAttemptIdの検証・解決済みマークの更新・FAILEDへの遷移」は1回のLock取得にまとまっており、途中でLockを解放・再取得しない', function () {
+  var lockService = createLockCycleCountingStub();
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 400, body: { error: { type: 'invalid_request_error', message: 'bad param' } } };
+  });
+  var ctx = setup({ urlFetchApp: urlFetchApp, lockService: lockService });
+  var bookingId = createBookingRow(ctx);
+
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'STRIPE_REQUEST_ERROR');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.paymentStatus, 'failed');
+
+  /*
+   * 1回目のLock取得サイクルはreservePaymentAttempt_の予約（Stripe呼び出し前）。
+   * 2回目のLock取得サイクルが、対象paymentAttemptIdの一致検証・paymentAttemptResolvedAtの
+   * 更新・paymentStatusのFAILEDへの遷移をまとめて完了させる。3回目レビュー対応時点の実装は
+   * 2回目がさらに2つ（settlePaymentAttemptResolved_・applyPaymentStateUpdate）の別々の
+   * Lock取得に分かれており、合計3回のサイクルになっていた。
+   */
+  assert.strictEqual(
+    lockService._completedCycles(), 2,
+    '合計のLock取得サイクル数が2回（予約1回＋確定的失敗処理1回）であること。3回になっている場合、' +
+      '確定的失敗処理がLockを2回に分けて取得している（間に別リクエストが割り込める隙間がある）'
+  );
+});
+
+test('failConfirmedCheckoutAttempt_: paymentAttemptResolvedAtの保存直後に別リクエストが到達しても、同じLockを保持し続けているため新しい決済試行を予約できない（古い失敗処理が新しい試行の状態を変更しない）', function () {
+  var ctx;
+  var bookingId;
+  var nestedResult;
+  var nested = false;
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 400, body: { error: { type: 'invalid_request_error', message: 'bad param' } } };
+  });
+  ctx = setup({ urlFetchApp: urlFetchApp });
+  bookingId = createBookingRow(ctx);
+
+  var realAtomicUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic;
+  ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic = function (id, fields) {
+    var result = realAtomicUpdate(id, fields);
+    var isResolvedAtOnlyWrite = fields &&
+      Object.prototype.hasOwnProperty.call(fields, 'paymentAttemptResolvedAt') &&
+      Object.keys(fields).length === 1;
+    if (!nested && isResolvedAtOnlyWrite) {
+      nested = true;
+      /*
+       * paymentAttemptResolvedAtの書き込み直後（まだ同じLockを保持したまま、
+       * paymentStatusをFAILEDへ書き込む前）に、別のリクエストが同じbookingIdへ
+       * 到達したことをシミュレートする。
+       */
+      nestedResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+    }
+    return result;
+  };
+
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'STRIPE_REQUEST_ERROR');
+
+  assert.strictEqual(nestedResult.success, false, JSON.stringify(nestedResult));
+  assert.strictEqual(
+    nestedResult.error.code, 'LOCK_TIMEOUT',
+    '解決済みマークの保存直後でも同じLockを保持し続けているため、割り込みリクエストは新しい決済試行を予約できない'
+  );
+
+  var createCalls = urlFetchApp._calls.filter(function (c) { return c.options.method === 'post'; });
+  assert.strictEqual(createCalls.length, 1, '新しいCheckout Session作成は行われない（割り込みリクエストはLOCK_TIMEOUTで即座に拒否される）');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.paymentStatus, 'failed', '古い失敗処理どおりFAILEDへ正しく遷移する');
+  assert.ok(found.record.paymentAttemptResolvedAt, '解決済みマークが保存されている');
+});
+
+test('failConfirmedCheckoutAttempt_: paymentAttemptResolvedAtの書き込みに失敗した場合、成功したものとみなしてFAILEDへの遷移を続行しない', function () {
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 400, body: { error: { type: 'invalid_request_error', message: 'bad param' } } };
+  });
+  var ctx = setup({ urlFetchApp: urlFetchApp });
+  var bookingId = createBookingRow(ctx);
+
+  var realAtomicUpdate = ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic;
+  ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic = function (id, fields) {
+    var isResolvedAtOnlyWrite = fields &&
+      Object.prototype.hasOwnProperty.call(fields, 'paymentAttemptResolvedAt') &&
+      Object.keys(fields).length === 1;
+    if (isResolvedAtOnlyWrite) {
+      throw new Error('simulated write failure for paymentAttemptResolvedAt');
+    }
+    return realAtomicUpdate(id, fields);
+  };
+
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'PAYMENT_DETAIL_WRITE_FAILED');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.paymentStatus, 'not_started', '解決済みマークの書き込みに失敗した場合、FAILEDへは無条件に進めない');
+  assert.strictEqual(found.record.paymentAttemptResolvedAt, '', '解決済みマークも書き込まれていない（書き込み失敗のため）');
+  assert.ok(found.record.paymentAttemptId, '決済試行IDは既に予約済みのまま残っている（同じ試行での再試行に使える）');
+
+  /* 書き込み失敗から復旧した後の再試行は、同じ決済試行IDのまま正しくFAILEDへ進める。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic = realAtomicUpdate;
+  var firstAttemptId = found.record.paymentAttemptId;
+  var retryResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(retryResult.success, false);
+  assert.strictEqual(retryResult.error.code, 'STRIPE_REQUEST_ERROR');
+  var afterRetry = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(afterRetry.record.paymentStatus, 'failed');
+  assert.strictEqual(afterRetry.record.paymentAttemptId, firstAttemptId, '書き込み失敗の間も同じ決済試行IDのままだった');
+});
+
+/*
+ * ============================================================================
  * その他の分岐（回帰確認）
  * ============================================================================
  */

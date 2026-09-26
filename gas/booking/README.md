@@ -4127,6 +4127,72 @@ Stripe呼び出し**を行ってしまう（二重のCheckout Session発行に�
 既存の管理者承認・Calendar・日程変更精算・Booking Admin・現地払い・旧Payment Link方式の
 回帰テストもすべてpass。実際の本番決済を伴う自動テストは行っていない。
 
+### PRレビュー対応（PR #354・4回目）
+
+3回目対応後、オーナーから`handleCheckoutCreateFailure_`の確定的失敗処理におけるLock取得の
+分割について追加で指摘を受けて対応した。
+
+#### 7. handleCheckoutCreateFailure_の確定的失敗処理におけるLockの二重取得
+
+**指摘**: 3回目の修正で、FAILEDからの並行再試行は改善されたが、確定的失敗の処理で、
+`paymentAttemptResolvedAt`の更新と`paymentStatus`のFAILEDへの遷移が別々のLock取得に
+なっており、両者の間に新しい決済試行が割り込める。
+
+**原因**: 3回目レビュー対応の実装は、「対象の`paymentAttemptId`が現在の決済試行と一致する
+ことの検証」「`paymentAttemptResolvedAt`の更新」を`settlePaymentAttemptResolved_`（専用の
+Lock取得→解放）で行った**後に**、「`paymentStatus`のFAILEDへの遷移」を通常の
+`applyPaymentStateUpdate`呼び出し（別のLock取得→解放）に任せていた。
+`settlePaymentAttemptResolved_`が`paymentAttemptResolvedAt`を書き込んだ時点で、
+`reservePaymentAttempt_`の再利用判定（`hasUnresolvedPaymentAttempt_`）は`paymentStatus`
+を見ずこの列だけで判定するため、`paymentStatus`がまだ`failed`へ書き換わっていなくても
+「新しい決済試行を予約してよい」状態になってしまう。この2つのLock取得の間（前者のLockが
+解放されてから後者のLockが取得されるまで）に、他のリクエストが`reservePaymentAttempt_`で
+新しい決済試行を予約・Stripe呼び出し・コミットまで完了できてしまい、その後にこの古い
+呼び出しが`paymentStatus`をFAILEDへ書き込むと、新しく予約された決済試行の状態を誤って
+巻き戻してしまう恐れがあった。
+
+**対応**: `applyPaymentStateUpdate`を、Lockを取得・解放する公開版と、Lockを取得済みで
+あることを前提とする内部版`applyPaymentStateUpdateLocked_`に分割した。その上で、
+`settlePaymentAttemptResolved_`と`handleCheckoutCreateFailure_`側の`applyPaymentStateUpdate`
+呼び出しを統合した新しい関数`failConfirmedCheckoutAttempt_`を追加し、次の3つを
+**1回のLock取得の中**で一続きに実行するようにした。
+
+1. 台帳の現在の`paymentAttemptId`が、この呼び出しがStripeへ送った`paymentAttemptId`と
+   まだ一致することの検証（一致しない場合はここで台帳へ一切書き込まず`stale:true`を返す）。
+2. `paymentAttemptResolvedAt`への現在時刻の書き込み。
+3. 既にLockを取得済みの状態で呼べる`applyPaymentStateUpdateLocked_`を直接呼び出し、
+   `paymentStatus`をFAILEDへ遷移させる（`applyPaymentStateUpdate`自身のLock取得を経由
+   しないため、同じ`LockService.getScriptLock()`を二重取得しない）。
+
+`paymentAttemptResolvedAt`の書き込み（2.）が失敗した場合は、**成功したものとみなして
+FAILEDへの遷移（3.）を続行せず、直ちに`PAYMENT_DETAIL_WRITE_FAILED`を返す**（Lockは
+この関数の終了時にのみ解放するため、この間に他のリクエストが割り込むことはない。書き込みが
+失敗した場合も`paymentAttemptId`自体は既に予約済みのまま残るため、次回の呼び出しは同じ
+決済試行で安全に再試行できる）。
+
+なお、`startNewCheckoutAttempt_`の成功コミット（`checkout_pending`への遷移）と
+`resumeExistingCheckout_`のexpired/unpaid確認による`failed`遷移（3回目レビュー対応・
+項目6で対応済み）は、いずれも`paymentAttemptResolvedAt`を遷移先の状態への**同じ1回の
+`applyPaymentStateUpdate`呼び出しのfields**に含めており、もともとLockの分割が発生して
+いなかったため、今回の対応対象には含まれない。
+
+`test/booking-card-checkout.test.js`に、Lock取得の回数を数える専用のLockServiceスタブ
+（`createLockCycleCountingStub`）を使い、確定的失敗時のLock取得サイクルが（決済試行の
+予約1回＋確定的失敗処理1回の）計2回であること（3回になっていた3回目時点の実装を検知
+できることを、あえてこの回のレビュー対応前の構造へ一時的に戻して確認済み）、
+`paymentAttemptResolvedAt`の保存直後に別リクエストが到達しても同じLockを保持し続けて
+いるため新しい決済試行を予約できないこと、`paymentAttemptResolvedAt`の書き込みに失敗した
+場合はFAILEDへの遷移を無条件に継続しない（かつ同じ決済試行IDのまま安全に再試行できる）
+ことのテストを3件追加した。3回目レビュー対応で追加した「FAILEDからの2件の並行再試行は
+同一の決済試行へ収束する」テストは無変更のまま引き続きpassすることを確認した。
+
+### テスト結果（4回目レビュー対応後）
+
+`node --test`: **総計1135件すべてpass**（3回目対応後1132件＋今回のレビュー対応で追加した
+3件）。既存の管理者承認・Calendar・日程変更精算・Booking Admin・現地払い・旧Payment Link
+方式の回帰テスト、および3回目レビュー対応で追加したCheckout成功・期限切れ・Recovery関連の
+並行再試行テストもすべてpass。実際の本番決済を伴う自動テストは行っていない。
+
 ## 部分失敗・recoveryの確認手順（運用者向け）
 
 1. `Recovery`シートを開き、`recoveryState`が`OPEN`の行を確認する

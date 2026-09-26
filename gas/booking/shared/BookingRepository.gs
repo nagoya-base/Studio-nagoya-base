@@ -1776,16 +1776,40 @@ var BookingRepository = (function () {
     if (!bookingId) {
       return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
     }
-    var effectiveNow = isDateLike_(now) ? now : new Date();
-    var safeFields = fields || {};
-
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(LOCK_TIMEOUT_MS_)) {
       return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
     }
-
     try {
-      var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+      return applyPaymentStateUpdateLocked_(bookingId, toPaymentStatus, fields, now);
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  /*
+   * applyPaymentStateUpdateの本体。呼び出し元が既にLockService.getScriptLock()を
+   * 取得済みであることを前提とし、この関数自身はLockを取得・解放しない
+   * （PR #354レビュー対応・4回目）。
+   *
+   * handleCheckoutCreateFailure_のSTRIPE_ERROR分岐（確定的失敗）は、「対象の
+   * paymentAttemptIdが現在の決済試行と一致することの検証」「paymentAttemptResolvedAtの
+   * 更新」「paymentStatusのFAILEDへの遷移」の3つを、他のリクエストのreservePaymentAttempt_
+   * が割り込めない一続きの処理として実行する必要がある（failConfirmedCheckoutAttempt_
+   * 参照）。3回目レビュー対応では、この3つ目（FAILEDへの遷移）を通常の
+   * applyPaymentStateUpdate呼び出しに任せていたため、1〜2つ目のLock取得・解放と
+   * 3つ目のLock取得・解放が別々になり、その間に別のリクエストが割り込める隙間が
+   * 生じていた。この内部関数を切り出すことで、failConfirmedCheckoutAttempt_は自身が
+   * 既に取得しているLockをそのまま使ってpaymentStatusの遷移まで完了させられる
+   * （同じLockService.getScriptLock()を二重取得しない）。
+   *
+   * 通常の呼び出し元（PR-B/PR-Cの大半）は、この関数を直接呼ばず、必ず自分でLockを
+   * 取得・解放する公開版のapplyPaymentStateUpdateを使うこと。
+   */
+  function applyPaymentStateUpdateLocked_(bookingId, toPaymentStatus, fields, now) {
+    var effectiveNow = isDateLike_(now) ? now : new Date();
+    var safeFields = fields || {};
+    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
       if (!found) {
         return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
       }
@@ -1980,9 +2004,6 @@ var BookingRepository = (function () {
       }
 
       return { success: true };
-    } finally {
-      lock.releaseLock();
-    }
   }
 
   /*
@@ -2399,30 +2420,48 @@ var BookingRepository = (function () {
    *
    * paymentAttemptId: この呼び出しがStripeへ送った（＝reservePaymentAttempt_がこの回の
    *   呼び出しのために予約・返した）決済試行ID。PR #354レビュー対応・3回目: STRIPE_ERROR
-   *   （確定的失敗）でpaymentStatusをFAILEDへ進める直前に、settlePaymentAttemptResolved_で
-   *   台帳の現在のpaymentAttemptIdがまだこのIDのままかをLock内で再確認したうえで
-   *   paymentAttemptResolvedAtへ現在時刻を書き込む。一致しない場合（この応答が発行された
-   *   後に何らかの経路で既に新しい決済試行が予約されている等）は、ここでFAILEDへ進めると
-   *   新しい試行の証跡を古い応答で上書きしてしまう恐れがあるため、遷移を行わず要復旧として
-   *   停止する（「以前の決済試行から遅れて届いた応答が、新しい試行の証跡を上書きしない」
-   *   という設計要件）。
+   *   （確定的失敗）でpaymentStatusをFAILEDへ進める直前に、台帳の現在のpaymentAttemptId
+   *   がまだこのIDのままかを確認したうえでpaymentAttemptResolvedAtへ現在時刻を書き込む。
+   *   一致しない場合（この応答が発行された後に何らかの経路で既に新しい決済試行が予約
+   *   されている等）は、ここでFAILEDへ進めると新しい試行の証跡を古い応答で上書きして
+   *   しまう恐れがあるため、遷移を行わず要復旧として停止する（「以前の決済試行から遅れて
+   *   届いた応答が、新しい試行の証跡を上書きしない」という設計要件）。
+   *
+   *   PR #354レビュー対応・4回目: 3回目の実装は、この確認・書き込みをsettlePaymentAttempt
+   *   Resolved_（専用のLock取得→解放）で行った**後に**、paymentStatusのFAILEDへの遷移を
+   *   applyPaymentStateUpdate（別のLock取得→解放）に任せていた。settlePaymentAttempt
+   *   Resolved_がpaymentAttemptResolvedAtを書き込んだ時点で、reservePaymentAttempt_の
+   *   再利用判定（hasUnresolvedPaymentAttempt_）はpaymentStatusを見ずこの列だけで
+   *   判定するため、paymentStatusがまだfailedへ書き換わっていなくても「新しい決済試行を
+   *   予約してよい」状態になってしまう。この2つのLock取得の間（前者のLockが解放されて
+   *   から後者のLockが取得されるまで）に、他のリクエストがreservePaymentAttempt_で新しい
+   *   決済試行を予約・Stripe呼び出し・コミットまで完了できてしまい、その後にこの古い
+   *   呼び出しがpaymentStatusをFAILEDへ書き込むと、新しく予約された決済試行の状態を
+   *   誤って巻き戻してしまう恐れがあった。failConfirmedCheckoutAttempt_で、この3つを
+   *   1回のLock取得の中で完結させることでこの隙間を無くした。
    */
   /*
-   * paymentAttemptIdが指す決済試行を「解決済み」にする（paymentAttemptResolvedAtへ現在
-   * 時刻を書き込む）。reservePaymentAttempt_と同じCHECKOUT_LOCK_TIMEOUT_MS_のLockで
-   * 「現在のpaymentAttemptIdがまだこのIDのままか」の確認と書き込みを一体化することで、
-   * 確認と書き込みの間に別の予約が割り込む余地をなくす（TOCTOU回避）。
+   * 「対象のpaymentAttemptIdが現在の決済試行と一致することの検証」「paymentAttempt
+   * ResolvedAtの更新」「paymentStatusのFAILEDへの遷移」を、他のリクエストの
+   * reservePaymentAttempt_による新しい決済試行の予約が割り込めない一続きの処理として
+   * 実行する（PR #354レビュー対応・4回目）。LockService.getScriptLock()を1回だけ取得し、
+   * その中で3つすべてを完了させてから解放する（applyPaymentStateUpdate自身のLock取得を
+   * 経由せず、Lockを既に取得済みの状態で呼べるapplyPaymentStateUpdateLocked_を直接呼ぶ
+   * ことで、同じLockを二重取得しない）。
    *
-   * 戻り値のstale:trueは、この呼び出しがStripeへ送った決済試行IDが、応答を受け取った
-   * 時点で既に台帳の「現在の」決済試行ではなくなっていたことを意味する（PR #354レビュー
-   * 対応・3回目）。この場合は解決済みマークを書き込まず、呼び出し元は台帳への以後の書き込み
-   * （paymentStatusの遷移等）を一切行ってはならない。
+   * paymentAttemptResolvedAtの書き込みが失敗した場合は、成功したものとみなして
+   * FAILEDへの遷移を続行せず、直ちにエラーを返す（Lockはこの関数の終了時にのみ解放する
+   * ため、この間に他のリクエストが割り込むことはない）。
+   *
+   * 戻り値: { stale: true }（対象のpaymentAttemptIdが既に台帳の現在の決済試行ではない。
+   * 台帳へは一切書き込んでいない） / { success: true }（FAILEDへの遷移まで完了） /
+   * { success: false, error }（paymentAttemptResolvedAtの書き込み失敗、またはFAILEDへの
+   * 遷移自体の失敗）。
    */
-  function settlePaymentAttemptResolved_(bookingId, paymentAttemptId, now) {
+  function failConfirmedCheckoutAttempt_(bookingId, paymentAttemptId, now) {
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(CHECKOUT_LOCK_TIMEOUT_MS_)) {
-      Logger.log('settlePaymentAttemptResolved_: Lock取得に失敗しました: ' + bookingId);
-      return { stale: false, lockFailed: true };
+      return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
     }
     try {
       var latest = SpreadsheetRepository.findRowByBookingId(bookingId);
@@ -2432,9 +2471,10 @@ var BookingRepository = (function () {
       try {
         SpreadsheetRepository.updateBookingPaymentStateAtomic(bookingId, { paymentAttemptResolvedAt: now });
       } catch (writeError) {
-        Logger.log('settlePaymentAttemptResolved_: 書き込みに失敗しました: ' + bookingId + ' ' + describeError_(writeError));
+        Logger.log('failConfirmedCheckoutAttempt_: paymentAttemptResolvedAtの書き込みに失敗しました: ' + bookingId + ' ' + describeError_(writeError));
+        return { success: false, error: { code: 'PAYMENT_DETAIL_WRITE_FAILED', message: '決済処理の記録に失敗しました。もう一度お試しください。' } };
       }
-      return { stale: false };
+      return applyPaymentStateUpdateLocked_(bookingId, Booking.PAYMENT_STATUS.FAILED, {}, now);
     } finally {
       lock.releaseLock();
     }
@@ -2480,17 +2520,22 @@ var BookingRepository = (function () {
        * permission_errorのいずれか）。この回のリクエストは処理されていないことが確定して
        * いるため、FAILEDへ進めて次回は新しい決済試行IDを発行させる（Booking.gs「新しい
        * paymentAttemptIdでの再試行時のみCHECKOUT_PENDINGへ戻れる」）。
+       *
+       * 「対象のpaymentAttemptIdが現在の決済試行と一致することの検証」
+       * 「paymentAttemptResolvedAtの更新」「paymentStatusのFAILEDへの遷移」を、
+       * failConfirmedCheckoutAttempt_が1回のLock取得の中で一続きに実行する
+       * （PR #354レビュー対応・4回目。3回目時点の実装は、この3つを2回の別々のLock取得に
+       * 分けていたため、その間に他のリクエストの新しい決済試行の予約が割り込めた）。
        */
-      var settled = settlePaymentAttemptResolved_(bookingId, paymentAttemptId, now);
-      if (settled.stale) {
+      var failAttemptResult = failConfirmedCheckoutAttempt_(bookingId, paymentAttemptId, now);
+      if (failAttemptResult.stale) {
         return recordStalePaymentAttemptResponse_(
           bookingId, record, paymentAttemptId,
           'Stripeからの確定的な失敗応答（' + createResult.errorType + '）', now
         );
       }
-      var failResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, {}, now);
-      if (!failResult.success) {
-        return { success: false, error: failResult.error };
+      if (!failAttemptResult.success) {
+        return { success: false, error: failAttemptResult.error };
       }
       return {
         success: false,
