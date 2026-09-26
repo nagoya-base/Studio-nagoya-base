@@ -31,44 +31,48 @@
  * `doGet`自体が定義されず、管理者UI・確定・取消・メール送信等の関数はこのプロジェクトの
  * URLからは構造的に到達不可能になる（`test/booking-webhook-deployment.test.js`で検証）。
  *
- * 【失効処理（expirePendingBookings）との競合について（レビュー対応・2回目で再設計）】
+ * 【失効処理（expirePendingBookings）との競合について（レビュー対応・2回目で導入、
+ * 3回目でバグ修正・前提の見直し）】
  * このプロジェクトはBooking Adminプロジェクトとは別のスクリプトであるため、
  * `LockService.getScriptLock()`はBooking Adminの`expirePendingBookings`とは**共有されない**
  * （GASのLockServiceはスクリプトプロジェクト単位）。
  *
- * レビュー対応・1回目では「双方の破壊的書き込み直前の最新状態再読込」「`paymentHoldExpiresAt`
- * 超過後の追加猶予（`CardPayment.WEBHOOK_RACE_GRACE_MINUTES`）」「`failed→paid`遷移の許可」の
- * 3点による多層防御で競合の実害を最小化していたが、これらは「一方が最新状態を読み終えた
- * 直後に他方が状態を変更する」という狭いレース自体を排除できないという指摘を受け、
- * 2回目のレビュー対応で以下へ変更した：
+ * レビュー対応・1回目の多層防御（最新状態再読込・追加猶予・`failed→paid`遷移の許可）では
+ * 「一方が最新状態を読み終えた直後に他方が状態を変更する」レースを排除できないという
+ * 指摘を受け、2回目で`BookingLockRepository`（Booking Webhook・Booking Adminの両プロジェクトが
+ * 共有するBookings台帳と同じSpreadsheet上の予約単位ロック）を導入した。3回目のレビューで、
+ * この実装に「チケット行の取り違え」「TTL経過後も古い保持者が書き込みを続けられる」という
+ * 実装バグと、「Sheetsのappend順序整列を公式に保証された契約として前提にしている」という
+ * 設計上の指摘を受け、両方を修正した（詳細は`BookingLockRepository.gs`冒頭コメント参照）。
  *
- * 1. **予約単位の排他制御（`BookingLockRepository`）を追加した**。Booking Webhook・
- *    Booking Adminの両プロジェクトが共有するBookings台帳と同じSpreadsheet上に、専用の
- *    「BookingLocks」シートを設け、そこへの`appendRow`＋直後の全件読み直しで「自分より
- *    前に追加された有効なチケットが無いか」を判定する、プロジェクトをまたいで機能する
- *    排他制御を実装した（`BookingLockRepository.gs`冒頭コメントに、なぜこれで正しいと
- *    言えるかの根拠を含めて詳述）。`processEvent`は、`applyPaymentStateUpdate`（paid）〜
- *    `confirmBooking`の一連（Stripe API呼び出しはすべてこれより前に完了済み）をこの
- *    ロックで保護する。取得できない場合は短い間隔で数回だけ再試行し（`acquireBookingLock
- *    WithRetry_`）、それでも取得できなければStripeの自動再送に委ねる
- *    （`BOOKING_LOCK_CONTENDED`。イベント台帳はRECEIVEDのまま残る）。これにより、
- *    `expirePendingBookings`と本処理が同じ予約を同時に処理することは構造的に発生しない
- *    （BookingRepository.gsのexpirePendingBookingsコメント参照）。
- * 2. `Booking.PAYMENT_STATUS_TRANSITIONS_`の`failed→paid`許可は引き続き維持する。1のロックは
- *    「同時に処理させない」ことを保証するが、「どちらが先に完了するか」は制御しないため、
- *    `expirePendingBookings`が先にロックを取得・完了して`paymentStatus:failed`・
- *    `status:EXPIRED`へ進めた**後**にWebhookがロックを取得した場合でも、入金の事実
- *    （`paymentStatus:paid`）を正しく記録できる必要がある（`status`は`EXPIRED`のまま
- *    変更しない。`confirmBooking`が`EXPIRED`を拒否するため自動確定はされず、
- *    `paymentRecoveryRequiredAt`を立ててRecoveryへ記録し運営者の確認を必須にする。
- *    「失効後の入金記録」節参照）。
- * 3. `CardPayment.WEBHOOK_RACE_GRACE_MINUTES`（既定10分）は補助策として維持するが、
- *    **競合を防ぐ根拠はもはやこれではない**（1のロックが競合そのものを防ぐ）。この猶予は
- *    単に「決済完了直後にWebhook到達を待たず即座にStripe再照会・ロック取得を試みる」
- *    無駄を減らす効率化のためだけに残す。
+ * `processEvent`は、`applyPaymentStateUpdate`（paid）〜`confirmBooking`の一連
+ * （Stripe API呼び出しはすべてこれより前に完了済み）を`BookingLockRepository`で保護する。
+ * 取得できない場合は短い間隔で数回だけ再試行し（`acquireBookingLockWithRetry_`）、それでも
+ * 取得できなければStripeの自動再送に委ねる（`BOOKING_LOCK_CONTENDED`。イベント台帳は
+ * RECEIVEDのまま残る）。**保護区間内でも、実際にBookings/Calendarへ書き込む直前
+ * （`applyPaymentStateUpdate`の直前・`confirmBooking`の直前の2箇所）で必ず
+ * `BookingLockRepository.isHeld`を再検証し、TTLが経過していれば書き込みを行わず中断する**
+ * （3回目レビュー対応。ロックを取得した「つもり」のままTTL超過後も書き込みを続けることを
+ * 防ぐ）。
  *
- * 上記1により、両プロジェクトが同じ予約について「両方とも成功した」と判断する状態は
- * 構造的に発生しない（`BookingLockRepository.gs`冒頭コメントの正当性の根拠を参照）。
+ * `Booking.PAYMENT_STATUS_TRANSITIONS_`の`failed→paid`許可は引き続き維持する。ロックは
+ * 「同時に処理させない」ことを目指すが、「どちらが先に完了するか」は制御しないため、
+ * `expirePendingBookings`が先に完了して`paymentStatus:failed`・`status:EXPIRED`へ進めた
+ * **後**にWebhookがロックを取得した場合でも、入金の事実（`paymentStatus:paid`）を正しく
+ * 記録できる必要がある（`status`は`EXPIRED`のまま変更しない。`confirmBooking`が`EXPIRED`を
+ * 拒否するため自動確定はされず、`paymentRecoveryRequiredAt`を立ててRecoveryへ記録し運営者の
+ * 確認を必須にする。「失効後の入金記録」節参照）。`CardPayment.WEBHOOK_RACE_GRACE_MINUTES`
+ * （既定10分）は補助策として維持するが、競合を防ぐ根拠ではなく、決済完了直後に即座に
+ * Stripe再照会・ロック取得を試みる無駄を減らす効率化のためだけに位置づけている。
+ *
+ * **保証範囲について**: `BookingLockRepository`は、Sheetsのappend順序整列を「公式に
+ * 保証された原子的ロック」として前提にしていない（3回目レビュー対応。詳細は
+ * `BookingLockRepository.gs`冒頭コメント）。実際に「両プロジェクトが同じ予約について
+ * 両方とも成功したと判断する状態」を防いでいるのは、(1)このロック（ベストエフォート）、
+ * (2)`isHeld`による書き込み直前の再検証、(3)`confirmBooking`/`expirePendingBookings`/
+ * `applyPaymentStateUpdate`が元々持つ「書き込み直前の最新状態再読込」（通常の読み書き
+ * 整合性にしか依存しない）の3層の組み合わせであり、この3層構成とその障害時の挙動は
+ * README「Webhookと失効処理の競合」節に記載する。
  *
  * 【処理方針】
  * - Session完了（event.data.objectのpayment_status）とPaymentIntentの入金完了
@@ -139,14 +143,23 @@ var StripeWebhookHandler = (function () {
    * 再試行する。この関数が呼ばれる時点でStripe API呼び出し（署名検証済みイベントの
    * 再照会・金額照合）はすべて完了しているため、待機してもStripeへの応答を大きく
    * 遅らせない（BOOKING_LOCK_MAX_ATTEMPTS_ * BOOKING_LOCK_RETRY_DELAY_MS_はミリ秒単位）。
+   *
+   * Issue #341 PR-Cレビュー対応・3回目: このロックのTTL/有効性判定は、意図的に
+   * processEventのeffectiveNow（イベントの発生時刻等、テストから固定できるビジネス上の
+   * 日時）を一切使わず、実時間（`new Date()`。BookingLockRepository.acquire/isHeldの
+   * now引数を省略した既定値）だけに基づかせる。TTLは「実際にどれだけ実時間が経過したか」
+   * を測るためのものであり、テストが固定する過去・未来のeffectiveNowと実時間を混同すると、
+   * 実行のたびに正しく機能しなくなる（例えばテストが2026-09-20を指定していても、実際の
+   * テスト実行はそれとは無関係な実時間で行われる）。本番ではeffectiveNowを指定せずに
+   * processEventを呼ぶため、この使い分けは本番の挙動に一切影響しない。
    */
   var BOOKING_LOCK_MAX_ATTEMPTS_ = 3;
   var BOOKING_LOCK_RETRY_DELAY_MS_ = 200;
 
-  function acquireBookingLockWithRetry_(bookingId, eventId, now) {
+  function acquireBookingLockWithRetry_(bookingId, eventId) {
     for (var attempt = 1; attempt <= BOOKING_LOCK_MAX_ATTEMPTS_; attempt++) {
       var holderId = 'webhook:' + eventId + ':' + attempt + ':' + Utilities.getUuid();
-      var result = BookingLockRepository.acquire(bookingId, holderId, 'webhook', now);
+      var result = BookingLockRepository.acquire(bookingId, holderId, 'webhook');
       if (result.acquired) return result;
       if (attempt < BOOKING_LOCK_MAX_ATTEMPTS_) {
         Utilities.sleep(BOOKING_LOCK_RETRY_DELAY_MS_);
@@ -462,12 +475,25 @@ var StripeWebhookHandler = (function () {
      * 待機はStripeへの応答を大きく遅らせない）。それでも取得できなければStripeの自動再送に
      * 委ねる（イベント台帳はRECEIVEDのまま残るため、次回の配信で安全に再開できる）。
      */
-    var bookingLock = acquireBookingLockWithRetry_(bookingId, eventId, effectiveNow);
+    var bookingLock = acquireBookingLockWithRetry_(bookingId, eventId);
     if (!bookingLock.acquired) {
       return outcome_(false, 'BOOKING_LOCK_CONTENDED', '一時的に他の処理と競合しています。再試行します。');
     }
 
     try {
+      /*
+       * Issue #341 PR-Cレビュー対応・3回目: 実際にapplyPaymentStateUpdateを呼ぶ直前に、
+       * 予約ロックがまだ有効（TTLが切れていない）ことを再検証する（BookingLockRepository.gs
+       * 「3回目レビュー対応で修正した実装バグ・項目2」参照）。ここまでの間にTTLが経過し
+       * 他プロセスが既にこの予約のロックを再取得している可能性があり、その場合はこの
+       * 実行がBookings/Calendarへ書き込んではならない。何も書き込んでいないため、
+       * finalizeせず安全に再試行させる。
+       */
+      if (!BookingLockRepository.isHeld(bookingLock.rowNumber, bookingLock.holderId, new Date())) {
+        Logger.log('StripeWebhookHandler: applyPaymentStateUpdate直前に予約ロックの有効期限が切れていたため中断しました: ' + bookingId);
+        return outcome_(false, 'BOOKING_LOCK_EXPIRED', '一時的に他の処理と競合しています。再試行します。');
+      }
+
       var paidResult = BookingRepository.applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.PAID, {
         stripePaymentIntentId: paymentIntent.id,
         lastStripeEventId: eventId,
@@ -512,8 +538,24 @@ var StripeWebhookHandler = (function () {
        * （Issue #341本文「7. 決済成功後の予約自動確定」。confirmBookingLocked_自身が
        * Lock取得直後に最新のstatus・Calendarイベントの有無を再確認するため、ここで
        * 個別に再読込・再確認を重複実装しない）。
+       *
+       * Issue #341 PR-Cレビュー対応・3回目: confirmBookingを呼ぶ直前にも予約ロックの
+       * 有効性を再検証する（applyPaymentStateUpdateに時間を要し、その間にTTLが切れた
+       * 場合を含む）。ここで失効していた場合、paymentStatus:paidは既に書き込み済みだが
+       * （入金の事実は保持される）、Calendar/Bookingsのstatus側は変更せずRecoveryへ記録し、
+       * 運営者の確認を必須にする（「決済済みでも予約を確定できない場合の扱い」と同じ
+       * PAID_CONFIRM_BLOCKED経路に合流させる。confirmResultを直接呼ばずに合成する）。
        */
-      var confirmResult = BookingRepository.confirmBooking(bookingId);
+      var confirmResult;
+      if (!BookingLockRepository.isHeld(bookingLock.rowNumber, bookingLock.holderId, new Date())) {
+        Logger.log('StripeWebhookHandler: confirmBooking直前に予約ロックの有効期限が切れていたため確定を中断しました: ' + bookingId);
+        confirmResult = {
+          success: false,
+          error: { code: 'BOOKING_LOCK_EXPIRED_BEFORE_CONFIRM', message: '予約ロックの有効期限切れにより確定処理を中断しました。' }
+        };
+      } else {
+        confirmResult = BookingRepository.confirmBooking(bookingId);
+      }
       if (!confirmResult.success) {
         /*
          * 決済済みでも予約を確定できない（仮押さえ失効・キャンセル済み・Calendarイベント
@@ -531,7 +573,11 @@ var StripeWebhookHandler = (function () {
         );
       }
     } finally {
-      BookingLockRepository.release(bookingLock.rowNumber, new Date());
+      try {
+        BookingLockRepository.release(bookingLock.rowNumber, bookingLock.holderId, new Date());
+      } catch (releaseError) {
+        Logger.log('BookingLockRepository.release failed: ' + bookingId + ' ' + describeError_(releaseError));
+      }
     }
 
     return finalizeAndAck_(rowNumber, {

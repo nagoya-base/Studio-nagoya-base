@@ -788,16 +788,24 @@ test('processEvent: Booking Admin側がこの予約のロックを保持して�
 
   var raceInstant = new Date('2026-09-20T11:00:00+09:00');
   /*
+   * BookingLockRepositoryのTTL/有効性判定は実時間（`new Date()`）だけに基づく
+   * （BookingRepository.gs/StripeWebhookHandler.gsのコメント参照。本番のnowはいずれも
+   * 実時間そのものであり、raceInstantのようなテスト用の固定ビジネス日時とは無関係。
+   * ここで手動でacquire/releaseする際も、processEvent/expirePendingBookings自身の
+   * 実装と同じく実時間を使う）。
+   *
    * Booking AdminのexpirePendingBookingsが、最新状態を読み終えてクリティカル
    * セクションへ入った直後（＝Calendar削除・status:EXPIRED書き込みの直前）の状態を、
    * 実際にBookingLockRepository.acquireを呼んで再現する（このロックはBooking Admin・
    * Booking Webhookの両サンドボックスが同じSpreadsheetを共有しているため、
    * pair.admin側から取得したチケットはpair.webhook側からも見える）。
    */
-  var adminLock = pair.admin.BookingLockRepository.acquire(BOOKING_ID, 'admin-expire:race-test', 'admin-expire', raceInstant);
+  var adminLock = pair.admin.BookingLockRepository.acquire(BOOKING_ID, 'admin-expire:race-test', 'admin-expire', new Date());
   assert.strictEqual(adminLock.acquired, true);
 
-  /* この瞬間にWebhookへ決済成功イベントが届いても、ロックを取得できず割り込めない。 */
+  /* この瞬間にWebhookへ決済成功イベントが届いても、ロックを取得できず割り込めない。
+     processEvent自体のeffectiveNow（イベント発生時刻の模擬）はraceInstantのままでよい
+     （ロックのTTL判定には使われない）。 */
   var duringHold = pair.webhook.StripeWebhookHandler.processEvent(buildEvent('checkout.session.completed', {}), raceInstant);
   assert.strictEqual(duringHold.ackSuccess, false);
   assert.strictEqual(duringHold.code, 'BOOKING_LOCK_CONTENDED');
@@ -813,7 +821,7 @@ test('processEvent: Booking Admin側がこの予約のロックを保持して�
      expirePendingBookings内部でも同じ手順でrelease→Calendar削除→status書き込みと
      進むが、ここでは「読み終えた直後」を模擬するためロック保持と実際の書き込みを
      分離して検証している）。 */
-  pair.admin.BookingLockRepository.release(adminLock.rowNumber, raceInstant);
+  pair.admin.BookingLockRepository.release(adminLock.rowNumber, adminLock.holderId, new Date());
 
   /* 実際にexpirePendingBookingsを走らせ、枠解放を完了させる。 */
   var expireResult = pair.admin.BookingRepository.expirePendingBookings(raceInstant);
@@ -846,7 +854,7 @@ test('expirePendingBookings: Webhook側がこの予約のロックを保持し�
    * Webhook側のprocessEventが、applyPaymentStateUpdate（paid）〜confirmBookingの
    * クリティカルセクションへ既に入っている状態を再現する。
    */
-  var webhookLock = pair.webhook.BookingLockRepository.acquire(BOOKING_ID, 'webhook:race-test', 'webhook', raceInstant);
+  var webhookLock = pair.webhook.BookingLockRepository.acquire(BOOKING_ID, 'webhook:race-test', 'webhook', new Date());
   assert.strictEqual(webhookLock.acquired, true);
 
   /* この瞬間にAdmin側の失効トリガーが実行されても、ロックを取得できず割り込めない
@@ -860,7 +868,7 @@ test('expirePendingBookings: Webhook側がこの予約のロックを保持し�
   assert.strictEqual(pair.events[0].isDeleted(), false, 'ロック競合中はCalendarイベントを削除してはならない');
 
   /* Webhook側が実際にクリティカルセクションを完了する（決済確認・予約自動確定）。 */
-  pair.webhook.BookingLockRepository.release(webhookLock.rowNumber, raceInstant);
+  pair.webhook.BookingLockRepository.release(webhookLock.rowNumber, webhookLock.holderId, new Date());
   var confirmResult = pair.webhook.StripeWebhookHandler.processEvent(buildEvent('checkout.session.completed', {}), raceInstant);
   assert.strictEqual(confirmResult.code, 'CONFIRMED');
 
@@ -872,6 +880,161 @@ test('expirePendingBookings: Webhook側がこの予約のロックを保持し�
   assert.strictEqual(finalRecord.status, 'CONFIRMED');
   assert.strictEqual(finalRecord.paymentStatus, 'paid');
   assert.strictEqual(pair.events[0].isDeleted(), false);
+});
+
+/*
+ * ============================================================================
+ * ロック期限切れ中の書き込み防止（Issue #341 PR-Cレビュー対応・3回目）
+ *
+ * BookingLockRepository.acquireでロックを取得した「つもり」のままTTLが経過しても、
+ * 従来はそれに気づかず古い保持者がCalendar/Bookingsへの書き込みを続けられた
+ * （BookingLockRepository.gs「3回目レビュー対応で修正した実装バグ・項目2」参照）。
+ * 修正後は、実際に破壊的な書き込みを行う直前に必ずBookingLockRepository.isHeldを
+ * 再検証する契約になっている。ここではBookingLockRepository.isHeld自体を差し替えて
+ * 「TTLが経過し、もはやこの保持者は有効ではない」という状況を確定的に再現し、
+ * StripeWebhookHandler.processEvent/BookingRepository.expirePendingBookingsという
+ * 本番コード経路が、実際にその契約（書き込み直前の再検証）を守っていることを検証する
+ * （BookingLockRepository自体のTTL計算ロジックはtest/booking-lock-repository.test.jsで
+ * 別途検証済みのため、ここではその判定結果をモックし、呼び出し側の振る舞いに焦点を
+ * 当てる）。
+ * ============================================================================
+ */
+
+test('processEvent: applyPaymentStateUpdate直前に予約ロックが失効していた場合、Bookingsへは一切書き込まず再試行させる（古い保持者による遅延書き込みの防止）', function () {
+  var ctx = setup();
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+
+  var callCount = 0;
+  var originalIsHeld = ctx.sandbox.BookingLockRepository.isHeld;
+  ctx.sandbox.BookingLockRepository.isHeld = function () {
+    callCount++;
+    return false; /* TTL経過を模擬（BookingLockRepository.gs参照）。 */
+  };
+
+  var result;
+  try {
+    result = ctx.sandbox.StripeWebhookHandler.processEvent(buildEvent('checkout.session.completed', {}), new Date());
+  } finally {
+    ctx.sandbox.BookingLockRepository.isHeld = originalIsHeld;
+  }
+
+  assert.strictEqual(result.ackSuccess, false);
+  assert.strictEqual(result.code, 'BOOKING_LOCK_EXPIRED');
+  assert.strictEqual(callCount, 1, 'applyPaymentStateUpdate直前の1回だけ検証され、confirmBooking直前までは進まないはず');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(record.status, 'PENDING');
+  assert.strictEqual(record.paymentStatus, 'checkout_pending', 'ロック失効を検知した場合、paymentStatusも一切書き換えてはならない');
+  assert.strictEqual(ctx.events[0].isDeleted(), false);
+  assert.strictEqual(ctx.mailApp._sentEmails.length, 0);
+});
+
+test('processEvent: confirmBooking直前に予約ロックが失効していた場合、入金の事実は記録しつつ確定はせずRecoveryへ送る（古い保持者による遅延書き込みの防止）', function () {
+  var ctx = setup();
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+
+  var callCount = 0;
+  var originalIsHeld = ctx.sandbox.BookingLockRepository.isHeld;
+  ctx.sandbox.BookingLockRepository.isHeld = function () {
+    callCount++;
+    return callCount === 1; /* 1回目（applyPaymentStateUpdate直前）はtrue、2回目（confirmBooking直前）はfalse。 */
+  };
+
+  var result;
+  try {
+    result = ctx.sandbox.StripeWebhookHandler.processEvent(buildEvent('checkout.session.completed', {}), new Date());
+  } finally {
+    ctx.sandbox.BookingLockRepository.isHeld = originalIsHeld;
+  }
+
+  assert.strictEqual(result.ackSuccess, true);
+  assert.strictEqual(result.code, 'PAID_CONFIRM_BLOCKED');
+  assert.strictEqual(callCount, 2);
+
+  /*
+   * 枠解放と予約確定が両方成功したと判断される状態にはならない: 入金の事実
+   * （paymentStatus:paid）は正しく記録されるが、Calendar・Bookingsのstatus側は
+   * 一切変更されない（確定していない）。
+   */
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(record.paymentStatus, 'paid');
+  assert.strictEqual(record.status, 'PENDING');
+  assert.strictEqual(ctx.events[0].isDeleted(), false);
+  assert.ok(record.paymentRecoveryRequiredAt);
+
+  var recovery = ctx.sandbox.RecoveryRepository.listAll();
+  assert.ok(recovery.some(function (r) {
+    return r.bookingId === BOOKING_ID && r.failureType === 'PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED' &&
+      r.errorMessage.indexOf('BOOKING_LOCK_EXPIRED_BEFORE_CONFIRM') !== -1;
+  }));
+
+  assert.strictEqual(ctx.mailApp._sentEmails.length, 0, '確定していないため確認メールは送られない');
+});
+
+test('expirePendingBookings: Calendar削除直前に予約ロックが失効していた場合、Calendar・Bookingsのいずれも変更せずスキップする（古い保持者による遅延書き込みの防止）', function () {
+  var pair = setupCompetitionPair({
+    adminUrlFetchApp: stubs.createUrlFetchAppStub(function (url) {
+      if (url.indexOf('/checkout/sessions/') !== -1) {
+        return { responseCode: 200, body: { id: SESSION_ID, status: 'expired', payment_status: 'unpaid' } };
+      }
+      throw new Error('未対応のURL: ' + url);
+    })
+  });
+  createBookingRowIn(pair.webhook, { paymentHoldExpiresAt: new Date('2026-09-20T10:05:00+09:00') });
+  createCalendarEventIn(pair.events);
+
+  var callCount = 0;
+  pair.admin.BookingLockRepository.isHeld = function () {
+    callCount++;
+    return false;
+  };
+
+  var expireResult = pair.admin.BookingRepository.expirePendingBookings(new Date('2026-09-20T11:00:00+09:00'));
+  assert.strictEqual(expireResult.expiredCount, 0);
+  assert.strictEqual(expireResult.skippedCount, 1);
+  assert.strictEqual(callCount, 1);
+
+  var record = pair.admin.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(record.status, 'PENDING');
+  assert.strictEqual(pair.events[0].isDeleted(), false);
+});
+
+test('expirePendingBookings: Sheets書き込み直前に予約ロックが失効していた場合、Calendar削除済みでもstatus:EXPIREDは書き込まずRecoveryへ記録する（古い保持者による遅延書き込みの防止）', function () {
+  var pair = setupCompetitionPair({
+    adminUrlFetchApp: stubs.createUrlFetchAppStub(function (url) {
+      if (url.indexOf('/checkout/sessions/') !== -1) {
+        return { responseCode: 200, body: { id: SESSION_ID, status: 'expired', payment_status: 'unpaid' } };
+      }
+      throw new Error('未対応のURL: ' + url);
+    })
+  });
+  createBookingRowIn(pair.webhook, { paymentHoldExpiresAt: new Date('2026-09-20T10:05:00+09:00') });
+  createCalendarEventIn(pair.events);
+
+  var callCount = 0;
+  pair.admin.BookingLockRepository.isHeld = function () {
+    callCount++;
+    return callCount === 1; /* 1回目（Calendar削除直前）はtrue、2回目（Sheets書き込み直前）はfalse。 */
+  };
+
+  var expireResult = pair.admin.BookingRepository.expirePendingBookings(new Date('2026-09-20T11:00:00+09:00'));
+  assert.strictEqual(expireResult.expiredCount, 0);
+  assert.strictEqual(expireResult.skippedCount, 1);
+  assert.strictEqual(callCount, 2);
+
+  /*
+   * 枠解放と予約確定が両方成功したと判断される状態にはならない: Calendarは既に
+   * 削除されているが、Sheets側のstatusはPENDINGのまま（Webhook側がこの予約を確定
+   * しようとしても、confirmBookingがCalendarイベント消失を検知してブロックする）。
+   */
+  var record = pair.admin.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(record.status, 'PENDING');
+  assert.strictEqual(pair.events[0].isDeleted(), true, 'Calendar削除自体はロック失効検知より前に完了しているはず');
+
+  var recovery = pair.admin.RecoveryRepository.listAll();
+  assert.ok(recovery.some(function (r) { return r.bookingId === BOOKING_ID && r.failureType === 'EXPIRE_LOCK_EXPIRED_BEFORE_SHEETS_UPDATE'; }));
 });
 
 /*

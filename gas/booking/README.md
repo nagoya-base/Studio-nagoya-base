@@ -4242,7 +4242,9 @@ GASデプロイは一切作成・更新していない。**
 **レビュー対応・1回目で、Webhook受信を独立した新しいGASプロジェクト
 （Booking Webhook）へ分離する設計変更を行った。詳細は「レビュー対応（1回目）」節参照。
 レビュー対応・2回目で、独立したBooking Webhook・Booking Adminプロジェクト間の予約単位の
-排他制御（`BookingLockRepository`）を追加した。詳細は「レビュー対応（2回目）」節参照。**
+排他制御（`BookingLockRepository`）を追加した。レビュー対応・3回目で、その実装バグ
+2件（ロック行の取り違え・期限切れ中の書き込み）を修正し、採用方式の保証範囲を
+見直した。詳細はそれぞれ「レビュー対応（2回目）」「レビュー対応（3回目）」節参照。**
 
 ### 受信基盤の構成（なぜCloud Run中継が必要か）
 
@@ -4422,7 +4424,7 @@ PaymentIntentともに、Webhookイベント本文のフィールドをそのま
   中継基盤へ伝え、中継基盤が`success:false`の場合にStripeへ5xxを返して自動再送を促す
   （`cloud-run/stripe-webhook-relay/`参照）。
 
-### Webhookと失効処理（expirePendingBookings）の競合（BookingLockRepositoryによる排他制御・レビュー対応2回目）
+### Webhookと失効処理（expirePendingBookings）の競合（BookingLockRepositoryによる排他制御・レビュー対応3回目で実装修正・前提を見直し）
 
 **この節がIssue #341本文「8. 失効処理との競合」への回答の核心。**
 
@@ -4436,12 +4438,32 @@ PaymentIntentともに、Webhookイベント本文のフィールドをそのま
 **1回目のレビュー対応**では、(a)双方の破壊的書き込み直前の最新状態再読込、
 (b)失効対象判定への追加猶予（`CardPayment.WEBHOOK_RACE_GRACE_MINUTES`。既定10分）、
 (c)`Booking.PAYMENT_STATUS_TRANSITIONS_`の`failed→paid`許可、の3点による多層防御で
-実害を最小化していた。**しかしこれらは、「一方が最新状態を読み終えた直後に他方が
-状態を変更する」という狭いレース自体を排除できない**という指摘を2回目のレビューで
-受けた（両者のLock内再読込が数百ミリ秒未満の間隔で重なった場合、Calendar側は削除、
-Sheets側は一方の書き込みが他方を上書きする、といった「両方が成功したと判断する」
-不整合が理論上起こり得た）。この節は2回目の対応、すなわち**予約単位の実際の排他制御**
-（`BookingLockRepository`）による再設計を記す。
+実害を最小化していたが、「一方が最新状態を読み終えた直後に他方が状態を変更する」
+という狭いレース自体を排除できないという指摘を2回目のレビューで受け、
+**予約単位の排他制御**（`BookingLockRepository`。専用の「BookingLocks」シートへの
+`appendRow`＋直後の全件読み直し）を新設した。
+
+**3回目のレビューで、この初版実装に2件のバグと1件の設計上の指摘を受け、以下のとおり
+修正した：**
+
+1. **チケット行の取り違え（実装バグ）**: 初版は`appendRow`直後に`sheet.getLastRow()`を
+   「自分の行番号」としていたが、並行して別の実行が同時にappendしていれば
+   `getLastRow()`は相手の行番号を返し得る（`appendRow`自体は書き込んだ行番号を返さない
+   ため、位置に頼るこの実装は原理的に誤りだった）。**修正**: 追加直後の全件読み直しで、
+   一意な`holderId`を内容で検索して自分の行を特定するよう変更した。`release`も
+   `holderId`が実際にその行の保持者であることを確認してからのみ解放するようにし、
+   万一の取り違えが起きても他者の有効なロックを誤って失効させないようにした。
+2. **ロック期限切れ中の書き込み（実装バグ）**: 初版は、TTL経過後に**別の**呼び出しが
+   チケットを再取得できることしか保証しておらず、TTLを過ぎた**元の保持者**自身が
+   Calendar/Bookingsへの書き込みを続けることを妨げていなかった。**修正**:
+   `BookingLockRepository.isHeld(rowNumber, holderId, now)`を追加し、
+   `StripeWebhookHandler.processEvent`（`applyPaymentStateUpdate`の直前・
+   `confirmBooking`の直前の2箇所）・`BookingRepository.expirePendingBookings`
+   （Calendar削除の直前・Sheetsへのstatus:EXPIRED書き込みの直前の2箇所）は、実際に
+   破壊的な書き込みを行う直前に必ずこれを再検証し、falseならその書き込みを行わずに
+   中断することを必須の契約とした。
+3. **設計上の指摘（Sheetsのappend順序整列を公式に保証された契約として前提にしない
+   こと）**: 下記「採用方式の保証範囲」参照。
 
 **排他制御の実体（`BookingLockRepository.gs`）**: GASの`LockService`はスクリプト
 プロジェクトをまたいで共有できないが、Booking Webhook・Booking Adminの両プロジェクトは
@@ -4452,12 +4474,50 @@ Spreadsheet自体を、プロジェクトをまたぐ排他制御の実体とし
 期限切れでない）チケットが無いか」を確認する。無ければロック取得成功、あれば
 失敗（他方が既に処理中）とみなす。
 
-この方式が正しいと言える根拠（詳細は`BookingLockRepository.gs`冒頭コメント）:
-Google Sheetsは単一のドキュメントであり、複数のクライアント（プロジェクトが違っても
-同じSpreadsheetへの操作はすべて）からの書き込みをバックエンド側で単一の直列順序へ
-整列させる。「`appendRow`で自分の行を追加した直後に全件を読み直す」という手順の
-もとでは、2つの実行が同時に「自分が最も早い」と誤認することは論理的に起こり得ない
-（両者がappend→readの順序を守る限り、少なくとも一方は相手の行を必ず見ることになる）。
+#### 採用方式の保証範囲（レビュー対応・3回目で明記）
+
+**本実装は、Google SheetsのappendRow・read-backだけを「複数のGASプロジェクトを
+またぐ、公式に保証された原子的ロック」として前提にしていない。** Googleは、異なる
+クライアント（プロジェクトが違っても同じSpreadsheetへの操作を含む）からの並行した
+appendRowが単一の直列順序へ整列されることを、Sheets API/Apps Scriptの正式なAPI契約
+として文書化していない（実運用上は概ねその通りに振る舞うと考えられるが、これは
+観測された挙動であって保証された契約ではない）。したがって、この整列を「ベスト
+エフォートで競合の発生確率を大きく下げる手段」として位置づけ、それだけを唯一の
+安全装置にはしていない。
+
+実際に「両プロジェクトが同じ予約に対してそれぞれ成功したと判断する状態」を防いで
+いるのは、以下の3層の組み合わせである（上から順に、それぞれ独立して機能する）:
+
+1. `BookingLockRepository`のappend-then-read-back方式によるロック取得（ベスト
+   エフォート。上記のとおり公式に保証された契約ではない）。
+2. **`isHeld`による書き込み直前の再検証**（レビュー対応・3回目で追加）。ロックを
+   取得したつもりでも、TTLが切れていれば実際の書き込みは行われない。
+3. **呼び出し側に既存の、通常の読み書き整合性だけに依存する再確認**
+   （`confirmBooking`が書き込み直前にBookings台帳を再読込しstatus===EXPIREDを
+   拒否する、`expirePendingBookings`が書き込み直前にpaymentStatusを再読込する、
+   `applyPaymentStateUpdate`が識別子・証跡を検証する、等。いずれも「直前に書き込まれた
+   値を直後の読み込みが見る」という、Spreadsheetが単一のドキュメントである以上
+   ほぼ確実に成り立つ、遥かに弱く自明な前提にしか依存しない。並行するappendの順序
+   整列のような強い前提を必要としない）。
+
+**障害時の挙動**: 仮に1のappend順序整列という前提が何らかの理由で崩れ、2つの実行が
+一時的に「自分がロックを取得した」と誤認したとしても、2（`isHeld`）がその後の実際の
+書き込みを実行直前に食い止める可能性があり、さらに3（呼び出し側の既存の再読込）が
+両者の最終的な書き込みの順序に関わらず「後から書き込む側」に相手の結果を確実に
+検知させる。この結果、最悪の場合でも「両方が成功したと判断する」状態には至らず、
+一方が安全側（Recoveryへの記録・自動処理停止）に倒れる。これは、このコードベースが
+既存のcreateBooking対スペースマーケット外部書き込みの競合で採用している「絶対に
+競合しないではなく、直前再確認とRecovery記録でリスクを最小化する」設計方針と同種の
+ものである。
+
+**TTL（ロックのリース期間）と実時間について**: `BookingLockRepository`のTTL/`isHeld`
+判定は、`processEvent`/`expirePendingBookings`のイベント発生時刻等（テストから固定
+できるビジネス上の日時）とは意図的に切り離し、実時間（`new Date()`。呼び出し側が
+`BookingLockRepository`のnow引数を省略した場合の既定値）だけに基づかせている。TTLは
+「実際にどれだけ実時間が経過したか」を測るためのものであり、本番では両者は同じ値
+（呼び出し時点の`new Date()`）になるため本番の挙動には影響しないが、テストが過去・
+未来の固定日時を指定する場合に両者を混同すると正しく機能しない（`BookingRepository.gs`
+のexpirePendingBookings・`StripeWebhookHandler.gs`のコメント参照）。
 
 **保護する範囲**: `StripeWebhookHandler.processEvent`は、`applyPaymentStateUpdate`
 （paid）〜`confirmBooking`の一連（Bookings/Calendarへの確定的な変更を含む区間）を
@@ -4476,8 +4536,19 @@ Google Sheetsは単一のドキュメントであり、複数のクライアン�
 `BOOKING_LOCK_CONTENDED`としてStripeの自動再送に委ねる（イベント台帳はRECEIVEDの
 まま残るため、次回の配信で安全に再開できる）。
 
+**`isHeld`の再検証に失敗した場合**（TTL経過により自分のロックが既に失効していた
+場合）は、実際の書き込みを一切行わずに中断する。Webhook側で`applyPaymentStateUpdate`
+の直前に失敗した場合は何も書き込んでいないため、finalizeせず安全に再試行させる
+（`BOOKING_LOCK_EXPIRED`）。`confirmBooking`の直前に失敗した場合は、
+`applyPaymentStateUpdate`（paid）は既に完了しているため、入金の事実は保持したまま
+`PAID_CONFIRM_BLOCKED`としてRecoveryへ送る（`BOOKING_LOCK_EXPIRED_BEFORE_CONFIRM`）。
+Admin側でCalendar削除の直前に失敗した場合は何も変更しておらずスキップするのみ、
+Sheets書き込みの直前に失敗した場合はCalendarが既に削除済みの可能性があるため
+専用のfailureType（`EXPIRE_LOCK_EXPIRED_BEFORE_SHEETS_UPDATE`）でRecoveryへ記録する
+（`BookingRepository.gs`のexpirePendingBookingsコメント参照）。
+
 **`failed→paid`許可は引き続き維持する**: このロックは「同時に処理させない」ことを
-保証するが、「どちらが先に完了するか」までは制御しない。`expirePendingBookings`が
+目指すが、「どちらが先に完了するか」までは制御しない。`expirePendingBookings`が
 先にロックを取得・完了して`paymentStatus:failed`・`status:EXPIRED`へ進めた**後**に
 Webhookがロックを取得した場合でも、入金の事実（`paymentStatus:paid`）を正しく
 記録できる必要があるため、この遷移は変更していない（`status`は`EXPIRED`のまま
@@ -4490,17 +4561,17 @@ Webhookがロックを取得した場合でも、入金の事実（`paymentStatu
 猶予は、決済完了直後にWebhook到達を待たず即座にStripe再照会・ロック取得を試みる
 無駄を減らす効率化のためだけに残している。
 
-上記の排他制御により、**両プロジェクトが同じ予約について「両方とも成功した」と
-判断する状態は構造的に発生しない**。`test/stripe-webhook-handler.test.js`へ、
-実際に`BookingLockRepository.acquire`を呼んで「一方が最新状態を読み終えて
-クリティカルセクションへ入った直後」の状態を再現し、もう一方の本番コード経路
-（`processEvent`/`expirePendingBookings`）が安全に競合を検知して待避すること、
-解放後に正しく収束すること（枠解放と予約確定が両方成功する状態にはならない。
-決済済みの事実は保持されRecoveryへ記録される）を検証する2件の統合テストを追加した
-（1回目レビュー対応時点の2件の統合テスト「Webhookが先に確定 → 失効処理は枠を
-解放しない」「失効処理が先に完了 → 遅延した決済成功でも入金の事実は記録され
-Recoveryへ送られる」はそのまま維持。あわせて`BookingLockRepository.gs`自体の単体
-テスト8件を`test/booking-lock-repository.test.js`に追加した）。
+`test/booking-lock-repository.test.js`（`BookingLockRepository`の単体テスト。3回目の
+レビュー対応で、同時に2件がappendするケースを実際に割り込ませて再現するテスト・
+異なるGASプロジェクト間の並行取得を再現するテスト・TTL経過後に古い保持者が
+`isHeld`でfalseと判定されることを検証するテスト・release時のholderId不一致や
+二重解放を検証するテストを追加）と、`test/stripe-webhook-handler.test.js`への統合
+テスト（`BookingLockRepository.acquire`を実際に呼んで「一方が最新状態を読み終えて
+クリティカルセクションへ入った直後」を再現するテスト2件に加え、3回目のレビュー対応で
+`BookingLockRepository.isHeld`をモックして「書き込み直前にTTLが経過していた」場合の
+本番コード経路の振る舞いを検証するテスト4件を追加）で、枠解放と予約確定が両方
+成功する状態にはならないこと、決済済みの事実は保持されRecoveryへ記録されることを
+検証している。
 
 ### 決済済みでも予約を確定できない場合の扱い（Recovery・運用）
 
@@ -4516,7 +4587,8 @@ Recoveryへ送られる」はそのまま維持。あわせて`BookingLockReposi
 | `PAYMENT_INTENT_STATUS_MISMATCH` | SessionはpaidだがPaymentIntentがsucceededでない |
 | `STRIPE_WEBHOOK_AMOUNT_MISMATCH` | 金額・通貨がCheckout Session発行時点のスナップショットと一致しない |
 | `STRIPE_WEBHOOK_PAYMENT_UPDATE_REJECTED` | `applyPaymentStateUpdate`が`INVALID_PAYMENT_TRANSITION`等、自身では記録しないコードで`paid`への更新を拒否した（`failed→paid`はレビュー対応・1回目で許可したため、通常の「仮押さえ失効後の遅延成功」はこの経路には来ず`PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED`側になる。このコードは、それ以外の想定外の遷移拒否―例えば将来のPR-Dの返金状態からの遷移拒否等―のためのfail-closedな受け皿） |
-| `PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED` | 決済確認（`paymentStatus:paid`への更新）自体は成功したが、続く`confirmBooking`が失敗した（仮押さえ失効・キャンセル済み・Calendarイベント消失・料金訂正案内未送信・保存失敗等）。`failed→paid`経由（失効後の遅延成功）もここに含まれる |
+| `PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED` | 決済確認（`paymentStatus:paid`への更新）自体は成功したが、続く`confirmBooking`が失敗した（仮押さえ失効・キャンセル済み・Calendarイベント消失・料金訂正案内未送信・保存失敗・`confirmBooking`直前の予約ロック失効等）。`failed→paid`経由（失効後の遅延成功）もここに含まれる |
+| `EXPIRE_LOCK_EXPIRED_BEFORE_SHEETS_UPDATE`（レビュー対応・3回目） | `expirePendingBookings`がCalendar削除後・Sheetsへのstatus:EXPIRED書き込み前に予約ロックの有効期限切れを検知し、Sheets書き込みを中断した。Calendarイベントは削除済みの可能性がある |
 
 `applyPaymentStateUpdate`自身が内部で既にRecoveryへ記録済みのコード
 （`UNKNOWN_PAYMENT_STATUS`/`PAYMENT_IDENTITY_MISMATCH`/`PAYMENT_IDENTITY_UNCONFIRMED`/
@@ -4681,6 +4753,69 @@ gs`をサンドボックスのファイル一覧へ追加したが、既存テ�
 - [x] Stripeへの外部HTTP呼び出し中は排他制御を保持しない（レビュー対応・2回目）
 - [x] 失効処理とWebhookを実際に交互実行させ、一方が最新状態を読み終えた直後に他方が状態を変更するケースで、決済済みの事実は保持されRecoveryへ記録されることを確認する（レビュー対応・2回目）
 
+### レビュー対応（3回目）
+
+2回目の対応後、オーナーから`BookingLockRepository`の実装バグ2点と設計上の指摘1点を
+受けて対応した。
+
+**1. ロック行の取り違え**: `sheet.appendRow(...)`の直後に`sheet.getLastRow()`を呼んでも、
+並行実行が別の行を追加していれば自分の行番号を取得できないという指摘。**対応**:
+`acquire`は追加直後の全件読み直しで、一意な`holderId`を内容で検索して自分の行を
+特定するよう修正した（`sheet.getLastRow()`には一切頼らない）。`release`も`holderId`が
+実際にその行の保持者であることを確認してからのみ解放するようにした。`test/booking-
+lock-repository.test.js`に、`sheet.appendRow`自体を差し替えて「自分がappendした
+直後・読み直す前に、別の実行が本当にappendする」状況を実際に割り込ませて再現する
+テストと、異なるGASプロジェクト（別々の`BookingLockRepository`モジュールインスタンス）
+からの並行取得を同じ手法で再現するテストを追加した。
+
+**2. ロック期限切れ中の書き込み**: TTL経過後、別の保持者が取得できることは保証されて
+いても、期限切れ後の古い保持者自身がCalendar/Bookingsへ書き込めないことは保証されて
+いないという指摘。**対応**: `BookingLockRepository.isHeld(rowNumber, holderId, now)`を
+新設し、`StripeWebhookHandler.processEvent`（`applyPaymentStateUpdate`直前・
+`confirmBooking`直前の2箇所）・`BookingRepository.expirePendingBookings`（Calendar削除
+直前・Sheets書き込み直前の2箇所）は、実際に破壊的な書き込みを行う直前に必ずこれを
+再検証し、falseならその書き込みを行わずに中断することを必須の契約とした。
+
+**3. 設計上の指摘（Sheetsのappendとread-backを公式に保証された原子的ロックとして
+前提にしないこと）**: 対応の詳細は「Webhookと失効処理の競合」節「採用方式の保証範囲」
+を参照。要約すると、Sheetsの並行appendの順序整列はGoogleが正式に文書化した契約では
+ないため、それだけを唯一の安全装置にはせず、(1)`BookingLockRepository`（ベスト
+エフォート）、(2)`isHeld`による書き込み直前の再検証、(3)呼び出し側に既存の、通常の
+読み書き整合性だけに依存する再確認、の3層の組み合わせで実際の安全性を担保するよう
+設計を再整理した。障害時の挙動（前提が崩れた場合の最悪ケースでも両方が成功したと
+判断される状態には至らないこと）も同節に明記した。
+
+**テスト**: 上記に加え、`BookingLockRepository.isHeld`をモックして「実際に破壊的な
+書き込みを行う直前にTTLが経過していた」状況を再現し、`processEvent`/
+`expirePendingBookings`という本番コード経路が書き込みを中断しRecoveryへ正しく記録
+することを検証する統合テスト4件を`test/stripe-webhook-handler.test.js`へ追加した
+（Webhook側は`applyPaymentStateUpdate`直前・`confirmBooking`直前の2パターン、Admin側は
+Calendar削除直前・Sheets書き込み直前の2パターン）。異なるGASプロジェクトからの並行
+取得・取得直後の割り込み・ロック期限切れ・古い保持者による遅延書き込み・解放処理の
+競合のいずれについても、枠解放と予約確定が両方成功しないことを確認済み。
+
+### テスト結果（3回目レビュー対応後）
+
+`node --test 'test/**/*.test.js'`: **1207件すべてpass**（2回目対応後1195件＋今回追加した
+12件。`test/booking-lock-repository.test.js`に6件追加（同時にappendするケースの再現・
+異なるGASプロジェクト間の並行取得の再現・TTL経過後の`isHeld`検証2件・release時の
+holderId不一致/二重解放/存在しない行番号の検証3件のうち一部は既存テストの拡張）・
+`test/stripe-webhook-handler.test.js`に4件追加（`isHeld`をモックした書き込み直前の
+ロック失効検証。Webhook側2件・Admin側2件）・既存の`BookingLockRepository.release`呼び
+出し箇所（本番コード2箇所・テスト内の手動呼び出し数箇所）を新しい`release(rowNumber,
+holderId, now)`シグネチャに合わせて更新）。加えて`cloud-run/stripe-webhook-relay`配下は
+変更なしで引き続き**11件すべてpass**。**合計1218件すべてpass**。既存の管理者承認・
+Calendar・日程変更精算・Booking Admin・現地払い・旧Payment Link方式・PR-A/PR-B・
+レビュー対応1〜2回目の回帰テストもすべてpass。実際の本番決済・本番Webhook配信を伴う
+自動テストは行っていない。
+
+受入条件との照合（今回追加分）:
+- [x] 自分のチケットを一意なholderIdで特定し、取得判定・解放処理が他の実行の行を操作しない（レビュー対応・3回目）
+- [x] 同時に2件がappendするケースを、単体テストで実際に割り込ませて再現する（レビュー対応・3回目）
+- [x] 期限切れ後の古い保持者がCalendarやBookingsへ書き込めないことを保証する（レビュー対応・3回目）
+- [x] Sheetsのappendとread-backだけを公式に保証された原子的ロックとして前提にせず、採用方式の保証範囲と障害時の挙動をREADMEに記載する（レビュー対応・3回目）
+- [x] 異なるGASプロジェクトからの並行取得・取得直後の割り込み・ロック期限切れ・古い保持者による遅延書き込み・解放処理の競合をテストし、枠解放と予約確定が両方成功しないことを確認する（レビュー対応・3回目）
+
 ### Stripe Webhookエンドポイントのデプロイ（オーナー承認後に実施すること）
 
 レビュー対応・1回目で、既存プロジェクトへのデプロイ追加ではなく**新しい独立した
@@ -4721,14 +4856,19 @@ Apps Scriptプロジェクト**を作成する方式へ変更した（「Webhook
 - 中継基盤（Cloud Run）・Stripe Webhook Endpoint・Booking Webhookプロジェクトの新規作成の
   実際の作成・本番Script Properties設定・本番Stripe Webhook設定はオーナーの明示承認後に
   別途行う（本PRはコードの提供のみ）。
-- Webhookと失効処理の競合は、レビュー対応・2回目で`BookingLockRepository`による
-  実際の排他制御へ置き換えたため、両者が同じ予約を同時に処理する状態は構造的に
-  発生しない（「Webhookと失効処理の競合（BookingLockRepositoryによる排他制御）」節
-  参照）。それでも本番運用開始後は、`BookingLocks`シートが行を追加し続ける一方で
-  自動削除しない設計（`StripeEvents`シートと同じ設計判断）のため、運用上肥大化した
-  場合は手動アーカイブを検討すること。またRecoveryシートの
-  `PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED`/`STRIPE_WEBHOOK_PAYMENT_UPDATE_REJECTED`の
-  発生頻度（失効処理が実際に決済成立後の予約を先に失効させたケースを含む）は引き続き
+- Webhookと失効処理の競合は、レビュー対応・2〜3回目で`BookingLockRepository`
+  （＋`isHeld`による書き込み直前の再検証＋呼び出し側の既存の再読込）による3層の
+  排他制御へ置き換えた。ただしレビュー対応・3回目で明記したとおり、これはSheetsの
+  append順序整列を公式に保証された契約として前提にしたものではなく、ベストエフォート
+  ＋2つの独立した安全網の組み合わせである（「Webhookと失効処理の競合
+  （BookingLockRepositoryによる排他制御）」節「採用方式の保証範囲」参照）。本番運用
+  開始後は、`BookingLocks`シートが行を追加し続ける一方で自動削除しない設計
+  （`StripeEvents`シートと同じ設計判断）のため、運用上肥大化した場合は手動アーカイブを
+  検討すること。またRecoveryシートの
+  `PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED`/`STRIPE_WEBHOOK_PAYMENT_UPDATE_REJECTED`/
+  `EXPIRE_LOCK_EXPIRED_BEFORE_SHEETS_UPDATE`の発生頻度（失効処理が実際に決済成立後の
+  予約を先に失効させたケース、ロック取得の前提が崩れて`isHeld`が実際に書き込みを
+  中断したケースを含む）は引き続き
   観察するとよい。
 
 PR-Dには自動着手しません。レビューをお待ちします。

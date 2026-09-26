@@ -840,8 +840,17 @@ var BookingRepository = (function () {
          * 取得できない場合はWebhook側が同時にこの予約を処理中とみなし、この回の
          * トリガー実行ではスキップする（バックグラウンド処理のため、単純にリトライせず
          * 次回のトリガー実行に委ねる）。
+         *
+         * Issue #341 PR-Cレビュー対応・3回目: このロックのTTL/有効性判定には、意図的に
+         * この関数のnow引数（テストから固定できるビジネス上の時刻。expirePendingBookings
+         * 自体のTTL判定にはnowを使い続ける）を渡さず、BookingLockRepository.acquire/
+         * isHeldのnow引数を省略して実時間（`new Date()`）だけに基づかせる。ロックのTTLは
+         * 「実際にどれだけ実時間が経過したか」を測るためのものであり、本番ではnowを
+         * 指定せずに呼ぶため（BookingTriggers.gs参照）この使い分けは本番の挙動に一切
+         * 影響しない。
          */
-        var bookingLock = BookingLockRepository.acquire(record.bookingId, Utilities.getUuid(), 'admin-expire', new Date());
+        var bookingLockHolderId = Utilities.getUuid();
+        var bookingLock = BookingLockRepository.acquire(record.bookingId, bookingLockHolderId, 'admin-expire');
         if (!bookingLock.acquired) {
           Logger.log('expirePendingBookings: 予約ロックの取得競合のためスキップ（次回トリガーで再評価）: ' + record.bookingId);
           skippedCount++;
@@ -866,6 +875,19 @@ var BookingRepository = (function () {
             return;
           }
 
+          /*
+           * Issue #341 PR-Cレビュー対応・3回目: 実際にCalendarを削除する直前に、予約ロックが
+           * まだ有効（TTLが切れていない）ことを再検証する。ここまでの間に他プロセスが
+           * TTL経過を理由にこの予約のロックを再取得している可能性があり、その場合はこの
+           * 実行がCalendar/Bookingsへ書き込んではならない（BookingLockRepository.gs
+           * 「3回目レビュー対応で修正した実装バグ・項目2」参照）。
+           */
+          if (!BookingLockRepository.isHeld(bookingLock.rowNumber, bookingLockHolderId, new Date())) {
+            Logger.log('expirePendingBookings: 予約ロックの有効期限が切れていたため書き込みを中断しました: ' + record.bookingId);
+            skippedCount++;
+            return;
+          }
+
           try {
             CalendarRepository.deleteEventById(calendarId, latest.record.calendarEventId);
           } catch (deleteError) {
@@ -883,6 +905,35 @@ var BookingRepository = (function () {
             } catch (recoveryError) {
               Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
             }
+          }
+
+          /*
+           * Issue #341 PR-Cレビュー対応・3回目: Sheetsへstatus:EXPIREDを書き込む直前にも
+           * 再度ロックの有効性を検証する（Calendar削除に時間を要し、その間にTTLが切れた
+           * 場合を含む）。ここで失効していた場合、Calendarは既に削除済み（または削除失敗を
+           * recovery記録済み）だがSheets側はPENDINGのまま残るため、専用のfailureTypeで
+           * 記録し運営者の確認を必須にする（削除済みのCalendarを元に戻すことはしない。
+           * 次回このbookingIdへ到達する処理――Webhook側のconfirmBooking等――が最新状態を
+           * 読み直して安全に判断する）。
+           */
+          if (!BookingLockRepository.isHeld(bookingLock.rowNumber, bookingLockHolderId, new Date())) {
+            Logger.log('expirePendingBookings: Calendar削除後、Sheets書き込み前に予約ロックの有効期限が切れたため中断しました: ' + record.bookingId);
+            try {
+              RecoveryRepository.recordFailure({
+                bookingId: record.bookingId,
+                failureType: 'EXPIRE_LOCK_EXPIRED_BEFORE_SHEETS_UPDATE',
+                occurredAt: new Date(),
+                calendarEventId: latest.record.calendarEventId,
+                status: 'PENDING',
+                errorMessage: '予約ロックの有効期限切れによりstatus:EXPIREDの書き込みを中断しました。Calendarイベントは削除済みの可能性があります。',
+                recoveryState: 'OPEN',
+                resolvedAt: ''
+              });
+            } catch (recoveryError) {
+              Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+            }
+            skippedCount++;
+            return;
           }
 
           var expiredAt = new Date();
@@ -933,7 +984,11 @@ var BookingRepository = (function () {
             skippedCount++;
           }
         } finally {
-          BookingLockRepository.release(bookingLock.rowNumber, new Date());
+          try {
+            BookingLockRepository.release(bookingLock.rowNumber, bookingLockHolderId, new Date());
+          } catch (releaseError) {
+            Logger.log('BookingLockRepository.release failed: ' + record.bookingId + ' ' + describeError_(releaseError));
+          }
         }
       } finally {
         lock.releaseLock();
