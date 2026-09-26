@@ -78,6 +78,12 @@ function createUtilitiesStub() {
         bytes.push(unsigned > 127 ? unsigned - 256 : unsigned);
       }
       return bytes;
+    },
+    /* Issue #341 PR-Cレビュー対応・2回目: BookingLockRepositoryの取得競合時の短い
+       再試行間隔用。テストは同期的に高速実行する必要があるため実際には待機せず、
+       呼び出されたこと自体だけを記録できるノーオペレーションのスタブとする。 */
+    sleep: function (millis) {
+      /* no-op */
     }
   };
 }

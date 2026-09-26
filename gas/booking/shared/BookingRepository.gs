@@ -610,6 +610,19 @@ var BookingRepository = (function () {
    * 候補行ごとにLockを取得し、Lock取得後に最新statusを再確認してから処理する（他プロセスとの
    * 二重処理を防ぐ）。Calendarイベント削除に失敗した場合もrecoveryへ記録した上でSheets側は
    * EXPIREDへ進める（削除失敗を理由にPENDINGのまま放置しない）。
+   *
+   * 【Booking Webhookプロジェクトとの競合について（Issue #341 PR-Cレビュー対応・2回目）】
+   * 上記のLockService.getScriptLock()はBooking Adminプロジェクト内だけで共有され、独立した
+   * Booking WebhookプロジェクトのStripeWebhookHandler.processEventとは共有されない。
+   * 1回目のレビュー対応（各々の最新状態再読込・CardPayment.WEBHOOK_RACE_GRACE_MINUTESの
+   * 猶予・failed→paid遷移の許可）だけでは、「一方が最新状態を読み終えた直後に他方が状態を
+   * 変更する」という狭いレース自体は排除できないという指摘を受け、この候補ごとの
+   * クリティカルセクション（最新状態の再読込〜Calendar削除〜status:EXPIRED書き込み）を
+   * BookingLockRepository（両プロジェクトが共有するBookings台帳と同じSpreadsheet上の
+   * 予約単位の排他制御。BookingLockRepository.gs冒頭コメント参照）で保護するよう変更した。
+   * このロックを取得できなかった場合（Webhook側が同時にこの予約を処理中）は、この回の
+   * トリガー実行ではこの予約をスキップし、次回のトリガー実行に委ねる（バックグラウンド
+   * 処理のため急ぐ必要がなく、単純にリトライしない設計とした）。
    */
   /*
    * Issue #341 PR-B「5. 仮押さえと期限切れ」: checkout_pending（Stripe Checkout Session
@@ -818,88 +831,109 @@ var BookingRepository = (function () {
       }
 
       try {
-        var latest = SpreadsheetRepository.findRowByBookingId(record.bookingId);
-        if (!latest || latest.record.status !== Booking.STATUS.PENDING) {
-          return; /* confirmBooking等で既に処理済み */
-        }
-
         /*
-         * Issue #341 PR-B: Lock取得前のStripe確認（verifyCheckoutHoldSafeToExpire_）から
-         * Lock取得までの間に、他プロセス（将来のWebhookハンドラ等）がpaymentStatusを
-         * 進めている可能性がある。Lock内で最新のpaymentStatusを再確認し、既に
-         * checkout_pendingでなくなっていれば（PAID等へ進んでいれば）枠を解放せず処理を
-         * スキップする（README「仮押さえの解放とStripe側の失効確認」の3条件どおり、
-         * 仮押さえ解放とpaymentStatus遷移は別物だが、解放前の最終確認としてここで見る）。
+         * Issue #341 PR-Cレビュー対応・2回目: 上記lockはBooking Adminプロジェクト内だけの
+         * 排他であり、独立したBooking WebhookプロジェクトのStripeWebhookHandlerとは
+         * 共有されない。このクリティカルセクション（最新状態の再読込〜Calendar削除〜
+         * status:EXPIRED書き込み）に入る前に、両プロジェクトが共有するBookings台帳と
+         * 同じSpreadsheet上の予約単位ロックを取得する（BookingLockRepository.gs参照）。
+         * 取得できない場合はWebhook側が同時にこの予約を処理中とみなし、この回の
+         * トリガー実行ではスキップする（バックグラウンド処理のため、単純にリトライせず
+         * 次回のトリガー実行に委ねる）。
          */
-        if (isCheckoutPendingHold && Booking.normalizePaymentStatus(latest.record.paymentStatus) !== Booking.PAYMENT_STATUS.CHECKOUT_PENDING) {
+        var bookingLock = BookingLockRepository.acquire(record.bookingId, Utilities.getUuid(), 'admin-expire', new Date());
+        if (!bookingLock.acquired) {
+          Logger.log('expirePendingBookings: 予約ロックの取得競合のためスキップ（次回トリガーで再評価）: ' + record.bookingId);
+          skippedCount++;
           return;
         }
 
         try {
-          CalendarRepository.deleteEventById(calendarId, latest.record.calendarEventId);
-        } catch (deleteError) {
-          try {
-            RecoveryRepository.recordFailure({
-              bookingId: record.bookingId,
-              failureType: 'EXPIRE_CALENDAR_DELETE_FAILED',
-              occurredAt: new Date(),
-              calendarEventId: latest.record.calendarEventId,
-              status: 'PENDING',
-              errorMessage: describeError_(deleteError),
-              recoveryState: 'OPEN',
-              resolvedAt: ''
-            });
-          } catch (recoveryError) {
-            Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+          var latest = SpreadsheetRepository.findRowByBookingId(record.bookingId);
+          if (!latest || latest.record.status !== Booking.STATUS.PENDING) {
+            return; /* confirmBooking等で既に処理済み */
           }
-        }
 
-        var expiredAt = new Date();
-        try {
-          SpreadsheetRepository.updateBookingFields(record.bookingId, {
-            status: Booking.STATUS.EXPIRED,
-            expiredAt: expiredAt,
-            updatedAt: expiredAt
-          });
-          expiredCount++;
-          /* Issue #334: Sheets側のEXPIRED更新が実際に成功した行だけを通知対象にする
-             （Sheets更新が失敗した行はPENDINGのまま残り、次回トリガーで再評価されるため、
-             ここで通知してしまうと台帳の状態と矛盾する）。 */
-          if (isCard) {
-            newlyExpiredCardBookingIds.push(record.bookingId);
-          }
           /*
-           * Issue #341 PR-B: 仮押さえ解放（status側）とpaymentStatus遷移は別物のまま
-           * （README「仮押さえの解放とStripe側の失効確認」参照）。applyPaymentStateUpdate
-           * 自体もLockService.getScriptLock()を取得するため、この関数（expirePendingBookings）
-           * が既に保持しているlockの内側から呼ぶと同一スクリプト内で二重にロックを取ろうと
-           * してしまう。そのためbookingIdだけを集め、この候補のlock解放後（finally節の外）に
-           * まとめて呼び出す（notifyCustomerExpiredBestEffort_と同じパターン）。
+           * Issue #341 PR-B: Lock取得前のStripe確認（verifyCheckoutHoldSafeToExpire_）から
+           * Lock取得までの間に、他プロセス（将来のWebhookハンドラ等）がpaymentStatusを
+           * 進めている可能性がある。Lock内で最新のpaymentStatusを再確認し、既に
+           * checkout_pendingでなくなっていれば（PAID等へ進んでいれば）枠を解放せず処理を
+           * スキップする（README「仮押さえの解放とStripe側の失効確認」の3条件どおり、
+           * 仮押さえ解放とpaymentStatus遷移は別物だが、解放前の最終確認としてここで見る）。
            */
-          if (isCheckoutPendingHold) {
-            newlyFailedCheckoutHoldBookingIds.push(record.bookingId);
+          if (isCheckoutPendingHold && Booking.normalizePaymentStatus(latest.record.paymentStatus) !== Booking.PAYMENT_STATUS.CHECKOUT_PENDING) {
+            return;
           }
-        } catch (sheetsError) {
-          /* Calendar側は削除済み（または削除失敗をrecovery記録済み）だが、Sheets側の
-             statusをEXPIREDへ更新できなかった場合の不整合をrecoveryへ記録する。
-             ここで例外を外へ投げるとforEachの以降の候補が処理されなくなるため、
-             このcatchで必ず握りつぶし、他の候補の処理を継続する（レビュー指摘対応:
-             1件のSheets更新失敗で他の候補まで巻き込んで未処理にしない）。 */
+
           try {
-            RecoveryRepository.recordFailure({
-              bookingId: record.bookingId,
-              failureType: 'EXPIRE_SHEETS_UPDATE_FAILED',
-              occurredAt: new Date(),
-              calendarEventId: latest.record.calendarEventId,
-              status: 'PENDING',
-              errorMessage: describeError_(sheetsError),
-              recoveryState: 'OPEN',
-              resolvedAt: ''
-            });
-          } catch (recoveryError) {
-            Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+            CalendarRepository.deleteEventById(calendarId, latest.record.calendarEventId);
+          } catch (deleteError) {
+            try {
+              RecoveryRepository.recordFailure({
+                bookingId: record.bookingId,
+                failureType: 'EXPIRE_CALENDAR_DELETE_FAILED',
+                occurredAt: new Date(),
+                calendarEventId: latest.record.calendarEventId,
+                status: 'PENDING',
+                errorMessage: describeError_(deleteError),
+                recoveryState: 'OPEN',
+                resolvedAt: ''
+              });
+            } catch (recoveryError) {
+              Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+            }
           }
-          skippedCount++;
+
+          var expiredAt = new Date();
+          try {
+            SpreadsheetRepository.updateBookingFields(record.bookingId, {
+              status: Booking.STATUS.EXPIRED,
+              expiredAt: expiredAt,
+              updatedAt: expiredAt
+            });
+            expiredCount++;
+            /* Issue #334: Sheets側のEXPIRED更新が実際に成功した行だけを通知対象にする
+               （Sheets更新が失敗した行はPENDINGのまま残り、次回トリガーで再評価されるため、
+               ここで通知してしまうと台帳の状態と矛盾する）。 */
+            if (isCard) {
+              newlyExpiredCardBookingIds.push(record.bookingId);
+            }
+            /*
+             * Issue #341 PR-B: 仮押さえ解放（status側）とpaymentStatus遷移は別物のまま
+             * （README「仮押さえの解放とStripe側の失効確認」参照）。applyPaymentStateUpdate
+             * 自体もLockService.getScriptLock()を取得するため、この関数（expirePendingBookings）
+             * が既に保持しているlockの内側から呼ぶと同一スクリプト内で二重にロックを取ろうと
+             * してしまう。そのためbookingIdだけを集め、この候補のlock解放後（finally節の外）に
+             * まとめて呼び出す（notifyCustomerExpiredBestEffort_と同じパターン）。
+             */
+            if (isCheckoutPendingHold) {
+              newlyFailedCheckoutHoldBookingIds.push(record.bookingId);
+            }
+          } catch (sheetsError) {
+            /* Calendar側は削除済み（または削除失敗をrecovery記録済み）だが、Sheets側の
+               statusをEXPIREDへ更新できなかった場合の不整合をrecoveryへ記録する。
+               ここで例外を外へ投げるとforEachの以降の候補が処理されなくなるため、
+               このcatchで必ず握りつぶし、他の候補の処理を継続する（レビュー指摘対応:
+               1件のSheets更新失敗で他の候補まで巻き込んで未処理にしない）。 */
+            try {
+              RecoveryRepository.recordFailure({
+                bookingId: record.bookingId,
+                failureType: 'EXPIRE_SHEETS_UPDATE_FAILED',
+                occurredAt: new Date(),
+                calendarEventId: latest.record.calendarEventId,
+                status: 'PENDING',
+                errorMessage: describeError_(sheetsError),
+                recoveryState: 'OPEN',
+                resolvedAt: ''
+              });
+            } catch (recoveryError) {
+              Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+            }
+            skippedCount++;
+          }
+        } finally {
+          BookingLockRepository.release(bookingLock.rowNumber, new Date());
         }
       } finally {
         lock.releaseLock();

@@ -29,6 +29,7 @@ var FILES = [
   'StripeGateway.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
+  'BookingLockRepository.gs',
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
   'BookingRepository.gs'

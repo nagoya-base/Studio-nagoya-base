@@ -31,33 +31,44 @@
  * `doGet`自体が定義されず、管理者UI・確定・取消・メール送信等の関数はこのプロジェクトの
  * URLからは構造的に到達不可能になる（`test/booking-webhook-deployment.test.js`で検証）。
  *
- * 【失効処理（expirePendingBookings）との競合について（レビュー対応・1回目で再設計）】
+ * 【失効処理（expirePendingBookings）との競合について（レビュー対応・2回目で再設計）】
  * このプロジェクトはBooking Adminプロジェクトとは別のスクリプトであるため、
  * `LockService.getScriptLock()`はBooking Adminの`expirePendingBookings`とは**共有されない**
- * （GASのLockServiceはスクリプトプロジェクト単位）。そのため「同一LockServiceによる
- * 完全な排他」はもはや前提にできない。代わりに以下の多層防御で競合の実害を防ぐ：
+ * （GASのLockServiceはスクリプトプロジェクト単位）。
  *
- * 1. 双方とも、破壊的な書き込み（Calendar削除+EXPIRED確定 / Calendar更新+CONFIRMED確定）
- *    の直前に、自分のLock内で予約の最新状態を再読込する（`expirePendingBookings`・
- *    `confirmBookingLocked_`いずれも既存の設計のまま）。これにより、一方が完全に完了して
- *    から他方が読む限り、後発側は必ず先発側の結果を検知して安全側に倒れる。
- * 2. `expirePendingBookings`は、`paymentHoldExpiresAt`を過ぎてから追加の猶予
- *    （`CardPayment.WEBHOOK_RACE_GRACE_MINUTES`。既定10分）が経過するまで、
- *    checkout_pendingの仮押さえを失効対象にしない。Stripeへの決済完了直後にWebhookが
- *    届くまでの時間（通常は数秒〜数十秒）に対して十分な余裕を持たせることで、
- *    「支払い成立の直後に枠を解放してしまう」窓を実務上ほぼ消滅させる（BookingRepository.gs
- *    のexpirePendingBookingsコメント参照）。
- * 3. `Booking.PAYMENT_STATUS_TRANSITIONS_`は`failed→paid`を許可する。仮に
- *    `expirePendingBookings`が先に完了して`paymentStatus:failed`・`status:EXPIRED`へ
- *    進めてしまっていても、その後に届いたWebhookは入金の事実（`paymentStatus:paid`）を
- *    正しく記録できる（`status`は`EXPIRED`のまま変更しない。`confirmBooking`が
- *    `EXPIRED`を拒否するため自動確定はされず、`paymentRecoveryRequiredAt`を立てて
- *    Recoveryへ記録し運営者の確認を必須にする。「失効後の入金記録」節参照）。
- * 4. 上記1〜3をもってしても理論上ゼロにはならない、極めて狭い残存レース
- *    （両者のLock内再読込が数百ミリ秒未満の間隔で重なる場合）は、既存のcreateBooking対
- *    スペースマーケット外部書き込みと同種の「絶対に競合しないではなく、直前再確認と
- *    Recovery記録でリスクを最小化する」設計として受容する（README「Webhookと失効処理の
- *    競合（再設計）」参照）。
+ * レビュー対応・1回目では「双方の破壊的書き込み直前の最新状態再読込」「`paymentHoldExpiresAt`
+ * 超過後の追加猶予（`CardPayment.WEBHOOK_RACE_GRACE_MINUTES`）」「`failed→paid`遷移の許可」の
+ * 3点による多層防御で競合の実害を最小化していたが、これらは「一方が最新状態を読み終えた
+ * 直後に他方が状態を変更する」という狭いレース自体を排除できないという指摘を受け、
+ * 2回目のレビュー対応で以下へ変更した：
+ *
+ * 1. **予約単位の排他制御（`BookingLockRepository`）を追加した**。Booking Webhook・
+ *    Booking Adminの両プロジェクトが共有するBookings台帳と同じSpreadsheet上に、専用の
+ *    「BookingLocks」シートを設け、そこへの`appendRow`＋直後の全件読み直しで「自分より
+ *    前に追加された有効なチケットが無いか」を判定する、プロジェクトをまたいで機能する
+ *    排他制御を実装した（`BookingLockRepository.gs`冒頭コメントに、なぜこれで正しいと
+ *    言えるかの根拠を含めて詳述）。`processEvent`は、`applyPaymentStateUpdate`（paid）〜
+ *    `confirmBooking`の一連（Stripe API呼び出しはすべてこれより前に完了済み）をこの
+ *    ロックで保護する。取得できない場合は短い間隔で数回だけ再試行し（`acquireBookingLock
+ *    WithRetry_`）、それでも取得できなければStripeの自動再送に委ねる
+ *    （`BOOKING_LOCK_CONTENDED`。イベント台帳はRECEIVEDのまま残る）。これにより、
+ *    `expirePendingBookings`と本処理が同じ予約を同時に処理することは構造的に発生しない
+ *    （BookingRepository.gsのexpirePendingBookingsコメント参照）。
+ * 2. `Booking.PAYMENT_STATUS_TRANSITIONS_`の`failed→paid`許可は引き続き維持する。1のロックは
+ *    「同時に処理させない」ことを保証するが、「どちらが先に完了するか」は制御しないため、
+ *    `expirePendingBookings`が先にロックを取得・完了して`paymentStatus:failed`・
+ *    `status:EXPIRED`へ進めた**後**にWebhookがロックを取得した場合でも、入金の事実
+ *    （`paymentStatus:paid`）を正しく記録できる必要がある（`status`は`EXPIRED`のまま
+ *    変更しない。`confirmBooking`が`EXPIRED`を拒否するため自動確定はされず、
+ *    `paymentRecoveryRequiredAt`を立ててRecoveryへ記録し運営者の確認を必須にする。
+ *    「失効後の入金記録」節参照）。
+ * 3. `CardPayment.WEBHOOK_RACE_GRACE_MINUTES`（既定10分）は補助策として維持するが、
+ *    **競合を防ぐ根拠はもはやこれではない**（1のロックが競合そのものを防ぐ）。この猶予は
+ *    単に「決済完了直後にWebhook到達を待たず即座にStripe再照会・ロック取得を試みる」
+ *    無駄を減らす効率化のためだけに残す。
+ *
+ * 上記1により、両プロジェクトが同じ予約について「両方とも成功した」と判断する状態は
+ * 構造的に発生しない（`BookingLockRepository.gs`冒頭コメントの正当性の根拠を参照）。
  *
  * 【処理方針】
  * - Session完了（event.data.objectのpayment_status）とPaymentIntentの入金完了
@@ -121,6 +132,27 @@ var StripeWebhookHandler = (function () {
 
   function outcome_(ackSuccess, code, message) {
     return { ackSuccess: ackSuccess, code: code, message: message };
+  }
+
+  /*
+   * Issue #341 PR-Cレビュー対応・2回目: BookingLockRepository.acquireを短い間隔で数回だけ
+   * 再試行する。この関数が呼ばれる時点でStripe API呼び出し（署名検証済みイベントの
+   * 再照会・金額照合）はすべて完了しているため、待機してもStripeへの応答を大きく
+   * 遅らせない（BOOKING_LOCK_MAX_ATTEMPTS_ * BOOKING_LOCK_RETRY_DELAY_MS_はミリ秒単位）。
+   */
+  var BOOKING_LOCK_MAX_ATTEMPTS_ = 3;
+  var BOOKING_LOCK_RETRY_DELAY_MS_ = 200;
+
+  function acquireBookingLockWithRetry_(bookingId, eventId, now) {
+    for (var attempt = 1; attempt <= BOOKING_LOCK_MAX_ATTEMPTS_; attempt++) {
+      var holderId = 'webhook:' + eventId + ':' + attempt + ':' + Utilities.getUuid();
+      var result = BookingLockRepository.acquire(bookingId, holderId, 'webhook', now);
+      if (result.acquired) return result;
+      if (attempt < BOOKING_LOCK_MAX_ATTEMPTS_) {
+        Utilities.sleep(BOOKING_LOCK_RETRY_DELAY_MS_);
+      }
+    }
+    return { acquired: false };
   }
 
   /*
@@ -420,67 +452,86 @@ var StripeWebhookHandler = (function () {
       return rejectFinalizeOnly_(rowNumber, bookingId, verify.error.code, '金額・通貨が一致しないため要復旧としました。', effectiveNow);
     }
 
-    var paidResult = BookingRepository.applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.PAID, {
-      stripePaymentIntentId: paymentIntent.id,
-      lastStripeEventId: eventId,
-      paymentConfirmedAt: effectiveNow
-    }, effectiveNow);
-
-    if (!paidResult.success) {
-      var paidErrorCode = paidResult.error && paidResult.error.code;
-      if (paidErrorCode === 'LOCK_TIMEOUT' || paidErrorCode === 'PAYMENT_DETAIL_WRITE_FAILED') {
-        /* 何も書き込まれていない失敗のため、finalizeせず安全に再試行させる。 */
-        return outcome_(false, paidErrorCode, '一時的に決済状態を更新できませんでした。再試行します。');
-      }
-      if (paidErrorCode === 'PAYMENT_RECOVERY_REQUIRED') {
-        return rejectFinalizeOnly_(rowNumber, bookingId, paidErrorCode, '既に要復旧のため何もしませんでした。', effectiveNow);
-      }
-      if (SELF_RECORDING_PAYMENT_UPDATE_ERROR_CODES_.indexOf(paidErrorCode) !== -1) {
-        /* PAYMENT_IDENTITY_MISMATCH・UNKNOWN_PAYMENT_STATUS・PAYMENT_STATUS_WRITE_FAILED_
-           AFTER_DETAIL_COMMIT・PAYMENT_IDENTITY_UNCONFIRMED・PAYMENT_EVIDENCE_MISSING等は
-           applyPaymentStateUpdate自身が既にRecoveryへ記録済み（BookingRepository.gs参照）。
-           ここで重複記録はしない。 */
-        return rejectFinalizeOnly_(rowNumber, bookingId, paidErrorCode || 'PAYMENT_UPDATE_FAILED', '決済状態の更新に失敗しました: ' + paidErrorCode, effectiveNow);
-      }
-      /*
-       * INVALID_PAYMENT_TRANSITION（例: 仮押さえ失効・キャンセル等で既にpaymentStatusが
-       * failedへ進んでいた後に、遅れて届いた決済成功イベント）等、applyPaymentStateUpdate
-       * 自身は台帳側の不整合とみなさずRecoveryへ記録しないコードは、ここで明示的に記録する。
-       * Stripe側では実際に入金が完了しているため、無条件に無視してはならない
-       * （Issue #341本文「仮押さえが既に失効している」場合の自動確定停止・Recovery記録）。
-       */
-      recordPaymentRecoveryGate_(
-        bookingId, record, 'STRIPE_WEBHOOK_PAYMENT_UPDATE_REJECTED',
-        '決済成功イベント（eventId=' + eventId + '）を受信しましたが、決済状態を' + Booking.PAYMENT_STATUS.PAID +
-          'へ更新できませんでした（' + paidErrorCode + '）。Stripe側では入金が完了している可能性が高いため、' +
-          '入金の事実を消さず自動処理を停止しました。運営者による確認が必要です。',
-        effectiveNow
-      );
-      return rejectFinalizeOnly_(rowNumber, bookingId, paidErrorCode || 'PAYMENT_UPDATE_FAILED', '決済状態の更新に失敗しました: ' + paidErrorCode, effectiveNow);
+    /*
+     * Issue #341 PR-Cレビュー対応・2回目: applyPaymentStateUpdate（paid）〜confirmBookingの
+     * 一連（Bookings/Calendarへの確定的な変更を含む区間。Stripe API呼び出しはここより前で
+     * 完了済み）を、Booking AdminプロジェクトのexpirePendingBookingsと共有する予約単位
+     * ロックで保護する（BookingLockRepository.gs冒頭コメント・BookingRepository.gsの
+     * expirePendingBookingsコメント参照）。取得できない場合はAdmin側が同時にこの予約を
+     * 処理中とみなし、短い間隔で数回だけ再試行する（外部HTTP呼び出しは行わないため、この
+     * 待機はStripeへの応答を大きく遅らせない）。それでも取得できなければStripeの自動再送に
+     * 委ねる（イベント台帳はRECEIVEDのまま残るため、次回の配信で安全に再開できる）。
+     */
+    var bookingLock = acquireBookingLockWithRetry_(bookingId, eventId, effectiveNow);
+    if (!bookingLock.acquired) {
+      return outcome_(false, 'BOOKING_LOCK_CONTENDED', '一時的に他の処理と競合しています。再試行します。');
     }
 
-    /*
-     * 予約の最新状態を読み直したうえで、既存の予約確定処理をそのまま再利用する
-     * （Issue #341本文「7. 決済成功後の予約自動確定」。confirmBookingLocked_自身が
-     * Lock取得直後に最新のstatus・Calendarイベントの有無を再確認するため、ここで
-     * 個別に再読込・再確認を重複実装しない）。
-     */
-    var confirmResult = BookingRepository.confirmBooking(bookingId);
-    if (!confirmResult.success) {
+    try {
+      var paidResult = BookingRepository.applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.PAID, {
+        stripePaymentIntentId: paymentIntent.id,
+        lastStripeEventId: eventId,
+        paymentConfirmedAt: effectiveNow
+      }, effectiveNow);
+
+      if (!paidResult.success) {
+        var paidErrorCode = paidResult.error && paidResult.error.code;
+        if (paidErrorCode === 'LOCK_TIMEOUT' || paidErrorCode === 'PAYMENT_DETAIL_WRITE_FAILED') {
+          /* 何も書き込まれていない失敗のため、finalizeせず安全に再試行させる。 */
+          return outcome_(false, paidErrorCode, '一時的に決済状態を更新できませんでした。再試行します。');
+        }
+        if (paidErrorCode === 'PAYMENT_RECOVERY_REQUIRED') {
+          return rejectFinalizeOnly_(rowNumber, bookingId, paidErrorCode, '既に要復旧のため何もしませんでした。', effectiveNow);
+        }
+        if (SELF_RECORDING_PAYMENT_UPDATE_ERROR_CODES_.indexOf(paidErrorCode) !== -1) {
+          /* PAYMENT_IDENTITY_MISMATCH・UNKNOWN_PAYMENT_STATUS・PAYMENT_STATUS_WRITE_FAILED_
+             AFTER_DETAIL_COMMIT・PAYMENT_IDENTITY_UNCONFIRMED・PAYMENT_EVIDENCE_MISSING等は
+             applyPaymentStateUpdate自身が既にRecoveryへ記録済み（BookingRepository.gs参照）。
+             ここで重複記録はしない。 */
+          return rejectFinalizeOnly_(rowNumber, bookingId, paidErrorCode || 'PAYMENT_UPDATE_FAILED', '決済状態の更新に失敗しました: ' + paidErrorCode, effectiveNow);
+        }
+        /*
+         * INVALID_PAYMENT_TRANSITION（例: 仮押さえ失効・キャンセル等で既にpaymentStatusが
+         * failedへ進んでいた後に、遅れて届いた決済成功イベント）等、applyPaymentStateUpdate
+         * 自身は台帳側の不整合とみなさずRecoveryへ記録しないコードは、ここで明示的に記録する。
+         * Stripe側では実際に入金が完了しているため、無条件に無視してはならない
+         * （Issue #341本文「仮押さえが既に失効している」場合の自動確定停止・Recovery記録）。
+         */
+        recordPaymentRecoveryGate_(
+          bookingId, record, 'STRIPE_WEBHOOK_PAYMENT_UPDATE_REJECTED',
+          '決済成功イベント（eventId=' + eventId + '）を受信しましたが、決済状態を' + Booking.PAYMENT_STATUS.PAID +
+            'へ更新できませんでした（' + paidErrorCode + '）。Stripe側では入金が完了している可能性が高いため、' +
+            '入金の事実を消さず自動処理を停止しました。運営者による確認が必要です。',
+          effectiveNow
+        );
+        return rejectFinalizeOnly_(rowNumber, bookingId, paidErrorCode || 'PAYMENT_UPDATE_FAILED', '決済状態の更新に失敗しました: ' + paidErrorCode, effectiveNow);
+      }
+
       /*
-       * 決済済みでも予約を確定できない（仮押さえ失効・キャンセル済み・Calendarイベント
-       * 消失・料金訂正案内未送信・保存失敗等）。入金の事実（paymentStatus=paid）は
-       * 一切書き戻さず、運営者が確認できるようRecoveryへ記録する（Issue #341本文
-       * 「決済済みでも予約を確定できない場合は、入金を消さずRecoveryへ記録し、運営者が
-       * 確認できるようにする」）。自動返金の判断はPR-Dへ引き継ぐ。
+       * 予約の最新状態を読み直したうえで、既存の予約確定処理をそのまま再利用する
+       * （Issue #341本文「7. 決済成功後の予約自動確定」。confirmBookingLocked_自身が
+       * Lock取得直後に最新のstatus・Calendarイベントの有無を再確認するため、ここで
+       * 個別に再読込・再確認を重複実装しない）。
        */
-      recordPaymentRecoveryGate_(
-        bookingId, record, 'PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED',
-        '決済は完了しました（eventId=' + eventId + '）が、予約の自動確定ができませんでした（' +
-          (confirmResult.error && confirmResult.error.code) + '）。入金は保持したまま自動処理を停止しました。' +
-          '運営者による確認・対応が必要です（枠を確保できない場合の返金判断を含む）。',
-        effectiveNow
-      );
+      var confirmResult = BookingRepository.confirmBooking(bookingId);
+      if (!confirmResult.success) {
+        /*
+         * 決済済みでも予約を確定できない（仮押さえ失効・キャンセル済み・Calendarイベント
+         * 消失・料金訂正案内未送信・保存失敗等）。入金の事実（paymentStatus=paid）は
+         * 一切書き戻さず、運営者が確認できるようRecoveryへ記録する（Issue #341本文
+         * 「決済済みでも予約を確定できない場合は、入金を消さずRecoveryへ記録し、運営者が
+         * 確認できるようにする」）。自動返金の判断はPR-Dへ引き継ぐ。
+         */
+        recordPaymentRecoveryGate_(
+          bookingId, record, 'PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED',
+          '決済は完了しました（eventId=' + eventId + '）が、予約の自動確定ができませんでした（' +
+            (confirmResult.error && confirmResult.error.code) + '）。入金は保持したまま自動処理を停止しました。' +
+            '運営者による確認・対応が必要です（枠を確保できない場合の返金判断を含む）。',
+          effectiveNow
+        );
+      }
+    } finally {
+      BookingLockRepository.release(bookingLock.rowNumber, new Date());
     }
 
     return finalizeAndAck_(rowNumber, {

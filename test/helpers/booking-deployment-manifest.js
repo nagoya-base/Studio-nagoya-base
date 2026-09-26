@@ -35,6 +35,13 @@ var BOOKING_ADMIN_FILES = [
   'StripeGateway.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
+  /*
+   * Issue #341 PR-Cレビュー対応・2回目で追加。expirePendingBookingsが、独立した
+   * Booking WebhookプロジェクトのStripeWebhookHandlerと共有する予約単位の排他制御に使う
+   * （BookingLockRepository.gs冒頭コメント参照）。BookingRepository.gsより前に置く
+   * （依存順）。
+   */
+  'BookingLockRepository.gs',
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
   'BookingRepository.gs',
@@ -113,6 +120,13 @@ var BOOKING_WEBHOOK_FILES = [
   'StripeEventRepository.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
+  /*
+   * Issue #341 PR-Cレビュー対応・2回目で追加。StripeWebhookHandlerが、独立したBooking
+   * AdminプロジェクトのexpirePendingBookingsと共有する予約単位の排他制御に使う
+   * （BookingLockRepository.gs冒頭コメント参照）。BookingRepository.gsより前に置く
+   * （依存順）。
+   */
+  'BookingLockRepository.gs',
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
   'BookingRepository.gs',

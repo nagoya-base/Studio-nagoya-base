@@ -29,6 +29,7 @@ var FILES = [
   'StripeEventRepository.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
+  'BookingLockRepository.gs',
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
   'BookingRepository.gs',
@@ -198,7 +199,7 @@ function createCalendarEvent(ctx) {
  */
 var ADMIN_FILES_FOR_COMPETITION_TEST = [
   'Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Booking.gs', 'CardPayment.gs',
-  'StripeGateway.gs', 'SpreadsheetRepository.gs', 'RecoveryRepository.gs',
+  'StripeGateway.gs', 'SpreadsheetRepository.gs', 'RecoveryRepository.gs', 'BookingLockRepository.gs',
   'BookingMailTemplates.gs', 'BookingMailer.gs', 'BookingRepository.gs'
 ];
 
@@ -755,6 +756,122 @@ test('processEvent: 失効処理（別プロジェクト）が先に完了して
     pair.mailApp._sentEmails[0].subject.indexOf('確定') === -1,
     '送信されたメールが確定（CONFIRMED）メールであってはならない'
   );
+});
+
+/*
+ * ============================================================================
+ * 予約単位の排他制御（BookingLockRepository）による競合防止
+ * （Issue #341 PR-Cレビュー対応・2回目）
+ *
+ * 1回目の対応（最新状態の再読込・グレース期間・failed→paid許可）は「一方が最新状態を
+ * 読み終えた直後に他方が状態を変更する」という狭いレース自体を排除できないという指摘を
+ * 受け、両プロジェクトが共有するBookings台帳と同じSpreadsheet上のBookingLockRepositoryで
+ * 実際に排他制御するよう変更した。以下は、まさにその「直後に他方が状態を変更する」
+ * タイミングを、BookingLockRepository.acquireを直接呼んで一方の側（別プロジェクト）が
+ * 既にこの予約のクリティカルセクションへ入っている状態として再現し、もう一方の本番
+ * コード経路（processEvent / expirePendingBookings）が安全に競合を検知して待避すること、
+ * そして解放後に収束することを検証する。
+ * ============================================================================
+ */
+
+test('processEvent: Booking Admin側がこの予約のロックを保持している間はWebhookが割り込めず、解放後にAdminが枠解放を完了すると遅延決済はRecoveryへ送られる（Issue #341 PR-Cレビュー対応・2回目）', function () {
+  var pair = setupCompetitionPair({
+    adminUrlFetchApp: stubs.createUrlFetchAppStub(function (url) {
+      if (url.indexOf('/checkout/sessions/') !== -1) {
+        return { responseCode: 200, body: { id: SESSION_ID, status: 'expired', payment_status: 'unpaid' } };
+      }
+      throw new Error('未対応のURL: ' + url);
+    })
+  });
+  createBookingRowIn(pair.webhook, { paymentHoldExpiresAt: new Date('2026-09-20T10:05:00+09:00') });
+  createCalendarEventIn(pair.events);
+
+  var raceInstant = new Date('2026-09-20T11:00:00+09:00');
+  /*
+   * Booking AdminのexpirePendingBookingsが、最新状態を読み終えてクリティカル
+   * セクションへ入った直後（＝Calendar削除・status:EXPIRED書き込みの直前）の状態を、
+   * 実際にBookingLockRepository.acquireを呼んで再現する（このロックはBooking Admin・
+   * Booking Webhookの両サンドボックスが同じSpreadsheetを共有しているため、
+   * pair.admin側から取得したチケットはpair.webhook側からも見える）。
+   */
+  var adminLock = pair.admin.BookingLockRepository.acquire(BOOKING_ID, 'admin-expire:race-test', 'admin-expire', raceInstant);
+  assert.strictEqual(adminLock.acquired, true);
+
+  /* この瞬間にWebhookへ決済成功イベントが届いても、ロックを取得できず割り込めない。 */
+  var duringHold = pair.webhook.StripeWebhookHandler.processEvent(buildEvent('checkout.session.completed', {}), raceInstant);
+  assert.strictEqual(duringHold.ackSuccess, false);
+  assert.strictEqual(duringHold.code, 'BOOKING_LOCK_CONTENDED');
+
+  /* Bookings・Calendarのいずれも一切変更されていない（両方が成功したと判断する状態は
+     もちろん、どちらか一方が中途半端に変更した状態にもなっていない）。 */
+  var duringHoldRecord = pair.admin.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(duringHoldRecord.status, 'PENDING');
+  assert.strictEqual(duringHoldRecord.paymentStatus, 'checkout_pending');
+  assert.strictEqual(pair.events[0].isDeleted(), false);
+
+  /* Booking Admin側がクリティカルセクションを完了し、ロックを解放する（実際の
+     expirePendingBookings内部でも同じ手順でrelease→Calendar削除→status書き込みと
+     進むが、ここでは「読み終えた直後」を模擬するためロック保持と実際の書き込みを
+     分離して検証している）。 */
+  pair.admin.BookingLockRepository.release(adminLock.rowNumber, raceInstant);
+
+  /* 実際にexpirePendingBookingsを走らせ、枠解放を完了させる。 */
+  var expireResult = pair.admin.BookingRepository.expirePendingBookings(raceInstant);
+  assert.strictEqual(expireResult.expiredCount, 1);
+  var afterExpire = pair.admin.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(afterExpire.status, 'EXPIRED');
+
+  /* Stripeの自動再送により、同じイベントが再度Webhookへ届く。ロックはもう競合しない。 */
+  var retryResult = pair.webhook.StripeWebhookHandler.processEvent(buildEvent('checkout.session.completed', {}), new Date('2026-09-20T11:05:00+09:00'));
+  assert.strictEqual(retryResult.ackSuccess, true);
+  assert.strictEqual(retryResult.code, 'PAID_CONFIRM_BLOCKED', 'Adminが先に枠解放を完了したため自動確定してはならない');
+
+  /* 枠解放（Admin）と予約確定（Webhook）の両方が「成功した」と判断される状態は
+     決して生じない: statusはEXPIREDのまま、入金の事実（paymentStatus:paid）だけが
+     正しく記録され、Recoveryへ送られる。 */
+  var finalRecord = pair.admin.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(finalRecord.status, 'EXPIRED');
+  assert.strictEqual(finalRecord.paymentStatus, 'paid');
+  var recovery = pair.admin.RecoveryRepository.listAll();
+  assert.ok(recovery.some(function (r) { return r.bookingId === BOOKING_ID && r.failureType === 'PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED'; }));
+});
+
+test('expirePendingBookings: Webhook側がこの予約のロックを保持している間は失効処理が割り込めず、この回はスキップして枠を解放しない（Issue #341 PR-Cレビュー対応・2回目）', function () {
+  var pair = setupCompetitionPair({});
+  createBookingRowIn(pair.webhook, { paymentHoldExpiresAt: new Date('2026-09-20T10:05:00+09:00') });
+  createCalendarEventIn(pair.events);
+
+  var raceInstant = new Date('2026-09-20T11:00:00+09:00');
+  /*
+   * Webhook側のprocessEventが、applyPaymentStateUpdate（paid）〜confirmBookingの
+   * クリティカルセクションへ既に入っている状態を再現する。
+   */
+  var webhookLock = pair.webhook.BookingLockRepository.acquire(BOOKING_ID, 'webhook:race-test', 'webhook', raceInstant);
+  assert.strictEqual(webhookLock.acquired, true);
+
+  /* この瞬間にAdmin側の失効トリガーが実行されても、ロックを取得できず割り込めない
+     （expirePendingBookings自身は1回だけ試行して即座にスキップする設計）。 */
+  var expireResult = pair.admin.BookingRepository.expirePendingBookings(raceInstant);
+  assert.strictEqual(expireResult.expiredCount, 0);
+  assert.strictEqual(expireResult.skippedCount, 1);
+
+  var duringHoldRecord = pair.admin.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(duringHoldRecord.status, 'PENDING');
+  assert.strictEqual(pair.events[0].isDeleted(), false, 'ロック競合中はCalendarイベントを削除してはならない');
+
+  /* Webhook側が実際にクリティカルセクションを完了する（決済確認・予約自動確定）。 */
+  pair.webhook.BookingLockRepository.release(webhookLock.rowNumber, raceInstant);
+  var confirmResult = pair.webhook.StripeWebhookHandler.processEvent(buildEvent('checkout.session.completed', {}), raceInstant);
+  assert.strictEqual(confirmResult.code, 'CONFIRMED');
+
+  /* 次回のトリガー実行では、既にCONFIRMED済みのため通常どおりスキップされる
+     （expirePendingBookings既存の再読込ロジック。新しい変更ではない）。 */
+  var secondExpireResult = pair.admin.BookingRepository.expirePendingBookings(new Date('2026-09-20T12:00:00+09:00'));
+  assert.strictEqual(secondExpireResult.expiredCount, 0);
+  var finalRecord = pair.admin.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(finalRecord.status, 'CONFIRMED');
+  assert.strictEqual(finalRecord.paymentStatus, 'paid');
+  assert.strictEqual(pair.events[0].isDeleted(), false);
 });
 
 /*
