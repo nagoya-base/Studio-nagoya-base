@@ -33,13 +33,28 @@ var BOOKING_ADMIN_FILES = [
    * StripeGateway.retrieveCheckoutSessionを呼ぶため、Booking Adminにも必要。
    */
   'StripeGateway.gs',
+  /*
+   * Issue #341 PR-C（署名検証Webhook受信基盤・自動確定・イベント冪等性）で追加。
+   * StripeWebhookAuth.gs（中継基盤からの呼び出し認証。Utilities依存のみ）・
+   * StripeEventRepository.gs（イベント処理台帳。BookingConfigのみに依存）はいずれも
+   * BookingRepository.gsより前に置く（依存順）。StripeWebhookHandler.gsは
+   * BookingRepository.applyPaymentStateUpdate/confirmBookingを呼ぶためBookingRepository.gs
+   * より後に置く。BookingWebhook.gs（doPostエントリポイント）は他のBooking Admin用
+   * .gsファイルと同じく最後に置く。いずれもBooking Web Appプロジェクトには追加しない
+   * （StripeWebhookHandler.gsファイル冒頭コメント「デプロイ先について」参照。
+   * confirmBooking/expirePendingBookingsとLockServiceを共有する必要があるため）。
+   */
+  'StripeWebhookAuth.gs',
+  'StripeEventRepository.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
   'BookingRepository.gs',
+  'StripeWebhookHandler.gs',
   'BookingAdmin.gs',
   'BookingAdminWeb.gs',
+  'BookingWebhook.gs',
   'BookingTriggers.gs',
   'BookingReminderTriggers.gs',
   'BookingReminderDiagnostics.gs',

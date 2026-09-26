@@ -205,6 +205,35 @@ var BookingConfig = (function () {
     };
   }
 
+  /*
+   * Stripe Webhook中継基盤（Cloud Run等）関連の設定（Issue #341 PR-C）。
+   *
+   * GASの`doPost(e)`はリクエストヘッダーを取得できないため、Stripeの`Stripe-Signature`
+   * 検証は中継基盤（Cloud Run等）側でのみ行う。中継基盤からGASへの呼び出しは、
+   * この`relaySharedSecret`を使ったHMAC署名（StripeWebhookAuth.gs参照。POST本文に
+   * 含めて渡す。ヘッダーではなくボディに含める理由はheaders取得不可の制約のため）で
+   * 保護する。中継基盤側にも同じ値を設定すること（README「シークレットの設定場所と
+   * ローテーション手順」参照）。
+   *
+   * - relaySharedSecret: 中継基盤とGASの間でのみ共有する秘密鍵。Stripeの
+   *   Webhook署名シークレット（STRIPE_WEBHOOK_SECRET。中継基盤側のみに設定し、
+   *   GASには一切渡さない）とは別物。未設定の場合、StripeWebhookAuth側はfail-closedに
+   *   すべてのリクエストを拒否する（空文字での偽装検証を絶対に許可しないため。
+   *   BookingRepository.tokensMatch_と同じ「空文字同士を一致させない」設計方針）。
+   * - replayToleranceSeconds: 中継基盤が署名したタイムスタンプと、GAS側の現在時刻との
+   *   許容誤差（既定300秒。Stripe公式SDKの既定タイムスタンプ許容誤差と合わせる）。
+   *   これを超えるリクエストは、たとえHMACが正しくても拒否する（キャプチャされた
+   *   リクエストの無期限な再送を防ぐ多層防御。同一イベントの正当な再送自体は
+   *   StripeEventRepository.gsの冪等性台帳が別途安全に処理する）。
+   */
+  function getStripeWebhookConfig() {
+    var properties = PropertiesService.getScriptProperties();
+    return {
+      relaySharedSecret: properties.getProperty('STRIPE_WEBHOOK_RELAY_SECRET') || '',
+      replayToleranceSeconds: readPositiveIntegerProperty_('STRIPE_WEBHOOK_RELAY_TOLERANCE_SECONDS', 300)
+    };
+  }
+
   return {
     DEFAULTS: DEFAULTS,
     getCalendarId: getCalendarId,
@@ -216,6 +245,7 @@ var BookingConfig = (function () {
     getRateLimitConfig: getRateLimitConfig,
     getMailConfig: getMailConfig,
     getAccessGuideConfig: getAccessGuideConfig,
-    getStripeConfig: getStripeConfig
+    getStripeConfig: getStripeConfig,
+    getStripeWebhookConfig: getStripeWebhookConfig
   };
 })();
