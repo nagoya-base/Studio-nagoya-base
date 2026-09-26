@@ -336,7 +336,7 @@ test('reservePaymentAttempt_: paymentAttemptId・stripeAmount・stripeCurrency�
      atomic範囲への1回の書き込み）、2回目がapplyPaymentStateUpdateの証跡コミット
      （同じ15列への2回目の書き込み）、3回目がpaymentStatus単独の書き込み。 */
   assert.strictEqual(sheet._setValuesCalls.length, 3);
-  assert.strictEqual(sheet._setValuesCalls[0].numCols, 15, '予約時点で15列のatomic範囲へまとめて書く');
+  assert.strictEqual(sheet._setValuesCalls[0].numCols, 16, '予約時点で16列のatomic範囲へまとめて書く');
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.strictEqual(found.record.stripeAmount, 9000);
@@ -448,7 +448,7 @@ test('reservePaymentAttempt_: 予約後・未解決の間に料金が修正さ�
 
 test('reservePaymentAttempt_: FAILEDから新しい決済試行を開始する場合は、その時点の最新料金を新しいスナップショットとして使う', function () {
   var urlFetchApp = stubs.createUrlFetchAppStub(function () {
-    return { responseCode: 400, body: { error: { code: 'parameter_invalid_integer', message: 'invalid' } } };
+    return { responseCode: 400, body: { error: { type: 'invalid_request_error', code: 'parameter_invalid_integer', message: 'invalid' } } };
   });
   var ctx = setup({ urlFetchApp: urlFetchApp });
   var bookingId = createBookingRow(ctx, { priceAmount: 8000 });
@@ -479,6 +479,187 @@ test('reservePaymentAttempt_: FAILEDから新しい決済試行を開始する�
 
 /*
  * ============================================================================
+ * PR #354レビュー対応・2回目
+ * 1. Stripeへ送るリクエスト全体の固定（金額・通貨・expires_at以外の全項目）
+ * 2. Stripeの4xxエラー分類（idempotency_error/409/その他の不明な4xx）
+ * ============================================================================
+ */
+
+test('reservePaymentAttempt_: 初回後にメールアドレス・successUrlが変更されても、未解決の決済試行の再試行はStripeへ初回と完全に同一のリクエストを送る', function () {
+  var attempt = 0;
+  var urlFetchApp = stubs.createUrlFetchAppStub(function (url, options) {
+    attempt++;
+    if (attempt === 1) return { thrown: new Error('simulated timeout') };
+    return defaultStripeResponder(url, options);
+  });
+  var ctx = setup({ urlFetchApp: urlFetchApp });
+  var bookingId = createBookingRow(ctx, { email: 'original@example.com' });
+
+  var firstResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(firstResult.success, false);
+  var firstPayload = parseFormPayload_(urlFetchApp._calls[0].options.payload);
+
+  /* 1回目（結果不明のまま未解決）と2回目の間に、予約者のメールアドレスが変わり、
+     かつBooking Web AppのScript Properties（STRIPE_CHECKOUT_SUCCESS_URL/CANCEL_URL）も
+     変更されたことを再現する。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { email: 'changed@example.com' });
+  ctx.globals.PropertiesService.getScriptProperties().setProperty('STRIPE_CHECKOUT_SUCCESS_URL', 'https://example.com/changed-success');
+  ctx.globals.PropertiesService.getScriptProperties().setProperty('STRIPE_CHECKOUT_CANCEL_URL', 'https://example.com/changed-cancel');
+
+  var secondResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(secondResult.success, true, JSON.stringify(secondResult));
+  var secondPayload = parseFormPayload_(urlFetchApp._calls[1].options.payload);
+
+  assert.strictEqual(secondPayload.customer_email, firstPayload.customer_email, 'メールアドレスの変更は未解決の決済試行の再試行に反映しない');
+  assert.strictEqual(secondPayload.customer_email, 'original@example.com');
+  assert.strictEqual(secondPayload.success_url, firstPayload.success_url, 'Script Properties変更(successUrl)は未解決の決済試行の再試行に反映しない');
+  assert.strictEqual(secondPayload.success_url, 'https://example.com/success');
+  assert.strictEqual(secondPayload.cancel_url, firstPayload.cancel_url);
+  assert.strictEqual(secondPayload.cancel_url, 'https://example.com/cancel');
+});
+
+test('reservePaymentAttempt_: 同じ冪等キーへの再試行は、送信フォーム全体（全キー・全値）が初回と完全に一致する（異なるパラメータ送信の防止）', function () {
+  var attempt = 0;
+  var urlFetchApp = stubs.createUrlFetchAppStub(function (url, options) {
+    attempt++;
+    if (attempt === 1) return { thrown: new Error('simulated timeout') };
+    return defaultStripeResponder(url, options);
+  });
+  var ctx = setup({ urlFetchApp: urlFetchApp });
+  var bookingId = createBookingRow(ctx);
+
+  ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { email: 'changed@example.com' });
+  ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+
+  assert.strictEqual(urlFetchApp._calls.length, 2);
+  assert.strictEqual(urlFetchApp._calls[1].options.payload, urlFetchApp._calls[0].options.payload, '送信するform-urlencoded文字列そのものが完全に一致する');
+  assert.deepStrictEqual(urlFetchApp._calls[1].options.headers, urlFetchApp._calls[0].options.headers);
+});
+
+test('beginCardCheckout: Stripeがidempotency_errorを返した場合は要復旧として恒久的に停止し、新しい決済試行IDを発行しない', function () {
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 400, body: { error: { type: 'idempotency_error', message: 'Keys for idempotent requests can only be used with the same parameters' } } };
+  });
+  var ctx = setup({ urlFetchApp: urlFetchApp });
+  var bookingId = createBookingRow(ctx);
+
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'PAYMENT_RECOVERY_REQUIRED');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.paymentStatus, 'not_started', 'FAILEDへは進めない（恒久ゲートで停止するため遷移自体を行わない）');
+  assert.ok(found.record.paymentRecoveryRequiredAt, '要復旧フラグを立てる');
+  assert.strictEqual(ctx.sandbox.RecoveryRepository.listAll().filter(function (r) { return r.failureType === 'STRIPE_IDEMPOTENCY_CONFLICT'; }).length, 1);
+
+  var attemptIdAfterFirst = found.record.paymentAttemptId;
+
+  /* 恒久ゲートが立った後は、正常応答へ差し替えても自動的には再試行できない
+     （beginCardCheckoutの先頭でpaymentRecoveryRequiredAtを検知して即座に拒否する）。 */
+  ctx.globals.UrlFetchApp.fetch = stubs.createUrlFetchAppStub(defaultStripeResponder).fetch;
+  var secondResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(secondResult.success, false);
+  assert.strictEqual(secondResult.error.code, 'PAYMENT_RECOVERY_REQUIRED');
+  assert.strictEqual(
+    ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.paymentAttemptId,
+    attemptIdAfterFirst,
+    '要復旧ゲートが立っている間は新しい決済試行IDを発行しない'
+  );
+});
+
+test('beginCardCheckout: Stripeが409（同一キーの別リクエストが処理中）を返した場合は新しい決済試行IDを発行せず、同じキーでの再試行のみ許可する', function () {
+  var attempt = 0;
+  var urlFetchApp = stubs.createUrlFetchAppStub(function (url, options) {
+    attempt++;
+    if (attempt === 1) {
+      return { responseCode: 409, body: { error: { message: 'A request with the same idempotency key is currently in progress' } } };
+    }
+    return defaultStripeResponder(url, options);
+  });
+  var ctx = setup({ urlFetchApp: urlFetchApp });
+  var bookingId = createBookingRow(ctx);
+
+  var firstResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(firstResult.success, false);
+  assert.strictEqual(firstResult.error.code, 'PAYMENT_STATUS_UNKNOWN');
+  var firstAttemptId = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.paymentAttemptId;
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.paymentRecoveryRequiredAt, '', '409だけでは恒久ゲートを立てない（一時的な競合のため）');
+
+  var secondResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(secondResult.success, true, JSON.stringify(secondResult));
+  var secondIdempotencyKey = urlFetchApp._calls[1].options.headers['Idempotency-Key'];
+  assert.strictEqual(secondIdempotencyKey, firstAttemptId, '新しい決済試行IDを発行せず、同じキーで再試行する');
+});
+
+test('beginCardCheckout: 種別を確認できない未知の4xxも新しい決済試行IDを発行せず、同じキーでの再試行のみ許可する', function () {
+  var attempt = 0;
+  var urlFetchApp = stubs.createUrlFetchAppStub(function (url, options) {
+    attempt++;
+    if (attempt === 1) {
+      return { responseCode: 422, body: { error: { message: 'unrecognized error shape without a type field' } } };
+    }
+    return defaultStripeResponder(url, options);
+  });
+  var ctx = setup({ urlFetchApp: urlFetchApp });
+  var bookingId = createBookingRow(ctx);
+
+  var firstResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(firstResult.success, false);
+  assert.strictEqual(firstResult.error.code, 'PAYMENT_STATUS_UNKNOWN', '種別不明の4xxを確定的な失敗と決めつけない');
+  var firstAttemptId = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.paymentAttemptId;
+
+  var secondResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(secondResult.success, true, JSON.stringify(secondResult));
+  var secondIdempotencyKey = urlFetchApp._calls[1].options.headers['Idempotency-Key'];
+  assert.strictEqual(secondIdempotencyKey, firstAttemptId, '安全側に倒し、新しい決済試行IDを発行しない');
+});
+
+test('beginCardCheckout: 明確にinvalid_request_errorと確認できた場合のみ、安全な新規試行（新しい決済試行ID）へ進める', function () {
+  var attempt = 0;
+  var urlFetchApp = stubs.createUrlFetchAppStub(function (url, options) {
+    attempt++;
+    if (attempt === 1) {
+      return { responseCode: 400, body: { error: { type: 'invalid_request_error', message: 'bad param' } } };
+    }
+    return defaultStripeResponder(url, options);
+  });
+  var ctx = setup({ urlFetchApp: urlFetchApp });
+  var bookingId = createBookingRow(ctx);
+
+  var firstResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(firstResult.success, false);
+  assert.strictEqual(firstResult.error.code, 'STRIPE_REQUEST_ERROR');
+  var firstAttemptId = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.paymentAttemptId;
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.paymentStatus, 'failed');
+
+  var secondResult = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(secondResult.success, true, JSON.stringify(secondResult));
+  var secondIdempotencyKey = urlFetchApp._calls[1].options.headers['Idempotency-Key'];
+  assert.notStrictEqual(secondIdempotencyKey, firstAttemptId, '確定的な失敗を確認できた場合のみ新しい決済試行IDを発行する');
+});
+
+test('reservePaymentAttempt_: 保存済みのリクエストスナップショットを安全に復元できない場合（破損したJSON）は新しいSessionを発行せず要復旧として停止する', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx, {
+    paymentAttemptId: 'PAY-CORRUPTED',
+    stripeAmount: 8000,
+    stripeCurrency: 'JPY',
+    paymentHoldExpiresAt: new Date('2026-10-01T09:35:00+09:00'),
+    stripeCheckoutRequestSnapshot: '{not-valid-json'
+  });
+
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'PAYMENT_EVIDENCE_MISSING');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 0, '復元できないスナップショットのまま新しいSessionを発行しない');
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.ok(found.record.paymentRecoveryRequiredAt);
+});
+
+/*
+ * ============================================================================
  * その他の分岐（回帰確認）
  * ============================================================================
  */
@@ -503,7 +684,7 @@ test('beginCardCheckout: Stripe呼び出し自体がタイムアウト/ネット
 
 test('beginCardCheckout: Stripeが明確な4xxエラーを返した場合はFAILEDへ進め、次回は新しいpaymentAttemptIdを発行する', function () {
   var urlFetchApp = stubs.createUrlFetchAppStub(function () {
-    return { responseCode: 400, body: { error: { code: 'parameter_invalid_integer', message: 'invalid' } } };
+    return { responseCode: 400, body: { error: { type: 'invalid_request_error', code: 'parameter_invalid_integer', message: 'invalid' } } };
   });
   var ctx = setup({ urlFetchApp: urlFetchApp });
   var bookingId = createBookingRow(ctx);

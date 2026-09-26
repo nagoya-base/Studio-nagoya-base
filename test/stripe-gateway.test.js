@@ -106,9 +106,9 @@ test('createCheckoutSession: UrlFetchApp.fetchが例外を投げた場合はNETW
   assert.strictEqual(result.errorType, 'NETWORK');
 });
 
-test('createCheckoutSession: Stripeが4xxを明確に返した場合はSTRIPE_ERROR（この回のリクエストは処理されていないと確定できる）', function () {
+test('createCheckoutSession: Stripeがinvalid_request_errorを明確に返した場合はSTRIPE_ERROR（この回のリクエストは処理されていないと確定できる）', function () {
   var urlFetchApp = stubs.createUrlFetchAppStub(function () {
-    return { responseCode: 400, body: { error: { code: 'parameter_invalid_integer', message: 'Invalid amount' } } };
+    return { responseCode: 400, body: { error: { type: 'invalid_request_error', code: 'parameter_invalid_integer', message: 'Invalid amount' } } };
   });
   var sandbox = loadStripeGateway(urlFetchApp);
   var result = sandbox.StripeGateway.createCheckoutSession(STRIPE_CONFIG, {
@@ -118,6 +118,58 @@ test('createCheckoutSession: Stripeが4xxを明確に返した場合はSTRIPE_ER
   assert.strictEqual(result.ok, false);
   assert.strictEqual(result.errorType, 'STRIPE_ERROR');
   assert.strictEqual(result.stripeErrorCode, 'parameter_invalid_integer');
+});
+
+test('createCheckoutSession: Stripeがauthentication_errorを返した場合もSTRIPE_ERROR', function () {
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 401, body: { error: { type: 'authentication_error', message: 'Invalid API key' } } };
+  });
+  var sandbox = loadStripeGateway(urlFetchApp);
+  var result = sandbox.StripeGateway.createCheckoutSession(STRIPE_CONFIG, {
+    amountJpy: 8000, currency: 'JPY', bookingId: 'b1', brand: 'studio_x',
+    paymentAttemptId: 'PAY-1', expiresAtSeconds: 1, successUrl: 'https://x', cancelUrl: 'https://y'
+  }, 'PAY-1');
+  assert.strictEqual(result.errorType, 'STRIPE_ERROR');
+});
+
+test('createCheckoutSession: 400でもerror.typeを読み取れない場合（未知の4xx）はSTRIPE_ERRORへ丸めずAMBIGUOUS扱いにする（PR #354レビュー対応・2回目）', function () {
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 400, body: { error: { message: 'something went wrong' } } };
+  });
+  var sandbox = loadStripeGateway(urlFetchApp);
+  var result = sandbox.StripeGateway.createCheckoutSession(STRIPE_CONFIG, {
+    amountJpy: 8000, currency: 'JPY', bookingId: 'b1', brand: 'studio_x',
+    paymentAttemptId: 'PAY-1', expiresAtSeconds: 1, successUrl: 'https://x', cancelUrl: 'https://y'
+  }, 'PAY-1');
+  assert.strictEqual(result.errorType, 'AMBIGUOUS', '種別を確認できない4xxを確定的な失敗と決めつけない');
+});
+
+test('createCheckoutSession: idempotency_errorはIDEMPOTENCY_CONFLICTに分類し、STRIPE_ERROR/AMBIGUOUSのいずれとも異なる扱いにする（PR #354レビュー対応・2回目）', function () {
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return {
+      responseCode: 400,
+      body: { error: { type: 'idempotency_error', message: 'Keys for idempotent requests can only be used with the same parameters they were first used with' } }
+    };
+  });
+  var sandbox = loadStripeGateway(urlFetchApp);
+  var result = sandbox.StripeGateway.createCheckoutSession(STRIPE_CONFIG, {
+    amountJpy: 8000, currency: 'JPY', bookingId: 'b1', brand: 'studio_x',
+    paymentAttemptId: 'PAY-1', expiresAtSeconds: 1, successUrl: 'https://x', cancelUrl: 'https://y'
+  }, 'PAY-1');
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.errorType, 'IDEMPOTENCY_CONFLICT');
+});
+
+test('createCheckoutSession: 409（同一キーの別リクエストが処理中）はAMBIGUOUS扱いで、新しい決済試行IDを発行させない', function () {
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 409, body: { error: { message: 'A request outputting a resource with that same idempotency key is currently in progress' } } };
+  });
+  var sandbox = loadStripeGateway(urlFetchApp);
+  var result = sandbox.StripeGateway.createCheckoutSession(STRIPE_CONFIG, {
+    amountJpy: 8000, currency: 'JPY', bookingId: 'b1', brand: 'studio_x',
+    paymentAttemptId: 'PAY-1', expiresAtSeconds: 1, successUrl: 'https://x', cancelUrl: 'https://y'
+  }, 'PAY-1');
+  assert.strictEqual(result.errorType, 'AMBIGUOUS');
 });
 
 test('createCheckoutSession: Stripeが5xxを返した場合はAMBIGUOUS（処理された可能性を否定できない）', function () {

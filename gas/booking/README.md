@@ -3297,7 +3297,8 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
    （このリポジトリのREADMEには現時点でその8列専用の追記手順節が無い。`HEADERS_`の
    実際の並び順どおりに追記すれば足りる）。
 2. **既存列の途中へ挿入せず**、本番シートの現在の最終列（通常は`feeRecoveryReason`）の
-   右隣から、次の16列を**この順番のまま**1行目へ追記する（列名は完全一致させる）。
+   右隣から、次の17列を**この順番のまま**1行目へ追記する（列名は完全一致させる。
+   `stripeCheckoutRequestSnapshot`はPR #354レビュー対応・2回目で追加した列）。
 
    ```text
    paymentAttemptId
@@ -3306,6 +3307,7 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
    paymentHoldExpiresAt
    stripeAmount
    stripeCurrency
+   stripeCheckoutRequestSnapshot
    paymentConfirmedAt
    lastStripeEventId
    stripeRefundId
@@ -3318,7 +3320,7 @@ CONFIRMED/CANCELLED/REMINDERいずれのメールもfail-closedに送信失敗�
    accessApprovedAt
    ```
 
-3. 既存行の新規16列は空欄のままにする。値を一括補完・再計算しない。
+3. 既存行の新規17列は空欄のままにする。値を一括補完・再計算しない。
    1行目に列名の重複・欠落・順序違いがないことを、`HEADERS_`と照合して確認する。
 4. **既存の`paymentStatus`列（30列目）はこの手順では追加しない（既存列を転用するのみ）。**
    ただし本番の既存行はすべて`unpaid`のまま保存されているため、`Booking.
@@ -3336,9 +3338,9 @@ Stripe本番APIキー設定のいずれも行わない（オーナーの明示�
 
 PR-Bの初版（マージ済みPR #353後）に対するレビュー対応で、bookingIdだけでのCheckout
 Session取得を防ぐ決済開始トークン用に1列（`checkoutAccessToken`）を追加した。上記
-「Issue #341 PR-A」の16列がすでに反映済みであることを前提に、その右隣へ追記する。
+「Issue #341 PR-A」の17列がすでに反映済みであることを前提に、その右隣へ追記する。
 
-1. 本番シートの現在の最終列が`accessApprovedAt`（Issue #341 PR-Aの16列の末尾）であることを
+1. 本番シートの現在の最終列が`accessApprovedAt`（Issue #341 PR-Aの17列の末尾）であることを
    確認する。
 2. その右隣へ、次の1列を追記する。
 
@@ -3676,7 +3678,8 @@ Webhookは、枠の空き有無で分岐する」「空いていれば自動でC
 | `PAYMENT_LINK_METADATA_UPDATE_FAILED`（PR #337レビュー対応・2回目） | Booking AdminからのStripe決済リンク送信で、MailApp.sendEmail・`paymentLinkSentAt`の記録には成功した（＝送信履行・二重送信防止は確定済み）が、続く`stripePaymentLinkUrl`/`paymentLinkSentTo`/`paymentLinkSendCount`の記録に失敗した。`paymentLinkSendCount`の表示が実際の送信回数より少ない可能性がある（`errorMessage`に本来の送信回数を記載）。予約自体・`status`（PENDING）は変更せず、メール自体の再送も自動実行しない。`Bookings`シートの`paymentLinkMetadataInconsistentAt`にも同時記録し、この値が空でない間は通常送信・明示的な再送とも`force`でも拒否する（3回目対応。他の送信が成功しただけでは自動的にクリアされない。解消手順は「部分失敗・recoveryの確認手順」項18参照） |
 | `PAYMENT_LINK_METADATA_RESOLVED`（PR #337レビュー対応・3回目。5回目でURL・送信先も対象に） | 運用者がBooking Admin予約詳細の「送信履歴を補正」操作（`resolvePaymentLinkMetadataInconsistency`）で`stripePaymentLinkUrl`/`paymentLinkSentTo`/`paymentLinkSendCount`を確認済みの値へ補正し、`paymentLinkMetadataInconsistentAt`を解消したことを示す記録。`recoveryState: 'RESOLVED'`で即時記録される（元の`PAYMENT_LINK_METADATA_UPDATE_FAILED`のOPEN行とは別の記録で、そちらの`recoveryState`/`resolvedAt`は運用者が別途手動記録する）。`errorMessage`に補正前後の送信回数・確認済みのURL・送信先を記載する |
 | `PAYMENT_LINK_METADATA_RESOLVE_INCOMPLETE`（PR #337レビュー対応・4回目。5回目で対象・案内文言を拡張） | `resolvePaymentLinkMetadataInconsistency`実行時、URL・送信先・送信回数の補正、または不整合フラグのクリアのいずれかが実際に反映されたことを確認できず、補正の試行自体が完了しなかった。`paymentLinkMetadataInconsistentAt`は原則維持されており、送信（通常送信・明示的な再送）は引き続き`METADATA_INCONSISTENT`で拒否される。ただし不整合フラグのクリア操作後の最終確認の再取得自体が失敗した場合（`RESOLVE_RESULT_UNKNOWN`。5回目対応）は、クリア操作自体は成功していた可能性があり、`errorMessage`も「フラグが実際にクリアされているかどうかは不明」である旨を記載する（「維持されている」と断定しない）。それ以外の場合（`RESOLVE_FIELDS_NOT_CONFIRMED`/`RESOLVE_FLAG_CLEAR_NOT_CONFIRMED`）は`errorMessage`に、どの段階（URL・送信先・送信回数の反映／不整合フラグのクリアの反映）を確認できなかったかを文章で記載する |
-| `STRIPE_CHECKOUT_SESSION_CREATE_UNKNOWN`（Issue #341 PR-B） | `beginCardCheckout`: Checkout Session作成APIの呼び出し結果が不明（タイムアウト・5xx・解析不能な応答）。**要手動対応ではない**（`paymentRecoveryRequiredAt`は立てない）。台帳には既に`paymentAttemptId`（Idempotency-Key）が永続化済みのため、利用者が再試行すれば同じ決済試行として安全に再開できる |
+| `STRIPE_CHECKOUT_SESSION_CREATE_UNKNOWN`（Issue #341 PR-B） | `beginCardCheckout`: Checkout Session作成APIの呼び出し結果が不明（タイムアウト・5xx・409・解析不能な応答・種別を確認できない4xxを含む）。**要手動対応ではない**（`paymentRecoveryRequiredAt`は立てない）。台帳には既に`paymentAttemptId`（Idempotency-Key）とリクエスト内容のスナップショットが永続化済みのため、利用者が再試行すれば同じ決済試行として安全に再開できる |
+| `STRIPE_IDEMPOTENCY_CONFLICT`（PR #354レビュー対応・2回目） | `beginCardCheckout`: Checkout Session作成APIがidempotency_errorを返した。台帳に保存された決済試行のリクエスト内容（金額・通貨・successUrl等のスナップショット）が、実際に最初にStripeへ送られた内容と食い違っている可能性がある異常事態。**要手動対応**（`paymentRecoveryRequiredAt`を立てる。新しい決済試行IDも発行しない）。Stripe管理画面で該当のIdempotency-Key（`paymentAttemptId`）に対応するCheckout Sessionの有無・内容を確認し、必要な補正を行ってから復旧すること |
 | `STRIPE_SESSION_STATUS_UNKNOWN`（Issue #341 PR-B） | `beginCardCheckout`（checkout_pending再開時）: 既存Checkout SessionのStripe側の状態確認（`retrieveCheckoutSession`）に失敗。同上、要手動対応ではなく利用者の再試行で解決し得る |
 | `EXPIRE_STRIPE_SESSION_STATUS_UNKNOWN`（Issue #341 PR-B） | `expirePendingBookings`: checkout_pendingの仮押さえ失効確認でStripe側の状態確認に失敗、またはStripeがopen/expired/complete以外の判定不能な状態を返した。この回のトリガー実行では枠を解放せずスキップし、次回のトリガー実行で再評価する（要手動対応ではない） |
 | `CHECKOUT_SESSION_ALREADY_COMPLETED`（Issue #341 PR-B） | `beginCardCheckout`（checkout_pending再開時）: Stripe Checkout Sessionが既に完了/決済済みと報告された。署名検証済みWebhookによる自動確定（PR-C）が未実装のため自動処理を停止し、**要手動対応**（`paymentRecoveryRequiredAt`を立てる）。Stripe管理画面で入金を確認し、必要であれば手動で予約を確定すること |
@@ -3860,7 +3863,7 @@ Apps Scriptエディタの「プロジェクトの設定」→「'appsscript.jso
 エディタで表示する」を有効化し、`oauthScopes`へ`https://www.googleapis.com/auth/
 script.external_request`を追記した上で、次回の関数実行時に追加のOAuth認可を承認すること。
 
-### PRレビュー対応（PR #354）
+### PRレビュー対応（PR #354・1回目）
 
 マージ保留のまま、オーナーから3点の指摘を受けて対応した。
 
@@ -3947,15 +3950,86 @@ bookingId不在とトークン不一致が同一のエラーになることの�
 `FORBIDDEN`/`STRIPE_REQUEST_ERROR`（uncertain）のエラーコードごとの画面分岐、および
 `fetch`自体が失敗した場合も`uncertain`扱いになることのテストを追加した。
 
-### テスト結果
+### テスト結果（1回目レビュー対応後）
 
-`node --test`: 総計1119件すべてpass（PR #354初版1098件＋今回のレビュー対応で追加した21件。
+`node --test`: 総計1119件すべてpass（PR #354初版1098件＋1回目レビュー対応で追加した21件。
 `test/booking-card-checkout.test.js`に項目1・2のテスト10件、`test/booking-code-checkout.
 test.js`に項目1のテスト3件、`test/booking-app.test.js`に項目3のテスト8件を追加。既存
 テストのうち、`beginCardCheckout`のシグネチャ変更（`checkoutAccessToken`引数の追加）に
 伴う呼び出し側の更新、および`createBooking`のモック応答に`checkoutAccessToken`を追加した
 更新を含む）。既存の管理者承認・Calendar・日程変更精算・Booking Admin・現地払い・旧
 Payment Link方式の回帰テストもすべてpass。実際の本番決済を伴う自動テストは行っていない。
+
+### PRレビュー対応（PR #354・2回目）
+
+1回目対応後、オーナーから追加で2点の指摘を受けて対応した。
+
+#### 4. Stripeへ送るリクエスト全体の固定
+
+**指摘**: 決済試行ID・金額・通貨・`expires_at`は保存していたが、`customerEmail`・
+`successUrl`・`cancelUrl`等は再試行のたびに`record.email`・Script Propertiesから再取得
+していたため、GAS保存失敗・APIタイムアウト後の再試行の間に予約者のメールアドレスが
+変わる、あるいは管理者が`STRIPE_CHECKOUT_SUCCESS_URL`/`STRIPE_CHECKOUT_CANCEL_URL`を
+変更すると、同じIdempotency-Keyに対して初回と異なるリクエスト内容をStripeへ送って
+しまう可能性が残っていた。
+
+**対応**: `reservePaymentAttempt_`が決済試行IDを発行するその場で、Stripe Checkout
+Session作成APIへ実際に送信するリクエスト内容一式（`checkoutParams`。金額・通貨・
+`expires_at`・`successUrl`・`cancelUrl`・`customerEmail`・`lineItemName`）を組み立て、
+JSON文字列として`stripeCheckoutRequestSnapshot`列（新設。決済試行ID・金額・通貨・期限と
+**同じ1回のRange.setValues**でまとめて保存）へ確定・永続化するよう再設計した。
+
+- 新規発行時のみ`checkoutParams`を組み立てる。未解決の決済試行の再試行（GAS保存失敗・
+  APIタイムアウト後を含む）は、その間にメールアドレス・料金・Script Propertiesが
+  変更されても**再計算・再取得せず**、保存済みの`checkoutParams`をJSON解析してそのまま
+  再利用する。
+- `startNewCheckoutAttempt_`は`reservePaymentAttempt_`が返した`checkoutParams`のみを
+  `StripeGateway.createCheckoutSession`へ渡し、`record.email`・
+  `stripeConfig.successUrl`/`cancelUrl`を独自に読み直さない。
+- 保存済みのスナップショットを安全に復元できない場合（JSON解析失敗・必須項目欠落・
+  `bookingId`/`paymentAttemptId`の不一致）は、新しいSessionを発行せず
+  `PAYMENT_EVIDENCE_MISSING`として要復旧で停止する。
+
+`test/booking-card-checkout.test.js`に、メールアドレス・`successUrl`/`cancelUrl`が
+変更されても未解決の決済試行の再試行が初回と完全に同一のリクエストを送ること、送信する
+form-urlencoded文字列・HTTPヘッダそのものが初回と完全に一致すること、破損した
+スナップショットは要復旧として停止することのテストを追加した。
+
+#### 5. Stripeの4xxエラー分類
+
+**指摘**: 4xxを一律に「確定的に失敗した」と扱っていたため、`idempotency_error`・`409`・
+その他の処理結果が不明なエラーでも`FAILED`へ進めて新しい決済試行IDを発行してしまう
+恐れがあった。
+
+**対応**: `StripeGateway.classifyHttpError_`を許可リスト方式に再設計した。デフォルトは
+常に`AMBIGUOUS`（安全側）とし、Stripeの`error.type`が`invalid_request_error`/
+`authentication_error`/`permission_error`のいずれかで、かつHTTPステータスが409を除く
+4xxである場合に**限り**`STRIPE_ERROR`（確定的な失敗）に分類する。`error.type`が
+`idempotency_error`の場合は新設の`IDEMPOTENCY_CONFLICT`に分類し、`BookingRepository.
+handleCheckoutCreateFailure_`はこれを検知すると、`STRIPE_IDEMPOTENCY_CONFLICT`として
+**要復旧で恒久的に停止**する（新しい決済試行IDも発行しない。台帳の保存内容がStripe側の
+記録と食い違っている可能性がある異常事態のため、Stripe管理画面での確認を必須にする）。
+`409`・`429`・`5xx`・種別を確認できない4xxはいずれも従来どおり`AMBIGUOUS`（新しい決済
+試行IDを発行せず、同じキーでの再試行のみ許可）のまま変更していない。
+
+`test/stripe-gateway.test.js`・`test/booking-card-checkout.test.js`に、
+`invalid_request_error`/`authentication_error`のみが`STRIPE_ERROR`に分類されること、
+`error.type`を読み取れない4xxは`STRIPE_ERROR`へ丸めず`AMBIGUOUS`になること、
+`idempotency_error`は`IDEMPOTENCY_CONFLICT`に分類され`beginCardCheckout`が要復旧として
+恒久的に停止し新しい決済試行IDを発行しないこと、`409`は新しい決済試行IDを発行せず
+同じキーでの再試行のみ許可すること、`invalid_request_error`のみが安全な新規試行（新しい
+決済試行ID）へ進めることのテストを追加した。
+
+### テスト結果（2回目レビュー対応後）
+
+`node --test`: 総計1130件すべてpass（1回目対応後1119件＋2回目レビュー対応で追加した
+11件。`test/stripe-gateway.test.js`に項目5のテスト4件、`test/booking-card-checkout.
+test.js`に項目4・5のテスト7件を追加。既存テストのうち、`stripeCheckoutRequestSnapshot`
+列の追加に伴い`updateBookingPaymentStateAtomic`のatomic書き込み範囲が15列→16列に
+広がったことを反映した既存テスト2件の期待値更新、および4xxのモック応答へ`error.type`を
+追加した既存テスト2件の更新を含む）。既存の管理者承認・Calendar・日程変更精算・Booking
+Admin・現地払い・旧Payment Link方式の回帰テストもすべてpass。実際の本番決済を伴う
+自動テストは行っていない。
 
 ## 部分失敗・recoveryの確認手順（運用者向け）
 

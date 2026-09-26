@@ -413,12 +413,12 @@ test('BookingsシートとRecoveryシートは独立している（同じSpreads
 
 /*
  * updateBookingPaymentStateAtomic（Issue #341 PR-A）: 'paymentAttemptId'〜
- * 'paymentRecoveryReason'の末尾15列だけを1回のsetValuesで更新する。updateBooking
+ * 'paymentRecoveryReason'の末尾16列だけを1回のsetValuesで更新する。updateBooking
  * CancellationStateAtomic/updateBookingPriceBaselineAtomicと同じ設計で、'paymentStatus'
- * （30列目。この15列とHEADERS_上で連続していない）や間に挟まる決済リンク送信・料金・
+ * （30列目。この16列とHEADERS_上で連続していない）や間に挟まる決済リンク送信・料金・
  * 日程変更精算関連の既存列は一切書き込まない。
  */
-test('updateBookingPaymentStateAtomic: paymentAttemptId〜paymentRecoveryReasonの15列だけを1回の書き込みで更新し、paymentStatusと中間の既存列は変化しない', function () {
+test('updateBookingPaymentStateAtomic: paymentAttemptId〜paymentRecoveryReasonの16列だけを1回の書き込みで更新し、paymentStatusと中間の既存列は変化しない', function () {
   var sandbox = loadRepos();
   sandbox.SpreadsheetRepository.appendBooking(sampleRecord({
     paymentMethod: 'オンラインクレジットカード',
@@ -447,7 +447,7 @@ test('updateBookingPaymentStateAtomic: paymentAttemptId〜paymentRecoveryReason�
   var sheet = sandbox.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
   var lastCall = sheet._setValuesCalls[sheet._setValuesCalls.length - 1];
   assert.strictEqual(lastCall.col, sandbox.SpreadsheetRepository.HEADERS.indexOf('paymentAttemptId') + 1);
-  assert.strictEqual(lastCall.numCols, 15, 'paymentAttemptId〜paymentRecoveryReasonの15列だけを1回で書く');
+  assert.strictEqual(lastCall.numCols, 16, 'paymentAttemptId〜paymentRecoveryReasonの16列だけを1回で書く（PR #354レビュー対応・2回目でstripeCheckoutRequestSnapshotを追加）');
   assert.strictEqual(lastCall.numRows, 1);
 });
 

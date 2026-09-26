@@ -15,9 +15,17 @@
  *     到達していない。
  *   - 'NETWORK': UrlFetchApp.fetch自体が例外を投げた（タイムアウト・DNS等）。Stripe側で
  *     実際に処理が行われたかどうかは不明（Idempotency-Keyでの安全な再試行が前提）。
- *   - 'STRIPE_ERROR': Stripeが4xxの応答を明確に返した（リクエスト自体が拒否された）。
- *     この回のリクエストが処理されていないことが確定しているケース。
- *   - 'AMBIGUOUS': Stripeが5xx・レート制限・解析不能な応答を返した。処理された可能性を
+ *   - 'STRIPE_ERROR': Stripeが`invalid_request_error`/`authentication_error`/
+ *     `permission_error`のいずれかを、明確な4xx（409を除く）で返した場合のみ
+ *     （CONFIRMED_FAILURE_ERROR_TYPES_参照）。この回のリクエストがStripe側で一切処理
+ *     されなかったと確信できるケースに限定する（PR #354レビュー対応・2回目「Stripeの
+ *     4xxエラー分類」。4xxを一律に確定的な失敗と扱わない）。
+ *   - 'IDEMPOTENCY_CONFLICT': Stripeがidempotency_errorを返した。同一Idempotency-Keyに
+ *     対して、Stripe側に既に記録済みのリクエストと異なる内容を送ったことを意味する。
+ *     呼び出し元の保存内容が信頼できない可能性がある異常事態であり、新しい決済試行を
+ *     発行してはならない（呼び出し元は要復旧として扱う）。
+ *   - 'AMBIGUOUS': 上記のいずれにも該当しない4xx（409＝同一キーの別リクエストが処理中等、
+ *     型が未知の4xxを含む）・5xx・レート制限(429)・解析不能な応答。処理された可能性を
  *     否定できないため、呼び出し元は無条件に新しい決済試行を発行してはならない。
  */
 'use strict';
@@ -62,9 +70,39 @@ var StripeGateway = (function () {
     return payload;
   }
 
-  function classifyHttpError_(responseCode) {
-    if (responseCode >= 500 || responseCode === 429) return 'AMBIGUOUS';
-    if (responseCode >= 400) return 'STRIPE_ERROR';
+  /*
+   * PR #354レビュー対応・2回目「Stripeの4xxエラー分類」。4xxを一律に「確定的な失敗
+   * （＝このIdempotency-Keyでのリクエストは処理されていない）」と扱わない。デフォルトは
+   * 常にAMBIGUOUS（安全側）であり、Stripeのエラー種別を積極的に確認できた場合にのみ
+   * STRIPE_ERROR（確定的な失敗）またはIDEMPOTENCY_CONFLICT（要復旧）へ分類する
+   * （許可リスト方式。ブロックリスト方式―既知の「安全な」コード以外はすべてSTRIPE_ERROR
+   * 扱い―だと、未知の4xxを誤って確定的な失敗として扱ってしまう恐れがあるため）。
+   */
+  var CONFIRMED_FAILURE_ERROR_TYPES_ = ['invalid_request_error', 'authentication_error', 'permission_error'];
+
+  function classifyHttpError_(responseCode, parsedBody) {
+    var stripeError = parsedBody && parsedBody.error;
+    var errorType = stripeError && stripeError.type;
+
+    /* idempotency_error: 同一Idempotency-Keyに対し、Stripe側に記録済みの内容と異なる
+       パラメータを送ったことをStripeが検知した。呼び出し元の保存内容自体が信頼できない
+       可能性がある異常事態であり、409やその他の不明なエラーよりもさらに踏み込んで
+       「新しい決済試行IDの発行を禁止するだけでなく要復旧として停止する」判断材料になる。
+       ここでは種別だけを返し、実際に要復旧ゲートを立てるかどうかはBookingRepository.gs
+       （呼び出し元）の責務とする。 */
+    if (errorType === 'idempotency_error') return 'IDEMPOTENCY_CONFLICT';
+
+    /* 409: 同一Idempotency-Keyへの別リクエストが処理中（後で再試行すれば解決し得る）。
+       5xx・429（レート制限）も同様に、この回のリクエストが実際に処理されたかどうかを
+       否定できない。 */
+    if (responseCode === 409 || responseCode >= 500 || responseCode === 429) return 'AMBIGUOUS';
+
+    if (responseCode >= 400 && responseCode < 500 && CONFIRMED_FAILURE_ERROR_TYPES_.indexOf(errorType) !== -1) {
+      return 'STRIPE_ERROR';
+    }
+
+    /* 上記いずれにも該当しない4xx（Stripeのエラー種別を読み取れない・想定外の種別）は
+       安全側に倒し、確定的な失敗と決めつけない。 */
     return 'AMBIGUOUS';
   }
 
@@ -112,9 +150,10 @@ var StripeGateway = (function () {
 
     return {
       ok: false,
-      errorType: classifyHttpError_(code),
+      errorType: classifyHttpError_(code, parsed),
       httpStatus: code,
       stripeErrorCode: (parsed && parsed.error && parsed.error.code) || '',
+      stripeErrorType: (parsed && parsed.error && parsed.error.type) || '',
       message: (parsed && parsed.error && parsed.error.message) || 'Stripe APIがエラーを返しました。'
     };
   }

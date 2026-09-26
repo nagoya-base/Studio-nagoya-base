@@ -1650,7 +1650,7 @@ var BookingRepository = (function () {
   /*
    * Issue #341 PR-Aレビュー対応: 決済状態（paymentStatus）の整合性を保証する共通更新処理。
    * 実際にStripe API・Webhookを呼ぶPR-B/PR-Cが、この関数を経由してのみpaymentStatus・
-   * 決済付随情報（paymentAttemptId〜paymentRecoveryReasonの15列）を更新することを想定する
+   * 決済付随情報（paymentAttemptId〜paymentRecoveryReasonの16列）を更新することを想定する
    * （SpreadsheetRepository.updateBookingPaymentStateAtomic/updateBookingFieldsを個別に
    * 直接呼ばせない）。PR-A時点ではこの関数を呼び出す実際の決済処理（Checkout Session発行・
    * Webhook確認・自動返金）は存在しない。
@@ -1658,9 +1658,9 @@ var BookingRepository = (function () {
    * 設計上の要点:
    * 1. LockService.getScriptLock()で排他制御する（confirmBooking等と同じ
    *    LOCK_TIMEOUT_MS_=10秒。呼び出し元のGASプロジェクトのLockと共有される）。
-   * 2. 更新順序を固定する：**先に決済付随情報の15列（updateBookingPaymentStateAtomic。
+   * 2. 更新順序を固定する：**先に決済付随情報の16列（updateBookingPaymentStateAtomic。
    *    HEADERS_上で連続する1回のRange.setValues）、その後にpaymentStatus単独
-   *    （updateBookingFields）の順**。paymentStatus（30列目）は15列の範囲と連続して
+   *    （updateBookingFields）の順**。paymentStatus（30列目）は16列の範囲と連続して
    *    いないため、レビュー対応前は「無関係な既存25列を巻き込む1回の書き込み」に
    *    まとめる案もあったが、それは他プロセスの並行更新を上書きする事故を招くため採用
    *    しない（PR-Aの元設計のまま。updateBookingPaymentStateAtomicのコメント参照）。
@@ -1691,7 +1691,7 @@ var BookingRepository = (function () {
    *    項目2）。要復旧フラグが既に立っている予約は、詳細を再判定するまでもなく先頭で
    *    即座に拒否する。
    *
-   * fields: SpreadsheetRepository.updateBookingPaymentStateAtomicが受け付ける15列の
+   * fields: SpreadsheetRepository.updateBookingPaymentStateAtomicが受け付ける16列の
    *   部分集合（省略・空オブジェクト可。例えばFAILED→CHECKOUT_PENDINGの再試行のように
    *   付随情報を伴わない遷移もある）。
    * 戻り値: { success: true } / { success: true, alreadyApplied: true } /
@@ -2204,31 +2204,72 @@ var BookingRepository = (function () {
 
   var CHECKOUT_LOCK_TIMEOUT_MS_ = 10000;
 
+  /* isFinitePositiveInteger_はCardPayment.gsの同名の非公開ヘルパーと同じ判定
+     （このファイルのIIFEからは直接参照できないためここに複製する）。 */
+  function isFinitePositiveInteger_(value) {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 && Math.round(value) === value;
+  }
+
+  function safeJsonParse_(text) {
+    if (typeof text !== 'string' || !text) return null;
+    try {
+      return JSON.parse(text);
+    } catch (parseError) {
+      return null;
+    }
+  }
+
   /*
-   * bookingIdの決済試行ID（Stripeへ渡すIdempotency-Key）と、Stripeへ実際に送るリクエスト
-   * 内容（請求金額・通貨・expires_at）を1回のRange.setValuesでまとめて予約・永続化する
-   * （PR #354レビュー対応・項目2「Stripe冪等キーとリクエスト内容の一致」）。
+   * reservePaymentAttempt_が保存・復元するCheckout Session作成リクエストのスナップショット
+   * （PR #354レビュー対応・2回目「Stripeへ送るリクエスト全体の固定」）が、Stripeへ安全に
+   * 再送できる完全な内容かどうかを検証する。1つでも欠落・型不正・bookingId/
+   * paymentAttemptIdの不一致があれば、この決済試行を安全に再照会できないとみなす
+   * （呼び出し元はPAYMENT_EVIDENCE_MISSINGとして停止し、新しいSessionを発行しない）。
+   */
+  function isValidCheckoutRequestSnapshot_(params, bookingId, paymentAttemptId) {
+    return !!params &&
+      params.bookingId === bookingId &&
+      params.paymentAttemptId === paymentAttemptId &&
+      typeof params.brand === 'string' && !!params.brand &&
+      isFinitePositiveInteger_(params.amountJpy) &&
+      typeof params.currency === 'string' && !!params.currency &&
+      isFinitePositiveInteger_(params.expiresAtSeconds) &&
+      typeof params.successUrl === 'string' && !!params.successUrl &&
+      typeof params.cancelUrl === 'string' && !!params.cancelUrl &&
+      typeof params.lineItemName === 'string' && !!params.lineItemName &&
+      typeof params.customerEmail === 'string';
+  }
+
+  /*
+   * bookingIdの決済試行ID（Stripeへ渡すIdempotency-Key）と、Stripe Checkout Session作成
+   * APIへ実際に送信するリクエスト内容一式（checkoutParams。金額・通貨・expires_at・
+   * successUrl・cancelUrl・customerEmail・lineItemName等）を1回のRange.setValuesで
+   * まとめて予約・永続化する（PR #354レビュー対応・2回目「Stripeへ送るリクエスト全体の
+   * 固定」）。
    *
-   * Stripeは同一Idempotency-Keyに対して異なるリクエスト内容（金額・expires_at等）が
-   * 送られた場合、最初のレスポンスを返さずidempotency_errorを返す。同じ決済試行IDの
-   * 再試行が「初回呼び出し時点で確定した内容」と寸分違わず一致するようにするため、
-   * 金額・通貨・expires_atは**この関数が呼ばれた最初の1回だけ**計算し、以後の再試行
-   * （GAS保存失敗・APIタイムアウト・この間の料金修正等いずれの場合も）は必ずこの時点の
-   * スナップショットをそのまま再利用する（呼び出し元のstartNewCheckoutAttempt_は
-   * 独自にCardPayment.computeExpectedPaymentAmount等を呼び直さない）。
+   * Stripeは同一Idempotency-Keyに対して異なるリクエスト内容が送られた場合、最初の
+   * レスポンスを返さずidempotency_errorを返す。同じ決済試行IDの再試行が「初回呼び出し
+   * 時点で確定した内容」と寸分違わず一致するようにするため、checkoutParams全体を
+   * **この関数が呼ばれた最初の1回だけ**組み立ててJSON文字列のまま保存し、以後の再試行
+   * （GAS保存失敗・APIタイムアウト・この間の料金修正やScript Properties変更等いずれの
+   * 場合も）は必ずこの時点のスナップショットをそのまま復元して再利用する（呼び出し元の
+   * startNewCheckoutAttempt_は独自にCardPayment.computeExpectedPaymentAmount等を
+   * 呼び直さず、record.email・stripeConfig.successUrl/cancelUrlも再取得しない）。
    *
    * - currentPaymentStatusがFAILED（前回の試行が確定的に不成立で終わった）の場合は、
    *   Booking.gsの設計どおり必ず新しいpaymentAttemptId・新しいスナップショットを発行する
-   *   （前回の金額・期限を引き継がない。料金が変わっていた場合はこの時点の最新額になる）。
+   *   （前回の内容を引き継がない。料金・successUrl等が変わっていればこの時点の最新値になる）。
    * - currentPaymentStatusがNOT_STARTEDで、かつ台帳に既にpaymentAttemptIdが記録されている
    *   場合（前回このLock内で予約情報だけ永続化した直後にStripe呼び出しやコミットで失敗した、
-   *   または実行がタイムアウトした等）は、その既存のスナップショット（paymentAttemptId・
-   *   stripeAmount・stripeCurrency・paymentHoldExpiresAt）をそのまま再利用する（新しい値を
-   *   発行・再計算しない）。**その間に管理者が料金を修正していても、この再試行では反映しない**
-   *   （Stripeへは初回と同じ内容を送る必要があるため。料金修正を反映した新しい決済試行は、
-   *   この試行がFAILED等で終わってからのみ行われる）。
+   *   または実行がタイムアウトした等）は、その既存のスナップショット（checkoutParams全体）
+   *   をそのまま再利用する（新しい値を発行・再計算しない）。**その間に管理者が料金を修正・
+   *   Script Propertiesのsuccess/cancel URLを変更していても、この再試行では反映しない**
+   *   （Stripeへは初回と同じ内容を送る必要があるため。変更を反映した新しい決済試行は、
+   *   この試行がFAILED等で終わってからのみ行われる）。保存済みのスナップショットを
+   *   安全に復元できない場合（JSON解析失敗・必須項目欠落・bookingId/paymentAttemptId
+   *   不一致等）は、新しいSessionを発行せず要復旧として停止する。
    */
-  function reservePaymentAttempt_(bookingId, now) {
+  function reservePaymentAttempt_(bookingId, stripeConfig, now) {
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(CHECKOUT_LOCK_TIMEOUT_MS_)) {
       return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
@@ -2244,30 +2285,20 @@ var BookingRepository = (function () {
       }
       var currentPaymentStatus = Booking.normalizePaymentStatus(record.paymentStatus);
       if (currentPaymentStatus === Booking.PAYMENT_STATUS.NOT_STARTED && record.paymentAttemptId) {
-        var reusedExpiresAtSeconds = isDateLike_(record.paymentHoldExpiresAt) ? Math.floor(record.paymentHoldExpiresAt.getTime() / 1000) : NaN;
-        var hasCompleteSnapshot =
-          record.stripeAmount !== '' && record.stripeAmount !== null && record.stripeAmount !== undefined &&
-          !!record.stripeCurrency && Number.isFinite(reusedExpiresAtSeconds);
-        if (!hasCompleteSnapshot) {
+        var snapshot = safeJsonParse_(record.stripeCheckoutRequestSnapshot);
+        if (!isValidCheckoutRequestSnapshot_(snapshot, bookingId, record.paymentAttemptId)) {
           /* 通常到達しない防御的分岐（このLock内で常にpaymentAttemptIdと同時に書くため）。
-             スナップショットが不完全なまま異なるリクエスト内容をStripeへ送ってしまう事故を
-             避け、要復旧として停止する。 */
+             スナップショットを安全に復元できないまま異なるリクエスト内容をStripeへ送って
+             しまう事故を避け、要復旧として停止する（PR #354レビュー対応・2回目）。 */
           recordPaymentRecoveryBestEffort_(
             bookingId, record, 'PAYMENT_EVIDENCE_MISSING',
-            '決済試行の予約情報（paymentAttemptIdに対応する請求金額・通貨・Session期限の' +
-              'スナップショット）が不完全です。Bookingsを直接確認してください。',
+            '決済試行の予約情報（Stripeへ送信するリクエスト内容一式のスナップショット）を' +
+              '安全に復元できません。Bookingsを直接確認してください。',
             now
           );
           return { success: false, error: { code: 'PAYMENT_EVIDENCE_MISSING', message: '決済処理の準備状態が不整合のため停止しました。管理者の確認が必要です。' } };
         }
-        return {
-          success: true,
-          reused: true,
-          paymentAttemptId: record.paymentAttemptId,
-          amountJpy: Number(record.stripeAmount),
-          currency: record.stripeCurrency,
-          expiresAtSeconds: reusedExpiresAtSeconds
-        };
+        return { success: true, reused: true, paymentAttemptId: record.paymentAttemptId, checkoutParams: snapshot };
       }
 
       var expected = CardPayment.computeExpectedPaymentAmount(record);
@@ -2277,38 +2308,88 @@ var BookingRepository = (function () {
       var expiresAtSeconds = CardPayment.computeStripeSessionExpiresAtSeconds(now.getTime());
       var paymentAttemptId = CardPayment.generatePaymentAttemptId(bookingId, Utilities.getUuid());
 
+      /*
+       * このcheckoutParamsが、Stripeへ実際に送るリクエスト内容の唯一の正になる。
+       * successUrl/cancelUrl（Script Properties由来）・customerEmail（record.email）を
+       * ここで確定し、以後この決済試行が解決するまで一切再取得・再計算しない。
+       */
+      var checkoutParams = {
+        amountJpy: expected.amountJpy,
+        currency: expected.currency,
+        bookingId: bookingId,
+        brand: record.brand,
+        paymentAttemptId: paymentAttemptId,
+        expiresAtSeconds: expiresAtSeconds,
+        successUrl: stripeConfig.successUrl,
+        cancelUrl: stripeConfig.cancelUrl,
+        customerEmail: record.email || '',
+        lineItemName: Booking.getBrandLabel(record.brand) + ' ご利用料金（' + bookingId + '）'
+      };
+
       try {
         SpreadsheetRepository.updateBookingPaymentStateAtomic(bookingId, {
           paymentAttemptId: paymentAttemptId,
           stripeAmount: expected.amountJpy,
           stripeCurrency: expected.currency,
-          paymentHoldExpiresAt: new Date(expiresAtSeconds * 1000)
+          paymentHoldExpiresAt: new Date(expiresAtSeconds * 1000),
+          stripeCheckoutRequestSnapshot: JSON.stringify(checkoutParams)
         });
       } catch (writeError) {
         Logger.log('reservePaymentAttempt_: 決済試行の予約情報の保存に失敗しました: ' + bookingId + ' ' + describeError_(writeError));
         return { success: false, error: { code: 'PAYMENT_DETAIL_WRITE_FAILED', message: '決済処理の準備に失敗しました。もう一度お試しください。' } };
       }
-      return {
-        success: true,
-        reused: false,
-        paymentAttemptId: paymentAttemptId,
-        amountJpy: expected.amountJpy,
-        currency: expected.currency,
-        expiresAtSeconds: expiresAtSeconds
-      };
+      return { success: true, reused: false, paymentAttemptId: paymentAttemptId, checkoutParams: checkoutParams };
     } finally {
       lock.releaseLock();
     }
   }
 
-  /* Stripe Checkout Session作成呼び出し自体が失敗した場合の分岐（Issue #341本文
-     「Stripe側で決済済みかどうか不明な場合は、新規発行を停止してRecoveryに記録」）。 */
+  /*
+   * Stripe Checkout Session作成呼び出し自体が失敗した場合の分岐（Issue #341本文
+   * 「Stripe側で決済済みかどうか不明な場合は、新規発行を停止してRecoveryに記録」）。
+   *
+   * PR #354レビュー対応・2回目「Stripeの4xxエラー分類」: 4xxを一律に「確定的に失敗した」
+   * とは扱わない。StripeGateway.classifyHttpError_が返すerrorTypeは3種類に分かれる:
+   * - IDEMPOTENCY_CONFLICT: Stripeが「このIdempotency-Keyには既に異なるパラメータの
+   *   リクエストが記録されている」と報告した。今回送った内容（保存済みスナップショット）
+   *   がStripe側の記録と食い違っている＝台帳の保存内容自体が信頼できない可能性がある
+   *   異常事態のため、自動再試行を続けても解決しない。**要復旧として恒久的に停止する**
+   *   （新しいpaymentAttemptIdも発行しない。Stripe管理画面での確認が必須）。
+   * - STRIPE_ERROR: Stripeが`invalid_request_error`/`authentication_error`/
+   *   `permission_error`のいずれかを、明確な4xx（409を除く）で返した場合のみ。この回の
+   *   リクエストがStripe側で一切処理されなかったと確信できるケースに限定する
+   *   （StripeGateway.CONFIRMED_FAILURE_ERROR_TYPES_参照）。FAILEDへ進め、次回は新しい
+   *   決済試行IDを発行させる。
+   * - それ以外すべて（AMBIGUOUS/NETWORK/NOT_CONFIGURED。409・429・5xx・型が未知の4xx・
+   *   応答解析不能を含む）: Stripe側で実際にSessionが作成された可能性を否定できない
+   *   （あるいはそもそも呼び出せていない）。paymentStatusをFAILEDへ進めず、新しい決済
+   *   試行IDも発行しない（＝次回もreservePaymentAttempt_が同じpaymentAttemptId・同じ
+   *   スナップショットを再利用する）。監査記録のみ残して呼び出し元へ再試行を促す。
+   */
   function handleCheckoutCreateFailure_(bookingId, record, createResult, now) {
+    if (createResult.errorType === 'IDEMPOTENCY_CONFLICT') {
+      recordPaymentRecoveryBestEffort_(
+        bookingId, record, 'STRIPE_IDEMPOTENCY_CONFLICT',
+        'Checkout Session作成リクエストが、Stripe側に既に記録済みの内容と一致しないと' +
+          '報告されました（idempotency_error）。台帳に保存された決済試行の内容（金額・通貨・' +
+          'successUrl等のスナップショット）が、実際に最初にStripeへ送られた内容と食い違って' +
+          'いる可能性があります。Stripe管理画面でこの決済試行ID（' + (record.paymentAttemptId || '不明') +
+          '）に対応するCheckout Sessionの有無・内容を確認し、必要な補正を行ってから復旧して' +
+          'ください。',
+        now
+      );
+      return {
+        success: false,
+        error: { code: 'PAYMENT_RECOVERY_REQUIRED', message: 'この予約の決済状態は要復旧のため、自動処理を停止しています。' }
+      };
+    }
+
     if (createResult.errorType === 'STRIPE_ERROR') {
       /*
-       * Stripeが明確にリクエストを拒否した（4xx）。この回のリクエストは処理されていない
-       * ことが確定しているため、FAILEDへ進めて次回は新しい決済試行IDを発行させる
-       * （Booking.gs「新しいpaymentAttemptIdでの再試行時のみCHECKOUT_PENDINGへ戻れる」）。
+       * Stripeが明確にリクエストを拒否した（invalid_request_error/authentication_error/
+       * permission_errorのいずれか）。この回のリクエストは処理されていないことが確定して
+       * いるため、FAILEDへ進めて次回は新しい決済試行IDを発行させる（Booking.gs「新しい
+       * paymentAttemptIdでの再試行時のみCHECKOUT_PENDINGへ戻れる」）。
        */
       var failResult = applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, {}, now);
       if (!failResult.success) {
@@ -2350,19 +2431,18 @@ var BookingRepository = (function () {
   /*
    * NOT_STARTED/FAILEDから新しい決済試行を開始する（Checkout Session発行→証跡コミット）。
    *
-   * PR #354レビュー対応・項目2: 金額・通貨・expires_atはreservePaymentAttempt_が
-   * 呼び出し時点で1回だけ確定・永続化したスナップショットをそのまま使う。ここで
-   * CardPayment.computeExpectedPaymentAmount等を独自に呼び直さない（呼び直すと、
-   * 同じpaymentAttemptId＝同じIdempotency-Keyのまま、料金修正等でStripeへ送る内容が
-   * 初回と食い違ってしまう。Stripeは差異を検知するとidempotency_errorを返す）。
+   * PR #354レビュー対応: Stripeへ送るリクエスト内容（checkoutParams）はreservePaymentAttempt_
+   * が呼び出し時点で1回だけ確定・永続化したスナップショットをそのまま使う。ここで
+   * CardPayment.computeExpectedPaymentAmount・record.email・stripeConfig.successUrl/
+   * cancelUrl等を独自に取得し直さない（取得し直すと、同じpaymentAttemptId＝同じ
+   * Idempotency-Keyのまま、料金修正・Script Properties変更等でStripeへ送る内容が初回と
+   * 食い違ってしまう。Stripeは差異を検知するとidempotency_errorを返す）。
    */
   function startNewCheckoutAttempt_(bookingId, stripeConfig, now) {
-    var reserveResult = reservePaymentAttempt_(bookingId, now);
+    var reserveResult = reservePaymentAttempt_(bookingId, stripeConfig, now);
     if (!reserveResult.success) return reserveResult;
     var paymentAttemptId = reserveResult.paymentAttemptId;
-    var amountJpy = reserveResult.amountJpy;
-    var currency = reserveResult.currency;
-    var expiresAtSeconds = reserveResult.expiresAtSeconds;
+    var checkoutParams = reserveResult.checkoutParams;
 
     var latest = SpreadsheetRepository.findRowByBookingId(bookingId);
     if (!latest) {
@@ -2370,18 +2450,7 @@ var BookingRepository = (function () {
     }
     var record = latest.record;
 
-    var createResult = StripeGateway.createCheckoutSession(stripeConfig, {
-      amountJpy: amountJpy,
-      currency: currency,
-      bookingId: bookingId,
-      brand: record.brand,
-      paymentAttemptId: paymentAttemptId,
-      expiresAtSeconds: expiresAtSeconds,
-      successUrl: stripeConfig.successUrl,
-      cancelUrl: stripeConfig.cancelUrl,
-      customerEmail: record.email,
-      lineItemName: Booking.getBrandLabel(record.brand) + ' ご利用料金（' + bookingId + '）'
-    }, paymentAttemptId);
+    var createResult = StripeGateway.createCheckoutSession(stripeConfig, checkoutParams, paymentAttemptId);
 
     if (!createResult.ok) {
       return handleCheckoutCreateFailure_(bookingId, record, createResult, now);
@@ -2392,8 +2461,8 @@ var BookingRepository = (function () {
      * Issue #341本文「Session expires_atをこの仮押さえ期限と一致させる」を、Stripeの
      * レスポンスに含まれる実際のexpires_atをpaymentHoldExpiresAtへそのまま保存し直す
      * ことで実現する（CardPayment.gsファイル冒頭コメント・README「Issue #341」節参照。
-     * 通常はreservePaymentAttempt_が送ったexpires_atとStripeの応答は一致するはずだが、
-     * 常にStripeの応答を正として保存する）。
+     * 通常はcheckoutParams.expiresAtSecondsとStripeの応答は一致するはずだが、常に
+     * Stripeの応答を正として保存する）。
      */
     var paymentHoldExpiresAt = new Date(session.expiresAtSeconds * 1000);
 
@@ -2401,12 +2470,12 @@ var BookingRepository = (function () {
       paymentAttemptId: paymentAttemptId,
       stripeCheckoutSessionId: session.id,
       paymentHoldExpiresAt: paymentHoldExpiresAt,
-      stripeAmount: amountJpy,
-      stripeCurrency: currency
+      stripeAmount: checkoutParams.amountJpy,
+      stripeCurrency: checkoutParams.currency
     }, now);
 
     if (!commitResult.success) {
-      /* paymentAttemptIdとスナップショット（金額・通貨・expires_at）は既にreservePaymentAttempt_
+      /* paymentAttemptIdとスナップショット（checkoutParams全体）は既にreservePaymentAttempt_
          で永続化済みのため、呼び出し元の再試行は同じIdempotency-Key・同じリクエスト内容で
          Stripeへ到達し、同じSessionがそのまま返る（新しいSessionは作られない）。 */
       return { success: false, error: commitResult.error, retryable: true };
@@ -2417,8 +2486,8 @@ var BookingRepository = (function () {
       bookingId: bookingId,
       checkoutUrl: session.url,
       paymentHoldExpiresAt: paymentHoldExpiresAt,
-      amount: amountJpy,
-      currency: currency
+      amount: checkoutParams.amountJpy,
+      currency: checkoutParams.currency
     };
   }
 
