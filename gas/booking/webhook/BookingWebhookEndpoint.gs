@@ -1,22 +1,23 @@
 /*
- * BookingWebhook.gs — Stripe Webhook中継基盤（cloud-run/stripe-webhook-relay/）からの
- * 呼び出しを受け付ける、Booking Adminプロジェクトの`doPost(e)`エントリポイント
- * （Issue #341 PR-C）。
+ * BookingWebhookEndpoint.gs — Booking Webhookプロジェクトの唯一のWeb Appエントリポイント
+ * （Issue #341 PR-C。レビュー対応・1回目で新設）。ファイル名を`Code.gs`にしないのは、
+ * `gas/booking/public/Code.gs`（Booking Web Appのエントリポイント）とこのリポジトリ内で
+ * 同名になり、テストヘルパー（test/helpers/gas-sandbox.js）がサブディレクトリを跨いで
+ * ファイル名だけで解決する都合上、意図せず誤った方が読み込まれる事故を避けるため。
  *
- * 【重要・デプロイ先とWeb Appデプロイ設定について】
- * このファイルはBookingAdmin.gs/BookingTriggers.gs/BookingAdminWeb.gsと同じBooking Admin
- * プロジェクトへデプロイする。Booking Web Appプロジェクト（Code.gs）には追加しない
- * （StripeWebhookHandler.gsのファイル冒頭コメントの理由と同じ。confirmBooking/
- * expirePendingBookingsとLockServiceを共有する必要があるため）。
+ * 【このプロジェクトについて】Stripe Webhook中継基盤（cloud-run/stripe-webhook-relay/）
+ * からの呼び出しだけを受け付ける、**独立した新しいApps Scriptプロジェクト**。
+ * Booking Web App（利用者向け）・Booking Admin（管理者向け）のいずれとも別プロジェクトで
+ * あり、`doGet`・管理者向けのサーバー関数（予約詳細取得・確定・取消・メール送信等）を
+ * 一切持たない（このプロジェクトのコンパイル済みバンドルに含まれるファイルは
+ * `test/helpers/booking-deployment-manifest.js`の`BOOKING_WEBHOOK_FILES`参照。
+ * `BookingAdmin.gs`/`BookingAdminWeb.gs`/`BookingTriggers.gs`等は含めない）。
  *
- * BookingAdminWeb.gsの`doGet()`（管理者本人用UI。Execute as: Me / Who has access:
- * Only myself）とこの`doPost(e)`は**同一プロジェクトの同一コード**として存在するが、
- * Web Appの「デプロイ」はGoogleが「1プロジェクトにつき複数デプロイ（別URL・別アクセス
- * 設定）」を許可しているため、この`doPost`を公開させたい場合は、既存の管理者専用
- * デプロイとは**別の新しいデプロイ**を作成し、そちらだけを「Execute as: Me / Who has
- * access: Anyone」にすること（README「Stripe Webhookエンドポイントのデプロイ」参照）。
- * 既存の管理者専用デプロイのアクセス設定は変更しない（doGetの挙動・セキュリティ境界を
- * 変えないため）。
+ * これにより、このプロジェクトのWeb Appデプロイを「Execute as: Me / Who has access:
+ * Anyone」で公開しても、公開されるのは`doPost`（このファイル）だけであり、管理者専用UI・
+ * 予約の確定/取消・メール送信等は構造的に一切公開されない
+ * （`test/booking-webhook-deployment.test.js`で検証。StripeWebhookHandler.gs冒頭コメント
+ * 「重要・デプロイ先について」も参照）。
  *
  * 【認証】GASの`doPost(e)`はStripeの`Stripe-Signature`ヘッダーを検証できない
  * （リクエストヘッダーを取得できないため）。この関数が信頼するのは、Stripeの署名検証を

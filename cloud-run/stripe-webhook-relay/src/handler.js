@@ -12,7 +12,7 @@
  * - GASへの転送は、Stripeから受け取った生の本文（文字列化したもの）そのものに対する
  *   HMAC-SHA256（`GAS_WEBHOOK_RELAY_SECRET`）を計算し、タイムスタンプとともにJSON化した
  *   ボディとして送る。ヘッダーではなく本文に含めるのは、GASの`doPost(e)`がリクエスト
- *   ヘッダーを読めない制約に合わせるため（gas/booking/shared/StripeWebhookAuth.gs参照）。
+ *   ヘッダーを読めない制約に合わせるため（gas/booking/webhook/StripeWebhookAuth.gs参照）。
  * - GASへの転送・応答はいずれも例外を投げずに`{ stripeStatus, reason, ... }`へ正規化する。
  *   `stripeStatus`は呼び出し元がStripeへ返すべきHTTPステータス
  *   （200=成功として扱ってよい、それ以外=Stripeの自動再送を促す）。

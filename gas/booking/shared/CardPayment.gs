@@ -62,6 +62,23 @@ var CardPayment = (function () {
    */
   var STRIPE_SESSION_EXPIRY_BUFFER_MINUTES = 5;
 
+  /*
+   * Issue #341 PR-Cレビュー対応・1回目で追加。Webhook処理（Booking Webhookプロジェクト）と
+   * expirePendingBookings（Booking Adminプロジェクト）は別々のGASプロジェクト・別々の
+   * LockService.getScriptLock()で動くため、「同一LockServiceによる完全な排他」は前提に
+   * できない（README「Webhookと失効処理の競合（再設計）」参照）。
+   *
+   * paymentHoldExpiresAtを過ぎてから、この分数がさらに経過するまでexpirePendingBookings
+   * はcheckout_pendingの仮押さえを失効対象にしない。Stripeで決済が完了してからWebhookが
+   * 実際に届く（署名検証・中継・GAS処理を経る）までの時間は通常数秒〜数十秒程度であり、
+   * この猶予（既定10分）を設けることで、「支払い成立の直後に枠を解放してしまう」窓を
+   * 実務上ほぼ消滅させる。理論上のレース自体は（別LockServiceである以上）完全には
+   * ゼロにできないが、この猶予とBooking.PAYMENT_STATUS_TRANSITIONS_のFAILED→PAID許可・
+   * 双方が破壊的書き込み直前に最新状態を再読込する既存の仕組みを組み合わせることで、
+   * 実害（二重予約・入金記録の消失）を防ぐ。
+   */
+  var WEBHOOK_RACE_GRACE_MINUTES = 10;
+
   /* PENDING（決済待ち）作成時刻から内部の仮押さえ期限（ミリ秒epoch）を計算する。 */
   function computeCheckoutHoldExpiryMillis(createdAtMillis) {
     return createdAtMillis + CHECKOUT_HOLD_MINUTES * 60000;
@@ -176,11 +193,22 @@ var CardPayment = (function () {
     return 'PAY-' + String(bookingId || '') + '-' + uuidPart;
   }
 
+  /*
+   * expirePendingBookingsが、checkout_pendingの仮押さえをいつから失効対象にしてよいかを
+   * 計算する（paymentHoldExpiresAtMillisにWEBHOOK_RACE_GRACE_MINUTES分の追加猶予を
+   * 乗せた時刻）。WEBHOOK_RACE_GRACE_MINUTESのコメント参照。
+   */
+  function computeExpireSweepEligibleMillis(paymentHoldExpiresAtMillis) {
+    return paymentHoldExpiresAtMillis + WEBHOOK_RACE_GRACE_MINUTES * 60000;
+  }
+
   return {
     CHECKOUT_HOLD_MINUTES: CHECKOUT_HOLD_MINUTES,
     STRIPE_SESSION_EXPIRY_BUFFER_MINUTES: STRIPE_SESSION_EXPIRY_BUFFER_MINUTES,
+    WEBHOOK_RACE_GRACE_MINUTES: WEBHOOK_RACE_GRACE_MINUTES,
     computeCheckoutHoldExpiryMillis: computeCheckoutHoldExpiryMillis,
     computeStripeSessionExpiresAtSeconds: computeStripeSessionExpiresAtSeconds,
+    computeExpireSweepEligibleMillis: computeExpireSweepEligibleMillis,
     computeExpectedPaymentAmount: computeExpectedPaymentAmount,
     verifyPaymentAmount: verifyPaymentAmount,
     verifyPaymentAgainstSnapshot: verifyPaymentAgainstSnapshot,

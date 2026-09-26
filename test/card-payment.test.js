@@ -62,6 +62,19 @@ test('computeStripeSessionExpiresAtSeconds: 常にSession作成時刻から30分
   assert.ok(expiresAtSeconds > minimumAllowedSeconds, 'expires_atはSession作成時刻+30分より後でなければならない');
 });
 
+/*
+ * Issue #341 PR-Cレビュー対応・1回目: Webhook処理（Booking Webhook）とexpirePendingBookings
+ * （Booking Admin）は別プロジェクト・別LockServiceのため、paymentHoldExpiresAtを過ぎて
+ * すぐに失効対象にせず、追加の猶予（WEBHOOK_RACE_GRACE_MINUTES）を待つ。
+ */
+test('computeExpireSweepEligibleMillis: paymentHoldExpiresAtにWEBHOOK_RACE_GRACE_MINUTES分を加算した時刻を返す', function () {
+  var CardPayment = loadCardPayment();
+  var paymentHoldExpiresAtMillis = new Date('2026-10-01T10:30:00+09:00').getTime();
+  var eligibleMillis = CardPayment.computeExpireSweepEligibleMillis(paymentHoldExpiresAtMillis);
+  assert.strictEqual(eligibleMillis, paymentHoldExpiresAtMillis + CardPayment.WEBHOOK_RACE_GRACE_MINUTES * 60000);
+  assert.strictEqual(CardPayment.WEBHOOK_RACE_GRACE_MINUTES, 10);
+});
+
 test('computeExpectedPaymentAmount: priceAmountをそのままamountJpy(JPY)として返す', function () {
   var CardPayment = loadCardPayment();
   var result = CardPayment.computeExpectedPaymentAmount(priceRecord({ priceAmount: 8000 }));

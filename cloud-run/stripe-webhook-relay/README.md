@@ -2,7 +2,7 @@
 
 Stripe Webhookの署名検証**専用**の中継サービス（Issue #341 PR-C）。予約・決済の業務ロジック
 （金額照合・冪等性判定・予約自動確定等）は一切持たない。それらはすべてGAS側
-（`gas/booking/shared/StripeWebhookHandler.gs`）に一元化されている。
+（`gas/booking/webhook/StripeWebhookHandler.gs`）に一元化されている。
 
 詳細な設計・認証チェーン・シークレット管理・ローテーション手順は
 [`gas/booking/README.md`](../../gas/booking/README.md)の「Issue #341: Stripe API即時決済に
@@ -35,8 +35,8 @@ npm start       # ローカルでポート8080で起動（STRIPE_WEBHOOK_SECRET�
 | 変数 | 必須 | 説明 |
 | --- | --- | --- |
 | `STRIPE_WEBHOOK_SECRET` | 必須 | Stripe DashboardのWebhook Endpointに対応する署名シークレット（`whsec_...`）。GASには一切渡さない |
-| `GAS_WEBHOOK_RELAY_SECRET` | 必須 | GAS（Booking Adminプロジェクト）の`STRIPE_WEBHOOK_RELAY_SECRET`と同じ値 |
-| `GAS_WEBHOOK_URL` | 必須 | Booking AdminプロジェクトのWebhook受信専用デプロイURL（管理者専用UIのデプロイとは別） |
+| `GAS_WEBHOOK_RELAY_SECRET` | 必須 | GAS（独立したBooking Webhookプロジェクト）の`STRIPE_WEBHOOK_RELAY_SECRET`と同じ値 |
+| `GAS_WEBHOOK_URL` | 必須 | Booking Webhookプロジェクト（Booking Web App・Booking Adminのいずれとも別の、Webhook受信専用の独立したGASプロジェクト）のデプロイURL。レビュー対応・1回目で、Booking Adminの2つ目のデプロイとして公開する初版の設計を撤回した（管理者専用UIまで公開されてしまう欠陥があったため。詳細はgas/booking/README.md「Webhookエンドポイントの公開境界」参照） |
 | `STRIPE_API_KEY` | 任意 | 未設定でも署名検証は正しく動作する（ローカルHMAC演算のためAPIキー不要）。設定不要 |
 | `PORT` | 任意 | 既定`8080`（Cloud Runの規約） |
 

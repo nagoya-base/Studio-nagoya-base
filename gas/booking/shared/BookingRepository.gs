@@ -750,8 +750,15 @@ var BookingRepository = (function () {
         isDateLike_(record.paymentHoldExpiresAt);
 
       if (isCheckoutPendingHold) {
-        if (now.getTime() < record.paymentHoldExpiresAt.getTime()) {
-          return; /* まだ仮押さえ有効 */
+        /*
+         * Issue #341 PR-Cレビュー対応・1回目: paymentHoldExpiresAtを過ぎてすぐには
+         * 失効対象にせず、CardPayment.WEBHOOK_RACE_GRACE_MINUTES分の追加猶予を待つ
+         * （Webhook処理は別プロジェクト・別LockServiceのため、Stripeでの決済完了直後の
+         * ごく短い時間はWebhookの到達を待つ。CardPayment.gsのWEBHOOK_RACE_GRACE_MINUTES
+         * コメント参照）。
+         */
+        if (now.getTime() < CardPayment.computeExpireSweepEligibleMillis(record.paymentHoldExpiresAt.getTime())) {
+          return; /* まだ仮押さえ有効、またはWebhook到達を待つ猶予期間中 */
         }
         /*
          * Stripe側の確認はLock取得前（ネットワーク呼び出しをLockの外で行う。
@@ -2065,18 +2072,28 @@ var BookingRepository = (function () {
    * 呼び出し元が`fields`でこれらのキーを明示的に主張した場合のみ、台帳の現在値と
    * 突き合わせる（主張していないキーは判定に使わない＝比較対象にしない）。
    *
-   * REQUIRED_EVIDENCE_FOR_STATUS_に登場する全フィールド（lastStripeEventId・
-   * stripeRefundIdを含む）の和集合にすること（3回目レビュー対応で判明した不具合の
-   * 修正：stripeRefundIdがここに含まれていなかったため、異なるstripeRefundIdを
-   * 主張する呼び出しがpaymentIdentityMatches_のミスマッチ判定をすり抜け、
-   * paymentIdentityConfirmed_のPAYMENT_IDENTITY_UNCONFIRMED側に誤って落ちていた。
-   * 「値を主張しているのに食い違う」場合は必ずこちらのPAYMENT_IDENTITY_MISMATCHで
-   * 検出できるよう、判定対象のフィールド集合をREQUIRED_EVIDENCE_FOR_STATUS_と
-   * 常に同期させる）。
+   * 原則としてREQUIRED_EVIDENCE_FOR_STATUS_に登場する全フィールドの和集合にすること
+   * （3回目レビュー対応で判明した不具合の修正：stripeRefundIdがここに含まれていなかった
+   * ため、異なるstripeRefundIdを主張する呼び出しがpaymentIdentityMatches_のミスマッチ
+   * 判定をすり抜け、paymentIdentityConfirmed_のPAYMENT_IDENTITY_UNCONFIRMED側に誤って
+   * 落ちていた。「値を主張しているのに食い違う」場合は必ずこちらのPAYMENT_IDENTITY_
+   * MISMATCHで検出できるよう、判定対象のフィールド集合をREQUIRED_EVIDENCE_FOR_STATUS_と
+   * 同期させる）。
+   *
+   * **例外: lastStripeEventIdはここに含めない**（Issue #341 PR-Cレビュー対応・1回目）。
+   * Stripeは同一の決済・返金について、異なるイベントID（例:
+   * checkout.session.completedとcheckout.session.async_payment_succeeded、あるいは
+   * Stripe側の重複配信）で複数回通知することがある。「決済・返金として同一かどうか」は
+   * stripePaymentIntentId/stripeCheckoutSessionId/paymentAttemptId/stripeRefundIdという
+   * **決済・返金そのものを表す識別子**で判定すべきであり、「どのイベント配信が最後に
+   * 触れたか」を表すだけのlastStripeEventIdを同一性の判定材料に含めると、同一入金への
+   * 異なるイベントIDでの正当な通知のたびにPAYMENT_IDENTITY_MISMATCH（恒久の要復旧ゲート）
+   * を誤発生させてしまう。StripeWebhookHandler.gsは、同一イベントの重複配信自体は
+   * 別途StripeEventRepository.gsのイベント台帳（eventId単位）で防いでいるため、
+   * ここでlastStripeEventIdの一致まで要求する必要はない。
    */
   var IDENTITY_FIELDS_ = [
-    'paymentAttemptId', 'stripeCheckoutSessionId', 'stripePaymentIntentId',
-    'lastStripeEventId', 'stripeRefundId'
+    'paymentAttemptId', 'stripeCheckoutSessionId', 'stripePaymentIntentId', 'stripeRefundId'
   ];
 
   /*
@@ -2160,14 +2177,24 @@ var BookingRepository = (function () {
   /*
    * 3回目レビュー対応・項目2: 資金移動を伴う状態（paid/refund_pending/refunded）へ
    * 「既に到達済み」の予約を再確認する際、呼び出し元が同一の決済・返金処理であることを
-   * 積極的に証明することを要求する状態の一覧。REQUIRED_EVIDENCE_FOR_STATUS_と同じ
-   * フィールド集合を流用する（その状態を裏付ける識別子＝その状態が同一処理であることを
-   * 確認する識別子、という考え方）。checkout_pending/failedは資金移動を伴わないため
-   * ここには含めない（paymentIdentityMatches_の「主張された値が食い違わないか」だけの
-   * 判定のままでよい）。
+   * 積極的に証明することを要求する状態の一覧。checkout_pending/failedは資金移動を
+   * 伴わないためここには含めない（paymentIdentityMatches_の「主張された値が食い違わ
+   * ないか」だけの判定のままでよい）。
+   *
+   * PAIDについてはREQUIRED_EVIDENCE_FOR_STATUS_[PAID]（stripePaymentIntentId・
+   * lastStripeEventId）をそのまま流用せず、**stripePaymentIntentIdのみ**を使う
+   * （Issue #341 PR-Cレビュー対応・1回目）。lastStripeEventIdは「どのイベント配信が
+   * 最後に触れたか」を表すだけで、決済そのものの同一性を表さない。Stripeが同一の
+   * 決済について異なるイベントID（例: checkout.session.completedと
+   * checkout.session.async_payment_succeeded、あるいは重複配信）で複数回通知しても、
+   * PaymentIntent IDが同じであれば同一の決済とみなし、二重確定・二重メール送信を
+   * 起こさず安全にalreadyApplied:trueへ収束させる（同一イベントIDの重複配信自体は
+   * StripeEventRepository.gsのイベント台帳で別途防ぐ）。REFUND_PENDING/REFUNDEDは
+   * lastStripeEventIdを含まないREQUIRED_EVIDENCE_FOR_STATUS_のままなので、そのまま
+   * 流用してよい。
    */
   var MONETARY_IDENTITY_CONFIRMATION_FIELDS_ = {};
-  MONETARY_IDENTITY_CONFIRMATION_FIELDS_[Booking.PAYMENT_STATUS.PAID] = REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.PAID];
+  MONETARY_IDENTITY_CONFIRMATION_FIELDS_[Booking.PAYMENT_STATUS.PAID] = ['stripePaymentIntentId'];
   MONETARY_IDENTITY_CONFIRMATION_FIELDS_[Booking.PAYMENT_STATUS.REFUND_PENDING] = REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.REFUND_PENDING];
   MONETARY_IDENTITY_CONFIRMATION_FIELDS_[Booking.PAYMENT_STATUS.REFUNDED] = REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.REFUNDED];
 

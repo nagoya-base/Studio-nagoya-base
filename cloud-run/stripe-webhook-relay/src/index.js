@@ -11,10 +11,12 @@
  * 必須環境変数:
  * - STRIPE_WEBHOOK_SECRET: StripeダッシュボードのWebhook Endpointに対応する署名シークレット
  *   （`whsec_...`）。GASには一切渡さない。
- * - GAS_WEBHOOK_RELAY_SECRET: GAS（Booking Adminプロジェクト）の
+ * - GAS_WEBHOOK_RELAY_SECRET: GAS（独立したBooking Webhookプロジェクト）の
  *   `STRIPE_WEBHOOK_RELAY_SECRET`と同じ値。
- * - GAS_WEBHOOK_URL: Booking Adminプロジェクトの、Webhook受信専用デプロイのURL
- *   （`doGet`用の管理者専用デプロイとは別のデプロイURL。README参照）。
+ * - GAS_WEBHOOK_URL: Booking Webhookプロジェクト（Booking Web App・Booking Adminの
+ *   いずれとも別の、Webhook受信専用の独立したGASプロジェクト）のデプロイURL。
+ *   レビュー対応・1回目で、Booking Adminの2つ目のデプロイとして公開する設計を撤回した
+ *   （README参照）。
  * 任意環境変数:
  * - PORT（既定8080。Cloud Runの規約）。
  */
@@ -35,7 +37,7 @@ function readRawBody(req) {
 
 /* GASへの転送。GAS Web Appは常にHTTP 200を返す仕様（ContentServiceの制約）のため、
    実際の成否はレスポンスJSONのsuccessフィールドで判定する
-   （gas/booking/admin/BookingWebhook.gs参照）。 */
+   （gas/booking/webhook/BookingWebhookEndpoint.gs参照）。 */
 async function forwardToGas(url, payload) {
   const response = await fetch(url, {
     method: 'POST',

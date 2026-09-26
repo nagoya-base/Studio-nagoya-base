@@ -186,6 +186,85 @@ function createCalendarEvent(ctx) {
 
 /*
  * ============================================================================
+ * 失効処理（expirePendingBookings。Booking Adminプロジェクト）との競合テスト専用の
+ * セットアップ（Issue #341 PR-Cレビュー対応・1回目）。
+ *
+ * Webhook処理は独立したBooking WebhookプロジェクトとしてLockService.getScriptLock()を
+ * 共有しない（StripeWebhookHandler.gsファイル冒頭コメント参照）ため、テストも実際の
+ * アーキテクチャに合わせて**2つの独立したサンドボックス（別々のLockServiceスタブ）**を
+ * 構築する。ただしSpreadsheet（spreadsheetsById）・Calendar（events配列）は同じ
+ * オブジェクト参照を両サンドボックスへ渡すことで、「別プロジェクトだが同じSpreadsheet/
+ * Calendarを見ている」という実際の構成を再現する。
+ */
+var ADMIN_FILES_FOR_COMPETITION_TEST = [
+  'Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Booking.gs', 'CardPayment.gs',
+  'StripeGateway.gs', 'SpreadsheetRepository.gs', 'RecoveryRepository.gs',
+  'BookingMailTemplates.gs', 'BookingMailer.gs', 'BookingRepository.gs'
+];
+
+function setupCompetitionPair(options) {
+  var opts = options || {};
+  var spreadsheetsById = {};
+  spreadsheetsById[SPREADSHEET_ID] = opts.sheetsByName || {};
+  var events = opts.events || [];
+  var calendarsById = { cal1: { events: events } };
+  var properties = Object.assign(
+    { SPREADSHEET_ID: SPREADSHEET_ID, CALENDAR_ID: CALENDAR_ID, STRIPE_SECRET_KEY: 'sk_test_dummy' },
+    MAIL_PROPERTIES,
+    opts.properties || {}
+  );
+  var mailApp = opts.mailApp || stubs.createMailAppStub();
+
+  /* Webhookプロジェクト側: 既定では実際にStripeが「決済成功」と報告する状態を返す
+     （opts.webhookUrlFetchAppで上書き可能）。 */
+  var webhookUrlFetchApp = opts.webhookUrlFetchApp || stubs.createUrlFetchAppStub(makeStripeResponder(opts.stripeState));
+  var webhook = loadBookingSandbox(FILES, {
+    PropertiesService: stubs.createPropertiesServiceStub(properties),
+    LockService: stubs.createLockServiceStub(), /* Webhookプロジェクト専用の独立したLock */
+    SpreadsheetApp: stubs.createSpreadsheetAppStub(spreadsheetsById),
+    CalendarApp: stubs.createCalendarAppStub(calendarsById),
+    UrlFetchApp: webhookUrlFetchApp,
+    Utilities: stubs.createUtilitiesStub(),
+    MailApp: mailApp,
+    Logger: stubs.createLoggerStub()
+  });
+
+  /* Booking Adminプロジェクト側: expirePendingBookingsが仮押さえ失効確認でStripeへ
+     問い合わせる際の応答（opts.adminUrlFetchAppで指定）。 */
+  var adminUrlFetchApp = opts.adminUrlFetchApp || stubs.createUrlFetchAppStub(function (url) {
+    throw new Error('このテストのadminUrlFetchAppは未設定のURLを受け取りました: ' + url);
+  });
+  var admin = loadBookingSandbox(ADMIN_FILES_FOR_COMPETITION_TEST, {
+    PropertiesService: stubs.createPropertiesServiceStub(properties),
+    LockService: stubs.createLockServiceStub(), /* Booking Adminプロジェクト専用の独立したLock */
+    SpreadsheetApp: stubs.createSpreadsheetAppStub(spreadsheetsById),
+    CalendarApp: stubs.createCalendarAppStub(calendarsById),
+    UrlFetchApp: adminUrlFetchApp,
+    Utilities: stubs.createUtilitiesStub(),
+    MailApp: mailApp,
+    Logger: stubs.createLoggerStub()
+  });
+
+  return { webhook: webhook, admin: admin, events: events, mailApp: mailApp };
+}
+
+function createBookingRowIn(sandbox, overrides) {
+  var record = sampleRecord(overrides);
+  sandbox.SpreadsheetRepository.appendBooking(record);
+  return record.bookingId;
+}
+
+function createCalendarEventIn(events) {
+  var start = new Date('2026-10-01T10:00:00+09:00');
+  var end = new Date('2026-10-01T12:00:00+09:00');
+  var event = stubs.createEventStub({ id: 'event-1', title: 'PENDING studio_x', start: start, end: end, isAllDay: false });
+  event.setTag('bookingId', BOOKING_ID);
+  events.push(event);
+  return event;
+}
+
+/*
+ * ============================================================================
  * 正常系: 決済成功 → 予約自動確定 → 確認メール送信
  * ============================================================================
  */
@@ -272,6 +351,100 @@ test('processEvent: 同一イベントの並行配信は二重処理せず一方
   var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
   assert.strictEqual(record.status, 'PENDING');
   assert.strictEqual(ctx.mailApp._sentEmails.length, 0);
+});
+
+/*
+ * ============================================================================
+ * 同一入金への異なるイベントID・同一イベントの再送・識別子が本当に異なる別決済の区別
+ * （Issue #341 PR-Cレビュー対応・1回目「2. 同一入金への異なる成功イベント」）
+ * ============================================================================
+ */
+
+test('processEvent: 同じ決済（同じPaymentIntent/Session/決済試行ID）に対する異なるイベントIDの通知は、lastStripeEventIdの不一致だけで要復旧にせず1回だけ確定・メール送信する', function () {
+  var ctx = setup();
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+
+  var firstEvent = JSON.stringify({
+    id: 'evt_first_0001', type: 'checkout.session.completed', data: { object: { id: SESSION_ID } }
+  });
+  var firstResult = ctx.sandbox.StripeWebhookHandler.processEvent(firstEvent, new Date('2026-09-20T10:10:00+09:00'));
+  assert.strictEqual(firstResult.ackSuccess, true);
+  assert.strictEqual(firstResult.code, 'CONFIRMED');
+
+  /* 同一のCheckout Session・PaymentIntent・決済試行IDについて、Stripeが別のイベントID
+     （例: checkout.session.async_payment_succeeded、または重複配信）で通知した状況を
+     再現する。eventId自体は異なるため、StripeEventRepositoryの台帳では新規行として
+     claimされる（同一イベントの再送とは別の経路）。 */
+  var secondEvent = JSON.stringify({
+    id: 'evt_second_0002', type: 'checkout.session.async_payment_succeeded', data: { object: { id: SESSION_ID } }
+  });
+  var secondResult = ctx.sandbox.StripeWebhookHandler.processEvent(secondEvent, new Date('2026-09-20T10:11:00+09:00'));
+
+  /* lastStripeEventIdが食い違うだけでPAYMENT_IDENTITY_MISMATCH（恒久の要復旧ゲート）に
+     してはならない（レビュー指摘の中心）。PaymentIntent/Session/決済試行IDが同じである
+     以上、同一決済の重複通知として安全に成功扱いにする。 */
+  assert.strictEqual(secondResult.ackSuccess, true);
+  assert.notStrictEqual(secondResult.code, 'IDENTITY_MISMATCH');
+  assert.strictEqual(secondResult.code, 'CONFIRMED', 'alreadyApplied/alreadyConfirmedを経て、これも成功として確定を試みる（実際には既に確定済みのため何も変更しない）');
+
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(record.status, 'CONFIRMED');
+  assert.strictEqual(record.paymentStatus, 'paid');
+  assert.strictEqual(record.paymentRecoveryRequiredAt, '', '恒久の要復旧ゲートを立ててはならない');
+
+  /* 予約確定・確認メールはいずれも1回だけ。 */
+  assert.strictEqual(ctx.mailApp._sentEmails.length, 1);
+
+  /* 2件とも別々のイベントとしてStripeEventsへ記録される（同一イベントの再送ではない）。 */
+  var firstLedgerRow = ctx.sandbox.StripeEventRepository.findByEventId('evt_first_0001');
+  var secondLedgerRow = ctx.sandbox.StripeEventRepository.findByEventId('evt_second_0002');
+  assert.strictEqual(firstLedgerRow.record.processingState, 'COMPLETED');
+  assert.strictEqual(secondLedgerRow.record.processingState, 'COMPLETED');
+});
+
+test('processEvent: 同一イベントIDの再送は、異なるイベントIDでの同一入金通知とは別に、StripeEventsのALREADY_TERMINALで短絡される', function () {
+  var ctx = setup();
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+
+  var eventId = 'evt_same_0001';
+  var event = JSON.stringify({ id: eventId, type: 'checkout.session.completed', data: { object: { id: SESSION_ID } } });
+
+  var first = ctx.sandbox.StripeWebhookHandler.processEvent(event, new Date('2026-09-20T10:10:00+09:00'));
+  assert.strictEqual(first.code, 'CONFIRMED');
+
+  var second = ctx.sandbox.StripeWebhookHandler.processEvent(event, new Date('2026-09-20T10:12:00+09:00'));
+  assert.strictEqual(second.code, 'ALREADY_COMPLETED');
+
+  assert.strictEqual(ctx.mailApp._sentEmails.length, 1);
+});
+
+test('processEvent: 決済試行ID・Session IDが本当に異なる別決済は、依然としてIDENTITY_MISMATCHとして要復旧にする（回帰確認）', function () {
+  var ctx = setup();
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+
+  /* metadataのpaymentAttemptId・brandは正しいが、Checkout Session自体が台帳の記録と
+     異なる（別の決済試行の遅延配信、または深刻な取り違えを想定）。 */
+  var otherSessionCtx = setup({
+    stripeState: {
+      metadata: { bookingId: BOOKING_ID, brand: 'studio_x', paymentAttemptId: 'PAY-COMPLETELY-DIFFERENT-ATTEMPT' }
+    }
+  });
+  createBookingRow(otherSessionCtx);
+  createCalendarEvent(otherSessionCtx);
+
+  var event = buildEvent('checkout.session.completed', {});
+  var result = otherSessionCtx.sandbox.StripeWebhookHandler.processEvent(event, new Date());
+
+  assert.strictEqual(result.ackSuccess, true);
+  assert.strictEqual(result.code, 'IDENTITY_MISMATCH');
+
+  var record = otherSessionCtx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(record.status, 'PENDING');
+  assert.strictEqual(record.paymentStatus, 'checkout_pending');
+  assert.ok(record.paymentRecoveryRequiredAt, '本当に異なる決済の疑いがある場合は引き続き恒久ゲートを立てる');
 });
 
 test('processEvent: 処理途中で停止したイベント（RECEIVEDのまま古い）は安全に再試行できる', function () {
@@ -489,99 +662,99 @@ test('processEvent: 予約IDがBookings台帳に見つからない場合はRecov
 
 /*
  * ============================================================================
- * 失効処理（expirePendingBookings）との競合
+ * 失効処理（expirePendingBookings。別プロジェクト・別LockService）との競合
+ * （Issue #341 PR-Cレビュー対応・1回目で再設計。setupCompetitionPair参照）
  * ============================================================================
  */
 
-test('processEvent → expirePendingBookings: Webhookが先に確定した場合、失効処理は枠を解放しない', function () {
-  var ctx = setup();
-  createBookingRow(ctx, { paymentHoldExpiresAt: new Date('2026-09-20T10:05:00+09:00') });
-  createCalendarEvent(ctx);
+test('processEvent → expirePendingBookings（別プロジェクト）: Webhookが先に確定した場合、失効処理は枠を解放しない', function () {
+  var pair = setupCompetitionPair({
+    /* Booking Admin側が仮押さえ失効確認で問い合わせた時点でも、Stripeは「安全に
+       失効させてよい」状態を報告する設定のまま実行する。それでもWebhookが先に
+       CONFIRMED済みのため、expirePendingBookings自身のLock保護された再確認
+       （latest.record.status !== PENDING）でスキップされる。 */
+    adminUrlFetchApp: stubs.createUrlFetchAppStub(function (url) {
+      if (url.indexOf('/checkout/sessions/') !== -1) {
+        return { responseCode: 200, body: { id: SESSION_ID, status: 'expired', payment_status: 'unpaid' } };
+      }
+      throw new Error('未対応のURL: ' + url);
+    })
+  });
+  createBookingRowIn(pair.webhook, { paymentHoldExpiresAt: new Date('2026-09-20T10:05:00+09:00') });
+  createCalendarEventIn(pair.events);
 
-  var confirmResult = ctx.sandbox.StripeWebhookHandler.processEvent(buildEvent('checkout.session.completed', {}), new Date('2026-09-20T10:10:00+09:00'));
+  var confirmResult = pair.webhook.StripeWebhookHandler.processEvent(buildEvent('checkout.session.completed', {}), new Date('2026-09-20T10:10:00+09:00'));
   assert.strictEqual(confirmResult.code, 'CONFIRMED');
 
-  /* Stripe側は「安全に失効させてよい」と報告する設定のまま、expirePendingBookingsを
-     同じLockServiceで実行する。既にCONFIRMED済みのため、Lock保護された再確認で
-     スキップされ、Calendarイベントは削除されない。 */
-  var expireStripeResponder = function (url) {
-    if (url.indexOf('/checkout/sessions/') !== -1) {
-      return { responseCode: 200, body: { id: SESSION_ID, status: 'expired', payment_status: 'unpaid' } };
-    }
-    throw new Error('未対応のURL: ' + url);
-  };
-  ctx.urlFetchApp._calls.length = 0;
-  var previousFetch = ctx.sandbox.UrlFetchApp.fetch;
-  ctx.sandbox.UrlFetchApp.fetch = function (url, options) {
-    var result = expireStripeResponder(url);
-    return {
-      getResponseCode: function () { return result.responseCode; },
-      getContentText: function () { return JSON.stringify(result.body); }
-    };
-  };
-
-  var expireResult = ctx.sandbox.BookingRepository.expirePendingBookings(new Date('2026-09-20T11:00:00+09:00'));
+  /* expirePendingBookingsはBooking Admin側の独立したサンドボックス（別LockService）で
+     実行する。グレース期間（CardPayment.WEBHOOK_RACE_GRACE_MINUTES=10分）を超えた
+     時刻で実行する。 */
+  var expireResult = pair.admin.BookingRepository.expirePendingBookings(new Date('2026-09-20T11:00:00+09:00'));
   assert.strictEqual(expireResult.expiredCount, 0);
 
-  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  var record = pair.admin.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
   assert.strictEqual(record.status, 'CONFIRMED');
   assert.strictEqual(record.paymentStatus, 'paid');
 
-  var calendarEvent = ctx.sandbox.CalendarApp.getCalendarById(CALENDAR_ID).getEventById('event-1') || ctx.sandbox.CalendarApp.getCalendarById(CALENDAR_ID).getEvents()[0];
-  assert.ok(calendarEvent);
-  assert.strictEqual(calendarEvent.isDeleted(), false);
+  assert.strictEqual(pair.events.length, 1);
+  assert.strictEqual(pair.events[0].isDeleted(), false);
 });
 
-test('processEvent: 失効処理が先に完了していた場合、遅延した決済成功はRecoveryへ送られ入金は保持される', function () {
-  var ctx = setup();
-  createBookingRow(ctx, { paymentHoldExpiresAt: new Date('2026-09-20T10:05:00+09:00') });
-  createCalendarEvent(ctx);
+test('processEvent: 失効処理（別プロジェクト）が先に完了していた場合、遅延した決済成功はRecoveryへ送られ入金は保持される', function () {
+  var pair = setupCompetitionPair({
+    /* Booking Admin側が問い合わせた時点では、Stripeは確実に期限切れ・未払いと
+       報告する（webhook側のデフォルト応答＝実際には決済成功、とは別の応答。
+       2つの異なるプロジェクトが異なるタイミングでStripeへ問い合わせている状況を表す）。 */
+    adminUrlFetchApp: stubs.createUrlFetchAppStub(function (url) {
+      if (url.indexOf('/checkout/sessions/') !== -1) {
+        return { responseCode: 200, body: { id: SESSION_ID, status: 'expired', payment_status: 'unpaid' } };
+      }
+      throw new Error('未対応のURL: ' + url);
+    })
+  });
+  createBookingRowIn(pair.webhook, { paymentHoldExpiresAt: new Date('2026-09-20T10:05:00+09:00') });
+  createCalendarEventIn(pair.events);
 
-  /* Stripe側は既に失効・未払いと確認できる状態。expirePendingBookingsが先に枠を解放する。 */
-  var expireResponder = function (url) {
-    if (url.indexOf('/checkout/sessions/') !== -1) {
-      return { responseCode: 200, body: { id: SESSION_ID, status: 'expired', payment_status: 'unpaid' } };
-    }
-    throw new Error('未対応のURL: ' + url);
-  };
-  ctx.sandbox.UrlFetchApp.fetch = function (url) {
-    var result = expireResponder(url);
-    return { getResponseCode: function () { return result.responseCode; }, getContentText: function () { return JSON.stringify(result.body); } };
-  };
-  var expireResult = ctx.sandbox.BookingRepository.expirePendingBookings(new Date('2026-09-20T11:00:00+09:00'));
+  var expireResult = pair.admin.BookingRepository.expirePendingBookings(new Date('2026-09-20T11:00:00+09:00'));
   assert.strictEqual(expireResult.expiredCount, 1);
 
-  var afterExpire = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  var afterExpire = pair.admin.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
   assert.strictEqual(afterExpire.status, 'EXPIRED');
   assert.strictEqual(afterExpire.paymentStatus, 'failed');
 
-  /* その直後、実際には決済が完了していたという遅延Webhookが届く（Stripe側の実際の
-     応答を成功状態に差し替える）。 */
-  ctx.sandbox.UrlFetchApp.fetch = function (url, options) {
-    var responder = makeStripeResponder();
-    var result = responder(url, options);
-    return { getResponseCode: function () { return result.responseCode; }, getContentText: function () { return JSON.stringify(result.body); } };
-  };
-
+  /* その直後、実際には決済が完了していたという遅延Webhookが、独立したBooking Webhook
+     プロジェクトへ届く（そちらのUrlFetchAppは既定の「決済成功」応答のまま）。 */
   var lateEvent = buildEvent('checkout.session.completed', {});
-  var result = ctx.sandbox.StripeWebhookHandler.processEvent(lateEvent, new Date('2026-09-20T11:05:00+09:00'));
+  var result = pair.webhook.StripeWebhookHandler.processEvent(lateEvent, new Date('2026-09-20T11:05:00+09:00'));
   assert.strictEqual(result.ackSuccess, true);
-  /* 決済試行ID・Session IDは一致する（expirePendingBookingsはpaymentAttemptIdを変更
-     しない）が、paymentStatusは既に'failed'へ進んでいるため'paid'への遷移自体が
-     許可されない（Booking.PAYMENT_STATUS_TRANSITIONS_）。Stripe側は入金完了と報告して
-     いるため、これを黙って無視せずRecoveryへ記録する（StripeWebhookHandler.gsの
-     SELF_RECORDING_PAYMENT_UPDATE_ERROR_CODES_に含まれないコードの扱い）。 */
-  assert.strictEqual(result.code, 'INVALID_PAYMENT_TRANSITION');
+  /*
+   * 決済試行ID・Session IDは一致する（expirePendingBookingsはpaymentAttemptIdを変更
+   * しない）ため、Booking.PAYMENT_STATUS_TRANSITIONS_のFAILED→PAID許可（レビュー対応・
+   * 1回目）により、入金の事実（paymentStatus:paid）は正しく記録される。一方status
+   * （EXPIRED）はapplyPaymentStateUpdateの対象外のため変更されず、confirmBookingが
+   * EXPIREDを理由に自動確定を拒否する（PAID_CONFIRM_BLOCKED）。
+   */
+  assert.strictEqual(result.code, 'PAID_CONFIRM_BLOCKED');
 
-  /* 入金の事実は消さない: EXPIRED状態のまま予約を勝手にCONFIRMEDへ戻さないが、
-     要復旧としてRecoveryへ記録される。 */
-  var finalRecord = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  /* 入金の事実は保持される: paymentStatusはpaidへ正しく更新されるが、予約のstatusは
+     EXPIREDのまま（勝手にCONFIRMEDへ戻さない）。運営者向けにRecoveryへ記録される。 */
+  var finalRecord = pair.admin.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
   assert.strictEqual(finalRecord.status, 'EXPIRED');
-  assert.strictEqual(finalRecord.paymentStatus, 'failed');
+  assert.strictEqual(finalRecord.paymentStatus, 'paid');
+  assert.strictEqual(finalRecord.stripePaymentIntentId, PAYMENT_INTENT_ID);
   assert.ok(finalRecord.paymentRecoveryRequiredAt);
 
-  var recovery = ctx.sandbox.RecoveryRepository.listAll();
-  assert.ok(recovery.some(function (r) { return r.bookingId === BOOKING_ID && r.failureType === 'STRIPE_WEBHOOK_PAYMENT_UPDATE_REJECTED'; }));
+  var recovery = pair.admin.RecoveryRepository.listAll();
+  assert.ok(recovery.some(function (r) { return r.bookingId === BOOKING_ID && r.failureType === 'PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED'; }));
+
+  /* 予約はまだ確定していないため、確認メール（CONFIRMEDメール）は送信されない。
+     送信されているのはexpirePendingBookings自体が送るEXPIRED通知（既存挙動。
+     Issue #334）の1件のみ。 */
+  assert.strictEqual(pair.mailApp._sentEmails.length, 1, 'EXPIRED通知メールのみ送信される');
+  assert.ok(
+    pair.mailApp._sentEmails[0].subject.indexOf('確定') === -1,
+    '送信されたメールが確定（CONFIRMED）メールであってはならない'
+  );
 });
 
 /*

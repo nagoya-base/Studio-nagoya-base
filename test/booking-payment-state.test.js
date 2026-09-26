@@ -422,6 +422,34 @@ test('applyPaymentStateUpdate: checkout_pending/failedのような非資金移�
 });
 
 /*
+ * Issue #341 PR-Cレビュー対応・1回目: expirePendingBookings（Booking Admin）とWebhook処理
+ * （Booking Webhook。別プロジェクト・別LockService）が競合し、失効判定が先に
+ * paymentStatus:failedへ進めた直後に、実際には決済が成立していたとWebhookで判明する
+ * 場合がある。この場合でも入金の事実（paymentStatus:paid）を記録できることを検証する
+ * （Booking.gsのPAYMENT_STATUS_TRANSITIONS_[FAILED]にPAIDを追加）。この関数はpaymentStatus
+ * 列のみを更新し、予約のstatus（EXPIRED等）には一切影響しない。
+ */
+test('applyPaymentStateUpdate: 失効によりFAILEDへ進んだ後でも、正しい証跡があれば入金の事実（PAID）を記録できる（Issue #341 PR-Cレビュー対応）', function () {
+  var ctx = setup();
+  var bookingId = createBookingRow(ctx, {
+    status: 'EXPIRED',
+    paymentStatus: 'failed',
+    paymentAttemptId: 'PAY-1',
+    stripeCheckoutSessionId: 'cs_1'
+  });
+
+  var result = ctx.sandbox.BookingRepository.applyPaymentStateUpdate(bookingId, 'paid', {
+    stripePaymentIntentId: 'pi_1', lastStripeEventId: 'evt_1', paymentConfirmedAt: new Date()
+  });
+  assert.strictEqual(result.success, true);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.paymentStatus, 'paid', '入金の事実が記録される');
+  assert.strictEqual(found.record.status, 'EXPIRED', '予約のstatusには一切影響しない（自動確定はconfirmBooking側の責務）');
+  assert.strictEqual(found.record.stripePaymentIntentId, 'pi_1');
+});
+
+/*
  * 2回目レビュー対応・項目2: 決済証跡の整合性検証。
  * paidへの遷移にはstripePaymentIntentId・lastStripeEventIdが必須（REQUIRED_EVIDENCE_FOR_STATUS_）。
  */
