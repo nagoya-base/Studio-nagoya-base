@@ -27,6 +27,12 @@ var BOOKING_ADMIN_FILES = [
    * 直後・SpreadsheetRepository.gsより前に置く（依存順）。
    */
   'CardPayment.gs',
+  /*
+   * Issue #341 PR-B（Checkout Session発行・仮押さえ）で追加。expirePendingBookings
+   * （このAdminプロジェクトの時間主導トリガー）がcheckout_pendingの仮押さえ失効確認で
+   * StripeGateway.retrieveCheckoutSessionを呼ぶため、Booking Adminにも必要。
+   */
+  'StripeGateway.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
   'BookingMailTemplates.gs',
@@ -64,6 +70,9 @@ var BOOKING_WEB_APP_FILES = [
   'Availability.gs',
   'Booking.gs',
   'CardPayment.gs',
+  /* Issue #341 PR-B: BookingRepository.beginCardCheckoutがStripeGateway.
+     createCheckoutSession/retrieveCheckoutSessionを呼ぶため必要。 */
+  'StripeGateway.gs',
   'JapaneseHolidays.gs',
   'BookingPricing.gs',
   'RateLimiter.gs',

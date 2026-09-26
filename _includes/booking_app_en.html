@@ -331,10 +331,24 @@
       </tbody>
     </table>
 
-    <div class="ba-complete-pending-notice">
+    <div class="ba-complete-pending-notice" id="ba-complete-generic-notice">
       <strong>Your booking is not confirmed yet.</strong><br>
       Your booking is confirmed only after we review your request and send you a confirmation. We normally contact you within 24 hours.
     </div>
+
+    <p class="ba-banner ba-banner--notice" id="ba-complete-card-payment-notice" hidden></p>
+
+    <!-- Issue #341 PR-B: Stripe Checkout redirect. Hidden by default; shown only when
+         startCardCheckout returns a checkoutUrl (disabled in production by default). -->
+    <p class="ba-banner ba-banner--notice" id="ba-complete-checkout-notice" hidden></p>
+    <p id="ba-complete-checkout-wrap" hidden><a class="ba-btn ba-btn-primary" id="ba-complete-checkout-link" href="#" rel="noopener"></a></p>
+
+    <!-- PR #354 review: shown when startCardCheckout's result is anything other than a
+         confirmed "not started" code (CHECKOUT_DISABLED etc.) — e.g. unknown Session
+         creation result, ledger save failure, or a possibly-completed payment. The old
+         "payment link will be sent later" notice above is never shown in that case
+         (double-payment prevention). -->
+    <p class="ba-banner ba-banner--error" id="ba-complete-checkout-uncertain-notice" hidden></p>
 
     <p id="ba-complete-back-link-wrap"><a class="ba-btn ba-btn-primary" id="ba-complete-back-link" href="#"></a></p>
   </section>

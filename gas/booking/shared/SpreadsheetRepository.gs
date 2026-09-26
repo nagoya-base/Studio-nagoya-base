@@ -205,7 +205,8 @@ var SpreadsheetRepository = (function () {
      * 追加時と同じく末尾追記の方針を踏襲する（本番反映時は既存Bookingsシートのヘッダー
      * 行へ手動で追記が必要。README.md「Spreadsheet構成」参照）。
      *
-     * 'paymentAttemptId'〜'paymentRecoveryReason'の15列はHEADERS_上で連続させ、
+     * 'paymentAttemptId'〜'paymentRecoveryReason'の17列（PR #354レビュー対応・2回目でstripeCheckoutRequestSnapshot、
+     * 3回目でpaymentAttemptResolvedAtを追加）はHEADERS_上で連続させ、
      * updateBookingPaymentStateAtomicによる1回のRange.setValuesでの一括更新を可能にする
      * （updateBookingCancellationStateAtomic/updateBookingRescheduleFeeAtomicと同じ
      * パターン）。'accessApprovedAt'だけはこの連続範囲に含めない（Issue #341本文
@@ -223,6 +224,21 @@ var SpreadsheetRepository = (function () {
      *   （CardPayment.generatePaymentAttemptId）。Stripe Checkout Session発行時の
      *   冪等キーやWebhook metadataとの照合に使う想定（PR-B/PR-C）。再試行のたびに
      *   新しいIDへ更新される。
+     * - paymentAttemptResolvedAt（PR #354レビュー対応・3回目。Issue #341 PR-B）:
+     *   paymentAttemptIdが指す決済試行が「これ以上自動的には動かない」終端の結果
+     *   （Stripeが明確に拒否＝failedへの遷移、またはCheckout Session発行成功＝
+     *   checkout_pendingへの遷移）に到達した日時。**paymentStatusとは独立**に持つ
+     *   （BookingRepository.reservePaymentAttempt_のコメント参照）。空＝この
+     *   paymentAttemptIdはまだ未解決（Stripe呼び出し中、または結果不明で保留中）で
+     *   あることを意味し、reservePaymentAttempt_は空である限りpaymentStatusが
+     *   not_started/failedのどちらであっても新しいIDを発行せずこのIDとスナップショットを
+     *   再利用する。これにより、failedの予約へ複数リクエストがほぼ同時に到達しても
+     *   （1つ目がpaymentStatusをfailedへ進める前に新しい試行を予約した直後など）、
+     *   後続のリクエストは同じ未解決の試行へ収束する（1つ目のリクエストがpaymentStatusを
+     *   変えずに決済試行だけを予約する設計のため、paymentStatus単体では「新しく予約済みで
+     *   未解決」と「以前の試行が確定的に終わった後の空き状態」を区別できないことに対応する）。
+     *   新しい決済試行を予約する（reservePaymentAttempt_が新しいpaymentAttemptIdを発行する）
+     *   たびに、この列は必ず空へ戻してから予約する（前の試行の終端状態を引き継がない）。
      * - stripeCheckoutSessionId / stripePaymentIntentId: Stripe側の識別子（PR-Bで
      *   Checkout Session発行時に記録）。
      * - paymentHoldExpiresAt: 決済中の仮押さえ期限（CardPayment.
@@ -239,6 +255,18 @@ var SpreadsheetRepository = (function () {
      *   一切影響しない（料金変更後のWebhookで正常な決済が誤ってAMOUNT_MISMATCHになる
      *   事故を防ぐ設計。詳細はCardPayment.gsのverifyPaymentAgainstSnapshotコメントおよび
      *   README「Issue #341」節参照）。
+     * - stripeCheckoutRequestSnapshot（PR #354レビュー対応・2回目。Issue #341 PR-B）:
+     *   Stripe Checkout Session作成APIへ実際に送信するリクエスト内容一式
+     *   （amountJpy/currency/bookingId/brand/paymentAttemptId/expiresAtSeconds/
+     *   successUrl/cancelUrl/customerEmail/lineItemName）をJSON文字列として保存した
+     *   スナップショット。決済試行ID（Idempotency-Key）を発行するのと**同じタイミング・
+     *   同じRange.setValues呼び出し**で確定・保存する（BookingRepository.
+     *   reservePaymentAttempt_）。GAS保存失敗・APIタイムアウト後の再試行、またはその間の
+     *   料金修正・Script Properties変更（successUrl/cancelUrl等）があっても、未解決の
+     *   決済試行はこのスナップショットを**そのまま**再利用し、Stripeへ送るリクエスト内容を
+     *   常に初回と完全に一致させる（Stripeは同一Idempotency-Keyに異なる内容が送られると
+     *   idempotency_errorを返すため）。安全に復元できない場合（JSON解析失敗・必須項目
+     *   欠落・paymentAttemptId不一致等）は新しいSessionを発行せず要復旧として停止する。
      * - paymentConfirmedAt: 署名検証済みWebhookで決済成功を確認した日時。予約確定
      *   （confirmedAt）とは独立した列として持つ（Issue #341本文「決済状態を独立して
      *   扱う」。通常は自動確定と同時刻になるが、遅延Webhookで枠が埋まっていた場合は
@@ -253,7 +281,7 @@ var SpreadsheetRepository = (function () {
      *   AdminのStripe決済状態表示で、メール送信の失敗と混同させないため。
      *   BookingMailer.gsの既存の専用エラー列の方針を踏襲）。
      * - paymentRecoveryRequiredAt / paymentRecoveryReason: 決済状態の更新処理が途中
-     *   失敗し、この15列の整合性が保証できない場合に設定する（PR #345レビュー対応の
+     *   失敗し、この17列の整合性が保証できない場合に設定する（PR #345レビュー対応の
      *   feeRecoveryRequiredAt/feeRecoveryReasonと同じ「明示的な補正関数でのみ
      *   クリアできる」設計を踏襲する想定。空でない間は以後の自動的な決済状態遷移を
      *   停止する。実際の遷移処理自体はPR-B/PR-Cで実装する）。
@@ -264,11 +292,13 @@ var SpreadsheetRepository = (function () {
      *   一切トリガーしない（Issue #341受入条件）。
      */
     'paymentAttemptId',
+    'paymentAttemptResolvedAt',
     'stripeCheckoutSessionId',
     'stripePaymentIntentId',
     'paymentHoldExpiresAt',
     'stripeAmount',
     'stripeCurrency',
+    'stripeCheckoutRequestSnapshot',
     'paymentConfirmedAt',
     'lastStripeEventId',
     'stripeRefundId',
@@ -278,7 +308,18 @@ var SpreadsheetRepository = (function () {
     'paymentLastErrorMessage',
     'paymentRecoveryRequiredAt',
     'paymentRecoveryReason',
-    'accessApprovedAt'
+    'accessApprovedAt',
+    /*
+     * PR #354レビュー対応（Issue #341 PR-B）で追加。カード決済予約のcreateBooking時に
+     * 発行する、推測困難な決済開始トークン（Utilities.getUuid()。現金・PayPay予約は
+     * 常に空文字のまま）。bookingId（ブランド+日付+uuidの一部8桁のみで構成され、
+     * 総当たりに対して十分な強度を持たない）だけではCheckout Sessionの発行・取得を
+     * 一切許可しない設計にするため、BookingRepository.beginCardCheckoutは必ずこの列と
+     * 呼び出し元が渡す値が一致することを要求する（tokensMatch_。定数時間比較）。
+     * createBookingのレスポンスで一度だけ本人（送信したブラウザ）へ返し、以後は
+     * ブラウザ側が保持する。台帳・ログ・PRには実値を記載しない。
+     */
+    'checkoutAccessToken'
   ];
 
   function getSpreadsheet_() {
@@ -572,8 +613,9 @@ var SpreadsheetRepository = (function () {
   }
 
   var PAYMENT_STATE_ATOMIC_FIELDS_ = [
-    'paymentAttemptId', 'stripeCheckoutSessionId', 'stripePaymentIntentId',
-    'paymentHoldExpiresAt', 'stripeAmount', 'stripeCurrency', 'paymentConfirmedAt',
+    'paymentAttemptId', 'paymentAttemptResolvedAt', 'stripeCheckoutSessionId', 'stripePaymentIntentId',
+    'paymentHoldExpiresAt', 'stripeAmount', 'stripeCurrency', 'stripeCheckoutRequestSnapshot',
+    'paymentConfirmedAt',
     'lastStripeEventId', 'stripeRefundId', 'refundRequestedAt', 'refundedAt',
     'paymentLastErrorAt', 'paymentLastErrorMessage', 'paymentRecoveryRequiredAt',
     'paymentRecoveryReason'
@@ -582,10 +624,11 @@ var SpreadsheetRepository = (function () {
   /*
    * Issue #341 PR-A: Stripe決済状態の付随情報のatomic更新（updateBookingCancellationStateAtomic/
    * updateBookingRescheduleFeeAtomicと同じパターン）。HEADERS_上で実際に連続する
-   * 'paymentAttemptId'〜'paymentRecoveryReason'（末尾15列）の範囲に対する1回のsetValuesで
-   * まとめて更新する。
+   * 'paymentAttemptId'〜'paymentRecoveryReason'（末尾17列。PR #354レビュー対応・2回目で
+   * 'stripeCheckoutRequestSnapshot'、3回目で'paymentAttemptResolvedAt'を追加）の範囲に対する
+   * 1回のsetValuesでまとめて更新する。
    *
-   * 既存の'paymentStatus'（30列目。Issue #271由来の既存列を転用）はこの15列と
+   * 既存の'paymentStatus'（30列目。Issue #271由来の既存列を転用）はこの17列と
    * HEADERS_上で連続していない（間にexpiredMailSentAt〜feeRecoveryReasonという無関係な
    * 既存25列が挟まる）ため、意図的にこの関数の対象に含めない。同じRange.setValuesへ
    * 含めてしまうと、その25列を他プロセス（決済リンク送信・料金修正・日程変更等）が

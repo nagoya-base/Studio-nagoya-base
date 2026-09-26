@@ -121,9 +121,16 @@ var Booking = (function () {
    * 識別子（NOT_STARTED:等）で書くとcanTransitionPaymentStatusの引数（実際の値
    * 'not_started'等）と一致せずルックアップが常に失敗する。計算されたプロパティ名
    * （[PAYMENT_STATUS.NOT_STARTED]:のように角括弧で値を明示）で定義する。
+   *
+   * NOT_STARTED→FAILED（Issue #341 PR-Bで判明し追加）: Stripe Checkout Session
+   * 作成そのものがStripe側に明確に拒否された場合（不正なリクエスト等。CHECKOUT_PENDING
+   * へは一度も到達していない）に必要な遷移。この場合でも、次回の決済試行が同じ
+   * Idempotency-Key（paymentAttemptId）を無条件に再利用し続けて同じエラーを繰り返さない
+   * よう、FAILEDへ進めて新しい決済試行IDの発行を可能にする
+   * （BookingRepository.reservePaymentAttempt_参照）。
    */
   var PAYMENT_STATUS_TRANSITIONS_ = {};
-  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.NOT_STARTED] = [PAYMENT_STATUS.CHECKOUT_PENDING];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.NOT_STARTED] = [PAYMENT_STATUS.CHECKOUT_PENDING, PAYMENT_STATUS.FAILED];
   PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.CHECKOUT_PENDING] = [PAYMENT_STATUS.PAID, PAYMENT_STATUS.FAILED];
   PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.FAILED] = [PAYMENT_STATUS.CHECKOUT_PENDING];
   PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.PAID] = [PAYMENT_STATUS.REFUND_PENDING];
