@@ -34,7 +34,6 @@ var FILES = [
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
-  'BookingLockRepository.gs',
   'FeeCalculator.gs',
   'FeeSettlementRepository.gs',
   'BookingReschedule.gs',

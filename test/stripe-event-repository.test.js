@@ -3,6 +3,12 @@
  * - 同一イベントの再送（既にCOMPLETED/IGNORED/REJECTED）は再処理せず同じ結果を返す。
  * - 同一イベントが同時に2件届いても（RECEIVEDのまま新しい）二重処理されない。
  * - 処理途中で失敗したイベント（RECEIVEDのまま古い）は安全に再claimできる。
+ *
+ * 【レビュー対応・4回目で追加】このファイルはBooking Webhook（新規イベントの受信・
+ * rawBody永続化）とBooking Admin（未処理イベントの取り出し・claim経由の二重処理防止）の
+ * 両方から共有される（gas/booking/webhook/からgas/booking/shared/へ移動。
+ * StripeEventRepository.gs冒頭コメント参照）。storeRawBody/listPendingWithBodyは
+ * このレビュー対応で新設した。
  */
 'use strict';
 
@@ -129,4 +135,61 @@ test('finalize: processingStateにCLAIMED等の非終端値を渡すと例外を
   assert.throws(function () {
     sandbox.StripeEventRepository.finalize(claimResult.rowNumber, { processingState: 'RECEIVED' }, new Date());
   });
+});
+
+/*
+ * ============================================================================
+ * storeRawBody / listPendingWithBody（レビュー対応・4回目で新設）
+ * ============================================================================
+ */
+
+test('storeRawBody: claimされた行にrawBodyを保存でき、findByEventIdで読み取れる', function () {
+  var sandbox = setup();
+  var now = new Date('2026-10-01T10:00:00+09:00');
+  var claimResult = sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', now);
+  var rawBody = JSON.stringify({ id: 'evt_1', type: 'checkout.session.completed', data: { object: { id: 'cs_1' } } });
+
+  sandbox.StripeEventRepository.storeRawBody(claimResult.rowNumber, rawBody, now);
+
+  var found = sandbox.StripeEventRepository.findByEventId('evt_1');
+  assert.strictEqual(found.record.rawBody, rawBody);
+});
+
+test('listPendingWithBody: processingState=RECEIVEDかつrawBody保存済みの行だけを返す', function () {
+  var sandbox = setup();
+  var now = new Date('2026-10-01T10:00:00+09:00');
+
+  /* 1) 正常系: 受信・永続化まで完了した行。 */
+  var claim1 = sandbox.StripeEventRepository.claim('evt_stored', 'checkout.session.completed', now);
+  sandbox.StripeEventRepository.storeRawBody(claim1.rowNumber, JSON.stringify({ id: 'evt_stored' }), now);
+
+  /* 2) Webhook側がclaim直後・storeRawBody前にクラッシュした行（取りこぼしを疑うべき行）。
+     rawBodyが空のため処理候補に含めてはならない（イベントの中身を復元できないため）。 */
+  sandbox.StripeEventRepository.claim('evt_crashed_before_store', 'checkout.session.completed', now);
+
+  /* 3) 既に終端状態まで到達した行。候補に含めてはならない。 */
+  var claim3 = sandbox.StripeEventRepository.claim('evt_done', 'checkout.session.completed', now);
+  sandbox.StripeEventRepository.storeRawBody(claim3.rowNumber, JSON.stringify({ id: 'evt_done' }), now);
+  sandbox.StripeEventRepository.finalize(claim3.rowNumber, { processingState: 'COMPLETED', outcomeCode: 'CONFIRMED', outcomeMessage: '' }, now);
+
+  var pending = sandbox.StripeEventRepository.listPendingWithBody();
+  assert.strictEqual(pending.length, 1);
+  assert.strictEqual(pending[0].record.eventId, 'evt_stored');
+});
+
+test('claim: rawBody保存済みでRECEIVEDのまま停止した行は、再claim（staleAfterMs経過後）してもrawBodyを保持したまま返す', function () {
+  var sandbox = setup();
+  var claimedAt = new Date('2026-10-01T10:00:00+09:00');
+  var claim1 = sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', claimedAt);
+  var rawBody = JSON.stringify({ id: 'evt_1' });
+  sandbox.StripeEventRepository.storeRawBody(claim1.rowNumber, rawBody, claimedAt);
+
+  /* Admin側の処理が例外で中断し、RECEIVEDのまま放置された想定（Admin側のstaleAfterMsは
+     StripeWebhookProcessor.ADMIN_CLAIM_STALE_AFTER_MS_=2分。ここでは直接staleAfterMsを
+     指定して同じ挙動を検証する）。 */
+  var muchLater = new Date(claimedAt.getTime() + 3 * 60000);
+  var retry = sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', muchLater, 2 * 60000);
+  assert.strictEqual(retry.outcome, 'CLAIMED');
+  assert.strictEqual(retry.isRetry, true);
+  assert.strictEqual(retry.record.rawBody, rawBody, 'rawBodyは再claimしても保持されたままであるべき');
 });

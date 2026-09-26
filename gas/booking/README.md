@@ -3002,30 +3002,38 @@ Webhook用の「Anyone」デプロイのURLへアクセスするだけで、管�
 バンドルには管理者向けファイルが**そもそも含まれない**ため、この種の漏洩が構造的に
 起こり得ない。
 
+**レビュー対応・4回目でBooking Webhookプロジェクトの配布ファイルが大幅に縮小した。**
+1〜3回目までは、このプロジェクトが決済照合・予約自動確定まで行っており、下表の
+CardPayment.gs/StripeGateway.gs/SpreadsheetRepository.gs/RecoveryRepository.gs/
+BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Calendarに
+触れるファイルの多くをこのプロジェクトにも配布する必要があった。4回目で、このプロジェクトの
+責務を「署名検証済みイベントをStripeEventRepositoryへ安全に永続化するだけ」に縮小した
+結果、これらのファイルは一切不要になった（詳細は「Webhookと失効処理の競合」節・
+`BookingWebhookEndpoint.gs`冒頭コメント参照）。
+
 | ファイル | Booking Web App（スタンドアロン） | Booking Admin（コンテナバインド） | Booking Webhook（スタンドアロン） | このリポジトリでの配置 |
 | --- | :---: | :---: | :---: | --- |
 | `Code.gs` | ✓ | – | – | `gas/booking/public/Code.gs` |
-| `Availability.gs` | ✓ | ✓ | ✓ | `gas/booking/shared/Availability.gs` |
+| `Availability.gs` | ✓ | ✓ | – | `gas/booking/shared/Availability.gs` |
 | `Config.gs` | ✓ | ✓ | ✓ | `gas/booking/shared/Config.gs` |
-| `CalendarRepository.gs` | ✓ | ✓ | ✓ | `gas/booking/shared/CalendarRepository.gs` |
-| `Booking.gs` | ✓ | ✓ | ✓ | `gas/booking/shared/Booking.gs` |
-| `CardPayment.gs`（Issue #341 PR-A） | ✓ | ✓ | ✓ | `gas/booking/shared/CardPayment.gs` |
-| `StripeGateway.gs`（Issue #341 PR-B。Stripe REST APIへのUrlFetchApp呼び出し。PR-Cで`retrievePaymentIntent`を追加） | ✓ | ✓（`expirePendingBookings`の仮押さえ失効確認でのみ使用） | ✓（Checkout Session/PaymentIntent再取得） | `gas/booking/shared/StripeGateway.gs` |
+| `CalendarRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/CalendarRepository.gs` |
+| `Booking.gs` | ✓ | ✓ | – | `gas/booking/shared/Booking.gs` |
+| `CardPayment.gs`（Issue #341 PR-A） | ✓ | ✓ | – | `gas/booking/shared/CardPayment.gs` |
+| `StripeGateway.gs`（Issue #341 PR-B。Stripe REST APIへのUrlFetchApp呼び出し。PR-Cで`retrievePaymentIntent`を追加） | ✓ | ✓（`expirePendingBookings`の仮押さえ失効確認・`processPendingStripeWebhookEvents`のCheckout Session/PaymentIntent再取得の両方で使用） | – | `gas/booking/shared/StripeGateway.gs` |
 | `JapaneseHolidays.gs`（Issue #346／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | – | `gas/booking/shared/JapaneseHolidays.gs` |
 | `BookingPricing.gs`（Issue #342／Issue #346で祝日判定を追加／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | – | `gas/booking/shared/BookingPricing.gs` |
 | `RateLimiter.gs` | ✓ | – | – | `gas/booking/public/RateLimiter.gs` |
-| `SpreadsheetRepository.gs` | ✓ | ✓ | ✓ | `gas/booking/shared/SpreadsheetRepository.gs` |
-| `RecoveryRepository.gs` | ✓ | ✓ | ✓ | `gas/booking/shared/RecoveryRepository.gs` |
-| `BookingLockRepository.gs`（Issue #341 PR-Cレビュー対応・2回目。Booking Admin/Webhook間で共有する予約単位の排他制御） | – | ✓ | ✓ | `gas/booking/shared/BookingLockRepository.gs` |
-| `BookingRepository.gs` | ✓ | ✓ | ✓ | `gas/booking/shared/BookingRepository.gs` |
+| `SpreadsheetRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/SpreadsheetRepository.gs` |
+| `RecoveryRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/RecoveryRepository.gs` |
+| `BookingRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/BookingRepository.gs` |
 | `AdminNotifier.gs` | ✓ | – | – | `gas/booking/public/AdminNotifier.gs` |
-| `BookingMailTemplates.gs`（Issue #271） | ✓ | ✓ | ✓ | `gas/booking/shared/BookingMailTemplates.gs` |
-| `BookingMailer.gs`（Issue #271） | ✓ | ✓ | ✓ | `gas/booking/shared/BookingMailer.gs` |
+| `BookingMailTemplates.gs`（Issue #271） | ✓ | ✓ | – | `gas/booking/shared/BookingMailTemplates.gs` |
+| `BookingMailer.gs`（Issue #271） | ✓ | ✓ | – | `gas/booking/shared/BookingMailer.gs` |
 | `StripeWebhookAuth.gs`（Issue #341 PR-C。中継基盤からの呼び出し認証） | – | – | ✓ | `gas/booking/webhook/StripeWebhookAuth.gs` |
-| `StripeEventRepository.gs`（Issue #341 PR-C。Stripe Webhookイベントの冪等性台帳） | – | – | ✓ | `gas/booking/webhook/StripeEventRepository.gs` |
-| `StripeWebhookHandler.gs`（Issue #341 PR-C。署名検証済みWebhookイベントの処理本体） | – | – | ✓ | `gas/booking/webhook/StripeWebhookHandler.gs` |
-| `BookingWebhookEndpoint.gs`（Issue #341 PR-C。Stripe Webhook中継基盤を受け付ける唯一の`doPost`） | – | – | ✓ | `gas/booking/webhook/BookingWebhookEndpoint.gs` |
-| `BookingTriggers.gs` | – | ✓ | – | `gas/booking/admin/BookingTriggers.gs` |
+| `StripeEventRepository.gs`（Issue #341 PR-C。Stripe Webhookイベントの受信・処理台帳。レビュー対応・4回目でBooking Admin/Webhookの両方が使う共有ファイルへ再設計） | – | ✓ | ✓ | `gas/booking/shared/StripeEventRepository.gs` |
+| `StripeWebhookProcessor.gs`（Issue #341 PR-C。レビュー対応・4回目で新設。決済照合・予約自動確定の本体。Booking Adminの時間主導トリガーから呼ばれる。旧`StripeWebhookHandler.gs`から移動・再設計） | – | ✓ | – | `gas/booking/admin/StripeWebhookProcessor.gs` |
+| `BookingWebhookEndpoint.gs`（Issue #341 PR-C。Stripe Webhook中継基盤を受け付ける唯一の`doPost`。レビュー対応・4回目で受信・永続化専用に再設計） | – | – | ✓ | `gas/booking/webhook/BookingWebhookEndpoint.gs` |
+| `BookingTriggers.gs`（`expirePendingBookings`に加え、レビュー対応・4回目で`processPendingStripeWebhookEvents`の時間主導トリガーも追加） | – | ✓ | – | `gas/booking/admin/BookingTriggers.gs` |
 | `BookingAdmin.gs` | – | ✓ | – | `gas/booking/admin/BookingAdmin.gs` |
 | `BookingAdminWeb.gs`（Issue #305） | – | ✓ | – | `gas/booking/admin/BookingAdminWeb.gs` |
 | `BookingReminderTriggers.gs`（Issue #271） | – | ✓ | – | `gas/booking/admin/BookingReminderTriggers.gs` |
@@ -3149,11 +3157,12 @@ Booking Web App側からは呼び出せない）。
 SUCCESS_URL`/`STRIPE_CHECKOUT_CANCEL_URL`は`beginCardCheckout`（`Code.gs`のdoPost経由）
 専用のため**Booking Web AppプロジェクトのScript Propertiesにのみ設定する**（Booking
 Admin・Booking Webhookには不要）。`STRIPE_SECRET_KEY`はBooking Web Appに加え、
-`expirePendingBookings`（Booking Adminプロジェクト。仮押さえ失効確認）と
-`StripeWebhookHandler.gs`（Booking Webhookプロジェクト。Checkout Session/PaymentIntent
-再取得）でも使うため、**Booking Web App・Booking Admin・Booking Webhookの3プロジェクト
-すべてに同じ値を設定する**（各プロジェクトの値は自動的には共有されない。他のScript
-Propertiesと同じ注意）。
+`expirePendingBookings`（仮押さえ失効確認）と`StripeWebhookProcessor.gs`
+（Checkout Session/PaymentIntent再取得）がいずれもBooking Adminプロジェクトで動くため
+（レビュー対応・4回目。「Webhookと失効処理の競合」節参照）、**Booking Web App・
+Booking Adminの2プロジェクトに同じ値を設定する**（Booking Webhookプロジェクトは
+決済照合を一切行わなくなったため不要。各プロジェクトの値は自動的には共有されない。
+他のScript Propertiesと同じ注意）。
 **`STRIPE_WEBHOOK_RELAY_SECRET`/`STRIPE_WEBHOOK_RELAY_TOLERANCE_SECONDS`は、
 Webhookを受け付ける独立したBooking Webhookプロジェクト側にのみ設定する**
 （Booking Web App・Booking Adminいずれにも不要。中継基盤側にも同じ
@@ -4244,7 +4253,11 @@ GASデプロイは一切作成・更新していない。**
 レビュー対応・2回目で、独立したBooking Webhook・Booking Adminプロジェクト間の予約単位の
 排他制御（`BookingLockRepository`）を追加した。レビュー対応・3回目で、その実装バグ
 2件（ロック行の取り違え・期限切れ中の書き込み）を修正し、採用方式の保証範囲を
-見直した。詳細はそれぞれ「レビュー対応（2回目）」「レビュー対応（3回目）」節参照。**
+見直した。**レビュー対応・4回目で、`isHeld`による書き込み直前の再検証はTOCTOU
+（確認から書き込みまでの間に競合する）を解消できないという指摘を受け、独自の分散ロック
+（`BookingLockRepository`）を廃止し、決済照合・予約自動確定の実行主体をBooking Admin
+プロジェクトへ一本化するアーキテクチャへ再設計した。** 詳細はそれぞれ
+「レビュー対応（1〜4回目）」節参照。**
 
 ### 受信基盤の構成（なぜCloud Run中継が必要か）
 
@@ -4252,6 +4265,10 @@ GAS Web Appの`doPost(e)`は、`e.postData.contents`（本文）は読めるが*
 取得できない**。Stripeの署名検証（`Stripe-Signature`ヘッダー）はGAS単体では不可能なため
 （Issue #341本文の既知の制約）、Stripeの署名検証だけを行う軽量な中継（`cloud-run/
 stripe-webhook-relay/`。Node.js製）を新設した。
+
+**レビュー対応・4回目で、Booking Webhookプロジェクトの責務を「署名検証済みイベントを
+安全に永続化するだけ」へ縮小し、決済照合・予約自動確定はBooking Adminプロジェクトの
+時間主導トリガーへ移した（詳細は「Webhookと失効処理の競合」節参照）。**
 
 ```
 Stripe ──(Stripe-Signature付きWebhook)──▶ Cloud Run中継
@@ -4263,18 +4280,29 @@ Stripe ──(Stripe-Signature付きWebhook)──▶ Cloud Run中継
                     Booking Webhookプロジェクトの doPost（独立した新しいGASプロジェクト）
                                             │ StripeWebhookAuth.verifyRelayRequestで認証
                                             ▼
-                                 StripeWebhookHandler.processEvent
-                                            │ StripeEventRepositoryで冪等性確保
-                                            │ BookingRepository.applyPaymentStateUpdate/confirmBooking
+                                 receiveStripeEvent_（BookingWebhookEndpoint.gs）
+                                            │ StripeEventRepository.claim/storeRawBodyで
+                                            │ 安全に永続化するだけ（決済照合・予約確定は
+                                            │ 一切行わない）
+                                            ▼
+                             StripeEventsシート（rawBody列に生イベント本文を保存）
+                                            ▲
+                                            │ StripeEventRepository.listPendingWithBody
+                                            │ （未処理イベントの取り出し）
+                     Booking Adminプロジェクトの時間主導トリガー（既定1分間隔）
+                     processPendingStripeWebhookEvents（BookingTriggers.gs）
+                                            │ StripeWebhookProcessor.processSingleEvent_
+                                            │ BookingRepository.applyPaymentStateUpdate/
+                                            │ confirmBooking（同じLockService.getScriptLock()
+                                            │ をexpirePendingBookings/confirmBookingと共有）
                                             ▼
                               Bookings / Calendar / Recovery / 確認メール
-
-  （別のGASプロジェクト）
-  Booking Admin: BookingAdminWeb.gs（doGet。Execute as: Me / Only myself）・
-  BookingTriggers.gs（expirePendingBookings）等。Booking Webhookとは
-  完全に独立したプロジェクトで、LockServiceも共有しない
-  （「Webhookエンドポイントの公開境界」「Webhookと失効処理の競合」節参照）。
 ```
+
+Booking Webhookと同じBooking AdminプロジェクトのLockService.getScriptLock()を、
+`processPendingStripeWebhookEvents`（このトリガー）・`expirePendingBookings`・
+手動の`confirmBooking`のすべてが共有するため、独自の分散ロックを一切必要としない
+（「Webhookと失効処理の競合」節参照）。
 
 中継自体はStripeの署名検証**専用**であり、予約・決済の業務ロジックを一切持たない
 （薄い中継に徹する。StripeGateway.gsと対称的な役割）。実際のイベント処理・冪等性判定・
@@ -4330,16 +4358,19 @@ Issue #341本文は「Stripeの署名検証を済ませたことだけを理由�
    多層防御）。
 4. **イベントID・本文は中継の途中で差し替えられない。** GASはeventId/eventTypeを
    中継が別途主張するフィールドとしては受け取らず、必ず**HMACで整合性が保証された
-   rawBodyそのものをJSON.parseして**取り出す（`StripeWebhookHandler.processEvent`）。
+   rawBodyそのものをJSON.parseして**取り出す（`BookingWebhookEndpoint.
+   receiveStripeEvent_`）。
    本文とは別の「主張フィールド」を一切作らないことで、本文とID/種別が食い違う余地を
    構造的に無くしている。
 5. 認証に失敗した場合、GASはStripe側・中継側の実装詳細を一切外部へ返さず、一律
    `FORBIDDEN`とする（失敗理由の詳細はLoggerにのみ記録し、存在確認のオラクルにしない）。
 
 **APIキー・Webhook署名シークレット・中継用シークレットは、いずれもリポジトリ・ログへ
-記載しない。** `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_RELAY_SECRET`はいずれもBooking Webhook
-プロジェクトのScript Propertiesにのみ設定し、`STRIPE_WEBHOOK_SECRET`（Stripeの署名検証鍵）
-はCloud Runサービスの環境変数（Secret Manager等）にのみ設定し、GASへは一切渡さない。
+記載しない。** `STRIPE_WEBHOOK_RELAY_SECRET`はBooking WebhookプロジェクトのScript
+Propertiesにのみ設定し（レビュー対応・4回目でこのプロジェクトは決済照合を一切行わなく
+なったため、`STRIPE_SECRET_KEY`はBooking Web App・Booking Adminにのみ設定する。
+「Script Properties」節参照）、`STRIPE_WEBHOOK_SECRET`（Stripeの署名検証鍵）は
+Cloud Runサービスの環境変数（Secret Manager等）にのみ設定し、GASへは一切渡さない。
 
 ### Stripe Webhookエンドポイントのシークレット管理・ローテーション手順
 
@@ -4347,14 +4378,16 @@ Issue #341本文は「Stripeの署名検証を済ませたことだけを理由�
 | --- | --- | --- |
 | `STRIPE_WEBHOOK_SECRET`（Stripeの署名検証鍵） | Cloud Runサービスの環境変数のみ（GASには一切渡さない） | Stripe Dashboardの当該Webhook Endpointで新しい署名シークレットを発行 → Cloud Runサービスの環境変数を更新・再デプロイ → 旧シークレットをStripe Dashboardで無効化する（Stripeは移行期間中、新旧いずれの署名でも検証可能な猶予を提供する。詳細はStripe公式ドキュメントで最新の手順を確認すること） |
 | `STRIPE_WEBHOOK_RELAY_SECRET`（中継⇄GAS共有鍵） | Cloud Runサービスの環境変数 **と** Booking WebhookプロジェクトのScript Properties（両方に同じ値） | 新しい値を生成 → まずBooking Webhook側のScript Propertiesを新しい値へ更新 → 続けてCloud Run側の環境変数を同じ新しい値へ更新・再デプロイする（**この順序を守ること**。逆順にすると、Cloud Run更新後・GAS更新前の間に送られたWebhookがすべて認証失敗になり、Stripeの再送に頼ることになる。この順序でも新シークレット反映直後の一瞬は同様の再送依存が生じ得るが、窓を最小化できる） |
-| `STRIPE_SECRET_KEY`（StripeのAPI秘密鍵） | Booking Web App・Booking Admin・Booking Webhookの3プロジェクトすべてのScript Properties（PR-B「Script Properties」節参照） | Stripe Dashboardで新しいキーを発行 → 3プロジェクトすべてのScript Propertiesを更新 → 旧キーをStripe Dashboardで失効させる |
+| `STRIPE_SECRET_KEY`（StripeのAPI秘密鍵） | Booking Web App・Booking Adminの2プロジェクトのScript Properties（PR-B「Script Properties」節参照。レビュー対応・4回目でBooking Webhookプロジェクトは決済照合を一切行わなくなったため不要になった） | Stripe Dashboardで新しいキーを発行 → 2プロジェクトすべてのScript Propertiesを更新 → 旧キーをStripe Dashboardで失効させる |
 
 いずれのシークレットも、値そのものをPR・Issue・コミットメッセージ・Loggerへ記載しない
 （本READMEにもキー名のみを記載し、実値は記載しない）。
 
 ### Stripeイベントの取り扱い（Session完了とPaymentIntent入金完了を同一視しない）
 
-`StripeWebhookHandler.gs`が処理するイベント種別:
+`StripeWebhookProcessor.gs`（Booking Adminの時間主導トリガー。レビュー対応・4回目で
+`gas/booking/webhook/StripeWebhookHandler.gs`から移動・再設計。「Webhookと失効処理の
+競合」節参照）が処理するイベント種別:
 
 | イベント種別 | 扱い |
 | --- | --- |
@@ -4372,7 +4405,7 @@ PaymentIntentともに、Webhookイベント本文のフィールドをそのま
 
 ### 予約・決済試行・金額の照合
 
-`StripeWebhookHandler.processEvent`は、自動確定を許可する前に次のすべてを検証する
+`StripeWebhookProcessor.processSingleEvent_`は、自動確定を許可する前に次のすべてを検証する
 （1つでも欠ければ自動確定せずRecoveryへ記録し、`paymentRecoveryRequiredAt`で以後の
 自動処理を停止する。入金の事実（`paymentStatus`）は消さない）:
 
@@ -4389,189 +4422,184 @@ PaymentIntentともに、Webhookイベント本文のフィールドをそのま
 `paid`への更新は`BookingRepository.applyPaymentStateUpdate`のみを使い、
 `stripePaymentIntentId`・`lastStripeEventId`を必ず添える（PR-Aで定めた契約どおり）。
 
-### イベントの冪等性（StripeEventRepository.gs）
+### イベントの冪等性・受信と処理の分離（StripeEventRepository.gs）
 
 `FeeSettlementRepository.gs`（日程変更精算の冪等性台帳）と同じ設計パターンで、専用の
-「StripeEvents」シートへイベントごとに1行の処理状態を記録する。
+「StripeEvents」シートへイベントごとに1行の処理状態を記録する。**レビュー対応・4回目で、
+このファイルはBooking Webhook（新規イベントの受信・rawBody永続化）とBooking Admin
+（未処理イベントの取り出し・処理着手の二重防止）の両方が使う共有ファイルへ再設計した**
+（`gas/booking/webhook/`から`gas/booking/shared/`へ移動）。
 
 | processingState | 意味 |
 | --- | --- |
-| `RECEIVED` | 処理に着手した（claim済み）が最終結果が未確定。`claimedAt`/`claimCount`で着手時刻・回数を追跡する |
-| `COMPLETED` | 処理が完了した（自動確定の試行まで完了。自動確定自体が失敗しRecoveryへ回った場合も含む） |
+| `RECEIVED` | Booking Webhookが受信・永続化した（`rawBody`列に生のイベント本文を保存済み）が、Booking Admin側でまだ最終結果が確定していない |
+| `COMPLETED` | Booking Admin側の処理が完了した（自動確定の試行まで完了。自動確定自体が失敗しRecoveryへ回った場合も含む） |
 | `IGNORED` | 対象外・まだ支払い未完了等、何も行う必要がなかった |
 | `REJECTED` | 識別子・金額の不一致等、構造的に処理できないと判断した（Recoveryへ記録済み） |
 
-- **同一イベントの再送を二重処理しない**: `processingState`が終端（`COMPLETED`/
-  `IGNORED`/`REJECTED`）の行は再処理せず、記録済みの結果をそのまま成功として返す。
-- **同一イベントの同時到達（並行配信）を二重実行しない**: `claim()`は
-  `LockService.getScriptLock()`で保護された短時間の排他区間内で「既存行の有無」
-  「`RECEIVED`のまま十分新しいか」を判定する。直近でclaimされたばかり（既定5分未満）の
-  `RECEIVED`行が見つかった場合は、別の呼び出しが処理中とみなし`IN_PROGRESS`を返す
-  （この回は何もせず、Stripeの自動再送に委ねる。二重に予約確定・Calendar更新・
-  確認メール送信が実行されることはない）。
-- **処理途中で失敗したイベントを「受信済みだから処理不要」として捨てない**: `RECEIVED`の
-  まま一定時間（既定5分）を超えて放置された行は、前回の実行がクラッシュ・タイムアウト
-  したとみなして安全に再claimし、最初から処理をやり直す。これが安全な理由は、
-  再実行する`applyPaymentStateUpdate`/`confirmBooking`/確認メール送信のいずれも、
-  それ自体が冪等（PR-A/PR-B/Issue #271で確立済み）であるため、途中まで進んでいても
-  やり直して安全に同じ最終状態へ収束できるから。
-- **Stripeへの成功応答の条件**: `StripeEventRepository.finalize()`（最終状態の永続化）が
-  実際に成功した場合にのみ、`processEvent`は`ackSuccess:true`を返す。この書き込み自体が
-  失敗した場合は、予約確定・決済状態の更新が既に成功していても`ackSuccess:false`を返し、
-  行は`RECEIVED`のまま残る（次回の配信で安全に再claim・再確認できる。予約確定・メール
-  送信は既に完了しているため二重実行はしない）。GAS Web Appの制約上`doPost`自体の
-  HTTPステータスは常に200になるため、実際の成否はレスポンスJSONの`success`フィールドで
-  中継基盤へ伝え、中継基盤が`success:false`の場合にStripeへ5xxを返して自動再送を促す
-  （`cloud-run/stripe-webhook-relay/`参照）。
+**`claim()`と`claimForProcessing()`は意図的に別の名前空間を持つ**（それぞれ
+`claimedAt`/`claimCount`列、`processingClaimedAt`/`processingClaimCount`列を使う）。
 
-### Webhookと失効処理（expirePendingBookings）の競合（BookingLockRepositoryによる排他制御・レビュー対応3回目で実装修正・前提を見直し）
+- `claim(eventId, eventType, now, staleAfterMs?)`: Booking Webhookが新規受信時に呼ぶ。
+  同一イベントの同時到達（並行配信）・再送を、`claimedAt`/`claimCount`で判定する。
+- `claimForProcessing(eventId, eventType, now, staleAfterMs?)`: Booking Adminのトリガーが
+  処理着手時に呼ぶ。トリガー実行が重複した場合の二重処理防止を、`processingClaimedAt`/
+  `processingClaimCount`で判定する。
+
+**この2つを分離した理由（レビュー対応・4回目で発覚し修正した設計バグ）**: 当初は
+両方が同じ`claimedAt`/`claimCount`を共有していた。この場合、Booking Webhookが
+イベントを受信した直後（＝`claimedAt`が「たった今」に更新された直後）を、Booking Admin
+側が「最近claimされた＝処理中の疑いがある」と誤判定してしまい、Admin側の
+`staleAfterMs`（既定2分）が経過するまで新規受信イベントに一切着手できないバグが
+あった。名前空間を分離したことで、Admin側は「一度もAdmin自身が着手していない行」を
+常に即座に着手対象にできる（`test/stripe-event-repository.test.js`で検証）。
+
+- **同一イベントの再送を二重処理しない**: `processingState`が終端（`COMPLETED`/
+  `IGNORED`/`REJECTED`）の行は再claimせず、記録済みの結果をそのまま成功として返す。
+- **同一イベントの同時到達（並行配信）を二重実行しない**: `claim()`/`claimForProcessing()`
+  はいずれも`LockService.getScriptLock()`で保護された短時間の排他区間内で「既存行の
+  有無」「`RECEIVED`のまま十分新しいか」を判定する。直近でclaimされたばかりの
+  `RECEIVED`行が見つかった場合は、別の呼び出しが処理中とみなし`IN_PROGRESS`を返す
+  （この回は何もせず、Stripeの自動再送またはAdmin側の次回トリガー実行に委ねる。
+  二重に予約確定・Calendar更新・確認メール送信が実行されることはない）。
+- **処理途中で失敗したイベントを「受信済みだから処理不要」として捨てない**: `RECEIVED`の
+  まま一定時間を超えて放置された行は、前回の実行がクラッシュ・タイムアウトしたとみなして
+  安全に再claimし、最初から処理をやり直す。これが安全な理由は、再実行する
+  `applyPaymentStateUpdate`/`confirmBooking`/確認メール送信のいずれも、それ自体が冪等
+  （PR-A/PR-B/Issue #271で確立済み）であるため、途中まで進んでいてもやり直して安全に
+  同じ最終状態へ収束できるから。
+- **Stripeへの成功応答の条件（レビュー対応・4回目で変更）**: Booking Webhookが
+  `StripeEventRepository.storeRawBody()`（生のイベント本文まで含めた永続化）に実際に
+  成功した場合にのみ、`success:true`を返す。**決済照合・予約自動確定の成否は一切
+  問わない**（それらはBooking Admin側の処理台帳とRecoveryで別途管理する。「Webhookと
+  失効処理の競合」節参照）。永続化自体が失敗した場合は`success:false`を返し、行は
+  `RECEIVED`のまま残る（次回の配信で安全に再claim・再永続化できる）。GAS Web Appの
+  制約上`doPost`自体のHTTPステータスは常に200になるため、実際の成否はレスポンスJSONの
+  `success`フィールドで中継基盤へ伝え、中継基盤が`success:false`の場合にStripeへ5xxを
+  返して自動再送を促す（`cloud-run/stripe-webhook-relay/`参照）。
+- **Booking Admin側の処理結果の永続化**: `StripeEventRepository.finalize()`が実際に
+  成功した場合にのみ、その回のトリガー実行はこのイベントを終端状態（`COMPLETED`/
+  `IGNORED`/`REJECTED`）まで到達させたとみなす（`processPendingStripeWebhookEvents`の
+  戻り値`finalized:true`）。この書き込み自体が失敗した場合は、予約確定・決済状態の
+  更新が既に成功していても`finalized:false`を返し、行は`RECEIVED`のまま残る（次回の
+  トリガー実行で安全に再claim・再確認できる。予約確定・メール送信は既に完了している
+  ため二重実行はしない）。この結果はStripeへの応答とは無関係（応答はBooking Webhookが
+  受信した時点で完結している）。
+
+### Webhookと失効処理（expirePendingBookings）の競合（レビュー対応・4回目で実行主体を一本化する設計へ再設計）
 
 **この節がIssue #341本文「8. 失効処理との競合」への回答の核心。**
 
-「Webhookエンドポイントの公開境界」節の対応により、Webhook処理は独立した
-**Booking Webhookプロジェクト**で動く。`confirmBooking`/`expirePendingBookings`は
-引き続き**Booking Adminプロジェクト**で動くため、両者は別々のスクリプトプロジェクト・
-別々の`LockService.getScriptLock()`となり、**「同一LockServiceによる完全な排他」は
-前提にできない**（初回提出時点の設計はこれを前提にしていたが、公開境界の問題を
-修正するために撤回した）。
-
-**1回目のレビュー対応**では、(a)双方の破壊的書き込み直前の最新状態再読込、
+**1回目のレビュー対応**では、Webhook受信を独立した**Booking Webhookプロジェクト**へ
+分離した結果、`confirmBooking`/`expirePendingBookings`が動く**Booking Admin
+プロジェクト**とは別々の`LockService.getScriptLock()`となり、「同一LockServiceによる
+完全な排他」を前提にできなくなった。(a)双方の破壊的書き込み直前の最新状態再読込、
 (b)失効対象判定への追加猶予（`CardPayment.WEBHOOK_RACE_GRACE_MINUTES`。既定10分）、
 (c)`Booking.PAYMENT_STATUS_TRANSITIONS_`の`failed→paid`許可、の3点による多層防御で
 実害を最小化していたが、「一方が最新状態を読み終えた直後に他方が状態を変更する」
 という狭いレース自体を排除できないという指摘を2回目のレビューで受け、
 **予約単位の排他制御**（`BookingLockRepository`。専用の「BookingLocks」シートへの
-`appendRow`＋直後の全件読み直し）を新設した。
+`appendRow`＋直後の全件読み直し）を新設した。3回目のレビューで、この初版実装の
+バグ2件（ロック行の取り違え・期限切れ中の書き込み）を修正し、Sheetsのappend順序
+整列を公式に保証された契約として前提にせず、`isHeld`による書き込み直前の再検証を
+加えた3層の多層防御として設計を整理した。
 
-**3回目のレビューで、この初版実装に2件のバグと1件の設計上の指摘を受け、以下のとおり
-修正した：**
+**4回目のレビューで、この`isHeld`による書き込み直前の再検証自体が、確認（check）と
+書き込み（use）の間に競合が起こり得るTOCTOU（time-of-check-to-time-of-use）問題を
+解消できていないという指摘を受けた**: `isHeld()`で有効と確認した直後に処理が遅延し、
+その間にTTLが経過してもう一方が新しいロックを取得して書き込みを完了させ、その後
+`isHeld()`の（既に古くなった）確認結果を使って自分も書き込みへ進んでしまう余地が
+残る。これは確認箇所を何箇所増やしても解消できない種類の競合であり、Sheets上の
+分散ロックを作り込む方向そのものが限界だった。
 
-1. **チケット行の取り違え（実装バグ）**: 初版は`appendRow`直後に`sheet.getLastRow()`を
-   「自分の行番号」としていたが、並行して別の実行が同時にappendしていれば
-   `getLastRow()`は相手の行番号を返し得る（`appendRow`自体は書き込んだ行番号を返さない
-   ため、位置に頼るこの実装は原理的に誤りだった）。**修正**: 追加直後の全件読み直しで、
-   一意な`holderId`を内容で検索して自分の行を特定するよう変更した。`release`も
-   `holderId`が実際にその行の保持者であることを確認してからのみ解放するようにし、
-   万一の取り違えが起きても他者の有効なロックを誤って失効させないようにした。
-2. **ロック期限切れ中の書き込み（実装バグ）**: 初版は、TTL経過後に**別の**呼び出しが
-   チケットを再取得できることしか保証しておらず、TTLを過ぎた**元の保持者**自身が
-   Calendar/Bookingsへの書き込みを続けることを妨げていなかった。**修正**:
-   `BookingLockRepository.isHeld(rowNumber, holderId, now)`を追加し、
-   `StripeWebhookHandler.processEvent`（`applyPaymentStateUpdate`の直前・
-   `confirmBooking`の直前の2箇所）・`BookingRepository.expirePendingBookings`
-   （Calendar削除の直前・Sheetsへのstatus:EXPIRED書き込みの直前の2箇所）は、実際に
-   破壊的な書き込みを行う直前に必ずこれを再検証し、falseならその書き込みを行わずに
-   中断することを必須の契約とした。
-3. **設計上の指摘（Sheetsのappend順序整列を公式に保証された契約として前提にしない
-   こと）**: 下記「採用方式の保証範囲」参照。
+**対応（設計の一本化）**: 予約単位の分散ロックを完全に廃止し、代わりに
+**決済照合・予約自動確定の実行主体をBooking Adminプロジェクトへ一本化した**。
 
-**排他制御の実体（`BookingLockRepository.gs`）**: GASの`LockService`はスクリプト
-プロジェクトをまたいで共有できないが、Booking Webhook・Booking Adminの両プロジェクトは
-**同じSpreadsheet（Bookings台帳と同じSpreadsheetId）を共有している**。この共有
-Spreadsheet自体を、プロジェクトをまたぐ排他制御の実体として使う。専用の
-「BookingLocks」シートへ、予約IDごとの所有権主張（チケット）を`appendRow`で1行ずつ
-追加し、追加直後に全件を読み直して「自分より前に追加された、まだ有効な（release・
-期限切れでない）チケットが無いか」を確認する。無ければロック取得成功、あれば
-失敗（他方が既に処理中）とみなす。
+- **Booking Webhookプロジェクト**（`gas/booking/webhook/`）は、署名検証済みイベントを
+  `StripeEventRepository`（Booking Adminと共有するSpreadsheet上の「StripeEvents」
+  シート）へ**安全に永続化するだけ**にする（決済照合・予約自動確定は一切行わない。
+  `BookingWebhookEndpoint.gs`冒頭コメント参照）。
+- **Booking Adminプロジェクト**の時間主導トリガー`processPendingStripeWebhookEvents`
+  （`BookingTriggers.gs`。既定1分間隔）が、`StripeEventRepository`から未処理
+  （`RECEIVED`・rawBody保存済み）のイベントを取り出し、決済照合〜予約自動確定まで
+  行う（`StripeWebhookProcessor.gs`）。
 
-#### 採用方式の保証範囲（レビュー対応・3回目で明記）
+これにより、Webhook由来の決済照合・予約自動確定と、既存の`expirePendingBookings`・
+手動の`confirmBooking`は、**すべて同じBooking Adminプロジェクト内で実行され、
+同じ`LockService.getScriptLock()`を自然に共有する**。`BookingRepository.
+applyPaymentStateUpdate`・`confirmBooking`はいずれも内部でこのLockを取得・解放し、
+`expirePendingBookings`も候補ごとに同じLockを取得・解放するため、confirmBooking
+（既存の管理者手動確定）とexpirePendingBookingsが既に共有しているのと**全く同じ
+仕組み**で、Webhook由来の確定と失効処理が同じ予約を同時に処理することは構造的に
+発生しない。**GAS公式のLockServiceの排他保証だけに依存し、Sheetsのappend順序整列の
+ような未保証の前提には一切依存しない。**
 
-**本実装は、Google SheetsのappendRow・read-backだけを「複数のGASプロジェクトを
-またぐ、公式に保証された原子的ロック」として前提にしていない。** Googleは、異なる
-クライアント（プロジェクトが違っても同じSpreadsheetへの操作を含む）からの並行した
-appendRowが単一の直列順序へ整列されることを、Sheets API/Apps Scriptの正式なAPI契約
-として文書化していない（実運用上は概ねその通りに振る舞うと考えられるが、これは
-観測された挙動であって保証された契約ではない）。したがって、この整列を「ベスト
-エフォートで競合の発生確率を大きく下げる手段」として位置づけ、それだけを唯一の
-安全装置にはしていない。
+#### なぜこれで十分か（新たな分散ロックが不要な理由）
 
-実際に「両プロジェクトが同じ予約に対してそれぞれ成功したと判断する状態」を防いで
-いるのは、以下の3層の組み合わせである（上から順に、それぞれ独立して機能する）:
+`LockService.getScriptLock()`は**スクリプトプロジェクト単位**の排他ロックであり、
+同一プロジェクト内でこのLockを取得するすべての実行（`processPendingStripeWebhookEvents`
+経由の`applyPaymentStateUpdate`/`confirmBooking`、`expirePendingBookings`、管理者の
+手動`confirmBooking`）は、**互いに真に並行しては実行されない**（一方がLockを保持して
+いる間、他方は`tryLock`が失敗するかLockが空くまで待つ）。この「1プロジェクト・1Lock」
+という前提の上に、この2つの操作それぞれが元々持つ「書き込み直前の最新状態再読込」を
+組み合わせるだけで、以下の場合分けにより「両方が成功したと判断する」状態は起こらない
+（TOCTOUの入り込む隙間が構造的に無い。isHeldのような「確認してから後で使う」処理が
+一切存在しないため）:
 
-1. `BookingLockRepository`のappend-then-read-back方式によるロック取得（ベスト
-   エフォート。上記のとおり公式に保証された契約ではない）。
-2. **`isHeld`による書き込み直前の再検証**（レビュー対応・3回目で追加）。ロックを
-   取得したつもりでも、TTLが切れていれば実際の書き込みは行われない。
-3. **呼び出し側に既存の、通常の読み書き整合性だけに依存する再確認**
-   （`confirmBooking`が書き込み直前にBookings台帳を再読込しstatus===EXPIREDを
-   拒否する、`expirePendingBookings`が書き込み直前にpaymentStatusを再読込する、
-   `applyPaymentStateUpdate`が識別子・証跡を検証する、等。いずれも「直前に書き込まれた
-   値を直後の読み込みが見る」という、Spreadsheetが単一のドキュメントである以上
-   ほぼ確実に成り立つ、遥かに弱く自明な前提にしか依存しない。並行するappendの順序
-   整列のような強い前提を必要としない）。
+1. **confirmBooking系の処理が先にLockを取得・完了する**: `status`が`PENDING`から
+   `CONFIRMED`（またはCalendar削除等の失敗でRecoveryへ）へ進む。その後Lockを取得する
+   `expirePendingBookings`は、Lock内で`status`を再読込し`PENDING`でなければ即座に
+   スキップする（既存のガード。変更なし）。
+2. **expirePendingBookingsが先にLockを取得・完了する**: `status`が`EXPIRED`へ進む。
+   その後Lockを取得する`applyPaymentStateUpdate`/`confirmBooking`は、
+   `Booking.PAYMENT_STATUS_TRANSITIONS_`の`failed→paid`許可により入金の事実
+   （`paymentStatus:paid`）だけは正しく記録できるが、`confirmBooking`は`status===
+   EXPIRED`を理由に自動確定を拒否する（既存のガード。変更なし）。`status`は
+   `EXPIRED`のまま変更されず、`paymentRecoveryRequiredAt`を立ててRecoveryへ送る。
+3. **両者が同時にLock取得を試みる**: `LockService.getScriptLock()`の排他保証により
+   片方が先に完了してから、もう片方がLockを取得する。したがって必ず上記1または2に
+   帰着する。
 
-**障害時の挙動**: 仮に1のappend順序整列という前提が何らかの理由で崩れ、2つの実行が
-一時的に「自分がロックを取得した」と誤認したとしても、2（`isHeld`）がその後の実際の
-書き込みを実行直前に食い止める可能性があり、さらに3（呼び出し側の既存の再読込）が
-両者の最終的な書き込みの順序に関わらず「後から書き込む側」に相手の結果を確実に
-検知させる。この結果、最悪の場合でも「両方が成功したと判断する」状態には至らず、
-一方が安全側（Recoveryへの記録・自動処理停止）に倒れる。これは、このコードベースが
-既存のcreateBooking対スペースマーケット外部書き込みの競合で採用している「絶対に
-競合しないではなく、直前再確認とRecovery記録でリスクを最小化する」設計方針と同種の
-ものである。
+つまり、確認と書き込みの間に別の実行が割り込む余地自体が構造的に存在しない
+（Lockを取得している間、他の実行はLockの外で待つか諦めるかのいずれかであり、
+「確認だけ済ませて後で使う」という設計が一切ない）。
 
-**TTL（ロックのリース期間）と実時間について**: `BookingLockRepository`のTTL/`isHeld`
-判定は、`processEvent`/`expirePendingBookings`のイベント発生時刻等（テストから固定
-できるビジネス上の日時）とは意図的に切り離し、実時間（`new Date()`。呼び出し側が
-`BookingLockRepository`のnow引数を省略した場合の既定値）だけに基づかせている。TTLは
-「実際にどれだけ実時間が経過したか」を測るためのものであり、本番では両者は同じ値
-（呼び出し時点の`new Date()`）になるため本番の挙動には影響しないが、テストが過去・
-未来の固定日時を指定する場合に両者を混同すると正しく機能しない（`BookingRepository.gs`
-のexpirePendingBookings・`StripeWebhookHandler.gs`のコメント参照）。
+**保護する範囲**: `StripeWebhookProcessor.processSingleEvent_`は、
+`applyPaymentStateUpdate`（paid）〜`confirmBooking`の一連（Bookings/Calendarへの
+確定的な変更を含む区間）を、それぞれの内部で`LockService.getScriptLock()`により
+保護する。`expirePendingBookings`は、候補ごとのクリティカルセクション（最新状態の
+再読込〜Calendar削除〜status:EXPIRED書き込み）を同じLockで保護する。**いずれも
+Stripeへの外部HTTP呼び出し（署名検証済みイベントの再照会・金額照合・仮押さえ失効
+確認）はLock取得前に完了させ、Lockを保持したまま外部HTTP呼び出しは行わない**
+（Issue #341本文「Stripeへの外部HTTP呼び出し中に長時間の排他制御を保持する必要は
+ない」を満たす。この方針自体は1〜3回目から変更していない）。
 
-**保護する範囲**: `StripeWebhookHandler.processEvent`は、`applyPaymentStateUpdate`
-（paid）〜`confirmBooking`の一連（Bookings/Calendarへの確定的な変更を含む区間）を
-このロックで保護する。`expirePendingBookings`は、候補ごとのクリティカルセクション
-（最新状態の再読込〜Calendar削除〜status:EXPIRED書き込み）を同じロックで保護する。
-**いずれもStripeへの外部HTTP呼び出し（署名検証済みイベントの再照会・金額照合・
-仮押さえ失効確認）はロック取得前に完了させ、ロックを保持したまま外部HTTP呼び出しは
-行わない**（Issue #341本文「Stripeへの外部HTTP呼び出し中に長時間の排他制御を保持する
-必要はない」を満たす）。
+**`failed→paid`許可は引き続き維持する**: 同じLockを共有していても「同時に処理させ
+ない」ことを保証するだけで、「どちらが先に完了するか」までは制御しない。
+`expirePendingBookings`が先にLockを取得・完了して`paymentStatus:failed`・
+`status:EXPIRED`へ進めた**後**にWebhook由来の処理がLockを取得した場合でも、入金の
+事実（`paymentStatus:paid`）を正しく記録できる必要があるため、この遷移は変更して
+いない（`status`は`EXPIRED`のまま変更しない。`confirmBooking`が`EXPIRED`を拒否する
+ため自動確定はされず、`paymentRecoveryRequiredAt`を立ててRecoveryへ記録する。次節
+参照。**枠を確保できない決済の返金判断はPR-Dへ引き継ぐ**）。
 
-**取得できなかった場合**: `expirePendingBookings`は候補ごとに1回だけ試行し、取得
-できなければこの回のトリガー実行ではその予約をスキップする（バックグラウンド処理の
-ため急ぐ必要がなく、次回のトリガー実行に委ねる）。`StripeWebhookHandler`は短い間隔
-（既定200ms）で最大3回まで再試行し（`acquireBookingLockWithRetry_`。外部HTTP呼び出しを
-含まないためStripeへの応答を大きく遅らせない）、それでも取得できなければ
-`BOOKING_LOCK_CONTENDED`としてStripeの自動再送に委ねる（イベント台帳はRECEIVEDの
-まま残るため、次回の配信で安全に再開できる）。
+**`CardPayment.WEBHOOK_RACE_GRACE_MINUTES`（既定10分）は補助策として維持する**。
+同一プロジェクト・同一LockServiceの共有により競合そのものはこの猶予がなくても
+発生しないが、決済完了直後にAdmin側のトリガーがまだ処理していない間に
+`expirePendingBookings`が無駄にStripeへ再照会する頻度を減らす効率化のために残して
+いる。
 
-**`isHeld`の再検証に失敗した場合**（TTL経過により自分のロックが既に失効していた
-場合）は、実際の書き込みを一切行わずに中断する。Webhook側で`applyPaymentStateUpdate`
-の直前に失敗した場合は何も書き込んでいないため、finalizeせず安全に再試行させる
-（`BOOKING_LOCK_EXPIRED`）。`confirmBooking`の直前に失敗した場合は、
-`applyPaymentStateUpdate`（paid）は既に完了しているため、入金の事実は保持したまま
-`PAID_CONFIRM_BLOCKED`としてRecoveryへ送る（`BOOKING_LOCK_EXPIRED_BEFORE_CONFIRM`）。
-Admin側でCalendar削除の直前に失敗した場合は何も変更しておらずスキップするのみ、
-Sheets書き込みの直前に失敗した場合はCalendarが既に削除済みの可能性があるため
-専用のfailureType（`EXPIRE_LOCK_EXPIRED_BEFORE_SHEETS_UPDATE`）でRecoveryへ記録する
-（`BookingRepository.gs`のexpirePendingBookingsコメント参照）。
+**廃止した`BookingLockRepository`について**: 2〜3回目のレビュー対応で実装した
+`gas/booking/shared/BookingLockRepository.gs`（予約単位の分散ロック）・
+`test/booking-lock-repository.test.js`はいずれも削除した。上記のとおり、実行主体を
+一本化した結果、予約単位の分散ロックは一切不要になったため。
 
-**`failed→paid`許可は引き続き維持する**: このロックは「同時に処理させない」ことを
-目指すが、「どちらが先に完了するか」までは制御しない。`expirePendingBookings`が
-先にロックを取得・完了して`paymentStatus:failed`・`status:EXPIRED`へ進めた**後**に
-Webhookがロックを取得した場合でも、入金の事実（`paymentStatus:paid`）を正しく
-記録できる必要があるため、この遷移は変更していない（`status`は`EXPIRED`のまま
-変更しない。`confirmBooking`が`EXPIRED`を拒否するため自動確定はされず、
-`paymentRecoveryRequiredAt`を立ててRecoveryへ記録する。次節参照。**枠を確保できない
-決済の返金判断はPR-Dへ引き継ぐ**）。
-
-**`CardPayment.WEBHOOK_RACE_GRACE_MINUTES`（既定10分）は補助策として維持する**が、
-**競合を防ぐ根拠はもはやこれではない**（上記のロックが競合そのものを防ぐ）。この
-猶予は、決済完了直後にWebhook到達を待たず即座にStripe再照会・ロック取得を試みる
-無駄を減らす効率化のためだけに残している。
-
-`test/booking-lock-repository.test.js`（`BookingLockRepository`の単体テスト。3回目の
-レビュー対応で、同時に2件がappendするケースを実際に割り込ませて再現するテスト・
-異なるGASプロジェクト間の並行取得を再現するテスト・TTL経過後に古い保持者が
-`isHeld`でfalseと判定されることを検証するテスト・release時のholderId不一致や
-二重解放を検証するテストを追加）と、`test/stripe-webhook-handler.test.js`への統合
-テスト（`BookingLockRepository.acquire`を実際に呼んで「一方が最新状態を読み終えて
-クリティカルセクションへ入った直後」を再現するテスト2件に加え、3回目のレビュー対応で
-`BookingLockRepository.isHeld`をモックして「書き込み直前にTTLが経過していた」場合の
-本番コード経路の振る舞いを検証するテスト4件を追加）で、枠解放と予約確定が両方
-成功する状態にはならないこと、決済済みの事実は保持されRecoveryへ記録されることを
-検証している。
+**テスト**: `test/stripe-webhook-processor.test.js`に、Webhookが先に確定した場合・
+失効処理が先に完了していた場合それぞれのテストに加え、`StripeGateway.
+retrievePaymentIntent`の呼び出しを横取りしてその中で直接`expirePendingBookings`を
+実行させることで「同じLockServiceを共有する2つの実行が同じ瞬間に迫っている」状況を
+確定的に再現するテストを追加し、枠解放と予約確定が両方成功する状態にはならない
+ことを検証している。
 
 ### 決済済みでも予約を確定できない場合の扱い（Recovery・運用）
 
@@ -4587,14 +4615,18 @@ Webhookがロックを取得した場合でも、入金の事実（`paymentStatu
 | `PAYMENT_INTENT_STATUS_MISMATCH` | SessionはpaidだがPaymentIntentがsucceededでない |
 | `STRIPE_WEBHOOK_AMOUNT_MISMATCH` | 金額・通貨がCheckout Session発行時点のスナップショットと一致しない |
 | `STRIPE_WEBHOOK_PAYMENT_UPDATE_REJECTED` | `applyPaymentStateUpdate`が`INVALID_PAYMENT_TRANSITION`等、自身では記録しないコードで`paid`への更新を拒否した（`failed→paid`はレビュー対応・1回目で許可したため、通常の「仮押さえ失効後の遅延成功」はこの経路には来ず`PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED`側になる。このコードは、それ以外の想定外の遷移拒否―例えば将来のPR-Dの返金状態からの遷移拒否等―のためのfail-closedな受け皿） |
-| `PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED` | 決済確認（`paymentStatus:paid`への更新）自体は成功したが、続く`confirmBooking`が失敗した（仮押さえ失効・キャンセル済み・Calendarイベント消失・料金訂正案内未送信・保存失敗・`confirmBooking`直前の予約ロック失効等）。`failed→paid`経由（失効後の遅延成功）もここに含まれる |
-| `EXPIRE_LOCK_EXPIRED_BEFORE_SHEETS_UPDATE`（レビュー対応・3回目） | `expirePendingBookings`がCalendar削除後・Sheetsへのstatus:EXPIRED書き込み前に予約ロックの有効期限切れを検知し、Sheets書き込みを中断した。Calendarイベントは削除済みの可能性がある |
+| `PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED` | 決済確認（`paymentStatus:paid`への更新）自体は成功したが、続く`confirmBooking`が失敗した（仮押さえ失効・キャンセル済み・Calendarイベント消失・料金訂正案内未送信・保存失敗等）。`failed→paid`経由（失効後の遅延成功）もここに含まれる |
+| `CHECKOUT_HOLD_EXPIRY_PAYMENT_MAYBE_SUCCEEDED` | `expirePendingBookings`が仮押さえ期限切れの枠解放を検討したが、Stripe Checkout Sessionが決済済みと報告されたため枠を解放せず自動処理を停止した（PR-Aから存在。詳細は「仮押さえの解放とStripe側の失効確認」節参照） |
 
 `applyPaymentStateUpdate`自身が内部で既にRecoveryへ記録済みのコード
 （`UNKNOWN_PAYMENT_STATUS`/`PAYMENT_IDENTITY_MISMATCH`/`PAYMENT_IDENTITY_UNCONFIRMED`/
 `PAYMENT_EVIDENCE_MISSING`/`PAYMENT_STATUS_WRITE_FAILED_AFTER_DETAIL_COMMIT`）は
-`StripeWebhookHandler.gs`側で重複記録しない（`SELF_RECORDING_PAYMENT_UPDATE_ERROR_CODES_`
-参照）。
+`StripeWebhookProcessor.gs`側で重複記録しない
+（`SELF_RECORDING_PAYMENT_UPDATE_ERROR_CODES_`参照）。
+
+**レビュー対応・4回目で`EXPIRE_LOCK_EXPIRED_BEFORE_SHEETS_UPDATE`・
+`BOOKING_LOCK_EXPIRED_BEFORE_CONFIRM`を削除した**（`BookingLockRepository`の廃止に伴い、
+これらのfailureTypeは発生しなくなった。「Webhookと失効処理の競合」節参照）。
 
 **同一入金への異なるイベントID（レビュー対応・1回目「2. 同一入金への異なる成功イベント」）**:
 Stripeは同一の決済について、異なるイベントID（例: `checkout.session.completed`と
@@ -4608,7 +4640,7 @@ Stripeは同一の決済について、異なるイベントID（例: `checkout.
 される。同一イベントIDの重複配信自体は別途`StripeEventRepository.gs`のイベント台帳
 （eventId単位）で防ぐ。決済試行ID・Session IDが**本当に異なる**別決済（取り違え・
 二重決済の疑い）は、引き続き`STRIPE_WEBHOOK_IDENTITY_MISMATCH`として要復旧にする
-（`test/stripe-webhook-handler.test.js`の回帰テスト3件参照）。
+（`test/stripe-webhook-processor.test.js`の回帰テスト参照）。
 
 決済は完了しているが予約を確定できない場合の利用者向け案内（返金確約・予約確定の
 誤案内を避ける文言）・自動返金・鍵承認ゲート・「来場案内を再送」ボタンはPR-Dの対象。
@@ -4620,7 +4652,8 @@ Stripeは同一の決済について、異なるイベントID（例: `checkout.
 Checkout Session/PaymentIntentの再取得（`StripeGateway.retrieveCheckoutSession`/
 `retrievePaymentIntent`）自体が失敗した場合（ネットワークエラー・Stripe側5xx等）、
 未払いと決めつけず、StripeEventsの行を`RECEIVED`のまま確定させない
-（`ackSuccess:false`を返し、Stripeの自動再送に委ねる。次回の配信で改めて照会する）。
+（`processPendingStripeWebhookEvents`は`finalized:false`を返し、この行は次回の
+トリガー実行で改めて照会・再試行される）。
 
 ### レビュー対応（1回目）
 
@@ -4816,6 +4849,110 @@ Calendar・日程変更精算・Booking Admin・現地払い・旧Payment Link�
 - [x] Sheetsのappendとread-backだけを公式に保証された原子的ロックとして前提にせず、採用方式の保証範囲と障害時の挙動をREADMEに記載する（レビュー対応・3回目）
 - [x] 異なるGASプロジェクトからの並行取得・取得直後の割り込み・ロック期限切れ・古い保持者による遅延書き込み・解放処理の競合をテストし、枠解放と予約確定が両方成功しないことを確認する（レビュー対応・3回目）
 
+### レビュー対応（4回目）
+
+3回目の対応後、オーナーから`isHeld`によるTOCTOU（time-of-check-to-time-of-use）問題の
+指摘を受け、予約単位の分散ロックそのものを廃止し、実行主体を一本化する設計へ
+再設計した。
+
+**指摘**: `BookingLockRepository.isHeld()`は、呼んだ時点でロックが有効かを確認して
+いるに過ぎない。確認から実際のCalendar・Bookingsへの書き込みまでの間にTTLが切れる
+可能性は残る（例: Webhook側が`isHeld()`で有効と確認した直後に処理が遅延し、TTLが
+経過。Admin側は新しいロックを取得して枠を解放できる。その後Webhook側が再開すると、
+既に行った`isHeld()`の結果を使って予約確定処理へ進めてしまう）。確認箇所を増やしても
+解決しない種類の競合であり、Sheets上に独自の分散ロックを作り込む方式そのものに
+限界があるという指摘だった。
+
+**原因**: 独立したBooking Webhookプロジェクトが決済照合・予約自動確定まで行う設計
+そのものが、Booking Adminプロジェクト（`expirePendingBookings`）と別々の
+`LockService.getScriptLock()`を持つことを前提にせざるを得ず、その間隙を埋めるための
+チェックアンドユース方式（`isHeld`）が本質的にTOCTOUを内包していた。
+
+**対応**: 「Webhookと失効処理の競合」節参照。Booking Webhookプロジェクトを
+「署名検証済みイベントを`StripeEventRepository`へ安全に永続化するだけ」の受信専用
+プロジェクトへ縮小し、決済照合・予約自動確定の実行主体をBooking Adminプロジェクトの
+時間主導トリガー`processPendingStripeWebhookEvents`（`StripeWebhookProcessor.gs`。
+`gas/booking/webhook/StripeWebhookHandler.gs`から移動・再設計）へ一本化した。これにより
+Webhook由来の確定と`expirePendingBookings`が同じLockService.getScriptLock()を自然に
+共有し、予約単位の分散ロック（`BookingLockRepository.gs`。削除）を一切必要としなく
+なった。
+
+具体的な変更点:
+- `gas/booking/webhook/BookingWebhookEndpoint.gs`: `receiveStripeEvent_`が
+  `StripeEventRepository.claim`/`storeRawBody`のみを行う。決済照合・予約確定は
+  一切行わない。Stripeへの成功応答の条件を「イベントを安全に永続化できたこと」に
+  変更した（詳細は「イベントの冪等性・受信と処理の分離」節参照）。
+- `gas/booking/shared/StripeEventRepository.gs`: `gas/booking/webhook/`から
+  `gas/booking/shared/`へ移動。`rawBody`列・`storeRawBody`/`listPendingWithBody`を
+  新設。`claim()`（Webhook受信の重複防止）と`claimForProcessing()`（Admin処理着手の
+  重複防止）を別名前空間に分離した（両者を同じ`claimedAt`で共有すると、Webhook受信
+  直後をAdmin側が誤って「処理中」と判定し、新規イベントの着手が不当に遅延するバグが
+  あったため。詳細は同ファイル冒頭コメント参照）。
+- `gas/booking/admin/StripeWebhookProcessor.gs`（新設。旧`gas/booking/webhook/
+  StripeWebhookHandler.gs`を移動・再設計）: `processPendingStripeWebhookEvents(now)`が
+  `BookingTriggers.gs`の時間主導トリガーから呼ばれ、未処理イベントを取り出して決済
+  照合・予約自動確定まで行う。`BookingLockRepository`/`isHeld`関連のコードはすべて
+  削除し、`applyPaymentStateUpdate`/`confirmBooking`自身の`LockService.getScriptLock()`
+  のみに依存する。
+- `gas/booking/admin/BookingTriggers.gs`: `processPendingStripeWebhookEvents`の時間
+  主導トリガー作成補助関数`createProcessPendingStripeWebhookEventsTrigger()`を追加
+  （既定1分間隔。`expirePendingBookings`の15分間隔より短くし、確定までの遅延を
+  短く抑える）。
+- `gas/booking/shared/BookingRepository.gs`: `expirePendingBookings`から
+  `BookingLockRepository`関連のコード（ロック取得・`isHeld`再検証・専用のRecovery
+  記録）をすべて削除し、1回目レビュー対応時点の構造（`LockService.getScriptLock()`の
+  みで保護する単純な`try`/`finally`）へ戻した。
+- `gas/booking/shared/BookingLockRepository.gs`・`test/booking-lock-repository.test.js`:
+  削除。
+
+**テスト**: `test/stripe-webhook-handler.test.js`を、責務の分離に合わせて
+`test/booking-webhook-endpoint.test.js`（Booking Webhookの受信・永続化契約）と
+`test/stripe-webhook-processor.test.js`（Booking Adminの決済照合・予約自動確定。
+旧ファイルの業務ロジックテストを移設）に分割した。オーナーが明示的に要求した3観点を
+新規テストで検証した:
+
+- **取りこぼし（イベント損失）**: `storeRawBody`の永続化自体が失敗した場合に成功を
+  返さないこと、直後の再送は`IN_PROGRESS_NOT_YET_STORED`として正直に再試行を促し
+  続け、決して誤ってrawBody無しのまま成功を返さないこと、`claimedAt`のstaleAfterMs
+  経過後に安全に再claim・再永続化できること（`test/booking-webhook-endpoint.test.js`）。
+- **重複処理**: 同一イベントの再送が二重に台帳行を作らないこと・二重確定/二重メール
+  送信を起こさないこと、Booking Adminのトリガー実行が重複した場合に
+  `claimForProcessing`が二重処理を防ぐこと（`test/booking-webhook-endpoint.test.js`・
+  `test/stripe-webhook-processor.test.js`）。
+- **処理遅延**: Booking Webhookが受け付けた直後（トリガー未実行の間）は予約が
+  `PENDING`のまま安全に待機し、Booking Adminのトリガーが実行されて初めて確定する
+  こと（`test/stripe-webhook-processor.test.js`）。
+
+加えて、`StripeGateway.retrievePaymentIntent`の呼び出しを横取りしてその中で直接
+`expirePendingBookings`を実行させることで、「同じLockServiceを共有する2つの実行が
+同じ瞬間に迫っている」状況を確定的に再現し、両方が成功したと判断される状態には
+ならないことを検証するテストを追加した（`test/stripe-webhook-processor.test.js`）。
+`test/stripe-event-repository.test.js`には`storeRawBody`/`listPendingWithBody`・
+`claim`/`claimForProcessing`の名前空間分離を検証するテストを追加した。
+
+### テスト結果（4回目レビュー対応後）
+
+`node --test 'test/**/*.test.js'`: **1197件すべてpass**。加えて`cloud-run/
+stripe-webhook-relay`配下（変更なし）は引き続き**11件すべてpass**。**合計1208件すべて
+pass**。3回目対応後の1218件からは、`test/booking-lock-repository.test.js`（削除）と
+旧`test/stripe-webhook-handler.test.js`（削除。分割・移設）の分の純減があり、新設した
+`test/booking-webhook-endpoint.test.js`（8件）・`test/stripe-webhook-processor.test.js`
+（24件。旧`stripe-webhook-handler.test.js`の業務ロジックテストの移設を含む）・
+`test/stripe-event-repository.test.js`への追加分（3件）を加えた結果としてこの件数に
+なった。既存の管理者承認・Calendar・日程変更精算・Booking Admin・現地払い・旧Payment
+Link方式・PR-A/PR-B・レビュー対応1〜3回目の回帰テストもすべてpass（`test/
+booking-card-checkout.test.js`・`test/booking-confirm-expire.test.js`・
+`test/booking-cancel.test.js`・`test/booking-admin-web.test.js`から
+`BookingLockRepository.gs`をサンドボックスのファイル一覧から削除したのみで、アサーション
+内容は変更していない）。実際の本番決済・本番Webhook配信を伴う自動テストは行っていない。
+
+受入条件との照合（今回追加分）:
+- [x] 確認（check）と書き込み（use）の間に競合が起こり得るチェックアンドユース方式を廃止し、実行主体の一本化によりTOCTOUの入り込む隙間自体を無くす（レビュー対応・4回目）
+- [x] Sheetsのappendとread-backだけを公式に保証されたプロジェクト間の原子的ロックとして前提にしない（レビュー対応・4回目。分散ロック自体を廃止）
+- [x] Stripeへの外部HTTP呼び出しはロックの外で行う（レビュー対応・4回目でも維持）
+- [x] イベントの取りこぼし・重複処理・処理遅延のいずれもテストで検証する（レビュー対応・4回目）
+- [x] 採用方式の保証範囲をREADMEに記載する（レビュー対応・4回目。「Webhookと失効処理の競合」節参照）
+
 ### Stripe Webhookエンドポイントのデプロイ（オーナー承認後に実施すること）
 
 レビュー対応・1回目で、既存プロジェクトへのデプロイ追加ではなく**新しい独立した
@@ -4825,15 +4962,18 @@ Apps Scriptプロジェクト**を作成する方式へ変更した（「Webhook
 1. 新しいスタンドアロンApps Scriptプロジェクトを作成する（Booking Web App・
    Booking Adminのいずれとも別のプロジェクト）。
 2. `gas/booking/webhook/`配下と`gas/booking/shared/`配下の指定ファイル
-   （`test/helpers/booking-deployment-manifest.js`の`BOOKING_WEBHOOK_FILES`参照）を
-   フラットにコピーする。`BookingAdmin.gs`/`BookingAdminWeb.gs`/`BookingTriggers.gs`等の
-   管理者向けファイルは**絶対に含めない**。
-3. `gas/booking/webhook/appsscript.json`を参考に、OAuthスコープ（`calendar`/
-   `spreadsheets`/`script.send_mail`/`script.external_request`）を設定する。
-4. Script Propertiesに`CALENDAR_ID`/`SPREADSHEET_ID`（他プロジェクトと同じ値）・
-   `STRIPE_SECRET_KEY`・`STRIPE_WEBHOOK_RELAY_SECRET`（中継基盤と共有する値）・
-   利用者向け確認メールに必要な`BOOKING_MAIL_DISPLAY_NAME`/`BOOKING_MAIL_REPLY_TO`/
-   `BOOKING_CONTACT_EMAIL`（PR-B/Issue #271「Script Properties」節と同じ値）を設定する。
+   （`test/helpers/booking-deployment-manifest.js`の`BOOKING_WEBHOOK_FILES`参照。
+   レビュー対応・4回目で`Config.gs`/`StripeWebhookAuth.gs`/`StripeEventRepository.gs`/
+   `BookingWebhookEndpoint.gs`の4ファイルのみへ大幅に縮小した）をフラットにコピーする。
+   `BookingAdmin.gs`/`BookingAdminWeb.gs`/`BookingTriggers.gs`等の管理者向けファイルは
+   **絶対に含めない**。
+3. `gas/booking/webhook/appsscript.json`を参考に、OAuthスコープ（レビュー対応・4回目で
+   `spreadsheets`のみへ縮小。決済照合・予約自動確定を行わなくなったため`calendar`/
+   `script.send_mail`/`script.external_request`は不要になった）を設定する。
+4. Script Propertiesに`SPREADSHEET_ID`（他プロジェクトと同じ値）・
+   `STRIPE_WEBHOOK_RELAY_SECRET`（中継基盤と共有する値）を設定する（レビュー対応・
+   4回目で決済照合・予約自動確定を行わなくなったため、`CALENDAR_ID`/
+   `STRIPE_SECRET_KEY`・確認メール関連のScript Propertiesは不要になった）。
 5. Web Appとしてデプロイする。**Execute as: 自分（Me）**、**Who has access: 全員
    （Anyone）**を選択する（Stripe中継基盤からの匿名POSTを受け付ける必要があるため。
    認証は`STRIPE_WEBHOOK_RELAY_SECRET`によるアプリケーションレベルのHMAC認証で行う。
@@ -4843,6 +4983,12 @@ Apps Scriptプロジェクト**を作成する方式へ変更した（「Webhook
    （`GAS_WEBHOOK_URL`。`cloud-run/stripe-webhook-relay/`参照）に設定する。
 7. コード更新のたびに、「デプロイを管理」から新しいバージョンへ更新すること
    （既存デプロイのURL維持の運用方針は他プロジェクトと同じ）。
+8. **Booking Adminプロジェクト側**で、`processPendingStripeWebhookEvents`の時間主導
+   トリガーを作成する（`createProcessPendingStripeWebhookEventsTrigger()`をスクリプト
+   エディタから一度だけ手動実行。既定1分間隔。「PENDING TTL失効の遅延についての注記」
+   節と同様、`expirePendingBookings`のトリガーとは別に作成が必要）。このトリガーが
+   実際にStripeEventsの未処理イベントを取り出して決済照合・予約自動確定まで行うため、
+   **これを作成しない限りWebhookが受信したイベントは処理されない**。
 
 ### PR-Dへの引き継ぎ事項
 
@@ -4856,20 +5002,21 @@ Apps Scriptプロジェクト**を作成する方式へ変更した（「Webhook
 - 中継基盤（Cloud Run）・Stripe Webhook Endpoint・Booking Webhookプロジェクトの新規作成の
   実際の作成・本番Script Properties設定・本番Stripe Webhook設定はオーナーの明示承認後に
   別途行う（本PRはコードの提供のみ）。
-- Webhookと失効処理の競合は、レビュー対応・2〜3回目で`BookingLockRepository`
-  （＋`isHeld`による書き込み直前の再検証＋呼び出し側の既存の再読込）による3層の
-  排他制御へ置き換えた。ただしレビュー対応・3回目で明記したとおり、これはSheetsの
-  append順序整列を公式に保証された契約として前提にしたものではなく、ベストエフォート
-  ＋2つの独立した安全網の組み合わせである（「Webhookと失効処理の競合
-  （BookingLockRepositoryによる排他制御）」節「採用方式の保証範囲」参照）。本番運用
-  開始後は、`BookingLocks`シートが行を追加し続ける一方で自動削除しない設計
-  （`StripeEvents`シートと同じ設計判断）のため、運用上肥大化した場合は手動アーカイブを
+- Webhookと失効処理の競合は、レビュー対応・2〜3回目で独自の分散ロック
+  （`BookingLockRepository`）を作り込んだが、確認と書き込みの間のTOCTOUを解消
+  できないという指摘を4回目で受け、決済照合・予約自動確定の実行主体をBooking Admin
+  プロジェクトへ一本化する設計へ置き換えた（分散ロックは完全に廃止。詳細は
+  「Webhookと失効処理の競合」節参照）。本番運用開始後は、`StripeEvents`シートが行を
+  追加し続ける一方で自動削除しない設計のため、運用上肥大化した場合は手動アーカイブを
   検討すること。またRecoveryシートの
-  `PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED`/`STRIPE_WEBHOOK_PAYMENT_UPDATE_REJECTED`/
-  `EXPIRE_LOCK_EXPIRED_BEFORE_SHEETS_UPDATE`の発生頻度（失効処理が実際に決済成立後の
-  予約を先に失効させたケース、ロック取得の前提が崩れて`isHeld`が実際に書き込みを
-  中断したケースを含む）は引き続き
+  `PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED`/`STRIPE_WEBHOOK_PAYMENT_UPDATE_REJECTED`の
+  発生頻度（失効処理が実際に決済成立後の予約を先に失効させたケースを含む）は引き続き
   観察するとよい。
+- Booking Adminの時間主導トリガー`processPendingStripeWebhookEvents`が停止・削除
+  されると、Webhookが受信したイベントが処理されないまま`StripeEvents`シートに
+  蓄積し続ける（Stripeへの応答自体は既に完了しているため、Stripeからの再送には
+  頼れない）。トリガーの実行状況（Apps Scriptの「実行数」画面等）を定期的に確認する
+  運用を推奨する。
 
 PR-Dには自動着手しません。レビューをお待ちします。
 

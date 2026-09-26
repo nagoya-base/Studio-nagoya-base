@@ -79,9 +79,8 @@ function createUtilitiesStub() {
       }
       return bytes;
     },
-    /* Issue #341 PR-Cレビュー対応・2回目: BookingLockRepositoryの取得競合時の短い
-       再試行間隔用。テストは同期的に高速実行する必要があるため実際には待機せず、
-       呼び出されたこと自体だけを記録できるノーオペレーションのスタブとする。 */
+    /* GASコードがUtilities.sleepを呼んだ場合に備えた汎用スタブ。テストは同期的に
+       高速実行する必要があるため実際には待機しない。 */
     sleep: function (millis) {
       /* no-op */
     }
