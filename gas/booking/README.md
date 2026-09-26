@@ -4562,12 +4562,16 @@ Stripe Webhook用の`doPost`をBooking Adminプロジェクトの2つ目のデ�
 
 ### テスト結果（1回目レビュー対応後）
 
-`node --test`: **総計1200件すべてpass**（初回提出1187件＋今回のレビュー対応で追加した
-13件。`test/booking-webhook-deployment.test.js`5件（新規。公開境界の検証）・
+`node --test 'test/**/*.test.js'`（リポジトリルート。外部npm依存なし）:
+**1185件すべてpass**。加えて`cloud-run/stripe-webhook-relay`配下（`stripe`パッケージへ
+実依存する中継サービス単体。`cd cloud-run/stripe-webhook-relay && npm install && npm test`）
+で**11件すべてpass**。合計**1196件すべてpass**（初回提出1187件のうち`stripe-webhook-relay`
+の11件を分離集計し、今回のレビュー対応で追加した9件を加算。内訳:
+`test/booking-webhook-deployment.test.js`5件（新規。公開境界の検証）・
 `test/booking-deployment-manifest-sync.test.js`2件（Webhook列の検証）・
 `test/stripe-webhook-handler.test.js`3件（同一入金への異なるイベントID・同一イベント
-再送・本当に異なる別決済の区別）・`test/card-payment.test.js`1件
-（`computeExpireSweepEligibleMillis`）・`test/booking-model.test.js`1件
+再送・本当に異なる別決済の区別。既存2件の書き直しは件数に含まず）・`test/card-payment.
+test.js`1件（`computeExpireSweepEligibleMillis`）・`test/booking-model.test.js`1件
 （`canTransitionPaymentStatus`のfailed→paid）・`test/booking-payment-state.test.js`1件
 （`applyPaymentStateUpdate`のfailed→paid実地検証））。既存の`stripe-webhook-handler.
 test.js`の競合テスト2件は、別々のLockServiceを持つ2つの独立したサンドボックスを使う
@@ -4575,6 +4579,20 @@ test.js`の競合テスト2件は、別々のLockServiceを持つ2つの独立�
 記録するよう更新）。既存の管理者承認・Calendar・日程変更精算・Booking Admin・現地払い・
 旧Payment Link方式・PR-A/PR-Bの回帰テストもすべてpass。実際の本番決済・本番Webhook
 配信を伴う自動テストは行っていない。
+
+**CI設定の修正（レビュー対応・1回目で判明）**: `.github/workflows/booking-pr-tests.yml`の
+`node-tests`ジョブは、リポジトリルートで`node --test`（引数なし）を実行していた。これは
+Node.jsのテストランナーの既定探索が`cloud-run/stripe-webhook-relay/test/`配下も再帰的に
+含めてしまう一方、同ジョブには`npm install`が一切なく、リポジトリルート自体は意図的に
+無依存（`package.json`参照）としているため、`stripe-webhook-relay/test/handler.test.js`の
+`require('stripe')`がCI上でのみ`MODULE_NOT_FOUND`になり、そのテストファイル単位で1件の
+失敗として計上されていた（ローカルでは`cloud-run/stripe-webhook-relay`で個別に`npm
+install`していたため気づかなかった）。ワークフローを次の3ステップへ分割して修正した。
+(1) `node --test 'test/**/*.test.js'`でリポジトリルートの無依存テストのみを明示的に
+対象化、(2) `cloud-run/stripe-webhook-relay`ディレクトリで`npm install`、(3) 同ディレクトリ
+で`npm test`。あわせて`pull_request.paths`に`cloud-run/**`を追加し、中継サービス単体の
+変更でも本ワークフローが起動するようにした。実際の本番CI・Secrets・デプロイ設定には
+一切触れていない。
 
 受入条件との照合（PR-Cの範囲内のもののみ）:
 - [x] 正しい署名のイベントのみ受け付ける（中継基盤のStripe署名検証＋中継→GASのHMAC認証）
