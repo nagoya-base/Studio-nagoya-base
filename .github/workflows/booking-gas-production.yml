@@ -98,13 +98,21 @@ jobs:
           NODE
 
           cd "$remote_dir"
-          deployments_before="$(clasp --auth "$auth_file" list-deployments)"
+          echo "Running clasp list-deployments (before update)"
+          if ! deployments_before="$(clasp --auth "$auth_file" list-deployments 2>/dev/null)"; then
+            echo "clasp list-deployments failed (before update)." >&2
+            exit 1
+          fi
           if ! grep -Fq -- "$deployment_id" <<<"$deployments_before"; then
             echo "Configured deployment ID does not belong to the selected existing GAS project." >&2
             exit 1
           fi
 
-          clasp --auth "$auth_file" pull
+          echo "Running clasp pull"
+          if ! clasp --auth "$auth_file" pull >/dev/null 2>&1; then
+            echo "clasp pull failed." >&2
+            exit 1
+          fi
           if [[ ! -f appsscript.json ]]; then
             echo "Existing GAS project did not return appsscript.json; refusing to push." >&2
             exit 1
@@ -130,12 +138,28 @@ jobs:
           NODE
 
           cd "$deploy_dir"
-          clasp --auth "$auth_file" show-file-status
-          clasp --auth "$auth_file" push --force
-          clasp --auth "$auth_file" update-deployment "$deployment_id" \
-            --description "main ${GITHUB_SHA}"
+          echo "Running clasp show-file-status"
+          if ! clasp --auth "$auth_file" show-file-status >/dev/null 2>&1; then
+            echo "clasp show-file-status failed." >&2
+            exit 1
+          fi
+          echo "Running clasp push --force"
+          if ! clasp --auth "$auth_file" push --force >/dev/null 2>&1; then
+            echo "clasp push --force failed." >&2
+            exit 1
+          fi
+          echo "Running clasp update-deployment"
+          if ! clasp --auth "$auth_file" update-deployment "$deployment_id" \
+            --description "main ${GITHUB_SHA}" >/dev/null 2>&1; then
+            echo "clasp update-deployment failed." >&2
+            exit 1
+          fi
 
-          deployments_after="$(clasp --auth "$auth_file" list-deployments)"
+          echo "Running clasp list-deployments (after update)"
+          if ! deployments_after="$(clasp --auth "$auth_file" list-deployments 2>/dev/null)"; then
+            echo "clasp list-deployments failed (after update)." >&2
+            exit 1
+          fi
           if ! grep -Fq -- "$deployment_id" <<<"$deployments_after"; then
             echo "Existing deployment could not be verified after update." >&2
             exit 1
