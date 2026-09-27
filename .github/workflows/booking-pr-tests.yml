@@ -13,6 +13,7 @@ on:
       - 'test/**'
       - 'cloud-run/**'
       - '.github/workflows/booking-pr-tests.yml'
+      - '.github/workflows/booking-gas-production.yml'
 
 permissions:
   contents: read
@@ -28,7 +29,7 @@ jobs:
       - name: Run repository tests (no external dependencies)
         run: node --test 'test/**/*.test.js'
       - name: Install stripe-webhook-relay dependencies
-        run: npm install
+        run: npm ci
         working-directory: cloud-run/stripe-webhook-relay
       - name: Run stripe-webhook-relay tests
         run: npm test
