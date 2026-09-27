@@ -26,11 +26,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Run repository tests (no external dependencies)
-        run: node --test 'test/**/*.test.js'
       - name: Install stripe-webhook-relay dependencies
         run: npm ci
         working-directory: cloud-run/stripe-webhook-relay
-      - name: Run stripe-webhook-relay tests
+      - name: Run repository tests
         run: npm test
-        working-directory: cloud-run/stripe-webhook-relay
