@@ -66,6 +66,33 @@
  * Booking Webhookプロジェクトが受信した時点で完結している。冒頭コメント参照）。
  * ここでの処理結果（COMPLETED/IGNORED/REJECTED、または未完了のままRECEIVED維持）は
  * StripeEventRepositoryとRecoveryにのみ記録され、運営者が確認する。
+ *
+ * 【レビュー対応・5回目: 処理権の世代管理とハートビートによる生存確認】4回目までは
+ * `claimForProcessing()`のstaleAfterMs（既定2分）判定だけに頼っており、1件のイベント
+ * 処理がstaleAfterMsを超えて実行中なだけでも、別のトリガー実行が「クラッシュした」と
+ * 誤判定して処理権を奪い、二重処理につながる恐れがあった（正常に実行中の処理権を、
+ * 時間経過だけで別の実行に渡してはならないという指摘）。対応として:
+ *
+ * - `StripeEventRepository.renewProcessingLease(rowNumber, generation, now)`を、
+ *   外部Stripe API呼び出し・Bookings/Calendarへの書き込みの直前に呼ぶ（本ファイル内の
+ *   3箇所。下記processSingleEvent_/handleAsyncPaymentFailed_参照）。実際に処理を
+ *   続けている実行はこれによりprocessingClaimedAt（ハートビート）を更新し続けるため、
+ *   claimForProcessing()のage判定は常に短く保たれ、時間経過だけで処理権が渡ることは
+ *   ない。
+ * - renewProcessingLeaseが`{renewed:false}`を返した場合（既に別の実行が世代を
+ *   進めている＝処理権を引き継いでいる）は、直ちにこの実行の処理を中断し
+ *   （SUPERSEDED_BY_NEWER_ATTEMPT）、以後Bookings/Calendarへの書き込み・
+ *   StripeEvents.finalizeForProcessing呼び出しを一切行わない。
+ * - `StripeEventRepository.finalizeForProcessing(rowNumber, generation, fields, now)`は
+ *   書き込み直前に世代番号（processingClaimCount）を再確認してから書き込む
+ *   （fencing token）。renewProcessingLeaseの確認から実際の書き込みまでのわずかな
+ *   間隙で世代が進んでいた場合でも、古い実行の遅延した書き込みが新しい実行の処理
+ *   結果を上書きすることを構造的に防ぐ。
+ *
+ * BookingRepository.applyPaymentStateUpdate/confirmBookingはそれ自体が冪等なため、
+ * 処理権を引き継いだ新しい実行がprocessSingleEvent_を最初からやり直しても、既に
+ * 完了した決済状態更新・予約確定・確認メール送信を二重実行することはない（詳細は
+ * README「Webhookと失効処理の競合」節参照）。
  */
 'use strict';
 
@@ -118,23 +145,54 @@ var StripeWebhookProcessor = (function () {
   }
 
   /*
-   * StripeEventRepository.finalizeの書き込み自体が失敗した場合、行はRECEIVEDのまま残り、
-   * 次回のトリガー実行で（ADMIN_CLAIM_STALE_AFTER_MS_経過後に）安全に再開できる。
+   * StripeEventRepository.finalizeForProcessingの書き込み自体が失敗した場合、行はRECEIVEDの
+   * まま残り、次回のトリガー実行で（ADMIN_CLAIM_STALE_AFTER_MS_経過後に）安全に再開できる。
    * fields.processingStateにはCOMPLETED/IGNORED/REJECTEDのいずれかを渡すこと。
+   *
+   * generation（claimForProcessing()が返したrecord.processingClaimCount）が既に古くなって
+   * いた場合（STALE_GENERATION/ALREADY_TERMINAL）、この書き込みは行わない。既に別の実行が
+   * このイベントの処理を引き継いでいるため、この実行の結果を破棄してSUPERSEDED_BY_
+   * NEWER_ATTEMPTを返す（レビュー対応・5回目。「Webhookと失効処理の競合」節参照）。
    */
-  function finalizeOutcome_(rowNumber, fields, now, code, message) {
+  function finalizeOutcome_(rowNumber, generation, fields, now, code, message) {
+    var result;
     try {
-      StripeEventRepository.finalize(rowNumber, fields, now);
+      result = StripeEventRepository.finalizeForProcessing(rowNumber, generation, fields, now);
     } catch (finalizeError) {
       Logger.log('StripeWebhookProcessor: イベント処理結果の永続化に失敗しました: ' + describeError_(finalizeError));
+      return outcome_(false, 'LEDGER_WRITE_FAILED', 'イベント処理結果の永続化に失敗しました。再試行します。');
+    }
+    if (!result.written) {
+      if (result.reason === 'STALE_GENERATION' || result.reason === 'ALREADY_TERMINAL') {
+        Logger.log('StripeWebhookProcessor: 別の実行に処理権が引き継がれていたため、この実行の結果は破棄しました: rowNumber=' + rowNumber + ' reason=' + result.reason);
+        return outcome_(false, 'SUPERSEDED_BY_NEWER_ATTEMPT', 'この処理権は別の実行に引き継がれています。');
+      }
       return outcome_(false, 'LEDGER_WRITE_FAILED', 'イベント処理結果の永続化に失敗しました。再試行します。');
     }
     return outcome_(true, code, message);
   }
 
+  /*
+   * 処理を続けている実行がまだ処理権を保持しているかを確認・更新する
+   * （StripeEventRepository.renewProcessingLease）。外部Stripe API呼び出しやBookings/
+   * Calendarへの書き込みなど、時間のかかる処理の直前に呼ぶ。既に別の実行へ処理権が
+   * 移っていた場合はnullではなくSUPERSEDED_BY_NEWER_ATTEMPTのoutcomeを返すので、
+   * 呼び出し元は直ちにそれをそのままprocessSingleEvent_の戻り値として返し、以後
+   * Bookings/Calendarへの書き込み・finalizeOutcome_呼び出しを一切行わないこと
+   * （レビュー対応・5回目で新設）。
+   */
+  function renewOrSupersededOutcome_(rowNumber, generation, now) {
+    var renewal = StripeEventRepository.renewProcessingLease(rowNumber, generation, now);
+    if (!renewal.renewed) {
+      Logger.log('StripeWebhookProcessor: 処理中に別の実行へ処理権が引き継がれたため中断しました: rowNumber=' + rowNumber);
+      return outcome_(false, 'SUPERSEDED_BY_NEWER_ATTEMPT', 'この処理権は別の実行に引き継がれています。');
+    }
+    return null;
+  }
+
   /* 予約に紐付けられない、または再送しても解決しない構造的な問題をRecoveryへ記録した上で
      REJECTEDとして確定する。 */
-  function rejectAndFinalize_(rowNumber, bookingId, code, message, now) {
+  function rejectAndFinalize_(rowNumber, generation, bookingId, code, message, now) {
     try {
       RecoveryRepository.recordFailure({
         bookingId: bookingId || '',
@@ -149,7 +207,7 @@ var StripeWebhookProcessor = (function () {
     } catch (recoveryError) {
       Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
     }
-    return finalizeOutcome_(rowNumber, {
+    return finalizeOutcome_(rowNumber, generation, {
       processingState: StripeEventRepository.STATE.REJECTED,
       bookingId: bookingId || '',
       outcomeCode: code,
@@ -160,8 +218,8 @@ var StripeWebhookProcessor = (function () {
   /* rejectAndFinalize_からRecoveryRepository呼び出しを除いた版。呼び出し元が
      recordPaymentRecoveryGate_で既にRecovery記録・恒久ゲートを立てている場合に使う
      （二重記録を避ける）。 */
-  function rejectFinalizeOnly_(rowNumber, bookingId, code, message, now) {
-    return finalizeOutcome_(rowNumber, {
+  function rejectFinalizeOnly_(rowNumber, generation, bookingId, code, message, now) {
+    return finalizeOutcome_(rowNumber, generation, {
       processingState: StripeEventRepository.STATE.REJECTED,
       bookingId: bookingId || '',
       outcomeCode: code,
@@ -209,34 +267,38 @@ var StripeWebhookProcessor = (function () {
    * 設計してください」）。対象の決済試行がまだ現在の決済試行のままCHECKOUT_PENDINGで
    * ある場合のみFAILEDへ進め、次回の申込で新しい決済試行IDを発行できるようにする。
    */
-  function handleAsyncPaymentFailed_(rowNumber, eventId, session, bookingId, paymentAttemptId, now) {
+  function handleAsyncPaymentFailed_(rowNumber, generation, eventId, session, bookingId, paymentAttemptId, now) {
     if (session.paymentStatus === 'paid') {
       /* 既に別の成功イベントでpaidへ進んでいる（順序逆転で失敗通知が後から届いた）。
          成功を巻き戻さない。 */
-      return finalizeOutcome_(rowNumber, {
+      return finalizeOutcome_(rowNumber, generation, {
         processingState: StripeEventRepository.STATE.IGNORED,
         bookingId: bookingId, paymentAttemptId: paymentAttemptId,
         outcomeCode: 'SUPERSEDED_BY_SUCCESS', outcomeMessage: '決済は既に成功しているため失敗通知を無視しました。'
       }, now, 'SUPERSEDED_BY_SUCCESS', '決済は既に成功しています。');
     }
     if (!bookingId) {
-      return rejectAndFinalize_(rowNumber, '', 'METADATA_MISSING', '非同期決済失敗イベントにmetadata.bookingIdがありません。sessionId=' + session.id, now);
+      return rejectAndFinalize_(rowNumber, generation, '', 'METADATA_MISSING', '非同期決済失敗イベントにmetadata.bookingIdがありません。sessionId=' + session.id, now);
     }
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
     if (!found) {
-      return rejectAndFinalize_(rowNumber, bookingId, 'BOOKING_NOT_FOUND', '対応する予約が見つかりません。bookingId=' + bookingId, now);
+      return rejectAndFinalize_(rowNumber, generation, bookingId, 'BOOKING_NOT_FOUND', '対応する予約が見つかりません。bookingId=' + bookingId, now);
     }
     var record = found.record;
     var currentPaymentStatus = Booking.normalizePaymentStatus(record.paymentStatus);
     var isCurrentAttempt = record.paymentAttemptId === paymentAttemptId && record.stripeCheckoutSessionId === session.id;
     if (!isCurrentAttempt || currentPaymentStatus !== Booking.PAYMENT_STATUS.CHECKOUT_PENDING) {
       /* 既に別の決済試行へ進んでいる、または既に解決済み（failed/paid等）。何もしない。 */
-      return finalizeOutcome_(rowNumber, {
+      return finalizeOutcome_(rowNumber, generation, {
         processingState: StripeEventRepository.STATE.IGNORED,
         bookingId: bookingId, paymentAttemptId: paymentAttemptId,
         outcomeCode: 'STALE_OR_ALREADY_RESOLVED', outcomeMessage: '既に別の決済試行へ進んでいるか解決済みのため何もしませんでした。'
       }, now, 'STALE_OR_ALREADY_RESOLVED', '対応不要です。');
     }
+
+    /* Bookingsへの書き込み直前に処理権がまだ有効か再確認する（レビュー対応・5回目）。 */
+    var superseded = renewOrSupersededOutcome_(rowNumber, generation, now);
+    if (superseded) return superseded;
 
     var failResult = BookingRepository.applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, { paymentAttemptResolvedAt: now }, now);
     if (!failResult.success) {
@@ -246,11 +308,11 @@ var StripeWebhookProcessor = (function () {
       }
       if (failCode === 'PAYMENT_RECOVERY_REQUIRED') {
         /* 既に別の理由で恒久ゲートが立っている。ここで重複してRecoveryへ記録しない。 */
-        return rejectFinalizeOnly_(rowNumber, bookingId, failCode, '既に要復旧のため何もしませんでした。', now);
+        return rejectFinalizeOnly_(rowNumber, generation, bookingId, failCode, '既に要復旧のため何もしませんでした。', now);
       }
-      return rejectAndFinalize_(rowNumber, bookingId, failCode || 'PAYMENT_UPDATE_FAILED', '決済失敗状態への更新に失敗しました: ' + failCode, now);
+      return rejectAndFinalize_(rowNumber, generation, bookingId, failCode || 'PAYMENT_UPDATE_FAILED', '決済失敗状態への更新に失敗しました: ' + failCode, now);
     }
-    return finalizeOutcome_(rowNumber, {
+    return finalizeOutcome_(rowNumber, generation, {
       processingState: StripeEventRepository.STATE.COMPLETED,
       bookingId: bookingId, paymentAttemptId: paymentAttemptId,
       outcomeCode: 'MARKED_FAILED', outcomeMessage: '決済試行をfailedへ更新しました。'
@@ -260,12 +322,17 @@ var StripeWebhookProcessor = (function () {
   /*
    * rowNumber/record: StripeEventRepository.claimForProcessing()が返したもの（record.rawBodyに
    * Stripe Webhookイベントの生JSON文字列が保存済み）。
+   * generation: claimForProcessing()が返したrecord.processingClaimCount（レビュー対応・5回目
+   *   で追加。処理権の世代番号。Bookings/Calendarへの書き込み直前の再確認・
+   *   StripeEvents.finalizeForProcessingの書き込み直前の再確認に使う）。
    * now: テストからの固定時刻注入用（省略時はnew Date()）。
    * 戻り値: { finalized, code, message }。finalized:trueの場合、StripeEventsは終端状態
    *   （COMPLETED/IGNORED/REJECTED）まで書き込まれている。falseの場合は行がRECEIVEDの
-   *   まま残り、次回のトリガー実行で安全に再試行される。
+   *   まま残り、次回のトリガー実行で安全に再試行される（code:'SUPERSEDED_BY_NEWER_ATTEMPT'
+   *   の場合は、既に別の実行がこのイベントの処理を引き継いでいるため、この実行の結果は
+   *   破棄されている。呼び出し元はこれを異常とはみなさない）。
    */
-  function processSingleEvent_(rowNumber, record, now) {
+  function processSingleEvent_(rowNumber, record, now, generation) {
     var effectiveNow = isDateLike_(now) ? now : new Date();
     var eventId = record.eventId;
     var eventType = record.eventType;
@@ -274,7 +341,7 @@ var StripeWebhookProcessor = (function () {
     if (!parsed || typeof parsed !== 'object') {
       /* 通常は起こり得ない（受信時にBooking Webhook側でJSON.parseが成功した本文だけを
          保存するため）。台帳の破損等、想定外の事態として構造的な問題扱いにする。 */
-      return rejectAndFinalize_(rowNumber, '', 'INVALID_STORED_EVENT_JSON', '保存済みのイベント本文を解析できませんでした。eventId=' + eventId, effectiveNow);
+      return rejectAndFinalize_(rowNumber, generation, '', 'INVALID_STORED_EVENT_JSON', '保存済みのイベント本文を解析できませんでした。eventId=' + eventId, effectiveNow);
     }
 
     var objectData = parsed.data && parsed.data.object;
@@ -282,14 +349,14 @@ var StripeWebhookProcessor = (function () {
     var isSuccessType = RELEVANT_SUCCESS_TYPES_.indexOf(eventType) !== -1;
     var isFailureType = FAILURE_TYPES_.indexOf(eventType) !== -1;
     if (!isSuccessType && !isFailureType) {
-      return finalizeOutcome_(rowNumber, {
+      return finalizeOutcome_(rowNumber, generation, {
         processingState: StripeEventRepository.STATE.IGNORED,
         outcomeCode: 'UNHANDLED_EVENT_TYPE', outcomeMessage: 'このイベント種別は対象外です: ' + eventType
       }, effectiveNow, 'IGNORED_EVENT_TYPE', '対象外のイベント種別です。');
     }
 
     if (!objectData || typeof objectData.id !== 'string' || !objectData.id) {
-      return rejectAndFinalize_(rowNumber, '', 'INVALID_EVENT_OBJECT', 'イベント本文にCheckout Session IDが含まれていません。eventId=' + eventId, effectiveNow);
+      return rejectAndFinalize_(rowNumber, generation, '', 'INVALID_EVENT_OBJECT', 'イベント本文にCheckout Session IDが含まれていません。eventId=' + eventId, effectiveNow);
     }
 
     /*
@@ -310,7 +377,7 @@ var StripeWebhookProcessor = (function () {
     var brand = typeof metadata.brand === 'string' ? metadata.brand : '';
 
     if (isFailureType) {
-      return handleAsyncPaymentFailed_(rowNumber, eventId, session, bookingId, paymentAttemptId, effectiveNow);
+      return handleAsyncPaymentFailed_(rowNumber, generation, eventId, session, bookingId, paymentAttemptId, effectiveNow);
     }
 
     /*
@@ -319,7 +386,7 @@ var StripeWebhookProcessor = (function () {
      * （非同期決済方法が有効な場合の中間状態を含む）ため自動確定しない。
      */
     if (session.paymentStatus !== 'paid') {
-      return finalizeOutcome_(rowNumber, {
+      return finalizeOutcome_(rowNumber, generation, {
         processingState: StripeEventRepository.STATE.IGNORED,
         bookingId: bookingId, paymentAttemptId: paymentAttemptId,
         outcomeCode: 'PAYMENT_NOT_YET_COMPLETE',
@@ -328,12 +395,12 @@ var StripeWebhookProcessor = (function () {
     }
 
     if (!bookingId || !paymentAttemptId || !brand) {
-      return rejectAndFinalize_(rowNumber, bookingId, 'METADATA_MISSING', 'Checkout Sessionのmetadataが不足しています（bookingId/paymentAttemptId/brand）。sessionId=' + session.id, effectiveNow);
+      return rejectAndFinalize_(rowNumber, generation, bookingId, 'METADATA_MISSING', 'Checkout Sessionのmetadataが不足しています（bookingId/paymentAttemptId/brand）。sessionId=' + session.id, effectiveNow);
     }
 
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
     if (!found) {
-      return rejectAndFinalize_(rowNumber, bookingId, 'BOOKING_NOT_FOUND', '対応する予約が見つかりません。bookingId=' + bookingId + ' sessionId=' + session.id, effectiveNow);
+      return rejectAndFinalize_(rowNumber, generation, bookingId, 'BOOKING_NOT_FOUND', '対応する予約が見つかりません。bookingId=' + bookingId + ' sessionId=' + session.id, effectiveNow);
     }
     var record2 = found.record;
 
@@ -341,7 +408,7 @@ var StripeWebhookProcessor = (function () {
       /* 既に別の理由で恒久の要復旧ゲートが立っている予約。無駄なStripe API呼び出し・
          重複したRecovery記録を避けるためここで打ち切る（後段のapplyPaymentStateUpdateも
          同じ理由でPAYMENT_RECOVERY_REQUIREDを返すが、PaymentIntent再取得等を省略できる）。 */
-      return rejectFinalizeOnly_(rowNumber, bookingId, 'PAYMENT_RECOVERY_REQUIRED', '既に要復旧のため何もしませんでした。', effectiveNow);
+      return rejectFinalizeOnly_(rowNumber, generation, bookingId, 'PAYMENT_RECOVERY_REQUIRED', '既に要復旧のため何もしませんでした。', effectiveNow);
     }
 
     /*
@@ -358,8 +425,17 @@ var StripeWebhookProcessor = (function () {
           'Stripe管理画面で実際の入金内容を確認してください。',
         effectiveNow
       );
-      return rejectFinalizeOnly_(rowNumber, bookingId, 'IDENTITY_MISMATCH', '識別子が一致しないため要復旧としました。', effectiveNow);
+      return rejectFinalizeOnly_(rowNumber, generation, bookingId, 'IDENTITY_MISMATCH', '識別子が一致しないため要復旧としました。', effectiveNow);
     }
+
+    /*
+     * ここまででCheckout Sessionの再取得（外部HTTP呼び出し）が1回完了している。
+     * 次のPaymentIntent再取得（外部HTTP呼び出し）へ進む前に、処理権がまだ有効か
+     * 再確認する（レビュー対応・5回目。長時間かかる処理の途中でstaleAfterMsが経過し、
+     * 別の実行に処理権が渡っていないことを確認する）。
+     */
+    var supersededBeforePi = renewOrSupersededOutcome_(rowNumber, generation, effectiveNow);
+    if (supersededBeforePi) return supersededBeforePi;
 
     /*
      * Session完了の事実と、PaymentIntentの入金完了を別々に確認する（同一視しない）。
@@ -381,7 +457,7 @@ var StripeWebhookProcessor = (function () {
           '入金完了を同一視せず、自動処理を停止しました。',
         effectiveNow
       );
-      return rejectFinalizeOnly_(rowNumber, bookingId, 'PAYMENT_INTENT_STATUS_MISMATCH', 'PaymentIntentのstatusが一致しないため要復旧としました。', effectiveNow);
+      return rejectFinalizeOnly_(rowNumber, generation, bookingId, 'PAYMENT_INTENT_STATUS_MISMATCH', 'PaymentIntentのstatusが一致しないため要復旧としました。', effectiveNow);
     }
 
     /* 金額照合はCheckout Session発行時点のスナップショット基準（現在の料金を再計算しない）。 */
@@ -394,7 +470,7 @@ var StripeWebhookProcessor = (function () {
           '）と一致しません（' + verify.error.code + '）。入金の事実は保持したまま自動処理を停止しました。',
         effectiveNow
       );
-      return rejectFinalizeOnly_(rowNumber, bookingId, verify.error.code, '金額・通貨が一致しないため要復旧としました。', effectiveNow);
+      return rejectFinalizeOnly_(rowNumber, generation, bookingId, verify.error.code, '金額・通貨が一致しないため要復旧としました。', effectiveNow);
     }
 
     /*
@@ -403,7 +479,13 @@ var StripeWebhookProcessor = (function () {
      * （BookingRepository.gs参照）。この関数自体がBooking Adminプロジェクトの一部として
      * 実行されるため、expirePendingBookingsと同じLockを自然に共有する。予約単位の
      * 分散ロックは一切不要（ファイル冒頭コメント参照）。
+     *
+     * レビュー対応・5回目: PaymentIntent再取得（外部HTTP呼び出し）が完了した直後・
+     * Bookingsへの実際の書き込みを行う直前に、処理権がまだ有効か再確認する。
      */
+    var supersededBeforePaid = renewOrSupersededOutcome_(rowNumber, generation, effectiveNow);
+    if (supersededBeforePaid) return supersededBeforePaid;
+
     var paidResult = BookingRepository.applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.PAID, {
       stripePaymentIntentId: paymentIntent.id,
       lastStripeEventId: eventId,
@@ -417,14 +499,14 @@ var StripeWebhookProcessor = (function () {
         return outcome_(false, paidErrorCode, '一時的に決済状態を更新できませんでした。再試行します。');
       }
       if (paidErrorCode === 'PAYMENT_RECOVERY_REQUIRED') {
-        return rejectFinalizeOnly_(rowNumber, bookingId, paidErrorCode, '既に要復旧のため何もしませんでした。', effectiveNow);
+        return rejectFinalizeOnly_(rowNumber, generation, bookingId, paidErrorCode, '既に要復旧のため何もしませんでした。', effectiveNow);
       }
       if (SELF_RECORDING_PAYMENT_UPDATE_ERROR_CODES_.indexOf(paidErrorCode) !== -1) {
         /* PAYMENT_IDENTITY_MISMATCH・UNKNOWN_PAYMENT_STATUS・PAYMENT_STATUS_WRITE_FAILED_
            AFTER_DETAIL_COMMIT・PAYMENT_IDENTITY_UNCONFIRMED・PAYMENT_EVIDENCE_MISSING等は
            applyPaymentStateUpdate自身が既にRecoveryへ記録済み（BookingRepository.gs参照）。
            ここで重複記録はしない。 */
-        return rejectFinalizeOnly_(rowNumber, bookingId, paidErrorCode || 'PAYMENT_UPDATE_FAILED', '決済状態の更新に失敗しました: ' + paidErrorCode, effectiveNow);
+        return rejectFinalizeOnly_(rowNumber, generation, bookingId, paidErrorCode || 'PAYMENT_UPDATE_FAILED', '決済状態の更新に失敗しました: ' + paidErrorCode, effectiveNow);
       }
       /*
        * INVALID_PAYMENT_TRANSITION（例: 仮押さえ失効・キャンセル等で既にpaymentStatusが
@@ -439,8 +521,19 @@ var StripeWebhookProcessor = (function () {
           '入金の事実を消さず自動処理を停止しました。運営者による確認が必要です。',
         effectiveNow
       );
-      return rejectFinalizeOnly_(rowNumber, bookingId, paidErrorCode || 'PAYMENT_UPDATE_FAILED', '決済状態の更新に失敗しました: ' + paidErrorCode, effectiveNow);
+      return rejectFinalizeOnly_(rowNumber, generation, bookingId, paidErrorCode || 'PAYMENT_UPDATE_FAILED', '決済状態の更新に失敗しました: ' + paidErrorCode, effectiveNow);
     }
+
+    /*
+     * confirmBooking直前にも処理権を再確認する（レビュー対応・5回目）。
+     * applyPaymentStateUpdate自体は既に成功済み（入金の事実は記録済み）のため、
+     * ここで処理権を失っていても入金記録が失われることはない
+     * （BookingRepository.applyPaymentStateUpdate自身の冪等性により、この後の実行
+     * ―別の実行が再claimして再度processSingleEvent_をやり直す、または既にpaidの
+     * ままconfirmBookingへ進む―が安全に引き継ぐ）。
+     */
+    var supersededBeforeConfirm = renewOrSupersededOutcome_(rowNumber, generation, effectiveNow);
+    if (supersededBeforeConfirm) return supersededBeforeConfirm;
 
     /*
      * 予約の最新状態を読み直したうえで、既存の予約確定処理をそのまま再利用する
@@ -465,7 +558,7 @@ var StripeWebhookProcessor = (function () {
       );
     }
 
-    return finalizeOutcome_(rowNumber, {
+    return finalizeOutcome_(rowNumber, generation, {
       processingState: StripeEventRepository.STATE.COMPLETED,
       bookingId: bookingId,
       paymentAttemptId: paymentAttemptId,
@@ -502,7 +595,8 @@ var StripeWebhookProcessor = (function () {
         skippedCount++;
         return;
       }
-      var result = processSingleEvent_(claimResult.rowNumber, claimResult.record, effectiveNow);
+      var generation = Number(claimResult.record.processingClaimCount);
+      var result = processSingleEvent_(claimResult.rowNumber, claimResult.record, effectiveNow, generation);
       results.push(Object.assign({ eventId: item.record.eventId }, result));
       if (result.finalized) {
         processedCount++;

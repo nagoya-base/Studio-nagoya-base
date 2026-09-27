@@ -4462,6 +4462,8 @@ PaymentIntentともに、Webhookイベント本文のフィールドをそのま
   `RECEIVED`行が見つかった場合は、別の呼び出しが処理中とみなし`IN_PROGRESS`を返す
   （この回は何もせず、Stripeの自動再送またはAdmin側の次回トリガー実行に委ねる。
   二重に予約確定・Calendar更新・確認メール送信が実行されることはない）。
+  **`claimForProcessing()`側の「十分新しいか」の判定は、レビュー対応・5回目で
+  ハートビート対応に変更した。詳細は「処理権の世代管理とハートビート」節参照。**
 - **処理途中で失敗したイベントを「受信済みだから処理不要」として捨てない**: `RECEIVED`の
   まま一定時間を超えて放置された行は、前回の実行がクラッシュ・タイムアウトしたとみなして
   安全に再claimし、最初から処理をやり直す。これが安全な理由は、再実行する
@@ -4477,14 +4479,87 @@ PaymentIntentともに、Webhookイベント本文のフィールドをそのま
   制約上`doPost`自体のHTTPステータスは常に200になるため、実際の成否はレスポンスJSONの
   `success`フィールドで中継基盤へ伝え、中継基盤が`success:false`の場合にStripeへ5xxを
   返して自動再送を促す（`cloud-run/stripe-webhook-relay/`参照）。
-- **Booking Admin側の処理結果の永続化**: `StripeEventRepository.finalize()`が実際に
-  成功した場合にのみ、その回のトリガー実行はこのイベントを終端状態（`COMPLETED`/
-  `IGNORED`/`REJECTED`）まで到達させたとみなす（`processPendingStripeWebhookEvents`の
-  戻り値`finalized:true`）。この書き込み自体が失敗した場合は、予約確定・決済状態の
-  更新が既に成功していても`finalized:false`を返し、行は`RECEIVED`のまま残る（次回の
-  トリガー実行で安全に再claim・再確認できる。予約確定・メール送信は既に完了している
-  ため二重実行はしない）。この結果はStripeへの応答とは無関係（応答はBooking Webhookが
-  受信した時点で完結している）。
+- **Booking Admin側の処理結果の永続化**: `StripeEventRepository.finalizeForProcessing()`
+  （レビュー対応・5回目で`finalize()`から分離。後述「処理権の世代管理とハートビート」節
+  参照）が実際に成功した場合にのみ、その回のトリガー実行はこのイベントを終端状態
+  （`COMPLETED`/`IGNORED`/`REJECTED`）まで到達させたとみなす
+  （`processPendingStripeWebhookEvents`の戻り値`finalized:true`）。この書き込み自体が
+  失敗した場合は、予約確定・決済状態の更新が既に成功していても`finalized:false`を返し、
+  行は`RECEIVED`のまま残る（次回のトリガー実行で安全に再claim・再確認できる。予約確定・
+  メール送信は既に完了しているため二重実行はしない）。この結果はStripeへの応答とは
+  無関係（応答はBooking Webhookが受信した時点で完結している）。
+
+### 処理権の世代管理とハートビート（レビュー対応・5回目で追加）
+
+**この節がレビュー対応・5回目の指摘（`claimForProcessing()`の処理権再取得制御）への
+回答の核心。**
+
+4回目までの`claimForProcessing()`は`processingClaimedAt`からの経過時間（`staleAfterMs`。
+既定2分）だけで「前回の実行がクラッシュしたか」を判定していた。この判定だけでは、
+**正常に実行中の処理**（Stripe再照会に時間がかかっている等で`staleAfterMs`を超えて
+実行中なだけ）も「クラッシュした」と誤判定され、まだ処理中の実行から処理権を奪って
+しまう恐れがあった（時間経過だけで処理権を渡してはならないという指摘）。
+
+**対応**: 処理権の「生存確認」を、経過時間だけでなく実際のハートビートに基づかせ、
+書き込み直前に世代（processingClaimCount）の一致を再確認するfencingを追加した。
+
+- **ハートビート（`StripeEventRepository.renewProcessingLease(rowNumber, generation,
+  now)`）**: 処理を続けている実行が、外部Stripe API呼び出しの直後・Bookings/Calendarへ
+  書き込む直前の計3箇所（`StripeWebhookProcessor.processSingleEvent_`内。Checkout
+  Session再取得後・PaymentIntent再取得後・confirmBooking直前）で呼ぶ。`processingClaimedAt`
+  だけを更新し、世代番号（`processingClaimCount`）は変更しない。実際に処理を続けている
+  実行はこれによりage判定を常に短く保つため、`claimForProcessing()`が時間経過だけで
+  別の実行に処理権を渡すことはない。
+- **世代管理（fencing token）**: `processingClaimCount`は`claimForProcessing()`が
+  新規claim・再claimのたびに1ずつ増分する単調増加のカウンタであり、そのまま「処理権の
+  世代番号」として使う。`renewProcessingLease()`・`StripeEventRepository.
+  finalizeForProcessing(rowNumber, generation, fields, now)`はいずれも、呼び出し時に
+  現在の行の`processingClaimCount`を読み直し、呼び出し元が保持する世代番号と一致する
+  場合にのみ更新・書き込みを行う（一致しなければ`{renewed:false}`・
+  `{written:false, reason:'STALE_GENERATION'または'ALREADY_TERMINAL'}`を返す）。
+  読み直し・一致確認・書き込みは同じ`LockService.getScriptLock()`のクリティカル
+  セクション内で行うため、確認と書き込みの間に別の実行が割り込む余地はない（TOCTOUを
+  再導入しない）。
+
+**この設計が満たす5つの要件（レビュー対応・5回目で明示的に要求されたもの）**:
+
+1. **正常に実行中の処理権を、時間経過だけで別の実行に渡さない**: ハートビートを
+   更新し続けている限り、`claimForProcessing()`のage判定は短く保たれ続ける。
+2. **クラッシュ・タイムアウト等で停止した処理は、再実行できる**: ハートビートが
+   途絶えれば、`staleAfterMs`経過後に別のトリガー実行が世代を進めて安全に再claimできる
+   （4回目までの挙動を維持）。
+3. **再実行時に、既に完了した決済状態更新・予約確定・メール送信を二重実行しない**:
+   `BookingRepository.applyPaymentStateUpdate`/`confirmBooking`はそれ自体が冪等
+   （PR-A/PR-B/Issue #271で確立済み）であるため、世代を引き継いだ新しい実行が
+   `processSingleEvent_`を最初からやり直しても安全に収束する（この保証は世代管理とは
+   独立して既に成立している）。
+4. **古い実行の遅延応答が、新しい実行のイベント処理結果を上書きしない**:
+   `finalizeForProcessing()`の書き込み直前の世代確認（fencing）により、既に世代が
+   進んでいる（または既に終端状態に達している）行への古い世代からの書き込みは拒否
+   される。
+5. **1件のイベントの失敗・長時間処理が、他の未処理イベントを不必要に停止させない**:
+   `claim`/`claimForProcessing`/`renewProcessingLease`/`finalizeForProcessing`は
+   いずれもStripeEvents台帳への読み書きだけを保護する短時間のLockであり、外部Stripe
+   API呼び出しやBookings/Calendarへの書き込みの間はLockを保持しない（既存方針を維持）。
+   `processPendingStripeWebhookEvents`は候補ごとに独立して`claimForProcessing`を試み、
+   `IN_PROGRESS`（他の実行が処理中）の候補はその場でスキップして次の候補へ進むため、
+   1件の処理が長引いても他の未処理イベントの着手を妨げない。
+
+**採用方式の保証範囲**: 本方式は、GAS公式の`LockService.getScriptLock()`による排他
+（読み直し・世代確認・書き込みを1つのクリティカルセクションにまとめる）と、
+`processingClaimCount`という単調増加カウンタによるfencing tokenパターンの組み合わせに
+依存する。いずれもGAS/Apps Scriptの公式に文書化された挙動であり、「Webhookと失効処理の
+競合」節で撤回した「Sheetsのappend順序整列」のような未保証の前提には依存しない。
+ハートビートの更新間隔（Stripe再照会の応答時間に依存）が`ADMIN_CLAIM_STALE_AFTER_MS_`
+（既定2分）を超えて空いた場合、理論上は正常に実行中の処理からも処理権が奪われ得るが、
+この場合も`BookingRepository`側の既存の冪等性・識別子照合により、二重に「成功」と
+判断される状態には至らない（要件3参照）。GAS Web App/トリガーの1回の実行が現実的に
+数分を超えて動き続けることは想定していない。
+
+`test/stripe-event-repository.test.js`（`renewProcessingLease`/`finalizeForProcessing`の
+単体テスト）・`test/stripe-webhook-processor.test.js`（実行中に処理権を奪われない
+ケース・実行停止後の再試行・再試行後に古い実行が遅れて戻るケースの統合テスト）で
+検証している。
 
 ### Webhookと失効処理（expirePendingBookings）の競合（レビュー対応・4回目で実行主体を一本化する設計へ再設計）
 
@@ -4952,6 +5027,109 @@ booking-card-checkout.test.js`・`test/booking-confirm-expire.test.js`・
 - [x] Stripeへの外部HTTP呼び出しはロックの外で行う（レビュー対応・4回目でも維持）
 - [x] イベントの取りこぼし・重複処理・処理遅延のいずれもテストで検証する（レビュー対応・4回目）
 - [x] 採用方式の保証範囲をREADMEに記載する（レビュー対応・4回目。「Webhookと失効処理の競合」節参照）
+
+### レビュー対応（5回目）
+
+4回目の対応後、オーナーからアーキテクチャ変更自体は確認できたとしたうえで、
+`StripeEventRepository.claimForProcessing()`の処理権再取得制御についての指摘を受け
+対応した。マージ・本番デプロイ・PR-Dへの着手は引き続き行っていない。
+
+### 指摘
+
+`processingClaimedAt`から2分（`ADMIN_CLAIM_STALE_AFTER_MS_`）を超えると、最初の実行が
+まだ処理中でも別の時間主導トリガーが同じイベントを再claimできてしまう。次を満たすよう
+修正すること: (1) 正常に実行中の処理権を、時間経過だけで別の実行に渡さない、
+(2) クラッシュ・タイムアウト等で停止した処理は再実行できる、(3) 再実行時に、既に完了
+した決済状態更新・予約確定・メール送信を二重実行しない、(4) 古い実行の遅延応答が、
+新しい実行のイベント処理結果を上書きしない、(5) 1件のイベントの失敗・長時間処理が、
+他の未処理イベントを不必要に停止させない。Booking Adminプロジェクト内のLockServiceを
+使う方式・処理権の世代管理・実行中状態の管理などを検討し、採用方式の保証範囲をREADMEに
+明記すること。
+
+### 原因
+
+`claimForProcessing()`は`processingClaimedAt`（前回claimした時刻）からの経過時間だけを
+「生存確認」の代理指標として使っており、実際にその実行がまだ生きて処理を続けているかを
+確認する手段を持っていなかった。そのため、`staleAfterMs`を超えて実行中なだけの正常な
+処理と、本当にクラッシュして停止した処理を区別できなかった。
+
+### 対応
+
+詳細は「処理権の世代管理とハートビート」節参照。`StripeEventRepository`に次の2つを
+追加した。
+
+- `renewProcessingLease(rowNumber, generation, now)`: 処理を続けている実行が、外部
+  Stripe API呼び出しの直後・Bookings/Calendarへの書き込み直前に呼ぶハートビート。
+  `processingClaimedAt`だけを更新し、世代番号（`processingClaimCount`）は変更しない。
+- `finalizeForProcessing(rowNumber, generation, fields, now)`: 書き込み直前に世代番号を
+  再確認してから書き込む（fencing token）。`StripeWebhookProcessor.gs`の本番処理経路は
+  従来の`finalize()`ではなくこちらを使う（`finalize()`自体はfencingを行わない汎用版
+  として残し、テストのフィクスチャ構築にのみ使う）。
+
+`StripeWebhookProcessor.processSingleEvent_`に、Checkout Session再取得後・PaymentIntent
+再取得後・confirmBooking直前の計3箇所で`renewProcessingLease`の呼び出しを追加し、
+失敗した場合（既に別の実行へ処理権が引き継がれている）は直ちに処理を中断して
+`SUPERSEDED_BY_NEWER_ATTEMPT`を返し、以後Bookings/Calendarへの書き込み・
+`finalizeForProcessing`呼び出しを一切行わないようにした。`finalizeOutcome_`・
+`rejectAndFinalize_`・`rejectFinalizeOnly_`・`handleAsyncPaymentFailed_`はいずれも
+世代番号を引き回すようシグネチャを変更した。
+
+**Booking Adminプロジェクト内のLockServiceを使う方式について（検討した代替案）**:
+1件のイベント処理全体（外部Stripe API呼び出しを含む）を`LockService.getScriptLock()`で
+保護する方式も検討したが、採用しなかった。Stripeへの外部HTTP呼び出し中に排他制御を
+保持しない既存方針（1〜4回目から維持）に反するうえ、1件のイベント処理が長時間かかった
+場合に他の未処理イベントの処理（同じ実行内の他候補、および`expirePendingBookings`・
+手動`confirmBooking`）まで不必要に足止めしてしまい、要件5に反する。採用した方式は、
+LockServiceを「StripeEvents台帳への読み書きだけを保護する短時間の排他」として使い続け、
+生存確認と世代管理はその上に構築した薄いレイヤーとして実装した。
+
+### テスト
+
+`test/stripe-event-repository.test.js`に`renewProcessingLease`/`finalizeForProcessing`の
+単体テストを追加した:
+- ハートビートを更新し続ける限り、最初のclaimからstaleAfterMsを超えても再claimされない
+  （実行中のケース）。
+- ハートビートが更新されないまま放置された場合は、staleAfterMs経過後に別の実行が
+  再claimでき、世代が進む（実行停止後の再試行）。
+- 世代が一致する場合のみ書き込み、既に進んだ古い世代からの書き込みは拒否する
+  （古い実行の遅延応答による上書き防止）。
+- 既に終端状態の行への書き込みは世代が一致していても拒否する。
+
+`test/stripe-webhook-processor.test.js`に、オーナーが明示的に要求した3ケースの統合
+テストを追加した（いずれも本番コード経路`processPendingStripeWebhookEvents`を実際に
+呼んで検証）:
+- **最初の実行が2分を超えてなお処理中のケース**: 実行Aがハートビートを更新し続けている
+  間は、staleAfterMsを超えても別のトリガー実行（実行B）がこのイベントに着手できず、
+  二重処理が起きないことを確認する。
+- **実行停止後の再試行**: ハートビートが更新されないまま停止した処理は、次のトリガー
+  実行が世代を進めて安全に再試行でき、決済確認・予約自動確定・確認メール送信まで
+  正しく完了することを確認する。
+- **再試行後に古い実行が遅れて戻るケース**: 次のトリガー実行が既に処理を完了させた後、
+  古い実行の極端に遅延した応答が戻ってきて自分の（古い世代の）結果を書き込もうとしても
+  拒否され、StripeEvents台帳・Bookings・送信済みメールのいずれも変化しないことを
+  確認する。
+
+加えて、処理中に実際にハートビートが更新されること（`renewProcessingLease`の呼び出し
+回数・引数）をスパイで検証するテストも追加した。
+
+### テスト結果（5回目レビュー対応後）
+
+`node --test 'test/**/*.test.js'`: **1205件すべてpass**（4回目対応後1197件＋今回追加した
+8件。`test/stripe-event-repository.test.js`4件・`test/stripe-webhook-processor.test.js`
+4件）。加えて`cloud-run/stripe-webhook-relay`配下（変更なし）は引き続き**11件すべて
+pass**。**合計1216件すべてpass**（今回のレビュー対応で独立して再実行し確認した）。
+既存の管理者承認・Calendar・日程変更精算・Booking Admin・現地払い・旧Payment Link
+方式・PR-A/PR-B・レビュー対応1〜4回目の回帰テストもすべてpass。実際の本番決済・
+本番Webhook配信を伴う自動テストは行っていない。
+
+受入条件との照合（今回追加分）:
+- [x] 正常に実行中の処理権を、時間経過だけで別の実行に渡さない（レビュー対応・5回目）
+- [x] クラッシュ・タイムアウト等で停止した処理は、再実行できる（レビュー対応・5回目）
+- [x] 再実行時に、既に完了した決済状態更新・予約確定・メール送信を二重実行しない（レビュー対応・5回目）
+- [x] 古い実行の遅延応答が、新しい実行のイベント処理結果を上書きしない（レビュー対応・5回目）
+- [x] 1件のイベントの失敗・長時間処理が、他の未処理イベントを不必要に停止させない（レビュー対応・5回目）
+- [x] 採用した方式の保証範囲をREADMEに明記する（レビュー対応・5回目。「処理権の世代管理とハートビート」節参照）
+- [x] 最初の実行が2分を超えてなお処理中のケース・実行停止後の再試行・再試行後に古い実行が遅れて戻るケースをテストする（レビュー対応・5回目）
 
 ### Stripe Webhookエンドポイントのデプロイ（オーナー承認後に実施すること）
 

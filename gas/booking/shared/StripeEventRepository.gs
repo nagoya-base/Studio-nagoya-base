@@ -62,6 +62,20 @@
  * クラッシュ・タイムアウトした」とみなし、再度claimして安全に再開できる（Admin側が呼ぶ
  * BookingRepository.applyPaymentStateUpdate/confirmBookingはいずれもそれ自体が冪等な
  * ため、同じ処理を最初からやり直しても安全に収束する）。
+ *
+ * 【レビュー対応・5回目で追加】claimForProcessing()のstaleAfterMs判定だけでは、
+ * 正常に実行中の処理（Stripe再照会に時間がかかっている等）がstaleAfterMsを超えた
+ * 時点で「クラッシュした」と誤判定され、別のトリガー実行に処理権を奪われる恐れが
+ * あった。これを防ぐため:
+ * - `renewProcessingLease()`: 処理を続けている実行が定期的に呼び、
+ *   processingClaimedAt（ハートビート）だけを更新する（processingClaimCountという
+ *   「世代番号」は変えない）。実行中である限りage判定は常に短く保たれ、時間経過
+ *   だけで処理権が渡ることはない。
+ * - `finalizeForProcessing()`: 書き込み直前に現在の世代番号を再確認してから書き込む
+ *   （fencing token）。renewProcessingLease()の確認から実際の書き込みまでの間に
+ *   別の実行へ処理権が移っていた場合でも、古い実行の書き込みが新しい実行の結果を
+ *   上書きすることを防ぐ。
+ * 採用方式の保証範囲はREADME「Webhookと失効処理の競合」節に明記した。
  */
 'use strict';
 
@@ -257,6 +271,58 @@ var StripeEventRepository = (function () {
   }
 
   /*
+   * claimForProcessing()で処理権を得た実行が、まだ生きて処理を続けていることを示す
+   * ハートビート（レビュー対応・5回目で新設）。processingClaimedAtだけを更新し、
+   * processingClaimCount（世代番号）は変更しない。呼び出し元プロジェクトの
+   * LockService.getScriptLock()を使う。
+   *
+   * generationにはclaimForProcessing()が返したrecord.processingClaimCountをそのまま
+   * 渡すこと。現在の行のprocessingClaimCountがこのgenerationと一致する場合にのみ
+   * 更新する（一致しない場合は、既に別の実行が再claimして世代が進んでいる、または
+   * 既に終端状態へ進んでいるため、更新してはならない）。
+   *
+   * 【なぜ必要か（レビュー対応・5回目）】4回目まではclaimForProcessing()の
+   * staleAfterMs判定だけに頼っていたため、1件のイベント処理がstaleAfterMs
+   * （既定2分）を超えて実行中なだけでも、別のトリガー実行が「クラッシュした」と
+   * 誤判定して処理権を奪ってしまい、二重処理につながる恐れがあった。実際に処理を
+   * 続けている実行がこれを定期的に呼んでprocessingClaimedAtを更新し続ける限り、
+   * claimForProcessing()のage判定は常に短く保たれ、時間経過だけで処理権が奪われる
+   * ことはない（詳細はStripeWebhookProcessor.gs・README「Webhookと失効処理の競合」節
+   * 参照）。
+   *
+   * 戻り値: { renewed: true } / { renewed: false }（世代が既に進んでいる、行が
+   * 見つからない、または終端状態に到達済み。呼び出し元は直ちにこの回の処理を中断し、
+   * 以後Bookings/Calendarへの書き込み・finalizeForProcessing呼び出しを一切
+   * 行ってはならない。別の実行が既にこのイベントの処理を引き継いでいる）。
+   */
+  function renewProcessingLease(rowNumber, generation, now) {
+    var effectiveNow = isDateLike_(now) ? now : new Date();
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(CLAIM_LOCK_TIMEOUT_MS_)) {
+      return { renewed: false };
+    }
+    try {
+      var sheet = ensureSheet_();
+      var row = sheet.getRange(rowNumber, 1, 1, HEADERS_.length).getValues()[0];
+      if (!row || !row[0]) {
+        return { renewed: false };
+      }
+      var record = rowToRecord_(row);
+      if (TERMINAL_STATES_.indexOf(record.processingState) !== -1) {
+        return { renewed: false };
+      }
+      if (Number(record.processingClaimCount) !== Number(generation)) {
+        return { renewed: false };
+      }
+      var processingClaimedAtIndex = HEADERS_.indexOf('processingClaimedAt');
+      sheet.getRange(rowNumber, processingClaimedAtIndex + 1, 1, 1).setValue(effectiveNow);
+      return { renewed: true };
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  /*
    * Webhook側が、claim()でCLAIMEDされた行へ生のイベント本文を保存する
    * （レビュー対応・4回目で新設）。この呼び出しが成功して初めて、Webhookは
    * Stripeへ成功応答を返してよい（「イベントを安全に永続化できたこと」＝rawBodyまで
@@ -300,9 +366,11 @@ var StripeEventRepository = (function () {
    * fields: { processingState（必須。STATE定数のいずれか）, bookingId?, paymentAttemptId?,
    *   stripePaymentIntentId?, outcomeCode?, outcomeMessage? }
    *
-   * この呼び出し自体が失敗した場合（Sheets書き込みエラー）、呼び出し元
-   * （StripeWebhookProcessor.gs）は処理完了とみなしてはならない。行はRECEIVEDのまま
-   * 残るため、次回のトリガー実行で安全に再開できる。
+   * 【レビュー対応・5回目】本番のBooking Admin処理経路（StripeWebhookProcessor.gs）は
+   * この関数を直接使わず、世代（processingClaimCount）の一致を書き込み直前に再確認する
+   * `finalizeForProcessing`を使うこと（下記参照）。この`finalize`はfencingを行わない
+   * ため、既に別の実行が処理を引き継いでいても無条件に上書きしてしまう。テストの
+   * フィクスチャ構築（終端状態の行を直接作る等）や、世代管理が不要な用途にのみ使う。
    */
   function finalize(rowNumber, fields, now) {
     if (TERMINAL_STATES_.indexOf(fields.processingState) === -1) {
@@ -323,13 +391,76 @@ var StripeEventRepository = (function () {
     sheet.getRange(rowNumber, startIndex + 1, 1, values.length).setValues([values]);
   }
 
+  /*
+   * finalize()のBooking Admin処理専用版（レビュー対応・5回目で新設）。書き込み前に
+   * 現在の行のprocessingClaimCountを読み直し、呼び出し元のgeneration（claimForProcessing()
+   * が返したrecord.processingClaimCount）と一致する場合にのみ書き込む（fencing token
+   * パターン）。読み直し・世代確認・書き込みは同じLockService.getScriptLock()の
+   * クリティカルセクション内で行うため、確認と書き込みの間に別の実行が割り込む余地はない。
+   *
+   * 【なぜ必要か】renewProcessingLease()による生存確認だけでは、直近の確認から実際の
+   * finalize呼び出しまでの間にわずかな競合の余地が残る。例えば、直前のrenewには成功した
+   * 実行が、Stripe再照会やBookings書き込みでさらに時間を要し、その間に別の実行が
+   * staleAfterMsの経過を検知してclaimForProcessingで世代を進めてしまうケース。
+   * finalizeForProcessing自身が書き込み直前に世代を再確認することで、こうした
+   * 「古い実行の遅延応答が新しい実行の処理結果を上書きする」事態を、確認と書き込みを
+   * 1つのLock区間にまとめることで構造的に防ぐ（TOCTOUを再導入しない）。
+   *
+   * 戻り値:
+   * - { written: true }: 書き込み成功。
+   * - { written: false, reason: 'STALE_GENERATION' }: 既に別の実行が世代を進めている。
+   *   呼び出し元はこの結果を破棄し、何もログ以外の対応をしてはならない（別の実行が
+   *   この予約の処理を引き継いでいる）。
+   * - { written: false, reason: 'ALREADY_TERMINAL' }: 既に終端状態に到達済み（別の実行が
+   *   既にfinalizeForProcessingを完了させた）。
+   * - { written: false, reason: 'LOCK_TIMEOUT' }: Lock取得に失敗した。行はRECEIVEDのまま
+   *   残るため、次回のトリガー実行で安全に再開できる。
+   */
+  function finalizeForProcessing(rowNumber, generation, fields, now) {
+    if (TERMINAL_STATES_.indexOf(fields.processingState) === -1) {
+      throw new Error('finalizeForProcessingにはCOMPLETED/IGNORED/REJECTEDのいずれかを指定してください: ' + fields.processingState);
+    }
+    var effectiveNow = isDateLike_(now) ? now : new Date();
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(CLAIM_LOCK_TIMEOUT_MS_)) {
+      return { written: false, reason: 'LOCK_TIMEOUT' };
+    }
+    try {
+      var sheet = ensureSheet_();
+      var row = sheet.getRange(rowNumber, 1, 1, HEADERS_.length).getValues()[0];
+      var record = rowToRecord_(row);
+      if (TERMINAL_STATES_.indexOf(record.processingState) !== -1) {
+        return { written: false, reason: 'ALREADY_TERMINAL' };
+      }
+      if (Number(record.processingClaimCount) !== Number(generation)) {
+        return { written: false, reason: 'STALE_GENERATION' };
+      }
+      var startIndex = HEADERS_.indexOf('processingState');
+      var values = [
+        fields.processingState,
+        fields.bookingId || '',
+        fields.paymentAttemptId || '',
+        fields.stripePaymentIntentId || '',
+        fields.outcomeCode || '',
+        fields.outcomeMessage || '',
+        effectiveNow
+      ];
+      sheet.getRange(rowNumber, startIndex + 1, 1, values.length).setValues([values]);
+      return { written: true };
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
   return {
     STATE: STATE,
     findByEventId: findByEventId,
     claim: claim,
     claimForProcessing: claimForProcessing,
+    renewProcessingLease: renewProcessingLease,
     storeRawBody: storeRawBody,
     listPendingWithBody: listPendingWithBody,
-    finalize: finalize
+    finalize: finalize,
+    finalizeForProcessing: finalizeForProcessing
   };
 })();
