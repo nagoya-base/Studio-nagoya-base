@@ -5683,6 +5683,31 @@ Stripe・Calendar・Sheets・メールはすべてモック。本番のStripe返
   ままにし、決済URLの存在を追跡できるようにする。要復旧ゲートは立てない（入金が成立した場合に
   Webhook処理が入金を記録できるように。予約は復活させない）。
 
+### PR-Dレビュー対応・3回目: 最新の決済試行の確認と最終結果の書き込みを同じLock区間に
+
+指摘: 取消後の最新の決済試行の確認（`settleCheckoutAfterCancel_`）と最終結果の書き込み
+（旧`recordSettledCheckout_`）が別々のLock区間だったため、その間にBooking Web Appが新しい決済試行・
+Sessionを記録すると見逃し、未失効のSessionがあるのに`checkoutCancelState=EXPIRED`と記録し得た。
+
+- **同じLock区間で確認と書き込み**: 各巡のLock区間で、最新の決済試行ID・Session ID・解決状態の確認
+  （`inspectLatestAttemptLocked_`）と、最終結果・Recoveryの書き込み（`writeSettledLocked_`）を続けて行う。
+  確認済みのSession集合に含まれない新しいSession、または結果未確定の決済試行があれば、`EXPIRED`/
+  `NO_SESSION`を記録しない。
+- **書き込み直後の再確認**: Booking Web AppはこのScript Lockを共有しないため、同じLock区間の中でも確認から
+  書き込みまでの間の更新は防げない。そこで`EXPIRED`/`NO_SESSION`を書き込んだ直後に最新の決済試行を読み直し、
+  変わっていれば直ちに`UNKNOWN`へ戻す。
+  - 新しいSessionが分かれば、失効・確認へ戻る（次の巡）。
+  - Sessionがまだ分からなければ、`UNKNOWN`のまま`paymentAttemptId=`付きでRecovery
+    （`PAYMENT_CHECKOUT_EXPIRE_UNKNOWN`）に残して止める。
+  - これにより、`EXPIRED`が残るのは「書き込み後に読み直しても、確認済みのSessionの集合と台帳の最新の試行が
+    一致した」場合だけになる。
+- **上限**: 巡回は`SETTLE_MAX_ROUNDS_`（3）回まで。それでも新しい試行が続く場合は、確認済みのSessionの
+  結果を記録したうえで、安全側の`UNKNOWN`で止める。まだ確認していないSessionは`sessionId=`付きでRecoveryに
+  残すため、「決済URLの失効を再確認」の対象に含まれる。
+- **表示との整合**: 呼び出し元・管理画面へ返す`checkoutExpireState`・メッセージは台帳へ最後に書き込んだ
+  状態と同じものにした。`UNKNOWN`の間は、再確認ボタン・「決済要対応」一覧・解消の拒否
+  （`CHECKOUT_EXPIRE_UNCONFIRMED`）がいずれも未解決として扱う。
+
 ### 残る制約
 
 - 未入金の取消で失効させるのは、台帳に記録された最新のCheckout Sessionと、Recoveryで追跡中の

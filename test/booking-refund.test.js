@@ -1160,3 +1160,142 @@ test('交差（Web App側）: 取消後に発行されたSessionで入金が成�
   assert.ok(r.paymentRecoveryRequiredAt);
   assert.strictEqual(ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '確認').error.code, 'RECOVERY_REFUND_DECISION_REQUIRED');
 });
+
+/* ========================================================================== */
+/* PR-Dレビュー対応・3回目: 最新試行の確認と最終結果の書き込みの間の競合             */
+/* ========================================================================== */
+
+/*
+ * checkoutCancelStateへEXPIRED/NO_SESSIONを書き込もうとする瞬間（最新試行の確認の直後、
+ * 最終結果の書き込みの直前）に、Booking Web App（Script Lockを共有しない）の書き込みを
+ * 割り込ませる。hookは割り込ませる回数だけ呼ばれ、書き込まれた状態の履歴を返す。
+ */
+/* 履歴の先頭は取消時（Phase 1）のEXPIRE_REQUESTED。 */
+function interceptFinalStateWrite(ctx, hook, times) {
+  var repo = ctx.sandbox.SpreadsheetRepository;
+  var original = repo.updateBookingFields;
+  var remaining = times || 1;
+  var history = [];
+  history.stop = function () { remaining = 0; };
+  repo.updateBookingFields = function (bookingId, fields) {
+    if (fields && Object.prototype.hasOwnProperty.call(fields, 'checkoutCancelState')) {
+      if (remaining > 0 && (fields.checkoutCancelState === 'EXPIRED' || fields.checkoutCancelState === 'NO_SESSION')) {
+        remaining--;
+        hook(history.length);
+      }
+      history.push(fields.checkoutCancelState);
+    }
+    return original.apply(this, arguments);
+  };
+  return history;
+}
+
+function webAppCommitsNewSession(ctx, sessionId, attemptId) {
+  ctx.stripe.addSession({ id: sessionId, paymentAttemptId: attemptId });
+  ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic(BOOKING_ID, {
+    paymentAttemptId: attemptId, paymentAttemptResolvedAt: new Date('2026-10-01T12:00:30+09:00'), stripeCheckoutSessionId: sessionId
+  });
+}
+
+test('3回目: 最新試行の確認直後・最終結果の書き込み直前にSession Bが発行された場合、EXPIREDを残さずBの失効・確認へ戻り、確認後にEXPIREDとする', function () {
+  var ctx = unpaidSetup();
+  var history = interceptFinalStateWrite(ctx, function () {
+    webAppCommitsNewSession(ctx, 'cs_test_B', NEW_ATTEMPT_ID);
+  });
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '取消依頼' });
+
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.deepStrictEqual(expiredSessionIds(ctx), ['cs_test_0001', 'cs_test_B'], 'Session Bも失効させる');
+  assert.strictEqual(ctx.stripe.sessions.cs_test_B.status, 'expired');
+  assert.deepStrictEqual(Array.from(history).slice(1), ['EXPIRED', 'UNKNOWN', 'EXPIRED'],
+    'Bの発行を検知した時点でUNKNOWNへ戻し、Bの失効を確認してからEXPIREDとする');
+  assert.strictEqual(result.checkoutExpireState, 'EXPIRED');
+  var r = rec(ctx);
+  assert.strictEqual(r.checkoutCancelState, 'EXPIRED');
+  assert.strictEqual(r.stripeCheckoutSessionId, 'cs_test_B');
+  var rows = trackedRows(ctx, 'PAYMENT_CHECKOUT_AFTER_CANCEL');
+  assert.strictEqual(rows.length, 1, '取消後に発行されたSessionを記録する');
+  assert.ok(rows[0].errorMessage.indexOf('sessionId=cs_test_B') !== -1);
+  assert.strictEqual(rows[0].recoveryState, 'RESOLVED');
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+});
+
+test('3回目: 同じタイミングでSession ID未確定の新しい試行が始まった場合、EXPIREDを残さずUNKNOWNとしてRecoveryに残し、結果表示・再確認ボタンも未解決として扱う', function () {
+  var ctx = unpaidSetup();
+  var history = interceptFinalStateWrite(ctx, function () {
+    /* Web Appが新しい決済試行を予約した（Stripeへ発行を依頼中。Session IDはまだ無い）。 */
+    ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic(BOOKING_ID, { paymentAttemptId: NEW_ATTEMPT_ID, paymentAttemptResolvedAt: '' });
+  });
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '取消依頼' });
+
+  assert.strictEqual(result.success, true, '取消（枠の解放）自体は完了している');
+  assert.strictEqual(result.checkoutExpireState, 'UNKNOWN', '結果表示も未解決');
+  assert.strictEqual(result.warning.code, 'CHECKOUT_EXPIRE_UNKNOWN');
+  assert.ok(/確認できませんでした/.test(result.message));
+  assert.deepStrictEqual(Array.from(history).slice(1), ['EXPIRED', 'UNKNOWN'], '書き込み直後の再確認でUNKNOWNへ戻す');
+  var r = rec(ctx);
+  assert.strictEqual(r.checkoutCancelState, 'UNKNOWN');
+  assert.strictEqual(r.paymentRecoveryRequiredAt, '', '遅延入金を記録できるようゲートは立てない');
+  assert.ok(trackedRows(ctx, 'PAYMENT_CHECKOUT_EXPIRE_UNKNOWN').some(function (row) {
+    return row.recoveryState === 'OPEN' && row.errorMessage.indexOf('paymentAttemptId=' + NEW_ATTEMPT_ID) !== -1;
+  }), 'Session未確定の試行をRecoveryに残す');
+  assert.ok(mailsTo(ctx, 'admin@example.com').length >= 1, '管理者へ通知する');
+
+  /* 管理画面: 詳細・一覧・再確認ボタンの表示条件も未解決として揃う。 */
+  var detail = ctx.sandbox.getAdminBookingDetail(BOOKING_ID).booking;
+  assert.strictEqual(detail.checkoutCancelState, 'UNKNOWN');
+  var recoveries = ctx.sandbox.getAdminPaymentRecoveries().items;
+  assert.strictEqual(recoveries.length, 1);
+  assert.strictEqual(recoveries[0].checkoutCancelState, 'UNKNOWN');
+  assert.strictEqual(ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '確認').error.code, 'CHECKOUT_EXPIRE_UNCONFIRMED');
+
+  /* 試行が未解決の間の再確認でも断定しない。 */
+  var early = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(early.success, false);
+  assert.strictEqual(early.checkoutExpireState, 'UNKNOWN');
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'UNKNOWN');
+
+  /* Web AppのSession発行が確定した後の再確認で、Bを失効させて記録を閉じる。 */
+  ctx.stripe.addSession({ id: 'cs_test_B', paymentAttemptId: NEW_ATTEMPT_ID });
+  ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic(BOOKING_ID, {
+    paymentAttemptResolvedAt: new Date('2026-10-01T12:01:00+09:00'), stripeCheckoutSessionId: 'cs_test_B'
+  });
+  var reconciled = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(reconciled.success, true, JSON.stringify(reconciled));
+  assert.strictEqual(ctx.stripe.sessions.cs_test_B.status, 'expired');
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'EXPIRED');
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+});
+
+test('3回目: 確認中に新しい試行・Sessionが何度も発生する場合、上限回数で安全側のUNKNOWNとして止め、最新のSessionを再確認の対象に残す', function () {
+  var ctx = unpaidSetup();
+  var counter = 0;
+  var history = interceptFinalStateWrite(ctx, function () {
+    counter++;
+    webAppCommitsNewSession(ctx, 'cs_test_R' + counter, 'PAY-' + BOOKING_ID + '-RPT00000000' + counter);
+  }, 10);
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '取消依頼' });
+
+  assert.strictEqual(result.checkoutExpireState, 'UNKNOWN');
+  assert.ok(counter <= 3, '巡回回数に上限がある: ' + counter);
+  var r = rec(ctx);
+  assert.strictEqual(r.checkoutCancelState, 'UNKNOWN', '最後に書き込まれた状態はUNKNOWN');
+  assert.strictEqual(history[history.length - 1], 'UNKNOWN');
+  var latestSession = r.stripeCheckoutSessionId;
+  var tracked = Array.from(ctx.sandbox.RecoveryRepository.listAll(), function (row) { return row; }).filter(function (row) {
+    return row.recoveryState === 'OPEN' && row.errorMessage.indexOf('sessionId=' + latestSession) !== -1;
+  });
+  assert.ok(tracked.length >= 1, '最新のSessionを「決済URLの失効を再確認」の対象として残す');
+  assert.ok(ctx.stripe.sessions[latestSession].status === 'open', '上限に達した時点の最新Sessionは未確認のまま（UNKNOWNで止めた）');
+  history.stop();
+
+  /* 試行が落ち着いた後の再確認で、残っていたSessionを失効させて閉じられる。 */
+  var reconciled = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(reconciled.success, true, JSON.stringify(reconciled));
+  assert.strictEqual(ctx.stripe.sessions[latestSession].status, 'expired');
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'EXPIRED');
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+});
