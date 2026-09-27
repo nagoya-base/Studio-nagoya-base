@@ -168,6 +168,13 @@ function setup(options) {
     MailApp: mailApp,
     Logger: stubs.createLoggerStub()
   };
+  /* レビュー対応・6回目: renewOrSupersededOutcome_内部の`new Date()`（ハートビート用の
+     実時間）を決定的に制御したいテストのみ、controllable clockをDateグローバルとして
+     注入する（stubs.createControllableClock参照）。通常のテストでは注入せず、
+     サンドボックス自身の（本物の）Dateをそのまま使う。 */
+  if (opts.clock) {
+    globals.Date = opts.clock.Date;
+  }
   var sandbox = loadBookingSandbox(FILES, globals);
   return { sandbox: sandbox, mailApp: mailApp, urlFetchApp: urlFetchApp, events: events };
 }
@@ -475,8 +482,14 @@ test('イベント結果の永続化自体が失敗した場合は完了扱い�
   assert.strictEqual(ctx.mailApp._sentEmails.length, 1);
 
   /* 行はRECEIVEDのまま残っているため、次回のトリガー実行（staleAfterMs経過後）で
-     安全に再claimして完了できる。予約は既にCONFIRMED・メール送信済みのため二重実行しない。 */
-  var retryNow = new Date(now.getTime() + 3 * 60000);
+     安全に再claimして完了できる。予約は既にCONFIRMED・メール送信済みのため二重実行しない。
+     レビュー対応・6回目でハートビート（renewProcessingLease）が実際の実時間
+     （new Date()）を書き込むようになったため、1回目の試行で複数回成功した
+     ハートビートにより`processingClaimedAt`は実時間で更新済みである。再試行時刻は
+     そのビジネス上の`now`（2026-09-20の固定日時）からの相対時刻ではなく、実際に
+     記録されている`processingClaimedAt`からの経過時間として構成する必要がある。 */
+  var claimedAtAfterFirst = ctx.sandbox.StripeEventRepository.findByEventId(eventId).record.processingClaimedAt;
+  var retryNow = new Date(claimedAtAfterFirst.getTime() + 3 * 60000);
   var retryRun = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(retryNow);
   var retryResult = retryRun.results.filter(function (r) { return r.eventId === eventId; })[0];
   assert.strictEqual(retryResult.finalized, true);
@@ -1055,4 +1068,116 @@ test('処理権の世代管理: 再試行が完了した後に古い実行の遅
   var finalRecord = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
   assert.strictEqual(finalRecord.status, 'CONFIRMED', '実行Aの遅延書き込みでBookingsの状態が変化してはならない');
   assert.strictEqual(ctx.mailApp._sentEmails.length, 1, '実行Aの遅延応答によってメールが再送されてはならない');
+});
+
+/*
+ * ============================================================================
+ * ハートビートの時刻管理（レビュー対応・6回目）
+ *
+ * 5回目の実装は、renewOrSupersededOutcome_（ひいてはStripeEventRepository.
+ * renewProcessingLease）に`processSingleEvent_`冒頭で1度だけ確定した`effectiveNow`
+ * （イベント処理開始時刻。監査ログ・テストの固定日時と共用）をそのまま渡していた。
+ * このため、実際には外部Stripe API呼び出しで real 90秒経過していても、書き込まれる
+ * `processingClaimedAt`は常に処理開始時刻のままで、ハートビートが実質的に機能して
+ * いなかった（正常に実行中でも2分経過時点で別のトリガーに処理権を奪われる不具合が
+ * 残っていた）。
+ *
+ * この節のテストは、`test/helpers/gas-stubs.js`の`createControllableClock`で
+ * サンドボックスの`Date`グローバル自体を差し替え、`StripeWebhookProcessor.
+ * processSingleEvent_`が内部で呼ぶ`new Date()`（ハートビートに使う実時間）を
+ * 実際に本番コード経路（`processPendingStripeWebhookEvents`）を通して決定的に
+ * 進めながら検証する。テストの固定日時（`now`引数。ここでは使わない）とは完全に
+ * 独立している。
+ * ============================================================================
+ */
+
+test('ハートビートの時刻管理: 処理開始から90秒後にハートビートを更新し、2分を超えた時点で別のトリガーが到達しても元の実行が処理権を保持する', function () {
+  var t0 = new Date('2026-09-20T10:00:00+09:00');
+  var clock = stubs.createControllableClock(t0);
+  var ctx = setup({ clock: clock });
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+
+  var eventId = 'evt_heartbeat_real_time_0001';
+  var event = buildEvent(eventId, 'checkout.session.completed');
+  var claimResult = ctx.sandbox.StripeEventRepository.claim(eventId, 'checkout.session.completed', t0);
+  ctx.sandbox.StripeEventRepository.storeRawBody(claimResult.rowNumber, event, t0);
+
+  var nestedTriggerBResult = null;
+  var bookingStatusDuringTriggerB = null;
+  var retrieveCheckoutSessionCallCount = 0;
+  var retrievePaymentIntentCallCount = 0;
+
+  var originalRetrieveCheckoutSession = ctx.sandbox.StripeGateway.retrieveCheckoutSession;
+  ctx.sandbox.StripeGateway.retrieveCheckoutSession = function () {
+    retrieveCheckoutSessionCallCount++;
+    var result = originalRetrieveCheckoutSession.apply(null, arguments);
+    /* 実行A（このテストの主体）のCheckout Session再取得が、実際には90秒かかった
+       ことを再現する（呼び出しが返った直後に実時間を90秒進める。この直後に
+       processSingleEvent_が1回目のハートビートを更新する）。 */
+    clock.advanceByMillis(90 * 1000);
+    return result;
+  };
+
+  /* 修正前のコード（ハートビートが機能しない）で本テストを実行すると、実行Bも
+     このPaymentIntent再取得直前まで同じ処理経路をたどり、この差し替え済み
+     retrievePaymentIntentへ再入してしまう。実行Bのさらに先（実行C、実行D…）まで
+     再帰的に連鎖するのを防ぎ、「実行Bを1回だけ起動する」というテストの意図を
+     壊さないよう、triggerBInvoked_で1回限りに制限する（修正前のコードでも、
+     無限再帰のRangeErrorではなく後続のassertが明確にfailするようにするための
+     テスト側のガード）。 */
+  var triggerBInvoked_ = false;
+  var originalRetrievePaymentIntent = ctx.sandbox.StripeGateway.retrievePaymentIntent;
+  ctx.sandbox.StripeGateway.retrievePaymentIntent = function () {
+    retrievePaymentIntentCallCount++;
+    if (!triggerBInvoked_) {
+      triggerBInvoked_ = true;
+      /* 実行AがPaymentIntent再取得へ進もうとしている時点（＝claimから90秒後に
+         ハートビートを更新済み）で、さらに40秒が経過し、claimから合計130秒
+         （staleAfterMs=2分を超えている）の時点で別のトリガー実行（実行B）が
+         到達した状況を再現する。 */
+      clock.advanceByMillis(40 * 1000);
+      nestedTriggerBResult = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+      /* 実行Bが返った直後（＝実行Aがまだpaid更新・confirmBookingへ進む前）の予約状態を
+         記録する。この時点で確定していれば、実行Bが二重に処理してしまったことになる。 */
+      bookingStatusDuringTriggerB = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record.status;
+    }
+    return originalRetrievePaymentIntent.apply(null, arguments);
+  };
+
+  var runResultA;
+  try {
+    runResultA = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  } finally {
+    ctx.sandbox.StripeGateway.retrieveCheckoutSession = originalRetrieveCheckoutSession;
+    ctx.sandbox.StripeGateway.retrievePaymentIntent = originalRetrievePaymentIntent;
+  }
+
+  assert.strictEqual(retrieveCheckoutSessionCallCount, 1);
+  assert.strictEqual(retrievePaymentIntentCallCount, 1, '実行Bはこのイベントに着手できずスキップするため、Stripeへは一切問い合わせないはず');
+
+  /*
+   * 実行Bは、claimから130秒後に到達しているが（staleAfterMsの2分を超えている）、
+   * 実行Aが90秒後に更新したハートビートにより、直近の更新からはまだ40秒しか
+   * 経っていないため「処理中」と正しく判定され、この候補には一切着手できない
+   * （claimForProcessingでIN_PROGRESSとなりStripeへの問い合わせにも進まない）。
+   */
+  assert.ok(nestedTriggerBResult, '実行Bが実際に実行されているべき');
+  assert.strictEqual(nestedTriggerBResult.processedCount, 0);
+  assert.strictEqual(nestedTriggerBResult.skippedCount, 1);
+  assert.strictEqual(bookingStatusDuringTriggerB, 'PENDING', '実行Bが二重に処理していないこと（実行Bの時点ではまだ実行Aも確定させていない）');
+
+  /* 実行Aはハートビートを保ち続けたため処理権を奪われず、最後まで正常に完了する。 */
+  assert.strictEqual(runResultA.processedCount, 1);
+  var resultA = runResultA.results.filter(function (r) { return r.eventId === eventId; })[0];
+  assert.strictEqual(resultA.finalized, true);
+  assert.strictEqual(resultA.code, 'CONFIRMED');
+
+  var finalRecord = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(finalRecord.status, 'CONFIRMED');
+  assert.strictEqual(finalRecord.paymentStatus, 'paid');
+  assert.strictEqual(ctx.mailApp._sentEmails.length, 1);
+
+  var finalLedgerRow = ctx.sandbox.StripeEventRepository.findByEventId(eventId);
+  assert.strictEqual(Number(finalLedgerRow.record.processingClaimCount), 1, '実行Bに処理権を奪われていない（世代が進んでいない）');
 });

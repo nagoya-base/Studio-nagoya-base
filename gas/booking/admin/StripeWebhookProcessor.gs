@@ -93,6 +93,18 @@
  * 処理権を引き継いだ新しい実行がprocessSingleEvent_を最初からやり直しても、既に
  * 完了した決済状態更新・予約確定・確認メール送信を二重実行することはない（詳細は
  * README「Webhookと失効処理の競合」節参照）。
+ *
+ * 【レビュー対応・6回目: ハートビートの時刻管理を修正】5回目の実装は
+ * `renewOrSupersededOutcome_`の呼び出しに`processSingleEvent_`冒頭で確定した
+ * `effectiveNow`（イベント処理開始時刻。監査ログ・テストの固定日時と共用）をそのまま
+ * 渡していたため、実際に外部Stripe API呼び出しで時間が経過していても、
+ * `renewProcessingLease`が書き込む`processingClaimedAt`は常にイベント処理開始時刻の
+ * ままで、ハートビートが実質的に機能していなかった（正常に実行中でも2分経過時点で
+ * 別のトリガーに処理権を奪われる不具合が残っていた）。修正として、
+ * `renewOrSupersededOutcome_`は`now`引数を受け取らず、必ず呼び出しの瞬間の実時間
+ * （`new Date()`）をハートビートとして書き込むよう変更した。処理権の生存確認に使う
+ * 実時間と、イベント処理の監査時刻・テスト用の固定日時（`effectiveNow`/`now`）は
+ * 完全に分離されている。
  */
 'use strict';
 
@@ -180,9 +192,22 @@ var StripeWebhookProcessor = (function () {
    * 呼び出し元は直ちにそれをそのままprocessSingleEvent_の戻り値として返し、以後
    * Bookings/Calendarへの書き込み・finalizeOutcome_呼び出しを一切行わないこと
    * （レビュー対応・5回目で新設）。
+   *
+   * 【レビュー対応・6回目で修正】この関数は`now`引数を受け取らず、必ずこの呼び出しの
+   * 瞬間の実時間（`new Date()`）をハートビートとして書き込む。5回目の実装は
+   * `processSingleEvent_`冒頭で1度だけ確定した`effectiveNow`（イベント処理開始時刻・
+   * 監査ログやテストの固定日時と共用）をそのまま受け取っていたため、Stripe再照会等で
+   * 実際に時間が経過していても、書き込まれる`processingClaimedAt`は常に処理開始時刻の
+   * ままだった。これでは`claimForProcessing()`の経過時間判定にとって「一度も更新
+   * されていない」のと変わらず、実際に処理中でも2分経過時点で別のトリガーに処理権を
+   * 奪われてしまう（ハートビートが実質的に機能していなかった）。処理権の生存確認は
+   * 実際に経過した実時間だけで判定すべきであり、イベント発生時刻等のビジネス上の
+   * 監査時刻・テスト用の固定日時とは意図的に切り離す
+   * （`BookingLockRepository`（廃止済み）のTTL判定で3回目レビュー対応時に確立した
+   * 方針と同じ。README「処理権の世代管理とハートビート」節参照）。
    */
-  function renewOrSupersededOutcome_(rowNumber, generation, now) {
-    var renewal = StripeEventRepository.renewProcessingLease(rowNumber, generation, now);
+  function renewOrSupersededOutcome_(rowNumber, generation) {
+    var renewal = StripeEventRepository.renewProcessingLease(rowNumber, generation, new Date());
     if (!renewal.renewed) {
       Logger.log('StripeWebhookProcessor: 処理中に別の実行へ処理権が引き継がれたため中断しました: rowNumber=' + rowNumber);
       return outcome_(false, 'SUPERSEDED_BY_NEWER_ATTEMPT', 'この処理権は別の実行に引き継がれています。');
@@ -297,7 +322,7 @@ var StripeWebhookProcessor = (function () {
     }
 
     /* Bookingsへの書き込み直前に処理権がまだ有効か再確認する（レビュー対応・5回目）。 */
-    var superseded = renewOrSupersededOutcome_(rowNumber, generation, now);
+    var superseded = renewOrSupersededOutcome_(rowNumber, generation);
     if (superseded) return superseded;
 
     var failResult = BookingRepository.applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, { paymentAttemptResolvedAt: now }, now);
@@ -434,7 +459,7 @@ var StripeWebhookProcessor = (function () {
      * 再確認する（レビュー対応・5回目。長時間かかる処理の途中でstaleAfterMsが経過し、
      * 別の実行に処理権が渡っていないことを確認する）。
      */
-    var supersededBeforePi = renewOrSupersededOutcome_(rowNumber, generation, effectiveNow);
+    var supersededBeforePi = renewOrSupersededOutcome_(rowNumber, generation);
     if (supersededBeforePi) return supersededBeforePi;
 
     /*
@@ -483,7 +508,7 @@ var StripeWebhookProcessor = (function () {
      * レビュー対応・5回目: PaymentIntent再取得（外部HTTP呼び出し）が完了した直後・
      * Bookingsへの実際の書き込みを行う直前に、処理権がまだ有効か再確認する。
      */
-    var supersededBeforePaid = renewOrSupersededOutcome_(rowNumber, generation, effectiveNow);
+    var supersededBeforePaid = renewOrSupersededOutcome_(rowNumber, generation);
     if (supersededBeforePaid) return supersededBeforePaid;
 
     var paidResult = BookingRepository.applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.PAID, {
@@ -532,7 +557,7 @@ var StripeWebhookProcessor = (function () {
      * ―別の実行が再claimして再度processSingleEvent_をやり直す、または既にpaidの
      * ままconfirmBookingへ進む―が安全に引き継ぐ）。
      */
-    var supersededBeforeConfirm = renewOrSupersededOutcome_(rowNumber, generation, effectiveNow);
+    var supersededBeforeConfirm = renewOrSupersededOutcome_(rowNumber, generation);
     if (supersededBeforeConfirm) return supersededBeforeConfirm;
 
     /*

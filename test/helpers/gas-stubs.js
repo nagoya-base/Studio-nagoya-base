@@ -466,6 +466,56 @@ function isDateLike(value) {
   return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
 }
 
+/*
+ * サンドボックスの`Date`グローバルを差し替え、`new Date()`（引数なし）が返す時刻を
+ * テストから明示的に制御できるようにする（Issue #341 PR-Cレビュー対応・6回目で新設）。
+ *
+ * 【用途】GASコード側でハートビート等の「呼び出し時点の実時間」（
+ * `StripeWebhookProcessor.renewOrSupersededOutcome_`が`new Date()`で取得する値。
+ * ビジネス上の監査時刻・テスト用の固定日時（`now`引数）とは意図的に分離されている）
+ * を、実際に実時間を待たずに決定的に進めてテストしたい場合に使う。単体テストで
+ * `claimForProcessing`/`renewProcessingLease`へ直接異なる`now`を渡して時間経過を
+ * 再現する手法（`test/stripe-event-repository.test.js`参照）だけでは、
+ * `processSingleEvent_`が内部で`new Date()`を呼ぶタイミング（外部Stripe API呼び出しの
+ * 直後等）を制御できないため、本番コード経路を実際に通して検証したい場合にこちらを使う。
+ *
+ * 返す`Date`インスタンスはNode側（テストファイル自身のrealm）の本物の`Date`であり、
+ * サンドボックス側の`Date`のインスタンスにはならない（`new Date() instanceof
+ * sandbox.Date`はfalseになる）が、このコードベースは`isDateLike`（`.getTime`の
+ * duck-typing）でDateかどうかを判定する方針を徹底しており、GASコード側も
+ * `typeof value.getTime === 'function'`でしか判定しないため問題にならない
+ * （このファイル冒頭の`isDateLike`コメント参照）。
+ *
+ * `advanceByMillis(ms)`で現在時刻を進める。`new Date(arg)`（引数あり。文字列や
+ * ミリ秒からの構築）は素通しし、現在時刻を返す機能には影響しない。
+ */
+function createControllableClock(initialTime) {
+  var RealDate = Date;
+  var currentMillis = (initialTime instanceof Date ? initialTime : new RealDate(initialTime)).getTime();
+
+  function FakeDate() {
+    if (arguments.length === 0) {
+      return new RealDate(currentMillis);
+    }
+    var args = Array.prototype.slice.call(arguments);
+    return new (Function.prototype.bind.apply(RealDate, [null].concat(args)))();
+  }
+  FakeDate.prototype = RealDate.prototype;
+  FakeDate.now = function () { return currentMillis; };
+  /* Availability.gs/BookingPricing.gs等が曜日計算に`Date.UTC(...)`を直接呼ぶため、
+     静的メソッドも本物のDateへ素通しする（欠けていると「Date.UTC is not a
+     function」でconfirmBooking等が例外になる。レビュー対応・6回目でのテスト
+     ヘルパー実装時に発見・修正）。 */
+  FakeDate.UTC = RealDate.UTC;
+  FakeDate.parse = RealDate.parse;
+
+  return {
+    Date: FakeDate,
+    advanceByMillis: function (ms) { currentMillis += ms; },
+    currentDate: function () { return new RealDate(currentMillis); }
+  };
+}
+
 module.exports = {
   isDateLike: isDateLike,
   createLoggerStub: createLoggerStub,
@@ -481,5 +531,6 @@ module.exports = {
   createSpreadsheetUiStub: createSpreadsheetUiStub,
   createMailAppStub: createMailAppStub,
   createScriptAppStub: createScriptAppStub,
-  createUrlFetchAppStub: createUrlFetchAppStub
+  createUrlFetchAppStub: createUrlFetchAppStub,
+  createControllableClock: createControllableClock
 };

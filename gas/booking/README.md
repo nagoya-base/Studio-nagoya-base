@@ -4561,6 +4561,55 @@ PaymentIntentともに、Webhookイベント本文のフィールドをそのま
 ケース・実行停止後の再試行・再試行後に古い実行が遅れて戻るケースの統合テスト）で
 検証している。
 
+#### ハートビートの時刻管理（レビュー対応・6回目で修正）
+
+**この節がレビュー対応・6回目の指摘への回答の核心。**
+
+5回目の実装には、上記のハートビート自体が実質的に機能しないバグが残っていた。
+`renewOrSupersededOutcome_(rowNumber, generation, now)`は、`processSingleEvent_`の
+冒頭で1度だけ確定する`effectiveNow`（そのイベント処理全体の監査時刻。テストからは
+固定日時を注入できる）をそのまま`now`として受け取り、`StripeEventRepository.
+renewProcessingLease(rowNumber, generation, now)`へ渡していた。そのため、外部Stripe
+API呼び出しで実際には90秒・120秒と実時間が経過していても、書き込まれる
+`processingClaimedAt`は常に**処理開始時点の時刻のまま**であり、`claimForProcessing()`
+のage判定（`effectiveNow.getTime() - processingClaimedAtMillis`）は経過時間をそのまま
+反映してしまう。結果として、正常に実行中の処理が2分（`staleAfterMs`）を超えた時点で
+別のトリガー実行に処理権を奪われる、5回目で解消したはずの問題が再発していた。
+
+**対応**: ハートビートに使う時刻と、イベント処理の監査時刻・テスト用の固定日時
+（`effectiveNow`/`now`）を構造的に分離した。`renewOrSupersededOutcome_`から`now`引数
+自体を削除し、常に呼び出された瞬間の`new Date()`を内部で取得して
+`renewProcessingLease`へ渡すようにした（引数を削除したのは、将来また誤って業務上の
+固定時刻を渡せてしまう余地を構造的に無くすため）。これは3回目のレビュー対応で廃止
+した`BookingLockRepository`のTTL/`isHeld`判定が、業務上の`now`を一切使わず常に実際の
+`new Date()`のみに基づいていたのと同じ「実時間と業務時刻の分離」原則を、この
+ハートビートにも徹底したものである。
+
+一方、`claimForProcessing()`のage判定自体が使う`now`/`effectiveNow`は変更していない
+（本番では`processPendingStripeWebhookEvents`の呼び出し元＝トリガーがカスタムの`now`を
+渡さないため、既定で実際の`new Date()`になり、修正後のハートビートと自然に整合する）。
+
+**テスト**: `test/stripe-webhook-processor.test.js`の「ハートビートの時刻管理」節に、
+`test/helpers/gas-stubs.js`の`createControllableClock`でサンドボックスの`Date`
+グローバル自体を差し替え、`processSingleEvent_`が内部で呼ぶ`new Date()`を本番コード
+経路を通して決定的に進める統合テストを追加した。Checkout Session再取得後に実時間を
+90秒進め（1回目のハートビート）、続くPaymentIntent再取得の直前でさらに40秒進めて
+claimから合計130秒（`staleAfterMs`の2分超）が経過した時点で、その場から同期的に
+別のトリガー実行（実行B）を呼び出し、実行Bがこのイベントに一切着手できず
+（`processedCount:0`、Stripeへも問い合わせない）、実行Aが最後まで処理権を保持して
+正常に完了する（`processingClaimCount`が世代を進めない）ことを検証する。このテストは
+修正前のコード（`git stash`で本番修正のみを一時的に戻した状態）では、実行Bが誤って
+このイベントに着手し、実行B自身もStripeへ問い合わせてしまう（`retrievePaymentIntent`
+呼び出し回数が1回ではなく2回になる）ことで失敗することを確認済み。既存の世代管理・
+古い世代のfinalize拒否・クラッシュ後の再取得（5回目までのテスト）は変更なくすべて
+成功することも確認済み。
+
+なお、この修正・テスト追加の過程で、テストヘルパー`createControllableClock`が返す
+`Date`グローバルに静的メソッド`Date.UTC`/`Date.parse`が欠けており、`Availability.gs`
+（曜日計算に`Date.UTC(...)`を直接使う）経由で`confirmBooking`のメール送信ステップが
+例外で失敗する、という**テストヘルパー自体の不具合**を発見・修正した（本番コードには
+影響しない。`test/helpers/gas-stubs.js`の`createControllableClock`のコメント参照）。
+
 ### Webhookと失効処理（expirePendingBookings）の競合（レビュー対応・4回目で実行主体を一本化する設計へ再設計）
 
 **この節がIssue #341本文「8. 失効処理との競合」への回答の核心。**
