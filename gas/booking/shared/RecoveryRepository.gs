@@ -210,8 +210,37 @@ var RecoveryRepository = (function () {
     return count;
   }
 
+  /*
+   * PR-Dレビュー対応・1回目: 指定したfailureTypeのOPEN行だけをRESOLVEDにする（Checkout
+   * Sessionの失効をStripe上で確認できた後に、失効の結果不明の記録だけを閉じるために使う）。
+   */
+  function resolveOpenRecordsOfTypes(bookingId, failureTypes, resolvedAt) {
+    var sheet = ensureRecoverySheet_();
+    var values = sheet.getDataRange().getValues();
+    var recoveryStateIndex = HEADERS_.indexOf('recoveryState');
+    var resolvedAtIndex = HEADERS_.indexOf('resolvedAt');
+    var count = 0;
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(values[i]);
+      if (record.bookingId === bookingId && record.recoveryState === 'OPEN' && failureTypes.indexOf(record.failureType) !== -1) {
+        sheet.getRange(i + 1, recoveryStateIndex + 1, 1, 1).setValues([['RESOLVED']]);
+        sheet.getRange(i + 1, resolvedAtIndex + 1, 1, 1).setValues([[resolvedAt]]);
+        count++;
+      }
+    }
+    return count;
+  }
+
+  function hasOpenPaymentRecords(bookingId) {
+    return listAll().some(function (record) {
+      return record.bookingId === bookingId && record.recoveryState === 'OPEN' && isPaymentFailureType(record.failureType);
+    });
+  }
+
   return {
     HEADERS: HEADERS_,
+    resolveOpenRecordsOfTypes: resolveOpenRecordsOfTypes,
+    hasOpenPaymentRecords: hasOpenPaymentRecords,
     isPaymentFailureType: isPaymentFailureType,
     resolveOpenPaymentRecords: resolveOpenPaymentRecords,
     hasRecord: hasRecord,

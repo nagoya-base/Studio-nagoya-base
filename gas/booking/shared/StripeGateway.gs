@@ -317,9 +317,30 @@ var StripeGateway = (function () {
     return { ok: true, refunds: result.raw.data.map(normalizeRefund_) };
   }
 
+  /*
+   * Checkout Sessionの失効（Issue #341 PR-Dレビュー対応・1回目）。未決済（status=open）の
+   * Sessionだけが失効でき、既に完了・失効済みのSessionにはStripeがエラーを返す。呼び出し元
+   * （BookingRefund.gs）は、失敗・応答不明のいずれの場合も「未決済・失効済み」と断定せず、
+   * retrieveCheckoutSessionで実際の状態を確認すること。Idempotency-Keyは同一Sessionの
+   * 失効リクエストの再送を同じ応答へ収束させるためだけに付ける（資金移動は伴わない）。
+   */
+  function expireCheckoutSession(stripeConfig, sessionId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!sessionId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripeCheckoutSessionIdが指定されていません。' };
+    }
+    var url = API_BASE_ + '/checkout/sessions/' + encodeURIComponent(sessionId) + '/expire';
+    var result = performRequest_('post', url, stripeConfig.secretKey, '', 'expire-' + sessionId);
+    if (!result.ok) return result;
+    return { ok: true, session: normalizeSession_(result.raw) };
+  }
+
   return {
     createCheckoutSession: createCheckoutSession,
     retrieveCheckoutSession: retrieveCheckoutSession,
+    expireCheckoutSession: expireCheckoutSession,
     retrievePaymentIntent: retrievePaymentIntent,
     createRefund: createRefund,
     retrieveRefund: retrieveRefund,

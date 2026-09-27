@@ -1940,6 +1940,18 @@ function refundAttemptStateLabel_(value) {
   return labels[value] || value || '';
 }
 
+/* PR-Dレビュー対応・1回目: 未入金の取消で発行済み決済URLを失効させた結果。 */
+function checkoutCancelStateLabel_(value) {
+  var labels = {
+    EXPIRE_REQUESTED: '失効を確認中（結果未記録）',
+    EXPIRED: 'Stripe側で失効済み',
+    NO_SESSION: '発行済みの決済URLなし',
+    UNKNOWN: '失効を確認できていません（要再確認）',
+    PAYMENT_RECEIVED: '取消と同時期に決済が成立（要対応）'
+  };
+  return labels[value] || value || '';
+}
+
 function refundDecisionLabel_(value) {
   var labels = { FULL: '全額返金', PARTIAL: '一部返金', NONE: '返金なし' };
   return labels[value] || value || '';
@@ -1961,6 +1973,10 @@ function describePaymentState_(booking) {
       (booking.refundDecidedAt ? ' / 実行: ' + booking.refundDecidedAt : ''));
   }
   if (booking.refundReason) lines.push('取消・返金の理由: ' + booking.refundReason);
+  if (booking.checkoutCancelState) {
+    lines.push('決済URLの失効: ' + checkoutCancelStateLabel_(booking.checkoutCancelState) +
+      (booking.checkoutCancelCheckedAt ? '（確認: ' + booking.checkoutCancelCheckedAt + '）' : ''));
+  }
   if (booking.refundAttemptState) lines.push('返金の状態: ' + refundAttemptStateLabel_(booking.refundAttemptState) +
     (booking.refundStripeStatus ? '（Stripe: ' + booking.refundStripeStatus + '）' : ''));
   if (booking.stripeRefundId) lines.push('返金ID: ' + booking.stripeRefundId);
@@ -2008,7 +2024,11 @@ function buildRefundConfirmMessage_(booking, decision, amountJpy, reason) {
     refundLine + '\n' +
     '理由: ' + reason + '\n\n' +
     (active ? 'この予約を取り消し（Calendarの予約枠を削除）、' : '') +
-    (decision === 'NONE' ? '返金なしとして記録します。' : 'Stripeで返金を実行します。') + '\n' +
+    (decision === 'NONE'
+      ? (booking.paymentStatus === 'paid'
+        ? '入金済みの料金を返金しないことを記録します。'
+        : '発行済みの決済URL（Checkout Session）もStripe側で失効させます（入金前のため返金はありません）。')
+      : 'Stripeで返金を実行します。') + '\n' +
     '利用者へ取消の案内メールを送信します（返金完了のお知らせは、Stripeで返金が完了した後に別途送信されます）。\n\n' +
     'この操作は取り消せません。実行しますか？';
 }
@@ -2054,6 +2074,11 @@ function initPaymentUi_() {
   reconcileButton.id = 'payment-reconcile-button';
   reconcileButton.textContent = '返金状態を照会';
   container.appendChild(reconcileButton);
+  var expiryButton = document.createElement('button');
+  expiryButton.type = 'button';
+  expiryButton.id = 'payment-expiry-reconcile-button';
+  expiryButton.textContent = '決済URLの失効を再確認';
+  container.appendChild(expiryButton);
   var resolveButton = document.createElement('button');
   resolveButton.type = 'button';
   resolveButton.id = 'payment-resolve-button';
@@ -2123,6 +2148,7 @@ function initPaymentUi_() {
   modal.insertBefore(accessContainer, closeButton);
 
   reconcileButton.addEventListener('click', runReconcileRefund_);
+  expiryButton.addEventListener('click', runReconcileCheckoutExpiry_);
   resolveButton.addEventListener('click', runResolvePaymentRecovery_);
   refundButton.addEventListener('click', runCancelWithRefund_);
   approveButton.addEventListener('click', runApproveAccess_);
@@ -2133,6 +2159,7 @@ function initPaymentUi_() {
   paymentUi_.dashboardLink = dashboardLink;
   paymentUi_.reconcileButton = reconcileButton;
   paymentUi_.resolveButton = resolveButton;
+  paymentUi_.expiryButton = expiryButton;
   paymentUi_.refundContainer = refundContainer;
   paymentUi_.refundDecisionSelect = decisionSelect;
   paymentUi_.refundAmountInput = amountInput;
@@ -2167,6 +2194,9 @@ function renderPaymentSection_(booking) {
     var canReconcile = !!booking.refundAttemptId;
     ui.reconcileButton.disabled = ui.inFlight || !canReconcile;
     if (canReconcile) { ui.reconcileButton.classList.remove('hidden'); } else { ui.reconcileButton.classList.add('hidden'); }
+    var canCheckExpiry = booking.checkoutCancelState === 'UNKNOWN' || booking.checkoutCancelState === 'EXPIRE_REQUESTED';
+    if (canCheckExpiry) { ui.expiryButton.classList.remove('hidden'); } else { ui.expiryButton.classList.add('hidden'); }
+    ui.expiryButton.disabled = ui.inFlight || !canCheckExpiry;
     if (booking.paymentRecoveryRequiredAt) { ui.resolveButton.classList.remove('hidden'); } else { ui.resolveButton.classList.add('hidden'); }
     ui.resolveButton.disabled = ui.inFlight;
 
@@ -2241,6 +2271,14 @@ function runReconcileRefund_() {
   }, '返金状態を照会しました。');
 }
 
+function runReconcileCheckoutExpiry_() {
+  var booking = currentDetailBooking_;
+  if (!booking || (booking.checkoutCancelState !== 'UNKNOWN' && booking.checkoutCancelState !== 'EXPIRE_REQUESTED')) return;
+  runPaymentAction_(booking, '決済URLの失効を確認中…', function (run) {
+    run.adminReconcileCheckoutExpiry(booking.bookingId);
+  }, '決済URLの失効を確認しました。');
+}
+
 function runResolvePaymentRecovery_() {
   var booking = currentDetailBooking_;
   if (!booking || !booking.paymentRecoveryRequiredAt) return;
@@ -2295,7 +2333,8 @@ function renderPaymentRecoveryItem_(item) {
     item.stripeCheckoutSessionId ? 'Session: ' + item.stripeCheckoutSessionId : '',
     item.stripePaymentIntentId ? 'PaymentIntent: ' + item.stripePaymentIntentId : '',
     item.stripeRefundId ? '返金ID: ' + item.stripeRefundId : '',
-    item.refundAttemptState ? '返金試行: ' + refundAttemptStateLabel_(item.refundAttemptState) : ''
+    item.refundAttemptState ? '返金試行: ' + refundAttemptStateLabel_(item.refundAttemptState) : '',
+    item.checkoutCancelState ? '決済URL: ' + checkoutCancelStateLabel_(item.checkoutCancelState) : ''
   ].filter(function (v) { return v; }).join(' / ');
   return '<div class="card recovery-card">' +
     '<div class="card-id">' + escapeHtml(item.bookingId) + (item.bookingFound ? '' : '（台帳に予約行なし）') + '</div>' +

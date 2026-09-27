@@ -1351,17 +1351,28 @@ var BookingRepository = (function () {
      * 前に拒否する。現金・PayPay・旧Payment Link方式の予約、決済前（checkout_pending等）の
      * カード予約は従来どおり（opts.allowStripePaidはBookingRefund.gsのみが指定する）。
      */
+    /*
+     * PR-Dレビュー対応・1回目: 決済待ち（checkout_pending）・決済開始の結果が未確定の予約も
+     * 同様に「取消・返金」からのみ取り消す。従来のキャンセルは発行済みのCheckout Session
+     * （決済URL）を失効させないため、取消後に利用者が入金できてしまう。「取消・返金」の
+     * 「返金なし」はSessionをStripe側でも失効させる（BookingRefund.cancelUnpaidCheckout_）。
+     */
     if (!opts.allowStripePaid && Booking.isStripeCheckoutBooking(record)) {
       var currentPaymentStatus = Booking.normalizePaymentStatus(record.paymentStatus);
-      if (currentPaymentStatus === null ||
-          currentPaymentStatus === Booking.PAYMENT_STATUS.PAID ||
-          currentPaymentStatus === Booking.PAYMENT_STATUS.REFUND_PENDING) {
+      var paidOrRefunding = currentPaymentStatus === null ||
+        currentPaymentStatus === Booking.PAYMENT_STATUS.PAID ||
+        currentPaymentStatus === Booking.PAYMENT_STATUS.REFUND_PENDING;
+      var checkoutMayBeOpen = currentPaymentStatus === Booking.PAYMENT_STATUS.CHECKOUT_PENDING ||
+        (!!record.paymentAttemptId && !record.paymentAttemptResolvedAt);
+      if (paidOrRefunding || checkoutMayBeOpen) {
         return {
           response: {
             success: false,
             error: {
               code: 'REFUND_DECISION_REQUIRED',
-              message: 'Stripeで入金済みの予約です。Booking Adminの予約詳細「取消・返金」から、返金方法を選んで取り消してください。'
+              message: paidOrRefunding
+                ? 'Stripeで入金済みの予約です。Booking Adminの予約詳細「取消・返金」から、返金方法を選んで取り消してください。'
+                : 'Stripeの決済URLを発行済みの予約です。Booking Adminの予約詳細「取消・返金」の「返金なし（取消のみ）」から取り消してください（決済URLもStripe側で失効させます）。'
             }
           },
           shouldTryMail: false
@@ -2444,6 +2455,15 @@ var BookingRepository = (function () {
       var record = found.record;
       if (record.paymentRecoveryRequiredAt) {
         return { success: false, error: { code: 'PAYMENT_RECOVERY_REQUIRED', message: 'この予約の決済状態は要復旧のため、自動処理を停止しています。' } };
+      }
+      /*
+       * PR-Dレビュー対応・1回目: beginCardCheckout冒頭のstatus確認（Lock外）の後に管理者が
+       * 予約を取り消していた場合に、取消済みの予約へ新しい決済試行（Checkout Session）を
+       * 発行しないよう、Lock取得後の最新行でも確認する（Booking AdminとはLockを共有しない
+       * ため競合の窓を完全には消せないが、その場合も遅延入金として記録・Recovery管理される）。
+       */
+      if (record.status !== Booking.STATUS.PENDING) {
+        return { success: false, error: { code: 'BOOKING_NOT_PENDING', message: 'この予約は決済待ちの状態ではありません。' } };
       }
       if (hasUnresolvedPaymentAttempt_(record)) {
         var snapshot = safeJsonParse_(record.stripeCheckoutRequestSnapshot);

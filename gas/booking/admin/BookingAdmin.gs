@@ -74,6 +74,10 @@ function reconcileBookingRefund(bookingId) {
   return BookingRefund.reconcileRefund(bookingId);
 }
 
+function reconcileBookingCheckoutExpiry(bookingId) {
+  return BookingRefund.reconcileCheckoutExpiry(bookingId);
+}
+
 function resolveBookingPaymentRecovery(bookingId, note) {
   return BookingRefund.resolvePaymentRecovery(bookingId, note);
 }

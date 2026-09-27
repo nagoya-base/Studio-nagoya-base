@@ -257,6 +257,21 @@ var BookingMailTemplates = (function () {
       return '今回のキャンセルでは、お支払い済みの利用料金の返金はございません。ご不明点は下記までお問い合わせください。\n';
     }
     if (!record.refundDecision) {
+      /*
+       * PR-Dレビュー対応・1回目: 未入金の取消では、発行済み決済URLの失効結果に応じて案内する。
+       * 失効を確認できない間は「失効した」とは書かず、支払わないよう案内する。取消と同時期に
+       * 決済が成立していた場合は、返金の有無を約束せず改めて連絡する旨だけを書く。
+       */
+      if (record.checkoutCancelState === 'PAYMENT_RECEIVED') {
+        return 'お支払いの手続きが完了していたことを確認しました。お支払い済みの利用料金の取り扱いについては、確認のうえ改めてご連絡いたします。\n';
+      }
+      if (record.checkoutCancelState === 'UNKNOWN' || record.checkoutCancelState === 'EXPIRE_REQUESTED') {
+        return 'お送りしているお支払い用のページからは、お支払いにならないようお願いいたします。' +
+          'すでにお支払いの手続きをされた場合は、確認のうえ改めてご連絡いたします。\n';
+      }
+      if (record.checkoutCancelState === 'EXPIRED') {
+        return 'お送りしていたお支払い用のページは無効になりました。お支払いは発生していません。\n';
+      }
       if (paymentStatus !== Booking.PAYMENT_STATUS.PAID) return '';
       return 'お支払い済みの利用料金の取り扱いについては、確認のうえ改めてご連絡いたします。\n';
     }

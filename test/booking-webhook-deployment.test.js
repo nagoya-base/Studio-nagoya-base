@@ -116,6 +116,8 @@ test('Booking Webhookプロジェクトには管理者向けのサーバー関�
     'reconcileBookingRefund',
     'resolveBookingPaymentRecovery',
     'approveBookingAccess',
+    'adminReconcileCheckoutExpiry',
+    'reconcileBookingCheckoutExpiry',
     'BookingRefund',
     'BookingAccessApproval'
   ];

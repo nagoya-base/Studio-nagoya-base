@@ -84,7 +84,24 @@ var BookingAdminAlerts = (function () {
     ]);
   }
 
+  /*
+   * PR-Dレビュー対応・1回目: 入金は成立したが予約を確定できなかった（取消済み・失効済み等への
+   * 遅延入金を含む）。予約は復活させずRecoveryで管理されるため、管理者が入金の事実を認識し、
+   * 返金方針を判断できるよう通知する。
+   */
+  function notifyPaidBookingNotConfirmed(bookingId, bookingStatus, reasonCode) {
+    return send_('【要対応】入金済みですが予約を確定できませんでした: ' + bookingId, [
+      'Stripeでの入金を確認しましたが、予約は' + (bookingStatus || '不明') + 'のため自動確定しませんでした（予約は復活させていません）。',
+      '入金は台帳へ記録済みです。Booking Adminの「決済要対応」から予約詳細を開き、',
+      '「取消・返金」で返金方針（全額／一部／返金なし）を判断してください。取消時点の判断は、この入金には適用されません。',
+      '',
+      'bookingId: ' + bookingId,
+      '状態: ' + (reasonCode || '')
+    ]);
+  }
+
   return {
+    notifyPaidBookingNotConfirmed: notifyPaidBookingNotConfirmed,
     notifyAccessApprovalPending: notifyAccessApprovalPending,
     notifyUnapprovedAccessForTomorrow: notifyUnapprovedAccessForTomorrow,
     notifyRefundNeedsAttention: notifyRefundNeedsAttention

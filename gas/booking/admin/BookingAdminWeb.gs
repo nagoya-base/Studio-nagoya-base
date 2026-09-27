@@ -265,8 +265,11 @@ function buildAdminPaymentSummary_(record, timezone) {
   return {
     isStripeCheckout: isStripeCheckout,
     paymentStatus: paymentStatus,
+    /* PR-Dレビュー対応・1回目: 決済URL発行済み（checkout_pending・決済開始の結果未確定）も
+       「取消・返金」（返金なし＝決済URLの失効つき）から取り消す。 */
     refundDecisionRequired: isStripeCheckout && active &&
-      (normalized === null || normalized === Booking.PAYMENT_STATUS.PAID || normalized === Booking.PAYMENT_STATUS.REFUND_PENDING),
+      (normalized === null || normalized === Booking.PAYMENT_STATUS.PAID || normalized === Booking.PAYMENT_STATUS.REFUND_PENDING ||
+        normalized === Booking.PAYMENT_STATUS.CHECKOUT_PENDING || (!!record.paymentAttemptId && !record.paymentAttemptResolvedAt)),
     paymentRecoveryRequired: !!record.paymentRecoveryRequiredAt,
     accessApprovalRequired: accessRequired,
     accessApprovalPending: accessRequired && record.status === Booking.STATUS.CONFIRMED && preApprovalGate.ok && !record.accessApprovedAt
@@ -469,6 +472,9 @@ function getAdminBookingDetail(bookingId) {
       refundCheckedAt: formatAdminDateTime_(record.refundCheckedAt, timezone),
       refundMailSentAt: formatAdminDateTime_(record.refundMailSentAt, timezone),
       refundInFlight: BookingRefund.isRefundInFlight(record),
+      /* PR-Dレビュー対応・1回目: 未入金の取消で発行済み決済URLを失効させた結果。 */
+      checkoutCancelState: record.checkoutCancelState || '',
+      checkoutCancelCheckedAt: formatAdminDateTime_(record.checkoutCancelCheckedAt, timezone),
       paymentLastErrorAt: formatAdminDateTime_(record.paymentLastErrorAt, timezone),
       paymentLastErrorMessage: record.paymentLastErrorMessage || '',
       paymentRecoveryRequiredAt: formatAdminDateTime_(record.paymentRecoveryRequiredAt, timezone),
@@ -624,6 +630,7 @@ function getAdminPaymentRecoveries() {
       stripeRefundId: r.stripeRefundId || '',
       refundAttemptId: r.refundAttemptId || '',
       refundAttemptState: r.refundAttemptState || '',
+      checkoutCancelState: r.checkoutCancelState || '',
       paymentRecoveryRequiredAt: formatAdminDateTime_(r.paymentRecoveryRequiredAt, timezone),
       paymentRecoveryReason: r.paymentRecoveryReason || '',
       openRecoveryRows: item.openRecoveryRows.map(function (row) {
@@ -636,6 +643,11 @@ function getAdminPaymentRecoveries() {
     };
   });
   return sanitizeForClient_({ success: true, items: items });
+}
+
+/* 決済URLの失効を再確認（PR-Dレビュー対応・1回目。BookingRefund.reconcileCheckoutExpiry）。 */
+function adminReconcileCheckoutExpiry(bookingId) {
+  return sanitizeForClient_(reconcileBookingCheckoutExpiry(bookingId));
 }
 
 /* 決済Recoveryの解消（BookingRefund.resolvePaymentRecovery。Stripeとの整合を確認できた場合のみ）。 */

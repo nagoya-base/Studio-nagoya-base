@@ -3414,18 +3414,19 @@ Session取得を防ぐ決済開始トークン用に1列（`checkoutAccessToken`
 
 ### Issue #341 PR-D 本番`Bookings`シートのヘッダー追記手順
 
-PR-D（管理者の取消・返金）で返金試行の記録用に9列を追加した。上記「PR #354レビュー対応」の
+PR-D（管理者の取消・返金）で返金試行の記録用に9列、PR-Dレビュー対応・1回目で未入金の取消時の
+決済URL失効の記録用に2列、合計11列を追加した。上記「PR #354レビュー対応」の
 `checkoutAccessToken`がすでに反映済みであることを前提に、その右隣へ追記する。
 
 1. 本番シートの現在の最終列が`checkoutAccessToken`であることを確認する。
-2. その右隣へ、次の9列をこの順で追記する（`refundAttemptId`〜`refundCheckedAt`の8列は
+2. その右隣へ、次の11列をこの順で追記する（`refundAttemptId`〜`refundCheckedAt`の8列は
    `updateBookingRefundStateAtomic`が1回の`setValues`で更新するため、順序を変えない）。
 
    ```text
-   refundAttemptId	refundAttemptState	refundDecision	refundAmount	refundReason	refundDecidedAt	refundStripeStatus	refundCheckedAt	refundMailSentAt
+   refundAttemptId	refundAttemptState	refundDecision	refundAmount	refundReason	refundDecidedAt	refundStripeStatus	refundCheckedAt	refundMailSentAt	checkoutCancelState	checkoutCancelCheckedAt
    ```
 
-3. 既存行の9列は空欄のままにする（空＝返金試行なし・返金完了メール未送信）。
+3. 既存行の11列は空欄のままにする（空＝返金試行なし・返金完了メール未送信・未入金取消なし）。
    `accessApprovedAt`列（PR-Aで追加済み）も既存行は空欄のままでよい（空＝未承認。
    鍵承認ゲートの対象はStripe Checkoutで決済した予約だけなので、既存の現地払い・旧
    Payment Link予約の前日リマインドには影響しない）。
@@ -5594,7 +5595,7 @@ Stripe・Calendar・Sheets・メールはすべてモック。本番のStripe返
 ### 本番反映時の手順（オーナーの明示承認後に行う。本PRでは行わない）
 
 1. `Bookings`シートのバックアップ（シートのコピー）を取る。
-2. 上記「Issue #341 PR-D 本番`Bookings`シートのヘッダー追記手順」で9列を追記する。
+2. 上記「Issue #341 PR-D 本番`Bookings`シートのヘッダー追記手順」で11列を追記する。
 3. Booking AdminのScript Propertiesに`ADMIN_NOTIFICATION_EMAIL`・`BOOKING_ADMIN_URL`を設定し、
    `STRIPE_SECRET_KEY`がテストモードの鍵であることを確認する。
 4. Booking Admin・Booking Web Appへファイルを反映する（既存デプロイID・`/exec` URLを維持。
@@ -5610,8 +5611,55 @@ Stripe・Calendar・Sheets・メールはすべてモック。本番のStripe返
 バージョンを戻す）。追記した9列は残しても旧コードは読まない（末尾追記のため既存列の読み取りに
 影響しない）。
 
+### PR-Dレビュー対応・1回目: 未入金のStripe Checkout予約の取消と決済URLの失効
+
+指摘: 未入金のカード予約を「返金なし」で取り消しても、発行済みのCheckout Session（決済URL）を
+失効させていなかったため、利用者が決済URLを保持していると取消後に入金が成立し得た。
+
+- **取消の経路を一本化**: 決済待ち（`checkout_pending`）・決済開始の結果が未確定の予約は、
+  通常の「キャンセル」（`cancelBookingAdmin`）を`REFUND_DECISION_REQUIRED`で拒否し、
+  「取消・返金」の「返金なし（取消のみ）」からだけ取り消す（一覧のボタンも「取消・返金」に
+  切り替わる）。現金・PayPay・旧Payment Link方式の予約は従来どおり（変更なし）。
+- **失効の手順**（`BookingRefund.cancelUnpaidCheckout_`）:
+  1. 決済試行IDはあるがSessionが未記録（発行の結果が未確定）の予約は、失効させる決済URLを
+     特定できないため取り消さない（`CHECKOUT_ATTEMPT_UNRESOLVED`）。
+  2. Script Lock内で最新行を再読込・比較して取消（Calendar削除→CANCELLED）し、
+     `checkoutCancelState=EXPIRE_REQUESTED`を記録する（枠は失効の結果を待たずに解放）。
+  3. Lockの外でStripeの失効API（`POST /v1/checkout/sessions/{id}/expire`）を呼び、続けて
+     Sessionを再取得して実際の状態を確認する。**Script LockはStripe呼び出し中に保持しない。**
+  4. Lock内で結果（`EXPIRED`／`PAYMENT_RECEIVED`／`UNKNOWN`）を記録する。
+- **応答不明**: 失効APIの応答もSessionの再取得も確認できない場合は`UNKNOWN`とし、未決済・
+  失効済みと断定しない（`paymentStatus`は`checkout_pending`のまま）。Recovery
+  （`PAYMENT_CHECKOUT_EXPIRE_UNKNOWN`）へ記録して管理者へ通知し、取消メールも「失効した」とは
+  書かず「お支払いにならないよう」案内する。「決済URLの失効を再確認」
+  （`reconcileCheckoutExpiry`。失効は資金移動を伴わないため何度でも実行可）で確認でき、
+  失効を確認できたらこのRecovery行を閉じる。
+- **失効と決済成功の競合・取消後の遅延Webhook**: Sessionが既に`complete/paid`だった場合は
+  `PAYMENT_RECEIVED`とし、Recovery（`PAYMENT_RECEIVED_AFTER_CANCEL`）・管理者通知で管理する。
+  入金そのものは既存のWebhook処理（PR-C）が`paid`として記録し、予約はCANCELLEDのため自動確定
+  されない（予約・Calendarの枠を勝手に復活させない）。確定できなかった入金は要復旧ゲート
+  （`PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED`）で管理され、管理者へ
+  「入金済みですが予約を確定できませんでした」を通知する（Webhook処理への追加は通知のみ）。
+  **このため未入金の取消経路では要復旧ゲートを立てない**（ゲートがあるとWebhook処理が入金の
+  記録自体を打ち切るため）。
+- **「返金なし」による解消の条件**: 入金前の取消では「返金なし」の判断を記録しない。Recoveryの
+  解消に使える「返金なし」は、入金確認（`paymentConfirmedAt`）より後に記録された判断だけとし
+  （`isNoneDecidedAfterPayment_`）、取消時点の判断や入金前の記録では解消できない
+  （`RECOVERY_REFUND_DECISION_REQUIRED`）。管理者は入金の事実を確認のうえ、「取消・返金」で
+  全額／一部／返金なしを改めて選ぶ。失効を確認できていない予約（`UNKNOWN`等）の解消も拒否する。
+- **決済開始側の防御**: `reservePaymentAttempt_`（Booking Web App）がLock取得後にも予約が
+  PENDINGであることを確認し、取消済みの予約に新しいCheckout Sessionを発行しない。
+
 ### 残る制約
 
+- 未入金の取消で失効させるのは台帳に記録された最新のCheckout Sessionのみ。決済開始の結果が
+  未確定（Sessionが未記録）の間は取り消せない。Booking Web AppとBooking AdminはScript Lockを
+  共有しないため、取消の直前に利用者が決済を開始した場合など、取消後に別のSessionで入金が成立する
+  窓は完全にはなくせない。その場合もWebhook処理が入金を記録し、予約は復活させずRecoveryで
+  管理される（識別子が台帳と異なる場合は`STRIPE_WEBHOOK_IDENTITY_MISMATCH`）。
+- 取消と同時期の入金（`PAYMENT_RECEIVED`）でWebhookが届かない場合、台帳の`paymentStatus`は
+  `checkout_pending`のまま残る（PR-Cの照合・Stripeの再送に依存）。Recovery行と管理者通知で
+  把握する。
 - 返金が`requires_action`/`pending`のまま長く残る場合は、「返金状態を照会」を管理者が実行して
   追跡する（自動の定期照会トリガーは本PRでは追加していない）。
 - `refund_pending`になった後にStripe側で返金が失敗した場合、決済状態の遷移表に

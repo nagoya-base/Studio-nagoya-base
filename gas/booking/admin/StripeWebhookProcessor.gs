@@ -678,6 +678,13 @@ var StripeWebhookProcessor = (function () {
         effectiveNow
       );
       if (gateStopped) return gateStopped;
+      /* PR-Dレビュー対応・1回目: 取消済み予約への遅延入金等を管理者へ通知する（best effort）。 */
+      try {
+        var blockedRow = SpreadsheetRepository.findRowByBookingId(bookingId);
+        BookingAdminAlerts.notifyPaidBookingNotConfirmed(bookingId, blockedRow ? blockedRow.record.status : '', confirmResult.error && confirmResult.error.code);
+      } catch (alertError) {
+        Logger.log('StripeWebhookProcessor: 入金済み未確定の管理者通知に失敗しました bookingId=' + bookingId);
+      }
     }
 
     /*

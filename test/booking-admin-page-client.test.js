@@ -108,7 +108,8 @@ function createScriptRunStub() {
     'adminApproveAccess',
     'adminResendReminderMail',
     'getAdminPaymentRecoveries',
-    'adminResolvePaymentRecovery'
+    'adminResolvePaymentRecovery',
+    'adminReconcileCheckoutExpiry'
   ];
 
   var stub = {
@@ -2616,4 +2617,26 @@ test('PR-D describePaymentState_: 決済・返金・要対応の状態を表示�
   assert.ok(text.indexOf('re_1') !== -1);
   assert.ok(text.indexOf('決済要対応') !== -1);
   assert.strictEqual(sandbox.describePaymentState_(booking({ isStripeCheckout: false })), '');
+});
+
+test('PR-Dレビュー対応・1回目: 未入金予約の「返金なし」は決済URLの失効を確認させ、失効を確認できていない予約には再確認ボタンを出す', function () {
+  var sandbox = loadClientSandbox();
+  var unpaid = stripeDetailBooking({ status: 'PENDING', paymentStatus: 'checkout_pending', stripeAmount: 8000 });
+  var message = sandbox.buildRefundConfirmMessage_(unpaid, 'NONE', 0, '取消依頼');
+  assert.ok(message.indexOf('決済URL') !== -1 && message.indexOf('失効') !== -1);
+  assert.ok(message.indexOf('入金済みの料金を返金しない') === -1);
+  var paidNone = sandbox.buildRefundConfirmMessage_(stripeDetailBooking(), 'NONE', 0, 'x');
+  assert.ok(paidNone.indexOf('入金済みの料金を返金しないことを記録します') !== -1);
+
+  sandbox.showDetailModal(stripeDetailBooking({ status: 'CANCELLED', paymentStatus: 'checkout_pending', checkoutCancelState: 'UNKNOWN', checkoutCancelCheckedAt: '2026-10-01 12:00' }));
+  assert.strictEqual(sandbox.paymentUi_.expiryButton.classList.contains('hidden'), false);
+  assert.ok(sandbox.paymentUi_.statusEl.textContent.indexOf('失効を確認できていません') !== -1);
+  sandbox.runReconcileCheckoutExpiry_();
+  var calls = sandbox.google.script.run.calls.filter(function (c) { return c.name === 'adminReconcileCheckoutExpiry'; });
+  assert.strictEqual(calls.length, 1);
+  assert.deepStrictEqual(Array.from(calls[0].args), ['SX-20261010-AAAAAAAA']);
+
+  var sandbox2 = loadClientSandbox();
+  sandbox2.showDetailModal(stripeDetailBooking({ status: 'CANCELLED', checkoutCancelState: 'EXPIRED' }));
+  assert.strictEqual(sandbox2.paymentUi_.expiryButton.classList.contains('hidden'), true);
 });

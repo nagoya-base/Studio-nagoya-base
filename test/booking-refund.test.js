@@ -99,7 +99,29 @@ function createStripe(options) {
     amountReceived: opts.amountReceived === undefined ? 8000 : opts.amountReceived,
     onPost: null,
     onListRefunds: null,
-    counter: 0
+    counter: 0,
+    /* PR-Dレビュー対応・1回目: Checkout Session（決済URL）の状態と、失効・取得の振る舞い。
+       expireBehaviors: 'ok'（open→expired）| 'network'（何もせず通信例外）|
+       'network_after_expire'（失効した後に通信例外）| 'paid_before_expire'（直前に決済が
+       成立しcomplete/paidになった→Stripeは失効を拒否）。retrieveBehaviors: 'ok' | 'network'。 */
+    session: Object.assign({
+      id: 'cs_test_0001', status: 'open', paymentStatus: 'unpaid', paymentIntent: null
+    }, opts.session || {}),
+    expires: [],
+    expireBehaviors: (opts.expireBehaviors || []).slice(),
+    retrieveBehaviors: (opts.retrieveBehaviors || []).slice()
+  };
+  function sessionBody() {
+    return {
+      id: stripe.session.id, status: stripe.session.status, payment_status: stripe.session.paymentStatus,
+      amount_total: 8000, currency: 'jpy', payment_intent: stripe.session.paymentIntent,
+      metadata: { bookingId: BOOKING_ID, brand: 'studio_x', paymentAttemptId: 'PAY-' + BOOKING_ID + '-ABCDEF012345' }
+    };
+  }
+  stripe.markPaid = function () {
+    stripe.session.status = 'complete';
+    stripe.session.paymentStatus = 'paid';
+    stripe.session.paymentIntent = PAYMENT_INTENT_ID;
   };
   function refundBody(refund) {
     return {
@@ -109,6 +131,23 @@ function createStripe(options) {
   }
   stripe.responder = function (url, options) {
     var method = (options && options.method) || 'get';
+    if (method === 'post' && /\/checkout\/sessions\/[^/]+\/expire$/.test(url)) {
+      stripe.expires.push({ url: url, key: options.headers['Idempotency-Key'] });
+      var expireBehavior = stripe.expireBehaviors.shift() || 'ok';
+      if (expireBehavior === 'network') return { thrown: new Error('Timeout') };
+      if (expireBehavior === 'paid_before_expire') stripe.markPaid();
+      if (stripe.session.status !== 'open') {
+        return { responseCode: 400, body: { error: { type: 'invalid_request_error', message: 'Only Checkout Sessions with a status in open can be expired.' } } };
+      }
+      stripe.session.status = 'expired';
+      if (expireBehavior === 'network_after_expire') return { thrown: new Error('Timeout') };
+      return { responseCode: 200, body: sessionBody() };
+    }
+    if (method === 'get' && /\/checkout\/sessions\/[^/]+$/.test(url)) {
+      var retrieveBehavior = stripe.retrieveBehaviors.shift() || 'ok';
+      if (retrieveBehavior === 'network') return { thrown: new Error('Timeout') };
+      return { responseCode: 200, body: sessionBody() };
+    }
     if (url.indexOf('/payment_intents/') !== -1) {
       return { responseCode: 200, body: { id: PAYMENT_INTENT_ID, status: stripe.piStatus, amount_received: stripe.amountReceived, currency: 'jpy' } };
     }
@@ -528,13 +567,214 @@ test('返金の事前照会: PaymentIntentの入金額が台帳と一致しな�
   assert.strictEqual(rec(ctx).status, 'CONFIRMED');
 });
 
-test('未入金（checkout_pending）の予約: 返金は拒否し、「返金なし」なら取消のみ行う', function () {
-  var ctx = setup({ record: { status: 'PENDING', paymentStatus: 'checkout_pending', stripePaymentIntentId: '' } });
+/* ========================================================================== */
+/* PR-Dレビュー対応・1回目: 未入金のStripe Checkout予約の取消と決済URLの失効         */
+/* ========================================================================== */
+
+var UNPAID_OVERRIDES = {
+  status: 'PENDING', paymentStatus: 'checkout_pending', stripePaymentIntentId: '', paymentConfirmedAt: '',
+  lastStripeEventId: '', confirmedAt: '', confirmedMailSentAt: '',
+  paymentHoldExpiresAt: new Date('2026-10-01T12:30:00+09:00')
+};
+
+function unpaidSetup(options) {
+  return setup(Object.assign({ record: Object.assign({}, UNPAID_OVERRIDES, (options && options.record) || {}) }, options || {}, {
+    record: Object.assign({}, UNPAID_OVERRIDES, (options && options.record) || {})
+  }));
+}
+
+/* Booking Webhookが署名検証済みイベントを永続化した状態を再現し、Booking Adminの
+   時間主導トリガー（StripeWebhookProcessor）を1回実行する（PR-Cの処理をそのまま使う）。 */
+function deliverPaidWebhook(ctx, eventId, now) {
+  var body = JSON.stringify({ id: eventId, type: 'checkout.session.completed', data: { object: { id: 'cs_test_0001' } } });
+  var claim = ctx.sandbox.StripeEventRepository.claim(eventId, 'checkout.session.completed', now);
+  ctx.sandbox.StripeEventRepository.storeRawBody(claim.rowNumber, body, now);
+  var run = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(now);
+  return run.results.filter(function (r) { return r.eventId === eventId; })[0];
+}
+
+function openRecoveryTypes(ctx) {
+  return Array.from(ctx.sandbox.RecoveryRepository.listAll(), function (r) { return r; })
+    .filter(function (r) { return r.recoveryState === 'OPEN'; })
+    .map(function (r) { return r.failureType; });
+}
+
+test('未入金（取消前に未決済）: 返金は拒否し、「返金なし」は取消→決済URLをStripe側で失効→失効を確認して記録する', function () {
+  var ctx = unpaidSetup();
   assert.strictEqual(ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'FULL', reason: 'x' }).error.code, 'NOT_PAID');
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '利用者からの取消依頼' });
+
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(result.checkoutExpireState, 'EXPIRED');
+  assert.strictEqual(result.warning, undefined);
+  var r = rec(ctx);
+  assert.strictEqual(r.status, 'CANCELLED');
+  assert.strictEqual(r.checkoutCancelState, 'EXPIRED');
+  assert.ok(r.checkoutCancelCheckedAt);
+  assert.strictEqual(r.refundDecision, '', '入金前の取消は「返金なし」の判断として記録しない');
+  assert.strictEqual(r.paymentRecoveryRequiredAt, '');
+  assert.strictEqual(liveEvents(ctx).length, 0);
+  assert.strictEqual(ctx.stripe.session.status, 'expired');
+  assert.strictEqual(ctx.stripe.expires.length, 1);
+  assert.ok(/\/checkout\/sessions\/cs_test_0001\/expire$/.test(ctx.stripe.expires[0].url));
+  assert.strictEqual(ctx.stripe.posts.length, 0, '返金APIは呼ばない');
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+  var mails = mailsTo(ctx, 'taro@example.com');
+  assert.strictEqual(mails.length, 1);
+  assert.ok(/お支払い用のページは無効になりました/.test(mails[0].body));
+});
+
+test('未入金: 通常の「キャンセル」は決済URLを失効させないため拒否する（「取消・返金」へ誘導）', function () {
+  var ctx = unpaidSetup();
+  var result = ctx.sandbox.cancelBookingAdmin(BOOKING_ID);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'REFUND_DECISION_REQUIRED');
+  assert.strictEqual(rec(ctx).status, 'PENDING');
+  assert.strictEqual(ctx.stripe.expires.length, 0);
+  var list = ctx.sandbox.getAdminBookings().bookings;
+  assert.strictEqual(list[0].refundDecisionRequired, true, '一覧でも「取消・返金」を出す');
+});
+
+test('未入金: 決済開始の結果が未確定（試行IDのみでSession未記録）なら、失効対象を特定できないため取り消さない', function () {
+  var ctx = unpaidSetup({ record: { paymentStatus: 'not_started', paymentAttemptResolvedAt: '', stripeCheckoutSessionId: '' } });
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: 'x' });
+  assert.strictEqual(result.error.code, 'CHECKOUT_ATTEMPT_UNRESOLVED');
+  assert.strictEqual(rec(ctx).status, 'PENDING');
+  assert.strictEqual(ctx.stripe.expires.length, 0);
+});
+
+test('未入金: Checkout Sessionの発行自体がStripeに拒否され（failed）決済URLが無い予約は、Stripeを呼ばずに取り消す', function () {
+  var ctx = unpaidSetup({ record: { paymentStatus: 'failed', stripeCheckoutSessionId: '' } });
   var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: 'x' });
   assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(result.checkoutExpireState, 'NO_SESSION');
   assert.strictEqual(rec(ctx).status, 'CANCELLED');
+  assert.strictEqual(ctx.stripe.expires.length, 0);
+});
+
+test('失効APIの応答不明（Sessionも確認できない）: 未決済・失効済みと断定せずUNKNOWNとRecoveryで管理し、要復旧ゲートは立てない。再確認で失効を確認できたら記録を閉じる', function () {
+  var ctx = unpaidSetup({ stripe: { expireBehaviors: ['network'], retrieveBehaviors: ['network'] } });
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: 'x' });
+
+  assert.strictEqual(result.success, true, '予約の取消（枠の解放）は完了している');
+  assert.strictEqual(result.checkoutExpireState, 'UNKNOWN');
+  assert.strictEqual(result.warning.code, 'CHECKOUT_EXPIRE_UNKNOWN');
+  var r = rec(ctx);
+  assert.strictEqual(r.status, 'CANCELLED');
+  assert.strictEqual(r.checkoutCancelState, 'UNKNOWN');
+  assert.strictEqual(r.paymentStatus, 'checkout_pending', '決済状態をfailed等へ進めない（未決済と断定しない）');
+  assert.strictEqual(r.paymentRecoveryRequiredAt, '', '遅延入金をWebhookで記録できるよう要復旧ゲートは立てない');
+  assert.ok(openRecoveryTypes(ctx).indexOf('PAYMENT_CHECKOUT_EXPIRE_UNKNOWN') !== -1);
+  assert.ok(mailsTo(ctx, 'admin@example.com').length >= 1);
+  var mail = mailsTo(ctx, 'taro@example.com')[0];
+  assert.ok(/お支払いにならないよう/.test(mail.body));
+  assert.ok(!/無効になりました/.test(mail.body), '失効を確認できない間は「無効になった」と案内しない');
+  var recoveries = ctx.sandbox.getAdminPaymentRecoveries().items;
+  assert.strictEqual(recoveries.length, 1);
+  assert.strictEqual(recoveries[0].checkoutCancelState, 'UNKNOWN');
+
+  /* 失効を確認できるまで要対応は解消できない。 */
+  assert.strictEqual(ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '確認').error.code, 'CHECKOUT_EXPIRE_UNCONFIRMED');
+
+  var reconciled = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(reconciled.success, true, JSON.stringify(reconciled));
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'EXPIRED');
+  assert.strictEqual(ctx.stripe.expires.length, 2);
+  assert.strictEqual(ctx.stripe.expires[1].key, ctx.stripe.expires[0].key, '失効の再依頼は同じIdempotency-Key');
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+});
+
+test('失効APIの応答不明でも、再取得したSessionがexpiredなら失効済みとして記録する', function () {
+  var ctx = unpaidSetup({ stripe: { expireBehaviors: ['network_after_expire'] } });
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: 'x' });
+  assert.strictEqual(result.checkoutExpireState, 'EXPIRED');
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'EXPIRED');
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+});
+
+test('失効と決済成功の競合: 実際の入金を記録し、予約は復活させずRecoveryで管理する。「返金なし」の判断は入金確認後に改めて行う必要がある', function () {
+  var ctx = unpaidSetup({ stripe: { expireBehaviors: ['paid_before_expire'] } });
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '利用者からの取消依頼' });
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.cancelled, true);
+  assert.strictEqual(result.checkoutExpireState, 'PAYMENT_RECEIVED');
+  assert.strictEqual(result.warning.code, 'CHECKOUT_EXPIRE_PAYMENT_RECEIVED');
+  var r = rec(ctx);
+  assert.strictEqual(r.status, 'CANCELLED');
+  assert.strictEqual(r.checkoutCancelState, 'PAYMENT_RECEIVED');
+  assert.strictEqual(r.paymentRecoveryRequiredAt, '', 'Webhookが入金を記録できるようゲートは立てない');
+  assert.ok(openRecoveryTypes(ctx).indexOf('PAYMENT_RECEIVED_AFTER_CANCEL') !== -1);
+  var cancelMail = mailsTo(ctx, 'taro@example.com')[0];
+  assert.ok(/改めてご連絡/.test(cancelMail.body));
+  assert.ok(!/返金はございません/.test(cancelMail.body), '入金前の取消の判断で「返金なし」と案内しない');
+
+  /* 決済成功のWebhook（PR-Cの処理）: 入金を記録し、取消済みの予約は自動確定しない。 */
+  var webhookAt = new Date('2026-10-01T12:05:00+09:00');
+  var processed = deliverPaidWebhook(ctx, 'evt_race_1', webhookAt);
+  assert.strictEqual(processed.code, 'PAID_CONFIRM_BLOCKED', JSON.stringify(processed));
+  r = rec(ctx);
+  assert.strictEqual(r.paymentStatus, 'paid', '実際の入金を記録する');
+  assert.strictEqual(r.stripePaymentIntentId, PAYMENT_INTENT_ID);
+  assert.strictEqual(r.status, 'CANCELLED', '予約を勝手に復活させない');
+  assert.strictEqual(liveEvents(ctx).length, 0, 'Calendarの枠も復活させない');
+  assert.ok(r.paymentRecoveryRequiredAt);
+  assert.ok(mailsTo(ctx, 'admin@example.com').some(function (m) { return /入金済みですが予約を確定できませんでした/.test(m.subject); }));
+  assert.ok(!mailsTo(ctx, 'taro@example.com').some(function (m) { return /予約が確定しました/.test(m.subject); }), '確定メールを送らない');
+
+  /* 取消時の「返金なし」相当の操作だけでは解消できない。 */
+  assert.strictEqual(ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '確認').error.code, 'RECOVERY_REFUND_DECISION_REQUIRED');
+
+  /* 管理者が入金を認識したうえで返金方針を判断すれば解消できる（ここでは全額返金）。 */
+  var refund = ctx.sandbox.BookingRefund.cancelWithRefund(BOOKING_ID, { decision: 'FULL', reason: '取消後の入金のため全額返金' }, new Date('2026-10-01T12:10:00+09:00'));
+  assert.strictEqual(refund.success, true, JSON.stringify(refund));
+  assert.strictEqual(rec(ctx).paymentStatus, 'refunded');
+  var resolved = ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '取消後の入金を全額返金したことをStripeで確認');
+  assert.strictEqual(resolved.success, true, JSON.stringify(resolved));
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+});
+
+test('取消後の遅延Webhook（失効の応答不明のまま入金成立）: 入金を記録し予約は復活させない。入金前に記録された「返金なし」では解消できず、入金確認後の判断が必要', function () {
+  var ctx = unpaidSetup({ stripe: { expireBehaviors: ['network'], retrieveBehaviors: ['network'] } });
+  ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: 'x' });
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'UNKNOWN');
+
+  /* 入金前に「返金なし」の判断が台帳にあった場合（例: 過去の操作・手動記録）を再現する。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingRefundStateAtomic(BOOKING_ID, {
+    refundDecision: 'NONE', refundAmount: 0, refundDecidedAt: new Date('2026-10-01T12:01:00+09:00')
+  });
+
+  /* 失効が効いていなかった決済URLから、取消後に利用者が支払った。 */
+  ctx.stripe.markPaid();
+  var webhookAt = new Date('2026-10-01T13:00:00+09:00');
+  var processed = deliverPaidWebhook(ctx, 'evt_late_1', webhookAt);
+  assert.strictEqual(processed.code, 'PAID_CONFIRM_BLOCKED', JSON.stringify(processed));
+  var r = rec(ctx);
+  assert.strictEqual(r.paymentStatus, 'paid', '要復旧ゲートを立てていないため遅延入金が記録される');
+  assert.strictEqual(r.status, 'CANCELLED');
+  assert.ok(r.paymentRecoveryRequiredAt);
+
+  /* 決済URLの状態を再確認すると「決済成立」として記録される。 */
+  var recheck = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(recheck.success, false);
+  assert.strictEqual(recheck.checkoutExpireState, 'PAYMENT_RECEIVED');
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'PAYMENT_RECEIVED');
+
+  /* 入金前の「返金なし」では解消できない。 */
+  var refused = ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '確認');
+  assert.strictEqual(refused.error.code, 'RECOVERY_REFUND_DECISION_REQUIRED');
+  assert.ok(/入金の確認/.test(refused.error.message));
+  assert.ok(rec(ctx).paymentRecoveryRequiredAt);
+
+  /* 入金確認後に管理者が改めて「返金なし」を判断した場合は解消できる。 */
+  var decided = ctx.sandbox.BookingRefund.cancelWithRefund(BOOKING_ID, { decision: 'NONE', reason: '当日キャンセル料100%に充当' }, new Date('2026-10-01T14:00:00+09:00'));
+  assert.strictEqual(decided.success, true, JSON.stringify(decided));
   assert.strictEqual(ctx.stripe.posts.length, 0);
+  var resolved = ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '入金を確認し、返金しない判断を記録');
+  assert.strictEqual(resolved.success, true, JSON.stringify(resolved));
 });
 
 /* ========================================================================== */

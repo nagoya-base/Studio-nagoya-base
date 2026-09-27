@@ -354,7 +354,18 @@ var SpreadsheetRepository = (function () {
     'refundDecidedAt',
     'refundStripeStatus',
     'refundCheckedAt',
-    'refundMailSentAt'
+    'refundMailSentAt',
+    /*
+     * PR-Dレビュー対応・1回目で追加。未入金のStripe Checkout予約を「返金なし」で取り消した
+     * ときの、発行済みCheckout Session（決済URL）の失効状況（BookingRefund.gs参照）。
+     * - checkoutCancelState: 'EXPIRE_REQUESTED'（取消済み・失効をStripeへ依頼する前後で
+     *   結果未記録）|'EXPIRED'（Stripe上で失効を確認）|'NO_SESSION'（発行済みSessionなし）|
+     *   'UNKNOWN'（失効APIの応答・Sessionの状態を確認できない。未決済・失効済みと断定しない）|
+     *   'PAYMENT_RECEIVED'（取消と同時期にSessionの決済が成立していた）。空＝この経路の取消なし。
+     * - checkoutCancelCheckedAt: 上記を最後に確認した日時。
+     */
+    'checkoutCancelState',
+    'checkoutCancelCheckedAt'
   ];
 
   function getSpreadsheet_() {
