@@ -474,6 +474,10 @@ function getAdminBookingDetail(bookingId) {
       refundInFlight: BookingRefund.isRefundInFlight(record),
       /* PR-Dレビュー対応・1回目: 未入金の取消で発行済み決済URLを失効させた結果。 */
       checkoutCancelState: record.checkoutCancelState || '',
+      /* PR-Dレビュー対応・4回目: 台帳の状態の保存に失敗して古い値が残っていても、未解決の追跡・
+         未記録のRecovery行があれば「決済URLの失効を再確認」を出す。 */
+      checkoutRecheckRequired: record.checkoutCancelState === 'UNKNOWN' || record.checkoutCancelState === 'EXPIRE_REQUESTED' ||
+        (!!record.checkoutCancelState && BookingRefund.hasOpenCheckoutRecheckRows(bookingId)),
       checkoutCancelCheckedAt: formatAdminDateTime_(record.checkoutCancelCheckedAt, timezone),
       paymentLastErrorAt: formatAdminDateTime_(record.paymentLastErrorAt, timezone),
       paymentLastErrorMessage: record.paymentLastErrorMessage || '',

@@ -1974,7 +1974,9 @@ function describePaymentState_(booking) {
   }
   if (booking.refundReason) lines.push('取消・返金の理由: ' + booking.refundReason);
   if (booking.checkoutCancelState) {
-    lines.push('決済URLの失効: ' + checkoutCancelStateLabel_(booking.checkoutCancelState) +
+    lines.push('決済URLの失効: ' + (booking.checkoutRecheckRequired === true && booking.checkoutCancelState !== 'UNKNOWN'
+      ? '要再確認（台帳の記録「' + checkoutCancelStateLabel_(booking.checkoutCancelState) + '」は未確定の可能性）'
+      : checkoutCancelStateLabel_(booking.checkoutCancelState)) +
       (booking.checkoutCancelCheckedAt ? '（確認: ' + booking.checkoutCancelCheckedAt + '）' : ''));
   }
   if (booking.refundAttemptState) lines.push('返金の状態: ' + refundAttemptStateLabel_(booking.refundAttemptState) +
@@ -2194,7 +2196,8 @@ function renderPaymentSection_(booking) {
     var canReconcile = !!booking.refundAttemptId;
     ui.reconcileButton.disabled = ui.inFlight || !canReconcile;
     if (canReconcile) { ui.reconcileButton.classList.remove('hidden'); } else { ui.reconcileButton.classList.add('hidden'); }
-    var canCheckExpiry = booking.checkoutCancelState === 'UNKNOWN' || booking.checkoutCancelState === 'EXPIRE_REQUESTED';
+    var canCheckExpiry = booking.checkoutRecheckRequired === true ||
+      booking.checkoutCancelState === 'UNKNOWN' || booking.checkoutCancelState === 'EXPIRE_REQUESTED';
     if (canCheckExpiry) { ui.expiryButton.classList.remove('hidden'); } else { ui.expiryButton.classList.add('hidden'); }
     ui.expiryButton.disabled = ui.inFlight || !canCheckExpiry;
     if (booking.paymentRecoveryRequiredAt) { ui.resolveButton.classList.remove('hidden'); } else { ui.resolveButton.classList.add('hidden'); }
@@ -2273,7 +2276,8 @@ function runReconcileRefund_() {
 
 function runReconcileCheckoutExpiry_() {
   var booking = currentDetailBooking_;
-  if (!booking || (booking.checkoutCancelState !== 'UNKNOWN' && booking.checkoutCancelState !== 'EXPIRE_REQUESTED')) return;
+  if (!booking || (booking.checkoutRecheckRequired !== true &&
+      booking.checkoutCancelState !== 'UNKNOWN' && booking.checkoutCancelState !== 'EXPIRE_REQUESTED')) return;
   runPaymentAction_(booking, '決済URLの失効を確認中…', function (run) {
     run.adminReconcileCheckoutExpiry(booking.bookingId);
   }, '決済URLの失効を確認しました。');

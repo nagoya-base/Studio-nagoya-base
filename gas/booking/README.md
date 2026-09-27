@@ -5708,6 +5708,31 @@ Sessionを記録すると見逃し、未失効のSessionがあるのに`checkout
   状態と同じものにした。`UNKNOWN`の間は、再確認ボタン・「決済要対応」一覧・解消の拒否
   （`CHECKOUT_EXPIRE_UNCONFIRMED`）がいずれも未解決として扱う。
 
+### PR-Dレビュー対応・4回目: checkoutCancelStateの保存失敗
+
+指摘: `writeCheckoutCancelState_()`が`SpreadsheetRepository.updateBookingFields()`の例外をログに残すだけで
+呼び出し元へ失敗を返さなかったため、BookingsシートへEXPIREDを保存できなくても成功として返り、管理画面に
+「決済URLも失効させました」と表示され得た。
+
+- **保存結果の判定**: `writeCheckoutCancelState_()`は保存後に最新行を読み戻し、
+  `checkoutCancelState`・`checkoutCancelCheckedAt`が期待した値であることを確認して
+  `{ ok }`（失敗時は`WRITE_ERROR`／`READBACK_MISMATCH`／`READBACK_FAILED`と理由）を返す。
+- **失敗時はEXPIRED/NO_SESSIONの保存成功を報告しない**: 返す`checkoutExpireState`は`UNKNOWN`（決済成立
+  などそれ以外の観測はその状態）とし、`ledgerRecorded: false`・`checkoutObservedState`（Stripeで確認できた
+  状態）・警告`CHECKOUT_STATE_NOT_RECORDED`を返す。表示文言も「Stripe上では失効を確認しましたが、予約台帳への
+  記録が完了していません」とし、「失効させました」とは表示しない。取消メールも失効済みとは案内しない。
+- **Stripeの事実と台帳の未記録を分けて記録**: UNKNOWNへの差し戻しを試みたうえで、Recovery
+  （`PAYMENT_CHECKOUT_STATE_NOT_RECORDED`）へ「【Stripe上で確認できた事実】」（各Sessionの`sessionId=`付き）と
+  「【Bookingsシートへの記録】未完了」（保存・差し戻しそれぞれの結果）を分けて記録し、管理者へ通知する。
+- **書き込み直後の再確認でのUNKNOWN差し戻しの失敗**: 新しい決済試行を検知してUNKNOWNへ戻す保存が失敗した
+  場合（台帳にEXPIRED/NO_SESSIONが残る）も同様に記録・通知し、成功とは報告しない。
+- **再確認で記録し直せる**: 「決済URLの失効を再確認」は、台帳の値がEXPIRED等のままでも、OPENな追跡・未記録の
+  Recovery行があれば実行できる。管理画面は`checkoutRecheckRequired`で再確認ボタンを出し、台帳の値を
+  「要再確認」と表示する。期待した状態を保存・読み戻しでき、直後の再確認でも決済試行が変わっていなければ、
+  未記録の記録を閉じる。未記録の記録がある間は決済要対応の解消も拒否する（`CHECKOUT_EXPIRE_UNCONFIRMED`）。
+- **既存の競合対策は変更なし**: 決済試行・Session IDの比較、同じLock区間での確認と書き込み、書き込み直後の
+  再確認、巡回の上限はそのまま（既存の競合テストはすべて通過）。
+
 ### 残る制約
 
 - 未入金の取消で失効させるのは、台帳に記録された最新のCheckout Sessionと、Recoveryで追跡中の

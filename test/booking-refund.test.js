@@ -1299,3 +1299,130 @@ test('3回目: 確認中に新しい試行・Sessionが何度も発生する場�
   assert.strictEqual(rec(ctx).checkoutCancelState, 'EXPIRED');
   assert.deepStrictEqual(openRecoveryTypes(ctx), []);
 });
+
+/* ========================================================================== */
+/* PR-Dレビュー対応・4回目: checkoutCancelStateの保存失敗                          */
+/* ========================================================================== */
+
+/*
+ * checkoutCancelStateの保存を失敗させる。mode: 'throw'（Sheetsの例外）|'silent'（例外は出ないが
+ * 実際には保存されない＝読み戻し不一致）。targetState の保存を times 回だけ失敗させる。
+ */
+function failStateWrite(ctx, targetState, mode, times) {
+  var repo = ctx.sandbox.SpreadsheetRepository;
+  var original = repo.updateBookingFields;
+  var remaining = times || 1;
+  repo.updateBookingFields = function (bookingId, fields) {
+    if (remaining > 0 && fields && fields.checkoutCancelState === targetState) {
+      remaining--;
+      if (mode === 'throw') throw new Error('Service Spreadsheets failed while accessing document');
+      return 0;
+    }
+    return original.apply(this, arguments);
+  };
+}
+
+function openRows(ctx, failureType) {
+  return trackedRows(ctx, failureType).filter(function (row) { return row.recoveryState === 'OPEN'; });
+}
+
+test('4回目: EXPIRED保存時にSheetsの例外が起きた場合、保存成功を報告せず、Stripeで確認した事実と台帳への記録が未完了であることを分けて記録し、再確認で記録し直せる', function () {
+  var ctx = unpaidSetup();
+  failStateWrite(ctx, 'EXPIRED', 'throw');
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '取消依頼' });
+
+  assert.strictEqual(result.success, true, '予約の取消自体は完了している');
+  assert.strictEqual(result.checkoutExpireState, 'UNKNOWN', 'EXPIREDの保存成功を報告しない');
+  assert.strictEqual(result.checkoutObservedState, 'EXPIRED', 'Stripeで確認できた事実は別に返す');
+  assert.strictEqual(result.warning.code, 'CHECKOUT_STATE_NOT_RECORDED');
+  assert.ok(/Stripe上では決済URLの失効を確認しましたが、予約台帳（Bookingsシート）への記録が完了していません/.test(result.message));
+  assert.ok(!/失効させました/.test(result.message));
+  assert.strictEqual(ctx.stripe.session.status, 'expired', 'Stripe上の失効自体は行われている');
+  var r = rec(ctx);
+  assert.strictEqual(r.checkoutCancelState, 'UNKNOWN', 'UNKNOWNへ差し戻して保存する');
+  var rows = openRows(ctx, 'PAYMENT_CHECKOUT_STATE_NOT_RECORDED');
+  assert.strictEqual(rows.length, 1);
+  assert.ok(rows[0].errorMessage.indexOf('【Stripe上で確認できた事実】Stripe上で決済URL（sessionId=cs_test_0001）の失効を確認しました。') !== -1);
+  assert.ok(rows[0].errorMessage.indexOf('【Bookingsシートへの記録】未完了') !== -1);
+  assert.ok(rows[0].errorMessage.indexOf('UNKNOWNへの差し戻し: 成功') !== -1);
+  assert.ok(mailsTo(ctx, 'admin@example.com').some(function (m) { return m.body.indexOf('CHECKOUT_STATE_NOT_RECORDED') !== -1; }), '管理者へ通知する');
+  assert.ok(!/無効になりました/.test(mailsTo(ctx, 'taro@example.com')[0].body), '取消メールでも失効済みとは案内しない');
+  var detail = ctx.sandbox.getAdminBookingDetail(BOOKING_ID).booking;
+  assert.strictEqual(detail.checkoutRecheckRequired, true, '再確認ボタンを出す');
+  assert.strictEqual(ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '確認').error.code, 'CHECKOUT_EXPIRE_UNCONFIRMED');
+
+  var reconciled = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(reconciled.success, true, JSON.stringify(reconciled));
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'EXPIRED');
+  assert.strictEqual(openRows(ctx, 'PAYMENT_CHECKOUT_STATE_NOT_RECORDED').length, 0, '記録し直せたら閉じる');
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+  assert.strictEqual(ctx.sandbox.getAdminBookingDetail(BOOKING_ID).booking.checkoutRecheckRequired, false);
+});
+
+test('4回目: EXPIREDの保存後に読み戻した値が一致しない（例外なしで保存されていない）場合も、保存成功を報告せずRecoveryへ記録する', function () {
+  var ctx = unpaidSetup();
+  failStateWrite(ctx, 'EXPIRED', 'silent');
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '取消依頼' });
+
+  assert.strictEqual(result.checkoutExpireState, 'UNKNOWN');
+  assert.strictEqual(result.warning.code, 'CHECKOUT_STATE_NOT_RECORDED');
+  var rows = openRows(ctx, 'PAYMENT_CHECKOUT_STATE_NOT_RECORDED');
+  assert.strictEqual(rows.length, 1);
+  assert.ok(rows[0].errorMessage.indexOf('読み戻した値が一致しません（期待: EXPIRED、実際: EXPIRE_REQUESTED）') !== -1);
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'UNKNOWN');
+
+  var reconciled = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(reconciled.success, true, JSON.stringify(reconciled));
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'EXPIRED');
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+});
+
+test('4回目: 書き込み直後の再確認で新しい試行を検知したがUNKNOWNへの差し戻し保存に失敗した場合、台帳にEXPIREDが残っていても成功と報告せず、再確認で安全に記録し直せる', function () {
+  var ctx = unpaidSetup();
+  interceptFinalStateWrite(ctx, function () {
+    /* EXPIREDを書き込む直前に、Web Appが新しい決済試行を始めた（Session IDは未確定）。 */
+    ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic(BOOKING_ID, { paymentAttemptId: NEW_ATTEMPT_ID, paymentAttemptResolvedAt: '' });
+  });
+  failStateWrite(ctx, 'UNKNOWN', 'throw');
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '取消依頼' });
+
+  assert.strictEqual(result.checkoutExpireState, 'UNKNOWN', '成功（EXPIRED）と報告しない');
+  assert.strictEqual(result.warning.code, 'CHECKOUT_STATE_NOT_RECORDED');
+  var r = rec(ctx);
+  assert.strictEqual(r.checkoutCancelState, 'EXPIRED', '差し戻しに失敗したため台帳には古い値が残っている（この状態を検知できることを確認する）');
+  var rows = openRows(ctx, 'PAYMENT_CHECKOUT_STATE_NOT_RECORDED');
+  assert.strictEqual(rows.length, 1);
+  assert.ok(rows[0].errorMessage.indexOf('UNKNOWNへの差し戻し: 失敗') !== -1);
+  assert.ok(openRows(ctx, 'PAYMENT_CHECKOUT_EXPIRE_UNKNOWN').some(function (row) {
+    return row.errorMessage.indexOf('paymentAttemptId=' + NEW_ATTEMPT_ID) !== -1;
+  }), '結果未確定の新しい試行も追跡する');
+  assert.ok(mailsTo(ctx, 'admin@example.com').length >= 1);
+
+  /* 管理画面: 台帳の値はEXPIREDでも、要再確認として扱う。 */
+  var detail = ctx.sandbox.getAdminBookingDetail(BOOKING_ID).booking;
+  assert.strictEqual(detail.checkoutCancelState, 'EXPIRED');
+  assert.strictEqual(detail.checkoutRecheckRequired, true);
+  assert.strictEqual(ctx.sandbox.getAdminPaymentRecoveries().items.length, 1);
+  assert.strictEqual(ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '確認').error.code, 'CHECKOUT_EXPIRE_UNCONFIRMED');
+
+  /* 再確認（台帳がEXPIREDでも実行できる）: 試行がまだ未解決なので、UNKNOWNとして記録し直す。 */
+  var recheck = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(recheck.success, false);
+  assert.strictEqual(recheck.checkoutExpireState, 'UNKNOWN');
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'UNKNOWN', '正しい状態（UNKNOWN）を記録し直した');
+  assert.strictEqual(openRows(ctx, 'PAYMENT_CHECKOUT_STATE_NOT_RECORDED').length, 0);
+
+  /* 試行の確定後の再確認で、Session Bを失効させてEXPIREDを記録する。 */
+  ctx.stripe.addSession({ id: 'cs_test_B', paymentAttemptId: NEW_ATTEMPT_ID });
+  ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic(BOOKING_ID, {
+    paymentAttemptResolvedAt: new Date('2026-10-01T12:01:00+09:00'), stripeCheckoutSessionId: 'cs_test_B'
+  });
+  var reconciled = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(reconciled.success, true, JSON.stringify(reconciled));
+  assert.strictEqual(ctx.stripe.sessions.cs_test_B.status, 'expired');
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'EXPIRED');
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+});

@@ -2640,3 +2640,12 @@ test('PR-Dレビュー対応・1回目: 未入金予約の「返金なし」は�
   sandbox2.showDetailModal(stripeDetailBooking({ status: 'CANCELLED', checkoutCancelState: 'EXPIRED' }));
   assert.strictEqual(sandbox2.paymentUi_.expiryButton.classList.contains('hidden'), true);
 });
+
+test('PR-Dレビュー対応・4回目: 台帳の記録がEXPIREDでも、未解決の記録がある（checkoutRecheckRequired）なら再確認ボタンを出し、要再確認と表示する', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(stripeDetailBooking({ status: 'CANCELLED', paymentStatus: 'checkout_pending', checkoutCancelState: 'EXPIRED', checkoutRecheckRequired: true }));
+  assert.strictEqual(sandbox.paymentUi_.expiryButton.classList.contains('hidden'), false);
+  assert.ok(sandbox.paymentUi_.statusEl.textContent.indexOf('要再確認') !== -1);
+  sandbox.runReconcileCheckoutExpiry_();
+  assert.strictEqual(sandbox.google.script.run.calls.filter(function (c) { return c.name === 'adminReconcileCheckoutExpiry'; }).length, 1);
+});
