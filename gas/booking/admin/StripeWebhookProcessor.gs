@@ -94,6 +94,12 @@
  * 完了した決済状態更新・予約確定・確認メール送信を二重実行することはない（詳細は
  * README「Webhookと失効処理の競合」節参照）。
  *
+ * （7回目の注記: 上記の「時間経過だけで処理権が渡ることはない」は、応答待ち中に
+ * ハートビートを更新できないため成り立っていなかった。7回目で`renewProcessingLease`は
+ * `confirmProcessingClaim`へ、`renewOrSupersededOutcome_`は
+ * `confirmClaimOrSupersededOutcome_`へ改名し、処理権の再取得は有効期限だけで判定する
+ * ようにした。下記「レビュー対応・7回目」参照。）
+ *
  * 【レビュー対応・6回目: ハートビートの時刻管理を修正】5回目の実装は
  * `renewOrSupersededOutcome_`の呼び出しに`processSingleEvent_`冒頭で確定した
  * `effectiveNow`（イベント処理開始時刻。監査ログ・テストの固定日時と共用）をそのまま
@@ -105,6 +111,38 @@
  * （`new Date()`）をハートビートとして書き込むよう変更した。処理権の生存確認に使う
  * 実時間と、イベント処理の監査時刻・テスト用の固定日時（`effectiveNow`/`now`）は
  * 完全に分離されている。
+ *
+ * 【レビュー対応・7回目: 処理権の有効期限をApps Scriptの最大実行時間から決める】
+ * 6回目までの再取得判定は「最後のハートビートから2分」だった。しかしハートビートは
+ * Stripe API（UrlFetchApp.fetch）の応答待ち中には更新できず、UrlFetchAppには
+ * タイムアウトを指定するオプションも無い（fetchのparamsはcontentType/headers/method/
+ * payload/useIntranet/validateHttpsCertificates/followRedirects/muteHttpExceptions/
+ * escapingのみ）。応答待ちが2分を超えると、生きている実行から処理権を奪い得た。
+ * また、トリガー開始時に1度だけ取った時刻を全候補のclaim時刻に使っていたため、
+ * 先行イベントに時間がかかると後続イベントの処理権が実際より古い時刻で記録されていた。
+ * 7回目では次のとおりにした。
+ *
+ * - 処理権の有効期限（processingLeaseExpiresAt）＝この実行の開始時刻（実時間）＋
+ *   Apps Scriptの1実行あたりの最大実行時間（GAS_MAX_EXECUTION_MS_＝6分）＋余裕
+ *   （CLAIM_TAKEOVER_MARGIN_MS_＝1分）。Apps Scriptは上限を超えた実行を強制終了する
+ *   ため、この時刻を過ぎれば元の実行は動いていない。したがって、正常に動いている
+ *   実行が応答待ちの長さに関係なく処理権を奪われることはない（この保証はApps Script側の
+ *   実行時間上限が守られることに依存する。README「処理権の有効期限とfencing」節参照）。
+ * - 各候補の着手時刻（processingClaimedAt）は、その候補をclaimする瞬間の`new Date()`。
+ *   業務上の監査時刻（`now`引数。paymentConfirmedAt等に使う。テストでは固定日時）とは
+ *   別に扱う。
+ * - 上限の前提が崩れた場合でも古い実行が書き込まないよう、Bookings（決済状態・予約
+ *   確定）・Calendar（予約確定）・Recovery・StripeEventsへの書き込みは、すべて
+ *   書き込み側が保持するLockService.getScriptLock()の中で世代を再確認してから行う
+ *   （BookingRepositoryのoptions.writeGuard・runFenced_・finalizeForProcessing）。
+ *   処理権の再取得も同じLockの中で世代を進めるため、確認と書き込みの間に世代が
+ *   変わることはない。
+ * - 未完了のまま終えた候補（Stripe照会失敗・Lock混雑・想定外の例外）は処理権を
+ *   手放し（releaseProcessingClaim）、次のトリガー実行ですぐ再試行できるようにする。
+ *   想定外の例外はその候補だけで止め、同じ実行の後続候補の処理は続ける。
+ * - 実行開始からCLAIM_BUDGET_MS_（4分）を過ぎたら新しい候補には着手せず、次のトリガー
+ *   実行に残す（着手した直後に実行時間の上限で打ち切られ、その候補が有効期限まで
+ *   待たされることを避ける）。
  */
 'use strict';
 
@@ -113,17 +151,19 @@ var StripeWebhookProcessor = (function () {
   var FAILURE_TYPES_ = ['checkout.session.async_payment_failed'];
 
   /*
-   * Booking Admin側のトリガー実行が重複した場合の二重処理防止に使う
-   * claimForProcessing()のstaleAfterMs。Webhook側の新規受信の重複防止に使うclaim()の
-   * staleAfterMs（既定5分。StripeEventRepository.DEFAULT_STALE_AFTER_MS_相当）とは
-   * 別の名前空間（processingClaimedAt/processingClaimCount）を使うため、この値の大小が
-   * Webhook側の挙動へ影響することはない（詳細はStripeEventRepository.gs冒頭コメント
-   * 「なぜ2つの関数に分けたか」参照）。トリガー間隔（既定1分。BookingTriggers.gs参照）より
-   * 少し長い程度にすることで、(a) 前回のトリガー実行がまだ処理中の間は再claimさせず
-   * 二重処理を防ぎつつ、(b) 一時的な失敗（Stripe API障害等）で終わった候補も数分以内に
-   * 再試行できるようにする。
+   * 処理権の有効期限（レビュー対応・7回目。6回目までのADMIN_CLAIM_STALE_AFTER_MS_＝
+   * 「最後のハートビートから2分」を置き換えた。ファイル冒頭コメント参照）。
+   * - GAS_MAX_EXECUTION_MS_: Apps Scriptの1実行あたりの最大実行時間（Apps Scriptの
+   *   割り当て表「Script runtime: 6 min / execution」）。時間主導トリガーの実行はこれを
+   *   超えると強制終了される。Google側の上限が変わった場合はこの値を合わせること。
+   * - CLAIM_TAKEOVER_MARGIN_MS_: 実行開始時刻の記録のずれ・強制終了にかかる時間の余裕。
+   * - CLAIM_BUDGET_MS_: 実行開始からこれを過ぎたら新しい候補に着手しない。
+   * 実行が異常停止した候補は、最長で実行開始から7分後に次のトリガー実行が再取得する。
    */
-  var ADMIN_CLAIM_STALE_AFTER_MS_ = 2 * 60 * 1000;
+  var GAS_MAX_EXECUTION_MS_ = 6 * 60 * 1000;
+  var CLAIM_TAKEOVER_MARGIN_MS_ = 60 * 1000;
+  var CLAIM_BUDGET_MS_ = 4 * 60 * 1000;
+  var FENCED_WRITE_LOCK_TIMEOUT_MS_ = 10000;
 
   /* BookingRepository.applyPaymentStateUpdateが失敗時に自分自身で既にRecoveryRepositoryへ
      記録済み（recordPaymentRecoveryBestEffort_/recordPaymentEvidenceAuditBestEffort_）の
@@ -158,7 +198,7 @@ var StripeWebhookProcessor = (function () {
 
   /*
    * StripeEventRepository.finalizeForProcessingの書き込み自体が失敗した場合、行はRECEIVEDの
-   * まま残り、次回のトリガー実行で（ADMIN_CLAIM_STALE_AFTER_MS_経過後に）安全に再開できる。
+   * まま残り、次回のトリガー実行で（処理権を手放した後、または有効期限の経過後に）安全に再開できる。
    * fields.processingStateにはCOMPLETED/IGNORED/REJECTEDのいずれかを渡すこと。
    *
    * generation（claimForProcessing()が返したrecord.processingClaimCount）が既に古くなって
@@ -184,42 +224,82 @@ var StripeWebhookProcessor = (function () {
     return outcome_(true, code, message);
   }
 
+  function supersededOutcome_() {
+    return outcome_(false, 'SUPERSEDED_BY_NEWER_ATTEMPT', 'この処理権は別の実行に引き継がれています。');
+  }
+
   /*
-   * 処理を続けている実行がまだ処理権を保持しているかを確認・更新する
-   * （StripeEventRepository.renewProcessingLease）。外部Stripe API呼び出しやBookings/
-   * Calendarへの書き込みなど、時間のかかる処理の直前に呼ぶ。既に別の実行へ処理権が
-   * 移っていた場合はnullではなくSUPERSEDED_BY_NEWER_ATTEMPTのoutcomeを返すので、
-   * 呼び出し元は直ちにそれをそのままprocessSingleEvent_の戻り値として返し、以後
-   * Bookings/Calendarへの書き込み・finalizeOutcome_呼び出しを一切行わないこと
-   * （レビュー対応・5回目で新設）。
+   * 処理の区切り（外部Stripe API呼び出しの後、Bookings/Calendarへの書き込みの前）で、
+   * この実行がまだ処理権を保持しているかを確認し、生存記録を残す
+   * （StripeEventRepository.confirmProcessingClaim）。処理権が移っていれば
+   * SUPERSEDED_BY_NEWER_ATTEMPTのoutcomeを返すので、呼び出し元はそれをそのまま返し、
+   * 以後何も書き込まないこと。確認そのものがLock混雑で行えなかった場合はLOCK_TIMEOUTの
+   * outcomeを返す（処理権を手放して次回再試行する）。
    *
-   * 【レビュー対応・6回目で修正】この関数は`now`引数を受け取らず、必ずこの呼び出しの
-   * 瞬間の実時間（`new Date()`）をハートビートとして書き込む。5回目の実装は
-   * `processSingleEvent_`冒頭で1度だけ確定した`effectiveNow`（イベント処理開始時刻・
-   * 監査ログやテストの固定日時と共用）をそのまま受け取っていたため、Stripe再照会等で
-   * 実際に時間が経過していても、書き込まれる`processingClaimedAt`は常に処理開始時刻の
-   * ままだった。これでは`claimForProcessing()`の経過時間判定にとって「一度も更新
-   * されていない」のと変わらず、実際に処理中でも2分経過時点で別のトリガーに処理権を
-   * 奪われてしまう（ハートビートが実質的に機能していなかった）。処理権の生存確認は
-   * 実際に経過した実時間だけで判定すべきであり、イベント発生時刻等のビジネス上の
-   * 監査時刻・テスト用の固定日時とは意図的に切り離す
-   * （`BookingLockRepository`（廃止済み）のTTL判定で3回目レビュー対応時に確立した
-   * 方針と同じ。README「処理権の世代管理とハートビート」節参照）。
+   * 生存記録の時刻は常にこの呼び出しの瞬間の実時間（`new Date()`）を使う（6回目の修正）。
+   * 7回目以降、この記録は処理権の有効期限を延長しない（StripeEventRepository.
+   * confirmProcessingClaim参照）。この確認は早めに打ち切るための最適化であり、
+   * 書き込みの安全性自体は書き込み側のLock内の世代確認（writeGuardFor_・runFenced_・
+   * finalizeForProcessing）が担う。
    */
-  function renewOrSupersededOutcome_(rowNumber, generation) {
-    var renewal = StripeEventRepository.renewProcessingLease(rowNumber, generation, new Date());
-    if (!renewal.renewed) {
-      Logger.log('StripeWebhookProcessor: 処理中に別の実行へ処理権が引き継がれたため中断しました: rowNumber=' + rowNumber);
-      return outcome_(false, 'SUPERSEDED_BY_NEWER_ATTEMPT', 'この処理権は別の実行に引き継がれています。');
+  function confirmClaimOrSupersededOutcome_(rowNumber, generation) {
+    var confirmation = StripeEventRepository.confirmProcessingClaim(rowNumber, generation, new Date());
+    if (confirmation.confirmed) return null;
+    if (confirmation.reason === 'LOCK_TIMEOUT') {
+      return outcome_(false, 'LOCK_TIMEOUT', '処理権を確認できませんでした。再試行します。');
     }
-    return null;
+    Logger.log('StripeWebhookProcessor: 処理中に別の実行へ処理権が引き継がれたため中断しました: rowNumber=' + rowNumber);
+    return supersededOutcome_();
+  }
+
+  /* BookingRepository.applyPaymentStateUpdate/confirmBookingへ渡すwriteGuard。
+     BookingRepositoryが保持するLockの中で呼ばれるため、Lockを取得しない版を使う。 */
+  function writeGuardFor_(rowNumber, generation) {
+    return function () {
+      return StripeEventRepository.isProcessingClaimCurrentLocked(rowNumber, generation);
+    };
+  }
+
+  function isWriteGuardRejected_(result) {
+    return !!(result && !result.success && result.error && result.error.code === 'WRITE_GUARD_REJECTED');
+  }
+
+  /*
+   * BookingRepositoryを経由しない書き込み（恒久の要復旧ゲート・Recovery記録）を、
+   * LockService.getScriptLock()の中で世代を確認してから行う（レビュー対応・7回目）。
+   * 戻り値: null（書き込んだ）、または中断すべきoutcome（SUPERSEDED/LOCK_TIMEOUT）。
+   * fnの中でLockを取得する関数を呼んではならない。
+   */
+  function runFenced_(rowNumber, generation, fn) {
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(FENCED_WRITE_LOCK_TIMEOUT_MS_)) {
+      return outcome_(false, 'LOCK_TIMEOUT', '一時的に混み合っています。再試行します。');
+    }
+    try {
+      if (!StripeEventRepository.isProcessingClaimCurrentLocked(rowNumber, generation)) {
+        Logger.log('StripeWebhookProcessor: 別の実行に処理権が引き継がれていたため書き込みを中止しました: rowNumber=' + rowNumber);
+        return supersededOutcome_();
+      }
+      fn();
+      return null;
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  function recordRecoveryFailureBestEffort_(entry) {
+    try {
+      RecoveryRepository.recordFailure(entry);
+    } catch (recoveryError) {
+      Logger.log('RecoveryRepository.recordFailure failed: ' + (entry.bookingId || '') + ' ' + entry.failureType + ' ' + describeError_(recoveryError));
+    }
   }
 
   /* 予約に紐付けられない、または再送しても解決しない構造的な問題をRecoveryへ記録した上で
      REJECTEDとして確定する。 */
   function rejectAndFinalize_(rowNumber, generation, bookingId, code, message, now) {
-    try {
-      RecoveryRepository.recordFailure({
+    var fenced = runFenced_(rowNumber, generation, function () {
+      recordRecoveryFailureBestEffort_({
         bookingId: bookingId || '',
         failureType: 'STRIPE_WEBHOOK_' + code,
         occurredAt: now,
@@ -229,9 +309,8 @@ var StripeWebhookProcessor = (function () {
         recoveryState: 'OPEN',
         resolvedAt: ''
       });
-    } catch (recoveryError) {
-      Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
-    }
+    });
+    if (fenced) return fenced;
     return finalizeOutcome_(rowNumber, generation, {
       processingState: StripeEventRepository.STATE.REJECTED,
       bookingId: bookingId || '',
@@ -261,17 +340,19 @@ var StripeWebhookProcessor = (function () {
    * cancelBookingAdmin/reviveExpiredBookingはこのゲートの対象外のため、管理者は引き続き
    * 手動でこれらの操作を行える）。
    */
-  function recordPaymentRecoveryGate_(bookingId, record, failureType, reason, now) {
-    try {
-      SpreadsheetRepository.updateBookingFields(bookingId, {
-        paymentRecoveryRequiredAt: now,
-        paymentRecoveryReason: reason
-      });
-    } catch (writeError) {
-      Logger.log('paymentRecoveryRequiredAtの記録に失敗しました: ' + bookingId + ' ' + describeError_(writeError));
-    }
-    try {
-      RecoveryRepository.recordFailure({
+  function recordPaymentRecoveryGate_(rowNumber, generation, bookingId, record, failureType, reason, now) {
+    /* レビュー対応・7回目: 世代を確認してから書き込む（runFenced_参照）。戻り値は
+       null（記録した）または中断すべきoutcome。 */
+    return runFenced_(rowNumber, generation, function () {
+      try {
+        SpreadsheetRepository.updateBookingFields(bookingId, {
+          paymentRecoveryRequiredAt: now,
+          paymentRecoveryReason: reason
+        });
+      } catch (writeError) {
+        Logger.log('paymentRecoveryRequiredAtの記録に失敗しました: ' + bookingId + ' ' + describeError_(writeError));
+      }
+      recordRecoveryFailureBestEffort_({
         bookingId: bookingId,
         failureType: failureType,
         occurredAt: now,
@@ -281,9 +362,7 @@ var StripeWebhookProcessor = (function () {
         recoveryState: 'OPEN',
         resolvedAt: ''
       });
-    } catch (recoveryError) {
-      Logger.log('RecoveryRepository.recordFailure failed: ' + bookingId + ' ' + failureType + ' ' + describeError_(recoveryError));
-    }
+    });
   }
 
   /*
@@ -321,11 +400,15 @@ var StripeWebhookProcessor = (function () {
       }, now, 'STALE_OR_ALREADY_RESOLVED', '対応不要です。');
     }
 
-    /* Bookingsへの書き込み直前に処理権がまだ有効か再確認する（レビュー対応・5回目）。 */
-    var superseded = renewOrSupersededOutcome_(rowNumber, generation);
+    /* Bookingsへの書き込み直前に処理権がまだ有効か再確認する（レビュー対応・5回目）。
+       書き込み自体もLock内で世代を再確認する（writeGuard。レビュー対応・7回目）。 */
+    var superseded = confirmClaimOrSupersededOutcome_(rowNumber, generation);
     if (superseded) return superseded;
 
-    var failResult = BookingRepository.applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, { paymentAttemptResolvedAt: now }, now);
+    var failResult = BookingRepository.applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.FAILED, { paymentAttemptResolvedAt: now }, now, {
+      writeGuard: writeGuardFor_(rowNumber, generation)
+    });
+    if (isWriteGuardRejected_(failResult)) return supersededOutcome_();
     if (!failResult.success) {
       var failCode = failResult.error && failResult.error.code;
       if (failCode === 'LOCK_TIMEOUT' || failCode === 'PAYMENT_DETAIL_WRITE_FAILED') {
@@ -350,7 +433,8 @@ var StripeWebhookProcessor = (function () {
    * generation: claimForProcessing()が返したrecord.processingClaimCount（レビュー対応・5回目
    *   で追加。処理権の世代番号。Bookings/Calendarへの書き込み直前の再確認・
    *   StripeEvents.finalizeForProcessingの書き込み直前の再確認に使う）。
-   * now: テストからの固定時刻注入用（省略時はnew Date()）。
+   * now: 業務上の監査時刻（paymentConfirmedAt・Recoveryの発生時刻等）。テストからの固定時刻
+   *   注入用（省略時はこのイベントに着手した時点のnew Date()）。処理権の管理には使わない。
    * 戻り値: { finalized, code, message }。finalized:trueの場合、StripeEventsは終端状態
    *   （COMPLETED/IGNORED/REJECTED）まで書き込まれている。falseの場合は行がRECEIVEDの
    *   まま残り、次回のトリガー実行で安全に再試行される（code:'SUPERSEDED_BY_NEWER_ATTEMPT'
@@ -428,6 +512,7 @@ var StripeWebhookProcessor = (function () {
       return rejectAndFinalize_(rowNumber, generation, bookingId, 'BOOKING_NOT_FOUND', '対応する予約が見つかりません。bookingId=' + bookingId + ' sessionId=' + session.id, effectiveNow);
     }
     var record2 = found.record;
+    var gateStopped = null;
 
     if (record2.paymentRecoveryRequiredAt) {
       /* 既に別の理由で恒久の要復旧ゲートが立っている予約。無駄なStripe API呼び出し・
@@ -443,23 +528,23 @@ var StripeWebhookProcessor = (function () {
      * 深刻な取り違えの可能性があるため、自動確定せず恒久の要復旧ゲートを立てる。
      */
     if (record2.brand !== brand || record2.paymentAttemptId !== paymentAttemptId || record2.stripeCheckoutSessionId !== session.id) {
-      recordPaymentRecoveryGate_(
-        bookingId, record2, 'STRIPE_WEBHOOK_IDENTITY_MISMATCH',
+      gateStopped = recordPaymentRecoveryGate_(
+        rowNumber, generation, bookingId, record2, 'STRIPE_WEBHOOK_IDENTITY_MISMATCH',
         '決済成功イベント（eventId=' + eventId + ', sessionId=' + session.id + '）の識別子（brand/決済試行ID/Session ID）が' +
           '台帳の記録と一致しません。二重決済・取り違えの可能性があるため、入金の事実は保持したまま自動処理を停止しました。' +
           'Stripe管理画面で実際の入金内容を確認してください。',
         effectiveNow
       );
+      if (gateStopped) return gateStopped;
       return rejectFinalizeOnly_(rowNumber, generation, bookingId, 'IDENTITY_MISMATCH', '識別子が一致しないため要復旧としました。', effectiveNow);
     }
 
     /*
      * ここまででCheckout Sessionの再取得（外部HTTP呼び出し）が1回完了している。
      * 次のPaymentIntent再取得（外部HTTP呼び出し）へ進む前に、処理権がまだ有効か
-     * 再確認する（レビュー対応・5回目。長時間かかる処理の途中でstaleAfterMsが経過し、
-     * 別の実行に処理権が渡っていないことを確認する）。
+     * 再確認する（レビュー対応・5回目。7回目以降、処理権が移るのは有効期限の経過後だけ）。
      */
-    var supersededBeforePi = renewOrSupersededOutcome_(rowNumber, generation);
+    var supersededBeforePi = confirmClaimOrSupersededOutcome_(rowNumber, generation);
     if (supersededBeforePi) return supersededBeforePi;
 
     /*
@@ -475,26 +560,28 @@ var StripeWebhookProcessor = (function () {
     var paymentIntent = piResult.paymentIntent;
 
     if (paymentIntent.status !== 'succeeded') {
-      recordPaymentRecoveryGate_(
-        bookingId, record2, 'PAYMENT_INTENT_STATUS_MISMATCH',
+      gateStopped = recordPaymentRecoveryGate_(
+        rowNumber, generation, bookingId, record2, 'PAYMENT_INTENT_STATUS_MISMATCH',
         'Checkout Session（' + session.id + '）はpayment_status=paidと報告していますが、対応するPaymentIntent（' +
           paymentIntent.id + '）のstatusはsucceededではありません（' + paymentIntent.status + '）。Session完了と' +
           '入金完了を同一視せず、自動処理を停止しました。',
         effectiveNow
       );
+      if (gateStopped) return gateStopped;
       return rejectFinalizeOnly_(rowNumber, generation, bookingId, 'PAYMENT_INTENT_STATUS_MISMATCH', 'PaymentIntentのstatusが一致しないため要復旧としました。', effectiveNow);
     }
 
     /* 金額照合はCheckout Session発行時点のスナップショット基準（現在の料金を再計算しない）。 */
     var verify = CardPayment.verifyPaymentAgainstSnapshot(record2, paymentIntent.amountReceived, paymentIntent.currency);
     if (!verify.valid) {
-      recordPaymentRecoveryGate_(
-        bookingId, record2, 'STRIPE_WEBHOOK_AMOUNT_MISMATCH',
+      gateStopped = recordPaymentRecoveryGate_(
+        rowNumber, generation, bookingId, record2, 'STRIPE_WEBHOOK_AMOUNT_MISMATCH',
         '決済成功イベント（eventId=' + eventId + '）の金額・通貨（' + paymentIntent.amountReceived + ' ' + paymentIntent.currency +
           '）が、Checkout Session発行時点のスナップショット（' + record2.stripeAmount + ' ' + record2.stripeCurrency +
           '）と一致しません（' + verify.error.code + '）。入金の事実は保持したまま自動処理を停止しました。',
         effectiveNow
       );
+      if (gateStopped) return gateStopped;
       return rejectFinalizeOnly_(rowNumber, generation, bookingId, verify.error.code, '金額・通貨が一致しないため要復旧としました。', effectiveNow);
     }
 
@@ -507,16 +594,23 @@ var StripeWebhookProcessor = (function () {
      *
      * レビュー対応・5回目: PaymentIntent再取得（外部HTTP呼び出し）が完了した直後・
      * Bookingsへの実際の書き込みを行う直前に、処理権がまだ有効か再確認する。
+     *
+     * レビュー対応・7回目: 上の確認だけでは、確認とapplyPaymentStateUpdateのLock取得の
+     * 間に世代が進む余地が残る。そのためapplyPaymentStateUpdate/confirmBookingには
+     * writeGuardを渡し、BookingRepositoryがLockを取得した後、Bookings/Calendarを
+     * 読み書きする前に世代を再確認させる（WRITE_GUARD_REJECTEDなら何も書き込まれて
+     * いない）。
      */
-    var supersededBeforePaid = renewOrSupersededOutcome_(rowNumber, generation);
+    var supersededBeforePaid = confirmClaimOrSupersededOutcome_(rowNumber, generation);
     if (supersededBeforePaid) return supersededBeforePaid;
 
     var paidResult = BookingRepository.applyPaymentStateUpdate(bookingId, Booking.PAYMENT_STATUS.PAID, {
       stripePaymentIntentId: paymentIntent.id,
       lastStripeEventId: eventId,
       paymentConfirmedAt: effectiveNow
-    }, effectiveNow);
+    }, effectiveNow, { writeGuard: writeGuardFor_(rowNumber, generation) });
 
+    if (isWriteGuardRejected_(paidResult)) return supersededOutcome_();
     if (!paidResult.success) {
       var paidErrorCode = paidResult.error && paidResult.error.code;
       if (paidErrorCode === 'LOCK_TIMEOUT' || paidErrorCode === 'PAYMENT_DETAIL_WRITE_FAILED') {
@@ -539,13 +633,14 @@ var StripeWebhookProcessor = (function () {
        * 自身は台帳側の不整合とみなさずRecoveryへ記録しないコードは、ここで明示的に記録する。
        * Stripe側では実際に入金が完了しているため、無条件に無視してはならない。
        */
-      recordPaymentRecoveryGate_(
-        bookingId, record2, 'STRIPE_WEBHOOK_PAYMENT_UPDATE_REJECTED',
+      gateStopped = recordPaymentRecoveryGate_(
+        rowNumber, generation, bookingId, record2, 'STRIPE_WEBHOOK_PAYMENT_UPDATE_REJECTED',
         '決済成功イベント（eventId=' + eventId + '）を受信しましたが、決済状態を' + Booking.PAYMENT_STATUS.PAID +
           'へ更新できませんでした（' + paidErrorCode + '）。Stripe側では入金が完了している可能性が高いため、' +
           '入金の事実を消さず自動処理を停止しました。運営者による確認が必要です。',
         effectiveNow
       );
+      if (gateStopped) return gateStopped;
       return rejectFinalizeOnly_(rowNumber, generation, bookingId, paidErrorCode || 'PAYMENT_UPDATE_FAILED', '決済状態の更新に失敗しました: ' + paidErrorCode, effectiveNow);
     }
 
@@ -557,7 +652,7 @@ var StripeWebhookProcessor = (function () {
      * ―別の実行が再claimして再度processSingleEvent_をやり直す、または既にpaidの
      * ままconfirmBookingへ進む―が安全に引き継ぐ）。
      */
-    var supersededBeforeConfirm = renewOrSupersededOutcome_(rowNumber, generation);
+    var supersededBeforeConfirm = confirmClaimOrSupersededOutcome_(rowNumber, generation);
     if (supersededBeforeConfirm) return supersededBeforeConfirm;
 
     /*
@@ -566,7 +661,8 @@ var StripeWebhookProcessor = (function () {
      * Lock取得直後に最新のstatus・Calendarイベントの有無を再確認するため、ここで
      * 個別に再読込・再確認を重複実装しない）。
      */
-    var confirmResult = BookingRepository.confirmBooking(bookingId);
+    var confirmResult = BookingRepository.confirmBooking(bookingId, { writeGuard: writeGuardFor_(rowNumber, generation) });
+    if (isWriteGuardRejected_(confirmResult)) return supersededOutcome_();
     if (!confirmResult.success) {
       /*
        * 決済済みでも予約を確定できない（仮押さえ失効・キャンセル済み・Calendarイベント
@@ -574,13 +670,14 @@ var StripeWebhookProcessor = (function () {
        * 一切書き戻さず、運営者が確認できるようRecoveryへ記録する。自動返金の判断は
        * PR-Dへ引き継ぐ。
        */
-      recordPaymentRecoveryGate_(
-        bookingId, record2, 'PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED',
+      gateStopped = recordPaymentRecoveryGate_(
+        rowNumber, generation, bookingId, record2, 'PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED',
         '決済は完了しました（eventId=' + eventId + '）が、予約の自動確定ができませんでした（' +
           (confirmResult.error && confirmResult.error.code) + '）。入金は保持したまま自動処理を停止しました。' +
           '運営者による確認・対応が必要です（枠を確保できない場合の返金判断を含む）。',
         effectiveNow
       );
+      if (gateStopped) return gateStopped;
     }
 
     return finalizeOutcome_(rowNumber, generation, {
@@ -598,42 +695,78 @@ var StripeWebhookProcessor = (function () {
 
   /*
    * BookingTriggers.gsの時間主導トリガーから呼ばれるエントリポイント。
-   * now: テストからの固定時刻注入用（省略時はnew Date()）。
-   * 戻り値: { candidateCount, processedCount, skippedCount, results }。
+   * now: 業務上の監査時刻（テストからの固定時刻注入用。省略時は各イベントに着手した時点の
+   *   new Date()）。処理権の管理（着手時刻・有効期限）には一切使わない（レビュー対応・
+   *   7回目。処理権の管理は常に実時間`new Date()`で行う）。
+   * 戻り値: { candidateCount, processedCount, skippedCount, deferredCount, results }。
    *   processedCount: 今回の実行で終端状態（COMPLETED/IGNORED/REJECTED）まで到達した件数。
-   *   skippedCount: 着手権を取得できなかった（他の実行が処理中）、または今回は未完了に
-   *     終わり次回のトリガー実行に委ねた件数。
+   *   skippedCount: 着手権を取得できなかった（他の実行が処理中）、今回は未完了に
+   *     終わり次回のトリガー実行に委ねた、またはdeferredCountに数えた件数。
+   *   deferredCount: 実行時間の予算（CLAIM_BUDGET_MS_）を使い切ったため、着手せずに
+   *     次回のトリガー実行へ残した件数（skippedCountにも含む）。
    */
   function processPendingStripeWebhookEvents(now) {
-    var effectiveNow = isDateLike_(now) ? now : new Date();
+    /* この実行の開始時刻（実時間）。処理権の有効期限はここから決める。Apps Scriptが
+       実際に実行を開始したのはこれより少し前のため、有効期限は安全側（遅め）にずれる。 */
+    var executionStartedAt = new Date();
+    var leaseExpiresAt = new Date(executionStartedAt.getTime() + GAS_MAX_EXECUTION_MS_ + CLAIM_TAKEOVER_MARGIN_MS_);
+    var auditNow = isDateLike_(now) ? now : null;
     var pending = StripeEventRepository.listPendingWithBody();
     var processedCount = 0;
     var skippedCount = 0;
+    var deferredCount = 0;
     var results = [];
 
-    pending.forEach(function (item) {
-      var claimResult = StripeEventRepository.claimForProcessing(item.record.eventId, item.record.eventType, effectiveNow, ADMIN_CLAIM_STALE_AFTER_MS_);
+    for (var i = 0; i < pending.length; i++) {
+      var item = pending[i];
+      /* 各候補の着手時刻は、その候補をclaimする瞬間の実時間（先行候補の処理時間を
+         含めた実際の時刻）を使う。トリガー開始時刻を使い回さない。 */
+      var claimStartedAt = new Date();
+      if (claimStartedAt.getTime() - executionStartedAt.getTime() >= CLAIM_BUDGET_MS_) {
+        deferredCount = pending.length - i;
+        skippedCount += deferredCount;
+        break;
+      }
+      var claimResult = StripeEventRepository.claimForProcessing(item.record.eventId, item.record.eventType, claimStartedAt, leaseExpiresAt);
       if (claimResult.outcome !== 'CLAIMED') {
-        /* IN_PROGRESS: 別のトリガー実行が処理中（重複実行防止）。
+        /* IN_PROGRESS: 別のトリガー実行が処理権を保持している（有効期限内）。
            ALREADY_TERMINAL: listPendingWithBody取得後、別の実行が既に完了させた。
            LOCK_TIMEOUT: 一時的な混雑。 */
         skippedCount++;
-        return;
+        continue;
       }
+      var rowNumber = claimResult.rowNumber;
       var generation = Number(claimResult.record.processingClaimCount);
-      var result = processSingleEvent_(claimResult.rowNumber, claimResult.record, effectiveNow, generation);
+      var result;
+      try {
+        result = processSingleEvent_(rowNumber, claimResult.record, auditNow, generation);
+      } catch (unexpectedError) {
+        /* 1件の想定外の例外で、同じ実行の後続候補まで止めない。 */
+        Logger.log('StripeWebhookProcessor: イベント処理中に想定外の例外が発生しました eventId=' + item.record.eventId + ' ' + describeError_(unexpectedError));
+        result = outcome_(false, 'UNEXPECTED_ERROR', '想定外のエラーが発生しました。再試行します。');
+      }
+      if (!result.finalized && result.code !== 'SUPERSEDED_BY_NEWER_ATTEMPT') {
+        /* 未完了のまま終えた候補は処理権を手放し、次のトリガー実行ですぐ再試行させる
+           （手放せなくても、有効期限の経過後に再取得される）。 */
+        try {
+          StripeEventRepository.releaseProcessingClaim(rowNumber, generation, new Date());
+        } catch (releaseError) {
+          Logger.log('StripeWebhookProcessor: 処理権の解放に失敗しました eventId=' + item.record.eventId + ' ' + describeError_(releaseError));
+        }
+      }
       results.push(Object.assign({ eventId: item.record.eventId }, result));
       if (result.finalized) {
         processedCount++;
       } else {
         skippedCount++;
       }
-    });
+    }
 
     return {
       candidateCount: pending.length,
       processedCount: processedCount,
       skippedCount: skippedCount,
+      deferredCount: deferredCount,
       results: results
     };
   }

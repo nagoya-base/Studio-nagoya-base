@@ -471,10 +471,11 @@ function isDateLike(value) {
  * テストから明示的に制御できるようにする（Issue #341 PR-Cレビュー対応・6回目で新設）。
  *
  * 【用途】GASコード側でハートビート等の「呼び出し時点の実時間」（
- * `StripeWebhookProcessor.renewOrSupersededOutcome_`が`new Date()`で取得する値。
+ * `StripeWebhookProcessor.confirmClaimOrSupersededOutcome_`・
+ * `processPendingStripeWebhookEvents`の着手時刻・有効期限が`new Date()`で取得する値。
  * ビジネス上の監査時刻・テスト用の固定日時（`now`引数）とは意図的に分離されている）
  * を、実際に実時間を待たずに決定的に進めてテストしたい場合に使う。単体テストで
- * `claimForProcessing`/`renewProcessingLease`へ直接異なる`now`を渡して時間経過を
+ * `claimForProcessing`/`confirmProcessingClaim`へ直接異なる時刻を渡して時間経過を
  * 再現する手法（`test/stripe-event-repository.test.js`参照）だけでは、
  * `processSingleEvent_`が内部で`new Date()`を呼ぶタイミング（外部Stripe API呼び出しの
  * 直後等）を制御できないため、本番コード経路を実際に通して検証したい場合にこちらを使う。

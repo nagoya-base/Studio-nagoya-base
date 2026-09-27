@@ -80,7 +80,8 @@ function processPendingStripeWebhookEvents(now) {
  * 1分おきにprocessPendingStripeWebhookEventsを実行するトリガーを作成する。Stripeの
  * Webhook配信からBookingsへの確定反映までの遅延を短く抑えるため、
  * expirePendingBookings（15分間隔）より短い間隔にする
- * （StripeWebhookProcessor.gsのADMIN_CLAIM_STALE_AFTER_MS_の設計根拠も参照）。
+ * （処理権の有効期限はStripeWebhookProcessor.gsのGAS_MAX_EXECUTION_MS_等を参照。
+ * レビュー対応・7回目）。
  */
 function createProcessPendingStripeWebhookEventsTrigger() {
   var FUNCTION_NAME = 'processPendingStripeWebhookEvents';

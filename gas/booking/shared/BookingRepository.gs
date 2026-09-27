@@ -408,7 +408,7 @@ var BookingRepository = (function () {
    * 処理することはない（一方がLockを保持している間、他方はtryLockが失敗するかLockが
    * 解放されるまで待つ）。
    */
-  function confirmBooking(bookingId) {
+  function confirmBooking(bookingId, options) {
     if (!bookingId) {
       return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
     }
@@ -421,7 +421,10 @@ var BookingRepository = (function () {
 
     var outcome;
     try {
-      outcome = confirmBookingLocked_(bookingId);
+      var guardRejection = writeGuardRejection_(options);
+      outcome = guardRejection
+        ? { response: guardRejection, shouldTryMail: false }
+        : confirmBookingLocked_(bookingId);
     } finally {
       lock.releaseLock();
     }
@@ -436,6 +439,25 @@ var BookingRepository = (function () {
     }
 
     return outcome.response;
+  }
+
+  /*
+   * options.writeGuard（任意。Issue #341 PR-Cレビュー対応・7回目）: Lockを取得した直後、
+   * Calendar/Sheetsを読み書きする前に呼ぶ関数。falseを返した場合は何も書き込まずに
+   * WRITE_GUARD_REJECTEDを返す。StripeWebhookProcessorが「この実行の処理権（StripeEventsの
+   * 世代）がまだ有効か」の確認に使う。処理権の再取得（StripeEventRepository.
+   * claimForProcessing）も同じLockService.getScriptLock()の中で行われるため、この確認と
+   * 続く書き込みの間に処理権が移ることはない。writeGuardの中でLockを取得してはならない
+   * （既にこの関数がLockを保持している）。管理者操作等、optionsを渡さない既存の呼び出しの
+   * 挙動は変わらない。
+   */
+  function writeGuardRejection_(options) {
+    if (!options || typeof options.writeGuard !== 'function') return null;
+    if (options.writeGuard() === true) return null;
+    return {
+      success: false,
+      error: { code: 'WRITE_GUARD_REJECTED', message: '書き込みの前提条件（処理権）が失われていたため、何も変更しませんでした。' }
+    };
   }
 
   /* confirmBookingのLock保持区間の本体。戻り値: { response, shouldTryMail }。
@@ -1800,7 +1822,7 @@ var BookingRepository = (function () {
    * Webhookの重複配信やリトライで同じ状態へ再度呼び出す場合も、これらの識別子を
    * 省略しないこと。省略すると（項目8のとおり）PAYMENT_IDENTITY_UNCONFIRMEDで拒否される。
    */
-  function applyPaymentStateUpdate(bookingId, toPaymentStatus, fields, now) {
+  function applyPaymentStateUpdate(bookingId, toPaymentStatus, fields, now, options) {
     if (!bookingId) {
       return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
     }
@@ -1809,6 +1831,9 @@ var BookingRepository = (function () {
       return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
     }
     try {
+      /* options.writeGuard: confirmBookingと同じ（writeGuardRejection_参照。レビュー対応・7回目）。 */
+      var guardRejection = writeGuardRejection_(options);
+      if (guardRejection) return guardRejection;
       return applyPaymentStateUpdateLocked_(bookingId, toPaymentStatus, fields, now);
     } finally {
       lock.releaseLock();

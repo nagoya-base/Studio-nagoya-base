@@ -67,15 +67,36 @@
  * 正常に実行中の処理（Stripe再照会に時間がかかっている等）がstaleAfterMsを超えた
  * 時点で「クラッシュした」と誤判定され、別のトリガー実行に処理権を奪われる恐れが
  * あった。これを防ぐため:
- * - `renewProcessingLease()`: 処理を続けている実行が定期的に呼び、
+ * - `renewProcessingLease()`（7回目で`confirmProcessingClaim()`へ改名し、有効期限を
+ *   延長しない確認へ役割を変更。下記参照）: 処理を続けている実行が定期的に呼び、
  *   processingClaimedAt（ハートビート）だけを更新する（processingClaimCountという
  *   「世代番号」は変えない）。実行中である限りage判定は常に短く保たれ、時間経過
  *   だけで処理権が渡ることはない。
  * - `finalizeForProcessing()`: 書き込み直前に現在の世代番号を再確認してから書き込む
- *   （fencing token）。renewProcessingLease()の確認から実際の書き込みまでの間に
+ *   （fencing token）。confirmProcessingClaim()の確認から実際の書き込みまでの間に
  *   別の実行へ処理権が移っていた場合でも、古い実行の書き込みが新しい実行の結果を
  *   上書きすることを防ぐ。
  * 採用方式の保証範囲はREADME「Webhookと失効処理の競合」節に明記した。
+ *
+ * 【レビュー対応・7回目で再設計】ハートビートはStripe API（UrlFetchApp.fetch）の応答待ち
+ * 中には更新できない（UrlFetchAppにはタイムアウトを指定するオプションが無く、応答が
+ * いつ戻るかを呼び出し側で制御できない）。そのため「ハートビートが2分途絶えたら停止と
+ * みなす」方式では、応答待ちが2分を超えた正常な実行から処理権を奪い得た。7回目では:
+ * - 処理権の再取得判定を、ハートビートではなく`processingLeaseExpiresAt`（処理権の
+ *   有効期限）だけで行う。有効期限は「その実行の開始時刻（実時間）＋Apps Scriptの
+ *   1実行あたりの最大実行時間（6分）＋余裕」として呼び出し元が決める。Apps Scriptは
+ *   上限を超えた実行を強制終了するため、有効期限が過ぎた時点で元の実行は（Apps Scriptの
+ *   上限が守られる限り）もう動いていない。ハートビートで有効期限を延長することはしない。
+ * - ハートビート（`confirmProcessingClaim`）は生存記録（processingHeartbeatAt）と
+ *   世代確認のためだけに残す。processingClaimedAtは「その世代が着手した時刻」として
+ *   claim時にだけ書き、以後上書きしない。
+ * - 上限の前提が崩れた場合（Google側の仕様変更等）に備え、Bookings・Calendar・Recoveryへの
+ *   書き込みは、書き込み処理自身が保持するLockService.getScriptLock()の中で
+ *   `isProcessingClaimCurrentLocked`により世代を再確認してから行う（fencing）。処理権の
+ *   再取得（claimForProcessing）も同じLockの中で世代を進めるため、確認と書き込みの間に
+ *   世代が進むことはない。
+ * - 処理が未完了のまま終わった（Stripe照会失敗等）場合は`releaseProcessingClaim`で
+ *   有効期限を即座に失効させ、次回のトリガー実行ですぐ再試行できるようにする。
  */
 'use strict';
 
@@ -85,7 +106,9 @@ var StripeEventRepository = (function () {
     'eventId', 'eventType', 'receivedAt', 'claimedAt', 'claimCount',
     'processingState', 'bookingId', 'paymentAttemptId', 'stripePaymentIntentId',
     'outcomeCode', 'outcomeMessage', 'updatedAt', 'rawBody',
-    'processingClaimedAt', 'processingClaimCount'
+    'processingClaimedAt', 'processingClaimCount',
+    /* レビュー対応・7回目で追加（既存列の位置は変えず末尾へ追加）。 */
+    'processingHeartbeatAt', 'processingLeaseExpiresAt'
   ];
 
   var STATE = { RECEIVED: 'RECEIVED', COMPLETED: 'COMPLETED', IGNORED: 'IGNORED', REJECTED: 'REJECTED' };
@@ -97,6 +120,9 @@ var StripeEventRepository = (function () {
      長く動き続けることは想定しない。 */
   var DEFAULT_STALE_AFTER_MS_ = 5 * 60 * 1000;
   var RAW_BODY_INDEX_ = HEADERS_.indexOf('rawBody');
+  /* processingLeaseExpiresAtが空のまま処理権だけ記録された行（7回目より前の形式）に
+     適用する有効期限。StripeWebhookProcessorが通常渡す有効期限（6分＋余裕）と同じ長さ。 */
+  var LEGACY_PROCESSING_LEASE_MS_ = 7 * 60 * 1000;
 
   function getSpreadsheet_() {
     return SpreadsheetApp.openById(BookingConfig.getSpreadsheetId());
@@ -202,7 +228,7 @@ var StripeEventRepository = (function () {
          （下記claimForProcessing冒頭コメント参照）。 */
       var newRow = [
         eventId, eventType || '', effectiveNow, effectiveNow, 1,
-        STATE.RECEIVED, '', '', '', '', '', effectiveNow, '', '', ''
+        STATE.RECEIVED, '', '', '', '', '', effectiveNow, '', '', '', '', ''
       ];
       sheet.appendRow(newRow);
       return {
@@ -222,20 +248,27 @@ var StripeEventRepository = (function () {
    * LockService.getScriptLock()を使う）。トリガー実行が重複した場合の二重処理防止に使う。
    *
    * claim()とは別のprocessingClaimedAt/processingClaimCount列を使う（claim()冒頭コメント
-   * 参照）。この行がまだ一度もAdmin側に着手されていない場合（processingClaimedAtが空）は
-   * 即座にCLAIMEDを返す。Webhookが受信した直後かどうかは一切見ない（claimedAtは見ない）
-   * ため、受信直後の初回ポーリングが不当にIN_PROGRESS扱いされることはない。
+   * 参照）。この行がまだ一度もAdmin側に着手されていない場合は即座にCLAIMEDを返す。
    *
-   * 戻り値の意味はclaim()と同じ（CLAIMED/ALREADY_TERMINAL/IN_PROGRESS/LOCK_TIMEOUT）。
-   * 対象の行が見つからない場合はNOT_FOUNDを返す
-   * （通常起こらない。呼び出し元はlistPendingWithBody()の結果を使うため）。
+   * 【レビュー対応・7回目で引数と判定を変更】
+   * - claimedAt: このイベントに着手する瞬間の実時間（呼び出し元が`new Date()`で取る）。
+   *   トリガー開始時刻や業務上の監査時刻を渡してはならない。processingClaimedAtへ
+   *   そのまま記録され、以後ハートビートで上書きされない。
+   * - leaseExpiresAt: この処理権の有効期限。呼び出し元の実行がApps Scriptの最大実行時間
+   *   によって確実に終了している時刻を渡す（StripeWebhookProcessor参照）。
+   * - 既存の処理権は、processingLeaseExpiresAtを過ぎるまで再取得させない（ハートビートの
+   *   新旧は見ない。Stripe APIの応答待ち中はハートビートを更新できないため）。
+   *
+   * 戻り値: CLAIMED/ALREADY_TERMINAL/IN_PROGRESS/LOCK_TIMEOUT/NOT_FOUND
+   * （NOT_FOUNDは通常起こらない。呼び出し元はlistPendingWithBody()の結果を使うため）。
    */
-  function claimForProcessing(eventId, eventType, now, staleAfterMs) {
+  function claimForProcessing(eventId, eventType, claimedAt, leaseExpiresAt) {
     if (!eventId) {
       throw new Error('eventIdを指定してください。');
     }
-    var effectiveNow = isDateLike_(now) ? now : new Date();
-    var effectiveStaleAfterMs = typeof staleAfterMs === 'number' && staleAfterMs > 0 ? staleAfterMs : DEFAULT_STALE_AFTER_MS_;
+    if (!isDateLike_(claimedAt) || !isDateLike_(leaseExpiresAt) || leaseExpiresAt.getTime() <= claimedAt.getTime()) {
+      throw new Error('claimForProcessingには着手時刻（実時間）と、それより後の処理権の有効期限を指定してください。');
+    }
 
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(CLAIM_LOCK_TIMEOUT_MS_)) {
@@ -251,16 +284,19 @@ var StripeEventRepository = (function () {
           if (TERMINAL_STATES_.indexOf(record.processingState) !== -1) {
             return { outcome: 'ALREADY_TERMINAL', rowNumber: rowNumber, record: record };
           }
-          var processingClaimedAtMillis = toMillis_(record.processingClaimedAt);
-          var ageMillis = isNaN(processingClaimedAtMillis) ? Infinity : effectiveNow.getTime() - processingClaimedAtMillis;
-          if (ageMillis < effectiveStaleAfterMs) {
+          var currentLeaseExpiresAtMillis = currentLeaseExpiresAtMillis_(record);
+          if (!isNaN(currentLeaseExpiresAtMillis) && claimedAt.getTime() < currentLeaseExpiresAtMillis) {
             return { outcome: 'IN_PROGRESS', rowNumber: rowNumber, record: record };
           }
           var nextProcessingClaimCount = (Number(record.processingClaimCount) || 0) + 1;
           var processingClaimedAtIndex = HEADERS_.indexOf('processingClaimedAt');
-          sheet.getRange(rowNumber, processingClaimedAtIndex + 1, 1, 2).setValues([[effectiveNow, nextProcessingClaimCount]]);
-          record.processingClaimedAt = effectiveNow;
+          sheet.getRange(rowNumber, processingClaimedAtIndex + 1, 1, 4).setValues([[
+            claimedAt, nextProcessingClaimCount, '', leaseExpiresAt
+          ]]);
+          record.processingClaimedAt = claimedAt;
           record.processingClaimCount = nextProcessingClaimCount;
+          record.processingHeartbeatAt = '';
+          record.processingLeaseExpiresAt = leaseExpiresAt;
           return { outcome: 'CLAIMED', rowNumber: rowNumber, record: record, isRetry: nextProcessingClaimCount > 1 };
         }
       }
@@ -270,53 +306,86 @@ var StripeEventRepository = (function () {
     }
   }
 
+  /* 現在の処理権の有効期限（ミリ秒）。まだ一度も着手されていなければNaN。 */
+  function currentLeaseExpiresAtMillis_(record) {
+    var leaseMillis = toMillis_(record.processingLeaseExpiresAt);
+    if (record.processingLeaseExpiresAt !== '' && record.processingLeaseExpiresAt !== null &&
+        record.processingLeaseExpiresAt !== undefined && !isNaN(leaseMillis)) {
+      return leaseMillis;
+    }
+    var claimedMillis = toMillis_(record.processingClaimedAt);
+    if (record.processingClaimedAt === '' || record.processingClaimedAt === null ||
+        record.processingClaimedAt === undefined || isNaN(claimedMillis)) {
+      return NaN;
+    }
+    return claimedMillis + LEGACY_PROCESSING_LEASE_MS_;
+  }
+
+  /* 呼び出し元がLockService.getScriptLock()を保持していることを前提に、rowNumberの行が
+     まだ終端状態でなく、処理権の世代がgenerationのままかを返す（Lockは取得しない）。 */
+  function isProcessingClaimCurrentLocked(rowNumber, generation) {
+    var sheet = ensureSheet_();
+    var row = sheet.getRange(rowNumber, 1, 1, HEADERS_.length).getValues()[0];
+    if (!row || !row[0]) return false;
+    var record = rowToRecord_(row);
+    if (TERMINAL_STATES_.indexOf(record.processingState) !== -1) return false;
+    return Number(record.processingClaimCount) === Number(generation);
+  }
+
   /*
-   * claimForProcessing()で処理権を得た実行が、まだ生きて処理を続けていることを示す
-   * ハートビート（レビュー対応・5回目で新設）。processingClaimedAtだけを更新し、
-   * processingClaimCount（世代番号）は変更しない。呼び出し元プロジェクトの
-   * LockService.getScriptLock()を使う。
+   * claimForProcessing()で処理権を得た実行が、処理の区切り（外部Stripe API呼び出しの
+   * 後・Bookings/Calendarへの書き込みの前）で呼ぶ確認（レビュー対応・5回目で
+   * renewProcessingLeaseとして新設し、7回目で役割を変更・改名）。
    *
-   * generationにはclaimForProcessing()が返したrecord.processingClaimCountをそのまま
-   * 渡すこと。現在の行のprocessingClaimCountがこのgenerationと一致する場合にのみ
-   * 更新する（一致しない場合は、既に別の実行が再claimして世代が進んでいる、または
-   * 既に終端状態へ進んでいるため、更新してはならない）。
+   * 世代（processingClaimCount）がgenerationのままで終端状態でもなければ、
+   * processingHeartbeatAtへnow（呼び出し元が取る実時間）を記録して{confirmed:true}を
+   * 返す。記録は運用上の生存確認（どこまで進んだか）のためだけに使い、処理権の有効期限
+   * （processingLeaseExpiresAt）は延長しない。有効期限を延ばせるのは、延ばした時点で
+   * 実行がまだ確実に動いていると言える場合だけだが、Apps Scriptの実行は最大実行時間で
+   * 打ち切られるため、実行開始時に決めた有効期限より後まで動き続けることはない。
    *
-   * 【なぜ必要か（レビュー対応・5回目）】4回目まではclaimForProcessing()の
-   * staleAfterMs判定だけに頼っていたため、1件のイベント処理がstaleAfterMs
-   * （既定2分）を超えて実行中なだけでも、別のトリガー実行が「クラッシュした」と
-   * 誤判定して処理権を奪ってしまい、二重処理につながる恐れがあった。実際に処理を
-   * 続けている実行がこれを定期的に呼んでprocessingClaimedAtを更新し続ける限り、
-   * claimForProcessing()のage判定は常に短く保たれ、時間経過だけで処理権が奪われる
-   * ことはない（詳細はStripeWebhookProcessor.gs・README「Webhookと失効処理の競合」節
-   * 参照）。
-   *
-   * 戻り値: { renewed: true } / { renewed: false }（世代が既に進んでいる、行が
-   * 見つからない、または終端状態に到達済み。呼び出し元は直ちにこの回の処理を中断し、
-   * 以後Bookings/Calendarへの書き込み・finalizeForProcessing呼び出しを一切
-   * 行ってはならない。別の実行が既にこのイベントの処理を引き継いでいる）。
+   * {confirmed:false}の場合（世代が進んでいる・終端状態・Lock取得失敗）、呼び出し元は
+   * 直ちに処理を中断し、以後Bookings/Calendar/StripeEventsへ書き込んではならない。
    */
-  function renewProcessingLease(rowNumber, generation, now) {
+  function confirmProcessingClaim(rowNumber, generation, now) {
     var effectiveNow = isDateLike_(now) ? now : new Date();
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(CLAIM_LOCK_TIMEOUT_MS_)) {
-      return { renewed: false };
+      return { confirmed: false, reason: 'LOCK_TIMEOUT' };
     }
     try {
+      if (!isProcessingClaimCurrentLocked(rowNumber, generation)) {
+        return { confirmed: false, reason: 'STALE_GENERATION' };
+      }
       var sheet = ensureSheet_();
-      var row = sheet.getRange(rowNumber, 1, 1, HEADERS_.length).getValues()[0];
-      if (!row || !row[0]) {
-        return { renewed: false };
+      var heartbeatIndex = HEADERS_.indexOf('processingHeartbeatAt');
+      sheet.getRange(rowNumber, heartbeatIndex + 1, 1, 1).setValue(effectiveNow);
+      return { confirmed: true };
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  /*
+   * 処理を未完了のまま終える実行（Stripe照会失敗・Lock混雑・想定外の例外等）が、自分の
+   * 処理権を手放す（レビュー対応・7回目で新設）。世代がgenerationのままの場合にのみ
+   * processingLeaseExpiresAtをnowへ書き換え、次回のトリガー実行が有効期限を待たずに
+   * 再取得できるようにする。失敗しても安全（有効期限の経過後に再取得される）。
+   */
+  function releaseProcessingClaim(rowNumber, generation, now) {
+    var effectiveNow = isDateLike_(now) ? now : new Date();
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(CLAIM_LOCK_TIMEOUT_MS_)) {
+      return { released: false };
+    }
+    try {
+      if (!isProcessingClaimCurrentLocked(rowNumber, generation)) {
+        return { released: false };
       }
-      var record = rowToRecord_(row);
-      if (TERMINAL_STATES_.indexOf(record.processingState) !== -1) {
-        return { renewed: false };
-      }
-      if (Number(record.processingClaimCount) !== Number(generation)) {
-        return { renewed: false };
-      }
-      var processingClaimedAtIndex = HEADERS_.indexOf('processingClaimedAt');
-      sheet.getRange(rowNumber, processingClaimedAtIndex + 1, 1, 1).setValue(effectiveNow);
-      return { renewed: true };
+      var sheet = ensureSheet_();
+      var leaseIndex = HEADERS_.indexOf('processingLeaseExpiresAt');
+      sheet.getRange(rowNumber, leaseIndex + 1, 1, 1).setValue(effectiveNow);
+      return { released: true };
     } finally {
       lock.releaseLock();
     }
@@ -398,10 +467,10 @@ var StripeEventRepository = (function () {
    * パターン）。読み直し・世代確認・書き込みは同じLockService.getScriptLock()の
    * クリティカルセクション内で行うため、確認と書き込みの間に別の実行が割り込む余地はない。
    *
-   * 【なぜ必要か】renewProcessingLease()による生存確認だけでは、直近の確認から実際の
-   * finalize呼び出しまでの間にわずかな競合の余地が残る。例えば、直前のrenewには成功した
+   * 【なぜ必要か】confirmProcessingClaim()による確認だけでは、直近の確認から実際の
+   * finalize呼び出しまでの間にわずかな競合の余地が残る。例えば、直前の確認には成功した
    * 実行が、Stripe再照会やBookings書き込みでさらに時間を要し、その間に別の実行が
-   * staleAfterMsの経過を検知してclaimForProcessingで世代を進めてしまうケース。
+   * 処理権の有効期限の経過を検知してclaimForProcessingで世代を進めてしまうケース。
    * finalizeForProcessing自身が書き込み直前に世代を再確認することで、こうした
    * 「古い実行の遅延応答が新しい実行の処理結果を上書きする」事態を、確認と書き込みを
    * 1つのLock区間にまとめることで構造的に防ぐ（TOCTOUを再導入しない）。
@@ -457,7 +526,9 @@ var StripeEventRepository = (function () {
     findByEventId: findByEventId,
     claim: claim,
     claimForProcessing: claimForProcessing,
-    renewProcessingLease: renewProcessingLease,
+    isProcessingClaimCurrentLocked: isProcessingClaimCurrentLocked,
+    confirmProcessingClaim: confirmProcessingClaim,
+    releaseProcessingClaim: releaseProcessingClaim,
     storeRawBody: storeRawBody,
     listPendingWithBody: listPendingWithBody,
     finalize: finalize,

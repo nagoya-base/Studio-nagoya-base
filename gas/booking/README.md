@@ -4442,9 +4442,10 @@ PaymentIntentともに、Webhookイベント本文のフィールドをそのま
 
 - `claim(eventId, eventType, now, staleAfterMs?)`: Booking Webhookが新規受信時に呼ぶ。
   同一イベントの同時到達（並行配信）・再送を、`claimedAt`/`claimCount`で判定する。
-- `claimForProcessing(eventId, eventType, now, staleAfterMs?)`: Booking Adminのトリガーが
-  処理着手時に呼ぶ。トリガー実行が重複した場合の二重処理防止を、`processingClaimedAt`/
-  `processingClaimCount`で判定する。
+- `claimForProcessing(eventId, eventType, claimedAt, leaseExpiresAt)`: Booking Adminの
+  トリガーが処理着手時に呼ぶ。トリガー実行が重複した場合の二重処理防止を、
+  `processingClaimCount`（世代）と`processingLeaseExpiresAt`（処理権の有効期限）で判定する
+  （レビュー対応・7回目で引数と判定を変更。「処理権の有効期限とfencing」節参照）。
 
 **この2つを分離した理由（レビュー対応・4回目で発覚し修正した設計バグ）**: 当初は
 両方が同じ`claimedAt`/`claimCount`を共有していた。この場合、Booking Webhookが
@@ -4545,7 +4546,12 @@ PaymentIntentともに、Webhookイベント本文のフィールドをそのま
    `IN_PROGRESS`（他の実行が処理中）の候補はその場でスキップして次の候補へ進むため、
    1件の処理が長引いても他の未処理イベントの着手を妨げない。
 
-**採用方式の保証範囲**: 本方式は、GAS公式の`LockService.getScriptLock()`による排他
+> **注（レビュー対応・7回目）**: 下記「採用方式の保証範囲」とこの節の要件1の説明は、
+> ハートビートがStripe APIの応答待ち中に更新できないことを見落としており、
+> 「正常実行中は再取得されない」とは言えなかった。7回目で処理権の再取得判定を
+> 有効期限方式へ置き換えた。現在の保証範囲は「処理権の有効期限とfencing」節を正とする。
+
+**採用方式の保証範囲（5回目時点）**: 本方式は、GAS公式の`LockService.getScriptLock()`による排他
 （読み直し・世代確認・書き込みを1つのクリティカルセクションにまとめる）と、
 `processingClaimCount`という単調増加カウンタによるfencing tokenパターンの組み合わせに
 依存する。いずれもGAS/Apps Scriptの公式に文書化された挙動であり、「Webhookと失効処理の
@@ -4609,6 +4615,98 @@ claimから合計130秒（`staleAfterMs`の2分超）が経過した時点で、
 （曜日計算に`Date.UTC(...)`を直接使う）経由で`confirmBooking`のメール送信ステップが
 例外で失敗する、という**テストヘルパー自体の不具合**を発見・修正した（本番コードには
 影響しない。`test/helpers/gas-stubs.js`の`createControllableClock`のコメント参照）。
+
+#### 処理権の有効期限とfencing（レビュー対応・7回目で再設計）
+
+**この節がレビュー対応・7回目の指摘への回答の核心であり、現在の保証範囲を定める。**
+
+**6回目までの問題**:
+
+1. 処理権の再取得を「最後のハートビートから2分」で判定していた。ハートビートは
+   Stripe API（`UrlFetchApp.fetch`）の応答待ち中には更新できない。応答待ちが2分を
+   超えると、生きている実行から別のトリガー実行が処理権を奪い得た。
+2. `processPendingStripeWebhookEvents()`がトリガー開始時に取った`effectiveNow`を全候補の
+   `claimForProcessing()`へ渡していた。先行イベントに時間がかかると、後続イベントは
+   実際に着手した時刻より古い`processingClaimedAt`でclaimされていた（テストから業務上の
+   固定日時を渡した場合は、その固定日時がそのまま処理権の時刻になっていた）。
+
+**確認したApps Scriptの仕様**:
+
+- `UrlFetchApp.fetch(url, params)`の`params`は`contentType`/`headers`/`method`/
+  `payload`/`useIntranet`/`validateHttpsCertificates`/`followRedirects`/
+  `muteHttpExceptions`/`escaping`だけで、**タイムアウトを指定するオプションは無い**
+  （`@types/google-apps-script`の`URLFetchRequestOptions`で確認。このセッションからは
+  developers.google.comへ接続できなかったため、公式リファレンスの原文は未確認）。
+  UrlFetchApp側の内部的な打ち切り時間は公開された契約として前提にしない。
+  したがって、Stripe APIの応答待ちの長さを呼び出し側で上限づけることはできない。
+- Apps Scriptの1実行あたりの最大実行時間は6分（割り当て表「Script runtime:
+  6 min / execution」）。時間主導トリガーの実行はこれを超えると強制終了される。
+  **本方式が時間について依存する前提はこの上限1つだけ**である。
+
+**採用した方式**:
+
+- **処理権の有効期限**: `processPendingStripeWebhookEvents()`は開始時に実時間
+  `executionStartedAt = new Date()`を取り、`processingLeaseExpiresAt =
+  executionStartedAt + 6分（GAS_MAX_EXECUTION_MS_）+ 1分（CLAIM_TAKEOVER_MARGIN_MS_）`
+  を、この実行がclaimするすべての候補に記録する。`claimForProcessing()`は、
+  既存の処理権の有効期限を過ぎるまで再取得させない。ハートビートの新旧は見ない。
+- **ハートビートは有効期限を延長しない**: `confirmProcessingClaim()`（旧
+  `renewProcessingLease()`）は世代の確認と生存記録（`processingHeartbeatAt`）だけを行う。
+  有効期限を延ばすと「その時点で実行が生きている」ことに依存するが、実行開始時に決めた
+  有効期限より後まで実行が続くことは上限上ありえないため、延長する必要がない。
+- **着手時刻は各候補に着手する瞬間の実時間**: `processingClaimedAt`は、その候補を
+  claimする直前の`new Date()`。以後ハートビートで上書きしない。業務上の監査時刻
+  （`now`引数。`paymentConfirmedAt`・Recoveryの発生時刻・StripeEventsの`updatedAt`等）
+  とは別に扱い、処理権の管理には使わない。
+- **書き込み側のLock内でのfencing**: Bookings（決済状態・予約確定）とCalendar（予約確定）
+  への書き込みは、`BookingRepository.applyPaymentStateUpdate`/`confirmBooking`へ渡す
+  `options.writeGuard`で、これらの関数がLockを取得した後、読み書きの前に世代を再確認
+  する。恒久の要復旧ゲート・Recoveryへの書き込みは`runFenced_`でLockを取り世代を確認して
+  から行う。StripeEventsの結果は従来どおり`finalizeForProcessing`がLock内で世代を確認
+  する。処理権の再取得（世代を進める操作）も同じ`LockService.getScriptLock()`の中で行う
+  ため、確認と書き込みの間に世代が進むことはない。
+- **未完了の候補は処理権を手放す**: Stripe照会失敗・Lock混雑・想定外の例外で未完了の
+  まま終えた候補は`releaseProcessingClaim()`で有効期限を即座に失効させ、次のトリガー
+  実行（1分後）ですぐ再試行する。想定外の例外はその候補だけで止め、同じ実行の後続候補の
+  処理を続ける。
+- **着手の予算**: 実行開始から4分（`CLAIM_BUDGET_MS_`）を過ぎたら新しい候補に着手せず、
+  次のトリガー実行へ残す（着手した直後に上限で強制終了され、その候補が有効期限まで
+  待たされることを避ける）。
+
+**保証範囲**:
+
+| 性質 | 保証の根拠 | 前提 |
+|---|---|---|
+| 古い世代の実行が、処理権が移った後にBookings・Calendar・Recovery・StripeEventsへ書き込まない | 書き込み側のLock内での世代確認と、同じLock内での世代の更新 | `LockService.getScriptLock()`の排他のみ（時間に依存しない） |
+| 正常に動いている実行から、応答待ちの長さにかかわらず処理権を奪わない | 有効期限＝実行開始＋最大実行時間＋余裕 | Apps Scriptが6分を超えた実行を強制終了すること |
+| 同一イベントを2つの実行が同時に処理しない | 上の2行の組み合わせ | 同上 |
+| 既にpaidへ更新済みの処理を再実行しても入金記録を壊さない・予約確定/Calendar更新/確認メールを二重にしない | `applyPaymentStateUpdate`のalreadyApplied、`confirmBooking`のalreadyConfirmed、確認メールの`confirmedMailSentAt`（いずれもLock内で判定） | 既存の冪等性（変更なし） |
+| 停止した実行のイベントを、永続化済みのrawBodyから再開できる | 有効期限の経過後（最長で停止した実行の開始から7分後）に次のトリガー実行が世代を進めて最初からやり直す | トリガーが動いていること |
+
+**残存する制約**（無条件に「正常実行中は再取得されない」とは言えない部分）:
+
+- Apps Scriptの最大実行時間の上限が守られない、または6分より長く設定されている環境では、
+  有効期限の経過後も古い実行が動いている可能性がある。この場合でも上表1行目により
+  古い実行は書き込まないが、新しい実行と並行してStripe APIへ照会すること（読み取り
+  のみ）は起こり得る。Googleが上限を変更した場合は`GAS_MAX_EXECUTION_MS_`を合わせること。
+- 上表1行目の対象外として、確認メールの送信は`BookingMailer`の既存の方式（Lock内で
+  `confirmedMailSentAt`を確認して送信し、送信後に記録する）に従う。送信には成功したが
+  `confirmedMailSentAt`の記録に失敗した場合に再送され得る制約は従来どおり残る。
+- 実行が強制終了した場合、そのイベントの再開は最長で「停止した実行の開始から7分後」まで
+  遅れる（6回目までは約2分）。停止が検知できない以上、これより早く再取得すると生きて
+  いる実行と並行処理になり得るため、意図的に待つ。例外で終わった場合（強制終了以外）は
+  処理権を手放すため、次のトリガー実行ですぐ再試行される。
+- 各候補は1つの実行の中では順に処理されるため、先行候補の応答待ちの間、同じ実行が
+  claimした後続候補は待つ。ただし候補は着手の直前に1件ずつclaimするため、まだclaim
+  していない候補は並行する別のトリガー実行が処理できる。失効処理（`expirePendingBookings`）
+  はStripe APIの応答待ちの間Lockを保持しないため止まらない。
+- 処理権（`processingLeaseExpiresAt`）を手放す書き込みそのものが失敗した場合は、
+  有効期限の経過後に再取得される。
+
+**テスト**: `test/stripe-webhook-processor.test.js`「処理権の世代管理・有効期限」節
+（必須1〜5ほか）と`test/stripe-event-repository.test.js`で検証している。必須1
+（応答待ちが2分を超え別トリガーが到達）・必須3（後続イベントの着手時刻）は、6回目の
+コードに対して実行すると失敗することを確認した。
 
 ### Webhookと失効処理（expirePendingBookings）の競合（レビュー対応・4回目で実行主体を一本化する設計へ再設計）
 
@@ -5179,6 +5277,39 @@ pass**。**合計1216件すべてpass**（今回のレビュー対応で独立�
 - [x] 1件のイベントの失敗・長時間処理が、他の未処理イベントを不必要に停止させない（レビュー対応・5回目）
 - [x] 採用した方式の保証範囲をREADMEに明記する（レビュー対応・5回目。「処理権の世代管理とハートビート」節参照）
 - [x] 最初の実行が2分を超えてなお処理中のケース・実行停止後の再試行・再試行後に古い実行が遅れて戻るケースをテストする（レビュー対応・5回目）
+
+### レビュー対応（7回目）
+
+6回目の対応後、オーナーから処理権の再取得制御について2点の指摘を受け対応した。
+マージ・本番デプロイ・本番Script Properties変更・トリガー作成・Cloud Run公開・Stripe
+Webhook Endpoint登録・PR-Dへの着手は行っていない。
+
+### 指摘
+
+1. Stripe APIの呼び出し中はハートビートを更新できず、応答待ちが2分を超えると、元の実行が
+   生きていても別の実行が同じイベントを処理し始め得る。
+2. `processPendingStripeWebhookEvents()`がトリガー開始時の`effectiveNow`を全候補の
+   `claimForProcessing()`へ渡しており、後続イベントが実際の着手時刻より古い
+   `processingClaimedAt`でclaimされる。
+
+### 対応
+
+「処理権の有効期限とfencing（レビュー対応・7回目で再設計）」節参照。外部API呼び出し
+全体をScript Lockで囲む方式は、失効処理や管理者操作も止めるため採用していない。
+
+### テスト結果（7回目レビュー対応後）
+
+`node --test 'test/**/*.test.js'`: **1215件すべてpass**（6回目対応後1206件から、
+旧方式を前提にしたテスト9件を置き換え・削除し、18件を追加した差し引き＋9件）。
+`cloud-run/stripe-webhook-relay`配下（変更なし）は**11件すべてpass**。合計1226件。
+
+受入条件との照合（今回追加分）:
+- [x] Stripe API応答待ちが2分を超えて別トリガーが到達しても、処理権を奪わない（必須1）
+- [x] 応答待ち中に処理権が新しい世代へ移った後に古い応答が戻っても、Bookings・Calendar・Recovery・StripeEventsへ書き込まない（必須2・補足）
+- [x] 後続イベントの`processingClaimedAt`が、そのイベント自身の着手時刻になる（必須3）
+- [x] クラッシュ相当の停止後、永続化済みイベントを再取得して完了できる（必須4）
+- [x] 再実行後も予約確定・Calendar更新・確認メールが二重にならず、入金記録を壊さない（必須5）
+- [x] 採用方式の保証範囲と残存する制約をREADMEに記載する
 
 ### Stripe Webhookエンドポイントのデプロイ（オーナー承認後に実施すること）
 

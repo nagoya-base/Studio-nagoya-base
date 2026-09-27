@@ -184,9 +184,8 @@ test('claim: rawBody保存済みでRECEIVEDのまま停止した行は、再clai
   var rawBody = JSON.stringify({ id: 'evt_1' });
   sandbox.StripeEventRepository.storeRawBody(claim1.rowNumber, rawBody, claimedAt);
 
-  /* Admin側の処理が例外で中断し、RECEIVEDのまま放置された想定（Admin側のstaleAfterMsは
-     StripeWebhookProcessor.ADMIN_CLAIM_STALE_AFTER_MS_=2分。ここでは直接staleAfterMsを
-     指定して同じ挙動を検証する）。 */
+  /* RECEIVEDのまま放置された行を、Webhook側のclaim()がstaleAfterMs経過後に再claimする
+     （ここでは直接staleAfterMsを指定して検証する）。 */
   var muchLater = new Date(claimedAt.getTime() + 3 * 60000);
   var retry = sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', muchLater, 2 * 60000);
   assert.strictEqual(retry.outcome, 'CLAIMED');
@@ -196,68 +195,142 @@ test('claim: rawBody保存済みでRECEIVEDのまま停止した行は、再clai
 
 /*
  * ============================================================================
- * 処理権の世代管理・ハートビート（レビュー対応・5回目で新設）
+ * 処理権の世代管理・有効期限（レビュー対応・5回目で新設、7回目で再設計）
  *
- * 4回目まではclaimForProcessing()のstaleAfterMs判定だけに頼っており、1件のイベント
- * 処理がstaleAfterMsを超えて実行中なだけでも、別のトリガー実行が「クラッシュした」と
- * 誤判定して処理権を奪ってしまう恐れがあった（正常に実行中の処理権を、時間経過だけで
- * 別の実行に渡してはならないという指摘）。renewProcessingLease（ハートビート）と
- * finalizeForProcessing（世代のfencing）を追加した。
+ * 5〜6回目は「最後のハートビートから2分」で処理権の再取得を許していたが、Stripe APIの
+ * 応答待ち中はハートビートを更新できないため、応答待ちが2分を超えた正常な実行から
+ * 処理権を奪い得た。7回目では、再取得の判定をprocessingLeaseExpiresAt（呼び出し元が
+ * Apps Scriptの最大実行時間から決める有効期限）だけで行い、ハートビート
+ * （confirmProcessingClaim）は有効期限を延長しない生存記録と世代確認に役割を変えた。
  * ============================================================================
  */
 
-test('renewProcessingLease: ハートビートを更新し続ける限り、最初の claim から staleAfterMs を超えても再claimされない（実行中のケース）', function () {
+var MINUTE = 60000;
+var LEASE_MS = 7 * MINUTE;
+
+function claimProcessingAt(sandbox, eventId, claimedAt) {
+  return sandbox.StripeEventRepository.claimForProcessing(
+    eventId, 'checkout.session.completed', claimedAt, new Date(claimedAt.getTime() + LEASE_MS));
+}
+
+test('claimForProcessing: 着手時刻と有効期限を記録し、有効期限内は（ハートビートの新旧に関係なく）再取得させない', function () {
   var sandbox = setup();
   var t0 = new Date('2026-10-01T10:00:00+09:00');
-  /* Booking Webhookが受信・永続化済み（claimForProcessingは既存行にしか着手できない）。 */
   sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', t0);
-  var claimed = sandbox.StripeEventRepository.claimForProcessing('evt_1', 'checkout.session.completed', t0, 2 * 60000);
+  var claimed = claimProcessingAt(sandbox, 'evt_1', t0);
   assert.strictEqual(claimed.outcome, 'CLAIMED');
-  var generation = claimed.record.processingClaimCount;
+  var stored = sandbox.StripeEventRepository.findByEventId('evt_1').record;
+  assert.strictEqual(stored.processingClaimedAt.getTime(), t0.getTime());
+  assert.strictEqual(stored.processingLeaseExpiresAt.getTime(), t0.getTime() + LEASE_MS);
+  assert.strictEqual(Number(stored.processingClaimCount), 1);
 
-  /* 実行Aがまだ処理を続けており、1分50秒後にハートビートを更新する
-     （Stripe再照会が完了した直後、等を模擬）。 */
-  var heartbeatAt = new Date(t0.getTime() + 110000);
-  var renewal = sandbox.StripeEventRepository.renewProcessingLease(claimed.rowNumber, generation, heartbeatAt);
-  assert.strictEqual(renewal.renewed, true);
-
-  /* 最初のclaimから3分後（staleAfterMs=2分を超えている）に、別のトリガー実行
-     （実行B）が同じイベントへclaimForProcessingを試みる。直近のハートビートから
-     70秒しか経っていないため、まだ実行中とみなされIN_PROGRESSになるべき
-     （＝時間経過だけで処理権が渡ってはならない）。 */
-  var competingAttemptAt = new Date(t0.getTime() + 180000);
-  var competing = sandbox.StripeEventRepository.claimForProcessing('evt_1', 'checkout.session.completed', competingAttemptAt, 2 * 60000);
+  /* ハートビートを一度も更新しないまま（Stripe APIの応答待ちを想定）、5分後に別の実行が
+     到達しても、有効期限（7分）内のため再取得できない。 */
+  var competing = claimProcessingAt(sandbox, 'evt_1', new Date(t0.getTime() + 5 * MINUTE));
   assert.strictEqual(competing.outcome, 'IN_PROGRESS');
-  assert.strictEqual(Number(competing.record.processingClaimCount), generation, '世代は進んでいないはず');
+  assert.strictEqual(Number(sandbox.StripeEventRepository.findByEventId('evt_1').record.processingClaimCount), 1);
 });
 
-test('renewProcessingLease: ハートビートが更新されないまま放置された場合は、staleAfterMs経過後に別の実行が再claimでき、世代が進む（実行停止後の再試行）', function () {
+test('confirmProcessingClaim: 生存記録だけを更新し、着手時刻・有効期限は変えない（有効期限を延長しない）', function () {
   var sandbox = setup();
   var t0 = new Date('2026-10-01T10:00:00+09:00');
   sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', t0);
-  var claimed = sandbox.StripeEventRepository.claimForProcessing('evt_1', 'checkout.session.completed', t0, 2 * 60000);
+  var claimed = claimProcessingAt(sandbox, 'evt_1', t0);
   var generation = claimed.record.processingClaimCount;
 
-  /* 実行Aはクラッシュし、以後ハートビートを一切更新しない。 */
-  var laterAttemptAt = new Date(t0.getTime() + 180000);
-  var reclaimed = sandbox.StripeEventRepository.claimForProcessing('evt_1', 'checkout.session.completed', laterAttemptAt, 2 * 60000);
-  assert.strictEqual(reclaimed.outcome, 'CLAIMED');
-  assert.strictEqual(Number(reclaimed.record.processingClaimCount), generation + 1, '再claimにより世代が進むべき');
+  var heartbeatAt = new Date(t0.getTime() + 6 * MINUTE);
+  var confirmation = sandbox.StripeEventRepository.confirmProcessingClaim(claimed.rowNumber, generation, heartbeatAt);
+  assert.strictEqual(confirmation.confirmed, true);
+  var stored = sandbox.StripeEventRepository.findByEventId('evt_1').record;
+  assert.strictEqual(stored.processingHeartbeatAt.getTime(), heartbeatAt.getTime());
+  assert.strictEqual(stored.processingClaimedAt.getTime(), t0.getTime(), '着手時刻はハートビートで上書きしない');
+  assert.strictEqual(stored.processingLeaseExpiresAt.getTime(), t0.getTime() + LEASE_MS, 'ハートビートで有効期限を延長しない');
 
-  /* 実行Aが今さらハートビートを送っても、既に世代が進んでいるため拒否される。 */
-  var staleRenewal = sandbox.StripeEventRepository.renewProcessingLease(claimed.rowNumber, generation, laterAttemptAt);
-  assert.strictEqual(staleRenewal.renewed, false);
+  /* 直前にハートビートがあっても、有効期限を過ぎれば再取得される（有効期限を過ぎた実行は
+     Apps Scriptの最大実行時間により既に終了している前提）。 */
+  var reclaimed = claimProcessingAt(sandbox, 'evt_1', new Date(t0.getTime() + LEASE_MS + 1000));
+  assert.strictEqual(reclaimed.outcome, 'CLAIMED');
+  assert.strictEqual(Number(reclaimed.record.processingClaimCount), Number(generation) + 1);
+});
+
+test('claimForProcessing: 有効期限を過ぎた処理権は再取得でき世代が進み、古い世代の確認は拒否される（実行停止後の再試行）', function () {
+  var sandbox = setup();
+  var t0 = new Date('2026-10-01T10:00:00+09:00');
+  sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', t0);
+  var claimed = claimProcessingAt(sandbox, 'evt_1', t0);
+  var generation = claimed.record.processingClaimCount;
+
+  var laterAttemptAt = new Date(t0.getTime() + 8 * MINUTE);
+  var reclaimed = claimProcessingAt(sandbox, 'evt_1', laterAttemptAt);
+  assert.strictEqual(reclaimed.outcome, 'CLAIMED');
+  assert.strictEqual(reclaimed.isRetry, true);
+  assert.strictEqual(Number(reclaimed.record.processingClaimCount), generation + 1, '再claimにより世代が進むべき');
+  assert.strictEqual(reclaimed.record.processingClaimedAt.getTime(), laterAttemptAt.getTime(), '着手時刻は新しい世代の着手時刻');
+
+  var staleConfirmation = sandbox.StripeEventRepository.confirmProcessingClaim(claimed.rowNumber, generation, laterAttemptAt);
+  assert.strictEqual(staleConfirmation.confirmed, false);
+  assert.strictEqual(staleConfirmation.reason, 'STALE_GENERATION');
+});
+
+test('claimForProcessing: 着手時刻・有効期限が無い、または有効期限が着手時刻以前なら例外を投げる', function () {
+  var sandbox = setup();
+  var t0 = new Date('2026-10-01T10:00:00+09:00');
+  sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', t0);
+  assert.throws(function () { sandbox.StripeEventRepository.claimForProcessing('evt_1', 'checkout.session.completed', t0, 2 * MINUTE); });
+  assert.throws(function () { sandbox.StripeEventRepository.claimForProcessing('evt_1', 'checkout.session.completed', t0, t0); });
+  assert.throws(function () { sandbox.StripeEventRepository.claimForProcessing('evt_1', 'checkout.session.completed', undefined, new Date(t0.getTime() + LEASE_MS)); });
+});
+
+test('releaseProcessingClaim: 現在の世代だけが処理権を手放せ、手放した後は有効期限を待たずに再取得できる', function () {
+  var sandbox = setup();
+  var t0 = new Date('2026-10-01T10:00:00+09:00');
+  sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', t0);
+  var claimed = claimProcessingAt(sandbox, 'evt_1', t0);
+  var generation = claimed.record.processingClaimCount;
+
+  assert.strictEqual(sandbox.StripeEventRepository.releaseProcessingClaim(claimed.rowNumber, generation + 1, t0).released, false, '別の世代は手放せない');
+  assert.strictEqual(claimProcessingAt(sandbox, 'evt_1', new Date(t0.getTime() + MINUTE)).outcome, 'IN_PROGRESS');
+
+  var releaseAt = new Date(t0.getTime() + 30000);
+  assert.strictEqual(sandbox.StripeEventRepository.releaseProcessingClaim(claimed.rowNumber, generation, releaseAt).released, true);
+  var retried = claimProcessingAt(sandbox, 'evt_1', new Date(t0.getTime() + MINUTE));
+  assert.strictEqual(retried.outcome, 'CLAIMED');
+  assert.strictEqual(Number(retried.record.processingClaimCount), generation + 1);
+});
+
+test('isProcessingClaimCurrentLocked: 世代が一致し終端状態でない場合だけtrue（Lockを取得しない）', function () {
+  var lockService = stubs.createLockServiceStub();
+  var sandbox = setup({ lockService: lockService });
+  var t0 = new Date('2026-10-01T10:00:00+09:00');
+  sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', t0);
+  var claimed = claimProcessingAt(sandbox, 'evt_1', t0);
+  var generation = claimed.record.processingClaimCount;
+
+  /* 呼び出し元（BookingRepository等）が既にLockを保持している状況で呼べること。 */
+  var outerLock = lockService.getScriptLock();
+  assert.strictEqual(outerLock.tryLock(1000), true);
+  try {
+    assert.strictEqual(sandbox.StripeEventRepository.isProcessingClaimCurrentLocked(claimed.rowNumber, generation), true);
+    assert.strictEqual(sandbox.StripeEventRepository.isProcessingClaimCurrentLocked(claimed.rowNumber, generation - 1), false);
+  } finally {
+    outerLock.releaseLock();
+  }
+
+  sandbox.StripeEventRepository.finalizeForProcessing(claimed.rowNumber, generation, {
+    processingState: 'COMPLETED', outcomeCode: 'CONFIRMED', outcomeMessage: ''
+  }, t0);
+  assert.strictEqual(sandbox.StripeEventRepository.isProcessingClaimCurrentLocked(claimed.rowNumber, generation), false, '終端状態ではfalse');
 });
 
 test('finalizeForProcessing: 世代が一致する場合のみ書き込み、既に進んだ古い世代からの書き込みは拒否する（古い実行の遅延応答による上書き防止）', function () {
   var sandbox = setup();
   var t0 = new Date('2026-10-01T10:00:00+09:00');
   sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', t0);
-  var claimedByA = sandbox.StripeEventRepository.claimForProcessing('evt_1', 'checkout.session.completed', t0, 2 * 60000);
+  var claimedByA = claimProcessingAt(sandbox, 'evt_1', t0);
   var generationA = claimedByA.record.processingClaimCount;
 
-  /* 実行Aが停止している間に、実行Bが再claimして世代を進める。 */
-  var reclaimedByB = sandbox.StripeEventRepository.claimForProcessing('evt_1', 'checkout.session.completed', new Date(t0.getTime() + 180000), 2 * 60000);
+  /* 実行Aの有効期限が過ぎた後に、実行Bが再claimして世代を進める。 */
+  var reclaimedByB = claimProcessingAt(sandbox, 'evt_1', new Date(t0.getTime() + 8 * MINUTE));
   var generationB = reclaimedByB.record.processingClaimCount;
   assert.notStrictEqual(generationA, generationB);
 
@@ -266,14 +339,14 @@ test('finalizeForProcessing: 世代が一致する場合のみ書き込み、既
      ではない段階でも、世代の不一致だけで正しく弾かれることを確認する）。 */
   var writtenByA = sandbox.StripeEventRepository.finalizeForProcessing(claimedByA.rowNumber, generationA, {
     processingState: 'REJECTED', bookingId: 'SX-A', outcomeCode: 'STALE_A', outcomeMessage: 'Aの遅延応答'
-  }, new Date(t0.getTime() + 190000));
+  }, new Date(t0.getTime() + 9 * MINUTE));
   assert.strictEqual(writtenByA.written, false);
   assert.strictEqual(writtenByA.reason, 'STALE_GENERATION');
 
   /* 実行Bが自分の結果を確定する。Aの拒否された書き込みの影響を受けない。 */
   var writtenByB = sandbox.StripeEventRepository.finalizeForProcessing(reclaimedByB.rowNumber, generationB, {
     processingState: 'COMPLETED', bookingId: 'SX-B', outcomeCode: 'CONFIRMED', outcomeMessage: 'Bが確定'
-  }, new Date(t0.getTime() + 200000));
+  }, new Date(t0.getTime() + 10 * MINUTE));
   assert.strictEqual(writtenByB.written, true);
 
   var finalRecord = sandbox.StripeEventRepository.findByEventId('evt_1').record;
@@ -286,7 +359,7 @@ test('finalizeForProcessing: 既に終端状態の行への書き込みは世代
   var sandbox = setup();
   var t0 = new Date('2026-10-01T10:00:00+09:00');
   sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', t0);
-  var claimed = sandbox.StripeEventRepository.claimForProcessing('evt_1', 'checkout.session.completed', t0, 2 * 60000);
+  var claimed = claimProcessingAt(sandbox, 'evt_1', t0);
   var generation = claimed.record.processingClaimCount;
 
   var first = sandbox.StripeEventRepository.finalizeForProcessing(claimed.rowNumber, generation, {

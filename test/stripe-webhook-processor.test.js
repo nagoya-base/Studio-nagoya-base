@@ -321,36 +321,6 @@ test('重複処理: 同一イベントの再送は二重確定・二重メール
   assert.strictEqual(record.status, 'CONFIRMED');
 });
 
-test('重複処理: Booking Adminのトリガー実行が重複しても（前回実行がまだ処理中）二重処理しない', function () {
-  var ctx = setup();
-  createBookingRow(ctx);
-  createCalendarEvent(ctx);
-
-  var eventId = 'evt_concurrent_0001';
-  var event = buildEvent(eventId, 'checkout.session.completed');
-  var now = new Date('2026-09-20T10:10:00+09:00');
-
-  /* Webhook側が既に受信・永続化済み。 */
-  var claimResult = ctx.sandbox.StripeEventRepository.claim(eventId, 'checkout.session.completed', now);
-  ctx.sandbox.StripeEventRepository.storeRawBody(claimResult.rowNumber, event, now);
-
-  /* 1つ目のトリガー実行が既にこのイベントをclaimForProcessing済み（処理中）という状況を
-     直接再現する（StripeWebhookProcessor.ADMIN_CLAIM_STALE_AFTER_MS_=2分未満）。 */
-  ctx.sandbox.StripeEventRepository.claimForProcessing(eventId, 'checkout.session.completed', now, 2 * 60000);
-
-  /* ほぼ同時に2つ目のトリガー実行（例: 前回の実行がStripe APIの応答待ちで長引いている間に
-     次のトリガーが起動した）が走っても、この候補を二重にclaimできず処理をスキップする。 */
-  var secondRunNow = new Date(now.getTime() + 1000);
-  var secondRun = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(secondRunNow);
-  assert.strictEqual(secondRun.processedCount, 0);
-  assert.strictEqual(secondRun.skippedCount, 1);
-
-  /* 二重に確定処理が実行されていない（予約はまだPENDINGのまま）。 */
-  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
-  assert.strictEqual(record.status, 'PENDING');
-  assert.strictEqual(ctx.mailApp._sentEmails.length, 0);
-});
-
 /*
  * ============================================================================
  * 同一入金への異なるイベントID・同一イベントの再送・識別子が本当に異なる別決済の区別
@@ -436,7 +406,8 @@ test('処理途中で停止したイベント（RECEIVEDのまま古い）は安
   var initialClaim = ctx.sandbox.StripeEventRepository.claim(eventId, 'checkout.session.completed', claimedAt);
   ctx.sandbox.StripeEventRepository.storeRawBody(initialClaim.rowNumber, event, claimedAt);
 
-  /* 3分後（既定ADMIN_CLAIM_STALE_AFTER_MS_=2分超）にトリガーが再実行された想定。 */
+  /* 3分後にトリガーが再実行された想定（Admin側はまだ一度も着手していないため、
+     Webhook側のclaim時刻に関係なく即座に着手できる）。 */
   var retryNow = new Date(claimedAt.getTime() + 3 * 60000);
   var runResult = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(retryNow);
   assert.strictEqual(runResult.processedCount, 1);
@@ -481,13 +452,10 @@ test('イベント結果の永続化自体が失敗した場合は完了扱い�
   assert.strictEqual(recordAfterFirst.paymentStatus, 'paid');
   assert.strictEqual(ctx.mailApp._sentEmails.length, 1);
 
-  /* 行はRECEIVEDのまま残っているため、次回のトリガー実行（staleAfterMs経過後）で
+  /* 行はRECEIVEDのまま残り、1回目の実行は未完了として処理権を手放している
+     （レビュー対応・7回目。releaseProcessingClaim）ため、次回のトリガー実行で
      安全に再claimして完了できる。予約は既にCONFIRMED・メール送信済みのため二重実行しない。
-     レビュー対応・6回目でハートビート（renewProcessingLease）が実際の実時間
-     （new Date()）を書き込むようになったため、1回目の試行で複数回成功した
-     ハートビートにより`processingClaimedAt`は実時間で更新済みである。再試行時刻は
-     そのビジネス上の`now`（2026-09-20の固定日時）からの相対時刻ではなく、実際に
-     記録されている`processingClaimedAt`からの経過時間として構成する必要がある。 */
+     処理権の管理は実時間で行われ、`now`引数（業務上の監査時刻）には依存しない。 */
   var claimedAtAfterFirst = ctx.sandbox.StripeEventRepository.findByEventId(eventId).record.processingClaimedAt;
   var retryNow = new Date(claimedAtAfterFirst.getTime() + 3 * 60000);
   var retryRun = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(retryNow);
@@ -899,175 +867,513 @@ test('processPendingStripeWebhookEvents: Checkout Session再取得が失敗し�
 
 /*
  * ============================================================================
- * 処理権の世代管理・ハートビート（レビュー対応・5回目）
+ * 処理権の世代管理・有効期限（レビュー対応・5回目で新設、7回目で再設計）
  *
- * 4回目までのclaimForProcessing()はstaleAfterMs（既定2分）だけで処理中かどうかを
- * 判定しており、1件のイベント処理がstaleAfterMsを超えて実行中なだけでも、別の
- * トリガー実行に処理権を奪われる恐れがあった。renewProcessingLease（ハートビート）と
- * finalizeForProcessing（世代のfencing）で、次の3ケースを検証する:
- * 1. 最初の実行が2分を超えてなお処理中のケース（ハートビートにより処理権を奪われない）。
- * 2. 実行停止後の再試行（クラッシュからの復帰。世代が進み安全に再処理できる）。
- * 3. 再試行後に古い実行が遅れて戻るケース（古い世代からの書き込みは拒否され、
- *    新しい実行の結果を上書きしない）。
+ * 5〜6回目は「最後のハートビートから2分」で処理権の再取得を許していたが、Stripe API
+ * （UrlFetchApp.fetch）の応答待ち中はハートビートを更新できず、UrlFetchAppには
+ * タイムアウトの指定も無い。7回目では処理権の有効期限を「実行開始時刻（実時間）＋
+ * Apps Scriptの最大実行時間6分＋余裕1分」とし、Bookings・Calendar・Recovery・
+ * StripeEventsへの書き込みは、書き込み側のLock内で世代を再確認してから行う。
+ *
+ * この節のテストはすべて`stubs.createControllableClock`でサンドボックスの`Date`を
+ * 差し替え、本番コード経路（processPendingStripeWebhookEvents）が内部で取る実時間を
+ * 決定的に進めて検証する。
  * ============================================================================
  */
 
-test('処理権の世代管理: 処理中はStripe再照会後・Bookings書き込み前にハートビートを更新し、処理権を保持し続ける', function () {
-  var ctx = setup();
-  createBookingRow(ctx);
-  createCalendarEvent(ctx);
+var MINUTE = 60 * 1000;
+/* StripeWebhookProcessorが使う有効期限（GAS_MAX_EXECUTION_MS_＋CLAIM_TAKEOVER_MARGIN_MS_）。 */
+var PROCESSING_LEASE_MS = 7 * MINUTE;
 
-  var eventId = 'evt_heartbeat_0001';
-  var event = buildEvent(eventId, 'checkout.session.completed');
-  var now = new Date('2026-09-20T10:10:00+09:00');
-  var claimResult = ctx.sandbox.StripeEventRepository.claim(eventId, 'checkout.session.completed', now);
-  ctx.sandbox.StripeEventRepository.storeRawBody(claimResult.rowNumber, event, now);
+function setupWithClock(t0, options) {
+  var clock = stubs.createControllableClock(t0);
+  var ctx = setup(Object.assign({ clock: clock }, options || {}));
+  ctx.clock = clock;
+  return ctx;
+}
 
-  var renewCalls = [];
-  var originalRenew = ctx.sandbox.StripeEventRepository.renewProcessingLease;
-  ctx.sandbox.StripeEventRepository.renewProcessingLease = function (rowNumber, generation, renewNow) {
-    renewCalls.push({ rowNumber: rowNumber, generation: generation });
-    return originalRenew.apply(null, arguments);
+/* Booking Webhookが受信・永続化済みの状態を作る（Webhook側のclaim時刻は処理権と無関係）。 */
+function persistEvent(ctx, eventId, eventType, body) {
+  var at = ctx.clock.currentDate();
+  var claimResult = ctx.sandbox.StripeEventRepository.claim(eventId, eventType, at);
+  ctx.sandbox.StripeEventRepository.storeRawBody(claimResult.rowNumber, body || buildEvent(eventId, eventType), at);
+  return claimResult.rowNumber;
+}
+
+/* ある実行が処理権を取った直後に強制終了された（Apps Scriptの実行時間上限による停止は
+   catchできないため、後始末が一切行われない）状況を、claimForProcessingだけ行う形で再現する。 */
+function claimAsKilledExecution(ctx, eventId, eventType) {
+  var claimedAt = ctx.clock.currentDate();
+  return ctx.sandbox.StripeEventRepository.claimForProcessing(
+    eventId, eventType, claimedAt, new Date(claimedAt.getTime() + PROCESSING_LEASE_MS));
+}
+
+/* CalendarRepository.setEventStatus（予約確定時のCalendar更新）の呼び出し回数を数える。 */
+function countCalendarStatusWrites(ctx) {
+  var counter = { count: 0 };
+  var original = ctx.sandbox.CalendarRepository.setEventStatus;
+  ctx.sandbox.CalendarRepository.setEventStatus = function () {
+    counter.count++;
+    return original.apply(null, arguments);
   };
+  return counter;
+}
 
-  var runResult;
-  try {
-    runResult = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(now);
-  } finally {
-    ctx.sandbox.StripeEventRepository.renewProcessingLease = originalRenew;
-  }
+function bookingSnapshot(ctx) {
+  return JSON.stringify(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record);
+}
 
-  /* Checkout Session再取得後・PaymentIntent再取得後の2箇所で、正しい世代番号に対して
-     ハートビートが更新されているべき（Bookings書き込みの直前まで処理権を保持し
-     続けたことの証跡）。 */
-  assert.ok(renewCalls.length >= 2, 'ハートビートが処理中に複数回更新されるべき');
-  var candidate = ctx.sandbox.StripeEventRepository.findByEventId(eventId);
-  var claimedGeneration = Number(candidate.record.processingClaimCount);
-  renewCalls.forEach(function (call) {
-    assert.strictEqual(call.rowNumber, claimResult.rowNumber);
-    assert.strictEqual(call.generation, claimedGeneration, 'ハートビートは処理開始時にclaimForProcessingが払い出した世代番号のまま更新されるべき');
-  });
-
-  var result = runResult.results.filter(function (r) { return r.eventId === eventId; })[0];
-  assert.strictEqual(result.finalized, true);
-  assert.strictEqual(result.code, 'CONFIRMED');
-});
-
-test('処理権の世代管理: 実行Aがハートビートを更新し続けている間は、別のトリガー実行（実行B）が同じイベントを二重処理しない（最初の実行が2分を超えてなお処理中のケース）', function () {
-  var ctx = setup();
+test('重複処理: Booking Adminのトリガー実行が重複しても（前回実行がまだ処理中）二重処理しない', function () {
+  var ctx = setupWithClock(new Date('2026-09-20T10:10:00+09:00'));
   createBookingRow(ctx);
   createCalendarEvent(ctx);
 
-  var eventId = 'evt_still_running_0001';
-  var event = buildEvent(eventId, 'checkout.session.completed');
-  var t0 = new Date('2026-09-20T10:00:00+09:00');
-  var claimResult = ctx.sandbox.StripeEventRepository.claim(eventId, 'checkout.session.completed', t0);
-  ctx.sandbox.StripeEventRepository.storeRawBody(claimResult.rowNumber, event, t0);
+  var eventId = 'evt_concurrent_0001';
+  persistEvent(ctx, eventId, 'checkout.session.completed');
 
-  /* 実行Aが処理に着手し（世代1）、Stripe再照会に時間がかかっているが、
-     1分50秒後にハートビートは正常に更新できている状態を再現する。 */
-  var claimedByA = ctx.sandbox.StripeEventRepository.claimForProcessing(eventId, 'checkout.session.completed', t0, 2 * 60000);
-  assert.strictEqual(claimedByA.outcome, 'CLAIMED');
-  var generationA = claimedByA.record.processingClaimCount;
-  var heartbeatAt = new Date(t0.getTime() + 110000);
-  var renewal = ctx.sandbox.StripeEventRepository.renewProcessingLease(claimedByA.rowNumber, generationA, heartbeatAt);
-  assert.strictEqual(renewal.renewed, true);
+  /* 1つ目のトリガー実行が既にこのイベントの処理権を取得済み（処理中）。 */
+  assert.strictEqual(claimAsKilledExecution(ctx, eventId, 'checkout.session.completed').outcome, 'CLAIMED');
 
-  /* 最初のclaimから3分後（staleAfterMs=2分を超えている）に、別のトリガー実行
-     （実行B）が起動しても、直近のハートビートからはまだ70秒しか経っていないため、
-     このイベントには着手できずスキップする。 */
-  var triggerBNow = new Date(t0.getTime() + 180000);
-  var runResultB = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(triggerBNow);
-  assert.strictEqual(runResultB.processedCount, 0);
-  assert.strictEqual(runResultB.skippedCount, 1);
+  /* ほぼ同時に2つ目のトリガー実行が走っても、この候補を二重にclaimできずスキップする。 */
+  ctx.clock.advanceByMillis(1000);
+  var secondRun = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  assert.strictEqual(secondRun.processedCount, 0);
+  assert.strictEqual(secondRun.skippedCount, 1);
 
-  /* 予約は未確定のまま、メールも送られていない（実行Bが二重に処理していない）。 */
   var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
   assert.strictEqual(record.status, 'PENDING');
   assert.strictEqual(ctx.mailApp._sentEmails.length, 0);
 });
 
-test('処理権の世代管理: ハートビートが更新されないまま停止した処理は、次のトリガー実行が世代を進めて安全に再試行できる（実行停止後の再試行）', function () {
-  var ctx = setup();
+test('処理権の確認: 処理中はStripe再照会後・Bookings書き込み前に、claim時の世代番号で処理権を確認する', function () {
+  var ctx = setupWithClock(new Date('2026-09-20T10:10:00+09:00'));
   createBookingRow(ctx);
   createCalendarEvent(ctx);
 
-  var eventId = 'evt_crashed_0001';
-  var event = buildEvent(eventId, 'checkout.session.completed');
+  var eventId = 'evt_heartbeat_0001';
+  var rowNumber = persistEvent(ctx, eventId, 'checkout.session.completed');
+
+  var confirmCalls = [];
+  var originalConfirm = ctx.sandbox.StripeEventRepository.confirmProcessingClaim;
+  ctx.sandbox.StripeEventRepository.confirmProcessingClaim = function (row, generation) {
+    confirmCalls.push({ rowNumber: row, generation: generation });
+    return originalConfirm.apply(null, arguments);
+  };
+  var runResult;
+  try {
+    runResult = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  } finally {
+    ctx.sandbox.StripeEventRepository.confirmProcessingClaim = originalConfirm;
+  }
+
+  assert.ok(confirmCalls.length >= 2, '処理中に複数回確認するべき');
+  confirmCalls.forEach(function (call) {
+    assert.strictEqual(call.rowNumber, rowNumber);
+    assert.strictEqual(call.generation, 1);
+  });
+  assert.strictEqual(runResult.results[0].code, 'CONFIRMED');
+});
+
+/*
+ * 必須テスト1（レビュー対応・7回目）: Stripe APIの応答待ちが2分を超え、その間に別の
+ * トリガー実行が到達する。応答待ち中はハートビートを一切更新できない。
+ * 6回目のコードでは、実行Bは「最後のハートビートから2分超」を理由に処理権を奪い、
+ * 同じイベントを二重に処理し始めていた（修正前のコードで失敗することを確認済み）。
+ */
+test('必須1: Stripe APIの応答待ちが2分を超え、別のトリガー実行が到達しても処理権を奪わない', function () {
   var t0 = new Date('2026-09-20T10:00:00+09:00');
-  var claimResult = ctx.sandbox.StripeEventRepository.claim(eventId, 'checkout.session.completed', t0);
-  ctx.sandbox.StripeEventRepository.storeRawBody(claimResult.rowNumber, event, t0);
+  var ctx = setupWithClock(t0);
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  var eventId = 'evt_long_stripe_wait_0001';
+  persistEvent(ctx, eventId, 'checkout.session.completed');
 
-  /* 実行Aが着手した直後にクラッシュし（世代1）、以後ハートビートを一切更新しない。 */
-  var claimedByA = ctx.sandbox.StripeEventRepository.claimForProcessing(eventId, 'checkout.session.completed', t0, 2 * 60000);
-  var generationA = claimedByA.record.processingClaimCount;
+  var nestedRuns = [];
+  var bookingStatusDuringNestedRuns = [];
+  var retrieveCheckoutSessionCallCount = 0;
+  var originalRetrieveCheckoutSession = ctx.sandbox.StripeGateway.retrieveCheckoutSession;
+  ctx.sandbox.StripeGateway.retrieveCheckoutSession = function () {
+    retrieveCheckoutSessionCallCount++;
+    if (retrieveCheckoutSessionCallCount === 1) {
+      /* 実行AのCheckout Session再取得が応答待ちのまま2分30秒経過し、そこへ実行Bが到達する。 */
+      ctx.clock.advanceByMillis(150 * 1000);
+      nestedRuns.push(ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents());
+      bookingStatusDuringNestedRuns.push(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record.status);
+      /* さらに応答待ちが続き、実行開始から5分の時点で実行Cも到達する。 */
+      ctx.clock.advanceByMillis(150 * 1000);
+      nestedRuns.push(ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents());
+      bookingStatusDuringNestedRuns.push(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record.status);
+    }
+    return originalRetrieveCheckoutSession.apply(null, arguments);
+  };
 
-  /* 3分後（staleAfterMs=2分超）にトリガーが再実行され、世代を進めて安全に最初から
-     処理をやり直す。 */
-  var retryNow = new Date(t0.getTime() + 180000);
-  var runResult = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(retryNow);
-  assert.strictEqual(runResult.processedCount, 1);
+  var runA;
+  try {
+    runA = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  } finally {
+    ctx.sandbox.StripeGateway.retrieveCheckoutSession = originalRetrieveCheckoutSession;
+  }
 
-  var afterRow = ctx.sandbox.StripeEventRepository.findByEventId(eventId);
-  assert.strictEqual(afterRow.record.processingState, 'COMPLETED');
-  assert.notStrictEqual(Number(afterRow.record.processingClaimCount), generationA, '再試行により世代が進んでいるべき');
+  assert.strictEqual(retrieveCheckoutSessionCallCount, 1, '実行B・CはStripeへ問い合わせない（着手していない）');
+  nestedRuns.forEach(function (run) {
+    assert.strictEqual(run.processedCount, 0);
+    assert.strictEqual(run.skippedCount, 1);
+    assert.strictEqual(run.results.length, 0);
+  });
+  assert.deepStrictEqual(bookingStatusDuringNestedRuns, ['PENDING', 'PENDING']);
 
-  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
-  assert.strictEqual(record.status, 'CONFIRMED');
-  assert.strictEqual(record.paymentStatus, 'paid');
+  /* 実行Aは応答が戻った後も処理権を保持しており、最後まで正常に完了する。 */
+  assert.strictEqual(runA.processedCount, 1);
+  assert.strictEqual(runA.results[0].code, 'CONFIRMED');
+  var ledger = ctx.sandbox.StripeEventRepository.findByEventId(eventId).record;
+  assert.strictEqual(Number(ledger.processingClaimCount), 1, '世代は進んでいない');
+  assert.strictEqual(ledger.processingClaimedAt.getTime(), t0.getTime());
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record.status, 'CONFIRMED');
   assert.strictEqual(ctx.mailApp._sentEmails.length, 1);
 });
 
-test('処理権の世代管理: 再試行が完了した後に古い実行の遅延応答が戻っても、新しい実行の処理結果を上書きしない（再試行後に古い実行が遅れて戻るケース）', function () {
-  var ctx = setup();
+/*
+ * 必須テスト2（レビュー対応・7回目）: 応答待ち中に処理権が新しい世代へ移り、その後
+ * 古い応答が戻る。7回目の設計では、処理権が移るのは有効期限（実行開始から7分）の
+ * 経過後だけで、Apps Scriptの実行時間上限が守られる限りその時点で元の実行は存在しない。
+ * ここではその前提が崩れた場合（上限を超えて古い実行が戻ってきた場合）を再現し、
+ * 古い実行がBookings・Calendar・メール・Recovery・StripeEventsのいずれにも書き込まない
+ * ことを確認する。
+ */
+test('必須2: 応答待ち中に処理権が新しい世代へ移り、新しい世代が完了した後に古い応答が戻っても何も書き込まない', function () {
+  var t0 = new Date('2026-09-20T10:00:00+09:00');
+  var ctx = setupWithClock(t0);
   createBookingRow(ctx);
   createCalendarEvent(ctx);
+  var calendarWrites = countCalendarStatusWrites(ctx);
+  var eventId = 'evt_superseded_during_wait_0001';
+  persistEvent(ctx, eventId, 'checkout.session.completed');
 
-  var eventId = 'evt_delayed_response_0001';
-  var event = buildEvent(eventId, 'checkout.session.completed');
-  var t0 = new Date('2026-09-20T10:00:00+09:00');
-  var claimResult = ctx.sandbox.StripeEventRepository.claim(eventId, 'checkout.session.completed', t0);
-  ctx.sandbox.StripeEventRepository.storeRawBody(claimResult.rowNumber, event, t0);
+  var runB = null;
+  var snapshotAfterB = null;
+  var calendarWritesAfterB = null;
+  var recoveryCountAfterB = null;
+  var retrievePaymentIntentCallCount = 0;
+  var originalRetrievePaymentIntent = ctx.sandbox.StripeGateway.retrievePaymentIntent;
+  ctx.sandbox.StripeGateway.retrievePaymentIntent = function () {
+    retrievePaymentIntentCallCount++;
+    if (retrievePaymentIntentCallCount === 1) {
+      /* 実行AのPaymentIntent再取得が、実行Aの有効期限（7分）を超えて戻らない。 */
+      ctx.clock.advanceByMillis(PROCESSING_LEASE_MS + MINUTE);
+      runB = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+      snapshotAfterB = bookingSnapshot(ctx);
+      calendarWritesAfterB = calendarWrites.count;
+      recoveryCountAfterB = ctx.sandbox.RecoveryRepository.listAll().length;
+    }
+    return originalRetrievePaymentIntent.apply(null, arguments);
+  };
 
-  /* 実行Aが着手した直後に応答が極端に遅延し（世代1）、ハートビートを更新できないまま
-     長時間経過する。 */
-  var claimedByA = ctx.sandbox.StripeEventRepository.claimForProcessing(eventId, 'checkout.session.completed', t0, 2 * 60000);
-  var generationA = claimedByA.record.processingClaimCount;
+  var runA;
+  try {
+    runA = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  } finally {
+    ctx.sandbox.StripeGateway.retrievePaymentIntent = originalRetrievePaymentIntent;
+  }
 
-  /* 3分後、次のトリガー実行（実行B）が世代を進めて実際に処理を完了させる
-     （決済確認・予約自動確定・確認メール送信まで完了）。 */
-  var retryNow = new Date(t0.getTime() + 180000);
-  var runResultB = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(retryNow);
-  assert.strictEqual(runResultB.processedCount, 1);
-  var recordAfterB = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
-  assert.strictEqual(recordAfterB.status, 'CONFIRMED');
+  /* 実行Bが世代2として処理を完了させた。 */
+  assert.strictEqual(runB.processedCount, 1);
+  assert.strictEqual(runB.results[0].code, 'CONFIRMED');
+  assert.strictEqual(calendarWritesAfterB, 1);
   assert.strictEqual(ctx.mailApp._sentEmails.length, 1);
 
-  /*
-   * さらに後になって、実行Aの極端に遅延したStripe応答がようやく戻ってきて、
-   * 実行Aが（既に失っている）古い世代のまま自分の処理結果を書き込もうとする。
-   * これは拒否され、実行Bが既に確定させた結果を一切変更しない
-   * （StripeEvents台帳・Bookings・送信済みメールのいずれも）。
-   */
-  var staleWrite = ctx.sandbox.StripeEventRepository.finalizeForProcessing(claimedByA.rowNumber, generationA, {
-    processingState: 'REJECTED', bookingId: BOOKING_ID, outcomeCode: 'STALE_A_LATE_RESPONSE',
-    outcomeMessage: '実行Aの極端に遅延した応答'
-  }, new Date(t0.getTime() + 300000));
-  assert.strictEqual(staleWrite.written, false);
-  /* 実行Bは既にfinalizeForProcessingまで完了させている（世代も進み、終端状態にも
-     到達済み）ため、fencingはALREADY_TERMINALとして拒否する
-     （STALE_GENERATIONは、世代だけが進み相手がまだfinalizeしていない段階で発生する。
-     test/stripe-event-repository.test.jsで別途検証済み）。いずれの理由であっても、
-     実行Aの書き込みは拒否され上書きは起こらない。 */
-  assert.strictEqual(staleWrite.reason, 'ALREADY_TERMINAL');
+  /* 実行Aの古い応答が戻っても、処理権の確認で中断し、何も書き込まない。 */
+  assert.strictEqual(runA.results[0].finalized, false);
+  assert.strictEqual(runA.results[0].code, 'SUPERSEDED_BY_NEWER_ATTEMPT');
+  assert.strictEqual(bookingSnapshot(ctx), snapshotAfterB, 'Bookingsは実行Bの結果のまま');
+  assert.strictEqual(calendarWrites.count, calendarWritesAfterB, 'Calendarは更新されない');
+  assert.strictEqual(ctx.mailApp._sentEmails.length, 1, 'メールは再送されない');
+  assert.strictEqual(ctx.sandbox.RecoveryRepository.listAll().length, recoveryCountAfterB, 'Recoveryへ記録しない');
+  var ledger = ctx.sandbox.StripeEventRepository.findByEventId(eventId).record;
+  assert.strictEqual(ledger.processingState, 'COMPLETED');
+  assert.strictEqual(ledger.outcomeCode, 'CONFIRMED');
+  assert.strictEqual(Number(ledger.processingClaimCount), 2);
+});
 
-  var finalLedgerRow = ctx.sandbox.StripeEventRepository.findByEventId(eventId);
-  assert.strictEqual(finalLedgerRow.record.processingState, 'COMPLETED', '実行Bの結果が保持されているべき');
-  assert.strictEqual(finalLedgerRow.record.outcomeCode, 'CONFIRMED');
+/*
+ * 必須テスト2の補足: 処理権の確認（confirmProcessingClaim）を通過した直後、Bookingsへの
+ * 書き込みでLockを取得するまでの間に世代が進むケース（確認と書き込みの間の競合）。
+ * 確認を常に通過させても、BookingRepository/runFenced_がLock内で世代を再確認するため
+ * 何も書き込まれないことを確認する。
+ */
+test('必須2（補足）: 処理権の確認を通過した後に世代が進んでも、Bookings・Calendar・要復旧ゲートへは書き込まない', function () {
+  [
+    { name: '決済状態の更新・予約確定', stripeState: {} },
+    { name: '金額不一致による要復旧ゲート', stripeState: { amountReceived: 9999 } }
+  ].forEach(function (scenario) {
+    var t0 = new Date('2026-09-20T10:00:00+09:00');
+    var ctx = setupWithClock(t0, { stripeState: scenario.stripeState });
+    createBookingRow(ctx);
+    createCalendarEvent(ctx);
+    var calendarWrites = countCalendarStatusWrites(ctx);
+    var eventId = 'evt_toctou_0001';
+    persistEvent(ctx, eventId, 'checkout.session.completed');
+    var snapshotBefore = bookingSnapshot(ctx);
 
-  var finalRecord = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
-  assert.strictEqual(finalRecord.status, 'CONFIRMED', '実行Aの遅延書き込みでBookingsの状態が変化してはならない');
-  assert.strictEqual(ctx.mailApp._sentEmails.length, 1, '実行Aの遅延応答によってメールが再送されてはならない');
+    var originalRetrievePaymentIntent = ctx.sandbox.StripeGateway.retrievePaymentIntent;
+    var takenOver = false;
+    ctx.sandbox.StripeGateway.retrievePaymentIntent = function () {
+      if (!takenOver) {
+        takenOver = true;
+        /* 実行Aの有効期限後に、別の実行が処理権を取得した（まだ処理は完了していない）。 */
+        ctx.clock.advanceByMillis(PROCESSING_LEASE_MS + MINUTE);
+        assert.strictEqual(claimAsKilledExecution(ctx, eventId, 'checkout.session.completed').outcome, 'CLAIMED');
+      }
+      return originalRetrievePaymentIntent.apply(null, arguments);
+    };
+    /* 区切りでの確認が、世代が進む直前に通過してしまった状況を作る。 */
+    var originalConfirm = ctx.sandbox.StripeEventRepository.confirmProcessingClaim;
+    ctx.sandbox.StripeEventRepository.confirmProcessingClaim = function () { return { confirmed: true }; };
+
+    var runA;
+    try {
+      runA = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+    } finally {
+      ctx.sandbox.StripeGateway.retrievePaymentIntent = originalRetrievePaymentIntent;
+      ctx.sandbox.StripeEventRepository.confirmProcessingClaim = originalConfirm;
+    }
+
+    assert.strictEqual(runA.results[0].code, 'SUPERSEDED_BY_NEWER_ATTEMPT', scenario.name);
+    assert.strictEqual(bookingSnapshot(ctx), snapshotBefore, scenario.name + ': Bookingsへ書き込まない');
+    assert.strictEqual(calendarWrites.count, 0, scenario.name + ': Calendarへ書き込まない');
+    assert.strictEqual(ctx.mailApp._sentEmails.length, 0, scenario.name);
+    assert.strictEqual(ctx.sandbox.RecoveryRepository.listAll().length, 0, scenario.name + ': Recoveryへ書き込まない');
+    var ledger = ctx.sandbox.StripeEventRepository.findByEventId(eventId).record;
+    assert.strictEqual(ledger.processingState, 'RECEIVED', scenario.name + ': StripeEventsの結果を書き込まない');
+    assert.strictEqual(Number(ledger.processingClaimCount), 2, scenario.name);
+  });
+});
+
+/*
+ * 必須テスト3（レビュー対応・7回目）: 先行イベントの処理に時間がかかった後、後続イベントに
+ * 着手する。後続イベントのprocessingClaimedAtは、トリガー開始時刻ではなくそのイベント
+ * 自身の着手時刻（実時間）であること。業務上の監査時刻（now引数）とは分離されていること。
+ * 6回目のコードでは、後続イベントもトリガー開始時の`effectiveNow`でclaimされていた
+ * （修正前のコードで失敗することを確認済み）。
+ */
+test('必須3: 先行イベントが長時間処理された後、後続イベントの着手時刻はその後続イベント自身の着手時刻になる', function () {
+  var t0 = new Date('2026-09-21T09:00:00+09:00');
+  var ctx = setupWithClock(t0);
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  var firstEventId = 'evt_first_slow_0001';
+  var secondEventId = 'evt_second_after_slow_0001';
+  persistEvent(ctx, firstEventId, 'checkout.session.completed');
+  persistEvent(ctx, secondEventId, 'customer.created', JSON.stringify({ id: secondEventId, type: 'customer.created', data: { object: { id: 'cus_1' } } }));
+
+  var originalRetrieveCheckoutSession = ctx.sandbox.StripeGateway.retrieveCheckoutSession;
+  ctx.sandbox.StripeGateway.retrieveCheckoutSession = function () {
+    var result = originalRetrieveCheckoutSession.apply(null, arguments);
+    ctx.clock.advanceByMillis(150 * 1000);
+    return result;
+  };
+  var originalRetrievePaymentIntent = ctx.sandbox.StripeGateway.retrievePaymentIntent;
+  ctx.sandbox.StripeGateway.retrievePaymentIntent = function () {
+    var result = originalRetrievePaymentIntent.apply(null, arguments);
+    ctx.clock.advanceByMillis(30 * 1000);
+    return result;
+  };
+
+  /* 業務上の監査時刻（テスト用の固定日時）。処理権の管理には使われないこと。 */
+  var auditNow = new Date('2026-09-20T10:10:00+09:00');
+  var run;
+  try {
+    run = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(auditNow);
+  } finally {
+    ctx.sandbox.StripeGateway.retrieveCheckoutSession = originalRetrieveCheckoutSession;
+    ctx.sandbox.StripeGateway.retrievePaymentIntent = originalRetrievePaymentIntent;
+  }
+  assert.strictEqual(run.processedCount, 2);
+
+  var first = ctx.sandbox.StripeEventRepository.findByEventId(firstEventId).record;
+  var second = ctx.sandbox.StripeEventRepository.findByEventId(secondEventId).record;
+  assert.strictEqual(second.processingClaimedAt.getTime(), t0.getTime() + 180 * 1000,
+    '後続イベントの着手時刻は、先行イベントの処理（3分）が終わった後の実時間');
+  assert.strictEqual(first.processingClaimedAt.getTime(), t0.getTime(), '先行イベントは実行開始直後に着手');
+  assert.strictEqual(second.processingClaimedAt.getTime() > first.processingClaimedAt.getTime(), true);
+  /* 処理権の有効期限は同じ実行の開始時刻から決まる（その実行が確実に終了している時刻）。 */
+  assert.strictEqual(first.processingLeaseExpiresAt.getTime(), t0.getTime() + PROCESSING_LEASE_MS);
+  assert.strictEqual(second.processingLeaseExpiresAt.getTime(), t0.getTime() + PROCESSING_LEASE_MS);
+
+  /* 業務上の監査時刻は引数の固定日時のまま。 */
+  var booking = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(booking.status, 'CONFIRMED');
+  assert.strictEqual(booking.paymentConfirmedAt.getTime(), auditNow.getTime());
+  assert.strictEqual(first.updatedAt.getTime(), auditNow.getTime());
+});
+
+/*
+ * 必須テスト4（レビュー対応・7回目）: 処理権を取った実行がクラッシュ相当で停止した後、
+ * 永続化済みのrawBodyから再開できる。有効期限内に到達したトリガー実行は着手せず、
+ * 有効期限の経過後に到達したトリガー実行が世代を進めて最初からやり直す。
+ */
+test('必須4: クラッシュ相当の停止後、有効期限の経過後に永続化済みイベントを再取得して完了できる', function () {
+  var t0 = new Date('2026-09-20T10:00:00+09:00');
+  var ctx = setupWithClock(t0);
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  var eventId = 'evt_crashed_0001';
+  persistEvent(ctx, eventId, 'checkout.session.completed');
+
+  /* 実行Aが処理権を取った直後に強制終了された（後始末も行われない）。 */
+  assert.strictEqual(claimAsKilledExecution(ctx, eventId, 'checkout.session.completed').outcome, 'CLAIMED');
+
+  /* 3分後のトリガー実行は、実行Aが生きている可能性を否定できないため着手しない。 */
+  ctx.clock.advanceByMillis(3 * MINUTE);
+  var runB = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  assert.strictEqual(runB.processedCount, 0);
+  assert.strictEqual(runB.skippedCount, 1);
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record.status, 'PENDING');
+
+  /* 有効期限（実行Aの開始から7分）を過ぎたトリガー実行が再取得し、rawBodyから処理する。 */
+  ctx.clock.advanceByMillis(4 * MINUTE + 1000);
+  var runC = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  assert.strictEqual(runC.processedCount, 1);
+  assert.strictEqual(runC.results[0].code, 'CONFIRMED');
+
+  var ledger = ctx.sandbox.StripeEventRepository.findByEventId(eventId).record;
+  assert.strictEqual(ledger.processingState, 'COMPLETED');
+  assert.strictEqual(Number(ledger.processingClaimCount), 2, '再取得により世代が進む');
+  var booking = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(booking.status, 'CONFIRMED');
+  assert.strictEqual(booking.paymentStatus, 'paid');
+  assert.strictEqual(ctx.mailApp._sentEmails.length, 1);
+});
+
+/*
+ * 必須テスト5（レビュー対応・7回目）: 再実行後も予約確定・Calendar更新・確認メールが
+ * 二重にならず、既にpaidへ更新済みの入金記録を壊さない。実行Aが途中まで書き込んだ後に
+ * 強制終了された（後始末の処理権解放も行われない）状況を2通り再現する。
+ */
+test('必須5: 再実行後も予約確定・Calendar更新・確認メールが二重にならず、入金記録を壊さない', function () {
+  [
+    { name: 'paid更新後・予約確定前に停止', stopAt: 'confirmBooking' },
+    { name: '予約確定・メール送信後・台帳の完了記録前に停止', stopAt: 'finalizeForProcessing' }
+  ].forEach(function (scenario) {
+    var t0 = new Date('2026-09-20T10:00:00+09:00');
+    var ctx = setupWithClock(t0);
+    createBookingRow(ctx);
+    createCalendarEvent(ctx);
+    var calendarWrites = countCalendarStatusWrites(ctx);
+    var eventId = 'evt_rerun_0001';
+    persistEvent(ctx, eventId, 'checkout.session.completed');
+
+    /* 実行Aの停止を再現する: 指定の箇所で実行が打ち切られ、以後の処理（処理権の解放を
+       含む）は一切行われない。 */
+    var KilledSignal = function () {};
+    var target = scenario.stopAt === 'confirmBooking' ? ctx.sandbox.BookingRepository : ctx.sandbox.StripeEventRepository;
+    var originalTarget = target[scenario.stopAt];
+    var originalRelease = ctx.sandbox.StripeEventRepository.releaseProcessingClaim;
+    target[scenario.stopAt] = function () {
+      if (scenario.stopAt === 'finalizeForProcessing') {
+        /* finalizeの直前までの書き込み（予約確定・メール）は完了している。 */
+        assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record.status, 'CONFIRMED');
+      }
+      throw new KilledSignal();
+    };
+    ctx.sandbox.StripeEventRepository.releaseProcessingClaim = function () { return { released: false }; };
+    try {
+      ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+    } finally {
+      target[scenario.stopAt] = originalTarget;
+      ctx.sandbox.StripeEventRepository.releaseProcessingClaim = originalRelease;
+    }
+
+    var afterA = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+    assert.strictEqual(afterA.paymentStatus, 'paid', scenario.name);
+    var paymentConfirmedAtByA = afterA.paymentConfirmedAt.getTime();
+    var calendarWritesByA = calendarWrites.count;
+    var mailsByA = ctx.mailApp._sentEmails.length;
+
+    /* 有効期限の経過後、次のトリガー実行が最初からやり直す。 */
+    ctx.clock.advanceByMillis(PROCESSING_LEASE_MS + MINUTE);
+    var runC = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+    assert.strictEqual(runC.processedCount, 1, scenario.name);
+    assert.strictEqual(runC.results[0].code, 'CONFIRMED', scenario.name);
+
+    var finalRecord = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+    assert.strictEqual(finalRecord.status, 'CONFIRMED', scenario.name);
+    assert.strictEqual(finalRecord.paymentStatus, 'paid', scenario.name);
+    assert.strictEqual(finalRecord.stripePaymentIntentId, PAYMENT_INTENT_ID, scenario.name);
+    assert.strictEqual(finalRecord.paymentConfirmedAt.getTime(), paymentConfirmedAtByA, scenario.name + ': 入金確認時刻を上書きしない');
+    assert.strictEqual(finalRecord.paymentRecoveryRequiredAt, '', scenario.name + ': 要復旧にしない');
+    assert.strictEqual(calendarWrites.count, 1, scenario.name + ': Calendarの確定更新は1回だけ');
+    assert.strictEqual(ctx.mailApp._sentEmails.length, 1, scenario.name + ': 確認メールは1通だけ');
+    if (scenario.stopAt === 'finalizeForProcessing') {
+      assert.strictEqual(calendarWritesByA, 1);
+      assert.strictEqual(mailsByA, 1);
+    }
+    var ledger = ctx.sandbox.StripeEventRepository.findByEventId(eventId).record;
+    assert.strictEqual(ledger.processingState, 'COMPLETED', scenario.name);
+    assert.strictEqual(Number(ledger.processingClaimCount), 2, scenario.name);
+  });
+});
+
+test('1件の想定外の例外は同じ実行の後続イベントを止めず、処理権を手放して次のトリガー実行ですぐ再試行される', function () {
+  var t0 = new Date('2026-09-20T10:00:00+09:00');
+  var ctx = setupWithClock(t0);
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  var failingEventId = 'evt_unexpected_error_0001';
+  var laterEventId = 'evt_after_error_0001';
+  persistEvent(ctx, failingEventId, 'checkout.session.completed');
+  persistEvent(ctx, laterEventId, 'customer.created', JSON.stringify({ id: laterEventId, type: 'customer.created', data: { object: { id: 'cus_1' } } }));
+
+  var originalRetrieveCheckoutSession = ctx.sandbox.StripeGateway.retrieveCheckoutSession;
+  ctx.sandbox.StripeGateway.retrieveCheckoutSession = function () { throw new Error('injected unexpected error'); };
+  var firstRun;
+  try {
+    firstRun = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  } finally {
+    ctx.sandbox.StripeGateway.retrieveCheckoutSession = originalRetrieveCheckoutSession;
+  }
+  assert.strictEqual(firstRun.processedCount, 1, '後続イベントは同じ実行で処理される');
+  assert.strictEqual(firstRun.results[0].code, 'UNEXPECTED_ERROR');
+  assert.strictEqual(ctx.sandbox.StripeEventRepository.findByEventId(laterEventId).record.processingState, 'IGNORED');
+
+  /* 1分後の次のトリガー実行が、有効期限を待たずに再試行して完了させる。 */
+  ctx.clock.advanceByMillis(MINUTE);
+  var secondRun = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  assert.strictEqual(secondRun.processedCount, 1);
+  assert.strictEqual(secondRun.results[0].code, 'CONFIRMED');
+  assert.strictEqual(ctx.mailApp._sentEmails.length, 1);
+});
+
+test('実行開始から4分を過ぎたら新しいイベントに着手せず、次のトリガー実行に残す', function () {
+  var t0 = new Date('2026-09-20T10:00:00+09:00');
+  var ctx = setupWithClock(t0);
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  var slowEventId = 'evt_slow_budget_0001';
+  var deferredEventId = 'evt_deferred_0001';
+  persistEvent(ctx, slowEventId, 'checkout.session.completed');
+  persistEvent(ctx, deferredEventId, 'customer.created', JSON.stringify({ id: deferredEventId, type: 'customer.created', data: { object: { id: 'cus_1' } } }));
+
+  var originalRetrieveCheckoutSession = ctx.sandbox.StripeGateway.retrieveCheckoutSession;
+  ctx.sandbox.StripeGateway.retrieveCheckoutSession = function () {
+    ctx.clock.advanceByMillis(4 * MINUTE + 30000);
+    return originalRetrieveCheckoutSession.apply(null, arguments);
+  };
+  var firstRun;
+  try {
+    firstRun = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  } finally {
+    ctx.sandbox.StripeGateway.retrieveCheckoutSession = originalRetrieveCheckoutSession;
+  }
+  assert.strictEqual(firstRun.processedCount, 1);
+  assert.strictEqual(firstRun.deferredCount, 1);
+  var deferred = ctx.sandbox.StripeEventRepository.findByEventId(deferredEventId).record;
+  assert.strictEqual(deferred.processingState, 'RECEIVED');
+  assert.strictEqual(deferred.processingClaimCount, '', '処理権を取っていない');
+
+  ctx.clock.advanceByMillis(MINUTE);
+  var secondRun = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  assert.strictEqual(secondRun.processedCount, 1);
+  assert.strictEqual(ctx.sandbox.StripeEventRepository.findByEventId(deferredEventId).record.processingState, 'IGNORED');
 });
 
 /*
