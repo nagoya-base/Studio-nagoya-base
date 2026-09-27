@@ -191,7 +191,7 @@ var BookingMailTemplates = (function () {
       '',
       'ご利用時は、施設の利用ルールを守り、利用後は原状回復をお願いいたします。設備・備品の取り扱いには十分ご注意ください。',
       '',
-      '来場方法・キーボックス等の詳細案内は、利用日前日に別途メールでお送りします。',
+      accessGuideNoticeLine_(record, timezone),
       'ご不明点やキャンセル・変更のご希望は下記までご連絡ください。',
       contactLine_(config)
     ]);
@@ -221,10 +221,93 @@ var BookingMailTemplates = (function () {
       '終了時刻: ' + endTime,
       'ブランド: ' + brandLabel,
       '',
+      refundNoticeLines_(record),
       '改めてご利用をご希望の場合は、お手数ですが再度ご予約ください。',
       contactLine_(config)
     ]);
 
+    return { subject: subject, body: body };
+  }
+
+  /*
+   * Issue #341 PR-D: 確定メールの来場案内に関する一文。鍵承認ゲートの対象（Stripeカード
+   * 決済・当日予約以外）でまだ鍵承認が無い予約には、「前日に必ず届く」とは書かず、運営の
+   * 確認後に案内する旨だけを書く（鍵情報の送付を約束しない）。対象外の予約は従来の文言。
+   */
+  function accessGuideNoticeLine_(record, timezone) {
+    if (Booking.requiresAccessApproval(record, timezone) && !record.accessApprovedAt) {
+      return '来場方法等の詳細案内は、運営での確認が完了した後、利用日前日を目安に別途メールでお送りします。';
+    }
+    return '来場方法・キーボックス等の詳細案内は、利用日前日に別途メールでお送りします。';
+  }
+
+  /*
+   * Issue #341 PR-D: Stripeカード決済の予約を管理者が取り消した場合の返金に関する案内。
+   * 取消メールの時点では「返金完了」とは書かない（返金の完了は、Stripeで返金がsucceeded
+   * になった後に別メール＝buildRefundedMailで案内する）。
+   * - 返金なし（NONE）: 返金がない旨のみ。
+   * - 返金をStripeが受け付けた（refund_pending/refunded）: 返金額と「手続きを開始した」旨。
+   * - それ以外（返金の結果確認中・失敗・未記録）: 金額を約束せず「確認のうえ改めて連絡」。
+   * Stripe Checkoutで決済していない予約（現金・PayPay・旧Payment Link）は何も追加しない。
+   */
+  function refundNoticeLines_(record) {
+    if (!Booking.isStripeCheckoutBooking(record)) return '';
+    var paymentStatus = Booking.normalizePaymentStatus(record.paymentStatus);
+    if (record.refundDecision === 'NONE') {
+      return '今回のキャンセルでは、お支払い済みの利用料金の返金はございません。ご不明点は下記までお問い合わせください。\n';
+    }
+    if (!record.refundDecision) {
+      /*
+       * PR-Dレビュー対応・1回目: 未入金の取消では、発行済み決済URLの失効結果に応じて案内する。
+       * 失効を確認できない間は「失効した」とは書かず、支払わないよう案内する。取消と同時期に
+       * 決済が成立していた場合は、返金の有無を約束せず改めて連絡する旨だけを書く。
+       */
+      if (record.checkoutCancelState === 'PAYMENT_RECEIVED') {
+        return 'お支払いの手続きが完了していたことを確認しました。お支払い済みの利用料金の取り扱いについては、確認のうえ改めてご連絡いたします。\n';
+      }
+      if (record.checkoutCancelState === 'UNKNOWN' || record.checkoutCancelState === 'EXPIRE_REQUESTED') {
+        return 'お送りしているお支払い用のページからは、お支払いにならないようお願いいたします。' +
+          'すでにお支払いの手続きをされた場合は、確認のうえ改めてご連絡いたします。\n';
+      }
+      if (record.checkoutCancelState === 'EXPIRED') {
+        return 'お送りしていたお支払い用のページは無効になりました。お支払いは発生していません。\n';
+      }
+      if (paymentStatus !== Booking.PAYMENT_STATUS.PAID) return '';
+      return 'お支払い済みの利用料金の取り扱いについては、確認のうえ改めてご連絡いたします。\n';
+    }
+    var amount = formatJpyAmount_(record.refundAmount);
+    if (record.refundAttemptState === 'SUBMITTED' && amount &&
+        (paymentStatus === Booking.PAYMENT_STATUS.REFUND_PENDING || paymentStatus === Booking.PAYMENT_STATUS.REFUNDED)) {
+      return 'お支払い済みの利用料金のうち' + amount + 'について、クレジットカードへの返金手続きを開始しました。' +
+        '返金の完了は改めてメールでお知らせします。\n';
+    }
+    return 'お支払い済みの利用料金の返金については、手続きの状況を確認のうえ改めてご連絡いたします。\n';
+  }
+
+  /*
+   * REFUNDED（Issue #341 PR-D。Stripeで返金がsucceededになった後に1回だけ送る）。
+   * カード明細への反映時期はカード会社によるため、日付は約束しない。
+   */
+  function buildRefundedMail(record, config) {
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var amount = formatJpyAmount_(record.refundAmount);
+    if (!amount) {
+      throw new Error('返金額が記録されていないため、返金完了メールを送信できません。');
+    }
+    var subject = '【' + brandLabel + '】ご返金手続き完了のお知らせ';
+    var body = joinNonEmpty_([
+      record.name + ' 様',
+      '',
+      '下記のご予約のお支払いについて、クレジットカードへの返金手続きが完了しました。',
+      '',
+      '予約ID: ' + record.bookingId,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      'ブランド: ' + brandLabel,
+      '返金額: ' + amount,
+      '',
+      'カードのご利用明細への反映時期はカード会社により異なり、数日〜数週間かかる場合があります。',
+      contactLine_(config)
+    ]);
     return { subject: subject, body: body };
   }
 
@@ -435,6 +518,7 @@ var BookingMailTemplates = (function () {
     buildExpiredMail: buildExpiredMail,
     buildReminderMail: buildReminderMail,
     buildPaymentLinkMail: buildPaymentLinkMail,
-    buildPriceUpdateMail: buildPriceUpdateMail
+    buildPriceUpdateMail: buildPriceUpdateMail,
+    buildRefundedMail: buildRefundedMail
   };
 })();

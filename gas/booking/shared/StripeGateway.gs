@@ -240,9 +240,110 @@ var StripeGateway = (function () {
     return { ok: true, paymentIntent: normalizePaymentIntent_(result.raw) };
   }
 
+  /*
+   * 返金（Issue #341 PR-D）。status: 'pending' | 'requires_action' | 'succeeded' |
+   * 'failed' | 'canceled'。metadata.refundAttemptIdは、GAS側が返金試行ごとに発行・
+   * 永続化するIdempotency-Keyそのもの（BookingRefund.gs参照）。応答不明後の照会
+   * （listRefundsForPaymentIntent）で「自分の返金試行が実際に作られたか」を判別する
+   * ために使う。
+   */
+  function normalizeRefund_(raw) {
+    return {
+      id: raw.id,
+      status: raw.status || '',
+      amount: raw.amount,
+      currency: typeof raw.currency === 'string' ? raw.currency.toUpperCase() : '',
+      paymentIntentId: typeof raw.payment_intent === 'string' ? raw.payment_intent : ((raw.payment_intent && raw.payment_intent.id) || ''),
+      metadata: raw.metadata || {},
+      failureReason: raw.failure_reason || ''
+    };
+  }
+
+  /*
+   * params: { paymentIntentId, amountJpy, bookingId, refundAttemptId }
+   * idempotencyKey: refundAttemptId（BookingRefund.gsが返金APIを呼ぶ前に台帳へ永続化した値）。
+   * 同一キー・同一パラメータでの再送はStripe側で重複作成されず、最初に作成した返金が
+   * そのまま返る。呼び出し元は再送時も必ず同じparamsを渡すこと（台帳に保存済みの
+   * refundAmount等から組み立て直す）。
+   */
+  function createRefund(stripeConfig, params, idempotencyKey) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!params || !params.paymentIntentId || !params.refundAttemptId || !idempotencyKey) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: '返金に必要な識別子が指定されていません。' };
+    }
+    var payload = {
+      'payment_intent': params.paymentIntentId,
+      'amount': String(params.amountJpy),
+      'metadata[bookingId]': params.bookingId,
+      'metadata[refundAttemptId]': params.refundAttemptId
+    };
+    var result = performRequest_('post', API_BASE_ + '/refunds', stripeConfig.secretKey, encodeFormPayload_(payload), idempotencyKey);
+    if (!result.ok) return result;
+    return { ok: true, refund: normalizeRefund_(result.raw) };
+  }
+
+  function retrieveRefund(stripeConfig, refundId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!refundId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripeRefundIdが指定されていません。' };
+    }
+    var result = performRequest_('get', API_BASE_ + '/refunds/' + encodeURIComponent(refundId), stripeConfig.secretKey, null, null);
+    if (!result.ok) return result;
+    return { ok: true, refund: normalizeRefund_(result.raw) };
+  }
+
+  /*
+   * PaymentIntentに紐づく返金の一覧（最大100件。予約1件あたりの返金は通常1件のため
+   * ページングはしない。has_moreがtrueの場合は全件を確認できないためAMBIGUOUSとして
+   * 扱い、呼び出し元に「照会できなかった」と判断させる）。
+   */
+  function listRefundsForPaymentIntent(stripeConfig, paymentIntentId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!paymentIntentId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripePaymentIntentIdが指定されていません。' };
+    }
+    var url = API_BASE_ + '/refunds?payment_intent=' + encodeURIComponent(paymentIntentId) + '&limit=100';
+    var result = performRequest_('get', url, stripeConfig.secretKey, null, null);
+    if (!result.ok) return result;
+    if (!Array.isArray(result.raw.data) || result.raw.has_more) {
+      return { ok: false, errorType: 'AMBIGUOUS', message: 'Stripeの返金一覧を完全には取得できませんでした。' };
+    }
+    return { ok: true, refunds: result.raw.data.map(normalizeRefund_) };
+  }
+
+  /*
+   * Checkout Sessionの失効（Issue #341 PR-Dレビュー対応・1回目）。未決済（status=open）の
+   * Sessionだけが失効でき、既に完了・失効済みのSessionにはStripeがエラーを返す。呼び出し元
+   * （BookingRefund.gs）は、失敗・応答不明のいずれの場合も「未決済・失効済み」と断定せず、
+   * retrieveCheckoutSessionで実際の状態を確認すること。Idempotency-Keyは同一Sessionの
+   * 失効リクエストの再送を同じ応答へ収束させるためだけに付ける（資金移動は伴わない）。
+   */
+  function expireCheckoutSession(stripeConfig, sessionId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!sessionId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripeCheckoutSessionIdが指定されていません。' };
+    }
+    var url = API_BASE_ + '/checkout/sessions/' + encodeURIComponent(sessionId) + '/expire';
+    var result = performRequest_('post', url, stripeConfig.secretKey, '', 'expire-' + sessionId);
+    if (!result.ok) return result;
+    return { ok: true, session: normalizeSession_(result.raw) };
+  }
+
   return {
     createCheckoutSession: createCheckoutSession,
     retrieveCheckoutSession: retrieveCheckoutSession,
-    retrievePaymentIntent: retrievePaymentIntent
+    expireCheckoutSession: expireCheckoutSession,
+    retrievePaymentIntent: retrievePaymentIntent,
+    createRefund: createRefund,
+    retrieveRefund: retrieveRefund,
+    listRefundsForPaymentIntent: listRefundsForPaymentIntent
   };
 })();

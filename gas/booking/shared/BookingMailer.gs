@@ -33,7 +33,9 @@ var BookingMailer = (function () {
     /* Issue #334 PR-C: 管理者がBooking AdminからStripe決済リンクを送信するメール種別。 */
     PAYMENT_LINK: 'PAYMENT_LINK',
     /* PR #343レビュー対応: 管理者による金額修正を利用者へ案内するメール種別。 */
-    PRICE_UPDATE: 'PRICE_UPDATE'
+    PRICE_UPDATE: 'PRICE_UPDATE',
+    /* Issue #341 PR-D: Stripe返金の完了（succeeded）を利用者へ案内するメール種別。 */
+    REFUNDED: 'REFUNDED'
   };
 
   function describeError_(error) {
@@ -179,8 +181,14 @@ var BookingMailer = (function () {
     ALREADY_SENT: 'ALREADY_SENT',
     EMAIL_MISSING: 'EMAIL_MISSING',
     MAIL_NOT_READY: 'MAIL_NOT_READY',
+    /* Issue #341 PR-D: 鍵承認ゲート（Booking.evaluateAccessGate）による送信停止。 */
+    PAYMENT_RECOVERY_REQUIRED: 'PAYMENT_RECOVERY_REQUIRED',
+    PAYMENT_NOT_SETTLED: 'PAYMENT_NOT_SETTLED',
+    ACCESS_NOT_APPROVED: 'ACCESS_NOT_APPROVED',
     ELIGIBLE: 'ELIGIBLE'
   };
+
+  var ACCESS_GATE_REASON_CODE_LIST_ = ['PAYMENT_RECOVERY_REQUIRED', 'PAYMENT_NOT_SETTLED', 'ACCESS_NOT_APPROVED'];
 
   /*
    * record.dateがDate値として保存されていた場合に備え、timezone基準の'YYYY-MM-DD'へ
@@ -245,6 +253,19 @@ var BookingMailer = (function () {
         reasonCode: REMINDER_REASON_CODES.INVALID_STATUS,
         message: (record.status || '未設定') + ' の予約には前日リマインドを送信できません（CONFIRMEDのみ対象）。'
       };
+    }
+
+    /*
+     * Issue #341 PR-D: 鍵承認ゲート。Stripeカード決済（当日予約以外）の予約は、入金済み・
+     * 要復旧なし・返金手続きなし・鍵承認済みの場合に限り、鍵情報を含むこのメールを送る。
+     * forceでも無視しない（管理者の再送でも同じゲートを通す）。対象外の予約（現地払い・
+     * 旧Payment Link・当日予約）は常に通過し、従来どおりの判定になる。
+     * 送信処理（sendReminderMailForBooking）はLock取得後に再読込した最新レコードでこの関数を
+     * 呼ぶため、画面表示後に取消・返金・Recoveryへ移った予約は送信直前にここで止まる。
+     */
+    var accessGate = Booking.evaluateAccessGate(record, timezone);
+    if (!accessGate.ok) {
+      return { eligible: false, reasonCode: accessGate.reasonCode, message: accessGate.message };
     }
     if (!basicEligibility.ok && basicEligibility.reasonCode === 'ALREADY_SENT') {
       return {
@@ -326,7 +347,10 @@ var BookingMailer = (function () {
     if (evaluation.reasonCode === REMINDER_REASON_CODES.ALREADY_SENT) {
       return { ok: false, outcome: { success: true, skipped: true, reason: 'ALREADY_SENT', bookingId: bookingId, mailType: mailType } };
     }
-    if (evaluation.reasonCode === REMINDER_REASON_CODES.NOT_NEXT_DAY) {
+    if (evaluation.reasonCode === REMINDER_REASON_CODES.NOT_NEXT_DAY ||
+        ACCESS_GATE_REASON_CODE_LIST_.indexOf(evaluation.reasonCode) !== -1) {
+      /* 鍵承認ゲートによる停止（Issue #341 PR-D）もNOT_NEXT_DAYと同じ「対象外スキップ」。
+         メール障害ではないためlastMailError*・Recoveryへは記録しない。 */
       return {
         ok: false,
         outcome: {
@@ -334,7 +358,7 @@ var BookingMailer = (function () {
           skipped: true,
           bookingId: bookingId,
           mailType: mailType,
-          error: { code: 'NOT_NEXT_DAY', message: evaluation.message }
+          error: { code: evaluation.reasonCode, message: evaluation.message }
         }
       };
     }
@@ -635,9 +659,66 @@ var BookingMailer = (function () {
         return [guide.keyboxNumber, guide.unlockCode];
       },
       function (mailType, lockedBookingId, requiredStatus, sentAtFields, force, record) {
+        /*
+         * Issue #341 PR-D: 管理者の「来場案内を再送」（force）で、画面を開いた時点の
+         * reminderSentAt（epoch ms。未送信は0）をexpectedSentAtVersionとして受け取り、
+         * Lock取得後の最新値と一致しなければ送らない。二重クリック・別タブからの再送で、
+         * 先行の再送が既に成功していた場合に同じメールを重複送信しないため。
+         */
+        if (typeof opts.expectedSentAtVersion === 'number' && reminderSentAtVersion_(record) !== opts.expectedSentAtVersion) {
+          return {
+            ok: false,
+            outcome: {
+              success: false,
+              skipped: true,
+              bookingId: lockedBookingId,
+              mailType: mailType,
+              error: {
+                code: 'SEND_HISTORY_CONFLICT',
+                message: '画面を開いた後に来場案内が送信されています（別の操作で送信済み）。画面を更新して送信履歴を確認してください。'
+              }
+            }
+          };
+        }
         return reminderEligibilityCheck_(mailType, lockedBookingId, requiredStatus, sentAtFields, force, record, opts.targetDateString || null);
       }
     );
+  }
+
+  function reminderSentAtVersion_(record) {
+    var value = record.reminderSentAt;
+    return value && typeof value.getTime === 'function' && !isNaN(value.getTime()) ? value.getTime() : 0;
+  }
+
+  /*
+   * REFUNDED（Issue #341 PR-D）。Stripeで返金がsucceededになり、台帳がrefundedへ進んだ
+   * 予約にだけ送る（予約status＝CANCELLED/EXPIRED等は問わない）。refundMailSentAtによる
+   * 二重送信防止は他のメール種別と同じ。返金額・返金状態はLock取得後の最新レコードで確認する。
+   */
+  function refundedEligibilityCheck_(mailType, bookingId, requiredStatus, sentAtFields, force, record) {
+    var refunded = Booking.normalizePaymentStatus(record.paymentStatus) === Booking.PAYMENT_STATUS.REFUNDED &&
+      record.refundAttemptState === 'SUBMITTED' && record.refundStripeStatus === 'succeeded' && !!record.stripeRefundId;
+    if (!refunded) {
+      return {
+        ok: false,
+        outcome: {
+          success: false, skipped: true, bookingId: bookingId, mailType: mailType,
+          error: { code: 'REFUND_NOT_COMPLETED', message: '返金の完了がStripeで確認されていないため、返金完了メールは送信しません。' }
+        }
+      };
+    }
+    if (record.refundMailSentAt && !force) {
+      return { ok: false, outcome: { success: true, skipped: true, reason: 'ALREADY_SENT', bookingId: bookingId, mailType: mailType } };
+    }
+    return { ok: true };
+  }
+
+  function sendRefundedMailForBooking(bookingId, options) {
+    var opts = options || {};
+    return withBookingLock_(MAIL_TYPES.REFUNDED, bookingId, null, ['refundMailSentAt'], !!opts.force, function (record) {
+      var config = ensureMailConfigComplete_();
+      return BookingMailTemplates.buildRefundedMail(record, config);
+    }, null, refundedEligibilityCheck_);
   }
 
   /*
@@ -1385,6 +1466,8 @@ var BookingMailer = (function () {
     resolvePaymentLinkMetadataInconsistency: resolvePaymentLinkMetadataInconsistency,
     /* PR #343レビュー対応: 管理者による金額修正を利用者へ案内する送信関数。 */
     sendPriceUpdateMailForBooking: sendPriceUpdateMailForBooking,
+    /* Issue #341 PR-D: Stripe返金の完了案内（BookingRefund.gsから呼ぶ）。 */
+    sendRefundedMailForBooking: sendRefundedMailForBooking,
     /* BookingRepository.gs等、利用者メール経路の他ファイルからも同じredaction方針で
        Loggerへ出力できるよう公開する（PRレビュー対応）。 */
     sanitizeErrorMessage: sanitizeErrorMessage_,

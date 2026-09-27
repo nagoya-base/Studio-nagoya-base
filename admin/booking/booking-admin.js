@@ -322,7 +322,11 @@ function render() {
     if (canConfirm) {
       actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>確定</button>';
     }
-    if (canCancel) {
+    if (canCancel && b.refundDecisionRequired) {
+      /* Issue #341 PR-D: Stripeで入金済みの予約は、返金方法を選ぶ「取消・返金」（予約詳細）
+         からのみ取り消せる（通常のキャンセルはサーバー側でも拒否される）。 */
+      actions += '<button type="button" class="action cancel" data-action="detail" data-id="' + escapeHtml(b.bookingId) + '">取消・返金</button>';
+    } else if (canCancel) {
       actions += '<button type="button" class="action cancel" data-action="cancel" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>キャンセル</button>';
     }
     if (canRevive) {
@@ -362,6 +366,8 @@ function render() {
         '<div class="card-sub">' + escapeHtml(b.paymentMethod) + ' ・ ' + escapeHtml(b.purpose) + '</div>' +
         priceLine +
         priceUpdateWarningLine +
+        (b.paymentRecoveryRequired ? '<div class="card-price-warning">⚠ 決済要対応</div>' : '') +
+        (b.accessApprovalPending ? '<div class="card-price-warning">🔑 鍵承認待ち</div>' : '') +
         cardDueLine +
         '<div class="card-id">' + escapeHtml(b.bookingId) + '</div>' +
         '<div class="card-actions">' + actions + '</div>' +
@@ -462,6 +468,7 @@ function showDetailModal(booking) {
     return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
   }).join('');
   renderPaymentLinkSection_(booking);
+  renderPaymentSection_(booking);
   /* いずれもmodal-bodyの直後へinsertAdjacentElement('afterend', ...)で挿入するため、
      画面上の表示順（金額修正→修正案内→要復旧通知→基準料金→日程変更→精算記録）に
      したい場合は逆順で呼び出す（後から挿入したものほどmodal-bodyに近い位置に来る）。
@@ -1882,6 +1889,519 @@ function runCancel(bookingId) {
     .adminCancelBooking(bookingId);
 }
 
+/*
+ * ============================================================================
+ * Issue #341 PR-D: Stripeカード決済の予約の「取消・返金」「返金状態を照会」
+ * 「決済要対応の解消」「鍵承認」「来場案内を再送」、および決済要対応（Recovery）の一覧。
+ * ============================================================================
+ *
+ * 判定ロジック（返金可否・返金額の上限・鍵承認ゲート・送信可否）はすべてサーバー側
+ * （BookingRefund.gs・BookingAccessApproval.gs・BookingMailer.gs）が、Lock取得後の最新の
+ * 台帳で行う。この画面は入力と確認ダイアログ、結果（error.message）の表示だけを担う。
+ * 返金額は管理者が都度選ぶ（全額／一部／返金なし）。システムはキャンセル料を計算しない。
+ */
+var paymentUi_ = {
+  container: null,
+  statusEl: null,
+  reconcileButton: null,
+  resolveButton: null,
+  refundContainer: null,
+  refundDecisionSelect: null,
+  refundAmountInput: null,
+  refundReasonInput: null,
+  refundButton: null,
+  accessContainer: null,
+  accessStatusEl: null,
+  approveButton: null,
+  resendButton: null,
+  inFlight: false
+};
+
+function paymentStatusLabel(value) {
+  var labels = {
+    not_started: '決済前',
+    checkout_pending: '決済待ち',
+    paid: '入金済み',
+    refund_pending: '返金手続き中',
+    refunded: '返金済み',
+    failed: '決済失敗',
+    unknown: '不明（要確認）'
+  };
+  return labels[value] || value || '';
+}
+
+function refundAttemptStateLabel_(value) {
+  var labels = {
+    RESERVED: '返金を実行中',
+    SUBMITTED: 'Stripeが受付済み',
+    UNKNOWN: '結果不明（照会が必要）',
+    FAILED: '返金失敗（要対応）'
+  };
+  return labels[value] || value || '';
+}
+
+/* PR-Dレビュー対応・1回目: 未入金の取消で発行済み決済URLを失効させた結果。 */
+function checkoutCancelStateLabel_(value) {
+  var labels = {
+    EXPIRE_REQUESTED: '失効を確認中（結果未記録）',
+    EXPIRED: 'Stripe側で失効済み',
+    NO_SESSION: '発行済みの決済URLなし',
+    UNKNOWN: '失効を確認できていません（要再確認）',
+    PAYMENT_RECEIVED: '取消と同時期に決済が成立（要対応）'
+  };
+  return labels[value] || value || '';
+}
+
+function refundDecisionLabel_(value) {
+  var labels = { FULL: '全額返金', PARTIAL: '一部返金', NONE: '返金なし' };
+  return labels[value] || value || '';
+}
+
+/* 予約詳細の決済・返金状態の表示文（純粋関数。テスト可能にするためDOMから分離）。 */
+function describePaymentState_(booking) {
+  if (!booking || !booking.isStripeCheckout) return '';
+  var lines = ['決済状態: ' + paymentStatusLabel(booking.paymentStatus)];
+  if (booking.stripeAmount !== null && booking.stripeAmount !== undefined) {
+    lines.push('請求額: ' + formatYen_(booking.stripeAmount));
+  }
+  if (booking.paymentConfirmedAt) lines.push('入金確認: ' + booking.paymentConfirmedAt);
+  if (booking.stripeCheckoutSessionId) lines.push('Checkout Session: ' + booking.stripeCheckoutSessionId);
+  if (booking.stripePaymentIntentId) lines.push('PaymentIntent: ' + booking.stripePaymentIntentId);
+  if (booking.refundDecision) {
+    lines.push('返金方法: ' + refundDecisionLabel_(booking.refundDecision) +
+      (booking.refundDecision !== 'NONE' && booking.refundAmount !== null && booking.refundAmount !== undefined ? '（' + formatYen_(booking.refundAmount) + '）' : '') +
+      (booking.refundDecidedAt ? ' / 実行: ' + booking.refundDecidedAt : ''));
+  }
+  if (booking.refundReason) lines.push('取消・返金の理由: ' + booking.refundReason);
+  if (booking.checkoutCancelState) {
+    lines.push('決済URLの失効: ' + (booking.checkoutRecheckRequired === true && booking.checkoutCancelState !== 'UNKNOWN'
+      ? '要再確認（台帳の記録「' + checkoutCancelStateLabel_(booking.checkoutCancelState) + '」は未確定の可能性）'
+      : checkoutCancelStateLabel_(booking.checkoutCancelState)) +
+      (booking.checkoutCancelCheckedAt ? '（確認: ' + booking.checkoutCancelCheckedAt + '）' : ''));
+  }
+  if (booking.refundAttemptState) lines.push('返金の状態: ' + refundAttemptStateLabel_(booking.refundAttemptState) +
+    (booking.refundStripeStatus ? '（Stripe: ' + booking.refundStripeStatus + '）' : ''));
+  if (booking.stripeRefundId) lines.push('返金ID: ' + booking.stripeRefundId);
+  if (booking.refundedAt) lines.push('返金完了: ' + booking.refundedAt);
+  if (booking.refundMailSentAt) lines.push('返金完了メール送信: ' + booking.refundMailSentAt);
+  if (booking.paymentLastErrorAt) lines.push('直近の決済エラー: ' + booking.paymentLastErrorAt + ' ' + (booking.paymentLastErrorMessage || ''));
+  if (booking.paymentRecoveryRequiredAt) {
+    lines.push('⚠ 決済要対応（' + booking.paymentRecoveryRequiredAt + '）: ' + (booking.paymentRecoveryReason || ''));
+  }
+  return lines.join('\n');
+}
+
+/*
+ * 取消・返金フォームの入力検証（純粋関数）。サーバー側でも同じ検証を必ず行うため、ここは
+ * 明らかな入力ミスを送信前に知らせるだけ。戻り値: { ok, amountJpy, message }。
+ */
+function validateRefundInput_(booking, decision, amountText, reason) {
+  if (['FULL', 'PARTIAL', 'NONE'].indexOf(decision) === -1) {
+    return { ok: false, message: '返金方法を選択してください。' };
+  }
+  if (!reason || !String(reason).trim()) {
+    return { ok: false, message: '取消・返金の理由を入力してください。' };
+  }
+  if (decision === 'FULL') return { ok: true, amountJpy: booking.stripeAmount };
+  if (decision === 'NONE') return { ok: true, amountJpy: 0 };
+  var text = String(amountText || '').trim();
+  if (!PRICE_AMOUNT_INPUT_PATTERN_.test(text)) {
+    return { ok: false, message: '一部返金の金額を1円以上の整数で入力してください。' };
+  }
+  var amount = Number(text);
+  if (typeof booking.stripeAmount === 'number' && amount > booking.stripeAmount) {
+    return { ok: false, message: '返金額は請求額（' + formatYen_(booking.stripeAmount) + '）以下で入力してください。' };
+  }
+  return { ok: true, amountJpy: amount };
+}
+
+function buildRefundConfirmMessage_(booking, decision, amountJpy, reason) {
+  var active = booking.status === 'PENDING' || booking.status === 'CONFIRMED';
+  var refundLine = decision === 'NONE'
+    ? '返金: なし（返金は行いません）'
+    : '返金: ' + refundDecisionLabel_(decision) + ' ' + formatYen_(amountJpy) + '（請求額 ' + formatYen_(booking.stripeAmount) + '）';
+  return '予約ID: ' + booking.bookingId + '\n' +
+    '利用日: ' + booking.date + ' ' + booking.startAt + '\n' +
+    '利用者名: ' + booking.name + '\n' +
+    refundLine + '\n' +
+    '理由: ' + reason + '\n\n' +
+    (active ? 'この予約を取り消し（Calendarの予約枠を削除）、' : '') +
+    (decision === 'NONE'
+      ? (booking.paymentStatus === 'paid'
+        ? '入金済みの料金を返金しないことを記録します。'
+        : '発行済みの決済URL（Checkout Session）もStripe側で失効させます（入金前のため返金はありません）。')
+      : 'Stripeで返金を実行します。') + '\n' +
+    '利用者へ取消の案内メールを送信します（返金完了のお知らせは、Stripeで返金が完了した後に別途送信されます）。\n\n' +
+    'この操作は取り消せません。実行しますか？';
+}
+
+/* サーバー関数の結果から、管理者へ表示するアラート文言を組み立てる（純粋関数）。 */
+function describePaymentActionResult_(result, successText) {
+  if (!result) return '結果を取得できませんでした。画面を更新して状態を確認してください。';
+  if (result.success) {
+    var lines = [successText];
+    if (result.message) lines.push(result.message);
+    if (result.warning && result.warning.message) lines.push('⚠ ' + result.warning.message);
+    if (result.cancelMailSent === false && result.cancelMailError) lines.push('⚠ 取消メールを送信できませんでした: ' + (result.cancelMailError.message || ''));
+    if (result.refundMailSent) lines.push('返金完了メールを送信しました。');
+    return lines.join('\n');
+  }
+  var message = (result.skipped ? '送信条件を満たさないため送信しませんでした: ' : '実行できませんでした: ') +
+    ((result.error && result.error.message) || '');
+  if (result.cancelled) message += '\n（予約の取消は完了しています）';
+  return message;
+}
+
+function initPaymentUi_() {
+  var modal = document.getElementById('modal');
+  var closeButton = document.getElementById('modal-close');
+
+  var container = document.createElement('div');
+  container.id = 'payment-section';
+  var heading = document.createElement('h3');
+  heading.textContent = '決済・返金（Stripe）';
+  container.appendChild(heading);
+  var statusEl = document.createElement('pre');
+  statusEl.id = 'payment-status';
+  statusEl.className = 'payment-status';
+  container.appendChild(statusEl);
+  var dashboardLink = document.createElement('a');
+  dashboardLink.id = 'payment-dashboard-link';
+  dashboardLink.target = '_blank';
+  dashboardLink.rel = 'noopener noreferrer';
+  dashboardLink.textContent = 'Stripe管理画面で開く';
+  container.appendChild(dashboardLink);
+  var reconcileButton = document.createElement('button');
+  reconcileButton.type = 'button';
+  reconcileButton.id = 'payment-reconcile-button';
+  reconcileButton.textContent = '返金状態を照会';
+  container.appendChild(reconcileButton);
+  var expiryButton = document.createElement('button');
+  expiryButton.type = 'button';
+  expiryButton.id = 'payment-expiry-reconcile-button';
+  expiryButton.textContent = '決済URLの失効を再確認';
+  container.appendChild(expiryButton);
+  var resolveButton = document.createElement('button');
+  resolveButton.type = 'button';
+  resolveButton.id = 'payment-resolve-button';
+  resolveButton.textContent = '決済要対応を解消';
+  container.appendChild(resolveButton);
+
+  var refundContainer = document.createElement('div');
+  refundContainer.id = 'refund-section';
+  var refundHeading = document.createElement('h3');
+  refundHeading.textContent = '取消・返金';
+  refundContainer.appendChild(refundHeading);
+  var decisionLabel = document.createElement('label');
+  decisionLabel.textContent = '返金方法';
+  var decisionSelect = document.createElement('select');
+  decisionSelect.id = 'refund-decision-select';
+  decisionSelect.innerHTML =
+    '<option value="">選択してください</option>' +
+    '<option value="FULL">全額返金</option>' +
+    '<option value="PARTIAL">一部返金（金額を入力）</option>' +
+    '<option value="NONE">返金なし（取消のみ）</option>';
+  decisionLabel.appendChild(decisionSelect);
+  refundContainer.appendChild(decisionLabel);
+  var amountLabel = document.createElement('label');
+  amountLabel.textContent = '一部返金の金額（円）';
+  var amountInput = document.createElement('input');
+  amountInput.type = 'number';
+  amountInput.id = 'refund-amount-input';
+  amountInput.min = '1';
+  amountInput.step = '1';
+  amountLabel.appendChild(amountInput);
+  refundContainer.appendChild(amountLabel);
+  var reasonLabel = document.createElement('label');
+  reasonLabel.textContent = '理由（必須・管理者の記録用。利用者には送りません）';
+  var reasonInput = document.createElement('textarea');
+  reasonInput.id = 'refund-reason-input';
+  reasonInput.maxLength = 500;
+  reasonLabel.appendChild(reasonInput);
+  refundContainer.appendChild(reasonLabel);
+  var refundButton = document.createElement('button');
+  refundButton.type = 'button';
+  refundButton.id = 'refund-submit-button';
+  refundButton.className = 'danger';
+  refundButton.textContent = '取消・返金を実行';
+  refundContainer.appendChild(refundButton);
+
+  var accessContainer = document.createElement('div');
+  accessContainer.id = 'access-section';
+  var accessHeading = document.createElement('h3');
+  accessHeading.textContent = '鍵承認・来場案内';
+  accessContainer.appendChild(accessHeading);
+  var accessStatusEl = document.createElement('div');
+  accessStatusEl.id = 'access-status';
+  accessContainer.appendChild(accessStatusEl);
+  var approveButton = document.createElement('button');
+  approveButton.type = 'button';
+  approveButton.id = 'access-approve-button';
+  approveButton.textContent = '鍵承認';
+  accessContainer.appendChild(approveButton);
+  var resendButton = document.createElement('button');
+  resendButton.type = 'button';
+  resendButton.id = 'reminder-resend-button';
+  resendButton.textContent = '来場案内（前日リマインド）を再送';
+  accessContainer.appendChild(resendButton);
+
+  modal.insertBefore(container, closeButton);
+  modal.insertBefore(refundContainer, closeButton);
+  modal.insertBefore(accessContainer, closeButton);
+
+  reconcileButton.addEventListener('click', runReconcileRefund_);
+  expiryButton.addEventListener('click', runReconcileCheckoutExpiry_);
+  resolveButton.addEventListener('click', runResolvePaymentRecovery_);
+  refundButton.addEventListener('click', runCancelWithRefund_);
+  approveButton.addEventListener('click', runApproveAccess_);
+  resendButton.addEventListener('click', runResendReminder_);
+
+  paymentUi_.container = container;
+  paymentUi_.statusEl = statusEl;
+  paymentUi_.dashboardLink = dashboardLink;
+  paymentUi_.reconcileButton = reconcileButton;
+  paymentUi_.resolveButton = resolveButton;
+  paymentUi_.expiryButton = expiryButton;
+  paymentUi_.refundContainer = refundContainer;
+  paymentUi_.refundDecisionSelect = decisionSelect;
+  paymentUi_.refundAmountInput = amountInput;
+  paymentUi_.refundReasonInput = reasonInput;
+  paymentUi_.refundButton = refundButton;
+  paymentUi_.accessContainer = accessContainer;
+  paymentUi_.accessStatusEl = accessStatusEl;
+  paymentUi_.approveButton = approveButton;
+  paymentUi_.resendButton = resendButton;
+}
+
+/* 取消・返金フォームを出す予約か（表示のヒント。最終判定はサーバー側）。 */
+function canRequestRefund_(booking) {
+  if (!booking || !booking.isStripeCheckout || booking.refundInFlight) return false;
+  if (booking.paymentStatus === 'paid') return true;
+  /* 入金前のカード予約（決済待ち等）の取消は「返金なし」のみ。 */
+  return (booking.status === 'PENDING' || booking.status === 'CONFIRMED') &&
+    ['not_started', 'checkout_pending', 'failed'].indexOf(booking.paymentStatus) !== -1;
+}
+
+function renderPaymentSection_(booking) {
+  var ui = paymentUi_;
+  if (!ui.container) return;
+  var show = !!(booking && booking.isStripeCheckout);
+  [ui.container, ui.refundContainer].forEach(function (el) {
+    if (show) { el.classList.remove('hidden'); } else { el.classList.add('hidden'); }
+  });
+  if (show) {
+    ui.statusEl.textContent = describePaymentState_(booking);
+    ui.dashboardLink.href = booking.stripeDashboardUrl || '';
+    if (booking.stripeDashboardUrl) { ui.dashboardLink.classList.remove('hidden'); } else { ui.dashboardLink.classList.add('hidden'); }
+    var canReconcile = !!booking.refundAttemptId;
+    ui.reconcileButton.disabled = ui.inFlight || !canReconcile;
+    if (canReconcile) { ui.reconcileButton.classList.remove('hidden'); } else { ui.reconcileButton.classList.add('hidden'); }
+    var canCheckExpiry = booking.checkoutRecheckRequired === true ||
+      booking.checkoutCancelState === 'UNKNOWN' || booking.checkoutCancelState === 'EXPIRE_REQUESTED';
+    if (canCheckExpiry) { ui.expiryButton.classList.remove('hidden'); } else { ui.expiryButton.classList.add('hidden'); }
+    ui.expiryButton.disabled = ui.inFlight || !canCheckExpiry;
+    if (booking.paymentRecoveryRequiredAt) { ui.resolveButton.classList.remove('hidden'); } else { ui.resolveButton.classList.add('hidden'); }
+    ui.resolveButton.disabled = ui.inFlight;
+
+    var refundable = canRequestRefund_(booking);
+    if (refundable) { ui.refundContainer.classList.remove('hidden'); } else { ui.refundContainer.classList.add('hidden'); }
+    ui.refundButton.disabled = ui.inFlight || !refundable;
+    ui.refundDecisionSelect.value = '';
+    ui.refundAmountInput.value = '';
+    ui.refundReasonInput.value = '';
+  }
+
+  /* 鍵承認・来場案内の再送: 鍵承認はゲート対象の予約のみ、再送はCONFIRMED予約全般。 */
+  var showAccess = !!booking && booking.status === 'CONFIRMED';
+  if (showAccess) { ui.accessContainer.classList.remove('hidden'); } else { ui.accessContainer.classList.add('hidden'); }
+  if (!showAccess) return;
+  var accessLines = [];
+  if (booking.accessApprovalRequired) {
+    accessLines.push(booking.accessApprovedAt ? '鍵承認: 承認済み（' + booking.accessApprovedAt + '）' : '鍵承認: 未承認（承認するまで鍵情報を含む来場案内は送信されません）');
+  } else {
+    accessLines.push('鍵承認: 対象外（前日の来場案内は従来どおり自動送信されます）');
+  }
+  accessLines.push('来場案内（前日リマインド）: ' + (booking.reminderSentAt ? '送信済み（' + booking.reminderSentAt + '）' : '未送信'));
+  ui.accessStatusEl.textContent = accessLines.join('\n');
+  if (booking.accessApprovalRequired && !booking.accessApprovedAt) { ui.approveButton.classList.remove('hidden'); } else { ui.approveButton.classList.add('hidden'); }
+  ui.approveButton.disabled = ui.inFlight || !booking.accessApprovalPending;
+  ui.resendButton.disabled = ui.inFlight;
+}
+
+function runPaymentAction_(booking, statusText, invoke, successText) {
+  if (paymentUi_.inFlight) return;
+  paymentUi_.inFlight = true;
+  renderPaymentSection_(booking);
+  setStatusLine(statusText);
+  var done = function () {
+    paymentUi_.inFlight = false;
+    setStatusLine('');
+    refreshOpenDetail_(booking.bookingId);
+    loadBookings();
+  };
+  invoke(google.script.run
+    .withSuccessHandler(function (result) {
+      alert(describePaymentActionResult_(result, successText));
+      done();
+    })
+    .withFailureHandler(function (error) {
+      alert('エラーが発生しました: ' + (error && error.message ? error.message : error) + '\n画面を更新して状態を確認してください。');
+      done();
+    }));
+}
+
+function runCancelWithRefund_() {
+  var booking = currentDetailBooking_;
+  if (!booking || !canRequestRefund_(booking)) return;
+  var decision = paymentUi_.refundDecisionSelect.value;
+  var reason = paymentUi_.refundReasonInput.value;
+  var validation = validateRefundInput_(booking, decision, paymentUi_.refundAmountInput.value, reason);
+  if (!validation.ok) {
+    alert(validation.message);
+    return;
+  }
+  if (!window.confirm(buildRefundConfirmMessage_(booking, decision, validation.amountJpy, String(reason).trim()))) return;
+  runPaymentAction_(booking, '取消・返金を処理中…', function (run) {
+    run.adminCancelBookingWithRefund(booking.bookingId, decision, decision === 'PARTIAL' ? validation.amountJpy : null, String(reason).trim());
+  }, decision === 'NONE' ? '取消しました（返金なし）。' : '取消・返金の処理を実行しました。');
+}
+
+function runReconcileRefund_() {
+  var booking = currentDetailBooking_;
+  if (!booking || !booking.refundAttemptId) return;
+  runPaymentAction_(booking, '返金状態を照会中…', function (run) {
+    run.adminReconcileRefund(booking.bookingId);
+  }, '返金状態を照会しました。');
+}
+
+function runReconcileCheckoutExpiry_() {
+  var booking = currentDetailBooking_;
+  if (!booking || (booking.checkoutRecheckRequired !== true &&
+      booking.checkoutCancelState !== 'UNKNOWN' && booking.checkoutCancelState !== 'EXPIRE_REQUESTED')) return;
+  runPaymentAction_(booking, '決済URLの失効を確認中…', function (run) {
+    run.adminReconcileCheckoutExpiry(booking.bookingId);
+  }, '決済URLの失効を確認しました。');
+}
+
+function runResolvePaymentRecovery_() {
+  var booking = currentDetailBooking_;
+  if (!booking || !booking.paymentRecoveryRequiredAt) return;
+  var note = window.prompt(
+    '予約ID: ' + booking.bookingId + '\n要対応の理由: ' + (booking.paymentRecoveryReason || '') + '\n\n' +
+    'Stripe管理画面と台帳を確認した内容を入力してください（必須）。\n' +
+    'サーバー側でStripeの実際の状態と台帳の整合を確認できた場合のみ解消します。'
+  );
+  if (note === null) return;
+  if (!String(note).trim()) {
+    alert('確認した内容を入力してください。');
+    return;
+  }
+  runPaymentAction_(booking, '決済要対応を確認中…', function (run) {
+    run.adminResolvePaymentRecovery(booking.bookingId, String(note).trim());
+  }, '決済要対応を解消しました。');
+}
+
+function runApproveAccess_() {
+  var booking = currentDetailBooking_;
+  if (!booking || !booking.accessApprovalPending) return;
+  if (!window.confirm(
+    '予約ID: ' + booking.bookingId + '\n利用日: ' + booking.date + '\n利用者名: ' + booking.name + '\n\n' +
+    'この予約の鍵承認を記録します。\n承認だけではメールは送信されません（前日18時の自動送信、または「来場案内を再送」で送信されます）。\n\n実行しますか？'
+  )) return;
+  runPaymentAction_(booking, '鍵承認を記録中…', function (run) {
+    run.adminApproveAccess(booking.bookingId);
+  }, '鍵承認を記録しました（メールは送信していません）。');
+}
+
+function runResendReminder_() {
+  var booking = currentDetailBooking_;
+  if (!booking || booking.status !== 'CONFIRMED') return;
+  if (!window.confirm(
+    '予約ID: ' + booking.bookingId + '\n利用日: ' + booking.date + '\n利用者名: ' + booking.name + '\n\n' +
+    '鍵情報を含む来場案内（前日リマインド）を' + (booking.reminderSentAt ? '再送' : '送信') + 'します。\n' +
+    '送信直前に予約・決済・鍵承認の状態を再確認し、条件を満たさない場合は送信しません。\n\n実行しますか？'
+  )) return;
+  var version = typeof booking.reminderSentAtVersion === 'number' ? booking.reminderSentAtVersion : 0;
+  runPaymentAction_(booking, '来場案内を送信中…', function (run) {
+    run.adminResendReminderMail(booking.bookingId, version);
+  }, '来場案内を送信しました。');
+}
+
+/* 決済要対応（Recovery）一覧の1件分のHTML（純粋関数）。予約IDの「詳細」ボタンから
+   予約詳細を開いて対応する（一覧を表示しただけでは何も変更しない）。 */
+function renderPaymentRecoveryItem_(item) {
+  var rows = (item.openRecoveryRows || []).map(function (row) {
+    return '<li>' + escapeHtml(row.occurredAt) + ' ' + escapeHtml(row.failureType) + ': ' + escapeHtml(row.errorMessage) + '</li>';
+  }).join('');
+  var ids = [
+    item.stripeCheckoutSessionId ? 'Session: ' + item.stripeCheckoutSessionId : '',
+    item.stripePaymentIntentId ? 'PaymentIntent: ' + item.stripePaymentIntentId : '',
+    item.stripeRefundId ? '返金ID: ' + item.stripeRefundId : '',
+    item.refundAttemptState ? '返金試行: ' + refundAttemptStateLabel_(item.refundAttemptState) : '',
+    item.checkoutCancelState ? '決済URL: ' + checkoutCancelStateLabel_(item.checkoutCancelState) : ''
+  ].filter(function (v) { return v; }).join(' / ');
+  return '<div class="card recovery-card">' +
+    '<div class="card-id">' + escapeHtml(item.bookingId) + (item.bookingFound ? '' : '（台帳に予約行なし）') + '</div>' +
+    (item.bookingFound
+      ? '<div class="card-sub">' + escapeHtml(item.date) + ' / ' + escapeHtml(statusLabel(item.status)) + ' / ' + escapeHtml(paymentStatusLabel(item.paymentStatus)) + '</div>'
+      : '') +
+    (ids ? '<div class="card-sub">' + escapeHtml(ids) + '</div>' : '') +
+    (item.paymentRecoveryRequiredAt
+      ? '<div class="card-price-warning">⚠ 要対応（' + escapeHtml(item.paymentRecoveryRequiredAt) + '）: ' + escapeHtml(item.paymentRecoveryReason) + '</div>'
+      : '') +
+    (rows ? '<ul class="recovery-rows">' + rows + '</ul>' : '') +
+    (item.bookingFound
+      ? '<div class="card-actions"><button type="button" class="action detail" data-recovery-detail="' + escapeHtml(item.bookingId) + '">詳細</button></div>'
+      : '') +
+    '</div>';
+}
+
+var paymentRecoveryPanel_ = null;
+
+function initPaymentRecoveryUi_() {
+  var metaRow = document.querySelector('.header-meta');
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.id = 'payment-recovery-open-button';
+  button.className = 'refresh-button';
+  button.textContent = '決済要対応';
+  if (metaRow) metaRow.appendChild(button);
+
+  var main = document.querySelector('main');
+  var panel = document.createElement('div');
+  panel.id = 'payment-recovery-panel';
+  panel.classList.add('hidden');
+  main.insertBefore(panel, document.getElementById('list'));
+  paymentRecoveryPanel_ = panel;
+
+  button.addEventListener('click', function () {
+    if (!panel.classList.contains('hidden')) {
+      panel.classList.add('hidden');
+      return;
+    }
+    panel.classList.remove('hidden');
+    panel.innerHTML = '<div class="empty">決済要対応を取得中…</div>';
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (!result || !result.success) {
+          panel.innerHTML = '<div class="empty">取得できませんでした。</div>';
+          return;
+        }
+        panel.innerHTML = '<h3>決済要対応（' + result.items.length + '件）</h3>' +
+          (result.items.length ? result.items.map(renderPaymentRecoveryItem_).join('') : '<div class="empty">決済要対応の案件はありません</div>');
+      })
+      .withFailureHandler(function (error) {
+        panel.innerHTML = '<div class="empty">取得に失敗しました: ' + escapeHtml(error && error.message ? error.message : String(error)) + '</div>';
+      })
+      .getAdminPaymentRecoveries();
+  });
+  panel.addEventListener('click', function (event) {
+    var target = event.target && event.target.closest ? event.target.closest('button[data-recovery-detail]') : null;
+    if (!target) return;
+    openDetail(target.getAttribute('data-recovery-detail'));
+  });
+}
+
 /* Issue #322: ヘッダー（要件1）・件数サマリー（要件2）・タブ件数（要件3）・
    検索欄（要件4）は、いずれもBookingAdminPage.html側には存在しない要素のため、
    このファイルの初回実行時にDOM要素を生成してheader/main配下へ挿入する
@@ -1954,7 +2474,11 @@ function reminderReasonLabel(code) {
     INVALID_STATUS: '対象外ステータス',
     ALREADY_SENT: '送信済み',
     EMAIL_MISSING: 'メール未登録',
-    MAIL_NOT_READY: '設定不足'
+    MAIL_NOT_READY: '設定不足',
+    /* Issue #341 PR-D: 鍵承認ゲートによる送信停止。 */
+    PAYMENT_RECOVERY_REQUIRED: '決済要対応',
+    PAYMENT_NOT_SETTLED: '入金・返金状態により対象外',
+    ACCESS_NOT_APPROVED: '鍵未承認'
   };
   return labels[code] || code || '';
 }
@@ -2361,5 +2885,7 @@ initSearchUi_();
 initPaymentLinkUi_();
 initPriceEditUi_();
 initPriceNoticeUi_();
+initPaymentUi_();
+initPaymentRecoveryUi_();
 
 loadBookings();

@@ -192,6 +192,7 @@ function getAdminBookings() {
   var bookings = SpreadsheetRepository.getAllBookings().map(function (item) {
     var record = item.record;
     var priceSummary = buildAdminPriceSummary_(record);
+    var paymentSummary = buildAdminPaymentSummary_(record, timezone);
     return {
       bookingId: record.bookingId,
       createdAt: normalizeAdminCreatedAt_(record.createdAt, timezone),
@@ -217,7 +218,13 @@ function getAdminBookings() {
        */
       effectivePriceAmount: priceSummary.effectiveAmount,
       priceOverridden: priceSummary.overridden,
-      priceUpdateNeeded: priceSummary.updateNeeded
+      priceUpdateNeeded: priceSummary.updateNeeded,
+      /* Issue #341 PR-D: 一覧のキャンセルボタンの出し分け・要対応表示用（buildAdminPaymentSummary_参照）。 */
+      isStripeCheckout: paymentSummary.isStripeCheckout,
+      paymentStatus: paymentSummary.paymentStatus,
+      refundDecisionRequired: paymentSummary.refundDecisionRequired,
+      paymentRecoveryRequired: paymentSummary.paymentRecoveryRequired,
+      accessApprovalPending: paymentSummary.accessApprovalPending
     };
   });
   return { todayJst: todayJst, bookings: bookings };
@@ -236,6 +243,51 @@ function getAdminBookings() {
  */
 function needsPriceUpdateNotice_(record) {
   return record.status === Booking.STATUS.PENDING && Booking.needsPriceUpdateNotice(record);
+}
+
+/*
+ * Issue #341 PR-D: 決済・返金・鍵承認の表示用サマリ（一覧・詳細で共通）。判定はBooking.gsの
+ * 関数（isStripeCheckoutBooking/requiresAccessApproval/evaluateAccessGate）へ委ね、ここでは
+ * 複製しない。表示のヒントに過ぎず、実際の可否は各操作のサーバー関数がLock取得後に再判定する。
+ * - refundDecisionRequired: Stripeで入金済み（paid）の有効な予約。通常の「キャンセル」では
+ *   取り消せず（BookingRepository.cancelBookingAdminがREFUND_DECISION_REQUIREDで拒否する）、
+ *   「取消・返金」を使う必要がある。
+ * - accessApprovalPending: 鍵承認ゲートの対象で、CONFIRMEDかつ鍵承認以外の条件を満たし、
+ *   まだ承認されていない（承認ボタンを押せる）。
+ */
+function buildAdminPaymentSummary_(record, timezone) {
+  var isStripeCheckout = Booking.isStripeCheckoutBooking(record);
+  var normalized = Booking.normalizePaymentStatus(record.paymentStatus);
+  var paymentStatus = normalized === null ? 'unknown' : normalized;
+  var active = record.status === Booking.STATUS.PENDING || record.status === Booking.STATUS.CONFIRMED;
+  var accessRequired = Booking.requiresAccessApproval(record, timezone);
+  var preApprovalGate = Booking.evaluateAccessGate(record, timezone, { ignoreApproval: true });
+  return {
+    isStripeCheckout: isStripeCheckout,
+    paymentStatus: paymentStatus,
+    /* PR-Dレビュー対応・1回目: 決済URL発行済み（checkout_pending・決済開始の結果未確定）も
+       「取消・返金」（返金なし＝決済URLの失効つき）から取り消す。 */
+    refundDecisionRequired: isStripeCheckout && active &&
+      (normalized === null || normalized === Booking.PAYMENT_STATUS.PAID || normalized === Booking.PAYMENT_STATUS.REFUND_PENDING ||
+        normalized === Booking.PAYMENT_STATUS.CHECKOUT_PENDING || (!!record.paymentAttemptId && !record.paymentAttemptResolvedAt)),
+    paymentRecoveryRequired: !!record.paymentRecoveryRequiredAt,
+    accessApprovalRequired: accessRequired,
+    accessApprovalPending: accessRequired && record.status === Booking.STATUS.CONFIRMED && preApprovalGate.ok && !record.accessApprovedAt
+  };
+}
+
+/* Stripe管理画面の決済ページへのリンク（Issue #341本文「Stripe管理画面への参照リンク」）。
+   テストモードの秘密鍵（sk_test_）のときはテストモードの画面を開く。秘密鍵の値そのものは
+   返さない（接頭辞だけを見る）。 */
+function buildStripeDashboardPaymentUrl_(paymentIntentId) {
+  if (!paymentIntentId) return '';
+  var secretKey = BookingConfig.getStripeConfig().secretKey || '';
+  var testMode = secretKey.indexOf('sk_test_') === 0 || secretKey.indexOf('rk_test_') === 0;
+  return 'https://dashboard.stripe.com/' + (testMode ? 'test/' : '') + 'payments/' + encodeURIComponent(paymentIntentId);
+}
+
+function adminNumberOrNull_(value) {
+  return value !== '' && value !== null && value !== undefined && Number.isFinite(Number(value)) ? Number(value) : null;
 }
 
 function buildAdminPriceSummary_(record) {
@@ -259,6 +311,7 @@ function getAdminBookingDetail(bookingId) {
   }
   var timezone = BookingConfig.getAvailabilityConfig().timezone;
   var record = found.record;
+  var paymentSummary = buildAdminPaymentSummary_(record, timezone);
   return {
     success: true,
     booking: {
@@ -389,7 +442,53 @@ function getAdminBookingDetail(bookingId) {
        * isBaselineRecoveryBlocked参照）。Web UI側は専用の要復旧表示・
        * resolveBaselinePriceRecovery呼び出し導線を出す。
        */
-      baselineRecoveryNeedsAttention: BookingReschedule.isBaselineRecoveryBlocked(bookingId)
+      baselineRecoveryNeedsAttention: BookingReschedule.isBaselineRecoveryBlocked(bookingId),
+      /*
+       * Issue #341 PR-D: Stripe決済・返金・鍵承認・Recovery。Stripeの識別子（Session/
+       * PaymentIntent/返金ID）は秘密情報ではないため、管理者専用のこの詳細でのみ返す
+       * （一覧には返さない）。鍵番号・解錠コード等の来場案内の秘密値は一切返さない。
+       * paymentLastErrorMessage/paymentRecoveryReasonはredaction済みの記録
+       * （BookingRefund.gs・BookingRepository.gs参照）をそのまま返す。
+       */
+      paymentStatus: paymentSummary.paymentStatus,
+      isStripeCheckout: paymentSummary.isStripeCheckout,
+      refundDecisionRequired: paymentSummary.refundDecisionRequired,
+      stripeCheckoutSessionId: record.stripeCheckoutSessionId || '',
+      stripePaymentIntentId: record.stripePaymentIntentId || '',
+      stripeDashboardUrl: buildStripeDashboardPaymentUrl_(record.stripePaymentIntentId),
+      stripeAmount: adminNumberOrNull_(record.stripeAmount),
+      stripeCurrency: record.stripeCurrency || '',
+      paymentConfirmedAt: formatAdminDateTime_(record.paymentConfirmedAt, timezone),
+      stripeRefundId: record.stripeRefundId || '',
+      refundRequestedAt: formatAdminDateTime_(record.refundRequestedAt, timezone),
+      refundedAt: formatAdminDateTime_(record.refundedAt, timezone),
+      refundAttemptId: record.refundAttemptId || '',
+      refundAttemptState: record.refundAttemptState || '',
+      refundDecision: record.refundDecision || '',
+      refundAmount: adminNumberOrNull_(record.refundAmount),
+      refundReason: record.refundReason || '',
+      refundDecidedAt: formatAdminDateTime_(record.refundDecidedAt, timezone),
+      refundStripeStatus: record.refundStripeStatus || '',
+      refundCheckedAt: formatAdminDateTime_(record.refundCheckedAt, timezone),
+      refundMailSentAt: formatAdminDateTime_(record.refundMailSentAt, timezone),
+      refundInFlight: BookingRefund.isRefundInFlight(record),
+      /* PR-Dレビュー対応・1回目: 未入金の取消で発行済み決済URLを失効させた結果。 */
+      checkoutCancelState: record.checkoutCancelState || '',
+      /* PR-Dレビュー対応・4回目: 台帳の状態の保存に失敗して古い値が残っていても、未解決の追跡・
+         未記録のRecovery行があれば「決済URLの失効を再確認」を出す。 */
+      checkoutRecheckRequired: record.checkoutCancelState === 'UNKNOWN' || record.checkoutCancelState === 'EXPIRE_REQUESTED' ||
+        (!!record.checkoutCancelState && BookingRefund.hasOpenCheckoutRecheckRows(bookingId)),
+      checkoutCancelCheckedAt: formatAdminDateTime_(record.checkoutCancelCheckedAt, timezone),
+      paymentLastErrorAt: formatAdminDateTime_(record.paymentLastErrorAt, timezone),
+      paymentLastErrorMessage: record.paymentLastErrorMessage || '',
+      paymentRecoveryRequiredAt: formatAdminDateTime_(record.paymentRecoveryRequiredAt, timezone),
+      paymentRecoveryReason: record.paymentRecoveryReason || '',
+      accessApprovalRequired: paymentSummary.accessApprovalRequired,
+      accessApprovalPending: paymentSummary.accessApprovalPending,
+      accessApprovedAt: formatAdminDateTime_(record.accessApprovedAt, timezone),
+      /* 来場案内の再送の二重送信防止用トークン（epoch ms。未送信は0）。クライアントは
+         解釈せずadminResendReminderMailへそのまま往復させる。 */
+      reminderSentAtVersion: isAdminWebDateLike_(record.reminderSentAt) ? record.reminderSentAt.getTime() : 0
     }
   };
 }
@@ -476,4 +575,86 @@ function adminUpdateBookingPrice(bookingId, newAmountJpy) {
  */
 function adminSendPriceUpdateMail(bookingId, options) {
   return sanitizeForClient_(sendPriceUpdateMail(bookingId, options));
+}
+
+/*
+ * Issue #341 PR-D: Stripeカード決済の予約の「取消・返金」。既存の正式関数
+ * cancelBookingWithRefund（BookingAdmin.gs → BookingRefund.cancelWithRefund）へ委譲する。
+ * 返金方法（FULL/PARTIAL/NONE）・金額・理由の入力と確認ダイアログはHTML側で行い、
+ * 返金額の上限・入金状態・二重返金の防止はすべてサーバー側で判定する。
+ */
+function adminCancelBookingWithRefund(bookingId, decision, amountJpy, reason) {
+  return sanitizeForClient_(cancelBookingWithRefund(bookingId, { decision: decision, amountJpy: amountJpy, reason: reason }));
+}
+
+/* 返金状態の照会（BookingRefund.reconcileRefund）。 */
+function adminReconcileRefund(bookingId) {
+  return sanitizeForClient_(reconcileBookingRefund(bookingId));
+}
+
+/* 鍵承認（BookingAccessApproval.approveAccess）。メール送信は一切行わない。 */
+function adminApproveAccess(bookingId) {
+  return sanitizeForClient_(approveBookingAccess(bookingId));
+}
+
+/*
+ * 来場案内（前日リマインド）の再送（Issue #341本文どおり）。既存の正式関数
+ * BookingMailer.sendReminderMailForBooking(bookingId, { force: true })へ委譲する。
+ * 送信可否（鍵承認ゲート・予約状態・設定不足）はLock取得後の最新レコードでサーバー側が
+ * 判定し、フロントはskipped/error.messageをそのまま表示する。
+ * expectedSentAtVersion: 予約詳細のreminderSentAtVersionをそのまま渡す（二重クリック・
+ * 別タブからの重複送信防止。BookingMailer.gs参照）。
+ */
+function adminResendReminderMail(bookingId, expectedSentAtVersion) {
+  var options = { force: true };
+  if (typeof expectedSentAtVersion === 'number' && isFinite(expectedSentAtVersion)) {
+    options.expectedSentAtVersion = expectedSentAtVersion;
+  }
+  return sanitizeForClient_(BookingMailer.sendReminderMailForBooking(bookingId, options));
+}
+
+/*
+ * 決済の要対応（Recovery）案件の一覧（読み取りのみ。表示しただけで返金・確定・ゲート解除は
+ * 行わない）。一覧カードと同じく氏名・連絡先等は返さず、予約ID・予約状態・決済状態・
+ * Stripe識別子・理由・発生日時のみを返す。
+ */
+function getAdminPaymentRecoveries() {
+  var timezone = BookingConfig.getAvailabilityConfig().timezone;
+  var items = BookingRefund.listPaymentRecoveries().map(function (item) {
+    var r = item.record;
+    var normalized = r.status ? Booking.normalizePaymentStatus(r.paymentStatus) : null;
+    return {
+      bookingId: r.bookingId || '',
+      bookingFound: !!r.status,
+      date: formatAdminDate_(r.date, timezone),
+      status: r.status || '',
+      paymentStatus: r.status ? (normalized === null ? 'unknown' : normalized) : '',
+      stripeCheckoutSessionId: r.stripeCheckoutSessionId || '',
+      stripePaymentIntentId: r.stripePaymentIntentId || '',
+      stripeRefundId: r.stripeRefundId || '',
+      refundAttemptId: r.refundAttemptId || '',
+      refundAttemptState: r.refundAttemptState || '',
+      checkoutCancelState: r.checkoutCancelState || '',
+      paymentRecoveryRequiredAt: formatAdminDateTime_(r.paymentRecoveryRequiredAt, timezone),
+      paymentRecoveryReason: r.paymentRecoveryReason || '',
+      openRecoveryRows: item.openRecoveryRows.map(function (row) {
+        return {
+          failureType: row.failureType || '',
+          occurredAt: formatAdminDateTime_(row.occurredAt, timezone),
+          errorMessage: row.errorMessage || ''
+        };
+      })
+    };
+  });
+  return sanitizeForClient_({ success: true, items: items });
+}
+
+/* 決済URLの失効を再確認（PR-Dレビュー対応・1回目。BookingRefund.reconcileCheckoutExpiry）。 */
+function adminReconcileCheckoutExpiry(bookingId) {
+  return sanitizeForClient_(reconcileBookingCheckoutExpiry(bookingId));
+}
+
+/* 決済Recoveryの解消（BookingRefund.resolvePaymentRecovery。Stripeとの整合を確認できた場合のみ）。 */
+function adminResolvePaymentRecovery(bookingId, note) {
+  return sanitizeForClient_(resolveBookingPaymentRecovery(bookingId, note));
 }

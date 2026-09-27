@@ -1295,7 +1295,7 @@ var BookingRepository = (function () {
 
     var outcome;
     try {
-      outcome = cancelBookingAdminLocked_(bookingId);
+      outcome = cancelBookingAdminLocked_(bookingId, null);
     } finally {
       lock.releaseLock();
     }
@@ -1314,7 +1314,8 @@ var BookingRepository = (function () {
 
   /* cancelBookingAdminのLock保持区間の本体。戻り値: { response, shouldTryMail }。
      Issue #272本文どおり、Lock取得後に必ずSheetsを最新再読込してからstatusを判定する。 */
-  function cancelBookingAdminLocked_(bookingId) {
+  function cancelBookingAdminLocked_(bookingId, options) {
+    var opts = options || {};
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
     if (!found) {
       return { response: handleCancelSheetsRowMissing_(bookingId), shouldTryMail: false };
@@ -1339,6 +1340,44 @@ var BookingRepository = (function () {
         },
         shouldTryMail: false
       };
+    }
+
+    /*
+     * Issue #341 PR-D: Stripeで入金済み（paid）・返金処理中（refund_pending）・決済状態不明の
+     * 予約は、返金方法（全額/一部/返金なし）の判断を伴う専用の取消（BookingRefund.
+     * cancelWithRefund。Booking Adminの「取消・返金」）からのみ取り消せる。従来の
+     * キャンセル（Spreadsheetメニュー・一覧のキャンセルボタン）から実行すると、返金の
+     * 判断・記録が無いまま入金済みの予約だけが取り消されるため、Calendar/Sheetsに触れる
+     * 前に拒否する。現金・PayPay・旧Payment Link方式の予約、決済前（checkout_pending等）の
+     * カード予約は従来どおり（opts.allowStripePaidはBookingRefund.gsのみが指定する）。
+     */
+    /*
+     * PR-Dレビュー対応・1回目: 決済待ち（checkout_pending）・決済開始の結果が未確定の予約も
+     * 同様に「取消・返金」からのみ取り消す。従来のキャンセルは発行済みのCheckout Session
+     * （決済URL）を失効させないため、取消後に利用者が入金できてしまう。「取消・返金」の
+     * 「返金なし」はSessionをStripe側でも失効させる（BookingRefund.cancelUnpaidCheckout_）。
+     */
+    if (!opts.allowStripePaid && Booking.isStripeCheckoutBooking(record)) {
+      var currentPaymentStatus = Booking.normalizePaymentStatus(record.paymentStatus);
+      var paidOrRefunding = currentPaymentStatus === null ||
+        currentPaymentStatus === Booking.PAYMENT_STATUS.PAID ||
+        currentPaymentStatus === Booking.PAYMENT_STATUS.REFUND_PENDING;
+      var checkoutMayBeOpen = currentPaymentStatus === Booking.PAYMENT_STATUS.CHECKOUT_PENDING ||
+        (!!record.paymentAttemptId && !record.paymentAttemptResolvedAt);
+      if (paidOrRefunding || checkoutMayBeOpen) {
+        return {
+          response: {
+            success: false,
+            error: {
+              code: 'REFUND_DECISION_REQUIRED',
+              message: paidOrRefunding
+                ? 'Stripeで入金済みの予約です。Booking Adminの予約詳細「取消・返金」から、返金方法を選んで取り消してください。'
+                : 'Stripeの決済URLを発行済みの予約です。Booking Adminの予約詳細「取消・返金」の「返金なし（取消のみ）」から取り消してください（決済URLもStripe側で失効させます）。'
+            }
+          },
+          shouldTryMail: false
+        };
+      }
     }
 
     var calendarId = BookingConfig.getCalendarId();
@@ -1859,7 +1898,7 @@ var BookingRepository = (function () {
    * 通常の呼び出し元（PR-B/PR-Cの大半）は、この関数を直接呼ばず、必ず自分でLockを
    * 取得・解放する公開版のapplyPaymentStateUpdateを使うこと。
    */
-  function applyPaymentStateUpdateLocked_(bookingId, toPaymentStatus, fields, now) {
+  function applyPaymentStateUpdateLocked_(bookingId, toPaymentStatus, fields, now, lockedOptions) {
     var effectiveNow = isDateLike_(now) ? now : new Date();
     var safeFields = fields || {};
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
@@ -1868,7 +1907,18 @@ var BookingRepository = (function () {
       }
       var record = found.record;
 
-      if (record.paymentRecoveryRequiredAt) {
+      /*
+       * Issue #341 PR-D: lockedOptions.allowWhileRecoveryRequiredは、BookingRefund.gsが
+       * 「Stripeで実際に確認した返金オブジェクト（stripeRefundId・status）」を台帳へ記録する
+       * refund_pending/refundedへの遷移に限って指定する。返金の事実（Stripe側で既に起きた
+       * 資金移動）は、要復旧ゲートが立っていても台帳へ記録できなければならない（記録
+       * できないと「返金済みなのに台帳はpaid」のまま残り、二重返金の判断材料を失う）。
+       * それ以外の遷移（paid・checkout_pending等）には使わない。
+       */
+      var bypassRecoveryGate = !!(lockedOptions && lockedOptions.allowWhileRecoveryRequired) &&
+        (toPaymentStatus === Booking.PAYMENT_STATUS.REFUND_PENDING || toPaymentStatus === Booking.PAYMENT_STATUS.REFUNDED);
+
+      if (record.paymentRecoveryRequiredAt && !bypassRecoveryGate) {
         return {
           success: false,
           error: { code: 'PAYMENT_RECOVERY_REQUIRED', message: 'この予約の決済状態は要復旧のため、自動処理を停止しています。管理者の確認が必要です。' }
@@ -2406,6 +2456,15 @@ var BookingRepository = (function () {
       if (record.paymentRecoveryRequiredAt) {
         return { success: false, error: { code: 'PAYMENT_RECOVERY_REQUIRED', message: 'この予約の決済状態は要復旧のため、自動処理を停止しています。' } };
       }
+      /*
+       * PR-Dレビュー対応・1回目: beginCardCheckout冒頭のstatus確認（Lock外）の後に管理者が
+       * 予約を取り消していた場合に、取消済みの予約へ新しい決済試行（Checkout Session）を
+       * 発行しないよう、Lock取得後の最新行でも確認する（Booking AdminとはLockを共有しない
+       * ため競合の窓を完全には消せないが、その場合も遅延入金として記録・Recovery管理される）。
+       */
+      if (record.status !== Booking.STATUS.PENDING) {
+        return { success: false, error: { code: 'BOOKING_NOT_PENDING', message: 'この予約は決済待ちの状態ではありません。' } };
+      }
       if (hasUnresolvedPaymentAttempt_(record)) {
         var snapshot = safeJsonParse_(record.stripeCheckoutRequestSnapshot);
         if (!isValidCheckoutRequestSnapshot_(snapshot, bookingId, record.paymentAttemptId)) {
@@ -2653,6 +2712,54 @@ var BookingRepository = (function () {
    * Idempotency-Keyのまま、料金修正・Script Properties変更等でStripeへ送る内容が初回と
    * 食い違ってしまう。Stripeは差異を検知するとidempotency_errorを返す）。
    */
+  /*
+   * PR-Dレビュー対応・2回目: Booking Web AppとBooking AdminはScript Lockを共有しないため、
+   * 利用者の決済開始（reservePaymentAttempt_でPENDINGを確認→Stripe→commit）の間に、管理者が
+   * 予約を取り消すことがある。その場合に作られたCheckout Sessionは:
+   * - 台帳には記録したまま（applyPaymentStateUpdateのcommit済み。管理者が追跡できるように）、
+   * - 利用者へURLを返さず（決済できる入口を渡さない）、
+   * - Stripe側での失効をbest effortで試み、
+   * - Recovery（PAYMENT_CHECKOUT_AFTER_CANCEL。sessionId付き）へ記録し、checkoutCancelStateを
+   *   UNKNOWNにして、管理者の「決済URLの失効を再確認」の対象にする（ここで失効を確認できても
+   *   断定はせず、Booking Admin側の確認で閉じる）。
+   * 予約の状態は変更しない（取消済みのまま）。要復旧ゲートも立てない（万一入金が成立した場合に
+   * Webhook処理が入金を記録できるようにするため）。
+   */
+  function handleCheckoutSessionIssuedAfterCancel_(bookingId, record, sessionId, stripeConfig, now) {
+    var expireResult = StripeGateway.expireCheckoutSession(stripeConfig, sessionId);
+    var expiredReported = !!(expireResult.ok && expireResult.session && expireResult.session.status === 'expired');
+    try {
+      RecoveryRepository.recordFailure({
+        bookingId: bookingId,
+        failureType: 'PAYMENT_CHECKOUT_AFTER_CANCEL',
+        occurredAt: now,
+        calendarEventId: (record && record.calendarEventId) || '',
+        status: (record && record.status) || '',
+        errorMessage: '取消済みの予約に対して決済URL（sessionId=' + sessionId + '）が発行されました（決済開始と取消が交差）。' +
+          '利用者へはURLを返していません。' + (expiredReported ? 'Stripeは失効を受け付けました。' : '失効を確認できていません。') +
+          'Booking Adminの「決済URLの失効を再確認」で失効と入金の有無を確認してください。',
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    } catch (recoveryError) {
+      Logger.log('RecoveryRepository.recordFailure failed: ' + describeError_(recoveryError));
+    }
+    var lock = LockService.getScriptLock();
+    if (lock.tryLock(CHECKOUT_LOCK_TIMEOUT_MS_)) {
+      try {
+        var latest = SpreadsheetRepository.findRowByBookingId(bookingId);
+        if (latest && latest.record.checkoutCancelState !== 'PAYMENT_RECEIVED') {
+          SpreadsheetRepository.updateBookingFields(bookingId, { checkoutCancelState: 'UNKNOWN', checkoutCancelCheckedAt: now });
+        }
+      } catch (writeError) {
+        Logger.log('checkoutCancelStateの記録に失敗しました: ' + bookingId + ' ' + describeError_(writeError));
+      } finally {
+        lock.releaseLock();
+      }
+    }
+    return { success: false, error: { code: 'BOOKING_NOT_PENDING', message: 'この予約は決済待ちの状態ではありません。' } };
+  }
+
   function startNewCheckoutAttempt_(bookingId, stripeConfig, now) {
     var reserveResult = reservePaymentAttempt_(bookingId, stripeConfig, now);
     if (!reserveResult.success) return reserveResult;
@@ -2716,6 +2823,12 @@ var BookingRepository = (function () {
       return { success: false, error: commitResult.error, retryable: true };
     }
 
+    /* PR-Dレビュー対応・2回目: Session発行の間に管理者が予約を取り消していた場合、URLを返さない。 */
+    var afterCommit = SpreadsheetRepository.findRowByBookingId(bookingId);
+    if (!afterCommit || afterCommit.record.status !== Booking.STATUS.PENDING) {
+      return handleCheckoutSessionIssuedAfterCancel_(bookingId, afterCommit ? afterCommit.record : record, session.id, stripeConfig, now);
+    }
+
     return {
       success: true,
       bookingId: bookingId,
@@ -2772,6 +2885,12 @@ var BookingRepository = (function () {
     var session = retrieveResult.session;
 
     if (session.status === 'open') {
+      /* PR-Dレビュー対応・2回目: Stripeへの照会の間に管理者が予約を取り消していれば、決済可能な
+         URLを利用者へ返さない（このSessionは取消処理が失効させる。台帳に記録済みのため追跡される）。 */
+      var beforeReturn = SpreadsheetRepository.findRowByBookingId(bookingId);
+      if (!beforeReturn || beforeReturn.record.status !== Booking.STATUS.PENDING) {
+        return { success: false, error: { code: 'BOOKING_NOT_PENDING', message: 'この予約は決済待ちの状態ではありません。' } };
+      }
       /* まだ決済可能なSessionが残っている。新しいSessionを発行せずこれを再利用する。 */
       return {
         success: true,
@@ -2970,7 +3089,18 @@ var BookingRepository = (function () {
     cancelBookingAdmin: cancelBookingAdmin,
     updateBookingPrice: updateBookingPrice,
     applyPaymentStateUpdate: applyPaymentStateUpdate,
-    beginCardCheckout: beginCardCheckout
+    beginCardCheckout: beginCardCheckout,
+    /*
+     * Issue #341 PR-D: BookingRefund.gs（Booking Admin専用。取消・返金のオーケストレーション）
+     * だけが使う、Lock保持中専用の内部関数。呼び出し元が既にLockService.getScriptLock()を
+     * 取得していることが前提で、これらの関数自身はLockを取得・解放しない。取消（Calendar
+     * 削除・CANCELLED更新）と返金試行の予約を同じLock区間で行うために公開する。
+     * 管理者操作以外（公開Web App・Webhook受信）から呼ばないこと。
+     */
+    lockedInternals: {
+      cancelBookingAdminLocked: cancelBookingAdminLocked_,
+      applyPaymentStateUpdateLocked: applyPaymentStateUpdateLocked_
+    }
   };
 })();
 

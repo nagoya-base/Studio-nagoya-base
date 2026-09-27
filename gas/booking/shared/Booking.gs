@@ -598,9 +598,102 @@ var Booking = (function () {
     return !Number.isFinite(changedAt) || !Number.isFinite(sentAt) || changedAt > sentAt;
   }
 
+  /*
+   * Issue #341 PR-D: この予約がStripe Checkout（PR-B/PR-C）の決済フローに一度でも
+   * 入ったかどうか。決済試行ID・Session・PaymentIntentのいずれかが記録されているか、
+   * paymentStatusがnot_started以外であればtrue。paymentStatusが未知の値（normalize結果
+   * null）の場合もtrueにする（fail-closed。鍵情報を誤って送る側へ倒さない）。
+   *
+   * 旧Payment Link方式（Issue #334）のカード予約・現金・PayPayはこれらの列がすべて空で
+   * paymentStatusも既定値のままのためfalseになり、PR-Dの鍵承認ゲート・返金操作の対象外
+   * （従来どおりの運用）になる。
+   */
+  function isStripeCheckoutBooking(record) {
+    var r = record || {};
+    if (r.paymentAttemptId || r.stripeCheckoutSessionId || r.stripePaymentIntentId) return true;
+    var normalized = normalizePaymentStatus(r.paymentStatus);
+    return normalized !== PAYMENT_STATUS.NOT_STARTED;
+  }
+
+  /*
+   * Issue #341 PR-D: 当日予約（受付日と利用日がtimezone基準で同じ日）かどうか。
+   * createBooking時のisSameDayBooking（validateCreateBookingInput）・expirePendingBookings
+   * の判定（createdAtの日付とrecord.dateの比較）と同じ定義。createdAtまたはdateを
+   * 解釈できない場合はfalse（当日予約ではない＝鍵承認ゲートの対象側。fail-closed）。
+   */
+  function isSameDayBookingRecord(record, timezone) {
+    var r = record || {};
+    if (!isDateLike_(r.createdAt)) return false;
+    var createdDate = formatDateInTimezone(r.createdAt, timezone);
+    var bookingDate = isDateLike_(r.date) ? formatDateInTimezone(r.date, timezone) : String(r.date || '');
+    return !!createdDate && createdDate === bookingDate;
+  }
+
+  /*
+   * Issue #341「鍵・来場案内の開示ゲート」の対象かどうか。対象はカード決済（Stripe
+   * Checkoutによる自動確定）かつ当日予約でない予約のみ。当日予約・現地払い・旧Payment
+   * Link方式の予約は対象外（前日リマインドは従来どおり）。
+   */
+  function requiresAccessApproval(record, timezone) {
+    return isStripeCheckoutBooking(record) && !isSameDayBookingRecord(record, timezone);
+  }
+
+  var ACCESS_GATE_REASON_CODES = {
+    PAYMENT_RECOVERY_REQUIRED: 'PAYMENT_RECOVERY_REQUIRED',
+    PAYMENT_NOT_SETTLED: 'PAYMENT_NOT_SETTLED',
+    ACCESS_NOT_APPROVED: 'ACCESS_NOT_APPROVED'
+  };
+
+  /*
+   * Issue #341 PR-D: 鍵・来場案内（前日リマインド）を送ってよいかのゲート判定。
+   * 前日リマインドの自動送信・管理者の再送・鍵承認操作のすべてが、Lock取得後に再読込した
+   * 最新レコードに対してこの1関数を呼ぶ（判定を複製しない）。
+   *
+   * ゲート対象外（requiresAccessApproval=false。現地払い・旧Payment Link・当日予約）は
+   * 常に{required:false, ok:true}。対象の予約は、上から順に次のいずれかに該当すると
+   * 送信不可（ok:false）:
+   * - PAYMENT_RECOVERY_REQUIRED: 決済の要復旧ゲート（paymentRecoveryRequiredAt）が未解消。
+   * - PAYMENT_NOT_SETTLED: 入金済み（paid）でない、または返金の判断・手続きが始まっている
+   *   （refundDecision/refundAttemptIdが記録済みで、返金試行が失敗で終わっていない）。
+   * - ACCESS_NOT_APPROVED: 管理者の鍵承認（accessApprovedAt）が無い。
+   *   options.ignoreApproval=trueの場合はこの判定を省く（鍵承認操作そのものの事前条件）。
+   */
+  function evaluateAccessGate(record, timezone, options) {
+    var r = record || {};
+    var opts = options || {};
+    if (!requiresAccessApproval(r, timezone)) {
+      return { required: false, ok: true, reasonCode: '', message: '' };
+    }
+    if (r.paymentRecoveryRequiredAt) {
+      return {
+        required: true, ok: false, reasonCode: ACCESS_GATE_REASON_CODES.PAYMENT_RECOVERY_REQUIRED,
+        message: 'この予約は決済の要対応（Recovery）が未解消のため、鍵情報を含む来場案内を送信できません。'
+      };
+    }
+    var refundStarted = !!r.refundDecision || (!!r.refundAttemptId && r.refundAttemptState !== 'FAILED');
+    if (normalizePaymentStatus(r.paymentStatus) !== PAYMENT_STATUS.PAID || refundStarted) {
+      return {
+        required: true, ok: false, reasonCode: ACCESS_GATE_REASON_CODES.PAYMENT_NOT_SETTLED,
+        message: 'この予約は入金済みの状態ではない（未入金・返金手続き中・返金済み等）ため、鍵情報を含む来場案内を送信できません。'
+      };
+    }
+    if (!opts.ignoreApproval && !r.accessApprovedAt) {
+      return {
+        required: true, ok: false, reasonCode: ACCESS_GATE_REASON_CODES.ACCESS_NOT_APPROVED,
+        message: 'この予約は鍵承認がまだのため、鍵情報を含む来場案内を送信できません。Booking Adminで「鍵承認」を行ってください。'
+      };
+    }
+    return { required: true, ok: true, reasonCode: '', message: '' };
+  }
+
   return {
     STATUS: STATUS,
     PAYMENT_STATUS: PAYMENT_STATUS,
+    ACCESS_GATE_REASON_CODES: ACCESS_GATE_REASON_CODES,
+    evaluateAccessGate: evaluateAccessGate,
+    isStripeCheckoutBooking: isStripeCheckoutBooking,
+    isSameDayBookingRecord: isSameDayBookingRecord,
+    requiresAccessApproval: requiresAccessApproval,
     normalizePaymentStatus: normalizePaymentStatus,
     canTransitionPaymentStatus: canTransitionPaymentStatus,
     ALLOWED_BOOKING_BRANDS: ALLOWED_BOOKING_BRANDS,
