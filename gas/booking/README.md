@@ -5650,10 +5650,46 @@ Stripe・Calendar・Sheets・メールはすべてモック。本番のStripe返
 - **決済開始側の防御**: `reservePaymentAttempt_`（Booking Web App）がLock取得後にも予約が
   PENDINGであることを確認し、取消済みの予約に新しいCheckout Sessionを発行しない。
 
+### PR-Dレビュー対応・2回目: 取消と新しい決済試行（Booking Web App）の競合
+
+指摘: 取消の事前確認・Lock内の再確認で決済試行ID・Session ID・解決状態の変化を見逃すと、
+管理者が古いSession Aを読んだ後に利用者側で新しいSession Bが発行された場合、予約を取り消した
+うえでSession Aだけを失効させて「取消成功」としてしまう可能性があった。
+
+前提: Booking Web App（`beginCardCheckout`）とBooking AdminはScript Lockを共有しない。
+
+- **事前確認・Lock内再確認の比較対象**（`SNAPSHOT_FIELDS_`）: 決済試行ID
+  （`paymentAttemptId`）・解決日時（`paymentAttemptResolvedAt`）・Session ID
+  （`stripeCheckoutSessionId`）・決済URL失効の記録（`checkoutCancelState`）を含める。
+- **未解決の決済試行の判定を修正**: 決済試行IDがあり解決日時が無ければ、Session IDが残っていても
+  （それは前の試行のSession）最新の試行のSessionは未確定とみなし、取り消さない
+  （`CHECKOUT_ATTEMPT_UNRESOLVED`）。以前はSession IDが残っていると古いSessionを失効対象にしていた。
+- **事前読込の後に決済試行・Sessionが変わった場合**: Lock内の比較で検知し、古いSessionは失効させず
+  取消もせずに、最新の行を読み直して最初からやり直す（最大2回。新しいSessionがあればそれを失効
+  させ、試行が未解決なら取り消さない）。
+- **取消の後に新しいSessionが記録された場合（交差）**: 取消後の結果記録（`settleCheckoutAfterCancel_`）
+  のLock内で、取消を確定した時点の決済試行と現在の決済試行を比較する。
+  - 新しいSessionが記録されていれば、Recovery（`PAYMENT_CHECKOUT_AFTER_CANCEL`、`sessionId=`付き）へ
+    記録し、そのSessionも失効させて確認し直す（最大3巡）。確認したすべてのSessionのうち最も注意が
+    必要な状態を`checkoutCancelState`に記録し、古いSessionの失効だけで`EXPIRED`としない。
+  - 新しい試行がまだ未解決（Sessionが分からない）なら、未決済・失効済みと断定せず`UNKNOWN`とし、
+    Recovery（`paymentAttemptId=`付き）・管理者通知で追跡する。
+  - 「決済URLの失効を再確認」は、台帳の最新Sessionと、Recoveryで追跡中（OPEN）のすべてのSessionを
+    確認し、失効を確認できたSessionの記録だけを閉じる。最新の試行が未解決の間は断定しない。
+- **Web App側**: Session発行（commit）の後と、既存Sessionの再利用でURLを返す直前に、予約がまだ
+  PENDINGかを再確認する。取消済みなら利用者へURLを返さず（`BOOKING_NOT_PENDING`）、Stripe側での失効を
+  best effortで試み、Recovery（`PAYMENT_CHECKOUT_AFTER_CANCEL`）へ記録して`checkoutCancelState=UNKNOWN`に
+  する（Web App側の失効結果では断定せず、管理者の再確認で閉じる）。発行されたSessionは台帳に記録した
+  ままにし、決済URLの存在を追跡できるようにする。要復旧ゲートは立てない（入金が成立した場合に
+  Webhook処理が入金を記録できるように。予約は復活させない）。
+
 ### 残る制約
 
-- 未入金の取消で失効させるのは台帳に記録された最新のCheckout Sessionのみ。決済開始の結果が
-  未確定（Sessionが未記録）の間は取り消せない。Booking Web AppとBooking AdminはScript Lockを
+- 未入金の取消で失効させるのは、台帳に記録された最新のCheckout Sessionと、Recoveryで追跡中の
+  Sessionのみ（Stripe上でSessionを予約IDから検索することはしない）。決済開始の結果が未確定の間は
+  取り消せない。取消の後にWeb AppのStripe呼び出しが長引き、Adminの確認より後にSessionが記録された
+  場合は、Web App側の再確認（URLを返さない・失効を試みる・Recovery記録）とAdminの「決済URLの失効を
+  再確認」で追跡する。Booking Web AppとBooking AdminはScript Lockを
   共有しないため、取消の直前に利用者が決済を開始した場合など、取消後に別のSessionで入金が成立する
   窓は完全にはなくせない。その場合もWebhook処理が入金を記録し、予約は復活させずRecoveryで
   管理される（識別子が台帳と異なる場合は`STRIPE_WEBHOOK_IDENTITY_MISMATCH`）。

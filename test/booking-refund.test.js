@@ -111,17 +111,33 @@ function createStripe(options) {
     expireBehaviors: (opts.expireBehaviors || []).slice(),
     retrieveBehaviors: (opts.retrieveBehaviors || []).slice()
   };
-  function sessionBody() {
+  /* PR-Dレビュー対応・2回目: 複数のCheckout Session（取消と交差して発行された新しいSession等）。
+     stripe.sessionは従来どおり'cs_test_0001'を指す。 */
+  stripe.sessions = {};
+  stripe.sessions[stripe.session.id] = stripe.session;
+  stripe.creates = [];
+  stripe.onExpire = null;
+  stripe.onCreateSession = null;
+  stripe.addSession = function (fields) {
+    var session = Object.assign({ status: 'open', paymentStatus: 'unpaid', paymentIntent: null, paymentAttemptId: 'PAY-' + BOOKING_ID + '-ABCDEF012345' }, fields);
+    stripe.sessions[session.id] = session;
+    return session;
+  };
+  function sessionBody(session) {
+    session = session || stripe.session;
     return {
-      id: stripe.session.id, status: stripe.session.status, payment_status: stripe.session.paymentStatus,
-      amount_total: 8000, currency: 'jpy', payment_intent: stripe.session.paymentIntent,
-      metadata: { bookingId: BOOKING_ID, brand: 'studio_x', paymentAttemptId: 'PAY-' + BOOKING_ID + '-ABCDEF012345' }
+      id: session.id, status: session.status, payment_status: session.paymentStatus,
+      amount_total: 8000, currency: 'jpy', payment_intent: session.paymentIntent,
+      url: 'https://checkout.stripe.com/c/pay/' + session.id,
+      expires_at: Math.floor(Date.now() / 1000) + 35 * 60,
+      metadata: { bookingId: BOOKING_ID, brand: 'studio_x', paymentAttemptId: session.paymentAttemptId || 'PAY-' + BOOKING_ID + '-ABCDEF012345' }
     };
   }
-  stripe.markPaid = function () {
-    stripe.session.status = 'complete';
-    stripe.session.paymentStatus = 'paid';
-    stripe.session.paymentIntent = PAYMENT_INTENT_ID;
+  stripe.markPaid = function (sessionId) {
+    var session = sessionId ? stripe.sessions[sessionId] : stripe.session;
+    session.status = 'complete';
+    session.paymentStatus = 'paid';
+    session.paymentIntent = PAYMENT_INTENT_ID;
   };
   function refundBody(refund) {
     return {
@@ -131,22 +147,45 @@ function createStripe(options) {
   }
   stripe.responder = function (url, options) {
     var method = (options && options.method) || 'get';
-    if (method === 'post' && /\/checkout\/sessions\/[^/]+\/expire$/.test(url)) {
-      stripe.expires.push({ url: url, key: options.headers['Idempotency-Key'] });
+    var expireMatch = /\/checkout\/sessions\/([^/]+)\/expire$/.exec(url);
+    if (method === 'post' && expireMatch) {
+      var target = stripe.sessions[decodeURIComponent(expireMatch[1])];
+      stripe.expires.push({ url: url, key: options.headers['Idempotency-Key'], sessionId: decodeURIComponent(expireMatch[1]) });
+      if (typeof stripe.onExpire === 'function') {
+        var expireHook = stripe.onExpire;
+        stripe.onExpire = null;
+        expireHook(decodeURIComponent(expireMatch[1]));
+      }
       var expireBehavior = stripe.expireBehaviors.shift() || 'ok';
       if (expireBehavior === 'network') return { thrown: new Error('Timeout') };
-      if (expireBehavior === 'paid_before_expire') stripe.markPaid();
-      if (stripe.session.status !== 'open') {
+      if (!target) return { responseCode: 404, body: { error: { type: 'invalid_request_error', message: 'No such checkout.session' } } };
+      if (expireBehavior === 'paid_before_expire') stripe.markPaid(target.id);
+      if (target.status !== 'open') {
         return { responseCode: 400, body: { error: { type: 'invalid_request_error', message: 'Only Checkout Sessions with a status in open can be expired.' } } };
       }
-      stripe.session.status = 'expired';
+      target.status = 'expired';
       if (expireBehavior === 'network_after_expire') return { thrown: new Error('Timeout') };
-      return { responseCode: 200, body: sessionBody() };
+      return { responseCode: 200, body: sessionBody(target) };
     }
-    if (method === 'get' && /\/checkout\/sessions\/[^/]+$/.test(url)) {
+    var getMatch = /\/checkout\/sessions\/([^/]+)$/.exec(url);
+    if (method === 'get' && getMatch) {
       var retrieveBehavior = stripe.retrieveBehaviors.shift() || 'ok';
       if (retrieveBehavior === 'network') return { thrown: new Error('Timeout') };
-      return { responseCode: 200, body: sessionBody() };
+      var found = stripe.sessions[decodeURIComponent(getMatch[1])];
+      if (!found) return { responseCode: 404, body: { error: { type: 'invalid_request_error', message: 'No such checkout.session' } } };
+      return { responseCode: 200, body: sessionBody(found) };
+    }
+    if (method === 'post' && /\/checkout\/sessions$/.test(url)) {
+      /* Booking Web App（beginCardCheckout）の新しいCheckout Session発行。 */
+      var form = parseForm(options.payload);
+      var created = stripe.addSession({ id: 'cs_test_new_' + (stripe.creates.length + 1), paymentAttemptId: form['metadata[paymentAttemptId]'] });
+      stripe.creates.push({ key: options.headers['Idempotency-Key'], sessionId: created.id });
+      if (typeof stripe.onCreateSession === 'function') {
+        var createHook = stripe.onCreateSession;
+        stripe.onCreateSession = null;
+        createHook(created.id);
+      }
+      return { responseCode: 200, body: sessionBody(created) };
     }
     if (url.indexOf('/payment_intents/') !== -1) {
       return { responseCode: 200, body: { id: PAYMENT_INTENT_ID, status: stripe.piStatus, amount_received: stripe.amountReceived, currency: 'jpy' } };
@@ -206,7 +245,7 @@ function setup(options) {
   var events = [];
   var globals = {
     PropertiesService: stubs.createPropertiesServiceStub(Object.assign({}, PROPERTIES, opts.properties || {})),
-    LockService: stubs.createLockServiceStub(),
+    LockService: opts.lockService || stubs.createLockServiceStub(),
     SpreadsheetApp: stubs.createSpreadsheetAppStub(spreadsheetsById),
     CalendarApp: stubs.createCalendarAppStub({ cal1: { events: events } }),
     UrlFetchApp: stubs.createUrlFetchAppStub(stripe.responder),
@@ -585,8 +624,8 @@ function unpaidSetup(options) {
 
 /* Booking Webhookが署名検証済みイベントを永続化した状態を再現し、Booking Adminの
    時間主導トリガー（StripeWebhookProcessor）を1回実行する（PR-Cの処理をそのまま使う）。 */
-function deliverPaidWebhook(ctx, eventId, now) {
-  var body = JSON.stringify({ id: eventId, type: 'checkout.session.completed', data: { object: { id: 'cs_test_0001' } } });
+function deliverPaidWebhook(ctx, eventId, now, sessionId) {
+  var body = JSON.stringify({ id: eventId, type: 'checkout.session.completed', data: { object: { id: sessionId || 'cs_test_0001' } } });
   var claim = ctx.sandbox.StripeEventRepository.claim(eventId, 'checkout.session.completed', now);
   ctx.sandbox.StripeEventRepository.storeRawBody(claim.rowNumber, body, now);
   var run = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(now);
@@ -868,4 +907,256 @@ test('getAdminBookingDetail: 決済・返金・Recoveryの表示項目を返し�
   assert.strictEqual(typeof detail.refundedAt, 'string');
   var serialized = JSON.stringify(detail);
   assert.ok(serialized.indexOf('sk_test_dummy') === -1, '秘密鍵を返さない');
+});
+
+/* ========================================================================== */
+/* PR-Dレビュー対応・2回目: 取消と新しい決済試行（Booking Web App）の競合            */
+/* ========================================================================== */
+
+/*
+ * Booking Web AppとBooking AdminはScript Lockを共有しない。同じサンドボックス内で両方の
+ * コードを動かすため、ここでは排他を行わないLockのスタブを使い（別プロジェクトのLockを表す）、
+ * onFirstTryLockで「Adminが最初にLockを取った瞬間」に割り込む操作を差し込めるようにする。
+ */
+function separateProjectLockService(onFirstTryLock) {
+  var hook = onFirstTryLock || null;
+  return {
+    getScriptLock: function () {
+      return {
+        tryLock: function () {
+          if (hook) {
+            var h = hook;
+            hook = null;
+            h();
+          }
+          return true;
+        },
+        releaseLock: function () {}
+      };
+    }
+  };
+}
+
+var NEW_ATTEMPT_ID = 'PAY-' + BOOKING_ID + '-NEW000000001';
+var CHECKOUT_PROPERTIES = {
+  STRIPE_CHECKOUT_ENABLED: 'true',
+  STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.com/booking/success',
+  STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/booking/cancel'
+};
+
+/* 前回のSession Aは失効済みで決済状態はfailed（利用者が決済をやり直せる状態）。 */
+var FAILED_PREVIOUS_ATTEMPT = {
+  paymentStatus: 'failed', checkoutAccessToken: 'token-0001',
+  paymentAttemptResolvedAt: new Date('2026-10-01T11:40:00+09:00')
+};
+
+function trackedRows(ctx, failureType) {
+  return Array.from(ctx.sandbox.RecoveryRepository.listAll(), function (r) { return r; })
+    .filter(function (r) { return r.failureType === failureType; });
+}
+
+function expiredSessionIds(ctx) {
+  return ctx.stripe.expires.map(function (e) { return e.sessionId; });
+}
+
+test('競合: 事前読込の後にSession IDが変わった場合、古いSessionを失効させて取消成功とせず、最新の決済試行を読み直して新しいSessionを失効させる', function () {
+  var ctx;
+  ctx = unpaidSetup({
+    lockService: separateProjectLockService(function () {
+      /* Adminの事前読込（Phase 0）の後、Web Appが前のSession Aを失効扱いにして新しいSession Bを記録した。 */
+      ctx.stripe.session.status = 'expired';
+      ctx.stripe.addSession({ id: 'cs_test_B', paymentAttemptId: NEW_ATTEMPT_ID });
+      ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic(BOOKING_ID, {
+        paymentAttemptId: NEW_ATTEMPT_ID, paymentAttemptResolvedAt: new Date('2026-10-01T12:00:30+09:00'), stripeCheckoutSessionId: 'cs_test_B'
+      });
+    })
+  });
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '取消依頼' });
+
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(result.checkoutExpireState, 'EXPIRED');
+  assert.deepStrictEqual(expiredSessionIds(ctx), ['cs_test_B'], '最新のSession Bを失効させる（古いSession Aだけで成功としない）');
+  assert.strictEqual(ctx.stripe.sessions.cs_test_B.status, 'expired');
+  var r = rec(ctx);
+  assert.strictEqual(r.status, 'CANCELLED');
+  assert.strictEqual(r.stripeCheckoutSessionId, 'cs_test_B');
+  assert.strictEqual(r.checkoutCancelState, 'EXPIRED');
+});
+
+test('競合: checkout_pendingのまま決済試行IDだけが変わった（新しい試行が未解決）場合、失効対象を特定できないため取り消さない', function () {
+  var ctx;
+  ctx = unpaidSetup({
+    lockService: separateProjectLockService(function () {
+      /* Web Appが新しい決済試行を予約し、Stripeへ発行を依頼している最中（Session未記録）。 */
+      ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic(BOOKING_ID, {
+        paymentAttemptId: NEW_ATTEMPT_ID, paymentAttemptResolvedAt: ''
+      });
+    })
+  });
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '取消依頼' });
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'CHECKOUT_ATTEMPT_UNRESOLVED');
+  var r = rec(ctx);
+  assert.strictEqual(r.status, 'PENDING', '取り消さない');
+  assert.strictEqual(r.paymentStatus, 'checkout_pending');
+  assert.strictEqual(r.checkoutCancelState, '');
+  assert.strictEqual(ctx.stripe.expires.length, 0, '古いSession Aを失効させて成功扱いにしない');
+  assert.strictEqual(liveEvents(ctx).length, 1);
+});
+
+test('競合: 事前読込時点で決済試行が未解決（前のSession IDが残っている）なら取り消さない', function () {
+  var ctx = unpaidSetup({ record: { paymentAttemptId: NEW_ATTEMPT_ID, paymentAttemptResolvedAt: '' } });
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: 'x' });
+  assert.strictEqual(result.error.code, 'CHECKOUT_ATTEMPT_UNRESOLVED');
+  assert.strictEqual(ctx.stripe.expires.length, 0);
+});
+
+test('交差: 取消の最中にWeb Appが（取消前にPENDINGを確認して）新しいSessionを発行した場合、取消後の記録時に検知して新しいSessionも失効させる', function () {
+  var ctx = setup({
+    record: Object.assign({}, UNPAID_OVERRIDES, FAILED_PREVIOUS_ATTEMPT),
+    properties: CHECKOUT_PROPERTIES,
+    lockService: separateProjectLockService()
+  });
+  ctx.stripe.session.status = 'expired';
+  var repo = ctx.sandbox.SpreadsheetRepository;
+  var originalCancelWrite = repo.updateBookingCancellationStateAtomic;
+  var webResult = null;
+  repo.updateBookingCancellationStateAtomic = function () {
+    /* AdminがPhase 1で最新行を確認した後、CANCELLEDを書き込む直前に、Web App（別のLock）が
+       決済開始を完了させる（Web AppからはまだPENDINGに見えている）。 */
+    repo.updateBookingCancellationStateAtomic = originalCancelWrite;
+    webResult = ctx.sandbox.BookingRepository.beginCardCheckout(BOOKING_ID, 'token-0001', new Date('2026-10-01T12:00:10+09:00'));
+    return originalCancelWrite.apply(this, arguments);
+  };
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '取消依頼' });
+
+  assert.ok(webResult && webResult.success, 'Web Appは取消前の状態を見て決済URLを発行した: ' + JSON.stringify(webResult));
+  var newSessionId = ctx.stripe.creates[0].sessionId;
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(result.checkoutExpireState, 'EXPIRED');
+  assert.ok(expiredSessionIds(ctx).indexOf(newSessionId) !== -1, '取消後に記録された新しいSessionも失効させる');
+  assert.strictEqual(ctx.stripe.sessions[newSessionId].status, 'expired');
+  var r = rec(ctx);
+  assert.strictEqual(r.status, 'CANCELLED', '予約は取消済み');
+  assert.strictEqual(r.stripeCheckoutSessionId, newSessionId, '新しい決済URLの存在は台帳で追跡できる');
+  assert.strictEqual(r.checkoutCancelState, 'EXPIRED');
+  var afterCancel = trackedRows(ctx, 'PAYMENT_CHECKOUT_AFTER_CANCEL');
+  assert.strictEqual(afterCancel.length, 1, '取消後に発行された決済URLを記録する');
+  assert.ok(afterCancel[0].errorMessage.indexOf('sessionId=' + newSessionId) !== -1);
+  assert.strictEqual(afterCancel[0].recoveryState, 'RESOLVED', '失効を確認できたので閉じる');
+});
+
+test('交差: 取消後の記録時に新しい決済試行がまだ未解決なら、未決済・失効済みと断定せずUNKNOWNで追跡し、試行の確定後に再確認で失効させる', function () {
+  var ctx = setup({
+    record: Object.assign({}, UNPAID_OVERRIDES, FAILED_PREVIOUS_ATTEMPT),
+    properties: CHECKOUT_PROPERTIES,
+    lockService: separateProjectLockService()
+  });
+  ctx.stripe.session.status = 'expired';
+  ctx.stripe.onExpire = function () {
+    /* Adminが古いSession Aを失効させている間に、Web Appが新しい決済試行を予約した（Stripe呼び出し中）。 */
+    ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic(BOOKING_ID, { paymentAttemptId: NEW_ATTEMPT_ID, paymentAttemptResolvedAt: '' });
+  };
+
+  var result = ctx.sandbox.cancelBookingWithRefund(BOOKING_ID, { decision: 'NONE', reason: '取消依頼' });
+
+  assert.strictEqual(result.success, true, '取消（枠の解放）は完了している');
+  assert.strictEqual(result.checkoutExpireState, 'UNKNOWN', '古いSession Aの失効だけで成功としない');
+  assert.strictEqual(result.warning.code, 'CHECKOUT_EXPIRE_UNKNOWN');
+  var r = rec(ctx);
+  assert.strictEqual(r.checkoutCancelState, 'UNKNOWN');
+  assert.strictEqual(r.paymentRecoveryRequiredAt, '', '遅延入金を記録できるようゲートは立てない');
+  assert.ok(trackedRows(ctx, 'PAYMENT_CHECKOUT_AFTER_CANCEL').some(function (row) {
+    return row.recoveryState === 'OPEN' && row.errorMessage.indexOf('paymentAttemptId=' + NEW_ATTEMPT_ID) !== -1;
+  }));
+  assert.ok(mailsTo(ctx, 'admin@example.com').length >= 1);
+  assert.ok(/お支払いにならないよう/.test(mailsTo(ctx, 'taro@example.com')[0].body));
+  assert.strictEqual(ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '確認').error.code, 'CHECKOUT_EXPIRE_UNCONFIRMED');
+
+  /* 最新の試行がまだ未解決の間の再確認でも断定しない。 */
+  var early = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(early.success, false);
+  assert.strictEqual(early.checkoutExpireState, 'UNKNOWN');
+
+  /* Web AppのSession発行が確定し、台帳にSession Bが記録された。 */
+  ctx.stripe.addSession({ id: 'cs_test_B', paymentAttemptId: NEW_ATTEMPT_ID });
+  ctx.sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic(BOOKING_ID, {
+    paymentAttemptResolvedAt: new Date('2026-10-01T12:01:00+09:00'), stripeCheckoutSessionId: 'cs_test_B'
+  });
+  var reconciled = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(reconciled.success, true, JSON.stringify(reconciled));
+  assert.strictEqual(ctx.stripe.sessions.cs_test_B.status, 'expired');
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'EXPIRED');
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+});
+
+test('交差（Web App側）: Session発行の間に予約が取り消されていたら、利用者へ決済URLを返さず失効を試み、管理者が追跡できるよう記録する', function () {
+  var ctx = setup({
+    record: Object.assign({}, UNPAID_OVERRIDES, FAILED_PREVIOUS_ATTEMPT),
+    properties: CHECKOUT_PROPERTIES,
+    lockService: separateProjectLockService()
+  });
+  ctx.stripe.session.status = 'expired';
+  ctx.stripe.onCreateSession = function () {
+    /* Web AppのStripe呼び出し中に、Booking Admin（別のLock）で取消が確定した。 */
+    ctx.sandbox.SpreadsheetRepository.updateBookingCancellationStateAtomic(BOOKING_ID, {
+      status: 'CANCELLED', cancelledAt: new Date('2026-10-01T12:00:05+09:00'), updatedAt: new Date('2026-10-01T12:00:05+09:00')
+    });
+  };
+
+  var web = ctx.sandbox.BookingRepository.beginCardCheckout(BOOKING_ID, 'token-0001', new Date('2026-10-01T12:00:00+09:00'));
+
+  assert.strictEqual(web.success, false);
+  assert.strictEqual(web.error.code, 'BOOKING_NOT_PENDING');
+  assert.strictEqual(web.checkoutUrl, undefined, '取消済みの予約の決済URLを利用者へ返さない');
+  var newSessionId = ctx.stripe.creates[0].sessionId;
+  assert.strictEqual(ctx.stripe.sessions[newSessionId].status, 'expired', 'Web App側でも失効を試みる');
+  var r = rec(ctx);
+  assert.strictEqual(r.status, 'CANCELLED', '予約を復活させない');
+  assert.strictEqual(r.stripeCheckoutSessionId, newSessionId, '発行された決済URLは台帳で追跡する');
+  assert.strictEqual(r.checkoutCancelState, 'UNKNOWN', 'Web App側の失効結果では断定せず、管理者の再確認対象にする');
+  var rows = trackedRows(ctx, 'PAYMENT_CHECKOUT_AFTER_CANCEL');
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].recoveryState, 'OPEN');
+
+  var reconciled = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(reconciled.success, true, JSON.stringify(reconciled));
+  assert.strictEqual(rec(ctx).checkoutCancelState, 'EXPIRED');
+  assert.deepStrictEqual(openRecoveryTypes(ctx), []);
+});
+
+test('交差（Web App側）: 取消後に発行されたSessionで入金が成立していた場合、入金を記録し予約は復活させずRecoveryで管理する', function () {
+  var ctx = setup({
+    record: Object.assign({}, UNPAID_OVERRIDES, FAILED_PREVIOUS_ATTEMPT),
+    properties: CHECKOUT_PROPERTIES,
+    lockService: separateProjectLockService()
+  });
+  ctx.stripe.session.status = 'expired';
+  ctx.stripe.onCreateSession = function (sessionId) {
+    ctx.sandbox.SpreadsheetRepository.updateBookingCancellationStateAtomic(BOOKING_ID, {
+      status: 'CANCELLED', cancelledAt: new Date('2026-10-01T12:00:05+09:00'), updatedAt: new Date('2026-10-01T12:00:05+09:00')
+    });
+    /* URLは利用者へ返らないが、失効の前に何らかの経路で決済が成立した最悪のケースを再現する。 */
+    ctx.stripe.markPaid(sessionId);
+  };
+  ctx.sandbox.BookingRepository.beginCardCheckout(BOOKING_ID, 'token-0001', new Date('2026-10-01T12:00:00+09:00'));
+  var newSessionId = ctx.stripe.creates[0].sessionId;
+
+  var recheck = ctx.sandbox.reconcileBookingCheckoutExpiry(BOOKING_ID);
+  assert.strictEqual(recheck.checkoutExpireState, 'PAYMENT_RECEIVED');
+  assert.ok(trackedRows(ctx, 'PAYMENT_RECEIVED_AFTER_CANCEL').some(function (row) {
+    return row.recoveryState === 'OPEN' && row.errorMessage.indexOf('sessionId=' + newSessionId) !== -1;
+  }));
+
+  var processed = deliverPaidWebhook(ctx, 'evt_after_cancel_1', new Date('2026-10-01T12:10:00+09:00'), newSessionId);
+  assert.strictEqual(processed.code, 'PAID_CONFIRM_BLOCKED', JSON.stringify(processed));
+  var r = rec(ctx);
+  assert.strictEqual(r.paymentStatus, 'paid', '実際の入金を記録する');
+  assert.strictEqual(r.status, 'CANCELLED', '予約は復活させない');
+  assert.ok(r.paymentRecoveryRequiredAt);
+  assert.strictEqual(ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '確認').error.code, 'RECOVERY_REFUND_DECISION_REQUIRED');
 });

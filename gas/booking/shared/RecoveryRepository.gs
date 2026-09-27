@@ -231,6 +231,29 @@ var RecoveryRepository = (function () {
     return count;
   }
 
+  /*
+   * PR-Dレビュー対応・2回目: 指定したfailureTypeのOPEN行のうち、errorMessageにneedle
+   * （例: 'sessionId=cs_...'）を含む行だけをRESOLVEDにする。取消後に複数の決済URLを追跡している
+   * 場合に、失効を確認できたSessionの記録だけを閉じ、他のSessionの記録は残すために使う。
+   */
+  function resolveOpenRecordsOfTypesMentioning(bookingId, failureTypes, needle, resolvedAt) {
+    var sheet = ensureRecoverySheet_();
+    var values = sheet.getDataRange().getValues();
+    var recoveryStateIndex = HEADERS_.indexOf('recoveryState');
+    var resolvedAtIndex = HEADERS_.indexOf('resolvedAt');
+    var count = 0;
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(values[i]);
+      if (record.bookingId === bookingId && record.recoveryState === 'OPEN' && failureTypes.indexOf(record.failureType) !== -1 &&
+          String(record.errorMessage || '').indexOf(needle) !== -1) {
+        sheet.getRange(i + 1, recoveryStateIndex + 1, 1, 1).setValues([['RESOLVED']]);
+        sheet.getRange(i + 1, resolvedAtIndex + 1, 1, 1).setValues([[resolvedAt]]);
+        count++;
+      }
+    }
+    return count;
+  }
+
   function hasOpenPaymentRecords(bookingId) {
     return listAll().some(function (record) {
       return record.bookingId === bookingId && record.recoveryState === 'OPEN' && isPaymentFailureType(record.failureType);
@@ -240,6 +263,7 @@ var RecoveryRepository = (function () {
   return {
     HEADERS: HEADERS_,
     resolveOpenRecordsOfTypes: resolveOpenRecordsOfTypes,
+    resolveOpenRecordsOfTypesMentioning: resolveOpenRecordsOfTypesMentioning,
     hasOpenPaymentRecords: hasOpenPaymentRecords,
     isPaymentFailureType: isPaymentFailureType,
     resolveOpenPaymentRecords: resolveOpenPaymentRecords,

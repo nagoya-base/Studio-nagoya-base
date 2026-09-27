@@ -112,7 +112,9 @@ var BookingRefund = (function () {
     'refundAttemptId', 'refundAttemptState', 'refundDecision', 'paymentRecoveryRequiredAt',
     /* PR-Dレビュー対応・1回目: 未入金の取消でCheckout Sessionを失効させるため、決済試行・
        Sessionの列も比較対象にする（Booking Web Appが並行して新しいSessionを発行していないか）。 */
-    'paymentAttemptId', 'paymentAttemptResolvedAt', 'stripeCheckoutSessionId'
+    'paymentAttemptId', 'paymentAttemptResolvedAt', 'stripeCheckoutSessionId',
+    /* PR-Dレビュー対応・2回目: 取消後の決済URL失効の記録も並行操作の検知に含める。 */
+    'checkoutCancelState'
   ];
 
   function sameSnapshot_(a, b) {
@@ -422,22 +424,87 @@ var BookingRefund = (function () {
     PAYMENT_RECEIVED: 'PAYMENT_RECEIVED'
   };
 
+  /*
+   * PR-Dレビュー対応・2回目: 取消と新しい決済試行（Booking Web AppのbeginCardCheckout）の競合。
+   *
+   * Booking Web AppとBooking AdminはScript Lockを共有しない。そのため、
+   * (a) Phase 0（Lockなし）で読んだ後、Phase 1（取消）までの間に新しい決済試行・Sessionが
+   *     記録される、
+   * (b) 取消（Phase 1）の直前にWeb Appが「PENDINGである」と確認して決済試行を始めており、
+   *     取消の後に新しいSessionが記録される、
+   * の両方が起こり得る。(a)はPhase 1の再読込で決済試行ID・Session ID・解決状態を比較して検知し
+   * （sameSnapshot_）、最新の状態を読み直して最初からやり直す（最大UNPAID_CANCEL_RETRIES_回）。
+   * (b)は取消後の結果記録（settleCheckoutAfterCancel_）のLock内で、取消時点の決済試行と
+   * 現在の決済試行を比較して検知する。新しいSessionが記録されていればそれも失効させて確認し、
+   * 古いSessionを失効させただけで取消成功（EXPIRED）とはしない。新しい決済試行の結果を
+   * 確認できない（試行IDはあるが未解決）場合は、未決済・失効済みと断定せずUNKNOWNとして
+   * Recoveryで追跡する。Web App側も、取消済みの予約に対して作られたSessionのURLは利用者へ
+   * 返さず、失効を試みたうえでRecoveryへ記録する（BookingRepository.gs参照）。
+   */
+  var UNPAID_CANCEL_RETRIES_ = 2;
+  var SETTLE_MAX_ROUNDS_ = 3;
+  var SESSION_MARKER_PATTERN_ = /sessionId=([A-Za-z0-9_]+)/g;
+
+  /* 決済試行IDに結果が確定していない（試行IDはあるが解決日時が無い）。Session IDが残っていても
+     それは前の試行のSessionであり、最新の試行のSessionはまだ分からない。 */
+  function hasUnresolvedCheckoutAttempt_(record) {
+    return !!record.paymentAttemptId && !record.paymentAttemptResolvedAt;
+  }
+
+  function checkoutIdentity_(record) {
+    return {
+      paymentAttemptId: record.paymentAttemptId || '',
+      paymentAttemptResolvedAt: record.paymentAttemptResolvedAt || '',
+      stripeCheckoutSessionId: record.stripeCheckoutSessionId || ''
+    };
+  }
+
+  function sameCheckoutIdentity_(a, b) {
+    return key_(a.paymentAttemptId) === key_(b.paymentAttemptId) &&
+      key_(a.paymentAttemptResolvedAt) === key_(b.paymentAttemptResolvedAt) &&
+      key_(a.stripeCheckoutSessionId) === key_(b.stripeCheckoutSessionId);
+  }
+
   function cancelUnpaidCheckout_(bookingId, snapshot, req, now) {
-    if (snapshot.paymentAttemptId && !snapshot.paymentAttemptResolvedAt && !snapshot.stripeCheckoutSessionId) {
-      return fail_('CHECKOUT_ATTEMPT_UNRESOLVED',
-        '利用者の決済開始（Checkout Sessionの発行）の結果がまだ確定していないため、失効させる決済URLを特定できません。' +
-          '数分後にもう一度お試しください（台帳・Stripeとも変更していません）。');
+    var current = snapshot;
+    for (var attempt = 0; attempt <= UNPAID_CANCEL_RETRIES_; attempt++) {
+      var outcome = cancelUnpaidCheckoutOnce_(bookingId, current, req, now);
+      if (!outcome.retryWithLatest) return outcome.response;
+      /* Phase 0の読込後に決済試行・Sessionが変わっていた。最新の行を読み直してやり直す
+         （古いSessionを失効させて取消成功とはしない）。 */
+      current = findRecord_(bookingId);
+      if (!current) return fail_('NOT_FOUND', 'bookingIdが見つかりません: ' + bookingId);
+      var latestStatus = Booking.normalizePaymentStatus(current.paymentStatus);
+      if (latestStatus === PS.PAID || latestStatus === PS.REFUND_PENDING || latestStatus === PS.REFUNDED || latestStatus === null) {
+        return fail_('CONCURRENT_MODIFICATION', '確認中に決済状態が変わりました（' + (latestStatus || '不明') + '）。画面を更新して内容を確認してから、もう一度操作してください。');
+      }
+    }
+    return concurrentModification_();
+  }
+
+  function cancelUnpaidCheckoutOnce_(bookingId, snapshot, req, now) {
+    if (hasUnresolvedCheckoutAttempt_(snapshot)) {
+      return {
+        response: fail_('CHECKOUT_ATTEMPT_UNRESOLVED',
+          '利用者の決済開始（Checkout Sessionの発行）の結果がまだ確定していないため、失効させる決済URLを特定できません。' +
+            '数分後にもう一度お試しください（台帳・Stripeとも変更していません）。')
+      };
     }
     var sessionId = snapshot.stripeCheckoutSessionId || '';
     var stripeConfig = BookingConfig.getStripeConfig();
     if (sessionId && !stripeConfig.secretKey) {
-      return fail_('STRIPE_NOT_CONFIGURED', 'Stripeの秘密鍵が設定されていないため、発行済みの決済URLを失効させられません。取消は行っていません。');
+      return { response: fail_('STRIPE_NOT_CONFIGURED', 'Stripeの秘密鍵が設定されていないため、発行済みの決済URLを失効させられません。取消は行っていません。') };
     }
 
     var phase1 = withLock_(LOCK_TIMEOUT_MS_, function () {
       var current = findRecord_(bookingId);
       if (!current) return { response: fail_('NOT_FOUND', 'bookingIdが見つかりません: ' + bookingId) };
-      if (!sameSnapshot_(snapshot, current)) return { response: concurrentModification_() };
+      if (!sameSnapshot_(snapshot, current)) {
+        /* 決済試行ID・Session ID・解決状態のいずれかが変わっていれば、読み直してやり直す。 */
+        return sameCheckoutIdentity_(checkoutIdentity_(snapshot), checkoutIdentity_(current))
+          ? { response: concurrentModification_() }
+          : { retryWithLatest: true };
+      }
       if (current.status !== Booking.STATUS.PENDING && current.status !== Booking.STATUS.CONFIRMED) {
         return { response: fail_('NOTHING_TO_CANCEL', 'この予約は既に' + current.status + 'のため、取り消す対象がありません。') };
       }
@@ -450,32 +517,33 @@ var BookingRefund = (function () {
         });
         SpreadsheetRepository.updateBookingRefundStateAtomic(bookingId, { refundReason: req.reason });
       } catch (writeError) {
-        /* 取消は完了済み。失効の記録ができなくてもPhase 2〜3は続け、結果をRecoveryへ残す。 */
+        /* 取消は完了済み。記録ができなくても失効の確認は続け、結果をRecoveryへ残す。 */
         Logger.log('BookingRefund: 決済URL失効の記録に失敗しました: ' + bookingId + ' ' + sanitize_(describeError_(writeError)));
       }
-      return { cancelled: true };
+      /* 取消を確定した時点の決済試行。これ以降にWeb Appが新しい試行を記録したかを、結果の記録時に比較する。 */
+      return { cancelled: true, identity: checkoutIdentity_(current) };
     });
-    if (phase1.lockTimeout) return lockTimeoutResponse_();
-    if (phase1.value.response) return phase1.value.response;
+    if (phase1.lockTimeout) return { response: lockTimeoutResponse_() };
+    if (phase1.value.retryWithLatest) return { retryWithLatest: true };
+    if (phase1.value.response) return { response: phase1.value.response };
 
-    var response = { success: true, bookingId: bookingId, cancelled: true, refundDecision: '' };
-    if (sessionId) {
-      var expireOutcome = expireAndRecord_(bookingId, sessionId, stripeConfig, now);
-      response.checkoutExpireState = expireOutcome.state;
-      response.message = expireOutcome.message;
-      if (expireOutcome.state !== CHECKOUT_CANCEL_STATE.EXPIRED) {
-        response.warning = { code: 'CHECKOUT_EXPIRE_' + expireOutcome.state, message: expireOutcome.message };
-      }
-    } else {
-      response.checkoutExpireState = CHECKOUT_CANCEL_STATE.NO_SESSION;
-      response.message = '発行済みの決済URL（Checkout Session）はありませんでした。';
+    var settled = settleCheckoutAfterCancel_(bookingId, phase1.value.identity, stripeConfig, now, []);
+    var response = {
+      success: true, bookingId: bookingId, cancelled: true, refundDecision: '',
+      checkoutExpireState: settled.state, message: settled.message
+    };
+    if (settled.state !== CHECKOUT_CANCEL_STATE.EXPIRED && settled.state !== CHECKOUT_CANCEL_STATE.NO_SESSION) {
+      response.warning = { code: 'CHECKOUT_EXPIRE_' + settled.state, message: settled.message };
     }
     notifyCancelledBestEffort_(bookingId, response);
-    return response;
+    return { response: response };
   }
 
   /* Phase 2（Lockなし）: 失効を依頼し、Sessionの実際の状態を確認して分類する。 */
   function observeExpiredSession_(stripeConfig, sessionId) {
+    if (!stripeConfig.secretKey) {
+      return { state: CHECKOUT_CANCEL_STATE.UNKNOWN, detail: 'Stripeの秘密鍵が未設定のため、決済URL（sessionId=' + sessionId + '）の失効を確認できません。' };
+    }
     var expireResult = StripeGateway.expireCheckoutSession(stripeConfig, sessionId);
     var session = expireResult.ok ? expireResult.session : null;
     var retrieveError = '';
@@ -493,109 +561,223 @@ var BookingRefund = (function () {
     if (!session || session.id !== sessionId) {
       return {
         state: CHECKOUT_CANCEL_STATE.UNKNOWN,
-        detail: '失効APIの結果（' + (expireResult.ok ? 'ok' : (expireResult.errorType || 'UNKNOWN')) + '）・Sessionの再取得（' +
-          (retrieveError || 'ID不一致') + '）のいずれからも、決済URLが失効したか確認できませんでした。'
+        detail: '決済URL（sessionId=' + sessionId + '）が失効したか確認できませんでした（失効API: ' +
+          (expireResult.ok ? 'ok' : (expireResult.errorType || 'UNKNOWN')) + '、再取得: ' + (retrieveError || 'ID不一致') + '）。'
       };
     }
     if (session.status === 'expired') {
-      return { state: CHECKOUT_CANCEL_STATE.EXPIRED, detail: 'Stripe上で決済URL（' + sessionId + '）の失効を確認しました。', session: session };
+      return { state: CHECKOUT_CANCEL_STATE.EXPIRED, detail: 'Stripe上で決済URL（sessionId=' + sessionId + '）の失効を確認しました。' };
     }
     if (session.status === 'complete' && (session.paymentStatus === 'paid' || session.paymentStatus === 'no_payment_required')) {
       return {
         state: CHECKOUT_CANCEL_STATE.PAYMENT_RECEIVED,
-        detail: '取消と同時期に決済URL（' + sessionId + '）の決済が成立していました（payment_intent=' + (session.paymentIntentId || '不明') +
-          ', amount=' + session.amountTotal + '）。',
-        session: session
+        detail: '取消と同時期に決済URL（sessionId=' + sessionId + '）の決済が成立していました（payment_intent=' +
+          (session.paymentIntentId || '不明') + ', amount=' + session.amountTotal + '）。'
       };
     }
     return {
       state: CHECKOUT_CANCEL_STATE.UNKNOWN,
-      detail: '決済URL（' + sessionId + '）はまだ失効していません（status=' + session.status + ', payment_status=' + session.paymentStatus + '）。',
-      session: session
+      detail: '決済URL（sessionId=' + sessionId + '）はまだ失効していません（status=' + session.status + ', payment_status=' + session.paymentStatus + '）。'
     };
   }
 
-  function expireAndRecord_(bookingId, sessionId, stripeConfig, now) {
-    var observed = observeExpiredSession_(stripeConfig, sessionId);
-    var locked = withLock_(RESULT_LOCK_TIMEOUT_MS_, function () {
-      var record = findRecord_(bookingId);
-      if (!record) return observed;
-      if (record.stripeCheckoutSessionId !== sessionId) {
-        recordRecovery_(bookingId, record, 'PAYMENT_CHECKOUT_EXPIRE_UNKNOWN',
-          '失効を確認した決済URL（' + sessionId + '）と台帳のSession（' + (record.stripeCheckoutSessionId || 'なし') + '）が異なります。' + observed.detail,
-          now, false);
-        return { state: CHECKOUT_CANCEL_STATE.UNKNOWN, detail: observed.detail, alert: true };
-      }
-      /* 一度記録した「入金あり」は、後の確認結果で上書きしない（入金の事実を消さない）。 */
-      var nextState = record.checkoutCancelState === CHECKOUT_CANCEL_STATE.PAYMENT_RECEIVED ? CHECKOUT_CANCEL_STATE.PAYMENT_RECEIVED : observed.state;
-      try {
-        SpreadsheetRepository.updateBookingFields(bookingId, { checkoutCancelState: nextState, checkoutCancelCheckedAt: now });
-      } catch (writeError) {
-        Logger.log('BookingRefund: 決済URL失効の結果記録に失敗しました: ' + bookingId);
-      }
-      if (observed.state === CHECKOUT_CANCEL_STATE.EXPIRED && nextState === CHECKOUT_CANCEL_STATE.EXPIRED) {
-        try {
-          RecoveryRepository.resolveOpenRecordsOfTypes(bookingId, ['PAYMENT_CHECKOUT_EXPIRE_UNKNOWN'], now);
-        } catch (resolveError) {
-          Logger.log('BookingRefund: 失効確認後のRecovery解消に失敗しました: ' + bookingId);
-        }
-        return { state: nextState, detail: observed.detail };
-      }
-      if (observed.state === CHECKOUT_CANCEL_STATE.PAYMENT_RECEIVED) {
-        recordRecovery_(bookingId, record, 'PAYMENT_RECEIVED_AFTER_CANCEL',
-          observed.detail + ' 予約は取消済みのまま復活させません。入金はWebhook処理で台帳へ記録されます。' +
-            '入金の記録後、「取消・返金」で返金方針（全額／一部／返金なし）を改めて判断してください。',
-          now, false);
-        return { state: nextState, detail: observed.detail, alert: true };
-      }
-      if (nextState === CHECKOUT_CANCEL_STATE.PAYMENT_RECEIVED) {
-        return { state: nextState, detail: observed.detail };
-      }
-      if (!hasOpenRecoveryOfType_(bookingId, 'PAYMENT_CHECKOUT_EXPIRE_UNKNOWN')) {
-        recordRecovery_(bookingId, record, 'PAYMENT_CHECKOUT_EXPIRE_UNKNOWN',
-          observed.detail + ' 予約は取消済みです。未決済・失効済みとは断定していません。「決済URLの失効を再確認」で確認してください。' +
-            'この間に入金が成立した場合はWebhook処理で記録され、要対応として管理されます。',
-          now, false);
-        return { state: nextState, detail: observed.detail, alert: true };
-      }
-      return { state: nextState, detail: observed.detail };
-    });
-    var result;
-    if (locked.lockTimeout) {
-      recordRecoveryOnly_(bookingId, null, observed.state === CHECKOUT_CANCEL_STATE.PAYMENT_RECEIVED ? 'PAYMENT_RECEIVED_AFTER_CANCEL' : 'PAYMENT_CHECKOUT_EXPIRE_UNKNOWN',
-        observed.detail + '（Lock混雑のため台帳へは未記録）', now);
-      result = { state: observed.state === CHECKOUT_CANCEL_STATE.EXPIRED ? CHECKOUT_CANCEL_STATE.UNKNOWN : observed.state, detail: observed.detail, alert: true };
-    } else {
-      result = locked.value;
-    }
-    if (result.alert) BookingAdminAlerts.notifyRefundNeedsAttention(bookingId, 'CHECKOUT_' + result.state, result.detail);
-    return { state: result.state, message: checkoutExpireMessage_(result.state, result.detail) };
+  var STATE_RANK_ = { NO_SESSION: 0, EXPIRED: 1, EXPIRE_REQUESTED: 2, UNKNOWN: 3, PAYMENT_RECEIVED: 4 };
+
+  function worseState_(a, b) {
+    return (STATE_RANK_[b] || 0) > (STATE_RANK_[a] || 0) ? b : a;
   }
 
-  function hasOpenRecoveryOfType_(bookingId, failureType) {
+  var CHECKOUT_TRACKING_FAILURE_TYPES_ = ['PAYMENT_CHECKOUT_EXPIRE_UNKNOWN', 'PAYMENT_CHECKOUT_AFTER_CANCEL'];
+
+  /* このRecovery行（OPEN）が、指定したSessionについての記録か。 */
+  function openRowMentions_(bookingId, failureTypes, needle) {
     try {
       return RecoveryRepository.listAll().some(function (row) {
-        return row.bookingId === bookingId && row.failureType === failureType && row.recoveryState === 'OPEN';
+        return row.bookingId === bookingId && row.recoveryState === 'OPEN' && failureTypes.indexOf(row.failureType) !== -1 &&
+          String(row.errorMessage || '').indexOf(needle) !== -1;
       });
     } catch (e) {
       return false;
     }
   }
 
+  /* 取消後の追跡が必要な（失効を確認できていない・取消後に発行された）SessionのID一覧。 */
+  function openTrackedSessionIds_(bookingId) {
+    var ids = [];
+    try {
+      RecoveryRepository.listAll().forEach(function (row) {
+        if (row.bookingId !== bookingId || row.recoveryState !== 'OPEN' || CHECKOUT_TRACKING_FAILURE_TYPES_.indexOf(row.failureType) === -1) return;
+        var text = String(row.errorMessage || '');
+        var match;
+        SESSION_MARKER_PATTERN_.lastIndex = 0;
+        while ((match = SESSION_MARKER_PATTERN_.exec(text)) !== null) {
+          if (ids.indexOf(match[1]) === -1) ids.push(match[1]);
+        }
+      });
+    } catch (e) {
+      Logger.log('BookingRefund: 追跡中の決済URLの取得に失敗しました: ' + bookingId);
+    }
+    return ids;
+  }
+
+  /*
+   * 取消後の決済URLの失効確認と記録（Phase 2〜3）。expected: 取消を確定した時点（または
+   * 前回確認した時点）の決済試行。extraSessionIds: 追跡中の他のSession（再確認時に使う）。
+   * 結果記録のLock内で決済試行が変わっていれば、新しいSessionも確認し直す（最大SETTLE_MAX_ROUNDS_回）。
+   * 戻り値: { state, message }（stateは確認したSession全体のうち最も注意が必要なもの）。
+   */
+  function settleCheckoutAfterCancel_(bookingId, expected, stripeConfig, now, extraSessionIds) {
+    var checked = {};
+    var order = [];
+    function addSession(id) {
+      if (id && order.indexOf(id) === -1) order.push(id);
+    }
+    addSession(expected.stripeCheckoutSessionId);
+    (extraSessionIds || []).forEach(addSession);
+    var ledgerIdentity = expected;
+
+    for (var round = 0; round < SETTLE_MAX_ROUNDS_; round++) {
+      order.forEach(function (id) {
+        if (!checked[id]) checked[id] = observeExpiredSession_(stripeConfig, id);
+      });
+      var locked = withLock_(RESULT_LOCK_TIMEOUT_MS_, function () {
+        var record = findRecord_(bookingId);
+        if (!record) return { done: true, state: CHECKOUT_CANCEL_STATE.UNKNOWN, details: ['予約行が見つかりません。'], alert: true };
+        var latest = checkoutIdentity_(record);
+        var extraUnknown = '';
+        if (!sameCheckoutIdentity_(latest, ledgerIdentity)) {
+          /* 取消の後に、Web Appが新しい決済試行・Sessionを記録した。 */
+          var marker = latest.stripeCheckoutSessionId && !hasUnresolvedCheckoutAttempt_(record)
+            ? 'sessionId=' + latest.stripeCheckoutSessionId
+            : 'paymentAttemptId=' + latest.paymentAttemptId;
+          if (!openRowMentions_(bookingId, ['PAYMENT_CHECKOUT_AFTER_CANCEL'], marker)) {
+            recordRecovery_(bookingId, record, 'PAYMENT_CHECKOUT_AFTER_CANCEL',
+              '予約の取消後に新しい決済試行が記録されました（paymentAttemptId=' + (latest.paymentAttemptId || 'なし') + ', ' +
+                (latest.stripeCheckoutSessionId && !hasUnresolvedCheckoutAttempt_(record) ? marker : '決済URLは未記録') +
+                '）。予約は取消済みのまま復活させません。決済URLの失効と入金の有無を確認してください。',
+              now, false);
+          }
+          if (!hasUnresolvedCheckoutAttempt_(record) && latest.stripeCheckoutSessionId && !checked[latest.stripeCheckoutSessionId]) {
+            return { again: true, latest: latest };
+          }
+          if (hasUnresolvedCheckoutAttempt_(record)) {
+            extraUnknown = '取消後に始まった決済試行（paymentAttemptId=' + latest.paymentAttemptId +
+              '）の結果（決済URL）をまだ確認できません。未決済・失効済みとは断定していません。';
+          }
+        }
+        return { done: true, record: record, extraUnknown: extraUnknown };
+      });
+      if (locked.lockTimeout) {
+        var timeoutDetail = order.map(function (id) { return checked[id] ? checked[id].detail : ''; }).join(' ');
+        recordRecoveryOnly_(bookingId, null, 'PAYMENT_CHECKOUT_EXPIRE_UNKNOWN', timeoutDetail + '（Lock混雑のため台帳へは未記録）', now);
+        BookingAdminAlerts.notifyRefundNeedsAttention(bookingId, 'CHECKOUT_UNKNOWN', timeoutDetail);
+        return { state: CHECKOUT_CANCEL_STATE.UNKNOWN, message: checkoutExpireMessage_(CHECKOUT_CANCEL_STATE.UNKNOWN, timeoutDetail) };
+      }
+      var value = locked.value;
+      if (value.again) {
+        ledgerIdentity = value.latest;
+        addSession(value.latest.stripeCheckoutSessionId);
+        continue;
+      }
+      return recordSettledCheckout_(bookingId, order, checked, value.extraUnknown, now);
+    }
+    /* 何度確認しても決済試行が動き続けている。断定せずUNKNOWNとして残す。 */
+    return recordSettledCheckout_(bookingId, order, checked,
+      '決済試行が確認中に繰り返し更新されたため、最新の決済URLの状態を確定できませんでした。', now);
+  }
+
+  /* Lock内で、確認できた各Sessionの結果と全体の状態を記録する。 */
+  function recordSettledCheckout_(bookingId, order, checked, extraUnknown, now) {
+    var locked = withLock_(RESULT_LOCK_TIMEOUT_MS_, function () {
+      var record = findRecord_(bookingId);
+      var aggregate = order.length === 0 ? CHECKOUT_CANCEL_STATE.NO_SESSION : CHECKOUT_CANCEL_STATE.EXPIRED;
+      var details = [];
+      var alert = false;
+      order.forEach(function (id) {
+        var observed = checked[id];
+        aggregate = worseState_(aggregate, observed.state);
+        details.push(observed.detail);
+        if (observed.state === CHECKOUT_CANCEL_STATE.EXPIRED) {
+          try {
+            RecoveryRepository.resolveOpenRecordsOfTypesMentioning(bookingId, CHECKOUT_TRACKING_FAILURE_TYPES_, 'sessionId=' + id, now);
+            /* このSessionが台帳の最新の決済試行（解決済み）のものなら、その試行が未解決だった間の記録も閉じる。 */
+            if (record && record.stripeCheckoutSessionId === id && !hasUnresolvedCheckoutAttempt_(record) && record.paymentAttemptId) {
+              RecoveryRepository.resolveOpenRecordsOfTypesMentioning(bookingId, CHECKOUT_TRACKING_FAILURE_TYPES_, 'paymentAttemptId=' + record.paymentAttemptId, now);
+            }
+          } catch (resolveError) {
+            Logger.log('BookingRefund: 失効確認後のRecovery解消に失敗しました: ' + bookingId);
+          }
+        } else if (observed.state === CHECKOUT_CANCEL_STATE.PAYMENT_RECEIVED) {
+          if (!openRowMentions_(bookingId, ['PAYMENT_RECEIVED_AFTER_CANCEL'], 'sessionId=' + id)) {
+            recordRecovery_(bookingId, record, 'PAYMENT_RECEIVED_AFTER_CANCEL',
+              observed.detail + ' 予約は取消済みのまま復活させません。入金はWebhook処理で台帳へ記録されます。' +
+                '入金の記録後、「取消・返金」で返金方針（全額／一部／返金なし）を改めて判断してください。',
+              now, false);
+          }
+          alert = true;
+        } else if (!openRowMentions_(bookingId, ['PAYMENT_CHECKOUT_EXPIRE_UNKNOWN'], 'sessionId=' + id)) {
+          recordRecovery_(bookingId, record, 'PAYMENT_CHECKOUT_EXPIRE_UNKNOWN',
+            observed.detail + ' 予約は取消済みです。未決済・失効済みとは断定していません。「決済URLの失効を再確認」で確認してください。' +
+              'この間に入金が成立した場合はWebhook処理で記録され、要対応として管理されます。',
+            now, false);
+          alert = true;
+        }
+      });
+      if (extraUnknown) {
+        aggregate = worseState_(aggregate, CHECKOUT_CANCEL_STATE.UNKNOWN);
+        details.push(extraUnknown);
+        alert = true;
+      }
+      /* 一度記録した「入金あり」は、後の確認結果で上書きしない（入金の事実を消さない）。 */
+      if (record && record.checkoutCancelState === CHECKOUT_CANCEL_STATE.PAYMENT_RECEIVED) {
+        aggregate = CHECKOUT_CANCEL_STATE.PAYMENT_RECEIVED;
+      }
+      /* 解消済みでないSession（追跡中のRecovery行）が他に残っていれば、全体を失効済みとしない。 */
+      if (aggregate === CHECKOUT_CANCEL_STATE.EXPIRED || aggregate === CHECKOUT_CANCEL_STATE.NO_SESSION) {
+        var stillTracked = openTrackedSessionIds_(bookingId).filter(function (id) { return !checked[id]; });
+        var pendingAttempt = openRowMentions_(bookingId, ['PAYMENT_CHECKOUT_AFTER_CANCEL', 'PAYMENT_CHECKOUT_EXPIRE_UNKNOWN'], 'paymentAttemptId=');
+        if (stillTracked.length > 0 || (pendingAttempt && record && hasUnresolvedCheckoutAttempt_(record))) {
+          aggregate = CHECKOUT_CANCEL_STATE.UNKNOWN;
+          details.push('他に失効を確認できていない決済URL・決済試行があります。');
+        }
+      }
+      if (record) {
+        try {
+          SpreadsheetRepository.updateBookingFields(bookingId, { checkoutCancelState: aggregate, checkoutCancelCheckedAt: now });
+        } catch (writeError) {
+          Logger.log('BookingRefund: 決済URL失効の結果記録に失敗しました: ' + bookingId);
+        }
+        if (extraUnknown && !openRowMentions_(bookingId, ['PAYMENT_CHECKOUT_EXPIRE_UNKNOWN'], 'paymentAttemptId=' + record.paymentAttemptId)) {
+          recordRecovery_(bookingId, record, 'PAYMENT_CHECKOUT_EXPIRE_UNKNOWN',
+            extraUnknown + '（paymentAttemptId=' + record.paymentAttemptId + '）「決済URLの失効を再確認」で確認してください。', now, false);
+        }
+      }
+      return { state: aggregate, detail: details.join(' '), alert: alert };
+    });
+    var result = locked.lockTimeout
+      ? { state: CHECKOUT_CANCEL_STATE.UNKNOWN, detail: 'Lock混雑のため確認結果を記録できませんでした。', alert: true }
+      : locked.value;
+    if (locked.lockTimeout) recordRecoveryOnly_(bookingId, null, 'PAYMENT_CHECKOUT_EXPIRE_UNKNOWN', result.detail, now);
+    if (result.alert) BookingAdminAlerts.notifyRefundNeedsAttention(bookingId, 'CHECKOUT_' + result.state, result.detail);
+    return { state: result.state, message: checkoutExpireMessage_(result.state, result.detail) };
+  }
+
   function checkoutExpireMessage_(state, detail) {
     if (state === CHECKOUT_CANCEL_STATE.EXPIRED) return '発行済みの決済URLもStripe側で失効させました。';
+    if (state === CHECKOUT_CANCEL_STATE.NO_SESSION) return '発行済みの決済URL（Checkout Session）はありませんでした。';
     if (state === CHECKOUT_CANCEL_STATE.PAYMENT_RECEIVED) {
       return '取消と同時期に決済が成立していました。予約は取消済みのままです。入金が台帳へ記録された後、「取消・返金」で返金方針を判断してください。（' + detail + '）';
     }
-    return '予約は取り消しましたが、発行済みの決済URLが失効したかを確認できませんでした（未決済・失効済みとは断定していません）。' +
+    return '予約は取り消しましたが、決済URLが失効したかを確認できませんでした（未決済・失効済みとは断定していません）。' +
       '「決済URLの失効を再確認」で確認してください。（' + detail + '）';
   }
 
   /*
    * reconcileCheckoutExpiry(bookingId, now) — Booking Adminの「決済URLの失効を再確認」。
-   * 未入金の取消で失効を確認できなかった（UNKNOWN・EXPIRE_REQUESTEDのまま）予約について、
-   * 失効APIの再実行とSessionの再取得を行い、結果を記録する。失効は資金移動を伴わないため
-   * 何度実行してもよい。
+   * 取消済みの予約について、台帳の最新の決済試行のSessionと、Recoveryで追跡中の（失効を確認
+   * できていない・取消後に発行された）Sessionのすべてを失効させて状態を確認する。
+   * 失効は資金移動を伴わないため何度実行してもよい。最新の決済試行の結果が未確定の間は
+   * 断定せずUNKNOWNのまま残す。
    */
   function reconcileCheckoutExpiry(bookingId, now) {
     var effectiveNow = isDateLike_(now) ? now : new Date();
@@ -610,10 +792,19 @@ var BookingRefund = (function () {
           ? '取消と同時期に決済が成立しています。入金の記録後、「取消・返金」で返金方針を判断してください。'
           : '失効を確認する決済URLはありません。'));
     }
-    if (!record.stripeCheckoutSessionId) return fail_('NO_CHECKOUT_EXPIRY_TO_CHECK', '失効を確認する決済URLはありません。');
+    if (record.status === Booking.STATUS.PENDING || record.status === Booking.STATUS.CONFIRMED) {
+      return fail_('NOT_CANCELLED', 'この予約は取り消されていません。');
+    }
     var stripeConfig = BookingConfig.getStripeConfig();
     if (!stripeConfig.secretKey) return fail_('STRIPE_NOT_CONFIGURED', 'Stripeの秘密鍵が設定されていないため確認できません。');
-    var outcome = expireAndRecord_(bookingId, record.stripeCheckoutSessionId, stripeConfig, effectiveNow);
+    var identity = checkoutIdentity_(record);
+    if (hasUnresolvedCheckoutAttempt_(record)) {
+      /* 最新の決済試行の結果が未確定。そのSessionは分からないため、既知のSessionだけ確認し、
+         全体はUNKNOWNのまま残す（settleCheckoutAfterCancel_のextraUnknown）。 */
+      identity = { paymentAttemptId: identity.paymentAttemptId, paymentAttemptResolvedAt: '', stripeCheckoutSessionId: '' };
+    }
+    var outcome = settleCheckoutAfterCancel_(bookingId, identity, stripeConfig, effectiveNow,
+      [record.stripeCheckoutSessionId].concat(openTrackedSessionIds_(bookingId)));
     if (outcome.state === CHECKOUT_CANCEL_STATE.EXPIRED) {
       return { success: true, bookingId: bookingId, checkoutExpireState: outcome.state, message: outcome.message };
     }
