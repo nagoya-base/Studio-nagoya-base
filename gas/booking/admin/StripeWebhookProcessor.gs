@@ -680,6 +680,20 @@ var StripeWebhookProcessor = (function () {
       if (gateStopped) return gateStopped;
     }
 
+    /*
+     * Issue #341 PR-D: 新規に自動確定した鍵承認ゲート対象の予約について、管理者へ「鍵承認待ち」
+     * を通知する（best effort。既に確定済みだった再送イベントでは送らない。通知の成否は
+     * イベント処理結果に影響させない）。
+     */
+    if (confirmResult.success && !confirmResult.alreadyConfirmed) {
+      try {
+        var confirmedRow = SpreadsheetRepository.findRowByBookingId(bookingId);
+        if (confirmedRow) BookingAdminAlerts.notifyAccessApprovalPending(confirmedRow.record);
+      } catch (alertError) {
+        Logger.log('StripeWebhookProcessor: 鍵承認待ちの管理者通知に失敗しました bookingId=' + bookingId);
+      }
+    }
+
     return finalizeOutcome_(rowNumber, generation, {
       processingState: StripeEventRepository.STATE.COMPLETED,
       bookingId: bookingId,

@@ -746,3 +746,76 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 }
 .reschedule-section-danger h3 { color: var(--color-danger); }
 .reschedule-section-danger button { background: var(--color-danger); }
+
+/*
+ * Issue #341 PR-D: 決済・返金（Stripe）／取消・返金／鍵承認・来場案内の各欄と、
+ * 決済要対応（Recovery）一覧パネル。#price-edit-section等と同じく
+ * booking-admin.js（initPaymentUi_/initPaymentRecoveryUi_）が1回だけDOM生成する。
+ */
+#payment-section,
+#refund-section,
+#access-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+#payment-section h3,
+#refund-section h3,
+#access-section h3,
+#payment-recovery-panel h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.payment-status,
+#access-status {
+  margin: 0 0 8px;
+  font-family: inherit;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+#payment-section button,
+#refund-section button,
+#access-section button {
+  margin: 4px 8px 4px 0;
+}
+
+#payment-dashboard-link {
+  display: inline-block;
+  margin: 0 8px 8px 0;
+  font-size: 13px;
+}
+
+#refund-section label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+#refund-section select,
+#refund-section input,
+#refund-section textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+#refund-section textarea {
+  min-height: 64px;
+}
+
+#payment-recovery-panel {
+  margin-bottom: 16px;
+}
+
+.recovery-rows {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  word-break: break-all;
+}

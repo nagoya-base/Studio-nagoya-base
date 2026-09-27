@@ -175,8 +175,45 @@ var RecoveryRepository = (function () {
     return false;
   }
 
+  /*
+   * Issue #341 PR-D: 決済・返金に関するRecovery行かどうか（failureTypeの接頭辞で判定）。
+   * PR-B/PR-C/PR-Dが記録する決済系のfailureTypeはいずれもこれらの接頭辞を持つ
+   * （PAYMENT_*・STRIPE_WEBHOOK_*・REFUND_*・UNKNOWN_PAYMENT_STATUS）。Calendar・メール・
+   * 日程変更精算等の他の種類のRecovery行はここに含めない。
+   */
+  var PAYMENT_FAILURE_TYPE_PREFIXES_ = ['PAYMENT_', 'STRIPE_WEBHOOK_', 'REFUND_', 'UNKNOWN_PAYMENT_STATUS'];
+
+  function isPaymentFailureType(failureType) {
+    var value = String(failureType || '');
+    return PAYMENT_FAILURE_TYPE_PREFIXES_.some(function (prefix) { return value.indexOf(prefix) === 0; });
+  }
+
+  /*
+   * BookingRefund.resolvePaymentRecoveryが、Stripe側の実際の状態と台帳の整合を確認した
+   * 後にのみ呼ぶ。この予約のOPENな決済系Recovery行をRESOLVEDにする（他の種類の行は
+   * 変更しない）。戻り値: RESOLVEDにした行数。
+   */
+  function resolveOpenPaymentRecords(bookingId, resolvedAt) {
+    var sheet = ensureRecoverySheet_();
+    var values = sheet.getDataRange().getValues();
+    var recoveryStateIndex = HEADERS_.indexOf('recoveryState');
+    var resolvedAtIndex = HEADERS_.indexOf('resolvedAt');
+    var count = 0;
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(values[i]);
+      if (record.bookingId === bookingId && record.recoveryState === 'OPEN' && isPaymentFailureType(record.failureType)) {
+        sheet.getRange(i + 1, recoveryStateIndex + 1, 1, 1).setValues([['RESOLVED']]);
+        sheet.getRange(i + 1, resolvedAtIndex + 1, 1, 1).setValues([[resolvedAt]]);
+        count++;
+      }
+    }
+    return count;
+  }
+
   return {
     HEADERS: HEADERS_,
+    isPaymentFailureType: isPaymentFailureType,
+    resolveOpenPaymentRecords: resolveOpenPaymentRecords,
     hasRecord: hasRecord,
     recordFailure: recordFailure,
     listAll: listAll,

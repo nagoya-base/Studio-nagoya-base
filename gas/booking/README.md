@@ -3032,6 +3032,9 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `StripeWebhookAuth.gs`（Issue #341 PR-C。中継基盤からの呼び出し認証） | – | – | ✓ | `gas/booking/webhook/StripeWebhookAuth.gs` |
 | `StripeEventRepository.gs`（Issue #341 PR-C。Stripe Webhookイベントの受信・処理台帳。レビュー対応・4回目でBooking Admin/Webhookの両方が使う共有ファイルへ再設計） | – | ✓ | ✓ | `gas/booking/shared/StripeEventRepository.gs` |
 | `StripeWebhookProcessor.gs`（Issue #341 PR-C。レビュー対応・4回目で新設。決済照合・予約自動確定の本体。Booking Adminの時間主導トリガーから呼ばれる。旧`StripeWebhookHandler.gs`から移動・再設計） | – | ✓ | – | `gas/booking/admin/StripeWebhookProcessor.gs` |
+| `BookingRefund.gs`（Issue #341 PR-D。管理者の取消・返金・返金状態の照会・決済Recoveryの一覧と解消） | – | ✓ | – | `gas/booking/admin/BookingRefund.gs` |
+| `BookingAccessApproval.gs`（Issue #341 PR-D。鍵承認） | – | ✓ | – | `gas/booking/admin/BookingAccessApproval.gs` |
+| `BookingAdminAlerts.gs`（Issue #341 PR-D。鍵承認待ち・鍵未承認・返金要対応の管理者通知） | – | ✓ | – | `gas/booking/admin/BookingAdminAlerts.gs` |
 | `BookingWebhookEndpoint.gs`（Issue #341 PR-C。Stripe Webhook中継基盤を受け付ける唯一の`doPost`。レビュー対応・4回目で受信・永続化専用に再設計） | – | – | ✓ | `gas/booking/webhook/BookingWebhookEndpoint.gs` |
 | `BookingTriggers.gs`（`expirePendingBookings`に加え、レビュー対応・4回目で`processPendingStripeWebhookEvents`の時間主導トリガーも追加） | – | ✓ | – | `gas/booking/admin/BookingTriggers.gs` |
 | `BookingAdmin.gs` | – | ✓ | – | `gas/booking/admin/BookingAdmin.gs` |
@@ -3405,6 +3408,33 @@ Session取得を防ぐ決済開始トークン用に1列（`checkoutAccessToken`
 4. 既存の両プロジェクトへ対象ファイル（`BookingRepository.gs`・`Code.gs`・
    `SpreadsheetRepository.gs`を含む）を反映する。本番デプロイを更新する場合は既存
    デプロイID・`/exec` URLを維持する。
+
+この手順は本番反映時の作業指示であり、本PRでは本番のシート編集・GASデプロイのいずれも
+行わない。
+
+### Issue #341 PR-D 本番`Bookings`シートのヘッダー追記手順
+
+PR-D（管理者の取消・返金）で返金試行の記録用に9列を追加した。上記「PR #354レビュー対応」の
+`checkoutAccessToken`がすでに反映済みであることを前提に、その右隣へ追記する。
+
+1. 本番シートの現在の最終列が`checkoutAccessToken`であることを確認する。
+2. その右隣へ、次の9列をこの順で追記する（`refundAttemptId`〜`refundCheckedAt`の8列は
+   `updateBookingRefundStateAtomic`が1回の`setValues`で更新するため、順序を変えない）。
+
+   ```text
+   refundAttemptId	refundAttemptState	refundDecision	refundAmount	refundReason	refundDecidedAt	refundStripeStatus	refundCheckedAt	refundMailSentAt
+   ```
+
+3. 既存行の9列は空欄のままにする（空＝返金試行なし・返金完了メール未送信）。
+   `accessApprovedAt`列（PR-Aで追加済み）も既存行は空欄のままでよい（空＝未承認。
+   鍵承認ゲートの対象はStripe Checkoutで決済した予約だけなので、既存の現地払い・旧
+   Payment Link予約の前日リマインドには影響しない）。
+4. Booking Adminプロジェクトへ対象ファイル（新規の`BookingRefund.gs`・
+   `BookingAccessApproval.gs`・`BookingAdminAlerts.gs`を含む。「GASプロジェクトへの
+   デプロイ対象ファイル」表参照）を反映する。Booking Web App（公開）プロジェクトには
+   `Booking.gs`・`BookingMailer.gs`・`BookingMailTemplates.gs`・`StripeGateway.gs`・
+   `SpreadsheetRepository.gs`・`RecoveryRepository.gs`・`BookingRepository.gs`の更新だけを
+   反映する（管理者専用ファイルは追加しない）。いずれも既存デプロイID・`/exec` URLを維持する。
 
 この手順は本番反映時の作業指示であり、本PRでは本番のシート編集・GASデプロイのいずれも
 行わない。
@@ -5377,6 +5407,217 @@ Apps Scriptプロジェクト**を作成する方式へ変更した（「Webhook
   運用を推奨する。
 
 PR-Dには自動着手しません。レビューをお待ちします。
+
+## Issue #341: Stripe API即時決済による予約自動確定・自動返金・鍵承認ゲートへ移行（PR-D）
+
+PR-C（署名検証Webhook受信・イベント台帳・入金照合・自動確定）の構成はそのまま前提とし、
+管理者の「取消・返金」「返金状態を照会」「決済要対応（Recovery）の一覧・解消」「鍵承認」
+「来場案内を再送」と、関連するメール文言・前日リマインドの送信ゲートを追加した。
+Webhook受信・イベント台帳・入金照合・自動確定の方式は変えていない（接続として、
+自動確定の直後に管理者へ「鍵承認待ち」を通知する1か所だけを追加）。
+
+### 追加・変更したファイル
+
+| ファイル | 内容 |
+| --- | --- |
+| `gas/booking/admin/BookingRefund.gs`（新規） | 取消・返金（`cancelWithRefund`）、返金状態の照会（`reconcileRefund`）、決済Recoveryの一覧（`listPaymentRecoveries`）と解消（`resolvePaymentRecovery`） |
+| `gas/booking/admin/BookingAccessApproval.gs`（新規） | 鍵承認（`approveAccess`） |
+| `gas/booking/admin/BookingAdminAlerts.gs`（新規） | 管理者通知（鍵承認待ち・明日利用の鍵未承認・返金の要対応） |
+| `gas/booking/shared/StripeGateway.gs` | 返金API（`createRefund`・`retrieveRefund`・`listRefundsForPaymentIntent`） |
+| `gas/booking/shared/Booking.gs` | `isStripeCheckoutBooking`・`isSameDayBookingRecord`・`requiresAccessApproval`・`evaluateAccessGate` |
+| `gas/booking/shared/BookingRepository.gs` | 通常のキャンセルでStripe入金済み予約を拒否（`REFUND_DECISION_REQUIRED`）、返金記録時に限り要復旧ゲート中でも返金の事実を記録できるオプション、`lockedInternals` |
+| `gas/booking/shared/BookingMailer.gs` / `BookingMailTemplates.gs` | 前日リマインドの鍵承認ゲート、再送の二重送信防止（`expectedSentAtVersion`）、返金完了メール（`REFUNDED`）、取消メールの返金文言、確定メールの来場案内文言 |
+| `gas/booking/shared/SpreadsheetRepository.gs` / `RecoveryRepository.gs` | 返金試行の9列と`updateBookingRefundStateAtomic`、決済系Recovery行の判定・解消 |
+| `gas/booking/admin/BookingAdmin.gs` / `BookingAdminWeb.gs` | 管理者専用のサーバー関数（下記） |
+| `gas/booking/admin/BookingReminderTriggers.gs` | 鍵未承認でスキップした予約の管理者通知 |
+| `gas/booking/admin/StripeWebhookProcessor.gs` | 新規自動確定時の「鍵承認待ち」通知（best effort） |
+| `admin/booking/booking-admin.js` / `.css` | 「決済・返金（Stripe）」「取消・返金」「鍵承認・来場案内」欄、「決済要対応」一覧 |
+
+Booking Adminのサーバー関数（いずれもBooking Adminプロジェクト専用。公開Web App・
+Webhookプロジェクトには配布しない。`test/booking-webhook-deployment.test.js`・
+`test/booking-deployment-manifest-sync.test.js`で検証）:
+`adminCancelBookingWithRefund(bookingId, decision, amountJpy, reason)`・
+`adminReconcileRefund(bookingId)`・`adminApproveAccess(bookingId)`・
+`adminResendReminderMail(bookingId, expectedSentAtVersion)`・`getAdminPaymentRecoveries()`・
+`adminResolvePaymentRecovery(bookingId, note)`。
+
+### 返金額の決め方（オーナー確認済み）
+
+規約のキャンセルポリシー（2日前まで無料／前日50%／当日100%・悪天候特例）とIssue本文の
+「取消と同時に自動返金」の間に、返金額の決め方が明記されていなかったため、実装前に確認した。
+結論は「**管理者が取消のたびに選択・入力する**」:
+
+- 取消ダイアログで「全額返金（FULL）／一部返金（PARTIAL・金額入力）／返金なし（NONE）」を
+  選び、理由（必須・500文字以内・管理者の記録用で利用者には送らない）を入力する。
+- システムはキャンセル料・返金額を自動計算しない（Issue #344の日程変更精算と同じ方針）。
+- 一部返金の上限はCheckout Session発行時点の請求額スナップショット（`stripeAmount`）。
+- 1予約につき成立させる返金は1回まで（返金手続き中・返金済みの予約への追加返金はしない）。
+  日程変更の差額精算（`FeeSettlementRepository`）とは統合していない。
+
+### 決済状態の遷移（PR-Aの状態機械をそのまま使用）
+
+```
+paid ──(Stripeが返金を受付: pending/requires_action)──> refund_pending ──(succeeded)──> refunded
+paid ──(Stripeが即時succeeded)──> refund_pending ──> refunded（同じLock区間で2段階）
+paid ──(返金なし／返金の拒否・失敗)──> paid のまま（入金の事実は消さない）
+```
+
+返金試行の状態は`paymentStatus`とは別の列（`refundAttemptState`）で持つ:
+`RESERVED`（試行IDを確保・Stripe呼び出し中）→`SUBMITTED`（Stripeが受付・返金IDを記録済み）／
+`UNKNOWN`（応答不明・照会が必要）／`FAILED`（Stripeが拒否、または返金がfailed/canceled）。
+予約の`status`は、有効な予約（PENDING/CONFIRMED）なら既存の取消処理でCANCELLEDへ進める
+（Issue本文どおり、枠の解放は返金APIの成功を待たない）。失効済み（EXPIRED）等の予約は
+`status`を変えずに返金だけ行う。
+
+### 返金の冪等性・二重返金の防止
+
+1. Phase 0（Lockなし）: 台帳を読み、返金試行が進行中（`RESERVED`/`UNKNOWN`、または
+   `SUBMITTED`なのに`paid`のまま）なら`REFUND_IN_PROGRESS`で止める。Stripeへ照会し、
+   PaymentIntentが`succeeded`で入金額・通貨が台帳と一致すること、そのPaymentIntentに
+   有効な返金がまだ無いことを確認する（Dashboard等での返金が既にあれば新しい返金を出さず
+   要対応にする）。
+2. Phase 1（Script Lock）: 最新行を再読込し、Phase 0から決済・返金・予約状態の列が
+   変わっていないことを確認（変わっていれば`CONCURRENT_MODIFICATION`）。有効な予約なら既存の
+   取消処理（Calendar削除→CANCELLED）を行い、返金試行ID（`refundAttemptId`＝Stripeへの
+   Idempotency-Key。`RFD-<bookingId>-<uuid>`）・返金額・理由を台帳へ保存し、読み戻して確認する。
+   保存を確認できなければStripeを呼ばない。
+3. Phase 2（Lockなし）: Stripe返金APIを呼ぶ。**Script LockはStripeの応答待ちの間保持しない。**
+4. Phase 3（Script Lock）: 最新行を再読込し、`refundAttemptId`が自分の試行のままのときだけ
+   結果を保存する。
+
+- 二重クリック・画面の再送信: 2回目はPhase 0で`REFUND_IN_PROGRESS`／`REFUND_ALREADY_REQUESTED`、
+  またはPhase 1で`CONCURRENT_MODIFICATION`になり、Stripeを呼ばない。
+- GASの再実行: 同じ予約の新しい返金試行IDは、前の試行が`FAILED`で終わった場合にしか発行しない。
+- Stripeの応答不明（通信例外・5xx・409・429・解析不能）: 未返金と決めつけず`UNKNOWN`とし、
+  返金一覧から`metadata.refundAttemptId`が一致する返金を照会して採用する。見つからなければ
+  「返金状態を照会」で**同じ返金試行ID・同じ金額**で再送する（Stripeは同じIdempotency-Keyの
+  再送に同じ返金を返す）。`RESERVED`のまま残った試行（実行が途中で止まった等）は、最初の
+  呼び出しが確実に終わっている（Apps Scriptの最大実行時間6分＋1分）まで照会のみを行い、
+  再送しない。StripeのIdempotency-Keyの保持期間（24時間）を過ぎた後の再送でも、再送の直前に
+  返金一覧でこの試行の返金が存在しないことを確認しているため、二重に作られることはない。
+- Stripeで返金成功後にBookings更新が失敗: 返金ID・金額をRecovery
+  （`REFUND_SUCCEEDED_LEDGER_UPDATE_FAILED`）へ記録し、要復旧ゲートを立て、管理者へ通知する。
+  入金・返金・予約の事実は消さない。台帳の回復後、「返金状態を照会」で同じ返金を記録する。
+
+### Recoveryの扱い
+
+- 「決済要対応」一覧（`getAdminPaymentRecoveries`）は、要復旧ゲート
+  （`paymentRecoveryRequiredAt`）が立っている予約、返金の結果確認待ち・失敗の予約、OPENな
+  決済系Recovery行（`PAYMENT_*`・`STRIPE_WEBHOOK_*`・`REFUND_*`・`UNKNOWN_PAYMENT_STATUS`）が
+  ある予約を、予約ID・予約状態・決済状態・Session/PaymentIntent/返金ID・理由・発生日時で
+  表示する（氏名・連絡先は含めない。詳細は予約詳細で確認）。**表示しただけでは返金・確定・
+  ゲート解除を行わない。**
+- PR-Cで記録された「入金済みだが自動確定できなかった」予約（`PAYMENT_SUCCEEDED_BOOKING_CONFIRM_BLOCKED`）
+  は、管理者が予約詳細で (a) 確定できる状態なら既存の「確定」、(b) 枠を確保できない等なら
+  「取消・返金」で返金方法を選ぶ。要復旧ゲート中でも「取消・返金」はPhase 0のStripe照合を
+  通った場合だけ実行でき、Stripeで確認した返金の事実は台帳へ記録する。
+- 「決済要対応を解消」（`resolvePaymentRecovery`）は、確認メモ（必須）を受け取り、Stripeの
+  PaymentIntent・返金一覧を照会して台帳と整合していることを確認できた場合だけ要復旧ゲートを
+  外し、その予約のOPENな決済系Recovery行をRESOLVEDにする（`PAYMENT_RECOVERY_RESOLVED`行を
+  追記）。解消できる状態は「入金済み・Stripe上に有効な返金なし・予約CONFIRMED」
+  「入金済み・有効な返金なし・予約は取消/失効済みで管理者が『返金なし』を記録済み」
+  「返金済み（Stripe上の返金が台帳の返金IDと一致しsucceeded）・予約はCONFIRMED/PENDINGでない」
+  のみ。返金手続き中・識別子の欠落・Stripeとの不一致は解消しない。
+
+### 鍵承認ゲート
+
+- 対象: Stripe Checkoutで決済した予約（`paymentAttemptId`/`stripeCheckoutSessionId`/
+  `stripePaymentIntentId`のいずれかがある、または`paymentStatus`が`not_started`以外）かつ
+  当日予約でない予約（`Booking.requiresAccessApproval`）。受付日時が読めない・決済状態が
+  不明な値の場合は対象側（鍵を出さない側）に倒す。
+- 対象外: 現地払い（現金・PayPay）・旧Payment Link方式のカード予約（Stripe Checkoutの記録が
+  無い）・当日予約。これらは従来どおり鍵承認なしで前日リマインドが自動送信される
+  （Issue本文の対象・対象外の定義どおり。全予約への一律適用はしていない）。
+- 送信条件（`Booking.evaluateAccessGate`。前日18時の自動送信・「来場案内を再送」・診断・
+  鍵承認操作の事前条件がすべて同じ関数を使う）: 予約がCONFIRMED、要復旧ゲートなし、
+  `paymentStatus=paid`かつ返金の判断・手続きが始まっていない、`accessApprovedAt`あり。
+  送信処理はScript Lock取得後に再読込した最新の台帳でこの判定を行うため、画面表示後に
+  取消・返金・Recoveryへ移った予約には送らない。`force`（再送）でもこのゲートは無視しない。
+- 鍵承認（`approveAccess`）は`accessApprovedAt`を記録するだけでメールを送らない。既に
+  承認済みなら何も書き込まない（二重クリックで承認日時は変わらない）。未入金・取消済み・
+  失効済み・Recovery未解消・返金手続き中の予約は承認できない。
+- 鍵番号・解錠コードは前日リマインド本文（既存の`buildReminderMail`）にのみ含まれ、
+  ログ・Recovery・管理者通知・Booking Adminのレスポンスには出さない（既存の
+  redactionをそのまま使う）。
+- 前日18時の自動送信で鍵承認等のゲートにより送らなかった予約は、`failedCount`ではなく
+  `skippedCount`（`accessGateSkippedCount`）に数え、管理者へ「明日利用・鍵未承認」を
+  1通にまとめて通知する（予約IDのみ）。
+
+### メール送信条件
+
+| メール | 送る条件 | 送らない・文言 |
+| --- | --- | --- |
+| 確定メール（既存） | 既存どおり | 鍵承認ゲート対象で未承認の予約は「運営での確認が完了した後、利用日前日を目安に別途」とし、前日に鍵案内が届くとは書かない |
+| 取消メール（既存） | 既存どおり（CANCELLEDの予約） | Stripe決済予約のみ返金の文言を追加。Stripeが返金を受け付けた場合だけ「返金手続きを開始しました（完了は改めて連絡）」、返金なしは「返金はございません」、結果不明・失敗・未記録は「確認のうえ改めて連絡」。**返金完了とは書かない** |
+| 返金完了メール（新規`REFUNDED`） | Stripeで返金がsucceededになり台帳が`refunded`になった後に1回（`refundMailSentAt`） | pending・失敗・結果不明の間は送らない |
+| 前日リマインド（既存） | 上記の鍵承認ゲートを通過した予約 | ゲートで止めた予約には送らず管理者へ通知 |
+| 来場案内を再送（新規ボタン） | CONFIRMED予約全般。鍵承認ゲートは送信直前に再判定 | スキップ理由（`error.message`）をそのまま表示。画面を開いた後に別操作で送信済みなら`SEND_HISTORY_CONFLICT`で送らない |
+| 管理者通知（新規） | 自動確定した鍵承認対象の予約／明日利用・鍵未承認／返金の要対応 | 予約ID・状態のみ（氏名・連絡先・鍵情報・Stripe秘密値なし） |
+
+メール送信に失敗しても予約・決済状態・鍵承認は巻き戻さず、既存の`lastMailError*`・
+Recovery（`MAIL_*_FAILED`）へ記録する。送信履歴（`reminderSentAt`等）は送信成功時にしか
+進めないため、原因解消後に同じボタンから再送できる。
+
+### Script Properties（Booking Adminプロジェクト）
+
+PR-Dで新しいキーは追加していない。Booking Adminプロジェクトに次が設定されている必要がある:
+
+- `STRIPE_SECRET_KEY`（PR-B/PR-Cで既にBooking Adminでも使用。返金APIもこの鍵で呼ぶ。
+  Stripeの制限付きキーを使う場合はRefundsの書き込み権限が必要）
+- `ADMIN_NOTIFICATION_EMAIL`・`BOOKING_ADMIN_URL`（既存キー。これまでBooking Web App側だけに
+  設定していた。PR-Dの管理者通知はBooking Admin側から送るため、同じ値をBooking Adminにも
+  設定する。未設定なら通知だけを行わない）
+- 既存の`ACCESS_GUIDE_*`・`BOOKING_MAIL_*`（前日リマインド・返金完了メール）
+
+### テスト（PR-D）
+
+- `test/booking-refund.test.js`: 正常な全額／一部返金、返金なし、入力・金額検証、通常キャンセルの
+  拒否（現金・旧Payment Linkの回帰）、二重クリック・並行実行（Stripe応答待ち中・事前照会中）、
+  応答不明（通信例外・5xx・RESERVEDの残留）と同一Idempotency-Keyでの再送、返金成功後の台帳
+  更新失敗とRecovery・照会・解消、Stripeの拒否、事前照会（既存返金・入金額不一致）、未入金予約、
+  Recovery一覧（表示のみで何も変えない）とRecovery案件の返金・解消、予約詳細の表示項目。
+- `test/booking-access-gate.test.js`: ゲート対象の判定、鍵承認前は前日リマインド・再送とも
+  鍵情報を送らず管理者へ通知、鍵承認の冪等性とメール非送信、承認の制限（対象外・未確定・
+  未入金・返金中・Recovery）、Recovery未解消時の送信停止、再送の二重クリック防止、送信直前の
+  取消・返金での停止、メール送信失敗時に何も巻き戻さず再実行で1通だけ送る、対象外予約の従来
+  動作、確定メール文言、管理者通知、診断の理由コード。
+- `test/stripe-webhook-processor.test.js`: 新規自動確定時の「鍵承認待ち」通知と、再送イベントでの
+  重複通知なし。
+- `test/booking-admin-page-client.test.js`: 取消・返金の入力検証・確認文言・二重クリック防止、
+  一覧の「取消・返金」ボタン出し分け、鍵承認・再送の呼び出し。
+- `test/booking-admin-web.test.js`・`test/booking-webhook-deployment.test.js`・
+  `test/booking-deployment-manifest-sync.test.js`: 一覧レスポンスの許可フィールド、管理者専用
+  関数・ファイルが公開Web App・Webhookへ配布されないこと。
+
+Stripe・Calendar・Sheets・メールはすべてモック。本番のStripe返金は一切行っていない。
+
+### 本番反映時の手順（オーナーの明示承認後に行う。本PRでは行わない）
+
+1. `Bookings`シートのバックアップ（シートのコピー）を取る。
+2. 上記「Issue #341 PR-D 本番`Bookings`シートのヘッダー追記手順」で9列を追記する。
+3. Booking AdminのScript Propertiesに`ADMIN_NOTIFICATION_EMAIL`・`BOOKING_ADMIN_URL`を設定し、
+   `STRIPE_SECRET_KEY`がテストモードの鍵であることを確認する。
+4. Booking Admin・Booking Web Appへファイルを反映する（既存デプロイID・`/exec` URLを維持。
+   Booking Adminは従来どおり「Only myself」）。Booking Adminの管理画面JS（GitHub Pages）は
+   mainへのマージで公開されるため、GAS側を先に反映する（GAS未反映のままでも、新しい欄は
+   サーバーが新しい項目を返すまで表示されず、既存の操作は従来どおり動く）。
+5. Stripeテストモードで、決済→自動確定→「鍵承認待ち」通知→鍵承認→「来場案内を再送」→
+   「取消・返金」（全額・一部・返金なし）→返金完了メール→「決済要対応」の解消までを通しで確認する。
+6. `STRIPE_CHECKOUT_ENABLED`の有効化・本番鍵への切り替え・時間主導トリガーの作成・Webhook
+   Endpointの登録・Cloud Run公開は、この通しテストの後にオーナーの明示承認を得てから行う。
+
+ロールバック: Booking Admin・Booking Web Appを直前のバージョンへ戻す（既存デプロイの
+バージョンを戻す）。追記した9列は残しても旧コードは読まない（末尾追記のため既存列の読み取りに
+影響しない）。
+
+### 残る制約
+
+- 返金が`requires_action`/`pending`のまま長く残る場合は、「返金状態を照会」を管理者が実行して
+  追跡する（自動の定期照会トリガーは本PRでは追加していない）。
+- `refund_pending`になった後にStripe側で返金が失敗した場合、決済状態の遷移表に
+  `refund_pending→paid`が無いため`refund_pending`のまま`FAILED`・要対応として止める。
+  Stripe管理画面で状況を確認し、台帳を手動で是正する（自動で再返金しない）。
+- 1予約1返金まで（追加の一部返金はStripe管理画面で行い、台帳は要対応として扱う）。
 
 ## 部分失敗・recoveryの確認手順（運用者向け）
 

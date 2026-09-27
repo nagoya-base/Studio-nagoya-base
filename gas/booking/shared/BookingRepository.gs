@@ -1295,7 +1295,7 @@ var BookingRepository = (function () {
 
     var outcome;
     try {
-      outcome = cancelBookingAdminLocked_(bookingId);
+      outcome = cancelBookingAdminLocked_(bookingId, null);
     } finally {
       lock.releaseLock();
     }
@@ -1314,7 +1314,8 @@ var BookingRepository = (function () {
 
   /* cancelBookingAdminのLock保持区間の本体。戻り値: { response, shouldTryMail }。
      Issue #272本文どおり、Lock取得後に必ずSheetsを最新再読込してからstatusを判定する。 */
-  function cancelBookingAdminLocked_(bookingId) {
+  function cancelBookingAdminLocked_(bookingId, options) {
+    var opts = options || {};
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
     if (!found) {
       return { response: handleCancelSheetsRowMissing_(bookingId), shouldTryMail: false };
@@ -1339,6 +1340,33 @@ var BookingRepository = (function () {
         },
         shouldTryMail: false
       };
+    }
+
+    /*
+     * Issue #341 PR-D: Stripeで入金済み（paid）・返金処理中（refund_pending）・決済状態不明の
+     * 予約は、返金方法（全額/一部/返金なし）の判断を伴う専用の取消（BookingRefund.
+     * cancelWithRefund。Booking Adminの「取消・返金」）からのみ取り消せる。従来の
+     * キャンセル（Spreadsheetメニュー・一覧のキャンセルボタン）から実行すると、返金の
+     * 判断・記録が無いまま入金済みの予約だけが取り消されるため、Calendar/Sheetsに触れる
+     * 前に拒否する。現金・PayPay・旧Payment Link方式の予約、決済前（checkout_pending等）の
+     * カード予約は従来どおり（opts.allowStripePaidはBookingRefund.gsのみが指定する）。
+     */
+    if (!opts.allowStripePaid && Booking.isStripeCheckoutBooking(record)) {
+      var currentPaymentStatus = Booking.normalizePaymentStatus(record.paymentStatus);
+      if (currentPaymentStatus === null ||
+          currentPaymentStatus === Booking.PAYMENT_STATUS.PAID ||
+          currentPaymentStatus === Booking.PAYMENT_STATUS.REFUND_PENDING) {
+        return {
+          response: {
+            success: false,
+            error: {
+              code: 'REFUND_DECISION_REQUIRED',
+              message: 'Stripeで入金済みの予約です。Booking Adminの予約詳細「取消・返金」から、返金方法を選んで取り消してください。'
+            }
+          },
+          shouldTryMail: false
+        };
+      }
     }
 
     var calendarId = BookingConfig.getCalendarId();
@@ -1859,7 +1887,7 @@ var BookingRepository = (function () {
    * 通常の呼び出し元（PR-B/PR-Cの大半）は、この関数を直接呼ばず、必ず自分でLockを
    * 取得・解放する公開版のapplyPaymentStateUpdateを使うこと。
    */
-  function applyPaymentStateUpdateLocked_(bookingId, toPaymentStatus, fields, now) {
+  function applyPaymentStateUpdateLocked_(bookingId, toPaymentStatus, fields, now, lockedOptions) {
     var effectiveNow = isDateLike_(now) ? now : new Date();
     var safeFields = fields || {};
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
@@ -1868,7 +1896,18 @@ var BookingRepository = (function () {
       }
       var record = found.record;
 
-      if (record.paymentRecoveryRequiredAt) {
+      /*
+       * Issue #341 PR-D: lockedOptions.allowWhileRecoveryRequiredは、BookingRefund.gsが
+       * 「Stripeで実際に確認した返金オブジェクト（stripeRefundId・status）」を台帳へ記録する
+       * refund_pending/refundedへの遷移に限って指定する。返金の事実（Stripe側で既に起きた
+       * 資金移動）は、要復旧ゲートが立っていても台帳へ記録できなければならない（記録
+       * できないと「返金済みなのに台帳はpaid」のまま残り、二重返金の判断材料を失う）。
+       * それ以外の遷移（paid・checkout_pending等）には使わない。
+       */
+      var bypassRecoveryGate = !!(lockedOptions && lockedOptions.allowWhileRecoveryRequired) &&
+        (toPaymentStatus === Booking.PAYMENT_STATUS.REFUND_PENDING || toPaymentStatus === Booking.PAYMENT_STATUS.REFUNDED);
+
+      if (record.paymentRecoveryRequiredAt && !bypassRecoveryGate) {
         return {
           success: false,
           error: { code: 'PAYMENT_RECOVERY_REQUIRED', message: 'この予約の決済状態は要復旧のため、自動処理を停止しています。管理者の確認が必要です。' }
@@ -2970,7 +3009,18 @@ var BookingRepository = (function () {
     cancelBookingAdmin: cancelBookingAdmin,
     updateBookingPrice: updateBookingPrice,
     applyPaymentStateUpdate: applyPaymentStateUpdate,
-    beginCardCheckout: beginCardCheckout
+    beginCardCheckout: beginCardCheckout,
+    /*
+     * Issue #341 PR-D: BookingRefund.gs（Booking Admin専用。取消・返金のオーケストレーション）
+     * だけが使う、Lock保持中専用の内部関数。呼び出し元が既にLockService.getScriptLock()を
+     * 取得していることが前提で、これらの関数自身はLockを取得・解放しない。取消（Calendar
+     * 削除・CANCELLED更新）と返金試行の予約を同じLock区間で行うために公開する。
+     * 管理者操作以外（公開Web App・Webhook受信）から呼ばないこと。
+     */
+    lockedInternals: {
+      cancelBookingAdminLocked: cancelBookingAdminLocked_,
+      applyPaymentStateUpdateLocked: applyPaymentStateUpdateLocked_
+    }
   };
 })();
 

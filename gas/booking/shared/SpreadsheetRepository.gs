@@ -319,7 +319,42 @@ var SpreadsheetRepository = (function () {
      * createBookingのレスポンスで一度だけ本人（送信したブラウザ）へ返し、以後は
      * ブラウザ側が保持する。台帳・ログ・PRには実値を記載しない。
      */
-    'checkoutAccessToken'
+    'checkoutAccessToken',
+    /*
+     * ここから先はIssue #341 PR-D（管理者の取消・返金）で追加した列。末尾追記の方針は
+     * 既存どおり（本番反映時は既存Bookingsシートのヘッダー行へ手動で追記が必要。
+     * README「Issue #341 PR-D」節参照）。返金試行の予約・結果の保存は
+     * updateBookingRefundStateAtomicで'refundAttemptId'〜'refundCheckedAt'の連続8列を
+     * 1回のRange.setValuesで更新する（この8列はHEADERS_上で連続させること）。
+     * 'refundMailSentAt'は返金完了メールのSentAt（他のメールSentAt列と同じ「空＝未送信」の
+     * 慣習。BookingMailer.sendRefundedMailForBookingが単独で更新するため、上の連続範囲に
+     * 含めない）。
+     *
+     * - refundAttemptId: 返金試行ID（Stripe返金APIへのIdempotency-Keyそのもの。
+     *   'RFD-<bookingId>-<uuid12桁>'）。Stripeを呼ぶ**前**に台帳へ永続化する
+     *   （PR-BのpaymentAttemptIdと同じ設計）。
+     * - refundAttemptState: 'RESERVED'（試行IDを確保しStripe呼び出し中）|'SUBMITTED'
+     *   （Stripeが返金を受け付け、stripeRefundIdを記録済み）|'UNKNOWN'（Stripeの応答が
+     *   不明。照会が必要）|'FAILED'（Stripeが返金を作らずに拒否した、または作られた返金が
+     *   failed/canceledになった）。空＝返金試行なし。
+     * - refundDecision: 管理者が取消時に選んだ返金方法（'FULL'|'PARTIAL'|'NONE'）。
+     *   キャンセル料・返金額はシステムが自動計算しない（Issue #344と同じ方針。オーナー
+     *   確認済み）。
+     * - refundAmount: 返金額（円・整数）。NONEの場合は0。
+     * - refundReason: 管理者が入力した取消・返金の理由（管理者専用の記録。利用者向け
+     *   メールには含めない）。
+     * - refundDecidedAt: 管理者が取消・返金を実行した日時。
+     * - refundStripeStatus / refundCheckedAt: Stripeで最後に確認した返金のstatusと確認日時。
+     */
+    'refundAttemptId',
+    'refundAttemptState',
+    'refundDecision',
+    'refundAmount',
+    'refundReason',
+    'refundDecidedAt',
+    'refundStripeStatus',
+    'refundCheckedAt',
+    'refundMailSentAt'
   ];
 
   function getSpreadsheet_() {
@@ -675,9 +710,47 @@ var SpreadsheetRepository = (function () {
     return found.rowNumber;
   }
 
+  var REFUND_STATE_ATOMIC_FIELDS_ = [
+    'refundAttemptId', 'refundAttemptState', 'refundDecision', 'refundAmount',
+    'refundReason', 'refundDecidedAt', 'refundStripeStatus', 'refundCheckedAt'
+  ];
+
+  /*
+   * Issue #341 PR-D: 返金試行の状態のatomic更新（updateBookingPaymentStateAtomicと同じ
+   * パターン）。HEADERS_上で連続する'refundAttemptId'〜'refundCheckedAt'の8列だけを
+   * 1回のsetValuesで更新し、呼び出し元が指定しないキーは既存値のまま書き戻す。
+   * 範囲外の列（paymentStatus・決済付随情報・メールSentAt等）には一切触れない。
+   */
+  function updateBookingRefundStateAtomic(bookingId, fields) {
+    var found = findRowByBookingId(bookingId);
+    if (!found) {
+      throw new Error('bookingIdが見つかりません: ' + bookingId);
+    }
+    Object.keys(fields).forEach(function (key) {
+      if (REFUND_STATE_ATOMIC_FIELDS_.indexOf(key) === -1) {
+        throw new Error('返金状態atomic更新で許可されていないフィールドです: ' + key);
+      }
+    });
+
+    var startIndex = HEADERS_.indexOf('refundAttemptId');
+    var endIndex = HEADERS_.indexOf('refundCheckedAt');
+    var values = [];
+    for (var i = startIndex; i <= endIndex; i++) {
+      var header = HEADERS_[i];
+      var hasOverride = Object.prototype.hasOwnProperty.call(fields, header);
+      var value = hasOverride ? fields[header] : found.record[header];
+      values.push(value !== undefined && value !== null ? value : '');
+    }
+
+    var sheet = ensureBookingsSheet_();
+    sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    return found.rowNumber;
+  }
+
   return {
     HEADERS: HEADERS_,
     appendBooking: appendBooking,
+    updateBookingRefundStateAtomic: updateBookingRefundStateAtomic,
     findRowByBookingId: findRowByBookingId,
     getAllBookings: getAllBookings,
     getAllPendingBookings: getAllPendingBookings,

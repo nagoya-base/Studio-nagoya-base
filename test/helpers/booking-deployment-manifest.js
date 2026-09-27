@@ -51,6 +51,14 @@ var BOOKING_ADMIN_FILES = [
    * confirmBooking）まで行う。BookingRepository.gsより後に置く（依存順）。
    */
   'StripeWebhookProcessor.gs',
+  /*
+   * Issue #341 PR-D（管理者の取消・返金・鍵承認・来場案内）で追加。いずれも
+   * BookingRepository.gs/BookingMailer.gsより後に置く（依存順）。Booking Admin専用で、
+   * 公開Web App・Webhookプロジェクトには含めない。
+   */
+  'BookingAdminAlerts.gs',
+  'BookingAccessApproval.gs',
+  'BookingRefund.gs',
   'BookingAdmin.gs',
   'BookingAdminWeb.gs',
   'BookingTriggers.gs',

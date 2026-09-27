@@ -41,6 +41,12 @@ var FILES = [
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
   'BookingRepository.gs',
+  /* Issue #341 PR-D: 予約詳細の決済・返金表示（BookingRefund.isRefundInFlight）と
+     取消・返金／鍵承認の委譲先。 */
+  'StripeGateway.gs',
+  'BookingAdminAlerts.gs',
+  'BookingAccessApproval.gs',
+  'BookingRefund.gs',
   'BookingAdmin.gs',
   'BookingAdminWeb.gs'
 ];
@@ -233,15 +239,22 @@ test('getAdminBookings: { todayJst, bookings }を返し、一覧の各要素は�
      Issue #342: effectivePriceAmount（実効金額。Booking.getEffectivePriceAmount）・
      priceOverridden（管理者による修正済みかどうか）も同様に一覧の許可フィールドへ追加。
      PR #343レビュー対応: priceUpdateNeeded（修正済みだが利用者への訂正案内がまだ、の
-     案内漏れ警告フラグ）も追加。 */
-  var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status', 'cardPaymentDueAt', 'effectivePriceAmount', 'priceOverridden', 'priceUpdateNeeded'];
+     案内漏れ警告フラグ）も追加。
+     Issue #341 PR-D: 決済・鍵承認の状態フラグ（isStripeCheckout/paymentStatus/
+     refundDecisionRequired/paymentRecoveryRequired/accessApprovalPending）を追加。
+     いずれも真偽値・状態コードのみで、Stripe識別子・PIIは一覧に含めない。 */
+  var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status', 'cardPaymentDueAt', 'effectivePriceAmount', 'priceOverridden', 'priceUpdateNeeded',
+    'isStripeCheckout', 'paymentStatus', 'refundDecisionRequired', 'paymentRecoveryRequired', 'accessApprovalPending'];
   assert.deepStrictEqual(Object.keys(item).sort(), allowedKeys.slice().sort());
   assert.strictEqual(item.cardPaymentDueAt, '', '現金等カード以外の支払方法ではcardPaymentDueAtは空文字であるべき');
   assert.strictEqual(item.priceOverridden, false, '未修正の予約はpriceOverridden:falseであるべき');
   assert.strictEqual(item.priceUpdateNeeded, false, '未修正の予約はpriceUpdateNeeded:falseであるべき');
   assert.strictEqual(typeof item.effectivePriceAmount, 'number', 'effectivePriceAmountは自動計算済みの数値であるべき');
 
-  ['email', 'phone', 'note', 'pendingMailSentAt', 'lastMailErrorMessage'].forEach(function (piiField) {
+  assert.strictEqual(item.isStripeCheckout, false, '現金予約はStripe Checkoutの予約ではない');
+  assert.strictEqual(item.refundDecisionRequired, false);
+  assert.strictEqual(item.accessApprovalPending, false);
+  ['email', 'phone', 'note', 'pendingMailSentAt', 'lastMailErrorMessage', 'stripePaymentIntentId'].forEach(function (piiField) {
     assert.strictEqual(Object.prototype.hasOwnProperty.call(item, piiField), false, '一覧レスポンスに' + piiField + 'を含めてはいけない');
   });
 });

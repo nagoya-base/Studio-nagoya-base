@@ -101,7 +101,14 @@ function createScriptRunStub() {
     'adminSendPriceUpdateMail',
     'diagnoseReminderEligibility',
     'previewReminderMail',
-    'sendReminderTestMail'
+    'sendReminderTestMail',
+    /* Issue #341 PR-D */
+    'adminCancelBookingWithRefund',
+    'adminReconcileRefund',
+    'adminApproveAccess',
+    'adminResendReminderMail',
+    'getAdminPaymentRecoveries',
+    'adminResolvePaymentRecovery'
   ];
 
   var stub = {
@@ -2482,4 +2489,131 @@ test('render: 一覧カードは金額修正済み・未送信の予約にのみ
   sandbox.render();
 
   assert.ok(list.innerHTML.indexOf('金額訂正の案内が未送信です') !== -1);
+});
+
+/* ========================================================================== */
+/* Issue #341 PR-D: 取消・返金／鍵承認／来場案内の再送                             */
+/* ========================================================================== */
+
+function stripeDetailBooking(overrides) {
+  return booking(Object.assign({
+    bookingId: 'SX-20261010-AAAAAAAA',
+    status: 'CONFIRMED',
+    paymentMethod: 'オンラインクレジットカード',
+    isStripeCheckout: true,
+    paymentStatus: 'paid',
+    stripeAmount: 8000,
+    stripePaymentIntentId: 'pi_test_1',
+    stripeDashboardUrl: 'https://dashboard.stripe.com/test/payments/pi_test_1',
+    refundAttemptId: '',
+    refundInFlight: false,
+    accessApprovalRequired: true,
+    accessApprovalPending: true,
+    accessApprovedAt: '',
+    reminderSentAt: '',
+    reminderSentAtVersion: 0
+  }, overrides || {}));
+}
+
+test('PR-D validateRefundInput_: 返金方法・理由・一部返金の金額（請求額以下の整数）を検証する', function () {
+  var sandbox = loadClientSandbox();
+  var b = stripeDetailBooking();
+  assert.strictEqual(sandbox.validateRefundInput_(b, '', '', '理由').ok, false);
+  assert.strictEqual(sandbox.validateRefundInput_(b, 'FULL', '', ' ').ok, false);
+  assert.strictEqual(sandbox.validateRefundInput_(b, 'FULL', '', '理由').amountJpy, 8000);
+  assert.strictEqual(sandbox.validateRefundInput_(b, 'NONE', '', '理由').amountJpy, 0);
+  assert.strictEqual(sandbox.validateRefundInput_(b, 'PARTIAL', '4000', '理由').amountJpy, 4000);
+  assert.strictEqual(sandbox.validateRefundInput_(b, 'PARTIAL', '8001', '理由').ok, false);
+  assert.strictEqual(sandbox.validateRefundInput_(b, 'PARTIAL', '10.5', '理由').ok, false);
+  assert.strictEqual(sandbox.validateRefundInput_(b, 'PARTIAL', '0', '理由').ok, false);
+});
+
+test('PR-D buildRefundConfirmMessage_/describePaymentActionResult_: 返金額と取消の有無を確認させ、失敗時は完了と表示しない', function () {
+  var sandbox = loadClientSandbox();
+  var message = sandbox.buildRefundConfirmMessage_(stripeDetailBooking(), 'PARTIAL', 4000, '前日キャンセル');
+  assert.ok(message.indexOf('¥4,000') !== -1);
+  assert.ok(message.indexOf('取り消し') !== -1);
+  assert.ok(message.indexOf('取り消せません') !== -1);
+  var none = sandbox.buildRefundConfirmMessage_(stripeDetailBooking(), 'NONE', 0, 'x');
+  assert.ok(none.indexOf('返金: なし') !== -1);
+
+  var unknown = sandbox.describePaymentActionResult_({ success: false, cancelled: true, error: { code: 'REFUND_RESULT_UNKNOWN', message: '返金が行われたかは未確定です。' } }, '完了');
+  assert.ok(unknown.indexOf('実行できませんでした') === 0);
+  assert.ok(unknown.indexOf('予約の取消は完了しています') !== -1);
+  var skipped = sandbox.describePaymentActionResult_({ success: false, skipped: true, error: { code: 'ACCESS_NOT_APPROVED', message: '鍵承認がまだです' } }, '送信しました');
+  assert.ok(skipped.indexOf('送信条件を満たさない') === 0);
+  assert.ok(skipped.indexOf('鍵承認がまだです') !== -1);
+});
+
+test('PR-D 一覧: Stripeで入金済みの有効な予約は通常の「キャンセル」ではなく「取消・返金」（詳細を開く）を出し、要対応・鍵承認待ちを表示する', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.filter = 'all';
+  sandbox.state.bookings = [
+    booking({ bookingId: 'stripe-paid', status: 'CONFIRMED', refundDecisionRequired: true, paymentRecoveryRequired: true, accessApprovalPending: true }),
+    booking({ bookingId: 'cash', status: 'CONFIRMED' })
+  ];
+  var list = sandbox.document.getElementById('list');
+  sandbox.render();
+  var html = list.innerHTML;
+  assert.ok(html.indexOf('data-action="detail" data-id="stripe-paid">取消・返金</button>') !== -1);
+  assert.ok(html.indexOf('data-action="cancel" data-id="stripe-paid"') === -1);
+  assert.ok(html.indexOf('data-action="cancel" data-id="cash"') !== -1, '現金予約は従来どおりのキャンセルボタン');
+  assert.ok(html.indexOf('決済要対応') !== -1);
+  assert.ok(html.indexOf('鍵承認待ち') !== -1);
+});
+
+test('PR-D 取消・返金: 入力内容をそのままサーバーへ渡し、処理中の二重クリックでは2回目を送らない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(stripeDetailBooking());
+  sandbox.paymentUi_.refundDecisionSelect.value = 'PARTIAL';
+  sandbox.paymentUi_.refundAmountInput.value = '3000';
+  sandbox.paymentUi_.refundReasonInput.value = ' 前日キャンセル ';
+  var run = sandbox.google.script.run;
+  sandbox.runCancelWithRefund_();
+  sandbox.runCancelWithRefund_();
+  var calls = run.calls.filter(function (c) { return c.name === 'adminCancelBookingWithRefund'; });
+  assert.strictEqual(calls.length, 1, '処理中は2回目を送らない');
+  assert.deepStrictEqual(Array.from(calls[0].args), ['SX-20261010-AAAAAAAA', 'PARTIAL', 3000, '前日キャンセル']);
+});
+
+test('PR-D 取消・返金: 確認ダイアログでキャンセルした場合はサーバーを呼ばない', function () {
+  var sandbox = loadClientSandbox({ confirmResult: false });
+  sandbox.showDetailModal(stripeDetailBooking());
+  sandbox.paymentUi_.refundDecisionSelect.value = 'FULL';
+  sandbox.paymentUi_.refundReasonInput.value = '理由';
+  sandbox.runCancelWithRefund_();
+  assert.strictEqual(sandbox.google.script.run.calls.filter(function (c) { return c.name === 'adminCancelBookingWithRefund'; }).length, 0);
+});
+
+test('PR-D 鍵承認・来場案内の再送: 承認は承認待ちの予約だけ、再送は送信履歴のバージョンを添えて呼ぶ', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.showDetailModal(stripeDetailBooking({ reminderSentAt: '2026-10-01 18:00', reminderSentAtVersion: 1759309200000 }));
+  assert.strictEqual(sandbox.paymentUi_.approveButton.disabled, false);
+  sandbox.runApproveAccess_();
+  var run = sandbox.google.script.run;
+  assert.strictEqual(run.calls.filter(function (c) { return c.name === 'adminApproveAccess'; }).length, 1);
+
+  var sandbox2 = loadClientSandbox();
+  sandbox2.showDetailModal(stripeDetailBooking({ accessApprovalPending: false, accessApprovedAt: '2026-09-25 10:00', reminderSentAtVersion: 1759309200000 }));
+  sandbox2.runApproveAccess_();
+  sandbox2.runResendReminder_();
+  var calls2 = sandbox2.google.script.run.calls;
+  assert.strictEqual(calls2.filter(function (c) { return c.name === 'adminApproveAccess'; }).length, 0);
+  var resend = calls2.filter(function (c) { return c.name === 'adminResendReminderMail'; });
+  assert.strictEqual(resend.length, 1);
+  assert.deepStrictEqual(Array.from(resend[0].args), ['SX-20261010-AAAAAAAA', 1759309200000]);
+});
+
+test('PR-D describePaymentState_: 決済・返金・要対応の状態を表示し、Stripe Checkout以外の予約では何も表示しない', function () {
+  var sandbox = loadClientSandbox();
+  var text = sandbox.describePaymentState_(stripeDetailBooking({
+    paymentStatus: 'refund_pending', refundDecision: 'PARTIAL', refundAmount: 3000, refundAttemptState: 'SUBMITTED',
+    stripeRefundId: 're_1', paymentRecoveryRequiredAt: '2026-10-01 12:00', paymentRecoveryReason: 'REFUND_FAILED: x'
+  }));
+  assert.ok(text.indexOf('返金手続き中') !== -1);
+  assert.ok(text.indexOf('一部返金（¥3,000）') !== -1);
+  assert.ok(text.indexOf('re_1') !== -1);
+  assert.ok(text.indexOf('決済要対応') !== -1);
+  assert.strictEqual(sandbox.describePaymentState_(booking({ isStripeCheckout: false })), '');
 });
