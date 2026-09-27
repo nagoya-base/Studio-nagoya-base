@@ -1,7 +1,8 @@
 /*
- * StripeGateway.gs — Stripe REST API（Checkout Session）へのUrlFetchApp呼び出しだけを
- * 責務とする薄いラッパー（Issue #341 PR-B）。金額の正当性検証・冪等性の判断・台帳更新は
- * 一切行わない（それぞれCardPayment.gs / BookingRepository.gsの責務）。
+ * StripeGateway.gs — Stripe REST API（Checkout Session・PaymentIntent）へのUrlFetchApp
+ * 呼び出しだけを責務とする薄いラッパー（Issue #341 PR-B。PR-CでretrievePaymentIntentを追加）。
+ * 金額の正当性検証・冪等性の判断・台帳更新は一切行わない（それぞれCardPayment.gs /
+ * BookingRepository.gs / StripeWebhookHandler.gsの責務）。
  *
  * - APIキー（stripeConfig.secretKey）はここでもLogger.log等へ絶対に出力しない。
  * - すべての呼び出しはmuteHttpExceptions:trueで行い、Stripe側の4xx/5xxをUrlFetchAppの例外
@@ -165,7 +166,28 @@ var StripeGateway = (function () {
       status: raw.status || '',
       paymentStatus: raw.payment_status || '',
       paymentIntentId: typeof raw.payment_intent === 'string' ? raw.payment_intent : ((raw.payment_intent && raw.payment_intent.id) || ''),
-      expiresAtSeconds: raw.expires_at
+      amountTotal: raw.amount_total,
+      currency: typeof raw.currency === 'string' ? raw.currency.toUpperCase() : '',
+      expiresAtSeconds: raw.expires_at,
+      /* Issue #341 PR-C: StripeWebhookHandler.gsが、Webhookイベント本文のmetadataではなく
+         Stripe APIから改めて取得したこの値（bookingId/brand/paymentAttemptId）を正として
+         使う（イベント本文だけで完結させない。ファイル冒頭コメント参照）。 */
+      metadata: raw.metadata || {}
+    };
+  }
+
+  /*
+   * PaymentIntentの正規化（Issue #341 PR-C）。「Session完了」と「入金完了」を同一視しない
+   * ため、Webhook側（StripeWebhookHandler.gs）はCheckout Session（payment_status）だけでなく、
+   * このPaymentIntentのstatus==='succeeded'も併せて確認する。amountReceived/currencyは
+   * CardPayment.verifyPaymentAgainstSnapshotでの金額照合にも使う。
+   */
+  function normalizePaymentIntent_(raw) {
+    return {
+      id: raw.id,
+      status: raw.status || '',
+      amountReceived: raw.amount_received,
+      currency: typeof raw.currency === 'string' ? raw.currency.toUpperCase() : ''
     };
   }
 
@@ -199,8 +221,28 @@ var StripeGateway = (function () {
     return { ok: true, session: normalizeSession_(result.raw) };
   }
 
+  /*
+   * PaymentIntentの再取得（Issue #341 PR-C）。Webhookのイベント本文（Checkout Session）
+   * だけで完結させず、Stripe APIから改めて取得した最新のPaymentIntent状態と突き合わせる
+   * ことで、「Session完了の事実」と「実際の入金完了（PaymentIntent.status==='succeeded'）」を
+   * 混同しない（README「Issue #341 PR-C」節参照）。
+   */
+  function retrievePaymentIntent(stripeConfig, paymentIntentId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!paymentIntentId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripePaymentIntentIdが指定されていません。' };
+    }
+    var url = API_BASE_ + '/payment_intents/' + encodeURIComponent(paymentIntentId);
+    var result = performRequest_('get', url, stripeConfig.secretKey, null, null);
+    if (!result.ok) return result;
+    return { ok: true, paymentIntent: normalizePaymentIntent_(result.raw) };
+  }
+
   return {
     createCheckoutSession: createCheckoutSession,
-    retrieveCheckoutSession: retrieveCheckoutSession
+    retrieveCheckoutSession: retrieveCheckoutSession,
+    retrievePaymentIntent: retrievePaymentIntent
   };
 })();

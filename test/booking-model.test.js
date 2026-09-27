@@ -452,6 +452,19 @@ test('canTransitionPaymentStatus: CHECKOUT_PENDING→FAILED、FAILEDからの再
   assert.strictEqual(Booking.canTransitionPaymentStatus(S.FAILED, S.CHECKOUT_PENDING), true);
 });
 
+/*
+ * Issue #341 PR-Cレビュー対応・1回目: expirePendingBookings（Booking Admin）と
+ * Webhook処理（Booking Webhook。別プロジェクト・別LockService）が競合し、失効判定が
+ * 先にpaymentStatus:failedへ進めた直後に実際には決済が成立していたと判明する場合が
+ * あるため、FAILED→PAIDを許可する（入金の事実を記録できるようにする。予約のstatusには
+ * 一切影響しない）。
+ */
+test('canTransitionPaymentStatus: FAILED→PAIDが許可される（失効後に実際は決済成功していたケースの入金記録用。Issue #341 PR-Cレビュー対応）', function () {
+  var Booking = loadBooking();
+  var S = Booking.PAYMENT_STATUS;
+  assert.strictEqual(Booking.canTransitionPaymentStatus(S.FAILED, S.PAID), true);
+});
+
 test('canTransitionPaymentStatus: REFUNDEDは終端状態で、NOT_STARTEDからPAID/REFUNDEDへの直接遷移など不正な遷移は不可（Issue #341）', function () {
   var Booking = loadBooking();
   var S = Booking.PAYMENT_STATUS;

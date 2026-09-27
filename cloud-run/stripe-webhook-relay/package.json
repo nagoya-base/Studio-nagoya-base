@@ -1,0 +1,16 @@
+{
+  "name": "stripe-webhook-relay",
+  "private": true,
+  "description": "Stripe Webhook署名検証専用の中継サービス（Issue #341 PR-C）。予約・決済の業務ロジックは持たず、署名検証済みイベントをGAS（Booking Admin）へHMAC認証付きで転送するのみ。",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "stripe": "^17.0.0"
+  }
+}

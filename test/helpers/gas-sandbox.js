@@ -12,11 +12,12 @@ var vm = require('vm');
 
 var BOOKING_DIR = path.join(__dirname, '..', '..', 'gas', 'booking');
 
-/* gas/booking/ 配下は shared/（Booking Web App・Booking Admin共通）・public/
-   （Booking Web App固有）・admin/（Booking Admin固有）へ役割ごとに分かれている
-   （GASプロジェクト自体はファイルをフラットに配置するため、テストからは
+/* gas/booking/ 配下は shared/（複数プロジェクト共通）・public/（Booking Web App固有）・
+   admin/（Booking Admin固有）・webhook/（Booking Webhook固有。Issue #341 PR-C
+   レビュー対応・1回目で追加。管理者UIとは別の独立したプロジェクト）へ役割ごとに
+   分かれている（GASプロジェクト自体はファイルをフラットに配置するため、テストからは
    ファイル名だけで参照し、どのサブディレクトリにあるかはここで解決する）。 */
-var BOOKING_SUBDIRS = ['shared', 'public', 'admin'];
+var BOOKING_SUBDIRS = ['shared', 'public', 'admin', 'webhook'];
 
 function resolveBookingFilePath(file) {
   for (var i = 0; i < BOOKING_SUBDIRS.length; i++) {

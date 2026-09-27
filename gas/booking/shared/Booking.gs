@@ -128,11 +128,25 @@ var Booking = (function () {
    * Idempotency-Key（paymentAttemptId）を無条件に再利用し続けて同じエラーを繰り返さない
    * よう、FAILEDへ進めて新しい決済試行IDの発行を可能にする
    * （BookingRepository.reservePaymentAttempt_参照）。
+   *
+   * FAILED→PAID（Issue #341 PR-Cレビュー対応・1回目で追加）: 仮押さえ失効
+   * （expirePendingBookings）や確定的なStripeエラーでいったんFAILEDへ進めた直後に、
+   * 実際には（例えば失効判定の直前に）決済が成立していたとStripe側の照会・Webhookで
+   * 判明する場合がある。expirePendingBookingsとWebhook処理（Booking Webhookプロジェクト）は
+   * 別々のGASプロジェクト・別々のLockServiceで動くため、「絶対にこの順序では起きない」とは
+   * 言い切れない（README「Webhookと失効処理の競合（再設計）」参照）。この遷移が無いと、
+   * 実際には入金が完了しているにもかかわらずpaymentStatusをpaidへ更新する手段が無く、
+   * 「入金済みの事実を記録できない」という事故になる。FAILED→PAIDはあくまで
+   * paymentStatus列のみを更新するものであり、予約の`status`（EXPIRED等）には一切影響
+   * しない。実際にこの遷移を使う場合は、予約の自動確定（confirmBooking）を許可する
+   * ものではなく、`status`が確定に適さない状態（EXPIRED/CANCELLED等）であれば
+   * confirmBooking自身がそれを拒否し、Recoveryへの記録・運営者の確認へつなげる
+   * （StripeWebhookHandler.gs参照）。
    */
   var PAYMENT_STATUS_TRANSITIONS_ = {};
   PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.NOT_STARTED] = [PAYMENT_STATUS.CHECKOUT_PENDING, PAYMENT_STATUS.FAILED];
   PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.CHECKOUT_PENDING] = [PAYMENT_STATUS.PAID, PAYMENT_STATUS.FAILED];
-  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.FAILED] = [PAYMENT_STATUS.CHECKOUT_PENDING];
+  PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.FAILED] = [PAYMENT_STATUS.CHECKOUT_PENDING, PAYMENT_STATUS.PAID];
   PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.PAID] = [PAYMENT_STATUS.REFUND_PENDING];
   PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.REFUND_PENDING] = [PAYMENT_STATUS.REFUNDED];
   PAYMENT_STATUS_TRANSITIONS_[PAYMENT_STATUS.REFUNDED] = [];

@@ -40,9 +40,15 @@ function createPropertiesServiceStub(initialProperties, options) {
 
 /* Utilities.parseDate相当。テストではAsia/Tokyo（DSTなし・常に+09:00）のみ対応する
    （getAvailabilityConfig()のTIMEZONEデフォルトかつIssue #266固定仕様のため）。
-   getUuid()は呼び出しごとに異なる値を返し、bookingId生成の一意性を検証できるようにする。 */
+   getUuid()は呼び出しごとに異なる値を返し、bookingId生成の一意性を検証できるようにする。
+   computeHmacSha256Signature（Issue #341 PR-C。StripeWebhookAuth.gs用）はNode組み込みの
+   cryptoモジュールで実際にHMAC-SHA256を計算し、実際のGAS Utilities.
+   computeHmacSha256Signatureと同じ「符号付きバイト配列（-128〜127）」形式で返す
+   （ダミー値を返すだけのスタブにせず、中継基盤側（Node.js）が16進で計算した値と
+   GAS側の16進変換ロジックが実際に一致することをテストで検証できるようにするため）。 */
 function createUtilitiesStub() {
   var uuidCounter = 0;
+  var crypto = require('crypto');
   return {
     parseDate: function (dateTimeString, timezone, format) {
       if (timezone !== 'Asia/Tokyo') {
@@ -63,6 +69,20 @@ function createUtilitiesStub() {
       var hex = uuidCounter.toString(16);
       while (hex.length < 8) hex = '0' + hex;
       return hex + '-mock-uuid-' + hex;
+    },
+    computeHmacSha256Signature: function (value, key) {
+      var digest = crypto.createHmac('sha256', key).update(value, 'utf8').digest();
+      var bytes = [];
+      for (var i = 0; i < digest.length; i++) {
+        var unsigned = digest[i];
+        bytes.push(unsigned > 127 ? unsigned - 256 : unsigned);
+      }
+      return bytes;
+    },
+    /* GASコードがUtilities.sleepを呼んだ場合に備えた汎用スタブ。テストは同期的に
+       高速実行する必要があるため実際には待機しない。 */
+    sleep: function (millis) {
+      /* no-op */
     }
   };
 }
@@ -446,6 +466,57 @@ function isDateLike(value) {
   return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
 }
 
+/*
+ * サンドボックスの`Date`グローバルを差し替え、`new Date()`（引数なし）が返す時刻を
+ * テストから明示的に制御できるようにする（Issue #341 PR-Cレビュー対応・6回目で新設）。
+ *
+ * 【用途】GASコード側でハートビート等の「呼び出し時点の実時間」（
+ * `StripeWebhookProcessor.confirmClaimOrSupersededOutcome_`・
+ * `processPendingStripeWebhookEvents`の着手時刻・有効期限が`new Date()`で取得する値。
+ * ビジネス上の監査時刻・テスト用の固定日時（`now`引数）とは意図的に分離されている）
+ * を、実際に実時間を待たずに決定的に進めてテストしたい場合に使う。単体テストで
+ * `claimForProcessing`/`confirmProcessingClaim`へ直接異なる時刻を渡して時間経過を
+ * 再現する手法（`test/stripe-event-repository.test.js`参照）だけでは、
+ * `processSingleEvent_`が内部で`new Date()`を呼ぶタイミング（外部Stripe API呼び出しの
+ * 直後等）を制御できないため、本番コード経路を実際に通して検証したい場合にこちらを使う。
+ *
+ * 返す`Date`インスタンスはNode側（テストファイル自身のrealm）の本物の`Date`であり、
+ * サンドボックス側の`Date`のインスタンスにはならない（`new Date() instanceof
+ * sandbox.Date`はfalseになる）が、このコードベースは`isDateLike`（`.getTime`の
+ * duck-typing）でDateかどうかを判定する方針を徹底しており、GASコード側も
+ * `typeof value.getTime === 'function'`でしか判定しないため問題にならない
+ * （このファイル冒頭の`isDateLike`コメント参照）。
+ *
+ * `advanceByMillis(ms)`で現在時刻を進める。`new Date(arg)`（引数あり。文字列や
+ * ミリ秒からの構築）は素通しし、現在時刻を返す機能には影響しない。
+ */
+function createControllableClock(initialTime) {
+  var RealDate = Date;
+  var currentMillis = (initialTime instanceof Date ? initialTime : new RealDate(initialTime)).getTime();
+
+  function FakeDate() {
+    if (arguments.length === 0) {
+      return new RealDate(currentMillis);
+    }
+    var args = Array.prototype.slice.call(arguments);
+    return new (Function.prototype.bind.apply(RealDate, [null].concat(args)))();
+  }
+  FakeDate.prototype = RealDate.prototype;
+  FakeDate.now = function () { return currentMillis; };
+  /* Availability.gs/BookingPricing.gs等が曜日計算に`Date.UTC(...)`を直接呼ぶため、
+     静的メソッドも本物のDateへ素通しする（欠けていると「Date.UTC is not a
+     function」でconfirmBooking等が例外になる。レビュー対応・6回目でのテスト
+     ヘルパー実装時に発見・修正）。 */
+  FakeDate.UTC = RealDate.UTC;
+  FakeDate.parse = RealDate.parse;
+
+  return {
+    Date: FakeDate,
+    advanceByMillis: function (ms) { currentMillis += ms; },
+    currentDate: function () { return new RealDate(currentMillis); }
+  };
+}
+
 module.exports = {
   isDateLike: isDateLike,
   createLoggerStub: createLoggerStub,
@@ -461,5 +532,6 @@ module.exports = {
   createSpreadsheetUiStub: createSpreadsheetUiStub,
   createMailAppStub: createMailAppStub,
   createScriptAppStub: createScriptAppStub,
-  createUrlFetchAppStub: createUrlFetchAppStub
+  createUrlFetchAppStub: createUrlFetchAppStub,
+  createControllableClock: createControllableClock
 };

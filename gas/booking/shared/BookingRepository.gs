@@ -408,7 +408,7 @@ var BookingRepository = (function () {
    * 処理することはない（一方がLockを保持している間、他方はtryLockが失敗するかLockが
    * 解放されるまで待つ）。
    */
-  function confirmBooking(bookingId) {
+  function confirmBooking(bookingId, options) {
     if (!bookingId) {
       return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
     }
@@ -421,7 +421,10 @@ var BookingRepository = (function () {
 
     var outcome;
     try {
-      outcome = confirmBookingLocked_(bookingId);
+      var guardRejection = writeGuardRejection_(options);
+      outcome = guardRejection
+        ? { response: guardRejection, shouldTryMail: false }
+        : confirmBookingLocked_(bookingId);
     } finally {
       lock.releaseLock();
     }
@@ -436,6 +439,25 @@ var BookingRepository = (function () {
     }
 
     return outcome.response;
+  }
+
+  /*
+   * options.writeGuard（任意。Issue #341 PR-Cレビュー対応・7回目）: Lockを取得した直後、
+   * Calendar/Sheetsを読み書きする前に呼ぶ関数。falseを返した場合は何も書き込まずに
+   * WRITE_GUARD_REJECTEDを返す。StripeWebhookProcessorが「この実行の処理権（StripeEventsの
+   * 世代）がまだ有効か」の確認に使う。処理権の再取得（StripeEventRepository.
+   * claimForProcessing）も同じLockService.getScriptLock()の中で行われるため、この確認と
+   * 続く書き込みの間に処理権が移ることはない。writeGuardの中でLockを取得してはならない
+   * （既にこの関数がLockを保持している）。管理者操作等、optionsを渡さない既存の呼び出しの
+   * 挙動は変わらない。
+   */
+  function writeGuardRejection_(options) {
+    if (!options || typeof options.writeGuard !== 'function') return null;
+    if (options.writeGuard() === true) return null;
+    return {
+      success: false,
+      error: { code: 'WRITE_GUARD_REJECTED', message: '書き込みの前提条件（処理権）が失われていたため、何も変更しませんでした。' }
+    };
   }
 
   /* confirmBookingのLock保持区間の本体。戻り値: { response, shouldTryMail }。
@@ -610,6 +632,26 @@ var BookingRepository = (function () {
    * 候補行ごとにLockを取得し、Lock取得後に最新statusを再確認してから処理する（他プロセスとの
    * 二重処理を防ぐ）。Calendarイベント削除に失敗した場合もrecoveryへ記録した上でSheets側は
    * EXPIREDへ進める（削除失敗を理由にPENDINGのまま放置しない）。
+   *
+   * 【Booking Webhookプロジェクトとの競合について（Issue #341 PR-Cレビュー対応の変遷）】
+   * 1回目のレビュー対応時点では、独立したBooking Webhookプロジェクトが決済照合〜予約
+   * 自動確定まで自分自身のLockService.getScriptLock()の下で行っており、Booking Admin
+   * プロジェクトのこの関数とは別々のLockServiceだったため、両者が同じ予約を並行して
+   * 変更する競合を排除できなかった。2〜3回目では、共有Spreadsheet上の予約単位の分散
+   * ロック（BookingLockRepository）でこれを塞ごうとしたが、「ロックの有効性確認から
+   * 実際の書き込みまでの間に競合が起こり得る（TOCTOU）。確認箇所を増やしても解消しない」
+   * という指摘を4回目のレビューで受けた。
+   *
+   * 4回目のレビュー対応で、独立したBooking Webhookプロジェクトの責務を「署名検証済み
+   * イベントをStripeEventRepositoryへ安全に永続化するだけ」に縮小し、決済照合〜予約
+   * 自動確定（StripeWebhookProcessor.processPendingStripeWebhookEvents。
+   * `gas/booking/admin/StripeWebhookProcessor.gs`）をBooking Adminプロジェクトの時間主導
+   * トリガーへ移した。これにより、Webhook由来の予約確定はこの関数（expirePendingBookings）
+   * と**同じBooking Adminプロジェクト・同じLockService.getScriptLock()**の下で実行される
+   * ようになり、confirmBooking（管理者手動確定）とexpirePendingBookingsが既に共有している
+   * のと全く同じ仕組みで直列化される。予約単位の分散ロックは一切不要になった
+   * （BookingLockRepositoryは削除。詳細はREADME「Webhookと失効処理の競合」節・
+   * StripeWebhookProcessor.gs冒頭コメント参照）。
    */
   /*
    * Issue #341 PR-B「5. 仮押さえと期限切れ」: checkout_pending（Stripe Checkout Session
@@ -750,8 +792,15 @@ var BookingRepository = (function () {
         isDateLike_(record.paymentHoldExpiresAt);
 
       if (isCheckoutPendingHold) {
-        if (now.getTime() < record.paymentHoldExpiresAt.getTime()) {
-          return; /* まだ仮押さえ有効 */
+        /*
+         * Issue #341 PR-Cレビュー対応・1回目: paymentHoldExpiresAtを過ぎてすぐには
+         * 失効対象にせず、CardPayment.WEBHOOK_RACE_GRACE_MINUTES分の追加猶予を待つ
+         * （Webhook処理は別プロジェクト・別LockServiceのため、Stripeでの決済完了直後の
+         * ごく短い時間はWebhookの到達を待つ。CardPayment.gsのWEBHOOK_RACE_GRACE_MINUTES
+         * コメント参照）。
+         */
+        if (now.getTime() < CardPayment.computeExpireSweepEligibleMillis(record.paymentHoldExpiresAt.getTime())) {
+          return; /* まだ仮押さえ有効、またはWebhook到達を待つ猶予期間中 */
         }
         /*
          * Stripe側の確認はLock取得前（ネットワーク呼び出しをLockの外で行う。
@@ -818,7 +867,8 @@ var BookingRepository = (function () {
 
         /*
          * Issue #341 PR-B: Lock取得前のStripe確認（verifyCheckoutHoldSafeToExpire_）から
-         * Lock取得までの間に、他プロセス（将来のWebhookハンドラ等）がpaymentStatusを
+         * Lock取得までの間に、他プロセス（Booking Adminプロジェクト内の
+         * StripeWebhookProcessor.processPendingStripeWebhookEvents等）がpaymentStatusを
          * 進めている可能性がある。Lock内で最新のpaymentStatusを再確認し、既に
          * checkout_pendingでなくなっていれば（PAID等へ進んでいれば）枠を解放せず処理を
          * スキップする（README「仮押さえの解放とStripe側の失効確認」の3条件どおり、
@@ -1772,7 +1822,7 @@ var BookingRepository = (function () {
    * Webhookの重複配信やリトライで同じ状態へ再度呼び出す場合も、これらの識別子を
    * 省略しないこと。省略すると（項目8のとおり）PAYMENT_IDENTITY_UNCONFIRMEDで拒否される。
    */
-  function applyPaymentStateUpdate(bookingId, toPaymentStatus, fields, now) {
+  function applyPaymentStateUpdate(bookingId, toPaymentStatus, fields, now, options) {
     if (!bookingId) {
       return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
     }
@@ -1781,6 +1831,9 @@ var BookingRepository = (function () {
       return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
     }
     try {
+      /* options.writeGuard: confirmBookingと同じ（writeGuardRejection_参照。レビュー対応・7回目）。 */
+      var guardRejection = writeGuardRejection_(options);
+      if (guardRejection) return guardRejection;
       return applyPaymentStateUpdateLocked_(bookingId, toPaymentStatus, fields, now);
     } finally {
       lock.releaseLock();
@@ -2065,18 +2118,28 @@ var BookingRepository = (function () {
    * 呼び出し元が`fields`でこれらのキーを明示的に主張した場合のみ、台帳の現在値と
    * 突き合わせる（主張していないキーは判定に使わない＝比較対象にしない）。
    *
-   * REQUIRED_EVIDENCE_FOR_STATUS_に登場する全フィールド（lastStripeEventId・
-   * stripeRefundIdを含む）の和集合にすること（3回目レビュー対応で判明した不具合の
-   * 修正：stripeRefundIdがここに含まれていなかったため、異なるstripeRefundIdを
-   * 主張する呼び出しがpaymentIdentityMatches_のミスマッチ判定をすり抜け、
-   * paymentIdentityConfirmed_のPAYMENT_IDENTITY_UNCONFIRMED側に誤って落ちていた。
-   * 「値を主張しているのに食い違う」場合は必ずこちらのPAYMENT_IDENTITY_MISMATCHで
-   * 検出できるよう、判定対象のフィールド集合をREQUIRED_EVIDENCE_FOR_STATUS_と
-   * 常に同期させる）。
+   * 原則としてREQUIRED_EVIDENCE_FOR_STATUS_に登場する全フィールドの和集合にすること
+   * （3回目レビュー対応で判明した不具合の修正：stripeRefundIdがここに含まれていなかった
+   * ため、異なるstripeRefundIdを主張する呼び出しがpaymentIdentityMatches_のミスマッチ
+   * 判定をすり抜け、paymentIdentityConfirmed_のPAYMENT_IDENTITY_UNCONFIRMED側に誤って
+   * 落ちていた。「値を主張しているのに食い違う」場合は必ずこちらのPAYMENT_IDENTITY_
+   * MISMATCHで検出できるよう、判定対象のフィールド集合をREQUIRED_EVIDENCE_FOR_STATUS_と
+   * 同期させる）。
+   *
+   * **例外: lastStripeEventIdはここに含めない**（Issue #341 PR-Cレビュー対応・1回目）。
+   * Stripeは同一の決済・返金について、異なるイベントID（例:
+   * checkout.session.completedとcheckout.session.async_payment_succeeded、あるいは
+   * Stripe側の重複配信）で複数回通知することがある。「決済・返金として同一かどうか」は
+   * stripePaymentIntentId/stripeCheckoutSessionId/paymentAttemptId/stripeRefundIdという
+   * **決済・返金そのものを表す識別子**で判定すべきであり、「どのイベント配信が最後に
+   * 触れたか」を表すだけのlastStripeEventIdを同一性の判定材料に含めると、同一入金への
+   * 異なるイベントIDでの正当な通知のたびにPAYMENT_IDENTITY_MISMATCH（恒久の要復旧ゲート）
+   * を誤発生させてしまう。StripeWebhookHandler.gsは、同一イベントの重複配信自体は
+   * 別途StripeEventRepository.gsのイベント台帳（eventId単位）で防いでいるため、
+   * ここでlastStripeEventIdの一致まで要求する必要はない。
    */
   var IDENTITY_FIELDS_ = [
-    'paymentAttemptId', 'stripeCheckoutSessionId', 'stripePaymentIntentId',
-    'lastStripeEventId', 'stripeRefundId'
+    'paymentAttemptId', 'stripeCheckoutSessionId', 'stripePaymentIntentId', 'stripeRefundId'
   ];
 
   /*
@@ -2160,14 +2223,24 @@ var BookingRepository = (function () {
   /*
    * 3回目レビュー対応・項目2: 資金移動を伴う状態（paid/refund_pending/refunded）へ
    * 「既に到達済み」の予約を再確認する際、呼び出し元が同一の決済・返金処理であることを
-   * 積極的に証明することを要求する状態の一覧。REQUIRED_EVIDENCE_FOR_STATUS_と同じ
-   * フィールド集合を流用する（その状態を裏付ける識別子＝その状態が同一処理であることを
-   * 確認する識別子、という考え方）。checkout_pending/failedは資金移動を伴わないため
-   * ここには含めない（paymentIdentityMatches_の「主張された値が食い違わないか」だけの
-   * 判定のままでよい）。
+   * 積極的に証明することを要求する状態の一覧。checkout_pending/failedは資金移動を
+   * 伴わないためここには含めない（paymentIdentityMatches_の「主張された値が食い違わ
+   * ないか」だけの判定のままでよい）。
+   *
+   * PAIDについてはREQUIRED_EVIDENCE_FOR_STATUS_[PAID]（stripePaymentIntentId・
+   * lastStripeEventId）をそのまま流用せず、**stripePaymentIntentIdのみ**を使う
+   * （Issue #341 PR-Cレビュー対応・1回目）。lastStripeEventIdは「どのイベント配信が
+   * 最後に触れたか」を表すだけで、決済そのものの同一性を表さない。Stripeが同一の
+   * 決済について異なるイベントID（例: checkout.session.completedと
+   * checkout.session.async_payment_succeeded、あるいは重複配信）で複数回通知しても、
+   * PaymentIntent IDが同じであれば同一の決済とみなし、二重確定・二重メール送信を
+   * 起こさず安全にalreadyApplied:trueへ収束させる（同一イベントIDの重複配信自体は
+   * StripeEventRepository.gsのイベント台帳で別途防ぐ）。REFUND_PENDING/REFUNDEDは
+   * lastStripeEventIdを含まないREQUIRED_EVIDENCE_FOR_STATUS_のままなので、そのまま
+   * 流用してよい。
    */
   var MONETARY_IDENTITY_CONFIRMATION_FIELDS_ = {};
-  MONETARY_IDENTITY_CONFIRMATION_FIELDS_[Booking.PAYMENT_STATUS.PAID] = REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.PAID];
+  MONETARY_IDENTITY_CONFIRMATION_FIELDS_[Booking.PAYMENT_STATUS.PAID] = ['stripePaymentIntentId'];
   MONETARY_IDENTITY_CONFIRMATION_FIELDS_[Booking.PAYMENT_STATUS.REFUND_PENDING] = REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.REFUND_PENDING];
   MONETARY_IDENTITY_CONFIRMATION_FIELDS_[Booking.PAYMENT_STATUS.REFUNDED] = REQUIRED_EVIDENCE_FOR_STATUS_[Booking.PAYMENT_STATUS.REFUNDED];
 
