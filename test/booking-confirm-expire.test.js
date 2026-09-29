@@ -113,8 +113,8 @@ function validPayload(overrides) {
   );
 }
 
-function createPending(ctx, overrides) {
-  var result = ctx.sandbox.BookingRepository.createBooking(validPayload(overrides));
+function createPending(ctx, overrides, now) {
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload(overrides), now);
   assert.strictEqual(result.success, true, 'テスト前提としてPENDING作成に成功しているべき');
   return result.bookingId;
 }
@@ -1076,8 +1076,13 @@ test('onOpen: container-boundスクリプトの単純トリガーとしてaddBoo
 
 test('updateBookingPrice: PENDINGの予約は金額を修正でき、priceAmountは変えずpriceOverrideAmount/priceOverrideAtへ記録する', function () {
   var ctx = setup();
-  var bookingId = createPending(ctx, { brand: 'studio_x', durationMinutes: 180 });
+  /* 一般・平日3時間（6,000円）を検証する。60日後の既定日は曜日が変わるため固定する。 */
+  var bookingId = createPending(ctx, {
+    brand: 'studio_x', date: '2026-11-27', durationMinutes: 180
+  }, new Date('2026-09-01T00:00:00+09:00'));
   var before = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(before.priceTier, 'GENERAL');
+  assert.strictEqual(before.priceDayType, 'WEEKDAY');
   assert.strictEqual(before.priceAmount, 6000);
 
   var result = ctx.sandbox.BookingRepository.updateBookingPrice(bookingId, 5000);

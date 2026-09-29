@@ -43,6 +43,7 @@ jobs:
     environment: booking-production
     env:
       CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
       PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
       PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
       ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
@@ -63,10 +64,14 @@ jobs:
 
           case "${{ inputs.target }}" in
             public)
+              selected_clasprc_json="$PUBLIC_CLASPRC_JSON"
+              clasp_user="booking-owner"
               script_id="$PUBLIC_SCRIPT_ID"
               deployment_id="$PUBLIC_DEPLOYMENT_ID"
               ;;
             admin)
+              selected_clasprc_json="$CLASPRC_JSON"
+              clasp_user="default"
               script_id="$ADMIN_SCRIPT_ID"
               deployment_id="$ADMIN_DEPLOYMENT_ID"
               ;;
@@ -76,7 +81,7 @@ jobs:
               ;;
           esac
 
-          if [[ -z "$CLASPRC_JSON" || -z "$script_id" || -z "$deployment_id" ]]; then
+          if [[ -z "$selected_clasprc_json" || -z "$script_id" || -z "$deployment_id" ]]; then
             echo "Required booking-production secrets are not configured." >&2
             exit 1
           fi
@@ -86,11 +91,17 @@ jobs:
           deploy_dir="$RUNNER_TEMP/booking-gas-deploy"
           mkdir -p "$remote_dir"
 
-          AUTH_FILE="$auth_file" PROJECT_DIR="$remote_dir" SCRIPT_ID="$script_id" node <<'NODE'
+          AUTH_FILE="$auth_file" PROJECT_DIR="$remote_dir" SCRIPT_ID="$script_id" \
+            CLASP_USER="$clasp_user" SELECTED_CLASPRC_JSON="$selected_clasprc_json" node <<'NODE'
           const fs = require('fs');
           const path = require('path');
-          JSON.parse(process.env.CLASPRC_JSON);
-          fs.writeFileSync(process.env.AUTH_FILE, process.env.CLASPRC_JSON, { mode: 0o600 });
+          const authJson = process.env.SELECTED_CLASPRC_JSON;
+          const auth = JSON.parse(authJson);
+          if (process.env.CLASP_USER === 'booking-owner' &&
+              (!auth.tokens || !auth.tokens['booking-owner'])) {
+            throw new Error('The public clasp credential does not contain the required user.');
+          }
+          fs.writeFileSync(process.env.AUTH_FILE, authJson, { mode: 0o600 });
           fs.writeFileSync(
             path.join(process.env.PROJECT_DIR, '.clasp.json'),
             JSON.stringify({ scriptId: process.env.SCRIPT_ID, rootDir: '.' })
@@ -99,7 +110,7 @@ jobs:
 
           cd "$remote_dir"
           echo "Running clasp list-deployments (before update)"
-          if ! deployments_before="$(clasp --auth "$auth_file" list-deployments 2>/dev/null)"; then
+          if ! deployments_before="$(clasp --auth "$auth_file" --user "$clasp_user" list-deployments 2>/dev/null)"; then
             echo "clasp list-deployments failed (before update)." >&2
             exit 1
           fi
@@ -109,7 +120,7 @@ jobs:
           fi
 
           echo "Running clasp pull"
-          if ! clasp --auth "$auth_file" pull >/dev/null 2>&1; then
+          if ! clasp --auth "$auth_file" --user "$clasp_user" pull >/dev/null 2>&1; then
             echo "clasp pull failed." >&2
             exit 1
           fi
@@ -139,24 +150,24 @@ jobs:
 
           cd "$deploy_dir"
           echo "Running clasp show-file-status"
-          if ! clasp --auth "$auth_file" show-file-status >/dev/null 2>&1; then
+          if ! clasp --auth "$auth_file" --user "$clasp_user" show-file-status >/dev/null 2>&1; then
             echo "clasp show-file-status failed." >&2
             exit 1
           fi
           echo "Running clasp push --force"
-          if ! clasp --auth "$auth_file" push --force >/dev/null 2>&1; then
+          if ! clasp --auth "$auth_file" --user "$clasp_user" push --force >/dev/null 2>&1; then
             echo "clasp push --force failed." >&2
             exit 1
           fi
           echo "Running clasp update-deployment"
-          if ! clasp --auth "$auth_file" update-deployment "$deployment_id" \
+          if ! clasp --auth "$auth_file" --user "$clasp_user" update-deployment "$deployment_id" \
             --description "main ${GITHUB_SHA}" >/dev/null 2>&1; then
             echo "clasp update-deployment failed." >&2
             exit 1
           fi
 
           echo "Running clasp list-deployments (after update)"
-          if ! deployments_after="$(clasp --auth "$auth_file" list-deployments 2>/dev/null)"; then
+          if ! deployments_after="$(clasp --auth "$auth_file" --user "$clasp_user" list-deployments 2>/dev/null)"; then
             echo "clasp list-deployments failed (after update)." >&2
             exit 1
           fi
