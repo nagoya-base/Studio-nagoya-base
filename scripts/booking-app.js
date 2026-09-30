@@ -92,6 +92,8 @@
     paymentMethod: '', note: ''
   };
   var isFetchingAvailability = false;
+  var availabilityInFlightKey = null;
+  var availabilityRequestSeq = 0;
   var isSubmitting = false;
   var hasSubmittedSuccessfully = false;
 
@@ -601,6 +603,8 @@
             }
             renderCalendarGrid_(entry);
             refreshPriceEstimate_();
+            /* 日付選択自体をStep1「次へ」と同じトリガーとして扱う（共通関数を再利用）。 */
+            proceedFromSelectedDate_();
           });
         }
         td.appendChild(button);
@@ -817,51 +821,63 @@
   handleCalendarPrereqChange_();
   refreshPriceEstimate_();
 
+  /*
+   * Step1の検証・state反映・Step2への遷移・空き時間取得を行う共通処理。
+   * カレンダーの日付クリック（自動遷移）と、フォールバック用の非表示Step1ボタンの
+   * 両方がこの関数だけを呼ぶ（予約条件のロジックを2箇所に持たない）。
+   */
+  function proceedFromSelectedDate_() {
+    /* 空き状況の確認中・取得失敗の間は、以前選んだ日付が残っていても進めない。 */
+    if (isCalendarReady_() && calendarSelectionStale_) return;
+    var dateValue = els.date ? els.date.value : '';
+    var durationMinutes = Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
+    /* Issue #301: 1時間はStep 1で止める（UX guard）。最終判定の正はGAS側
+       MIN_BOOKING_MINUTESであり、ここではUI側の入力を早期に拒否するだけ。 */
+    var durationValid = Logic.isDurationAtLeastUiMinimum(durationMinutes);
+    var customerType = checkedCustomerType();
+
+    setFieldError_(els.date, els.dateError, dateValue ? '' : UI_TEXT.dateRequired);
+    setFieldError_(els.duration, els.durationError, durationValid ? '' : UI_TEXT.durationRequired);
+    setFieldError_(null, els.customerTypeError, customerType ? '' : UI_TEXT.customerTypeRequired);
+    if (!dateValue || !durationValid || !customerType) return;
+
+    /*
+     * 初回利用＋当日はここで空き時間取得（getAvailability）へ進ませない（Issue #270）。
+     * これはUX目的の一次チェックであり、最終的な当日予約可否の正はcreateBookingの
+     * サーバー側検証（Booking.validateCreateBookingInput）。フロントを書き換えて
+     * このチェックを回避されても、サーバー側でSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEとして
+     * 拒否される（BookingRepository.gs参照）。
+     */
+    if (Logic.isSameDayFirstTimeBlocked(dateValue, customerType, Logic.todayInJapan())) {
+      setFieldError_(els.date, els.dateError, Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', locale));
+      return;
+    }
+
+    state.date = dateValue;
+    state.durationMinutes = durationMinutes;
+    state.customerType = customerType;
+    state.timeBand = checkedTimeBand();
+    state.isMember = isMemberChecked_();
+    state.startTime = null;
+
+    goToStep('start-time');
+    fetchAvailability();
+    refreshPriceEstimate_();
+  }
+
   if (els.step1Next) {
-    els.step1Next.addEventListener('click', function () {
-      /* 空き状況の確認中・取得失敗の間は、以前選んだ日付が残っていても進めない。 */
-      if (isCalendarReady_() && calendarSelectionStale_) return;
-      var dateValue = els.date ? els.date.value : '';
-      var durationMinutes = Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
-      /* Issue #301: 1時間はStep 1で止める（UX guard）。最終判定の正はGAS側
-         MIN_BOOKING_MINUTESであり、ここではUI側の入力を早期に拒否するだけ。 */
-      var durationValid = Logic.isDurationAtLeastUiMinimum(durationMinutes);
-      var customerType = checkedCustomerType();
-
-      setFieldError_(els.date, els.dateError, dateValue ? '' : UI_TEXT.dateRequired);
-      setFieldError_(els.duration, els.durationError, durationValid ? '' : UI_TEXT.durationRequired);
-      setFieldError_(null, els.customerTypeError, customerType ? '' : UI_TEXT.customerTypeRequired);
-      if (!dateValue || !durationValid || !customerType) return;
-
-      /*
-       * 初回利用＋当日はここで空き時間取得（getAvailability）へ進ませない（Issue #270）。
-       * これはUX目的の一次チェックであり、最終的な当日予約可否の正はcreateBookingの
-       * サーバー側検証（Booking.validateCreateBookingInput）。フロントを書き換えて
-       * このチェックを回避されても、サーバー側でSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEとして
-       * 拒否される（BookingRepository.gs参照）。
-       */
-      if (Logic.isSameDayFirstTimeBlocked(dateValue, customerType, Logic.todayInJapan())) {
-        setFieldError_(els.date, els.dateError, Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', locale));
-        return;
-      }
-
-      state.date = dateValue;
-      state.durationMinutes = durationMinutes;
-      state.customerType = customerType;
-      state.timeBand = checkedTimeBand();
-      state.isMember = isMemberChecked_();
-      state.startTime = null;
-
-      goToStep('start-time');
-      fetchAvailability();
-      refreshPriceEstimate_();
-    });
+    els.step1Next.addEventListener('click', proceedFromSelectedDate_);
   }
 
   /* ── Step 2: 開始時刻 ── */
   function fetchAvailability() {
-    if (isFetchingAvailability) return;
+    /* 同じ条件のfetchが実行中なら二重発火しない。条件が違う場合（戻る→別の日付）は
+       新しいfetchを開始し、古い応答は連番で判別して捨てる。 */
+    var requestKey = state.date + '|' + state.durationMinutes + '|' + state.timeBand + '|' + brand;
+    if (isFetchingAvailability && availabilityInFlightKey === requestKey) return;
     isFetchingAvailability = true;
+    availabilityInFlightKey = requestKey;
+    var requestSeq = ++availabilityRequestSeq;
 
     els.startTimeSummary.textContent = UI_TEXT.startTimeSummary(state.date, state.durationMinutes / 60);
     els.startTimeLoading.hidden = false;
@@ -886,6 +902,7 @@
     fetch(url, { method: 'GET' })
       .then(function (response) { return response.json(); })
       .then(function (body) {
+        if (requestSeq !== availabilityRequestSeq) return;
         isFetchingAvailability = false;
         els.startTimeLoading.hidden = true;
         if (!body || body.success !== true) {
@@ -901,6 +918,7 @@
         renderStartTimes(Logic.filterStartTimesByTimeBand(body.bookableStartTimes || [], state.timeBand));
       })
       .catch(function () {
+        if (requestSeq !== availabilityRequestSeq) return;
         isFetchingAvailability = false;
         els.startTimeLoading.hidden = true;
         showGlobalError(Logic.networkErrorMessage(locale), [
