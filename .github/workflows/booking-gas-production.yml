@@ -161,7 +161,7 @@ jobs:
           push_log="$RUNNER_TEMP/clasp-push.log"
           trap 'rm -f "$push_log"' EXIT
           if ! clasp --auth "$auth_file" --user "$clasp_user" push --force >"$push_log" 2>&1; then
-            node scripts/classify-clasp-push-error.js "$push_log" >&2
+            node "$GITHUB_WORKSPACE/scripts/classify-clasp-push-error.js" "$push_log" >&2
             exit 1
           fi
           rm -f "$push_log"

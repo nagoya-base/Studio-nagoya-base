@@ -27,12 +27,20 @@ test('clasp push failures are classified without returning identifiers or raw er
   }
 });
 
-test('CLI prints only the fixed category even when clasp output contains secrets', () => {
+test('workflow classifier runs outside the repository and prints only the fixed category', () => {
+  const workspace = path.resolve(__dirname, '..');
+  const workflow = fs.readFileSync(path.join(workspace, '.github/workflows/booking-gas-production.yml'), 'utf8');
+  const command = workflow.split('\n').find(line => /^\s*node .*classify-clasp-push-error\.js/.test(line));
+  assert.ok(command, 'Workflow must call the push error classifier');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clasp-error-test-'));
   const log = path.join(dir, 'push.log');
   try {
     fs.writeFileSync(log, 'The caller does not have permission. account@example.test script-id-123 refresh-token-789');
-    const result = spawnSync(process.execPath, [require.resolve('../scripts/classify-clasp-push-error'), log], { encoding: 'utf8' });
+    const result = spawnSync('bash', ['-c', command.trim()], {
+      cwd: dir,
+      env: { ...process.env, GITHUB_WORKSPACE: workspace, push_log: log },
+      encoding: 'utf8'
+    });
     assert.equal(result.status, 0);
     assert.equal(result.stdout, '');
     assert.equal(result.stderr, 'clasp push --force failed: WRITE_PERMISSION_OR_SCOPE_DENIED\n');
