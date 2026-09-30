@@ -17,7 +17,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="../pages.css">
-  <link rel="stylesheet" href="../../styles/booking.css">
+  <link rel="stylesheet" href="../../styles/booking.css?v={{ site.time | date: '%s' }}">
 
   <!-- Google Analytics 4 -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
@@ -67,8 +67,8 @@
 
   <script src="../analytics.js"></script>
   <script src="../main.js"></script>
-  <script src="../../scripts/booking-logic.js"></script>
-  <script src="../../scripts/booking-config.js"></script>
-  <script src="../../scripts/booking-app.js"></script>
+  <script src="../../scripts/booking-logic.js?v={{ site.time | date: '%s' }}"></script>
+  <script src="../../scripts/booking-config.js?v={{ site.time | date: '%s' }}"></script>
+  <script src="../../scripts/booking-app.js?v={{ site.time | date: '%s' }}"></script>
 </body>
 </html>
