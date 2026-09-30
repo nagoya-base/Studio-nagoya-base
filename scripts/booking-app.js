@@ -372,6 +372,15 @@
    */
   var calendarSelectionStale_ = false;
 
+  /*
+   * resumeStartTimesAfterRecheck_: 開始時刻エリアを表示していた状態で条件（利用時間・利用区分・
+   * 希望時間帯）が変わったことを示す。エリアは旧条件の一覧を残さないため一旦閉じるが、
+   * 月間カレンダーの再確認後も選択日が有効なら、利用者に押し直させず、新条件で開始時刻を
+   * 自動で再検索する（renderCalendarGrid_の成功時に判定）。選択日が無効になった場合や、
+   * 利用者が日付を選び直した場合は解除する。
+   */
+  var resumeStartTimesAfterRecheck_ = false;
+
   function syncStep1NextEnabled_() {
     setStepDisabled_(els.step1Next, isCalendarReady_() && calendarSelectionStale_);
   }
@@ -401,7 +410,17 @@
     return Logic.isDurationAtLeastUiMinimum(currentCalendarDurationMinutes_()) && !!checkedCustomerType();
   }
 
+  /* 直近に処理した条件（利用時間・利用区分・希望時間帯）。利用時間入力欄はinput後にblurで
+     値の変わらないchangeも発火する。その度にカレンダーを再描画すると、日付ボタンの
+     mousedown（=入力欄のblur）とmouseupの間にボタンが作り直され、最初のクリックが
+     無視される。また表示中の開始時刻エリアも無駄に閉じてしまう。条件が実際に変わった
+     ときだけ処理する。 */
+  var lastPrereqSignature_ = null;
+
   function handleCalendarPrereqChange_() {
+    var signature = currentCalendarDurationMinutes_() + '|' + checkedCustomerType() + '|' + currentTimeBand_();
+    if (signature === lastPrereqSignature_) return;
+    lastPrereqSignature_ = signature;
     /* Issue #342: 利用時間の変更は利用料金にも影響するため、ここから呼ぶ
        （duration/利用区分/希望時間帯のいずれの変更もこの関数を経由するが、
        refreshPriceEstimate_自体は日付・利用時間・会員自己申告だけで見積りキーを
@@ -412,6 +431,7 @@
     refreshPriceEstimate_();
     /* 条件（利用時間・利用区分・希望時間帯）が変わると、表示中の開始時刻一覧は旧条件の
        ものになる。古い一覧を確定値のように残さず、進行中のfetchの応答も破棄する（#365/#367）。 */
+    if (els.startTimeArea && !els.startTimeArea.hidden) resumeStartTimesAfterRecheck_ = true;
     resetStartTimeArea_();
     if (els.date && els.date.value) calendarSelectionStale_ = true;
     if (!isCalendarReady_()) {
@@ -570,6 +590,10 @@
     }
     if (isSuccess) calendarSelectionStale_ = false;
     syncStep1NextEnabled_();
+    /* 再確認の結果、選択日が新条件でも有効なら、新条件の開始時刻を自動で再検索する。
+       この判定は、グリッド描画（下）より前に副作用を起こさないよう、フラグだけ先に確定する。 */
+    var resumeStartTimes = isSuccess && resumeStartTimesAfterRecheck_ && !!selectedDate;
+    if (isSuccess) resumeStartTimesAfterRecheck_ = false;
 
     var weeks = Logic.buildMonthMatrix(calendarMonth.year, calendarMonth.month);
 
@@ -624,6 +648,7 @@
       });
       els.calendarGridBody.appendChild(row);
     });
+    if (resumeStartTimes) proceedFromSelectedDate_();
   }
 
   /*
@@ -841,6 +866,7 @@
   function proceedFromSelectedDate_() {
     /* 空き状況の確認中・取得失敗の間は、以前選んだ日付が残っていても進めない。 */
     if (isCalendarReady_() && calendarSelectionStale_) return;
+    resumeStartTimesAfterRecheck_ = false;
     var dateValue = els.date ? els.date.value : '';
     var durationMinutes = Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
     /* Issue #301: 1時間はStep 1で止める（UX guard）。最終判定の正はGAS側
@@ -923,6 +949,8 @@
     if (els.startTimeEmpty) els.startTimeEmpty.hidden = true;
     hideStartTimeError_();
     setStepDisabled_(els.step2Next, true);
+    /* エリアを閉じたら進捗表示も「利用日・時間」へ戻す（状態と表示をずらさない）。 */
+    if (els.stepDatetime && !els.stepDatetime.hidden) setProgress_('datetime');
   }
 
   function fetchAvailability() {
