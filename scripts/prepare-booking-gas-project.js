@@ -8,13 +8,14 @@ var manifest = require('../test/helpers/booking-deployment-manifest');
 /* READMEの配布表は.gsだけを管理するため、GASで必要なHTMLはここで明示する。 */
 var TARGET_ASSET_FILES = {
   public: [],
-  admin: ['BookingAdminPage.html']
+  admin: ['BookingAdminPage.html'],
+  webhook: []
 };
 
 function usage() {
   throw new Error(
     'Usage: node scripts/prepare-booking-gas-project.js ' +
-    '<public|admin> <output-directory> <appsscript.json>'
+    '<public|admin|webhook> <output-directory> <appsscript.json>'
   );
 }
 
@@ -34,14 +35,14 @@ function findSourceFile(repositoryRoot, target, fileName) {
 }
 
 function prepareProject(target, outputDirectory, manifestPath) {
-  if (target !== 'public' && target !== 'admin') usage();
+  if (target !== 'public' && target !== 'admin' && target !== 'webhook') usage();
 
   var repositoryRoot = path.resolve(__dirname, '..');
   var output = path.resolve(outputDirectory);
   var sourceManifest = path.resolve(manifestPath);
   var scriptFiles = target === 'public'
     ? manifest.BOOKING_WEB_APP_FILES
-    : manifest.BOOKING_ADMIN_FILES;
+    : target === 'admin' ? manifest.BOOKING_ADMIN_FILES : manifest.BOOKING_WEBHOOK_FILES;
   var files = scriptFiles.concat(TARGET_ASSET_FILES[target]);
 
   if (!fs.existsSync(sourceManifest)) {
