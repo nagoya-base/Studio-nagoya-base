@@ -128,6 +128,7 @@ function setup(options) {
      resolvePendingMonthly()で明示的に応答するまで保留する（月をまたいだ
      競合・応答順の入れ替えを再現するテスト用）。 */
   var pendingMonthly = [];
+  var holdMonthly = false; /* holdMonthly()呼び出し以降のmonthlyを保留する */
 
   function fetchStub(url, fetchOptions) {
     fetchCalls.push({ url: url, options: fetchOptions });
@@ -137,7 +138,7 @@ function setup(options) {
         var parts = pair.split('=');
         params[decodeURIComponent(parts[0])] = decodeURIComponent(parts[1] || '');
       });
-      if (opts.deferMonthly) {
+      if (opts.deferMonthly || holdMonthly) {
         return new Promise(function (resolve) {
           pendingMonthly.push({
             year: parseInt(params.year, 10),
@@ -175,6 +176,7 @@ function setup(options) {
       elements['ba-duration'].value = String(hours);
       elements['ba-duration']._listeners.input();
     },
+    holdMonthly: function () { holdMonthly = true; },
     pendingMonthlyCount: function () { return pendingMonthly.length; },
     resolvePendingMonthly: function (year, month, durationMinutes, body) {
       var index = pendingMonthly.findIndex(function (p) {
@@ -451,6 +453,64 @@ test('2時間で日付選択→duration変更→その日がFULLになった場�
 
   assert.strictEqual(ctx.elements['ba-date-error'].hidden, false, '日付未選択としてStep1のエラーが出るべき');
   assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true, 'Step2（開始時刻取得）へは進めない');
+});
+
+test('日付選択後に利用時間を変更すると、再取得中は「次へ」を無効化し、旧日付のままStep2へ進めない。成功後に有効と確認できれば再び進める', async function () {
+  var ctx = setup({});
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+
+  var today = ctx.Logic.todayInJapan();
+  var button = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  button._listeners.click();
+  assert.strictEqual(ctx.elements['ba-date'].value, today);
+  assert.strictEqual(ctx.elements['ba-step-datetime-next'].disabled, false, '確認済みの間は進める');
+
+  /* 再取得を保留にするため、以降のmonthlyは応答しない */
+  ctx.holdMonthly();
+  ctx.setDuration('3');
+  assert.strictEqual(ctx.elements['ba-step-datetime-next'].disabled, true, '再取得中は「次へ」を無効化');
+  assert.strictEqual(ctx.elements['ba-date'].value, today, '選択自体は保持される');
+
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true, '確認中は旧日付のままStep2へ進めない');
+
+  var month = ctx.Logic.yearMonthFromDateValue(today);
+  ctx.resolvePendingMonthly(month.year, month.month, 180, {
+    success: true,
+    month: month.year + '-' + pad2(month.month),
+    days: buildDaysForMonth(month.year, month.month, 'AVAILABLE')
+  });
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-step-datetime-next'].disabled, false, '成功後は再び進める');
+  assert.strictEqual(ctx.elements['ba-date'].value, today, '新条件でも有効な選択日は保持される');
+});
+
+test('日付選択後の再取得が失敗した場合も、旧日付のまま「次へ」で進めない', async function () {
+  var fail = false;
+  var ctx = setup({
+    monthlyResponder: function (year, month) {
+      if (fail) return { success: false, error: { code: 'INTERNAL_ERROR' } };
+      return { success: true, month: year + '-' + pad2(month), days: buildDaysForMonth(year, month, 'AVAILABLE') };
+    }
+  });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  var today = ctx.Logic.todayInJapan();
+  findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
+
+  fail = true;
+  ctx.setDuration('3');
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-step-datetime-next'].disabled, true);
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true);
 });
 
 test('利用経験ありで当日選択→初回利用へ変更→当日の選択状態が残らない', async function () {

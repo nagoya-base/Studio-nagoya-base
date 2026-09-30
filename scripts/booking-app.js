@@ -352,6 +352,19 @@
       timeBand === currentTimeBand_();
   }
 
+  /*
+   * calendarSelectionStale_: 日付を選択済みの状態でduration/利用区分/希望時間帯が変わり、
+   * その選択日がまだ新しい条件で再検証されていないことを示す。この間（確認中・取得失敗）は、
+   * #ba-dateに旧条件の日付が残っていても「次へ」で進めない（旧条件の日付が新条件では
+   * ×になり得るため）。選択自体は保持し、成功レスポンスで再検証できた時点で解除する
+   * （表示中の月以外の選択日は検証できないため、その成功描画で選択を解除する）。
+   */
+  var calendarSelectionStale_ = false;
+
+  function syncStep1NextEnabled_() {
+    setStepDisabled_(els.step1Next, isCalendarReady_() && calendarSelectionStale_);
+  }
+
   function showCalendarLoadingState_() {
     if (els.calendarLoading) els.calendarLoading.hidden = false;
     if (els.calendarError) els.calendarError.hidden = true;
@@ -386,9 +399,11 @@
        DOMスタブ（test/helpers）はaddEventListenerを「同じイベント名は1つだけ」保持する
        前提で実装されており、2つ目を追加すると1つ目を上書きしてしまうため。 */
     refreshPriceEstimate_();
+    if (els.date && els.date.value) calendarSelectionStale_ = true;
     if (!isCalendarReady_()) {
       if (els.calendarBody) els.calendarBody.hidden = true;
       if (els.calendarHint) els.calendarHint.hidden = false;
+      syncStep1NextEnabled_();
       return;
     }
     if (els.calendarHint) els.calendarHint.hidden = true;
@@ -444,8 +459,8 @@
 
   /*
    * 月間空き状況の取得に失敗した場合、空いているように見せない（fail-open禁止。
-   * Issue #318要件）。取得失敗時はグリッドを描画せずエラー表示のみとし、
-   * どの日も選択できない状態にする。
+   * Issue #318要件）。取得失敗時も日付グリッド自体は残し、◎○△×は表示せず、
+   * エラー表示とともにどの日も選択できない状態にする。
    */
   function fetchCalendarMonth_(year, month, durationMinutes, timeBand, key) {
     if (!API_BASE_URL) {
@@ -531,7 +546,16 @@
         selectedDate = '';
         if (els.calendarSelected) els.calendarSelected.textContent = '';
       }
+      calendarSelectionStale_ = false;
+    } else if (isSuccess && selectedDate && calendarSelectionStale_) {
+      /* 条件変更後に別の月を表示しており、選択日は新条件で検証できないため解除する。 */
+      els.date.value = '';
+      selectedDate = '';
+      calendarSelectionStale_ = false;
+      if (els.calendarSelected) els.calendarSelected.textContent = '';
     }
+    if (isSuccess) calendarSelectionStale_ = false;
+    syncStep1NextEnabled_();
 
     var weeks = Logic.buildMonthMatrix(calendarMonth.year, calendarMonth.month);
 
@@ -795,6 +819,8 @@
 
   if (els.step1Next) {
     els.step1Next.addEventListener('click', function () {
+      /* 空き状況の確認中・取得失敗の間は、以前選んだ日付が残っていても進めない。 */
+      if (isCalendarReady_() && calendarSelectionStale_) return;
       var dateValue = els.date ? els.date.value : '';
       var durationMinutes = Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
       /* Issue #301: 1時間はStep 1で止める（UX guard）。最終判定の正はGAS側
