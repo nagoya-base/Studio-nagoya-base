@@ -354,8 +354,9 @@
 #ba-calendar-loading {
   min-height: 1.4em;
 }
-#ba-calendar-loading[hidden] {
-  display: block;
+/* .booking-app [hidden]（display: none !important）より詳細度を上げて上書きする。 */
+.booking-app #ba-calendar-loading[hidden] {
+  display: block !important;
   visibility: hidden;
 }
 
