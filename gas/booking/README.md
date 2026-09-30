@@ -5342,6 +5342,98 @@ Webhook Endpoint登録・PR-Dへの着手は行っていない。
 - [x] 再実行後も予約確定・Calendar更新・確認メールが二重にならず、入金記録を壊さない（必須5）
 - [x] 採用方式の保証範囲と残存する制約をREADMEに記載する
 
+### Booking Webhookの初期作成とGitHub Actions更新（Issue #341）
+
+独立したスタンドアロンGASを1つ作成し、初回のみGoogle画面でWeb Appデプロイを
+作成する。以降は `.github/workflows/booking-gas-webhook-production.yml` の手動実行で
+既存Deployment IDを更新する。Booking Web App/Adminの更新ワークフローとは独立している。
+この手順の掲載・PRのマージだけではデプロイしない。以下はオーナーが導入を決めた後の作業。
+
+#### 初回：Google側でオーナーが行う作業
+
+1. オーナーのGoogleアカウントで https://script.google.com/ を開き「新しいプロジェクト」を
+   選び、名前を `Booking Webhook` にする。既存Web App/Adminやスプレッドシートの
+   「拡張機能」から作らず、独立したスタンドアロンプロジェクトにする。
+2. 承認済みmainの正本から次のファイルだけを配置する。初期の空の `Code.gs` は削除する。
+
+   | GASのファイル名 | リポジトリの正本 |
+   | --- | --- |
+   | `Config.gs` | `gas/booking/shared/Config.gs` |
+   | `StripeWebhookAuth.gs` | `gas/booking/webhook/StripeWebhookAuth.gs` |
+   | `StripeEventRepository.gs` | `gas/booking/shared/StripeEventRepository.gs` |
+   | `BookingWebhookEndpoint.gs` | `gas/booking/webhook/BookingWebhookEndpoint.gs` |
+   | `appsscript.json` | `gas/booking/webhook/appsscript.json` |
+
+   エディタ左側の「＋」→「スクリプト」で4ファイルを作り、それぞれ内容をコピーする。
+   「プロジェクトの設定」→「appsscript.json マニフェスト ファイルをエディタで表示する」を
+   有効にし、manifestを正本の内容に置き換えて保存する。PCで配布セットを準備する場合は
+   `node scripts/prepare-booking-gas-project.js webhook /tmp/booking-webhook gas/booking/webhook/appsscript.json`
+   を実行できる。出力先はそのたびに削除・再生成されるので専用の空ディレクトリを指定する
+   （Windowsでは `/tmp/booking-webhook` を専用の一時フォルダーの絶対パスに置き換える）。
+3. 「プロジェクトの設定」→「スクリプト プロパティ」に次を登録する。
+
+   | プロパティ | 設定内容 |
+   | --- | --- |
+   | `SPREADSHEET_ID` | Web App/Adminと同じ予約台帳。オーナーに編集権限が必要 |
+   | `STRIPE_WEBHOOK_RELAY_SECRET` | 中継とGAS間で共有する十分長いランダムな秘密値。Stripeの署名Secretとは別物 |
+   | `STRIPE_WEBHOOK_RELAY_TOLERANCE_SECONDS` | 正の整数。まず `300`（秒）を明示設定。現行コードの未設定時の既定値も300 |
+
+   値をGitHubログ・PR・Issue・コメント・スクリーンショットへ出さない。
+   この受信専用GASに `STRIPE_SECRET_KEY`、Calendar、メールの設定は不要。
+4. 「デプロイ」→「新しいデプロイ」→歯車→「ウェブアプリ」。実行ユーザーは
+   **自分（Execute as Me）**、アクセスできるユーザーは **全員（Anyone、Googleログイン不要）**。
+   「デプロイ」を選び、オーナーとしてスプレッドシートへのアクセスを承認する。
+   組織ポリシーでAnyoneを選べない場合はこの構成で導入できないため、アクセス制限を
+   勝手に代替せずオーナーが管理者と確認する。
+5. 「プロジェクトの設定」からScript ID、「デプロイを管理」から初回のDeployment IDと
+   `/exec` URLを非公開で控える。今後もこのDeployment IDとURLを維持する。
+   Web公開エントリポイントは `doPost` のみで、`doGet`・HTML・Admin機能は配布しない。
+   `/exec` をブラウザでGETしても画面が出ないのは想定どおり。認証済み中継のHMAC付きPOSTを
+   受けるためのURLであり、Stripeから直接POSTするURLではない。
+
+#### Actions用の設定（オーナーが別途設定）
+
+GitHubの Settings → Environments → `booking-production` → Environment secrets に
+次の3つを登録する。Secret未設定・指定ユーザーなしの場合は停止し、他の認証へフォールバックしない。
+
+| Secret名 | 内容 |
+| --- | --- |
+| `BOOKING_WEBHOOK_CLASPRC_JSON` | この独立GASを編集・更新できるオーナーのclasp 3.4.1認証JSON。`tokens.booking-owner` が必要 |
+| `BOOKING_WEBHOOK_SCRIPT_ID` | 初回作成した独立GASのScript ID |
+| `BOOKING_WEBHOOK_DEPLOYMENT_ID` | 初回Web AppデプロイのDeployment ID |
+
+clasp 3.4.1では専用認証ファイルを `--auth`、その中のアカウントを
+`--user booking-owner` で指定する。既にオーナーの `tokens.booking-owner` を含む認証がある場合は
+安全に保管されたそのJSONを利用できる。新規認証が必要ならオーナーのPCで
+`clasp login --user booking-owner` を実行する。JSONやトークンは表示・貼付して公開しない。
+オーナーのApps Scriptユーザー設定でApps Script APIを有効にし、claspのOAuthには
+プロジェクト内容の書込・既存デプロイ更新権限が必要。GAS実行時のmanifestの
+`spreadsheets` scopeと、claspの管理用OAuth scopeは別の設定。
+既存のAdmin/Public用Secretはそのまま使い、Webhook用の値で上書きしない。
+
+#### 2回目以降の更新とロールバック
+
+承認済み変更をmainへマージした後、Actions → **Update Booking Webhook GAS** →
+Run workflow → branch `main` を指定する。全テスト成功後、`booking-production` の承認設定に従い、
+既存デプロイの確認 → pull → 正本4ファイルとmanifestだけで配布セット再生成 → push →
+`update-deployment` → 同じDeployment IDの存在確認の順に更新する。
+新規プロジェクトや新規デプロイを自動作成する処理はない。Public/Adminと同じScript IDなら
+push前に停止する。各clasp操作は名前のみ、push失敗は固定分類のみをログに表示する。
+
+ロールバックはGoogleの「デプロイを管理」→対象デプロイ→編集→以前のバージョンを選択→
+デプロイで行う。新しいデプロイを作らないのでDeployment ID・`/exec` URLを維持できる。
+次のActions更新でmainのコードへ戻るため、必要ならコード側の変更もrevertしてレビューする。
+Script Propertiesはバージョン管理されないので、この操作では復元されない。
+
+Cloud Runのデプロイ、`GAS_WEBHOOK_URL` の登録、Stripeテスト用Endpoint設定、
+Booking Adminの処理トリガー確認、テストモードE2Eは別途承認して実施する。
+このワークフローは `STRIPE_CHECKOUT_ENABLED` を設定・有効化しない。
+Webhookは受信・イベント台帳への永続化だけを担当し、予約確定はAdmin側の
+`processPendingStripeWebhookEvents` トリガーが行う。初回構築だけではStripeテスト運用は完成しない。
+
+参考: [GoogleのWeb Appデプロイ手順](https://developers.google.com/apps-script/guides/web?hl=ja)、
+[既存デプロイとバージョンの管理](https://developers.google.com/apps-script/concepts/deployments)。
+
 ### Stripe Webhookエンドポイントのデプロイ（オーナー承認後に実施すること）
 
 レビュー対応・1回目で、既存プロジェクトへのデプロイ追加ではなく**新しい独立した
@@ -5359,7 +5451,9 @@ Apps Scriptプロジェクト**を作成する方式へ変更した（「Webhook
 3. `gas/booking/webhook/appsscript.json`を参考に、OAuthスコープ（レビュー対応・4回目で
    `spreadsheets`のみへ縮小。決済照合・予約自動確定を行わなくなったため`calendar`/
    `script.send_mail`/`script.external_request`は不要になった）を設定する。
-4. Script Propertiesに`SPREADSHEET_ID`（他プロジェクトと同じ値）・
+4. 上の「Booking Webhookの初期作成とGitHub Actions更新」の手順に従い、
+   `STRIPE_WEBHOOK_RELAY_TOLERANCE_SECONDS`（まず300秒）も明示設定する。
+   Script Propertiesに`SPREADSHEET_ID`（他プロジェクトと同じ値）・
    `STRIPE_WEBHOOK_RELAY_SECRET`（中継基盤と共有する値）を設定する（レビュー対応・
    4回目で決済照合・予約自動確定を行わなくなったため、`CALENDAR_ID`/
    `STRIPE_SECRET_KEY`・確認メール関連のScript Propertiesは不要になった）。
@@ -5370,7 +5464,7 @@ Apps Scriptプロジェクト**を作成する方式へ変更した（「Webhook
    ため、Anyoneアクセスにしても管理者専用UIが公開される心配はない）。
 6. 発行されたデプロイURLを、中継基盤（Cloud Run）の環境変数
    （`GAS_WEBHOOK_URL`。`cloud-run/stripe-webhook-relay/`参照）に設定する。
-7. コード更新のたびに、「デプロイを管理」から新しいバージョンへ更新すること
+7. コード更新は上記の専用Actionsワークフローで既存デプロイを更新すること
    （既存デプロイのURL維持の運用方針は他プロジェクトと同じ）。
 8. **Booking Adminプロジェクト側**で、`processPendingStripeWebhookEvents`の時間主導
    トリガーを作成する（`createProcessPendingStripeWebhookEventsTrigger()`をスクリプト
