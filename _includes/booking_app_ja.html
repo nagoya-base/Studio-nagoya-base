@@ -62,15 +62,15 @@
       <span class="ba-field-label-like" id="ba-calendar-label">利用日<span class="ba-required">必須</span></span>
       <input type="hidden" id="ba-date" name="date" autocomplete="off">
       <div class="ba-calendar" aria-labelledby="ba-calendar-label">
-        <p class="ba-calendar-hint" id="ba-calendar-hint">利用時間と利用区分を選択すると、空き状況カレンダーが表示されます。</p>
-        <div id="ba-calendar-body" hidden>
+        <p class="ba-calendar-hint" id="ba-calendar-hint" hidden>利用時間と利用区分を選択すると、空き状況カレンダーが表示されます。</p>
+        <div id="ba-calendar-body">
           <div class="ba-calendar-nav">
             <button type="button" class="ba-btn ba-btn-ghost ba-calendar-nav-btn" id="ba-calendar-prev" aria-label="前月へ">‹ 前月</button>
             <span class="ba-calendar-month" id="ba-calendar-month-label" aria-live="polite"></span>
             <button type="button" class="ba-btn ba-btn-ghost ba-calendar-nav-btn" id="ba-calendar-next" aria-label="翌月へ">翌月 ›</button>
           </div>
 
-          <div id="ba-calendar-loading" class="ba-loading" hidden>空き状況を確認しています…</div>
+          <div id="ba-calendar-loading" class="ba-loading">空き状況を確認しています…</div>
 
           <div id="ba-calendar-error" class="ba-banner ba-banner--error" role="alert" aria-live="assertive" hidden>
             <p id="ba-calendar-error-message"></p>
@@ -94,6 +94,54 @@
             </thead>
             <tbody id="ba-calendar-grid-body"></tbody>
           </table>
+
+          <!-- 初期骨格（PR #365の追加修正）: booking-app.js（bodyの最後で同期読み込み）の
+               実行や空き状況APIの応答を待たず、HTMLのパース中にその場で当月の日付グリッドを描く
+               （Slow 3Gでもページを開いた直後からカレンダー領域が見える）。全セルはdisabled・
+               記号なし。booking-app.jsが初期化後に同じ内容へ描き直し、取得成功後に記号と
+               選択可否だけを反映する。ここでは業務ルールを一切持たない（表示のみ）。 -->
+          <script>
+          (function () {
+            var body = document.getElementById('ba-calendar-grid-body');
+            var label = document.getElementById('ba-calendar-month-label');
+            if (!body || !label) return;
+            try {
+              var y, m;
+              try {
+                var parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
+                parts.forEach(function (p) {
+                  if (p.type === 'year') y = parseInt(p.value, 10);
+                  if (p.type === 'month') m = parseInt(p.value, 10);
+                });
+              } catch (e) {}
+              if (!y || !m) { var d = new Date(); y = d.getFullYear(); m = d.getMonth() + 1; }
+              
+              label.textContent = y + '年' + m + '月';
+              var start = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+              var total = new Date(Date.UTC(y, m, 0)).getUTCDate();
+              var day = 1 - start;
+              while (day <= total) {
+                var tr = document.createElement('tr');
+                for (var c = 0; c < 7; c++, day++) {
+                  var td = document.createElement('td');
+                  if (day >= 1 && day <= total) {
+                    var b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'ba-cal-day ba-cal-day--pending';
+                    b.disabled = true;
+                    b.textContent = String(day);
+                    b.setAttribute('data-date', y + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day);
+                    b.setAttribute('aria-label', m + '月' + day + '日');
+                    b.setAttribute('aria-busy', 'true');
+                    td.appendChild(b);
+                  }
+                  tr.appendChild(td);
+                }
+                body.appendChild(tr);
+              }
+            } catch (e) {}
+          })();
+          </script>
 
           <ul class="ba-calendar-legend">
             <li><span aria-hidden="true">◎</span> 空き時間が十分あります</li>
