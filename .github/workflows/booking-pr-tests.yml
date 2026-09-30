@@ -8,6 +8,7 @@ on:
     paths:
       - 'gas/booking/**'
       - 'scripts/booking-*.js'
+      - 'scripts/prepare-booking-gas-project.js'
       - 'scripts/classify-clasp-push-error.js'
       - 'admin/booking/**'
       - '_includes/booking_app_*.html'
@@ -15,6 +16,7 @@ on:
       - 'cloud-run/**'
       - '.github/workflows/booking-pr-tests.yml'
       - '.github/workflows/booking-gas-production.yml'
+      - '.github/workflows/booking-gas-webhook-production.yml'
 
 permissions:
   contents: read
