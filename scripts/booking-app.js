@@ -42,8 +42,7 @@
       durationRequired: '利用時間を2時間以上の整数で入力してください。',
       customerTypeRequired: '利用区分を選択してください。',
       startTimeSummary: function (date, hours) { return date + '　' + hours + '時間利用'; },
-      back: '戻る',
-      reselectDateTime: '日付・利用時間を選び直す',
+      searchingStartTimes: '予約できる時間を検索しています…',
       retryCheck: 'もう一度確認する',
       confirmTime: function (startTime, endTime, hours) { return startTime + '〜' + endTime + '（' + hours + '時間）'; },
       phoneUnset: '（未入力）',
@@ -62,8 +61,7 @@
       durationRequired: 'Please enter a duration of 2 hours or more (whole numbers only).',
       customerTypeRequired: 'Please select a customer type.',
       startTimeSummary: function (date, hours) { return date + ' · ' + hours + (hours === 1 ? ' hour' : ' hours'); },
-      back: 'Back',
-      reselectDateTime: 'Choose date & duration again',
+      searchingStartTimes: 'Searching available start times…',
       retryCheck: 'Check again',
       confirmTime: function (startTime, endTime, hours) { return startTime + '–' + endTime + ' (' + hours + (hours === 1 ? ' hour)' : ' hours)'); },
       phoneUnset: '(not provided)',
@@ -128,14 +126,16 @@
     calendarGridBody: document.getElementById('ba-calendar-grid-body'),
     calendarSelected: document.getElementById('ba-calendar-selected'),
 
-    stepStartTime: document.getElementById('ba-step-start-time'),
+    startTimeArea: document.getElementById('ba-start-time-area'),
     startTimeSummary: document.getElementById('ba-start-time-summary'),
     startTimePriceLine: document.getElementById('ba-start-time-price-line'),
     startTimePriceNote: document.getElementById('ba-start-time-price-note'),
     startTimeLoading: document.getElementById('ba-start-time-loading'),
     startTimeGrid: document.getElementById('ba-start-time-grid'),
     startTimeEmpty: document.getElementById('ba-start-time-empty'),
-    step2Back: document.getElementById('ba-step-start-time-back'),
+    startTimeError: document.getElementById('ba-start-time-error'),
+    startTimeErrorMessage: document.getElementById('ba-start-time-error-message'),
+    startTimeErrorActions: document.getElementById('ba-start-time-error-actions'),
     step2Next: document.getElementById('ba-step-start-time-next'),
 
     stepDetails: document.getElementById('ba-step-details'),
@@ -222,14 +222,13 @@
     return Logic.brandShowsMemberOption(brand) && !!(els.isMember && els.isMember.checked);
   }
 
-  /* ── ステップ切り替え ── */
+  /* ── ステップ切り替え ──
+     'start-time'（開始時刻の選択）は独立した画面ではなく、Step1（#ba-step-datetime）内の
+     カレンダー直下に表示するエリア（#ba-start-time-area）。進捗表示上のステップとしては
+     残すが、セクションの表示切り替えではStep1のままにする（カレンダーを消さない）。 */
   var STEP_ORDER = ['datetime', 'start-time', 'details', 'confirm', 'complete'];
 
-  function goToStep(stepName) {
-    STEP_ORDER.forEach(function (name) {
-      var section = document.getElementById('ba-step-' + name);
-      if (section) section.hidden = name !== stepName;
-    });
+  function setProgress_(stepName) {
     els.progressItems.forEach(function (item) {
       var name = item.getAttribute('data-step');
       var index = STEP_ORDER.indexOf(name);
@@ -239,8 +238,18 @@
       if (name === stepName) item.setAttribute('aria-current', 'step');
       else if (index < currentIndex) item.classList.add('ba-progress-done');
     });
-    var section = document.getElementById('ba-step-' + stepName);
-    if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function goToStep(stepName) {
+    var sectionName = stepName === 'start-time' ? 'datetime' : stepName;
+    STEP_ORDER.forEach(function (name) {
+      var section = document.getElementById('ba-step-' + name);
+      if (section) section.hidden = name !== sectionName;
+    });
+    setProgress_(stepName);
+    if (stepName === 'start-time' && els.startTimeArea) els.startTimeArea.hidden = false;
+    var target = (stepName === 'start-time' && els.startTimeArea) || document.getElementById('ba-step-' + sectionName);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     hideGlobalError();
   }
 
@@ -401,6 +410,9 @@
        DOMスタブ（test/helpers）はaddEventListenerを「同じイベント名は1つだけ」保持する
        前提で実装されており、2つ目を追加すると1つ目を上書きしてしまうため。 */
     refreshPriceEstimate_();
+    /* 条件（利用時間・利用区分・希望時間帯）が変わると、表示中の開始時刻一覧は旧条件の
+       ものになる。古い一覧を確定値のように残さず、進行中のfetchの応答も破棄する（#365/#367）。 */
+    resetStartTimeArea_();
     if (els.date && els.date.value) calendarSelectionStale_ = true;
     if (!isCalendarReady_()) {
       if (els.calendarBody) els.calendarBody.hidden = true;
@@ -822,7 +834,7 @@
   refreshPriceEstimate_();
 
   /*
-   * Step1の検証・state反映・Step2への遷移・空き時間取得を行う共通処理。
+   * Step1の検証・state反映・開始時刻エリアの表示・空き時間取得を行う共通処理。
    * カレンダーの日付クリック（自動遷移）と、フォールバック用の非表示Step1ボタンの
    * 両方がこの関数だけを呼ぶ（予約条件のロジックを2箇所に持たない）。
    */
@@ -839,7 +851,7 @@
     setFieldError_(els.date, els.dateError, dateValue ? '' : UI_TEXT.dateRequired);
     setFieldError_(els.duration, els.durationError, durationValid ? '' : UI_TEXT.durationRequired);
     setFieldError_(null, els.customerTypeError, customerType ? '' : UI_TEXT.customerTypeRequired);
-    if (!dateValue || !durationValid || !customerType) return;
+    if (!dateValue || !durationValid || !customerType) { resetStartTimeArea_(); return; }
 
     /*
      * 初回利用＋当日はここで空き時間取得（getAvailability）へ進ませない（Issue #270）。
@@ -850,6 +862,7 @@
      */
     if (Logic.isSameDayFirstTimeBlocked(dateValue, customerType, Logic.todayInJapan())) {
       setFieldError_(els.date, els.dateError, Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', locale));
+      resetStartTimeArea_();
       return;
     }
 
@@ -860,7 +873,11 @@
     state.isMember = isMemberChecked_();
     state.startTime = null;
 
-    goToStep('start-time');
+    /* カレンダーは隠さない（goToStep('start-time')でStep1全体を切り替えない）。
+       カレンダー直下の開始時刻エリアを表示し、その中だけをローディング→一覧へ切り替える。 */
+    hideGlobalError();
+    if (els.startTimeArea) els.startTimeArea.hidden = false;
+    setProgress_('start-time');
     fetchAvailability();
     refreshPriceEstimate_();
   }
@@ -869,9 +886,47 @@
     els.step1Next.addEventListener('click', proceedFromSelectedDate_);
   }
 
-  /* ── Step 2: 開始時刻 ── */
+  /* ── 開始時刻（Step1内・カレンダー直下のエリア） ── */
+  function hideStartTimeError_() {
+    if (els.startTimeError) els.startTimeError.hidden = true;
+  }
+
+  /* 検索エリア内にエラーと再試行導線を出す（Step1全体・別画面へは切り替えない）。
+     エリアが無いDOM（テストのスタブ等）ではグローバルエラーへフォールバックする。 */
+  function showStartTimeError_(message, actions) {
+    if (!els.startTimeError || !els.startTimeErrorMessage || !els.startTimeErrorActions) {
+      showGlobalError(message, actions);
+      return;
+    }
+    els.startTimeErrorMessage.textContent = message;
+    els.startTimeErrorActions.innerHTML = '';
+    (actions || []).forEach(function (action) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'ba-btn ba-btn-ghost';
+      button.textContent = action.label;
+      button.addEventListener('click', action.onClick);
+      els.startTimeErrorActions.appendChild(button);
+    });
+    els.startTimeError.hidden = false;
+  }
+
+  /* 開始時刻エリアを初期状態（非表示・空）へ戻し、進行中のfetchの応答も破棄する。 */
+  function resetStartTimeArea_() {
+    availabilityRequestSeq++;
+    isFetchingAvailability = false;
+    availabilityInFlightKey = null;
+    state.startTime = null;
+    if (els.startTimeArea) els.startTimeArea.hidden = true;
+    if (els.startTimeLoading) els.startTimeLoading.hidden = true;
+    if (els.startTimeGrid) { els.startTimeGrid.hidden = true; els.startTimeGrid.innerHTML = ''; }
+    if (els.startTimeEmpty) els.startTimeEmpty.hidden = true;
+    hideStartTimeError_();
+    setStepDisabled_(els.step2Next, true);
+  }
+
   function fetchAvailability() {
-    /* 同じ条件のfetchが実行中なら二重発火しない。条件が違う場合（戻る→別の日付）は
+    /* 同じ条件のfetchが実行中なら二重発火しない。条件が違う場合（別の日付をクリック）は
        新しいfetchを開始し、古い応答は連番で判別して捨てる。 */
     var requestKey = state.date + '|' + state.durationMinutes + '|' + state.timeBand + '|' + brand;
     if (isFetchingAvailability && availabilityInFlightKey === requestKey) return;
@@ -879,17 +934,22 @@
     availabilityInFlightKey = requestKey;
     var requestSeq = ++availabilityRequestSeq;
 
+    /* fetch開始前に必ず「検索中」を表示する。旧日付の一覧・エラーは即クリアし、
+       状態が変わる間も領域を空白にしない。 */
+    state.startTime = null;
     els.startTimeSummary.textContent = UI_TEXT.startTimeSummary(state.date, state.durationMinutes / 60);
+    els.startTimeLoading.textContent = UI_TEXT.searchingStartTimes;
     els.startTimeLoading.hidden = false;
     els.startTimeGrid.hidden = true;
     els.startTimeGrid.innerHTML = '';
     els.startTimeEmpty.hidden = true;
+    hideStartTimeError_();
     setStepDisabled_(els.step2Next, true);
 
     if (!API_BASE_URL) {
       isFetchingAvailability = false;
       els.startTimeLoading.hidden = true;
-      showGlobalError(Logic.apiNotConfiguredMessage(locale), [{ label: UI_TEXT.back, onClick: function () { goToStep('datetime'); } }]);
+      showStartTimeError_(Logic.apiNotConfiguredMessage(locale), []);
       return;
     }
 
@@ -907,12 +967,12 @@
         els.startTimeLoading.hidden = true;
         if (!body || body.success !== true) {
           var code = body && body.error && body.error.code;
-          showGlobalError(Logic.messageForErrorCode(code, locale), [
-            { label: UI_TEXT.reselectDateTime, onClick: function () { goToStep('datetime'); } }
+          showStartTimeError_(Logic.messageForErrorCode(code, locale), [
+            { label: UI_TEXT.retryCheck, onClick: fetchAvailability }
           ]);
           return;
         }
-        /* Step2の開始時刻一覧も、月間カレンダーで選んだ日と同じtimeBandで絞り込む
+        /* 開始時刻一覧も、月間カレンダーで選んだ日と同じtimeBandで絞り込む
            （Issue #324本文レビュー追記2）。GAS側の単日getAvailability自体・
            このリクエストURLは変更しない（フロント側フィルタのみ）。 */
         renderStartTimes(Logic.filterStartTimesByTimeBand(body.bookableStartTimes || [], state.timeBand));
@@ -921,7 +981,7 @@
         if (requestSeq !== availabilityRequestSeq) return;
         isFetchingAvailability = false;
         els.startTimeLoading.hidden = true;
-        showGlobalError(Logic.networkErrorMessage(locale), [
+        showStartTimeError_(Logic.networkErrorMessage(locale), [
           { label: UI_TEXT.retryCheck, onClick: fetchAvailability }
         ]);
       });
@@ -954,9 +1014,6 @@
     });
   }
 
-  if (els.step2Back) {
-    els.step2Back.addEventListener('click', function () { goToStep('datetime'); });
-  }
   if (els.step2Next) {
     els.step2Next.addEventListener('click', function () {
       if (!state.startTime) return;

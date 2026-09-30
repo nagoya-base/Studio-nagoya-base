@@ -98,6 +98,10 @@ function setup(options) {
 
   var startTimeGrid = createElement('ba-start-time-grid');
   elements['ba-start-time-grid'] = startTimeGrid;
+  /* 実際のHTMLではStep1は初期表示（hiddenなし）。日付クリックで隠れないことを検証する。 */
+  var step1 = createElement('ba-step-datetime');
+  step1.hidden = false;
+  elements['ba-step-datetime'] = step1;
 
   /* opts.initialDurationHours: 予約フォーム初期表示改善のテスト用。実際のHTMLは
      #ba-durationにvalue="2"を入れて配信するため、documentStub.getElementByIdが
@@ -128,6 +132,7 @@ function setup(options) {
      resolvePendingMonthly()で明示的に応答するまで保留する（月をまたいだ
      競合・応答順の入れ替えを再現するテスト用）。 */
   var pendingMonthly = [];
+  var pendingAvailability = [];
   var holdMonthly = false; /* holdMonthly()呼び出し以降のmonthlyを保留する */
 
   function fetchStub(url, fetchOptions) {
@@ -154,6 +159,14 @@ function setup(options) {
     if (fetchOptions && fetchOptions.method === 'POST') {
       return Promise.resolve({ json: function () { return Promise.resolve({ success: true, bookingId: 'X', requestId: 'r' }); } });
     }
+    /* 単日の開始時刻取得（getAvailability）。opts.deferAvailabilityなら保留し、
+       resolveAvailability()/rejectAvailability()で明示的に応答する（応答順の入れ替え再現用）。 */
+    if (opts.deferAvailability && url.indexOf('action=') === -1) {
+      var dateParam = /[?&]date=([^&]+)/.exec(url)[1];
+      return new Promise(function (resolve, reject) {
+        pendingAvailability.push({ date: decodeURIComponent(dateParam), resolve: resolve, reject: reject });
+      });
+    }
     return Promise.resolve({ json: function () { return Promise.resolve({ success: true, bookableStartTimes: ['10:00'] }); } });
   }
 
@@ -176,6 +189,17 @@ function setup(options) {
       elements['ba-duration'].value = String(hours);
       elements['ba-duration']._listeners.input();
     },
+    resolveAvailability: function (date, body) {
+      var i = pendingAvailability.findIndex(function (p) { return p.date === date; });
+      if (i === -1) throw new Error('保留中のavailabilityが見つかりません: ' + date);
+      var pending = pendingAvailability.splice(i, 1)[0];
+      pending.resolve({ json: function () { return Promise.resolve(body); } });
+    },
+    rejectAvailability: function (date) {
+      var i = pendingAvailability.findIndex(function (p) { return p.date === date; });
+      if (i === -1) throw new Error('保留中のavailabilityが見つかりません: ' + date);
+      pendingAvailability.splice(i, 1)[0].reject(new Error('network'));
+    },
     holdMonthly: function () { holdMonthly = true; },
     pendingMonthlyCount: function () { return pendingMonthly.length; },
     resolvePendingMonthly: function (year, month, durationMinutes, body) {
@@ -192,15 +216,9 @@ function setup(options) {
   };
 }
 
-/* 日付クリックは自動でStep2へ進むため、「選択後に条件を変える」系のテストでは
-   一度Step1へ戻ってから条件を変更する（実際の利用者の操作と同じ）。 */
 /* 単日の開始時刻取得（getAvailability）だけを数える（monthly/estimatePriceは除く）。 */
 function availabilityCalls(ctx) {
   return ctx.fetchCalls.filter(function (c) { return c.url.indexOf('action=') === -1 && !(c.options && c.options.method === 'POST'); });
-}
-
-function backToStep1(ctx) {
-  ctx.elements['ba-step-start-time-back']._listeners.click();
 }
 
 function flushPromises() {
@@ -406,7 +424,7 @@ test('利用時間を変更すると、表示中の月だけを新しいduration
   assert.ok(ctx.fetchCalls[1].url.indexOf('durationMinutes=180') !== -1);
 });
 
-test('日付を1回クリックするだけで、Step1「次へ」を押さずにStep2の開始時刻取得へ進む', async function () {
+test('日付を1回クリックするだけで、Step1「次へ」を押さずに同じ画面のカレンダー直下で開始時刻取得へ進む', async function () {
   var ctx = setup({});
   ctx.setDuration('2');
   ctx.setCustomerType('returning');
@@ -416,11 +434,14 @@ test('日付を1回クリックするだけで、Step1「次へ」を押さず�
   var today = ctx.Logic.todayInJapan();
   findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
 
-  /* クリック直後（応答待ち）から、Step2へ遷移し「確認しています」を表示している */
+  /* クリック直後（応答待ち）: カレンダー（Step1）は残り、その直下に検索中を表示している */
   assert.strictEqual(ctx.elements['ba-date'].value, today);
-  assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, true, 'Step1が終わりStep2へ進んでいる');
-  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, false, 'Step1（カレンダー）は隠れない');
+  assert.strictEqual(ctx.elements['ba-calendar-body'].hidden, false, 'カレンダー本体も表示されたまま');
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, false, 'カレンダー直下の開始時刻エリアを表示');
   assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, false, '応答前に即ローディング表示');
+  assert.strictEqual(ctx.elements['ba-start-time-loading'].textContent, '予約できる時間を検索しています…');
+  assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, true, '応答まで次へはdisabled');
   assert.strictEqual(availabilityCalls(ctx).length, 1, '開始時刻取得のfetchが1回だけ発火');
   assert.ok(availabilityCalls(ctx)[0].url.indexOf('date=' + today) !== -1);
   assert.ok(availabilityCalls(ctx)[0].url.indexOf('durationMinutes=120') !== -1);
@@ -428,6 +449,8 @@ test('日付を1回クリックするだけで、Step1「次へ」を押さず�
   await flushPromises();
   assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, true);
   assert.strictEqual(ctx.elements['ba-start-time-grid'].hidden, false, '開始時刻一覧を表示');
+  assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, false, '一覧表示後もカレンダーは残る');
+  assert.strictEqual(findDayButton(ctx.elements['ba-calendar-grid-body'], today).getAttribute('aria-pressed'), 'true', '選択日は維持');
   assert.strictEqual(ctx.elements['ba-date-error'].hidden, true);
 });
 
@@ -445,15 +468,14 @@ test('同じ日付ボタンを連打してもStep2の開始時刻fetchは二重�
   assert.strictEqual(availabilityCalls(ctx).length, 1);
 });
 
-test('通信が遅くても日付クリック直後にローディングが出て、戻って別の日付を選ぶと新しい日付で再取得される（古い応答は捨てる）', async function () {
-  var ctx = setup({});
+test('通信が遅くても日付クリック直後にローディングが出て、別の日付を直接クリックすると新しい日付で再取得される（古い応答は捨てる）', async function () {
+  var ctx = setup({ deferAvailability: true });
   ctx.setDuration('2');
   ctx.setCustomerType('returning');
   ctx.triggerCustomerTypeChange();
   await flushPromises();
 
   var today = ctx.Logic.todayInJapan();
-  var month = ctx.Logic.yearMonthFromDateValue(today);
   var other = null;
   ctx.elements['ba-calendar-grid-body'].children.forEach(function (tr) {
     tr.children.forEach(function (td) {
@@ -466,16 +488,158 @@ test('通信が遅くても日付クリック直後にローディングが出�
   findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
   assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, false);
 
-  /* 応答前に戻って別の日付を選ぶ */
-  backToStep1(ctx);
+  /* 応答前に、カレンダー上で別の日付をそのままクリックする（戻る操作は不要） */
   findDayButton(ctx.elements['ba-calendar-grid-body'], other)._listeners.click();
   assert.strictEqual(availabilityCalls(ctx).length, 2, '別の日付なら再取得する');
   assert.ok(availabilityCalls(ctx)[1].url.indexOf('date=' + other) !== -1);
   assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, false);
-  assert.ok(month);
+  assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-date'].value, other);
 
+  /* 古い日付（today）の応答が後から届いても表示しない */
+  ctx.resolveAvailability(today, { success: true, bookableStartTimes: ['09:00', '09:30'] });
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, false, '古い応答ではローディングを消さない');
+  assert.strictEqual(ctx.elements['ba-start-time-grid'].hidden, true);
+  assert.strictEqual(ctx.elements['ba-start-time-grid'].children.length, 0, '古い応答の時刻は描画されない');
+
+  /* 新しい日付の応答だけが表示される */
+  ctx.resolveAvailability(other, { success: true, bookableStartTimes: ['13:00'] });
   await flushPromises();
   assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, true);
+  assert.strictEqual(ctx.elements['ba-start-time-grid'].hidden, false);
+  assert.deepStrictEqual(ctx.elements['ba-start-time-grid'].children.map(function (c) { return c.textContent; }), ['13:00']);
+  assert.strictEqual(findDayButton(ctx.elements['ba-calendar-grid-body'], other).getAttribute('aria-pressed'), 'true');
+});
+
+test('別の日付をクリックすると、現在の時刻一覧を即クリアして検索中を表示する', async function () {
+  var ctx = setup({ deferAvailability: true });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  var today = ctx.Logic.todayInJapan();
+  var other = null;
+  ctx.elements['ba-calendar-grid-body'].children.forEach(function (tr) {
+    tr.children.forEach(function (td) {
+      var b = td.children[0];
+      if (b && !b.disabled && b.getAttribute('data-date') !== today && !other) other = b.getAttribute('data-date');
+    });
+  });
+  findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
+  ctx.resolveAvailability(today, { success: true, bookableStartTimes: ['10:00', '11:00'] });
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-start-time-grid'].children.length, 2);
+
+  findDayButton(ctx.elements['ba-calendar-grid-body'], other)._listeners.click();
+  assert.strictEqual(ctx.elements['ba-start-time-grid'].children.length, 0, '旧日付の一覧は即クリア');
+  assert.strictEqual(ctx.elements['ba-start-time-grid'].hidden, true);
+  assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, true);
+});
+
+test('空きなしでもカレンダーは残り、時刻一覧エリアに案内が出る', async function () {
+  var ctx = setup({ deferAvailability: true });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  var today = ctx.Logic.todayInJapan();
+  findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
+  ctx.resolveAvailability(today, { success: true, bookableStartTimes: [] });
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-start-time-empty'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, true);
+  assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, false, 'カレンダーは残る');
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, true);
+});
+
+test('API失敗（通信エラー・エラー応答）でもカレンダーは残り、検索エリア内に再試行導線が出る', async function () {
+  var ctx = setup({ deferAvailability: true });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  var today = ctx.Logic.todayInJapan();
+  findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
+  ctx.rejectAvailability(today);
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, false, 'カレンダーは残る');
+  assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, true);
+  assert.strictEqual(ctx.elements['ba-start-time-error'].hidden, false, '検索エリア内にエラー表示');
+  assert.strictEqual(ctx.elements['ba-global-error'].hidden, true, '画面全体のエラーへ切り替えない');
+  var retry = ctx.elements['ba-start-time-error-actions'].children[0];
+  assert.ok(retry, '再試行ボタンがある');
+
+  /* 再試行: 検索中に戻り、再度fetchする */
+  retry._listeners.click();
+  assert.strictEqual(availabilityCalls(ctx).length, 2);
+  assert.strictEqual(ctx.elements['ba-start-time-error'].hidden, true);
+  assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, false);
+  ctx.resolveAvailability(today, { success: false, error: { code: 'INTERNAL_ERROR' } });
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-start-time-error'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-global-error'].hidden, true);
+  assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-start-time-error-actions'].children.length, 1);
+});
+
+test('時刻を選択すると次へ進めて、利用者情報（Step3）へ遷移する。カレンダーの日付選択と時刻は保持される', async function () {
+  var ctx = setup({});
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  var today = ctx.Logic.todayInJapan();
+  findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
+  await flushPromises();
+
+  var slot = ctx.elements['ba-start-time-grid'].children[0];
+  assert.strictEqual(slot.textContent, '10:00');
+  assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, true, '時刻選択前はdisabled');
+  slot._listeners.click();
+  assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, false);
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+  assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, true, 'Step3へ進むとStep1は隠れる');
+  assert.strictEqual(ctx.elements['ba-step-details'].hidden, false, '利用者情報入力へ進む');
+
+  /* 利用者情報から戻ると、カレンダー+開始時刻エリアがそのまま見える */
+  ctx.elements['ba-step-details-back']._listeners.click();
+  assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-date'].value, today);
+});
+
+test('日付選択後に利用時間を変更すると、旧条件の開始時刻一覧は消え、進行中の応答も破棄される', async function () {
+  var ctx = setup({ deferAvailability: true });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  var today = ctx.Logic.todayInJapan();
+  findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
+  ctx.setDuration('3');
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true);
+  ctx.resolveAvailability(today, { success: true, bookableStartTimes: ['10:00'] });
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-start-time-grid'].children.length, 0, '旧条件の応答は描画しない');
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true);
+});
+
+test('EN: 日付クリック直後に英語の検索中文言が出て、カレンダーは残る', async function () {
+  var ctx = setup({ locale: 'en' });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  var today = ctx.Logic.todayInJapan();
+  findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
+  assert.strictEqual(ctx.elements['ba-start-time-loading'].textContent, 'Searching available start times…');
+  assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, false);
+  await flushPromises();
   assert.strictEqual(ctx.elements['ba-start-time-grid'].hidden, false);
 });
 
@@ -489,7 +653,6 @@ test('戻る→利用時間を変更→日付選択で、新しい利用時間�
   var today = ctx.Logic.todayInJapan();
   findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
   await flushPromises();
-  backToStep1(ctx);
 
   ctx.setDuration('4');
   ctx.setTimeBand('evening');
@@ -522,7 +685,7 @@ test('確認中（pending）の日付ボタンはクリック不可で、Step2�
     assert.strictEqual(b.disabled, true);
     assert.strictEqual(b._listeners.click, undefined, 'pendingにはclickハンドラが付かない');
   });
-  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true);
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true);
   assert.strictEqual(availabilityCalls(ctx).length, 0);
 });
 
@@ -535,7 +698,7 @@ test('初回利用+当日は従来どおりクリック不可でStep2へ進ま�
   var button = findDayButton(ctx.elements['ba-calendar-grid-body'], ctx.Logic.todayInJapan());
   assert.strictEqual(button.disabled, true);
   assert.strictEqual(button._listeners.click, undefined);
-  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true);
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true);
 });
 
 
@@ -561,7 +724,6 @@ test('2時間で日付選択→duration変更→その日がFULLになった場�
   assert.strictEqual(button.disabled, false, '2時間ならAVAILABLEで選択可能');
   button._listeners.click();
   await flushPromises();
-  backToStep1(ctx);
   assert.strictEqual(ctx.elements['ba-date'].value, today);
 
   /* 6時間へ変更すると、同じ日がFULLになる想定 */
@@ -579,7 +741,7 @@ test('2時間で日付選択→duration変更→その日がFULLになった場�
   await flushPromises();
 
   assert.strictEqual(ctx.elements['ba-date-error'].hidden, false, '日付未選択としてStep1のエラーが出るべき');
-  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true, 'Step2（開始時刻取得）へは進めない');
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true, 'Step2（開始時刻取得）へは進めない');
 });
 
 test('日付選択後に利用時間を変更すると、再取得中は「次へ」を無効化し、旧日付のままStep2へ進めない。成功後に有効と確認できれば再び進める', async function () {
@@ -593,7 +755,6 @@ test('日付選択後に利用時間を変更すると、再取得中は「次�
   var button = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
   button._listeners.click();
   await flushPromises();
-  backToStep1(ctx);
   assert.strictEqual(ctx.elements['ba-date'].value, today);
   assert.strictEqual(ctx.elements['ba-step-datetime-next'].disabled, false, '確認済みの間は進める');
 
@@ -605,7 +766,7 @@ test('日付選択後に利用時間を変更すると、再取得中は「次�
 
   ctx.elements['ba-step-datetime-next']._listeners.click();
   await flushPromises();
-  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true, '確認中は旧日付のままStep2へ進めない');
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true, '確認中は旧日付のままStep2へ進めない');
 
   var month = ctx.Logic.yearMonthFromDateValue(today);
   ctx.resolvePendingMonthly(month.year, month.month, 180, {
@@ -633,7 +794,6 @@ test('日付選択後の再取得が失敗した場合も、旧日付のまま�
   var today = ctx.Logic.todayInJapan();
   findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
   await flushPromises();
-  backToStep1(ctx);
 
   fail = true;
   ctx.setDuration('3');
@@ -641,7 +801,7 @@ test('日付選択後の再取得が失敗した場合も、旧日付のまま�
   assert.strictEqual(ctx.elements['ba-step-datetime-next'].disabled, true);
   ctx.elements['ba-step-datetime-next']._listeners.click();
   await flushPromises();
-  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true);
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true);
 });
 
 test('利用経験ありで当日選択→初回利用へ変更→当日の選択状態が残らない', async function () {
@@ -655,7 +815,6 @@ test('利用経験ありで当日選択→初回利用へ変更→当日の選�
   var button = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
   button._listeners.click();
   await flushPromises();
-  backToStep1(ctx);
   assert.strictEqual(ctx.elements['ba-date'].value, today);
 
   var fetchCountBeforeSwitch = ctx.fetchCalls.length;
@@ -673,7 +832,7 @@ test('利用経験ありで当日選択→初回利用へ変更→当日の選�
   await flushPromises();
 
   assert.strictEqual(ctx.elements['ba-date-error'].hidden, false, '日付未選択としてStep1のエラーが出るべき');
-  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true, 'Step2（開始時刻取得）へは進めない');
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true, 'Step2（開始時刻取得）へは進めない');
 });
 
 test('duration変更時に短時間でinput/changeが連続発火しても、同じ月・同じdurationのfetchは1回だけ（in-flightキーで重複を抑止）', async function () {
@@ -832,7 +991,6 @@ test('timeBand変更後、選択済み日付が新条件でFULLになれば選�
   assert.strictEqual(button.disabled, false, 'allではAVAILABLEで選択可能');
   button._listeners.click();
   await flushPromises();
-  backToStep1(ctx);
   assert.strictEqual(ctx.elements['ba-date'].value, today);
 
   ctx.setTimeBand('evening');
@@ -849,7 +1007,7 @@ test('timeBand変更後、選択済み日付が新条件でFULLになれば選�
   await flushPromises();
 
   assert.strictEqual(ctx.elements['ba-date-error'].hidden, false, '日付未選択としてStep1のエラーが出るべき');
-  assert.strictEqual(ctx.elements['ba-step-start-time'].hidden, true, 'Step2（開始時刻取得）へは進めない');
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true, 'Step2（開始時刻取得）へは進めない');
 });
 
 test('duration・利用区分未確定の間はtimeBandを変更してもgetMonthlyAvailabilityを呼ばない（isCalendarReady_の判定条件は変更しない）', async function () {
