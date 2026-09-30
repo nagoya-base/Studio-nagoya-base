@@ -210,7 +210,9 @@
       <p class="ba-price-note" id="ba-price-note"></p>
     </div>
 
-    <div class="ba-actions">
+    <!-- 日付を選ぶと自動で開始時刻の確認へ進むため通常は使わない。スクリプトの共通処理
+         （proceedFromSelectedDate_）を呼ぶフォールバックとして非表示のまま残す。 -->
+    <div class="ba-actions" hidden>
       <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">Show Available Start Times</button>
     </div>
   </section>

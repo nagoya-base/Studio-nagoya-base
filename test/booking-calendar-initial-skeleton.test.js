@@ -76,6 +76,13 @@ function runInlineSkeleton(html) {
     });
   });
 
+  test('[' + locale + '] Step1の「予約できる時間を表示」ボタンは日付選択で自動遷移するため非表示（フォールバックとして要素は残す）', function () {
+    var html = readInclude(locale);
+    var m = html.match(/<div class="ba-actions"([^>]*)>\s*<button[^>]*id="ba-step-datetime-next"/);
+    assert.ok(m, 'Step1ボタンがba-actions内に残っている');
+    assert.match(m[1], /\bhidden\b/, '通常操作では見えない');
+  });
+
   test('[' + locale + '] 骨格scriptは曜日ヘッダ・グリッド・確認中表示の後ろ（同じカレンダー内）に置かれる', function () {
     var html = readInclude(locale);
     assert.ok(html.indexOf('id="ba-calendar-grid-body"') < html.indexOf('<script>'));
