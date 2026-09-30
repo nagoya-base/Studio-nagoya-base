@@ -344,6 +344,21 @@
   opacity: 0.7;
 }
 
+/* 空き状況の確認中／取得失敗: 日付のみ表示し、薄いグレーの「未確定」状態にする。 */
+.ba-cal-day--pending:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* 読み込み表示の出入りでカレンダーがずれないよう、非表示時も領域を確保する。 */
+#ba-calendar-loading {
+  min-height: 1.4em;
+}
+#ba-calendar-loading[hidden] {
+  display: block;
+  visibility: hidden;
+}
+
 .ba-calendar-legend {
   display: flex;
   flex-wrap: wrap;

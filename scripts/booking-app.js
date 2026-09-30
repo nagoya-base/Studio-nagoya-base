@@ -355,7 +355,10 @@
   function showCalendarLoadingState_() {
     if (els.calendarLoading) els.calendarLoading.hidden = false;
     if (els.calendarError) els.calendarError.hidden = true;
-    if (els.calendarGridBody) els.calendarGridBody.innerHTML = '';
+    /* カレンダー本体は消さない。日付グリッドだけを先に描画し、全セルを「確認中」
+       （クリック不可・記号なし）にする。空き状況の取得完了後にrenderCalendarGrid_が
+       記号と選択可否だけを反映する（時間帯・月送りによる再取得時も同じ）。 */
+    renderCalendarGrid_({ status: 'loading' });
   }
 
   function currentCalendarDurationMinutes_() {
@@ -491,15 +494,19 @@
   function renderCalendarGrid_(entry) {
     if (!calendarMonth || !els.calendarGridBody) return;
 
-    if (!entry || entry.status !== 'success') {
-      els.calendarGridBody.innerHTML = '';
+    /* 取得中(loading)・取得失敗(error)でも日付グリッド自体は描画する。この場合、
+       全セルはクリック不可で◎○△×は表示しない（fail-open禁止）。 */
+    var isSuccess = !!entry && entry.status === 'success';
+    var isLoading = !!entry && entry.status === 'loading';
+    if (!isSuccess && !isLoading) {
       if (els.calendarError) {
         els.calendarErrorMessage.textContent = (entry && entry.message) || Logic.networkErrorMessage(locale);
         els.calendarError.hidden = false;
       }
-      return;
+    } else if (els.calendarError) {
+      els.calendarError.hidden = true;
     }
-    if (els.calendarError) els.calendarError.hidden = true;
+    var days = isSuccess ? (entry.days || {}) : {};
 
     var todayValue = Logic.todayInJapan();
     var customerType = checkedCustomerType();
@@ -516,8 +523,8 @@
      * 判定できないため、実際にその月を再描画するタイミングで改めて判定する）。
      */
     var monthPrefix = calendarMonth.year + '-' + (calendarMonth.month < 10 ? '0' : '') + calendarMonth.month + '-';
-    if (selectedDate && selectedDate.indexOf(monthPrefix) === 0) {
-      var selectedDayInfo = entry.days[selectedDate];
+    if (isSuccess && selectedDate && selectedDate.indexOf(monthPrefix) === 0) {
+      var selectedDayInfo = days[selectedDate];
       var selectedStatus = selectedDayInfo ? selectedDayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
       if (!Logic.isCalendarDaySelectable(selectedDate, selectedStatus, customerType, todayValue)) {
         els.date.value = '';
@@ -537,15 +544,26 @@
           row.appendChild(td);
           return;
         }
-        var dayInfo = entry.days[cell.dateValue];
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute('data-date', cell.dateValue);
+        if (!isSuccess) {
+          /* 確認中／取得失敗: 日付のみ。クリック不可・記号なし。 */
+          button.className = 'ba-cal-day ba-cal-day--pending';
+          button.textContent = String(cell.day);
+          button.setAttribute('aria-label', Logic.formatCalendarDayLabel(cell.dateValue, locale));
+          button.disabled = true;
+          if (isLoading) button.setAttribute('aria-busy', 'true');
+          td.appendChild(button);
+          row.appendChild(td);
+          return;
+        }
+        var dayInfo = days[cell.dateValue];
         var status = dayInfo ? dayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
         var selectable = Logic.isCalendarDaySelectable(cell.dateValue, status, customerType, todayValue);
 
-        var button = document.createElement('button');
-        button.type = 'button';
         button.className = 'ba-cal-day';
         button.textContent = cell.day + Logic.dayStatusSymbol(status);
-        button.setAttribute('data-date', cell.dateValue);
         button.setAttribute('aria-label', Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale));
         button.disabled = !selectable;
         button.setAttribute('aria-pressed', cell.dateValue === selectedDate ? 'true' : 'false');

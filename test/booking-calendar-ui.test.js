@@ -283,6 +283,26 @@ test('初回利用＋当日は、GAS側のstatusが予約可でもセルが選�
   assert.strictEqual(ctx.fetchCalls.length, fetchCountAfterSwitch, '選択可否の切り替えだけでは再取得しない');
 });
 
+/* グリッド内のボタン（日付セル）を平坦化して返す。 */
+function dayButtons(ctx) {
+  var out = [];
+  ctx.elements['ba-calendar-grid-body'].children.forEach(function (tr) {
+    tr.children.forEach(function (td) {
+      td.children.forEach(function (b) { out.push(b); });
+    });
+  });
+  return out;
+}
+
+function assertAllPending(ctx, message) {
+  var buttons = dayButtons(ctx);
+  assert.ok(buttons.length >= 28, message + '（日付グリッドが残っている）');
+  buttons.forEach(function (b) {
+    assert.strictEqual(b.disabled, true, message + '（クリック不可）');
+    assert.ok(/^\d+$/.test(b.textContent), message + '（◎○△×を表示しない）: ' + b.textContent);
+  });
+}
+
 test('月間空き状況の取得に失敗した場合、グリッドを描画せずエラー表示のみにする（fail-open禁止）', async function () {
   var ctx = setup({
     monthlyResponder: function () {
@@ -295,7 +315,40 @@ test('月間空き状況の取得に失敗した場合、グリッドを描画�
   await flushPromises();
 
   assert.strictEqual(ctx.elements['ba-calendar-error'].hidden, false);
-  assert.strictEqual(ctx.elements['ba-calendar-grid-body'].children.length, 0, '取得失敗時はどの日も描画・選択できない状態にする');
+  assertAllPending(ctx, '取得失敗時も日付グリッドは残し、どの日も選択できない状態にする');
+});
+
+test('取得中は日付グリッドを即時表示し（クリック不可・記号なし）、取得完了後に記号と選択可否だけを反映する', async function () {
+  var ctx = setup({ deferMonthly: true });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+
+  assert.strictEqual(ctx.elements['ba-calendar-body'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-calendar-loading'].hidden, false);
+  assertAllPending(ctx, '取得中');
+
+  var monthA = ctx.Logic.yearMonthFromDateValue(ctx.Logic.todayInJapan());
+  ctx.resolvePendingMonthly(monthA.year, monthA.month, 120, {
+    success: true,
+    month: monthA.year + '-' + pad2(monthA.month),
+    days: buildDaysForMonth(monthA.year, monthA.month, 'AVAILABLE_HIGH')
+  });
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-calendar-loading'].hidden, true);
+  var buttons = dayButtons(ctx);
+  assert.ok(buttons.some(function (b) { return b.textContent.indexOf('◎') !== -1; }), '取得後は◎が反映される');
+  assert.ok(buttons.some(function (b) { return !b.disabled; }), '取得後は選択可能な日がある');
+});
+
+test('月送り中も日付グリッドを維持する（空白にしない）', async function () {
+  var ctx = setup({ deferMonthly: true });
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  ctx.elements['ba-calendar-next']._listeners.click();
+  assertAllPending(ctx, '翌月取得中');
 });
 
 test('翌月・前月ボタンで表示中の月だけを取得し直す（年またぎも正しく計算される）', async function () {
@@ -487,11 +540,7 @@ test('月A→月B→月Aと素早く往復し、応答順が入れ替わって�
   });
   await flushPromises();
 
-  assert.strictEqual(
-    ctx.elements['ba-calendar-grid-body'].children.length,
-    0,
-    '現在表示中は月Aのため、先に届いた月Bの応答でグリッドを描画してはいけない'
-  );
+  assertAllPending(ctx, '現在表示中は月Aのため、先に届いた月Bの応答で記号を描画してはいけない');
 
   /* 続いて月A（現在表示中）の応答を返す */
   ctx.resolvePendingMonthly(monthA.year, monthA.month, 120, {
