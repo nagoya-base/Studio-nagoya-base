@@ -156,7 +156,7 @@ jobs:
           fi
           echo "Running clasp push --force"
           # Never print clasp's raw output: Google errors may include identifiers.
-          # The classifier emits only fixed category names, not matched text.
+          # The script emits a fixed category (plus sanitized allowlisted fields if unclassified).
           umask 077
           push_log="$RUNNER_TEMP/clasp-push.log"
           trap 'rm -f "$push_log"' EXIT
