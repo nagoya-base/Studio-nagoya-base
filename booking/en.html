@@ -27,7 +27,7 @@
 </script>
 
 <link rel="stylesheet" href="../styles/common.css">
-<link rel="stylesheet" href="../styles/booking.css">
+<link rel="stylesheet" href="../styles/booking.css?v={{ site.time | date: '%s' }}">
 </head>
 
 <body data-page-type="booking" data-site-section="studio_main">
@@ -82,9 +82,9 @@
   <p class="footer-copy">&copy; Studio Nagoya Base. All rights reserved.</p>
 </footer>
 
-<script src="../scripts/booking-logic.js"></script>
-<script src="../scripts/booking-config.js"></script>
-<script src="../scripts/booking-app.js"></script>
+<script src="../scripts/booking-logic.js?v={{ site.time | date: '%s' }}"></script>
+<script src="../scripts/booking-config.js?v={{ site.time | date: '%s' }}"></script>
+<script src="../scripts/booking-app.js?v={{ site.time | date: '%s' }}"></script>
 <script src="../scripts/analytics.js"></script>
 
 </body>
