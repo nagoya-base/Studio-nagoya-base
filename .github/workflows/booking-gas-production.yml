@@ -155,10 +155,16 @@ jobs:
             exit 1
           fi
           echo "Running clasp push --force"
-          if ! clasp --auth "$auth_file" --user "$clasp_user" push --force >/dev/null 2>&1; then
-            echo "clasp push --force failed." >&2
+          # Never print clasp's raw output: Google errors may include identifiers.
+          # The classifier emits only fixed category names, not matched text.
+          umask 077
+          push_log="$RUNNER_TEMP/clasp-push.log"
+          trap 'rm -f "$push_log"' EXIT
+          if ! clasp --auth "$auth_file" --user "$clasp_user" push --force >"$push_log" 2>&1; then
+            node scripts/classify-clasp-push-error.js "$push_log" >&2
             exit 1
           fi
+          rm -f "$push_log"
           echo "Running clasp update-deployment"
           if ! clasp --auth "$auth_file" --user "$clasp_user" update-deployment "$deployment_id" \
             --description "main ${GITHUB_SHA}" >/dev/null 2>&1; then
