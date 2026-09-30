@@ -352,10 +352,26 @@
       timeBand === currentTimeBand_();
   }
 
+  /*
+   * calendarSelectionStale_: 日付を選択済みの状態でduration/利用区分/希望時間帯が変わり、
+   * その選択日がまだ新しい条件で再検証されていないことを示す。この間（確認中・取得失敗）は、
+   * #ba-dateに旧条件の日付が残っていても「次へ」で進めない（旧条件の日付が新条件では
+   * ×になり得るため）。選択自体は保持し、成功レスポンスで再検証できた時点で解除する
+   * （表示中の月以外の選択日は検証できないため、その成功描画で選択を解除する）。
+   */
+  var calendarSelectionStale_ = false;
+
+  function syncStep1NextEnabled_() {
+    setStepDisabled_(els.step1Next, isCalendarReady_() && calendarSelectionStale_);
+  }
+
   function showCalendarLoadingState_() {
     if (els.calendarLoading) els.calendarLoading.hidden = false;
     if (els.calendarError) els.calendarError.hidden = true;
-    if (els.calendarGridBody) els.calendarGridBody.innerHTML = '';
+    /* カレンダー本体は消さない。日付グリッドだけを先に描画し、全セルを「確認中」
+       （クリック不可・記号なし）にする。空き状況の取得完了後にrenderCalendarGrid_が
+       記号と選択可否だけを反映する（時間帯・月送りによる再取得時も同じ）。 */
+    renderCalendarGrid_({ status: 'loading' });
   }
 
   function currentCalendarDurationMinutes_() {
@@ -383,9 +399,11 @@
        DOMスタブ（test/helpers）はaddEventListenerを「同じイベント名は1つだけ」保持する
        前提で実装されており、2つ目を追加すると1つ目を上書きしてしまうため。 */
     refreshPriceEstimate_();
+    if (els.date && els.date.value) calendarSelectionStale_ = true;
     if (!isCalendarReady_()) {
       if (els.calendarBody) els.calendarBody.hidden = true;
       if (els.calendarHint) els.calendarHint.hidden = false;
+      syncStep1NextEnabled_();
       return;
     }
     if (els.calendarHint) els.calendarHint.hidden = true;
@@ -441,8 +459,8 @@
 
   /*
    * 月間空き状況の取得に失敗した場合、空いているように見せない（fail-open禁止。
-   * Issue #318要件）。取得失敗時はグリッドを描画せずエラー表示のみとし、
-   * どの日も選択できない状態にする。
+   * Issue #318要件）。取得失敗時も日付グリッド自体は残し、◎○△×は表示せず、
+   * エラー表示とともにどの日も選択できない状態にする。
    */
   function fetchCalendarMonth_(year, month, durationMinutes, timeBand, key) {
     if (!API_BASE_URL) {
@@ -491,15 +509,19 @@
   function renderCalendarGrid_(entry) {
     if (!calendarMonth || !els.calendarGridBody) return;
 
-    if (!entry || entry.status !== 'success') {
-      els.calendarGridBody.innerHTML = '';
+    /* 取得中(loading)・取得失敗(error)でも日付グリッド自体は描画する。この場合、
+       全セルはクリック不可で◎○△×は表示しない（fail-open禁止）。 */
+    var isSuccess = !!entry && entry.status === 'success';
+    var isLoading = !!entry && entry.status === 'loading';
+    if (!isSuccess && !isLoading) {
       if (els.calendarError) {
         els.calendarErrorMessage.textContent = (entry && entry.message) || Logic.networkErrorMessage(locale);
         els.calendarError.hidden = false;
       }
-      return;
+    } else if (els.calendarError) {
+      els.calendarError.hidden = true;
     }
-    if (els.calendarError) els.calendarError.hidden = true;
+    var days = isSuccess ? (entry.days || {}) : {};
 
     var todayValue = Logic.todayInJapan();
     var customerType = checkedCustomerType();
@@ -516,15 +538,24 @@
      * 判定できないため、実際にその月を再描画するタイミングで改めて判定する）。
      */
     var monthPrefix = calendarMonth.year + '-' + (calendarMonth.month < 10 ? '0' : '') + calendarMonth.month + '-';
-    if (selectedDate && selectedDate.indexOf(monthPrefix) === 0) {
-      var selectedDayInfo = entry.days[selectedDate];
+    if (isSuccess && selectedDate && selectedDate.indexOf(monthPrefix) === 0) {
+      var selectedDayInfo = days[selectedDate];
       var selectedStatus = selectedDayInfo ? selectedDayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
       if (!Logic.isCalendarDaySelectable(selectedDate, selectedStatus, customerType, todayValue)) {
         els.date.value = '';
         selectedDate = '';
         if (els.calendarSelected) els.calendarSelected.textContent = '';
       }
+      calendarSelectionStale_ = false;
+    } else if (isSuccess && selectedDate && calendarSelectionStale_) {
+      /* 条件変更後に別の月を表示しており、選択日は新条件で検証できないため解除する。 */
+      els.date.value = '';
+      selectedDate = '';
+      calendarSelectionStale_ = false;
+      if (els.calendarSelected) els.calendarSelected.textContent = '';
     }
+    if (isSuccess) calendarSelectionStale_ = false;
+    syncStep1NextEnabled_();
 
     var weeks = Logic.buildMonthMatrix(calendarMonth.year, calendarMonth.month);
 
@@ -537,15 +568,26 @@
           row.appendChild(td);
           return;
         }
-        var dayInfo = entry.days[cell.dateValue];
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute('data-date', cell.dateValue);
+        if (!isSuccess) {
+          /* 確認中／取得失敗: 日付のみ。クリック不可・記号なし。 */
+          button.className = 'ba-cal-day ba-cal-day--pending';
+          button.textContent = String(cell.day);
+          button.setAttribute('aria-label', Logic.formatCalendarDayLabel(cell.dateValue, locale));
+          button.disabled = true;
+          if (isLoading) button.setAttribute('aria-busy', 'true');
+          td.appendChild(button);
+          row.appendChild(td);
+          return;
+        }
+        var dayInfo = days[cell.dateValue];
         var status = dayInfo ? dayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
         var selectable = Logic.isCalendarDaySelectable(cell.dateValue, status, customerType, todayValue);
 
-        var button = document.createElement('button');
-        button.type = 'button';
         button.className = 'ba-cal-day';
         button.textContent = cell.day + Logic.dayStatusSymbol(status);
-        button.setAttribute('data-date', cell.dateValue);
         button.setAttribute('aria-label', Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale));
         button.disabled = !selectable;
         button.setAttribute('aria-pressed', cell.dateValue === selectedDate ? 'true' : 'false');
@@ -777,6 +819,8 @@
 
   if (els.step1Next) {
     els.step1Next.addEventListener('click', function () {
+      /* 空き状況の確認中・取得失敗の間は、以前選んだ日付が残っていても進めない。 */
+      if (isCalendarReady_() && calendarSelectionStale_) return;
       var dateValue = els.date ? els.date.value : '';
       var durationMinutes = Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
       /* Issue #301: 1時間はStep 1で止める（UX guard）。最終判定の正はGAS側
