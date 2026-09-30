@@ -4,7 +4,8 @@
 // Never print raw clasp output: API errors can include account addresses, project
 // IDs, and OAuth details. Output is a fixed category plus, only when UNCLASSIFIED,
 // a few allowlisted fields (HTTP status, error code/status/reason, short message)
-// that have been sanitized.
+// or, when there are none, the first meaningful line(s) of plain-text output,
+// all sanitized and length-capped.
 const fs = require('node:fs');
 
 function classify(output) {
@@ -38,6 +39,8 @@ function classify(output) {
 
 const REDACTED = '[REDACTED]';
 const MAX_MESSAGE_LENGTH = 160;
+const MAX_LINE_LENGTH = 200;
+const MAX_LINES = 2;
 
 // Replace anything that could identify an account, project, or credential.
 function sanitize(text) {
@@ -48,6 +51,9 @@ function sanitize(text) {
     .replace(/\b(?:ya29|1\/\/|GOCSPX|AKfycb)[\w./~+=-]*/g, REDACTED)
     .replace(/[\w.-]*\.apps\.googleusercontent\.com\b/gi, REDACTED)
     .replace(/\b(?:Bearer|Basic)\s+\S+/gi, REDACTED)
+    .replace(/\b[A-Z][A-Z0-9_]{2,}=\S*/g, REDACTED)
+    .replace(/(?<![\w])(?:[A-Za-z]:[\\/]|~[\\/]|\.{0,2}[\\/])[^\s"'`<>|]+/g, '[REDACTED_PATH]')
+    .replace(/(?<![\w.-])[\w.@-]+[\\/][\w.@\\/-]+/g, '[REDACTED_PATH]')
     .replace(/[A-Za-z0-9_\-./+=~]{16,}/g, REDACTED)
     .replace(/\b\d{6,}\b/g, REDACTED)
     .replace(/\s+/g, ' ')
@@ -84,11 +90,34 @@ function extractDiagnostics(output) {
   return fields;
 }
 
+const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+
+// First meaningful non-empty line(s) of plain-text output, sanitized and capped.
+// Skips blank lines, punctuation/spinner-only lines and stack frames.
+function extractSanitizedLine(output) {
+  const lines = String(output).slice(0, 1024 * 1024).replace(ANSI, '').split(/\r?\n|\r/);
+  const kept = [];
+  for (const line of lines) {
+    if (kept.length >= MAX_LINES) break;
+    if (!/[A-Za-z]/.test(line) || /^\s*at\s/.test(line)) continue;
+    const clean = sanitize(line);
+    if (!/[A-Za-z]/.test(clean.replace(/\[REDACTED(?:_PATH)?\]/g, ''))) continue;
+    kept.push(clean);
+  }
+  const joined = kept.join(' | ').slice(0, MAX_LINE_LENGTH).trim();
+  if (!/[A-Za-z]/.test(joined.replace(/\[REDACTED(?:_PATH)?\]/g, ''))) return null;
+  return joined;
+}
+
 function report(output) {
   const category = classify(output);
   if (category !== 'UNCLASSIFIED') return 'clasp push --force failed: ' + category;
   const fields = extractDiagnostics(output);
-  const detail = fields.length ? fields.join(' ') : 'no structured error fields found';
+  let detail = fields.join(' ');
+  if (!detail) {
+    const line = extractSanitizedLine(output);
+    detail = line ? 'sanitized_line="' + line + '"' : 'sanitized_line_unavailable';
+  }
   return 'clasp push --force failed: UNCLASSIFIED (sanitized diagnostics: ' + detail + ')';
 }
 
@@ -102,4 +131,4 @@ if (require.main === module) {
   process.stderr.write(report(output) + '\n');
 }
 
-module.exports = { classify, sanitize, extractDiagnostics, report };
+module.exports = { classify, sanitize, extractDiagnostics, extractSanitizedLine, report };
