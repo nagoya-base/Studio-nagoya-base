@@ -6,7 +6,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { classify, sanitize, extractDiagnostics, report } = require('../scripts/classify-clasp-push-error');
+const { classify, sanitize, extractDiagnostics, extractSanitizedLine, report } = require('../scripts/classify-clasp-push-error');
 
 test('clasp push failures are classified without returning identifiers or raw errors', () => {
   const sensitive = ' account@example.test script-id-123 deployment-id-456 refresh-token-789';
@@ -100,7 +100,8 @@ test('UNCLASSIFIED report shows only allowlisted, sanitized fields', () => {
 
 test('UNCLASSIFIED report without structured fields never echoes raw text', () => {
   const out = report('weird output ' + SECRETS.join(' '));
-  assert.equal(out, 'clasp push --force failed: UNCLASSIFIED (sanitized diagnostics: no structured error fields found)');
+  assert.equal(out.includes('sanitized_line="weird output'), true);
+  for (const secret of SECRETS) assert.equal(out.includes(secret), false);
   assert.deepEqual(extractDiagnostics(''), []);
 });
 
@@ -120,4 +121,47 @@ test('workflow CLI does not leak secrets for UNCLASSIFIED output', () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+const PATHS = [
+  '/home/runner/work/repo/repo/.clasp.json',
+  '/home/runner/work/_temp/clasprc.json',
+  'C:\\Users\\runner\\AppData\\clasp\\auth.json',
+  '~/.clasprc.json',
+  'src/Code.gs'
+];
+
+test('plain-text output: first meaningful line only, sanitized', () => {
+  const raw = '\n  \n\u001b[31m✖\u001b[0m\n' +
+    'Error: Unexpected ' + SECRETS.join(' ') + ' ' + PATHS.join(' ') + ' SCRIPT_ID=abc123 TOKEN=xyz\n' +
+    'Second line detail\nthird line must not appear\n    at Object.<anonymous> (/home/runner/x.js:1:1)';
+  const out = report(raw);
+  assert.match(out, /sanitized_line="Error: Unexpected /);
+  assert.doesNotMatch(out, /third line|Object\.<anonymous>/);
+  assert.match(out, /\[REDACTED_PATH\]/);
+  for (const secret of [...SECRETS, ...PATHS, 'abc123', 'xyz', 'runner']) {
+    assert.equal(out.includes(secret), false, secret);
+  }
+  assert.ok(out.length < 300);
+});
+
+test('plain-text second line is included when short', () => {
+  assert.match(report('Error: Something failed\nSecond line detail\nthird line'), /Something failed \| Second line detail"/);
+  assert.doesNotMatch(report('Error: Something failed\nSecond line detail\nthird line'), /third/);
+});
+
+test('plain-text line is capped at 200 characters', () => {
+  const line = extractSanitizedLine('Error: ' + 'word '.repeat(100));
+  assert.ok(line.length <= 200);
+});
+
+test('stack frames and paths only are unavailable, never shown', () => {
+  for (const raw of ['', '   \n\n', '- \\ | /', '    at foo (/home/runner/a.js:1:1)', '/home/runner/work/x/y', SECRETS[3], SECRETS[0]]) {
+    const out = report(raw);
+    assert.equal(out, 'clasp push --force failed: UNCLASSIFIED (sanitized diagnostics: sanitized_line_unavailable)', raw);
+  }
+});
+
+test('sanitize redacts Windows and Linux paths', () => {
+  for (const p of PATHS) assert.equal(sanitize('see ' + p + ' now'), 'see [REDACTED_PATH] now', p);
 });
