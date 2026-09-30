@@ -379,6 +379,24 @@
 }
 
 /* ── 開始時刻の選択 ── */
+/* カレンダー直下（Step1内）の開始時刻エリア。日付クリック後もカレンダーは残し、
+   この領域だけをローディング→時刻一覧/空き無し/エラーへ切り替える。 */
+.ba-start-time-area {
+  margin: 16px 0 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--ba-border);
+  min-width: 0;
+}
+
+.ba-start-time-title {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.ba-start-time-area .ba-loading {
+  padding: 14px 0;
+}
+
 .ba-time-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));

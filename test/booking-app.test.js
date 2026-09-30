@@ -1002,9 +1002,8 @@ test('Issue #334 PR-B: 日時変更によって96時間未満になった場合�
   ctx.setPaymentMethod(CARD_VALUE);
   assert.strictEqual(ctx.cardRadio.checked, true);
 
-  /* Step3→Step2→Step1と戻り、96時間未満の日程へ変更してStep3へ再度進む */
+  /* Step3→Step1（カレンダー+開始時刻エリア）と戻り、96時間未満の日程へ変更してStep3へ再度進む */
   ctx.elements['ba-step-details-back']._listeners.click();
-  ctx.elements['ba-step-start-time-back']._listeners.click();
   ctx.elements['ba-date'].value = jstDateString(1);
   ctx.elements['ba-step-datetime-next']._listeners.click();
   await flushPromises();
