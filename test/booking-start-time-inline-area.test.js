@@ -39,8 +39,12 @@ test('375px幅: 開始時刻グリッドは折り返し（auto-fill）で、横�
   assert.ok(/\.ba-start-time-area \{[^}]*min-width: 0;/.test(css));
 });
 
-test('JS: 開始時刻側の料金DOM参照とstart-timeへのscrollIntoViewが無い', function () {
+test('JS: 開始時刻側の料金DOM参照が無く、scrollは日付クリック経由の画面外判定に限定される', function () {
   var js = read('scripts/booking-app.js');
   assert.ok(js.indexOf('startTimePrice') === -1 && js.indexOf('ba-start-time-price') === -1);
-  assert.ok(!/scrollIntoView[^\n]*startTimeArea|startTimeArea[^\n]*scrollIntoView/.test(js));
+  var calls = js.match(/\.scrollIntoView\(\{[^)]*\}\)/g) || [];
+  assert.strictEqual(calls.length, 2, 'scrollIntoViewはgoToStep（start-time以外）とreveal（日付クリック時）のみ');
+  assert.ok(/scrollToStartTime: true/.test(js));
+  var goTo = js.slice(js.indexOf('function goToStep'), js.indexOf('function setStepDisabled_'));
+  assert.ok(goTo.indexOf('startTimeArea.scrollIntoView') === -1 && /stepName !== 'start-time'/.test(goTo), 'goToStepはstart-timeでスクロールしない');
 });

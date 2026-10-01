@@ -184,6 +184,7 @@ function setup(options) {
 
   return {
     elements: elements,
+    window: windowStub,
     progressItems: progressItems,
     Logic: windowStub.BookingLogic,
     fetchCalls: fetchCalls,
@@ -431,7 +432,7 @@ test('利用時間を変更すると、表示中の月だけを新しいduration
   assert.ok(ctx.fetchCalls[1].url.indexOf('durationMinutes=180') !== -1);
 });
 
-test('日付を1回クリックするだけで、Step1「次へ」を押さずに同じ画面のカレンダー直下で開始時刻取得へ進む', async function () {
+test('日付を1回クリックするだけで、Step1「次へ」を押さずに同じ画面のStep1最下部で開始時刻取得へ進む', async function () {
   var ctx = setup({});
   ctx.setDuration('2');
   ctx.setCustomerType('returning');
@@ -445,7 +446,7 @@ test('日付を1回クリックするだけで、Step1「次へ」を押さず�
   assert.strictEqual(ctx.elements['ba-date'].value, today);
   assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, false, 'Step1（カレンダー）は隠れない');
   assert.strictEqual(ctx.elements['ba-calendar-body'].hidden, false, 'カレンダー本体も表示されたまま');
-  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, false, 'カレンダー直下の開始時刻エリアを表示');
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, false, 'Step1最下部の開始時刻エリアを表示');
   assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, false, '応答前に即ローディング表示');
   assert.strictEqual(ctx.elements['ba-start-time-loading'].textContent, '予約できる時間を検索しています…');
   assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, true, '応答まで次へはdisabled');
@@ -459,6 +460,62 @@ test('日付を1回クリックするだけで、Step1「次へ」を押さず�
   assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, false, '一覧表示後もカレンダーは残る');
   assert.strictEqual(findDayButton(ctx.elements['ba-calendar-grid-body'], today).getAttribute('aria-pressed'), 'true', '選択日は維持');
   assert.strictEqual(ctx.elements['ba-date-error'].hidden, true);
+});
+
+function trackScroll(ctx, loadingTop) {
+  var calls = [];
+  ctx.window.innerHeight = 700;
+  ctx.elements['ba-start-time-area'].scrollIntoView = function (opts) { calls.push(opts); };
+  ctx.elements['ba-start-time-loading'].getBoundingClientRect = function () {
+    var top = loadingTop.value;
+    return { top: top, bottom: top + 40 };
+  };
+  return calls;
+}
+
+test('日付クリックで開始時刻エリアが画面外なら、検索中表示が見えるようsmooth scrollする（calendarは残る）', async function () {
+  var ctx = setup({});
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  var calls = trackScroll(ctx, { value: 1500 });
+
+  findDayButton(ctx.elements['ba-calendar-grid-body'], ctx.Logic.todayInJapan())._listeners.click();
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].behavior, 'smooth');
+  assert.strictEqual(calls[0].block, 'nearest');
+  assert.strictEqual(ctx.elements['ba-calendar-body'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-start-time-loading'].hidden, false);
+});
+
+test('日付クリック時、開始時刻エリアがすでに画面内ならスクロールしない', async function () {
+  var ctx = setup({});
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  var calls = trackScroll(ctx, { value: 300 });
+
+  findDayButton(ctx.elements['ba-calendar-grid-body'], ctx.Logic.todayInJapan())._listeners.click();
+  assert.strictEqual(calls.length, 0);
+});
+
+test('条件変更の自動再検索ではscrollしない', async function () {
+  var ctx = setup({});
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  findDayButton(ctx.elements['ba-calendar-grid-body'], ctx.Logic.todayInJapan())._listeners.click();
+  await flushPromises();
+  var calls = trackScroll(ctx, { value: 1500 });
+
+  ctx.setDuration('3');
+  await flushPromises();
+  await flushPromises();
+  assert.ok(availabilityCalls(ctx).length >= 2, '自動再検索は走る');
+  assert.strictEqual(calls.length, 0, '自動再検索では画面を動かさない');
 });
 
 test('同じ日付ボタンを連打してもStep2の開始時刻fetchは二重発火しない', async function () {

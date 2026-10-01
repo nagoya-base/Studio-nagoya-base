@@ -246,7 +246,8 @@
     });
     setProgress_(stepName);
     if (stepName === 'start-time' && els.startTimeArea) els.startTimeArea.hidden = false;
-    /* 開始時刻エリアはStep1最下部にインライン表示する。日付クリックで画面位置を飛ばさない。 */
+    /* 開始時刻エリアはStep1最下部にインライン表示する。ここでは動かさず、日付クリック時のみ
+       proceedFromSelectedDate_がrevealStartTimeAreaIfOffscreen_で必要なときだけ寄せる。 */
     if (stepName !== 'start-time') {
       var target = document.getElementById('ba-step-' + sectionName);
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -641,7 +642,7 @@
             renderCalendarGrid_(entry);
             refreshPriceEstimate_();
             /* 日付選択自体をStep1「次へ」と同じトリガーとして扱う（共通関数を再利用）。 */
-            proceedFromSelectedDate_();
+            proceedFromSelectedDate_({ scrollToStartTime: true });
           });
         }
         td.appendChild(button);
@@ -863,7 +864,7 @@
    * カレンダーの日付クリック（自動遷移）と、フォールバック用の非表示Step1ボタンの
    * 両方がこの関数だけを呼ぶ（予約条件のロジックを2箇所に持たない）。
    */
-  function proceedFromSelectedDate_() {
+  function proceedFromSelectedDate_(options) {
     /* 空き状況の確認中・取得失敗の間は、以前選んだ日付が残っていても進めない。 */
     if (isCalendarReady_() && calendarSelectionStale_) return;
     resumeStartTimesAfterRecheck_ = false;
@@ -900,19 +901,34 @@
     state.startTime = null;
 
     /* カレンダーは隠さない（goToStep('start-time')でStep1全体を切り替えない）。
-       カレンダー直下の開始時刻エリアを表示し、その中だけをローディング→一覧へ切り替える。 */
+       Step1最下部の開始時刻エリアを表示し、その中だけをローディング→一覧へ切り替える。 */
     hideGlobalError();
     if (els.startTimeArea) els.startTimeArea.hidden = false;
     setProgress_('start-time');
     fetchAvailability();
     refreshPriceEstimate_();
+    /* 日付クリック由来のときだけ、検索中表示が画面外なら見える位置まで寄せる。
+       条件変更の自動再検索・フォールバックボタンでは画面を動かさない。 */
+    if (options && options.scrollToStartTime === true) revealStartTimeAreaIfOffscreen_();
+  }
+
+  function revealStartTimeAreaIfOffscreen_() {
+    var area = els.startTimeArea;
+    if (!area || typeof area.scrollIntoView !== 'function') return;
+    var probe = els.startTimeLoading || area;
+    if (typeof probe.getBoundingClientRect === 'function') {
+      var rect = probe.getBoundingClientRect();
+      var viewportHeight = window.innerHeight || (document.documentElement && document.documentElement.clientHeight) || 0;
+      if (viewportHeight && rect.top >= 0 && rect.bottom <= viewportHeight) return;
+    }
+    area.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
   if (els.step1Next) {
     els.step1Next.addEventListener('click', proceedFromSelectedDate_);
   }
 
-  /* ── 開始時刻（Step1内・カレンダー直下のエリア） ── */
+  /* ── 開始時刻（Step1最下部のエリア） ── */
   function hideStartTimeError_() {
     if (els.startTimeError) els.startTimeError.hidden = true;
   }
