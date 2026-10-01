@@ -128,8 +128,6 @@
 
     startTimeArea: document.getElementById('ba-start-time-area'),
     startTimeSummary: document.getElementById('ba-start-time-summary'),
-    startTimePriceLine: document.getElementById('ba-start-time-price-line'),
-    startTimePriceNote: document.getElementById('ba-start-time-price-note'),
     startTimeLoading: document.getElementById('ba-start-time-loading'),
     startTimeGrid: document.getElementById('ba-start-time-grid'),
     startTimeEmpty: document.getElementById('ba-start-time-empty'),
@@ -224,7 +222,7 @@
 
   /* ── ステップ切り替え ──
      'start-time'（開始時刻の選択）は独立した画面ではなく、Step1（#ba-step-datetime）内の
-     カレンダー直下に表示するエリア（#ba-start-time-area）。進捗表示上のステップとしては
+     Step1最下部（利用料金の後ろ）に表示するエリア（#ba-start-time-area）。進捗表示上のステップとしては
      残すが、セクションの表示切り替えではStep1のままにする（カレンダーを消さない）。 */
   var STEP_ORDER = ['datetime', 'start-time', 'details', 'confirm', 'complete'];
 
@@ -248,8 +246,11 @@
     });
     setProgress_(stepName);
     if (stepName === 'start-time' && els.startTimeArea) els.startTimeArea.hidden = false;
-    var target = (stepName === 'start-time' && els.startTimeArea) || document.getElementById('ba-step-' + sectionName);
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    /* 開始時刻エリアはStep1最下部にインライン表示する。日付クリックで画面位置を飛ばさない。 */
+    if (stepName !== 'start-time') {
+      var target = document.getElementById('ba-step-' + sectionName);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
     hideGlobalError();
   }
 
@@ -744,7 +745,6 @@
   function renderPriceEverywhere_(entry) {
     latestPriceEntry = entry;
     renderPriceEntryInto_(els.priceLine, els.priceNote, entry);
-    renderPriceEntryInto_(els.startTimePriceLine, els.startTimePriceNote, entry);
     if (els.confirmPrice) els.confirmPrice.textContent = priceDisplayText_(entry);
   }
 
