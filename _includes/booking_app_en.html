@@ -151,27 +151,6 @@
           <p class="ba-calendar-selected" id="ba-calendar-selected" aria-live="polite"></p>
         </div>
       </div>
-      <!-- Start-time area directly under the calendar (inside Step 1). The calendar stays
-           visible after a date click; only this area switches between loading, times, empty
-           and error states. -->
-      <div class="ba-start-time-area" id="ba-start-time-area" data-step="start-time" aria-live="polite" hidden>
-        <h3 class="ba-start-time-title">Choose a Start Time</h3>
-        <p class="ba-step-desc" id="ba-start-time-summary"></p>
-        <p class="ba-price-line" id="ba-start-time-price-line" hidden></p>
-        <p class="ba-price-note" id="ba-start-time-price-note"></p>
-
-        <div id="ba-start-time-loading" class="ba-loading" role="status" hidden>Searching available start times…</div>
-        <div id="ba-start-time-grid" class="ba-time-grid" role="group" aria-label="Start time" hidden></div>
-        <p id="ba-start-time-empty" class="ba-time-empty" hidden>No bookable start times are available for this date and duration. Please choose another date or duration.</p>
-        <div id="ba-start-time-error" class="ba-banner ba-banner--error" role="alert" hidden>
-          <p id="ba-start-time-error-message"></p>
-          <div class="ba-banner-actions" id="ba-start-time-error-actions"></div>
-        </div>
-
-        <div class="ba-actions">
-          <button type="button" class="ba-btn ba-btn-primary" id="ba-step-start-time-next" disabled>Continue</button>
-        </div>
-      </div>
       <p class="ba-field-error" id="ba-date-error" hidden></p>
     </div>
 
@@ -235,6 +214,26 @@
          （proceedFromSelectedDate_）を呼ぶフォールバックとして非表示のまま残す。 -->
     <div class="ba-actions" hidden>
       <button type="button" class="ba-btn ba-btn-primary" id="ba-step-datetime-next">Show Available Start Times</button>
+    </div>
+
+    <!-- Start-time area at the bottom of Step 1 (after the price). The calendar stays
+       visible after a date click; only this area switches between loading, times, empty
+       and error states. -->
+    <div class="ba-start-time-area" id="ba-start-time-area" data-step="start-time" aria-live="polite" hidden>
+      <h3 class="ba-start-time-title">Choose a Start Time</h3>
+      <p class="ba-step-desc" id="ba-start-time-summary"></p>
+
+      <div id="ba-start-time-loading" class="ba-loading" role="status" hidden>Searching available start times…</div>
+      <div id="ba-start-time-grid" class="ba-time-grid" role="group" aria-label="Start time" hidden></div>
+      <p id="ba-start-time-empty" class="ba-time-empty" hidden>No bookable start times are available for this date and duration. Please choose another date or duration.</p>
+      <div id="ba-start-time-error" class="ba-banner ba-banner--error" role="alert" hidden>
+        <p id="ba-start-time-error-message"></p>
+        <div class="ba-banner-actions" id="ba-start-time-error-actions"></div>
+      </div>
+
+      <div class="ba-actions">
+        <button type="button" class="ba-btn ba-btn-primary" id="ba-step-start-time-next" disabled>Continue</button>
+      </div>
     </div>
   </section>
 

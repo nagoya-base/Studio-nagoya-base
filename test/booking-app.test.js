@@ -668,7 +668,7 @@ test('Issue #301: 日本語（locale未指定）でduration=1はStep 1で止ま�
   assert.strictEqual(ctx.getFetchCallCount(), 0, 'getAvailabilityが呼ばれないこと');
 });
 
-test('Issue #342: 利用日・利用時間が揃うとStep1/Step2の両方に見積り金額が表示される', async function () {
+test('Issue #342: 利用日・利用時間が揃うとStep1に見積り金額が1か所だけ表示される', async function () {
   var ctx = setupFullFlow(null);
 
   ctx.elements['ba-date'].value = '2026-10-10';
@@ -679,8 +679,6 @@ test('Issue #342: 利用日・利用時間が揃うとStep1/Step2の両方に見
 
   assert.strictEqual(ctx.elements['ba-price-line'].textContent, '利用料金: ¥4,000（税込）');
   assert.strictEqual(ctx.elements['ba-price-line'].hidden, false);
-  assert.strictEqual(ctx.elements['ba-start-time-price-line'].textContent, '利用料金: ¥4,000（税込）');
-  assert.strictEqual(ctx.elements['ba-start-time-price-line'].hidden, false);
 });
 
 test('Issue #301: 日本語（locale未指定）でduration=2は通常どおりStep 2へ進みavailabilityを取得する', async function () {
