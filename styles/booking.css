@@ -186,7 +186,7 @@
   line-height: 1.6;
 }
 
-/* 利用料金の見積り表示（Issue #342）。Step1・Step2で共通のクラスを使う。 */
+/* 利用料金の見積り表示（Issue #342）。Step1内の1か所（#ba-price-box）だけで使う。 */
 .ba-price-box {
   margin: 18px 0;
   padding: 14px 16px;
@@ -379,10 +379,22 @@
 }
 
 /* ── 開始時刻の選択 ── */
-/* Step1最下部の開始時刻エリア。日付クリック後もカレンダーは残し、
+/* Step1のカレンダー直後の開始時刻エリア。日付クリック後もカレンダーは残し、
    この領域だけをローディング→時刻一覧/空き無し/エラーへ切り替える。 */
+/* 日付未選択の間の事前案内。日付クリック後は同じ位置で開始時刻エリアに入れ替わる。 */
+.ba-start-time-hint {
+  margin: 16px 0 18px;
+  padding: 12px 14px;
+  color: var(--ba-muted);
+  font-size: 0.86rem;
+  line-height: 1.7;
+  border: 1px dashed var(--ba-border);
+  border-radius: 8px;
+  min-width: 0;
+}
+
 .ba-start-time-area {
-  margin: 16px 0 0;
+  margin: 16px 0 18px;
   padding: 14px 0 0;
   border-top: 1px solid var(--ba-border);
   min-width: 0;

@@ -41,6 +41,7 @@
       dateRequired: '利用日を選択してください。',
       durationRequired: '利用時間を2時間以上の整数で入力してください。',
       customerTypeRequired: '利用区分を選択してください。',
+      memberRequired: '会員区分を選択してください。',
       startTimeSummary: function (date, hours) { return date + '　' + hours + '時間利用'; },
       searchingStartTimes: '予約できる時間を検索しています…',
       retryCheck: 'もう一度確認する',
@@ -60,6 +61,7 @@
       dateRequired: 'Please select a date.',
       durationRequired: 'Please enter a duration of 2 hours or more (whole numbers only).',
       customerTypeRequired: 'Please select a customer type.',
+      memberRequired: 'Please select a membership type.',
       startTimeSummary: function (date, hours) { return date + ' · ' + hours + (hours === 1 ? ' hour' : ' hours'); },
       searchingStartTimes: 'Searching available start times…',
       retryCheck: 'Check again',
@@ -109,7 +111,7 @@
     durationError: document.getElementById('ba-duration-error'),
     customerTypeError: document.getElementById('ba-customer-type-error'),
     memberField: document.getElementById('ba-member-field'),
-    isMember: document.getElementById('ba-is-member'),
+    memberError: document.getElementById('ba-member-error'),
     priceLine: document.getElementById('ba-price-line'),
     priceNote: document.getElementById('ba-price-note'),
     step1Next: document.getElementById('ba-step-datetime-next'),
@@ -126,6 +128,7 @@
     calendarGridBody: document.getElementById('ba-calendar-grid-body'),
     calendarSelected: document.getElementById('ba-calendar-selected'),
 
+    startTimeHint: document.getElementById('ba-start-time-hint'),
     startTimeArea: document.getElementById('ba-start-time-area'),
     startTimeSummary: document.getElementById('ba-start-time-summary'),
     startTimeLoading: document.getElementById('ba-start-time-loading'),
@@ -216,17 +219,40 @@
    */
   if (els.memberField) els.memberField.hidden = !Logic.brandShowsMemberOption(brand);
 
+  /* 会員区分は「一般 / 会員」のラジオ（name="memberStatus"）。単一checkboxでは「非会員と回答した」
+     のか「未回答」なのか区別できないため、初期は未選択にする。サーバーへ送る isMember
+     （estimatePrice/createBooking）は従来どおり真偽値のまま。 */
+  function memberStatusRadios_() {
+    return Array.prototype.slice.call(root.querySelectorAll('input[name="memberStatus"]') || []);
+  }
+
+  function checkedMemberStatus_() {
+    var checked = root.querySelector('input[name="memberStatus"]:checked');
+    return checked ? checked.value : '';
+  }
+
   function isMemberChecked_() {
-    return Logic.brandShowsMemberOption(brand) && !!(els.isMember && els.isMember.checked);
+    return Logic.brandShowsMemberOption(brand) && checkedMemberStatus_() === 'member';
+  }
+
+  /* 会員区分の回答が必要か（snb/studio_xでラジオが存在する場合のみ。mensは常に会員相当で表示しない）。 */
+  function memberAnswerRequired_() {
+    return Logic.brandShowsMemberOption(brand) && memberStatusRadios_().length > 0;
+  }
+
+  function memberAnswered_() {
+    return !memberAnswerRequired_() || checkedMemberStatus_() !== '';
   }
 
   /* ── ステップ切り替え ──
-     'start-time'（開始時刻の選択）は独立した画面ではなく、Step1（#ba-step-datetime）内の
-     Step1最下部（利用料金の後ろ）に表示するエリア（#ba-start-time-area）。進捗表示上のステップとしては
-     残すが、セクションの表示切り替えではStep1のままにする（カレンダーを消さない）。 */
-  var STEP_ORDER = ['datetime', 'start-time', 'details', 'confirm', 'complete'];
+     'start-time'（開始時刻の選択）は独立した画面でも進捗項目でもなく、Step1（#ba-step-datetime）内の
+     カレンダー直後に表示するエリア（#ba-start-time-area）。goToStep('start-time')は
+     「Step1へ戻ってエリアを見せる」呼び出しの別名として残し、進捗は常に'datetime'として扱う
+     （カレンダーを消さない）。 */
+  var STEP_ORDER = ['datetime', 'details', 'confirm', 'complete'];
 
   function setProgress_(stepName) {
+    if (stepName === 'start-time') stepName = 'datetime';
     els.progressItems.forEach(function (item) {
       var name = item.getAttribute('data-step');
       var index = STEP_ORDER.indexOf(name);
@@ -245,14 +271,21 @@
       if (section) section.hidden = name !== sectionName;
     });
     setProgress_(stepName);
-    if (stepName === 'start-time' && els.startTimeArea) els.startTimeArea.hidden = false;
-    /* 開始時刻エリアはStep1最下部にインライン表示する。ここでは動かさず、日付クリック時のみ
+    if (stepName === 'start-time') setStartTimeAreaVisible_(true);
+    /* 開始時刻エリアはStep1のカレンダー直後にインライン表示する。ここでは動かさず、日付クリック時のみ
        proceedFromSelectedDate_がrevealStartTimeAreaIfOffscreen_で必要なときだけ寄せる。 */
     if (stepName !== 'start-time') {
       var target = document.getElementById('ba-step-' + sectionName);
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     hideGlobalError();
+  }
+
+  /* 開始時刻エリアと事前案内（#ba-start-time-hint）はカレンダー直後の同じ位置を入れ替えて使う:
+     日付未選択の間は案内、日付クリック後はエリア。 */
+  function setStartTimeAreaVisible_(visible) {
+    if (els.startTimeArea) els.startTimeArea.hidden = !visible;
+    if (els.startTimeHint) els.startTimeHint.hidden = !!visible;
   }
 
   function setStepDisabled_(button, disabled) {
@@ -759,7 +792,8 @@
     var durationMinutes = currentCalendarDurationMinutes_();
     var memberFlag = isMemberChecked_();
 
-    if (!dateValue || !Logic.isDurationAtLeastUiMinimum(durationMinutes)) {
+    /* snb/studio_xは会員区分が確定してから料金を表示する（未回答のまま一般料金を出さない）。 */
+    if (!dateValue || !Logic.isDurationAtLeastUiMinimum(durationMinutes) || !memberAnswered_()) {
       renderPriceEverywhere_({ status: 'unset' });
       return;
     }
@@ -808,9 +842,12 @@
     els.duration.addEventListener('input', handleCalendarPrereqChange_);
     els.duration.addEventListener('change', handleCalendarPrereqChange_);
   }
-  if (els.isMember) {
-    els.isMember.addEventListener('change', refreshPriceEstimate_);
-  }
+  memberStatusRadios_().forEach(function (radio) {
+    radio.addEventListener('change', function () {
+      setFieldError_(null, els.memberError, '');
+      refreshPriceEstimate_();
+    });
+  });
   root.querySelectorAll('input[name="customerType"]').forEach(function (radio) {
     radio.addEventListener('change', handleCalendarPrereqChange_);
   });
@@ -903,8 +940,8 @@
     /* カレンダーは隠さない（goToStep('start-time')でStep1全体を切り替えない）。
        Step1最下部の開始時刻エリアを表示し、その中だけをローディング→一覧へ切り替える。 */
     hideGlobalError();
-    if (els.startTimeArea) els.startTimeArea.hidden = false;
-    setProgress_('start-time');
+    setStartTimeAreaVisible_(true);
+    setProgress_('datetime');
     fetchAvailability();
     refreshPriceEstimate_();
     /* 日付クリック由来のときだけ、検索中表示が画面外なら見える位置まで寄せる。
@@ -959,7 +996,7 @@
     isFetchingAvailability = false;
     availabilityInFlightKey = null;
     state.startTime = null;
-    if (els.startTimeArea) els.startTimeArea.hidden = true;
+    setStartTimeAreaVisible_(false);
     if (els.startTimeLoading) els.startTimeLoading.hidden = true;
     if (els.startTimeGrid) { els.startTimeGrid.hidden = true; els.startTimeGrid.innerHTML = ''; }
     if (els.startTimeEmpty) els.startTimeEmpty.hidden = true;
@@ -1061,6 +1098,12 @@
   if (els.step2Next) {
     els.step2Next.addEventListener('click', function () {
       if (!state.startTime) return;
+      /* 会員区分（snb/studio_x）は未回答のまま進ませない。料金も会員区分の確定後にだけ表示する。 */
+      if (!memberAnswered_()) {
+        setFieldError_(null, els.memberError, UI_TEXT.memberRequired);
+        return;
+      }
+      state.isMember = isMemberChecked_();
       updateCardPaymentGating();
       goToStep('details');
     });

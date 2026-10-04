@@ -78,14 +78,19 @@ function setup(options) {
     if (name === 'data-locale') return opts.locale || null;
     return null;
   };
-  var progressItems = ['datetime', 'start-time', 'details', 'confirm', 'complete'].map(function (name) {
+  var progressItems = ['datetime', 'details', 'confirm', 'complete'].map(function (name) {
     var item = createElement('progress-' + name);
     item.setAttribute('data-step', name);
     return item;
   });
   var customerTypeRadio = createElement('customerType-radio');
   var timeBandRadio = createElement('timeBand-radio');
+  /* opts.withMemberRadios: 会員区分（name="memberStatus"）のラジオ群を持つDOMを模す。
+     既定は持たない（従来のスタブ互換。会員区分の回答は要求されない）。 */
+  var selectedMemberStatus = '';
+  var memberRadio = createElement('memberStatus-radio');
   root.querySelectorAll = function (selector) {
+    if (selector === 'input[name="memberStatus"]') return opts.withMemberRadios ? [memberRadio] : [];
     if (selector === 'input[name="customerType"]') return [customerTypeRadio];
     if (selector === 'input[name="timeBand"]') return [timeBandRadio];
     if (selector === '#ba-progress li') return progressItems;
@@ -97,6 +102,9 @@ function setup(options) {
     }
     if (selector === 'input[name="timeBand"]:checked') {
       return { value: selectedTimeBand };
+    }
+    if (selector === 'input[name="memberStatus"]:checked') {
+      return selectedMemberStatus ? { value: selectedMemberStatus } : null;
     }
     return null;
   };
@@ -190,6 +198,7 @@ function setup(options) {
     fetchCalls: fetchCalls,
     setCustomerType: function (v) { selectedCustomerType = v; },
     triggerCustomerTypeChange: function () { customerTypeRadio._listeners.change(); },
+    setMemberStatus: function (v) { selectedMemberStatus = v; memberRadio._listeners.change(); },
     setTimeBand: function (v) { selectedTimeBand = v; },
     triggerTimeBandChange: function () { timeBandRadio._listeners.change(); },
     setDuration: function (hours) {
@@ -1246,7 +1255,7 @@ test('時刻一覧表示後に利用時間を変更すると、選択日が有�
   var today = ctx.Logic.todayInJapan();
   findDayButton(ctx.elements['ba-calendar-grid-body'], today)._listeners.click();
   await flushPromises();
-  assert.strictEqual(currentProgressStep(ctx), 'start-time');
+  assert.strictEqual(currentProgressStep(ctx), 'datetime', '開始時刻表示中も進捗は「日時を選択」のまま');
   assert.strictEqual(availabilityCalls(ctx).length, 1);
 
   ctx.holdMonthly();
@@ -1270,7 +1279,7 @@ test('時刻一覧表示後に利用時間を変更すると、選択日が有�
   assert.ok(availabilityCalls(ctx)[1].url.indexOf('durationMinutes=180') !== -1, '新しい利用時間で検索');
   assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, false);
   assert.strictEqual(ctx.elements['ba-start-time-grid'].hidden, false, '新条件の時刻一覧が表示される');
-  assert.strictEqual(currentProgressStep(ctx), 'start-time');
+  assert.strictEqual(currentProgressStep(ctx), 'datetime', '開始時刻表示中も進捗は「日時を選択」のまま');
   assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, false);
 });
 
@@ -1341,4 +1350,67 @@ test('値の変わらないchange（入力欄のblur等）では、カレンダ�
   assert.strictEqual(ctx.elements['ba-calendar-grid-body'].children[0], gridBefore[0], '日付ボタンを作り直さない');
   assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, false, '開始時刻エリアは閉じない');
   assert.strictEqual(ctx.elements['ba-start-time-grid'].children.length, 1);
+});
+
+
+function priceCalls(ctx) {
+  return ctx.fetchCalls.filter(function (c) { return c.url.indexOf('action=estimatePrice') !== -1; });
+}
+
+async function openStartTimeArea(ctx) {
+  ctx.setDuration('2');
+  ctx.setCustomerType('returning');
+  ctx.triggerCustomerTypeChange();
+  await flushPromises();
+  findDayButton(ctx.elements['ba-calendar-grid-body'], ctx.Logic.todayInJapan())._listeners.click();
+  await flushPromises();
+}
+
+test('進捗表示は4段階（start-timeを独立項目として持たない）で、日付クリック・時刻選択中もdatetimeのまま', async function () {
+  var ctx = setup({});
+  assert.deepStrictEqual(ctx.progressItems.map(function (i) { return i.getAttribute('data-step'); }), ['datetime', 'details', 'confirm', 'complete']);
+  await openStartTimeArea(ctx);
+  assert.strictEqual(currentProgressStep(ctx), 'datetime');
+  ctx.elements['ba-start-time-grid'].children[0]._listeners.click();
+  assert.strictEqual(currentProgressStep(ctx), 'datetime');
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+  assert.strictEqual(currentProgressStep(ctx), 'details', '「次へ進む」で利用者情報へ進む');
+});
+
+test('開始時刻の事前案内は日付未選択の間だけ表示され、日付クリックで同じ位置のエリアへ入れ替わる', async function () {
+  var ctx = setup({});
+  assert.notStrictEqual(ctx.elements['ba-start-time-hint'].hidden, true, '初期は案内が見える');
+  await openStartTimeArea(ctx);
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-start-time-hint'].hidden, true);
+  ctx.holdMonthly();
+  ctx.setDuration('3');
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true, '条件変更で再確認中はエリアを閉じる');
+  assert.strictEqual(ctx.elements['ba-start-time-hint'].hidden, false, '案内へ戻る');
+});
+
+test('会員区分（snb/studio_x）が未回答の間は料金を表示せず、次へ進めない。回答後に料金見積りを取得する', async function () {
+  var ctx = setup({ withMemberRadios: true });
+  await openStartTimeArea(ctx);
+  assert.strictEqual(priceCalls(ctx).length, 0, '会員区分が未回答の間は見積りを取得しない');
+  assert.strictEqual(ctx.elements['ba-price-line'].hidden, true);
+
+  ctx.elements['ba-start-time-grid'].children[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+  assert.strictEqual(currentProgressStep(ctx), 'datetime', '会員区分未回答では進めない');
+  assert.strictEqual(ctx.elements['ba-member-error'].hidden, false);
+
+  ctx.setMemberStatus('general');
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-member-error'].hidden, true);
+  assert.strictEqual(priceCalls(ctx).length, 1);
+  assert.ok(priceCalls(ctx)[0].url.indexOf('isMember=0') !== -1);
+
+  ctx.setMemberStatus('member');
+  await flushPromises();
+  assert.strictEqual(priceCalls(ctx).length, 2);
+  assert.ok(priceCalls(ctx)[1].url.indexOf('isMember=1') !== -1, '会員選択はisMember=1としてestimatePriceへ渡る');
+
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+  assert.strictEqual(currentProgressStep(ctx), 'details');
 });
