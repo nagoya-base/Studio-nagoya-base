@@ -14,12 +14,17 @@ var prepare = require('../../scripts/prepare-survey-gas-project');
 /* 値の読み書きができる最小限のSheetスタブ（setNumberFormat / 部分getRange対応）。 */
 function createSurveySheet(name) {
   var rows = [];
+  /* 実Spreadsheetと同じく、列数を超える範囲の読み書きは例外にする（既定は新規シートと同じ26列）。 */
+  var maxColumns = 26;
   return {
     getName: function () { return name; },
     getLastRow: function () { return rows.length; },
+    getMaxColumns: function () { return maxColumns; },
+    insertColumnsAfter: function (after, count) { maxColumns = Math.max(maxColumns, after + count); },
     getRange: function (row, col, numRows, numCols) {
       numRows = numRows || 1;
       numCols = numCols || 1;
+      if (col - 1 + numCols > maxColumns) throw new Error('The coordinates of the range are outside the dimensions of the sheet.');
       return {
         getValues: function () {
           var out = [];

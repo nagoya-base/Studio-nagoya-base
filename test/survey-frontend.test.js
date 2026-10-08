@@ -55,3 +55,26 @@ test('設問定義の正本はJSON1か所: GAS配布物にも同じschemaが埋�
     assert.ok(text.indexOf('利用を見送る') === -1 && text.indexOf('緊縛・ロープとの関わり方') === -1, file);
   });
 });
+
+test('クライアントJS: 重複回答防止とテストモード（Issue #381）', function () {
+  var js = read('scripts/survey-app.js');
+  /* respondent_idの永続化。localStorageは例外に備えてtry/catchで包む */
+  assert.match(js, /studio_nagoya_base_survey_respondent_id_v1/);
+  assert.match(js, /studio_nagoya_base_survey_completed_v1/);
+  assert.match(js, /try \{ return window\.localStorage\.getItem/);
+  assert.match(js, /try \{ window\.localStorage\.setItem/);
+  assert.match(js, /crypto/);
+  /* ?test=1 だけをテストモードにする */
+  assert.match(js, /query\.get\('test'\) === '1'/);
+  assert.match(js, /TEST MODE：この回答は本番集計に含まれません/);
+  /* 送信・イベントの両方に is_test を付与し、通常モードでは付けない */
+  assert.match(js, /if \(testMode\) payload\.is_test = 1/);
+  assert.match(js, /post\('submit', withTestFlag\(/);
+  assert.match(js, /post\('event', withTestFlag\(/);
+  /* 回答済み表示。完了フラグはテストモードでは立てず、先出しもしない */
+  assert.match(js, /このブラウザからはすでに回答済みです。ご協力ありがとうございました。/);
+  assert.match(js, /DUPLICATE_RESPONSE/);
+  assert.match(js, /if \(!testMode\) storageSet\(COMPLETED_KEY, '1'\)/);
+  assert.match(js, /if \(!testMode && storageGet\(COMPLETED_KEY\) === '1'\)/);
+  assert.match(read('styles/survey.css'), /\.sv-test-banner/);
+});
