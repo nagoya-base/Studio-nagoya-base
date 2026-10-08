@@ -1,0 +1,2637 @@
+{
+  "version": 1,
+  "meta": {
+    "title": "Studio Nagoya Base 利用・市場調査アンケート",
+    "intro": [
+      "これはStudio Nagoya Baseの利用・市場調査アンケートです（広告ではありません）。所要時間は5〜6分程度です。",
+      "このアンケートは匿名です。回答は集計・サービス改善に使用し、少人数の属性組み合わせが個人特定につながる形では公開しません。"
+    ],
+    "underageMessage": "このアンケートは18歳以上の方を対象としています。",
+    "completeMessage": [
+      "アンケートへのご協力ありがとうございました。",
+      "今後のStudio Nagoya Baseの運営・サービス改善の参考にさせていただきます。"
+    ],
+    "ageField": "age_screening",
+    "ageBlockValue": "under_18"
+  },
+  "steps": [
+    {
+      "id": "age",
+      "title": "年齢確認",
+      "questions": [
+        {
+          "id": "age_screening",
+          "type": "single",
+          "label": "あなたの年齢について教えてください",
+          "required": true,
+          "options": [
+            {
+              "value": "under_18",
+              "label": "17歳以下"
+            },
+            {
+              "value": "adult",
+              "label": "18歳以上"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "usage",
+      "title": "利用状況",
+      "questions": [
+        {
+          "id": "usage_status",
+          "type": "single",
+          "label": "Studio Nagoya Baseの利用状況を教えてください",
+          "required": true,
+          "options": [
+            {
+              "value": "used",
+              "label": "利用したことがある"
+            },
+            {
+              "value": "known_not_used",
+              "label": "知っているが利用したことはない"
+            },
+            {
+              "value": "name_only",
+              "label": "名前だけ知っていた"
+            },
+            {
+              "value": "first_time",
+              "label": "このアンケートで初めて知った"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "basic",
+      "title": "基本属性",
+      "questions": [
+        {
+          "id": "age",
+          "type": "single",
+          "label": "年代",
+          "required": true,
+          "options": [
+            {
+              "value": "a18_24",
+              "label": "18〜24歳"
+            },
+            {
+              "value": "a25_29",
+              "label": "25〜29歳"
+            },
+            {
+              "value": "a30_39",
+              "label": "30〜39歳"
+            },
+            {
+              "value": "a40_49",
+              "label": "40〜49歳"
+            },
+            {
+              "value": "a50_59",
+              "label": "50〜59歳"
+            },
+            {
+              "value": "a60_plus",
+              "label": "60歳以上"
+            },
+            {
+              "value": "no_answer",
+              "label": "回答しない"
+            }
+          ]
+        },
+        {
+          "id": "prefecture",
+          "type": "single",
+          "label": "お住まいの都道府県",
+          "required": true,
+          "ui": "select",
+          "options": [
+            {
+              "value": "hokkaido",
+              "label": "北海道"
+            },
+            {
+              "value": "aomori",
+              "label": "青森県"
+            },
+            {
+              "value": "iwate",
+              "label": "岩手県"
+            },
+            {
+              "value": "miyagi",
+              "label": "宮城県"
+            },
+            {
+              "value": "akita",
+              "label": "秋田県"
+            },
+            {
+              "value": "yamagata",
+              "label": "山形県"
+            },
+            {
+              "value": "fukushima",
+              "label": "福島県"
+            },
+            {
+              "value": "ibaraki",
+              "label": "茨城県"
+            },
+            {
+              "value": "tochigi",
+              "label": "栃木県"
+            },
+            {
+              "value": "gunma",
+              "label": "群馬県"
+            },
+            {
+              "value": "saitama",
+              "label": "埼玉県"
+            },
+            {
+              "value": "chiba",
+              "label": "千葉県"
+            },
+            {
+              "value": "tokyo",
+              "label": "東京都"
+            },
+            {
+              "value": "kanagawa",
+              "label": "神奈川県"
+            },
+            {
+              "value": "niigata",
+              "label": "新潟県"
+            },
+            {
+              "value": "toyama",
+              "label": "富山県"
+            },
+            {
+              "value": "ishikawa",
+              "label": "石川県"
+            },
+            {
+              "value": "fukui",
+              "label": "福井県"
+            },
+            {
+              "value": "yamanashi",
+              "label": "山梨県"
+            },
+            {
+              "value": "nagano",
+              "label": "長野県"
+            },
+            {
+              "value": "gifu",
+              "label": "岐阜県"
+            },
+            {
+              "value": "shizuoka",
+              "label": "静岡県"
+            },
+            {
+              "value": "aichi",
+              "label": "愛知県"
+            },
+            {
+              "value": "mie",
+              "label": "三重県"
+            },
+            {
+              "value": "shiga",
+              "label": "滋賀県"
+            },
+            {
+              "value": "kyoto",
+              "label": "京都府"
+            },
+            {
+              "value": "osaka",
+              "label": "大阪府"
+            },
+            {
+              "value": "hyogo",
+              "label": "兵庫県"
+            },
+            {
+              "value": "nara",
+              "label": "奈良県"
+            },
+            {
+              "value": "wakayama",
+              "label": "和歌山県"
+            },
+            {
+              "value": "tottori",
+              "label": "鳥取県"
+            },
+            {
+              "value": "shimane",
+              "label": "島根県"
+            },
+            {
+              "value": "okayama",
+              "label": "岡山県"
+            },
+            {
+              "value": "hiroshima",
+              "label": "広島県"
+            },
+            {
+              "value": "yamaguchi",
+              "label": "山口県"
+            },
+            {
+              "value": "tokushima",
+              "label": "徳島県"
+            },
+            {
+              "value": "kagawa",
+              "label": "香川県"
+            },
+            {
+              "value": "ehime",
+              "label": "愛媛県"
+            },
+            {
+              "value": "kochi",
+              "label": "高知県"
+            },
+            {
+              "value": "fukuoka",
+              "label": "福岡県"
+            },
+            {
+              "value": "saga",
+              "label": "佐賀県"
+            },
+            {
+              "value": "nagasaki",
+              "label": "長崎県"
+            },
+            {
+              "value": "kumamoto",
+              "label": "熊本県"
+            },
+            {
+              "value": "oita",
+              "label": "大分県"
+            },
+            {
+              "value": "miyazaki",
+              "label": "宮崎県"
+            },
+            {
+              "value": "kagoshima",
+              "label": "鹿児島県"
+            },
+            {
+              "value": "okinawa",
+              "label": "沖縄県"
+            },
+            {
+              "value": "overseas",
+              "label": "海外"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "country",
+              "when": "overseas",
+              "label": "国名・地域名（任意）",
+              "required": false,
+              "maxLength": 100
+            },
+            {
+              "field": "region_other",
+              "when": "other",
+              "label": "具体的な地域（任意）",
+              "required": false,
+              "maxLength": 100
+            }
+          ]
+        },
+        {
+          "id": "aichi_area",
+          "type": "single",
+          "label": "愛知県内の地域",
+          "required": true,
+          "showIf": {
+            "q": "prefecture",
+            "eq": "aichi"
+          },
+          "options": [
+            {
+              "value": "nagoya",
+              "label": "名古屋市"
+            },
+            {
+              "value": "owari_chita",
+              "label": "尾張・知多地域（名古屋市以外）"
+            },
+            {
+              "value": "mikawa",
+              "label": "三河地域"
+            },
+            {
+              "value": "unknown_other",
+              "label": "その他・わからない"
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "aichi_area_other",
+              "when": "unknown_other",
+              "label": "具体的な地域（任意）",
+              "required": false,
+              "maxLength": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kinbaku",
+      "title": "緊縛・利用形態",
+      "questions": [
+        {
+          "id": "kinbaku_role",
+          "type": "multi",
+          "label": "緊縛・ロープとの関わり方（複数選択可）",
+          "required": true,
+          "hint": "「未経験・まだ分からない」は他の項目と併用できます。",
+          "options": [
+            {
+              "value": "tie",
+              "label": "縛る側に興味がある"
+            },
+            {
+              "value": "tied",
+              "label": "縛られる側に興味がある"
+            },
+            {
+              "value": "photographer",
+              "label": "撮影する側として関わりたい"
+            },
+            {
+              "value": "observer",
+              "label": "見学・鑑賞したい"
+            },
+            {
+              "value": "unsure",
+              "label": "未経験・まだ分からない"
+            },
+            {
+              "value": "no_interest",
+              "label": "緊縛には特に関心がない",
+              "conflictsWith": [
+                "tie",
+                "tied",
+                "photographer",
+                "observer",
+                "other"
+              ]
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "kinbaku_role_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        },
+        {
+          "id": "member_composition",
+          "type": "single",
+          "label": "Studio Nagoya Baseのようなスペースを利用する場合、主にどのような構成を想定しますか？",
+          "required": true,
+          "options": [
+            {
+              "value": "solo",
+              "label": "1人"
+            },
+            {
+              "value": "male_male",
+              "label": "男性同士"
+            },
+            {
+              "value": "female_female",
+              "label": "女性同士"
+            },
+            {
+              "value": "mixed",
+              "label": "男女"
+            },
+            {
+              "value": "group",
+              "label": "撮影会・縄会など複数人"
+            },
+            {
+              "value": "undecided",
+              "label": "まだ決まっていない"
+            }
+          ],
+          "derives": {
+            "field": "usage_segment",
+            "map": {
+              "solo": "solo",
+              "male_male": "male_male",
+              "female_female": "female_female",
+              "mixed": "mixed",
+              "group": "group",
+              "undecided": "undecided"
+            }
+          }
+        },
+        {
+          "id": "group_size",
+          "type": "single",
+          "label": "利用人数",
+          "required": true,
+          "options": [
+            {
+              "value": "p1",
+              "label": "1人"
+            },
+            {
+              "value": "p2",
+              "label": "2人"
+            },
+            {
+              "value": "p3",
+              "label": "3人"
+            },
+            {
+              "value": "p4",
+              "label": "4人"
+            },
+            {
+              "value": "p5_plus",
+              "label": "5人以上"
+            },
+            {
+              "value": "unknown",
+              "label": "わからない"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "purpose",
+      "title": "利用目的",
+      "questions": [
+        {
+          "id": "usage_purpose",
+          "type": "multi",
+          "label": "利用目的（複数選択可）",
+          "required": true,
+          "options": [
+            {
+              "value": "self_practice",
+              "label": "緊縛・縄の自主練習"
+            },
+            {
+              "value": "suspension_practice",
+              "label": "吊りの練習"
+            },
+            {
+              "value": "show_practice",
+              "label": "ショー・演目の練習"
+            },
+            {
+              "value": "lesson",
+              "label": "緊縛講習・レッスン"
+            },
+            {
+              "value": "nawakai",
+              "label": "縄会"
+            },
+            {
+              "value": "idobata",
+              "label": "井戸端会議"
+            },
+            {
+              "value": "kinbaku_shoot",
+              "label": "緊縛作品撮影"
+            },
+            {
+              "value": "portrait_shoot",
+              "label": "ポートレート撮影"
+            },
+            {
+              "value": "cosplay_shoot",
+              "label": "コスプレ・衣装撮影"
+            },
+            {
+              "value": "costume_shoot",
+              "label": "ユニフォーム・スーツ・制服・スポーツウェア等の衣装撮影"
+            },
+            {
+              "value": "video_stream",
+              "label": "動画撮影・配信"
+            },
+            {
+              "value": "photo_session",
+              "label": "撮影会"
+            },
+            {
+              "value": "workshop",
+              "label": "ワークショップ"
+            },
+            {
+              "value": "small_gathering",
+              "label": "少人数の交流会"
+            },
+            {
+              "value": "meeting",
+              "label": "打ち合わせ"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            },
+            {
+              "value": "none",
+              "label": "特に利用予定はない",
+              "exclusive": true
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "usage_purpose_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        },
+        {
+          "id": "preferred_duration",
+          "type": "single",
+          "label": "利用しやすい時間",
+          "required": true,
+          "options": [
+            {
+              "value": "h1",
+              "label": "1時間"
+            },
+            {
+              "value": "h2",
+              "label": "2時間"
+            },
+            {
+              "value": "h3",
+              "label": "3時間"
+            },
+            {
+              "value": "h4",
+              "label": "4時間"
+            },
+            {
+              "value": "h5_plus",
+              "label": "5時間以上"
+            },
+            {
+              "value": "unknown",
+              "label": "わからない"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "schedule",
+      "title": "利用の頻度・時間帯",
+      "questions": [
+        {
+          "id": "preferred_schedule",
+          "type": "multi",
+          "label": "利用しやすい曜日・時間帯（複数選択可）",
+          "required": true,
+          "options": [
+            {
+              "value": "weekday_am",
+              "label": "平日午前"
+            },
+            {
+              "value": "weekday_pm",
+              "label": "平日午後"
+            },
+            {
+              "value": "weekday_night",
+              "label": "平日夜"
+            },
+            {
+              "value": "sat_am",
+              "label": "土曜午前"
+            },
+            {
+              "value": "sat_pm",
+              "label": "土曜午後"
+            },
+            {
+              "value": "sat_night",
+              "label": "土曜夜"
+            },
+            {
+              "value": "holiday_am",
+              "label": "日祝午前"
+            },
+            {
+              "value": "holiday_pm",
+              "label": "日祝午後"
+            },
+            {
+              "value": "holiday_night",
+              "label": "日祝夜"
+            },
+            {
+              "value": "any",
+              "label": "特にこだわらない",
+              "exclusive": true
+            }
+          ]
+        },
+        {
+          "id": "preferred_frequency",
+          "type": "single",
+          "label": "条件が合うレンタルスタジオがあった場合、どのくらいの頻度で利用したいですか？",
+          "required": true,
+          "options": [
+            {
+              "value": "twice_month_plus",
+              "label": "月2回以上"
+            },
+            {
+              "value": "monthly",
+              "label": "月1回程度"
+            },
+            {
+              "value": "every_1_2m",
+              "label": "1〜2か月に1回程度"
+            },
+            {
+              "value": "every_2_3m",
+              "label": "2〜3か月に1回程度"
+            },
+            {
+              "value": "half_year",
+              "label": "半年に1回程度"
+            },
+            {
+              "value": "yearly",
+              "label": "年に1回程度"
+            },
+            {
+              "value": "none",
+              "label": "利用する予定はない"
+            },
+            {
+              "value": "unknown",
+              "label": "わからない"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "alternatives",
+      "title": "利用・比較する場所",
+      "questions": [
+        {
+          "id": "primary_alternative_space",
+          "type": "single",
+          "label": "緊縛・縄の練習や撮影などを行う場合、主に利用・比較する場所を教えてください",
+          "required": true,
+          "options": [
+            {
+              "value": "general_studio",
+              "label": "一般の撮影スタジオ"
+            },
+            {
+              "value": "rental_space",
+              "label": "レンタルスペース"
+            },
+            {
+              "value": "love_hotel",
+              "label": "ラブホテル"
+            },
+            {
+              "value": "home",
+              "label": "自宅"
+            },
+            {
+              "value": "friend_home",
+              "label": "友人・知人の自宅"
+            },
+            {
+              "value": "kinbaku_studio",
+              "label": "別の緊縛・縄向けスタジオ"
+            },
+            {
+              "value": "event_venue",
+              "label": "イベント会場・練習会場"
+            },
+            {
+              "value": "outdoor",
+              "label": "屋外"
+            },
+            {
+              "value": "not_yet",
+              "label": "まだ練習・撮影等をしていない"
+            },
+            {
+              "value": "no_rent",
+              "label": "場所を借りてまで行わない"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "primary_alternative_space_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        },
+        {
+          "id": "alternative_spaces",
+          "type": "multi",
+          "label": "他にも利用・比較している場所があれば教えてください（任意・複数選択可）",
+          "required": false,
+          "showIf": {
+            "q": "primary_alternative_space",
+            "notIn": [
+              "not_yet",
+              "no_rent"
+            ]
+          },
+          "options": [
+            {
+              "value": "general_studio",
+              "label": "一般の撮影スタジオ"
+            },
+            {
+              "value": "rental_space",
+              "label": "レンタルスペース"
+            },
+            {
+              "value": "love_hotel",
+              "label": "ラブホテル"
+            },
+            {
+              "value": "home",
+              "label": "自宅"
+            },
+            {
+              "value": "friend_home",
+              "label": "友人・知人の自宅"
+            },
+            {
+              "value": "kinbaku_studio",
+              "label": "別の緊縛・縄向けスタジオ"
+            },
+            {
+              "value": "event_venue",
+              "label": "イベント会場・練習会場"
+            },
+            {
+              "value": "outdoor",
+              "label": "屋外"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "alternative_spaces_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "price_limit",
+      "title": "料金（1/2）",
+      "questions": [
+        {
+          "id": "max_price_3h_weekend",
+          "type": "single",
+          "label": "土日祝・3時間・1室貸切（利用人数を問わず）で、これ以上なら利用を見送ると思う金額を教えてください。",
+          "required": true,
+          "lockOnLeave": true,
+          "hint": "回答後に、現行の通常料金をお見せします。",
+          "options": [
+            {
+              "value": "p5000_or_less",
+              "label": "5,000円以下"
+            },
+            {
+              "value": "p6000",
+              "label": "6,000円程度"
+            },
+            {
+              "value": "p7000",
+              "label": "7,000円程度"
+            },
+            {
+              "value": "p8000",
+              "label": "8,000円程度"
+            },
+            {
+              "value": "p9000",
+              "label": "9,000円程度"
+            },
+            {
+              "value": "p10000_plus",
+              "label": "10,000円以上"
+            },
+            {
+              "value": "unknown",
+              "label": "わからない"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "price_rating",
+      "title": "料金（2/2）",
+      "reveal": {
+        "requires": "max_price_3h_weekend",
+        "title": "現行の通常料金",
+        "lines": [
+          "平日：2時間4,000円／3時間6,000円",
+          "土日祝：2時間5,000円／3時間7,500円"
+        ]
+      },
+      "questions": [
+        {
+          "id": "current_price_rating",
+          "type": "single",
+          "label": "上の現行料金について、どう感じますか？",
+          "required": true,
+          "options": [
+            {
+              "value": "very_cheap",
+              "label": "とても安い"
+            },
+            {
+              "value": "cheap",
+              "label": "やや安い"
+            },
+            {
+              "value": "fair",
+              "label": "適正"
+            },
+            {
+              "value": "expensive",
+              "label": "やや高い"
+            },
+            {
+              "value": "very_expensive",
+              "label": "高い"
+            },
+            {
+              "value": "unknown",
+              "label": "わからない"
+            }
+          ]
+        },
+        {
+          "id": "pricing_preferences",
+          "type": "multi",
+          "label": "希望する料金制度（複数選択可）",
+          "required": true,
+          "options": [
+            {
+              "value": "hourly",
+              "label": "1時間利用"
+            },
+            {
+              "value": "per_person",
+              "label": "1人利用料金"
+            },
+            {
+              "value": "weekday_discount",
+              "label": "平日割引"
+            },
+            {
+              "value": "long_discount",
+              "label": "長時間割引"
+            },
+            {
+              "value": "repeat_discount",
+              "label": "リピーター割引"
+            },
+            {
+              "value": "coupon_book",
+              "label": "回数券"
+            },
+            {
+              "value": "monthly_plan",
+              "label": "月額プラン"
+            },
+            {
+              "value": "last_minute_discount",
+              "label": "直前予約割引"
+            },
+            {
+              "value": "early_late_discount",
+              "label": "早朝・夜間割引"
+            },
+            {
+              "value": "as_is",
+              "label": "現状でよい",
+              "exclusive": true
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "pricing_preferences_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "paid_options",
+      "title": "追加サービス",
+      "questions": [
+        {
+          "id": "paid_options_interest",
+          "type": "multi",
+          "label": "今後、追加サービスとして用意された場合に利用してみたいものを教えてください。",
+          "required": true,
+          "hint": "ニーズ調査のための質問です。提供開始を予定・保証するものではありません。",
+          "options": [
+            {
+              "value": "photo_equipment",
+              "label": "撮影機材セット"
+            },
+            {
+              "value": "shower",
+              "label": "シャワー利用"
+            },
+            {
+              "value": "amenities",
+              "label": "タオル・アメニティ"
+            },
+            {
+              "value": "early_late",
+              "label": "早朝・深夜利用"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            },
+            {
+              "value": "none",
+              "label": "特にない",
+              "exclusive": true
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "paid_options_interest_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        },
+        {
+          "id": "price_photo_equipment",
+          "type": "single",
+          "label": "撮影機材セットの追加サービスとして、利用してもよいと思う金額",
+          "required": true,
+          "showIf": {
+            "q": "paid_options_interest",
+            "includes": "photo_equipment"
+          },
+          "options": [
+            {
+              "value": "y500",
+              "label": "500円程度",
+              "amount": 500
+            },
+            {
+              "value": "y1000",
+              "label": "1,000円程度",
+              "amount": 1000
+            },
+            {
+              "value": "y1500",
+              "label": "1,500円程度",
+              "amount": 1500
+            },
+            {
+              "value": "y2000",
+              "label": "2,000円程度",
+              "amount": 2000
+            },
+            {
+              "value": "y2500_plus",
+              "label": "2,500円以上でも内容次第で利用する",
+              "amount": 2500,
+              "kind": "above"
+            },
+            {
+              "value": "free_only",
+              "label": "無料なら使うが、有料なら利用しない",
+              "kind": "free_only"
+            }
+          ]
+        },
+        {
+          "id": "price_shower",
+          "type": "single",
+          "label": "シャワー利用の追加サービスとして、利用してもよいと思う金額",
+          "required": true,
+          "hint": "ニーズ調査のための質問です。提供開始を予定・保証するものではありません。",
+          "showIf": {
+            "q": "paid_options_interest",
+            "includes": "shower"
+          },
+          "options": [
+            {
+              "value": "y300",
+              "label": "300円程度",
+              "amount": 300
+            },
+            {
+              "value": "y500",
+              "label": "500円程度",
+              "amount": 500
+            },
+            {
+              "value": "y800",
+              "label": "800円程度",
+              "amount": 800
+            },
+            {
+              "value": "y1000",
+              "label": "1,000円程度",
+              "amount": 1000
+            },
+            {
+              "value": "y1500",
+              "label": "1,500円程度",
+              "amount": 1500
+            },
+            {
+              "value": "y1500_plus",
+              "label": "1,500円以上でも内容次第で利用する",
+              "amount": 1500,
+              "kind": "above"
+            },
+            {
+              "value": "free_only",
+              "label": "無料なら使うが、有料なら利用しない",
+              "kind": "free_only"
+            }
+          ]
+        },
+        {
+          "id": "price_amenities",
+          "type": "single",
+          "label": "タオル・アメニティの追加サービスとして、利用してもよいと思う金額",
+          "required": true,
+          "showIf": {
+            "q": "paid_options_interest",
+            "includes": "amenities"
+          },
+          "options": [
+            {
+              "value": "y300",
+              "label": "300円程度",
+              "amount": 300
+            },
+            {
+              "value": "y500",
+              "label": "500円程度",
+              "amount": 500
+            },
+            {
+              "value": "y800",
+              "label": "800円程度",
+              "amount": 800
+            },
+            {
+              "value": "y1000",
+              "label": "1,000円程度",
+              "amount": 1000
+            },
+            {
+              "value": "free_only",
+              "label": "無料なら使うが、有料なら利用しない",
+              "kind": "free_only"
+            }
+          ]
+        },
+        {
+          "id": "price_early_late",
+          "type": "single",
+          "label": "早朝・深夜利用の通常料金への追加額として、利用してもよいと思う金額",
+          "required": true,
+          "showIf": {
+            "q": "paid_options_interest",
+            "includes": "early_late"
+          },
+          "options": [
+            {
+              "value": "y500",
+              "label": "＋500円程度",
+              "amount": 500
+            },
+            {
+              "value": "y1000",
+              "label": "＋1,000円程度",
+              "amount": 1000
+            },
+            {
+              "value": "y1500",
+              "label": "＋1,500円程度",
+              "amount": 1500
+            },
+            {
+              "value": "y2000",
+              "label": "＋2,000円程度",
+              "amount": 2000
+            },
+            {
+              "value": "y2000_plus",
+              "label": "＋2,000円以上でも条件次第で利用する",
+              "amount": 2000,
+              "kind": "above"
+            },
+            {
+              "value": "refuse",
+              "label": "追加料金があるなら利用しない",
+              "kind": "refuse"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "privacy",
+      "title": "プライバシー・利用しやすさ",
+      "questions": [
+        {
+          "id": "privacy_needs",
+          "type": "multi",
+          "label": "利用時に重要なこと（最大3つまで）",
+          "required": true,
+          "maxSelect": 3,
+          "options": [
+            {
+              "value": "whole_rental",
+              "label": "完全貸切"
+            },
+            {
+              "value": "no_encounter",
+              "label": "他の利用者と顔を合わせない"
+            },
+            {
+              "value": "unmanned_entry",
+              "label": "無人で入退室できる"
+            },
+            {
+              "value": "discreet",
+              "label": "利用内容を周囲に知られにくい"
+            },
+            {
+              "value": "no_visibility",
+              "label": "外から室内が見えない"
+            },
+            {
+              "value": "changing_room",
+              "label": "更衣しやすい"
+            },
+            {
+              "value": "women_friendly",
+              "label": "女性でも利用しやすい"
+            },
+            {
+              "value": "male_pair_friendly",
+              "label": "男性同士でも利用しやすい"
+            },
+            {
+              "value": "multi_person_friendly",
+              "label": "撮影者を含めた複数人で使いやすい"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            },
+            {
+              "value": "none",
+              "label": "特にない",
+              "exclusive": true
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "privacy_needs_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "user_experience",
+      "title": "ご利用について",
+      "questions": [
+        {
+          "id": "visit_count",
+          "type": "single",
+          "label": "利用回数",
+          "required": true,
+          "showIf": {
+            "q": "usage_status",
+            "eq": "used"
+          },
+          "options": [
+            {
+              "value": "once",
+              "label": "1回"
+            },
+            {
+              "value": "two_three",
+              "label": "2〜3回"
+            },
+            {
+              "value": "four_five",
+              "label": "4〜5回"
+            },
+            {
+              "value": "six_ten",
+              "label": "6〜10回"
+            },
+            {
+              "value": "eleven_plus",
+              "label": "11回以上"
+            }
+          ]
+        },
+        {
+          "id": "reuse_intent",
+          "type": "single",
+          "label": "今後もStudio Nagoya Baseを利用したいと思いますか？",
+          "required": true,
+          "showIf": {
+            "q": "usage_status",
+            "eq": "used"
+          },
+          "options": [
+            {
+              "value": "definitely",
+              "label": "ぜひ利用したい"
+            },
+            {
+              "value": "probably",
+              "label": "たぶん利用したい"
+            },
+            {
+              "value": "neutral",
+              "label": "どちらともいえない"
+            },
+            {
+              "value": "unlikely",
+              "label": "あまり利用したくない"
+            },
+            {
+              "value": "never",
+              "label": "利用したくない"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "user_feedback",
+      "title": "良かった点・改善してほしい点",
+      "questions": [
+        {
+          "id": "good_points",
+          "type": "multi",
+          "label": "良かった点（複数選択可）",
+          "required": true,
+          "showIf": {
+            "q": "usage_status",
+            "eq": "used"
+          },
+          "options": [
+            {
+              "value": "fee",
+              "label": "料金"
+            },
+            {
+              "value": "location",
+              "label": "立地"
+            },
+            {
+              "value": "private_rental",
+              "label": "完全貸切"
+            },
+            {
+              "value": "privacy",
+              "label": "プライバシー"
+            },
+            {
+              "value": "suspension",
+              "label": "吊り設備"
+            },
+            {
+              "value": "rope_rigging",
+              "label": "縄・リギング用品"
+            },
+            {
+              "value": "photo_equipment",
+              "label": "撮影設備"
+            },
+            {
+              "value": "lighting",
+              "label": "照明"
+            },
+            {
+              "value": "backdrop",
+              "label": "背景・セット"
+            },
+            {
+              "value": "mirror",
+              "label": "大型ミラー"
+            },
+            {
+              "value": "easy_booking",
+              "label": "予約のしやすさ"
+            },
+            {
+              "value": "easy_entry",
+              "label": "入退室のしやすさ"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            },
+            {
+              "value": "none",
+              "label": "特にない",
+              "exclusive": true
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "good_points_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        },
+        {
+          "id": "improvement_points",
+          "type": "multi",
+          "label": "改善してほしい点（複数選択可）",
+          "required": true,
+          "showIf": {
+            "q": "usage_status",
+            "eq": "used"
+          },
+          "options": [
+            {
+              "value": "fee",
+              "label": "料金"
+            },
+            {
+              "value": "min_duration",
+              "label": "最低利用時間"
+            },
+            {
+              "value": "hours",
+              "label": "営業時間"
+            },
+            {
+              "value": "booking_method",
+              "label": "予約方法"
+            },
+            {
+              "value": "entry_method",
+              "label": "入退室方法"
+            },
+            {
+              "value": "cleaning",
+              "label": "清掃"
+            },
+            {
+              "value": "aircon",
+              "label": "空調"
+            },
+            {
+              "value": "changing_space",
+              "label": "更衣スペース"
+            },
+            {
+              "value": "luggage",
+              "label": "荷物置場"
+            },
+            {
+              "value": "lighting",
+              "label": "撮影照明"
+            },
+            {
+              "value": "backdrop",
+              "label": "背景"
+            },
+            {
+              "value": "kinbaku_equipment",
+              "label": "緊縛設備"
+            },
+            {
+              "value": "props_furniture",
+              "label": "小道具・家具"
+            },
+            {
+              "value": "shower",
+              "label": "シャワー"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            },
+            {
+              "value": "none",
+              "label": "特にない",
+              "exclusive": true
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "improvement_points_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nonuser_reasons",
+      "title": "まだ利用していない理由",
+      "questions": [
+        {
+          "id": "nonuse_reasons",
+          "type": "multi",
+          "label": "利用したことがない理由（複数選択可）",
+          "required": true,
+          "showIf": {
+            "q": "usage_status",
+            "in": [
+              "known_not_used",
+              "name_only"
+            ]
+          },
+          "options": [
+            {
+              "value": "no_chance",
+              "label": "利用する機会がなかった"
+            },
+            {
+              "value": "no_partner",
+              "label": "一緒に利用する相手がいない"
+            },
+            {
+              "value": "expensive",
+              "label": "料金が高そう"
+            },
+            {
+              "value": "far",
+              "label": "場所が遠い"
+            },
+            {
+              "value": "unclear_what",
+              "label": "何ができるのか分からない"
+            },
+            {
+              "value": "unclear_equipment",
+              "label": "設備がよく分からない"
+            },
+            {
+              "value": "unclear_fit",
+              "label": "自分の用途で使えるか分からない"
+            },
+            {
+              "value": "unclear_booking",
+              "label": "予約方法が分からない"
+            },
+            {
+              "value": "dont_want_known",
+              "label": "周囲に利用を知られたくない"
+            },
+            {
+              "value": "privacy_worry",
+              "label": "プライバシー面が不安"
+            },
+            {
+              "value": "encounter_worry",
+              "label": "他の利用者と顔を合わせるのが不安"
+            },
+            {
+              "value": "other_studio",
+              "label": "他のスタジオを利用している"
+            },
+            {
+              "value": "no_studio_use",
+              "label": "スタジオ自体を利用することがない"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            },
+            {
+              "value": "none",
+              "label": "特にない",
+              "exclusive": true
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "nonuse_reasons_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        },
+        {
+          "id": "consideration_actions",
+          "type": "multi",
+          "label": "これまでに行った検討行動（複数選択可）",
+          "required": true,
+          "showIf": {
+            "q": "usage_status",
+            "in": [
+              "known_not_used",
+              "name_only"
+            ]
+          },
+          "options": [
+            {
+              "value": "saw_x",
+              "label": "Xの投稿を見た"
+            },
+            {
+              "value": "saw_web",
+              "label": "Webサイトを見た"
+            },
+            {
+              "value": "checked_price",
+              "label": "料金を確認した"
+            },
+            {
+              "value": "checked_availability",
+              "label": "空き状況を確認した"
+            },
+            {
+              "value": "checked_booking",
+              "label": "予約方法を確認した"
+            },
+            {
+              "value": "inquiry",
+              "label": "問い合わせを検討／問い合わせした"
+            },
+            {
+              "value": "nothing",
+              "label": "特に何もしていない",
+              "exclusive": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nonuser_interest",
+      "title": "Studio Nagoya Baseについて",
+      "questions": [
+        {
+          "id": "snb_interest_features",
+          "type": "multi",
+          "label": "Studio Nagoya Baseの特徴で、利用のきっかけになりそうなもの（複数選択可）",
+          "required": true,
+          "showIf": {
+            "q": "usage_status",
+            "notIn": [
+              "used"
+            ]
+          },
+          "options": [
+            {
+              "value": "private_small",
+              "label": "少人数で完全貸切できる"
+            },
+            {
+              "value": "kinbaku_practice",
+              "label": "緊縛・吊りの練習ができる"
+            },
+            {
+              "value": "kinbaku_shoot",
+              "label": "緊縛撮影に利用できる"
+            },
+            {
+              "value": "show_practice",
+              "label": "ショー・演目の練習に利用できる"
+            },
+            {
+              "value": "lesson_nawakai",
+              "label": "緊縛講習・縄会に利用できる"
+            },
+            {
+              "value": "lighting",
+              "label": "撮影用の照明設備がある"
+            },
+            {
+              "value": "mirror",
+              "label": "大型ミラーがある"
+            },
+            {
+              "value": "kamimaezu",
+              "label": "上前津で利用できる"
+            },
+            {
+              "value": "small_group",
+              "label": "1〜4名程度の少人数利用に向いている"
+            },
+            {
+              "value": "no_encounter",
+              "label": "他の利用者と顔を合わせにくい"
+            },
+            {
+              "value": "privacy",
+              "label": "プライバシーを確保しやすい"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            },
+            {
+              "value": "none",
+              "label": "特にない",
+              "exclusive": true
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "snb_interest_features_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        },
+        {
+          "id": "conversion_factors",
+          "type": "multi",
+          "label": "利用につながる条件（複数選択可）",
+          "required": true,
+          "showIf": {
+            "q": "usage_status",
+            "notIn": [
+              "used"
+            ]
+          },
+          "options": [
+            {
+              "value": "cheaper",
+              "label": "料金がもう少し安い"
+            },
+            {
+              "value": "first_discount",
+              "label": "初回割引がある"
+            },
+            {
+              "value": "more_samples",
+              "label": "作例がもっと見られる"
+            },
+            {
+              "value": "more_studio_photos",
+              "label": "スタジオ内の写真や動画がもっと見られる"
+            },
+            {
+              "value": "clearer_usage",
+              "label": "利用方法がもっと分かりやすい"
+            },
+            {
+              "value": "clearer_booking",
+              "label": "予約方法がもっと分かりやすい"
+            },
+            {
+              "value": "interesting_event",
+              "label": "興味のある撮影・練習企画がある"
+            },
+            {
+              "value": "with_acquaintance",
+              "label": "知人と一緒なら利用したい"
+            },
+            {
+              "value": "clearer_privacy",
+              "label": "プライバシー面がもっと分かりやすい"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            },
+            {
+              "value": "none",
+              "label": "特にない",
+              "exclusive": true
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "conversion_factors_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        },
+        {
+          "id": "snb_usage_intent_3m",
+          "type": "single",
+          "label": "今後3か月以内にStudio Nagoya Baseを利用したいと思いますか？",
+          "required": true,
+          "showIf": {
+            "q": "usage_status",
+            "notIn": [
+              "used"
+            ]
+          },
+          "options": [
+            {
+              "value": "definitely",
+              "label": "ぜひ利用したい"
+            },
+            {
+              "value": "probably",
+              "label": "たぶん利用したい"
+            },
+            {
+              "value": "unsure",
+              "label": "わからない"
+            },
+            {
+              "value": "probably_not",
+              "label": "たぶん利用しない"
+            },
+            {
+              "value": "no",
+              "label": "利用しない"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "marketing",
+      "title": "認知経路など",
+      "questions": [
+        {
+          "id": "awareness_source",
+          "type": "single",
+          "label": "Studio Nagoya Baseを知ったきっかけ（今回のアンケートで初めて知った場合は「今回のアンケート」）",
+          "required": true,
+          "options": [
+            {
+              "value": "x",
+              "label": "X"
+            },
+            {
+              "value": "instagram",
+              "label": "Instagram"
+            },
+            {
+              "value": "google_search",
+              "label": "Google検索"
+            },
+            {
+              "value": "google_maps",
+              "label": "Googleマップ"
+            },
+            {
+              "value": "friend",
+              "label": "友人・知人"
+            },
+            {
+              "value": "kinbaku_referral",
+              "label": "緊縛関係者からの紹介"
+            },
+            {
+              "value": "photo_referral",
+              "label": "カメラ・撮影関係者からの紹介"
+            },
+            {
+              "value": "event",
+              "label": "イベント"
+            },
+            {
+              "value": "website",
+              "label": "Webサイト"
+            },
+            {
+              "value": "this_survey",
+              "label": "今回のアンケート"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "awareness_source_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        },
+        {
+          "id": "preferred_media",
+          "type": "multi",
+          "label": "情報を見る媒体（任意・複数選択可）",
+          "required": false,
+          "options": [
+            {
+              "value": "x",
+              "label": "X"
+            },
+            {
+              "value": "instagram",
+              "label": "Instagram"
+            },
+            {
+              "value": "website",
+              "label": "Webサイト"
+            },
+            {
+              "value": "google",
+              "label": "Google検索・Googleマップ"
+            },
+            {
+              "value": "line",
+              "label": "LINE"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "preferred_media_other",
+              "when": "other",
+              "label": "その他の内容",
+              "required": true,
+              "maxLength": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "attributes",
+      "title": "属性（任意）",
+      "description": "この2問は任意です。回答しなくても送信できます。",
+      "questions": [
+        {
+          "id": "gender_identity",
+          "type": "single",
+          "label": "性別（任意）",
+          "required": false,
+          "options": [
+            {
+              "value": "male",
+              "label": "男性"
+            },
+            {
+              "value": "female",
+              "label": "女性"
+            },
+            {
+              "value": "nonbinary_other",
+              "label": "ノンバイナリー・その他"
+            },
+            {
+              "value": "no_answer",
+              "label": "回答しない"
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "gender_identity_other",
+              "when": "nonbinary_other",
+              "label": "具体的に（任意）",
+              "required": false,
+              "maxLength": 100
+            }
+          ]
+        },
+        {
+          "id": "sexual_orientation",
+          "type": "single",
+          "label": "性的指向（任意）",
+          "required": false,
+          "hint": "集計の補助的な分析にのみ使用します。",
+          "options": [
+            {
+              "value": "heterosexual",
+              "label": "異性愛"
+            },
+            {
+              "value": "gay",
+              "label": "ゲイ"
+            },
+            {
+              "value": "lesbian",
+              "label": "レズビアン"
+            },
+            {
+              "value": "bisexual",
+              "label": "バイセクシュアル"
+            },
+            {
+              "value": "pansexual",
+              "label": "パンセクシュアル"
+            },
+            {
+              "value": "other",
+              "label": "その他"
+            },
+            {
+              "value": "no_answer",
+              "label": "回答しない"
+            }
+          ],
+          "otherTexts": [
+            {
+              "field": "sexual_orientation_other",
+              "when": "other",
+              "label": "具体的に（任意）",
+              "required": false,
+              "maxLength": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "free_text",
+      "title": "ご意見・ご感想（任意）",
+      "questions": [
+        {
+          "id": "free_feedback",
+          "type": "text",
+          "label": "こういう設備・サービス・使い方があれば嬉しい、改善してほしい点があれば教えてください。",
+          "required": false,
+          "maxLength": 500
+        },
+        {
+          "id": "support_message",
+          "type": "text",
+          "label": "Studio Nagoya Baseや活動への応援・激励メッセージがあれば、ぜひお聞かせください。",
+          "required": false,
+          "maxLength": 500,
+          "hint": "運営の励みにさせていただきます。"
+        }
+      ]
+    }
+  ],
+  "analysis": {
+    "minCell": 5,
+    "auxMinN": 50,
+    "recodes": {
+      "purpose_group": {
+        "label": "利用目的（再コード）",
+        "source": "usage_purpose",
+        "multi": true,
+        "groups": [
+          {
+            "key": "practice",
+            "label": "練習系",
+            "values": [
+              "self_practice",
+              "suspension_practice",
+              "show_practice"
+            ]
+          },
+          {
+            "key": "lesson_social",
+            "label": "講習・交流系",
+            "values": [
+              "lesson",
+              "nawakai",
+              "idobata",
+              "workshop",
+              "small_gathering"
+            ]
+          },
+          {
+            "key": "kinbaku_shoot",
+            "label": "緊縛撮影系",
+            "values": [
+              "kinbaku_shoot"
+            ]
+          },
+          {
+            "key": "other_shoot",
+            "label": "その他撮影・制作系",
+            "values": [
+              "portrait_shoot",
+              "cosplay_shoot",
+              "costume_shoot",
+              "video_stream",
+              "photo_session"
+            ]
+          }
+        ]
+      },
+      "price_group": {
+        "label": "上限価格（再コード）",
+        "source": "max_price_3h_weekend",
+        "groups": [
+          {
+            "key": "le5000",
+            "label": "5,000円以下",
+            "values": [
+              "p5000_or_less"
+            ]
+          },
+          {
+            "key": "6000_7000",
+            "label": "6,000〜7,000円",
+            "values": [
+              "p6000",
+              "p7000"
+            ]
+          },
+          {
+            "key": "ge8000",
+            "label": "8,000円以上",
+            "values": [
+              "p8000",
+              "p9000",
+              "p10000_plus"
+            ]
+          },
+          {
+            "key": "unknown",
+            "label": "わからない",
+            "values": [
+              "unknown"
+            ]
+          }
+        ]
+      },
+      "kinbaku_role_group": {
+        "label": "緊縛ロール（再コード）",
+        "source": "kinbaku_role",
+        "priority": true,
+        "groups": [
+          {
+            "key": "includes_tie",
+            "label": "縛る側を含む",
+            "values": [
+              "tie"
+            ]
+          },
+          {
+            "key": "receiver_only",
+            "label": "受け手のみ",
+            "values": [
+              "tied"
+            ]
+          },
+          {
+            "key": "shoot_watch",
+            "label": "撮影・見学中心",
+            "values": [
+              "photographer",
+              "observer"
+            ]
+          },
+          {
+            "key": "inexperienced_other",
+            "label": "未経験・その他",
+            "values": [
+              "unsure",
+              "no_interest",
+              "other"
+            ]
+          }
+        ]
+      },
+      "region_group": {
+        "label": "地域（再コード）",
+        "type": "region",
+        "groups": [
+          {
+            "key": "nagoya",
+            "label": "名古屋市"
+          },
+          {
+            "key": "aichi_other",
+            "label": "愛知県その他"
+          },
+          {
+            "key": "tokai_other",
+            "label": "東海他県"
+          },
+          {
+            "key": "far",
+            "label": "遠方"
+          }
+        ],
+        "tokaiPrefectures": [
+          "gifu",
+          "mie",
+          "shizuoka"
+        ]
+      }
+    },
+    "funnels": {
+      "nonuser": {
+        "label": "未利用者ファネル（事前認知済みの未利用者が母集団）",
+        "population": {
+          "q": "usage_status",
+          "in": [
+            "known_not_used",
+            "name_only"
+          ]
+        },
+        "reference": {
+          "label": "未利用者全体（今回初めて知った回答者を含む）",
+          "population": {
+            "q": "usage_status",
+            "notIn": [
+              "used"
+            ]
+          }
+        },
+        "stages": [
+          {
+            "key": "pre_awareness",
+            "label": "事前認知（母集団）",
+            "cond": {
+              "q": "usage_status",
+              "in": [
+                "known_not_used",
+                "name_only"
+              ]
+            }
+          },
+          {
+            "key": "category_demand",
+            "label": "カテゴリ需要",
+            "cond": {
+              "q": "preferred_frequency",
+              "notIn": [
+                "none",
+                "unknown"
+              ]
+            }
+          },
+          {
+            "key": "consideration",
+            "label": "検討行動",
+            "cond": {
+              "all": [
+                {
+                  "q": "consideration_actions",
+                  "nonEmpty": true
+                },
+                {
+                  "q": "consideration_actions",
+                  "notIncludes": "nothing"
+                }
+              ]
+            }
+          },
+          {
+            "key": "price_acceptance",
+            "label": "価格受容（8,000円以上）",
+            "cond": {
+              "q": "max_price_3h_weekend",
+              "in": [
+                "p8000",
+                "p9000",
+                "p10000_plus"
+              ]
+            }
+          },
+          {
+            "key": "intent",
+            "label": "SNB利用意向",
+            "cond": {
+              "q": "snb_usage_intent_3m",
+              "in": [
+                "definitely",
+                "probably"
+              ]
+            }
+          }
+        ],
+        "outside": {
+          "label": "今回初めて知った回答者（事前認知ファネル外）",
+          "population": {
+            "q": "usage_status",
+            "eq": "first_time"
+          },
+          "metric": {
+            "label": "特徴提示後のSNB3か月利用意向（ぜひ／たぶん）",
+            "cond": {
+              "q": "snb_usage_intent_3m",
+              "in": [
+                "definitely",
+                "probably"
+              ]
+            }
+          }
+        }
+      },
+      "user": {
+        "label": "利用者ファネル",
+        "population": {
+          "all": []
+        },
+        "stages": [
+          {
+            "key": "used",
+            "label": "利用経験あり",
+            "cond": {
+              "q": "usage_status",
+              "eq": "used"
+            }
+          },
+          {
+            "key": "repeat",
+            "label": "複数回利用（2回以上）",
+            "cond": {
+              "q": "visit_count",
+              "in": [
+                "two_three",
+                "four_five",
+                "six_ten",
+                "eleven_plus"
+              ]
+            }
+          },
+          {
+            "key": "reuse",
+            "label": "再利用意向あり（上位2段階）",
+            "cond": {
+              "q": "reuse_intent",
+              "in": [
+                "definitely",
+                "probably"
+              ]
+            }
+          },
+          {
+            "key": "heavy",
+            "label": "高頻度利用（6回以上）",
+            "cond": {
+              "q": "visit_count",
+              "in": [
+                "six_ten",
+                "eleven_plus"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "crosstabs": [
+      {
+        "id": "seg_status",
+        "label": "セグメント × 利用状況",
+        "row": "usage_segment",
+        "col": "usage_status"
+      },
+      {
+        "id": "seg_purpose",
+        "label": "セグメント × 利用目的",
+        "row": "usage_segment",
+        "col": "usage_purpose"
+      },
+      {
+        "id": "seg_frequency",
+        "label": "セグメント × 希望利用頻度",
+        "row": "usage_segment",
+        "col": "preferred_frequency"
+      },
+      {
+        "id": "seg_price",
+        "label": "セグメント × 上限価格",
+        "row": "usage_segment",
+        "col": "max_price_3h_weekend",
+        "colRecode": "price_group"
+      },
+      {
+        "id": "seg_rating",
+        "label": "セグメント × 現行料金評価",
+        "row": "usage_segment",
+        "col": "current_price_rating"
+      },
+      {
+        "id": "seg_alternative",
+        "label": "セグメント × 主な代替スペース",
+        "row": "usage_segment",
+        "col": "primary_alternative_space"
+      },
+      {
+        "id": "seg_nonuse",
+        "label": "セグメント × 未利用理由",
+        "row": "usage_segment",
+        "col": "nonuse_reasons"
+      },
+      {
+        "id": "seg_conversion",
+        "label": "セグメント × 利用転換要因",
+        "row": "usage_segment",
+        "col": "conversion_factors"
+      },
+      {
+        "id": "seg_features",
+        "label": "セグメント × SNB特徴",
+        "row": "usage_segment",
+        "col": "snb_interest_features"
+      },
+      {
+        "id": "seg_privacy",
+        "label": "セグメント × プライバシー要素",
+        "row": "usage_segment",
+        "col": "privacy_needs"
+      },
+      {
+        "id": "seg_intent",
+        "label": "セグメント × SNB3か月利用意向",
+        "row": "usage_segment",
+        "col": "snb_usage_intent_3m"
+      },
+      {
+        "id": "purpose_duration",
+        "label": "利用目的 × 利用時間",
+        "row": "usage_purpose",
+        "col": "preferred_duration",
+        "rowRecode": "purpose_group"
+      },
+      {
+        "id": "purpose_frequency",
+        "label": "利用目的 × 希望利用頻度",
+        "row": "usage_purpose",
+        "col": "preferred_frequency",
+        "rowRecode": "purpose_group"
+      },
+      {
+        "id": "purpose_price",
+        "label": "利用目的 × 上限価格",
+        "row": "usage_purpose",
+        "col": "max_price_3h_weekend",
+        "rowRecode": "purpose_group",
+        "colRecode": "price_group"
+      },
+      {
+        "id": "awareness_intent",
+        "label": "認知経路 × SNB3か月利用意向",
+        "row": "awareness_source",
+        "col": "snb_usage_intent_3m"
+      },
+      {
+        "id": "alternative_price",
+        "label": "主な代替スペース × 上限価格",
+        "row": "primary_alternative_space",
+        "col": "max_price_3h_weekend",
+        "colRecode": "price_group"
+      },
+      {
+        "id": "region_intent",
+        "label": "地域 × SNB3か月利用意向",
+        "row": "region_group",
+        "col": "snb_usage_intent_3m",
+        "rowRecode": "region_group"
+      },
+      {
+        "id": "gender_purpose",
+        "label": "性別 × 利用目的（補助）",
+        "row": "gender_identity",
+        "col": "usage_purpose",
+        "aux": true,
+        "colRecode": "purpose_group"
+      },
+      {
+        "id": "orientation_purpose",
+        "label": "性的指向 × 利用目的（補助）",
+        "row": "sexual_orientation",
+        "col": "usage_purpose",
+        "aux": true,
+        "colRecode": "purpose_group"
+      },
+      {
+        "id": "orientation_privacy",
+        "label": "性的指向 × プライバシー要素（補助）",
+        "row": "sexual_orientation",
+        "col": "privacy_needs",
+        "aux": true
+      }
+    ],
+    "dashboard": [
+      {
+        "id": "usage_status",
+        "field": "usage_status"
+      },
+      {
+        "id": "age",
+        "field": "age"
+      },
+      {
+        "id": "region",
+        "field": "region_group",
+        "recode": "region_group",
+        "label": "地域（再コード）"
+      },
+      {
+        "id": "usage_segment",
+        "field": "usage_segment",
+        "label": "利用メンバー構成（usage_segment）"
+      },
+      {
+        "id": "kinbaku_role_group",
+        "field": "kinbaku_role_group",
+        "recode": "kinbaku_role_group"
+      },
+      {
+        "id": "usage_purpose",
+        "field": "usage_purpose"
+      },
+      {
+        "id": "purpose_group",
+        "field": "purpose_group",
+        "recode": "purpose_group"
+      },
+      {
+        "id": "group_size",
+        "field": "group_size"
+      },
+      {
+        "id": "preferred_duration",
+        "field": "preferred_duration"
+      },
+      {
+        "id": "preferred_frequency",
+        "field": "preferred_frequency"
+      },
+      {
+        "id": "primary_alternative_space",
+        "field": "primary_alternative_space"
+      },
+      {
+        "id": "max_price_3h_weekend",
+        "field": "max_price_3h_weekend"
+      },
+      {
+        "id": "price_group",
+        "field": "price_group",
+        "recode": "price_group"
+      },
+      {
+        "id": "current_price_rating",
+        "field": "current_price_rating",
+        "splitUsed": true
+      },
+      {
+        "id": "pricing_preferences",
+        "field": "pricing_preferences"
+      },
+      {
+        "id": "paid_options_interest",
+        "field": "paid_options_interest"
+      },
+      {
+        "id": "privacy_needs",
+        "field": "privacy_needs"
+      },
+      {
+        "id": "nonuse_reasons",
+        "field": "nonuse_reasons"
+      },
+      {
+        "id": "consideration_actions",
+        "field": "consideration_actions"
+      },
+      {
+        "id": "conversion_factors",
+        "field": "conversion_factors"
+      },
+      {
+        "id": "snb_interest_features",
+        "field": "snb_interest_features"
+      },
+      {
+        "id": "snb_usage_intent_3m",
+        "field": "snb_usage_intent_3m"
+      },
+      {
+        "id": "visit_count",
+        "field": "visit_count"
+      },
+      {
+        "id": "reuse_intent",
+        "field": "reuse_intent"
+      },
+      {
+        "id": "awareness_source",
+        "field": "awareness_source"
+      }
+    ],
+    "paidOptionPrices": [
+      {
+        "option": "photo_equipment",
+        "question": "price_photo_equipment",
+        "label": "撮影機材セット"
+      },
+      {
+        "option": "shower",
+        "question": "price_shower",
+        "label": "シャワー利用"
+      },
+      {
+        "option": "amenities",
+        "question": "price_amenities",
+        "label": "タオル・アメニティ"
+      },
+      {
+        "option": "early_late",
+        "question": "price_early_late",
+        "label": "早朝・深夜利用（追加額）"
+      }
+    ]
+  }
+}

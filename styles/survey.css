@@ -1,0 +1,71 @@
+/* 利用・市場調査アンケート（Issue #374）専用スタイル。スマホ最優先・Xアプリ内ブラウザ想定。 */
+:root {
+  --sv-bg: #f7f6f3;
+  --sv-card: #ffffff;
+  --sv-fg: #1f2328;
+  --sv-muted: #5f6670;
+  --sv-line: #d9d8d2;
+  --sv-accent: #2f6f5e;
+  --sv-accent-fg: #ffffff;
+  --sv-error: #b42318;
+  --sv-reveal-bg: #eef5f2;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sv-bg: #14161a; --sv-card: #1d2025; --sv-fg: #e8e8e5; --sv-muted: #a0a6ad;
+    --sv-line: #394048; --sv-accent: #5fb39c; --sv-accent-fg: #0e1412; --sv-error: #ff8a80; --sv-reveal-bg: #1f2a27;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--sv-bg); color: var(--sv-fg);
+  font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+.sv-page { max-width: 640px; margin: 0 auto; padding: 16px; }
+.sv-brand { margin: 4px 0 12px; color: var(--sv-muted); font-size: 13px; }
+.sv-card { background: var(--sv-card); border: 1px solid var(--sv-line); border-radius: 12px; padding: 16px; }
+.sv-title { font-size: 20px; line-height: 1.4; margin: 8px 0 12px; }
+.sv-title:focus, #sv-end:focus { outline: none; }
+.sv-intro { margin: 0 0 8px; font-size: 14px; }
+.sv-hint { margin: 4px 0 8px; color: var(--sv-muted); font-size: 13px; }
+.sv-progress-text { margin: 0 0 6px; color: var(--sv-muted); font-size: 13px; }
+.sv-progress-bar { height: 6px; background: var(--sv-line); border-radius: 3px; overflow: hidden; }
+.sv-progress-bar > i { display: block; height: 100%; background: var(--sv-accent); }
+.sv-question { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
+.sv-question legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
+.sv-badge { margin-left: 8px; padding: 1px 6px; border: 1px solid var(--sv-line); border-radius: 4px; color: var(--sv-muted); font-size: 11px; font-weight: 400; vertical-align: 2px; }
+.sv-badge.is-required { color: var(--sv-error); border-color: var(--sv-error); }
+.sv-options { display: grid; gap: 8px; }
+.sv-option {
+  display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 10px 12px;
+  border: 1px solid var(--sv-line); border-radius: 8px; cursor: pointer; background: var(--sv-card);
+}
+.sv-option.is-checked { border-color: var(--sv-accent); background: var(--sv-reveal-bg); }
+.sv-option input { width: 22px; height: 22px; flex: 0 0 22px; margin: 0; accent-color: var(--sv-accent); }
+.sv-option span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sv-other { margin-top: 10px; }
+.sv-other label { display: block; font-size: 14px; }
+.sv-other input, .sv-question select, .sv-question textarea {
+  display: block; width: 100%; min-height: 48px; margin-top: 6px; padding: 10px 12px;
+  font: inherit; font-size: 16px; /* 16px未満だとiOSが自動ズームする */
+  color: var(--sv-fg); background: var(--sv-card); border: 1px solid var(--sv-line); border-radius: 8px;
+}
+.sv-question textarea { min-height: 120px; resize: vertical; }
+.sv-reveal { margin: 0 0 20px; padding: 12px 14px; background: var(--sv-reveal-bg); border-radius: 8px; border: 1px solid var(--sv-line); }
+.sv-reveal h2 { margin: 0 0 4px; font-size: 15px; }
+.sv-reveal p { margin: 0; }
+.sv-error { color: var(--sv-error); font-size: 14px; margin: 6px 0 0; }
+.sv-summary { font-weight: 600; margin-bottom: 16px; }
+.sv-summary:focus { outline: none; }
+.sv-nav { display: flex; gap: 12px; margin-top: 8px; }
+.sv-btn { flex: 1; min-height: 52px; padding: 12px 16px; font: inherit; font-weight: 600; border-radius: 10px; border: 1px solid var(--sv-accent); cursor: pointer; }
+.sv-btn-primary { background: var(--sv-accent); color: var(--sv-accent-fg); }
+.sv-btn-secondary { background: transparent; color: var(--sv-accent); flex: 0 0 35%; }
+.sv-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.sv-btn:focus-visible, .sv-option:focus-within { outline: 3px solid var(--sv-accent); outline-offset: 2px; }
+.sv-end p { margin: 8px 0; }
+@media (max-width: 360px) {
+  .sv-page { padding: 12px; }
+  .sv-card { padding: 12px; }
+}
