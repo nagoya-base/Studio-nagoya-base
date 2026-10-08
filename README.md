@@ -49,7 +49,7 @@ Studio Nagoya Base の静的サイト一式です。GitHub Pages で公開する
         └── index.html      Studio Xの共通予約UI（仮予約フォーム）
 ```
 
-### 利用・市場調査アンケート（Issue #374）
+### サービス改善フィードバック（Issue #374）
 
 `survey/`（回答画面。`noindex`）と `gas/survey/`（公開Web App・管理者Web App）で構成する匿名アンケートです。
 設問定義の正本は `survey/survey-schema.json` の1ファイルで、設定・デプロイ手順は

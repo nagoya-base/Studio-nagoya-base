@@ -1,6 +1,6 @@
-# 利用・市場調査アンケート（Issue #374）
+# サービス改善フィードバック（Issue #374）
 
-Studio Nagoya Base の利用・市場調査アンケート（匿名）と管理者画面。Google Spreadsheet をデータストアに、
+Studio Nagoya Base のサービス改善フィードバック（匿名）と管理者画面。Google Spreadsheet をデータストアに、
 Google Apps Script（GAS）の **公開Web App** と **管理者Web App** の2プロジェクトで動かします。
 予約システム（`gas/booking/`）とはプロジェクト・グローバル関数とも完全に分離しています。
 
