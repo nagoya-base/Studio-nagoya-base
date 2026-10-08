@@ -1,0 +1,165 @@
+name: Deploy Survey GAS to production
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Existing survey GAS project to update
+        required: true
+        type: choice
+        options:
+          - public
+          - admin
+
+permissions:
+  contents: read
+
+concurrency:
+  group: survey-gas-production-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test survey
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the selected main commit
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run survey tests
+        run: node --test test/survey-*.test.js
+
+  deploy:
+    name: Update existing survey ${{ inputs.target }} deployment
+    needs: test
+    runs-on: ubuntu-latest
+    environment: survey-production
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      PUBLIC_SCRIPT_ID: ${{ secrets.SURVEY_PUBLIC_SCRIPT_ID }}
+      PUBLIC_DEPLOYMENT_ID: ${{ secrets.SURVEY_PUBLIC_DEPLOYMENT_ID }}
+      ADMIN_SCRIPT_ID: ${{ secrets.SURVEY_ADMIN_SCRIPT_ID }}
+      ADMIN_DEPLOYMENT_ID: ${{ secrets.SURVEY_ADMIN_DEPLOYMENT_ID }}
+    steps:
+      - name: Check out the approved main commit
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned clasp
+        run: npm install --global @google/clasp@3.4.1
+      - name: Update the existing deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "${{ inputs.target }}" in
+            public)
+              script_id="$PUBLIC_SCRIPT_ID"
+              deployment_id="$PUBLIC_DEPLOYMENT_ID"
+              ;;
+            admin)
+              script_id="$ADMIN_SCRIPT_ID"
+              deployment_id="$ADMIN_DEPLOYMENT_ID"
+              ;;
+            *)
+              echo "Unsupported target" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ -z "$CLASPRC_JSON" || -z "$script_id" || -z "$deployment_id" ]]; then
+            echo "Required survey-production secrets are not configured." >&2
+            exit 1
+          fi
+
+          auth_file="$RUNNER_TEMP/.clasprc.json"
+          remote_dir="$RUNNER_TEMP/survey-gas-remote"
+          deploy_dir="$RUNNER_TEMP/survey-gas-deploy"
+          mkdir -p "$remote_dir"
+
+          AUTH_FILE="$auth_file" PROJECT_DIR="$remote_dir" SCRIPT_ID="$script_id" \
+            CLASPRC_JSON_VALUE="$CLASPRC_JSON" node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const authJson = process.env.CLASPRC_JSON_VALUE;
+          JSON.parse(authJson);
+          fs.writeFileSync(process.env.AUTH_FILE, authJson, { mode: 0o600 });
+          fs.writeFileSync(
+            path.join(process.env.PROJECT_DIR, '.clasp.json'),
+            JSON.stringify({ scriptId: process.env.SCRIPT_ID, rootDir: '.' })
+          );
+          NODE
+
+          cd "$remote_dir"
+          echo "Running clasp list-deployments (before update)"
+          if ! deployments_before="$(clasp --auth "$auth_file" list-deployments 2>/dev/null)"; then
+            echo "clasp list-deployments failed (before update)." >&2
+            exit 1
+          fi
+          if ! grep -Fq -- "$deployment_id" <<<"$deployments_before"; then
+            echo "Configured deployment ID does not belong to the selected survey GAS project." >&2
+            exit 1
+          fi
+
+          echo "Running clasp pull"
+          if ! clasp --auth "$auth_file" pull >/dev/null 2>&1; then
+            echo "clasp pull failed." >&2
+            exit 1
+          fi
+          if [[ ! -f appsscript.json ]]; then
+            echo "Existing survey GAS project did not return appsscript.json; refusing to push." >&2
+            exit 1
+          fi
+
+          cd "$GITHUB_WORKSPACE"
+          node scripts/prepare-survey-gas-project.js \
+            "${{ inputs.target }}" "$deploy_dir"
+
+          PROJECT_DIR="$deploy_dir" SCRIPT_ID="$script_id" node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          fs.writeFileSync(
+            path.join(process.env.PROJECT_DIR, '.clasp.json'),
+            JSON.stringify({ scriptId: process.env.SCRIPT_ID, rootDir: '.' })
+          );
+          NODE
+
+          cd "$deploy_dir"
+          echo "Running clasp show-file-status"
+          if ! clasp --auth "$auth_file" show-file-status >/dev/null 2>&1; then
+            echo "clasp show-file-status failed." >&2
+            exit 1
+          fi
+
+          echo "Running clasp push --force"
+          umask 077
+          push_log="$RUNNER_TEMP/clasp-push.log"
+          trap 'rm -f "$push_log"' EXIT
+          if ! clasp --auth "$auth_file" push --force >"$push_log" 2>&1; then
+            node "$GITHUB_WORKSPACE/scripts/classify-clasp-push-error.js" "$push_log" >&2
+            exit 1
+          fi
+          rm -f "$push_log"
+
+          echo "Running clasp update-deployment"
+          if ! clasp --auth "$auth_file" update-deployment "$deployment_id" \
+            --description "main ${GITHUB_SHA}" >/dev/null 2>&1; then
+            echo "clasp update-deployment failed." >&2
+            exit 1
+          fi
+
+          echo "Running clasp list-deployments (after update)"
+          if ! deployments_after="$(clasp --auth "$auth_file" list-deployments 2>/dev/null)"; then
+            echo "clasp list-deployments failed (after update)." >&2
+            exit 1
+          fi
+          if ! grep -Fq -- "$deployment_id" <<<"$deployments_after"; then
+            echo "Existing survey deployment could not be verified after update." >&2
+            exit 1
+          fi
