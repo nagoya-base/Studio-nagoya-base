@@ -91,6 +91,11 @@ var SurveyCore = (function () {
     eachQuestion(schema, function (question) {
       fieldsOfQuestion(question).forEach(function (field) { fields.push(field); });
     });
+    /* 廃止した設問の列は、既存Spreadsheetのヘッダ・既存回答を壊さないよう元の位置に残す（新規回答では空欄）。 */
+    (schema.retiredColumns || []).forEach(function (retired) {
+      var at = fields.indexOf(retired.after);
+      if (at !== -1 && fields.indexOf(retired.field) === -1) fields.splice(at + 1, 0, retired.field);
+    });
     return fields;
   }
 
