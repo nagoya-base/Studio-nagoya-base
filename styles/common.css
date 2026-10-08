@@ -951,6 +951,82 @@ details.faq-item summary:hover {
 }
 
 /* =====================
+   改善アンケート導線（控えめな横長カード）
+===================== */
+.survey-link-section {
+  padding: 24px 0;
+}
+
+.survey-link-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  text-decoration: none;
+  transition: background 0.15s;
+}
+
+.survey-link-card:hover {
+  background: var(--bg-card);
+}
+
+.survey-link-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.survey-link-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.survey-link-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.survey-link-text,
+.survey-link-note {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.survey-link-note {
+  font-size: 0.76rem;
+}
+
+.survey-link-cta {
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.survey-link-card:hover .survey-link-cta {
+  text-decoration: underline;
+}
+
+@media (max-width: 600px) {
+  .survey-link-section {
+    padding: 20px 0;
+  }
+
+  .survey-link-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+}
+
+/* =====================
    SNS
 ===================== */
 .sns-section {

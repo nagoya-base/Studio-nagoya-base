@@ -24,6 +24,9 @@ body {
 }
 .sv-page { max-width: 640px; margin: 0 auto; padding: 16px; }
 .sv-hero { display: block; width: 100%; height: auto; border-radius: 12px; margin: 0 0 12px; }
+.sv-back { margin: 0 0 8px; font-size: 13px; }
+.sv-back a { color: var(--sv-muted); text-decoration: underline; }
+.sv-back a:hover { color: var(--sv-accent); }
 .sv-brand { margin: 4px 0 12px; color: var(--sv-muted); font-size: 13px; }
 .sv-card { background: var(--sv-card); border: 1px solid var(--sv-line); border-radius: 12px; padding: 16px; }
 .sv-title { font-size: 20px; line-height: 1.4; margin: 8px 0 12px; }
