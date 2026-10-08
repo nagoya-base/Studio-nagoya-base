@@ -259,3 +259,36 @@ test('セグメント比較の未利用者意向は初認知者も含む（Q26�
   assert.strictEqual(solo.nonUserIntentN, 2);
   assert.strictEqual(solo.nonUserIntentRate, 0.5);
 });
+
+function testRec(answers) {
+  var record = rec(answers);
+  record.is_test = 1;
+  return record;
+}
+
+test('test回答・testイベントは全集計から除外される（Issue #381）', function () {
+  var production = many(8, function (i) { return rec(i % 2 ? A.user() : A.nonuser()); });
+  production.forEach(function (r) { r.is_test = 0; });
+  production.push(Object.assign(rec(A.user()), { is_test: '' }));
+  var tests = many(30, function () { return testRec(A.user({ paid_options_interest: ['photo_equipment'], price_photo_equipment: 'y500', free_feedback: 'TESTROW' })); });
+  var prodEvents = [{ respondent_hash: 'p', step_id: 'age', is_test: '0' }, { respondent_hash: 'q', step_id: 'age' }];
+  var testEvents = many(6, function (i) { return { respondent_hash: 't' + i, step_id: 'age', is_test: '1' }; });
+
+  var base = Analytics.buildDashboard(schema, production, prodEvents, {});
+  var mixed = Analytics.buildDashboard(schema, production.concat(tests), prodEvents.concat(testEvents), {});
+  assert.strictEqual(mixed.summary.n, 9);
+  assert.deepStrictEqual(mixed, base, '本番件数・ファネル・クロス集計・WTP・セグメント比較・step reach・日別・自由記述のすべてが同一');
+  assert.strictEqual(JSON.stringify(mixed).indexOf('TESTROW'), -1);
+  assert.strictEqual(mixed.stepReach[0].count, 2);
+
+  var seg = Analytics.buildDashboard(schema, production.concat(tests), [], { segment: 'male_male' });
+  assert.deepStrictEqual(seg, Analytics.buildDashboard(schema, production, [], { segment: 'male_male' }));
+  assert.strictEqual(Analytics.stepReach(schema, testEvents).every(function (r) { return r.count === 0; }), true);
+});
+
+test('旧データ（is_test列なし／空欄）は本番として集計される', function () {
+  var legacy = many(5, function () { return rec(A.user()); });
+  legacy.forEach(function (r) { delete r.is_test; });
+  assert.strictEqual(Analytics.buildDashboard(schema, legacy, [{ respondent_hash: 'a', step_id: 'age' }], {}).summary.n, 5);
+  assert.strictEqual(Analytics.buildDashboard(schema, legacy, [{ respondent_hash: 'a', step_id: 'age' }], {}).stepReach[0].count, 1);
+});

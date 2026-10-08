@@ -24,8 +24,26 @@ Google Apps Script（GAS）の **公開Web App** と **管理者Web App** の2�
 
 > **schemaを変更したら** `survey/survey-schema.json` の `version` を上げ、公開・管理者の両GASを再デプロイしてください。
 > クライアントとGASの版が違うと、サーバーは `SCHEMA_VERSION_MISMATCH` で保存を拒否します。
-> 列が増減した場合は、`responses` / `events` シートの旧ヘッダとの不一致で書き込みが止まるため、
+> 末尾の `is_test` 以外で列が増減した場合は、`responses` / `events` シートの旧ヘッダとの不一致で書き込みが止まるため、
 > 旧シートを退避してから `setupSurveySpreadsheet()` を実行してください。
+
+## 重複回答防止と `?test=1` テストモード（Issue #381）
+
+匿名性を保つため、厳密な「1人1回答」ではなく **「同一ブラウザ環境で1回答」** を実装しています
+（別端末・別ブラウザ・シークレットモード等は防げません。氏名・メール・IP・フィンガープリントは使いません）。
+
+| 項目 | 内容 |
+| --- | --- |
+| respondent_id | 初回表示時に `crypto.randomUUID()`（無ければフォールバック）で生成し、`localStorage`（`studio_nagoya_base_survey_respondent_id_v1`）へ保存。既存の `respondent_hash` をそのまま再利用（二重管理なし） |
+| 重複判定（正） | GAS側。`responses` の**本番行**（`is_test` が 1 でない行）に同じ `respondent_hash` があれば保存せず `DUPLICATE_RESPONSE`。既存行は上書きしない |
+| 完了フラグ | 送信成功時に `studio_nagoya_base_survey_completed_v1=1`。回答済み画面を先出しするUX用で、localStorageを消されてもサーバー判定で止まる |
+| テストモード | URLが厳密に `?test=1` のときだけ。上部に `TEST MODE：この回答は本番集計に含まれません` を常時表示。重複判定・完了フラグを無視し、`is_test=1` で送信（`events` も同様） |
+| 検証 | テストモードでも年齢制限・必須・選択肢・hidden値破棄・rate limit・schema版は通常どおり。`is_test` は認証ではない |
+
+- 使い方: `/survey/?test=1`（`test=true` 等は通常モード）。テスト送信は完了フラグを立てないため、同じブラウザで続けて通常回答もできます。
+- 除外: `is_test=1` の回答・イベントは、`SurveyAnalytics.buildDashboard`（件数・分布・ファネル・クロス集計・WTP・セグメント比較・日別・自由記述・step reach）の入口で除外します。Spreadsheet上には残り、`is_test` 列で識別できます。
+- 既存Spreadsheetの移行: `responses` / `events` の**末尾**に `is_test` 列を追加しました。旧ヘッダ（`is_test` 無し）のシートは、新規回答の保存時（または `setupSurveySpreadsheet()`）にヘッダ行へ列名が追記されるだけで、既存行は変更されません。既存行の空欄は本番（0相当）として扱います。末尾以外のヘッダ不一致は従来どおり `SCHEMA_MISMATCH` で保存を止めます。
+- 旧 `duplicate:true` 応答は廃止しました（同一IDの再送は `DUPLICATE_RESPONSE`）。公開GASとGitHub Pagesの両方をデプロイしてください。
 
 ## 初期設定
 

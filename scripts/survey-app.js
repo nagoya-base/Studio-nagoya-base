@@ -6,6 +6,13 @@
  * 現行料金（schema の reveal）は、該当ステップへ到達して描画するまでDOMに存在しない。
  * 送信はContent-Type: text/plain;charset=utf-8のJSON（GAS Web AppのCORSプリフライト回避。
  * scripts/booking-app.js と同じ方針）。
+ *
+ * 重複回答防止・テストモード（Issue #381）:
+ *   - respondent_hash（= respondent_id）は localStorage に永続化したランダムUUID。個人特定には使わない。
+ *   - 通常モードは完了フラグ（localStorage）で回答済み画面を先出しするが、最終判定はGAS側の重複チェック
+ *     （DUPLICATE_RESPONSE）。localStorage を消されても二重保存されない。
+ *   - URLが厳密に ?test=1 のときだけテストモード。重複制限・完了フラグを無視し、is_test=1 で送信する
+ *     （サーバーは本番集計から除外する）。テストモードは認証ではなく、検証は通常と同じ。
  */
 (function () {
   'use strict';
@@ -22,8 +29,31 @@
   var isSubmitting = false;
   var locked = {};
   var eventsSent = {};
-  var respondentHash = Core.generateUuid(window.crypto);
-  var surveyPath = Core.sanitizeSurveyPath(new URLSearchParams(window.location.search).get('src') || '');
+  var query = new URLSearchParams(window.location.search);
+  var surveyPath = Core.sanitizeSurveyPath(query.get('src') || '');
+  var RESPONDENT_ID_KEY = 'studio_nagoya_base_survey_respondent_id_v1';
+  var COMPLETED_KEY = 'studio_nagoya_base_survey_completed_v1';
+  var ALREADY_ANSWERED_MESSAGE = 'このブラウザからはすでに回答済みです。ご協力ありがとうございました。';
+  var TEST_MODE_MESSAGE = 'TEST MODE：この回答は本番集計に含まれません';
+  /* ?test=1 だけをテストモードにする（test=true 等は通常モード）。 */
+  var testMode = query.get('test') === '1';
+
+  /* localStorage はプライベートモード等で例外になり得るため、必ず try/catch で包む（使えなければ無視）。 */
+  function storageGet(key) {
+    try { return window.localStorage.getItem(key); } catch (e) { return null; }
+  }
+  function storageSet(key, value) {
+    try { window.localStorage.setItem(key, value); } catch (e) { /* 保存できない環境ではサーバー判定のみになる */ }
+  }
+
+  function loadRespondentId() {
+    var stored = storageGet(RESPONDENT_ID_KEY);
+    if (Core.isValidRespondentHash(stored)) return stored;
+    var created = Core.generateUuid(window.crypto);
+    storageSet(RESPONDENT_ID_KEY, created);
+    return created;
+  }
+  var respondentHash = loadRespondentId();
 
   var MESSAGES = {
     REQUIRED: 'この項目は回答が必要です。',
@@ -38,7 +68,8 @@
     VALIDATION_FAILED: '入力内容に不備がありました。各ステップの内容を確認してください。',
     AGE_NOT_ELIGIBLE: 'このアンケートは18歳以上の方を対象としています。',
     RATE_LIMITED: 'アクセスが集中しています。少し時間をおいてからもう一度お試しください。',
-    BUSY: '混み合っています。少し時間をおいてからもう一度お試しください。'
+    BUSY: '混み合っています。少し時間をおいてからもう一度お試しください。',
+    DUPLICATE_RESPONSE: ALREADY_ANSWERED_MESSAGE
   };
 
   function h(tag, attrs, children) {
@@ -74,11 +105,23 @@
     }).then(function (response) { return response.json(); });
   }
 
+  /* テストモードのときだけ is_test=1 を付ける（通常モードは項目自体を送らない＝本番扱い）。 */
+  function withTestFlag(payload) {
+    if (testMode) payload.is_test = 1;
+    return payload;
+  }
+
+  function showTestBanner() {
+    if (!testMode || document.getElementById('sv-test-banner')) return;
+    var banner = h('div', { 'class': 'sv-test-banner', id: 'sv-test-banner', role: 'status', text: TEST_MODE_MESSAGE });
+    root.parentNode.insertBefore(banner, root.parentNode.firstChild);
+  }
+
   /* 匿名のステップ到達イベント（離脱計測）。失敗してもアンケート自体は止めない。 */
   function sendStepEvent(stepId) {
     if (eventsSent[stepId]) return;
     eventsSent[stepId] = true;
-    post('event', { schema_version: schema.version, respondent_hash: respondentHash, step_id: stepId })
+    post('event', withTestFlag({ schema_version: schema.version, respondent_hash: respondentHash, step_id: stepId }))
       .then(function () {}, function () {});
   }
 
@@ -96,9 +139,11 @@
 
   function renderEnd(kind) {
     clear();
-    var message = kind === 'underage' ? [schema.meta.underageMessage] : schema.meta.completeMessage;
+    var message = kind === 'underage' ? [schema.meta.underageMessage]
+      : kind === 'answered' ? [ALREADY_ANSWERED_MESSAGE] : schema.meta.completeMessage;
+    var heading = kind === 'underage' ? '回答の対象外です' : kind === 'answered' ? '回答済みです' : '完了しました';
     var box = h('section', { 'class': 'sv-card sv-end', tabindex: '-1', id: 'sv-end' }, [
-      h('h1', { text: kind === 'underage' ? '回答の対象外です' : '完了しました' })
+      h('h1', { text: heading })
     ].concat(paragraphs(message)));
     root.appendChild(box);
     box.focus();
@@ -330,15 +375,25 @@
     button.textContent = '送信中…';
     showSubmitError('');
 
-    post('submit', {
+    post('submit', withTestFlag({
       schema_version: schema.version,
       respondent_hash: respondentHash,
       survey_path: surveyPath,
       answers: processed.answers
-    }).then(function (result) {
+    })).then(function (result) {
       isSubmitting = false;
-      if (result && result.success === true) { renderEnd('complete'); return; }
+      if (result && result.success === true) {
+        /* テスト送信では完了フラグを立てない（同じブラウザで通常回答をブロックしないため）。 */
+        if (!testMode) storageSet(COMPLETED_KEY, '1');
+        renderEnd('complete');
+        return;
+      }
       var code = result && result.error && result.error.code;
+      if (code === 'DUPLICATE_RESPONSE' && !testMode) {
+        storageSet(COMPLETED_KEY, '1');
+        renderEnd('answered');
+        return;
+      }
       failSubmit(code === 'NOT_CONFIGURED' ? 'アンケートは現在準備中です。公開までしばらくお待ちください。'
         : SUBMIT_ERRORS[code] || '送信できませんでした。時間をおいてもう一度お試しください。');
     }, function () {
@@ -365,6 +420,9 @@
     .then(function (loaded) {
       schema = loaded;
       root.removeAttribute('aria-busy');
+      showTestBanner();
+      /* 通常モードで回答済みなら開始前に案内（UX用。最終判定はサーバー）。テストモードはブロックしない。 */
+      if (!testMode && storageGet(COMPLETED_KEY) === '1') { renderEnd('answered'); return; }
       normalize();
       start();
     })

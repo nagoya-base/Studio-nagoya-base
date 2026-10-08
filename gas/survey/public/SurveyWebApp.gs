@@ -11,6 +11,9 @@
  *
  * クライアントの送信値は信用せず、SurveyCore.validateSubmission でschemaに基づき再検証する
  * （表示条件外の値の破棄・排他・必須・上限・schema外フィールドの無視・18歳未満の拒否）。
+ * 重複回答防止（Issue #381）: 通常回答は同じrespondent_hashの本番回答が既にあれば DUPLICATE_RESPONSE で拒否する。
+ * payloadの is_test=1（画面の ?test=1）は重複判定を行わず is_test=1 で保存する（本番集計からは除外）。
+ * is_test は認証ではなく、検証・年齢制限・rate limitは通常と同じ。
  * 管理者機能（集計・自由記述の閲覧）はこのプロジェクトに一切含めない。
  */
 'use strict';
@@ -83,7 +86,7 @@ function handleSurveySubmit_(payload, now) {
   }
   var saved = SurveyRepository.appendResponse(result.record, now);
   if (!saved.success) return surveyError_(saved.error.code);
-  return { success: true, duplicate: !!saved.duplicate };
+  return { success: true };
 }
 
 /* ステップ到達イベント。step_idはschemaのステップIDのみ受け付け、個人情報は受け取らない。 */
@@ -91,7 +94,7 @@ function handleSurveyEvent_(payload, now) {
   if (!SurveyCore.isValidRespondentHash(payload.respondent_hash)) return surveyError_('INVALID_RESPONDENT');
   var known = SURVEY_SCHEMA.steps.some(function (step) { return step.id === payload.step_id; });
   if (!known) return surveyError_('INVALID_STEP');
-  var saved = SurveyRepository.appendEvent(payload.respondent_hash, payload.step_id, now);
+  var saved = SurveyRepository.appendEvent(payload.respondent_hash, payload.step_id, now, SurveyCore.normalizeTestFlag(payload.is_test) === 1);
   if (!saved.success) return surveyError_(saved.error.code);
   return { success: true };
 }

@@ -69,3 +69,10 @@ body {
   .sv-page { padding: 12px; }
   .sv-card { padding: 12px; }
 }
+
+/* テストモード（?test=1。Issue #381）: 本番回答と取り違えないよう、画面上部に常時表示する。 */
+.sv-test-banner {
+  position: sticky; top: 0; z-index: 10; margin: 0; padding: 10px 16px;
+  background: #b42318; color: #fff; font-size: 14px; font-weight: 700; text-align: center;
+  overflow-wrap: anywhere;
+}

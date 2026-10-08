@@ -285,11 +285,15 @@ var SurveyAnalytics = (function () {
     return jst.toISOString().slice(0, 10);
   }
 
+  function excludeTest(rows) {
+    return (rows || []).filter(function (row) { return !core().isTestFlag(row && row.is_test); });
+  }
+
   /* ステップ到達数（離脱計測）。events: [{respondent_hash, step_id}]。同一respondentの重複は1回。 */
   function stepReach(schema, events) {
     var seen = {};
     var counts = {};
-    events.forEach(function (event) {
+    excludeTest(events).forEach(function (event) {
       var key = event.respondent_hash + '|' + event.step_id;
       if (seen[key]) return;
       seen[key] = true;
@@ -308,7 +312,11 @@ var SurveyAnalytics = (function () {
    * 自由記述は日付(JST)単位に丸めた投稿日とともに返す。個別のtimestampは返さない。
    * records: rowToRecord済み＋ timestamp(Date|string|undefined)。
    */
-  function buildDashboard(schema, allRecords, events, filter) {
+  function buildDashboard(schema, rawRecords, rawEvents, filter) {
+    /* test回答・testイベント（is_test=1。Issue #381）は、すべての集計の入口で除外する。
+       件数・ファネル・クロス集計・WTP・セグメント比較・自由記述・日別・step reachはここから下流のみ。 */
+    var allRecords = excludeTest(rawRecords);
+    var events = excludeTest(rawEvents);
     var segment = filter && filter.segment && filter.segment !== 'all' ? filter.segment : null;
     var records = segment ? allRecords.filter(function (r) { return r.usage_segment === segment; }) : allRecords;
     var analysis = schema.analysis;
@@ -390,6 +398,7 @@ var SurveyAnalytics = (function () {
     priceAcceptance: priceAcceptance,
     segmentComparison: segmentComparison,
     stepReach: stepReach,
+    excludeTest: excludeTest,
     buildDashboard: buildDashboard,
     jstDate: jstDate
   };

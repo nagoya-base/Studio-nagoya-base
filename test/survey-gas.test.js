@@ -51,7 +51,7 @@ test('setup: schemaから responses / events / questions / settings を作る（
   setup(project);
   setup(project);
   assert.deepStrictEqual(project.sheets.responses._rows[0], Core.responseColumns(schema));
-  assert.deepStrictEqual(project.sheets.events._rows[0], ['timestamp', 'respondent_hash', 'step_id']);
+  assert.deepStrictEqual(project.sheets.events._rows[0], ['timestamp', 'respondent_hash', 'step_id', 'is_test']);
   assert.ok(project.sheets.questions._rows.length > 30);
   assert.strictEqual(project.sheets.settings._rows[1][1], String(schema.version));
 });
@@ -59,7 +59,7 @@ test('setup: schemaから responses / events / questions / settings を作る（
 test('submit: 検証済みの行を保存し、定義外・条件外の値は保存しない', function () {
   var project = loadSurveyProject('public');
   var result = call(project, 'submit', body(A.nonuser({ evil: 'x', visit_count: 'once', reuse_intent: 'definitely' }), { survey_path: 'x_main' }));
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), { success: true, duplicate: false });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), { success: true });
   var rows = project.sheets.responses._rows;
   assert.strictEqual(rows.length, 2);
   var columns = rows[0];
@@ -97,16 +97,151 @@ test('submit: 不正JSON・過大・schema版不一致・未知アクション�
   assert.strictEqual(project.sheets.responses, undefined);
 });
 
-test('二重送信防止: 同じrespondent_hashは1行だけ', function () {
+function rowObjects(project) {
+  var rows = project.sheets.responses._rows;
+  return rows.slice(1).map(function (r) {
+    var o = {};
+    rows[0].forEach(function (c, i) { o[c] = r[i]; });
+    return o;
+  });
+}
+var OTHER_HASH = '123e4567-e89b-42d3-a456-426614174999';
+
+test('重複回答防止: 同じrespondent_hashの2回目は DUPLICATE_RESPONSE で拒否し、行を増やさず既存行も上書きしない', function () {
   var project = loadSurveyProject('public');
-  assert.strictEqual(call(project, 'submit', body(A.user())).duplicate, false);
-  var second = call(project, 'submit', body(A.user()));
-  assert.strictEqual(second.success, true);
-  assert.strictEqual(second.duplicate, true);
+  assert.strictEqual(call(project, 'submit', body(A.user())).success, true);
+  var before = JSON.stringify(project.sheets.responses._rows);
+  var second = call(project, 'submit', body(A.nonuser()));
+  assert.strictEqual(second.success, false);
+  assert.strictEqual(second.error.code, 'DUPLICATE_RESPONSE');
   assert.strictEqual(project.sheets.responses._rows.length, 2);
-  var other = call(project, 'submit', JSON.stringify({ schema_version: schema.version, respondent_hash: '123e4567-e89b-42d3-a456-426614174999', answers: A.user() }));
-  assert.strictEqual(other.duplicate, false);
+  assert.strictEqual(JSON.stringify(project.sheets.responses._rows), before, '既存行は変更されない');
+  var other = call(project, 'submit', JSON.stringify({ schema_version: schema.version, respondent_hash: OTHER_HASH, answers: A.user() }));
+  assert.strictEqual(other.success, true);
   assert.strictEqual(project.sheets.responses._rows.length, 3);
+});
+
+test('is_test: 通常回答は 0、?test=1 の回答は 1 で保存される', function () {
+  var project = loadSurveyProject('public');
+  call(project, 'submit', body(A.user()));
+  call(project, 'submit', body(A.user(), { is_test: 1 }));
+  var rows = rowObjects(project);
+  assert.deepStrictEqual(rows.map(function (r) { return String(r.is_test); }), ['0', '1']);
+  assert.strictEqual(Core.isTestFlag(rows[0].is_test), false);
+  assert.strictEqual(Core.isTestFlag(rows[1].is_test), true);
+});
+
+test('is_test: "1"や"true"など厳密な1/true以外は本番扱い（クライアント値の曖昧解釈をしない）', function () {
+  var project = loadSurveyProject('public');
+  ['1', 'true', 2, null, 'yes'].forEach(function (value, i) {
+    call(project, 'submit', JSON.stringify({ schema_version: schema.version, respondent_hash: '123e4567-e89b-42d3-a456-42661417410' + i, is_test: value, answers: A.user() }));
+  });
+  rowObjects(project).forEach(function (r) { assert.strictEqual(String(r.is_test), '0'); });
+});
+
+test('テストモード: 同じrespondent_hashで何度でも保存でき、本番の重複判定にも数えない', function () {
+  var project = loadSurveyProject('public');
+  assert.strictEqual(call(project, 'submit', body(A.user(), { is_test: 1 })).success, true);
+  assert.strictEqual(call(project, 'submit', body(A.user(), { is_test: 1 })).success, true);
+  assert.strictEqual(call(project, 'submit', body(A.user(), { is_test: 1 })).success, true);
+  assert.strictEqual(project.sheets.responses._rows.length, 4);
+  /* 先にテストしたブラウザでも、通常回答は1回だけ保存できる */
+  assert.strictEqual(call(project, 'submit', body(A.user())).success, true);
+  assert.strictEqual(call(project, 'submit', body(A.user())).error.code, 'DUPLICATE_RESPONSE');
+  assert.strictEqual(project.sheets.responses._rows.length, 5);
+  /* 本番回答の後にテストしても保存できる */
+  assert.strictEqual(call(project, 'submit', body(A.user(), { is_test: 1 })).success, true);
+  assert.strictEqual(project.sheets.responses._rows.length, 6);
+});
+
+test('テストモードでもサーバー側検証は緩めない（18歳未満・必須不足・不正値・schema版・rate limit）', function () {
+  var project = loadSurveyProject('public', { properties: { SURVEY_RATE_LIMIT_PER_MINUTE: '4' } });
+  assert.strictEqual(call(project, 'submit', body(A.user({ age_screening: 'under_18' }), { is_test: 1 })).error.code, 'AGE_NOT_ELIGIBLE');
+  assert.strictEqual(call(project, 'submit', body(A.user({ usage_status: 'zzz' }), { is_test: 1 })).error.code, 'VALIDATION_FAILED');
+  var missing = A.user();
+  delete missing.prefecture;
+  assert.strictEqual(call(project, 'submit', body(missing, { is_test: 1 })).error.code, 'VALIDATION_FAILED');
+  assert.strictEqual(call(project, 'submit', JSON.stringify({ schema_version: 999, respondent_hash: HASH, is_test: 1, answers: A.user() })).error.code, 'SCHEMA_VERSION_MISMATCH');
+  assert.strictEqual(call(project, 'submit', JSON.stringify({ schema_version: schema.version, respondent_hash: 'bad', is_test: 1, answers: A.user() })).error.code, 'VALIDATION_FAILED');
+  assert.strictEqual(call(project, 'submit', body(A.user(), { is_test: 1 })).error.code, 'RATE_LIMITED');
+  assert.strictEqual(project.sheets.responses, undefined, '拒否されたtest送信は何も保存しない');
+});
+
+test('testモードの条件外の値は通常どおり破棄される（hidden値破棄）', function () {
+  var project = loadSurveyProject('public');
+  call(project, 'submit', body(A.nonuser({ visit_count: 'once', reuse_intent: 'definitely' }), { is_test: 1 }));
+  var row = rowObjects(project)[0];
+  assert.strictEqual(row.visit_count, '');
+  assert.strictEqual(row.reuse_intent, '');
+});
+
+test('event: is_test=1 のイベントは is_test=1 で保存され、通常イベントは 0', function () {
+  var project = loadSurveyProject('public');
+  call(project, 'event', JSON.stringify({ schema_version: schema.version, respondent_hash: HASH, step_id: 'privacy', is_test: 1 }));
+  call(project, 'event', JSON.stringify({ schema_version: schema.version, respondent_hash: HASH, step_id: 'privacy' }));
+  var rows = project.sheets.events._rows;
+  assert.deepStrictEqual([rows[1][3], rows[2][3]], ['1', '0']);
+});
+
+/* 旧Spreadsheet（is_test列なし）を再現する。旧ヘッダ＋旧行を直接書く。 */
+function legacySheets(project) {
+  var oldResponses = Core.responseColumns(schema).slice(0, -1);
+  project.sandbox.__old = oldResponses;
+  project.run('SpreadsheetApp.openById("ss-survey").insertSheet("responses")');
+  project.run('SpreadsheetApp.openById("ss-survey").insertSheet("events")');
+  var res = project.sheets.responses;
+  res.insertColumnsAfter(26, oldResponses.length - 26);
+  res.getRange(1, 1, 1, oldResponses.length).setValues([oldResponses]);
+  var rec = Core.validateSubmission(schema, { respondent_hash: HASH, survey_path: 'old', answers: A.user() }).record;
+  var legacyRow = Core.recordToRow(schema, rec, '2026-10-01T00:00:00.000Z').slice(0, oldResponses.length);
+  res.getRange(2, 1, 1, legacyRow.length).setValues([legacyRow]);
+  var ev = project.sheets.events;
+  ev.getRange(1, 1, 1, 3).setValues([['timestamp', 'respondent_hash', 'step_id']]);
+  ev.getRange(2, 1, 1, 3).setValues([['2026-10-01T00:00:00.000Z', HASH, 'privacy']]);
+  return JSON.stringify([res._rows, ev._rows]);
+}
+
+test('既存Spreadsheet互換: is_test列の無い旧ヘッダでも新規保存でき、既存行は変更されず、ヘッダだけ追記される', function () {
+  var project = loadSurveyProject('public');
+  var before = JSON.parse(legacySheets(project));
+  var result = call(project, 'submit', body(A.user(), { survey_path: 'new' }));
+  /* 旧行(=本番扱い)と同じrespondent_hashなので通常回答は重複として拒否される */
+  assert.strictEqual(result.error.code, 'DUPLICATE_RESPONSE');
+  var fresh = call(project, 'submit', JSON.stringify({ schema_version: schema.version, respondent_hash: OTHER_HASH, answers: A.user() }));
+  assert.strictEqual(fresh.success, true);
+  var rows = project.sheets.responses._rows;
+  assert.strictEqual(rows.length, 3);
+  assert.deepStrictEqual(rows[0], Core.responseColumns(schema), 'ヘッダへis_testが追記される');
+  assert.deepStrictEqual(rows[1], before[0][1], '既存回答行は削除・上書きされない');
+  assert.strictEqual(rows[2][rows[0].indexOf('is_test')], '0');
+  /* テスト送信は旧行と同じIDでも保存でき、旧行は上書きされない */
+  assert.strictEqual(call(project, 'submit', body(A.user(), { is_test: 1 })).success, true);
+  assert.deepStrictEqual(project.sheets.responses._rows[1], before[0][1]);
+  assert.strictEqual(project.sheets.responses._rows.length, 4);
+  /* events も同様 */
+  assert.strictEqual(call(project, 'event', JSON.stringify({ schema_version: schema.version, respondent_hash: HASH, step_id: 'privacy', is_test: 1 })).success, true);
+  var events = project.sheets.events._rows;
+  assert.deepStrictEqual(events[0], Core.eventColumns());
+  assert.deepStrictEqual(events[1], before[1][1]);
+  assert.strictEqual(events[2][3], '1');
+});
+
+test('既存Spreadsheet互換: setupSurveySpreadsheet は旧ヘッダへis_test列を追記し、既存行を保持する（冪等）', function () {
+  var project = loadSurveyProject('public');
+  var before = JSON.parse(legacySheets(project));
+  setup(project);
+  setup(project);
+  assert.deepStrictEqual(project.sheets.responses._rows[0], Core.responseColumns(schema));
+  assert.deepStrictEqual(project.sheets.responses._rows[1], before[0][1]);
+  assert.deepStrictEqual(project.sheets.events._rows[0], Core.eventColumns());
+});
+
+test('旧ヘッダの途中がずれていれば従来どおり SCHEMA_MISMATCH（末尾is_test以外は緩めない）', function () {
+  var project = loadSurveyProject('public');
+  legacySheets(project);
+  project.sheets.responses._rows[0][5] = 'tampered';
+  assert.strictEqual(call(project, 'submit', body(A.user())).error.code, 'INTERNAL_ERROR');
+  assert.strictEqual(project.sheets.responses._rows.length, 2);
 });
 
 test('ロック取得失敗時は BUSY を返し保存しない', function () {
@@ -136,7 +271,7 @@ test('event: schemaのステップIDのみ受け付ける', function () {
   var project = loadSurveyProject('public');
   var ok = call(project, 'event', JSON.stringify({ schema_version: schema.version, respondent_hash: HASH, step_id: 'privacy' }));
   assert.strictEqual(ok.success, true);
-  assert.deepStrictEqual(project.sheets.events._rows[1].slice(1), [HASH, 'privacy']);
+  assert.deepStrictEqual(project.sheets.events._rows[1].slice(1), [HASH, 'privacy', '0']);
   assert.strictEqual(call(project, 'event', JSON.stringify({ schema_version: schema.version, respondent_hash: HASH, step_id: 'nope' })).error.code, 'INVALID_STEP');
   assert.strictEqual(call(project, 'event', JSON.stringify({ schema_version: schema.version, respondent_hash: 'x', step_id: 'privacy' })).error.code, 'INVALID_RESPONDENT');
   assert.strictEqual(project.sheets.events._rows.length, 2);
@@ -158,7 +293,7 @@ test('doGet/doPost: JSONを返し、Spreadsheet IDやschemaを露出しない', 
   assert.ok(!/ss-survey|steps|analysis/.test(get.text));
   project.sandbox.__e = { parameter: { action: 'submit' }, postData: { contents: body(A.user()) } };
   var post = project.run('doPost(__e)');
-  assert.deepStrictEqual(JSON.parse(post.text), { success: true, duplicate: false });
+  assert.deepStrictEqual(JSON.parse(post.text), { success: true });
   assert.ok(!/ss-survey/.test(post.text));
   project.sandbox.__e = { parameter: {}, postData: { contents: '{}' } };
   assert.strictEqual(JSON.parse(project.run('doPost(__e)').text).error.code, 'SCHEMA_VERSION_MISMATCH');
@@ -204,6 +339,44 @@ test('管理者: 許可されたアカウントだけがダッシュボードを
   assert.strictEqual(dashboard.freeText[0].free_feedback, '<img src=x onerror=alert(1)>', 'サーバーは生文字列を返し、画面側でtextContent表示する');
   var filtered = JSON.parse(admin.run('JSON.stringify(getSurveyDashboard({segment:"male_male"}))'));
   assert.strictEqual(filtered.summary.n, 3);
+});
+
+test('管理者: test回答・testイベントは件数・ファネル・クロス集計・WTP・step reach・日別・自由記述から除外される', function () {
+  var admin = loadSurveyProject('admin', { activeEmail: 'owner@example.com', properties: { SURVEY_ADMIN_EMAILS: 'owner@example.com' } });
+  seedResponses(admin, 6);
+  var baseline = JSON.parse(admin.run('JSON.stringify(getSurveyDashboard({segment:"all"}))'));
+  var sheet = admin.sheets.responses;
+  /* test回答を多数混ぜる（free_feedback付き・価格設問付き） */
+  for (var i = 0; i < 25; i++) {
+    var rec = Core.validateSubmission(schema, {
+      respondent_hash: '123e4567-e89b-42d3-a456-' + String(300000000000 + i), is_test: 1,
+      answers: A.user({ free_feedback: 'TESTROW', paid_options_interest: ['photo_equipment'], price_photo_equipment: 'y1000' })
+    }).record;
+    sheet._rows.push(Core.recordToRow(schema, rec, '2026-10-08T15:30:00.000Z'));
+  }
+  var events = admin.sheets.events;
+  events.getRange(2, 1, 1, 4).setValues([['2026-10-08T00:00:00.000Z', HASH, 'privacy', '0']]);
+  for (var j = 0; j < 5; j++) events.getRange(3 + j, 1, 1, 4).setValues([['2026-10-08T00:00:00.000Z', '123e4567-e89b-42d3-a456-42661417420' + j, 'privacy', '1']]);
+  var json = admin.run('JSON.stringify(getSurveyDashboard({segment:"all"}))');
+  var withTest = JSON.parse(json);
+  assert.strictEqual(withTest.summary.n, 6, '本番件数にtestが入らない');
+  assert.ok(json.indexOf('TESTROW') === -1);
+  assert.deepStrictEqual(withTest.funnels, baseline.funnels);
+  assert.deepStrictEqual(withTest.crosstabs, baseline.crosstabs);
+  assert.deepStrictEqual(withTest.priceAcceptance, baseline.priceAcceptance);
+  assert.deepStrictEqual(withTest.distributions, baseline.distributions);
+  assert.deepStrictEqual(withTest.segmentComparison, baseline.segmentComparison);
+  assert.deepStrictEqual(withTest.responsesByDate, baseline.responsesByDate);
+  var reach = withTest.stepReach.filter(function (r) { return r.id === 'privacy'; })[0];
+  assert.strictEqual(reach.count, 1, 'testイベントがstep reach/drop-offに入らない');
+});
+
+test('管理者: 旧ヘッダ（is_test列なし）のSpreadsheetでも集計でき、既存行は本番扱い', function () {
+  var admin = loadSurveyProject('admin', { activeEmail: 'owner@example.com', properties: { SURVEY_ADMIN_EMAILS: 'owner@example.com' } });
+  legacySheets(admin);
+  var dashboard = JSON.parse(admin.run('JSON.stringify(getSurveyDashboard({segment:"all"}))'));
+  assert.strictEqual(dashboard.summary.n, 1);
+  assert.strictEqual(dashboard.stepReach.filter(function (r) { return r.id === 'privacy'; })[0].count, 1);
 });
 
 test('管理画面HTMLは自由記述をinnerHTMLへ入れずtextContentで出す', function () {

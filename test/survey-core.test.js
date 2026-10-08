@@ -53,7 +53,7 @@ test('schema: responses列がIssue #374の列定義と一致する（completion_
     'price_photo_equipment price_shower price_amenities price_early_late privacy_needs privacy_needs_other visit_count reuse_intent good_points ' +
     'good_points_other improvement_points improvement_points_other nonuse_reasons nonuse_reasons_other consideration_actions snb_interest_features ' +
     'snb_interest_features_other conversion_factors conversion_factors_other snb_usage_intent_3m awareness_source awareness_source_other preferred_media ' +
-    'preferred_media_other gender_identity gender_identity_other sexual_orientation sexual_orientation_other free_feedback support_message survey_path').split(' ');
+    'preferred_media_other gender_identity gender_identity_other sexual_orientation sexual_orientation_other free_feedback support_message survey_path is_test').split(' ');
   assert.deepStrictEqual(Core.responseColumns(schema), expected);
 });
 
@@ -322,6 +322,25 @@ test('generateUuid: v4形式で、cryptoが無くても生成できる', functio
   assert.ok(Core.isValidRespondentHash(Core.generateUuid(null)));
   assert.ok(Core.isValidRespondentHash(Core.generateUuid({ getRandomValues: function (a) { for (var i = 0; i < a.length; i++) a[i] = i * 7; } })));
   assert.notStrictEqual(Core.generateUuid(null), Core.generateUuid(null));
+});
+
+test('is_test: ?test=1相当（1/true）だけ1、それ以外は0。recordToRow/rowToRecordで往復できる（Issue #381）', function () {
+  assert.strictEqual(submit(A.user(), { is_test: 1 }).record.is_test, 1);
+  assert.strictEqual(submit(A.user(), { is_test: true }).record.is_test, 1);
+  [undefined, 0, '1', 'true', 2, null, [], {}].forEach(function (value) {
+    assert.strictEqual(submit(A.user(), { is_test: value }).record.is_test, 0, String(value));
+  });
+  var test = submit(A.user(), { is_test: 1 }).record;
+  var columns = Core.responseColumns(schema);
+  assert.strictEqual(columns[columns.length - 1], 'is_test', 'is_testは末尾列（既存列の位置を動かさない）');
+  var row = Core.recordToRow(schema, test, 'T');
+  assert.strictEqual(row[columns.length - 1], '1');
+  var object = {};
+  columns.forEach(function (c, i) { object[c] = row[i]; });
+  assert.strictEqual(Core.isTestFlag(Core.rowToRecord(schema, object).is_test), true);
+  /* 旧行（列なし/空欄/0）は本番扱い */
+  [undefined, null, '', 0, '0', false].forEach(function (value) { assert.strictEqual(Core.isTestFlag(value), false); });
+  assert.deepStrictEqual(Core.eventColumns(), ['timestamp', 'respondent_hash', 'step_id', 'is_test']);
 });
 
 test('Issue #379: 早朝割引のみ残し、深夜・早朝深夜の追加料金設問は回答画面から消えている', function () {

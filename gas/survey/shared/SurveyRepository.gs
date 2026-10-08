@@ -24,21 +24,56 @@ var SurveyRepository = (function () {
     return SpreadsheetApp.openById(id);
   }
 
-  function headerMatches_(header, columns) {
-    if (header.length < columns.length) return false;
-    for (var i = 0; i < columns.length; i++) if (header[i] !== columns[i]) return false;
+  /*
+   * ヘッダ照合。先頭 (columns.length - optionalTail) 列は完全一致が必須。
+   * 末尾 optionalTail 列は「一致」または「空欄（旧Spreadsheetで未追加）」を許す（Issue #381 の is_test）。
+   */
+  function headerMatches_(header, columns, optionalTail) {
+    var required = columns.length - (optionalTail || 0);
+    for (var i = 0; i < columns.length; i++) {
+      var cell = header[i] === undefined ? '' : header[i];
+      if (cell === columns[i]) continue;
+      if (i >= required && cell === '') continue;
+      return false;
+    }
     return true;
   }
 
-  /* シートを取得（無ければ作成しヘッダを書く）。ヘッダがschemaと異なれば SCHEMA_MISMATCH で止める。 */
-  function ensureSheet_(spreadsheet, name, columns) {
+  /* シートの列数が足りなければ増やす（実Spreadsheetは範囲外のgetRange/setValuesで例外になり得る）。 */
+  function ensureColumns_(sheet, width) {
+    if (typeof sheet.getMaxColumns !== 'function') return;
+    var max = sheet.getMaxColumns();
+    if (max < width) sheet.insertColumnsAfter(max, width - max);
+  }
+
+  /* 実在する列数を超えて読まない（未追加の末尾列は空欄として扱う）。 */
+  function readWidth_(sheet, width) {
+    return typeof sheet.getMaxColumns === 'function' ? Math.min(width, sheet.getMaxColumns()) : width;
+  }
+
+  function readHeader_(sheet, width) {
+    var actual = readWidth_(sheet, width);
+    var header = sheet.getRange(1, 1, 1, actual).getValues()[0];
+    while (header.length < width) header.push('');
+    return header;
+  }
+
+  /*
+   * シートを取得（無ければ作成しヘッダを書く）。ヘッダがschemaと異なれば SCHEMA_MISMATCH で止める。
+   * 旧ヘッダ（末尾の is_test が無いだけ）は、既存行を変更せずヘッダ行へ列名を追加して移行する。
+   */
+  function ensureSheet_(spreadsheet, name, columns, optionalTail) {
     var sheet = spreadsheet.getSheetByName(name);
     if (!sheet) sheet = spreadsheet.insertSheet(name);
+    ensureColumns_(sheet, columns.length);
     if (sheet.getLastRow() === 0) {
       sheet.getRange(1, 1, 1, columns.length).setValues([columns]);
     } else {
-      var header = sheet.getRange(1, 1, 1, columns.length).getValues()[0];
-      if (!headerMatches_(header, columns)) throw new Error('SCHEMA_MISMATCH:' + name);
+      var header = readHeader_(sheet, columns.length);
+      if (!headerMatches_(header, columns, optionalTail)) throw new Error('SCHEMA_MISMATCH:' + name);
+      for (var i = columns.length - (optionalTail || 0); i < columns.length; i++) {
+        if (header[i] === '') sheet.getRange(1, i + 1, 1, 1).setValues([[columns[i]]]);
+      }
     }
     return sheet;
   }
@@ -51,14 +86,15 @@ var SurveyRepository = (function () {
     range.setValues([row]);
   }
 
+  /* 読み取りは書き込みなしで旧ヘッダ（is_test列なし）も許し、未追加列の値は空欄＝本番扱いにする。 */
   function readObjects_(sheet, columns) {
     var lastRow = sheet.getLastRow();
     if (lastRow < 2) return [];
-    var values = sheet.getRange(1, 1, lastRow, columns.length).getValues();
-    if (!headerMatches_(values[0], columns)) throw new Error('SCHEMA_MISMATCH:' + sheet.getName());
+    var values = sheet.getRange(1, 1, lastRow, readWidth_(sheet, columns.length)).getValues();
+    if (!headerMatches_(values[0], columns, SurveyCore.optionalTailColumns)) throw new Error('SCHEMA_MISMATCH:' + sheet.getName());
     return values.slice(1).map(function (row) {
       var obj = {};
-      columns.forEach(function (column, index) { obj[column] = row[index]; });
+      columns.forEach(function (column, index) { obj[column] = row[index] === undefined ? '' : row[index]; });
       return obj;
     });
   }
@@ -84,8 +120,8 @@ var SurveyRepository = (function () {
   /* 初期設定。エディタから一度だけ手動実行する（冪等。既存データは消さない）。 */
   function setup() {
     var spreadsheet = getSpreadsheet_();
-    ensureSheet_(spreadsheet, SHEET_RESPONSES, SurveyCore.responseColumns(SURVEY_SCHEMA));
-    ensureSheet_(spreadsheet, SHEET_EVENTS, SurveyCore.eventColumns());
+    ensureSheet_(spreadsheet, SHEET_RESPONSES, SurveyCore.responseColumns(SURVEY_SCHEMA), SurveyCore.optionalTailColumns);
+    ensureSheet_(spreadsheet, SHEET_EVENTS, SurveyCore.eventColumns(), SurveyCore.optionalTailColumns);
     /* questions / settings は人が読む参照用。schemaから毎回上書きする。 */
     var questions = spreadsheet.getSheetByName(SHEET_QUESTIONS) || spreadsheet.insertSheet(SHEET_QUESTIONS);
     writeTable_(questions, questionRows_());
@@ -98,33 +134,43 @@ var SurveyRepository = (function () {
     return { success: true };
   }
 
-  /* 二重送信防止: 同じrespondent_hashが既にあれば追記せず duplicate:true を返す（冪等）。 */
+  /*
+   * 重複回答防止（Issue #381）。判定の正はここ（サーバー側）。
+   * - 通常回答: 本番行（is_test が 1 でない行。旧行の空欄を含む）に同じrespondent_hashが既にあれば、
+   *   追記せず DUPLICATE_RESPONSE を返す。既存行は上書きしない。
+   * - テスト回答（record.is_test=1）: 重複判定をせず、常に is_test=1 の行として追記する。
+   *   テスト行は本番の重複判定にも数えない（同じブラウザで先にテストしても本番回答できる）。
+   */
   function appendResponse(record, now) {
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(LOCK_WAIT_MS)) return { success: false, error: { code: 'BUSY' } };
     try {
       var columns = SurveyCore.responseColumns(SURVEY_SCHEMA);
-      var sheet = ensureSheet_(getSpreadsheet_(), SHEET_RESPONSES, columns);
+      var sheet = ensureSheet_(getSpreadsheet_(), SHEET_RESPONSES, columns, SurveyCore.optionalTailColumns);
+      var isTest = SurveyCore.isTestFlag(record.is_test);
       var lastRow = sheet.getLastRow();
-      if (lastRow >= 2) {
+      if (!isTest && lastRow >= 2) {
         var hashes = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
+        var flags = sheet.getRange(2, columns.indexOf('is_test') + 1, lastRow - 1, 1).getValues();
         for (var i = 0; i < hashes.length; i++) {
-          if (hashes[i][0] === record.respondent_hash) return { success: true, duplicate: true };
+          if (hashes[i][0] === record.respondent_hash && !SurveyCore.isTestFlag(flags[i][0])) {
+            return { success: false, error: { code: 'DUPLICATE_RESPONSE' } };
+          }
         }
       }
       appendRow_(sheet, SurveyCore.recordToRow(SURVEY_SCHEMA, record, (now || new Date()).toISOString()));
-      return { success: true, duplicate: false };
+      return { success: true };
     } finally {
       lock.releaseLock();
     }
   }
 
-  function appendEvent(respondentHash, stepId, now) {
+  function appendEvent(respondentHash, stepId, now, isTest) {
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(LOCK_WAIT_MS)) return { success: false, error: { code: 'BUSY' } };
     try {
-      var sheet = ensureSheet_(getSpreadsheet_(), SHEET_EVENTS, SurveyCore.eventColumns());
-      appendRow_(sheet, [(now || new Date()).toISOString(), respondentHash, stepId]);
+      var sheet = ensureSheet_(getSpreadsheet_(), SHEET_EVENTS, SurveyCore.eventColumns(), SurveyCore.optionalTailColumns);
+      appendRow_(sheet, [(now || new Date()).toISOString(), respondentHash, stepId, isTest ? '1' : '0']);
       return { success: true };
     } finally {
       lock.releaseLock();

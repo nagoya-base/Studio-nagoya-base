@@ -101,11 +101,24 @@ var SurveyCore = (function () {
 
   /* responsesシートの列順。schemaから生成するので、列定義をコード側に二重管理しない。 */
   function responseColumns(schema) {
-    return ['timestamp', 'respondent_hash'].concat(responseFields(schema)).concat(['survey_path']);
+    return ['timestamp', 'respondent_hash'].concat(responseFields(schema)).concat(['survey_path', 'is_test']);
   }
 
   function eventColumns() {
-    return ['timestamp', 'respondent_hash', 'step_id'];
+    return ['timestamp', 'respondent_hash', 'step_id', 'is_test'];
+  }
+
+  /* 旧Spreadsheetに無くてもよい末尾列の数（Issue #381）。ヘッダに無ければ書き込み時に追加する。 */
+  var OPTIONAL_TAIL_COLUMNS = 1;
+
+  /* テスト回答/イベントの印。1/'1'/true のみ真。空欄・0・その他は本番扱い（既存行は空欄＝本番）。 */
+  function isTestFlag(value) {
+    return value === 1 || value === '1' || value === true;
+  }
+
+  /* 送信payloadの is_test。厳密に 1 / true のときだけテスト（?test=1 のみ。"true"文字列等は本番扱い）。 */
+  function normalizeTestFlag(value) {
+    return value === 1 || value === true ? 1 : 0;
   }
 
   function emptyValueFor(question) {
@@ -339,6 +352,7 @@ var SurveyCore = (function () {
     var record = { respondent_hash: payload.respondent_hash };
     Object.keys(processed.answers).forEach(function (field) { record[field] = processed.answers[field]; });
     record.survey_path = sanitizeSurveyPath(payload.survey_path);
+    record.is_test = normalizeTestFlag(payload.is_test);
     return { ok: true, errors: [], record: record };
   }
 
@@ -444,6 +458,9 @@ var SurveyCore = (function () {
     responseFields: responseFields,
     responseColumns: responseColumns,
     eventColumns: eventColumns,
+    optionalTailColumns: OPTIONAL_TAIL_COLUMNS,
+    isTestFlag: isTestFlag,
+    normalizeTestFlag: normalizeTestFlag,
     processAnswers: processAnswers,
     stepFields: stepFields,
     stepErrors: stepErrors,
