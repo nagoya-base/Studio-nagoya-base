@@ -144,7 +144,11 @@
     var heading = kind === 'underage' ? '回答の対象外です' : kind === 'answered' ? '回答済みです' : '完了しました';
     var box = h('section', { 'class': 'sv-card sv-end', tabindex: '-1', id: 'sv-end' }, [
       h('h1', { text: heading })
-    ].concat(paragraphs(message)));
+    ].concat(paragraphs(message), [
+      h('p', { 'class': 'sv-back' }, [
+        h('a', { href: 'https://nagoya-base.github.io/Studio-nagoya-base/', text: 'Studio Nagoya Base に戻る' })
+      ])
+    ]));
     root.appendChild(box);
     box.focus();
     window.scrollTo(0, 0);
