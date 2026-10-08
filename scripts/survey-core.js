@@ -1,5 +1,5 @@
 /*
- * scripts/survey-core.js — 利用・市場調査アンケート（Issue #374）のDOM非依存コア。
+ * scripts/survey-core.js — サービス改善フィードバック（Issue #374）のDOM非依存コア。
  *
  * 設問定義の正本は survey/survey-schema.json の1ファイルのみ。このファイルは、そのschemaを
  * 入力として「表示条件の評価」「入力の正規化・検証」「保存行への変換」だけを行う。
