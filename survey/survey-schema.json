@@ -1,5 +1,8 @@
 {
   "version": 1,
+  "retiredColumns": [
+    { "field": "price_early_late", "after": "price_amenities" }
+  ],
   "meta": {
     "title": "Studio Nagoya Base 利用・市場調査アンケート",
     "intro": [
@@ -975,7 +978,7 @@
             },
             {
               "value": "early_late_discount",
-              "label": "早朝・夜間割引"
+              "label": "早朝割引"
             },
             {
               "value": "as_is",
@@ -1021,10 +1024,6 @@
             {
               "value": "amenities",
               "label": "タオル・アメニティ"
-            },
-            {
-              "value": "early_late",
-              "label": "早朝・深夜利用"
             },
             {
               "value": "other",
@@ -1172,49 +1171,6 @@
               "value": "free_only",
               "label": "無料なら使うが、有料なら利用しない",
               "kind": "free_only"
-            }
-          ]
-        },
-        {
-          "id": "price_early_late",
-          "type": "single",
-          "label": "早朝・深夜利用の通常料金への追加額として、利用してもよいと思う金額",
-          "required": true,
-          "showIf": {
-            "q": "paid_options_interest",
-            "includes": "early_late"
-          },
-          "options": [
-            {
-              "value": "y500",
-              "label": "＋500円程度",
-              "amount": 500
-            },
-            {
-              "value": "y1000",
-              "label": "＋1,000円程度",
-              "amount": 1000
-            },
-            {
-              "value": "y1500",
-              "label": "＋1,500円程度",
-              "amount": 1500
-            },
-            {
-              "value": "y2000",
-              "label": "＋2,000円程度",
-              "amount": 2000
-            },
-            {
-              "value": "y2000_plus",
-              "label": "＋2,000円以上でも条件次第で利用する",
-              "amount": 2000,
-              "kind": "above"
-            },
-            {
-              "value": "refuse",
-              "label": "追加料金があるなら利用しない",
-              "kind": "refuse"
             }
           ]
         }
@@ -2626,11 +2582,6 @@
         "option": "amenities",
         "question": "price_amenities",
         "label": "タオル・アメニティ"
-      },
-      {
-        "option": "early_late",
-        "question": "price_early_late",
-        "label": "早朝・深夜利用（追加額）"
       }
     ]
   }

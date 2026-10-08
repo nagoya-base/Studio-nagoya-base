@@ -195,12 +195,11 @@ test('Q12A alternative_spaces は任意で、Q12が「まだしていない／�
 
 test('有料オプション: 選択した項目の価格だけ必須。選択解除で価格回答を破棄。無料需要と支払意思を判別できる', function () {
   assert.deepStrictEqual(codes(submit(A.user({ paid_options_interest: ['shower'] })), 'price_shower'), ['REQUIRED']);
-  var ok = submit(A.user({ paid_options_interest: ['shower', 'early_late'], price_shower: 'free_only', price_early_late: 'y1000' }));
+  var ok = submit(A.user({ paid_options_interest: ['shower', 'amenities'], price_shower: 'free_only', price_amenities: 'y500' }));
   assert.strictEqual(ok.ok, true);
   assert.strictEqual(ok.record.price_shower, 'free_only');
-  var removed = submit(A.user({ paid_options_interest: ['early_late'], price_shower: 'y500', price_early_late: 'refuse' }));
+  var removed = submit(A.user({ paid_options_interest: ['amenities'], price_shower: 'y500', price_amenities: 'y500' }));
   assert.strictEqual(removed.record.price_shower, '', '選択解除した項目の価格は破棄');
-  assert.strictEqual(removed.record.price_early_late, 'refuse');
   var photo = Core.findQuestion(schema, 'price_photo_equipment');
   assert.ok(photo.options.some(function (o) { return o.kind === 'free_only'; }));
   /* 現行無料備品（照明・ミラー等）を追加サービス候補に混在させない */
@@ -323,4 +322,35 @@ test('generateUuid: v4形式で、cryptoが無くても生成できる', functio
   assert.ok(Core.isValidRespondentHash(Core.generateUuid(null)));
   assert.ok(Core.isValidRespondentHash(Core.generateUuid({ getRandomValues: function (a) { for (var i = 0; i < a.length; i++) a[i] = i * 7; } })));
   assert.notStrictEqual(Core.generateUuid(null), Core.generateUuid(null));
+});
+
+test('Issue #379: 早朝割引のみ残し、深夜・早朝深夜の追加料金設問は回答画面から消えている', function () {
+  var pricing = Core.findQuestion(schema, 'pricing_preferences');
+  assert.strictEqual(Core.findOption(pricing, 'early_late_discount').label, '早朝割引');
+  var paid = Core.findQuestion(schema, 'paid_options_interest');
+  assert.strictEqual(Core.findOption(paid, 'early_late'), null);
+  assert.strictEqual(Core.findQuestion(schema, 'price_early_late'), null);
+  var answerFacing = JSON.stringify(schema.steps);
+  assert.ok(!/深夜|夜間/.test(answerFacing), '回答画面に深夜／夜間の文言が残っていない');
+  assert.ok(!/early_late"|price_early_late/.test(JSON.stringify(schema.analysis)));
+  /* 旧選択肢を送っても必須化されず、価格列は新規回答で空欄になる */
+  var legacy = submit(A.user({ paid_options_interest: ['early_late'] }));
+  assert.ok(!legacy.ok || legacy.record.price_early_late === '');
+});
+
+test('Issue #379: 廃止列 price_early_late は既存シートのヘッダ位置に残り、新規回答では空欄', function () {
+  var columns = Core.responseColumns(schema);
+  assert.strictEqual(columns.indexOf('price_early_late'), columns.indexOf('price_amenities') + 1);
+  var ok = submit(A.user({ paid_options_interest: ['amenities'], price_amenities: 'y500' }));
+  assert.strictEqual(ok.ok, true);
+  var row = Core.recordToRow(schema, ok.record, '2026-10-08T00:00:00.000Z');
+  assert.strictEqual(row[columns.indexOf('price_early_late')], '');
+  assert.strictEqual(row.length, columns.length);
+  /* 旧データ行（early_late / price_early_late 入り）も読める */
+  var legacyRow = {};
+  columns.forEach(function (c) { legacyRow[c] = ''; });
+  legacyRow.paid_options_interest = 'shower,early_late';
+  legacyRow.price_early_late = 'y1000';
+  var rec = Core.rowToRecord(schema, legacyRow);
+  assert.deepStrictEqual(rec.paid_options_interest, ['shower', 'early_late']);
 });
