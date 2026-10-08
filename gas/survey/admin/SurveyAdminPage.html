@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Survey Admin</title>
+<style>
+  :root { --bg:#f6f6f4; --fg:#1f2328; --muted:#6b7280; --card:#fff; --line:#e1e1dc; --bar:#2f6f5e; --bar-bg:#e8efec; --low:#9aa0a6; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14161a; --fg:#e6e6e3; --muted:#9aa0a6; --card:#1d2025; --line:#33373d; --bar:#5fb39c; --bar-bg:#27312e; --low:#6b7280; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:0 16px 48px; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; }
+  main { max-width:1000px; margin:0 auto; }
+  h1 { font-size:20px; margin:20px 0 4px; }
+  h2 { font-size:17px; margin:32px 0 8px; }
+  h3 { font-size:14px; margin:0 0 8px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin:8px 0; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
+  .tile b { display:block; font-size:22px; }
+  .row { display:grid; grid-template-columns:minmax(80px,40%) 1fr 90px; gap:8px; align-items:center; margin:4px 0; font-size:13px; }
+  .bar { height:10px; background:var(--bar-bg); border-radius:5px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--bar); }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+  table { border-collapse:collapse; font-size:12px; min-width:100%; }
+  th, td { border:1px solid var(--line); padding:4px 6px; text-align:right; vertical-align:top; }
+  th:first-child, td:first-child { text-align:left; position:sticky; left:0; background:var(--card); }
+  .scroll { overflow-x:auto; }
+  td.low { color:var(--low); }
+  select { font:inherit; padding:6px 8px; min-height:40px; }
+  details { margin:6px 0; }
+  summary { cursor:pointer; padding:6px 0; }
+  .free { white-space:pre-wrap; word-break:break-word; border-top:1px solid var(--line); padding:8px 0; font-size:13px; }
+  #error { color:#b42318; }
+</style>
+</head>
+<body>
+<main>
+  <h1>アンケート管理（Studio Nagoya Base）</h1>
+  <p class="muted">n &lt; <span id="mincell">5</span> のセルは参考値（グレー表示）です。個別回答・日時は表示しません。</p>
+  <label class="muted" for="segment">利用メンバー構成で絞り込み：</label>
+  <select id="segment"><option value="all">全体</option></select>
+  <p id="error" role="alert"></p>
+  <div id="content"><p class="muted">読み込み中…</p></div>
+</main>
+<script>
+(function () {
+  'use strict';
+  var content = document.getElementById('content');
+  var segmentSelect = document.getElementById('segment');
+  var segmentsLoaded = false;
+
+  function h(tag, attrs, children) {
+    var el = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      if (k === 'text') el.textContent = attrs[k]; else el.setAttribute(k, attrs[k]);
+    });
+    (children || []).forEach(function (c) { if (c) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return el;
+  }
+  function pct(v) { return (v * 100).toFixed(1) + '%'; }
+
+  function barRows(items, n) {
+    var wrap = h('div');
+    items.forEach(function (it) {
+      wrap.appendChild(h('div', { 'class': 'row' }, [
+        h('span', { text: it.label }),
+        h('span', { 'class': 'bar' }, [h('i', { style: 'width:' + Math.round(it.share * 100) + '%' })]),
+        h('span', { 'class': 'num', text: it.count + ' (' + pct(it.share) + ')' })
+      ]));
+    });
+    wrap.appendChild(h('div', { 'class': 'muted', text: 'n=' + n }));
+    return wrap;
+  }
+
+  function section(title) { return h('h2', { text: title }); }
+
+  function renderFunnel(f) {
+    var card = h('div', { 'class': 'card' }, [h('h3', { text: f.label + '（対象 n=' + f.total + '）' })]);
+    f.stages.forEach(function (s) {
+      card.appendChild(h('div', { 'class': 'row' }, [
+        h('span', { text: s.label }),
+        h('span', { 'class': 'bar' }, [h('i', { style: 'width:' + Math.round(s.rateFromStart * 100) + '%' })]),
+        h('span', { 'class': 'num' + (s.low ? ' low' : ''), text: 'n=' + s.count + ' / 前段階比 ' + (s.low ? '参考' : pct(s.rateFromPrevious)) })
+      ]));
+    });
+    if (f.outside) {
+      card.appendChild(h('p', { 'class': 'muted', text: f.outside.label + '：n=' + f.outside.total + '／' + f.outside.metricLabel + ' n=' + f.outside.count + (f.outside.low ? '（参考）' : '（' + pct(f.outside.rate) + '）') }));
+    }
+    return card;
+  }
+
+  function renderCrosstab(ct) {
+    var det = h('details', { 'class': 'card' }, [h('summary', { text: ct.label + (ct.aux ? '' : '') })]);
+    if (ct.suppressed) { det.appendChild(h('p', { 'class': 'muted', text: 'サンプル数が不足しているため表示しません（補助クロス）。' })); return det; }
+    var head = h('tr', {}, [h('th', { text: '行 \\ 列' }), h('th', { text: '母数n' })]);
+    ct.columns.forEach(function (c) { head.appendChild(h('th', { text: c.label })); });
+    var table = h('table', {}, [h('thead', {}, [head])]);
+    var body = h('tbody');
+    ct.rows.forEach(function (r) {
+      var tr = h('tr', {}, [h('td', { text: r.label }), h('td', { text: String(r.n) })]);
+      r.cells.forEach(function (cell) {
+        tr.appendChild(h('td', { 'class': cell.low ? 'low' : '', text: cell.low ? 'n=' + cell.count + ' ※' : 'n=' + cell.count + ' (' + pct(cell.share) + ')' }));
+      });
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    det.appendChild(h('div', { 'class': 'scroll' }, [table]));
+    det.appendChild(h('p', { 'class': 'muted', text: '※ n<' + ct.minCell + ' のセルは参考値（割合は表示しません）。' }));
+    return det;
+  }
+
+  function render(d) {
+    document.getElementById('mincell').textContent = d.minCell;
+    if (!segmentsLoaded) {
+      d.segmentComparison.forEach(function (s) { segmentSelect.appendChild(h('option', { value: s.key, text: s.label })); });
+      segmentsLoaded = true;
+    }
+    content.textContent = '';
+    var s = d.summary;
+    content.appendChild(h('div', { 'class': 'tiles' }, [
+      h('div', { 'class': 'card tile' }, [h('b', { text: String(s.n) }), h('span', { 'class': 'muted', text: '有効回答数' })]),
+      h('div', { 'class': 'card tile' }, [h('b', { text: pct(s.usedRate) }), h('span', { 'class': 'muted', text: '利用経験率' })]),
+      h('div', { 'class': 'card tile' }, [h('b', { text: pct(s.preAwarenessRate) }), h('span', { 'class': 'muted', text: '事前認知率' })]),
+      h('div', { 'class': 'card tile' }, [h('b', { text: pct(s.firstTimeRate) }), h('span', { 'class': 'muted', text: '今回初認知率' })])
+    ]));
+
+    content.appendChild(section('ファネル'));
+    content.appendChild(renderFunnel(d.funnels.nonuser));
+    content.appendChild(renderFunnel(d.funnels.user));
+
+    content.appendChild(section('利用メンバー構成別の比較'));
+    var cmp = h('table', {}, [h('thead', {}, [h('tr', {}, ['構成', 'n', '利用経験率', '未利用者の利用意向', '利用者の再利用意向', '8,000円以上受容'].map(function (t) { return h('th', { text: t }); }))])]);
+    var cb = h('tbody');
+    d.segmentComparison.forEach(function (r) {
+      cb.appendChild(h('tr', {}, [
+        h('td', { text: r.label }), h('td', { text: String(r.n) }),
+        h('td', { 'class': r.low ? 'low' : '', text: r.low ? '参考' : pct(r.usedRate) }),
+        h('td', { 'class': r.low ? 'low' : '', text: r.low ? '参考' : pct(r.nonUserIntentRate) + ' (n=' + r.nonUserIntentN + ')' }),
+        h('td', { 'class': r.low ? 'low' : '', text: r.low ? '参考' : pct(r.reuseRate) + ' (n=' + r.reuseN + ')' }),
+        h('td', { 'class': r.low ? 'low' : '', text: r.low ? '参考' : pct(r.priceGe8000Rate) + ' (n=' + r.priceN + ')' })
+      ]));
+    });
+    cmp.appendChild(cb);
+    content.appendChild(h('div', { 'class': 'card scroll' }, [cmp]));
+
+    content.appendChild(section('単純集計'));
+    d.distributions.forEach(function (dist) {
+      var card = h('div', { 'class': 'card' }, [h('h3', { text: dist.label })]);
+      if (dist.split) {
+        dist.split.forEach(function (sp) { card.appendChild(h('div', { 'class': 'muted', text: sp.label })); card.appendChild(barRows(sp.dist.items, sp.dist.n)); });
+      } else {
+        card.appendChild(barRows(dist.items, dist.n));
+      }
+      content.appendChild(card);
+    });
+
+    content.appendChild(section('有料オプション：価格受容（金額P以上を許容した割合）'));
+    d.priceAcceptance.forEach(function (p) {
+      var card = h('div', { 'class': 'card' }, [h('h3', { text: p.label + '（希望 n=' + p.interested + '／希望率 ' + pct(p.interestRate) + '／価格回答 n=' + p.answered + '）' })]);
+      p.points.forEach(function (pt) {
+        card.appendChild(h('div', { 'class': 'row' }, [
+          h('span', { text: pt.amount + '円以上' }),
+          h('span', { 'class': 'bar' }, [h('i', { style: 'width:' + Math.round(pt.share * 100) + '%' })]),
+          h('span', { 'class': 'num' + (pt.low ? ' low' : ''), text: 'n=' + pt.count + (pt.low ? '' : ' (' + pct(pt.share) + ')') })
+        ]));
+      });
+      card.appendChild(h('div', { 'class': 'muted', text: '無料なら使うが有料なら使わない／追加料金なら使わない：n=' + p.freeOnly + (p.answered ? '（' + pct(p.freeOnlyRate) + '）' : '') }));
+      content.appendChild(card);
+    });
+
+    content.appendChild(section('クロス集計'));
+    d.crosstabs.filter(function (c) { return !c.aux; }).forEach(function (c) { content.appendChild(renderCrosstab(c)); });
+    content.appendChild(section('補助クロス（サンプル数が十分な場合のみ）'));
+    d.crosstabs.filter(function (c) { return c.aux; }).forEach(function (c) { content.appendChild(renderCrosstab(c)); });
+
+    content.appendChild(section('ステップ到達（離脱計測）'));
+    var reach = h('div', { 'class': 'card' });
+    d.stepReach.forEach(function (r) {
+      reach.appendChild(h('div', { 'class': 'row' }, [
+        h('span', { text: r.title }),
+        h('span', { 'class': 'bar' }, [h('i', { style: 'width:' + Math.round(r.rateFromFirst * 100) + '%' })]),
+        h('span', { 'class': 'num', text: r.count + ' (' + pct(r.rateFromFirst) + ')' })
+      ]));
+    });
+    content.appendChild(reach);
+
+    content.appendChild(section('自由記述（日付単位）'));
+    if (!d.freeText.length) content.appendChild(h('p', { 'class': 'muted', text: 'まだありません。' }));
+    d.freeText.forEach(function (f) {
+      var card = h('div', { 'class': 'card' }, [h('div', { 'class': 'muted', text: f.date })]);
+      if (f.free_feedback) card.appendChild(h('div', { 'class': 'free', text: '要望・改善：' + f.free_feedback }));
+      if (f.support_message) card.appendChild(h('div', { 'class': 'free', text: '応援：' + f.support_message }));
+      content.appendChild(card);
+    });
+  }
+
+  function load() {
+    document.getElementById('error').textContent = '';
+    google.script.run
+      .withSuccessHandler(render)
+      .withFailureHandler(function () { document.getElementById('error').textContent = '読み込みに失敗しました（権限またはデータ構成を確認してください）。'; })
+      .getSurveyDashboard({ segment: segmentSelect.value });
+  }
+  segmentSelect.addEventListener('change', load);
+  load();
+})();
+</script>
+</body>
+</html>

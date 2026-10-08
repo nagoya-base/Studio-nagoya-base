@@ -1,0 +1,14 @@
+{
+  "timeZone": "Asia/Tokyo",
+  "dependencies": {},
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "webapp": {
+    "access": "MYSELF",
+    "executeAs": "USER_ACCESSING"
+  }
+}
