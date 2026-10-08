@@ -84,6 +84,9 @@
         h('span', { 'class': 'num' + (s.low ? ' low' : ''), text: 'n=' + s.count + ' / 前段階比 ' + (s.low ? '参考' : pct(s.rateFromPrevious)) })
       ]));
     });
+    if (f.reference) {
+      card.appendChild(h('p', { 'class': 'muted', text: f.reference.label + '：n=' + f.reference.total + '／うち事前認知済み n=' + f.reference.count + '（' + pct(f.reference.rate) + '）' }));
+    }
     if (f.outside) {
       card.appendChild(h('p', { 'class': 'muted', text: f.outside.label + '：n=' + f.outside.total + '／' + f.outside.metricLabel + ' n=' + f.outside.count + (f.outside.low ? '（参考）' : '（' + pct(f.outside.rate) + '）') }));
     }
@@ -176,7 +179,8 @@
 
     content.appendChild(section('ステップ到達（離脱計測）'));
     var reach = h('div', { 'class': 'card' });
-    d.stepReach.forEach(function (r) {
+    if (!d.stepReach) reach.appendChild(h('p', { 'class': 'muted', text: 'ステップ到達は離脱者のセグメントが分からないため、「全体」表示のときだけ集計します。' }));
+    (d.stepReach || []).forEach(function (r) {
       reach.appendChild(h('div', { 'class': 'row' }, [
         h('span', { text: r.title }),
         h('span', { 'class': 'bar' }, [h('i', { style: 'width:' + Math.round(r.rateFromFirst * 100) + '%' })]),

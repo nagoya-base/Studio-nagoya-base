@@ -179,6 +179,15 @@ var SurveyAnalytics = (function () {
       return row;
     });
     var result = { label: definition.label, total: population.length, stages: stages };
+    if (definition.reference) {
+      var reference = records.filter(function (r) { return core_.evalCondition(definition.reference.population, r); });
+      result.reference = {
+        label: definition.reference.label,
+        total: reference.length,
+        count: population.length,
+        rate: reference.length ? population.length / reference.length : 0
+      };
+    }
     if (definition.outside) {
       var outside = records.filter(function (r) { return core_.evalCondition(definition.outside.population, r); });
       var hit = outside.filter(function (r) { return core_.evalCondition(definition.outside.metric.cond, r); });
@@ -248,7 +257,7 @@ var SurveyAnalytics = (function () {
     return axis.categories.map(function (cat) {
       var members = records.filter(function (r) { return r.usage_segment === cat.key; });
       var used = members.filter(function (r) { return r.usage_status === 'used'; });
-      var nonUsers = members.filter(function (r) { return core_.evalCondition(funnels.nonuser.population, r); });
+      var nonUsers = members.filter(function (r) { return core_.evalCondition(funnels.nonuser.reference.population, r); });
       var positive = nonUsers.filter(function (r) { return core_.evalCondition(stageCond(funnels.nonuser, 'intent'), r); });
       var reuse = used.filter(function (r) { return core_.evalCondition(stageCond(funnels.user, 'reuse'), r); });
       var ge8000 = members.filter(function (r) { return core_.evalCondition(stageCond(funnels.nonuser, 'price_acceptance'), r); });
@@ -365,7 +374,9 @@ var SurveyAnalytics = (function () {
       },
       segmentComparison: segmentComparison(schema, allRecords),
       crosstabs: crosstabs,
-      stepReach: stepReach(schema, events || []),
+      /* events は回答者(respondent_hash)単位でセグメントを持たない（Q6到達前の離脱者はセグメント不明）。
+         絞り込み時に全体のeventsを渡すと誤解を招くため、ステップ到達は全体表示のときだけ返す。 */
+      stepReach: segment ? null : stepReach(schema, events || []),
       responsesByDate: Object.keys(byDate).sort().map(function (d) { return { date: d, count: byDate[d] }; }),
       freeText: freeText
     };

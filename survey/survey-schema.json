@@ -2218,17 +2218,27 @@
     },
     "funnels": {
       "nonuser": {
-        "label": "未利用者ファネル",
+        "label": "未利用者ファネル（事前認知済みの未利用者が母集団）",
         "population": {
           "q": "usage_status",
-          "notIn": [
-            "used"
+          "in": [
+            "known_not_used",
+            "name_only"
           ]
+        },
+        "reference": {
+          "label": "未利用者全体（今回初めて知った回答者を含む）",
+          "population": {
+            "q": "usage_status",
+            "notIn": [
+              "used"
+            ]
+          }
         },
         "stages": [
           {
             "key": "pre_awareness",
-            "label": "事前認知",
+            "label": "事前認知（母集団）",
             "cond": {
               "q": "usage_status",
               "in": [

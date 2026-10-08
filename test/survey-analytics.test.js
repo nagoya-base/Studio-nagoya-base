@@ -49,11 +49,15 @@ test('未利用者ファネルは入れ子で、前段階通過者だけが次�
     rec(A.user())
   ];
   var funnel = Analytics.nestedFunnel(schema, records, schema.analysis.funnels.nonuser);
-  assert.strictEqual(funnel.total, 8);
+  /* 母集団は事前認知済みの未利用者のみ（初認知の2名と利用者は含めない） */
+  assert.strictEqual(funnel.total, 6);
   assert.deepStrictEqual(funnel.stages.map(function (s) { return s.count; }), [6, 5, 4, 3, 2]);
+  assert.strictEqual(stage(funnel, 'pre_awareness').rateFromStart, 1);
   assert.strictEqual(stage(funnel, 'category_demand').rateFromPrevious, 5 / 6);
   assert.strictEqual(stage(funnel, 'intent').rateFromPrevious, 2 / 3);
-  assert.strictEqual(stage(funnel, 'intent').rateFromStart, 2 / 8);
+  assert.strictEqual(stage(funnel, 'intent').rateFromStart, 2 / 6);
+  assert.strictEqual(funnel.reference.total, 8, '参考: 未利用者全体（初認知を含む）');
+  assert.strictEqual(funnel.reference.rate, 6 / 8);
   assert.strictEqual(funnel.outside.total, 2);
   assert.strictEqual(funnel.outside.count, 1);
   assert.strictEqual(funnel.outside.rate, 0.5);
@@ -235,4 +239,23 @@ test('ダッシュボードのセグメント絞り込みはファネルにも�
   assert.strictEqual(male.funnels.user.total, 2);
   assert.strictEqual(male.summary.n, 2);
   assert.strictEqual(male.segmentComparison.length, 6, '構成別比較は絞り込みに関わらず全構成を返す');
+});
+
+test('ステップ到達はセグメント絞り込み時は返さない（離脱者のセグメントが不明なため全体のみ）', function () {
+  var records = [rec(A.user({ member_composition: 'male_male' })), rec(A.nonuser({ member_composition: 'solo' }))];
+  var events = [{ respondent_hash: 'a', step_id: 'age' }, { respondent_hash: 'b', step_id: 'age' }, { respondent_hash: 'c', step_id: 'age' }];
+  var all = Analytics.buildDashboard(schema, records, events, { segment: 'all' });
+  assert.strictEqual(all.stepReach[0].count, 3);
+  var male = Analytics.buildDashboard(schema, records, events, { segment: 'male_male' });
+  assert.strictEqual(male.stepReach, null);
+});
+
+test('セグメント比較の未利用者意向は初認知者も含む（Q26は全未利用者に聞く）', function () {
+  var records = [
+    rec(A.nonuser({ member_composition: 'solo', usage_status: 'first_time', snb_usage_intent_3m: 'definitely' })),
+    rec(A.nonuser({ member_composition: 'solo', snb_usage_intent_3m: 'no' }))
+  ];
+  var solo = Analytics.segmentComparison(schema, records).filter(function (r) { return r.key === 'solo'; })[0];
+  assert.strictEqual(solo.nonUserIntentN, 2);
+  assert.strictEqual(solo.nonUserIntentRate, 0.5);
 });
