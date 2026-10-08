@@ -21,6 +21,7 @@ on:
       - '.github/workflows/booking-pr-tests.yml'
       - '.github/workflows/booking-gas-production.yml'
       - '.github/workflows/booking-gas-webhook-production.yml'
+      - '.github/workflows/survey-gas-production.yml'
 
 permissions:
   contents: read
