@@ -7,5 +7,5 @@
  * デプロイ手順は gas/survey/README.md を参照。
  */
 window.SurveyApiConfig = {
-  BASE_URL: ''
+  BASE_URL: 'https://script.google.com/macros/s/AKfycby0xcPlMcQmFzKQ7GiR3Ka34XJzR3BAO1TZZOXPHGys3uY-6dmlmkxdb54apIpFy7Cc/exec'
 };
