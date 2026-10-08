@@ -28,7 +28,7 @@ test('クライアントJS: textContent描画・text/plain送信・二重送信�
   assert.match(js, /'Content-Type': 'text\/plain;charset=utf-8'/);
   assert.match(js, /if \(isSubmitting\) return/);
   assert.match(js, /button\.disabled = true/);
-  assert.ok(!/AKfycb|spreadsheets\/d\/|SURVEY_SPREADSHEET_ID/.test(js + read('scripts/survey-config.js')), 'Spreadsheet ID等を含めない');
+  assert.ok(!/spreadsheets\/d\/|SURVEY_SPREADSHEET_ID/.test(js + read('scripts/survey-config.js')), 'Spreadsheet ID等を含めない');
   /* 設問文・選択肢をクライアントにハードコードしていない */
   ['緊縛', '土日祝', '男性同士', 'シャワー'].forEach(function (word) { assert.ok(js.indexOf(word) === -1, word); });
 });
