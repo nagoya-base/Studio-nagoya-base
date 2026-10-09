@@ -10,6 +10,9 @@ var test = require('node:test');
 var assert = require('node:assert');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
+var futureDates = require('./helpers/future-date');
+var futureJstDate = futureDates.futureJstDate;
+var futureJstMonth = futureDates.futureJstMonth;
 
 var FILES = ['Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Code.gs'];
 
@@ -69,17 +72,6 @@ test('authorizeBookingWebAppScopes: 実メールを送信せずMailApp scopeを�
   assert.deepStrictEqual(logger._logs, ['Booking Web App authorization check: OK']);
 });
 
-/* dateをAsia/Tokyo基準の'YYYY-MM-DD'へ変換する（テスト専用。本番Code.gs/Availability.gsの
-   formatDateInTimezoneとは独立した実装だが、同じ変換規則を使う）。 */
-function formatJstDate_(date) {
-  var parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
-  }).formatToParts(date);
-  var out = {};
-  parts.forEach(function (part) { if (part.type !== 'literal') out[part.type] = part.value; });
-  return out.year + '-' + out.month + '-' + out.day;
-}
-
 /*
  * doGet（Code.gs handleGetAvailability_）はnowを注入できず、実行時の実時刻(new Date())を
  * 基準に過去日拒否を行う（Issue #270 2回目レビュー対応）。そのため、正常系テストで
@@ -88,9 +80,12 @@ function formatJstDate_(date) {
  * FUTURE_DATE（Asia/Tokyo基準）を利用日として使い、実行日から独立させる
  * （Issue #270 3回目レビュー指摘対応）。FUTURE_DATE_NEXTはその翌日
  * （終日イベントが日をまたぐテスト用）。 */
-var FUTURE_BASE_MILLIS = Date.now() + 30 * 24 * 3600000;
-var FUTURE_DATE = formatJstDate_(new Date(FUTURE_BASE_MILLIS));
-var FUTURE_DATE_NEXT = formatJstDate_(new Date(FUTURE_BASE_MILLIS + 24 * 3600000));
+var FUTURE_DATE = futureJstDate(30);
+var FUTURE_DATE_NEXT = futureJstDate(31);
+/* action=monthly用の未来月（JST基準で2ヶ月先。年またぎはヘルパーが正しく扱う）。
+   固定の2026-10だと実行日が月をまたぐと過去月になりOUT_OF_RANGEへ変わるため
+   （Issue #393）、FUTURE_DATEと同様に実行時刻から算出する。 */
+var FUTURE_MONTH = futureJstMonth(2);
 
 /* FUTURE_DATE上の'HH:mm'をJSTのDateへ変換する（Calendarイベントのstart/end用）。 */
 function atFutureTime_(hhmm) {
@@ -170,18 +165,18 @@ test('doGet: 無効な日付はバリデーションエラーを返し、Calenda
 
 test('doGet: 120分未満はバリデーションエラーを返す', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
-  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '60' });
+  var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '60' });
   assert.strictEqual(body.success, false);
   assert.strictEqual(body.error.code, 'DURATION_TOO_SHORT');
 });
 
 test('doGet: durationMinutesが未指定・数値以外でもエラーになり例外を投げない', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
-  var body1 = callDoGet(sandbox, { date: '2026-10-01' });
+  var body1 = callDoGet(sandbox, { date: FUTURE_DATE });
   assert.strictEqual(body1.success, false);
   assert.strictEqual(body1.error.code, 'INVALID_DURATION');
 
-  var body2 = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: 'abc' });
+  var body2 = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: 'abc' });
   assert.strictEqual(body2.success, false);
   assert.strictEqual(body2.error.code, 'INVALID_DURATION');
 });
@@ -189,7 +184,7 @@ test('doGet: durationMinutesが未指定・数値以外でもエラーになり�
 test('doGet: durationMinutesは文字列全体が正の整数のときだけ受理する（"120abc"や"120.9"は120として通さない）', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
   ['120abc', '120.9', '0', '-5', ' 120', '120 ', '007', ''].forEach(function (rawValue) {
-    var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: rawValue });
+    var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: rawValue });
     assert.strictEqual(body.success, false, JSON.stringify(rawValue) + ' は正の整数として拒否されるべき');
     assert.strictEqual(body.error.code, 'INVALID_DURATION');
   });
@@ -208,7 +203,7 @@ test('doGet: Script Propertiesの数値項目が不正な場合はfail-closedに
 
   var body1 = callDoGet(
     loadCode({ CALENDAR_ID: 'cal1', BUFFER_MINUTES: 'abc' }, calendarsById),
-    { date: '2026-10-01', durationMinutes: '120' }
+    { date: FUTURE_DATE, durationMinutes: '120' }
   );
   assert.strictEqual(body1.success, false);
   assert.strictEqual(body1.error.code, 'INVALID_CONFIG');
@@ -218,7 +213,7 @@ test('doGet: Script Propertiesの数値項目が不正な場合はfail-closedに
 test('doGet: SLOT_STEP_MINUTES=0はINVALID_CONFIGで拒否し、無限ループ相当のタイムアウトを起こさない', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1', SLOT_STEP_MINUTES: '0' }, { cal1: { events: [] } });
   var start = Date.now();
-  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120' });
+  var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120' });
   assert.ok(Date.now() - start < 1000, 'SLOT_STEP_MINUTES=0でハングしてはいけない');
   assert.strictEqual(body.success, false);
   assert.strictEqual(body.error.code, 'INVALID_CONFIG');
@@ -226,7 +221,7 @@ test('doGet: SLOT_STEP_MINUTES=0はINVALID_CONFIGで拒否し、無限ループ�
 
 test('doGet: OPEN_TIME >= CLOSE_TIMEの誤設定はINVALID_CONFIGになる', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1', OPEN_TIME: '23:00', CLOSE_TIME: '08:00' }, { cal1: { events: [] } });
-  var body = callDoGet(sandbox, { date: '2026-10-01', durationMinutes: '120' });
+  var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120' });
   assert.strictEqual(body.success, false);
   assert.strictEqual(body.error.code, 'INVALID_CONFIG');
 });
@@ -249,7 +244,7 @@ test('doGet: Script Propertiesの数値項目が"15abc"のような部分一致�
     { BUFFER_MINUTES: '15.5' }
   ].forEach(function (badProperty) {
     var properties = Object.assign({ CALENDAR_ID: 'cal1' }, badProperty);
-    var body = callDoGet(loadCode(properties, calendarsById), { date: '2026-10-01', durationMinutes: '120' });
+    var body = callDoGet(loadCode(properties, calendarsById), { date: FUTURE_DATE, durationMinutes: '120' });
     assert.strictEqual(body.success, false, JSON.stringify(badProperty) + ' はINVALID_CONFIGとして拒否されるべき');
     assert.strictEqual(body.error.code, 'INVALID_CONFIG');
   });
@@ -258,7 +253,7 @@ test('doGet: Script Propertiesの数値項目が"15abc"のような部分一致�
 
 test('doGet: レスポンスはJSON MIMEタイプで返す', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
-  var output = sandbox.doGet({ parameter: { date: '2026-10-01', durationMinutes: '120' } });
+  var output = sandbox.doGet({ parameter: { date: FUTURE_DATE, durationMinutes: '120' } });
   assert.strictEqual(output.mimeType, 'JSON');
 });
 
@@ -299,12 +294,12 @@ test('doGet: action=monthlyでgetMonthlyAvailabilityへ配線される。calenda
     }
   };
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, calendarsById);
-  var body = callDoGet(sandbox, { action: 'monthly', year: '2026', month: '10', durationMinutes: '120', brand: 'studio_x' });
+  var body = callDoGet(sandbox, { action: 'monthly', year: FUTURE_MONTH.yearParam, month: FUTURE_MONTH.monthParam, durationMinutes: '120', brand: 'studio_x' });
 
   assert.strictEqual(body.success, true);
-  assert.strictEqual(body.month, '2026-10');
+  assert.strictEqual(body.month, FUTURE_MONTH.monthString);
   assert.strictEqual(body.brand, 'studio_x');
-  assert.strictEqual(Object.keys(body.days).length, 31);
+  assert.strictEqual(Object.keys(body.days).length, FUTURE_MONTH.daysInMonth);
   assert.strictEqual(getEventsCallCount, 1, '月間取得でCalendar.getEvents()は1回だけ呼ばれるべき（31回連続アクセス禁止）');
 });
 
@@ -324,7 +319,7 @@ test('doGet: action=monthlyは無効な年月・利用時間をバリデーシ�
   assert.strictEqual(badMonth.success, false);
   assert.strictEqual(badMonth.error.code, 'INVALID_MONTH');
 
-  var badDuration = callDoGet(sandbox, { action: 'monthly', year: '2026', month: '10', durationMinutes: '60' });
+  var badDuration = callDoGet(sandbox, { action: 'monthly', year: FUTURE_MONTH.yearParam, month: FUTURE_MONTH.monthParam, durationMinutes: '60' });
   assert.strictEqual(badDuration.success, false);
   assert.strictEqual(badDuration.error.code, 'DURATION_TOO_SHORT');
 
@@ -348,7 +343,7 @@ test('doGet: action=monthlyは既存の空きを正しく塞ぐ（単日getAvail
 
 test('doGet: レスポンスはJSON MIMEタイプで返す（action=monthly）', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
-  var output = sandbox.doGet({ parameter: { action: 'monthly', year: '2026', month: '10', durationMinutes: '120' } });
+  var output = sandbox.doGet({ parameter: { action: 'monthly', year: FUTURE_MONTH.yearParam, month: FUTURE_MONTH.monthParam, durationMinutes: '120' } });
   assert.strictEqual(output.mimeType, 'JSON');
 });
 
@@ -361,18 +356,18 @@ test('doGet: レスポンスはJSON MIMEタイプで返す（action=monthly）',
 test('doGet: action=monthlyはtimeBandクエリパラメータをgetMonthlyAvailabilityへ渡す（6時間利用+eveningは0件でFULL）', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
   var body = callDoGet(sandbox, {
-    action: 'monthly', year: '2026', month: '10', durationMinutes: '360', brand: 'studio_x', timeBand: 'evening'
+    action: 'monthly', year: FUTURE_MONTH.yearParam, month: FUTURE_MONTH.monthParam, durationMinutes: '360', brand: 'studio_x', timeBand: 'evening'
   });
   assert.strictEqual(body.success, true);
-  assert.strictEqual(body.days['2026-10-01'].status, 'FULL');
-  assert.strictEqual(body.days['2026-10-01'].availableStartTimes, 0);
+  assert.strictEqual(body.days[FUTURE_MONTH.firstDay].status, 'FULL');
+  assert.strictEqual(body.days[FUTURE_MONTH.firstDay].availableStartTimes, 0);
 });
 
 test('doGet: action=monthlyはtimeBand未指定・不正値をallへフォールバックする（デプロイ過渡期の旧フロント互換）', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
-  var withoutTimeBand = callDoGet(sandbox, { action: 'monthly', year: '2026', month: '10', durationMinutes: '120' });
-  var withExplicitAll = callDoGet(sandbox, { action: 'monthly', year: '2026', month: '10', durationMinutes: '120', timeBand: 'all' });
-  var withInvalidTimeBand = callDoGet(sandbox, { action: 'monthly', year: '2026', month: '10', durationMinutes: '120', timeBand: 'bogus' });
+  var withoutTimeBand = callDoGet(sandbox, { action: 'monthly', year: FUTURE_MONTH.yearParam, month: FUTURE_MONTH.monthParam, durationMinutes: '120' });
+  var withExplicitAll = callDoGet(sandbox, { action: 'monthly', year: FUTURE_MONTH.yearParam, month: FUTURE_MONTH.monthParam, durationMinutes: '120', timeBand: 'all' });
+  var withInvalidTimeBand = callDoGet(sandbox, { action: 'monthly', year: FUTURE_MONTH.yearParam, month: FUTURE_MONTH.monthParam, durationMinutes: '120', timeBand: 'bogus' });
 
   assert.strictEqual(withoutTimeBand.success, true);
   assert.deepStrictEqual(withoutTimeBand.days, withExplicitAll.days);
