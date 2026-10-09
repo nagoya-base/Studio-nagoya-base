@@ -77,6 +77,7 @@ function loadSurveyProject(target, options) {
   var spreadsheets = createSurveySpreadsheets('ss-survey');
   var properties = Object.assign({ SURVEY_SPREADSHEET_ID: 'ss-survey' }, opts.properties || {});
   var logs = [];
+  var mails = [];
   var sandbox = {
     PropertiesService: stubs.createPropertiesServiceStub(properties),
     SpreadsheetApp: spreadsheets.app,
@@ -90,6 +91,12 @@ function loadSurveyProject(target, options) {
         return { kind: 'file', name: name, setTitle: function () { return this; }, addMetaTag: function () { return this; } };
       }
     },
+    MailApp: {
+      sendEmail: function (to, subject, body) {
+        if (opts.mailFails) throw new Error('mail failed');
+        mails.push({ to: to, subject: subject, body: body });
+      }
+    },
     Logger: { log: function (m) { logs.push(m); } }
   };
   vm.createContext(sandbox);
@@ -97,7 +104,7 @@ function loadSurveyProject(target, options) {
     var filePath = path.join(dir, file);
     vm.runInContext(fs.readFileSync(filePath, 'utf8'), sandbox, { filename: filePath });
   });
-  return { sandbox: sandbox, sheets: spreadsheets.sheets, dir: dir, logs: logs, run: function (code) { return vm.runInContext(code, sandbox); } };
+  return { sandbox: sandbox, sheets: spreadsheets.sheets, dir: dir, logs: logs, mails: mails, run: function (code) { return vm.runInContext(code, sandbox); } };
 }
 
 module.exports = { loadSurveyProject: loadSurveyProject };

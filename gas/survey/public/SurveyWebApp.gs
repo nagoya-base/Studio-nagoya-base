@@ -86,7 +86,36 @@ function handleSurveySubmit_(payload, now) {
   }
   var saved = SurveyRepository.appendResponse(result.record, now);
   if (!saved.success) return surveyError_(saved.error.code);
+  surveyNotifyAdmin_(result.record, now);
   return { success: true };
+}
+
+/*
+ * 本番回答の保存成功後に管理者へ通知メールを送る（Issue #391）。
+ * - is_test=1 は通知しない。保存失敗・重複・検証エラーはここへ到達しない。
+ * - 通知先は Script Properties の SURVEY_NOTIFICATION_EMAIL（未設定なら何もしない）。
+ * - 管理画面URLは任意の SURVEY_ADMIN_URL（未設定なら省略）。
+ * - 送信失敗は回答保存の成否に影響させない（ログには短いメッセージだけ残す）。
+ * 回答内容全文・respondent_hashはメールへ載せない。
+ */
+function surveyNotifyAdmin_(record, now) {
+  try {
+    if (SurveyCore.isTestFlag(record.is_test)) return;
+    var props = PropertiesService.getScriptProperties();
+    var to = String(props.getProperty('SURVEY_NOTIFICATION_EMAIL') || '').trim();
+    if (!to) return;
+    var adminUrl = String(props.getProperty('SURVEY_ADMIN_URL') || '').trim();
+    var lines = [
+      'Studio Nagoya Base のフィードバックに新しい回答がありました。',
+      '',
+      '回答日時: ' + (now || new Date()).toISOString(),
+      'usage_segment: ' + (record.usage_segment || '(なし)')
+    ];
+    if (adminUrl) lines.push('管理画面: ' + adminUrl);
+    MailApp.sendEmail(to, '【Studio Nagoya Base】新しいフィードバック回答がありました', lines.join('\n'));
+  } catch (mailError) {
+    Logger.log('survey notify failed: ' + String(mailError && mailError.message).slice(0, 80));
+  }
 }
 
 /* ステップ到達イベント。step_idはschemaのステップIDのみ受け付け、個人情報は受け取らない。 */
