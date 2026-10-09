@@ -10,6 +10,7 @@ var test = require('node:test');
 var assert = require('node:assert');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
+var futureJstDate = require('./helpers/future-date').futureJstDate;
 
 var FILES = [
   'Config.gs',
@@ -32,6 +33,9 @@ var FILES = [
 
 var SPREADSHEET_ID = 'ss1';
 var CALENDAR_ID = 'cal1';
+/* createBooking（Code.gs doPost）は実行時刻で過去日を拒否するため、利用日は固定せず
+   実行日から30日後（JST）を使う（Issue #393: 固定'2026-10-05'が2026-10-09に過去化して故障した）。 */
+var FUTURE_DATE = futureJstDate(30);
 var TOKEN = 'test-checkout-access-token-0001';
 
 function setup(options) {
@@ -176,7 +180,7 @@ test('doPost action未指定は、カード決済のcreateBookingレスポンス
     parameter: {},
     postData: {
       contents: JSON.stringify({
-        brand: 'studio_x', customerType: 'returning', date: '2026-10-05', startTime: '10:00',
+        brand: 'studio_x', customerType: 'returning', date: FUTURE_DATE, startTime: '10:00',
         durationMinutes: 120, name: 'テスト太郎', email: 'test@example.com', phone: '',
         people: '2名', purpose: '練習', paymentMethod: 'オンラインクレジットカード'
       })
@@ -209,7 +213,7 @@ test('doPost action未指定は従来どおりcreateBookingへ振り分ける（
     parameter: {},
     postData: {
       contents: JSON.stringify({
-        brand: 'studio_x', customerType: 'returning', date: '2026-10-05', startTime: '10:00',
+        brand: 'studio_x', customerType: 'returning', date: FUTURE_DATE, startTime: '10:00',
         durationMinutes: 120, name: 'テスト太郎', email: 'test@example.com', phone: '',
         people: '2名', purpose: '練習', paymentMethod: '現金'
       })
