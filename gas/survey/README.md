@@ -45,6 +45,13 @@ Google Apps Script（GAS）の **公開Web App** と **管理者Web App** の2�
 - 既存Spreadsheetの移行: `responses` / `events` の**末尾**に `is_test` 列を追加しました。旧ヘッダ（`is_test` 無し）のシートは、新規回答の保存時（または `setupSurveySpreadsheet()`）にヘッダ行へ列名が追記されるだけで、既存行は変更されません。既存行の空欄は本番（0相当）として扱います。末尾以外のヘッダ不一致は従来どおり `SCHEMA_MISMATCH` で保存を止めます。
 - 旧 `duplicate:true` 応答は廃止しました（同一IDの再送は `DUPLICATE_RESPONSE`）。公開GASとGitHub Pagesの両方をデプロイしてください。
 
+## 管理者への通知メール（Issue #391）
+
+本番回答（`is_test` が 1 でない）が `responses` へ保存された**後に**、`MailApp.sendEmail()` で `SURVEY_NOTIFICATION_EMAIL` へ通知します。
+件名は `【Studio Nagoya Base】新しいフィードバック回答がありました`、本文は回答日時・`usage_segment`・管理画面URL（設定時）のみで、回答全文や `respondent_hash` は載せません。
+`?test=1`・重複・未成年・検証エラー・保存エラーでは送りません。メール送信の失敗や宛先未設定は回答保存に影響せず、ユーザーには成功を返します（失敗はLoggerへ短く記録）。
+公開GASのマニフェストに `script.send_mail` スコープを追加したため、**デプロイ後にエディタから一度認可の再承認が必要**です。
+
 ## 初期設定
 
 1. 空のGoogle Spreadsheetを作成（回答データ用）。IDを控える（**Gitへは書かない**）。
@@ -61,6 +68,8 @@ Google Apps Script（GAS）の **公開Web App** と **管理者Web App** の2�
    | --- | --- | --- |
    | 公開・管理者 共通 | `SURVEY_SPREADSHEET_ID` | 回答Spreadsheetの ID |
    | 公開 | `SURVEY_RATE_LIMIT_PER_MINUTE` | 任意。1分あたりの受付上限（既定 120） |
+   | 公開 | `SURVEY_NOTIFICATION_EMAIL` | 任意。本番回答の保存成功時に通知メールを送る宛先（1件）。未設定なら通知しない（Issue #391） |
+   | 公開 | `SURVEY_ADMIN_URL` | 任意。通知メール本文に載せる管理画面URL。未設定なら省略 |
    | 管理者 | `SURVEY_ADMIN_EMAILS` | 閲覧を許可するGoogleアカウント（カンマ区切り）。未設定だと全員拒否 |
 
 4. いずれかのプロジェクトのエディタから `setupSurveySpreadsheet()` を1回実行

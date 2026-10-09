@@ -41,8 +41,8 @@ test('配布物: 公開プロジェクトに管理者機能・集計を含めず
   assert.strictEqual(manifests.pub.webapp.access, 'ANYONE_ANONYMOUS');
   assert.strictEqual(manifests.adm.webapp.access, 'MYSELF');
   assert.strictEqual(manifests.adm.webapp.executeAs, 'USER_ACCESSING');
-  /* 公開側は Spreadsheet 以外の権限を要求しない */
-  assert.deepStrictEqual(manifests.pub.oauthScopes, ['https://www.googleapis.com/auth/spreadsheets']);
+  /* 公開側は Spreadsheet と通知メール送信（Issue #391）以外の権限を要求しない */
+  assert.deepStrictEqual(manifests.pub.oauthScopes, ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/script.send_mail']);
   assert.ok(Object.keys(prepare.TARGETS).length === 2);
 });
 
@@ -385,4 +385,45 @@ test('管理画面HTMLは自由記述をinnerHTMLへ入れずtextContentで出�
   assert.match(html, /textContent/);
   assert.match(html, /n &lt; <span id="mincell">/);
   assert.match(html, /td\.low/);
+});
+
+var NOTIFY = { SURVEY_NOTIFICATION_EMAIL: 'admin@example.com', SURVEY_ADMIN_URL: 'https://example.com/admin' };
+
+test('通知メール(#391): 本番回答の保存後に1通送る（日時・usage_segment・管理画面URLを含み、hashは含まない）', function () {
+  var project = loadSurveyProject('public', { properties: NOTIFY });
+  assert.strictEqual(call(project, 'submit', body(A.nonuser())).success, true);
+  assert.strictEqual(project.mails.length, 1);
+  var mail = project.mails[0];
+  assert.strictEqual(mail.to, 'admin@example.com');
+  assert.strictEqual(mail.subject, '【Studio Nagoya Base】新しいフィードバック回答がありました');
+  assert.ok(mail.body.indexOf(NOW.toISOString()) !== -1);
+  assert.ok(mail.body.indexOf('usage_segment: solo') !== -1);
+  assert.ok(mail.body.indexOf('https://example.com/admin') !== -1);
+  assert.strictEqual(mail.body.indexOf(HASH), -1);
+});
+
+test('通知メール(#391): テスト・重複・検証エラー・保存エラーでは送らない', function () {
+  var project = loadSurveyProject('public', { properties: NOTIFY });
+  call(project, 'submit', body(A.user(), { is_test: 1 }));
+  assert.strictEqual(project.mails.length, 0);
+  call(project, 'submit', body(A.user()));
+  call(project, 'submit', body(A.user()));
+  assert.strictEqual(project.mails.length, 1, '重複は通知しない');
+  call(project, 'submit', JSON.stringify({ schema_version: schema.version, respondent_hash: OTHER_HASH, answers: A.user({ age_screening: 'under_18' }) }));
+  call(project, 'submit', JSON.stringify({ schema_version: schema.version, respondent_hash: OTHER_HASH, answers: A.user({ usage_status: 'zzz' }) }));
+  assert.strictEqual(project.mails.length, 1);
+  var busy = loadSurveyProject('public', { properties: NOTIFY, lockFails: true });
+  assert.strictEqual(call(busy, 'submit', body(A.user())).error.code, 'BUSY');
+  assert.strictEqual(busy.mails.length, 0);
+});
+
+test('通知メール(#391): 送信失敗・通知先未設定でも回答は保存され成功扱い', function () {
+  var failing = loadSurveyProject('public', { properties: NOTIFY, mailFails: true });
+  assert.strictEqual(call(failing, 'submit', body(A.user())).success, true);
+  assert.strictEqual(failing.sheets.responses._rows.length, 2);
+  assert.ok(failing.logs.some(function (l) { return /notify failed/.test(l); }));
+  var unset = loadSurveyProject('public');
+  assert.strictEqual(call(unset, 'submit', body(A.user())).success, true);
+  assert.strictEqual(unset.mails.length, 0);
+  assert.strictEqual(unset.sheets.responses._rows.length, 2);
 });
