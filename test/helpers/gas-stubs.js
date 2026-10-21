@@ -70,8 +70,12 @@ function createUtilitiesStub() {
       while (hex.length < 8) hex = '0' + hex;
       return hex + '-mock-uuid-' + hex;
     },
-    computeHmacSha256Signature: function (value, key) {
-      var digest = crypto.createHmac('sha256', key).update(value, 'utf8').digest();
+    Charset: { UTF_8: 'UTF_8' },
+    /* charset省略時は非UTF-8（1文字1バイトへ切り詰め）として扱い、実GASで非ASCII本文の
+       署名が食い違う不具合（Issue #341）をテストで再現できるようにする。 */
+    computeHmacSha256Signature: function (value, key, charset) {
+      var encoding = charset === 'UTF_8' ? 'utf8' : 'latin1';
+      var digest = crypto.createHmac('sha256', key).update(Buffer.from(String(value), encoding)).digest();
       var bytes = [];
       for (var i = 0; i < digest.length; i++) {
         var unsigned = digest[i];

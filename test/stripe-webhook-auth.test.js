@@ -144,3 +144,38 @@ test('verifyRelayRequest: Script Propertiesで許容秒数をカスタマイズ�
   assert.strictEqual(result.valid, false);
   assert.strictEqual(result.error.code, 'TIMESTAMP_OUT_OF_TOLERANCE');
 });
+
+/* Issue #341: GASのUtilities.computeHmacSha256Signatureは文字セット未指定だと非ASCII本文で
+   Node側（UTF-8）と署名が食い違うため、UTF-8明示の回帰テスト。 */
+function assertAcceptsBody(body) {
+  var sandbox = setup();
+  var nowMillis = 1893456000000;
+  var timestampSeconds = Math.floor(nowMillis / 1000);
+  var signature = sign(SECRET, timestampSeconds, body);
+  var webhookConfig = sandbox.BookingConfig.getStripeWebhookConfig();
+  var result = sandbox.StripeWebhookAuth.verifyRelayRequest(webhookConfig, timestampSeconds, body, signature, nowMillis);
+  assert.strictEqual(result.valid, true);
+}
+
+test('verifyRelayRequest: ASCIIのみの本文でNode側HMACと一致する', function () {
+  assertAcceptsBody(JSON.stringify({ id: 'evt_ascii', type: 'checkout.session.completed' }));
+});
+
+test('verifyRelayRequest: 日本語を含む本文でNode側HMACと一致する', function () {
+  assertAcceptsBody(JSON.stringify({ id: 'evt_ja', type: 'checkout.session.completed', name: '山田 太郎' }));
+});
+
+test('verifyRelayRequest: 絵文字を含む本文でNode側HMACと一致する', function () {
+  assertAcceptsBody(JSON.stringify({ id: 'evt_emoji', type: 'checkout.session.completed', note: '予約 🎸🎉 👨‍👩‍👧' }));
+});
+
+test('verifyRelayRequest: 非ASCII本文が改ざんされた場合は拒否する', function () {
+  var sandbox = setup();
+  var nowMillis = 1893456000000;
+  var timestampSeconds = Math.floor(nowMillis / 1000);
+  var signature = sign(SECRET, timestampSeconds, JSON.stringify({ name: '山田' }));
+  var webhookConfig = sandbox.BookingConfig.getStripeWebhookConfig();
+  var result = sandbox.StripeWebhookAuth.verifyRelayRequest(webhookConfig, timestampSeconds, JSON.stringify({ name: '田中' }), signature, nowMillis);
+  assert.strictEqual(result.valid, false);
+  assert.strictEqual(result.error.code, 'SIGNATURE_MISMATCH');
+});
