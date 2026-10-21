@@ -49,7 +49,10 @@ var StripeWebhookAuth = (function () {
   }
 
   function computeSignatureHex_(secret, message) {
-    var bytes = Utilities.computeHmacSha256Signature(message, secret);
+    /* 文字セットを明示しないと非ASCII文字（日本語・絵文字）の符号化がNode側のUTF-8と食い違い、
+       署名不一致（FORBIDDEN）になる。Cloud Run側のcrypto.createHmac().update(string)は
+       UTF-8として処理するため、GAS側も必ずUTF-8を指定する。 */
+    var bytes = Utilities.computeHmacSha256Signature(message, secret, Utilities.Charset.UTF_8);
     return bytesToHex_(bytes);
   }
 

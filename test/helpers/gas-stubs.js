@@ -70,8 +70,14 @@ function createUtilitiesStub() {
       while (hex.length < 8) hex = '0' + hex;
       return hex + '-mock-uuid-' + hex;
     },
-    computeHmacSha256Signature: function (value, key) {
-      var digest = crypto.createHmac('sha256', key).update(value, 'utf8').digest();
+    Charset: { UTF_8: 'UTF_8' },
+    /* 実機で確認済みの事実は「charset未指定だと非ASCII本文でCloud Run側（UTF-8）の署名と
+       一致しなかった」こと（Issue #341）。charset省略時にlatin1で符号化するのは、この不具合を
+       回帰テストで再現するためのテスト用モデルであり、実GAS内部のデフォルト
+       エンコーディングを再現しているわけではない。 */
+    computeHmacSha256Signature: function (value, key, charset) {
+      var encoding = charset === 'UTF_8' ? 'utf8' : 'latin1';
+      var digest = crypto.createHmac('sha256', key).update(Buffer.from(String(value), encoding)).digest();
       var bytes = [];
       for (var i = 0; i < digest.length; i++) {
         var unsigned = digest[i];
