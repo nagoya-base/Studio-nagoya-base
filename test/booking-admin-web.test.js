@@ -244,7 +244,7 @@ test('getAdminBookings: { todayJst, bookings }を返し、一覧の各要素は�
      refundDecisionRequired/paymentRecoveryRequired/accessApprovalPending）を追加。
      いずれも真偽値・状態コードのみで、Stripe識別子・PIIは一覧に含めない。 */
   var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status', 'cardPaymentDueAt', 'effectivePriceAmount', 'priceOverridden', 'priceUpdateNeeded',
-    'isStripeCheckout', 'paymentStatus', 'refundDecisionRequired', 'paymentRecoveryRequired', 'accessApprovalPending'];
+    'isStripeCheckout', 'isCardPayment', 'paymentLinkSent', 'paymentStatus', 'refundDecisionRequired', 'paymentRecoveryRequired', 'accessApprovalPending'];
   assert.deepStrictEqual(Object.keys(item).sort(), allowedKeys.slice().sort());
   assert.strictEqual(item.cardPaymentDueAt, '', '現金等カード以外の支払方法ではcardPaymentDueAtは空文字であるべき');
   assert.strictEqual(item.priceOverridden, false, '未修正の予約はpriceOverridden:falseであるべき');
@@ -711,7 +711,9 @@ test('adminSendCardPaymentLink: カード決済以外・PENDING以外には送�
   assert.strictEqual(cashResult.error.code, 'NOT_CARD_PAYMENT');
 
   var confirmedBookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード', email: 'confirmed@example.com', startTime: '13:00' });
-  ctx.sandbox.adminConfirmBooking(confirmedBookingId);
+  var linkResult = ctx.sandbox.adminSendCardPaymentLink(confirmedBookingId, 'https://buy.stripe.com/test_ABC123');
+  assert.strictEqual(linkResult.success, true, JSON.stringify(linkResult));
+  assert.strictEqual(ctx.sandbox.adminConfirmBooking(confirmedBookingId).success, true);
   var confirmedResult = ctx.sandbox.adminSendCardPaymentLink(confirmedBookingId, 'https://buy.stripe.com/test_ABC123');
   assert.strictEqual(confirmedResult.success, false);
   assert.strictEqual(confirmedResult.error.code, 'INVALID_STATUS');
@@ -1247,4 +1249,74 @@ test('priceUpdateNeeded: 訂正案内送信後に再修正した場合は一覧�
   var resent = ctx.sandbox.adminSendPriceUpdateMail(bookingId);
   assert.strictEqual(resent.success, true, '二回目の料金修正はforce指定なしで再案内できる');
   assert.strictEqual(ctx.sandbox.getAdminBookingDetail(bookingId).booking.priceUpdateNeeded, false);
+});
+
+/* ---------- Issue #396: 旧Payment Link方式の承認ガード ---------- */
+
+var CARD = 'オンラインクレジットカード';
+
+test('Issue #396 adminConfirmBooking: 旧方式カード予約は決済リンク未送信の間PAYMENT_LINK_NOT_SENTで拒否し、何も変更しない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx, { paymentMethod: CARD });
+
+  var result = ctx.sandbox.adminConfirmBooking(bookingId);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'PAYMENT_LINK_NOT_SENT');
+  assert.strictEqual(ctx.sandbox.confirmBooking(bookingId).error.code, 'PAYMENT_LINK_NOT_SENT', 'Spreadsheetメニュー経路（confirmBooking）も同じ');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'PENDING');
+  var confirmedMails = mailApp._sentEmails.filter(function (m) { return m.subject && m.subject.indexOf('予約が確定しました') !== -1; });
+  assert.strictEqual(confirmedMails.length, 0);
+});
+
+test('Issue #396 adminConfirmBooking: 決済リンク送信済みの旧方式カード予約は承認できる', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { paymentMethod: CARD });
+  var sent = ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
+  assert.strictEqual(sent.success, true, JSON.stringify(sent));
+
+  var result = ctx.sandbox.adminConfirmBooking(bookingId);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(result.status, 'CONFIRMED');
+});
+
+test('Issue #396 adminConfirmBooking: 現金・PayPayのPENDINGは従来どおり承認できる', function () {
+  ['現金', 'PayPay'].forEach(function (method, i) {
+    var ctx = setup();
+    var bookingId = createPending(ctx, { paymentMethod: method, startTime: i === 0 ? '10:00' : '13:00' });
+    var result = ctx.sandbox.adminConfirmBooking(bookingId);
+    assert.strictEqual(result.success, true, method + ': ' + JSON.stringify(result));
+  });
+});
+
+test('Issue #396 adminConfirmBooking: Stripe Checkout方式（checkout_pending/paid）は旧ガードの対象外', function () {
+  ['checkout_pending', 'paid'].forEach(function (paymentStatus) {
+    var ctx = setup();
+    var bookingId = createPending(ctx, { paymentMethod: CARD });
+    ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { paymentStatus: paymentStatus });
+
+    var result = ctx.sandbox.confirmBooking(bookingId);
+    assert.notStrictEqual(result.error && result.error.code, 'PAYMENT_LINK_NOT_SENT', paymentStatus);
+  });
+});
+
+test('Issue #396 adminSendCardPaymentLink: Stripe Checkout方式の予約には旧Payment Linkを送信できない', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { paymentMethod: CARD });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { paymentStatus: 'checkout_pending' });
+
+  var result = ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
+  assert.strictEqual(result.success, false);
+});
+
+test('Issue #396 getAdminBookings: 一覧に旧方式の確定可否判定用フラグ（isCardPayment/paymentLinkSent）が出る', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { paymentMethod: CARD });
+  var item = ctx.sandbox.getAdminBookings().bookings.filter(function (b) { return b.bookingId === bookingId; })[0];
+  assert.strictEqual(item.isCardPayment, true);
+  assert.strictEqual(item.paymentLinkSent, false);
+
+  ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
+  item = ctx.sandbox.getAdminBookings().bookings.filter(function (b) { return b.bookingId === bookingId; })[0];
+  assert.strictEqual(item.paymentLinkSent, true);
 });

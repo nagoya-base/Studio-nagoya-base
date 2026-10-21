@@ -616,6 +616,25 @@ var Booking = (function () {
   }
 
   /*
+   * Issue #396: 旧Payment Link方式（Issue #334）のカード予約か。カード決済で、かつ
+   * Stripe Checkoutの決済フローに入っていない（isStripeCheckoutBookingがfalse）予約。
+   * STRIPE_CHECKOUT_ENABLEDが有効になるまで、本番のカード予約はすべてこちらになる。
+   */
+  function isLegacyPaymentLinkBooking(record) {
+    var r = record || {};
+    return isCardPaymentMethod(r.paymentMethod) && !isStripeCheckoutBooking(r);
+  }
+
+  /*
+   * Issue #396: 決済リンクが少なくとも1回送信済みか（paymentLinkSentAtまたは送信回数）。
+   * 送信結果が未確認（paymentLinkSendUnconfirmedAtのみ）の予約は送信済みとみなさない。
+   */
+  function hasPaymentLinkBeenSent(record) {
+    var r = record || {};
+    return !!r.paymentLinkSentAt || Number(r.paymentLinkSendCount) > 0;
+  }
+
+  /*
    * Issue #341 PR-D: 当日予約（受付日と利用日がtimezone基準で同じ日）かどうか。
    * createBooking時のisSameDayBooking（validateCreateBookingInput）・expirePendingBookings
    * の判定（createdAtの日付とrecord.dateの比較）と同じ定義。createdAtまたはdateを
@@ -692,6 +711,8 @@ var Booking = (function () {
     ACCESS_GATE_REASON_CODES: ACCESS_GATE_REASON_CODES,
     evaluateAccessGate: evaluateAccessGate,
     isStripeCheckoutBooking: isStripeCheckoutBooking,
+    isLegacyPaymentLinkBooking: isLegacyPaymentLinkBooking,
+    hasPaymentLinkBeenSent: hasPaymentLinkBeenSent,
     isSameDayBookingRecord: isSameDayBookingRecord,
     requiresAccessApproval: requiresAccessApproval,
     normalizePaymentStatus: normalizePaymentStatus,

@@ -1393,6 +1393,19 @@ test('canSendPaymentLink: カード決済かつPENDINGのみtrue。カード以�
   assert.strictEqual(sandbox.canSendPaymentLink(null), false);
 });
 
+test('Issue #396 canSendPaymentLink/needsPaymentLinkBeforeConfirm_: 旧方式カード予約のみ決済リンクUI・確定ガードの対象。Stripe Checkout方式・PayPay・現金は対象外', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ isStripeCheckout: true, paymentStatus: 'checkout_pending' })), false);
+  assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ isStripeCheckout: false, paymentStatus: 'not_started' })), true);
+
+  assert.strictEqual(sandbox.needsPaymentLinkBeforeConfirm_(paymentLinkDetailBooking()), true, 'カード/未送信は確定不可');
+  assert.strictEqual(sandbox.needsPaymentLinkBeforeConfirm_(paymentLinkDetailBooking({ paymentLinkSentAt: '2026-10-01 10:00', paymentLinkSendCount: 1 })), false, '送信済みは確定可');
+  assert.strictEqual(sandbox.needsPaymentLinkBeforeConfirm_(paymentLinkDetailBooking({ paymentLinkSent: true })), false, '一覧の応答（paymentLinkSent）でも送信済みは確定可');
+  assert.strictEqual(sandbox.needsPaymentLinkBeforeConfirm_(paymentLinkDetailBooking({ isCardPayment: false, paymentMethod: '現金' })), false, '現金/PayPayは従来どおり');
+  assert.strictEqual(sandbox.needsPaymentLinkBeforeConfirm_(paymentLinkDetailBooking({ isStripeCheckout: true })), false, 'Checkout方式は旧ガード対象外');
+  assert.strictEqual(sandbox.needsPaymentLinkBeforeConfirm_(null), false);
+});
+
 test('isValidStripePaymentLinkUrlClient: GAS側（Booking.isValidStripePaymentLinkUrl）と同じ正規表現で判定する', function () {
   var sandbox = loadClientSandbox();
   assert.strictEqual(sandbox.isValidStripePaymentLinkUrlClient('https://buy.stripe.com/test_ABC123'), true);

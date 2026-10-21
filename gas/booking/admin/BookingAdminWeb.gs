@@ -221,6 +221,9 @@ function getAdminBookings() {
       priceUpdateNeeded: priceSummary.updateNeeded,
       /* Issue #341 PR-D: 一覧のキャンセルボタンの出し分け・要対応表示用（buildAdminPaymentSummary_参照）。 */
       isStripeCheckout: paymentSummary.isStripeCheckout,
+      /* Issue #396: 旧Payment Link方式のカード予約の確定ボタンの出し分け用（最終判定はconfirmBooking）。 */
+      isCardPayment: Booking.isCardPaymentMethod(record.paymentMethod),
+      paymentLinkSent: Booking.hasPaymentLinkBeenSent(record),
       paymentStatus: paymentSummary.paymentStatus,
       refundDecisionRequired: paymentSummary.refundDecisionRequired,
       paymentRecoveryRequired: paymentSummary.paymentRecoveryRequired,
