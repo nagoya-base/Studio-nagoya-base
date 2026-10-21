@@ -145,8 +145,9 @@ test('verifyRelayRequest: Script Propertiesで許容秒数をカスタマイズ�
   assert.strictEqual(result.error.code, 'TIMESTAMP_OUT_OF_TOLERANCE');
 });
 
-/* Issue #341: GASのUtilities.computeHmacSha256Signatureは文字セット未指定だと非ASCII本文で
-   Node側（UTF-8）と署名が食い違うため、UTF-8明示の回帰テスト。 */
+/* Issue #341: 実機でcharset未指定のとき、非ASCII本文がCloud Run側（UTF-8）の署名と一致しない
+   ことを確認した。UTF-8を明示する実装の回帰テスト（スタブはcharset省略時の不一致をテスト用に
+   モデル化したもので、実GASの内部実装を再現するものではない）。 */
 function assertAcceptsBody(body) {
   var sandbox = setup();
   var nowMillis = 1893456000000;
