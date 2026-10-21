@@ -314,13 +314,16 @@ function render() {
   list.innerHTML = bookings.map(function (b) {
     var busy = !!state.busyIds[b.bookingId];
     var canConfirm = b.status === 'PENDING';
+    /* Issue #396: 旧Payment Link方式のカード予約は、決済リンク送信前は確定できない
+       （サーバー側confirmBookingも同条件で拒否する）。詳細から決済リンクを送信する。 */
+    var awaitingPaymentLink = canConfirm && needsPaymentLinkBeforeConfirm_(b);
     var canCancel = b.status === 'PENDING' || b.status === 'CONFIRMED';
     /* Issue #334: EXPIREDのみ復活可能（利用開始後かどうか・枠の空きはサーバー側
        （reviveExpiredBooking）が最終判定する。ここでは表示上の出し分けのみ）。 */
     var canRevive = b.status === 'EXPIRED';
     var actions = '<button type="button" class="action detail" data-action="detail" data-id="' + escapeHtml(b.bookingId) + '">詳細</button>';
     if (canConfirm) {
-      actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>確定</button>';
+      actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '"' + (busy || awaitingPaymentLink ? ' disabled' : '') + (awaitingPaymentLink ? ' title="決済リンク未送信のため確定できません（詳細から送信してください）"' : '') + '>確定</button>';
     }
     if (canCancel && b.refundDecisionRequired) {
       /* Issue #341 PR-D: Stripeで入金済みの予約は、返金方法を選ぶ「取消・返金」（予約詳細）
@@ -1061,7 +1064,15 @@ function closeModal() {
  * 支払方法の内部文字列（'オンラインクレジットカード'）をこのファイルに複製しない。
  */
 function canSendPaymentLink(booking) {
-  return !!booking && !!booking.isCardPayment && booking.status === 'PENDING';
+  return !!booking && !!booking.isCardPayment && !booking.isStripeCheckout && booking.status === 'PENDING';
+}
+
+/* Issue #396: 決済リンク送信前の旧Payment Link方式カード予約（確定不可）か。
+   bookingは一覧・詳細どちらの応答でも可（isCardPayment/isStripeCheckout/paymentLinkSent/
+   paymentLinkSentAtを参照）。 */
+function needsPaymentLinkBeforeConfirm_(booking) {
+  if (!booking || !booking.isCardPayment || booking.isStripeCheckout) return false;
+  return !(booking.paymentLinkSent || booking.paymentLinkSentAt || Number(booking.paymentLinkSendCount) > 0);
 }
 
 /*
@@ -1217,7 +1228,8 @@ function renderPaymentLinkSection_(booking) {
   var ui = paymentLinkUi_;
   if (!ui.container) return;
 
-  if (!booking || !booking.isCardPayment) {
+  /* Issue #396: Stripe Checkout方式（checkout_pending/paid等）の予約には旧UIを出さない。 */
+  if (!booking || !booking.isCardPayment || booking.isStripeCheckout) {
     ui.container.classList.add('hidden');
     return;
   }

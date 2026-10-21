@@ -797,6 +797,13 @@ var BookingMailer = (function () {
         message: '支払方法がオンラインクレジットカードの予約のみ決済リンクを送信できます。'
       };
     }
+    if (Booking.isStripeCheckoutBooking(record)) {
+      return {
+        eligible: false,
+        reasonCode: PAYMENT_LINK_REASON_CODES_.NOT_CARD_PAYMENT,
+        message: 'Stripe Checkoutの決済フローに入っている予約には、手動の決済リンクを送信できません。'
+      };
+    }
     if (record.paymentLinkMetadataInconsistentAt) {
       return {
         eligible: false,

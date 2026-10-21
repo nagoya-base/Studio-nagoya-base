@@ -510,6 +510,22 @@ var BookingRepository = (function () {
     }
 
     /*
+     * Issue #396: 旧Payment Link方式のカード予約は、決済リンクを1回も送信していない間は
+     * 確定できない（未収金のままCONFIRMEDへ進めない）。UIの出し分けとは独立した
+     * サーバー側の最終ガードで、Web管理画面・Spreadsheetメニューの双方に効く。
+     * Stripe Checkout方式（Webhook確定を含む）・PayPay・現金は対象外。
+     */
+    if (Booking.isLegacyPaymentLinkBooking(record) && !Booking.hasPaymentLinkBeenSent(record)) {
+      return {
+        response: {
+          success: false,
+          error: { code: 'PAYMENT_LINK_NOT_SENT', message: 'カード決済の予約は、Stripe決済リンクを送信するまで確定できません。' }
+        },
+        shouldTryMail: false
+      };
+    }
+
+    /*
      * 料金修正の訂正案内が未完了なら、Calendar/Sheetsを変更する前に確定を止める。
      * Web管理画面とSpreadsheetメニューは同じconfirmBookingを経由する。
      */
