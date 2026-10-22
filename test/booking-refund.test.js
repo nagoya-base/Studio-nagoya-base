@@ -613,7 +613,8 @@ test('返金の事前照会: PaymentIntentの入金額が台帳と一致しな�
 var UNPAID_OVERRIDES = {
   status: 'PENDING', paymentStatus: 'checkout_pending', stripePaymentIntentId: '', paymentConfirmedAt: '',
   lastStripeEventId: '', confirmedAt: '', confirmedMailSentAt: '',
-  paymentHoldExpiresAt: new Date('2026-10-01T12:30:00+09:00')
+  /* 実行日に依存しないよう、Session期限は常に未来（Issue #398で期限経過後の試行ID予約の分類が時刻依存になった） */
+  paymentHoldExpiresAt: new Date(Date.now() + 24 * 3600000)
 };
 
 function unpaidSetup(options) {

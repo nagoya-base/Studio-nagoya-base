@@ -1320,3 +1320,87 @@ test('Issue #396 getAdminBookings: 一覧に旧方式の確定可否判定用フ
   item = ctx.sandbox.getAdminBookings().bookings.filter(function (b) { return b.bookingId === bookingId; })[0];
   assert.strictEqual(item.paymentLinkSent, true);
 });
+
+/* ---------- Issue #398: 決済試行IDだけが残った旧方式カード予約の分類 ---------- */
+
+var HOUR_MS_ = 3600000;
+
+/* reservePaymentAttempt_が書く状態（試行ID・金額・Session期限のみ。Session/PIの証跡なし）を再現する。 */
+function reserveAttemptOnly(ctx, bookingId, holdExpiresAt, extra) {
+  var fields = {
+    paymentAttemptId: 'pa_' + bookingId,
+    stripeAmount: 4000,
+    stripeCurrency: 'JPY',
+    paymentHoldExpiresAt: holdExpiresAt
+  };
+  Object.keys(extra || {}).forEach(function (k) { fields[k] = extra[k]; });
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, fields);
+}
+
+function detailOf(ctx, bookingId) {
+  return ctx.sandbox.getAdminBookingDetail(bookingId).booking;
+}
+
+test('Issue #398: Session期限＋猶予を過ぎた試行ID予約のみのカード予約は旧方式として扱い、送信UI用フラグを返す', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { paymentMethod: CARD });
+  reserveAttemptOnly(ctx, bookingId, new Date(Date.now() - 2 * HOUR_MS_));
+
+  var detail = detailOf(ctx, bookingId);
+  assert.strictEqual(detail.isStripeCheckout, false);
+  assert.strictEqual(detail.isCardPayment, true);
+  assert.strictEqual(detail.paymentStatus, 'not_started');
+  assert.strictEqual(ctx.sandbox.getAdminBookings().bookings.filter(function (b) { return b.bookingId === bookingId; })[0].isStripeCheckout, false);
+});
+
+test('Issue #398: 旧方式に復旧した予約でも決済リンク未送信なら承認不可（#396ガード維持）、送信後は承認できる', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { paymentMethod: CARD });
+  reserveAttemptOnly(ctx, bookingId, new Date(Date.now() - 2 * HOUR_MS_));
+
+  assert.strictEqual(ctx.sandbox.adminConfirmBooking(bookingId).error.code, 'PAYMENT_LINK_NOT_SENT');
+  var sent = ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
+  assert.strictEqual(sent.success, true, JSON.stringify(sent));
+  assert.strictEqual(ctx.sandbox.adminConfirmBooking(bookingId).success, true);
+});
+
+test('Issue #398: Session期限内（または猶予内）の試行ID予約はCheckout方式のまま（二重決済防止）', function () {
+  [-10 * 60000, 30 * 60000].forEach(function (offsetMs) {
+    var ctx = setup();
+    var bookingId = createPending(ctx, { paymentMethod: CARD });
+    reserveAttemptOnly(ctx, bookingId, new Date(Date.now() + offsetMs));
+
+    assert.strictEqual(detailOf(ctx, bookingId).isStripeCheckout, true, 'offset=' + offsetMs);
+    var sent = ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
+    assert.strictEqual(sent.success, false, 'offset=' + offsetMs);
+  });
+});
+
+test('Issue #398: 期限が読めない・要復旧・Session/PI証跡あり・paymentStatus進行済みはCheckout方式のまま', function () {
+  var past = new Date(Date.now() - 5 * HOUR_MS_);
+  var cases = [
+    { name: '期限なし', hold: '', extra: {} },
+    { name: '要復旧', hold: past, extra: { paymentRecoveryRequiredAt: new Date(), paymentRecoveryReason: 'x' } },
+    { name: 'Session ID', hold: past, extra: { stripeCheckoutSessionId: 'cs_test_1' } },
+    { name: 'PaymentIntent', hold: past, extra: { stripePaymentIntentId: 'pi_test_1' } },
+    { name: 'checkout_pending', hold: past, extra: { paymentStatus: 'checkout_pending', stripeCheckoutSessionId: 'cs_test_1' } },
+    { name: 'paid', hold: past, extra: { paymentStatus: 'paid' } },
+    { name: '未知のpaymentStatus', hold: past, extra: { paymentStatus: 'weird' } }
+  ];
+  cases.forEach(function (c) {
+    var ctx = setup();
+    var bookingId = createPending(ctx, { paymentMethod: CARD });
+    reserveAttemptOnly(ctx, bookingId, c.hold, c.extra);
+    assert.strictEqual(detailOf(ctx, bookingId).isStripeCheckout, true, c.name);
+    assert.strictEqual(ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123').success, false, c.name);
+  });
+});
+
+test('Issue #398: 現金・PayPayは試行ID予約の有無にかかわらず従来どおり承認できる', function () {
+  ['現金', 'PayPay'].forEach(function (method, i) {
+    var ctx = setup();
+    var bookingId = createPending(ctx, { paymentMethod: method, startTime: i === 0 ? '10:00' : '13:00' });
+    assert.strictEqual(detailOf(ctx, bookingId).isStripeCheckout, false);
+    assert.strictEqual(ctx.sandbox.adminConfirmBooking(bookingId).success, true, method);
+  });
+});

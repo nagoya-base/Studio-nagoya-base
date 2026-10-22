@@ -7191,3 +7191,13 @@ Phase 0のゲート確認（スペースマーケットとの同一Calendar共�
 Issue #267で完了（PASS, 2026-09-19）。確認手順・記録は
 [`docs/phase0-issue267-spacemarket-coexistence.md`](../../docs/phase0-issue267-spacemarket-coexistence.md)
 を参照。
+
+### Issue #398: 試行ID予約のみで止まったカード予約の旧方式／Checkout方式判定
+
+`Booking.isStripeCheckoutBooking(record, now)`は、`paymentStatus`がnot_started以外、またはSession ID・PaymentIntentが
+あればCheckout方式（旧Payment Link送信UIを出さない）。**`paymentAttemptId`だけ**（`reservePaymentAttempt_`が
+試行ID・金額・Session期限を書いた後、Session作成が結果不明・中断のまま止まった状態。`paymentStatus`は
+not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの`expires_at`）＋1時間を過ぎるまでCheckout方式、
+過ぎれば旧Payment Link方式として扱う（期限切れSessionは支払えないため二重決済にならない）。期限が読めない・
+`paymentRecoveryRequiredAt`が立っている場合は常にCheckout方式（fail-closed）。`beginCardCheckout`は
+`STRIPE_CHECKOUT_ENABLED`が有効でないとこの状態を作れないため、過去にキルスイッチが有効だった期間の試行が原因と推定される。

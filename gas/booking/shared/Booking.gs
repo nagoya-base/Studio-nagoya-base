@@ -608,11 +608,34 @@ var Booking = (function () {
    * paymentStatusも既定値のままのためfalseになり、PR-Dの鍵承認ゲート・返金操作の対象外
    * （従来どおりの運用）になる。
    */
-  function isStripeCheckoutBooking(record) {
+  function isStripeCheckoutBooking(record, now) {
     var r = record || {};
-    if (r.paymentAttemptId || r.stripeCheckoutSessionId || r.stripePaymentIntentId) return true;
     var normalized = normalizePaymentStatus(r.paymentStatus);
-    return normalized !== PAYMENT_STATUS.NOT_STARTED;
+    if (normalized !== PAYMENT_STATUS.NOT_STARTED) return true;
+    if (r.stripeCheckoutSessionId || r.stripePaymentIntentId) return true;
+    if (r.paymentAttemptId) return !isExpiredUnstartedCheckoutReservation_(r, now);
+    return false;
+  }
+
+  /*
+   * Issue #398: 決済試行IDだけが予約済み（reservePaymentAttempt_が書いた状態）で、
+   * Checkout Sessionの証跡（Session ID・PaymentIntent）が無く
+   * paymentStatusもnot_startedのままの予約が、Sessionの有効期限（paymentHoldExpiresAt。
+   * Stripeのexpires_atと同じ値）を十分に過ぎているか。
+   *
+   * この状態はSession作成APIの結果が不明のまま止まった、または作成前に中断した予約で、
+   * Sessionが仮に存在しても期限切れで支払えない。この間は二重決済の恐れがあるため
+   * Checkout方式として扱い（旧Payment Link送信UIを出さない）、期限＋猶予を過ぎたら
+   * 旧Payment Link方式として扱って運用を復旧させる。
+   * 期限を読み取れない・要復旧が立っている場合は常にfalse（fail-closed）。
+   */
+  var CHECKOUT_RESERVATION_GRACE_MS_ = 60 * 60 * 1000;
+
+  function isExpiredUnstartedCheckoutReservation_(record, now) {
+    if (record.paymentRecoveryRequiredAt) return false;
+    if (!isDateLike_(record.paymentHoldExpiresAt)) return false;
+    var current = isDateLike_(now) ? new Date(now).getTime() : Date.now();
+    return current > new Date(record.paymentHoldExpiresAt).getTime() + CHECKOUT_RESERVATION_GRACE_MS_;
   }
 
   /*
@@ -620,9 +643,9 @@ var Booking = (function () {
    * Stripe Checkoutの決済フローに入っていない（isStripeCheckoutBookingがfalse）予約。
    * STRIPE_CHECKOUT_ENABLEDが有効になるまで、本番のカード予約はすべてこちらになる。
    */
-  function isLegacyPaymentLinkBooking(record) {
+  function isLegacyPaymentLinkBooking(record, now) {
     var r = record || {};
-    return isCardPaymentMethod(r.paymentMethod) && !isStripeCheckoutBooking(r);
+    return isCardPaymentMethod(r.paymentMethod) && !isStripeCheckoutBooking(r, now);
   }
 
   /*
