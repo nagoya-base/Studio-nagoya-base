@@ -88,3 +88,36 @@ Deployment protection rulesで次を設定する。
 
 実予約を作成する`createBooking`の正常系テストは、専用テスト日時と後処理の合意がある
 別作業として行う。このワークフローの初回実行と同時には行わない。
+
+## list-deployments失敗時の診断と復旧（Issue #400）
+
+更新前・更新後ともstdout/stderrは権限を制限した一時ファイルへ保存し、終了時に
+認証ファイルとともに削除する。Actionsへは固定カテゴリだけを出力する。
+生ログの表示・artifact化・Issue/PRへの貼り付けは行わない。
+
+| カテゴリ | 確認・対応 |
+| --- | --- |
+| `AUTHENTICATION_FAILED` | OAuth期限切れ・失効・invalid_grant等。下記の再認証を行う |
+| `ACCESS_DENIED` | 選択アカウントの編集権限・OAuth scope・API設定を確認する |
+| `SCRIPT_NOT_FOUND_OR_INACCESSIBLE` | 対象GASと既存Script ID・アカウントのアクセスを確認する。404だけではID誤りと権限による不可視を断定できない |
+| `CLASP_CREDENTIAL_OR_USER_MISMATCH` | credential形式と選択userを確認する。Adminはdefault、Publicはbooking-owner |
+| `TRANSIENT_API_OR_NETWORK_ERROR` | API障害・ネットワーク・quotaを確認して時間を置いて再実行する |
+| `UNCLASSIFIED` | 原因未確定。承認された管理者のローカル環境で確認し、秘密情報を共有しない |
+
+Adminで認証切れと判明した場合は、Admin GASを編集できる正しいGoogleアカウントで、
+管理者のローカルPCから`@google/clasp@3.4.1`の`clasp login`をやり直す。
+生成された最新`~/.clasprc.json`全文を、GitHubの
+**Settings > Environments > booking-production > Environment secrets > CLASPRC_JSON**
+へ直接登録する。認証情報をコード・ログ・チャットへ保存しない。
+Public専用の`BOOKING_PUBLIC_CLASPRC_JSON`は変更しない。
+
+診断改善PRのマージ前は本番実行しない。マージ後、最新mainを選びtarget=`admin`で
+実行し、Environment承認後のカテゴリを確認する。必要な復旧後に同じ手順で再実行し、
+list-deployments → pull → push --force → update-deployment → 更新後検証の成功を確認する。
+既存Deploymentを再作成せず、`STRIPE_CHECKOUT_ENABLED`も変更しない。
+実行URL・対象main SHA・カテゴリまたは成功結果を記録し、PR #399を含むmainの反映を確認する。
+
+最後に管理者が旧Payment Link方式の対象カード予約を開き、Stripe Payment Link URL入力欄と
+「決済リンクを送信」ボタンの表示を確認する。メール送信はこの表示確認には不要。
+表示されない場合はIssue #398を完了扱いにせず、デプロイ世代と予約データを再確認する。
+本番再実行・実原因・反映・表示確認は、マージ前の自動テストでは検証できないため別途記録する。
