@@ -556,6 +556,23 @@
   filter: brightness(1.08);
 }
 
+/* リンク型Primary CTA（予約完了画面の「カード決済へ進む」「戻る」）。Studio Xの
+   `.content-section a { color: var(--accent) }`（0,1,1）が .ba-btn-primary（0,1,0）に
+   勝ち、背景と同じアクセント色の文字になるため、それより詳細度を上げて文字色を固定する。
+   hover / focus でも同化しないよう同じ色を明示する（Issue #402）。 */
+.booking-app a.ba-btn-primary,
+.booking-app a.ba-btn-primary:hover,
+.booking-app a.ba-btn-primary:focus,
+.booking-app a.ba-btn-primary:focus-visible,
+.booking-app a.ba-btn-primary:active {
+  color: var(--ba-bg);
+}
+
+.booking-app a.ba-btn-primary:focus-visible {
+  outline: 2px solid var(--ba-text);
+  outline-offset: 2px;
+}
+
 .ba-btn-ghost {
   border-color: var(--ba-border);
   color: var(--ba-text);
