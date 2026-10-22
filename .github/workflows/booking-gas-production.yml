@@ -145,7 +145,8 @@ jobs:
           manifest_path="$remote_dir/appsscript.json"
           if [[ "${{ inputs.target }}" == "public" ]]; then
             # The public manifest is version-controlled. The admin manifest is
-            # intentionally preserved from its existing container-bound project.
+            # preserved from its existing container-bound project; the builder only
+            # appends missing required oauthScopes (script.external_request).
             manifest_path="$GITHUB_WORKSPACE/gas/booking/public/appsscript.json"
           fi
           node scripts/prepare-booking-gas-project.js \

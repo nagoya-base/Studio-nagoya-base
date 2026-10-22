@@ -14,7 +14,14 @@ Admin配布物には`.gs`許可リストに加え、Web UIのエントリポイ�
 
 ワークフローはGASコードと`appsscript.json`だけを更新する。公開Web Appのmanifestは
 mainの`gas/booking/public/appsscript.json`を正とし、コンテナ固有設定を持つBooking Adminの
-manifestは既存プロジェクトから取得して維持する。Script Properties、
+manifestは既存プロジェクトから取得して維持する。ただしBooking AdminはStripe API
+（`UrlFetchApp`）を呼ぶため、`oauthScopes`に
+`https://www.googleapis.com/auth/script.external_request`が必須である。欠けていると
+`processPendingStripeWebhookEvents`のCheckout Session再取得が`errorType=NETWORK`で失敗し、
+予約が`checkout_pending`／`pending`のまま止まる（Issue #404）。デプロイ時に
+`scripts/prepare-booking-gas-project.js`が不足分だけを末尾へ追記し（既存scopeや他項目は
+変更しない）、既存manifestに`oauthScopes`配列自体が無い場合は自動検出scopeを失わないよう
+明示的に失敗させる。新scopeの追加後は、Apps Scriptエディタで一度関数を実行して再認可する。Script Properties、
 トリガー、Calendar、Spreadsheet、予約実データを読み書きする処理は含まない。
 
 ## 初回設定: Google認証

@@ -37,7 +37,14 @@ test('admin GAS bundle preserves the supplied existing-project manifest', functi
   withTempDirectory(function (directory) {
     var remoteManifest = path.join(directory, 'remote-appsscript.json');
     var output = path.join(directory, 'output');
-    var expectedManifest = { timeZone: 'Asia/Tokyo', webapp: { access: 'MYSELF' } };
+    var expectedManifest = {
+      timeZone: 'Asia/Tokyo',
+      oauthScopes: [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/script.external_request'
+      ],
+      webapp: { access: 'MYSELF' }
+    };
     fs.writeFileSync(remoteManifest, JSON.stringify(expectedManifest));
 
     var files = builder.prepareProject('admin', output, remoteManifest);
@@ -57,4 +64,52 @@ test('admin GAS bundle preserves the supplied existing-project manifest', functi
       expectedManifest
     );
   });
+});
+
+var EXTERNAL_REQUEST = 'https://www.googleapis.com/auth/script.external_request';
+
+test('admin GAS bundle appends missing script.external_request without touching other manifest fields (Issue #404)', function () {
+  withTempDirectory(function (directory) {
+    var remoteManifest = path.join(directory, 'remote-appsscript.json');
+    var output = path.join(directory, 'output');
+    var existing = {
+      timeZone: 'Asia/Tokyo',
+      oauthScopes: [
+        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/spreadsheets'
+      ],
+      webapp: { access: 'MYSELF' }
+    };
+    fs.writeFileSync(remoteManifest, JSON.stringify(existing));
+
+    builder.prepareProject('admin', output, remoteManifest);
+
+    var written = JSON.parse(fs.readFileSync(path.join(output, 'appsscript.json'), 'utf8'));
+    assert.deepStrictEqual(
+      written.oauthScopes,
+      existing.oauthScopes.concat([EXTERNAL_REQUEST])
+    );
+    assert.strictEqual(written.timeZone, existing.timeZone);
+    assert.deepStrictEqual(written.webapp, existing.webapp);
+  });
+});
+
+test('admin GAS bundle fails explicitly when the manifest has no oauthScopes array (Issue #404)', function () {
+  withTempDirectory(function (directory) {
+    var remoteManifest = path.join(directory, 'remote-appsscript.json');
+    fs.writeFileSync(remoteManifest, JSON.stringify({ timeZone: 'Asia/Tokyo' }));
+
+    assert.throws(
+      function () { builder.prepareProject('admin', path.join(directory, 'output'), remoteManifest); },
+      /oauthScopes/
+    );
+  });
+});
+
+test('Stripe APIを呼ぶ全配布対象のmanifest要件が正本化されている (Issue #404)', function () {
+  assert.ok(builder.ADMIN_REQUIRED_OAUTH_SCOPES.indexOf(EXTERNAL_REQUEST) !== -1);
+  var publicManifest = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'gas', 'booking', 'public', 'appsscript.json'), 'utf8'
+  ));
+  assert.ok(publicManifest.oauthScopes.indexOf(EXTERNAL_REQUEST) !== -1);
 });

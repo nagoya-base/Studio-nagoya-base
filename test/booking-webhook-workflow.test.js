@@ -24,7 +24,14 @@ test('prepareProject preserves public/admin sets and isolates the webhook payloa
       fs.writeFileSync(path.join(output, 'stale-admin.gs'), 'stale');
       prepareProject(target, output, sourceManifest);
       assert.deepEqual(fs.readdirSync(output).sort(), files.concat('appsscript.json').sort());
-      assert.equal(fs.readFileSync(path.join(output, 'appsscript.json'), 'utf8'), fs.readFileSync(sourceManifest, 'utf8'));
+      if (target === 'admin') {
+        // Admin appends only the missing required scope (Issue #404); everything else is preserved.
+        const expected = JSON.parse(fs.readFileSync(sourceManifest, 'utf8'));
+        expected.oauthScopes.push('https://www.googleapis.com/auth/script.external_request');
+        assert.deepEqual(JSON.parse(fs.readFileSync(path.join(output, 'appsscript.json'), 'utf8')), expected);
+      } else {
+        assert.equal(fs.readFileSync(path.join(output, 'appsscript.json'), 'utf8'), fs.readFileSync(sourceManifest, 'utf8'));
+      }
     }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
