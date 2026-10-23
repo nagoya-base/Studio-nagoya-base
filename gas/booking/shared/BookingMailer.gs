@@ -263,7 +263,7 @@ var BookingMailer = (function () {
      * 送信処理（sendReminderMailForBooking）はLock取得後に再読込した最新レコードでこの関数を
      * 呼ぶため、画面表示後に取消・返金・Recoveryへ移った予約は送信直前にここで止まる。
      */
-    var accessGate = Booking.evaluateAccessGate(record, timezone);
+    var accessGate = Booking.evaluateAccessGate(record, timezone, { includeSameDay: !!opts.includeSameDayAccessGate });
     if (!accessGate.ok) {
       return { eligible: false, reasonCode: accessGate.reasonCode, message: accessGate.message };
     }
@@ -325,8 +325,10 @@ var BookingMailer = (function () {
    *   ため、既存のMAIL_NOT_READY/MAIL_SEND_FAILEDと同じくrecordMailFailure_で記録し、
    *   lastMailError*・Recoveryへ既存と同じ形で残す。
    */
-  function reminderEligibilityCheck_(mailType, bookingId, requiredStatus, sentAtFields, force, record, targetDateString) {
-    var evaluation = evaluateReminderEligibility_(record, { targetDateString: targetDateString, force: force });
+  function reminderEligibilityCheck_(mailType, bookingId, requiredStatus, sentAtFields, force, record, targetDateString, includeSameDayAccessGate) {
+    var evaluation = evaluateReminderEligibility_(record, {
+      targetDateString: targetDateString, force: force, includeSameDayAccessGate: !!includeSameDayAccessGate
+    });
     if (evaluation.eligible) return { ok: true };
 
     if (evaluation.reasonCode === REMINDER_REASON_CODES.INVALID_STATUS) {
@@ -680,7 +682,7 @@ var BookingMailer = (function () {
             }
           };
         }
-        return reminderEligibilityCheck_(mailType, lockedBookingId, requiredStatus, sentAtFields, force, record, opts.targetDateString || null);
+        return reminderEligibilityCheck_(mailType, lockedBookingId, requiredStatus, sentAtFields, force, record, opts.targetDateString || null, opts.includeSameDayAccessGate);
       }
     );
   }
@@ -713,8 +715,10 @@ var BookingMailer = (function () {
     if (found.record.status !== Booking.STATUS.CONFIRMED) return notApplicable('INVALID_STATUS');
     if (normalizeReminderDate_(found.record.date, timezone) !== today) return notApplicable('NOT_SAME_DAY');
 
-    /* 当日の再確認はLock取得後の最新レコードでtargetDateString（=今日）として行われる。 */
-    return sendReminderMailForBooking(bookingId, { targetDateString: today });
+    /* 当日の再確認はLock取得後の最新レコードでtargetDateString（=今日）として行われる。
+       当日受付のStripe予約は通常の鍵承認ゲート対象外だが、鍵情報を自動で先送りしないよう、
+       即時送信に限って入金済み・Recovery解消済み・鍵承認済みを必須にする（includeSameDayAccessGate）。 */
+    return sendReminderMailForBooking(bookingId, { targetDateString: today, includeSameDayAccessGate: true });
   }
 
   function reminderSentAtVersion_(record) {

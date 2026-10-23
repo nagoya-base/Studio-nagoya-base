@@ -179,6 +179,55 @@ test('当日 + 鍵承認済み・入金済みのカード事前受付 → 送信
   assert.strictEqual(guideMails(ctx).length, 1);
 });
 
+test('当日受付のStripe予約: 入金済みでも鍵承認がなければ即時送信せず、承認済みなら送信する（Issue #412受入条件）', function () {
+  var today = cardRecord({ createdAt: new Date('2026-10-02T08:00:00+09:00') });
+  var ctx = setup(today);
+  var result = sendSameDay(ctx);
+  assert.strictEqual(result.skipped, true);
+  assert.strictEqual(result.error.code, 'ACCESS_NOT_APPROVED');
+  assert.strictEqual(ctx.mailApp._sentEmails.length, 0);
+
+  var approved = setup(cardRecord({
+    createdAt: new Date('2026-10-02T08:00:00+09:00'), accessApprovedAt: new Date('2026-10-02T08:50:00+09:00')
+  }));
+  assert.strictEqual(sendSameDay(approved).success, true);
+  assert.strictEqual(guideMails(approved).length, 1);
+});
+
+test('当日受付のStripe予約: 未入金・Recovery未解消は鍵承認済みでも送信しない', function () {
+  var approvedAt = new Date('2026-10-02T08:50:00+09:00');
+  var created = new Date('2026-10-02T08:00:00+09:00');
+  var unpaid = setup(cardRecord({ createdAt: created, paymentStatus: 'checkout_pending', accessApprovedAt: approvedAt }));
+  assert.strictEqual(sendSameDay(unpaid).error.code, 'PAYMENT_NOT_SETTLED');
+  var recovery = setup(cardRecord({ createdAt: created, paymentRecoveryRequiredAt: approvedAt, accessApprovedAt: approvedAt }));
+  assert.strictEqual(sendSameDay(recovery).error.code, 'PAYMENT_RECOVERY_REQUIRED');
+  assert.strictEqual(unpaid.mailApp._sentEmails.length + recovery.mailApp._sentEmails.length, 0);
+});
+
+test('当日受付のStripe予約でも、管理者の通常再送（従来ゲート）は従来どおり可能', function () {
+  var ctx = setup(cardRecord({ createdAt: new Date('2026-10-02T08:00:00+09:00') }));
+  var forced = ctx.sandbox.BookingMailer.sendReminderMailForBooking(BOOKING_ID, { force: true });
+  assert.strictEqual(forced.success, true);
+});
+
+test('確定メール: 利用日が当日なら「利用日前日に別途送る」と書かず、即時送信と矛盾しない文言にする', function () {
+  var clock = stubs.createControllableClock(NOW);
+  var ctx = setup(null, { clock: clock });
+  var T = ctx.sandbox.BookingMailTemplates;
+  var config = { timezone: 'Asia/Tokyo', contactEmail: 'contact@example.com' };
+
+  var cash = T.buildConfirmedMail(cashRecord(), config).body;
+  assert.ok(/このあと、来場方法・キーボックス等の詳細案内を別途メールでお送りします。/.test(cash));
+  assert.ok(cash.indexOf('利用日前日') === -1);
+
+  var card = T.buildConfirmedMail(cardRecord({ createdAt: new Date('2026-10-02T08:00:00+09:00') }), config).body;
+  assert.ok(/運営での確認が完了した後、別途メールでお送りします。/.test(card));
+  assert.ok(card.indexOf('利用日前日') === -1);
+
+  var tomorrow = T.buildConfirmedMail(cashRecord({ date: '2026-10-03' }), config).body;
+  assert.ok(/利用日前日に別途メールでお送りします。/.test(tomorrow), '翌日以降は従来の文言');
+});
+
 test('当日 + PAYMENT_NOT_SETTLED → スキップ', function () {
   var ctx = setup(cardRecord({ paymentStatus: 'checkout_pending', accessApprovedAt: new Date('2026-10-02T08:50:00+09:00') }));
   var result = sendSameDay(ctx);

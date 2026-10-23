@@ -813,6 +813,10 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
      timezone基準で当日と判定した場合のみ、`sendReminderMailForBooking`へ委譲して来場案内を即時送信する。
      支払・Recovery・鍵承認ゲート、設定不足のfail-closed、`reminderSentAt`/`accessGuideSentAt`による
      二重送信防止は既存のまま。送信失敗でも予約のCONFIRMED状態は変えない。前日18時台のトリガーは変更なし。
+     当日受付のStripe Checkout予約は通常の鍵承認ゲート対象外だが、即時送信に限り入金済み・Recovery解消済み・
+     鍵承認済みを必須にする（`Booking.evaluateAccessGate`の`includeSameDay`）。条件未達なら送らず、
+     管理者の「来場案内を再送」（従来ゲート）で手動送信する。当日予約の確定メールは「前日に送る」ではなく
+     「このあと別途送る」（Stripeで鍵承認前は「運営の確認後に別途送る」）と案内する。
 5. 前日リマインドへ同梱する来場案内（住所・建物・部屋・入口案内・キーボックス位置・
    キーボックス番号・解錠コード・利用案内URL・案内PDF URL）
 6. `Bookings`シートへの送信履歴・エラー記録（8列追加。「Sheets変更（Issue #271）」参照）
