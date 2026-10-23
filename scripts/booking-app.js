@@ -1147,7 +1147,7 @@
       renderMultilineNotice_(els.cardPaymentNotice, null);
       return;
     }
-    renderMultilineNotice_(els.cardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale, { sameDay: Logic.isSameDayInJapan(state.date) }));
+    renderMultilineNotice_(els.cardPaymentNotice, Logic.cardPaymentNoticeLines(locale));
   }
 
   /* name="paymentMethod"のラジオが切り替わるたびにカード注意書きの表示を更新する。
@@ -1236,11 +1236,10 @@
     els.confirmPayment.textContent = Logic.paymentMethodLabel(state.paymentMethod, locale);
     els.confirmNote.textContent = state.note || UI_TEXT.noteUnset;
 
-    /* 予約確認画面のカード注意書き（Issue #334 PR-B「2. カード決済の注意書き」）。
-       支払期限はここでも改めて「今、確認画面を開いた時点+72時間」で再計算する
-       （送信前の目安表示。実際の期限は仮受付メールに記載されるサーバー側の値が正）。 */
+    /* 予約確認画面のカード注意書き（Issue #334 PR-B / Issue #407）。支払期限は申込後に表示される
+       Stripe Checkoutの決済ページの有効期限が正のため、ここでは日時を表示しない。 */
     if (Logic.isCardPaymentMethodValue(state.paymentMethod)) {
-      renderMultilineNotice_(els.confirmCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale, { sameDay: Logic.isSameDayInJapan(state.date) }));
+      renderMultilineNotice_(els.confirmCardPaymentNotice, Logic.cardPaymentNoticeLines(locale));
     } else {
       renderMultilineNotice_(els.confirmCardPaymentNotice, null);
     }
@@ -1297,7 +1296,7 @@
 
   /*
    * PR #354レビュー対応・項目3: 「Stripe Checkoutが開始されていないと確実に判断できる」
-   * エラーコードだけを、旧「決済リンクを後日送付」フローへのフォールバック対象とする。
+   * エラーコードだけを、運営からの個別案内（旧Payment Link方式）へのフォールバック対象とする。
    * これ以外（Session作成結果が確認できない、台帳への保存が失敗した、決済済みの可能性が
    * ある等）を安易に「これから決済リンクを送ります」という案内へ丸めてしまうと、既に
    * Stripe側で決済試行が進んでいるかもしれない予約について、後日さらに別経路（旧
@@ -1313,7 +1312,7 @@
    * 受付自体の完了表示を止めてはならないため）:
    * - { status: 'success', checkoutUrl }: Checkout Sessionを発行できた。
    * - { status: 'fallback', code }: CHECKOUT_SAFE_FALLBACK_CODES_のいずれか。Checkoutは
-   *   確実に未着手のため、既存の「決済リンクを後日送付」案内を表示してよい。
+   *   確実に未着手のため、運営から決済方法を案内する旨の案内（日時の約束なし）を表示してよい。
    * - { status: 'uncertain', code }: 上記以外のすべて（ネットワーク障害・タイムアウト・
    *   応答の解析失敗を含む）。Checkoutが実際に開始された可能性を否定できないため、
    *   旧方式へは誘導せず専用のエラー・再試行案内を表示する。
@@ -1437,10 +1436,9 @@
           if (els.completeStatus) {
             els.completeStatus.textContent = body.status === 'PENDING' ? UI_TEXT.pendingStatusLabel : (body.status || '');
           }
-          /* 完了画面（Issue #334 PR-B）: 既存の「通常24時間以内にご連絡します」は
+          /* 完了画面（Issue #334 PR-B / Issue #407）: 既存の「通常24時間以内にご連絡します」は
              確定連絡そのものが24時間以内に届くという前提の文言のため、カード決済では
-             出さない（実際の確定連絡は入金確認後の承認を経るため、72時間後の支払期限まで
-             届かない可能性がある）。代わりにカード注意書きを表示する。現金・PayPay・
+             出さない（カードは決済ページでの支払い完了で確定する）。代わりにカード注意書きを表示する。現金・PayPay・
              未定は既存文言のまま変更しない。 */
           if (Logic.isCardPaymentMethodValue(state.paymentMethod)) {
             if (els.completeGenericNotice) els.completeGenericNotice.hidden = true;
@@ -1449,7 +1447,7 @@
              * 試みる。結果は3通りに分岐する（attemptCardCheckout_のコメント参照）:
              * - success: Stripe Checkoutへの遷移導線を表示する。
              * - fallback: Checkoutが確実に未着手（キルスイッチ無効等）の場合のみ、
-             *   既存の「決済リンクを後日送付」案内をそのまま表示する。
+             *   運営から決済方法を案内する旨の案内（日時の約束なし）を表示する。
              * - uncertain: それ以外すべて。旧方式へは絶対に誘導せず（二重決済の恐れが
              *   あるため）、専用のエラー・再試行案内を表示する。
              */
@@ -1467,7 +1465,7 @@
                 renderMultilineNotice_(els.completeCheckoutNotice, null);
                 renderMultilineNotice_(els.completeCheckoutUncertainNotice, null);
                 if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = true;
-                renderMultilineNotice_(els.completeCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale, { sameDay: Logic.isSameDayInJapan(state.date) }));
+                renderMultilineNotice_(els.completeCardPaymentNotice, Logic.cardCheckoutFallbackNoticeLines(locale));
               } else {
                 renderMultilineNotice_(els.completeCardPaymentNotice, null);
                 renderMultilineNotice_(els.completeCheckoutNotice, null);

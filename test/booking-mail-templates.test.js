@@ -112,7 +112,7 @@ test('buildPendingMail: キーボックス番号・解錠コードを一切含�
 
 /* ── カード決済の仮受付メール案内（Issue #334 PR-B「3. 仮受付メール」） ── */
 
-test('buildPendingMail: カード決済のみ、決済リンクの送信予定・実際の支払期限日時・自動失効・再申し込み方法を含む', function () {
+test('buildPendingMail: カード決済のみ、Checkoutの決済ページでの支払い・有効期限内の決済成功で確定・期限切れ/未完了は確定しない旨を含み、旧24時間/72時間の案内を含まない（Issue #407）', function () {
   var templates = loadTemplates();
   var record = sampleRecord({
     paymentMethod: 'オンラインクレジットカード',
@@ -123,15 +123,11 @@ test('buildPendingMail: カード決済のみ、決済リンクの送信予定�
   var mail = templates.buildPendingMail(record, config);
 
   assert.match(mail.body, /【クレジットカード決済のご案内】/);
-  assert.match(mail.body, /決済リンクは、お申し込みから24時間以内にメールでお送りします。/);
-  /* 支払期限はBooking.computeCardPaymentDueMillis（createdAt+72時間。利用開始2時間前の
-     上限には掛からない）に基づく実際の日時が入る。フォーム上の「目安」表示
-     （scripts/booking-logic.jsのcardPaymentDueDisplay）とは別に、ここでは必ず
-     createdAt/startAtから計算したサーバー側の値を使う。 */
-  assert.match(mail.body, /お支払い期限：お申し込みから72時間後（2026-10-01（木） 10:00）/);
-  assert.match(mail.body, /期限までに予約が確定しなかった場合は、予約が自動的に失効します。/);
+  assert.match(mail.body, /予約申込後に表示される決済ページでお支払いください。/);
+  assert.match(mail.body, /決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。/);
   assert.match(mail.body, /改めて予約フォームからお申し込みください。/);
   assert.match(mail.body, /すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。/);
+  assert.doesNotMatch(mail.body, /24時間以内|72時間|お支払い期限：|決済リンクは/);
 });
 
 test('buildPendingMail: カード決済の注意書きは、冒頭の既存仮受付案内と重複する「仮受付です」の行を含まない（重複整理）', function () {
@@ -166,13 +162,13 @@ test('buildPendingMail: 現金・PayPay・未定にはカード専用の注意�
   });
 });
 
-test('buildPendingMail: カード決済でもcreatedAt/startAtが欠けている場合は例外を投げず、括弧内の日時なしで案内文だけ出す', function () {
+test('buildPendingMail: カード決済でもcreatedAt/startAtが欠けていても例外を投げず、案内文を出す', function () {
   var templates = loadTemplates();
   var record = sampleRecord({ paymentMethod: 'オンラインクレジットカード', createdAt: undefined });
   var config = Object.assign({}, CONFIG, { ttlConfig: { minHoursBeforeStart: 2 } });
   var mail = templates.buildPendingMail(record, config);
   assert.match(mail.body, /【クレジットカード決済のご案内】/);
-  assert.match(mail.body, /お支払い期限：お申し込みから72時間後/);
+  assert.match(mail.body, /決済ページの有効期限内にお支払いが完了した場合に予約が確定します/);
 });
 
 test('buildConfirmedMail: 件名で予約確定が分かる', function () {

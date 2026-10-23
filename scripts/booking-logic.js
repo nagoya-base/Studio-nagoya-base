@@ -408,94 +408,63 @@
   }
 
   /*
-   * ── カード決済の支払期限表示（Issue #334 PR-B） ──
-   * ここでの表示はあくまでフォーム側の目安表示であり、実際の支払期限の正は
-   * gas/booking/shared/Booking.gs（CARD_TTL_HOURS/computeCardPaymentDueMillis）。TTLはそちらと
-   * 値を一致させること。カード決済の96時間受付制限はIssue #407で全面撤廃した。
+   * ── カード決済（Issue #334 PR-B / Issue #407） ──
+   * Issue #407でカード決済の96時間受付制限と、旧「24時間以内に決済リンク／72時間後まで」の
+   * 一般向け案内を撤廃した。カードは申込直後のStripe Checkoutで支払い、支払期限は
+   * Checkout Sessionの有効期限（サーバー側paymentHoldExpiresAt）が正。フォーム側では
+   * 具体的な日時を持たず、「決済ページの有効期限内」とだけ案内する。
    */
   var CARD_PAYMENT_METHOD_VALUE = 'オンラインクレジットカード';
-  var CARD_TTL_HOURS = 72;
 
   function isCardPaymentMethodValue(value) {
     return value === CARD_PAYMENT_METHOD_VALUE;
   }
 
-  /* Issue #406: 利用日（'YYYY-MM-DD'）がAsia/Tokyo基準の今日か。カード注意書きの当日用文言の切替に使う。 */
-  function isSameDayInJapan(dateValue, now) {
-    return isNonEmpty(dateValue) && dateValue === todayInJapan(now);
-  }
-
-  var WEEKDAY_LABELS_JA_ = ['日', '月', '火', '水', '木', '金', '土'];
-
-  /* Date（絶対時刻）をAsia/Tokyo基準の'YYYY-MM-DD（曜）HH:mm'へ整形する。
-     gas/booking/shared/Availability.gsのformatDateWithWeekdayと表示体裁を揃える。 */
-  function formatDateTimeWithWeekdayInJapan_(date) {
-    var parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
-    }).formatToParts(date);
-    var result = {};
-    parts.forEach(function (part) { if (part.type !== 'literal') result[part.type] = part.value; });
-    var weekdayIndex = new Date(Date.UTC(
-      parseInt(result.year, 10), parseInt(result.month, 10) - 1, parseInt(result.day, 10)
-    )).getUTCDay();
-    return result.year + '-' + result.month + '-' + result.day +
-      '（' + WEEKDAY_LABELS_JA_[weekdayIndex] + '） ' + result.hour + ':' + result.minute;
-  }
-
-  /*
-   * カード決済の支払期限の「目安」表示（フォーム送信前のみ使う）。実際の支払期限は
-   * サーバー側の申込日時（createdAt）を起点に計算されるため、送信後は仮受付メールに
-   * 記載される正式な期限を必ず確認するよう案内する（cardPaymentNoticeLines参照）。
-   */
-  function cardPaymentDueDisplay(now) {
-    var base = isDateLike_(now) ? now : new Date();
-    var due = new Date(base.getTime() + CARD_TTL_HOURS * 3600000);
-    return formatDateTimeWithWeekdayInJapan_(due);
-  }
-
-  /* フォーム（支払方法欄・確認画面）で使うカード決済の注意書き本文（Issue #334本文の
-     引用ブロックと一致させる）。仮受付メール側（gas/booking/shared/BookingMailTemplates.gsの
-     buildCardPendingNotice_）は、この末尾行と重複する既存の仮受付案内が別にあるため、
-     その行を省いた独自の組み立てを別途持つ（テキストの正はこちら1か所ではなく、
-     フォーム/メールそれぞれの文脈に応じて必要な行だけを使う）。 */
+  /* フォーム（支払方法欄・確認画面・完了画面）で使うカード決済の注意書き本文（Issue #407）。
+     仮受付メール側（gas/booking/shared/BookingMailTemplates.gsのbuildCardPendingNotice_）は
+     メール本文の文脈に合わせた同趣旨の文言を別に持つ。 */
   var CARD_PAYMENT_NOTICE_TEXT_ = {
     ja: {
       title: '【クレジットカード決済のご案内】',
-      linkTiming: '決済リンクは、お申し込みから24時間以内にメールでお送りします。',
-      sameDayTiming: '当日のご予約のため、お申し込み後に表示される決済ページですぐにお支払いください。',
-      sameDayDue: 'お支払い期限：決済ページの有効時間内（お申し込み後およそ30分）。利用開始時刻までに決済が完了しない場合は、予約が自動的に失効します。',
-      dueLabel: function (dueDisplay) { return 'お支払い期限：お申し込みから72時間後（' + dueDisplay + '）'; },
-      expiry: '期限までにお支払いのうえ、予約確定のご案内をお待ちください。期限までに予約が確定しなかった場合は、予約が自動的に失効します。',
-      reapply: '失効後もご利用を希望される場合は、改めて予約フォームからお申し込みください。',
-      alreadyPaid: 'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。',
-      pendingNote: '※お申し込み時点では仮受付です。入金確認後、当施設の承認をもって予約確定となります。'
+      pay: 'オンラインクレジットカード決済は、予約申込後に表示される決済ページでお支払いください。',
+      confirm: '決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。',
+      reapply: '予約が確定しなかった場合にご利用を希望されるときは、改めて予約フォームからお申し込みください。',
+      alreadyPaid: 'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。'
     },
     en: {
       title: '[Credit Card Payment]',
-      linkTiming: 'We will email you a payment link within 24 hours of your request.',
-      sameDayTiming: 'Because this is a same-day booking, please pay right away on the payment page shown after you submit.',
-      sameDayDue: 'Payment due: within the validity of the payment page (about 30 minutes after your request). If payment is not completed before your start time, the booking will expire automatically.',
-      dueLabel: function (dueDisplay) { return 'Payment due: 72 hours after your request (' + dueDisplay + ')'; },
-      expiry: 'Please complete payment before the deadline and wait for booking confirmation. If the booking is not confirmed by the deadline, it will expire automatically.',
-      reapply: 'If you still wish to book after it expires, please submit a new request through the booking form.',
-      alreadyPaid: 'If you have already paid, please contact us instead of submitting a new request or paying again.',
-      pendingNote: 'Your request is only a provisional hold at this point. The booking is confirmed only after we verify payment and approve it.'
+      pay: 'Please pay by online credit card on the payment page shown after you submit your request.',
+      confirm: 'Your booking is confirmed when payment is completed within the validity period of the payment page. If the page expires or payment is not completed, the booking is not confirmed.',
+      reapply: 'If your booking is not confirmed and you still wish to book, please submit a new request through the booking form.',
+      alreadyPaid: 'If you have already paid, please contact us instead of submitting a new request or paying again.'
     }
   };
 
-  /* dueDisplay/localeに加え、options.omitPendingNote:trueで末尾の「仮受付です」行を省く
-     （仮受付メール本文で既存の仮受付案内と重複させないため。フォーム表示側は省かない）。 */
-  function cardPaymentNoticeLines(dueDisplay, locale, options) {
+  function cardPaymentNoticeLines(locale) {
     var t = CARD_PAYMENT_NOTICE_TEXT_[normalizeLocale(locale)];
-    var opts = options || {};
-    /* Issue #406: 当日予約は「24時間以内に決済リンク」「申込から72時間後」の案内が当てはまらない
-       （申込直後に決済ページへ進む）ため、当日用の文言に差し替える。 */
-    var lines = opts.sameDay
-      ? [t.title, t.sameDayTiming, t.sameDayDue, t.expiry, t.reapply, t.alreadyPaid]
-      : [t.title, t.linkTiming, t.dueLabel(dueDisplay), t.expiry, t.reapply, t.alreadyPaid];
-    if (!opts.omitPendingNote) lines.push(t.pendingNote);
-    return lines;
+    return [t.title, t.pay, t.confirm, t.reapply, t.alreadyPaid];
+  }
+
+  /*
+   * startCardCheckoutが「Checkout未着手と確実に判断できる」コード（CHECKOUT_DISABLED等）を
+   * 返したときの完了画面の案内。Checkoutを開始できなかったことだけを伝え、旧Payment Link
+   * 方式の日時（24時間以内・72時間後等）は一般向けの仕様として案内しない。
+   */
+  var CARD_CHECKOUT_FALLBACK_TEXT_ = {
+    ja: [
+      '【クレジットカード決済のご案内】',
+      '決済ページを自動で開始できませんでした。運営より決済方法をご案内しますので、お待ちください。',
+      'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。'
+    ],
+    en: [
+      '[Credit Card Payment]',
+      'We could not start the payment page automatically. We will contact you with payment instructions, so please wait.',
+      'If you have already paid, please contact us instead of submitting a new request or paying again.'
+    ]
+  };
+
+  function cardCheckoutFallbackNoticeLines(locale) {
+    return CARD_CHECKOUT_FALLBACK_TEXT_[normalizeLocale(locale)];
   }
 
   /*
@@ -513,13 +482,13 @@
     ja: {
       title: '【クレジットカード決済へ進む】',
       body: 'このあと表示される決済ページ（Stripe）でお支払い手続きを行ってください。',
-      confirmationNote: '決済ページでの操作が完了しても、その画面だけでは予約確定とはなりません。当店にて内容を確認のうえ、あらためて予約確定のご連絡をいたします。',
+      confirmationNote: '決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。',
       buttonLabel: '決済ページへ進む'
     },
     en: {
       title: '[Proceed to Card Payment]',
       body: 'You will be taken to a secure payment page (Stripe) to complete your payment.',
-      confirmationNote: 'Completing payment there does not confirm your booking by itself. We will review your request and send a separate confirmation.',
+      confirmationNote: 'Your booking is confirmed when payment is completed within the validity period of the payment page. If the page expires or payment is not completed, the booking is not confirmed.',
       buttonLabel: 'Proceed to payment'
     }
   };
@@ -893,10 +862,8 @@
     yearMonthFromDateValue: yearMonthFromDateValue,
     weekdayColumnClass: weekdayColumnClass,
     CARD_PAYMENT_METHOD_VALUE: CARD_PAYMENT_METHOD_VALUE,
-    CARD_TTL_HOURS: CARD_TTL_HOURS,
     isCardPaymentMethodValue: isCardPaymentMethodValue,
-    isSameDayInJapan: isSameDayInJapan,
-    cardPaymentDueDisplay: cardPaymentDueDisplay,
+    cardCheckoutFallbackNoticeLines: cardCheckoutFallbackNoticeLines,
     cardPaymentNoticeLines: cardPaymentNoticeLines,
     cardCheckoutRedirectNoticeLines: cardCheckoutRedirectNoticeLines,
     cardCheckoutButtonLabel: cardCheckoutButtonLabel,

@@ -1072,7 +1072,7 @@ test('Issue #334 PR-B: 送信直前もなお受付期限内であれば、通常
   assert.strictEqual(ctx.elements['ba-step-complete'].hidden, false);
 });
 
-test('Issue #334 PR-B: カード選択時のみ、支払方法欄付近に支払期限つきの注意書きが表示される', async function () {
+test('Issue #334 PR-B: カード選択時のみ、支払方法欄付近にCheckout基準の注意書きが表示される', async function () {
   var ctx = setupCardFlow(null);
   ctx.elements['ba-date'].value = jstDateString(10);
   ctx.elements['ba-duration'].value = '2';
@@ -1088,9 +1088,9 @@ test('Issue #334 PR-B: カード選択時のみ、支払方法欄付近に支払
   var text = ctx.elements['ba-card-payment-notice'].renderedText();
   assert.strictEqual(ctx.elements['ba-card-payment-notice'].hidden, false);
   assert.match(text, /【クレジットカード決済のご案内】/);
-  assert.match(text, /24時間以内にメールでお送りします/);
-  assert.match(text, /お支払い期限：お申し込みから72時間後/);
-  assert.match(text, /自動的に失効/);
+  assert.match(text, /予約申込後に表示される決済ページでお支払いください/);
+  assert.match(text, /決済ページの有効期限内にお支払いが完了した場合に予約が確定します/);
+  assert.doesNotMatch(text, /24時間|72時間|96時間/);
 
   /* 現金へ切り替えると即座に消える（現金・PayPay・未定にカード専用文言を混入させない） */
   ctx.setPaymentMethod('現金');
@@ -1115,7 +1115,7 @@ test('Issue #334 PR-B: 現金・PayPay・未定を選んでも支払方法欄の
   });
 });
 
-test('Issue #334 PR-B: 予約確認画面にもカード選択時のみ支払期限つきの注意書きが表示される', async function () {
+test('Issue #334 PR-B: 予約確認画面にもカード選択時のみCheckout基準の注意書きが表示される', async function () {
   var ctx = setupCardFlow(null);
   ctx.elements['ba-date'].value = jstDateString(10);
   ctx.elements['ba-duration'].value = '2';
@@ -1131,7 +1131,9 @@ test('Issue #334 PR-B: 予約確認画面にもカード選択時のみ支払期
 
   assert.strictEqual(ctx.elements['ba-step-confirm'].hidden, false);
   assert.strictEqual(ctx.elements['ba-confirm-card-payment-notice'].hidden, false);
-  assert.match(ctx.elements['ba-confirm-card-payment-notice'].renderedText(), /お支払い期限：お申し込みから72時間後/);
+  var confirmText = ctx.elements['ba-confirm-card-payment-notice'].renderedText();
+  assert.match(confirmText, /決済ページの有効期限内にお支払いが完了した場合に予約が確定します/);
+  assert.doesNotMatch(confirmText, /24時間|72時間|96時間/);
 });
 
 test('Issue #334 PR-B: 現金決済では予約確認画面のカード注意書きが表示されない（既存の仮予約バナーのみ）', async function () {
@@ -1172,7 +1174,9 @@ test('Issue #334 PR-B: 仮予約送信成功後、カード決済のみ完了画
   assert.strictEqual(ctx.elements['ba-step-complete'].hidden, false);
   assert.strictEqual(ctx.elements['ba-complete-generic-notice'].hidden, true, '既存の「通常24時間以内にご連絡します」は隠れること');
   assert.strictEqual(ctx.elements['ba-complete-card-payment-notice'].hidden, false);
-  assert.match(ctx.elements['ba-complete-card-payment-notice'].renderedText(), /お支払い期限：お申し込みから72時間後/);
+  var completeText = ctx.elements['ba-complete-card-payment-notice'].renderedText();
+  assert.match(completeText, /運営より決済方法をご案内します/);
+  assert.doesNotMatch(completeText, /24時間|72時間|96時間/);
 });
 
 test('Issue #341 PR-B: startCardCheckoutがcheckoutUrlを返した場合、旧「決済リンクを後日送付」案内の代わりにStripe決済ボタンを表示する', async function () {
@@ -1205,8 +1209,8 @@ test('Issue #341 PR-B: startCardCheckoutがcheckoutUrlを返した場合、旧�
   assert.strictEqual(ctx.elements['ba-complete-checkout-notice'].hidden, false);
   assert.match(
     ctx.elements['ba-complete-checkout-notice'].renderedText(),
-    /決済ページでの操作が完了しても、その画面だけでは予約確定とはなりません/,
-    'PR-Cのwebhook自動確定が実装されるまでは、この画面で確定を約束しない'
+    /決済ページの有効期限内にお支払いが完了した場合に予約が確定します/,
+    'Checkout期限内の決済成功で確定・期限切れ/未完了は確定しない旨を案内する（Issue #407）'
   );
   assert.strictEqual(ctx.elements['ba-complete-checkout-wrap'].hidden, false);
   assert.strictEqual(ctx.elements['ba-complete-checkout-link'].href, 'https://checkout.stripe.com/pay/cs_test_abc');

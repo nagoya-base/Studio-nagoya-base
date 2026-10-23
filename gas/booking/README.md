@@ -7244,3 +7244,24 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
   - 初回利用ではStep3でカード以外のラジオを無効化しカードを選択済みにする（`#ba-first-time-card-notice`）。
   - 96時間の事前チェック（`isCardPaymentEligible`・`cardPaymentIneligibleNotice`・`#ba-card-ineligible-notice`）は削除。
   - `isSameDayFirstTimeBlocked`は削除した。
+
+### Issue #407 追補: カードの支払期限・決済導線をStripe Checkout基準へ統一
+
+> 上のIssue #334節にある「申込から24時間以内に決済リンクを送付」「申込から72時間後まで支払い」
+> 「お支払い期限の日時表示」は、一般向けの仕様としては**廃止**した（歴史的記録として残している）。
+
+- オンラインクレジットカードは、**申込直後にStripe Checkoutの決済ページへ遷移して支払う**。
+  支払期限はCheckout Sessionの有効期限（`paymentHoldExpiresAt`）。有効期限内に決済が成功した場合のみ予約が確定し
+  （Stripe Webhook成功後の自動確定）、期限切れ・決済失敗・未完了は確定しない。
+- 一般向け表示（予約フォームの注意書き・確認画面・完了画面・仮受付メール・Web・legal）の文言は次の趣旨に統一:
+  「オンラインクレジットカード決済は、予約申込後に表示される決済ページでお支払いください。決済ページの有効期限内に
+  お支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。」
+  （`Logic.cardPaymentNoticeLines(locale)` / `buildCardPendingNotice_`）。具体的な期限日時は表示しない。
+- `startCardCheckout`が`CHECKOUT_DISABLED` / `STRIPE_NOT_CONFIGURED`を返した場合（Checkout未着手と確実に判断できる場合）の
+  完了画面は、「決済ページを自動で開始できなかった。運営より決済方法を案内する」旨のみを示し、
+  24時間/72時間といった旧Payment Link方式の日時は案内しない（`Logic.cardCheckoutFallbackNoticeLines`）。
+  旧Payment Link方式のコード・Booking Adminの決済リンク送信機能自体は残している（管理者の個別運用用）。
+- 維持するもの: カードPENDINGの内部TTL（`CARD_TTL_HOURS`・利用開始の`minHoursBeforeStart`前を上限・当日grace）は、
+  Checkout発行前／旧方式のPENDINGを失効させる安全網として残す。Checkout発行後は`paymentHoldExpiresAt`の別クロックが正。
+  `STRIPE_CHECKOUT_ENABLED`の設定値（キルスイッチ）はこのIssueで変更していない。
+- 現金・PayPayの既存PENDING/当日支払ルールは変更していない。

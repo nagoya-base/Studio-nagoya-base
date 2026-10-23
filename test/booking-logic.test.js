@@ -615,51 +615,32 @@ test('isCardPaymentMethodValue: 内部value「オンラインクレジットカ�
   assert.strictEqual(Logic.isCardPaymentMethodValue(undefined), false);
 });
 
-test('cardPaymentDueDisplay: 「今から72時間後」をAsia/Tokyo基準の日付（曜日つき）・時刻で返す', function () {
+test('cardPaymentNoticeLines: Stripe Checkoutの決済ページでの支払い・有効期限内の決済成功で確定・期限切れ/未完了は確定しない旨を含み、旧24時間/72時間の案内を含まない（Issue #407）', function () {
   var Logic = loadLogic();
-  var now = new Date('2026-10-01T10:00:00+09:00'); /* 木曜 */
-  assert.strictEqual(Logic.cardPaymentDueDisplay(now), '2026-10-04（日） 10:00');
-});
-
-test('cardPaymentDueDisplay: 72時間後に日付だけでなく曜日も正しく繰り上がる', function () {
-  var Logic = loadLogic();
-  var now = new Date('2026-10-29T23:30:00+09:00'); /* 木曜 */
-  assert.strictEqual(Logic.cardPaymentDueDisplay(now), '2026-11-01（日） 23:30');
-});
-
-test('cardPaymentNoticeLines: 決済リンクの送信予定（24時間以内）・支払期限（72時間後の実際の日時）・自動失効・再申し込み方法・決済済みの場合の連絡先をすべて含む', function () {
-  var Logic = loadLogic();
-  var due = '2026-10-04（日） 10:00';
-  var lines = Logic.cardPaymentNoticeLines(due, 'ja');
-  var body = lines.join('\n');
-  assert.match(body, /24時間以内にメールでお送りします/);
-  assert.match(body, /72時間後（2026-10-04（日） 10:00）/);
-  assert.match(body, /自動的に失効/);
-  assert.match(body, /改めて予約フォームからお申し込み/);
+  var body = Logic.cardPaymentNoticeLines('ja').join('\n');
+  assert.match(body, /予約申込後に表示される決済ページでお支払いください/);
+  assert.match(body, /決済ページの有効期限内にお支払いが完了した場合に予約が確定します/);
+  assert.match(body, /期限切れ・決済未完了の場合、予約は確定しません/);
   assert.match(body, /二重決済をせず、運営までご連絡/);
+  assert.doesNotMatch(body, /24時間|72時間|96時間|4日前|決済リンク/);
 });
 
-test('cardPaymentNoticeLines: options.omitPendingNoteを指定すると「仮受付です」の行を省く（仮受付メールとの重複整理用）', function () {
+test('cardCheckoutFallbackNoticeLines / cardCheckoutRedirectNoticeLines: 旧Payment Link方式の日時を一般向け仕様として案内しない（Issue #407）', function () {
   var Logic = loadLogic();
-  var withNote = Logic.cardPaymentNoticeLines('2026-10-04（日） 10:00', 'ja').join('\n');
-  var withoutNote = Logic.cardPaymentNoticeLines('2026-10-04（日） 10:00', 'ja', { omitPendingNote: true }).join('\n');
-  assert.match(withNote, /仮受付です/);
-  assert.doesNotMatch(withoutNote, /仮受付です/);
+  ['ja', 'en'].forEach(function (locale) {
+    var body = Logic.cardCheckoutFallbackNoticeLines(locale).concat(Logic.cardCheckoutRedirectNoticeLines(locale)).join('\n');
+    assert.doesNotMatch(body, /24時間|72時間|96時間|24 hours|72 hours|96 hours/, locale);
+  });
+  var redirect = Logic.cardCheckoutRedirectNoticeLines('ja').join('\n');
+  assert.match(redirect, /有効期限内にお支払いが完了した場合に予約が確定します/);
+  assert.doesNotMatch(redirect, /あらためて予約確定のご連絡/);
 });
 
-test('cardPaymentNoticeLines: locale="en"では英語の案内文を返す', function () {
-  var Logic = loadLogic();
-  var lines = Logic.cardPaymentNoticeLines('2026-10-04 10:00', 'en');
-  var body = lines.join('\n');
-  assert.match(body, /24 hours/);
-  assert.match(body, /72 hours/);
-  assert.match(body, /expire automatically/);
-});
-
-test('CARD_TTL_HOURS/CARD_PAYMENT_METHOD_VALUE: gas/booking/shared/Booking.gsの値と一致する定数を公開する', function () {
+test('CARD_PAYMENT_METHOD_VALUE: gas/booking/shared/Booking.gsの値と一致する定数を公開し、旧96時間・72時間の定数/表示APIは撤廃されている（Issue #407）', function () {
   var Logic = loadLogic();
   assert.strictEqual(Logic.CARD_MIN_HOURS_BEFORE_START, undefined, 'Issue #407: 96時間制限の定数は撤廃');
-  assert.strictEqual(Logic.CARD_TTL_HOURS, 72);
+  assert.strictEqual(Logic.CARD_TTL_HOURS, undefined);
+  assert.strictEqual(Logic.cardPaymentDueDisplay, undefined);
   assert.strictEqual(Logic.CARD_PAYMENT_METHOD_VALUE, 'オンラインクレジットカード');
 });
 
@@ -695,14 +676,3 @@ test('priceComputingLabel/priceUnavailableLabel: locale="en"は英語、未指�
   assert.ok(Logic.priceUnavailableLabel('en').length > 0);
 });
 
-test('cardPaymentNoticeLines: sameDay指定では「24時間以内に決済リンク」「72時間後」を出さず、当日用の案内にする（Issue #406）', function () {
-  var Logic = loadLogic();
-  var lines = Logic.cardPaymentNoticeLines('2026-10-04（日） 10:00', 'ja', { sameDay: true }).join('\n');
-  assert.ok(!/24時間以内/.test(lines));
-  assert.ok(!/72時間後/.test(lines));
-  assert.ok(/当日のご予約/.test(lines));
-  var normal = Logic.cardPaymentNoticeLines('2026-10-04（日） 10:00', 'ja').join('\n');
-  assert.ok(/24時間以内/.test(normal) && /72時間後/.test(normal));
-  assert.ok(Logic.isSameDayInJapan('2026-10-01', new Date('2026-10-01T10:00:00+09:00')));
-  assert.ok(!Logic.isSameDayInJapan('2026-10-02', new Date('2026-10-01T10:00:00+09:00')));
-});
