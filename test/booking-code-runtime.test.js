@@ -163,11 +163,14 @@ test('doGet: 無効な日付はバリデーションエラーを返し、Calenda
   assert.strictEqual(calendarQueried, false, '入力検証エラー時はCalendar APIを呼ばない');
 });
 
-test('doGet: 120分未満はバリデーションエラーを返す', function () {
+test('doGet: 60分未満（59分以下）はバリデーションエラーを返し、60分は受理する（Issue #410）', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [] } });
-  var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '60' });
+  var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '59' });
   assert.strictEqual(body.success, false);
   assert.strictEqual(body.error.code, 'DURATION_TOO_SHORT');
+
+  var oneHour = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '60' });
+  assert.strictEqual(oneHour.success, true, '60分（1時間）はDURATION_TOO_SHORTにならない');
 });
 
 test('doGet: durationMinutesが未指定・数値以外でもエラーになり例外を投げない', function () {
@@ -319,7 +322,7 @@ test('doGet: action=monthlyは無効な年月・利用時間をバリデーシ�
   assert.strictEqual(badMonth.success, false);
   assert.strictEqual(badMonth.error.code, 'INVALID_MONTH');
 
-  var badDuration = callDoGet(sandbox, { action: 'monthly', year: FUTURE_MONTH.yearParam, month: FUTURE_MONTH.monthParam, durationMinutes: '60' });
+  var badDuration = callDoGet(sandbox, { action: 'monthly', year: FUTURE_MONTH.yearParam, month: FUTURE_MONTH.monthParam, durationMinutes: '59' });
   assert.strictEqual(badDuration.success, false);
   assert.strictEqual(badDuration.error.code, 'DURATION_TOO_SHORT');
 

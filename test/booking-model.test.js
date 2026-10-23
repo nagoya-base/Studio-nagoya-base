@@ -12,7 +12,7 @@ var DEFAULT_CONFIG = {
   timezone: 'Asia/Tokyo',
   openTime: '08:00',
   closeTime: '23:00',
-  minBookingMinutes: 120,
+  minBookingMinutes: 60,
   bufferMinutes: 15,
   slotStepMinutes: 15
 };
@@ -325,7 +325,7 @@ test('validateCreateBookingInput: durationMinutesが数値以外・0以下はINV
 
 test('validateCreateBookingInput: 最低利用時間未満はDURATION_TOO_SHORT', function () {
   var Booking = loadBooking();
-  var result = Booking.validateCreateBookingInput(validInput({ durationMinutes: 60 }), DEFAULT_CONFIG);
+  var result = Booking.validateCreateBookingInput(validInput({ durationMinutes: 59 }), DEFAULT_CONFIG);
   assert.strictEqual(result.valid, false);
   assert.strictEqual(result.error.code, 'DURATION_TOO_SHORT');
 });

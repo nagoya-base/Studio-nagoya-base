@@ -12,7 +12,7 @@ var DEFAULT_CONFIG = {
   timezone: 'Asia/Tokyo',
   openTime: '08:00',
   closeTime: '23:00',
-  minBookingMinutes: 120,
+  minBookingMinutes: 60,
   bufferMinutes: 15,
   slotStepMinutes: 15
 };
@@ -157,11 +157,36 @@ test('無効な日付はエラーになる', function () {
   });
 });
 
-test('120分未満（最低利用時間未満）はエラーになる', function () {
+test('60分未満（最低利用時間未満）はエラーになり、60分（1時間）は受理される（Issue #410）', function () {
   var BookingAvailability = loadAvailability();
-  var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 60 }, [], DEFAULT_CONFIG, GENERIC_NOW);
-  assert.strictEqual(result.success, false);
-  assert.strictEqual(result.error.code, 'DURATION_TOO_SHORT');
+  var tooShort = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 59 }, [], DEFAULT_CONFIG, GENERIC_NOW);
+  assert.strictEqual(tooShort.success, false);
+  assert.strictEqual(tooShort.error.code, 'DURATION_TOO_SHORT');
+
+  var oneHour = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 60 }, [], DEFAULT_CONFIG, GENERIC_NOW);
+  assert.strictEqual(oneHour.success, true);
+});
+
+test('1時間予約（Issue #410）: 08:00〜22:00開始まで15分刻みで返し、23:00を超える枠は返さない', function () {
+  var BookingAvailability = loadAvailability();
+  var result = BookingAvailability.computeBookableStartTimes(60, [], DEFAULT_CONFIG);
+  assert.strictEqual(result[0], '08:00');
+  assert.strictEqual(result[result.length - 1], '22:00');
+  result.forEach(function (t) {
+    assert.ok(timeToMinutes(t) + 60 <= 23 * 60, t + ' 開始だと23:00を超えてしまう');
+  });
+});
+
+test('1時間予約（Issue #410）: 既存予約との重複・バッファ15分は2時間予約と同じ規則で防止される', function () {
+  var BookingAvailability = loadAvailability();
+  // 10:00-12:00が占有済み。1時間予約は08:00-09:00開始枠（終了+バッファ15分が10:00に収まる）まで可、
+  // 12:15以降は可、その間（08:00開始より後〜12:00開始前）は不可。
+  var result = BookingAvailability.computeBookableStartTimes(60, [busy(600, 720)], DEFAULT_CONFIG);
+  assert.ok(result.indexOf('08:45') !== -1, '08:45開始→09:45終了+バッファ15分=10:00で可');
+  assert.strictEqual(result.indexOf('09:00'), -1, '09:00開始→10:00終了でバッファ不足');
+  assert.strictEqual(result.indexOf('11:00'), -1, '予約と重複');
+  assert.strictEqual(result.indexOf('12:00'), -1, '直後バッファ不足');
+  assert.ok(result.indexOf('12:15') !== -1);
 });
 
 test('durationMinutesが非数値・非整数・0以下の場合はINVALID_DURATIONになる', function () {

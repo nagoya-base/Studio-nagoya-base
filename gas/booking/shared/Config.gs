@@ -20,7 +20,7 @@ var BookingConfig = (function () {
     TIMEZONE: 'Asia/Tokyo',
     OPEN_TIME: '08:00',
     CLOSE_TIME: '23:00',
-    MIN_BOOKING_MINUTES: '120',
+    MIN_BOOKING_MINUTES: '60',
     BUFFER_MINUTES: '15',
     SLOT_STEP_MINUTES: '15'
   };

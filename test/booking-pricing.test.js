@@ -29,6 +29,7 @@ var ANOTHER_WEEKDAY_DATE = '2026-10-01';
 test('computeBookingPrice: studio_xは一般（GENERAL）料金表と一致する（平日2h/3h/4h・延長）', function () {
   var Pricing = loadPricing();
   var cases = [
+    { minutes: 60, amount: 2000 }, // 1h（Issue #410。延長1hと同額）
     { minutes: 120, amount: 4000 },
     { minutes: 180, amount: 6000 },
     { minutes: 240, amount: 8000 },
@@ -47,6 +48,7 @@ test('computeBookingPrice: studio_xは一般（GENERAL）料金表と一致す�
 test('computeBookingPrice: studio_xの土日祝料金（2h/3h/4h・延長）', function () {
   var Pricing = loadPricing();
   var cases = [
+    { minutes: 60, amount: 2500 }, // 1h（Issue #410。延長1hと同額）
     { minutes: 120, amount: 5000 },
     { minutes: 180, amount: 7500 },
     { minutes: 240, amount: 10000 },
@@ -92,6 +94,7 @@ test('computeBookingPrice: mensはisMember:falseを送っても常に会員（ME
 test('computeBookingPrice: mensの会員料金表（平日/土日祝の2h/3h/4h・延長）', function () {
   var Pricing = loadPricing();
   var weekdayCases = [
+    { minutes: 60, amount: 2000 },
     { minutes: 120, amount: 4000 },
     { minutes: 180, amount: 5500 },
     { minutes: 240, amount: 7000 },
@@ -103,6 +106,7 @@ test('computeBookingPrice: mensの会員料金表（平日/土日祝の2h/3h/4h�
   });
 
   var weekendCases = [
+    { minutes: 60, amount: 2500 },
     { minutes: 120, amount: 5000 },
     { minutes: 180, amount: 7000 },
     { minutes: 240, amount: 9000 },
@@ -132,12 +136,32 @@ test('computeBookingPrice: snbのisMember未指定・不正値はfail-closedでG
   });
 });
 
-test('computeBookingPrice: 2時間未満のdurationMinutesは2時間の料金へ切り上げる（料金表に無い時間帯を参照しない）', function () {
+test('computeBookingPrice: 1時間未満のdurationMinutesは1時間の料金へ切り上げる（料金表に無い時間帯を参照しない）', function () {
   var Pricing = loadPricing();
-  var result = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 60 });
+  var result = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 30 });
   assert.strictEqual(result.valid, true);
-  assert.strictEqual(result.price.amount, 4000);
-  assert.strictEqual(result.price.billableHours, 2);
+  assert.strictEqual(result.price.amount, 2000);
+  assert.strictEqual(result.price.billableHours, 1);
+});
+
+test('computeBookingPrice: 1時間料金は全ブランド・全区分で延長+1時間料金と同額（Issue #410）', function () {
+  var Pricing = loadPricing();
+  ['snb', 'studio_x'].forEach(function (brand) {
+    var weekday = Pricing.computeBookingPrice({ brand: brand, date: WEEKDAY_DATE, durationMinutes: 60, isMember: false });
+    var weekdayTwo = Pricing.computeBookingPrice({ brand: brand, date: WEEKDAY_DATE, durationMinutes: 120, isMember: false });
+    var weekdayFive = Pricing.computeBookingPrice({ brand: brand, date: WEEKDAY_DATE, durationMinutes: 300, isMember: false });
+    var weekdayFour = Pricing.computeBookingPrice({ brand: brand, date: WEEKDAY_DATE, durationMinutes: 240, isMember: false });
+    assert.strictEqual(weekday.price.amount, 2000, brand + ' 平日1h');
+    assert.strictEqual(weekdayTwo.price.amount, weekday.price.amount * 2, brand + ' 平日2h=1h×2');
+    assert.strictEqual(weekdayFive.price.amount - weekdayFour.price.amount, weekday.price.amount, brand + ' 平日 延長1h=1h料金');
+
+    var weekend = Pricing.computeBookingPrice({ brand: brand, date: SATURDAY_DATE, durationMinutes: 60, isMember: false });
+    var weekendFour = Pricing.computeBookingPrice({ brand: brand, date: SATURDAY_DATE, durationMinutes: 240, isMember: false });
+    var weekendFive = Pricing.computeBookingPrice({ brand: brand, date: SATURDAY_DATE, durationMinutes: 300, isMember: false });
+    assert.strictEqual(weekend.price.amount, 2500, brand + ' 土日祝1h');
+    assert.strictEqual(weekendFive.price.amount - weekendFour.price.amount, weekend.price.amount, brand + ' 土日祝 延長1h=1h料金');
+    assert.strictEqual(weekend.price.billableHours, 1);
+  });
 });
 
 test('computeBookingPrice: 時間の端数（例: 150分=2.5h）は切り上げて課金する（過小請求にならない方向）', function () {

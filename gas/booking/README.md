@@ -3123,7 +3123,7 @@ Booking Web App側からは呼び出せない）。
 | `TIMEZONE` | - | 省略時 `Asia/Tokyo` |
 | `OPEN_TIME` | - | 省略時 `08:00` |
 | `CLOSE_TIME` | - | 省略時 `23:00` |
-| `MIN_BOOKING_MINUTES` | - | 省略時 `120` |
+| `MIN_BOOKING_MINUTES` | - | 省略時 `60`（Issue #410で120から変更。本番のScript Propertiesに`120`が明示設定されている場合は、削除または`60`へ更新が必要） |
 | `BUFFER_MINUTES` | - | 省略時 `15`（予約間マージン） |
 | `SLOT_STEP_MINUTES` | - | 省略時 `15`（getAvailabilityの候補生成刻み） |
 | `PENDING_TTL_HOURS` | - | 省略時 `24`。PENDINGを受付から何時間保持するか |
@@ -7265,3 +7265,17 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
   Checkout発行前／旧方式のPENDINGを失効させる安全網として残す。Checkout発行後は`paymentHoldExpiresAt`の別クロックが正。
   `STRIPE_CHECKOUT_ENABLED`の設定値（キルスイッチ）はこのIssueで変更していない。
 - 現金・PayPayの既存PENDING/当日支払ルールは変更していない。
+
+## Issue #410: 最短予約時間を1時間へ変更し、料金・延長単価と整合させる
+
+- `MIN_BOOKING_MINUTES`の既定値を`120`→`60`へ変更（`Config.gs`）。`Availability.gs`の`DURATION_TOO_SHORT`判定は
+  設定値を参照するため、59分以下は引き続き拒否、60分（1時間）以上は受理される。フロントのUX guard
+  （`Logic.UI_MIN_BOOKING_MINUTES`）も60へ変更。サーバー側が正で、フロントはその複製ではなく早期拒否のみ。
+- **運用注意**: Script Propertiesに`MIN_BOOKING_MINUTES=120`が明示設定されている場合は既定値より優先されるため、
+  削除または`60`へ更新すること（コード変更だけでは本番に反映されない）。新Deploymentの作成は本Issueの対象外。
+- 料金（`BookingPricing.gs`）: 1時間を追加。GENERAL 平日2,000円／土日祝2,500円（延長+1時間と同額）。
+  2/3/4時間および延長の料金は変更なし。MEMBERの1時間は、既存のMEMBER 2時間料金がGENERALと同額であることに
+  合わせてGENERALと同額（平日2,000円／土日祝2,500円）とした。会員割引の適用条件（3時間以上・延長）は変更していない。
+  `billableHours_`の切り上げ下限を2時間→1時間へ変更。
+- Web表示（トップ・mens・Studio X・英語版・予約フォーム・how-to）を1時間基準へ更新。
+- Stripe Checkout・当日予約・初回利用者のカード必須ルール（Issue #407 / PR #409）には触れていない。
