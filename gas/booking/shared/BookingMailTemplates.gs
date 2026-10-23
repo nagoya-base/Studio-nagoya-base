@@ -71,43 +71,20 @@ var BookingMailTemplates = (function () {
   }
 
   /*
-   * カード決済選択時のみ仮受付メールへ追加する案内（Issue #334 PR-B「3. 仮受付メール」）。
+   * カード決済選択時のみ仮受付メールへ追加する案内（Issue #334 PR-B「3. 仮受付メール」/ Issue #407）。
    * 現金・PayPay・未定にはこのブロックを一切混入させない（buildPendingMail側の
    * isCardPaymentMethod分岐でのみ呼ぶ）。
-   * - 決済リンクの送信予定（お申し込みから24時間以内）
-   * - 実際の支払期限（record.createdAt/record.startAtからBooking.computeCardPaymentDueMillis
-   *   で計算した、GAS側で確定した日時。フォーム上の「申込時点+72時間」の目安とは別に、
-   *   ここでは必ずサーバー側の実測値を表示する）
-   * - 期限までに未確定の場合の自動失効・再申し込み方法
-   * - 決済済みなのに失効した場合の連絡導線
-   * 末尾の「※お申し込み時点では仮受付です…」は、buildPendingMail冒頭の既存の仮受付案内
-   * （「このメールの時点ではご予約はまだ確定しておりません…」）とほぼ同じ内容のため、
-   * メールでは重複させず省く（Issue #334本文「既存の仮受付・予約確定案内との重複を
-   * 整理してください」への対応。フォーム・確認画面側ではこの行を残す）。
-   * Stripeの決済リンクそのものはここに含めない（リンクは運営がPR-Cの機能で別途送信する）。
+   * Issue #407: カードは申込直後に表示されるStripe Checkoutの決済ページで支払う。支払期限は
+   * Checkout Sessionの有効期限が正のため、旧「24時間以内に決済リンクをメール送付」
+   * 「申込から72時間後まで」の案内と期限日時の表示は行わない。
+   * Stripeの決済リンクそのものはここに含めない。
    */
   function buildCardPendingNotice_(record, config) {
-    var ttlConfig = (config && config.ttlConfig) || {};
-    var dueDisplay = '';
-    if (isDateLike_(record.createdAt) && isDateLike_(record.startAt)) {
-      var dueMillis = Booking.computeCardPaymentDueMillis(
-        record.createdAt.getTime(),
-        record.startAt.getTime(),
-        ttlConfig.minHoursBeforeStart,
-        Booking.cardMinHoldHours(record, config.timezone, ttlConfig.minHoldHours)
-      );
-      var dueDate = new Date(dueMillis);
-      var dueDateString = BookingAvailability.formatDateInTimezone(dueDate, config.timezone);
-      var dueTimeString = formatTime_(dueDate, config.timezone);
-      dueDisplay = dueDateString ? BookingAvailability.formatDateWithWeekday(dueDateString) + ' ' + dueTimeString : '';
-    }
-
     return joinNonEmpty_([
       '【クレジットカード決済のご案内】',
-      '決済リンクは、お申し込みから24時間以内にメールでお送りします。',
-      'お支払い期限：お申し込みから72時間後' + (dueDisplay ? '（' + dueDisplay + '）' : ''),
-      '期限までにお支払いのうえ、予約確定のご案内をお待ちください。期限までに予約が確定しなかった場合は、予約が自動的に失効します。',
-      '失効後もご利用を希望される場合は、改めて予約フォームからお申し込みください。',
+      'オンラインクレジットカード決済は、予約申込後に表示される決済ページでお支払いください。',
+      '決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。',
+      '予約が確定しなかった場合にご利用を希望されるときは、改めて予約フォームからお申し込みください。',
       'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。'
     ]);
   }

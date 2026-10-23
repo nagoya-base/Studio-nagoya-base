@@ -305,7 +305,7 @@ test('取得した月のグリッドが描画され、空きのある日は選�
   void ym;
 });
 
-test('初回利用＋当日は、GAS側のstatusが予約可でもセルが選択不可になる（フロント側ガードの再現）', async function () {
+test('初回利用＋当日も、GAS側のstatusが予約可ならセルが選択可能（Issue #407で当日予約を解禁）', async function () {
   var ctx = setup({});
   ctx.setDuration('2');
   ctx.setCustomerType('first_time');
@@ -316,10 +316,10 @@ test('初回利用＋当日は、GAS側のstatusが予約可でもセルが選�
   var gridBody = ctx.elements['ba-calendar-grid-body'];
   var todayButton = findDayButton(gridBody, today);
   assert.ok(todayButton, '当日のセルが描画されているべき');
-  assert.strictEqual(todayButton.disabled, true, '初回利用は当日を選択できない');
+  assert.strictEqual(todayButton.disabled, false, '初回利用でも当日を選択できる');
   assert.ok(
-    todayButton.getAttribute('aria-label').indexOf('初回利用の方は当日のご予約を受け付けていません') !== -1,
-    'aria-labelにも理由が示されるべき'
+    todayButton.getAttribute('aria-label').indexOf('受け付けていません') === -1,
+    'aria-labelに当日不可の文言が出ないべき'
   );
 
   /* 利用経験ありへ切り替えると、再取得なしで同じ当日セルが選択可能になる */
@@ -768,16 +768,17 @@ test('確認中（pending）の日付ボタンはクリック不可で、Step2�
   assert.strictEqual(availabilityCalls(ctx).length, 0);
 });
 
-test('初回利用+当日は従来どおりクリック不可でStep2へ進まない', async function () {
+test('初回利用+当日もクリックでき、選択日が反映される（Issue #407）', async function () {
   var ctx = setup({});
   ctx.setDuration('2');
   ctx.setCustomerType('first_time');
   ctx.triggerCustomerTypeChange();
   await flushPromises();
-  var button = findDayButton(ctx.elements['ba-calendar-grid-body'], ctx.Logic.todayInJapan());
-  assert.strictEqual(button.disabled, true);
-  assert.strictEqual(button._listeners.click, undefined);
-  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true);
+  var today = ctx.Logic.todayInJapan();
+  var button = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
+  assert.strictEqual(button.disabled, false);
+  button._listeners.click();
+  assert.strictEqual(ctx.elements['ba-date'].value, today);
 });
 
 
@@ -883,7 +884,7 @@ test('日付選択後の再取得が失敗した場合も、旧日付のまま�
   assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true);
 });
 
-test('利用経験ありで当日選択→初回利用へ変更→当日の選択状態が残らない', async function () {
+test('利用経験ありで当日選択→初回利用へ変更→当日の選択状態が維持される（Issue #407で当日予約を解禁）', async function () {
   var ctx = setup({}); /* 既定のmonthlyResponderは常にAVAILABLE（当日はcustomerType側のガードのみで判定される） */
   ctx.setDuration('2');
   ctx.setCustomerType('returning');
@@ -896,22 +897,21 @@ test('利用経験ありで当日選択→初回利用へ変更→当日の選�
   await flushPromises();
   assert.strictEqual(ctx.elements['ba-date'].value, today);
 
-  var fetchCountBeforeSwitch = ctx.fetchCalls.length;
   ctx.setCustomerType('first_time');
   ctx.triggerCustomerTypeChange();
 
-  assert.strictEqual(ctx.fetchCalls.length, fetchCountBeforeSwitch, '選択可否の再判定だけでは再取得しない');
-  assert.strictEqual(ctx.elements['ba-date'].value, '', '初回利用へ変更後、当日の選択状態は残らないべき');
-  assert.strictEqual(ctx.elements['ba-calendar-selected'].textContent, '');
+  var monthlyCallsAfterSwitch = ctx.fetchCalls.filter(function (c) { return String(c.url || c).indexOf('action=monthly') !== -1; });
+  assert.strictEqual(monthlyCallsAfterSwitch.length, 1, '利用区分の切り替えだけでは月間カレンダーを再取得しない');
+  assert.strictEqual(ctx.elements['ba-date'].value, today, '初回利用へ変更しても当日の選択は有効なまま');
 
   var todayButtonAfter = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
-  assert.strictEqual(todayButtonAfter.disabled, true, '初回利用+当日は選択不可');
+  assert.strictEqual(todayButtonAfter.disabled, false, '初回利用+当日も選択可能');
 
   ctx.elements['ba-step-datetime-next']._listeners.click();
   await flushPromises();
 
-  assert.strictEqual(ctx.elements['ba-date-error'].hidden, false, '日付未選択としてStep1のエラーが出るべき');
-  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true, 'Step2（開始時刻取得）へは進めない');
+  assert.strictEqual(ctx.elements['ba-date-error'].hidden, true, '当日が有効なので日付エラーは出ない');
+  assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, false, 'Step2（開始時刻取得）へ進める');
 });
 
 test('duration変更時に短時間でinput/changeが連続発火しても、同じ月・同じdurationのfetchは1回だけ（in-flightキーで重複を抑止）', async function () {
@@ -1183,14 +1183,14 @@ test('初期表示: ユーザー操作なしで、HTML初期値（2時間・初�
   assert.ok(ctx.elements['ba-calendar-grid-body'].children.length > 0, '当月のグリッドが描画されているべき');
 });
 
-test('初期表示: 初回利用＋当日の既存ガードは、ユーザー操作なしの初期表示時にも維持される', async function () {
+test('初期表示: 初回利用＋当日も、ユーザー操作なしの初期表示時から選択可能（Issue #407）', async function () {
   var ctx = setup({ initialDurationHours: '2', initialCustomerType: 'first_time', initialTimeBand: 'all' });
   await flushPromises();
 
   var today = ctx.Logic.todayInJapan();
   var todayButton = findDayButton(ctx.elements['ba-calendar-grid-body'], today);
   assert.ok(todayButton, '当日のセルが初期表示の時点で描画されているべき');
-  assert.strictEqual(todayButton.disabled, true, '初期値が初回利用のため、当日は初期表示時点から選択不可であるべき');
+  assert.strictEqual(todayButton.disabled, false, '初回利用でも当日は初期表示時点から選択可能であるべき');
 });
 
 test('初期表示後に利用時間を変更すると、既存仕様どおり表示中の月を新しいdurationで再取得する', async function () {

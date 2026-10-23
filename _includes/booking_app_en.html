@@ -75,7 +75,7 @@
         <label class="ba-choice"><input type="radio" name="customerType" value="first_time" checked> <span>First-time guest</span></label>
         <label class="ba-choice"><input type="radio" name="customerType" value="returning"> <span>Returning guest (you have previously used SNB, SNB mens or Studio X)</span></label>
       </div>
-      <p class="ba-field-help">Whichever brand you used before — SNB, SNB mens, or Studio X — please select "Returning guest." First-time guests cannot book for the same day. Returning guests may book for the same day.</p>
+      <p class="ba-field-help">Whichever brand you used before — SNB, SNB mens, or Studio X — please select "Returning guest." First-time guests can pay by online credit card only. Same-day booking is available when a slot is open.</p>
       <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
     </fieldset>
 
@@ -315,6 +315,7 @@
         <label class="ba-choice"><input type="radio" name="paymentMethod" value="オンラインクレジットカード"> <span>Online credit card</span></label>
         <label class="ba-choice"><input type="radio" name="paymentMethod" value="未定"> <span>Undecided</span></label>
       </div>
+      <p class="ba-field-help" id="ba-first-time-card-notice" hidden>First-time guests can pay by online credit card only.</p>
       <p class="ba-field-error" id="ba-payment-error" hidden></p>
     </fieldset>
 

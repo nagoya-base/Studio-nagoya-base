@@ -57,11 +57,16 @@
     return labels[value] || '';
   }
 
-  /* dateValue/todayValueは'YYYY-MM-DD'。当日（dateValue===todayValue）かつ初回利用の
-     組み合わせのみを検出する（Issue #270最終仕様）。todayValueは呼び出し側がtodayInJapan()で
-     求めた値を渡すこと（この関数自体はブラウザのローカルtimezoneに依存しない）。 */
-  function isSameDayFirstTimeBlocked(dateValue, customerType, todayValue) {
-    return dateValue === todayValue && customerType === CUSTOMER_TYPES.FIRST_TIME;
+  /* Issue #407: 初回利用はオンラインクレジットカード決済のみ。サーバー側
+     （Booking.gsのFIRST_TIME_CARD_PAYMENT_REQUIRED）と同じ条件のUX目的の一次チェック。
+     利用経験ありは全ての支払方法を従来どおり選べる。 */
+  function isFirstTimeCardRequired(customerType) {
+    return customerType === CUSTOMER_TYPES.FIRST_TIME;
+  }
+
+  function isPaymentMethodAllowedForCustomer(customerType, paymentMethod) {
+    if (!isFirstTimeCardRequired(customerType)) return true;
+    return isCardPaymentMethodValue(paymentMethod);
   }
 
   /* createBooking / getAvailability が返すerror.codeの文言。
@@ -86,9 +91,8 @@
       INVALID_NOTE: '連絡事項は1000文字以内で入力してください。',
       INVALID_SOURCE: '送信元の情報が正しくありません。お手数ですがページを開き直してください。',
       INVALID_CUSTOMER_TYPE: '利用区分（初回利用／利用経験あり）を選択してください。',
-      SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME: '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付を選択してください。',
+      FIRST_TIME_CARD_PAYMENT_REQUIRED: '初回利用の方のお支払いはオンラインクレジットカード決済のみとなります。',
       SAME_DAY_START_TIME_PASSED: '指定した開始時刻はすでに過ぎています。現在時刻より後の開始時刻を選択してください。',
-      CARD_PAYMENT_TOO_CLOSE_TO_START: 'カード事前決済は利用開始の4日前（96時間前）までのお申し込みに限ります。直前のご予約は現金・PayPay（現地決済）をお選びください。',
       RATE_LIMITED: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。',
       LOCK_TIMEOUT: '一時的に混み合っています。もう一度お試しください。',
       BOOKING_SAVE_FAILED: '予約の保存に失敗しました。しばらくしてから再度お試しください。',
@@ -113,9 +117,8 @@
       INVALID_NOTE: 'Notes must be 1000 characters or fewer.',
       INVALID_SOURCE: 'There is a problem with the request source. Please reload the page and try again.',
       INVALID_CUSTOMER_TYPE: 'Please select your customer type (first-time guest or returning guest).',
-      SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME: 'First-time guests cannot book for the same day. Please choose a date from tomorrow onward.',
+      FIRST_TIME_CARD_PAYMENT_REQUIRED: 'First-time guests can pay by online credit card only.',
       SAME_DAY_START_TIME_PASSED: 'The selected start time has already passed. Please choose a start time later than the current time.',
-      CARD_PAYMENT_TOO_CLOSE_TO_START: 'Card prepayment is only available up to 96 hours (4 days) before your start time. For last-minute bookings, please choose cash or PayPay (pay on site).',
       RATE_LIMITED: 'Too many requests have been submitted. Please wait a moment and try again.',
       LOCK_TIMEOUT: 'The system is currently busy. Please try again.',
       BOOKING_SAVE_FAILED: 'We couldn’t save your booking. Please try again in a moment.',
@@ -159,12 +162,12 @@
 
   /* SLOT_CONFLICTのみ「空き時間の選び直し」に誘導し、それ以外の入力系エラー
      （INVALID_EMAIL等）は「内容の修正」に、rate limit等は「再試行」に誘導する。
-     利用日・利用区分そのものをやり直す必要があるエラー（当日+初回利用の組み合わせ等）は
+     利用日・利用区分そのものをやり直す必要があるエラー（利用区分の未指定等）は
      「日付・利用区分の選び直し」（'reselect-date'）に誘導する。空き時間の再取得だけでは
      解決しないため、'reselect-time'とは区別する（Issue #270）。
      UIの導線分岐のみを担い、エラーメッセージ自体はmessageForErrorCode()を使う。 */
   function recoveryActionForErrorCode(code) {
-    if (code === 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME' || code === 'INVALID_CUSTOMER_TYPE') {
+    if (code === 'INVALID_CUSTOMER_TYPE') {
       return 'reselect-date';
     }
     if (
@@ -183,9 +186,8 @@
       code === 'INVALID_PURPOSE' ||
       code === 'INVALID_PAYMENT_METHOD' ||
       code === 'INVALID_NOTE' ||
-      /* Issue #334: 支払方法を現地決済へ変更するか、日程を選び直せば解消するため、
-         支払方法系のエラーと同じedit-detailsへ誘導する。 */
-      code === 'CARD_PAYMENT_TOO_CLOSE_TO_START'
+      /* Issue #407: 初回利用はカード決済のみ。支払方法を直せば解消する。 */
+      code === 'FIRST_TIME_CARD_PAYMENT_REQUIRED'
     ) {
       return 'edit-details';
     }
@@ -406,150 +408,63 @@
   }
 
   /*
-   * ── カード決済の96時間受付条件・支払期限表示（Issue #334 PR-B） ──
-   * ここでの判定・表示はあくまでフォーム側の事前チェック・目安表示であり、実際の受付可否・
-   * 支払期限の正はgas/booking/shared/Booking.gs（CARD_MIN_HOURS_BEFORE_START/CARD_TTL_HOURS/
-   * computeCardPaymentDueMillis）。しきい値・TTLはそちらと値を一致させること。ここを
-   * すり抜けても、サーバー側のvalidateCreateBookingInputがfail-closedに拒否する
-   * （CARD_PAYMENT_TOO_CLOSE_TO_START。既にERROR_MESSAGES/recoveryActionForErrorCodeへ
-   * 対応済み）。
+   * ── カード決済（Issue #334 PR-B / Issue #407） ──
+   * Issue #407でカード決済の96時間受付制限と、旧「24時間以内に決済リンク／72時間後まで」の
+   * 一般向け案内を撤廃した。カードは申込直後のStripe Checkoutで支払い、支払期限は
+   * Checkout Sessionの有効期限（サーバー側paymentHoldExpiresAt）が正。フォーム側では
+   * 具体的な日時を持たず、「決済ページの有効期限内」とだけ案内する。
    */
   var CARD_PAYMENT_METHOD_VALUE = 'オンラインクレジットカード';
-  var CARD_MIN_HOURS_BEFORE_START = 96;
-  var CARD_TTL_HOURS = 72;
 
   function isCardPaymentMethodValue(value) {
     return value === CARD_PAYMENT_METHOD_VALUE;
   }
 
-  /*
-   * dateValue（'YYYY-MM-DD'）とtimeValue（'HH:mm'）をAsia/Tokyo基準の壁時計時刻として
-   * 解釈し、その瞬間のUTC epoch msを返す（PRレビュー対応: 以前は「今日からの暦日差 × 1440分
-   * + 分単位に切り捨てたstartMinutes/nowMinutes」で分単位の判定をしていたため、
-   * 現在時刻の秒が切り捨てられる分だけ実際の残り時間より最大59秒長く見積もる方向の
-   * バイアスがあり、96時間未満の申込を誤って受け付け可能と判定しうる不具合があった。
-   * Asia/Tokyoは夏時間の無い固定UTC+9オフセットのtimezoneのため、Date.UTC(...)の月・日を
-   * そのまま使い、時をUTC+9分だけ引くだけで正しい絶対時刻（epoch ms）が一意に求まる
-   * （タイムゾーンデータベースへの依存なしに秒単位で正確）。この関数はミリ秒精度を返す
-   * ため、以降の比較はdaysBetweenDateStrings_やcurrentMinutesInJapan_のような分単位の
-   * 中間表現を経由しない。 */
-  function jstWallClockToUtcMillis_(dateValue, timeValue) {
-    var dateParts = (dateValue || '').split('-');
-    var timeParts = (timeValue || '').split(':');
-    var year = parseInt(dateParts[0], 10);
-    var month = parseInt(dateParts[1], 10);
-    var day = parseInt(dateParts[2], 10);
-    var hour = parseInt(timeParts[0], 10);
-    var minute = parseInt(timeParts[1], 10);
-    return Date.UTC(year, month - 1, day, hour - 9, minute, 0, 0);
-  }
-
-  /*
-   * カード決済を選べるかどうかの事前判定。dateValue/startTimeValueが未確定の間は
-   * true（まだ判定できる材料がないため選択肢を塞がない）。日時が確定した時点
-   * （Step2→Step3遷移時、および最終送信直前）で呼び出し側が再評価する
-   * （PRレビュー対応: 確認画面を開いたまま96時間の受付期限をまたいだ場合に備え、
-   * scripts/booking-app.jsのsubmitハンドラでも送信直前に呼び直す）。
-   * gas/booking/shared/Booking.gsのvalidateCreateBookingInput（`< CARD_MIN_HOURS_BEFORE_START`
-   * で拒否＝ちょうど96時間は許可）と同じ境界（>=で許可）をミリ秒精度で判定する。
-   */
-  function isCardPaymentEligible(dateValue, startTimeValue, now) {
-    if (!isNonEmpty(dateValue) || !isNonEmpty(startTimeValue)) return true;
-    var base = isDateLike_(now) ? now : new Date();
-    /* Issue #406: 当日予約（利用日がAsia/Tokyo基準の今日）は96時間ルールの対象外。
-       サーバー側（Booking.gsのvalidateCreateBookingInput）と同じく、当日はカードを選べる。
-       当日予約を使える人の条件（初回利用の当日禁止）は別途isSameDayFirstTimeBlockedが担う。 */
-    if (dateValue === todayInJapan(base)) return true;
-    var startMillis = jstWallClockToUtcMillis_(dateValue, startTimeValue);
-    var msUntilStart = startMillis - base.getTime();
-    return msUntilStart >= CARD_MIN_HOURS_BEFORE_START * 3600000;
-  }
-
-  /* Issue #406: 利用日（'YYYY-MM-DD'）がAsia/Tokyo基準の今日か。カード注意書きの当日用文言の切替に使う。 */
-  function isSameDayInJapan(dateValue, now) {
-    return isNonEmpty(dateValue) && dateValue === todayInJapan(now);
-  }
-
-  var WEEKDAY_LABELS_JA_ = ['日', '月', '火', '水', '木', '金', '土'];
-
-  /* Date（絶対時刻）をAsia/Tokyo基準の'YYYY-MM-DD（曜）HH:mm'へ整形する。
-     gas/booking/shared/Availability.gsのformatDateWithWeekdayと表示体裁を揃える。 */
-  function formatDateTimeWithWeekdayInJapan_(date) {
-    var parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
-    }).formatToParts(date);
-    var result = {};
-    parts.forEach(function (part) { if (part.type !== 'literal') result[part.type] = part.value; });
-    var weekdayIndex = new Date(Date.UTC(
-      parseInt(result.year, 10), parseInt(result.month, 10) - 1, parseInt(result.day, 10)
-    )).getUTCDay();
-    return result.year + '-' + result.month + '-' + result.day +
-      '（' + WEEKDAY_LABELS_JA_[weekdayIndex] + '） ' + result.hour + ':' + result.minute;
-  }
-
-  /*
-   * カード決済の支払期限の「目安」表示（フォーム送信前のみ使う）。実際の支払期限は
-   * サーバー側の申込日時（createdAt）を起点に計算されるため、送信後は仮受付メールに
-   * 記載される正式な期限を必ず確認するよう案内する（cardPaymentNoticeLines参照）。
-   */
-  function cardPaymentDueDisplay(now) {
-    var base = isDateLike_(now) ? now : new Date();
-    var due = new Date(base.getTime() + CARD_TTL_HOURS * 3600000);
-    return formatDateTimeWithWeekdayInJapan_(due);
-  }
-
-  var CARD_PAYMENT_INELIGIBLE_NOTICE = {
-    ja: 'カード事前決済は利用開始の4日前までのお申し込みです。直前のご予約は現金・PayPay（現地決済）をお選びください。',
-    en: 'Card prepayment is only available up to 4 days before your start time. For last-minute bookings, please choose cash or PayPay (pay on site).'
-  };
-
-  function cardPaymentIneligibleNotice(locale) {
-    return CARD_PAYMENT_INELIGIBLE_NOTICE[normalizeLocale(locale)];
-  }
-
-  /* フォーム（支払方法欄・確認画面）で使うカード決済の注意書き本文（Issue #334本文の
-     引用ブロックと一致させる）。仮受付メール側（gas/booking/shared/BookingMailTemplates.gsの
-     buildCardPendingNotice_）は、この末尾行と重複する既存の仮受付案内が別にあるため、
-     その行を省いた独自の組み立てを別途持つ（テキストの正はこちら1か所ではなく、
-     フォーム/メールそれぞれの文脈に応じて必要な行だけを使う）。 */
+  /* フォーム（支払方法欄・確認画面・完了画面）で使うカード決済の注意書き本文（Issue #407）。
+     仮受付メール側（gas/booking/shared/BookingMailTemplates.gsのbuildCardPendingNotice_）は
+     メール本文の文脈に合わせた同趣旨の文言を別に持つ。 */
   var CARD_PAYMENT_NOTICE_TEXT_ = {
     ja: {
       title: '【クレジットカード決済のご案内】',
-      linkTiming: '決済リンクは、お申し込みから24時間以内にメールでお送りします。',
-      sameDayTiming: '当日のご予約のため、お申し込み後に表示される決済ページですぐにお支払いください。',
-      sameDayDue: 'お支払い期限：決済ページの有効時間内（お申し込み後およそ30分）。利用開始時刻までに決済が完了しない場合は、予約が自動的に失効します。',
-      dueLabel: function (dueDisplay) { return 'お支払い期限：お申し込みから72時間後（' + dueDisplay + '）'; },
-      expiry: '期限までにお支払いのうえ、予約確定のご案内をお待ちください。期限までに予約が確定しなかった場合は、予約が自動的に失効します。',
-      reapply: '失効後もご利用を希望される場合は、改めて予約フォームからお申し込みください。',
-      alreadyPaid: 'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。',
-      pendingNote: '※お申し込み時点では仮受付です。入金確認後、当施設の承認をもって予約確定となります。'
+      pay: 'オンラインクレジットカード決済は、予約申込後に表示される決済ページでお支払いください。',
+      confirm: '決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。',
+      reapply: '予約が確定しなかった場合にご利用を希望されるときは、改めて予約フォームからお申し込みください。',
+      alreadyPaid: 'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。'
     },
     en: {
       title: '[Credit Card Payment]',
-      linkTiming: 'We will email you a payment link within 24 hours of your request.',
-      sameDayTiming: 'Because this is a same-day booking, please pay right away on the payment page shown after you submit.',
-      sameDayDue: 'Payment due: within the validity of the payment page (about 30 minutes after your request). If payment is not completed before your start time, the booking will expire automatically.',
-      dueLabel: function (dueDisplay) { return 'Payment due: 72 hours after your request (' + dueDisplay + ')'; },
-      expiry: 'Please complete payment before the deadline and wait for booking confirmation. If the booking is not confirmed by the deadline, it will expire automatically.',
-      reapply: 'If you still wish to book after it expires, please submit a new request through the booking form.',
-      alreadyPaid: 'If you have already paid, please contact us instead of submitting a new request or paying again.',
-      pendingNote: 'Your request is only a provisional hold at this point. The booking is confirmed only after we verify payment and approve it.'
+      pay: 'Please pay by online credit card on the payment page shown after you submit your request.',
+      confirm: 'Your booking is confirmed when payment is completed within the validity period of the payment page. If the page expires or payment is not completed, the booking is not confirmed.',
+      reapply: 'If your booking is not confirmed and you still wish to book, please submit a new request through the booking form.',
+      alreadyPaid: 'If you have already paid, please contact us instead of submitting a new request or paying again.'
     }
   };
 
-  /* dueDisplay/localeに加え、options.omitPendingNote:trueで末尾の「仮受付です」行を省く
-     （仮受付メール本文で既存の仮受付案内と重複させないため。フォーム表示側は省かない）。 */
-  function cardPaymentNoticeLines(dueDisplay, locale, options) {
+  function cardPaymentNoticeLines(locale) {
     var t = CARD_PAYMENT_NOTICE_TEXT_[normalizeLocale(locale)];
-    var opts = options || {};
-    /* Issue #406: 当日予約は「24時間以内に決済リンク」「申込から72時間後」の案内が当てはまらない
-       （申込直後に決済ページへ進む）ため、当日用の文言に差し替える。 */
-    var lines = opts.sameDay
-      ? [t.title, t.sameDayTiming, t.sameDayDue, t.expiry, t.reapply, t.alreadyPaid]
-      : [t.title, t.linkTiming, t.dueLabel(dueDisplay), t.expiry, t.reapply, t.alreadyPaid];
-    if (!opts.omitPendingNote) lines.push(t.pendingNote);
-    return lines;
+    return [t.title, t.pay, t.confirm, t.reapply, t.alreadyPaid];
+  }
+
+  /*
+   * startCardCheckoutが「Checkout未着手と確実に判断できる」コード（CHECKOUT_DISABLED等）を
+   * 返したときの完了画面の案内。Checkoutを開始できなかったことだけを伝え、旧Payment Link
+   * 方式の日時（24時間以内・72時間後等）は一般向けの仕様として案内しない。
+   */
+  var CARD_CHECKOUT_FALLBACK_TEXT_ = {
+    ja: [
+      '【クレジットカード決済のご案内】',
+      '決済ページを自動で開始できませんでした。運営より決済方法をご案内しますので、お待ちください。',
+      'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。'
+    ],
+    en: [
+      '[Credit Card Payment]',
+      'We could not start the payment page automatically. We will contact you with payment instructions, so please wait.',
+      'If you have already paid, please contact us instead of submitting a new request or paying again.'
+    ]
+  };
+
+  function cardCheckoutFallbackNoticeLines(locale) {
+    return CARD_CHECKOUT_FALLBACK_TEXT_[normalizeLocale(locale)];
   }
 
   /*
@@ -567,13 +482,13 @@
     ja: {
       title: '【クレジットカード決済へ進む】',
       body: 'このあと表示される決済ページ（Stripe）でお支払い手続きを行ってください。',
-      confirmationNote: '決済ページでの操作が完了しても、その画面だけでは予約確定とはなりません。当店にて内容を確認のうえ、あらためて予約確定のご連絡をいたします。',
+      confirmationNote: '決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。',
       buttonLabel: '決済ページへ進む'
     },
     en: {
       title: '[Proceed to Card Payment]',
       body: 'You will be taken to a secure payment page (Stripe) to complete your payment.',
-      confirmationNote: 'Completing payment there does not confirm your booking by itself. We will review your request and send a separate confirmation.',
+      confirmationNote: 'Your booking is confirmed when payment is completed within the validity period of the payment page. If the page expires or payment is not completed, the booking is not confirmed.',
       buttonLabel: 'Proceed to payment'
     }
   };
@@ -629,7 +544,7 @@
   };
 
   /* ○/◎/△は選択可能、×/－（予約可能枠なし・対象外）は選択不可。
-     「今日＋初回利用」は別途isSameDayFirstTimeBlockedで上書きする（下記参照）。 */
+     Issue #407以降、初回利用の当日も選択可能（支払方法がカード必須になるのみ）。 */
   var SELECTABLE_DAY_STATUSES_ = [DAY_STATUSES.AVAILABLE_HIGH, DAY_STATUSES.AVAILABLE, DAY_STATUSES.LIMITED];
 
   function isBookableDayStatus(status) {
@@ -673,17 +588,12 @@
   }
 
   /*
-   * カレンダー上のセルが選択可能かどうか。GASのstatus判定に加えて、当日＋初回利用の
-   * 組み合わせは（getAvailability自体がcustomerTypeを見ないため）ここで上書きして
-   * 選択不可にする（Issue #318追記のテスト要件: 「今日」セルが初回利用選択時は
-   * 選択不可／警告になることを再現する）。最終的な可否の正はcreateBookingの
-   * サーバー側検証であり、ここはUX目的の一次チェック（既存のisSameDayFirstTimeBlockedと
-   * 同じ位置づけ）。
+   * カレンダー上のセルが選択可能かどうか。GASのstatus判定のみで決まる。
+   * Issue #407で初回利用の当日予約を解禁したため、利用区分・当日かどうかでは塞がない
+   * （customerType/todayValueは呼び出し側の互換のため引数に残している）。
    */
   function isCalendarDaySelectable(dateValue, status, customerType, todayValue) {
-    if (!isBookableDayStatus(status)) return false;
-    if (isSameDayFirstTimeBlocked(dateValue, customerType, todayValue)) return false;
-    return true;
+    return isBookableDayStatus(status);
   }
 
   /*
@@ -774,14 +684,10 @@
   }
 
   /* カレンダーの日セルのaria-label。記号・色だけに依存しないアクセシビリティ対応
-     （Issue #318要件）。「今日＋初回利用」の場合はSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEの
-     メッセージをそのまま使い、通常のstatusラベルとメッセージを二重に定義しない。 */
+     （Issue #318要件）。 */
   function dayAriaLabel(dateValue, status, customerType, todayValue, locale) {
     var loc = normalizeLocale(locale);
     var dayLabel = formatCalendarDayLabel(dateValue, loc);
-    if (isSameDayFirstTimeBlocked(dateValue, customerType, todayValue)) {
-      return dayLabel + '　' + messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', loc);
-    }
     return dayLabel + '　' + dayStatusLabel(status, loc);
   }
 
@@ -843,7 +749,7 @@
 
   /*
    * JST（日本時間）での「今日」を'YYYY-MM-DD'で返す。日付入力の下限（過去日を選べなくする）と、
-   * isSameDayFirstTimeBlockedへ渡す「当日かどうか」の判定基準の両方に使う（Issue #270）。
+   * 「当日かどうか」の判定基準の両方に使う（Issue #270）。
    * ブラウザのローカルtimezoneには依存せず、常にAsia/Tokyo基準で計算する。
    * ここでの判定はあくまでUI側の一次チェック（UX目的）であり、最終的な当日予約可否の正は
    * createBookingのサーバー側検証（gas/booking/shared/Booking.gsのformatDateInTimezoneも同じ方針で
@@ -917,7 +823,8 @@
     ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,
     isAllowedCustomerType: isAllowedCustomerType,
     customerTypeLabel: customerTypeLabel,
-    isSameDayFirstTimeBlocked: isSameDayFirstTimeBlocked,
+    isFirstTimeCardRequired: isFirstTimeCardRequired,
+    isPaymentMethodAllowedForCustomer: isPaymentMethodAllowedForCustomer,
     messageForErrorCode: messageForErrorCode,
     recoveryActionForErrorCode: recoveryActionForErrorCode,
     NETWORK_ERROR_MESSAGE: NETWORK_ERROR_MESSAGE,
@@ -955,13 +862,8 @@
     yearMonthFromDateValue: yearMonthFromDateValue,
     weekdayColumnClass: weekdayColumnClass,
     CARD_PAYMENT_METHOD_VALUE: CARD_PAYMENT_METHOD_VALUE,
-    CARD_MIN_HOURS_BEFORE_START: CARD_MIN_HOURS_BEFORE_START,
-    CARD_TTL_HOURS: CARD_TTL_HOURS,
     isCardPaymentMethodValue: isCardPaymentMethodValue,
-    isCardPaymentEligible: isCardPaymentEligible,
-    isSameDayInJapan: isSameDayInJapan,
-    cardPaymentDueDisplay: cardPaymentDueDisplay,
-    cardPaymentIneligibleNotice: cardPaymentIneligibleNotice,
+    cardCheckoutFallbackNoticeLines: cardCheckoutFallbackNoticeLines,
     cardPaymentNoticeLines: cardPaymentNoticeLines,
     cardCheckoutRedirectNoticeLines: cardCheckoutRedirectNoticeLines,
     cardCheckoutButtonLabel: cardCheckoutButtonLabel,

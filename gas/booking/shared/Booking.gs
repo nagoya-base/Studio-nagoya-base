@@ -23,6 +23,8 @@
  * - 当日判定は必ずavailabilityConfig.timezone（既定Asia/Tokyo）基準で行い、
  *   ブラウザのローカルtimezoneには依存しない（formatDateInTimezone参照。実体は
  *   BookingAvailability.formatDateInTimezone）。
+ * - Issue #407: 初回利用の当日予約を解禁した。代わりに初回利用の支払方法はオンライン
+ *   クレジットカード決済のみとし、サーバー側で検証する（FIRST_TIME_CARD_PAYMENT_REQUIRED）。
  * - 当日（isSameDayBooking）は、開始時刻が現在時刻より後であることも必須とする
  *   （レビュー対応で追加。SAME_DAY_START_TIME_PASSED。現在時刻の判定は
  *   BookingAvailability.getCurrentMinutesInTimezoneを使う）。
@@ -194,13 +196,10 @@ var Booking = (function () {
    * - CARD_TTL_HOURS: カード予約のみに適用するPENDING TTL（受付から72時間）。
    *   現金/PayPay/未定の基本TTL（Script PropertiesのPENDING_TTL_HOURS。既定24時間）は
    *   このIssueでは変更しない。
-   * - CARD_MIN_HOURS_BEFORE_START: カード決済を受け付ける最低リードタイム（96時間）。
-   *   これ未満の申込はvalidateCreateBookingInputで拒否する（GAS側のfail-closedな検証。
-   *   フロント側の選択肢非表示はPR-Bの対象）。
+   * （旧CARD_MIN_HOURS_BEFORE_STARTによるカード96時間受付制限はIssue #407で撤廃した）
    */
   var PAYMENT_METHOD_CARD = 'オンラインクレジットカード';
   var CARD_TTL_HOURS = 72;
-  var CARD_MIN_HOURS_BEFORE_START = 96;
 
   function isCardPaymentMethod(paymentMethod) {
     return String(paymentMethod || '').trim() === PAYMENT_METHOD_CARD;
@@ -344,7 +343,8 @@ var Booking = (function () {
      * availabilityConfig.timezone（既定Asia/Tokyo）基準の暦日へ変換し、入力された
      * 利用日(input.date)と文字列比較する（'YYYY-MM-DD'は辞書順=日付順に一致する）。
      * - 過去日は初回/利用経験ありを問わず拒否する
-     * - 当日 + 初回利用は拒否する（Issue #270本文の最終仕様）
+     * - 当日 + 初回利用は、Issue #407以降は拒否しない（初回利用はオンラインクレジットカード決済
+     *   のみ可とし、その条件を下のFIRST_TIME_CARD_PAYMENT_REQUIREDで検証する）
      * - 当日 + 利用経験ありはここでは拒否せず、以降の通常フローへ進む
      * - 翌日以降は初回/利用経験ありのどちらも通常フローへ進む
      * timezoneの設定自体が不正でIntlが解釈できない場合はfail-closedにINVALID_CONFIGとする
@@ -359,15 +359,6 @@ var Booking = (function () {
       return { valid: false, error: err_('INVALID_DATE', '過去の日付は指定できません。') };
     }
     var isSameDayBooking = input.date === todayString;
-    if (isSameDayBooking && input.customerType === CUSTOMER_TYPES.FIRST_TIME) {
-      return {
-        valid: false,
-        error: err_(
-          'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME',
-          '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付をお選びください。'
-        )
-      };
-    }
 
     if (!BookingAvailability.isValidTimeString(input.startTime)) {
       return { valid: false, error: err_('INVALID_START_TIME', '開始時刻の形式が正しくありません（HH:mm）。') };
@@ -396,8 +387,7 @@ var Booking = (function () {
     /*
      * 当日（isSameDayBooking）は、開始時刻が現在時刻より後であることを必須とする
      * （Issue #270レビュー対応）。現在時刻ちょうども不可（「後」であることを要求する）。
-     * ここに到達する時点でfirst_time+当日は既に上でSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEとして
-     * 拒否済みのため、この判定に実際に到達するのはreturning+当日のみ。フロントの
+     * Issue #407以降は初回利用+当日（カード決済のみ）もここへ到達する。フロントの
      * getAvailabilityが過去時刻を候補から除外していても、フロント改変・タイミングのずれ
      * （空き取得後に時間が経過した等）でここまで来る可能性があるため、Calendar書き込み前に
      * 必ずここで再検証する。
@@ -438,41 +428,27 @@ var Booking = (function () {
     }
 
     /*
-     * カード決済の最低リードタイム（Issue #334）: 利用開始まで96時間（4日）未満の申込は
-     * GAS側で拒否する（フロントの選択肢非表示に依存しないfail-closedな検証。フロント側の
-     * 表示制御自体はPR-Bで対応する）。
-     *
-     * PR-Bレビュー対応: 以前は「今日からの暦日差×1440分＋分単位に丸めたstartMinutes/
-     * 現在時刻」という分単位の中間表現で比較していたため、96時間ちょうど付近の秒・
-     * ミリ秒単位の境界でフロント側（scripts/booking-logic.jsのisCardPaymentEligible。
-     * 同じくミリ秒精度）の判定とずれうる不具合があった。ここではBookingAvailability.
-     * zonedDateTimeToUtcMillisで利用開始日時をavailabilityConfig.timezone基準の絶対時刻
-     * （UTC epoch ms）へ変換し、receivedAt（Dateとして既にミリ秒精度の絶対時刻）との差分を
-     * そのままミリ秒で比較する。CARD_MIN_HOURS_BEFORE_START=96はそのまま維持し、
-     * 新しいScript Propertiesは追加しない。
-     *
-     * Issue #406: 当日予約（isSameDayBooking。当日予約を使える人の条件は上のcustomerType判定のまま
-     * 変更しない）はこの96時間ルールの対象外とし、現金・PayPayと同じく当日でもカードを選べる。
-     * 翌日以降の予約は従来どおり96時間未満を拒否する。
+     * Issue #407: 初回利用はオンラインクレジットカード決済のみ。フロントの選択肢制御に依存せず、
+     * APIを直接呼んでも初回利用+現金/PayPay/未定は受理しない（当日・翌日以降を問わない）。
+     * 利用経験あり（リピーター・会員）の支払方法は従来どおり。
      */
-    if (isCardPaymentMethod(input.paymentMethod) && !isSameDayBooking) {
-      var cardStartAtMillis = BookingAvailability.zonedDateTimeToUtcMillis(
-        input.date, input.startTime, availabilityConfig.timezone
-      );
-      if (cardStartAtMillis === null) {
-        return { valid: false, error: err_('INVALID_CONFIG', '営業時間・予約ルールの設定が正しくありません。') };
-      }
-      var msUntilStart = cardStartAtMillis - receivedAt.getTime();
-      if (msUntilStart < CARD_MIN_HOURS_BEFORE_START * 3600000) {
-        return {
-          valid: false,
-          error: err_(
-            'CARD_PAYMENT_TOO_CLOSE_TO_START',
-            'カード事前決済は利用開始の4日前（96時間前）までのお申し込みに限ります。直前のご予約は現金・PayPay（現地決済）をお選びください。'
-          )
-        };
-      }
+    if (input.customerType === CUSTOMER_TYPES.FIRST_TIME && !isCardPaymentMethod(input.paymentMethod)) {
+      return {
+        valid: false,
+        error: err_(
+          'FIRST_TIME_CARD_PAYMENT_REQUIRED',
+          '初回利用の方のお支払いはオンラインクレジットカード決済のみとなります。'
+        )
+      };
     }
+
+    /*
+     * Issue #407: カード決済の「利用開始96時間前まで」の受付制限（旧CARD_PAYMENT_TOO_CLOSE_TO_START。
+     * Issue #334）は全面撤廃した。Stripe Checkoutによる決済自動化により、当日を含め日程にかかわらず
+     * カードを受け付ける。未決済の予約は、PENDING TTL（CARD_TTL_HOURS・利用開始の
+     * minHoursBeforeStart前を上限。当日はminHoldHoursのgrace）とCheckout Sessionの
+     * paymentHoldExpiresAtで従来どおり失効する。
+     */
 
     if (input.note !== undefined && input.note !== null && (typeof input.note !== 'string' || input.note.length > 1000)) {
       return { valid: false, error: err_('INVALID_NOTE', '連絡事項は1000文字以内で入力してください。') };
@@ -759,7 +735,6 @@ var Booking = (function () {
     ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,
     PAYMENT_METHOD_CARD: PAYMENT_METHOD_CARD,
     CARD_TTL_HOURS: CARD_TTL_HOURS,
-    CARD_MIN_HOURS_BEFORE_START: CARD_MIN_HOURS_BEFORE_START,
     isCardPaymentMethod: isCardPaymentMethod,
     isValidStripePaymentLinkUrl: isValidStripePaymentLinkUrl,
     /* PR #337レビュー対応（5回目）: resolvePaymentLinkMetadataInconsistencyが

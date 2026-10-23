@@ -7215,3 +7215,53 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
   Checkout発行後は従来どおり`paymentHoldExpiresAt`の別クロックで判定する。
 - 決済失敗・未完了は従来どおり予約確定にならない（確定はStripe Webhook成功後のみ）。
 - フロントは`isCardPaymentEligible`が当日をtrueとし、カード注意書きは当日用文言に切り替える。
+
+## Issue #407: 初回利用者をクレジットカード決済必須化し当日予約を解禁（カード96時間制限の全面撤廃）
+
+> **最終仕様**: 本節は、Issue #334（カード96時間受付条件）および #406（当日だけ96時間ルール例外）の
+> 記述を上書きする。上のIssue #334/#406節にある「96時間未満のカードを拒否する」
+> 「`CARD_PAYMENT_TOO_CLOSE_TO_START`」「`Booking.CARD_MIN_HOURS_BEFORE_START`」
+> 「`Logic.isCardPaymentEligible`」は**廃止済み**（歴史的記録として残している）。
+
+- 業務ルール
+  - 初回利用（`first_time`）: 支払方法はオンラインクレジットカードのみ。当日予約可。日程にかかわらずカード可。
+  - 利用経験あり（`returning`）: 現金・PayPay・オンラインクレジットカードから選択可。当日予約可。
+    カードは当日を含め日程にかかわらず可。
+  - **カード決済に「利用開始96時間前まで」の制限は一切ない**。現金・PayPayの運用は変更なし。
+- サーバー（`Booking.validateCreateBookingInput`）
+  - `first_time`かつカード以外（現金・PayPay・未定）は`FIRST_TIME_CARD_PAYMENT_REQUIRED`で拒否
+    （当日・翌日以降を問わず、API直呼びでも回避できない）。
+  - 初回利用の当日予約禁止（`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`）は廃止。
+  - `CARD_PAYMENT_TOO_CLOSE_TO_START`と`CARD_MIN_HOURS_BEFORE_START`は廃止。
+  - 当日の過去開始時刻拒否（`SAME_DAY_START_TIME_PASSED`）・空き枠判定・重複予約防止は全顧客区分で従来どおり。
+- 未決済予約の失効（**維持**）
+  - 受付可否の制限は撤廃したが、PENDING TTL（`CARD_TTL_HOURS`=72時間、利用開始の
+    `minHoursBeforeStart`前を上限。当日カードは#406の`cardMinHoldHours`でgrace）と、Stripe Checkout Sessionの
+    `paymentHoldExpiresAt`による別クロックの失効は変更していない。決済失敗・未完了はPENDINGのまま失効し、
+    確定はStripe Webhook成功後のみ。`STRIPE_CHECKOUT_ENABLED`の設定値・Checkout/Webhookの業務ロジックは未変更。
+- フロント
+  - `Logic.isFirstTimeCardRequired` / `Logic.isPaymentMethodAllowedForCustomer`。
+  - 初回利用ではStep3でカード以外のラジオを無効化しカードを選択済みにする（`#ba-first-time-card-notice`）。
+  - 96時間の事前チェック（`isCardPaymentEligible`・`cardPaymentIneligibleNotice`・`#ba-card-ineligible-notice`）は削除。
+  - `isSameDayFirstTimeBlocked`は削除した。
+
+### Issue #407 追補: カードの支払期限・決済導線をStripe Checkout基準へ統一
+
+> 上のIssue #334節にある「申込から24時間以内に決済リンクを送付」「申込から72時間後まで支払い」
+> 「お支払い期限の日時表示」は、一般向けの仕様としては**廃止**した（歴史的記録として残している）。
+
+- オンラインクレジットカードは、**申込直後にStripe Checkoutの決済ページへ遷移して支払う**。
+  支払期限はCheckout Sessionの有効期限（`paymentHoldExpiresAt`）。有効期限内に決済が成功した場合のみ予約が確定し
+  （Stripe Webhook成功後の自動確定）、期限切れ・決済失敗・未完了は確定しない。
+- 一般向け表示（予約フォームの注意書き・確認画面・完了画面・仮受付メール・Web・legal）の文言は次の趣旨に統一:
+  「オンラインクレジットカード決済は、予約申込後に表示される決済ページでお支払いください。決済ページの有効期限内に
+  お支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。」
+  （`Logic.cardPaymentNoticeLines(locale)` / `buildCardPendingNotice_`）。具体的な期限日時は表示しない。
+- `startCardCheckout`が`CHECKOUT_DISABLED` / `STRIPE_NOT_CONFIGURED`を返した場合（Checkout未着手と確実に判断できる場合）の
+  完了画面は、「決済ページを自動で開始できなかった。運営より決済方法を案内する」旨のみを示し、
+  24時間/72時間といった旧Payment Link方式の日時は案内しない（`Logic.cardCheckoutFallbackNoticeLines`）。
+  旧Payment Link方式のコード・Booking Adminの決済リンク送信機能自体は残している（管理者の個別運用用）。
+- 維持するもの: カードPENDINGの内部TTL（`CARD_TTL_HOURS`・利用開始の`minHoursBeforeStart`前を上限・当日grace）は、
+  Checkout発行前／旧方式のPENDINGを失効させる安全網として残す。Checkout発行後は`paymentHoldExpiresAt`の別クロックが正。
+  `STRIPE_CHECKOUT_ENABLED`の設定値（キルスイッチ）はこのIssueで変更していない。
+- 現金・PayPayの既存PENDING/当日支払ルールは変更していない。

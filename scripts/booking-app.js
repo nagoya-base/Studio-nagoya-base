@@ -154,7 +154,7 @@
     purposeOther: document.getElementById('ba-purpose-other'),
     purposeOtherError: document.getElementById('ba-purpose-other-error'),
     paymentError: document.getElementById('ba-payment-error'),
-    cardIneligibleNotice: document.getElementById('ba-card-ineligible-notice'),
+    firstTimeCardNotice: document.getElementById('ba-first-time-card-notice'),
     cardPaymentNotice: document.getElementById('ba-card-payment-notice'),
     note: document.getElementById('ba-note'),
     noteError: document.getElementById('ba-note-error'),
@@ -208,8 +208,8 @@
   }
 
   /* 過去日を選べないようにするだけの技術的な下限（当日は選択可）。当日利用ルール
-     （初回利用+当日の禁止）は、日付・利用区分の両方が決まるStep1の「次へ」押下時に
-     Logic.isSameDayFirstTimeBlockedで判定する（Issue #270）。 */
+     （旧: 初回利用+当日の禁止）
+     Issue #407以降は初回利用の当日も許可する（支払方法がカード必須になる）。 */
   if (els.date) els.date.min = Logic.todayInJapan();
 
   /*
@@ -363,8 +363,7 @@
    * ── 月間空き状況カレンダー（Issue #318） ──
    * 単一日付入力（#ba-date。type="hidden"）を、1か月表示のカレンダーから選ぶ形へ
    * 置き換える。#ba-dateの値自体は引き続きこのカレンダーが書き込み、Step1の
-   * 「次へ」押下時の検証（上のclickハンドラ）・SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME
-   * チェックは一切変更しない（既存の開始時刻選択以降のフローをそのまま再利用する）。
+   * 「次へ」押下時の検証（上のclickハンドラ）は一切変更しない（既存の開始時刻選択以降のフローをそのまま再利用する）。
    *
    * 利用時間・利用区分を先に確定してからカレンダーを描画・取得する（Issue #318追記の
    * 仕様）。月間取得はGAS側 getMonthlyAvailability(year, month, durationMinutes, brand,
@@ -888,7 +887,7 @@
    * isCalendarReady_()は既にtrueになる。ユーザーの入力を待たず、この時点で
    * handleCalendarPrereqChange_を1回呼び、現在月のカレンダーを自動取得・表示する。
    * duration/利用区分/希望時間帯を変更した場合の再取得（同じ関数を再利用）・
-   * 初回利用+当日ガード（isCalendarDaySelectable経由）・cache/in-flight/retry/
+   * カレンダー選択（isCalendarDaySelectable経由）・cache/in-flight/retry/
    * current-response判定は、このイベントリスナー群と共通のため変更しない。
    * 初期値がまだ整っていない（テストのDOMスタブ等）場合はisCalendarReady_()が
    * falseのままなので、この呼び出しは何もしない。
@@ -916,19 +915,6 @@
     setFieldError_(els.duration, els.durationError, durationValid ? '' : UI_TEXT.durationRequired);
     setFieldError_(null, els.customerTypeError, customerType ? '' : UI_TEXT.customerTypeRequired);
     if (!dateValue || !durationValid || !customerType) { resetStartTimeArea_(); return; }
-
-    /*
-     * 初回利用＋当日はここで空き時間取得（getAvailability）へ進ませない（Issue #270）。
-     * これはUX目的の一次チェックであり、最終的な当日予約可否の正はcreateBookingの
-     * サーバー側検証（Booking.validateCreateBookingInput）。フロントを書き換えて
-     * このチェックを回避されても、サーバー側でSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEとして
-     * 拒否される（BookingRepository.gs参照）。
-     */
-    if (Logic.isSameDayFirstTimeBlocked(dateValue, customerType, Logic.todayInJapan())) {
-      setFieldError_(els.date, els.dateError, Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', locale));
-      resetStartTimeArea_();
-      return;
-    }
 
     state.date = dateValue;
     state.durationMinutes = durationMinutes;
@@ -1104,7 +1090,7 @@
         return;
       }
       state.isMember = isMemberChecked_();
-      updateCardPaymentGating();
+      updatePaymentMethodGating();
       goToStep('details');
     });
   }
@@ -1128,26 +1114,26 @@
   }
 
   /*
-   * カード決済の96時間受付条件（Issue #334 PR-B「1. カード決済の受付条件」）。
-   * Step2→Step3遷移時（利用日時が確定した直後）に必ず呼び直す。これにより、
-   * 一度カードを選んだ後に戻って日時を変更し、96時間未満になった場合も、次にStep3へ
-   * 進んだ時点で選択が解除される（「送信できない状態にする」の実装は、最終的には
-   * サーバー側のCARD_PAYMENT_TOO_CLOSE_TO_START拒否が担保する多層防御の一つ）。
+   * 支払方法の選択制御（Issue #407）。カード決済は日程にかかわらず選べる（旧96時間受付制限は撤廃）。
+   * 初回利用はカード固定: カード以外のラジオを選べなくし、カードを選択済みにする。
+   * 利用経験ありへ戻した場合は解除して従来どおり全て選べる。Step2→Step3遷移時に呼び直す。
+   * 最終的な拒否はサーバー側（FIRST_TIME_CARD_PAYMENT_REQUIRED）が担保する。
    */
-  function updateCardPaymentGating() {
+  function updatePaymentMethodGating() {
     var radio = cardPaymentRadio_();
     if (!radio) return;
-    var eligible = Logic.isCardPaymentEligible(state.date, state.startTime);
-    radio.disabled = !eligible;
-    /* radio.closestはDOM本体では常に使えるが、テストの最小DOMスタブには実装されていない
-       ことがあるため、存在確認してから使う（見た目のdisabled表現のみに関わる処理であり、
-       欠けても選択不可自体はradio.disabledで担保される）。 */
-    var label = typeof radio.closest === 'function' ? radio.closest('label') : null;
-    if (label && label.classList) label.classList.toggle('ba-choice--disabled', !eligible);
-    if (!eligible && radio.checked) {
-      radio.checked = false;
-    }
-    if (els.cardIneligibleNotice) els.cardIneligibleNotice.hidden = eligible;
+    var firstTime = Logic.isFirstTimeCardRequired(state.customerType);
+    root.querySelectorAll('input[name="paymentMethod"]').forEach(function (other) {
+      if (other === radio) return;
+      other.disabled = firstTime;
+      /* closestはDOM本体では常に使えるが、テストの最小DOMスタブには実装されていないことが
+         あるため、存在確認してから使う（見た目のdisabled表現のみに関わる処理）。 */
+      var otherLabel = typeof other.closest === 'function' ? other.closest('label') : null;
+      if (otherLabel && otherLabel.classList) otherLabel.classList.toggle('ba-choice--disabled', firstTime);
+      if (firstTime && other.checked) other.checked = false;
+    });
+    if (firstTime) radio.checked = true;
+    if (els.firstTimeCardNotice) els.firstTimeCardNotice.hidden = !firstTime;
     updateCardPaymentNoticeVisibility();
   }
 
@@ -1161,7 +1147,7 @@
       renderMultilineNotice_(els.cardPaymentNotice, null);
       return;
     }
-    renderMultilineNotice_(els.cardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale, { sameDay: Logic.isSameDayInJapan(state.date) }));
+    renderMultilineNotice_(els.cardPaymentNotice, Logic.cardPaymentNoticeLines(locale));
   }
 
   /* name="paymentMethod"のラジオが切り替わるたびにカード注意書きの表示を更新する。
@@ -1192,13 +1178,9 @@
       };
       var errors = Logic.validateDetailsForm(fields, locale);
 
-      /* 二重チェック（Issue #334 PR-B）: updateCardPaymentGating()は通常Step2→Step3遷移時に
-         カード選択を解除済みだが、Step3に長時間滞在して96時間未満へ状態が変わった場合等に
-         備え、送信直前にも再評価する。サーバー側のCARD_PAYMENT_TOO_CLOSE_TO_START拒否と
-         合わせた多層防御であり、ここでの拒否メッセージも同じ案内文を使う。 */
-      if (Logic.isCardPaymentMethodValue(fields.paymentMethod) && !Logic.isCardPaymentEligible(state.date, state.startTime)) {
-        errors.paymentMethod = Logic.cardPaymentIneligibleNotice(locale);
-        updateCardPaymentGating();
+      /* 二重チェック（Issue #407）: 初回利用はカード以外を送信させない（サーバー側と同じ条件）。 */
+      if (fields.paymentMethod && !Logic.isPaymentMethodAllowedForCustomer(state.customerType, fields.paymentMethod)) {
+        errors.paymentMethod = Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale);
       }
 
       setFieldError_(els.name, els.nameError, errors.name);
@@ -1254,11 +1236,10 @@
     els.confirmPayment.textContent = Logic.paymentMethodLabel(state.paymentMethod, locale);
     els.confirmNote.textContent = state.note || UI_TEXT.noteUnset;
 
-    /* 予約確認画面のカード注意書き（Issue #334 PR-B「2. カード決済の注意書き」）。
-       支払期限はここでも改めて「今、確認画面を開いた時点+72時間」で再計算する
-       （送信前の目安表示。実際の期限は仮受付メールに記載されるサーバー側の値が正）。 */
+    /* 予約確認画面のカード注意書き（Issue #334 PR-B / Issue #407）。支払期限は申込後に表示される
+       Stripe Checkoutの決済ページの有効期限が正のため、ここでは日時を表示しない。 */
     if (Logic.isCardPaymentMethodValue(state.paymentMethod)) {
-      renderMultilineNotice_(els.confirmCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale, { sameDay: Logic.isSameDayInJapan(state.date) }));
+      renderMultilineNotice_(els.confirmCardPaymentNotice, Logic.cardPaymentNoticeLines(locale));
     } else {
       renderMultilineNotice_(els.confirmCardPaymentNotice, null);
     }
@@ -1315,7 +1296,7 @@
 
   /*
    * PR #354レビュー対応・項目3: 「Stripe Checkoutが開始されていないと確実に判断できる」
-   * エラーコードだけを、旧「決済リンクを後日送付」フローへのフォールバック対象とする。
+   * エラーコードだけを、運営からの個別案内（旧Payment Link方式）へのフォールバック対象とする。
    * これ以外（Session作成結果が確認できない、台帳への保存が失敗した、決済済みの可能性が
    * ある等）を安易に「これから決済リンクを送ります」という案内へ丸めてしまうと、既に
    * Stripe側で決済試行が進んでいるかもしれない予約について、後日さらに別経路（旧
@@ -1331,7 +1312,7 @@
    * 受付自体の完了表示を止めてはならないため）:
    * - { status: 'success', checkoutUrl }: Checkout Sessionを発行できた。
    * - { status: 'fallback', code }: CHECKOUT_SAFE_FALLBACK_CODES_のいずれか。Checkoutは
-   *   確実に未着手のため、既存の「決済リンクを後日送付」案内を表示してよい。
+   *   確実に未着手のため、運営から決済方法を案内する旨の案内（日時の約束なし）を表示してよい。
    * - { status: 'uncertain', code }: 上記以外のすべて（ネットワーク障害・タイムアウト・
    *   応答の解析失敗を含む）。Checkoutが実際に開始された可能性を否定できないため、
    *   旧方式へは誘導せず専用のエラー・再試行案内を表示する。
@@ -1374,18 +1355,14 @@
       setFieldError_(els.consent, els.consentError, els.consent.checked ? '' : UI_TEXT.consentRequired);
       if (!els.consent.checked) return;
 
-      /* PRレビュー対応（Issue #334 PR-B）: 予約確認画面を開いたまま96時間の受付期限を
-         過ぎた場合、Step3→Step4遷移時点のチェックだけでは検知できないため、送信直前にも
-         必ず再評価する。期限を過ぎていれば送信自体を中止し、Step3へ戻して現地決済への
-         切り替えを案内する（サーバー側のCARD_PAYMENT_TOO_CLOSE_TO_START拒否と合わせた
-         多層防御。ここで止められればfetch自体を発生させない）。 */
-      if (Logic.isCardPaymentMethodValue(state.paymentMethod) && !Logic.isCardPaymentEligible(state.date, state.startTime)) {
-        updateCardPaymentGating();
+      /* 送信直前にも初回利用のカード必須を再確認する（サーバー側のFIRST_TIME_CARD_PAYMENT_REQUIRED拒否と
+         合わせた多層防御。ここで止められればfetch自体を発生させない）。 */
+      if (!Logic.isPaymentMethodAllowedForCustomer(state.customerType, state.paymentMethod)) {
+        updatePaymentMethodGating();
         goToStep('details');
-        showGlobalError(Logic.cardPaymentIneligibleNotice(locale), []);
+        showGlobalError(Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale), []);
         return;
       }
-
       if (!API_BASE_URL) {
         els.submitError.textContent = Logic.apiNotConfiguredMessage(locale);
         els.submitError.hidden = false;
@@ -1459,10 +1436,9 @@
           if (els.completeStatus) {
             els.completeStatus.textContent = body.status === 'PENDING' ? UI_TEXT.pendingStatusLabel : (body.status || '');
           }
-          /* 完了画面（Issue #334 PR-B）: 既存の「通常24時間以内にご連絡します」は
+          /* 完了画面（Issue #334 PR-B / Issue #407）: 既存の「通常24時間以内にご連絡します」は
              確定連絡そのものが24時間以内に届くという前提の文言のため、カード決済では
-             出さない（実際の確定連絡は入金確認後の承認を経るため、72時間後の支払期限まで
-             届かない可能性がある）。代わりにカード注意書きを表示する。現金・PayPay・
+             出さない（カードは決済ページでの支払い完了で確定する）。代わりにカード注意書きを表示する。現金・PayPay・
              未定は既存文言のまま変更しない。 */
           if (Logic.isCardPaymentMethodValue(state.paymentMethod)) {
             if (els.completeGenericNotice) els.completeGenericNotice.hidden = true;
@@ -1471,7 +1447,7 @@
              * 試みる。結果は3通りに分岐する（attemptCardCheckout_のコメント参照）:
              * - success: Stripe Checkoutへの遷移導線を表示する。
              * - fallback: Checkoutが確実に未着手（キルスイッチ無効等）の場合のみ、
-             *   既存の「決済リンクを後日送付」案内をそのまま表示する。
+             *   運営から決済方法を案内する旨の案内（日時の約束なし）を表示する。
              * - uncertain: それ以外すべて。旧方式へは絶対に誘導せず（二重決済の恐れが
              *   あるため）、専用のエラー・再試行案内を表示する。
              */
@@ -1489,7 +1465,7 @@
                 renderMultilineNotice_(els.completeCheckoutNotice, null);
                 renderMultilineNotice_(els.completeCheckoutUncertainNotice, null);
                 if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = true;
-                renderMultilineNotice_(els.completeCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale, { sameDay: Logic.isSameDayInJapan(state.date) }));
+                renderMultilineNotice_(els.completeCardPaymentNotice, Logic.cardCheckoutFallbackNoticeLines(locale));
               } else {
                 renderMultilineNotice_(els.completeCardPaymentNotice, null);
                 renderMultilineNotice_(els.completeCheckoutNotice, null);
