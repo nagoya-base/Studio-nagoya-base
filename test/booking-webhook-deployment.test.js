@@ -106,20 +106,17 @@ test('Booking Webhookプロジェクトには管理者向けのサーバー関�
     'createNextDayReminderTrigger',
     'sendNextDayReminders',
     'sendReminderTestMail',
-    /* Issue #341 PR-D: 取消・返金／返金照会／決済Recovery／鍵承認（管理者専用）。 */
+    /* Issue #341 PR-D: 取消・返金／返金照会／決済Recovery（管理者専用）。 */
     'adminCancelBookingWithRefund',
     'adminReconcileRefund',
-    'adminApproveAccess',
     'getAdminPaymentRecoveries',
     'adminResolvePaymentRecovery',
     'cancelBookingWithRefund',
     'reconcileBookingRefund',
     'resolveBookingPaymentRecovery',
-    'approveBookingAccess',
     'adminReconcileCheckoutExpiry',
     'reconcileBookingCheckoutExpiry',
-    'BookingRefund',
-    'BookingAccessApproval'
+    'BookingRefund'
   ];
 
   adminOnlyGlobalFunctionNames.forEach(function (name) {
@@ -147,7 +144,7 @@ test('BOOKING_WEBHOOK_FILESには管理者専用ファイルが1つも含まれ�
   var adminOnlyFiles = [
     'BookingAdmin.gs', 'BookingAdminWeb.gs', 'BookingTriggers.gs',
     'BookingReminderTriggers.gs', 'BookingReminderDiagnostics.gs',
-    'BookingRefund.gs', 'BookingAccessApproval.gs', 'BookingAdminAlerts.gs'
+    'BookingRefund.gs', 'BookingAdminAlerts.gs'
   ];
   adminOnlyFiles.forEach(function (fileName) {
     assert.strictEqual(

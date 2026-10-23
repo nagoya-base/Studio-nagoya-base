@@ -246,7 +246,7 @@ test('processPendingStripeWebhookEvents: 決済成功イベントを受けて予
   assert.strictEqual(ctx.mailApp._sentEmails[0].to, 'taro@example.com');
 });
 
-test('processPendingStripeWebhookEvents（Issue #341 PR-D）: 新規に自動確定した鍵承認対象の予約について管理者へ「鍵承認待ち」を通知し、再送イベントでは重複通知しない', function () {
+test('processPendingStripeWebhookEvents（Issue #341 PR-D）: 新規に自動確定しても管理者へ「鍵承認待ち」を通知せず、確定メールにも鍵承認前提の文言を含めない', function () {
   var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com', BOOKING_ADMIN_URL: 'https://script.google.com/macros/s/admin/exec' } });
   createBookingRow(ctx);
   createCalendarEvent(ctx);
@@ -254,15 +254,13 @@ test('processPendingStripeWebhookEvents（Issue #341 PR-D）: 新規に自動確
   var result = receiveAndProcess(ctx, buildEvent('evt_admin_1', 'checkout.session.completed'), new Date('2026-09-20T10:10:00+09:00'));
   assert.strictEqual(result.code, 'CONFIRMED');
   var adminMails = ctx.mailApp._sentEmails.filter(function (m) { return m.to === 'admin@example.com'; });
-  assert.strictEqual(adminMails.length, 1);
-  assert.ok(/鍵承認待ち/.test(adminMails[0].subject));
-  assert.ok(adminMails[0].body.indexOf(BOOKING_ID) !== -1);
+  assert.strictEqual(adminMails.length, 0, '鍵承認は廃止したため確定時の管理者通知は出さない（Issue #414）');
   var customer = ctx.mailApp._sentEmails.filter(function (m) { return m.to === 'taro@example.com'; });
   assert.strictEqual(customer.length, 1);
-  assert.ok(/運営での確認が完了した後/.test(customer[0].body), '鍵承認前の確定メールは鍵案内の送付を約束しない');
+  assert.ok(customer[0].body.indexOf('運営での確認') === -1 && customer[0].body.indexOf('鍵承認') === -1, '旧・鍵承認前提の文言を含めない');
 
   receiveAndProcess(ctx, buildEvent('evt_admin_2', 'checkout.session.async_payment_succeeded'), new Date('2026-09-20T10:11:00+09:00'));
-  assert.strictEqual(ctx.mailApp._sentEmails.filter(function (m) { return m.to === 'admin@example.com'; }).length, 1);
+  assert.strictEqual(ctx.mailApp._sentEmails.filter(function (m) { return m.to === 'admin@example.com'; }).length, 0);
 });
 
 test('processPendingStripeWebhookEvents: async_payment_succeededでも同様に確定する', function () {

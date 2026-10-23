@@ -484,7 +484,7 @@ test('updateBookingPaymentStateAtomic: 許可されていないフィールド�
   });
   assert.throws(function () {
     sandbox.SpreadsheetRepository.updateBookingPaymentStateAtomic('SX-20261001-AAAAAAAA', { accessApprovedAt: new Date() });
-  }, '鍵承認(accessApprovedAt)はこのatomic更新の対象外（Issue #341本文「鍵承認は予約確定とは独立させる」）');
+  }, '未使用化した旧・鍵承認列(accessApprovedAt)はこのatomic更新の対象外（Issue #414。列自体は後方互換のため残す）');
 
   var found = sandbox.SpreadsheetRepository.findRowByBookingId('SX-20261001-AAAAAAAA');
   assert.strictEqual(found.record.paymentAttemptId, '', '例外発生時は行を書き換えない（範囲書き込み前にフィールド名を検証するため）');

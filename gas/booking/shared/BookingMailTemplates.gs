@@ -217,9 +217,8 @@ var BookingMailTemplates = (function () {
   }
 
   /*
-   * Issue #341 PR-D: 確定メールの来場案内に関する一文。鍵承認ゲートの対象（Stripeカード
-   * 決済・当日予約以外）でまだ鍵承認が無い予約には、「前日に必ず届く」とは書かず、運営の
-   * 確認後に案内する旨だけを書く（鍵情報の送付を約束しない）。対象外の予約は従来の文言。
+   * 確定メールの来場案内に関する一文。当日予約は確定直後に即時送信、翌日以降は前日に送る
+   * （Issue #412。Issue #414で鍵承認を廃止したため、Stripe予約も同じ文言）。
    */
   function accessGuideNoticeLine_(record, timezone) {
     /*
@@ -228,9 +227,6 @@ var BookingMailTemplates = (function () {
      */
     if (isUseDateToday_(record, timezone)) {
       return 'このあと、来場方法・キーボックス等の詳細案内を別途メールでお送りします。';
-    }
-    if (Booking.requiresAccessApproval(record, timezone) && !record.accessApprovedAt) {
-      return '来場方法等の詳細案内は、運営での確認が完了した後、利用日前日を目安に別途メールでお送りします。';
     }
     return '来場方法・キーボックス等の詳細案内は、利用日前日に別途メールでお送りします。';
   }

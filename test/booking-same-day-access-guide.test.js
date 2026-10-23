@@ -38,7 +38,7 @@ var PROPERTIES = {
   ACCESS_GUIDE_URL: 'https://example.com/how-to'
 };
 
-/* 現地払い・当日受付の確定済み予約（鍵承認ゲート対象外）。 */
+/* 現地払い・当日受付の確定済み予約（決済ゲート対象外）。 */
 function cashRecord(overrides) {
   return Object.assign({
     bookingId: BOOKING_ID,
@@ -65,7 +65,7 @@ function cashRecord(overrides) {
   }, overrides || {});
 }
 
-/* Stripeカード決済・事前受付（鍵承認ゲート対象）。 */
+/* Stripeカード決済・事前受付（決済ゲート対象）。 */
 function cardRecord(overrides) {
   return cashRecord(Object.assign({
     createdAt: new Date('2026-09-20T10:00:00+09:00'),

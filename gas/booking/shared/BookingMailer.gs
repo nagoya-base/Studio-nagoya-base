@@ -181,14 +181,13 @@ var BookingMailer = (function () {
     ALREADY_SENT: 'ALREADY_SENT',
     EMAIL_MISSING: 'EMAIL_MISSING',
     MAIL_NOT_READY: 'MAIL_NOT_READY',
-    /* Issue #341 PR-D: 鍵承認ゲート（Booking.evaluateAccessGate）による送信停止。 */
+    /* Issue #341 PR-D: 決済ゲート（Booking.evaluateAccessGate）による送信停止。 */
     PAYMENT_RECOVERY_REQUIRED: 'PAYMENT_RECOVERY_REQUIRED',
     PAYMENT_NOT_SETTLED: 'PAYMENT_NOT_SETTLED',
-    ACCESS_NOT_APPROVED: 'ACCESS_NOT_APPROVED',
     ELIGIBLE: 'ELIGIBLE'
   };
 
-  var ACCESS_GATE_REASON_CODE_LIST_ = ['PAYMENT_RECOVERY_REQUIRED', 'PAYMENT_NOT_SETTLED', 'ACCESS_NOT_APPROVED'];
+  var ACCESS_GATE_REASON_CODE_LIST_ = ['PAYMENT_RECOVERY_REQUIRED', 'PAYMENT_NOT_SETTLED'];
 
   /*
    * record.dateがDate値として保存されていた場合に備え、timezone基準の'YYYY-MM-DD'へ
@@ -256,14 +255,14 @@ var BookingMailer = (function () {
     }
 
     /*
-     * Issue #341 PR-D: 鍵承認ゲート。Stripeカード決済（当日予約以外）の予約は、入金済み・
-     * 要復旧なし・返金手続きなし・鍵承認済みの場合に限り、鍵情報を含むこのメールを送る。
-     * forceでも無視しない（管理者の再送でも同じゲートを通す）。対象外の予約（現地払い・
-     * 旧Payment Link・当日予約）は常に通過し、従来どおりの判定になる。
+     * Issue #341 PR-D / Issue #414: 決済ゲート。Stripe Checkout予約（当日予約を含む）は、
+     * 入金済み・要復旧なし・返金手続きなしの場合に限り、鍵情報を含むこのメールを送る
+     * （管理者の鍵承認は要求しない）。forceでも無視しない（管理者の再送でも同じゲートを通す）。
+     * 対象外の予約（現地払い・旧Payment Link）は常に通過し、従来どおりの判定になる。
      * 送信処理（sendReminderMailForBooking）はLock取得後に再読込した最新レコードでこの関数を
      * 呼ぶため、画面表示後に取消・返金・Recoveryへ移った予約は送信直前にここで止まる。
      */
-    var accessGate = Booking.evaluateAccessGate(record, timezone, { includeSameDay: !!opts.includeSameDayAccessGate });
+    var accessGate = Booking.evaluateAccessGate(record);
     if (!accessGate.ok) {
       return { eligible: false, reasonCode: accessGate.reasonCode, message: accessGate.message };
     }
@@ -325,9 +324,9 @@ var BookingMailer = (function () {
    *   ため、既存のMAIL_NOT_READY/MAIL_SEND_FAILEDと同じくrecordMailFailure_で記録し、
    *   lastMailError*・Recoveryへ既存と同じ形で残す。
    */
-  function reminderEligibilityCheck_(mailType, bookingId, requiredStatus, sentAtFields, force, record, targetDateString, includeSameDayAccessGate) {
+  function reminderEligibilityCheck_(mailType, bookingId, requiredStatus, sentAtFields, force, record, targetDateString) {
     var evaluation = evaluateReminderEligibility_(record, {
-      targetDateString: targetDateString, force: force, includeSameDayAccessGate: !!includeSameDayAccessGate
+      targetDateString: targetDateString, force: force
     });
     if (evaluation.eligible) return { ok: true };
 
@@ -351,7 +350,7 @@ var BookingMailer = (function () {
     }
     if (evaluation.reasonCode === REMINDER_REASON_CODES.NOT_NEXT_DAY ||
         ACCESS_GATE_REASON_CODE_LIST_.indexOf(evaluation.reasonCode) !== -1) {
-      /* 鍵承認ゲートによる停止（Issue #341 PR-D）もNOT_NEXT_DAYと同じ「対象外スキップ」。
+      /* 決済ゲートによる停止（Issue #341 PR-D）もNOT_NEXT_DAYと同じ「対象外スキップ」。
          メール障害ではないためlastMailError*・Recoveryへは記録しない。 */
       return {
         ok: false,
@@ -682,7 +681,7 @@ var BookingMailer = (function () {
             }
           };
         }
-        return reminderEligibilityCheck_(mailType, lockedBookingId, requiredStatus, sentAtFields, force, record, opts.targetDateString || null, opts.includeSameDayAccessGate);
+        return reminderEligibilityCheck_(mailType, lockedBookingId, requiredStatus, sentAtFields, force, record, opts.targetDateString || null);
       }
     );
   }
@@ -695,7 +694,7 @@ var BookingMailer = (function () {
    * 当日判定はBookingConfigのtimezone基準で「予約日 === 現在日」（options.nowはテスト用）。
    * 当日でない・CONFIRMEDでない予約は何もせずスキップする（翌日以降は従来どおり前日トリガー）。
    * 当日の予約は新しいテンプレート・判定を作らず、sendReminderMailForBookingへそのまま委譲する
-   * （Lock・再読込・支払/Recovery/鍵承認ゲート・EMAIL_MISSING/MAIL_NOT_READY・SentAt更新・
+   * （Lock・再読込・支払/Recoveryゲート・EMAIL_MISSING/MAIL_NOT_READY・SentAt更新・
    * 失敗記録をすべて再利用。reminderSentAt/accessGuideSentAt済みはALREADY_SENTでスキップ）。
    * forceは受け付けない（管理者の明示再送は従来のsendReminderMailForBooking(force)を使う）。
    * 戻り値の形はsendReminderMailForBookingと同じ。対象外はsuccess:true, skipped:true, reason付き。
@@ -716,9 +715,8 @@ var BookingMailer = (function () {
     if (normalizeReminderDate_(found.record.date, timezone) !== today) return notApplicable('NOT_SAME_DAY');
 
     /* 当日の再確認はLock取得後の最新レコードでtargetDateString（=今日）として行われる。
-       当日受付のStripe予約は通常の鍵承認ゲート対象外だが、即時送信では入金済み・Recovery解消済み・
-       返金手続きなしを確認する（includeSameDayAccessGate。鍵承認は要求しない。Issue #414）。 */
-    return sendReminderMailForBooking(bookingId, { targetDateString: today, includeSameDayAccessGate: true });
+       Stripe予約は入金済み・Recovery解消済み・返金手続きなしを確認する（鍵承認は要求しない。Issue #414）。 */
+    return sendReminderMailForBooking(bookingId, { targetDateString: today });
   }
 
   function reminderSentAtVersion_(record) {

@@ -370,7 +370,6 @@ function render() {
         priceLine +
         priceUpdateWarningLine +
         (b.paymentRecoveryRequired ? '<div class="card-price-warning">⚠ 決済要対応</div>' : '') +
-        (b.accessApprovalPending ? '<div class="card-price-warning">🔑 鍵承認待ち</div>' : '') +
         cardDueLine +
         '<div class="card-id">' + escapeHtml(b.bookingId) + '</div>' +
         '<div class="card-actions">' + actions + '</div>' +
@@ -1904,11 +1903,11 @@ function runCancel(bookingId) {
 /*
  * ============================================================================
  * Issue #341 PR-D: Stripeカード決済の予約の「取消・返金」「返金状態を照会」
- * 「決済要対応の解消」「鍵承認」「来場案内を再送」、および決済要対応（Recovery）の一覧。
+ * 「決済要対応の解消」「来場案内を再送」、および決済要対応（Recovery）の一覧。
  * ============================================================================
  *
- * 判定ロジック（返金可否・返金額の上限・鍵承認ゲート・送信可否）はすべてサーバー側
- * （BookingRefund.gs・BookingAccessApproval.gs・BookingMailer.gs）が、Lock取得後の最新の
+ * 判定ロジック（返金可否・返金額の上限・決済ゲート・送信可否）はすべてサーバー側
+ * （BookingRefund.gs・BookingMailer.gs）が、Lock取得後の最新の
  * 台帳で行う。この画面は入力と確認ダイアログ、結果（error.message）の表示だけを担う。
  * 返金額は管理者が都度選ぶ（全額／一部／返金なし）。システムはキャンセル料を計算しない。
  */
@@ -1924,7 +1923,6 @@ var paymentUi_ = {
   refundButton: null,
   accessContainer: null,
   accessStatusEl: null,
-  approveButton: null,
   resendButton: null,
   inFlight: false
 };
@@ -2141,16 +2139,11 @@ function initPaymentUi_() {
   var accessContainer = document.createElement('div');
   accessContainer.id = 'access-section';
   var accessHeading = document.createElement('h3');
-  accessHeading.textContent = '鍵承認・来場案内';
+  accessHeading.textContent = '来場案内';
   accessContainer.appendChild(accessHeading);
   var accessStatusEl = document.createElement('div');
   accessStatusEl.id = 'access-status';
   accessContainer.appendChild(accessStatusEl);
-  var approveButton = document.createElement('button');
-  approveButton.type = 'button';
-  approveButton.id = 'access-approve-button';
-  approveButton.textContent = '鍵承認';
-  accessContainer.appendChild(approveButton);
   var resendButton = document.createElement('button');
   resendButton.type = 'button';
   resendButton.id = 'reminder-resend-button';
@@ -2165,7 +2158,6 @@ function initPaymentUi_() {
   expiryButton.addEventListener('click', runReconcileCheckoutExpiry_);
   resolveButton.addEventListener('click', runResolvePaymentRecovery_);
   refundButton.addEventListener('click', runCancelWithRefund_);
-  approveButton.addEventListener('click', runApproveAccess_);
   resendButton.addEventListener('click', runResendReminder_);
 
   paymentUi_.container = container;
@@ -2181,7 +2173,6 @@ function initPaymentUi_() {
   paymentUi_.refundButton = refundButton;
   paymentUi_.accessContainer = accessContainer;
   paymentUi_.accessStatusEl = accessStatusEl;
-  paymentUi_.approveButton = approveButton;
   paymentUi_.resendButton = resendButton;
 }
 
@@ -2223,20 +2214,13 @@ function renderPaymentSection_(booking) {
     ui.refundReasonInput.value = '';
   }
 
-  /* 鍵承認・来場案内の再送: 鍵承認はゲート対象の予約のみ、再送はCONFIRMED予約全般。 */
+  /* 来場案内の再送: CONFIRMED予約全般（鍵承認は廃止。送信可否はサーバー側が決済・Recoveryで再判定する）。 */
   var showAccess = !!booking && booking.status === 'CONFIRMED';
   if (showAccess) { ui.accessContainer.classList.remove('hidden'); } else { ui.accessContainer.classList.add('hidden'); }
   if (!showAccess) return;
   var accessLines = [];
-  if (booking.accessApprovalRequired) {
-    accessLines.push(booking.accessApprovedAt ? '鍵承認: 承認済み（' + booking.accessApprovedAt + '）' : '鍵承認: 未承認（承認するまで鍵情報を含む来場案内は送信されません）');
-  } else {
-    accessLines.push('鍵承認: 対象外（前日の来場案内は従来どおり自動送信されます）');
-  }
   accessLines.push('来場案内（前日リマインド）: ' + (booking.reminderSentAt ? '送信済み（' + booking.reminderSentAt + '）' : '未送信'));
   ui.accessStatusEl.textContent = accessLines.join('\n');
-  if (booking.accessApprovalRequired && !booking.accessApprovedAt) { ui.approveButton.classList.remove('hidden'); } else { ui.approveButton.classList.add('hidden'); }
-  ui.approveButton.disabled = ui.inFlight || !booking.accessApprovalPending;
   ui.resendButton.disabled = ui.inFlight;
 }
 
@@ -2313,25 +2297,13 @@ function runResolvePaymentRecovery_() {
   }, '決済要対応を解消しました。');
 }
 
-function runApproveAccess_() {
-  var booking = currentDetailBooking_;
-  if (!booking || !booking.accessApprovalPending) return;
-  if (!window.confirm(
-    '予約ID: ' + booking.bookingId + '\n利用日: ' + booking.date + '\n利用者名: ' + booking.name + '\n\n' +
-    'この予約の鍵承認を記録します。\n承認だけではメールは送信されません（前日18時の自動送信、または「来場案内を再送」で送信されます）。\n\n実行しますか？'
-  )) return;
-  runPaymentAction_(booking, '鍵承認を記録中…', function (run) {
-    run.adminApproveAccess(booking.bookingId);
-  }, '鍵承認を記録しました（メールは送信していません）。');
-}
-
 function runResendReminder_() {
   var booking = currentDetailBooking_;
   if (!booking || booking.status !== 'CONFIRMED') return;
   if (!window.confirm(
     '予約ID: ' + booking.bookingId + '\n利用日: ' + booking.date + '\n利用者名: ' + booking.name + '\n\n' +
     '鍵情報を含む来場案内（前日リマインド）を' + (booking.reminderSentAt ? '再送' : '送信') + 'します。\n' +
-    '送信直前に予約・決済・鍵承認の状態を再確認し、条件を満たさない場合は送信しません。\n\n実行しますか？'
+    '送信直前に予約・決済の状態を再確認し、条件を満たさない場合は送信しません。\n\n実行しますか？'
   )) return;
   var version = typeof booking.reminderSentAtVersion === 'number' ? booking.reminderSentAtVersion : 0;
   runPaymentAction_(booking, '来場案内を送信中…', function (run) {
@@ -2487,10 +2459,9 @@ function reminderReasonLabel(code) {
     ALREADY_SENT: '送信済み',
     EMAIL_MISSING: 'メール未登録',
     MAIL_NOT_READY: '設定不足',
-    /* Issue #341 PR-D: 鍵承認ゲートによる送信停止。 */
+    /* Issue #341 PR-D: 決済ゲートによる送信停止。 */
     PAYMENT_RECOVERY_REQUIRED: '決済要対応',
-    PAYMENT_NOT_SETTLED: '入金・返金状態により対象外',
-    ACCESS_NOT_APPROVED: '鍵未承認'
+    PAYMENT_NOT_SETTLED: '入金・返金状態により対象外'
   };
   return labels[code] || code || '';
 }

@@ -595,7 +595,7 @@ var Booking = (function () {
    * null）の場合もtrueにする（fail-closed。鍵情報を誤って送る側へ倒さない）。
    *
    * 旧Payment Link方式（Issue #334）のカード予約・現金・PayPayはこれらの列がすべて空で
-   * paymentStatusも既定値のままのためfalseになり、PR-Dの鍵承認ゲート・返金操作の対象外
+   * paymentStatusも既定値のままのためfalseになり、PR-Dの来場案内の決済ゲート・返金操作の対象外
    * （従来どおりの運用）になる。
    */
   function isStripeCheckoutBooking(record, now) {
@@ -651,7 +651,7 @@ var Booking = (function () {
    * Issue #341 PR-D: 当日予約（受付日と利用日がtimezone基準で同じ日）かどうか。
    * createBooking時のisSameDayBooking（validateCreateBookingInput）・expirePendingBookings
    * の判定（createdAtの日付とrecord.dateの比較）と同じ定義。createdAtまたはdateを
-   * 解釈できない場合はfalse（当日予約ではない＝鍵承認ゲートの対象側。fail-closed）。
+   * 解釈できない場合はfalse（当日予約ではない側。fail-closed）。
    */
   function isSameDayBookingRecord(record, timezone) {
     var r = record || {};
@@ -661,45 +661,28 @@ var Booking = (function () {
     return !!createdDate && createdDate === bookingDate;
   }
 
-  /*
-   * Issue #341「鍵・来場案内の開示ゲート」の対象かどうか。対象はカード決済（Stripe
-   * Checkoutによる自動確定）かつ当日予約でない予約のみ。当日予約・現地払い・旧Payment
-   * Link方式の予約は対象外（前日リマインドは従来どおり）。
-   */
-  function requiresAccessApproval(record, timezone) {
-    return isStripeCheckoutBooking(record) && !isSameDayBookingRecord(record, timezone);
-  }
-
   var ACCESS_GATE_REASON_CODES = {
     PAYMENT_RECOVERY_REQUIRED: 'PAYMENT_RECOVERY_REQUIRED',
-    PAYMENT_NOT_SETTLED: 'PAYMENT_NOT_SETTLED',
-    ACCESS_NOT_APPROVED: 'ACCESS_NOT_APPROVED'
+    PAYMENT_NOT_SETTLED: 'PAYMENT_NOT_SETTLED'
   };
 
   /*
-   * Issue #341 PR-D: 鍵・来場案内（前日リマインド）を送ってよいかのゲート判定。
-   * 前日リマインドの自動送信・管理者の再送・鍵承認操作のすべてが、Lock取得後に再読込した
-   * 最新レコードに対してこの1関数を呼ぶ（判定を複製しない）。
+   * 鍵・来場案内（前日リマインド／当日即時送信）を送ってよいかの決済ゲート判定
+   * （Issue #341 PR-D、Issue #414で鍵承認を廃止）。前日リマインドの自動送信・管理者の再送・
+   * 当日即時送信のすべてが、Lock取得後に再読込した最新レコードに対してこの1関数を呼ぶ
+   * （判定を複製しない）。管理者の鍵承認（accessApprovedAt）は判定に使わない。
    *
-   * ゲート対象外（requiresAccessApproval=false。現地払い・旧Payment Link・当日予約）は
-   * 常に{required:false, ok:true}。対象の予約は、上から順に次のいずれかに該当すると
-   * 送信不可（ok:false）:
+   * Stripe Checkoutの決済フローに入っていない予約（現地払い・旧Payment Link）は
+   * 常に{required:false, ok:true}。Stripe Checkout予約は、上から順に次のいずれかに
+   * 該当すると送信不可（ok:false。fail-closed）:
    * - PAYMENT_RECOVERY_REQUIRED: 決済の要復旧ゲート（paymentRecoveryRequiredAt）が未解消。
    * - PAYMENT_NOT_SETTLED: 入金済み（paid）でない、または返金の判断・手続きが始まっている
    *   （refundDecision/refundAttemptIdが記録済みで、返金試行が失敗で終わっていない）。
-   * - ACCESS_NOT_APPROVED: 管理者の鍵承認（accessApprovedAt）が無い。
-   *   options.ignoreApproval=trueの場合はこの判定を省く（鍵承認操作そのものの事前条件）。
-   *
-   * options.includeSameDay=true（Issue #412。当日予約の来場案内の即時送信だけが指定する）:
-   * 当日受付のStripe Checkout予約もゲート対象として扱い、入金済み・Recovery解消済み・返金手続きなしを
-   * 必須にする。鍵承認（accessApprovedAt）は要求しない（Issue #414の方針。requiresAccessApprovalの
-   * 定義自体は変更しない）。現地払い・旧Payment Linkは従来どおり対象外。
+   * 当日予約も同じ判定（当日かどうかで条件を変えない）。
    */
-  function evaluateAccessGate(record, timezone, options) {
+  function evaluateAccessGate(record) {
     var r = record || {};
-    var opts = options || {};
-    var gateRequired = opts.includeSameDay ? isStripeCheckoutBooking(r) : requiresAccessApproval(r, timezone);
-    if (!gateRequired) {
+    if (!isStripeCheckoutBooking(r)) {
       return { required: false, ok: true, reasonCode: '', message: '' };
     }
     if (r.paymentRecoveryRequiredAt) {
@@ -715,12 +698,6 @@ var Booking = (function () {
         message: 'この予約は入金済みの状態ではない（未入金・返金手続き中・返金済み等）ため、鍵情報を含む来場案内を送信できません。'
       };
     }
-    if (!opts.ignoreApproval && !opts.includeSameDay && !r.accessApprovedAt) {
-      return {
-        required: true, ok: false, reasonCode: ACCESS_GATE_REASON_CODES.ACCESS_NOT_APPROVED,
-        message: 'この予約は鍵承認がまだのため、鍵情報を含む来場案内を送信できません。Booking Adminで「鍵承認」を行ってください。'
-      };
-    }
     return { required: true, ok: true, reasonCode: '', message: '' };
   }
 
@@ -733,7 +710,6 @@ var Booking = (function () {
     isLegacyPaymentLinkBooking: isLegacyPaymentLinkBooking,
     hasPaymentLinkBeenSent: hasPaymentLinkBeenSent,
     isSameDayBookingRecord: isSameDayBookingRecord,
-    requiresAccessApproval: requiresAccessApproval,
     normalizePaymentStatus: normalizePaymentStatus,
     canTransitionPaymentStatus: canTransitionPaymentStatus,
     ALLOWED_BOOKING_BRANDS: ALLOWED_BOOKING_BRANDS,

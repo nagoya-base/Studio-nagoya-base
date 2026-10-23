@@ -1,15 +1,16 @@
 /*
- * Issue #341 PR-D: 鍵承認ゲート（Booking.evaluateAccessGate / BookingAccessApproval.gs）・
+ * Issue #341 PR-D / Issue #414: 来場案内の決済ゲート（Booking.evaluateAccessGate。鍵承認は廃止）・
  * 前日リマインドの送信ゲート・管理者の「来場案内を再送」の統合テスト。
  * Booking Adminの配布ファイル一式をvmで実行し、Sheets・メール・Stripeはスタブを使う。
  *
  * 受入条件との対応:
- * - 鍵承認前に鍵情報（キーボックス番号・解錠コード）を送らない（自動送信・再送とも）
- * - 鍵承認はメールを送らず、承認日時は冪等に保存される
- * - 鍵承認後の前日リマインドと来場案内の再送
+ * - Stripe決済済み + CONFIRMED + Recovery正常 → 鍵承認（accessApprovedAt）なしで送信する
+ * - PAYMENT_NOT_SETTLED / PAYMENT_RECOVERY_REQUIRED → 送信しない（鍵情報を出さない。自動送信・再送とも）
+ * - 二重送信防止（reminderSentAt）と管理者の明示再送の維持
  * - 送信直前に予約が取消・返金・Recoveryへ移った場合は送信しない
- * - メール送信失敗時に予約・決済・鍵承認を巻き戻さず、再実行で重複送信しない
- * - 現地払い・旧Payment Link・当日予約はゲートの対象外（従来どおり）
+ * - メール送信失敗時に予約・決済を巻き戻さず、再実行で重複送信しない
+ * - 現地払い・旧Payment Linkは従来どおり
+ * - 鍵承認の関数・UI・通知・旧文言が残っていない
  */
 'use strict';
 
@@ -124,103 +125,115 @@ function assertNoSecretsSent(ctx) {
   });
 }
 
+
 /* ========================================================================== */
-/* ゲート対象の判定                                                            */
+/* ゲート判定                                                                   */
 /* ========================================================================== */
 
-test('Booking.requiresAccessApproval: Stripeカード決済（当日以外）のみ対象。現地払い・旧Payment Link・当日予約は対象外', function () {
+test('Booking.evaluateAccessGate: Stripe Checkout予約は決済済み・Recovery正常ならaccessApprovedAtなしでok。現地払い・旧Payment Linkは対象外', function () {
   var ctx = setup();
   var B = ctx.sandbox.Booking;
-  assert.strictEqual(B.requiresAccessApproval(stripeRecord(), 'Asia/Tokyo'), true);
-  assert.strictEqual(B.requiresAccessApproval(stripeRecord(CASH_OVERRIDES), 'Asia/Tokyo'), false);
-  assert.strictEqual(B.requiresAccessApproval(stripeRecord(Object.assign({}, CASH_OVERRIDES, {
+  assert.strictEqual(typeof B.requiresAccessApproval, 'undefined', '鍵承認の判定関数は廃止');
+  assert.strictEqual(B.ACCESS_GATE_REASON_CODES.ACCESS_NOT_APPROVED, undefined);
+  var paid = B.evaluateAccessGate(stripeRecord());
+  assert.strictEqual(paid.required, true);
+  assert.strictEqual(paid.ok, true, '鍵承認なしでも通る');
+  assert.strictEqual(B.evaluateAccessGate(stripeRecord({ createdAt: new Date('2026-10-02T08:00:00+09:00') })).ok, true, '当日予約も同じ判定');
+  assert.strictEqual(B.evaluateAccessGate(stripeRecord(CASH_OVERRIDES)).required, false);
+  assert.strictEqual(B.evaluateAccessGate(stripeRecord(Object.assign({}, CASH_OVERRIDES, {
     paymentMethod: 'オンラインクレジットカード', stripePaymentLinkUrl: 'https://buy.stripe.com/test_abc'
-  })), 'Asia/Tokyo'), false, '旧Payment Link方式は対象外');
-  assert.strictEqual(B.requiresAccessApproval(stripeRecord({ createdAt: new Date('2026-10-02T08:00:00+09:00') }), 'Asia/Tokyo'), false, '当日予約は対象外');
-  assert.strictEqual(B.requiresAccessApproval(stripeRecord({ paymentStatus: '???' }), 'Asia/Tokyo'), true, '決済状態が不明な値ならfail-closedで対象');
-  assert.strictEqual(B.requiresAccessApproval(stripeRecord({ createdAt: '' }), 'Asia/Tokyo'), true, '受付日時が不明ならfail-closedで対象');
+  }))).required, false, '旧Payment Link方式は対象外');
+  assert.strictEqual(B.evaluateAccessGate(stripeRecord({ paymentStatus: 'checkout_pending' })).reasonCode, 'PAYMENT_NOT_SETTLED');
+  assert.strictEqual(B.evaluateAccessGate(stripeRecord({ paymentStatus: '???' })).reasonCode, 'PAYMENT_NOT_SETTLED', '不明な決済状態はfail-closed');
+  assert.strictEqual(B.evaluateAccessGate(stripeRecord({ refundDecision: 'NONE' })).reasonCode, 'PAYMENT_NOT_SETTLED');
+  assert.strictEqual(B.evaluateAccessGate(stripeRecord({ paymentRecoveryRequiredAt: new Date('2026-09-21T00:00:00+09:00') })).reasonCode, 'PAYMENT_RECOVERY_REQUIRED');
+});
+
+test('鍵承認の関数・UI用フラグ・管理者通知は廃止されている', function () {
+  var ctx = setup();
+  var s = ctx.sandbox;
+  assert.strictEqual(typeof s.approveBookingAccess, 'undefined');
+  assert.strictEqual(typeof s.adminApproveAccess, 'undefined');
+  assert.strictEqual(typeof s.BookingAccessApproval, 'undefined');
+  assert.strictEqual(typeof s.BookingAdminAlerts.notifyAccessApprovalPending, 'undefined');
+  var detail = s.getAdminBookingDetail(BOOKING_ID).booking;
+  ['accessApprovalRequired', 'accessApprovalPending', 'accessApprovedAt'].forEach(function (key) {
+    assert.strictEqual(key in detail, false, key + 'は詳細に含めない');
+  });
+  var list = s.getAdminBookings().bookings[0];
+  assert.strictEqual('accessApprovalPending' in list, false);
 });
 
 /* ========================================================================== */
 /* 前日リマインドの自動送信                                                      */
 /* ========================================================================== */
 
-test('sendNextDayReminders: 鍵承認前のStripeカード予約には送らず（鍵情報を出さない）、管理者へ「明日利用・鍵未承認」を通知する。現地払いは従来どおり送る', function () {
+test('sendNextDayReminders: 決済済みのStripe予約は鍵承認なしで鍵情報を含む来場案内を送り、管理者通知は出さない', function () {
   var ctx = setup({
     records: [
       stripeRecord(),
       stripeRecord(Object.assign({}, CASH_OVERRIDES, { bookingId: 'SX-20261002-CASH0001', email: 'cash@example.com' }))
     ]
   });
+  assert.strictEqual(rec(ctx).accessApprovedAt, '');
 
   var summary = ctx.sandbox.sendNextDayReminders(NOW);
 
   assert.strictEqual(summary.processedCount, 2);
-  assert.strictEqual(summary.sentCount, 1);
-  assert.strictEqual(summary.failedCount, 0, 'ゲートによる停止はメール障害として数えない');
-  assert.strictEqual(summary.accessGateSkippedCount, 1);
-  assert.strictEqual(customerMails(ctx).length, 0);
-  assert.strictEqual(rec(ctx).reminderSentAt, '');
-  assert.strictEqual(rec(ctx).lastMailErrorAt, '', 'メール障害として記録しない');
-
-  var cashMail = ctx.mailApp._sentEmails.filter(function (m) { return m.to === 'cash@example.com'; });
-  assert.strictEqual(cashMail.length, 1);
-  assert.ok(cashMail[0].body.indexOf(KEYBOX) !== -1, '現地払いは従来どおり鍵情報を含む来場案内を送る');
-
-  var alerts = adminMails(ctx);
-  assert.strictEqual(alerts.length, 1);
-  assert.ok(/鍵未承認/.test(alerts[0].subject));
-  assert.ok(alerts[0].body.indexOf(BOOKING_ID) !== -1);
-  assert.ok(alerts[0].body.indexOf(KEYBOX) === -1 && alerts[0].body.indexOf('taro@example.com') === -1, '管理者通知にも鍵情報・連絡先を含めない');
-});
-
-test('鍵承認: メールを送らずaccessApprovedAtだけを記録し、二重クリックでは承認日時を変えない。承認後の前日リマインドは鍵情報を含めて送る', function () {
-  var ctx = setup();
-  var first = ctx.sandbox.approveBookingAccess(BOOKING_ID);
-  assert.strictEqual(first.success, true, JSON.stringify(first));
-  var approvedAt = rec(ctx).accessApprovedAt;
-  assert.ok(approvedAt);
-  assert.strictEqual(ctx.mailApp._sentEmails.length, 0, '鍵承認はメール送信をトリガーしない');
-
-  var second = ctx.sandbox.approveBookingAccess(BOOKING_ID);
-  assert.strictEqual(second.success, true);
-  assert.strictEqual(second.alreadyApproved, true);
-  assert.strictEqual(rec(ctx).accessApprovedAt.getTime(), approvedAt.getTime(), '承認日時を上書きしない');
-
-  var summary = ctx.sandbox.sendNextDayReminders(NOW);
-  assert.strictEqual(summary.sentCount, 1);
+  assert.strictEqual(summary.sentCount, 2);
+  assert.strictEqual(summary.failedCount, 0);
+  assert.ok(!summary.accessGateSkippedCount);
   var mails = customerMails(ctx);
   assert.strictEqual(mails.length, 1);
   assert.ok(mails[0].body.indexOf(KEYBOX) !== -1 && mails[0].body.indexOf(UNLOCK) !== -1);
+  assert.ok(rec(ctx).reminderSentAt, '二重送信防止の送信日時を記録する');
   assert.strictEqual(adminMails(ctx).length, 0);
+
+  /* 2回目の実行は送らない（reminderSentAtによる二重送信防止）。 */
+  ctx.sandbox.sendNextDayReminders(NOW);
+  assert.strictEqual(customerMails(ctx).length, 1);
 });
 
-test('鍵承認の制限: 対象外（現地払い）・未確定・未入金・返金手続き中・Recovery未解消の予約は承認できない', function () {
-  var cases = [
-    { overrides: CASH_OVERRIDES, code: 'ACCESS_APPROVAL_NOT_REQUIRED' },
-    { overrides: { status: 'PENDING', paymentStatus: 'checkout_pending' }, code: 'INVALID_STATUS' },
-    { overrides: { status: 'CANCELLED' }, code: 'INVALID_STATUS' },
-    { overrides: { status: 'EXPIRED' }, code: 'INVALID_STATUS' },
-    { overrides: { paymentStatus: 'refund_pending', stripeRefundId: 're_1' }, code: 'PAYMENT_NOT_SETTLED' },
-    { overrides: { refundDecision: 'NONE' }, code: 'PAYMENT_NOT_SETTLED' },
-    { overrides: { paymentRecoveryRequiredAt: new Date('2026-09-21T00:00:00+09:00'), paymentRecoveryReason: 'x' }, code: 'PAYMENT_RECOVERY_REQUIRED' }
-  ];
-  cases.forEach(function (c) {
-    var ctx = setup({ record: c.overrides });
-    var result = ctx.sandbox.approveBookingAccess(BOOKING_ID);
-    assert.strictEqual(result.success, false, JSON.stringify(c.overrides));
-    assert.strictEqual(result.error.code, c.code, JSON.stringify(c.overrides));
-    assert.strictEqual(rec(ctx).accessApprovedAt, '');
-    assert.strictEqual(ctx.mailApp._sentEmails.length, 0);
-  });
-});
-
-test('Recovery未解消: 鍵承認済みでも前日リマインド・再送は送らない', function () {
+test('sendNextDayReminders: 未入金・Recovery未解消のStripe予約は鍵情報を出さず、メール障害にも数えず、管理者へ通知する', function () {
   var ctx = setup({
-    record: {
-      accessApprovedAt: new Date('2026-09-25T10:00:00+09:00'),
-      paymentRecoveryRequiredAt: new Date('2026-09-26T10:00:00+09:00'), paymentRecoveryReason: 'x'
-    }
+    records: [
+      stripeRecord({ bookingId: 'SX-20261002-UNPAID01', paymentStatus: 'checkout_pending' }),
+      stripeRecord({ bookingId: 'SX-20261002-RECOV001', paymentRecoveryRequiredAt: new Date('2026-09-26T10:00:00+09:00'), paymentRecoveryReason: 'x' })
+    ]
+  });
+  var summary = ctx.sandbox.sendNextDayReminders(NOW);
+  assert.strictEqual(summary.sentCount, 0);
+  assert.strictEqual(summary.failedCount, 0);
+  assert.strictEqual(summary.accessGateSkippedCount, 2);
+  assert.strictEqual(customerMails(ctx).length, 0);
+  assertNoSecretsSent(ctx);
+  assert.strictEqual(rec(ctx, 'SX-20261002-UNPAID01').lastMailErrorAt, '');
+  var alerts = adminMails(ctx);
+  assert.strictEqual(alerts.length, 1);
+  assert.ok(/来場案内を送信できなかった/.test(alerts[0].subject));
+  assert.ok(alerts[0].body.indexOf('SX-20261002-UNPAID01') !== -1);
+  assert.ok(alerts[0].body.indexOf('鍵承認') === -1, '旧文言を出さない');
+  assert.ok(alerts[0].body.indexOf('taro@example.com') === -1);
+});
+
+test('メールアドレス欠落・来場案内の設定不足のStripe予約は決済済みでもfail-closedで送らない', function () {
+  var noEmail = setup({ record: { email: '' } });
+  noEmail.sandbox.sendNextDayReminders(NOW);
+  assert.strictEqual(noEmail.mailApp._sentEmails.filter(function (m) { return m.body.indexOf(KEYBOX) !== -1; }).length, 0);
+  assert.strictEqual(
+    noEmail.sandbox.BookingMailer.evaluateReminderEligibility(rec(noEmail), { targetDateString: '2026-10-02' }).reasonCode, 'EMAIL_MISSING');
+
+  var noConfig = setup({ properties: { ACCESS_GUIDE_UNLOCK_CODE: '' } });
+  assert.strictEqual(
+    noConfig.sandbox.BookingMailer.evaluateReminderEligibility(rec(noConfig), { targetDateString: '2026-10-02' }).reasonCode, 'MAIL_NOT_READY');
+  noConfig.sandbox.sendNextDayReminders(NOW);
+  assert.strictEqual(customerMails(noConfig).length, 0);
+  assert.strictEqual(rec(noConfig).status, 'CONFIRMED', '送信失敗でも予約のCONFIRMEDを壊さない');
+});
+
+test('Recovery未解消: 前日リマインド・再送は送らない', function () {
+  var ctx = setup({
+    record: { paymentRecoveryRequiredAt: new Date('2026-09-26T10:00:00+09:00'), paymentRecoveryReason: 'x' }
   });
   ctx.sandbox.sendNextDayReminders(NOW);
   var resend = ctx.sandbox.adminResendReminderMail(BOOKING_ID, 0);
@@ -234,51 +247,36 @@ test('Recovery未解消: 鍵承認済みでも前日リマインド・再送は�
 /* 来場案内の再送                                                               */
 /* ========================================================================== */
 
-test('来場案内を再送: 鍵承認前はスキップ理由を返して送らない。承認後は送信し、二重クリック（古い送信履歴）では重複送信しない', function () {
+test('来場案内を再送: 決済済みなら鍵承認なしで送信でき、二重クリック（古い送信履歴）では重複送信しない。画面更新後の明示再送は送れる', function () {
   var ctx = setup();
-  var before = ctx.sandbox.adminResendReminderMail(BOOKING_ID, 0);
-  assert.strictEqual(before.success, false);
-  assert.strictEqual(before.skipped, true);
-  assert.strictEqual(before.error.code, 'ACCESS_NOT_APPROVED');
-  assert.ok(/鍵承認/.test(before.error.message));
-  assert.strictEqual(customerMails(ctx).length, 0);
-
-  ctx.sandbox.approveBookingAccess(BOOKING_ID);
   var detail = ctx.sandbox.getAdminBookingDetail(BOOKING_ID).booking;
   assert.strictEqual(detail.reminderSentAtVersion, 0);
-  assert.strictEqual(detail.accessApprovalRequired, true);
-  assert.ok(detail.accessApprovedAt);
 
   var sent = ctx.sandbox.adminResendReminderMail(BOOKING_ID, detail.reminderSentAtVersion);
   assert.strictEqual(sent.success, true, JSON.stringify(sent));
   assert.strictEqual(typeof sent.sentAt, 'string', 'google.script.run越しにDateを返さない');
   assert.strictEqual(customerMails(ctx).length, 1);
 
-  /* 同じ画面（古いreminderSentAtVersion）からの2回目のクリック。 */
   var doubleClick = ctx.sandbox.adminResendReminderMail(BOOKING_ID, detail.reminderSentAtVersion);
   assert.strictEqual(doubleClick.skipped, true);
   assert.strictEqual(doubleClick.error.code, 'SEND_HISTORY_CONFLICT');
   assert.strictEqual(customerMails(ctx).length, 1);
 
-  /* 画面を更新した後の明示的な再送は送れる。 */
   var refreshed = ctx.sandbox.getAdminBookingDetail(BOOKING_ID).booking;
   var resend = ctx.sandbox.adminResendReminderMail(BOOKING_ID, refreshed.reminderSentAtVersion);
   assert.strictEqual(resend.success, true);
   assert.strictEqual(customerMails(ctx).length, 2);
 });
 
-test('来場案内を再送: 画面表示時は承認済みでも、送信直前に取消・返金済みへ変わっていれば送らない', function () {
-  var ctx = setup({ record: { accessApprovedAt: new Date('2026-09-25T10:00:00+09:00') } });
+test('来場案内を再送: 画面表示後に返金手続き・取消済みへ変わっていれば送信直前に止まる', function () {
+  var ctx = setup();
   var detail = ctx.sandbox.getAdminBookingDetail(BOOKING_ID).booking;
-  assert.strictEqual(detail.accessApprovalPending, false);
 
-  /* 画面表示後に別操作で返金手続きへ進んだ（予約はCONFIRMEDのまま・決済はrefund_pending）。 */
   ctx.sandbox.SpreadsheetRepository.updateBookingFields(BOOKING_ID, { paymentStatus: 'refund_pending', stripeRefundId: 're_1' });
   var refunding = ctx.sandbox.adminResendReminderMail(BOOKING_ID, detail.reminderSentAtVersion);
   assert.strictEqual(refunding.skipped, true);
   assert.strictEqual(refunding.error.code, 'PAYMENT_NOT_SETTLED');
 
-  /* さらに取消済みへ。 */
   ctx.sandbox.SpreadsheetRepository.updateBookingFields(BOOKING_ID, { status: 'CANCELLED' });
   var cancelled = ctx.sandbox.adminResendReminderMail(BOOKING_ID, detail.reminderSentAtVersion);
   assert.strictEqual(cancelled.skipped, true);
@@ -288,9 +286,9 @@ test('来場案内を再送: 画面表示時は承認済みでも、送信直前
   assertNoSecretsSent(ctx);
 });
 
-test('来場案内を再送: メール送信失敗では予約・決済・鍵承認を巻き戻さず、送信履歴も進めない。復旧後の再実行で1通だけ送る', function () {
+test('来場案内を再送: メール送信失敗では予約・決済を巻き戻さず、送信履歴も進めない。復旧後の再実行で1通だけ送る', function () {
   var failingMail = stubs.createMailAppStub({ throwError: new Error('Service invoked too many times: taro@example.com') });
-  var ctx = setup({ record: { accessApprovedAt: new Date('2026-09-25T10:00:00+09:00') }, mailApp: failingMail });
+  var ctx = setup({ mailApp: failingMail });
 
   var failed = ctx.sandbox.adminResendReminderMail(BOOKING_ID, 0);
   assert.strictEqual(failed.success, false);
@@ -298,7 +296,6 @@ test('来場案内を再送: メール送信失敗では予約・決済・鍵承
   var r = rec(ctx);
   assert.strictEqual(r.status, 'CONFIRMED');
   assert.strictEqual(r.paymentStatus, 'paid');
-  assert.ok(r.accessApprovedAt, '鍵承認を巻き戻さない');
   assert.strictEqual(r.reminderSentAt, '', '送信履歴を進めない');
   assert.ok(r.lastMailErrorAt, '再送可能な証跡を残す');
   assert.ok(String(r.lastMailErrorMessage).indexOf('taro@example.com') === -1, 'エラー記録から連絡先をマスクする');
@@ -314,7 +311,7 @@ test('来場案内を再送: メール送信失敗では予約・決済・鍵承
   assert.strictEqual(okMail._sentEmails.length, 1);
 });
 
-test('来場案内を再送: ゲート対象外（現地払い・旧Payment Link・当日予約）は鍵承認なしで従来どおり送れる', function () {
+test('来場案内を再送: 現地払い・旧Payment Link・当日予約も従来どおり送れる', function () {
   var ctx = setup({
     records: [
       stripeRecord(CASH_OVERRIDES),
@@ -332,35 +329,28 @@ test('来場案内を再送: ゲート対象外（現地払い・旧Payment Link
 });
 
 /* ========================================================================== */
-/* 確定メール・管理者通知の文言                                                   */
+/* 確定メール・診断                                                              */
 /* ========================================================================== */
 
-test('確定メール: 鍵承認前のStripeカード予約には「前日に必ずキーボックス案内が届く」とは書かない。現地払いは従来の文言', function () {
+test('確定メール: Stripe予約も現地払いも同じ来場案内の文言で、旧「運営での確認が完了した後」を含まない。当日予約は即時送信の文言', function () {
   var ctx = setup();
   var T = ctx.sandbox.BookingMailTemplates;
   var config = { timezone: 'Asia/Tokyo', contactEmail: 'contact@example.com' };
-  var gated = T.buildConfirmedMail(stripeRecord(), config).body;
-  assert.ok(/運営での確認が完了した後/.test(gated));
-  assert.ok(gated.indexOf('キーボックス等の詳細案内は、利用日前日に別途') === -1);
+  var stripe = T.buildConfirmedMail(stripeRecord(), config).body;
   var cash = T.buildConfirmedMail(stripeRecord(CASH_OVERRIDES), config).body;
-  assert.ok(/来場方法・キーボックス等の詳細案内は、利用日前日に別途メールでお送りします。/.test(cash));
+  [stripe, cash].forEach(function (body) {
+    assert.ok(/来場方法・キーボックス等の詳細案内は、利用日前日に別途メールでお送りします。/.test(body));
+    assert.ok(body.indexOf('運営での確認') === -1 && body.indexOf('鍵承認') === -1);
+  });
 });
 
-test('管理者通知: Stripe決済で自動確定した鍵承認対象の予約は「鍵承認待ち」を通知し、対象外は通知しない', function () {
+test('BookingReminderDiagnostics: 診断も同じ決済ゲートを使い、決済済みならELIGIBLE、未入金・Recoveryは理由コードを返す', function () {
   var ctx = setup();
-  var sent = ctx.sandbox.BookingAdminAlerts.notifyAccessApprovalPending(stripeRecord());
-  assert.strictEqual(sent.sent, true);
-  var alerts = adminMails(ctx);
-  assert.ok(/鍵承認待ち/.test(alerts[0].subject));
-  assert.ok(alerts[0].body.indexOf('https://script.google.com/macros/s/admin/exec') !== -1, 'Booking Adminへの直リンクを含める');
-  assert.ok(alerts[0].body.indexOf('taro@example.com') === -1);
-  var notRequired = ctx.sandbox.BookingAdminAlerts.notifyAccessApprovalPending(stripeRecord(CASH_OVERRIDES));
-  assert.strictEqual(notRequired.sent, false);
-});
-
-test('BookingReminderDiagnostics: 診断も同じゲート判定を使い、鍵未承認を理由コードとして返す', function () {
-  var ctx = setup();
-  var evaluation = ctx.sandbox.BookingMailer.evaluateReminderEligibility(rec(ctx), { targetDateString: '2026-10-02' });
-  assert.strictEqual(evaluation.eligible, false);
-  assert.strictEqual(evaluation.reasonCode, 'ACCESS_NOT_APPROVED');
+  var M = ctx.sandbox.BookingMailer;
+  assert.strictEqual(M.evaluateReminderEligibility(rec(ctx), { targetDateString: '2026-10-02' }).reasonCode, 'ELIGIBLE');
+  assert.strictEqual(M.REMINDER_REASON_CODES && M.REMINDER_REASON_CODES.ACCESS_NOT_APPROVED, undefined);
+  var unpaid = Object.assign({}, rec(ctx), { paymentStatus: 'checkout_pending' });
+  assert.strictEqual(M.evaluateReminderEligibility(unpaid, { targetDateString: '2026-10-02' }).reasonCode, 'PAYMENT_NOT_SETTLED');
+  var recovery = Object.assign({}, rec(ctx), { paymentRecoveryRequiredAt: new Date('2026-09-26T10:00:00+09:00') });
+  assert.strictEqual(M.evaluateReminderEligibility(recovery, { targetDateString: '2026-10-02' }).reasonCode, 'PAYMENT_RECOVERY_REQUIRED');
 });

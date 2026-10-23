@@ -62,8 +62,8 @@ function cancelBookingAdmin(bookingId) {
 
 /*
  * Issue #341 PR-D: Stripeカード決済の予約の取消・返金／返金状態の照会／決済Recoveryの
- * 解消／鍵承認。いずれもBooking Admin専用（公開Web Appには追加しない）。業務ロジックは
- * BookingRefund.gs・BookingAccessApproval.gsにのみ置き、ここでは委譲だけを行う。
+ * 解消。いずれもBooking Admin専用（公開Web Appには追加しない）。業務ロジックは
+ * BookingRefund.gsにのみ置き、ここでは委譲だけを行う。
  * request: { decision: 'FULL'|'PARTIAL'|'NONE', amountJpy, reason }
  */
 function cancelBookingWithRefund(bookingId, request) {
@@ -80,10 +80,6 @@ function reconcileBookingCheckoutExpiry(bookingId) {
 
 function resolveBookingPaymentRecovery(bookingId, note) {
   return BookingRefund.resolvePaymentRecovery(bookingId, note);
-}
-
-function approveBookingAccess(bookingId) {
-  return BookingAccessApproval.approveAccess(bookingId);
 }
 
 /* 正式関数: reviveExpiredBooking(bookingId)（Issue #334本文どおりのグローバル関数名）。

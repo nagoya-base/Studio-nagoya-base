@@ -59,8 +59,8 @@ function sendNextDayReminders(now) {
   }
 
   var candidates = SpreadsheetRepository.getConfirmedBookingsForDate(tomorrowDateString);
-  /* Issue #341 PR-D: 鍵承認が無いため利用者への送信をスキップした予約（管理者へ別途通知）。 */
-  var unapprovedBookingIds = [];
+  /* Issue #341 PR-D: 決済未確定・Recovery未解消のため利用者への送信をスキップした予約（管理者へ別途通知）。 */
+  var blockedBookingIds = [];
 
   candidates.forEach(function (item) {
     summary.processedCount++;
@@ -74,12 +74,12 @@ function sendNextDayReminders(now) {
        */
       var result = BookingMailer.sendReminderMailForBooking(item.record.bookingId, { targetDateString: tomorrowDateString });
       var gateCode = result && result.skipped && result.error && result.error.code;
-      if (gateCode === 'ACCESS_NOT_APPROVED' || gateCode === 'PAYMENT_NOT_SETTLED' || gateCode === 'PAYMENT_RECOVERY_REQUIRED') {
-        /* 鍵承認ゲート（Issue #341 PR-D）による意図的な送信停止。メール障害ではないため
+      if (gateCode === 'PAYMENT_NOT_SETTLED' || gateCode === 'PAYMENT_RECOVERY_REQUIRED') {
+        /* 決済ゲート（Issue #341 PR-D）による意図的な送信停止。メール障害ではないため
            failedCountには数えない。 */
         summary.skippedCount++;
         summary.accessGateSkippedCount = (summary.accessGateSkippedCount || 0) + 1;
-        unapprovedBookingIds.push(item.record.bookingId);
+        blockedBookingIds.push(item.record.bookingId);
         return;
       }
       if (!result.success) {
@@ -112,11 +112,11 @@ function sendNextDayReminders(now) {
   });
 
   /*
-   * Issue #341 PR-D: 「明日利用・鍵未承認（または入金・Recoveryの問題で来場案内を送れない）」
+   * Issue #341 PR-D: 「明日利用・入金やRecoveryの問題で来場案内を送れない」
    * 予約を管理者へ1通にまとめて通知する（best effort。通知の成否は送信結果に影響させない）。
    */
-  if (unapprovedBookingIds.length > 0) {
-    BookingAdminAlerts.notifyUnapprovedAccessForTomorrow(tomorrowDateString, unapprovedBookingIds);
+  if (blockedBookingIds.length > 0) {
+    BookingAdminAlerts.notifyAccessGuideBlockedForTomorrow(tomorrowDateString, blockedBookingIds);
   }
 
   return summary;
