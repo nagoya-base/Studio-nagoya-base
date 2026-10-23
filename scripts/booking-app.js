@@ -154,7 +154,6 @@
     purposeOther: document.getElementById('ba-purpose-other'),
     purposeOtherError: document.getElementById('ba-purpose-other-error'),
     paymentError: document.getElementById('ba-payment-error'),
-    cardIneligibleNotice: document.getElementById('ba-card-ineligible-notice'),
     firstTimeCardNotice: document.getElementById('ba-first-time-card-notice'),
     cardPaymentNotice: document.getElementById('ba-card-payment-notice'),
     note: document.getElementById('ba-note'),
@@ -1091,7 +1090,7 @@
         return;
       }
       state.isMember = isMemberChecked_();
-      updateCardPaymentGating();
+      updatePaymentMethodGating();
       goToStep('details');
     });
   }
@@ -1115,39 +1114,26 @@
   }
 
   /*
-   * カード決済の96時間受付条件（Issue #334 PR-B「1. カード決済の受付条件」）。
-   * Step2→Step3遷移時（利用日時が確定した直後）に必ず呼び直す。これにより、
-   * 一度カードを選んだ後に戻って日時を変更し、96時間未満になった場合も、次にStep3へ
-   * 進んだ時点で選択が解除される（「送信できない状態にする」の実装は、最終的には
-   * サーバー側のCARD_PAYMENT_TOO_CLOSE_TO_START拒否が担保する多層防御の一つ）。
+   * 支払方法の選択制御（Issue #407）。カード決済は日程にかかわらず選べる（旧96時間受付制限は撤廃）。
+   * 初回利用はカード固定: カード以外のラジオを選べなくし、カードを選択済みにする。
+   * 利用経験ありへ戻した場合は解除して従来どおり全て選べる。Step2→Step3遷移時に呼び直す。
+   * 最終的な拒否はサーバー側（FIRST_TIME_CARD_PAYMENT_REQUIRED）が担保する。
    */
-  function updateCardPaymentGating() {
+  function updatePaymentMethodGating() {
     var radio = cardPaymentRadio_();
     if (!radio) return;
     var firstTime = Logic.isFirstTimeCardRequired(state.customerType);
-    var eligible = Logic.isCardPaymentEligible(state.date, state.startTime, undefined, state.customerType);
-    radio.disabled = !eligible;
-    /* Issue #407: 初回利用はカード固定。カード以外のラジオを選べなくし、カードを選択済みにする。
-       利用経験ありへ戻した場合は解除して従来どおり全て選べる。最終的な拒否はサーバー側
-       （FIRST_TIME_CARD_PAYMENT_REQUIRED）が担保する。 */
     root.querySelectorAll('input[name="paymentMethod"]').forEach(function (other) {
       if (other === radio) return;
       other.disabled = firstTime;
+      /* closestはDOM本体では常に使えるが、テストの最小DOMスタブには実装されていないことが
+         あるため、存在確認してから使う（見た目のdisabled表現のみに関わる処理）。 */
       var otherLabel = typeof other.closest === 'function' ? other.closest('label') : null;
       if (otherLabel && otherLabel.classList) otherLabel.classList.toggle('ba-choice--disabled', firstTime);
       if (firstTime && other.checked) other.checked = false;
     });
-    if (firstTime && eligible) radio.checked = true;
+    if (firstTime) radio.checked = true;
     if (els.firstTimeCardNotice) els.firstTimeCardNotice.hidden = !firstTime;
-    /* radio.closestはDOM本体では常に使えるが、テストの最小DOMスタブには実装されていない
-       ことがあるため、存在確認してから使う（見た目のdisabled表現のみに関わる処理であり、
-       欠けても選択不可自体はradio.disabledで担保される）。 */
-    var label = typeof radio.closest === 'function' ? radio.closest('label') : null;
-    if (label && label.classList) label.classList.toggle('ba-choice--disabled', !eligible);
-    if (!eligible && radio.checked) {
-      radio.checked = false;
-    }
-    if (els.cardIneligibleNotice) els.cardIneligibleNotice.hidden = eligible;
     updateCardPaymentNoticeVisibility();
   }
 
@@ -1192,14 +1178,7 @@
       };
       var errors = Logic.validateDetailsForm(fields, locale);
 
-      /* 二重チェック（Issue #334 PR-B）: updateCardPaymentGating()は通常Step2→Step3遷移時に
-         カード選択を解除済みだが、Step3に長時間滞在して96時間未満へ状態が変わった場合等に
-         備え、送信直前にも再評価する。サーバー側のCARD_PAYMENT_TOO_CLOSE_TO_START拒否と
-         合わせた多層防御であり、ここでの拒否メッセージも同じ案内文を使う。 */
-      if (Logic.isCardPaymentMethodValue(fields.paymentMethod) && !Logic.isCardPaymentEligible(state.date, state.startTime, undefined, state.customerType)) {
-        errors.paymentMethod = Logic.cardPaymentIneligibleNotice(locale);
-        updateCardPaymentGating();
-      }
+      /* 二重チェック（Issue #407）: 初回利用はカード以外を送信させない（サーバー側と同じ条件）。 */
       if (fields.paymentMethod && !Logic.isPaymentMethodAllowedForCustomer(state.customerType, fields.paymentMethod)) {
         errors.paymentMethod = Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale);
       }
@@ -1377,24 +1356,14 @@
       setFieldError_(els.consent, els.consentError, els.consent.checked ? '' : UI_TEXT.consentRequired);
       if (!els.consent.checked) return;
 
-      /* PRレビュー対応（Issue #334 PR-B）: 予約確認画面を開いたまま96時間の受付期限を
-         過ぎた場合、Step3→Step4遷移時点のチェックだけでは検知できないため、送信直前にも
-         必ず再評価する。期限を過ぎていれば送信自体を中止し、Step3へ戻して現地決済への
-         切り替えを案内する（サーバー側のCARD_PAYMENT_TOO_CLOSE_TO_START拒否と合わせた
-         多層防御。ここで止められればfetch自体を発生させない）。 */
+      /* 送信直前にも初回利用のカード必須を再確認する（サーバー側のFIRST_TIME_CARD_PAYMENT_REQUIRED拒否と
+         合わせた多層防御。ここで止められればfetch自体を発生させない）。 */
       if (!Logic.isPaymentMethodAllowedForCustomer(state.customerType, state.paymentMethod)) {
-        updateCardPaymentGating();
+        updatePaymentMethodGating();
         goToStep('details');
         showGlobalError(Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale), []);
         return;
       }
-      if (Logic.isCardPaymentMethodValue(state.paymentMethod) && !Logic.isCardPaymentEligible(state.date, state.startTime, undefined, state.customerType)) {
-        updateCardPaymentGating();
-        goToStep('details');
-        showGlobalError(Logic.cardPaymentIneligibleNotice(locale), []);
-        return;
-      }
-
       if (!API_BASE_URL) {
         els.submitError.textContent = Logic.apiNotConfiguredMessage(locale);
         els.submitError.hidden = false;

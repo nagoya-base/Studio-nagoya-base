@@ -36,7 +36,7 @@ test('messageForErrorCode: createBooking/getAvailabilityのerror.code一覧を�
     'INVALID_START_TIME', 'START_TIME_NOT_ALIGNED', 'SLOT_CONFLICT', 'INVALID_NAME', 'INVALID_EMAIL',
     'INVALID_PHONE', 'INVALID_PEOPLE', 'INVALID_PURPOSE', 'INVALID_PAYMENT_METHOD', 'INVALID_NOTE',
     'INVALID_SOURCE', 'INVALID_CUSTOMER_TYPE', 'FIRST_TIME_CARD_PAYMENT_REQUIRED',
-    'SAME_DAY_START_TIME_PASSED', 'CARD_PAYMENT_TOO_CLOSE_TO_START',
+    'SAME_DAY_START_TIME_PASSED',
     'RATE_LIMITED', 'LOCK_TIMEOUT', 'BOOKING_SAVE_FAILED', 'INVALID_JSON', 'INTERNAL_ERROR'
   ];
   codes.forEach(function (code) {
@@ -57,7 +57,6 @@ test('recoveryActionForErrorCode: SLOT_CONFLICT系は時間の選び直し、入
   assert.strictEqual(Logic.recoveryActionForErrorCode('SLOT_CONFLICT'), 'reselect-time');
   assert.strictEqual(Logic.recoveryActionForErrorCode('START_TIME_NOT_ALIGNED'), 'reselect-time');
   assert.strictEqual(Logic.recoveryActionForErrorCode('SAME_DAY_START_TIME_PASSED'), 'reselect-time', '当日の過去開始時刻はStep2へ戻し空き時間を再取得する（Issue #270レビュー対応）');
-  assert.strictEqual(Logic.recoveryActionForErrorCode('CARD_PAYMENT_TOO_CLOSE_TO_START'), 'edit-details', 'カード96時間未満は支払方法変更/日程変更で解消するためedit-detailsへ誘導する（Issue #334）');
   assert.strictEqual(Logic.recoveryActionForErrorCode('INVALID_EMAIL'), 'edit-details');
   assert.strictEqual(Logic.recoveryActionForErrorCode('INVALID_PAYMENT_METHOD'), 'edit-details');
   assert.strictEqual(Logic.recoveryActionForErrorCode('RATE_LIMITED'), 'retry');
@@ -260,19 +259,6 @@ test('messageForErrorCode: locale="en"は英語、locale未指定は既存どお
   assert.notStrictEqual(Logic.messageForErrorCode('SOMETHING_NEW', 'en'), Logic.messageForErrorCode('SOMETHING_NEW', 'ja'));
 });
 
-test('messageForErrorCode: CARD_PAYMENT_TOO_CLOSE_TO_START（Issue #334の新エラーコード）はja/enとも汎用メッセージにフォールバックせず専用文言を返す', function () {
-  var Logic = loadLogic();
-  var ja = Logic.messageForErrorCode('CARD_PAYMENT_TOO_CLOSE_TO_START');
-  var en = Logic.messageForErrorCode('CARD_PAYMENT_TOO_CLOSE_TO_START', 'en');
-  assert.match(ja, /96時間/);
-  assert.match(ja, /現金・PayPay/);
-  assert.match(en, /96 hours/);
-  assert.match(en, /cash or PayPay/);
-  /* 汎用メッセージ（未知のcode用）へフォールバックしていないことを確認する */
-  assert.notStrictEqual(ja, Logic.messageForErrorCode('SOMETHING_UNKNOWN'));
-  assert.notStrictEqual(en, Logic.messageForErrorCode('SOMETHING_UNKNOWN', 'en'));
-});
-
 test('customerTypeLabel: locale="en"は英語ラベル、locale未指定は日本語ラベル（内部valueはfirst_time/returningのまま不変）', function () {
   var Logic = loadLogic();
   assert.strictEqual(Logic.customerTypeLabel('first_time'), '初回利用');
@@ -461,13 +447,11 @@ test('dayAriaLabel: 今日＋初回利用も通常のstatusラベルになる（
   assert.strictEqual(Logic.dayAriaLabel(today, 'AVAILABLE_HIGH', 'first_time', today, 'ja'), '10月1日　空き時間が十分あります');
 });
 
-test('isCardPaymentEligible: 初回利用はカードが唯一の支払方法のため96時間未満・翌日でも選択できる（Issue #407）。利用経験ありは従来どおり', function () {
+test('isCardPaymentEligible / cardPaymentIneligibleNotice / CARD_PAYMENT_TOO_CLOSE_TO_START: カード決済の96時間制限に関するAPIは撤廃済み（Issue #407）', function () {
   var Logic = loadLogic();
-  var now = new Date(Date.UTC(2026, 9, 1, 3, 0, 0)); /* 2026-10-01 12:00 JST */
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-02', '10:00', now, 'first_time'), true);
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-02', '10:00', now, 'returning'), false);
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-02', '10:00', now), false, '利用区分未指定は従来どおり');
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-01', '15:00', now, 'first_time'), true, '当日');
+  assert.strictEqual(Logic.isCardPaymentEligible, undefined);
+  assert.strictEqual(Logic.cardPaymentIneligibleNotice, undefined);
+  assert.strictEqual(Logic.recoveryActionForErrorCode('CARD_PAYMENT_TOO_CLOSE_TO_START'), 'retry', '旧エラーコードは専用導線を持たない');
 });
 
 test('monthLabel: ja "2026年10月" / en "October 2026"', function () {
@@ -631,83 +615,6 @@ test('isCardPaymentMethodValue: 内部value「オンラインクレジットカ�
   assert.strictEqual(Logic.isCardPaymentMethodValue(undefined), false);
 });
 
-test('isCardPaymentEligible: 利用開始まで96時間ちょうどは選択できる（境界を含む。gas/booking/shared/Booking.gsのCARD_MIN_HOURS_BEFORE_START=96と同じ境界）', function () {
-  var Logic = loadLogic();
-  var now = new Date('2026-10-01T10:00:00+09:00');
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-05', '10:00', now), true);
-});
-
-test('isCardPaymentEligible: 96時間に1分でも満たない場合は選択できない', function () {
-  var Logic = loadLogic();
-  var now = new Date('2026-10-01T10:00:00+09:00');
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-05', '09:59', now), false);
-});
-
-/*
- * PRレビュー対応: 以前の実装は現在時刻を分単位（秒を切り捨て）で丸めてから
- * 「暦日差×1440分 + 分」で比較していたため、実際の残り時間より最大59秒長く見積もる
- * バイアスがあり、96時間未満の申込を誤って選択可能と判定しうる不具合があった。
- * 固定時刻を使い、96時間ちょうど／1秒前（96時間01秒前＝許可）／1秒後（95時間59分59秒前＝
- * 不許可）の境界をミリ秒精度で検証する（gas/booking/shared/Booking.gsの
- * `minutesUntilStart < CARD_MIN_HOURS_BEFORE_START * 60`とちょうど96時間が一致する
- * よう、`>=`で許可する境界を秒単位で崩さないことを保証する）。
- */
-test('isCardPaymentEligible: 96時間の境界を秒単位で判定する（96時間ちょうど／1秒前／1秒後）', function () {
-  var Logic = loadLogic();
-  var startAt = new Date('2026-10-05T10:00:00+09:00').getTime();
-  var exactly96hBefore = new Date(startAt - 96 * 3600000);
-  var oneSecondBeforeThat = new Date(exactly96hBefore.getTime() - 1000); /* 96時間01秒前 */
-  var oneSecondAfterThat = new Date(exactly96hBefore.getTime() + 1000); /* 95時間59分59秒前 */
-
-  assert.strictEqual(
-    Logic.isCardPaymentEligible('2026-10-05', '10:00', exactly96hBefore),
-    true,
-    '96時間ちょうどは許可（境界を含む）'
-  );
-  assert.strictEqual(
-    Logic.isCardPaymentEligible('2026-10-05', '10:00', oneSecondBeforeThat),
-    true,
-    '96時間01秒前（96時間を1秒超えて余裕がある）は許可'
-  );
-  assert.strictEqual(
-    Logic.isCardPaymentEligible('2026-10-05', '10:00', oneSecondAfterThat),
-    false,
-    '95時間59分59秒前（96時間に1秒足りない）は不許可'
-  );
-});
-
-test('isCardPaymentEligible: 分の境目をまたぐ1秒でも、秒単位で正しく判定する（分単位への丸めによる誤判定がないことの確認）', function () {
-  var Logic = loadLogic();
-  /* now=10:00:59（分としては10:00扱いされていた旧実装だと、本来95時間59分1秒しか
-     余裕が無いのに96時間ちょうど余裕があるかのように誤って許可されうるケース）。 */
-  var now = new Date('2026-10-01T10:00:59+09:00');
-  assert.strictEqual(
-    Logic.isCardPaymentEligible('2026-10-05', '10:00', now),
-    false,
-    '96時間まで59秒足りないため不許可であるべき（分単位への丸めで許可されてはいけない）'
-  );
-});
-
-test('isCardPaymentEligible: 96時間を十分に超えていれば選択できる', function () {
-  var Logic = loadLogic();
-  var now = new Date('2026-10-01T10:00:00+09:00');
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-10', '10:00', now), true);
-});
-
-test('isCardPaymentEligible: 利用開始が過去・現在時刻より前でも例外を投げず、96時間未満としてfalseを返す（fail-closed）', function () {
-  var Logic = loadLogic();
-  var now = new Date('2026-10-05T10:00:00+09:00');
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-01', '10:00', now), false);
-});
-
-test('isCardPaymentEligible: 日付・開始時刻がまだ未確定（空文字）の間は選択肢を塞がずtrueを返す', function () {
-  var Logic = loadLogic();
-  var now = new Date('2026-10-01T10:00:00+09:00');
-  assert.strictEqual(Logic.isCardPaymentEligible('', '', now), true);
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-05', '', now), true);
-  assert.strictEqual(Logic.isCardPaymentEligible('', '10:00', now), true);
-});
-
 test('cardPaymentDueDisplay: 「今から72時間後」をAsia/Tokyo基準の日付（曜日つき）・時刻で返す', function () {
   var Logic = loadLogic();
   var now = new Date('2026-10-01T10:00:00+09:00'); /* 木曜 */
@@ -718,15 +625,6 @@ test('cardPaymentDueDisplay: 72時間後に日付だけでなく曜日も正し�
   var Logic = loadLogic();
   var now = new Date('2026-10-29T23:30:00+09:00'); /* 木曜 */
   assert.strictEqual(Logic.cardPaymentDueDisplay(now), '2026-11-01（日） 23:30');
-});
-
-test('cardPaymentIneligibleNotice: Issue #334本文どおりの案内文をja/enで返す', function () {
-  var Logic = loadLogic();
-  assert.strictEqual(
-    Logic.cardPaymentIneligibleNotice('ja'),
-    'カード事前決済は利用開始の4日前までのお申し込みです。直前のご予約は現金・PayPay（現地決済）をお選びください。'
-  );
-  assert.match(Logic.cardPaymentIneligibleNotice('en'), /4 days/);
 });
 
 test('cardPaymentNoticeLines: 決済リンクの送信予定（24時間以内）・支払期限（72時間後の実際の日時）・自動失効・再申し込み方法・決済済みの場合の連絡先をすべて含む', function () {
@@ -758,9 +656,9 @@ test('cardPaymentNoticeLines: locale="en"では英語の案内文を返す', fun
   assert.match(body, /expire automatically/);
 });
 
-test('CARD_MIN_HOURS_BEFORE_START/CARD_TTL_HOURS/CARD_PAYMENT_METHOD_VALUE: gas/booking/shared/Booking.gsの値と一致する定数を公開する', function () {
+test('CARD_TTL_HOURS/CARD_PAYMENT_METHOD_VALUE: gas/booking/shared/Booking.gsの値と一致する定数を公開する', function () {
   var Logic = loadLogic();
-  assert.strictEqual(Logic.CARD_MIN_HOURS_BEFORE_START, 96);
+  assert.strictEqual(Logic.CARD_MIN_HOURS_BEFORE_START, undefined, 'Issue #407: 96時間制限の定数は撤廃');
   assert.strictEqual(Logic.CARD_TTL_HOURS, 72);
   assert.strictEqual(Logic.CARD_PAYMENT_METHOD_VALUE, 'オンラインクレジットカード');
 });
@@ -795,23 +693,6 @@ test('priceComputingLabel/priceUnavailableLabel: locale="en"は英語、未指�
   assert.notStrictEqual(Logic.priceUnavailableLabel(), Logic.priceUnavailableLabel('en'));
   assert.ok(Logic.priceUnavailableLabel().length > 0);
   assert.ok(Logic.priceUnavailableLabel('en').length > 0);
-});
-
-/* ---------- Issue #406: 当日予約でカード決済を選べる ---------- */
-
-test('isCardPaymentEligible: 当日（Asia/Tokyo基準）の利用日は96時間未満でもカードを選択できる（Issue #406）', function () {
-  var Logic = loadLogic();
-  var now = new Date('2026-10-01T10:00:00+09:00');
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-01', '15:00', now), true);
-  /* 日付境界: UTCでは前日でもJSTで当日なら当日扱い */
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-01', '09:30', new Date('2026-09-30T16:00:00Z')), true);
-});
-
-test('isCardPaymentEligible: 翌日以降で96時間未満は従来どおり選択できない（Issue #406の回帰確認）', function () {
-  var Logic = loadLogic();
-  var now = new Date('2026-10-01T10:00:00+09:00');
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-02', '10:00', now), false);
-  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-04', '10:00', now), false);
 });
 
 test('cardPaymentNoticeLines: sameDay指定では「24時間以内に決済リンク」「72時間後」を出さず、当日用の案内にする（Issue #406）', function () {

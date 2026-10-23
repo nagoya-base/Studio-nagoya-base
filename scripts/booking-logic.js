@@ -93,7 +93,6 @@
       INVALID_CUSTOMER_TYPE: '利用区分（初回利用／利用経験あり）を選択してください。',
       FIRST_TIME_CARD_PAYMENT_REQUIRED: '初回利用の方のお支払いはオンラインクレジットカード決済のみとなります。',
       SAME_DAY_START_TIME_PASSED: '指定した開始時刻はすでに過ぎています。現在時刻より後の開始時刻を選択してください。',
-      CARD_PAYMENT_TOO_CLOSE_TO_START: 'カード事前決済は利用開始の4日前（96時間前）までのお申し込みに限ります。直前のご予約は現金・PayPay（現地決済）をお選びください。',
       RATE_LIMITED: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。',
       LOCK_TIMEOUT: '一時的に混み合っています。もう一度お試しください。',
       BOOKING_SAVE_FAILED: '予約の保存に失敗しました。しばらくしてから再度お試しください。',
@@ -120,7 +119,6 @@
       INVALID_CUSTOMER_TYPE: 'Please select your customer type (first-time guest or returning guest).',
       FIRST_TIME_CARD_PAYMENT_REQUIRED: 'First-time guests can pay by online credit card only.',
       SAME_DAY_START_TIME_PASSED: 'The selected start time has already passed. Please choose a start time later than the current time.',
-      CARD_PAYMENT_TOO_CLOSE_TO_START: 'Card prepayment is only available up to 96 hours (4 days) before your start time. For last-minute bookings, please choose cash or PayPay (pay on site).',
       RATE_LIMITED: 'Too many requests have been submitted. Please wait a moment and try again.',
       LOCK_TIMEOUT: 'The system is currently busy. Please try again.',
       BOOKING_SAVE_FAILED: 'We couldn’t save your booking. Please try again in a moment.',
@@ -188,9 +186,6 @@
       code === 'INVALID_PURPOSE' ||
       code === 'INVALID_PAYMENT_METHOD' ||
       code === 'INVALID_NOTE' ||
-      /* Issue #334: 支払方法を現地決済へ変更するか、日程を選び直せば解消するため、
-         支払方法系のエラーと同じedit-detailsへ誘導する。 */
-      code === 'CARD_PAYMENT_TOO_CLOSE_TO_START' ||
       /* Issue #407: 初回利用はカード決済のみ。支払方法を直せば解消する。 */
       code === 'FIRST_TIME_CARD_PAYMENT_REQUIRED'
     ) {
@@ -413,65 +408,16 @@
   }
 
   /*
-   * ── カード決済の96時間受付条件・支払期限表示（Issue #334 PR-B） ──
-   * ここでの判定・表示はあくまでフォーム側の事前チェック・目安表示であり、実際の受付可否・
-   * 支払期限の正はgas/booking/shared/Booking.gs（CARD_MIN_HOURS_BEFORE_START/CARD_TTL_HOURS/
-   * computeCardPaymentDueMillis）。しきい値・TTLはそちらと値を一致させること。ここを
-   * すり抜けても、サーバー側のvalidateCreateBookingInputがfail-closedに拒否する
-   * （CARD_PAYMENT_TOO_CLOSE_TO_START。既にERROR_MESSAGES/recoveryActionForErrorCodeへ
-   * 対応済み）。
+   * ── カード決済の支払期限表示（Issue #334 PR-B） ──
+   * ここでの表示はあくまでフォーム側の目安表示であり、実際の支払期限の正は
+   * gas/booking/shared/Booking.gs（CARD_TTL_HOURS/computeCardPaymentDueMillis）。TTLはそちらと
+   * 値を一致させること。カード決済の96時間受付制限はIssue #407で全面撤廃した。
    */
   var CARD_PAYMENT_METHOD_VALUE = 'オンラインクレジットカード';
-  var CARD_MIN_HOURS_BEFORE_START = 96;
   var CARD_TTL_HOURS = 72;
 
   function isCardPaymentMethodValue(value) {
     return value === CARD_PAYMENT_METHOD_VALUE;
-  }
-
-  /*
-   * dateValue（'YYYY-MM-DD'）とtimeValue（'HH:mm'）をAsia/Tokyo基準の壁時計時刻として
-   * 解釈し、その瞬間のUTC epoch msを返す（PRレビュー対応: 以前は「今日からの暦日差 × 1440分
-   * + 分単位に切り捨てたstartMinutes/nowMinutes」で分単位の判定をしていたため、
-   * 現在時刻の秒が切り捨てられる分だけ実際の残り時間より最大59秒長く見積もる方向の
-   * バイアスがあり、96時間未満の申込を誤って受け付け可能と判定しうる不具合があった。
-   * Asia/Tokyoは夏時間の無い固定UTC+9オフセットのtimezoneのため、Date.UTC(...)の月・日を
-   * そのまま使い、時をUTC+9分だけ引くだけで正しい絶対時刻（epoch ms）が一意に求まる
-   * （タイムゾーンデータベースへの依存なしに秒単位で正確）。この関数はミリ秒精度を返す
-   * ため、以降の比較はdaysBetweenDateStrings_やcurrentMinutesInJapan_のような分単位の
-   * 中間表現を経由しない。 */
-  function jstWallClockToUtcMillis_(dateValue, timeValue) {
-    var dateParts = (dateValue || '').split('-');
-    var timeParts = (timeValue || '').split(':');
-    var year = parseInt(dateParts[0], 10);
-    var month = parseInt(dateParts[1], 10);
-    var day = parseInt(dateParts[2], 10);
-    var hour = parseInt(timeParts[0], 10);
-    var minute = parseInt(timeParts[1], 10);
-    return Date.UTC(year, month - 1, day, hour - 9, minute, 0, 0);
-  }
-
-  /*
-   * カード決済を選べるかどうかの事前判定。dateValue/startTimeValueが未確定の間は
-   * true（まだ判定できる材料がないため選択肢を塞がない）。日時が確定した時点
-   * （Step2→Step3遷移時、および最終送信直前）で呼び出し側が再評価する
-   * （PRレビュー対応: 確認画面を開いたまま96時間の受付期限をまたいだ場合に備え、
-   * scripts/booking-app.jsのsubmitハンドラでも送信直前に呼び直す）。
-   * gas/booking/shared/Booking.gsのvalidateCreateBookingInput（`< CARD_MIN_HOURS_BEFORE_START`
-   * で拒否＝ちょうど96時間は許可）と同じ境界（>=で許可）をミリ秒精度で判定する。
-   */
-  function isCardPaymentEligible(dateValue, startTimeValue, now, customerType) {
-    /* Issue #407: 初回利用はカードが唯一の支払方法のため、96時間ルールの対象外
-       （サーバー側のvalidateCreateBookingInputと同じ）。 */
-    if (isFirstTimeCardRequired(customerType)) return true;
-    if (!isNonEmpty(dateValue) || !isNonEmpty(startTimeValue)) return true;
-    var base = isDateLike_(now) ? now : new Date();
-    /* Issue #406: 当日予約（利用日がAsia/Tokyo基準の今日）は96時間ルールの対象外。
-       サーバー側（Booking.gsのvalidateCreateBookingInput）と同じく、当日はカードを選べる。 */
-    if (dateValue === todayInJapan(base)) return true;
-    var startMillis = jstWallClockToUtcMillis_(dateValue, startTimeValue);
-    var msUntilStart = startMillis - base.getTime();
-    return msUntilStart >= CARD_MIN_HOURS_BEFORE_START * 3600000;
   }
 
   /* Issue #406: 利用日（'YYYY-MM-DD'）がAsia/Tokyo基準の今日か。カード注意書きの当日用文言の切替に使う。 */
@@ -506,15 +452,6 @@
     var base = isDateLike_(now) ? now : new Date();
     var due = new Date(base.getTime() + CARD_TTL_HOURS * 3600000);
     return formatDateTimeWithWeekdayInJapan_(due);
-  }
-
-  var CARD_PAYMENT_INELIGIBLE_NOTICE = {
-    ja: 'カード事前決済は利用開始の4日前までのお申し込みです。直前のご予約は現金・PayPay（現地決済）をお選びください。',
-    en: 'Card prepayment is only available up to 4 days before your start time. For last-minute bookings, please choose cash or PayPay (pay on site).'
-  };
-
-  function cardPaymentIneligibleNotice(locale) {
-    return CARD_PAYMENT_INELIGIBLE_NOTICE[normalizeLocale(locale)];
   }
 
   /* フォーム（支払方法欄・確認画面）で使うカード決済の注意書き本文（Issue #334本文の
@@ -956,13 +893,10 @@
     yearMonthFromDateValue: yearMonthFromDateValue,
     weekdayColumnClass: weekdayColumnClass,
     CARD_PAYMENT_METHOD_VALUE: CARD_PAYMENT_METHOD_VALUE,
-    CARD_MIN_HOURS_BEFORE_START: CARD_MIN_HOURS_BEFORE_START,
     CARD_TTL_HOURS: CARD_TTL_HOURS,
     isCardPaymentMethodValue: isCardPaymentMethodValue,
-    isCardPaymentEligible: isCardPaymentEligible,
     isSameDayInJapan: isSameDayInJapan,
     cardPaymentDueDisplay: cardPaymentDueDisplay,
-    cardPaymentIneligibleNotice: cardPaymentIneligibleNotice,
     cardPaymentNoticeLines: cardPaymentNoticeLines,
     cardCheckoutRedirectNoticeLines: cardCheckoutRedirectNoticeLines,
     cardCheckoutButtonLabel: cardCheckoutButtonLabel,

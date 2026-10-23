@@ -228,7 +228,7 @@
 
 .ba-choice input { flex: 0 0 auto; width: 18px; height: 18px; accent-color: var(--ba-accent); }
 
-/* カード決済が96時間未満で選択不可の間の見た目（Issue #334 PR-B）。 */
+/* 選択不可の支払方法の見た目（初回利用はカード以外。Issue #407）。 */
 .ba-choice--disabled { opacity: 0.5; cursor: not-allowed; }
 .ba-choice--disabled input { cursor: not-allowed; }
 

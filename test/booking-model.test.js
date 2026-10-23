@@ -160,7 +160,7 @@ test('validateCreateBookingInput: 初回利用 + カード決済は利用開始�
   assert.strictEqual(result.valid, true, JSON.stringify(result.error));
 });
 
-test('validateCreateBookingInput: 利用経験あり(returning)の支払方法は従来どおり（現金/PayPay/未定を許可、翌日のカードは96時間ルールで拒否。Issue #407の回帰確認）', function () {
+test('validateCreateBookingInput: 利用経験あり(returning)の支払方法は従来どおり（現金/PayPay/未定を許可、翌日のカードも許可。Issue #407の回帰確認）', function () {
   var Booking = loadBooking();
   ['現金', 'PayPay', '未定'].forEach(function (paymentMethod) {
     var result = Booking.validateCreateBookingInput(
@@ -175,8 +175,7 @@ test('validateCreateBookingInput: 利用経験あり(returning)の支払方法�
     DEFAULT_CONFIG,
     NOW
   );
-  assert.strictEqual(card.valid, false);
-  assert.strictEqual(card.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
+  assert.strictEqual(card.valid, true, '翌日のカードも許可（96時間制限は撤廃）');
 });
 
 test('validateCreateBookingInput: 当日(2026-10-01) + 利用経験あり(returning) + 現在時刻より後の開始時刻は通常どおり許可する', function () {
@@ -707,11 +706,11 @@ test('isAllowedCustomerType/getCustomerTypeLabel: first_time/returningのみ許�
  */
 var NOW_CARD = new Date('2026-10-01T12:00:00+09:00');
 
-test('Booking定数: PAYMENT_METHOD_CARD/CARD_TTL_HOURS/CARD_MIN_HOURS_BEFORE_STARTが公開されている（Issue #334）', function () {
+test('Booking定数: PAYMENT_METHOD_CARD/CARD_TTL_HOURSが公開され、96時間制限の定数は撤廃されている（Issue #334/#407）', function () {
   var Booking = loadBooking();
   assert.strictEqual(Booking.PAYMENT_METHOD_CARD, 'オンラインクレジットカード');
   assert.strictEqual(Booking.CARD_TTL_HOURS, 72);
-  assert.strictEqual(Booking.CARD_MIN_HOURS_BEFORE_START, 96);
+  assert.strictEqual(Booking.CARD_MIN_HOURS_BEFORE_START, undefined);
 });
 
 test('isCardPaymentMethod: カード決済の文字列のみtrue。前後空白はtrim、他の支払方法・空値はfalse（Issue #334）', function () {
@@ -726,97 +725,39 @@ test('isCardPaymentMethod: カード決済の文字列のみtrue。前後空白�
   assert.strictEqual(Booking.isCardPaymentMethod(null), false);
 });
 
-test('validateCreateBookingInput: カード決済×利用開始ちょうど96時間前は許可される（境界。Issue #334）', function () {
+test('validateCreateBookingInput: 利用経験あり×カード決済は、当日・翌日・2日後・3日後・96時間ちょうど前後のいずれでも許可される（96時間制限は撤廃。Issue #407）', function () {
   var Booking = loadBooking();
-  var result = Booking.validateCreateBookingInput(
-    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '12:00' }),
-    DEFAULT_CONFIG,
-    NOW_CARD
-  );
-  assert.strictEqual(result.valid, true, JSON.stringify(result.error));
-  assert.strictEqual(result.normalized.paymentMethod, 'オンラインクレジットカード');
+  /* NOW_CARD = JST 2026-10-01 12:00。96時間後は 2026-10-05 12:00 */
+  [
+    ['2026-10-01', '15:00'], /* 当日 */
+    ['2026-10-02', '12:00'], /* 翌日（24時間前） */
+    ['2026-10-03', '12:00'], /* 2日後 */
+    ['2026-10-04', '12:00'], /* 3日後 */
+    ['2026-10-04', '13:00'], /* 97時間未満 */
+    ['2026-10-05', '11:45'], /* 96時間を1分切る（旧制限なら拒否） */
+    ['2026-10-05', '12:00'], /* 96時間ちょうど */
+    ['2026-10-10', '12:00']
+  ].forEach(function (c) {
+    var result = Booking.validateCreateBookingInput(
+      validInput({ paymentMethod: 'オンラインクレジットカード', customerType: 'returning', date: c[0], startTime: c[1] }),
+      DEFAULT_CONFIG,
+      NOW_CARD
+    );
+    assert.strictEqual(result.valid, true, c.join(' ') + ': ' + JSON.stringify(result.error));
+    assert.strictEqual(result.normalized.paymentMethod, 'オンラインクレジットカード');
+  });
 });
 
-test('validateCreateBookingInput: カード決済×利用開始96時間前を1分でも切ると拒否される（境界。Issue #334）', function () {
+test('validateCreateBookingInput: 初回利用×カード決済は、当日・翌日〜3日後のいずれでも許可される（Issue #407）', function () {
   var Booking = loadBooking();
-  var result = Booking.validateCreateBookingInput(
-    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '11:45' }),
-    DEFAULT_CONFIG,
-    NOW_CARD
-  );
-  assert.strictEqual(result.valid, false);
-  assert.strictEqual(result.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
-});
-
-test('validateCreateBookingInput: カード決済×利用開始96時間前を1分でも超えれば許可される（境界。Issue #334）', function () {
-  var Booking = loadBooking();
-  var result = Booking.validateCreateBookingInput(
-    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '12:15' }),
-    DEFAULT_CONFIG,
-    NOW_CARD
-  );
-  assert.strictEqual(result.valid, true, JSON.stringify(result.error));
-});
-
-test('validateCreateBookingInput: カード決済×利用開始まで97時間・95時間の境界外テスト（Issue #334受入条件）', function () {
-  var Booking = loadBooking();
-  /* 97時間後（2026-10-05 13:00）は許可される */
-  var allowed = Booking.validateCreateBookingInput(
-    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '13:00' }),
-    DEFAULT_CONFIG,
-    NOW_CARD
-  );
-  assert.strictEqual(allowed.valid, true, JSON.stringify(allowed.error));
-
-  /* 95時間後（2026-10-05 11:00）は拒否される */
-  var rejected = Booking.validateCreateBookingInput(
-    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '11:00' }),
-    DEFAULT_CONFIG,
-    NOW_CARD
-  );
-  assert.strictEqual(rejected.valid, false);
-  assert.strictEqual(rejected.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
-});
-
-/*
- * PRレビュー対応（Issue #334 PR-B #336）: 以前の実装は「今日からの暦日差×1440分＋
- * 分単位に丸めたstartMinutes/現在時刻」という分単位の中間表現で96時間ルールを判定して
- * いたため、96時間ちょうど付近の秒・ミリ秒単位の境界でフロント側
- * （scripts/booking-logic.jsのisCardPaymentEligible。ミリ秒精度）とずれうる不具合が
- * あった。ここではinput.startTime（'HH:mm'。秒は表現できない）を固定し、receivedAt
- * （now引数）側をミリ秒単位でずらすことで、96時間ちょうど・1秒前・1秒後・1ミリ秒未満の
- * 境界をBookingAvailability.zonedDateTimeToUtcMillis経由のミリ秒比較で検証する。
- */
-test('validateCreateBookingInput: カード決済×96時間の境界をミリ秒単位で判定する（96時間ちょうど／1秒前／1秒後／1ミリ秒未満。PRレビュー対応）', function () {
-  var Booking = loadBooking();
-  var input = validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-05', startTime: '12:00' });
-  var startAtMillis = new Date('2026-10-05T12:00:00+09:00').getTime();
-  var exactly96hBeforeMillis = startAtMillis - 96 * 3600000;
-
-  var exactly96h = Booking.validateCreateBookingInput(input, DEFAULT_CONFIG, new Date(exactly96hBeforeMillis));
-  assert.strictEqual(exactly96h.valid, true, '96時間ちょうどは許可される（境界を含む）: ' + JSON.stringify(exactly96h.error));
-
-  var oneSecondOfExtraMargin = Booking.validateCreateBookingInput(
-    input, DEFAULT_CONFIG, new Date(exactly96hBeforeMillis - 1000)
-  );
-  assert.strictEqual(oneSecondOfExtraMargin.valid, true, '96時間より1秒余裕がある（96時間+1秒前）は許可される');
-
-  var oneSecondShort = Booking.validateCreateBookingInput(
-    input, DEFAULT_CONFIG, new Date(exactly96hBeforeMillis + 1000)
-  );
-  assert.strictEqual(oneSecondShort.valid, false, '96時間に1秒足りない（96時間-1秒前）は拒否される');
-  assert.strictEqual(oneSecondShort.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
-
-  var oneMillisecondShort = Booking.validateCreateBookingInput(
-    input, DEFAULT_CONFIG, new Date(exactly96hBeforeMillis + 1)
-  );
-  assert.strictEqual(oneMillisecondShort.valid, false, '96時間に1ミリ秒足りない場合も拒否される');
-  assert.strictEqual(oneMillisecondShort.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
-
-  var oneMillisecondOfExtraMargin = Booking.validateCreateBookingInput(
-    input, DEFAULT_CONFIG, new Date(exactly96hBeforeMillis - 1)
-  );
-  assert.strictEqual(oneMillisecondOfExtraMargin.valid, true, '96時間より1ミリ秒でも余裕があれば許可される');
+  [['2026-10-01', '15:00'], ['2026-10-02', '12:00'], ['2026-10-03', '12:00'], ['2026-10-04', '12:00']].forEach(function (c) {
+    var result = Booking.validateCreateBookingInput(
+      validInput({ paymentMethod: 'オンラインクレジットカード', customerType: 'first_time', date: c[0], startTime: c[1] }),
+      DEFAULT_CONFIG,
+      NOW_CARD
+    );
+    assert.strictEqual(result.valid, true, c.join(' ') + ': ' + JSON.stringify(result.error));
+  });
 });
 
 test('validateCreateBookingInput: 現金/PayPay/未定は96時間ルールの対象外（直前でも通常どおり許可される。Issue #334の回帰要件）', function () {
@@ -929,17 +870,6 @@ test('validateCreateBookingInput: 当日予約のカード決済でも、過去�
   );
   assert.strictEqual(passed.valid, false);
   assert.strictEqual(passed.error.code, 'SAME_DAY_START_TIME_PASSED');
-});
-
-test('validateCreateBookingInput: 翌日以降のカード決済は96時間ルールのまま（当日解禁の影響を受けない。Issue #406）', function () {
-  var Booking = loadBooking();
-  var tomorrow = Booking.validateCreateBookingInput(
-    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-02', startTime: '12:00' }),
-    DEFAULT_CONFIG,
-    NOW_CARD
-  );
-  assert.strictEqual(tomorrow.valid, false);
-  assert.strictEqual(tomorrow.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
 });
 
 test('cardMinHoldHours: 当日予約（受付日=利用日）のカードだけgraceを返し、翌日以降は0（Issue #406）', function () {

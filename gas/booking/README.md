@@ -7216,18 +7216,31 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
 - 決済失敗・未完了は従来どおり予約確定にならない（確定はStripe Webhook成功後のみ）。
 - フロントは`isCardPaymentEligible`が当日をtrueとし、カード注意書きは当日用文言に切り替える。
 
-## Issue #407: 初回利用者をクレジットカード決済必須化し当日予約を解禁
+## Issue #407: 初回利用者をクレジットカード決済必須化し当日予約を解禁（カード96時間制限の全面撤廃）
 
-- 初回利用（`customerType=first_time`）の当日予約を解禁した。`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`は
-  廃止（サーバー・フロントとも返さない）。当日の開始時刻検証（`SAME_DAY_START_TIME_PASSED`）・空き枠判定・
-  重複予約防止は全顧客区分で従来どおり。
-- 代わりに初回利用の支払方法は**オンラインクレジットカード決済のみ**。`Booking.validateCreateBookingInput`が
-  `first_time`かつカード以外（現金・PayPay・未定）を`FIRST_TIME_CARD_PAYMENT_REQUIRED`で拒否する
-  （当日・翌日以降を問わず、API直呼びでも回避できない）。`returning`の支払方法は変更なし。
-- 初回利用はカードが唯一の支払方法のため、**96時間ルール（`CARD_PAYMENT_TOO_CLOSE_TO_START`）の対象外**。
-  対象にすると利用開始まで4日未満の日程が初回利用だけ予約不能になるため。`returning`のカードは従来どおり
-  （当日のみ#406で対象外）。
-- 予約確定はStripe決済成功（Webhook）後のみで、決済失敗・未完了はPENDINGのまま失効する（既存フロー）。
-- フロント: `Logic.isFirstTimeCardRequired` / `isPaymentMethodAllowedForCustomer` /
-  `isCardPaymentEligible(…, customerType)`。初回利用ではStep3でカード以外のラジオを無効化しカードを選択済みにする
-  （`#ba-first-time-card-notice`）。`isSameDayFirstTimeBlocked`は削除した。
+> **最終仕様**: 本節は、Issue #334（カード96時間受付条件）および #406（当日だけ96時間ルール例外）の
+> 記述を上書きする。上のIssue #334/#406節にある「96時間未満のカードを拒否する」
+> 「`CARD_PAYMENT_TOO_CLOSE_TO_START`」「`Booking.CARD_MIN_HOURS_BEFORE_START`」
+> 「`Logic.isCardPaymentEligible`」は**廃止済み**（歴史的記録として残している）。
+
+- 業務ルール
+  - 初回利用（`first_time`）: 支払方法はオンラインクレジットカードのみ。当日予約可。日程にかかわらずカード可。
+  - 利用経験あり（`returning`）: 現金・PayPay・オンラインクレジットカードから選択可。当日予約可。
+    カードは当日を含め日程にかかわらず可。
+  - **カード決済に「利用開始96時間前まで」の制限は一切ない**。現金・PayPayの運用は変更なし。
+- サーバー（`Booking.validateCreateBookingInput`）
+  - `first_time`かつカード以外（現金・PayPay・未定）は`FIRST_TIME_CARD_PAYMENT_REQUIRED`で拒否
+    （当日・翌日以降を問わず、API直呼びでも回避できない）。
+  - 初回利用の当日予約禁止（`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`）は廃止。
+  - `CARD_PAYMENT_TOO_CLOSE_TO_START`と`CARD_MIN_HOURS_BEFORE_START`は廃止。
+  - 当日の過去開始時刻拒否（`SAME_DAY_START_TIME_PASSED`）・空き枠判定・重複予約防止は全顧客区分で従来どおり。
+- 未決済予約の失効（**維持**）
+  - 受付可否の制限は撤廃したが、PENDING TTL（`CARD_TTL_HOURS`=72時間、利用開始の
+    `minHoursBeforeStart`前を上限。当日カードは#406の`cardMinHoldHours`でgrace）と、Stripe Checkout Sessionの
+    `paymentHoldExpiresAt`による別クロックの失効は変更していない。決済失敗・未完了はPENDINGのまま失効し、
+    確定はStripe Webhook成功後のみ。`STRIPE_CHECKOUT_ENABLED`の設定値・Checkout/Webhookの業務ロジックは未変更。
+- フロント
+  - `Logic.isFirstTimeCardRequired` / `Logic.isPaymentMethodAllowedForCustomer`。
+  - 初回利用ではStep3でカード以外のラジオを無効化しカードを選択済みにする（`#ba-first-time-card-notice`）。
+  - 96時間の事前チェック（`isCardPaymentEligible`・`cardPaymentIneligibleNotice`・`#ba-card-ineligible-notice`）は削除。
+  - `isSameDayFirstTimeBlocked`は削除した。

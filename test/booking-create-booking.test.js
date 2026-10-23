@@ -668,6 +668,20 @@ test('createBooking: 当日+初回利用の現金拒否・当日+利用経験あ
   });
 });
 
+test('createBooking: カード決済は利用経験あり・初回利用とも、当日・翌日・2日後・3日後でPENDINGを作成できる（96時間制限は撤廃。Issue #407）', function () {
+  ['returning', 'first_time'].forEach(function (customerType) {
+    ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'].forEach(function (date) {
+      var ctx = setup();
+      var result = ctx.sandbox.BookingRepository.createBooking(
+        validPayload({ customerType: customerType, date: date, startTime: '13:00', paymentMethod: 'オンラインクレジットカード' }),
+        NOW
+      );
+      assert.strictEqual(result.success, true, customerType + ' ' + date + ': ' + JSON.stringify(result.error));
+      assert.strictEqual(result.status, 'PENDING', '決済前はPENDINGのまま（確定はStripe決済成功後のみ）');
+    });
+  });
+});
+
 test('createBooking: customerType未指定・不正値はINVALID_CUSTOMER_TYPEでfail-closedに拒否し、Calendar/Sheetsに何も作らない（フロント改変での当日制限回避を防ぐ）', function () {
   [undefined, null, '', 'member', 'FIRST_TIME'].forEach(function (customerType) {
     var ctx = setup();
