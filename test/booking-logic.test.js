@@ -780,3 +780,32 @@ test('priceComputingLabel/priceUnavailableLabel: locale="en"は英語、未指�
   assert.ok(Logic.priceUnavailableLabel().length > 0);
   assert.ok(Logic.priceUnavailableLabel('en').length > 0);
 });
+
+/* ---------- Issue #406: 当日予約でカード決済を選べる ---------- */
+
+test('isCardPaymentEligible: 当日（Asia/Tokyo基準）の利用日は96時間未満でもカードを選択できる（Issue #406）', function () {
+  var Logic = loadLogic();
+  var now = new Date('2026-10-01T10:00:00+09:00');
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-01', '15:00', now), true);
+  /* 日付境界: UTCでは前日でもJSTで当日なら当日扱い */
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-01', '09:30', new Date('2026-09-30T16:00:00Z')), true);
+});
+
+test('isCardPaymentEligible: 翌日以降で96時間未満は従来どおり選択できない（Issue #406の回帰確認）', function () {
+  var Logic = loadLogic();
+  var now = new Date('2026-10-01T10:00:00+09:00');
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-02', '10:00', now), false);
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-04', '10:00', now), false);
+});
+
+test('cardPaymentNoticeLines: sameDay指定では「24時間以内に決済リンク」「72時間後」を出さず、当日用の案内にする（Issue #406）', function () {
+  var Logic = loadLogic();
+  var lines = Logic.cardPaymentNoticeLines('2026-10-04（日） 10:00', 'ja', { sameDay: true }).join('\n');
+  assert.ok(!/24時間以内/.test(lines));
+  assert.ok(!/72時間後/.test(lines));
+  assert.ok(/当日のご予約/.test(lines));
+  var normal = Logic.cardPaymentNoticeLines('2026-10-04（日） 10:00', 'ja').join('\n');
+  assert.ok(/24時間以内/.test(normal) && /72時間後/.test(normal));
+  assert.ok(Logic.isSameDayInJapan('2026-10-01', new Date('2026-10-01T10:00:00+09:00')));
+  assert.ok(!Logic.isSameDayInJapan('2026-10-02', new Date('2026-10-01T10:00:00+09:00')));
+});

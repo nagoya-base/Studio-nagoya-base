@@ -843,7 +843,8 @@ var BookingMailer = (function () {
     var dueMillis = Booking.computeCardPaymentDueMillis(
       record.createdAt.getTime(),
       record.startAt.getTime(),
-      ttlConfig.minHoursBeforeStart
+      ttlConfig.minHoursBeforeStart,
+      Booking.cardMinHoldHours(record, ttlConfig.timezone, ttlConfig.minHoldHours)
     );
     var nowMillis = isDateLike_(opts.now) ? opts.now.getTime() : Date.now();
     if (nowMillis >= dueMillis) {

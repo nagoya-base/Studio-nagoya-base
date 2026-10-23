@@ -93,7 +93,8 @@ var BookingMailTemplates = (function () {
       var dueMillis = Booking.computeCardPaymentDueMillis(
         record.createdAt.getTime(),
         record.startAt.getTime(),
-        ttlConfig.minHoursBeforeStart
+        ttlConfig.minHoursBeforeStart,
+        Booking.cardMinHoldHours(record, config.timezone, ttlConfig.minHoldHours)
       );
       var dueDate = new Date(dueMillis);
       var dueDateString = BookingAvailability.formatDateInTimezone(dueDate, config.timezone);
@@ -379,7 +380,8 @@ var BookingMailTemplates = (function () {
       var dueMillis = Booking.computeCardPaymentDueMillis(
         record.createdAt.getTime(),
         record.startAt.getTime(),
-        ttlConfig.minHoursBeforeStart
+        ttlConfig.minHoursBeforeStart,
+        Booking.cardMinHoldHours(record, config.timezone, ttlConfig.minHoldHours)
       );
       var dueDate = new Date(dueMillis);
       var dueDateString = BookingAvailability.formatDateInTimezone(dueDate, timezone);

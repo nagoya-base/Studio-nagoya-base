@@ -450,8 +450,12 @@ var Booking = (function () {
      * （UTC epoch ms）へ変換し、receivedAt（Dateとして既にミリ秒精度の絶対時刻）との差分を
      * そのままミリ秒で比較する。CARD_MIN_HOURS_BEFORE_START=96はそのまま維持し、
      * 新しいScript Propertiesは追加しない。
+     *
+     * Issue #406: 当日予約（isSameDayBooking。当日予約を使える人の条件は上のcustomerType判定のまま
+     * 変更しない）はこの96時間ルールの対象外とし、現金・PayPayと同じく当日でもカードを選べる。
+     * 翌日以降の予約は従来どおり96時間未満を拒否する。
      */
-    if (isCardPaymentMethod(input.paymentMethod)) {
+    if (isCardPaymentMethod(input.paymentMethod) && !isSameDayBooking) {
       var cardStartAtMillis = BookingAvailability.zonedDateTimeToUtcMillis(
         input.date, input.startTime, availabilityConfig.timezone
       );
@@ -555,14 +559,24 @@ var Booking = (function () {
    * カード予約の支払期限（＝PENDING TTL失効時刻）をミリ秒epochで返す（Issue #334）。
    * expirePendingBookings（失効判定）とBooking Admin表示（支払期限表示）の両方が
    * 必ずこの1関数だけを経由する（表示用と判定用で別計算・別定数を持たない）。
-   * 内部はcomputeTtlExpiryMillisをCARD_TTL_HOURS固定・minHoldHours=0（当日受付グレースは
-   * 適用しない。カードは96時間未満の申込自体をvalidateCreateBookingInputで拒否している
-   * ため、通常運用でminHoldHoursのgraceが必要になるケースはそもそも発生しない）で
-   * 呼び出すだけの薄いラッパー。minHoursBeforeStartは既存のPENDING_TTL_MIN_HOURS_BEFORE_START
+   * 内部はcomputeTtlExpiryMillisをCARD_TTL_HOURS固定で呼び出すだけの薄いラッパー。
+   * minHoldHoursは省略時0（翌日以降のカード予約。Issue #406で当日カードを解禁するまでは
+   * 常に0）。当日予約のカードのみ、呼び出し側がcardMinHoldHoursの値を渡す。minHoursBeforeStartは既存のPENDING_TTL_MIN_HOURS_BEFORE_START
    * （既定2時間。Script Properties経由。Issue #334で変更しない）をそのまま渡す。
    */
-  function computeCardPaymentDueMillis(createdAtMillis, startAtMillis, minHoursBeforeStart) {
-    return computeTtlExpiryMillis(createdAtMillis, startAtMillis, CARD_TTL_HOURS, minHoursBeforeStart, 0);
+  function computeCardPaymentDueMillis(createdAtMillis, startAtMillis, minHoursBeforeStart, minHoldHours) {
+    return computeTtlExpiryMillis(createdAtMillis, startAtMillis, CARD_TTL_HOURS, minHoursBeforeStart, minHoldHours || 0);
+  }
+
+  /*
+   * Issue #406: カード予約に適用するPENDING TTLのgrace（minHoldHours）。当日予約のカードは
+   * 利用開始まで2時間未満で受け付けることがあり、grace無しだと通常TTL（利用開始-2時間）が
+   * 受付時刻以前になって作成直後に失効してしまう。当日予約に限り、現金・PayPayと同じ
+   * ttlConfig.minHoldHours（利用開始時刻を上限とする猶予）を使う。翌日以降は0のまま
+   * （従来の72時間TTLと完全に同じ値）。当日判定はisSameDayBookingRecord（受付日=利用日）。
+   */
+  function cardMinHoldHours(record, timezone, minHoldHours) {
+    return isSameDayBookingRecord(record, timezone) ? (minHoldHours || 0) : 0;
   }
 
   /*
@@ -762,6 +776,7 @@ var Booking = (function () {
     generateBookingId: generateBookingId,
     computeTtlExpiryMillis: computeTtlExpiryMillis,
     computeCardPaymentDueMillis: computeCardPaymentDueMillis,
+    cardMinHoldHours: cardMinHoldHours,
     isExpired: isExpired,
     getEffectivePriceAmount: getEffectivePriceAmount,
     needsPriceUpdateNotice: needsPriceUpdateNotice
