@@ -46,6 +46,20 @@ function computeNextDayDateString_(baseDate, timezone) {
  * ブランド（snb/mens/studio_x）で抽出ロジック・送信ロジックを分岐させない。
  */
 function sendNextDayReminders(now) {
+  return runNextDayReminderBatch_(now, 'sendNextDayReminders');
+}
+
+/*
+ * 21時台の未送信補完（catch-up。Issue #416）。毎日21時台に翌日のCONFIRMED予約を再走査し、
+ * 来場案内が未送信の予約だけに送る。18時台の通常便と同じ内部処理を使い、抽出・送信・集計・
+ * 管理者通知を複製しない。強制再送（force）はしない: 送信済みはALREADY_SENTでスキップされ、
+ * Stripe Checkout予約の決済・Recovery・返金ゲートとfail-closedも通常便と同じ。
+ */
+function sendNextDayReminderCatchUp(now) {
+  return runNextDayReminderBatch_(now, 'sendNextDayReminderCatchUp');
+}
+
+function runNextDayReminderBatch_(now, label) {
   now = isReminderNowDateLike_(now) ? now : new Date();
 
   var timezone = BookingConfig.getAvailabilityConfig().timezone;
@@ -54,7 +68,7 @@ function sendNextDayReminders(now) {
   var summary = { processedCount: 0, sentCount: 0, skippedCount: 0, failedCount: 0 };
 
   if (!tomorrowDateString) {
-    Logger.log('sendNextDayReminders: timezone設定が不正なため翌日を計算できませんでした。');
+    Logger.log(label + ': timezone設定が不正なため翌日を計算できませんでした。');
     return summary;
   }
 
@@ -90,7 +104,7 @@ function sendNextDayReminders(now) {
          * そのまま含むため、Loggerにはbooking Id・error.codeのみを残す
          * （利用者メールアドレス・解錠コード・キーボックス番号・メール本文は残さない）。
          */
-        Logger.log('sendNextDayReminders: 送信失敗 ' + item.record.bookingId + ' code=' + (result.error && result.error.code));
+        Logger.log(label + ': 送信失敗 ' + item.record.bookingId + ' code=' + (result.error && result.error.code));
       } else if (result.skipped) {
         summary.skippedCount++;
       } else {
@@ -103,7 +117,7 @@ function sendNextDayReminders(now) {
          アドレスをredactしてから記録する（PRレビュー対応）。 */
       summary.failedCount++;
       Logger.log(
-        'sendNextDayReminders: 予期しない例外 ' +
+        label + ': 予期しない例外 ' +
           item.record.bookingId +
           ': ' +
           BookingMailer.sanitizeErrorMessage(unexpectedError && unexpectedError.message)
@@ -122,18 +136,26 @@ function sendNextDayReminders(now) {
   return summary;
 }
 
+function createDailyReminderTrigger_(functionName, hour) {
+  var existing = ScriptApp.getProjectTriggers().filter(function (trigger) {
+    return trigger.getHandlerFunction() === functionName;
+  });
+  if (existing.length > 0) {
+    Logger.log('トリガーは既に存在します: ' + functionName);
+    return existing[0];
+  }
+  return ScriptApp.newTrigger(functionName).timeBased().everyDays(1).atHour(hour).create();
+}
+
 /* GASエディタから手動で一度だけ実行するための補助関数（README.md参照）。
    毎日18時台に1回 sendNextDayReminders を実行するトリガーを作成する。
    GASの時間主導トリガーは分単位の完全一致を保証しないため、「18:00ちょうど」を
    業務要件にはしない（README「18時台に1回」と明記する）。 */
 function createNextDayReminderTrigger() {
-  var FUNCTION_NAME = 'sendNextDayReminders';
-  var existing = ScriptApp.getProjectTriggers().filter(function (trigger) {
-    return trigger.getHandlerFunction() === FUNCTION_NAME;
-  });
-  if (existing.length > 0) {
-    Logger.log('トリガーは既に存在します: ' + FUNCTION_NAME);
-    return existing[0];
-  }
-  return ScriptApp.newTrigger(FUNCTION_NAME).timeBased().everyDays(1).atHour(18).create();
+  return createDailyReminderTrigger_('sendNextDayReminders', 18);
+}
+
+/* 21時台の未送信補完（Issue #416）用。毎日21時台に1回 sendNextDayReminderCatchUp を実行する。 */
+function createNextDayReminderCatchUpTrigger() {
+  return createDailyReminderTrigger_('sendNextDayReminderCatchUp', 21);
 }

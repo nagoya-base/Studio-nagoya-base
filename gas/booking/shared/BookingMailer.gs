@@ -687,19 +687,23 @@ var BookingMailer = (function () {
   }
 
   /*
-   * 当日予約の来場案内即時送信（Issue #412）。前日18時台のsendNextDayReminders（翌日の
-   * CONFIRMED予約のみ対象）では、利用日当日にCONFIRMEDになった予約へ来場案内が届かないため、
-   * 確定直後（BookingRepository.notifyCustomerConfirmedBestEffort_）に呼ぶ。
-   *
-   * 当日判定はBookingConfigのtimezone基準で「予約日 === 現在日」（options.nowはテスト用）。
-   * 当日でない・CONFIRMEDでない予約は何もせずスキップする（翌日以降は従来どおり前日トリガー）。
-   * 当日の予約は新しいテンプレート・判定を作らず、sendReminderMailForBookingへそのまま委譲する
+   * 確定直後の来場案内即時送信（Issue #412 当日予約 / Issue #416 前日19時以降の翌日予約）。
+   * 前日18時台のsendNextDayReminders（翌日のCONFIRMED予約のみ対象）では、次の予約へ
+   * 来場案内が届かないため、確定直後（BookingRepository.notifyCustomerConfirmedBestEffort_）に呼ぶ。
+   *   - 利用日が今日 → 即時送信
+   *   - 利用日が明日 かつ 現在時刻（BookingConfigのtimezone基準）が19:00以降 → 即時送信
+   *     （18:00〜18:59は対象外。18時台の通常便、または21時台のcatch-upで送る）
+   *   - それ以外 → 何もしない（success:true, skipped:true, reason付き）
+   * 日付・時刻はすべてBookingConfigのtimezone基準（options.nowはテスト用）。
+   * 新しいテンプレート・判定は作らず、sendReminderMailForBookingへそのまま委譲する
    * （Lock・再読込・支払/Recoveryゲート・EMAIL_MISSING/MAIL_NOT_READY・SentAt更新・
    * 失敗記録をすべて再利用。reminderSentAt/accessGuideSentAt済みはALREADY_SENTでスキップ）。
    * forceは受け付けない（管理者の明示再送は従来のsendReminderMailForBooking(force)を使う）。
-   * 戻り値の形はsendReminderMailForBookingと同じ。対象外はsuccess:true, skipped:true, reason付き。
+   * 戻り値の形はsendReminderMailForBookingと同じ。
    */
-  function sendSameDayAccessGuideForBooking(bookingId, options) {
+  var IMMEDIATE_NEXT_DAY_START_MINUTES_ = 19 * 60;
+
+  function sendImmediateAccessGuideForBooking(bookingId, options) {
     var opts = options || {};
     var now = isDateLike_(opts.now) ? opts.now : new Date();
     var timezone = BookingConfig.getAvailabilityConfig().timezone;
@@ -712,11 +716,20 @@ var BookingMailer = (function () {
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
     if (!found) return notApplicable('NOT_FOUND');
     if (found.record.status !== Booking.STATUS.CONFIRMED) return notApplicable('INVALID_STATUS');
-    if (normalizeReminderDate_(found.record.date, timezone) !== today) return notApplicable('NOT_SAME_DAY');
 
-    /* 当日の再確認はLock取得後の最新レコードでtargetDateString（=今日）として行われる。
+    var bookingDate = normalizeReminderDate_(found.record.date, timezone);
+    var targetDateString = today;
+    if (bookingDate !== today) {
+      var tomorrow = BookingAvailability.formatDateInTimezone(new Date(now.getTime() + 24 * 3600000), timezone);
+      if (!tomorrow || bookingDate !== tomorrow) return notApplicable('NOT_SAME_DAY');
+      var minutes = BookingAvailability.getCurrentMinutesInTimezone(now, timezone);
+      if (minutes === null || minutes < IMMEDIATE_NEXT_DAY_START_MINUTES_) return notApplicable('NEXT_DAY_BEFORE_IMMEDIATE_WINDOW');
+      targetDateString = tomorrow;
+    }
+
+    /* 日付の再確認はLock取得後の最新レコードでtargetDateStringとして行われる。
        Stripe予約は入金済み・Recovery解消済み・返金手続きなしを確認する（鍵承認は要求しない。Issue #414）。 */
-    return sendReminderMailForBooking(bookingId, { targetDateString: today, now: now });
+    return sendReminderMailForBooking(bookingId, { targetDateString: targetDateString, now: now });
   }
 
   function reminderSentAtVersion_(record) {
@@ -1504,7 +1517,7 @@ var BookingMailer = (function () {
     sendCancelledMailForBooking: sendCancelledMailForBooking,
     sendExpiredMailForBooking: sendExpiredMailForBooking,
     sendReminderMailForBooking: sendReminderMailForBooking,
-    sendSameDayAccessGuideForBooking: sendSameDayAccessGuideForBooking,
+    sendImmediateAccessGuideForBooking: sendImmediateAccessGuideForBooking,
     sendPaymentLinkMailForBooking: sendPaymentLinkMailForBooking,
     resolvePaymentLinkMetadataInconsistency: resolvePaymentLinkMetadataInconsistency,
     /* PR #343レビュー対応: 管理者による金額修正を利用者へ案内する送信関数。 */
