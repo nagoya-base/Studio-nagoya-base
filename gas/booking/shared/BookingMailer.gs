@@ -653,7 +653,7 @@ var BookingMailer = (function () {
         var config = ensureMailConfigComplete_();
         var guide = BookingConfig.getAccessGuideConfig();
         ensureAccessGuideComplete_(guide);
-        return BookingMailTemplates.buildReminderMail(record, config, guide);
+        return BookingMailTemplates.buildReminderMail(record, config, guide, { now: isDateLike_(opts.now) ? opts.now : null });
       },
       function () {
         var guide = BookingConfig.getAccessGuideConfig();
@@ -729,7 +729,7 @@ var BookingMailer = (function () {
 
     /* 日付の再確認はLock取得後の最新レコードでtargetDateStringとして行われる。
        Stripe予約は入金済み・Recovery解消済み・返金手続きなしを確認する（鍵承認は要求しない。Issue #414）。 */
-    return sendReminderMailForBooking(bookingId, { targetDateString: targetDateString });
+    return sendReminderMailForBooking(bookingId, { targetDateString: targetDateString, now: now });
   }
 
   function reminderSentAtVersion_(record) {

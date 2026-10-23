@@ -118,6 +118,15 @@ function sendSameDay(ctx, now) {
   return ctx.sandbox.BookingMailer.sendImmediateAccessGuideForBooking(BOOKING_ID, { now: now || NOW });
 }
 
+test('当日送信の来場案内メールは「本日のご利用案内」になる（Issue #420）', function () {
+  var ctx = setup(cashRecord());
+  sendSameDay(ctx);
+  assert.strictEqual(guideMails(ctx).length, 1);
+  assert.match(guideMails(ctx)[0].subject, /本日のご利用案内/);
+  assert.match(guideMails(ctx)[0].body, /本日のご予約について/);
+  assert.strictEqual(guideMails(ctx)[0].body.indexOf('明日'), -1);
+});
+
 test('当日 + CONFIRMED + 全ゲートOK → 来場案内を即時送信し、reminderSentAt/accessGuideSentAtを更新する', function () {
   var ctx = setup(cashRecord());
   var result = sendSameDay(ctx);
@@ -401,6 +410,25 @@ test('翌日19時以降: メール欠落・Script Properties不足はfail-closed
   assert.strictEqual(sendSameDay(noConfig, at('20:00:00')).success, false);
   assert.strictEqual(noConfig.mailApp._sentEmails.length, 0);
   assert.strictEqual(rec(noConfig).status, 'CONFIRMED');
+});
+
+test('文言(Issue #420): 19時以降の即時送信・21時catch-up・18時台通常便は「明日」、当日即時送信は「本日」', function () {
+  var immediate = setup(cashRecord({ date: NEXT_DAY }));
+  sendSameDay(immediate, at('19:00:00'));
+  assert.match(guideMails(immediate)[0].subject, /明日のご利用案内/);
+  assert.match(guideMails(immediate)[0].body, /明日のご予約について/);
+
+  var catchUp = setup(cashRecord({ date: NEXT_DAY }));
+  catchUp.sandbox.sendNextDayReminderCatchUp(at('21:10:00'));
+  assert.match(guideMails(catchUp)[0].subject, /明日のご利用案内/);
+
+  var regular = setup(cashRecord({ date: NEXT_DAY }));
+  regular.sandbox.sendNextDayReminders(at('18:00:00'));
+  assert.match(guideMails(regular)[0].subject, /明日のご利用案内/);
+
+  var sameDay = setup(cashRecord({ date: '2026-10-02' }));
+  sendSameDay(sameDay, at('19:30:00'));
+  assert.match(guideMails(sameDay)[0].subject, /本日のご利用案内/);
 });
 
 test('21時catch-up: 18時台通常便の後に確定した翌日予約（未送信）を送る', function () {

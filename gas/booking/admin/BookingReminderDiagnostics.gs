@@ -251,7 +251,7 @@ function previewReminderMail_impl_(bookingId, options) {
 
   var mail;
   try {
-    mail = BookingMailTemplates.buildReminderMail(record, mailConfig, maskedGuide);
+    mail = BookingMailTemplates.buildReminderMail(record, mailConfig, maskedGuide, { now: parseDiagnosticsBaseDate_(opts.baseDateString) });
   } catch (buildError) {
     Logger.log('previewReminderMail: 生成失敗 bookingId=' + bookingId);
     return {
@@ -339,7 +339,7 @@ function sendReminderTestMail_impl_(bookingId, baseDateString) {
   var accessGuide = BookingConfig.getAccessGuideConfig();
   var mail;
   try {
-    mail = BookingMailTemplates.buildReminderMail(record, mailConfig, accessGuide);
+    mail = BookingMailTemplates.buildReminderMail(record, mailConfig, accessGuide, { now: parseDiagnosticsBaseDate_(baseDateString) });
   } catch (buildError) {
     Logger.log('sendReminderTestMail: 本文生成失敗 bookingId=' + bookingId);
     return {
