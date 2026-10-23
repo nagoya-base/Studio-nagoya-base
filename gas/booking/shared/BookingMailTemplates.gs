@@ -224,12 +224,9 @@ var BookingMailTemplates = (function () {
   function accessGuideNoticeLine_(record, timezone) {
     /*
      * Issue #412: 利用日が当日の予約は、確定直後に来場案内を即時送信する（前日案内は届かない）。
-     * 「利用日前日に送る」とは書かない。Stripeカード決済で鍵承認がまだなら、承認後の案内になる旨のみ書く。
+     * 「利用日前日に送る」とは書かない。
      */
     if (isUseDateToday_(record, timezone)) {
-      if (Booking.isStripeCheckoutBooking(record) && !record.accessApprovedAt) {
-        return '来場方法等の詳細案内は、運営での確認が完了した後、別途メールでお送りします。';
-      }
       return 'このあと、来場方法・キーボックス等の詳細案内を別途メールでお送りします。';
     }
     if (Booking.requiresAccessApproval(record, timezone) && !record.accessApprovedAt) {

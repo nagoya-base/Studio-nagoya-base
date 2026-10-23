@@ -716,8 +716,8 @@ var BookingMailer = (function () {
     if (normalizeReminderDate_(found.record.date, timezone) !== today) return notApplicable('NOT_SAME_DAY');
 
     /* 当日の再確認はLock取得後の最新レコードでtargetDateString（=今日）として行われる。
-       当日受付のStripe予約は通常の鍵承認ゲート対象外だが、鍵情報を自動で先送りしないよう、
-       即時送信に限って入金済み・Recovery解消済み・鍵承認済みを必須にする（includeSameDayAccessGate）。 */
+       当日受付のStripe予約は通常の鍵承認ゲート対象外だが、即時送信では入金済み・Recovery解消済み・
+       返金手続きなしを確認する（includeSameDayAccessGate。鍵承認は要求しない。Issue #414）。 */
     return sendReminderMailForBooking(bookingId, { targetDateString: today, includeSameDayAccessGate: true });
   }
 
