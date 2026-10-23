@@ -601,28 +601,28 @@ var BookingRepository = (function () {
       response.mailSent = false;
       response.mailError = { code: 'UNEXPECTED_ERROR', message: sanitizedMessage };
     }
-    notifySameDayAccessGuideBestEffort_(bookingId, response);
+    notifyImmediateAccessGuideBestEffort_(bookingId, response);
   }
 
   /*
    * Issue #412: 利用日当日にCONFIRMEDになった予約へ来場案内を即時送信する（前日18時台の
    * sendNextDayReminders対象外のため）。当日判定・各種ゲート・二重送信防止は
-   * BookingMailer.sendSameDayAccessGuideForBookingに委ね、ここでは呼ぶだけ。
+   * BookingMailer.sendImmediateAccessGuideForBookingに委ね、ここでは呼ぶだけ。
    * 確定メールの成否に関わらず試み、失敗してもconfirmBooking自体の成否は変えない。
    * ログにはbookingIdとエラーコードのみ残す（メールアドレス・鍵情報・本文は残さない）。
    */
-  function notifySameDayAccessGuideBestEffort_(bookingId, response) {
+  function notifyImmediateAccessGuideBestEffort_(bookingId, response) {
     try {
-      var result = BookingMailer.sendSameDayAccessGuideForBooking(bookingId);
+      var result = BookingMailer.sendImmediateAccessGuideForBooking(bookingId);
       response.accessGuideSent = !!(result && result.success && !result.skipped);
       if (result && !result.success && !result.skipped) {
         response.accessGuideError = result.error;
-        Logger.log('BookingRepository: 当日来場案内の送信失敗 ' + bookingId + ' code=' + (result.error && result.error.code));
+        Logger.log('BookingRepository: 即時来場案内の送信失敗 ' + bookingId + ' code=' + (result.error && result.error.code));
       }
     } catch (guideError) {
       response.accessGuideSent = false;
       response.accessGuideError = { code: 'UNEXPECTED_ERROR' };
-      Logger.log('BookingRepository: 当日来場案内送信中に予期しない例外 ' + bookingId + ' ' +
+      Logger.log('BookingRepository: 即時来場案内送信中に予期しない例外 ' + bookingId + ' ' +
         BookingMailer.sanitizeErrorMessage(describeError_(guideError)));
     }
   }

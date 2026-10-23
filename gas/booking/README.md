@@ -809,19 +809,29 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
    **呼び出し配線は#272**（このIssueでは状態遷移自体もCalendar削除も実装しない。#272で実装済み）
 4. 翌日の`CONFIRMED`予約への前日リマインド（`sendNextDayReminders(now)`）
    - **当日予約（Issue #412）**: 利用日当日にCONFIRMEDになった予約は翌日抽出の対象外のため、
-     確定直後（`confirmBooking` / 失効予約の復活）に`BookingMailer.sendSameDayAccessGuideForBooking`が
+     確定直後（`confirmBooking` / 失効予約の復活）に`BookingMailer.sendImmediateAccessGuideForBooking`が
      timezone基準で当日と判定した場合のみ、`sendReminderMailForBooking`へ委譲して来場案内を即時送信する。
      支払・Recoveryゲート、設定不足のfail-closed、`reminderSentAt`/`accessGuideSentAt`による
      二重送信防止は既存のまま。送信失敗でも予約のCONFIRMED状態は変えない。前日18時台のトリガーは変更なし。
      Stripe Checkout予約（当日受付を含む）は、入金済み・Recovery解消済み・返金手続きなしを確認する
      （`Booking.evaluateAccessGate`。Issue #414で鍵承認ゲートを廃止したため、鍵承認は要求しない）。
      当日予約の確定メールは「前日に送る」ではなく「このあと別途送る」と案内する。
+   - **前日19時以降に確定した翌日予約（Issue #416）**: 確定直後の即時送信
+     （`BookingMailer.sendImmediateAccessGuideForBooking`）は、利用日が今日、または利用日が明日かつ
+     確定時刻がBookingConfigのtimezone基準で19:00以降（19:00ちょうどを含む）の場合に送る。
+     18:00〜18:59の確定は即時送信せず、18時台通常便に間に合わなければ21時台のcatch-upで送る。
+   - **21時台の未送信補完（Issue #416）**: `sendNextDayReminderCatchUp(now)`が毎日21時台に翌日の
+     CONFIRMED予約を再走査し、未送信のものだけ送る。18時台通常便と同じ内部処理
+     （`runNextDayReminderBatch_`）を使い、`force`は使わない（送信済みは`ALREADY_SENT`でスキップ。
+     決済・Recoveryゲート、メール欠落・設定不足のfail-closedも通常便と同じ）。
+     トリガーはBooking Adminプロジェクトのスクリプトエディタから`createNextDayReminderCatchUpTrigger`を
+     一度だけ実行して作成する（本PRでは本番トリガー作成は行わない）。
 5. 前日リマインドへ同梱する来場案内（住所・建物・部屋・入口案内・キーボックス位置・
    キーボックス番号・解錠コード・利用案内URL・案内PDF URL）
 6. `Bookings`シートへの送信履歴・エラー記録（8列追加。「Sheets変更（Issue #271）」参照）
 7. SentAtによる二重送信防止（`LockService`での直列化を含む）
 8. 管理者による明示的な個別再送（`{ force: true }`。SentAtを先に消す運用はしない）
-9. 前日リマインド用の時間主導トリガー作成関数（`createNextDayReminderTrigger()`。
+9. 前日リマインド用の時間主導トリガー作成関数（`createNextDayReminderTrigger()`、21時台catch-up用の`createNextDayReminderCatchUpTrigger()`。
    本番トリガー作成自体はこのPRでは行わない）
 10. ブランド共通のメールテンプレート（`BookingMailTemplates.gs`。SNB/mens/Studio X
     で本文生成ロジックを複製しない）

@@ -1,6 +1,6 @@
 /*
  * Issue #412: 当日予約がCONFIRMEDになった時点の来場案内即時送信
- * （BookingMailer.sendSameDayAccessGuideForBooking / BookingRepository.confirmBookingへの配線）。
+ * （BookingMailer.sendImmediateAccessGuideForBooking / BookingRepository.confirmBookingへの配線）。
  * Booking Adminの配布ファイル一式をvmで実行し、Sheets・メール・Calendarはスタブを使う。
  */
 'use strict';
@@ -96,7 +96,7 @@ function setup(record, options) {
     Utilities: stubs.createUtilitiesStub(),
     CacheService: stubs.createCacheServiceStub(),
     MailApp: mailApp,
-    ScriptApp: stubs.createScriptAppStub(),
+    ScriptApp: opts.scriptApp || stubs.createScriptAppStub(),
     Logger: logger
   };
   if (opts.clock) globals.Date = opts.clock.Date;
@@ -115,7 +115,7 @@ function guideMails(ctx) {
 }
 
 function sendSameDay(ctx, now) {
-  return ctx.sandbox.BookingMailer.sendSameDayAccessGuideForBooking(BOOKING_ID, { now: now || NOW });
+  return ctx.sandbox.BookingMailer.sendImmediateAccessGuideForBooking(BOOKING_ID, { now: now || NOW });
 }
 
 test('当日 + CONFIRMED + 全ゲートOK → 来場案内を即時送信し、reminderSentAt/accessGuideSentAtを更新する', function () {
@@ -247,8 +247,8 @@ test('当日 + 来場案内Script Properties不足 → fail-closed（送信せ�
   assert.ok(!rec(ctx).reminderSentAt);
 });
 
-test('翌日予約・2日以上先の予約は即時送信しない', function () {
-  [['2026-10-03', 'NOT_SAME_DAY'], ['2026-10-04', 'NOT_SAME_DAY'], ['2026-11-15', 'NOT_SAME_DAY']].forEach(function (c) {
+test('翌日予約（19時前の確定）・2日以上先の予約は即時送信しない', function () {
+  [['2026-10-03', 'NEXT_DAY_BEFORE_IMMEDIATE_WINDOW'], ['2026-10-04', 'NOT_SAME_DAY'], ['2026-11-15', 'NOT_SAME_DAY']].forEach(function (c) {
     var ctx = setup(cashRecord({ date: c[0] }));
     var result = sendSameDay(ctx);
     assert.strictEqual(result.skipped, true, c[0]);
@@ -293,16 +293,18 @@ test('メール送信失敗は予約のCONFIRMED状態を壊さず、失敗を�
 });
 
 /* createBookingの入力検証・レート制限・料金計算に必要な公開側ファイルを足し、実時刻をNOWへ固定する。 */
-function pendingTodayCtx() {
+function pendingTodayCtx(options) {
+  var o = options || {};
+  var clock = stubs.createControllableClock(NOW);
   var ctx = setup(null, {
-    clock: stubs.createControllableClock(NOW),
+    clock: clock,
     extraFiles: ['JapaneseHolidays.gs', 'BookingPricing.gs', 'RateLimiter.gs'].filter(function (f) {
       return manifest.BOOKING_ADMIN_FILES.indexOf(f) === -1;
     })
   });
   var created = ctx.sandbox.BookingRepository.createBooking({
     brand: 'studio_x',
-    date: '2026-10-02',
+    date: o.date || '2026-10-02',
     startTime: '13:00',
     durationMinutes: 120,
     name: '山田太郎',
@@ -316,6 +318,7 @@ function pendingTodayCtx() {
     source: 'test'
   }, NOW);
   assert.strictEqual(created.success, true, JSON.stringify(created));
+  if (o.now) clock.advanceByMillis(o.now.getTime() - NOW.getTime());
   return { ctx: ctx, bookingId: created.bookingId };
 }
 
@@ -332,10 +335,132 @@ test('confirmBooking: 当日予約を確定すると確定メールに続き来�
 
 test('confirmBooking: 来場案内の送信が例外でも確定は成功のままで、ログに秘密情報を残さない', function () {
   var p = pendingTodayCtx();
-  p.ctx.sandbox.BookingMailer.sendSameDayAccessGuideForBooking = function () { throw new Error('boom ' + UNLOCK + ' taro@example.com'); };
+  p.ctx.sandbox.BookingMailer.sendImmediateAccessGuideForBooking = function () { throw new Error('boom ' + UNLOCK + ' taro@example.com'); };
   var result = p.ctx.sandbox.confirmBooking(p.bookingId);
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.accessGuideSent, false);
   var logs = p.ctx.logger._logs.join('\n');
   assert.ok(logs.indexOf('taro@example.com') === -1, 'メールアドレスをログに残さない');
+});
+
+/* ---- Issue #416: 前日19時以降の翌日予約の即時送信と21時catch-up ---- */
+
+var NEXT_DAY = '2026-10-03';
+function at(time) { return new Date('2026-10-02T' + time + '+09:00'); }
+
+test('翌日予約: 18:59確定は即時送信しない / 19:00・23:59確定は即時送信する', function () {
+  var early = setup(cashRecord({ date: NEXT_DAY }));
+  var r = sendSameDay(early, at('18:59:59'));
+  assert.strictEqual(r.reason, 'NEXT_DAY_BEFORE_IMMEDIATE_WINDOW');
+  assert.strictEqual(early.mailApp._sentEmails.length, 0);
+
+  ['19:00:00', '23:59:59'].forEach(function (time) {
+    var ctx = setup(cashRecord({ date: NEXT_DAY }));
+    assert.strictEqual(sendSameDay(ctx, at(time)).success, true, time);
+    assert.strictEqual(guideMails(ctx).length, 1, time);
+    assert.ok(stubs.isDateLike(rec(ctx).accessGuideSentAt), time);
+  });
+});
+
+test('翌々日予約は19時以降でも即時送信しない', function () {
+  var ctx = setup(cashRecord({ date: '2026-10-04' }));
+  var r = sendSameDay(ctx, at('19:00:00'));
+  assert.strictEqual(r.reason, 'NOT_SAME_DAY');
+  assert.strictEqual(ctx.mailApp._sentEmails.length, 0);
+});
+
+test('JST日付境界: UTCでは同日でもJSTで翌日0時以降なら、その日の「今日」基準で判定する', function () {
+  /* 2026-10-02T15:30Z = JST 10-03 00:30。10-03の予約は当日扱い、10-04の予約は翌日だが0時台なので対象外。 */
+  var nowUtc = new Date('2026-10-02T15:30:00Z');
+  var today = setup(cashRecord({ date: '2026-10-03' }));
+  assert.strictEqual(sendSameDay(today, nowUtc).success, true);
+  assert.strictEqual(guideMails(today).length, 1);
+  var tomorrow = setup(cashRecord({ date: '2026-10-04' }));
+  assert.strictEqual(sendSameDay(tomorrow, nowUtc).reason, 'NEXT_DAY_BEFORE_IMMEDIATE_WINDOW');
+});
+
+test('翌日19時以降: 現金・PayPay・カード入金済みは送信し、未入金・Recovery未解消は送信しない', function () {
+  ['現金', 'PayPay'].forEach(function (method) {
+    var ctx = setup(cashRecord({ date: NEXT_DAY, paymentMethod: method }));
+    assert.strictEqual(sendSameDay(ctx, at('20:00:00')).success, true, method);
+    assert.strictEqual(guideMails(ctx).length, 1, method);
+  });
+  assert.strictEqual(sendSameDay(setup(cardRecord({ date: NEXT_DAY })), at('20:00:00')).success, true);
+  var unpaid = setup(cardRecord({ date: NEXT_DAY, paymentStatus: 'unpaid', paymentConfirmedAt: '' }));
+  assert.strictEqual(sendSameDay(unpaid, at('20:00:00')).error.code, 'PAYMENT_NOT_SETTLED');
+  var recovery = setup(cardRecord({ date: NEXT_DAY, paymentRecoveryRequiredAt: new Date('2026-10-02T12:00:00+09:00') }));
+  assert.strictEqual(sendSameDay(recovery, at('20:00:00')).error.code, 'PAYMENT_RECOVERY_REQUIRED');
+  assert.strictEqual(recovery.mailApp._sentEmails.length, 0);
+});
+
+test('翌日19時以降: メール欠落・Script Properties不足はfail-closed', function () {
+  var noEmail = setup(cashRecord({ date: NEXT_DAY, email: '' }));
+  assert.strictEqual(sendSameDay(noEmail, at('20:00:00')).success, false);
+  assert.strictEqual(noEmail.mailApp._sentEmails.length, 0);
+  var noConfig = setup(cashRecord({ date: NEXT_DAY }), { properties: { ACCESS_GUIDE_UNLOCK_CODE: '' } });
+  assert.strictEqual(sendSameDay(noConfig, at('20:00:00')).success, false);
+  assert.strictEqual(noConfig.mailApp._sentEmails.length, 0);
+  assert.strictEqual(rec(noConfig).status, 'CONFIRMED');
+});
+
+test('21時catch-up: 18時台通常便の後に確定した翌日予約（未送信）を送る', function () {
+  var ctx = setup(cashRecord({ date: NEXT_DAY }));
+  var summary = ctx.sandbox.sendNextDayReminderCatchUp(at('21:10:00'));
+  assert.strictEqual(summary.sentCount, 1);
+  assert.strictEqual(guideMails(ctx).length, 1);
+});
+
+test('21時catch-up: 19時以降の即時送信済み・18時台通常便送信済みの予約は二重送信しない', function () {
+  var immediate = setup(cashRecord({ date: NEXT_DAY }));
+  sendSameDay(immediate, at('19:30:00'));
+  var s1 = immediate.sandbox.sendNextDayReminderCatchUp(at('21:10:00'));
+  assert.strictEqual(s1.sentCount, 0);
+  assert.strictEqual(s1.skippedCount, 1);
+  assert.strictEqual(guideMails(immediate).length, 1);
+
+  var regular = setup(cashRecord({ date: NEXT_DAY }));
+  regular.sandbox.sendNextDayReminders(at('18:20:00'));
+  var s2 = regular.sandbox.sendNextDayReminderCatchUp(at('21:10:00'));
+  assert.strictEqual(s2.sentCount, 0);
+  assert.strictEqual(guideMails(regular).length, 1);
+});
+
+test('21時catch-up: Stripe未入金・Recovery未解消は送らず、forceもしない', function () {
+  var unpaid = setup(cardRecord({ date: NEXT_DAY, paymentStatus: 'unpaid', paymentConfirmedAt: '' }));
+  var s1 = unpaid.sandbox.sendNextDayReminderCatchUp(at('21:10:00'));
+  assert.strictEqual(s1.sentCount, 0);
+  assert.strictEqual(s1.accessGateSkippedCount, 1);
+  assert.strictEqual(unpaid.mailApp._sentEmails.filter(function (m) { return String(m.body).indexOf(KEYBOX) !== -1; }).length, 0);
+
+  var recovery = setup(cardRecord({ date: NEXT_DAY, paymentRecoveryRequiredAt: new Date('2026-10-02T12:00:00+09:00') }));
+  var s2 = recovery.sandbox.sendNextDayReminderCatchUp(at('21:10:00'));
+  assert.strictEqual(s2.sentCount, 0);
+  assert.strictEqual(guideMails(recovery).length, 0);
+});
+
+test('21時catch-up: 翌日以外・CONFIRMED以外は対象外。現金・PayPayは対象', function () {
+  var today = setup(cashRecord({ date: '2026-10-02' }));
+  assert.strictEqual(today.sandbox.sendNextDayReminderCatchUp(at('21:10:00')).processedCount, 0);
+  var pending = setup(cashRecord({ date: NEXT_DAY, status: 'PENDING' }));
+  assert.strictEqual(pending.sandbox.sendNextDayReminderCatchUp(at('21:10:00')).processedCount, 0);
+  var paypay = setup(cashRecord({ date: NEXT_DAY, paymentMethod: 'PayPay' }));
+  assert.strictEqual(paypay.sandbox.sendNextDayReminderCatchUp(at('21:10:00')).sentCount, 1);
+});
+
+test('createNextDayReminderCatchUpTrigger: 21時台のトリガーを二重作成せず、18時台のトリガーとは別', function () {
+  var scriptApp = stubs.createScriptAppStub();
+  var ctx = setup(null, { scriptApp: scriptApp });
+  ctx.sandbox.createNextDayReminderCatchUpTrigger();
+  ctx.sandbox.createNextDayReminderCatchUpTrigger();
+  ctx.sandbox.createNextDayReminderTrigger();
+  var handlers = scriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); }).sort();
+  assert.deepStrictEqual(handlers, ['sendNextDayReminderCatchUp', 'sendNextDayReminders']);
+});
+
+test('confirmBooking: 翌日予約を19時以降に確定すると来場案内が即時送信され、18時台は送信されない', function () {
+  var late = pendingTodayCtx({ date: NEXT_DAY, now: at('19:00:00') });
+  var r = late.ctx.sandbox.confirmBooking(late.bookingId);
+  assert.strictEqual(r.success, true);
+  assert.strictEqual(r.accessGuideSent, true);
+  assert.strictEqual(guideMails(late.ctx).length, 1);
 });
