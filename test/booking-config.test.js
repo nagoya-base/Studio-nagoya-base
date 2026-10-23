@@ -23,7 +23,7 @@ test('Script Propertiesが空でも固定仕様のデフォルト値が使われ
     timezone: 'Asia/Tokyo',
     openTime: '08:00',
     closeTime: '23:00',
-    minBookingMinutes: 120,
+    minBookingMinutes: 60,
     bufferMinutes: 15,
     slotStepMinutes: 15
   });
@@ -84,7 +84,7 @@ test('数値項目は文字列全体が厳密な整数のときだけ数値化�
     var config = BookingConfig.getAvailabilityConfig();
     if (rawValue === '') {
       // 空文字はプロパティ未設定と同じ扱いでデフォルト値になる（readProperty_の既存仕様）。
-      assert.strictEqual(config.minBookingMinutes, 120, JSON.stringify(rawValue));
+      assert.strictEqual(config.minBookingMinutes, 60, JSON.stringify(rawValue));
       assert.strictEqual(config.bufferMinutes, 15, JSON.stringify(rawValue));
       assert.strictEqual(config.slotStepMinutes, 15, JSON.stringify(rawValue));
       return;

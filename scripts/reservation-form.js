@@ -135,6 +135,7 @@
 
   function mapDurationGroup(value) {
     switch (value) {
+      case '1': return '1h';
       case '2': return '2h';
       case '3': return '3h';
       case '4': return '4h';

@@ -218,11 +218,12 @@
     return n * 60;
   }
 
-  /* 新予約UIのStep 1で1時間入力を止めるためのUX guard（Issue #301）。
-     120はUIが把握している最低受付時間の目安に過ぎず、予約可否の正はGAS側
+  /* 新予約UIのStep 1で最低利用時間未満の入力を止めるためのUX guard（Issue #301。
+     Issue #410で最低利用時間を2時間から1時間へ変更）。
+     60はUIが把握している最低受付時間の目安に過ぎず、予約可否の正はGAS側
      （gas/booking/shared/Config.gs の MIN_BOOKING_MINUTES）。ここでの値をサーバー側の
      設定値の複製・代替として扱わないこと。 */
-  var UI_MIN_BOOKING_MINUTES = 120;
+  var UI_MIN_BOOKING_MINUTES = 60;
 
   function isDurationAtLeastUiMinimum(durationMinutes) {
     return Number(durationMinutes) >= UI_MIN_BOOKING_MINUTES;

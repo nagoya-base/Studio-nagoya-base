@@ -14,7 +14,7 @@ var DEFAULT_CONFIG = {
   timezone: 'Asia/Tokyo',
   openTime: '08:00',
   closeTime: '23:00',
-  minBookingMinutes: 120,
+  minBookingMinutes: 60,
   bufferMinutes: 15,
   slotStepMinutes: 15
 };
@@ -181,7 +181,7 @@ test('durationMinutesが不正な場合はgetAvailabilityと同じerror.codeに�
   assert.strictEqual(invalidDuration.error.code, 'INVALID_DURATION');
 
   var tooShort = BookingAvailability.getMonthlyAvailability(
-    { year: 2026, month: 10, durationMinutes: 60 }, {}, DEFAULT_CONFIG, NOW
+    { year: 2026, month: 10, durationMinutes: 59 }, {}, DEFAULT_CONFIG, NOW
   );
   assert.strictEqual(tooShort.success, false);
   assert.strictEqual(tooShort.error.code, 'DURATION_TOO_SHORT');

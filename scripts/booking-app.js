@@ -39,7 +39,7 @@
       backLabelDefault: 'トップへ戻る',
       invalidBrandTitle: Logic.messageForErrorCode('INVALID_BRAND', 'ja'),
       dateRequired: '利用日を選択してください。',
-      durationRequired: '利用時間を2時間以上の整数で入力してください。',
+      durationRequired: '利用時間を1時間以上の整数で入力してください。',
       customerTypeRequired: '利用区分を選択してください。',
       memberRequired: '会員区分を選択してください。',
       startTimeSummary: function (date, hours) { return date + '　' + hours + '時間利用'; },
@@ -59,7 +59,7 @@
       backLabelDefault: 'Back to Studio Nagoya Base',
       invalidBrandTitle: Logic.messageForErrorCode('INVALID_BRAND', 'en'),
       dateRequired: 'Please select a date.',
-      durationRequired: 'Please enter a duration of 2 hours or more (whole numbers only).',
+      durationRequired: 'Please enter a duration of 1 hour or more (whole numbers only).',
       customerTypeRequired: 'Please select a customer type.',
       memberRequired: 'Please select a membership type.',
       startTimeSummary: function (date, hours) { return date + ' · ' + hours + (hours === 1 ? ' hour' : ' hours'); },
@@ -906,7 +906,7 @@
     resumeStartTimesAfterRecheck_ = false;
     var dateValue = els.date ? els.date.value : '';
     var durationMinutes = Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
-    /* Issue #301: 1時間はStep 1で止める（UX guard）。最終判定の正はGAS側
+    /* Issue #301/#410: 最低利用時間（1時間）未満はStep 1で止める（UX guard）。最終判定の正はGAS側
        MIN_BOOKING_MINUTESであり、ここではUI側の入力を早期に拒否するだけ。 */
     var durationValid = Logic.isDurationAtLeastUiMinimum(durationMinutes);
     var customerType = checkedCustomerType();

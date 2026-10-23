@@ -105,7 +105,7 @@ test('doGet: action=estimatePriceは不正な日付・利用時間をバリデ�
   assert.strictEqual(badDate.success, false);
   assert.strictEqual(badDate.error.code, 'INVALID_DATE');
 
-  var shortDuration = callDoGet(sandbox, { action: 'estimatePrice', brand: 'snb', date: FIXED_WEEKDAY_DATE, durationMinutes: '60' });
+  var shortDuration = callDoGet(sandbox, { action: 'estimatePrice', brand: 'snb', date: FIXED_WEEKDAY_DATE, durationMinutes: '59' });
   assert.strictEqual(shortDuration.success, false);
   assert.strictEqual(shortDuration.error.code, 'DURATION_TOO_SHORT');
 

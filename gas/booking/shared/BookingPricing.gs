@@ -62,17 +62,20 @@ var BookingPricing = (function () {
   var DAY_TYPE = { WEEKDAY: 'WEEKDAY', WEEKEND_HOLIDAY: 'WEEKEND_HOLIDAY' };
 
   /*
-   * 2/3/4時間は基本料金の表引き、4時間を超えた分だけ1時間ごとにextensionPerHourを加算する。
-   * 2時間未満の入力はbillableHours_で2時間へ切り上げるため、この表に2時間未満のキーはない。
+   * 1/2/3/4時間は基本料金の表引き、4時間を超えた分だけ1時間ごとにextensionPerHourを加算する。
+   * 1時間料金は（Issue #410）延長+1時間料金と同額（GENERALの平日2,000円/土日祝2,500円）。
+   * 1時間未満の入力はbillableHours_で1時間へ切り上げるため、この表に1時間未満のキーはない。
+   * MEMBERの1時間料金はGENERALと同額（既存のMEMBER 2時間料金がGENERALと同額であることに
+   * 合わせた。会員割引の適用条件＝3時間以上・延長は変更しない）。
    */
   var RATE_TABLES_ = {
     GENERAL: {
-      WEEKDAY: { base: { 2: 4000, 3: 6000, 4: 8000 }, extensionPerHour: 2000 },
-      WEEKEND_HOLIDAY: { base: { 2: 5000, 3: 7500, 4: 10000 }, extensionPerHour: 2500 }
+      WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 6000, 4: 8000 }, extensionPerHour: 2000 },
+      WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7500, 4: 10000 }, extensionPerHour: 2500 }
     },
     MEMBER: {
-      WEEKDAY: { base: { 2: 4000, 3: 5500, 4: 7000 }, extensionPerHour: 1500 },
-      WEEKEND_HOLIDAY: { base: { 2: 5000, 3: 7000, 4: 9000 }, extensionPerHour: 2000 }
+      WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 5500, 4: 7000 }, extensionPerHour: 1500 },
+      WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7000, 4: 9000 }, extensionPerHour: 2000 }
     }
   };
 
@@ -122,11 +125,11 @@ var BookingPricing = (function () {
    * フロントからの入力を信用しないため、想定外の分単位（例: 90分）が来ても過小請求に
    * ならないよう常に時間単位へ切り上げる。最低利用時間の妥当性検証自体はBooking.gs
    * （validateCreateBookingInput）側の責務であり、ここでは料金表に存在しない時間帯
-   * （2時間未満）を参照しないためだけに2時間へ切り上げる。
+   * （1時間未満）を参照しないためだけに1時間へ切り上げる。
    */
   function billableHours_(durationMinutes) {
     var hours = Math.ceil(Number(durationMinutes) / 60);
-    return hours < 2 ? 2 : hours;
+    return hours < 1 ? 1 : hours;
   }
 
   function computeAmount_(tier, dayType, hours) {
