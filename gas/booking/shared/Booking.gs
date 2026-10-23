@@ -23,6 +23,8 @@
  * - 当日判定は必ずavailabilityConfig.timezone（既定Asia/Tokyo）基準で行い、
  *   ブラウザのローカルtimezoneには依存しない（formatDateInTimezone参照。実体は
  *   BookingAvailability.formatDateInTimezone）。
+ * - Issue #407: 初回利用の当日予約を解禁した。代わりに初回利用の支払方法はオンライン
+ *   クレジットカード決済のみとし、サーバー側で検証する（FIRST_TIME_CARD_PAYMENT_REQUIRED）。
  * - 当日（isSameDayBooking）は、開始時刻が現在時刻より後であることも必須とする
  *   （レビュー対応で追加。SAME_DAY_START_TIME_PASSED。現在時刻の判定は
  *   BookingAvailability.getCurrentMinutesInTimezoneを使う）。
@@ -344,7 +346,8 @@ var Booking = (function () {
      * availabilityConfig.timezone（既定Asia/Tokyo）基準の暦日へ変換し、入力された
      * 利用日(input.date)と文字列比較する（'YYYY-MM-DD'は辞書順=日付順に一致する）。
      * - 過去日は初回/利用経験ありを問わず拒否する
-     * - 当日 + 初回利用は拒否する（Issue #270本文の最終仕様）
+     * - 当日 + 初回利用は、Issue #407以降は拒否しない（初回利用はオンラインクレジットカード決済
+     *   のみ可とし、その条件を下のFIRST_TIME_CARD_PAYMENT_REQUIREDで検証する）
      * - 当日 + 利用経験ありはここでは拒否せず、以降の通常フローへ進む
      * - 翌日以降は初回/利用経験ありのどちらも通常フローへ進む
      * timezoneの設定自体が不正でIntlが解釈できない場合はfail-closedにINVALID_CONFIGとする
@@ -359,15 +362,6 @@ var Booking = (function () {
       return { valid: false, error: err_('INVALID_DATE', '過去の日付は指定できません。') };
     }
     var isSameDayBooking = input.date === todayString;
-    if (isSameDayBooking && input.customerType === CUSTOMER_TYPES.FIRST_TIME) {
-      return {
-        valid: false,
-        error: err_(
-          'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME',
-          '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付をお選びください。'
-        )
-      };
-    }
 
     if (!BookingAvailability.isValidTimeString(input.startTime)) {
       return { valid: false, error: err_('INVALID_START_TIME', '開始時刻の形式が正しくありません（HH:mm）。') };
@@ -396,8 +390,7 @@ var Booking = (function () {
     /*
      * 当日（isSameDayBooking）は、開始時刻が現在時刻より後であることを必須とする
      * （Issue #270レビュー対応）。現在時刻ちょうども不可（「後」であることを要求する）。
-     * ここに到達する時点でfirst_time+当日は既に上でSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEとして
-     * 拒否済みのため、この判定に実際に到達するのはreturning+当日のみ。フロントの
+     * Issue #407以降は初回利用+当日（カード決済のみ）もここへ到達する。フロントの
      * getAvailabilityが過去時刻を候補から除外していても、フロント改変・タイミングのずれ
      * （空き取得後に時間が経過した等）でここまで来る可能性があるため、Calendar書き込み前に
      * 必ずここで再検証する。
@@ -438,6 +431,21 @@ var Booking = (function () {
     }
 
     /*
+     * Issue #407: 初回利用はオンラインクレジットカード決済のみ。フロントの選択肢制御に依存せず、
+     * APIを直接呼んでも初回利用+現金/PayPay/未定は受理しない（当日・翌日以降を問わない）。
+     * 利用経験あり（リピーター・会員）の支払方法は従来どおり。
+     */
+    if (input.customerType === CUSTOMER_TYPES.FIRST_TIME && !isCardPaymentMethod(input.paymentMethod)) {
+      return {
+        valid: false,
+        error: err_(
+          'FIRST_TIME_CARD_PAYMENT_REQUIRED',
+          '初回利用の方のお支払いはオンラインクレジットカード決済のみとなります。'
+        )
+      };
+    }
+
+    /*
      * カード決済の最低リードタイム（Issue #334）: 利用開始まで96時間（4日）未満の申込は
      * GAS側で拒否する（フロントの選択肢非表示に依存しないfail-closedな検証。フロント側の
      * 表示制御自体はPR-Bで対応する）。
@@ -451,11 +459,14 @@ var Booking = (function () {
      * そのままミリ秒で比較する。CARD_MIN_HOURS_BEFORE_START=96はそのまま維持し、
      * 新しいScript Propertiesは追加しない。
      *
-     * Issue #406: 当日予約（isSameDayBooking。当日予約を使える人の条件は上のcustomerType判定のまま
-     * 変更しない）はこの96時間ルールの対象外とし、現金・PayPayと同じく当日でもカードを選べる。
+     * Issue #406: 当日予約（isSameDayBooking）はこの96時間ルールの対象外とし、現金・PayPayと同じく当日でもカードを選べる。
      * 翌日以降の予約は従来どおり96時間未満を拒否する。
+     *
+     * Issue #407: 初回利用はカード決済が唯一の支払方法のため、96時間ルールの対象外とする
+     * （対象にすると利用開始まで4日未満の日程が初回利用だけ予約不能になる）。決済は申込直後の
+     * Stripe Checkoutで完結させ、成功時のみ予約を確定する。利用経験ありのカードは従来どおり。
      */
-    if (isCardPaymentMethod(input.paymentMethod) && !isSameDayBooking) {
+    if (isCardPaymentMethod(input.paymentMethod) && !isSameDayBooking && input.customerType !== CUSTOMER_TYPES.FIRST_TIME) {
       var cardStartAtMillis = BookingAvailability.zonedDateTimeToUtcMillis(
         input.date, input.startTime, availabilityConfig.timezone
       );

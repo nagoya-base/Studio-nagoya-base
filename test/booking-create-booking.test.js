@@ -571,7 +571,37 @@ test('同時createBooking: 同時刻・重複する2件を続けて送ると、2
 
 /* ---------- 当日利用ルール（Issue #270） ---------- */
 
-test('createBooking: 当日(2026-10-01) + 初回利用(first_time)はSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEで拒否し、Calendar/Sheetsに何も作らず、bookingIdも発行・永続化しない', function () {
+test('createBooking: 初回利用(first_time) + 現金/PayPayはFIRST_TIME_CARD_PAYMENT_REQUIREDで拒否し、Calendar/Sheetsに何も作らず、bookingIdも発行・永続化しない（当日・翌日以降とも。Issue #407）', function () {
+  ['2026-10-01', '2026-10-02'].forEach(function (date) {
+    ['現金', 'PayPay'].forEach(function (paymentMethod) {
+      var ctx = setup();
+      var result = ctx.sandbox.BookingRepository.createBooking(
+        validPayload({ customerType: 'first_time', date: date, startTime: '13:00', paymentMethod: paymentMethod }),
+        NOW
+      );
+      assert.strictEqual(result.success, false, date + ' ' + paymentMethod);
+      assert.strictEqual(result.error.code, 'FIRST_TIME_CARD_PAYMENT_REQUIRED', date + ' ' + paymentMethod);
+      assert.strictEqual(result.bookingId, undefined, '拒否時はbookingIdを返さない');
+      assert.strictEqual(ctx.calendarsById.cal1.events.length, 0, 'Calendarイベントを作らない');
+      assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 0, 'Sheets行を作らない');
+    });
+  });
+});
+
+test('createBooking: 当日(2026-10-01) + 初回利用(first_time) + カード決済はPENDINGで作成できる（Issue #407。確定はStripe決済成功後のみ）', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'first_time', date: '2026-10-01', startTime: '13:00', paymentMethod: 'オンラインクレジットカード' }),
+    NOW
+  );
+  assert.strictEqual(result.success, true, JSON.stringify(result.error));
+  assert.strictEqual(result.status, 'PENDING', '決済前はPENDINGのまま（自動確定しない）');
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.strictEqual(found.record.customerType, 'first_time');
+  assert.strictEqual(found.record.paymentMethod, 'オンラインクレジットカード');
+});
+
+test('createBooking: 当日(2026-10-01) + 初回利用(first_time) + 現金は拒否する（Issue #407）', function () {
   var ctx = setup();
   var result = ctx.sandbox.BookingRepository.createBooking(
     validPayload({ customerType: 'first_time', date: '2026-10-01', startTime: '13:00' }),
@@ -579,7 +609,7 @@ test('createBooking: 当日(2026-10-01) + 初回利用(first_time)はSAME_DAY_NO
   );
 
   assert.strictEqual(result.success, false);
-  assert.strictEqual(result.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME');
+  assert.strictEqual(result.error.code, 'FIRST_TIME_CARD_PAYMENT_REQUIRED');
   assert.strictEqual(result.bookingId, undefined, '拒否時はbookingIdを返さない');
   assert.strictEqual(ctx.calendarsById.cal1.events.length, 0, 'Calendarイベントを作らない');
   assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 0, 'Sheets行を作らない');
@@ -604,11 +634,11 @@ test('createBooking: 当日(2026-10-01) + 利用経験あり(returning)は通常
   assert.strictEqual(event.getTag('status'), 'PENDING');
 });
 
-test('createBooking: 翌日(2026-10-02)は初回利用/利用経験ありのどちらも通常どおり作成できる', function () {
+test('createBooking: 翌日(2026-10-02)は初回利用(カード)/利用経験ありのどちらも通常どおり作成できる', function () {
   ['first_time', 'returning'].forEach(function (customerType) {
     var ctx = setup();
     var result = ctx.sandbox.BookingRepository.createBooking(
-      validPayload({ customerType: customerType, date: '2026-10-02', startTime: '13:00', email: customerType + '@example.com' }),
+      validPayload({ customerType: customerType, date: '2026-10-02', startTime: '13:00', email: customerType + '@example.com', paymentMethod: customerType === 'first_time' ? 'オンラインクレジットカード' : '現金' }),
       NOW
     );
     assert.strictEqual(result.success, true, customerType);
@@ -616,15 +646,15 @@ test('createBooking: 翌日(2026-10-02)は初回利用/利用経験ありのど�
   });
 });
 
-test('createBooking: 当日+初回利用の拒否・当日+利用経験ありの許可は、snb/mens/studio_xのいずれのbrandでも同じ挙動になる（brandで分岐させない。Issue #270）', function () {
+test('createBooking: 当日+初回利用の現金拒否・当日+利用経験ありの許可は、snb/mens/studio_xのいずれのbrandでも同じ挙動になる（brandで分岐させない。Issue #270/#407）', function () {
   ['snb', 'mens', 'studio_x'].forEach(function (brand) {
     var blockedCtx = setup();
     var blocked = blockedCtx.sandbox.BookingRepository.createBooking(
       validPayload({ brand: brand, customerType: 'first_time', date: '2026-10-01', startTime: '13:00' }),
       NOW
     );
-    assert.strictEqual(blocked.success, false, brand + ': 当日+初回利用は拒否されるべき');
-    assert.strictEqual(blocked.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', brand);
+    assert.strictEqual(blocked.success, false, brand + ': 初回利用+現金は拒否されるべき');
+    assert.strictEqual(blocked.error.code, 'FIRST_TIME_CARD_PAYMENT_REQUIRED', brand);
 
     var allowedCtx = setup();
     var allowed = allowedCtx.sandbox.BookingRepository.createBooking(
@@ -685,14 +715,14 @@ test('createBooking: 当日+利用経験ありで、開始時刻が現在時刻�
   assert.strictEqual(result.status, 'PENDING');
 });
 
-test('createBooking: 当日+初回利用は、開始時刻が現在時刻より後であってもSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEが先に返る（優先順位の確認）', function () {
+test('createBooking: 当日+初回利用(カード)で、開始時刻が現在時刻以前（NOW=12:00に対し09:00開始）はSAME_DAY_START_TIME_PASSEDで拒否する（Issue #407）', function () {
   var ctx = setup();
   var result = ctx.sandbox.BookingRepository.createBooking(
-    validPayload({ customerType: 'first_time', date: '2026-10-01', startTime: '13:00' }),
+    validPayload({ customerType: 'first_time', date: '2026-10-01', startTime: '09:00', paymentMethod: 'オンラインクレジットカード' }),
     NOW
   );
   assert.strictEqual(result.success, false);
-  assert.strictEqual(result.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME');
+  assert.strictEqual(result.error.code, 'SAME_DAY_START_TIME_PASSED');
 });
 
 test('createBooking: snb/mens/studio_xのいずれのbrandでも当日の過去開始時刻拒否は同じ挙動になる（brandで分岐させない）', function () {

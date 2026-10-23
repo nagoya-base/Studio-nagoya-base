@@ -57,11 +57,16 @@
     return labels[value] || '';
   }
 
-  /* dateValue/todayValueは'YYYY-MM-DD'。当日（dateValue===todayValue）かつ初回利用の
-     組み合わせのみを検出する（Issue #270最終仕様）。todayValueは呼び出し側がtodayInJapan()で
-     求めた値を渡すこと（この関数自体はブラウザのローカルtimezoneに依存しない）。 */
-  function isSameDayFirstTimeBlocked(dateValue, customerType, todayValue) {
-    return dateValue === todayValue && customerType === CUSTOMER_TYPES.FIRST_TIME;
+  /* Issue #407: 初回利用はオンラインクレジットカード決済のみ。サーバー側
+     （Booking.gsのFIRST_TIME_CARD_PAYMENT_REQUIRED）と同じ条件のUX目的の一次チェック。
+     利用経験ありは全ての支払方法を従来どおり選べる。 */
+  function isFirstTimeCardRequired(customerType) {
+    return customerType === CUSTOMER_TYPES.FIRST_TIME;
+  }
+
+  function isPaymentMethodAllowedForCustomer(customerType, paymentMethod) {
+    if (!isFirstTimeCardRequired(customerType)) return true;
+    return isCardPaymentMethodValue(paymentMethod);
   }
 
   /* createBooking / getAvailability が返すerror.codeの文言。
@@ -86,7 +91,7 @@
       INVALID_NOTE: '連絡事項は1000文字以内で入力してください。',
       INVALID_SOURCE: '送信元の情報が正しくありません。お手数ですがページを開き直してください。',
       INVALID_CUSTOMER_TYPE: '利用区分（初回利用／利用経験あり）を選択してください。',
-      SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME: '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付を選択してください。',
+      FIRST_TIME_CARD_PAYMENT_REQUIRED: '初回利用の方のお支払いはオンラインクレジットカード決済のみとなります。',
       SAME_DAY_START_TIME_PASSED: '指定した開始時刻はすでに過ぎています。現在時刻より後の開始時刻を選択してください。',
       CARD_PAYMENT_TOO_CLOSE_TO_START: 'カード事前決済は利用開始の4日前（96時間前）までのお申し込みに限ります。直前のご予約は現金・PayPay（現地決済）をお選びください。',
       RATE_LIMITED: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。',
@@ -113,7 +118,7 @@
       INVALID_NOTE: 'Notes must be 1000 characters or fewer.',
       INVALID_SOURCE: 'There is a problem with the request source. Please reload the page and try again.',
       INVALID_CUSTOMER_TYPE: 'Please select your customer type (first-time guest or returning guest).',
-      SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME: 'First-time guests cannot book for the same day. Please choose a date from tomorrow onward.',
+      FIRST_TIME_CARD_PAYMENT_REQUIRED: 'First-time guests can pay by online credit card only.',
       SAME_DAY_START_TIME_PASSED: 'The selected start time has already passed. Please choose a start time later than the current time.',
       CARD_PAYMENT_TOO_CLOSE_TO_START: 'Card prepayment is only available up to 96 hours (4 days) before your start time. For last-minute bookings, please choose cash or PayPay (pay on site).',
       RATE_LIMITED: 'Too many requests have been submitted. Please wait a moment and try again.',
@@ -159,12 +164,12 @@
 
   /* SLOT_CONFLICTのみ「空き時間の選び直し」に誘導し、それ以外の入力系エラー
      （INVALID_EMAIL等）は「内容の修正」に、rate limit等は「再試行」に誘導する。
-     利用日・利用区分そのものをやり直す必要があるエラー（当日+初回利用の組み合わせ等）は
+     利用日・利用区分そのものをやり直す必要があるエラー（利用区分の未指定等）は
      「日付・利用区分の選び直し」（'reselect-date'）に誘導する。空き時間の再取得だけでは
      解決しないため、'reselect-time'とは区別する（Issue #270）。
      UIの導線分岐のみを担い、エラーメッセージ自体はmessageForErrorCode()を使う。 */
   function recoveryActionForErrorCode(code) {
-    if (code === 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME' || code === 'INVALID_CUSTOMER_TYPE') {
+    if (code === 'INVALID_CUSTOMER_TYPE') {
       return 'reselect-date';
     }
     if (
@@ -185,7 +190,9 @@
       code === 'INVALID_NOTE' ||
       /* Issue #334: 支払方法を現地決済へ変更するか、日程を選び直せば解消するため、
          支払方法系のエラーと同じedit-detailsへ誘導する。 */
-      code === 'CARD_PAYMENT_TOO_CLOSE_TO_START'
+      code === 'CARD_PAYMENT_TOO_CLOSE_TO_START' ||
+      /* Issue #407: 初回利用はカード決済のみ。支払方法を直せば解消する。 */
+      code === 'FIRST_TIME_CARD_PAYMENT_REQUIRED'
     ) {
       return 'edit-details';
     }
@@ -453,12 +460,14 @@
    * gas/booking/shared/Booking.gsのvalidateCreateBookingInput（`< CARD_MIN_HOURS_BEFORE_START`
    * で拒否＝ちょうど96時間は許可）と同じ境界（>=で許可）をミリ秒精度で判定する。
    */
-  function isCardPaymentEligible(dateValue, startTimeValue, now) {
+  function isCardPaymentEligible(dateValue, startTimeValue, now, customerType) {
+    /* Issue #407: 初回利用はカードが唯一の支払方法のため、96時間ルールの対象外
+       （サーバー側のvalidateCreateBookingInputと同じ）。 */
+    if (isFirstTimeCardRequired(customerType)) return true;
     if (!isNonEmpty(dateValue) || !isNonEmpty(startTimeValue)) return true;
     var base = isDateLike_(now) ? now : new Date();
     /* Issue #406: 当日予約（利用日がAsia/Tokyo基準の今日）は96時間ルールの対象外。
-       サーバー側（Booking.gsのvalidateCreateBookingInput）と同じく、当日はカードを選べる。
-       当日予約を使える人の条件（初回利用の当日禁止）は別途isSameDayFirstTimeBlockedが担う。 */
+       サーバー側（Booking.gsのvalidateCreateBookingInput）と同じく、当日はカードを選べる。 */
     if (dateValue === todayInJapan(base)) return true;
     var startMillis = jstWallClockToUtcMillis_(dateValue, startTimeValue);
     var msUntilStart = startMillis - base.getTime();
@@ -629,7 +638,7 @@
   };
 
   /* ○/◎/△は選択可能、×/－（予約可能枠なし・対象外）は選択不可。
-     「今日＋初回利用」は別途isSameDayFirstTimeBlockedで上書きする（下記参照）。 */
+     Issue #407以降、初回利用の当日も選択可能（支払方法がカード必須になるのみ）。 */
   var SELECTABLE_DAY_STATUSES_ = [DAY_STATUSES.AVAILABLE_HIGH, DAY_STATUSES.AVAILABLE, DAY_STATUSES.LIMITED];
 
   function isBookableDayStatus(status) {
@@ -673,17 +682,12 @@
   }
 
   /*
-   * カレンダー上のセルが選択可能かどうか。GASのstatus判定に加えて、当日＋初回利用の
-   * 組み合わせは（getAvailability自体がcustomerTypeを見ないため）ここで上書きして
-   * 選択不可にする（Issue #318追記のテスト要件: 「今日」セルが初回利用選択時は
-   * 選択不可／警告になることを再現する）。最終的な可否の正はcreateBookingの
-   * サーバー側検証であり、ここはUX目的の一次チェック（既存のisSameDayFirstTimeBlockedと
-   * 同じ位置づけ）。
+   * カレンダー上のセルが選択可能かどうか。GASのstatus判定のみで決まる。
+   * Issue #407で初回利用の当日予約を解禁したため、利用区分・当日かどうかでは塞がない
+   * （customerType/todayValueは呼び出し側の互換のため引数に残している）。
    */
   function isCalendarDaySelectable(dateValue, status, customerType, todayValue) {
-    if (!isBookableDayStatus(status)) return false;
-    if (isSameDayFirstTimeBlocked(dateValue, customerType, todayValue)) return false;
-    return true;
+    return isBookableDayStatus(status);
   }
 
   /*
@@ -774,14 +778,10 @@
   }
 
   /* カレンダーの日セルのaria-label。記号・色だけに依存しないアクセシビリティ対応
-     （Issue #318要件）。「今日＋初回利用」の場合はSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEの
-     メッセージをそのまま使い、通常のstatusラベルとメッセージを二重に定義しない。 */
+     （Issue #318要件）。 */
   function dayAriaLabel(dateValue, status, customerType, todayValue, locale) {
     var loc = normalizeLocale(locale);
     var dayLabel = formatCalendarDayLabel(dateValue, loc);
-    if (isSameDayFirstTimeBlocked(dateValue, customerType, todayValue)) {
-      return dayLabel + '　' + messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', loc);
-    }
     return dayLabel + '　' + dayStatusLabel(status, loc);
   }
 
@@ -843,7 +843,7 @@
 
   /*
    * JST（日本時間）での「今日」を'YYYY-MM-DD'で返す。日付入力の下限（過去日を選べなくする）と、
-   * isSameDayFirstTimeBlockedへ渡す「当日かどうか」の判定基準の両方に使う（Issue #270）。
+   * 「当日かどうか」の判定基準の両方に使う（Issue #270）。
    * ブラウザのローカルtimezoneには依存せず、常にAsia/Tokyo基準で計算する。
    * ここでの判定はあくまでUI側の一次チェック（UX目的）であり、最終的な当日予約可否の正は
    * createBookingのサーバー側検証（gas/booking/shared/Booking.gsのformatDateInTimezoneも同じ方針で
@@ -917,7 +917,8 @@
     ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,
     isAllowedCustomerType: isAllowedCustomerType,
     customerTypeLabel: customerTypeLabel,
-    isSameDayFirstTimeBlocked: isSameDayFirstTimeBlocked,
+    isFirstTimeCardRequired: isFirstTimeCardRequired,
+    isPaymentMethodAllowedForCustomer: isPaymentMethodAllowedForCustomer,
     messageForErrorCode: messageForErrorCode,
     recoveryActionForErrorCode: recoveryActionForErrorCode,
     NETWORK_ERROR_MESSAGE: NETWORK_ERROR_MESSAGE,

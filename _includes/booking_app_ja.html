@@ -75,17 +75,16 @@
     </div>
 
     <!-- 利用区分（Issue #270）: 「会員かどうか」ではなく、SNB／SNB mens／Studio Xという
-         同一施設の利用経験の有無で当日予約可否を判定する。当日+初回利用の組み合わせは
-         カレンダー上でも選択不可にする（Issue #318。getAvailability自体はcustomerTypeを
-         見ないためフロント側のガード。最終的な可否の正はcreateBookingのサーバー側検証）。
-         初期値は初回利用（checked）。 -->
+         同一施設の利用経験の有無で支払方法を分ける。Issue #407以降、初回利用は当日予約も可能だが
+         支払方法はオンラインクレジットカード決済のみ（最終的な可否の正はcreateBookingの
+         サーバー側検証）。初期値は初回利用（checked）。 -->
     <fieldset class="ba-fieldset">
       <legend>利用区分<span class="ba-required">必須</span></legend>
       <div class="ba-choices" id="ba-customer-type-choices">
         <label class="ba-choice"><input type="radio" name="customerType" value="first_time" checked> <span>初回利用</span></label>
         <label class="ba-choice"><input type="radio" name="customerType" value="returning"> <span>利用経験あり（SNB／SNB mens／Studio Xのいずれかで利用したことがある）</span></label>
       </div>
-      <p class="ba-field-help">ブランドを問わず、この施設をご利用いただいたことがあれば「利用経験あり」を選択してください。初回利用の方は当日のご予約を受け付けていません。</p>
+      <p class="ba-field-help">ブランドを問わず、この施設をご利用いただいたことがあれば「利用経験あり」を選択してください。初回利用の方はオンラインクレジットカード決済のみご利用いただけます。空きがある場合は当日のご予約も可能です。</p>
       <p class="ba-field-error" id="ba-customer-type-error" hidden></p>
     </fieldset>
 
@@ -321,6 +320,7 @@
         <label class="ba-choice"><input type="radio" name="paymentMethod" value="オンラインクレジットカード"> <span>オンラインクレジットカード</span></label>
         <label class="ba-choice"><input type="radio" name="paymentMethod" value="未定"> <span>未定</span></label>
       </div>
+      <p class="ba-field-help" id="ba-first-time-card-notice" hidden>初回利用の方はオンラインクレジットカード決済のみご利用いただけます。</p>
       <p class="ba-field-help" id="ba-card-ineligible-notice" hidden>カード事前決済は利用開始の4日前までのお申し込みです。直前のご予約は現金・PayPay（現地決済）をお選びください。</p>
       <p class="ba-field-error" id="ba-payment-error" hidden></p>
       <p class="ba-banner ba-banner--notice" id="ba-card-payment-notice" hidden></p>

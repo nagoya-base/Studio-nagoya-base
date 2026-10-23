@@ -155,6 +155,7 @@
     purposeOtherError: document.getElementById('ba-purpose-other-error'),
     paymentError: document.getElementById('ba-payment-error'),
     cardIneligibleNotice: document.getElementById('ba-card-ineligible-notice'),
+    firstTimeCardNotice: document.getElementById('ba-first-time-card-notice'),
     cardPaymentNotice: document.getElementById('ba-card-payment-notice'),
     note: document.getElementById('ba-note'),
     noteError: document.getElementById('ba-note-error'),
@@ -208,8 +209,8 @@
   }
 
   /* 過去日を選べないようにするだけの技術的な下限（当日は選択可）。当日利用ルール
-     （初回利用+当日の禁止）は、日付・利用区分の両方が決まるStep1の「次へ」押下時に
-     Logic.isSameDayFirstTimeBlockedで判定する（Issue #270）。 */
+     （旧: 初回利用+当日の禁止）
+     Issue #407以降は初回利用の当日も許可する（支払方法がカード必須になる）。 */
   if (els.date) els.date.min = Logic.todayInJapan();
 
   /*
@@ -363,8 +364,7 @@
    * ── 月間空き状況カレンダー（Issue #318） ──
    * 単一日付入力（#ba-date。type="hidden"）を、1か月表示のカレンダーから選ぶ形へ
    * 置き換える。#ba-dateの値自体は引き続きこのカレンダーが書き込み、Step1の
-   * 「次へ」押下時の検証（上のclickハンドラ）・SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME
-   * チェックは一切変更しない（既存の開始時刻選択以降のフローをそのまま再利用する）。
+   * 「次へ」押下時の検証（上のclickハンドラ）は一切変更しない（既存の開始時刻選択以降のフローをそのまま再利用する）。
    *
    * 利用時間・利用区分を先に確定してからカレンダーを描画・取得する（Issue #318追記の
    * 仕様）。月間取得はGAS側 getMonthlyAvailability(year, month, durationMinutes, brand,
@@ -888,7 +888,7 @@
    * isCalendarReady_()は既にtrueになる。ユーザーの入力を待たず、この時点で
    * handleCalendarPrereqChange_を1回呼び、現在月のカレンダーを自動取得・表示する。
    * duration/利用区分/希望時間帯を変更した場合の再取得（同じ関数を再利用）・
-   * 初回利用+当日ガード（isCalendarDaySelectable経由）・cache/in-flight/retry/
+   * カレンダー選択（isCalendarDaySelectable経由）・cache/in-flight/retry/
    * current-response判定は、このイベントリスナー群と共通のため変更しない。
    * 初期値がまだ整っていない（テストのDOMスタブ等）場合はisCalendarReady_()が
    * falseのままなので、この呼び出しは何もしない。
@@ -916,19 +916,6 @@
     setFieldError_(els.duration, els.durationError, durationValid ? '' : UI_TEXT.durationRequired);
     setFieldError_(null, els.customerTypeError, customerType ? '' : UI_TEXT.customerTypeRequired);
     if (!dateValue || !durationValid || !customerType) { resetStartTimeArea_(); return; }
-
-    /*
-     * 初回利用＋当日はここで空き時間取得（getAvailability）へ進ませない（Issue #270）。
-     * これはUX目的の一次チェックであり、最終的な当日予約可否の正はcreateBookingの
-     * サーバー側検証（Booking.validateCreateBookingInput）。フロントを書き換えて
-     * このチェックを回避されても、サーバー側でSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEとして
-     * 拒否される（BookingRepository.gs参照）。
-     */
-    if (Logic.isSameDayFirstTimeBlocked(dateValue, customerType, Logic.todayInJapan())) {
-      setFieldError_(els.date, els.dateError, Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', locale));
-      resetStartTimeArea_();
-      return;
-    }
 
     state.date = dateValue;
     state.durationMinutes = durationMinutes;
@@ -1137,8 +1124,21 @@
   function updateCardPaymentGating() {
     var radio = cardPaymentRadio_();
     if (!radio) return;
-    var eligible = Logic.isCardPaymentEligible(state.date, state.startTime);
+    var firstTime = Logic.isFirstTimeCardRequired(state.customerType);
+    var eligible = Logic.isCardPaymentEligible(state.date, state.startTime, undefined, state.customerType);
     radio.disabled = !eligible;
+    /* Issue #407: 初回利用はカード固定。カード以外のラジオを選べなくし、カードを選択済みにする。
+       利用経験ありへ戻した場合は解除して従来どおり全て選べる。最終的な拒否はサーバー側
+       （FIRST_TIME_CARD_PAYMENT_REQUIRED）が担保する。 */
+    root.querySelectorAll('input[name="paymentMethod"]').forEach(function (other) {
+      if (other === radio) return;
+      other.disabled = firstTime;
+      var otherLabel = typeof other.closest === 'function' ? other.closest('label') : null;
+      if (otherLabel && otherLabel.classList) otherLabel.classList.toggle('ba-choice--disabled', firstTime);
+      if (firstTime && other.checked) other.checked = false;
+    });
+    if (firstTime && eligible) radio.checked = true;
+    if (els.firstTimeCardNotice) els.firstTimeCardNotice.hidden = !firstTime;
     /* radio.closestはDOM本体では常に使えるが、テストの最小DOMスタブには実装されていない
        ことがあるため、存在確認してから使う（見た目のdisabled表現のみに関わる処理であり、
        欠けても選択不可自体はradio.disabledで担保される）。 */
@@ -1196,9 +1196,12 @@
          カード選択を解除済みだが、Step3に長時間滞在して96時間未満へ状態が変わった場合等に
          備え、送信直前にも再評価する。サーバー側のCARD_PAYMENT_TOO_CLOSE_TO_START拒否と
          合わせた多層防御であり、ここでの拒否メッセージも同じ案内文を使う。 */
-      if (Logic.isCardPaymentMethodValue(fields.paymentMethod) && !Logic.isCardPaymentEligible(state.date, state.startTime)) {
+      if (Logic.isCardPaymentMethodValue(fields.paymentMethod) && !Logic.isCardPaymentEligible(state.date, state.startTime, undefined, state.customerType)) {
         errors.paymentMethod = Logic.cardPaymentIneligibleNotice(locale);
         updateCardPaymentGating();
+      }
+      if (fields.paymentMethod && !Logic.isPaymentMethodAllowedForCustomer(state.customerType, fields.paymentMethod)) {
+        errors.paymentMethod = Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale);
       }
 
       setFieldError_(els.name, els.nameError, errors.name);
@@ -1379,7 +1382,13 @@
          必ず再評価する。期限を過ぎていれば送信自体を中止し、Step3へ戻して現地決済への
          切り替えを案内する（サーバー側のCARD_PAYMENT_TOO_CLOSE_TO_START拒否と合わせた
          多層防御。ここで止められればfetch自体を発生させない）。 */
-      if (Logic.isCardPaymentMethodValue(state.paymentMethod) && !Logic.isCardPaymentEligible(state.date, state.startTime)) {
+      if (!Logic.isPaymentMethodAllowedForCustomer(state.customerType, state.paymentMethod)) {
+        updateCardPaymentGating();
+        goToStep('details');
+        showGlobalError(Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale), []);
+        return;
+      }
+      if (Logic.isCardPaymentMethodValue(state.paymentMethod) && !Logic.isCardPaymentEligible(state.date, state.startTime, undefined, state.customerType)) {
         updateCardPaymentGating();
         goToStep('details');
         showGlobalError(Logic.cardPaymentIneligibleNotice(locale), []);

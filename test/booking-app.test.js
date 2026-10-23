@@ -89,6 +89,9 @@ function setup(responseBody) {
        常に空文字のため、常にfalseを返す形で足りる）。 */
     CARD_PAYMENT_METHOD_VALUE: 'オンラインクレジットカード',
     isCardPaymentMethodValue: function (v) { return v === 'オンラインクレジットカード'; },
+    /* Issue #407: 初回利用のカード必須判定。このstubのテスト群は利用区分を持たないため常に許可する。 */
+    isFirstTimeCardRequired: function () { return false; },
+    isPaymentMethodAllowedForCustomer: function () { return true; },
     /* Issue #342: 料金見積り表示の配線用スタブ。このテスト群はstate.date等が常に
        未設定（Step1へ進んでいない）ため、実際に見積りfetchが発生することはないが、
        モジュール読み込み時点（brandShowsMemberOptionの呼び出し）で例外にならないよう

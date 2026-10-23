@@ -124,15 +124,59 @@ test('validateCreateBookingInput: 過去日はcustomerTypeを問わずINVALID_DA
   });
 });
 
-test('validateCreateBookingInput: 当日(2026-10-01) + 初回利用(first_time)はSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEで拒否する（Issue #270最終仕様）', function () {
+test('validateCreateBookingInput: 当日(2026-10-01) + 初回利用(first_time) + カード決済は受け付ける（Issue #407で当日予約を解禁）', function () {
   var Booking = loadBooking();
   var result = Booking.validateCreateBookingInput(
-    validInput({ customerType: 'first_time', date: '2026-10-01' }),
+    validInput({ customerType: 'first_time', date: '2026-10-01', startTime: '13:00', paymentMethod: 'オンラインクレジットカード' }),
     DEFAULT_CONFIG,
     NOW
   );
-  assert.strictEqual(result.valid, false);
-  assert.strictEqual(result.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME');
+  assert.strictEqual(result.valid, true, JSON.stringify(result.error));
+  assert.strictEqual(result.normalized.customerType, 'first_time');
+});
+
+test('validateCreateBookingInput: 初回利用 + 現金/PayPay/未定はFIRST_TIME_CARD_PAYMENT_REQUIREDで拒否する（当日・翌日以降とも。API直呼びでも回避できない。Issue #407）', function () {
+  var Booking = loadBooking();
+  ['2026-10-01', '2026-10-02', '2026-10-20'].forEach(function (date) {
+    ['現金', 'PayPay', '未定'].forEach(function (paymentMethod) {
+      var result = Booking.validateCreateBookingInput(
+        validInput({ customerType: 'first_time', date: date, startTime: '13:00', paymentMethod: paymentMethod }),
+        DEFAULT_CONFIG,
+        NOW
+      );
+      assert.strictEqual(result.valid, false, date + ' ' + paymentMethod);
+      assert.strictEqual(result.error.code, 'FIRST_TIME_CARD_PAYMENT_REQUIRED', date + ' ' + paymentMethod);
+    });
+  });
+});
+
+test('validateCreateBookingInput: 初回利用 + カード決済は利用開始まで96時間未満の翌日以降でも受け付ける（Issue #407。初回利用は96時間ルールの対象外）', function () {
+  var Booking = loadBooking();
+  var result = Booking.validateCreateBookingInput(
+    validInput({ customerType: 'first_time', date: '2026-10-02', startTime: '10:00', paymentMethod: 'オンラインクレジットカード' }),
+    DEFAULT_CONFIG,
+    NOW
+  );
+  assert.strictEqual(result.valid, true, JSON.stringify(result.error));
+});
+
+test('validateCreateBookingInput: 利用経験あり(returning)の支払方法は従来どおり（現金/PayPay/未定を許可、翌日のカードは96時間ルールで拒否。Issue #407の回帰確認）', function () {
+  var Booking = loadBooking();
+  ['現金', 'PayPay', '未定'].forEach(function (paymentMethod) {
+    var result = Booking.validateCreateBookingInput(
+      validInput({ customerType: 'returning', date: '2026-10-01', startTime: '13:00', paymentMethod: paymentMethod }),
+      DEFAULT_CONFIG,
+      NOW
+    );
+    assert.strictEqual(result.valid, true, paymentMethod);
+  });
+  var card = Booking.validateCreateBookingInput(
+    validInput({ customerType: 'returning', date: '2026-10-02', startTime: '10:00', paymentMethod: 'オンラインクレジットカード' }),
+    DEFAULT_CONFIG,
+    NOW
+  );
+  assert.strictEqual(card.valid, false);
+  assert.strictEqual(card.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
 });
 
 test('validateCreateBookingInput: 当日(2026-10-01) + 利用経験あり(returning) + 現在時刻より後の開始時刻は通常どおり許可する', function () {
@@ -147,11 +191,11 @@ test('validateCreateBookingInput: 当日(2026-10-01) + 利用経験あり(return
   assert.strictEqual(result.normalized.customerType, 'returning');
 });
 
-test('validateCreateBookingInput: 翌日以降(2026-10-02)は初回利用/利用経験ありのどちらも許可する', function () {
+test('validateCreateBookingInput: 翌日以降(2026-10-02)は初回利用(カード)/利用経験ありのどちらも許可する', function () {
   var Booking = loadBooking();
   ['first_time', 'returning'].forEach(function (customerType) {
     var result = Booking.validateCreateBookingInput(
-      validInput({ customerType: customerType, date: '2026-10-02' }),
+      validInput({ customerType: customerType, date: '2026-10-02', paymentMethod: customerType === 'first_time' ? 'オンラインクレジットカード' : '現金' }),
       DEFAULT_CONFIG,
       NOW
     );
@@ -159,16 +203,23 @@ test('validateCreateBookingInput: 翌日以降(2026-10-02)は初回利用/利用
   });
 });
 
-test('validateCreateBookingInput: 当日+初回利用の拒否ルールはsnb/mens/studio_xのいずれのbrandでも同じ（brandで分岐させない。Issue #270）', function () {
+test('validateCreateBookingInput: 初回利用のカード必須ルールはsnb/mens/studio_xのいずれのbrandでも同じ（brandで分岐させない。Issue #270/#407）', function () {
   var Booking = loadBooking();
   ['snb', 'mens', 'studio_x'].forEach(function (brand) {
     var blocked = Booking.validateCreateBookingInput(
-      validInput({ brand: brand, customerType: 'first_time', date: '2026-10-01' }),
+      validInput({ brand: brand, customerType: 'first_time', date: '2026-10-01', startTime: '13:00' }),
       DEFAULT_CONFIG,
       NOW
     );
     assert.strictEqual(blocked.valid, false, brand);
-    assert.strictEqual(blocked.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', brand);
+    assert.strictEqual(blocked.error.code, 'FIRST_TIME_CARD_PAYMENT_REQUIRED', brand);
+
+    var firstTimeCard = Booking.validateCreateBookingInput(
+      validInput({ brand: brand, customerType: 'first_time', date: '2026-10-01', startTime: '13:00', paymentMethod: 'オンラインクレジットカード' }),
+      DEFAULT_CONFIG,
+      NOW
+    );
+    assert.strictEqual(firstTimeCard.valid, true, brand);
 
     var allowed = Booking.validateCreateBookingInput(
       validInput({ brand: brand, customerType: 'returning', date: '2026-10-01', startTime: '13:00' }),
@@ -182,8 +233,8 @@ test('validateCreateBookingInput: 当日+初回利用の拒否ルールはsnb/me
 test('validateCreateBookingInput: nowを省略した場合は現在時刻を使う（デフォルト引数）', function () {
   var Booking = loadBooking();
   var farFuture = new Date(Date.now() + 30 * 24 * 3600000).toISOString().slice(0, 10);
-  var result = Booking.validateCreateBookingInput(validInput({ customerType: 'first_time', date: farFuture }), DEFAULT_CONFIG);
-  assert.strictEqual(result.valid, true, '30日後は当日ではないため初回利用でも許可されるべき');
+  var result = Booking.validateCreateBookingInput(validInput({ customerType: 'first_time', date: farFuture, paymentMethod: 'オンラインクレジットカード' }), DEFAULT_CONFIG);
+  assert.strictEqual(result.valid, true, '30日後は当日ではないため初回利用(カード)でも許可されるべき');
 });
 
 /*
@@ -217,15 +268,21 @@ test('validateCreateBookingInput: 当日+利用経験ありで、開始時刻が
   });
 });
 
-test('validateCreateBookingInput: 当日+初回利用は、開始時刻が現在時刻より後であってもSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEが先に返る（優先順位の確認）', function () {
+test('validateCreateBookingInput: 当日+初回利用(カード)も、開始時刻が現在時刻以前ならSAME_DAY_START_TIME_PASSEDで拒否し、後なら許可する（Issue #407）', function () {
   var Booking = loadBooking();
-  var result = Booking.validateCreateBookingInput(
-    validInput({ customerType: 'first_time', date: '2026-10-01', startTime: '10:30' }),
+  var passed = Booking.validateCreateBookingInput(
+    validInput({ customerType: 'first_time', date: '2026-10-01', startTime: '10:00', paymentMethod: 'オンラインクレジットカード' }),
     DEFAULT_CONFIG,
     NOW_1007
   );
-  assert.strictEqual(result.valid, false);
-  assert.strictEqual(result.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME');
+  assert.strictEqual(passed.valid, false);
+  assert.strictEqual(passed.error.code, 'SAME_DAY_START_TIME_PASSED');
+  var ok = Booking.validateCreateBookingInput(
+    validInput({ customerType: 'first_time', date: '2026-10-01', startTime: '10:30', paymentMethod: 'オンラインクレジットカード' }),
+    DEFAULT_CONFIG,
+    NOW_1007
+  );
+  assert.strictEqual(ok.valid, true, JSON.stringify(ok.error));
 });
 
 test('validateCreateBookingInput: 翌日以降は現在時刻に関わらず開始時刻の過去判定を行わない（従来どおり）', function () {
@@ -856,15 +913,14 @@ test('validateCreateBookingInput: 当日予約×利用経験ありは、利用�
   assert.strictEqual(result.normalized.paymentMethod, 'オンラインクレジットカード');
 });
 
-test('validateCreateBookingInput: 当日予約のカード決済でも、初回利用の当日禁止・過去の開始時刻の拒否は変わらない（Issue #406）', function () {
+test('validateCreateBookingInput: 当日予約のカード決済でも、過去の開始時刻の拒否は変わらない（Issue #406。初回利用の当日は#407で解禁）', function () {
   var Booking = loadBooking();
   var firstTime = Booking.validateCreateBookingInput(
     validInput({ paymentMethod: 'オンラインクレジットカード', customerType: 'first_time', date: '2026-10-01', startTime: '15:00' }),
     DEFAULT_CONFIG,
     NOW_CARD
   );
-  assert.strictEqual(firstTime.valid, false);
-  assert.strictEqual(firstTime.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME');
+  assert.strictEqual(firstTime.valid, true, JSON.stringify(firstTime.error));
 
   var passed = Booking.validateCreateBookingInput(
     validInput({ paymentMethod: 'オンラインクレジットカード', customerType: 'returning', date: '2026-10-01', startTime: '11:00' }),

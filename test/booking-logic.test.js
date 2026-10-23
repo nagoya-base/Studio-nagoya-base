@@ -35,7 +35,7 @@ test('messageForErrorCode: createBooking/getAvailabilityのerror.code一覧を�
     'INVALID_BRAND', 'INVALID_CONFIG', 'INVALID_DATE', 'INVALID_DURATION', 'DURATION_TOO_SHORT',
     'INVALID_START_TIME', 'START_TIME_NOT_ALIGNED', 'SLOT_CONFLICT', 'INVALID_NAME', 'INVALID_EMAIL',
     'INVALID_PHONE', 'INVALID_PEOPLE', 'INVALID_PURPOSE', 'INVALID_PAYMENT_METHOD', 'INVALID_NOTE',
-    'INVALID_SOURCE', 'INVALID_CUSTOMER_TYPE', 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME',
+    'INVALID_SOURCE', 'INVALID_CUSTOMER_TYPE', 'FIRST_TIME_CARD_PAYMENT_REQUIRED',
     'SAME_DAY_START_TIME_PASSED', 'CARD_PAYMENT_TOO_CLOSE_TO_START',
     'RATE_LIMITED', 'LOCK_TIMEOUT', 'BOOKING_SAVE_FAILED', 'INVALID_JSON', 'INTERNAL_ERROR'
   ];
@@ -65,10 +65,14 @@ test('recoveryActionForErrorCode: SLOT_CONFLICT系は時間の選び直し、入
   assert.strictEqual(Logic.recoveryActionForErrorCode('INTERNAL_ERROR'), 'retry');
 });
 
-test('recoveryActionForErrorCode: 当日+初回利用・利用区分未指定は日付・利用区分の選び直しに振り分ける（Issue #270。空き時間の再取得だけでは解決しないためreselect-timeとは区別する）', function () {
+test('recoveryActionForErrorCode: 利用区分未指定は日付・利用区分の選び直しに振り分ける（Issue #270。空き時間の再取得だけでは解決しないためreselect-timeとは区別する）', function () {
   var Logic = loadLogic();
-  assert.strictEqual(Logic.recoveryActionForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME'), 'reselect-date');
   assert.strictEqual(Logic.recoveryActionForErrorCode('INVALID_CUSTOMER_TYPE'), 'reselect-date');
+});
+
+test('recoveryActionForErrorCode: 初回利用+カード以外（FIRST_TIME_CARD_PAYMENT_REQUIRED）は支払方法の修正へ誘導する（Issue #407）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.recoveryActionForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED'), 'edit-details');
 });
 
 test('isAllowedCustomerType/customerTypeLabel: first_time/returningのみ許可し、表示文言を返す（Issue #270）', function () {
@@ -84,13 +88,17 @@ test('isAllowedCustomerType/customerTypeLabel: first_time/returningのみ許可�
   assert.strictEqual(Logic.customerTypeLabel('unknown'), '');
 });
 
-test('isSameDayFirstTimeBlocked: 当日+初回利用の組み合わせのみtrue（Issue #270最終仕様）', function () {
+test('isPaymentMethodAllowedForCustomer: 初回利用はオンラインクレジットカードのみ、利用経験ありは全て許可（Issue #407）', function () {
   var Logic = loadLogic();
-  var today = '2026-10-01';
-  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-01', 'first_time', today), true);
-  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-01', 'returning', today), false, '当日+利用経験ありは通常フロー');
-  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-02', 'first_time', today), false, '翌日+初回利用は通常フロー');
-  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-02', 'returning', today), false, '翌日+利用経験ありは通常フロー');
+  assert.strictEqual(Logic.isFirstTimeCardRequired('first_time'), true);
+  assert.strictEqual(Logic.isFirstTimeCardRequired('returning'), false);
+  assert.strictEqual(Logic.isPaymentMethodAllowedForCustomer('first_time', 'オンラインクレジットカード'), true);
+  ['現金', 'PayPay', '未定', ''].forEach(function (method) {
+    assert.strictEqual(Logic.isPaymentMethodAllowedForCustomer('first_time', method), false, method);
+  });
+  ['現金', 'PayPay', '未定', 'オンラインクレジットカード'].forEach(function (method) {
+    assert.strictEqual(Logic.isPaymentMethodAllowedForCustomer('returning', method), true, method);
+  });
 });
 
 test('durationHoursToMinutes: 正の整数時間だけを分へ変換し、それ以外はnull', function () {
@@ -240,10 +248,10 @@ test('normalizeLocale: 未指定・未知のlocaleはjaへfallbackし、enはen�
 
 test('messageForErrorCode: locale="en"は英語、locale未指定は既存どおり日本語を返す（後方互換）', function () {
   var Logic = loadLogic();
-  assert.strictEqual(Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME'), '初回利用の方は当日のご予約を受け付けていません。翌日以降の日付を選択してください。');
+  assert.strictEqual(Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED'), '初回利用の方のお支払いはオンラインクレジットカード決済のみとなります。');
   assert.strictEqual(
-    Logic.messageForErrorCode('SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME', 'en'),
-    'First-time guests cannot book for the same day. Please choose a date from tomorrow onward.'
+    Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', 'en'),
+    'First-time guests can pay by online credit card only.'
   );
   /* 未知のlocaleはjaへfallback */
   assert.strictEqual(Logic.messageForErrorCode('BOOKING_SAVE_FAILED', 'fr'), '予約の保存に失敗しました。しばらくしてから再度お試しください。');
@@ -341,11 +349,10 @@ test('buildCreateBookingPayload: localeに関わらずpayloadのkey/valueは変�
   });
 });
 
-test('isSameDayFirstTimeBlocked: English UIでも当日+初回利用の判定結果は日本語版と同一（localeを取らない業務ロジック）', function () {
+test('isPaymentMethodAllowedForCustomer: English UIでも判定結果は日本語版と同一（localeを取らない業務ロジック。内部valueは日本語のまま）', function () {
   var Logic = loadLogic();
-  var today = '2026-10-05';
-  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-05', 'first_time', today), true);
-  assert.strictEqual(Logic.isSameDayFirstTimeBlocked('2026-10-05', 'returning', today), false);
+  assert.strictEqual(Logic.isPaymentMethodAllowedForCustomer('first_time', 'PayPay'), false);
+  assert.strictEqual(Logic.isPaymentMethodAllowedForCustomer('first_time', 'オンラインクレジットカード'), true);
 });
 
 /* ── 確認画面表示専用ラベル（Issue #297 PR #300再レビュー対応） ──
@@ -433,10 +440,11 @@ test('isCalendarDaySelectable: FULL/OUT_OF_RANGEは選択不可、それ以外�
   assert.strictEqual(Logic.isCalendarDaySelectable('2026-10-05', 'OUT_OF_RANGE', 'returning', '2026-10-01'), false);
 });
 
-test('isCalendarDaySelectable: 初回利用＋当日は、GAS側のstatusが予約可でも選択不可になる（getAvailability自体はcustomerTypeを見ないため、フロント側ガードの再現）', function () {
+test('isCalendarDaySelectable: 初回利用＋当日も、GAS側のstatusが予約可なら選択可能（Issue #407で当日予約を解禁）', function () {
   var Logic = loadLogic();
   var today = '2026-10-01';
-  assert.strictEqual(Logic.isCalendarDaySelectable(today, 'AVAILABLE_HIGH', 'first_time', today), false, '今日＋初回利用は選択不可');
+  assert.strictEqual(Logic.isCalendarDaySelectable(today, 'AVAILABLE_HIGH', 'first_time', today), true, '今日＋初回利用も選択可能');
+  assert.strictEqual(Logic.isCalendarDaySelectable(today, 'FULL', 'first_time', today), false, '満席の当日は初回利用でも選択不可');
   assert.strictEqual(Logic.isCalendarDaySelectable(today, 'AVAILABLE_HIGH', 'returning', today), true, '今日＋利用経験ありは選択可能');
   assert.strictEqual(Logic.isCalendarDaySelectable('2026-10-02', 'AVAILABLE_HIGH', 'first_time', today), true, '翌日＋初回利用は選択可能');
 });
@@ -447,11 +455,19 @@ test('dayAriaLabel: 記号ではなく日付＋状態の文言をaria-label用�
   assert.strictEqual(Logic.dayAriaLabel('2026-10-05', 'AVAILABLE', 'returning', '2026-10-01', 'en'), 'October 5　Available');
 });
 
-test('dayAriaLabel: 今日＋初回利用は、通常のstatusラベルではなくSAME_DAY_NOT_ALLOWED_FOR_FIRST_TIMEの案内文になる', function () {
+test('dayAriaLabel: 今日＋初回利用も通常のstatusラベルになる（Issue #407で当日予約を解禁）', function () {
   var Logic = loadLogic();
   var today = '2026-10-01';
-  var label = Logic.dayAriaLabel(today, 'AVAILABLE_HIGH', 'first_time', today, 'ja');
-  assert.ok(label.indexOf('初回利用の方は当日のご予約を受け付けていません') !== -1, label);
+  assert.strictEqual(Logic.dayAriaLabel(today, 'AVAILABLE_HIGH', 'first_time', today, 'ja'), '10月1日　空き時間が十分あります');
+});
+
+test('isCardPaymentEligible: 初回利用はカードが唯一の支払方法のため96時間未満・翌日でも選択できる（Issue #407）。利用経験ありは従来どおり', function () {
+  var Logic = loadLogic();
+  var now = new Date(Date.UTC(2026, 9, 1, 3, 0, 0)); /* 2026-10-01 12:00 JST */
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-02', '10:00', now, 'first_time'), true);
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-02', '10:00', now, 'returning'), false);
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-02', '10:00', now), false, '利用区分未指定は従来どおり');
+  assert.strictEqual(Logic.isCardPaymentEligible('2026-10-01', '15:00', now, 'first_time'), true, '当日');
 });
 
 test('monthLabel: ja "2026年10月" / en "October 2026"', function () {

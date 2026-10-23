@@ -7215,3 +7215,19 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
   Checkout発行後は従来どおり`paymentHoldExpiresAt`の別クロックで判定する。
 - 決済失敗・未完了は従来どおり予約確定にならない（確定はStripe Webhook成功後のみ）。
 - フロントは`isCardPaymentEligible`が当日をtrueとし、カード注意書きは当日用文言に切り替える。
+
+## Issue #407: 初回利用者をクレジットカード決済必須化し当日予約を解禁
+
+- 初回利用（`customerType=first_time`）の当日予約を解禁した。`SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME`は
+  廃止（サーバー・フロントとも返さない）。当日の開始時刻検証（`SAME_DAY_START_TIME_PASSED`）・空き枠判定・
+  重複予約防止は全顧客区分で従来どおり。
+- 代わりに初回利用の支払方法は**オンラインクレジットカード決済のみ**。`Booking.validateCreateBookingInput`が
+  `first_time`かつカード以外（現金・PayPay・未定）を`FIRST_TIME_CARD_PAYMENT_REQUIRED`で拒否する
+  （当日・翌日以降を問わず、API直呼びでも回避できない）。`returning`の支払方法は変更なし。
+- 初回利用はカードが唯一の支払方法のため、**96時間ルール（`CARD_PAYMENT_TOO_CLOSE_TO_START`）の対象外**。
+  対象にすると利用開始まで4日未満の日程が初回利用だけ予約不能になるため。`returning`のカードは従来どおり
+  （当日のみ#406で対象外）。
+- 予約確定はStripe決済成功（Webhook）後のみで、決済失敗・未完了はPENDINGのまま失効する（既存フロー）。
+- フロント: `Logic.isFirstTimeCardRequired` / `isPaymentMethodAllowedForCustomer` /
+  `isCardPaymentEligible(…, customerType)`。初回利用ではStep3でカード以外のラジオを無効化しカードを選択済みにする
+  （`#ba-first-time-card-notice`）。`isSameDayFirstTimeBlocked`は削除した。
