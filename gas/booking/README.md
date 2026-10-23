@@ -7201,3 +7201,17 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
 過ぎれば旧Payment Link方式として扱う（期限切れSessionは支払えないため二重決済にならない）。期限が読めない・
 `paymentRecoveryRequiredAt`が立っている場合は常にCheckout方式（fail-closed）。`beginCardCheckout`は
 `STRIPE_CHECKOUT_ENABLED`が有効でないとこの状態を作れないため、過去にキルスイッチが有効だった期間の試行が原因と推定される。
+
+## Issue #406: 当日予約でオンラインクレジットカード決済を解禁
+
+- 当日予約（受付日=利用日。`availabilityConfig.timezone`基準）のカード決済は、**96時間ルール
+  （`CARD_PAYMENT_TOO_CLOSE_TO_START`）の対象外**。現金・PayPayと同じく当日でも選べる。
+  翌日以降のカードは従来どおり96時間未満を拒否する。
+- 当日予約を使える人の条件（初回利用の当日禁止）、当日の締切・開始時刻検証、SNB/Studio Xの
+  ブランドルールは変更しない。
+- 当日カードPENDINGは、現金等と同じ`PENDING_TTL_MIN_HOLD_HOURS`のgrace（利用開始を上限）を使う
+  （`Booking.cardMinHoldHours` → `computeCardPaymentDueMillis`の第4引数・`expirePendingBookings`）。
+  grace無しだと「開始-2時間」が受付以前になり、Checkout開始前に即EXPIREDになるため。
+  Checkout発行後は従来どおり`paymentHoldExpiresAt`の別クロックで判定する。
+- 決済失敗・未完了は従来どおり予約確定にならない（確定はStripe Webhook成功後のみ）。
+- フロントは`isCardPaymentEligible`が当日をtrueとし、カード注意書きは当日用文言に切り替える。

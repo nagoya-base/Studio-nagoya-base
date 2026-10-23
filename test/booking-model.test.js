@@ -842,3 +842,69 @@ test('isValidStripePaymentLinkUrl: 前後に空白を含む・空文字・非文
   assert.strictEqual(Booking.isValidStripePaymentLinkUrl(undefined), false);
   assert.strictEqual(Booking.isValidStripePaymentLinkUrl(123), false);
 });
+
+/* ---------- Issue #406: 当日予約でオンラインクレジットカード決済を解禁する ---------- */
+
+test('validateCreateBookingInput: 当日予約×利用経験ありは、利用開始まで96時間未満でもカード決済を受け付ける（Issue #406）', function () {
+  var Booking = loadBooking();
+  var result = Booking.validateCreateBookingInput(
+    validInput({ paymentMethod: 'オンラインクレジットカード', customerType: 'returning', date: '2026-10-01', startTime: '15:00' }),
+    DEFAULT_CONFIG,
+    NOW_CARD
+  );
+  assert.strictEqual(result.valid, true, JSON.stringify(result.error));
+  assert.strictEqual(result.normalized.paymentMethod, 'オンラインクレジットカード');
+});
+
+test('validateCreateBookingInput: 当日予約のカード決済でも、初回利用の当日禁止・過去の開始時刻の拒否は変わらない（Issue #406）', function () {
+  var Booking = loadBooking();
+  var firstTime = Booking.validateCreateBookingInput(
+    validInput({ paymentMethod: 'オンラインクレジットカード', customerType: 'first_time', date: '2026-10-01', startTime: '15:00' }),
+    DEFAULT_CONFIG,
+    NOW_CARD
+  );
+  assert.strictEqual(firstTime.valid, false);
+  assert.strictEqual(firstTime.error.code, 'SAME_DAY_NOT_ALLOWED_FOR_FIRST_TIME');
+
+  var passed = Booking.validateCreateBookingInput(
+    validInput({ paymentMethod: 'オンラインクレジットカード', customerType: 'returning', date: '2026-10-01', startTime: '11:00' }),
+    DEFAULT_CONFIG,
+    NOW_CARD
+  );
+  assert.strictEqual(passed.valid, false);
+  assert.strictEqual(passed.error.code, 'SAME_DAY_START_TIME_PASSED');
+});
+
+test('validateCreateBookingInput: 翌日以降のカード決済は96時間ルールのまま（当日解禁の影響を受けない。Issue #406）', function () {
+  var Booking = loadBooking();
+  var tomorrow = Booking.validateCreateBookingInput(
+    validInput({ paymentMethod: 'オンラインクレジットカード', date: '2026-10-02', startTime: '12:00' }),
+    DEFAULT_CONFIG,
+    NOW_CARD
+  );
+  assert.strictEqual(tomorrow.valid, false);
+  assert.strictEqual(tomorrow.error.code, 'CARD_PAYMENT_TOO_CLOSE_TO_START');
+});
+
+test('cardMinHoldHours: 当日予約（受付日=利用日）のカードだけgraceを返し、翌日以降は0（Issue #406）', function () {
+  var Booking = loadBooking();
+  var sameDay = { createdAt: new Date('2026-10-01T13:00:00+09:00'), date: '2026-10-01' };
+  var nextDay = { createdAt: new Date('2026-10-01T13:00:00+09:00'), date: '2026-10-02' };
+  assert.strictEqual(Booking.cardMinHoldHours(sameDay, 'Asia/Tokyo', 2), 2);
+  assert.strictEqual(Booking.cardMinHoldHours(nextDay, 'Asia/Tokyo', 2), 0);
+});
+
+test('computeCardPaymentDueMillis: 利用開始2時間未満で受け付けた当日カードは、graceで受付直後に失効せず利用開始を上限とする（Issue #406）', function () {
+  var Booking = loadBooking();
+  var createdAt = new Date('2026-10-01T13:00:00+09:00').getTime();
+  var startAt = new Date('2026-10-01T14:00:00+09:00').getTime();
+  /* grace無し（従来）: 開始-2hが受付以前になり、受付と同時に失効する */
+  assert.strictEqual(Booking.computeCardPaymentDueMillis(createdAt, startAt, 2), startAt - 2 * 3600000);
+  /* grace有り: 受付+2hか開始のどちらか早い方＝開始時刻 */
+  var due = Booking.computeCardPaymentDueMillis(createdAt, startAt, 2, 2);
+  assert.ok(due > createdAt);
+  assert.ok(due <= startAt);
+  /* 開始まで十分あるときはgraceを渡しても従来と同じ値 */
+  var farStart = new Date('2026-10-10T09:00:00+09:00').getTime();
+  assert.strictEqual(Booking.computeCardPaymentDueMillis(createdAt, farStart, 2, 2), Booking.computeCardPaymentDueMillis(createdAt, farStart, 2));
+});

@@ -456,9 +456,18 @@
   function isCardPaymentEligible(dateValue, startTimeValue, now) {
     if (!isNonEmpty(dateValue) || !isNonEmpty(startTimeValue)) return true;
     var base = isDateLike_(now) ? now : new Date();
+    /* Issue #406: 当日予約（利用日がAsia/Tokyo基準の今日）は96時間ルールの対象外。
+       サーバー側（Booking.gsのvalidateCreateBookingInput）と同じく、当日はカードを選べる。
+       当日予約を使える人の条件（初回利用の当日禁止）は別途isSameDayFirstTimeBlockedが担う。 */
+    if (dateValue === todayInJapan(base)) return true;
     var startMillis = jstWallClockToUtcMillis_(dateValue, startTimeValue);
     var msUntilStart = startMillis - base.getTime();
     return msUntilStart >= CARD_MIN_HOURS_BEFORE_START * 3600000;
+  }
+
+  /* Issue #406: 利用日（'YYYY-MM-DD'）がAsia/Tokyo基準の今日か。カード注意書きの当日用文言の切替に使う。 */
+  function isSameDayInJapan(dateValue, now) {
+    return isNonEmpty(dateValue) && dateValue === todayInJapan(now);
   }
 
   var WEEKDAY_LABELS_JA_ = ['日', '月', '火', '水', '木', '金', '土'];
@@ -508,6 +517,8 @@
     ja: {
       title: '【クレジットカード決済のご案内】',
       linkTiming: '決済リンクは、お申し込みから24時間以内にメールでお送りします。',
+      sameDayTiming: '当日のご予約のため、お申し込み後に表示される決済ページですぐにお支払いください。',
+      sameDayDue: 'お支払い期限：決済ページの有効時間内（お申し込み後およそ30分）。利用開始時刻までに決済が完了しない場合は、予約が自動的に失効します。',
       dueLabel: function (dueDisplay) { return 'お支払い期限：お申し込みから72時間後（' + dueDisplay + '）'; },
       expiry: '期限までにお支払いのうえ、予約確定のご案内をお待ちください。期限までに予約が確定しなかった場合は、予約が自動的に失効します。',
       reapply: '失効後もご利用を希望される場合は、改めて予約フォームからお申し込みください。',
@@ -517,6 +528,8 @@
     en: {
       title: '[Credit Card Payment]',
       linkTiming: 'We will email you a payment link within 24 hours of your request.',
+      sameDayTiming: 'Because this is a same-day booking, please pay right away on the payment page shown after you submit.',
+      sameDayDue: 'Payment due: within the validity of the payment page (about 30 minutes after your request). If payment is not completed before your start time, the booking will expire automatically.',
       dueLabel: function (dueDisplay) { return 'Payment due: 72 hours after your request (' + dueDisplay + ')'; },
       expiry: 'Please complete payment before the deadline and wait for booking confirmation. If the booking is not confirmed by the deadline, it will expire automatically.',
       reapply: 'If you still wish to book after it expires, please submit a new request through the booking form.',
@@ -530,7 +543,11 @@
   function cardPaymentNoticeLines(dueDisplay, locale, options) {
     var t = CARD_PAYMENT_NOTICE_TEXT_[normalizeLocale(locale)];
     var opts = options || {};
-    var lines = [t.title, t.linkTiming, t.dueLabel(dueDisplay), t.expiry, t.reapply, t.alreadyPaid];
+    /* Issue #406: 当日予約は「24時間以内に決済リンク」「申込から72時間後」の案内が当てはまらない
+       （申込直後に決済ページへ進む）ため、当日用の文言に差し替える。 */
+    var lines = opts.sameDay
+      ? [t.title, t.sameDayTiming, t.sameDayDue, t.expiry, t.reapply, t.alreadyPaid]
+      : [t.title, t.linkTiming, t.dueLabel(dueDisplay), t.expiry, t.reapply, t.alreadyPaid];
     if (!opts.omitPendingNote) lines.push(t.pendingNote);
     return lines;
   }
@@ -942,6 +959,7 @@
     CARD_TTL_HOURS: CARD_TTL_HOURS,
     isCardPaymentMethodValue: isCardPaymentMethodValue,
     isCardPaymentEligible: isCardPaymentEligible,
+    isSameDayInJapan: isSameDayInJapan,
     cardPaymentDueDisplay: cardPaymentDueDisplay,
     cardPaymentIneligibleNotice: cardPaymentIneligibleNotice,
     cardPaymentNoticeLines: cardPaymentNoticeLines,

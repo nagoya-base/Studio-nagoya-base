@@ -1161,7 +1161,7 @@
       renderMultilineNotice_(els.cardPaymentNotice, null);
       return;
     }
-    renderMultilineNotice_(els.cardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale));
+    renderMultilineNotice_(els.cardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale, { sameDay: Logic.isSameDayInJapan(state.date) }));
   }
 
   /* name="paymentMethod"のラジオが切り替わるたびにカード注意書きの表示を更新する。
@@ -1258,7 +1258,7 @@
        支払期限はここでも改めて「今、確認画面を開いた時点+72時間」で再計算する
        （送信前の目安表示。実際の期限は仮受付メールに記載されるサーバー側の値が正）。 */
     if (Logic.isCardPaymentMethodValue(state.paymentMethod)) {
-      renderMultilineNotice_(els.confirmCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale));
+      renderMultilineNotice_(els.confirmCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale, { sameDay: Logic.isSameDayInJapan(state.date) }));
     } else {
       renderMultilineNotice_(els.confirmCardPaymentNotice, null);
     }
@@ -1489,7 +1489,7 @@
                 renderMultilineNotice_(els.completeCheckoutNotice, null);
                 renderMultilineNotice_(els.completeCheckoutUncertainNotice, null);
                 if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = true;
-                renderMultilineNotice_(els.completeCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale));
+                renderMultilineNotice_(els.completeCardPaymentNotice, Logic.cardPaymentNoticeLines(Logic.cardPaymentDueDisplay(), locale, { sameDay: Logic.isSameDayInJapan(state.date) }));
               } else {
                 renderMultilineNotice_(els.completeCardPaymentNotice, null);
                 renderMultilineNotice_(els.completeCheckoutNotice, null);

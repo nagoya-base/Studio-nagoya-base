@@ -182,7 +182,10 @@ function computeAdminCardPaymentDueAt_(record, timezone) {
   if (!Booking.isCardPaymentMethod(record.paymentMethod)) return '';
   if (!isAdminWebDateLike_(record.createdAt) || !isAdminWebDateLike_(record.startAt)) return '';
   var ttlConfig = BookingConfig.getTtlConfig();
-  var dueMillis = Booking.computeCardPaymentDueMillis(record.createdAt.getTime(), record.startAt.getTime(), ttlConfig.minHoursBeforeStart);
+  var dueMillis = Booking.computeCardPaymentDueMillis(
+    record.createdAt.getTime(), record.startAt.getTime(), ttlConfig.minHoursBeforeStart,
+    Booking.cardMinHoldHours(record, timezone, ttlConfig.minHoldHours)
+  );
   return formatAdminDateTime_(new Date(dueMillis), timezone);
 }
 

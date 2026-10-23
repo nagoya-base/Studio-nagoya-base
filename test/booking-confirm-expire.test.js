@@ -1188,3 +1188,43 @@ test('confirmBooking: 訂正案内後の再修正は再び未案内として拒�
   assert.strictEqual(ctx.sandbox.sendPriceUpdateMail(bookingId).success, true, 'forceなしで最新の金額を再案内できる');
   assert.strictEqual(ctx.sandbox.confirmBooking(bookingId).success, true);
 });
+
+/* ---------- Issue #406: 当日予約のカード決済 ---------- */
+
+test('expirePendingBookings: 利用開始まで2時間未満で受け付けた当日のカードPENDINGは、受付直後に失効せず、利用開始後に失効する（Issue #406）', function () {
+  var ctx = setup();
+  var receivedAt = new Date('2026-10-01T20:00:00+09:00');
+  var startAt = new Date('2026-10-01T21:00:00+09:00');
+  var created = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({
+      paymentMethod: 'オンラインクレジットカード', customerType: 'returning',
+      date: '2026-10-01', startTime: '21:00', durationMinutes: 120
+    }),
+    receivedAt
+  );
+  assert.strictEqual(created.success, true, '当日+利用経験ありのカード予約はPENDING作成に成功する');
+
+  /* 通常のカードTTL（開始-2h）は受付以前＝grace無しなら即EXPIREDだった */
+  var justAfter = ctx.sandbox.expirePendingBookings(new Date(receivedAt.getTime() + 5 * 60000));
+  assert.strictEqual(justAfter.expiredCount, 0, '当日カードPENDINGを受付直後に失効させてはいけない');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(created.bookingId).record.status, 'PENDING');
+
+  var afterStart = ctx.sandbox.expirePendingBookings(new Date(startAt.getTime() + 60000));
+  assert.strictEqual(afterStart.expiredCount, 1, '利用開始後には失効する');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(created.bookingId).record.status, 'EXPIRED');
+});
+
+test('expirePendingBookings: 翌日以降のカードPENDINGはgraceの対象外で従来どおり（Issue #406の回帰確認）', function () {
+  var ctx = setup();
+  var receivedAt = new Date('2026-10-01T20:00:00+09:00');
+  var created = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({
+      paymentMethod: 'オンラインクレジットカード', customerType: 'returning',
+      date: '2026-10-10', startTime: '10:00'
+    }),
+    receivedAt
+  );
+  assert.strictEqual(created.success, true);
+  assert.strictEqual(ctx.sandbox.expirePendingBookings(new Date(receivedAt.getTime() + 71 * 3600000)).expiredCount, 0);
+  assert.strictEqual(ctx.sandbox.expirePendingBookings(new Date(receivedAt.getTime() + 73 * 3600000)).expiredCount, 1);
+});

@@ -784,12 +784,7 @@ var BookingRepository = (function () {
        * Issue #334: カード決済のPENDINGのみCARD_TTL_HOURS（72時間・受付起点）を使う。
        * 現金/PayPay/未定はScript Properties由来のttlConfig.ttlHours（既定24時間）のまま
        * 一切変更しない（Issue #334本文「現金・PayPay・未定の失効挙動（24時間）は変更しない」）。
-       * カードはvalidateCreateBookingInputで96時間未満の申込自体を拒否しているため、
-       * 「利用開始まで2時間未満で受け付けた当日予約」のgrace（minHoldHours）は通常発生しない。
-       * 96時間ルール導入前に作成された既存のカードPENDING行に対する安全策として
-       * minHoldHoursは適用せず0固定にし、「利用開始の2時間前を超えない」上限
-       * （minHoursBeforeStart。既存のPENDING_TTL_MIN_HOURS_BEFORE_START）だけは
-       * 維持する（Booking.computeCardPaymentDueMillis参照）。
+       * Issue #406: 当日予約のカードのみ、現金等と同じgrace（minHoldHours）を使う（下記）。
        */
       var isCard = Booking.isCardPaymentMethod(record.paymentMethod);
 
@@ -836,31 +831,26 @@ var BookingRepository = (function () {
          * Issue #334: カード決済のPENDINGのみCARD_TTL_HOURS（72時間・受付起点）を使う。
          * 現金/PayPay/未定はScript Properties由来のttlConfig.ttlHours（既定24時間）のまま
          * 一切変更しない（Issue #334本文「現金・PayPay・未定の失効挙動（24時間）は変更しない」）。
-         * カードはvalidateCreateBookingInputで96時間未満の申込自体を拒否しているため、
-         * 「利用開始まで2時間未満で受け付けた当日予約」のgrace（minHoldHours）は通常発生しない。
-         * 96時間ルール導入前に作成された既存のカードPENDING行に対する安全策として
-         * minHoldHoursは適用せず0固定にし、「利用開始の2時間前を超えない」上限
-         * （minHoursBeforeStart。既存のPENDING_TTL_MIN_HOURS_BEFORE_START）だけは
-         * 維持する（Booking.computeCardPaymentDueMillis参照）。
          */
         var ttlHours = isCard ? Booking.CARD_TTL_HOURS : ttlConfig.ttlHours;
-        var minHoldHours;
-        if (isCard) {
-          minHoldHours = 0;
-        } else {
-          /*
-           * Issue #270（レビュー対応）: 「利用開始まで2時間未満で受け付けた当日予約」が
-           * 作成直後に即EXPIREDになる事故を防ぐため、受付時刻(createdAt)の暦日(Asia/Tokyo基準)と
-           * 予約の利用日(date)が一致する場合のみ、Booking.computeTtlExpiryMillisのgrace
-           * （通常TTLが受付時刻以前になる直前当日予約にだけ使う最大猶予。利用開始時刻を
-           * 必ず上限とする＝expiry<=startAtを保証する）を適用する。一致しない（＝翌日以降に
-           * 通常の余裕を持って受け付けた）予約はminHoldHours=0のまま#268時点と完全に同じ
-           * TTL計算になる（既存の翌日以降予約のTTLへの影響なし）。
-           */
-          var createdDateString = Booking.formatDateInTimezone(new Date(createdAtMillis), ttlConfig.timezone);
-          var isSameDayBooking = !!createdDateString && record.date === createdDateString;
-          minHoldHours = isSameDayBooking ? ttlConfig.minHoldHours : 0;
-        }
+        /*
+         * Issue #406: 当日予約のカードもgrace（minHoldHours）を使う。現金等と同じく、受付時刻
+         * (createdAt)の暦日(Asia/Tokyo基準)と利用日(date)が一致する場合のみ。カードで
+         * 通常TTL（利用開始-minHoursBeforeStart）が受付時刻以前になる直前の当日予約が、
+         * 作成直後（決済開始前）に即EXPIREDになる事故を防ぐ。一致しない（翌日以降）は
+         * minHoldHours=0のままで従来のTTL計算と完全に同じ。
+         *
+         * Issue #270（レビュー対応）: 「利用開始まで2時間未満で受け付けた当日予約」が
+         * 作成直後に即EXPIREDになる事故を防ぐため、受付時刻(createdAt)の暦日(Asia/Tokyo基準)と
+         * 予約の利用日(date)が一致する場合のみ、Booking.computeTtlExpiryMillisのgrace
+         * （通常TTLが受付時刻以前になる直前当日予約にだけ使う最大猶予。利用開始時刻を
+         * 必ず上限とする＝expiry<=startAtを保証する）を適用する。一致しない（＝翌日以降に
+         * 通常の余裕を持って受け付けた）予約はminHoldHours=0のまま#268時点と完全に同じ
+         * TTL計算になる（既存の翌日以降予約のTTLへの影響なし）。
+         */
+        var createdDateString = Booking.formatDateInTimezone(new Date(createdAtMillis), ttlConfig.timezone);
+        var isSameDayBooking = !!createdDateString && record.date === createdDateString;
+        var minHoldHours = isSameDayBooking ? ttlConfig.minHoldHours : 0;
 
         if (!Booking.isExpired(createdAtMillis, startAtMillis, ttlHours, ttlConfig.minHoursBeforeStart, now.getTime(), minHoldHours)) {
           return; /* まだ有効 */
