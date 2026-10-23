@@ -590,8 +590,13 @@ var BookingRepository = (function () {
     try {
       var mailResult = BookingMailer.sendConfirmedMailForBooking(bookingId);
       response.mailSent = !!(mailResult && mailResult.success && !mailResult.skipped);
+      if (mailResult && mailResult.success && mailResult.skipped && mailResult.reason === 'ALREADY_SENT') {
+        response.mailAlreadySent = true;
+      }
       if (!mailResult || !mailResult.success) {
-        response.mailError = mailResult && mailResult.error;
+        response.mailError = (mailResult && mailResult.error) || { code: 'UNEXPECTED_ERROR', message: '確定メールの送信結果を取得できませんでした。' };
+        /* Issue #418: 失敗理由コードのみ残す（メールアドレス・本文・鍵情報は残さない）。 */
+        Logger.log('BookingRepository: CONFIRMEDメール未送信 ' + bookingId + ' code=' + response.mailError.code);
       }
     } catch (mailError) {
       /* PRレビュー対応: 例外messageをそのままLoggerへ出さず、BookingMailer.gsと同じ

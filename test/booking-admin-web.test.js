@@ -242,7 +242,7 @@ test('getAdminBookings: { todayJst, bookings }を返し、一覧の各要素は�
      Issue #341 PR-D: 決済の状態フラグ（isStripeCheckout/paymentStatus/
      refundDecisionRequired/paymentRecoveryRequired）を追加。
      いずれも真偽値・状態コードのみで、Stripe識別子・PIIは一覧に含めない。 */
-  var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status', 'cardPaymentDueAt', 'effectivePriceAmount', 'priceOverridden', 'priceUpdateNeeded',
+  var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status', 'confirmedMailPending', 'cardPaymentDueAt', 'effectivePriceAmount', 'priceOverridden', 'priceUpdateNeeded',
     'isStripeCheckout', 'isCardPayment', 'paymentLinkSent', 'paymentStatus', 'refundDecisionRequired', 'paymentRecoveryRequired'];
   assert.deepStrictEqual(Object.keys(item).sort(), allowedKeys.slice().sort());
   assert.strictEqual(item.cardPaymentDueAt, '', '現金等カード以外の支払方法ではcardPaymentDueAtは空文字であるべき');
@@ -1401,5 +1401,94 @@ test('Issue #398: 現金・PayPayは試行ID予約の有無にかかわらず従
     var bookingId = createPending(ctx, { paymentMethod: method, startTime: i === 0 ? '10:00' : '13:00' });
     assert.strictEqual(detailOf(ctx, bookingId).isStripeCheckout, false);
     assert.strictEqual(ctx.sandbox.adminConfirmBooking(bookingId).success, true, method);
+  });
+});
+
+/* ---------- Issue #418: Admin確定時の確定メール ---------- */
+
+function confirmedMailsOf_(mailApp) {
+  return mailApp._sentEmails.filter(function (mail) { return mail.subject && mail.subject.indexOf('予約が確定しました') !== -1; });
+}
+
+['現金', 'PayPay'].forEach(function (paymentMethod) {
+  test('adminConfirmBooking（Issue #418）: ' + paymentMethod + 'のPENDING→CONFIRMEDで確定メールが1通送られ、confirmedMailSentAtが記録される。再confirmでも二重送信しない', function () {
+    var mailApp = stubs.createMailAppStub();
+    var ctx = setup({ mailApp: mailApp });
+    var bookingId = createPending(ctx, { paymentMethod: paymentMethod });
+
+    var result = ctx.sandbox.adminConfirmBooking(bookingId);
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.mailSent, true);
+    assert.strictEqual(confirmedMailsOf_(mailApp).length, 1);
+    assert.ok(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.confirmedMailSentAt);
+
+    var again = ctx.sandbox.adminConfirmBooking(bookingId);
+    assert.strictEqual(again.success, true);
+    assert.strictEqual(again.alreadyConfirmed, true);
+    assert.strictEqual(again.mailSent, undefined, '送信済みなら再送処理自体を行わない');
+    assert.strictEqual(confirmedMailsOf_(mailApp).length, 1);
+  });
+});
+
+test('adminConfirmBooking（Issue #418）: MailApp失敗でもCONFIRMEDのまま、mailSent=false/mailError.codeで識別でき、送信元復旧後の再confirmで再試行される', function () {
+  var failing = true;
+  var mailApp = stubs.createMailAppStub();
+  var realSend = mailApp.sendEmail;
+  mailApp.sendEmail = function (m) {
+    if (failing) throw new Error('mail server down');
+    return realSend(m);
+  };
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx);
+  var sentBeforeConfirm = mailApp._sentEmails.length;
+
+  var result = ctx.sandbox.adminConfirmBooking(bookingId);
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.status, 'CONFIRMED');
+  assert.strictEqual(result.mailSent, false);
+  assert.strictEqual(result.mailError.code, 'MAIL_SEND_FAILED');
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.status, 'CONFIRMED');
+  assert.ok(!record.confirmedMailSentAt);
+
+  var list = ctx.sandbox.getAdminBookings({});
+  var item = (list.bookings || []).filter(function (b) { return b.bookingId === bookingId; })[0];
+  assert.strictEqual(item.confirmedMailPending, true);
+
+  failing = false;
+  var retry = ctx.sandbox.adminConfirmBooking(bookingId);
+  assert.strictEqual(retry.alreadyConfirmed, true);
+  assert.strictEqual(retry.mailSent, true);
+  assert.strictEqual(mailApp._sentEmails.length - sentBeforeConfirm, 1);
+});
+
+test('adminConfirmBooking（Issue #418）: メールアドレス欠落はMailAppを呼ばずfail-closed。CONFIRMEDは維持される', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = createPending(ctx);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { email: '' });
+  var before = mailApp._sentEmails.length;
+
+  var result = ctx.sandbox.adminConfirmBooking(bookingId);
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.mailSent, false);
+  assert.strictEqual(result.mailError.code, 'MAIL_NOT_READY');
+  assert.strictEqual(mailApp._sentEmails.length, before);
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'CONFIRMED');
+});
+
+test('adminConfirmBooking（Issue #418）: Mail設定不足はfail-closed。ログに利用者メールアドレスを残さない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp, properties: { BOOKING_MAIL_REPLY_TO: '' } });
+  var bookingId = createPending(ctx, { email: 'private-user@example.com' });
+  var before = mailApp._sentEmails.length;
+
+  var result = ctx.sandbox.adminConfirmBooking(bookingId);
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.mailSent, false);
+  assert.strictEqual(result.mailError.code, 'MAIL_NOT_READY');
+  assert.strictEqual(mailApp._sentEmails.length, before);
+  ctx.globals.Logger._logs.forEach(function (line) {
+    assert.strictEqual(line.indexOf('private-user@example.com'), -1);
   });
 });
