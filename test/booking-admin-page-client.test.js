@@ -2506,7 +2506,7 @@ test('render: 一覧カードは金額修正済み・未送信の予約にのみ
 });
 
 /* ========================================================================== */
-/* Issue #341 PR-D: 取消・返金／鍵承認／来場案内の再送                             */
+/* Issue #341 PR-D: 取消・返金／来場案内の再送                                   */
 /* ========================================================================== */
 
 function stripeDetailBooking(overrides) {
@@ -2521,9 +2521,6 @@ function stripeDetailBooking(overrides) {
     stripeDashboardUrl: 'https://dashboard.stripe.com/test/payments/pi_test_1',
     refundAttemptId: '',
     refundInFlight: false,
-    accessApprovalRequired: true,
-    accessApprovalPending: true,
-    accessApprovedAt: '',
     reminderSentAt: '',
     reminderSentAtVersion: 0
   }, overrides || {}));
@@ -2554,17 +2551,17 @@ test('PR-D buildRefundConfirmMessage_/describePaymentActionResult_: 返金額と
   var unknown = sandbox.describePaymentActionResult_({ success: false, cancelled: true, error: { code: 'REFUND_RESULT_UNKNOWN', message: '返金が行われたかは未確定です。' } }, '完了');
   assert.ok(unknown.indexOf('実行できませんでした') === 0);
   assert.ok(unknown.indexOf('予約の取消は完了しています') !== -1);
-  var skipped = sandbox.describePaymentActionResult_({ success: false, skipped: true, error: { code: 'ACCESS_NOT_APPROVED', message: '鍵承認がまだです' } }, '送信しました');
+  var skipped = sandbox.describePaymentActionResult_({ success: false, skipped: true, error: { code: 'PAYMENT_NOT_SETTLED', message: '入金済みの状態ではありません' } }, '送信しました');
   assert.ok(skipped.indexOf('送信条件を満たさない') === 0);
-  assert.ok(skipped.indexOf('鍵承認がまだです') !== -1);
+  assert.ok(skipped.indexOf('入金済みの状態ではありません') !== -1);
 });
 
-test('PR-D 一覧: Stripeで入金済みの有効な予約は通常の「キャンセル」ではなく「取消・返金」（詳細を開く）を出し、要対応・鍵承認待ちを表示する', function () {
+test('PR-D 一覧: Stripeで入金済みの有効な予約は通常の「キャンセル」ではなく「取消・返金」（詳細を開く）を出し、要対応を表示する。鍵承認待ちは表示しない', function () {
   var sandbox = loadClientSandbox();
   sandbox.state.todayJst = TODAY;
   sandbox.state.filter = 'all';
   sandbox.state.bookings = [
-    booking({ bookingId: 'stripe-paid', status: 'CONFIRMED', refundDecisionRequired: true, paymentRecoveryRequired: true, accessApprovalPending: true }),
+    booking({ bookingId: 'stripe-paid', status: 'CONFIRMED', refundDecisionRequired: true, paymentRecoveryRequired: true }),
     booking({ bookingId: 'cash', status: 'CONFIRMED' })
   ];
   var list = sandbox.document.getElementById('list');
@@ -2574,7 +2571,7 @@ test('PR-D 一覧: Stripeで入金済みの有効な予約は通常の「キャ�
   assert.ok(html.indexOf('data-action="cancel" data-id="stripe-paid"') === -1);
   assert.ok(html.indexOf('data-action="cancel" data-id="cash"') !== -1, '現金予約は従来どおりのキャンセルボタン');
   assert.ok(html.indexOf('決済要対応') !== -1);
-  assert.ok(html.indexOf('鍵承認待ち') !== -1);
+  assert.ok(html.indexOf('鍵承認待ち') === -1);
 });
 
 test('PR-D 取消・返金: 入力内容をそのままサーバーへ渡し、処理中の二重クリックでは2回目を送らない', function () {
@@ -2600,20 +2597,14 @@ test('PR-D 取消・返金: 確認ダイアログでキャンセルした場合�
   assert.strictEqual(sandbox.google.script.run.calls.filter(function (c) { return c.name === 'adminCancelBookingWithRefund'; }).length, 0);
 });
 
-test('PR-D 鍵承認・来場案内の再送: 承認は承認待ちの予約だけ、再送は送信履歴のバージョンを添えて呼ぶ', function () {
-  var sandbox = loadClientSandbox();
-  sandbox.showDetailModal(stripeDetailBooking({ reminderSentAt: '2026-10-01 18:00', reminderSentAtVersion: 1759309200000 }));
-  assert.strictEqual(sandbox.paymentUi_.approveButton.disabled, false);
-  sandbox.runApproveAccess_();
-  var run = sandbox.google.script.run;
-  assert.strictEqual(run.calls.filter(function (c) { return c.name === 'adminApproveAccess'; }).length, 1);
-
+test('PR-D 来場案内の再送: 鍵承認のボタン・表示は無く、再送は鍵承認なしで送信履歴のバージョンを添えて呼ぶ', function () {
   var sandbox2 = loadClientSandbox();
-  sandbox2.showDetailModal(stripeDetailBooking({ accessApprovalPending: false, accessApprovedAt: '2026-09-25 10:00', reminderSentAtVersion: 1759309200000 }));
-  sandbox2.runApproveAccess_();
+  sandbox2.showDetailModal(stripeDetailBooking({ reminderSentAtVersion: 1759309200000 }));
+  assert.strictEqual(sandbox2.paymentUi_.approveButton, undefined, '鍵承認ボタンは廃止');
+  assert.strictEqual(sandbox2.runApproveAccess_, undefined);
+  assert.ok(sandbox2.paymentUi_.accessStatusEl.textContent.indexOf('鍵承認') === -1);
   sandbox2.runResendReminder_();
   var calls2 = sandbox2.google.script.run.calls;
-  assert.strictEqual(calls2.filter(function (c) { return c.name === 'adminApproveAccess'; }).length, 0);
   var resend = calls2.filter(function (c) { return c.name === 'adminResendReminderMail'; });
   assert.strictEqual(resend.length, 1);
   assert.deepStrictEqual(Array.from(resend[0].args), ['SX-20261010-AAAAAAAA', 1759309200000]);

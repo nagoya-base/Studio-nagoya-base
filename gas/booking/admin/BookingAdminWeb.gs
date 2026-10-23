@@ -195,7 +195,7 @@ function getAdminBookings() {
   var bookings = SpreadsheetRepository.getAllBookings().map(function (item) {
     var record = item.record;
     var priceSummary = buildAdminPriceSummary_(record);
-    var paymentSummary = buildAdminPaymentSummary_(record, timezone);
+    var paymentSummary = buildAdminPaymentSummary_(record);
     return {
       bookingId: record.bookingId,
       createdAt: normalizeAdminCreatedAt_(record.createdAt, timezone),
@@ -229,8 +229,7 @@ function getAdminBookings() {
       paymentLinkSent: Booking.hasPaymentLinkBeenSent(record),
       paymentStatus: paymentSummary.paymentStatus,
       refundDecisionRequired: paymentSummary.refundDecisionRequired,
-      paymentRecoveryRequired: paymentSummary.paymentRecoveryRequired,
-      accessApprovalPending: paymentSummary.accessApprovalPending
+      paymentRecoveryRequired: paymentSummary.paymentRecoveryRequired
     };
   });
   return { todayJst: todayJst, bookings: bookings };
@@ -252,22 +251,18 @@ function needsPriceUpdateNotice_(record) {
 }
 
 /*
- * Issue #341 PR-D: 決済・返金・鍵承認の表示用サマリ（一覧・詳細で共通）。判定はBooking.gsの
- * 関数（isStripeCheckoutBooking/requiresAccessApproval/evaluateAccessGate）へ委ね、ここでは
+ * Issue #341 PR-D: 決済・返金の表示用サマリ（一覧・詳細で共通）。判定はBooking.gsの
+ * 関数（isStripeCheckoutBooking）へ委ね、ここでは
  * 複製しない。表示のヒントに過ぎず、実際の可否は各操作のサーバー関数がLock取得後に再判定する。
  * - refundDecisionRequired: Stripeで入金済み（paid）の有効な予約。通常の「キャンセル」では
  *   取り消せず（BookingRepository.cancelBookingAdminがREFUND_DECISION_REQUIREDで拒否する）、
  *   「取消・返金」を使う必要がある。
- * - accessApprovalPending: 鍵承認ゲートの対象で、CONFIRMEDかつ鍵承認以外の条件を満たし、
- *   まだ承認されていない（承認ボタンを押せる）。
  */
-function buildAdminPaymentSummary_(record, timezone) {
+function buildAdminPaymentSummary_(record) {
   var isStripeCheckout = Booking.isStripeCheckoutBooking(record);
   var normalized = Booking.normalizePaymentStatus(record.paymentStatus);
   var paymentStatus = normalized === null ? 'unknown' : normalized;
   var active = record.status === Booking.STATUS.PENDING || record.status === Booking.STATUS.CONFIRMED;
-  var accessRequired = Booking.requiresAccessApproval(record, timezone);
-  var preApprovalGate = Booking.evaluateAccessGate(record, timezone, { ignoreApproval: true });
   return {
     isStripeCheckout: isStripeCheckout,
     paymentStatus: paymentStatus,
@@ -276,9 +271,7 @@ function buildAdminPaymentSummary_(record, timezone) {
     refundDecisionRequired: isStripeCheckout && active &&
       (normalized === null || normalized === Booking.PAYMENT_STATUS.PAID || normalized === Booking.PAYMENT_STATUS.REFUND_PENDING ||
         normalized === Booking.PAYMENT_STATUS.CHECKOUT_PENDING || (!!record.paymentAttemptId && !record.paymentAttemptResolvedAt)),
-    paymentRecoveryRequired: !!record.paymentRecoveryRequiredAt,
-    accessApprovalRequired: accessRequired,
-    accessApprovalPending: accessRequired && record.status === Booking.STATUS.CONFIRMED && preApprovalGate.ok && !record.accessApprovedAt
+    paymentRecoveryRequired: !!record.paymentRecoveryRequiredAt
   };
 }
 
@@ -317,7 +310,7 @@ function getAdminBookingDetail(bookingId) {
   }
   var timezone = BookingConfig.getAvailabilityConfig().timezone;
   var record = found.record;
-  var paymentSummary = buildAdminPaymentSummary_(record, timezone);
+  var paymentSummary = buildAdminPaymentSummary_(record);
   return {
     success: true,
     booking: {
@@ -489,9 +482,6 @@ function getAdminBookingDetail(bookingId) {
       paymentLastErrorMessage: record.paymentLastErrorMessage || '',
       paymentRecoveryRequiredAt: formatAdminDateTime_(record.paymentRecoveryRequiredAt, timezone),
       paymentRecoveryReason: record.paymentRecoveryReason || '',
-      accessApprovalRequired: paymentSummary.accessApprovalRequired,
-      accessApprovalPending: paymentSummary.accessApprovalPending,
-      accessApprovedAt: formatAdminDateTime_(record.accessApprovedAt, timezone),
       /* 来場案内の再送の二重送信防止用トークン（epoch ms。未送信は0）。クライアントは
          解釈せずadminResendReminderMailへそのまま往復させる。 */
       reminderSentAtVersion: isAdminWebDateLike_(record.reminderSentAt) ? record.reminderSentAt.getTime() : 0
@@ -598,15 +588,10 @@ function adminReconcileRefund(bookingId) {
   return sanitizeForClient_(reconcileBookingRefund(bookingId));
 }
 
-/* 鍵承認（BookingAccessApproval.approveAccess）。メール送信は一切行わない。 */
-function adminApproveAccess(bookingId) {
-  return sanitizeForClient_(approveBookingAccess(bookingId));
-}
-
 /*
  * 来場案内（前日リマインド）の再送（Issue #341本文どおり）。既存の正式関数
  * BookingMailer.sendReminderMailForBooking(bookingId, { force: true })へ委譲する。
- * 送信可否（鍵承認ゲート・予約状態・設定不足）はLock取得後の最新レコードでサーバー側が
+ * 送信可否（決済・Recoveryゲート・予約状態・設定不足）はLock取得後の最新レコードでサーバー側が
  * 判定し、フロントはskipped/error.messageをそのまま表示する。
  * expectedSentAtVersion: 予約詳細のreminderSentAtVersionをそのまま渡す（二重クリック・
  * 別タブからの重複送信防止。BookingMailer.gs参照）。

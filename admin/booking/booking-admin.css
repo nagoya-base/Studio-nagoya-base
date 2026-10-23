@@ -748,7 +748,7 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 .reschedule-section-danger button { background: var(--color-danger); }
 
 /*
- * Issue #341 PR-D: 決済・返金（Stripe）／取消・返金／鍵承認・来場案内の各欄と、
+ * Issue #341 PR-D: 決済・返金（Stripe）／取消・返金／来場案内の各欄と、
  * 決済要対応（Recovery）一覧パネル。#price-edit-section等と同じく
  * booking-admin.js（initPaymentUi_/initPaymentRecoveryUi_）が1回だけDOM生成する。
  */

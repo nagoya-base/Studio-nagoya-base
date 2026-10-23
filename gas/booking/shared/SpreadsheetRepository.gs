@@ -285,11 +285,9 @@ var SpreadsheetRepository = (function () {
      *   feeRecoveryRequiredAt/feeRecoveryReasonと同じ「明示的な補正関数でのみ
      *   クリアできる」設計を踏襲する想定。空でない間は以後の自動的な決済状態遷移を
      *   停止する。実際の遷移処理自体はPR-B/PR-Cで実装する）。
-     * - accessApprovedAt: 鍵・来場案内の開示承認日時（Issue #341本文の鍵承認ゲート）。
-     *   空＝未承認。status・paymentStatusのいずれとも独立しており、この列の更新だけでは
-     *   予約状態を一切変更しない。カード決済かつ当日予約でない予約にのみ意味を持つ
-     *   （対象外の予約では常に空のまま）。この列を承認済みにする操作自体はメール送信を
-     *   一切トリガーしない（Issue #341受入条件）。
+     * - accessApprovedAt: 旧・鍵承認ゲート（Issue #341 PR-D）の承認日時。Issue #414で鍵承認を廃止したため
+     *   未使用（来場案内の送信判定・Booking Adminの表示・操作のいずれにも使わない）。既存台帳の列と
+     *   値は後方互換のため残し、読み取りと既存データには影響しない（破壊的な列削除はしない）。
      */
     'paymentAttemptId',
     'paymentAttemptResolvedAt',

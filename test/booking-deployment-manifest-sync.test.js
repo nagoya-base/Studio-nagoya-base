@@ -120,7 +120,7 @@ test('README.mdの配布対象ファイル表: Booking Webhook列にBooking Admi
   var table = parseDeploymentTable(fs.readFileSync(README_PATH, 'utf8'));
   var adminOnlyFiles = ['BookingAdmin.gs', 'BookingAdminWeb.gs', 'BookingTriggers.gs', 'BookingReminderTriggers.gs', 'BookingReminderDiagnostics.gs',
     /* Issue #341 PR-D */
-    'BookingRefund.gs', 'BookingAccessApproval.gs', 'BookingAdminAlerts.gs'];
+    'BookingRefund.gs', 'BookingAdminAlerts.gs'];
 
   adminOnlyFiles.forEach(function (fileName) {
     assert.ok(
@@ -147,9 +147,9 @@ test('README.mdの配布対象ファイル表・manifestのいずれにも同一
   });
 });
 
-test('Issue #341 PR-D: 取消・返金／鍵承認の管理者専用ファイルは公開Booking Web App・Webhookのいずれにも配布しない', function () {
+test('Issue #341 PR-D: 取消・返金の管理者専用ファイルは公開Booking Web App・Webhookのいずれにも配布しない', function () {
   var table = parseDeploymentTable(fs.readFileSync(README_PATH, 'utf8'));
-  ['BookingRefund.gs', 'BookingAccessApproval.gs', 'BookingAdminAlerts.gs'].forEach(function (fileName) {
+  ['BookingRefund.gs', 'BookingAdminAlerts.gs'].forEach(function (fileName) {
     assert.ok(manifest.BOOKING_ADMIN_FILES.indexOf(fileName) !== -1, fileName + 'はBooking Adminへ配布する');
     assert.strictEqual(manifest.BOOKING_WEB_APP_FILES.indexOf(fileName), -1, fileName + 'を公開Web Appへ配布してはならない');
     assert.strictEqual(manifest.BOOKING_WEBHOOK_FILES.indexOf(fileName), -1, fileName + 'をWebhookへ配布してはならない');
