@@ -413,19 +413,30 @@ var BookingMailTemplates = (function () {
    * REMINDER（前日リマインド + 来場案内。1通にまとめる）。
    * PENDING/CONFIRMED直後のメールと異なり、ここでは来場方法・キーボックス位置・
    * 解錠コード等の秘密値を含める（CONFIRMEDの予約にのみ送る前提。呼び出し側で保証する）。
+   *
+   * 文言は送信日と利用日の関係で切り替える（Issue #420）。config.timezone基準で
+   * 利用日 === 送信日（options.now。省略時は現在時刻）なら「本日」、それ以外は「明日」。
+   * 送信経路（前日18時台・19時以降の即時送信・21時catch-up・当日即時送信）ごとの
+   * 複製はせず、すべてこの1箇所で決める。
    */
-  function buildReminderMail(record, config, accessGuide) {
+  function buildReminderMail(record, config, accessGuide, options) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
     var startTime = formatTime_(record.startAt, timezone);
     var endTime = formatTime_(record.endAt, timezone);
     var guide = accessGuide || {};
+    var now = options && options.now;
+    var sendDate = BookingAvailability.formatDateInTimezone(now || new Date(), timezone);
+    var useDate = record.date && typeof record.date.getTime === 'function'
+      ? BookingAvailability.formatDateInTimezone(record.date, timezone)
+      : record.date;
+    var dayWord = sendDate && useDate === sendDate ? '本日' : '明日';
 
-    var subject = '【' + brandLabel + '】明日のご利用案内';
+    var subject = '【' + brandLabel + '】' + dayWord + 'のご利用案内';
     var body = joinNonEmpty_([
       record.name + ' 様',
       '',
-      '明日のご予約について、来場方法をご案内します。',
+      dayWord + 'のご予約について、来場方法をご案内します。',
       '',
       '予約ID: ' + record.bookingId,
       '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),

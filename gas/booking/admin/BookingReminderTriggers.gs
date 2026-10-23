@@ -72,7 +72,7 @@ function sendNextDayReminders(now) {
        * 実際に経由させ、ロック取得後の最新レコードに対する防御的な再確認にする
        * （本番と診断が同じ共通判定関数を呼ぶという受入条件に対応）。
        */
-      var result = BookingMailer.sendReminderMailForBooking(item.record.bookingId, { targetDateString: tomorrowDateString });
+      var result = BookingMailer.sendReminderMailForBooking(item.record.bookingId, { targetDateString: tomorrowDateString, now: now });
       var gateCode = result && result.skipped && result.error && result.error.code;
       if (gateCode === 'PAYMENT_NOT_SETTLED' || gateCode === 'PAYMENT_RECOVERY_REQUIRED') {
         /* 決済ゲート（Issue #341 PR-D）による意図的な送信停止。メール障害ではないため

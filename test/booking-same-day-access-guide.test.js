@@ -118,6 +118,15 @@ function sendSameDay(ctx, now) {
   return ctx.sandbox.BookingMailer.sendSameDayAccessGuideForBooking(BOOKING_ID, { now: now || NOW });
 }
 
+test('当日送信の来場案内メールは「本日のご利用案内」になる（Issue #420）', function () {
+  var ctx = setup(cashRecord());
+  sendSameDay(ctx);
+  assert.strictEqual(guideMails(ctx).length, 1);
+  assert.match(guideMails(ctx)[0].subject, /本日のご利用案内/);
+  assert.match(guideMails(ctx)[0].body, /本日のご予約について/);
+  assert.strictEqual(guideMails(ctx)[0].body.indexOf('明日'), -1);
+});
+
 test('当日 + CONFIRMED + 全ゲートOK → 来場案内を即時送信し、reminderSentAt/accessGuideSentAtを更新する', function () {
   var ctx = setup(cashRecord());
   var result = sendSameDay(ctx);

@@ -249,6 +249,7 @@ test('sendNextDayReminders: MailApp例外に利用者メールアドレスが含
     assert.strictEqual(line.indexOf('TEST-KEYBOX'), -1, 'Loggerにキーボックス番号を残してはいけない: ' + line);
     assert.strictEqual(line.indexOf('TEST-CODE'), -1, 'Loggerに解錠コードを残してはいけない: ' + line);
     assert.strictEqual(line.indexOf('明日のご予約について'), -1, 'Loggerにメール本文を残してはいけない: ' + line);
+    assert.strictEqual(line.indexOf('本日のご予約について'), -1, 'Loggerにメール本文を残してはいけない: ' + line);
   });
 });
 

@@ -381,6 +381,45 @@ test('buildReminderMail: 「明日」の案内であることが分かり、来�
   assert.match(mail.body, /guide\.pdf/);
 });
 
+test('buildReminderMail: 当日送信（利用日 === 送信日）は「本日」の件名・本文になる（Issue #420）', function () {
+  var templates = loadTemplates();
+  var mail = templates.buildReminderMail(sampleRecord(), CONFIG, DUMMY_ACCESS_GUIDE, { now: new Date('2026-10-01T09:00:00+09:00') });
+  assert.match(mail.subject, /^【Studio X】本日のご利用案内$/);
+  assert.match(mail.body, /本日のご予約について、来場方法をご案内します。/);
+  assert.strictEqual(mail.body.indexOf('明日'), -1);
+});
+
+test('buildReminderMail: 前日送信（18時台・19時以降・21時catch-up）は「明日」の件名・本文になる（Issue #420）', function () {
+  var templates = loadTemplates();
+  ['2026-09-30T18:00:00+09:00', '2026-09-30T19:30:00+09:00', '2026-09-30T21:00:00+09:00'].forEach(function (iso) {
+    var mail = templates.buildReminderMail(sampleRecord(), CONFIG, DUMMY_ACCESS_GUIDE, { now: new Date(iso) });
+    assert.match(mail.subject, /^【Studio X】明日のご利用案内$/, iso);
+    assert.match(mail.body, /明日のご予約について、来場方法をご案内します。/, iso);
+    assert.strictEqual(mail.body.indexOf('本日'), -1, iso);
+  });
+});
+
+test('buildReminderMail: JST日付境界はconfig.timezone基準で判定する（UTCでは前日でもJSTでは当日）', function () {
+  var templates = loadTemplates();
+  /* 2026-09-30T15:30Z = JST 2026-10-01 00:30。UTC日付は9/30だがJSTでは利用日当日。 */
+  var justAfterMidnight = templates.buildReminderMail(sampleRecord(), CONFIG, DUMMY_ACCESS_GUIDE, { now: new Date('2026-09-30T15:30:00Z') });
+  assert.match(justAfterMidnight.subject, /本日のご利用案内/);
+  /* 2026-09-30T14:59Z = JST 2026-09-30 23:59。まだ前日。 */
+  var justBeforeMidnight = templates.buildReminderMail(sampleRecord(), CONFIG, DUMMY_ACCESS_GUIDE, { now: new Date('2026-09-30T14:59:00Z') });
+  assert.match(justBeforeMidnight.subject, /明日のご利用案内/);
+});
+
+test('buildReminderMail: record.dateがDate値でも同じ判定になり、SNB / SNB mens / Studio Xで同じ挙動（Issue #420）', function () {
+  var templates = loadTemplates();
+  var now = new Date('2026-10-01T09:00:00+09:00');
+  ['snb', 'mens', 'studio_x'].forEach(function (brand) {
+    var same = templates.buildReminderMail(sampleRecord({ brand: brand, date: new Date('2026-10-01T00:00:00+09:00') }), CONFIG, DUMMY_ACCESS_GUIDE, { now: now });
+    assert.match(same.subject, /本日のご利用案内/, brand);
+    var next = templates.buildReminderMail(sampleRecord({ brand: brand, date: '2026-10-02' }), CONFIG, DUMMY_ACCESS_GUIDE, { now: now });
+    assert.match(next.subject, /明日のご利用案内/, brand);
+  });
+});
+
 test('buildReminderMail: ダミーのキーボックス番号・解錠コードが含まれる（実秘密値はテストで使わない）', function () {
   var templates = loadTemplates();
   var mail = templates.buildReminderMail(sampleRecord(), CONFIG, DUMMY_ACCESS_GUIDE);
