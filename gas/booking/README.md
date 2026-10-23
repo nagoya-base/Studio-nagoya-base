@@ -808,6 +808,14 @@ snb/mens/studio_xの3ブランドすべてが同じ挙動になることを検�
 3. `CANCELLED`状態の予約に送れるキャンセルメール送信関数（`BookingMailer.sendCancelledMailForBooking`）。
    **呼び出し配線は#272**（このIssueでは状態遷移自体もCalendar削除も実装しない。#272で実装済み）
 4. 翌日の`CONFIRMED`予約への前日リマインド（`sendNextDayReminders(now)`）
+   - **当日予約（Issue #412）**: 利用日当日にCONFIRMEDになった予約は翌日抽出の対象外のため、
+     確定直後（`confirmBooking` / 失効予約の復活）に`BookingMailer.sendSameDayAccessGuideForBooking`が
+     timezone基準で当日と判定した場合のみ、`sendReminderMailForBooking`へ委譲して来場案内を即時送信する。
+     支払・Recovery・鍵承認ゲート、設定不足のfail-closed、`reminderSentAt`/`accessGuideSentAt`による
+     二重送信防止は既存のまま。送信失敗でも予約のCONFIRMED状態は変えない。前日18時台のトリガーは変更なし。
+     当日受付のStripe Checkout予約も、即時送信では入金済み・Recovery解消済み・返金手続きなしを確認する
+     （`Booking.evaluateAccessGate`の`includeSameDay`。鍵承認は要求しない。鍵承認ゲート自体の廃止はIssue #414）。
+     当日予約の確定メールは「前日に送る」ではなく「このあと別途送る」と案内する。
 5. 前日リマインドへ同梱する来場案内（住所・建物・部屋・入口案内・キーボックス位置・
    キーボックス番号・解錠コード・利用案内URL・案内PDF URL）
 6. `Bookings`シートへの送信履歴・エラー記録（8列追加。「Sheets変更（Issue #271）」参照）

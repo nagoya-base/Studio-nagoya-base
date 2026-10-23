@@ -689,11 +689,17 @@ var Booking = (function () {
    *   （refundDecision/refundAttemptIdが記録済みで、返金試行が失敗で終わっていない）。
    * - ACCESS_NOT_APPROVED: 管理者の鍵承認（accessApprovedAt）が無い。
    *   options.ignoreApproval=trueの場合はこの判定を省く（鍵承認操作そのものの事前条件）。
+   *
+   * options.includeSameDay=true（Issue #412。当日予約の来場案内の即時送信だけが指定する）:
+   * 当日受付のStripe Checkout予約もゲート対象として扱い、入金済み・Recovery解消済み・返金手続きなしを
+   * 必須にする。鍵承認（accessApprovedAt）は要求しない（Issue #414の方針。requiresAccessApprovalの
+   * 定義自体は変更しない）。現地払い・旧Payment Linkは従来どおり対象外。
    */
   function evaluateAccessGate(record, timezone, options) {
     var r = record || {};
     var opts = options || {};
-    if (!requiresAccessApproval(r, timezone)) {
+    var gateRequired = opts.includeSameDay ? isStripeCheckoutBooking(r) : requiresAccessApproval(r, timezone);
+    if (!gateRequired) {
       return { required: false, ok: true, reasonCode: '', message: '' };
     }
     if (r.paymentRecoveryRequiredAt) {
@@ -709,7 +715,7 @@ var Booking = (function () {
         message: 'この予約は入金済みの状態ではない（未入金・返金手続き中・返金済み等）ため、鍵情報を含む来場案内を送信できません。'
       };
     }
-    if (!opts.ignoreApproval && !r.accessApprovedAt) {
+    if (!opts.ignoreApproval && !opts.includeSameDay && !r.accessApprovedAt) {
       return {
         required: true, ok: false, reasonCode: ACCESS_GATE_REASON_CODES.ACCESS_NOT_APPROVED,
         message: 'この予約は鍵承認がまだのため、鍵情報を含む来場案内を送信できません。Booking Adminで「鍵承認」を行ってください。'

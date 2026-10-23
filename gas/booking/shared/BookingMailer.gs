@@ -263,7 +263,7 @@ var BookingMailer = (function () {
      * 送信処理（sendReminderMailForBooking）はLock取得後に再読込した最新レコードでこの関数を
      * 呼ぶため、画面表示後に取消・返金・Recoveryへ移った予約は送信直前にここで止まる。
      */
-    var accessGate = Booking.evaluateAccessGate(record, timezone);
+    var accessGate = Booking.evaluateAccessGate(record, timezone, { includeSameDay: !!opts.includeSameDayAccessGate });
     if (!accessGate.ok) {
       return { eligible: false, reasonCode: accessGate.reasonCode, message: accessGate.message };
     }
@@ -325,8 +325,10 @@ var BookingMailer = (function () {
    *   ため、既存のMAIL_NOT_READY/MAIL_SEND_FAILEDと同じくrecordMailFailure_で記録し、
    *   lastMailError*・Recoveryへ既存と同じ形で残す。
    */
-  function reminderEligibilityCheck_(mailType, bookingId, requiredStatus, sentAtFields, force, record, targetDateString) {
-    var evaluation = evaluateReminderEligibility_(record, { targetDateString: targetDateString, force: force });
+  function reminderEligibilityCheck_(mailType, bookingId, requiredStatus, sentAtFields, force, record, targetDateString, includeSameDayAccessGate) {
+    var evaluation = evaluateReminderEligibility_(record, {
+      targetDateString: targetDateString, force: force, includeSameDayAccessGate: !!includeSameDayAccessGate
+    });
     if (evaluation.eligible) return { ok: true };
 
     if (evaluation.reasonCode === REMINDER_REASON_CODES.INVALID_STATUS) {
@@ -680,9 +682,43 @@ var BookingMailer = (function () {
             }
           };
         }
-        return reminderEligibilityCheck_(mailType, lockedBookingId, requiredStatus, sentAtFields, force, record, opts.targetDateString || null);
+        return reminderEligibilityCheck_(mailType, lockedBookingId, requiredStatus, sentAtFields, force, record, opts.targetDateString || null, opts.includeSameDayAccessGate);
       }
     );
+  }
+
+  /*
+   * 当日予約の来場案内即時送信（Issue #412）。前日18時台のsendNextDayReminders（翌日の
+   * CONFIRMED予約のみ対象）では、利用日当日にCONFIRMEDになった予約へ来場案内が届かないため、
+   * 確定直後（BookingRepository.notifyCustomerConfirmedBestEffort_）に呼ぶ。
+   *
+   * 当日判定はBookingConfigのtimezone基準で「予約日 === 現在日」（options.nowはテスト用）。
+   * 当日でない・CONFIRMEDでない予約は何もせずスキップする（翌日以降は従来どおり前日トリガー）。
+   * 当日の予約は新しいテンプレート・判定を作らず、sendReminderMailForBookingへそのまま委譲する
+   * （Lock・再読込・支払/Recovery/鍵承認ゲート・EMAIL_MISSING/MAIL_NOT_READY・SentAt更新・
+   * 失敗記録をすべて再利用。reminderSentAt/accessGuideSentAt済みはALREADY_SENTでスキップ）。
+   * forceは受け付けない（管理者の明示再送は従来のsendReminderMailForBooking(force)を使う）。
+   * 戻り値の形はsendReminderMailForBookingと同じ。対象外はsuccess:true, skipped:true, reason付き。
+   */
+  function sendSameDayAccessGuideForBooking(bookingId, options) {
+    var opts = options || {};
+    var now = isDateLike_(opts.now) ? opts.now : new Date();
+    var timezone = BookingConfig.getAvailabilityConfig().timezone;
+    var today = BookingAvailability.formatDateInTimezone(now, timezone);
+    var notApplicable = function (reason) {
+      return { success: true, skipped: true, reason: reason, bookingId: bookingId, mailType: MAIL_TYPES.REMINDER };
+    };
+    if (!today) return notApplicable('TIMEZONE_INVALID');
+
+    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+    if (!found) return notApplicable('NOT_FOUND');
+    if (found.record.status !== Booking.STATUS.CONFIRMED) return notApplicable('INVALID_STATUS');
+    if (normalizeReminderDate_(found.record.date, timezone) !== today) return notApplicable('NOT_SAME_DAY');
+
+    /* 当日の再確認はLock取得後の最新レコードでtargetDateString（=今日）として行われる。
+       当日受付のStripe予約は通常の鍵承認ゲート対象外だが、即時送信では入金済み・Recovery解消済み・
+       返金手続きなしを確認する（includeSameDayAccessGate。鍵承認は要求しない。Issue #414）。 */
+    return sendReminderMailForBooking(bookingId, { targetDateString: today, includeSameDayAccessGate: true });
   }
 
   function reminderSentAtVersion_(record) {
@@ -1470,6 +1506,7 @@ var BookingMailer = (function () {
     sendCancelledMailForBooking: sendCancelledMailForBooking,
     sendExpiredMailForBooking: sendExpiredMailForBooking,
     sendReminderMailForBooking: sendReminderMailForBooking,
+    sendSameDayAccessGuideForBooking: sendSameDayAccessGuideForBooking,
     sendPaymentLinkMailForBooking: sendPaymentLinkMailForBooking,
     resolvePaymentLinkMetadataInconsistency: resolvePaymentLinkMetadataInconsistency,
     /* PR #343レビュー対応: 管理者による金額修正を利用者へ案内する送信関数。 */

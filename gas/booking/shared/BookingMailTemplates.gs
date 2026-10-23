@@ -207,12 +207,28 @@ var BookingMailTemplates = (function () {
     return { subject: subject, body: body };
   }
 
+  /* Issue #412: 利用日がtimezone基準で今日か（確定メールの来場案内の一文の分岐用）。 */
+  function isUseDateToday_(record, timezone) {
+    var today = BookingAvailability.formatDateInTimezone(new Date(), timezone);
+    var useDate = record.date && typeof record.date.getTime === 'function'
+      ? BookingAvailability.formatDateInTimezone(record.date, timezone)
+      : String(record.date || '');
+    return !!today && today === useDate;
+  }
+
   /*
    * Issue #341 PR-D: 確定メールの来場案内に関する一文。鍵承認ゲートの対象（Stripeカード
    * 決済・当日予約以外）でまだ鍵承認が無い予約には、「前日に必ず届く」とは書かず、運営の
    * 確認後に案内する旨だけを書く（鍵情報の送付を約束しない）。対象外の予約は従来の文言。
    */
   function accessGuideNoticeLine_(record, timezone) {
+    /*
+     * Issue #412: 利用日が当日の予約は、確定直後に来場案内を即時送信する（前日案内は届かない）。
+     * 「利用日前日に送る」とは書かない。
+     */
+    if (isUseDateToday_(record, timezone)) {
+      return 'このあと、来場方法・キーボックス等の詳細案内を別途メールでお送りします。';
+    }
     if (Booking.requiresAccessApproval(record, timezone) && !record.accessApprovedAt) {
       return '来場方法等の詳細案内は、運営での確認が完了した後、利用日前日を目安に別途メールでお送りします。';
     }
