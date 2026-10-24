@@ -68,6 +68,17 @@ var StripeGateway = (function () {
     if (params.customerEmail) {
       payload.customer_email = params.customerEmail;
     }
+    /* Issue #423: 追加オプション決済用。client_reference_idと追加metadata（orderType・
+       optionOrderId）で「どの予約のどの追加注文か」をWebhookで一意に復元する。
+       未指定の既存呼び出し（部屋予約のCheckout）ではペイロードは1バイトも変わらない。 */
+    if (params.clientReferenceId) {
+      payload.client_reference_id = params.clientReferenceId;
+    }
+    if (params.extraMetadata) {
+      Object.keys(params.extraMetadata).forEach(function (key) {
+        payload['metadata[' + key + ']'] = params.extraMetadata[key];
+      });
+    }
     return payload;
   }
 
@@ -172,7 +183,8 @@ var StripeGateway = (function () {
       /* Issue #341 PR-C: StripeWebhookHandler.gsが、Webhookイベント本文のmetadataではなく
          Stripe APIから改めて取得したこの値（bookingId/brand/paymentAttemptId）を正として
          使う（イベント本文だけで完結させない。ファイル冒頭コメント参照）。 */
-      metadata: raw.metadata || {}
+      metadata: raw.metadata || {},
+      clientReferenceId: raw.client_reference_id || ''
     };
   }
 

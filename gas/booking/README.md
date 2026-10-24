@@ -1,4 +1,66 @@
 
+## Issue #423: 予約オプション（Studio X限定・実装レビュー中）
+
+Issue #423の本文と追加コメント3件（**コメントを本文より優先**）を正本として実装した。**初期リリースはStudio X
+（`studio_x`）のみ**。SNB / SNB mensの予約フォーム・料金・決済・メール・Adminの挙動は変えていない
+（`options`を送らない従来の`createBooking`はレスポンスも含め1バイトも変わらない）。
+
+### 確定要件と実装の対応
+
+| 要件 | 実装 |
+| --- | --- |
+| 事前設営3,000円／片付け3,000円／設営＋片付け5,000円（5テーマ共通。両方選択は6,000円にしない） | `BookingOptions.gs`の`STAFF_SERVICE_PRICES_`が**唯一の正本**。画面は`optionCatalog`で取得して表示し、金額を持たない（テストで重複ハードコードを検出） |
+| 有料スタッフ対応は事前承認後にStripe決済、承認前は課金しない | 必ず`PENDING_APPROVAL`から開始。`isPayable`は`approvalStatus`が`NOT_REQUIRED`/`APPROVED`でなければ偽。承認前は`startOptionCheckout`が`APPROVAL_REQUIRED`で拒否しStripeを呼ばない |
+| 不承認でも部屋予約は不変 | 承認/不承認はOptionOrdersのみ更新。テストでBookings行が1バイトも変わらないことを検証 |
+| 無料セルフ設営・原状復帰・メールサポート | `FREE`注文。承認不要・課金なし・即`CONFIRMED`。定型案内を受付/確定メールへ自動付加 |
+| 機材は1点ごとの個別加算（数量×単価・在庫超過は不可）。機材ページと同一の料金正本 | 正本は`_data/studio_x_equipment.json`。機材ページ`/studio-x/equipment/`はこれを直接読み、GASは`scripts/sync-studio-x-equipment.js`で生成した`EquipmentCatalog.gs`を読む（`test/studio-x-equipment-catalog.test.js`が同期を検査）。選択は`equipment: {機材コード: 数量}`。在庫は予約単位（既存の有効な注文の数量も合算）。背景スタンドは0円のセルフ |
+| ビデオライト系(定常光)のセルフレンタルは「対面で操作レクチャーを受け、利用許可済み」の利用者のみ | 対象は`requiresLecture`の3機材（バイカラーCOB／フルカラーパネル／フルカラーCOB）。**資格はAdminが機材コード単位で明示的に付与した許可（`OptionEligibility`／`adminGrantVideoLightEligibility(email, 機材コード, note)`）のみが正**。過去の利用履歴・支払い済み注文からは自動で資格ありと判定せず、一括許可もしない（バイカラーCOBの許可でフルカラーCOBは借りられない）。**許可の無い申込は拒否して消さず、Checkoutを発行しない保留注文（`PENDING_APPROVAL`）として残す**（直接改ざんされた入力でもサーバー側で必ずこの状態に落ちる）。Adminの予約詳細に「資格未確認」と表示され、**「許可済みにして進める」**（承認＝その機材コードの許可を記録して支払い待ちへ。機材用の承認メール）か**「不承認」**（`DECLINED`。部屋予約は不変。機材用の否認メール）を選べる。未承認の間は支払い不可・確定不可。**サーバー側で資格を再検証する**: ①Checkout開始（既存Sessionの再利用も含む）で許可を確認できなければStripeを呼ばず支払い不可、②Webhookで支払い済みでも許可を確認できなければ確定にせず入金の事実を保持して要復旧（`OPTION_PAID_NOT_ELIGIBLE`。確定メールも送らない）。許可が取り消された（`adminRevokeVideoLightEligibility(email, 機材コード)`）未払い注文も「資格未確認」として不承認にできる。ストロボ等に追加の資格制限は設けず、同時申込ではストロボ分は即決済待ち・定常光の保留分とは別注文（保留分の金額が決済額に混ざらない） |
+| 予約IDを親キーに維持、後付けで新しい部屋予約を作らない | `OptionOrders.bookingId`に既存の予約IDを保持。`optionOrderId`（`OPT-XXXXXXXX`）は決済・履歴用。予約ID生成方式は変更なし |
+| 同時申込と後付けを共通モデルで処理 | どちらも`OptionOrderService.createOrders`（`source`=`WITH_BOOKING`/`ADDON`） |
+| 後付けの本人確認 | **予約ID＋登録メールアドレス**の一致（大文字小文字無視）。不一致・未存在は同一の`FORBIDDEN`（存在確認に使わせない）、予約ID単位で10分20回のレート制限 |
+
+### データモデル（Bookings台帳には列を足さない）
+
+- `OptionOrders`シート（自動作成。注文単位＝承認・決済の単位）: `optionOrderId, bookingId, brand, category(FREE|EQUIPMENT|STAFF_SERVICE), source, itemsJson, amountJpy, approvalStatus, paymentStatus, status, customerEmail(正規化), …, paymentAttemptId, checkoutRequestJson, stripeCheckoutSessionId, stripePaymentIntentId, stripeAmount, stripeCurrency, paidAt, lastStripeEventId, decisionMailSentAt, confirmedMailSentAt, paymentRecoveryRequiredAt, paymentRecoveryReason`。
+- `OptionEligibility`シート（自動作成）: `email, optionCode, grantedAt, note`。
+- 既存予約にオプションが無くても行が無いだけで、そのまま動作・表示される（後方互換）。本番で手動のヘッダー追記は**不要**。
+- 状態は部屋予約と**完全に別**: `status`は`PENDING_APPROVAL → AWAITING_PAYMENT（承認済み・未払い。Issue本文のAPPROVED相当）→ PAYMENT_PENDING → CONFIRMED`、不承認は`DECLINED`。部屋がCONFIRMEDでも未承認のスタッフ対応をCONFIRMED扱いにせず、DECLINEDを理由に部屋を取消もしない。
+- 1回の申込は最大3注文に分かれる（FREE / EQUIPMENT / STAFF_SERVICE）ので、**未承認のスタッフ料金が機材の決済額へ混入しない**。
+
+### 申込から確定まで
+
+1. **同時申込**: `createBooking`のpayloadに`options`（選択内容のみ。金額は受け取らない）。予約作成の**前に**検証し、不正・受付停止・資格なしなら予約自体を作らない（SNB/mensは`OPTIONS_NOT_AVAILABLE`）。`rate limit`の計上より前に検証するので、選び直しての再送が「連投」扱いにならない。注文の保存だけが失敗しても予約は成功のまま、レスポンスの`options`にエラーを返す（案内ページから同じ予約IDで追加できる）。
+2. **後付け**: `studio-x/booking/options/`（予約ID＋メール）→ `optionSummary` → `submitOptions`。取消済み・期限切れ・利用開始後の予約には追加不可。締切は`OPTION_ADDON_DEADLINE_HOURS`（未設定なら独自の締切なし）。
+3. **承認（Booking Admin）**: 予約詳細の「予約オプション」欄で承認／不承認（`adminApproveOptionOrder`/`adminDeclineOptionOrder`）。二重操作は冪等でメールも再送しない。承認時に利用者へ案内メール（決済URLは載せない。本人確認付きの案内ページへ誘導）。
+4. **決済**: 案内ページの「お支払いに進む」→ `startOptionCheckout`。**部屋予約がCONFIRMEDになるまでは開始できない**。`STRIPE_CHECKOUT_ENABLED`が`true`でなければfail-closed（このフラグはコードから変更しない）。Checkout Sessionには`client_reference_id=optionOrderId`と`metadata`（`orderType=addon`, `bookingId`, `optionOrderId`, `paymentAttemptId`, `brand`）だけを載せる。決済試行は**Stripe呼び出しの前に**台帳へ予約し、同一冪等キー・同一要求内容で再送できる（二重Session防止）。有効なSessionがあれば再利用、失効していれば新しい試行。
+5. **Webhook**: `StripeWebhookProcessor`が`metadata.orderType==='addon'`を**専用経路**で処理（部屋予約の決済照合・`confirmBooking`には入らない）。Session/PaymentIntentをStripe APIから再取得し、Session ID・`client_reference_id`・metadata・決済試行ID・金額（Checkout発行時点のスナップショット）を照合して`PAID/CONFIRMED`にする。再送は`ALREADY_APPLIED`で何も変えない（確定メールも1回だけ）。照合不一致・不承認/取消済み注文への入金は**入金の事実を保持したまま**要復旧にする。
+
+### 設計判断（オーナー確認をお願いしたい点）
+
+- **部屋の初回Checkoutへオプションを統合していない**。Issue 6は「同一Checkoutに含められる構成を基本」としているが、統合すると部屋の`priceAmount`・金額スナップショット・Webhook金額照合（`verifyPaymentAgainstSnapshot`）と密結合し、既存の部屋決済経路を壊すリスクがある。そのためオプションは常に**別Checkout（追加決済）**とし、部屋の確定後に決済する。受入条件（未承認のセッティング料金が初回Checkoutへ混入しない／部屋のCheckout経路が回帰しない）は満たす。
+- **有料機材は部屋予約確定後の追加Checkout方式**（Issue追加要件で正式採用）。機材のレンタル料金・数量は設定値ではなく上記の正本JSONで、Script Propertiesの`OPTION_PRICE_*`は廃止した。
+- **無料セルフセッティングの定型案内**（保管場所・使用備品・セット方法・原状復帰・注意事項）は、運営から提供された確定文言を`BookingOptions.gs`の`GUIDANCE_TEMPLATES_`に入れた: **黒板教室（チョーク収納の注意を明記）・和風/畳・白黒背景布・グランジ（背景布と同じ運用）の5テーマすべて確定済み**。収納場所は提供文言どおり「所定位置／指定の収納場所」で、新しい場所は作っていない。将来テーマを追加して文言が未確定の項目は`null`とし、メールには創作せず「運営にて内容を確認中です」と表示、Adminの予約詳細にも未整備の警告を出す（フォールバックはテストで検証）。
+- スタッフ対応は共通料金のため**1予約につき1テーマ分**（複数テーマにまたがる1回分の料金で依頼させない）。後付けで事前設営済みに片付けだけを足す場合は、通算でセット価格を適用し差額（5,000−3,000＝2,000円）を請求する（運営確定のA案）。同じテーマの設営/片付けをセルフとスタッフで同時に選べない。
+- 未払いのオプション注文を部屋予約の取消と連動して自動取消する処理は入れていない（部屋が取消済みなら承認・決済ができず、支払い済みの場合は`OPTION_PAID_BOOKING_NOT_CONFIRMED`のRecoveryが残る）。注文の個別取消・返金のUIも今回は対象外（Stripeダッシュボードと手動運用）。
+- Recoveryの`failureType`は`OPTION_`で始める。`PAYMENT_`/`STRIPE_WEBHOOK_`で始めると`RecoveryRepository.isPaymentFailureType`に該当し、同じ予約IDの**部屋予約の決済ゲート・来場案内判定を巻き込む**ため。
+
+### Script Properties（追加）
+
+| キー | 内容 |
+| --- | --- |
+| `OPTION_ADDON_DEADLINE_HOURS` | 後付け申込の締切（利用開始の何時間前まで）。未設定なら独自の締切なし |
+
+### デプロイ
+
+- 追加ファイル: `EquipmentCatalog.gs`（自動生成）/ `BookingOptions.gs` / `OptionOrderRepository.gs` / `OptionMailTemplates.gs` / `OptionOrderService.gs`（Booking Web App・Booking Admin。Booking Webhookには**配布しない**）。`Code.gs`・`RateLimiter.gs`・`BookingRepository.gs`・`Config.gs`・`StripeGateway.gs`・`StripeWebhookProcessor.gs`・`BookingAdminWeb.gs`を更新。
+- **反映順: Booking Adminを先に**（追加決済のWebhookを処理できる状態にしてから、Booking Web Appで追加Checkoutを発行できるようにする。Admin未反映のまま追加Checkoutが発行されると、metadataの`bookingId`/`paymentAttemptId`が部屋予約の照合に入って要復旧になる）。既存の`/exec` URL・Deploymentは作り直さず、既存Deploymentを更新する。PRブランチからの本番デプロイは行わない。
+- Webhook中継基盤（Cloud Run）・`STRIPE_CHECKOUT_ENABLED`は変更しない。オプションのCheckoutは同フラグが`true`でない限り発行されない。
+- GitHub Pages: `_data/studio_x_equipment.json` と `studio-x/equipment/`（機材・料金ページ。トップ・ご利用ガイド・予約フォーム・後付け画面から導線）・`studio-x/booking/`（オプション欄）・`studio-x/booking/options/`（後付け・追加決済の案内）・`studio-x/booking/option-payment-complete.html`（追加決済の戻り先。部屋予約用の「予約はまだ確定していません」とは別文面）・`scripts/booking-options*.js`・`admin/booking/booking-admin.js`/`.css`。
+
+### テスト
+
+`node --test test/booking-options.test.js test/booking-option-orders.test.js test/booking-option-deployment.test.js test/booking-options-panel.test.js test/booking-admin-page-client.test.js`。Stripe・Calendar・Sheets・Mailはすべてスタブで、本番GAS・Stripeには接続しない。`cloud-run/stripe-webhook-relay`のテストは`stripe`パッケージ未導入の環境では本変更と無関係に失敗する（mainでも同じ）。
+
 ## Issue #344: 管理者による確定済み予約の日時変更（実装レビュー中）
 
 - 対象は **Booking Adminプロジェクトのみ**（管理者用Web App: Execute as Me / Only myself）。
@@ -3058,6 +3120,11 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `AdminNotifier.gs` | ✓ | – | – | `gas/booking/public/AdminNotifier.gs` |
 | `BookingMailTemplates.gs`（Issue #271） | ✓ | ✓ | – | `gas/booking/shared/BookingMailTemplates.gs` |
 | `BookingMailer.gs`（Issue #271） | ✓ | ✓ | – | `gas/booking/shared/BookingMailer.gs` |
+| `EquipmentCatalog.gs`（Issue #423追加要件。Studio Xの機材料金・数量・在庫。`_data/studio_x_equipment.json`から`scripts/sync-studio-x-equipment.js`で自動生成。直接編集しない） | ✓ | ✓ | – | `gas/booking/shared/EquipmentCatalog.gs` |
+| `BookingOptions.gs`（Issue #423。予約オプションのカタログ・料金・状態遷移・定型案内の純粋ロジック） | ✓ | ✓ | – | `gas/booking/shared/BookingOptions.gs` |
+| `OptionOrderRepository.gs`（Issue #423。`OptionOrders`・`OptionEligibility`シートの台帳） | ✓ | ✓ | – | `gas/booking/shared/OptionOrderRepository.gs` |
+| `OptionMailTemplates.gs`（Issue #423。オプションの受付・承認・不承認・確定メール文面） | ✓ | ✓ | – | `gas/booking/shared/OptionMailTemplates.gs` |
+| `OptionOrderService.gs`（Issue #423。申込・本人確認・追加Checkout・承認・Webhook反映の業務フロー） | ✓ | ✓ | – | `gas/booking/shared/OptionOrderService.gs` |
 | `StripeWebhookAuth.gs`（Issue #341 PR-C。中継基盤からの呼び出し認証） | – | – | ✓ | `gas/booking/webhook/StripeWebhookAuth.gs` |
 | `StripeEventRepository.gs`（Issue #341 PR-C。Stripe Webhookイベントの受信・処理台帳。レビュー対応・4回目でBooking Admin/Webhookの両方が使う共有ファイルへ再設計） | – | ✓ | ✓ | `gas/booking/shared/StripeEventRepository.gs` |
 | `StripeWebhookProcessor.gs`（Issue #341 PR-C。レビュー対応・4回目で新設。決済照合・予約自動確定の本体。Booking Adminの時間主導トリガーから呼ばれる。旧`StripeWebhookHandler.gs`から移動・再設計） | – | ✓ | – | `gas/booking/admin/StripeWebhookProcessor.gs` |

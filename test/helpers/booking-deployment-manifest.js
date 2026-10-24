@@ -27,6 +27,10 @@ var BOOKING_ADMIN_FILES = [
    * 直後・SpreadsheetRepository.gsより前に置く（依存順）。
    */
   'CardPayment.gs',
+  /* Issue #423: Studio X機材カタログ（_data/studio_x_equipment.jsonから自動生成。機材ページと同一の正本）。 */
+  'EquipmentCatalog.gs',
+  /* Issue #423: 予約オプションの純粋ロジック（BookingPricing.gs等と同じ依存の無い層）。 */
+  'BookingOptions.gs',
   /*
    * Issue #341 PR-B（Checkout Session発行・仮押さえ）で追加。expirePendingBookings
    * （このAdminプロジェクトの時間主導トリガー）がcheckout_pendingの仮押さえ失効確認で
@@ -34,6 +38,8 @@ var BOOKING_ADMIN_FILES = [
    */
   'StripeGateway.gs',
   'SpreadsheetRepository.gs',
+  /* Issue #423: OptionOrders / OptionEligibilityシートの台帳。Bookings台帳には列を足さない。 */
+  'OptionOrderRepository.gs',
   'RecoveryRepository.gs',
   /*
    * Issue #341 PR-Cレビュー対応・4回目で追加。独立したBooking Webhookプロジェクトが
@@ -44,6 +50,9 @@ var BOOKING_ADMIN_FILES = [
   'StripeEventRepository.gs',
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
+  /* Issue #423: オプションのメール文面と業務フロー（承認・不承認・Webhook反映）。BookingRepository.gsより前（createBookingから呼ぶ）。 */
+  'OptionMailTemplates.gs',
+  'OptionOrderService.gs',
   'BookingRepository.gs',
   /*
    * Issue #341 PR-Cレビュー対応・4回目で追加。StripeEventRepositoryの未処理イベントを
@@ -90,6 +99,9 @@ var BOOKING_WEB_APP_FILES = [
   'Availability.gs',
   'Booking.gs',
   'CardPayment.gs',
+  /* Issue #423: Studio X機材カタログ（自動生成）と予約オプションの純粋ロジック。 */
+  'EquipmentCatalog.gs',
+  'BookingOptions.gs',
   /* Issue #341 PR-B: BookingRepository.beginCardCheckoutがStripeGateway.
      createCheckoutSession/retrieveCheckoutSessionを呼ぶため必要。 */
   'StripeGateway.gs',
@@ -97,11 +109,15 @@ var BOOKING_WEB_APP_FILES = [
   'BookingPricing.gs',
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',
+  'OptionOrderRepository.gs',
   'RecoveryRepository.gs',
   'BookingRepository.gs',
   'AdminNotifier.gs',
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
+  /* Issue #423: 申込（同時・後付け）・本人確認付き照会・追加Checkout開始。 */
+  'OptionMailTemplates.gs',
+  'OptionOrderService.gs',
   'Code.gs'
 ];
 

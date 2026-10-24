@@ -81,6 +81,17 @@
 
   var API_BASE_URL = (window.BookingApiConfig && window.BookingApiConfig.BASE_URL) || '';
 
+  /*
+   * 予約オプション（Issue #423。Studio Xのみ）。include側がdata-options="true"を付けた
+   * ページ（studio-x/booking/）でだけ有効。SNB / mensのページにはスロット自体が無く、
+   * 以降のoptionsPanel分岐はすべて素通りになる（既存の挙動・payloadは変わらない）。
+   */
+  var optionsPanel = null;
+  var optionsSlot = document.getElementById('ba-options-slot');
+  if (optionsSlot && root.getAttribute('data-options') === 'true' && window.BookingOptionsPanel) {
+    optionsPanel = window.BookingOptionsPanel.mount({ slot: optionsSlot, apiBaseUrl: API_BASE_URL, brand: brand });
+  }
+
   var state = {
     date: '',
     durationMinutes: null,
@@ -1192,6 +1203,14 @@
       setFieldError_(null, els.paymentError, errors.paymentMethod);
       setFieldError_(els.note, els.noteError, errors.note);
 
+      var optionsErrorEl = document.getElementById('ba-options-error');
+      var optionsErrorText = optionsPanel ? optionsPanel.validate() : '';
+      if (optionsErrorEl) {
+        optionsErrorEl.textContent = optionsErrorText;
+        optionsErrorEl.hidden = !optionsErrorText;
+      }
+      if (optionsErrorText) return;
+
       if (Object.keys(errors).length > 0) return;
 
       state.name = fields.name;
@@ -1225,6 +1244,13 @@
      * 含めて自動的に最新化する（古い金額のまま固定される問題の修正）。
      */
     refreshPriceEstimate_();
+    var confirmOptionsRow = document.getElementById('ba-confirm-options-row');
+    var confirmOptions = document.getElementById('ba-confirm-options');
+    if (confirmOptionsRow && confirmOptions) {
+      var optionLines = optionsPanel ? optionsPanel.summaryLines() : [];
+      confirmOptions.textContent = optionLines.join(' / ');
+      confirmOptionsRow.hidden = optionLines.length === 0;
+    }
     els.confirmName.textContent = state.name;
     els.confirmEmail.textContent = state.email;
     els.confirmPhone.textContent = state.phone || UI_TEXT.phoneUnset;
@@ -1305,6 +1331,38 @@
    * 決済機能自体が未設定。いずれもGAS側がStripe APIを一切呼んでいないと確定できる。
    */
   var CHECKOUT_SAFE_FALLBACK_CODES_ = ['CHECKOUT_DISABLED', 'STRIPE_NOT_CONFIGURED'];
+
+  /* オプション由来で予約が作られなかった場合のerror.code（BookingOptions.gs / OptionOrderService.gs）。 */
+  var OPTION_ERROR_CODES_ = [
+    'INVALID_OPTIONS', 'UNKNOWN_OPTION', 'LAYOUT_REQUIRED_FOR_STAFF_SERVICE', 'STAFF_SERVICE_SINGLE_THEME',
+    'OPTIONS_NOT_AVAILABLE', 'PRICE_NOT_CONFIGURED', 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE',
+    'DUPLICATE_OPTION', 'SERVICE_MODE_CONFLICT', 'STAFF_SERVICE_THEME_MISMATCH'
+  ];
+
+  /* 完了画面のオプション結果（Issue #423）。部屋予約とは別の状態であることを明示する。 */
+  function renderOptionsResult_(result) {
+    var target = document.getElementById('ba-complete-options');
+    if (!target) return;
+    target.textContent = '';
+    if (!result) { target.hidden = true; return; }
+    var lines = [];
+    if (result.success) {
+      lines.push('オプションのお申し込みを受け付けました（ご予約とは別の状態で管理します）。');
+      (result.orders || []).forEach(function (order) {
+        var itemLabels = (order.items || []).map(function (i) { return i.label; }).join('、');
+        lines.push('・' + itemLabels + '：' + window.BookingOptionsPanel.describeOrderStatus(order));
+      });
+      lines.push('お支払いや状況のご確認は、受付メールの案内ページ（予約IDとご登録のメールアドレスで確認します）から行えます。');
+    } else {
+      lines.push(window.BookingOptionsPanel.describeError(result.error));
+    }
+    lines.forEach(function (line) {
+      var p = document.createElement('p');
+      p.textContent = line;
+      target.appendChild(p);
+    });
+    target.hidden = false;
+  }
 
   /*
    * Stripe Checkout Session発行（Issue #341 PR-B）。createBooking成功後、カード決済のみ
@@ -1390,6 +1448,9 @@
         note: state.note,
         isMember: state.isMember
       });
+      /* オプションは選択内容のみ送る（金額・承認状態はサーバーが決める）。未選択ならキー自体を付けない。 */
+      var optionsSelection = optionsPanel ? optionsPanel.getSelection() : null;
+      if (optionsSelection) payload.options = optionsSelection;
 
       fetch(API_BASE_URL, {
         method: 'POST',
@@ -1403,11 +1464,19 @@
           if (!body || body.success !== true) {
             els.submit.disabled = false;
             els.submit.textContent = UI_TEXT.submitLabel;
+            if (optionsPanel && body && body.error && OPTION_ERROR_CODES_.indexOf(body.error.code) !== -1) {
+              /* オプション由来の拒否（資格なし・受付停止等）は予約自体は作られていない。サーバーの
+                 利用者向け文言をそのまま表示し、選択を直してもらう。 */
+              goToStep('details');
+              showGlobalError(window.BookingOptionsPanel.describeError(body.error), []);
+              return;
+            }
             showSubmitError(body && body.error && body.error.code, body && body.requestId);
             return;
           }
           hasSubmittedSuccessfully = true;
           els.completeBookingId.textContent = body.bookingId || '';
+          renderOptionsResult_(body.options);
           els.completeBackLink.href = backUrl;
           els.completeBackLink.textContent = backLabel;
 

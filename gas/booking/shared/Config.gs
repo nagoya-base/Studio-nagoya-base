@@ -244,6 +244,21 @@ var BookingConfig = (function () {
     };
   }
 
+  /*
+   * 予約オプション（Issue #423。Studio X限定）の設定値。
+   * - addonDeadlineHoursBeforeStart: 後付け申込の締切（利用開始の何時間前まで）。未設定なら
+   *   独自の締切を設けない（実装側で勝手な時間を決めない）。OPTION_ADDON_DEADLINE_HOURS。
+   * 機材のレンタル料金・数量・在庫は設定値ではなく、機材ページと同一の正本
+   * （_data/studio_x_equipment.json → EquipmentCatalog.gs）。スタッフ対応料金
+   * （3,000/3,000/5,000円）はBookingOptions.gsに集約している。
+   */
+  function getOptionsConfig() {
+    var properties = PropertiesService.getScriptProperties();
+    return {
+      addonDeadlineHoursBeforeStart: properties.getProperty('OPTION_ADDON_DEADLINE_HOURS') || ''
+    };
+  }
+
   return {
     DEFAULTS: DEFAULTS,
     getCalendarId: getCalendarId,
@@ -256,6 +271,7 @@ var BookingConfig = (function () {
     getMailConfig: getMailConfig,
     getAccessGuideConfig: getAccessGuideConfig,
     getStripeConfig: getStripeConfig,
-    getStripeWebhookConfig: getStripeWebhookConfig
+    getStripeWebhookConfig: getStripeWebhookConfig,
+    getOptionsConfig: getOptionsConfig
   };
 })();

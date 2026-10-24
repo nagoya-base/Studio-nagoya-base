@@ -109,7 +109,10 @@ function createScriptRunStub() {
     'adminResendReminderMail',
     'getAdminPaymentRecoveries',
     'adminResolvePaymentRecovery',
-    'adminReconcileCheckoutExpiry'
+    'adminReconcileCheckoutExpiry',
+    /* Issue #423 */
+    'adminApproveOptionOrder',
+    'adminDeclineOptionOrder'
   ];
 
   var stub = {
@@ -2674,4 +2677,140 @@ test('PR-Dレビュー対応・4回目: 台帳の記録がEXPIREDでも、未解
   assert.ok(sandbox.paymentUi_.statusEl.textContent.indexOf('要再確認') !== -1);
   sandbox.runReconcileCheckoutExpiry_();
   assert.strictEqual(sandbox.google.script.run.calls.filter(function (c) { return c.name === 'adminReconcileCheckoutExpiry'; }).length, 1);
+});
+
+
+/*
+ * Issue #423: 予約オプションの確認・承認／不承認UI。
+ * 判定（承認可否・二重承認）はサーバー側。この画面は表示と確認ダイアログ、結果の表示だけを担う。
+ */
+function optionOrder(overrides) {
+  return Object.assign({
+    optionOrderId: 'OPT-AAAA1111', category: 'STAFF_SERVICE', paidLabel: '有料', sourceLabel: '後付け',
+    items: [{ code: 'STAFF_PRE_SETUP:CLASSROOM', label: '事前設営（スタッフ）: 教室セット（机・黒板）' }],
+    amountJpy: 3000, approvalStatus: 'PENDING_APPROVAL', paymentStatus: 'NOT_STARTED', status: 'PENDING_APPROVAL',
+    requiresApproval: true, createdAt: '2026-10-24 10:00', approvedAt: '', declinedAt: '', declineReason: '', paidAt: '',
+    recoveryRequired: false, recoveryReason: '', canApprove: true, canDecline: true
+  }, overrides || {});
+}
+
+test('describeOptionOrder_: 選択内容・有料/無料・同時/後付け・申込日時・承認状態・決済状態・optionOrderIdを表示する', function () {
+  var sandbox = loadClientSandbox();
+  var lines = sandbox.describeOptionOrder_(optionOrder()).join('\n');
+  assert.ok(lines.indexOf('有料／後付け／事前設営（スタッフ）: 教室セット（机・黒板）') !== -1);
+  assert.ok(lines.indexOf('注文ID: OPT-AAAA1111') !== -1);
+  assert.ok(lines.indexOf('3,000') !== -1 || lines.indexOf('3000') !== -1);
+  assert.ok(lines.indexOf('承認: 承認待ち') !== -1);
+  assert.ok(lines.indexOf('決済: 未決済') !== -1);
+  assert.ok(lines.indexOf('申込: 2026-10-24 10:00') !== -1);
+  var free = sandbox.describeOptionOrder_(optionOrder({ paidLabel: '無料', sourceLabel: '予約と同時', amountJpy: 0, approvalStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_REQUIRED', status: 'CONFIRMED' })).join('\n');
+  assert.ok(free.indexOf('無料／予約と同時') !== -1);
+  assert.ok(free.indexOf('金額: 無料') !== -1);
+  assert.ok(free.indexOf('承認: 承認不要') !== -1 && free.indexOf('決済: 課金なし') !== -1);
+});
+
+test('describeOptionOrder_: 要復旧の注文は警告を表示する', function () {
+  var sandbox = loadClientSandbox();
+  var lines = sandbox.describeOptionOrder_(optionOrder({ recoveryRequired: true, recoveryReason: '金額が一致しません' })).join('\n');
+  assert.ok(lines.indexOf('⚠ 要確認: 金額が一致しません') !== -1);
+});
+
+test('renderOptionSection_: オプションを持たない既存予約ではセクションを隠し、承認待ちの注文には承認/不承認ボタンを出す', function () {
+  var sandbox = loadClientSandbox();
+  var container = sandbox.optionUi_.container;
+  sandbox.renderOptionSection_({ options: { available: true, orders: [] } });
+  assert.ok(container.classList.contains('hidden'));
+  sandbox.renderOptionSection_({});
+  assert.ok(container.classList.contains('hidden'));
+
+  sandbox.renderOptionSection_({ options: { available: true, guidanceIncomplete: true, orders: [optionOrder(), optionOrder({ optionOrderId: 'OPT-BBBB2222', canApprove: false, canDecline: false, status: 'CONFIRMED' })] } });
+  assert.ok(!container.classList.contains('hidden'));
+  var html = sandbox.optionUi_.listEl.innerHTML;
+  assert.ok(html.indexOf('data-option-action="approve" data-option-order-id="OPT-AAAA1111"') !== -1);
+  assert.ok(html.indexOf('data-option-action="decline" data-option-order-id="OPT-AAAA1111"') !== -1);
+  assert.ok(html.indexOf('data-option-order-id="OPT-BBBB2222"') === -1, '承認不要・処理済みの注文にはボタンを出さない');
+  assert.ok(html.indexOf('運営確認待ち') !== -1, '定型案内の未整備をAdminに知らせる');
+});
+
+test('renderOptionSection_: 注文IDなどの値はHTMLエスケープされる', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.renderOptionSection_({ options: { available: true, orders: [optionOrder({ optionOrderId: '"><script>x</script>', items: [{ label: '<b>x</b>' }] })] } });
+  assert.ok(sandbox.optionUi_.listEl.innerHTML.indexOf('<script>') === -1);
+  assert.ok(sandbox.optionUi_.listEl.innerHTML.indexOf('<b>x</b>') === -1);
+});
+
+test('runOptionDecision_: 承認はconfirmで確認後にadminApproveOptionOrderだけを呼ぶ（Stripe・予約操作は呼ばない）。キャンセルなら何も呼ばない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.currentDetailBooking_ = { bookingId: 'SX-1', options: { available: true, orders: [optionOrder()] } };
+  sandbox.window.confirm = function () { return false; };
+  sandbox.runOptionDecision_('approve', 'OPT-AAAA1111');
+  var run = sandbox.google.script.run;
+  assert.strictEqual(run.calls.filter(function (c) { return c.name === 'adminApproveOptionOrder'; }).length, 0);
+
+  sandbox.window.confirm = function () { return true; };
+  var before = run.calls.length;
+  sandbox.runOptionDecision_('approve', 'OPT-AAAA1111');
+  var made = run.calls.slice(before);
+  assert.strictEqual(made.length, 1);
+  assert.strictEqual(made[0].name, 'adminApproveOptionOrder');
+  assert.deepStrictEqual(Array.from(made[0].args), ['OPT-AAAA1111']);
+  // 実行中の二重クリックは無視される
+  sandbox.runOptionDecision_('approve', 'OPT-AAAA1111');
+  assert.strictEqual(run.calls.slice(before).length, 1);
+});
+
+test('runOptionDecision_: 不承認は理由入力(prompt)後にadminDeclineOptionOrderを呼び、promptキャンセルでは何も呼ばない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.currentDetailBooking_ = { bookingId: 'SX-1', options: { available: true, orders: [optionOrder()] } };
+  sandbox.window.prompt = function () { return null; };
+  var run = sandbox.google.script.run;
+  var before = run.calls.length;
+  sandbox.runOptionDecision_('decline', 'OPT-AAAA1111');
+  assert.strictEqual(run.calls.length, before);
+
+  sandbox.window.prompt = function () { return '  当日は不在  '; };
+  sandbox.runOptionDecision_('decline', 'OPT-AAAA1111');
+  var call = run.calls[run.calls.length - 1];
+  assert.strictEqual(call.name, 'adminDeclineOptionOrder');
+  assert.deepStrictEqual(Array.from(call.args), ['OPT-AAAA1111', '当日は不在']);
+});
+
+test('describeOptionOrder_ / renderOptionSection_（資格の再検証）: 対面レクチャー済みの許可が無い機材注文は警告を出し、否認ボタンを出せる', function () {
+  var sandbox = loadClientSandbox();
+  var order = optionOrder({
+    category: 'EQUIPMENT', paidLabel: '有料', approvalStatus: 'NOT_REQUIRED', status: 'AWAITING_PAYMENT', requiresApproval: false,
+    canApprove: false, canDecline: true, eligibilityMissing: true, eligibilityMissingLabels: ['フルカラーCOBライト（定常光）']
+  });
+  var lines = sandbox.describeOptionOrder_(order).join('\n');
+  assert.ok(lines.indexOf('⚠ 資格未確認: フルカラーCOBライト（定常光）') !== -1);
+  assert.ok(lines.indexOf('支払い・確定できません') !== -1);
+  sandbox.renderOptionSection_({ options: { available: true, guidanceIncomplete: false, orders: [order] } });
+  var html = sandbox.optionUi_.listEl.innerHTML;
+  assert.ok(html.indexOf('data-option-action="decline"') !== -1);
+  assert.ok(html.indexOf('data-option-action="approve"') === -1, '機材は承認ではなく否認のみ');
+});
+
+test('許可確認待ちの機材注文（eligibilityHold）は「許可済みにして進める」と不承認のボタンを出し、確認ダイアログで対面レクチャーの確認を求める', function () {
+  var sandbox = loadClientSandbox();
+  var order = optionOrder({
+    category: 'EQUIPMENT', approvalStatus: 'PENDING_APPROVAL', status: 'PENDING_APPROVAL', requiresApproval: true, eligibilityHold: true,
+    canApprove: true, canDecline: true, eligibilityMissing: true, eligibilityMissingLabels: ['バイカラーCOBライト（定常光）']
+  });
+  var lines = sandbox.describeOptionOrder_(order).join('\n');
+  assert.ok(lines.indexOf('「許可済みにして進める」か不承認を選んでください') !== -1);
+  sandbox.renderOptionSection_({ options: { available: true, guidanceIncomplete: false, orders: [order] } });
+  var html = sandbox.optionUi_.listEl.innerHTML;
+  assert.ok(html.indexOf('>許可済みにして進める</button>') !== -1);
+  assert.ok(html.indexOf('data-option-action="decline"') !== -1);
+
+  var confirmText = '';
+  sandbox.currentDetailBooking_ = { bookingId: 'SX-1', options: { available: true, orders: [order] } };
+  sandbox.window.confirm = function (text) { confirmText = text; return false; };
+  sandbox.runOptionDecision_('approve', 'OPT-AAAA1111');
+  assert.ok(confirmText.indexOf('対面で操作レクチャー済みであることを確認した場合のみ') !== -1);
+  assert.strictEqual(sandbox.google.script.run.calls.filter(function (c) { return c.name === 'adminApproveOptionOrder'; }).length, 0, 'キャンセルなら呼ばない');
+
+  // スタッフ対応(通常の承認)のボタン文言は従来どおり
+  sandbox.renderOptionSection_({ options: { available: true, guidanceIncomplete: false, orders: [optionOrder()] } });
+  assert.ok(sandbox.optionUi_.listEl.innerHTML.indexOf('>承認する</button>') !== -1);
 });

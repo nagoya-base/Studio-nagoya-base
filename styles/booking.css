@@ -604,3 +604,7 @@
   .ba-cal-day { min-height: 38px; padding: 3px 1px; font-size: 0.72rem; }
   .ba-calendar-nav-btn { padding: 8px 10px; font-size: 0.76rem; }
 }
+
+/* Issue #423: 予約オプション欄（Studio Xのみ） */
+.booking-app .ba-option-heading { margin: 18px 0 6px; font-size: 1rem; }
+.booking-app .ba-option-equipment .ba-choice select { margin-left: auto; min-width: 7em; }
