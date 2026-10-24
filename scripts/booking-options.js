@@ -43,7 +43,9 @@
     roomAndOptionsPayment: 'SEPARATE',
     staffServicePaymentTiming: 'AFTER_AVAILABILITY_CONFIRMED',
     staffServiceConfirmedOnApply: false,
-    equipmentRequiresPrecheck: true
+    equipmentRequiresPrecheck: true,
+    equipmentSetupChoiceRequired: true,
+    selfServiceFree: true
   };
 
   function policyOf(catalog) {
@@ -60,6 +62,8 @@
     var p = policyOf(catalog);
     var staffAfterCheck = p.staffServicePaymentTiming === 'AFTER_AVAILABILITY_CONFIRMED';
     var equipmentAfterRoom = p.equipmentPaymentTiming === 'AFTER_ROOM_CONFIRMED';
+    var selfFree = p.selfServiceFree === true;
+    var setupRequired = p.equipmentSetupChoiceRequired === true;
     return {
       cardOnly: p.equipmentPaymentMethod === 'CARD_ONLY'
         ? '機材レンタルはオンラインクレジットカード決済のみです（PayPay・現金は受け付けていません）。' : '',
@@ -76,7 +80,17 @@
           (p.staffServiceConfirmedOnApply === false ? '申込時点ではスタッフ対応は確定していません。' : '')
         : '',
       selfVsStaff: staffAfterCheck
-        ? 'セルフ（自分で設営・原状復帰）は無料です。スタッフ対応（有料）は、日程確認後にご利用可能な場合のみお支払いいただきます。' : ''
+        ? 'セルフ（自分で設営・原状復帰）は' + (selfFree ? '無料です。' : 'ご自身で行う方法です。') +
+          'スタッフ対応（有料）は、日程確認後にご利用可能な場合のみお支払いいただきます。' : '',
+      /* 「必須」「無料」の表示は policy.equipmentSetupChoiceRequired / selfServiceFree から導出する。 */
+      setupHeadingPaid: '設営方法' + (setupRequired ? '（機材レンタル時は必須）' : ''),
+      cleanupHeadingPaid: '片付け方法' + (setupRequired ? '（機材レンタル時は必須）' : ''),
+      selfSetupChoice: 'セルフ設営' + (selfFree ? '　無料' : ''),
+      selfCleanupChoice: '自分で原状復帰' + (selfFree ? '　無料' : ''),
+      selfSetupLine: 'セルフ設営' + (selfFree ? '（無料）' : ''),
+      selfCleanupLine: 'セルフ片付け・原状復帰' + (selfFree ? '（無料）' : ''),
+      selfLabel: 'セルフ' + (selfFree ? '（無料）' : ''),
+      setupRequired: setupRequired
     };
   }
 
@@ -238,11 +252,12 @@
     var s = state || {};
     var layouts = s.layouts || [];
     /* 機材レンタルの設営方法はセルフ/スタッフの2択（後付けでも「追加しない」は選べない）。スタッフ設営はテーマ未選択でも依頼できる。 */
-    if (catalog && hasPaidEquipment(catalog, s.equipment) && !(s.setupChosen === true && (s.setupService === 'SELF' || s.setupService === 'STAFF'))) {
+    var choiceRequired = !!catalog && policyOf(catalog).equipmentSetupChoiceRequired === true && hasPaidEquipment(catalog, s.equipment);
+    if (choiceRequired && !(s.setupChosen === true && (s.setupService === 'SELF' || s.setupService === 'STAFF'))) {
       return '機材をレンタルする場合は、設営方法（セルフ設営／スタッフ設営）を選択してください。';
     }
     /* 片付け方法も同様に必須（Issue #441）。 */
-    if (catalog && hasPaidEquipment(catalog, s.equipment) && !(s.cleanupChosen === true && (s.cleanupService === 'SELF' || s.cleanupService === 'STAFF'))) {
+    if (choiceRequired && !(s.cleanupChosen === true && (s.cleanupService === 'SELF' || s.cleanupService === 'STAFF'))) {
       return '機材をレンタルする場合は、片付け方法（セルフ片付け／スタッフ片付け）を選択してください。';
     }
     if (catalog && existingOrders && computeSummary(catalog, s, existingOrders).duplicate) {
@@ -255,7 +270,7 @@
     }
     var staff = layouts.length > 0 && (s.setupService === 'STAFF' || s.cleanupService === 'STAFF');
     if (staff && layouts.length !== 1) {
-      return 'スタッフ対応（有料）を依頼できるセッティングは1種類です。複数選ぶ場合は、残りをセルフ（無料）にするか、メールでご相談ください。';
+      return 'スタッフ対応（有料）を依頼できるセッティングは1種類です。複数選ぶ場合は、残りを' + copyFor(catalog).selfLabel + 'にするか、メールでご相談ください。';
     }
     return '';
   }
@@ -436,10 +451,10 @@
     };
   }
 
-  function serviceLabel(value) {
+  function serviceLabel(value, catalog) {
     if (value === 'STAFF') return 'スタッフ';
     if (value === 'NONE') return '追加なし';
-    return 'セルフ（無料）';
+    return copyFor(catalog).selfLabel;
   }
 
   /* 申込内容の確認用サマリ行。 */
@@ -459,16 +474,16 @@
     });
     var equipmentTotal = equipmentTotalJpy(catalog, selection.equipment);
     if (hasPaidEquipment(catalog, selection.equipment)) {
-      lines.push('機材の設営方法: ' + (state.setupService === 'STAFF' ? 'スタッフ設営（事前確認制・事前設営料金）' : 'セルフ設営（無料）'));
-      lines.push('機材の片付け方法: ' + (state.cleanupService === 'STAFF' ? 'スタッフ片付け（事前確認制・片付け料金）' : 'セルフ片付け・原状復帰（無料）'));
+      lines.push('機材の設営方法: ' + (state.setupService === 'STAFF' ? 'スタッフ設営（事前確認制・事前設営料金）' : copyFor(catalog).selfSetupLine));
+      lines.push('機材の片付け方法: ' + (state.cleanupService === 'STAFF' ? 'スタッフ片付け（事前確認制・片付け料金）' : copyFor(catalog).selfCleanupLine));
     }
     if (equipmentTotal > 0) lines.push('機材レンタル合計: ' + formatJpy(equipmentTotal) + '（個別加算。部屋のご予約確定後にお支払い）');
     var themeByCode = {};
     ((catalog && catalog.themes) || []).forEach(function (t) { themeByCode[t.code] = t; });
     selection.layouts.forEach(function (code) {
       lines.push((themeByCode[code] ? themeByCode[code].label : code) +
-        '：設営=' + serviceLabel(selection.setupService) +
-        '／片付け=' + serviceLabel(selection.cleanupService));
+        '：設営=' + serviceLabel(selection.setupService, catalog) +
+        '／片付け=' + serviceLabel(selection.cleanupService, catalog));
     });
     var staffPrice = computeSummary(catalog, state).applicable ? staffServicePrice(catalog, selection.setupService, selection.cleanupService) : null;
     if (staffPrice) {
@@ -725,30 +740,31 @@
       root.appendChild(themeGroup);
 
       var paidEquipment = hasPaidEquipment(catalog, state.equipment);
+      var choiceRequired = paidEquipment && copy.setupRequired;
       if (state.layouts.length > 0 || paidEquipment) {
         var staff = catalog.staffServices || {};
         var setupPrice = staff.PRE_SETUP ? formatJpy(staff.PRE_SETUP.priceJpy) : '';
         var cleanupPrice = staff.CLEANUP ? formatJpy(staff.CLEANUP.priceJpy) : '';
-        root.appendChild(el('p', { className: 'ba-option-subheading', text: paidEquipment ? '設営方法（機材レンタル時は必須）' : '設営（利用前）' }));
+        root.appendChild(el('p', { className: 'ba-option-subheading', text: paidEquipment ? copy.setupHeadingPaid : '設営（利用前）' }));
         var setupGroup = el('div', { className: 'ba-choices' });
-        var setupChoices = [['SELF', 'セルフ設営　無料'], ['STAFF', 'スタッフ設営　+' + setupPrice + '（事前確認制）']];
+        var setupChoices = [['SELF', copy.selfSetupChoice], ['STAFF', 'スタッフ設営　+' + setupPrice + '（事前確認制）']];
         if (config.allowNone && !paidEquipment) setupChoices.push(['NONE', '設営は追加しない（申込済み・不要）']);
         setupChoices.forEach(function (pair) {
           var c = choice('bo-setup', pair[0], pair[1], 'radio', false);
-          c.input.checked = state.setupService === pair[0] && (!paidEquipment || state.setupChosen);
+          c.input.checked = state.setupService === pair[0] && (!choiceRequired || state.setupChosen);
           c.input.addEventListener('change', function () { state.setupService = pair[0]; state.setupChosen = true; render(); });
           setupGroup.appendChild(c.label);
         });
         root.appendChild(setupGroup);
 
         /* 片付け方法。機材レンタルでは設営方法と同様に必須（Issue #441。テーマ未選択でも選べる）。 */
-        root.appendChild(el('p', { className: 'ba-option-subheading', text: paidEquipment ? '片付け方法（機材レンタル時は必須）' : '片付け（利用後）' }));
+        root.appendChild(el('p', { className: 'ba-option-subheading', text: paidEquipment ? copy.cleanupHeadingPaid : '片付け（利用後）' }));
         var cleanupGroup = el('div', { className: 'ba-choices' });
-        var cleanupChoices = [['SELF', '自分で原状復帰　無料'], ['STAFF', 'スタッフ片付け　+' + cleanupPrice + '（事前確認制）']];
+        var cleanupChoices = [['SELF', copy.selfCleanupChoice], ['STAFF', 'スタッフ片付け　+' + cleanupPrice + '（事前確認制）']];
         if (config.allowNone && !paidEquipment) cleanupChoices.push(['NONE', '片付けは追加しない（申込済み・不要）']);
         cleanupChoices.forEach(function (pair) {
           var c = choice('bo-cleanup', pair[0], pair[1], 'radio', false);
-          c.input.checked = state.cleanupService === pair[0] && (!paidEquipment || state.cleanupChosen);
+          c.input.checked = state.cleanupService === pair[0] && (!choiceRequired || state.cleanupChosen);
           c.input.addEventListener('change', function () { state.cleanupService = pair[0]; state.cleanupChosen = true; render(); });
           cleanupGroup.appendChild(c.label);
         });

@@ -317,3 +317,42 @@ test('フロントがバックエンドの文章（notices / error.message）を
   assert.ok(!/\.notices\b/.test(src), 'catalog.noticesを参照しない');
   assert.ok(!/error\.message|\.error\.message/.test(src), 'error.messageを表示しない');
 });
+
+/* ---- 「必須」「無料」の表示もpolicyから導出する（equipmentSetupChoiceRequired / selfServiceFree） ---- */
+
+function renderWithPolicy(overrides) {
+  var catalog = JSON.parse(JSON.stringify(CATALOG));
+  Object.keys(overrides).forEach(function (k) { catalog.policy[k] = overrides[k]; });
+  var m = mountPanel({ catalog: catalog, getRoomPrice: function () { return { kind: 'estimate', status: 'ok', amountJpy: 8000 }; } });
+  /* mountPanel は config.catalog を上書きしてしまうため、改めて差し替える */
+  m.controller.setCatalog(Object.assign(catalog, { notices: undefined }));
+  var paid = catalog.equipment.filter(function (e) { return e.unitPriceJpy > 0; })[0];
+  fire(m, function (n) { return n.tagName === 'SELECT' && (n.attrs['aria-label'] || '').indexOf(paid.label) === 0; }, function (n) { n.value = '1'; });
+  fire(m, function (n) { return n.attrs.name === 'bo-layout' && n.value === 'GRUNGE'; }, function (n) { n.checked = true; });
+  return { m: m, catalog: catalog, text: renderedText(m) };
+}
+
+test('policy: 設営方法の「必須」とセルフの「無料」表示は、バックエンドの条件（フラグ）に従う', function () {
+  var on = renderWithPolicy({});
+  assert.ok(on.text.indexOf('設営方法（機材レンタル時は必須）') !== -1 && on.text.indexOf('片付け方法（機材レンタル時は必須）') !== -1);
+  assert.ok(on.text.indexOf('セルフ設営　無料') !== -1 && on.text.indexOf('自分で原状復帰　無料') !== -1);
+  assert.ok(Panel.summarize(on.catalog, { equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' }).join('\n').indexOf('セルフ設営（無料）') !== -1);
+
+  var off = renderWithPolicy({ equipmentSetupChoiceRequired: false, selfServiceFree: false });
+  ['機材レンタル時は必須', 'セルフ設営　無料', '自分で原状復帰　無料'].forEach(function (t) {
+    assert.strictEqual(off.text.indexOf(t), -1, 'policy=false のとき「' + t + '」が残らない');
+  });
+  assert.ok(off.text.indexOf('設営方法') !== -1 && off.text.indexOf('セルフ設営') !== -1, '見出し・選択肢自体は表示される');
+  var lines = Panel.summarize(off.catalog, { equipment: { COB_BICOLOR: 1 }, layouts: ['GRUNGE'], setupService: 'SELF', cleanupService: 'SELF' }).join('\n');
+  assert.strictEqual(lines.indexOf('セルフ設営（無料）'), -1);
+  assert.strictEqual(lines.indexOf('セルフ（無料）'), -1);
+  assert.strictEqual(Panel.copyFor(off.catalog).selfVsStaff.indexOf('無料です'), -1);
+});
+
+test('policy: 設営方法の選択が必須でない条件なら、クライアント側の必須チェックも課さない（最終判定はサーバー）', function () {
+  var off = JSON.parse(JSON.stringify(CATALOG));
+  off.policy.equipmentSetupChoiceRequired = false;
+  var state = { equipment: { COB_BICOLOR: 1 }, layouts: [], setupChosen: false, cleanupChosen: false };
+  assert.ok(Panel.validateSelection(state, CATALOG, []).indexOf('設営方法') !== -1, '必須のときは選択を促す');
+  assert.strictEqual(Panel.validateSelection(state, off, []), '');
+});

@@ -282,7 +282,8 @@ test('パネルのUI: 機材を選ぶと設営方法のラジオを出し、未�
   var src = read('scripts/booking-options.js');
   assert.ok(src.indexOf('state.setupChosen = true') !== -1);
   assert.ok(src.indexOf('item.freeWhenWith && item.freeWhenWith.label') !== -1);
-  assert.ok(src.indexOf('設営方法（機材レンタル時は必須）') !== -1);
+  assert.strictEqual(Panel.copyFor(SERVER_CATALOG).setupHeadingPaid, '設営方法（機材レンタル時は必須）', '必須の表示はpolicy由来（Issue #465）');
+  assert.ok(src.indexOf('copy.setupHeadingPaid') !== -1);
   assert.ok(!/セットで無料|単独200円/.test(src), '無料条件の文言をパネルに直書きしない（カタログの値だけ）');
 });
 
