@@ -21,7 +21,7 @@
     { "code": "BOWENS_BRACKET", "label": "ボーエンズマウントブラケット", "stock": 1, "unitPriceJpy": 200, "unitLabel": "", "requiresLecture": true },
     { "code": "SOFTBOX_STRIP_60X90", "label": "ストリップソフトボックス（60×90cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresLecture": true },
     { "code": "SOFTBOX_STRIP_30X120", "label": "ストリップソフトボックス（30×120cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresLecture": true },
-    { "code": "SOFTBOX_60", "label": "ソフトボックス（60cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresLecture": true },
+    { "code": "SOFTBOX_60", "label": "オクタゴンソフトボックス（90cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresLecture": true },
     { "code": "COLOR_FILTER_SET", "label": "カラーフィルター（8色セット）", "stock": 1, "unitPriceJpy": 200, "unitLabel": "", "requiresLecture": true }
   ],
   "freeSelf": [

@@ -107,7 +107,7 @@ var StudioXEquipmentCatalog = {
     },
     {
       "code": "SOFTBOX_60",
-      "label": "ソフトボックス（60cm）",
+      "label": "オクタゴンソフトボックス（90cm）",
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
