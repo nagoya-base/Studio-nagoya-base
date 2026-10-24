@@ -826,3 +826,10 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 #option-section .option-actions { margin-top: 8px; }
 #option-section .option-actions button { margin-right: 8px; }
 #option-section .option-warning { color: #8a5a00; font-size: 13px; }
+
+/* Issue #447: 一覧カードの予約オプション状態（Studio Xのみ） */
+.card-option { margin-top: 6px; font-size: 13px; font-weight: 600; }
+.card-option-line { font-size: 13px; color: #555; padding-left: 4px; }
+.card-option-pending-approval, .card-option-unknown { color: #a14a00; }
+.option-badge { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: #a14a00; color: #fff; font-size: 12px; }
+button.action.option-review { background: #a14a00; border-color: #a14a00; color: #fff; font-weight: 700; }

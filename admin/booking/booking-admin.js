@@ -300,6 +300,42 @@ function renderTabCounts() {
   setElementText_('tab-count-all', String(counts.all));
 }
 
+/* Issue #447: 一覧カードの予約オプション状態（Studio Xのみ。optionSummaryはgetAdminBookingsが付ける）。
+   部屋予約のstatusとは別に、OptionOrderの状態だけで表示・確定ボタンの可否を決める。 */
+var OPTION_STATE_LABELS_ = {
+  PENDING_APPROVAL: '承認待ち',
+  AWAITING_PAYMENT: '支払い待ち',
+  CONFIRMED: '確定済み',
+  CLOSED: '不承認/取消済み',
+  UNKNOWN: '状態を取得できません'
+};
+
+function optionSummaryOf_(booking) {
+  var summary = booking && booking.optionSummary;
+  return summary && summary.state && summary.state !== 'NONE' ? summary : null;
+}
+
+/* 未処理（承認待ち）のオプションがある間は、一覧の「確定」を押せなくする。 */
+function isOptionApprovalPending_(booking) {
+  var summary = optionSummaryOf_(booking);
+  return !!summary && summary.state === 'PENDING_APPROVAL';
+}
+
+function renderOptionSummaryLines_(booking) {
+  var summary = optionSummaryOf_(booking);
+  if (!summary) return '';
+  var cls = 'card-option card-option-' + String(summary.state).toLowerCase().replace(/_/g, '-');
+  var html = '<div class="' + cls + '">予約オプション: ' + escapeHtml(OPTION_STATE_LABELS_[summary.state] || summary.state);
+  if (summary.state === 'PENDING_APPROVAL') {
+    html += '<span class="option-badge">オプション承認待ち ' + escapeHtml(summary.pendingApprovalCount) + '件</span>';
+  }
+  html += '</div>';
+  (summary.lines || []).forEach(function (line) {
+    html += '<div class="card-option-line">・' + escapeHtml(line) + '</div>';
+  });
+  return html;
+}
+
 function render() {
   renderSummary();
   renderTabCounts();
@@ -321,8 +357,16 @@ function render() {
     /* Issue #334: EXPIREDのみ復活可能（利用開始後かどうか・枠の空きはサーバー側
        （reviveExpiredBooking）が最終判定する。ここでは表示上の出し分けのみ）。 */
     var canRevive = b.status === 'EXPIRED';
-    var actions = '<button type="button" class="action detail" data-action="detail" data-id="' + escapeHtml(b.bookingId) + '">詳細</button>';
-    if (canConfirm) {
+    var optionPending = isOptionApprovalPending_(b);
+    var actions = '';
+    if (optionPending) {
+      /* Issue #447: 承認待ちオプションがある予約は、通常の「詳細」より先に目立つ導線を出す。 */
+      actions += '<button type="button" class="action option-review" data-action="detail" data-id="' + escapeHtml(b.bookingId) + '">オプションを確認</button>';
+    }
+    actions += '<button type="button" class="action detail" data-action="detail" data-id="' + escapeHtml(b.bookingId) + '">詳細</button>';
+    if (canConfirm && optionPending) {
+      actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '" disabled title="予約オプションの承認待ちがあります。詳細でオプションを確認してください">オプション確認後に確定</button>';
+    } else if (canConfirm) {
       actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '"' + (busy || awaitingPaymentLink ? ' disabled' : '') + (awaitingPaymentLink ? ' title="決済リンク未送信のため確定できません（詳細から送信してください）"' : '') + '>確定</button>';
     }
     if (b.status === 'CONFIRMED' && b.confirmedMailPending) {
@@ -378,6 +422,7 @@ function render() {
         priceUpdateWarningLine +
         (b.paymentRecoveryRequired ? '<div class="card-price-warning">⚠ 決済要対応</div>' : '') +
         cardDueLine +
+        renderOptionSummaryLines_(b) +
         '<div class="card-id">' + escapeHtml(b.bookingId) + '</div>' +
         '<div class="card-actions">' + actions + '</div>' +
       '</div>'
@@ -1825,7 +1870,17 @@ function setBusy(bookingId, busy) {
    （途中で古い一覧のまま再度「確定」を押せてしまう隙をなくすため）。 */
 function runConfirm(bookingId) {
   var booking = state.bookings.find(function (b) { return b.bookingId === bookingId; });
+  if (isOptionApprovalPending_(booking)) {
+    alert('予約オプションの承認待ちがあるため、一覧からは確定できません。詳細でオプションを確認してください。');
+    return;
+  }
+  var optionSummary = optionSummaryOf_(booking);
+  var optionWarning = optionSummary && optionSummary.state !== 'CLOSED'
+    ? '予約オプション: ' + (OPTION_STATE_LABELS_[optionSummary.state] || optionSummary.state) +
+      (optionSummary.state === 'UNKNOWN' ? '（詳細で確認してください）' : '') + '\n\n'
+    : '';
   var confirmed = window.confirm(
+    optionWarning +
     (booking
       ? '予約ID: ' + booking.bookingId + '\n' +
         '利用日: ' + booking.date + ' ' + booking.startAt + '-' + booking.endAt + '\n' +
