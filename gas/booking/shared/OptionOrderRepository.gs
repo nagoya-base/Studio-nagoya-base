@@ -172,6 +172,22 @@ var OptionOrderRepository = (function () {
     });
   }
 
+  /* 許可の取り消し（該当する許可行を空にする。履歴の行数は変えない）。取り消した件数を返す。 */
+  function removeEligibilityGrant(email, optionCode) {
+    var target = normalizeEmail(email);
+    if (!target) return 0;
+    var sheet = ensureSheet_(ELIGIBILITY_SHEET_, ELIGIBILITY_HEADERS_);
+    var values = sheet.getDataRange().getValues();
+    var count = 0;
+    for (var i = 1; i < values.length; i++) {
+      if (normalizeEmail(values[i][0]) === target && values[i][1] === optionCode) {
+        sheet.getRange(i + 1, 1, 1, ELIGIBILITY_HEADERS_.length).setValues([['', '', values[i][2], '取り消し済み']]);
+        count++;
+      }
+    }
+    return count;
+  }
+
   function addEligibilityGrant(email, optionCode, note, now) {
     var sheet = ensureSheet_(ELIGIBILITY_SHEET_, ELIGIBILITY_HEADERS_);
     sheet.appendRow([safeCell_(normalizeEmail(email)), optionCode, now || new Date(), safeCell_(String(note || '').slice(0, 200))]);
@@ -188,6 +204,7 @@ var OptionOrderRepository = (function () {
     updateOrder: updateOrder,
     listEligibilityGrants: listEligibilityGrants,
     hasEligibilityGrant: hasEligibilityGrant,
-    addEligibilityGrant: addEligibilityGrant
+    addEligibilityGrant: addEligibilityGrant,
+    removeEligibilityGrant: removeEligibilityGrant
   };
 })();

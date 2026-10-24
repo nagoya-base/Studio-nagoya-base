@@ -526,7 +526,9 @@ function buildAdminOptionSummary_(bookingId, timezone) {
           recoveryRequired: !!order.paymentRecoveryRequiredAt,
           recoveryReason: order.paymentRecoveryReason || '',
           canApprove: order.status === BookingOptions.STATUS.PENDING_APPROVAL,
-          canDecline: order.status === BookingOptions.STATUS.PENDING_APPROVAL
+          canDecline: order.status === BookingOptions.STATUS.PENDING_APPROVAL || order.canDeclineEligibility === true,
+          eligibilityMissing: order.eligibilityMissing === true,
+          eligibilityMissingLabels: order.eligibilityMissingLabels || []
         };
       })
     };
@@ -553,6 +555,12 @@ function adminDeclineOptionOrder(optionOrderId, reason) {
    「どれか1台の許可で全定常光を許可」はしない。 */
 function adminGrantVideoLightEligibility(email, equipmentCode, note) {
   return sanitizeForClient_(OptionOrderService.grantVideoLightEligibility(email, equipmentCode, note));
+}
+
+/* ビデオライト系の許可の取り消し（機材コード単位）。取り消し後は未払い注文が支払い不可になり、
+   Adminが否認できる。部屋予約には影響しない。 */
+function adminRevokeVideoLightEligibility(email, equipmentCode) {
+  return sanitizeForClient_(OptionOrderService.revokeVideoLightEligibility(email, equipmentCode));
 }
 
 /* 確定。既存の正式関数confirmBooking(bookingId)（BookingAdmin.gs）へそのまま委譲する。

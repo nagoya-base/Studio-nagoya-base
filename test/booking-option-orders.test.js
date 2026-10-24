@@ -1012,3 +1012,132 @@ test('資格: 他人のメールアドレスの許可は引き継がれない（
   confirmRoom(ctx, r.bookingId);
   assert.strictEqual(ctx.sandbox.OptionOrderService.submitAddonOptions(r.bookingId, EMAIL, { equipment: { COB_BICOLOR: 1 } }).error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
 });
+
+// ============================================================================
+// 資格の再検証（Issue追加要件: 未許可は支払い不可・確定不可、Adminが否認できる）
+// ============================================================================
+
+function grantedBicolorOrder(ctx) {
+  var svc = ctx.sandbox.OptionOrderService;
+  var r = createRoom(ctx);
+  confirmRoom(ctx, r.bookingId);
+  svc.grantVideoLightEligibility(EMAIL, 'COB_BICOLOR', '対面レクチャー済み');
+  var res = svc.submitAddonOptions(r.bookingId, EMAIL, { equipment: { COB_BICOLOR: 1, STAND_260: 1 } });
+  assert.strictEqual(res.success, true, JSON.stringify(res.error));
+  return { bookingId: r.bookingId, optionOrderId: res.orders[0].optionOrderId };
+}
+
+test('資格の再検証: 許可が取り消されると、申込済みの注文でもCheckoutを生成せず支払い不可（Stripeを呼ばない）', function () {
+  var ctx = setup();
+  var o = grantedBicolorOrder(ctx);
+  var svc = ctx.sandbox.OptionOrderService;
+  assert.strictEqual(svc.revokeVideoLightEligibility(EMAIL, 'COB_BICOLOR').revoked, 1);
+
+  var out = svc.startOptionCheckout(o.bookingId, EMAIL, o.optionOrderId);
+  assert.strictEqual(out.success, false);
+  assert.strictEqual(out.error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
+  assert.ok(out.error.message.indexOf('バイカラーCOBライト') !== -1);
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
+  assert.strictEqual(orderRows(ctx, o.bookingId)[0].status, 'AWAITING_PAYMENT', '状態は自動では変えない（Adminが判断）');
+
+  // 再付与すれば支払える（許可はサーバーが毎回再検証する）
+  svc.grantVideoLightEligibility(EMAIL, 'COB_BICOLOR', '再付与');
+  assert.strictEqual(svc.startOptionCheckout(o.bookingId, EMAIL, o.optionOrderId).success, true);
+});
+
+test('資格の再検証: Checkout発行後に許可が取り消されても、既存の有効なSessionのURLを返さない', function () {
+  var ctx = setup();
+  var o = grantedBicolorOrder(ctx);
+  var svc = ctx.sandbox.OptionOrderService;
+  assert.strictEqual(svc.startOptionCheckout(o.bookingId, EMAIL, o.optionOrderId).success, true);
+  svc.revokeVideoLightEligibility(EMAIL, 'COB_BICOLOR');
+  var again = svc.startOptionCheckout(o.bookingId, EMAIL, o.optionOrderId);
+  assert.strictEqual(again.error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
+  assert.strictEqual(ctx.stripe.createCalls.length, 1);
+});
+
+test('資格の再検証: 許可の無いまま保存された注文（不正な申込データ）もCheckoutに進めず、Adminが否認でき、部屋予約は不変', function () {
+  var ctx = setup();
+  var r = createRoom(ctx);
+  confirmRoom(ctx, r.bookingId);
+  // 申込時の検証をすり抜けて保存された想定の注文を直接作る
+  ctx.sandbox.OptionOrderRepository.appendOrders([{
+    optionOrderId: 'OPT-FORGED01', bookingId: r.bookingId, brand: 'studio_x', category: 'EQUIPMENT', source: 'ADDON',
+    items: ['EQ:COB_FULLCOLOR:2', 'EQ:STAND_260:1'], amountJpy: 1800, currency: 'JPY', approvalStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_STARTED',
+    status: 'AWAITING_PAYMENT', customerEmail: EMAIL, createdAt: new Date(), updatedAt: new Date()
+  }]);
+  var svc = ctx.sandbox.OptionOrderService;
+  assert.strictEqual(svc.startOptionCheckout(r.bookingId, EMAIL, 'OPT-FORGED01').error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
+
+  // Admin: 資格未確認として見え、否認できる
+  var listed = svc.listForAdmin(r.bookingId).orders[0];
+  assert.strictEqual(listed.eligibilityMissing, true);
+  assert.deepStrictEqual(plain(listed.eligibilityMissingLabels), ['フルカラーCOBライト（定常光）']);
+  assert.strictEqual(listed.canDeclineEligibility, true);
+
+  var roomBefore = plain(room(ctx, r.bookingId));
+  var before = mailsTo(ctx, EMAIL).length;
+  var declined = svc.declineOrder('OPT-FORGED01', '対面レクチャー未実施');
+  assert.strictEqual(declined.success, true);
+  var row = orderRows(ctx, r.bookingId)[0];
+  assert.strictEqual(row.status, 'DECLINED');
+  assert.strictEqual(row.approvalStatus, 'DECLINED');
+  assert.deepStrictEqual(plain(room(ctx, r.bookingId)), roomBefore, '否認しても部屋予約には影響しない');
+  var mail = mailsTo(ctx, EMAIL).slice(before)[0];
+  assert.ok(mail.body.indexOf('対面でのレクチャー・利用許可を確認できなかった') !== -1);
+  assert.ok(mail.body.indexOf('スタッフの予定') === -1, '機材の否認メールにスタッフ対応の文面を使わない');
+  assert.strictEqual(svc.declineOrder('OPT-FORGED01', '').alreadyDecided, true, '二重否認は冪等');
+  assert.strictEqual(svc.startOptionCheckout(r.bookingId, EMAIL, 'OPT-FORGED01').error.code, 'ORDER_DECLINED');
+  assert.strictEqual(svc.approveOrder('OPT-FORGED01').error.code, 'APPROVAL_NOT_REQUIRED', '機材は承認ではなく否認のみ');
+});
+
+test('資格の再検証: 許可済みの機材注文・ストロボ等の注文は否認の対象にならない', function () {
+  var ctx = setup();
+  var o = grantedBicolorOrder(ctx);
+  var svc = ctx.sandbox.OptionOrderService;
+  assert.strictEqual(svc.listForAdmin(o.bookingId).orders[0].eligibilityMissing, false);
+  assert.strictEqual(svc.declineOrder(o.optionOrderId, '').error.code, 'APPROVAL_NOT_REQUIRED', '許可済みの注文を勝手に否認できない');
+  var r2 = createRoom(ctx, { date: futureDateJst_(61) });
+  confirmRoom(ctx, r2.bookingId);
+  var strobe = svc.submitAddonOptions(r2.bookingId, EMAIL, { equipment: { STROBE_MONOBLOCK: 1 } });
+  assert.strictEqual(svc.declineOrder(strobe.orders[0].optionOrderId, '').error.code, 'APPROVAL_NOT_REQUIRED');
+  assert.strictEqual(svc.startOptionCheckout(r2.bookingId, EMAIL, strobe.orders[0].optionOrderId).success, true, 'ストロボに資格制限は無い');
+});
+
+test('資格の再検証（Webhook）: 支払い済みでも許可を確認できないビデオライト系は確定にせず、入金の事実を残して要復旧にする', function () {
+  var ctx = setup();
+  var o = grantedBicolorOrder(ctx);
+  var svc = ctx.sandbox.OptionOrderService;
+  assert.strictEqual(svc.startOptionCheckout(o.bookingId, EMAIL, o.optionOrderId).success, true);
+  svc.revokeVideoLightEligibility(EMAIL, 'COB_BICOLOR');
+  ctx.stripe.sessions.cs_test_1.payment_status = 'paid';
+  ctx.stripe.sessions.cs_test_1.status = 'complete';
+  var before = mailsTo(ctx, EMAIL).length;
+  var result = receiveAndProcess(ctx, addonEvent('evt_elig1', 'checkout.session.completed', 'cs_test_1'), new Date());
+  assert.strictEqual(result.code, 'ADDON_RECOVERY_REQUIRED');
+  var row = orderRows(ctx, o.bookingId)[0];
+  assert.notStrictEqual(row.status, 'CONFIRMED');
+  assert.strictEqual(row.paymentStatus, 'PAID', '入金の事実は保持する');
+  assert.ok(row.paymentRecoveryRequiredAt);
+  assert.strictEqual(mailsTo(ctx, EMAIL).length, before, '確定メールを送らない');
+  var recovery = ctx.sandbox.RecoveryRepository.listAll().filter(function (x) { return x.failureType === 'OPTION_PAID_NOT_ELIGIBLE'; });
+  assert.strictEqual(recovery.length, 1);
+  assert.strictEqual(ctx.sandbox.RecoveryRepository.hasOpenPaymentRecords(o.bookingId), false, '部屋予約の決済ゲートに波及しない');
+});
+
+test('許可の取り消しは機材コード単位で、他の機材・他人の許可に影響しない。ストロボ等は対象外', function () {
+  var ctx = setup();
+  var svc = ctx.sandbox.OptionOrderService;
+  svc.grantVideoLightEligibility(EMAIL, 'COB_BICOLOR', '');
+  svc.grantVideoLightEligibility(EMAIL, 'COB_FULLCOLOR', '');
+  svc.grantVideoLightEligibility('hanako@example.com', 'COB_BICOLOR', '');
+  assert.strictEqual(svc.revokeVideoLightEligibility(EMAIL, 'COB_BICOLOR').revoked, 1);
+  assert.strictEqual(svc.revokeVideoLightEligibility(EMAIL, 'COB_BICOLOR').revoked, 0, '二重取り消しは何もしない');
+  assert.strictEqual(svc.revokeVideoLightEligibility(EMAIL, 'STROBE_MONOBLOCK').error.code, 'INVALID_EQUIPMENT');
+  assert.strictEqual(ctx.sandbox.OptionOrderRepository.hasEligibilityGrant(EMAIL, 'COB_FULLCOLOR'), true);
+  assert.strictEqual(ctx.sandbox.OptionOrderRepository.hasEligibilityGrant('hanako@example.com', 'COB_BICOLOR'), true);
+  assert.strictEqual(ctx.sandbox.OptionOrderRepository.hasEligibilityGrant(EMAIL, 'COB_BICOLOR'), false);
+  // 取り消し後に再付与できる
+  assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'COB_BICOLOR', '再付与').alreadyGranted, false);
+});

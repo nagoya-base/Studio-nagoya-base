@@ -1956,6 +1956,9 @@ function describeOptionOrder_(order) {
   if (order.approvedAt) lines.push('承認日時: ' + order.approvedAt);
   if (order.declinedAt) lines.push('不承認日時: ' + order.declinedAt + (order.declineReason ? '（' + order.declineReason + '）' : ''));
   if (order.paidAt) lines.push('決済日時: ' + order.paidAt);
+  if (order.eligibilityMissing) {
+    lines.push('⚠ 資格未確認: ' + (order.eligibilityMissingLabels || []).join('、') + ' の対面レクチャー済みの利用許可がありません（支払い・確定できません。不承認にできます）');
+  }
   if (order.recoveryRequired) lines.push('⚠ 要確認: ' + (order.recoveryReason || '決済の照合に問題があります。Stripeを確認してください。'));
   return lines;
 }
@@ -2028,7 +2031,7 @@ function runOptionDecision_(action, optionOrderId) {
   if (approving) {
     if (!window.confirm('このスタッフ対応を承認します。\n\n利用者へ承認メールを送り、オンライン決済に進めるようになります（承認後に決済されるまで確定しません）。\n\n実行しますか？')) return;
   } else {
-    var input = window.prompt('このスタッフ対応を不承認にします。部屋のご予約には影響しません。\n理由（任意。利用者向けメールには載りません）:');
+    var input = window.prompt('このオプションを不承認にします。部屋のご予約には影響しません。\n理由（任意。利用者向けメールには載りません）:');
     if (input === null) return;
     reason = String(input).trim();
   }

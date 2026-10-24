@@ -124,20 +124,28 @@ var OptionMailTemplates = (function () {
   /* 不承認メール。部屋のご予約には影響しないことを明記する。 */
   function buildOptionDeclinedMail(booking, order, config) {
     var brandLabel = Booking.getBrandLabel(booking.brand);
-    var lines = [
+    var isEquipment = order.category === BookingOptions.CATEGORY.EQUIPMENT;
+    var lines = (isEquipment ? [
+      booking.name + ' 様',
+      '',
+      'お申し込みのビデオライト系機材は、対面でのレクチャー・利用許可を確認できなかったため、セルフレンタルをお受けできませんでした。',
+      'お支払いは発生していません。ご予約（部屋の利用）の内容には影響ありません。',
+      'レクチャーのご相談は、メールでお問い合わせください。',
+      ''
+    ] : [
       booking.name + ' 様',
       '',
       'お申し込みのスタッフ対応は、スタッフの予定の都合により対応できませんでした。申し訳ありません。',
       'お支払いは発生していません。ご予約（部屋の利用）の内容には影響ありません。',
       'セルフでの設営・原状復帰（無料）をご希望の場合は、案内ページからお申し込みいただけます。',
       ''
-    ].concat(bookingLines_(booking, config)).concat(orderLines_(order)).concat([
+    ]).concat(bookingLines_(booking, config)).concat(orderLines_(order)).concat([
       '',
       buildOptionsPageUrl(booking),
       contactLine_(config),
       signature_(booking)
     ]);
-    return { subject: '【' + brandLabel + '】スタッフ対応について（対応できませんでした）', body: joinNonEmpty_(lines) };
+    return { subject: '【' + brandLabel + '】' + (isEquipment ? 'ビデオライト系機材のお申し込みについて（お受けできませんでした）' : 'スタッフ対応について（対応できませんでした）'), body: joinNonEmpty_(lines) };
   }
 
   /* お支払い完了・確定メール。 */

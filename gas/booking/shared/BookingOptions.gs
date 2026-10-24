@@ -73,7 +73,8 @@ var BookingOptions = (function () {
 
   var ALLOWED_TRANSITIONS_ = {};
   ALLOWED_TRANSITIONS_[STATUS.PENDING_APPROVAL] = [STATUS.AWAITING_PAYMENT, STATUS.DECLINED, STATUS.CANCELLED];
-  ALLOWED_TRANSITIONS_[STATUS.AWAITING_PAYMENT] = [STATUS.PAYMENT_PENDING, STATUS.CONFIRMED, STATUS.CANCELLED];
+  /* AWAITING_PAYMENT→DECLINED: 対面レクチャー済みの許可を確認できない機材注文を管理者が否認する（部屋予約は不変）。 */
+  ALLOWED_TRANSITIONS_[STATUS.AWAITING_PAYMENT] = [STATUS.PAYMENT_PENDING, STATUS.CONFIRMED, STATUS.DECLINED, STATUS.CANCELLED];
   /* PAYMENT_PENDING→AWAITING_PAYMENT: 決済失敗・Checkout失効後に再試行できる状態へ戻す。 */
   ALLOWED_TRANSITIONS_[STATUS.PAYMENT_PENDING] = [STATUS.CONFIRMED, STATUS.AWAITING_PAYMENT, STATUS.CANCELLED];
   ALLOWED_TRANSITIONS_[STATUS.CONFIRMED] = [];
@@ -126,6 +127,22 @@ var BookingOptions = (function () {
   function equipmentCodeOfItem(item) {
     var parsed = parseEquipmentItem_(item);
     return parsed ? parsed.code : '';
+  }
+
+  /* 項目一覧のうち、対面レクチャー済みの許可が必要な機材コード（重複なし）。 */
+  function lectureRequiredCodesOfItems(items) {
+    var codes = [];
+    (items || []).forEach(function (item) {
+      var parsed = parseEquipmentItem_(item);
+      var def = parsed && equipmentRental_(parsed.code);
+      if (def && def.requiresLecture === true && codes.indexOf(parsed.code) === -1) codes.push(parsed.code);
+    });
+    return codes;
+  }
+
+  function equipmentLabel(code) {
+    var def = equipmentRental_(code) || equipmentFreeSelf_(code);
+    return def ? def.label : code;
   }
 
   /* 対面レクチャー済みの許可が条件の機材（ビデオライト系の定常光）か。 */
@@ -700,6 +717,8 @@ var BookingOptions = (function () {
     normalizeSelection: normalizeSelection,
     describeItem: describeItem,
     isLectureRequiredItem: isLectureRequiredItem,
+    lectureRequiredCodesOfItems: lectureRequiredCodesOfItems,
+    equipmentLabel: equipmentLabel,
     lectureRequiredEquipmentCodes: lectureRequiredEquipmentCodes,
     equipmentCodeOfItem: equipmentCodeOfItem,
     computeStaffServiceCharge: computeStaffServiceCharge,

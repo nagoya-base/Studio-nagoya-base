@@ -114,6 +114,24 @@ var OptionOrderService = (function () {
     };
   }
 
+  /*
+   * サーバー側の資格の再検証（Issue追加要件）。注文に含まれるビデオライト系機材のうち、現時点で
+   * 対面レクチャー済みの許可（Admin付与）を確認できない機材コードを返す。申込時に通っていても、
+   * 許可が取り消された・申込データが不正だった場合に、支払い・確定へ進ませないために使う。
+   */
+  function missingLectureCodes_(order) {
+    var required = BookingOptions.lectureRequiredCodesOfItems(order.items);
+    if (required.length === 0) return [];
+    var eligible = resolveEligibility_(order.customerEmail).eligibleEquipmentCodes;
+    return required.filter(function (code) { return eligible.indexOf(code) === -1; });
+  }
+
+  function notEligibleError_(codes) {
+    return fail_('VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE',
+      codes.map(BookingOptions.equipmentLabel).join('・') + 'のセルフレンタルは、対面で操作レクチャーを受け、利用許可済みの方のみご利用いただけます。お支払いには進めません。メールでご相談ください。',
+      { items: codes });
+  }
+
   function activeExistingOrders_(bookingId) {
     return OptionOrderRepository.listByBookingId(bookingId).map(function (row) { return row.record; });
   }
@@ -392,6 +410,9 @@ var OptionOrderService = (function () {
       if (order.status === BookingOptions.STATUS.PENDING_APPROVAL) return fail_('APPROVAL_REQUIRED', 'スタッフ対応は承認後にお支払いいただけます。承認をお待ちください。');
       if (order.status === BookingOptions.STATUS.DECLINED) return fail_('ORDER_DECLINED', 'このスタッフ対応は対応できませんでした。');
       if (!BookingOptions.isPayable(order)) return fail_('NOT_PAYABLE', 'このオプションはお支払いの対象ではありません。');
+      /* 資格の再検証: 許可を確認できないビデオライト系は、Stripeを呼ばず支払い不可（管理者が否認できる）。 */
+      var missing1 = missingLectureCodes_(order);
+      if (missing1.length > 0) return notEligibleError_(missing1);
       return { success: true, order: order };
     });
     if (!phase1.success) return phase1;
@@ -419,6 +440,8 @@ var OptionOrderService = (function () {
         return fail_('NOT_PAYABLE', 'このオプションはお支払いの対象ではありません。');
       }
       var order = found.record;
+      var missing2 = missingLectureCodes_(order);
+      if (missing2.length > 0) return notEligibleError_(missing2);
       /* 結果不明のまま残っている試行（Session ID未記録）は同じ試行ID・同じ要求内容で再送する
          （Stripeの冪等キーにより二重Sessionにならない）。 */
       var snapshot = order.paymentAttemptId && !order.stripeCheckoutSessionId ? parseSnapshot_(order.checkoutRequestJson) : null;
@@ -514,6 +537,13 @@ var OptionOrderService = (function () {
     summary.stripePaymentIntentId = record.stripePaymentIntentId;
     summary.sourceLabel = record.source === BookingOptions.SOURCE.ADDON ? '後付け' : '予約と同時';
     summary.paidLabel = record.category === BookingOptions.CATEGORY.FREE ? '無料' : '有料';
+    /* 対面レクチャー済みの許可を確認できないビデオライト系の未払い注文（Adminが否認できる）。 */
+    var missing = (record.category === BookingOptions.CATEGORY.EQUIPMENT &&
+      (record.status === BookingOptions.STATUS.AWAITING_PAYMENT || record.status === BookingOptions.STATUS.PAYMENT_PENDING))
+      ? missingLectureCodes_(record) : [];
+    summary.eligibilityMissing = missing.length > 0;
+    summary.eligibilityMissingLabels = missing.map(BookingOptions.equipmentLabel);
+    summary.canDeclineEligibility = summary.eligibilityMissing && record.status === BookingOptions.STATUS.AWAITING_PAYMENT;
     return summary;
   }
 
@@ -546,10 +576,18 @@ var OptionOrderService = (function () {
       var found = OptionOrderRepository.findByOptionOrderId(optionOrderId);
       if (!found) return fail_('ORDER_NOT_FOUND', '対象のオプション注文が見つかりません。');
       var order = found.record;
-      if (order.category !== BookingOptions.CATEGORY.STAFF_SERVICE) {
+      var approving = decision === 'APPROVE';
+      var isStaff = order.category === BookingOptions.CATEGORY.STAFF_SERVICE;
+      /* 既に不承認済みの機材注文への再不承認は、何も変えずに現在の結果を返す（冪等）。 */
+      if (!approving && order.category === BookingOptions.CATEGORY.EQUIPMENT && order.status === BookingOptions.STATUS.DECLINED) {
+        return { success: true, alreadyDecided: true, order: order };
+      }
+      /* 承認の対象はスタッフ対応のみ。機材は、対面レクチャー済みの許可を確認できない未払い注文に限り不承認にできる。 */
+      var isEligibilityDecline = !approving && order.category === BookingOptions.CATEGORY.EQUIPMENT &&
+        order.status === BookingOptions.STATUS.AWAITING_PAYMENT && missingLectureCodes_(order).length > 0;
+      if (!isStaff && !isEligibilityDecline) {
         return fail_('APPROVAL_NOT_REQUIRED', 'この注文は承認の対象ではありません。');
       }
-      var approving = decision === 'APPROVE';
       var targetStatus = approving ? BookingOptions.STATUS.AWAITING_PAYMENT : BookingOptions.STATUS.DECLINED;
       /* 二重承認・二重不承認は何も変えずに現在の結果を返す（冪等）。 */
       if (order.status === targetStatus) {
@@ -606,6 +644,18 @@ var OptionOrderService = (function () {
       }
       OptionOrderRepository.addEligibilityGrant(normalized, equipmentCode, note, nowOrDefault_(now));
       return { success: true, alreadyGranted: false };
+    });
+  }
+
+  /* 許可の取り消し（機材コード単位）。取り消し後は申込・支払いの再検証で通らなくなる。 */
+  function revokeVideoLightEligibility(email, equipmentCode) {
+    var normalized = normalizeEmail_(email);
+    if (!Booking.isValidEmail(normalized)) return fail_('INVALID_EMAIL', 'メールアドレスの形式が正しくありません。');
+    if (BookingOptions.lectureRequiredEquipmentCodes().indexOf(equipmentCode) === -1) {
+      return fail_('INVALID_EQUIPMENT', '対象はビデオライト系（定常光）の機材コードのみです。');
+    }
+    return withLock_(function () {
+      return { success: true, revoked: OptionOrderRepository.removeEligibilityGrant(normalized, equipmentCode) };
     });
   }
 
@@ -703,6 +753,18 @@ var OptionOrderService = (function () {
         return { outcome: 'RECOVERY_REQUIRED', optionOrderId: order.optionOrderId };
       }
 
+      /* 資格の再検証: 支払い済みでも、対面レクチャー済みの許可を確認できないビデオライト系は確定にしない
+         （入金の事実は保持して運営へ回す。自動確定・自動返金はしない）。 */
+      var missingAtPayment = missingLectureCodes_(order);
+      if (missingAtPayment.length > 0) {
+        OptionOrderRepository.updateOrder(order.optionOrderId, Object.assign(paidFields, {
+          paymentRecoveryRequiredAt: effectiveNow,
+          paymentRecoveryReason: 'ビデオライト系の利用許可（対面レクチャー済み）を確認できないため確定しませんでした: ' + missingAtPayment.join(',') + '。確認・返金判断が必要です。'
+        }));
+        recordOptionRecovery_(order.bookingId, 'OPTION_PAID_NOT_ELIGIBLE', '', 'optionOrderId=' + order.optionOrderId + ' codes=' + missingAtPayment.join(','), effectiveNow);
+        return { outcome: 'RECOVERY_REQUIRED', optionOrderId: order.optionOrderId };
+      }
+
       OptionOrderRepository.updateOrder(order.optionOrderId, Object.assign(paidFields, {
         status: BookingOptions.STATUS.CONFIRMED,
         updatedAt: effectiveNow
@@ -778,6 +840,7 @@ var OptionOrderService = (function () {
     approveOrder: approveOrder,
     declineOrder: declineOrder,
     grantVideoLightEligibility: grantVideoLightEligibility,
+    revokeVideoLightEligibility: revokeVideoLightEligibility,
     applyAddonPaymentSucceeded: applyAddonPaymentSucceeded,
     applyAddonPaymentFailed: applyAddonPaymentFailed,
     verifyBookingIdentity_: verifyBookingIdentity_

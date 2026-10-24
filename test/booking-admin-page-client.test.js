@@ -2752,3 +2752,18 @@ test('runOptionDecision_: 不承認は理由入力(prompt)後にadminDeclineOpti
   assert.strictEqual(call.name, 'adminDeclineOptionOrder');
   assert.deepStrictEqual(Array.from(call.args), ['OPT-AAAA1111', '当日は不在']);
 });
+
+test('describeOptionOrder_ / renderOptionSection_（資格の再検証）: 対面レクチャー済みの許可が無い機材注文は警告を出し、否認ボタンを出せる', function () {
+  var sandbox = loadClientSandbox();
+  var order = optionOrder({
+    category: 'EQUIPMENT', paidLabel: '有料', approvalStatus: 'NOT_REQUIRED', status: 'AWAITING_PAYMENT', requiresApproval: false,
+    canApprove: false, canDecline: true, eligibilityMissing: true, eligibilityMissingLabels: ['フルカラーCOBライト（定常光）']
+  });
+  var lines = sandbox.describeOptionOrder_(order).join('\n');
+  assert.ok(lines.indexOf('⚠ 資格未確認: フルカラーCOBライト（定常光）') !== -1);
+  assert.ok(lines.indexOf('支払い・確定できません') !== -1);
+  sandbox.renderOptionSection_({ options: { available: true, guidanceIncomplete: false, orders: [order] } });
+  var html = sandbox.optionUi_.listEl.innerHTML;
+  assert.ok(html.indexOf('data-option-action="decline"') !== -1);
+  assert.ok(html.indexOf('data-option-action="approve"') === -1, '機材は承認ではなく否認のみ');
+});
