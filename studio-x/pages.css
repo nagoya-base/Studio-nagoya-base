@@ -124,8 +124,8 @@
 .equipment-tables {
   margin-top: 12px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 32px;
 }
 
 .equipment-table-block h3 {
@@ -148,8 +148,28 @@
   vertical-align: middle;
 }
 
-.equipment-table-block th { background: var(--surface); color: var(--text); font-weight: 600; width: 55%; }
-.equipment-table-block td { text-align: center; width: 45%; }
+.equipment-table-block th { background: var(--surface); color: var(--text); font-weight: 600; }
+.equipment-table-block td { text-align: center; }
+
+/* クラスなしの旧2列表（ご利用ガイド等）は従来の幅配分を維持 */
+.equipment-table-block table:not([class]) th { width: 55%; }
+.equipment-table-block table:not([class]) td { width: 45%; }
+
+/* 列幅は列数ごとに分ける（Issue #461）。2列=項目|数量・料金、3列=名称|数量|料金・条件。
+   3列表は一覧の幅いっぱいに広げ、数量列を細く・料金列に余裕を持たせて不要な折り返しを防ぐ。 */
+.equipment-table--2col { table-layout: fixed; max-width: 640px; }
+.equipment-table--2col th { width: 68%; text-align: left; }
+.equipment-table--2col td { width: 32%; }
+.equipment-table--3col { table-layout: fixed; }
+.equipment-table--3col .col-name { width: 58%; }
+.equipment-table--3col .col-qty { width: 9%; }
+.equipment-table--3col .col-price { width: 33%; }
+.equipment-table--3col th,
+.equipment-table--3col td { overflow-wrap: anywhere; }
+.equipment-table--3col thead th { text-align: center; }
+.equipment-table--3col thead th:first-child,
+.equipment-table--2col thead th:first-child { text-align: left; }
+.equipment-table-block thead th { color: var(--muted); font-weight: 600; }
 
 .equipment-note { margin-top: 16px; color: var(--muted); font-size: .8rem; }
 
@@ -197,6 +217,11 @@
   .legal-table th { padding-bottom: 4px; border-bottom: 0; }
   .legal-table td { padding-top: 4px; }
   .equipment-tables { grid-template-columns: 1fr; }
+  .equipment-table-block th,
+  .equipment-table-block td { padding: 9px 8px; }
+  .equipment-table--3col .col-name { width: 47%; }
+  .equipment-table--3col .col-qty { width: 15%; }
+  .equipment-table--3col .col-price { width: 38%; }
   .equipment-photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 

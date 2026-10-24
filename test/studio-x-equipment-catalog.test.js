@@ -58,15 +58,14 @@ test('スタッフ設営料金とテーマの正本（Issue #430）: 事前設�
   assert.ok(!/PRE_SETUP:\s*\d/.test(gas) && !/BOTH:\s*\d/.test(gas), 'GASにスタッフ料金を直書きしない');
 });
 
-test('機材ページにスタッフ設営料金を正本から表示し、事前確認制・承認後決済とセルフ無料を明記する（Issue #430）', function () {
+test('機材ページにスタッフ設営料金を正本から表示し、日程確認後の案内とセルフ無料を明記する（Issue #430, #461）', function () {
   var html = read('studio-x/equipment/index.html') + read('_includes/equipment_catalog_ja.html'); /* 共通include化（Issue #432） */
   assert.match(html, /id="staff-service"/);
   assert.ok(html.indexOf('site.data.studio_x_equipment.staffService') !== -1);
   assert.match(html, /セルフ設営<\/th><td>無料/);
   assert.match(html, /セルフ原状復帰<\/th><td>無料/);
-  assert.match(html, /事前確認制/);
-  assert.match(html, /承認/);
-  assert.match(html, /オンラインで決済/);
+  assert.match(html, /日程を確認してからご案内します/);
+  assert.match(html, /ご利用可能な場合のみお支払いをお願いします/);
 });
 
 test('Studio Xのメインナビ「設備・レンタル」は/studio-x/equipment/へ直接つながる（Issue #430）', function () {
@@ -90,8 +89,9 @@ test('機材ページは正本(site.data)を直接読み、常設無料・有料
   assert.match(html, /id="equipment-free"/);
   assert.match(html, /id="equipment-rental"/);
   assert.match(html, /id="equipment-self"/);
-  assert.match(html, /1点ごとの個別加算/);
-  assert.match(html, /施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要/);
+  assert.match(html, /1点ごと/);
+  assert.match(html, /施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要/, 'SNB側の文言は変更しない');
+  assert.match(html, /初めて利用する方は、事前に/, 'Studio X側は平易な案内にする（Issue #461）');
   assert.ok(!/資格制限はありません|資格の制限はありません/.test(html), '資格制限なしの旧文言を残さない');
   assert.match(html, /背景紙ロール[^。]*無料/);
   assert.match(html, /背景用竹竿[^。]*無料/);
@@ -144,7 +144,7 @@ test('SNB(/equipment/)とStudio X(/studio-x/equipment/)は同じ共通include・
   [snb, sx].forEach(function (html) {
     assert.ok(/\{% include equipment_catalog_ja\.html[^%]*%\}/.test(html));
     assert.ok(html.indexOf('{% include equipment_photo_cards.html') !== -1);
-    assert.ok(html.indexOf('{% include equipment_caution_ja.html %}') !== -1);
+    assert.ok(/\{% include equipment_caution_ja\.html[^%]*%\}/.test(html));
     assert.ok(!/\b(800|500|300|200)円/.test(stripComments(html)), '金額をページへ直書きしない');
   });
   var catalog = read('_includes/equipment_catalog_ja.html');
@@ -153,12 +153,12 @@ test('SNB(/equipment/)とStudio X(/studio-x/equipment/)は同じ共通include・
   });
   assert.match(catalog, /施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要/);
   assert.match(catalog, /セルフ設営<\/th><td>無料/);
-  assert.match(catalog, /承認前に請求されることはありません/);
+  assert.match(catalog, /日程を確認してからご案内します/);
   // Studio X専用の予約オプション・承認・決済運用は brand="studio-x" のときだけ出す（SNBに同フローはない）
   assert.ok(sx.indexOf('equipment_catalog_ja.html brand="studio-x"') !== -1);
   assert.ok(snb.indexOf('brand=') === -1, 'SNBページはbrandを渡さない');
   var gated = catalog.replace(/\{%-? comment -%\}[\s\S]*?\{%-? endcomment -%\}/g, "").replace(/\{%-?\s*if is_studio_x\s*-?%\}[\s\S]*?\{%-?\s*(?:else|endif)\s*-?%\}/g, '');
-  ['オプション追加', 'お支払いは部屋のご予約', 'オンラインで決済', '承認', 'id="staff-service"', 'staffService'].forEach(function (w) {
+  ['オプション追加', 'お支払いは部屋のご予約', 'オンラインで決済', 'id="staff-service"', 'staffService'].forEach(function (w) {
     assert.ok(gated.indexOf(w) === -1, 'Studio X専用文言「' + w + '」がブランド分岐の外にある');
   });
   assert.ok(!/保有機材（応相談）|保有・要相談/.test(snb + sx + catalog + read('_includes/equipment_photo_cards.html') + read('_includes/equipment_caution_ja.html')));
@@ -223,11 +223,35 @@ test('機材ページは背景・テーマ・オプションの流れを案内�
   var order = ['事前相談', 'オプションを選ぶ', '部屋を予約する', 'オプションを予約・決済', 'スタッフが事前設営', 'ご利用', 'スタッフが片付け'];
   var last = -1;
   order.forEach(function (t) { var i = flow.indexOf('<h3>' + t + '</h3>'); assert.ok(i > last, t); last = i; });
-  assert.ok(flow.indexOf('1週間前') !== -1 && flow.indexOf('別決済') !== -1 && flow.indexOf('予約時間内') !== -1);
+  assert.ok(flow.indexOf('1週間前') !== -1 && flow.indexOf('別々にお支払い') !== -1 && flow.indexOf('予約時間内') !== -1);
   assert.ok(page.indexOf('studio_x_option_flow_ja.html') !== -1 && page.indexOf('studio_x_worlds_ja.html') !== -1);
   // 利用者向け文言に内部用語Adminを出さない・金額を重複定義しない
   [page, flow, worlds, read('_includes/studio_x_worlds_ja.html')].forEach(function (t) {
     assert.ok(!/Admin/.test(t.replace(/<!--[\s\S]*?-->|\{%-?\s*comment[\s\S]*?endcomment\s*-?%\}/g, '')));
     assert.ok(!/\d[,\d]*円/.test(t));
   });
+});
+
+test('Studio X設備ページの公開文言に内部用語を出さず、3列表の列幅を分ける（Issue #461）', function () {
+  var page = stripComments(read('studio-x/equipment/index.html'));
+  /* Studio X向けの出力 = ページ本体 + 各includeのstudio-x側（SNB専用分岐は除く） */
+  function studioX(rel) {
+    return stripComments(read(rel))
+      .replace(/\{%-?\s*comment\s*-?%\}[\s\S]*?\{%-?\s*endcomment\s*-?%\}/g, '')
+      .replace(/\{%-?\s*unless (?:is_studio_x|include\.brand == "studio-x")\s*-?%\}[\s\S]*?\{%-?\s*endunless\s*-?%\}/g, '')
+      .replace(/\{%-?\s*else\s*-?%\}[\s\S]*?\{%-?\s*endif\s*-?%\}/g, '');
+  }
+  var text = [studioX('studio-x/equipment/index.html')].concat(['equipment_catalog_ja.html', 'equipment_beginner_ja.html', 'equipment_caution_ja.html',
+    'equipment_photo_cards.html', 'studio_x_option_flow_ja.html', 'studio_x_worlds_ja.html'].map(function (f) { return studioX('_includes/' + f); })).join('\n');
+  ['信用確認', '正本', '承認', '保留', '管理者', '事前確認制', '申込時点', '落ち着いて', '全体像'].forEach(function (w) {
+    assert.ok(text.indexOf(w) === -1, '公開ページに「' + w + '」を出さない');
+  });
+  assert.ok(page.indexOf('id="choose"') === -1, '重複する「オプションの選び方」セクションは統合済み');
+  var css = read('studio-x/pages.css');
+  assert.match(css, /\.equipment-table--2col th \{ width: 68%/);
+  assert.match(css, /\.col-qty \{ width: 9%/);
+  assert.match(css, /\.col-name \{ width: 58%/);
+  var catalog = read('_includes/equipment_catalog_ja.html');
+  assert.strictEqual((catalog.match(/class="equipment-table--3col"/g) || []).length, 2, '有料レンタル・セルフ無料備品は3列表');
+  assert.strictEqual((catalog.match(/class="equipment-table--2col"/g) || []).length, 2, '常設無料・スタッフ料金は2列表');
 });

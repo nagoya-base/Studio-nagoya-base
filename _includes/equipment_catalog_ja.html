@@ -1,15 +1,17 @@
 {%- comment -%}
   設備・機材の事実（常設無料／有料レンタル／セルフ無料／スタッフ設営料金／施錠・Admin許可制）の共通表示。
   /equipment/ と /studio-x/equipment/ の両ページがこのincludeを使う。
-  引数 brand="studio-x" のときだけ Studio X 専用の予約オプション・承認・決済・スタッフ設営の運用文言を出す（SNBには同フローがないため案内しない）。料金・在庫・区分の正本は _data/studio_x_equipment.json（Issue #432）。
+  引数 brand="studio-x" のときだけ Studio X 専用の予約オプション・決済・スタッフ設営の運用文言を出す（SNBには同フローがないため案内しない）。料金・在庫・区分の正本は _data/studio_x_equipment.json（Issue #432）。
+  Studio X側は利用者向けの平易な文言にする（Issue #461）。内部用語（信用確認・承認・保留など）は出さない。
+  表は列数ごとに列幅を分ける: 2列=equipment-table--2col（項目|数量/料金）、3列=equipment-table--3col（名称|数量|料金・条件）。幅は studio-x/pages.css。
 {%- endcomment -%}
 {%- assign is_studio_x = false -%}
 {%- if include.brand == "studio-x" -%}{%- assign is_studio_x = true -%}{%- endif -%}
 <div class="equipment-tables">
   <div class="equipment-table-block" id="equipment-free">
     <h3>常設・無料の機材</h3>
-    <p class="equipment-note">常設・無料の機材だけでも撮影は完結します。使用後は元の位置へ戻してください。</p>
-    <table>
+    <p class="equipment-note">{% if is_studio_x %}常設・無料の機材だけでも撮影できます。{% else %}常設・無料の機材だけでも撮影は完結します。使用後は元の位置へ戻してください。{% endif %}</p>
+    <table class="equipment-table--2col">
       <tbody>
 {%- for item in site.data.studio_x_equipment.permanent %}
         <tr><th>{{ item.label }}</th><td>×{{ item.quantity }}</td></tr>
@@ -18,22 +20,29 @@
     </table>
   </div>
   <div class="equipment-table-block" id="equipment-rental">
-    <h3>有料レンタル機材（1点ごとの個別加算）</h3>
-    <p class="equipment-note">セット料金ではなく、借りる機材だけを加算します（税込）。複数台ある機材は台数×単価です。ライトスタンド・ボーエンズマウントブラケットは、対象機材（ライト・ストロボ／ポータブルストロボ）と同時に借りる分が無料です（表の「セットで無料」。単独で借りる場合のみ有料）。{% if is_studio_x %}予約フォーム、または予約後の「オプション追加」ページから申し込めます。有料機材を借りる場合は、設営方法（セルフ設営＝追加料金なし／スタッフ設営＝事前設営料金・事前確認制）をあわせて選択します。お支払いは部屋のご予約が確定した後です。{% endif %}</p>
-    <table>
+    <h3>{% if is_studio_x %}有料レンタル機材{% else %}有料レンタル機材（1点ごとの個別加算）{% endif %}</h3>
+    <p class="equipment-note">{% if is_studio_x %}借りる機材だけ、1点ごとに料金がかかります（税込）。複数台の場合は台数×単価です。お申込みは予約フォーム、または予約後の「オプション追加」ページから。お支払いは部屋の予約確定後です。初めて利用する方は、事前に<a href="../reservation/?intent=consult">ご相談ください</a>。{% else %}セット料金ではなく、借りる機材だけを加算します（税込）。複数台ある機材は台数×単価です。ライトスタンド・ボーエンズマウントブラケットは、対象機材（ライト・ストロボ／ポータブルストロボ）と同時に借りる分が無料です（表の「セットで無料」。単独で借りる場合のみ有料）。{% endif %}</p>
+    <table class="equipment-table--3col">
+      <colgroup><col class="col-name"><col class="col-qty"><col class="col-price"></colgroup>
       <thead><tr><th>機材</th><th>数量</th><th>1点あたり</th></tr></thead>
       <tbody>
 {%- for item in site.data.studio_x_equipment.rental %}
-        <tr><th>{{ item.label }}{% if item.requiresLecture %}<span class="equipment-note">※1</span>{% endif %}</th><td>×{{ item.stock }}</td><td>{% if item.freeWhenWith %}{{ item.freeWhenWith.label }}{% else %}{{ item.unitPriceJpy }}円{% if item.unitLabel != "" %} / {{ item.unitLabel }}{% endif %}{% endif %}</td></tr>
+        <tr><th>{{ item.label }}{% unless is_studio_x %}{% if item.requiresLecture %}<span class="equipment-note">※1</span>{% endif %}{% endunless %}</th><td>×{{ item.stock }}</td><td>{% if item.freeWhenWith %}{{ item.freeWhenWith.label }}{% else %}{{ item.unitPriceJpy }}円{% if item.unitLabel != "" %} / {{ item.unitLabel }}{% endif %}{% endif %}</td></tr>
 {%- endfor %}
       </tbody>
     </table>
-    <p class="equipment-note">※1 有料レンタル機材は施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要です（ビデオライト・ストロボ・ソフトボックス等、有料レンタル機材すべてが対象です）。{% if is_studio_x %}許可を確認できない申込は保留となり、管理者の確認までお支払い・確定はできません。初めての方は先にメールでご相談ください。{% else %}ご利用をご希望の場合は、予約前にあらかじめご相談ください。{% endif %}</p>
+    {%- unless is_studio_x %}
+    <p class="equipment-note">※1 有料レンタル機材は施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要です（ビデオライト・ストロボ・ソフトボックス等、有料レンタル機材すべてが対象です）。ご利用をご希望の場合は、予約前にあらかじめご相談ください。</p>
+    {%- endunless %}
   </div>
   <div class="equipment-table-block" id="equipment-self">
     <h3>セルフ利用は無料の備品</h3>
-    <p class="equipment-note">背景紙ロール（常設）・背景布・背景用竹竿は無料で、セルフで設営・原状復帰する場合も無料です（背景スタンドは有料レンタル機材です）。{% if is_studio_x %}スタッフによる事前設営・片付けを依頼する場合のみ、別途スタッフ対応料金がかかります（機材料金とは別に加算。下の「スタッフ設営・片付け料金」をご確認ください）。{% endif %}</p>
-    <table>
+    <p class="equipment-note">{% if is_studio_x %}背景紙ロール（常設）・背景布・背景用竹竿は、セルフで設営・片付けする場合は無料です。背景スタンドは有料レンタル機材です。{% else %}背景紙ロール（常設）・背景布・背景用竹竿は無料で、セルフで設営・原状復帰する場合も無料です（背景スタンドは有料レンタル機材です）。{% endif %}</p>
+    <table class="equipment-table--3col">
+      <colgroup><col class="col-name"><col class="col-qty"><col class="col-price"></colgroup>
+      {%- if is_studio_x %}
+      <thead><tr><th>備品</th><th>数量</th><th>料金</th></tr></thead>
+      {%- endif %}
       <tbody>
 {%- for item in site.data.studio_x_equipment.freeSelf %}
         <tr><th>{{ item.label }}</th><td>{% if item.stock %}×{{ item.stock }}{% else %}—{% endif %}</td><td>無料（セルフ）</td></tr>
@@ -45,8 +54,8 @@
   <div class="equipment-table-block" id="staff-service">
     <h3>スタッフ設営・片付け料金</h3>
     {%- assign staff = site.data.studio_x_equipment.staffService %}
-    <p class="equipment-note">下記は{% for theme in staff.themes %}{{ theme.shortLabel }}{% unless forloop.last %}・{% endunless %}{% endfor %}の5テーマ共通料金です（税込・機材レンタル料金とは別に加算）。</p>
-    <table>
+    <p class="equipment-note">{% for theme in staff.themes %}{{ theme.shortLabel }}{% unless forloop.last %}・{% endunless %}{% endfor %}の5テーマ共通です（税込・機材レンタル料金とは別）。</p>
+    <table class="equipment-table--2col">
       <thead><tr><th>内容</th><th>料金</th></tr></thead>
       <tbody>
         <tr><th>セルフ設営</th><td>無料</td></tr>
@@ -56,7 +65,7 @@
 {%- endfor %}
       </tbody>
     </table>
-    <p class="equipment-note"><strong>スタッフ対応は事前確認制です。</strong>スタッフの予定を確認する必要があるため、申込時点では確定しません。対応可否を承認したのち、オンラインで決済すると確定します。承認前に請求されることはありません。セルフ設営・セルフ原状復帰は無料で、スタッフの空き確認も不要です。</p>
+    <p class="equipment-note">スタッフによる設営・片付けは、日程を確認してからご案内します。ご利用可能な場合のみお支払いをお願いします。</p>
   </div>
 {%- endif %}
 </div>
