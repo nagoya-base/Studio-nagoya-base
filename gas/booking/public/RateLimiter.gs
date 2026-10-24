@@ -94,8 +94,19 @@ var RateLimiter = (function () {
     return { allowed: true };
   }
 
+  /*
+   * 任意のkey単位の簡易レート制限（Issue #423: オプション照会・後付け申込・追加決済の総当たり対策）。
+   * key単位でwindowMinutes以内の試行がmaxCount未満なら許可して記録、超えていれば拒否する。
+   * keyにはPII（メールアドレス等）を直接入れず、呼び出し側で予約ID等の識別子を使うこと。
+   */
+  function limitByKey(key, windowMinutes, maxCount, now) {
+    now = typeof now === 'number' ? now : Date.now();
+    return checkWindow_(CacheService.getScriptCache(), 'booking_rl_key_' + key, windowMinutes, maxCount, now);
+  }
+
   return {
     evaluate: evaluate,
+    limitByKey: limitByKey,
     buildFingerprint_: buildFingerprint_
   };
 })();

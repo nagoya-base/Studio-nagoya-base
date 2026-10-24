@@ -77,6 +77,26 @@ var BookingRepository = (function () {
       return { success: false, error: priceResult.error };
     }
 
+    /*
+     * 予約オプション（Issue #423。Studio X限定）の事前検証。payloadにoptionsが無い場合は
+     * 何もせず、既存の予約作成の挙動・レスポンスは一切変わらない。選択が不正・受付不可・
+     * 資格なし（ビデオライトの初回利用者等）の場合は、Calendar/Sheetsへ何も書く前に拒否する。
+     * rate limitの計上より前に行う（オプションの選び直しで再送しても「連投」扱いにならないよう、
+     * 拒否した申込は計上しない）。代わりに、過去利用の有無（ビデオライト資格）の照会だけは
+     * メールアドレス単位で別枠に制限する（利用履歴を無制限に探られないようにするため）。
+     */
+    var hasOptionsPayload = !!rawInput && rawInput.options !== undefined && rawInput.options !== null;
+    var optionsPreflight = hasOptionsPayload
+      ? OptionOrderService.preflightForNewBooking(input.brand, rawInput.options, input.email, {
+        allowEligibilityLookup: function (email) {
+          return RateLimiter.limitByKey('opt_elig_' + String(email).trim().toLowerCase(), 10, 5, now.getTime());
+        }
+      })
+      : { success: true, empty: true };
+    if (!optionsPreflight.success) {
+      return { success: false, error: optionsPreflight.error };
+    }
+
     var rateLimitConfig = BookingConfig.getRateLimitConfig();
     var rateLimitResult = RateLimiter.evaluate(input, rateLimitConfig, now.getTime());
     if (!rateLimitResult.allowed) {
@@ -192,7 +212,18 @@ var BookingRepository = (function () {
     notifyCustomerPendingBestEffort_(record);
     notifyAdminBestEffort_(record);
 
-    return {
+    /*
+     * オプション注文は既存のbookingIdを親キーとして紐付ける（Issue #423）。部屋予約はここまでで
+     * 成立済みのため、注文の保存に失敗しても予約自体は成功のまま返し、結果をoptionsに載せる
+     * （利用者は案内ページから同じ予約IDでオプションを追加し直せる）。オプションの決済は
+     * 部屋予約のCheckoutとは別（部屋の確定後に追加Checkout）。
+     */
+    var optionsResponse = null;
+    if (!optionsPreflight.empty) {
+      optionsResponse = createOptionOrdersForNewBookingBestEffort_(bookingId, optionsPreflight.normalized, now);
+    }
+
+    var response = {
       success: true,
       bookingId: bookingId,
       status: Booking.STATUS.PENDING,
@@ -222,6 +253,32 @@ var BookingRepository = (function () {
         dayType: priceResult.price.dayType
       }
     };
+    if (optionsResponse) response.options = optionsResponse;
+    return response;
+  }
+
+  /* 予約作成後のオプション注文保存（失敗しても予約は成功のまま。例外は握りつぶして結果に載せる）。 */
+  function createOptionOrdersForNewBookingBestEffort_(bookingId, normalizedSelection, now) {
+    try {
+      var created = OptionOrderService.createOrders(bookingId, normalizedSelection, BookingOptions.SOURCE.WITH_BOOKING, now);
+      if (created && created.success) {
+        return { success: true, orders: created.orders };
+      }
+      var code = created && created.error && created.error.code;
+      return {
+        success: false,
+        error: {
+          code: code || 'OPTIONS_PERSIST_FAILED',
+          message: (created && created.error && created.error.message) || 'オプションのお申し込みを保存できませんでした。予約は受け付けています。案内ページから同じ予約IDでオプションを追加してください。'
+        }
+      };
+    } catch (optionError) {
+      Logger.log('BookingRepository: オプション注文の保存に失敗しました bookingId=' + bookingId);
+      return {
+        success: false,
+        error: { code: 'OPTIONS_PERSIST_FAILED', message: 'オプションのお申し込みを保存できませんでした。予約は受け付けています。案内ページから同じ予約IDでオプションを追加してください。' }
+      };
+    }
   }
 
   /* 送信失敗はcreateBooking自体の成否に影響させない（BookingMailer側で既にSentAt確認・

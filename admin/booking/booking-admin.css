@@ -819,3 +819,10 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
   font-size: 12px;
   word-break: break-all;
 }
+
+/* Issue #423: 予約オプション欄 */
+#option-section { margin-top: 16px; }
+#option-section .option-order { border: 1px solid var(--line, #d5d5d5); border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-size: 13px; line-height: 1.6; }
+#option-section .option-actions { margin-top: 8px; }
+#option-section .option-actions button { margin-right: 8px; }
+#option-section .option-warning { color: #8a5a00; font-size: 13px; }

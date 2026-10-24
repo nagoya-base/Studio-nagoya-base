@@ -487,9 +487,70 @@ function getAdminBookingDetail(bookingId) {
       paymentRecoveryReason: record.paymentRecoveryReason || '',
       /* 来場案内の再送の二重送信防止用トークン（epoch ms。未送信は0）。クライアントは
          解釈せずadminResendReminderMailへそのまま往復させる。 */
-      reminderSentAtVersion: isAdminWebDateLike_(record.reminderSentAt) ? record.reminderSentAt.getTime() : 0
+      reminderSentAtVersion: isAdminWebDateLike_(record.reminderSentAt) ? record.reminderSentAt.getTime() : 0,
+      /* Issue #423: 予約オプション。Bookings本体とは別の台帳（OptionOrders）。オプションが無い
+         既存予約は空配列で、既存の表示・処理に影響しない。 */
+      options: buildAdminOptionSummary_(bookingId, timezone)
     }
   };
+}
+
+/*
+ * 予約オプションの管理者向け表示（Issue #423）。選択内容・有料/無料・同時/後付け・申込日時・
+ * 承認状態・決済状態・optionOrderIdを返す。決済URL・内部トークン・メールアドレスは返さない。
+ * 台帳の読み取りに失敗しても予約詳細そのものは表示できるよう、失敗はエラー表示に倒す。
+ */
+function buildAdminOptionSummary_(bookingId, timezone) {
+  try {
+    var listed = OptionOrderService.listForAdmin(bookingId);
+    return {
+      available: true,
+      guidanceIncomplete: listed.guidanceIncomplete,
+      orders: listed.orders.map(function (order) {
+        return {
+          optionOrderId: order.optionOrderId,
+          category: order.category,
+          paidLabel: order.paidLabel,
+          sourceLabel: order.sourceLabel,
+          items: order.items,
+          amountJpy: order.amountJpy,
+          approvalStatus: order.approvalStatus,
+          paymentStatus: order.paymentStatus,
+          status: order.status,
+          requiresApproval: order.requiresApproval,
+          createdAt: formatAdminDateTime_(order.createdAt, timezone),
+          approvedAt: formatAdminDateTime_(order.approvedAt, timezone),
+          declinedAt: formatAdminDateTime_(order.declinedAt, timezone),
+          declineReason: order.declineReason || '',
+          paidAt: formatAdminDateTime_(order.paidAt, timezone),
+          recoveryRequired: !!order.paymentRecoveryRequiredAt,
+          recoveryReason: order.paymentRecoveryReason || '',
+          canApprove: order.status === BookingOptions.STATUS.PENDING_APPROVAL,
+          canDecline: order.status === BookingOptions.STATUS.PENDING_APPROVAL
+        };
+      })
+    };
+  } catch (optionError) {
+    Logger.log('getAdminBookingDetail: オプション台帳の読み取りに失敗しました bookingId=' + bookingId);
+    return { available: false, guidanceIncomplete: false, orders: [] };
+  }
+}
+
+/* スタッフ対応（事前設営／片付け）の承認（Issue #423）。業務ロジックはOptionOrderServiceにあり、
+   ここは委譲のみ。承認で初めてオンライン決済に進める状態になる（Checkoutは本人確認付きの
+   案内ページから開始され、この関数ではStripeを呼ばない）。二重承認は冪等。 */
+function adminApproveOptionOrder(optionOrderId) {
+  return sanitizeForClient_(OptionOrderService.approveOrder(optionOrderId));
+}
+
+/* 不承認。部屋予約には一切影響しない（Bookingsを更新しない）。 */
+function adminDeclineOptionOrder(optionOrderId, reason) {
+  return sanitizeForClient_(OptionOrderService.declineOrder(optionOrderId, reason));
+}
+
+/* ビデオライトのセルフレンタル許可（過去利用を自動判定できない既存利用者向け）。 */
+function adminGrantVideoLightEligibility(email, note) {
+  return sanitizeForClient_(OptionOrderService.grantVideoLightEligibility(email, note));
 }
 
 /* 確定。既存の正式関数confirmBooking(bookingId)（BookingAdmin.gs）へそのまま委譲する。

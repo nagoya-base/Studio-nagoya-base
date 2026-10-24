@@ -428,6 +428,99 @@ var StripeWebhookProcessor = (function () {
   }
 
   /*
+   * 追加オプション決済（Issue #423。Checkout Sessionのmetadata.orderType==='addon'）。
+   * 部屋予約の決済照合（Bookingsの決済試行ID・金額スナップショット・予約確定）とは完全に
+   * 別経路で、OptionOrdersの注文だけを更新する。部屋予約のpaymentStatus・status・
+   * 恒久の要復旧ゲート（paymentRecoveryRequiredAt）には一切触れない。
+   * Recoveryへ記録するfailureTypeは`OPTION_`で始める（`PAYMENT_`/`STRIPE_WEBHOOK_`で始めると
+   * RecoveryRepository.isPaymentFailureTypeに該当し、同じbookingIdの部屋予約の決済ゲートに
+   * 影響してしまうため）。再送・順序逆転はOptionOrderServiceの冪等性で吸収する。
+   */
+  function rejectAddon_(rowNumber, generation, bookingId, code, message, now) {
+    var fenced = runFenced_(rowNumber, generation, function () {
+      recordRecoveryFailureBestEffort_({
+        bookingId: bookingId || '',
+        failureType: 'OPTION_WEBHOOK_' + code,
+        occurredAt: now,
+        calendarEventId: '',
+        status: '',
+        errorMessage: message,
+        recoveryState: 'OPEN',
+        resolvedAt: ''
+      });
+    });
+    if (fenced) return fenced;
+    return rejectFinalizeOnly_(rowNumber, generation, bookingId, code, message, now);
+  }
+
+  function handleAddonEvent_(rowNumber, generation, eventId, session, isFailureType, stripeConfig, now) {
+    var metadata = session.metadata || {};
+    var bookingId = typeof metadata.bookingId === 'string' ? metadata.bookingId : '';
+    var optionOrderId = typeof metadata.optionOrderId === 'string' ? metadata.optionOrderId : '';
+    var paymentAttemptId = typeof metadata.paymentAttemptId === 'string' ? metadata.paymentAttemptId : '';
+
+    if (!bookingId || !optionOrderId || !paymentAttemptId) {
+      return rejectAddon_(rowNumber, generation, bookingId, 'METADATA_MISSING', '追加決済のCheckout Sessionのmetadataが不足しています（bookingId/optionOrderId/paymentAttemptId）。sessionId=' + session.id, now);
+    }
+
+    if (isFailureType) {
+      var supersededBeforeFail = confirmClaimOrSupersededOutcome_(rowNumber, generation);
+      if (supersededBeforeFail) return supersededBeforeFail;
+      var failed = OptionOrderService.applyAddonPaymentFailed({ session: session, now: now });
+      if (failed.outcome === 'LOCK_TIMEOUT') return outcome_(false, 'LOCK_TIMEOUT', '一時的に混み合っています。再試行します。');
+      return finalizeOutcome_(rowNumber, generation, {
+        processingState: StripeEventRepository.STATE.COMPLETED,
+        bookingId: bookingId, paymentAttemptId: paymentAttemptId,
+        outcomeCode: 'ADDON_' + failed.outcome, outcomeMessage: '追加決済の失敗通知を処理しました（' + failed.outcome + '）。optionOrderId=' + optionOrderId
+      }, now, 'ADDON_' + failed.outcome, '追加決済の失敗通知を処理しました。');
+    }
+
+    if (session.paymentStatus !== 'paid') {
+      return finalizeOutcome_(rowNumber, generation, {
+        processingState: StripeEventRepository.STATE.IGNORED,
+        bookingId: bookingId, paymentAttemptId: paymentAttemptId,
+        outcomeCode: 'PAYMENT_NOT_YET_COMPLETE',
+        outcomeMessage: '追加決済のCheckout Sessionの支払いはまだ完了していません（payment_status=' + session.paymentStatus + '）。'
+      }, now, 'PAYMENT_NOT_YET_COMPLETE', '決済はまだ完了していません。');
+    }
+
+    var supersededBeforePi = confirmClaimOrSupersededOutcome_(rowNumber, generation);
+    if (supersededBeforePi) return supersededBeforePi;
+
+    /* Session完了とPaymentIntentの入金完了を同一視しない（部屋予約の決済と同じ方針）。 */
+    var piResult = StripeGateway.retrievePaymentIntent(stripeConfig, session.paymentIntentId);
+    if (!piResult.ok) {
+      Logger.log('StripeWebhookProcessor: 追加決済のPaymentIntent再取得に失敗しました eventId=' + eventId + ' errorType=' + piResult.errorType);
+      return outcome_(false, 'STRIPE_LOOKUP_FAILED', 'Stripeへの照会に失敗しました。再試行します。');
+    }
+    if (piResult.paymentIntent.status !== 'succeeded') {
+      return rejectAddon_(rowNumber, generation, bookingId, 'PAYMENT_INTENT_STATUS_MISMATCH',
+        '追加決済のCheckout Session（' + session.id + '）はpaidですが、PaymentIntent（' + piResult.paymentIntent.id + '）のstatusがsucceededではありません（' + piResult.paymentIntent.status + '）。', now);
+    }
+
+    var supersededBeforeApply = confirmClaimOrSupersededOutcome_(rowNumber, generation);
+    if (supersededBeforeApply) return supersededBeforeApply;
+
+    var applied = OptionOrderService.applyAddonPaymentSucceeded({
+      session: session, paymentIntent: piResult.paymentIntent, eventId: eventId, now: now
+    });
+    if (applied.outcome === 'LOCK_TIMEOUT') return outcome_(false, 'LOCK_TIMEOUT', '一時的に混み合っています。再試行します。');
+    if (applied.outcome === 'CONFIRMED' || applied.outcome === 'ALREADY_APPLIED') {
+      return finalizeOutcome_(rowNumber, generation, {
+        processingState: StripeEventRepository.STATE.COMPLETED,
+        bookingId: bookingId, paymentAttemptId: paymentAttemptId, stripePaymentIntentId: piResult.paymentIntent.id,
+        outcomeCode: 'ADDON_' + applied.outcome, outcomeMessage: '追加決済を反映しました（' + applied.outcome + '）。optionOrderId=' + optionOrderId
+      }, now, 'ADDON_' + applied.outcome, '追加決済を反映しました。');
+    }
+    if (applied.outcome === 'ORDER_NOT_FOUND') {
+      return rejectAddon_(rowNumber, generation, bookingId, 'ORDER_NOT_FOUND', '対応するオプション注文が見つかりません。optionOrderId=' + optionOrderId + ' sessionId=' + session.id, now);
+    }
+    /* IDENTITY_MISMATCH / AMOUNT_MISMATCH / RECOVERY_REQUIRED: OptionOrderServiceが注文の要復旧印と
+       OPTION_のRecoveryを記録済み。入金の事実は保持したまま自動確定せず止める。 */
+    return rejectFinalizeOnly_(rowNumber, generation, bookingId, 'ADDON_' + applied.outcome, '追加決済を自動反映できませんでした: ' + applied.outcome, now);
+  }
+
+  /*
    * rowNumber/record: StripeEventRepository.claimForProcessing()が返したもの（record.rawBodyに
    * Stripe Webhookイベントの生JSON文字列が保存済み）。
    * generation: claimForProcessing()が返したrecord.processingClaimCount（レビュー対応・5回目
@@ -484,6 +577,11 @@ var StripeWebhookProcessor = (function () {
     var bookingId = typeof metadata.bookingId === 'string' ? metadata.bookingId : '';
     var paymentAttemptId = typeof metadata.paymentAttemptId === 'string' ? metadata.paymentAttemptId : '';
     var brand = typeof metadata.brand === 'string' ? metadata.brand : '';
+
+    /* 追加オプション決済（Issue #423）は部屋予約の照合経路に入れず、専用経路で処理する。 */
+    if (metadata.orderType === 'addon') {
+      return handleAddonEvent_(rowNumber, generation, eventId, session, isFailureType, stripeConfig, effectiveNow);
+    }
 
     if (isFailureType) {
       return handleAsyncPaymentFailed_(rowNumber, generation, eventId, session, bookingId, paymentAttemptId, effectiveNow);

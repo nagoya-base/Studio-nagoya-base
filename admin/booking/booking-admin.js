@@ -475,6 +475,7 @@ function showDetailModal(booking) {
   }).join('');
   renderPaymentLinkSection_(booking);
   renderPaymentSection_(booking);
+  renderOptionSection_(booking);
   /* いずれもmodal-bodyの直後へinsertAdjacentElement('afterend', ...)で挿入するため、
      画面上の表示順（金額修正→修正案内→要復旧通知→基準料金→日程変更→精算記録）に
      したい場合は逆順で呼び出す（後から挿入したものほどmodal-bodyに近い位置に来る）。
@@ -1911,6 +1912,157 @@ function runCancel(bookingId) {
 
 /*
  * ============================================================================
+ * Issue #423: 予約オプション（Studio X）の確認・スタッフ対応の承認／不承認。
+ * ============================================================================
+ *
+ * 表示するのはgetAdminBookingDetailのbooking.options（OptionOrdersの注文）。
+ * 部屋予約のstatus・決済とは別の状態であり、不承認にしても部屋予約は変わらない。
+ * 承認可否・二重操作の判定はサーバー側（OptionOrderService）がLock内で行う。この画面は
+ * 表示と確認ダイアログ、結果の表示だけを担う（statusをクライアントで推測・変更しない）。
+ */
+var optionUi_ = { container: null, listEl: null, inFlight: false };
+
+function optionStatusLabel_(status) {
+  var labels = {
+    PENDING_APPROVAL: '承認待ち',
+    AWAITING_PAYMENT: '承認済み・お支払い待ち',
+    PAYMENT_PENDING: '決済手続き中',
+    CONFIRMED: '確定',
+    DECLINED: '不承認',
+    CANCELLED: '取消'
+  };
+  return Object.prototype.hasOwnProperty.call(labels, status) ? labels[status] : String(status || '');
+}
+
+function optionApprovalLabel_(status) {
+  var labels = { NOT_REQUIRED: '承認不要', PENDING_APPROVAL: '承認待ち', APPROVED: '承認済み', DECLINED: '不承認' };
+  return Object.prototype.hasOwnProperty.call(labels, status) ? labels[status] : String(status || '');
+}
+
+function optionPaymentLabel_(status) {
+  var labels = { NOT_REQUIRED: '課金なし', NOT_STARTED: '未決済', CHECKOUT_PENDING: '決済手続き中', PAID: '決済済み', FAILED: '決済失敗（再試行可）' };
+  return Object.prototype.hasOwnProperty.call(labels, status) ? labels[status] : String(status || '');
+}
+
+/* 注文1件の表示行（純粋関数）。 */
+function describeOptionOrder_(order) {
+  var items = (order.items || []).map(function (item) { return item.label; }).join('、');
+  var lines = [
+    order.paidLabel + '／' + order.sourceLabel + '／' + items,
+    '注文ID: ' + order.optionOrderId + '／金額: ' + (order.amountJpy > 0 ? formatYen_(order.amountJpy) : '無料'),
+    '承認: ' + optionApprovalLabel_(order.approvalStatus) + '／決済: ' + optionPaymentLabel_(order.paymentStatus) + '／状態: ' + optionStatusLabel_(order.status),
+    '申込: ' + (order.createdAt || '-')
+  ];
+  if (order.approvedAt) lines.push('承認日時: ' + order.approvedAt);
+  if (order.declinedAt) lines.push('不承認日時: ' + order.declinedAt + (order.declineReason ? '（' + order.declineReason + '）' : ''));
+  if (order.paidAt) lines.push('決済日時: ' + order.paidAt);
+  if (order.recoveryRequired) lines.push('⚠ 要確認: ' + (order.recoveryReason || '決済の照合に問題があります。Stripeを確認してください。'));
+  return lines;
+}
+
+function initOptionUi_() {
+  var modal = document.getElementById('modal');
+  var closeButton = document.getElementById('modal-close');
+
+  var container = document.createElement('div');
+  container.id = 'option-section';
+
+  var heading = document.createElement('h3');
+  heading.textContent = '予約オプション';
+  container.appendChild(heading);
+
+  var listEl = document.createElement('div');
+  listEl.id = 'option-list';
+  container.appendChild(listEl);
+
+  modal.insertBefore(container, closeButton);
+  listEl.addEventListener('click', function (event) {
+    var target = event.target;
+    if (!target || !target.getAttribute) return;
+    var action = target.getAttribute('data-option-action');
+    var optionOrderId = target.getAttribute('data-option-order-id');
+    if (action && optionOrderId) runOptionDecision_(action, optionOrderId);
+  });
+
+  optionUi_.container = container;
+  optionUi_.listEl = listEl;
+}
+
+function renderOptionSection_(booking) {
+  var ui = optionUi_;
+  if (!ui.container) return;
+  var options = booking && booking.options;
+  /* オプション情報を持たない既存予約（Studio X以外を含む）ではセクション自体を出さない。 */
+  if (!options || (options.available && (!options.orders || options.orders.length === 0))) {
+    ui.container.classList.add('hidden');
+    return;
+  }
+  ui.container.classList.remove('hidden');
+  if (!options.available) {
+    ui.listEl.textContent = 'オプション台帳を読み取れませんでした。Spreadsheetを確認してください。';
+    return;
+  }
+  var html = [];
+  if (options.guidanceIncomplete) {
+    html.push('<p class="option-warning">⚠ 無料セルフセッティングの定型案内に、運営確認待ち（未整備）の項目があります。案内メールには「確認中」と表示されています。</p>');
+  }
+  options.orders.forEach(function (order) {
+    var lines = describeOptionOrder_(order).map(function (line) { return escapeHtml(line); }).join('<br>');
+    var buttons = '';
+    if (order.canApprove) {
+      buttons += '<button type="button" data-option-action="approve" data-option-order-id="' + escapeHtml(order.optionOrderId) + '"' + (optionUi_.inFlight ? ' disabled' : '') + '>承認する</button> ';
+    }
+    if (order.canDecline) {
+      buttons += '<button type="button" data-option-action="decline" data-option-order-id="' + escapeHtml(order.optionOrderId) + '"' + (optionUi_.inFlight ? ' disabled' : '') + '>不承認にする</button>';
+    }
+    html.push('<div class="option-order">' + lines + (buttons ? '<div class="option-actions">' + buttons + '</div>' : '') + '</div>');
+  });
+  ui.listEl.innerHTML = html.join('');
+}
+
+function runOptionDecision_(action, optionOrderId) {
+  var booking = currentDetailBooking_;
+  if (!booking || optionUi_.inFlight) return;
+  var approving = action === 'approve';
+  var reason = '';
+  if (approving) {
+    if (!window.confirm('このスタッフ対応を承認します。\n\n利用者へ承認メールを送り、オンライン決済に進めるようになります（承認後に決済されるまで確定しません）。\n\n実行しますか？')) return;
+  } else {
+    var input = window.prompt('このスタッフ対応を不承認にします。部屋のご予約には影響しません。\n理由（任意。利用者向けメールには載りません）:');
+    if (input === null) return;
+    reason = String(input).trim();
+  }
+
+  optionUi_.inFlight = true;
+  renderOptionSection_(booking);
+  setStatusLine(approving ? '承認処理中…' : '不承認処理中…');
+  var finish = function () {
+    optionUi_.inFlight = false;
+    setStatusLine('');
+    refreshOpenDetail_(booking.bookingId);
+  };
+  var run = google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result || !result.success) {
+        alert((approving ? '承認できませんでした: ' : '不承認にできませんでした: ') + (result && result.error && result.error.message));
+      } else if (result.alreadyDecided) {
+        alert('すでに処理済みです（二重実行はされていません）。');
+      }
+      finish();
+    })
+    .withFailureHandler(function (error) {
+      alert('エラーが発生しました: ' + (error && error.message ? error.message : error) + '\n画面を更新して状態を確認してください。');
+      finish();
+    });
+  if (approving) {
+    run.adminApproveOptionOrder(optionOrderId);
+  } else {
+    run.adminDeclineOptionOrder(optionOrderId, reason);
+  }
+}
+
+/*
+ * ============================================================================
  * Issue #341 PR-D: Stripeカード決済の予約の「取消・返金」「返金状態を照会」
  * 「決済要対応の解消」「来場案内を再送」、および決済要対応（Recovery）の一覧。
  * ============================================================================
@@ -2880,5 +3032,6 @@ initPriceEditUi_();
 initPriceNoticeUi_();
 initPaymentUi_();
 initPaymentRecoveryUi_();
+initOptionUi_();
 
 loadBookings();

@@ -1,0 +1,113 @@
+---
+---
+<!DOCTYPE html>
+<html lang="ja" data-mood="school">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, follow">
+  <meta name="theme-color" content="#0b0b0f">
+  <title>オプションの追加・お支払い | Studio X</title>
+  <meta name="description" content="Studio Xのご予約済みの方向け。機材レンタル・セッティング（スタッフ対応）などのオプション追加と、承認後のお支払いのページです。">
+  <link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/booking/options/">
+  <link rel="icon" href="../../touch-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../../touch-icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../style.css">
+  <link rel="stylesheet" href="../../pages.css">
+  <link rel="stylesheet" href="../../../styles/booking.css?v={{ site.time | date: '%s' }}">
+
+  <!-- Google Analytics 4 -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-6TWDLEFWJT');
+  </script>
+</head>
+<body id="top">
+  <a class="skip-link" href="#main-content">本文へ移動</a>
+  <header class="site-header">
+    <a class="brand" href="../../" aria-label="Studio X トップへ"><span class="brand-name">STUDIO <b>X</b></span><span class="brand-place">KAMIMAEZU / NAGOYA</span></a>
+    <nav class="desktop-nav" aria-label="メインナビゲーション"><a href="../../">トップ</a><a href="../../how-to/">利用ガイド</a><a href="../../legal/">規約</a></nav>
+    <a class="header-cta" href="#booking-options-app">オプションを追加</a>
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="メニューを開く"><span></span><span></span></button>
+  </header>
+  <div class="mobile-menu" id="mobile-menu" hidden>
+    <a href="../../">トップ</a><a href="../../how-to/">ご利用ガイド</a><a href="../../legal/">利用規約・プライバシー</a>
+    <a class="mobile-menu-cta" href="#booking-options-app">オプションを追加</a>
+  </div>
+
+  <main id="main-content" class="subpage-main">
+    <header class="subpage-hero">
+      <p class="section-kicker">OPTIONS</p>
+      <h1>オプションの追加・<br>お支払い</h1>
+      <p class="subpage-lead">ご予約済みの予約IDに、機材レンタル・セッティング・サポートを追加できます。新しい予約は作られません。スタッフ対応（事前設営・片付け）は事前確認制で、承認後にお支払いいただきます。</p>
+    </header>
+
+    <section class="content-section" id="booking-options-section">
+      <a class="button button-ghost" href="../">← 予約フォームへ</a>
+
+      <div class="booking-app" id="booking-options-app" data-brand="studio_x">
+        <p class="ba-banner ba-banner--notice">予約IDと、ご予約時にご登録のメールアドレスを入力してください（本人確認のため。予約IDだけでは操作できません）。</p>
+
+        <form id="bo-lookup-form" novalidate>
+          <div class="ba-field">
+            <label for="bo-booking-id">予約ID</label>
+            <input type="text" id="bo-booking-id" autocomplete="off" maxlength="64" required>
+          </div>
+          <div class="ba-field">
+            <label for="bo-email">ご登録のメールアドレス</label>
+            <input type="email" id="bo-email" autocomplete="email" maxlength="254" required>
+          </div>
+          <p class="ba-field-error" id="bo-lookup-error" role="alert" hidden></p>
+          <div class="ba-actions">
+            <button type="submit" class="ba-btn ba-btn-primary" id="bo-lookup-submit">予約を確認する</button>
+          </div>
+        </form>
+
+        <div id="bo-detail" hidden>
+          <h2>ご予約の内容</h2>
+          <table class="ba-summary">
+            <tbody>
+              <tr><th>予約ID</th><td id="bo-d-booking-id"></td></tr>
+              <tr><th>利用日</th><td id="bo-d-date"></td></tr>
+              <tr><th>利用時間</th><td id="bo-d-time"></td></tr>
+              <tr><th>予約の状態</th><td id="bo-d-status"></td></tr>
+            </tbody>
+          </table>
+
+          <h2>お申し込み済みのオプション</h2>
+          <div id="bo-orders"></div>
+          <p class="ba-banner ba-banner--notice" id="bo-pay-notice" hidden></p>
+          <p class="ba-field-error" id="bo-pay-error" role="alert" hidden></p>
+
+          <div id="bo-add" hidden>
+            <h2>オプションを追加する</h2>
+            <div id="bo-panel-slot" hidden></div>
+            <p class="ba-field-error" id="bo-submit-error" role="alert" hidden></p>
+            <p class="ba-banner ba-banner--notice" id="bo-submit-message" hidden></p>
+            <div class="ba-actions">
+              <button type="button" class="ba-btn ba-btn-primary" id="bo-submit">オプションを申し込む</button>
+            </div>
+          </div>
+          <p class="ba-banner ba-banner--notice" id="bo-add-closed" hidden></p>
+        </div>
+      </div>
+    </section>
+
+    <aside class="page-cta"><h2>予約前に、使い方も確認。</h2><p>入室、照明、清掃、施錠までを画像付きPDFと一緒に案内しています。</p><a class="button button-primary" href="../../how-to/">ご利用ガイドを見る</a></aside>
+  </main>
+
+  <footer><a class="brand" href="../../"><span class="brand-name">STUDIO <b>X</b></span><span class="brand-place">KAMIMAEZU / NAGOYA</span></a><div class="footer-links"><a href="../../">トップ</a><a href="../../how-to/">ご利用ガイド</a><a href="../../legal/">利用規約・プライバシー</a><a href="https://x.com/studiox2026" target="_blank" rel="noopener noreferrer">X @studiox2026</a></div><p>© Studio X / Studio Nagoya Base</p></footer>
+
+  <script src="../../analytics.js"></script>
+  <script src="../../main.js"></script>
+  <script src="../../../scripts/booking-config.js?v={{ site.time | date: '%s' }}"></script>
+  <script src="../../../scripts/booking-options.js?v={{ site.time | date: '%s' }}"></script>
+  <script src="../../../scripts/booking-options-addon.js?v={{ site.time | date: '%s' }}"></script>
+</body>
+</html>

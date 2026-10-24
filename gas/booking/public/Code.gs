@@ -34,6 +34,9 @@ function doGet(e) {
   if (params.action === 'estimatePrice') {
     return jsonOutput_(handleEstimatePrice_(params));
   }
+  if (params.action === 'optionCatalog') {
+    return jsonOutput_(handleOptionCatalog_(params));
+  }
   return jsonOutput_(handleGetAvailability_(params));
 }
 
@@ -41,6 +44,9 @@ function doPost(e) {
   var params = (e && e.parameter) || {};
   if (params.action === 'startCardCheckout') {
     return jsonOutput_(handleStartCardCheckout_(e));
+  }
+  if (params.action === 'optionSummary' || params.action === 'submitOptions' || params.action === 'startOptionCheckout') {
+    return jsonOutput_(handleOptionAction_(params.action, e));
   }
   return jsonOutput_(handleCreateBooking_(e));
 }
@@ -200,6 +206,70 @@ function handleStartCardCheckout_(e) {
       error: { code: 'INTERNAL_ERROR', message: '決済処理中にエラーが発生しました。しばらくしてから再度お試しください。' },
       requestId: requestId
     };
+  }
+}
+
+/*
+ * 予約オプション（Issue #423。Studio X限定）。
+ *
+ * optionCatalog（GET）: オプションの種類・料金・文言。PIIなし・読み取り専用。料金は
+ *   BookingOptions / Config（Script Properties）が正本で、画面はここから取得して表示する。
+ * optionSummary / submitOptions / startOptionCheckout（POST。PIIを扱うためGETにしない）:
+ *   いずれも「予約ID＋登録メールアドレス」で本人確認する。予約IDだけでは操作できない。
+ *   本人確認の失敗は存在有無を区別しない同一のFORBIDDENを返し、予約ID単位でレート制限する。
+ *   金額・状態はクライアントから受け取らない（optionsの選択内容とoptionOrderIdのみ）。
+ */
+function handleOptionCatalog_(params) {
+  var brand = params.brand || '';
+  if (!Booking.isAllowedBrand(brand)) {
+    return { success: false, error: { code: 'INVALID_BRAND', message: 'このブランドではオンライン予約を受け付けていません。' } };
+  }
+  return { success: true, catalog: OptionOrderService.getCatalog(brand) };
+}
+
+var OPTION_ACTION_RATE_LIMIT_ = { windowMinutes: 10, maxCount: 20 };
+
+function handleOptionAction_(action, e) {
+  var requestId = Utilities.getUuid();
+  Logger.log('requestId=' + requestId + ' ' + action + '=start');
+
+  var payload;
+  try {
+    payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (parseError) {
+    Logger.log('requestId=' + requestId + ' ' + action + '=result error.code=INVALID_JSON');
+    return { success: false, error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' }, requestId: requestId };
+  }
+
+  var bookingId = payload && typeof payload.bookingId === 'string' ? payload.bookingId : '';
+  var email = payload && typeof payload.email === 'string' ? payload.email : '';
+  if (!bookingId || bookingId.length > 64 || !email || email.length > 254) {
+    Logger.log('requestId=' + requestId + ' ' + action + '=result error.code=FORBIDDEN');
+    return { success: false, error: { code: 'FORBIDDEN', message: '予約が見つからないか、操作の権限がありません。' }, requestId: requestId };
+  }
+
+  try {
+    var allowed = RateLimiter.limitByKey('opt_' + bookingId, OPTION_ACTION_RATE_LIMIT_.windowMinutes, OPTION_ACTION_RATE_LIMIT_.maxCount);
+    var result;
+    if (!allowed) {
+      result = { success: false, error: { code: 'RATE_LIMITED', message: '操作回数が多すぎます。しばらく時間を置いてから再度お試しください。' } };
+    } else if (action === 'optionSummary') {
+      result = OptionOrderService.getCustomerSummary(bookingId, email);
+    } else if (action === 'submitOptions') {
+      result = OptionOrderService.submitAddonOptions(bookingId, email, payload.options);
+    } else {
+      result = OptionOrderService.startOptionCheckout(bookingId, email, typeof payload.optionOrderId === 'string' ? payload.optionOrderId : '');
+    }
+    if (!result || typeof result !== 'object') {
+      result = { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' } };
+    }
+    var errorCode = result.success ? '' : (result.error && result.error.code);
+    Logger.log('requestId=' + requestId + ' ' + action + '=result ' + (result.success ? 'success' : 'error.code=' + sanitizeErrorCode_(errorCode)));
+    result.requestId = requestId;
+    return result;
+  } catch (unexpectedError) {
+    Logger.log('requestId=' + requestId + ' ' + action + '=result error.code=INTERNAL_ERROR');
+    return { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' }, requestId: requestId };
   }
 }
 

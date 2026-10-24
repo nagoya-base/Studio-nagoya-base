@@ -15,13 +15,16 @@
     include.back_label  — 上記リンクのラベル
   任意パラメータ:
     include.intro_note  — ステップ1の上に表示する案内文（ブランド固有の一言。任意）
+    include.options     — 'true' のとき予約オプション欄（Issue #423。Studio Xのみ）を表示する。
+                          SNB / mensは指定しない（既存の挙動・文面は一切変わらない）。
 -->
 <div
   id="booking-app"
   class="booking-app"
   data-brand="{{ include.brand }}"
   data-back-url="{{ include.back_url }}"
-  data-back-label="{{ include.back_label }}">
+  data-back-label="{{ include.back_label }}"{% if include.options == "true" %}
+  data-options="true"{% endif %}>
 
   {% if include.intro_note %}
   <p class="ba-banner ba-banner--notice">{{ include.intro_note }}</p>
@@ -332,6 +335,13 @@
       <p class="ba-field-error" id="ba-note-error" hidden></p>
     </div>
 
+    {% if include.options == "true" %}
+    <!-- Issue #423: 予約オプション（Studio Xのみ）。内容・料金はoptionCatalog APIが正本。
+         取得できない／無効な場合はscripts/booking-options.jsがこの領域を隠す（予約自体は妨げない）。 -->
+    <div id="ba-options-slot" hidden></div>
+    <p class="ba-field-error" id="ba-options-error" hidden></p>
+    {% endif %}
+
     <div class="ba-actions">
       <button type="button" class="ba-btn ba-btn-ghost" id="ba-step-details-back">戻る</button>
       <button type="button" class="ba-btn ba-btn-primary" id="ba-step-details-next">確認画面へ</button>
@@ -356,6 +366,7 @@
         <tr><th>利用目的</th><td id="ba-confirm-purpose"></td></tr>
         <tr><th>支払方法</th><td id="ba-confirm-payment"></td></tr>
         <tr><th>連絡事項</th><td id="ba-confirm-note"></td></tr>
+        {% if include.options == "true" %}<tr id="ba-confirm-options-row" hidden><th>オプション</th><td id="ba-confirm-options"></td></tr>{% endif %}
       </tbody>
     </table>
 
@@ -406,6 +417,11 @@
       <strong>まだ予約は確定していません。</strong><br>
       当方が内容を確認し、確定のご連絡をした時点ではじめて予約成立となります。通常24時間以内にご連絡します。
     </div>
+
+    {% if include.options == "true" %}
+    <!-- Issue #423: オプションの申込結果。部屋予約とは別の状態（承認待ち等）を表示する。 -->
+    <div class="ba-banner ba-banner--notice" id="ba-complete-options" hidden></div>
+    {% endif %}
 
     <p class="ba-banner ba-banner--notice" id="ba-complete-card-payment-notice" hidden></p>
 
