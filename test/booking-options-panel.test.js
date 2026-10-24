@@ -261,12 +261,13 @@ test('summarize: セット無料は「（セット無料）」「（うちN本�
   assert.ok(alone.indexOf('ライトスタンド（260cm）（200円）') !== -1 && alone.indexOf('セット無料') === -1, alone);
 });
 
-test('validateSelection: 有料機材を選んだのに設営方法を選んでいなければ次へ進めない。スタッフ設営はテーマ必須', function () {
+test('validateSelection: 有料機材を選んだのに設営方法を選んでいなければ次へ進めない。スタッフ設営はテーマ不要', function () {
   var equipment = { STROBE_PORTABLE: 1 };
   assert.ok(Panel.validateSelection({ equipment: equipment, setupService: 'SELF', setupChosen: false }, SERVER_CATALOG).indexOf('設営方法') !== -1);
   assert.strictEqual(Panel.validateSelection({ equipment: equipment, setupService: 'SELF', setupChosen: true }, SERVER_CATALOG), '');
   assert.strictEqual(Panel.validateSelection({ equipment: equipment, setupService: 'STAFF', setupChosen: true, layouts: ['GRUNGE'] }, SERVER_CATALOG), '');
-  assert.ok(Panel.validateSelection({ equipment: equipment, setupService: 'STAFF', setupChosen: true, layouts: [] }, SERVER_CATALOG).indexOf('テーマ') !== -1);
+  assert.strictEqual(Panel.validateSelection({ equipment: equipment, setupService: 'STAFF', setupChosen: true, layouts: [] }, SERVER_CATALOG), '', '機材のみでもスタッフ設営を選べる');
+  assert.ok(Panel.validateSelection({ equipment: equipment, setupService: 'NONE', setupChosen: true }, SERVER_CATALOG).indexOf('設営方法') !== -1, '機材レンタルでは後付けでもNONEは通らない');
   assert.strictEqual(Panel.validateSelection({ equipment: {}, setupService: 'SELF', setupChosen: false }, SERVER_CATALOG), '', '機材なしなら設営方法は任意');
   assert.strictEqual(Panel.validateSelection({ equipment: { STAND_260: 1 }, setupService: 'SELF', setupChosen: false }, SERVER_CATALOG).indexOf('設営方法') !== -1, true, 'スタンド単独も有料機材');
 });
@@ -282,4 +283,8 @@ test('パネルのUI: 機材を選ぶと設営方法のラジオを出し、未�
   assert.ok(src.indexOf('item.freeWhenWith && item.freeWhenWith.label') !== -1);
   assert.ok(src.indexOf('設営方法（機材レンタルでは必須）') !== -1);
   assert.ok(!/セットで無料|単独200円/.test(src), '無料条件の文言をパネルに直書きしない（カタログの値だけ）');
+});
+
+test('パネルのUI: 機材レンタル中は後付けでも設営方法に「追加しない」を出さない', function () {
+  assert.ok(read('scripts/booking-options.js').indexOf("config.allowNone && !paidEquipment") !== -1);
 });

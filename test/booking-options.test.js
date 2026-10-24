@@ -591,10 +591,13 @@ test('有料機材を選んだら設営方法（セルフ/スタッフ）の明�
   assert.strictEqual(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 } }).error.code, 'SETUP_METHOD_REQUIRED');
   assert.strictEqual(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: '' }).error.code, 'SETUP_METHOD_REQUIRED');
   assert.ok(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'SELF' }).ok);
-  assert.ok(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'NONE' }).ok, '後付けで設営が申込済みの場合');
+  assert.strictEqual(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'NONE' }).error.code, 'SETUP_METHOD_REQUIRED', '機材レンタルでは後付けでもNONEは選べない');
+  assert.ok(BookingOptions.normalizeSelection({ layouts: ['CLASSROOM'], setupService: 'NONE', cleanupService: 'STAFF' }).ok, '機材なしの後付けではNONEを許容');
   assert.ok(BookingOptions.normalizeSelection({ layouts: ['CLASSROOM'] }).ok, '機材なしのセッティングは従来どおり既定セルフ');
   assert.ok(BookingOptions.normalizeSelection({ equipment: { BACKGROUND_STAND: 1 }, setupService: 'SELF' }).ok);
-  assert.strictEqual(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'STAFF' }).error.code, 'LAYOUT_REQUIRED_FOR_STAFF_SERVICE', 'スタッフ設営は対象テーマが必要');
+  assert.ok(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'STAFF' }).ok, '機材のみでもスタッフ設営を選べる（テーマ不要）');
+  assert.strictEqual(BookingOptions.normalizeSelection({ layouts: [], setupService: 'STAFF' }).error.code, 'LAYOUT_REQUIRED_FOR_STAFF_SERVICE', '機材なしのスタッフ設営は従来どおりテーマが必要');
+  assert.strictEqual(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'SELF', cleanupService: 'STAFF' }).error.code, 'LAYOUT_REQUIRED_FOR_STAFF_SERVICE', '片付けのスタッフ依頼は従来どおりテーマが必要');
   var staff = plan(select({ equipment: { STROBE_PORTABLE: 1 }, layouts: ['GRUNGE'], setupService: 'STAFF', cleanupService: 'STAFF' }));
   assert.ok(staff.ok);
   var staffOrder = staff.orders.filter(function (o) { return o.category === 'STAFF_SERVICE'; })[0];
@@ -624,4 +627,23 @@ test('ライトが許可待ちなら、セット無料のスタンドも同じ�
   assert.strictEqual(r.orders.length, 1);
   assert.strictEqual(r.orders[0].status, 'PENDING_APPROVAL');
   assert.strictEqual(r.orders[0].amountJpy, 1000);
+});
+
+test('機材のみのスタッフ設営（テーマなし）は既存の事前設営3,000円・承認後決済に乗り、片付けとの通算5,000円ルールを維持する', function () {
+  var r = plan(select({ equipment: { COB_FULLCOLOR: 1 }, setupService: 'STAFF' }));
+  assert.ok(r.ok, JSON.stringify(r.error));
+  var staff = r.orders.filter(function (o) { return o.category === 'STAFF_SERVICE'; })[0];
+  assert.deepStrictEqual(plain(staff.items), ['STAFF_PRE_SETUP:EQUIPMENT']);
+  assert.strictEqual(staff.amountJpy, 3000);
+  assert.strictEqual(staff.status, 'PENDING_APPROVAL');
+  assert.strictEqual(BookingOptions.describeItem('STAFF_PRE_SETUP:EQUIPMENT'), '事前設営（スタッフ）: 機材の設営');
+  assert.strictEqual(r.orders.filter(function (o) { return o.category === 'EQUIPMENT'; })[0].amountJpy, 1000, '機材料金は別に加算');
+  // 既存の事前設営（テーマなし）へ、後から片付け（テーマあり）を足しても通算5,000円。差額は2,000円
+  var later = plan(select({ layouts: ['CLASSROOM'], setupService: 'NONE', cleanupService: 'STAFF' }), { existingOrders: [{ status: 'PENDING_APPROVAL', items: ['STAFF_PRE_SETUP:EQUIPMENT'] }] });
+  assert.ok(later.ok, JSON.stringify(later.error));
+  assert.strictEqual(later.orders.filter(function (o) { return o.category === 'STAFF_SERVICE'; })[0].amountJpy, 2000);
+  // テーマを選んだ場合はそのテーマを紐づける
+  var themed = plan(select({ equipment: { COB_FULLCOLOR: 1 }, layouts: ['GRUNGE'], setupService: 'STAFF', cleanupService: 'STAFF' }));
+  assert.deepStrictEqual(plain(themed.orders.filter(function (o) { return o.category === 'STAFF_SERVICE'; })[0].items.sort()), ['STAFF_CLEANUP:GRUNGE', 'STAFF_PRE_SETUP:GRUNGE']);
+  assert.strictEqual(themed.orders.filter(function (o) { return o.category === 'STAFF_SERVICE'; })[0].amountJpy, 5000);
 });

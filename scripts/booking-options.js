@@ -77,11 +77,9 @@
   function validateSelection(state, catalog) {
     var s = state || {};
     var layouts = s.layouts || [];
-    if (catalog && hasPaidEquipment(catalog, s.equipment) && s.setupChosen !== true) {
+    /* 機材レンタルの設営方法はセルフ/スタッフの2択（後付けでも「追加しない」は選べない）。スタッフ設営はテーマ未選択でも依頼できる。 */
+    if (catalog && hasPaidEquipment(catalog, s.equipment) && !(s.setupChosen === true && (s.setupService === 'SELF' || s.setupService === 'STAFF'))) {
       return '機材をレンタルする場合は、設営方法（セルフ設営／スタッフ設営）を選択してください。';
-    }
-    if (hasPaidEquipment(catalog, s.equipment) && s.setupService === 'STAFF' && layouts.length === 0) {
-      return 'スタッフ設営を依頼するセッティング（テーマ）を選択してください。';
     }
     var staff = layouts.length > 0 && (s.setupService === 'STAFF' || s.cleanupService === 'STAFF');
     if (staff && layouts.length !== 1) {
@@ -291,7 +289,7 @@
         if (paidEquipment) root.appendChild(el('p', { className: 'ba-field-help', text: (catalog.notices && catalog.notices.EQUIPMENT_SETUP) || '' }));
         var setupGroup = el('div', { className: 'ba-choices' });
         var setupChoices = [['SELF', 'セルフ設営　無料'], ['STAFF', '事前設営を依頼　+' + setupPrice + '（事前確認制）']];
-        if (config.allowNone) setupChoices.push(['NONE', '設営は追加しない（申込済み・不要）']);
+        if (config.allowNone && !paidEquipment) setupChoices.push(['NONE', '設営は追加しない（申込済み・不要）']);
         setupChoices.forEach(function (pair) {
           var c = choice('bo-setup', pair[0], pair[1], 'radio', false);
           c.input.checked = state.setupService === pair[0] && (!paidEquipment || state.setupChosen);

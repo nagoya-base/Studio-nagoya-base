@@ -180,6 +180,9 @@ var BookingOptions = (function () {
     return theme.code;
   });
 
+  /* 機材レンタルのスタッフ設営でテーマ未選択のときの項目コード上のテーマ（'STAFF_PRE_SETUP:EQUIPMENT'。Issue #438）。 */
+  var STAFF_NO_THEME_ = 'EQUIPMENT';
+
   /* スタッフ対応の料金（Issue #423 追加コメント。テーマ別の個別価格は持たない）。
      正本は _data/studio_x_equipment.json の staffService（生成物 EquipmentCatalog.gs 経由）。機材ページも同じJSONを読むため食い違わない。
      画面はoptionCatalog APIで取得して表示し、GAS・Webhookも必ずここを参照する。 */
@@ -373,8 +376,8 @@ var BookingOptions = (function () {
     /* 有料レンタル機材を1点でも選んだら設営方法（セルフ/スタッフ）の明示選択が必須（Issue #438）。
        未指定を既定のセルフ扱いにしない（直接APIを叩いても必ずここで拒否する）。 */
     var hasPaidRental = equipmentCodes.some(function (code) { return !!equipmentRental_(code) && equipment[code] > 0; });
-    var setupExplicit = selection.setupService !== undefined && selection.setupService !== null && selection.setupService !== '';
-    if (hasPaidRental && !setupExplicit) {
+    /* 機材レンタルの設営方法はSELF/STAFFの2択（初回予約・後付けとも。NONEは機材なしの後付けだけ許容）。 */
+    if (hasPaidRental && selection.setupService !== 'SELF' && selection.setupService !== 'STAFF') {
       return { ok: false, error: err_('SETUP_METHOD_REQUIRED', '機材をレンタルする場合は、設営方法（セルフ設営／スタッフ設営）を選択してください。') };
     }
 
@@ -391,14 +394,16 @@ var BookingOptions = (function () {
        テーマ未選択のSELF/SELFは単に「セッティングなし」。 */
     var staffRequested = normalized.setupService === 'STAFF' || normalized.cleanupService === 'STAFF';
     if (normalized.layouts.length === 0) {
-      if (staffRequested) {
+      /* 機材レンタルのスタッフ設営だけは、テーマ未選択でも依頼できる（Issue #438。事前設営として扱う）。 */
+      var equipmentStaffSetup = hasPaidRental && normalized.setupService === 'STAFF' && normalized.cleanupService !== 'STAFF';
+      if (staffRequested && !equipmentStaffSetup) {
         return { ok: false, error: err_('LAYOUT_REQUIRED_FOR_STAFF_SERVICE', 'スタッフ対応を依頼するセッティング（テーマ）を選択してください。') };
       }
-      normalized.setupService = 'SELF';
+      normalized.setupService = equipmentStaffSetup ? 'STAFF' : 'SELF';
       normalized.cleanupService = 'SELF';
     }
     /* スタッフ作業は1テーマ分（共通料金のため、複数テーマを1回の料金で依頼させない）。 */
-    if (staffRequested && normalized.layouts.length !== 1) {
+    if (staffRequested && normalized.layouts.length > 1) {
       return { ok: false, error: err_('STAFF_SERVICE_SINGLE_THEME', 'スタッフ対応を依頼できるセッティングは1種類です。複数ある場合は残りをセルフ設営にするか、メールでご相談ください。') };
     }
 
@@ -430,7 +435,11 @@ var BookingOptions = (function () {
       return (eqDef ? eqDef.label : eq.code) + (eq.quantity > 1 ? ' ×' + eq.quantity : '') + freeNote;
     }
     if (code === ITEM_PREFIX.EMAIL_SUPPORT) return 'メールサポート';
-    var themeOf = function (prefix) { var t = THEMES[code.slice(prefix.length)]; return t ? t.label : code.slice(prefix.length); };
+    var themeOf = function (prefix) {
+      if (code.slice(prefix.length) === STAFF_NO_THEME_) return '機材の設営';
+      var t = THEMES[code.slice(prefix.length)];
+      return t ? t.label : code.slice(prefix.length);
+    };
     if (code.indexOf(ITEM_PREFIX.SELF_SETUP) === 0) return 'セルフ設営: ' + themeOf(ITEM_PREFIX.SELF_SETUP);
     if (code.indexOf(ITEM_PREFIX.SELF_CLEANUP) === 0) return 'セルフ原状復帰: ' + themeOf(ITEM_PREFIX.SELF_CLEANUP);
     if (code.indexOf(ITEM_PREFIX.STAFF_PRE_SETUP) === 0) return '事前設営（スタッフ）: ' + themeOf(ITEM_PREFIX.STAFF_PRE_SETUP);
@@ -469,7 +478,7 @@ var BookingOptions = (function () {
     if (overlap.length > 0) {
       return { ok: false, error: err_('DUPLICATE_OPTION', '既に申し込み済みのスタッフ対応は重複して追加できません。') };
     }
-    if (existingServices.length > 0 && existingTheme && existingTheme !== requestedTheme) {
+    if (existingServices.length > 0 && existingTheme && existingTheme !== requestedTheme && existingTheme !== STAFF_NO_THEME_ && requestedTheme !== STAFF_NO_THEME_) {
       return { ok: false, error: err_('STAFF_SERVICE_THEME_MISMATCH', '既に申し込み済みのスタッフ対応と同じセッティングを指定してください。') };
     }
     var union = uniqueStrings_(existingServices.concat(requestedServices));
@@ -579,7 +588,7 @@ var BookingOptions = (function () {
 
     /* 無料セルフ対応・メールサポート */
     var freeItems = [];
-    var staffPre = normalized.layouts.length > 0 && normalized.setupService === 'STAFF';
+    var staffPre = normalized.setupService === 'STAFF' && (normalized.layouts.length > 0 || normalized.equipmentSetup === 'STAFF');
     var staffCleanup = normalized.layouts.length > 0 && normalized.cleanupService === 'STAFF';
     normalized.layouts.forEach(function (theme) {
       if (!staffPre && normalized.setupService !== 'NONE') freeItems.push(ITEM_PREFIX.SELF_SETUP + theme);
@@ -606,7 +615,7 @@ var BookingOptions = (function () {
 
     /* 有料スタッフ対応（承認制。必ずPENDING_APPROVALから開始し、この時点では課金しない） */
     if (staffPre || staffCleanup) {
-      var theme = normalized.layouts[0];
+      var theme = normalized.layouts[0] || STAFF_NO_THEME_;
       var requested = [];
       if (staffPre) requested.push('PRE_SETUP');
       if (staffCleanup) requested.push('CLEANUP');
