@@ -1380,6 +1380,13 @@ footer nav a:hover {
   color: var(--text-muted);
 }
 
+.equipment-photo-badge.is-rental {
+  border-color: var(--accent-dark);
+  color: var(--accent-dark);
+  font-weight: 700;
+}
+
+
 .equipment-photo-card h3 {
   font-size: 0.92rem;
   font-weight: 600;
