@@ -92,7 +92,7 @@ test('Booking Admin配布ファイルセット: 予約詳細にオプション�
   var options = detail.booking.options;
   assert.strictEqual(options.available, true);
   assert.strictEqual(options.orders.length, 3);
-  assert.strictEqual(options.guidanceIncomplete, true, '未提供(グランジ)の定型案内があることをAdminに知らせる');
+  assert.strictEqual(options.guidanceIncomplete, false, '5テーマとも確定済みのため未整備警告は出ない');
   var staff = options.orders.filter(function (o) { return o.optionOrderId === 'OPT-STAFF001'; })[0];
   // 選択内容・有料/無料・同時/後付け・申込日時・承認状態・決済状態・optionOrderId
   assert.strictEqual(staff.paidLabel, '有料');

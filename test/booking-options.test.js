@@ -142,7 +142,7 @@ test('設営＋片付けの両方選択は5,000円（3,000+3,000=6,000円と誤�
   assert.deepStrictEqual(plain(staff.items.sort()), ['STAFF_CLEANUP:CLASSROOM', 'STAFF_PRE_SETUP:CLASSROOM']);
 });
 
-test('後付けでも共通料金ルールを適用: 事前設営(3,000)申込済みに片付けだけ足すと差額2,000円（合計はセット5,000円）', function () {
+test('後付けでも共通料金ルールを適用（運営確定のA案）: 事前設営(3,000)申込済みに片付けだけ足すと2,000円、通算でセット5,000円', function () {
   var r = plan(select({ layouts: ['GRUNGE'], setupService: 'NONE', cleanupService: 'STAFF' }), {
     existingOrders: [{ status: 'CONFIRMED', items: ['STAFF_PRE_SETUP:GRUNGE'] }]
   });
@@ -406,15 +406,43 @@ test('定型案内（確定文言）: 白黒背景布は同じ案内で、スタ
   assert.ok(BookingOptions.renderSelfGuidance(['SELF_SETUP:BLACK_BACKDROP']).text.indexOf('【黒背景布のセルフセッティング】') !== -1);
 });
 
-test('定型案内: グランジは文言が未提供のため創作せず「運営確認中」と明示し、Adminに未整備を知らせる', function () {
+test('定型案内（確定文言）: グランジは背景布と同じ運用（スタンド/竹の梁・畳んで収納・スタンドも原状復帰・靴/テープ/濡れ/飲食/化粧品）', function () {
   var g = BookingOptions.renderSelfGuidance(['SELF_SETUP:GRUNGE', 'SELF_CLEANUP:GRUNGE']);
-  assert.strictEqual(g.incomplete, true);
+  assert.strictEqual(g.incomplete, false);
   assert.ok(g.text.indexOf('【グランジセットのセルフセッティング】') !== -1);
+  assert.ok(g.text.indexOf('背景スタンド、または竹の梁にセットして使用してください') !== -1);
+  assert.ok(g.text.indexOf('使用後は畳んで元の場所へ収納してください') !== -1);
+  assert.ok(g.text.indexOf('スタンドも元の位置へ戻してください') !== -1);
+  assert.ok(g.text.indexOf('靴・粘着テープ・濡れ・飲食物・化粧品に注意してください') !== -1);
+  assert.ok(g.text.indexOf('運営にて内容を確認中です') === -1);
+});
+
+test('定型案内: 5テーマすべて確定済みで、未整備(null)の項目が残っていない', function () {
+  THEMES.forEach(function (theme) {
+    var g = BookingOptions.renderSelfGuidance(['SELF_SETUP:' + theme, 'SELF_CLEANUP:' + theme]);
+    assert.strictEqual(g.incomplete, false, theme);
+    assert.ok(g.text.indexOf('運営にて内容を確認中です') === -1, theme);
+    ['保管場所:', '使用する備品:', 'セット方法:', '原状復帰の方法:', '注意事項:'].forEach(function (label) {
+      assert.ok(g.text.indexOf(label) !== -1, theme + ' に ' + label + ' がある');
+    });
+  });
+});
+
+test('定型案内: 将来テーマの文言が未確定(null)の項目は創作せず「運営確認中」と明示し、Adminに未整備を知らせる（フォールバック）', function () {
+  // 確定済みの収納場所をnullへ差し替えたソースを読み込み、フォールバック動作だけを検証する
+  var fs2 = require('node:fs');
+  var src = fs2.readFileSync(path.join(__dirname, '..', 'gas', 'booking', 'shared', 'BookingOptions.gs'), 'utf8')
+    .replace("storage: 'グランジ背景は、白・黒背景布と同じ運用で、指定の収納場所に保管しています。',", 'storage: null,');
+  assert.ok(src.indexOf('storage: null,') !== -1);
+  var vm2 = require('node:vm');
+  var ctx = {};
+  vm2.createContext(ctx);
+  vm2.runInContext(fs2.readFileSync(path.join(__dirname, '..', 'gas', 'booking', 'shared', 'EquipmentCatalog.gs'), 'utf8'), ctx);
+  vm2.runInContext(src, ctx);
+  var g = ctx.BookingOptions.renderSelfGuidance(['SELF_SETUP:GRUNGE']);
+  assert.strictEqual(g.incomplete, true);
   assert.ok(g.text.indexOf('運営にて内容を確認中です') !== -1);
-  // 確定済みテーマと同時に選んでも、確定済みの文言は出て、未整備フラグだけがグランジ由来で立つ
-  var mixed = BookingOptions.renderSelfGuidance(['SELF_SETUP:CLASSROOM', 'SELF_SETUP:GRUNGE']);
-  assert.ok(mixed.text.indexOf('教卓を前方') !== -1);
-  assert.strictEqual(mixed.incomplete, true);
+  assert.ok(g.text.indexOf('セット方法: 背景スタンド、または竹の梁にセットして使用してください') !== -1, '確定済みの項目はそのまま出る');
 });
 
 test('定型案内: セルフ設営だけなら原状復帰の項目を出さず、スタッフ対応・機材のみなら案内なし', function () {

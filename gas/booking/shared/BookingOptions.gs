@@ -141,11 +141,11 @@ var BookingOptions = (function () {
    *
    * 収納場所・設置手順・原状復帰・注意事項は、運営（オーナー）から提供された確定文言のみを書く
    * （2026-10-24。PR #427のレビュー対応）。実装者判断で場所や手順を作らない。
-   * - CLASSROOM（黒板教室）／JAPANESE（和風・畳）／WHITE_BACKDROP・BLACK_BACKDROP（白黒背景布）:
-   *   確定済み。
-   * - GRUNGE（グランジ）: まだ提供されていないためnull（運営確認待ち）。nullの項目は案内メール上で
+   * - CLASSROOM（黒板教室）／JAPANESE（和風・畳）／WHITE_BACKDROP・BLACK_BACKDROP（白黒背景布）／
+   *   GRUNGE（グランジ。背景布と同じ運用）: 5テーマすべて確定済み。
+   * - 将来テーマを追加して文言が未確定の項目はnullにする。nullの項目は案内メール上で
    *   「運営にて内容を確認中」と明示し、Adminの予約詳細にも未整備として表示する
-   *   （renderSelfGuidanceのincomplete）。文章を提供されたらnullを置き換えるだけで全箇所へ反映される。
+   *   （renderSelfGuidanceのincomplete）。文章が確定したらnullを置き換えるだけで全箇所へ反映される。
    *
    * 収納場所は「所定位置／指定の収納場所」という提供文言のとおり。部屋内の具体的な位置は
    * 現地の掲示・原状写真・室内のラミネート手順書で確認する前提（ここでは新しい場所を作らない）。
@@ -172,7 +172,14 @@ var BookingOptions = (function () {
       restoreSteps: '畳・滑り止め・備品を、所定の順序・位置へ戻してください。',
       cautions: '畳の上で靴を使用しないでください。飲食物・濡れた物を直接置かないでください。重量物を引きずらないでください。'
     },
-    GRUNGE: { items: null, storage: null, setupSteps: null, restoreSteps: null, cautions: null },
+    /* グランジ: 運営確定「背景布と同じ運用」（2026-10-24）。提供された4点（セット／収納／スタンドの原状復帰／注意）のみ。 */
+    GRUNGE: {
+      items: 'グランジ背景、背景スタンド（または竹の梁）',
+      storage: 'グランジ背景は、白・黒背景布と同じ運用で、指定の収納場所に保管しています。',
+      setupSteps: '背景スタンド、または竹の梁にセットして使用してください。',
+      restoreSteps: '使用後は畳んで元の場所へ収納してください。背景スタンドを使用した場合は、スタンドも元の位置へ戻してください。',
+      cautions: '靴・粘着テープ・濡れ・飲食物・化粧品に注意してください。'
+    },
     WHITE_BACKDROP: BACKDROP_GUIDANCE_,
     BLACK_BACKDROP: BACKDROP_GUIDANCE_
   };

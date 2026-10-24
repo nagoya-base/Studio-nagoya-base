@@ -240,7 +240,7 @@ test('同時: 受付メールにスタッフ対応の事前確認制の説明と
   assert.ok(adminMails[0].body.indexOf('山田') === -1 && adminMails[0].body.indexOf(EMAIL) === -1, '管理者通知にPIIを含めない');
 });
 
-test('同時: 無料セルフ選択の受付メールにテーマ別の定型案内が付き、運営未確認の項目は創作せず「確認中」と明示する', function () {
+test('同時: 無料セルフ選択の受付メールにテーマ別の確定済み定型案内が付く（グランジ・白背景布）', function () {
   var ctx = setup();
   createRoom(ctx, { options: { layouts: ['GRUNGE', 'WHITE_BACKDROP'] } });
   var mail = mailsTo(ctx, EMAIL).filter(function (m) { return m.subject.indexOf('オプション') !== -1; })[0];
@@ -248,7 +248,8 @@ test('同時: 無料セルフ選択の受付メールにテーマ別の定型案
   assert.ok(mail.body.indexOf('背景スタンド、または竹の梁にセットして使用してください') !== -1, '白背景布は確定文言');
   assert.ok(mail.body.indexOf('【白背景布のセルフセッティング】') !== -1);
   assert.ok(mail.body.indexOf('使用後は清掃して元の位置へ戻してください。') !== -1);
-  assert.ok(mail.body.indexOf('運営にて内容を確認中です') !== -1, 'グランジは文言未提供');
+  assert.ok(mail.body.indexOf('靴・粘着テープ・濡れ・飲食物・化粧品に注意してください') !== -1, 'グランジは確定文言');
+  assert.ok(mail.body.indexOf('運営にて内容を確認中です') === -1);
   assert.ok(mail.body.indexOf('お支払い') === -1 || mail.body.indexOf('無料') !== -1);
 });
 
