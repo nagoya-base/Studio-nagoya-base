@@ -166,6 +166,20 @@ test('適用後の手動変更は元に戻らない。再適用するとその�
   assert.deepStrictEqual(m.panel.getState().equipment, { BACKGROUND_STAND: 1, COB_BICOLOR: 1, STAND_260: 1, SOFTBOX_60: 1 });
 });
 
+test('手動で選んだストリップ30×120は、再適用でその時点のおすすめに置き換わる（ソフトボックスなし／あり）', function () {
+  ['OFF', 'ON'].forEach(function (softbox) {
+    var m = mount();
+    var strip = equipmentSelect(m, 'SOFTBOX_STRIP_30X120');
+    strip.value = '1'; strip.fire('change');
+    var eq = choose(m, 'STROBE', '1', softbox);
+    assert.strictEqual(eq.SOFTBOX_STRIP_30X120, undefined, softbox);
+    assert.deepStrictEqual(eq, EXPECTED['STROBE,1,' + softbox], softbox);
+    assert.strictEqual(m.panel.validate().indexOf('ボーエンズ'), -1, softbox);
+  });
+  var applied = Panel.applyLightingPreset(CATALOG, { SOFTBOX_STRIP_30X120: 1, SOFTBOX_STRIP_60X90: 1 }, { kind: 'VIDEO', count: '1', softbox: 'OFF' });
+  assert.deepStrictEqual(applied, EXPECTED['VIDEO,1,OFF']);
+});
+
 test('料金は既存計算のまま: ライトスタンドはセット無料、ブラケットはポータブルとセットで無料', function () {
   var eq = EXPECTED['STROBE,2,ON'];
   var total = Panel.equipmentTotalJpy(CATALOG, eq);
