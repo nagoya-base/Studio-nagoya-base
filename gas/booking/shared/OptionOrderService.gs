@@ -101,12 +101,18 @@ var OptionOrderService = (function () {
     });
   }
 
+  /*
+   * 機材コード単位の資格: 過去に支払い済みで借りた機材、または管理者がその機材コードで許可した機材。
+   * 別のビデオライト系機材の利用歴では許可しない（Issue「当該ビデオライト」）。
+   */
   function resolveEligibility_(email) {
-    return {
-      videoLightSelfRental:
-        OptionOrderRepository.hasConfirmedItemForEmail(email, BookingOptions.isPriorRentalItem) ||
-        OptionOrderRepository.hasEligibilityGrant(email, 'VIDEO_LIGHT')
-    };
+    var eligible = OptionOrderRepository.listConfirmedEquipmentCodesForEmail(email).filter(function (code) {
+      return BookingOptions.priorRentalEquipmentCodes().indexOf(code) !== -1;
+    });
+    BookingOptions.priorRentalEquipmentCodes().forEach(function (code) {
+      if (eligible.indexOf(code) === -1 && OptionOrderRepository.hasEligibilityGrant(email, code)) eligible.push(code);
+    });
+    return { eligibleEquipmentCodes: eligible };
   }
 
   function activeExistingOrders_(bookingId) {
@@ -142,7 +148,7 @@ var OptionOrderService = (function () {
       normalized: normalizedResult.normalized,
       existingOrders: [],
       optionsConfig: BookingConfig.getOptionsConfig(),
-      eligibility: needsEligibility ? resolveEligibility_(email) : { videoLightSelfRental: false }
+      eligibility: needsEligibility ? resolveEligibility_(email) : { eligibleEquipmentCodes: [] }
     });
     if (!plan.ok) return { success: false, error: plan.error };
     return { success: true, empty: false, normalized: normalizedResult.normalized };
@@ -229,7 +235,7 @@ var OptionOrderService = (function () {
         normalized: normalized,
         existingOrders: existingForBooking,
         optionsConfig: optionsConfig,
-        eligibility: requiresEligibility_(normalized) ? resolveEligibility_(booking.email) : { videoLightSelfRental: false }
+        eligibility: requiresEligibility_(normalized) ? resolveEligibility_(booking.email) : { eligibleEquipmentCodes: [] }
       });
       if (!plan.ok) return { success: false, error: plan.error };
       if (plan.orders.length === 0) return fail_('NO_OPTIONS_SELECTED', '追加するオプションを選択してください。');
@@ -584,14 +590,21 @@ var OptionOrderService = (function () {
     return decide_(optionOrderId, 'DECLINE', reason, now);
   }
 
-  function grantVideoLightEligibility(email, note, now) {
+  /*
+   * ビデオライト系機材のセルフレンタル許可（過去利用を自動判定できない既存利用者向け）。
+   * 機材コード単位（例: COB_BICOLOR）。一括許可はしない。許可済みなら冪等。
+   */
+  function grantVideoLightEligibility(email, equipmentCode, note, now) {
     var normalized = normalizeEmail_(email);
     if (!Booking.isValidEmail(normalized)) return fail_('INVALID_EMAIL', 'メールアドレスの形式が正しくありません。');
+    if (BookingOptions.priorRentalEquipmentCodes().indexOf(equipmentCode) === -1) {
+      return fail_('INVALID_EQUIPMENT', '許可の対象はビデオライト系（定常光）の機材コードのみです。');
+    }
     return withLock_(function () {
-      if (OptionOrderRepository.hasEligibilityGrant(normalized, 'VIDEO_LIGHT')) {
+      if (OptionOrderRepository.hasEligibilityGrant(normalized, equipmentCode)) {
         return { success: true, alreadyGranted: true };
       }
-      OptionOrderRepository.addEligibilityGrant(normalized, 'VIDEO_LIGHT', note, nowOrDefault_(now));
+      OptionOrderRepository.addEligibilityGrant(normalized, equipmentCode, note, nowOrDefault_(now));
       return { success: true, alreadyGranted: false };
     });
   }

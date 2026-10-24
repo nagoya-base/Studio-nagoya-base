@@ -548,9 +548,10 @@ function adminDeclineOptionOrder(optionOrderId, reason) {
   return sanitizeForClient_(OptionOrderService.declineOrder(optionOrderId, reason));
 }
 
-/* ビデオライトのセルフレンタル許可（過去利用を自動判定できない既存利用者向け）。 */
-function adminGrantVideoLightEligibility(email, note) {
-  return sanitizeForClient_(OptionOrderService.grantVideoLightEligibility(email, note));
+/* ビデオライト系機材のセルフレンタル許可（過去利用を自動判定できない既存利用者向け）。
+   機材コード単位（例: COB_BICOLOR）。「どれか1台の経験で全定常光を許可」はしない。 */
+function adminGrantVideoLightEligibility(email, equipmentCode, note) {
+  return sanitizeForClient_(OptionOrderService.grantVideoLightEligibility(email, equipmentCode, note));
 }
 
 /* 確定。既存の正式関数confirmBooking(bookingId)（BookingAdmin.gs）へそのまま委譲する。

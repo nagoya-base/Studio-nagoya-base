@@ -117,7 +117,7 @@ test('Booking Admin配布ファイルセット: 予約詳細にオプション�
   assert.strictEqual(declined.order.status, 'DECLINED');
   assert.strictEqual(JSON.stringify(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record), roomBefore, '部屋予約の行は一切変わらない');
   assert.strictEqual(ctx.sandbox.adminApproveOptionOrder('OPT-STAFF001').alreadyDecided, true, '二重承認は冪等');
-  assert.strictEqual(ctx.sandbox.adminGrantVideoLightEligibility('hanako@example.com', 'DM記録').success, true);
+  assert.strictEqual(ctx.sandbox.adminGrantVideoLightEligibility('hanako@example.com', 'COB_FULLCOLOR', 'DM記録').success, true);
 });
 
 test('Booking Admin配布ファイルセット: オプション注文が無い既存予約の詳細は従来どおり表示でき、optionsは空', function () {

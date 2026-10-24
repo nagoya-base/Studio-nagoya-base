@@ -17,8 +17,8 @@ var sandbox = loadBookingSandbox(['EquipmentCatalog.gs', 'BookingOptions.gs'], {
 var BookingOptions = sandbox.BookingOptions;
 
 var CONFIG_WITH_PRICES = { addonDeadlineHoursBeforeStart: '' };
-var ELIGIBLE = { videoLightSelfRental: true };
-var NOT_ELIGIBLE = { videoLightSelfRental: false };
+var ELIGIBLE = { eligibleEquipmentCodes: ['COB_BICOLOR', 'PANEL_FULLCOLOR', 'COB_FULLCOLOR'] };
+var NOT_ELIGIBLE = { eligibleEquipmentCodes: [] };
 
 function select(overrides) {
   var r = BookingOptions.normalizeSelection(Object.assign({}, overrides));
@@ -273,6 +273,29 @@ test('ビデオライト系(定常光)のセルフレンタルは過去利用者
   assert.strictEqual(mixed.ok, false);
   assert.strictEqual(mixed.orders, undefined);
   assert.ok(plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: ELIGIBLE }).ok);
+});
+
+test('資格は機材コード単位: バイカラーCOBの利用歴だけでは、未使用のフルカラーCOB・フルカラーパネルは選べない', function () {
+  var onlyBicolor = { eligibleEquipmentCodes: ['COB_BICOLOR'] };
+  assert.ok(plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: onlyBicolor }).ok);
+  var fullColor = plan(select({ equipment: { COB_FULLCOLOR: 1 } }), { eligibility: onlyBicolor });
+  assert.strictEqual(fullColor.ok, false);
+  assert.strictEqual(fullColor.error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
+  assert.strictEqual(plan(select({ equipment: { PANEL_FULLCOLOR: 1 } }), { eligibility: onlyBicolor }).ok, false);
+  // 複数選択では未経験の機材が1つでもあれば全体を拒否し、エラーに該当機材だけを挙げる
+  var mixed = plan(select({ equipment: { COB_BICOLOR: 1, COB_FULLCOLOR: 1 } }), { eligibility: onlyBicolor });
+  assert.strictEqual(mixed.ok, false);
+  assert.deepStrictEqual(plain(mixed.error.items), ['フルカラーCOBライト（定常光）']);
+  assert.ok(mixed.error.message.indexOf('バイカラー') === -1);
+  // 旧形式(単一のbool)や空の資格では許可しない（fail-closed）
+  assert.strictEqual(plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: { videoLightSelfRental: true } }).ok, false);
+  assert.strictEqual(BookingOptions.planOrders({ normalized: select({ equipment: { COB_BICOLOR: 1 } }), existingOrders: [], optionsConfig: CONFIG_WITH_PRICES }).ok, false, '資格情報が無ければ許可しない');
+});
+
+test('priorRentalEquipmentCodes / equipmentCodeOfItem: 対象は定常光3機材、機材項目からコードだけを取り出す', function () {
+  assert.deepStrictEqual(plain(BookingOptions.priorRentalEquipmentCodes().sort()), ['COB_BICOLOR', 'COB_FULLCOLOR', 'PANEL_FULLCOLOR']);
+  assert.strictEqual(BookingOptions.equipmentCodeOfItem('EQ:COB_FULLCOLOR:2'), 'COB_FULLCOLOR');
+  assert.strictEqual(BookingOptions.equipmentCodeOfItem('SELF_SETUP:CLASSROOM'), '');
 });
 
 test('isPriorRentalItem: ビデオライト系の機材項目だけが「過去利用」に数えられる', function () {

@@ -14,7 +14,7 @@ Issue #423の本文と追加コメント3件（**コメントを本文より優�
 | 不承認でも部屋予約は不変 | 承認/不承認はOptionOrdersのみ更新。テストでBookings行が1バイトも変わらないことを検証 |
 | 無料セルフ設営・原状復帰・メールサポート | `FREE`注文。承認不要・課金なし・即`CONFIRMED`。定型案内を受付/確定メールへ自動付加 |
 | 機材は1点ごとの個別加算（数量×単価・在庫超過は不可）。機材ページと同一の料金正本 | 正本は`_data/studio_x_equipment.json`。機材ページ`/studio-x/equipment/`はこれを直接読み、GASは`scripts/sync-studio-x-equipment.js`で生成した`EquipmentCatalog.gs`を読む（`test/studio-x-equipment-catalog.test.js`が同期を検査）。選択は`equipment: {機材コード: 数量}`。在庫は予約単位（既存の有効な注文の数量も合算）。背景スタンドは0円のセルフ |
-| ビデオライト系(定常光)のセルフレンタルは過去の利用者のみ | 対象は`requiresPriorRental`の3機材（バイカラーCOB／フルカラーパネル／フルカラーCOB）。過去に**支払い済み**の当該機材注文（メール一致）または管理者の許可（`OptionEligibility`／`adminGrantVideoLightEligibility`）がある場合のみ。初回利用者は申込段階で拒否（`VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE`）しCheckoutへ進まない。ストロボ等に追加の資格制限は設けない |
+| ビデオライト系(定常光)のセルフレンタルは過去の利用者のみ | 対象は`requiresPriorRental`の3機材（バイカラーCOB／フルカラーパネル／フルカラーCOB）。資格は**機材コード単位**（バイカラーCOBの利用歴ではフルカラーCOB・フルカラーパネルは選べない）: 過去に**支払い済み**でその機材を借りた注文（メール一致）、または管理者のその機材コードでの許可（`OptionEligibility`／`adminGrantVideoLightEligibility(email, 機材コード, note)`。一括許可はしない）がある場合のみ。初回利用者は申込段階で拒否（`VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE`）しCheckoutへ進まない。ストロボ等に追加の資格制限は設けない |
 | 予約IDを親キーに維持、後付けで新しい部屋予約を作らない | `OptionOrders.bookingId`に既存の予約IDを保持。`optionOrderId`（`OPT-XXXXXXXX`）は決済・履歴用。予約ID生成方式は変更なし |
 | 同時申込と後付けを共通モデルで処理 | どちらも`OptionOrderService.createOrders`（`source`=`WITH_BOOKING`/`ADDON`） |
 | 後付けの本人確認 | **予約ID＋登録メールアドレス**の一致（大文字小文字無視）。不一致・未存在は同一の`FORBIDDEN`（存在確認に使わせない）、予約ID単位で10分20回のレート制限 |

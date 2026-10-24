@@ -115,6 +115,17 @@ var BookingOptions = (function () {
     return m ? { code: m[1], quantity: Number(m[2]) } : null;
   }
 
+  /* 過去利用が条件の機材コード一覧（ビデオライト系の定常光）。 */
+  function priorRentalEquipmentCodes() {
+    return StudioXEquipmentCatalog.rental.filter(function (item) { return item.requiresPriorRental === true; }).map(function (item) { return item.code; });
+  }
+
+  /* 機材項目('EQ:<コード>:<数量>')から機材コードを取り出す。機材項目でなければ空文字。 */
+  function equipmentCodeOfItem(item) {
+    var parsed = parseEquipmentItem_(item);
+    return parsed ? parsed.code : '';
+  }
+
   /* 過去に借りたことが条件の機材（ビデオライト系の定常光）か。 */
   function isPriorRentalItem(item) {
     var parsed = parseEquipmentItem_(item);
@@ -418,7 +429,7 @@ var BookingOptions = (function () {
    *   normalized,            // normalizeSelectionのnormalized
    *   existingOrders,        // 同一bookingIdの既存注文（{items:[], status}）
    *   optionsConfig,         // BookingConfig.getOptionsConfig()
-   *   eligibility: { videoLightSelfRental: bool }  // 呼び出し側が履歴・Adminの許可から判定
+   *   eligibility: { eligibleEquipmentCodes: ['COB_BICOLOR', ...] }  // 機材コード単位。呼び出し側が履歴・Adminの許可から判定
    * }
    * 戻り値: { ok:true, orders:[{category, items[], amountJpy, approvalStatus, paymentStatus, status}] }
    *        | { ok:false, error }
@@ -442,6 +453,7 @@ var BookingOptions = (function () {
     var paidTotal = 0;
     var freeEquipmentItems = [];
     var needsPriorRental = [];
+    var eligibleCodes = (input.eligibility && input.eligibility.eligibleEquipmentCodes) || [];
     var equipmentCodes = Object.keys(normalized.equipment);
     for (var i = 0; i < equipmentCodes.length; i++) {
       var code = equipmentCodes[i];
@@ -455,13 +467,15 @@ var BookingOptions = (function () {
       if (rental) {
         paidItems.push(equipmentItemCode_(code, quantity));
         paidTotal += rental.unitPriceJpy * quantity;
-        if (rental.requiresPriorRental === true) needsPriorRental.push(rental.label);
+        /* 資格は機材コード単位: 「当該ビデオライト」を過去に借りた（または管理者が許可した）機材だけ。
+           別のビデオライト系機材の利用歴では許可しない。 */
+        if (rental.requiresPriorRental === true && eligibleCodes.indexOf(code) === -1) needsPriorRental.push(rental.label);
       } else {
         freeEquipmentItems.push(equipmentItemCode_(code, quantity));
       }
     }
-    if (needsPriorRental.length > 0 && !(input.eligibility && input.eligibility.videoLightSelfRental === true)) {
-      return { ok: false, error: err_('VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE', needsPriorRental.join('・') + 'のセルフレンタルは、過去にビデオライトをご利用いただいた方のみ選択できます。初めての方はメールでご相談ください。', { items: needsPriorRental }) };
+    if (needsPriorRental.length > 0) {
+      return { ok: false, error: err_('VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE', needsPriorRental.join('・') + 'のセルフレンタルは、過去にその機材をご利用いただいた方のみ選択できます。初めての方はメールでご相談ください。', { items: needsPriorRental }) };
     }
     if (paidItems.length > 0) {
       orders.push({
@@ -684,6 +698,8 @@ var BookingOptions = (function () {
     normalizeSelection: normalizeSelection,
     describeItem: describeItem,
     isPriorRentalItem: isPriorRentalItem,
+    priorRentalEquipmentCodes: priorRentalEquipmentCodes,
+    equipmentCodeOfItem: equipmentCodeOfItem,
     computeStaffServiceCharge: computeStaffServiceCharge,
     planOrders: planOrders,
     checkBookingAcceptsOptions: checkBookingAcceptsOptions,

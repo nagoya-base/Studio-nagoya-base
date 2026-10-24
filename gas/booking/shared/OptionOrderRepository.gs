@@ -153,18 +153,22 @@ var OptionOrderRepository = (function () {
   }
 
   /*
-   * 過去にこの利用者（メールアドレス）が、matcher(item)に該当する項目を実際に借りたか
-   * （支払い済みのCONFIRMED注文のみ。申込だけで未払いの注文は数えない）。
+   * この利用者（メールアドレス）が過去に実際に借りた機材コードの一覧（支払い済みのCONFIRMED注文のみ。
+   * 申込だけで未払いの注文は数えない）。資格判定は機材コード単位で行う。
    */
-  function hasConfirmedItemForEmail(email, matcher) {
+  function listConfirmedEquipmentCodesForEmail(email) {
     var target = normalizeEmail(email);
-    if (!target) return false;
-    return listAll().some(function (row) {
+    var codes = [];
+    if (!target) return codes;
+    listAll().forEach(function (row) {
       var r = row.record;
-      return normalizeEmail(r.customerEmail) === target &&
-        r.status === 'CONFIRMED' && r.paymentStatus === 'PAID' &&
-        r.items.some(matcher);
+      if (normalizeEmail(r.customerEmail) !== target || r.status !== 'CONFIRMED' || r.paymentStatus !== 'PAID') return;
+      r.items.forEach(function (item) {
+        var code = BookingOptions.equipmentCodeOfItem(item);
+        if (code && codes.indexOf(code) === -1) codes.push(code);
+      });
     });
+    return codes;
   }
 
   /* ---- OptionEligibility（管理者が自動判定できない既存利用者を許可する） ---- */
@@ -201,7 +205,7 @@ var OptionOrderRepository = (function () {
     findByOptionOrderId: findByOptionOrderId,
     appendOrders: appendOrders,
     updateOrder: updateOrder,
-    hasConfirmedItemForEmail: hasConfirmedItemForEmail,
+    listConfirmedEquipmentCodesForEmail: listConfirmedEquipmentCodesForEmail,
     listEligibilityGrants: listEligibilityGrants,
     hasEligibilityGrant: hasEligibilityGrant,
     addEligibilityGrant: addEligibilityGrant
