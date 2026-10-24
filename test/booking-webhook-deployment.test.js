@@ -96,6 +96,7 @@ test('Booking Webhookプロジェクトには管理者向けのサーバー関�
     'adminCancelBooking',
     'adminResendReminderMail',
     'adminSendCardPaymentLink',
+    'adminReviveExpiredCardBooking',
     'confirmBooking',
     'cancelBookingAdmin',
     'reviveExpiredBooking',

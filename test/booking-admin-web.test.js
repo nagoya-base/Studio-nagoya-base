@@ -634,6 +634,110 @@ test('adminReviveExpiredBooking: PENDINGからの復活はreviveExpiredBooking�
   assert.strictEqual(result.error.code, 'INVALID_TRANSITION');
 });
 
+/* ---------- Issue #428: EXPIREDカード予約の手動決済リンク→入金確認して復活 ---------- */
+
+function expireCardBooking_(ctx, overrides) {
+  var bookingId = createPending(ctx, Object.assign({ paymentMethod: 'オンラインクレジットカード' }, overrides || {}));
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  assert.strictEqual(ctx.sandbox.BookingRepository.expirePendingBookings().expiredCount, 1, 'テスト前提としてEXPIRED化に成功しているべき');
+  return bookingId;
+}
+
+function mailsWithSubject_(mailApp, text) {
+  return mailApp._sentEmails.filter(function (mail) { return mail.subject && mail.subject.indexOf(text) !== -1; });
+}
+
+test('adminSendCardPaymentLink: EXPIREDカード予約へ送信でき、statusはEXPIREDのまま送信履歴が詳細に反映される。不正URLは拒否', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = expireCardBooking_(ctx);
+
+  var bad = ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://evil.example/x');
+  assert.strictEqual(bad.success, false);
+  assert.strictEqual(bad.error.code, 'INVALID_PAYMENT_LINK_URL');
+
+  var result = ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  var detail = ctx.sandbox.getAdminBookingDetail(bookingId).booking;
+  assert.strictEqual(detail.status, 'EXPIRED');
+  assert.ok(detail.paymentLinkSentAt);
+  assert.strictEqual(detail.paymentLinkSendCount, 1);
+});
+
+test('adminReviveExpiredCardBooking: 入金確認なし(true以外)は復活せずEXPIREDのまま', function () {
+  var ctx = setup();
+  var bookingId = expireCardBooking_(ctx);
+
+  [undefined, false, 'true', 1].forEach(function (flag) {
+    var result = ctx.sandbox.adminReviveExpiredCardBooking(bookingId, flag);
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error.code, 'PAYMENT_NOT_CONFIRMED');
+  });
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'EXPIRED');
+});
+
+test('adminReviveExpiredCardBooking: 入金確認済み・枠が空き→CONFIRMEDへ復活し確定メール1通。再操作で二重送信しない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = expireCardBooking_(ctx);
+  ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
+
+  var result = ctx.sandbox.adminReviveExpiredCardBooking(bookingId, true);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  assert.strictEqual(record.status, 'CONFIRMED');
+  assert.ok(record.confirmedMailSentAt, 'confirmedMailSentAtが記録されるべき');
+  assert.strictEqual(mailsWithSubject_(mailApp, '予約が確定しました').length, 1);
+
+  var again = ctx.sandbox.adminReviveExpiredCardBooking(bookingId, true);
+  assert.strictEqual(again.success, false);
+  assert.strictEqual(again.error.code, 'INVALID_TRANSITION');
+  assert.strictEqual(mailsWithSubject_(mailApp, '予約が確定しました').length, 1, '再操作で確定メールを二重送信しない');
+});
+
+test('adminReviveExpiredCardBooking: 入金確認済みでも枠が埋まっていればSLOT_UNAVAILABLEで復活せず、EXPIRED維持・確定メールなし', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = expireCardBooking_(ctx);
+  /* 失効後に同じ枠が別予約で埋まった状態を再現する。 */
+  createPending(ctx, { email: 'other@example.com', paymentMethod: '現金' });
+
+  var result = ctx.sandbox.adminReviveExpiredCardBooking(bookingId, true);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'SLOT_UNAVAILABLE');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'EXPIRED');
+  assert.strictEqual(mailsWithSubject_(mailApp, '予約が確定しました').length, 0);
+});
+
+test('adminReviveExpiredCardBooking: 利用開始時刻を過ぎていれば復活せずEXPIRED維持', function () {
+  var ctx = setup();
+  var bookingId = expireCardBooking_(ctx);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, {
+    startAt: new Date(Date.now() - 3600000),
+    endAt: new Date(Date.now() + 3600000)
+  });
+
+  var result = ctx.sandbox.adminReviveExpiredCardBooking(bookingId, true);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'REVIVE_AFTER_START_NOT_ALLOWED');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'EXPIRED');
+});
+
+test('adminReviveExpiredCardBooking: 現金・PayPay・Stripe Checkout予約は対象外（NOT_CARD_PAYMENT）。既存adminReviveExpiredBookingは影響を受けない', function () {
+  var ctx = setup();
+  var cashId = createPending(ctx);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(cashId, { createdAt: new Date(Date.now() - 73 * 3600000) });
+  ctx.sandbox.BookingRepository.expirePendingBookings();
+  var cash = ctx.sandbox.adminReviveExpiredCardBooking(cashId, true);
+  assert.strictEqual(cash.error.code, 'NOT_CARD_PAYMENT');
+  assert.strictEqual(ctx.sandbox.adminReviveExpiredBooking(cashId).success, true, '現金の既存復活運用はそのまま');
+
+  var ctx2 = setup();
+  var checkoutId = expireCardBooking_(ctx2);
+  ctx2.sandbox.SpreadsheetRepository.updateBookingFields(checkoutId, { stripeCheckoutSessionId: 'cs_test_1' });
+  assert.strictEqual(ctx2.sandbox.adminReviveExpiredCardBooking(checkoutId, true).error.code, 'NOT_CARD_PAYMENT');
+});
+
 /* ---------- Issue #334 PR-C: Stripe決済リンク送信欄 ---------- */
 
 test('getAdminBookingDetail: カード決済PENDINGはisCardPayment:trueで、決済リンク送信欄用のフィールドは未送信の初期状態（空文字/0）を返す', function () {

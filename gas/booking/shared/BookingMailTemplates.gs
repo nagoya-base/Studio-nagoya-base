@@ -406,6 +406,32 @@ var BookingMailTemplates = (function () {
     }
 
     var subject = '【' + brandLabel + '】お支払いのご案内（決済リンク）';
+    if (record.status === Booking.STATUS.EXPIRED) {
+      /* Issue #428: 期限切れ予約への手動案内。枠は解放済みのため、お支払い確認後に
+         空き状況を確認して確定する旨を明記し、確定を約束する文面にしない。 */
+      return {
+        subject: subject,
+        body: joinNonEmpty_([
+          record.name + ' 様',
+          '',
+          'ご予約はお支払い期限を過ぎて一度失効しておりますが、下記のStripe決済リンクをご案内いたします。',
+          '',
+          '予約ID: ' + record.bookingId,
+          '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+          '開始時刻: ' + startTime,
+          '終了時刻: ' + endTime,
+          'ブランド: ' + brandLabel,
+          '',
+          '決済リンク: ' + paymentLinkUrl,
+          '',
+          'お支払いの確認後、枠の空き状況を確認のうえ、予約を確定した場合に確定のご連絡をお送りします。',
+          '失効後は他のご予約が入っている場合があり、その場合はご予約を確定できません（お支払い済みの場合は別途ご連絡のうえ対応いたします）。',
+          'このメールの送信のみでは予約は確定しておりません。',
+          contactLine_(config),
+          signatureLines_(record)
+        ])
+      };
+    }
     var body = joinNonEmpty_([
       record.name + ' 様',
       '',
