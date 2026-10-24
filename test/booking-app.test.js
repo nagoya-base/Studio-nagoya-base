@@ -1569,3 +1569,49 @@ test('Issue #445レビュー: 利用者向けコピー（フォームのHTML・�
 function loadLogicForCopy_() {
   return require(path.join(__dirname, '..', 'scripts', 'booking-logic.js'));
 }
+
+test('Issue #445レビュー: クレカ選択時、フォーム上部・支払方法欄・確認画面の同意文に「予約申込後30分以内」の支払期限が出る（曖昧な失効表現だけにしない）', async function () {
+  var ctx = setupCardFlow(null);
+  await goToDetailsStep_(ctx);
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.triggerPaymentMethodChange();
+
+  assert.match(flowBannerText_(ctx), /予約申込後30分以内にお支払いを完了してください/);
+  assert.match(ctx.elements['ba-card-payment-notice'].renderedText(), /予約申込後30分以内にお支払いを完了してください/);
+
+  ctx.elements['ba-step-details-next']._listeners.click();
+  assert.match(ctx.elements['ba-consent-text'].textContent, /30分以内にお支払いを完了する必要があること/);
+  assert.match(ctx.elements['ba-confirm-card-payment-notice'].renderedText(), /予約申込後30分以内にお支払いを完了してください/);
+
+  /* 現金・PayPayには30分の支払期限を出さない */
+  ctx.setPaymentMethod('現金');
+  ctx.triggerPaymentMethodChange();
+  assert.doesNotMatch(flowBannerText_(ctx), /30分/);
+});
+
+test('Issue #445レビュー: Checkout作成後の完了画面は、paymentHoldExpiresAtをAsia/Tokyo基準の「お支払い期限：YYYY/MM/DD HH:mm」で表示し、値がなければ期限行を出さない', async function () {
+  async function submitWith_(checkoutResponse) {
+    var ctx = setupCardFlow(null, { checkoutResponse: checkoutResponse });
+    await goToDetailsStep_(ctx);
+    fillStep3RequiredFields(ctx);
+    ctx.setPaymentMethod(CARD_VALUE);
+    ctx.elements['ba-step-details-next']._listeners.click();
+    ctx.elements['ba-confirm-consent'].checked = true;
+    ctx.elements['ba-submit']._listeners.click();
+    await flushPromises();
+    return ctx.elements['ba-complete-checkout-notice'].renderedText();
+  }
+
+  /* 2033-05-18T03:33:19Z = JST 12:33（端末のローカル時刻に依存しない） */
+  var withDeadline = await submitWith_({
+    success: true, checkoutUrl: 'https://checkout.stripe.com/pay/cs_test_abc',
+    paymentHoldExpiresAt: '2033-05-18T03:33:19.000Z'
+  });
+  assert.match(withDeadline, /お支払い期限：2033\/05\/18 12:33/);
+  assert.match(withDeadline, /予約申込後30分以内にお支払いを完了してください/);
+
+  var without = await submitWith_({ success: true, checkoutUrl: 'https://checkout.stripe.com/pay/cs_test_abc' });
+  assert.doesNotMatch(without, /お支払い期限：/);
+  assert.match(without, /予約申込後30分以内にお支払いを完了してください/);
+});

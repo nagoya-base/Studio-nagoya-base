@@ -695,3 +695,19 @@ test('bookingFlowCopy: 未選択は中立、カードは決済完了で確定、
   assert.match(manual.banner.title, /仮受付/);
   assert.match(manual.banner.body, /確定のご連絡/);
 });
+
+test('formatPaymentDeadline: ISO値をAsia/Tokyo基準のYYYY/MM/DD HH:mmへ整形し、不正値は空文字（Issue #445）', function () {
+  var Logic = loadLogic();
+  assert.strictEqual(Logic.formatPaymentDeadline('2033-05-18T03:33:19.000Z'), '2033/05/18 12:33');
+  assert.strictEqual(Logic.formatPaymentDeadline('2026-10-24T15:05:00Z'), '2026/10/25 00:05', '日付またぎ・0時台は24時表記にならない');
+  assert.strictEqual(Logic.formatPaymentDeadline(''), '');
+  assert.strictEqual(Logic.formatPaymentDeadline(undefined), '');
+  assert.strictEqual(Logic.formatPaymentDeadline('not-a-date'), '');
+});
+
+test('cardCheckoutRedirectNoticeLines: 期限文字列を渡したときだけ「お支払い期限：」行を含む（Issue #445）', function () {
+  var Logic = loadLogic();
+  assert.match(Logic.cardCheckoutRedirectNoticeLines('ja', '2026/10/25 00:05').join('\n'), /お支払い期限：2026\/10\/25 00:05/);
+  assert.doesNotMatch(Logic.cardCheckoutRedirectNoticeLines('ja').join('\n'), /お支払い期限：/);
+  assert.match(Logic.cardCheckoutRedirectNoticeLines('en', '2026/10/25 00:05').join('\n'), /Payment deadline: 2026\/10\/25 00:05/);
+});

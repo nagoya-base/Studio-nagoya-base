@@ -1435,7 +1435,7 @@
       .then(function (response) { return response.json(); })
       .then(function (result) {
         if (result && result.success === true && result.checkoutUrl) {
-          return { status: 'success', checkoutUrl: result.checkoutUrl };
+          return { status: 'success', checkoutUrl: result.checkoutUrl, paymentHoldExpiresAt: result.paymentHoldExpiresAt };
         }
         var code = result && result.error && result.error.code;
         if (CHECKOUT_SAFE_FALLBACK_CODES_.indexOf(code) !== -1) {
@@ -1579,7 +1579,7 @@
               if (checkout.status === 'success') {
                 renderMultilineNotice_(els.completeCardPaymentNotice, null);
                 renderMultilineNotice_(els.completeCheckoutUncertainNotice, null);
-                renderMultilineNotice_(els.completeCheckoutNotice, Logic.cardCheckoutRedirectNoticeLines(locale));
+                renderMultilineNotice_(els.completeCheckoutNotice, Logic.cardCheckoutRedirectNoticeLines(locale, Logic.formatPaymentDeadline(checkout.paymentHoldExpiresAt)));
                 if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = false;
                 if (els.completeCheckoutLink) {
                   els.completeCheckoutLink.href = checkout.checkoutUrl;

@@ -145,7 +145,7 @@ test('buildPendingMail: カード決済の受付メールは、決済未完了�
   assert.match(mail.body, /お支払いが完了しておらず、ご予約はまだ確定しておりません/);
   assert.match(mail.body, /続けてオンライン決済を完了してください/);
   assert.match(mail.body, /お支払い完了後、ご予約は自動で確定します/);
-  assert.match(mail.body, /決済を完了せずに時間が経過すると、ご予約が失効する場合があります/);
+  assert.match(mail.body, /予約申込後30分以内にお支払いを完了してください。決済を完了せずに時間が経過すると、ご予約が失効する場合があります/);
   assert.match(mail.body, /お支払い完了後、予約はすぐに確定します/);
   assert.doesNotMatch(mail.body, /仮受付|仮予約|管理者|当方で内容を確認|確定のご連絡を改めて/);
 });
