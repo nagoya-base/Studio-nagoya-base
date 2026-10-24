@@ -124,6 +124,18 @@ test('機材・料金ページへの導線: Studio Xトップ・ご利用ガイ�
   assert.ok(read('studio-x/index.html').indexOf('href="equipment/"') !== -1);
 });
 
+test('共通設備ページ(/equipment/)にStudio Xへ「戻る」導線はなく、SNBへ戻る導線とStudio X CTAは残る（Issue #434）', function () {
+  var snb = stripComments(read('equipment/index.html'));
+  assert.ok(snb.indexOf('Studio Xガイドへ') === -1, '上部ナビにStudio Xガイドへを出さない');
+  assert.ok(snb.indexOf('Studio Xご利用ガイドへ戻る') === -1, 'Studio Xご利用ガイドへ戻るを出さない');
+  assert.ok(snb.indexOf('studio-x/how-to/') === -1, 'Studio Xのご利用ガイドへのリンクを持たない');
+  assert.strictEqual((snb.match(/← SNBご利用ガイドへ戻る/g) || []).length, 2, 'SNBへ戻る導線はヒーロー直下と下部に残る');
+  assert.ok(snb.indexOf('href="../studio-x/booking/"') !== -1, 'Studio X予約CTAは残す');
+  assert.ok(snb.indexOf('href="../studio-x/reservation/?intent=consult"') !== -1, 'Studio X相談CTAは残す');
+  // Studio X側の設備ページの戻る導線には影響しない
+  assert.match(read('studio-x/equipment/index.html'), /href="\.\.\/how-to\/#equipment"[^>]*>← Studio Xご利用ガイドへ戻る/);
+});
+
 test('SNB(/equipment/)とStudio X(/studio-x/equipment/)は同じ共通include・正本から機材内容を生成する（Issue #432）', function () {
   var snb = read('equipment/index.html');
   var sx = read('studio-x/equipment/index.html');
