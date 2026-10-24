@@ -1,0 +1,40 @@
+{%- comment -%}
+  「一室で、6つの世界。」の背景・テーマを予約オプション検討の観点で一覧化（/studio-x/equipment/ 専用）。
+  名称・画像は _data/studio_x_worlds.yml（トップと同じ6テーマ）。スタッフ設営の対応可否は staffService.themes、
+  関連機材名は rental / freeSelf を正本として引く。金額は出さない（下の機材一覧・料金表が正本）。
+{%- endcomment -%}
+{%- assign eq = site.data.studio_x_equipment -%}
+<div class="theme-option-grid">
+{%- for world in site.data.studio_x_worlds %}
+  {%- assign has_staff = false -%}
+  {%- for t in eq.staffService.themes %}{% if t.code == world.staff_theme %}{% assign has_staff = true %}{% endif %}{% endfor %}
+  <article class="theme-option-card">
+    <img src="../images/{{ world.image }}" alt="{{ world.alt }}" loading="lazy" decoding="async">
+    <div class="theme-option-body">
+      <span class="theme-option-kicker">{{ world.kicker }}</span>
+      <h3>{{ world.name }}</h3>
+      <p>{{ world.best_for }}</p>
+      <dl class="theme-option-facts">
+        <dt>使うもの</dt><dd>{{ world.setup }}</dd>
+        <dt>設営方法</dt>
+        <dd>
+          <span class="theme-option-badge">セルフ設営</span>
+          {%- if has_staff %}<span class="theme-option-badge theme-option-badge--staff">スタッフ設営も依頼可</span>
+          {%- elsif world.staff_via != "" %}<span class="theme-option-badge theme-option-badge--staff">{{ world.staff_via }}も依頼可</span>{% endif %}
+        </dd>
+        {%- if world.related_codes.size > 0 or world.related_text != "" %}
+        <dt>関連</dt>
+        <dd>
+          {%- assign shown = 0 -%}
+          {%- if world.related_text != "" %}{{ world.related_text }}{% assign shown = 1 %}{% endif -%}
+          {%- for code in world.related_codes %}
+            {%- for item in eq.rental %}{% if item.code == code %}{% if shown > 0 %}／{% endif %}{{ item.label }}［有料］{% assign shown = shown | plus: 1 %}{% endif %}{% endfor %}
+            {%- for item in eq.freeSelf %}{% if item.code == code %}{% if shown > 0 %}／{% endif %}{{ item.label }}{% assign shown = shown | plus: 1 %}{% endif %}{% endfor %}
+          {%- endfor %}
+        </dd>
+        {%- endif %}
+      </dl>
+    </div>
+  </article>
+{%- endfor %}
+</div>

@@ -117,10 +117,12 @@ test('予約オプション側(画面・GAS)にも機材の単価・在庫を重
 
 test('機材・料金ページへの導線: Studio Xトップ・ご利用ガイドの機材・予約フォームの機材オプション・後付け画面', function () {
   var label = '撮影機材・レンタル料金を見る';
-  assert.ok(read('studio-x/index.html').indexOf(label) !== -1);
+  var guideLabel = '背景・照明・設営オプションを先に確認する';
+  assert.ok(read('studio-x/index.html').indexOf('設備・背景・オプションを見る') !== -1, 'トップは機材だけでなく設備・背景・オプション案内であることを示す（Issue #457）');
+  assert.ok(read('studio-x/index.html').indexOf('href="equipment/#worlds"') !== -1, '「一室で、6つの世界。」から背景・テーマ一覧へ');
   assert.ok(read('studio-x/how-to/index.html').indexOf(label) !== -1);
-  assert.ok(read('studio-x/booking/options/index.html').indexOf(label) !== -1);
-  assert.ok(read('scripts/booking-options.js').indexOf(label) !== -1, '予約フォームの機材オプション付近');
+  assert.ok(read('studio-x/booking/options/index.html').indexOf(guideLabel) !== -1);
+  assert.ok(read('scripts/booking-options.js').indexOf(guideLabel) !== -1, '予約フォームのオプション冒頭（Issue #457）');
   assert.ok(read('studio-x/index.html').indexOf('href="equipment/"') !== -1);
 });
 
@@ -205,4 +207,27 @@ test('セット無料条件は正本JSONの freeWhenWith が唯一の定義（Is
   var gas = stripComments(read('gas/booking/shared/BookingOptions.gs'));
   assert.ok(gas.indexOf('freeWhenWith') !== -1);
   assert.ok(!/STAND_260|BOWENS_BRACKET/.test(gas), 'セット無料の対象コードをGASに直書きしない');
+});
+
+test('機材ページは背景・テーマ・オプションの流れを案内し、業務ルールは正本のまま（Issue #457）', function () {
+  var page = read('studio-x/equipment/index.html');
+  var flow = read('_includes/studio_x_option_flow_ja.html');
+  var worlds = read('_data/studio_x_worlds.yml');
+  // トップの6テーマがすべて一覧化されている
+  var home = read('studio-x/index.html');
+  ['サイバー・ネオン', '白背景', '黒背景', '教室セット', '和ダーク', 'グランジ・廃墟風'].forEach(function (name) {
+    assert.ok(home.indexOf('<h3>' + name + '</h3>') !== -1, 'トップに' + name);
+    assert.ok(worlds.indexOf('name: "' + name + '"') !== -1, '案内ページに' + name);
+  });
+  // 7ステップが順番どおり
+  var order = ['事前相談', 'オプションを選ぶ', '部屋を予約する', 'オプションを予約・決済', 'スタッフが事前設営', 'ご利用', 'スタッフが片付け'];
+  var last = -1;
+  order.forEach(function (t) { var i = flow.indexOf('<h3>' + t + '</h3>'); assert.ok(i > last, t); last = i; });
+  assert.ok(flow.indexOf('1週間前') !== -1 && flow.indexOf('別決済') !== -1 && flow.indexOf('予約時間内') !== -1);
+  assert.ok(page.indexOf('studio_x_option_flow_ja.html') !== -1 && page.indexOf('studio_x_worlds_ja.html') !== -1);
+  // 利用者向け文言に内部用語Adminを出さない・金額を重複定義しない
+  [page, flow, worlds, read('_includes/studio_x_worlds_ja.html')].forEach(function (t) {
+    assert.ok(!/Admin/.test(t.replace(/<!--[\s\S]*?-->|\{%-?\s*comment[\s\S]*?endcomment\s*-?%\}/g, '')));
+    assert.ok(!/\d[,\d]*円/.test(t));
+  });
 });
