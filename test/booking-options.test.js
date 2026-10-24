@@ -411,9 +411,11 @@ test('定型案内（確定文言）: グランジは背景布と同じ運用（
   assert.strictEqual(g.incomplete, false);
   assert.ok(g.text.indexOf('【グランジセットのセルフセッティング】') !== -1);
   assert.ok(g.text.indexOf('背景スタンド、または竹の梁にセットして使用してください') !== -1);
-  assert.ok(g.text.indexOf('使用後は畳んで元の場所へ収納してください') !== -1);
+  assert.ok(g.text.indexOf('布に汚れ・異物がないことを確認してから畳み、元の場所へ収納してください') !== -1);
   assert.ok(g.text.indexOf('スタンドも元の位置へ戻してください') !== -1);
-  assert.ok(g.text.indexOf('靴・粘着テープ・濡れ・飲食物・化粧品に注意してください') !== -1);
+  assert.ok(g.text.indexOf('靴で背景布を踏まないでください') !== -1);
+  assert.ok(g.text.indexOf('粘着テープを直接貼らないでください') !== -1);
+  assert.ok(g.text.indexOf('濡れ・飲食物・化粧品の付着に注意してください') !== -1);
   assert.ok(g.text.indexOf('運営にて内容を確認中です') === -1);
 });
 

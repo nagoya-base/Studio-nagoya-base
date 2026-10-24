@@ -248,7 +248,7 @@ test('同時: 無料セルフ選択の受付メールにテーマ別の確定済
   assert.ok(mail.body.indexOf('背景スタンド、または竹の梁にセットして使用してください') !== -1, '白背景布は確定文言');
   assert.ok(mail.body.indexOf('【白背景布のセルフセッティング】') !== -1);
   assert.ok(mail.body.indexOf('使用後は清掃して元の位置へ戻してください。') !== -1);
-  assert.ok(mail.body.indexOf('靴・粘着テープ・濡れ・飲食物・化粧品に注意してください') !== -1, 'グランジは確定文言');
+  assert.ok(mail.body.indexOf('濡れ・飲食物・化粧品の付着に注意してください') !== -1, 'グランジは確定文言');
   assert.ok(mail.body.indexOf('運営にて内容を確認中です') === -1);
   assert.ok(mail.body.indexOf('お支払い') === -1 || mail.body.indexOf('無料') !== -1);
 });
@@ -956,4 +956,18 @@ test('同時: 黒板教室のセルフ選択ではチョーク収納の注意を
   var mail = mailsTo(ctx, EMAIL).filter(function (m) { return m.subject.indexOf('オプション') !== -1; })[0];
   assert.ok(mail.body.indexOf('チョークを必ずケースに収納してください') !== -1);
   assert.ok(mail.body.indexOf('運営にて内容を確認中です') === -1);
+});
+
+test('後付け片付け（運営確定のA案）: 事前設営3,000円を申込済みの予約へ片付けだけ追加すると2,000円、通算5,000円（6,000円にしない）', function () {
+  var ctx = setup();
+  var r = createRoom(ctx);
+  confirmRoom(ctx, r.bookingId);
+  var first = ctx.sandbox.OptionOrderService.submitAddonOptions(r.bookingId, EMAIL, { layouts: ['GRUNGE'], setupService: 'STAFF', cleanupService: 'NONE' });
+  assert.strictEqual(first.orders[0].amountJpy, 3000);
+  var second = ctx.sandbox.OptionOrderService.submitAddonOptions(r.bookingId, EMAIL, { layouts: ['GRUNGE'], setupService: 'NONE', cleanupService: 'STAFF' });
+  assert.strictEqual(second.success, true, JSON.stringify(second.error));
+  assert.strictEqual(second.orders[0].amountJpy, 2000);
+  assert.strictEqual(second.orders[0].status, 'PENDING_APPROVAL');
+  var total = orderRows(ctx, r.bookingId).reduce(function (sum, row) { return sum + Number(row.amountJpy); }, 0);
+  assert.strictEqual(total, 5000);
 });

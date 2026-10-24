@@ -172,13 +172,13 @@ var BookingOptions = (function () {
       restoreSteps: '畳・滑り止め・備品を、所定の順序・位置へ戻してください。',
       cautions: '畳の上で靴を使用しないでください。飲食物・濡れた物を直接置かないでください。重量物を引きずらないでください。'
     },
-    /* グランジ: 運営確定「背景布と同じ運用」（2026-10-24）。提供された4点（セット／収納／スタンドの原状復帰／注意）のみ。 */
+    /* グランジ: 運営確定「白黒背景布と同じ運用」（2026-10-24。PR #427の確定事項）。 */
     GRUNGE: {
       items: 'グランジ背景、背景スタンド（または竹の梁）',
       storage: 'グランジ背景は、白・黒背景布と同じ運用で、指定の収納場所に保管しています。',
       setupSteps: '背景スタンド、または竹の梁にセットして使用してください。',
-      restoreSteps: '使用後は畳んで元の場所へ収納してください。背景スタンドを使用した場合は、スタンドも元の位置へ戻してください。',
-      cautions: '靴・粘着テープ・濡れ・飲食物・化粧品に注意してください。'
+      restoreSteps: BACKDROP_GUIDANCE_.restoreSteps,
+      cautions: BACKDROP_GUIDANCE_.cautions
     },
     WHITE_BACKDROP: BACKDROP_GUIDANCE_,
     BLACK_BACKDROP: BACKDROP_GUIDANCE_
