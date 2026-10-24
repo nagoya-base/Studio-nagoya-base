@@ -814,13 +814,65 @@ var BookingOptions = (function () {
   }
 
   /*
+   * スタッフ設営・片付けの作業時刻の表示（Issue #451）。表示専用で、承認・決済・料金計算には使わない。
+   * scheduleは親予約の開始・終了を予約タイムゾーンで整形済みの値で渡す（呼び出し側が既存の予約日時から作る。
+   * ここで日時を再計算しない）: { startDate:'YYYY-MM-DD', startTime:'HH:mm', endDate:'YYYY-MM-DD', endTime:'HH:mm' }。
+   * 事前設営＝開始時刻までに完了、片付け＝終了時刻以降（「○時までに片付け完了」とは断定しない）。
+   * 基準日（refDate）と同じ日なら時刻のみ、日跨ぎなど違う日なら'M/D HH:mm'にする。
+   */
+  function scheduleMoment_(date, time, refDate) {
+    if (!date || !time) return '';
+    if (refDate && date === refDate) return time;
+    var m = /^\d{4}-(\d{2})-(\d{2})$/.exec(String(date));
+    return m ? Number(m[1]) + '/' + Number(m[2]) + ' ' + time : String(date) + ' ' + time;
+  }
+
+  function staffWorkNote(kind, schedule, refDate) {
+    if (!schedule) return '';
+    if (kind === 'PRE_SETUP') {
+      var deadline = scheduleMoment_(schedule.startDate, schedule.startTime, refDate);
+      return deadline ? deadline + 'までに完了' : '';
+    }
+    var from = scheduleMoment_(schedule.endDate, schedule.endTime, refDate);
+    return from ? from + '以降' : '';
+  }
+
+  /* 親予約の利用日時の表示（例: '2026-10-26 08:00-10:00'。日跨ぎは終了側にも日付を付ける）。 */
+  function formatScheduleRange(schedule) {
+    if (!schedule || !schedule.startDate || !schedule.startTime || !schedule.endTime) return '';
+    var head = schedule.startDate + ' ' + schedule.startTime;
+    if (!schedule.endDate || schedule.endDate === schedule.startDate) return head + '-' + schedule.endTime;
+    return head + ' 〜 ' + schedule.endDate + ' ' + schedule.endTime;
+  }
+
+  /* 注文のitemsからスタッフ作業（事前設営／片付け）の作業時刻の見出しを返す。スタッフ対応でなければ空配列。
+     withDate=trueなら常に'M/D HH:mm'（詳細用）、falseなら開始日と同じ日は時刻のみ。 */
+  function describeStaffWork(items, schedule, withDate) {
+    var out = [];
+    var seen = {};
+    (items || []).forEach(function (item) {
+      var code = String(item || '');
+      var kind = code.indexOf(ITEM_PREFIX.STAFF_PRE_SETUP) === 0 ? 'PRE_SETUP' : code.indexOf(ITEM_PREFIX.STAFF_CLEANUP) === 0 ? 'CLEANUP' : '';
+      if (!kind || seen[kind]) return;
+      seen[kind] = true;
+      var note = staffWorkNote(kind, schedule, withDate ? '' : schedule && schedule.startDate);
+      out.push({
+        kind: kind,
+        label: kind === 'PRE_SETUP' ? '事前設営（スタッフ）' : '片付け（スタッフ）',
+        note: note
+      });
+    });
+    return out;
+  }
+
+  /*
    * 管理画面の予約一覧カード用に、1予約分のOptionOrders（record配列）を要約する（Issue #447）。
    * 部屋予約の状態（Bookings.status）とは独立に、OptionOrderのstatusだけから決める。
    * state（未処理が最優先）: PENDING_APPROVAL（承認待ち）> AWAITING_PAYMENT（支払い待ち。
    * PAYMENT_PENDINGを含む）> CONFIRMED > CLOSED（不承認/取消のみ）> NONE。
    * 一覧に載せるのは件数と項目の概要のみ。決済URL・トークン・メールは含めない。
    */
-  function summarizeForAdminList(orders) {
+  function summarizeForAdminList(orders, schedule) {
     var list = orders || [];
     var counts = { pendingApproval: 0, awaitingPayment: 0, confirmed: 0, closed: 0 };
     var staffPre = false;
@@ -851,8 +903,16 @@ var BookingOptions = (function () {
       else state = 'CLOSED';
     }
     var lines = [];
-    if (staffPre) lines.push('事前設営（スタッフ）');
-    if (staffCleanup) lines.push('片付け（スタッフ）');
+    /* Issue #451: 親予約の日時が渡されたら、スタッフ作業の時刻（事前設営＝開始までに完了／片付け＝終了以降）を添える。 */
+    var staffWork = [];
+    function staffLine_(kind, label) {
+      var note = staffWorkNote(kind, schedule, schedule && schedule.startDate);
+      var text = note ? label + '｜' + note : label;
+      staffWork.push({ kind: kind, text: text });
+      lines.push(text);
+    }
+    if (staffPre) staffLine_('PRE_SETUP', '事前設営（スタッフ）');
+    if (staffCleanup) staffLine_('CLEANUP', '片付け（スタッフ）');
     if (equipmentPoints > 0) lines.push('機材レンタル ' + equipmentPoints + '点');
     if (freeSelf) lines.push('無料セルフ対応');
     return {
@@ -863,7 +923,8 @@ var BookingOptions = (function () {
       awaitingPaymentCount: counts.awaitingPayment,
       confirmedCount: counts.confirmed,
       closedCount: counts.closed,
-      lines: lines
+      lines: lines,
+      staffWork: staffWork
     };
   }
 
@@ -898,6 +959,8 @@ var BookingOptions = (function () {
     isPayable: isPayable,
     renderSelfGuidance: renderSelfGuidance,
     summarizeOrder: summarizeOrder,
-    summarizeForAdminList: summarizeForAdminList
+    summarizeForAdminList: summarizeForAdminList,
+    describeStaffWork: describeStaffWork,
+    formatScheduleRange: formatScheduleRange
   };
 })();

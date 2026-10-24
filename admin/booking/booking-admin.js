@@ -364,8 +364,16 @@ function renderOptionSummaryLines_(booking) {
     html += '<span class="option-badge">オプション承認待ち ' + escapeHtml(summary.pendingApprovalCount) + '件</span>';
   }
   html += '</div>';
+  /* Issue #451: スタッフ設営・片付けは作業時刻つきで強調する（事前設営は⚠）。 */
+  var staffTexts = {};
+  (summary.staffWork || []).forEach(function (work) { staffTexts[work.text] = work.kind; });
   (summary.lines || []).forEach(function (line) {
-    html += '<div class="card-option-line">・' + escapeHtml(line) + '</div>';
+    var kind = Object.prototype.hasOwnProperty.call(staffTexts, line) ? staffTexts[line] : '';
+    if (kind) {
+      html += '<div class="card-option-line card-option-staff">' + (kind === 'PRE_SETUP' ? '⚠ ' : '') + escapeHtml(line) + '</div>';
+    } else {
+      html += '<div class="card-option-line">・' + escapeHtml(line) + '</div>';
+    }
   });
   return html;
 }
@@ -2084,12 +2092,18 @@ function optionPaymentLabel_(status) {
 /* 注文1件の表示行（純粋関数）。 */
 function describeOptionOrder_(order) {
   var items = (order.items || []).map(function (item) { return item.label; }).join('、');
-  var lines = [
+  /* Issue #451: スタッフ設営・片付けは、対象予約日時と作業期限を先頭に出す。 */
+  var lines = [];
+  (order.staffWork || []).forEach(function (work) {
+    lines.push('【' + work.label + (work.note ? '｜' + work.note : '') + '】');
+    if (work.target) lines.push('対象予約: ' + work.target + (work.bookingId ? '（予約ID: ' + work.bookingId + '）' : ''));
+  });
+  lines.push(
     order.paidLabel + '／' + order.sourceLabel + '／' + items,
     '注文ID: ' + order.optionOrderId + '／金額: ' + (order.amountJpy > 0 ? formatYen_(order.amountJpy) : '無料'),
     '承認: ' + optionApprovalLabel_(order.approvalStatus) + '／決済: ' + optionPaymentLabel_(order.paymentStatus) + '／状態: ' + optionStatusLabel_(order.status),
     '申込: ' + (order.createdAt || '-')
-  ];
+  );
   if (order.approvedAt) lines.push('承認日時: ' + order.approvedAt);
   if (order.declinedAt) lines.push('不承認日時: ' + order.declinedAt + (order.declineReason ? '（' + order.declineReason + '）' : ''));
   if (order.paidAt) lines.push('決済日時: ' + order.paidAt);

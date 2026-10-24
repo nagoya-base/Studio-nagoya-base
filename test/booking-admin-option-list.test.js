@@ -92,7 +92,11 @@ test('スタッフ設営・片付け・機材の承認待ちがあるとPENDING_
   var item = listItem(ctx, id);
   assert.strictEqual(item.optionSummary.state, 'PENDING_APPROVAL');
   assert.strictEqual(item.optionSummary.pendingApprovalCount, 2);
-  assert.deepStrictEqual(item.optionSummary.lines, ['事前設営（スタッフ）', '片付け（スタッフ）', '機材レンタル 4点']);
+  assert.deepStrictEqual(item.optionSummary.lines, ['事前設営（スタッフ）｜10:00までに完了', '片付け（スタッフ）｜12:00以降', '機材レンタル 4点']);
+  assert.deepStrictEqual(item.optionSummary.staffWork, [
+    { kind: 'PRE_SETUP', text: '事前設営（スタッフ）｜10:00までに完了' },
+    { kind: 'CLEANUP', text: '片付け（スタッフ）｜12:00以降' }
+  ]);
   assert.strictEqual(item.status, 'PENDING');
 });
 
@@ -151,4 +155,58 @@ test('一覧のoptionSummaryに決済URL・メール等の内部情報を含め�
   var json = JSON.stringify(listItem(ctx, id).optionSummary);
   assert.ok(json.indexOf(EMAIL) === -1);
   assert.ok(json.indexOf('OPT-') === -1);
+});
+
+
+/* Issue #451: スタッフ作業の作業時刻（親予約の日時が正本。日跨ぎ・詳細カードも）。 */
+test('Issue #451: 詳細カードは対象予約日時と設営完了期限／片付け開始目安を返し、承認状態は変えない', function () {
+  var ctx = setup();
+  var id = createRoom(ctx);
+  addOrder(ctx, id, { items: ['STAFF_PRE_SETUP:EQUIPMENT', 'STAFF_CLEANUP:EQUIPMENT'] });
+  var detail = JSON.parse(JSON.stringify(ctx.sandbox.getAdminBookingDetail(id)));
+  var order = detail.booking.options.orders[0];
+  var date = detail.booking.date;
+  var md = Number(date.slice(5, 7)) + '/' + Number(date.slice(8, 10));
+  assert.strictEqual(order.status, 'PENDING_APPROVAL');
+  assert.strictEqual(order.canApprove, true);
+  assert.deepStrictEqual(order.staffWork.map(function (w) { return w.kind; }), ['PRE_SETUP', 'CLEANUP']);
+  var pre = order.staffWork.filter(function (w) { return w.kind === 'PRE_SETUP'; })[0];
+  assert.strictEqual(pre.note, md + ' 10:00までに完了');
+  assert.strictEqual(pre.target, date + ' 10:00-12:00');
+  assert.strictEqual(pre.bookingId, id);
+});
+
+test('Issue #451: 片付けは終了時刻以降と表示し、不承認/取消の注文には作業時刻を出さない', function () {
+  var ctx = setup();
+  var id = createRoom(ctx);
+  addOrder(ctx, id, { items: ['STAFF_CLEANUP:EQUIPMENT'] });
+  addOrder(ctx, id, { items: ['STAFF_PRE_SETUP:EQUIPMENT'], status: 'DECLINED', approvalStatus: 'DECLINED' });
+  var orders = JSON.parse(JSON.stringify(ctx.sandbox.getAdminBookingDetail(id))).booking.options.orders;
+  var cleanup = orders.filter(function (o) { return o.items[0].code.indexOf('STAFF_CLEANUP') === 0; })[0];
+  var declined = orders.filter(function (o) { return o.items[0].code.indexOf('STAFF_PRE_SETUP') === 0; })[0];
+  assert.ok(/ 12:00以降$/.test(cleanup.staffWork[0].note));
+  assert.ok(cleanup.staffWork[0].note.indexOf('完了') === -1, '片付け完了期限とは断定しない');
+  assert.deepStrictEqual(declined.staffWork, []);
+});
+
+test('Issue #451: 一覧カードのスタッフ作業は時刻のみ。日跨ぎの終了側は日付つき', function () {
+  var ctx = setup();
+  var BO = ctx.sandbox.BookingOptions;
+  var overnight = { startDate: '2026-10-26', startTime: '22:00', endDate: '2026-10-27', endTime: '02:00' };
+  var summary = JSON.parse(JSON.stringify(BO.summarizeForAdminList([
+    { status: 'PENDING_APPROVAL', items: ['STAFF_PRE_SETUP:EQUIPMENT', 'STAFF_CLEANUP:EQUIPMENT'] }
+  ], overnight)));
+  assert.deepStrictEqual(summary.lines, ['事前設営（スタッフ）｜22:00までに完了', '片付け（スタッフ）｜10/27 02:00以降']);
+  assert.strictEqual(BO.formatScheduleRange(overnight), '2026-10-26 22:00 〜 2026-10-27 02:00');
+  var detailWork = JSON.parse(JSON.stringify(BO.describeStaffWork(['STAFF_PRE_SETUP:EQUIPMENT', 'STAFF_CLEANUP:EQUIPMENT'], overnight, true)));
+  assert.strictEqual(detailWork[0].note, '10/26 22:00までに完了');
+  assert.strictEqual(detailWork[1].note, '10/27 02:00以降');
+});
+
+test('Issue #451: スタッフ対応でない注文・日時未指定ではこれまで通りの表示', function () {
+  var ctx = setup();
+  var BO = ctx.sandbox.BookingOptions;
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(BO.describeStaffWork(['EQ:COB_BICOLOR:4', 'SELF_SETUP:EQUIPMENT']))), []);
+  var plain = BO.summarizeForAdminList([{ status: 'PENDING_APPROVAL', items: ['STAFF_PRE_SETUP:EQUIPMENT'] }]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(plain.lines)), ['事前設営（スタッフ）']);
 });

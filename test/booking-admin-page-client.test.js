@@ -2709,6 +2709,32 @@ test('describeOptionOrder_: 選択内容・有料/無料・同時/後付け・�
   assert.ok(free.indexOf('承認: 承認不要') !== -1 && free.indexOf('決済: 課金なし') !== -1);
 });
 
+test('Issue #451: describeOptionOrder_ はスタッフ作業の期限と対象予約日時を先頭に表示する', function () {
+  var sandbox = loadClientSandbox();
+  var lines = sandbox.describeOptionOrder_(optionOrder({ staffWork: [
+    { kind: 'PRE_SETUP', label: '事前設営（スタッフ）', note: '10/26 08:00までに完了', target: '2026-10-26 08:00-10:00', bookingId: 'SX-1' }
+  ] }));
+  assert.strictEqual(lines[0], '【事前設営（スタッフ）｜10/26 08:00までに完了】');
+  assert.strictEqual(lines[1], '対象予約: 2026-10-26 08:00-10:00（予約ID: SX-1）');
+  var cleanup = sandbox.describeOptionOrder_(optionOrder({ staffWork: [
+    { kind: 'CLEANUP', label: '片付け（スタッフ）', note: '10/26 10:00以降', target: '2026-10-26 08:00-10:00', bookingId: 'SX-1' }
+  ] }));
+  assert.strictEqual(cleanup[0], '【片付け（スタッフ）｜10/26 10:00以降】');
+  assert.strictEqual(sandbox.describeOptionOrder_(optionOrder())[0].indexOf('【'), -1, 'staffWorkが無い注文は従来表示');
+});
+
+test('Issue #451: 一覧カードはスタッフ設営を⚠つきで作業時刻まで強調する', function () {
+  var sandbox = loadClientSandbox();
+  var html = sandbox.renderOptionSummaryLines_({ optionSummary: {
+    state: 'PENDING_APPROVAL', pendingApprovalCount: 1,
+    lines: ['事前設営（スタッフ）｜08:00までに完了', '片付け（スタッフ）｜10:00以降', '機材レンタル 2点'],
+    staffWork: [{ kind: 'PRE_SETUP', text: '事前設営（スタッフ）｜08:00までに完了' }, { kind: 'CLEANUP', text: '片付け（スタッフ）｜10:00以降' }]
+  } });
+  assert.ok(html.indexOf('⚠ 事前設営（スタッフ）｜08:00までに完了') !== -1);
+  assert.ok(html.indexOf('card-option-staff">片付け（スタッフ）｜10:00以降') !== -1);
+  assert.ok(html.indexOf('・機材レンタル 2点') !== -1);
+});
+
 test('describeOptionOrder_: 要復旧の注文は警告を表示する', function () {
   var sandbox = loadClientSandbox();
   var lines = sandbox.describeOptionOrder_(optionOrder({ recoveryRequired: true, recoveryReason: '金額が一致しません' })).join('\n');
