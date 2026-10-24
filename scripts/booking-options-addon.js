@@ -36,6 +36,7 @@
     payError: $('bo-pay-error'),
     add: $('bo-add'),
     panelSlot: $('bo-panel-slot'),
+    summarySlot: $('bo-summary-slot'),
     submitError: $('bo-submit-error'),
     submitMessage: $('bo-submit-message'),
     submit: $('bo-submit'),
@@ -132,10 +133,12 @@
       els.addClosed.hidden = true;
       if (!panel) {
         /* 後付けでは、申込済みの項目を「追加しない」と選べる（allowNone）。 */
-        panel = Panel.mount({ slot: els.panelSlot, catalog: summary.catalog, allowNone: true, equipmentPageUrl: '../../equipment/', consultUrl: '../../reservation/?intent=consult' });
+        panel = Panel.mount({ slot: els.panelSlot, summarySlot: $('bo-summary-slot'), catalog: summary.catalog, allowNone: true, equipmentPageUrl: '../../equipment/', consultUrl: '../../reservation/?intent=consult' });
       } else {
         panel.setCatalog(summary.catalog);
       }
+      /* 申込済みのスタッフ対応を加味して、画面の追加請求額をサーバー（computeStaffServiceCharge）と一致させる。 */
+      panel.setExistingOrders(summary.orders || []);
     } else {
       els.add.hidden = true;
       show(els.addClosed, CLOSED_REASONS[summary.acceptsOptionsReason] || 'この予約にはオプションを追加できません。');
