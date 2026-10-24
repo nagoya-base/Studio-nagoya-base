@@ -84,7 +84,7 @@ test('Booking Admin配布ファイルセット: 予約詳細にオプション�
   ctx.sandbox.OptionOrderRepository.appendOrders([
     { optionOrderId: 'OPT-STAFF001', bookingId: bookingId, brand: 'studio_x', category: 'STAFF_SERVICE', source: 'ADDON', items: ['STAFF_PRE_SETUP:CLASSROOM'], amountJpy: 3000, currency: 'JPY', approvalStatus: 'PENDING_APPROVAL', paymentStatus: 'NOT_STARTED', status: 'PENDING_APPROVAL', customerEmail: 'taro@example.com', createdAt: new Date(), updatedAt: new Date() },
     { optionOrderId: 'OPT-STAFF002', bookingId: bookingId, brand: 'studio_x', category: 'STAFF_SERVICE', source: 'WITH_BOOKING', items: ['STAFF_CLEANUP:GRUNGE'], amountJpy: 3000, currency: 'JPY', approvalStatus: 'PENDING_APPROVAL', paymentStatus: 'NOT_STARTED', status: 'PENDING_APPROVAL', customerEmail: 'taro@example.com', createdAt: new Date(), updatedAt: new Date() },
-    { optionOrderId: 'OPT-FREE0001', bookingId: bookingId, brand: 'studio_x', category: 'FREE', source: 'ADDON', items: ['SELF_SETUP:WHITE_BACKDROP', 'EMAIL_SUPPORT'], amountJpy: 0, currency: 'JPY', approvalStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_REQUIRED', status: 'CONFIRMED', customerEmail: 'taro@example.com', createdAt: new Date(), updatedAt: new Date() }
+    { optionOrderId: 'OPT-FREE0001', bookingId: bookingId, brand: 'studio_x', category: 'FREE', source: 'ADDON', items: ['SELF_SETUP:GRUNGE', 'EMAIL_SUPPORT'], amountJpy: 0, currency: 'JPY', approvalStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_REQUIRED', status: 'CONFIRMED', customerEmail: 'taro@example.com', createdAt: new Date(), updatedAt: new Date() }
   ]);
 
   var detail = ctx.sandbox.getAdminBookingDetail(bookingId);
@@ -92,7 +92,7 @@ test('Booking Admin配布ファイルセット: 予約詳細にオプション�
   var options = detail.booking.options;
   assert.strictEqual(options.available, true);
   assert.strictEqual(options.orders.length, 3);
-  assert.strictEqual(options.guidanceIncomplete, true, '運営確認待ちの定型案内があることをAdminに知らせる');
+  assert.strictEqual(options.guidanceIncomplete, true, '未提供(グランジ)の定型案内があることをAdminに知らせる');
   var staff = options.orders.filter(function (o) { return o.optionOrderId === 'OPT-STAFF001'; })[0];
   // 選択内容・有料/無料・同時/後付け・申込日時・承認状態・決済状態・optionOrderId
   assert.strictEqual(staff.paidLabel, '有料');

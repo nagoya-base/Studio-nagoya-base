@@ -139,22 +139,42 @@ var BookingOptions = (function () {
 
   /* ---- 定型案内（無料セルフセッティング。Issue #423 追加コメント 3） ----
    *
-   * 収納場所・具体的な設置手順・原状復帰の手順は現行の設備情報・運用資料で確認できたもの
-   * だけを書く。リポジトリ内で確認できない項目はnull（運営確認待ち）とし、実装者判断で
-   * 場所や手順を作らない。nullの項目は案内メール上で「運営確認中・別途ご案内」と明示し、
-   * Adminの予約詳細にも未整備として表示する（renderSelfGuidanceのincomplete）。
-   * 運営が資料を確認できたら、この表のnullを文章に置き換えるだけで全箇所へ反映される。
+   * 収納場所・設置手順・原状復帰・注意事項は、運営（オーナー）から提供された確定文言のみを書く
+   * （2026-10-24。PR #427のレビュー対応）。実装者判断で場所や手順を作らない。
+   * - CLASSROOM（黒板教室）／JAPANESE（和風・畳）／WHITE_BACKDROP・BLACK_BACKDROP（白黒背景布）:
+   *   確定済み。
+   * - GRUNGE（グランジ）: まだ提供されていないためnull（運営確認待ち）。nullの項目は案内メール上で
+   *   「運営にて内容を確認中」と明示し、Adminの予約詳細にも未整備として表示する
+   *   （renderSelfGuidanceのincomplete）。文章を提供されたらnullを置き換えるだけで全箇所へ反映される。
    *
-   * 確認できた事実の出典:
-   * - items(教室): studio-x/index.html「PROPS: 学校机、椅子、教卓、黒板」
-   * - COMMON_RESTORE_: studio-x/legal/index.html「使用後は清掃して元の位置へ戻してください」
+   * 収納場所は「所定位置／指定の収納場所」という提供文言のとおり。部屋内の具体的な位置は
+   * 現地の掲示・原状写真・室内のラミネート手順書で確認する前提（ここでは新しい場所を作らない）。
    */
+  var BACKDROP_GUIDANCE_ = {
+    items: '白・黒の背景布、背景スタンド（または竹の梁）',
+    storage: '白・黒背景布は指定の収納場所に保管しています。',
+    setupSteps: '背景スタンド、または竹の梁にセットして使用してください。使用する色を選び、しわやたるみを整えてください。床まで垂らす場合は、踏み込み部分を必要最小限にしてください。',
+    restoreSteps: '布に汚れ・異物がないことを確認してから畳み、元の場所へ収納してください。背景スタンドを使用した場合は、スタンドも元の位置へ戻してください。',
+    cautions: '靴で背景布を踏まないでください。粘着テープを直接貼らないでください。濡れ・飲食物・化粧品の付着に注意してください。'
+  };
   var GUIDANCE_TEMPLATES_ = {
-    CLASSROOM: { items: '学校机・椅子・教卓・黒板', storage: null, setupSteps: null, restoreSteps: null, cautions: null },
-    JAPANESE: { items: null, storage: null, setupSteps: null, restoreSteps: null, cautions: null },
+    CLASSROOM: {
+      items: '教卓・小黒板・学校机・椅子',
+      storage: '教卓・小黒板・学校机・椅子は、教室セット側の所定位置に置いてあります。',
+      setupSteps: '教卓を前方、小黒板を背景側に置き、必要に応じて机・椅子を配置してください。',
+      restoreSteps: '教卓・黒板・机・椅子を、原状写真と同じ位置へ戻してください。黒板に書いた内容は消してください。',
+      cautions: '【黒板を移動するときは、チョークを必ずケースに収納してください。】移動中にチョークが落下すると割れるおそれがあります。黒板以外の壁や備品へは筆記しないでください。備品を強く引きずらないでください。'
+    },
+    JAPANESE: {
+      items: '畳、滑り止め、和風備品',
+      storage: '畳・和風備品は、指定の収納場所に保管しています。',
+      setupSteps: '畳の下に滑り止めを敷いてから設置してください。詳しい敷き方・並べ方は、室内のラミネート手順書を参照してください。',
+      restoreSteps: '畳・滑り止め・備品を、所定の順序・位置へ戻してください。',
+      cautions: '畳の上で靴を使用しないでください。飲食物・濡れた物を直接置かないでください。重量物を引きずらないでください。'
+    },
     GRUNGE: { items: null, storage: null, setupSteps: null, restoreSteps: null, cautions: null },
-    WHITE_BACKDROP: { items: null, storage: null, setupSteps: null, restoreSteps: null, cautions: null },
-    BLACK_BACKDROP: { items: null, storage: null, setupSteps: null, restoreSteps: null, cautions: null }
+    WHITE_BACKDROP: BACKDROP_GUIDANCE_,
+    BLACK_BACKDROP: BACKDROP_GUIDANCE_
   };
   var COMMON_RESTORE_ = '使用後は清掃して元の位置へ戻してください。';
   var GUIDANCE_PENDING_NOTE_ = '運営にて内容を確認中です。予約確定後に、メールで改めてご案内します。';

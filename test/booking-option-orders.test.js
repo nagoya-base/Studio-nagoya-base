@@ -245,9 +245,10 @@ test('同時: 無料セルフ選択の受付メールにテーマ別の定型案
   createRoom(ctx, { options: { layouts: ['GRUNGE', 'WHITE_BACKDROP'] } });
   var mail = mailsTo(ctx, EMAIL).filter(function (m) { return m.subject.indexOf('オプション') !== -1; })[0];
   assert.ok(mail.body.indexOf('【グランジセットのセルフセッティング】') !== -1);
+  assert.ok(mail.body.indexOf('背景スタンド、または竹の梁にセットして使用してください') !== -1, '白背景布は確定文言');
   assert.ok(mail.body.indexOf('【白背景布のセルフセッティング】') !== -1);
   assert.ok(mail.body.indexOf('使用後は清掃して元の位置へ戻してください。') !== -1);
-  assert.ok(mail.body.indexOf('運営にて内容を確認中です') !== -1);
+  assert.ok(mail.body.indexOf('運営にて内容を確認中です') !== -1, 'グランジは文言未提供');
   assert.ok(mail.body.indexOf('お支払い') === -1 || mail.body.indexOf('無料') !== -1);
 });
 
@@ -946,4 +947,12 @@ test('台帳: 管理者入力(不承認理由・資格メモ)が数式として�
   assert.strictEqual(raw[reasonIndex].charAt(0), "'");
   ctx.sandbox.OptionOrderService.grantVideoLightEligibility('a@example.com', '+81-90-xxxx');
   assert.strictEqual(ctx.sheets.OptionEligibility._rows[1][3].charAt(0), "'");
+});
+
+test('同時: 黒板教室のセルフ選択ではチョーク収納の注意を含む確定文言が届き、未整備の注記は出ない', function () {
+  var ctx = setup();
+  createRoom(ctx, { options: { layouts: ['CLASSROOM'] } });
+  var mail = mailsTo(ctx, EMAIL).filter(function (m) { return m.subject.indexOf('オプション') !== -1; })[0];
+  assert.ok(mail.body.indexOf('チョークを必ずケースに収納してください') !== -1);
+  assert.ok(mail.body.indexOf('運営にて内容を確認中です') === -1);
 });

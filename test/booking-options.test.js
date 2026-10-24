@@ -368,14 +368,53 @@ test('optionOrderId・決済試行IDの形式と、同一UUIDから同一IDに�
 
 // ---- 定型案内 ----
 
-test('定型案内: 教室セットは使用備品を案内し、保管場所・手順は確認できていないので創作せず「運営確認中」と明示する', function () {
+test('定型案内（確定文言）: 黒板教室は保管場所・セット方法・原状復帰・注意事項を案内し、チョーク収納を明示する', function () {
   var g = BookingOptions.renderSelfGuidance(['SELF_SETUP:CLASSROOM', 'SELF_CLEANUP:CLASSROOM']);
+  assert.strictEqual(g.incomplete, false, '教室セットは確定文言のため未整備にならない');
   assert.ok(g.text.indexOf('【教室セット（机・黒板）のセルフセッティング】') !== -1);
-  assert.ok(g.text.indexOf('学校机・椅子・教卓・黒板') !== -1, '出典(studio-x/index.html)で確認できた備品');
-  assert.ok(g.text.indexOf('使用後は清掃して元の位置へ戻してください。') !== -1, '出典(studio-x/legal)で確認できた原状復帰の原則');
-  assert.ok(g.text.indexOf('運営にて内容を確認中です') !== -1);
-  assert.strictEqual(g.incomplete, true, 'Adminに未整備を知らせる');
+  assert.ok(g.text.indexOf('教卓・小黒板・学校机・椅子は、教室セット側の所定位置') !== -1);
+  assert.ok(g.text.indexOf('教卓を前方、小黒板を背景側に置き') !== -1);
+  assert.ok(g.text.indexOf('原状写真と同じ位置へ戻してください。黒板に書いた内容は消してください') !== -1);
+  assert.ok(g.text.indexOf('黒板を移動するときは、チョークを必ずケースに収納してください') !== -1);
+  assert.ok(g.text.indexOf('チョークが落下すると割れるおそれ') !== -1);
+  assert.ok(g.text.indexOf('使用後は清掃して元の位置へ戻してください。') !== -1);
+  assert.ok(g.text.indexOf('運営にて内容を確認中です') === -1);
   assert.ok(g.text.indexOf('追加のご質問はメールでお問い合わせください') !== -1);
+});
+
+test('定型案内（確定文言）: 和風・畳は滑り止めとラミネート手順書、靴・飲食・重量物の注意を案内する', function () {
+  var g = BookingOptions.renderSelfGuidance(['SELF_SETUP:JAPANESE', 'SELF_CLEANUP:JAPANESE']);
+  assert.strictEqual(g.incomplete, false);
+  assert.ok(g.text.indexOf('畳の下に滑り止めを敷いてから設置してください') !== -1);
+  assert.ok(g.text.indexOf('室内のラミネート手順書を参照してください') !== -1);
+  assert.ok(g.text.indexOf('所定の順序・位置へ戻してください') !== -1);
+  assert.ok(g.text.indexOf('畳の上で靴を使用しないでください') !== -1);
+  assert.ok(g.text.indexOf('重量物を引きずらないでください') !== -1);
+});
+
+test('定型案内（確定文言）: 白黒背景布は同じ案内で、スタンド/竹の梁・踏み込み・靴・テープの注意を案内する', function () {
+  ['WHITE_BACKDROP', 'BLACK_BACKDROP'].forEach(function (theme) {
+    var g = BookingOptions.renderSelfGuidance(['SELF_SETUP:' + theme, 'SELF_CLEANUP:' + theme]);
+    assert.strictEqual(g.incomplete, false, theme);
+    assert.ok(g.text.indexOf('背景スタンド、または竹の梁にセットして使用してください') !== -1, theme);
+    assert.ok(g.text.indexOf('踏み込み部分を必要最小限にしてください') !== -1, theme);
+    assert.ok(g.text.indexOf('布に汚れ・異物がないことを確認してから畳み') !== -1, theme);
+    assert.ok(g.text.indexOf('スタンドも元の位置へ戻してください') !== -1, theme);
+    assert.ok(g.text.indexOf('靴で背景布を踏まないでください') !== -1 && g.text.indexOf('粘着テープを直接貼らない') !== -1, theme);
+  });
+  assert.ok(BookingOptions.renderSelfGuidance(['SELF_SETUP:WHITE_BACKDROP']).text.indexOf('【白背景布のセルフセッティング】') !== -1);
+  assert.ok(BookingOptions.renderSelfGuidance(['SELF_SETUP:BLACK_BACKDROP']).text.indexOf('【黒背景布のセルフセッティング】') !== -1);
+});
+
+test('定型案内: グランジは文言が未提供のため創作せず「運営確認中」と明示し、Adminに未整備を知らせる', function () {
+  var g = BookingOptions.renderSelfGuidance(['SELF_SETUP:GRUNGE', 'SELF_CLEANUP:GRUNGE']);
+  assert.strictEqual(g.incomplete, true);
+  assert.ok(g.text.indexOf('【グランジセットのセルフセッティング】') !== -1);
+  assert.ok(g.text.indexOf('運営にて内容を確認中です') !== -1);
+  // 確定済みテーマと同時に選んでも、確定済みの文言は出て、未整備フラグだけがグランジ由来で立つ
+  var mixed = BookingOptions.renderSelfGuidance(['SELF_SETUP:CLASSROOM', 'SELF_SETUP:GRUNGE']);
+  assert.ok(mixed.text.indexOf('教卓を前方') !== -1);
+  assert.strictEqual(mixed.incomplete, true);
 });
 
 test('定型案内: セルフ設営だけなら原状復帰の項目を出さず、スタッフ対応・機材のみなら案内なし', function () {
