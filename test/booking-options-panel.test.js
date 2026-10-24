@@ -77,10 +77,10 @@ test('validateSelection: スタッフ対応は1テーマのみ。セルフなら
   assert.strictEqual(Panel.validateSelection({ layouts: ['GRUNGE'], setupService: 'STAFF' }), '');
 });
 
-test('summarize: スタッフ対応は「承認後にお支払い。申込時点では確定しません」と明示。無料セルフは無料と表示', function () {
+test('summarize: スタッフ対応は「日程確認後、ご利用可能な場合のみお支払い。申込時点では確定しません」と明示。無料セルフは無料と表示', function () {
   var staff = Panel.summarize(CATALOG, { layouts: ['CLASSROOM'], setupService: 'STAFF', cleanupService: 'STAFF' }).join('\n');
   assert.ok(staff.indexOf('5,000円') !== -1);
-  assert.ok(staff.indexOf('承認後にお支払い') !== -1 && staff.indexOf('申込時点では確定しません') !== -1);
+  assert.ok(staff.indexOf('日程確認後、ご利用可能な場合のみお支払い') !== -1 && staff.indexOf('申込時点では確定しません') !== -1);
   var rental = Panel.summarize(CATALOG, { equipment: { STAND_260: 2, COB_BICOLOR: 1 } }).join('\n');
   assert.ok(rental.indexOf('ライトスタンド（260cm） ×2（400円）') !== -1);
   assert.ok(rental.indexOf('機材レンタル合計: 1,200円') !== -1);
@@ -88,19 +88,20 @@ test('summarize: スタッフ対応は「承認後にお支払い。申込時点
   var self = Panel.summarize(CATALOG, { layouts: ['GRUNGE'], emailSupport: true }).join('\n');
   assert.ok(self.indexOf('セルフ（無料）') !== -1);
   assert.ok(self.indexOf('メールサポート（無料）') !== -1);
-  assert.ok(self.indexOf('承認') === -1, 'セルフは承認不要');
+  assert.ok(self.indexOf('日程確認後') === -1, 'セルフは確認不要');
   assert.deepStrictEqual(Panel.summarize(CATALOG, {}), []);
 });
 
-test('describeError: サーバーの利用者向け文言をそのまま使う。無ければ汎用文', function () {
-  assert.strictEqual(Panel.describeError({ code: 'X', message: 'ビデオライトは許可済みの方のみ' }), 'ビデオライトは許可済みの方のみ');
+test('describeError: error.codeからフロントの文言を引く（サーバーのmessageは使わない）。無ければ汎用文', function () {
+  assert.strictEqual(Panel.describeError({ code: 'ADDON_DEADLINE_PASSED', message: 'サーバー文言' }), Panel.ERROR_COPY.ADDON_DEADLINE_PASSED);
+  assert.ok(Panel.describeError({ code: 'X', message: 'ビデオライトは許可済みの方のみ' }).indexOf('時間を置いて') !== -1);
   assert.ok(Panel.describeError(null).indexOf('時間を置いて') !== -1);
 });
 
-test('describeOrderStatus: 承認待ちは「まだ確定していません・お支払い不要」、不承認は「お支払いは発生していません」', function () {
+test('describeOrderStatus: 確認中は「まだ確定していません・お支払い不要」、対応不可は「お支払いは発生していません」', function () {
   assert.ok(Panel.describeOrderStatus({ status: 'PENDING_APPROVAL' }).indexOf('まだ確定していません') !== -1);
   assert.ok(Panel.describeOrderStatus({ status: 'DECLINED' }).indexOf('お支払いは発生していません') !== -1);
-  assert.ok(Panel.describeOrderStatus({ status: 'AWAITING_PAYMENT', requiresApproval: true }).indexOf('承認済み') !== -1);
+  assert.ok(Panel.describeOrderStatus({ status: 'AWAITING_PAYMENT', requiresApproval: true }).indexOf('確認済み') !== -1);
   assert.strictEqual(Panel.describeOrderStatus({ status: 'CONFIRMED', amountJpy: 0 }), '確定（無料）');
 });
 
@@ -163,11 +164,11 @@ test('メール内リンクの案内ページURLはStudio Xのオプション案
   assert.strictEqual(url, 'https://nagoya-base.github.io/Studio-nagoya-base/studio-x/booking/options/?bookingId=SX-20261101-AAAAAAAA');
 });
 
-test('画面の案内文言: 有料レンタル機材全般は施錠管理で「管理者の利用許可が必要」で、未許可の申込は保留（お支払い・確定は管理者の確認後）。「過去利用者のみ」とは言わない', function () {
+test('画面の案内文言: 有料レンタル機材は「利用条件の確認後にご案内」で、確認できるまでお支払い・確定はできない（内部用語は出さない）。「過去利用者のみ」とは言わない', function () {
   var src = read('scripts/booking-options.js').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.ok(src.indexOf('有料機材は管理者の利用許可が必要です') !== -1);
+  assert.ok(src.indexOf('有料機材は、利用条件の確認後にご案内します') !== -1);
   assert.ok(src.indexOf('ストロボ等に資格の制限はありません') === -1, '資格制限なしの旧文言を残さない');
-  assert.ok(src.indexOf('確認できるまでお支払い・確定はできません') !== -1);
+  assert.ok(src.indexOf('利用条件の確認がとれるまでお支払い・確定はできません') !== -1);
   assert.ok(!/Admin/.test(src), '利用者向け画面に内部用語Adminを出さない（Issue #453）');
   assert.ok(src.indexOf('過去にビデオライト') === -1 && src.indexOf('過去の') === -1);
 });

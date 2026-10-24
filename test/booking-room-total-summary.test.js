@@ -113,7 +113,7 @@ test('機材レンタル選択時は「オンラインクレジットカード�
   /* 機材を選んだ状態を直接再現するため、選択数量セレクトのchangeハンドラは使わず、カタログ文言とヘルパーを検査する。 */
   var text = Panel.equipmentCardOnlyText(CATALOG);
   assert.ok(/オンラインクレジットカード決済のみ/.test(text) && /PayPay・現金は受け付けていません/.test(text));
-  assert.strictEqual(CATALOG.notices.EQUIPMENT_CARD_ONLY, text, '文言はサーバー（カタログ）の値を使う');
+  assert.strictEqual(CATALOG.policy.equipmentPaymentMethod, 'CARD_ONLY', '条件はサーバー（カタログのpolicy）の値、文言はフロントが持つ（Issue #465）');
   assert.ok(panel);
 });
 
@@ -136,8 +136,9 @@ test('後付けページ: 予約済みの部屋代はサーバー応答（bookin
   assert.ok(src.indexOf('getRoomPrice: currentRoomPrice') !== -1 && src.indexOf('booking.roomPriceJpy') !== -1);
 });
 
-test('GAS: 機材レンタルのカード専用文言がカタログのnoticesに入る。機材の決済は既存のStripe Checkout経由のみ（PayPay/現金の経路を持たない）', function () {
-  assert.ok(/オンラインクレジットカード決済のみ/.test(CATALOG.notices.EQUIPMENT_CARD_ONLY));
+test('GAS: 機材レンタルのカード専用条件がカタログのpolicyに入る（文言はフロント）。機材の決済は既存のStripe Checkout経由のみ（PayPay/現金の経路を持たない）', function () {
+  assert.strictEqual(CATALOG.policy.equipmentPaymentMethod, 'CARD_ONLY');
+  assert.strictEqual(CATALOG.notices, undefined, 'カタログに利用者向けの文章を載せない');
   var svc = read('gas/booking/shared/OptionOrderService.gs');
   assert.ok(svc.indexOf('StripeGateway.createCheckoutSession') !== -1);
   assert.ok(!/PayPay|paypay|現金/.test(svc.replace(/\/\*[\s\S]*?\*\//g, '')), 'OptionOrderServiceにPayPay/現金の決済経路を作らない');
