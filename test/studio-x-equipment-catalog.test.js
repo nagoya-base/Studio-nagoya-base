@@ -91,7 +91,7 @@ test('機材ページは正本(site.data)を直接読み、常設無料・有料
   assert.match(html, /id="equipment-self"/);
   assert.match(html, /1点ごと/);
   assert.match(html, /施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要/, 'SNB側の文言は変更しない');
-  assert.match(html, /初めて利用する方は、事前に/, 'Studio X側は平易な案内にする（Issue #461）');
+  assert.match(html, /有料レンタル機材を初めて利用する方は、事前に/, 'Studio X側は平易な案内にする（Issue #461）');
   assert.ok(!/資格制限はありません|資格の制限はありません/.test(html), '資格制限なしの旧文言を残さない');
   assert.match(html, /背景紙ロール[^。]*無料/);
   assert.match(html, /背景用竹竿[^。]*無料/);

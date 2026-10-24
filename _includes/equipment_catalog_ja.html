@@ -21,7 +21,7 @@
   </div>
   <div class="equipment-table-block" id="equipment-rental">
     <h3>{% if is_studio_x %}有料レンタル機材{% else %}有料レンタル機材（1点ごとの個別加算）{% endif %}</h3>
-    <p class="equipment-note">{% if is_studio_x %}借りる機材だけ、1点ごとに料金がかかります（税込）。複数台の場合は台数×単価です。お申込みは予約フォーム、または予約後の「オプション追加」ページから。お支払いは部屋の予約確定後です。初めて利用する方は、事前に<a href="../reservation/?intent=consult">ご相談ください</a>。{% else %}セット料金ではなく、借りる機材だけを加算します（税込）。複数台ある機材は台数×単価です。ライトスタンド・ボーエンズマウントブラケットは、対象機材（ライト・ストロボ／ポータブルストロボ）と同時に借りる分が無料です（表の「セットで無料」。単独で借りる場合のみ有料）。{% endif %}</p>
+    <p class="equipment-note">{% if is_studio_x %}借りる機材だけ、1点ごとに料金がかかります（税込）。複数台の場合は台数×単価です。お申込みは予約フォーム、または予約後の「オプション追加」ページから。お支払いは部屋の予約確定後です。有料レンタル機材を初めて利用する方は、事前に<a href="../reservation/?intent=consult">ご相談ください</a>。{% else %}セット料金ではなく、借りる機材だけを加算します（税込）。複数台ある機材は台数×単価です。ライトスタンド・ボーエンズマウントブラケットは、対象機材（ライト・ストロボ／ポータブルストロボ）と同時に借りる分が無料です（表の「セットで無料」。単独で借りる場合のみ有料）。{% endif %}</p>
     <table class="equipment-table--3col">
       <colgroup><col class="col-name"><col class="col-qty"><col class="col-price"></colgroup>
       <thead><tr><th>機材</th><th>数量</th><th>1点あたり</th></tr></thead>
