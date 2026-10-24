@@ -163,9 +163,10 @@ test('メール内リンクの案内ページURLはStudio Xのオプション案
   assert.strictEqual(url, 'https://nagoya-base.github.io/Studio-nagoya-base/studio-x/booking/options/?bookingId=SX-20261101-AAAAAAAA');
 });
 
-test('画面の案内文言: ビデオライト系は「対面で操作レクチャーを受け、利用許可済みの方のみ」。「過去利用者のみ」とは言わない', function () {
+test('画面の案内文言: ビデオライト系は「対面で操作レクチャーを受け、利用許可済みの方のみ」で、未許可の申込は保留（お支払い・確定は管理者の確認後）。「過去利用者のみ」とは言わない', function () {
   var src = read('scripts/booking-options.js').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.ok(src.indexOf('対面で操作レクチャーを受け、利用許可済みの方のみ選択できます') !== -1);
+  assert.ok(src.indexOf('対面で操作レクチャーを受け、利用許可済みの方のみご利用いただけます') !== -1);
+  assert.ok(src.indexOf('申込は保留となり、管理者が確認するまでお支払い・確定はできません') !== -1);
   assert.ok(src.indexOf('過去にビデオライト') === -1 && src.indexOf('過去の') === -1);
 });
 

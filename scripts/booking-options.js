@@ -229,7 +229,7 @@
         root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', text: '機材レンタル合計：' + formatJpy(equipmentTotal) + '（税込。部屋のご予約が確定した後にお支払いいただきます）' }));
       }
       var needsLecture = (catalog.equipment || []).some(function (e) { return e.requiresLecture && state.equipment[e.code]; });
-      root.appendChild(el('p', { className: needsLecture ? 'ba-banner ba-banner--notice' : 'ba-field-help', text: 'ビデオライト系（定常光）のセルフレンタルは、対面で操作レクチャーを受け、利用許可済みの方のみ選択できます（初めての方・レクチャー未実施の方はメールでご相談ください）。ストロボ等に資格の制限はありません。' }));
+      root.appendChild(el('p', { className: needsLecture ? 'ba-banner ba-banner--notice' : 'ba-field-help', text: 'ビデオライト系（定常光）のセルフレンタルは、対面で操作レクチャーを受け、利用許可済みの方のみご利用いただけます。許可を確認できない場合、申込は保留となり、管理者が確認するまでお支払い・確定はできません（許可が確認できない場合はお受けできません）。初めての方・レクチャー未実施の方は、先にメールでご相談ください。ストロボ等に資格の制限はありません。' }));
 
       /* セッティング（テーマ） */
       root.appendChild(el('h3', { className: 'ba-option-heading', text: 'セッティング' }));

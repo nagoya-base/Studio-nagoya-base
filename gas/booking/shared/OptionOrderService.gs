@@ -203,11 +203,13 @@ var OptionOrderService = (function () {
     try {
       var adminEmail = BookingConfig.getAdminNotificationEmail();
       if (!adminEmail) return;
-      var staff = orders.filter(function (o) { return o.category === BookingOptions.CATEGORY.STAFF_SERVICE; });
+      var staff = orders.filter(function (o) {
+        return o.category === BookingOptions.CATEGORY.STAFF_SERVICE || o.approvalStatus === BookingOptions.APPROVAL_STATUS.PENDING_APPROVAL;
+      });
       if (staff.length === 0) return;
       var adminUrl = BookingConfig.getBookingAdminUrl();
       var lines = [
-        'スタッフ対応（事前設営／片付け）の承認依頼が届きました。空き状況を確認し、Booking Adminで承認または不承認にしてください。',
+        '承認依頼が届きました（スタッフ対応の空き確認、またはビデオライト系機材の利用許可＝対面レクチャー済みの確認）。Booking Adminで承認（許可済みにして進める）または不承認にしてください。Checkoutは承認後にのみ発行されます。',
         '',
         'bookingId: ' + booking.bookingId,
         '利用日: ' + BookingAvailability.formatDateWithWeekday(booking.date)
@@ -218,7 +220,7 @@ var OptionOrderService = (function () {
       if (adminUrl) { lines.push(''); lines.push('Booking Admin:'); lines.push(adminUrl); }
       lines.push('');
       lines.push('※お客様の氏名・連絡先は含めていません。');
-      MailApp.sendEmail(adminEmail, '[' + Booking.getBrandLabel(booking.brand) + '] スタッフ対応の承認依頼: ' + booking.bookingId, lines.join('\n'));
+      MailApp.sendEmail(adminEmail, '[' + Booking.getBrandLabel(booking.brand) + '] オプションの承認依頼: ' + booking.bookingId, lines.join('\n'));
     } catch (notifyError) {
       Logger.log('OptionOrderService: 管理者通知に失敗しました bookingId=' + booking.bookingId);
     }
@@ -407,7 +409,11 @@ var OptionOrderService = (function () {
       }
       if (order.category === BookingOptions.CATEGORY.FREE) return fail_('NOT_PAYABLE', '無料のオプションはお支払い不要です。');
       if (order.status === BookingOptions.STATUS.CONFIRMED) return fail_('ALREADY_PAID', 'このオプションはお支払い済みです。');
-      if (order.status === BookingOptions.STATUS.PENDING_APPROVAL) return fail_('APPROVAL_REQUIRED', 'スタッフ対応は承認後にお支払いいただけます。承認をお待ちください。');
+      if (order.status === BookingOptions.STATUS.PENDING_APPROVAL) {
+        return fail_('APPROVAL_REQUIRED', order.category === BookingOptions.CATEGORY.EQUIPMENT
+          ? 'ビデオライト系機材は、対面レクチャー済みの利用許可の確認後にお支払いいただけます。確認をお待ちください。'
+          : 'スタッフ対応は承認後にお支払いいただけます。承認をお待ちください。');
+      }
       if (order.status === BookingOptions.STATUS.DECLINED) return fail_('ORDER_DECLINED', 'このスタッフ対応は対応できませんでした。');
       if (!BookingOptions.isPayable(order)) return fail_('NOT_PAYABLE', 'このオプションはお支払いの対象ではありません。');
       /* 資格の再検証: 許可を確認できないビデオライト系は、Stripeを呼ばず支払い不可（管理者が否認できる）。 */
@@ -539,7 +545,7 @@ var OptionOrderService = (function () {
     summary.paidLabel = record.category === BookingOptions.CATEGORY.FREE ? '無料' : '有料';
     /* 対面レクチャー済みの許可を確認できないビデオライト系の未払い注文（Adminが否認できる）。 */
     var missing = (record.category === BookingOptions.CATEGORY.EQUIPMENT &&
-      (record.status === BookingOptions.STATUS.AWAITING_PAYMENT || record.status === BookingOptions.STATUS.PAYMENT_PENDING))
+      (record.status === BookingOptions.STATUS.PENDING_APPROVAL || record.status === BookingOptions.STATUS.AWAITING_PAYMENT || record.status === BookingOptions.STATUS.PAYMENT_PENDING))
       ? missingLectureCodes_(record) : [];
     summary.eligibilityMissing = missing.length > 0;
     summary.eligibilityMissingLabels = missing.map(BookingOptions.equipmentLabel);
@@ -578,14 +584,20 @@ var OptionOrderService = (function () {
       var order = found.record;
       var approving = decision === 'APPROVE';
       var isStaff = order.category === BookingOptions.CATEGORY.STAFF_SERVICE;
+      var isEquipment = order.category === BookingOptions.CATEGORY.EQUIPMENT;
       /* 既に不承認済みの機材注文への再不承認は、何も変えずに現在の結果を返す（冪等）。 */
-      if (!approving && order.category === BookingOptions.CATEGORY.EQUIPMENT && order.status === BookingOptions.STATUS.DECLINED) {
+      if (!approving && isEquipment && order.status === BookingOptions.STATUS.DECLINED) {
         return { success: true, alreadyDecided: true, order: order };
       }
-      /* 承認の対象はスタッフ対応のみ。機材は、対面レクチャー済みの許可を確認できない未払い注文に限り不承認にできる。 */
-      var isEligibilityDecline = !approving && order.category === BookingOptions.CATEGORY.EQUIPMENT &&
+      /* 利用許可（対面レクチャー済み）の確認待ちの機材注文（保留中）。承認＝許可済みにして進める。 */
+      var isEligibilityHold = isEquipment && order.status === BookingOptions.STATUS.PENDING_APPROVAL;
+      /* 承認済み／不承認済みの許可確認注文への再操作は、冪等な結果または状態遷移エラーを返す。 */
+      var isApprovedHold = isEquipment && (order.approvalStatus === BookingOptions.APPROVAL_STATUS.APPROVED || order.approvalStatus === BookingOptions.APPROVAL_STATUS.DECLINED);
+      /* 承認の対象はスタッフ対応と、許可確認待ちの機材注文。許可を確認できない未払いの機材注文
+         （許可の取り消し等）は不承認のみできる。 */
+      var isEligibilityDecline = !approving && isEquipment &&
         order.status === BookingOptions.STATUS.AWAITING_PAYMENT && missingLectureCodes_(order).length > 0;
-      if (!isStaff && !isEligibilityDecline) {
+      if (!isStaff && !isEligibilityHold && !isApprovedHold && !isEligibilityDecline) {
         return fail_('APPROVAL_NOT_REQUIRED', 'この注文は承認の対象ではありません。');
       }
       var targetStatus = approving ? BookingOptions.STATUS.AWAITING_PAYMENT : BookingOptions.STATUS.DECLINED;
@@ -601,6 +613,15 @@ var OptionOrderService = (function () {
         var booking = findBookingView_(order.bookingId);
         var accepts = BookingOptions.checkBookingAcceptsOptions(booking, { addonDeadlineHoursBeforeStart: '' }, effectiveNow);
         if (!accepts.ok) return { success: false, error: accepts.error };
+      }
+      if (approving && isEligibilityHold) {
+        /* 「許可済みにして進める」: 管理者の承認操作そのものが対面レクチャー済みの許可の付与。
+           機材コード単位で許可を記録してから支払い可能な状態へ進める（二重付与しない）。 */
+        missingLectureCodes_(order).forEach(function (code) {
+          if (!OptionOrderRepository.hasEligibilityGrant(order.customerEmail, code)) {
+            OptionOrderRepository.addEligibilityGrant(order.customerEmail, code, '管理者承認(オプション注文 ' + order.optionOrderId + ')', effectiveNow);
+          }
+        });
       }
       var fields = approving
         ? { approvalStatus: BookingOptions.APPROVAL_STATUS.APPROVED, status: targetStatus, approvedAt: effectiveNow }

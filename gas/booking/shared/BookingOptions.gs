@@ -18,9 +18,9 @@
  *   セルフ利用は0円。有料機材は部屋予約確定後の追加Checkout方式（Issue追加要件で正式採用）。
  * - ビデオライト系（定常光）のセルフレンタルは「管理者から対面で操作レクチャーを受け、セルフ利用可と
  *   確認された利用者」のみ（Issue追加確定要件）。利用履歴からは自動で資格ありと判定せず、Adminが
- *   機材コード単位で明示的に付与した許可（OptionEligibility）だけを正とする。未許可の利用者（初回を
- *   含む）は拒否し、メール等の相談案内に留める（誤って即時Checkoutへ進ませない）。ストロボ等へ
- *   追加の資格制限は設けない。
+ *   機材コード単位で明示的に付与した許可（OptionEligibility）だけを正とする。未許可の申込（初回を
+ *   含む）は拒否して消さず、Checkoutを発行しない保留注文（PENDING_APPROVAL）として残し、管理者が
+ *   「許可済みにして進める」か「不承認」にする（部屋予約には影響しない）。ストロボ等へ追加の資格制限は設けない。
  *
  * 【状態の分離】予約（Bookings.status）とオプション注文（OptionOrders）は別の状態を持つ。
  * 注文ごとに approvalStatus / paymentStatus / status を持ち、セッティングのDECLINEDで
@@ -452,7 +452,7 @@ var BookingOptions = (function () {
    * }
    * 戻り値: { ok:true, orders:[{category, items[], amountJpy, approvalStatus, paymentStatus, status}] }
    *        | { ok:false, error }
-   * 副作用なし。重複・未設定価格・資格なしは注文を一件も作らず全体を拒否する。
+   * 副作用なし。重複・在庫超過は注文を一件も作らず全体を拒否する。許可の無いビデオライト系は拒否せず保留注文にする。
    */
   function planOrders(input) {
     var normalized = input.normalized;
@@ -470,8 +470,9 @@ var BookingOptions = (function () {
     });
     var paidItems = [];
     var paidTotal = 0;
+    var holdItems = [];
+    var holdTotal = 0;
     var freeEquipmentItems = [];
-    var needsLecture = [];
     var eligibleCodes = (input.eligibility && input.eligibility.eligibleEquipmentCodes) || [];
     var equipmentCodes = Object.keys(normalized.equipment);
     for (var i = 0; i < equipmentCodes.length; i++) {
@@ -484,17 +485,20 @@ var BookingOptions = (function () {
         return { ok: false, error: err_('STOCK_EXCEEDED', def.label + 'は在庫数（' + def.stock + '点）を超えて申し込めません。', { items: [code] }) };
       }
       if (rental) {
-        paidItems.push(equipmentItemCode_(code, quantity));
-        paidTotal += rental.unitPriceJpy * quantity;
-        /* 資格は機材コード単位: 管理者が対面レクチャー済みとして許可した機材だけ。利用履歴や、別の
-           ビデオライト系機材の許可では通さない。 */
-        if (rental.requiresLecture === true && eligibleCodes.indexOf(code) === -1) needsLecture.push(rental.label);
+        /* 資格は機材コード単位: 管理者が対面レクチャー済みとして許可した機材だけが即時の支払い対象。
+           利用履歴や、別のビデオライト系機材の許可では通さない。許可を確認できない申込は拒否して
+           消さず、Checkoutを発行しない保留注文として残し、管理者が「許可済みにして進める」か
+           「不承認」にする（直接改ざんされた入力でもサーバー側で必ずこの状態に落ちる）。 */
+        if (rental.requiresLecture === true && eligibleCodes.indexOf(code) === -1) {
+          holdItems.push(equipmentItemCode_(code, quantity));
+          holdTotal += rental.unitPriceJpy * quantity;
+        } else {
+          paidItems.push(equipmentItemCode_(code, quantity));
+          paidTotal += rental.unitPriceJpy * quantity;
+        }
       } else {
         freeEquipmentItems.push(equipmentItemCode_(code, quantity));
       }
-    }
-    if (needsLecture.length > 0) {
-      return { ok: false, error: err_('VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE', needsLecture.join('・') + 'のセルフレンタルは、対面で操作レクチャーを受け、利用許可済みの方のみ選択できます。初めての方・レクチャー未実施の方はメールでご相談ください。', { items: needsLecture }) };
     }
     if (paidItems.length > 0) {
       orders.push({
@@ -504,6 +508,16 @@ var BookingOptions = (function () {
         approvalStatus: APPROVAL_STATUS.NOT_REQUIRED,
         paymentStatus: PAYMENT_STATUS.NOT_STARTED,
         status: STATUS.AWAITING_PAYMENT
+      });
+    }
+    if (holdItems.length > 0) {
+      orders.push({
+        category: CATEGORY.EQUIPMENT,
+        items: holdItems,
+        amountJpy: holdTotal,
+        approvalStatus: APPROVAL_STATUS.PENDING_APPROVAL,
+        paymentStatus: PAYMENT_STATUS.NOT_STARTED,
+        status: STATUS.PENDING_APPROVAL
       });
     }
 
@@ -694,7 +708,10 @@ var BookingOptions = (function () {
       approvalStatus: order.approvalStatus,
       paymentStatus: order.paymentStatus,
       status: order.status,
-      requiresApproval: order.category === CATEGORY.STAFF_SERVICE,
+      /* スタッフ対応、および利用許可（対面レクチャー済み）の確認待ちの機材注文は承認制。 */
+      requiresApproval: order.category === CATEGORY.STAFF_SERVICE || order.approvalStatus !== APPROVAL_STATUS.NOT_REQUIRED,
+      /* 未許可のビデオライト系の申込（Checkoutを発行しない保留注文。管理者が許可して進める／不承認）。 */
+      eligibilityHold: order.category === CATEGORY.EQUIPMENT && order.approvalStatus !== APPROVAL_STATUS.NOT_REQUIRED,
       payable: isPayable(order)
     };
   }

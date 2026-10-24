@@ -2767,3 +2767,28 @@ test('describeOptionOrder_ / renderOptionSection_（資格の再検証）: 対�
   assert.ok(html.indexOf('data-option-action="decline"') !== -1);
   assert.ok(html.indexOf('data-option-action="approve"') === -1, '機材は承認ではなく否認のみ');
 });
+
+test('許可確認待ちの機材注文（eligibilityHold）は「許可済みにして進める」と不承認のボタンを出し、確認ダイアログで対面レクチャーの確認を求める', function () {
+  var sandbox = loadClientSandbox();
+  var order = optionOrder({
+    category: 'EQUIPMENT', approvalStatus: 'PENDING_APPROVAL', status: 'PENDING_APPROVAL', requiresApproval: true, eligibilityHold: true,
+    canApprove: true, canDecline: true, eligibilityMissing: true, eligibilityMissingLabels: ['バイカラーCOBライト（定常光）']
+  });
+  var lines = sandbox.describeOptionOrder_(order).join('\n');
+  assert.ok(lines.indexOf('「許可済みにして進める」か不承認を選んでください') !== -1);
+  sandbox.renderOptionSection_({ options: { available: true, guidanceIncomplete: false, orders: [order] } });
+  var html = sandbox.optionUi_.listEl.innerHTML;
+  assert.ok(html.indexOf('>許可済みにして進める</button>') !== -1);
+  assert.ok(html.indexOf('data-option-action="decline"') !== -1);
+
+  var confirmText = '';
+  sandbox.currentDetailBooking_ = { bookingId: 'SX-1', options: { available: true, orders: [order] } };
+  sandbox.window.confirm = function (text) { confirmText = text; return false; };
+  sandbox.runOptionDecision_('approve', 'OPT-AAAA1111');
+  assert.ok(confirmText.indexOf('対面で操作レクチャー済みであることを確認した場合のみ') !== -1);
+  assert.strictEqual(sandbox.google.script.run.calls.filter(function (c) { return c.name === 'adminApproveOptionOrder'; }).length, 0, 'キャンセルなら呼ばない');
+
+  // スタッフ対応(通常の承認)のボタン文言は従来どおり
+  sandbox.renderOptionSection_({ options: { available: true, guidanceIncomplete: false, orders: [optionOrder()] } });
+  assert.ok(sandbox.optionUi_.listEl.innerHTML.indexOf('>承認する</button>') !== -1);
+});

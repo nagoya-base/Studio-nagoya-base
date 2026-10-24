@@ -259,37 +259,63 @@ test('背景スタンドは無料セルフ（0円）。FREE注文に入り、課
   assert.strictEqual(mixed.orders.filter(function (o) { return o.category === 'EQUIPMENT'; })[0].amountJpy, 800);
 });
 
-test('ビデオライト系(定常光)のセルフレンタルは対面レクチャー済みの許可（Admin付与）のみ。未許可は拒否され、決済に進まない', function () {
+test('ビデオライト系(定常光)は対面レクチャー済みの許可（Admin付与）が無ければ拒否せず保留注文にする。Checkoutは発行できず、管理者が許可/不承認する', function () {
   ['COB_BICOLOR', 'PANEL_FULLCOLOR', 'COB_FULLCOLOR'].forEach(function (code) {
     var sel = {}; sel[code] = 1;
     var r = plan(select({ equipment: sel }), { eligibility: NOT_ELIGIBLE });
-    assert.strictEqual(r.ok, false, code);
-    assert.strictEqual(r.error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE', code);
+    assert.strictEqual(r.ok, true, code);
+    assert.strictEqual(r.orders.length, 1, code);
+    var hold = r.orders[0];
+    assert.strictEqual(hold.category, 'EQUIPMENT', code);
+    assert.strictEqual(hold.status, 'PENDING_APPROVAL', code);
+    assert.strictEqual(hold.approvalStatus, 'PENDING_APPROVAL', code);
+    assert.strictEqual(hold.paymentStatus, 'NOT_STARTED', code);
+    assert.strictEqual(BookingOptions.isPayable(hold), false, code + ': 保留注文は支払い不可');
+    assert.strictEqual(BookingOptions.summarizeOrder(hold).eligibilityHold, true, code);
+    assert.strictEqual(BookingOptions.summarizeOrder(hold).requiresApproval, true, code);
   });
-  // ストロボ・アクセサリーには同条件を課さない（実装者判断で資格制限を増やさない）
-  assert.ok(plan(select({ equipment: { STROBE_MONOBLOCK: 1, STROBE_PORTABLE: 1, STAND_260: 1, COMMANDER_SONY: 1, COLOR_FILTER_SET: 1 } }), { eligibility: NOT_ELIGIBLE }).ok);
-  // 資格なしの1件が混ざると注文は1件も作られない（部分作成しない）
-  var mixed = plan(select({ equipment: { COB_BICOLOR: 1, STROBE_MONOBLOCK: 1 }, emailSupport: true }), { eligibility: NOT_ELIGIBLE });
-  assert.strictEqual(mixed.ok, false);
-  assert.strictEqual(mixed.orders, undefined);
-  assert.ok(plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: ELIGIBLE }).ok);
+  // 許可済みなら承認不要・決済待ち
+  var ok = plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: ELIGIBLE });
+  assert.strictEqual(ok.orders[0].status, 'AWAITING_PAYMENT');
+  assert.strictEqual(ok.orders[0].approvalStatus, 'NOT_REQUIRED');
+  assert.strictEqual(BookingOptions.summarizeOrder(ok.orders[0]).eligibilityHold, false);
+  // 資格情報が無い（旧形式・欠落）場合も同じ保留状態に落ちる（fail-closed。直接改ざん入力でも決済へ進まない）
+  [{ videoLightSelfRental: true }, undefined].forEach(function (elig) {
+    var r = BookingOptions.planOrders({ normalized: select({ equipment: { COB_BICOLOR: 1 } }), existingOrders: [], optionsConfig: CONFIG_WITH_PRICES, eligibility: elig });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.orders[0].status, 'PENDING_APPROVAL');
+  });
 });
 
-test('資格は機材コード単位: バイカラーCOBの許可だけでは、未使用のフルカラーCOB・フルカラーパネルは選べない', function () {
+test('ストロボ・アクセサリーには資格制限が無く、未許可でも即決済待ちの注文になる（保留にしない）', function () {
+  var r = plan(select({ equipment: { STROBE_MONOBLOCK: 1, STROBE_PORTABLE: 1, STAND_260: 1, COMMANDER_SONY: 1, COLOR_FILTER_SET: 1 } }), { eligibility: NOT_ELIGIBLE });
+  assert.strictEqual(r.orders.length, 1);
+  assert.strictEqual(r.orders[0].status, 'AWAITING_PAYMENT');
+});
+
+test('定常光とストロボを同時に申し込むと注文が分かれる: ストロボ分は決済待ち、未許可の定常光分だけ保留（保留分の金額が決済額に混ざらない）', function () {
+  var r = plan(select({ equipment: { COB_BICOLOR: 1, STROBE_MONOBLOCK: 1 } }), { eligibility: NOT_ELIGIBLE });
+  assert.strictEqual(r.orders.length, 2);
+  var byStatus = {};
+  r.orders.forEach(function (o) { byStatus[o.status] = o; });
+  assert.strictEqual(byStatus.AWAITING_PAYMENT.amountJpy, 800);
+  assert.deepStrictEqual(plain(byStatus.AWAITING_PAYMENT.items), ['EQ:STROBE_MONOBLOCK:1']);
+  assert.strictEqual(byStatus.PENDING_APPROVAL.amountJpy, 800);
+  assert.deepStrictEqual(plain(byStatus.PENDING_APPROVAL.items), ['EQ:COB_BICOLOR:1']);
+});
+
+test('資格は機材コード単位: バイカラーCOBの許可だけでは、フルカラーCOB・フルカラーパネルは保留になる（許可済み分だけ即決済待ち）', function () {
   var onlyBicolor = { eligibleEquipmentCodes: ['COB_BICOLOR'] };
-  assert.ok(plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: onlyBicolor }).ok);
-  var fullColor = plan(select({ equipment: { COB_FULLCOLOR: 1 } }), { eligibility: onlyBicolor });
-  assert.strictEqual(fullColor.ok, false);
-  assert.strictEqual(fullColor.error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
-  assert.strictEqual(plan(select({ equipment: { PANEL_FULLCOLOR: 1 } }), { eligibility: onlyBicolor }).ok, false);
-  // 複数選択では未経験の機材が1つでもあれば全体を拒否し、エラーに該当機材だけを挙げる
-  var mixed = plan(select({ equipment: { COB_BICOLOR: 1, COB_FULLCOLOR: 1 } }), { eligibility: onlyBicolor });
-  assert.strictEqual(mixed.ok, false);
-  assert.deepStrictEqual(plain(mixed.error.items), ['フルカラーCOBライト（定常光）']);
-  assert.ok(mixed.error.message.indexOf('バイカラー') === -1);
-  // 旧形式(単一のbool)や空の資格では許可しない（fail-closed）
-  assert.strictEqual(plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: { videoLightSelfRental: true } }).ok, false);
-  assert.strictEqual(BookingOptions.planOrders({ normalized: select({ equipment: { COB_BICOLOR: 1 } }), existingOrders: [], optionsConfig: CONFIG_WITH_PRICES }).ok, false, '資格情報が無ければ許可しない');
+  assert.strictEqual(plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: onlyBicolor }).orders[0].status, 'AWAITING_PAYMENT');
+  assert.strictEqual(plan(select({ equipment: { COB_FULLCOLOR: 1 } }), { eligibility: onlyBicolor }).orders[0].status, 'PENDING_APPROVAL');
+  assert.strictEqual(plan(select({ equipment: { PANEL_FULLCOLOR: 1 } }), { eligibility: onlyBicolor }).orders[0].status, 'PENDING_APPROVAL');
+  var mixed = plan(select({ equipment: { COB_BICOLOR: 1, COB_FULLCOLOR: 2 } }), { eligibility: onlyBicolor });
+  assert.strictEqual(mixed.orders.length, 2);
+  var pay = mixed.orders.filter(function (o) { return o.status === 'AWAITING_PAYMENT'; })[0];
+  var hold = mixed.orders.filter(function (o) { return o.status === 'PENDING_APPROVAL'; })[0];
+  assert.deepStrictEqual(plain(pay.items), ['EQ:COB_BICOLOR:1']);
+  assert.deepStrictEqual(plain(hold.items), ['EQ:COB_FULLCOLOR:2']);
+  assert.strictEqual(hold.amountJpy, 1600);
 });
 
 test('lectureRequiredEquipmentCodes / equipmentCodeOfItem: 対象は定常光3機材、機材項目からコードだけを取り出す', function () {

@@ -518,6 +518,7 @@ function buildAdminOptionSummary_(bookingId, timezone) {
           paymentStatus: order.paymentStatus,
           status: order.status,
           requiresApproval: order.requiresApproval,
+          eligibilityHold: order.eligibilityHold === true,
           createdAt: formatAdminDateTime_(order.createdAt, timezone),
           approvedAt: formatAdminDateTime_(order.approvedAt, timezone),
           declinedAt: formatAdminDateTime_(order.declinedAt, timezone),

@@ -58,6 +58,7 @@ var OptionMailTemplates = (function () {
     var guidanceItems = [];
     var hasStaff = false;
     var hasEquipment = false;
+    var hasHold = false;
     orders.forEach(function (order) {
       var state;
       if (order.category === BookingOptions.CATEGORY.FREE) {
@@ -66,6 +67,9 @@ var OptionMailTemplates = (function () {
       } else if (order.category === BookingOptions.CATEGORY.STAFF_SERVICE) {
         state = '状態: 承認待ち（まだ確定していません・お支払いは不要です）';
         hasStaff = true;
+      } else if (order.approvalStatus === BookingOptions.APPROVAL_STATUS.PENDING_APPROVAL) {
+        state = '状態: 利用許可の確認待ち（まだ確定していません・お支払いは不要です）';
+        hasHold = true;
       } else {
         state = '状態: お支払い待ち（ご予約の確定後にお支払いいただけます）';
         hasEquipment = true;
@@ -85,7 +89,11 @@ var OptionMailTemplates = (function () {
       lines.push('');
       lines.push(BookingOptions.NOTICES.STAFF_SERVICE_APPROVAL);
     }
-    if (hasEquipment || hasStaff) {
+    if (hasHold) {
+      lines.push('');
+      lines.push('ビデオライト系機材のセルフレンタルは、対面で操作レクチャーを受け、利用許可済みの方のみご利用いただけます。管理者が許可を確認するまでお支払い・確定はできません。確認後にご案内します（許可が確認できない場合はお受けできません）。');
+    }
+    if (hasEquipment || hasStaff || hasHold) {
       lines.push('');
       lines.push('お支払い・状況のご確認はこちら（予約IDとご登録のメールアドレスで確認します）:');
       lines.push(buildOptionsPageUrl(booking));
@@ -104,13 +112,20 @@ var OptionMailTemplates = (function () {
   /* 承認メール。承認後にオンライン決済をお願いする（Checkoutは案内ページから本人確認後に開始）。 */
   function buildOptionApprovedMail(booking, order, config) {
     var brandLabel = Booking.getBrandLabel(booking.brand);
-    var lines = [
+    var isEquipment = order.category === BookingOptions.CATEGORY.EQUIPMENT;
+    var lines = (isEquipment ? [
+      booking.name + ' 様',
+      '',
+      'ビデオライト系機材のセルフレンタルについて、利用許可を確認しました。',
+      '下記のページからオンライン決済をお願いします。ご予約が確定している場合にお支払いいただけます。お支払いの完了をもって確定となります。',
+      ''
+    ] : [
       booking.name + ' 様',
       '',
       'お申し込みのスタッフ対応について、対応可能と確認できました。',
       '下記のページからオンライン決済をお願いします。お支払いの完了をもって確定となります。',
       ''
-    ].concat(bookingLines_(booking, config)).concat(orderLines_(order)).concat([
+    ]).concat(bookingLines_(booking, config)).concat(orderLines_(order)).concat([
       '',
       'お支払いはこちら（予約IDとご登録のメールアドレスで確認します）:',
       buildOptionsPageUrl(booking),
@@ -118,7 +133,7 @@ var OptionMailTemplates = (function () {
       contactLine_(config),
       signature_(booking)
     ]);
-    return { subject: '【' + brandLabel + '】スタッフ対応を承認しました（お支払いのお願い）', body: joinNonEmpty_(lines) };
+    return { subject: '【' + brandLabel + '】' + (isEquipment ? 'ビデオライト系機材の利用を許可しました（お支払いのお願い）' : 'スタッフ対応を承認しました（お支払いのお願い）'), body: joinNonEmpty_(lines) };
   }
 
   /* 不承認メール。部屋のご予約には影響しないことを明記する。 */

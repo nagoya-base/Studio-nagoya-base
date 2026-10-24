@@ -1957,7 +1957,8 @@ function describeOptionOrder_(order) {
   if (order.declinedAt) lines.push('不承認日時: ' + order.declinedAt + (order.declineReason ? '（' + order.declineReason + '）' : ''));
   if (order.paidAt) lines.push('決済日時: ' + order.paidAt);
   if (order.eligibilityMissing) {
-    lines.push('⚠ 資格未確認: ' + (order.eligibilityMissingLabels || []).join('、') + ' の対面レクチャー済みの利用許可がありません（支払い・確定できません。不承認にできます）');
+    lines.push('⚠ 資格未確認: ' + (order.eligibilityMissingLabels || []).join('、') + ' の対面レクチャー済みの利用許可がありません（支払い・確定できません。' +
+      (order.eligibilityHold ? '「許可済みにして進める」か不承認を選んでください' : '不承認にできます') + '）');
   }
   if (order.recoveryRequired) lines.push('⚠ 要確認: ' + (order.recoveryReason || '決済の照合に問題があります。Stripeを確認してください。'));
   return lines;
@@ -2013,7 +2014,7 @@ function renderOptionSection_(booking) {
     var lines = describeOptionOrder_(order).map(function (line) { return escapeHtml(line); }).join('<br>');
     var buttons = '';
     if (order.canApprove) {
-      buttons += '<button type="button" data-option-action="approve" data-option-order-id="' + escapeHtml(order.optionOrderId) + '"' + (optionUi_.inFlight ? ' disabled' : '') + '>承認する</button> ';
+      buttons += '<button type="button" data-option-action="approve" data-option-order-id="' + escapeHtml(order.optionOrderId) + '"' + (optionUi_.inFlight ? ' disabled' : '') + '>' + (order.eligibilityHold ? '許可済みにして進める' : '承認する') + '</button> ';
     }
     if (order.canDecline) {
       buttons += '<button type="button" data-option-action="decline" data-option-order-id="' + escapeHtml(order.optionOrderId) + '"' + (optionUi_.inFlight ? ' disabled' : '') + '>不承認にする</button>';
@@ -2028,7 +2029,10 @@ function runOptionDecision_(action, optionOrderId) {
   if (!booking || optionUi_.inFlight) return;
   var approving = action === 'approve';
   var reason = '';
-  if (approving) {
+  var targetOrder = ((booking.options && booking.options.orders) || []).filter(function (o) { return o.optionOrderId === optionOrderId; })[0];
+  if (approving && targetOrder && targetOrder.eligibilityHold) {
+    if (!window.confirm('ビデオライト系機材の利用を許可します。\n\n対面で操作レクチャー済みであることを確認した場合のみ実行してください。この利用者に、該当機材の利用許可（対面レクチャー済み）を記録し、オンライン決済に進めるようにします（支払いが完了するまで確定しません）。\n\n実行しますか？')) return;
+  } else if (approving) {
     if (!window.confirm('このスタッフ対応を承認します。\n\n利用者へ承認メールを送り、オンライン決済に進めるようになります（承認後に決済されるまで確定しません）。\n\n実行しますか？')) return;
   } else {
     var input = window.prompt('このオプションを不承認にします。部屋のご予約には影響しません。\n理由（任意。利用者向けメールには載りません）:');
