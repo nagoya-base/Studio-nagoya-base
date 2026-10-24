@@ -93,6 +93,9 @@ test('機材ページは正本(site.data)を直接読み、常設無料・有料
   assert.match(html, /施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要/);
   assert.ok(!/資格制限はありません|資格の制限はありません/.test(html), '資格制限なしの旧文言を残さない');
   assert.match(html, /背景紙ロール[^。]*無料/);
+  assert.match(html, /背景用竹竿[^。]*無料/);
+  assert.match(html, /背景スタンドは有料レンタル機材/);
+  assert.ok(!/背景布・背景スタンドは/.test(html), '背景スタンドを無料扱いにしない');
   assert.ok(html.indexOf('過去にビデオライト') === -1);
   var code = stripComments(html);
   assert.ok(!/\b(800|500|300|200)円/.test(code), '機材の単価をページへ直書きしない');
