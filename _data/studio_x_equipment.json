@@ -21,9 +21,9 @@
       "freeWhenWith": { "codes": ["COB_BICOLOR", "PANEL_FULLCOLOR", "COB_FULLCOLOR", "STROBE_MONOBLOCK", "STROBE_PORTABLE"], "label": "ライト・ストロボとセットで無料／単独200円" } },
     { "code": "BOWENS_BRACKET", "label": "ボーエンズマウントブラケット", "stock": 1, "unitPriceJpy": 200, "unitLabel": "", "requiresLecture": true,
       "freeWhenWith": { "codes": ["STROBE_PORTABLE"], "label": "ポータブルストロボとセットで無料／単独200円" } },
-    { "code": "SOFTBOX_STRIP_60X90", "label": "ストリップソフトボックス（60×90cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresLecture": true },
+    { "code": "SOFTBOX_STRIP_60X90", "label": "ストリップソフトボックス（60×90cm）", "stock": 2, "unitPriceJpy": 300, "unitLabel": "個", "requiresLecture": true },
     { "code": "SOFTBOX_STRIP_30X120", "label": "ストリップソフトボックス（30×120cm）", "stock": 2, "unitPriceJpy": 300, "unitLabel": "個", "requiresLecture": true },
-    { "code": "SOFTBOX_60", "label": "オクタゴンソフトボックス（90cm）", "stock": 2, "unitPriceJpy": 300, "unitLabel": "個", "requiresLecture": true },
+    { "code": "SOFTBOX_60", "label": "オクタゴンソフトボックス（90cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "個", "requiresLecture": true },
     { "code": "COLOR_FILTER_SET", "label": "カラーフィルター（8色セット）", "stock": 1, "unitPriceJpy": 200, "unitLabel": "", "requiresLecture": true }
   ],
   "freeSelf": [

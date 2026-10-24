@@ -118,9 +118,16 @@
     show(els.payNotice, hasPayableBeforeConfirm ? 'お支払いは、ご予約の確定後に行えます。確定のご連絡をお待ちください。' : '');
   }
 
+  /* 予約済みの部屋代（サーバーが予約本体から返した値）。取得できなければnull扱いで、サマリーに部屋代を出さない。 */
+  var bookedRoomPriceJpy = null;
+  function currentRoomPrice() {
+    return { kind: 'booked', status: bookedRoomPriceJpy === null ? 'unavailable' : 'ok', amountJpy: bookedRoomPriceJpy };
+  }
+
   function renderSummary(summary) {
     els.detail.hidden = false;
     var booking = summary.booking || {};
+    bookedRoomPriceJpy = booking.roomPriceJpy !== null && booking.roomPriceJpy !== undefined && Number.isFinite(Number(booking.roomPriceJpy)) ? Number(booking.roomPriceJpy) : null;
     els.dBookingId.textContent = booking.bookingId || '';
     els.dDate.textContent = booking.date || '';
     els.dTime.textContent = booking.startTime ? booking.startTime + '〜' + (booking.endTime || '') : '';
@@ -133,12 +140,13 @@
       els.addClosed.hidden = true;
       if (!panel) {
         /* 後付けでは、申込済みの項目を「追加しない」と選べる（allowNone）。 */
-        panel = Panel.mount({ slot: els.panelSlot, summarySlot: $('bo-summary-slot'), catalog: summary.catalog, allowNone: true, equipmentPageUrl: '../../equipment/', consultUrl: '../../reservation/?intent=consult' });
+        panel = Panel.mount({ slot: els.panelSlot, summarySlot: $('bo-summary-slot'), getRoomPrice: currentRoomPrice, catalog: summary.catalog, allowNone: true, equipmentPageUrl: '../../equipment/', consultUrl: '../../reservation/?intent=consult' });
       } else {
         panel.setCatalog(summary.catalog);
       }
       /* 申込済みのスタッフ対応を加味して、画面の追加請求額をサーバー（computeStaffServiceCharge）と一致させる。 */
       panel.setExistingOrders(summary.orders || []);
+      panel.refreshSummary();
     } else {
       els.add.hidden = true;
       show(els.addClosed, CLOSED_REASONS[summary.acceptsOptionsReason] || 'この予約にはオプションを追加できません。');

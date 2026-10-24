@@ -30,7 +30,7 @@ test('正本の内容がIssueの確定料金・数量・常設無料設備と一
   assert.deepStrictEqual(rental, {
     COB_BICOLOR: '1x800', PANEL_FULLCOLOR: '1x500', COB_FULLCOLOR: '2x1000/台', BACKGROUND_STAND: '1x200', STROBE_MONOBLOCK: '1x800', STROBE_PORTABLE: '1x1000',
     COMMANDER_CANON: '1x300', COMMANDER_SONY: '1x300', STAND_260: '3x200/本', BOWENS_BRACKET: '1x200',
-    SOFTBOX_STRIP_60X90: '1x300', SOFTBOX_STRIP_30X120: '2x300/個', SOFTBOX_60: '2x300/個', COLOR_FILTER_SET: '1x200'
+    SOFTBOX_STRIP_60X90: '2x300/個', SOFTBOX_STRIP_30X120: '2x300/個', SOFTBOX_60: '1x300/個', COLOR_FILTER_SET: '1x200'
   });
   assert.deepStrictEqual(data.permanent.map(function (e) { return e.label + '×' + e.quantity; }), [
     'バイカラーパネルライト（定常光）×2', 'ライトスタンド（100〜190cm）×2', '背景ローラーサポート×1',
