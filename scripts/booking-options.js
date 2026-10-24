@@ -79,29 +79,59 @@
    * （サーバー BookingOptions.normalizeSelection / planOrders と同じ規則）。両方依頼ならセット価格で、
    * 個別価格の合計との差額を「セット割引」として分けて返す。最終請求額はサーバーが決める。
    */
-  function computeSummary(catalog, state) {
+  /* 後付け時: 申込済み（有効）注文のスタッフ対応サービス。サーバー staffServicesOfItems_ と同じ項目コードで判定する。 */
+  function existingStaffServices(existingOrders) {
+    var found = { PRE_SETUP: false, CLEANUP: false };
+    (existingOrders || []).forEach(function (order) {
+      (order.items || []).forEach(function (item) {
+        var code = typeof item === 'string' ? item : (item && item.code) || '';
+        if (code.indexOf('STAFF_PRE_SETUP:') === 0) found.PRE_SETUP = true;
+        if (code.indexOf('STAFF_CLEANUP:') === 0) found.CLEANUP = true;
+      });
+    });
+    return found;
+  }
+
+  function computeSummary(catalog, state, existingOrders) {
     var s = state || {};
     var equipment = {};
     Object.keys(s.equipment || {}).forEach(function (code) {
       if (Number(s.equipment[code]) > 0) equipment[code] = Number(s.equipment[code]);
     });
     var services = (catalog && catalog.staffServices) || {};
+    var existing = existingStaffServices(existingOrders);
     var applicable = (s.layouts || []).length > 0 || hasPaidEquipment(catalog, equipment);
     var setupStaff = applicable && s.setupService === 'STAFF' && !!services.PRE_SETUP;
     var cleanupStaff = applicable && s.cleanupService === 'STAFF' && !!services.CLEANUP;
-    var setupJpy = setupStaff ? Number(services.PRE_SETUP.priceJpy) : 0;
-    var cleanupJpy = cleanupStaff ? Number(services.CLEANUP.priceJpy) : 0;
-    var bundleAdjustmentJpy = setupStaff && cleanupStaff && services.BOTH ? Number(services.BOTH.priceJpy) - setupJpy - cleanupJpy : 0;
+    /* 申込済みのサービスと重複する依頼は、サーバーが DUPLICATE_OPTION で拒否する（validateSelectionで案内）。 */
+    var duplicate = (setupStaff && existing.PRE_SETUP) || (cleanupStaff && existing.CLEANUP);
+    function priceOf(pre, cleanup) {
+      if (pre && cleanup) return services.BOTH ? Number(services.BOTH.priceJpy) : Number(services.PRE_SETUP.priceJpy) + Number(services.CLEANUP.priceJpy);
+      if (pre) return services.PRE_SETUP ? Number(services.PRE_SETUP.priceJpy) : 0;
+      if (cleanup) return services.CLEANUP ? Number(services.CLEANUP.priceJpy) : 0;
+      return 0;
+    }
+    var setupJpy = setupStaff && !existing.PRE_SETUP ? Number(services.PRE_SETUP.priceJpy) : 0;
+    var cleanupJpy = cleanupStaff && !existing.CLEANUP ? Number(services.CLEANUP.priceJpy) : 0;
+    /* 今回の追加請求額 = 「既存＋今回」のセット価格 − 「既存」のセット価格（サーバー computeStaffServiceCharge と同じ式）。 */
+    var staffJpy = (setupStaff || cleanupStaff) && !duplicate
+      ? priceOf(existing.PRE_SETUP || setupStaff, existing.CLEANUP || cleanupStaff) - priceOf(existing.PRE_SETUP, existing.CLEANUP)
+      : 0;
+    if (duplicate) { setupJpy = 0; cleanupJpy = 0; }
+    var bundleAdjustmentJpy = duplicate ? 0 : staffJpy - setupJpy - cleanupJpy;
     var equipmentJpy = equipmentTotalJpy(catalog, equipment);
     return {
       equipmentJpy: equipmentJpy,
       setupJpy: setupJpy,
       cleanupJpy: cleanupJpy,
       bundleAdjustmentJpy: bundleAdjustmentJpy,
+      staffJpy: staffJpy,
       setupMethod: applicable ? normalizeService(s.setupService) : 'SELF',
       cleanupMethod: applicable ? normalizeService(s.cleanupService) : 'SELF',
+      existingStaff: existing,
+      duplicate: !!duplicate,
       applicable: applicable,
-      totalJpy: equipmentJpy + setupJpy + cleanupJpy + bundleAdjustmentJpy
+      totalJpy: equipmentJpy + staffJpy
     };
   }
 
@@ -110,7 +140,7 @@
   }
 
   /* 送信前のクライアント側チェック（最終判定はサーバー）。エラー文言 or ''。 */
-  function validateSelection(state, catalog) {
+  function validateSelection(state, catalog, existingOrders) {
     var s = state || {};
     var layouts = s.layouts || [];
     /* 機材レンタルの設営方法はセルフ/スタッフの2択（後付けでも「追加しない」は選べない）。スタッフ設営はテーマ未選択でも依頼できる。 */
@@ -120,6 +150,9 @@
     /* 片付け方法も同様に必須（Issue #441）。 */
     if (catalog && hasPaidEquipment(catalog, s.equipment) && !(s.cleanupChosen === true && (s.cleanupService === 'SELF' || s.cleanupService === 'STAFF'))) {
       return '機材をレンタルする場合は、片付け方法（セルフ片付け／スタッフ片付け）を選択してください。';
+    }
+    if (catalog && existingOrders && computeSummary(catalog, s, existingOrders).duplicate) {
+      return '既に申し込み済みのスタッフ対応（設営／片付け）は重複して追加できません。申込済みの項目は「セルフ」または「追加しない」を選んでください。';
     }
     var staff = layouts.length > 0 && (s.setupService === 'STAFF' || s.cleanupService === 'STAFF');
     if (staff && layouts.length !== 1) {
@@ -248,12 +281,14 @@
     var slot = config.slot;
     var catalog = config.catalog || null;
     var state = { equipment: {}, layouts: [], setupService: 'SELF', setupChosen: false, cleanupService: 'SELF', cleanupChosen: false, emailSupport: false };
+    var existingOrders = config.existingOrders || [];
     var controller = {
       isAvailable: function () { return !!(catalog && catalog.enabled); },
       getState: function () { return JSON.parse(JSON.stringify(state)); },
       getSelection: function () { return buildSelection(state); },
-      validate: function () { return validateSelection(state, catalog); },
-      getSummary: function () { return computeSummary(catalog, state); },
+      validate: function () { return validateSelection(state, catalog, existingOrders); },
+      getSummary: function () { return computeSummary(catalog, state, existingOrders); },
+      setExistingOrders: function (orders) { existingOrders = orders || []; render(); },
       summaryLines: function () { return summarize(catalog, state); },
       reset: function () { state = { equipment: {}, layouts: [], setupService: 'SELF', setupChosen: false, cleanupService: 'SELF', cleanupChosen: false, emailSupport: false }; render(); },
       setCatalog: function (next) { catalog = next; render(); },
@@ -369,8 +404,13 @@
         }
 
         var price = staffServicePrice(catalog, state.setupService, state.cleanupService);
+        var existingStaff = computeSummary(catalog, state, existingOrders).existingStaff;
         if (price) {
-          root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', text: price.label + '：' + formatJpy(price.priceJpy) + '（税込）' }));
+          /* 後付けで申込済みのスタッフ対応がある場合は、セット価格ではなく今回の追加請求額を示す。 */
+          var bannerText = existingStaff.PRE_SETUP || existingStaff.CLEANUP
+            ? '今回のスタッフ対応の追加料金：' + formatJpy(computeSummary(catalog, state, existingOrders).staffJpy) + '（申込済み分との差額・税込）'
+            : price.label + '：' + formatJpy(price.priceJpy) + '（税込）';
+          root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', text: bannerText }));
           root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', text: (catalog.notices && catalog.notices.STAFF_SERVICE_APPROVAL) || '' }));
         } else {
           root.appendChild(el('p', { className: 'ba-field-help', text: 'セルフで設営・原状復帰する場合は無料で、スタッフの空き確認は不要です。選択後、予約案内に保管場所・セット方法・原状復帰方法を記載します。' }));
@@ -399,11 +439,11 @@
         return;
       }
       target.hidden = false;
-      var sum = computeSummary(catalog, state);
+      var sum = computeSummary(catalog, state, existingOrders);
       var rows = [['機材レンタル小計', formatJpy(sum.equipmentJpy)]];
       if (sum.applicable) {
-        rows.push(['スタッフ設営', sum.setupMethod === 'STAFF' ? formatJpy(sum.setupJpy) : (sum.setupMethod === 'NONE' ? '追加なし' : '0円（セルフ）')]);
-        rows.push(['スタッフ片付け', sum.cleanupMethod === 'STAFF' ? formatJpy(sum.cleanupJpy) : (sum.cleanupMethod === 'NONE' ? '追加なし' : '0円（セルフ）')]);
+        rows.push(['スタッフ設営', sum.existingStaff.PRE_SETUP ? (sum.setupMethod === 'STAFF' ? '0円（申込済み）' : '0円（申込済み・追加なし）') : (sum.setupMethod === 'STAFF' ? formatJpy(sum.setupJpy) : (sum.setupMethod === 'NONE' ? '追加なし' : '0円（セルフ）'))]);
+        rows.push(['スタッフ片付け', sum.existingStaff.CLEANUP ? (sum.cleanupMethod === 'STAFF' ? '0円（申込済み）' : '0円（申込済み・追加なし）') : (sum.cleanupMethod === 'STAFF' ? formatJpy(sum.cleanupJpy) : (sum.cleanupMethod === 'NONE' ? '追加なし' : '0円（セルフ）'))]);
       } else {
         rows.push(['スタッフ設営', '0円']);
         rows.push(['スタッフ片付け', '0円']);
@@ -419,7 +459,7 @@
       target.appendChild(el('div', { className: 'ba-banner ba-banner--notice ba-option-summary', role: 'status', 'aria-live': 'polite' }, [
         el('h3', { className: 'ba-option-heading', text: '料金サマリー（税込）' }),
         list,
-        el('p', { className: 'ba-field-help', text: 'スタッフ対応分は承認後、機材分は部屋の予約確定後にお支払いいただきます。最終金額は申込時にサーバーで確定します。' })
+        el('p', { className: 'ba-field-help', text: 'スタッフ対応分は承認後、機材分は部屋の予約確定後にお支払いいただきます。申込済みのスタッフ対応がある場合は、セット価格との差額を表示しています。' })
       ]));
     }
 

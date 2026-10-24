@@ -137,6 +137,8 @@
       } else {
         panel.setCatalog(summary.catalog);
       }
+      /* 申込済みのスタッフ対応を加味して、画面の追加請求額をサーバー（computeStaffServiceCharge）と一致させる。 */
+      panel.setExistingOrders(summary.orders || []);
     } else {
       els.add.hidden = true;
       show(els.addClosed, CLOSED_REASONS[summary.acceptsOptionsReason] || 'この予約にはオプションを追加できません。');

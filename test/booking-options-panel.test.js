@@ -335,3 +335,36 @@ test('オクタゴンソフトボックス（90cm）は300円/個・最大2個�
   var item = SERVER_CATALOG.equipment.filter(function (e) { return e.code === 'SOFTBOX_60'; })[0];
   assert.deepStrictEqual([item.label, item.unitPriceJpy, item.stock, item.unitLabel], ['オクタゴンソフトボックス（90cm）', 300, 2, '個']);
 });
+
+test('後付け: 申込済みのスタッフ対応があるとき、画面の追加請求額はサーバー（planOrders）の差額計算と一致する（Issue #441 レビュー対応）', function () {
+  var equipment = { COB_FULLCOLOR: 1 };
+  var cases = [
+    { existing: ['STAFF_PRE_SETUP:EQUIPMENT'], setup: 'SELF', cleanup: 'STAFF', staff: 2000 },
+    { existing: ['STAFF_CLEANUP:EQUIPMENT'], setup: 'STAFF', cleanup: 'SELF', staff: 2000 },
+    { existing: ['STAFF_PRE_SETUP:EQUIPMENT'], setup: 'SELF', cleanup: 'SELF', staff: 0 },
+    { existing: [], setup: 'STAFF', cleanup: 'STAFF', staff: 5000 }
+  ];
+  cases.forEach(function (c) {
+    var normalized = gasSandbox.BookingOptions.normalizeSelection({ equipment: equipment, setupService: c.setup, cleanupService: c.cleanup });
+    assert.ok(normalized.ok, JSON.stringify(normalized.error));
+    var existingOrders = c.existing.length ? [{ status: 'PENDING_APPROVAL', items: c.existing }] : [];
+    var planned = gasSandbox.BookingOptions.planOrders({
+      normalized: normalized.normalized, existingOrders: existingOrders, optionsConfig: {},
+      eligibility: { eligibleEquipmentCodes: gasSandbox.BookingOptions.lectureRequiredEquipmentCodes() }
+    });
+    assert.ok(planned.ok, JSON.stringify(planned.error));
+    var serverTotal = planned.orders.reduce(function (sum, o) { return sum + o.amountJpy; }, 0);
+    var clientOrders = c.existing.map(function (code) { return { items: [{ code: code, label: code }], status: 'PENDING_APPROVAL' }; });
+    var sum = Panel.computeSummary(SERVER_CATALOG, { equipment: equipment, setupService: c.setup, cleanupService: c.cleanup }, clientOrders);
+    assert.strictEqual(sum.staffJpy, c.staff, JSON.stringify(c));
+    assert.strictEqual(sum.totalJpy, serverTotal, JSON.stringify(c));
+    assert.strictEqual(sum.setupJpy + sum.cleanupJpy + sum.bundleAdjustmentJpy, c.staff, '内訳の合計は追加請求額と一致する');
+  });
+});
+
+test('後付け: 申込済みと同じスタッフ対応の再依頼は重複として画面でも止める（サーバーはDUPLICATE_OPTION）', function () {
+  var state = { equipment: { COB_FULLCOLOR: 1 }, setupService: 'STAFF', setupChosen: true, cleanupService: 'SELF', cleanupChosen: true };
+  var existing = [{ items: [{ code: 'STAFF_PRE_SETUP:EQUIPMENT' }], status: 'AWAITING_PAYMENT' }];
+  assert.ok(Panel.validateSelection(state, SERVER_CATALOG, existing).indexOf('重複') !== -1);
+  assert.strictEqual(Panel.validateSelection(state, SERVER_CATALOG, []), '');
+});
