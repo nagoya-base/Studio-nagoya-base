@@ -476,3 +476,104 @@ test('利用日の曜日表示: 別の曜日（2026-10-05は月曜日）でも�
   var mail = templates.buildConfirmedMail(record, CONFIG);
   assert.match(mail.body, /利用日: 2026-10-05（月）/);
 });
+
+/*
+ * ============================================================================
+ * Issue #422: SNB / SNB mens / Studio X の案内メール分離
+ * ============================================================================
+ */
+var BRAND_CASES = [
+  { brand: 'snb', label: 'SNB', path: '/Studio-nagoya-base/booking/', guide: '/Studio-nagoya-base/how-to/', signature: 'Studio Nagoya Base' },
+  { brand: 'mens', label: 'SNB mens', path: '/mens/booking/', guide: '/mens/how-to/', signature: 'SNB mens（Studio Nagoya Base）' },
+  { brand: 'studio_x', label: 'Studio X', path: '/studio-x/booking/', guide: '/studio-x/how-to/', signature: 'Studio X' }
+];
+var ALL_BUILDERS_ = {
+  buildPendingMail: function (t, r) { return t.buildPendingMail(r, CONFIG); },
+  buildConfirmedMail: function (t, r) { return t.buildConfirmedMail(r, CONFIG); },
+  buildCancelledMail: function (t, r) { return t.buildCancelledMail(r, CONFIG); },
+  buildExpiredMail: function (t, r) { return t.buildExpiredMail(r, CONFIG); },
+  buildReminderMail: function (t, r) { return t.buildReminderMail(r, CONFIG, DUMMY_ACCESS_GUIDE, { now: new Date('2026-09-30T18:00:00+09:00') }); },
+  buildPaymentLinkMail: function (t, r) { return t.buildPaymentLinkMail(r, CONFIG, 'https://buy.stripe.com/test_abc'); },
+  buildPriceUpdateMail: function (t, r) { return t.buildPriceUpdateMail(r, CONFIG); },
+  buildRefundedMail: function (t, r) { return t.buildRefundedMail(r, CONFIG); }
+};
+
+BRAND_CASES.forEach(function (c) {
+  Object.keys(ALL_BUILDERS_).forEach(function (name) {
+    test('Issue #422: ' + name + ' は ' + c.brand + ' の署名・ブランド名を出し、共通予約情報を欠落させない', function () {
+      var t = loadTemplates();
+      var record = sampleRecord({ brand: c.brand, priceAmount: 8000, refundAmount: 4000 });
+      var mail = ALL_BUILDERS_[name](t, record);
+      var text = mail.subject + '\n' + mail.body;
+      assert.ok(mail.subject.indexOf('【' + c.label + '】') === 0, mail.subject);
+      assert.ok(mail.body.indexOf('--\n' + c.signature) !== -1, '署名: ' + c.signature);
+      assert.match(mail.body, /SX-20261001-AAAAAAAA/);
+      assert.match(mail.body, /山田太郎/);
+      assert.match(mail.body, /contact@example\.com/);
+      /* 他ブランドの案内先URL・署名を混入させない */
+      BRAND_CASES.filter(function (o) { return o.brand !== c.brand; }).forEach(function (o) {
+        if (o.brand !== 'snb') {
+          assert.ok(text.indexOf(o.path) === -1, o.brand + 'のURLが混入: ' + name);
+        }
+      });
+    });
+  });
+});
+
+test('Issue #422: Studio XのメールにSNB / mens / 緊縛の表現・リンクを含めない', function () {
+  var t = loadTemplates();
+  var record = sampleRecord({ brand: 'studio_x', priceAmount: 8000, refundAmount: 4000, paymentMethod: 'オンラインクレジットカード' });
+  Object.keys(ALL_BUILDERS_).forEach(function (name) {
+    var mail = ALL_BUILDERS_[name](t, record);
+    var text = mail.subject + '\n' + mail.body;
+    assert.ok(!/緊縛|SNB|Studio Nagoya Base|\/mens\//.test(text), name + ': ' + text);
+    assert.ok(!/nagoya-base\.github\.io\/Studio-nagoya-base\/(booking|how-to)\//.test(text), name + ': SNB向けURL');
+  });
+});
+
+test('Issue #422: キャンセル・失効メールは各ブランドの予約ページへ誘導する', function () {
+  var t = loadTemplates();
+  var expected = {
+    snb: 'https://nagoya-base.github.io/Studio-nagoya-base/booking/',
+    mens: 'https://nagoya-base.github.io/Studio-nagoya-base/mens/booking/',
+    studio_x: 'https://nagoya-base.github.io/Studio-nagoya-base/studio-x/booking/'
+  };
+  Object.keys(expected).forEach(function (brand) {
+    var record = sampleRecord({ brand: brand });
+    assert.ok(t.buildCancelledMail(record, CONFIG).body.indexOf('再度のご予約はこちら: ' + expected[brand]) !== -1);
+    assert.ok(t.buildExpiredMail(record, CONFIG).body.indexOf('再度のご予約はこちら: ' + expected[brand]) !== -1);
+  });
+});
+
+test('Issue #422: 仮予約・確定メールは各ブランドの利用案内URLを出す', function () {
+  var t = loadTemplates();
+  var expected = {
+    snb: 'https://nagoya-base.github.io/Studio-nagoya-base/how-to/',
+    mens: 'https://nagoya-base.github.io/Studio-nagoya-base/mens/how-to/',
+    studio_x: 'https://nagoya-base.github.io/Studio-nagoya-base/studio-x/how-to/'
+  };
+  Object.keys(expected).forEach(function (brand) {
+    var record = sampleRecord({ brand: brand });
+    assert.ok(t.buildPendingMail(record, CONFIG).body.indexOf('ご利用案内: ' + expected[brand]) !== -1);
+    assert.ok(t.buildConfirmedMail(record, CONFIG).body.indexOf('ご利用案内: ' + expected[brand]) !== -1);
+  });
+});
+
+test('Issue #422: 前日リマインドの利用案内ページ — SNBは従来のACCESS_GUIDE_URL優先、mens/Studio Xはブランド別URL', function () {
+  var t = loadTemplates();
+  var opts = { now: new Date('2026-09-30T18:00:00+09:00') };
+  var snb = t.buildReminderMail(sampleRecord({ brand: 'snb' }), CONFIG, DUMMY_ACCESS_GUIDE, opts);
+  assert.ok(snb.body.indexOf('利用案内ページ: https://example.com/how-to') !== -1);
+  var mens = t.buildReminderMail(sampleRecord({ brand: 'mens' }), CONFIG, DUMMY_ACCESS_GUIDE, opts);
+  assert.ok(mens.body.indexOf('利用案内ページ: https://nagoya-base.github.io/Studio-nagoya-base/mens/how-to/') !== -1);
+  var sx = t.buildReminderMail(sampleRecord({ brand: 'studio_x' }), CONFIG, DUMMY_ACCESS_GUIDE, opts);
+  assert.ok(sx.body.indexOf('利用案内ページ: https://nagoya-base.github.io/Studio-nagoya-base/studio-x/how-to/') !== -1);
+  assert.ok(sx.body.indexOf('example.com/how-to') === -1);
+});
+
+test('Issue #422: brandが空の既存予約データはSNB扱いでメールを組み立てられる（後方互換）', function () {
+  var t = loadTemplates();
+  var mail = t.buildPendingMail(sampleRecord({ brand: '' }), CONFIG);
+  assert.ok(mail.body.indexOf('--\nStudio Nagoya Base') !== -1);
+  assert.match(mail.body, /SX-20261001-AAAAAAAA/);
+});

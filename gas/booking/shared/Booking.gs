@@ -228,6 +228,89 @@ var Booking = (function () {
   }
 
   /*
+   * ブランド（導線）別の案内設定（Issue #422）。SNB / SNB mens / Studio Xの案内メール・
+   * Stripe Checkoutの戻り先を分離するための唯一の定義。予約日時・料金・予約ID等の共通情報は
+   * 各テンプレートで共通ロジックのまま、ここにはブランド固有の「表示名・案内先URL・署名・
+   * 注意事項・戻り先パス」だけを持つ。
+   * - brand判定は既存予約データのbrand列（snb / mens / studio_x）を正とする。mensを
+   *   SNBへ丸めない。brandが空・未知の過去データはSNBとして扱う（後方互換）。
+   * - Studio Xの文面にはSNB・緊縛向けの表現やリンクを一切含めない。
+   * - successPath / cancelPathはサイトルートからの相対パス。実際のURLは
+   *   resolveCheckoutReturnUrlsがScript Properties由来のSNB用URLから導出する。
+   */
+  var SITE_BASE_URL_ = 'https://nagoya-base.github.io/Studio-nagoya-base';
+  var BRAND_PROFILES_ = {
+    snb: {
+      key: 'snb',
+      signature: 'Studio Nagoya Base',
+      siteUrl: SITE_BASE_URL_ + '/',
+      bookingUrl: SITE_BASE_URL_ + '/booking/',
+      guideUrl: SITE_BASE_URL_ + '/how-to/',
+      pathPrefix: '',
+      notes: []
+    },
+    mens: {
+      key: 'mens',
+      signature: 'SNB mens（Studio Nagoya Base）',
+      siteUrl: SITE_BASE_URL_ + '/mens/',
+      bookingUrl: SITE_BASE_URL_ + '/mens/booking/',
+      guideUrl: SITE_BASE_URL_ + '/mens/how-to/',
+      pathPrefix: '/mens',
+      notes: []
+    },
+    studio_x: {
+      key: 'studio_x',
+      signature: 'Studio X',
+      siteUrl: SITE_BASE_URL_ + '/studio-x/',
+      bookingUrl: SITE_BASE_URL_ + '/studio-x/booking/',
+      guideUrl: SITE_BASE_URL_ + '/studio-x/how-to/',
+      pathPrefix: '/studio-x',
+      notes: []
+    }
+  };
+
+  function getBrandProfile(brand) {
+    return BRAND_PROFILES_[brand] || BRAND_PROFILES_.snb;
+  }
+
+  /* SNB用の戻り先URL（既存のScript Properties値）の末尾パスを、ブランド別パスへ差し替える。
+     クエリ・フラグメント（例: ?session_id={CHECKOUT_SESSION_ID}）は保持する。
+     末尾パスが想定と異なり導出できない場合はnullを返す。 */
+  function swapBrandPath_(url, snbSuffix, prefix) {
+    var match = /^([^?#]*)([?#].*)?$/.exec(String(url || ''));
+    if (!match) return null;
+    var path = match[1];
+    if (path.length < snbSuffix.length || path.slice(-snbSuffix.length) !== snbSuffix) return null;
+    return path.slice(0, path.length - snbSuffix.length) + prefix + snbSuffix + (match[2] || '');
+  }
+
+  /*
+   * Stripe Checkoutのsuccess_url / cancel_urlをブランド別に解決する（Issue #422）。
+   * 優先順位: (1) ブランド別Script Property（stripeConfig.successUrls / cancelUrls[brand]）
+   * → (2) SNB用の既存URL（successUrl / cancelUrl）の末尾
+   * '/booking/payment-complete.html' / '/booking/' をブランド別パスへ差し替えて導出
+   * → (3) 導出できなければSNB用の既存URLをそのまま使う（後方互換。既存の単一URL設定の環境でも
+   * Checkoutが止まらない）。SNBは常に既存URLをそのまま使う。
+   * 決済の成立条件・金額・有効期限には一切関与しない（戻り先URLのみ）。
+   */
+  var SUCCESS_PATH_SUFFIX_ = '/booking/payment-complete.html';
+  var CANCEL_PATH_SUFFIX_ = '/booking/';
+
+  function resolveCheckoutReturnUrls(brand, stripeConfig) {
+    var config = stripeConfig || {};
+    var profile = getBrandProfile(brand);
+    var successUrl = config.successUrl || '';
+    var cancelUrl = config.cancelUrl || '';
+    if (profile.key !== 'snb') {
+      var successOverride = config.successUrls && config.successUrls[profile.key];
+      var cancelOverride = config.cancelUrls && config.cancelUrls[profile.key];
+      successUrl = successOverride || swapBrandPath_(successUrl, SUCCESS_PATH_SUFFIX_, profile.pathPrefix) || successUrl;
+      cancelUrl = cancelOverride || swapBrandPath_(cancelUrl, CANCEL_PATH_SUFFIX_, profile.pathPrefix) || cancelUrl;
+    }
+    return { successUrl: successUrl, cancelUrl: cancelUrl };
+  }
+
+  /*
    * PENDINGからCONFIRMED/CANCELLED/EXPIREDへ、CONFIRMEDからCANCELLEDへの遷移のみを許可する
    * （Issue #272で管理者キャンセルを追加し、CONFIRMEDを終端状態から外した）。
    * CANCELLED/EXPIREDはいずれも終端状態のまま（CANCELLED→CANCELLEDの二重実行は
@@ -724,6 +807,8 @@ var Booking = (function () {
        validateCreateBookingInputと同じ形式検証を再利用するための公開API。 */
     isValidEmail: isValidEmail_,
     getBrandLabel: getBrandLabel,
+    getBrandProfile: getBrandProfile,
+    resolveCheckoutReturnUrls: resolveCheckoutReturnUrls,
     getCustomerTypeLabel: getCustomerTypeLabel,
     canTransition: canTransition,
     isAllowedBrand: isAllowedBrand,

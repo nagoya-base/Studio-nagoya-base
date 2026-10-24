@@ -1217,3 +1217,77 @@ test('expirePendingBookings: 現地払い(PayPay)予約は既存の24時間TTL�
   assert.strictEqual(result.expiredCount, 1);
   assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
 });
+
+/*
+ * ============================================================================
+ * Issue #422: success_url / cancel_url のブランド別生成（戻り先のみ。金額・期限は不変）
+ * ============================================================================
+ */
+var BRAND_URL_PROPERTIES = {
+  STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.test/Studio-nagoya-base/booking/payment-complete.html?session_id={CHECKOUT_SESSION_ID}',
+  STRIPE_CHECKOUT_CANCEL_URL: 'https://example.test/Studio-nagoya-base/booking/'
+};
+
+function checkoutPayloadForBrand_(brand, properties) {
+  var ctx = setup({ properties: properties || BRAND_URL_PROPERTIES });
+  var bookingId = createBookingRow(ctx, { brand: brand, bookingId: 'ID-' + brand + '-20261001-AAAAAAAA' });
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  return parseFormPayload_(ctx.urlFetchApp._calls[0].options.payload);
+}
+
+test('Issue #422: SNB予約は既存のsuccess/cancel URLをそのまま使う', function () {
+  var payload = checkoutPayloadForBrand_('snb');
+  assert.strictEqual(payload.success_url, BRAND_URL_PROPERTIES.STRIPE_CHECKOUT_SUCCESS_URL);
+  assert.strictEqual(payload.cancel_url, BRAND_URL_PROPERTIES.STRIPE_CHECKOUT_CANCEL_URL);
+});
+
+test('Issue #422: mens予約はmens配下の戻り先へ導出し、session_idプレースホルダを保持する', function () {
+  var payload = checkoutPayloadForBrand_('mens');
+  assert.strictEqual(payload.success_url, 'https://example.test/Studio-nagoya-base/mens/booking/payment-complete.html?session_id={CHECKOUT_SESSION_ID}');
+  assert.strictEqual(payload.cancel_url, 'https://example.test/Studio-nagoya-base/mens/booking/');
+});
+
+test('Issue #422: Studio X予約はstudio-x配下の戻り先へ導出する', function () {
+  var payload = checkoutPayloadForBrand_('studio_x');
+  assert.strictEqual(payload.success_url, 'https://example.test/Studio-nagoya-base/studio-x/booking/payment-complete.html?session_id={CHECKOUT_SESSION_ID}');
+  assert.strictEqual(payload.cancel_url, 'https://example.test/Studio-nagoya-base/studio-x/booking/');
+});
+
+test('Issue #422: ブランド別Script Propertyがあれば導出より優先する', function () {
+  var props = Object.assign({}, BRAND_URL_PROPERTIES, {
+    STRIPE_CHECKOUT_SUCCESS_URL_MENS: 'https://example.test/custom-mens-success',
+    STRIPE_CHECKOUT_CANCEL_URL_MENS: 'https://example.test/custom-mens-cancel'
+  });
+  var payload = checkoutPayloadForBrand_('mens', props);
+  assert.strictEqual(payload.success_url, 'https://example.test/custom-mens-success');
+  assert.strictEqual(payload.cancel_url, 'https://example.test/custom-mens-cancel');
+  var studioX = checkoutPayloadForBrand_('studio_x', props);
+  assert.ok(studioX.success_url.indexOf('/studio-x/booking/payment-complete.html') !== -1, '他ブランドのPropertyは影響しない');
+});
+
+test('Issue #422: 導出できない単一URL設定（既存環境）はSNB用URLへフォールバックし、決済は止まらない', function () {
+  var payload = checkoutPayloadForBrand_('studio_x', {
+    STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.com/success',
+    STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/cancel'
+  });
+  assert.strictEqual(payload.success_url, 'https://example.com/success');
+  assert.strictEqual(payload.cancel_url, 'https://example.com/cancel');
+});
+
+test('Issue #422: brandが空・未知の既存予約データはSNBとして扱う（後方互換）', function () {
+  var ctx = setup({ properties: BRAND_URL_PROPERTIES });
+  var urls = ctx.sandbox.Booking.resolveCheckoutReturnUrls('', {
+    successUrl: BRAND_URL_PROPERTIES.STRIPE_CHECKOUT_SUCCESS_URL,
+    cancelUrl: BRAND_URL_PROPERTIES.STRIPE_CHECKOUT_CANCEL_URL
+  });
+  assert.strictEqual(urls.successUrl, BRAND_URL_PROPERTIES.STRIPE_CHECKOUT_SUCCESS_URL);
+  assert.strictEqual(urls.cancelUrl, BRAND_URL_PROPERTIES.STRIPE_CHECKOUT_CANCEL_URL);
+});
+
+test('Issue #422: ブランド別URLでも金額・通貨・有効期限・metadataは従来どおり', function () {
+  var payload = checkoutPayloadForBrand_('mens');
+  assert.strictEqual(payload['line_items[0][price_data][unit_amount]'], '8000');
+  assert.strictEqual(payload['metadata[brand]'], 'mens');
+  assert.ok(Number(payload.expires_at) > 0);
+});

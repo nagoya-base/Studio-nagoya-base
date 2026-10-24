@@ -49,6 +49,24 @@ var BookingMailTemplates = (function () {
   }
 
   /*
+   * ブランド（SNB / SNB mens / Studio X）別の案内先URL・署名・注意事項（Issue #422）。
+   * 設定の唯一の定義はBooking.getBrandProfile。ここでは各テンプレートが共通ロジックのまま
+   * 末尾へ差し込むだけで、予約日時・料金等の共通情報の組み立てはブランドで分岐させない。
+   */
+  function guideLine_(record) {
+    return 'ご利用案内: ' + Booking.getBrandProfile(record.brand).guideUrl;
+  }
+
+  function rebookLine_(record) {
+    return '再度のご予約はこちら: ' + Booking.getBrandProfile(record.brand).bookingUrl;
+  }
+
+  function signatureLines_(record) {
+    var profile = Booking.getBrandProfile(record.brand);
+    return joinNonEmpty_(profile.notes.concat(['', '--', profile.signature]));
+  }
+
+  /*
    * 利用料金の表示行（Issue #342）。record.priceAmountが数値化できない場合（列自体を
    * 持たない過去の予約、または想定外の空値）は空文字を返し、joinNonEmpty_により行自体を
    * 出さない（料金データがないことをエラーにせず、既存予約との後方互換を保つ）。
@@ -131,7 +149,9 @@ var BookingMailTemplates = (function () {
       record.paymentMethod ? '支払方法: ' + record.paymentMethod : '',
       '',
       isCard ? buildCardPendingNotice_(record, config) : '',
-      contactLine_(config)
+      contactLine_(config),
+      guideLine_(record),
+      signatureLines_(record)
     ]);
 
     return { subject: subject, body: body };
@@ -171,7 +191,9 @@ var BookingMailTemplates = (function () {
       '',
       accessGuideNoticeLine_(record, timezone),
       'ご不明点やキャンセル・変更のご希望は下記までご連絡ください。',
-      contactLine_(config)
+      contactLine_(config),
+      guideLine_(record),
+      signatureLines_(record)
     ]);
 
     return { subject: subject, body: body };
@@ -201,7 +223,9 @@ var BookingMailTemplates = (function () {
       '',
       refundNoticeLines_(record),
       '改めてご利用をご希望の場合は、お手数ですが再度ご予約ください。',
-      contactLine_(config)
+      rebookLine_(record),
+      contactLine_(config),
+      signatureLines_(record)
     ]);
 
     return { subject: subject, body: body };
@@ -296,7 +320,8 @@ var BookingMailTemplates = (function () {
       '返金額: ' + amount,
       '',
       'カードのご利用明細への反映時期はカード会社により異なり、数日〜数週間かかる場合があります。',
-      contactLine_(config)
+      contactLine_(config),
+      signatureLines_(record)
     ]);
     return { subject: subject, body: body };
   }
@@ -329,8 +354,10 @@ var BookingMailTemplates = (function () {
       'ブランド: ' + brandLabel,
       '',
       '改めてご利用をご希望の場合は、お手数ですが予約ページから再度お申し込みください。',
+      rebookLine_(record),
       'すでにお支払いが完了している場合は、再度のお申し込みや二重のお支払いをせず、下記までご連絡ください。',
-      contactLine_(config)
+      contactLine_(config),
+      signatureLines_(record)
     ]);
 
     return { subject: subject, body: body };
@@ -396,7 +423,8 @@ var BookingMailTemplates = (function () {
       '期限までにお支払いのうえ、予約確定のご連絡をお待ちください。このメールの送信のみでは予約は確定しておりません。',
       '期限までに確定のご連絡ができなかった場合、予約は自動的に失効いたします。',
       'すでにお支払いが完了しているにもかかわらず予約が失効した場合は、再度のお申し込みや二重のお支払いをせず、下記までご連絡ください。',
-      contactLine_(config)
+      contactLine_(config),
+      signatureLines_(record)
     ]);
 
     return { subject: subject, body: body };
@@ -432,6 +460,12 @@ var BookingMailTemplates = (function () {
       : record.date;
     var dayWord = sendDate && useDate === sendDate ? '本日' : '明日';
 
+    /* Issue #422: 利用案内ページはブランド別。ACCESS_GUIDE_URLは従来どおりSNBでのみ優先し、
+       mens / Studio XへSNB向けの案内URLを出さない。 */
+    var reminderGuideUrl = Booking.getBrandProfile(record.brand).key === 'snb'
+      ? (guide.url || Booking.getBrandProfile(record.brand).guideUrl)
+      : Booking.getBrandProfile(record.brand).guideUrl;
+
     var subject = '【' + brandLabel + '】' + dayWord + 'のご利用案内';
     var body = joinNonEmpty_([
       record.name + ' 様',
@@ -453,11 +487,12 @@ var BookingMailTemplates = (function () {
       guide.entryMethod ? '入室方法: ' + guide.entryMethod : '',
       secretLine_('キーボックス番号', guide.keyboxNumber),
       secretLine_('解錠コード', guide.unlockCode),
-      guide.url ? '利用案内ページ: ' + guide.url : '',
+      reminderGuideUrl ? '利用案内ページ: ' + reminderGuideUrl : '',
       guide.pdfUrl ? '案内PDF: ' + guide.pdfUrl : '',
       '',
       'ご利用時は忘れ物・原状回復にご注意ください。',
-      contactLine_(config)
+      contactLine_(config),
+      signatureLines_(record)
     ]);
 
     return { subject: subject, body: body };
@@ -507,7 +542,8 @@ var BookingMailTemplates = (function () {
       '訂正後の利用料金: ' + formattedAmount + '（税込）',
       '',
       'このままお申し込みを続けられる場合、改めてのご連絡は不要です。ご不明点やお申し込みを取りやめたい場合は下記までご連絡ください。',
-      contactLine_(config)
+      contactLine_(config),
+      signatureLines_(record)
     ]);
 
     return { subject: subject, body: body };
