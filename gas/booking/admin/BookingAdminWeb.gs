@@ -209,6 +209,9 @@ function getAdminBookings() {
       purpose: record.purpose,
       paymentMethod: record.paymentMethod,
       status: record.status,
+      /* Issue #418: CONFIRMED済みで確定メール未送信（confirmedMailSentAt空）。一覧に
+         「確定メール送信」（再試行）を出すための判定のみ。送信可否の最終判定はサーバー側。 */
+      confirmedMailPending: record.status === 'CONFIRMED' && !record.confirmedMailSentAt,
       /* Issue #334: カード予約のみ非空（読み取り専用の支払期限表示用）。 */
       cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone),
       /*

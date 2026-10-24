@@ -325,6 +325,10 @@ function render() {
     if (canConfirm) {
       actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '"' + (busy || awaitingPaymentLink ? ' disabled' : '') + (awaitingPaymentLink ? ' title="決済リンク未送信のため確定できません（詳細から送信してください）"' : '') + '>確定</button>';
     }
+    if (b.status === 'CONFIRMED' && b.confirmedMailPending) {
+      /* Issue #418: 確定済みで確定メール未送信の予約は、同じconfirmBooking経由で再試行できる。 */
+      actions += '<button type="button" class="action confirm" data-action="confirm-mail" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>確定メール送信</button>';
+    }
     if (canCancel && b.refundDecisionRequired) {
       /* Issue #341 PR-D: Stripeで入金済みの予約は、返金方法を選ぶ「取消・返金」（予約詳細）
          からのみ取り消せる（通常のキャンセルはサーバー側でも拒否される）。 */
@@ -1829,6 +1833,11 @@ function runConfirm(bookingId) {
     .withSuccessHandler(function (result) {
       if (!result || !result.success) {
         alert('確定できませんでした: ' + (result && result.error && result.error.message));
+      } else if (result.mailSent === false && !result.mailAlreadySent) {
+        /* Issue #418: 予約はCONFIRMEDのまま。確定メールの未送信を管理者が認識できるようにする。 */
+        alert('予約は確定しましたが、確定メールを送信できませんでした。' +
+          (result.mailError ? '（' + (result.mailError.code || '') + '）' + (result.mailError.message || '') : '') +
+          '\n原因を解消後、一覧の「確定メール送信」から再試行してください。');
       }
       loadBookings(function () { setBusy(bookingId, false); });
     })
@@ -2848,6 +2857,7 @@ document.getElementById('list').addEventListener('click', function (event) {
   var bookingId = target.getAttribute('data-id');
   if (action === 'detail') openDetail(bookingId);
   if (action === 'confirm') runConfirm(bookingId);
+  if (action === 'confirm-mail') runConfirm(bookingId);
   if (action === 'cancel') runCancel(bookingId);
   if (action === 'revive') runRevive(bookingId);
 });

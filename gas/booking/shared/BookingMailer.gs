@@ -534,6 +534,10 @@ var BookingMailer = (function () {
   function sendConfirmedMailForBooking(bookingId, options) {
     var opts = options || {};
     return withBookingLock_(MAIL_TYPES.CONFIRMED, bookingId, Booking.STATUS.CONFIRMED, ['confirmedMailSentAt'], !!opts.force, function (record) {
+      /* Issue #418: 宛先が欠落・不正ならMailAppを呼ばずfail-closed（アドレス自体はエラーに含めない）。 */
+      if (!record.email || !/^[^\s@]+@[^\s@]+$/.test(String(record.email).trim())) {
+        throw new Error('予約に有効なメールアドレスがないため確定メールを送信できません。');
+      }
       var config = ensureMailConfigComplete_();
       return BookingMailTemplates.buildConfirmedMail(record, config);
     });
