@@ -175,10 +175,7 @@ var BookingOptions = (function () {
 
   /* セルフ設営・スタッフ対応の共通対象（Issue #423 追加コメント）。 */
   var THEMES = {};
-  var THEME_CODES_ = StudioXEquipmentCatalog.staffService.themes.map(function (theme) {
-    THEMES[theme.code] = { code: theme.code, label: theme.label };
-    return theme.code;
-  });
+  var THEME_CODES_ = [];
 
   /* 機材レンタルのスタッフ設営でテーマ未選択のときの項目コード上のテーマ（'STAFF_PRE_SETUP:EQUIPMENT'。Issue #438）。 */
   var STAFF_NO_THEME_ = 'EQUIPMENT';
@@ -188,11 +185,30 @@ var BookingOptions = (function () {
      画面はoptionCatalog APIで取得して表示し、GAS・Webhookも必ずここを参照する。 */
   var STAFF_SERVICE_PRICES_ = {};
   var STAFF_SERVICE_LABELS_ = {};
-  Object.keys(StudioXEquipmentCatalog.staffService.services).forEach(function (key) {
-    var service = StudioXEquipmentCatalog.staffService.services[key];
-    STAFF_SERVICE_PRICES_[key] = service.priceJpy;
-    STAFF_SERVICE_LABELS_[key] = service.label;
-  });
+  var catalogInitialized_ = false;
+
+  /* GASのファイル初期化順に依存しないよう、カタログ参照はAPI呼び出し時まで遅延する。
+     読み取り失敗時は初期化済みにせず、空カタログ・0円へフォールバックしない。 */
+  function ensureCatalogInitialized_() {
+    if (catalogInitialized_) return;
+    var staffService = StudioXEquipmentCatalog.staffService;
+    var themes = {};
+    var codes = staffService.themes.map(function (theme) {
+      themes[theme.code] = { code: theme.code, label: theme.label };
+      return theme.code;
+    });
+    var prices = {};
+    var labels = {};
+    Object.keys(staffService.services).forEach(function (key) {
+      prices[key] = staffService.services[key].priceJpy;
+      labels[key] = staffService.services[key].label;
+    });
+    THEMES = themes;
+    THEME_CODES_ = codes;
+    STAFF_SERVICE_PRICES_ = prices;
+    STAFF_SERVICE_LABELS_ = labels;
+    catalogInitialized_ = true;
+  }
 
   /* ---- 定型案内（無料セルフセッティング。Issue #423 追加コメント 3） ----
    *
@@ -279,6 +295,7 @@ var BookingOptions = (function () {
     if (!isBrandEnabled(brand)) {
       return { enabled: false, brand: brand, currency: CURRENCY_ };
     }
+    ensureCatalogInitialized_();
     return {
       enabled: true,
       brand: brand,
@@ -328,6 +345,7 @@ var BookingOptions = (function () {
   }
 
   function normalizeSelection(selection) {
+    ensureCatalogInitialized_();
     if (selection === undefined || selection === null) {
       return { ok: true, empty: true, normalized: emptySelection_() };
     }
@@ -426,6 +444,7 @@ var BookingOptions = (function () {
   };
 
   function describeItem(itemCode) {
+    ensureCatalogInitialized_();
     var code = String(itemCode || '');
     var eq = parseEquipmentItem_(code);
     if (eq) {
@@ -459,6 +478,7 @@ var BookingOptions = (function () {
 
   /* スタッフ対応の合計料金（services: 'PRE_SETUP'/'CLEANUP'の集合）。両方ならセット価格。 */
   function staffServiceTotal_(services) {
+    ensureCatalogInitialized_();
     var hasPre = services.indexOf('PRE_SETUP') !== -1;
     var hasCleanup = services.indexOf('CLEANUP') !== -1;
     if (hasPre && hasCleanup) return STAFF_SERVICE_PRICES_.BOTH;
@@ -502,6 +522,7 @@ var BookingOptions = (function () {
    * 副作用なし。重複・在庫超過は注文を一件も作らず全体を拒否する。許可の無いビデオライト系は拒否せず保留注文にする。
    */
   function planOrders(input) {
+    ensureCatalogInitialized_();
     var normalized = input.normalized;
     var existing = (input.existingOrders || []).filter(function (o) { return isActiveStatus(o.status); });
     var existingItems = [];
@@ -716,6 +737,7 @@ var BookingOptions = (function () {
    * 戻り値: { text, incomplete, themes[] }。セルフ対応・メールサポートがなければtext=''。
    */
   function renderSelfGuidance(items) {
+    ensureCatalogInitialized_();
     var list = items || [];
     var themes = [];
     var setupThemes = {};

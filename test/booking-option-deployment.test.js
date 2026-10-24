@@ -155,3 +155,33 @@ test('Booking Web App配布ファイルセット: Adminに無いRateLimiterへ�
   assert.strictEqual(typeof ctx.sandbox.RateLimiter, 'undefined');
   assert.strictEqual(typeof ctx.sandbox.OptionOrderService.approveOrder, 'function');
 });
+
+
+// 本番回帰: GASのファイル初期化順を配布一覧の依存順と仮定しない。
+['public', 'admin'].forEach(function (target) {
+  test(target + ': BookingOptionsがEquipmentCatalogより先でも初期化・カタログ・料金・案内が動く', function () {
+    var files = (target === 'public' ? manifest.BOOKING_WEB_APP_FILES : manifest.BOOKING_ADMIN_FILES).slice().sort();
+    assert.ok(files.indexOf('BookingOptions.gs') < files.indexOf('EquipmentCatalog.gs'));
+    var ctx = setup(files);
+    var options = ctx.sandbox.BookingOptions;
+    var catalog = options.buildCatalog('studio_x', {});
+    assert.strictEqual(catalog.enabled, true);
+    assert.strictEqual(catalog.themes.length, 5);
+    assert.strictEqual(catalog.staffServices.BOTH.priceJpy, 5000);
+    assert.strictEqual(options.normalizeSelection({}).ok, true);
+    assert.ok(options.renderSelfGuidance(['SELF_SETUP:CLASSROOM']).text.length > 0);
+    if (target === 'public') {
+      var date = futureDateJst_(3);
+      ['snb', 'mens', 'studio_x'].forEach(function (brand) {
+        [
+          { action: 'monthly', year: date.slice(0, 4), month: String(Number(date.slice(5, 7))), durationMinutes: '120', brand: brand },
+          { date: date, durationMinutes: '120', brand: brand },
+          { action: 'estimatePrice', date: date, durationMinutes: '120', brand: brand }
+        ].forEach(function (parameter) {
+          var result = JSON.parse(ctx.sandbox.doGet({ parameter: parameter }).text);
+          assert.strictEqual(result.success, true, JSON.stringify(result));
+        });
+      });
+    }
+  });
+});
