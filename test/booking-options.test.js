@@ -3,7 +3,7 @@
  * 確定要件（Issue本文＋追加コメント3件）をそのままテスト名にしている:
  * 事前設営3,000円 / 片付け3,000円 / 設営＋片付け5,000円（両方選択時に6,000円と誤計算しない）、
  * 5テーマ共通料金、スタッフ対応は必ずPENDING_APPROVAL、セルフは無料・承認不要、
- * ビデオライト系のセルフレンタルは過去利用者のみ、機材は個別加算（数量×単価）・在庫超過は拒否。
+ * ビデオライト系のセルフレンタルは対面レクチャー済みの許可者のみ、機材は個別加算（数量×単価）・在庫超過は拒否。
  */
 'use strict';
 
@@ -61,10 +61,10 @@ test('カタログ: スタッフ対応料金は3,000/3,000/5,000円、5テーマ
   var byCode = {};
   c.equipment.forEach(function (e) { byCode[e.code] = e; });
   assert.strictEqual(byCode.COB_BICOLOR.unitPriceJpy, 800);
-  assert.strictEqual(byCode.COB_BICOLOR.requiresPriorRental, true);
+  assert.strictEqual(byCode.COB_BICOLOR.requiresLecture, true);
   assert.strictEqual(byCode.COB_FULLCOLOR.stock, 2);
   assert.strictEqual(byCode.STAND_260.stock, 3);
-  assert.strictEqual(byCode.STROBE_MONOBLOCK.requiresPriorRental, false, 'ストロボ等へ追加の資格制限を設けない');
+  assert.strictEqual(byCode.STROBE_MONOBLOCK.requiresLecture, false, 'ストロボ等へ追加の資格制限を設けない');
   assert.strictEqual(byCode.BACKGROUND_STAND.unitPriceJpy, 0, '背景スタンドのセルフ利用は無料');
   assert.strictEqual(byCode.BACKDROP_CLOTH_WHITE, undefined, '背景布は無料セルフ設営(テーマ)から選ぶ。機材欄には出さない');
 });
@@ -78,8 +78,8 @@ test('機材カタログ: Issue追加要件の個別料金・数量と完全に�
   var actual = {};
   plain(sandbox.StudioXEquipmentCatalog.rental).forEach(function (e) { actual[e.code] = [e.stock, e.unitPriceJpy]; });
   assert.deepStrictEqual(actual, expected);
-  // ビデオライト系(定常光)のみが過去利用を要する
-  var prior = plain(sandbox.StudioXEquipmentCatalog.rental).filter(function (e) { return e.requiresPriorRental; }).map(function (e) { return e.code; }).sort();
+  // ビデオライト系(定常光)のみが対面レクチャー済みの許可を要する
+  var prior = plain(sandbox.StudioXEquipmentCatalog.rental).filter(function (e) { return e.requiresLecture; }).map(function (e) { return e.code; }).sort();
   assert.deepStrictEqual(prior, ['COB_BICOLOR', 'COB_FULLCOLOR', 'PANEL_FULLCOLOR']);
 });
 
@@ -259,7 +259,7 @@ test('背景スタンドは無料セルフ（0円）。FREE注文に入り、課
   assert.strictEqual(mixed.orders.filter(function (o) { return o.category === 'EQUIPMENT'; })[0].amountJpy, 800);
 });
 
-test('ビデオライト系(定常光)のセルフレンタルは過去利用者のみ。初回利用者は拒否され、決済に進まない', function () {
+test('ビデオライト系(定常光)のセルフレンタルは対面レクチャー済みの許可（Admin付与）のみ。未許可は拒否され、決済に進まない', function () {
   ['COB_BICOLOR', 'PANEL_FULLCOLOR', 'COB_FULLCOLOR'].forEach(function (code) {
     var sel = {}; sel[code] = 1;
     var r = plan(select({ equipment: sel }), { eligibility: NOT_ELIGIBLE });
@@ -275,7 +275,7 @@ test('ビデオライト系(定常光)のセルフレンタルは過去利用者
   assert.ok(plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: ELIGIBLE }).ok);
 });
 
-test('資格は機材コード単位: バイカラーCOBの利用歴だけでは、未使用のフルカラーCOB・フルカラーパネルは選べない', function () {
+test('資格は機材コード単位: バイカラーCOBの許可だけでは、未使用のフルカラーCOB・フルカラーパネルは選べない', function () {
   var onlyBicolor = { eligibleEquipmentCodes: ['COB_BICOLOR'] };
   assert.ok(plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: onlyBicolor }).ok);
   var fullColor = plan(select({ equipment: { COB_FULLCOLOR: 1 } }), { eligibility: onlyBicolor });
@@ -292,18 +292,18 @@ test('資格は機材コード単位: バイカラーCOBの利用歴だけでは
   assert.strictEqual(BookingOptions.planOrders({ normalized: select({ equipment: { COB_BICOLOR: 1 } }), existingOrders: [], optionsConfig: CONFIG_WITH_PRICES }).ok, false, '資格情報が無ければ許可しない');
 });
 
-test('priorRentalEquipmentCodes / equipmentCodeOfItem: 対象は定常光3機材、機材項目からコードだけを取り出す', function () {
-  assert.deepStrictEqual(plain(BookingOptions.priorRentalEquipmentCodes().sort()), ['COB_BICOLOR', 'COB_FULLCOLOR', 'PANEL_FULLCOLOR']);
+test('lectureRequiredEquipmentCodes / equipmentCodeOfItem: 対象は定常光3機材、機材項目からコードだけを取り出す', function () {
+  assert.deepStrictEqual(plain(BookingOptions.lectureRequiredEquipmentCodes().sort()), ['COB_BICOLOR', 'COB_FULLCOLOR', 'PANEL_FULLCOLOR']);
   assert.strictEqual(BookingOptions.equipmentCodeOfItem('EQ:COB_FULLCOLOR:2'), 'COB_FULLCOLOR');
   assert.strictEqual(BookingOptions.equipmentCodeOfItem('SELF_SETUP:CLASSROOM'), '');
 });
 
-test('isPriorRentalItem: ビデオライト系の機材項目だけが「過去利用」に数えられる', function () {
-  assert.strictEqual(BookingOptions.isPriorRentalItem('EQ:COB_BICOLOR:1'), true);
-  assert.strictEqual(BookingOptions.isPriorRentalItem('EQ:COB_FULLCOLOR:2'), true);
-  assert.strictEqual(BookingOptions.isPriorRentalItem('EQ:STROBE_MONOBLOCK:1'), false);
-  assert.strictEqual(BookingOptions.isPriorRentalItem('SELF_SETUP:CLASSROOM'), false);
-  assert.strictEqual(BookingOptions.isPriorRentalItem('VIDEO_LIGHT'), false);
+test('isLectureRequiredItem: ビデオライト系の機材項目だけが許可の対象', function () {
+  assert.strictEqual(BookingOptions.isLectureRequiredItem('EQ:COB_BICOLOR:1'), true);
+  assert.strictEqual(BookingOptions.isLectureRequiredItem('EQ:COB_FULLCOLOR:2'), true);
+  assert.strictEqual(BookingOptions.isLectureRequiredItem('EQ:STROBE_MONOBLOCK:1'), false);
+  assert.strictEqual(BookingOptions.isLectureRequiredItem('SELF_SETUP:CLASSROOM'), false);
+  assert.strictEqual(BookingOptions.isLectureRequiredItem('VIDEO_LIGHT'), false);
 });
 
 // ---- 混在: 未承認スタッフ料金が機材の決済額へ混入しない ----

@@ -20,9 +20,9 @@ var Panel = require('../scripts/booking-options.js');
 var CATALOG = {
   enabled: true,
   equipment: [
-    { code: 'COB_BICOLOR', label: 'バイカラーCOBライト（定常光）', unitPriceJpy: 800, unitLabel: '', stock: 1, requiresPriorRental: true },
-    { code: 'STAND_260', label: 'ライトスタンド（260cm）', unitPriceJpy: 200, unitLabel: '本', stock: 3, requiresPriorRental: false },
-    { code: 'BACKGROUND_STAND', label: '背景スタンド', unitPriceJpy: 0, unitLabel: '', stock: 1, requiresPriorRental: false }
+    { code: 'COB_BICOLOR', label: 'バイカラーCOBライト（定常光）', unitPriceJpy: 800, unitLabel: '', stock: 1, requiresLecture: true },
+    { code: 'STAND_260', label: 'ライトスタンド（260cm）', unitPriceJpy: 200, unitLabel: '本', stock: 3, requiresLecture: false },
+    { code: 'BACKGROUND_STAND', label: '背景スタンド', unitPriceJpy: 0, unitLabel: '', stock: 1, requiresLecture: false }
   ],
   themes: [
     { code: 'CLASSROOM', label: '教室セット（机・黒板）' }, { code: 'JAPANESE', label: '和風セット' }, { code: 'GRUNGE', label: 'グランジセット' },
@@ -93,7 +93,7 @@ test('summarize: スタッフ対応は「承認後にお支払い。申込時点
 });
 
 test('describeError: サーバーの利用者向け文言をそのまま使う。無ければ汎用文', function () {
-  assert.strictEqual(Panel.describeError({ code: 'X', message: 'ビデオライトは過去の方のみ' }), 'ビデオライトは過去の方のみ');
+  assert.strictEqual(Panel.describeError({ code: 'X', message: 'ビデオライトは許可済みの方のみ' }), 'ビデオライトは許可済みの方のみ');
   assert.ok(Panel.describeError(null).indexOf('時間を置いて') !== -1);
 });
 
@@ -161,4 +161,10 @@ test('メール内リンクの案内ページURLはStudio Xのオプション案
   var sb = loadBookingSandbox(['Booking.gs', 'BookingOptions.gs', 'Availability.gs', 'OptionMailTemplates.gs'], {});
   var url = sb.OptionMailTemplates.buildOptionsPageUrl({ brand: 'studio_x', bookingId: 'SX-20261101-AAAAAAAA' });
   assert.strictEqual(url, 'https://nagoya-base.github.io/Studio-nagoya-base/studio-x/booking/options/?bookingId=SX-20261101-AAAAAAAA');
+});
+
+test('画面の案内文言: ビデオライト系は「対面で操作レクチャーを受け、利用許可済みの方のみ」。「過去利用者のみ」とは言わない', function () {
+  var src = read('scripts/booking-options.js').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(src.indexOf('対面で操作レクチャーを受け、利用許可済みの方のみ選択できます') !== -1);
+  assert.ok(src.indexOf('過去にビデオライト') === -1 && src.indexOf('過去の') === -1);
 });

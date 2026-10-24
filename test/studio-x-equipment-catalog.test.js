@@ -49,7 +49,8 @@ test('機材ページは正本(site.data)を直接読み、常設無料・有料
   assert.match(html, /id="equipment-rental"/);
   assert.match(html, /id="equipment-self"/);
   assert.match(html, /1点ごとの個別加算/);
-  assert.match(html, /過去にビデオライトをご利用いただいた方のみ/);
+  assert.match(html, /対面で操作レクチャーを受け、利用許可済みの方のみ/);
+  assert.ok(html.indexOf('過去にビデオライト') === -1);
   var code = stripComments(html);
   assert.ok(!/\b(800|500|300|200)円/.test(code), '機材の単価をページへ直書きしない');
   assert.ok(!/3,?000円|5,?000円/.test(code), 'スタッフ対応料金も重複して書かない');

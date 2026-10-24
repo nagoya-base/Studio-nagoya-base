@@ -287,7 +287,7 @@ test('同時: 空のoptions指定（何も選ばない）は部屋のみの予�
 // ビデオライトのセルフレンタル資格
 // ============================================================================
 
-test('ビデオライト: 初回利用者は同時申込でも後付けでも拒否され、Checkoutへ進まない。管理者が許可すると選べる', function () {
+test('ビデオライト: 未許可の利用者（初回を含む）は同時申込でも後付けでも拒否され、Checkoutへ進まない。管理者が許可すると選べる', function () {
   var ctx = setup();
   var first = ctx.sandbox.BookingRepository.createBooking(payload({ options: { equipment: { COB_BICOLOR: 1 } } }));
   assert.strictEqual(first.success, false);
@@ -310,7 +310,7 @@ test('ビデオライト: 初回利用者は同時申込でも後付けでも拒
   assert.strictEqual(allowed.orders[0].amountJpy, 800);
 });
 
-test('ビデオライト: 過去に支払い済みのビデオライト注文がある利用者は自動で資格あり（他人のメールでは資格なし）', function () {
+test('ビデオライト: 過去に支払い済みで借りた履歴があっても自動では資格ありにならない（Adminの付与のみが正）', function () {
   var ctx = setup();
   var past = createRoom(ctx);
   confirmRoom(ctx, past.bookingId);
@@ -320,21 +320,23 @@ test('ビデオライト: 過去に支払い済みのビデオライト注文が
     status: 'CONFIRMED', customerEmail: EMAIL, createdAt: new Date(), updatedAt: new Date()
   }]);
 
-  var again = createRoom(ctx, { date: futureDateJst_(61), options: { equipment: { COB_BICOLOR: 1 } } });
-  assert.strictEqual(again.options.success, true);
+  // 履歴があっても、同時申込・後付けのどちらでもセルフレンタル不可（即時Checkoutへ進ませない）
+  var again = ctx.sandbox.BookingRepository.createBooking(payload({ date: futureDateJst_(61), options: { equipment: { COB_BICOLOR: 1 } } }));
+  assert.strictEqual(again.success, false);
+  assert.strictEqual(again.error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
+  assert.ok(again.error.message.indexOf('対面で操作レクチャーを受け、利用許可済みの方のみ') !== -1);
+  assert.ok(again.error.message.indexOf('過去') === -1, '「過去利用者のみ」の文言は使わない');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
 
-  var other = ctx.sandbox.BookingRepository.createBooking(payload({ date: futureDateJst_(62), email: 'hanako@example.com', options: { equipment: { COB_BICOLOR: 1 } } }));
+  // Adminが付与した後は選べる
+  assert.strictEqual(ctx.sandbox.OptionOrderService.grantVideoLightEligibility(EMAIL, 'COB_BICOLOR', '対面レクチャー済み').success, true);
+  var allowed = ctx.sandbox.BookingRepository.createBooking(payload({ date: futureDateJst_(62), options: { equipment: { COB_BICOLOR: 1 } } }));
+  assert.strictEqual(allowed.success, true, JSON.stringify(allowed.error));
+  assert.strictEqual(allowed.options.orders[0].status, 'AWAITING_PAYMENT');
+
+  // 他人のメールアドレスの許可は引き継がれない
+  var other = ctx.sandbox.BookingRepository.createBooking(payload({ date: futureDateJst_(63), email: 'hanako@example.com', options: { equipment: { COB_BICOLOR: 1 } } }));
   assert.strictEqual(other.error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
-});
-
-test('ビデオライト: 申込だけで未払い・未確定の注文は「過去の利用」に数えない', function () {
-  var ctx = setup();
-  ctx.sandbox.OptionOrderRepository.appendOrders([{
-    optionOrderId: 'OPT-UNPAID01', bookingId: 'SX-X', brand: 'studio_x', category: 'EQUIPMENT', source: 'ADDON',
-    items: ['EQ:COB_BICOLOR:1'], amountJpy: 800, currency: 'JPY', approvalStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_STARTED',
-    status: 'AWAITING_PAYMENT', customerEmail: EMAIL, createdAt: new Date(), updatedAt: new Date()
-  }]);
-  assert.strictEqual(ctx.sandbox.OptionOrderRepository.listConfirmedEquipmentCodesForEmail(EMAIL).length, 0);
 });
 
 // ============================================================================
@@ -925,7 +927,7 @@ test('オプション由来で拒否された申込は連投制限に計上さ�
   assert.strictEqual(retry.success, true, JSON.stringify(retry.error));
 });
 
-test('ビデオライトの過去利用の照会はメールアドレス単位でレート制限される（利用履歴を探られない）', function () {
+test('ビデオライトの資格(許可)の照会はメールアドレス単位でレート制限される（許可の有無を探られない）', function () {
   var ctx = setup();
   var last;
   for (var i = 0; i < 6; i++) {
@@ -972,34 +974,38 @@ test('後付け片付け（運営確定のA案）: 事前設営3,000円を申込
   assert.strictEqual(total, 5000);
 });
 
-test('資格は機材コード単位（Issue「当該ビデオライト」）: バイカラーCOBの支払い済み履歴ではフルカラーCOBを借りられない。許可も機材コード単位', function () {
+test('資格は機材コード単位でAdmin付与のみ: 支払い済み履歴は資格にならず、バイカラーCOBの許可でフルカラーは借りられない', function () {
   var ctx = setup();
   var past = createRoom(ctx);
   confirmRoom(ctx, past.bookingId);
   ctx.sandbox.OptionOrderRepository.appendOrders([{
     optionOrderId: 'OPT-PAST0002', bookingId: past.bookingId, brand: 'studio_x', category: 'EQUIPMENT', source: 'ADDON',
-    items: ['EQ:COB_BICOLOR:1'], amountJpy: 800, currency: 'JPY', approvalStatus: 'NOT_REQUIRED', paymentStatus: 'PAID',
+    items: ['EQ:COB_BICOLOR:1', 'EQ:COB_FULLCOLOR:1'], amountJpy: 1600, currency: 'JPY', approvalStatus: 'NOT_REQUIRED', paymentStatus: 'PAID',
     status: 'CONFIRMED', customerEmail: EMAIL, createdAt: new Date(), updatedAt: new Date()
   }]);
   var next = createRoom(ctx, { date: futureDateJst_(61) });
   confirmRoom(ctx, next.bookingId);
   var svc = ctx.sandbox.OptionOrderService;
 
-  assert.strictEqual(svc.submitAddonOptions(next.bookingId, EMAIL, { equipment: { COB_FULLCOLOR: 1 } }).error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
-  assert.strictEqual(svc.submitAddonOptions(next.bookingId, EMAIL, { equipment: { PANEL_FULLCOLOR: 1 } }).error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
-  assert.strictEqual(svc.submitAddonOptions(next.bookingId, EMAIL, { equipment: { COB_BICOLOR: 1, COB_FULLCOLOR: 1 } }).success, false);
+  ['COB_BICOLOR', 'COB_FULLCOLOR', 'PANEL_FULLCOLOR'].forEach(function (code) {
+    var sel = {}; sel[code] = 1;
+    assert.strictEqual(svc.submitAddonOptions(next.bookingId, EMAIL, { equipment: sel }).error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE', '履歴では通らない: ' + code);
+  });
   assert.strictEqual(orderRows(ctx, next.bookingId).length, 0, '拒否した申込は注文を作らない');
-  assert.strictEqual(svc.submitAddonOptions(next.bookingId, EMAIL, { equipment: { COB_BICOLOR: 1 } }).success, true, '利用歴のある機材は選べる');
 
-  // 管理者許可も機材コード単位: フルカラーCOBだけを許可してもフルカラーパネルは不可
-  assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'COB_FULLCOLOR', 'DM記録').success, true);
+  // 許可は機材コード単位
+  assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'COB_BICOLOR', '対面レクチャー済み').success, true);
   assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'VIDEO_LIGHT', '').error.code, 'INVALID_EQUIPMENT', '一括コードでは許可できない');
   assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'STROBE_MONOBLOCK', '').error.code, 'INVALID_EQUIPMENT', 'ストロボに資格制限は設けない');
-  assert.strictEqual(svc.submitAddonOptions(next.bookingId, EMAIL, { equipment: { PANEL_FULLCOLOR: 1 } }).error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
+  assert.strictEqual(svc.submitAddonOptions(next.bookingId, EMAIL, { equipment: { COB_FULLCOLOR: 1 } }).error.code, 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE');
+  assert.strictEqual(svc.submitAddonOptions(next.bookingId, EMAIL, { equipment: { COB_BICOLOR: 1, COB_FULLCOLOR: 1 } }).success, false);
+  assert.strictEqual(svc.submitAddonOptions(next.bookingId, EMAIL, { equipment: { COB_BICOLOR: 1 } }).success, true);
+
+  assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'COB_FULLCOLOR', '対面レクチャー済み').success, true);
   assert.strictEqual(svc.submitAddonOptions(next.bookingId, EMAIL, { equipment: { COB_FULLCOLOR: 2 } }).success, true);
 });
 
-test('資格: 他人のメールアドレスの利用歴・許可は引き継がれない（機材コード単位でも同様）', function () {
+test('資格: 他人のメールアドレスの許可は引き継がれない（機材コード単位でも同様）', function () {
   var ctx = setup();
   ctx.sandbox.OptionOrderService.grantVideoLightEligibility('hanako@example.com', 'COB_BICOLOR', '');
   var r = createRoom(ctx);

@@ -82,8 +82,8 @@ var BookingRepository = (function () {
      * 何もせず、既存の予約作成の挙動・レスポンスは一切変わらない。選択が不正・受付不可・
      * 資格なし（ビデオライトの初回利用者等）の場合は、Calendar/Sheetsへ何も書く前に拒否する。
      * rate limitの計上より前に行う（オプションの選び直しで再送しても「連投」扱いにならないよう、
-     * 拒否した申込は計上しない）。代わりに、過去利用の有無（ビデオライト資格）の照会だけは
-     * メールアドレス単位で別枠に制限する（利用履歴を無制限に探られないようにするため）。
+     * 拒否した申込は計上しない）。代わりに、ビデオライト系の資格（対面レクチャー済みの許可）の照会だけは
+     * メールアドレス単位で別枠に制限する（許可の有無を無制限に探られないようにするため）。
      */
     var hasOptionsPayload = !!rawInput && rawInput.options !== undefined && rawInput.options !== null;
     var optionsPreflight = hasOptionsPayload

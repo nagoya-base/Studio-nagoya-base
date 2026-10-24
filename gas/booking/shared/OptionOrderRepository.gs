@@ -2,7 +2,7 @@
  * OptionOrderRepository.gs — 予約オプション注文の台帳（Issue #423）。
  *
  * 既存のBookings台帳には列を足さず、別シート`OptionOrders`（注文単位）と
- * `OptionEligibility`（ビデオライトのセルフレンタル許可。管理者が付与）を使う。
+ * `OptionEligibility`（ビデオライト系のセルフレンタル許可＝対面レクチャー済み。管理者が機材コード単位で付与）を使う。
  * 理由: Bookingsの列追加は本番ヘッダーの手動追記が必要になり、既存の予約・Stripe
  * 決済経路（Bookings列に強く依存）へ影響し得るため。オプション情報が無い既存予約は
  * そもそもOptionOrdersに行が無いだけで、そのまま動作する（後方互換）。
@@ -152,25 +152,6 @@ var OptionOrderRepository = (function () {
     return { rowNumber: found.rowNumber, record: updated };
   }
 
-  /*
-   * この利用者（メールアドレス）が過去に実際に借りた機材コードの一覧（支払い済みのCONFIRMED注文のみ。
-   * 申込だけで未払いの注文は数えない）。資格判定は機材コード単位で行う。
-   */
-  function listConfirmedEquipmentCodesForEmail(email) {
-    var target = normalizeEmail(email);
-    var codes = [];
-    if (!target) return codes;
-    listAll().forEach(function (row) {
-      var r = row.record;
-      if (normalizeEmail(r.customerEmail) !== target || r.status !== 'CONFIRMED' || r.paymentStatus !== 'PAID') return;
-      r.items.forEach(function (item) {
-        var code = BookingOptions.equipmentCodeOfItem(item);
-        if (code && codes.indexOf(code) === -1) codes.push(code);
-      });
-    });
-    return codes;
-  }
-
   /* ---- OptionEligibility（管理者が自動判定できない既存利用者を許可する） ---- */
 
   function listEligibilityGrants() {
@@ -205,7 +186,6 @@ var OptionOrderRepository = (function () {
     findByOptionOrderId: findByOptionOrderId,
     appendOrders: appendOrders,
     updateOrder: updateOrder,
-    listConfirmedEquipmentCodesForEmail: listConfirmedEquipmentCodesForEmail,
     listEligibilityGrants: listEligibilityGrants,
     hasEligibilityGrant: hasEligibilityGrant,
     addEligibilityGrant: addEligibilityGrant

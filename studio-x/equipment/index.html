@@ -90,11 +90,11 @@
             <thead><tr><th>機材</th><th>数量</th><th>1点あたり</th></tr></thead>
             <tbody>
 {%- for item in site.data.studio_x_equipment.rental %}
-              <tr><th>{{ item.label }}{% if item.requiresPriorRental %}<span class="equipment-note">※1</span>{% endif %}</th><td>×{{ item.stock }}</td><td>{{ item.unitPriceJpy }}円{% if item.unitLabel != "" %} / {{ item.unitLabel }}{% endif %}</td></tr>
+              <tr><th>{{ item.label }}{% if item.requiresLecture %}<span class="equipment-note">※1</span>{% endif %}</th><td>×{{ item.stock }}</td><td>{{ item.unitPriceJpy }}円{% if item.unitLabel != "" %} / {{ item.unitLabel }}{% endif %}</td></tr>
 {%- endfor %}
             </tbody>
           </table>
-          <p class="equipment-note">※1 ビデオライト（定常光）系のセルフレンタルは、過去にビデオライトをご利用いただいた方のみ選択できます（初めての方・履歴を確認できない方はメールでご相談ください）。ストロボ等に追加の資格制限はありません。</p>
+          <p class="equipment-note">※1 ビデオライト（定常光）系のセルフレンタルは、対面で操作レクチャーを受け、利用許可済みの方のみ選択できます（初めての方・レクチャー未実施の方はメールでご相談ください）。ストロボ等に追加の資格制限はありません。</p>
         </div>
         <div class="equipment-table-block" id="equipment-self">
           <h3>セルフ利用は無料の備品</h3>

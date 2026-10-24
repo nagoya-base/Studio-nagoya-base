@@ -94,25 +94,24 @@ var OptionOrderService = (function () {
     return view;
   }
 
-  /* ビデオライト系（定常光）を含む申込か。含む場合だけ過去利用の資格を照会する。 */
+  /* ビデオライト系（定常光）を含む申込か。含む場合だけ、Adminが付与した資格（対面レクチャー済み）を照会する。 */
   function requiresEligibility_(normalized) {
     return Object.keys(normalized.equipment).some(function (code) {
-      return BookingOptions.isPriorRentalItem('EQ:' + code + ':1');
+      return BookingOptions.isLectureRequiredItem('EQ:' + code + ':1');
     });
   }
 
   /*
-   * 機材コード単位の資格: 過去に支払い済みで借りた機材、または管理者がその機材コードで許可した機材。
-   * 別のビデオライト系機材の利用歴では許可しない（Issue「当該ビデオライト」）。
+   * 機材コード単位の資格: **Adminが対面レクチャー済みとして明示的に付与した許可のみ**を正とする
+   * （Issue追加確定要件）。過去の利用履歴・支払い済み注文からは自動で資格ありと判定しない。
+   * 別のビデオライト系機材の許可でも通さない。
    */
   function resolveEligibility_(email) {
-    var eligible = OptionOrderRepository.listConfirmedEquipmentCodesForEmail(email).filter(function (code) {
-      return BookingOptions.priorRentalEquipmentCodes().indexOf(code) !== -1;
-    });
-    BookingOptions.priorRentalEquipmentCodes().forEach(function (code) {
-      if (eligible.indexOf(code) === -1 && OptionOrderRepository.hasEligibilityGrant(email, code)) eligible.push(code);
-    });
-    return { eligibleEquipmentCodes: eligible };
+    return {
+      eligibleEquipmentCodes: BookingOptions.lectureRequiredEquipmentCodes().filter(function (code) {
+        return OptionOrderRepository.hasEligibilityGrant(email, code);
+      })
+    };
   }
 
   function activeExistingOrders_(bookingId) {
@@ -128,7 +127,7 @@ var OptionOrderService = (function () {
   /*
    * createBooking前の事前検証（副作用なし）。選択が不正・受付不可・資格なしなら、予約を作る
    * 前にエラーを返す（予約だけ作られてオプションが失敗する状況を減らす）。
-   * options.allowEligibilityLookup(email): 過去利用の照会を行ってよいか（レート制限）を返す関数。
+   * options.allowEligibilityLookup(email): 資格の照会を行ってよいか（レート制限）を返す関数。
    *   Booking Web Appのみ渡す（RateLimiterはWeb App専用のため）。
    * 戻り値: { success:true, normalized, empty } | { success:false, error }
    */
@@ -591,13 +590,14 @@ var OptionOrderService = (function () {
   }
 
   /*
-   * ビデオライト系機材のセルフレンタル許可（過去利用を自動判定できない既存利用者向け）。
+   * ビデオライト系機材のセルフレンタル許可。管理者から対面で操作レクチャーを受け、セルフ利用可と
+   * 確認した利用者にだけ、運営がAdminから付与する（これが資格の唯一の正本）。
    * 機材コード単位（例: COB_BICOLOR）。一括許可はしない。許可済みなら冪等。
    */
   function grantVideoLightEligibility(email, equipmentCode, note, now) {
     var normalized = normalizeEmail_(email);
     if (!Booking.isValidEmail(normalized)) return fail_('INVALID_EMAIL', 'メールアドレスの形式が正しくありません。');
-    if (BookingOptions.priorRentalEquipmentCodes().indexOf(equipmentCode) === -1) {
+    if (BookingOptions.lectureRequiredEquipmentCodes().indexOf(equipmentCode) === -1) {
       return fail_('INVALID_EQUIPMENT', '許可の対象はビデオライト系（定常光）の機材コードのみです。');
     }
     return withLock_(function () {

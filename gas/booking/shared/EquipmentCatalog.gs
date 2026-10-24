@@ -15,7 +15,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 800,
       "unitLabel": "",
-      "requiresPriorRental": true
+      "requiresLecture": true
     },
     {
       "code": "PANEL_FULLCOLOR",
@@ -23,7 +23,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 500,
       "unitLabel": "",
-      "requiresPriorRental": true
+      "requiresLecture": true
     },
     {
       "code": "COB_FULLCOLOR",
@@ -31,7 +31,7 @@ var StudioXEquipmentCatalog = {
       "stock": 2,
       "unitPriceJpy": 800,
       "unitLabel": "台",
-      "requiresPriorRental": true
+      "requiresLecture": true
     },
     {
       "code": "STROBE_MONOBLOCK",
@@ -39,7 +39,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 800,
       "unitLabel": "",
-      "requiresPriorRental": false
+      "requiresLecture": false
     },
     {
       "code": "STROBE_PORTABLE",
@@ -47,7 +47,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 800,
       "unitLabel": "",
-      "requiresPriorRental": false
+      "requiresLecture": false
     },
     {
       "code": "COMMANDER_CANON",
@@ -55,7 +55,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresPriorRental": false
+      "requiresLecture": false
     },
     {
       "code": "COMMANDER_SONY",
@@ -63,7 +63,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresPriorRental": false
+      "requiresLecture": false
     },
     {
       "code": "STAND_260",
@@ -71,7 +71,7 @@ var StudioXEquipmentCatalog = {
       "stock": 3,
       "unitPriceJpy": 200,
       "unitLabel": "本",
-      "requiresPriorRental": false
+      "requiresLecture": false
     },
     {
       "code": "BOWENS_BRACKET",
@@ -79,7 +79,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 200,
       "unitLabel": "",
-      "requiresPriorRental": false
+      "requiresLecture": false
     },
     {
       "code": "SOFTBOX_STRIP_60X90",
@@ -87,7 +87,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresPriorRental": false
+      "requiresLecture": false
     },
     {
       "code": "SOFTBOX_STRIP_30X120",
@@ -95,7 +95,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresPriorRental": false
+      "requiresLecture": false
     },
     {
       "code": "SOFTBOX_60",
@@ -103,7 +103,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresPriorRental": false
+      "requiresLecture": false
     },
     {
       "code": "COLOR_FILTER_SET",
@@ -111,7 +111,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 200,
       "unitLabel": "",
-      "requiresPriorRental": false
+      "requiresLecture": false
     }
   ],
   "freeSelf": [
