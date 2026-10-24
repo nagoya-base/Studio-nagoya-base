@@ -2,6 +2,9 @@
   写真付き機材紹介カード。/equipment/ と /studio-x/equipment/ の共通include。
   レンタル価格は _data/studio_x_equipment.json の rental[].unitPriceJpy から引く（金額をここへ直書きしない。Issue #432）。
 {%- endcomment -%}
+{%- comment -%} Studio X側は有料機材の利用条件を機材一覧で一度だけ案内するため、各カードでは繰り返さない（Issue #461）。 {%- endcomment -%}
+{%- assign lock_note = "" -%}
+{%- unless include.brand == "studio-x" %}{% assign lock_note = "施錠管理のため、ご利用には管理者の利用許可が必要です。" %}{% endunless -%}
 {%- assign rental_list = site.data.studio_x_equipment.rental -%}
 {%- assign price_BOWENS_BRACKET = rental_list | where: "code", "BOWENS_BRACKET" | first -%}
 {%- assign price_COB_BICOLOR = rental_list | where: "code", "COB_BICOLOR" | first -%}
@@ -34,7 +37,7 @@
   <div class="equipment-photo-card-body">
     <span class="equipment-photo-badge is-rental">レンタル {{ price_COB_BICOLOR.unitPriceJpy }}円</span>
     <h3>バイカラーCOBライト</h3>
-    <p>リフレクターを装着した定常光のCOBライトです。色温度を昼白色〜電球色の間で調整できます。施錠管理のため、ご利用には管理者の利用許可が必要です。</p>
+    <p>リフレクターを装着した定常光のCOBライトです。色温度を昼白色〜電球色の間で調整できます。{{ lock_note }}</p>
   </div>
 </article>
 
@@ -43,7 +46,7 @@
   <div class="equipment-photo-card-body">
     <span class="equipment-photo-badge is-rental">レンタル {{ price_COB_FULLCOLOR.unitPriceJpy }}円 / 台（最大{{ price_COB_FULLCOLOR.stock }}台）</span>
     <h3>フルカラーCOBライト</h3>
-    <p>同型のFS150Cを2灯並べた状態です。定常光でカラーライティングにも対応します。施錠管理のため、ご利用には管理者の利用許可が必要です。</p>
+    <p>同型のFS150Cを2灯並べた状態です。定常光でカラーライティングにも対応します。{{ lock_note }}</p>
   </div>
 </article>
 
@@ -52,7 +55,7 @@
   <div class="equipment-photo-card-body">
     <span class="equipment-photo-badge is-rental">レンタル {{ price_STROBE_MONOBLOCK.unitPriceJpy }}円</span>
     <h3>モノブロックストロボ</h3>
-    <p>リフレクターを装着したモノブロックストロボです。強い光量が必要な一眼・ストロボ撮影向けの機材です。施錠管理のため、ご利用には管理者の利用許可が必要です。</p>
+    <p>リフレクターを装着したモノブロックストロボです。強い光量が必要な一眼・ストロボ撮影向けの機材です。{{ lock_note }}</p>
   </div>
 </article>
 
@@ -61,7 +64,7 @@
   <div class="equipment-photo-card-body">
     <span class="equipment-photo-badge is-rental">レンタル {{ price_STROBE_PORTABLE.unitPriceJpy }}円</span>
     <h3>ポータブルストロボ</h3>
-    <p>ボーエンズマウントブラケットに取り付けた状態です。ソフトボックスなどのライトモディファイヤーを装着して使用します。施錠管理のため、ご利用には管理者の利用許可が必要です。</p>
+    <p>ボーエンズマウントブラケットに取り付けた状態です。ソフトボックスなどのライトモディファイヤーを装着して使用します。{{ lock_note }}</p>
   </div>
 </article>
 
@@ -70,7 +73,7 @@
   <div class="equipment-photo-card-body">
     <span class="equipment-photo-badge is-rental">レンタル {{ price_BOWENS_BRACKET.freeWhenWith.label }}</span>
     <h3>ボーエンズマウントブラケット</h3>
-    <p>ストロボにソフトボックスや傘などのモディファイヤーを取り付ける際に使用します。施錠管理のため、ご利用には管理者の利用許可が必要です。</p>
+    <p>ストロボにソフトボックスや傘などのモディファイヤーを取り付ける際に使用します。{{ lock_note }}</p>
   </div>
 </article>
 
@@ -79,6 +82,6 @@
   <div class="equipment-photo-card-body">
     <span class="equipment-photo-badge is-rental">レンタル {{ price_COMMANDER_CANON.unitPriceJpy }}円（Canon）／{{ price_COMMANDER_SONY.unitPriceJpy }}円（SONY）</span>
     <h3>ワイヤレスコマンダー（Canon / SONY用）</h3>
-    <p>カメラに装着し、対応するストロボを無線で発光させます。Canon用・SONY用をご用意しています。施錠管理のため、ご利用には管理者の利用許可が必要です。</p>
+    <p>カメラに装着し、対応するストロボを無線で発光させます。Canon用・SONY用をご用意しています。{{ lock_note }}</p>
   </div>
 </article>
