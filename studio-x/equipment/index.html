@@ -47,13 +47,13 @@
       <span class="brand-place">KAMIMAEZU / NAGOYA</span>
     </a>
     <nav class="desktop-nav" aria-label="メインナビゲーション">
-      <a href="../">トップ</a><a href="../how-to/">利用ガイド</a><a href="../how-to/#equipment">設備</a><a href="../legal/">規約</a>
+      <a href="../">トップ</a><a href="../how-to/">利用ガイド</a><a href="../equipment/" aria-current="page">設備・レンタル</a><a href="../legal/">規約</a>
     </nav>
     <a class="header-cta" href="../booking/" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="header" data-analytics-destination="booking_app">日時を選んで予約する</a>
     <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="メニューを開く"><span></span><span></span></button>
   </header>
   <div class="mobile-menu" id="mobile-menu" hidden>
-    <a href="../">トップ</a><a href="../how-to/">ご利用ガイド</a><a href="../how-to/#equipment">設備</a><a href="../legal/">利用規約・プライバシー</a>
+    <a href="../">トップ</a><a href="../how-to/">ご利用ガイド</a><a href="../equipment/" aria-current="page">設備・レンタル</a><a href="../legal/">利用規約・プライバシー</a>
     <a class="mobile-menu-cta" href="../booking/" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="header_mobile_menu" data-analytics-destination="booking_app">日時を選んで予約する</a>
   </div>
 
@@ -61,10 +61,10 @@
     <header class="subpage-hero">
       <p class="section-kicker">EQUIPMENT &amp; LIGHTING</p>
       <h1>照明ひとつで、<br>作品の世界が変わる。</h1>
-      <p class="subpage-lead">Studio Xは、常設・無料の定常光と背景紙だけでも作品づくりが完結するように機材をそろえています。光の扱いに慣れていない方でも、点灯した状態を見ながら向きや強さを調整できるので安心です。ストロボや保有機材のレンタル（有料・1点ごとの個別加算）は、予約フォームのオプションから申し込めます。</p>
+      <p class="subpage-lead">Studio Xは、常設・無料の定常光と背景紙だけでも作品づくりが完結するように機材をそろえています。光の扱いに慣れていない方でも、点灯した状態を見ながら向きや強さを調整できるので安心です。ストロボや保有機材のレンタル（有料・1点ごとの個別加算・施錠管理のため管理者の利用許可が必要）は、予約フォームのオプションから申し込めます。スタッフによる事前設営・片付け（有料・事前確認制）の料金もこのページでまとめて確認できます。</p>
     </header>
     <nav class="page-nav" aria-label="ページ内メニュー">
-      <a href="#equipment-list">機材一覧</a><a href="#photos">写真</a><a href="#beginner">初めての方へ</a><a href="#caution">注意事項</a><a href="#cta">予約・相談</a>
+      <a href="#equipment-list">機材一覧</a><a href="#staff-service">設営・片付け料金</a><a href="#photos">写真</a><a href="#beginner">初めての方へ</a><a href="#caution">注意事項</a><a href="#cta">予約・相談</a>
     </nav>
 
     <section class="content-section" id="equipment-list">
@@ -94,18 +94,34 @@
 {%- endfor %}
             </tbody>
           </table>
-          <p class="equipment-note">※1 ビデオライト（定常光）系のセルフレンタルは、対面で操作レクチャーを受け、利用許可済みの方のみご利用いただけます（許可を確認できない申込は保留となり、管理者の確認までお支払い・確定はできません。初めての方・レクチャー未実施の方は先にメールでご相談ください）。ストロボ等に追加の資格制限はありません。</p>
+          <p class="equipment-note">※1 有料レンタル機材は施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要です（ビデオライト・ストロボ・ソフトボックス等、有料レンタル機材すべてが対象です）。許可を確認できない申込は保留となり、管理者の確認までお支払い・確定はできません。初めての方は先にメールでご相談ください。</p>
         </div>
         <div class="equipment-table-block" id="equipment-self">
           <h3>セルフ利用は無料の備品</h3>
-          <p class="equipment-note">背景布・背景スタンドはセルフで設営・原状復帰する場合は無料です。スタッフによる事前設営・片付けを依頼する場合のみ、別途スタッフ対応料金がかかります（機材料金とは別に加算。金額は予約オプションの選択画面でご確認ください）。</p>
+          <p class="equipment-note">背景紙ロール（常設）・背景布・背景用竹竿は無料で、セルフで設営・原状復帰する場合も無料です（背景スタンドは有料レンタル機材です）。スタッフによる事前設営・片付けを依頼する場合のみ、別途スタッフ対応料金がかかります（機材料金とは別に加算。下の「スタッフ設営・片付け料金」をご確認ください）。</p>
           <table>
             <tbody>
 {%- for item in site.data.studio_x_equipment.freeSelf %}
-              <tr><th>{{ item.label }}</th><td>×{{ item.stock }}</td><td>無料（セルフ）</td></tr>
+              <tr><th>{{ item.label }}</th><td>{% if item.stock %}×{{ item.stock }}{% else %}—{% endif %}</td><td>無料（セルフ）</td></tr>
 {%- endfor %}
             </tbody>
           </table>
+        </div>
+        <div class="equipment-table-block" id="staff-service">
+          <h3>スタッフ設営・片付け料金</h3>
+          {%- assign staff = site.data.studio_x_equipment.staffService %}
+          <p class="equipment-note">下記は{% for theme in staff.themes %}{{ theme.shortLabel }}{% unless forloop.last %}・{% endunless %}{% endfor %}の5テーマ共通料金です（税込・機材レンタル料金とは別に加算）。</p>
+          <table>
+            <thead><tr><th>内容</th><th>料金</th></tr></thead>
+            <tbody>
+              <tr><th>セルフ設営</th><td>無料</td></tr>
+              <tr><th>セルフ原状復帰</th><td>無料</td></tr>
+{%- for pair in staff.services %}
+              <tr><th>{{ pair[1].tableLabel }}</th><td>{{ pair[1].priceJpy }}円</td></tr>
+{%- endfor %}
+            </tbody>
+          </table>
+          <p class="equipment-note"><strong>スタッフ対応は事前確認制です。</strong>スタッフの予定を確認する必要があるため、申込時点では確定しません。対応可否を承認したのち、オンラインで決済すると確定します。承認前に請求されることはありません。セルフ設営・セルフ原状復帰は無料で、スタッフの空き確認も不要です。</p>
         </div>
       </div>
     </section>

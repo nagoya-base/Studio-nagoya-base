@@ -21,10 +21,10 @@ var TARGET = path.join(ROOT, 'gas', 'booking', 'shared', 'EquipmentCatalog.gs');
 
 function render() {
   var data = JSON.parse(fs.readFileSync(SOURCE, 'utf8'));
-  var catalog = { rental: data.rental, freeSelf: data.freeSelf };
+  var catalog = { rental: data.rental, freeSelf: data.freeSelf, staffService: data.staffService };
   return [
     '/*',
-    ' * EquipmentCatalog.gs — Studio Xの有料レンタル機材・無料セルフ機材の料金/数量/在庫（Issue #423）。',
+    ' * EquipmentCatalog.gs — Studio Xの有料レンタル機材・無料セルフ機材・スタッフ設営料金の料金/数量/在庫（Issue #423 / #430）。',
     ' *',
     ' * ★自動生成ファイル。直接編集しない。正本は _data/studio_x_equipment.json。',
     ' *   編集後は `node scripts/sync-studio-x-equipment.js` で再生成する（機材ページ',

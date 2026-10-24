@@ -136,6 +136,11 @@ function setup(options) {
     ContentService: stubs.createContentServiceStub()
   };
   var sandbox = loadBookingSandbox(FILES, globals);
+  /* 有料レンタル機材は全件Admin許可制（Issue #430）。既定ではストロボだけ許可済みにして、
+     「許可済みなら即決済待ち」の経路を試験する。許可の保留・付与を試験するテストは COB 等を使う。 */
+  if (opts.grantStrobe !== false) {
+    sandbox.OptionOrderService.grantVideoLightEligibility(EMAIL, 'STROBE_MONOBLOCK', 'test setup');
+  }
   return { sandbox: sandbox, mailApp: mailApp, urlFetchApp: urlFetchApp, stripe: stripeState, sheets: spreadsheetsById[SPREADSHEET_ID], calendars: calendarsById };
 }
 
@@ -324,7 +329,7 @@ test('ビデオライト: 未許可の申込は拒否して消さず保留注文
   assert.strictEqual(ctx.sandbox.OptionOrderRepository.hasEligibilityGrant(EMAIL, 'COB_BICOLOR'), true);
   assert.strictEqual(ctx.sandbox.OptionOrderRepository.hasEligibilityGrant(EMAIL, 'COB_FULLCOLOR'), false, '他の機材コードは許可されない');
   var approvalMail = mailsTo(ctx, EMAIL).slice(before)[0];
-  assert.ok(approvalMail.body.indexOf('ビデオライト系機材のセルフレンタルについて、利用許可を確認しました') !== -1);
+  assert.ok(approvalMail.body.indexOf('有料レンタル機材のセルフレンタルについて、利用許可を確認しました') !== -1);
   assert.ok(approvalMail.body.indexOf('スタッフ対応') === -1, '機材用の文面');
   assert.strictEqual(svc.approveOrder(held.optionOrderId).alreadyDecided, true, '二重承認は冪等');
   assert.strictEqual(mailsTo(ctx, EMAIL).slice(before).length, 1);
@@ -358,7 +363,7 @@ test('ビデオライト: 保留注文の不承認はDECLINEDになり、部屋�
   assert.strictEqual(orderRows(ctx, r.bookingId).filter(function (x) { return x.optionOrderId === hold.optionOrderId; })[0].status, 'DECLINED');
   assert.deepStrictEqual(plain(room(ctx, r.bookingId)), roomBefore, '否認しても部屋予約には影響しない');
   var mail = mailsTo(ctx, EMAIL).slice(before)[0];
-  assert.ok(mail.body.indexOf('対面でのレクチャー・利用許可を確認できなかった') !== -1);
+  assert.ok(mail.body.indexOf('管理者による利用許可を確認できなかった') !== -1);
   assert.ok(mail.body.indexOf('スタッフの予定') === -1 && mail.body.indexOf('セルフでの設営') === -1, 'スタッフ対応向けの文面を使わない');
   assert.strictEqual(svc.declineOrder(hold.optionOrderId, '').alreadyDecided, true);
   assert.strictEqual(svc.approveOrder(hold.optionOrderId).error.code, 'INVALID_TRANSITION', '否認後は承認できない');
@@ -1004,7 +1009,7 @@ test('台帳: 管理者入力(不承認理由・資格メモ)が数式として�
   var reasonIndex = ctx.sandbox.OptionOrderRepository.HEADERS.indexOf('declineReason');
   assert.strictEqual(raw[reasonIndex].charAt(0), "'");
   ctx.sandbox.OptionOrderService.grantVideoLightEligibility('a@example.com', 'COB_BICOLOR', '+81-90-xxxx');
-  assert.strictEqual(ctx.sheets.OptionEligibility._rows[1][3].charAt(0), "'");
+  assert.strictEqual(ctx.sheets.OptionEligibility._rows[ctx.sheets.OptionEligibility._rows.length - 1][3].charAt(0), "'");
 });
 
 test('同時: 黒板教室のセルフ選択ではチョーク収納の注意を含む確定文言が届き、未整備の注記は出ない', function () {
@@ -1050,7 +1055,8 @@ test('資格は機材コード単位でAdmin付与のみ: 支払い済み履歴�
   // 許可は機材コード単位
   assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'COB_BICOLOR', '対面レクチャー済み').success, true);
   assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'VIDEO_LIGHT', '').error.code, 'INVALID_EQUIPMENT', '一括コードでは許可できない');
-  assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'STROBE_MONOBLOCK', '').error.code, 'INVALID_EQUIPMENT', 'ストロボに資格制限は設けない');
+  assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'STROBE_MONOBLOCK', '').alreadyGranted, true, 'ストロボも許可制の対象（セットアップで付与済み）');
+  assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'NOT_A_RENTAL', '').error.code, 'INVALID_EQUIPMENT', '有料レンタル機材以外は許可できない');
   var mixed = svc.submitAddonOptions(next.bookingId, EMAIL, { equipment: { COB_BICOLOR: 1, COB_FULLCOLOR: 1 } });
   assert.strictEqual(mixed.success, true);
   var statuses = {};
@@ -1132,7 +1138,7 @@ test('資格の再検証: 許可の無いまま保存された注文（不正な
   // Admin: 資格未確認として見え、否認できる
   var listed = svc.listForAdmin(r.bookingId).orders[0];
   assert.strictEqual(listed.eligibilityMissing, true);
-  assert.deepStrictEqual(plain(listed.eligibilityMissingLabels), ['フルカラーCOBライト（定常光）']);
+  assert.deepStrictEqual(plain(listed.eligibilityMissingLabels), ['フルカラーCOBライト（定常光）', 'ライトスタンド（260cm）']);
   assert.strictEqual(listed.canDeclineEligibility, true);
 
   var roomBefore = plain(room(ctx, r.bookingId));
@@ -1144,7 +1150,7 @@ test('資格の再検証: 許可の無いまま保存された注文（不正な
   assert.strictEqual(row.approvalStatus, 'DECLINED');
   assert.deepStrictEqual(plain(room(ctx, r.bookingId)), roomBefore, '否認しても部屋予約には影響しない');
   var mail = mailsTo(ctx, EMAIL).slice(before)[0];
-  assert.ok(mail.body.indexOf('対面でのレクチャー・利用許可を確認できなかった') !== -1);
+  assert.ok(mail.body.indexOf('管理者による利用許可を確認できなかった') !== -1);
   assert.ok(mail.body.indexOf('スタッフの予定') === -1, '機材の否認メールにスタッフ対応の文面を使わない');
   assert.strictEqual(svc.declineOrder('OPT-FORGED01', '').alreadyDecided, true, '二重否認は冪等');
   assert.strictEqual(svc.startOptionCheckout(r.bookingId, EMAIL, 'OPT-FORGED01').error.code, 'ORDER_DECLINED');
@@ -1161,7 +1167,7 @@ test('資格の再検証: 許可済みの機材注文・ストロボ等の注文
   confirmRoom(ctx, r2.bookingId);
   var strobe = svc.submitAddonOptions(r2.bookingId, EMAIL, { equipment: { STROBE_MONOBLOCK: 1 } });
   assert.strictEqual(svc.declineOrder(strobe.orders[0].optionOrderId, '').error.code, 'APPROVAL_NOT_REQUIRED');
-  assert.strictEqual(svc.startOptionCheckout(r2.bookingId, EMAIL, strobe.orders[0].optionOrderId).success, true, 'ストロボに資格制限は無い');
+  assert.strictEqual(svc.startOptionCheckout(r2.bookingId, EMAIL, strobe.orders[0].optionOrderId).success, true, '許可済みのストロボは支払える');
 });
 
 test('資格の再検証（Webhook）: 支払い済みでも許可を確認できないビデオライト系は確定にせず、入金の事実を残して要復旧にする', function () {
@@ -1185,7 +1191,7 @@ test('資格の再検証（Webhook）: 支払い済みでも許可を確認で�
   assert.strictEqual(ctx.sandbox.RecoveryRepository.hasOpenPaymentRecords(o.bookingId), false, '部屋予約の決済ゲートに波及しない');
 });
 
-test('許可の取り消しは機材コード単位で、他の機材・他人の許可に影響しない。ストロボ等は対象外', function () {
+test('許可の取り消しは機材コード単位で、他の機材・他人の許可に影響しない。有料レンタル機材以外は対象外', function () {
   var ctx = setup();
   var svc = ctx.sandbox.OptionOrderService;
   svc.grantVideoLightEligibility(EMAIL, 'COB_BICOLOR', '');
@@ -1193,10 +1199,31 @@ test('許可の取り消しは機材コード単位で、他の機材・他人�
   svc.grantVideoLightEligibility('hanako@example.com', 'COB_BICOLOR', '');
   assert.strictEqual(svc.revokeVideoLightEligibility(EMAIL, 'COB_BICOLOR').revoked, 1);
   assert.strictEqual(svc.revokeVideoLightEligibility(EMAIL, 'COB_BICOLOR').revoked, 0, '二重取り消しは何もしない');
-  assert.strictEqual(svc.revokeVideoLightEligibility(EMAIL, 'STROBE_MONOBLOCK').error.code, 'INVALID_EQUIPMENT');
+  assert.strictEqual(svc.revokeVideoLightEligibility(EMAIL, 'NOT_A_RENTAL').error.code, 'INVALID_EQUIPMENT');
   assert.strictEqual(ctx.sandbox.OptionOrderRepository.hasEligibilityGrant(EMAIL, 'COB_FULLCOLOR'), true);
   assert.strictEqual(ctx.sandbox.OptionOrderRepository.hasEligibilityGrant('hanako@example.com', 'COB_BICOLOR'), true);
   assert.strictEqual(ctx.sandbox.OptionOrderRepository.hasEligibilityGrant(EMAIL, 'COB_BICOLOR'), false);
   // 取り消し後に再付与できる
   assert.strictEqual(svc.grantVideoLightEligibility(EMAIL, 'COB_BICOLOR', '再付与').alreadyGranted, false);
+});
+
+test('有料レンタル機材は全件Admin許可制（Issue #430）: 未許可のストロボ・ソフトボックス・背景スタンドは保留注文になりCheckoutに進めず、Adminが許可/不承認できる', function () {
+  var ctx = setup({ grantStrobe: false });
+  var svc = ctx.sandbox.OptionOrderService;
+  var r = createRoom(ctx);
+  confirmRoom(ctx, r.bookingId);
+  var res = svc.submitAddonOptions(r.bookingId, EMAIL, { equipment: { STROBE_MONOBLOCK: 1, SOFTBOX_60: 1, BACKGROUND_STAND: 1 } });
+  assert.strictEqual(res.success, true, JSON.stringify(res.error));
+  assert.strictEqual(res.orders.length, 1);
+  var hold = res.orders[0];
+  assert.strictEqual(hold.status, 'PENDING_APPROVAL');
+  assert.strictEqual(hold.eligibilityHold, true);
+  assert.strictEqual(hold.amountJpy, 800 + 300 + 200);
+  assert.strictEqual(svc.startOptionCheckout(r.bookingId, EMAIL, hold.optionOrderId).error.code, 'APPROVAL_REQUIRED');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 0, '未許可でCheckoutを作らない');
+  var view = svc.listForAdmin(r.bookingId).orders[0];
+  assert.strictEqual(view.eligibilityMissing, true);
+  assert.strictEqual(svc.approveOrder(hold.optionOrderId).success, true, 'Adminが許可して進める');
+  assert.strictEqual(ctx.sandbox.OptionOrderRepository.hasEligibilityGrant(EMAIL, 'SOFTBOX_60'), true);
+  assert.strictEqual(svc.startOptionCheckout(r.bookingId, EMAIL, hold.optionOrderId).success, true);
 });

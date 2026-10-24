@@ -91,7 +91,7 @@ var OptionMailTemplates = (function () {
     }
     if (hasHold) {
       lines.push('');
-      lines.push('ビデオライト系機材のセルフレンタルは、対面で操作レクチャーを受け、利用許可済みの方のみご利用いただけます。管理者が許可を確認するまでお支払い・確定はできません。確認後にご案内します（許可が確認できない場合はお受けできません）。');
+      lines.push('有料レンタル機材は施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要です。管理者が許可を確認するまでお支払い・確定はできません。確認後にご案内します（許可が確認できない場合はお受けできません）。');
     }
     if (hasEquipment || hasStaff || hasHold) {
       lines.push('');
@@ -116,7 +116,7 @@ var OptionMailTemplates = (function () {
     var lines = (isEquipment ? [
       booking.name + ' 様',
       '',
-      'ビデオライト系機材のセルフレンタルについて、利用許可を確認しました。',
+      '有料レンタル機材のセルフレンタルについて、利用許可を確認しました。',
       '下記のページからオンライン決済をお願いします。ご予約が確定している場合にお支払いいただけます。お支払いの完了をもって確定となります。',
       ''
     ] : [
@@ -133,7 +133,7 @@ var OptionMailTemplates = (function () {
       contactLine_(config),
       signature_(booking)
     ]);
-    return { subject: '【' + brandLabel + '】' + (isEquipment ? 'ビデオライト系機材の利用を許可しました（お支払いのお願い）' : 'スタッフ対応を承認しました（お支払いのお願い）'), body: joinNonEmpty_(lines) };
+    return { subject: '【' + brandLabel + '】' + (isEquipment ? '有料レンタル機材の利用を許可しました（お支払いのお願い）' : 'スタッフ対応を承認しました（お支払いのお願い）'), body: joinNonEmpty_(lines) };
   }
 
   /* 不承認メール。部屋のご予約には影響しないことを明記する。 */
@@ -143,9 +143,9 @@ var OptionMailTemplates = (function () {
     var lines = (isEquipment ? [
       booking.name + ' 様',
       '',
-      'お申し込みのビデオライト系機材は、対面でのレクチャー・利用許可を確認できなかったため、セルフレンタルをお受けできませんでした。',
+      'お申し込みの有料レンタル機材は、管理者による利用許可を確認できなかったため、セルフレンタルをお受けできませんでした。',
       'お支払いは発生していません。ご予約（部屋の利用）の内容には影響ありません。',
-      'レクチャーのご相談は、メールでお問い合わせください。',
+      'ご利用許可についてのご相談は、メールでお問い合わせください。',
       ''
     ] : [
       booking.name + ' 様',
@@ -160,7 +160,7 @@ var OptionMailTemplates = (function () {
       contactLine_(config),
       signature_(booking)
     ]);
-    return { subject: '【' + brandLabel + '】' + (isEquipment ? 'ビデオライト系機材のお申し込みについて（お受けできませんでした）' : 'スタッフ対応について（対応できませんでした）'), body: joinNonEmpty_(lines) };
+    return { subject: '【' + brandLabel + '】' + (isEquipment ? '有料レンタル機材のお申し込みについて（お受けできませんでした）' : 'スタッフ対応について（対応できませんでした）'), body: joinNonEmpty_(lines) };
   }
 
   /* お支払い完了・確定メール。 */

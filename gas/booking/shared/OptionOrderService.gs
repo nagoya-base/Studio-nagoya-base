@@ -94,7 +94,7 @@ var OptionOrderService = (function () {
     return view;
   }
 
-  /* ビデオライト系（定常光）を含む申込か。含む場合だけ、Adminが付与した資格（対面レクチャー済み）を照会する。 */
+  /* 有料レンタル機材を含む申込か。含む場合だけ、Adminが付与した資格（管理者の利用許可）を照会する。 */
   function requiresEligibility_(normalized) {
     return Object.keys(normalized.equipment).some(function (code) {
       return BookingOptions.isLectureRequiredItem('EQ:' + code + ':1');
@@ -102,7 +102,7 @@ var OptionOrderService = (function () {
   }
 
   /*
-   * 機材コード単位の資格: **Adminが対面レクチャー済みとして明示的に付与した許可のみ**を正とする
+   * 機材コード単位の資格: **Adminが管理者が信用確認のうえ明示的に付与した利用許可のみ**を正とする
    * （Issue追加確定要件）。過去の利用履歴・支払い済み注文からは自動で資格ありと判定しない。
    * 別のビデオライト系機材の許可でも通さない。
    */
@@ -116,7 +116,7 @@ var OptionOrderService = (function () {
 
   /*
    * サーバー側の資格の再検証（Issue追加要件）。注文に含まれるビデオライト系機材のうち、現時点で
-   * 対面レクチャー済みの許可（Admin付与）を確認できない機材コードを返す。申込時に通っていても、
+   * 管理者の利用許可（Admin付与）を確認できない機材コードを返す。申込時に通っていても、
    * 許可が取り消された・申込データが不正だった場合に、支払い・確定へ進ませないために使う。
    */
   function missingLectureCodes_(order) {
@@ -128,7 +128,7 @@ var OptionOrderService = (function () {
 
   function notEligibleError_(codes) {
     return fail_('VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE',
-      codes.map(BookingOptions.equipmentLabel).join('・') + 'のセルフレンタルは、対面で操作レクチャーを受け、利用許可済みの方のみご利用いただけます。お支払いには進めません。メールでご相談ください。',
+      codes.map(BookingOptions.equipmentLabel).join('・') + 'は施錠管理している有料レンタル機材のため、管理者の利用許可を得た方のみご利用いただけます。お支払いには進めません。メールでご相談ください。',
       { items: codes });
   }
 
@@ -209,7 +209,7 @@ var OptionOrderService = (function () {
       if (staff.length === 0) return;
       var adminUrl = BookingConfig.getBookingAdminUrl();
       var lines = [
-        '承認依頼が届きました（スタッフ対応の空き確認、またはビデオライト系機材の利用許可＝対面レクチャー済みの確認）。Booking Adminで承認（許可済みにして進める）または不承認にしてください。Checkoutは承認後にのみ発行されます。',
+        '承認依頼が届きました（スタッフ対応の空き確認、または有料レンタル機材の利用許可の確認）。Booking Adminで承認（許可済みにして進める）または不承認にしてください。Checkoutは承認後にのみ発行されます。',
         '',
         'bookingId: ' + booking.bookingId,
         '利用日: ' + BookingAvailability.formatDateWithWeekday(booking.date)
@@ -411,7 +411,7 @@ var OptionOrderService = (function () {
       if (order.status === BookingOptions.STATUS.CONFIRMED) return fail_('ALREADY_PAID', 'このオプションはお支払い済みです。');
       if (order.status === BookingOptions.STATUS.PENDING_APPROVAL) {
         return fail_('APPROVAL_REQUIRED', order.category === BookingOptions.CATEGORY.EQUIPMENT
-          ? 'ビデオライト系機材は、対面レクチャー済みの利用許可の確認後にお支払いいただけます。確認をお待ちください。'
+          ? '有料レンタル機材は、管理者の利用許可の確認後にお支払いいただけます。確認をお待ちください。'
           : 'スタッフ対応は承認後にお支払いいただけます。承認をお待ちください。');
       }
       if (order.status === BookingOptions.STATUS.DECLINED) return fail_('ORDER_DECLINED', 'このスタッフ対応は対応できませんでした。');
@@ -543,7 +543,7 @@ var OptionOrderService = (function () {
     summary.stripePaymentIntentId = record.stripePaymentIntentId;
     summary.sourceLabel = record.source === BookingOptions.SOURCE.ADDON ? '後付け' : '予約と同時';
     summary.paidLabel = record.category === BookingOptions.CATEGORY.FREE ? '無料' : '有料';
-    /* 対面レクチャー済みの許可を確認できないビデオライト系の未払い注文（Adminが否認できる）。 */
+    /* 管理者の利用許可を確認できない有料レンタル機材の未払い注文（Adminが否認できる）。 */
     var missing = (record.category === BookingOptions.CATEGORY.EQUIPMENT &&
       (record.status === BookingOptions.STATUS.PENDING_APPROVAL || record.status === BookingOptions.STATUS.AWAITING_PAYMENT || record.status === BookingOptions.STATUS.PAYMENT_PENDING))
       ? missingLectureCodes_(record) : [];
@@ -589,7 +589,7 @@ var OptionOrderService = (function () {
       if (!approving && isEquipment && order.status === BookingOptions.STATUS.DECLINED) {
         return { success: true, alreadyDecided: true, order: order };
       }
-      /* 利用許可（対面レクチャー済み）の確認待ちの機材注文（保留中）。承認＝許可済みにして進める。 */
+      /* 利用許可の確認待ちの機材注文（保留中）。承認＝許可済みにして進める。 */
       var isEligibilityHold = isEquipment && order.status === BookingOptions.STATUS.PENDING_APPROVAL;
       /* 承認済み／不承認済みの許可確認注文への再操作は、冪等な結果または状態遷移エラーを返す。 */
       var isApprovedHold = isEquipment && (order.approvalStatus === BookingOptions.APPROVAL_STATUS.APPROVED || order.approvalStatus === BookingOptions.APPROVAL_STATUS.DECLINED);
@@ -615,7 +615,7 @@ var OptionOrderService = (function () {
         if (!accepts.ok) return { success: false, error: accepts.error };
       }
       if (approving && isEligibilityHold) {
-        /* 「許可済みにして進める」: 管理者の承認操作そのものが対面レクチャー済みの許可の付与。
+        /* 「許可済みにして進める」: 管理者の承認操作そのものが管理者の利用許可の付与。
            機材コード単位で許可を記録してから支払い可能な状態へ進める（二重付与しない）。 */
         missingLectureCodes_(order).forEach(function (code) {
           if (!OptionOrderRepository.hasEligibilityGrant(order.customerEmail, code)) {
@@ -649,7 +649,7 @@ var OptionOrderService = (function () {
   }
 
   /*
-   * ビデオライト系機材のセルフレンタル許可。管理者から対面で操作レクチャーを受け、セルフ利用可と
+   * 有料レンタル機材のセルフレンタル許可。施錠管理のため、管理者が信用確認のうえセルフ利用可と
    * 確認した利用者にだけ、運営がAdminから付与する（これが資格の唯一の正本）。
    * 機材コード単位（例: COB_BICOLOR）。一括許可はしない。許可済みなら冪等。
    */
@@ -657,7 +657,7 @@ var OptionOrderService = (function () {
     var normalized = normalizeEmail_(email);
     if (!Booking.isValidEmail(normalized)) return fail_('INVALID_EMAIL', 'メールアドレスの形式が正しくありません。');
     if (BookingOptions.lectureRequiredEquipmentCodes().indexOf(equipmentCode) === -1) {
-      return fail_('INVALID_EQUIPMENT', '許可の対象はビデオライト系（定常光）の機材コードのみです。');
+      return fail_('INVALID_EQUIPMENT', '許可の対象は有料レンタル機材の機材コードのみです。');
     }
     return withLock_(function () {
       if (OptionOrderRepository.hasEligibilityGrant(normalized, equipmentCode)) {
@@ -673,7 +673,7 @@ var OptionOrderService = (function () {
     var normalized = normalizeEmail_(email);
     if (!Booking.isValidEmail(normalized)) return fail_('INVALID_EMAIL', 'メールアドレスの形式が正しくありません。');
     if (BookingOptions.lectureRequiredEquipmentCodes().indexOf(equipmentCode) === -1) {
-      return fail_('INVALID_EQUIPMENT', '対象はビデオライト系（定常光）の機材コードのみです。');
+      return fail_('INVALID_EQUIPMENT', '対象は有料レンタル機材の機材コードのみです。');
     }
     return withLock_(function () {
       return { success: true, revoked: OptionOrderRepository.removeEligibilityGrant(normalized, equipmentCode) };
@@ -774,13 +774,13 @@ var OptionOrderService = (function () {
         return { outcome: 'RECOVERY_REQUIRED', optionOrderId: order.optionOrderId };
       }
 
-      /* 資格の再検証: 支払い済みでも、対面レクチャー済みの許可を確認できないビデオライト系は確定にしない
+      /* 資格の再検証: 支払い済みでも、管理者の利用許可を確認できない有料レンタル機材は確定にしない
          （入金の事実は保持して運営へ回す。自動確定・自動返金はしない）。 */
       var missingAtPayment = missingLectureCodes_(order);
       if (missingAtPayment.length > 0) {
         OptionOrderRepository.updateOrder(order.optionOrderId, Object.assign(paidFields, {
           paymentRecoveryRequiredAt: effectiveNow,
-          paymentRecoveryReason: 'ビデオライト系の利用許可（対面レクチャー済み）を確認できないため確定しませんでした: ' + missingAtPayment.join(',') + '。確認・返金判断が必要です。'
+          paymentRecoveryReason: '有料レンタル機材の利用許可を確認できないため確定しませんでした: ' + missingAtPayment.join(',') + '。確認・返金判断が必要です。'
         }));
         recordOptionRecovery_(order.bookingId, 'OPTION_PAID_NOT_ELIGIBLE', '', 'optionOrderId=' + order.optionOrderId + ' codes=' + missingAtPayment.join(','), effectiveNow);
         return { outcome: 'RECOVERY_REQUIRED', optionOrderId: order.optionOrderId };

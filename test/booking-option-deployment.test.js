@@ -119,7 +119,7 @@ test('Booking Admin配布ファイルセット: 予約詳細にオプション�
   assert.strictEqual(ctx.sandbox.adminApproveOptionOrder('OPT-STAFF001').alreadyDecided, true, '二重承認は冪等');
   assert.strictEqual(ctx.sandbox.adminGrantVideoLightEligibility('hanako@example.com', 'COB_FULLCOLOR', 'DM記録').success, true);
   assert.strictEqual(ctx.sandbox.adminRevokeVideoLightEligibility('hanako@example.com', 'COB_FULLCOLOR').revoked, 1);
-  assert.strictEqual(ctx.sandbox.adminRevokeVideoLightEligibility('hanako@example.com', 'STROBE_MONOBLOCK').error.code, 'INVALID_EQUIPMENT');
+  assert.strictEqual(ctx.sandbox.adminRevokeVideoLightEligibility('hanako@example.com', 'NOT_A_RENTAL').error.code, 'INVALID_EQUIPMENT');
 });
 
 test('Booking Admin配布ファイルセット: オプション注文が無い既存予約の詳細は従来どおり表示でき、optionsは空', function () {

@@ -28,7 +28,7 @@ test('正本の内容がIssueの確定料金・数量・常設無料設備と一
   var rental = {};
   data.rental.forEach(function (e) { rental[e.code] = e.stock + 'x' + e.unitPriceJpy + (e.unitLabel ? '/' + e.unitLabel : ''); });
   assert.deepStrictEqual(rental, {
-    COB_BICOLOR: '1x800', PANEL_FULLCOLOR: '1x500', COB_FULLCOLOR: '2x800/台', STROBE_MONOBLOCK: '1x800', STROBE_PORTABLE: '1x800',
+    COB_BICOLOR: '1x800', PANEL_FULLCOLOR: '1x500', COB_FULLCOLOR: '2x800/台', BACKGROUND_STAND: '1x200', STROBE_MONOBLOCK: '1x800', STROBE_PORTABLE: '1x800',
     COMMANDER_CANON: '1x300', COMMANDER_SONY: '1x300', STAND_260: '3x200/本', BOWENS_BRACKET: '1x200',
     SOFTBOX_STRIP_60X90: '1x300', SOFTBOX_STRIP_30X120: '1x300', SOFTBOX_60: '1x300', COLOR_FILTER_SET: '1x200'
   });
@@ -37,7 +37,49 @@ test('正本の内容がIssueの確定料金・数量・常設無料設備と一
     '背景紙 ブラック（135cm×5m）×1', '背景紙 ホワイト（135cm×5m）×1', 'レフ板 5-in-1（80cm）×1'
   ]);
   // 背景布・背景スタンドはセルフ利用が無料
-  assert.deepStrictEqual(data.freeSelf.map(function (e) { return e.code; }), ['BACKGROUND_STAND', 'BACKDROP_CLOTH_WHITE', 'BACKDROP_CLOTH_BLACK']);
+  assert.deepStrictEqual(data.freeSelf.map(function (e) { return e.code; }), ['BACKDROP_CLOTH_WHITE', 'BACKDROP_POLE', 'BACKDROP_CLOTH_BLACK']);
+  assert.strictEqual(data.freeSelf.filter(function (e) { return e.code === 'BACKDROP_POLE'; })[0].selectable, false, '背景用竹竿は無料備品として正本に載せる（個別選択はさせない）');
+  // 背景スタンドは無料ではなく200円の有料レンタル機材（Issue #430）。背景紙ロールは常設・無料
+  assert.strictEqual(data.rental.filter(function (e) { return e.code === 'BACKGROUND_STAND'; })[0].unitPriceJpy, 200);
+  assert.ok(data.permanent.some(function (e) { return /背景紙 ブラック/.test(e.label); }) && data.permanent.some(function (e) { return /背景紙 ホワイト/.test(e.label); }));
+  // 有料レンタル機材は全件Admin許可制
+  assert.ok(data.rental.every(function (e) { return e.requiresLecture === true; }));
+});
+
+test('スタッフ設営料金とテーマの正本（Issue #430）: 事前設営3,000円／片付け3,000円／両方5,000円、5テーマ共通', function () {
+  var services = {};
+  Object.keys(data.staffService.services).forEach(function (k) { services[k] = data.staffService.services[k].priceJpy; });
+  assert.deepStrictEqual(services, { PRE_SETUP: 3000, CLEANUP: 3000, BOTH: 5000 });
+  assert.deepStrictEqual(data.staffService.themes.map(function (t) { return t.code; }),
+    ['CLASSROOM', 'JAPANESE', 'GRUNGE', 'WHITE_BACKDROP', 'BLACK_BACKDROP']);
+  // GASの料金表はJSON(生成カタログ)からの参照で、数値を再定義しない
+  var gas = stripComments(read('gas/booking/shared/BookingOptions.gs'));
+  assert.ok(gas.indexOf('StudioXEquipmentCatalog.staffService') !== -1);
+  assert.ok(!/PRE_SETUP:\s*\d/.test(gas) && !/BOTH:\s*\d/.test(gas), 'GASにスタッフ料金を直書きしない');
+});
+
+test('機材ページにスタッフ設営料金を正本から表示し、事前確認制・承認後決済とセルフ無料を明記する（Issue #430）', function () {
+  var html = read('studio-x/equipment/index.html');
+  assert.match(html, /id="staff-service"/);
+  assert.ok(html.indexOf('site.data.studio_x_equipment.staffService') !== -1);
+  assert.match(html, /セルフ設営<\/th><td>無料/);
+  assert.match(html, /セルフ原状復帰<\/th><td>無料/);
+  assert.match(html, /事前確認制/);
+  assert.match(html, /承認/);
+  assert.match(html, /オンラインで決済/);
+});
+
+test('Studio Xのメインナビ「設備・レンタル」は/studio-x/equipment/へ直接つながる（Issue #430）', function () {
+  var top = read('studio-x/index.html');
+  var nav = top.match(/<nav class="desktop-nav"[\s\S]*?<\/nav>/)[0];
+  var mobile = top.match(/<div class="mobile-menu"[\s\S]*?<\/div>/)[0];
+  [nav, mobile].forEach(function (block) {
+    assert.match(block, /<a href="equipment\/">設備・レンタル<\/a>/);
+    assert.ok(block.indexOf('#specs') === -1, '旧「設備」導線(#specs)を残さない');
+  });
+  assert.ok(top.indexOf('id="specs"') !== -1, '#specsセクション自体は残す');
+  var page = read('studio-x/equipment/index.html');
+  assert.ok(page.split('設備・レンタル</a>').length >= 3, '機材ページ自身のデスクトップ/モバイルナビも統一');
 });
 
 test('機材ページは正本(site.data)を直接読み、常設無料・有料レンタル・セルフ無料を分けて表示し、金額を直書きしない', function () {
@@ -49,7 +91,12 @@ test('機材ページは正本(site.data)を直接読み、常設無料・有料
   assert.match(html, /id="equipment-rental"/);
   assert.match(html, /id="equipment-self"/);
   assert.match(html, /1点ごとの個別加算/);
-  assert.match(html, /対面で操作レクチャーを受け、利用許可済みの方のみ/);
+  assert.match(html, /施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要/);
+  assert.ok(!/資格制限はありません|資格の制限はありません/.test(html), '資格制限なしの旧文言を残さない');
+  assert.match(html, /背景紙ロール[^。]*無料/);
+  assert.match(html, /背景用竹竿[^。]*無料/);
+  assert.match(html, /背景スタンドは有料レンタル機材/);
+  assert.ok(!/背景布・背景スタンドは/.test(html), '背景スタンドを無料扱いにしない');
   assert.ok(html.indexOf('過去にビデオライト') === -1);
   var code = stripComments(html);
   assert.ok(!/\b(800|500|300|200)円/.test(code), '機材の単価をページへ直書きしない');

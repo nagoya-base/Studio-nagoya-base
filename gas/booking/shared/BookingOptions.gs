@@ -14,13 +14,12 @@
  * - 有料機材: 個別レンタル機材を1点ごとに数量×単価で加算（セット料金ではない）。管理者承認不要。
  *   料金・数量・在庫は機材ページ(studio-x/equipment/)と同じ正本 _data/studio_x_equipment.json
  *   から生成した EquipmentCatalog.gs（StudioXEquipmentCatalog）だけを参照する。画面・GAS・
- *   機材ページに金額を重複して持たない。在庫数を超える選択は拒否する。背景布・背景スタンドの
- *   セルフ利用は0円。有料機材は部屋予約確定後の追加Checkout方式（Issue追加要件で正式採用）。
- * - ビデオライト系（定常光）のセルフレンタルは「管理者から対面で操作レクチャーを受け、セルフ利用可と
- *   確認された利用者」のみ（Issue追加確定要件）。利用履歴からは自動で資格ありと判定せず、Adminが
+ *   機材ページに金額を重複して持たない。在庫数を超える選択は拒否する。背景布のセルフ利用は0円、背景スタンドは有料レンタル（200円）。有料機材は部屋予約確定後の追加Checkout方式（Issue追加要件で正式採用）。
+ * - 有料レンタル機材は全件施錠管理のため「管理者が信用確認のうえ利用を許可した利用者」のみ
+ *   セルフ利用できる（Issue #430。ビデオライト系に限定しない）。利用履歴からは自動で資格ありと判定せず、Adminが
  *   機材コード単位で明示的に付与した許可（OptionEligibility）だけを正とする。未許可の申込（初回を
  *   含む）は拒否して消さず、Checkoutを発行しない保留注文（PENDING_APPROVAL）として残し、管理者が
- *   「許可済みにして進める」か「不承認」にする（部屋予約には影響しない）。ストロボ等へ追加の資格制限は設けない。
+ *   「許可済みにして進める」か「不承認」にする（部屋予約には影響しない）。ストロボ・ソフトボックス・背景スタンド等も同様に対象。
  *
  * 【状態の分離】予約（Bookings.status）とオプション注文（OptionOrders）は別の状態を持つ。
  * 注文ごとに approvalStatus / paymentStatus / status を持ち、セッティングのDECLINEDで
@@ -73,7 +72,7 @@ var BookingOptions = (function () {
 
   var ALLOWED_TRANSITIONS_ = {};
   ALLOWED_TRANSITIONS_[STATUS.PENDING_APPROVAL] = [STATUS.AWAITING_PAYMENT, STATUS.DECLINED, STATUS.CANCELLED];
-  /* AWAITING_PAYMENT→DECLINED: 対面レクチャー済みの許可を確認できない機材注文を管理者が否認する（部屋予約は不変）。 */
+  /* AWAITING_PAYMENT→DECLINED: 管理者の利用許可を確認できない機材注文を管理者が否認する（部屋予約は不変）。 */
   ALLOWED_TRANSITIONS_[STATUS.AWAITING_PAYMENT] = [STATUS.PAYMENT_PENDING, STATUS.CONFIRMED, STATUS.DECLINED, STATUS.CANCELLED];
   /* PAYMENT_PENDING→AWAITING_PAYMENT: 決済失敗・Checkout失効後に再試行できる状態へ戻す。 */
   ALLOWED_TRANSITIONS_[STATUS.PAYMENT_PENDING] = [STATUS.CONFIRMED, STATUS.AWAITING_PAYMENT, STATUS.CANCELLED];
@@ -118,7 +117,7 @@ var BookingOptions = (function () {
     return m ? { code: m[1], quantity: Number(m[2]) } : null;
   }
 
-  /* 対面レクチャー済みの許可が条件の機材コード一覧（ビデオライト系の定常光）。 */
+  /* 管理者の利用許可が条件の機材コード一覧（有料レンタル機材全件）。 */
   function lectureRequiredEquipmentCodes() {
     return StudioXEquipmentCatalog.rental.filter(function (item) { return item.requiresLecture === true; }).map(function (item) { return item.code; });
   }
@@ -129,7 +128,7 @@ var BookingOptions = (function () {
     return parsed ? parsed.code : '';
   }
 
-  /* 項目一覧のうち、対面レクチャー済みの許可が必要な機材コード（重複なし）。 */
+  /* 項目一覧のうち、管理者の利用許可が必要な機材コード（重複なし）。 */
   function lectureRequiredCodesOfItems(items) {
     var codes = [];
     (items || []).forEach(function (item) {
@@ -145,7 +144,7 @@ var BookingOptions = (function () {
     return def ? def.label : code;
   }
 
-  /* 対面レクチャー済みの許可が条件の機材（ビデオライト系の定常光）か。 */
+  /* 管理者の利用許可が条件の機材（有料レンタル機材全件）か。 */
   function isLectureRequiredItem(item) {
     var parsed = parseEquipmentItem_(item);
     var def = parsed && equipmentRental_(parsed.code);
@@ -153,19 +152,22 @@ var BookingOptions = (function () {
   }
 
   /* セルフ設営・スタッフ対応の共通対象（Issue #423 追加コメント）。 */
-  var THEMES = {
-    CLASSROOM: { code: 'CLASSROOM', label: '教室セット（机・黒板）' },
-    JAPANESE: { code: 'JAPANESE', label: '和風セット' },
-    GRUNGE: { code: 'GRUNGE', label: 'グランジセット' },
-    WHITE_BACKDROP: { code: 'WHITE_BACKDROP', label: '白背景布' },
-    BLACK_BACKDROP: { code: 'BLACK_BACKDROP', label: '黒背景布' }
-  };
-  var THEME_CODES_ = ['CLASSROOM', 'JAPANESE', 'GRUNGE', 'WHITE_BACKDROP', 'BLACK_BACKDROP'];
+  var THEMES = {};
+  var THEME_CODES_ = StudioXEquipmentCatalog.staffService.themes.map(function (theme) {
+    THEMES[theme.code] = { code: theme.code, label: theme.label };
+    return theme.code;
+  });
 
   /* スタッフ対応の料金（Issue #423 追加コメント。テーマ別の個別価格は持たない）。
-     この表が唯一の正本。画面はoptionCatalog APIで取得して表示し、GAS・Webhookも必ずここを参照する。 */
-  var STAFF_SERVICE_PRICES_ = { PRE_SETUP: 3000, CLEANUP: 3000, BOTH: 5000 };
-  var STAFF_SERVICE_LABELS_ = { PRE_SETUP: '事前設営を依頼', CLEANUP: '片付けを依頼', BOTH: '事前設営＋片付けセット' };
+     正本は _data/studio_x_equipment.json の staffService（生成物 EquipmentCatalog.gs 経由）。機材ページも同じJSONを読むため食い違わない。
+     画面はoptionCatalog APIで取得して表示し、GAS・Webhookも必ずここを参照する。 */
+  var STAFF_SERVICE_PRICES_ = {};
+  var STAFF_SERVICE_LABELS_ = {};
+  Object.keys(StudioXEquipmentCatalog.staffService.services).forEach(function (key) {
+    var service = StudioXEquipmentCatalog.staffService.services[key];
+    STAFF_SERVICE_PRICES_[key] = service.priceJpy;
+    STAFF_SERVICE_LABELS_[key] = service.label;
+  });
 
   /* ---- 定型案内（無料セルフセッティング。Issue #423 追加コメント 3） ----
    *
@@ -485,7 +487,7 @@ var BookingOptions = (function () {
         return { ok: false, error: err_('STOCK_EXCEEDED', def.label + 'は在庫数（' + def.stock + '点）を超えて申し込めません。', { items: [code] }) };
       }
       if (rental) {
-        /* 資格は機材コード単位: 管理者が対面レクチャー済みとして許可した機材だけが即時の支払い対象。
+        /* 資格は機材コード単位: 管理者が管理者が利用を許可した機材だけが即時の支払い対象。
            利用履歴や、別のビデオライト系機材の許可では通さない。許可を確認できない申込は拒否して
            消さず、Checkoutを発行しない保留注文として残し、管理者が「許可済みにして進める」か
            「不承認」にする（直接改ざんされた入力でもサーバー側で必ずこの状態に落ちる）。 */
@@ -708,7 +710,7 @@ var BookingOptions = (function () {
       approvalStatus: order.approvalStatus,
       paymentStatus: order.paymentStatus,
       status: order.status,
-      /* スタッフ対応、および利用許可（対面レクチャー済み）の確認待ちの機材注文は承認制。 */
+      /* スタッフ対応、および利用許可の確認待ちの機材注文は承認制。 */
       requiresApproval: order.category === CATEGORY.STAFF_SERVICE || order.approvalStatus !== APPROVAL_STATUS.NOT_REQUIRED,
       /* 未許可のビデオライト系の申込（Checkoutを発行しない保留注文。管理者が許可して進める／不承認）。 */
       eligibilityHold: order.category === CATEGORY.EQUIPMENT && order.approvalStatus !== APPROVAL_STATUS.NOT_REQUIRED,

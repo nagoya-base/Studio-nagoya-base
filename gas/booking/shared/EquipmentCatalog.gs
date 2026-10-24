@@ -1,5 +1,5 @@
 /*
- * EquipmentCatalog.gs — Studio Xの有料レンタル機材・無料セルフ機材の料金/数量/在庫（Issue #423）。
+ * EquipmentCatalog.gs — Studio Xの有料レンタル機材・無料セルフ機材・スタッフ設営料金の料金/数量/在庫（Issue #423 / #430）。
  *
  * ★自動生成ファイル。直接編集しない。正本は _data/studio_x_equipment.json。
  *   編集後は `node scripts/sync-studio-x-equipment.js` で再生成する（機材ページ
@@ -34,12 +34,20 @@ var StudioXEquipmentCatalog = {
       "requiresLecture": true
     },
     {
+      "code": "BACKGROUND_STAND",
+      "label": "背景スタンド",
+      "stock": 1,
+      "unitPriceJpy": 200,
+      "unitLabel": "",
+      "requiresLecture": true
+    },
+    {
       "code": "STROBE_MONOBLOCK",
       "label": "モノブロックストロボ",
       "stock": 1,
       "unitPriceJpy": 800,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "STROBE_PORTABLE",
@@ -47,7 +55,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 800,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "COMMANDER_CANON",
@@ -55,7 +63,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "COMMANDER_SONY",
@@ -63,7 +71,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "STAND_260",
@@ -71,7 +79,7 @@ var StudioXEquipmentCatalog = {
       "stock": 3,
       "unitPriceJpy": 200,
       "unitLabel": "本",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "BOWENS_BRACKET",
@@ -79,7 +87,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 200,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "SOFTBOX_STRIP_60X90",
@@ -87,7 +95,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "SOFTBOX_STRIP_30X120",
@@ -95,7 +103,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "SOFTBOX_60",
@@ -103,7 +111,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "COLOR_FILTER_SET",
@@ -111,16 +119,10 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 200,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     }
   ],
   "freeSelf": [
-    {
-      "code": "BACKGROUND_STAND",
-      "label": "背景スタンド",
-      "stock": 1,
-      "selectable": true
-    },
     {
       "code": "BACKDROP_CLOTH_WHITE",
       "label": "背景布 白（幅180cm×長さ250cm）",
@@ -129,11 +131,63 @@ var StudioXEquipmentCatalog = {
       "viaTheme": "WHITE_BACKDROP"
     },
     {
+      "code": "BACKDROP_POLE",
+      "label": "背景用竹竿",
+      "selectable": false
+    },
+    {
       "code": "BACKDROP_CLOTH_BLACK",
       "label": "背景布 黒（幅180cm×長さ250cm）",
       "stock": 1,
       "selectable": false,
       "viaTheme": "BLACK_BACKDROP"
     }
-  ]
+  ],
+  "staffService": {
+    "_comment": "スタッフ設営・片付けの料金とテーマ（5テーマ共通。テーマ別の個別価格は持たない）。予約オプション(GAS)・Webhook・機材ページはすべてここを参照する。",
+    "themes": [
+      {
+        "code": "CLASSROOM",
+        "label": "教室セット（机・黒板）",
+        "shortLabel": "教室セット"
+      },
+      {
+        "code": "JAPANESE",
+        "label": "和風セット",
+        "shortLabel": "和風セット"
+      },
+      {
+        "code": "GRUNGE",
+        "label": "グランジセット",
+        "shortLabel": "グランジセット"
+      },
+      {
+        "code": "WHITE_BACKDROP",
+        "label": "白背景布",
+        "shortLabel": "白背景布"
+      },
+      {
+        "code": "BLACK_BACKDROP",
+        "label": "黒背景布",
+        "shortLabel": "黒背景布"
+      }
+    ],
+    "services": {
+      "PRE_SETUP": {
+        "label": "事前設営を依頼",
+        "tableLabel": "事前設営（スタッフ）",
+        "priceJpy": 3000
+      },
+      "CLEANUP": {
+        "label": "片付けを依頼",
+        "tableLabel": "片付け（スタッフ）",
+        "priceJpy": 3000
+      },
+      "BOTH": {
+        "label": "事前設営＋片付けセット",
+        "tableLabel": "事前設営＋片付け（スタッフ）",
+        "priceJpy": 5000
+      }
+    }
+  }
 };

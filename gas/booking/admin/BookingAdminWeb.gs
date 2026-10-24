@@ -551,9 +551,9 @@ function adminDeclineOptionOrder(optionOrderId, reason) {
   return sanitizeForClient_(OptionOrderService.declineOrder(optionOrderId, reason));
 }
 
-/* ビデオライト系機材のセルフレンタル許可。管理者から対面で操作レクチャーを受け、セルフ利用可と
-   確認した利用者にだけ付与する（利用履歴からの自動判定はしない）。機材コード単位（例: COB_BICOLOR）で、
-   「どれか1台の許可で全定常光を許可」はしない。 */
+/* 有料レンタル機材のセルフレンタル許可。施錠管理のため、管理者が信用確認のうえセルフ利用可と
+   判断した利用者にだけ付与する（利用履歴からの自動判定はしない）。機材コード単位（例: COB_BICOLOR）で、
+   「どれか1台の許可で全機材を許可」はしない。 */
 function adminGrantVideoLightEligibility(email, equipmentCode, note) {
   return sanitizeForClient_(OptionOrderService.grantVideoLightEligibility(email, equipmentCode, note));
 }
