@@ -136,7 +136,7 @@ var BookingMailTemplates = (function () {
     var isCard = Booking.isCardPaymentMethod(record.paymentMethod);
 
     /* Issue #445: オンラインクレジットカードは「申込→そのままオンライン決済→決済完了で自動確定」。
-       決済前に届く受付メールで「あとで決済すればよい」「管理者の確定連絡待ち」と誤解させないため、
+       決済前に届く受付メールで「あとで決済すればよい」「確定連絡待ち」と誤解させないため、
        決済未完了であること・続けて決済が必要なこと・失効し得ることを明記する。現金・PayPay・未定は従来文言。 */
     var subject = isCard
       ? '【' + brandLabel + '】予約申込を受け付けました（決済完了で確定）'
@@ -149,7 +149,7 @@ var BookingMailTemplates = (function () {
       ]
       : [
         brandLabel + ' のご予約を仮受付いたしました。',
-        '※このメールの時点ではご予約はまだ確定しておりません。管理者が内容を確認のうえ、確定のご連絡を改めてお送りします。'
+        '※このメールの時点ではご予約はまだ確定しておりません。当方で内容を確認のうえ、確定のご連絡を改めてお送りします。'
       ];
     var body = joinNonEmpty_([
       record.name + ' 様',

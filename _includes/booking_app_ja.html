@@ -34,7 +34,7 @@
        支払方法を選ぶとscripts/booking-app.jsが文言を切り替える（カード＝決済完了で即確定／現金・PayPay＝仮受付→管理者確認）。 -->
   <p class="ba-banner ba-banner--notice" id="ba-flow-banner">
     <strong id="ba-flow-banner-title">支払方法により予約確定までの流れが異なります。</strong>
-    <span id="ba-flow-banner-body">オンラインクレジットカード：申込後そのままお支払いへ進み、お支払い完了で予約確定。現金・PayPay：申込後は仮受付となり、管理者確認後に予約確定。</span>
+    <span id="ba-flow-banner-body">オンラインクレジットカード：申込後そのままお支払いへ進み、お支払い完了で予約確定。現金・PayPay：申込後は仮受付となり、当方で内容確認後に予約確定。</span>
   </p>
 
   <ol class="ba-progress" id="ba-progress" aria-label="予約手続きの進み具合">
@@ -325,7 +325,7 @@
         <label class="ba-choice"><input type="radio" name="paymentMethod" value="オンラインクレジットカード"> <span>オンラインクレジットカード</span></label>
         <label class="ba-choice"><input type="radio" name="paymentMethod" value="未定"> <span>未定</span></label>
       </div>
-      <p class="ba-field-help" id="ba-first-time-card-notice" hidden>初回利用の方はオンラインクレジットカード決済のみご利用いただけます。</p>
+      <p class="ba-banner ba-banner--notice ba-first-time-card-notice" id="ba-first-time-card-notice" role="note" hidden>初回利用の方はオンラインクレジットカード決済のみご利用いただけます。</p>
       <p class="ba-field-error" id="ba-payment-error" hidden></p>
       <p class="ba-banner ba-banner--notice" id="ba-card-payment-notice" hidden></p>
     </fieldset>

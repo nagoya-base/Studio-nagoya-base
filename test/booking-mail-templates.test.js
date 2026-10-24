@@ -147,7 +147,7 @@ test('buildPendingMail: カード決済の受付メールは、決済未完了�
   assert.match(mail.body, /お支払い完了後、ご予約は自動で確定します/);
   assert.match(mail.body, /決済を完了せずに時間が経過すると、ご予約が失効する場合があります/);
   assert.match(mail.body, /お支払い完了後、予約はすぐに確定します/);
-  assert.doesNotMatch(mail.body, /仮受付|仮予約|管理者が内容を確認|確定のご連絡を改めて/);
+  assert.doesNotMatch(mail.body, /仮受付|仮予約|管理者|当方で内容を確認|確定のご連絡を改めて/);
 });
 
 test('buildPendingMail: 現金・PayPay・未定は従来どおり仮受付→管理者確認→確定連絡の文言を維持する（Issue #445）', function () {
@@ -156,7 +156,8 @@ test('buildPendingMail: 現金・PayPay・未定は従来どおり仮受付→�
     var mail = templates.buildPendingMail(sampleRecord({ paymentMethod: paymentMethod }), CONFIG);
     assert.match(mail.subject, /仮予約を受け付けました（未確定）/, paymentMethod);
     assert.match(mail.body, /仮受付いたしました/, paymentMethod);
-    assert.match(mail.body, /このメールの時点ではご予約はまだ確定しておりません。管理者が内容を確認のうえ、確定のご連絡を改めてお送りします。/, paymentMethod);
+    assert.match(mail.body, /このメールの時点ではご予約はまだ確定しておりません。当方で内容を確認のうえ、確定のご連絡を改めてお送りします。/, paymentMethod);
+    assert.doesNotMatch(mail.body, /管理者/, paymentMethod);
   });
 });
 

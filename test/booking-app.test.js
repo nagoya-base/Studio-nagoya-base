@@ -1534,3 +1534,38 @@ test('Issue #445: 全ブランド（SNB / SNB mens / Studio X）が共通のbook
   assert.doesNotMatch(ja, /このフォームの送信は「仮予約（PENDING）」の申込です/);
   assert.doesNotMatch(ja, /送信すると「仮予約（PENDING）」として受け付けます/);
 });
+
+test('Issue #445レビュー: 初回利用はカード決済のみの案内は補足文(ba-field-help)ではなく強調noticeとして存在し、CSSで太字になる', function () {
+  var css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'booking.css'), 'utf8');
+  ['ja', 'en'].forEach(function (lang) {
+    var html = fs.readFileSync(path.join(__dirname, '..', '_includes', 'booking_app_' + lang + '.html'), 'utf8');
+    var tag = html.match(/<p[^>]*id="ba-first-time-card-notice"[^>]*>/);
+    assert.ok(tag, lang);
+    assert.match(tag[0], /class="[^"]*ba-banner[^"]*ba-banner--notice[^"]*ba-first-time-card-notice/, lang);
+    assert.doesNotMatch(tag[0], /ba-field-help/, lang);
+    assert.match(tag[0], /role="note"/, lang);
+  });
+  assert.match(css, /\.ba-first-time-card-notice\s*\{[^}]*font-weight:\s*700/);
+});
+
+test('Issue #445レビュー: 利用者向けコピー（フォームのHTML・案内文言）に「管理者」「Admin」を出さない', function () {
+  var strip = function (html) {
+    return html.replace(/<!--[\s\S]*?-->/g, '');
+  };
+  ['ja', 'en'].forEach(function (lang) {
+    var html = strip(fs.readFileSync(path.join(__dirname, '..', '_includes', 'booking_app_' + lang + '.html'), 'utf8'));
+    assert.doesNotMatch(html, /管理者|\bAdmin(istrator)?\b/, lang);
+  });
+  var Logic = loadLogicForCopy_();
+  ['ja', 'en'].forEach(function (locale) {
+    ['', 'オンラインクレジットカード', '現金', 'PayPay', '未定'].forEach(function (method) {
+      var copy = JSON.stringify(Logic.bookingFlowCopy(method, locale));
+      assert.doesNotMatch(copy, /管理者|\bAdmin(istrator)?\b/, locale + ':' + method);
+    });
+    assert.doesNotMatch(Logic.cardPaymentNoticeLines(locale).join('\n'), /管理者|\bAdmin(istrator)?\b/, locale);
+  });
+});
+
+function loadLogicForCopy_() {
+  return require(path.join(__dirname, '..', 'scripts', 'booking-logic.js'));
+}
