@@ -68,3 +68,21 @@ test('Issue #445: 利用者向けの「申込後30分以内」はサーバー側
   }, { timezone: 'Asia/Tokyo', contactEmail: 'c@example.com' });
   assert.match(mail.body, pattern);
 });
+
+test('Issue #454: フォーム上のカード決済案内は短く、30分以内・決済完了で確定・未決済/期限切れは未確定・二重決済防止を重複なく示す', function () {
+  const Logic = require(path.join(ROOT, 'scripts', 'booking-logic.js'));
+  ['ja', 'en'].forEach(function (locale) {
+    assert.ok(Logic.cardPaymentNoticeLines(locale).length <= 5, locale);
+  });
+  const text = Logic.cardPaymentNoticeLines('ja').join('\n');
+  assert.ok(text.length <= 150, '案内文が長すぎる: ' + text.length);
+  assert.match(text, /予約申込後30分以内/);
+  assert.match(text, /お支払い完了で予約確定/);
+  assert.match(text, /未決済・期限切れの場合、予約は確定しません/);
+  assert.match(text, /再決済せず、運営へご連絡ください/);
+  assert.doesNotMatch(text, /有効期限内/);
+  assert.strictEqual((text.match(/確定しません/g) || []).length, 1);
+  const redirect = Logic.cardCheckoutRedirectNoticeLines('ja').join('\n');
+  assert.doesNotMatch(redirect, /有効期限内/);
+  assert.strictEqual((redirect.match(/確定しません/g) || []).length, 1);
+});

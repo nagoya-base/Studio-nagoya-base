@@ -620,10 +620,10 @@ test('isCardPaymentMethodValue: 内部value「オンラインクレジットカ�
 test('cardPaymentNoticeLines: Stripe Checkoutの決済ページでの支払い・有効期限内の決済成功で確定・期限切れ/未完了は確定しない旨を含み、旧24時間/72時間の案内を含まない（Issue #407）', function () {
   var Logic = loadLogic();
   var body = Logic.cardPaymentNoticeLines('ja').join('\n');
-  assert.match(body, /予約申込後に表示される決済ページでお支払いください/);
-  assert.match(body, /決済ページの有効期限内にお支払いが完了した場合に予約が確定します/);
-  assert.match(body, /期限切れ・決済未完了の場合、予約は確定しません/);
-  assert.match(body, /二重決済をせず、運営までご連絡/);
+  assert.match(body, /予約申込後、そのままお支払いへ進みます/);
+  assert.match(body, /予約申込後30分以内にお支払いを完了してください/);
+  assert.match(body, /未決済・期限切れの場合、予約は確定しません/);
+  assert.match(body, /再決済せず、運営へご連絡ください/);
   assert.doesNotMatch(body, /24時間|72時間|96時間|4日前|決済リンク/);
 });
 
@@ -634,7 +634,8 @@ test('cardCheckoutFallbackNoticeLines / cardCheckoutRedirectNoticeLines: 旧Paym
     assert.doesNotMatch(body, /24時間|72時間|96時間|24 hours|72 hours|96 hours/, locale);
   });
   var redirect = Logic.cardCheckoutRedirectNoticeLines('ja').join('\n');
-  assert.match(redirect, /有効期限内にお支払いが完了した場合に予約が確定します/);
+  assert.match(redirect, /予約申込後30分以内にお支払いを完了してください/);
+  assert.match(redirect, /未決済・期限切れの場合、予約は確定しません/);
   assert.doesNotMatch(redirect, /あらためて予約確定のご連絡/);
 });
 
