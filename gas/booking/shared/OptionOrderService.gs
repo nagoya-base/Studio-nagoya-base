@@ -600,7 +600,9 @@ var OptionOrderService = (function () {
       if (!isStaff && !isEligibilityHold && !isApprovedHold && !isEligibilityDecline) {
         return fail_('APPROVAL_NOT_REQUIRED', 'この注文は承認の対象ではありません。');
       }
-      var targetStatus = approving ? BookingOptions.STATUS.AWAITING_PAYMENT : BookingOptions.STATUS.DECLINED;
+      /* 請求額0円（セット無料の付帯機材のみ）の機材注文は、Adminの許可でそのまま確定する（Checkoutなし）。 */
+      var freeOfCharge = approving && isEquipment && Number(order.amountJpy) === 0;
+      var targetStatus = approving ? (freeOfCharge ? BookingOptions.STATUS.CONFIRMED : BookingOptions.STATUS.AWAITING_PAYMENT) : BookingOptions.STATUS.DECLINED;
       /* 二重承認・二重不承認は何も変えずに現在の結果を返す（冪等）。 */
       if (order.status === targetStatus) {
         return { success: true, alreadyDecided: true, order: order };
@@ -626,6 +628,7 @@ var OptionOrderService = (function () {
       var fields = approving
         ? { approvalStatus: BookingOptions.APPROVAL_STATUS.APPROVED, status: targetStatus, approvedAt: effectiveNow }
         : { approvalStatus: BookingOptions.APPROVAL_STATUS.DECLINED, status: targetStatus, declinedAt: effectiveNow, declineReason: String(reason || '').slice(0, 200) };
+      if (freeOfCharge) fields.paymentStatus = BookingOptions.PAYMENT_STATUS.NOT_REQUIRED;
       fields.updatedAt = effectiveNow;
       var updated = OptionOrderRepository.updateOrder(optionOrderId, fields);
       return { success: true, alreadyDecided: false, order: updated.record };

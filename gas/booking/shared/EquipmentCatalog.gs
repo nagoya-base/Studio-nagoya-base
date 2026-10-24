@@ -29,7 +29,7 @@ var StudioXEquipmentCatalog = {
       "code": "COB_FULLCOLOR",
       "label": "フルカラーCOBライト（定常光）",
       "stock": 2,
-      "unitPriceJpy": 800,
+      "unitPriceJpy": 1000,
       "unitLabel": "台",
       "requiresLecture": true
     },
@@ -53,7 +53,7 @@ var StudioXEquipmentCatalog = {
       "code": "STROBE_PORTABLE",
       "label": "ポータブルストロボ",
       "stock": 1,
-      "unitPriceJpy": 800,
+      "unitPriceJpy": 1000,
       "unitLabel": "",
       "requiresLecture": true
     },
@@ -79,7 +79,17 @@ var StudioXEquipmentCatalog = {
       "stock": 3,
       "unitPriceJpy": 200,
       "unitLabel": "本",
-      "requiresLecture": true
+      "requiresLecture": true,
+      "freeWhenWith": {
+        "codes": [
+          "COB_BICOLOR",
+          "PANEL_FULLCOLOR",
+          "COB_FULLCOLOR",
+          "STROBE_MONOBLOCK",
+          "STROBE_PORTABLE"
+        ],
+        "label": "ライト・ストロボとセットで無料／単独200円"
+      }
     },
     {
       "code": "BOWENS_BRACKET",
@@ -87,7 +97,13 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 200,
       "unitLabel": "",
-      "requiresLecture": true
+      "requiresLecture": true,
+      "freeWhenWith": {
+        "codes": [
+          "STROBE_PORTABLE"
+        ],
+        "label": "ポータブルストロボとセットで無料／単独200円"
+      }
     },
     {
       "code": "SOFTBOX_STRIP_60X90",
@@ -100,9 +116,9 @@ var StudioXEquipmentCatalog = {
     {
       "code": "SOFTBOX_STRIP_30X120",
       "label": "ストリップソフトボックス（30×120cm）",
-      "stock": 1,
+      "stock": 2,
       "unitPriceJpy": 300,
-      "unitLabel": "",
+      "unitLabel": "個",
       "requiresLecture": true
     },
     {

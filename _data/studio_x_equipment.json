@@ -1,5 +1,5 @@
 {
-  "_comment": "Studio Xの機材・料金の唯一の正本（有料レンタル機材は施錠管理のため全件 requiresLecture:true＝Adminの利用許可が必須。フィールド名は互換のため据え置き。Issue #430）（Issue #423 追加要件）。ここを編集したら `node scripts/sync-studio-x-equipment.js` を実行して gas/booking/shared/EquipmentCatalog.gs を再生成する（test/studio-x-equipment-catalog.test.js が同期を検査する）。機材ページ(studio-x/equipment/)はこのファイルを直接読み、予約オプション(GAS)は生成された EquipmentCatalog.gs を読む。",
+  "_comment": "Studio Xの機材・料金の唯一の正本（有料レンタル機材は施錠管理のため全件 requiresLecture:true＝Adminの利用許可が必須。フィールド名は互換のため据え置き。Issue #430）（Issue #423 追加要件）。セット無料条件は rental の freeWhenWith（codes=同時に借りると対象分が無料になる機材。unitPriceJpy は単独利用時の単価。対象機材1点につき1点まで無料＝無料数は min(数量, codes機材の合計数量)。Issue #438）。ここを編集したら `node scripts/sync-studio-x-equipment.js` を実行して gas/booking/shared/EquipmentCatalog.gs を再生成する（test/studio-x-equipment-catalog.test.js が同期を検査する）。機材ページ(studio-x/equipment/)はこのファイルを直接読み、予約オプション(GAS)は生成された EquipmentCatalog.gs を読む。",
   "permanent": [
     { "label": "バイカラーパネルライト（定常光）", "quantity": 2 },
     { "label": "ライトスタンド（100〜190cm）", "quantity": 2 },
@@ -11,16 +11,18 @@
   "rental": [
     { "code": "COB_BICOLOR", "label": "バイカラーCOBライト（定常光）", "stock": 1, "unitPriceJpy": 800, "unitLabel": "", "requiresLecture": true },
     { "code": "PANEL_FULLCOLOR", "label": "フルカラーパネルライト（定常光）", "stock": 1, "unitPriceJpy": 500, "unitLabel": "", "requiresLecture": true },
-    { "code": "COB_FULLCOLOR", "label": "フルカラーCOBライト（定常光）", "stock": 2, "unitPriceJpy": 800, "unitLabel": "台", "requiresLecture": true },
+    { "code": "COB_FULLCOLOR", "label": "フルカラーCOBライト（定常光）", "stock": 2, "unitPriceJpy": 1000, "unitLabel": "台", "requiresLecture": true },
     { "code": "BACKGROUND_STAND", "label": "背景スタンド", "stock": 1, "unitPriceJpy": 200, "unitLabel": "", "requiresLecture": true },
     { "code": "STROBE_MONOBLOCK", "label": "モノブロックストロボ", "stock": 1, "unitPriceJpy": 800, "unitLabel": "", "requiresLecture": true },
-    { "code": "STROBE_PORTABLE", "label": "ポータブルストロボ", "stock": 1, "unitPriceJpy": 800, "unitLabel": "", "requiresLecture": true },
+    { "code": "STROBE_PORTABLE", "label": "ポータブルストロボ", "stock": 1, "unitPriceJpy": 1000, "unitLabel": "", "requiresLecture": true },
     { "code": "COMMANDER_CANON", "label": "ワイヤレスコマンダー（Canon専用）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresLecture": true },
     { "code": "COMMANDER_SONY", "label": "ワイヤレスコマンダー（SONY専用）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresLecture": true },
-    { "code": "STAND_260", "label": "ライトスタンド（260cm）", "stock": 3, "unitPriceJpy": 200, "unitLabel": "本", "requiresLecture": true },
-    { "code": "BOWENS_BRACKET", "label": "ボーエンズマウントブラケット", "stock": 1, "unitPriceJpy": 200, "unitLabel": "", "requiresLecture": true },
+    { "code": "STAND_260", "label": "ライトスタンド（260cm）", "stock": 3, "unitPriceJpy": 200, "unitLabel": "本", "requiresLecture": true,
+      "freeWhenWith": { "codes": ["COB_BICOLOR", "PANEL_FULLCOLOR", "COB_FULLCOLOR", "STROBE_MONOBLOCK", "STROBE_PORTABLE"], "label": "ライト・ストロボとセットで無料／単独200円" } },
+    { "code": "BOWENS_BRACKET", "label": "ボーエンズマウントブラケット", "stock": 1, "unitPriceJpy": 200, "unitLabel": "", "requiresLecture": true,
+      "freeWhenWith": { "codes": ["STROBE_PORTABLE"], "label": "ポータブルストロボとセットで無料／単独200円" } },
     { "code": "SOFTBOX_STRIP_60X90", "label": "ストリップソフトボックス（60×90cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresLecture": true },
-    { "code": "SOFTBOX_STRIP_30X120", "label": "ストリップソフトボックス（30×120cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresLecture": true },
+    { "code": "SOFTBOX_STRIP_30X120", "label": "ストリップソフトボックス（30×120cm）", "stock": 2, "unitPriceJpy": 300, "unitLabel": "個", "requiresLecture": true },
     { "code": "SOFTBOX_60", "label": "オクタゴンソフトボックス（90cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresLecture": true },
     { "code": "COLOR_FILTER_SET", "label": "カラーフィルター（8色セット）", "stock": 1, "unitPriceJpy": 200, "unitLabel": "", "requiresLecture": true }
   ],

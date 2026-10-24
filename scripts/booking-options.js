@@ -56,7 +56,7 @@
     return {
       equipment: equipment,
       layouts: layouts,
-      setupService: layouts.length > 0 ? normalizeService(s.setupService) : 'SELF',
+      setupService: layouts.length > 0 || Object.keys(equipment).length > 0 ? normalizeService(s.setupService) : 'SELF',
       cleanupService: layouts.length > 0 ? normalizeService(s.cleanupService) : 'SELF',
       emailSupport: emailSupport
     };
@@ -74,9 +74,13 @@
   }
 
   /* 送信前のクライアント側チェック（最終判定はサーバー）。エラー文言 or ''。 */
-  function validateSelection(state) {
+  function validateSelection(state, catalog) {
     var s = state || {};
     var layouts = s.layouts || [];
+    /* 機材レンタルの設営方法はセルフ/スタッフの2択（後付けでも「追加しない」は選べない）。スタッフ設営はテーマ未選択でも依頼できる。 */
+    if (catalog && hasPaidEquipment(catalog, s.equipment) && !(s.setupChosen === true && (s.setupService === 'SELF' || s.setupService === 'STAFF'))) {
+      return '機材をレンタルする場合は、設営方法（セルフ設営／スタッフ設営）を選択してください。';
+    }
     var staff = layouts.length > 0 && (s.setupService === 'STAFF' || s.cleanupService === 'STAFF');
     if (staff && layouts.length !== 1) {
       return 'スタッフ対応（有料）を依頼できるセッティングは1種類です。複数選ぶ場合は、残りをセルフ（無料）にするか、メールでご相談ください。';
@@ -84,14 +88,37 @@
     return '';
   }
 
-  /* 機材の合計（数量×単価の個別加算）。単価はカタログの値だけを使う。 */
+  /* セット無料の数量（表示用。サーバー BookingOptions.bundleFreeQuantities_ と同じ規則: min(数量, 相手機材の合計数量)）。
+     相手機材の定義はカタログ（freeWhenWith.codes）の値だけを使う。最終請求額はサーバーが決める。 */
+  function bundleFreeQuantity(catalog, equipment, code) {
+    var item = null;
+    ((catalog && catalog.equipment) || []).forEach(function (e) { if (e.code === code) item = e; });
+    var quantity = Number((equipment || {})[code]) || 0;
+    if (!item || !item.freeWhenWith || !(quantity > 0)) return 0;
+    var companions = 0;
+    (item.freeWhenWith.codes || []).forEach(function (c) { companions += Number((equipment || {})[c]) || 0; });
+    return Math.min(quantity, companions);
+  }
+
+  function equipmentLineJpy(catalog, equipment, code) {
+    var item = null;
+    ((catalog && catalog.equipment) || []).forEach(function (e) { if (e.code === code) item = e; });
+    if (!item) return 0;
+    return Number(item.unitPriceJpy) * (Number(equipment[code]) - bundleFreeQuantity(catalog, equipment, code));
+  }
+
+  /* 機材の合計（数量×単価の個別加算。セット無料の対象分は除く）。単価はカタログの値だけを使う。 */
   function equipmentTotalJpy(catalog, equipment) {
-    var byCode = {};
-    ((catalog && catalog.equipment) || []).forEach(function (e) { byCode[e.code] = e; });
     return Object.keys(equipment || {}).reduce(function (sum, code) {
-      var e = byCode[code];
-      return sum + (e ? Number(e.unitPriceJpy) * Number(equipment[code]) : 0);
+      return sum + equipmentLineJpy(catalog, equipment, code);
     }, 0);
+  }
+
+  /* 有料レンタル機材（単価>0）を1点でも選んでいるか。設営方法の必須選択の判定に使う。 */
+  function hasPaidEquipment(catalog, equipment) {
+    var paid = {};
+    ((catalog && catalog.equipment) || []).forEach(function (e) { if (Number(e.unitPriceJpy) > 0) paid[e.code] = true; });
+    return Object.keys(equipment || {}).some(function (code) { return paid[code] && Number(equipment[code]) > 0; });
   }
 
   function serviceLabel(value) {
@@ -110,10 +137,13 @@
     Object.keys(selection.equipment).forEach(function (code) {
       var e = equipmentByCode[code];
       var qty = selection.equipment[code];
-      var unit = e ? Number(e.unitPriceJpy) : 0;
-      lines.push((e ? e.label : code) + (qty > 1 ? ' ×' + qty : '') + '（' + (unit > 0 ? formatJpy(unit * qty) : '無料') + '）');
+      var lineJpy = equipmentLineJpy(catalog, selection.equipment, code);
+      var freeQty = bundleFreeQuantity(catalog, selection.equipment, code);
+      var freeText = freeQty > 0 ? (freeQty >= qty ? '（セット無料）' : '（うち' + freeQty + (e && e.unitLabel ? e.unitLabel : '点') + 'セット無料）') : '';
+      lines.push((e ? e.label : code) + (qty > 1 ? ' ×' + qty : '') + '（' + (lineJpy > 0 ? formatJpy(lineJpy) : '無料') + '）' + freeText);
     });
     var equipmentTotal = equipmentTotalJpy(catalog, selection.equipment);
+    if (hasPaidEquipment(catalog, selection.equipment)) lines.push('機材の設営方法: ' + (state.setupService === 'STAFF' ? 'スタッフ設営（事前確認制・事前設営料金）' : 'セルフ設営（無料）'));
     if (equipmentTotal > 0) lines.push('機材レンタル合計: ' + formatJpy(equipmentTotal) + '（個別加算。部屋のご予約確定後にお支払い）');
     var themeByCode = {};
     ((catalog && catalog.themes) || []).forEach(function (t) { themeByCode[t.code] = t; });
@@ -174,14 +204,14 @@
   function mount(config) {
     var slot = config.slot;
     var catalog = config.catalog || null;
-    var state = { equipment: {}, layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false };
+    var state = { equipment: {}, layouts: [], setupService: 'SELF', setupChosen: false, cleanupService: 'SELF', emailSupport: false };
     var controller = {
       isAvailable: function () { return !!(catalog && catalog.enabled); },
       getState: function () { return JSON.parse(JSON.stringify(state)); },
       getSelection: function () { return buildSelection(state); },
-      validate: function () { return validateSelection(state); },
+      validate: function () { return validateSelection(state, catalog); },
       summaryLines: function () { return summarize(catalog, state); },
-      reset: function () { state = { equipment: {}, layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false }; render(); },
+      reset: function () { state = { equipment: {}, layouts: [], setupService: 'SELF', setupChosen: false, cleanupService: 'SELF', emailSupport: false }; render(); },
       setCatalog: function (next) { catalog = next; render(); },
       ready: null
     };
@@ -215,9 +245,11 @@
           else delete state.equipment[item.code];
           render();
         });
-        var priceText = item.unitPriceJpy > 0
-          ? formatJpy(item.unitPriceJpy) + (item.unitLabel ? ' / ' + item.unitLabel : '')
-          : '無料（セルフ）';
+        var priceText = item.freeWhenWith && item.freeWhenWith.label
+          ? item.freeWhenWith.label
+          : (item.unitPriceJpy > 0
+            ? formatJpy(item.unitPriceJpy) + (item.unitLabel ? ' / ' + item.unitLabel : '')
+            : '無料（セルフ）');
         var stockText = item.stock > 1 ? '（最大' + item.stock + (item.unitLabel || '点') + '）' : '';
         equipmentGroup.appendChild(el('div', { className: 'ba-choice' }, [
           el('label', { for: 'bo-eq-' + uid, text: item.label + '　' + priceText + stockText + '　' }), select
@@ -248,21 +280,25 @@
       });
       root.appendChild(themeGroup);
 
-      if (state.layouts.length > 0) {
+      var paidEquipment = hasPaidEquipment(catalog, state.equipment);
+      if (state.layouts.length > 0 || paidEquipment) {
         var staff = catalog.staffServices || {};
         var setupPrice = staff.PRE_SETUP ? formatJpy(staff.PRE_SETUP.priceJpy) : '';
         var cleanupPrice = staff.CLEANUP ? formatJpy(staff.CLEANUP.priceJpy) : '';
-        root.appendChild(el('p', { className: 'ba-field-help', text: '設営（利用前）' }));
+        root.appendChild(el('p', { className: 'ba-field-help', text: paidEquipment ? '設営方法（機材レンタルでは必須）' : '設営（利用前）' }));
+        if (paidEquipment) root.appendChild(el('p', { className: 'ba-field-help', text: (catalog.notices && catalog.notices.EQUIPMENT_SETUP) || '' }));
         var setupGroup = el('div', { className: 'ba-choices' });
         var setupChoices = [['SELF', 'セルフ設営　無料'], ['STAFF', '事前設営を依頼　+' + setupPrice + '（事前確認制）']];
-        if (config.allowNone) setupChoices.push(['NONE', '設営は追加しない（申込済み・不要）']);
+        if (config.allowNone && !paidEquipment) setupChoices.push(['NONE', '設営は追加しない（申込済み・不要）']);
         setupChoices.forEach(function (pair) {
           var c = choice('bo-setup', pair[0], pair[1], 'radio', false);
-          c.input.checked = state.setupService === pair[0];
-          c.input.addEventListener('change', function () { state.setupService = pair[0]; render(); });
+          c.input.checked = state.setupService === pair[0] && (!paidEquipment || state.setupChosen);
+          c.input.addEventListener('change', function () { state.setupService = pair[0]; state.setupChosen = true; render(); });
           setupGroup.appendChild(c.label);
         });
         root.appendChild(setupGroup);
+      }
+      if (state.layouts.length > 0) {
         root.appendChild(el('p', { className: 'ba-field-help', text: '片付け（利用後）' }));
         var cleanupGroup = el('div', { className: 'ba-choices' });
         var cleanupChoices = [['SELF', '自分で原状復帰　無料'], ['STAFF', '片付けを依頼　+' + cleanupPrice + '（事前確認制）']];
@@ -329,6 +365,8 @@
     buildSelection: buildSelection,
     staffServicePrice: staffServicePrice,
     equipmentTotalJpy: equipmentTotalJpy,
+    bundleFreeQuantity: bundleFreeQuantity,
+    hasPaidEquipment: hasPaidEquipment,
     validateSelection: validateSelection,
     summarize: summarize,
     describeError: describeError,
