@@ -152,15 +152,18 @@ var OptionOrderRepository = (function () {
     return { rowNumber: found.rowNumber, record: updated };
   }
 
-  /* 過去にこの利用者（メールアドレス）がitemCodeを実際に借りたか（支払い済みのCONFIRMED注文）。 */
-  function hasConfirmedItemForEmail(email, itemCode) {
+  /*
+   * 過去にこの利用者（メールアドレス）が、matcher(item)に該当する項目を実際に借りたか
+   * （支払い済みのCONFIRMED注文のみ。申込だけで未払いの注文は数えない）。
+   */
+  function hasConfirmedItemForEmail(email, matcher) {
     var target = normalizeEmail(email);
     if (!target) return false;
     return listAll().some(function (row) {
       var r = row.record;
       return normalizeEmail(r.customerEmail) === target &&
         r.status === 'CONFIRMED' && r.paymentStatus === 'PAID' &&
-        r.items.indexOf(itemCode) !== -1;
+        r.items.some(matcher);
     });
   }
 

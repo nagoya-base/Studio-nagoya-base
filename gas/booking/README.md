@@ -13,7 +13,8 @@ Issue #423の本文と追加コメント3件（**コメントを本文より優�
 | 有料スタッフ対応は事前承認後にStripe決済、承認前は課金しない | 必ず`PENDING_APPROVAL`から開始。`isPayable`は`approvalStatus`が`NOT_REQUIRED`/`APPROVED`でなければ偽。承認前は`startOptionCheckout`が`APPROVAL_REQUIRED`で拒否しStripeを呼ばない |
 | 不承認でも部屋予約は不変 | 承認/不承認はOptionOrdersのみ更新。テストでBookings行が1バイトも変わらないことを検証 |
 | 無料セルフ設営・原状復帰・メールサポート | `FREE`注文。承認不要・課金なし・即`CONFIRMED`。定型案内を受付/確定メールへ自動付加 |
-| ビデオライトのセルフレンタルは過去の利用者のみ | 過去に**支払い済み**のビデオライト注文（メール一致）または管理者の許可（`OptionEligibility`シート／`adminGrantVideoLightEligibility`）がある場合のみ。初回利用者は申込段階で拒否（`VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE`）し、Checkoutへ進まない |
+| 機材は1点ごとの個別加算（数量×単価・在庫超過は不可）。機材ページと同一の料金正本 | 正本は`_data/studio_x_equipment.json`。機材ページ`/studio-x/equipment/`はこれを直接読み、GASは`scripts/sync-studio-x-equipment.js`で生成した`EquipmentCatalog.gs`を読む（`test/studio-x-equipment-catalog.test.js`が同期を検査）。選択は`equipment: {機材コード: 数量}`。在庫は予約単位（既存の有効な注文の数量も合算）。背景スタンドは0円のセルフ |
+| ビデオライト系(定常光)のセルフレンタルは過去の利用者のみ | 対象は`requiresPriorRental`の3機材（バイカラーCOB／フルカラーパネル／フルカラーCOB）。過去に**支払い済み**の当該機材注文（メール一致）または管理者の許可（`OptionEligibility`／`adminGrantVideoLightEligibility`）がある場合のみ。初回利用者は申込段階で拒否（`VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE`）しCheckoutへ進まない。ストロボ等に追加の資格制限は設けない |
 | 予約IDを親キーに維持、後付けで新しい部屋予約を作らない | `OptionOrders.bookingId`に既存の予約IDを保持。`optionOrderId`（`OPT-XXXXXXXX`）は決済・履歴用。予約ID生成方式は変更なし |
 | 同時申込と後付けを共通モデルで処理 | どちらも`OptionOrderService.createOrders`（`source`=`WITH_BOOKING`/`ADDON`） |
 | 後付けの本人確認 | **予約ID＋登録メールアドレス**の一致（大文字小文字無視）。不一致・未存在は同一の`FORBIDDEN`（存在確認に使わせない）、予約ID単位で10分20回のレート制限 |
@@ -37,7 +38,7 @@ Issue #423の本文と追加コメント3件（**コメントを本文より優�
 ### 設計判断（オーナー確認をお願いしたい点）
 
 - **部屋の初回Checkoutへオプションを統合していない**。Issue 6は「同一Checkoutに含められる構成を基本」としているが、統合すると部屋の`priceAmount`・金額スナップショット・Webhook金額照合（`verifyPaymentAgainstSnapshot`）と密結合し、既存の部屋決済経路を壊すリスクがある。そのためオプションは常に**別Checkout（追加決済）**とし、部屋の確定後に決済する。受入条件（未承認のセッティング料金が初回Checkoutへ混入しない／部屋のCheckout経路が回帰しない）は満たす。
-- **機材（ビデオライト・ストロボ）の料金はIssueに記載がなく、サイト上も「¥2,000〜」としか確認できないため、コードに決め打ちしていない**。`OPTION_PRICE_VIDEO_LIGHT_JPY` / `OPTION_PRICE_STROBE_JPY`（Script Properties。正の整数円）が**未設定の機材は受付停止**（`PRICE_NOT_CONFIGURED`。画面にも「現在オンライン受付を停止中」と表示）。会員限定などの対象者条件は変更していない（ビデオライトのセルフレンタル資格のみ追加コメントどおり実装）。
+- **有料機材は部屋予約確定後の追加Checkout方式**（Issue追加要件で正式採用）。機材のレンタル料金・数量は設定値ではなく上記の正本JSONで、Script Propertiesの`OPTION_PRICE_*`は廃止した。
 - **無料セルフセッティングの定型案内（保管場所・セット方法・原状復帰・注意事項）は、リポジトリ内の設備情報で確認できたものだけを書いた**（教室セットの使用備品＝studio-x/index.html、原状復帰の原則＝studio-x/legal）。確認できない項目は`BookingOptions.gs`の`GUIDANCE_TEMPLATES_`で`null`とし、メールには創作せず「運営にて内容を確認中です」と表示、Adminの予約詳細にも未整備の警告を出す。**運営が資料を確認して`null`を文章に置き換えるだけで全箇所へ反映される**。「禁止: 実装者判断で収納場所や手順を作らない」に従った。
 - スタッフ対応は共通料金のため**1予約につき1テーマ分**（複数テーマにまたがる1回分の料金で依頼させない）。後付けで事前設営済みに片付けだけを足す場合は、セット価格との差額（5,000−3,000＝2,000円）を請求する。同じテーマの設営/片付けをセルフとスタッフで同時に選べない。
 - 未払いのオプション注文を部屋予約の取消と連動して自動取消する処理は入れていない（部屋が取消済みなら承認・決済ができず、支払い済みの場合は`OPTION_PAID_BOOKING_NOT_CONFIRMED`のRecoveryが残る）。注文の個別取消・返金のUIも今回は対象外（Stripeダッシュボードと手動運用）。
@@ -47,16 +48,14 @@ Issue #423の本文と追加コメント3件（**コメントを本文より優�
 
 | キー | 内容 |
 | --- | --- |
-| `OPTION_PRICE_VIDEO_LIGHT_JPY` | ビデオライトの料金（円・正の整数）。未設定なら受付停止 |
-| `OPTION_PRICE_STROBE_JPY` | ストロボの料金（円・正の整数）。未設定なら受付停止 |
 | `OPTION_ADDON_DEADLINE_HOURS` | 後付け申込の締切（利用開始の何時間前まで）。未設定なら独自の締切なし |
 
 ### デプロイ
 
-- 追加ファイル: `BookingOptions.gs` / `OptionOrderRepository.gs` / `OptionMailTemplates.gs` / `OptionOrderService.gs`（Booking Web App・Booking Admin。Booking Webhookには**配布しない**）。`Code.gs`・`RateLimiter.gs`・`BookingRepository.gs`・`Config.gs`・`StripeGateway.gs`・`StripeWebhookProcessor.gs`・`BookingAdminWeb.gs`を更新。
+- 追加ファイル: `EquipmentCatalog.gs`（自動生成）/ `BookingOptions.gs` / `OptionOrderRepository.gs` / `OptionMailTemplates.gs` / `OptionOrderService.gs`（Booking Web App・Booking Admin。Booking Webhookには**配布しない**）。`Code.gs`・`RateLimiter.gs`・`BookingRepository.gs`・`Config.gs`・`StripeGateway.gs`・`StripeWebhookProcessor.gs`・`BookingAdminWeb.gs`を更新。
 - **反映順: Booking Adminを先に**（追加決済のWebhookを処理できる状態にしてから、Booking Web Appで追加Checkoutを発行できるようにする。Admin未反映のまま追加Checkoutが発行されると、metadataの`bookingId`/`paymentAttemptId`が部屋予約の照合に入って要復旧になる）。既存の`/exec` URL・Deploymentは作り直さず、既存Deploymentを更新する。PRブランチからの本番デプロイは行わない。
 - Webhook中継基盤（Cloud Run）・`STRIPE_CHECKOUT_ENABLED`は変更しない。オプションのCheckoutは同フラグが`true`でない限り発行されない。
-- GitHub Pages: `studio-x/booking/`（オプション欄）・`studio-x/booking/options/`（後付け・追加決済の案内）・`studio-x/booking/option-payment-complete.html`（追加決済の戻り先。部屋予約用の「予約はまだ確定していません」とは別文面）・`scripts/booking-options*.js`・`admin/booking/booking-admin.js`/`.css`。
+- GitHub Pages: `_data/studio_x_equipment.json` と `studio-x/equipment/`（機材・料金ページ。トップ・ご利用ガイド・予約フォーム・後付け画面から導線）・`studio-x/booking/`（オプション欄）・`studio-x/booking/options/`（後付け・追加決済の案内）・`studio-x/booking/option-payment-complete.html`（追加決済の戻り先。部屋予約用の「予約はまだ確定していません」とは別文面）・`scripts/booking-options*.js`・`admin/booking/booking-admin.js`/`.css`。
 
 ### テスト
 
@@ -3110,6 +3109,7 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `AdminNotifier.gs` | ✓ | – | – | `gas/booking/public/AdminNotifier.gs` |
 | `BookingMailTemplates.gs`（Issue #271） | ✓ | ✓ | – | `gas/booking/shared/BookingMailTemplates.gs` |
 | `BookingMailer.gs`（Issue #271） | ✓ | ✓ | – | `gas/booking/shared/BookingMailer.gs` |
+| `EquipmentCatalog.gs`（Issue #423追加要件。Studio Xの機材料金・数量・在庫。`_data/studio_x_equipment.json`から`scripts/sync-studio-x-equipment.js`で自動生成。直接編集しない） | ✓ | ✓ | – | `gas/booking/shared/EquipmentCatalog.gs` |
 | `BookingOptions.gs`（Issue #423。予約オプションのカタログ・料金・状態遷移・定型案内の純粋ロジック） | ✓ | ✓ | – | `gas/booking/shared/BookingOptions.gs` |
 | `OptionOrderRepository.gs`（Issue #423。`OptionOrders`・`OptionEligibility`シートの台帳） | ✓ | ✓ | – | `gas/booking/shared/OptionOrderRepository.gs` |
 | `OptionMailTemplates.gs`（Issue #423。オプションの受付・承認・不承認・確定メール文面） | ✓ | ✓ | – | `gas/booking/shared/OptionMailTemplates.gs` |

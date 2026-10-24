@@ -11,12 +11,14 @@
  *   両方選択時は6,000円ではなくセット価格を適用する。料金はSTAFF_SERVICE_PRICES_の1箇所のみ。
  * - 無料セルフ対応: セルフ設営・セルフ片付け（原状復帰）・メールサポート。管理者承認不要・
  *   課金なし。選択時は対象テーマごとの定型案内（GUIDANCE_TEMPLATES_）を案内メールへ付加する。
- * - 有料機材: ビデオライト・ストロボ。管理者承認不要。ただし**金額はIssueに記載がない**ため
- *   コードに決め打ちせず、Script Properties（Config.getOptionsConfig）の設定値を正本とする。
- *   未設定の機材は受付しない（fail-closed。PRICE_NOT_CONFIGURED）。
- * - ビデオライトのセルフレンタルは「過去にビデオライトを借りたことがある利用者」のみ。
- *   自動判定できない既存利用者は管理者の許可（OptionEligibility）で補う。初回利用者は拒否する
- *   （誤って即時Checkoutへ進ませない）。
+ * - 有料機材: 個別レンタル機材を1点ごとに数量×単価で加算（セット料金ではない）。管理者承認不要。
+ *   料金・数量・在庫は機材ページ(studio-x/equipment/)と同じ正本 _data/studio_x_equipment.json
+ *   から生成した EquipmentCatalog.gs（StudioXEquipmentCatalog）だけを参照する。画面・GAS・
+ *   機材ページに金額を重複して持たない。在庫数を超える選択は拒否する。背景布・背景スタンドの
+ *   セルフ利用は0円。有料機材は部屋予約確定後の追加Checkout方式（Issue追加要件で正式採用）。
+ * - ビデオライト系（定常光）のセルフレンタルは「過去に当該ビデオライトを借りたことがある利用者」
+ *   のみ。自動判定できない既存利用者は管理者の許可（OptionEligibility）で補う。初回利用者は
+ *   拒否する（誤って即時Checkoutへ進ませない）。ストロボ等へ追加の資格制限は設けない。
  *
  * 【状態の分離】予約（Bookings.status）とオプション注文（OptionOrders）は別の状態を持つ。
  * 注文ごとに approvalStatus / paymentStatus / status を持ち、セッティングのDECLINEDで
@@ -87,11 +89,38 @@ var BookingOptions = (function () {
 
   /* ---- カタログ ---- */
 
-  var EQUIPMENT = {
-    VIDEO_LIGHT: { code: 'VIDEO_LIGHT', label: 'ビデオライト' },
-    STROBE: { code: 'STROBE', label: 'ストロボ' }
-  };
-  var EQUIPMENT_CODES_ = ['VIDEO_LIGHT', 'STROBE'];
+  /* ---- 機材カタログ（EquipmentCatalog.gs。唯一の正本は _data/studio_x_equipment.json） ---- */
+
+  function equipmentRental_(code) {
+    var list = StudioXEquipmentCatalog.rental;
+    for (var i = 0; i < list.length; i++) if (list[i].code === code) return list[i];
+    return null;
+  }
+
+  function equipmentFreeSelf_(code) {
+    var list = StudioXEquipmentCatalog.freeSelf;
+    for (var i = 0; i < list.length; i++) if (list[i].code === code && list[i].selectable === true) return list[i];
+    return null;
+  }
+
+  /* 予約の機材項目コード: 'EQ:<機材コード>:<数量>'。 */
+  var EQUIPMENT_ITEM_PREFIX = 'EQ:';
+
+  function equipmentItemCode_(code, quantity) {
+    return EQUIPMENT_ITEM_PREFIX + code + ':' + quantity;
+  }
+
+  function parseEquipmentItem_(item) {
+    var m = /^EQ:([A-Z0-9_]+):(\d+)$/.exec(String(item || ''));
+    return m ? { code: m[1], quantity: Number(m[2]) } : null;
+  }
+
+  /* 過去に借りたことが条件の機材（ビデオライト系の定常光）か。 */
+  function isPriorRentalItem(item) {
+    var parsed = parseEquipmentItem_(item);
+    var def = parsed && equipmentRental_(parsed.code);
+    return !!(def && def.requiresPriorRental === true);
+  }
 
   /* セルフ設営・スタッフ対応の共通対象（Issue #423 追加コメント）。 */
   var THEMES = {
@@ -149,12 +178,6 @@ var BookingOptions = (function () {
     return Number.isFinite(n) && n > 0 && Math.round(n) === n ? n : null;
   }
 
-  /* config: BookingConfig.getOptionsConfig()の戻り値 { equipmentPrices:{...}, addonDeadlineHoursBeforeStart }。 */
-  function resolveEquipmentPrice_(config, code) {
-    var prices = (config && config.equipmentPrices) || {};
-    return readPositiveInteger_(prices[code]);
-  }
-
   function isBrandEnabled(brand) {
     return ENABLED_BRANDS_.indexOf(brand) !== -1;
   }
@@ -174,17 +197,19 @@ var BookingOptions = (function () {
       enabled: true,
       brand: brand,
       currency: CURRENCY_,
-      equipment: EQUIPMENT_CODES_.map(function (code) {
-        var price = resolveEquipmentPrice_(config, code);
+      /* 機材ページ(studio-x/equipment/)と同一のカタログ。数量選択の上限は在庫数。 */
+      equipment: StudioXEquipmentCatalog.rental.map(function (item) {
         return {
-          code: code,
-          label: EQUIPMENT[code].label,
-          priceJpy: price,
-          available: price !== null,
-          /* ビデオライトのセルフレンタルは過去の利用者のみ（可否はサーバーが申込時に判定する）。 */
-          requiresPriorRental: code === 'VIDEO_LIGHT'
+          code: item.code,
+          label: item.label,
+          unitPriceJpy: item.unitPriceJpy,
+          unitLabel: item.unitLabel || '',
+          stock: item.stock,
+          requiresPriorRental: item.requiresPriorRental === true
         };
-      }),
+      }).concat(StudioXEquipmentCatalog.freeSelf.filter(function (item) { return item.selectable === true; }).map(function (item) {
+        return { code: item.code, label: item.label, unitPriceJpy: 0, unitLabel: '', stock: item.stock, requiresPriorRental: false };
+      })),
       themes: THEME_CODES_.map(function (code) { return { code: code, label: THEMES[code].label }; }),
       staffServices: {
         PRE_SETUP: { label: STAFF_SERVICE_LABELS_.PRE_SETUP, priceJpy: STAFF_SERVICE_PRICES_.PRE_SETUP },
@@ -198,7 +223,7 @@ var BookingOptions = (function () {
   /* ---- 申込内容の正規化 ----
    *
    * selection（クライアント入力。金額は一切受け取らない）:
-   *   { equipment: ['VIDEO_LIGHT','STROBE'], layouts: ['CLASSROOM',...],
+   *   { equipment: { COB_BICOLOR: 1, STAND_260: 2 }（機材コード→数量）, layouts: ['CLASSROOM',...],
    *     setupService: 'SELF'|'STAFF'|'NONE', cleanupService: 'SELF'|'STAFF'|'NONE', emailSupport: true }
    * 戻り値: { ok:true, normalized:{equipment[], layouts[], setupService, cleanupService, emailSupport} }
    *        | { ok:false, error }
@@ -222,16 +247,29 @@ var BookingOptions = (function () {
     if (!isPlainObject_(selection)) {
       return { ok: false, error: err_('INVALID_OPTIONS', 'オプションの指定形式が正しくありません。') };
     }
-    var equipment = selection.equipment === undefined || selection.equipment === null ? [] : selection.equipment;
+    var equipmentInput = selection.equipment === undefined || selection.equipment === null ? {} : selection.equipment;
     var layouts = selection.layouts === undefined || selection.layouts === null ? [] : selection.layouts;
-    if (!Array.isArray(equipment) || !Array.isArray(layouts) || equipment.length > 10 || layouts.length > 10) {
+    if (!isPlainObject_(equipmentInput) || !Array.isArray(layouts) || layouts.length > 10 || Object.keys(equipmentInput).length > 30) {
       return { ok: false, error: err_('INVALID_OPTIONS', 'オプションの指定形式が正しくありません。') };
     }
+    /* 機材: { 機材コード: 数量 }。数量0は「選ばない」。在庫数を超える数量・小数・負数は拒否する。 */
+    var equipment = {};
+    var equipmentCodes = Object.keys(equipmentInput);
     var i;
-    for (i = 0; i < equipment.length; i++) {
-      if (typeof equipment[i] !== 'string' || EQUIPMENT_CODES_.indexOf(equipment[i]) === -1) {
+    for (i = 0; i < equipmentCodes.length; i++) {
+      var eqCode = equipmentCodes[i];
+      var def = equipmentRental_(eqCode) || equipmentFreeSelf_(eqCode);
+      if (!def) {
         return { ok: false, error: err_('UNKNOWN_OPTION', '選択できないオプションが含まれています。') };
       }
+      var qty = equipmentInput[eqCode];
+      if (typeof qty !== 'number' || !Number.isFinite(qty) || Math.round(qty) !== qty || qty < 0) {
+        return { ok: false, error: err_('INVALID_OPTIONS', def.label + 'の数量が正しくありません。') };
+      }
+      if (qty > def.stock) {
+        return { ok: false, error: err_('STOCK_EXCEEDED', def.label + 'は最大' + def.stock + '点までです。', { items: [eqCode] }) };
+      }
+      if (qty > 0) equipment[eqCode] = qty;
     }
     for (i = 0; i < layouts.length; i++) {
       if (typeof layouts[i] !== 'string' || THEME_CODES_.indexOf(layouts[i]) === -1) {
@@ -249,7 +287,7 @@ var BookingOptions = (function () {
     }
 
     var normalized = {
-      equipment: uniqueStrings_(equipment),
+      equipment: equipment,
       layouts: uniqueStrings_(layouts),
       setupService: setupService,
       cleanupService: cleanupService,
@@ -271,12 +309,12 @@ var BookingOptions = (function () {
       return { ok: false, error: err_('STAFF_SERVICE_SINGLE_THEME', 'スタッフ対応を依頼できるセッティングは1種類です。複数ある場合は残りをセルフ設営にするか、メールでご相談ください。') };
     }
 
-    var empty = normalized.equipment.length === 0 && normalized.layouts.length === 0 && !normalized.emailSupport;
+    var empty = Object.keys(normalized.equipment).length === 0 && normalized.layouts.length === 0 && !normalized.emailSupport;
     return { ok: true, empty: empty, normalized: normalized };
   }
 
   function emptySelection_() {
-    return { equipment: [], layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false };
+    return { equipment: {}, layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false };
   }
 
   /* ---- 項目コード ----
@@ -291,7 +329,11 @@ var BookingOptions = (function () {
 
   function describeItem(itemCode) {
     var code = String(itemCode || '');
-    if (EQUIPMENT[code]) return EQUIPMENT[code].label;
+    var eq = parseEquipmentItem_(code);
+    if (eq) {
+      var eqDef = equipmentRental_(eq.code) || equipmentFreeSelf_(eq.code);
+      return (eqDef ? eqDef.label : eq.code) + (eq.quantity > 1 ? ' ×' + eq.quantity : '');
+    }
     if (code === ITEM_PREFIX.EMAIL_SUPPORT) return 'メールサポート';
     var themeOf = function (prefix) { var t = THEMES[code.slice(prefix.length)]; return t ? t.label : code.slice(prefix.length); };
     if (code.indexOf(ITEM_PREFIX.SELF_SETUP) === 0) return 'セルフ設営: ' + themeOf(ITEM_PREFIX.SELF_SETUP);
@@ -363,27 +405,42 @@ var BookingOptions = (function () {
 
     var orders = [];
 
-    /* 有料機材 */
-    if (normalized.equipment.length > 0) {
-      var equipmentTotal = 0;
-      for (var i = 0; i < normalized.equipment.length; i++) {
-        var code = normalized.equipment[i];
-        if (existingItems.indexOf(code) !== -1) {
-          return { ok: false, error: err_('DUPLICATE_OPTION', EQUIPMENT[code].label + 'は既に申し込み済みです。', { items: [code] }) };
-        }
-        var price = resolveEquipmentPrice_(input.optionsConfig, code);
-        if (price === null) {
-          return { ok: false, error: err_('PRICE_NOT_CONFIGURED', EQUIPMENT[code].label + 'は現在オンラインでお申し込みいただけません。予約時の連絡事項欄、またはメールでご相談ください。', { items: [code] }) };
-        }
-        if (code === 'VIDEO_LIGHT' && !(input.eligibility && input.eligibility.videoLightSelfRental === true)) {
-          return { ok: false, error: err_('VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE', 'ビデオライトのセルフレンタルは、過去にビデオライトをご利用いただいた方のみ選択できます。初めての方はメールでご相談ください。', { items: [code] }) };
-        }
-        equipmentTotal += price;
+    /* 機材（個別加算: 数量×単価）。在庫数は予約単位で、既存の有効な注文の数量も合算して超過を拒否する。 */
+    var existingQuantity = {};
+    existingItems.forEach(function (item) {
+      var parsed = parseEquipmentItem_(item);
+      if (parsed) existingQuantity[parsed.code] = (existingQuantity[parsed.code] || 0) + parsed.quantity;
+    });
+    var paidItems = [];
+    var paidTotal = 0;
+    var freeEquipmentItems = [];
+    var needsPriorRental = [];
+    var equipmentCodes = Object.keys(normalized.equipment);
+    for (var i = 0; i < equipmentCodes.length; i++) {
+      var code = equipmentCodes[i];
+      var quantity = normalized.equipment[code];
+      var rental = equipmentRental_(code);
+      var def = rental || equipmentFreeSelf_(code);
+      if (!def) return { ok: false, error: err_('UNKNOWN_OPTION', '選択できないオプションが含まれています。') };
+      if ((existingQuantity[code] || 0) + quantity > def.stock) {
+        return { ok: false, error: err_('STOCK_EXCEEDED', def.label + 'は在庫数（' + def.stock + '点）を超えて申し込めません。', { items: [code] }) };
       }
+      if (rental) {
+        paidItems.push(equipmentItemCode_(code, quantity));
+        paidTotal += rental.unitPriceJpy * quantity;
+        if (rental.requiresPriorRental === true) needsPriorRental.push(rental.label);
+      } else {
+        freeEquipmentItems.push(equipmentItemCode_(code, quantity));
+      }
+    }
+    if (needsPriorRental.length > 0 && !(input.eligibility && input.eligibility.videoLightSelfRental === true)) {
+      return { ok: false, error: err_('VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE', needsPriorRental.join('・') + 'のセルフレンタルは、過去にビデオライトをご利用いただいた方のみ選択できます。初めての方はメールでご相談ください。', { items: needsPriorRental }) };
+    }
+    if (paidItems.length > 0) {
       orders.push({
         category: CATEGORY.EQUIPMENT,
-        items: normalized.equipment.slice(),
-        amountJpy: equipmentTotal,
+        items: paidItems,
+        amountJpy: paidTotal,
         approvalStatus: APPROVAL_STATUS.NOT_REQUIRED,
         paymentStatus: PAYMENT_STATUS.NOT_STARTED,
         status: STATUS.AWAITING_PAYMENT
@@ -399,11 +456,13 @@ var BookingOptions = (function () {
       if (!staffCleanup && normalized.cleanupService !== 'NONE') freeItems.push(ITEM_PREFIX.SELF_CLEANUP + theme);
     });
     if (normalized.emailSupport) freeItems.push(ITEM_PREFIX.EMAIL_SUPPORT);
+    /* 無料機材（背景スタンド等）は数量・在庫を上で検査済み。重複判定は項目コードの完全一致ではなく在庫で行う。 */
     for (var j = 0; j < freeItems.length; j++) {
       if (existingItems.indexOf(freeItems[j]) !== -1) {
         return { ok: false, error: err_('DUPLICATE_OPTION', '既に選択済みのオプションが含まれています。', { items: [freeItems[j]] }) };
       }
     }
+    freeItems = freeItems.concat(freeEquipmentItems);
     if (freeItems.length > 0) {
       orders.push({
         category: CATEGORY.FREE,
@@ -597,6 +656,7 @@ var BookingOptions = (function () {
     buildCatalog: buildCatalog,
     normalizeSelection: normalizeSelection,
     describeItem: describeItem,
+    isPriorRentalItem: isPriorRentalItem,
     computeStaffServiceCharge: computeStaffServiceCharge,
     planOrders: planOrders,
     checkBookingAcceptsOptions: checkBookingAcceptsOptions,

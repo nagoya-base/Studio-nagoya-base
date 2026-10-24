@@ -1,0 +1,31 @@
+{
+  "_comment": "Studio Xの機材・料金の唯一の正本（Issue #423 追加要件）。ここを編集したら `node scripts/sync-studio-x-equipment.js` を実行して gas/booking/shared/EquipmentCatalog.gs を再生成する（test/studio-x-equipment-catalog.test.js が同期を検査する）。機材ページ(studio-x/equipment/)はこのファイルを直接読み、予約オプション(GAS)は生成された EquipmentCatalog.gs を読む。",
+  "permanent": [
+    { "label": "バイカラーパネルライト（定常光）", "quantity": 2 },
+    { "label": "ライトスタンド（100〜190cm）", "quantity": 2 },
+    { "label": "背景ローラーサポート", "quantity": 1 },
+    { "label": "背景紙 ブラック（135cm×5m）", "quantity": 1 },
+    { "label": "背景紙 ホワイト（135cm×5m）", "quantity": 1 },
+    { "label": "レフ板 5-in-1（80cm）", "quantity": 1 }
+  ],
+  "rental": [
+    { "code": "COB_BICOLOR", "label": "バイカラーCOBライト（定常光）", "stock": 1, "unitPriceJpy": 800, "unitLabel": "", "requiresPriorRental": true },
+    { "code": "PANEL_FULLCOLOR", "label": "フルカラーパネルライト（定常光）", "stock": 1, "unitPriceJpy": 500, "unitLabel": "", "requiresPriorRental": true },
+    { "code": "COB_FULLCOLOR", "label": "フルカラーCOBライト（定常光）", "stock": 2, "unitPriceJpy": 800, "unitLabel": "台", "requiresPriorRental": true },
+    { "code": "STROBE_MONOBLOCK", "label": "モノブロックストロボ", "stock": 1, "unitPriceJpy": 800, "unitLabel": "", "requiresPriorRental": false },
+    { "code": "STROBE_PORTABLE", "label": "ポータブルストロボ", "stock": 1, "unitPriceJpy": 800, "unitLabel": "", "requiresPriorRental": false },
+    { "code": "COMMANDER_CANON", "label": "ワイヤレスコマンダー（Canon専用）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresPriorRental": false },
+    { "code": "COMMANDER_SONY", "label": "ワイヤレスコマンダー（SONY専用）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresPriorRental": false },
+    { "code": "STAND_260", "label": "ライトスタンド（260cm）", "stock": 3, "unitPriceJpy": 200, "unitLabel": "本", "requiresPriorRental": false },
+    { "code": "BOWENS_BRACKET", "label": "ボーエンズマウントブラケット", "stock": 1, "unitPriceJpy": 200, "unitLabel": "", "requiresPriorRental": false },
+    { "code": "SOFTBOX_STRIP_60X90", "label": "ストリップソフトボックス（60×90cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresPriorRental": false },
+    { "code": "SOFTBOX_STRIP_30X120", "label": "ストリップソフトボックス（30×120cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresPriorRental": false },
+    { "code": "SOFTBOX_60", "label": "ソフトボックス（60cm）", "stock": 1, "unitPriceJpy": 300, "unitLabel": "", "requiresPriorRental": false },
+    { "code": "COLOR_FILTER_SET", "label": "カラーフィルター（8色セット）", "stock": 1, "unitPriceJpy": 200, "unitLabel": "", "requiresPriorRental": false }
+  ],
+  "freeSelf": [
+    { "code": "BACKGROUND_STAND", "label": "背景スタンド", "stock": 1, "selectable": true },
+    { "code": "BACKDROP_CLOTH_WHITE", "label": "背景布 白（幅180cm×長さ250cm）", "stock": 1, "selectable": false, "viaTheme": "WHITE_BACKDROP" },
+    { "code": "BACKDROP_CLOTH_BLACK", "label": "背景布 黒（幅180cm×長さ250cm）", "stock": 1, "selectable": false, "viaTheme": "BLACK_BACKDROP" }
+  ]
+}

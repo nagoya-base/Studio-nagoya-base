@@ -246,21 +246,15 @@ var BookingConfig = (function () {
 
   /*
    * 予約オプション（Issue #423。Studio X限定）の設定値。
-   * - equipmentPrices: 有料機材の料金（円）。**Issue #423に金額の記載がないためコードに決め打ち
-   *   しない**。未設定（または正の整数でない値）の機材はBookingOptions側で受付停止（fail-closed）。
-   *   OPTION_PRICE_VIDEO_LIGHT_JPY / OPTION_PRICE_STROBE_JPY（現行の料金表・運用正本の確定後に
-   *   運営が設定する）。
    * - addonDeadlineHoursBeforeStart: 後付け申込の締切（利用開始の何時間前まで）。未設定なら
    *   独自の締切を設けない（実装側で勝手な時間を決めない）。OPTION_ADDON_DEADLINE_HOURS。
-   * スタッフ対応料金（3,000/3,000/5,000円）は確定済みの正本としてBookingOptions.gsに集約している。
+   * 機材のレンタル料金・数量・在庫は設定値ではなく、機材ページと同一の正本
+   * （_data/studio_x_equipment.json → EquipmentCatalog.gs）。スタッフ対応料金
+   * （3,000/3,000/5,000円）はBookingOptions.gsに集約している。
    */
   function getOptionsConfig() {
     var properties = PropertiesService.getScriptProperties();
     return {
-      equipmentPrices: {
-        VIDEO_LIGHT: properties.getProperty('OPTION_PRICE_VIDEO_LIGHT_JPY') || '',
-        STROBE: properties.getProperty('OPTION_PRICE_STROBE_JPY') || ''
-      },
       addonDeadlineHoursBeforeStart: properties.getProperty('OPTION_ADDON_DEADLINE_HOURS') || ''
     };
   }

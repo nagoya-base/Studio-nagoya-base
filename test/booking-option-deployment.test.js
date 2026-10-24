@@ -17,7 +17,7 @@ var stubs = require('./helpers/gas-stubs');
 var manifest = require('./helpers/booking-deployment-manifest');
 
 var SPREADSHEET_ID = 'ss1';
-var OPTION_FILES = ['BookingOptions.gs', 'OptionOrderRepository.gs', 'OptionMailTemplates.gs', 'OptionOrderService.gs'];
+var OPTION_FILES = ['EquipmentCatalog.gs', 'BookingOptions.gs', 'OptionOrderRepository.gs', 'OptionMailTemplates.gs', 'OptionOrderService.gs'];
 
 function futureDateJst_(daysAhead) {
   var d = new Date(Date.now() + daysAhead * 24 * 3600000);
@@ -33,7 +33,7 @@ function setup(files, extraGlobals) {
   var properties = {
     CALENDAR_ID: 'cal1', SPREADSHEET_ID: SPREADSHEET_ID,
     BOOKING_MAIL_DISPLAY_NAME: 'Studio X', BOOKING_MAIL_REPLY_TO: 'noreply@example.com', BOOKING_CONTACT_EMAIL: 'contact@example.com',
-    OPTION_PRICE_STROBE_JPY: '3500', RATE_LIMIT_EMAIL_COUNT: '100'
+    RATE_LIMIT_EMAIL_COUNT: '100'
   };
   var mailApp = stubs.createMailAppStub();
   var globals = Object.assign({
@@ -134,7 +134,7 @@ test('Booking Web App配布ファイルセット: 同時申込・本人確認付
   var res = JSON.parse(ctx.sandbox.doPost({ postData: { contents: JSON.stringify({
     brand: 'studio_x', customerType: 'returning', date: date, startTime: '10:00', durationMinutes: 120, name: '山田太郎',
     email: 'taro@example.com', phone: '090-1234-5678', people: '2名', purpose: '作品撮り', paymentMethod: '現金', note: '', source: 'test',
-    options: { equipment: ['STROBE'], layouts: ['GRUNGE'], setupService: 'STAFF', cleanupService: 'SELF' }
+    options: { equipment: { STROBE_MONOBLOCK: 1 }, layouts: ['GRUNGE'], setupService: 'STAFF', cleanupService: 'SELF' }
   }) } }).text);
   assert.strictEqual(res.success, true, JSON.stringify(res.error));
   assert.strictEqual(res.options.success, true);

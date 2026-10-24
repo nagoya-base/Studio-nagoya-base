@@ -132,7 +132,7 @@
       els.addClosed.hidden = true;
       if (!panel) {
         /* 後付けでは、申込済みの項目を「追加しない」と選べる（allowNone）。 */
-        panel = Panel.mount({ slot: els.panelSlot, catalog: summary.catalog, allowNone: true });
+        panel = Panel.mount({ slot: els.panelSlot, catalog: summary.catalog, allowNone: true, equipmentPageUrl: '../../equipment/' });
       } else {
         panel.setCatalog(summary.catalog);
       }

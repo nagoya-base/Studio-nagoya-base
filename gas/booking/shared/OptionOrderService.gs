@@ -94,10 +94,17 @@ var OptionOrderService = (function () {
     return view;
   }
 
+  /* ビデオライト系（定常光）を含む申込か。含む場合だけ過去利用の資格を照会する。 */
+  function requiresEligibility_(normalized) {
+    return Object.keys(normalized.equipment).some(function (code) {
+      return BookingOptions.isPriorRentalItem('EQ:' + code + ':1');
+    });
+  }
+
   function resolveEligibility_(email) {
     return {
       videoLightSelfRental:
-        OptionOrderRepository.hasConfirmedItemForEmail(email, 'VIDEO_LIGHT') ||
+        OptionOrderRepository.hasConfirmedItemForEmail(email, BookingOptions.isPriorRentalItem) ||
         OptionOrderRepository.hasEligibilityGrant(email, 'VIDEO_LIGHT')
     };
   }
@@ -126,7 +133,7 @@ var OptionOrderService = (function () {
     if (!BookingOptions.isBrandEnabled(brand)) {
       return fail_('OPTIONS_NOT_AVAILABLE', 'このブランドの予約ではオプションをお申し込みいただけません。');
     }
-    var needsEligibility = normalizedResult.normalized.equipment.indexOf('VIDEO_LIGHT') !== -1;
+    var needsEligibility = requiresEligibility_(normalizedResult.normalized);
     var lookupAllowed = !needsEligibility || !options || typeof options.allowEligibilityLookup !== 'function' || options.allowEligibilityLookup(email) === true;
     if (!lookupAllowed) {
       return fail_('RATE_LIMITED', '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。');
@@ -222,7 +229,7 @@ var OptionOrderService = (function () {
         normalized: normalized,
         existingOrders: existingForBooking,
         optionsConfig: optionsConfig,
-        eligibility: normalized.equipment.indexOf('VIDEO_LIGHT') !== -1 ? resolveEligibility_(booking.email) : { videoLightSelfRental: false }
+        eligibility: requiresEligibility_(normalized) ? resolveEligibility_(booking.email) : { videoLightSelfRental: false }
       });
       if (!plan.ok) return { success: false, error: plan.error };
       if (plan.orders.length === 0) return fail_('NO_OPTIONS_SELECTED', '追加するオプションを選択してください。');

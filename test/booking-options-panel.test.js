@@ -20,8 +20,9 @@ var Panel = require('../scripts/booking-options.js');
 var CATALOG = {
   enabled: true,
   equipment: [
-    { code: 'VIDEO_LIGHT', label: 'ビデオライト', priceJpy: 2000, available: true, requiresPriorRental: true },
-    { code: 'STROBE', label: 'ストロボ', priceJpy: null, available: false, requiresPriorRental: false }
+    { code: 'COB_BICOLOR', label: 'バイカラーCOBライト（定常光）', unitPriceJpy: 800, unitLabel: '', stock: 1, requiresPriorRental: true },
+    { code: 'STAND_260', label: 'ライトスタンド（260cm）', unitPriceJpy: 200, unitLabel: '本', stock: 3, requiresPriorRental: false },
+    { code: 'BACKGROUND_STAND', label: '背景スタンド', unitPriceJpy: 0, unitLabel: '', stock: 1, requiresPriorRental: false }
   ],
   themes: [
     { code: 'CLASSROOM', label: '教室セット（机・黒板）' }, { code: 'JAPANESE', label: '和風セット' }, { code: 'GRUNGE', label: 'グランジセット' },
@@ -34,12 +35,23 @@ var CATALOG = {
   }
 };
 
-test('buildSelection: 何も選ばなければnull（payloadにoptionsを付けない）。金額・承認状態は含めない', function () {
+test('buildSelection: 何も選ばなければnull（payloadにoptionsを付けない）。金額・承認状態は含めず、数量0は選ばない扱い', function () {
   assert.strictEqual(Panel.buildSelection({}), null);
-  assert.strictEqual(Panel.buildSelection({ equipment: [], layouts: [], emailSupport: false }), null);
-  var s = Panel.buildSelection({ equipment: ['VIDEO_LIGHT'], layouts: ['GRUNGE'], setupService: 'STAFF', cleanupService: 'SELF', emailSupport: true, amountJpy: 1, approvalStatus: 'APPROVED' });
+  assert.strictEqual(Panel.buildSelection({ equipment: {}, layouts: [], emailSupport: false }), null);
+  assert.strictEqual(Panel.buildSelection({ equipment: { STAND_260: 0 } }), null);
+  var s = Panel.buildSelection({ equipment: { COB_BICOLOR: 1, STAND_260: 2, BACKGROUND_STAND: 0 }, layouts: ['GRUNGE'], setupService: 'STAFF', cleanupService: 'SELF', emailSupport: true, amountJpy: 1, approvalStatus: 'APPROVED' });
   assert.deepStrictEqual(Object.keys(s).sort(), ['cleanupService', 'emailSupport', 'equipment', 'layouts', 'setupService']);
+  assert.deepStrictEqual(s.equipment, { COB_BICOLOR: 1, STAND_260: 2 });
   assert.strictEqual(s.setupService, 'STAFF');
+});
+
+test('equipmentTotalJpy: 数量×単価の個別加算。単価はカタログの値だけを使う（無料セルフは0円）', function () {
+  assert.strictEqual(Panel.equipmentTotalJpy(CATALOG, { COB_BICOLOR: 1, STAND_260: 3 }), 800 + 600);
+  assert.strictEqual(Panel.equipmentTotalJpy(CATALOG, { BACKGROUND_STAND: 1 }), 0);
+  assert.strictEqual(Panel.equipmentTotalJpy(CATALOG, {}), 0);
+  var changed = JSON.parse(JSON.stringify(CATALOG));
+  changed.equipment[1].unitPriceJpy = 250;
+  assert.strictEqual(Panel.equipmentTotalJpy(changed, { STAND_260: 2 }), 500, '画面は値を持たずカタログに従う');
 });
 
 test('buildSelection: テーマ未選択ならセッティング方法はセルフ扱い。不明値はセルフ(無料)に倒す。NONEは後付け用に通す', function () {
@@ -69,6 +81,10 @@ test('summarize: スタッフ対応は「承認後にお支払い。申込時点
   var staff = Panel.summarize(CATALOG, { layouts: ['CLASSROOM'], setupService: 'STAFF', cleanupService: 'STAFF' }).join('\n');
   assert.ok(staff.indexOf('5,000円') !== -1);
   assert.ok(staff.indexOf('承認後にお支払い') !== -1 && staff.indexOf('申込時点では確定しません') !== -1);
+  var rental = Panel.summarize(CATALOG, { equipment: { STAND_260: 2, COB_BICOLOR: 1 } }).join('\n');
+  assert.ok(rental.indexOf('ライトスタンド（260cm） ×2（400円）') !== -1);
+  assert.ok(rental.indexOf('機材レンタル合計: 1,200円') !== -1);
+  assert.ok(rental.indexOf('部屋のご予約確定後にお支払い') !== -1);
   var self = Panel.summarize(CATALOG, { layouts: ['GRUNGE'], emailSupport: true }).join('\n');
   assert.ok(self.indexOf('セルフ（無料）') !== -1);
   assert.ok(self.indexOf('メールサポート（無料）') !== -1);

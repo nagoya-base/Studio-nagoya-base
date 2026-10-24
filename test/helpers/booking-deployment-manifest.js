@@ -27,6 +27,8 @@ var BOOKING_ADMIN_FILES = [
    * 直後・SpreadsheetRepository.gsより前に置く（依存順）。
    */
   'CardPayment.gs',
+  /* Issue #423: Studio X機材カタログ（_data/studio_x_equipment.jsonから自動生成。機材ページと同一の正本）。 */
+  'EquipmentCatalog.gs',
   /* Issue #423: 予約オプションの純粋ロジック（BookingPricing.gs等と同じ依存の無い層）。 */
   'BookingOptions.gs',
   /*
@@ -97,7 +99,8 @@ var BOOKING_WEB_APP_FILES = [
   'Availability.gs',
   'Booking.gs',
   'CardPayment.gs',
-  /* Issue #423: 予約オプションの純粋ロジック。 */
+  /* Issue #423: Studio X機材カタログ（自動生成）と予約オプションの純粋ロジック。 */
+  'EquipmentCatalog.gs',
   'BookingOptions.gs',
   /* Issue #341 PR-B: BookingRepository.beginCardCheckoutがStripeGateway.
      createCheckoutSession/retrieveCheckoutSessionを呼ぶため必要。 */

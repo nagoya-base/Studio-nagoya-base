@@ -36,10 +36,15 @@
    */
   function buildSelection(state) {
     var s = state || {};
-    var equipment = (s.equipment || []).slice();
+    /* 機材: { 機材コード: 数量 }。数量0以下は選ばない扱い。 */
+    var equipment = {};
+    Object.keys(s.equipment || {}).forEach(function (code) {
+      var qty = Number(s.equipment[code]);
+      if (Number.isFinite(qty) && qty > 0) equipment[code] = qty;
+    });
     var layouts = (s.layouts || []).slice();
     var emailSupport = s.emailSupport === true;
-    if (equipment.length === 0 && layouts.length === 0 && !emailSupport) return null;
+    if (Object.keys(equipment).length === 0 && layouts.length === 0 && !emailSupport) return null;
     return {
       equipment: equipment,
       layouts: layouts,
@@ -71,6 +76,16 @@
     return '';
   }
 
+  /* 機材の合計（数量×単価の個別加算）。単価はカタログの値だけを使う。 */
+  function equipmentTotalJpy(catalog, equipment) {
+    var byCode = {};
+    ((catalog && catalog.equipment) || []).forEach(function (e) { byCode[e.code] = e; });
+    return Object.keys(equipment || {}).reduce(function (sum, code) {
+      var e = byCode[code];
+      return sum + (e ? Number(e.unitPriceJpy) * Number(equipment[code]) : 0);
+    }, 0);
+  }
+
   function serviceLabel(value) {
     if (value === 'STAFF') return 'スタッフ';
     if (value === 'NONE') return '追加なし';
@@ -84,10 +99,14 @@
     var lines = [];
     var equipmentByCode = {};
     ((catalog && catalog.equipment) || []).forEach(function (e) { equipmentByCode[e.code] = e; });
-    selection.equipment.forEach(function (code) {
+    Object.keys(selection.equipment).forEach(function (code) {
       var e = equipmentByCode[code];
-      lines.push((e ? e.label : code) + (e && e.priceJpy ? '（' + formatJpy(e.priceJpy) + '）' : ''));
+      var qty = selection.equipment[code];
+      var unit = e ? Number(e.unitPriceJpy) : 0;
+      lines.push((e ? e.label : code) + (qty > 1 ? ' ×' + qty : '') + '（' + (unit > 0 ? formatJpy(unit * qty) : '無料') + '）');
     });
+    var equipmentTotal = equipmentTotalJpy(catalog, selection.equipment);
+    if (equipmentTotal > 0) lines.push('機材レンタル合計: ' + formatJpy(equipmentTotal) + '（個別加算。部屋のご予約確定後にお支払い）');
     var themeByCode = {};
     ((catalog && catalog.themes) || []).forEach(function (t) { themeByCode[t.code] = t; });
     selection.layouts.forEach(function (code) {
@@ -147,14 +166,14 @@
   function mount(config) {
     var slot = config.slot;
     var catalog = config.catalog || null;
-    var state = { equipment: [], layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false };
+    var state = { equipment: {}, layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false };
     var controller = {
       isAvailable: function () { return !!(catalog && catalog.enabled); },
       getState: function () { return JSON.parse(JSON.stringify(state)); },
       getSelection: function () { return buildSelection(state); },
       validate: function () { return validateSelection(state); },
       summaryLines: function () { return summarize(catalog, state); },
-      reset: function () { state = { equipment: [], layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false }; render(); },
+      reset: function () { state = { equipment: {}, layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false }; render(); },
       setCatalog: function (next) { catalog = next; render(); },
       ready: null
     };
@@ -170,24 +189,39 @@
       root.appendChild(el('legend', { text: 'オプション（任意）' }));
       root.appendChild(el('p', { className: 'ba-field-help', text: (catalog.notices && catalog.notices.SELF_VS_STAFF) || '' }));
 
-      /* 機材レンタル */
-      root.appendChild(el('h3', { className: 'ba-option-heading', text: '機材レンタル（有料）' }));
-      var equipmentGroup = el('div', { className: 'ba-choices' });
+      /* 機材レンタル（1点ごとの個別加算。料金・在庫はカタログ＝機材ページと同一の正本） */
+      root.appendChild(el('h3', { className: 'ba-option-heading', text: '機材レンタル（1点ごとの個別加算）' }));
+      var equipmentLink = el('a', { href: config.equipmentPageUrl || '../equipment/', text: '撮影機材・レンタル料金を見る', target: '_blank', rel: 'noopener' });
+      root.appendChild(el('p', { className: 'ba-field-help' }, [equipmentLink]));
+      var equipmentGroup = el('div', { className: 'ba-option-equipment' });
       (catalog.equipment || []).forEach(function (item) {
-        var text = item.label + (item.available ? '　' + formatJpy(item.priceJpy) : '　現在オンライン受付を停止中（メールでご相談ください）');
-        var c = choice('bo-equipment', item.code, text, 'checkbox', !item.available);
-        c.input.checked = state.equipment.indexOf(item.code) !== -1;
-        c.input.addEventListener('change', function () {
-          state.equipment = state.equipment.filter(function (code) { return code !== item.code; });
-          if (c.input.checked) state.equipment.push(item.code);
+        uid += 1;
+        var select = el('select', { id: 'bo-eq-' + uid, 'aria-label': item.label + 'の数量' });
+        for (var n = 0; n <= item.stock; n += 1) {
+          select.appendChild(el('option', { value: String(n), text: n === 0 ? '0（借りない）' : String(n) }));
+        }
+        select.value = String(state.equipment[item.code] || 0);
+        select.addEventListener('change', function () {
+          var qty = Number(select.value);
+          if (qty > 0) state.equipment[item.code] = qty;
+          else delete state.equipment[item.code];
+          render();
         });
-        equipmentGroup.appendChild(c.label);
+        var priceText = item.unitPriceJpy > 0
+          ? formatJpy(item.unitPriceJpy) + (item.unitLabel ? ' / ' + item.unitLabel : '')
+          : '無料（セルフ）';
+        var stockText = item.stock > 1 ? '（最大' + item.stock + (item.unitLabel || '点') + '）' : '';
+        equipmentGroup.appendChild(el('div', { className: 'ba-choice' }, [
+          el('label', { for: 'bo-eq-' + uid, text: item.label + '　' + priceText + stockText + '　' }), select
+        ]));
       });
       root.appendChild(equipmentGroup);
-      var hasVideoLight = (catalog.equipment || []).some(function (e) { return e.requiresPriorRental; });
-      if (hasVideoLight) {
-        root.appendChild(el('p', { className: 'ba-field-help', text: 'ビデオライトのセルフレンタルは、過去にビデオライトをご利用いただいた方のみ選択できます（初めての方はメールでご相談ください）。' }));
+      var equipmentTotal = equipmentTotalJpy(catalog, state.equipment);
+      if (equipmentTotal > 0) {
+        root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', text: '機材レンタル合計：' + formatJpy(equipmentTotal) + '（税込。部屋のご予約が確定した後にお支払いいただきます）' }));
       }
+      var needsPrior = (catalog.equipment || []).some(function (e) { return e.requiresPriorRental && state.equipment[e.code]; });
+      root.appendChild(el('p', { className: needsPrior ? 'ba-banner ba-banner--notice' : 'ba-field-help', text: 'ビデオライト系（定常光）のセルフレンタルは、過去にビデオライトをご利用いただいた方のみ選択できます（初めての方はメールでご相談ください）。ストロボ等に資格の制限はありません。' }));
 
       /* セッティング（テーマ） */
       root.appendChild(el('h3', { className: 'ba-option-heading', text: 'セッティング' }));
@@ -275,6 +309,7 @@
     mount: mount,
     buildSelection: buildSelection,
     staffServicePrice: staffServicePrice,
+    equipmentTotalJpy: equipmentTotalJpy,
     validateSelection: validateSelection,
     summarize: summarize,
     describeError: describeError,
