@@ -263,14 +263,17 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
+  align-items: start;
 }
+/* 写真を元の縦横比のまま見せるため、カード高さが揃わない前提で列ごとに積む（行揃えにしない） */
+.theme-option-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .theme-option-card {
   display: flex;
   flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--line);
 }
-.theme-option-card img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; }
+.theme-option-card img { display: block; width: 100%; height: auto; }
 .theme-option-body { padding: 18px; }
 .theme-option-kicker { color: var(--accent); font-family: var(--font-display); font-size: .66rem; font-weight: 700; letter-spacing: .14em; }
 .theme-option-body h3 { margin: 6px 0 8px; font-size: 1.05rem; }
@@ -292,8 +295,9 @@
   .option-flow { grid-template-columns: 1fr; gap: 26px; }
   .option-flow-step::after { content: '↓'; top: auto; bottom: -24px; right: auto; left: 50%; transform: translateX(-50%); }
   .option-flow-step:last-child::after { content: none; }
-  .theme-option-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .theme-option-grid { display: flex; flex-direction: column; gap: 14px; max-width: 640px; margin-inline: auto; }
+  .theme-option-col { display: contents; }
 }
 @media (max-width: 760px) {
-  .theme-option-grid { grid-template-columns: 1fr; }
+  
 }

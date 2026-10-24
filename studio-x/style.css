@@ -382,24 +382,21 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 .section-heading p:last-child { margin: 0; color: var(--muted); font-size: .9rem; }
 
-.world-grid {
-  display: grid;
-  grid-template-columns: repeat(12, 1fr);
-  grid-auto-rows: 220px;
-  gap: 16px;
-}
+/* 写真に合わせてレイアウトする: 各行の幅を画像の縦横比（--ratio = 幅/高さ）に比例配分し、行内の高さを揃える。
+   画像は元の比率のまま全体表示し、トリミングしない。 */
+.world-grid { display: grid; gap: 16px; }
+.world-row { display: flex; gap: 16px; align-items: flex-start; }
 
 .world-card {
   position: relative;
-  grid-column: span 4;
+  flex: var(--ratio, 1) 1 0;
+  min-width: 0;
   overflow: hidden;
   background: var(--surface);
 }
 
-.world-card-wide { grid-column: span 8; grid-row: span 2; }
-.world-card-tall { grid-row: span 2; }
-.world-card img { width: 100%; height: 100%; object-fit: cover; transition: transform .8s cubic-bezier(.2,.7,.2,1), filter .4s ease; }
-.world-card:hover img { transform: scale(1.045); filter: saturate(1.12); }
+.world-card img { display: block; width: 100%; height: auto; transition: filter .4s ease; }
+.world-card:hover img { filter: saturate(1.12); }
 .world-overlay { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 30%, rgba(0,0,0,.9)); }
 
 .world-copy { position: absolute; left: 24px; right: 24px; bottom: 22px; }
@@ -605,9 +602,12 @@ footer {
   .hero-facts div:nth-child(2) { border-right: 0; }
   .hero-facts div:first-child, .hero-facts div:nth-child(2) { border-bottom: 1px solid var(--line); }
   .hero-facts div:nth-child(3) { padding-left: 0; }
-  .world-card { grid-column: span 6; }
-  .world-card-wide { grid-column: span 12; }
-  .world-card-tall { grid-row: span 1; }
+}
+
+@media (max-width: 900px) {
+  .world-grid { max-width: 640px; margin-inline: auto; }
+  .world-row { flex-direction: column; }
+  .world-card { flex: none; }
 }
 
 @media (max-width: 760px) {
@@ -646,11 +646,9 @@ footer {
   .statement h2, .section-heading h2, .for-you > h2, .beginners h2, .specs h2, .price h2, .access h2, .faq h2, .final-cta h2 { font-size: clamp(2.15rem, 10vw, 3.3rem); }
   .section-heading { margin-bottom: 38px; }
   .worlds { padding-top: 0; }
-  .world-grid { grid-template-columns: 1fr 1fr; grid-auto-rows: 240px; gap: 8px; }
-  .world-card, .world-card-wide { grid-column: span 1; grid-row: span 1; }
-  .world-card-wide { grid-column: span 2; grid-row: span 2; }
+  .world-grid { gap: 8px; }
+  .world-row { gap: 8px; }
   .world-copy { left: 16px; right: 16px; bottom: 15px; }
-  .world-copy p { display: none; }
   .world-copy h3 { font-size: 1rem; }
 
   .for-you, .price { padding-left: 20px; padding-right: 20px; }
@@ -692,8 +690,6 @@ footer {
 }
 
 @media (max-width: 420px) {
-  .world-grid { grid-auto-rows: 210px; }
-  .world-card-wide { grid-row: span 1; }
   .hero-facts dd { font-size: .68rem; }
 }
 
