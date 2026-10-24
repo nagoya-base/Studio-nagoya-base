@@ -191,7 +191,10 @@ function computeAdminCardPaymentDueAt_(record, timezone) {
 
 function getAdminBookings() {
   var timezone = BookingConfig.getAvailabilityConfig().timezone;
-  var todayJst = BookingAvailability.formatDateInTimezone(new Date(), timezone);
+  var now = new Date();
+  var todayJst = BookingAvailability.formatDateInTimezone(now, timezone);
+  /* Issue #449: 終了済み予約を通常一覧から外す判定用（予約タイムゾーン基準の'YYYY-MM-DD HH:mm'）。 */
+  var nowJst = formatAdminDateTime_(now, timezone);
   var optionOrdersByBooking = loadAdminListOptionOrders_();
   var bookings = SpreadsheetRepository.getAllBookings().map(function (item) {
     var record = item.record;
@@ -244,7 +247,7 @@ function getAdminBookings() {
     }
     return listItem;
   });
-  return { todayJst: todayJst, bookings: bookings };
+  return { todayJst: todayJst, nowJst: nowJst, bookings: bookings };
 }
 
 /*

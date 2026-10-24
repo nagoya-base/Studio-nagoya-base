@@ -436,6 +436,15 @@ test('getAdminBookings: todayJstはAsia/Tokyo基準で計算される（端末ti
   assert.strictEqual(result.todayJst, futureDateJst_(0), 'todayJstはAsia/Tokyo基準の「今日」の日付文字列であるべき');
 });
 
+test('getAdminBookings: nowJstは予約タイムゾーン基準の"YYYY-MM-DD HH:mm"で、todayJstの日付と一致する（Issue #449）', function () {
+  var ctx = setup();
+
+  var result = ctx.sandbox.getAdminBookings();
+
+  assert.ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(result.nowJst), 'nowJstの形式: ' + result.nowJst);
+  assert.strictEqual(result.nowJst.slice(0, 10), result.todayJst);
+});
+
 /* ---------- getAdminBookingDetail ---------- */
 
 test('getAdminBookingDetail: 詳細表示に必要な全フィールド（email/phone/note等を含む）を返す。日時はWeb UI用の文字列へ正規化する', function () {

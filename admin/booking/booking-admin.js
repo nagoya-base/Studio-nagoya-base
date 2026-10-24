@@ -25,6 +25,7 @@
 var state = {
   bookings: [],
   todayJst: null,
+  nowJst: null,
   filter: 'today',
   sort: 'date',
   searchQuery: '',
@@ -159,14 +160,44 @@ function formatValue(key, value) {
    Issue #322で件数サマリー・タブ件数（computeSummaryCounts/computeTabCounts）にも
    同じ判定を使うため、stateに依存しない純粋関数として切り出した（DOM操作からも
    分離しているため、この関数単体を直接テストできる）。 */
-function filterBookingsByTab(bookings, filter, todayJst) {
+/* Issue #449: 終了時刻を過ぎた予約かどうか。nowJstはサーバーが予約タイムゾーン
+   （BookingConfigのtimezone）基準で返す'YYYY-MM-DD HH:mm'で、booking.date/endAt
+   （同じくサーバーが同タイムゾーンで整形した'YYYY-MM-DD'/'HH:mm'）と文字列比較する。
+   端末時刻・端末timezoneには依存しない。endAtがstartAt以前の場合は日跨ぎ（翌日終了）と
+   みなす。nowJst/endAt未取得時はfalse（従来どおり除外しない）。表示フィルタ専用で、
+   予約データのstatusには一切触れない。 */
+function isBookingEnded(b, nowJst) {
+  if (!nowJst || !b || !b.date || !b.endAt) return false;
+  var endDate = b.date;
+  if (b.startAt && b.endAt <= b.startAt) endDate = addDaysToDateString_(b.date, 1);
+  return (endDate + ' ' + b.endAt) <= nowJst;
+}
+
+function addDaysToDateString_(dateString, days) {
+  var parts = String(dateString).split('-');
+  var d = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]) + days));
+  return d.toISOString().slice(0, 10);
+}
+
+/* Issue #449: 通常の対応一覧（今日/今後/仮予約）に載せる条件の共通部分。
+   終了済みは「すべて」「キャンセル」でのみ確認できる（履歴確認手段を残す）。 */
+function isActiveBooking_(b, nowJst) {
+  return b.status !== 'CANCELLED' && b.status !== 'EXPIRED' && !isBookingEnded(b, nowJst);
+}
+
+/* Issue #449: 「今日」「今後」は終了時刻を過ぎた予約を外す（当日でも終了前なら表示）。
+   「仮予約」タブはstatus===PENDING（一覧上の「仮受付」）だけを、終了前のものに限って
+   日付を問わず表示する。CONFIRMED/CANCELLED/EXPIREDは混ぜない。nowJstは省略可能で、
+   省略時は終了判定をしない。 */
+function filterBookingsByTab(bookings, filter, todayJst, nowJst) {
   var today = todayJst;
   return bookings.filter(function (b) {
     if (filter === 'all') return true;
     if (filter === 'cancelled') return b.status === 'CANCELLED';
+    if (filter === 'pending') return b.status === 'PENDING' && !isBookingEnded(b, nowJst);
     if (!today) return true;
-    if (filter === 'today') return b.date === today && b.status !== 'CANCELLED' && b.status !== 'EXPIRED';
-    if (filter === 'upcoming') return b.date >= today && b.status !== 'CANCELLED' && b.status !== 'EXPIRED';
+    if (filter === 'today') return b.date === today && isActiveBooking_(b, nowJst);
+    if (filter === 'upcoming') return b.date >= today && isActiveBooking_(b, nowJst);
     return true;
   });
 }
@@ -174,7 +205,7 @@ function filterBookingsByTab(bookings, filter, todayJst) {
 /* 現在のstate（filter/todayJst）に対してfilterBookingsByTabを適用するだけの
    薄いラッパー。既存の呼び出し側（visibleBookings）はこの関数名のまま使い続ける。 */
 function filteredBookings() {
-  return filterBookingsByTab(state.bookings, state.filter, state.todayJst);
+  return filterBookingsByTab(state.bookings, state.filter, state.todayJst, state.nowJst);
 }
 
 /* 「日付順」: date昇順、同一日はstartAt昇順（デフォルト）。date/startAtはいずれも
@@ -251,11 +282,12 @@ function visibleBookings() {
    検索クエリ・現在のタブ選択のいずれにも影響されず、常にbookings全件ベースで
    計算する（要件どおり）。DOM操作から分離した純粋関数として実装し、直接テスト
    できるようにしている。 */
-function computeSummaryCounts(bookings, todayJst) {
+function computeSummaryCounts(bookings, todayJst, nowJst) {
   var list = bookings || [];
   return {
-    today: filterBookingsByTab(list, 'today', todayJst).length,
-    pending: list.filter(function (b) { return b.status === 'PENDING'; }).length,
+    today: filterBookingsByTab(list, 'today', todayJst, nowJst).length,
+    /* Issue #449: 「仮予約」タブの件数と一致させる（終了済みの仮受付は含めない）。 */
+    pending: filterBookingsByTab(list, 'pending', todayJst, nowJst).length,
     confirmed: list.filter(function (b) { return b.status === 'CONFIRMED'; }).length,
     all: list.length
   };
@@ -263,10 +295,11 @@ function computeSummaryCounts(bookings, todayJst) {
 
 /* 既存4タブ（今日/今後/キャンセル/すべて）それぞれの件数。サマリーと同様、
    検索クエリの影響を受けず全件ベースで計算する純粋関数。 */
-function computeTabCounts(bookings, todayJst) {
+function computeTabCounts(bookings, todayJst, nowJst) {
   return {
-    today: filterBookingsByTab(bookings, 'today', todayJst).length,
-    upcoming: filterBookingsByTab(bookings, 'upcoming', todayJst).length,
+    today: filterBookingsByTab(bookings, 'today', todayJst, nowJst).length,
+    upcoming: filterBookingsByTab(bookings, 'upcoming', todayJst, nowJst).length,
+    pending: filterBookingsByTab(bookings, 'pending', todayJst, nowJst).length,
     cancelled: filterBookingsByTab(bookings, 'cancelled', todayJst).length,
     all: filterBookingsByTab(bookings, 'all', todayJst).length
   };
@@ -282,7 +315,7 @@ function setElementText_(id, text) {
 
 /* 予約サマリー（要件2）のDOM反映のみを担当。集計自体はcomputeSummaryCountsで行う。 */
 function renderSummary() {
-  var counts = computeSummaryCounts(state.bookings, state.todayJst);
+  var counts = computeSummaryCounts(state.bookings, state.todayJst, state.nowJst);
   setElementText_('summary-today-count', String(counts.today));
   setElementText_('summary-pending-count', String(counts.pending));
   setElementText_('summary-confirmed-count', String(counts.confirmed));
@@ -293,9 +326,10 @@ function renderSummary() {
    タブ本体（ボタン要素）はBookingAdminPage.html側の固定DOMのため、件数表示用の
    子要素はinitTabCountsUi()が初回に生成する。 */
 function renderTabCounts() {
-  var counts = computeTabCounts(state.bookings, state.todayJst);
+  var counts = computeTabCounts(state.bookings, state.todayJst, state.nowJst);
   setElementText_('tab-count-today', String(counts.today));
   setElementText_('tab-count-upcoming', String(counts.upcoming));
+  setElementText_('tab-count-pending', String(counts.pending));
   setElementText_('tab-count-cancelled', String(counts.cancelled));
   setElementText_('tab-count-all', String(counts.all));
 }
@@ -473,6 +507,7 @@ function loadBookings(onDone) {
       if (requestId === loadRequestSeq) {
         state.bookings = (result && result.bookings) || [];
         state.todayJst = result && result.todayJst;
+        state.nowJst = (result && result.nowJst) || null;
         setStatusLine('');
         updateLastUpdatedNow_();
         render();
