@@ -128,7 +128,7 @@ test('SNB(/equipment/)とStudio X(/studio-x/equipment/)は同じ共通include・
   var snb = read('equipment/index.html');
   var sx = read('studio-x/equipment/index.html');
   [snb, sx].forEach(function (html) {
-    assert.ok(html.indexOf('{% include equipment_catalog_ja.html %}') !== -1);
+    assert.ok(/\{% include equipment_catalog_ja\.html[^%]*%\}/.test(html));
     assert.ok(html.indexOf('{% include equipment_photo_cards.html') !== -1);
     assert.ok(html.indexOf('{% include equipment_caution_ja.html %}') !== -1);
     assert.ok(!/\b(800|500|300|200)円/.test(stripComments(html)), '金額をページへ直書きしない');
@@ -140,6 +140,13 @@ test('SNB(/equipment/)とStudio X(/studio-x/equipment/)は同じ共通include・
   assert.match(catalog, /施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要/);
   assert.match(catalog, /セルフ設営<\/th><td>無料/);
   assert.match(catalog, /承認前に請求されることはありません/);
+  // Studio X専用の予約オプション・承認・決済運用は brand="studio-x" のときだけ出す（SNBに同フローはない）
+  assert.ok(sx.indexOf('equipment_catalog_ja.html brand="studio-x"') !== -1);
+  assert.ok(snb.indexOf('brand=') === -1, 'SNBページはbrandを渡さない');
+  var gated = catalog.replace(/\{%-? comment -%\}[\s\S]*?\{%-? endcomment -%\}/g, "").replace(/\{%-?\s*if is_studio_x\s*-?%\}[\s\S]*?\{%-?\s*(?:else|endif)\s*-?%\}/g, '');
+  ['オプション追加', 'お支払いは部屋のご予約', 'オンラインで決済', '承認', 'id="staff-service"', 'staffService'].forEach(function (w) {
+    assert.ok(gated.indexOf(w) === -1, 'Studio X専用文言「' + w + '」がブランド分岐の外にある');
+  });
   assert.ok(!/保有機材（応相談）|保有・要相談/.test(snb + sx + catalog + read('_includes/equipment_photo_cards.html') + read('_includes/equipment_caution_ja.html')));
   // how-to / mens が使う従来の共通表は今回の対象外（変更しない）
   assert.ok(read('_includes/equipment_table.html').indexOf('保有機材（応相談）') !== -1);
