@@ -192,11 +192,12 @@ function computeAdminCardPaymentDueAt_(record, timezone) {
 function getAdminBookings() {
   var timezone = BookingConfig.getAvailabilityConfig().timezone;
   var todayJst = BookingAvailability.formatDateInTimezone(new Date(), timezone);
+  var optionOrdersByBooking = loadAdminListOptionOrders_();
   var bookings = SpreadsheetRepository.getAllBookings().map(function (item) {
     var record = item.record;
     var priceSummary = buildAdminPriceSummary_(record);
     var paymentSummary = buildAdminPaymentSummary_(record);
-    return {
+    var listItem = {
       bookingId: record.bookingId,
       createdAt: normalizeAdminCreatedAt_(record.createdAt, timezone),
       date: formatAdminDate_(record.date, timezone),
@@ -234,8 +235,36 @@ function getAdminBookings() {
       refundDecisionRequired: paymentSummary.refundDecisionRequired,
       paymentRecoveryRequired: paymentSummary.paymentRecoveryRequired
     };
+    /* Issue #447: Studio Xのみ予約オプション（OptionOrders）の状態を一覧にも載せる。部屋予約の
+       status/paymentStatusとは別キー。SNB / SNB mensにはキー自体を付けない。 */
+    if (record.brand === 'studio_x' && optionOrdersByBooking) {
+      listItem.optionSummary = optionOrdersByBooking.failed
+        ? { available: false, state: 'UNKNOWN', lines: [] }
+        : BookingOptions.summarizeForAdminList(optionOrdersByBooking.byBooking[record.bookingId] || []);
+    }
+    return listItem;
   });
   return { todayJst: todayJst, bookings: bookings };
+}
+
+/*
+ * 一覧用にOptionOrders台帳を1回だけ読み、bookingId別にrecordをまとめる（予約ごとの読み取りを避ける）。
+ * 台帳が使えない構成（OptionOrderRepository未配備）はnull＝optionSummaryを付けない。読み取りに失敗しても
+ * 一覧そのものは表示できるよう、failed: trueを返してクライアントに「オプション状態不明」と出させる。
+ */
+function loadAdminListOptionOrders_() {
+  if (typeof OptionOrderRepository === 'undefined' || typeof BookingOptions === 'undefined') return null;
+  try {
+    var byBooking = {};
+    OptionOrderRepository.listAll().forEach(function (row) {
+      var id = row.record.bookingId;
+      (byBooking[id] = byBooking[id] || []).push(row.record);
+    });
+    return { failed: false, byBooking: byBooking };
+  } catch (optionError) {
+    Logger.log('getAdminBookings: オプション台帳の読み取りに失敗しました');
+    return { failed: true, byBooking: {} };
+  }
 }
 
 /*

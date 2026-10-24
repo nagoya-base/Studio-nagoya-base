@@ -813,6 +813,60 @@ var BookingOptions = (function () {
     };
   }
 
+  /*
+   * 管理画面の予約一覧カード用に、1予約分のOptionOrders（record配列）を要約する（Issue #447）。
+   * 部屋予約の状態（Bookings.status）とは独立に、OptionOrderのstatusだけから決める。
+   * state（未処理が最優先）: PENDING_APPROVAL（承認待ち）> AWAITING_PAYMENT（支払い待ち。
+   * PAYMENT_PENDINGを含む）> CONFIRMED > CLOSED（不承認/取消のみ）> NONE。
+   * 一覧に載せるのは件数と項目の概要のみ。決済URL・トークン・メールは含めない。
+   */
+  function summarizeForAdminList(orders) {
+    var list = orders || [];
+    var counts = { pendingApproval: 0, awaitingPayment: 0, confirmed: 0, closed: 0 };
+    var staffPre = false;
+    var staffCleanup = false;
+    var equipmentPoints = 0;
+    var freeSelf = false;
+    list.forEach(function (order) {
+      var status = order.status;
+      if (status === STATUS.PENDING_APPROVAL) counts.pendingApproval++;
+      else if (status === STATUS.AWAITING_PAYMENT || status === STATUS.PAYMENT_PENDING) counts.awaitingPayment++;
+      else if (status === STATUS.CONFIRMED) counts.confirmed++;
+      else counts.closed++;
+      if (!isActiveStatus(status)) return;
+      (order.items || []).forEach(function (item) {
+        var code = String(item || '');
+        var eq = parseEquipmentItem_(code);
+        if (eq) { equipmentPoints += eq.quantity; return; }
+        if (code.indexOf(ITEM_PREFIX.STAFF_PRE_SETUP) === 0) { staffPre = true; return; }
+        if (code.indexOf(ITEM_PREFIX.STAFF_CLEANUP) === 0) { staffCleanup = true; return; }
+        if (code.indexOf(ITEM_PREFIX.SELF_SETUP) === 0 || code.indexOf(ITEM_PREFIX.SELF_CLEANUP) === 0 || code === ITEM_PREFIX.EMAIL_SUPPORT) freeSelf = true;
+      });
+    });
+    var state = 'NONE';
+    if (list.length > 0) {
+      if (counts.pendingApproval > 0) state = 'PENDING_APPROVAL';
+      else if (counts.awaitingPayment > 0) state = 'AWAITING_PAYMENT';
+      else if (counts.confirmed > 0) state = 'CONFIRMED';
+      else state = 'CLOSED';
+    }
+    var lines = [];
+    if (staffPre) lines.push('事前設営（スタッフ）');
+    if (staffCleanup) lines.push('片付け（スタッフ）');
+    if (equipmentPoints > 0) lines.push('機材レンタル ' + equipmentPoints + '点');
+    if (freeSelf) lines.push('無料セルフ対応');
+    return {
+      available: true,
+      state: state,
+      totalCount: list.length,
+      pendingApprovalCount: counts.pendingApproval,
+      awaitingPaymentCount: counts.awaitingPayment,
+      confirmedCount: counts.confirmed,
+      closedCount: counts.closed,
+      lines: lines
+    };
+  }
+
   return {
     ENABLED_BRANDS: ENABLED_BRANDS_.slice(),
     CURRENCY: CURRENCY_,
@@ -843,6 +897,7 @@ var BookingOptions = (function () {
     generateOptionOrderId: generateOptionOrderId,
     isPayable: isPayable,
     renderSelfGuidance: renderSelfGuidance,
-    summarizeOrder: summarizeOrder
+    summarizeOrder: summarizeOrder,
+    summarizeForAdminList: summarizeForAdminList
   };
 })();

@@ -2814,3 +2814,79 @@ test('許可確認待ちの機材注文（eligibilityHold）は「許可済み�
   sandbox.renderOptionSection_({ options: { available: true, guidanceIncomplete: false, orders: [optionOrder()] } });
   assert.ok(sandbox.optionUi_.listEl.innerHTML.indexOf('>承認する</button>') !== -1);
 });
+
+/* ---------- Issue #447: 一覧カードの予約オプション状態（Studio X） ---------- */
+
+function optionSummary(overrides) {
+  return Object.assign({
+    available: true, state: 'PENDING_APPROVAL', totalCount: 3, pendingApprovalCount: 2,
+    awaitingPaymentCount: 0, confirmedCount: 0, closedCount: 0,
+    lines: ['事前設営（スタッフ）', '片付け（スタッフ）', '機材レンタル 4点']
+  }, overrides || {});
+}
+
+function renderOptionCard(summary, extra) {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.filter = 'all';
+  sandbox.state.bookings = [booking(Object.assign({ bookingId: 'opt-card', optionSummary: summary }, extra || {}))];
+  sandbox.render();
+  return { sandbox: sandbox, html: sandbox.document.getElementById('list').innerHTML };
+}
+
+test('render(Issue #447): 承認待ちオプションがあるカードは状態・件数・概要を出し、確定ボタンを無効化して「オプションを確認」を先頭に出す', function () {
+  var html = renderOptionCard(optionSummary()).html;
+  assert.ok(html.indexOf('予約オプション: 承認待ち') !== -1);
+  assert.ok(html.indexOf('オプション承認待ち 2件') !== -1);
+  assert.ok(html.indexOf('・事前設営（スタッフ）') !== -1 && html.indexOf('・機材レンタル 4点') !== -1);
+  assert.ok(html.indexOf('オプションを確認') !== -1 && html.indexOf('オプションを確認') < html.indexOf('>詳細<'), '導線は通常の詳細より先');
+  assert.match(html, /data-action="confirm"[^>]* disabled[^>]*>オプション確認後に確定</);
+  assert.ok(html.indexOf('>確定</button>') === -1, '通常の「確定」ボタンは出ない');
+});
+
+test('render(Issue #447): オプションなし・SNB（optionSummaryなし）は従来どおり簡潔で、確定ボタンも通常のまま', function () {
+  [renderOptionCard({ state: 'NONE', totalCount: 0 }).html, renderOptionCard(undefined, { brand: 'snb' }).html].forEach(function (html) {
+    assert.ok(html.indexOf('予約オプション') === -1);
+    assert.ok(html.indexOf('オプションを確認') === -1);
+    assert.match(html, /data-action="confirm"[^>]*>確定</);
+    assert.ok(!/data-action="confirm"[^>]* disabled/.test(html));
+  });
+});
+
+test('render(Issue #447): 支払い待ち・確定済み・不承認/取消済みは状態を表示し、確定ボタンはブロックしない', function () {
+  [['AWAITING_PAYMENT', '支払い待ち'], ['CONFIRMED', '確定済み'], ['CLOSED', '不承認/取消済み']].forEach(function (pair) {
+    var html = renderOptionCard(optionSummary({ state: pair[0], pendingApprovalCount: 0, lines: [] })).html;
+    assert.ok(html.indexOf('予約オプション: ' + pair[1]) !== -1, pair[1]);
+    assert.ok(html.indexOf('オプションを確認') === -1);
+    assert.match(html, /data-action="confirm"[^>]*>確定</);
+  });
+});
+
+test('runConfirm(Issue #447): 承認待ちオプションがある予約は、確認ダイアログも出さずAPIを呼ばない', function () {
+  var ctx = renderOptionCard(optionSummary());
+  var sandbox = ctx.sandbox;
+  var alerts = [];
+  var confirms = 0;
+  sandbox.alert = function (m) { alerts.push(m); };
+  sandbox.window.confirm = function () { confirms++; return true; };
+  sandbox.google.script.run.calls.length = 0;
+
+  sandbox.runConfirm('opt-card');
+
+  assert.strictEqual(confirms, 0);
+  assert.strictEqual(alerts.length, 1);
+  assert.strictEqual(sandbox.google.script.run.calls.length, 0);
+});
+
+test('runConfirm(Issue #447): 支払い待ち/状態不明のオプションは確認ダイアログに状態を明示し、オプションなしでは出さない', function () {
+  function confirmText(summary) {
+    var sandbox = renderOptionCard(summary).sandbox;
+    var text = '';
+    sandbox.window.confirm = function (m) { text = m; return false; };
+    sandbox.runConfirm('opt-card');
+    return text;
+  }
+  assert.ok(confirmText(optionSummary({ state: 'AWAITING_PAYMENT' })).indexOf('予約オプション: 支払い待ち') !== -1);
+  assert.ok(confirmText({ available: false, state: 'UNKNOWN', lines: [] }).indexOf('詳細で確認してください') !== -1);
+  assert.ok(confirmText({ state: 'NONE' }).indexOf('予約オプション') === -1);
+});
