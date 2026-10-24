@@ -290,10 +290,20 @@ var BookingRepository = (function () {
     }
   }
 
+  /*
+   * 「実際にCheckoutを開始できる」場合だけtrue（beginCardCheckoutの事前条件と同じ:
+   * checkoutEnabled・secretKey・successUrl・cancelUrl、およびブランド別の戻り先解決）。
+   * 条件を欠く場合はbeginCardCheckoutがSessionを作れず（CHECKOUT_DISABLED / STRIPE_NOT_CONFIGURED）
+   * 支払い案内メールも送られないため、利用者へのメールが1通も届かない事態を避けて、
+   * 従来どおりcreateBooking時に受付メールを送る。
+   */
   function shouldDeferPendingMailToCheckout_(record) {
     if (!Booking.isCardPaymentMethod(record.paymentMethod)) return false;
     try {
-      return !!BookingConfig.getStripeConfig().checkoutEnabled;
+      var stripeConfig = BookingConfig.getStripeConfig();
+      if (!stripeConfig.checkoutEnabled) return false;
+      if (!stripeConfig.secretKey || !stripeConfig.successUrl || !stripeConfig.cancelUrl) return false;
+      return !!Booking.resolveCheckoutReturnUrls(record.brand, stripeConfig).ok;
     } catch (configError) {
       return false;
     }

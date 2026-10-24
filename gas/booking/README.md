@@ -7368,7 +7368,9 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
     （`CardPayment.computeCheckoutSessionCreatedMillis(paymentHoldExpiresAt)`）以降に記録済みか」で判定する。送信失敗時は
     `pendingMailSentAt`を更新しないため、Sessionが再利用された次の`beginCardCheckout`で再送される。
   - 失敗してもCheckout作成・予約状態（PENDING / checkout_pending）は変えない（best effort）。checkoutUrlはログ・エラー記録へ出さない。
-  - Checkout無効・設定不足でSessionが作られない場合は従来どおり`createBooking`時に受付メール（`buildPendingMail`）を送る。
+  - 受付メールを延期するのは「実際にCheckoutを開始できる設定が揃っている」場合だけ（`checkoutEnabled`・`secretKey`・`successUrl`・`cancelUrl`・
+    ブランド別の戻り先解決`Booking.resolveCheckoutReturnUrls`。`beginCardCheckout`の事前条件と同じ）。いずれかを欠きSessionが作られない場合は、
+    利用者向けメールが1通も届かない事態を避けるため従来どおり`createBooking`時に受付メール（`buildPendingMail`）を送る。
   - 公開APIは増やしていない。`checkoutAccessToken`認可・Idempotency-Key・Session再利用の既存ロジックは変更なし。
 - `startCardCheckout`が`CHECKOUT_DISABLED` / `STRIPE_NOT_CONFIGURED`を返した場合（Checkout未着手と確実に判断できる場合）の
   完了画面は、「決済ページを自動で開始できなかった。運営より決済方法を案内する」旨のみを示し、

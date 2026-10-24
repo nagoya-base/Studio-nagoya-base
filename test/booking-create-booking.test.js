@@ -1304,7 +1304,10 @@ var CHECKOUT_ENABLED_PROPERTIES_445 = {
   STRIPE_SECRET_KEY: 'sk_test_dummy',
   STRIPE_CHECKOUT_ENABLED: 'true',
   STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.com/success',
-  STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/cancel'
+  STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/cancel',
+  /* 既定のbrand(studio_x)の戻り先を解決できる完全設定にする */
+  STRIPE_CHECKOUT_SUCCESS_URL_STUDIO_X: 'https://example.com/studio-x/success',
+  STRIPE_CHECKOUT_CANCEL_URL_STUDIO_X: 'https://example.com/studio-x/cancel'
 };
 
 function customerMails_(mailApp) {
@@ -1339,5 +1342,45 @@ test('Issue #445: クレカでもCheckout無効（Sessionが作られない）�
     assert.strictEqual(mails.length, 1, c.method);
     assert.match(mails[0].subject, c.expectSubject, c.method);
     assert.doesNotMatch(mails[0].body, /管理者/, c.method);
+  });
+});
+
+test('Issue #445: STRIPE_CHECKOUT_ENABLED=trueでもCheckoutを開始できない設定（secretKey欠落／success・cancel URL不足／ブランド別戻り先を解決できない）なら、createBooking時に受付メールを1通送る', function () {
+  var base = Object.assign({}, MAIL_PROPERTIES_445, CHECKOUT_ENABLED_PROPERTIES_445);
+  function without_(keys) {
+    var copy = Object.assign({}, base);
+    keys.forEach(function (k) { delete copy[k]; });
+    return copy;
+  }
+  [
+    { name: 'STRIPE_SECRET_KEY欠落', brand: 'studio_x', props: without_(['STRIPE_SECRET_KEY']) },
+    { name: 'success URL不足', brand: 'snb', props: without_(['STRIPE_CHECKOUT_SUCCESS_URL']) },
+    { name: 'cancel URL不足', brand: 'snb', props: without_(['STRIPE_CHECKOUT_CANCEL_URL']) },
+    {
+      name: 'studio_xの戻り先を解決できない（ブランド別URLなし・SNB用URLから導出もできない）',
+      brand: 'studio_x',
+      props: without_(['STRIPE_CHECKOUT_SUCCESS_URL_STUDIO_X', 'STRIPE_CHECKOUT_CANCEL_URL_STUDIO_X'])
+    }
+  ].forEach(function (c) {
+    var mailApp = stubs.createMailAppStub();
+    var ctx = setup({ mailApp: mailApp, properties: c.props });
+    var result = ctx.sandbox.BookingRepository.createBooking(validPayload({
+      brand: c.brand, paymentMethod: 'オンラインクレジットカード', date: futureDateJst_(10), startTime: '10:00', email: 'taro@example.com'
+    }));
+    assert.strictEqual(result.success, true, c.name);
+    assert.strictEqual(customerMails_(mailApp).length, 1, c.name + ': 利用者向けメールが欠落しない');
+  });
+});
+
+test('Issue #445: 完全設定（ブランド別の戻り先を解決できる）のときだけ、createBookingでは受付メールを送らない', function () {
+  ['snb', 'studio_x'].forEach(function (brand) {
+    var mailApp = stubs.createMailAppStub();
+    var props = Object.assign({}, MAIL_PROPERTIES_445, CHECKOUT_ENABLED_PROPERTIES_445);
+    var ctx = setup({ mailApp: mailApp, properties: props });
+    var result = ctx.sandbox.BookingRepository.createBooking(validPayload({
+      brand: brand, paymentMethod: 'オンラインクレジットカード', date: futureDateJst_(10), startTime: '10:00', email: 'taro@example.com'
+    }));
+    assert.strictEqual(result.success, true, brand);
+    assert.strictEqual(customerMails_(mailApp).length, 0, brand);
   });
 });
