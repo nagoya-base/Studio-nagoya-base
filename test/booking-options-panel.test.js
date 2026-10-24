@@ -224,8 +224,8 @@ var gasSandbox = loadBookingSandbox(['EquipmentCatalog.gs', 'BookingOptions.gs']
 var SERVER_CATALOG = JSON.parse(JSON.stringify(gasSandbox.BookingOptions.buildCatalog('studio_x', {})));
 
 test('画面の機材合計は、サーバー（planOrders）の請求額と一致する（セット無料の組み合わせを総当たり）', function () {
-  var codes = ['COB_BICOLOR', 'COB_FULLCOLOR', 'STROBE_MONOBLOCK', 'STROBE_PORTABLE', 'STAND_260', 'BOWENS_BRACKET', 'SOFTBOX_STRIP_30X120', 'SOFTBOX_60'];
-  var max = { COB_BICOLOR: 1, COB_FULLCOLOR: 2, STROBE_MONOBLOCK: 1, STROBE_PORTABLE: 1, STAND_260: 3, BOWENS_BRACKET: 1, SOFTBOX_STRIP_30X120: 2, SOFTBOX_60: 2 };
+  var codes = ['COB_BICOLOR', 'COB_FULLCOLOR', 'STROBE_MONOBLOCK', 'STROBE_PORTABLE', 'STAND_260', 'BOWENS_BRACKET', 'SOFTBOX_STRIP_30X120', 'SOFTBOX_60', 'SOFTBOX_STRIP_60X90'];
+  var max = { COB_BICOLOR: 1, COB_FULLCOLOR: 2, STROBE_MONOBLOCK: 1, STROBE_PORTABLE: 1, STAND_260: 3, BOWENS_BRACKET: 1, SOFTBOX_STRIP_30X120: 2, SOFTBOX_60: 1, SOFTBOX_STRIP_60X90: 2 };
   var checked = 0;
   (function walk(index, equipment) {
     if (index === codes.length) {
@@ -311,7 +311,7 @@ test('computeSummary: 機材・設営・片付け・セット割引・合計。�
 });
 
 test('computeSummary の合計は、サーバー（planOrders）の請求額合計と一致する（設営×片付け×セット無料）', function () {
-  var equipments = [{ STROBE_PORTABLE: 1, BOWENS_BRACKET: 1, STAND_260: 2 }, { COB_FULLCOLOR: 2, STAND_260: 3 }, { SOFTBOX_60: 2 }, { COMMANDER_CANON: 1 }];
+  var equipments = [{ STROBE_PORTABLE: 1, BOWENS_BRACKET: 1, STAND_260: 2 }, { COB_FULLCOLOR: 2, STAND_260: 3 }, { SOFTBOX_STRIP_60X90: 2 }, { COMMANDER_CANON: 1 }];
   var checked = 0;
   equipments.forEach(function (equipment) {
     ['SELF', 'STAFF'].forEach(function (setup) {
@@ -331,9 +331,14 @@ test('computeSummary の合計は、サーバー（planOrders）の請求額合�
   assert.strictEqual(checked, 16);
 });
 
-test('オクタゴンソフトボックス（90cm）は300円/個・最大2個（コードSOFTBOX_60は据え置き）', function () {
+test('オクタゴンソフトボックス（90cm）は300円/個・最大1個（コードSOFTBOX_60は据え置き）', function () {
   var item = SERVER_CATALOG.equipment.filter(function (e) { return e.code === 'SOFTBOX_60'; })[0];
-  assert.deepStrictEqual([item.label, item.unitPriceJpy, item.stock, item.unitLabel], ['オクタゴンソフトボックス（90cm）', 300, 2, '個']);
+  assert.deepStrictEqual([item.label, item.unitPriceJpy, item.stock, item.unitLabel], ['オクタゴンソフトボックス（90cm）', 300, 1, '個']);
+});
+
+test('ストリップソフトボックス（60×90cm）は300円/個・最大2個（コードSOFTBOX_STRIP_60X90は据え置き）', function () {
+  var item = SERVER_CATALOG.equipment.filter(function (e) { return e.code === 'SOFTBOX_STRIP_60X90'; })[0];
+  assert.deepStrictEqual([item.label, item.unitPriceJpy, item.stock, item.unitLabel], ['ストリップソフトボックス（60×90cm）', 300, 2, '個']);
 });
 
 test('後付け: 申込済みのスタッフ対応があるとき、画面の追加請求額はサーバー（planOrders）の差額計算と一致する（Issue #441 レビュー対応）', function () {

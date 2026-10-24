@@ -108,9 +108,9 @@ var StudioXEquipmentCatalog = {
     {
       "code": "SOFTBOX_STRIP_60X90",
       "label": "ストリップソフトボックス（60×90cm）",
-      "stock": 1,
+      "stock": 2,
       "unitPriceJpy": 300,
-      "unitLabel": "",
+      "unitLabel": "個",
       "requiresLecture": true
     },
     {
@@ -124,7 +124,7 @@ var StudioXEquipmentCatalog = {
     {
       "code": "SOFTBOX_60",
       "label": "オクタゴンソフトボックス（90cm）",
-      "stock": 2,
+      "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "個",
       "requiresLecture": true

@@ -74,7 +74,7 @@ test('機材カタログ: Issue追加要件の個別料金・数量と完全に�
   var expected = {
     COB_BICOLOR: [1, 800], PANEL_FULLCOLOR: [1, 500], COB_FULLCOLOR: [2, 1000], STROBE_MONOBLOCK: [1, 800], STROBE_PORTABLE: [1, 1000],
     BACKGROUND_STAND: [1, 200], COMMANDER_CANON: [1, 300], COMMANDER_SONY: [1, 300], STAND_260: [3, 200], BOWENS_BRACKET: [1, 200],
-    SOFTBOX_STRIP_60X90: [1, 300], SOFTBOX_STRIP_30X120: [2, 300], SOFTBOX_60: [2, 300], COLOR_FILTER_SET: [1, 200]
+    SOFTBOX_STRIP_60X90: [2, 300], SOFTBOX_STRIP_30X120: [2, 300], SOFTBOX_60: [1, 300], COLOR_FILTER_SET: [1, 200]
   };
   var actual = {};
   plain(sandbox.StudioXEquipmentCatalog.rental).forEach(function (e) { actual[e.code] = [e.stock, e.unitPriceJpy]; });

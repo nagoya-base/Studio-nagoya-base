@@ -75,7 +75,9 @@ var OptionOrderService = (function () {
       date: date,
       startAt: record.startAt,
       endAt: record.endAt,
-      timezone: timezone
+      timezone: timezone,
+      /* 予約済みの部屋代。予約本体の正本（Booking.getEffectivePriceAmount）だけを使い、取得できなければnull。 */
+      roomPriceJpy: Booking.getEffectivePriceAmount(record)
     };
   }
 
@@ -326,7 +328,8 @@ var OptionOrderService = (function () {
         status: booking.status,
         date: booking.date,
         startTime: BookingAvailability.formatTimeInTimezone(booking.startAt, booking.timezone) || '',
-        endTime: BookingAvailability.formatTimeInTimezone(booking.endAt, booking.timezone) || ''
+        endTime: BookingAvailability.formatTimeInTimezone(booking.endAt, booking.timezone) || '',
+        roomPriceJpy: booking.roomPriceJpy === undefined ? null : booking.roomPriceJpy
       },
       acceptsOptions: accepts.ok,
       acceptsOptionsReason: accepts.ok ? '' : accepts.error.code,

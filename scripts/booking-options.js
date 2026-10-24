@@ -194,6 +194,28 @@
     return Object.keys(equipment || {}).some(function (code) { return paid[code] && Number(equipment[code]) > 0; });
   }
 
+  /* 機材レンタルの支払方法の明示（Issue #443）。文言はカタログ（サーバー）の値を優先する。 */
+  var EQUIPMENT_CARD_ONLY_FALLBACK = '機材レンタルはオンラインクレジットカード決済のみです（PayPay・現金は受け付けていません）。';
+  function equipmentCardOnlyText(catalog) {
+    return (catalog && catalog.notices && catalog.notices.EQUIPMENT_CARD_ONLY) || EQUIPMENT_CARD_ONLY_FALLBACK;
+  }
+
+  /*
+   * 部屋代を含む表示用の合計（Issue #443）。部屋代は予約本体の正本（見積りAPI／予約済みの金額）をそのまま渡され、
+   * ここでは金額表を持たない。オプション小計は computeSummary（= サーバー請求額と同じ規則）の totalJpy。
+   * roomPrice: { kind:'estimate'|'booked', status:'ok'|'pending'|'unavailable', amountJpy }
+   *   estimate（初回予約）: 総合計 = 部屋代 + オプション小計。部屋代が確定していない間は総合計を出さない（推測しない）。
+   *   booked（後付け）: 予約済み部屋代と今回の追加請求額を別ラベルで並べ、合算した「総合計」は作らない。
+   */
+  function computeTotals(sum, roomPrice) {
+    var room = roomPrice && roomPrice.status === 'ok' && Number.isFinite(Number(roomPrice.amountJpy)) ? Number(roomPrice.amountJpy) : null;
+    return {
+      roomJpy: room,
+      optionSubtotalJpy: sum.totalJpy,
+      grandTotalJpy: roomPrice && roomPrice.kind === 'estimate' && room !== null ? room + sum.totalJpy : null
+    };
+  }
+
   function serviceLabel(value) {
     if (value === 'STAFF') return 'スタッフ';
     if (value === 'NONE') return '追加なし';
@@ -292,6 +314,8 @@
       summaryLines: function () { return summarize(catalog, state); },
       reset: function () { state = { equipment: {}, layouts: [], setupService: 'SELF', setupChosen: false, cleanupService: 'SELF', cleanupChosen: false, emailSupport: false }; render(); },
       setCatalog: function (next) { catalog = next; render(); },
+      /* 部屋代の見積り・予約済み部屋代が変わったとき、サマリーだけを描き直す（入力中のパネルは触らない）。 */
+      refreshSummary: function () { renderSummary(); },
       ready: null
     };
 
@@ -338,6 +362,9 @@
       var equipmentTotal = equipmentTotalJpy(catalog, state.equipment);
       if (equipmentTotal > 0) {
         root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', text: '機材レンタル合計：' + formatJpy(equipmentTotal) + '（税込。部屋のご予約が確定した後にお支払いいただきます）' }));
+      }
+      if (hasPaidEquipment(catalog, state.equipment)) {
+        root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', id: 'ba-equipment-card-only', text: equipmentCardOnlyText(catalog) }));
       }
       var needsLecture = (catalog.equipment || []).some(function (e) { return e.requiresLecture && state.equipment[e.code]; });
       root.appendChild(el('p', { className: needsLecture ? 'ba-banner ba-banner--notice' : 'ba-field-help', text: '有料レンタル機材は施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要です。許可を確認できない場合、申込は保留となり、管理者が確認するまでお支払い・確定はできません（許可が確認できない場合はお受けできません）。初めての方は、先にメールでご相談ください。' }));
@@ -440,7 +467,17 @@
       }
       target.hidden = false;
       var sum = computeSummary(catalog, state, existingOrders);
-      var rows = [['機材レンタル小計', formatJpy(sum.equipmentJpy)]];
+      var roomPrice = typeof config.getRoomPrice === 'function' ? config.getRoomPrice() : null;
+      var totals = computeTotals(sum, roomPrice);
+      var rows = [];
+      if (roomPrice) {
+        if (roomPrice.kind === 'booked') {
+          if (totals.roomJpy !== null) rows.push(['予約済みの部屋代', formatJpy(totals.roomJpy)]);
+        } else {
+          rows.push(['部屋代', totals.roomJpy !== null ? formatJpy(totals.roomJpy) : (roomPrice.status === 'pending' ? '計算中' : '日時の選択後に表示')]);
+        }
+      }
+      rows.push(['機材レンタル小計', formatJpy(sum.equipmentJpy)]);
       if (sum.applicable) {
         rows.push(['スタッフ設営', sum.existingStaff.PRE_SETUP ? (sum.setupMethod === 'STAFF' ? '0円（申込済み）' : '0円（申込済み・追加なし）') : (sum.setupMethod === 'STAFF' ? formatJpy(sum.setupJpy) : (sum.setupMethod === 'NONE' ? '追加なし' : '0円（セルフ）'))]);
         rows.push(['スタッフ片付け', sum.existingStaff.CLEANUP ? (sum.cleanupMethod === 'STAFF' ? '0円（申込済み）' : '0円（申込済み・追加なし）') : (sum.cleanupMethod === 'STAFF' ? formatJpy(sum.cleanupJpy) : (sum.cleanupMethod === 'NONE' ? '追加なし' : '0円（セルフ）'))]);
@@ -454,11 +491,25 @@
         list.appendChild(el('dt', { text: row[0] }));
         list.appendChild(el('dd', { text: row[1] }));
       });
-      list.appendChild(el('dt', { className: 'ba-option-summary-total', text: '今回のオプション合計' }));
-      list.appendChild(el('dd', { className: 'ba-option-summary-total', id: 'ba-option-summary-total', text: formatJpy(sum.totalJpy) }));
+      var booked = !!roomPrice && roomPrice.kind === 'booked';
+      var estimate = !!roomPrice && !booked;
+      if (booked) {
+        list.appendChild(el('dt', { text: '今回の追加オプション' }));
+        list.appendChild(el('dd', { text: formatJpy(sum.totalJpy) }));
+        list.appendChild(el('dt', { className: 'ba-option-summary-total', text: '今回の追加請求額' }));
+      } else {
+        list.appendChild(el('dt', { className: estimate ? '' : 'ba-option-summary-total', text: estimate ? 'オプション小計' : '今回のオプション合計' }));
+      }
+      list.appendChild(el('dd', { className: estimate ? '' : 'ba-option-summary-total', id: 'ba-option-summary-total', text: formatJpy(sum.totalJpy) }));
+      if (estimate) {
+        list.appendChild(el('dt', { className: 'ba-option-summary-total', text: '総合計（部屋代＋オプション小計）' }));
+        list.appendChild(el('dd', { className: 'ba-option-summary-total', id: 'ba-option-summary-grand-total', text: totals.grandTotalJpy !== null ? formatJpy(totals.grandTotalJpy) : '—' }));
+      }
       target.appendChild(el('div', { className: 'ba-banner ba-banner--notice ba-option-summary', role: 'status', 'aria-live': 'polite' }, [
         el('h3', { className: 'ba-option-heading', text: '料金サマリー（税込）' }),
         list,
+        hasPaidEquipment(catalog, state.equipment) ? el('p', { className: 'ba-field-help', id: 'ba-summary-card-only', text: equipmentCardOnlyText(catalog) }) : null,
+        estimate ? el('p', { className: 'ba-field-help', text: '部屋代とオプションは別々にお支払いいただきます（決済は分かれます）。この総合計は合算表示です。' }) : null,
         el('p', { className: 'ba-field-help', text: 'スタッフ対応分は承認後、機材分は部屋の予約確定後にお支払いいただきます。申込済みのスタッフ対応がある場合は、セット価格との差額を表示しています。' })
       ]));
     }
@@ -490,6 +541,8 @@
     hasPaidEquipment: hasPaidEquipment,
     validateSelection: validateSelection,
     computeSummary: computeSummary,
+    computeTotals: computeTotals,
+    equipmentCardOnlyText: equipmentCardOnlyText,
     summarize: summarize,
     describeError: describeError,
     describeOrderStatus: describeOrderStatus,

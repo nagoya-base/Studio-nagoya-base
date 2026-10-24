@@ -271,7 +271,10 @@ var BookingOptions = (function () {
       '片付け方法（セルフ片付け・原状復帰＝無料／スタッフ片付け＝片付け料金・事前確認制）の選択が必要です。',
     SELF_VS_STAFF:
       'セルフ（自分で設営・原状復帰）は無料で、スタッフの空き確認は不要です。スタッフ対応（有料）は承認後の決済で確定します。',
-    EMAIL_SUPPORT: EMAIL_SUPPORT_NOTE_
+    EMAIL_SUPPORT: EMAIL_SUPPORT_NOTE_,
+    EQUIPMENT_CARD_ONLY:
+      '機材レンタルはオンラインクレジットカード決済のみです（PayPay・現金は受け付けていません）。' +
+      '部屋代のお支払い方法とは別に、ご予約の確定（機材はAdminの利用許可の確認後）にカードでお支払いいただきます。'
   };
 
   /* ---- 設定 ---- */

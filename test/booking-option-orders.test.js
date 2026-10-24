@@ -501,6 +501,16 @@ test('後付け: 旧データ（Optionシートが無い・オプション無し
   assert.ok(!JSON.stringify(summary).match(/example\.com|山田/), '氏名・メールアドレスを返さない');
 });
 
+test('後付け照会: 予約済みの部屋代は予約本体の金額（Booking.getEffectivePriceAmount）をそのまま返す。取得できなければnull（Issue #443）', function () {
+  var ctx = setup();
+  var r = createRoom(ctx);
+  var summary = ctx.sandbox.OptionOrderService.getCustomerSummary(r.bookingId, EMAIL);
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(r.bookingId).record;
+  var expected = ctx.sandbox.Booking.getEffectivePriceAmount(record);
+  assert.strictEqual(summary.booking.roomPriceJpy, expected);
+  assert.ok(expected === null || Number.isFinite(expected));
+});
+
 // ============================================================================
 // 承認 / 不承認（Admin）
 // ============================================================================

@@ -87,9 +87,18 @@
    * 以降のoptionsPanel分岐はすべて素通りになる（既存の挙動・payloadは変わらない）。
    */
   var optionsPanel = null;
+
+  /* 料金サマリーの部屋代（Issue #443）。見積りAPI（BookingPricing）の最新結果だけを使い、金額表は持たない。
+     function宣言で巻き上げられるため、optionsPanel.mountより後で定義するlatestPriceEntryも参照できる。 */
+  function currentRoomPrice_() {
+    var entry = typeof latestPriceEntry === 'undefined' ? null : latestPriceEntry;
+    var amount = entry && entry.status === 'success' && entry.price ? Number(entry.price.amount) : NaN;
+    if (Number.isFinite(amount)) return { kind: 'estimate', status: 'ok', amountJpy: amount };
+    return { kind: 'estimate', status: entry && entry.status === 'loading' ? 'pending' : 'unavailable', amountJpy: null };
+  }
   var optionsSlot = document.getElementById('ba-options-slot');
   if (optionsSlot && root.getAttribute('data-options') === 'true' && window.BookingOptionsPanel) {
-    optionsPanel = window.BookingOptionsPanel.mount({ slot: optionsSlot, summarySlot: document.getElementById('ba-options-summary-slot'), apiBaseUrl: API_BASE_URL, brand: brand });
+    optionsPanel = window.BookingOptionsPanel.mount({ slot: optionsSlot, summarySlot: document.getElementById('ba-options-summary-slot'), getRoomPrice: currentRoomPrice_, apiBaseUrl: API_BASE_URL, brand: brand });
   }
 
   var state = {
@@ -788,6 +797,7 @@
    */
   function renderPriceEverywhere_(entry) {
     latestPriceEntry = entry;
+    if (optionsPanel && optionsPanel.refreshSummary) optionsPanel.refreshSummary();
     renderPriceEntryInto_(els.priceLine, els.priceNote, entry);
     if (els.confirmPrice) els.confirmPrice.textContent = priceDisplayText_(entry);
   }
