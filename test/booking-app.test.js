@@ -1127,9 +1127,9 @@ test('Issue #334 PR-B: カード選択時のみ、支払方法欄付近にChecko
 
   var text = ctx.elements['ba-card-payment-notice'].renderedText();
   assert.strictEqual(ctx.elements['ba-card-payment-notice'].hidden, false);
-  assert.match(text, /【クレジットカード決済のご案内】/);
-  assert.match(text, /予約申込後に表示される決済ページでお支払いください/);
-  assert.match(text, /決済ページの有効期限内にお支払いが完了した場合に予約が確定します/);
+  assert.match(text, /【クレジットカード決済】/);
+  assert.match(text, /予約申込後30分以内にお支払いを完了してください/);
+  assert.match(text, /未決済・期限切れの場合、予約は確定しません/);
   assert.doesNotMatch(text, /24時間|72時間|96時間/);
 
   /* 現金へ切り替えると即座に消える（現金・PayPay・未定にカード専用文言を混入させない） */
@@ -1172,7 +1172,7 @@ test('Issue #334 PR-B: 予約確認画面にもカード選択時のみCheckout�
   assert.strictEqual(ctx.elements['ba-step-confirm'].hidden, false);
   assert.strictEqual(ctx.elements['ba-confirm-card-payment-notice'].hidden, false);
   var confirmText = ctx.elements['ba-confirm-card-payment-notice'].renderedText();
-  assert.match(confirmText, /決済ページの有効期限内にお支払いが完了した場合に予約が確定します/);
+  assert.match(confirmText, /未決済・期限切れの場合、予約は確定しません/);
   assert.doesNotMatch(confirmText, /24時間|72時間|96時間/);
 });
 
@@ -1249,8 +1249,8 @@ test('Issue #341 PR-B: startCardCheckoutがcheckoutUrlを返した場合、旧�
   assert.strictEqual(ctx.elements['ba-complete-checkout-notice'].hidden, false);
   assert.match(
     ctx.elements['ba-complete-checkout-notice'].renderedText(),
-    /決済ページの有効期限内にお支払いが完了した場合に予約が確定します/,
-    'Checkout期限内の決済成功で確定・期限切れ/未完了は確定しない旨を案内する（Issue #407）'
+    /未決済・期限切れの場合、予約は確定しません/,
+    '期限切れ/未決済は確定しない旨を案内する（Issue #407 / #454）'
   );
   assert.strictEqual(ctx.elements['ba-complete-checkout-wrap'].hidden, false);
   assert.strictEqual(ctx.elements['ba-complete-checkout-link'].href, 'https://checkout.stripe.com/pay/cs_test_abc');
@@ -1417,7 +1417,7 @@ test('Issue #445: フォーム上部バナーは、クレカ選択で「決済�
   ctx.triggerPaymentMethodChange();
   var card = flowBannerText_(ctx);
   assert.match(card, /お支払い完了で予約確定/);
-  assert.match(card, /失効する場合があります/);
+  assert.match(card, /予約申込後30分以内にお支払いを完了してください/);
   assert.doesNotMatch(card, /仮予約|PENDING|仮受付|管理者|確定のご連絡|当方から/);
 
   ['現金', 'PayPay'].forEach(function (method) {
@@ -1443,8 +1443,9 @@ test('Issue #445: クレカ選択の支払方法欄・確認画面に「申込�
   ctx.triggerPaymentMethodChange();
 
   var fieldNotice = ctx.elements['ba-card-payment-notice'].renderedText();
-  assert.match(fieldNotice, /予約申込後そのままお支払いへ進みます。お支払い完了後、予約はすぐに確定します。/);
-  assert.match(fieldNotice, /決済を完了せずに時間が経過すると、予約が失効する場合があります。/);
+  assert.match(fieldNotice, /予約申込後、そのままお支払いへ進みます。/);
+  assert.match(fieldNotice, /お支払い完了で予約確定となります。/);
+  assert.match(fieldNotice, /支払済みの場合は再決済せず、運営へご連絡ください。/);
 
   ctx.elements['ba-step-details-next']._listeners.click();
   assert.strictEqual(ctx.elements['ba-step-confirm'].hidden, false);
@@ -1458,7 +1459,7 @@ test('Issue #445: クレカ選択の支払方法欄・確認画面に「申込�
   ].join('\n');
   assert.match(confirmText, /お支払い完了で予約が確定/);
   assert.match(confirmText, /お支払い画面へ進む/);
-  assert.match(confirmText, /失効する場合があります/);
+  assert.match(confirmText, /予約申込後30分以内にお支払いを完了してください/);
   assert.doesNotMatch(confirmText, /仮予約|PENDING|仮受付|管理者|確定のご連絡|確定連絡|当方から/);
 
   assert.strictEqual(ctx.elements['ba-submit'].textContent, '予約内容を確認して支払いへ進む');
@@ -1500,7 +1501,8 @@ test('Issue #445: クレカの送信後は「予約申込を受け付けまし�
   assert.match(redirect, /予約申込を受け付けました/);
   assert.match(redirect, /続けて/);
   assert.match(redirect, /お支払い完了後、予約が確定します/);
-  assert.match(redirect, /失効する場合があります/);
+  assert.match(redirect, /予約申込後30分以内にお支払いを完了してください/);
+  assert.match(redirect, /未決済・期限切れの場合、予約は確定しません/);
   assert.doesNotMatch(redirect + ctx.elements['ba-complete-heading'].textContent, /仮予約|管理者|確定のご連絡/);
 });
 

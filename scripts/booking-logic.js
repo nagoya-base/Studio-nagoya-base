@@ -413,7 +413,7 @@
    * Issue #407でカード決済の96時間受付制限と、旧「24時間以内に決済リンク／72時間後まで」の
    * 一般向け案内を撤廃した。カードは申込直後のStripe Checkoutで支払い、支払期限は
    * Checkout Sessionの有効期限（サーバー側paymentHoldExpiresAt）が正。フォーム側では
-   * 具体的な日時を持たず、「決済ページの有効期限内」とだけ案内する。
+   * フォームでは「予約申込後30分以内」を支払期限として案内する（Issue #454）。
    */
   var CARD_PAYMENT_METHOD_VALUE = 'オンラインクレジットカード';
 
@@ -430,28 +430,24 @@
 
   var CARD_PAYMENT_NOTICE_TEXT_ = {
     ja: {
-      title: '【クレジットカード決済のご案内】',
-      flow: 'オンラインクレジットカードを選択した場合は、予約申込後そのままお支払いへ進みます。お支払い完了後、予約はすぐに確定します。',
-      pay: 'オンラインクレジットカード決済は、予約申込後に表示される決済ページでお支払いください。',
-      confirm: '決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。',
-      expire: '予約申込後30分以内にお支払いを完了してください。決済を完了せずに時間が経過すると、予約が失効する場合があります。',
-      reapply: '予約が確定しなかった場合にご利用を希望されるときは、改めて予約フォームからお申し込みください。',
-      alreadyPaid: 'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。'
+      title: '【クレジットカード決済】',
+      flow: '予約申込後、そのままお支払いへ進みます。',
+      expire: '予約申込後30分以内にお支払いを完了してください。お支払い完了で予約確定となります。',
+      confirm: '未決済・期限切れの場合、予約は確定しません。',
+      alreadyPaid: '※支払済みの場合は再決済せず、運営へご連絡ください。'
     },
     en: {
       title: '[Credit Card Payment]',
-      flow: 'If you choose online credit card, you will go straight to payment after submitting your request. Your booking is confirmed immediately once payment is completed.',
-      pay: 'Please pay by online credit card on the payment page shown after you submit your request.',
-      confirm: 'Your booking is confirmed when payment is completed within the validity period of the payment page. If the page expires or payment is not completed, the booking is not confirmed.',
-      expire: 'Please complete payment within 30 minutes after submitting your request. If payment is not completed and time passes, your booking may expire.',
-      reapply: 'If your booking is not confirmed and you still wish to book, please submit a new request through the booking form.',
-      alreadyPaid: 'If you have already paid, please contact us instead of submitting a new request or paying again.'
+      flow: 'After you submit your request, you will go straight to payment.',
+      expire: 'Please complete payment within 30 minutes after submitting. Your booking is confirmed once payment is completed.',
+      confirm: 'If payment is not completed or the time expires, the booking is not confirmed.',
+      alreadyPaid: '* If you have already paid, please do not pay again; contact us instead.'
     }
   };
 
   function cardPaymentNoticeLines(locale) {
     var t = CARD_PAYMENT_NOTICE_TEXT_[normalizeLocale(locale)];
-    return [t.title, t.flow, t.pay, t.confirm, t.expire, t.reapply, t.alreadyPaid];
+    return [t.title, t.flow, t.expire, t.confirm, t.alreadyPaid];
   }
 
   /*
@@ -468,7 +464,7 @@
       },
       card: {
         title: '申込後そのままオンライン決済へ進み、お支払い完了で予約確定します。',
-        body: '予約申込 → そのままお支払い → お支払い完了で予約確定。予約申込後30分以内にお支払いを完了してください。時間が経過すると、予約が失効する場合があります。'
+        body: '予約申込 → そのままお支払い → お支払い完了で予約確定。予約申込後30分以内にお支払いを完了してください。'
       },
       manual: {
         title: '申込後は仮受付です。この時点では予約は確定していません。',
@@ -494,7 +490,7 @@
       },
       card: {
         title: 'After submitting, you go straight to online payment, and your booking is confirmed once payment is completed.',
-        body: 'Submit request → pay right away → booking confirmed on payment. Please complete payment within 30 minutes after submitting. If time passes, your booking may expire.'
+        body: 'Submit request → pay right away → booking confirmed on payment. Please complete payment within 30 minutes after submitting.'
       },
       manual: {
         title: 'This form submits a pending booking request. Your booking is not confirmed yet.',
@@ -576,13 +572,13 @@
     ja: {
       title: '【続けてお支払いへ進みます】',
       body: '予約申込を受け付けました。下のボタンから、続けて決済ページ（Stripe）でお支払い手続きを行ってください。お支払い完了後、予約が確定します。',
-      confirmationNote: 'お支払いページのリンクはメールでもご案内します。画面を閉じた場合も、期限内であればメールからお支払いページへ戻れます。決済ページの有効期限内にお支払いが完了した場合に予約が確定します。予約申込後30分以内にお支払いを完了してください。決済を完了せずに時間が経過すると、予約が失効する場合があります。期限切れ・決済未完了の場合、予約は確定しません。',
+      confirmationNote: 'お支払いページのリンクはメールでもご案内します。予約申込後30分以内にお支払いを完了してください。未決済・期限切れの場合、予約は確定しません。',
       buttonLabel: '決済ページへ進む'
     },
     en: {
       title: '[Continue to Payment]',
       body: 'Your booking request has been received. Please continue to the secure payment page (Stripe) with the button below. Your booking is confirmed once payment is completed.',
-      confirmationNote: 'The payment page link is also sent by email. If you close this screen, you can return to the payment page from the email until the deadline. Your booking is confirmed when payment is completed within the validity period of the payment page. Please complete payment within 30 minutes after submitting your request. If payment is not completed and time passes, your booking may expire. If the page expires or payment is not completed, the booking is not confirmed.',
+      confirmationNote: 'The payment page link is also sent by email. Please complete payment within 30 minutes after submitting your request. If payment is not completed or the time expires, the booking is not confirmed.',
       buttonLabel: 'Proceed to payment'
     }
   };
