@@ -618,3 +618,11 @@
 .booking-app .ba-option-summary-list dd { text-align: right; font-variant-numeric: tabular-nums; }
 .booking-app .ba-option-summary-total { border-top: 1px solid currentColor; padding-top: 6px; font-weight: 700; }
 .booking-app .ba-option-equipment .ba-choice select { margin-left: auto; min-width: 7em; }
+
+/* Issue #453: 機材レンタル周辺の注記を短くし、金額・選択肢を主役にする。 */
+.booking-app .ba-option-subheading { margin: 14px 0 4px; font-weight: 700; }
+.booking-app .ba-equipment-notes { padding-block: 10px; }
+.booking-app .ba-equipment-notes p { margin: 0; }
+.booking-app .ba-equipment-notes .ba-equipment-total { font-size: 1.05rem; font-weight: 700; margin-bottom: 4px; }
+.booking-app .ba-equipment-notes .ba-equipment-note { font-size: 0.875rem; }
+.booking-app .ba-option-consult { margin: 8px 0; }

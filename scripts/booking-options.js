@@ -18,10 +18,20 @@
 
   /* スタッフ設営の事前相談導線の文言（相談は申込・確定・決済ではない）。 */
   var CONSULT_TEXT = {
-    lead: '配置や内容に迷っている場合は、申し込み前にご相談いただけます。',
-    notice: '事前相談だけではスタッフ設営の申込・確定・決済にはなりません。',
-    cta: '設営について事前相談する',
-    back: '相談フォームは別のタブで開きます。相談後はこのページに戻って、通常どおり設営を申し込めます。'
+    lead: '配置に迷う場合は、申込前に相談できます。',
+    notice: '相談だけでは予約されません。',
+    cta: '設営について相談する'
+  };
+
+  /* 画面の短い補足文（Issue #453）。詳細は機材ページへ逃がし、同じ注意を複数箇所で繰り返さない。 */
+  var TEXT = {
+    permission: '有料機材は管理者の利用許可が必要です。初めての方は事前にご相談ください。',
+    permissionSelected: '有料機材は管理者の利用許可が必要です（確認できるまでお支払い・確定はできません）。',
+    equipmentPayment: '部屋予約の確定後にカード決済します。',
+    selfGuidance: '保管場所・セット方法・原状復帰方法は予約案内に記載します。',
+    emailSupport: '予約後の設営方法についてメールで確認できます。',
+    paymentSplit: '部屋代とオプションは別決済です。',
+    paymentTiming: 'スタッフ対応は承認後、機材は部屋の予約確定後にお支払いです。'
   };
 
   var THEME_ORDER = ['CLASSROOM', 'JAPANESE', 'GRUNGE', 'WHITE_BACKDROP', 'BLACK_BACKDROP'];
@@ -360,14 +370,16 @@
       });
       root.appendChild(equipmentGroup);
       var equipmentTotal = equipmentTotalJpy(catalog, state.equipment);
-      if (equipmentTotal > 0) {
-        root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', text: '機材レンタル合計：' + formatJpy(equipmentTotal) + '（税込。部屋のご予約が確定した後にお支払いいただきます）' }));
-      }
       if (hasPaidEquipment(catalog, state.equipment)) {
-        root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', id: 'ba-equipment-card-only', text: equipmentCardOnlyText(catalog) }));
+        /* 金額を主役に、条件は短い2行へまとめる（カード決済のみの明示は料金サマリーに1回だけ出す）。 */
+        root.appendChild(el('div', { className: 'ba-banner ba-banner--notice ba-equipment-notes' }, [
+          el('p', { className: 'ba-equipment-total', text: '機材レンタル：' + formatJpy(equipmentTotal) + '（税込）' }),
+          el('p', { className: 'ba-equipment-note', text: '※' + TEXT.equipmentPayment }),
+          el('p', { className: 'ba-equipment-note', text: '※' + TEXT.permissionSelected })
+        ]));
+      } else {
+        root.appendChild(el('p', { className: 'ba-field-help', text: TEXT.permission }));
       }
-      var needsLecture = (catalog.equipment || []).some(function (e) { return e.requiresLecture && state.equipment[e.code]; });
-      root.appendChild(el('p', { className: needsLecture ? 'ba-banner ba-banner--notice' : 'ba-field-help', text: '有料レンタル機材は施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要です。許可を確認できない場合、申込は保留となり、管理者が確認するまでお支払い・確定はできません（許可が確認できない場合はお受けできません）。初めての方は、先にメールでご相談ください。' }));
 
       /* セッティング（テーマ） */
       root.appendChild(el('h3', { className: 'ba-option-heading', text: 'セッティング' }));
@@ -391,10 +403,9 @@
         var staff = catalog.staffServices || {};
         var setupPrice = staff.PRE_SETUP ? formatJpy(staff.PRE_SETUP.priceJpy) : '';
         var cleanupPrice = staff.CLEANUP ? formatJpy(staff.CLEANUP.priceJpy) : '';
-        root.appendChild(el('p', { className: 'ba-field-help', text: paidEquipment ? '設営方法（機材レンタルでは必須）' : '設営（利用前）' }));
-        if (paidEquipment) root.appendChild(el('p', { className: 'ba-field-help', text: (catalog.notices && catalog.notices.EQUIPMENT_SETUP) || '' }));
+        root.appendChild(el('p', { className: 'ba-option-subheading', text: paidEquipment ? '設営方法（機材レンタル時は必須）' : '設営（利用前）' }));
         var setupGroup = el('div', { className: 'ba-choices' });
-        var setupChoices = [['SELF', 'セルフ設営　無料'], ['STAFF', '事前設営を依頼　+' + setupPrice + '（事前確認制）']];
+        var setupChoices = [['SELF', 'セルフ設営　無料'], ['STAFF', 'スタッフ設営　+' + setupPrice + '（要事前承認）']];
         if (config.allowNone && !paidEquipment) setupChoices.push(['NONE', '設営は追加しない（申込済み・不要）']);
         setupChoices.forEach(function (pair) {
           var c = choice('bo-setup', pair[0], pair[1], 'radio', false);
@@ -405,9 +416,9 @@
         root.appendChild(setupGroup);
 
         /* 片付け方法。機材レンタルでは設営方法と同様に必須（Issue #441。テーマ未選択でも選べる）。 */
-        root.appendChild(el('p', { className: 'ba-field-help', text: paidEquipment ? '片付け方法（機材レンタルでは必須）' : '片付け（利用後）' }));
+        root.appendChild(el('p', { className: 'ba-option-subheading', text: paidEquipment ? '片付け方法（機材レンタル時は必須）' : '片付け（利用後）' }));
         var cleanupGroup = el('div', { className: 'ba-choices' });
-        var cleanupChoices = [['SELF', '自分で原状復帰　無料'], ['STAFF', '片付けを依頼　+' + cleanupPrice + '（事前確認制）']];
+        var cleanupChoices = [['SELF', '自分で原状復帰　無料'], ['STAFF', 'スタッフ片付け　+' + cleanupPrice + '（要事前承認）']];
         if (config.allowNone && !paidEquipment) cleanupChoices.push(['NONE', '片付けは追加しない（申込済み・不要）']);
         cleanupChoices.forEach(function (pair) {
           var c = choice('bo-cleanup', pair[0], pair[1], 'radio', false);
@@ -423,9 +434,8 @@
              このページに戻って通常の設営申込をそのまま続けられる。 */
           var consult = el('div', { className: 'ba-option-consult' }, [
             el('p', { className: 'ba-field-help', text: CONSULT_TEXT.lead }),
-            el('p', { className: 'ba-field-help', text: CONSULT_TEXT.notice }),
             el('a', { className: 'ba-btn ba-btn-ghost', href: config.consultUrl || '../reservation/?intent=consult', target: '_blank', rel: 'noopener', text: CONSULT_TEXT.cta }),
-            el('p', { className: 'ba-field-help', text: CONSULT_TEXT.back })
+            el('p', { className: 'ba-field-help', text: CONSULT_TEXT.notice })
           ]);
           root.appendChild(consult);
         }
@@ -440,7 +450,7 @@
           root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', text: bannerText }));
           root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', text: (catalog.notices && catalog.notices.STAFF_SERVICE_APPROVAL) || '' }));
         } else {
-          root.appendChild(el('p', { className: 'ba-field-help', text: 'セルフで設営・原状復帰する場合は無料で、スタッフの空き確認は不要です。選択後、予約案内に保管場所・セット方法・原状復帰方法を記載します。' }));
+          root.appendChild(el('p', { className: 'ba-field-help', text: TEXT.selfGuidance }));
         }
       }
 
@@ -450,7 +460,7 @@
       supportChoice.input.checked = state.emailSupport;
       supportChoice.input.addEventListener('change', function () { state.emailSupport = supportChoice.input.checked; });
       root.appendChild(el('div', { className: 'ba-choices' }, [supportChoice.label]));
-      root.appendChild(el('p', { className: 'ba-field-help', text: (catalog.notices && catalog.notices.EMAIL_SUPPORT) || '' }));
+      root.appendChild(el('p', { className: 'ba-field-help', text: TEXT.emailSupport }));
 
       slot.appendChild(root);
       renderSummary();
@@ -509,8 +519,8 @@
         el('h3', { className: 'ba-option-heading', text: '料金サマリー（税込）' }),
         list,
         hasPaidEquipment(catalog, state.equipment) ? el('p', { className: 'ba-field-help', id: 'ba-summary-card-only', text: equipmentCardOnlyText(catalog) }) : null,
-        estimate ? el('p', { className: 'ba-field-help', text: '部屋代とオプションは別々にお支払いいただきます（決済は分かれます）。この総合計は合算表示です。' }) : null,
-        el('p', { className: 'ba-field-help', text: 'スタッフ対応分は承認後、機材分は部屋の予約確定後にお支払いいただきます。申込済みのスタッフ対応がある場合は、セット価格との差額を表示しています。' })
+        estimate ? el('p', { className: 'ba-field-help', text: '※' + TEXT.paymentSplit }) : null,
+        el('p', { className: 'ba-field-help', text: '※' + TEXT.paymentTiming })
       ]));
     }
 
@@ -547,6 +557,7 @@
     describeError: describeError,
     describeOrderStatus: describeOrderStatus,
     CONSULT_TEXT: CONSULT_TEXT,
+    TEXT: TEXT,
     formatJpy: formatJpy
   };
 
