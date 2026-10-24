@@ -165,19 +165,19 @@ test('メール内リンクの案内ページURLはStudio Xのオプション案
 
 test('画面の案内文言: 有料レンタル機材全般は施錠管理で「管理者の利用許可が必要」で、未許可の申込は保留（お支払い・確定は管理者の確認後）。「過去利用者のみ」とは言わない', function () {
   var src = read('scripts/booking-options.js').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.ok(src.indexOf('有料レンタル機材は施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要です') !== -1);
+  assert.ok(src.indexOf('有料機材は管理者の利用許可が必要です') !== -1);
   assert.ok(src.indexOf('ストロボ等に資格の制限はありません') === -1, '資格制限なしの旧文言を残さない');
-  assert.ok(src.indexOf('申込は保留となり、管理者が確認するまでお支払い・確定はできません') !== -1);
+  assert.ok(src.indexOf('確認できるまでお支払い・確定はできません') !== -1);
+  assert.ok(!/Admin/.test(src), '利用者向け画面に内部用語Adminを出さない（Issue #453）');
   assert.ok(src.indexOf('過去にビデオライト') === -1 && src.indexOf('過去の') === -1);
 });
 
 // ---- スタッフ設営の事前相談導線（Issue #423 追加要件） ----
 
 test('事前相談の文言: 申込前に相談でき、相談だけでは申込・確定・決済にならない旨を明示し、CTAは「設営について事前相談する」', function () {
-  assert.strictEqual(Panel.CONSULT_TEXT.lead, '配置や内容に迷っている場合は、申し込み前にご相談いただけます。');
-  assert.strictEqual(Panel.CONSULT_TEXT.notice, '事前相談だけではスタッフ設営の申込・確定・決済にはなりません。');
-  assert.strictEqual(Panel.CONSULT_TEXT.cta, '設営について事前相談する');
-  assert.ok(Panel.CONSULT_TEXT.back.indexOf('このページに戻って') !== -1, '相談後に通常の設営申込へ戻れる');
+  assert.strictEqual(Panel.CONSULT_TEXT.lead, '配置に迷う場合は、申込前に相談できます。');
+  assert.strictEqual(Panel.CONSULT_TEXT.notice, '相談だけでは予約されません。');
+  assert.strictEqual(Panel.CONSULT_TEXT.cta, '設営について相談する');
 });
 
 test('事前相談の導線: 既存の問い合わせフォームへのリンクのみ。注文・API呼び出し・新しい相談管理を作らない', function () {
@@ -281,7 +281,7 @@ test('パネルのUI: 機材を選ぶと設営方法のラジオを出し、未�
   var src = read('scripts/booking-options.js');
   assert.ok(src.indexOf('state.setupChosen = true') !== -1);
   assert.ok(src.indexOf('item.freeWhenWith && item.freeWhenWith.label') !== -1);
-  assert.ok(src.indexOf('設営方法（機材レンタルでは必須）') !== -1);
+  assert.ok(src.indexOf('設営方法（機材レンタル時は必須）') !== -1);
   assert.ok(!/セットで無料|単独200円/.test(src), '無料条件の文言をパネルに直書きしない（カタログの値だけ）');
 });
 

@@ -117,9 +117,10 @@ test('機材レンタル選択時は「オンラインクレジットカード�
   assert.ok(panel);
 });
 
-test('パネル・サマリーのソース: 有料機材選択時にカード専用の注意書きを出し、PayPay/現金へのフォールバックを持たない', function () {
+test('パネル・サマリーのソース: 有料機材選択時にカード専用の注意書きを料金サマリーへ1回だけ出し（Issue #453）、PayPay/現金へのフォールバックを持たない', function () {
   var src = read('scripts/booking-options.js');
-  assert.ok(src.indexOf("id: 'ba-equipment-card-only'") !== -1 && src.indexOf("id: 'ba-summary-card-only'") !== -1);
+  assert.ok(src.indexOf("id: 'ba-summary-card-only'") !== -1);
+  assert.strictEqual(src.indexOf('ba-equipment-card-only'), -1, 'パネル側では同じ注意を繰り返さない');
   assert.ok(!/paymentMethod|PayPay.*フォールバック/.test(src));
 });
 
