@@ -338,7 +338,10 @@ test('reservePaymentAttempt_: paymentAttemptId・stripeAmount・stripeCurrency�
      （paymentAttemptId・stripeAmount・stripeCurrency・paymentHoldExpiresAtを含む15列の
      atomic範囲への1回の書き込み）、2回目がapplyPaymentStateUpdateの証跡コミット
      （同じ15列への2回目の書き込み）、3回目がpaymentStatus単独の書き込み。 */
-  assert.strictEqual(sheet._setValuesCalls.length, 3);
+  /* Issue #445: Checkout作成成功後は、支払い案内メールの送信記録（pendingMailSentAt等）の
+     書き込みが4回目以降に続く。Checkout作成そのものの書き込みは先頭3回で変わらない。 */
+  assert.ok(sheet._setValuesCalls.length >= 3);
+  assert.strictEqual(sheet._setValuesCalls[1].numCols, 17);
   assert.strictEqual(sheet._setValuesCalls[0].numCols, 17, '予約時点で17列のatomic範囲へまとめて書く（PR #354レビュー対応・3回目でpaymentAttemptResolvedAtを追加）');
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
@@ -1324,4 +1327,151 @@ test('Issue #422: ブランド別URLでも金額・通貨・有効期限・metad
   assert.strictEqual(payload['line_items[0][price_data][unit_amount]'], '8000');
   assert.strictEqual(payload['metadata[brand]'], 'mens');
   assert.ok(Number(payload.expires_at) > 0);
+});
+
+/*
+ * ============================================================================
+ * Issue #445: Checkout Session作成後の支払い案内メール（決済URL・実際の支払期限入り）
+ * ============================================================================
+ */
+
+/* 実時刻基準のexpires_at（Stripeへ送った値＝作成時刻+35分）を返すレスポンダ。
+   二重送信防止は「Session作成時刻（expires_atから逆算）以降にpendingMailSentAtがあるか」で判定するため、
+   固定の遠い未来値ではなく実時刻に合わせる。 */
+function realClockStripeResponder() {
+  return function (url, options) {
+    if (options.method === 'get') {
+      var sessionId = url.split('/checkout/sessions/')[1];
+      return {
+        responseCode: 200,
+        body: { id: sessionId, url: 'https://checkout.stripe.com/pay/' + sessionId, status: 'open', payment_status: 'unpaid', expires_at: expiresAtSeconds_ }
+      };
+    }
+    var idKey = options.headers['Idempotency-Key'];
+    return {
+      responseCode: 200,
+      body: { id: 'cs_' + idKey, url: 'https://checkout.stripe.com/pay/cs_' + idKey, status: 'open', payment_status: 'unpaid', expires_at: expiresAtSeconds_ }
+    };
+  };
+}
+var expiresAtSeconds_ = 0;
+
+function setupGuideMailCtx_(mailApp) {
+  expiresAtSeconds_ = Math.floor(Date.now() / 1000) + 35 * 60;
+  var ctx = setup({ urlFetchApp: stubs.createUrlFetchAppStub(realClockStripeResponder()), mailApp: mailApp });
+  return { ctx: ctx, bookingId: createBookingRow(ctx) };
+}
+
+test('Issue #445: Checkout作成成功後、実際のcheckoutUrlと支払期限（JST）・画面を閉じても戻れる旨を含む支払い案内メールが1通送られ、管理者確認待ちとは書かない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var s = setupGuideMailCtx_(mailApp);
+
+  var result = s.ctx.sandbox.BookingRepository.beginCardCheckout(s.bookingId, TOKEN);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+  var mail = mailApp._sentEmails[0];
+  assert.strictEqual(mail.to, 'taro@example.com');
+  assert.match(mail.subject, /予約申込を受け付けました（決済ページのご案内）/);
+  assert.ok(mail.body.indexOf('お支払いページ: ' + result.checkoutUrl) !== -1, '実際のcheckoutUrlが本文に含まれる');
+
+  var pad = function (n) { return String(n).padStart(2, '0'); };
+  var jst = new Date(result.paymentHoldExpiresAt.getTime() + 9 * 3600 * 1000);
+  var expected = jst.getUTCFullYear() + '/' + pad(jst.getUTCMonth() + 1) + '/' + pad(jst.getUTCDate()) + ' ' + pad(jst.getUTCHours()) + ':' + pad(jst.getUTCMinutes());
+  assert.ok(mail.body.indexOf('お支払い期限: ' + expected) !== -1, '実際のpaymentHoldExpiresAtがJSTで含まれる: ' + expected);
+  assert.match(mail.body, /画面を閉じた場合も、期限内であればこのメールからお支払いページへ戻れます/);
+  assert.match(mail.body, /期限内にお支払いが完了すると、ご予約は自動で確定します/);
+  assert.match(mail.body, /期限を過ぎるとこのURLではお支払いできず/);
+  assert.match(mail.body, /二重決済をせず/);
+  assert.doesNotMatch(mail.body, /管理者|仮受付|仮予約|確定のご連絡/);
+
+  /* 予約・決済状態は変えない（PENDINGのまま、checkout_pending） */
+  var found = s.ctx.sandbox.SpreadsheetRepository.findRowByBookingId(s.bookingId);
+  assert.strictEqual(found.record.status, 'PENDING');
+  assert.strictEqual(found.record.paymentStatus, 'checkout_pending');
+  assert.ok(stubs.isDateLike(found.record.pendingMailSentAt));
+});
+
+test('Issue #445: 同じCheckout Sessionの再利用（再度のbeginCardCheckout）では支払い案内メールを重複送信しない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var s = setupGuideMailCtx_(mailApp);
+
+  var first = s.ctx.sandbox.BookingRepository.beginCardCheckout(s.bookingId, TOKEN);
+  var second = s.ctx.sandbox.BookingRepository.beginCardCheckout(s.bookingId, TOKEN);
+  var third = s.ctx.sandbox.BookingRepository.beginCardCheckout(s.bookingId, TOKEN);
+  assert.strictEqual(first.success, true);
+  assert.strictEqual(second.reused, true);
+  assert.strictEqual(second.checkoutUrl, first.checkoutUrl);
+  assert.strictEqual(third.success, true);
+  assert.strictEqual(mailApp._sentEmails.length, 1, '同一Checkoutについて案内メールは1通だけ');
+});
+
+test('Issue #445: メール送信が失敗してもCheckout作成・予約状態は成功のままで、Sessionが再利用された次の機会に再送できる', function () {
+  var inner = stubs.createMailAppStub();
+  var failing = true;
+  var mailApp = {
+    sendEmail: function (message) {
+      if (failing) throw new Error('mail server down');
+      return inner.sendEmail(message);
+    },
+    _sentEmails: inner._sentEmails
+  };
+  var s = setupGuideMailCtx_(mailApp);
+
+  var first = s.ctx.sandbox.BookingRepository.beginCardCheckout(s.bookingId, TOKEN);
+  assert.strictEqual(first.success, true, 'メール失敗でCheckout作成を失敗扱いにしない');
+  assert.ok(first.checkoutUrl);
+  var afterFail = s.ctx.sandbox.SpreadsheetRepository.findRowByBookingId(s.bookingId);
+  assert.strictEqual(afterFail.record.status, 'PENDING');
+  assert.strictEqual(afterFail.record.paymentStatus, 'checkout_pending');
+  assert.strictEqual(afterFail.record.pendingMailSentAt, '', '失敗時は送信済み扱いにしない');
+  assert.strictEqual(mailApp._sentEmails.length, 0);
+
+  failing = false;
+  var retry = s.ctx.sandbox.BookingRepository.beginCardCheckout(s.bookingId, TOKEN);
+  assert.strictEqual(retry.reused, true);
+  assert.strictEqual(mailApp._sentEmails.length, 1, 'Session再利用時に未送信なら再送される');
+  assert.ok(mailApp._sentEmails[0].body.indexOf(retry.checkoutUrl) !== -1);
+
+  var again = s.ctx.sandbox.BookingRepository.beginCardCheckout(s.bookingId, TOKEN);
+  assert.strictEqual(again.success, true);
+  assert.strictEqual(mailApp._sentEmails.length, 1, '送信後は重複しない');
+});
+
+test('Issue #445: 不正なbookingId / checkoutAccessTokenでは情報を返さず、支払い案内メールも送らない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var s = setupGuideMailCtx_(mailApp);
+
+  var wrongToken = s.ctx.sandbox.BookingRepository.beginCardCheckout(s.bookingId, 'wrong-token');
+  var unknownId = s.ctx.sandbox.BookingRepository.beginCardCheckout('NO-SUCH-BOOKING', TOKEN);
+  [wrongToken, unknownId].forEach(function (result) {
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error.code, 'FORBIDDEN');
+    assert.strictEqual(result.checkoutUrl, undefined);
+  });
+  assert.strictEqual(mailApp._sentEmails.length, 0);
+});
+
+test('Issue #445: 支払い案内メールの失敗エラー・ログにcheckoutUrlを出さない', function () {
+  var mailApp = stubs.createMailAppStub({ throwError: new Error('rejected body https://checkout.stripe.com/pay/cs_leak') });
+  var s = setupGuideMailCtx_(mailApp);
+  var result = s.ctx.sandbox.BookingRepository.beginCardCheckout(s.bookingId, TOKEN);
+  assert.strictEqual(result.success, true);
+
+  var found = s.ctx.sandbox.SpreadsheetRepository.findRowByBookingId(s.bookingId);
+  assert.ok(found.record.lastMailErrorAt);
+  assert.strictEqual(String(found.record.lastMailErrorMessage).indexOf(result.checkoutUrl), -1);
+  s.ctx.globals.Logger._logs.forEach(function (line) {
+    assert.strictEqual(String(line).indexOf(result.checkoutUrl), -1);
+  });
+});
+
+test('buildCardCheckoutMail: 無効なURL・期限ではfail-closedで例外（URL・期限を捏造しない）', function () {
+  var ctx = setup();
+  var templates = ctx.sandbox.BookingMailTemplates;
+  var config = { timezone: 'Asia/Tokyo', contactEmail: 'c@example.com' };
+  var record = sampleRecord();
+  assert.throws(function () { templates.buildCardCheckoutMail(record, config, { url: '', expiresAt: new Date() }); });
+  assert.throws(function () { templates.buildCardCheckoutMail(record, config, { url: 'http://insecure.example.com/x', expiresAt: new Date() }); });
+  assert.throws(function () { templates.buildCardCheckoutMail(record, config, { url: 'https://checkout.stripe.com/pay/cs_1', expiresAt: 'soon' }); });
 });

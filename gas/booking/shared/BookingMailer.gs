@@ -26,6 +26,8 @@ var BookingMailer = (function () {
 
   var MAIL_TYPES = {
     PENDING: 'PENDING',
+    /* Issue #445: Checkout Session作成後に送る、決済URL・支払期限入りのカード決済案内。 */
+    CARD_CHECKOUT: 'CARD_CHECKOUT',
     CONFIRMED: 'CONFIRMED',
     CANCELLED: 'CANCELLED',
     REMINDER: 'REMINDER',
@@ -528,6 +530,44 @@ var BookingMailer = (function () {
       var config = ensureMailConfigComplete_();
       config.ttlConfig = BookingConfig.getTtlConfig();
       return BookingMailTemplates.buildPendingMail(record, config);
+    });
+  }
+
+  /*
+   * カード決済の支払い案内メール（Issue #445）。BookingRepository.beginCardCheckoutが
+   * Checkout Sessionの作成（または有効なSessionの再利用）に成功した後に、実際のcheckoutUrl・
+   * paymentHoldExpiresAtを渡して呼ぶ。checkout = { url, expiresAt(Date) }。
+   *
+   * 二重送信防止: 専用列を増やさず既存のpendingMailSentAtを使う。このSessionの作成時刻
+   * （CardPayment.computeCheckoutSessionCreatedMillis(expiresAt)）以降にpendingMailSentAtが
+   * 記録済みなら同じCheckoutについて送信済みとみなして送らない（再利用で何度呼ばれても1通）。
+   * 送信に失敗した場合はpendingMailSentAtが更新されないため、次にこのSessionが再利用された
+   * 呼び出しで再送される。失敗してもCheckout作成・予約状態は変えない（呼び出し側はbest effort）。
+   * checkoutUrlはログ・エラーメッセージへ出さない（extraRedactionsでマスクする）。
+   */
+  function sendCardCheckoutMailForBooking(bookingId, checkout) {
+    var url = checkout && checkout.url;
+    var redactions = url ? [String(url)] : [];
+    return withBookingLock_(MAIL_TYPES.CARD_CHECKOUT, bookingId, Booking.STATUS.PENDING, ['pendingMailSentAt'], false, function (record) {
+      if (!record.email || !/^[^\s@]+@[^\s@]+$/.test(String(record.email).trim())) {
+        throw new Error('予約に有効なメールアドレスがないため支払い案内メールを送信できません。');
+      }
+      var config = ensureMailConfigComplete_();
+      return BookingMailTemplates.buildCardCheckoutMail(record, config, checkout);
+    }, function () { return redactions; }, function (mailType, id, requiredStatus, sentAtFields, force, record) {
+      if (record.status !== requiredStatus) {
+        return { ok: false, outcome: { success: false, skipped: true, bookingId: id, mailType: mailType, error: { code: 'INVALID_STATUS', message: record.status + ' の予約には支払い案内メールを送信できません。' } } };
+      }
+      if (!Booking.isCardPaymentMethod(record.paymentMethod)) {
+        return { ok: false, outcome: { success: true, skipped: true, reason: 'NOT_CARD_PAYMENT', bookingId: id, mailType: mailType } };
+      }
+      var expiresMillis = checkout && checkout.expiresAt && typeof checkout.expiresAt.getTime === 'function' ? checkout.expiresAt.getTime() : NaN;
+      var sentMillis = record.pendingMailSentAt && typeof record.pendingMailSentAt.getTime === 'function' ? record.pendingMailSentAt.getTime() : NaN;
+      if (Number.isFinite(expiresMillis) && Number.isFinite(sentMillis) &&
+          sentMillis >= CardPayment.computeCheckoutSessionCreatedMillis(expiresMillis)) {
+        return { ok: false, outcome: { success: true, skipped: true, reason: 'ALREADY_SENT', bookingId: id, mailType: mailType } };
+      }
+      return { ok: true };
     });
   }
 
@@ -1532,6 +1572,7 @@ var BookingMailer = (function () {
   return {
     MAIL_TYPES: MAIL_TYPES,
     sendPendingMailForBooking: sendPendingMailForBooking,
+    sendCardCheckoutMailForBooking: sendCardCheckoutMailForBooking,
     sendConfirmedMailForBooking: sendConfirmedMailForBooking,
     sendCancelledMailForBooking: sendCancelledMailForBooking,
     sendExpiredMailForBooking: sendExpiredMailForBooking,

@@ -177,6 +177,68 @@ var BookingMailTemplates = (function () {
     return { subject: subject, body: body };
   }
 
+  /* paymentHoldExpiresAt（Date）をconfig.timezone基準の「YYYY/MM/DD HH:mm」へ整形する。
+     端末・実行環境のローカルtimezoneには依存しない。整形できなければ空文字。 */
+  function formatDeadline_(date, timezone) {
+    if (!isDateLike_(date)) return '';
+    var day = BookingAvailability.formatDateInTimezone(date, timezone);
+    var time = BookingAvailability.formatTimeInTimezone(date, timezone);
+    return day && time ? String(day).replace(/-/g, '/') + ' ' + time : '';
+  }
+
+  /*
+   * カード決済の支払い案内メール（Issue #445）。Stripe Checkout Session作成成功後に、実際の
+   * checkoutUrlとpaymentHoldExpiresAtを使って送る。画面を閉じても支払期限内ならこのメールの
+   * リンクから同じCheckoutへ戻れる。checkout.url / checkout.expiresAt はBookingRepository.
+   * beginCardCheckoutが返した値だけを使い、ここで推測・生成しない（無効なら例外＝fail-closed）。
+   * 「管理者確認後に確定」「当方からの確定連絡待ち」とは書かない（決済完了で自動確定する）。
+   */
+  function buildCardCheckoutMail(record, config, checkout) {
+    var url = checkout && typeof checkout.url === 'string' ? checkout.url : '';
+    if (!/^https:\/\/[^\s]+$/.test(url)) {
+      throw new Error('お支払いページのURLが無効なため支払い案内メールを作成できません。');
+    }
+    var deadline = formatDeadline_(checkout.expiresAt, config.timezone);
+    if (!deadline) {
+      throw new Error('お支払い期限が無効なため支払い案内メールを作成できません。');
+    }
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var startTime = formatTime_(record.startAt, config.timezone);
+    var endTime = formatTime_(record.endAt, config.timezone);
+    var duration = formatDurationMinutes_(record.startAt, record.endAt);
+
+    var subject = '【' + brandLabel + '】予約申込を受け付けました（決済ページのご案内）';
+    var body = joinNonEmpty_([
+      record.name + ' 様',
+      '',
+      brandLabel + ' のご予約申込を受け付けました。',
+      '※このメールの時点ではお支払いが完了しておらず、ご予約はまだ確定しておりません。',
+      '期限内にお支払いが完了すると、ご予約は自動で確定します。',
+      '',
+      'お支払いページ: ' + url,
+      'お支払い期限: ' + deadline,
+      '画面を閉じた場合も、期限内であればこのメールからお支払いページへ戻れます。',
+      '期限を過ぎるとこのURLではお支払いできず、ご予約は確定せず失効します。',
+      'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。',
+      '',
+      '予約ID: ' + record.bookingId,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '開始時刻: ' + startTime,
+      '終了時刻: ' + endTime,
+      duration ? '利用時間: ' + duration : '',
+      'ブランド: ' + brandLabel,
+      '利用人数: ' + record.people,
+      priceLine_(record),
+      record.paymentMethod ? '支払方法: ' + record.paymentMethod : '',
+      '',
+      contactLine_(config),
+      guideLine_(record),
+      signatureLines_(record)
+    ]);
+
+    return { subject: subject, body: body };
+  }
+
   /*
    * CONFIRMED（予約確定メール）。件名で確定が分かるようにする。
    * 料金は本文へ出さない（Issue #271本文の指示どおり据え置き。Issue #342で仮予約受付
@@ -597,6 +659,7 @@ var BookingMailTemplates = (function () {
 
   return {
     buildPendingMail: buildPendingMail,
+    buildCardCheckoutMail: buildCardCheckoutMail,
     buildConfirmedMail: buildConfirmedMail,
     buildCancelledMail: buildCancelledMail,
     buildExpiredMail: buildExpiredMail,

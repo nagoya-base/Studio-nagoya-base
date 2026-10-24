@@ -1581,7 +1581,7 @@ test('Issue #445レビュー: クレカ選択時、フォーム上部・支払�
   assert.match(ctx.elements['ba-card-payment-notice'].renderedText(), /予約申込後30分以内にお支払いを完了してください/);
 
   ctx.elements['ba-step-details-next']._listeners.click();
-  assert.match(ctx.elements['ba-consent-text'].textContent, /30分以内にお支払いを完了する必要があること/);
+  assert.match(ctx.elements['ba-consent-text'].textContent, /30分以内にお支払いを完了すること/);
   assert.match(ctx.elements['ba-confirm-card-payment-notice'].renderedText(), /予約申込後30分以内にお支払いを完了してください/);
 
   /* 現金・PayPayには30分の支払期限を出さない */

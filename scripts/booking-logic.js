@@ -474,7 +474,7 @@
         title: '申込後は仮受付です。この時点では予約は確定していません。',
         body: '内容を確認のうえ、当方から確定のご連絡をします（当方からの確定連絡をもって予約成立となります）。'
       },
-      consentCard: '申込後にお支払い画面へ進むこと、申込後30分以内にお支払いを完了する必要があること、お支払い完了で予約が確定すること、時間が経過すると予約が失効する場合があることを確認しました。',
+      consentCard: '申込後にお支払い画面へ進むこと、申込後30分以内にお支払いを完了すること、お支払い完了で予約が確定することを確認しました。',
       consentManual: 'フォーム送信時点では予約は確定せず、当方からの確定連絡をもって予約成立となることを確認しました。',
       confirmHeadingCard: '内容を確認して支払いへ進む',
       confirmHeadingManual: '内容を確認して仮予約を送信',
@@ -500,7 +500,7 @@
         title: 'This form submits a pending booking request. Your booking is not confirmed yet.',
         body: 'Your booking becomes confirmed only after we send you a confirmation.'
       },
-      consentCard: 'I understand that I will proceed to payment after submitting, that I must complete payment within 30 minutes, that my booking is confirmed once payment is completed, and that it may expire if payment is not completed.',
+      consentCard: 'I understand that I will proceed to payment after submitting, that I must complete payment within 30 minutes, and that my booking is confirmed once payment is completed.',
       consentManual: 'I understand that submitting this form does not confirm my booking, and that my booking is confirmed only once I receive a confirmation.',
       confirmHeadingCard: 'Review and Proceed to Payment',
       confirmHeadingManual: 'Review and Submit Pending Booking',
@@ -576,13 +576,13 @@
     ja: {
       title: '【続けてお支払いへ進みます】',
       body: '予約申込を受け付けました。下のボタンから、続けて決済ページ（Stripe）でお支払い手続きを行ってください。お支払い完了後、予約が確定します。',
-      confirmationNote: '決済ページの有効期限内にお支払いが完了した場合に予約が確定します。予約申込後30分以内にお支払いを完了してください。決済を完了せずに時間が経過すると、予約が失効する場合があります。期限切れ・決済未完了の場合、予約は確定しません。',
+      confirmationNote: 'お支払いページのリンクはメールでもご案内します。画面を閉じた場合も、期限内であればメールからお支払いページへ戻れます。決済ページの有効期限内にお支払いが完了した場合に予約が確定します。予約申込後30分以内にお支払いを完了してください。決済を完了せずに時間が経過すると、予約が失効する場合があります。期限切れ・決済未完了の場合、予約は確定しません。',
       buttonLabel: '決済ページへ進む'
     },
     en: {
       title: '[Continue to Payment]',
       body: 'Your booking request has been received. Please continue to the secure payment page (Stripe) with the button below. Your booking is confirmed once payment is completed.',
-      confirmationNote: 'Your booking is confirmed when payment is completed within the validity period of the payment page. Please complete payment within 30 minutes after submitting your request. If payment is not completed and time passes, your booking may expire. If the page expires or payment is not completed, the booking is not confirmed.',
+      confirmationNote: 'The payment page link is also sent by email. If you close this screen, you can return to the payment page from the email until the deadline. Your booking is confirmed when payment is completed within the validity period of the payment page. Please complete payment within 30 minutes after submitting your request. If payment is not completed and time passes, your booking may expire. If the page expires or payment is not completed, the booking is not confirmed.',
       buttonLabel: 'Proceed to payment'
     }
   };

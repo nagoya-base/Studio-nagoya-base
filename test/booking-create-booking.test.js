@@ -1292,3 +1292,52 @@ test('管理者通知 (Issue #311): BOOKING_ADMIN_URL未設定でもcreateBookin
   assert.strictEqual(result.success, true);
   assert.strictEqual(mailApp._sentEmails.length, 1);
 });
+
+/* ── Issue #445: カード＋Checkout有効時は、Session作成前の受付メールを送らない ── */
+
+var MAIL_PROPERTIES_445 = {
+  BOOKING_MAIL_DISPLAY_NAME: 'Studio Nagoya Base',
+  BOOKING_MAIL_REPLY_TO: 'noreply@example.com',
+  BOOKING_CONTACT_EMAIL: 'contact@example.com'
+};
+var CHECKOUT_ENABLED_PROPERTIES_445 = {
+  STRIPE_SECRET_KEY: 'sk_test_dummy',
+  STRIPE_CHECKOUT_ENABLED: 'true',
+  STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.com/success',
+  STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/cancel'
+};
+
+function customerMails_(mailApp) {
+  return mailApp._sentEmails.filter(function (m) { return m.to === 'taro@example.com'; });
+}
+
+test('Issue #445: クレカ＋Checkout有効の予約は、実際のcheckoutUrl・支払期限が未確定のcreateBooking時点では受付メールを送らない（Checkout作成後の支払い案内メールに一本化）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp, properties: Object.assign({}, MAIL_PROPERTIES_445, CHECKOUT_ENABLED_PROPERTIES_445) });
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload({
+    paymentMethod: 'オンラインクレジットカード', date: futureDateJst_(10), startTime: '10:00', email: 'taro@example.com'
+  }));
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(customerMails_(mailApp).length, 0);
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+  assert.strictEqual(found.record.pendingMailSentAt, '');
+});
+
+test('Issue #445: クレカでもCheckout無効（Sessionが作られない）なら従来どおりcreateBooking時に受付メールを送り、現金・PayPayは常に仮受付メール', function () {
+  [
+    { method: 'オンラインクレジットカード', props: MAIL_PROPERTIES_445, expectSubject: /予約申込を受け付けました/ },
+    { method: '現金', props: Object.assign({}, MAIL_PROPERTIES_445, CHECKOUT_ENABLED_PROPERTIES_445), expectSubject: /仮予約を受け付けました（未確定）/ },
+    { method: 'PayPay', props: Object.assign({}, MAIL_PROPERTIES_445, CHECKOUT_ENABLED_PROPERTIES_445), expectSubject: /仮予約を受け付けました（未確定）/ }
+  ].forEach(function (c) {
+    var mailApp = stubs.createMailAppStub();
+    var ctx = setup({ mailApp: mailApp, properties: c.props });
+    var result = ctx.sandbox.BookingRepository.createBooking(validPayload({
+      paymentMethod: c.method, date: futureDateJst_(10), startTime: '10:00', email: 'taro@example.com'
+    }));
+    assert.strictEqual(result.success, true, c.method);
+    var mails = customerMails_(mailApp);
+    assert.strictEqual(mails.length, 1, c.method);
+    assert.match(mails[0].subject, c.expectSubject, c.method);
+    assert.doesNotMatch(mails[0].body, /管理者/, c.method);
+  });
+});

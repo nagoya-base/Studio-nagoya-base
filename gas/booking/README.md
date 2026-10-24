@@ -7355,6 +7355,21 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
   「オンラインクレジットカード決済は、予約申込後に表示される決済ページでお支払いください。決済ページの有効期限内に
   お支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。」
   （`Logic.cardPaymentNoticeLines(locale)` / `buildCardPendingNotice_`）。具体的な期限日時は表示しない。
+  **Issue #445で追記**: フォームでは「予約申込後30分以内にお支払いを完了してください」を明示し（`Logic.CARD_PAYMENT_WINDOW_MINUTES`
+  = `CardPayment.CHECKOUT_HOLD_MINUTES`。テストで一致を検証）、Checkout作成後の完了画面は`beginCardCheckout`が返した実際の
+  `paymentHoldExpiresAt`をAsia/Tokyoで「お支払い期限：YYYY/MM/DD HH:mm」と表示する。
+  利用者向け文言は支払方法別（カード＝申込→そのまま決済→決済完了で自動確定／現金・PayPay・未定＝仮受付→当方で内容確認→確定のご連絡）に
+  `Logic.bookingFlowCopy`で切り替える。利用者向けに「管理者」「Admin」は使わない。
+- **カード決済の支払い案内メール（Issue #445）**: `createBooking`時点ではCheckout Session（`checkoutUrl`・`paymentHoldExpiresAt`）が
+  未確定のため、カード＋`STRIPE_CHECKOUT_ENABLED`有効の予約は受付メールをそこでは送らない（`shouldDeferPendingMailToCheckout_`）。
+  `beginCardCheckout`がSession作成または有効Sessionの再利用に成功した後に、`BookingMailer.sendCardCheckoutMailForBooking`が
+  実際の決済URL・支払期限入りの案内を送る（画面を閉じても期限内ならメールから同じCheckoutへ戻れる）。
+  - 二重送信防止: 新しい列は追加せず、既存`pendingMailSentAt`が「そのSessionの作成時刻
+    （`CardPayment.computeCheckoutSessionCreatedMillis(paymentHoldExpiresAt)`）以降に記録済みか」で判定する。送信失敗時は
+    `pendingMailSentAt`を更新しないため、Sessionが再利用された次の`beginCardCheckout`で再送される。
+  - 失敗してもCheckout作成・予約状態（PENDING / checkout_pending）は変えない（best effort）。checkoutUrlはログ・エラー記録へ出さない。
+  - Checkout無効・設定不足でSessionが作られない場合は従来どおり`createBooking`時に受付メール（`buildPendingMail`）を送る。
+  - 公開APIは増やしていない。`checkoutAccessToken`認可・Idempotency-Key・Session再利用の既存ロジックは変更なし。
 - `startCardCheckout`が`CHECKOUT_DISABLED` / `STRIPE_NOT_CONFIGURED`を返した場合（Checkout未着手と確実に判断できる場合）の
   完了画面は、「決済ページを自動で開始できなかった。運営より決済方法を案内する」旨のみを示し、
   24時間/72時間といった旧Payment Link方式の日時は案内しない（`Logic.cardCheckoutFallbackNoticeLines`）。
