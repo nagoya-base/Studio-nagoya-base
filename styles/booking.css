@@ -607,4 +607,8 @@
 
 /* Issue #423: 予約オプション欄（Studio Xのみ） */
 .booking-app .ba-option-heading { margin: 18px 0 6px; font-size: 1rem; }
+.booking-app .ba-option-summary-list { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; margin: 8px 0; }
+.booking-app .ba-option-summary-list dt, .booking-app .ba-option-summary-list dd { margin: 0; }
+.booking-app .ba-option-summary-list dd { text-align: right; font-variant-numeric: tabular-nums; }
+.booking-app .ba-option-summary-total { border-top: 1px solid currentColor; padding-top: 6px; font-weight: 700; }
 .booking-app .ba-option-equipment .ba-choice select { margin-left: auto; min-width: 7em; }

@@ -267,7 +267,8 @@ var BookingOptions = (function () {
       'お申し込み後、対応可否をご案内します。承認後にオンライン決済をお願いします。' +
       '申込時点ではスタッフ対応は確定していません。',
     EQUIPMENT_SETUP:
-      '有料の機材レンタルを選ぶ場合は、設営方法（セルフ設営＝無料／スタッフ設営＝事前設営料金・事前確認制）の選択が必要です。',
+      '有料の機材レンタルを選ぶ場合は、設営方法（セルフ設営＝無料／スタッフ設営＝事前設営料金・事前確認制）と、' +
+      '片付け方法（セルフ片付け・原状復帰＝無料／スタッフ片付け＝片付け料金・事前確認制）の選択が必要です。',
     SELF_VS_STAFF:
       'セルフ（自分で設営・原状復帰）は無料で、スタッフの空き確認は不要です。スタッフ対応（有料）は承認後の決済で確定します。',
     EMAIL_SUPPORT: EMAIL_SUPPORT_NOTE_
@@ -398,10 +399,15 @@ var BookingOptions = (function () {
     if (hasPaidRental && selection.setupService !== 'SELF' && selection.setupService !== 'STAFF') {
       return { ok: false, error: err_('SETUP_METHOD_REQUIRED', '機材をレンタルする場合は、設営方法（セルフ設営／スタッフ設営）を選択してください。') };
     }
+    /* 片付け方法も同様に必須（Issue #441。セルフ片付け／スタッフ片付けの2択。未指定・NONEは拒否）。 */
+    if (hasPaidRental && selection.cleanupService !== 'SELF' && selection.cleanupService !== 'STAFF') {
+      return { ok: false, error: err_('CLEANUP_METHOD_REQUIRED', '機材をレンタルする場合は、片付け方法（セルフ片付け／スタッフ片付け）を選択してください。') };
+    }
 
     var normalized = {
       equipment: equipment,
       equipmentSetup: hasPaidRental ? setupService : '',
+      equipmentCleanup: hasPaidRental ? cleanupService : '',
       layouts: uniqueStrings_(layouts),
       setupService: setupService,
       cleanupService: cleanupService,
@@ -412,13 +418,14 @@ var BookingOptions = (function () {
        テーマ未選択のSELF/SELFは単に「セッティングなし」。 */
     var staffRequested = normalized.setupService === 'STAFF' || normalized.cleanupService === 'STAFF';
     if (normalized.layouts.length === 0) {
-      /* 機材レンタルのスタッフ設営だけは、テーマ未選択でも依頼できる（Issue #438。事前設営として扱う）。 */
-      var equipmentStaffSetup = hasPaidRental && normalized.setupService === 'STAFF' && normalized.cleanupService !== 'STAFF';
-      if (staffRequested && !equipmentStaffSetup) {
+      /* 機材レンタルのスタッフ設営・スタッフ片付けは、テーマ未選択でも依頼できる（Issue #438 / #441。機材の設営・片付けとして扱う）。 */
+      if (staffRequested && !hasPaidRental) {
         return { ok: false, error: err_('LAYOUT_REQUIRED_FOR_STAFF_SERVICE', 'スタッフ対応を依頼するセッティング（テーマ）を選択してください。') };
       }
-      normalized.setupService = equipmentStaffSetup ? 'STAFF' : 'SELF';
-      normalized.cleanupService = 'SELF';
+      if (!hasPaidRental) {
+        normalized.setupService = 'SELF';
+        normalized.cleanupService = 'SELF';
+      }
     }
     /* スタッフ作業は1テーマ分（共通料金のため、複数テーマを1回の料金で依頼させない）。 */
     if (staffRequested && normalized.layouts.length > 1) {
@@ -430,7 +437,7 @@ var BookingOptions = (function () {
   }
 
   function emptySelection_() {
-    return { equipment: {}, equipmentSetup: '', layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false };
+    return { equipment: {}, equipmentSetup: '', equipmentCleanup: '', layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false };
   }
 
   /* ---- 項目コード ----
@@ -455,7 +462,7 @@ var BookingOptions = (function () {
     }
     if (code === ITEM_PREFIX.EMAIL_SUPPORT) return 'メールサポート';
     var themeOf = function (prefix) {
-      if (code.slice(prefix.length) === STAFF_NO_THEME_) return '機材の設営';
+      if (code.slice(prefix.length) === STAFF_NO_THEME_) return prefix === ITEM_PREFIX.STAFF_CLEANUP ? '機材の片付け' : '機材の設営';
       var t = THEMES[code.slice(prefix.length)];
       return t ? t.label : code.slice(prefix.length);
     };
@@ -610,7 +617,7 @@ var BookingOptions = (function () {
     /* 無料セルフ対応・メールサポート */
     var freeItems = [];
     var staffPre = normalized.setupService === 'STAFF' && (normalized.layouts.length > 0 || normalized.equipmentSetup === 'STAFF');
-    var staffCleanup = normalized.layouts.length > 0 && normalized.cleanupService === 'STAFF';
+    var staffCleanup = normalized.cleanupService === 'STAFF' && (normalized.layouts.length > 0 || normalized.equipmentCleanup === 'STAFF');
     normalized.layouts.forEach(function (theme) {
       if (!staffPre && normalized.setupService !== 'NONE') freeItems.push(ITEM_PREFIX.SELF_SETUP + theme);
       if (!staffCleanup && normalized.cleanupService !== 'NONE') freeItems.push(ITEM_PREFIX.SELF_CLEANUP + theme);

@@ -36,6 +36,7 @@
     payError: $('bo-pay-error'),
     add: $('bo-add'),
     panelSlot: $('bo-panel-slot'),
+    summarySlot: $('bo-summary-slot'),
     submitError: $('bo-submit-error'),
     submitMessage: $('bo-submit-message'),
     submit: $('bo-submit'),
@@ -132,7 +133,7 @@
       els.addClosed.hidden = true;
       if (!panel) {
         /* 後付けでは、申込済みの項目を「追加しない」と選べる（allowNone）。 */
-        panel = Panel.mount({ slot: els.panelSlot, catalog: summary.catalog, allowNone: true, equipmentPageUrl: '../../equipment/', consultUrl: '../../reservation/?intent=consult' });
+        panel = Panel.mount({ slot: els.panelSlot, summarySlot: $('bo-summary-slot'), catalog: summary.catalog, allowNone: true, equipmentPageUrl: '../../equipment/', consultUrl: '../../reservation/?intent=consult' });
       } else {
         panel.setCatalog(summary.catalog);
       }
