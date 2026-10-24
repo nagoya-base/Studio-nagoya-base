@@ -664,9 +664,22 @@ test('adminSendCardPaymentLink: EXPIREDカード予約へ送信でき、status�
   assert.strictEqual(detail.paymentLinkSendCount, 1);
 });
 
+test('adminReviveExpiredCardBooking: 決済リンク未送信(paymentLinkSentAt空)ならpaymentConfirmed=trueでも復活せずPAYMENT_LINK_NOT_SENT、EXPIRED維持', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp });
+  var bookingId = expireCardBooking_(ctx);
+
+  var result = ctx.sandbox.adminReviveExpiredCardBooking(bookingId, true);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'PAYMENT_LINK_NOT_SENT');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'EXPIRED');
+  assert.strictEqual(mailsWithSubject_(mailApp, '予約が確定しました').length, 0);
+});
+
 test('adminReviveExpiredCardBooking: 入金確認なし(true以外)は復活せずEXPIREDのまま', function () {
   var ctx = setup();
   var bookingId = expireCardBooking_(ctx);
+  ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
 
   [undefined, false, 'true', 1].forEach(function (flag) {
     var result = ctx.sandbox.adminReviveExpiredCardBooking(bookingId, flag);
@@ -699,6 +712,7 @@ test('adminReviveExpiredCardBooking: 入金確認済みでも枠が埋まって�
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ mailApp: mailApp });
   var bookingId = expireCardBooking_(ctx);
+  ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
   /* 失効後に同じ枠が別予約で埋まった状態を再現する。 */
   createPending(ctx, { email: 'other@example.com', paymentMethod: '現金' });
 
@@ -712,6 +726,7 @@ test('adminReviveExpiredCardBooking: 入金確認済みでも枠が埋まって�
 test('adminReviveExpiredCardBooking: 利用開始時刻を過ぎていれば復活せずEXPIRED維持', function () {
   var ctx = setup();
   var bookingId = expireCardBooking_(ctx);
+  ctx.sandbox.adminSendCardPaymentLink(bookingId, 'https://buy.stripe.com/test_ABC123');
   ctx.sandbox.SpreadsheetRepository.updateBookingFields(bookingId, {
     startAt: new Date(Date.now() - 3600000),
     endAt: new Date(Date.now() + 3600000)

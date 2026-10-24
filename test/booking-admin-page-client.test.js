@@ -1401,7 +1401,8 @@ test('Issue #428 render: EXPIREDの手動決済リンク方式カード予約は
   sandbox.state.todayJst = TODAY;
   sandbox.state.filter = 'all';
   sandbox.state.bookings = [
-    booking({ bookingId: 'card', status: 'EXPIRED', isCardPayment: true, isStripeCheckout: false }),
+    booking({ bookingId: 'card', status: 'EXPIRED', isCardPayment: true, isStripeCheckout: false, paymentLinkSent: true }),
+    booking({ bookingId: 'unsent', status: 'EXPIRED', isCardPayment: true, isStripeCheckout: false, paymentLinkSent: false }),
     booking({ bookingId: 'cash', status: 'EXPIRED', isCardPayment: false }),
     booking({ bookingId: 'checkout', status: 'EXPIRED', isCardPayment: true, isStripeCheckout: true })
   ];
@@ -1411,6 +1412,7 @@ test('Issue #428 render: EXPIREDの手動決済リンク方式カード予約は
   assert.ok(list.innerHTML.indexOf('data-action="revive" data-id="cash"') !== -1);
   assert.ok(list.innerHTML.indexOf('data-action="revive" data-id="checkout"') !== -1);
   assert.ok(list.innerHTML.indexOf('data-action="revive" data-id="card"') === -1, '入金確認なしの通常復活ボタンは出さない');
+  assert.ok(list.innerHTML.indexOf('data-id="unsent"') !== -1 && list.innerHTML.indexOf('data-action="revive-paid" data-id="unsent"') === -1 && list.innerHTML.indexOf('data-action="revive" data-id="unsent"') === -1, '決済リンク未送信では復活ボタンを出さない');
 });
 
 test('Issue #396 canSendPaymentLink/needsPaymentLinkBeforeConfirm_: 旧方式カード予約のみ決済リンクUI・確定ガードの対象。Stripe Checkout方式・PayPay・現金は対象外', function () {

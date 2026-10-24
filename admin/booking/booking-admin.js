@@ -337,7 +337,8 @@ function render() {
       actions += '<button type="button" class="action cancel" data-action="cancel" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>キャンセル</button>';
     }
     if (canRevive && isManualPaymentLinkCardBooking_(b)) {
-      actions += '<button type="button" class="action revive" data-action="revive-paid" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>入金確認して復活</button>';
+      /* 決済リンク送信済みになってから表示する（未送信は詳細から先に送信する）。 */
+      if (b.paymentLinkSent || b.paymentLinkSentAt || Number(b.paymentLinkSendCount) > 0) actions += '<button type="button" class="action revive" data-action="revive-paid" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>入金確認して復活</button>';
     } else if (canRevive) {
       actions += '<button type="button" class="action revive" data-action="revive" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>復活</button>';
     }
