@@ -2890,3 +2890,95 @@ test('runConfirm(Issue #447): 支払い待ち/状態不明のオプションは�
   assert.ok(confirmText({ available: false, state: 'UNKNOWN', lines: [] }).indexOf('詳細で確認してください') !== -1);
   assert.ok(confirmText({ state: 'NONE' }).indexOf('予約オプション') === -1);
 });
+
+/* ---------- Issue #449: 終了済み予約の通常一覧除外と「仮予約」タブ ---------- */
+
+var NOW_JST = '2026-09-22 17:00';
+
+function endedBookingSet() {
+  return [
+    booking({ bookingId: 'ended-pending', date: TODAY, startAt: '08:00', endAt: '10:00', status: 'PENDING' }),
+    booking({ bookingId: 'live-pending', date: TODAY, startAt: '18:00', endAt: '20:00', status: 'PENDING' }),
+    booking({ bookingId: 'ended-confirmed', date: TODAY, startAt: '08:00', endAt: '10:00', status: 'CONFIRMED' }),
+    booking({ bookingId: 'ongoing-confirmed', date: TODAY, startAt: '16:00', endAt: '18:00', status: 'CONFIRMED' }),
+    booking({ bookingId: 'past-pending', date: YESTERDAY, startAt: '18:00', endAt: '20:00', status: 'PENDING' }),
+    booking({ bookingId: 'future-pending', date: TOMORROW, startAt: '09:00', endAt: '11:00', status: 'PENDING' }),
+    booking({ bookingId: 'future-confirmed', date: TOMORROW, startAt: '09:00', endAt: '11:00', status: 'CONFIRMED' }),
+    booking({ bookingId: 'today-cancelled', date: TODAY, startAt: '18:00', endAt: '20:00', status: 'CANCELLED' }),
+    booking({ bookingId: 'future-expired', date: TOMORROW, startAt: '18:00', endAt: '20:00', status: 'EXPIRED' })
+  ];
+}
+
+function idsOf(list) {
+  return list.map(function (b) { return b.bookingId; }).sort();
+}
+
+test('isBookingEnded: 終了時刻ちょうど/以降は終了、前は未終了、日跨ぎは翌日の終了時刻で判定する', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.isBookingEnded({ date: TODAY, startAt: '15:00', endAt: '17:00' }, NOW_JST), true);
+  assert.strictEqual(sandbox.isBookingEnded({ date: TODAY, startAt: '15:00', endAt: '17:01' }, NOW_JST), false);
+  assert.strictEqual(sandbox.isBookingEnded({ date: YESTERDAY, startAt: '22:00', endAt: '01:00' }, '2026-09-22 00:30'), false);
+  assert.strictEqual(sandbox.isBookingEnded({ date: YESTERDAY, startAt: '22:00', endAt: '01:00' }, '2026-09-22 01:00'), true);
+  assert.strictEqual(sandbox.isBookingEnded({ date: TODAY, startAt: '08:00', endAt: '10:00' }, null), false, 'nowJst未取得なら除外しない');
+});
+
+test('filterBookingsByTab: 「今日」は終了済みを外し、当日の終了前は残す', function () {
+  var sandbox = loadClientSandbox();
+  var result = sandbox.filterBookingsByTab(endedBookingSet(), 'today', TODAY, NOW_JST);
+  assert.deepStrictEqual(idsOf(result), ['live-pending', 'ongoing-confirmed']);
+});
+
+test('filterBookingsByTab: 「今後」も終了済みを外す', function () {
+  var sandbox = loadClientSandbox();
+  var result = sandbox.filterBookingsByTab(endedBookingSet(), 'upcoming', TODAY, NOW_JST);
+  assert.deepStrictEqual(idsOf(result), ['future-confirmed', 'future-pending', 'live-pending', 'ongoing-confirmed']);
+});
+
+test('filterBookingsByTab: 「仮予約」はPENDINGかつ終了前だけ（確定・キャンセル・失効・終了済みは混ぜない）', function () {
+  var sandbox = loadClientSandbox();
+  var result = sandbox.filterBookingsByTab(endedBookingSet(), 'pending', TODAY, NOW_JST);
+  assert.deepStrictEqual(idsOf(result), ['future-pending', 'live-pending']);
+  assert.ok(result.every(function (b) { return b.status === 'PENDING'; }));
+});
+
+test('filterBookingsByTab: 「すべて」「キャンセル」は終了済みも含め履歴確認できる', function () {
+  var sandbox = loadClientSandbox();
+  var all = sandbox.filterBookingsByTab(endedBookingSet(), 'all', TODAY, NOW_JST);
+  assert.strictEqual(all.length, endedBookingSet().length);
+  assert.ok(idsOf(all).indexOf('ended-pending') !== -1);
+});
+
+test('filterBookingsByTab: 終了判定は元データのstatusを変更しない', function () {
+  var sandbox = loadClientSandbox();
+  var bookings = endedBookingSet();
+  var before = JSON.stringify(bookings);
+  sandbox.filterBookingsByTab(bookings, 'pending', TODAY, NOW_JST);
+  assert.strictEqual(JSON.stringify(bookings), before);
+});
+
+test('computeTabCounts/computeSummaryCounts: 仮予約の件数は「仮予約」タブの表示件数と一致する', function () {
+  var sandbox = loadClientSandbox();
+  var bookings = endedBookingSet();
+  var tabCounts = sandbox.computeTabCounts(bookings, TODAY, NOW_JST);
+  var summary = sandbox.computeSummaryCounts(bookings, TODAY, NOW_JST);
+  assert.strictEqual(tabCounts.pending, 2);
+  assert.strictEqual(summary.pending, tabCounts.pending);
+  assert.strictEqual(tabCounts.today, sandbox.filterBookingsByTab(bookings, 'today', TODAY, NOW_JST).length);
+  assert.strictEqual(tabCounts.upcoming, sandbox.filterBookingsByTab(bookings, 'upcoming', TODAY, NOW_JST).length);
+});
+
+test('visibleBookings: state.nowJstを使って仮予約タブの表示とタブ件数が一致する', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.nowJst = NOW_JST;
+  sandbox.state.filter = 'pending';
+  sandbox.state.bookings = endedBookingSet();
+  sandbox.render();
+  assert.deepStrictEqual(idsOf(sandbox.visibleBookings()), ['future-pending', 'live-pending']);
+  assert.strictEqual(sandbox.document.getElementById('tab-count-pending').textContent, '2');
+});
+
+test('静的HTML: 「仮予約」タブ(data-filter="pending")が存在する', function () {
+  var html = fs.readFileSync(path.join(__dirname, '..', 'gas', 'booking', 'admin', 'BookingAdminPage.html'), 'utf8');
+  assert.ok(/data-filter="pending">仮予約</.test(html));
+});
