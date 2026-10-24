@@ -243,11 +243,25 @@ function getAdminBookings() {
     if (record.brand === 'studio_x' && optionOrdersByBooking) {
       listItem.optionSummary = optionOrdersByBooking.failed
         ? { available: false, state: 'UNKNOWN', lines: [] }
-        : BookingOptions.summarizeForAdminList(optionOrdersByBooking.byBooking[record.bookingId] || []);
+        : BookingOptions.summarizeForAdminList(optionOrdersByBooking.byBooking[record.bookingId] || [], buildAdminBookingSchedule_(record, timezone));
     }
     return listItem;
   });
   return { todayJst: todayJst, nowJst: nowJst, bookings: bookings };
+}
+
+/*
+ * 親予約の利用日時（予約タイムゾーン）を、スタッフ作業時刻の表示用に整形する（Issue #451）。
+ * Bookingsのstart/endAt（Date値）を既存のformat関数で整形するだけで、日時の再計算はしない。
+ * 終了側も日付を持つので、日跨ぎ予約でもendDateが開始日と変わる。Date値でない場合は
+ * 日付列と文字列の時刻をそのまま使う。
+ */
+function buildAdminBookingSchedule_(record, timezone) {
+  var startDate = formatAdminDate_(record.date, timezone);
+  var startTime = formatAdminTime_(record.startAt, timezone);
+  var endTime = formatAdminTime_(record.endAt, timezone);
+  var endDate = isAdminWebDateLike_(record.endAt) ? formatAdminDate_(record.endAt, timezone) : startDate;
+  return { startDate: startDate, startTime: startTime, endDate: endDate, endTime: endTime };
 }
 
 /*
@@ -522,7 +536,7 @@ function getAdminBookingDetail(bookingId) {
       reminderSentAtVersion: isAdminWebDateLike_(record.reminderSentAt) ? record.reminderSentAt.getTime() : 0,
       /* Issue #423: 予約オプション。Bookings本体とは別の台帳（OptionOrders）。オプションが無い
          既存予約は空配列で、既存の表示・処理に影響しない。 */
-      options: buildAdminOptionSummary_(bookingId, timezone)
+      options: buildAdminOptionSummary_(bookingId, timezone, buildAdminBookingSchedule_(record, timezone))
     }
   };
 }
@@ -532,9 +546,10 @@ function getAdminBookingDetail(bookingId) {
  * 承認状態・決済状態・optionOrderIdを返す。決済URL・内部トークン・メールアドレスは返さない。
  * 台帳の読み取りに失敗しても予約詳細そのものは表示できるよう、失敗はエラー表示に倒す。
  */
-function buildAdminOptionSummary_(bookingId, timezone) {
+function buildAdminOptionSummary_(bookingId, timezone, schedule) {
   try {
     var listed = OptionOrderService.listForAdmin(bookingId);
+    var targetLabel = BookingOptions.formatScheduleRange(schedule);
     return {
       available: true,
       guidanceIncomplete: listed.guidanceIncomplete,
@@ -545,6 +560,12 @@ function buildAdminOptionSummary_(bookingId, timezone) {
           paidLabel: order.paidLabel,
           sourceLabel: order.sourceLabel,
           items: order.items,
+          /* Issue #451: スタッフ設営・片付けの対象予約日時と作業時刻（有効な注文のみ。表示専用）。 */
+          staffWork: BookingOptions.isActiveStatus(order.status)
+            ? BookingOptions.describeStaffWork((order.items || []).map(function (item) { return item.code; }), schedule, true).map(function (work) {
+              return { kind: work.kind, label: work.label, note: work.note, target: targetLabel, bookingId: bookingId };
+            })
+            : [],
           amountJpy: order.amountJpy,
           approvalStatus: order.approvalStatus,
           paymentStatus: order.paymentStatus,

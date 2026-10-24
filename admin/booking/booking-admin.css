@@ -833,3 +833,6 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 .card-option-pending-approval, .card-option-unknown { color: #a14a00; }
 .option-badge { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: #a14a00; color: #fff; font-size: 12px; }
 button.action.option-review { background: #a14a00; border-color: #a14a00; color: #fff; font-weight: 700; }
+
+/* Issue #451: スタッフ設営・片付けの作業時刻 */
+.card-option-staff { font-weight: 600; color: #a14a00; }
