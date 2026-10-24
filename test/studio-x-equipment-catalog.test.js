@@ -28,9 +28,9 @@ test('正本の内容がIssueの確定料金・数量・常設無料設備と一
   var rental = {};
   data.rental.forEach(function (e) { rental[e.code] = e.stock + 'x' + e.unitPriceJpy + (e.unitLabel ? '/' + e.unitLabel : ''); });
   assert.deepStrictEqual(rental, {
-    COB_BICOLOR: '1x800', PANEL_FULLCOLOR: '1x500', COB_FULLCOLOR: '2x800/台', BACKGROUND_STAND: '1x200', STROBE_MONOBLOCK: '1x800', STROBE_PORTABLE: '1x800',
+    COB_BICOLOR: '1x800', PANEL_FULLCOLOR: '1x500', COB_FULLCOLOR: '2x1000/台', BACKGROUND_STAND: '1x200', STROBE_MONOBLOCK: '1x800', STROBE_PORTABLE: '1x1000',
     COMMANDER_CANON: '1x300', COMMANDER_SONY: '1x300', STAND_260: '3x200/本', BOWENS_BRACKET: '1x200',
-    SOFTBOX_STRIP_60X90: '1x300', SOFTBOX_STRIP_30X120: '1x300', SOFTBOX_60: '1x300', COLOR_FILTER_SET: '1x200'
+    SOFTBOX_STRIP_60X90: '1x300', SOFTBOX_STRIP_30X120: '2x300/個', SOFTBOX_60: '1x300', COLOR_FILTER_SET: '1x200'
   });
   assert.deepStrictEqual(data.permanent.map(function (e) { return e.label + '×' + e.quantity; }), [
     'バイカラーパネルライト（定常光）×2', 'ライトスタンド（100〜190cm）×2', '背景ローラーサポート×1',
@@ -180,7 +180,29 @@ test('写真カードの有料機材はレンタル価格を正本(unitPriceJpy)
     var def = data.rental.filter(function (e) { return e.code === c; })[0];
     assert.ok(def && def.unitPriceJpy > 0, c + ' は正本の有料機材');
     assert.ok(cards.indexOf('"code", "' + c + '"') !== -1, c + ' の価格を正本から引く');
-    assert.ok(cards.indexOf('price_' + c + '.unitPriceJpy') !== -1, c);
+    assert.ok(cards.indexOf('price_' + c + (c === 'BOWENS_BRACKET' ? '.freeWhenWith.label' : '.unitPriceJpy')) !== -1, c);
   });
   assert.strictEqual(cards.split('レンタル {{').length - 1, 6);
+});
+
+test('セット無料条件は正本JSONの freeWhenWith が唯一の定義（Issue #438）。設備ページ・GAS・パネルは同じ値を参照する', function () {
+  var byCode = {};
+  data.rental.forEach(function (e) { byCode[e.code] = e; });
+  assert.strictEqual(byCode.STAND_260.unitPriceJpy, 200);
+  assert.deepStrictEqual(byCode.STAND_260.freeWhenWith.codes, ['COB_BICOLOR', 'PANEL_FULLCOLOR', 'COB_FULLCOLOR', 'STROBE_MONOBLOCK', 'STROBE_PORTABLE']);
+  assert.strictEqual(byCode.STAND_260.freeWhenWith.label, 'ライト・ストロボとセットで無料／単独200円');
+  assert.strictEqual(byCode.BOWENS_BRACKET.unitPriceJpy, 200);
+  assert.deepStrictEqual(byCode.BOWENS_BRACKET.freeWhenWith.codes, ['STROBE_PORTABLE']);
+  assert.strictEqual(byCode.BOWENS_BRACKET.freeWhenWith.label, 'ポータブルストロボとセットで無料／単独200円');
+  // 設備ページ（/equipment/ と /studio-x/equipment/ が共有するinclude）は正本の値を表示する
+  var table = read('_includes/equipment_catalog_ja.html');
+  assert.ok(table.indexOf('item.freeWhenWith.label') !== -1);
+  var cards = read('_includes/equipment_photo_cards.html');
+  assert.ok(cards.indexOf('price_STROBE_PORTABLE.unitPriceJpy') !== -1 && cards.indexOf('price_COB_FULLCOLOR.stock') !== -1);
+  assert.ok(read('studio-x/equipment/index.html').indexOf('equipment_catalog_ja.html') !== -1);
+  assert.ok(read('equipment/index.html').indexOf('equipment_catalog_ja.html') !== -1);
+  // GASは生成カタログのfreeWhenWithを読み、スタンド・ブラケットのコードや金額を直書きしない
+  var gas = stripComments(read('gas/booking/shared/BookingOptions.gs'));
+  assert.ok(gas.indexOf('freeWhenWith') !== -1);
+  assert.ok(!/STAND_260|BOWENS_BRACKET/.test(gas), 'セット無料の対象コードをGASに直書きしない');
 });

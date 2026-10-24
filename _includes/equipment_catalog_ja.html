@@ -19,12 +19,12 @@
   </div>
   <div class="equipment-table-block" id="equipment-rental">
     <h3>有料レンタル機材（1点ごとの個別加算）</h3>
-    <p class="equipment-note">セット料金ではなく、借りる機材だけを加算します（税込）。複数台ある機材は台数×単価です。{% if is_studio_x %}予約フォーム、または予約後の「オプション追加」ページから申し込めます。お支払いは部屋のご予約が確定した後です。{% endif %}</p>
+    <p class="equipment-note">セット料金ではなく、借りる機材だけを加算します（税込）。複数台ある機材は台数×単価です。ライトスタンド・ボーエンズマウントブラケットは、対象機材（ライト・ストロボ／ポータブルストロボ）と同時に借りる分が無料です（表の「セットで無料」。単独で借りる場合のみ有料）。{% if is_studio_x %}予約フォーム、または予約後の「オプション追加」ページから申し込めます。有料機材を借りる場合は、設営方法（セルフ設営＝追加料金なし／スタッフ設営＝事前設営料金・事前確認制）をあわせて選択します。お支払いは部屋のご予約が確定した後です。{% endif %}</p>
     <table>
       <thead><tr><th>機材</th><th>数量</th><th>1点あたり</th></tr></thead>
       <tbody>
 {%- for item in site.data.studio_x_equipment.rental %}
-        <tr><th>{{ item.label }}{% if item.requiresLecture %}<span class="equipment-note">※1</span>{% endif %}</th><td>×{{ item.stock }}</td><td>{{ item.unitPriceJpy }}円{% if item.unitLabel != "" %} / {{ item.unitLabel }}{% endif %}</td></tr>
+        <tr><th>{{ item.label }}{% if item.requiresLecture %}<span class="equipment-note">※1</span>{% endif %}</th><td>×{{ item.stock }}</td><td>{% if item.freeWhenWith %}{{ item.freeWhenWith.label }}{% else %}{{ item.unitPriceJpy }}円{% if item.unitLabel != "" %} / {{ item.unitLabel }}{% endif %}{% endif %}</td></tr>
 {%- endfor %}
       </tbody>
     </table>

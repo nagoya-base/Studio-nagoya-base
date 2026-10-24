@@ -200,7 +200,7 @@ test('事前相談の導線: 既存の問い合わせフォームへのリンク
 
 test('事前相談はスタッフ設営の選択肢付近（セッティング選択後）にだけ表示され、機材・無料サポート欄には出ない', function () {
   var src = read('scripts/booking-options.js');
-  var start = src.indexOf('if (state.layouts.length > 0) {');
+  var start = src.indexOf('if (state.layouts.length > 0 || paidEquipment) {');
   var consult = src.indexOf("var consult = el('div', { className: 'ba-option-consult'");
   var support = src.indexOf("root.appendChild(el('h3', { className: 'ba-option-heading', text: '無料サポート' }))");
   var staffServices = src.indexOf("var staff = catalog.staffServices || {};");
@@ -215,4 +215,71 @@ test('事前相談の追加はサーバー側(GAS)・Stripe・注文に一切触
   ['booking/index.html', 'mens/booking/index.html', 'booking/en.html'].forEach(function (rel) {
     assert.ok(read(rel).indexOf('booking-options') === -1, rel);
   });
+});
+
+// ---- Issue #438: セット無料・設営方法の必須選択（サーバーのカタログ＝正本と同じ結果になること） ----
+
+var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
+var gasSandbox = loadBookingSandbox(['EquipmentCatalog.gs', 'BookingOptions.gs'], {});
+var SERVER_CATALOG = JSON.parse(JSON.stringify(gasSandbox.BookingOptions.buildCatalog('studio_x', {})));
+
+test('画面の機材合計は、サーバー（planOrders）の請求額と一致する（セット無料の組み合わせを総当たり）', function () {
+  var codes = ['COB_BICOLOR', 'COB_FULLCOLOR', 'STROBE_MONOBLOCK', 'STROBE_PORTABLE', 'STAND_260', 'BOWENS_BRACKET', 'SOFTBOX_STRIP_30X120', 'SOFTBOX_60'];
+  var max = { COB_BICOLOR: 1, COB_FULLCOLOR: 2, STROBE_MONOBLOCK: 1, STROBE_PORTABLE: 1, STAND_260: 3, BOWENS_BRACKET: 1, SOFTBOX_STRIP_30X120: 2, SOFTBOX_60: 1 };
+  var checked = 0;
+  (function walk(index, equipment) {
+    if (index === codes.length) {
+      if (Object.keys(equipment).length === 0) return;
+      var normalized = gasSandbox.BookingOptions.normalizeSelection({ equipment: equipment, setupService: 'SELF' });
+      assert.ok(normalized.ok, JSON.stringify(normalized.error));
+      var planned = gasSandbox.BookingOptions.planOrders({
+        normalized: normalized.normalized, existingOrders: [], optionsConfig: {},
+        eligibility: { eligibleEquipmentCodes: gasSandbox.BookingOptions.lectureRequiredEquipmentCodes() }
+      });
+      var serverTotal = planned.orders.reduce(function (sum, o) { return o.category === 'EQUIPMENT' ? sum + o.amountJpy : sum; }, 0);
+      assert.strictEqual(Panel.equipmentTotalJpy(SERVER_CATALOG, equipment), serverTotal, JSON.stringify(equipment));
+      checked += 1;
+      return;
+    }
+    for (var qty = 0; qty <= max[codes[index]]; qty += 1) {
+      var next = Object.assign({}, equipment);
+      if (qty > 0) next[codes[index]] = qty;
+      walk(index + 1, next);
+    }
+  })(0, {});
+  assert.ok(checked > 100);
+});
+
+test('summarize: セット無料は「（セット無料）」「（うちN本セット無料）」と表示し、合計から除く', function () {
+  var set = Panel.summarize(SERVER_CATALOG, { equipment: { COB_FULLCOLOR: 2, STAND_260: 2 }, setupService: 'SELF', setupChosen: true }).join('\n');
+  assert.ok(set.indexOf('ライトスタンド（260cm） ×2（無料）（セット無料）') !== -1, set);
+  assert.ok(set.indexOf('機材レンタル合計: 2,000円') !== -1, set);
+  assert.ok(set.indexOf('機材の設営方法: セルフ設営（無料）') !== -1, set);
+  var partial = Panel.summarize(SERVER_CATALOG, { equipment: { COB_FULLCOLOR: 1, STAND_260: 3 }, setupService: 'SELF', setupChosen: true }).join('\n');
+  assert.ok(partial.indexOf('ライトスタンド（260cm） ×3（400円）（うち1本セット無料）') !== -1, partial);
+  var alone = Panel.summarize(SERVER_CATALOG, { equipment: { STAND_260: 1 }, setupService: 'SELF', setupChosen: true }).join('\n');
+  assert.ok(alone.indexOf('ライトスタンド（260cm）（200円）') !== -1 && alone.indexOf('セット無料') === -1, alone);
+});
+
+test('validateSelection: 有料機材を選んだのに設営方法を選んでいなければ次へ進めない。スタッフ設営はテーマ必須', function () {
+  var equipment = { STROBE_PORTABLE: 1 };
+  assert.ok(Panel.validateSelection({ equipment: equipment, setupService: 'SELF', setupChosen: false }, SERVER_CATALOG).indexOf('設営方法') !== -1);
+  assert.strictEqual(Panel.validateSelection({ equipment: equipment, setupService: 'SELF', setupChosen: true }, SERVER_CATALOG), '');
+  assert.strictEqual(Panel.validateSelection({ equipment: equipment, setupService: 'STAFF', setupChosen: true, layouts: ['GRUNGE'] }, SERVER_CATALOG), '');
+  assert.ok(Panel.validateSelection({ equipment: equipment, setupService: 'STAFF', setupChosen: true, layouts: [] }, SERVER_CATALOG).indexOf('テーマ') !== -1);
+  assert.strictEqual(Panel.validateSelection({ equipment: {}, setupService: 'SELF', setupChosen: false }, SERVER_CATALOG), '', '機材なしなら設営方法は任意');
+  assert.strictEqual(Panel.validateSelection({ equipment: { STAND_260: 1 }, setupService: 'SELF', setupChosen: false }, SERVER_CATALOG).indexOf('設営方法') !== -1, true, 'スタンド単独も有料機材');
+});
+
+test('buildSelection: 機材のみでもsetupServiceを送る（サーバーが明示選択を必須で検査する）', function () {
+  assert.strictEqual(Panel.buildSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'SELF' }).setupService, 'SELF');
+  assert.strictEqual(Panel.buildSelection({ equipment: { STROBE_PORTABLE: 1 }, layouts: ['GRUNGE'], setupService: 'STAFF' }).setupService, 'STAFF');
+});
+
+test('パネルのUI: 機材を選ぶと設営方法のラジオを出し、未選択のままにする（セット無料の表示ラベルはカタログの値）', function () {
+  var src = read('scripts/booking-options.js');
+  assert.ok(src.indexOf('state.setupChosen = true') !== -1);
+  assert.ok(src.indexOf('item.freeWhenWith && item.freeWhenWith.label') !== -1);
+  assert.ok(src.indexOf('設営方法（機材レンタルでは必須）') !== -1);
+  assert.ok(!/セットで無料|単独200円/.test(src), '無料条件の文言をパネルに直書きしない（カタログの値だけ）');
 });

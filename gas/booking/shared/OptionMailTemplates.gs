@@ -113,7 +113,14 @@ var OptionMailTemplates = (function () {
   function buildOptionApprovedMail(booking, order, config) {
     var brandLabel = Booking.getBrandLabel(booking.brand);
     var isEquipment = order.category === BookingOptions.CATEGORY.EQUIPMENT;
-    var lines = (isEquipment ? [
+    var freeSet = isEquipment && Number(order.amountJpy) === 0;
+    var lines = (freeSet ? [
+      booking.name + ' 様',
+      '',
+      '有料レンタル機材のセルフレンタルについて、利用許可を確認しました。',
+      'ポータブルストロボ・ライト等とのセット無料分のため、お支払いは不要です。下記の内容で確定しました。',
+      ''
+    ] : isEquipment ? [
       booking.name + ' 様',
       '',
       '有料レンタル機材のセルフレンタルについて、利用許可を確認しました。',
@@ -125,15 +132,16 @@ var OptionMailTemplates = (function () {
       'お申し込みのスタッフ対応について、対応可能と確認できました。',
       '下記のページからオンライン決済をお願いします。お支払いの完了をもって確定となります。',
       ''
-    ]).concat(bookingLines_(booking, config)).concat(orderLines_(order)).concat([
+    ]).concat(bookingLines_(booking, config)).concat(orderLines_(order)).concat(freeSet ? [] : [
       '',
       'お支払いはこちら（予約IDとご登録のメールアドレスで確認します）:',
-      buildOptionsPageUrl(booking),
+      buildOptionsPageUrl(booking)
+    ]).concat([
       '',
       contactLine_(config),
       signature_(booking)
     ]);
-    return { subject: '【' + brandLabel + '】' + (isEquipment ? '有料レンタル機材の利用を許可しました（お支払いのお願い）' : 'スタッフ対応を承認しました（お支払いのお願い）'), body: joinNonEmpty_(lines) };
+    return { subject: '【' + brandLabel + '】' + (freeSet ? '有料レンタル機材の利用を許可しました（セット無料・確定）' : isEquipment ? '有料レンタル機材の利用を許可しました（お支払いのお願い）' : 'スタッフ対応を承認しました（お支払いのお願い）'), body: joinNonEmpty_(lines) };
   }
 
   /* 不承認メール。部屋のご予約には影響しないことを明記する。 */

@@ -71,7 +71,8 @@ var BookingOptions = (function () {
   var ACTIVE_STATUSES_ = [STATUS.PENDING_APPROVAL, STATUS.AWAITING_PAYMENT, STATUS.PAYMENT_PENDING, STATUS.CONFIRMED];
 
   var ALLOWED_TRANSITIONS_ = {};
-  ALLOWED_TRANSITIONS_[STATUS.PENDING_APPROVAL] = [STATUS.AWAITING_PAYMENT, STATUS.DECLINED, STATUS.CANCELLED];
+  /* PENDING_APPROVAL→CONFIRMED: セット無料で請求額0円の機材注文を、Adminの許可で支払いなしに確定する（Issue #438）。 */
+  ALLOWED_TRANSITIONS_[STATUS.PENDING_APPROVAL] = [STATUS.AWAITING_PAYMENT, STATUS.CONFIRMED, STATUS.DECLINED, STATUS.CANCELLED];
   /* AWAITING_PAYMENT→DECLINED: 管理者の利用許可を確認できない機材注文を管理者が否認する（部屋予約は不変）。 */
   ALLOWED_TRANSITIONS_[STATUS.AWAITING_PAYMENT] = [STATUS.PAYMENT_PENDING, STATUS.CONFIRMED, STATUS.DECLINED, STATUS.CANCELLED];
   /* PAYMENT_PENDING→AWAITING_PAYMENT: 決済失敗・Checkout失効後に再試行できる状態へ戻す。 */
@@ -108,13 +109,34 @@ var BookingOptions = (function () {
   /* 予約の機材項目コード: 'EQ:<機材コード>:<数量>'。 */
   var EQUIPMENT_ITEM_PREFIX = 'EQ:';
 
-  function equipmentItemCode_(code, quantity) {
-    return EQUIPMENT_ITEM_PREFIX + code + ':' + quantity;
+  /* freeQuantity（セット無料の数量。Issue #438）が正のときだけ末尾に ':F<数量>' を付ける。 */
+  function equipmentItemCode_(code, quantity, freeQuantity) {
+    return EQUIPMENT_ITEM_PREFIX + code + ':' + quantity + (freeQuantity > 0 ? ':F' + freeQuantity : '');
   }
 
   function parseEquipmentItem_(item) {
-    var m = /^EQ:([A-Z0-9_]+):(\d+)$/.exec(String(item || ''));
-    return m ? { code: m[1], quantity: Number(m[2]) } : null;
+    var m = /^EQ:([A-Z0-9_]+):(\d+)(?::F(\d+))?$/.exec(String(item || ''));
+    return m ? { code: m[1], quantity: Number(m[2]), freeQuantity: m[3] ? Number(m[3]) : 0 } : null;
+  }
+
+  /*
+   * セット無料の数量（Issue #438）。freeWhenWith.codes の機材と同時に申し込んだ分だけ、
+   * 対象機材1点につき1点まで無料（無料数 = min(数量, codes機材の合計数量)）。
+   * 正本は _data/studio_x_equipment.json の rental[].freeWhenWith。料金計算はこの関数を通す。
+   * equipment: { 機材コード: 数量 }（今回の申込分。既存注文とは合算しない＝「同時に選択」のみ）。
+   */
+  function bundleFreeQuantities_(equipment) {
+    var free = {};
+    StudioXEquipmentCatalog.rental.forEach(function (item) {
+      var bundle = item.freeWhenWith;
+      var quantity = equipment[item.code] || 0;
+      if (!bundle || !(quantity > 0)) return;
+      var companions = 0;
+      bundle.codes.forEach(function (code) { companions += equipment[code] || 0; });
+      var units = Math.min(quantity, companions);
+      if (units > 0) free[item.code] = units;
+    });
+    return free;
   }
 
   /* 管理者の利用許可が条件の機材コード一覧（有料レンタル機材全件）。 */
@@ -225,6 +247,8 @@ var BookingOptions = (function () {
       'スタッフによる事前設営・片付けは、スタッフの予定を確認する必要があるため事前確認制です。' +
       'お申し込み後、対応可否をご案内します。承認後にオンライン決済をお願いします。' +
       '申込時点ではスタッフ対応は確定していません。',
+    EQUIPMENT_SETUP:
+      '有料の機材レンタルを選ぶ場合は、設営方法（セルフ設営＝無料／スタッフ設営＝事前設営料金・事前確認制）の選択が必要です。',
     SELF_VS_STAFF:
       'セルフ（自分で設営・原状復帰）は無料で、スタッフの空き確認は不要です。スタッフ対応（有料）は承認後の決済で確定します。',
     EMAIL_SUPPORT: EMAIL_SUPPORT_NOTE_
@@ -264,10 +288,11 @@ var BookingOptions = (function () {
           unitPriceJpy: item.unitPriceJpy,
           unitLabel: item.unitLabel || '',
           stock: item.stock,
-          requiresLecture: item.requiresLecture === true
+          requiresLecture: item.requiresLecture === true,
+          freeWhenWith: item.freeWhenWith ? { codes: item.freeWhenWith.codes.slice(), label: item.freeWhenWith.label } : null
         };
       }).concat(StudioXEquipmentCatalog.freeSelf.filter(function (item) { return item.selectable === true; }).map(function (item) {
-        return { code: item.code, label: item.label, unitPriceJpy: 0, unitLabel: '', stock: item.stock, requiresLecture: false };
+        return { code: item.code, label: item.label, unitPriceJpy: 0, unitLabel: '', stock: item.stock, requiresLecture: false, freeWhenWith: null };
       })),
       themes: THEME_CODES_.map(function (code) { return { code: code, label: THEMES[code].label }; }),
       staffServices: {
@@ -345,8 +370,17 @@ var BookingOptions = (function () {
       return { ok: false, error: err_('INVALID_OPTIONS', 'メールサポートの指定が正しくありません。') };
     }
 
+    /* 有料レンタル機材を1点でも選んだら設営方法（セルフ/スタッフ）の明示選択が必須（Issue #438）。
+       未指定を既定のセルフ扱いにしない（直接APIを叩いても必ずここで拒否する）。 */
+    var hasPaidRental = equipmentCodes.some(function (code) { return !!equipmentRental_(code) && equipment[code] > 0; });
+    var setupExplicit = selection.setupService !== undefined && selection.setupService !== null && selection.setupService !== '';
+    if (hasPaidRental && !setupExplicit) {
+      return { ok: false, error: err_('SETUP_METHOD_REQUIRED', '機材をレンタルする場合は、設営方法（セルフ設営／スタッフ設営）を選択してください。') };
+    }
+
     var normalized = {
       equipment: equipment,
+      equipmentSetup: hasPaidRental ? setupService : '',
       layouts: uniqueStrings_(layouts),
       setupService: setupService,
       cleanupService: cleanupService,
@@ -373,7 +407,7 @@ var BookingOptions = (function () {
   }
 
   function emptySelection_() {
-    return { equipment: {}, layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false };
+    return { equipment: {}, equipmentSetup: '', layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false };
   }
 
   /* ---- 項目コード ----
@@ -391,7 +425,9 @@ var BookingOptions = (function () {
     var eq = parseEquipmentItem_(code);
     if (eq) {
       var eqDef = equipmentRental_(eq.code) || equipmentFreeSelf_(eq.code);
-      return (eqDef ? eqDef.label : eq.code) + (eq.quantity > 1 ? ' ×' + eq.quantity : '');
+      var freeNote = '';
+      if (eq.freeQuantity > 0) freeNote = eq.freeQuantity >= eq.quantity ? '（セット無料）' : '（うち' + eq.freeQuantity + '点セット無料）';
+      return (eqDef ? eqDef.label : eq.code) + (eq.quantity > 1 ? ' ×' + eq.quantity : '') + freeNote;
     }
     if (code === ITEM_PREFIX.EMAIL_SUPPORT) return 'メールサポート';
     var themeOf = function (prefix) { var t = THEMES[code.slice(prefix.length)]; return t ? t.label : code.slice(prefix.length); };
@@ -477,6 +513,7 @@ var BookingOptions = (function () {
     var freeEquipmentItems = [];
     var eligibleCodes = (input.eligibility && input.eligibility.eligibleEquipmentCodes) || [];
     var equipmentCodes = Object.keys(normalized.equipment);
+    var bundleFree = bundleFreeQuantities_(normalized.equipment);
     for (var i = 0; i < equipmentCodes.length; i++) {
       var code = equipmentCodes[i];
       var quantity = normalized.equipment[code];
@@ -491,16 +528,33 @@ var BookingOptions = (function () {
            利用履歴や、別のビデオライト系機材の許可では通さない。許可を確認できない申込は拒否して
            消さず、Checkoutを発行しない保留注文として残し、管理者が「許可済みにして進める」か
            「不承認」にする（直接改ざんされた入力でもサーバー側で必ずこの状態に落ちる）。 */
-        if (rental.requiresLecture === true && eligibleCodes.indexOf(code) === -1) {
-          holdItems.push(equipmentItemCode_(code, quantity));
-          holdTotal += rental.unitPriceJpy * quantity;
+        var freeQuantity = bundleFree[code] || 0;
+        var lineJpy = rental.unitPriceJpy * (quantity - freeQuantity);
+        /* セット無料の付帯機材は、相手機材のどれかが許可待ちなら同じ保留注文に載せる
+           （許可前に付帯機材だけ支払い・確定させない。Issue #438） */
+        var companionOnHold = freeQuantity > 0 && rental.freeWhenWith.codes.some(function (c) {
+          var companion = equipmentRental_(c);
+          return normalized.equipment[c] > 0 && companion && companion.requiresLecture === true && eligibleCodes.indexOf(c) === -1;
+        });
+        if (rental.requiresLecture === true && (eligibleCodes.indexOf(code) === -1 || companionOnHold)) {
+          holdItems.push(equipmentItemCode_(code, quantity, freeQuantity));
+          holdTotal += lineJpy;
         } else {
-          paidItems.push(equipmentItemCode_(code, quantity));
-          paidTotal += rental.unitPriceJpy * quantity;
+          paidItems.push(equipmentItemCode_(code, quantity, freeQuantity));
+          paidTotal += lineJpy;
         }
       } else {
         freeEquipmentItems.push(equipmentItemCode_(code, quantity));
       }
+    }
+    /* 請求額0円の支払い対象注文はCheckoutを作れないため、保留注文へ寄せる（許可を確認するまで何も確定させない側へ倒す）。
+       保留注文が0円（セット無料の付帯機材だけが許可待ち）の場合は、Admin承認で支払いなしに確定する
+       （OptionOrderService.decide_）。 */
+    if (paidItems.length > 0 && holdItems.length > 0 && paidTotal === 0) {
+      holdItems = holdItems.concat(paidItems);
+      holdTotal += paidTotal;
+      paidItems = [];
+      paidTotal = 0;
     }
     if (paidItems.length > 0) {
       orders.push({

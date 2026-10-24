@@ -72,9 +72,9 @@ test('カタログ: スタッフ対応料金は3,000/3,000/5,000円、5テーマ
 
 test('機材カタログ: Issue追加要件の個別料金・数量と完全に一致する', function () {
   var expected = {
-    COB_BICOLOR: [1, 800], PANEL_FULLCOLOR: [1, 500], COB_FULLCOLOR: [2, 800], STROBE_MONOBLOCK: [1, 800], STROBE_PORTABLE: [1, 800],
+    COB_BICOLOR: [1, 800], PANEL_FULLCOLOR: [1, 500], COB_FULLCOLOR: [2, 1000], STROBE_MONOBLOCK: [1, 800], STROBE_PORTABLE: [1, 1000],
     BACKGROUND_STAND: [1, 200], COMMANDER_CANON: [1, 300], COMMANDER_SONY: [1, 300], STAND_260: [3, 200], BOWENS_BRACKET: [1, 200],
-    SOFTBOX_STRIP_60X90: [1, 300], SOFTBOX_STRIP_30X120: [1, 300], SOFTBOX_60: [1, 300], COLOR_FILTER_SET: [1, 200]
+    SOFTBOX_STRIP_60X90: [1, 300], SOFTBOX_STRIP_30X120: [2, 300], SOFTBOX_60: [1, 300], COLOR_FILTER_SET: [1, 200]
   };
   var actual = {};
   plain(sandbox.StudioXEquipmentCatalog.rental).forEach(function (e) { actual[e.code] = [e.stock, e.unitPriceJpy]; });
@@ -221,49 +221,49 @@ test('同じテーマの設営をセルフとスタッフで同時に選ぶ矛�
 // ---- 有料機材（個別加算・在庫・資格） ----
 
 test('機材は1点ごとの個別加算（数量×単価）。承認不要・決済待ち（AWAITING_PAYMENT）の注文になる', function () {
-  var r = plan(select({ equipment: { STROBE_MONOBLOCK: 1, STAND_260: 2, SOFTBOX_60: 1, COMMANDER_CANON: 1 } }));
+  var r = plan(select({ equipment: { STROBE_MONOBLOCK: 1, STAND_260: 2, SOFTBOX_60: 1, COMMANDER_CANON: 1 }, setupService: 'SELF' }));
   assert.ok(r.ok, JSON.stringify(r.error));
   var eq = r.orders[0];
   assert.strictEqual(eq.category, 'EQUIPMENT');
-  assert.strictEqual(eq.amountJpy, 800 + 200 * 2 + 300 + 300);
+  assert.strictEqual(eq.amountJpy, 800 + 200 + 300 + 300, 'ストロボとセットのライトスタンド2本のうち1本は無料（相手機材1点につき1本まで）、残り1本は200円');
   assert.strictEqual(eq.approvalStatus, 'NOT_REQUIRED');
   assert.strictEqual(eq.paymentStatus, 'NOT_STARTED');
   assert.strictEqual(eq.status, 'AWAITING_PAYMENT');
-  assert.deepStrictEqual(plain(eq.items.sort()), ['EQ:COMMANDER_CANON:1', 'EQ:SOFTBOX_60:1', 'EQ:STAND_260:2', 'EQ:STROBE_MONOBLOCK:1']);
+  assert.deepStrictEqual(plain(eq.items.sort()), ['EQ:COMMANDER_CANON:1', 'EQ:SOFTBOX_60:1', 'EQ:STAND_260:2:F1', 'EQ:STROBE_MONOBLOCK:1']);
 });
 
-test('複数台の機材は数量×単価: フルカラーCOB 2台=1,600円、ライトスタンド3本=600円', function () {
-  assert.strictEqual(plan(select({ equipment: { COB_FULLCOLOR: 2 } })).orders[0].amountJpy, 1600);
-  assert.strictEqual(plan(select({ equipment: { STAND_260: 3 } })).orders[0].amountJpy, 600);
-  assert.strictEqual(plan(select({ equipment: { COB_FULLCOLOR: 1, STAND_260: 1 } })).orders[0].amountJpy, 1000);
+test('複数台の機材は数量×単価: フルカラーCOB 2台=2,000円、ライトスタンド3本（単独）=600円', function () {
+  assert.strictEqual(plan(select({ equipment: { COB_FULLCOLOR: 2 }, setupService: 'SELF' })).orders[0].amountJpy, 2000);
+  assert.strictEqual(plan(select({ equipment: { STAND_260: 3 }, setupService: 'SELF' })).orders[0].amountJpy, 600);
+  assert.strictEqual(plan(select({ equipment: { COB_FULLCOLOR: 1, STAND_260: 1 }, setupService: 'SELF' })).orders[0].amountJpy, 1000, 'ライトとセットのスタンドは無料');
 });
 
 test('在庫数を超える申込は拒否（既存の有効な注文の数量も合算）。不承認・取消の注文は在庫を占有しない', function () {
-  var overNew = plan(select({ equipment: { STAND_260: 3 } }), { existingOrders: [{ status: 'AWAITING_PAYMENT', items: ['EQ:STAND_260:1'] }] });
+  var overNew = plan(select({ equipment: { STAND_260: 3 }, setupService: 'SELF' }), { existingOrders: [{ status: 'AWAITING_PAYMENT', items: ['EQ:STAND_260:1'] }] });
   assert.strictEqual(overNew.ok, false);
   assert.strictEqual(overNew.error.code, 'STOCK_EXCEEDED');
-  assert.ok(plan(select({ equipment: { STAND_260: 2 } }), { existingOrders: [{ status: 'AWAITING_PAYMENT', items: ['EQ:STAND_260:1'] }] }).ok, '残り2本まで追加できる');
-  assert.ok(plan(select({ equipment: { STAND_260: 3 } }), { existingOrders: [{ status: 'CANCELLED', items: ['EQ:STAND_260:3'] }] }).ok);
-  assert.strictEqual(plan(select({ equipment: { STROBE_MONOBLOCK: 1 } }), { existingOrders: [{ status: 'CONFIRMED', items: ['EQ:STROBE_MONOBLOCK:1'] }] }).error.code, 'STOCK_EXCEEDED');
+  assert.ok(plan(select({ equipment: { STAND_260: 2 }, setupService: 'SELF' }), { existingOrders: [{ status: 'AWAITING_PAYMENT', items: ['EQ:STAND_260:1'] }] }).ok, '残り2本まで追加できる');
+  assert.ok(plan(select({ equipment: { STAND_260: 3 }, setupService: 'SELF' }), { existingOrders: [{ status: 'CANCELLED', items: ['EQ:STAND_260:3'] }] }).ok);
+  assert.strictEqual(plan(select({ equipment: { STROBE_MONOBLOCK: 1 }, setupService: 'SELF' }), { existingOrders: [{ status: 'CONFIRMED', items: ['EQ:STROBE_MONOBLOCK:1'] }] }).error.code, 'STOCK_EXCEEDED');
 });
 
 test('背景スタンドは200円の有料レンタル機材（Issue #430）。無料注文ではなくEQUIPMENT注文で課金され、Admin許可制', function () {
-  var r = plan(select({ equipment: { BACKGROUND_STAND: 1 } }));
+  var r = plan(select({ equipment: { BACKGROUND_STAND: 1 }, setupService: 'SELF' }));
   assert.ok(r.ok);
   assert.strictEqual(r.orders.length, 1);
   assert.strictEqual(r.orders[0].category, 'EQUIPMENT');
   assert.strictEqual(r.orders[0].amountJpy, 200);
   assert.strictEqual(r.orders[0].status, 'AWAITING_PAYMENT');
-  var held = plan(select({ equipment: { BACKGROUND_STAND: 1 } }), { eligibility: NOT_ELIGIBLE });
+  var held = plan(select({ equipment: { BACKGROUND_STAND: 1 }, setupService: 'SELF' }), { eligibility: NOT_ELIGIBLE });
   assert.strictEqual(held.orders[0].status, 'PENDING_APPROVAL', '未許可は保留（Checkoutを発行しない）');
-  var mixed = plan(select({ equipment: { BACKGROUND_STAND: 1, STROBE_PORTABLE: 1 } }));
-  assert.strictEqual(mixed.orders.filter(function (o) { return o.category === 'EQUIPMENT'; })[0].amountJpy, 1000);
+  var mixed = plan(select({ equipment: { BACKGROUND_STAND: 1, STROBE_PORTABLE: 1 }, setupService: 'SELF' }));
+  assert.strictEqual(mixed.orders.filter(function (o) { return o.category === 'EQUIPMENT'; })[0].amountJpy, 1200);
 });
 
 test('有料レンタル機材は全件、Admin付与の利用許可が無ければ拒否せず保留注文にする。Checkoutは発行できず、管理者が許可/不承認する', function () {
   ALL_RENTAL_CODES.forEach(function (code) {
     var sel = {}; sel[code] = 1;
-    var r = plan(select({ equipment: sel }), { eligibility: NOT_ELIGIBLE });
+    var r = plan(select({ equipment: sel, setupService: 'SELF' }), { eligibility: NOT_ELIGIBLE });
     assert.strictEqual(r.ok, true, code);
     assert.strictEqual(r.orders.length, 1, code);
     var hold = r.orders[0];
@@ -276,27 +276,27 @@ test('有料レンタル機材は全件、Admin付与の利用許可が無けれ
     assert.strictEqual(BookingOptions.summarizeOrder(hold).requiresApproval, true, code);
   });
   // 許可済みなら承認不要・決済待ち
-  var ok = plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: ELIGIBLE });
+  var ok = plan(select({ equipment: { COB_BICOLOR: 1 }, setupService: 'SELF' }), { eligibility: ELIGIBLE });
   assert.strictEqual(ok.orders[0].status, 'AWAITING_PAYMENT');
   assert.strictEqual(ok.orders[0].approvalStatus, 'NOT_REQUIRED');
   assert.strictEqual(BookingOptions.summarizeOrder(ok.orders[0]).eligibilityHold, false);
   // 資格情報が無い（旧形式・欠落）場合も同じ保留状態に落ちる（fail-closed。直接改ざん入力でも決済へ進まない）
   [{ videoLightSelfRental: true }, undefined].forEach(function (elig) {
-    var r = BookingOptions.planOrders({ normalized: select({ equipment: { COB_BICOLOR: 1 } }), existingOrders: [], optionsConfig: CONFIG_WITH_PRICES, eligibility: elig });
+    var r = BookingOptions.planOrders({ normalized: select({ equipment: { COB_BICOLOR: 1 }, setupService: 'SELF' }), existingOrders: [], optionsConfig: CONFIG_WITH_PRICES, eligibility: elig });
     assert.strictEqual(r.ok, true);
     assert.strictEqual(r.orders[0].status, 'PENDING_APPROVAL');
   });
 });
 
 test('ストロボ・ソフトボックス・アクセサリーも未許可なら保留注文になり、Checkoutに進めない（Issue #430）', function () {
-  var r = plan(select({ equipment: { STROBE_MONOBLOCK: 1, STROBE_PORTABLE: 1, STAND_260: 1, COMMANDER_SONY: 1, COLOR_FILTER_SET: 1, SOFTBOX_60: 1 } }), { eligibility: NOT_ELIGIBLE });
+  var r = plan(select({ equipment: { STROBE_MONOBLOCK: 1, STROBE_PORTABLE: 1, STAND_260: 1, COMMANDER_SONY: 1, COLOR_FILTER_SET: 1, SOFTBOX_60: 1 }, setupService: 'SELF' }), { eligibility: NOT_ELIGIBLE });
   assert.strictEqual(r.orders.length, 1);
   assert.strictEqual(r.orders[0].status, 'PENDING_APPROVAL');
   assert.strictEqual(BookingOptions.isPayable(r.orders[0]), false);
 });
 
 test('許可済みの機材と未許可の機材を同時に申し込むと注文が分かれる: 許可済み分は決済待ち、未許可分だけ保留（保留分の金額が決済額に混ざらない）', function () {
-  var r = plan(select({ equipment: { COB_BICOLOR: 1, STROBE_MONOBLOCK: 1 } }), { eligibility: { eligibleEquipmentCodes: ['STROBE_MONOBLOCK'] } });
+  var r = plan(select({ equipment: { COB_BICOLOR: 1, STROBE_MONOBLOCK: 1 }, setupService: 'SELF' }), { eligibility: { eligibleEquipmentCodes: ['STROBE_MONOBLOCK'] } });
   assert.strictEqual(r.orders.length, 2);
   var byStatus = {};
   r.orders.forEach(function (o) { byStatus[o.status] = o; });
@@ -308,16 +308,16 @@ test('許可済みの機材と未許可の機材を同時に申し込むと注�
 
 test('資格は機材コード単位: バイカラーCOBの許可だけでは、フルカラーCOB・フルカラーパネルは保留になる（許可済み分だけ即決済待ち）', function () {
   var onlyBicolor = { eligibleEquipmentCodes: ['COB_BICOLOR'] };
-  assert.strictEqual(plan(select({ equipment: { COB_BICOLOR: 1 } }), { eligibility: onlyBicolor }).orders[0].status, 'AWAITING_PAYMENT');
-  assert.strictEqual(plan(select({ equipment: { COB_FULLCOLOR: 1 } }), { eligibility: onlyBicolor }).orders[0].status, 'PENDING_APPROVAL');
-  assert.strictEqual(plan(select({ equipment: { PANEL_FULLCOLOR: 1 } }), { eligibility: onlyBicolor }).orders[0].status, 'PENDING_APPROVAL');
-  var mixed = plan(select({ equipment: { COB_BICOLOR: 1, COB_FULLCOLOR: 2 } }), { eligibility: onlyBicolor });
+  assert.strictEqual(plan(select({ equipment: { COB_BICOLOR: 1 }, setupService: 'SELF' }), { eligibility: onlyBicolor }).orders[0].status, 'AWAITING_PAYMENT');
+  assert.strictEqual(plan(select({ equipment: { COB_FULLCOLOR: 1 }, setupService: 'SELF' }), { eligibility: onlyBicolor }).orders[0].status, 'PENDING_APPROVAL');
+  assert.strictEqual(plan(select({ equipment: { PANEL_FULLCOLOR: 1 }, setupService: 'SELF' }), { eligibility: onlyBicolor }).orders[0].status, 'PENDING_APPROVAL');
+  var mixed = plan(select({ equipment: { COB_BICOLOR: 1, COB_FULLCOLOR: 2 }, setupService: 'SELF' }), { eligibility: onlyBicolor });
   assert.strictEqual(mixed.orders.length, 2);
   var pay = mixed.orders.filter(function (o) { return o.status === 'AWAITING_PAYMENT'; })[0];
   var hold = mixed.orders.filter(function (o) { return o.status === 'PENDING_APPROVAL'; })[0];
   assert.deepStrictEqual(plain(pay.items), ['EQ:COB_BICOLOR:1']);
   assert.deepStrictEqual(plain(hold.items), ['EQ:COB_FULLCOLOR:2']);
-  assert.strictEqual(hold.amountJpy, 1600);
+  assert.strictEqual(hold.amountJpy, 2000);
 });
 
 test('lectureRequiredEquipmentCodes / equipmentCodeOfItem: 対象は有料レンタル機材全件、機材項目からコードだけを取り出す', function () {
@@ -361,7 +361,7 @@ test('状態遷移: PENDING_APPROVAL→承認→支払い→CONFIRMED、不承�
   assert.ok(BookingOptions.canTransition(S.PENDING_APPROVAL, S.DECLINED));
   // 承認前に決済待ち/確定へ飛べない
   assert.strictEqual(BookingOptions.canTransition(S.PENDING_APPROVAL, S.PAYMENT_PENDING), false);
-  assert.strictEqual(BookingOptions.canTransition(S.PENDING_APPROVAL, S.CONFIRMED), false);
+  assert.strictEqual(BookingOptions.canTransition(S.PENDING_APPROVAL, S.CONFIRMED), true, '請求額0円（セット無料）の機材注文はAdmin許可で確定できる（Issue #438）。決済経由の確定は決済待ちからのみ');
   // 終端は動かない
   [S.DECLINED, S.CANCELLED, S.CONFIRMED].forEach(function (t) {
     Object.keys(S).forEach(function (k) { assert.strictEqual(BookingOptions.canTransition(t, S[k]), false); });
@@ -547,4 +547,81 @@ test('スタッフ対応料金(3,000/5,000円)はBookingOptions.gsにのみ定�
   var canon = JSON.parse(fs.readFileSync(path.join(root, '_data/studio_x_equipment.json'), 'utf8'));
   assert.strictEqual(canon.staffService.services.PRE_SETUP.priceJpy, 3000);
   assert.strictEqual(canon.staffService.services.BOTH.priceJpy, 5000);
+});
+
+// ---- Issue #438: セット無料・設営方法の必須選択 ----
+
+test('ライトスタンド: 単独は200円/本、ライト・ストロボとセットなら相手機材1点につき1本まで無料（二重計上しない）', function () {
+  assert.strictEqual(plan(select({ equipment: { STAND_260: 2 }, setupService: 'SELF' })).orders[0].amountJpy, 400, '単独は200円/本');
+  var withLight = plan(select({ equipment: { COB_FULLCOLOR: 2, STAND_260: 2 }, setupService: 'SELF' }));
+  assert.strictEqual(withLight.orders[0].amountJpy, 2000, 'COB2台=2,000円、スタンド2本は無料');
+  assert.deepStrictEqual(plain(withLight.orders[0].items.sort()), ['EQ:COB_FULLCOLOR:2', 'EQ:STAND_260:2:F2']);
+  var extra = plan(select({ equipment: { COB_FULLCOLOR: 1, STAND_260: 3 }, setupService: 'SELF' }));
+  assert.strictEqual(extra.orders[0].amountJpy, 1000 + 200 * 2, 'ライト1台につき1本無料、残り2本は200円');
+  assert.ok(plan(select({ equipment: { STROBE_PORTABLE: 1, STAND_260: 1 }, setupService: 'SELF' })).orders[0].items.indexOf('EQ:STAND_260:1:F1') !== -1);
+  assert.strictEqual(plan(select({ equipment: { SOFTBOX_60: 1, STAND_260: 1 }, setupService: 'SELF' })).orders[0].amountJpy, 500, 'ソフトボックスはセット対象ではない');
+});
+
+test('ボーエンズマウントブラケット: 単独200円、ポータブルストロボとセットなら無料（モノブロックではセット無料にならない）', function () {
+  assert.strictEqual(plan(select({ equipment: { BOWENS_BRACKET: 1 }, setupService: 'SELF' })).orders[0].amountJpy, 200);
+  var set = plan(select({ equipment: { STROBE_PORTABLE: 1, BOWENS_BRACKET: 1 }, setupService: 'SELF' }));
+  assert.strictEqual(set.orders[0].amountJpy, 1000);
+  assert.ok(set.orders[0].items.indexOf('EQ:BOWENS_BRACKET:1:F1') !== -1);
+  assert.strictEqual(plan(select({ equipment: { STROBE_MONOBLOCK: 1, BOWENS_BRACKET: 1 }, setupService: 'SELF' })).orders[0].amountJpy, 1000);
+});
+
+test('ストリップソフトボックス（30×120cm）は300円/個で最大2個、フルカラーCOBは1,000円/台で最大2台', function () {
+  assert.strictEqual(plan(select({ equipment: { SOFTBOX_STRIP_30X120: 2 }, setupService: 'SELF' })).orders[0].amountJpy, 600);
+  assert.strictEqual(BookingOptions.normalizeSelection({ equipment: { SOFTBOX_STRIP_30X120: 3 }, setupService: 'SELF' }).error.code, 'STOCK_EXCEEDED');
+  assert.strictEqual(BookingOptions.normalizeSelection({ equipment: { COB_FULLCOLOR: 3 }, setupService: 'SELF' }).error.code, 'STOCK_EXCEEDED');
+});
+
+test('セット無料の表示: 品目名に「セット無料」が付き、Admin・メール・Checkoutの品名（describeItem）で一致する', function () {
+  assert.strictEqual(BookingOptions.describeItem('EQ:STAND_260:2:F2'), 'ライトスタンド（260cm） ×2（セット無料）');
+  assert.strictEqual(BookingOptions.describeItem('EQ:STAND_260:3:F1'), 'ライトスタンド（260cm） ×3（うち1点セット無料）');
+  assert.strictEqual(BookingOptions.describeItem('EQ:STAND_260:2'), 'ライトスタンド（260cm） ×2');
+  var catalog = BookingOptions.buildCatalog('studio_x', {});
+  var stand = catalog.equipment.filter(function (e) { return e.code === 'STAND_260'; })[0];
+  assert.strictEqual(stand.unitPriceJpy, 200);
+  assert.strictEqual(stand.freeWhenWith.label, 'ライト・ストロボとセットで無料／単独200円');
+  assert.strictEqual(catalog.equipment.filter(function (e) { return e.code === 'BOWENS_BRACKET'; })[0].freeWhenWith.label, 'ポータブルストロボとセットで無料／単独200円');
+});
+
+test('有料機材を選んだら設営方法（セルフ/スタッフ）の明示選択が必須。未指定は拒否、セルフは0円、スタッフは既存の事前設営フロー', function () {
+  assert.strictEqual(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 } }).error.code, 'SETUP_METHOD_REQUIRED');
+  assert.strictEqual(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: '' }).error.code, 'SETUP_METHOD_REQUIRED');
+  assert.ok(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'SELF' }).ok);
+  assert.ok(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'NONE' }).ok, '後付けで設営が申込済みの場合');
+  assert.ok(BookingOptions.normalizeSelection({ layouts: ['CLASSROOM'] }).ok, '機材なしのセッティングは従来どおり既定セルフ');
+  assert.ok(BookingOptions.normalizeSelection({ equipment: { BACKGROUND_STAND: 1 }, setupService: 'SELF' }).ok);
+  assert.strictEqual(BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'STAFF' }).error.code, 'LAYOUT_REQUIRED_FOR_STAFF_SERVICE', 'スタッフ設営は対象テーマが必要');
+  var staff = plan(select({ equipment: { STROBE_PORTABLE: 1 }, layouts: ['GRUNGE'], setupService: 'STAFF', cleanupService: 'STAFF' }));
+  assert.ok(staff.ok);
+  var staffOrder = staff.orders.filter(function (o) { return o.category === 'STAFF_SERVICE'; })[0];
+  assert.strictEqual(staffOrder.amountJpy, 5000, '事前設営＋片付けは通算5,000円');
+  assert.strictEqual(staffOrder.status, 'PENDING_APPROVAL', 'スタッフ設営は承認後に決済');
+  var self = plan(select({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'SELF' }));
+  assert.strictEqual(self.orders.reduce(function (sum, o) { return sum + o.amountJpy; }, 0), 1000, 'セルフ設営は追加料金なし');
+  var preOnly = plan(select({ equipment: { STROBE_PORTABLE: 1 }, layouts: ['GRUNGE'], setupService: 'STAFF', cleanupService: 'SELF' }));
+  assert.strictEqual(preOnly.orders.filter(function (o) { return o.category === 'STAFF_SERVICE'; })[0].amountJpy, 3000);
+});
+
+test('セット無料の付帯機材だけが許可待ちの場合は0円の保留注文になり、許可済みの本体は支払い対象のまま（付帯機材は勝手に確定しない）', function () {
+  var r = plan(select({ equipment: { STROBE_PORTABLE: 1, BOWENS_BRACKET: 1 }, setupService: 'SELF' }), { eligibility: { eligibleEquipmentCodes: ['STROBE_PORTABLE'] } });
+  assert.ok(r.ok);
+  var hold = r.orders.filter(function (o) { return o.status === 'PENDING_APPROVAL'; })[0];
+  assert.ok(hold, '付帯機材はAdmin許可待ち');
+  assert.strictEqual(hold.amountJpy, 0);
+  assert.deepStrictEqual(plain(hold.items), ['EQ:BOWENS_BRACKET:1:F1']);
+  var pay = r.orders.filter(function (o) { return o.status === 'AWAITING_PAYMENT'; });
+  assert.strictEqual(pay.length, 1);
+  assert.strictEqual(pay[0].amountJpy, 1000);
+});
+
+test('ライトが許可待ちなら、セット無料のスタンドも同じ保留注文に載る（許可前に付帯機材だけ決済・確定させない）', function () {
+  var r = plan(select({ equipment: { COB_FULLCOLOR: 1, STAND_260: 1 }, setupService: 'SELF' }), { eligibility: { eligibleEquipmentCodes: ['STAND_260'] } });
+  assert.ok(r.ok);
+  assert.strictEqual(r.orders.length, 1);
+  assert.strictEqual(r.orders[0].status, 'PENDING_APPROVAL');
+  assert.strictEqual(r.orders[0].amountJpy, 1000);
 });
