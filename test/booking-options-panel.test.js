@@ -22,7 +22,7 @@ var CATALOG = {
   equipment: [
     { code: 'COB_BICOLOR', label: 'バイカラーCOBライト（定常光）', unitPriceJpy: 800, unitLabel: '', stock: 1, requiresLecture: true },
     { code: 'STAND_260', label: 'ライトスタンド（260cm）', unitPriceJpy: 200, unitLabel: '本', stock: 3, requiresLecture: false },
-    { code: 'BACKGROUND_STAND', label: '背景スタンド', unitPriceJpy: 0, unitLabel: '', stock: 1, requiresLecture: false }
+    { code: 'BACKGROUND_STAND', label: '背景スタンド', unitPriceJpy: 200, unitLabel: '', stock: 1, requiresLecture: true }
   ],
   themes: [
     { code: 'CLASSROOM', label: '教室セット（机・黒板）' }, { code: 'JAPANESE', label: '和風セット' }, { code: 'GRUNGE', label: 'グランジセット' },
@@ -47,7 +47,7 @@ test('buildSelection: 何も選ばなければnull（payloadにoptionsを付け�
 
 test('equipmentTotalJpy: 数量×単価の個別加算。単価はカタログの値だけを使う（無料セルフは0円）', function () {
   assert.strictEqual(Panel.equipmentTotalJpy(CATALOG, { COB_BICOLOR: 1, STAND_260: 3 }), 800 + 600);
-  assert.strictEqual(Panel.equipmentTotalJpy(CATALOG, { BACKGROUND_STAND: 1 }), 0);
+  assert.strictEqual(Panel.equipmentTotalJpy(CATALOG, { BACKGROUND_STAND: 1 }), 200);
   assert.strictEqual(Panel.equipmentTotalJpy(CATALOG, {}), 0);
   var changed = JSON.parse(JSON.stringify(CATALOG));
   changed.equipment[1].unitPriceJpy = 250;
@@ -163,9 +163,10 @@ test('メール内リンクの案内ページURLはStudio Xのオプション案
   assert.strictEqual(url, 'https://nagoya-base.github.io/Studio-nagoya-base/studio-x/booking/options/?bookingId=SX-20261101-AAAAAAAA');
 });
 
-test('画面の案内文言: ビデオライト系は「対面で操作レクチャーを受け、利用許可済みの方のみ」で、未許可の申込は保留（お支払い・確定は管理者の確認後）。「過去利用者のみ」とは言わない', function () {
+test('画面の案内文言: 有料レンタル機材全般は施錠管理で「管理者の利用許可が必要」で、未許可の申込は保留（お支払い・確定は管理者の確認後）。「過去利用者のみ」とは言わない', function () {
   var src = read('scripts/booking-options.js').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.ok(src.indexOf('対面で操作レクチャーを受け、利用許可済みの方のみご利用いただけます') !== -1);
+  assert.ok(src.indexOf('有料レンタル機材は施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要です') !== -1);
+  assert.ok(src.indexOf('ストロボ等に資格の制限はありません') === -1, '資格制限なしの旧文言を残さない');
   assert.ok(src.indexOf('申込は保留となり、管理者が確認するまでお支払い・確定はできません') !== -1);
   assert.ok(src.indexOf('過去にビデオライト') === -1 && src.indexOf('過去の') === -1);
 });

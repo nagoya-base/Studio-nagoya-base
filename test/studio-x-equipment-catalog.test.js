@@ -28,7 +28,7 @@ test('正本の内容がIssueの確定料金・数量・常設無料設備と一
   var rental = {};
   data.rental.forEach(function (e) { rental[e.code] = e.stock + 'x' + e.unitPriceJpy + (e.unitLabel ? '/' + e.unitLabel : ''); });
   assert.deepStrictEqual(rental, {
-    COB_BICOLOR: '1x800', PANEL_FULLCOLOR: '1x500', COB_FULLCOLOR: '2x800/台', STROBE_MONOBLOCK: '1x800', STROBE_PORTABLE: '1x800',
+    COB_BICOLOR: '1x800', PANEL_FULLCOLOR: '1x500', COB_FULLCOLOR: '2x800/台', BACKGROUND_STAND: '1x200', STROBE_MONOBLOCK: '1x800', STROBE_PORTABLE: '1x800',
     COMMANDER_CANON: '1x300', COMMANDER_SONY: '1x300', STAND_260: '3x200/本', BOWENS_BRACKET: '1x200',
     SOFTBOX_STRIP_60X90: '1x300', SOFTBOX_STRIP_30X120: '1x300', SOFTBOX_60: '1x300', COLOR_FILTER_SET: '1x200'
   });
@@ -37,7 +37,12 @@ test('正本の内容がIssueの確定料金・数量・常設無料設備と一
     '背景紙 ブラック（135cm×5m）×1', '背景紙 ホワイト（135cm×5m）×1', 'レフ板 5-in-1（80cm）×1'
   ]);
   // 背景布・背景スタンドはセルフ利用が無料
-  assert.deepStrictEqual(data.freeSelf.map(function (e) { return e.code; }), ['BACKGROUND_STAND', 'BACKDROP_CLOTH_WHITE', 'BACKDROP_CLOTH_BLACK']);
+  assert.deepStrictEqual(data.freeSelf.map(function (e) { return e.code; }), ['BACKDROP_CLOTH_WHITE', 'BACKDROP_CLOTH_BLACK']);
+  // 背景スタンドは無料ではなく200円の有料レンタル機材（Issue #430）。背景紙ロールは常設・無料
+  assert.strictEqual(data.rental.filter(function (e) { return e.code === 'BACKGROUND_STAND'; })[0].unitPriceJpy, 200);
+  assert.ok(data.permanent.some(function (e) { return /背景紙 ブラック/.test(e.label); }) && data.permanent.some(function (e) { return /背景紙 ホワイト/.test(e.label); }));
+  // 有料レンタル機材は全件Admin許可制
+  assert.ok(data.rental.every(function (e) { return e.requiresLecture === true; }));
 });
 
 test('スタッフ設営料金とテーマの正本（Issue #430）: 事前設営3,000円／片付け3,000円／両方5,000円、5テーマ共通', function () {
@@ -85,7 +90,9 @@ test('機材ページは正本(site.data)を直接読み、常設無料・有料
   assert.match(html, /id="equipment-rental"/);
   assert.match(html, /id="equipment-self"/);
   assert.match(html, /1点ごとの個別加算/);
-  assert.match(html, /対面で操作レクチャーを受け、利用許可済みの方のみ/);
+  assert.match(html, /施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要/);
+  assert.ok(!/資格制限はありません|資格の制限はありません/.test(html), '資格制限なしの旧文言を残さない');
+  assert.match(html, /背景紙ロール[^。]*無料/);
   assert.ok(html.indexOf('過去にビデオライト') === -1);
   var code = stripComments(html);
   assert.ok(!/\b(800|500|300|200)円/.test(code), '機材の単価をページへ直書きしない');

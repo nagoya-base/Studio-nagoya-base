@@ -34,12 +34,20 @@ var StudioXEquipmentCatalog = {
       "requiresLecture": true
     },
     {
+      "code": "BACKGROUND_STAND",
+      "label": "背景スタンド",
+      "stock": 1,
+      "unitPriceJpy": 200,
+      "unitLabel": "",
+      "requiresLecture": true
+    },
+    {
       "code": "STROBE_MONOBLOCK",
       "label": "モノブロックストロボ",
       "stock": 1,
       "unitPriceJpy": 800,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "STROBE_PORTABLE",
@@ -47,7 +55,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 800,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "COMMANDER_CANON",
@@ -55,7 +63,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "COMMANDER_SONY",
@@ -63,7 +71,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "STAND_260",
@@ -71,7 +79,7 @@ var StudioXEquipmentCatalog = {
       "stock": 3,
       "unitPriceJpy": 200,
       "unitLabel": "本",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "BOWENS_BRACKET",
@@ -79,7 +87,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 200,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "SOFTBOX_STRIP_60X90",
@@ -87,7 +95,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "SOFTBOX_STRIP_30X120",
@@ -95,7 +103,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "SOFTBOX_60",
@@ -103,7 +111,7 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 300,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     },
     {
       "code": "COLOR_FILTER_SET",
@@ -111,16 +119,10 @@ var StudioXEquipmentCatalog = {
       "stock": 1,
       "unitPriceJpy": 200,
       "unitLabel": "",
-      "requiresLecture": false
+      "requiresLecture": true
     }
   ],
   "freeSelf": [
-    {
-      "code": "BACKGROUND_STAND",
-      "label": "背景スタンド",
-      "stock": 1,
-      "selectable": true
-    },
     {
       "code": "BACKDROP_CLOTH_WHITE",
       "label": "背景布 白（幅180cm×長さ250cm）",

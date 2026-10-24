@@ -2,7 +2,7 @@
  * OptionOrderRepository.gs — 予約オプション注文の台帳（Issue #423）。
  *
  * 既存のBookings台帳には列を足さず、別シート`OptionOrders`（注文単位）と
- * `OptionEligibility`（ビデオライト系のセルフレンタル許可＝対面レクチャー済み。管理者が機材コード単位で付与）を使う。
+ * `OptionEligibility`（有料レンタル機材のセルフレンタル許可（Admin付与）。管理者が機材コード単位で付与）を使う。
  * 理由: Bookingsの列追加は本番ヘッダーの手動追記が必要になり、既存の予約・Stripe
  * 決済経路（Bookings列に強く依存）へ影響し得るため。オプション情報が無い既存予約は
  * そもそもOptionOrdersに行が無いだけで、そのまま動作する（後方互換）。

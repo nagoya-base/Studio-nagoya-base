@@ -8,7 +8,7 @@
  * - 料金・対象・文言はGAS（optionCatalog API）が返すカタログが唯一の正本。このファイルに
  *   金額（3,000円等）を持たない。表示する金額は常にカタログの値。
  * - 画面は「選択内容」だけをサーバーへ送る。金額・承認状態・資格はサーバーが判定する
- *   （画面で選択できる＝申込が通る、ではない。ビデオライトのセルフレンタル資格等は
+ *   （画面で選択できる＝申込が通る、ではない。有料レンタル機材の利用許可等は
  *   サーバーの応答をそのまま表示する）。
  * - 無料セルフ（自分で設営・原状復帰）と有料スタッフ対応（事前確認制）の違いが一目で分かる
  *   ようにし、スタッフ対応は「申込時点では確定しない」旨を選択箇所の近くに表示する。
@@ -229,7 +229,7 @@
         root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', text: '機材レンタル合計：' + formatJpy(equipmentTotal) + '（税込。部屋のご予約が確定した後にお支払いいただきます）' }));
       }
       var needsLecture = (catalog.equipment || []).some(function (e) { return e.requiresLecture && state.equipment[e.code]; });
-      root.appendChild(el('p', { className: needsLecture ? 'ba-banner ba-banner--notice' : 'ba-field-help', text: 'ビデオライト系（定常光）のセルフレンタルは、対面で操作レクチャーを受け、利用許可済みの方のみご利用いただけます。許可を確認できない場合、申込は保留となり、管理者が確認するまでお支払い・確定はできません（許可が確認できない場合はお受けできません）。初めての方・レクチャー未実施の方は、先にメールでご相談ください。ストロボ等に資格の制限はありません。' }));
+      root.appendChild(el('p', { className: needsLecture ? 'ba-banner ba-banner--notice' : 'ba-field-help', text: '有料レンタル機材は施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要です。許可を確認できない場合、申込は保留となり、管理者が確認するまでお支払い・確定はできません（許可が確認できない場合はお受けできません）。初めての方は、先にメールでご相談ください。' }));
 
       /* セッティング（テーマ） */
       root.appendChild(el('h3', { className: 'ba-option-heading', text: 'セッティング' }));
