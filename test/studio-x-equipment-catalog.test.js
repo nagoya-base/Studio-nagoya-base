@@ -40,6 +40,42 @@ test('正本の内容がIssueの確定料金・数量・常設無料設備と一
   assert.deepStrictEqual(data.freeSelf.map(function (e) { return e.code; }), ['BACKGROUND_STAND', 'BACKDROP_CLOTH_WHITE', 'BACKDROP_CLOTH_BLACK']);
 });
 
+test('スタッフ設営料金とテーマの正本（Issue #430）: 事前設営3,000円／片付け3,000円／両方5,000円、5テーマ共通', function () {
+  var services = {};
+  Object.keys(data.staffService.services).forEach(function (k) { services[k] = data.staffService.services[k].priceJpy; });
+  assert.deepStrictEqual(services, { PRE_SETUP: 3000, CLEANUP: 3000, BOTH: 5000 });
+  assert.deepStrictEqual(data.staffService.themes.map(function (t) { return t.code; }),
+    ['CLASSROOM', 'JAPANESE', 'GRUNGE', 'WHITE_BACKDROP', 'BLACK_BACKDROP']);
+  // GASの料金表はJSON(生成カタログ)からの参照で、数値を再定義しない
+  var gas = stripComments(read('gas/booking/shared/BookingOptions.gs'));
+  assert.ok(gas.indexOf('StudioXEquipmentCatalog.staffService') !== -1);
+  assert.ok(!/PRE_SETUP:\s*\d/.test(gas) && !/BOTH:\s*\d/.test(gas), 'GASにスタッフ料金を直書きしない');
+});
+
+test('機材ページにスタッフ設営料金を正本から表示し、事前確認制・承認後決済とセルフ無料を明記する（Issue #430）', function () {
+  var html = read('studio-x/equipment/index.html');
+  assert.match(html, /id="staff-service"/);
+  assert.ok(html.indexOf('site.data.studio_x_equipment.staffService') !== -1);
+  assert.match(html, /セルフ設営<\/th><td>無料/);
+  assert.match(html, /セルフ原状復帰<\/th><td>無料/);
+  assert.match(html, /事前確認制/);
+  assert.match(html, /承認/);
+  assert.match(html, /オンラインで決済/);
+});
+
+test('Studio Xのメインナビ「設備・レンタル」は/studio-x/equipment/へ直接つながる（Issue #430）', function () {
+  var top = read('studio-x/index.html');
+  var nav = top.match(/<nav class="desktop-nav"[\s\S]*?<\/nav>/)[0];
+  var mobile = top.match(/<div class="mobile-menu"[\s\S]*?<\/div>/)[0];
+  [nav, mobile].forEach(function (block) {
+    assert.match(block, /<a href="equipment\/">設備・レンタル<\/a>/);
+    assert.ok(block.indexOf('#specs') === -1, '旧「設備」導線(#specs)を残さない');
+  });
+  assert.ok(top.indexOf('id="specs"') !== -1, '#specsセクション自体は残す');
+  var page = read('studio-x/equipment/index.html');
+  assert.ok(page.split('設備・レンタル</a>').length >= 3, '機材ページ自身のデスクトップ/モバイルナビも統一');
+});
+
 test('機材ページは正本(site.data)を直接読み、常設無料・有料レンタル・セルフ無料を分けて表示し、金額を直書きしない', function () {
   var html = read('studio-x/equipment/index.html');
   assert.ok(html.indexOf('site.data.studio_x_equipment.permanent') !== -1);

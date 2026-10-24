@@ -1,5 +1,5 @@
 /*
- * EquipmentCatalog.gs — Studio Xの有料レンタル機材・無料セルフ機材の料金/数量/在庫（Issue #423）。
+ * EquipmentCatalog.gs — Studio Xの有料レンタル機材・無料セルフ機材・スタッフ設営料金の料金/数量/在庫（Issue #423 / #430）。
  *
  * ★自動生成ファイル。直接編集しない。正本は _data/studio_x_equipment.json。
  *   編集後は `node scripts/sync-studio-x-equipment.js` で再生成する（機材ページ
@@ -135,5 +135,52 @@ var StudioXEquipmentCatalog = {
       "selectable": false,
       "viaTheme": "BLACK_BACKDROP"
     }
-  ]
+  ],
+  "staffService": {
+    "_comment": "スタッフ設営・片付けの料金とテーマ（5テーマ共通。テーマ別の個別価格は持たない）。予約オプション(GAS)・Webhook・機材ページはすべてここを参照する。",
+    "themes": [
+      {
+        "code": "CLASSROOM",
+        "label": "教室セット（机・黒板）",
+        "shortLabel": "教室セット"
+      },
+      {
+        "code": "JAPANESE",
+        "label": "和風セット",
+        "shortLabel": "和風セット"
+      },
+      {
+        "code": "GRUNGE",
+        "label": "グランジセット",
+        "shortLabel": "グランジセット"
+      },
+      {
+        "code": "WHITE_BACKDROP",
+        "label": "白背景布",
+        "shortLabel": "白背景布"
+      },
+      {
+        "code": "BLACK_BACKDROP",
+        "label": "黒背景布",
+        "shortLabel": "黒背景布"
+      }
+    ],
+    "services": {
+      "PRE_SETUP": {
+        "label": "事前設営を依頼",
+        "tableLabel": "事前設営（スタッフ）",
+        "priceJpy": 3000
+      },
+      "CLEANUP": {
+        "label": "片付けを依頼",
+        "tableLabel": "片付け（スタッフ）",
+        "priceJpy": 3000
+      },
+      "BOTH": {
+        "label": "事前設営＋片付けセット",
+        "tableLabel": "事前設営＋片付け（スタッフ）",
+        "priceJpy": 5000
+      }
+    }
+  }
 };

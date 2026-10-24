@@ -158,7 +158,7 @@ test('オプション決済完了ページ: 部屋予約の確定とは別の案
 
 test('メール内リンクの案内ページURLはStudio Xのオプション案内ページを指す', function () {
   var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
-  var sb = loadBookingSandbox(['Booking.gs', 'BookingOptions.gs', 'Availability.gs', 'OptionMailTemplates.gs'], {});
+  var sb = loadBookingSandbox(['Booking.gs', 'EquipmentCatalog.gs', 'BookingOptions.gs', 'Availability.gs', 'OptionMailTemplates.gs'], {});
   var url = sb.OptionMailTemplates.buildOptionsPageUrl({ brand: 'studio_x', bookingId: 'SX-20261101-AAAAAAAA' });
   assert.strictEqual(url, 'https://nagoya-base.github.io/Studio-nagoya-base/studio-x/booking/options/?bookingId=SX-20261101-AAAAAAAA');
 });

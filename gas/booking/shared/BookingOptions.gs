@@ -153,19 +153,22 @@ var BookingOptions = (function () {
   }
 
   /* セルフ設営・スタッフ対応の共通対象（Issue #423 追加コメント）。 */
-  var THEMES = {
-    CLASSROOM: { code: 'CLASSROOM', label: '教室セット（机・黒板）' },
-    JAPANESE: { code: 'JAPANESE', label: '和風セット' },
-    GRUNGE: { code: 'GRUNGE', label: 'グランジセット' },
-    WHITE_BACKDROP: { code: 'WHITE_BACKDROP', label: '白背景布' },
-    BLACK_BACKDROP: { code: 'BLACK_BACKDROP', label: '黒背景布' }
-  };
-  var THEME_CODES_ = ['CLASSROOM', 'JAPANESE', 'GRUNGE', 'WHITE_BACKDROP', 'BLACK_BACKDROP'];
+  var THEMES = {};
+  var THEME_CODES_ = StudioXEquipmentCatalog.staffService.themes.map(function (theme) {
+    THEMES[theme.code] = { code: theme.code, label: theme.label };
+    return theme.code;
+  });
 
   /* スタッフ対応の料金（Issue #423 追加コメント。テーマ別の個別価格は持たない）。
-     この表が唯一の正本。画面はoptionCatalog APIで取得して表示し、GAS・Webhookも必ずここを参照する。 */
-  var STAFF_SERVICE_PRICES_ = { PRE_SETUP: 3000, CLEANUP: 3000, BOTH: 5000 };
-  var STAFF_SERVICE_LABELS_ = { PRE_SETUP: '事前設営を依頼', CLEANUP: '片付けを依頼', BOTH: '事前設営＋片付けセット' };
+     正本は _data/studio_x_equipment.json の staffService（生成物 EquipmentCatalog.gs 経由）。機材ページも同じJSONを読むため食い違わない。
+     画面はoptionCatalog APIで取得して表示し、GAS・Webhookも必ずここを参照する。 */
+  var STAFF_SERVICE_PRICES_ = {};
+  var STAFF_SERVICE_LABELS_ = {};
+  Object.keys(StudioXEquipmentCatalog.staffService.services).forEach(function (key) {
+    var service = StudioXEquipmentCatalog.staffService.services[key];
+    STAFF_SERVICE_PRICES_[key] = service.priceJpy;
+    STAFF_SERVICE_LABELS_[key] = service.label;
+  });
 
   /* ---- 定型案内（無料セルフセッティング。Issue #423 追加コメント 3） ----
    *

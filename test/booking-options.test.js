@@ -539,7 +539,10 @@ test('スタッフ対応料金(3,000/5,000円)はBookingOptions.gsにのみ定�
     var code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/<!--[\s\S]*?-->/g, '');
     assert.ok(!/\b3000\b|\b5000\b|3,000|5,000/.test(code), rel + ' に金額が重複して書かれている');
   });
+  // 正本は_data/studio_x_equipment.json（Issue #430）。GASは生成カタログから参照し、数値を再定義しない
   var source = fs.readFileSync(path.join(root, 'gas/booking/shared/BookingOptions.gs'), 'utf8');
-  assert.strictEqual((source.match(/PRE_SETUP: 3000/g) || []).length, 1);
-  assert.strictEqual((source.match(/BOTH: 5000/g) || []).length, 1);
+  assert.ok(!/PRE_SETUP: \d|BOTH: \d/.test(source.replace(/\/\*[\s\S]*?\*\//g, '')));
+  var canon = JSON.parse(fs.readFileSync(path.join(root, '_data/studio_x_equipment.json'), 'utf8'));
+  assert.strictEqual(canon.staffService.services.PRE_SETUP.priceJpy, 3000);
+  assert.strictEqual(canon.staffService.services.BOTH.priceJpy, 5000);
 });
