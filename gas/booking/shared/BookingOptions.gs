@@ -260,7 +260,33 @@ var BookingOptions = (function () {
   var GUIDANCE_PENDING_NOTE_ = '運営にて内容を確認中です。予約確定後に、メールで改めてご案内します。';
   var EMAIL_SUPPORT_NOTE_ = 'セルフセッティング方法は予約案内に記載します。追加のご質問はメールでお問い合わせください。';
 
-  /* 利用者向けの固定文言（画面・メールで共通。複数箇所に重複して書かない）。 */
+  /*
+   * 公開カタログ（optionCatalog API）が返す「利用条件」の構造化データ（Issue #465）。
+   * バックエンドは条件の意味（enum・フラグ）だけを持ち、画面に出す日本語の文章は返さない。
+   * 利用者向けコピーは scripts/booking-options.js（COPY）が組み立てる。ここの値を変えても
+   * 公開画面の文言は変わらない（フロントが値を解釈して表示する）。内部状態名（PENDING_APPROVAL等）や
+   * 管理者向けの用語は、この公開用オブジェクトに含めない。
+   *   equipmentPaymentMethod:        'CARD_ONLY'（オンラインカード決済のみ）
+   *   equipmentPaymentTiming:        'AFTER_ROOM_CONFIRMED'（部屋の予約確定後）
+   *   roomAndOptionsPayment:         'SEPARATE'（部屋代とオプションは別決済）
+   *   staffServicePaymentTiming:     'AFTER_AVAILABILITY_CONFIRMED'（対応可否の確認後）
+   *   staffServiceConfirmedOnApply:  false（申込時点ではスタッフ対応は確定しない）
+   *   equipmentRequiresPrecheck:     true（有料機材は利用条件の事前確認が必要）
+   *   equipmentSetupChoiceRequired:  true（有料機材は設営・片付け方法の選択が必要）
+   *   selfServiceFree:               true（セルフ設営・原状復帰は無料）
+   */
+  var PUBLIC_POLICY_ = {
+    equipmentPaymentMethod: 'CARD_ONLY',
+    equipmentPaymentTiming: 'AFTER_ROOM_CONFIRMED',
+    roomAndOptionsPayment: 'SEPARATE',
+    staffServicePaymentTiming: 'AFTER_AVAILABILITY_CONFIRMED',
+    staffServiceConfirmedOnApply: false,
+    equipmentRequiresPrecheck: true,
+    equipmentSetupChoiceRequired: true,
+    selfServiceFree: true
+  };
+
+  /* 利用者宛メールの固定文言（メール本文用。公開カタログには載せない。画面の文言はフロントが持つ）。 */
   var NOTICES = {
     STAFF_SERVICE_APPROVAL:
       'スタッフ設営・片付けは事前確認制です。お申し込み後に対応可否をご案内し、承認後にオンライン決済をお願いします。申込時点ではスタッフ対応は確定していません。',
@@ -320,7 +346,7 @@ var BookingOptions = (function () {
         CLEANUP: { label: STAFF_SERVICE_LABELS_.CLEANUP, priceJpy: STAFF_SERVICE_PRICES_.CLEANUP },
         BOTH: { label: STAFF_SERVICE_LABELS_.BOTH, priceJpy: STAFF_SERVICE_PRICES_.BOTH }
       },
-      notices: NOTICES
+      policy: Object.keys(PUBLIC_POLICY_).reduce(function (acc, key) { acc[key] = PUBLIC_POLICY_[key]; return acc; }, {})
     };
   }
 
@@ -934,6 +960,7 @@ var BookingOptions = (function () {
     PAYMENT_STATUS: PAYMENT_STATUS,
     STATUS: STATUS,
     NOTICES: NOTICES,
+    PUBLIC_POLICY: PUBLIC_POLICY_,
     ITEM_PREFIX: ITEM_PREFIX,
     isBrandEnabled: isBrandEnabled,
     isActiveStatus: isActiveStatus,
