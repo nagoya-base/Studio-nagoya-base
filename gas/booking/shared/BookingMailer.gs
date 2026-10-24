@@ -812,7 +812,8 @@ var BookingMailer = (function () {
     SEND_UNCONFIRMED: 'SEND_UNCONFIRMED',
     EMAIL_MISSING: 'EMAIL_MISSING',
     PAYMENT_DUE_UNKNOWN: 'PAYMENT_DUE_UNKNOWN',
-    PAYMENT_DUE_PASSED: 'PAYMENT_DUE_PASSED'
+    PAYMENT_DUE_PASSED: 'PAYMENT_DUE_PASSED',
+    START_PASSED: 'START_PASSED'
   };
 
   /*
@@ -834,11 +835,13 @@ var BookingMailer = (function () {
   function evaluatePaymentLinkEligibility_(record, options) {
     var opts = options || {};
 
-    if (record.status !== Booking.STATUS.PENDING) {
+    /* Issue #428: PENDINGに加え、期限切れ（EXPIRED）のカード予約にも手動の決済リンクを
+       送れる。EXPIREDのまま維持し、復活は入金確認後にreviveExpiredBookingが行う。 */
+    if (record.status !== Booking.STATUS.PENDING && record.status !== Booking.STATUS.EXPIRED) {
       return {
         eligible: false,
         reasonCode: PAYMENT_LINK_REASON_CODES_.INVALID_STATUS,
-        message: (record.status || '未設定') + ' の予約には決済リンクメールを送信できません（PENDINGのみ対象）。'
+        message: (record.status || '未設定') + ' の予約には決済リンクメールを送信できません（PENDING/EXPIREDのみ対象）。'
       };
     }
     if (!Booking.isCardPaymentMethod(record.paymentMethod)) {
@@ -890,6 +893,19 @@ var BookingMailer = (function () {
         message: '支払期限を計算できないため送信できません（申込日時・利用開始日時を確認してください）。'
       };
     }
+    var nowMillis = isDateLike_(opts.now) ? opts.now.getTime() : Date.now();
+    if (record.status === Booking.STATUS.EXPIRED) {
+      /* Issue #428: EXPIREDは支払期限を過ぎていて当然のため期限判定は行わず、利用開始前で
+         あることだけを確認する（reviveExpiredBookingも同じ条件で復活を拒否する）。 */
+      if (nowMillis >= record.startAt.getTime()) {
+        return {
+          eligible: false,
+          reasonCode: PAYMENT_LINK_REASON_CODES_.START_PASSED,
+          message: '利用開始時刻を過ぎているため送信できません。'
+        };
+      }
+      return { eligible: true, dueMillis: null };
+    }
     var ttlConfig = BookingConfig.getTtlConfig();
     var dueMillis = Booking.computeCardPaymentDueMillis(
       record.createdAt.getTime(),
@@ -897,7 +913,6 @@ var BookingMailer = (function () {
       ttlConfig.minHoursBeforeStart,
       Booking.cardMinHoldHours(record, ttlConfig.timezone, ttlConfig.minHoldHours)
     );
-    var nowMillis = isDateLike_(opts.now) ? opts.now.getTime() : Date.now();
     if (nowMillis >= dueMillis) {
       return {
         eligible: false,

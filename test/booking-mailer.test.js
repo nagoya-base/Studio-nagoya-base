@@ -608,8 +608,8 @@ test('sendPaymentLinkMailForBooking: 現金・PayPay・未定にはNOT_CARD_PAYM
   });
 });
 
-test('sendPaymentLinkMailForBooking: CONFIRMED/CANCELLED/EXPIREDのカード予約にはINVALID_STATUSで送信できない', function () {
-  ['CONFIRMED', 'CANCELLED', 'EXPIRED'].forEach(function (status) {
+test('sendPaymentLinkMailForBooking: CONFIRMED/CANCELLEDのカード予約にはINVALID_STATUSで送信できない', function () {
+  ['CONFIRMED', 'CANCELLED'].forEach(function (status) {
     var mailApp = stubs.createMailAppStub();
     var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
     var bookingId = seedBooking(ctx, { status: status, bookingId: 'SX-' + status, paymentMethod: 'オンラインクレジットカード' });
@@ -619,6 +619,43 @@ test('sendPaymentLinkMailForBooking: CONFIRMED/CANCELLED/EXPIREDのカード予�
     assert.strictEqual(result.error.code, 'INVALID_STATUS', status);
     assert.strictEqual(mailApp._sentEmails.length, 0, status);
   });
+});
+
+/* ---------- Issue #428: EXPIREDカード予約への手動決済リンク ---------- */
+
+test('sendPaymentLinkMailForBooking: EXPIREDのカード予約にも送信でき、statusはEXPIREDのまま送信履歴を記録する（期限判定は行わない）', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var bookingId = seedBooking(ctx, { status: 'EXPIRED', paymentMethod: 'オンラインクレジットカード' });
+
+  var result = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(bookingId, SAMPLE_PAYMENT_LINK_URL, AFTER_DUE);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+  assert.match(mailApp._sentEmails[0].body, /buy\.stripe\.com\/test_ABC123/);
+  assert.match(mailApp._sentEmails[0].body, /失効/);
+  assert.doesNotMatch(mailApp._sentEmails[0].body, /お支払い期限:/);
+
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
+  assert.strictEqual(found.record.status, 'EXPIRED', '決済リンク送信だけではstatusを変えない');
+  assert.ok(stubs.isDateLike(found.record.paymentLinkSentAt));
+  assert.strictEqual(found.record.paymentLinkSendCount, 1);
+  assert.strictEqual(found.record.stripePaymentLinkUrl, SAMPLE_PAYMENT_LINK_URL);
+});
+
+test('sendPaymentLinkMailForBooking: EXPIREDでも不正URLは拒否、現金は拒否、利用開始後はSTART_PASSEDで拒否し、メールを送らない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ properties: COMPLETE_MAIL_PROPERTIES, mailApp: mailApp });
+  var cardId = seedBooking(ctx, { status: 'EXPIRED', paymentMethod: 'オンラインクレジットカード' });
+  var cashId = seedBooking(ctx, { status: 'EXPIRED', bookingId: 'SX-CASH', paymentMethod: '現金' });
+
+  var bad = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(cardId, 'https://evil.example/x', AFTER_DUE);
+  assert.strictEqual(bad.error.code, 'INVALID_PAYMENT_LINK_URL');
+  var cash = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(cashId, SAMPLE_PAYMENT_LINK_URL, AFTER_DUE);
+  assert.strictEqual(cash.error.code, 'NOT_CARD_PAYMENT');
+  var started = ctx.sandbox.BookingMailer.sendPaymentLinkMailForBooking(cardId, SAMPLE_PAYMENT_LINK_URL, { now: new Date('2026-10-01T10:00:00+09:00') });
+  assert.strictEqual(started.success, false);
+  assert.strictEqual(started.error.code, 'START_PASSED');
+  assert.strictEqual(mailApp._sentEmails.length, 0);
 });
 
 test('sendPaymentLinkMailForBooking: buy.stripe.com形式に一致しないURLはINVALID_PAYMENT_LINK_URLで拒否し、Sheets/MailAppに触れない', function () {

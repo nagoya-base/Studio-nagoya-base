@@ -336,7 +336,10 @@ function render() {
     } else if (canCancel) {
       actions += '<button type="button" class="action cancel" data-action="cancel" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>キャンセル</button>';
     }
-    if (canRevive) {
+    if (canRevive && isManualPaymentLinkCardBooking_(b)) {
+      /* 決済リンク送信済みになってから表示する（未送信は詳細から先に送信する）。 */
+      if (b.paymentLinkSent || b.paymentLinkSentAt || Number(b.paymentLinkSendCount) > 0) actions += '<button type="button" class="action revive" data-action="revive-paid" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>入金確認して復活</button>';
+    } else if (canRevive) {
       actions += '<button type="button" class="action revive" data-action="revive" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>復活</button>';
     }
 
@@ -1067,7 +1070,15 @@ function closeModal() {
  * 支払方法の内部文字列（'オンラインクレジットカード'）をこのファイルに複製しない。
  */
 function canSendPaymentLink(booking) {
-  return !!booking && !!booking.isCardPayment && !booking.isStripeCheckout && booking.status === 'PENDING';
+  /* Issue #428: 期限切れ（EXPIRED）でも送信できる（statusはEXPIREDのまま維持される）。 */
+  return !!booking && !!booking.isCardPayment && !booking.isStripeCheckout &&
+    (booking.status === 'PENDING' || booking.status === 'EXPIRED');
+}
+
+/* Issue #428: 手動Payment Link方式のカード予約（EXPIRED）は、Stripe側の入金確認を明示した
+   「入金確認して復活」でのみ復活する（通常の「復活」ボタンは出さない）。 */
+function isManualPaymentLinkCardBooking_(booking) {
+  return !!booking && !!booking.isCardPayment && !booking.isStripeCheckout;
 }
 
 /* Issue #396: 決済リンク送信前の旧Payment Link方式カード予約（確定不可）か。
@@ -1883,6 +1894,42 @@ function runRevive(bookingId) {
       loadBookings(function () { setBusy(bookingId, false); });
     })
     .adminReviveExpiredBooking(bookingId);
+}
+
+/*
+ * Issue #428: 手動決済リンクを送った期限切れカード予約の「入金確認して復活」。
+ * Stripe側で入金済みを確認した旨を管理者に明示確認させ、サーバー（adminReviveExpiredCardBooking）
+ * へpaymentConfirmed=trueで渡す。枠の競合・利用開始後かどうかの最終判定はサーバー側
+ * （reviveExpiredBooking）が行い、失敗時はEXPIREDのまま。
+ */
+function runRevivePaid(bookingId) {
+  var booking = state.bookings.find(function (b) { return b.bookingId === bookingId; });
+  var confirmed = window.confirm(
+    (booking
+      ? '予約ID: ' + booking.bookingId + '\n' +
+        '利用日: ' + booking.date + ' ' + booking.startAt + '-' + booking.endAt + '\n' +
+        '利用者名: ' + booking.name + '\n\n'
+      : '') +
+    'Stripe側でこの予約の入金済みを確認しましたか？\n\n' +
+    '「OK」で、入金確認済みとして枠の空きを再確認し、空いていればCONFIRMEDへ復活して確定メールを送信します。' +
+    '枠が埋まっている場合は復活せずEXPIREDのままです（返金は別途ご判断ください）。'
+  );
+  if (!confirmed) return;
+
+  setBusy(bookingId, true);
+  setStatusLine('入金確認済みとして復活処理中…');
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result || !result.success) {
+        alert('復活できませんでした（予約はEXPIREDのままです）: ' + (result && result.error && result.error.message));
+      }
+      loadBookings(function () { setBusy(bookingId, false); });
+    })
+    .withFailureHandler(function (error) {
+      alert('復活でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      loadBookings(function () { setBusy(bookingId, false); });
+    })
+    .adminReviveExpiredCardBooking(bookingId, true);
 }
 
 function runCancel(bookingId) {
@@ -2860,6 +2907,7 @@ document.getElementById('list').addEventListener('click', function (event) {
   if (action === 'confirm-mail') runConfirm(bookingId);
   if (action === 'cancel') runCancel(bookingId);
   if (action === 'revive') runRevive(bookingId);
+  if (action === 'revive-paid') runRevivePaid(bookingId);
 });
 
 document.getElementById('sort-select').addEventListener('change', function (event) {

@@ -1981,6 +1981,17 @@ PR #335（本PR-A）のレビュー対応で調査した結果、PR #328は以�
 - `BookingAdmin.gs`の`RESEND_MAIL_HANDLERS_`に`EXPIRED`を追加し、既存の個別再送導線
   （bookingId・メール種別指定・強制再送）から失効通知も再送できるようにした。
 
+### 期限切れカード予約の手動決済リンク→入金確認して復活（Issue #428）
+
+- 旧Payment Link方式のカード予約（Stripe Checkout以外）が`EXPIRED`になった場合、Booking Admin詳細から
+  手動Stripe Payment Linkを送れる（`sendPaymentLinkMailForBooking`のURL検証・二重送信防止を再利用。
+  `EXPIRED`では支払期限判定の代わりに利用開始前であることだけを確認）。送信後も`status`は`EXPIRED`のまま。
+- 復活は決済リンク送信済みの予約に限り、一覧の「入金確認して復活」（`adminReviveExpiredCardBooking(bookingId, true)`）のみ。未送信は`PAYMENT_LINK_NOT_SENT`で拒否しUIにも出さない。管理者が
+  Stripe側の入金を確認した旨のダイアログ確認を必須とし、`paymentConfirmed===true`でなければ拒否する。
+  status・利用開始時刻・枠競合の最終判定、確定メール、来場案内は既存`reviveExpiredBooking`に委譲する。
+  枠が埋まっている等で復活できない場合は`EXPIRED`のまま（自動返金はしない）。
+- 入金の自動検知による自動復活は行わない。
+
 ### 手動復活（`reviveExpiredBooking`）
 
 - `BookingRepository.reviveExpiredBooking(bookingId, now)`（新規。`now`は省略可・

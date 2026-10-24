@@ -512,6 +512,32 @@ function adminReviveExpiredBooking(bookingId) {
 }
 
 /*
+ * 期限切れ（EXPIRED）の旧Payment Link方式カード予約を、管理者のStripe入金確認後に復活する
+ * （Issue #428）。入金の自動検知は行わず、管理者の明示確認（paymentConfirmed===true）を
+ * 正本とする。ここでは「入金確認済みの明示」「カード決済（Stripe Checkout以外）」「決済リンク送信済み」だけを
+ * 確認し、status・利用開始時刻・枠の競合の最終判定と状態遷移・確定メール・来場案内は
+ * すべて既存のreviveExpiredBooking（BookingRepository）へ委譲する（業務ロジックは複製しない）。
+ * 復活できなかった場合はstatusはEXPIREDのまま。
+ */
+function adminReviveExpiredCardBooking(bookingId, paymentConfirmed) {
+  if (paymentConfirmed !== true) {
+    return { success: false, error: { code: 'PAYMENT_NOT_CONFIRMED', message: 'Stripe側で入金済みであることを確認してから復活してください。' } };
+  }
+  var found = bookingId ? SpreadsheetRepository.findRowByBookingId(bookingId) : null;
+  if (!found) {
+    return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
+  }
+  if (!Booking.isCardPaymentMethod(found.record.paymentMethod) || Booking.isStripeCheckoutBooking(found.record)) {
+    return { success: false, error: { code: 'NOT_CARD_PAYMENT', message: '手動決済リンクで入金を確認するカード予約のみ対象です。' } };
+  }
+  /* 手動決済リンクを一度も送っていない予約は、入金確認の対象ではないため復活させない。 */
+  if (!Booking.hasPaymentLinkBeenSent(found.record)) {
+    return { success: false, error: { code: 'PAYMENT_LINK_NOT_SENT', message: '決済リンクが未送信のため、入金確認して復活はできません。先に決済リンクを送信してください。' } };
+  }
+  return reviveExpiredBooking(bookingId);
+}
+
+/*
  * Stripe決済リンクの送信（Issue #334 PR-C）。既存の正式関数sendCardPaymentLinkMail
  * （BookingAdmin.gs）へそのまま委譲する。業務ロジック（URL検証・予約状態/支払方法/
  * 期限の再検証・二重送信防止・送信履歴の記録）はコピーしない。送信前の内容確認

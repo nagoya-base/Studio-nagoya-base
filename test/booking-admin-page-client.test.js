@@ -1384,13 +1384,35 @@ function paymentLinkDetailBooking(overrides) {
   );
 }
 
-test('canSendPaymentLink: カード決済かつPENDINGのみtrue。カード以外・PENDING以外・booking未指定はfalse', function () {
+test('canSendPaymentLink: カード決済かつPENDING/EXPIREDのみtrue（Issue #428）。カード以外・CONFIRMED等・booking未指定はfalse', function () {
   var sandbox = loadClientSandbox();
   assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking()), true);
   assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ isCardPayment: false })), false);
   assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ status: 'CONFIRMED' })), false);
-  assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ status: 'EXPIRED' })), false);
+  assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ status: 'CANCELLED' })), false);
+  assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ status: 'EXPIRED' })), true);
+  assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ status: 'EXPIRED', isCardPayment: false })), false);
+  assert.strictEqual(sandbox.canSendPaymentLink(paymentLinkDetailBooking({ status: 'EXPIRED', isStripeCheckout: true })), false);
   assert.strictEqual(sandbox.canSendPaymentLink(null), false);
+});
+
+test('Issue #428 render: EXPIREDの手動決済リンク方式カード予約は「入金確認して復活」、現金等は従来の「復活」を表示する', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.filter = 'all';
+  sandbox.state.bookings = [
+    booking({ bookingId: 'card', status: 'EXPIRED', isCardPayment: true, isStripeCheckout: false, paymentLinkSent: true }),
+    booking({ bookingId: 'unsent', status: 'EXPIRED', isCardPayment: true, isStripeCheckout: false, paymentLinkSent: false }),
+    booking({ bookingId: 'cash', status: 'EXPIRED', isCardPayment: false }),
+    booking({ bookingId: 'checkout', status: 'EXPIRED', isCardPayment: true, isStripeCheckout: true })
+  ];
+  var list = sandbox.document.getElementById('list');
+  sandbox.render();
+  assert.ok(list.innerHTML.indexOf('data-action="revive-paid" data-id="card"') !== -1);
+  assert.ok(list.innerHTML.indexOf('data-action="revive" data-id="cash"') !== -1);
+  assert.ok(list.innerHTML.indexOf('data-action="revive" data-id="checkout"') !== -1);
+  assert.ok(list.innerHTML.indexOf('data-action="revive" data-id="card"') === -1, '入金確認なしの通常復活ボタンは出さない');
+  assert.ok(list.innerHTML.indexOf('data-id="unsent"') !== -1 && list.innerHTML.indexOf('data-action="revive-paid" data-id="unsent"') === -1 && list.innerHTML.indexOf('data-action="revive" data-id="unsent"') === -1, '決済リンク未送信では復活ボタンを出さない');
 });
 
 test('Issue #396 canSendPaymentLink/needsPaymentLinkBeforeConfirm_: 旧方式カード予約のみ決済リンクUI・確定ガードの対象。Stripe Checkout方式・PayPay・現金は対象外', function () {
