@@ -203,3 +203,100 @@
 @media (max-width: 480px) {
   .equipment-photo-grid { grid-template-columns: 1fr; }
 }
+
+/* ---- 設備・背景・オプション案内（/studio-x/equipment/。Issue #457） ---- */
+.option-flow {
+  list-style: none;
+  margin: 28px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 22px;
+}
+.option-flow-step {
+  position: relative;
+  margin: 0;
+  padding: 16px 14px 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.option-flow-step--conditional { border-style: dashed; }
+.option-flow-step--main { border-color: var(--accent); }
+.option-flow-step::after {
+  content: '→';
+  position: absolute;
+  top: 50%;
+  right: -19px;
+  transform: translateY(-50%);
+  width: 16px;
+  color: var(--accent);
+  font-weight: 800;
+  text-align: center;
+}
+.option-flow-step:last-child::after { content: none; }
+.option-flow-num {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: .66rem;
+  font-weight: 700;
+  letter-spacing: .14em;
+}
+.option-flow-tag {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 700;
+}
+.option-flow-step h3 { margin: 0 0 8px; font-size: .95rem; line-height: 1.4; }
+.option-flow-step p { margin: 0; font-size: .78rem; }
+.option-flow-notes { margin-top: 24px; }
+.option-flow-notes ul { margin: 0 0 18px; }
+.option-flow-notes strong { color: var(--text); }
+
+.theme-option-grid {
+  margin-top: 28px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.theme-option-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.theme-option-card img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; }
+.theme-option-body { padding: 18px; }
+.theme-option-kicker { color: var(--accent); font-family: var(--font-display); font-size: .66rem; font-weight: 700; letter-spacing: .14em; }
+.theme-option-body h3 { margin: 6px 0 8px; font-size: 1.05rem; }
+.theme-option-body > p { margin: 0 0 14px; }
+.theme-option-facts { margin: 0; font-size: .78rem; }
+.theme-option-facts dt { margin-top: 10px; color: var(--muted); font-weight: 700; }
+.theme-option-facts dd { margin: 2px 0 0; color: #c8c4cc; }
+.theme-option-badge {
+  display: inline-block;
+  margin: 0 6px 4px 0;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  font-size: .72rem;
+  font-weight: 700;
+}
+.theme-option-badge--staff { border-color: var(--accent); color: var(--accent); }
+
+@media (max-width: 1080px) {
+  .option-flow { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 22px; }
+  .option-flow-step:nth-child(4n)::after { content: none; }
+  .theme-option-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .option-flow { grid-template-columns: 1fr; gap: 26px; }
+  .option-flow-step::after, .option-flow-step:nth-child(4n)::after { content: '↓'; }
+  .option-flow-step:last-child::after { content: none; }
+  .option-flow-step::after { top: auto; bottom: -24px; right: auto; left: 50%; transform: translateX(-50%); }
+  .theme-option-grid { grid-template-columns: 1fr; }
+}

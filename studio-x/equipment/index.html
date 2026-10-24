@@ -7,10 +7,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="index, follow">
   <meta name="theme-color" content="#0b0b0f">
-  <title>撮影機材・ライティング設備 | Studio X</title>
-  <meta name="description" content="Studio X（名古屋・上前津）の撮影機材・ライティング設備を写真付きで紹介。常設・無料の定常光や背景紙と、有料レンタル機材の違いをまとめました。">
-  <meta property="og:title" content="撮影機材・ライティング設備 | Studio X">
-  <meta property="og:description" content="常設・無料の定常光や背景紙と、有料レンタル機材を写真付きで紹介します。">
+  <title>設備・背景・オプション案内 | Studio X</title>
+  <meta name="description" content="Studio X（名古屋・上前津）の設備・背景・テーマ・設営/片付けオプションを予約前に確認できる案内ページ。オプション利用の流れ、常設・無料設備、有料レンタル機材をまとめました。">
+  <meta property="og:title" content="設備・背景・オプション案内 | Studio X">
+  <meta property="og:description" content="背景・テーマ、設営/片付けオプション、利用の流れを予約前に確認できます。">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/equipment/">
   <meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/equipment/equipment-wireless-commander.webp">
@@ -18,8 +18,8 @@
   <meta property="og:image:height" content="900">
   <meta property="og:image:alt" content="Godoxワイヤレスコマンダー2台を並べた背面操作パネル">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="撮影機材・ライティング設備 | Studio X">
-  <meta name="twitter:description" content="常設・無料の定常光や背景紙と、有料レンタル機材を写真付きで紹介します。">
+  <meta name="twitter:title" content="設備・背景・オプション案内 | Studio X">
+  <meta name="twitter:description" content="背景・テーマ、設営/片付けオプション、利用の流れを予約前に確認できます。">
   <meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/equipment/equipment-wireless-commander.webp">
   <link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/equipment/">
   <link rel="icon" href="../touch-icon.svg" type="image/svg+xml">
@@ -59,13 +59,38 @@
 
   <main id="main-content" class="subpage-main">
     <header class="subpage-hero">
-      <p class="section-kicker">EQUIPMENT &amp; LIGHTING</p>
-      <h1>照明ひとつで、<br>作品の世界が変わる。</h1>
-      <p class="subpage-lead">Studio Xは、常設・無料の定常光と背景紙だけでも作品づくりが完結するように機材をそろえています。光の扱いに慣れていない方でも、点灯した状態を見ながら向きや強さを調整できるので安心です。ストロボや保有機材のレンタル（有料・1点ごとの個別加算・施錠管理のため管理者の利用許可が必要）は、予約フォームのオプションから申し込めます。スタッフによる事前設営・片付け（有料・事前確認制）の料金もこのページでまとめて確認できます。</p>
+      <p class="section-kicker">EQUIPMENT, BACKDROPS &amp; OPTIONS</p>
+      <h1>背景も、光も、<br>予約前にゆっくり選ぶ。</h1>
+      <p class="subpage-lead">背景・テーマ、照明機材、設営・片付けオプションを、予約前に落ち着いて比較できるページです。常設・無料の設備だけでも撮影は完結します。オプションの申込は予約フォームで行います。</p>
     </header>
     <nav class="page-nav" aria-label="ページ内メニュー">
-      <a href="#equipment-list">機材一覧</a><a href="#staff-service">設営・片付け料金</a><a href="#photos">写真</a><a href="#beginner">初めての方へ</a><a href="#caution">注意事項</a><a href="#cta">予約・相談</a>
+      <a href="#option-flow">利用の流れ</a><a href="#worlds">背景・テーマ</a><a href="#choose">選び方</a><a href="#equipment-list">機材一覧</a><a href="#staff-service">設営・片付け料金</a><a href="#photos">写真</a><a href="#beginner">初めての方へ</a><a href="#caution">注意事項</a><a href="#cta">予約・相談</a>
     </nav>
+
+    <section class="content-section" id="option-flow">
+      <h2>オプション利用の流れ</h2>
+      <p class="subpage-lead">オプションを使わない場合は、通常どおり部屋を予約するだけです。使う場合の全体像はこちらです。</p>
+      {% include studio_x_option_flow_ja.html %}
+    </section>
+
+    <section class="content-section" id="worlds">
+      <h2>背景・テーマと設営オプション</h2>
+      <p class="subpage-lead">Studio Xトップの「一室で、6つの世界。」を、オプションを選ぶ観点で整理しました。設営はセルフ（無料）が基本で、対応できるものはスタッフ設営（有料・事前確認制）も選べます。</p>
+      {% include studio_x_worlds_ja.html %}
+      <p class="equipment-note" style="margin-top:16px;">対応可否・料金・条件は予約フォームのオプションと同じ正本に基づきます。有料機材を使う場合は、設営方法・片付け方法の選択が必要です。</p>
+    </section>
+
+    <section class="content-section" id="choose">
+      <h2>オプションの選び方</h2>
+      <div class="check-grid">
+        <article class="check-card"><h3>背景セット</h3><p>撮りたい世界に合わせて、上の6テーマから選びます。</p></article>
+        <article class="check-card"><h3>照明機材</h3><p>必要な機材だけを1点ごとに選びます。料金は下の機材一覧のとおりです。</p></article>
+        <article class="check-card"><h3>設営方法</h3><p>セルフ設営（無料）か、スタッフ設営（有料・事前確認制）を選びます。</p></article>
+        <article class="check-card"><h3>片付け方法</h3><p>セルフ片付け（無料）か、スタッフ片付け（有料・事前確認制）を選びます。</p></article>
+      </div>
+      <div class="notice"><p><strong>有料機材のセルフ利用は、管理者の利用許可を受けた方のみです。</strong>有料機材は施錠管理しているため、許可を確認できるまでお支払い・確定はできません。初めての方は先にご相談ください。背景布などの無料備品のセルフ設営に、許可は不要です。</p></div>
+      <div class="notice"><p><strong>部屋代と有料オプションは別決済です。</strong>スタッフ対応は承認後、有料機材は部屋の予約確定後にオンラインで決済します。</p></div>
+    </section>
 
     <section class="content-section" id="equipment-list">
       <h2>機材一覧</h2>
@@ -95,10 +120,10 @@
 
     <section class="content-section" id="cta">
       <h2>予約・相談する</h2>
-      <p class="subpage-lead">機材の利用可否を含め、ご不明な点は予約前にお気軽にご相談ください。</p>
+      <p class="subpage-lead">背景・機材・設営方法に迷う場合は、予約前にお気軽にご相談ください（無料）。スタッフ設営を希望する場合は、できるだけ1週間前までにご相談ください。</p>
       <div class="hero-actions">
         <a class="button button-primary" href="../booking/" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="equipment_cta" data-analytics-destination="booking_app">Studio Xの予約ページへ</a>
-        <a class="button button-ghost" href="../reservation/?intent=consult" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="equipment_cta" data-analytics-destination="direct_form">利用前に相談する</a>
+        <a class="button button-ghost" href="../reservation/?intent=consult" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="equipment_cta" data-analytics-destination="direct_form">オプションについてメールで相談する</a>
         <a class="button button-ghost" href="../how-to/#equipment" data-analytics-event="cta_click" data-analytics-type="how_to_page" data-analytics-location="equipment_cta" data-analytics-destination="how_to_page">← Studio Xご利用ガイドへ戻る</a>
       </div>
     </section>

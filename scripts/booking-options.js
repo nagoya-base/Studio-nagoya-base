@@ -338,6 +338,9 @@
       slot.hidden = false;
       var root = el('fieldset', { className: 'ba-fieldset' });
       root.appendChild(el('legend', { text: 'オプション（任意）' }));
+      /* 長い説明は案内ページへ逃がし、予約フォームは選択・申込に集中させる（Issue #457）。 */
+      var guideLink = el('a', { href: config.equipmentPageUrl || '../equipment/', text: '背景・照明・設営オプションを先に確認する →', target: '_blank', rel: 'noopener' });
+      root.appendChild(el('p', { className: 'ba-field-help' }, [guideLink]));
       root.appendChild(el('p', { className: 'ba-field-help', text: (catalog.notices && catalog.notices.SELF_VS_STAFF) || '' }));
 
       /* 機材レンタル（1点ごとの個別加算。料金・在庫はカタログ＝機材ページと同一の正本） */
