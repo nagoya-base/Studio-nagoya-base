@@ -289,14 +289,11 @@
 .theme-option-badge--staff { border-color: var(--accent); color: var(--accent); }
 
 @media (max-width: 1080px) {
-  .option-flow { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 22px; }
-  .option-flow-step:nth-child(4n)::after { content: none; }
+  .option-flow { grid-template-columns: 1fr; gap: 26px; }
+  .option-flow-step::after { content: '↓'; top: auto; bottom: -24px; right: auto; left: 50%; transform: translateX(-50%); }
+  .option-flow-step:last-child::after { content: none; }
   .theme-option-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
-  .option-flow { grid-template-columns: 1fr; gap: 26px; }
-  .option-flow-step::after, .option-flow-step:nth-child(4n)::after { content: '↓'; }
-  .option-flow-step:last-child::after { content: none; }
-  .option-flow-step::after { top: auto; bottom: -24px; right: auto; left: 50%; transform: translateX(-50%); }
   .theme-option-grid { grid-template-columns: 1fr; }
 }
