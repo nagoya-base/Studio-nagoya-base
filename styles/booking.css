@@ -79,6 +79,12 @@
   color: var(--ba-text);
 }
 
+.ba-first-time-card-notice {
+  /* 初回利用はカード決済のみという支払方法選択に直結する条件のため、補足文より目立たせる（Issue #445）。 */
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
 .ba-banner-actions {
   display: flex;
   flex-wrap: wrap;

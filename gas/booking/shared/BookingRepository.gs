@@ -209,7 +209,16 @@ var BookingRepository = (function () {
      * （Issue #271「11. createBookingへの接続」）。どちらかが失敗してもcreateBooking自体は
      * success:trueのまま返す。
      */
-    notifyCustomerPendingBestEffort_(record);
+    /*
+     * Issue #445: オンラインクレジットカードでCheckoutが有効な場合は、この時点ではまだ
+     * Checkout Session（checkoutUrl・paymentHoldExpiresAt）が存在しないため、受付メールを
+     * ここでは送らない。Session作成成功後にbeginCardCheckoutが、実際の決済URL・支払期限入りの
+     * 支払い案内メールを1通だけ送る（役割の重複を避ける）。Checkout無効・設定不足の場合は
+     * Sessionが作られないため、従来どおりこの時点で受付メールを送る。
+     */
+    if (!shouldDeferPendingMailToCheckout_(record)) {
+      notifyCustomerPendingBestEffort_(record);
+    }
     notifyAdminBestEffort_(record);
 
     /*
@@ -278,6 +287,38 @@ var BookingRepository = (function () {
         success: false,
         error: { code: 'OPTIONS_PERSIST_FAILED', message: 'オプションのお申し込みを保存できませんでした。予約は受け付けています。案内ページから同じ予約IDでオプションを追加してください。' }
       };
+    }
+  }
+
+  /*
+   * 「実際にCheckoutを開始できる」場合だけtrue（beginCardCheckoutの事前条件と同じ:
+   * checkoutEnabled・secretKey・successUrl・cancelUrl、およびブランド別の戻り先解決）。
+   * 条件を欠く場合はbeginCardCheckoutがSessionを作れず（CHECKOUT_DISABLED / STRIPE_NOT_CONFIGURED）
+   * 支払い案内メールも送られないため、利用者へのメールが1通も届かない事態を避けて、
+   * 従来どおりcreateBooking時に受付メールを送る。
+   */
+  function shouldDeferPendingMailToCheckout_(record) {
+    if (!Booking.isCardPaymentMethod(record.paymentMethod)) return false;
+    try {
+      var stripeConfig = BookingConfig.getStripeConfig();
+      if (!stripeConfig.checkoutEnabled) return false;
+      if (!stripeConfig.secretKey || !stripeConfig.successUrl || !stripeConfig.cancelUrl) return false;
+      return !!Booking.resolveCheckoutReturnUrls(record.brand, stripeConfig).ok;
+    } catch (configError) {
+      return false;
+    }
+  }
+
+  /*
+   * Checkout Session作成（または有効なSessionの再利用）に成功した後の支払い案内メール（Issue #445）。
+   * Lock・Stripe呼び出しの外でbest effortに行い、失敗してもbeginCardCheckoutの結果（Checkout作成成功）
+   * は変えない。同一Sessionの二重送信はBookingMailer側が防ぐ。checkoutUrlはログへ出さない。
+   */
+  function notifyCardCheckoutBestEffort_(bookingId, result) {
+    try {
+      BookingMailer.sendCardCheckoutMailForBooking(bookingId, { url: result.checkoutUrl, expiresAt: result.paymentHoldExpiresAt });
+    } catch (mailError) {
+      Logger.log('BookingRepository: カード決済案内メール送信中に予期しない例外: ' + BookingMailer.sanitizeErrorMessage(describeError_(mailError), [String(result.checkoutUrl || '')]));
     }
   }
 
@@ -3118,6 +3159,14 @@ var BookingRepository = (function () {
    * 一致しなければ、以降のいかなる予約情報（決済状態・金額等）も一切返さない。
    */
   function beginCardCheckout(bookingId, checkoutAccessToken, now) {
+    var result = beginCardCheckoutCore_(bookingId, checkoutAccessToken, now);
+    if (result && result.success && result.checkoutUrl) {
+      notifyCardCheckoutBestEffort_(bookingId, result);
+    }
+    return result;
+  }
+
+  function beginCardCheckoutCore_(bookingId, checkoutAccessToken, now) {
     now = isDateLike_(now) ? now : new Date();
 
     if (!bookingId || typeof bookingId !== 'string') {

@@ -24,9 +24,9 @@
   <p class="ba-banner ba-banner--notice">{{ include.intro_note }}</p>
   {% endif %}
 
-  <p class="ba-banner ba-banner--notice">
-    This form submits a pending booking request. <strong>Your booking is not confirmed yet.</strong>
-    Your booking becomes confirmed only after we send you a confirmation.
+  <p class="ba-banner ba-banner--notice" id="ba-flow-banner">
+    <strong id="ba-flow-banner-title">The steps to confirm your booking depend on the payment method.</strong>
+    <span id="ba-flow-banner-body">Online credit card: go straight to payment after submitting; your booking is confirmed once payment is completed. Cash / PayPay: your request is received as pending and confirmed after staff review.</span>
   </p>
 
   <ol class="ba-progress" id="ba-progress" aria-label="Booking progress">
@@ -315,7 +315,7 @@
         <label class="ba-choice"><input type="radio" name="paymentMethod" value="オンラインクレジットカード"> <span>Online credit card</span></label>
         <label class="ba-choice"><input type="radio" name="paymentMethod" value="未定"> <span>Undecided</span></label>
       </div>
-      <p class="ba-field-help" id="ba-first-time-card-notice" hidden>First-time guests can pay by online credit card only.</p>
+      <p class="ba-banner ba-banner--notice ba-first-time-card-notice" id="ba-first-time-card-notice" role="note" hidden>First-time guests can pay by online credit card only.</p>
       <p class="ba-field-error" id="ba-payment-error" hidden></p>
     </fieldset>
 
@@ -334,7 +334,7 @@
 
   <!-- Step 4: 内容確認 -->
   <section class="ba-step" id="ba-step-confirm" data-step="confirm" hidden>
-    <h2>Review &amp; Submit</h2>
+    <h2 id="ba-confirm-heading">Review &amp; Submit</h2>
 
     <table class="ba-summary">
       <tbody>
@@ -353,14 +353,14 @@
       </tbody>
     </table>
 
-    <p class="ba-banner ba-banner--notice">
-      Submitting this form does not confirm your booking. <strong>Your booking is not confirmed yet.</strong>
-      Your booking is confirmed only after we review your request and send you a confirmation.
+    <p class="ba-banner ba-banner--notice" id="ba-confirm-flow-notice">
+      <strong id="ba-confirm-flow-title">This form submits a pending booking request. Your booking is not confirmed yet.</strong>
+      <span id="ba-confirm-flow-body">Your booking becomes confirmed only after we send you a confirmation.</span>
     </p>
 
     <label class="ba-choice" style="align-items: flex-start;">
       <input type="checkbox" id="ba-confirm-consent">
-      <span>I understand that submitting this form does not confirm my booking, and that my booking is confirmed only once I receive a confirmation.<span class="ba-required">Required</span></span>
+      <span><span id="ba-consent-text">I understand that submitting this form does not confirm my booking, and that my booking is confirmed only once I receive a confirmation.</span><span class="ba-required">Required</span></span>
     </label>
     <p class="ba-field-error" id="ba-consent-error" hidden></p>
 
@@ -375,7 +375,7 @@
   <!-- Step 5: 完了 -->
   <section class="ba-step ba-complete" id="ba-step-complete" data-step="complete" hidden>
     <div class="ba-complete-icon" aria-hidden="true">&#10003;</div>
-    <h2>Your booking request has been received</h2>
+    <h2 id="ba-complete-heading">Your booking request has been received</h2>
     <p>Booking ID: <span class="ba-booking-id" id="ba-complete-booking-id"></span></p>
 
     <!-- Issue #342: booking summary and price. The amount shown here is never the
@@ -391,7 +391,7 @@
         <tr><th>Number of Guests</th><td id="ba-complete-people"></td></tr>
         <tr><th>Price</th><td id="ba-complete-price"></td></tr>
         <tr><th>Payment Method</th><td id="ba-complete-payment"></td></tr>
-        <tr><th>Pending Status</th><td id="ba-complete-status"></td></tr>
+        <tr><th id="ba-complete-status-label">Pending Status</th><td id="ba-complete-status"></td></tr>
       </tbody>
     </table>
 

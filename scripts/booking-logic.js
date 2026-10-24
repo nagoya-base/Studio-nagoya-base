@@ -424,18 +424,26 @@
   /* フォーム（支払方法欄・確認画面・完了画面）で使うカード決済の注意書き本文（Issue #407）。
      仮受付メール側（gas/booking/shared/BookingMailTemplates.gsのbuildCardPendingNotice_）は
      メール本文の文脈に合わせた同趣旨の文言を別に持つ。 */
+  /* カード決済の支払い猶予（分）。サーバー側 CardPayment.CHECKOUT_HOLD_MINUTES と同値
+     （test/card-payment-copy.test.jsで一致を検証する）。利用者へ「申込後30分以内」と明示する（Issue #445）。 */
+  var CARD_PAYMENT_WINDOW_MINUTES = 30;
+
   var CARD_PAYMENT_NOTICE_TEXT_ = {
     ja: {
       title: '【クレジットカード決済のご案内】',
+      flow: 'オンラインクレジットカードを選択した場合は、予約申込後そのままお支払いへ進みます。お支払い完了後、予約はすぐに確定します。',
       pay: 'オンラインクレジットカード決済は、予約申込後に表示される決済ページでお支払いください。',
       confirm: '決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。',
+      expire: '予約申込後30分以内にお支払いを完了してください。決済を完了せずに時間が経過すると、予約が失効する場合があります。',
       reapply: '予約が確定しなかった場合にご利用を希望されるときは、改めて予約フォームからお申し込みください。',
       alreadyPaid: 'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。'
     },
     en: {
       title: '[Credit Card Payment]',
+      flow: 'If you choose online credit card, you will go straight to payment after submitting your request. Your booking is confirmed immediately once payment is completed.',
       pay: 'Please pay by online credit card on the payment page shown after you submit your request.',
       confirm: 'Your booking is confirmed when payment is completed within the validity period of the payment page. If the page expires or payment is not completed, the booking is not confirmed.',
+      expire: 'Please complete payment within 30 minutes after submitting your request. If payment is not completed and time passes, your booking may expire.',
       reapply: 'If your booking is not confirmed and you still wish to book, please submit a new request through the booking form.',
       alreadyPaid: 'If you have already paid, please contact us instead of submitting a new request or paying again.'
     }
@@ -443,7 +451,92 @@
 
   function cardPaymentNoticeLines(locale) {
     var t = CARD_PAYMENT_NOTICE_TEXT_[normalizeLocale(locale)];
-    return [t.title, t.pay, t.confirm, t.reapply, t.alreadyPaid];
+    return [t.title, t.flow, t.pay, t.confirm, t.expire, t.reapply, t.alreadyPaid];
+  }
+
+  /*
+   * 支払方法ごとの予約確定までの流れの案内（Issue #445）。フォーム上部・確認画面・送信ボタン・
+   * 完了画面が同じ文言を参照する。カード決済は「申込→そのまま決済→決済完了で即確定」を主メッセージにし、
+   * 「仮予約」「管理者確認」は出さない。現金・PayPay・未定は従来どおり仮受付→管理者確認→確定。
+   * 支払方法未選択（空文字）は中立表現。内部状態（PENDING）は変更しない。
+   */
+  var BOOKING_FLOW_TEXT_ = {
+    ja: {
+      neutral: {
+        title: '支払方法により予約確定までの流れが異なります。',
+        body: 'オンラインクレジットカード：申込後そのままお支払いへ進み、お支払い完了で予約確定。現金・PayPay：申込後は仮受付となり、当方で内容確認後に予約確定。'
+      },
+      card: {
+        title: '申込後そのままオンライン決済へ進み、お支払い完了で予約確定します。',
+        body: '予約申込 → そのままお支払い → お支払い完了で予約確定。予約申込後30分以内にお支払いを完了してください。時間が経過すると、予約が失効する場合があります。'
+      },
+      manual: {
+        title: '申込後は仮受付です。この時点では予約は確定していません。',
+        body: '内容を確認のうえ、当方から確定のご連絡をします（当方からの確定連絡をもって予約成立となります）。'
+      },
+      consentCard: '申込後にお支払い画面へ進むこと、申込後30分以内にお支払いを完了すること、お支払い完了で予約が確定することを確認しました。',
+      consentManual: 'フォーム送信時点では予約は確定せず、当方からの確定連絡をもって予約成立となることを確認しました。',
+      confirmHeadingCard: '内容を確認して支払いへ進む',
+      confirmHeadingManual: '内容を確認して仮予約を送信',
+      submitCard: '予約内容を確認して支払いへ進む',
+      submitManual: 'この内容で仮予約を送信する',
+      completeHeadingCard: '予約申込を受け付けました',
+      completeHeadingManual: '仮予約の送信を受け付けました',
+      statusLabelCard: '予約ステータス',
+      statusLabelManual: '仮予約ステータス',
+      statusValueCard: 'お支払い待ち（お支払い完了で確定）',
+      statusValueManual: '仮予約受付（未確定）'
+    },
+    en: {
+      neutral: {
+        title: 'The steps to confirm your booking depend on the payment method.',
+        body: 'Online credit card: go straight to payment after submitting; your booking is confirmed once payment is completed. Cash / PayPay: your request is received as pending and confirmed after staff review.'
+      },
+      card: {
+        title: 'After submitting, you go straight to online payment, and your booking is confirmed once payment is completed.',
+        body: 'Submit request → pay right away → booking confirmed on payment. Please complete payment within 30 minutes after submitting. If time passes, your booking may expire.'
+      },
+      manual: {
+        title: 'This form submits a pending booking request. Your booking is not confirmed yet.',
+        body: 'Your booking becomes confirmed only after we send you a confirmation.'
+      },
+      consentCard: 'I understand that I will proceed to payment after submitting, that I must complete payment within 30 minutes, and that my booking is confirmed once payment is completed.',
+      consentManual: 'I understand that submitting this form does not confirm my booking, and that my booking is confirmed only once I receive a confirmation.',
+      confirmHeadingCard: 'Review and Proceed to Payment',
+      confirmHeadingManual: 'Review and Submit Pending Booking',
+      submitCard: 'Review and Proceed to Payment',
+      submitManual: 'Submit Pending Booking',
+      completeHeadingCard: 'Booking Request Received',
+      completeHeadingManual: 'Pending Booking Received',
+      statusLabelCard: 'Booking Status',
+      statusLabelManual: 'Pending Status',
+      statusValueCard: 'Awaiting payment (confirmed on payment)',
+      statusValueManual: 'Pending — not confirmed yet'
+    }
+  };
+
+  /* 支払方法valueから案内の種別を決める。'neutral'（未選択）／'card'／'manual'（現金・PayPay・未定）。 */
+  function bookingFlowKind(paymentMethod) {
+    if (!paymentMethod) return 'neutral';
+    return isCardPaymentMethodValue(paymentMethod) ? 'card' : 'manual';
+  }
+
+  /* 画面ごとの文言一式を返す。kindはbookingFlowKindの戻り値。neutralの個別文言は
+     未選択時にフォーム上部バナーでのみ使い、他の画面ではmanual扱い（確認画面へ進む時点で必ず選択済み）。 */
+  function bookingFlowCopy(paymentMethod, locale) {
+    var t = BOOKING_FLOW_TEXT_[normalizeLocale(locale)];
+    var kind = bookingFlowKind(paymentMethod);
+    var isCard = kind === 'card';
+    return {
+      kind: kind,
+      banner: t[kind],
+      consent: isCard ? t.consentCard : t.consentManual,
+      confirmHeading: isCard ? t.confirmHeadingCard : t.confirmHeadingManual,
+      submitLabel: isCard ? t.submitCard : t.submitManual,
+      completeHeading: isCard ? t.completeHeadingCard : t.completeHeadingManual,
+      statusLabel: isCard ? t.statusLabelCard : t.statusLabelManual,
+      statusValue: isCard ? t.statusValueCard : t.statusValueManual
+    };
   }
 
   /*
@@ -481,22 +574,47 @@
    */
   var CARD_CHECKOUT_REDIRECT_TEXT_ = {
     ja: {
-      title: '【クレジットカード決済へ進む】',
-      body: 'このあと表示される決済ページ（Stripe）でお支払い手続きを行ってください。',
-      confirmationNote: '決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。',
+      title: '【続けてお支払いへ進みます】',
+      body: '予約申込を受け付けました。下のボタンから、続けて決済ページ（Stripe）でお支払い手続きを行ってください。お支払い完了後、予約が確定します。',
+      confirmationNote: 'お支払いページのリンクはメールでもご案内します。画面を閉じた場合も、期限内であればメールからお支払いページへ戻れます。決済ページの有効期限内にお支払いが完了した場合に予約が確定します。予約申込後30分以内にお支払いを完了してください。決済を完了せずに時間が経過すると、予約が失効する場合があります。期限切れ・決済未完了の場合、予約は確定しません。',
       buttonLabel: '決済ページへ進む'
     },
     en: {
-      title: '[Proceed to Card Payment]',
-      body: 'You will be taken to a secure payment page (Stripe) to complete your payment.',
-      confirmationNote: 'Your booking is confirmed when payment is completed within the validity period of the payment page. If the page expires or payment is not completed, the booking is not confirmed.',
+      title: '[Continue to Payment]',
+      body: 'Your booking request has been received. Please continue to the secure payment page (Stripe) with the button below. Your booking is confirmed once payment is completed.',
+      confirmationNote: 'The payment page link is also sent by email. If you close this screen, you can return to the payment page from the email until the deadline. Your booking is confirmed when payment is completed within the validity period of the payment page. Please complete payment within 30 minutes after submitting your request. If payment is not completed and time passes, your booking may expire. If the page expires or payment is not completed, the booking is not confirmed.',
       buttonLabel: 'Proceed to payment'
     }
   };
 
-  function cardCheckoutRedirectNoticeLines(locale) {
-    var t = CARD_CHECKOUT_REDIRECT_TEXT_[normalizeLocale(locale)];
-    return [t.title, t.body, t.confirmationNote];
+  /*
+   * deadlineText（formatPaymentDeadlineの戻り値）がある場合のみ、実際のお支払い期限を表示する
+   * （Issue #445。startCardCheckoutのpaymentHoldExpiresAt由来。取得できなければ従来どおり表示しない）。
+   */
+  function cardCheckoutRedirectNoticeLines(locale, deadlineText) {
+    var loc = normalizeLocale(locale);
+    var t = CARD_CHECKOUT_REDIRECT_TEXT_[loc];
+    var lines = [t.title, t.body];
+    if (deadlineText) lines.push((loc === 'en' ? 'Payment deadline: ' : 'お支払い期限：') + deadlineText);
+    lines.push(t.confirmationNote);
+    return lines;
+  }
+
+  /*
+   * paymentHoldExpiresAt（GASのJSONレスポンスではISO文字列）を「YYYY/MM/DD HH:mm」へ整形する。
+   * 端末のローカル時刻には依存せず、常にAsia/Tokyo基準（サイトの予約時刻と同じtimezone）。
+   * 解釈できない値は空文字を返し、呼び出し側は期限表示を省略する。
+   */
+  function formatPaymentDeadline(value) {
+    if (value === null || value === undefined || value === '') return '';
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return '';
+    var parts = {};
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    }).formatToParts(date).forEach(function (p) { parts[p.type] = p.value; });
+    return parts.year + '/' + parts.month + '/' + parts.day + ' ' + parts.hour + ':' + parts.minute;
   }
 
   function cardCheckoutButtonLabel(locale) {
@@ -866,6 +984,10 @@
     isCardPaymentMethodValue: isCardPaymentMethodValue,
     cardCheckoutFallbackNoticeLines: cardCheckoutFallbackNoticeLines,
     cardPaymentNoticeLines: cardPaymentNoticeLines,
+    CARD_PAYMENT_WINDOW_MINUTES: CARD_PAYMENT_WINDOW_MINUTES,
+    formatPaymentDeadline: formatPaymentDeadline,
+    bookingFlowKind: bookingFlowKind,
+    bookingFlowCopy: bookingFlowCopy,
     cardCheckoutRedirectNoticeLines: cardCheckoutRedirectNoticeLines,
     cardCheckoutButtonLabel: cardCheckoutButtonLabel,
     cardCheckoutUncertainNoticeLines: cardCheckoutUncertainNoticeLines,

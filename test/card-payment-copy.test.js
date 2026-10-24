@@ -51,3 +51,20 @@ test('規約・トップのカード決済案内は、決済ページでの支�
     assert.match(html, /期限切れ・決済未完了の場合、予約は確定しません|期限切れ・決済未完了の場合は予約が確定しません/, file);
   });
 });
+
+test('Issue #445: 利用者向けの「申込後30分以内」はサーバー側の仮押さえ分数(CardPayment.CHECKOUT_HOLD_MINUTES)と一致し、フォーム・受付メールの両方がその分数を案内する', function () {
+  const loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
+  const sandbox = loadBookingSandbox(['Availability.gs', 'Booking.gs', 'CardPayment.gs', 'BookingMailTemplates.gs'], {});
+  const minutes = sandbox.CardPayment.CHECKOUT_HOLD_MINUTES;
+  const Logic = require(path.join(ROOT, 'scripts', 'booking-logic.js'));
+  assert.strictEqual(Logic.CARD_PAYMENT_WINDOW_MINUTES, minutes);
+
+  const pattern = new RegExp('予約申込後' + minutes + '分以内にお支払いを完了してください');
+  assert.match(Logic.cardPaymentNoticeLines('ja').join('\n'), pattern);
+  const mail = sandbox.BookingMailTemplates.buildPendingMail({
+    bookingId: 'SX-1', date: '2026-10-01', brand: 'studio_x', name: '山田', email: 'a@example.com', people: '2名',
+    startAt: new Date('2026-10-01T10:00:00+09:00'), endAt: new Date('2026-10-01T12:00:00+09:00'),
+    paymentMethod: 'オンラインクレジットカード'
+  }, { timezone: 'Asia/Tokyo', contactEmail: 'c@example.com' });
+  assert.match(mail.body, pattern);
+});

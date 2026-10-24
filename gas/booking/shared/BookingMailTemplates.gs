@@ -100,8 +100,10 @@ var BookingMailTemplates = (function () {
   function buildCardPendingNotice_(record, config) {
     return joinNonEmpty_([
       '【クレジットカード決済のご案内】',
+      'オンラインクレジットカードを選択した場合は、予約申込後そのままお支払いへ進みます。お支払い完了後、予約はすぐに確定します。',
       'オンラインクレジットカード決済は、予約申込後に表示される決済ページでお支払いください。',
       '決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。',
+      '予約申込後30分以内にお支払いを完了してください。決済を完了せずに時間が経過すると、予約が失効する場合があります。',
       '予約が確定しなかった場合にご利用を希望されるときは、改めて予約フォームからお申し込みください。',
       'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。'
     ]);
@@ -115,8 +117,10 @@ var BookingMailTemplates = (function () {
   }
 
   /*
-   * PENDING（仮予約受付メール）。
+   * PENDING（受付メール）。現金・PayPay・未定は仮予約受付（Issue #445以前の文言）。
    * 「このメール時点では予約未確定」「管理者確認後に確定連絡を送る」旨を必ず含む。
+   * オンラインクレジットカードは「予約申込を受け付けた／決済は未完了／続けて決済が必要／
+   * 決済完了で自動確定／未完了のまま時間が経過すると失効し得る」旨を示し、管理者確認待ちとは書かない。
    * キーボックス番号・解錠コード等は一切含めない（accessGuideを引数に取らない）。
    * 利用料金（Issue #342。priceLine_）はcreateBooking時点でGASが確定・保存した
    * record.priceAmountを表示する。カード決済の場合でも、この金額表示だけで自動的に
@@ -131,12 +135,28 @@ var BookingMailTemplates = (function () {
     var duration = formatDurationMinutes_(record.startAt, record.endAt);
     var isCard = Booking.isCardPaymentMethod(record.paymentMethod);
 
-    var subject = '【' + brandLabel + '】仮予約を受け付けました（未確定）';
+    /* Issue #445: オンラインクレジットカードは「申込→そのままオンライン決済→決済完了で自動確定」。
+       決済前に届く受付メールで「あとで決済すればよい」「確定連絡待ち」と誤解させないため、
+       決済未完了であること・続けて決済が必要なこと・失効し得ることを明記する。現金・PayPay・未定は従来文言。 */
+    var subject = isCard
+      ? '【' + brandLabel + '】予約申込を受け付けました（決済完了で確定）'
+      : '【' + brandLabel + '】仮予約を受け付けました（未確定）';
+    var intro = isCard
+      ? [
+        brandLabel + ' のご予約申込を受け付けました。',
+        '※このメールの時点ではお支払いが完了しておらず、ご予約はまだ確定しておりません。続けてオンライン決済を完了してください。お支払い完了後、ご予約は自動で確定します。',
+        '※予約申込後30分以内にお支払いを完了してください。決済を完了せずに時間が経過すると、ご予約が失効する場合があります。'
+      ]
+      : [
+        brandLabel + ' のご予約を仮受付いたしました。',
+        '※このメールの時点ではご予約はまだ確定しておりません。当方で内容を確認のうえ、確定のご連絡を改めてお送りします。'
+      ];
     var body = joinNonEmpty_([
       record.name + ' 様',
       '',
-      brandLabel + ' のご予約を仮受付いたしました。',
-      '※このメールの時点ではご予約はまだ確定しておりません。管理者が内容を確認のうえ、確定のご連絡を改めてお送りします。',
+      intro[0],
+      intro[1],
+      intro[2] || '',
       '',
       '予約ID: ' + record.bookingId,
       '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
@@ -149,6 +169,68 @@ var BookingMailTemplates = (function () {
       record.paymentMethod ? '支払方法: ' + record.paymentMethod : '',
       '',
       isCard ? buildCardPendingNotice_(record, config) : '',
+      contactLine_(config),
+      guideLine_(record),
+      signatureLines_(record)
+    ]);
+
+    return { subject: subject, body: body };
+  }
+
+  /* paymentHoldExpiresAt（Date）をconfig.timezone基準の「YYYY/MM/DD HH:mm」へ整形する。
+     端末・実行環境のローカルtimezoneには依存しない。整形できなければ空文字。 */
+  function formatDeadline_(date, timezone) {
+    if (!isDateLike_(date)) return '';
+    var day = BookingAvailability.formatDateInTimezone(date, timezone);
+    var time = BookingAvailability.formatTimeInTimezone(date, timezone);
+    return day && time ? String(day).replace(/-/g, '/') + ' ' + time : '';
+  }
+
+  /*
+   * カード決済の支払い案内メール（Issue #445）。Stripe Checkout Session作成成功後に、実際の
+   * checkoutUrlとpaymentHoldExpiresAtを使って送る。画面を閉じても支払期限内ならこのメールの
+   * リンクから同じCheckoutへ戻れる。checkout.url / checkout.expiresAt はBookingRepository.
+   * beginCardCheckoutが返した値だけを使い、ここで推測・生成しない（無効なら例外＝fail-closed）。
+   * 「管理者確認後に確定」「当方からの確定連絡待ち」とは書かない（決済完了で自動確定する）。
+   */
+  function buildCardCheckoutMail(record, config, checkout) {
+    var url = checkout && typeof checkout.url === 'string' ? checkout.url : '';
+    if (!/^https:\/\/[^\s]+$/.test(url)) {
+      throw new Error('お支払いページのURLが無効なため支払い案内メールを作成できません。');
+    }
+    var deadline = formatDeadline_(checkout.expiresAt, config.timezone);
+    if (!deadline) {
+      throw new Error('お支払い期限が無効なため支払い案内メールを作成できません。');
+    }
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var startTime = formatTime_(record.startAt, config.timezone);
+    var endTime = formatTime_(record.endAt, config.timezone);
+    var duration = formatDurationMinutes_(record.startAt, record.endAt);
+
+    var subject = '【' + brandLabel + '】予約申込を受け付けました（決済ページのご案内）';
+    var body = joinNonEmpty_([
+      record.name + ' 様',
+      '',
+      brandLabel + ' のご予約申込を受け付けました。',
+      '※このメールの時点ではお支払いが完了しておらず、ご予約はまだ確定しておりません。',
+      '期限内にお支払いが完了すると、ご予約は自動で確定します。',
+      '',
+      'お支払いページ: ' + url,
+      'お支払い期限: ' + deadline,
+      '画面を閉じた場合も、期限内であればこのメールからお支払いページへ戻れます。',
+      '期限を過ぎるとこのURLではお支払いできず、ご予約は確定せず失効します。',
+      'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。',
+      '',
+      '予約ID: ' + record.bookingId,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '開始時刻: ' + startTime,
+      '終了時刻: ' + endTime,
+      duration ? '利用時間: ' + duration : '',
+      'ブランド: ' + brandLabel,
+      '利用人数: ' + record.people,
+      priceLine_(record),
+      record.paymentMethod ? '支払方法: ' + record.paymentMethod : '',
+      '',
       contactLine_(config),
       guideLine_(record),
       signatureLines_(record)
@@ -577,6 +659,7 @@ var BookingMailTemplates = (function () {
 
   return {
     buildPendingMail: buildPendingMail,
+    buildCardCheckoutMail: buildCardCheckoutMail,
     buildConfirmedMail: buildConfirmedMail,
     buildCancelledMail: buildCancelledMail,
     buildExpiredMail: buildExpiredMail,

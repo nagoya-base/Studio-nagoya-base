@@ -96,6 +96,16 @@ var CardPayment = (function () {
     return Math.floor((sessionCreationAtMillis + minutes * 60000) / 1000);
   }
 
+  /*
+   * paymentHoldExpiresAt（Stripeが返した実際のexpires_at。作成時刻にHOLD+BUFFER分を足した値）から
+   * 逆算した、そのCheckout Sessionの作成時刻（ミリ秒epoch）。受付後に送るカード決済案内メール
+   * （Issue #445）の「このSessionについて送信済みか」の判定に使う（専用列を増やさず、既存の
+   * pendingMailSentAtがSession作成後に記録されているかで判定するため）。
+   */
+  function computeCheckoutSessionCreatedMillis(paymentHoldExpiresAtMillis) {
+    return paymentHoldExpiresAtMillis - (CHECKOUT_HOLD_MINUTES + STRIPE_SESSION_EXPIRY_BUFFER_MINUTES) * 60000;
+  }
+
   function isFinitePositiveInteger_(value) {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 && Math.round(value) === value;
   }
@@ -208,6 +218,7 @@ var CardPayment = (function () {
     WEBHOOK_RACE_GRACE_MINUTES: WEBHOOK_RACE_GRACE_MINUTES,
     computeCheckoutHoldExpiryMillis: computeCheckoutHoldExpiryMillis,
     computeStripeSessionExpiresAtSeconds: computeStripeSessionExpiresAtSeconds,
+    computeCheckoutSessionCreatedMillis: computeCheckoutSessionCreatedMillis,
     computeExpireSweepEligibleMillis: computeExpireSweepEligibleMillis,
     computeExpectedPaymentAmount: computeExpectedPaymentAmount,
     verifyPaymentAmount: verifyPaymentAmount,

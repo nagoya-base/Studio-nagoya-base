@@ -176,6 +176,14 @@
     paymentError: document.getElementById('ba-payment-error'),
     firstTimeCardNotice: document.getElementById('ba-first-time-card-notice'),
     cardPaymentNotice: document.getElementById('ba-card-payment-notice'),
+    flowBannerTitle: document.getElementById('ba-flow-banner-title'),
+    flowBannerBody: document.getElementById('ba-flow-banner-body'),
+    confirmHeading: document.getElementById('ba-confirm-heading'),
+    confirmFlowTitle: document.getElementById('ba-confirm-flow-title'),
+    confirmFlowBody: document.getElementById('ba-confirm-flow-body'),
+    consentText: document.getElementById('ba-consent-text'),
+    completeHeading: document.getElementById('ba-complete-heading'),
+    completeStatusLabel: document.getElementById('ba-complete-status-label'),
     note: document.getElementById('ba-note'),
     noteError: document.getElementById('ba-note-error'),
     step3Back: document.getElementById('ba-step-details-back'),
@@ -1161,7 +1169,34 @@
   /* 支払方法欄付近のカード注意書き（Issue #334 PR-B「2. カード決済の注意書き」）。
      カードが選択されている間のみ表示し、他の支払方法へ切り替えると即座に消える
      （現金・PayPay・未定にカード専用文言を混入させないため）。 */
+  function setText_(el, text) {
+    if (el) el.textContent = text;
+  }
+
+  /* 支払方法に応じた案内の切替（Issue #445）。フォーム上部バナー・確認画面の案内/同意文/見出し・
+     送信ボタン文言を、選択中の支払方法（カード／現金・PayPay・未定／未選択）で一括更新する。
+     送信処理・Stripe Checkout遷移ロジックには関与しない（表示文言のみ）。 */
+  function updateBookingFlowCopy_() {
+    var copy = Logic.bookingFlowCopy(checkedPaymentMethod(), locale);
+    setText_(els.flowBannerTitle, copy.banner.title);
+    setText_(els.flowBannerBody, copy.banner.body);
+    var confirmCopy = Logic.bookingFlowCopy(state.paymentMethod || checkedPaymentMethod(), locale);
+    var confirmKind = confirmCopy.kind === 'neutral' ? Logic.bookingFlowCopy('未定', locale) : confirmCopy;
+    setText_(els.confirmHeading, confirmKind.confirmHeading);
+    setText_(els.confirmFlowTitle, confirmKind.banner.title);
+    setText_(els.confirmFlowBody, confirmKind.banner.body);
+    setText_(els.consentText, confirmKind.consent);
+    if (els.submit && !isSubmitting) els.submit.textContent = submitLabelFor_(state.paymentMethod || checkedPaymentMethod());
+  }
+
+  function submitLabelFor_(paymentMethod) {
+    return Logic.isCardPaymentMethodValue(paymentMethod)
+      ? Logic.bookingFlowCopy(paymentMethod, locale).submitLabel
+      : UI_TEXT.submitLabel;
+  }
+
   function updateCardPaymentNoticeVisibility() {
+    updateBookingFlowCopy_();
     if (!els.cardPaymentNotice) return;
     var isCard = Logic.isCardPaymentMethodValue(checkedPaymentMethod());
     if (!isCard) {
@@ -1279,6 +1314,8 @@
     } else {
       renderMultilineNotice_(els.confirmCardPaymentNotice, null);
     }
+    /* 確認画面の見出し・案内・同意文・送信ボタンを選択済み支払方法に合わせる（Issue #445）。 */
+    updateBookingFlowCopy_();
   }
 
   if (els.step4Back) {
@@ -1398,7 +1435,7 @@
       .then(function (response) { return response.json(); })
       .then(function (result) {
         if (result && result.success === true && result.checkoutUrl) {
-          return { status: 'success', checkoutUrl: result.checkoutUrl };
+          return { status: 'success', checkoutUrl: result.checkoutUrl, paymentHoldExpiresAt: result.paymentHoldExpiresAt };
         }
         var code = result && result.error && result.error.code;
         if (CHECKOUT_SAFE_FALLBACK_CODES_.indexOf(code) !== -1) {
@@ -1473,7 +1510,7 @@
           isSubmitting = false;
           if (!body || body.success !== true) {
             els.submit.disabled = false;
-            els.submit.textContent = UI_TEXT.submitLabel;
+            els.submit.textContent = submitLabelFor_(state.paymentMethod);
             if (optionsPanel && body && body.error && OPTION_ERROR_CODES_.indexOf(body.error.code) !== -1) {
               /* オプション由来の拒否（資格なし・受付停止等）は予約自体は作られていない。サーバーの
                  利用者向け文言をそのまま表示し、選択を直してもらう。 */
@@ -1512,8 +1549,16 @@
             els.completePrice.textContent = completeAmount ? UI_TEXT.priceLine(completeAmount) : Logic.priceUnavailableLabel(locale);
           }
           if (els.completePayment) els.completePayment.textContent = Logic.paymentMethodLabel(body.paymentMethod, locale);
+          /* Issue #445: カードは「予約申込を受け付けました→お支払い完了で確定」を前面に出し、
+             「仮予約」を主見出しにしない。現金・PayPay・未定は従来どおり仮予約受付。内部状態（PENDING）は不変。 */
+          var completeCopy = Logic.bookingFlowCopy(state.paymentMethod, locale);
+          var completeIsCard = Logic.isCardPaymentMethodValue(state.paymentMethod);
+          setText_(els.completeHeading, completeCopy.completeHeading);
+          setText_(els.completeStatusLabel, completeCopy.statusLabel);
           if (els.completeStatus) {
-            els.completeStatus.textContent = body.status === 'PENDING' ? UI_TEXT.pendingStatusLabel : (body.status || '');
+            els.completeStatus.textContent = body.status === 'PENDING'
+              ? (completeIsCard ? completeCopy.statusValue : UI_TEXT.pendingStatusLabel)
+              : (body.status || '');
           }
           /* 完了画面（Issue #334 PR-B / Issue #407）: 既存の「通常24時間以内にご連絡します」は
              確定連絡そのものが24時間以内に届くという前提の文言のため、カード決済では
@@ -1534,7 +1579,7 @@
               if (checkout.status === 'success') {
                 renderMultilineNotice_(els.completeCardPaymentNotice, null);
                 renderMultilineNotice_(els.completeCheckoutUncertainNotice, null);
-                renderMultilineNotice_(els.completeCheckoutNotice, Logic.cardCheckoutRedirectNoticeLines(locale));
+                renderMultilineNotice_(els.completeCheckoutNotice, Logic.cardCheckoutRedirectNoticeLines(locale, Logic.formatPaymentDeadline(checkout.paymentHoldExpiresAt)));
                 if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = false;
                 if (els.completeCheckoutLink) {
                   els.completeCheckoutLink.href = checkout.checkoutUrl;
@@ -1565,7 +1610,7 @@
         .catch(function () {
           isSubmitting = false;
           els.submit.disabled = false;
-          els.submit.textContent = UI_TEXT.submitLabel;
+          els.submit.textContent = submitLabelFor_(state.paymentMethod);
           els.submitError.textContent = Logic.networkErrorMessage(locale);
           els.submitError.hidden = false;
           els.submitError.focus();
