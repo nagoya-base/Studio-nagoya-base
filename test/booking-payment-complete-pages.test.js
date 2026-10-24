@@ -51,3 +51,28 @@ test('SNBの戻りページからStudio X / mensへ不要に誘導しない', fu
   assert.ok(html.indexOf('studio-x') === -1);
   assert.ok(html.indexOf('/mens/') === -1);
 });
+
+// Issue #425: 各ブランドのトップ／利用ガイドへの導線が正しく、他ブランドへ漏れない。
+test('各ブランドの戻りページがそのブランドのトップ・利用ガイドへ導線を持つ', function () {
+  var snb = read(PAGES.snb);
+  assert.match(snb, /"\/"\s*\|\s*relative_url/);
+  assert.match(snb, /"\/how-to\/"\s*\|\s*relative_url/);
+
+  var mens = read(PAGES.mens);
+  assert.match(mens, /"\/mens\/"\s*\|\s*relative_url/);
+  assert.match(mens, /"\/mens\/how-to\/"\s*\|\s*relative_url/);
+  assert.match(mens, /subpage_backlink_ja\.html brand="mens"/);
+  assert.match(mens, /subpage_footer_ja\.html brand="mens"/);
+
+  var x = read(PAGES.studio_x);
+  assert.match(x, /class="button button-primary" href="\.\.\/">/);
+  assert.match(x, /class="button button-ghost" href="\.\.\/how-to\/">/);
+});
+
+test('3ページとも二重申込・二重決済を避ける注意書きを含み、予約IDや決済状態をURL・画面に出さない', function () {
+  Object.keys(PAGES).forEach(function (brand) {
+    var html = read(PAGES[brand]);
+    assert.match(html, /二重のお支払いはお控えください/, brand);
+    assert.ok(!/session_id|bookingId|reservationId|location\.search|URLSearchParams/.test(html), brand + ': クエリ値を扱わない');
+  });
+});
