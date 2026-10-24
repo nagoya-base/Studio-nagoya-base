@@ -168,3 +168,49 @@ test('画面の案内文言: ビデオライト系は「対面で操作レクチ
   assert.ok(src.indexOf('対面で操作レクチャーを受け、利用許可済みの方のみ選択できます') !== -1);
   assert.ok(src.indexOf('過去にビデオライト') === -1 && src.indexOf('過去の') === -1);
 });
+
+// ---- スタッフ設営の事前相談導線（Issue #423 追加要件） ----
+
+test('事前相談の文言: 申込前に相談でき、相談だけでは申込・確定・決済にならない旨を明示し、CTAは「設営について事前相談する」', function () {
+  assert.strictEqual(Panel.CONSULT_TEXT.lead, '配置や内容に迷っている場合は、申し込み前にご相談いただけます。');
+  assert.strictEqual(Panel.CONSULT_TEXT.notice, '事前相談だけではスタッフ設営の申込・確定・決済にはなりません。');
+  assert.strictEqual(Panel.CONSULT_TEXT.cta, '設営について事前相談する');
+  assert.ok(Panel.CONSULT_TEXT.back.indexOf('このページに戻って') !== -1, '相談後に通常の設営申込へ戻れる');
+});
+
+test('事前相談の導線: 既存の問い合わせフォームへのリンクのみ。注文・API呼び出し・新しい相談管理を作らない', function () {
+  var code = read('scripts/booking-options.js').replace(/\/\*[\s\S]*?\*\//g, '');
+  // リンクは既存の相談フォーム(?intent=consult)。別タブで開く（申込ページを維持）
+  assert.ok(code.indexOf("config.consultUrl || '../reservation/?intent=consult'") !== -1);
+  assert.ok(/target: '_blank', rel: 'noopener', text: CONSULT_TEXT\.cta/.test(code));
+  // 相談リンクの生成箇所はaタグのみで、fetch/POST/ストレージを呼ばない（パネル内のfetchはカタログ取得だけ）
+  var fetches = code.match(/fetch\(/g) || [];
+  assert.strictEqual(fetches.length, 1, 'パネルのfetchはoptionCatalogの取得だけ');
+  assert.ok(code.indexOf("action=optionCatalog") !== -1);
+  assert.ok(!/submitOptions|startOptionCheckout|localStorage|sessionStorage/.test(code));
+  // 後付けページ(1階層深い)でも既存の相談フォームを指す
+  assert.ok(read('scripts/booking-options-addon.js').indexOf("consultUrl: '../../reservation/?intent=consult'") !== -1);
+  // 既存の相談フォームが実在し、?intent=consult を受け付ける
+  assert.ok(fs.existsSync(path.join(ROOT, 'studio-x/reservation/index.html')));
+  assert.ok(read('studio-x/reservation/form.js').indexOf('intent') !== -1);
+  assert.ok(read('studio-x/booking/options/index.html').indexOf('booking-options.js') !== -1);
+});
+
+test('事前相談はスタッフ設営の選択肢付近（セッティング選択後）にだけ表示され、機材・無料サポート欄には出ない', function () {
+  var src = read('scripts/booking-options.js');
+  var start = src.indexOf('if (state.layouts.length > 0) {');
+  var consult = src.indexOf("var consult = el('div', { className: 'ba-option-consult'");
+  var support = src.indexOf("root.appendChild(el('h3', { className: 'ba-option-heading', text: '無料サポート' }))");
+  var staffServices = src.indexOf("var staff = catalog.staffServices || {};");
+  assert.ok(start !== -1 && consult > start && consult < support, '設営の選択肢(テーマ選択後のブロック)の中');
+  assert.ok(staffServices > start && staffServices < consult, '設営/片付けの選択肢の直後');
+});
+
+test('事前相談の追加はサーバー側(GAS)・Stripe・注文に一切触れず、SNB / mensの予約ページにも影響しない', function () {
+  ['gas/booking/shared/OptionOrderService.gs', 'gas/booking/shared/BookingOptions.gs', 'gas/booking/public/Code.gs'].forEach(function (rel) {
+    assert.ok(read(rel).indexOf('CONSULT') === -1 && read(rel).indexOf('consult') === -1, rel + ' に相談関連の処理を追加していない');
+  });
+  ['booking/index.html', 'mens/booking/index.html', 'booking/en.html'].forEach(function (rel) {
+    assert.ok(read(rel).indexOf('booking-options') === -1, rel);
+  });
+});

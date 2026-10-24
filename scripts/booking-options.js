@@ -16,6 +16,14 @@
 (function (global) {
   'use strict';
 
+  /* スタッフ設営の事前相談導線の文言（相談は申込・確定・決済ではない）。 */
+  var CONSULT_TEXT = {
+    lead: '配置や内容に迷っている場合は、申し込み前にご相談いただけます。',
+    notice: '事前相談だけではスタッフ設営の申込・確定・決済にはなりません。',
+    cta: '設営について事前相談する',
+    back: '相談フォームは別のタブで開きます。相談後はこのページに戻って、通常どおり設営を申し込めます。'
+  };
+
   var THEME_ORDER = ['CLASSROOM', 'JAPANESE', 'GRUNGE', 'WHITE_BACKDROP', 'BLACK_BACKDROP'];
 
   function formatJpy(amount) {
@@ -267,6 +275,17 @@
         });
         root.appendChild(cleanupGroup);
 
+        /* 設営について申込前に相談できる導線（Issue #423 追加要件）。既存の問い合わせフォームへのリンクのみで、
+           相談してもオプション注文・承認・Checkoutは一切作られない。別タブで開くので、相談後は
+           このページに戻って通常の設営申込をそのまま続けられる。 */
+        var consult = el('div', { className: 'ba-option-consult' }, [
+          el('p', { className: 'ba-field-help', text: CONSULT_TEXT.lead }),
+          el('p', { className: 'ba-field-help', text: CONSULT_TEXT.notice }),
+          el('a', { className: 'ba-btn ba-btn-ghost', href: config.consultUrl || '../reservation/?intent=consult', target: '_blank', rel: 'noopener', text: CONSULT_TEXT.cta }),
+          el('p', { className: 'ba-field-help', text: CONSULT_TEXT.back })
+        ]);
+        root.appendChild(consult);
+
         var price = staffServicePrice(catalog, state.setupService, state.cleanupService);
         if (price) {
           root.appendChild(el('p', { className: 'ba-banner ba-banner--notice', text: price.label + '：' + formatJpy(price.priceJpy) + '（税込）' }));
@@ -314,6 +333,7 @@
     summarize: summarize,
     describeError: describeError,
     describeOrderStatus: describeOrderStatus,
+    CONSULT_TEXT: CONSULT_TEXT,
     formatJpy: formatJpy
   };
 
