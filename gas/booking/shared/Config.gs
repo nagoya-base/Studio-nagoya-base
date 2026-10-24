@@ -201,7 +201,17 @@ var BookingConfig = (function () {
       secretKey: properties.getProperty('STRIPE_SECRET_KEY') || '',
       checkoutEnabled: properties.getProperty('STRIPE_CHECKOUT_ENABLED') === 'true',
       successUrl: properties.getProperty('STRIPE_CHECKOUT_SUCCESS_URL') || '',
-      cancelUrl: properties.getProperty('STRIPE_CHECKOUT_CANCEL_URL') || ''
+      cancelUrl: properties.getProperty('STRIPE_CHECKOUT_CANCEL_URL') || '',
+      /* Issue #422: ブランド別の戻り先（任意）。未設定ならBooking.resolveCheckoutReturnUrlsが
+         SNB用URLから導出する。SNB用は既存のSTRIPE_CHECKOUT_SUCCESS_URL/CANCEL_URLを使う。 */
+      successUrls: {
+        mens: properties.getProperty('STRIPE_CHECKOUT_SUCCESS_URL_MENS') || '',
+        studio_x: properties.getProperty('STRIPE_CHECKOUT_SUCCESS_URL_STUDIO_X') || ''
+      },
+      cancelUrls: {
+        mens: properties.getProperty('STRIPE_CHECKOUT_CANCEL_URL_MENS') || '',
+        studio_x: properties.getProperty('STRIPE_CHECKOUT_CANCEL_URL_STUDIO_X') || ''
+      }
     };
   }
 

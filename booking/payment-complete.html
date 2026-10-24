@@ -1,0 +1,64 @@
+---
+---
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>お支払い完了 | Studio Nagoya Base</title>
+
+<!-- SEO -->
+<meta name="description" content="Studio Nagoya Baseのカード決済後にご案内するページです。">
+<meta name="robots" content="noindex, follow">
+<link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/booking/payment-complete.html">
+
+<!-- Favicon -->
+<link rel="icon" href="../images/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="../images/apple-touch-icon.png">
+
+<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-6TWDLEFWJT');
+</script>
+
+<link rel="stylesheet" href="../styles/common.css">
+<link rel="stylesheet" href="../styles/booking.css?v={{ site.time | date: '%s' }}">
+</head>
+
+<body data-page-type="payment-complete" data-site-section="studio_main">
+
+<a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
+
+{% include subpage_nav_ja.html %}
+
+<main id="main-content">
+
+<section id="payment-complete" class="bg-section">
+  <div class="container">
+    {% include subpage_backlink_ja.html %}
+    <h1 class="section-title">お支払い手続きありがとうございます</h1>
+    <p class="section-subtitle">Payment Received</p>
+
+    <div class="booking-app" style="max-width:640px;margin:0 auto;">
+      <p>カード決済のお手続きが完了しました。決済内容の確認後、予約確定のメールをご登録のメールアドレスへお送りします。</p>
+      <p>※このページが表示されただけでは、ご予約はまだ確定していません。確定のメールが届くまでしばらくお待ちください。</p>
+      <p>しばらくしてもメールが届かない場合は、迷惑メールフォルダをご確認のうえ、運営までご連絡ください。お支払い済みの場合は、再度のお申し込みや二重のお支払いはお控えください。</p>
+      <p><a class="btn" href="{{ "/" | relative_url }}">Studio Nagoya Baseトップへ戻る</a></p>
+      <p><a href="{{ "/how-to/" | relative_url }}">ご利用ガイド</a></p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+{% include subpage_footer_ja.html %}
+
+<script src="../scripts/analytics.js"></script>
+
+</body>
+</html>

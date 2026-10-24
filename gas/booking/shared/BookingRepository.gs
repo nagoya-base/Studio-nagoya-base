@@ -2529,6 +2529,12 @@ var BookingRepository = (function () {
        * successUrl/cancelUrl（Script Properties由来）・customerEmail（record.email）を
        * ここで確定し、以後この決済試行が解決するまで一切再取得・再計算しない。
        */
+      /* Issue #422: 戻り先URLのみブランド（record.brand）別に解決する。金額・有効期限等は不変。 */
+      var returnUrls = Booking.resolveCheckoutReturnUrls(record.brand, stripeConfig);
+      if (!returnUrls.ok) {
+        /* mens / Studio Xの戻り先を確定できない場合、SNBへ戻さずCheckout生成前に停止する。 */
+        return { success: false, error: { code: 'STRIPE_NOT_CONFIGURED', message: '決済機能が設定されていません。当店へお問い合わせください。' } };
+      }
       var checkoutParams = {
         amountJpy: expected.amountJpy,
         currency: expected.currency,
@@ -2536,8 +2542,8 @@ var BookingRepository = (function () {
         brand: record.brand,
         paymentAttemptId: paymentAttemptId,
         expiresAtSeconds: expiresAtSeconds,
-        successUrl: stripeConfig.successUrl,
-        cancelUrl: stripeConfig.cancelUrl,
+        successUrl: returnUrls.successUrl,
+        cancelUrl: returnUrls.cancelUrl,
         customerEmail: record.email || '',
         lineItemName: Booking.getBrandLabel(record.brand) + ' ご利用料金（' + bookingId + '）'
       };
