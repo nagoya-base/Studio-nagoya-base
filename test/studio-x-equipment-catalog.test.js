@@ -59,7 +59,7 @@ test('スタッフ設営料金とテーマの正本（Issue #430）: 事前設�
 });
 
 test('機材ページにスタッフ設営料金を正本から表示し、事前確認制・承認後決済とセルフ無料を明記する（Issue #430）', function () {
-  var html = read('studio-x/equipment/index.html');
+  var html = read('studio-x/equipment/index.html') + read('_includes/equipment_catalog_ja.html'); /* 共通include化（Issue #432） */
   assert.match(html, /id="staff-service"/);
   assert.ok(html.indexOf('site.data.studio_x_equipment.staffService') !== -1);
   assert.match(html, /セルフ設営<\/th><td>無料/);
@@ -83,7 +83,7 @@ test('Studio Xのメインナビ「設備・レンタル」は/studio-x/equipmen
 });
 
 test('機材ページは正本(site.data)を直接読み、常設無料・有料レンタル・セルフ無料を分けて表示し、金額を直書きしない', function () {
-  var html = read('studio-x/equipment/index.html');
+  var html = read('studio-x/equipment/index.html') + read('_includes/equipment_catalog_ja.html'); /* 共通include化（Issue #432） */
   assert.ok(html.indexOf('site.data.studio_x_equipment.permanent') !== -1);
   assert.ok(html.indexOf('site.data.studio_x_equipment.rental') !== -1);
   assert.ok(html.indexOf('site.data.studio_x_equipment.freeSelf') !== -1);
@@ -124,10 +124,38 @@ test('機材・料金ページへの導線: Studio Xトップ・ご利用ガイ�
   assert.ok(read('studio-x/index.html').indexOf('href="equipment/"') !== -1);
 });
 
-test('SNB / mensの機材ページ・共通機材表は変更していない（応相談表示のまま）', function () {
-  var table = read('_includes/equipment_table.html');
-  assert.ok(table.indexOf('保有機材（応相談）') !== -1);
-  assert.ok(!/studio_x_equipment/.test(table));
-  assert.ok(!/studio_x_equipment/.test(read('equipment/index.html')));
-  assert.ok(!/studio_x_equipment/.test(read('mens/index.html')));
+test('SNB(/equipment/)とStudio X(/studio-x/equipment/)は同じ共通include・正本から機材内容を生成する（Issue #432）', function () {
+  var snb = read('equipment/index.html');
+  var sx = read('studio-x/equipment/index.html');
+  [snb, sx].forEach(function (html) {
+    assert.ok(html.indexOf('{% include equipment_catalog_ja.html %}') !== -1);
+    assert.ok(html.indexOf('{% include equipment_photo_cards.html') !== -1);
+    assert.ok(html.indexOf('{% include equipment_caution_ja.html %}') !== -1);
+    assert.ok(!/\b(800|500|300|200)円/.test(stripComments(html)), '金額をページへ直書きしない');
+  });
+  var catalog = read('_includes/equipment_catalog_ja.html');
+  ['permanent', 'rental', 'freeSelf', 'staffService'].forEach(function (k) {
+    assert.ok(catalog.indexOf('site.data.studio_x_equipment.' + k) !== -1, k);
+  });
+  assert.match(catalog, /施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要/);
+  assert.match(catalog, /セルフ設営<\/th><td>無料/);
+  assert.match(catalog, /承認前に請求されることはありません/);
+  assert.ok(!/保有機材（応相談）|保有・要相談/.test(snb + sx + catalog + read('_includes/equipment_photo_cards.html') + read('_includes/equipment_caution_ja.html')));
+  // how-to / mens が使う従来の共通表は今回の対象外（変更しない）
+  assert.ok(read('_includes/equipment_table.html').indexOf('保有機材（応相談）') !== -1);
+});
+
+test('写真カードの有料機材はレンタル価格を正本(unitPriceJpy)から表示し、金額を直書きしない（Issue #432）', function () {
+  var cards = read('_includes/equipment_photo_cards.html');
+  var code = stripComments(cards);
+  assert.ok(!/\d+円/.test(code), '写真カードに金額を直書きしない');
+  assert.ok(cards.indexOf('site.data.studio_x_equipment.rental') !== -1);
+  assert.strictEqual(cards.split('常設・無料').length - 1, 2, '常設・無料のカードは維持');
+  ['COB_BICOLOR', 'COB_FULLCOLOR', 'STROBE_MONOBLOCK', 'STROBE_PORTABLE', 'BOWENS_BRACKET', 'COMMANDER_CANON', 'COMMANDER_SONY'].forEach(function (c) {
+    var def = data.rental.filter(function (e) { return e.code === c; })[0];
+    assert.ok(def && def.unitPriceJpy > 0, c + ' は正本の有料機材');
+    assert.ok(cards.indexOf('"code", "' + c + '"') !== -1, c + ' の価格を正本から引く');
+    assert.ok(cards.indexOf('price_' + c + '.unitPriceJpy') !== -1, c);
+  });
+  assert.strictEqual(cards.split('レンタル {{').length - 1, 6);
 });

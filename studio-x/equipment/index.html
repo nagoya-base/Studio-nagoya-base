@@ -8,9 +8,9 @@
   <meta name="robots" content="index, follow">
   <meta name="theme-color" content="#0b0b0f">
   <title>撮影機材・ライティング設備 | Studio X</title>
-  <meta name="description" content="Studio X（名古屋・上前津）の撮影機材・ライティング設備を写真付きで紹介。常設・無料の定常光や背景紙と、予約時の事前相談が必要な保有機材の違いをまとめました。">
+  <meta name="description" content="Studio X（名古屋・上前津）の撮影機材・ライティング設備を写真付きで紹介。常設・無料の定常光や背景紙と、有料レンタル機材の違いをまとめました。">
   <meta property="og:title" content="撮影機材・ライティング設備 | Studio X">
-  <meta property="og:description" content="常設・無料の定常光や背景紙と、予約時の事前相談が必要な保有機材を写真付きで紹介します。">
+  <meta property="og:description" content="常設・無料の定常光や背景紙と、有料レンタル機材を写真付きで紹介します。">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/equipment/">
   <meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/equipment/equipment-wireless-commander.webp">
@@ -19,7 +19,7 @@
   <meta property="og:image:alt" content="Godoxワイヤレスコマンダー2台を並べた背面操作パネル">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="撮影機材・ライティング設備 | Studio X">
-  <meta name="twitter:description" content="常設・無料の定常光や背景紙と、予約時の事前相談が必要な保有機材を写真付きで紹介します。">
+  <meta name="twitter:description" content="常設・無料の定常光や背景紙と、有料レンタル機材を写真付きで紹介します。">
   <meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/equipment/equipment-wireless-commander.webp">
   <link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/equipment/">
   <link rel="icon" href="../touch-icon.svg" type="image/svg+xml">
@@ -71,59 +71,7 @@
       <h2>機材一覧</h2>
       <!-- Issue #423: 料金・数量は _data/studio_x_equipment.json が唯一の正本。予約オプション(GAS)は同じJSONから
            生成した EquipmentCatalog.gs を参照するため、このページと予約画面で金額が食い違わない。 -->
-      <div class="equipment-tables">
-        <div class="equipment-table-block" id="equipment-free">
-          <h3>常設・無料の機材</h3>
-          <p class="equipment-note">常設・無料の機材だけでも撮影は完結します。使用後は元の位置へ戻してください。</p>
-          <table>
-            <tbody>
-{%- for item in site.data.studio_x_equipment.permanent %}
-              <tr><th>{{ item.label }}</th><td>×{{ item.quantity }}</td></tr>
-{%- endfor %}
-            </tbody>
-          </table>
-        </div>
-        <div class="equipment-table-block" id="equipment-rental">
-          <h3>有料レンタル機材（1点ごとの個別加算）</h3>
-          <p class="equipment-note">セット料金ではなく、借りる機材だけを加算します（税込）。複数台ある機材は台数×単価です。予約フォーム、または予約後の「オプション追加」ページから申し込めます。お支払いは部屋のご予約が確定した後です。</p>
-          <table>
-            <thead><tr><th>機材</th><th>数量</th><th>1点あたり</th></tr></thead>
-            <tbody>
-{%- for item in site.data.studio_x_equipment.rental %}
-              <tr><th>{{ item.label }}{% if item.requiresLecture %}<span class="equipment-note">※1</span>{% endif %}</th><td>×{{ item.stock }}</td><td>{{ item.unitPriceJpy }}円{% if item.unitLabel != "" %} / {{ item.unitLabel }}{% endif %}</td></tr>
-{%- endfor %}
-            </tbody>
-          </table>
-          <p class="equipment-note">※1 有料レンタル機材は施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要です（ビデオライト・ストロボ・ソフトボックス等、有料レンタル機材すべてが対象です）。許可を確認できない申込は保留となり、管理者の確認までお支払い・確定はできません。初めての方は先にメールでご相談ください。</p>
-        </div>
-        <div class="equipment-table-block" id="equipment-self">
-          <h3>セルフ利用は無料の備品</h3>
-          <p class="equipment-note">背景紙ロール（常設）・背景布・背景用竹竿は無料で、セルフで設営・原状復帰する場合も無料です（背景スタンドは有料レンタル機材です）。スタッフによる事前設営・片付けを依頼する場合のみ、別途スタッフ対応料金がかかります（機材料金とは別に加算。下の「スタッフ設営・片付け料金」をご確認ください）。</p>
-          <table>
-            <tbody>
-{%- for item in site.data.studio_x_equipment.freeSelf %}
-              <tr><th>{{ item.label }}</th><td>{% if item.stock %}×{{ item.stock }}{% else %}—{% endif %}</td><td>無料（セルフ）</td></tr>
-{%- endfor %}
-            </tbody>
-          </table>
-        </div>
-        <div class="equipment-table-block" id="staff-service">
-          <h3>スタッフ設営・片付け料金</h3>
-          {%- assign staff = site.data.studio_x_equipment.staffService %}
-          <p class="equipment-note">下記は{% for theme in staff.themes %}{{ theme.shortLabel }}{% unless forloop.last %}・{% endunless %}{% endfor %}の5テーマ共通料金です（税込・機材レンタル料金とは別に加算）。</p>
-          <table>
-            <thead><tr><th>内容</th><th>料金</th></tr></thead>
-            <tbody>
-              <tr><th>セルフ設営</th><td>無料</td></tr>
-              <tr><th>セルフ原状復帰</th><td>無料</td></tr>
-{%- for pair in staff.services %}
-              <tr><th>{{ pair[1].tableLabel }}</th><td>{{ pair[1].priceJpy }}円</td></tr>
-{%- endfor %}
-            </tbody>
-          </table>
-          <p class="equipment-note"><strong>スタッフ対応は事前確認制です。</strong>スタッフの予定を確認する必要があるため、申込時点では確定しません。対応可否を承認したのち、オンラインで決済すると確定します。承認前に請求されることはありません。セルフ設営・セルフ原状復帰は無料で、スタッフの空き確認も不要です。</p>
-        </div>
-      </div>
+      {% include equipment_catalog_ja.html %}
     </section>
 
     <section class="content-section" id="photos">
