@@ -3008,3 +3008,13 @@ test('静的HTML: 「仮予約」タブ(data-filter="pending")が存在する', 
   var html = fs.readFileSync(path.join(__dirname, '..', 'gas', 'booking', 'admin', 'BookingAdminPage.html'), 'utf8');
   assert.ok(/data-filter="pending">仮予約</.test(html));
 });
+
+test('静的HTML: フィルタ順は 今日/仮予約/今後/すべて で、「キャンセル」ボタンは存在しない', function () {
+  var html = fs.readFileSync(path.join(__dirname, '..', 'gas', 'booking', 'admin', 'BookingAdminPage.html'), 'utf8');
+  var filters = [];
+  var re = /class="tab-button[^"]*" data-filter="([^"]+)"/g;
+  var m;
+  while ((m = re.exec(html)) !== null) filters.push(m[1]);
+  assert.deepStrictEqual(filters, ['today', 'pending', 'upcoming', 'all']);
+  assert.ok(html.indexOf('data-filter="cancelled"') === -1);
+});

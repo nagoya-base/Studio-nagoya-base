@@ -330,7 +330,6 @@ function renderTabCounts() {
   setElementText_('tab-count-today', String(counts.today));
   setElementText_('tab-count-upcoming', String(counts.upcoming));
   setElementText_('tab-count-pending', String(counts.pending));
-  setElementText_('tab-count-cancelled', String(counts.cancelled));
   setElementText_('tab-count-all', String(counts.all));
 }
 
@@ -3120,7 +3119,7 @@ function closeReminderDiagnostics_() {
   bumpReminderDiagRequestSeq_();
 }
 
-/* 既存4タブ（今日/今後/キャンセル/すべて）の各ボタンへ、件数表示用の子要素だけを
+/* 既存タブ（今日/仮予約/今後/すべて）の各ボタンへ、件数表示用の子要素だけを
    追加する（要件3: 可能なら各タブに件数を表示する）。タブボタン本体・タブ切替
    ロジックはBookingAdminPage.html/既存のクリックハンドラのまま変更しない。 */
 function initTabCountsUi_() {
