@@ -30,9 +30,11 @@
   <p class="ba-banner ba-banner--notice">{{ include.intro_note }}</p>
   {% endif %}
 
-  <p class="ba-banner ba-banner--notice">
-    このフォームの送信は「仮予約（PENDING）」の申込です。<strong>この時点では予約は確定していません。</strong>
-    内容を確認のうえ、当方から確定のご連絡をします（当方からの確定連絡をもって予約成立となります）。
+  <!-- Issue #445: 支払方法ごとに予約確定までの流れが異なるため、未選択時は中立表現。
+       支払方法を選ぶとscripts/booking-app.jsが文言を切り替える（カード＝決済完了で即確定／現金・PayPay＝仮受付→管理者確認）。 -->
+  <p class="ba-banner ba-banner--notice" id="ba-flow-banner">
+    <strong id="ba-flow-banner-title">支払方法により予約確定までの流れが異なります。</strong>
+    <span id="ba-flow-banner-body">オンラインクレジットカード：申込後そのままお支払いへ進み、お支払い完了で予約確定。現金・PayPay：申込後は仮受付となり、管理者確認後に予約確定。</span>
   </p>
 
   <ol class="ba-progress" id="ba-progress" aria-label="予約手続きの進み具合">
@@ -352,7 +354,7 @@
 
   <!-- Step 4: 内容確認 -->
   <section class="ba-step" id="ba-step-confirm" data-step="confirm" hidden>
-    <h2>内容を確認して仮予約を送信</h2>
+    <h2 id="ba-confirm-heading">内容を確認して仮予約を送信</h2>
 
     <table class="ba-summary">
       <tbody>
@@ -374,14 +376,14 @@
 
     <p class="ba-banner ba-banner--notice" id="ba-confirm-card-payment-notice" hidden></p>
 
-    <p class="ba-banner ba-banner--notice">
-      送信すると「仮予約（PENDING）」として受け付けます。<strong>この時点では予約は確定していません。</strong>
-      当方が内容を確認し、確定のご連絡をした時点で予約成立となります。
+    <p class="ba-banner ba-banner--notice" id="ba-confirm-flow-notice">
+      <strong id="ba-confirm-flow-title">申込後は仮受付です。この時点では予約は確定していません。</strong>
+      <span id="ba-confirm-flow-body">内容を確認のうえ、当方から確定のご連絡をします（当方からの確定連絡をもって予約成立となります）。</span>
     </p>
 
     <label class="ba-choice" style="align-items: flex-start;">
       <input type="checkbox" id="ba-confirm-consent">
-      <span>フォーム送信時点では予約は確定せず、当方からの確定連絡をもって予約成立となることを確認しました。<span class="ba-required">必須</span></span>
+      <span><span id="ba-consent-text">フォーム送信時点では予約は確定せず、当方からの確定連絡をもって予約成立となることを確認しました。</span><span class="ba-required">必須</span></span>
     </label>
     <p class="ba-field-error" id="ba-consent-error" hidden></p>
 
@@ -396,7 +398,7 @@
   <!-- Step 5: 完了 -->
   <section class="ba-step ba-complete" id="ba-step-complete" data-step="complete" hidden>
     <div class="ba-complete-icon" aria-hidden="true">&#10003;</div>
-    <h2>仮予約の送信を受け付けました</h2>
+    <h2 id="ba-complete-heading">仮予約の送信を受け付けました</h2>
     <p>受付番号: <span class="ba-booking-id" id="ba-complete-booking-id"></span></p>
 
     <!-- Issue #342: 予約内容・利用料金の表示。金額はフォーム側の見積り値ではなく、
@@ -411,7 +413,7 @@
         <tr><th>利用人数</th><td id="ba-complete-people"></td></tr>
         <tr><th>利用料金</th><td id="ba-complete-price"></td></tr>
         <tr><th>支払方法</th><td id="ba-complete-payment"></td></tr>
-        <tr><th>仮予約ステータス</th><td id="ba-complete-status"></td></tr>
+        <tr><th id="ba-complete-status-label">仮予約ステータス</th><td id="ba-complete-status"></td></tr>
       </tbody>
     </table>
 

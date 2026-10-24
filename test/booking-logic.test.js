@@ -678,3 +678,20 @@ test('priceComputingLabel/priceUnavailableLabel: locale="en"は英語、未指�
   assert.ok(Logic.priceUnavailableLabel('en').length > 0);
 });
 
+
+test('bookingFlowCopy: 未選択は中立、カードは決済完了で確定、現金・PayPay・未定は仮受付→管理者確認（Issue #445）', function () {
+  var Logic = loadLogic();
+  ['ja', 'en'].forEach(function (locale) {
+    assert.strictEqual(Logic.bookingFlowCopy('', locale).kind, 'neutral');
+    assert.strictEqual(Logic.bookingFlowCopy('オンラインクレジットカード', locale).kind, 'card');
+    ['現金', 'PayPay', '未定'].forEach(function (m) {
+      assert.strictEqual(Logic.bookingFlowCopy(m, locale).kind, 'manual', locale + m);
+    });
+  });
+  var card = Logic.bookingFlowCopy('オンラインクレジットカード', 'ja');
+  assert.match(card.banner.title + card.banner.body, /お支払い完了で予約確定/);
+  assert.doesNotMatch(JSON.stringify(card), /仮予約の送信|仮予約を送信|管理者|確定のご連絡|確定連絡/);
+  var manual = Logic.bookingFlowCopy('現金', 'ja');
+  assert.match(manual.banner.title, /仮受付/);
+  assert.match(manual.banner.body, /確定のご連絡/);
+});

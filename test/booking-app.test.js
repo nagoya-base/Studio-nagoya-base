@@ -89,6 +89,19 @@ function setup(responseBody) {
        常に空文字のため、常にfalseを返す形で足りる）。 */
     CARD_PAYMENT_METHOD_VALUE: 'オンラインクレジットカード',
     isCardPaymentMethodValue: function (v) { return v === 'オンラインクレジットカード'; },
+    /* Issue #445: 支払方法別の案内文言。このstubのテスト群は常に現金相当（manual）で足りる。 */
+    bookingFlowCopy: function () {
+      return {
+        kind: 'manual',
+        banner: { title: '', body: '' },
+        consent: '',
+        confirmHeading: '',
+        submitLabel: '',
+        completeHeading: '',
+        statusLabel: '',
+        statusValue: ''
+      };
+    },
     /* Issue #407: 初回利用のカード必須判定。このstubのテスト群は利用区分を持たないため常に許可する。 */
     isFirstTimeCardRequired: function () { return false; },
     isPaymentMethodAllowedForCustomer: function () { return true; },
@@ -940,7 +953,7 @@ function setupCardFlow(locale, options) {
           /* PR #354レビュー対応・項目1: checkoutAccessTokenもcreateBookingのレスポンスに
              含める（実際のGAS応答と同じ。これがないとattemptCardCheckout_がfetch自体を
              呼ばずfallback扱いへ短絡してしまい、opts.checkoutResponseの検証ができない）。 */
-          return Promise.resolve({ success: true, bookingId: 'SNB-CARD-TEST', checkoutAccessToken: 'test-token-for-snb-card-test', requestId: 'req-card' });
+          return Promise.resolve({ success: true, status: 'PENDING', bookingId: 'SNB-CARD-TEST', checkoutAccessToken: 'test-token-for-snb-card-test', requestId: 'req-card' });
         } });
       }
       return Promise.resolve({ json: function () {
@@ -1378,4 +1391,146 @@ test('_includes/booking_app_ja.html: 初回利用向けカード案内・各注�
   assert.match(html, /id="ba-confirm-card-payment-notice"/);
   assert.match(html, /id="ba-complete-generic-notice"/);
   assert.match(html, /id="ba-complete-card-payment-notice"/);
+});
+
+/* ── Issue #445: オンラインクレカは「申込→そのまま決済→決済完了で即確定」と分かる導線 ── */
+
+async function goToDetailsStep_(ctx) {
+  ctx.elements['ba-date'].value = jstDateString(10);
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+}
+
+function flowBannerText_(ctx) {
+  return ctx.elements['ba-flow-banner-title'].textContent + ' ' + ctx.elements['ba-flow-banner-body'].textContent;
+}
+
+test('Issue #445: フォーム上部バナーは、クレカ選択で「決済完了で確定」、現金・PayPayで「仮受付→管理者確認」へ切り替わり、切替で更新される', async function () {
+  var ctx = setupCardFlow(null);
+  await goToDetailsStep_(ctx);
+
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.triggerPaymentMethodChange();
+  var card = flowBannerText_(ctx);
+  assert.match(card, /お支払い完了で予約確定/);
+  assert.match(card, /失効する場合があります/);
+  assert.doesNotMatch(card, /仮予約|PENDING|仮受付|管理者|確定のご連絡|当方から/);
+
+  ['現金', 'PayPay'].forEach(function (method) {
+    ctx.setPaymentMethod(method);
+    ctx.triggerPaymentMethodChange();
+    var manual = flowBannerText_(ctx);
+    assert.match(manual, /仮受付/, method);
+    assert.match(manual, /この時点では予約は確定していません/, method);
+    assert.match(manual, /確定のご連絡/, method);
+    assert.doesNotMatch(manual, /お支払い完了で予約確定/, method);
+  });
+
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.triggerPaymentMethodChange();
+  assert.match(flowBannerText_(ctx), /お支払い完了で予約確定/, '現金からクレカへ戻すと表示が戻る');
+});
+
+test('Issue #445: クレカ選択の支払方法欄・確認画面に「申込後そのままお支払いへ進み、完了後すぐ確定」が出て、管理者確認待ち・後払いを連想させる文言が出ない', async function () {
+  var ctx = setupCardFlow(null);
+  await goToDetailsStep_(ctx);
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.triggerPaymentMethodChange();
+
+  var fieldNotice = ctx.elements['ba-card-payment-notice'].renderedText();
+  assert.match(fieldNotice, /予約申込後そのままお支払いへ進みます。お支払い完了後、予約はすぐに確定します。/);
+  assert.match(fieldNotice, /決済を完了せずに時間が経過すると、予約が失効する場合があります。/);
+
+  ctx.elements['ba-step-details-next']._listeners.click();
+  assert.strictEqual(ctx.elements['ba-step-confirm'].hidden, false);
+
+  var confirmText = [
+    ctx.elements['ba-confirm-heading'].textContent,
+    ctx.elements['ba-confirm-flow-title'].textContent,
+    ctx.elements['ba-confirm-flow-body'].textContent,
+    ctx.elements['ba-consent-text'].textContent,
+    ctx.elements['ba-confirm-card-payment-notice'].renderedText()
+  ].join('\n');
+  assert.match(confirmText, /お支払い完了で予約が確定/);
+  assert.match(confirmText, /お支払い画面へ進む/);
+  assert.match(confirmText, /失効する場合があります/);
+  assert.doesNotMatch(confirmText, /仮予約|PENDING|仮受付|管理者|確定のご連絡|確定連絡|当方から/);
+
+  assert.strictEqual(ctx.elements['ba-submit'].textContent, '予約内容を確認して支払いへ進む');
+});
+
+test('Issue #445: 現金・PayPayの確認画面と送信ボタンは従来どおり仮受付→確定連絡の案内・文言を維持する', async function () {
+  for (const method of ['現金', 'PayPay']) {
+    var ctx = setupCardFlow(null);
+    await goToDetailsStep_(ctx);
+    fillStep3RequiredFields(ctx);
+    ctx.setPaymentMethod(method);
+    ctx.triggerPaymentMethodChange();
+    ctx.elements['ba-step-details-next']._listeners.click();
+
+    assert.strictEqual(ctx.elements['ba-confirm-heading'].textContent, '内容を確認して仮予約を送信', method);
+    assert.match(ctx.elements['ba-confirm-flow-title'].textContent, /仮受付/, method);
+    assert.match(ctx.elements['ba-confirm-flow-title'].textContent, /予約は確定していません/, method);
+    assert.match(ctx.elements['ba-confirm-flow-body'].textContent, /確定のご連絡/, method);
+    assert.match(ctx.elements['ba-consent-text'].textContent, /確定連絡をもって予約成立/, method);
+    assert.strictEqual(ctx.elements['ba-submit'].textContent, 'この内容で仮予約を送信する', method);
+  }
+});
+
+test('Issue #445: クレカの送信後は「予約申込を受け付けました→続けてお支払いへ→決済完了後に確定」を示し、仮予約完了を主見出しにしない', async function () {
+  var ctx = setupCardFlow(null, { checkoutResponse: { success: true, checkoutUrl: 'https://checkout.stripe.com/pay/cs_test_abc' } });
+  await goToDetailsStep_(ctx);
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod(CARD_VALUE);
+  ctx.elements['ba-step-details-next']._listeners.click();
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-step-complete'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-complete-heading'].textContent, '予約申込を受け付けました');
+  assert.strictEqual(ctx.elements['ba-complete-status-label'].textContent, '予約ステータス');
+  assert.match(ctx.elements['ba-complete-status'].textContent, /お支払い完了で確定/);
+  var redirect = ctx.elements['ba-complete-checkout-notice'].renderedText();
+  assert.match(redirect, /予約申込を受け付けました/);
+  assert.match(redirect, /続けて/);
+  assert.match(redirect, /お支払い完了後、予約が確定します/);
+  assert.match(redirect, /失効する場合があります/);
+  assert.doesNotMatch(redirect + ctx.elements['ba-complete-heading'].textContent, /仮予約|管理者|確定のご連絡/);
+});
+
+test('Issue #445: 現金の送信後は従来どおり仮予約受付の完了画面・管理者確認の案内を維持する', async function () {
+  var ctx = setupCardFlow(null);
+  await goToDetailsStep_(ctx);
+  fillStep3RequiredFields(ctx);
+  ctx.setPaymentMethod('現金');
+  ctx.elements['ba-step-details-next']._listeners.click();
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-complete-heading'].textContent, '仮予約の送信を受け付けました');
+  assert.strictEqual(ctx.elements['ba-complete-status-label'].textContent, '仮予約ステータス');
+  assert.strictEqual(ctx.elements['ba-complete-generic-notice'].hidden, false);
+});
+
+test('Issue #445: 全ブランド（SNB / SNB mens / Studio X）が共通のbooking_app_ja/enインクルードを使い、静的な共通バナーに「仮予約（PENDING）」を前面に出さない', function () {
+  ['booking/index.html', 'mens/booking/index.html', 'studio-x/booking/index.html'].forEach(function (file) {
+    var html = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+    assert.match(html, /booking_app_ja\.html/, file);
+  });
+  ['ja', 'en'].forEach(function (lang) {
+    var html = fs.readFileSync(path.join(__dirname, '..', '_includes', 'booking_app_' + lang + '.html'), 'utf8');
+    ['ba-flow-banner-title', 'ba-flow-banner-body', 'ba-confirm-flow-title', 'ba-confirm-flow-body', 'ba-consent-text', 'ba-confirm-heading', 'ba-complete-heading', 'ba-complete-status-label'].forEach(function (id) {
+      assert.match(html, new RegExp('id="' + id + '"'), lang + ' ' + id);
+    });
+  });
+  var ja = fs.readFileSync(path.join(__dirname, '..', '_includes', 'booking_app_ja.html'), 'utf8');
+  assert.doesNotMatch(ja, /このフォームの送信は「仮予約（PENDING）」の申込です/);
+  assert.doesNotMatch(ja, /送信すると「仮予約（PENDING）」として受け付けます/);
 });
