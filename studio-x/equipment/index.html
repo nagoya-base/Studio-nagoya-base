@@ -102,7 +102,7 @@
           <table>
             <tbody>
 {%- for item in site.data.studio_x_equipment.freeSelf %}
-              <tr><th>{{ item.label }}</th><td>×{{ item.stock }}</td><td>無料（セルフ）</td></tr>
+              <tr><th>{{ item.label }}</th><td>{% if item.stock %}×{{ item.stock }}{% else %}—{% endif %}</td><td>無料（セルフ）</td></tr>
 {%- endfor %}
             </tbody>
           </table>

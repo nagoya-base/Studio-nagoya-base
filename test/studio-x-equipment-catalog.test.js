@@ -37,7 +37,8 @@ test('正本の内容がIssueの確定料金・数量・常設無料設備と一
     '背景紙 ブラック（135cm×5m）×1', '背景紙 ホワイト（135cm×5m）×1', 'レフ板 5-in-1（80cm）×1'
   ]);
   // 背景布・背景スタンドはセルフ利用が無料
-  assert.deepStrictEqual(data.freeSelf.map(function (e) { return e.code; }), ['BACKDROP_CLOTH_WHITE', 'BACKDROP_CLOTH_BLACK']);
+  assert.deepStrictEqual(data.freeSelf.map(function (e) { return e.code; }), ['BACKDROP_CLOTH_WHITE', 'BACKDROP_POLE', 'BACKDROP_CLOTH_BLACK']);
+  assert.strictEqual(data.freeSelf.filter(function (e) { return e.code === 'BACKDROP_POLE'; })[0].selectable, false, '背景用竹竿は無料備品として正本に載せる（個別選択はさせない）');
   // 背景スタンドは無料ではなく200円の有料レンタル機材（Issue #430）。背景紙ロールは常設・無料
   assert.strictEqual(data.rental.filter(function (e) { return e.code === 'BACKGROUND_STAND'; })[0].unitPriceJpy, 200);
   assert.ok(data.permanent.some(function (e) { return /背景紙 ブラック/.test(e.label); }) && data.permanent.some(function (e) { return /背景紙 ホワイト/.test(e.label); }));

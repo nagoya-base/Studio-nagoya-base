@@ -131,6 +131,11 @@ var StudioXEquipmentCatalog = {
       "viaTheme": "WHITE_BACKDROP"
     },
     {
+      "code": "BACKDROP_POLE",
+      "label": "背景用竹竿",
+      "selectable": false
+    },
+    {
       "code": "BACKDROP_CLOTH_BLACK",
       "label": "背景布 黒（幅180cm×長さ250cm）",
       "stock": 1,
