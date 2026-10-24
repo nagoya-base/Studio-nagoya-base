@@ -61,7 +61,10 @@ function setup(options) {
       STRIPE_SECRET_KEY: 'sk_test_dummy',
       STRIPE_CHECKOUT_ENABLED: 'true',
       STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.com/success',
-      STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/cancel'
+      STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/cancel',
+      /* Issue #422: 既存フィクスチャのstudio_x予約用（ブランド別URL未設定だとfail-closedになるため） */
+      STRIPE_CHECKOUT_SUCCESS_URL_STUDIO_X: 'https://example.com/success',
+      STRIPE_CHECKOUT_CANCEL_URL_STUDIO_X: 'https://example.com/cancel'
     },
     DEFAULT_MAIL_PROPERTIES,
     opts.properties || {}
@@ -1225,7 +1228,10 @@ test('expirePendingBookings: 現地払い(PayPay)予約は既存の24時間TTL�
  */
 var BRAND_URL_PROPERTIES = {
   STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.test/Studio-nagoya-base/booking/payment-complete.html?session_id={CHECKOUT_SESSION_ID}',
-  STRIPE_CHECKOUT_CANCEL_URL: 'https://example.test/Studio-nagoya-base/booking/'
+  STRIPE_CHECKOUT_CANCEL_URL: 'https://example.test/Studio-nagoya-base/booking/',
+  /* setup()の既定のstudio_x用URLを打ち消し、導出ロジックを検証する */
+  STRIPE_CHECKOUT_SUCCESS_URL_STUDIO_X: '',
+  STRIPE_CHECKOUT_CANCEL_URL_STUDIO_X: ''
 };
 
 function checkoutPayloadForBrand_(brand, properties) {
@@ -1266,13 +1272,41 @@ test('Issue #422: ブランド別Script Propertyがあれば導出より優先�
   assert.ok(studioX.success_url.indexOf('/studio-x/booking/payment-complete.html') !== -1, '他ブランドのPropertyは影響しない');
 });
 
-test('Issue #422: 導出できない単一URL設定（既存環境）はSNB用URLへフォールバックし、決済は止まらない', function () {
-  var payload = checkoutPayloadForBrand_('studio_x', {
+test('Issue #422: mens / Studio Xで戻り先を導出できない場合はSNB URLへフォールバックせず、Checkout生成前に停止する', function () {
+  var legacy = {
+    STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.com/success',
+    STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/cancel',
+    STRIPE_CHECKOUT_SUCCESS_URL_STUDIO_X: '',
+    STRIPE_CHECKOUT_CANCEL_URL_STUDIO_X: ''
+  };
+  ['mens', 'studio_x'].forEach(function (brand) {
+    var ctx = setup({ properties: legacy });
+    var bookingId = createBookingRow(ctx, { brand: brand, bookingId: 'ID-' + brand + '-20261001-AAAAAAAA' });
+    var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+    assert.strictEqual(result.success, false, brand);
+    assert.strictEqual(result.error.code, 'STRIPE_NOT_CONFIGURED', brand);
+    assert.strictEqual(ctx.urlFetchApp._calls.length, 0, brand + ': Stripeを呼ばない');
+  });
+});
+
+test('Issue #422: 導出できなくてもSNB予約は従来の単一URL設定のまま決済できる', function () {
+  var payload = checkoutPayloadForBrand_('snb', {
     STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.com/success',
     STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/cancel'
   });
   assert.strictEqual(payload.success_url, 'https://example.com/success');
   assert.strictEqual(payload.cancel_url, 'https://example.com/cancel');
+});
+
+test('Issue #422: 導出できなくてもブランド別Propertyがあればmens / Studio Xは決済できる', function () {
+  var payload = checkoutPayloadForBrand_('studio_x', {
+    STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.com/success',
+    STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/cancel',
+    STRIPE_CHECKOUT_SUCCESS_URL_STUDIO_X: 'https://example.com/sx-success',
+    STRIPE_CHECKOUT_CANCEL_URL_STUDIO_X: 'https://example.com/sx-cancel'
+  });
+  assert.strictEqual(payload.success_url, 'https://example.com/sx-success');
+  assert.strictEqual(payload.cancel_url, 'https://example.com/sx-cancel');
 });
 
 test('Issue #422: brandが空・未知の既存予約データはSNBとして扱う（後方互換）', function () {

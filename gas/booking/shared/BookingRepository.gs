@@ -2531,6 +2531,10 @@ var BookingRepository = (function () {
        */
       /* Issue #422: 戻り先URLのみブランド（record.brand）別に解決する。金額・有効期限等は不変。 */
       var returnUrls = Booking.resolveCheckoutReturnUrls(record.brand, stripeConfig);
+      if (!returnUrls.ok) {
+        /* mens / Studio Xの戻り先を確定できない場合、SNBへ戻さずCheckout生成前に停止する。 */
+        return { success: false, error: { code: 'STRIPE_NOT_CONFIGURED', message: '決済機能が設定されていません。当店へお問い合わせください。' } };
+      }
       var checkoutParams = {
         amountJpy: expected.amountJpy,
         currency: expected.currency,

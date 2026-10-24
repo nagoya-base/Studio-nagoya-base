@@ -50,6 +50,9 @@ function setup(options) {
       STRIPE_CHECKOUT_ENABLED: 'true',
       STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.com/success',
       STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/cancel',
+      /* Issue #422: 既存フィクスチャのstudio_x予約用（ブランド別URL未設定だとfail-closedになるため） */
+      STRIPE_CHECKOUT_SUCCESS_URL_STUDIO_X: 'https://example.com/success',
+      STRIPE_CHECKOUT_CANCEL_URL_STUDIO_X: 'https://example.com/cancel',
       BOOKING_MAIL_DISPLAY_NAME: 'Studio Nagoya Base',
       BOOKING_MAIL_REPLY_TO: 'noreply@example.com',
       BOOKING_CONTACT_EMAIL: 'contact@example.com'

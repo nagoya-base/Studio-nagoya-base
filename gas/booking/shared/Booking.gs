@@ -286,11 +286,11 @@ var Booking = (function () {
 
   /*
    * Stripe Checkoutのsuccess_url / cancel_urlをブランド別に解決する（Issue #422）。
-   * 優先順位: (1) ブランド別Script Property（stripeConfig.successUrls / cancelUrls[brand]）
-   * → (2) SNB用の既存URL（successUrl / cancelUrl）の末尾
-   * '/booking/payment-complete.html' / '/booking/' をブランド別パスへ差し替えて導出
-   * → (3) 導出できなければSNB用の既存URLをそのまま使う（後方互換。既存の単一URL設定の環境でも
-   * Checkoutが止まらない）。SNBは常に既存URLをそのまま使う。
+   * - snb（brand空・未知の過去データを含む）: 既存のSTRIPE_CHECKOUT_SUCCESS_URL / CANCEL_URLをそのまま使う。
+   * - mens / studio_x: ブランド別Script Property（stripeConfig.successUrls / cancelUrls[brand]）→
+   *   なければSNB用URLの末尾'/booking/payment-complete.html' / '/booking/'をブランド別パスへ
+   *   差し替えて導出。導出できない場合はSNB用URLへ黙ってフォールバックせず、ok:falseを返す
+   *   （呼び出し側は設定不足としてCheckout生成前にfail-closedにする。ブランド混在の防止）。
    * 決済の成立条件・金額・有効期限には一切関与しない（戻り先URLのみ）。
    */
   var SUCCESS_PATH_SUFFIX_ = '/booking/payment-complete.html';
@@ -304,10 +304,10 @@ var Booking = (function () {
     if (profile.key !== 'snb') {
       var successOverride = config.successUrls && config.successUrls[profile.key];
       var cancelOverride = config.cancelUrls && config.cancelUrls[profile.key];
-      successUrl = successOverride || swapBrandPath_(successUrl, SUCCESS_PATH_SUFFIX_, profile.pathPrefix) || successUrl;
-      cancelUrl = cancelOverride || swapBrandPath_(cancelUrl, CANCEL_PATH_SUFFIX_, profile.pathPrefix) || cancelUrl;
+      successUrl = successOverride || swapBrandPath_(successUrl, SUCCESS_PATH_SUFFIX_, profile.pathPrefix) || '';
+      cancelUrl = cancelOverride || swapBrandPath_(cancelUrl, CANCEL_PATH_SUFFIX_, profile.pathPrefix) || '';
     }
-    return { successUrl: successUrl, cancelUrl: cancelUrl };
+    return { ok: !!successUrl && !!cancelUrl, successUrl: successUrl, cancelUrl: cancelUrl };
   }
 
   /*

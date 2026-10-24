@@ -942,7 +942,10 @@ var NEW_ATTEMPT_ID = 'PAY-' + BOOKING_ID + '-NEW000000001';
 var CHECKOUT_PROPERTIES = {
   STRIPE_CHECKOUT_ENABLED: 'true',
   STRIPE_CHECKOUT_SUCCESS_URL: 'https://example.com/booking/success',
-  STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/booking/cancel'
+  STRIPE_CHECKOUT_CANCEL_URL: 'https://example.com/booking/cancel',
+  /* Issue #422: 既存フィクスチャのstudio_x予約用 */
+  STRIPE_CHECKOUT_SUCCESS_URL_STUDIO_X: 'https://example.com/booking/success',
+  STRIPE_CHECKOUT_CANCEL_URL_STUDIO_X: 'https://example.com/booking/cancel'
 };
 
 /* 前回のSession Aは失効済みで決済状態はfailed（利用者が決済をやり直せる状態）。 */
