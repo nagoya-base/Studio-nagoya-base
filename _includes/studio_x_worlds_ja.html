@@ -5,11 +5,13 @@
 {%- endcomment -%}
 {%- assign eq = site.data.studio_x_equipment -%}
 <div class="theme-option-grid">
-{%- for world in site.data.studio_x_worlds %}
+{%- for col in (1..3) %}
+<div class="theme-option-col">
+{%- for world in site.data.studio_x_worlds %}{% if world.column == col %}
   {%- assign has_staff = false -%}
   {%- for t in eq.staffService.themes %}{% if t.code == world.staff_theme %}{% assign has_staff = true %}{% endif %}{% endfor %}
-  <article class="theme-option-card">
-    <img src="../images/{{ world.image }}" alt="{{ world.alt }}" loading="lazy" decoding="async">
+  <article class="theme-option-card" style="order:{{ world.position }}">
+    <img src="../images/{{ world.image }}" width="{{ world.width }}" height="{{ world.height }}" alt="{{ world.alt }}" loading="lazy" decoding="async">
     <div class="theme-option-body">
       <span class="theme-option-kicker">{{ world.kicker }}</span>
       <h3>{{ world.name }}</h3>
@@ -36,5 +38,7 @@
       </dl>
     </div>
   </article>
+{%- endif %}{% endfor %}
+</div>
 {%- endfor %}
 </div>
