@@ -361,7 +361,7 @@ var StripeGateway = (function () {
    * alwaysでStripe Customerを作る。メールアドレスは入力値をcustomer_emailで固定する（Checkout上で
    * 変更させない。予約メールとの照合を安定させるため）。サブスクリプション本体は、この決済の完了
    * Webhookを受けてcreateMembershipSubscriptionで作る（MembershipRules.gs冒頭コメント参照）。
-   * params: { amountJpy, email, memberId, successUrl, cancelUrl, productName }
+   * params: { amountJpy, email, memberId, successUrl, cancelUrl, productName, expiresAtSeconds? }
    */
   function createMembershipCheckoutSession(stripeConfig, params, idempotencyKey) {
     if (!stripeConfig || !stripeConfig.secretKey) {
@@ -382,6 +382,7 @@ var StripeGateway = (function () {
       'metadata[memberId]': params.memberId,
       'client_reference_id': params.memberId
     };
+    if (params.expiresAtSeconds) payload.expires_at = String(params.expiresAtSeconds);
     var result = performRequest_('post', API_BASE_ + '/checkout/sessions', stripeConfig.secretKey, encodeFormPayload_(payload), idempotencyKey);
     if (!result.ok) return result;
     return { ok: true, session: normalizeSession_(result.raw) };

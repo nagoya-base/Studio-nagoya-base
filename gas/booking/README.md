@@ -7460,9 +7460,14 @@ SNB MEMBER（月額1,000円）の実会員資格を、Stripeの決済事実か�
 
 冪等性: ①StripeEventsのイベントID台帳、②`(memberId, month)`の支払い事実、③subscription作成のIdempotency-Key（`snb-membership-sub-<入会Checkout Session ID>`）と「会員行にsubscription IDがあれば作らない」確認。書き込みはすべて処理権の世代確認つきロック内。署名検証・受信はBooking Webhook/中継基盤の既存方式のまま変更なし。ログにメール・Stripe ID・秘密鍵は出さない。
 
-### 入会Checkoutの開始
+### 入会受付と二重加入・二重課金の防止
 
-`POST ?action=startMembershipCheckout`（本文`{ "email": "..." }`のみ）。既存のカード決済と同じキルスイッチ（`STRIPE_CHECKOUT_ENABLED`）に従い、有効でなければ発行しない（**この変更でSTRIPE_CHECKOUT_ENABLEDは変更していない**）。金額は固定1,000円。応答は`{ success, checkoutUrl }`のみで、既存会員かどうかは返さない（二重加入の防止は案内で行う）。
+`POST ?action=startMembershipCheckout`（本文`{ "email": "..." }`のみ）。既存のカード決済と同じキルスイッチ（`STRIPE_CHECKOUT_ENABLED`）に従い、有効でなければ発行しない（**この変更でSTRIPE_CHECKOUT_ENABLEDは変更していない**）。金額は固定1,000円。
+
+- **応答は常に同じ形・同じ文言**（`{ success: true, message: "入力されたメールアドレス宛に、入会のご案内をお送りしました…" }`）。結果はメール宛にだけ伝える: 新規→35分有効の決済URL、既存会員→登録済みである旨（Checkoutは発行しない）。これにより、外部応答からそのメールが会員かどうかを判別できず、決済URLも本人のメールにしか届かない。
+- 「既存会員」＝同じメールに、subscriptionが有効（`status=active`。解約予約中も期間末までは有効）、または当月の支払い事実がある会員がいる（`MemberRepository.findLiveMemberByEmail`）。
+- 並行リクエスト: `LockService`で「確認〜Checkout発行〜保留中マーク記録」を直列化し、同じメールには保留中マーク（`CacheService`、35分＝Checkoutの失効時間）がある間は新しいCheckoutを発行しない。ロックを取れなければ発行しない。
+- 最終防御（Webhook）: 入会決済の完了時に同じメールの有効な別会員（自分自身の再送・再試行は除外）がいれば、会員行もsubscriptionも作らず`MEMBERSHIP_DUPLICATE_JOIN`として**Recoveryへ記録**する。入金は済んでいるため、運営が入会Checkoutの1,000円を**返金**すること。
 
 ### 手動設定（Secretの値はここに書かない）
 

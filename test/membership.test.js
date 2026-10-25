@@ -550,23 +550,116 @@ test('入会Checkout: STRIPE_CHECKOUT_ENABLEDが有効でない限り発行し�
   assert.strictEqual(ctx.stripeCalls.length, 0);
 });
 
-test('入会Checkout: 金額はサーバー固定の1,000円・メール固定・決済手段保存つきで発行し、会員の存在は応答に出さない', function () {
-  var ctx = setup({ properties: {
-    STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/ok', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/ng'
-  } });
+var CHECKOUT_PROPERTIES = {
+  STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/ok', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/ng'
+};
+
+function checkoutPosts(ctx) {
+  return ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/checkout/sessions') !== -1 && c.options.method === 'post'; });
+}
+
+test('入会受付: 金額はサーバー固定の1,000円・メール固定・決済手段保存つきでCheckoutを発行し、決済URLはメールでだけ伝える', function () {
+  var ctx = setup({ properties: CHECKOUT_PROPERTIES });
   var result = ctx.sandbox.MembershipService.startCheckout({ email: ' Taro@Example.com ', amount: 1 });
   assert.strictEqual(result.success, true);
-  assert.strictEqual(result.checkoutUrl, 'https://checkout.stripe.com/c/pay/cs_new');
-  var body = decodeURIComponent(ctx.stripeCalls[0].options.payload);
+  assert.deepStrictEqual(Object.keys(result).sort(), ['message', 'success']);
+  assert.ok(JSON.stringify(result).indexOf('checkout.stripe.com') === -1, '応答に決済URLを含めない');
+
+  var body = decodeURIComponent(checkoutPosts(ctx)[0].options.payload);
   assert.ok(body.indexOf('mode=payment') !== -1);
   assert.ok(body.indexOf('line_items[0][price_data][unit_amount]=1000') !== -1);
   assert.ok(body.indexOf('customer_email=taro@example.com') !== -1);
   assert.ok(body.indexOf('payment_intent_data[setup_future_usage]=off_session') !== -1);
   assert.ok(body.indexOf('customer_creation=always') !== -1);
   assert.ok(body.indexOf('metadata[orderType]=membership') !== -1);
-  assert.deepStrictEqual(Object.keys(result).sort(), ['checkoutUrl', 'success']);
+  assert.ok(body.indexOf('expires_at=') !== -1, 'Checkoutは短時間で失効させる');
+
+  var mails = ctx.globals.MailApp._sentEmails;
+  assert.strictEqual(mails.length, 1);
+  assert.strictEqual(mails[0].to, 'taro@example.com');
+  assert.ok(mails[0].body.indexOf('https://checkout.stripe.com/c/pay/cs_new') !== -1);
 
   assert.strictEqual(ctx.sandbox.MembershipService.startCheckout({ email: 'bad' }).error.code, 'INVALID_EMAIL');
+});
+
+test('二重加入防止: 既存会員（当月支払済み/subscription有効）にはCheckoutを発行せず、応答は新規と同一でメールだけが異なる', function () {
+  var ctx = setup({ properties: CHECKOUT_PROPERTIES });
+  joined(ctx);
+  var before = checkoutPosts(ctx).length;
+
+  var existing = ctx.sandbox.MembershipService.startCheckout({ email: 'TARO@example.com' });
+  var fresh = ctx.sandbox.MembershipService.startCheckout({ email: 'newcomer@example.com' });
+  assert.strictEqual(JSON.stringify(existing), JSON.stringify(fresh), '外部応答から既存会員か判別できない');
+
+  assert.strictEqual(checkoutPosts(ctx).length, before + 1, '新しいCheckoutは新規メールの1件だけ');
+  var mails = ctx.globals.MailApp._sentEmails;
+  assert.strictEqual(mails.length, 2);
+  assert.strictEqual(mails[0].to, 'taro@example.com');
+  assert.ok(mails[0].body.indexOf('checkout.stripe.com') === -1);
+  assert.ok(mails[0].body.indexOf('登録済み') !== -1);
+  assert.ok(mails[1].body.indexOf('checkout.stripe.com') !== -1);
+});
+
+test('二重加入防止: 当月の支払い事実だけがある（subscription未作成）会員も再入会できない', function () {
+  var ctx = setup({ properties: CHECKOUT_PROPERTIES, stripeState: { subscriptionFailures: 5 } });
+  receiveAndProcess(ctx, joinEvent()); /* subscription作成は失敗中だが入会月は支払済み。 */
+  ctx.sandbox.MembershipService.startCheckout({ email: MEMBER_EMAIL });
+  assert.strictEqual(checkoutPosts(ctx).length, 0);
+});
+
+test('二重加入防止: 同一メールの連続・並行入会でも発行するCheckoutは1件だけ（保留中マーク）', function () {
+  var ctx = setup({ properties: CHECKOUT_PROPERTIES });
+  var first = ctx.sandbox.MembershipService.startCheckout({ email: 'dup@example.com' });
+  var second = ctx.sandbox.MembershipService.startCheckout({ email: 'DUP@example.com' });
+  assert.strictEqual(JSON.stringify(first), JSON.stringify(second));
+  assert.strictEqual(checkoutPosts(ctx).length, 1);
+  assert.strictEqual(ctx.globals.MailApp._sentEmails.length, 1);
+});
+
+test('二重加入防止: ロックを取れない並行リクエストはCheckoutを発行しない', function () {
+  var ctx = setup({ properties: CHECKOUT_PROPERTIES });
+  /* 別実行がロック保持中を再現する。 */
+  var holder = ctx.globals.LockService.getScriptLock();
+  assert.strictEqual(holder.tryLock(1), true);
+  var result = ctx.sandbox.MembershipService.startCheckout({ email: 'race@example.com' });
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(checkoutPosts(ctx).length, 0);
+  holder.releaseLock();
+});
+
+test('二重加入防止（Webhook最終防御）: 同一メール・同一月の二重決済は会員もsubscriptionも作らず要復旧にする', function () {
+  var ctx = setup();
+  joined(ctx);
+  var subCalls = function () { return ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/subscriptions') !== -1; }).length; };
+  assert.strictEqual(subCalls(), 1);
+
+  /* 別の入会Checkout（別memberId・別Session）が同じメールで決済された。 */
+  var responder = ctx.sandbox.UrlFetchApp.fetch;
+  ctx.sandbox.UrlFetchApp.fetch = function (url, options) {
+    if (url.indexOf('/checkout/sessions/cs_second') !== -1) {
+      return { getResponseCode: function () { return 200; }, getContentText: function () {
+        return JSON.stringify({ id: 'cs_second', mode: 'payment', status: 'complete', payment_status: 'paid', amount_total: 1000, currency: 'jpy',
+          payment_intent: 'pi_join', customer: 'cus_second', customer_email: 'taro@example.com', metadata: { orderType: 'membership', memberId: 'MBR-second' } });
+      } };
+    }
+    return responder(url, options);
+  };
+  var result = receiveAndProcess(ctx, { id: 'evt_second', type: 'checkout.session.completed', created: sec(JOIN_AT) + 60, data: { object: { id: 'cs_second' } } });
+  assert.strictEqual(result.code, 'MEMBERSHIP_DUPLICATE_JOIN');
+  assert.strictEqual(result.finalized, true);
+  assert.strictEqual(rowsOf(ctx, 'Members').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(subCalls(), 1, '二重にsubscriptionを作らない');
+  var recorded = Object.keys(ctx.sheets).some(function (name) {
+    return ctx.sheets[name]._rows.some(function (row) { return row.indexOf('STRIPE_WEBHOOK_MEMBERSHIP_DUPLICATE_JOIN') !== -1; });
+  });
+  assert.ok(recorded, '返金確認のためRecoveryへ記録');
+});
+
+test('二重加入防止（Webhook最終防御）: 自分自身の入会イベントの再送・再試行は重複扱いにしない', function () {
+  var ctx = setup({ stripeState: { subscriptionFailures: 1 } });
+  assert.strictEqual(receiveAndProcess(ctx, joinEvent()).code, 'SUBSCRIPTION_CREATE_RETRY');
+  assert.strictEqual(receiveAndProcess(ctx, joinEvent()).code, 'MEMBERSHIP_JOINED');
 });
 
 /* ===== ログ・既存経路 ===== */

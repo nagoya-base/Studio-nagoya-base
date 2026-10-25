@@ -233,7 +233,36 @@ var MemberRepository = (function () {
     return false;
   }
 
+  /*
+   * 二重加入の防止用（Issue #471レビュー対応）。同じメールアドレスに、有効な会員が既にいるか。
+   * 「有効」＝subscriptionが有効（status=active。解約予約中も期間末までは有効）、または指定の月
+   * （'YYYY-MM'）の支払い事実がある会員。excludeMemberIdは、同じ入会の再送・再試行で自分自身を
+   * 重複と誤判定しないために除外する会員ID。該当する会員の行を返す（無ければnull）。
+   * メールが不正なときもnull（呼び出し側は新規扱い）。
+   */
+  function findLiveMemberByEmail(email, monthKey, excludeMemberId) {
+    var normalized = MembershipRules.normalizeEmail(email);
+    if (!normalized) return null;
+    var matches = readMembers_().members.filter(function (m) {
+      return m.record.email === normalized && m.record.memberId && m.record.memberId !== excludeMemberId;
+    });
+    if (matches.length === 0) return null;
+    for (var i = 0; i < matches.length; i++) {
+      if (matches[i].record.status === MembershipRules.STATUS.ACTIVE) return matches[i];
+    }
+    if (!/^\d{4}-\d{2}$/.test(monthKey || '')) return null;
+    var values = ensureSheet_(MONTHS_SHEET_, MONTH_HEADERS_).getDataRange().getValues();
+    for (var j = 1; j < values.length; j++) {
+      if (Number(values[j][1]) !== monthToCell_(monthKey)) continue;
+      for (var k = 0; k < matches.length; k++) {
+        if (matches[k].record.memberId === values[j][0]) return matches[k];
+      }
+    }
+    return null;
+  }
+
   return {
+    findLiveMemberByEmail: findLiveMemberByEmail,
     MEMBER_HEADERS: MEMBER_HEADERS_,
     MONTH_HEADERS: MONTH_HEADERS_,
     findMember: findMember,

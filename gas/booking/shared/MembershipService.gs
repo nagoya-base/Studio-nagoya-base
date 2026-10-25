@@ -1,17 +1,26 @@
 /*
- * MembershipService.gs — SNB MEMBER（Issue #471）の入会Checkout開始。Booking Web Appから呼ぶ。
+ * MembershipService.gs — SNB MEMBER（Issue #471）の入会受付。Booking Web Appから呼ぶ。
  *
  * 入会は「入会月ぶん1,000円の満額決済（Checkout mode=payment）」から始まり、決済完了Webhookを
  * 受けてBooking Admin側（StripeWebhookProcessor.handleMembershipJoin_）が会員登録と、
  * 翌月1日からの月額subscriptionを作る（MembershipRules.gs冒頭コメント参照）。
  *
+ * 【二重加入・二重課金の防止（レビュー対応）】
+ * - 受付時: 同じメールに有効な会員（subscription有効、または当月の支払い事実あり）が既にいる場合は
+ *   Checkoutを発行しない。
+ * - 会員の存在を外部へ漏らさないため、**応答は既存会員・新規・保留中のいずれでも同じ形・同じ文言**
+ *   （`{ success: true, message }`）にし、結果はメールアドレス宛のメールでだけ伝える（新規は決済URL、
+ *   既存会員はその旨）。他人のメールを入力しても、結果を見られるのはそのメールの持ち主だけ。
+ * - 並行リクエスト: LockServiceで「確認〜発行〜保留中マークの記録」を直列化し、同じメールには保留中
+ *   マーク（CacheService）がある間、新しいCheckoutを発行しない。Checkoutは35分で失効させ、保留中
+ *   マークも同じ期間で切れる。
+ * - 最終防御: Webhook側（StripeWebhookProcessor.handleMembershipJoin_）が、同じメールの有効な別会員
+ *   がいる場合は会員・subscriptionを作らず要復旧（返金確認）にする。
+ *
  * - 新しいCheckout導線は既存と同じキルスイッチ（STRIPE_CHECKOUT_ENABLED）に従う。未設定・
  *   'true'以外では入会Checkoutを発行しない（この変更でSTRIPE_CHECKOUT_ENABLEDは変更しない）。
  * - 金額はサーバー側の固定値（MembershipRules.MONTHLY_FEE_JPY）のみ。クライアントから金額は
- *   受け取らない。
- * - 既に会員かどうかの確認・応答は行わない（会員メールの存在を外部へ漏らさないため。二重加入の
- *   防止は案内・運用で行う。README参照）。
- * - メールアドレスは入力値をCheckoutへ固定する。予約メールとの照合は正規化した完全一致。
+ *   受け取らない。メールアドレスは入力値をCheckoutへ固定する。予約メールとの照合は正規化した完全一致。
  */
 'use strict';
 
@@ -19,12 +28,34 @@ var MembershipService = (function () {
   var PRODUCT_NAME_ = 'SNB MEMBER 月会費（入会月）';
   var RATE_LIMIT_PER_EMAIL_ = { windowMinutes: 10, maxCount: 3 };
   var RATE_LIMIT_GLOBAL_ = { windowMinutes: 1, maxCount: 20 };
+  var CHECKOUT_TTL_SECONDS_ = 35 * 60;
+  var LOCK_TIMEOUT_MS_ = 10000;
+  var MAIL_SUBJECT_ = '【Studio Nagoya Base】SNB MEMBER 入会のご案内';
+
+  /* 既存会員・新規・保留中のどれでも同一の応答。 */
+  var ACCEPTED_RESPONSE_MESSAGE_ = '入力されたメールアドレス宛に、入会のご案内をお送りしました。メールをご確認ください（届かない場合は迷惑メールフォルダもご確認ください）。';
 
   function fail_(code, message) {
     return { success: false, error: { code: code, message: message } };
   }
 
-  /* input: { email }。戻り値: { success: true, checkoutUrl } または { success: false, error }。 */
+  function accepted_() {
+    return { success: true, message: ACCEPTED_RESPONSE_MESSAGE_ };
+  }
+
+  function sendMail_(email, body) {
+    var mailConfig = BookingConfig.getMailConfig();
+    var message = { to: email, subject: MAIL_SUBJECT_, body: body };
+    if (mailConfig.displayName) message.name = mailConfig.displayName;
+    if (mailConfig.replyTo) message.replyTo = mailConfig.replyTo;
+    MailApp.sendEmail(message);
+  }
+
+  function currentMonthKey_() {
+    return MembershipRules.jstMonthKeyOfEpochSeconds(Math.floor(new Date().getTime() / 1000));
+  }
+
+  /* input: { email }。戻り値: { success: true, message } または { success: false, error }。 */
   function startCheckout(input) {
     var email = MembershipRules.normalizeEmail(input && input.email);
     if (!MembershipRules.isValidEmail(email)) {
@@ -45,20 +76,52 @@ var MembershipService = (function () {
       return fail_('RATE_LIMITED', '操作回数が多すぎます。しばらく時間を置いてから再度お試しください。');
     }
 
-    var memberId = 'MBR-' + Utilities.getUuid();
-    var result = StripeGateway.createMembershipCheckoutSession(stripeConfig, {
-      amountJpy: MembershipRules.MONTHLY_FEE_JPY,
-      email: email,
-      memberId: memberId,
-      successUrl: stripeConfig.membershipSuccessUrl,
-      cancelUrl: stripeConfig.membershipCancelUrl,
-      productName: PRODUCT_NAME_
-    }, memberId);
-    if (!result.ok || !result.session || !result.session.url) {
-      Logger.log('MembershipService: 入会Checkout Sessionを作成できませんでした errorType=' + (result.errorType || 'UNKNOWN'));
-      return fail_('CHECKOUT_UNAVAILABLE', '入会の決済ページを開始できませんでした。しばらくしてから再度お試しください。');
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS_)) {
+      return fail_('LOCK_TIMEOUT', '一時的に混み合っています。しばらくしてから再度お試しください。');
     }
-    return { success: true, checkoutUrl: result.session.url };
+    try {
+      var existing = MemberRepository.findLiveMemberByEmail(email, currentMonthKey_(), '');
+      if (existing) {
+        sendMail_(email, 'このメールアドレスは既にSNB MEMBERとしてご登録済みです。新たにお手続きいただく必要はありません。\n' +
+          '更新・解約などについてご不明な点は、お問い合わせください。');
+        return accepted_();
+      }
+
+      var cache = CacheService.getScriptCache();
+      var pendingKey = 'member_join_open_' + email;
+      if (cache.get(pendingKey)) {
+        /* 直近に発行済みのCheckoutがある。二重に発行せず、先に送ったメールを案内する。 */
+        return accepted_();
+      }
+
+      var memberId = 'MBR-' + Utilities.getUuid();
+      var result = StripeGateway.createMembershipCheckoutSession(stripeConfig, {
+        amountJpy: MembershipRules.MONTHLY_FEE_JPY,
+        email: email,
+        memberId: memberId,
+        successUrl: stripeConfig.membershipSuccessUrl,
+        cancelUrl: stripeConfig.membershipCancelUrl,
+        productName: PRODUCT_NAME_,
+        expiresAtSeconds: Math.floor(new Date().getTime() / 1000) + CHECKOUT_TTL_SECONDS_
+      }, memberId);
+      if (!result.ok || !result.session || !result.session.url) {
+        Logger.log('MembershipService: 入会Checkout Sessionを作成できませんでした errorType=' + (result.errorType || 'UNKNOWN'));
+        return fail_('CHECKOUT_UNAVAILABLE', '入会の受付を開始できませんでした。しばらくしてから再度お試しください。');
+      }
+      cache.put(pendingKey, '1', CHECKOUT_TTL_SECONDS_);
+      sendMail_(email, 'SNB MEMBER（月額1,000円）の入会手続きは、下記のお支払いページから行えます（35分間有効）。\n\n' +
+        result.session.url + '\n\n' +
+        '・入会月は日割りなしで1,000円、入会日から当月末まで有効です。\n' +
+        '・翌月以降は毎月1日に1,000円が自動更新されます。\n' +
+        '・心当たりがない場合は、このメールを破棄してください。');
+      return accepted_();
+    } catch (error) {
+      Logger.log('MembershipService: 入会受付中にエラーが発生しました');
+      return fail_('CHECKOUT_UNAVAILABLE', '入会の受付を開始できませんでした。しばらくしてから再度お試しください。');
+    } finally {
+      lock.releaseLock();
+    }
   }
 
   return { startCheckout: startCheckout };

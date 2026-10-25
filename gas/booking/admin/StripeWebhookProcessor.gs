@@ -712,7 +712,13 @@ var StripeWebhookProcessor = (function () {
 
     /* 1) 会員行＋入会月の支払い事実（冪等）。 */
     var existingSubscriptionId = '';
+    var duplicateOf = null;
     var fenced = runFenced_(rowNumber, generation, function () {
+      /* 二重加入の最終防御（Issue #471レビュー対応）。同じメールに有効な別会員（subscription有効、
+         または入会月の支払い事実あり）が既にいる場合、会員行もsubscriptionも作らない。
+         入金は済んでいるため、要復旧として運営が返金する。自分自身の再送・再試行は除外する。 */
+      duplicateOf = MemberRepository.findLiveMemberByEmail(email, joinMonth, memberId);
+      if (duplicateOf) return;
       var upsert = MemberRepository.upsertMember({ memberId: memberId, customerId: session.customerId },
         { memberId: memberId, email: email, customerId: session.customerId }, null, { create: true }, now);
       MemberRepository.recordPaidMonth({
@@ -728,6 +734,10 @@ var StripeWebhookProcessor = (function () {
       existingSubscriptionId = (found && found.record.stripeSubscriptionId) || '';
     });
     if (fenced) return fenced;
+    if (duplicateOf) {
+      return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_DUPLICATE_JOIN',
+        '同じメールアドレスの有効な会員が既にいるため、二重加入として会員登録・subscription作成を行いませんでした。入会Checkoutの決済（1,000円）の返金を確認してください。eventId=' + eventId, now);
+    }
     if (existingSubscriptionId) {
       return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_JOINED', '入会処理は完了済みです。', now);
     }

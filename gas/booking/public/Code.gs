@@ -215,7 +215,7 @@ function handleStartCardCheckout_(e) {
 
 /*
  * SNB MEMBER入会Checkoutの開始（Issue #471）。{ email }のみを受け取る（金額等は受け取らない）。
- * 既存会員かどうかは応答に含めない。想定外の例外は汎用のINTERNAL_ERRORとして返す。
+ * 既存会員かどうかは応答に含めない（結果はメールで伝える）。想定外の例外は汎用のINTERNAL_ERRORとして返す。
  */
 function handleStartMembershipCheckout_(e) {
   var requestId = Utilities.getUuid();
