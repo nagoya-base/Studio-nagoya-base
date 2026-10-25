@@ -19,8 +19,9 @@
  * 会員区分（tier）の決定方針（Issue #342のユーザー確認、およびPR #343レビュー
  * （ブランド分離基準書v1.1）を反映。studio_xの扱いをPR #343レビューで修正）:
  * - studio_x（Issue #470）: 会員料金の廃止は2026/12/1以降に作成される予約（V2）から。V2は
- *   isMember入力を無視して常にGENERAL（現行一般料金の一本化表。SNBの新一般料金へは追従
- *   しない）。V1（〜2026/11/30作成）は従来どおり自己申告（isMember）でGENERAL/MEMBER。
+ *   isMember入力を無視して常にGENERALとするが、GENERAL料金そのものは現行MEMBER料金を
+ *   スライドした共通料金とする。V1（〜2026/11/30作成）は従来どおり自己申告（isMember）で
+ *   GENERAL/MEMBERを使い分ける。
  * - 料金世代（Issue #470）: 予約作成時刻でV1（〜2026/11/30）/V2（2026/12/1〜）を決めて
  *   予約へ保存し、日程変更でも保存済みの世代で再見積りする（現行表で再計算しない）。
  *   料金表はブランド別（snb/studio_x。mensはsnbのMEMBER表）に分離している。
@@ -100,15 +101,15 @@ var BookingPricing = (function () {
         MEMBER: MEMBER_RATES_
       }
     },
-    /* Studio Xは会員料金を持たず、現行一般料金（旧世代と同額）の一本化表。SNBの新一般料金へは
-       追従させない。V1のMEMBER表は2026/11/30までの新規予約と、旧世代予約の日程変更見積りで使う。 */
+    /* Studio XはV2で会員区分を廃止するが、V2のGENERAL料金には現行MEMBER料金をスライドする。
+       V1は2026/11/30までの新規予約と旧世代予約の日程変更見積りのためGENERAL/MEMBER双方を保持。 */
     studio_x: {
       V1: {
         GENERAL: STUDIO_X_GENERAL_RATES_,
         MEMBER: MEMBER_RATES_
       },
       V2: {
-        GENERAL: STUDIO_X_GENERAL_RATES_
+        GENERAL: MEMBER_RATES_
       }
     }
   };
@@ -119,7 +120,8 @@ var BookingPricing = (function () {
    * - mens: 予約導線で自動判定し、会員加入の有無・isMember入力に関係なく常にMEMBER料金。
    * - snb: 予約フォームの自己申告（isMember）でGENERAL/MEMBER。未指定はGENERAL。
    * - studio_x: 会員料金の廃止は新料金世代（V2）から。V1（〜2026/11/30作成）は従来どおり
-   *   自己申告（isMember）でGENERAL/MEMBER、V2は常にGENERAL。
+   *   自己申告（isMember）でGENERAL/MEMBER、V2は常にGENERAL。ただしV2 GENERALの金額は
+   *   現行MEMBER料金をスライドした共通料金。
    */
   function resolveTier_(brand, isMemberInput, generation) {
     if (brand === 'mens') return TIER.MEMBER;
