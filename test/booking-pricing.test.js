@@ -94,19 +94,19 @@ test('computeBookingPrice: studio_x V2の全時間帯は現行MEMBER料金と一
   });
 });
 
-test('computeBookingPrice: SNB一般料金はV2で新料金、V1は旧料金（Issue #470）', function () {
+test('computeBookingPrice: SNB一般料金はV2もV1と同じ現行料金のまま（Issue #475。値上げ撤回）', function () {
   var Pricing = loadPricing();
   var cases = [
-    { date: WEEKDAY_DATE, minutes: 60, v1: 2000, v2: 2500 },
-    { date: WEEKDAY_DATE, minutes: 120, v1: 4000, v2: 5000 },
-    { date: WEEKDAY_DATE, minutes: 180, v1: 6000, v2: 7500 },
-    { date: WEEKDAY_DATE, minutes: 240, v1: 8000, v2: 10000 },
-    { date: WEEKDAY_DATE, minutes: 300, v1: 10000, v2: 12500 },
-    { date: SATURDAY_DATE, minutes: 60, v1: 2500, v2: 3000 },
-    { date: SATURDAY_DATE, minutes: 120, v1: 5000, v2: 6000 },
-    { date: SATURDAY_DATE, minutes: 180, v1: 7500, v2: 9000 },
-    { date: SATURDAY_DATE, minutes: 240, v1: 10000, v2: 12000 },
-    { date: SATURDAY_DATE, minutes: 300, v1: 12500, v2: 15000 }
+    { date: WEEKDAY_DATE, minutes: 60, v1: 2000, v2: 2000 },
+    { date: WEEKDAY_DATE, minutes: 120, v1: 4000, v2: 4000 },
+    { date: WEEKDAY_DATE, minutes: 180, v1: 6000, v2: 6000 },
+    { date: WEEKDAY_DATE, minutes: 240, v1: 8000, v2: 8000 },
+    { date: WEEKDAY_DATE, minutes: 300, v1: 10000, v2: 10000 },
+    { date: SATURDAY_DATE, minutes: 60, v1: 2500, v2: 2500 },
+    { date: SATURDAY_DATE, minutes: 120, v1: 5000, v2: 5000 },
+    { date: SATURDAY_DATE, minutes: 180, v1: 7500, v2: 7500 },
+    { date: SATURDAY_DATE, minutes: 240, v1: 10000, v2: 10000 },
+    { date: SATURDAY_DATE, minutes: 300, v1: 12500, v2: 12500 }
   ];
   cases.forEach(function (c) {
     var r1 = Pricing.computeBookingPrice({ brand: 'snb', date: c.date, durationMinutes: c.minutes, generation: 'V1' });
