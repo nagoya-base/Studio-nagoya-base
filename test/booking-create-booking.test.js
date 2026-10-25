@@ -303,8 +303,8 @@ test('createBooking: studio_xの会員料金は2026/11/30までの新規予約�
   [
     { now: '2026-11-30T23:59:59+09:00', isMember: true, amount: 5500, tier: 'MEMBER', generation: 'V1' },
     { now: '2026-11-30T23:59:59+09:00', isMember: false, amount: 6000, tier: 'GENERAL', generation: 'V1' },
-    { now: '2026-12-01T00:00:00+09:00', isMember: true, amount: 6000, tier: 'GENERAL', generation: 'V2' },
-    { now: '2026-12-01T00:00:00+09:00', isMember: false, amount: 6000, tier: 'GENERAL', generation: 'V2' }
+    { now: '2026-12-01T00:00:00+09:00', isMember: true, amount: 5500, tier: 'GENERAL', generation: 'V2' },
+    { now: '2026-12-01T00:00:00+09:00', isMember: false, amount: 5500, tier: 'GENERAL', generation: 'V2' }
   ].forEach(function (c) {
     var ctx = setup();
     var result = ctx.sandbox.BookingRepository.createBooking(
