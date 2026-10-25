@@ -7466,13 +7466,13 @@ SNB MEMBER（月額1,000円）の実会員資格を、Stripeの決済事実か�
 
 - **応答は常に同じ形・同じ文言**（`{ success: true, message: "入力されたメールアドレス宛に、入会のご案内をお送りしました…" }`）。結果はメール宛にだけ伝える: 新規→35分有効の決済URL、既存会員→登録済みである旨（Checkoutは発行しない）。これにより、外部応答からそのメールが会員かどうかを判別できず、決済URLも本人のメールにしか届かない。
 - 「既存会員」＝同じメールに、subscriptionが有効（`status=active`。解約予約中も期間末までは有効）、または当月の支払い事実がある会員がいる（`MemberRepository.findLiveMemberByEmail`）。
-- 並行リクエスト: `LockService`で「確認〜Checkout発行〜保留中マーク記録」を直列化し、同じメールには保留中マーク（`CacheService`、35分＝Checkoutの失効時間）がある間は新しいCheckoutを発行しない。ロックを取れなければ発行しない。
+- 並行リクエスト・二重課金: `LockService`内で「既存有効会員の確認 → 有効な保留中入会の確認 → 保留中の永続化 → Checkout発行 → セッションID記録」を行う。保留中は**永続台帳`MemberCheckouts`シート**（`memberId`/`email`/`checkoutSessionId`/`pendingUntil`/`state`=PENDING・COMPLETED・EXPIRED）が正本で、`CacheService`は使わない（消失し得るため）。`pendingUntil`＝Checkout失効（35分）＋Webhook反映の猶予（10分）で、この間は同じメールへ新しいCheckoutを発行しない。決済完了Webhookで`COMPLETED`、Stripeの確定的な発行失敗で`EXPIRED`（解放）。応答不明（5xx・ネットワーク）の場合は決済可能なSessionが残る恐れがあるため解放しない。期限切れは`pendingUntil`の経過で判定する。ロックを取れなければ発行しない。
 - 最終防御（Webhook）: 入会決済の完了時に同じメールの有効な別会員（自分自身の再送・再試行は除外）がいれば、会員行もsubscriptionも作らず`MEMBERSHIP_DUPLICATE_JOIN`として**Recoveryへ記録**する。入金は済んでいるため、運営が入会Checkoutの1,000円を**返金**すること。
 
 ### 手動設定（Secretの値はここに書かない）
 
 - Script Properties（Booking Web App）: `STRIPE_MEMBERSHIP_SUCCESS_URL` / `STRIPE_MEMBERSHIP_CANCEL_URL`（入会Checkoutの戻り先URL）。新規のSecretはなし（既存の`STRIPE_SECRET_KEY`を使用）。
-- Bookingsシートのヘッダー行末尾（`priceGeneration`の右）へ`membershipStatus`を手動で追記。`Members`・`MemberMonths`シートは初回書き込み時に自動作成される。
+- Bookingsシートのヘッダー行末尾（`priceGeneration`の右）へ`membershipStatus`を手動で追記。`Members`・`MemberMonths`・`MemberCheckouts`シートは初回書き込み時に自動作成される。
 - Stripe Dashboard→Webhook（中継基盤が受けているエンドポイント）の送信イベントへ追加: `invoice.paid` / `invoice.payment_failed` / `customer.subscription.created` / `customer.subscription.updated` / `customer.subscription.deleted`（`checkout.session.completed`は既存）。
 - Stripe Dashboard→設定→Billing→サブスクリプションと請求メール→支払い失敗の管理: **Smart Retries（再試行）をオフ**にし、最終的に失敗した場合は**サブスクリプションをキャンセル**に設定（猶予期間なしの仕様のため）。
 - 解約の手段: Stripeカスタマーポータル（Dashboard→設定→Billing→カスタマーポータルで「サブスクリプションのキャンセル」を「請求期間の終了時」に設定）を用意するか、問い合わせ対応でDashboardから`cancel_at_period_end`を設定する。ポータルへの導線・規約・特商法の記載は#472。

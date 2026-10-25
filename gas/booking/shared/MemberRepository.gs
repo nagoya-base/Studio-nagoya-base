@@ -30,6 +30,10 @@ var MemberRepository = (function () {
   var MEMBERS_SHEET_ = 'Members';
   var MONTHS_SHEET_ = 'MemberMonths';
 
+  var PENDING_SHEET_ = 'MemberCheckouts';
+  var PENDING_HEADERS_ = ['memberId', 'email', 'checkoutSessionId', 'pendingUntil', 'state', 'createdAt', 'updatedAt'];
+  var PENDING_STATE = { PENDING: 'PENDING', COMPLETED: 'COMPLETED', EXPIRED: 'EXPIRED' };
+
   var MEMBER_HEADERS_ = [
     'memberId', 'email', 'stripeCustomerId', 'stripeSubscriptionId', 'status',
     'currentPeriodStart', 'currentPeriodEnd', 'canceledAt', 'cancelAtPeriodEnd',
@@ -261,7 +265,69 @@ var MemberRepository = (function () {
     return null;
   }
 
+  /*
+   * 保留中の入会Checkout台帳（MemberCheckouts。二重課金防止の正本。CacheServiceは使わない）。
+   * 1行＝発行した入会Checkout 1本: memberId / email（正規化済み）/ checkoutSessionId /
+   * pendingUntil（Checkoutの失効時刻＋Webhook反映の猶予。この時刻まで同じメールへ新しいCheckoutを
+   * 発行しない）/ state（PENDING・COMPLETED＝決済完了Webhookを処理済み・EXPIRED＝発行失敗で解放）。
+   * 失効はpendingUntilの経過で判定する（行を書き換えなくてもよい）。ロック保持下で呼ぶこと。
+   */
+  function readPending_() {
+    var sheet = ensureSheet_(PENDING_SHEET_, PENDING_HEADERS_);
+    var values = sheet.getDataRange().getValues();
+    var rows = [];
+    for (var i = 1; i < values.length; i++) rows.push({ rowNumber: i + 1, record: rowToRecord_(PENDING_HEADERS_, values[i]) });
+    return { sheet: sheet, rows: rows };
+  }
+
+  function toMillis_(value) {
+    if (value && typeof value.getTime === 'function') return value.getTime();
+    var parsed = new Date(value).getTime();
+    return isNaN(parsed) ? NaN : parsed;
+  }
+
+  /* 有効な（state=PENDINGかつpendingUntil未経過の）保留中Checkoutがあれば、その行を返す。無ければnull。 */
+  function findActivePending(email, now) {
+    var normalized = MembershipRules.normalizeEmail(email);
+    if (!normalized) return null;
+    var nowMs = toMillis_(now);
+    var rows = readPending_().rows;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i].record;
+      if (r.email === normalized && r.state === PENDING_STATE.PENDING && toMillis_(r.pendingUntil) > nowMs) return rows[i];
+    }
+    return null;
+  }
+
+  function addPending(entry, now) {
+    var sheet = ensureSheet_(PENDING_SHEET_, PENDING_HEADERS_);
+    sheet.appendRow(recordToRow_(PENDING_HEADERS_, {
+      memberId: entry.memberId, email: MembershipRules.normalizeEmail(entry.email), checkoutSessionId: entry.checkoutSessionId || '',
+      pendingUntil: entry.pendingUntil, state: PENDING_STATE.PENDING, createdAt: now, updatedAt: now
+    }));
+  }
+
+  /* memberIdの行のstate（と、指定があればcheckoutSessionId）を更新する。無ければ何もしない（false）。 */
+  function updatePending(memberId, fields, now) {
+    var data = readPending_();
+    for (var i = 0; i < data.rows.length; i++) {
+      if (data.rows[i].record.memberId !== memberId) continue;
+      var record = data.rows[i].record;
+      if (fields.state) record.state = fields.state;
+      if (fields.checkoutSessionId) record.checkoutSessionId = fields.checkoutSessionId;
+      record.updatedAt = now;
+      data.sheet.getRange(data.rows[i].rowNumber, 1, 1, PENDING_HEADERS_.length).setValues([recordToRow_(PENDING_HEADERS_, record)]);
+      return true;
+    }
+    return false;
+  }
+
   return {
+    PENDING_STATE: PENDING_STATE,
+    PENDING_HEADERS: PENDING_HEADERS_,
+    findActivePending: findActivePending,
+    addPending: addPending,
+    updatePending: updatePending,
     findLiveMemberByEmail: findLiveMemberByEmail,
     MEMBER_HEADERS: MEMBER_HEADERS_,
     MONTH_HEADERS: MONTH_HEADERS_,

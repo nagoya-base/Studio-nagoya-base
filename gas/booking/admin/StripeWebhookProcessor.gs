@@ -717,6 +717,8 @@ var StripeWebhookProcessor = (function () {
       /* 二重加入の最終防御（Issue #471レビュー対応）。同じメールに有効な別会員（subscription有効、
          または入会月の支払い事実あり）が既にいる場合、会員行もsubscriptionも作らない。
          入金は済んでいるため、要復旧として運営が返金する。自分自身の再送・再試行は除外する。 */
+      /* 保留中入会を完了扱いにする（同じメールの再入会を妨げない。重複判定は下記が担う）。 */
+      MemberRepository.updatePending(memberId, { state: MemberRepository.PENDING_STATE.COMPLETED }, now);
       duplicateOf = MemberRepository.findLiveMemberByEmail(email, joinMonth, memberId);
       if (duplicateOf) return;
       var upsert = MemberRepository.upsertMember({ memberId: memberId, customerId: session.customerId },

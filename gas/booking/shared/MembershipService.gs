@@ -11,9 +11,10 @@
  * - 会員の存在を外部へ漏らさないため、**応答は既存会員・新規・保留中のいずれでも同じ形・同じ文言**
  *   （`{ success: true, message }`）にし、結果はメールアドレス宛のメールでだけ伝える（新規は決済URL、
  *   既存会員はその旨）。他人のメールを入力しても、結果を見られるのはそのメールの持ち主だけ。
- * - 並行リクエスト: LockServiceで「確認〜発行〜保留中マークの記録」を直列化し、同じメールには保留中
- *   マーク（CacheService）がある間、新しいCheckoutを発行しない。Checkoutは35分で失効させ、保留中
- *   マークも同じ期間で切れる。
+ * - 並行リクエスト: LockServiceで「確認〜発行〜保留中マークの記録」を直列化し、同じメールには有効な
+ *   保留中入会（永続台帳MemberCheckouts。pendingUntil＝Checkout失効35分＋Webhook猶予10分）がある間、
+ *   新しいCheckoutを発行しない。確認→保留中の永続化→Checkout発行→セッションID記録をロック内で行う。
+ *   CacheServiceは正本にしない（消失し得るため使わない）。
  * - 最終防御: Webhook側（StripeWebhookProcessor.handleMembershipJoin_）が、同じメールの有効な別会員
  *   がいる場合は会員・subscriptionを作らず要復旧（返金確認）にする。
  *
@@ -29,6 +30,8 @@ var MembershipService = (function () {
   var RATE_LIMIT_PER_EMAIL_ = { windowMinutes: 10, maxCount: 3 };
   var RATE_LIMIT_GLOBAL_ = { windowMinutes: 1, maxCount: 20 };
   var CHECKOUT_TTL_SECONDS_ = 35 * 60;
+  /* Checkout失効後、決済完了Webhookが反映されるまでの猶予。この間も同じメールへ再発行しない。 */
+  var PENDING_GRACE_SECONDS_ = 10 * 60;
   var LOCK_TIMEOUT_MS_ = 10000;
   var MAIL_SUBJECT_ = '【Studio Nagoya Base】SNB MEMBER 入会のご案内';
 
@@ -88,14 +91,20 @@ var MembershipService = (function () {
         return accepted_();
       }
 
-      var cache = CacheService.getScriptCache();
-      var pendingKey = 'member_join_open_' + email;
-      if (cache.get(pendingKey)) {
-        /* 直近に発行済みのCheckoutがある。二重に発行せず、先に送ったメールを案内する。 */
+      var now = new Date();
+      if (MemberRepository.findActivePending(email, now)) {
+        /* 有効な保留中Checkoutが永続台帳（MemberCheckouts）にある。二重に発行せず、先に送ったメールを案内する。 */
         return accepted_();
       }
 
+      /* 保留中を先に永続化してからStripeへ発行する（発行後・記録前のクラッシュで2本目が出るのを防ぐ。
+         失敗時は解放する）。 */
       var memberId = 'MBR-' + Utilities.getUuid();
+      var expiresAtSeconds = Math.floor(now.getTime() / 1000) + CHECKOUT_TTL_SECONDS_;
+      MemberRepository.addPending({
+        memberId: memberId, email: email,
+        pendingUntil: new Date((expiresAtSeconds + PENDING_GRACE_SECONDS_) * 1000)
+      }, now);
       var result = StripeGateway.createMembershipCheckoutSession(stripeConfig, {
         amountJpy: MembershipRules.MONTHLY_FEE_JPY,
         email: email,
@@ -103,13 +112,18 @@ var MembershipService = (function () {
         successUrl: stripeConfig.membershipSuccessUrl,
         cancelUrl: stripeConfig.membershipCancelUrl,
         productName: PRODUCT_NAME_,
-        expiresAtSeconds: Math.floor(new Date().getTime() / 1000) + CHECKOUT_TTL_SECONDS_
+        expiresAtSeconds: expiresAtSeconds
       }, memberId);
       if (!result.ok || !result.session || !result.session.url) {
+        /* 発行できたか不明なAMBIGUOUS/NETWORKでは解放しない（決済可能なSessionが残っている恐れがあるため
+           pendingUntilまで再発行しない）。確定的な失敗のみ解放する。 */
+        if (result.errorType === 'STRIPE_ERROR' || result.errorType === 'NOT_CONFIGURED' || result.errorType === 'INVALID_REQUEST') {
+          MemberRepository.updatePending(memberId, { state: MemberRepository.PENDING_STATE.EXPIRED }, new Date());
+        }
         Logger.log('MembershipService: 入会Checkout Sessionを作成できませんでした errorType=' + (result.errorType || 'UNKNOWN'));
         return fail_('CHECKOUT_UNAVAILABLE', '入会の受付を開始できませんでした。しばらくしてから再度お試しください。');
       }
-      cache.put(pendingKey, '1', CHECKOUT_TTL_SECONDS_);
+      MemberRepository.updatePending(memberId, { checkoutSessionId: result.session.id }, new Date());
       sendMail_(email, 'SNB MEMBER（月額1,000円）の入会手続きは、下記のお支払いページから行えます（35分間有効）。\n\n' +
         result.session.url + '\n\n' +
         '・入会月は日割りなしで1,000円、入会日から当月末まで有効です。\n' +

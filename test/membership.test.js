@@ -616,6 +616,60 @@ test('二重加入防止: 同一メールの連続・並行入会でも発行す
   assert.strictEqual(ctx.globals.MailApp._sentEmails.length, 1);
 });
 
+test('二重課金防止: CacheServiceが消えても、永続台帳（MemberCheckouts）の保留中があれば2本目のCheckoutを発行しない', function () {
+  var ctx = setup({ properties: CHECKOUT_PROPERTIES });
+  ctx.sandbox.MembershipService.startCheckout({ email: 'cache@example.com' });
+  assert.strictEqual(checkoutPosts(ctx).length, 1);
+  var pendingRows = ctx.sheets.MemberCheckouts._rows;
+  assert.strictEqual(pendingRows.length, 2, 'ヘッダー＋保留中1行');
+  assert.strictEqual(pendingRows[1][1], 'cache@example.com');
+  assert.strictEqual(pendingRows[1][2], 'cs_new', 'checkoutSessionIdを記録');
+  assert.strictEqual(pendingRows[1][4], 'PENDING');
+
+  /* CacheService（レート制限含む）の全消失を再現する。 */
+  ctx.sandbox.CacheService = stubs.createCacheServiceStub();
+  var again = ctx.sandbox.MembershipService.startCheckout({ email: 'cache@example.com' });
+  assert.strictEqual(again.success, true);
+  assert.strictEqual(checkoutPosts(ctx).length, 1, 'キャッシュが消えても2本目を発行しない');
+});
+
+test('二重課金防止: 保留中はCheckout失効＋Webhook猶予（45分）を過ぎると解除され、再発行できる', function () {
+  var ctx = setup({ properties: CHECKOUT_PROPERTIES });
+  ctx.sandbox.MembershipService.startCheckout({ email: 'late@example.com' });
+  ctx.clock.advanceByMillis(44 * 60 * 1000);
+  ctx.sandbox.CacheService = stubs.createCacheServiceStub();
+  ctx.sandbox.MembershipService.startCheckout({ email: 'late@example.com' });
+  assert.strictEqual(checkoutPosts(ctx).length, 1);
+  ctx.clock.advanceByMillis(2 * 60 * 1000);
+  ctx.sandbox.CacheService = stubs.createCacheServiceStub();
+  ctx.sandbox.MembershipService.startCheckout({ email: 'late@example.com' });
+  assert.strictEqual(checkoutPosts(ctx).length, 2);
+});
+
+test('二重課金防止: 決済完了Webhookで保留中は完了扱いになる。Stripeの確定的な失敗では解放し、応答不明では解放しない', function () {
+  var ctx = setup({ properties: CHECKOUT_PROPERTIES });
+  /* 入会Checkoutと同じmemberIdで保留中を作ってから、決済完了を処理する。 */
+  ctx.sandbox.MemberRepository.addPending({ memberId: MEMBER_ID, email: MEMBER_EMAIL, pendingUntil: new Date(Date.parse(JOIN_AT) + 3600000) }, new Date());
+  joined(ctx);
+  assert.strictEqual(ctx.sheets.MemberCheckouts._rows[1][4], 'COMPLETED');
+
+  var failing = setup({ properties: CHECKOUT_PROPERTIES });
+  var original = failing.sandbox.UrlFetchApp.fetch;
+  var mode = { code: 400, type: 'invalid_request_error' };
+  failing.sandbox.UrlFetchApp.fetch = function (url, options) {
+    if (url.indexOf('/checkout/sessions') !== -1 && options.method === 'post') {
+      return { getResponseCode: function () { return mode.code; }, getContentText: function () { return JSON.stringify({ error: { type: mode.type } }); } };
+    }
+    return original(url, options);
+  };
+  assert.strictEqual(failing.sandbox.MembershipService.startCheckout({ email: 'err@example.com' }).success, false);
+  assert.strictEqual(failing.sheets.MemberCheckouts._rows[1][4], 'EXPIRED', '確定的な失敗は解放');
+
+  mode = { code: 500, type: 'api_error' };
+  failing.sandbox.MembershipService.startCheckout({ email: 'amb@example.com' });
+  assert.strictEqual(failing.sheets.MemberCheckouts._rows[2][4], 'PENDING', '応答不明は決済可能なSessionが残る恐れがあり解放しない');
+});
+
 test('二重加入防止: ロックを取れない並行リクエストはCheckoutを発行しない', function () {
   var ctx = setup({ properties: CHECKOUT_PROPERTIES });
   /* 別実行がロック保持中を再現する。 */
