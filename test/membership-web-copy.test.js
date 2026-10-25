@@ -312,3 +312,26 @@ test('内部資料: 料金表・ブランド分離基準が新ルールで、チ
     assert.ok(read('docs/' + n + '.md').indexOf('2026/12/1以降は無効') !== -1, n);
   });
 });
+
+test('更新・解約の表現: 毎月1日は「当月分」を請求し当月の資格が成立。解約に25日などの締切を設けず、「翌月分」と書かない（#471の仕様どおり）', function () {
+  var pages = ['_includes/membership_terms_ja.html', '_includes/legal_ja.html', 'index.html', 'legal/index.html', 'membership/index.html', 'legal/en.html', 'en.html'];
+  pages.forEach(function (p) {
+    var raw = read(p);
+    var t = textOf(raw);
+    var body = p === '_includes/legal_ja.html' ? t.replace(/月額料金の決済はStripeによるクレジットカード自動課金とします。毎月同日に翌月分を請求します。/, '') : t; /* 平日6時間パスの条文は別仕様 */
+    assert.ok(!/25日|25th/.test(body), p + ' に解約の締切日（25日）が残っている');
+    assert.ok(!/翌月分の会費|翌月分を|next month['’]s (fee|membership)/i.test(body), p + ' に「翌月分」の表現が残っている');
+  });
+  var terms = textOf(read('_includes/membership_terms_ja.html'));
+  assert.ok(terms.indexOf('毎月1日に当月分の会費が自動で請求され、決済が成功すると、その月の会員資格が有効になります') !== -1);
+  assert.ok(terms.indexOf('次回の更新前に解約の手続きが完了した場合、次回以降の自動更新を停止します') !== -1);
+  assert.ok(terms.indexOf('お支払い済みの月の末日までは会員資格が有効') !== -1);
+  ['index.html', 'legal/index.html'].forEach(function (p) {
+    var raw = read(p);
+    assert.ok(textOf(raw).indexOf('毎月1日に当月分が自動請求され、決済が成功した月の会員資格が有効になります') !== -1, p);
+    assert.ok(textOf(raw).indexOf('次回の更新前に解約の手続きが完了した場合、次回以降の自動更新を停止します') !== -1, p);
+  });
+  assert.ok(textOf(read('_includes/legal_ja.html')).indexOf('当月分を自動請求します（決済が成功した月の会員資格が有効になります）') !== -1);
+  assert.ok(textOf(read('docs/membership-pricing-2026-12.md')).indexOf('締切日は設けていない') !== -1);
+});
+
