@@ -363,7 +363,13 @@ var SpreadsheetRepository = (function () {
      * - checkoutCancelCheckedAt: 上記を最後に確認した日時。
      */
     'checkoutCancelState',
-    'checkoutCancelCheckedAt'
+    'checkoutCancelCheckedAt',
+    /*
+     * Issue #470で追加した列（末尾追記。本番反映時は既存Bookingsシートのヘッダー行へ手動で追記が必要）。
+     * - priceGeneration: 予約作成時に固定した料金世代（'V1'=2026/11/30まで|'V2'=2026/12/1から）。
+     *   日程変更でも更新しない。空は列追加前の予約でV1として扱う（BookingPricing.normalizeGeneration）。
+     */
+    'priceGeneration'
   ];
 
   function getSpreadsheet_() {

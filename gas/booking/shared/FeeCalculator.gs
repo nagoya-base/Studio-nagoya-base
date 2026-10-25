@@ -69,7 +69,7 @@ var FeeCalculator = (function () {
   }
 
   /*
-   * params: { brand, priceTier ('GENERAL'|'MEMBER'), durationMinutes, dateString }
+   * params: { brand, priceTier ('GENERAL'|'MEMBER'), durationMinutes, dateString, generation }
    * dateStringは変更後の利用日（'YYYY-MM-DD'。土日祝判定に使う）。
    * 戻り値:
    *   { supported: true, amount, dayType, tier, roundedMinutes, billableHours }
@@ -95,7 +95,10 @@ var FeeCalculator = (function () {
     }
     var priceResult = BookingPricing.computeBookingPrice({
       brand: params.brand, date: params.dateString, durationMinutes: roundedMinutes,
-      isMember: params.priceTier === 'MEMBER'
+      isMember: params.priceTier === 'MEMBER',
+      /* 日程変更でも元予約の料金世代を維持する（現行表で再計算しない）。空は旧世代V1。 */
+      generation: BookingPricing.normalizeGeneration(params.generation),
+      legacyMemberTier: true
     });
     if (!priceResult.valid) {
       return {

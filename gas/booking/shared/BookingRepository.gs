@@ -71,7 +71,8 @@ var BookingRepository = (function () {
       brand: input.brand,
       date: input.date,
       durationMinutes: input.durationMinutes,
-      isMember: input.isMember
+      isMember: input.isMember,
+      generation: BookingPricing.generationAt(now)
     });
     if (!priceResult.valid) {
       return { success: false, error: priceResult.error };
@@ -192,6 +193,7 @@ var BookingRepository = (function () {
         priceDayType: priceResult.price.dayType,
         priceIsMember: priceResult.price.isMember,
         priceComputedAt: now,
+        priceGeneration: priceResult.price.generation,
         checkoutAccessToken: checkoutAccessToken
       };
 

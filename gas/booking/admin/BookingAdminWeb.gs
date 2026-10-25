@@ -434,6 +434,7 @@ function getAdminBookingDetail(bookingId) {
       priceTier: record.priceTier || '',
       priceDayType: record.priceDayType || '',
       priceIsMember: record.priceIsMember === true,
+      priceGeneration: BookingPricing.normalizeGeneration(record.priceGeneration),
       priceComputedAt: formatAdminDateTime_(record.priceComputedAt, timezone),
       priceOverrideAmount: record.priceOverrideAt && Number.isFinite(Number(record.priceOverrideAmount))
         ? Number(record.priceOverrideAmount)

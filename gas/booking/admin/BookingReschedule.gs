@@ -145,6 +145,7 @@ var BookingReschedule = (function () {
     return {
       oldAmount: Booking.getEffectivePriceAmount(record),
       priceTier: record.priceTier || '',
+      priceGeneration: BookingPricing.normalizeGeneration(record.priceGeneration),
       scheduleChangeCount: isFiniteNumber_(record.scheduleChangeCount) ? Number(record.scheduleChangeCount) : 0,
       feePaidAmount: isFiniteNumber_(record.feePaidAmount) ? Number(record.feePaidAmount) : 0,
       feeRefundedAmount: isFiniteNumber_(record.feeRefundedAmount) ? Number(record.feeRefundedAmount) : 0,
@@ -250,7 +251,7 @@ var BookingReschedule = (function () {
       return { ready: false, status: 'BASELINE_REQUIRED', baseline: baseline };
     }
     var quote = FeeCalculator.quoteFee({
-      brand: record.brand, priceTier: baseline.priceTier,
+      brand: record.brand, priceTier: baseline.priceTier, generation: baseline.priceGeneration,
       durationMinutes: newDurationMinutes, dateString: newDateString
     });
     if (!quote.supported) {

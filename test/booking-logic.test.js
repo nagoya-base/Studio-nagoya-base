@@ -649,10 +649,10 @@ test('CARD_PAYMENT_METHOD_VALUE: gas/booking/shared/Booking.gsの値と一致す
 
 /* ── 利用料金表示（Issue #342） ── */
 
-test('brandShowsMemberOption: snb/studio_xはtrue、mens/未知のbrandはfalse（PR #343レビュー対応: studio_xも会員基準の対象）', function () {
+test('brandShowsMemberOption: snbのみtrue、studio_x（Issue #470で会員料金廃止）/mens/未知のbrandはfalse', function () {
   var Logic = loadLogic();
   assert.strictEqual(Logic.brandShowsMemberOption('snb'), true);
-  assert.strictEqual(Logic.brandShowsMemberOption('studio_x'), true);
+  assert.strictEqual(Logic.brandShowsMemberOption('studio_x'), false);
   assert.strictEqual(Logic.brandShowsMemberOption('mens'), false);
   assert.strictEqual(Logic.brandShowsMemberOption('ataru'), false);
   assert.strictEqual(Logic.brandShowsMemberOption(undefined), false);

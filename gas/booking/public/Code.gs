@@ -380,7 +380,8 @@ function handleEstimatePrice_(params) {
     brand: params.brand,
     date: params.date,
     durationMinutes: durationMinutes,
-    isMember: parseBooleanParam_(params.isMember)
+    isMember: parseBooleanParam_(params.isMember),
+    generation: BookingPricing.generationAt(new Date())
   });
   if (!priceResult.valid) {
     return { success: false, error: priceResult.error };

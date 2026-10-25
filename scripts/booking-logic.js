@@ -887,11 +887,10 @@
    * （estimatePrice/createBooking。gas/booking/shared/BookingPricing.gs）から取得する。
    */
 
-  /* snb/studio_xは会員自己申告欄を出す（PR #343レビュー対応。ブランド分離基準書v1.1に
-     よりstudio_xの直接予約にもSNB共通の会員基準を適用するため）。mensは常に会員相当の
-     価格が適用されるため自己申告欄を出さない（BookingPricing.gsのresolveTier_と同じ
-     分岐。ここでは表示制御のみ）。 */
-  var MEMBER_OPTION_BRANDS_ = ['snb', 'studio_x'];
+  /* snbのみ会員自己申告欄を出す。Studio Xは会員料金を廃止して一般料金に一本化したため
+     出さない（Issue #470）。mensは予約導線で常にMEMBER料金が自動適用されるため出さない
+     （BookingPricing.gsのresolveTier_と同じ分岐。ここでは表示制御のみ）。 */
+  var MEMBER_OPTION_BRANDS_ = ['snb'];
 
   function brandShowsMemberOption(brand) {
     return MEMBER_OPTION_BRANDS_.indexOf(brand) !== -1;

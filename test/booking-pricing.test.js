@@ -63,16 +63,69 @@ test('computeBookingPrice: studio_xの土日祝料金（2h/3h/4h・延長）', f
   });
 });
 
-test('computeBookingPrice: studio_xはisMember:trueを送ると会員料金になる（PR #343レビュー対応: ブランド分離基準書v1.1によりSNB共通の会員基準を適用）', function () {
+test('computeBookingPrice: studio_xはisMember:trueでも常にGENERAL（Issue #470: 会員料金廃止。V1/V2とも同額）', function () {
   var Pricing = loadPricing();
-  var member = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true });
-  assert.strictEqual(member.price.tier, 'MEMBER');
-  assert.strictEqual(member.price.isMember, true);
-  assert.strictEqual(member.price.amount, 5500, '会員料金（一般料金6,000ではない）になる');
+  ['V1', 'V2', undefined].forEach(function (generation) {
+    var r = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true, generation: generation });
+    assert.strictEqual(r.price.tier, 'GENERAL');
+    assert.strictEqual(r.price.isMember, false);
+    assert.strictEqual(r.price.amount, 6000, 'Studio XはSNB新一般料金に追従しない');
+  });
+});
 
-  var general = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: false });
-  assert.strictEqual(general.price.tier, 'GENERAL');
-  assert.strictEqual(general.price.amount, 6000);
+test('computeBookingPrice: 旧世代studio_x予約の日程変更見積りに限りlegacyMemberTierで旧MEMBER区分を維持する', function () {
+  var Pricing = loadPricing();
+  var v1 = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true, generation: 'V1', legacyMemberTier: true });
+  assert.strictEqual(v1.price.tier, 'MEMBER');
+  assert.strictEqual(v1.price.amount, 5500);
+  var v2 = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true, generation: 'V2', legacyMemberTier: true });
+  assert.strictEqual(v2.price.tier, 'GENERAL');
+});
+
+test('computeBookingPrice: SNB一般料金はV2で新料金、V1は旧料金（Issue #470）', function () {
+  var Pricing = loadPricing();
+  var cases = [
+    { date: WEEKDAY_DATE, minutes: 60, v1: 2000, v2: 2500 },
+    { date: WEEKDAY_DATE, minutes: 120, v1: 4000, v2: 5000 },
+    { date: WEEKDAY_DATE, minutes: 180, v1: 6000, v2: 7500 },
+    { date: WEEKDAY_DATE, minutes: 240, v1: 8000, v2: 10000 },
+    { date: WEEKDAY_DATE, minutes: 300, v1: 10000, v2: 12500 },
+    { date: SATURDAY_DATE, minutes: 60, v1: 2500, v2: 3000 },
+    { date: SATURDAY_DATE, minutes: 120, v1: 5000, v2: 6000 },
+    { date: SATURDAY_DATE, minutes: 180, v1: 7500, v2: 9000 },
+    { date: SATURDAY_DATE, minutes: 240, v1: 10000, v2: 12000 },
+    { date: SATURDAY_DATE, minutes: 300, v1: 12500, v2: 15000 }
+  ];
+  cases.forEach(function (c) {
+    var r1 = Pricing.computeBookingPrice({ brand: 'snb', date: c.date, durationMinutes: c.minutes, generation: 'V1' });
+    var r2 = Pricing.computeBookingPrice({ brand: 'snb', date: c.date, durationMinutes: c.minutes, generation: 'V2' });
+    assert.strictEqual(r1.price.amount, c.v1, 'V1 ' + c.date + ' ' + c.minutes);
+    assert.strictEqual(r2.price.amount, c.v2, 'V2 ' + c.date + ' ' + c.minutes);
+    assert.strictEqual(r2.price.generation, 'V2');
+  });
+});
+
+test('computeBookingPrice: SNB MEMBER料金は全世代で現行会員料金のまま。mensは世代・isMember入力に関係なくMEMBER', function () {
+  var Pricing = loadPricing();
+  ['V1', 'V2'].forEach(function (generation) {
+    [[WEEKDAY_DATE, 60, 2000], [WEEKDAY_DATE, 180, 5500], [WEEKDAY_DATE, 300, 8500], [SATURDAY_DATE, 240, 9000], [SATURDAY_DATE, 300, 11000]].forEach(function (c) {
+      var snb = Pricing.computeBookingPrice({ brand: 'snb', date: c[0], durationMinutes: c[1], isMember: true, generation: generation });
+      assert.strictEqual(snb.price.amount, c[2], generation + ' snb member ' + c[1]);
+      var mens = Pricing.computeBookingPrice({ brand: 'mens', date: c[0], durationMinutes: c[1], isMember: false, generation: generation });
+      assert.strictEqual(mens.price.tier, 'MEMBER');
+      assert.strictEqual(mens.price.amount, c[2]);
+    });
+  });
+});
+
+test('generationAt/normalizeGeneration: 2026/12/1 0:00 JSTで切り替わり、空・不正値は旧世代V1', function () {
+  var Pricing = loadPricing();
+  assert.strictEqual(Pricing.generationAt(new Date('2026-11-30T23:59:59+09:00')), 'V1');
+  assert.strictEqual(Pricing.generationAt(new Date('2026-12-01T00:00:00+09:00')), 'V2');
+  assert.strictEqual(Pricing.generationAt(undefined), 'V1');
+  assert.strictEqual(Pricing.normalizeGeneration(''), 'V1');
+  assert.strictEqual(Pricing.normalizeGeneration('V2'), 'V2');
+  assert.strictEqual(Pricing.normalizeGeneration('V9'), 'V1');
 });
 
 test('computeBookingPrice: studio_xのisMember未指定・不正値はfail-closedでGENERAL（会員割引を誤って適用しない）', function () {

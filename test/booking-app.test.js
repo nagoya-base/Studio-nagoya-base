@@ -267,9 +267,9 @@ function setupForBrand(brand) {
   return { elements: elements };
 }
 
-test('Issue #342: 会員自己申告欄はsnb/studio_xで表示し、mensでは非表示のまま（PR #343レビュー対応）', function () {
+test('Issue #470: 会員自己申告欄はsnbのみ表示し、studio_x（会員料金廃止）とmensでは非表示', function () {
   assert.strictEqual(setupForBrand('snb').elements['ba-member-field'].hidden, false);
-  assert.strictEqual(setupForBrand('studio_x').elements['ba-member-field'].hidden, false);
+  assert.strictEqual(setupForBrand('studio_x').elements['ba-member-field'].hidden, true);
   assert.strictEqual(setupForBrand('mens').elements['ba-member-field'].hidden, true);
 });
 
