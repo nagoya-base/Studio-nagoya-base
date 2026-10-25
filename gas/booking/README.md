@@ -7489,3 +7489,17 @@ SNB MEMBER（月額1,000円）の実会員資格を、Stripeの決済事実か�
 2. Test clock等で月を進め、1日の更新invoice（`billing_reason=subscription_cycle`）の`lines.data[].period.start`が翌月1日（JST 09:00）で、`invoice.paid`後に翌月の行が増える。
 3. 失敗するテストカードで更新を失敗させ、再試行されず翌月の行が増えないこと。
 4. `cancel_at_period_end`を設定し、当月は有効・翌月の請求が作られないこと。
+
+## Issue #472: 会員制度のWeb表示・規約/特商法・Studio X会員限定スタッフ対応
+
+料金ロジック（#470）・Stripe/Webhook/会員台帳（#471）は変更せず、利用者向けページの表示と規約類だけを更新した。
+
+- 会員案内ページ `/membership/`（入会フォームは `POST ?action=startMembershipCheckout` に `{ email }` だけを送る。`STRIPE_CHECKOUT_ENABLED` が有効でない間は「現在オンラインでの入会受付は行っていません」と表示される。この変更で `STRIPE_CHECKOUT_ENABLED` は変更していない）。入会完了ページ `/membership/complete.html` は `STRIPE_MEMBERSHIP_SUCCESS_URL` に、`/membership/` は `STRIPE_MEMBERSHIP_CANCEL_URL` に設定する想定（Script Propertiesの設定はデプロイ作業側）。
+- 会員条件の文言は `_includes/membership_terms_ja.html` の1か所に持ち、会員案内ページ・利用規約13条・特商法が同じ条件を参照する。
+- 解約は予約フォーム等で受付（締切日は設けていない。次回の更新前に解約処理が完了した場合は次回以降の自動更新を停止。締切日を設ける場合は別Issueで事業ルールとして決めてから反映する）。運営側はStripeでsubscriptionを`cancel_at_period_end`にする（カスタマーポータルを用意した場合は導線と文言を差し替える）。
+- Studio Xのスタッフ対応（事前設営3,000円／片付け3,000円／セット5,000円。正本は `_data/studio_x_equipment.json`）は会員限定。表示だけでなく申込経路でも判定する（新しい会員判定方式は作らず、#471の会員台帳を正本として使う）:
+  - `BookingOptions.planOrders` は `input.staffServiceMember === true` のときだけスタッフ対応を通す（未指定・false・不明は `STAFF_SERVICE_MEMBERS_ONLY` で拒否。fail-closed）。
+  - `OptionOrderService` が `MemberRepository.isMemberForMonth(予約メール, 利用日の属する月)` で判定し、①同時申込の事前検証（予約を作る前）、②同時申込・後付けの注文作成、③追加決済（Checkout）開始の2段階（状態確認・試行予約）で確認する。台帳を読めない場合も非会員扱い。
+  - 判定は予約の経路・`source`・備考に依存しない（スペースマーケット経由だけ非会員可という例外は無い）。部屋の利用・セルフ設営（無料）・機材レンタルは従来どおり。
+  - 会員の存在を探られないよう、会員確認を伴う事前検証は既存の資格照会と同じレート制限（メール単位）に載せている。
+- 料金表・ブランド分離の確定内容は `docs/membership-pricing-2026-12.md`。

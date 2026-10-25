@@ -33,7 +33,9 @@ function plan(selection, extra) {
     normalized: selection,
     existingOrders: e.existingOrders || [],
     optionsConfig: e.config || CONFIG_WITH_PRICES,
-    eligibility: e.eligibility || ELIGIBLE
+    eligibility: e.eligibility || ELIGIBLE,
+    /* スタッフ対応は会員限定（Issue #472）。既定は有効会員として通し、非会員は staffServiceMember:false で試験する。 */
+    staffServiceMember: e.staffServiceMember !== false
   });
 }
 
@@ -666,4 +668,22 @@ test('有料機材を選んだら片付け方法（セルフ/スタッフ）も�
   var order = cleanupOnly.orders.filter(function (o) { return o.category === 'STAFF_SERVICE'; })[0];
   assert.deepStrictEqual(plain(order.items), ['STAFF_CLEANUP:EQUIPMENT']);
   assert.strictEqual(order.status, 'PENDING_APPROVAL', 'スタッフ片付けは承認後に決済');
+});
+
+// ---- スタッフ対応は会員限定（Issue #472）: 会員資格の確認結果（staffServiceMember）が無い申込は必ず拒否 ----
+
+test('planOrders: 会員資格が確認できない（未指定・false）スタッフ対応の申込は拒否。セルフ・機材は影響を受けない', function () {
+  var staff = select({ layouts: ['CLASSROOM'], setupService: 'STAFF', cleanupService: 'STAFF' });
+  [false, undefined].forEach(function (flag) {
+    var r = BookingOptions.planOrders({ normalized: staff, existingOrders: [], optionsConfig: CONFIG_WITH_PRICES, eligibility: ELIGIBLE, staffServiceMember: flag });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.error.code, 'STAFF_SERVICE_MEMBERS_ONLY');
+  });
+  var ok = plain(plan(staff));
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(ok.orders.filter(function (o) { return o.category === 'STAFF_SERVICE'; })[0].amountJpy, 5000);
+  var self = select({ layouts: ['CLASSROOM'], setupService: 'SELF', cleanupService: 'SELF' });
+  assert.strictEqual(plan(self, { staffServiceMember: false }).ok, true);
+  assert.strictEqual(BookingOptions.requestsStaffService(staff), true);
+  assert.strictEqual(BookingOptions.requestsStaffService(self), false);
 });

@@ -128,6 +128,24 @@ var OptionOrderService = (function () {
     return required.filter(function (code) { return eligible.indexOf(code) === -1; });
   }
 
+  /*
+   * スタッフ対応は会員限定（Issue #472）。会員資格の正本は#471の会員台帳（MemberRepository.isMemberForMonth。
+   * 利用日の属する暦月の支払い事実）。新しい判定方式は持たない。メール・利用日が不正、台帳を読めない場合は
+   * すべて非会員（fail-closed）。予約の経路（自社予約・スペースマーケット経由等）による例外は無い。
+   */
+  function isStaffServiceMember_(email, dateString) {
+    try {
+      return MemberRepository.isMemberForMonth(email, MembershipRules.monthKeyOfDateString(dateString)) === true;
+    } catch (lookupError) {
+      Logger.log('OptionOrderService: 会員資格の確認に失敗したためスタッフ対応は受け付けません');
+      return false;
+    }
+  }
+
+  function staffMembersOnlyError_() {
+    return fail_('STAFF_SERVICE_MEMBERS_ONLY', 'スタッフ設営・片付けは会員限定です。会員でない方はお申し込みいただけません。セルフ設営・セルフ片付け（無料）をご利用ください。');
+  }
+
   function notEligibleError_(codes) {
     return fail_('VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE',
       codes.map(BookingOptions.equipmentLabel).join('・') + 'は施錠管理している有料レンタル機材のため、管理者の利用許可を得た方のみご利用いただけます。お支払いには進めません。メールでご相談ください。',
@@ -159,7 +177,8 @@ var OptionOrderService = (function () {
       return fail_('OPTIONS_NOT_AVAILABLE', 'このブランドの予約ではオプションをお申し込みいただけません。');
     }
     var needsEligibility = requiresEligibility_(normalizedResult.normalized);
-    var lookupAllowed = !needsEligibility || !options || typeof options.allowEligibilityLookup !== 'function' || options.allowEligibilityLookup(email) === true;
+    var needsStaffMember = BookingOptions.requestsStaffService(normalizedResult.normalized);
+    var lookupAllowed = !(needsEligibility || needsStaffMember) || !options || typeof options.allowEligibilityLookup !== 'function' || options.allowEligibilityLookup(email) === true;
     if (!lookupAllowed) {
       return fail_('RATE_LIMITED', '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。');
     }
@@ -167,7 +186,8 @@ var OptionOrderService = (function () {
       normalized: normalizedResult.normalized,
       existingOrders: [],
       optionsConfig: BookingConfig.getOptionsConfig(),
-      eligibility: needsEligibility ? resolveEligibility_(email) : { eligibleEquipmentCodes: [] }
+      eligibility: needsEligibility ? resolveEligibility_(email) : { eligibleEquipmentCodes: [] },
+      staffServiceMember: needsStaffMember ? isStaffServiceMember_(email, options && options.date) : false
     });
     if (!plan.ok) return { success: false, error: plan.error };
     return { success: true, empty: false, normalized: normalizedResult.normalized };
@@ -256,7 +276,8 @@ var OptionOrderService = (function () {
         normalized: normalized,
         existingOrders: existingForBooking,
         optionsConfig: optionsConfig,
-        eligibility: requiresEligibility_(normalized) ? resolveEligibility_(booking.email) : { eligibleEquipmentCodes: [] }
+        eligibility: requiresEligibility_(normalized) ? resolveEligibility_(booking.email) : { eligibleEquipmentCodes: [] },
+        staffServiceMember: BookingOptions.requestsStaffService(normalized) ? isStaffServiceMember_(booking.email, booking.date) : false
       });
       if (!plan.ok) return { success: false, error: plan.error };
       if (plan.orders.length === 0) return fail_('NO_OPTIONS_SELECTED', '追加するオプションを選択してください。');
@@ -422,6 +443,10 @@ var OptionOrderService = (function () {
       /* 資格の再検証: 許可を確認できないビデオライト系は、Stripeを呼ばず支払い不可（管理者が否認できる）。 */
       var missing1 = missingLectureCodes_(order);
       if (missing1.length > 0) return notEligibleError_(missing1);
+      /* 会員資格の再検証: スタッフ対応は、支払い（確定）の時点でも有効会員でなければ進ませない。 */
+      if (order.category === BookingOptions.CATEGORY.STAFF_SERVICE && !isStaffServiceMember_(freshBooking.email, freshBooking.date)) {
+        return staffMembersOnlyError_();
+      }
       return { success: true, order: order };
     });
     if (!phase1.success) return phase1;
@@ -451,6 +476,10 @@ var OptionOrderService = (function () {
       var order = found.record;
       var missing2 = missingLectureCodes_(order);
       if (missing2.length > 0) return notEligibleError_(missing2);
+      if (order.category === BookingOptions.CATEGORY.STAFF_SERVICE) {
+        var bookingForMember = findBookingView_(bookingId);
+        if (!bookingForMember || !isStaffServiceMember_(bookingForMember.email, bookingForMember.date)) return staffMembersOnlyError_();
+      }
       /* 結果不明のまま残っている試行（Session ID未記録）は同じ試行ID・同じ要求内容で再送する
          （Stripeの冪等キーにより二重Sessionにならない）。 */
       var snapshot = order.paymentAttemptId && !order.stripeCheckoutSessionId ? parseSnapshot_(order.checkoutRequestJson) : null;

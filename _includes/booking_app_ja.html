@@ -230,9 +230,9 @@
       <legend>会員区分<span class="ba-required">必須</span></legend>
       <div class="ba-choices" id="ba-member-status-choices">
         <label class="ba-choice"><input type="radio" name="memberStatus" value="general"> <span>一般</span></label>
-        <label class="ba-choice"><input type="radio" name="memberStatus" value="member"> <span>会員（当施設が承認した会員の方のみ）</span></label>
+        <label class="ba-choice"><input type="radio" name="memberStatus" value="member"> <span>{% if include.brand == "studio_x" %}会員（当施設が承認した会員の方のみ）{% else %}会員（SNB MEMBERの方のみ）{% endif %}</span></label>
       </div>
-      <p class="ba-field-help">会員資格は予約確定前に確認します。実際には会員でない場合、料金が修正されることがあります。会員区分を選択すると利用料金が表示されます。</p>
+      <p class="ba-field-help">{% if include.brand == "studio_x" %}会員資格は予約確定前に確認します。実際には会員でない場合、料金が修正されることがあります。会員区分を選択すると利用料金が表示されます。{% else %}2026年12月1日以降に作成するご予約では、予約時のメールアドレスが会員登録のメールアドレスと一致し、利用日の属する月の会費が支払済みの場合に会員料金が適用されます。確認できない場合は一般料金になります。会員でない方は<a href="{{ '/membership/' | relative_url }}">SNB MEMBERのご案内</a>をご覧ください。{% endif %}</p>
       <p class="ba-field-error" id="ba-member-error" hidden></p>
     </fieldset>
 

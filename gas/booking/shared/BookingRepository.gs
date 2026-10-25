@@ -91,6 +91,7 @@ var BookingRepository = (function () {
     var hasOptionsPayload = !!rawInput && rawInput.options !== undefined && rawInput.options !== null;
     var optionsPreflight = hasOptionsPayload
       ? OptionOrderService.preflightForNewBooking(input.brand, rawInput.options, input.email, {
+        date: input.date,
         allowEligibilityLookup: function (email) {
           return RateLimiter.limitByKey('opt_elig_' + String(email).trim().toLowerCase(), 10, 5, now.getTime());
         }

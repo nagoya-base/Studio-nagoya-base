@@ -233,7 +233,7 @@ test('画面の機材合計は、サーバー（planOrders）の請求額と一�
       if (Object.keys(equipment).length === 0) return;
       var normalized = gasSandbox.BookingOptions.normalizeSelection({ equipment: equipment, setupService: 'SELF', cleanupService: 'SELF' });
       assert.ok(normalized.ok, JSON.stringify(normalized.error));
-      var planned = gasSandbox.BookingOptions.planOrders({
+      var planned = gasSandbox.BookingOptions.planOrders({ staffServiceMember: true,
         normalized: normalized.normalized, existingOrders: [], optionsConfig: {},
         eligibility: { eligibleEquipmentCodes: gasSandbox.BookingOptions.lectureRequiredEquipmentCodes() }
       });
@@ -320,7 +320,7 @@ test('computeSummary の合計は、サーバー（planOrders）の請求額合�
       ['SELF', 'STAFF'].forEach(function (cleanup) {
         var normalized = gasSandbox.BookingOptions.normalizeSelection({ equipment: equipment, setupService: setup, cleanupService: cleanup });
         assert.ok(normalized.ok, JSON.stringify(normalized.error));
-        var planned = gasSandbox.BookingOptions.planOrders({
+        var planned = gasSandbox.BookingOptions.planOrders({ staffServiceMember: true,
           normalized: normalized.normalized, existingOrders: [], optionsConfig: {},
           eligibility: { eligibleEquipmentCodes: gasSandbox.BookingOptions.lectureRequiredEquipmentCodes() }
         });
@@ -355,7 +355,7 @@ test('後付け: 申込済みのスタッフ対応があるとき、画面の追
     var normalized = gasSandbox.BookingOptions.normalizeSelection({ equipment: equipment, setupService: c.setup, cleanupService: c.cleanup });
     assert.ok(normalized.ok, JSON.stringify(normalized.error));
     var existingOrders = c.existing.length ? [{ status: 'PENDING_APPROVAL', items: c.existing }] : [];
-    var planned = gasSandbox.BookingOptions.planOrders({
+    var planned = gasSandbox.BookingOptions.planOrders({ staffServiceMember: true,
       normalized: normalized.normalized, existingOrders: existingOrders, optionsConfig: {},
       eligibility: { eligibleEquipmentCodes: gasSandbox.BookingOptions.lectureRequiredEquipmentCodes() }
     });

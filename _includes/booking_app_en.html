@@ -219,9 +219,9 @@
       <legend>Membership<span class="ba-required">Required</span></legend>
       <div class="ba-choices" id="ba-member-status-choices">
         <label class="ba-choice"><input type="radio" name="memberStatus" value="general"> <span>General</span></label>
-        <label class="ba-choice"><input type="radio" name="memberStatus" value="member"> <span>Member (approved by the facility)</span></label>
+        <label class="ba-choice"><input type="radio" name="memberStatus" value="member"> <span>{% if include.brand == "studio_x" %}Member (approved by the facility){% else %}Member (SNB MEMBER only){% endif %}</span></label>
       </div>
-      <p class="ba-field-help">We'll confirm membership before finalizing your booking. If it turns out you are not a member, the price may be corrected. The price is shown once you choose a membership type.</p>
+      <p class="ba-field-help">{% if include.brand == "studio_x" %}We'll confirm membership before finalizing your booking. If it turns out you are not a member, the price may be corrected. The price is shown once you choose a membership type.{% else %}For bookings created on or after December 1, 2026, the member rate applies when the email address on your booking matches your member registration and the membership fee for the month of use has been paid. Otherwise the general rate applies. Not a member yet? See <a href="{{ '/membership/' | relative_url }}">SNB MEMBER</a> (Japanese).{% endif %}</p>
       <p class="ba-field-error" id="ba-member-error" hidden></p>
     </fieldset>
 

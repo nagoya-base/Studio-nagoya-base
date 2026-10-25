@@ -76,7 +76,7 @@
       paymentTiming: (staffAfterCheck ? 'スタッフ対応は日程確認後にご利用可能な場合のみ、' : '') +
         (equipmentAfterRoom ? '機材は部屋の予約確定後に' : '') + (staffAfterCheck || equipmentAfterRoom ? 'お支払いです。' : ''),
       staffNotice: staffAfterCheck
-        ? 'スタッフ設営・片付けは事前確認制です。お申し込み後に対応可否をご案内し、ご利用可能な場合のみオンライン決済をお願いします。' +
+        ? 'スタッフ設営・片付けは会員限定・事前確認制です。お申し込み後に会員確認と対応可否をご案内し、ご利用可能な場合のみオンライン決済をお願いします。' +
           (p.staffServiceConfirmedOnApply === false ? '申込時点ではスタッフ対応は確定していません。' : '')
         : '',
       selfVsStaff: staffAfterCheck
@@ -106,6 +106,7 @@
     STAFF_SERVICE_SINGLE_THEME: 'スタッフ対応を依頼できるセッティングは1種類です。複数ある場合は残りをセルフ設営にするか、メールでご相談ください。',
     DUPLICATE_OPTION: '既に申し込み済みのオプションは重複して追加できません。',
     STAFF_SERVICE_THEME_MISMATCH: '既に申し込み済みのスタッフ対応と同じセッティングを指定してください。',
+    STAFF_SERVICE_MEMBERS_ONLY: 'スタッフ設営・片付けは会員限定です。会員でない方はお申し込みいただけません。セルフ設営・セルフ片付け（無料）をご利用ください。',
     SERVICE_MODE_CONFLICT: '同じセッティングの設営・片付けは、セルフとスタッフ対応を同時に選べません。',
     BOOKING_NOT_FOUND: '予約が見つかりません。',
     BOOKING_NOT_ELIGIBLE: 'この予約にはオプションを追加できません（取消済み・期限切れ等）。',
@@ -747,7 +748,7 @@
         var cleanupPrice = staff.CLEANUP ? formatJpy(staff.CLEANUP.priceJpy) : '';
         root.appendChild(el('p', { className: 'ba-option-subheading', text: paidEquipment ? copy.setupHeadingPaid : '設営（利用前）' }));
         var setupGroup = el('div', { className: 'ba-choices' });
-        var setupChoices = [['SELF', copy.selfSetupChoice], ['STAFF', 'スタッフ設営　+' + setupPrice + '（事前確認制）']];
+        var setupChoices = [['SELF', copy.selfSetupChoice], ['STAFF', 'スタッフ設営　+' + setupPrice + '（会員限定・事前確認制）']];
         if (config.allowNone && !paidEquipment) setupChoices.push(['NONE', '設営は追加しない（申込済み・不要）']);
         setupChoices.forEach(function (pair) {
           var c = choice('bo-setup', pair[0], pair[1], 'radio', false);
@@ -760,7 +761,7 @@
         /* 片付け方法。機材レンタルでは設営方法と同様に必須（Issue #441。テーマ未選択でも選べる）。 */
         root.appendChild(el('p', { className: 'ba-option-subheading', text: paidEquipment ? copy.cleanupHeadingPaid : '片付け（利用後）' }));
         var cleanupGroup = el('div', { className: 'ba-choices' });
-        var cleanupChoices = [['SELF', copy.selfCleanupChoice], ['STAFF', 'スタッフ片付け　+' + cleanupPrice + '（事前確認制）']];
+        var cleanupChoices = [['SELF', copy.selfCleanupChoice], ['STAFF', 'スタッフ片付け　+' + cleanupPrice + '（会員限定・事前確認制）']];
         if (config.allowNone && !paidEquipment) cleanupChoices.push(['NONE', '片付けは追加しない（申込済み・不要）']);
         cleanupChoices.forEach(function (pair) {
           var c = choice('bo-cleanup', pair[0], pair[1], 'radio', false);
