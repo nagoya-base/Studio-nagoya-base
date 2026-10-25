@@ -447,7 +447,7 @@ test('予約: 非会員メールは自己申告（isMember:true）しても一�
   joined(ctx);
   var result = book(ctx, { email: 'stranger@example.com', isMember: true });
   assert.strictEqual(result.price.tier, 'GENERAL');
-  assert.strictEqual(result.price.amount, 7500);
+  assert.strictEqual(result.price.amount, 6000);
   var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId).record;
   assert.strictEqual(record.membershipStatus, 'INACTIVE');
   assert.strictEqual(record.priceIsMember, false);

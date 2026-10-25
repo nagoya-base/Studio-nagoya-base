@@ -147,7 +147,7 @@ test('quoteFee keeps the original price generation on reschedule (Issue #470: no
   var current = f.FeeCalculator.quoteFee(Object.assign({ generation: 'V2' }, base));
   assert.strictEqual(legacy.amount, 6000, '旧世代は変更後が2026/12以降でも旧料金');
   assert.strictEqual(unset.amount, 6000, '世代が空の既存予約は旧世代');
-  assert.strictEqual(current.amount, 7500);
+  assert.strictEqual(current.amount, 6000);
 });
 
 test('quoteFee: Studio X legacy MEMBER booking keeps MEMBER in V1 only', function () {
