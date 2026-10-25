@@ -88,6 +88,22 @@
   "mainEntity": [
     {
       "@type": "Question",
+      "name": "SNB MEMBERとは何ですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "月額1,000円の会員制度です。会員になると、利用料金が会員料金になります。2時間以上のご利用なら、一般料金との差額が会費（月額1,000円）以上になります（1時間のみのご利用では差額は500円です）。初めてご利用の方も加入できます。旧制度の会員の方は、新しい会員制度へ自動では移行しないため、ご希望の場合はあらためてご加入ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "SNB MEMBERの自動更新・解約・返金について教えてください。",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "会費の月額1,000円は、クレジットカード決済（Stripe）で毎月1日に自動更新されます。入会月は日割りなしの満額で、入会日から当月末まで有効です。解約は予約フォームで「SNB MEMBER解約」と登録メールアドレスをお知らせください（毎月25日までにお申し出いただくと、翌月1日の更新から請求を停止します）。解約後も、お支払い済みの月の末日までは会員資格が有効です。日割りを含め、お支払い済みの会費は返金しません。更新時の決済に失敗した月は、猶予期間なく会員資格が有効にならず、一般料金になります。"
+      }
+    },
+    {
+      "@type": "Question",
       "name": "緊縛撮影は可能ですか？",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -512,10 +528,11 @@
     <h2 class="section-title">料金</h2>
     <p class="section-subtitle">Pricing</p>
     <p class="phase2-intro">完全貸切・1〜4名まで同一料金です。定期的な自主練や長時間の演目練習には、継続利用向けプランもご利用いただけます（詳細は下記）。</p>
+    <p class="phase2-intro">2026年12月1日以降に作成するご予約から、一般料金を改定します。月額1,000円の<strong>SNB MEMBER</strong>に加入すると、会員料金でご利用いただけます。2時間以上のご利用なら、会費相当以上の料金差があります。</p>
 
     <div class="pricing-grid">
       <div class="pricing-card">
-        <div class="pricing-card-header">通常価格（直接予約）</div>
+        <div class="pricing-card-header">一般料金（2026年12月1日以降のご予約）</div>
         <table>
   <thead>
     <tr>
@@ -527,35 +544,35 @@
   <tbody>
     <tr>
             <td>1時間</td>
+            <td>3,000円</td>
             <td>2,500円</td>
-            <td>2,000円</td>
           </tr>
     <tr>
             <td>2時間</td>
+            <td>6,000円</td>
             <td>5,000円</td>
-            <td>4,000円</td>
           </tr>
     <tr>
             <td>3時間</td>
+            <td>9,000円</td>
             <td>7,500円</td>
-            <td>6,000円</td>
           </tr>
     <tr>
             <td>4時間</td>
+            <td>12,000円</td>
             <td>10,000円</td>
-            <td>8,000円</td>
           </tr>
     <tr>
             <td>延長（1h）</td>
+            <td>3,000円</td>
             <td>2,500円</td>
-            <td>2,000円</td>
           </tr>
   </tbody>
 </table>
       </div>
 
       <div class="pricing-card">
-        <div class="pricing-card-header">会員価格</div>
+        <div class="pricing-card-header">SNB MEMBER料金（月額1,000円）</div>
         <table>
   <thead>
     <tr>
@@ -586,7 +603,7 @@
             <td>7,000円</td>
           </tr>
     <tr class="pricing-highlight-row">
-            <td>延長（1h）<span class="pricing-discount-badge">▼約20～25% OFF</span></td>
+            <td>延長（1h）<span class="pricing-discount-badge">▼1,000円お得</span></td>
             <td>2,000円</td>
             <td>1,500円</td>
           </tr>
@@ -594,7 +611,22 @@
 </table>
       </div>
     </div>
-    <p class="pricing-extension-note">❖ 会員は3時間を超えた延長料金（1時間ごと）も約20～25%割引。長時間撮影ほどよりお得にご利用いただけます。</p>
+    <p class="pricing-extension-note">❖ 会員は延長料金（1時間ごと）も一般料金より1,000円お得です。長時間撮影ほどお得にご利用いただけます。</p>
+
+    <!-- SNB MEMBER（Issue #472） -->
+    <div class="snb-member-cta" id="snb-member">
+      <p class="snb-member-cta-title">SNB MEMBER（月額1,000円）</p>
+      <p>一般料金との差額は、2時間で1,000円、3時間で2,000円、4時間で3,000円です（平日・土日祝とも）。<strong>2時間以上のご利用なら、会費（月額1,000円）相当以上の料金差があります。</strong>1時間のみのご利用では差額は500円のため、会費には届きません。</p>
+      <p>初めてご利用の方も加入できます。クレジットカードで毎月1日に自動更新され、入会月は日割りなしです。お支払い済みの会費は返金できません。旧制度の会員の方は自動では移行しないため、ご希望の場合はあらためてご加入ください。</p>
+      <details class="faq-item">
+        <summary>2026年11月30日までに作成するご予約の料金</summary>
+        <div class="faq-answer">2026年11月30日までに作成したご予約は、利用日が12月以降でも、改定前の料金（一般料金：平日 1時間2,000円・2時間4,000円・3時間6,000円・4時間8,000円・延長1時間2,000円／土日祝 1時間2,500円・2時間5,000円・3時間7,500円・4時間10,000円・延長1時間2,500円）が適用されます。</div>
+      </details>
+      <div class="btn-group">
+        <a class="btn-primary" href="{{ '/membership/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="pricing" data-analytics-type="membership_join" data-analytics-destination="membership_page">SNB MEMBERに加入する（月額1,000円）</a>
+        <a class="btn-secondary" href="{{ '/membership/' | relative_url }}#join" data-analytics-event="cta_click" data-analytics-location="pricing" data-analytics-type="membership_detail" data-analytics-destination="membership_page">会員の条件を見る</a>
+      </div>
+    </div>
 
     <!-- 機材レンタルオプション -->
     <div class="pricing-card pricing-card--extra">
@@ -651,7 +683,7 @@
     <p class="pricing-note" style="margin-top: 24px;">※ 緊縛・吊り床を使う撮影は3時間以上のご予約をおすすめします。</p>
     <p class="pricing-note">※ 料金は人数に関わらず一定です（1部屋まるごとのご利用）。</p>
     <p class="pricing-note">※ 常設の撮影機材・備品は利用料金内でご利用いただけます。機材レンタルオプション（会員限定・有料）の詳細は上記をご覧ください。</p>
-    <p class="pricing-note">※ 会員料金は、当施設が承認した会員が当サイトの予約フォームから直接予約いただいた場合に適用されます。プラットフォーム経由のご予約には適用されません。詳細は<a href="{{ '/legal/' | relative_url }}#membership-terms" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="pricing">利用規約の「会員資格」</a>をご確認ください。</p>
+    <p class="pricing-note">※ 会員料金は、SNB MEMBERの方が当サイトの予約ページから直接予約し、予約時のメールアドレスが会員登録のメールアドレスと一致する場合に適用されます（利用日の属する月の会費が支払済みであることが条件です）。プラットフォーム経由のご予約には適用されません。詳細は<a href="{{ '/legal/' | relative_url }}#membership-terms" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="pricing">利用規約の「会員資格」</a>をご確認ください。</p>
     <p class="pricing-note">※ ご予約前に必ず<a href="{{ '/legal/' | relative_url }}#terms" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="pricing">利用規約</a>をご確認ください。</p>
     <p class="pricing-note">※ カード決済は当日を含め、日程にかかわらずお選びいただけます（はじめてご利用の方はカード決済のみです）。オンラインクレジットカード決済は、予約申込後に表示される決済ページでお支払いください。決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。</p>
     <div class="section-cta-sm">
@@ -698,6 +730,16 @@
     <p class="section-subtitle">FAQ</p>
 
     <div class="faq-list">
+      <details class="faq-item" data-analytics-faq-id="snb_member">
+        <summary>SNB MEMBERとは何ですか？</summary>
+        <div class="faq-answer">月額1,000円の会員制度です。会員になると、利用料金が会員料金になります。2時間以上のご利用なら、一般料金との差額が会費（月額1,000円）以上になります（1時間のみのご利用では差額は500円です）。初めてご利用の方も加入できます。旧制度の会員の方は、新しい会員制度へ自動では移行しないため、ご希望の場合はあらためてご加入ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="snb_member_billing">
+        <summary>SNB MEMBERの自動更新・解約・返金について教えてください。</summary>
+        <div class="faq-answer">会費の月額1,000円は、クレジットカード決済（Stripe）で毎月1日に自動更新されます。入会月は日割りなしの満額で、入会日から当月末まで有効です。解約は予約フォームで「SNB MEMBER解約」と登録メールアドレスをお知らせください（毎月25日までにお申し出いただくと、翌月1日の更新から請求を停止します）。解約後も、お支払い済みの月の末日までは会員資格が有効です。日割りを含め、お支払い済みの会費は返金しません。更新時の決済に失敗した月は、猶予期間なく会員資格が有効にならず、一般料金になります。</div>
+      </details>
+
       <details class="faq-item" data-analytics-faq-id="bondage_allowed">
         <summary>緊縛撮影は可能ですか？</summary>
         <div class="faq-answer">可能です。ただし、性的行為および性的な行為を伴う撮影は禁止しています。</div>

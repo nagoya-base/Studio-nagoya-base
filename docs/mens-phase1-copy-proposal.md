@@ -1,3 +1,5 @@
+> **【2026/12/1以降は無効】** 本書の「メンズページを見た」と伝える申告制の会員料金・「承認した会員」の記述は旧制度のものです。2026/12/1以降は、SNB mensの予約ページからの予約はSNB MEMBER加入有無にかかわらずMEMBER料金が自動適用されます（料金優遇のみで会員資格は付与しません）。現行ルールは `docs/membership-pricing-2026-12.md` を参照してください（Issue #472）。
+
 # /mens/ 改修 Phase 1：コピー整理提案書
 
 対象ページ：`mens/index.html`（公開URL: https://nagoya-base.github.io/Studio-nagoya-base/mens/）

@@ -52,7 +52,7 @@
   </div>
 {%- if is_studio_x %}
   <div class="equipment-table-block" id="staff-service">
-    <h3>スタッフ設営・片付け料金</h3>
+    <h3>スタッフ設営・片付け料金（会員限定）</h3>
     {%- assign staff = site.data.studio_x_equipment.staffService %}
     <p class="equipment-note">{% for theme in staff.themes %}{{ theme.shortLabel }}{% unless forloop.last %}・{% endunless %}{% endfor %}の5テーマ共通です（税込・機材レンタル料金とは別）。</p>
     <table class="equipment-table--2col">
@@ -66,6 +66,8 @@
       </tbody>
     </table>
     <p class="equipment-note">スタッフによる設営・片付けは、日程を確認してからご案内します。ご利用可能な場合のみお支払いをお願いします。</p>
+    <p class="equipment-note">スタッフ対応は<strong>会員限定</strong>です。お申込みの際にご登録のメールアドレスで会員確認を行い、会員でない場合はお受けできません。セルフ設営・セルフ原状復帰は、会員でない方も無料でご利用いただけます。</p>
+    <p class="equipment-note">スペースマーケット経由のご予約でもスタッフ対応はお申込みいただけますが、会員限定の条件は同じです（スペースマーケット経由だからといって会員でない方がご利用できるわけではありません）。会員のご案内は<a href="{{ '/membership/' | relative_url }}">会員案内ページ</a>をご覧ください。</p>
   </div>
 {%- endif %}
 </div>
