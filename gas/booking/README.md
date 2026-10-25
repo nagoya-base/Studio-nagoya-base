@@ -3525,7 +3525,7 @@ PR-D（管理者の取消・返金）で返金試行の記録用に9列、PR-D�
    `updateBookingRefundStateAtomic`が1回の`setValues`で更新するため、順序を変えない）。
 
    ```text
-   refundAttemptId	refundAttemptState	refundDecision	refundAmount	refundReason	refundDecidedAt	refundStripeStatus	refundCheckedAt	refundMailSentAt	checkoutCancelState	checkoutCancelCheckedAt	priceGeneration
+   refundAttemptId	refundAttemptState	refundDecision	refundAmount	refundReason	refundDecidedAt	refundStripeStatus	refundCheckedAt	refundMailSentAt	checkoutCancelState	checkoutCancelCheckedAt
    ```
 
 3. 既存行の11列は空欄のままにする（空＝返金試行なし・返金完了メール未送信・未入金取消なし）。
