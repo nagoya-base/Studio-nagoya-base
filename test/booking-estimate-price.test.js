@@ -35,15 +35,17 @@ test('doGet: action=estimatePriceは料金計算を返す（studio_x・平日3�
   var body = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: '180' });
 
   assert.strictEqual(body.success, true);
-  assert.strictEqual(body.price.amount, 6000);
+  /* 見積りは現在時刻の料金世代で計算する。Studio Xの非会員はV1=6,000円、V2（2026/12/1〜）は共通料金5,500円。 */
+  assert.strictEqual(body.price.amount, Date.now() >= Date.parse('2026-12-01T00:00:00+09:00') ? 5500 : 6000);
   assert.strictEqual(body.price.tier, 'GENERAL');
   assert.strictEqual(body.price.dayType, 'WEEKDAY');
 });
 
-test('doGet: action=estimatePriceはisMember=1のときstudio_xも会員料金にする（PR #343レビュー対応: ブランド分離基準書v1.1）', function () {
+test('doGet: action=estimatePriceのstudio_x会員料金は2026/12/1 0:00 JSTで廃止される（Issue #470。見積りは現在時刻の料金世代）', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' });
+  var abolished = Date.now() >= Date.parse('2026-12-01T00:00:00+09:00');
   var member = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: '180', isMember: '1' });
-  assert.strictEqual(member.price.tier, 'MEMBER');
+  assert.strictEqual(member.price.tier, abolished ? 'GENERAL' : 'MEMBER');
   assert.strictEqual(member.price.amount, 5500);
   var general = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: '180' });
   assert.strictEqual(general.price.tier, 'GENERAL');

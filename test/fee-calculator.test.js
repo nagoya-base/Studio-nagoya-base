@@ -138,3 +138,23 @@ test('assessScheduleChangeFee: no amount change requires no billing action', fun
   assert.equal(result.refundStatus, 'NONE');
   assert.equal(result.feeDifference, 0);
 });
+
+test('quoteFee keeps the original price generation on reschedule (Issue #470: no repricing with the current table)', function () {
+  var f = setup();
+  var base = { brand: 'snb', priceTier: 'GENERAL', durationMinutes: 180, dateString: '2026-12-15' };
+  var legacy = f.FeeCalculator.quoteFee(Object.assign({ generation: 'V1' }, base));
+  var unset = f.FeeCalculator.quoteFee(base);
+  var current = f.FeeCalculator.quoteFee(Object.assign({ generation: 'V2' }, base));
+  assert.strictEqual(legacy.amount, 6000, '旧世代は変更後が2026/12以降でも旧料金');
+  assert.strictEqual(unset.amount, 6000, '世代が空の既存予約は旧世代');
+  assert.strictEqual(current.amount, 7500);
+});
+
+test('quoteFee: Studio X legacy MEMBER booking keeps MEMBER in V1 only', function () {
+  var f = setup();
+  var base = { brand: 'studio_x', priceTier: 'MEMBER', durationMinutes: 180, dateString: '2026-12-15' };
+  assert.strictEqual(f.FeeCalculator.quoteFee(Object.assign({ generation: 'V1' }, base)).amount, 5500);
+  var v2 = f.FeeCalculator.quoteFee(Object.assign({ generation: 'V2' }, base));
+  assert.strictEqual(v2.amount, 5500, 'V2の共通料金は現行MEMBER料金');
+  assert.strictEqual(v2.tier, 'GENERAL');
+});

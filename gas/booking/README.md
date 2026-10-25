@@ -7399,3 +7399,11 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
   `billableHours_`の切り上げ下限を2時間→1時間へ変更。
 - Web表示（トップ・mens・Studio X・英語版・予約フォーム・how-to）を1時間基準へ更新。
 - Stripe Checkout・当日予約・初回利用者のカード必須ルール（Issue #407 / PR #409）には触れていない。
+
+## Issue #470: 料金改定・ブランド別料金表・料金世代
+
+- 料金表は`BookingPricing.gs`でブランド別（snb / studio_x。mensはsnbのMEMBER表）かつ世代別（V1=〜2026/11/30作成、V2=2026/12/1 0:00 JST〜作成）に分離。
+- SNB一般料金はV2で改定、SNB MEMBER料金は全世代で据え置き。Studio Xは会員区分を廃止し、V2の共通料金には現行MEMBER料金を適用する（SNB新一般料金に追従しない。Issue #470の最新仕様）。廃止は新料金世代（V2）から。2026/11/30までの新規予約（V1）は従来どおり会員料金を選べる。
+- mensは予約導線でMEMBER料金を自動適用する（価格優遇のみ。会員資格の付与ではない）。`priceIsMember`は「MEMBER料金が適用されたか」を示し、実会員資格とは別概念。
+- 料金世代は`createBooking`時に`priceGeneration`列へ保存し、日程変更（`FeeCalculator.quoteFee`）でも保存済みの世代で再見積りする。空は旧予約としてV1。
+- **本番反映時**: Bookingsシートのヘッダー行末尾（`checkoutCancelCheckedAt`の右）へ`priceGeneration`を手動で追記すること。

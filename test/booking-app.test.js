@@ -109,7 +109,7 @@ function setup(responseBody) {
        未設定（Step1へ進んでいない）ため、実際に見積りfetchが発生することはないが、
        モジュール読み込み時点（brandShowsMemberOptionの呼び出し）で例外にならないよう
        最低限の実装を用意する。 */
-    brandShowsMemberOption: function (b) { return b === 'snb'; },
+    brandShowsMemberOption: function (b) { return b === 'snb' || b === 'studio_x'; },
     formatJpyAmount: function (amount) {
       var value = Number(amount);
       return Number.isFinite(value) ? '¥' + value.toLocaleString('en-US') : '';
@@ -267,9 +267,10 @@ function setupForBrand(brand) {
   return { elements: elements };
 }
 
-test('Issue #342: 会員自己申告欄はsnb/studio_xで表示し、mensでは非表示のまま（PR #343レビュー対応）', function () {
+test('Issue #470: 会員自己申告欄はsnbで表示、studio_xは2026/12/1 0:00 JSTまで表示（以後は非表示）、mensは非表示', function () {
   assert.strictEqual(setupForBrand('snb').elements['ba-member-field'].hidden, false);
-  assert.strictEqual(setupForBrand('studio_x').elements['ba-member-field'].hidden, false);
+  var studioXVisible = Date.now() < Date.parse('2026-12-01T00:00:00+09:00');
+  assert.strictEqual(setupForBrand('studio_x').elements['ba-member-field'].hidden, !studioXVisible);
   assert.strictEqual(setupForBrand('mens').elements['ba-member-field'].hidden, true);
 });
 

@@ -887,14 +887,18 @@
    * （estimatePrice/createBooking。gas/booking/shared/BookingPricing.gs）から取得する。
    */
 
-  /* snb/studio_xは会員自己申告欄を出す（PR #343レビュー対応。ブランド分離基準書v1.1に
-     よりstudio_xの直接予約にもSNB共通の会員基準を適用するため）。mensは常に会員相当の
-     価格が適用されるため自己申告欄を出さない（BookingPricing.gsのresolveTier_と同じ
-     分岐。ここでは表示制御のみ）。 */
+  /* snbは会員自己申告欄を出す。Studio Xは会員料金の廃止（Issue #470）が2026/12/1 0:00 JST
+     から（新料金世代V2）のため、それ以前だけ出す。mensは予約導線で常にMEMBER料金が自動適用
+     されるため出さない（BookingPricing.gsのresolveTier_と同じ分岐。ここでは表示制御のみで、
+     最終的な料金はサーバーが予約作成時刻で判定する）。 */
   var MEMBER_OPTION_BRANDS_ = ['snb', 'studio_x'];
+  var STUDIO_X_MEMBER_OPTION_END_MS_ = Date.parse('2026-12-01T00:00:00+09:00');
 
-  function brandShowsMemberOption(brand) {
-    return MEMBER_OPTION_BRANDS_.indexOf(brand) !== -1;
+  function brandShowsMemberOption(brand, nowMs) {
+    if (MEMBER_OPTION_BRANDS_.indexOf(brand) === -1) return false;
+    if (brand !== 'studio_x') return true;
+    var now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+    return now < STUDIO_X_MEMBER_OPTION_END_MS_;
   }
 
   /* amount（数値）を'¥4,000'へ整形する。数値化できない場合は空文字を返す

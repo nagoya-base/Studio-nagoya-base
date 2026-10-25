@@ -299,22 +299,41 @@ test('createBooking: mensはisMember未送信でも常に会員料金で保存�
   assert.strictEqual(mensFound.record.priceIsMember, true);
 });
 
-test('createBooking: studio_xの直接予約もisMember:trueで会員料金になる（PR #343レビュー対応: ブランド分離基準書v1.1）', function () {
-  var studioCtx = setup();
-  var studioMemberResult = studioCtx.sandbox.BookingRepository.createBooking(
-    validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180, isMember: true })
-  );
-  assert.strictEqual(studioMemberResult.price.amount, 5500, 'studio_xもisMember:trueなら会員料金になるべき');
-  assert.strictEqual(studioMemberResult.price.tier, 'MEMBER');
-  var studioMemberFound = studioCtx.sandbox.SpreadsheetRepository.findRowByBookingId(studioMemberResult.bookingId);
-  assert.strictEqual(studioMemberFound.record.priceIsMember, true);
+test('createBooking: studio_xの会員料金は2026/11/30までの新規予約（V1）では有効、2026/12/1以降（V2）は廃止（Issue #470）', function () {
+  [
+    { now: '2026-11-30T23:59:59+09:00', isMember: true, amount: 5500, tier: 'MEMBER', generation: 'V1' },
+    { now: '2026-11-30T23:59:59+09:00', isMember: false, amount: 6000, tier: 'GENERAL', generation: 'V1' },
+    { now: '2026-12-01T00:00:00+09:00', isMember: true, amount: 5500, tier: 'GENERAL', generation: 'V2' },
+    { now: '2026-12-01T00:00:00+09:00', isMember: false, amount: 5500, tier: 'GENERAL', generation: 'V2' }
+  ].forEach(function (c) {
+    var ctx = setup();
+    var result = ctx.sandbox.BookingRepository.createBooking(
+      validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180, isMember: c.isMember }), new Date(c.now)
+    );
+    assert.strictEqual(result.price.amount, c.amount, JSON.stringify(c));
+    assert.strictEqual(result.price.tier, c.tier);
+    var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId).record;
+    assert.strictEqual(record.priceGeneration, c.generation);
+    assert.strictEqual(record.priceIsMember, c.tier === 'MEMBER');
+  });
+});
 
-  var studioGeneralCtx = setup();
-  var studioGeneralResult = studioGeneralCtx.sandbox.BookingRepository.createBooking(
-    validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 })
-  );
-  assert.strictEqual(studioGeneralResult.price.amount, 6000, 'isMember未送信は一般料金のまま（fail-closed）');
-  assert.strictEqual(studioGeneralResult.price.tier, 'GENERAL');
+test('createBooking: 料金世代は予約作成時刻で固定して保存される（Issue #470。2026/12/1 0:00 JSTが境界）', function () {
+  var cases = [
+    { now: '2026-11-30T23:59:59+09:00', generation: 'V1', amount: 6000 },
+    { now: '2026-12-01T00:00:00+09:00', generation: 'V2', amount: 7500 }
+  ];
+  cases.forEach(function (c) {
+    var ctx = setup();
+    var result = ctx.sandbox.BookingRepository.createBooking(
+      validPayload({ brand: 'snb', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 }), new Date(c.now)
+    );
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.price.amount, c.amount, c.now);
+    var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
+    assert.strictEqual(found.record.priceGeneration, c.generation);
+    assert.strictEqual(found.record.priceAmount, c.amount);
+  });
 });
 
 test('createBooking: snbはisMember:trueを送ると会員料金で保存される', function () {

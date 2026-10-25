@@ -18,15 +18,16 @@
  *
  * 会員区分（tier）の決定方針（Issue #342のユーザー確認、およびPR #343レビュー
  * （ブランド分離基準書v1.1）を反映。studio_xの扱いをPR #343レビューで修正）:
- * - studio_x: ブランド分離基準書v1.1により、直接予約（このGAS予約フォーム経由の予約。
- *   スペースマーケット等の外部プラットフォーム予約はそもそもこの経路を通らない）には
- *   SNB本体と共通の会員基準を適用する。snbと同じくisMember入力でGENERAL/MEMBERを
- *   決める（当初Issue #342時点では「Studio Xに会員概念なし」としてisMember入力を
- *   無視し常にGENERALにしていたが、PR #343レビューでこれは誤りと判明したため修正した）。
- * - mens: ランディングページが常に会員相当の価格のみを掲載しているため、isMember入力を
- *   無視して常にMEMBER（現行の「メンズページを見た」自己申告による割引運用をそのまま
- *   自動化したもの）。
- * - snb / studio_x: いずれも予約フォームの自己申告（isMember）でGENERAL/MEMBERを決める。
+ * - studio_x（Issue #470）: 会員料金の廃止は2026/12/1以降に作成される予約（V2）から。V2は
+ *   isMember入力を無視して常にGENERALとするが、GENERAL料金そのものは現行MEMBER料金を
+ *   スライドした共通料金とする。V1（〜2026/11/30作成）は従来どおり自己申告（isMember）で
+ *   GENERAL/MEMBERを使い分ける。
+ * - 料金世代（Issue #470）: 予約作成時刻でV1（〜2026/11/30）/V2（2026/12/1〜）を決めて
+ *   予約へ保存し、日程変更でも保存済みの世代で再見積りする（現行表で再計算しない）。
+ *   料金表はブランド別（snb/studio_x。mensはsnbのMEMBER表）に分離している。
+ * - mens: 予約導線でMEMBER料金を自動適用する。会員資格の付与ではなく価格優遇のみ
+ *   （isMember入力・SNB MEMBER加入有無は無関係）。
+ * - snb: 予約フォームの自己申告（isMember）でGENERAL/MEMBERを決める。
  *   未指定・不正値はfail-closedでGENERAL（会員特典を誤って適用しない方向へ倒す）。
  * 実際に会員資格が本物かどうかの最終確認は、既存どおり管理者が予約確定前に行い、
  * 必要であればBookingRepository.updateBookingPriceで金額を補正する（このファイルの
@@ -61,6 +62,21 @@ var BookingPricing = (function () {
   var TIER = { GENERAL: 'GENERAL', MEMBER: 'MEMBER' };
   var DAY_TYPE = { WEEKDAY: 'WEEKDAY', WEEKEND_HOLIDAY: 'WEEKEND_HOLIDAY' };
 
+  /* 料金世代。予約作成時に決まり、以後（日程変更を含む）その予約では変わらない。
+     V1=2026/11/30までに作成された予約の旧料金、V2=2026/12/1以降に作成された予約の新料金。
+     空・未知の値は旧予約（列追加前）とみなしV1へ倒す。 */
+  var GENERATION = { V1: 'V1', V2: 'V2' };
+  var GENERATION_V2_START_MS_ = Date.parse('2026-12-01T00:00:00+09:00');
+
+  var MEMBER_RATES_ = {
+    WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 5500, 4: 7000 }, extensionPerHour: 1500 },
+    WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7000, 4: 9000 }, extensionPerHour: 2000 }
+  };
+  var STUDIO_X_GENERAL_RATES_ = {
+    WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 6000, 4: 8000 }, extensionPerHour: 2000 },
+    WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7500, 4: 10000 }, extensionPerHour: 2500 }
+  };
+
   /*
    * 1/2/3/4時間は基本料金の表引き、4時間を超えた分だけ1時間ごとにextensionPerHourを加算する。
    * 1時間料金は（Issue #410）延長+1時間料金と同額（GENERALの平日2,000円/土日祝2,500円）。
@@ -69,22 +85,59 @@ var BookingPricing = (function () {
    * 合わせた。会員割引の適用条件＝3時間以上・延長は変更しない）。
    */
   var RATE_TABLES_ = {
-    GENERAL: {
-      WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 6000, 4: 8000 }, extensionPerHour: 2000 },
-      WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7500, 4: 10000 }, extensionPerHour: 2500 }
+    snb: {
+      V1: {
+        GENERAL: {
+          WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 6000, 4: 8000 }, extensionPerHour: 2000 },
+          WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7500, 4: 10000 }, extensionPerHour: 2500 }
+        },
+        MEMBER: MEMBER_RATES_
+      },
+      V2: {
+        GENERAL: {
+          WEEKDAY: { base: { 1: 2500, 2: 5000, 3: 7500, 4: 10000 }, extensionPerHour: 2500 },
+          WEEKEND_HOLIDAY: { base: { 1: 3000, 2: 6000, 3: 9000, 4: 12000 }, extensionPerHour: 3000 }
+        },
+        MEMBER: MEMBER_RATES_
+      }
     },
-    MEMBER: {
-      WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 5500, 4: 7000 }, extensionPerHour: 1500 },
-      WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7000, 4: 9000 }, extensionPerHour: 2000 }
+    /* Studio XはV2で会員区分を廃止するが、V2のGENERAL料金には現行MEMBER料金をスライドする。
+       V1は2026/11/30までの新規予約と旧世代予約の日程変更見積りのためGENERAL/MEMBER双方を保持。 */
+    studio_x: {
+      V1: {
+        GENERAL: STUDIO_X_GENERAL_RATES_,
+        MEMBER: MEMBER_RATES_
+      },
+      V2: {
+        GENERAL: MEMBER_RATES_
+      }
     }
   };
 
-  /* mensのみisMember入力を無視して常にMEMBERへ固定する。snb/studio_xはいずれも
-     自己申告（isMember）でGENERAL/MEMBERを決める（PR #343レビュー対応。ブランド
-     分離基準書v1.1によりstudio_xの直接予約にもSNB共通の会員基準を適用する）。 */
-  function resolveTier_(brand, isMemberInput) {
+  /*
+   * 価格優遇（MEMBER料金の適用）の判定。実際の会員資格とは別概念で、ここで決まるのは
+   * 「どの料金表を使うか」だけ（会員資格の付与・確認ではない）。
+   * - mens: 予約導線で自動判定し、会員加入の有無・isMember入力に関係なく常にMEMBER料金。
+   * - snb: 予約フォームの自己申告（isMember）でGENERAL/MEMBER。未指定はGENERAL。
+   * - studio_x: 会員料金の廃止は新料金世代（V2）から。V1（〜2026/11/30作成）は従来どおり
+   *   自己申告（isMember）でGENERAL/MEMBER、V2は常にGENERAL。ただしV2 GENERALの金額は
+   *   現行MEMBER料金をスライドした共通料金。
+   */
+  function resolveTier_(brand, isMemberInput, generation) {
     if (brand === 'mens') return TIER.MEMBER;
+    if (brand === 'studio_x' && generation === GENERATION.V2) return TIER.GENERAL;
     return isMemberInput === true ? TIER.MEMBER : TIER.GENERAL;
+  }
+
+  /* 予約作成時刻から料金世代を決める（施設timezone=JSTの2026/12/1 0:00が境界）。 */
+  function generationAt(createdAt) {
+    var ms = createdAt instanceof Date ? createdAt.getTime() : Number(createdAt);
+    return Number.isFinite(ms) && ms >= GENERATION_V2_START_MS_ ? GENERATION.V2 : GENERATION.V1;
+  }
+
+  /* 保存済みの料金世代を正規化する。空・不正値は旧予約としてV1。 */
+  function normalizeGeneration(value) {
+    return value === GENERATION.V2 ? GENERATION.V2 : GENERATION.V1;
   }
 
   function isValidDateString_(value) {
@@ -132,14 +185,21 @@ var BookingPricing = (function () {
     return hours < 1 ? 1 : hours;
   }
 
-  function computeAmount_(tier, dayType, hours) {
-    var table = RATE_TABLES_[tier][dayType];
+  /* mensはSNBの料金表（MEMBER）を使う。ブランドごとに表を分離している。 */
+  function rateTableGroupOf_(brand) {
+    return brand === 'studio_x' ? RATE_TABLES_.studio_x : RATE_TABLES_.snb;
+  }
+
+  function computeAmount_(brand, generation, tier, dayType, hours) {
+    var table = rateTableGroupOf_(brand)[generation][tier][dayType];
     if (hours <= 4) return table.base[hours];
     return table.base[4] + (hours - 4) * table.extensionPerHour;
   }
 
   /*
-   * input: { brand, date ('YYYY-MM-DD'), durationMinutes, isMember }
+   * input: { brand, date ('YYYY-MM-DD'), durationMinutes, isMember, generation }
+   * generation: 料金世代（'V1'|'V2'。省略・不正値はV1）。新規予約は呼び出し側がgenerationAt(now)で渡し、
+   * 既存予約の再見積りは保存済みの世代を渡す。
    * 戻り値: { valid: true, price: {...} } または { valid: false, error: {code, message} }。
    *
    * brand/date/durationMinutesの本格的な入力検証はBooking.validateCreateBookingInput /
@@ -163,14 +223,15 @@ var BookingPricing = (function () {
       return { valid: false, error: { code: 'INVALID_DURATION', message: '利用時間（分）が正しくありません。' } };
     }
 
-    var tier = resolveTier_(brand, params.isMember === true);
+    var generation = normalizeGeneration(params.generation);
+    var tier = resolveTier_(brand, params.isMember === true, generation);
     var dayTypeResult = resolveDayType_(date);
     if (!dayTypeResult.ok) {
       return { valid: false, error: dayTypeResult.error };
     }
     var dayType = dayTypeResult.dayType;
     var hours = billableHours_(durationMinutes);
-    var amount = computeAmount_(tier, dayType, hours);
+    var amount = computeAmount_(brand, generation, tier, dayType, hours);
 
     return {
       valid: true,
@@ -179,7 +240,9 @@ var BookingPricing = (function () {
         currency: CURRENCY_,
         brand: brand,
         tier: tier,
-        /* mensではisMemberInputを無視して上書きした結果（実際に適用されたtier）を返す。
+        generation: generation,
+        /* 価格優遇（MEMBER料金）の適用有無であり、実会員資格ではない。
+           mensではisMemberInputを無視して上書きした結果（実際に適用されたtier）を返す。
            呼び出し側はこの値をSheetsへ保存し、入力値ではなく「実際に何が適用されたか」を
            後から追跡できるようにする。 */
         isMember: tier === TIER.MEMBER,
@@ -194,6 +257,9 @@ var BookingPricing = (function () {
     TIER: TIER,
     DAY_TYPE: DAY_TYPE,
     CURRENCY: CURRENCY_,
+    GENERATION: GENERATION,
+    generationAt: generationAt,
+    normalizeGeneration: normalizeGeneration,
     computeBookingPrice: computeBookingPrice
   };
 })();
