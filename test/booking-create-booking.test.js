@@ -336,10 +336,11 @@ test('createBooking: 料金世代は予約作成時刻で固定して保存さ�
   });
 });
 
-test('createBooking: snbはisMember:trueを送ると会員料金で保存される', function () {
+test('createBooking: snbはisMember:trueを送ると会員料金で保存される（V1。V2は実会員資格で判定: test/membership.test.js）', function () {
   var ctx = setup();
   var result = ctx.sandbox.BookingRepository.createBooking(
-    validPayload({ brand: 'snb', date: FIXED_WEEKDAY_DATE, durationMinutes: 180, isMember: true })
+    validPayload({ brand: 'snb', date: FIXED_WEEKDAY_DATE, durationMinutes: 180, isMember: true }),
+    new Date('2026-11-30T12:00:00+09:00')
   );
   assert.strictEqual(result.price.amount, 5500);
   assert.strictEqual(result.price.tier, 'MEMBER');

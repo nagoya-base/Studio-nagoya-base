@@ -48,6 +48,10 @@ var BOOKING_ADMIN_FILES = [
    * ため必要（BookingRepository.gsより前に置く。依存順）。
    */
   'StripeEventRepository.gs',
+  /* Issue #471: SNB MEMBERの純粋ロジックと会員台帳。StripeWebhookProcessor.gsが会員イベントの
+     処理で使う（BookingRepository.gsがcreateBookingで資格照会に使うため、それより前）。 */
+  'MembershipRules.gs',
+  'MemberRepository.gs',
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
   /* Issue #423: オプションのメール文面と業務フロー（承認・不承認・Webhook反映）。BookingRepository.gsより前（createBookingから呼ぶ）。 */
@@ -118,6 +122,10 @@ var BOOKING_WEB_APP_FILES = [
   /* Issue #423: 申込（同時・後付け）・本人確認付き照会・追加Checkout開始。 */
   'OptionMailTemplates.gs',
   'OptionOrderService.gs',
+  /* Issue #471: SNB MEMBER。createBookingの資格照会（MemberRepository）と入会Checkout開始（MembershipService）。 */
+  'MembershipRules.gs',
+  'MemberRepository.gs',
+  'MembershipService.gs',
   'Code.gs'
 ];
 

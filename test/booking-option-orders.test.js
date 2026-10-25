@@ -36,6 +36,8 @@ var FILES = [
   'OptionOrderRepository.gs',
   'RecoveryRepository.gs',
   'StripeEventRepository.gs',
+  'MembershipRules.gs',
+  'MemberRepository.gs',
   'BookingMailTemplates.gs',
   'BookingMailer.gs',
   'OptionMailTemplates.gs',

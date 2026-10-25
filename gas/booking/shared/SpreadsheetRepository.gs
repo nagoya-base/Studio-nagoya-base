@@ -369,7 +369,15 @@ var SpreadsheetRepository = (function () {
      * - priceGeneration: 予約作成時に固定した料金世代（'V1'=2026/11/30まで|'V2'=2026/12/1から）。
      *   日程変更でも更新しない。空は列追加前の予約でV1として扱う（BookingPricing.normalizeGeneration）。
      */
-    'priceGeneration'
+    'priceGeneration',
+    /*
+     * Issue #471で追加した列（末尾追記。本番反映時は既存Bookingsシートのヘッダー行へ手動で追記が必要）。
+     * - membershipStatus: 予約作成時に確認したSNB MEMBERの実会員資格（利用日の属する月の支払い事実）。
+     *   'ACTIVE'（資格あり）|'INACTIVE'（確認したが資格なし）|'NOT_CHECKED'（確認対象外。V1・mens・
+     *   studio_x、または空）。価格優遇フラグ priceIsMember とは別概念で、mensがMEMBER料金でも
+     *   'ACTIVE'にはならない。日程変更でも更新しない（作成時点の事実）。
+     */
+    'membershipStatus'
   ];
 
   function getSpreadsheet_() {

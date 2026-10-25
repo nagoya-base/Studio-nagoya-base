@@ -4,7 +4,8 @@
  * doGet: action未指定=getAvailability・action=monthly=getMonthlyAvailability・
  *   action=estimatePrice=利用料金の見積り（Issue #342）。いずれも読み取り専用でPIIを
  *   含まない。
- * doPost: action未指定=createBooking（Issue #268で追加）・action=startCardCheckout=
+ * doPost（Issue #471: action=startMembershipCheckout=SNB MEMBER入会Checkout開始も受け付ける）:
+ *   action未指定=createBooking（Issue #268で追加）・action=startCardCheckout=
  *   Stripe Checkout Session発行（Issue #341 PR-B）。いずれも個人情報を書き込む/参照する
  *   APIのため、GETではなくPOST専用にしている（GETクエリパラメータや閲覧履歴にPIIが
  *   残る事故を避けるため。actionの判定自体はURLクエリパラメータe.parameterで行う
@@ -44,6 +45,9 @@ function doPost(e) {
   var params = (e && e.parameter) || {};
   if (params.action === 'startCardCheckout') {
     return jsonOutput_(handleStartCardCheckout_(e));
+  }
+  if (params.action === 'startMembershipCheckout') {
+    return jsonOutput_(handleStartMembershipCheckout_(e));
   }
   if (params.action === 'optionSummary' || params.action === 'submitOptions' || params.action === 'startOptionCheckout') {
     return jsonOutput_(handleOptionAction_(params.action, e));
@@ -206,6 +210,32 @@ function handleStartCardCheckout_(e) {
       error: { code: 'INTERNAL_ERROR', message: '決済処理中にエラーが発生しました。しばらくしてから再度お試しください。' },
       requestId: requestId
     };
+  }
+}
+
+/*
+ * SNB MEMBER入会Checkoutの開始（Issue #471）。{ email }のみを受け取る（金額等は受け取らない）。
+ * 既存会員かどうかは応答に含めない（結果はメールで伝える）。想定外の例外は汎用のINTERNAL_ERRORとして返す。
+ */
+function handleStartMembershipCheckout_(e) {
+  var requestId = Utilities.getUuid();
+  var payload;
+  try {
+    payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (parseError) {
+    return { success: false, error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' }, requestId: requestId };
+  }
+  try {
+    var result = MembershipService.startCheckout({ email: payload && payload.email });
+    if (!result || typeof result !== 'object') {
+      result = { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' } };
+    }
+    Logger.log('requestId=' + requestId + ' startMembershipCheckout=result ' + (result.success ? 'success' : 'error.code=' + sanitizeErrorCode_(result.error && result.error.code)));
+    result.requestId = requestId;
+    return result;
+  } catch (unexpectedError) {
+    Logger.log('requestId=' + requestId + ' startMembershipCheckout=result error.code=INTERNAL_ERROR');
+    return { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' }, requestId: requestId };
   }
 }
 

@@ -149,6 +149,11 @@
 var StripeWebhookProcessor = (function () {
   var RELEVANT_SUCCESS_TYPES_ = ['checkout.session.completed', 'checkout.session.async_payment_succeeded'];
   var FAILURE_TYPES_ = ['checkout.session.async_payment_failed'];
+  /* SNB MEMBER（Issue #471）。subscription/invoiceのイベントは部屋予約・オプションの照合経路に
+     入れず、専用経路（下記のhandleMembership*_）で処理する。 */
+  var MEMBERSHIP_SUBSCRIPTION_TYPES_ = ['customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted'];
+  var MEMBERSHIP_INVOICE_TYPES_ = ['invoice.paid', 'invoice.payment_failed'];
+  var MEMBERSHIP_PRODUCT_NAME_ = 'SNB MEMBER 月会費';
 
   /*
    * 処理権の有効期限（レビュー対応・7回目。6回目までのADMIN_CLAIM_STALE_AFTER_MS_＝
@@ -534,6 +539,253 @@ var StripeWebhookProcessor = (function () {
    *   の場合は、既に別の実行がこのイベントの処理を引き継いでいるため、この実行の結果は
    *   破棄されている。呼び出し元はこれを異常とはみなさない）。
    */
+
+  /*
+   * ============================================================================
+   * SNB MEMBER（Issue #471）のイベント処理
+   * ============================================================================
+   * 設計はMembershipRules.gs冒頭・README「SNB MEMBER」節を参照。要点:
+   * - 資格の根拠は「会員×利用月の支払い事実」（MemberRepository.recordPaidMonth）だけ。
+   *   入会月の事実は入会Checkout（mode=payment）の決済完了、翌月以降の事実は月次更新invoice
+   *   （billing_reason=subscription_cycle・1,000円）の支払い成功から作る。
+   * - subscription.*・invoice.payment_failedはMembersの表示用statusを更新するだけで、
+   *   資格（支払い事実）は増減しない。更新失敗・解約は「翌月の事実が作られない」ことで
+   *   猶予なくinactiveになる。
+   * - 同一イベントの再送はStripeEvents台帳（eventId）で、支払い事実は(会員, 月)で、
+   *   それぞれ冪等。statusの更新はイベント発生時刻（event.created）が新しいものだけが
+   *   反映される（順序逆転で巻き戻さない。MemberRepository.upsertMember参照）。
+   * - 書き込みはすべてrunFenced_（処理権の世代確認つきロック）の中で行う。
+   * 顧客のメールアドレス・Stripe ID・金額などはログへ出さない。
+   */
+  function secondsToDate_(seconds) {
+    var value = Number(seconds);
+    return Number.isFinite(value) && value > 0 ? new Date(value * 1000) : '';
+  }
+
+  function finalizeIgnored_(rowNumber, generation, code, message, now) {
+    return finalizeOutcome_(rowNumber, generation, {
+      processingState: StripeEventRepository.STATE.IGNORED,
+      outcomeCode: code, outcomeMessage: message
+    }, now, code, message);
+  }
+
+  function finalizeCompleted_(rowNumber, generation, code, message, now) {
+    return finalizeOutcome_(rowNumber, generation, {
+      processingState: StripeEventRepository.STATE.COMPLETED,
+      outcomeCode: code, outcomeMessage: message
+    }, now, code, message);
+  }
+
+  /* subscription / invoice 由来のイベントから、当方の会員を特定する情報を取り出す。 */
+  function membershipIdentityOf_(eventType, objectData) {
+    if (MEMBERSHIP_SUBSCRIPTION_TYPES_.indexOf(eventType) !== -1) {
+      var metadata = objectData.metadata || {};
+      return {
+        isMembership: metadata.orderType === MembershipRules.METADATA_ORDER_TYPE,
+        memberId: typeof metadata.memberId === 'string' ? metadata.memberId : '',
+        subscriptionId: typeof objectData.id === 'string' ? objectData.id : '',
+        customerId: typeof objectData.customer === 'string' ? objectData.customer : ((objectData.customer && objectData.customer.id) || '')
+      };
+    }
+    var fromInvoice = MembershipRules.readInvoiceSubscription(objectData);
+    var invoiceMetadata = fromInvoice.metadata || {};
+    var knownMember = fromInvoice.subscriptionId ? MemberRepository.findMember({ subscriptionId: fromInvoice.subscriptionId }) : null;
+    return {
+      isMembership: invoiceMetadata.orderType === MembershipRules.METADATA_ORDER_TYPE || !!knownMember,
+      memberId: typeof invoiceMetadata.memberId === 'string' ? invoiceMetadata.memberId : '',
+      subscriptionId: fromInvoice.subscriptionId,
+      customerId: typeof objectData.customer === 'string' ? objectData.customer : ((objectData.customer && objectData.customer.id) || '')
+    };
+  }
+
+  function handleMembershipObjectEvent_(rowNumber, generation, eventId, eventType, parsed, objectData, now) {
+    if (!objectData || typeof objectData !== 'object' || typeof objectData.id !== 'string') {
+      return rejectAndFinalize_(rowNumber, generation, '', 'INVALID_EVENT_OBJECT', 'イベント本文にオブジェクトIDが含まれていません。eventId=' + eventId, now);
+    }
+    var identity = membershipIdentityOf_(eventType, objectData);
+    if (!identity.isMembership || (!identity.memberId && !identity.subscriptionId)) {
+      return finalizeIgnored_(rowNumber, generation, 'NOT_MEMBERSHIP', 'SNB MEMBER以外のsubscription/invoiceです。', now);
+    }
+    var event = { id: eventId, created: parsed.created };
+    var memberIdentity = { memberId: identity.memberId, subscriptionId: identity.subscriptionId, customerId: identity.customerId };
+
+    if (eventType === 'invoice.paid') {
+      var paid = MembershipRules.resolvePaidMonthOfRenewalInvoice(objectData);
+      if (!paid.ok) {
+        if (paid.ignorable) {
+          /* 初回の$0 invoice等。月の支払い事実は作らない。 */
+          return finalizeIgnored_(rowNumber, generation, 'NOT_MONTHLY_RENEWAL', '月次更新の請求ではないため対象外です。', now);
+        }
+        return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_INVOICE_' + paid.code,
+          '月次更新invoiceの内容を確認できませんでした。eventId=' + eventId, now);
+      }
+      var paidMemberId = '';
+      var fencedPaid = runFenced_(rowNumber, generation, function () {
+        var upsert = MemberRepository.upsertMember(memberIdentity, { subscriptionId: identity.subscriptionId, customerId: identity.customerId }, null, { create: false }, now);
+        if (!upsert.found) return;
+        paidMemberId = upsert.memberId;
+        var paidAtSeconds = objectData.status_transitions && objectData.status_transitions.paid_at;
+        MemberRepository.recordPaidMonth({
+          memberId: upsert.memberId,
+          month: paid.month,
+          sourceType: 'invoice',
+          sourceId: objectData.id,
+          amount: MembershipRules.MONTHLY_FEE_JPY,
+          paidAt: secondsToDate_(paidAtSeconds || parsed.created),
+          eventId: eventId
+        }, now);
+      });
+      if (fencedPaid) return fencedPaid;
+      if (!paidMemberId) {
+        return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_MEMBER_NOT_FOUND', '更新対象の会員が見つかりません。eventId=' + eventId, now);
+      }
+      return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_MONTH_PAID', '月次更新の支払い事実を記録しました。', now);
+    }
+
+    var state;
+    if (eventType === 'invoice.payment_failed') {
+      if (objectData.billing_reason !== 'subscription_cycle') {
+        return finalizeIgnored_(rowNumber, generation, 'NOT_MONTHLY_RENEWAL', '月次更新の請求ではないため対象外です。', now);
+      }
+      state = { status: MembershipRules.STATUS.PAST_DUE, invoiceId: objectData.id };
+    } else {
+      var period = MembershipRules.readSubscriptionPeriod(objectData);
+      var isDeleted = eventType === 'customer.subscription.deleted';
+      state = {
+        status: isDeleted ? MembershipRules.STATUS.CANCELED : MembershipRules.mapSubscriptionStatus(objectData.status),
+        currentPeriodStart: secondsToDate_(period.start),
+        currentPeriodEnd: secondsToDate_(period.end),
+        canceledAt: secondsToDate_(objectData.canceled_at || (isDeleted ? parsed.created : 0)) || null,
+        cancelAtPeriodEnd: !!(objectData.cancel_at_period_end || objectData.cancel_at)
+      };
+    }
+
+    var result = null;
+    var fenced = runFenced_(rowNumber, generation, function () {
+      result = MemberRepository.upsertMember(memberIdentity, { subscriptionId: identity.subscriptionId, customerId: identity.customerId, state: state }, event, { create: false }, now);
+    });
+    if (fenced) return fenced;
+    if (!result || !result.found) {
+      return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_MEMBER_NOT_FOUND', '対象の会員が見つかりません。eventId=' + eventId, now);
+    }
+    return finalizeCompleted_(rowNumber, generation,
+      result.stateApplied ? 'MEMBERSHIP_STATE_APPLIED' : 'MEMBERSHIP_STATE_STALE',
+      result.stateApplied ? '会員状態を更新しました。' : 'より新しい状態が記録済みのため反映しませんでした。', now);
+  }
+
+  /*
+   * 入会Checkout（mode=payment・metadata.orderType=membership）の決済完了。
+   * 1) 会員行の作成と入会月の支払い事実の記録（冪等）→ 2) subscription作成（翌月1日 00:00 UTC
+   * アンカー・日割りなし。Idempotency-Keyで二重作成しない）→ 3) subscription IDの記録。
+   * 2)が一時的に失敗した場合は未完了のまま終え、次回の実行で1)をやり直さず2)から再開する
+   * （1)・3)が冪等のため、何度再試行しても会員・支払い事実は重複しない）。
+   */
+  function handleMembershipJoin_(rowNumber, generation, eventId, parsed, session, stripeConfig, now) {
+    if (session.paymentStatus !== 'paid') {
+      return finalizeIgnored_(rowNumber, generation, 'PAYMENT_NOT_YET_COMPLETE', '入会の支払いはまだ完了していません。', now);
+    }
+    var memberId = typeof session.metadata.memberId === 'string' ? session.metadata.memberId : '';
+    var email = MembershipRules.normalizeEmail(session.customerEmail);
+    if (!memberId || !session.customerId || !MembershipRules.isValidEmail(email)) {
+      return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_JOIN_INVALID_SESSION', '入会Checkout Sessionの必須情報が不足しています。eventId=' + eventId, now);
+    }
+    if (session.amountTotal !== MembershipRules.MONTHLY_FEE_JPY || session.currency !== MembershipRules.CURRENCY) {
+      return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_JOIN_AMOUNT_MISMATCH', '入会の決済金額が会費と一致しません。eventId=' + eventId, now);
+    }
+    var joinMonth = MembershipRules.jstMonthKeyOfEpochSeconds(parsed.created);
+    if (!joinMonth) {
+      return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_JOIN_INVALID_EVENT_TIME', 'イベント時刻を確認できません。eventId=' + eventId, now);
+    }
+
+    var intentResult = StripeGateway.retrievePaymentIntent(stripeConfig, session.paymentIntentId);
+    if (!intentResult.ok) {
+      Logger.log('StripeWebhookProcessor: 入会PaymentIntent再取得に失敗しました eventId=' + eventId + ' errorType=' + intentResult.errorType);
+      return outcome_(false, 'STRIPE_LOOKUP_FAILED', 'Stripeへの照会に失敗しました。再試行します。');
+    }
+    var intent = intentResult.paymentIntent;
+    if (intent.status !== 'succeeded' || intent.amountReceived !== MembershipRules.MONTHLY_FEE_JPY || !intent.paymentMethodId) {
+      return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_JOIN_PAYMENT_UNCONFIRMED', '入会の入金または決済手段を確認できません。eventId=' + eventId, now);
+    }
+
+    var superseded = confirmClaimOrSupersededOutcome_(rowNumber, generation);
+    if (superseded) return superseded;
+
+    /* 1) 会員行＋入会月の支払い事実（冪等）。 */
+    var existingSubscriptionId = '';
+    var duplicateOf = null;
+    var fenced = runFenced_(rowNumber, generation, function () {
+      /* 二重加入の最終防御（Issue #471レビュー対応）。同じメールに有効な別会員（subscription有効、
+         または入会月の支払い事実あり）が既にいる場合、会員行もsubscriptionも作らない。
+         入金は済んでいるため、要復旧として運営が返金する。自分自身の再送・再試行は除外する。 */
+      /* 保留中入会を完了扱いにする（同じメールの再入会を妨げない。重複判定は下記が担う）。 */
+      MemberRepository.updatePending(memberId, { state: MemberRepository.PENDING_STATE.COMPLETED }, now);
+      duplicateOf = MemberRepository.findLiveMemberByEmail(email, joinMonth, memberId);
+      if (duplicateOf) return;
+      var upsert = MemberRepository.upsertMember({ memberId: memberId, customerId: session.customerId },
+        { memberId: memberId, email: email, customerId: session.customerId }, null, { create: true }, now);
+      MemberRepository.recordPaidMonth({
+        memberId: upsert.memberId,
+        month: joinMonth,
+        sourceType: 'checkout_session',
+        sourceId: session.id,
+        amount: MembershipRules.MONTHLY_FEE_JPY,
+        paidAt: secondsToDate_(parsed.created),
+        eventId: eventId
+      }, now);
+      var found = MemberRepository.findMember({ memberId: upsert.memberId });
+      existingSubscriptionId = (found && found.record.stripeSubscriptionId) || '';
+    });
+    if (fenced) return fenced;
+    if (duplicateOf) {
+      return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_DUPLICATE_JOIN',
+        '同じメールアドレスの有効な会員が既にいるため、二重加入として会員登録・subscription作成を行いませんでした。入会Checkoutの決済（1,000円）の返金を確認してください。eventId=' + eventId, now);
+    }
+    if (existingSubscriptionId) {
+      return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_JOINED', '入会処理は完了済みです。', now);
+    }
+
+    /* 2) subscription作成。 */
+    var anchorSeconds = MembershipRules.renewalAnchorSecondsAfterMonth(joinMonth);
+    if (!anchorSeconds || anchorSeconds * 1000 <= new Date().getTime() + 60 * 1000) {
+      return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_JOIN_MONTH_ELAPSED',
+        '入会月を過ぎたため自動更新の設定ができません。入会月の資格は記録済みです。手動でsubscriptionを設定してください。eventId=' + eventId, now);
+    }
+    var subscriptionResult = StripeGateway.createMembershipSubscription(stripeConfig, {
+      customerId: session.customerId,
+      paymentMethodId: intent.paymentMethodId,
+      amountJpy: MembershipRules.MONTHLY_FEE_JPY,
+      productName: MEMBERSHIP_PRODUCT_NAME_,
+      anchorSeconds: anchorSeconds,
+      memberId: memberId
+    }, 'snb-membership-sub-' + session.id);
+    if (!subscriptionResult.ok) {
+      Logger.log('StripeWebhookProcessor: 会員subscription作成に失敗しました eventId=' + eventId + ' errorType=' + subscriptionResult.errorType);
+      if (subscriptionResult.errorType === 'STRIPE_ERROR' || subscriptionResult.errorType === 'IDEMPOTENCY_CONFLICT') {
+        return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_SUBSCRIPTION_CREATE_FAILED',
+          '自動更新のsubscriptionを作成できませんでした。入会月の資格は記録済みです。eventId=' + eventId, now);
+      }
+      return outcome_(false, 'SUBSCRIPTION_CREATE_RETRY', 'subscriptionの作成を再試行します。');
+    }
+
+    /* 3) subscription IDと初期状態の記録。 */
+    var subscription = subscriptionResult.subscription;
+    var period = MembershipRules.readSubscriptionPeriod(subscription.raw);
+    var fencedFinal = runFenced_(rowNumber, generation, function () {
+      MemberRepository.upsertMember({ memberId: memberId }, {
+        subscriptionId: subscription.id,
+        customerId: session.customerId,
+        state: {
+          status: MembershipRules.mapSubscriptionStatus(subscription.status),
+          currentPeriodStart: secondsToDate_(period.start),
+          currentPeriodEnd: secondsToDate_(period.end),
+          cancelAtPeriodEnd: false
+        }
+      }, { id: eventId, created: parsed.created }, { create: false }, now);
+    });
+    if (fencedFinal) return fencedFinal;
+    return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_JOINED', '入会を記録し、自動更新を設定しました。', now);
+  }
+
   function processSingleEvent_(rowNumber, record, now, generation) {
     var effectiveNow = isDateLike_(now) ? now : new Date();
     var eventId = record.eventId;
@@ -547,6 +799,10 @@ var StripeWebhookProcessor = (function () {
     }
 
     var objectData = parsed.data && parsed.data.object;
+
+    if (MEMBERSHIP_SUBSCRIPTION_TYPES_.indexOf(eventType) !== -1 || MEMBERSHIP_INVOICE_TYPES_.indexOf(eventType) !== -1) {
+      return handleMembershipObjectEvent_(rowNumber, generation, eventId, eventType, parsed, objectData, effectiveNow);
+    }
 
     var isSuccessType = RELEVANT_SUCCESS_TYPES_.indexOf(eventType) !== -1;
     var isFailureType = FAILURE_TYPES_.indexOf(eventType) !== -1;
@@ -577,6 +833,14 @@ var StripeWebhookProcessor = (function () {
     var bookingId = typeof metadata.bookingId === 'string' ? metadata.bookingId : '';
     var paymentAttemptId = typeof metadata.paymentAttemptId === 'string' ? metadata.paymentAttemptId : '';
     var brand = typeof metadata.brand === 'string' ? metadata.brand : '';
+
+    /* SNB MEMBER入会（Issue #471）も部屋予約の照合経路に入れない。 */
+    if (metadata.orderType === MembershipRules.METADATA_ORDER_TYPE) {
+      if (isFailureType) {
+        return finalizeIgnored_(rowNumber, generation, 'MEMBERSHIP_PAYMENT_FAILED', '入会の非同期決済が失敗しました（会員は作成しません）。', effectiveNow);
+      }
+      return handleMembershipJoin_(rowNumber, generation, eventId, parsed, session, stripeConfig, effectiveNow);
+    }
 
     /* 追加オプション決済（Issue #423）は部屋予約の照合経路に入れず、専用経路で処理する。 */
     if (metadata.orderType === 'addon') {
