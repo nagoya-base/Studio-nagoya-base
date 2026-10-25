@@ -18,9 +18,9 @@
  *
  * 会員区分（tier）の決定方針（Issue #342のユーザー確認、およびPR #343レビュー
  * （ブランド分離基準書v1.1）を反映。studio_xの扱いをPR #343レビューで修正）:
- * - studio_x（Issue #470）: 会員料金を廃止し、isMember入力を無視して常にGENERAL（現行一般
- *   料金の一本化表。SNBの新一般料金へは追従しない）。2026/11/30以前に作成済みの旧世代
- *   （V1）予約の日程変更見積りに限り、保存済みの旧MEMBER区分を維持できる（legacyMemberTier）。
+ * - studio_x（Issue #470）: 会員料金の廃止は2026/12/1以降に作成される予約（V2）から。V2は
+ *   isMember入力を無視して常にGENERAL（現行一般料金の一本化表。SNBの新一般料金へは追従
+ *   しない）。V1（〜2026/11/30作成）は従来どおり自己申告（isMember）でGENERAL/MEMBER。
  * - 料金世代（Issue #470）: 予約作成時刻でV1（〜2026/11/30）/V2（2026/12/1〜）を決めて
  *   予約へ保存し、日程変更でも保存済みの世代で再見積りする（現行表で再計算しない）。
  *   料金表はブランド別（snb/studio_x。mensはsnbのMEMBER表）に分離している。
@@ -101,7 +101,7 @@ var BookingPricing = (function () {
       }
     },
     /* Studio Xは会員料金を持たず、現行一般料金（旧世代と同額）の一本化表。SNBの新一般料金へは
-       追従させない。V1のMEMBER表は2026/11/30以前に作成済みの予約の日程変更見積り用に残す。 */
+       追従させない。V1のMEMBER表は2026/11/30までの新規予約と、旧世代予約の日程変更見積りで使う。 */
     studio_x: {
       V1: {
         GENERAL: STUDIO_X_GENERAL_RATES_,
@@ -118,16 +118,12 @@ var BookingPricing = (function () {
    * 「どの料金表を使うか」だけ（会員資格の付与・確認ではない）。
    * - mens: 予約導線で自動判定し、会員加入の有無・isMember入力に関係なく常にMEMBER料金。
    * - snb: 予約フォームの自己申告（isMember）でGENERAL/MEMBER。未指定はGENERAL。
-   * - studio_x: 会員料金を廃止し常にGENERAL。例外として、2026/11/30以前に作成済みの
-   *   旧世代（V1）予約の日程変更見積りに限り、保存済みの旧価格区分（legacyMemberTier）を維持する。
+   * - studio_x: 会員料金の廃止は新料金世代（V2）から。V1（〜2026/11/30作成）は従来どおり
+   *   自己申告（isMember）でGENERAL/MEMBER、V2は常にGENERAL。
    */
-  function resolveTier_(brand, isMemberInput, generation, legacyMemberTier) {
+  function resolveTier_(brand, isMemberInput, generation) {
     if (brand === 'mens') return TIER.MEMBER;
-    if (brand === 'studio_x') {
-      return legacyMemberTier === true && generation === GENERATION.V1 && isMemberInput === true
-        ? TIER.MEMBER
-        : TIER.GENERAL;
-    }
+    if (brand === 'studio_x' && generation === GENERATION.V2) return TIER.GENERAL;
     return isMemberInput === true ? TIER.MEMBER : TIER.GENERAL;
   }
 
@@ -199,7 +195,7 @@ var BookingPricing = (function () {
   }
 
   /*
-   * input: { brand, date ('YYYY-MM-DD'), durationMinutes, isMember, generation, legacyMemberTier }
+   * input: { brand, date ('YYYY-MM-DD'), durationMinutes, isMember, generation }
    * generation: 料金世代（'V1'|'V2'。省略・不正値はV1）。新規予約は呼び出し側がgenerationAt(now)で渡し、
    * 既存予約の再見積りは保存済みの世代を渡す。
    * 戻り値: { valid: true, price: {...} } または { valid: false, error: {code, message} }。
@@ -226,7 +222,7 @@ var BookingPricing = (function () {
     }
 
     var generation = normalizeGeneration(params.generation);
-    var tier = resolveTier_(brand, params.isMember === true, generation, params.legacyMemberTier === true);
+    var tier = resolveTier_(brand, params.isMember === true, generation);
     var dayTypeResult = resolveDayType_(date);
     if (!dayTypeResult.ok) {
       return { valid: false, error: dayTypeResult.error };

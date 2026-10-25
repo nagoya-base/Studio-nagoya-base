@@ -40,11 +40,12 @@ test('doGet: action=estimatePriceは料金計算を返す（studio_x・平日3�
   assert.strictEqual(body.price.dayType, 'WEEKDAY');
 });
 
-test('doGet: action=estimatePriceはisMember=1でもstudio_xは一般料金（Issue #470: 会員料金廃止）', function () {
+test('doGet: action=estimatePriceのstudio_x会員料金は2026/12/1 0:00 JSTで廃止される（Issue #470。見積りは現在時刻の料金世代）', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' });
+  var abolished = Date.now() >= Date.parse('2026-12-01T00:00:00+09:00');
   var member = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: '180', isMember: '1' });
-  assert.strictEqual(member.price.tier, 'GENERAL');
-  assert.strictEqual(member.price.amount, 6000);
+  assert.strictEqual(member.price.tier, abolished ? 'GENERAL' : 'MEMBER');
+  assert.strictEqual(member.price.amount, abolished ? 6000 : 5500);
   var general = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: '180' });
   assert.strictEqual(general.price.tier, 'GENERAL');
 });

@@ -63,23 +63,20 @@ test('computeBookingPrice: studio_xの土日祝料金（2h/3h/4h・延長）', f
   });
 });
 
-test('computeBookingPrice: studio_xはisMember:trueでも常にGENERAL（Issue #470: 会員料金廃止。V1/V2とも同額）', function () {
+test('computeBookingPrice: studio_xの会員料金廃止はV2から。V1は従来どおりisMemberでMEMBER、V2は常にGENERAL（Issue #470）', function () {
   var Pricing = loadPricing();
-  ['V1', 'V2', undefined].forEach(function (generation) {
-    var r = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true, generation: generation });
-    assert.strictEqual(r.price.tier, 'GENERAL');
-    assert.strictEqual(r.price.isMember, false);
-    assert.strictEqual(r.price.amount, 6000, 'Studio XはSNB新一般料金に追従しない');
-  });
-});
-
-test('computeBookingPrice: 旧世代studio_x予約の日程変更見積りに限りlegacyMemberTierで旧MEMBER区分を維持する', function () {
-  var Pricing = loadPricing();
-  var v1 = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true, generation: 'V1', legacyMemberTier: true });
+  var v1 = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true, generation: 'V1' });
   assert.strictEqual(v1.price.tier, 'MEMBER');
   assert.strictEqual(v1.price.amount, 5500);
-  var v2 = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true, generation: 'V2', legacyMemberTier: true });
+  var unset = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true });
+  assert.strictEqual(unset.price.tier, 'MEMBER', '世代未指定は旧世代V1');
+  var v1General = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: false, generation: 'V1' });
+  assert.strictEqual(v1General.price.amount, 6000);
+
+  var v2 = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true, generation: 'V2' });
   assert.strictEqual(v2.price.tier, 'GENERAL');
+  assert.strictEqual(v2.price.isMember, false);
+  assert.strictEqual(v2.price.amount, 6000, 'Studio XはSNB新一般料金（7,500円）に追従しない');
 });
 
 test('computeBookingPrice: SNB一般料金はV2で新料金、V1は旧料金（Issue #470）', function () {
