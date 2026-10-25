@@ -34,6 +34,8 @@ var FILES = [
   'CardPayment.gs',
   'StripeGateway.gs',
   'StripeEventRepository.gs',
+  'MembershipRules.gs',
+  'MemberRepository.gs',
   'SpreadsheetRepository.gs',
   'RecoveryRepository.gs',
   'BookingMailTemplates.gs',
@@ -813,7 +815,7 @@ test('processPendingStripeWebhookEvents: 対象外のイベント種別は何も
   var ctx = setup();
   createBookingRow(ctx);
 
-  var event = JSON.stringify({ id: 'evt_other', type: 'invoice.paid', data: { object: { id: 'in_1' } } });
+  var event = JSON.stringify({ id: 'evt_other', type: 'charge.succeeded', data: { object: { id: 'ch_1' } } });
   var result = receiveAndProcess(ctx, event, new Date());
   assert.strictEqual(result.finalized, true);
   assert.strictEqual(result.code, 'IGNORED_EVENT_TYPE');

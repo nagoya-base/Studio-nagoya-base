@@ -1,0 +1,602 @@
+/*
+ * SNB MEMBER（月額会員。Issue #471）のテスト。Stripe API・Sheets・Calendarはすべてスタブ/fixtureで、
+ * 本番Stripeへは一切アクセスしない。
+ *
+ * 必須テスト（Issue #471）との対応:
+ *  1. 月途中の新規入会（満額1,000円・入会日〜当月末active）
+ *  2. 翌月1日の更新成功
+ *  3. 更新失敗（猶予なし）
+ *  4. cancel_at_period_end
+ *  5. Webhook再送
+ *  6. Webhook順序逆転
+ *  7. mens予約（MEMBER価格でも実会員資格は付かない）
+ *  8. 非会員メール（一般料金・外部APIから会員の存在を推測できない）
+ *  9. 未来月予約
+ * 10. 既存Booking Checkout（既存テスト群が維持されること。本ファイルでは回帰の一部のみ確認）
+ */
+'use strict';
+
+var test = require('node:test');
+var assert = require('node:assert');
+var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
+var stubs = require('./helpers/gas-stubs');
+
+var FILES = [
+  'Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Booking.gs', 'CardPayment.gs',
+  'JapaneseHolidays.gs', 'BookingPricing.gs', 'RateLimiter.gs', 'StripeGateway.gs',
+  'StripeEventRepository.gs', 'MembershipRules.gs', 'MemberRepository.gs', 'MembershipService.gs',
+  'SpreadsheetRepository.gs', 'RecoveryRepository.gs', 'AdminNotifier.gs',
+  'BookingMailTemplates.gs', 'BookingMailer.gs', 'BookingRepository.gs',
+  'StripeWebhookProcessor.gs', 'BookingAdminAlerts.gs', 'Code.gs'
+];
+
+var SPREADSHEET_ID = 'ss1';
+var JOIN_SESSION_ID = 'cs_test_join_0001';
+var MEMBER_ID = 'MBR-test-0001';
+var CUSTOMER_ID = 'cus_test_0001';
+var SUBSCRIPTION_ID = 'sub_test_0001';
+var MEMBER_EMAIL = 'taro@example.com';
+
+function sec(iso) { return Math.floor(Date.parse(iso) / 1000); }
+
+/* 入会（2026/12/15 JST）。入会月=2026-12、翌月1日 00:00 UTC=2027-01-01T00:00:00Z が更新アンカー。 */
+var JOIN_AT = '2026-12-15T12:00:00+09:00';
+var JAN_RENEWAL_AT = '2027-01-01T00:00:00Z';
+var FEB_RENEWAL_AT = '2027-02-01T00:00:00Z';
+
+function makeStripeResponder(state, calls) {
+  return function (url, options) {
+    calls.push({ url: url, options: options });
+    if (url.indexOf('/checkout/sessions/' + JOIN_SESSION_ID) !== -1) {
+      return { responseCode: 200, body: {
+        id: JOIN_SESSION_ID, mode: 'payment', status: 'complete', payment_status: state.paymentStatus,
+        amount_total: state.amountTotal, currency: 'jpy', payment_intent: 'pi_join', customer: CUSTOMER_ID,
+        customer_email: ' Taro@Example.com ',
+        metadata: { orderType: 'membership', memberId: MEMBER_ID }
+      } };
+    }
+    if (url.indexOf('/payment_intents/pi_join') !== -1) {
+      return { responseCode: 200, body: { id: 'pi_join', status: 'succeeded', amount_received: 1000, currency: 'jpy', payment_method: 'pm_saved_1' } };
+    }
+    if (url.indexOf('/subscriptions') !== -1 && options.method === 'post') {
+      if (state.subscriptionFailures > 0) {
+        state.subscriptionFailures--;
+        return { responseCode: 500, body: { error: { type: 'api_error' } } };
+      }
+      return { responseCode: 200, body: {
+        id: SUBSCRIPTION_ID, status: 'active', customer: CUSTOMER_ID,
+        items: { data: [{ current_period_start: sec(JOIN_AT), current_period_end: sec(JAN_RENEWAL_AT) }] }
+      } };
+    }
+    if (url.indexOf('/checkout/sessions') !== -1 && options.method === 'post') {
+      return { responseCode: 200, body: { id: 'cs_new', url: 'https://checkout.stripe.com/c/pay/cs_new', metadata: {} } };
+    }
+    throw new Error('未対応のURL: ' + url);
+  };
+}
+
+function setup(options) {
+  var opts = options || {};
+  var spreadsheetsById = {};
+  spreadsheetsById[SPREADSHEET_ID] = {};
+  var stripeState = Object.assign({ paymentStatus: 'paid', amountTotal: 1000, subscriptionFailures: 0 }, opts.stripeState || {});
+  var stripeCalls = [];
+  var clock = stubs.createControllableClock(opts.clockAt || JOIN_AT);
+  var properties = Object.assign({
+    SPREADSHEET_ID: SPREADSHEET_ID, CALENDAR_ID: 'cal1', STRIPE_SECRET_KEY: 'sk_test_dummy_value'
+  }, opts.properties || {});
+  var globals = {
+    PropertiesService: stubs.createPropertiesServiceStub(properties),
+    LockService: stubs.createLockServiceStub(),
+    CacheService: stubs.createCacheServiceStub(),
+    SpreadsheetApp: stubs.createSpreadsheetAppStub(spreadsheetsById),
+    CalendarApp: stubs.createCalendarAppStub({ cal1: { events: [] } }),
+    UrlFetchApp: stubs.createUrlFetchAppStub(makeStripeResponder(stripeState, stripeCalls)),
+    Utilities: stubs.createUtilitiesStub(),
+    MailApp: stubs.createMailAppStub(),
+    ContentService: stubs.createContentServiceStub(),
+    Logger: stubs.createLoggerStub(),
+    Date: clock.Date
+  };
+  var sandbox = loadBookingSandbox(FILES, globals);
+  return { sandbox: sandbox, globals: globals, stripeCalls: stripeCalls, stripeState: stripeState, clock: clock, sheets: spreadsheetsById[SPREADSHEET_ID] };
+}
+
+/* StripeEventsへ受信・永続化した状態にしてから、Booking Adminのトリガー処理を1回実行する。 */
+function receiveAndProcess(ctx, event) {
+  var body = JSON.stringify(event);
+  var now = ctx.clock.currentDate();
+  var claim = ctx.sandbox.StripeEventRepository.claim(event.id, event.type, now);
+  if (claim.outcome === 'CLAIMED') ctx.sandbox.StripeEventRepository.storeRawBody(claim.rowNumber, body, now);
+  var run = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents(now);
+  var match = run.results.filter(function (r) { return r.eventId === event.id; })[0];
+  return match || { finalized: false, code: 'NOT_PROCESSED' };
+}
+
+function joinEvent(id) {
+  return { id: id || 'evt_join_1', type: 'checkout.session.completed', created: sec(JOIN_AT), data: { object: { id: JOIN_SESSION_ID } } };
+}
+
+function subscriptionObject(overrides) {
+  return Object.assign({
+    id: SUBSCRIPTION_ID, object: 'subscription', customer: CUSTOMER_ID, status: 'active',
+    cancel_at_period_end: false, canceled_at: null,
+    metadata: { orderType: 'membership', memberId: MEMBER_ID },
+    items: { data: [{ current_period_start: sec(JOIN_AT), current_period_end: sec(JAN_RENEWAL_AT) }] }
+  }, overrides || {});
+}
+
+function subscriptionEvent(id, type, created, overrides) {
+  return { id: id, type: type, created: created, data: { object: subscriptionObject(overrides) } };
+}
+
+function renewalInvoice(id, periodStartIso, overrides) {
+  return Object.assign({
+    id: id, object: 'invoice', billing_reason: 'subscription_cycle', status: 'paid',
+    amount_paid: 1000, currency: 'jpy', customer: CUSTOMER_ID,
+    parent: { subscription_details: { subscription: SUBSCRIPTION_ID, metadata: { orderType: 'membership', memberId: MEMBER_ID } } },
+    lines: { data: [{ amount: 1000, period: { start: sec(periodStartIso), end: sec(periodStartIso) + 86400 * 30 } }] },
+    status_transitions: { paid_at: sec(periodStartIso) + 5 }
+  }, overrides || {});
+}
+
+function invoiceEvent(id, type, created, invoice) {
+  return { id: id, type: type, created: created, data: { object: invoice } };
+}
+
+function isMember(ctx, email, month) {
+  return ctx.sandbox.MemberRepository.isMemberForMonth(email, month);
+}
+
+function rowsOf(ctx, sheetName) {
+  var sheet = ctx.sheets[sheetName];
+  return sheet ? sheet._rows.slice(1) : [];
+}
+
+function joined(ctx) {
+  var result = receiveAndProcess(ctx, joinEvent());
+  assert.strictEqual(result.finalized, true);
+  assert.strictEqual(result.code, 'MEMBERSHIP_JOINED');
+  return result;
+}
+
+/* ===== 純粋ロジック ===== */
+
+test('MembershipRules: メール正規化・利用月・JST月境界・翌月1日UTCアンカー', function () {
+  var R = setup().sandbox.MembershipRules;
+  assert.strictEqual(R.normalizeEmail('  Taro@Example.COM '), 'taro@example.com');
+  assert.strictEqual(R.normalizeEmail(null), '');
+  assert.strictEqual(R.isValidEmail('a@b.co'), true);
+  assert.strictEqual(R.isValidEmail('not-an-email'), false);
+  assert.strictEqual(R.monthKeyOfDateString('2027-01-12'), '2027-01');
+  assert.strictEqual(R.monthKeyOfDateString('2027/01/12'), '');
+  /* 12/31 23:59 JSTは12月、1/1 00:00 JSTは1月。 */
+  assert.strictEqual(R.jstMonthKeyOfEpochSeconds(sec('2026-12-31T23:59:59+09:00')), '2026-12');
+  assert.strictEqual(R.jstMonthKeyOfEpochSeconds(sec('2027-01-01T00:00:00+09:00')), '2027-01');
+  assert.strictEqual(R.nextMonthKey('2026-12'), '2027-01');
+  assert.strictEqual(R.renewalAnchorSecondsAfterMonth('2026-12'), sec('2027-01-01T00:00:00Z'));
+  assert.strictEqual(R.renewalAnchorSecondsAfterMonth('2027-01'), sec('2027-02-01T00:00:00Z'));
+});
+
+test('MembershipRules: 月次更新invoiceの利用月はline itemのperiod.startから決め、想定外はfail-closed', function () {
+  var R = setup().sandbox.MembershipRules;
+  assert.strictEqual(R.resolvePaidMonthOfRenewalInvoice(renewalInvoice('in_1', JAN_RENEWAL_AT)).month, '2027-01');
+  /* 旧API versionのsubscription直下のperiodと違い、invoice.period_startは「直前の期間」を指し得るため使わない。 */
+  var old = renewalInvoice('in_2', FEB_RENEWAL_AT, { period_start: sec(JAN_RENEWAL_AT), period_end: sec(FEB_RENEWAL_AT) });
+  assert.strictEqual(R.resolvePaidMonthOfRenewalInvoice(old).month, '2027-02');
+  assert.strictEqual(R.resolvePaidMonthOfRenewalInvoice(renewalInvoice('in_3', JAN_RENEWAL_AT, { amount_paid: 0 })).ok, false);
+  assert.strictEqual(R.resolvePaidMonthOfRenewalInvoice(renewalInvoice('in_4', JAN_RENEWAL_AT, { status: 'open' })).ok, false);
+  assert.strictEqual(R.resolvePaidMonthOfRenewalInvoice(renewalInvoice('in_5', '2027-01-15T00:00:00Z')).code, 'PERIOD_NOT_MONTH_START');
+  var initial = R.resolvePaidMonthOfRenewalInvoice(renewalInvoice('in_6', JAN_RENEWAL_AT, { billing_reason: 'subscription_create' }));
+  assert.strictEqual(initial.ok, false);
+  assert.strictEqual(initial.ignorable, true);
+});
+
+test('MembershipRules: API version差（basil以降のitems.data[]直下のperiodとparent.subscription_details）を読める', function () {
+  var R = setup().sandbox.MembershipRules;
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(R.readSubscriptionPeriod({ items: { data: [{ current_period_start: 10, current_period_end: 20 }] } }))), { start: 10, end: 20 });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(R.readSubscriptionPeriod({ current_period_start: 1, current_period_end: 2 }))), { start: 1, end: 2 });
+  assert.strictEqual(R.readInvoiceSubscription({ subscription: 'sub_old' }).subscriptionId, 'sub_old');
+  assert.strictEqual(R.readInvoiceSubscription({ parent: { subscription_details: { subscription: 'sub_new' } } }).subscriptionId, 'sub_new');
+});
+
+/* ===== 1. 月途中の新規入会 ===== */
+
+test('入会: 月途中の入会は満額1,000円。日割りせず、入会日〜当月末が有効で翌月はまだ無効', function () {
+  var ctx = setup();
+  joined(ctx);
+
+  var members = rowsOf(ctx, 'Members');
+  assert.strictEqual(members.length, 1);
+  var m = ctx.sandbox.MemberRepository.findMember({ memberId: MEMBER_ID }).record;
+  assert.strictEqual(m.email, MEMBER_EMAIL, 'メールは正規化して保存する');
+  assert.strictEqual(m.stripeCustomerId, CUSTOMER_ID);
+  assert.strictEqual(m.stripeSubscriptionId, SUBSCRIPTION_ID);
+  assert.strictEqual(m.status, 'active');
+
+  var months = rowsOf(ctx, 'MemberMonths');
+  assert.strictEqual(months.length, 1);
+  assert.strictEqual(months[0][2], 'checkout_session');
+  assert.strictEqual(months[0][4], 1000, '入会月は満額1,000円');
+
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), true, '入会月は有効');
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), false, '翌月分は更新の課金成功まで有効にならない');
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-11'), false);
+
+  /* subscriptionは翌月1日00:00 UTCアンカー・日割りなし・月額1,000円で作成する。 */
+  var post = ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/subscriptions') !== -1; });
+  assert.strictEqual(post.length, 1);
+  var body = decodeURIComponent(post[0].options.payload);
+  assert.ok(body.indexOf('billing_cycle_anchor=' + sec(JAN_RENEWAL_AT)) !== -1);
+  assert.ok(body.indexOf('proration_behavior=none') !== -1);
+  assert.ok(body.indexOf('items[0][price_data][unit_amount]=1000') !== -1);
+  assert.ok(body.indexOf('items[0][price_data][recurring][interval]=month') !== -1);
+  assert.ok(body.indexOf('default_payment_method=pm_saved_1') !== -1);
+  assert.strictEqual(post[0].options.headers['Idempotency-Key'], 'snb-membership-sub-' + JOIN_SESSION_ID);
+});
+
+test('入会: 入会が月末日のJSTでも、その月が入会月になり翌月1日が更新アンカーになる', function () {
+  var ctx = setup({ clockAt: '2026-12-31T23:30:00+09:00' });
+  var event = joinEvent();
+  event.created = sec('2026-12-31T23:30:00+09:00');
+  var result = receiveAndProcess(ctx, event);
+  assert.strictEqual(result.code, 'MEMBERSHIP_JOINED');
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), true);
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), false);
+});
+
+test('入会: 未決済・金額不一致は会員を作らない', function () {
+  var unpaid = setup({ stripeState: { paymentStatus: 'unpaid' } });
+  assert.strictEqual(receiveAndProcess(unpaid, joinEvent()).code, 'PAYMENT_NOT_YET_COMPLETE');
+  assert.strictEqual(rowsOf(unpaid, 'Members').length, 0);
+
+  var wrong = setup({ stripeState: { amountTotal: 500 } });
+  var result = receiveAndProcess(wrong, joinEvent());
+  assert.strictEqual(result.code, 'MEMBERSHIP_JOIN_AMOUNT_MISMATCH');
+  assert.strictEqual(rowsOf(wrong, 'Members').length, 0);
+  assert.strictEqual(isMember(wrong, MEMBER_EMAIL, '2026-12'), false);
+});
+
+test('入会: subscription作成が一時失敗しても会員・入会月は重複せず、再試行で自動更新が設定される', function () {
+  var ctx = setup({ stripeState: { subscriptionFailures: 1 } });
+  var first = receiveAndProcess(ctx, joinEvent());
+  assert.strictEqual(first.finalized, false);
+  assert.strictEqual(first.code, 'SUBSCRIPTION_CREATE_RETRY');
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), true, '入金済みの入会月は失われない');
+
+  var second = receiveAndProcess(ctx, joinEvent());
+  assert.strictEqual(second.finalized, true);
+  assert.strictEqual(second.code, 'MEMBERSHIP_JOINED');
+  assert.strictEqual(rowsOf(ctx, 'Members').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(ctx.sandbox.MemberRepository.findMember({ memberId: MEMBER_ID }).record.stripeSubscriptionId, SUBSCRIPTION_ID);
+});
+
+test('入会: 入会月を過ぎて処理された場合はsubscriptionを作らず要復旧にするが、入会月の資格は失われない', function () {
+  var ctx = setup({ clockAt: '2027-01-02T00:00:00+09:00' });
+  var result = receiveAndProcess(ctx, joinEvent());
+  assert.strictEqual(result.code, 'MEMBERSHIP_JOIN_MONTH_ELAPSED');
+  assert.strictEqual(ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/subscriptions') !== -1; }).length, 0);
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), true);
+});
+
+/* ===== 2. 更新成功 ===== */
+
+test('更新: 翌月1日の課金成功で翌月分が有効になる。翌々月はまだ無効', function () {
+  var ctx = setup();
+  joined(ctx);
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), false);
+
+  var paid = receiveAndProcess(ctx, invoiceEvent('evt_inv_jan', 'invoice.paid', sec(JAN_RENEWAL_AT) + 10, renewalInvoice('in_jan', JAN_RENEWAL_AT)));
+  assert.strictEqual(paid.code, 'MEMBERSHIP_MONTH_PAID');
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), true);
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), true, '入会月の資格は維持');
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-02'), false);
+});
+
+test('更新: 入会時の$0 invoice（billing_reason=subscription_create）や他商品のinvoiceは資格を作らない', function () {
+  var ctx = setup();
+  joined(ctx);
+  var zero = renewalInvoice('in_zero', JAN_RENEWAL_AT, { billing_reason: 'subscription_create', amount_paid: 0 });
+  assert.strictEqual(receiveAndProcess(ctx, invoiceEvent('evt_zero', 'invoice.paid', sec(JOIN_AT), zero)).code, 'NOT_MONTHLY_RENEWAL');
+  var other = { id: 'in_other', billing_reason: 'subscription_cycle', status: 'paid', amount_paid: 3000, currency: 'jpy',
+    parent: { subscription_details: { subscription: 'sub_other', metadata: {} } }, lines: { data: [] } };
+  assert.strictEqual(receiveAndProcess(ctx, invoiceEvent('evt_other', 'invoice.paid', sec(JAN_RENEWAL_AT), other)).code, 'NOT_MEMBERSHIP');
+  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+});
+
+/* ===== 3. 更新失敗 ===== */
+
+test('更新失敗: 猶予期間なしで翌月はinactive。支払済みの当月は影響を受けない', function () {
+  var ctx = setup();
+  joined(ctx);
+  receiveAndProcess(ctx, invoiceEvent('evt_inv_jan', 'invoice.paid', sec(JAN_RENEWAL_AT) + 10, renewalInvoice('in_jan', JAN_RENEWAL_AT)));
+
+  var failedInvoice = renewalInvoice('in_feb_fail', FEB_RENEWAL_AT, { status: 'open', amount_paid: 0 });
+  var failed = receiveAndProcess(ctx, invoiceEvent('evt_inv_feb_fail', 'invoice.payment_failed', sec(FEB_RENEWAL_AT) + 20, failedInvoice));
+  assert.strictEqual(failed.code, 'MEMBERSHIP_STATE_APPLIED');
+
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-02'), false, '更新失敗の月は猶予なしでinactive');
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), true, '支払済みの月は有効のまま');
+  var m = ctx.sandbox.MemberRepository.findMember({ memberId: MEMBER_ID }).record;
+  assert.strictEqual(m.status, 'past_due');
+  assert.strictEqual(m.latestInvoiceId, 'in_feb_fail');
+});
+
+/* ===== 4. cancel_at_period_end ===== */
+
+test('解約: cancel_at_period_endでも支払済みの当月末まではactive、翌月以降はinactive', function () {
+  var ctx = setup();
+  joined(ctx);
+  receiveAndProcess(ctx, invoiceEvent('evt_inv_jan', 'invoice.paid', sec(JAN_RENEWAL_AT) + 10, renewalInvoice('in_jan', JAN_RENEWAL_AT)));
+
+  var cancelAt = sec('2027-01-20T10:00:00+09:00');
+  receiveAndProcess(ctx, subscriptionEvent('evt_sub_cancel_req', 'customer.subscription.updated', cancelAt, {
+    cancel_at_period_end: true, canceled_at: cancelAt,
+    items: { data: [{ current_period_start: sec(JAN_RENEWAL_AT), current_period_end: sec(FEB_RENEWAL_AT) }] }
+  }));
+  var requested = ctx.sandbox.MemberRepository.findMember({ memberId: MEMBER_ID }).record;
+  assert.strictEqual(requested.cancelAtPeriodEnd, 'TRUE');
+  assert.ok(requested.canceledAt);
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), true, '支払済みの当月（1月）末まではactive');
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-02'), false, '翌月以降はinactive（更新の請求が作られない）');
+
+  /* 期間末に実際に解約されたイベント。 */
+  var endAt = sec(FEB_RENEWAL_AT);
+  receiveAndProcess(ctx, subscriptionEvent('evt_sub_deleted', 'customer.subscription.deleted', endAt, { status: 'canceled', canceled_at: cancelAt }));
+  var m = ctx.sandbox.MemberRepository.findMember({ memberId: MEMBER_ID }).record;
+  assert.strictEqual(m.status, 'canceled');
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), true, '解約後も支払済み月は有効（日割り返金なし）');
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-02'), false);
+  assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-03'), false);
+});
+
+/* ===== 5. Webhook再送 ===== */
+
+test('再送: 同一イベントを複数回受けても会員・支払い事実・subscriptionは1回だけ', function () {
+  var ctx = setup();
+  var event = joinEvent('evt_join_dup');
+  var first = receiveAndProcess(ctx, event);
+  assert.strictEqual(first.code, 'MEMBERSHIP_JOINED');
+  /* 受信（Booking Webhook）側の再送は台帳で弾かれ、処理対象にも再度ならない。 */
+  var again = receiveAndProcess(ctx, event);
+  assert.strictEqual(again.code, 'NOT_PROCESSED');
+  assert.strictEqual(rowsOf(ctx, 'Members').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+
+  var inv = invoiceEvent('evt_inv_dup', 'invoice.paid', sec(JAN_RENEWAL_AT) + 10, renewalInvoice('in_jan', JAN_RENEWAL_AT));
+  receiveAndProcess(ctx, inv);
+  receiveAndProcess(ctx, inv);
+  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 2);
+  assert.strictEqual(ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/subscriptions') !== -1; }).length, 1);
+});
+
+test('再送: イベントIDが異なっても同じ入会・同じ請求なら二重に記録しない', function () {
+  var ctx = setup();
+  joined(ctx);
+  var secondJoin = receiveAndProcess(ctx, joinEvent('evt_join_other_id'));
+  assert.strictEqual(secondJoin.code, 'MEMBERSHIP_JOINED');
+  assert.strictEqual(rowsOf(ctx, 'Members').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/subscriptions') !== -1; }).length, 1, 'subscriptionを二重作成しない');
+
+  receiveAndProcess(ctx, invoiceEvent('evt_inv_a', 'invoice.paid', sec(JAN_RENEWAL_AT) + 10, renewalInvoice('in_jan', JAN_RENEWAL_AT)));
+  receiveAndProcess(ctx, invoiceEvent('evt_inv_b', 'invoice.paid', sec(JAN_RENEWAL_AT) + 11, renewalInvoice('in_jan', JAN_RENEWAL_AT)));
+  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 2);
+});
+
+/* ===== 6. Webhook順序逆転 ===== */
+
+test('順序逆転: 古いイベントが後から届いても、新しい状態を巻き戻さない', function () {
+  var ctx = setup();
+  joined(ctx);
+  var t = sec(FEB_RENEWAL_AT);
+  /* 新しいpast_dueが先に処理され、古いactiveが後から届く。 */
+  receiveAndProcess(ctx, subscriptionEvent('evt_new', 'customer.subscription.updated', t + 200, { status: 'past_due' }));
+  var stale = receiveAndProcess(ctx, subscriptionEvent('evt_old', 'customer.subscription.updated', t + 100, { status: 'active' }));
+  assert.strictEqual(stale.code, 'MEMBERSHIP_STATE_STALE');
+  assert.strictEqual(ctx.sandbox.MemberRepository.findMember({ memberId: MEMBER_ID }).record.status, 'past_due');
+});
+
+test('順序逆転: 解約済み（canceled）は終端で、古い/後着のactiveで復活しない。支払い事実は順序に依存しない', function () {
+  var ctx = setup();
+  joined(ctx);
+  var t = sec(FEB_RENEWAL_AT);
+  receiveAndProcess(ctx, subscriptionEvent('evt_del', 'customer.subscription.deleted', t, { status: 'canceled', canceled_at: t }));
+  receiveAndProcess(ctx, subscriptionEvent('evt_late_active', 'customer.subscription.updated', t + 50, { status: 'active' }));
+  assert.strictEqual(ctx.sandbox.MemberRepository.findMember({ memberId: MEMBER_ID }).record.status, 'canceled');
+
+  /* 更新失敗→再試行成功のinvoice.paidが、失敗イベントより先に処理されても月の資格は成立する。 */
+  var ctx2 = setup();
+  joined(ctx2);
+  receiveAndProcess(ctx2, invoiceEvent('evt_paid_first', 'invoice.paid', sec(JAN_RENEWAL_AT) + 7200, renewalInvoice('in_jan', JAN_RENEWAL_AT)));
+  receiveAndProcess(ctx2, invoiceEvent('evt_fail_later', 'invoice.payment_failed', sec(JAN_RENEWAL_AT) + 20, renewalInvoice('in_jan', JAN_RENEWAL_AT, { status: 'open', amount_paid: 0 })));
+  assert.strictEqual(isMember(ctx2, MEMBER_EMAIL, '2027-01'), true);
+});
+
+/* ===== 7〜9. 予約作成での資格判定 ===== */
+
+var FIXED_NOW = new Date('2026-12-20T12:00:00+09:00');
+
+function bookingPayload(overrides) {
+  return Object.assign({
+    brand: 'snb', customerType: 'returning', date: '2026-12-28', startTime: '10:00', durationMinutes: 180,
+    name: '山田太郎', email: MEMBER_EMAIL, phone: '090-1234-5678', people: '2名', purpose: '緊縛の自主練習',
+    paymentMethod: '現金', note: '', source: 'test', isMember: true
+  }, overrides || {});
+}
+
+function book(ctx, overrides, now) {
+  return ctx.sandbox.BookingRepository.createBooking(bookingPayload(overrides), now || FIXED_NOW);
+}
+
+test('予約: 利用月の資格がある会員はMEMBER料金。予約メールは正規化して照合し、membershipStatus=ACTIVE', function () {
+  var ctx = setup();
+  joined(ctx);
+  var result = book(ctx, { email: 'TARO@Example.com', isMember: false });
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(result.price.tier, 'MEMBER');
+  assert.strictEqual(result.price.amount, 5500);
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId).record;
+  assert.strictEqual(record.membershipStatus, 'ACTIVE');
+  assert.strictEqual(record.priceGeneration, 'V2');
+});
+
+test('予約: 非会員メールは自己申告（isMember:true）しても一般料金。membershipStatus=INACTIVE', function () {
+  var ctx = setup();
+  joined(ctx);
+  var result = book(ctx, { email: 'stranger@example.com', isMember: true });
+  assert.strictEqual(result.price.tier, 'GENERAL');
+  assert.strictEqual(result.price.amount, 7500);
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId).record;
+  assert.strictEqual(record.membershipStatus, 'INACTIVE');
+  assert.strictEqual(record.priceIsMember, false);
+});
+
+test('予約: 台帳が空・読めない場合もfail-closedで一般料金', function () {
+  var ctx = setup();
+  var empty = book(ctx, { isMember: true });
+  assert.strictEqual(empty.price.tier, 'GENERAL');
+
+  var broken = setup();
+  broken.sandbox.MemberRepository.isMemberForMonth = function () { throw new Error('Sheets error'); };
+  var result = book(broken, { isMember: true });
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.price.tier, 'GENERAL');
+});
+
+test('未来月: 現在月がactiveでも、利用日の属する月の支払いが無ければMEMBER扱いにしない（予約作成月ではなく利用月で判定）', function () {
+  var ctx = setup();
+  joined(ctx); /* 12月分のみ支払済み。subscriptionはactive。 */
+
+  var december = book(ctx, { date: '2026-12-28' });
+  assert.strictEqual(december.price.tier, 'MEMBER', '12月利用は12月分が支払済み');
+
+  var january = book(ctx, { date: '2027-01-12', startTime: '13:00' }, new Date('2026-12-21T12:00:00+09:00'));
+  assert.strictEqual(january.price.tier, 'GENERAL', '12月中に予約した1月利用は、1月分の課金成功まで非会員扱い');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(january.bookingId).record.membershipStatus, 'INACTIVE');
+
+  /* 1月分の課金が成功した後に作った1月利用の予約はMEMBER。 */
+  receiveAndProcess(ctx, invoiceEvent('evt_inv_jan', 'invoice.paid', sec(JAN_RENEWAL_AT) + 10, renewalInvoice('in_jan', JAN_RENEWAL_AT)));
+  var afterRenewal = book(ctx, { date: '2027-01-26', startTime: '10:00' }, new Date('2027-01-05T12:00:00+09:00'));
+  assert.strictEqual(afterRenewal.price.tier, 'MEMBER');
+});
+
+test('mens: MEMBER料金でも実会員資格は付かない（会員台帳へ何も作らず、membershipStatusはACTIVEにならない）', function () {
+  var ctx = setup();
+  var result = book(ctx, { brand: 'mens', isMember: false, email: 'mens-user@example.com' });
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.price.tier, 'MEMBER', 'mens導線は常にMEMBER料金');
+  assert.strictEqual(result.price.amount, 5500);
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId).record;
+  assert.strictEqual(record.priceIsMember, true, '価格優遇フラグ');
+  assert.strictEqual(record.membershipStatus, 'NOT_CHECKED', '実会員資格は付与も確認もしない');
+  assert.strictEqual(rowsOf(ctx, 'Members').length, 0);
+  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 0);
+  assert.strictEqual(isMember(ctx, 'mens-user@example.com', '2026-12'), false);
+
+  /* mens予約を重ねても、SNBの会員資格には影響しない。 */
+  var snb = book(ctx, { brand: 'snb', email: 'mens-user@example.com', isMember: true, startTime: '15:00' });
+  assert.strictEqual(snb.price.tier, 'GENERAL');
+});
+
+test('Studio X V2は会員資格に関係なく共通料金（会員台帳を参照しない）', function () {
+  var ctx = setup();
+  joined(ctx);
+  var result = book(ctx, { brand: 'studio_x', isMember: true });
+  assert.strictEqual(result.price.tier, 'GENERAL');
+  assert.strictEqual(result.price.amount, 5500);
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId).record.membershipStatus, 'NOT_CHECKED');
+});
+
+test('V1（〜2026/11/30作成）は従来どおり自己申告で、会員台帳を参照しない', function () {
+  var ctx = setup();
+  var result = book(ctx, { email: 'anyone@example.com', isMember: true, date: '2026-12-28' }, new Date('2026-11-30T12:00:00+09:00'));
+  assert.strictEqual(result.price.tier, 'MEMBER');
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId).record;
+  assert.strictEqual(record.priceGeneration, 'V1');
+  assert.strictEqual(record.membershipStatus, 'NOT_CHECKED');
+});
+
+/* ===== 8. 見積りAPIから会員の存在を推測できない ===== */
+
+test('見積りAPI: メールアドレスを受け取らず、会員・非会員で応答が変わらない（会員台帳を一切参照しない）', function () {
+  var ctx = setup();
+  joined(ctx);
+  var run = function (extra) {
+    var params = Object.assign({ action: 'estimatePrice', brand: 'snb', date: '2027-02-02', durationMinutes: '180', isMember: '1' }, extra || {});
+    return ctx.sandbox.doGet({ parameter: params }).text;
+  };
+  var base = run();
+  assert.strictEqual(run({ email: MEMBER_EMAIL }), base);
+  assert.strictEqual(run({ email: 'stranger@example.com' }), base);
+  assert.strictEqual(JSON.parse(base).price.tier, 'MEMBER', '見積りは自己申告の区分の料金を表示するだけ');
+
+  /* 見積り処理の実装が会員台帳・会員リポジトリに触れていないこと。 */
+  var fs = require('fs');
+  var path = require('path');
+  var code = fs.readFileSync(path.join(__dirname, '..', 'gas', 'booking', 'public', 'Code.gs'), 'utf8');
+  var estimateBody = code.substring(code.indexOf('function handleEstimatePrice_'), code.indexOf('function parseBooleanParam_'));
+  assert.ok(estimateBody.indexOf('MemberRepository') === -1 && estimateBody.indexOf('email') === -1);
+});
+
+/* ===== 入会Checkout開始 ===== */
+
+test('入会Checkout: STRIPE_CHECKOUT_ENABLEDが有効でない限り発行しない（キルスイッチ）', function () {
+  var ctx = setup({ properties: { STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/ok', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/ng' } });
+  var result = ctx.sandbox.MembershipService.startCheckout({ email: MEMBER_EMAIL });
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'CHECKOUT_DISABLED');
+  assert.strictEqual(ctx.stripeCalls.length, 0);
+});
+
+test('入会Checkout: 金額はサーバー固定の1,000円・メール固定・決済手段保存つきで発行し、会員の存在は応答に出さない', function () {
+  var ctx = setup({ properties: {
+    STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/ok', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/ng'
+  } });
+  var result = ctx.sandbox.MembershipService.startCheckout({ email: ' Taro@Example.com ', amount: 1 });
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.checkoutUrl, 'https://checkout.stripe.com/c/pay/cs_new');
+  var body = decodeURIComponent(ctx.stripeCalls[0].options.payload);
+  assert.ok(body.indexOf('mode=payment') !== -1);
+  assert.ok(body.indexOf('line_items[0][price_data][unit_amount]=1000') !== -1);
+  assert.ok(body.indexOf('customer_email=taro@example.com') !== -1);
+  assert.ok(body.indexOf('payment_intent_data[setup_future_usage]=off_session') !== -1);
+  assert.ok(body.indexOf('customer_creation=always') !== -1);
+  assert.ok(body.indexOf('metadata[orderType]=membership') !== -1);
+  assert.deepStrictEqual(Object.keys(result).sort(), ['checkoutUrl', 'success']);
+
+  assert.strictEqual(ctx.sandbox.MembershipService.startCheckout({ email: 'bad' }).error.code, 'INVALID_EMAIL');
+});
+
+/* ===== ログ・既存経路 ===== */
+
+test('ログ: 会員処理でメールアドレス・Stripe ID・秘密鍵をLoggerへ出さない', function () {
+  var ctx = setup({ stripeState: { subscriptionFailures: 1 } });
+  receiveAndProcess(ctx, joinEvent());
+  receiveAndProcess(ctx, joinEvent());
+  receiveAndProcess(ctx, invoiceEvent('evt_x', 'invoice.paid', sec(JAN_RENEWAL_AT) + 10, renewalInvoice('in_x', JAN_RENEWAL_AT, { amount_paid: 1 })));
+  var logs = ctx.globals.Logger._logs.join('\n');
+  assert.ok(logs.indexOf('taro@example.com') === -1);
+  assert.ok(logs.indexOf('sk_test') === -1);
+  assert.ok(logs.indexOf(CUSTOMER_ID) === -1);
+});
+
+test('既存: 部屋予約のCheckout完了イベントは会員経路に入らない（metadata.orderTypeが無ければ従来の照合）', function () {
+  var ctx = setup();
+  var original = ctx.globals.UrlFetchApp;
+  assert.ok(original);
+  var event = { id: 'evt_booking', type: 'checkout.session.completed', created: sec(JOIN_AT), data: { object: { id: 'cs_booking' } } };
+  var customFetch = ctx.sandbox.UrlFetchApp.fetch;
+  ctx.sandbox.UrlFetchApp.fetch = function (url, options) {
+    if (url.indexOf('/checkout/sessions/cs_booking') !== -1) {
+      return { getResponseCode: function () { return 200; }, getContentText: function () {
+        return JSON.stringify({ id: 'cs_booking', status: 'complete', payment_status: 'paid', amount_total: 8000, currency: 'jpy', payment_intent: 'pi_b', metadata: {} });
+      } };
+    }
+    return customFetch(url, options);
+  };
+  var result = receiveAndProcess(ctx, event);
+  assert.notStrictEqual(result.code, 'MEMBERSHIP_JOINED');
+  assert.strictEqual(rowsOf(ctx, 'Members').length, 0);
+});

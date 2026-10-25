@@ -184,7 +184,11 @@ var StripeGateway = (function () {
          Stripe APIから改めて取得したこの値（bookingId/brand/paymentAttemptId）を正として
          使う（イベント本文だけで完結させない。ファイル冒頭コメント参照）。 */
       metadata: raw.metadata || {},
-      clientReferenceId: raw.client_reference_id || ''
+      clientReferenceId: raw.client_reference_id || '',
+      /* Issue #471（SNB MEMBER入会）。既存の部屋予約・オプション決済は参照しない。 */
+      mode: raw.mode || '',
+      customerId: typeof raw.customer === 'string' ? raw.customer : ((raw.customer && raw.customer.id) || ''),
+      customerEmail: String(raw.customer_email || (raw.customer_details && raw.customer_details.email) || '')
     };
   }
 
@@ -199,7 +203,9 @@ var StripeGateway = (function () {
       id: raw.id,
       status: raw.status || '',
       amountReceived: raw.amount_received,
-      currency: typeof raw.currency === 'string' ? raw.currency.toUpperCase() : ''
+      currency: typeof raw.currency === 'string' ? raw.currency.toUpperCase() : '',
+      /* Issue #471: 入会時に保存した決済手段（setup_future_usage=off_session）。 */
+      paymentMethodId: typeof raw.payment_method === 'string' ? raw.payment_method : ((raw.payment_method && raw.payment_method.id) || '')
     };
   }
 
@@ -349,7 +355,82 @@ var StripeGateway = (function () {
     return { ok: true, session: normalizeSession_(result.raw) };
   }
 
+  /*
+   * SNB MEMBER入会のCheckout Session（Issue #471）。mode=payment（入会月ぶん1,000円の満額決済）で、
+   * 決済手段を翌月以降の自動請求用に保存する（setup_future_usage=off_session）。customer_creation=
+   * alwaysでStripe Customerを作る。メールアドレスは入力値をcustomer_emailで固定する（Checkout上で
+   * 変更させない。予約メールとの照合を安定させるため）。サブスクリプション本体は、この決済の完了
+   * Webhookを受けてcreateMembershipSubscriptionで作る（MembershipRules.gs冒頭コメント参照）。
+   * params: { amountJpy, email, memberId, successUrl, cancelUrl, productName }
+   */
+  function createMembershipCheckoutSession(stripeConfig, params, idempotencyKey) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    var payload = {
+      'mode': 'payment',
+      'success_url': params.successUrl,
+      'cancel_url': params.cancelUrl,
+      'customer_email': params.email,
+      'customer_creation': 'always',
+      'payment_intent_data[setup_future_usage]': 'off_session',
+      'line_items[0][quantity]': '1',
+      'line_items[0][price_data][currency]': 'jpy',
+      'line_items[0][price_data][unit_amount]': String(params.amountJpy),
+      'line_items[0][price_data][product_data][name]': params.productName,
+      'metadata[orderType]': 'membership',
+      'metadata[memberId]': params.memberId,
+      'client_reference_id': params.memberId
+    };
+    var result = performRequest_('post', API_BASE_ + '/checkout/sessions', stripeConfig.secretKey, encodeFormPayload_(payload), idempotencyKey);
+    if (!result.ok) return result;
+    return { ok: true, session: normalizeSession_(result.raw) };
+  }
+
+  /*
+   * SNB MEMBERの月額subscription作成（Issue #471）。billing_cycle_anchorは翌月1日 00:00 UTC、
+   * proration_behavior=none（入会月は既にCheckoutで満額決済済みのため、入会月ぶんの請求を
+   * 作らない）。以後は毎月1日（UTC）に1,000円が自動請求される。価格はprice_dataで渡す
+   * （Stripe Dashboardでの商品・価格の事前作成は不要）。
+   * params: { customerId, paymentMethodId, amountJpy, productName, anchorSeconds, memberId }
+   * idempotencyKey: 入会Checkout Session IDから導出した固定値（同じ入会で二重作成しない）。
+   */
+  function createMembershipSubscription(stripeConfig, params, idempotencyKey) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!params || !params.customerId || !params.paymentMethodId || !params.anchorSeconds || !idempotencyKey) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'subscription作成に必要な情報が不足しています。' };
+    }
+    var payload = {
+      'customer': params.customerId,
+      'default_payment_method': params.paymentMethodId,
+      'billing_cycle_anchor': String(params.anchorSeconds),
+      'proration_behavior': 'none',
+      'items[0][quantity]': '1',
+      'items[0][price_data][currency]': 'jpy',
+      'items[0][price_data][unit_amount]': String(params.amountJpy),
+      'items[0][price_data][recurring][interval]': 'month',
+      'items[0][price_data][product_data][name]': params.productName,
+      'metadata[orderType]': 'membership',
+      'metadata[memberId]': params.memberId
+    };
+    var result = performRequest_('post', API_BASE_ + '/subscriptions', stripeConfig.secretKey, encodeFormPayload_(payload), idempotencyKey);
+    if (!result.ok) return result;
+    var raw = result.raw;
+    return {
+      ok: true,
+      subscription: {
+        id: raw.id,
+        status: raw.status || '',
+        raw: raw
+      }
+    };
+  }
+
   return {
+    createMembershipCheckoutSession: createMembershipCheckoutSession,
+    createMembershipSubscription: createMembershipSubscription,
     createCheckoutSession: createCheckoutSession,
     retrieveCheckoutSession: retrieveCheckoutSession,
     expireCheckoutSession: expireCheckoutSession,

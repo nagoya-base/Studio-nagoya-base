@@ -3131,6 +3131,9 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `OptionOrderRepository.gs`（Issue #423。`OptionOrders`・`OptionEligibility`シートの台帳） | ✓ | ✓ | – | `gas/booking/shared/OptionOrderRepository.gs` |
 | `OptionMailTemplates.gs`（Issue #423。オプションの受付・承認・不承認・確定メール文面） | ✓ | ✓ | – | `gas/booking/shared/OptionMailTemplates.gs` |
 | `OptionOrderService.gs`（Issue #423。申込・本人確認・追加Checkout・承認・Webhook反映の業務フロー） | ✓ | ✓ | – | `gas/booking/shared/OptionOrderService.gs` |
+| `MembershipRules.gs`（Issue #471。SNB MEMBERの月・メール正規化・Stripe請求の解釈などの純粋ロジック） | ✓ | ✓ | – | `gas/booking/shared/MembershipRules.gs` |
+| `MemberRepository.gs`（Issue #471。`Members`・`MemberMonths`シートの会員台帳） | ✓ | ✓ | – | `gas/booking/shared/MemberRepository.gs` |
+| `MembershipService.gs`（Issue #471。SNB MEMBER入会Checkoutの開始） | ✓ | – | – | `gas/booking/shared/MembershipService.gs` |
 | `StripeWebhookAuth.gs`（Issue #341 PR-C。中継基盤からの呼び出し認証） | – | – | ✓ | `gas/booking/webhook/StripeWebhookAuth.gs` |
 | `StripeEventRepository.gs`（Issue #341 PR-C。Stripe Webhookイベントの受信・処理台帳。レビュー対応・4回目でBooking Admin/Webhookの両方が使う共有ファイルへ再設計） | – | ✓ | ✓ | `gas/booking/shared/StripeEventRepository.gs` |
 | `StripeWebhookProcessor.gs`（Issue #341 PR-C。レビュー対応・4回目で新設。決済照合・予約自動確定の本体。Booking Adminの時間主導トリガーから呼ばれる。旧`StripeWebhookHandler.gs`から移動・再設計） | – | ✓ | – | `gas/booking/admin/StripeWebhookProcessor.gs` |
@@ -7407,3 +7410,72 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
 - mensは予約導線でMEMBER料金を自動適用する（価格優遇のみ。会員資格の付与ではない）。`priceIsMember`は「MEMBER料金が適用されたか」を示し、実会員資格とは別概念。
 - 料金世代は`createBooking`時に`priceGeneration`列へ保存し、日程変更（`FeeCalculator.quoteFee`）でも保存済みの世代で再見積りする。空は旧予約としてV1。
 - **本番反映時**: Bookingsシートのヘッダー行末尾（`checkoutCancelCheckedAt`の右）へ`priceGeneration`を手動で追記すること。
+
+## Issue #471: SNB MEMBER（月額会員）のStripe管理・毎月1日更新・Webhook連携
+
+SNB MEMBER（月額1,000円）の実会員資格を、Stripeの決済事実から予約システムへ反映する。料金表・料金世代（#470）、Web表示・規約（#472）は対象外。
+
+### 会員制度（固定仕様）
+
+月額1,000円・自動更新・更新基準日は毎月1日・入会月は日割りせず満額・入会日から当月末まで有効・翌月1日の課金成功で翌月分を有効化・更新失敗は猶予なしでその月はinactive・解約しても支払済みの当月末まではactive・日割り返金なし。既存会員は自動移行しない（初回利用者から加入可）。
+
+### Stripeでの実現方法（Stripe公式仕様を確認して採用）
+
+| 論点 | 確認した仕様 | 採用した方法 |
+| --- | --- | --- |
+| Checkout subscriptionモードで`billing_cycle_anchor`＋`proration_behavior=none` | 入会時の課金は発生しない（アンカーまでの初回期間は無料でinvoiceも作られない）。この組み合わせでは単発（one-time）価格を同一Sessionに含められず、trialも併用できない | 使わない。入会月の1,000円を取れないため |
+| Checkout subscriptionモードで`billing_cycle_anchor`のみ（日割りあり） | 入会時に日割り額が課金される | 使わない。入会月は満額1,000円の固定仕様のため |
+| 採用 | — | **入会**: Checkout Session（`mode=payment`、1,000円、`setup_future_usage=off_session`、`customer_creation=always`）で入会月ぶんを満額決済。決済完了Webhook後にサーバーが`subscription`を作成（`billing_cycle_anchor`＝入会月の翌月1日00:00 UTC、`proration_behavior=none`、保存した決済手段を既定に設定）。入会月は追加課金されず、翌月1日から毎月1,000円が自動請求される |
+| アンカーの時刻 | Stripeの月次の繰り返しはUTCの「日」を維持する | JSTの月初0:00（＝前日15:00 UTC）をアンカーにすると請求日が月末にずれるため、**00:00 UTC（＝毎月1日09:00 JST）**をアンカーにする。1日の00:00〜09:00 JSTは新しい月の支払い事実がまだ無く、その間に作った当月利用の予約は一般料金になる（fail-closed） |
+| API version差 | 2025-03-31.basil以降は`invoice.parent.subscription_details`・期間は`items.data[]`直下 | 新旧どちらの形でも読む（`MembershipRules.readInvoiceSubscription`/`readSubscriptionPeriod`） |
+
+**実Stripe（テストモード）での確認が必要**: 上記のsubscription作成パラメータ・イベント形状はStripe公式ドキュメントとfixtureで確認したもので、テストモードでの実機確認（下記「本番反映前の確認」）は未実施。
+
+### 会員資格の設計
+
+- 会員資格の判定根拠は、**「会員 × 利用月」の支払い事実**（`MemberMonths`シート、1会員×1か月=1行、追記専用、`(memberId, month)`で冪等）だけ。Stripeの現在のsubscription状態（active等）から未来月の資格を推測しない。
+  - 入会月: 入会Checkoutの決済完了（`checkout.session.completed`、1,000円・paid）。
+  - 翌月以降: `invoice.paid`（`billing_reason=subscription_cycle`・1,000円・JPY・paid）。利用月は**1,000円のline itemの`period.start`のJST月**（`invoice.period_start`は旧API versionで直前の期間を指すため使わない）。1日でない・金額違い・line無しはfail-closed（記録せずRecoveryへ）。
+  - 更新失敗・解約は「翌月の支払い事実が作られない」ことで猶予なくinactiveになる（猶予のロジックを別に持たない）。
+- `Members`シートはStripe subscription状態の写し（運用確認用。資格判定には使わない）: `memberId`/`email`（正規化済み）/`stripeCustomerId`/`stripeSubscriptionId`/`status`（active・past_due・canceled・incomplete）/`currentPeriodStart`/`currentPeriodEnd`/`canceledAt`/`cancelAtPeriodEnd`/`latestInvoiceId`/`latestEventId`/`latestEventCreated`/`createdAt`/`updatedAt`。`status`系の列は`latestEventCreated`（Stripeイベント発生時刻）より古いイベントでは更新しない。`canceled`は終端。ID類は空欄のときだけ埋める。
+- 予約メールと会員メールは`MembershipRules.normalizeEmail`（前後空白除去・小文字化）で正規化して完全一致で照合する。
+- シート上の利用月は`YYYYMM`の整数（例: `202612`）。`2026-12`のまま書くとSheetsが日付へ自動変換して比較できなくなるため。
+
+### 予約作成時の資格判定（`BookingRepository.createBooking`）
+
+- **SNB・料金世代V2（2026/12/1以降の作成）のみ**、利用日の属する暦月の支払い事実で判定する。ある→MEMBER料金（`membershipStatus=ACTIVE`）、ない・台帳を読めない→一般料金（`INACTIVE`、fail-closed）。フォームの自己申告（`isMember`）は信用しない。
+- 12月に1月利用を予約しても、1月分の課金成功まで一般料金。1月分の課金成功後に作った1月利用の予約はMEMBER料金。予約を作った月・現在のsubscription状態は使わない。
+- V1（〜2026/11/30作成）・mens・Studio Xは従来どおり（`membershipStatus=NOT_CHECKED`）。**mensがMEMBER料金でも`membershipStatus`はACTIVEにならず、会員台帳にも何も作らない**。`priceIsMember`は価格優遇フラグであり実会員資格ではない。
+- Bookingsシートの`membershipStatus`は、価格を決めた時点の事実。日程変更では更新しない。
+- 見積りAPI（`estimatePrice`）はメールアドレスを受け取らず、会員台帳を参照しない（自己申告の区分の料金を表示するだけ）。会員の存在を探索できるのは予約作成の応答（適用料金）だけで、既存の予約レート制限・予約者本人の予約として管理者に残る点に限られる（残余リスク: 他人のメールで予約を作ると、その人が会員か料金から分かる。運用でレート制限と管理者確認に委ねる）。
+
+### Webhookイベント（Booking Adminの`processPendingStripeWebhookEvents`が処理）
+
+| イベント | 処理 |
+| --- | --- |
+| `checkout.session.completed`（`metadata.orderType=membership`） | 会員行作成＋入会月の支払い事実を記録→subscription作成（Idempotency-Key固定）→subscription IDと状態を記録。subscription作成が一時失敗した場合は未完了のまま再試行（会員・支払い事実は重複しない）。入会月を過ぎて処理された場合は要復旧（入会月の資格は記録済み） |
+| `invoice.paid` | 月次更新（上記条件）なら利用月の支払い事実を追記。入会時の$0 invoice等は無視 |
+| `invoice.payment_failed` | 月次更新の失敗なら`Members.status=past_due`（資格は増減しない） |
+| `customer.subscription.created/updated/deleted` | `status`・期間・`canceledAt`・`cancelAtPeriodEnd`を反映（順序判定つき） |
+
+冪等性: ①StripeEventsのイベントID台帳、②`(memberId, month)`の支払い事実、③subscription作成のIdempotency-Key（`snb-membership-sub-<入会Checkout Session ID>`）と「会員行にsubscription IDがあれば作らない」確認。書き込みはすべて処理権の世代確認つきロック内。署名検証・受信はBooking Webhook/中継基盤の既存方式のまま変更なし。ログにメール・Stripe ID・秘密鍵は出さない。
+
+### 入会Checkoutの開始
+
+`POST ?action=startMembershipCheckout`（本文`{ "email": "..." }`のみ）。既存のカード決済と同じキルスイッチ（`STRIPE_CHECKOUT_ENABLED`）に従い、有効でなければ発行しない（**この変更でSTRIPE_CHECKOUT_ENABLEDは変更していない**）。金額は固定1,000円。応答は`{ success, checkoutUrl }`のみで、既存会員かどうかは返さない（二重加入の防止は案内で行う）。
+
+### 手動設定（Secretの値はここに書かない）
+
+- Script Properties（Booking Web App）: `STRIPE_MEMBERSHIP_SUCCESS_URL` / `STRIPE_MEMBERSHIP_CANCEL_URL`（入会Checkoutの戻り先URL）。新規のSecretはなし（既存の`STRIPE_SECRET_KEY`を使用）。
+- Bookingsシートのヘッダー行末尾（`priceGeneration`の右）へ`membershipStatus`を手動で追記。`Members`・`MemberMonths`シートは初回書き込み時に自動作成される。
+- Stripe Dashboard→Webhook（中継基盤が受けているエンドポイント）の送信イベントへ追加: `invoice.paid` / `invoice.payment_failed` / `customer.subscription.created` / `customer.subscription.updated` / `customer.subscription.deleted`（`checkout.session.completed`は既存）。
+- Stripe Dashboard→設定→Billing→サブスクリプションと請求メール→支払い失敗の管理: **Smart Retries（再試行）をオフ**にし、最終的に失敗した場合は**サブスクリプションをキャンセル**に設定（猶予期間なしの仕様のため）。
+- 解約の手段: Stripeカスタマーポータル（Dashboard→設定→Billing→カスタマーポータルで「サブスクリプションのキャンセル」を「請求期間の終了時」に設定）を用意するか、問い合わせ対応でDashboardから`cancel_at_period_end`を設定する。ポータルへの導線・規約・特商法の記載は#472。
+- Booking Adminへ`MembershipRules.gs`・`MemberRepository.gs`、Booking Web Appへ上記＋`MembershipService.gs`を配布（配布表参照）。
+
+### 本番反映前の確認（Stripeテストモード。本番へ実課金しない）
+
+1. 入会Checkout（テストカード）→ `Members`・`MemberMonths`に入会月が記録され、Dashboardに`billing_cycle_anchor`＝翌月1日00:00 UTCのsubscriptionができ、入会時の請求が1,000円のみ（subscription側に日割り請求が無い）。
+2. Test clock等で月を進め、1日の更新invoice（`billing_reason=subscription_cycle`）の`lines.data[].period.start`が翌月1日（JST 09:00）で、`invoice.paid`後に翌月の行が増える。
+3. 失敗するテストカードで更新を失敗させ、再試行されず翌月の行が増えないこと。
+4. `cancel_at_period_end`を設定し、当月は有効・翌月の請求が作られないこと。

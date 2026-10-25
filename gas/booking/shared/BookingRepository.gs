@@ -67,12 +67,14 @@ var BookingRepository = (function () {
      * 既に検証済みのため通常は発生しない）で失敗した場合でもCalendarイベント等を
      * 一切作らずに済む。
      */
+    var priceGeneration = BookingPricing.generationAt(now);
+    var membership = resolveMembershipForPricing_(input, priceGeneration);
     var priceResult = BookingPricing.computeBookingPrice({
       brand: input.brand,
       date: input.date,
       durationMinutes: input.durationMinutes,
-      isMember: input.isMember,
-      generation: BookingPricing.generationAt(now)
+      isMember: membership.isMember,
+      generation: priceGeneration
     });
     if (!priceResult.valid) {
       return { success: false, error: priceResult.error };
@@ -194,6 +196,7 @@ var BookingRepository = (function () {
         priceIsMember: priceResult.price.isMember,
         priceComputedAt: now,
         priceGeneration: priceResult.price.generation,
+        membershipStatus: membership.status,
         checkoutAccessToken: checkoutAccessToken
       };
 
@@ -266,6 +269,29 @@ var BookingRepository = (function () {
     };
     if (optionsResponse) response.options = optionsResponse;
     return response;
+  }
+
+  /*
+   * SNB MEMBER料金の適用可否（Issue #471）。新料金世代（V2）のSNB予約では、フォームの自己申告
+   * （isMember）を信用せず、予約メールアドレスと会員登録メールアドレスを正規化して照合し、
+   * 「利用日の属する暦月」の支払い事実があるときだけMEMBER料金にする（予約を作った月ではない。
+   * 現在月の状態から未来月を推測しない。MemberRepository.isMemberForMonth参照）。
+   * 照合できない・会員台帳を読めない場合はすべてfail-closedで一般料金。
+   * V1（〜2026/11/30作成）・mens（価格優遇のみ。実会員資格は付与しない）・studio_x（V2は会員区分廃止）は
+   * 従来どおり自己申告/固定の扱いで、会員台帳を参照しない（status='NOT_CHECKED'）。
+   * 戻り値: { isMember: 料金計算へ渡す値, status: 'ACTIVE'|'INACTIVE'|'NOT_CHECKED' }
+   */
+  function resolveMembershipForPricing_(input, generation) {
+    if (input.brand !== 'snb' || generation !== BookingPricing.GENERATION.V2) {
+      return { isMember: input.isMember, status: 'NOT_CHECKED' };
+    }
+    var eligible = false;
+    try {
+      eligible = MemberRepository.isMemberForMonth(input.email, MembershipRules.monthKeyOfDateString(input.date)) === true;
+    } catch (lookupError) {
+      Logger.log('BookingRepository: 会員資格の確認に失敗したため一般料金とします');
+    }
+    return { isMember: eligible, status: eligible ? 'ACTIVE' : 'INACTIVE' };
   }
 
   /* 予約作成後のオプション注文保存（失敗しても予約は成功のまま。例外は握りつぶして結果に載せる）。 */
