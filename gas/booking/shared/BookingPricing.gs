@@ -72,7 +72,8 @@ var BookingPricing = (function () {
     WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 5500, 4: 7000 }, extensionPerHour: 1500 },
     WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7000, 4: 9000 }, extensionPerHour: 2000 }
   };
-  var STUDIO_X_GENERAL_RATES_ = {
+  /* 現行一般料金。SNB V1/V2とStudio X V1のGENERALで共通（Issue #475でSNB V2の値上げを撤回）。 */
+  var CURRENT_GENERAL_RATES_ = {
     WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 6000, 4: 8000 }, extensionPerHour: 2000 },
     WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7500, 4: 10000 }, extensionPerHour: 2500 }
   };
@@ -87,17 +88,12 @@ var BookingPricing = (function () {
   var RATE_TABLES_ = {
     snb: {
       V1: {
-        GENERAL: {
-          WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 6000, 4: 8000 }, extensionPerHour: 2000 },
-          WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7500, 4: 10000 }, extensionPerHour: 2500 }
-        },
+        GENERAL: CURRENT_GENERAL_RATES_,
         MEMBER: MEMBER_RATES_
       },
       V2: {
-        GENERAL: {
-          WEEKDAY: { base: { 1: 2500, 2: 5000, 3: 7500, 4: 10000 }, extensionPerHour: 2500 },
-          WEEKEND_HOLIDAY: { base: { 1: 3000, 2: 6000, 3: 9000, 4: 12000 }, extensionPerHour: 3000 }
-        },
+        /* Issue #475: SNB一般料金の値上げは撤回し、V2もV1と同じ現行一般料金を維持する。 */
+        GENERAL: CURRENT_GENERAL_RATES_,
         MEMBER: MEMBER_RATES_
       }
     },
@@ -105,7 +101,7 @@ var BookingPricing = (function () {
        V1は2026/11/30までの新規予約と旧世代予約の日程変更見積りのためGENERAL/MEMBER双方を保持。 */
     studio_x: {
       V1: {
-        GENERAL: STUDIO_X_GENERAL_RATES_,
+        GENERAL: CURRENT_GENERAL_RATES_,
         MEMBER: MEMBER_RATES_
       },
       V2: {
