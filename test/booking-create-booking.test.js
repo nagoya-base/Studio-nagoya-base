@@ -310,6 +310,21 @@ test('createBooking: studio_xはisMember:trueを送っても一般料金（Issue
   assert.strictEqual(found.record.priceIsMember, false);
 });
 
+test('createBooking: mensのMEMBER料金は価格優遇のみで、実会員資格を示す値は一切保存されない（Issue #470）', function () {
+  var ctx = setup();
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'mens', date: FIXED_WEEKDAY_DATE, durationMinutes: 180, isMember: false }),
+    new Date('2026-12-05T12:00:00+09:00')
+  );
+  assert.strictEqual(result.price.amount, 5500, 'V2でもmensはMEMBER料金');
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId).record;
+  assert.strictEqual(record.priceTier, 'MEMBER');
+  assert.strictEqual(record.priceGeneration, 'V2');
+  Object.keys(record).forEach(function (key) {
+    assert.ok(!/^membership/i.test(key), '会員資格用の列を持たない: ' + key);
+  });
+});
+
 test('createBooking: 料金世代は予約作成時刻で固定して保存される（Issue #470。2026/12/1 0:00 JSTが境界）', function () {
   var cases = [
     { now: '2026-11-30T23:59:59+09:00', generation: 'V1', amount: 6000 },
