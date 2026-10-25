@@ -138,12 +138,22 @@ function setup(options) {
     ContentService: stubs.createContentServiceStub()
   };
   var sandbox = loadBookingSandbox(FILES, globals);
+  /* スタッフ対応は会員限定（Issue #472）。会員資格の正本は会員台帳（#471）の MemberRepository.isMemberForMonth。
+     既定ではメールの会員資格を満たすものとして通し、非会員・台帳障害は ctx.members で試験する
+     （members: true=全員有効 / false=全員非会員 / { 'メール': ['YYYY-MM', ...] }=利用月ごと）。 */
+  var memberState = { rule: opts.members === undefined ? true : opts.members, calls: [] };
+  if (opts.members !== 'LEDGER') sandbox.MemberRepository.isMemberForMonth = function (email, month) {
+    memberState.calls.push({ email: email, month: month });
+    if (memberState.rule === 'THROW') throw new Error('Sheets error');
+    if (memberState.rule === true || memberState.rule === false) return memberState.rule;
+    return (memberState.rule[String(email).toLowerCase()] || []).indexOf(month) !== -1;
+  };
   /* 有料レンタル機材は全件Admin許可制（Issue #430）。既定ではストロボだけ許可済みにして、
      「許可済みなら即決済待ち」の経路を試験する。許可の保留・付与を試験するテストは COB 等を使う。 */
   if (opts.grantStrobe !== false) {
     sandbox.OptionOrderService.grantVideoLightEligibility(EMAIL, 'STROBE_MONOBLOCK', 'test setup');
   }
-  return { sandbox: sandbox, mailApp: mailApp, urlFetchApp: urlFetchApp, stripe: stripeState, sheets: spreadsheetsById[SPREADSHEET_ID], calendars: calendarsById };
+  return { memberState: memberState, sandbox: sandbox, mailApp: mailApp, urlFetchApp: urlFetchApp, stripe: stripeState, sheets: spreadsheetsById[SPREADSHEET_ID], calendars: calendarsById };
 }
 
 function payload(overrides) {
@@ -1271,4 +1281,114 @@ test('機材のみでsetupService未指定の申込は予約作成・後付け�
   var r = createRoom(ctx);
   confirmRoom(ctx, r.bookingId);
   assert.strictEqual(ctx.sandbox.OptionOrderService.submitAddonOptions(r.bookingId, EMAIL, { equipment: { STROBE_PORTABLE: 1 } }).error.code, 'SETUP_METHOD_REQUIRED');
+});
+
+// ============================================================================
+// スタッフ対応は会員限定（Issue #472）。会員資格の正本は会員台帳（#471）の利用月の支払い事実
+// ============================================================================
+
+var STAFF_ONLY_SELECTION = { layouts: ['CLASSROOM'], setupService: 'STAFF', cleanupService: 'STAFF' };
+var SELF_SELECTION = { layouts: ['CLASSROOM'], setupService: 'SELF', cleanupService: 'SELF', emailSupport: true };
+var FUTURE_MONTH = FUTURE_DATE.slice(0, 7);
+
+test('会員限定: 非会員は部屋と同時にスタッフ対応を申し込めず、予約自体も作られない（正しい文言で拒否）', function () {
+  var ctx = setup({ members: false });
+  var result = ctx.sandbox.BookingRepository.createBooking(payload({ options: STAFF_ONLY_SELECTION }));
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'STAFF_SERVICE_MEMBERS_ONLY');
+  assert.match(result.error.message, /会員限定/);
+  assert.ok(!/管理者|承認|Admin|MemberMonths|membershipStatus|Webhook/.test(result.error.message), '内部用語を出さない');
+  assert.strictEqual(ctx.calendars.cal1.events.length, 0, '予約（Calendar枠）は作られない');
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
+});
+
+test('会員限定: 非会員でも部屋・セルフ設営（無料）・メールサポートは従来どおり利用できる', function () {
+  var ctx = setup({ members: false });
+  var result = createRoom(ctx, { options: SELF_SELECTION });
+  assert.strictEqual(result.options.success, true);
+  assert.ok(result.options.orders.every(function (o) { return o.category !== 'STAFF_SERVICE'; }));
+  assert.strictEqual(createRoom(ctx, { date: futureDateJst_(61) }).success, true, '部屋のみの利用は非会員でも可');
+});
+
+test('会員限定: 非会員の後付け申込も拒否され、注文は作られない（フロントの表示だけに頼らない）', function () {
+  var ctx = setup({ members: false });
+  var r = createRoom(ctx);
+  confirmRoom(ctx, r.bookingId);
+  var result = ctx.sandbox.OptionOrderService.submitAddonOptions(r.bookingId, EMAIL, STAFF_ONLY_SELECTION);
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.error.code, 'STAFF_SERVICE_MEMBERS_ONLY');
+  assert.strictEqual(orderRows(ctx, r.bookingId).length, 0);
+  /* 同じ予約へのセルフ設営は非会員でも追加できる */
+  assert.strictEqual(ctx.sandbox.OptionOrderService.submitAddonOptions(r.bookingId, EMAIL, SELF_SELECTION).success, true);
+});
+
+test('会員限定: 有効会員は同時申込・後付けともにスタッフ対応を申し込め、料金は3,000/3,000/5,000円のまま。判定は利用日の属する月', function () {
+  var members = {};
+  members[EMAIL] = [FUTURE_MONTH];
+  var ctx = setup({ members: members });
+  var r = createRoom(ctx, { options: { layouts: ['CLASSROOM'], setupService: 'STAFF', cleanupService: 'STAFF' } });
+  assert.strictEqual(r.options.success, true);
+  var staff = r.options.orders.filter(function (o) { return o.category === 'STAFF_SERVICE'; })[0];
+  assert.strictEqual(staff.amountJpy, 5000);
+  assert.ok(ctx.memberState.calls.every(function (c) { return c.month === FUTURE_MONTH; }), '利用日の月で会員台帳を確認する: ' + JSON.stringify(ctx.memberState.calls));
+  var r2 = createRoom(ctx, { date: futureDateJst_(61) });
+  confirmRoom(ctx, r2.bookingId);
+  var addon = ctx.sandbox.OptionOrderService.submitAddonOptions(r2.bookingId, EMAIL, { layouts: ['JAPANESE'], setupService: 'STAFF', cleanupService: 'SELF' });
+  if (futureDateJst_(61).slice(0, 7) === FUTURE_MONTH) {
+    assert.strictEqual(addon.success, true);
+    assert.strictEqual(addon.orders.filter(function (o) { return o.category === 'STAFF_SERVICE'; })[0].amountJpy, 3000);
+  } else {
+    assert.strictEqual(addon.error.code, 'STAFF_SERVICE_MEMBERS_ONLY', '別の月の会費が未払いなら利用不可');
+  }
+});
+
+test('会員限定: 別の月の会費しか支払っていない・台帳を読めない場合は拒否（fail-closed）', function () {
+  var otherMonth = {};
+  otherMonth[EMAIL] = ['2000-01'];
+  var a = setup({ members: otherMonth });
+  assert.strictEqual(a.sandbox.BookingRepository.createBooking(payload({ options: STAFF_ONLY_SELECTION })).error.code, 'STAFF_SERVICE_MEMBERS_ONLY');
+  var b = setup({ members: 'THROW' });
+  assert.strictEqual(b.sandbox.BookingRepository.createBooking(payload({ options: STAFF_ONLY_SELECTION })).error.code, 'STAFF_SERVICE_MEMBERS_ONLY');
+  /* メールの大文字小文字・別メールでは通らない（予約メールと会員登録メールの照合） */
+  var other = {};
+  other['someone-else@example.com'] = [FUTURE_MONTH];
+  var c = setup({ members: other });
+  assert.strictEqual(c.sandbox.BookingRepository.createBooking(payload({ options: STAFF_ONLY_SELECTION })).error.code, 'STAFF_SERVICE_MEMBERS_ONLY');
+});
+
+test('会員限定: スペースマーケット経由などsource・備考が何であっても条件は同じ（非会員の例外は無い）', function () {
+  var ctx = setup({ members: false });
+  ['spacemarket', 'スペースマーケット', 'studio-x-booking-app'].forEach(function (source) {
+    var result = ctx.sandbox.BookingRepository.createBooking(payload({ source: source, note: 'スペースマーケット経由です', options: STAFF_ONLY_SELECTION }));
+    assert.strictEqual(result.success, false, source);
+    assert.strictEqual(result.error.code, 'STAFF_SERVICE_MEMBERS_ONLY', source);
+  });
+  var r = createRoom(ctx, { source: 'spacemarket' });
+  confirmRoom(ctx, r.bookingId);
+  assert.strictEqual(ctx.sandbox.OptionOrderService.submitAddonOptions(r.bookingId, EMAIL, STAFF_ONLY_SELECTION).error.code, 'STAFF_SERVICE_MEMBERS_ONLY');
+});
+
+test('会員限定: 支払い（確定）の時点でも会員資格を再確認する。承認後に資格を失っていたらCheckoutを作らない', function () {
+  var ctx = setup();
+  var s = stagedStaffOrder(ctx);
+  ctx.sandbox.OptionOrderService.approveOrder(s.optionOrderId);
+  ctx.memberState.rule = false;
+  var out = ctx.sandbox.OptionOrderService.startOptionCheckout(s.bookingId, EMAIL, s.optionOrderId);
+  assert.strictEqual(out.success, false);
+  assert.strictEqual(out.error.code, 'STAFF_SERVICE_MEMBERS_ONLY');
+  assert.strictEqual(ctx.stripe.createCalls.length, 0, 'Stripeを呼ばない');
+  ctx.memberState.rule = true;
+  assert.strictEqual(ctx.sandbox.OptionOrderService.startOptionCheckout(s.bookingId, EMAIL, s.optionOrderId).success, true, '会員なら決済に進める');
+});
+
+test('会員限定: 実際の会員台帳（#471のMemberRepository）で、未登録は拒否・利用月の支払い事実がある会員は利用できる', function () {
+  var ctx = setup({ members: 'LEDGER' });
+  var denied = ctx.sandbox.BookingRepository.createBooking(payload({ options: STAFF_ONLY_SELECTION }));
+  assert.strictEqual(denied.error.code, 'STAFF_SERVICE_MEMBERS_ONLY');
+  ctx.sandbox.MemberRepository.upsertMember({ memberId: 'MBR-T1' }, { email: EMAIL }, { id: 'evt_seed', created: 1 }, { create: true }, new Date());
+  assert.strictEqual(ctx.sandbox.BookingRepository.createBooking(payload({ options: STAFF_ONLY_SELECTION })).error.code, 'STAFF_SERVICE_MEMBERS_ONLY', '会員行だけでは不可（利用月の支払い事実が必要）');
+  ctx.sandbox.MemberRepository.recordPaidMonth({ memberId: 'MBR-T1', month: FUTURE_MONTH, amount: 1000 }, new Date());
+  var ok = ctx.sandbox.BookingRepository.createBooking(payload({ options: STAFF_ONLY_SELECTION }));
+  assert.strictEqual(ok.success, true, JSON.stringify(ok.error));
+  assert.strictEqual(ok.options.success, true);
 });

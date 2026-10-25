@@ -9,7 +9,7 @@
 <title>SNB MEMBER（月額会員）のご案内 | Studio Nagoya Base</title>
 
 <!-- SEO -->
-<meta name="description" content="Studio Nagoya Baseの月額会員「SNB MEMBER」（月額1,000円）のご案内。2時間以上のご利用なら、会費相当以上の料金差があります。初めてご利用の方も加入できます。">
+<meta name="description" content="Studio Nagoya Baseの月額会員「SNB MEMBER」（月額1,000円）のご案内。継続・長時間ご利用の方向けの優遇制度です。会員料金は3時間以上のご利用で一般料金より安くなります。初めてご利用の方も加入できます。">
 <link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/membership/">
 
 <!-- Favicon -->
@@ -43,11 +43,11 @@
     <p class="section-subtitle">Membership</p>
 
     <div class="membership-page">
-      <p class="membership-lead">月額1,000円で、Studio Nagoya Baseの利用料金が会員料金になります。2時間以上のご利用なら、一般料金との差額が会費（月額1,000円）以上になります。初めてご利用の方も加入できます。</p>
+      <p class="membership-lead">SNB MEMBERは、継続してご利用の方・長時間ご利用の方向けの優遇制度です（月額1,000円）。会員料金は、3時間以上のご利用で一般料金より安くなります。初めてご利用の方も加入できます。</p>
 
       <h2 class="membership-heading">料金の比べ方</h2>
       <div class="pricing-card">
-        <div class="pricing-card-header">一般料金と会員料金（2026年12月1日以降のご予約）</div>
+        <div class="pricing-card-header">一般料金と会員料金</div>
         <div class="pricing-table-scroll">
         <table>
           <thead>
@@ -61,26 +61,34 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td>1時間</td><td>2,500円</td><td>2,000円</td><td>3,000円</td><td>2,500円</td><td>500円</td></tr>
-            <tr class="pricing-highlight-row"><td>2時間</td><td>5,000円</td><td>4,000円</td><td>6,000円</td><td>5,000円</td><td>1,000円</td></tr>
-            <tr class="pricing-highlight-row"><td>3時間</td><td>7,500円</td><td>5,500円</td><td>9,000円</td><td>7,000円</td><td>2,000円</td></tr>
-            <tr class="pricing-highlight-row"><td>4時間</td><td>10,000円</td><td>7,000円</td><td>12,000円</td><td>9,000円</td><td>3,000円</td></tr>
-            <tr><td>延長（1時間）</td><td>2,500円</td><td>1,500円</td><td>3,000円</td><td>2,000円</td><td>1,000円</td></tr>
+            <tr><td>1時間</td><td>2,000円</td><td>2,000円</td><td>2,500円</td><td>2,500円</td><td>0円</td></tr>
+            <tr><td>2時間</td><td>4,000円</td><td>4,000円</td><td>5,000円</td><td>5,000円</td><td>0円</td></tr>
+            <tr class="pricing-highlight-row"><td>3時間</td><td>6,000円</td><td>5,500円</td><td>7,500円</td><td>7,000円</td><td>500円</td></tr>
+            <tr class="pricing-highlight-row"><td>4時間</td><td>8,000円</td><td>7,000円</td><td>10,000円</td><td>9,000円</td><td>1,000円</td></tr>
+            <tr><td>延長（1時間）</td><td>2,000円</td><td>1,500円</td><td>2,500円</td><td>2,000円</td><td>500円</td></tr>
           </tbody>
         </table>
         </div>
       </div>
-      <p class="membership-note">2時間以上のご利用なら、1回で会費（月額1,000円）相当以上の料金差があります。1時間のみのご利用では差額が500円のため、会費には届きません。ご利用の長さや回数に合わせてご検討ください。</p>
+      <p class="membership-note">3時間以上のご利用で、会員料金は一般料金より安くなります。4時間のご利用では、一般料金との差額が月会費（1,000円）相当になります（3時間は500円、延長1時間ごとに500円）。1〜2時間のご利用では、一般料金と同額です。ご利用の時間や頻度に合わせて、必要な方がご検討ください。</p>
 
       <h2 class="membership-heading">SNB MEMBERの条件</h2>
       {% include membership_terms_ja.html %}
 
       <h2 class="membership-heading" id="join">入会のお手続き</h2>
-      <p>会費のお支払い（クレジットカード）は、メールでお送りする専用のお支払いページから行います。会員登録に使うメールアドレスは、<strong>ご予約の際に入力するメールアドレスと同じもの</strong>をご入力ください。</p>
+      <div class="membership-summary" role="note" aria-label="入会前にご確認いただく内容">
+        <p class="membership-summary-title">入会前にご確認ください</p>
+        <ul>
+          <li><strong>月額1,000円</strong>（税込）。クレジットカード決済（Stripe）で<strong>毎月1日に自動更新</strong>されます。</li>
+          <li><strong>入会月は日割りなし</strong>。満額の1,000円で、入会日から当月末まで有効です。</li>
+          <li>日割りでの返金はありません。解約後も、お支払い済みの月の末日までは有効です。</li>
+        </ul>
+      </div>
+      <p>会費のお支払いは、メールでお送りする専用のお支払いページから行います。会員登録に使うメールアドレスは、<strong>ご予約の際に入力するメールアドレスと同じもの</strong>をご入力ください。</p>
       <form class="membership-join" id="membership-join-form" novalidate>
         <label for="membership-email">メールアドレス</label>
         <input type="email" id="membership-email" name="email" autocomplete="email" inputmode="email" required aria-describedby="membership-join-status">
-        <label class="membership-consent"><input type="checkbox" id="membership-consent" required> <span>上記の条件（月額1,000円・毎月1日の自動更新・日割りなし・返金なし）と<a href="{{ '/legal/' | relative_url }}#membership-terms">利用規約の「会員資格」</a>に同意します。</span></label>
+        <label class="membership-consent"><input type="checkbox" id="membership-consent" required> <span>上記の内容（月額1,000円・毎月1日の自動更新・入会月は日割りなし・返金なし）と<a href="{{ '/legal/' | relative_url }}#membership-terms">利用規約の「会員資格」</a>に同意します。</span></label>
         <button type="submit" class="btn-primary" id="membership-join-submit" data-analytics-event="cta_click" data-analytics-type="membership_join" data-analytics-location="membership_page">SNB MEMBERに加入する（月額1,000円）</button>
         <p class="membership-status" id="membership-join-status" role="status" aria-live="polite"></p>
       </form>

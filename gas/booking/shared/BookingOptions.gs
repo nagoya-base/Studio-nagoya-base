@@ -183,6 +183,7 @@ var BookingOptions = (function () {
   /* スタッフ対応の料金（Issue #423 追加コメント。テーマ別の個別価格は持たない）。
      正本は _data/studio_x_equipment.json の staffService（生成物 EquipmentCatalog.gs 経由）。機材ページも同じJSONを読むため食い違わない。
      画面はoptionCatalog APIで取得して表示し、GAS・Webhookも必ずここを参照する。 */
+  var STAFF_SERVICE_MEMBERS_ONLY_MESSAGE_ = 'スタッフ設営・片付けは会員限定です。会員でない方はお申し込みいただけません。セルフ設営・セルフ片付け（無料）をご利用ください。';
   var STAFF_SERVICE_PRICES_ = {};
   var STAFF_SERVICE_LABELS_ = {};
   var catalogInitialized_ = false;
@@ -553,6 +554,13 @@ var BookingOptions = (function () {
    *        | { ok:false, error }
    * 副作用なし。重複・在庫超過は注文を一件も作らず全体を拒否する。許可の無いビデオライト系は拒否せず保留注文にする。
    */
+  /* 選択にスタッフ設営／スタッフ片付けが含まれるか（planOrdersのstaffPre/staffCleanupと同じ判定）。 */
+  function requestsStaffService(normalized) {
+    var hasTarget = normalized.layouts.length > 0;
+    return (normalized.setupService === 'STAFF' && (hasTarget || normalized.equipmentSetup === 'STAFF')) ||
+      (normalized.cleanupService === 'STAFF' && (hasTarget || normalized.equipmentCleanup === 'STAFF'));
+  }
+
   function planOrders(input) {
     ensureCatalogInitialized_();
     var normalized = input.normalized;
@@ -643,6 +651,12 @@ var BookingOptions = (function () {
     var freeItems = [];
     var staffPre = normalized.setupService === 'STAFF' && (normalized.layouts.length > 0 || normalized.equipmentSetup === 'STAFF');
     var staffCleanup = normalized.cleanupService === 'STAFF' && (normalized.layouts.length > 0 || normalized.equipmentCleanup === 'STAFF');
+    /* スタッフ対応は会員限定（Issue #472）。会員資格の判定は呼び出し側（OptionOrderService）が会員台帳（#471）で行い、
+       input.staffServiceMember === true のときだけ通す。未指定・不明はfail-closedで拒否（スペースマーケット経由等の
+       例外もここには無い。セルフ設営・セルフ片付け＝無料は会員でなくても選べる）。 */
+    if ((staffPre || staffCleanup) && input.staffServiceMember !== true) {
+      return { ok: false, error: err_('STAFF_SERVICE_MEMBERS_ONLY', STAFF_SERVICE_MEMBERS_ONLY_MESSAGE_) };
+    }
     normalized.layouts.forEach(function (theme) {
       if (!staffPre && normalized.setupService !== 'NONE') freeItems.push(ITEM_PREFIX.SELF_SETUP + theme);
       if (!staffCleanup && normalized.cleanupService !== 'NONE') freeItems.push(ITEM_PREFIX.SELF_CLEANUP + theme);
@@ -975,6 +989,7 @@ var BookingOptions = (function () {
     equipmentCodeOfItem: equipmentCodeOfItem,
     computeStaffServiceCharge: computeStaffServiceCharge,
     planOrders: planOrders,
+    requestsStaffService: requestsStaffService,
     checkBookingAcceptsOptions: checkBookingAcceptsOptions,
     buildCheckoutReference: buildCheckoutReference,
     generatePaymentAttemptId: generatePaymentAttemptId,

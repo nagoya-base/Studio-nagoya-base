@@ -48,27 +48,35 @@ function tableByHeader(html, headerPart) {
 }
 var LABELS = { 1: '1時間', 2: '2時間', 3: '3時間', 4: '4時間' };
 
-test('SNB: 一般料金（2026/12/1以降）の表が料金ロジックV2と一致する', function () {
-  var t = tableByHeader(read('index.html'), '一般料金');
+test('SNB: 一般料金は現行料金のまま（値上げなし）で、料金ロジックV2（2026/12/1以降）と一致する', function () {
+  var t = tableByHeader(read('index.html'), '通常価格');
+  var expected = { '1時間': ['2,000円', '2,500円'], '2時間': ['4,000円', '5,000円'], '3時間': ['6,000円', '7,500円'], '4時間': ['8,000円', '10,000円'], '延長（1h）': ['2,000円', '2,500円'] };
+  Object.keys(expected).forEach(function (k) {
+    assert.deepStrictEqual([t[k].weekday, t[k].weekend], expected[k], k);
+  });
   [1, 2, 3, 4].forEach(function (h) {
     assert.strictEqual(t[LABELS[h]].weekday, yen(price('snb', WEEKDAY, h, false, 'V2')), h + 'h 平日');
     assert.strictEqual(t[LABELS[h]].weekend, yen(price('snb', WEEKEND, h, false, 'V2')), h + 'h 土日祝');
+    /* 2026/12/1以降の一般料金は、それ以前（V1）と同額＝値上げしていない */
+    assert.strictEqual(price('snb', WEEKDAY, h, false, 'V2'), price('snb', WEEKDAY, h, false, 'V1'));
+    assert.strictEqual(price('snb', WEEKEND, h, false, 'V2'), price('snb', WEEKEND, h, false, 'V1'));
   });
   assert.strictEqual(t['延長（1h）'].weekday, yen(price('snb', WEEKDAY, 5, false, 'V2') - price('snb', WEEKDAY, 4, false, 'V2')));
   assert.strictEqual(t['延長（1h）'].weekend, yen(price('snb', WEEKEND, 5, false, 'V2') - price('snb', WEEKEND, 4, false, 'V2')));
 });
 
-test('SNB: SNB MEMBER料金の表が料金ロジックV2と一致する', function () {
+test('SNB: SNB MEMBER料金の表が料金ロジックと一致する（現行会員料金のまま）', function () {
   var t = tableByHeader(read('index.html'), 'SNB MEMBER料金');
   [1, 2, 3, 4].forEach(function (h) {
     assert.strictEqual(t[LABELS[h]].weekday, yen(price('snb', WEEKDAY, h, true, 'V2')));
     assert.strictEqual(t[LABELS[h]].weekend, yen(price('snb', WEEKEND, h, true, 'V2')));
   });
+  assert.deepStrictEqual([t['3時間'].weekday, t['3時間'].weekend, t['4時間'].weekday, t['4時間'].weekend], ['5,500円', '7,000円', '7,000円', '9,000円']);
   assert.strictEqual(t['延長（1h）'].weekday, yen(price('snb', WEEKDAY, 5, true, 'V2') - price('snb', WEEKDAY, 4, true, 'V2')));
   assert.strictEqual(t['延長（1h）'].weekend, yen(price('snb', WEEKEND, 5, true, 'V2') - price('snb', WEEKEND, 4, true, 'V2')));
 });
 
-test('SNB: 会員案内ページの比較表（一般/会員/差額）が料金ロジックV2と一致し、差額が正しい', function () {
+test('SNB: 会員案内ページの比較表（一般/会員/差額）が料金ロジックと一致し、3時間以上で割引・4時間で月会費相当の差額になる', function () {
   var html = read('membership/index.html');
   var rows = {};
   var re = /<tr[^>]*><td>([^<]*)<\/td><td>([^<]*)<\/td><td>([^<]*)<\/td><td>([^<]*)<\/td><td>([^<]*)<\/td><td>([^<]*)<\/td><\/tr>/g;
@@ -79,25 +87,48 @@ test('SNB: 会員案内ページの比較表（一般/会員/差額）が料金�
     var weG = price('snb', WEEKEND, h, false, 'V2'), weM = price('snb', WEEKEND, h, true, 'V2');
     assert.deepStrictEqual(rows[LABELS[h]], [yen(wdG), yen(wdM), yen(weG), yen(weM), yen(wdG - wdM)], h + '時間');
     assert.strictEqual(wdG - wdM, weG - weM, '平日と土日祝で差額が同じ');
-    if (h >= 2) assert.ok(wdG - wdM >= 1000, h + '時間は会費1,000円以上の差額');
-    else assert.ok(wdG - wdM < 1000, '1時間は会費未満の差額');
+    if (h >= 3) assert.ok(wdG - wdM > 0, h + '時間は会員料金の方が安い');
+    else assert.strictEqual(wdG - wdM, 0, h + '時間は一般料金と同額');
   });
+  assert.strictEqual(price('snb', WEEKDAY, 4, false, 'V2') - price('snb', WEEKDAY, 4, true, 'V2'), 1000, '4時間の差額は月会費1,000円相当');
+  assert.strictEqual(price('snb', WEEKEND, 4, false, 'V2') - price('snb', WEEKEND, 4, true, 'V2'), 1000);
+  assert.deepStrictEqual(rows['4時間'][4], '1,000円');
 });
 
-test('SNB: 「2時間以上なら会費相当以上」と案内し、1時間で元が取れる等の成立しない表現がない', function () {
-  var pages = ['index.html', 'membership/index.html', 'legal/index.html', '_includes/legal_ja.html', 'mens/index.html'];
+test('SNB: 会員訴求は「3時間以上で割引」「4時間で月会費相当」。旧「2時間以上で会費相当以上」・値上げ・過剰表現が無い', function () {
+  var pages = ['index.html', 'membership/index.html', 'legal/index.html', '_includes/legal_ja.html', 'mens/index.html', 'en.html', 'legal/en.html', '_data/news_ja.yml'];
   pages.forEach(function (p) {
     var t = textOf(read(p));
-    assert.ok(!/1回で元が取れ|1時間で元が取れ|1回で会費(分)?(が)?回収|必ず(お)?得/.test(t), p + ' に成立しない得の表現');
+    assert.ok(!/2時間以上(の(ご)?利用)?(なら|で)[^。]*(会費|差額)/.test(t.replace(/「2時間以上で会費相当以上の差額」[^。]*/g, '')), p + ' に旧「2時間以上で会費相当」');
+    assert.ok(!/1回で元が取れ|1時間で元が取れ|必ず(お)?得|必ず元が取れ/.test(t), p + ' に過剰表現');
+    assert.ok(!/値上げ|料金改定|一般料金を改定|一般料金が(上がり|変わり)/.test(t.replace(/Pricing revisions/g, '')), p + ' に値上げ・改定の表示');
+    assert.ok(!/(安く(使う|利用)|お得に(使う|利用)|割引を受ける)(ため|なら|には)[^。]*(会員(に)?(なって|加入|登録)|ご加入)/.test(t), p + ' に加入を促しすぎる表現');
   });
+  var idx = textOf(read('index.html'));
+  assert.ok(idx.indexOf('3時間以上のご利用で一般料金より安く') !== -1);
+  assert.ok(idx.indexOf('4時間のご利用では、一般料金との差額が月会費1,000円相当') !== -1);
+  assert.ok(idx.indexOf('継続・長時間ご利用の方向けの優遇制度') !== -1);
   var m = textOf(read('membership/index.html'));
-  assert.ok(m.indexOf('2時間以上のご利用なら') !== -1 && m.indexOf('会費') !== -1);
-  assert.ok(textOf(read('index.html')).indexOf('2時間以上のご利用なら、会費（月額1,000円）相当以上の料金差があります') !== -1);
+  assert.ok(m.indexOf('3時間以上のご利用で、会員料金は一般料金より安くなります') !== -1);
+  assert.ok(m.indexOf('4時間のご利用では、一般料金との差額が月会費（1,000円）相当') !== -1);
+  var faq = textOf(read('legal/index.html'));
+  assert.ok(faq.indexOf('3時間以上のご利用で一般料金より安くなり、4時間のご利用では一般料金との差額が月会費1,000円相当') !== -1);
+});
+
+test('SNB: 加入前に「月額1,000円」「自動更新」「初月日割りなし」を表示し、同意のうえ既存の入会APIへ接続する（決済URL固定なし）', function () {
+  var html = read('membership/index.html');
+  var form = html.slice(html.indexOf('class="membership-summary"'), html.indexOf('</form>'));
+  var t = textOf(form);
+  ['月額1,000円', '毎月1日に自動更新', '入会月は日割りなし', '日割りでの返金はありません'].forEach(function (w) { assert.ok(t.indexOf(w) !== -1, '入会前の表示に「' + w + '」'); });
+  assert.match(form, /id="membership-consent"[^>]*required/, '同意チェック必須');
+  assert.ok(!/stripe\.com|buy\.stripe|checkout\.stripe/.test(html + read('scripts/membership-join.js')), 'Checkout URLを固定記載しない');
+  var js = read('scripts/membership-join.js');
+  assert.ok(js.indexOf('action=startMembershipCheckout') !== -1 && js.indexOf('JSON.stringify({ email: email })') !== -1, '金額・会員判定をフロントで持たず、メールのみ既存APIへ送る');
 });
 
 test('SNB: 会員加入CTAがあり、会員案内ページへ接続し、初回利用者から加入可・旧会員は自動移行しないと案内する', function () {
   var idx = read('index.html');
-  assert.match(idx, /id="snb-member"[\s\S]*?href="\{\{ '\/membership\/' \| relative_url \}\}"[^>]*>SNB MEMBERに加入する/);
+  assert.match(idx, /id="snb-member"[\s\S]*?href="\{\{ '\/membership\/' \| relative_url \}\}"[^>]*>SNB MEMBERの内容を見て加入する/);
   var snb = textOf(idx);
   assert.ok(snb.indexOf('初めてご利用の方も加入できます') !== -1);
   assert.ok(snb.indexOf('自動では移行しない') !== -1);
@@ -136,7 +167,6 @@ test('会員条件: 会員案内ページ・利用規約・特商法・FAQが同
     var t = textOf(stripComments(read(p)));
     assert.ok(!/前月に1回以上の利用実績|前月の利用実績が0件|入会審査の対象|当施設が承認した(会員|継続利用者)|承認した会員のみ/.test(t) || p === '_includes/booking_app_ja.html', p + ' に旧会員制度の記述');
     assert.ok(!/メンズページを見た/.test(t), p + ' に旧申告制の記述');
-    assert.ok(!/約20～25%/.test(t), p + ' に旧割引率の記述');
   });
 });
 

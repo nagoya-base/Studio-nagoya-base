@@ -2248,3 +2248,6 @@ p.pricing-note + p.pricing-note {
 @media (max-width: 640px) {
   .snb-member-cta { padding: 16px; }
 }
+.membership-summary { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; margin: 12px 0 16px; }
+.membership-summary-title { font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+.membership-summary ul { padding-left: 1.2em; font-size: 0.92rem; }

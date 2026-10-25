@@ -133,6 +133,9 @@ test('Booking Admin配布ファイルセット: オプション注文が無い�
 test('Booking Web App配布ファイルセット: 同時申込・本人確認付き後付け・カタログがReferenceErrorなく動く', function () {
   var ctx = setup(manifest.BOOKING_WEB_APP_FILES);
   var date = futureDateJst_(60);
+  /* スタッフ対応は会員限定（Issue #472）。会員台帳（#471）に利用月の支払い事実がある会員として登録しておく。 */
+  ctx.sandbox.MemberRepository.upsertMember({ memberId: 'MBR-1' }, { email: 'taro@example.com' }, { id: 'evt_seed', created: 1 }, { create: true }, new Date());
+  ctx.sandbox.MemberRepository.recordPaidMonth({ memberId: 'MBR-1', month: date.slice(0, 7), amount: 1000 }, new Date());
   var res = JSON.parse(ctx.sandbox.doPost({ postData: { contents: JSON.stringify({
     brand: 'studio_x', customerType: 'returning', date: date, startTime: '10:00', durationMinutes: 120, name: '山田太郎',
     email: 'taro@example.com', phone: '090-1234-5678', people: '2名', purpose: '作品撮り', paymentMethod: '現金', note: '', source: 'test',
