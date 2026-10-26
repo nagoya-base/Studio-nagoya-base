@@ -38,6 +38,37 @@ var MembershipService = (function () {
   /* 既存会員・新規・保留中のどれでも同一の応答。 */
   var ACCEPTED_RESPONSE_MESSAGE_ = '入力されたメールアドレス宛に、入会のご案内をお送りしました。メールをご確認ください（届かない場合は迷惑メールフォルダもご確認ください）。';
 
+  /* Stripe失敗ログ用の要約（Issue #524）。結果オブジェクトから必要な4項目だけを明示的に取り出す。
+     オブジェクト全体やbodyはログへ出さない。messageはStripeが鍵の一部等を含めて返す恐れがあるため、
+     鍵・Bearer・token・client_secret・Stripe object ID・URL様の文字列を伏せ、長さも制限する。例外は投げない。 */
+  var LOG_VALUE_MAX_LENGTH_ = 200;
+
+  function sanitizeLogValue_(value) {
+    if (value === null || value === undefined) return '';
+    var text = String(value)
+      .replace(/Bearer\s+\S+/gi, '[REDACTED]')
+      .replace(/\b(?:sk|rk|pk|whsec)_[A-Za-z0-9_*]+/g, '[REDACTED]')
+      .replace(/\b(?:cs|seti|pi)_[A-Za-z0-9]+_secret_[A-Za-z0-9_]+/g, '[REDACTED]')
+      .replace(/(client_secret|access_token|refresh_token|api[_-]?key|token|secret)(["']?\s*[:=]\s*)["']?[^\s,"'}]+["']?/gi, '$1$2[REDACTED]')
+      .replace(/\b(?:cus|sub|si|pi|pm|ch|re|in|cs|price|prod|evt|seti|txn)_[A-Za-z0-9]+/g, '[ID]')
+      .replace(/https?:\/\/\S+/gi, '[URL]')
+      .replace(/[\r\n]+/g, ' ');
+    return text.length > LOG_VALUE_MAX_LENGTH_ ? text.substring(0, LOG_VALUE_MAX_LENGTH_) + '...' : text;
+  }
+
+  function describeStripeFailure_(result) {
+    try {
+      var r = result || {};
+      return 'errorType=' + sanitizeLogValue_(r.errorType || 'UNKNOWN') +
+        ' httpStatus=' + sanitizeLogValue_(r.httpStatus) +
+        ' stripeErrorCode=' + sanitizeLogValue_(r.stripeErrorCode) +
+        ' stripeErrorType=' + sanitizeLogValue_(r.stripeErrorType) +
+        ' message=' + sanitizeLogValue_(r.message);
+    } catch (e) {
+      return 'errorType=UNKNOWN';
+    }
+  }
+
   function fail_(code, message) {
     return { success: false, error: { code: code, message: message } };
   }
@@ -134,7 +165,7 @@ var MembershipService = (function () {
         if (result.errorType === 'STRIPE_ERROR' || result.errorType === 'NOT_CONFIGURED' || result.errorType === 'INVALID_REQUEST') {
           MemberRepository.updatePending(memberId, { state: MemberRepository.PENDING_STATE.EXPIRED }, new Date());
         }
-        Logger.log('MembershipService: 入会Checkout Sessionを作成できませんでした errorType=' + (result.errorType || 'UNKNOWN'));
+        Logger.log('MembershipService: 入会Checkout Sessionを作成できませんでした ' + describeStripeFailure_(result));
         return fail_('CHECKOUT_UNAVAILABLE', '入会の受付を開始できませんでした。しばらくしてから再度お試しください。');
       }
       MemberRepository.updatePending(memberId, { checkoutSessionId: result.session.id }, new Date());
@@ -313,7 +344,7 @@ var MembershipService = (function () {
 
       var result = StripeGateway.setSubscriptionCancelAtPeriodEnd(stripeConfig, target.subscriptionId);
       if (!result.ok || !result.subscription || result.subscription.cancelAtPeriodEnd !== true) {
-        Logger.log('MembershipService: 解約を受け付けられませんでした errorType=' + (result.errorType || 'UNKNOWN'));
+        Logger.log('MembershipService: 解約を受け付けられませんでした ' + describeStripeFailure_(result));
         return fail_('CANCEL_UNAVAILABLE', '解約を受け付けられませんでした。しばらくしてから再度お試しください。解決しない場合は、お問い合わせフォームからご連絡ください。');
       }
       MemberRepository.markCancelRequested(target.memberId, now);
