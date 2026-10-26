@@ -210,12 +210,39 @@ var MembershipRules = (function () {
     }
   }
 
+  /*
+   * 永久会員（Issue #480）か。判定の正本は BookingConfig.getPermanentMemberEmails（サーバー側のみ）。
+   * 各機能へメールを直書きせず、MemberRepository.isMemberForMonth経由で全特典に効く。
+   * 設定を読めない場合は永久会員扱いにしない（通常の台帳判定へ進む）。
+   */
+  function isPermanentMember(email) {
+    var normalized = normalizeEmail(email);
+    if (!normalized) return false;
+    try {
+      return BookingConfig.getPermanentMemberEmails().indexOf(normalized) !== -1;
+    } catch (configError) {
+      return false;
+    }
+  }
+
+  /*
+   * 90日先行予約の資格（Issue #480）。利用日の月ではなく、**予約作成時点（todayString＝JSTの暦日）の
+   * 当月**のactual membershipで判定する（90日前には利用月の会費がまだ無いため）。
+   * priceIsMember・mens料金優遇・自己申告isMemberは見ない。台帳を読めない場合はfail-closed。
+   * 戻り値: { ok: true } | { ok: false, reason: 'INVALID_INPUT'|'NOT_MEMBER'|'LEDGER_ERROR' }。
+   */
+  function verifyAdvanceBookingMembership(email, todayString) {
+    return verifyActualMembership(email, todayString);
+  }
+
   return {
     BENEFITS_START_MS: BENEFITS_START_MS_,
     MEMBER_BENEFIT_DENIED_CODE: MEMBER_BENEFIT_DENIED_CODE,
     MEMBER_BENEFIT_DENIED_MESSAGE: MEMBER_BENEFIT_DENIED_MESSAGE,
     isBenefitsRuleActive: isBenefitsRuleActive,
     verifyActualMembership: verifyActualMembership,
+    verifyAdvanceBookingMembership: verifyAdvanceBookingMembership,
+    isPermanentMember: isPermanentMember,
     MONTHLY_FEE_JPY: MONTHLY_FEE_JPY,
     CURRENCY: CURRENCY,
     METADATA_ORDER_TYPE: METADATA_ORDER_TYPE,

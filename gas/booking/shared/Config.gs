@@ -262,8 +262,39 @@ var BookingConfig = (function () {
     };
   }
 
+  /*
+   * 永久会員（Issue #480）のメールアドレス。Stripe月額会費の支払い有無・利用月に関係なく、常にactual
+   * SNB MEMBERとして扱う（MemberRepository.isMemberForMonthが唯一の判定点）。Stripe台帳は偽造しない。
+   * 既定値（下のコード内定数）に、Script Properties PERMANENT_MEMBER_EMAILS（カンマ区切り）を加える。
+   * 未設定でも既定値は有効で、通常の会員判定は壊れない。公開API・フロントJSへは一切返さない。
+   */
+  var DEFAULT_PERMANENT_MEMBER_EMAILS_ = ['koishi.s@gmail.com'];
+
+  function parseEmailList_(raw) {
+    return String(raw || '').split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(function (s) { return s; });
+  }
+
+  function getPermanentMemberEmails() {
+    var raw = PropertiesService.getScriptProperties().getProperty('PERMANENT_MEMBER_EMAILS') || '';
+    return DEFAULT_PERMANENT_MEMBER_EMAILS_.concat(parseEmailList_(raw));
+  }
+
+  /*
+   * Booking Admin（認証済みGoogleアカウント）の管理者メール。予約可能期間の上限を外せる唯一の経路。
+   * 既定値に、Script Properties BOOKING_ADMIN_EMAILS（カンマ区切り）を加える。
+   * 公開予約フォームの予約メールはここと照合しない（BookingWindow.isAdminEmailの注意参照）。
+   */
+  var DEFAULT_BOOKING_ADMIN_EMAILS_ = ['nagoyabase2023@gmail.com'];
+
+  function getBookingAdminEmails() {
+    var raw = PropertiesService.getScriptProperties().getProperty('BOOKING_ADMIN_EMAILS') || '';
+    return DEFAULT_BOOKING_ADMIN_EMAILS_.concat(parseEmailList_(raw));
+  }
+
   return {
     DEFAULTS: DEFAULTS,
+    getPermanentMemberEmails: getPermanentMemberEmails,
+    getBookingAdminEmails: getBookingAdminEmails,
     getCalendarId: getCalendarId,
     getAvailabilityConfig: getAvailabilityConfig,
     getSpreadsheetId: getSpreadsheetId,

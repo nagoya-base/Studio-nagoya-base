@@ -700,9 +700,11 @@
         var status = dayInfo ? dayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
         var selectable = Logic.isCalendarDaySelectable(cell.dateValue, status, customerType, todayValue);
 
-        button.className = 'ba-cal-day';
+        /* 31〜90日先は会員先行枠（Issue #480。APIが全員に同じ印を返す。資格の最終確認は予約送信時のサーバー側）。 */
+        var memberAdvance = !!(dayInfo && dayInfo.memberAdvance);
+        button.className = memberAdvance ? 'ba-cal-day ba-cal-day--member-advance' : 'ba-cal-day';
         button.textContent = cell.day + Logic.dayStatusSymbol(status);
-        button.setAttribute('aria-label', Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale));
+        button.setAttribute('aria-label', Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale, memberAdvance));
         button.disabled = !selectable;
         button.setAttribute('aria-pressed', cell.dateValue === selectedDate ? 'true' : 'false');
         if (selectable) {
@@ -711,7 +713,7 @@
             setFieldError_(els.date, els.dateError, '');
             hideGlobalError();
             if (els.calendarSelected) {
-              els.calendarSelected.textContent = Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale);
+              els.calendarSelected.textContent = Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale, memberAdvance);
             }
             renderCalendarGrid_(entry);
             refreshPriceEstimate_();

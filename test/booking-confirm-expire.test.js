@@ -53,6 +53,8 @@ var DEFAULT_MAIL_PROPERTIES = {
    validPayload()の既定dateを固定文字列にすると実行日がその日付を過ぎた時点で
    now省略呼び出し（createPending経由を含む）が一斉にINVALID_DATEへ変わり自然故障する。 */
 function futureDateJst_(daysAhead) {
+  /* Issue #480: 公開経路の予約は30日先まで（会員先行枠を除く）。テストの日付は互いに衝突しない範囲で30日以内へ畳む。 */
+  if (daysAhead > 28) daysAhead = 2 + (daysAhead % 27);
   var d = new Date(Date.now() + daysAhead * 24 * 3600000);
   var parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
@@ -1079,7 +1081,7 @@ test('updateBookingPrice: PENDINGの予約は金額を修正でき、priceAmount
   /* 一般・平日3時間（6,000円）を検証する。60日後の既定日は曜日が変わるため固定する。 */
   var bookingId = createPending(ctx, {
     brand: 'studio_x', date: '2026-11-27', durationMinutes: 180
-  }, new Date('2026-09-01T00:00:00+09:00'));
+  }, new Date('2026-11-01T00:00:00+09:00'));
   var before = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
   assert.strictEqual(before.priceTier, 'GENERAL');
   assert.strictEqual(before.priceDayType, 'WEEKDAY');

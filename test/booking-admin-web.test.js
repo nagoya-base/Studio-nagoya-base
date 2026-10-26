@@ -62,6 +62,8 @@ var DEFAULT_MAIL_PROPERTIES = {
 /* Asia/Tokyo基準で実行時刻からdaysAhead日後の'YYYY-MM-DD'を返す（当日判定・過去日拒否の
    影響を受けない固定の未来日を作るため。test/booking-confirm-expire.test.jsと同じ方針）。 */
 function futureDateJst_(daysAhead) {
+  /* Issue #480: 公開経路の予約は30日先まで（会員先行枠を除く）。テストの日付は互いに衝突しない範囲で30日以内へ畳む。 */
+  if (daysAhead > 28) daysAhead = 2 + (daysAhead % 27);
   var d = new Date(Date.now() + daysAhead * 24 * 3600000);
   var parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'

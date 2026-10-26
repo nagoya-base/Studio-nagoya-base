@@ -441,6 +441,14 @@ var Booking = (function () {
     if (input.date < todayString) {
       return { valid: false, error: err_('INVALID_DATE', '過去の日付は指定できません。') };
     }
+    /*
+     * 予約可能期間の絶対上限（Issue #480）。会員先行枠を含む90日を超える日は、公開経路では誰も予約できない
+     * （管理者の上限解除は認証済みのBooking Admin経路のみで、この関数は通らない）。31〜90日先の会員資格は
+     * BookingRepository.createBookingがメールアドレスで確認する。
+     */
+    if (BookingWindow.classifyDate(input.date, todayString) === BookingWindow.BAND.OUT_OF_RANGE) {
+      return { valid: false, error: err_('DATE_OUT_OF_RANGE', '予約できるのは' + BookingWindow.MEMBER_DAYS + '日先までです。') };
+    }
     var isSameDayBooking = input.date === todayString;
 
     if (!BookingAvailability.isValidTimeString(input.startTime)) {

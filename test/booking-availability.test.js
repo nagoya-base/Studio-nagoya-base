@@ -25,7 +25,7 @@ var DEFAULT_CONFIG = {
  * 「nowを省略した場合は現在時刻を使う」ことそのものを検証する1ケースのみに限定する
  * （そのケースでは実行時刻から動的に十分未来の日付を算出し、固定日付を使わない）。
  */
-var GENERIC_NOW = new Date('2026-01-01T00:00:00+09:00');
+var GENERIC_NOW = new Date('2026-09-20T00:00:00+09:00');
 
 function busy(startMinutes, endMinutes) {
   return { startMinutes: startMinutes, endMinutes: endMinutes, isAllDay: false };
@@ -244,7 +244,7 @@ test('23:00を超える利用時間は、エラーにはせず空き枠0件を�
 test('getAvailabilityのレスポンスにPIIやイベント詳細を一切含めない', function () {
   var BookingAvailability = loadAvailability();
   var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120, brand: 'studio_x' }, [busy(600, 720)], DEFAULT_CONFIG, GENERIC_NOW);
-  var allowedKeys = ['success', 'date', 'durationMinutes', 'brand', 'bookableStartTimes'];
+  var allowedKeys = ['success', 'date', 'durationMinutes', 'brand', 'bookableStartTimes', 'memberAdvance', 'generalMaxDate', 'memberMaxDate'];
   Object.keys(result).forEach(function (key) {
     assert.ok(allowedKeys.indexOf(key) !== -1, '想定外のキーが含まれている: ' + key);
   });
@@ -335,7 +335,7 @@ test('getAvailability: 当日+現在時刻ちょうどの候補も除外する�
 test('getAvailability: getAvailabilityの応答にcustomerType関連のキーは一切含まれない（Issue #270: customerTypeルールをgetAvailabilityに持ち込まない）', function () {
   var BookingAvailability = loadAvailability();
   var result = BookingAvailability.getAvailability({ date: '2026-10-01', durationMinutes: 120 }, [], DEFAULT_CONFIG, NOW_JST_1007);
-  var allowedKeys = ['success', 'date', 'durationMinutes', 'brand', 'bookableStartTimes'];
+  var allowedKeys = ['success', 'date', 'durationMinutes', 'brand', 'bookableStartTimes', 'memberAdvance', 'generalMaxDate', 'memberMaxDate'];
   Object.keys(result).forEach(function (key) {
     assert.ok(allowedKeys.indexOf(key) !== -1, '想定外のキーが含まれている: ' + key);
   });

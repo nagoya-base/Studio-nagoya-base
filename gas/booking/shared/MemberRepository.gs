@@ -223,6 +223,9 @@ var MemberRepository = (function () {
     var normalized = MembershipRules.normalizeEmail(email);
     if (!normalized || !/^\d{4}-\d{2}$/.test(monthKey || '')) return false;
 
+    /* 永久会員（Issue #480）: 対象年月・Stripe支払い有無に関係なく常に会員。台帳は読まない・書かない。 */
+    if (MembershipRules.isPermanentMember(normalized)) return true;
+
     var memberIds = {};
     readMembers_().members.forEach(function (m) {
       if (m.record.email === normalized && m.record.memberId) memberIds[m.record.memberId] = true;

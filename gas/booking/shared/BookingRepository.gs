@@ -128,6 +128,18 @@ var BookingRepository = (function () {
       };
     }
 
+    /*
+     * 予約可能期間（Issue #480）。一般30日を超える日（〜90日）は、予約作成時点（JSTの当日）の当月
+     * actual membershipがある場合のみ受け付ける。利用日の月ではない（90日前には利用月の会費がまだ無いため）。
+     * priceIsMember・mens料金優遇・自己申告isMemberは使わない。台帳エラーはfail-closed（拒否）。
+     * 会員有無を探られないよう、非会員・台帳エラーは同一のエラーを返し、判定はrate limit計上後に行う。
+     * 予約成立後に退会しても、この予約自体は維持される（ここでしか判定しない）。
+     */
+    var windowResult = verifyBookingWindowForNewBooking_(input, availabilityConfig, now);
+    if (!windowResult.ok) {
+      return { success: false, error: windowResult.error };
+    }
+
     var calendarId = BookingConfig.getCalendarId();
     var lock = LockService.getScriptLock();
     var gotLock = lock.tryLock(LOCK_TIMEOUT_MS_);
@@ -328,6 +340,26 @@ var BookingRepository = (function () {
    * 従来どおり自己申告/固定の扱いで、会員台帳を参照しない（status='NOT_CHECKED'）。
    * 戻り値: { isMember: 料金計算へ渡す値, status: 'ACTIVE'|'INACTIVE'|'NOT_CHECKED' }
    */
+  var ADVANCE_MEMBER_ONLY_ERROR_ = {
+    code: 'ADVANCE_BOOKING_MEMBER_ONLY',
+    message: '30日より先の日程は、SNB MEMBERの先行予約対象です。会員登録メールアドレスでのご予約をお願いします。'
+  };
+
+  function verifyBookingWindowForNewBooking_(input, availabilityConfig, now) {
+    var todayString = BookingAvailability.formatDateInTimezone(now, availabilityConfig.timezone);
+    var band = BookingWindow.classifyDate(input.date, todayString);
+    if (band === BookingWindow.BAND.GENERAL) return { ok: true };
+    if (band !== BookingWindow.BAND.MEMBER_ONLY) {
+      return { ok: false, error: { code: 'DATE_OUT_OF_RANGE', message: '予約できるのは' + BookingWindow.MEMBER_DAYS + '日先までです。' } };
+    }
+    var membership = MembershipRules.verifyAdvanceBookingMembership(input.email, todayString);
+    if (!membership.ok) {
+      if (membership.reason === 'LEDGER_ERROR') Logger.log('BookingRepository: 会員台帳を確認できないため先行予約を拒否しました');
+      return { ok: false, error: { code: ADVANCE_MEMBER_ONLY_ERROR_.code, message: ADVANCE_MEMBER_ONLY_ERROR_.message } };
+    }
+    return { ok: true };
+  }
+
   function resolveMembershipForPricing_(input, generation) {
     if (input.brand !== 'snb' || generation !== BookingPricing.GENERATION.V2) {
       return { isMember: input.isMember, status: 'NOT_CHECKED' };

@@ -37,6 +37,12 @@ function loadBookingSandbox(files, globals) {
     sandbox[key] = globals[key];
   });
   vm.createContext(sandbox);
+  /* Issue #480: 予約可能期間の正本（BookingWindow.gs）はAvailability.gsから呼ばれる。個別に読み込むテストが
+     全て追記しなくて済むよう、Availability.gsを読む場合は先に読み込む（配布対象の網羅は
+     booking-deployment-manifest-sync / booking-admin-deploymentテストが検証する）。 */
+  if (files.indexOf('Availability.gs') !== -1 && files.indexOf('BookingWindow.gs') === -1) {
+    files = ['BookingWindow.gs'].concat(files);
+  }
   files.forEach(function (file) {
     var filePath = resolveBookingFilePath(file);
     vm.runInContext(fs.readFileSync(filePath, 'utf8'), sandbox, { filename: filePath });

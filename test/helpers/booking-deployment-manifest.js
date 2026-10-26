@@ -20,6 +20,8 @@ var BOOKING_ADMIN_FILES = [
   'Config.gs',
   'CalendarRepository.gs',
   'Availability.gs',
+  /* Issue #480: 予約可能期間（一般30日・会員90日・管理者無制限）の正本。Availability.gs/Booking.gs等より前に置く。 */
+  'BookingWindow.gs',
   'Booking.gs',
   /*
    * Issue #341 PR-A（Stripe API即時決済移行）で追加。CardPayment.gsはBooking.gsの
@@ -101,6 +103,8 @@ var BOOKING_WEB_APP_FILES = [
   'Config.gs',
   'CalendarRepository.gs',
   'Availability.gs',
+  /* Issue #480: 予約可能期間（一般30日・会員90日・管理者無制限）の正本。Availability.gs/Booking.gs等より前に置く。 */
+  'BookingWindow.gs',
   'Booking.gs',
   'CardPayment.gs',
   /* Issue #423: Studio X機材カタログ（自動生成）と予約オプションの純粋ロジック。 */

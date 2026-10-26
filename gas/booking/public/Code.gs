@@ -334,6 +334,11 @@ function handleGetAvailability_(params) {
     return { success: false, error: { code: 'INVALID_DATE', message: '過去の日付は指定できません。' } };
   }
 
+  /* 予約可能期間（Issue #480）。90日超はCalendarへ問い合わせず、getAvailabilityと同じ判定・同じエラーで拒否する。 */
+  if (BookingWindow.classifyDate(request.date, todayString) === BookingWindow.BAND.OUT_OF_RANGE) {
+    return { success: false, error: { code: 'DATE_OUT_OF_RANGE', message: '予約できるのは' + BookingWindow.MEMBER_DAYS + '日先までです。' } };
+  }
+
   var calendarId = BookingConfig.getCalendarId();
   var busyIntervals = CalendarRepository.getBusyIntervalsForDate(calendarId, request.date, config.timezone);
 

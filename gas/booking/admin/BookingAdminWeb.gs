@@ -804,3 +804,17 @@ function adminReconcileCheckoutExpiry(bookingId) {
 function adminResolvePaymentRecovery(bookingId, note) {
   return sanitizeForClient_(resolveBookingPaymentRecovery(bookingId, note));
 }
+
+/*
+ * Booking Adminの認証済み管理者か（Issue #480）。予約可能期間の上限を外せる唯一の判定で、
+ * Session.getActiveUser()（Googleアカウントでサーバー側が本人性を確認できた値）だけを使う。
+ * 公開予約フォームの予約メールアドレスは見ない（第三者が管理者メールを入力しても管理者扱いにならない）。
+ * メール取得不可・allowlist不一致・例外はすべてfalse（fail-closed）。メール自体はクライアントへ返さない。
+ */
+function isBookingAdminVerified_() {
+  try {
+    return BookingWindow.isAdminEmail(Session.getActiveUser().getEmail(), BookingConfig.getBookingAdminEmails());
+  } catch (authError) {
+    return false;
+  }
+}
