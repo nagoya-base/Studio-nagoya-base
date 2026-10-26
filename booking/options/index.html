@@ -1,0 +1,58 @@
+---
+---
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>オプション（シャワー）のお申し込み・お支払い | Studio Nagoya Base</title>
+
+<meta name="description" content="Studio Nagoya Baseのご予約済みの方向け。会員限定シャワー（1予約1回1,000円）のお申し込みとお支払いのページです。">
+<meta name="robots" content="noindex, follow">
+<link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/booking/options/">
+
+<link rel="icon" href="../../images/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="../../images/apple-touch-icon.png">
+
+<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-6TWDLEFWJT');
+</script>
+
+<link rel="stylesheet" href="../../styles/common.css">
+
+<link rel="stylesheet" href="../../styles/booking.css?v={{ site.time | date: '%s' }}">
+</head>
+
+<body data-page-type="booking" data-site-section="studio_main">
+
+<a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
+
+{% include subpage_nav_ja.html %}
+
+<main id="main-content">
+
+<section id="booking-options" class="bg-section">
+  <div class="container">
+    <h1 class="section-title">オプション（シャワー）のお申し込み・お支払い</h1>
+    <p class="section-subtitle">Member-only Shower</p>
+    <p><a href="{{ '/booking/' | relative_url }}">← 予約フォームへ</a></p>
+    {% include shower_options_ja.html brand="snb" %}
+  </div>
+</section>
+
+</main>
+
+{% include subpage_footer_ja.html %}
+
+<script src="../../scripts/booking-config.js?v={{ site.time | date: '%s' }}"></script>
+<script src="../../scripts/booking-shower.js?v={{ site.time | date: '%s' }}"></script>
+<script src="../../scripts/analytics.js"></script>
+
+</body>
+</html>

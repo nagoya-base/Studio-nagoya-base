@@ -236,6 +236,21 @@
       <p class="ba-field-error" id="ba-member-error" hidden></p>
     </fieldset>
 
+{% if include.brand == "snb" or include.brand == "mens" %}
+    <!-- 会員限定の特典（Issue #478）。2026/12/1以降のみJS側が表示する（brandShowsMemberBenefits）。
+         どちらも実会員資格（SNB MEMBER。利用日の属する月の会費が支払済み）が必要で、確認はサーバー側で行う
+         （mensの会員料金の自動適用では代用できない）。ペアパックは独立プラン（通常の会員料金表とは別商品）。 -->
+    <fieldset class="ba-fieldset" id="ba-benefits-field" hidden>
+      <legend>会員限定の特典（SNB MEMBER・任意）</legend>
+      <div class="ba-choices">
+        <label class="ba-choice"><input type="checkbox" id="ba-plan-pair" value="member_pair_3h"> <span>2名ペアパック（3時間・1〜2名／平日5,000円・土日祝6,000円）</span></label>
+        <label class="ba-choice"><input type="checkbox" id="ba-shower" value="shower"> <span>シャワー（1予約1回・1,000円。予約確定後に「オプションのお支払い」ページでお支払い）</span></label>
+      </div>
+      <p class="ba-field-help">会員限定です。ご利用日の属する月のSNB MEMBER会員資格（当月の会費のお支払い）を確認できない場合は、お申し込みいただけません。予約のメールアドレスは会員登録と同じものをご入力ください。2名ペアパックは他の割引・優待と併用できず、延長は通常の会員延長料金です。<a href="{{ '/' | relative_url }}{% if include.brand == "mens" %}mens/{% endif %}membership/" target="_blank" rel="noopener">会員案内を見る</a></p>
+      <p class="ba-field-error" id="ba-benefits-error" hidden></p>
+    </fieldset>
+{% endif %}
+
     <!-- 利用料金の見積り（Issue #342）。利用日・利用時間（・会員自己申告）が揃った時点で
          GASのestimatePriceを呼んで表示する。料金表自体はここに置かず、必ずGAS側の値を
          表示する（scripts/booking-app.js参照）。計算中・取得失敗時は古い金額を確定料金

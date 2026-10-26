@@ -226,7 +226,9 @@ test('Studio X: 2026/12/1以降の料金は現行MEMBER料金（スライド）�
   assert.ok(!/会員価格|会員料金|会員区分/.test(t), 'Studio Xトップに会員価格・会員区分の表示がない');
 });
 
-test('Studio X: 機材料金は変更なし・セルフ設営無料・スタッフ対応のみ会員限定（3,000/3,000/5,000円）', function () {
+/* Issue #478: #469 / #472 の「機材レンタル自体は会員限定ではない（会員限定はスタッフ対応のみ）」を上書きし、
+   2026/12/1以降の新規作成分から Studio Xの有料オプション全般（rental全件 + staffService全件）を会員限定とする。 */
+test('Studio X: 機材料金は変更なし・セルフ設営無料・有料オプション全般（機材レンタル＋スタッフ対応）が会員限定（スタッフ3,000/3,000/5,000円）', function () {
   var data = JSON.parse(read('_data/studio_x_equipment.json'));
   var rental = {};
   data.rental.forEach(function (e) { rental[e.code] = e.unitPriceJpy; });
@@ -243,12 +245,13 @@ test('Studio X: 機材料金は変更なし・セルフ設営無料・スタッ�
   assert.match(catalog, /<th>セルフ設営<\/th><td>無料<\/td>/);
   assert.match(catalog, /<th>セルフ原状復帰<\/th><td>無料<\/td>/);
   assert.match(catalog, /\{\{ pair\[1\]\.priceJpy \}\}円/, '料金は正本から表示（直書きしない）');
-  /* 機材レンタル自体は会員限定にしていない */
+  /* 有料の機材レンタルも会員限定（#478で#469/#472の旧前提を上書き）。セルフ設営・原状復帰は無料のまま。 */
   var rentalBlock = catalog.slice(catalog.indexOf('id="equipment-rental"'), catalog.indexOf('id="equipment-self"'));
-  assert.ok(!/会員限定/.test(rentalBlock));
+  assert.ok(/有料レンタル機材（会員限定）/.test(rentalBlock) && /セットで0円になる機材も会員限定のまま/.test(textOf(rentalBlock)));
   var flow = textOf(read('_includes/studio_x_option_flow_ja.html'));
-  assert.ok(flow.indexOf('スタッフ対応は会員限定です') !== -1 && flow.indexOf('セルフ設営・セルフ片付け（無料）') !== -1);
+  assert.ok(flow.indexOf('有料オプション（機材のレンタル・スタッフ対応）は会員限定です') !== -1 && flow.indexOf('セルフ設営・セルフ片付け（無料）') !== -1);
   var top = textOf(read('studio-x/index.html'));
+  assert.ok(top.indexOf('有料オプションは会員限定です') !== -1);
   assert.ok(top.indexOf('スタッフによる事前設営・片付けは会員限定です（事前設営3,000円／片付け3,000円／セット5,000円）') !== -1);
   assert.ok(top.indexOf('セルフ設営・セルフ片付けは無料') !== -1);
   assert.ok(read('scripts/booking-options.js').indexOf('（会員限定・事前確認制）') !== -1, '予約オプション画面のスタッフ選択に会員限定を表示');
@@ -304,7 +307,7 @@ test('モバイル表示: 会員比較表は横スクロール枠に入り、フ
 
 test('内部資料: 料金表・ブランド分離基準が新ルールで、チェックリストに旧会員制度の定義が残っていない', function () {
   var doc = read('docs/membership-pricing-2026-12.md');
-  ['SNB: 会員 / 非会員で部屋料金が異なる', '全員', 'MEMBER料金', '現行MEMBER料金を一般料金へスライド', '会員限定はスタッフ対応のみ', '3,000円', '5,000円'].forEach(function (w) {
+  ['SNB: 会員 / 非会員で部屋料金が異なる', '全員', 'MEMBER料金', '現行MEMBER料金を一般料金へスライド', '有料オプション全般が会員限定', '3,000円', '5,000円'].forEach(function (w) {
     assert.ok(doc.indexOf(w.replace('SNB: 会員 / 非会員で部屋料金が異なる', '会員 / 非会員で部屋料金が異なる')) !== -1, w);
   });
   assert.ok(!/「承認した会員のみ」が正/.test(read('REVIEW_CHECKLIST.md')));

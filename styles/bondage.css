@@ -411,3 +411,19 @@
     padding: 16px;
   }
 }
+
+/* 会員案内ページ（/membership/）のヒーロー: トップと同じhero-adにテキスト見出しを重ねず画像下に置く（Issue #478） */
+.hero-ad-title {
+  margin: 0 0 10px;
+  font-size: clamp(1.25rem, 4.6vw, 1.7rem);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.hero-ad-title-sub {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.95rem;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}

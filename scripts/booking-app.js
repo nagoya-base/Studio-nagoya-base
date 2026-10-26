@@ -131,6 +131,10 @@
     durationError: document.getElementById('ba-duration-error'),
     customerTypeError: document.getElementById('ba-customer-type-error'),
     memberField: document.getElementById('ba-member-field'),
+    benefitsField: document.getElementById('ba-benefits-field'),
+    planPair: document.getElementById('ba-plan-pair'),
+    shower: document.getElementById('ba-shower'),
+    benefitsError: document.getElementById('ba-benefits-error'),
     memberError: document.getElementById('ba-member-error'),
     priceLine: document.getElementById('ba-price-line'),
     priceNote: document.getElementById('ba-price-note'),
@@ -246,6 +250,16 @@
    * 適用されるため表示しない。HTML自体は3ブランド共通のため、表示制御だけをここで行う。
    */
   if (els.memberField) els.memberField.hidden = !Logic.brandShowsMemberOption(brand);
+
+  /* 会員限定の特典（Issue #478。SNB / SNB mens、2026/12/1以降の表示）。表示制御のみで、可否はサーバーが判定する。 */
+  var benefitsVisible = Logic.brandShowsMemberBenefits(brand);
+  if (els.benefitsField) els.benefitsField.hidden = !benefitsVisible;
+  function selectedPlan_() {
+    return benefitsVisible && els.planPair && els.planPair.checked ? Logic.PAIR_PACK_PLAN_CODE : '';
+  }
+  function showerSelected_() {
+    return benefitsVisible && !!els.shower && els.shower.checked;
+  }
 
   /* 会員区分は「一般 / 会員」のラジオ（name="memberStatus"）。単一checkboxでは「非会員と回答した」
      のか「未回答」なのか区別できないため、初期は未選択にする。サーバーへ送る isMember
@@ -728,23 +742,25 @@
   var priceEstimateCache = {}; /* key -> {status:'success', price} | {status:'error', message} */
   var priceEstimateInFlight = {};
 
-  function priceEstimateKey_(dateValue, durationMinutes, memberFlag) {
-    return dateValue + '|' + durationMinutes + '|' + (memberFlag ? '1' : '0');
+  function priceEstimateKey_(dateValue, durationMinutes, memberFlag, plan) {
+    return dateValue + '|' + durationMinutes + '|' + (memberFlag ? '1' : '0') + '|' + (plan || '');
   }
 
   function currentPriceEstimateKey_() {
     var dateValue = els.date ? els.date.value : '';
-    return priceEstimateKey_(dateValue, currentCalendarDurationMinutes_(), isMemberChecked_());
+    return priceEstimateKey_(dateValue, currentCalendarDurationMinutes_(), isMemberChecked_(), selectedPlan_());
   }
 
-  function priceEstimateUrl_(dateValue, durationMinutes, memberFlag) {
+  function priceEstimateUrl_(dateValue, durationMinutes, memberFlag, plan) {
     return API_BASE_URL +
       (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') +
       'action=estimatePrice' +
       '&brand=' + encodeURIComponent(brand) +
       '&date=' + encodeURIComponent(dateValue) +
       '&durationMinutes=' + encodeURIComponent(String(durationMinutes)) +
-      '&isMember=' + (memberFlag ? '1' : '0');
+      '&isMember=' + (memberFlag ? '1' : '0') +
+      /* 2名ペアパックの見積り。見積りAPIは会員台帳を照会しない（資格の確認は予約作成時のサーバー側のみ）。 */
+      (plan ? '&plan=' + encodeURIComponent(plan) : '');
   }
 
   /* lineEl/noteElの組へ、現在の見積り状態を描画する。取得中・失敗時はlineElを必ず
@@ -819,6 +835,7 @@
     var dateValue = els.date ? els.date.value : '';
     var durationMinutes = currentCalendarDurationMinutes_();
     var memberFlag = isMemberChecked_();
+    var plan = selectedPlan_();
 
     /* snb/studio_xは会員区分が確定してから料金を表示する（未回答のまま一般料金を出さない）。 */
     if (!dateValue || !Logic.isDurationAtLeastUiMinimum(durationMinutes) || !memberAnswered_()) {
@@ -826,7 +843,7 @@
       return;
     }
 
-    var key = priceEstimateKey_(dateValue, durationMinutes, memberFlag);
+    var key = priceEstimateKey_(dateValue, durationMinutes, memberFlag, plan);
     var cached = priceEstimateCache[key];
     if (cached) {
       renderPriceEverywhere_(cached);
@@ -844,7 +861,7 @@
     if (priceEstimateInFlight[key]) return;
     priceEstimateInFlight[key] = true;
 
-    fetch(priceEstimateUrl_(dateValue, durationMinutes, memberFlag), { method: 'GET' })
+    fetch(priceEstimateUrl_(dateValue, durationMinutes, memberFlag, plan), { method: 'GET' })
       .then(function (response) { return response.json(); })
       .then(function (body) {
         delete priceEstimateInFlight[key];
@@ -865,6 +882,10 @@
         renderPriceEverywhereIfCurrent_(key, networkErrorEntry);
       });
   }
+
+  [els.planPair, els.shower].forEach(function (control) {
+    if (control) control.addEventListener('change', function () { refreshPriceEstimate_(); });
+  });
 
   if (els.duration) {
     els.duration.addEventListener('input', handleCalendarPrereqChange_);
@@ -1234,6 +1255,19 @@
       };
       var errors = Logic.validateDetailsForm(fields, locale);
 
+      /* 2名ペアパックは1〜2名・3時間以上（サーバー側でも同じ条件で拒否する）。 */
+      if (selectedPlan_()) {
+        if (fields.people && !Logic.isPairPackPeopleValue(fields.people)) {
+          errors.people = Logic.messageForErrorCode('PAIR_PACK_PEOPLE_EXCEEDED', locale);
+        }
+        if (state.durationMinutes < 180 && els.benefitsError) {
+          els.benefitsError.textContent = Logic.messageForErrorCode('PLAN_DURATION_INVALID', locale);
+          els.benefitsError.hidden = false;
+          return;
+        }
+      }
+      if (els.benefitsError) els.benefitsError.hidden = true;
+
       /* 二重チェック（Issue #407）: 初回利用はカード以外を送信させない（サーバー側と同じ条件）。 */
       if (fields.paymentMethod && !Logic.isPaymentMethodAllowedForCustomer(state.customerType, fields.paymentMethod)) {
         errors.paymentMethod = Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale);
@@ -1493,7 +1527,9 @@
         purposeOther: state.purposeOther,
         paymentMethod: state.paymentMethod,
         note: state.note,
-        isMember: state.isMember
+        isMember: state.isMember,
+        plan: selectedPlan_(),
+        shower: showerSelected_()
       });
       /* オプションは選択内容のみ送る（金額・承認状態はサーバーが決める）。未選択ならキー自体を付けない。 */
       var optionsSelection = optionsPanel ? optionsPanel.getSelection() : null;

@@ -1,0 +1,75 @@
+{%- comment -%}
+  SNB MEMBER限定の特典（Issue #478）。SNB（/membership/）とSNB mens（/mens/membership/）の会員案内ページで共通表示する。
+  金額・条件の正本は予約システム側（ペアパック: BookingPricing.gs / シャワー: BookingOptions.gs）。ここの数字は
+  test/member-benefits-web.test.js が正本と一致することを検査する。
+  include.brand: "snb"（既定）| "mens"。
+{%- endcomment -%}
+{% assign is_mens = false %}
+{% if include.brand == "mens" %}{% assign is_mens = true %}{% endif %}
+<h2 class="membership-heading" id="member-benefits">会員限定の特典</h2>
+<p class="membership-note">以下の特典は、SNB MEMBERの会員資格（月額1,000円）を確認できた場合にご利用いただけます。2026年12月1日以降に作成するご予約・お申し込みから適用します（2026年11月30日までに作成済みのご予約・お申し込みは従来どおりです）。</p>
+
+<div class="membership-benefit-card" id="pair-pack">
+  <p class="membership-benefit-tag">会員限定</p>
+  <h3 class="membership-benefit-title">2名ペアパック</h3>
+  <p class="membership-benefit-lead">ふたりで3時間。縄に集中できる、会員専用の定額プランです。緊縛・縄撮影・自主練・ショー練習などに。</p>
+  <div class="pricing-table-scroll">
+  <table class="membership-benefit-table">
+    <thead><tr><th scope="col">プラン</th><th scope="col">平日</th><th scope="col">土日祝</th></tr></thead>
+    <tbody><tr><td>2名ペアパック（3時間・1〜2名）</td><td>5,000円</td><td>6,000円</td></tr></tbody>
+  </table>
+  </div>
+  <ul class="membership-benefit-list">
+    <li>3時間固定・1〜2名まで。3名以上のご予約では選べません。</li>
+    <li>上の「一般料金と会員料金」の表（3時間 5,500円／7,000円）とは<strong>別商品</strong>です。時間貸しの会員料金を置き換えるものではありません。</li>
+    <li>他の割引・優待との併用はできません。</li>
+    <li>延長する場合は、通常の会員延長料金（1時間ごとに平日1,500円／土日祝2,000円）です。</li>
+    <li>予約フォームでプランを選んでお申し込みください。日程を変更しても、プランは維持され、変更先の平日／土日祝に合わせて料金を再計算します。</li>
+    <li>SNB・SNB mens でご利用いただけます（Studio Xでは提供していません）。</li>
+  </ul>
+</div>
+
+<div class="membership-benefit-card" id="shower">
+  <p class="membership-benefit-tag">会員限定</p>
+  <h3 class="membership-benefit-title">シャワー</h3>
+  <div class="pricing-table-scroll">
+  <table class="membership-benefit-table">
+    <thead><tr><th scope="col">内容</th><th scope="col">料金</th></tr></thead>
+    <tbody><tr><td>シャワー（1予約につき1回）</td><td>1,000円</td></tr></tbody>
+  </table>
+  </div>
+  <ul class="membership-benefit-list">
+    <li>同じご予約の利用者2名まで共有できます。ご利用は予約時間内に限ります。</li>
+    <li>部屋料金とは別のオプションです。予約の確定後、予約ID・ご登録のメールアドレスで確認する「オプションのお申し込み・お支払い」ページからお申し込み・お支払いください。</li>
+    <li>SNB・SNB mens でご利用いただけます（Studio Xでは提供していません）。2026年12月1日から提供します。</li>
+  </ul>
+</div>
+
+<div class="membership-benefit-card" id="member-equipment">
+  <p class="membership-benefit-tag">会員限定</p>
+  <h3 class="membership-benefit-title">有料機材レンタル</h3>
+  <ul class="membership-benefit-list">
+    <li>各ページに掲載の「機材レンタルオプション（会員限定）」は、2026年12月1日以降に作成するご予約・お申し込み分から、SNB MEMBERの会員資格が必要です。内容・料金は変わりません。</li>
+    <li>2026年11月30日までに作成済みのお申し込みは、従来どおりの扱いです。</li>
+  </ul>
+</div>
+
+<div class="membership-benefit-card" id="member-month-rule">
+  <h3 class="membership-benefit-title">会員資格の確認と「利用日の属する月」</h3>
+  <ul class="membership-benefit-list">
+    <li>会員資格は、<strong>ご利用日の属する月の会費</strong>のお支払い（決済成功）で決まります。予約時のメールアドレスは、会員登録のメールアドレスと同じものをご入力ください。</li>
+    <li>翌月のお部屋そのものは、通常どおりご予約いただけます。ただし、翌月分の2名ペアパック・シャワー・会員限定の有料機材は、その月の1日以降、当月の会費の決済が成功してから確定できます。</li>
+    <li>毎月1日も、当月の決済成功が反映されるまではご利用いただけません（猶予期間はありません）。</li>
+    <li>日程変更で利用日の月が変わる場合は、変更先の月の会員資格を改めて確認します。資格が確認できない場合は、2名ペアパック・シャワーを維持したまま変更することはできません。</li>
+    <li>会員資格を確認できない場合の理由は、お問い合わせ先以外には細かくお知らせしません（メールアドレスごとの会員登録の有無が第三者に分からないようにするためです）。</li>
+  </ul>
+</div>
+{% if is_mens %}
+<div class="membership-benefit-card" id="mens-price-note">
+  <h3 class="membership-benefit-title">SNB mensの部屋料金について</h3>
+  <ul class="membership-benefit-list">
+    <li>SNB mensの通常のお部屋料金は、従来どおり、会員加入なしでも会員料金でご利用いただけます。</li>
+    <li>これは<strong>料金の優遇</strong>であり、SNB MEMBERの会員資格が付与されるものではありません。2名ペアパック・シャワー・会員限定の有料機材は、SNB MEMBERへのご加入が必要です。</li>
+  </ul>
+</div>
+{% endif %}
