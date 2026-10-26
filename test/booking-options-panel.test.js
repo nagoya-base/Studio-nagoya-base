@@ -375,3 +375,101 @@ test('後付け: 申込済みと同じスタッフ対応の再依頼は重複と
   assert.ok(Panel.validateSelection(state, SERVER_CATALOG, existing).indexOf('重複') !== -1);
   assert.strictEqual(Panel.validateSelection(state, SERVER_CATALOG, []), '');
 });
+
+// ============================================================================
+// Issue #496: 6時間貸切ベースプラン中は追加オプションを畳み、選択・検証・サマリー・payloadを空にする
+// ============================================================================
+
+function fakeNode(tag) {
+  var node = {
+    tag: tag, children: [], attrs: {}, hidden: false, className: '', disabled: false, checked: false, value: '', listeners: {},
+    setAttribute: function (k, v) { this.attrs[k] = v; },
+    appendChild: function (child) { this.children.push(child); return child; },
+    addEventListener: function (type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+    fire: function (type) { (this.listeners[type] || []).forEach(function (fn) { fn(); }); }
+  };
+  var text = '';
+  Object.defineProperty(node, 'textContent', {
+    get: function () { return text + node.children.map(function (c) { return c.textContent; }).join(''); },
+    set: function (v) { text = v; node.children = []; }
+  });
+  return node;
+}
+
+function findAll(node, predicate, out) {
+  out = out || [];
+  if (predicate(node)) out.push(node);
+  node.children.forEach(function (child) { findAll(child, predicate, out); });
+  return out;
+}
+
+function mountFakePanel() {
+  var previous = global.document;
+  global.document = { createElement: fakeNode };
+  var slot = fakeNode('div');
+  var summarySlot = fakeNode('div');
+  var panel;
+  try {
+    panel = Panel.mount({ slot: slot, summarySlot: summarySlot, catalog: CATALOG, getRoomPrice: function () { return null; } });
+  } finally {
+    global.document = previous;
+  }
+  return { panel: panel, slot: slot, summarySlot: summarySlot };
+}
+
+function selectQuantity(m, label, qty) {
+  var select = findAll(m.slot, function (n) { return n.tag === 'select' && n.attrs['aria-label'] === label + 'の数量'; })[0];
+  assert.ok(select, label + 'の数量欄がある');
+  select.value = String(qty);
+  select.fire('change');
+}
+
+test('Issue #496 パネル: setSuspended(true)で選択内容（機材数量）が破棄され、selection/validate/summaryLinesが空になる', function () {
+  var m = mountFakePanel();
+  global.document = { createElement: fakeNode };
+  try {
+    selectQuantity(m, 'ライトスタンド（260cm）', 2);
+    assert.deepStrictEqual(m.panel.getSelection().equipment, { STAND_260: 2 }, '抑止前は選択が送られる');
+    assert.ok(m.panel.summaryLines().length > 0);
+    m.panel.setSuspended(true);
+    assert.strictEqual(m.panel.getSelection(), null, 'payloadにoptionsを付けない');
+    assert.strictEqual(m.panel.validate(), '');
+    assert.deepStrictEqual(m.panel.summaryLines(), []);
+    assert.deepStrictEqual(m.panel.getState().equipment, {});
+    assert.strictEqual(m.panel.getState().setupService, 'SELF');
+    assert.strictEqual(m.panel.getState().cleanupService, 'SELF');
+  } finally {
+    delete global.document;
+  }
+});
+
+test('Issue #496 パネル: 抑止中は入力欄を残さず短い案内だけを出し、料金サマリーも隠す。解除で欄が戻り、以前の選択は復元しない', function () {
+  var m = mountFakePanel();
+  global.document = { createElement: fakeNode };
+  try {
+    var inputsOf = function () { return findAll(m.slot, function (n) { return n.tag === 'input' || n.tag === 'select'; }); };
+    assert.ok(inputsOf().length > 0);
+    m.panel.setSuspended(true);
+    assert.strictEqual(inputsOf().length, 0, 'disabledの入力群を残さない');
+    assert.strictEqual(m.slot.hidden, false);
+    assert.ok(m.slot.textContent.indexOf('6時間貸切ベースプランでは追加オプションは利用できません。') !== -1);
+    assert.strictEqual(m.summarySlot.hidden, true);
+    assert.strictEqual(m.panel.isSuspended(), true);
+
+    m.panel.setSuspended(false);
+    assert.ok(inputsOf().length > 0 || findAll(m.slot, function (n) { return n.tag === 'select'; }).length > 0, '解除後は再び選択できる');
+    assert.strictEqual(m.slot.textContent.indexOf('追加オプションは利用できません'), -1);
+    assert.strictEqual(m.panel.getSelection(), null, '以前の選択は自動復元しない');
+    assert.strictEqual(m.panel.isSuspended(), false);
+  } finally {
+    delete global.document;
+  }
+});
+
+test('Issue #496 予約フォーム: ベースプランの変更でパネルを抑止/解除し、拒否コードの文言を持つ', function () {
+  var app = read('scripts/booking-app.js');
+  assert.ok(/optionsPanel\.setSuspended\(selected\)/.test(app));
+  assert.ok(app.indexOf("'EVENT_PLAN_OPTIONS_NOT_ALLOWED'") !== -1);
+  assert.ok(typeof Panel.describeError({ code: 'EVENT_PLAN_OPTIONS_NOT_ALLOWED' }) === 'string');
+  assert.ok(Panel.describeError({ code: 'EVENT_PLAN_OPTIONS_NOT_ALLOWED' }).indexOf('追加オプション') !== -1);
+});

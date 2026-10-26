@@ -109,6 +109,11 @@ var BookingRepository = (function () {
      * メールアドレス単位で別枠に制限する（許可の有無を無制限に探られないようにするため）。
      */
     var hasOptionsPayload = !!rawInput && rawInput.options !== undefined && rawInput.options !== null;
+    /* Issue #496: 6時間貸切ベースプランは追加オプションと併用できない。フロントの解除漏れがあっても、
+       プランにオプションが紐づく予約を作らない（Calendar/Sheetsへ何も書く前に明示エラーで拒否する）。 */
+    if (hasOptionsPayload && BookingPricing.isEventPlan(planResult.plan) && BookingPricing.hasOptionSelection(rawInput.options)) {
+      return { success: false, error: BookingPricing.eventPlanOptionsError() };
+    }
     if (isAdminWindow && hasOptionsPayload) {
       /* 管理者の新規予約はお部屋の予約のみ（オプションの申込・本人確認・rate limitは公開経路の仕組み）。 */
       return { success: false, error: { code: 'OPTIONS_NOT_SUPPORTED', message: '管理者の新規予約ではオプションを同時に申し込めません。' } };
