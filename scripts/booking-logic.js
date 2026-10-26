@@ -748,8 +748,13 @@
    * Issue #407で初回利用の当日予約を解禁したため、利用区分・当日かどうかでは塞がない
    * （customerType/todayValueは呼び出し側の互換のため引数に残している）。
    */
-  function isCalendarDaySelectable(dateValue, status, customerType, todayValue) {
-    return isBookableDayStatus(status);
+  function isCalendarDaySelectable(dateValue, status, customerType, todayValue, memberAdvance, memberFeaturesEnabled) {
+    if (!isBookableDayStatus(status)) return false;
+    /* Issue #546: 31〜90日先の会員先行枠（memberAdvance。APIが全員に同じ印を返す）は、会員向けUIが有効なときだけ
+       選択できる。UX目的のガードで、資格の最終判定は予約送信時のサーバー（ADVANCE_BOOKING_MEMBER_ONLY）。
+       memberAdvance/memberFeaturesEnabledを渡さない従来の呼び出しは、空き状況だけで決まる。 */
+    if (memberAdvance === true && memberFeaturesEnabled !== true) return false;
+    return true;
   }
 
   /*
@@ -943,6 +948,15 @@
   var MEMBER_BENEFIT_BRANDS_ = ['snb', 'mens'];
   var MEMBER_BENEFITS_START_MS_ = Date.parse('2026-12-01T00:00:00+09:00');
 
+  /*
+   * Issue #546: 会員限定の特典・31〜90日先行予約を、会員向けUIが有効なときだけ選べるようにするブランド。
+   * SNB mensの部屋料金優遇は実会員資格と別概念のため、mensも同じ扱い。Studio Xは対象外（既存仕様のまま）。
+   * 表示制御のみで、実会員資格の最終判定はサーバー。
+   */
+  function brandGatesMemberFeatures(brand) {
+    return MEMBER_BENEFIT_BRANDS_.indexOf(brand) !== -1;
+  }
+
   function brandShowsMemberBenefits(brand, nowMs) {
     if (MEMBER_BENEFIT_BRANDS_.indexOf(brand) === -1) return false;
     var now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
@@ -1003,6 +1017,31 @@
     else if (price.tier === 'GENERAL') value = t.general;
     else return null;
     return { kind: 'rate', label: t.rateLabel, value: value, text: t.rateLabel + t.sep + value };
+  }
+
+  /*
+   * Issue #546: シャワーは部屋料金に含めず、承認後に別途決済する追加オプション。見積りの確定合計へ加算せず、
+   * 部屋料金とは別の行で「追加オプション予定額」として出す。金額はoptionCatalog（BookingOptions.gs）の
+   * shower.priceJpyだけを使い、フロントに価格を持たない（取得できない間は金額なしの文言）。
+   */
+  var SHOWER_EXTRA_TEXT_ = {
+    ja: {
+      label: '追加オプション', name: 'シャワー', noAmount: '（別途料金）', tax: '（税込）',
+      notes: ['※シャワー料金は上記の部屋料金には含まれていません。', '※事前確認・運営承認後に別途お支払いいただきます（承認後に別途決済）。'],
+      confirmNote: '部屋料金には含まれず、事前確認・承認後に別途決済'
+    },
+    en: {
+      label: 'Add-on', name: 'Shower', noAmount: ' (separate fee)', tax: ' (tax incl.)',
+      notes: ['* The shower fee is not included in the room fee above.', '* Payable separately after advance confirmation and approval.'],
+      confirmNote: 'Not included in the room fee; paid separately after approval'
+    }
+  };
+
+  function showerExtraInfo(priceJpy, locale) {
+    var t = SHOWER_EXTRA_TEXT_[locale === 'en' ? 'en' : 'ja'];
+    var formatted = formatJpyAmount(priceJpy);
+    var value = t.name + (formatted ? ' ' + formatted + t.tax : t.noAmount);
+    return { label: t.label, value: value, text: t.label + (locale === 'en' ? ': ' : '：') + value, notes: t.notes.slice(), confirmNote: t.confirmNote };
   }
 
   /* ペアパックの人数条件（'1名'|'2名'）。未選択は判定せずtrue（人数の必須チェックは別）。 */
@@ -1166,6 +1205,8 @@
     cardCheckoutUncertainNoticeLines: cardCheckoutUncertainNoticeLines,
     brandShowsMemberOption: brandShowsMemberOption,
     brandShowsMemberBenefits: brandShowsMemberBenefits,
+    brandGatesMemberFeatures: brandGatesMemberFeatures,
+    showerExtraInfo: showerExtraInfo,
     pairPackAvailableOnDate: pairPackAvailableOnDate,
     showerAvailableOnDate: showerAvailableOnDate,
     appliedRateInfo: appliedRateInfo,

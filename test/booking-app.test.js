@@ -118,6 +118,8 @@ function setup(responseBody) {
     appliedRateInfo: function () { return null; },
     isPairPackPeopleValue: function () { return true; },
     PAIR_PACK_PLAN_CODE: 'member_pair_3h',
+    brandGatesMemberFeatures: function () { return false; },
+    showerExtraInfo: function () { return { label: '', value: '', text: '', notes: [], confirmNote: '' }; },
     /* Issue #500: 初期化末尾でURLのplanを読む。このstub群はURLのplanを持たない。 */
     planFromSearch: function () { return ''; },
     formatJpyAmount: function (amount) {

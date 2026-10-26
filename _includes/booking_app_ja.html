@@ -283,6 +283,17 @@
     </fieldset>
 
 {% if include.brand == "snb" or include.brand == "mens" %}
+    <!-- Issue #546: 会員区分ラジオが無い場合（SNB V2・SNB mens）に、会員向けの特典・31〜90日先の先行予約を選べるようにするUI解除操作。
+         操作の誤り防止（UX）だけに使い、会員資格の正本にも料金の判定にも使わない（isMember等は送らない）。
+         実会員資格は予約メールと会員台帳によりサーバーが最終判定する。会員区分ラジオの表示中（SNB V1）はJS側が隠す。 -->
+    <fieldset class="ba-fieldset" id="ba-member-unlock-field" hidden>
+      <legend>SNB MEMBERの特典・先行予約</legend>
+      <div class="ba-choices">
+        <label class="ba-choice"><input type="checkbox" id="ba-member-unlock" value="1"> <span>SNB MEMBERの会員特典・先行予約（31〜90日先）を利用する</span></label>
+      </div>
+      <p class="ba-field-help">チェックすると、31〜90日先の先行予約日と会員限定の特典を選べるようになります。会員資格の確認は予約のメールアドレスで行い、これだけでは会員料金や特典は確定しません。会員でない方は<a href="{{ '/membership/' | relative_url }}">SNB MEMBERのご案内</a>をご覧ください。</p>
+    </fieldset>
+
     <!-- 会員限定の特典（Issue #478）。ペアパックは利用日が2026/12/1以降（pairPackAvailableOnDate。Issue #539）、シャワーも利用日が2026/12/1以降（showerAvailableOnDate。Issue #541）のときだけJS側が表示する。
          どちらも実会員資格（SNB MEMBER。利用日がお支払い済みの有効期間に入っていること）が必要で、確認はサーバー側で行う
          （mensの会員料金の自動適用では代用できない）。ペアパックは独立プラン（通常の会員料金表とは別商品）。 -->
@@ -292,6 +303,7 @@
         <label class="ba-choice"><input type="checkbox" id="ba-plan-pair" value="member_pair_3h"> <span>2名ペアパック（3時間・1〜2名／平日5,000円・土日祝6,000円）</span></label>
         <label class="ba-choice"><input type="checkbox" id="ba-shower" value="shower"> <span>シャワー（1予約1回・1,000円。事前確認・承認制で、選択だけでは利用確定になりません。承認後にお支払い）</span></label>
       </div>
+      <p class="ba-field-help" id="ba-benefits-locked" hidden>SNB MEMBER会員のみ選択できます。{% if include.brand == "mens" %}「SNB MEMBERの会員特典・先行予約を利用する」にチェックすると選択できます。{% else %}会員区分で「会員」を選ぶと選択できます（表示されない場合は「SNB MEMBERの会員特典・先行予約を利用する」にチェック）。{% endif %}</p>
       <p class="ba-field-help">会員限定です。シャワー利用は事前確認が必要です。利用希望の場合は事前にご連絡ください。対応可能な場合のみご案内し、承認後にお支払いをお願いします。ここでの選択は利用希望の連絡であり、承認とお支払いの完了までは利用確定ではありません。ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できない場合は、お申し込みいただけません。予約のメールアドレスは会員登録と同じものをご入力ください。2名ペアパックは他の割引・優待と併用できず、延長は通常の会員延長料金です。<a href="{{ '/' | relative_url }}{% if include.brand == "mens" %}mens/{% endif %}membership/" target="_blank" rel="noopener">会員案内を見る</a></p>
       <p class="ba-field-error" id="ba-benefits-error" hidden></p>
     </fieldset>
@@ -305,6 +317,11 @@
       <p class="ba-price-time" id="ba-price-time" hidden></p>
       <p class="ba-price-line" id="ba-price-line" hidden></p>
       <p class="ba-price-applied" id="ba-price-applied" hidden></p>
+      <!-- Issue #546: シャワーは部屋料金に含めず、承認後に別途決済する追加オプション。確定合計には加算しない。金額はoptionCatalog由来。 -->
+      <div class="ba-price-extra" id="ba-price-extra" hidden>
+        <p class="ba-price-extra-line" id="ba-price-extra-line"></p>
+        <p class="ba-field-help" id="ba-price-extra-note"></p>
+      </div>
       <p class="ba-price-note" id="ba-price-note"></p>
     </div>
 
@@ -433,6 +450,7 @@
 {% endif %}
         <tr><th>利用料金</th><td id="ba-confirm-price"></td></tr>
         <tr id="ba-confirm-applied-row" hidden><th id="ba-confirm-applied-label">適用料金</th><td id="ba-confirm-applied"></td></tr>
+        <tr id="ba-confirm-shower-row" hidden><th id="ba-confirm-shower-label">追加オプション</th><td id="ba-confirm-shower"></td></tr>
         <tr><th>お名前</th><td id="ba-confirm-name"></td></tr>
         <tr><th>メールアドレス</th><td id="ba-confirm-email"></td></tr>
         <tr><th>電話番号</th><td id="ba-confirm-phone"></td></tr>
