@@ -413,3 +413,16 @@ test('STRIPE_CHECKOUT_ENABLED の既定は変更していない（未設定な�
   assert.ok(/properties\.getProperty\('STRIPE_CHECKOUT_ENABLED'\)\s*===\s*'true'/.test(cfg), "'true'以外は無効");
   assert.ok(!/STRIPE_CHECKOUT_ENABLED['"]?\s*[:=]\s*['"]?true/.test(read('gas/booking/README.md').split('## Issue #478')[1] || ''), 'READMEで有効化を指示していない');
 });
+
+test('シャワー(#481): 予約フォーム・会員案内・申込ページに「事前確認が必要・承認後にお支払い」を明記し、即利用できる表現を出さない', function () {
+  var fs = require('fs');
+  var NOTICE = 'シャワー利用は事前確認が必要です。利用希望の場合は事前にご連絡ください。対応可能な場合のみご案内し、承認後にお支払いをお願いします。';
+  ['_includes/booking_app_ja.html', '_includes/membership_benefits_ja.html', '_includes/shower_options_ja.html',
+    'membership/index.html', 'mens/membership/index.html', 'mens/index.html'].forEach(function (file) {
+    var html = fs.readFileSync(__dirname + '/../' + file, 'utf8');
+    assert.ok(html.indexOf(NOTICE) !== -1, file + ' に事前確認の案内がある');
+    assert.ok(!/予約確定後に「オプションのお支払い」ページでお支払い/.test(html), file + ' に即時利用を思わせる旧文言がない');
+  });
+  var form = fs.readFileSync(__dirname + '/../_includes/booking_app_ja.html', 'utf8');
+  assert.ok(form.indexOf('選択だけでは利用確定になりません') !== -1);
+});

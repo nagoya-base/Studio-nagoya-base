@@ -59,6 +59,7 @@ var OptionMailTemplates = (function () {
     var hasStaff = false;
     var hasEquipment = false;
     var hasHold = false;
+    var hasShower = false;
     orders.forEach(function (order) {
       var state;
       if (order.category === BookingOptions.CATEGORY.FREE) {
@@ -67,6 +68,9 @@ var OptionMailTemplates = (function () {
       } else if (order.category === BookingOptions.CATEGORY.STAFF_SERVICE) {
         state = '状態: 承認待ち（まだ確定していません・お支払いは不要です）';
         hasStaff = true;
+      } else if (order.category === BookingOptions.CATEGORY.MEMBER_SERVICE) {
+        state = '状態: 運営の確認待ち（まだ確定していません・お支払いは不要です）';
+        hasShower = true;
       } else if (order.approvalStatus === BookingOptions.APPROVAL_STATUS.PENDING_APPROVAL) {
         state = '状態: 利用許可の確認待ち（まだ確定していません・お支払いは不要です）';
         hasHold = true;
@@ -89,11 +93,15 @@ var OptionMailTemplates = (function () {
       lines.push('');
       lines.push(BookingOptions.NOTICES.STAFF_SERVICE_APPROVAL);
     }
+    if (hasShower) {
+      lines.push('');
+      lines.push(BookingOptions.NOTICES.SHOWER_APPROVAL);
+    }
     if (hasHold) {
       lines.push('');
       lines.push('有料レンタル機材は施錠管理しているため、セルフでのご利用には管理者の利用許可（信用確認）が必要です。管理者が許可を確認するまでお支払い・確定はできません。確認後にご案内します（許可が確認できない場合はお受けできません）。');
     }
-    if (hasEquipment || hasStaff || hasHold) {
+    if (hasEquipment || hasStaff || hasHold || hasShower) {
       lines.push('');
       lines.push('お支払い・状況のご確認はこちら（予約IDとご登録のメールアドレスで確認します）:');
       lines.push(buildOptionsPageUrl(booking));
@@ -113,6 +121,7 @@ var OptionMailTemplates = (function () {
   function buildOptionApprovedMail(booking, order, config) {
     var brandLabel = Booking.getBrandLabel(booking.brand);
     var isEquipment = order.category === BookingOptions.CATEGORY.EQUIPMENT;
+    var isShower = order.category === BookingOptions.CATEGORY.MEMBER_SERVICE;
     var freeSet = isEquipment && Number(order.amountJpy) === 0;
     var lines = (freeSet ? [
       booking.name + ' 様',
@@ -125,6 +134,12 @@ var OptionMailTemplates = (function () {
       '',
       '有料レンタル機材のセルフレンタルについて、利用許可を確認しました。',
       '下記のページからオンライン決済をお願いします。ご予約が確定している場合にお支払いいただけます。お支払いの完了をもって確定となります。',
+      ''
+    ] : isShower ? [
+      booking.name + ' 様',
+      '',
+      'ご希望のシャワー利用について、対応可能と確認できました。',
+      '下記のページからオンライン決済をお願いします。お支払いの完了をもって利用確定となります。',
       ''
     ] : [
       booking.name + ' 様',
@@ -141,14 +156,21 @@ var OptionMailTemplates = (function () {
       contactLine_(config),
       signature_(booking)
     ]);
-    return { subject: '【' + brandLabel + '】' + (freeSet ? '有料レンタル機材の利用を許可しました（セット無料・確定）' : isEquipment ? '有料レンタル機材の利用を許可しました（お支払いのお願い）' : 'スタッフ対応を承認しました（お支払いのお願い）'), body: joinNonEmpty_(lines) };
+    return { subject: '【' + brandLabel + '】' + (freeSet ? '有料レンタル機材の利用を許可しました（セット無料・確定）' : isEquipment ? '有料レンタル機材の利用を許可しました（お支払いのお願い）' : isShower ? 'シャワー利用を承認しました（お支払いのお願い）' : 'スタッフ対応を承認しました（お支払いのお願い）'), body: joinNonEmpty_(lines) };
   }
 
   /* 不承認メール。部屋のご予約には影響しないことを明記する。 */
   function buildOptionDeclinedMail(booking, order, config) {
     var brandLabel = Booking.getBrandLabel(booking.brand);
     var isEquipment = order.category === BookingOptions.CATEGORY.EQUIPMENT;
-    var lines = (isEquipment ? [
+    var isShower = order.category === BookingOptions.CATEGORY.MEMBER_SERVICE;
+    var lines = (isShower ? [
+      booking.name + ' 様',
+      '',
+      'ご希望のシャワー利用は、当日の対応の都合によりお受けできませんでした。申し訳ありません。',
+      'お支払いは発生していません。ご予約（部屋の利用）の内容には影響ありません。',
+      ''
+    ] : isEquipment ? [
       booking.name + ' 様',
       '',
       'お申し込みの有料レンタル機材は、管理者による利用許可を確認できなかったため、セルフレンタルをお受けできませんでした。',
@@ -168,7 +190,7 @@ var OptionMailTemplates = (function () {
       contactLine_(config),
       signature_(booking)
     ]);
-    return { subject: '【' + brandLabel + '】' + (isEquipment ? '有料レンタル機材のお申し込みについて（お受けできませんでした）' : 'スタッフ対応について（対応できませんでした）'), body: joinNonEmpty_(lines) };
+    return { subject: '【' + brandLabel + '】' + (isShower ? 'シャワー利用について（お受けできませんでした）' : isEquipment ? '有料レンタル機材のお申し込みについて（お受けできませんでした）' : 'スタッフ対応について（対応できませんでした）'), body: joinNonEmpty_(lines) };
   }
 
   /* お支払い完了・確定メール。 */

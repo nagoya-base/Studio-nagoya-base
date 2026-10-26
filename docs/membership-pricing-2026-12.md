@@ -76,7 +76,7 @@ Issue #469（親）/ #470（料金ロジック）/ #471（Stripe会員管理）/
 
 ### 会員限定シャワー（SNB / SNB mensのみ。Studio Xでは表示しない）
 
-- 1予約につき1回 1,000円。同一予約の利用者2名まで共有可・予約時間内のみ。OptionOrder系の有料オプション（`category=MEMBER_SERVICE`・`items=['SHOWER']`・承認不要・Checkout決済）。正本: `BookingOptions.gs`（`SHOWER_PRICE_JPY_`）。
+- 1予約につき1回 1,000円。同一予約の利用者2名まで共有可・予約時間内のみ。OptionOrder系の有料オプション（`category=MEMBER_SERVICE`・`items=['SHOWER']`・Issue #481で事前連絡・管理者承認制に変更: `PENDING_APPROVAL` → 承認 → `AWAITING_PAYMENT` → Checkout決済 → `CONFIRMED`）。正本: `BookingOptions.gs`（`SHOWER_PRICE_JPY_`）。
 
 ### SNB / mens の既存有料機材（「機材レンタルオプション（会員限定）」）
 

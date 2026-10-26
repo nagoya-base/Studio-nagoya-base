@@ -1,5 +1,5 @@
 /*
- * scripts/booking-shower.js — 会員限定シャワー（Issue #478）の申込・お支払いページ
+ * scripts/booking-shower.js — 会員限定シャワー（Issue #478／#481）の利用希望・お支払いページ
  * （/booking/options/ ＝ SNB、/mens/booking/options/ ＝ SNB mens）。
  *
  * - 既存の予約ID（bookingId）に紐づく。新しい部屋予約は作らない。予約IDだけでは操作できず、登録メールとの
@@ -34,7 +34,8 @@
 
   var BOOKING_STATUS_LABELS = { PENDING: '仮予約（確定連絡待ち）', CONFIRMED: '確定', CANCELLED: '取消', EXPIRED: '期限切れ' };
   var ORDER_STATUS_LABELS = {
-    AWAITING_PAYMENT: 'お支払い待ち', PAYMENT_PENDING: 'お支払い手続き中', CONFIRMED: '確定（お支払い済み）',
+    PENDING_APPROVAL: '運営の確認待ち（まだ利用確定ではありません・お支払いは不要です）',
+    AWAITING_PAYMENT: '承認済み・お支払い待ち', PAYMENT_PENDING: 'お支払い手続き中', CONFIRMED: '確定（お支払い済み）',
     DECLINED: 'お受けできませんでした', CANCELLED: '取消'
   };
   var CLOSED_REASONS = {
@@ -47,6 +48,8 @@
   var ERROR_COPY = {
     MEMBER_BENEFIT_NOT_AVAILABLE: 'この特典は、ご利用日の属する月のSNB MEMBER会員資格を確認できた場合のみご利用いただけます。ご予約のメールアドレスは会員登録と同じものをご入力ください。翌月分は、その月の1日以降、当月の会費の決済が成功してから確定できます。',
     OPTIONS_NOT_AVAILABLE: 'この予約ではシャワーをお申し込みいただけません（会員限定シャワーは2026年12月1日からのご提供です）。',
+    APPROVAL_REQUIRED: 'シャワー利用は事前確認が必要です。運営の承認後にお支払いいただけます。承認をお待ちください。',
+    ORDER_DECLINED: 'このシャワー利用は対応できませんでした。',
     DUPLICATE_OPTION: 'シャワーは1予約につき1回までです。既にお申し込み済みです。',
     FORBIDDEN: '予約IDまたはメールアドレスが一致しません。ご登録の内容をご確認ください。',
     RATE_LIMITED: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。',
@@ -136,7 +139,9 @@
       els.orders.appendChild(box);
     });
     var waiting = orders.some(function (o) { return o.payable; }) && !summary.canPayNow;
-    show(els.payNotice, waiting ? 'お支払いは、ご予約の確定後に行えます。確定のご連絡をお待ちください。' : '');
+    var pending = orders.some(function (o) { return o.status === 'PENDING_APPROVAL'; });
+    show(els.payNotice, waiting ? 'お支払いは、ご予約の確定後に行えます。確定のご連絡をお待ちください。'
+      : (pending ? '運営の承認後にお支払いいただけます。承認のご連絡をお待ちください。' : ''));
   }
 
   function renderSummary(summary) {
@@ -207,7 +212,7 @@
           show(els.submitError, describeError(body && body.error));
           return null;
         }
-        show(els.submitMessage, 'シャワーのお申し込みを受け付けました。ご予約の確定後に、このページからお支払いください。');
+        show(els.submitMessage, 'シャワーの利用希望を受け付けました。まだ利用確定ではありません。運営が対応可否を確認し、承認された場合のみご案内します。承認後に、このページからお支払いください。');
         return lookup(true);
       })
       .catch(function () { show(els.submitError, '通信に失敗しました。時間を置いて再度お試しください。'); })
