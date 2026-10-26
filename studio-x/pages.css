@@ -348,3 +348,23 @@
 @media (max-width: 760px) {
   .member-grid { grid-template-columns: 1fr; }
 }
+
+/* Issue #507: 6時間貸切ベースプラン（X直リンク向けミニマム構成）。ヒーロー画像は .base-plan-hero-media を足すだけで2カラムになる。 */
+.base-plan-main { padding-top: clamp(40px, 6vw, 80px); }
+.base-plan-hero { display: grid; gap: 28px; padding-bottom: 44px; }
+.base-plan-hero-media { margin: 0; }
+.base-plan-hero-media img { display: block; width: 100%; height: auto; }
+.base-plan-hero:has(.base-plan-hero-media) { grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); align-items: center; }
+.base-plan-hero h1 { font-size: clamp(2.2rem, 6vw, 4.2rem); }
+.base-plan-price { margin: 24px 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+.base-plan-price strong { color: var(--accent); font-size: clamp(1.9rem, 6vw, 3rem); letter-spacing: -.04em; line-height: 1.1; }
+.base-plan-price span { color: var(--text); font-weight: 700; font-size: .95rem; }
+.base-plan-sub { max-width: 560px; margin: 14px 0 24px; color: #c6c1c9; font-size: .92rem; }
+.base-plan-main .content-section { padding: 44px 0; }
+.base-plan-main .content-section > h2 { margin-bottom: 20px; font-size: clamp(1.5rem, 4vw, 2.2rem); }
+.base-plan-main .page-cta { margin-top: 44px; }
+@media (max-width: 760px) {
+  .base-plan-hero:has(.base-plan-hero-media) { grid-template-columns: 1fr; }
+  .base-plan-hero .button { width: 100%; justify-content: center; text-align: center; }
+  .base-plan-main .page-cta .button { width: 100%; justify-content: center; text-align: center; }
+}
