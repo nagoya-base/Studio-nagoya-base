@@ -956,10 +956,18 @@
    * 利用日が未選択・形式不正のときは出さない。
    */
   var PAIR_PACK_START_DATE_ = '2026-12-01';
+  /* Issue #541: シャワーもペアパックと同じく利用日が2026/12/1以降で表示する（予約作成日・端末時刻は見ない）。 */
+  var SHOWER_START_DATE_ = '2026-12-01';
 
   function pairPackAvailableOnDate(brand, dateValue) {
     if (MEMBER_BENEFIT_BRANDS_.indexOf(brand) === -1) return false;
     return typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue) && dateValue >= PAIR_PACK_START_DATE_;
+  }
+
+  /* Issue #541: シャワーの表示条件。SNB / mensのみ、利用日が2026/12/1以降。表示制御のみで正本はサーバー（BookingOptions.gs）。 */
+  function showerAvailableOnDate(brand, dateValue) {
+    if (MEMBER_BENEFIT_BRANDS_.indexOf(brand) === -1) return false;
+    return typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue) && dateValue >= SHOWER_START_DATE_;
   }
 
   /*
@@ -1159,6 +1167,7 @@
     brandShowsMemberOption: brandShowsMemberOption,
     brandShowsMemberBenefits: brandShowsMemberBenefits,
     pairPackAvailableOnDate: pairPackAvailableOnDate,
+    showerAvailableOnDate: showerAvailableOnDate,
     appliedRateInfo: appliedRateInfo,
     isPairPackPeopleValue: isPairPackPeopleValue,
     PAIR_PACK_PLAN_CODE: PAIR_PACK_PLAN_CODE,

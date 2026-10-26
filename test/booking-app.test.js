@@ -114,6 +114,7 @@ function setup(responseBody) {
     brandShowsMemberOption: function (b) { return b === 'snb' || b === 'studio_x'; },
     brandShowsMemberBenefits: function () { return false; },
     pairPackAvailableOnDate: function () { return false; },
+    showerAvailableOnDate: function () { return false; },
     appliedRateInfo: function () { return null; },
     isPairPackPeopleValue: function () { return true; },
     PAIR_PACK_PLAN_CODE: 'member_pair_3h',

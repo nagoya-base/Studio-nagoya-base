@@ -215,6 +215,7 @@ var OptionOrderService = (function () {
       optionsConfig: BookingConfig.getOptionsConfig(),
       eligibility: needsEligibility ? resolveEligibility_(email) : { eligibleEquipmentCodes: [] },
       brand: brand,
+      date: options && options.date,
       now: preflightNow,
       actualMember: needsStaffMember ? isStaffServiceMember_(email, options && options.date) : false
     });
@@ -309,6 +310,7 @@ var OptionOrderService = (function () {
         optionsConfig: optionsConfig,
         eligibility: requiresEligibility_(normalized) ? resolveEligibility_(booking.email) : { eligibleEquipmentCodes: [] },
         brand: booking.brand,
+        date: booking.date,
         now: effectiveNow,
         actualMember: BookingOptions.requestsMemberOnlyOption(normalized, effectiveNow) ? isStaffServiceMember_(booking.email, booking.date) : false
       });
@@ -488,6 +490,10 @@ var OptionOrderService = (function () {
          2026/11/30までに作成済みの機材注文は旧ルールのまま（スタッフ対応は#472から常に会員限定）。 */
       if (BookingOptions.orderRequiresActualMember(order) && !isStaffServiceMember_(freshBooking.email, freshBooking.date)) {
         return memberRequiredErrorFor_(order);
+      }
+      /* Issue #541: シャワーは利用日が2026/12/1以降の予約のみ（作成・日程変更で守られるが、支払い前にも最終確認する）。 */
+      if (order.category === BookingOptions.CATEGORY.MEMBER_SERVICE && !BookingOptions.isShowerAvailableOnDate(freshBooking.date)) {
+        return fail_('OPTIONS_NOT_AVAILABLE', BookingOptions.SHOWER_NOT_AVAILABLE_MESSAGE);
       }
       return { success: true, order: order };
     });

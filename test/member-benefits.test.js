@@ -517,13 +517,51 @@ test('シャワーはStudio Xでは選べない。SNB / mensではStudio Xの機
   assert.strictEqual(addon(ctx, m, { layouts: ['CLASSROOM'], setupService: 'SELF', cleanupService: 'SELF' }).success === false, true, 'SNB/mensはシャワー以外のオプションを受け付けない');
 });
 
-test('シャワーは2026/12/1以降に作成する注文のみ（提供開始前は不可）', function () {
+test('シャワーは利用日が2026/12/1以降の予約のみ（Issue #541。注文の作成日は問わない）', function () {
+  var NOW_OCT = new Date('2026-10-27T12:00:00+09:00');
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
-  var id = seedRoom(ctx, {});
-  var before = addon(ctx, id, { shower: true }, NOW_BEFORE);
-  assert.strictEqual(before.success, false);
-  assert.strictEqual(before.error.code, 'OPTIONS_NOT_AVAILABLE');
-  assert.strictEqual(addon(ctx, id, { shower: true }, NOW_START).success, true);
+  /* 作成日10/27・利用日12/10 → 可（提供開始前に作る注文でも利用日が12/1以降なら受け付ける）。 */
+  var dec = seedRoom(ctx, { date: '2026-12-10', bookingId: 'MENS-20261210-EEEE0001' });
+  assert.strictEqual(addon(ctx, dec, { shower: true }, NOW_OCT).success, true);
+  /* 境界: 作成日11/30・利用日12/1 → 可。 */
+  var edge = seedRoom(ctx, { date: '2026-12-01', bookingId: 'MENS-20261201-EEEE0002' });
+  assert.strictEqual(addon(ctx, edge, { shower: true }, new Date('2026-11-30T12:00:00+09:00')).success, true);
+  /* 境界: 利用日11/30 → 不可（作成日が12/1以降でも利用日で判定）。 */
+  var nov = seedRoom(ctx, { date: '2026-11-30', bookingId: 'MENS-20261130-EEEE0003' });
+  var denied = addon(ctx, nov, { shower: true }, NOW_OCT);
+  assert.strictEqual(denied.success, false);
+  assert.strictEqual(denied.error.code, 'OPTIONS_NOT_AVAILABLE');
+  assert.strictEqual(ctx.sandbox.OptionOrderRepository.listByBookingId(nov).length, 0);
+});
+
+test('シャワー(#541): 予約同時申込の事前検証（preflight）も利用日で判定。非会員・Studio Xは従来どおり拒否', function () {
+  var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
+  var OOS = ctx.sandbox.OptionOrderService;
+  var NOW_OCT = new Date('2026-10-27T12:00:00+09:00');
+  function pre(brand, date, email) { return OOS.preflightForNewBooking(brand, { shower: true }, email || EMAIL, { date: date, now: NOW_OCT }); }
+  assert.strictEqual(pre('mens', '2026-12-10').success, true);
+  assert.strictEqual(pre('snb', '2026-12-01').success, true);
+  var early = pre('snb', '2026-11-30');
+  assert.strictEqual(early.success, false);
+  assert.strictEqual(early.error.code, 'OPTIONS_NOT_AVAILABLE');
+  assert.strictEqual(pre('snb', undefined).success, false, '利用日が不明ならfail-closed');
+  assert.strictEqual(pre('snb', '2026-12-10', 'other@example.com').error.code, DENIED_CODE, '非会員は既存の拒否コード');
+  assert.strictEqual(pre('studio_x', '2026-12-10').success, false, 'Studio Xは対象外');
+});
+
+test('シャワー(#541): 提供可否の純粋判定は利用日の境界（11/30=不可・12/1=可）。日程変更とCheckout前にも同じ判定を使う', function () {
+  var BO = setup().sandbox.BookingOptions;
+  assert.strictEqual(BO.isShowerAvailableOnDate('2026-11-30'), false);
+  assert.strictEqual(BO.isShowerAvailableOnDate('2026-12-01'), true);
+  assert.strictEqual(BO.isShowerAvailableOnDate('2027-01-12'), true);
+  assert.strictEqual(BO.isShowerAvailableOnDate(''), false);
+  assert.strictEqual(BO.isShowerAvailableOnDate(null), false);
+  assert.strictEqual(BO.isShowerAvailableOnDate('2026/12/10'), false, '形式不正はfail-closed');
+  var fs = require('fs');
+  var resched = fs.readFileSync(__dirname + '/../gas/booking/admin/BookingReschedule.gs', 'utf8');
+  assert.ok(resched.indexOf('BookingOptions.isShowerAvailableOnDate(newDateString)') !== -1, '日程変更で11/30以前へ移せない');
+  var svc = fs.readFileSync(__dirname + '/../gas/booking/shared/OptionOrderService.gs', 'utf8');
+  assert.ok(svc.indexOf('BookingOptions.isShowerAvailableOnDate(freshBooking.date)') !== -1, 'Checkout開始前の最終確認');
 });
 
 test('シャワーの会員判定月: 翌月分は翌月の当月会費決済成功後に確定可能（月境界）', function () {

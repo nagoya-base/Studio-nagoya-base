@@ -264,7 +264,7 @@ test('各トップから対応する会員ページへの導線がある（SNB�
 
 test('規約・特商法・会員条件に、新料金（5,000/6,000/1,000円）・利用日ルール・共通会員・適用開始日が載っている', function () {
   var terms = textOf(read('_includes/membership_terms_ja.html'));
-  ['ご利用日が2026年12月1日以降のご予約からご利用いただけます', '2026年12月1日以降に作成するご予約・お申し込みから', '2名ペアパック', '平日5,000円／土日祝6,000円', 'シャワー（1予約につき1回1,000円', '他の割引・優待と併用できず',
+  ['ご利用日が2026年12月1日以降のご予約からご利用いただけます', '2名ペアパックと同じくご利用日が2026年12月1日以降のご予約から', '2名ペアパック', '平日5,000円／土日祝6,000円', 'シャワー（1予約につき1回1,000円', '他の割引・優待と併用できず',
     'その期間の特典は、更新の決済が成功してから確定できます', '猶予期間はありません',
     '変更先の利用日の会員資格を改めて確認', 'Studio Nagoya Base・SNB mens・Studio Xで共通の1つのSNB MEMBER'].forEach(function (w) {
     assert.ok(terms.indexOf(w) !== -1, '会員条件に「' + w + '」');
@@ -452,6 +452,26 @@ test('Issue #539: ペアパックの表示は利用日が2026/12/1以降のSNB /
   assert.strictEqual(Logic.pairPackAvailableOnDate('snb', '2026/12/10'), false, '形式不正');
 });
 
+test('Issue #541: シャワーの表示は利用日が2026/12/1以降のSNB / mensのみ（予約フォームを開いた日は問わない）', function () {
+  var Logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
+  assert.strictEqual(Logic.showerAvailableOnDate('snb', '2026-12-10'), true, '作成日10/27でも利用日12/10なら表示');
+  assert.strictEqual(Logic.showerAvailableOnDate('snb', '2026-12-01'), true, '境界（11/30作成・12/1利用）');
+  assert.strictEqual(Logic.showerAvailableOnDate('mens', '2026-12-01'), true);
+  assert.strictEqual(Logic.showerAvailableOnDate('snb', '2026-11-30'), false, '利用日が11/30以前は表示しない');
+  assert.strictEqual(Logic.showerAvailableOnDate('mens', '2026-11-30'), false);
+  assert.strictEqual(Logic.showerAvailableOnDate('studio_x', '2026-12-10'), false, 'Studio Xには出さない');
+  assert.strictEqual(Logic.showerAvailableOnDate('snb', ''), false, '利用日未選択');
+  assert.strictEqual(Logic.showerAvailableOnDate('snb', undefined), false);
+  assert.strictEqual(Logic.showerAvailableOnDate('snb', '2026/12/10'), false, '形式不正');
+});
+
+test('Issue #541: 予約フォームは利用日変更でシャワー表示を同期し、出せない日付では選択を外す', function () {
+  var app = read('scripts/booking-app.js');
+  assert.match(app, /Logic\.showerAvailableOnDate\(brand, els\.date \? els\.date\.value : ''\)/, 'ブラウザの現在日時ではなく選択された利用日で判定');
+  assert.match(app, /if \(!showerVisible && els\.shower\) els\.shower\.checked = false;/, '出せなくなったら選択を外す');
+  assert.ok(app.indexOf('brandShowsMemberBenefits') === -1, '端末時刻基準の判定を使わない');
+});
+
 test('Issue #539: 適用料金の表示はサーバーの見積り結果（plan / tier / brand）だけから導出する', function () {
   var Logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
   function info(price, locale) { return Logic.appliedRateInfo(price, locale || 'ja'); }
@@ -508,9 +528,9 @@ test('Issue #539: 予約フォームはペアパック欄を利用日で同期�
   assert.ok(tpl.indexOf('id="ba-plan-pair"') > tpl.indexOf('{% if include.brand == "snb" or include.brand == "mens" %}'));
 });
 
-test('Issue #539: 公開文言は、ペアパック=利用日基準 / シャワー等=作成日基準 に分けて一致している（規約・特商法・特典ページ）', function () {
+test('Issue #541: 公開文言は、ペアパックもシャワーも利用日基準で一致している（規約・特商法・特典ページ）', function () {
   var pairRule = 'ご利用日が2026年12月1日以降のご予約から';
-  var showerRule = '2026年12月1日以降に作成するご予約・お申し込みから';
+  var showerRule = 'ご利用日が2026年12月1日以降のご予約から';
   var terms = textOf(read('_includes/membership_terms_ja.html'));
   var legal = textOf(read('_includes/legal_ja.html'));
   var benefits = textOf(read('_includes/membership_benefits_ja.html'));
@@ -518,6 +538,11 @@ test('Issue #539: 公開文言は、ペアパック=利用日基準 / シャワ�
     assert.ok(t.indexOf(pairRule) !== -1 && t.indexOf(showerRule) !== -1);
   });
   assert.ok(legal.indexOf('いずれも2026年12月1日以降に作成するご予約') === -1, '旧「いずれも作成日基準」の文言を残さない');
-  assert.ok(benefits.indexOf('2名ペアパックはご利用日が2026年12月1日以降のご予約から') !== -1);
+  [terms, legal, benefits].forEach(function (t) {
+    assert.ok(t.indexOf('シャワー') !== -1 && t.indexOf('2026年12月1日以降に作成するご予約・お申し込みから') === -1, 'シャワーを作成日基準と書かない');
+  });
+  assert.ok(legal.indexOf('シャワーも、ご利用日が2026年12月1日以降のご予約から提供します') !== -1);
+  assert.ok(legal.indexOf('シャワー（1回1,000円）もご利用日が2026年12月1日以降のご予約から') !== -1);
+  assert.ok(benefits.indexOf('2名ペアパックとシャワーは、ご利用日が2026年12月1日以降のご予約から') !== -1);
   assert.ok(benefits.indexOf(showerRule) !== -1);
 });

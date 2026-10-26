@@ -283,7 +283,7 @@
     </fieldset>
 
 {% if include.brand == "snb" or include.brand == "mens" %}
-    <!-- 会員限定の特典（Issue #478）。シャワーは2026/12/1以降（brandShowsMemberBenefits）、ペアパックは利用日が2026/12/1以降（pairPackAvailableOnDate。Issue #539）のときだけJS側が表示する。
+    <!-- 会員限定の特典（Issue #478）。ペアパックは利用日が2026/12/1以降（pairPackAvailableOnDate。Issue #539）、シャワーも利用日が2026/12/1以降（showerAvailableOnDate。Issue #541）のときだけJS側が表示する。
          どちらも実会員資格（SNB MEMBER。利用日がお支払い済みの有効期間に入っていること）が必要で、確認はサーバー側で行う
          （mensの会員料金の自動適用では代用できない）。ペアパックは独立プラン（通常の会員料金表とは別商品）。 -->
     <fieldset class="ba-fieldset" id="ba-benefits-field" hidden>
