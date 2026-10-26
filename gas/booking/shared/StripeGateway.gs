@@ -53,7 +53,17 @@ var StripeGateway = (function () {
    */
   function buildCreateSessionPayload_(params) {
     var payload = {
+      'ui_mode': 'hosted_page',
       'mode': 'payment',
+      'billing_address_collection': 'auto',
+      'phone_number_collection[enabled]': false,
+      'automatic_tax[enabled]': false,
+      'allow_promotion_codes': false,
+      'submit_type': 'auto',
+      'name_collection[individual][enabled]': true,
+      'name_collection[individual][optional]': true,
+      'integration_identifier': 'hosted_web_0001',
+      'origin_context': 'web',
       'success_url': params.successUrl,
       'cancel_url': params.cancelUrl,
       'expires_at': String(params.expiresAtSeconds),
@@ -368,7 +378,17 @@ var StripeGateway = (function () {
       return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
     }
     var payload = {
+      'ui_mode': 'hosted_page',
       'mode': 'payment',
+      'billing_address_collection': 'auto',
+      'phone_number_collection[enabled]': false,
+      'automatic_tax[enabled]': false,
+      'allow_promotion_codes': false,
+      'submit_type': 'auto',
+      'name_collection[individual][enabled]': true,
+      'name_collection[individual][optional]': true,
+      'integration_identifier': 'hosted_web_0001',
+      'origin_context': 'web',
       'success_url': params.successUrl,
       'cancel_url': params.cancelUrl,
       'customer_email': params.email,
