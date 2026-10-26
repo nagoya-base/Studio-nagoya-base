@@ -113,6 +113,8 @@ function setup(responseBody) {
     brandShowsMemberBenefits: function () { return false; },
     isPairPackPeopleValue: function () { return true; },
     PAIR_PACK_PLAN_CODE: 'member_pair_3h',
+    /* Issue #500: 初期化末尾でURLのplanを読む。このstub群はURLのplanを持たない。 */
+    planFromSearch: function () { return ''; },
     formatJpyAmount: function (amount) {
       var value = Number(amount);
       return Number.isFinite(value) ? '¥' + value.toLocaleString('en-US') : '';
