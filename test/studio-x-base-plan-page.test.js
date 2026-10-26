@@ -29,6 +29,10 @@ test('planFromSearch: studio_xの有効なplanだけを返し、なし・不正�
     assert.strictEqual(Logic.planFromSearch('?plan=' + PLAN, b), '', String(b));
   });
   assert.strictEqual(Logic.planFromSearch('?xplan=' + PLAN, 'studio_x'), '');
+  /* 複数指定は無効（どちらが有効か曖昧なため通常予約） */
+  assert.strictEqual(Logic.planFromSearch('?plan=' + PLAN + '&plan=xxx', 'studio_x'), '');
+  assert.strictEqual(Logic.planFromSearch('?plan=xxx&plan=' + PLAN, 'studio_x'), '');
+  assert.strictEqual(Logic.planFromSearch('?plan=' + PLAN + '&plan=' + PLAN, 'studio_x'), '');
 });
 
 test('予約フォーム: URLの初期選択は初期化の最後に1回だけ。6時間固定・オプション畳み込みは既存の applyEventPlanState_ を通す', function () {
@@ -81,8 +85,12 @@ test('特設ページ: ファーストビューの価格・人数・用途、誤
 
 test('特設ページ: CTAは上部・下部ともプラン選択済み予約へ直結し、GA4は既存のcta_click規約を使う', function () {
   var html = read('studio-x/base-plan/index.html');
-  var ctas = html.match(/<a [^>]*href="booking\/\?plan=osu_cosplay_base_6h#booking-app-section"[^>]*>/g) || [];
-  assert.ok(ctas.length >= 3, 'ヘッダー・ファーストビュー・下部');
+  /* /studio-x/base-plan/ から見て ../booking/（= /studio-x/booking/）へ解決されること。booking/ だけだと /studio-x/base-plan/booking/ になる。 */
+  var ctas = html.match(/<a [^>]*href="\.\.\/booking\/\?plan=osu_cosplay_base_6h#booking-app-section"[^>]*>/g) || [];
+  assert.strictEqual(ctas.length, 4, 'ヘッダー・モバイルメニュー・ファーストビュー・下部');
+  var hrefs = html.match(/href="[^"]*booking\/[^"]*"/g) || [];
+  hrefs.forEach(function (h) { assert.ok(h.indexOf('href="../booking/') === 0, '相対階層: ' + h); });
+  assert.ok(html.indexOf('href="../booking/">通常のStudio X予約</a>') !== -1, '通常予約リンク');
   ctas.forEach(function (a) { assert.ok(/data-analytics-event="cta_click"/.test(a) && /data-analytics-location="[a-z_]+"/.test(a)); });
   assert.ok(html.indexOf('base_plan_hero') !== -1 && html.indexOf('base_plan_footer') !== -1);
   assert.ok(!/generate_lead|gtag\('event'/.test(html), '成果イベントを増やさない');

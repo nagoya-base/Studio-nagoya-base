@@ -962,10 +962,10 @@
      可否はサーバーが予約作成時に必ず判定する。 */
   function planFromSearch(search, brand) {
     if (brand !== 'studio_x') return '';
-    var m = /(?:^|[?&])plan=([^&#]*)/.exec(String(search || ''));
-    if (!m) return '';
+    var matches = String(search || '').match(/(?:^|[?&])plan=([^&#]*)/g) || [];
+    if (matches.length !== 1) return '';
     var value;
-    try { value = decodeURIComponent(m[1]); } catch (e) { return ''; }
+    try { value = decodeURIComponent(matches[0].replace(/^[?&]?plan=/, '')); } catch (e) { return ''; }
     return value === EVENT_BASE_PLAN_CODE ? EVENT_BASE_PLAN_CODE : '';
   }
 
