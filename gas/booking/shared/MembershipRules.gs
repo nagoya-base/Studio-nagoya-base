@@ -258,7 +258,6 @@ var MembershipRules = (function () {
     { key: 'advance_booking_90', label: '90日先行予約', fromBenefitsStart: false },
     { key: 'pair_pack', label: '2名ペアパック（SNB / SNB mens）', fromBenefitsStart: true },
     { key: 'shower', label: 'シャワー（SNB / SNB mens）', fromBenefitsStart: true },
-    { key: 'paid_equipment', label: '会員限定の有料機材レンタル（SNB / SNB mens）', fromBenefitsStart: true },
     { key: 'studio_x_options', label: 'Studio X 会員限定の有料オプション', fromBenefitsStart: true }
   ];
 

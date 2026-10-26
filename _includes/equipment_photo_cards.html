@@ -1,10 +1,9 @@
 {%- comment -%}
-  写真付き機材紹介カード。/equipment/ と /studio-x/equipment/ の共通include。
+  写真付き機材紹介カード。/equipment/ と /studio-x/equipment/ の共通include。有料レンタル機材のカードはStudio Xのサービスとして brand="studio-x" のときだけ出す（Issue #502）。
   レンタル価格は _data/studio_x_equipment.json の rental[].unitPriceJpy から引く（金額をここへ直書きしない。Issue #432）。
 {%- endcomment -%}
 {%- comment -%} Studio X側は有料機材の利用条件を機材一覧で一度だけ案内するため、各カードでは繰り返さない（Issue #461）。 {%- endcomment -%}
 {%- assign lock_note = "" -%}
-{%- unless include.brand == "studio-x" %}{% assign lock_note = "施錠管理のため、ご利用には管理者の利用許可が必要です。" %}{% endunless -%}
 {%- assign rental_list = site.data.studio_x_equipment.rental -%}
 {%- assign price_BOWENS_BRACKET = rental_list | where: "code", "BOWENS_BRACKET" | first -%}
 {%- assign price_COB_BICOLOR = rental_list | where: "code", "COB_BICOLOR" | first -%}
@@ -32,6 +31,7 @@
   </div>
 </article>
 
+{%- if include.brand == "studio-x" %}
 <article class="equipment-photo-card">
   <img src="{{ include.image_path }}/equipment-cob-light-bicolor.webp" width="900" height="1600" loading="lazy" decoding="async" alt="バイカラーCOBライト（型番表記：FS150B）にリフレクターを装着した側面">
   <div class="equipment-photo-card-body">
@@ -85,3 +85,4 @@
     <p>カメラに装着し、対応するストロボを無線で発光させます。Canon用・SONY用をご用意しています。{{ lock_note }}</p>
   </div>
 </article>
+{%- endif %}
