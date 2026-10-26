@@ -638,7 +638,8 @@ test('SNB / mens: 料金表・プラン処理は変わらない（ペアパッ�
   var snb = P.computeBookingPrice({ brand: 'snb', date: EVENT_DAY, durationMinutes: 180, generation: 'V2', isMember: false });
   assert.strictEqual(snb.valid, true);
   assert.strictEqual(snb.price.plan, '');
-  var pair = P.computeBookingPrice({ brand: 'snb', date: EVENT_DAY, durationMinutes: 180, generation: 'V2', plan: 'member_pair_3h' });
+  /* Issue #539: ペアパックの提供可否は利用日（2026/12/1以降）で決まる。EVENT_DAYは実行時刻に依存するため固定日を使う。 */
+  var pair = P.computeBookingPrice({ brand: 'snb', date: '2026-12-07', durationMinutes: 180, generation: 'V2', plan: 'member_pair_3h' });
   assert.strictEqual(pair.valid, true);
   assert.ok(pair.price.amount === 5000 || pair.price.amount === 6000);
 });

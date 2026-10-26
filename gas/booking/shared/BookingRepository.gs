@@ -332,7 +332,8 @@ var BookingRepository = (function () {
     }
     if (!plan) return { ok: true, plan: '' };
     if (BookingPricing.isEventPlan(plan)) return resolveEventPlanForNewBooking_(input, plan);
-    if ((input.brand !== 'snb' && input.brand !== 'mens') || generation !== BookingPricing.GENERATION.V2) {
+    /* Issue #539: 提供可否は予約作成日（料金世代）ではなく利用日（2026/12/1以降）で判定する。 */
+    if ((input.brand !== 'snb' && input.brand !== 'mens') || !BookingPricing.isPairPackAvailableOnDate(input.date)) {
       return { ok: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
     }
     if (!BookingPricing.isPairPackPeople(input.people)) {

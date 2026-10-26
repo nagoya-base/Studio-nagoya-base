@@ -7737,3 +7737,10 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - **エラー**: `INVALID_TOKEN`（期限切れ・不正）/ `RATE_LIMITED` / `LOCK_TIMEOUT` / `CANCEL_UNAVAILABLE`（Stripe未設定・Stripeの失敗。内部詳細・Stripe IDは返さない）。
 - **手動の予備導線**: 予約フォーム等から運営へ連絡する方法は残す（UIを使えない場合）。規約・特商法・FAQは「通常は専用UI、できない場合は連絡」に更新済み。
 - 配布: `StripeGateway.gs` / `MemberRepository.gs` / `MembershipService.gs` / `Code.gs` をBooking Web Appへ。Booking Admin・Webhookは変更なし。
+
+## Issue #539: 料金サマリーの適用料金区分と、ペアパックの利用日基準の提供
+
+- **ペアパックの提供可否は利用日基準**: 利用日が2026/12/1以降（`BookingPricing.isPairPackAvailableOnDate`）であれば、予約作成日（料金世代V1/V2）に関わらずSNB / mensで選択・予約できる。`BookingPricing.computeBookingPrice`・`BookingRepository.resolvePlanForNewBooking_`（見積り・作成・日程変更〔`FeeCalculator.quoteFee`〕が同じ判定）。利用日が11/30以前・Studio Xは従来どおり `PLAN_NOT_AVAILABLE`。
+- **変えていないもの**: ペアパックの価格・人数・対象ブランド、actual membership必須（非会員・資格不一致は `MEMBER_BENEFIT_NOT_AVAILABLE`）、会員資格の正本・料金世代の境界（`generationAt`）、90日先行予約の判定、シャワー（従来どおり作成日2026/12/1以降）、Stripe関連。見積りAPIは引き続き会員台帳を照会しない。
+- **フロント**: `BookingLogic.pairPackAvailableOnDate(brand, date)` は表示制御のみ（正本はGAS）。利用日が選ばれた時点でペアパック欄を出し、出せない日付に変えたら選択を外す。
+- **適用料金の表示**: `BookingLogic.appliedRateInfo(price, locale)` が見積り応答の `price.plan / tier / brand` だけから「適用料金：一般料金／SNB MEMBER 会員料金」「適用プラン：SNB MEMBER限定 2名ペアパック」を導出する（料金表はフロントに持たない）。成功した見積りのときだけ表示し、計算中・失敗時は隠す。

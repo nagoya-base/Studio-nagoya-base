@@ -104,7 +104,7 @@
       PAIR_PACK_PEOPLE_EXCEEDED: '2名ペアパックのご利用は1〜2名までです。人数を変更するか、ペアパックの選択を外してください。',
       PLAN_DURATION_INVALID: 'ご選択のプランの利用時間が条件を満たしていません（2名ペアパックは3時間以上、貸切ベースプランは最低6時間から1時間単位）。',
       PLAN_HOURS_OUT_OF_RANGE: '貸切ベースプランは8:00〜21:00の範囲内でご利用ください。終了が21:00を超える時間は選べません。開始時刻か利用時間を変更してください。',
-      PLAN_NOT_AVAILABLE: 'このプランは現在ご利用いただけません（会員限定の2名ペアパックは2026年12月1日からのご提供です）。',
+      PLAN_NOT_AVAILABLE: 'このプランは現在ご利用いただけません（会員限定の2名ペアパックは、ご利用日が2026年12月1日以降の場合のみご選択いただけます）。',
       INVALID_PLAN: 'プランの指定が正しくありません。ページを開き直してください。',
       /* Issue #488 / #492 / #510: 6時間貸切ベースプラン（常設）。 */
       EVENT_PLAN_PEOPLE_EXCEEDED: '貸切ベースプランのご利用は1〜10名までです。人数を変更するか、プランの選択を外してください。',
@@ -949,6 +949,54 @@
     return now >= MEMBER_BENEFITS_START_MS_;
   }
 
+  /*
+   * Issue #539: 2名ペアパックの表示条件は「予約作成日」ではなく**利用日が2026/12/1以降**（JSTの暦日 'YYYY-MM-DD'）。
+   * 2026/11/30以前に予約フォームを開いても、12/1以降の利用日を選べばSNB / mensで選択できる。
+   * 表示制御のみで、可否（ブランド・利用日・人数・会員資格）の正本はサーバー（BookingPricing.gs / BookingRepository.gs）。
+   * 利用日が未選択・形式不正のときは出さない。
+   */
+  var PAIR_PACK_START_DATE_ = '2026-12-01';
+
+  function pairPackAvailableOnDate(brand, dateValue) {
+    if (MEMBER_BENEFIT_BRANDS_.indexOf(brand) === -1) return false;
+    return typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue) && dateValue >= PAIR_PACK_START_DATE_;
+  }
+
+  /*
+   * Issue #539: 料金サマリーに出す「適用料金／適用プラン」。サーバーの見積り結果（price: plan / tier / brand）だけから導出し、
+   * フロントに料金表は持たない。金額と同じ応答から作るため、金額と区分は必ず同時に更新される。
+   * - plan=member_pair_3h → 適用プラン: SNB MEMBER限定 2名ペアパック
+   * - plan=貸切ベースプラン → 適用プラン: Studio X｜6時間貸切ベースプラン（tierはGENERALだが一般料金とは表示しない）
+   * - tier=MEMBER → 適用料金: SNB MEMBER 会員料金（Studio Xの旧世代V1の会員料金は「会員料金」）
+   * - tier=GENERAL → 適用料金: 一般料金
+   * 判定できない応答（priceなし・tier不明）はnull（何も表示しない。誤った区分を出さない）。
+   */
+  var APPLIED_RATE_TEXT_ = {
+    ja: {
+      rateLabel: '適用料金', planLabel: '適用プラン', general: '一般料金',
+      member: 'SNB MEMBER 会員料金', memberPlain: '会員料金',
+      pairPlan: 'SNB MEMBER限定 2名ペアパック', eventPlan: 'Studio X｜6時間貸切ベースプラン', sep: '：'
+    },
+    en: {
+      rateLabel: 'Applied rate', planLabel: 'Applied plan', general: 'Standard rate',
+      member: 'SNB MEMBER rate', memberPlain: 'Member rate',
+      pairPlan: 'SNB MEMBER-only Pair Pack (2 guests)', eventPlan: 'Studio X 6-hour Private Base Plan', sep: ': '
+    }
+  };
+
+  function appliedRateInfo(price, locale) {
+    if (!price || typeof price !== 'object') return null;
+    var t = APPLIED_RATE_TEXT_[locale === 'en' ? 'en' : 'ja'];
+    if (price.plan === PAIR_PACK_PLAN_CODE) return { kind: 'plan', label: t.planLabel, value: t.pairPlan, text: t.planLabel + t.sep + t.pairPlan };
+    if (price.plan === EVENT_BASE_PLAN_CODE) return { kind: 'plan', label: t.planLabel, value: t.eventPlan, text: t.planLabel + t.sep + t.eventPlan };
+    if (price.plan) return null;
+    var value;
+    if (price.tier === 'MEMBER') value = price.brand === 'studio_x' ? t.memberPlain : t.member;
+    else if (price.tier === 'GENERAL') value = t.general;
+    else return null;
+    return { kind: 'rate', label: t.rateLabel, value: value, text: t.rateLabel + t.sep + value };
+  }
+
   /* ペアパックの人数条件（'1名'|'2名'）。未選択は判定せずtrue（人数の必須チェックは別）。 */
   function isPairPackPeopleValue(people) {
     if (!people) return true;
@@ -1110,6 +1158,8 @@
     cardCheckoutUncertainNoticeLines: cardCheckoutUncertainNoticeLines,
     brandShowsMemberOption: brandShowsMemberOption,
     brandShowsMemberBenefits: brandShowsMemberBenefits,
+    pairPackAvailableOnDate: pairPackAvailableOnDate,
+    appliedRateInfo: appliedRateInfo,
     isPairPackPeopleValue: isPairPackPeopleValue,
     PAIR_PACK_PLAN_CODE: PAIR_PACK_PLAN_CODE,
     EVENT_BASE_PLAN_CODE: EVENT_BASE_PLAN_CODE,
