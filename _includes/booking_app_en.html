@@ -51,9 +51,37 @@
     <div class="ba-field" id="ba-email-field">
       <label for="ba-email">Email Address<span class="ba-required">Required</span></label>
       <input type="email" id="ba-email" name="email" autocomplete="email" inputmode="email" maxlength="254">
-      <p class="ba-field-help">Please use an address where you can receive our confirmation. SNB MEMBER members: when you submit, the registered email address is checked automatically, and member rates and benefits apply to bookings whose date of use falls within the membership period (please enter the same email address as your membership registration). Whether you are a member is not shown on this screen.</p>
+      <p class="ba-field-help">Please use an address where you can receive our confirmation. For bookings created on or after December 1, 2026, SNB MEMBER members who want member rates, member benefits or advance booking (31-90 days ahead) should enter the same email address as their membership registration and confirm it with a 6-digit verification code in "SNB MEMBER members" below. Without verification you can still continue as a general booking. Whether you are a member is not shown on this screen.</p>
       <p class="ba-field-error" id="ba-email-error" hidden></p>
     </div>
+
+{% if include.brand == "snb" or include.brand == "mens" %}
+    <!-- Issue #548: member verification for V2 bookings (SNB / SNB mens bookings created on/after 2026-12-01 00:00 JST).
+         A 6-digit code (OTP) sent to the booking email unlocks member rates, member-only benefits and 31-90 day advance booking.
+         The V1/V2 decision is the server's priceGeneration; JS hides this field while V1 applies. -->
+    <fieldset class="ba-fieldset" id="ba-member-verify-field" hidden>
+      <legend>SNB MEMBER members (verification)</legend>
+      <p class="ba-field-help">To use member rates, member-only benefits or advance booking 31-90 days ahead, send a 6-digit verification code to the email address above and enter it here (valid for 60 minutes). You can continue with a general booking without verifying.</p>
+      <div class="ba-banner-actions">
+        <button type="button" class="ba-btn ba-btn-ghost" id="ba-member-code-send">Send verification code</button>
+      </div>
+      <div id="ba-member-code-entry" hidden>
+        <label for="ba-member-code">Verification code (6 digits)</label>
+        <input type="text" id="ba-member-code" name="memberCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*">
+        <div class="ba-banner-actions">
+          <button type="button" class="ba-btn ba-btn-primary" id="ba-member-code-verify">Verify</button>
+        </div>
+      </div>
+      <p class="ba-field-help" id="ba-member-verify-status" role="status" aria-live="polite" hidden></p>
+      <p class="ba-field-error" id="ba-member-verify-error" role="alert" hidden></p>
+      <div id="ba-member-reverify" class="ba-banner ba-banner--error" role="alert" hidden>
+        <p id="ba-member-reverify-message"></p>
+        <div class="ba-banner-actions">
+          <button type="button" class="ba-btn ba-btn-ghost" id="ba-member-general-continue">Continue as a general booking</button>
+        </div>
+      </div>
+    </fieldset>
+{% endif %}
 
     <!-- Preferred time of day (Issue #324). Defaults to "Any time" (all) checked.
          This selection only filters the monthly calendar symbols and the Step1 start
@@ -259,7 +287,7 @@
       <div class="ba-choices">
         <label class="ba-choice"><input type="checkbox" id="ba-member-unlock" value="1"> <span>I want to use SNB MEMBER advance booking (31-90 days ahead)</span></label>
       </div>
-      <p class="ba-field-help">Dates 31 to 90 days ahead are open only to SNB MEMBERS. Checking this only unlocks the dates; membership is confirmed from your booking email and does not change your rate by itself.</p>
+      <p class="ba-field-help">Shown only for bookings created through November 30, 2026. Dates 31 to 90 days ahead are open only to SNB MEMBERS. Checking this only unlocks the dates; membership is confirmed from your booking email and does not change your rate by itself.</p>
     </fieldset>
 {% endif %}
 

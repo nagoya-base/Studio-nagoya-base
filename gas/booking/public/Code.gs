@@ -52,6 +52,9 @@ function doPost(e) {
   if (params.action === 'requestMembershipStatus' || params.action === 'membershipStatus' || params.action === 'cancelMembership') {
     return jsonOutput_(handleMembershipStatusAction_(params.action, e));
   }
+  if (params.action === 'requestBookingMemberCode' || params.action === 'verifyBookingMemberCode' || params.action === 'bookingMemberStatus') {
+    return jsonOutput_(handleBookingMemberAction_(params.action, e));
+  }
   if (params.action === 'optionSummary' || params.action === 'submitOptions' || params.action === 'startOptionCheckout') {
     return jsonOutput_(handleOptionAction_(params.action, e));
   }
@@ -278,6 +281,85 @@ function handleMembershipStatusAction_(action, e) {
 }
 
 /*
+ * V2予約の会員確認（Issue #548。SNB / SNB mensの2026/12/1 0:00 JST以降に作成する直接予約）。メールアドレス・OTP・証明を扱うためPOST専用で、
+ * リクエスト本文はログに出さない。想定外の例外は汎用のINTERNAL_ERROR。
+ * - requestBookingMemberCode={ email }: 会員か否かにかかわらず同一の処理・同一の応答で6桁の確認コードをメール送信する。
+ * - verifyBookingMemberCode={ email, code }: 確認コードを検証し、メール・用途に拘束した確認済み証明（60分）と、今日の先行予約資格を返す。
+ * - bookingMemberStatus={ brand, email, proof, date?, durationMinutes?, startTime?, plan? }: 確認済み証明が有効な場合だけ、
+ *   先行予約資格・利用日の会員資格・会員料金の見積りを返す（証明なし・期限切れ・メール不一致・改ざん時は会員情報を返さない）。
+ */
+function handleBookingMemberAction_(action, e) {
+  var requestId = Utilities.getUuid();
+  var payload;
+  try {
+    payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (parseError) {
+    return { success: false, error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' }, requestId: requestId };
+  }
+  try {
+    var result;
+    if (action === 'verifyBookingMemberCode') {
+      result = BookingMemberVerification.verifyCode({ email: payload && payload.email, code: payload && payload.code });
+    } else if (action === 'bookingMemberStatus') {
+      result = handleBookingMemberStatus_(payload || {});
+    } else {
+      result = BookingMemberVerification.requestCode({ email: payload && payload.email });
+    }
+    if (!result || typeof result !== 'object') {
+      result = { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' } };
+    }
+    Logger.log('requestId=' + requestId + ' ' + action + '=result ' + (result.success ? 'success' : 'error.code=' + sanitizeErrorCode_(result.error && result.error.code)));
+    result.requestId = requestId;
+    return result;
+  } catch (unexpectedError) {
+    Logger.log('requestId=' + requestId + ' ' + action + '=result error.code=INTERNAL_ERROR');
+    return { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' }, requestId: requestId };
+  }
+}
+
+/*
+ * 会員結果の再取得と会員料金の見積り。V1/V2はサーバー時刻（BookingPricing.generationAt）で決め、クライアント指定では切り替えない。
+ * V1・対象外ブランド（snb / mens以外）は、この確認の仕組みを使わないためエラー。会員料金は、確認済み証明が有効かつ利用日が会員資格内のときだけ。
+ */
+function handleBookingMemberStatus_(payload) {
+  var brand = payload.brand;
+  if (brand !== 'snb' && brand !== 'mens') {
+    return { success: false, error: { code: 'INVALID_BRAND', message: 'このブランドでは会員確認を使用しません。' } };
+  }
+  var now = new Date();
+  var generation = BookingPricing.generationAt(now, brand);
+  if (generation !== BookingPricing.GENERATION.V2) {
+    return { success: false, error: { code: 'MEMBER_VERIFICATION_NOT_REQUIRED', message: 'この予約では会員確認は不要です。' }, priceGeneration: generation };
+  }
+  var date = typeof payload.date === 'string' ? payload.date : '';
+  var status = BookingMemberVerification.memberStatus({ email: payload.email, proof: payload.proof, date: date }, now);
+  if (!status.success) return status;
+  status.priceGeneration = generation;
+  var config = BookingConfig.getAvailabilityConfig();
+  var durationMinutes = typeof payload.durationMinutes === 'number' ? payload.durationMinutes : parseDurationParam_(payload.durationMinutes);
+  if (date && durationMinutes && !BookingAvailability.validateInput(date, durationMinutes, config)) {
+    var plan = BookingPricing.normalizePlan(payload.plan);
+    if (plan === null || BookingPricing.isEventPlan(plan)) {
+      return { success: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
+    }
+    if (plan && status.memberOnDate !== true) {
+      return { success: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE } };
+    }
+    var priceResult = BookingPricing.computeBookingPrice({
+      brand: brand,
+      date: date,
+      durationMinutes: durationMinutes,
+      isMember: status.memberOnDate === true,
+      startTime: payload.startTime,
+      generation: generation,
+      plan: plan
+    });
+    if (priceResult.valid) status.price = priceResult.price;
+  }
+  return status;
+}
+
+/*
  * 予約オプション（Issue #423。Studio X限定）。
  *
  * optionCatalog（GET）: オプションの種類・料金・文言。PIIなし・読み取り専用。料金は
@@ -475,7 +557,9 @@ function handleEstimatePrice_(params) {
     brand: params.brand,
     date: params.date,
     durationMinutes: durationMinutes,
-    isMember: parseBooleanParam_(params.isMember),
+    /* Issue #548: V2のSNBはメールOTPの確認済み証明が無い限り会員料金にしない。見積りGETはクライアントのisMemberを無視して
+       一般料金とし、会員料金の見積りは確認済み証明を検証するPOST（bookingMemberStatus）だけが返す。 */
+    isMember: isEstimateMemberTierLocked_(params.brand) ? false : parseBooleanParam_(params.isMember),
     startTime: params.startTime,
     generation: BookingPricing.generationAt(new Date(), params.brand),
     /* Issue #478: 2名ペアパックの見積り。見積りAPIでは会員台帳を一切照会しない（会員の有無を
@@ -494,6 +578,10 @@ function handleEstimatePrice_(params) {
     price: priceResult.price,
     priceGeneration: BookingPricing.generationAt(new Date(), params.brand)
   };
+}
+
+function isEstimateMemberTierLocked_(brand) {
+  return brand === 'snb' && BookingPricing.generationAt(new Date(), brand) === BookingPricing.GENERATION.V2;
 }
 
 /*

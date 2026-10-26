@@ -21,6 +21,7 @@ var assert = require('node:assert');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
 var membershipLookupResponse = require('./helpers/stripe-membership-mock').membershipLookupResponse;
+var memberProof = require('./helpers/booking-member-proof');
 
 var FILES = [
   'Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Booking.gs', 'CardPayment.gs',
@@ -28,7 +29,7 @@ var FILES = [
   'StripeEventRepository.gs', 'MembershipRules.gs', 'MemberRepository.gs', 'MembershipService.gs',
   'SpreadsheetRepository.gs', 'RecoveryRepository.gs', 'AdminNotifier.gs',
   'BookingMailTemplates.gs', 'BookingMailer.gs', 'BookingRepository.gs',
-  'StripeWebhookProcessor.gs', 'BookingAdminAlerts.gs', 'Code.gs'
+  'StripeWebhookProcessor.gs', 'BookingAdminAlerts.gs', 'BookingMemberVerification.gs', 'Code.gs'
 ];
 
 var SPREADSHEET_ID = 'ss1';
@@ -788,8 +789,20 @@ function bookingPayload(overrides) {
   }, overrides || {});
 }
 
+/*
+ * Issue #548: V2（2026/12/1 0:00 JST以降の作成）のSNB / mensは、メールOTPの確認済み証明（memberProof）が無ければ会員機能を使えない。
+ * 既定では予約メールのOTP確認（確認コードのメール送信→検証）を済ませた証明を付ける。memberProof: null で証明なしを送る。
+ */
 function book(ctx, overrides, now) {
-  return ctx.sandbox.BookingRepository.createBooking(bookingPayload(overrides), now || ADVANCE_NOW);
+  var at = now || ADVANCE_NOW;
+  var payload = bookingPayload(overrides);
+  if (payload.memberProof === null) {
+    delete payload.memberProof;
+  } else if (payload.memberProof === undefined) {
+    ctx.proofs = ctx.proofs || {};
+    payload.memberProof = memberProof.proofFor(ctx.proofs, ctx.sandbox, ctx.globals.MailApp, payload.email, at);
+  }
+  return ctx.sandbox.BookingRepository.createBooking(payload, at);
 }
 
 /* 12/15 12:00 JST入会 → 有効日 12/15〜1/14。 */

@@ -21,6 +21,7 @@ var assert = require('node:assert');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
 var membershipLookupResponse = require('./helpers/stripe-membership-mock').membershipLookupResponse;
+var memberProof = require('./helpers/booking-member-proof');
 
 var FILES = [
   'Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Booking.gs', 'CardPayment.gs',
@@ -28,7 +29,7 @@ var FILES = [
   'StripeEventRepository.gs', 'MembershipRules.gs', 'MemberRepository.gs', 'MembershipService.gs',
   'SpreadsheetRepository.gs', 'RecoveryRepository.gs', 'AdminNotifier.gs',
   'BookingMailTemplates.gs', 'BookingMailer.gs', 'BookingRepository.gs',
-  'StripeWebhookProcessor.gs', 'BookingAdminAlerts.gs', 'Code.gs'
+  'StripeWebhookProcessor.gs', 'BookingAdminAlerts.gs', 'BookingMemberVerification.gs', 'Code.gs'
 ];
 
 var SPREADSHEET_ID = 'ss1';
@@ -484,8 +485,20 @@ function bookingPayload(overrides) {
   }, overrides || {});
 }
 
+/*
+ * Issue #548: V2（2026/12/1 0:00 JST以降の作成）のSNB / mensは、メールOTPの確認済み証明（memberProof）が無ければ会員機能を使えない。
+ * 既定では予約メールのOTP確認（確認コードのメール送信→検証）を済ませた証明を付ける。memberProof: null で証明なしを送る。
+ */
 function book(ctx, overrides, now) {
-  return ctx.sandbox.BookingRepository.createBooking(bookingPayload(overrides), now || FIXED_NOW);
+  var at = now || FIXED_NOW;
+  var payload = bookingPayload(overrides);
+  if (payload.memberProof === null) {
+    delete payload.memberProof;
+  } else if (payload.memberProof === undefined) {
+    ctx.proofs = ctx.proofs || {};
+    payload.memberProof = memberProof.proofFor(ctx.proofs, ctx.sandbox, ctx.globals.MailApp, payload.email, at);
+  }
+  return ctx.sandbox.BookingRepository.createBooking(payload, at);
 }
 
 test('予約: 利用月の資格がある会員はMEMBER料金。予約メールは正規化して照合し、membershipStatus=ACTIVE', function () {
@@ -588,7 +601,8 @@ test('見積りAPI: メールアドレスを受け取らず、会員・非会員
   var base = run();
   assert.strictEqual(run({ email: MEMBER_EMAIL }), base);
   assert.strictEqual(run({ email: 'stranger@example.com' }), base);
-  assert.strictEqual(JSON.parse(base).price.tier, 'MEMBER', '見積りは自己申告の区分の料金を表示するだけ');
+  /* Issue #548: V2（2026/12/1 0:00 JST以降）のSNBは、見積りGETのisMember（自己申告）を無視して一般料金。会員料金の見積りは確認済み証明を検証するPOSTだけ。 */
+  assert.strictEqual(JSON.parse(base).price.tier, 'GENERAL', 'V2の見積りGETは会員区分を受け付けない');
 
   /* 見積り処理の実装が会員台帳・会員リポジトリに触れていないこと。 */
   var fs = require('fs');

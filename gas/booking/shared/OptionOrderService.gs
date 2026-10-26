@@ -79,7 +79,10 @@ var OptionOrderService = (function () {
       /* 予約済みの部屋代。予約本体の正本（Booking.getEffectivePriceAmount）だけを使い、取得できなければnull。 */
       roomPriceJpy: Booking.getEffectivePriceAmount(record),
       /* Issue #496: 貸切ベースプランの予約へはオプションを追加できない（併用不可の判定に使う）。 */
-      planCode: record.planCode || ''
+      planCode: record.planCode || '',
+      /* Issue #548: V2（SNB / mens）の予約で会員限定オプションを後付けできるかの判定に使う（予約作成時のメールOTP確認結果）。 */
+      priceGeneration: BookingPricing.normalizeGeneration(record.priceGeneration),
+      membershipStatus: record.membershipStatus || ''
     };
   }
 
@@ -150,6 +153,18 @@ var OptionOrderService = (function () {
     return verified.ok;
   }
 
+  /*
+   * Issue #548: 予約作成時にメールOTPで会員確認を済ませた予約か。V2（SNB / mens）の予約だけが対象で、予約作成時の確認結果
+   * （BookingRepository.createBookingがmembershipStatusへ記録。確認済みかつ利用日に会員資格あり=ACTIVE、未確認=UNVERIFIED）で判定する。
+   * 後付けの申込は予約ID＋予約メールで本人確認するだけで、メール所有確認を再度行えないため、未確認で作られたV2予約には会員限定オプションを付けられない。
+   * V1・Studio Xの予約は従来どおり（true）。
+   */
+  function bookingMemberVerified_(booking) {
+    if (!booking || (booking.brand !== 'snb' && booking.brand !== 'mens')) return true;
+    if (booking.priceGeneration !== BookingPricing.GENERATION.V2) return true;
+    return booking.membershipStatus === 'ACTIVE';
+  }
+
   /* 会員限定オプション（シャワー・Studio Xの有料機材）の外部向け共通エラー。内訳を出し分けない。 */
   function memberDeniedError_() {
     return fail_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE);
@@ -208,6 +223,10 @@ var OptionOrderService = (function () {
     var lookupAllowed = !(needsEligibility || needsStaffMember) || !options || typeof options.allowEligibilityLookup !== 'function' || options.allowEligibilityLookup(email) === true;
     if (!lookupAllowed) {
       return fail_('RATE_LIMITED', '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。');
+    }
+    /* Issue #548: V2のSNB / mensは、会員限定オプションにもメールOTPの確認済み証明が必須（証明が無ければ会員台帳を見ずに確認を要求）。 */
+    if (needsStaffMember && options && options.memberVerificationRequired === true && options.memberVerified !== true) {
+      return fail_(MembershipRules.BOOKING_VERIFICATION_REQUIRED_CODE, MembershipRules.BOOKING_VERIFICATION_REQUIRED_MESSAGE);
     }
     var plan = BookingOptions.planOrders({
       normalized: normalizedResult.normalized,
@@ -312,7 +331,7 @@ var OptionOrderService = (function () {
         brand: booking.brand,
         date: booking.date,
         now: effectiveNow,
-        actualMember: BookingOptions.requestsMemberOnlyOption(normalized, effectiveNow) ? isStaffServiceMember_(booking.email, booking.date) : false
+        actualMember: BookingOptions.requestsMemberOnlyOption(normalized, effectiveNow) && bookingMemberVerified_(booking) ? isStaffServiceMember_(booking.email, booking.date) : false
       });
       if (!plan.ok) return { success: false, error: plan.error };
       if (plan.orders.length === 0) return fail_('NO_OPTIONS_SELECTED', '追加するオプションを選択してください。');

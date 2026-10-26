@@ -594,6 +594,64 @@ var MemberRepository = (function () {
   }
 
   /*
+   * 予約フォームの会員確認（Issue #548。purpose=booking_membership）のOTP・確認済み証明の台帳（BookingMemberVerifications）。
+   * 会員状態ページ用のMemberStatusTokensとは別シート・別HMAC鍵・別purposeで、相互に通用しない。
+   * kind='otp': 6桁OTP（secretHashのみ保存。平文は保存しない。attemptsは誤入力回数）。kind='proof': 確認済み証明トークン（ハッシュのみ）。
+   * ロック保持下で呼ぶこと。
+   */
+  var BOOKING_VERIFICATION_SHEET_ = 'BookingMemberVerifications';
+  var BOOKING_VERIFICATION_HEADERS_ = ['kind', 'secretHash', 'email', 'purpose', 'expiresAt', 'usedAt', 'attempts', 'createdAt'];
+
+  function addBookingVerification(entry, now) {
+    var sheet = ensureSheet_(BOOKING_VERIFICATION_SHEET_, BOOKING_VERIFICATION_HEADERS_);
+    sheet.appendRow(recordToRow_(BOOKING_VERIFICATION_HEADERS_, {
+      kind: entry.kind, secretHash: entry.secretHash, email: MembershipRules.normalizeEmail(entry.email),
+      purpose: entry.purpose, expiresAt: entry.expiresAt, usedAt: '', attempts: 0, createdAt: now
+    }));
+  }
+
+  /* 指定メール・用途の最新のOTP行（無ければnull）。{ rowNumber, secretHash, used, expired, attempts }。 */
+  function findLatestBookingOtp(email, purpose, now) {
+    var normalized = MembershipRules.normalizeEmail(email);
+    if (!normalized) return null;
+    var values = ensureSheet_(BOOKING_VERIFICATION_SHEET_, BOOKING_VERIFICATION_HEADERS_).getDataRange().getValues();
+    var nowMs = toMillis_(now);
+    var found = null;
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(BOOKING_VERIFICATION_HEADERS_, values[i]);
+      if (record.kind !== 'otp' || record.purpose !== purpose || record.email !== normalized) continue;
+      found = {
+        rowNumber: i + 1, secretHash: String(record.secretHash), used: !!record.usedAt,
+        expired: !(toMillis_(record.expiresAt) > nowMs), attempts: Number(record.attempts) || 0
+      };
+    }
+    return found;
+  }
+
+  function setBookingVerificationAttempts(rowNumber, attempts) {
+    var sheet = ensureSheet_(BOOKING_VERIFICATION_SHEET_, BOOKING_VERIFICATION_HEADERS_);
+    sheet.getRange(rowNumber, BOOKING_VERIFICATION_HEADERS_.indexOf('attempts') + 1, 1, 1).setValues([[attempts]]);
+  }
+
+  function markBookingVerificationUsed(rowNumber, now) {
+    var sheet = ensureSheet_(BOOKING_VERIFICATION_SHEET_, BOOKING_VERIFICATION_HEADERS_);
+    sheet.getRange(rowNumber, BOOKING_VERIFICATION_HEADERS_.indexOf('usedAt') + 1, 1, 1).setValues([[now]]);
+  }
+
+  /* 確認済み証明のハッシュから行を引く（無ければnull）。{ email, purpose, expired }。 */
+  function findBookingProof(secretHash, now) {
+    if (!secretHash) return null;
+    var values = ensureSheet_(BOOKING_VERIFICATION_SHEET_, BOOKING_VERIFICATION_HEADERS_).getDataRange().getValues();
+    var nowMs = toMillis_(now);
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(BOOKING_VERIFICATION_HEADERS_, values[i]);
+      if (record.kind !== 'proof' || String(record.secretHash) !== secretHash) continue;
+      return { email: record.email, purpose: record.purpose, expired: !(toMillis_(record.expiresAt) > nowMs) };
+    }
+    return null;
+  }
+
+  /*
    * 解約（Issue #506）の対象会員。メール1件に対し、subscriptionが有効（status=active）で、subscription IDを持つ
    * 会員行を返す（無ければnull）。**内部用**で、返す行（Stripe ID）を公開APIへ出さない。
    * 戻り値: { rowNumber, memberId, subscriptionId, cancelAtPeriodEnd }。台帳を読めない場合は例外。
@@ -648,6 +706,12 @@ var MemberRepository = (function () {
     findStatusTokenAnyState: findStatusTokenAnyState,
     statusFactsForEmail: statusFactsForEmail,
     addStatusToken: addStatusToken,
+    addBookingVerification: addBookingVerification,
+    findLatestBookingOtp: findLatestBookingOtp,
+    setBookingVerificationAttempts: setBookingVerificationAttempts,
+    markBookingVerificationUsed: markBookingVerificationUsed,
+    findBookingProof: findBookingProof,
+    BOOKING_VERIFICATION_HEADERS: BOOKING_VERIFICATION_HEADERS_,
     findUsableStatusToken: findUsableStatusToken,
     markStatusTokenUsed: markStatusTokenUsed,
     TOKEN_HEADERS: TOKEN_HEADERS_,

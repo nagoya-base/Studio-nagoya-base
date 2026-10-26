@@ -1,3 +1,26 @@
+## Issue #548: V2予約の会員確認（メール6桁OTP）で会員料金・特典・先行予約を開放する
+
+V2（SNB / SNB mensの**2026/12/1 00:00 JST以降に作成**する直接予約）では、予約メールアドレスだけでは会員扱いしない。**メール所有確認（6桁OTP）が済んだ予約フローだけ**に、会員料金・会員限定特典（2名ペアパック・シャワー）・31〜90日先行予約を開放する。V1（〜2026/11/30作成）は#532の従来仕様のまま（OTPを要求しない）。Studio X・スペースマーケットは対象外。
+
+- **V1/V2の判定はサーバーが正本**: `BookingPricing.generationAt(now, brand)`（`createBooking` 内の `newMemberAuth_`）。クライアントの `priceGeneration` / `generation` / `verified` / `isMember` は無視する＝クライアント指定でV1へ逃げられない。フォームのUI切替もサーバーが返す `priceGeneration` に従う（端末の時計は見ない）。管理者の新規予約（`BookingWindow.TIER.ADMIN`）は対象外。
+- **`BookingMemberVerification.gs`（新規。Booking Web App専用）**:
+  - `requestCode({ email })`（POST `requestBookingMemberCode`）: 有効なメール形式なら**会員台帳を参照せず**、会員・非会員とも同じ処理・同じ応答で6桁OTPをメール送信（会員の有無を出さない）。OTPは平文保存せずHMAC-SHA256（メール・用途 `booking_membership` に拘束）のみ保存、**有効期限60分**。
+  - `verifyCode({ email, code })`（POST `verifyBookingMemberCode`）: 最新のOTPのみ有効・**1回使用で再利用不可**・**誤入力5回で当該OTPを失効**。成功時のみ**確認済み証明**（不透明トークン。ハッシュのみ保存・メールと用途に拘束・**60分**）と `advanceEligible`（今日（JST）が会員有効期間内か＝90日先まで選べるか）を返す。
+  - `checkProof(email, proof, now)`: `{ ok } | { ok:false, reason: MISSING|INVALID|EXPIRED }`。証明なし・形式不正・未登録・メール不一致・用途不一致・期限切れ・台帳エラーは会員情報を返さない（fail-closed）。証明は「メール所有確認が済んだ」ことだけを示し、会員資格・料金・利用日資格は固定しない（毎回 `verifyActualMembership` / `verifyAdvanceBookingMembership` で再判定）。
+  - `memberStatus({ email, proof, date })`（POST `bookingMemberStatus`。`brand`・`durationMinutes`・`plan` を付けると会員料金の見積り `price` も返す）: 証明が有効なときだけ `advanceEligible`（今日）・`memberOnDate`（利用日）・`price` を返す。V1・Studio Xは `MEMBER_VERIFICATION_NOT_REQUIRED` / `INVALID_BRAND`。
+- **用途分離**: 予約用は `BookingMemberVerifications` シート（列: `kind / secretHash / email / purpose / expiresAt / usedAt / attempts / createdAt`。初回使用時に自動作成）・専用HMAC鍵・`purpose=booking_membership`。会員状態ページ（`/membership/status/`）は従来の `MemberStatusTokens`・別HMAC鍵のまま。相互に通用しない（`membership_status` 用トークンを予約に使うと `MEMBER_REVERIFY_REQUIRED`、予約用の証明・OTPは `verifyStatusLink` で `INVALID_TOKEN`）。
+- **送信制限**: 再送間隔1分（メール単位）・メール単位60分5通・全体60分40通・検証はメール単位10分10回／全体1分60回。さらに**MailAppの日次残枠が50通以下なら確認コードを送らない**（`VERIFICATION_UNAVAILABLE`。予約確定・運営通知など本来のメールの余力を確保）。OTP・証明・メール本文・メールアドレスはLogger・console・GA4・dataLayerへ出さない（エラーコードのみ）。
+- **`createBooking`（V2）**: payloadの `memberProof` を検証。
+  - 証明なし → 通常予約は一般料金（会員台帳を参照しない。`membershipStatus=UNVERIFIED`）。ペアパック・シャワー・31〜90日先の日付は会員台帳を見ずに `MEMBER_VERIFICATION_REQUIRED`（予約を作らない）。
+  - 証明が**あるが無効**（期限切れ・メール不一致・改ざん・他用途）→ 会員利用中かどうかにかかわらず `MEMBER_REVERIFY_REQUIRED` で停止し、**黙って一般料金へ降格して確定しない**（予約を作らない）。一般予約へ戻すのは利用者自身が証明を外す明示操作（フロントの「一般予約として続ける」）。
+  - 証明が有効 + 利用日にactual membership → 会員料金／ペアパック／シャワー。利用日が期間外なら確認済みでも一般料金・特典不可。先行予約は証明有効 + 今日のactual membership。
+  - `membershipStatus`（Bookings）: V2 SNBは `ACTIVE / INACTIVE / UNVERIFIED`、V2 mensは確認済みかつ会員のときだけ `ACTIVE`（mensの部屋料金優遇は従来どおり会員資格と別概念）。
+  - **後付けオプション**（`OptionOrderService.createOrders`）: V2のSNB / mens予約は、`membershipStatus=ACTIVE`（予約作成時にOTP確認済み + 利用日に会員資格あり）の予約にだけ会員限定オプション（シャワー）を付けられる。決済・承認時の再確認（`isStaffServiceMember_`）は従来どおり。
+- **見積りGET（`estimatePrice`）**: V2のSNBはクライアントの `isMember` を無視して一般料金。会員料金の見積りは証明を検証するPOST（`bookingMemberStatus`）のみ。V1は従来どおり自己申告。
+- **フロント**: V2のとき（サーバーの `priceGeneration`）メール欄の下に会員確認欄（確認コード送信 → 6桁入力）を表示。確認済みの間だけ会員限定特典と（今日会員なら）先行予約枠を選べ、会員料金はPOSTで取得する。メール変更で証明・先行予約日・特典を即破棄、利用日変更では証明を維持して会員結果を再取得、期限切れ（端末の時計/サーバー応答）では再確認案内を出し、再確認か「一般予約として続ける」を選ぶまで先へ進ませない。証明はメモリのみ（storage不使用）。V1・Studio Xは従来どおり（#546のUI解除チェックはV1/mensのV1期間のみ。V2では実装しない）。
+- **テスト**: 新規 `test/booking-member-verification.test.js`（OTP/証明/用途分離/送信制限/MailApp枠/V1・V2分岐/期限切れ再認証/後付けオプション/Web App）、`test/booking-member-gate-ui.test.js`（V2のOTP UI・メール変更・期限切れ）。#532の「メールだけで会員料金」を前提にしていたV2テスト（`membership.test.js` / `membership-subscription.test.js` / `member-benefits.test.js`）は、OTP確認済み証明つき（`test/helpers/booking-member-proof.js`）へ更新。V1互換テストは維持。
+- **配布**: Booking Web App … `BookingMemberVerification.gs`（新規）・`BookingRepository.gs`・`OptionOrderService.gs`・`MemberRepository.gs`・`MembershipRules.gs`・`Code.gs`。Booking Admin … `BookingRepository.gs`・`OptionOrderService.gs`・`MemberRepository.gs`・`MembershipRules.gs`（`BookingMemberVerification.gs` は配布しない）。**反映順: Booking Adminを先に**。新しいScript Property・Secretは無い。既存 `/exec` URL・Deploymentは作り直さず更新する。PRブランチからの本番デプロイは行わない。サイト（GitHub Pages）は予約フォーム（`booking_app_*.html` / `booking-app.js` / `booking-logic.js`）と規約・特典・料金注記の文言を更新。
+
 ## Issue #535: 新規Subscription入会でinvoice.paidが届かなくても初回Periodを記録する
 
 Issue #535の本文を正本とした修正（GAS・テストのみ。サイト・料金・会員特典ルールは変更しない）。
@@ -3228,6 +3251,7 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `MembershipRules.gs`（Issue #471。SNB MEMBERの月・メール正規化・Stripe請求の解釈などの純粋ロジック） | ✓ | ✓ | – | `gas/booking/shared/MembershipRules.gs` |
 | `MemberRepository.gs`（Issue #471。`Members`・`MemberMonths`シートの会員台帳） | ✓ | ✓ | – | `gas/booking/shared/MemberRepository.gs` |
 | `MembershipService.gs`（Issue #471。SNB MEMBER入会Checkoutの開始） | ✓ | – | – | `gas/booking/shared/MembershipService.gs` |
+| `BookingMemberVerification.gs`（Issue #548。V2予約の会員確認。6桁OTPのメール送信・検証と、メール・用途に拘束した確認済み証明の発行・検証） | ✓ | – | – | `gas/booking/shared/BookingMemberVerification.gs` |
 | `StripeWebhookAuth.gs`（Issue #341 PR-C。中継基盤からの呼び出し認証） | – | – | ✓ | `gas/booking/webhook/StripeWebhookAuth.gs` |
 | `StripeEventRepository.gs`（Issue #341 PR-C。Stripe Webhookイベントの受信・処理台帳。レビュー対応・4回目でBooking Admin/Webhookの両方が使う共有ファイルへ再設計） | – | ✓ | ✓ | `gas/booking/shared/StripeEventRepository.gs` |
 | `StripeWebhookProcessor.gs`（Issue #341 PR-C。レビュー対応・4回目で新設。決済照合・予約自動確定の本体。Booking Adminの時間主導トリガーから呼ばれる。旧`StripeWebhookHandler.gs`から移動・再設計） | – | ✓ | – | `gas/booking/admin/StripeWebhookProcessor.gs` |

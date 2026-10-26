@@ -98,6 +98,12 @@
       BOOKING_SAVE_FAILED: '予約の保存に失敗しました。しばらくしてから再度お試しください。',
       INVALID_JSON: '送信内容の形式が正しくありませんでした。もう一度お試しください。',
       /* Issue #478: 会員限定特典（2名ペアパック・シャワー）。資格の内訳（非会員・メール不一致・利用月不一致等）は出し分けない。 */
+      /* Issue #548: V2（2026/12/1以降の作成）の会員確認。メールアドレス宛の6桁確認コード（OTP）で所有を確認した場合だけ、会員料金・会員特典・先行予約を使える。 */
+      MEMBER_VERIFICATION_REQUIRED: '会員料金・会員特典・先行予約をご利用いただくには、メールアドレスの確認コードによる会員確認が必要です。確認コードを送信して確認するか、会員機能を使わない一般のご予約としてお進みください。',
+      MEMBER_REVERIFY_REQUIRED: '会員確認の有効期限が切れました。会員料金・会員特典を利用する場合は、確認コードを再送してもう一度確認してください。',
+      INVALID_CODE: '確認コードが正しくないか、有効期限が切れています。お手数ですが、確認コードを再送してもう一度お試しください。',
+      VERIFICATION_UNAVAILABLE: '現在、確認コードを送信できません。しばらくしてから再度お試しください。',
+      MEMBER_VERIFICATION_NOT_REQUIRED: 'この予約では会員確認は不要です。',
       DATE_OUT_OF_RANGE: 'ご予約いただけるのは90日先までです。別の日付を選択してください。',
       ADVANCE_BOOKING_MEMBER_ONLY: '30日より先の日程は、SNB MEMBERの先行予約（90日先まで）の対象です。会員登録と同じメールアドレスでご入力いただくか、30日以内の日程を選択してください。',
       MEMBER_BENEFIT_NOT_AVAILABLE: 'この特典は、ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できた場合のみご利用いただけます。ご予約のメールアドレスは会員登録と同じものをご入力ください。次回更新前の未払いの期間は、更新の決済が成功してから確定できます。',
@@ -134,6 +140,12 @@
       LOCK_TIMEOUT: 'The system is currently busy. Please try again.',
       BOOKING_SAVE_FAILED: 'We couldn’t save your booking. Please try again in a moment.',
       INVALID_JSON: 'Your submission could not be read correctly. Please try again.',
+      /* Issue #548: member verification for V2 bookings (created on/after 2026-12-01). */
+      MEMBER_VERIFICATION_REQUIRED: 'Member pricing, member benefits and advance booking require email verification with a 6-digit code. Please send a verification code and confirm it, or continue as a general (non-member) booking.',
+      MEMBER_REVERIFY_REQUIRED: 'Your member verification has expired. To use member pricing or benefits, please resend the verification code and confirm it again.',
+      INVALID_CODE: 'The verification code is incorrect or has expired. Please resend a verification code and try again.',
+      VERIFICATION_UNAVAILABLE: 'Verification codes cannot be sent right now. Please try again later.',
+      MEMBER_VERIFICATION_NOT_REQUIRED: 'Member verification is not required for this booking.',
       DATE_OUT_OF_RANGE: 'Bookings can be made up to 90 days ahead. Please choose another date.',
       ADVANCE_BOOKING_MEMBER_ONLY: 'Dates more than 30 days ahead are open only to SNB MEMBERS (advance booking up to 90 days). Please use the email address registered for your membership, or choose a date within 30 days.',
       MEMBER_BENEFIT_NOT_AVAILABLE: 'This member-only benefit requires an SNB MEMBER membership confirmed for the month of your visit. Please use the same email address as your membership.',
@@ -189,6 +201,10 @@
   function recoveryActionForErrorCode(code) {
     if (code === 'INVALID_CUSTOMER_TYPE' || code === 'DATE_OUT_OF_RANGE' || code === 'ADVANCE_BOOKING_MEMBER_ONLY') {
       return 'reselect-date';
+    }
+    /* Issue #548: 会員確認が無い／期限切れ。Step1（メールアドレス欄の会員確認）へ戻って再確認するか、一般予約へ戻ってもらう。 */
+    if (code === 'MEMBER_VERIFICATION_REQUIRED' || code === 'MEMBER_REVERIFY_REQUIRED') {
+      return 'reverify';
     }
     if (
       code === 'SLOT_CONFLICT' ||
@@ -439,6 +455,9 @@
     /* Issue #488 / #492: 6時間貸切ベースプラン（常設）。金額・可否は送らない（サーバーが判定する）。 */
     if (s.plan === EVENT_BASE_PLAN_CODE) payload.plan = EVENT_BASE_PLAN_CODE;
     if (s.shower === true) payload.options = { shower: true };
+    /* Issue #548: V2のメールOTP確認済み証明（サーバーが発行した不透明な文字列）。保持している場合だけ送る。verified等の真偽値は送らない。
+       有効か・予約メールに拘束されているか・会員資格があるかはすべてサーバーが判定する。 */
+    if (typeof s.memberProof === 'string' && s.memberProof) payload.memberProof = s.memberProof;
     return payload;
   }
 

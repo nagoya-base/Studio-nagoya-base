@@ -55,7 +55,11 @@
       diagnosticIdLabel: '\n診断ID: ',
       pendingStatusLabel: '仮予約受付（未確定）',
       priceLine: function (amount) { return '利用料金: ' + amount + '（税込）'; },
-      timeRangeLine: function (range) { return '利用時間：' + range; }
+      timeRangeLine: function (range) { return '利用時間：' + range; },
+      memberCodeFormat: '確認コード（6桁の数字）を入力してください。',
+      memberCodeSent: '入力されたメールアドレス宛に、6桁の確認コードをお送りしました（60分間有効）。',
+      memberVerified: 'メールアドレスの確認が完了しました（60分間有効）。会員料金・会員特典・先行予約の対象かどうかは、利用日に応じて自動で判定されます。',
+      memberGeneralContinued: '一般のご予約として進めます。会員料金・会員特典・先行予約を利用する場合は、確認コードを送信して会員確認をしてください。'
     },
     en: {
       backLabelDefault: 'Back to Studio Nagoya Base',
@@ -77,7 +81,11 @@
       diagnosticIdLabel: '\nDiagnostic ID: ',
       pendingStatusLabel: 'Pending — not confirmed yet',
       priceLine: function (amount) { return 'Price: ' + amount + ' (tax included)'; },
-      timeRangeLine: function (range) { return 'Time: ' + range; }
+      timeRangeLine: function (range) { return 'Time: ' + range; },
+      memberCodeFormat: 'Please enter the 6-digit verification code.',
+      memberCodeSent: 'We sent a 6-digit verification code to the email address you entered (valid for 60 minutes).',
+      memberVerified: 'Your email address is verified (valid for 60 minutes). Whether member rates, benefits and advance booking apply is determined automatically for your date of use.',
+      memberGeneralContinued: 'Continuing as a general booking. To use member rates, benefits or advance booking, send a verification code and verify your membership.'
     }
   }[locale];
 
@@ -142,6 +150,16 @@
     planBanner: document.getElementById('ba-plan-banner'),
     planRelease: document.getElementById('ba-plan-release'),
     shower: document.getElementById('ba-shower'),
+    memberVerifyField: document.getElementById('ba-member-verify-field'),
+    memberCodeSend: document.getElementById('ba-member-code-send'),
+    memberCodeEntry: document.getElementById('ba-member-code-entry'),
+    memberCode: document.getElementById('ba-member-code'),
+    memberCodeVerify: document.getElementById('ba-member-code-verify'),
+    memberVerifyStatus: document.getElementById('ba-member-verify-status'),
+    memberVerifyError: document.getElementById('ba-member-verify-error'),
+    memberReverify: document.getElementById('ba-member-reverify'),
+    memberReverifyMessage: document.getElementById('ba-member-reverify-message'),
+    memberGeneralContinue: document.getElementById('ba-member-general-continue'),
     memberUnlockField: document.getElementById('ba-member-unlock-field'),
     memberUnlock: document.getElementById('ba-member-unlock'),
     benefitsLocked: document.getElementById('ba-benefits-locked'),
@@ -279,6 +297,41 @@
    * 月間空き状況・見積りのGET応答（priceGeneration）で更新し、判定できない間は会員区分ラジオを表示する側へ倒す。
    */
   var serverGeneration = null;
+
+  /*
+   * Issue #548: V2（サーバーが返す料金世代がV2。SNB / SNB mensの2026/12/1 0:00 JST以降に作成する予約）の会員確認。
+   * 予約メール宛の6桁確認コード（OTP）で所有を確認すると、サーバーが「確認済み証明」（不透明な文字列。メール・用途に拘束・60分）を返す。
+   * この証明はサーバー送信用に保持するだけで、フロントは証明の有効性・会員資格を判断しない（verified=true等も送らない）。
+   * 会員で結果が変わる処理（先行予約・会員料金の見積り・createBooking）は証明をサーバーが検証する。V1は従来どおり（この仕組みを使わない）。
+   */
+  function emptyMemberAuth_(epoch) {
+    return { proof: '', email: '', expiresAt: 0, advanceEligible: false, epoch: epoch, reverifyPending: false };
+  }
+  var memberAuth = emptyMemberAuth_(0);
+  var memberCodeSent_ = false;
+  var memberCodeEmail_ = '';
+  var memberCodeBusy_ = false;
+  function normalizedEmail_() {
+    return String(els.email ? els.email.value : '').trim().toLowerCase();
+  }
+  function otpMode_() {
+    return Logic.brandGatesMemberFeatures(brand) && serverGeneration === 'V2';
+  }
+  function memberVerified_() {
+    return otpMode_() && !!memberAuth.proof && memberAuth.email === normalizedEmail_();
+  }
+  function memberProofExpiredLocally_() {
+    return memberVerified_() && Date.now() >= memberAuth.expiresAt;
+  }
+  /* 31〜90日先の先行予約枠を選べるか（V2は確認済み証明 + 今日の会員資格。V1は従来の会員向けUI）。UXのみで、最終判定はサーバー。 */
+  function advanceFeaturesEnabled_() {
+    return otpMode_() ? (memberVerified_() && memberAuth.advanceEligible === true) : memberFeaturesEnabled_();
+  }
+  /* 見積りのキーに使う会員区分。V2で確認済みなら証明の世代（epoch）を含め、証明が変われば古い見積りを再利用しない。 */
+  function estimateMemberFlag_() {
+    return memberVerified_() ? 'v' + memberAuth.epoch : isMemberChecked_();
+  }
+
   function memberOptionVisible_() {
     return Logic.brandShowsMemberOption(brand, undefined, serverGeneration);
   }
@@ -332,6 +385,8 @@
    */
   function memberFeaturesEnabled_() {
     if (!Logic.brandGatesMemberFeatures(brand)) return true;
+    /* Issue #548: V2はメールOTPの確認済み証明があるときだけ（自己申告のチェックでは解除できない）。 */
+    if (otpMode_()) return memberVerified_();
     if (memberOptionVisible_() && memberStatusRadios_().length > 0) return checkedMemberStatus_() === 'member';
     return !!els.memberUnlock && els.memberUnlock.checked;
   }
@@ -761,7 +816,7 @@
     if (isSuccess && selectedDate && selectedDate.indexOf(monthPrefix) === 0) {
       var selectedDayInfo = days[selectedDate];
       var selectedStatus = selectedDayInfo ? selectedDayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
-      if (!Logic.isCalendarDaySelectable(selectedDate, selectedStatus, customerType, todayValue, !!(selectedDayInfo && selectedDayInfo.memberAdvance), memberFeaturesEnabled_())) {
+      if (!Logic.isCalendarDaySelectable(selectedDate, selectedStatus, customerType, todayValue, !!(selectedDayInfo && selectedDayInfo.memberAdvance), advanceFeaturesEnabled_())) {
         els.date.value = '';
         selectedDate = '';
         selectedDateMemberAdvance_ = false;
@@ -815,7 +870,7 @@
         /* 31〜90日先は会員先行枠（Issue #480。APIが全員に同じ印を返す。資格の最終確認は予約送信時のサーバー側）。
            Issue #546: 会員向けUIが有効でない間は表示のみで選択不可にする（月間APIは会員別に分けない）。 */
         var memberAdvance = !!(dayInfo && dayInfo.memberAdvance);
-        var selectable = Logic.isCalendarDaySelectable(cell.dateValue, status, customerType, todayValue, memberAdvance, memberFeaturesEnabled_());
+        var selectable = Logic.isCalendarDaySelectable(cell.dateValue, status, customerType, todayValue, memberAdvance, advanceFeaturesEnabled_());
         button.className = memberAdvance ? 'ba-cal-day ba-cal-day--member-advance' : 'ba-cal-day';
         button.textContent = cell.day + Logic.dayStatusSymbol(status);
         button.setAttribute('aria-label', Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale, memberAdvance));
@@ -861,12 +916,13 @@
   var priceEstimateInFlight = {};
 
   function priceEstimateKey_(dateValue, durationMinutes, memberFlag, plan) {
-    return dateValue + '|' + durationMinutes + '|' + (memberFlag ? '1' : '0') + '|' + (plan || '');
+    var flag = typeof memberFlag === 'string' ? memberFlag : (memberFlag ? '1' : '0');
+    return dateValue + '|' + durationMinutes + '|' + flag + '|' + (plan || '');
   }
 
   function currentPriceEstimateKey_() {
     var dateValue = els.date ? els.date.value : '';
-    return priceEstimateKey_(dateValue, currentCalendarDurationMinutes_(), isMemberChecked_(), selectedPlan_());
+    return priceEstimateKey_(dateValue, currentCalendarDurationMinutes_(), estimateMemberFlag_(), selectedPlan_());
   }
 
   function priceEstimateUrl_(dateValue, durationMinutes, memberFlag, plan) {
@@ -984,9 +1040,11 @@
 
   function refreshPriceEstimate_() {
     syncBenefitsVisibility_();
+    /* Issue #548: 保持している確認済み証明が（端末の時計で）期限切れなら、見積りの前に再確認を求める（黙って一般料金へ切り替えない）。 */
+    if (memberProofExpiredLocally_()) { handleReverifyRequired_(); return; }
     var dateValue = els.date ? els.date.value : '';
     var durationMinutes = currentCalendarDurationMinutes_();
-    var memberFlag = isMemberChecked_();
+    var memberFlag = estimateMemberFlag_();
     var plan = selectedPlan_();
 
     /* snb/studio_xは会員区分が確定してから料金を表示する（未回答のまま一般料金を出さない）。 */
@@ -1013,12 +1071,21 @@
     if (priceEstimateInFlight[key]) return;
     priceEstimateInFlight[key] = true;
 
-    fetch(priceEstimateUrl_(dateValue, durationMinutes, memberFlag, plan), { method: 'GET' })
-      .then(function (response) { return response.json(); })
+    /* Issue #548: V2で確認済みなら、会員料金の見積りは証明を検証するPOST（bookingMemberStatus）で取得する（GETのisMemberは使わない）。 */
+    var verifiedQuote = memberVerified_();
+    var pendingEstimate = verifiedQuote
+      ? postApi_('bookingMemberStatus', { brand: brand, email: memberAuth.email, proof: memberAuth.proof, date: dateValue, durationMinutes: durationMinutes, plan: plan })
+      : fetch(priceEstimateUrl_(dateValue, durationMinutes, memberFlag, plan), { method: 'GET' }).then(function (response) { return response.json(); });
+    pendingEstimate
       .then(function (body) {
         delete priceEstimateInFlight[key];
         var entry;
-        if (!body || body.success !== true) {
+        if (verifiedQuote && body && body.success !== true && body.error && body.error.code === 'MEMBER_REVERIFY_REQUIRED') {
+          /* 証明がサーバーで無効（期限切れ等）。古い見積りとして残さず再確認を求める。 */
+          if (key === currentPriceEstimateKey_()) handleReverifyRequired_();
+          return;
+        }
+        if (!body || body.success !== true || (verifiedQuote && !body.price)) {
           var code = body && body.error && body.error.code;
           entry = { status: 'error', message: Logic.messageForErrorCode(code, locale) };
         } else {
@@ -1042,8 +1109,148 @@
   function syncMemberUnlockField_() {
     if (!els.memberUnlockField) return;
     var radiosShown = memberOptionVisible_() && !eventPlanSelected_();
-    els.memberUnlockField.hidden = !Logic.brandGatesMemberFeatures(brand) || radiosShown;
-    if (radiosShown && els.memberUnlock) els.memberUnlock.checked = false;
+    /* Issue #548: V2はメールOTPの会員確認が唯一の解除手段。自己申告のチェックは出さず、選択済みも破棄する（V1の間だけ表示）。 */
+    var otp = otpMode_();
+    els.memberUnlockField.hidden = !Logic.brandGatesMemberFeatures(brand) || radiosShown || otp;
+    if ((radiosShown || otp) && els.memberUnlock) els.memberUnlock.checked = false;
+  }
+
+  /* ── Issue #548: V2の会員確認（メールOTP）UI ── */
+  function postApi_(action, payload) {
+    var endpoint = API_BASE_URL + (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') + 'action=' + action;
+    return fetch(endpoint, {
+      method: 'POST',
+      /* text/plainで送る理由はファイル冒頭のコメント参照（GAS Web AppのCORS制約） */
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload)
+    }).then(function (response) { return response.json(); });
+  }
+
+  function setMemberVerifyStatus_(text) {
+    if (!els.memberVerifyStatus) return;
+    els.memberVerifyStatus.textContent = text || '';
+    els.memberVerifyStatus.hidden = !text;
+  }
+
+  function showMemberVerifyError_(text) {
+    if (!els.memberVerifyError) return;
+    els.memberVerifyError.textContent = text || '';
+    els.memberVerifyError.hidden = !text;
+  }
+
+  function renderMemberVerify_() {
+    var otp = otpMode_();
+    if (els.memberVerifyField) els.memberVerifyField.hidden = !otp;
+    if (els.memberCodeEntry) els.memberCodeEntry.hidden = !otp || !memberCodeSent_ || memberVerified_();
+    if (els.memberReverify) els.memberReverify.hidden = !otp || !memberAuth.reverifyPending;
+    if (els.memberReverifyMessage) els.memberReverifyMessage.textContent = Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale);
+    if (memberVerified_()) setMemberVerifyStatus_(UI_TEXT.memberVerified);
+    else if (!memberCodeSent_) setMemberVerifyStatus_('');
+  }
+
+  /* 確認済み証明を破棄する（メール変更・期限切れ）。会員料金・会員特典・先行予約は安全側（一般・30日）へ戻す。
+     reverify=trueは期限切れ等で会員利用中だった可能性があるため、利用者が再確認するか「一般予約として続ける」を選ぶまで先へ進ませない。 */
+  function resetMemberAuth_(options) {
+    var hadProof = !!memberAuth.proof;
+    var reverify = !!(options && options.reverify);
+    memberAuth = emptyMemberAuth_(memberAuth.epoch + 1);
+    memberAuth.reverifyPending = reverify;
+    memberCodeSent_ = false;
+    setMemberVerifyStatus_('');
+    showMemberVerifyError_('');
+    if (els.memberCode) els.memberCode.value = '';
+    renderMemberVerify_();
+    if (hadProof || reverify) applyMemberGate_();
+  }
+
+  function revealMemberVerify_() {
+    if (els.memberVerifyField && typeof els.memberVerifyField.scrollIntoView === 'function') els.memberVerifyField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function handleReverifyRequired_() {
+    resetMemberAuth_({ reverify: true });
+    revealMemberVerify_();
+  }
+
+  /* 端末の時計で期限切れの証明を持っていたら再確認へ。再確認待ち（一般予約へ戻る明示操作が未了）なら先へ進ませない。 */
+  function reverifyBlocked_() {
+    if (memberProofExpiredLocally_()) handleReverifyRequired_();
+    if (!otpMode_() || !memberAuth.reverifyPending) return false;
+    showGlobalError(Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale), []);
+    revealMemberVerify_();
+    return true;
+  }
+
+  if (els.memberCodeSend) {
+    els.memberCodeSend.addEventListener('click', function () {
+      if (memberCodeBusy_) return;
+      var message = emailErrorMessage_();
+      setFieldError_(els.email, els.emailError, message);
+      if (message) { focusEmail_(); return; }
+      if (!API_BASE_URL) { showMemberVerifyError_(Logic.apiNotConfiguredMessage(locale)); return; }
+      memberCodeBusy_ = true;
+      els.memberCodeSend.disabled = true;
+      showMemberVerifyError_('');
+      postApi_('requestBookingMemberCode', { email: String(els.email.value).trim() })
+        .then(function (body) {
+          if (!body || body.success !== true) {
+            showMemberVerifyError_(Logic.messageForErrorCode(body && body.error && body.error.code, locale));
+            return;
+          }
+          memberCodeSent_ = true;
+          memberCodeEmail_ = normalizedEmail_();
+          setMemberVerifyStatus_(body.message || UI_TEXT.memberCodeSent);
+          renderMemberVerify_();
+          if (els.memberCode && typeof els.memberCode.focus === 'function') els.memberCode.focus();
+        })
+        .catch(function () { showMemberVerifyError_(Logic.networkErrorMessage(locale)); })
+        .then(function () { memberCodeBusy_ = false; els.memberCodeSend.disabled = false; });
+    });
+  }
+
+  if (els.memberCodeVerify) {
+    els.memberCodeVerify.addEventListener('click', function () {
+      if (memberCodeBusy_) return;
+      var code = String(els.memberCode ? els.memberCode.value : '').trim();
+      if (!/^\d{6}$/.test(code)) { showMemberVerifyError_(UI_TEXT.memberCodeFormat); return; }
+      var emailAtRequest = normalizedEmail_();
+      memberCodeBusy_ = true;
+      els.memberCodeVerify.disabled = true;
+      showMemberVerifyError_('');
+      postApi_('verifyBookingMemberCode', { email: String(els.email.value).trim(), code: code })
+        .then(function (body) {
+          if (!body || body.success !== true || !body.proof) {
+            showMemberVerifyError_(Logic.messageForErrorCode(body && body.error && body.error.code, locale));
+            return;
+          }
+          /* 確認コードの入力中にメールアドレスが変わっていたら、その証明は使わない（証明はメールに拘束される）。 */
+          if (emailAtRequest !== normalizedEmail_()) { showMemberVerifyError_(Logic.messageForErrorCode('INVALID_CODE', locale)); return; }
+          memberAuth = {
+            proof: body.proof,
+            email: emailAtRequest,
+            expiresAt: Date.now() + (Number(body.expiresInMinutes) > 0 ? Number(body.expiresInMinutes) : 60) * 60 * 1e3,
+            advanceEligible: body.advanceEligible === true,
+            epoch: memberAuth.epoch + 1,
+            reverifyPending: false
+          };
+          memberCodeSent_ = false;
+          if (els.memberCode) els.memberCode.value = '';
+          renderMemberVerify_();
+          applyMemberGate_();
+        })
+        .catch(function () { showMemberVerifyError_(Logic.networkErrorMessage(locale)); })
+        .then(function () { memberCodeBusy_ = false; els.memberCodeVerify.disabled = false; });
+    });
+  }
+
+  if (els.memberGeneralContinue) {
+    els.memberGeneralContinue.addEventListener('click', function () {
+      /* 利用者自身が明示的に一般予約へ戻る操作。会員料金・会員特典・先行予約は使わず、一般として進める。 */
+      memberAuth.reverifyPending = false;
+      hideGlobalError();
+      renderMemberVerify_();
+      setMemberVerifyStatus_(UI_TEXT.memberGeneralContinued);
+    });
   }
   function clearSelectedDate_() {
     if (els.date) els.date.value = '';
@@ -1058,10 +1265,14 @@
   }
   function applyMemberGate_() {
     syncMemberUnlockField_();
+    renderMemberVerify_();
     if (!memberFeaturesEnabled_()) {
       if (els.planPair) els.planPair.checked = false;
       if (els.shower) els.shower.checked = false;
       if (selectedDateMemberAdvance_) clearSelectedDate_();
+    } else if (!advanceFeaturesEnabled_() && selectedDateMemberAdvance_) {
+      /* 確認済みでも今日の会員資格が無ければ、31〜90日先の先行予約日は選べない。 */
+      clearSelectedDate_();
     }
     if (calendarMonth && isCalendarReady_()) {
       var cached = calendarCache[calendarCacheKey_(calendarMonth.year, calendarMonth.month, currentCalendarDurationMinutes_(), currentTimeBand_())];
@@ -1250,6 +1461,8 @@
   function proceedFromSelectedDate_(options) {
     /* 空き状況の確認中・取得失敗の間は、以前選んだ日付が残っていても進めない。 */
     if (isCalendarReady_() && calendarSelectionStale_) return;
+    /* Issue #548: 会員確認の期限切れ後は、再確認または「一般予約として続ける」を選ぶまで先へ進ませない。 */
+    if (reverifyBlocked_()) return;
     resumeStartTimesAfterRecheck_ = false;
     var dateValue = els.date ? els.date.value : '';
     var durationMinutes = Logic.durationHoursToMinutes(durationHoursValue_());
@@ -1316,8 +1529,22 @@
     if (typeof els.email.focus === 'function') els.email.focus();
   }
 
+  /* Issue #548: メールアドレスが変わったら、確認済み証明・先行予約資格・会員料金/特典を即破棄して安全側（一般・30日）へ戻す。 */
+  function discardMemberAuthIfEmailChanged_() {
+    if (memberAuth.proof && memberAuth.email !== normalizedEmail_()) {
+      resetMemberAuth_();
+    } else if (memberCodeSent_ && memberCodeEmail_ !== normalizedEmail_()) {
+      /* 別のメールアドレス宛に送った確認コードの入力欄は閉じる。 */
+      memberCodeSent_ = false;
+      setMemberVerifyStatus_('');
+      renderMemberVerify_();
+    }
+  }
+
   if (els.email) {
+    els.email.addEventListener('input', discardMemberAuthIfEmailChanged_);
     els.email.addEventListener('change', function () {
+      discardMemberAuthIfEmailChanged_();
       var message = emailErrorMessage_();
       setFieldError_(els.email, els.emailError, message);
       if (message) return;
@@ -1473,6 +1700,7 @@
   if (els.step2Next) {
     els.step2Next.addEventListener('click', function () {
       if (!state.startTime) return;
+      if (reverifyBlocked_()) return;
       /* 会員区分（snb/studio_x）は未回答のまま進ませない。料金も会員区分の確定後にだけ表示する。 */
       if (!memberAnswered_()) {
         setFieldError_(null, els.memberError, UI_TEXT.memberRequired);
@@ -1737,6 +1965,13 @@
       showGlobalError(message, []);
       return;
     }
+    /* Issue #548: 会員確認が無い／期限切れ。予約は作られていない。証明を破棄し、Step1の会員確認（再送）か一般予約へ戻る操作を求める。 */
+    if (action === 'reverify') {
+      if (code === 'MEMBER_REVERIFY_REQUIRED') handleReverifyRequired_();
+      goToStep('datetime');
+      showGlobalError(message, []);
+      return;
+    }
     if (action === 'reselect-time') {
       goToStep('start-time');
       showGlobalError(message, []);
@@ -1845,6 +2080,9 @@
          duplicate submission抑止と合わせた多層防御）。 */
       if (isSubmitting || hasSubmittedSuccessfully) return;
 
+      /* Issue #548: 会員確認が期限切れ（端末の時計）または再確認待ちなら、送信せずStep1の会員確認へ戻す（黙って一般料金で送らない）。 */
+      if (reverifyBlocked_()) { goToStep('datetime'); showGlobalError(Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale), []); return; }
+
       hideSubmitError();
       setFieldError_(els.consent, els.consentError, els.consent.checked ? '' : UI_TEXT.consentRequired);
       if (!els.consent.checked) return;
@@ -1884,7 +2122,9 @@
         note: state.note,
         isMember: state.isMember,
         plan: selectedPlan_(),
-        shower: showerSelected_()
+        shower: showerSelected_(),
+        /* Issue #548: V2で確認済みなら、サーバーが発行した証明を送る。有効性・予約メールとの一致・会員資格はサーバーが再判定する。 */
+        memberProof: memberVerified_() ? memberAuth.proof : ''
       });
       /* オプションは選択内容のみ送る（金額・承認状態はサーバーが決める）。未選択ならキー自体を付けない。 */
       var optionsSelection = optionsPanel ? optionsPanel.getSelection() : null;

@@ -77,6 +77,16 @@ var MembershipRules = (function () {
   var MEMBER_BENEFIT_DENIED_CODE = 'MEMBER_BENEFIT_NOT_AVAILABLE';
   var MEMBER_BENEFIT_DENIED_MESSAGE = 'この特典は、ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できた場合のみご利用いただけます。会員資格をご確認のうえ、改めてお申し込みください。';
 
+  /*
+   * V2予約（Issue #548。SNB / SNB mensの2026/12/1 0:00 JST以降に作成する直接予約）の会員機能に必要なメールOTP確認の外部向けエラー。
+   * 確認済み証明が無い場合（VERIFICATION_REQUIRED）と、あったが期限切れ・不正・メール不一致の場合（REVERIFY_REQUIRED）を分ける。
+   * どちらも会員台帳の内容（会員か否か）には一切触れない。会員利用中の予約を黙って一般料金へ降格しないための再確認要求。
+   */
+  var BOOKING_VERIFICATION_REQUIRED_CODE = 'MEMBER_VERIFICATION_REQUIRED';
+  var BOOKING_VERIFICATION_REQUIRED_MESSAGE = '会員料金・会員特典・先行予約をご利用いただくには、メールアドレスの確認コードによる会員確認が必要です。確認コードを送信して確認してください。';
+  var BOOKING_REVERIFY_REQUIRED_CODE = 'MEMBER_REVERIFY_REQUIRED';
+  var BOOKING_REVERIFY_REQUIRED_MESSAGE = '会員確認の有効期限が切れました。会員料金・会員特典を利用する場合は、確認コードを再送してもう一度確認してください。';
+
   var STATUS = { INCOMPLETE: 'incomplete', ACTIVE: 'active', PAST_DUE: 'past_due', CANCELED: 'canceled' };
 
   /*
@@ -526,6 +536,10 @@ var MembershipRules = (function () {
     BENEFITS_START_MS: BENEFITS_START_MS_,
     MEMBER_BENEFIT_DENIED_CODE: MEMBER_BENEFIT_DENIED_CODE,
     MEMBER_BENEFIT_DENIED_MESSAGE: MEMBER_BENEFIT_DENIED_MESSAGE,
+    BOOKING_VERIFICATION_REQUIRED_CODE: BOOKING_VERIFICATION_REQUIRED_CODE,
+    BOOKING_VERIFICATION_REQUIRED_MESSAGE: BOOKING_VERIFICATION_REQUIRED_MESSAGE,
+    BOOKING_REVERIFY_REQUIRED_CODE: BOOKING_REVERIFY_REQUIRED_CODE,
+    BOOKING_REVERIFY_REQUIRED_MESSAGE: BOOKING_REVERIFY_REQUIRED_MESSAGE,
     isBenefitsRuleActive: isBenefitsRuleActive,
     verifyActualMembership: verifyActualMembership,
     verifyAdvanceBookingMembership: verifyAdvanceBookingMembership,

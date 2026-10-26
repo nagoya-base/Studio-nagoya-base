@@ -98,7 +98,8 @@ function setup(opts) {
     if (!(this instanceof FakeDate)) return new Date(FIXED_NOW_MS).toString();
     return args.length === 0 ? new Date(FIXED_NOW_MS) : new (Function.prototype.bind.apply(Date, [null].concat(args)))();
   }
-  FakeDate.now = function () { return FIXED_NOW_MS; };
+  var clockOffsetMs = 0;
+  FakeDate.now = function () { return FIXED_NOW_MS + clockOffsetMs; };
   FakeDate.parse = Date.parse;
   FakeDate.UTC = Date.UTC;
   FakeDate.prototype = Date.prototype;
@@ -160,9 +161,29 @@ function setup(opts) {
   };
   var windowStub = { BookingApiConfig: { BASE_URL: 'https://example.invalid/exec' } };
 
-  function fetchStub(url) {
+  var posts = [];
+  function fetchStub(url, options) {
     fetchCalls.push(url);
     var body;
+    if (options && options.method === 'POST') {
+      var requestBody = JSON.parse(options.body || '{}');
+      posts.push({ url: url, body: requestBody });
+      if (url.indexOf('action=requestBookingMemberCode') !== -1) {
+        body = opts.requestCode ? opts.requestCode(requestBody) : { success: true, message: 'sent', ttlMinutes: 60 };
+      } else if (url.indexOf('action=verifyBookingMemberCode') !== -1) {
+        body = requestBody.code === '123456'
+          ? { success: true, proof: 'P'.repeat(40), expiresInMinutes: 60, advanceEligible: opts.advanceEligible !== false }
+          : { success: false, error: { code: 'INVALID_CODE' } };
+      } else if (url.indexOf('action=bookingMemberStatus') !== -1) {
+        body = opts.memberStatus ? opts.memberStatus(requestBody) : {
+          success: true, verified: true, advanceEligible: true, memberOnDate: true, priceGeneration: 'V2',
+          price: { amount: 5500, tier: 'MEMBER', brand: brand, plan: requestBody.plan || '' }
+        };
+      } else {
+        body = { success: false, error: { code: 'INTERNAL_ERROR' } };
+      }
+      return Promise.resolve({ json: function () { return Promise.resolve(body); } });
+    }
     if (url.indexOf('action=monthly') !== -1) {
       var year = Number(/[?&]year=(\d+)/.exec(url)[1]);
       var month = Number(/[?&]month=(\d+)/.exec(url)[1]);
@@ -186,6 +207,20 @@ function setup(opts) {
   var ctx = {
     elements: elements,
     fetchCalls: fetchCalls,
+    posts: posts,
+    advanceClock: function (ms) { clockOffsetMs += ms; },
+    postsOf: function (action) { return posts.filter(function (p) { return p.url.indexOf('action=' + action) !== -1; }); },
+    click: function (id) { elements[id]._listeners.click(); },
+    typeEmail: function (value) { elements['ba-email'].value = value; elements['ba-email']._listeners.input(); },
+    /* 確認コードを送信 → 入力 → 確認する。 */
+    verifyMember: async function (code) {
+      elements['ba-member-code-send']._listeners.click();
+      await flushPromises();
+      elements['ba-member-code'].value = code || '123456';
+      elements['ba-member-code-verify']._listeners.click();
+      await flushPromises();
+      await flushPromises();
+    },
     Logic: windowStub.BookingLogic,
     setMember: function (value) { selectedMemberStatus = value; checkedValue = !!value; memberRadio._listeners.change(); },
     setDuration: function (hours) { durationEl.value = String(hours); durationEl._listeners.input(); },
@@ -331,9 +366,9 @@ test('会員→一般: 31〜90日先を選択済みなら、利用日・開始�
 
 /* ── V2 / SNB mens: UI解除操作 ── */
 
-[['snb', 'V2'], ['mens', 'V1']].forEach(function (c) {
+[['mens', 'V1']].forEach(function (c) {
   var brand = c[0], generation = c[1];
-  var label = brand === 'snb' ? 'SNB V2' : 'SNB mens';
+  var label = 'SNB mens（V1。2026/11/30までの作成はUI解除）';
 
   test(label + ': 通常状態では31日先・会員限定特典を選べず、UI解除を出す', async function () {
     var ctx = await ready({ brand: brand, generation: generation });
@@ -555,4 +590,248 @@ test('利用時間を変えても日付を選び直した場合は、前の開�
   await flushPromises();
   assert.strictEqual(ctx.elements['ba-date'].value, '2026-12-11');
   assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, true, '別日は開始時刻を選び直す');
+});
+
+/* ── Issue #548: V2（SNB / SNB mens）の会員確認（メールOTP） ── */
+
+['snb', 'mens'].forEach(function (brand) {
+  var label = brand === 'snb' ? 'SNB V2' : 'SNB mens V2';
+
+  test(label + ': 未確認では会員確認欄を出し、自己申告のUI解除は出さない。31日先・会員限定特典は選べず、見積りは一般（isMember=0）', async function () {
+    var ctx = await ready({ brand: brand, generation: 'V2' });
+    await ctx.dayButton(1); /* 月間応答（priceGeneration=V2）を反映させる */
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-member-verify-field'].hidden, false, 'メールOTPの会員確認欄を表示');
+    assert.strictEqual(ctx.elements['ba-member-unlock-field'].hidden, true, '自己申告の解除は出さない（#546のUI解除はV2では実装しない）');
+    assert.strictEqual(ctx.elements['ba-member-code-entry'].hidden, true, '確認コードの入力欄は送信後に表示');
+    assert.strictEqual((await ctx.dayButton(30)).disabled, false, '一般は30日先まで');
+    assert.strictEqual((await ctx.dayButton(31)).disabled, true);
+    assert.strictEqual((await ctx.dayButton(90)).disabled, true);
+    await ctx.pick(20);
+    assert.strictEqual(ctx.elements['ba-plan-pair'].disabled, true);
+    assert.strictEqual(ctx.elements['ba-shower'].disabled, true);
+    assert.ok(/isMember=0/.test(lastEstimateUrl(ctx)), '未確認はGETの見積り（一般）: ' + lastEstimateUrl(ctx));
+    assert.strictEqual(ctx.postsOf('bookingMemberStatus').length, 0, '未確認は会員結果を取得しない');
+  });
+
+  test(label + ': 確認コードを送信 → 6桁入力 → 確認済みで、先行予約・会員限定特典を選べ、会員料金の見積りは証明つきPOSTで取得する', async function () {
+    var ctx = await ready({ brand: brand, generation: 'V2' });
+    await ctx.dayButton(1);
+    await flushPromises();
+
+    ctx.click('ba-member-code-send');
+    await flushPromises();
+    assert.strictEqual(ctx.postsOf('requestBookingMemberCode').length, 1);
+    assert.deepStrictEqual(ctx.postsOf('requestBookingMemberCode')[0].body, { email: 'taro@example.com' }, 'メールだけを送る');
+    assert.strictEqual(ctx.elements['ba-member-code-entry'].hidden, false, '送信後に入力欄を表示');
+
+    /* 6桁でない入力はAPIへ送らない。誤ったコードは拒否され、会員機能は開かない。 */
+    ctx.elements['ba-member-code'].value = '12ab';
+    ctx.click('ba-member-code-verify');
+    await flushPromises();
+    assert.strictEqual(ctx.postsOf('verifyBookingMemberCode').length, 0);
+    assert.strictEqual(ctx.elements['ba-member-verify-error'].hidden, false);
+    ctx.elements['ba-member-code'].value = '000000';
+    ctx.click('ba-member-code-verify');
+    await flushPromises();
+    await flushPromises();
+    assert.strictEqual(ctx.postsOf('verifyBookingMemberCode').length, 1);
+    assert.strictEqual(ctx.elements['ba-member-verify-error'].hidden, false, '誤ったコードはエラー表示');
+    assert.strictEqual((await ctx.dayButton(31)).disabled, true, '未確認のまま');
+
+    ctx.elements['ba-member-code'].value = '123456';
+    ctx.click('ba-member-code-verify');
+    await flushPromises();
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-member-verify-error'].hidden, true);
+    assert.strictEqual(ctx.elements['ba-member-code-entry'].hidden, true, '確認後は入力欄を閉じる');
+    assert.strictEqual((await ctx.dayButton(31)).disabled, false, '確認済み + 今日会員なら先行予約枠を選べる');
+    assert.strictEqual((await ctx.dayButton(90)).disabled, false);
+    assert.strictEqual((await ctx.dayButton(91)).disabled, true, '91日先は範囲外のまま');
+
+    await ctx.pick(20);
+    assert.strictEqual(ctx.elements['ba-plan-pair'].disabled, false);
+    assert.strictEqual(ctx.elements['ba-shower'].disabled, false);
+    var statusPosts = ctx.postsOf('bookingMemberStatus');
+    assert.ok(statusPosts.length >= 1, '会員料金の見積りは証明つきPOST');
+    var quote = statusPosts[statusPosts.length - 1].body;
+    assert.strictEqual(quote.email, 'taro@example.com');
+    assert.strictEqual(quote.proof, 'P'.repeat(40));
+    assert.strictEqual(quote.date, '2026-12-10');
+    assert.strictEqual(quote.brand, brand);
+    assert.ok(ctx.elements['ba-price-line'].textContent.indexOf('5,500') !== -1, '会員料金を表示: ' + ctx.elements['ba-price-line'].textContent);
+    var getEstimates = ctx.fetchCalls.filter(function (u) { return u.indexOf('action=estimatePrice') !== -1; });
+    getEstimates.forEach(function (u) { assert.ok(/isMember=0/.test(u), 'GETの見積りはisMember=1を送らない: ' + u); });
+  });
+
+  test(label + ': 確認済みでも今日の会員資格が無ければ先行予約枠は選べない（会員限定特典の欄は開く）', async function () {
+    var ctx = await ready({ brand: brand, generation: 'V2', advanceEligible: false });
+    await ctx.dayButton(1);
+    await flushPromises();
+    await ctx.verifyMember();
+    assert.strictEqual((await ctx.dayButton(31)).disabled, true);
+    assert.strictEqual((await ctx.dayButton(30)).disabled, false);
+    await ctx.pick(20);
+    assert.strictEqual(ctx.elements['ba-plan-pair'].disabled, false);
+  });
+
+  test(label + ': メールアドレスを変えると確認済み状態・先行予約日・特典・会員料金を即破棄する', async function () {
+    var ctx = await ready({ brand: brand, generation: 'V2' });
+    await ctx.dayButton(1);
+    await flushPromises();
+    await ctx.verifyMember();
+    await ctx.pick(45);
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-date'].value, dateAfter(45));
+    ctx.setBenefit('ba-shower', true);
+
+    ctx.typeEmail('other@example.com');
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-date'].value, '', '先行予約日を解除');
+    assert.strictEqual(ctx.elements['ba-shower'].checked, false, '特典を解除');
+    assert.strictEqual((await ctx.dayButton(31)).disabled, true, '30日先までへ戻る');
+    assert.strictEqual(ctx.elements['ba-price-line'].hidden, true, '会員料金の見積りを消す');
+    await ctx.pick(20);
+    assert.ok(/isMember=0/.test(lastEstimateUrl(ctx)), '一般料金の見積りへ戻る');
+    assert.strictEqual(ctx.postsOf('bookingMemberStatus').filter(function (p) { return p.body.email === 'other@example.com'; }).length, 0, '新しいメールで古い証明を使わない');
+  });
+
+  test(label + ': 利用日を変えても確認済み証明は維持し、利用日ごとに会員結果と見積りを再取得する', async function () {
+    var ctx = await ready({ brand: brand, generation: 'V2' });
+    await ctx.dayButton(1);
+    await flushPromises();
+    await ctx.verifyMember();
+    await ctx.pick(20);
+    var before = ctx.postsOf('bookingMemberStatus').length;
+    await ctx.pick(21);
+    await flushPromises();
+    var posts = ctx.postsOf('bookingMemberStatus');
+    assert.ok(posts.length > before, '利用日変更で再取得');
+    assert.strictEqual(posts[posts.length - 1].body.date, dateAfter(21));
+    assert.strictEqual(posts[posts.length - 1].body.proof, 'P'.repeat(40), '証明は維持');
+    assert.strictEqual(ctx.postsOf('verifyBookingMemberCode').length, 1, '再度コード入力は求めない');
+  });
+
+  test(label + ': 会員結果の再取得で証明が無効（期限切れ）と分かったら、黙って一般料金へ降格せず再確認を求め、先へ進ませない', async function () {
+    var expired = false;
+    var ctx = await ready({
+      brand: brand, generation: 'V2',
+      memberStatus: function (body) {
+        return expired
+          ? { success: false, error: { code: 'MEMBER_REVERIFY_REQUIRED' } }
+          : { success: true, verified: true, advanceEligible: true, memberOnDate: true, priceGeneration: 'V2', price: { amount: 5500, tier: 'MEMBER', brand: brand, plan: body.plan || '' } };
+      }
+    });
+    await ctx.dayButton(1);
+    await flushPromises();
+    await ctx.verifyMember();
+    await ctx.pick(45); /* 先行予約日を選択済み */
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-date'].value, dateAfter(45));
+
+    expired = true;
+    ctx.setDuration(4); /* 条件変更で会員結果を再取得 */
+    await flushPromises();
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-member-reverify'].hidden, false, '再確認の案内を表示');
+    assert.ok(ctx.elements['ba-member-reverify-message'].textContent.indexOf('確認コードを再送') !== -1);
+    assert.strictEqual(ctx.elements['ba-date'].value, '', '先行予約日は一般予約として確定させない（解除）');
+    assert.strictEqual((await ctx.dayButton(31)).disabled, true);
+    assert.ok(ctx.elements['ba-price-line'].hidden === true || ctx.elements['ba-price-line'].textContent.indexOf('5,500') === -1, '会員料金のまま残さない');
+
+    /* 再確認するか「一般予約として続ける」を選ぶまで、Step1の「次へ」は進まない。 */
+    ctx.elements['ba-date'].value = dateAfter(20);
+    var fetchCountBefore = ctx.fetchCalls.length;
+    ctx.click('ba-step-datetime-next');
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-start-time-area'].hidden, true, '開始時刻へ進まない');
+    assert.strictEqual(ctx.fetchCalls.slice(fetchCountBefore).filter(function (u) { return u.indexOf('action=getAvailability') !== -1 || (u.indexOf('action=') === -1 && u.indexOf('date=') !== -1); }).length, 0);
+    assert.strictEqual(ctx.elements['ba-global-error'].hidden, false, '再確認を促すエラーを表示');
+
+    /* 利用者自身の明示操作で一般予約へ戻る。 */
+    ctx.click('ba-member-general-continue');
+    assert.strictEqual(ctx.elements['ba-member-reverify'].hidden, true);
+  });
+
+  test(label + ': 端末の時計で60分を過ぎた確認済み証明は、見積り・先へ進む前に再確認へ（サーバーへ古い証明を送り続けない）', async function () {
+    var ctx = await ready({ brand: brand, generation: 'V2' });
+    await ctx.dayButton(1);
+    await flushPromises();
+    await ctx.verifyMember();
+    await ctx.pick(20);
+    var before = ctx.postsOf('bookingMemberStatus').length;
+    ctx.advanceClock(61 * 60 * 1000);
+    ctx.setDuration(4);
+    await flushPromises();
+    assert.strictEqual(ctx.postsOf('bookingMemberStatus').length, before, '期限切れの証明で会員結果を取得しない');
+    assert.strictEqual(ctx.elements['ba-member-reverify'].hidden, false);
+  });
+
+  test(label + ': 確認コードの送信はメールアドレスの形式が正しいときだけ（会員の有無は表示しない）', async function () {
+    var ctx = await ready({ brand: brand, generation: 'V2' });
+    await ctx.dayButton(1);
+    await flushPromises();
+    ctx.elements['ba-email'].value = 'not-an-email';
+    ctx.click('ba-member-code-send');
+    await flushPromises();
+    assert.strictEqual(ctx.postsOf('requestBookingMemberCode').length, 0);
+    assert.strictEqual(ctx.elements['ba-email-error'].hidden, false);
+  });
+});
+
+test('SNB V1: 会員確認欄（メールOTP）は出さない（V1は従来仕様）。V1/V2はサーバーが返す料金世代で決め、端末の時計では判断しない', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1' });
+  await ctx.dayButton(1);
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-member-verify-field'].hidden, true);
+  assert.strictEqual(ctx.postsOf('requestBookingMemberCode').length, 0);
+  ctx.setMember('member');
+  assert.strictEqual((await ctx.dayButton(31)).disabled, false, 'V1は会員区分で従来どおり先行予約を選べる');
+  var mens = await ready({ brand: 'mens', generation: 'V1' });
+  await mens.dayButton(1);
+  assert.strictEqual(mens.elements['ba-member-verify-field'].hidden, true);
+});
+
+test('Studio X: 会員確認欄は出さず、従来どおり（本Issueの対象外）', async function () {
+  var ctx = await ready({ brand: 'studio_x', generation: 'V2' });
+  await ctx.dayButton(1);
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-member-verify-field'].hidden, true);
+});
+
+test('Logic.buildCreateBookingPayload: memberProofは保持している場合だけ送る。verified/isMember=trueは会員確認の代わりにならない（サーバーが検証）', function () {
+  var Logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
+  var base = { brand: 'snb', customerType: 'returning', date: '2026-12-10', startTime: '10:00', durationMinutes: 180, name: 'a', email: 'a@example.com', people: '1名', purpose: 'x', paymentMethod: '現金', isMember: false };
+  var without = Logic.buildCreateBookingPayload(base);
+  assert.strictEqual('memberProof' in without, false, '証明が無ければキー自体を付けない');
+  assert.strictEqual(without.isMember, false);
+  var withProof = Logic.buildCreateBookingPayload(Object.assign({}, base, { memberProof: 'P'.repeat(40), verified: true }));
+  assert.strictEqual(withProof.memberProof, 'P'.repeat(40));
+  assert.strictEqual('verified' in withProof, false, 'verifiedなどのクライアント値は送らない');
+  assert.strictEqual('memberProof' in Logic.buildCreateBookingPayload(Object.assign({}, base, { memberProof: '' })), false);
+});
+
+test('Logic: 会員確認が無い／期限切れのエラーは再確認の導線（reverify）で、予約を作らず会員確認欄へ戻す。文言に会員の有無を含めない', function () {
+  var Logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
+  assert.strictEqual(Logic.recoveryActionForErrorCode('MEMBER_REVERIFY_REQUIRED'), 'reverify');
+  assert.strictEqual(Logic.recoveryActionForErrorCode('MEMBER_VERIFICATION_REQUIRED'), 'reverify');
+  ['ja', 'en'].forEach(function (locale) {
+    ['MEMBER_REVERIFY_REQUIRED', 'MEMBER_VERIFICATION_REQUIRED', 'INVALID_CODE', 'VERIFICATION_UNAVAILABLE'].forEach(function (code) {
+      var message = Logic.messageForErrorCode(code, locale);
+      assert.ok(message && message !== Logic.messageForErrorCode('NO_SUCH_CODE', locale), code + ' ' + locale + ' に専用の文言がある');
+      assert.ok(!/非会員|台帳|不一致/.test(message), '会員の有無を示さない: ' + message);
+    });
+  });
+  assert.ok(Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', 'ja').indexOf('確認コードを再送してもう一度確認してください') !== -1);
+});
+
+test('配線: 確認済み証明はcreateBookingの送信にだけ付け、フロントはverified/isMemberを正本にしない', function () {
+  var app = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'booking-app.js'), 'utf8');
+  assert.ok(/memberProof: memberVerified_\(\) \? memberAuth\.proof : ''/.test(app), '送信ペイロードに証明を付ける');
+  assert.ok(!/isMember: *true|verified *: *true/.test(app.replace(/\/\*[\s\S]*?\*\//g, '')), 'フロントでisMember/verifiedをtrueにして送らない');
+  assert.ok(!/localStorage|sessionStorage/.test(app), '証明をlocalStorage等へ保存しない（メモリのみ）');
+  assert.ok(!/console\./.test(app), '証明・コードをconsoleへ出さない');
+  var tpl = fs.readFileSync(path.join(__dirname, '..', '_includes', 'booking_app_ja.html'), 'utf8');
+  assert.ok(tpl.indexOf('id="ba-member-verify-field"') > tpl.indexOf('{% if include.brand == "snb" or include.brand == "mens" %}'), '会員確認欄はSNB / mensのテンプレート内だけ');
+  assert.ok(/autocomplete="one-time-code"/.test(tpl));
 });
