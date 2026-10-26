@@ -1,0 +1,67 @@
+---
+---
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
+
+<title>SNB MEMBER 会員資格の確認 | Studio Nagoya Base</title>
+
+<meta name="description" content="SNB MEMBER（月額会員）の会員資格を、メールで本人確認のうえ確認できるページです。">
+<meta name="robots" content="noindex, follow">
+<link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/membership/status/">
+
+<link rel="icon" href="../../images/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="../../images/apple-touch-icon.png">
+
+<link rel="stylesheet" href="../../styles/common.css">
+</head>
+
+<body data-page-type="membership-status" data-site-section="studio_main">
+
+<a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
+
+{% include subpage_nav_ja.html %}
+
+<main id="main-content">
+
+<section id="membership-status" class="bg-section">
+  <div class="container">
+    {% include subpage_backlink_ja.html %}
+    <h1 class="section-title">会員資格の確認</h1>
+    <p class="section-subtitle">SNB MEMBER</p>
+
+    <div class="membership-page">
+      {% include membership_prestart_ja.html %}
+
+      <p class="membership-lead">SNB MEMBERの会員資格（有効・無効、有効期間、次回更新日、利用できる特典）を確認できます。会員資格は、Studio Nagoya Base・SNB mens・Studio Xで共通の1つです。</p>
+
+      <div id="membership-status-request">
+        <h2 class="membership-heading">メールで本人確認</h2>
+        <p>メールアドレスを入力しただけでは、会員かどうかは表示されません。会員登録に使ったメールアドレスを入力すると、<strong>確認用のリンク</strong>をそのメールアドレス宛にお送りします。メール内のリンク（30分間有効・1回のみ）を開くと、会員状態が表示されます。</p>
+        <form class="membership-join" id="membership-status-form" novalidate>
+          <label for="membership-status-email">メールアドレス</label>
+          <input type="email" id="membership-status-email" name="email" autocomplete="email" inputmode="email" required aria-describedby="membership-status-message">
+          <button type="submit" class="btn-primary" id="membership-status-submit">確認用リンクを送る</button>
+          <p class="membership-status" id="membership-status-message" role="status" aria-live="polite"></p>
+        </form>
+        <noscript><p class="membership-note">会員資格の確認にはJavaScriptが必要です。</p></noscript>
+      </div>
+
+      <div id="membership-status-result" hidden aria-live="polite"></div>
+
+      <p class="membership-note">会員でない方・メールアドレスが異なる方にも、同じ内容の案内メールが届く場合があります（会員かどうかは、本人確認後の画面にだけ表示されます）。ご加入は<a href="{{ '/membership/' | relative_url }}#join">会員案内ページ</a>から行えます。</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+{% include subpage_footer_ja.html %}
+
+<script src="../../scripts/booking-config.js"></script>
+<script src="../../scripts/membership-status.js"></script>
+</body>
+</html>

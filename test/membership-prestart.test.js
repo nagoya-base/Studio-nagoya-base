@@ -273,3 +273,179 @@ test('会員限定特典の開始は2026/12/1のまま（プレスタートで�
   assert.strictEqual(R.isBenefitsRuleActive(Date.parse('2026-11-30T23:59:59+09:00')), false);
   assert.strictEqual(R.isBenefitsRuleActive(Date.parse('2026-12-01T00:00:00+09:00')), true);
 });
+
+/* ===== 会員資格確認UI（/membership/status/。Issue #490） ===== */
+
+var STATUS_PROPS = {
+  STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/Studio-nagoya-base/membership/complete.html',
+  STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/Studio-nagoya-base/membership/',
+  BOOKING_MAIL_DISPLAY_NAME: 'SNB', BOOKING_MAIL_REPLY_TO: 'noreply@example.com', BOOKING_CONTACT_EMAIL: 'contact@example.com',
+  PERMANENT_MEMBER_EMAILS: 'forever@example.com'
+};
+
+function statusCtx(extra) {
+  var ctx = setup(Object.assign({ clockAt: '2026-10-27T10:00:00+09:00', properties: Object.assign({}, STATUS_PROPS, (extra && extra.properties) || {}) }, extra && extra.options));
+  var sent = [];
+  ctx.sandbox.MailApp = { sendEmail: function (m) { sent.push(m); } };
+  ctx.sent = sent;
+  return ctx;
+}
+
+function tokenOf(mail) {
+  var m = /#t=([A-Za-z0-9]+)/.exec(mail.body);
+  assert.ok(m, 'メールにワンタイムリンクがある');
+  return m[1];
+}
+
+function plain(x) { return JSON.parse(JSON.stringify(x)); }
+
+test('会員資格確認: 会員でも非会員でも、確認要求への外部応答は同一でリンクメールが送られる（会員列挙の防止）', function () {
+  var ctx = joinAt({ properties: STATUS_PROPS }, '2026-10-26T10:00:00+09:00');
+  var sent = [];
+  ctx.sandbox.MailApp = { sendEmail: function (m) { sent.push(m); } };
+  var member = plain(ctx.sandbox.MembershipService.requestStatusLink({ email: MEMBER_EMAIL }));
+  var stranger = plain(ctx.sandbox.MembershipService.requestStatusLink({ email: 'nobody@example.com' }));
+  assert.strictEqual(member.success, true);
+  assert.deepStrictEqual(member, stranger);
+  assert.strictEqual(sent.length, 2);
+  assert.ok(sent[0].body.indexOf('https://example.com/Studio-nagoya-base/membership/status/#t=') !== -1);
+  assert.strictEqual(plain(ctx.sandbox.MembershipService.requestStatusLink({ email: 'bad' })).error.code, 'INVALID_EMAIL');
+});
+
+test('会員資格確認: 要求の応答にも台帳にもトークン本体は含まれず（ハッシュのみ保存）、ログにも出さない', function () {
+  var ctx = joinAt({ properties: STATUS_PROPS }, '2026-10-26T10:00:00+09:00');
+  var sent = [];
+  ctx.sandbox.MailApp = { sendEmail: function (m) { sent.push(m); } };
+  var res = ctx.sandbox.MembershipService.requestStatusLink({ email: MEMBER_EMAIL });
+  var token = tokenOf(sent[0]);
+  assert.strictEqual(JSON.stringify(res).indexOf(token), -1);
+  var rows = ctx.sheets.MemberStatusTokens._rows;
+  assert.strictEqual(rows.length, 2);
+  assert.strictEqual(JSON.stringify(rows).indexOf(token), -1, 'トークン本体は保存しない');
+});
+
+test('会員資格確認: プレスタート加入者はリンクを開いた本人にだけ状態を表示（有効・11/30まで・次回12/1・500円・マスク・特典の出し分け）', function () {
+  var ctx = joinAt({ properties: STATUS_PROPS }, '2026-10-26T10:00:00+09:00');
+  var sent = [];
+  ctx.sandbox.MailApp = { sendEmail: function (m) { sent.push(m); } };
+  ctx.sandbox.MembershipService.requestStatusLink({ email: MEMBER_EMAIL });
+  var out = plain(ctx.sandbox.MembershipService.verifyStatusLink({ token: tokenOf(sent[0]) }));
+  assert.strictEqual(out.success, true);
+  var st = out.status;
+  assert.strictEqual(st.active, true);
+  assert.strictEqual(st.validUntil, '2026-11-30');
+  assert.strictEqual(st.nextRenewalDate, '2026-12-01');
+  assert.strictEqual(st.monthlyFeeJpy, 500);
+  assert.strictEqual(st.maskedEmail, 't***@e***.com');
+  var by = {};
+  st.benefits.forEach(function (b) { by[b.key] = b; });
+  assert.strictEqual(by.advance_booking_90.available, true);
+  ['pair_pack', 'shower', 'paid_equipment', 'studio_x_options'].forEach(function (k) {
+    assert.strictEqual(by[k].available, false, k);
+    assert.strictEqual(by[k].startsOn, '2026-12-01', k);
+  });
+  var json = JSON.stringify(out);
+  ['MBR-', CUSTOMER_ID, SUBSCRIPTION_ID, MEMBER_EMAIL, 'cus_', 'sub_'].forEach(function (s) { assert.strictEqual(json.indexOf(s), -1, s); });
+});
+
+test('会員資格確認: トークンは1回限り（使用後は無効）。期限切れ・不正・未発行も同一の汎用エラー', function () {
+  var ctx = joinAt({ properties: STATUS_PROPS }, '2026-10-26T10:00:00+09:00');
+  var sent = [];
+  ctx.sandbox.MailApp = { sendEmail: function (m) { sent.push(m); } };
+  ctx.sandbox.MembershipService.requestStatusLink({ email: MEMBER_EMAIL });
+  var token = tokenOf(sent[0]);
+  assert.strictEqual(plain(ctx.sandbox.MembershipService.verifyStatusLink({ token: token })).success, true);
+  var again = plain(ctx.sandbox.MembershipService.verifyStatusLink({ token: token }));
+  assert.strictEqual(again.success, false);
+  assert.strictEqual(again.error.code, 'INVALID_TOKEN');
+  assert.strictEqual(plain(ctx.sandbox.MembershipService.verifyStatusLink({ token: 'x'.repeat(40) })).error.code, 'INVALID_TOKEN');
+  assert.strictEqual(plain(ctx.sandbox.MembershipService.verifyStatusLink({ token: '' })).error.code, 'INVALID_TOKEN');
+  assert.strictEqual(plain(ctx.sandbox.MembershipService.verifyStatusLink({})).error.code, 'INVALID_TOKEN');
+
+  /* 期限（30分）切れ */
+  ctx.sandbox.MembershipService.requestStatusLink({ email: MEMBER_EMAIL });
+  var expired = tokenOf(sent[1]);
+  ctx.clock.advanceByMillis(60 * 60 * 1000);
+  assert.strictEqual(plain(ctx.sandbox.MembershipService.verifyStatusLink({ token: expired })).error.code, 'INVALID_TOKEN');
+});
+
+test('会員資格確認: 非会員は「無効」と表示される（本人確認後のみ）。有効期間・特典は返さない', function () {
+  var ctx = statusCtx();
+  ctx.sandbox.MembershipService.requestStatusLink({ email: 'nobody@example.com' });
+  var out = plain(ctx.sandbox.MembershipService.verifyStatusLink({ token: tokenOf(ctx.sent[0]) }));
+  assert.strictEqual(out.success, true);
+  assert.strictEqual(out.status.active, false);
+  assert.strictEqual(out.status.validUntil, null);
+  assert.strictEqual(out.status.nextRenewalDate, null);
+  assert.deepStrictEqual(out.status.benefits, []);
+});
+
+test('会員資格確認: 永久会員は通常の有効会員と同じ形で表示され、永久会員であることは返さない', function () {
+  var ctx = statusCtx();
+  ctx.sandbox.MembershipService.requestStatusLink({ email: 'forever@example.com' });
+  var out = plain(ctx.sandbox.MembershipService.verifyStatusLink({ token: tokenOf(ctx.sent[0]) }));
+  assert.strictEqual(out.status.active, true);
+  assert.strictEqual(out.status.validUntil, '2026-10-31');
+  assert.strictEqual(out.status.nextRenewalDate, '2026-11-01');
+  assert.ok(JSON.stringify(out).toLowerCase().indexOf('permanent') === -1);
+  assert.ok(JSON.stringify(out).indexOf('永久') === -1);
+});
+
+test('会員資格確認: 台帳エラー時はfail-closed（汎用エラー・内部詳細なし・トークン未消費）', function () {
+  var ctx = statusCtx();
+  ctx.sandbox.MembershipService.requestStatusLink({ email: MEMBER_EMAIL });
+  var token = tokenOf(ctx.sent[0]);
+  var original = ctx.sandbox.MemberRepository.statusFactsForEmail;
+  ctx.sandbox.MemberRepository.statusFactsForEmail = function () { throw new Error('boom: ledger broken'); };
+  var out = plain(ctx.sandbox.MembershipService.verifyStatusLink({ token: token }));
+  assert.strictEqual(out.success, false);
+  assert.strictEqual(out.error.code, 'STATUS_UNAVAILABLE');
+  assert.strictEqual(JSON.stringify(out).indexOf('boom'), -1);
+  ctx.sandbox.MemberRepository.statusFactsForEmail = original;
+  assert.strictEqual(plain(ctx.sandbox.MembershipService.verifyStatusLink({ token: token })).success, true, '読めなかった回はトークンを消費しない');
+});
+
+test('会員資格確認: 解約済み（自動更新なし）は次回更新日なし。12/1以降は本特典が利用可になる', function () {
+  var R = setup().sandbox.MembershipRules;
+  var nowDec = Date.parse('2026-12-02T10:00:00+09:00');
+  var s = plain(R.describeMembershipStatus('a@b.co', { paidMonths: ['2026-12'], autoRenew: false }, { nowMs: nowDec }));
+  assert.strictEqual(s.active, true);
+  assert.strictEqual(s.validUntil, '2026-12-31');
+  assert.strictEqual(s.nextRenewalDate, null);
+  assert.strictEqual(s.autoRenew, false);
+  assert.ok(s.benefits.every(function (b) { return b.available === true; }));
+  assert.strictEqual(R.maskEmail('taro@example.com'), 't***@e***.com');
+  assert.strictEqual(R.maskEmail('bad'), '');
+  assert.strictEqual(R.lastDateOfMonth('2028-02'), '2028-02-29');
+});
+
+test('会員資格確認: 要求のrate limit（同一メール10分3件）を超えると拒否する', function () {
+  var ctx = statusCtx();
+  var codes = [];
+  for (var i = 0; i < 4; i++) codes.push(plain(ctx.sandbox.MembershipService.requestStatusLink({ email: 'rate@example.com' })));
+  assert.strictEqual(codes[2].success, true);
+  assert.strictEqual(codes[3].success, false);
+  assert.strictEqual(codes[3].error.code, 'RATE_LIMITED');
+});
+
+test('会員資格確認: Web Appのaction経路（requestMembershipStatus / membershipStatus）がPOSTで動く', function () {
+  var ctx = statusCtx();
+  var res = JSON.parse(ctx.sandbox.doPost({ parameter: { action: 'requestMembershipStatus' }, postData: { contents: JSON.stringify({ email: MEMBER_EMAIL }) } }).text);
+  assert.strictEqual(res.success, true);
+  var out = JSON.parse(ctx.sandbox.doPost({ parameter: { action: 'membershipStatus' }, postData: { contents: JSON.stringify({ token: tokenOf(ctx.sent[0]) }) } }).text);
+  assert.strictEqual(out.success, true);
+  assert.strictEqual(out.status.active, false);
+});
+
+test('Web: /membership/status/ ページとスクリプト（noindex・フラグメントのトークンを読んで即URLから消す・textContentで描画）', function () {
+  var html = read('membership/status/index.html');
+  assert.ok(html.indexOf('noindex') !== -1);
+  assert.ok(html.indexOf('membership-status.js') !== -1);
+  assert.ok(html.indexOf('membership_prestart_ja.html') !== -1);
+  var js = read('scripts/membership-status.js');
+  assert.ok(js.indexOf('requestMembershipStatus') !== -1 && js.indexOf("'membershipStatus'") !== -1);
+  assert.ok(js.indexOf('replaceState') !== -1);
+  assert.strictEqual(/innerHTML/.test(js), false);
+  assert.ok(read('_includes/membership_prestart_ja.html').indexOf('/membership/status/') !== -1);
+  assert.ok(read('_includes/membership_terms_ja.html').indexOf('会員資格の確認') !== -1);
+});

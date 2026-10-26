@@ -227,6 +227,83 @@ var MembershipRules = (function () {
     return months.length ? renewalAnchorSecondsAfterMonth(months[months.length - 1]) : 0;
   }
 
+  /*
+   * 会員資格確認UI（Issue #490）用の純粋ロジック。外部へ返す表示用の値だけを作る
+   * （Stripe ID・台帳内部IDは一切含めない）。
+   */
+
+  /* メールアドレスのマスク表示。例: taro@example.com → t***@e***.com。不正値は空文字。 */
+  function maskEmail(value) {
+    var email = normalizeEmail(value);
+    var at = email.lastIndexOf('@');
+    if (at < 1 || at === email.length - 1) return '';
+    var local = email.substring(0, at);
+    var domain = email.substring(at + 1);
+    var dot = domain.lastIndexOf('.');
+    var host = dot > 0 ? domain.substring(0, dot) : domain;
+    var tld = dot > 0 ? domain.substring(dot) : '';
+    return local.charAt(0) + '***@' + host.charAt(0) + '***' + tld;
+  }
+
+  /* 'YYYY-MM'の末日 'YYYY-MM-DD'。不正値は空文字。 */
+  function lastDateOfMonth(monthKey) {
+    var m = /^(\d{4})-(\d{2})$/.exec(monthKey || '');
+    if (!m) return '';
+    var day = new Date(Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10), 0)).getUTCDate();
+    return monthKey + '-' + pad2_(day);
+  }
+
+  /* 利用者向けの特典表（表示順固定）。availableFromBenefitsStart=trueは2026/12/1開始の本特典。 */
+  var STATUS_BENEFITS_ = [
+    { key: 'advance_booking_90', label: '90日先行予約', fromBenefitsStart: false },
+    { key: 'pair_pack', label: '2名ペアパック（SNB / SNB mens）', fromBenefitsStart: true },
+    { key: 'shower', label: 'シャワー（SNB / SNB mens）', fromBenefitsStart: true },
+    { key: 'paid_equipment', label: '会員限定の有料機材レンタル（SNB / SNB mens）', fromBenefitsStart: true },
+    { key: 'studio_x_options', label: 'Studio X 会員限定の有料オプション', fromBenefitsStart: true }
+  ];
+
+  /*
+   * 会員資格確認の表示内容。
+   * facts: { paidMonths: ['YYYY-MM', ...]（支払い事実のある利用月）, autoRenew: boolean（自動更新が続く見込みか）}
+   * options: { permanent: boolean, nowMs: number }
+   * 永久会員は支払い事実が無くても通常の有効会員と同じ形で表示する（永久会員であること自体は返さない）。
+   * 戻り値は公開API用のプレーンなオブジェクト（IDを含まない）。
+   */
+  function describeMembershipStatus(email, facts, options) {
+    var opts = options || {};
+    var nowMs = Number.isFinite(opts.nowMs) ? opts.nowMs : Date.now();
+    var currentMonth = jstMonthKeyOfEpochSeconds(Math.floor(nowMs / 1000));
+    var paid = {};
+    ((facts && facts.paidMonths) || []).forEach(function (m) { paid[m] = true; });
+    var autoRenew = !!(facts && facts.autoRenew);
+    if (opts.permanent) { paid[currentMonth] = true; autoRenew = true; }
+
+    var active = !!currentMonth && paid[currentMonth] === true;
+    var result = {
+      active: active,
+      maskedEmail: maskEmail(email),
+      monthlyFeeJpy: MONTHLY_FEE_JPY,
+      validUntil: null,
+      nextRenewalDate: null,
+      autoRenew: false,
+      benefits: []
+    };
+    if (!active) return result;
+
+    var last = currentMonth;
+    while (paid[nextMonthKey(last)] === true) last = nextMonthKey(last);
+    result.validUntil = lastDateOfMonth(last);
+    result.autoRenew = autoRenew;
+    result.nextRenewalDate = autoRenew ? nextMonthKey(last) + '-01' : null;
+
+    var benefitsOpen = nowMs >= BENEFITS_START_MS_;
+    result.benefits = STATUS_BENEFITS_.map(function (b) {
+      var available = !b.fromBenefitsStart || benefitsOpen;
+      return { key: b.key, label: b.label, available: available, startsOn: available ? null : '2026-12-01' };
+    });
+    return result;
+  }
+
   /* 作成時刻（Date|ms）が会員特典の新ルール（2026/12/1 JST以降）の対象か。不正値は旧ルール側（grandfather）。 */
   function isBenefitsRuleActive(createdAt) {
     var ms = createdAt && typeof createdAt.getTime === 'function' ? createdAt.getTime() : Number(createdAt);
@@ -297,6 +374,9 @@ var MembershipRules = (function () {
     renewalAnchorSecondsAfterMonth: renewalAnchorSecondsAfterMonth,
     PRESTART_START_MS: PRESTART_START_MS_,
     isPrestartJoin: isPrestartJoin,
+    maskEmail: maskEmail,
+    lastDateOfMonth: lastDateOfMonth,
+    describeMembershipStatus: describeMembershipStatus,
     coveredMonthsForJoin: coveredMonthsForJoin,
     renewalAnchorSecondsForJoin: renewalAnchorSecondsForJoin,
     mapSubscriptionStatus: mapSubscriptionStatus,

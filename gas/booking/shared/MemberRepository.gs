@@ -325,7 +325,76 @@ var MemberRepository = (function () {
     return false;
   }
 
+  /*
+   * 会員資格確認（Issue #490）用の事実。メール1件に対し、支払い事実のある利用月（'YYYY-MM'）と、
+   * 自動更新が続く見込みか（statusがactiveでcancelAtPeriodEndでない会員行がある）を返す。
+   * 内部ID・Stripe IDは返さない。台帳を読めない場合は例外（呼び出し側でfail-closed）。
+   */
+  function statusFactsForEmail(email) {
+    var normalized = MembershipRules.normalizeEmail(email);
+    var facts = { paidMonths: [], autoRenew: false };
+    if (!normalized) return facts;
+    var ids = {};
+    readMembers_().members.forEach(function (m) {
+      if (m.record.email !== normalized || !m.record.memberId) return;
+      ids[m.record.memberId] = true;
+      if (m.record.status === MembershipRules.STATUS.ACTIVE && !m.record.cancelAtPeriodEnd) facts.autoRenew = true;
+    });
+    if (Object.keys(ids).length === 0) return facts;
+    var values = ensureSheet_(MONTHS_SHEET_, MONTH_HEADERS_).getDataRange().getValues();
+    var seen = {};
+    for (var i = 1; i < values.length; i++) {
+      if (!ids[values[i][0]]) continue;
+      var cell = String(values[i][1]);
+      if (!/^\d{6}$/.test(cell)) continue;
+      var key = cell.substring(0, 4) + '-' + cell.substring(4);
+      if (!seen[key]) { seen[key] = true; facts.paidMonths.push(key); }
+    }
+    return facts;
+  }
+
+  /*
+   * 会員資格確認のワンタイムトークン台帳（MemberStatusTokens）。トークン本体は保存せず、ハッシュのみ持つ。
+   * 1行＝発行1本: tokenHash / email（正規化済み）/ expiresAt / usedAt / createdAt。ロック保持下で呼ぶこと。
+   */
+  var TOKEN_SHEET_ = 'MemberStatusTokens';
+  var TOKEN_HEADERS_ = ['tokenHash', 'email', 'expiresAt', 'usedAt', 'createdAt'];
+
+  function addStatusToken(entry, now) {
+    var sheet = ensureSheet_(TOKEN_SHEET_, TOKEN_HEADERS_);
+    sheet.appendRow(recordToRow_(TOKEN_HEADERS_, {
+      tokenHash: entry.tokenHash, email: MembershipRules.normalizeEmail(entry.email),
+      expiresAt: entry.expiresAt, usedAt: '', createdAt: now
+    }));
+  }
+
+  /* 未使用・未失効のトークン行を返す（無ければnull）。{ rowNumber, email }。 */
+  function findUsableStatusToken(tokenHash, now) {
+    if (!tokenHash) return null;
+    var sheet = ensureSheet_(TOKEN_SHEET_, TOKEN_HEADERS_);
+    var values = sheet.getDataRange().getValues();
+    var nowMs = toMillis_(now);
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(TOKEN_HEADERS_, values[i]);
+      if (record.tokenHash !== tokenHash) continue;
+      if (record.usedAt) return null;
+      if (!(toMillis_(record.expiresAt) > nowMs)) return null;
+      return { rowNumber: i + 1, email: record.email };
+    }
+    return null;
+  }
+
+  function markStatusTokenUsed(rowNumber, now) {
+    var sheet = ensureSheet_(TOKEN_SHEET_, TOKEN_HEADERS_);
+    sheet.getRange(rowNumber, TOKEN_HEADERS_.indexOf('usedAt') + 1, 1, 1).setValues([[now]]);
+  }
+
   return {
+    statusFactsForEmail: statusFactsForEmail,
+    addStatusToken: addStatusToken,
+    findUsableStatusToken: findUsableStatusToken,
+    markStatusTokenUsed: markStatusTokenUsed,
+    TOKEN_HEADERS: TOKEN_HEADERS_,
     PENDING_STATE: PENDING_STATE,
     PENDING_HEADERS: PENDING_HEADERS_,
     findActivePending: findActivePending,
