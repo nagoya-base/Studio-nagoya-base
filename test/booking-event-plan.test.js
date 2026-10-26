@@ -489,7 +489,7 @@ test('予約フォーム: Studio Xのみに貸切ベースプラン欄（常時�
   assert.ok(app.indexOf('action=eventPlan') === -1 && app.indexOf('loadEventPlan_') === -1, '対象日APIを呼ばない');
   assert.ok(app.indexOf('els.duration.disabled = true') !== -1);
   var booking = read('studio-x/booking/index.html');
-  assert.ok(booking.indexOf('../#osu-base-plan') !== -1, '予約ページからプラン説明への導線');
+  assert.ok(booking.indexOf('../base-plan/') !== -1, '予約ページからプラン説明への導線');
   ['booking/index.html', 'mens/booking/index.html'].forEach(function (rel) {
     if (fs.existsSync(path.join(ROOT, rel))) assert.ok(read(rel).indexOf('ba-plan-event') === -1);
   });
