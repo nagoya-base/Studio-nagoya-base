@@ -7548,7 +7548,7 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 
 ### 会員限定シャワー（OptionOrder系。SNB / mensのみ）
 
-- 正本: `BookingOptions.gs`（`SHOWER_PRICE_JPY_`）。`category=MEMBER_SERVICE`・`items=['SHOWER']`・金額1,000円・承認不要・`AWAITING_PAYMENT` から Checkout 決済。1予約1回（重複は `DUPLICATE_OPTION`）。Studio Xには出さない（選択は `OPTIONS_NOT_AVAILABLE`）。SNB / mensではシャワー以外（Studio Xの機材・セッティング）を同時に申し込めない。
+- 正本: `BookingOptions.gs`（`SHOWER_PRICE_JPY_`）。`category=MEMBER_SERVICE`・`items=['SHOWER']`・金額1,000円。**Issue #481で承認制に変更**: 申込は `approvalStatus=PENDING_APPROVAL / status=PENDING_APPROVAL`（Checkout不可・`APPROVAL_REQUIRED`）→ Booking Adminの既存OptionOrder承認（`decide_`。スタッフ対応と同じ処理。承認時にもactual membershipを再確認）→ `AWAITING_PAYMENT` → Checkout（開始時に再確認）→ Webhookで `CONFIRMED`（決済済みは会員再確認で巻き戻さない）。否認は `DECLINED`（重複判定から外れ再申込可）。1予約1回（重複は `DUPLICATE_OPTION`）。Studio Xには出さない（選択は `OPTIONS_NOT_AVAILABLE`）。SNB / mensではシャワー以外（Studio Xの機材・セッティング）を同時に申し込めない。
 - `BookingOptions.isBrandEnabled` は snb / mens も真になるが、`buildCatalog` は `showerOnly` のカタログ（機材・スタッフ対応を含まない）。申込・お支払いページは `/booking/options/`（SNB）・`/mens/booking/options/`（mens）。戻り先は `option-payment-complete.html`（ブランド別・既存の導出ロジックのまま）。
 
 ### Studio X: 有料オプション全般の会員限定化

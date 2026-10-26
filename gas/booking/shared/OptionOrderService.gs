@@ -248,12 +248,12 @@ var OptionOrderService = (function () {
       var adminEmail = BookingConfig.getAdminNotificationEmail();
       if (!adminEmail) return;
       var staff = orders.filter(function (o) {
-        return o.category === BookingOptions.CATEGORY.STAFF_SERVICE || o.approvalStatus === BookingOptions.APPROVAL_STATUS.PENDING_APPROVAL;
+        return o.category === BookingOptions.CATEGORY.STAFF_SERVICE || o.category === BookingOptions.CATEGORY.MEMBER_SERVICE || o.approvalStatus === BookingOptions.APPROVAL_STATUS.PENDING_APPROVAL;
       });
       if (staff.length === 0) return;
       var adminUrl = BookingConfig.getBookingAdminUrl();
       var lines = [
-        '承認依頼が届きました（スタッフ対応の空き確認、または有料レンタル機材の利用許可の確認）。Booking Adminで承認（許可済みにして進める）または不承認にしてください。Checkoutは承認後にのみ発行されます。',
+        '承認依頼が届きました（スタッフ対応の空き確認、シャワー利用の対応可否確認、または有料レンタル機材の利用許可の確認）。Booking Adminで承認（許可済みにして進める）または不承認にしてください。Checkoutは承認後にのみ発行されます。',
         '',
         'bookingId: ' + booking.bookingId,
         '利用日: ' + BookingAvailability.formatDateWithWeekday(booking.date)
@@ -460,9 +460,11 @@ var OptionOrderService = (function () {
       if (order.status === BookingOptions.STATUS.PENDING_APPROVAL) {
         return fail_('APPROVAL_REQUIRED', order.category === BookingOptions.CATEGORY.EQUIPMENT
           ? '有料レンタル機材は、管理者の利用許可の確認後にお支払いいただけます。確認をお待ちください。'
-          : 'スタッフ対応は承認後にお支払いいただけます。承認をお待ちください。');
+          : order.category === BookingOptions.CATEGORY.MEMBER_SERVICE
+            ? 'シャワー利用は事前確認が必要です。運営の承認後にお支払いいただけます。承認をお待ちください。'
+            : 'スタッフ対応は承認後にお支払いいただけます。承認をお待ちください。');
       }
-      if (order.status === BookingOptions.STATUS.DECLINED) return fail_('ORDER_DECLINED', 'このスタッフ対応は対応できませんでした。');
+      if (order.status === BookingOptions.STATUS.DECLINED) return fail_('ORDER_DECLINED', order.category === BookingOptions.CATEGORY.MEMBER_SERVICE ? 'このシャワー利用は対応できませんでした。' : 'このスタッフ対応は対応できませんでした。');
       if (!BookingOptions.isPayable(order)) return fail_('NOT_PAYABLE', 'このオプションはお支払いの対象ではありません。');
       /* 資格の再検証: 許可を確認できないビデオライト系は、Stripeを呼ばず支払い不可（管理者が否認できる）。 */
       var missing1 = missingLectureCodes_(order);
@@ -641,7 +643,8 @@ var OptionOrderService = (function () {
       if (!found) return fail_('ORDER_NOT_FOUND', '対象のオプション注文が見つかりません。');
       var order = found.record;
       var approving = decision === 'APPROVE';
-      var isStaff = order.category === BookingOptions.CATEGORY.STAFF_SERVICE;
+      /* スタッフ対応と会員限定シャワー（Issue #481）は、同じ承認フロー（PENDING_APPROVAL→AWAITING_PAYMENT／DECLINED）。 */
+      var isStaff = order.category === BookingOptions.CATEGORY.STAFF_SERVICE || order.category === BookingOptions.CATEGORY.MEMBER_SERVICE;
       var isEquipment = order.category === BookingOptions.CATEGORY.EQUIPMENT;
       /* 既に不承認済みの機材注文への再不承認は、何も変えずに現在の結果を返す（冪等）。 */
       if (!approving && isEquipment && order.status === BookingOptions.STATUS.DECLINED) {
