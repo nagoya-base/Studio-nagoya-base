@@ -9,7 +9,7 @@
 <title>SNB MEMBER（月額会員）のご案内｜2名ペアパック・シャワー｜Studio Nagoya Base</title>
 
 <!-- SEO -->
-<meta name="description" content="Studio Nagoya Baseの月額会員「SNB MEMBER」（月額500円）のご案内。会員限定の2名ペアパック（平日3時間5,000円／土日祝3時間6,000円）、シャワー（1回1,000円）をご利用いただけます。SNB・SNB mens・Studio X共通の会員資格です。">
+<meta name="description" content="Studio Nagoya Baseの月額会員「SNB MEMBER」（月額500円）のご案内。プレスタート中は90日先行予約をすぐご利用いただけます。会員限定の2名ペアパック（平日3時間5,000円／土日祝3時間6,000円）、シャワー（1回1,000円）は2026年12月1日スタートです。SNB・SNB mens・Studio X共通の会員資格です。">
 <link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/membership/">
 <link rel="preload" as="image" href="../images/studio-nagoya-base-hero-ogp.webp" type="image/webp" fetchpriority="high">
 
@@ -28,13 +28,13 @@
 
 <!-- OGP（SNBトップと同じ画像資産。タイトル・説明・URLはこのページ固有） -->
 <meta property="og:title" content="SNB MEMBER｜ふたりで、3時間。縄に集中できる2名ペアパック | Studio Nagoya Base">
-<meta property="og:description" content="会員限定の2名ペアパック（平日3時間5,000円／土日祝3時間6,000円）とシャワー（1回1,000円）。月額500円のSNB MEMBERは、SNB・SNB mens・Studio X共通の会員資格です。">
+<meta property="og:description" content="プレスタート中は90日先行予約をすぐご利用いただけます。会員限定の2名ペアパック（平日3時間5,000円／土日祝3時間6,000円）とシャワー（1回1,000円）は2026年12月1日スタート。月額500円のSNB MEMBERは、SNB・SNB mens・Studio X共通の会員資格です。">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/membership/">
 <meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/studio-nagoya-base-hero-ogp.jpg">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="SNB MEMBER｜ふたりで、3時間。縄に集中できる2名ペアパック | Studio Nagoya Base">
-<meta name="twitter:description" content="会員限定の2名ペアパック（平日3時間5,000円／土日祝3時間6,000円）とシャワー（1回1,000円）。月額500円のSNB MEMBERは、SNB・SNB mens・Studio X共通の会員資格です。">
+<meta name="twitter:description" content="プレスタート中は90日先行予約をすぐご利用いただけます。会員限定の2名ペアパック（平日3時間5,000円／土日祝3時間6,000円）とシャワー（1回1,000円）は2026年12月1日スタート。月額500円のSNB MEMBERは、SNB・SNB mens・Studio X共通の会員資格です。">
 <meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/studio-nagoya-base-hero-ogp.jpg">
 
 <link rel="stylesheet" href="../styles/common.css?v={{ site.time | date: '%s' }}">
@@ -90,6 +90,7 @@
 {% include subpage_nav_ja.html %}
 
 <main id="main-content">
+{% include membership_phase_ja.html %}
 
 <!-- ヒーロー（SNBトップと同じhero-ad構造・同じ画像資産。緊縛向けの会員訴求） -->
 <section class="hero-ad" aria-labelledby="membership-hero-title">
@@ -100,15 +101,31 @@
     </picture>
   </div>
   <div class="hero-ad-content">
-    <h1 id="membership-hero-title" class="hero-ad-title">ふたりで、3時間。縄に集中できる時間を。<span class="hero-ad-title-sub">SNB MEMBER限定「2名ペアパック」</span></h1>
-    <p class="hero-ad-price">
-      平日3時間 <span class="hero-ad-price-amount">5,000円</span> / 土日祝3時間 <span class="hero-ad-price-amount">6,000円</span>
-    </p>
-    <p class="hero-ad-subcopy">緊縛・縄撮影・自主練に使いやすい、2名までの会員専用プランです。</p>
-    <p class="hero-ad-note">月額500円 / SNB・SNB mens・Studio X共通会員</p>
-    <div class="hero-buttons">
-      <a class="btn-primary" href="#join" data-analytics-event="cta_click" data-analytics-location="membership_hero" data-analytics-type="membership_join" data-analytics-destination="membership_join_form">SNB MEMBERに加入する</a>
-      <a class="btn-secondary" href="#pair-pack">2名ペアパックの内容を見る</a>
+    <div data-membership-phase="prestart"{% unless membership_is_prestart %} hidden{% endunless %}>
+      <h1 id="membership-hero-title" class="hero-ad-title">今すぐ使える特典は、90日先行予約。<span class="hero-ad-title-sub">SNB MEMBER プレスタート中｜月額500円</span></h1>
+      <p class="hero-ad-subcopy">一般は30日先まで、SNB MEMBERは<strong>90日先まで</strong>予約できます。登録・決済後すぐにご利用いただけます。</p>
+      <div class="membership-prestart-start" role="note" aria-label="2026年12月1日スタートの特典">
+        <p class="membership-prestart-start-title">会員限定 2名ペアパック <span class="membership-prestart-start-date">2026年12月1日スタート</span></p>
+        <p class="membership-prestart-start-price">平日3時間 5,000円 / 土日祝3時間 6,000円（12月1日から）</p>
+        <p class="membership-prestart-start-note">シャワー・会員限定有料機材・Studio X会員限定有料オプションも2026年12月1日スタートです。</p>
+      </div>
+      <p class="hero-ad-note">月額500円 / SNB・SNB mens・Studio X共通会員</p>
+      <div class="hero-buttons">
+        <a class="btn-primary" href="#join" data-analytics-event="cta_click" data-analytics-location="membership_hero" data-analytics-type="membership_join" data-analytics-destination="membership_join_form">SNB MEMBERに加入する</a>
+        <a class="btn-secondary" href="#membership-prestart" data-analytics-event="cta_click" data-analytics-location="membership_hero" data-analytics-type="membership_prestart_info" data-analytics-destination="membership_prestart">90日先行予約について見る</a>
+      </div>
+    </div>
+    <div data-membership-phase="regular"{% if membership_is_prestart %} hidden{% endif %}>
+      <h1 id="membership-hero-title" class="hero-ad-title">ふたりで、3時間。縄に集中できる時間を。<span class="hero-ad-title-sub">SNB MEMBER限定「2名ペアパック」</span></h1>
+      <p class="hero-ad-price">
+        平日3時間 <span class="hero-ad-price-amount">5,000円</span> / 土日祝3時間 <span class="hero-ad-price-amount">6,000円</span>
+      </p>
+      <p class="hero-ad-subcopy">緊縛・縄撮影・自主練に使いやすい、2名までの会員専用プランです。</p>
+      <p class="hero-ad-note">月額500円 / SNB・SNB mens・Studio X共通会員</p>
+      <div class="hero-buttons">
+        <a class="btn-primary" href="#join" data-analytics-event="cta_click" data-analytics-location="membership_hero" data-analytics-type="membership_join" data-analytics-destination="membership_join_form">SNB MEMBERに加入する</a>
+        <a class="btn-secondary" href="#pair-pack">2名ペアパックの内容を見る</a>
+      </div>
     </div>
   </div>
 </section>
@@ -220,6 +237,7 @@
 {% include subpage_footer_ja.html %}
 
 <script src="../scripts/booking-config.js"></script>
+<script src="../scripts/membership-prestart-hero.js"></script>
 <script src="../scripts/membership-join.js"></script>
 </body>
 </html>
