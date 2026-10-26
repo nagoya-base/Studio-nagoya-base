@@ -93,6 +93,66 @@ test('createCheckoutSession: 正常系はAuthorization/Idempotency-Keyヘッダ�
   assert.strictEqual(form['metadata[paymentAttemptId]'], 'PAY-1');
 });
 
+/* ===== Issue #516: Checkout Studio固定値（fixed_by_ui） ===== */
+
+var CHECKOUT_STUDIO_FORM = {
+  'ui_mode': 'hosted_page',
+  'billing_address_collection': 'auto',
+  'phone_number_collection[enabled]': 'false',
+  'automatic_tax[enabled]': 'false',
+  'allow_promotion_codes': 'false',
+  'submit_type': 'auto',
+  'name_collection[individual][enabled]': 'true',
+  'name_collection[individual][optional]': 'true',
+  'integration_identifier': 'hosted_web_0001',
+  'origin_context': 'web'
+};
+
+function assertCheckoutStudioForm(form) {
+  Object.keys(CHECKOUT_STUDIO_FORM).forEach(function (key) {
+    assert.strictEqual(form[key], CHECKOUT_STUDIO_FORM[key], key);
+  });
+  assert.strictEqual(form.payment_method_collection, undefined, 'mode=paymentにpayment_method_collectionを付けない');
+}
+
+test('createCheckoutSession: Checkout Studio固定値を送り、mode/success_url/cancel_url/line_itemsの既存値は維持する（Issue #516）', function () {
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 200, body: { id: 'cs_test_516', url: 'https://checkout.stripe.com/pay/cs_test_516', status: 'open', payment_status: 'unpaid', expires_at: 1999999999 } };
+  });
+  var sandbox = loadStripeGateway(urlFetchApp);
+  sandbox.StripeGateway.createCheckoutSession(STRIPE_CONFIG, {
+    amountJpy: 8000, currency: 'JPY', bookingId: 'SX-20261001-AAAAAAAA', brand: 'studio_x',
+    paymentAttemptId: 'PAY-1', expiresAtSeconds: 1999999999,
+    successUrl: 'https://example.com/success', cancelUrl: 'https://example.com/cancel'
+  }, 'PAY-1');
+  var form = parseFormPayload(urlFetchApp._calls[0].options.payload);
+  assertCheckoutStudioForm(form);
+  assert.strictEqual(form.mode, 'payment');
+  assert.strictEqual(form.success_url, 'https://example.com/success');
+  assert.strictEqual(form.cancel_url, 'https://example.com/cancel');
+  assert.strictEqual(form['line_items[0][price_data][unit_amount]'], '8000');
+});
+
+test('createMembershipCheckoutSession: Checkout Studio固定値を送り、決済手段保存・メール固定などの既存値は維持する（Issue #516）', function () {
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 200, body: { id: 'cs_test_m', url: 'https://checkout.stripe.com/pay/cs_test_m', status: 'open', payment_status: 'unpaid' } };
+  });
+  var sandbox = loadStripeGateway(urlFetchApp);
+  sandbox.StripeGateway.createMembershipCheckoutSession(STRIPE_CONFIG, {
+    amountJpy: 500, email: 'taro@example.com', memberId: 'M-1', productName: 'SNB MEMBER',
+    successUrl: 'https://example.com/ok', cancelUrl: 'https://example.com/ng', expiresAtSeconds: 1999999999
+  }, 'idem-m');
+  var form = parseFormPayload(urlFetchApp._calls[0].options.payload);
+  assertCheckoutStudioForm(form);
+  assert.strictEqual(form.mode, 'payment');
+  assert.strictEqual(form.success_url, 'https://example.com/ok');
+  assert.strictEqual(form.cancel_url, 'https://example.com/ng');
+  assert.strictEqual(form.customer_email, 'taro@example.com');
+  assert.strictEqual(form.customer_creation, 'always');
+  assert.strictEqual(form['payment_intent_data[setup_future_usage]'], 'off_session');
+  assert.strictEqual(form['line_items[0][price_data][unit_amount]'], '500');
+});
+
 test('createCheckoutSession: UrlFetchApp.fetchが例外を投げた場合はNETWORKを返す（Stripe側の処理結果は不明のまま）', function () {
   var urlFetchApp = stubs.createUrlFetchAppStub(function () {
     return { thrown: new Error('DNS error') };

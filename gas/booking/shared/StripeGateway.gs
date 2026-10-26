@@ -63,7 +63,18 @@ var StripeGateway = (function () {
       'line_items[0][price_data][product_data][name]': params.lineItemName || ('予約 ' + params.bookingId),
       'metadata[bookingId]': params.bookingId,
       'metadata[brand]': params.brand,
-      'metadata[paymentAttemptId]': params.paymentAttemptId
+      'metadata[paymentAttemptId]': params.paymentAttemptId,
+      /* Issue #516: Checkout Studio固定値（fixed_by_ui）。mode=paymentのためpayment_method_collectionは付けない。 */
+      'ui_mode': 'hosted_page',
+      'billing_address_collection': 'auto',
+      'phone_number_collection[enabled]': 'false',
+      'automatic_tax[enabled]': 'false',
+      'allow_promotion_codes': 'false',
+      'submit_type': 'auto',
+      'name_collection[individual][enabled]': 'true',
+      'name_collection[individual][optional]': 'true',
+      'integration_identifier': 'hosted_web_0001',
+      'origin_context': 'web'
     };
     if (params.customerEmail) {
       payload.customer_email = params.customerEmail;
@@ -424,7 +435,18 @@ var StripeGateway = (function () {
       'line_items[0][price_data][product_data][name]': params.productName,
       'metadata[orderType]': 'membership',
       'metadata[memberId]': params.memberId,
-      'client_reference_id': params.memberId
+      'client_reference_id': params.memberId,
+      /* Issue #516: Checkout Studio固定値（fixed_by_ui）。mode=paymentのためpayment_method_collectionは付けない。 */
+      'ui_mode': 'hosted_page',
+      'billing_address_collection': 'auto',
+      'phone_number_collection[enabled]': 'false',
+      'automatic_tax[enabled]': 'false',
+      'allow_promotion_codes': 'false',
+      'submit_type': 'auto',
+      'name_collection[individual][enabled]': 'true',
+      'name_collection[individual][optional]': 'true',
+      'integration_identifier': 'hosted_web_0001',
+      'origin_context': 'web'
     };
     if (params.expiresAtSeconds) payload.expires_at = String(params.expiresAtSeconds);
     var result = performRequest_('post', API_BASE_ + '/checkout/sessions', stripeConfig.secretKey, encodeFormPayload_(payload), idempotencyKey);
