@@ -7525,6 +7525,7 @@ SNB MEMBER（月額500円）の実会員資格を、Stripeの決済事実から�
 - **応答は常に同じ形・同じ文言**（`{ success: true, message: "入力されたメールアドレス宛に、入会のご案内をお送りしました…" }`）。結果はメール宛にだけ伝える: 新規→35分有効の決済URL、既存会員→登録済みである旨（Checkoutは発行しない）。これにより、外部応答からそのメールが会員かどうかを判別できず、決済URLも本人のメールにしか届かない。
 - 「既存会員」＝同じメールに、subscriptionが有効（`status=active`。解約予約中も期間末までは有効）、または当月の支払い事実がある会員がいる（`MemberRepository.findLiveMemberByEmail`）。
 - 並行リクエスト・二重課金: `LockService`内で「既存有効会員の確認 → 有効な保留中入会の確認 → 保留中の永続化 → Checkout発行 → セッションID記録」を行う。保留中は**永続台帳`MemberCheckouts`シート**（`memberId`/`email`/`checkoutSessionId`/`pendingUntil`/`state`=PENDING・COMPLETED・EXPIRED）が正本で、`CacheService`は使わない（消失し得るため）。`pendingUntil`＝Checkout失効（35分）＋Webhook反映の猶予（10分）で、この間は同じメールへ新しいCheckoutを発行しない。決済完了Webhookで`COMPLETED`、Stripeの確定的な発行失敗で`EXPIRED`（解放）。応答不明（5xx・ネットワーク）の場合は決済可能なSessionが残る恐れがあるため解放しない。期限切れは`pendingUntil`の経過で判定する。ロックを取れなければ発行しない。
+- 返金済み会員の再入会（Issue #522）: 初回決済が全額返金され（`MemberRefunds`）、現在月の有効な支払い事実・有効なsubscription（`status=active`）・有効な保留中Checkoutのいずれも無い会員は、`Members`/`MemberMonths`/`MemberRefunds`の履歴を残したまま、同じメールで新しい入会Checkout（新しいmemberId・Session）を開始できる。subscriptionが残る会員（要復旧で運営が解約するまで）、当月に有効な支払いがある会員、保留中Checkoutがある会員は従来どおり拒否する。拒否時の外部応答は新規と同一。`CHECKOUT_UNAVAILABLE`（「入会の受付を開始できませんでした」）は二重加入判定では返らず、Stripeへの発行失敗または内部例外のときだけ返る。
 - 最終防御（Webhook）: 入会決済の完了時に同じメールの有効な別会員（自分自身の再送・再試行は除外）がいれば、会員行もsubscriptionも作らず`MEMBERSHIP_DUPLICATE_JOIN`として**Recoveryへ記録**する。入金は済んでいるため、運営が入会Checkoutの500円を**返金**すること。
 
 ### 手動設定（Secretの値はここに書かない）
