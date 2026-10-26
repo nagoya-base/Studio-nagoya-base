@@ -159,7 +159,7 @@ test('オプション決済完了ページ: 部屋予約の確定とは別の案
 
 test('メール内リンクの案内ページURLはStudio Xのオプション案内ページを指す', function () {
   var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
-  var sb = loadBookingSandbox(['Booking.gs', 'EquipmentCatalog.gs', 'BookingOptions.gs', 'Availability.gs', 'OptionMailTemplates.gs'], {});
+  var sb = loadBookingSandbox(['Booking.gs', 'MembershipRules.gs', 'EquipmentCatalog.gs', 'BookingOptions.gs', 'Availability.gs', 'OptionMailTemplates.gs'], {});
   var url = sb.OptionMailTemplates.buildOptionsPageUrl({ brand: 'studio_x', bookingId: 'SX-20261101-AAAAAAAA' });
   assert.strictEqual(url, 'https://nagoya-base.github.io/Studio-nagoya-base/studio-x/booking/options/?bookingId=SX-20261101-AAAAAAAA');
 });
@@ -221,7 +221,7 @@ test('事前相談の追加はサーバー側(GAS)・Stripe・注文に一切触
 // ---- Issue #438: セット無料・設営方法の必須選択（サーバーのカタログ＝正本と同じ結果になること） ----
 
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
-var gasSandbox = loadBookingSandbox(['EquipmentCatalog.gs', 'BookingOptions.gs'], {});
+var gasSandbox = loadBookingSandbox(['MembershipRules.gs', 'EquipmentCatalog.gs', 'BookingOptions.gs'], {});
 var SERVER_CATALOG = JSON.parse(JSON.stringify(gasSandbox.BookingOptions.buildCatalog('studio_x', {})));
 
 test('画面の機材合計は、サーバー（planOrders）の請求額と一致する（セット無料の組み合わせを総当たり）', function () {

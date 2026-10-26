@@ -377,7 +377,15 @@ var SpreadsheetRepository = (function () {
      *   studio_x、または空）。価格優遇フラグ priceIsMember とは別概念で、mensがMEMBER料金でも
      *   'ACTIVE'にはならない。日程変更でも更新しない（作成時点の事実）。
      */
-    'membershipStatus'
+    'membershipStatus',
+    /*
+     * Issue #478で追加した列（末尾追記。本番反映時は既存Bookingsシートのヘッダー行の末尾（membershipStatusの
+     * 右隣）へ手動で `planCode` を追記が必要）。
+     * - planCode: 独立プラン識別子。'member_pair_3h'＝会員限定2名ペアパック。空＝通常料金（列追加前の予約も空）。
+     *   通常料金tier（priceTier）とは別に保持し、日程変更でも更新しない（BookingReschedule・FeeCalculatorは
+     *   この値を見て変更先の曜日区分でプラン料金を再計算する）。
+     */
+    'planCode'
   ];
 
   function getSpreadsheet_() {

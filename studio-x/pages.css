@@ -326,3 +326,25 @@
 @media (max-width: 760px) {
   
 }
+
+/* ===== 会員案内ページ（/studio-x/membership/。Issue #478） ===== */
+.member-page { padding-top: 24px; }
+.member-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 24px; }
+.member-card { padding: clamp(22px, 3vw, 34px); background: var(--surface); border: 1px solid var(--line); }
+.member-card h3 { margin: 0 0 10px; font-size: 1.05rem; }
+.member-card p { margin: 0 0 10px; }
+.member-card-tag { display: inline-block; margin-bottom: 14px !important; padding: 2px 10px; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent) !important; font-size: .7rem !important; font-weight: 700; letter-spacing: .1em; }
+.member-note { margin-top: 12px; }
+.member-terms { padding-left: 1.35rem; }
+.member-terms li + li { margin-top: 10px; }
+.membership-join { display: grid; gap: 14px; margin: 22px 0 8px; max-width: 560px; }
+.membership-join label { font-size: .85rem; color: #c8c4cc; }
+.membership-join input[type="email"] { width: 100%; padding: 14px; font-size: 1rem; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); }
+.membership-consent { display: flex; gap: 10px; align-items: flex-start; }
+.membership-join button[disabled] { opacity: .6; cursor: not-allowed; }
+.membership-status { min-height: 1.5em; margin: 0; font-size: .88rem; }
+.membership-status.is-error { color: #ff8a80; }
+.membership-status.is-ok { color: var(--accent); }
+@media (max-width: 760px) {
+  .member-grid { grid-template-columns: 1fr; }
+}

@@ -35,6 +35,14 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://nagoya-base.github.io/Studio-nagoya-base/how-to/en.html" />
   </url>
   <url>
+    <loc>https://nagoya-base.github.io/Studio-nagoya-base/mens/membership/</loc>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/mens/membership/" />
+  </url>
+  <url>
+    <loc>https://nagoya-base.github.io/Studio-nagoya-base/studio-x/membership/</loc>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/membership/" />
+  </url>
+  <url>
     <loc>https://nagoya-base.github.io/Studio-nagoya-base/studio-x/how-to/</loc>
     <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/how-to/" />
   </url>

@@ -389,7 +389,7 @@ function handleGetMonthlyAvailability_(params) {
  * computeBookingPriceで金額を再計算するため、フロントエンドはこの見積り値を「確定金額」
  * として送信・信用してはならない（createBookingのレスポンスに含まれるpriceが最終値）。
  *
- * params: { brand, date, durationMinutes, isMember }（すべて文字列。GASのdoGetクエリ
+ * params: { brand, date, durationMinutes, isMember, plan }（すべて文字列。GASのdoGetクエリ
  * パラメータのため）。いずれもPIIを含まないため、GET・クエリパラメータで問題ない
  * （handleGetAvailability_と同じ方針）。
  */
@@ -411,7 +411,10 @@ function handleEstimatePrice_(params) {
     date: params.date,
     durationMinutes: durationMinutes,
     isMember: parseBooleanParam_(params.isMember),
-    generation: BookingPricing.generationAt(new Date())
+    generation: BookingPricing.generationAt(new Date()),
+    /* Issue #478: 2名ペアパックの見積り。見積りAPIでは会員台帳を一切照会しない（会員の有無を
+       探る口にしない）。資格の確認は予約作成時のサーバー側だけで行う。 */
+    plan: params.plan
   });
   if (!priceResult.valid) {
     return { success: false, error: priceResult.error };

@@ -110,6 +110,9 @@ function setup(responseBody) {
        モジュール読み込み時点（brandShowsMemberOptionの呼び出し）で例外にならないよう
        最低限の実装を用意する。 */
     brandShowsMemberOption: function (b) { return b === 'snb' || b === 'studio_x'; },
+    brandShowsMemberBenefits: function () { return false; },
+    isPairPackPeopleValue: function () { return true; },
+    PAIR_PACK_PLAN_CODE: 'member_pair_3h',
     formatJpyAmount: function (amount) {
       var value = Number(amount);
       return Number.isFinite(value) ? '¥' + value.toLocaleString('en-US') : '';

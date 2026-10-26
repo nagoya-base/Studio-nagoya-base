@@ -42,7 +42,9 @@ function read(rel) { return fs.readFileSync(path.join(__dirname, '..', rel), 'ut
     var member = html.slice(html.indexOf('id="ba-member-field"'), html.indexOf('id="ba-price-box"'));
     assert.ok(/name="memberStatus" value="general"/.test(member) && /name="memberStatus" value="member"/.test(member));
     assert.ok(member.indexOf('checked') === -1, '初期は未選択');
-    var step1 = html.slice(html.indexOf('id="ba-step-datetime"'), html.indexOf('id="ba-step-details"'));
+    var step1 = html.slice(html.indexOf('id="ba-step-datetime"'), html.indexOf('id="ba-step-details"'))
+      /* Issue #478: 会員限定の特典（2名ペアパック・シャワー）のcheckboxは旧「会員」自己申告checkboxとは別物。 */
+      .replace(/<fieldset class="ba-fieldset" id="ba-benefits-field"[\s\S]*?<\/fieldset>/, '');
     assert.ok(html.indexOf('id="ba-is-member"') === -1 && step1.indexOf('type="checkbox"') === -1, 'Step1に会員checkboxは無い');
     var progress = html.slice(html.indexOf('id="ba-progress"'), html.indexOf('</ol>'));
     assert.deepStrictEqual(progress.match(/data-step="[a-z-]+"/g), ['data-step="datetime"', 'data-step="details"', 'data-step="confirm"', 'data-step="complete"']);

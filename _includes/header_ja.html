@@ -5,12 +5,14 @@
 {% assign nav_howto_url = "/mens/how-to/" | relative_url %}
 {% assign nav_legal_url = "/mens/legal/" | relative_url %}
 {% assign nav_booking_url = "/mens/booking/" | relative_url %}
+{% assign nav_member_url = "/mens/membership/" | relative_url %}
 {% else %}
 {% assign nav_top_url = "/" | relative_url %}
 {% assign nav_logo_name = "スタジオ　名古屋ベース" %}
 {% assign nav_howto_url = "/how-to/" | relative_url %}
 {% assign nav_legal_url = "/legal/" | relative_url %}
 {% assign nav_booking_url = "/booking/" | relative_url %}
+{% assign nav_member_url = "/membership/" | relative_url %}
 {% endif %}
 <nav class="site-nav" aria-label="サイトナビゲーション">
   <div class="nav-inner">
@@ -27,6 +29,7 @@
       <li><a href="#pricing">料金</a></li>
       <li><a href="#access">アクセス・営業時間</a></li>
       <li><a href="{{ nav_howto_url }}">使い方</a></li>
+      <li><a href="{{ nav_member_url }}" data-analytics-event="cta_click" data-analytics-type="membership" data-analytics-location="header_nav" data-analytics-destination="membership_page">会員案内</a></li>
       <li><a href="#faq">FAQ</a></li>
       <li><a href="{{ nav_legal_url }}" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="other">利用規約</a></li>
       <li><a href="{{ '/en.html' | relative_url }}" class="nav-link-accent">EN</a></li>
@@ -64,6 +67,7 @@
   <a href="#pricing"   class="nav-mobile-link">料金</a>
   <a href="#access"    class="nav-mobile-link">アクセス・営業時間</a>
   <a href="{{ nav_howto_url }}" class="nav-mobile-link">使い方</a>
+  <a href="{{ nav_member_url }}" class="nav-mobile-link" data-analytics-event="cta_click" data-analytics-type="membership" data-analytics-location="header_mobile_menu" data-analytics-destination="membership_page">会員案内</a>
   <a href="#faq"       class="nav-mobile-link">FAQ</a>
   <a href="{{ nav_legal_url }}" class="nav-mobile-link" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="other">利用規約</a>
   <a href="{{ '/en.html' | relative_url }}" class="nav-mobile-link nav-link-accent">EN</a>

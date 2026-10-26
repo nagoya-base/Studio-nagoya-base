@@ -9,6 +9,9 @@ var FILES = [
   'Config.gs', 'JapaneseHolidays.gs', 'BookingPricing.gs', 'FeeCalculator.gs',
   'CalendarRepository.gs', 'Availability.gs', 'Booking.gs',
   'SpreadsheetRepository.gs', 'RecoveryRepository.gs', 'FeeSettlementRepository.gs',
+  /* Issue #478: 会員限定特典（ペアパック・シャワー）の日程変更時の会員再確認で使う。 */
+  'MembershipRules.gs', 'MemberRepository.gs', 'EquipmentCatalog.gs', 'BookingOptions.gs',
+  'OptionOrderRepository.gs', 'OptionOrderService.gs',
   'BookingReschedule.gs'
 ];
 

@@ -7503,3 +7503,61 @@ SNB MEMBER（月額1,000円）の実会員資格を、Stripeの決済事実か�
   - 判定は予約の経路・`source`・備考に依存しない（スペースマーケット経由だけ非会員可という例外は無い）。部屋の利用・セルフ設営（無料）・機材レンタルは従来どおり。
   - 会員の存在を探られないよう、会員確認を伴う事前検証は既存の資格照会と同じレート制限（メール単位）に載せている。
 - 料金表・ブランド分離の確定内容は `docs/membership-pricing-2026-12.md`。
+
+## Issue #478: 会員限定2名ペアパック・シャワー・Studio X有料オプションの会員限定化
+
+Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員限定はスタッフ対応のみ・機材レンタル自体は会員限定ではない」を明示的に上書き**する（Webコピー・docs・テストも更新済み）。`STRIPE_CHECKOUT_ENABLED` は変更していない（無効の間は新規加入できないため、新特典を使えるのは既にactual membershipが有効な利用者のみ）。
+
+### 適用開始とgrandfather（マージ即時で旧注文を切り替えない）
+
+- 新ルールは **2026/12/1 00:00 JST以降に新規作成された予約・OptionOrder** から（`MembershipRules.isBenefitsRuleActive`。予約は `priceGeneration=V2`、OptionOrderは `createdAt`）。
+- 2026/11/30までに作成済みの予約・OptionOrder（`AWAITING_PAYMENT` / `PENDING_APPROVAL` 等を含む）は旧ルールのまま。承認・決済・日程変更の時点で世代を切り替えない（`BookingOptions.orderRequiresActualMember` が `order.createdAt` で判定）。
+- スタッフ対応は#472から会員限定（作成時刻に依らず従来どおり）。Studio Xの機材レンタルの会員限定と、シャワー・ペアパックは12/1以降の新規作成分から。
+
+### 会員資格（actual membership）
+
+- 正本は `MemberRepository.isMemberForMonth`（利用日の属する月の支払い事実）。`MembershipRules.verifyActualMembership(email, 利用日)` に一本化。`priceIsMember`・mens経路・価格overrideは実会員資格ではない。
+- fail-closedで再確認する箇所（非会員・利用月不一致・台帳エラーは同一の外部向けエラー `MEMBER_BENEFIT_NOT_AVAILABLE` で拒否。スタッフ対応は#472の既存コード `STAFF_SERVICE_MEMBERS_ONLY` を維持）:
+
+| 箇所 | 実装 |
+|---|---|
+| 予約作成（ペアパック） | `BookingRepository.createBooking` → `resolvePlanForNewBooking_` |
+| OptionOrder作成（同時・後付け） | `OptionOrderService.preflightForNewBooking` / `createOrders`（`planOrders` の `actualMember`） |
+| Checkout開始 | `OptionOrderService.startOptionCheckout` の状態確認・試行予約の2段階（`orderRequiresActualMember`） |
+| 日程変更 | `BookingReschedule.parse_`（preview/commit共通）→ `memberBenefitRejection_`（ペアパック予約・有効なシャワー注文のある予約。変更先の日付の月で再確認） |
+| Admin承認（`approveOrder`）・0円バンドルの確定 | `OptionOrderService.decide_`（承認時。不承認は資格不要） |
+| 管理者の手動確定・EXPIRED復活 | `BookingRepository.confirmBooking` / `reviveExpiredBooking`（ペアパック予約。Stripe決済済みとして確定するWebhook経由＝`options.writeGuard` ありは対象外） |
+| 現地精算の確定 | `BookingReschedule.recordFeeSettlement`（ペアパック予約の入金記録のみ。返金のみは対象外） |
+
+- **見積りAPI（`estimatePrice`）は会員台帳を照会しない**。**決済済みのWebhook処理（`applyAddonPaymentSucceeded` 等）は会員資格不足を理由に覆さない**。
+- 列挙対策: 会員照会は既存の `opt_elig_<メール>`（10分5回）のレート制限に載せ、外部向けエラーは理由を出し分けない。
+
+### 会員限定2名ペアパック（独立プラン `member_pair_3h`）
+
+- 正本: `BookingPricing.gs`（`PAIR_PACK_`）。3時間が基本（3時間未満は不可）・1〜2名・平日5,000円 / 土日祝6,000円・4時間以上は延長分に通常の会員延長料金（平日+1,500円 / 土日祝+2,000円）・SNB / mensのみ・V2（12/1以降の作成）のみ。通常料金tier（GENERAL / MEMBER）の置換ではない。
+- 予約にプラン識別子を保存（`Bookings.planCode`）。`createBooking` の入力は `plan: 'member_pair_3h'`。3名以上（`people` が1名/2名以外）・3時間未満・Studio X・未知のプランはサーバー側で拒否（通常料金へ黙って倒さない）。
+- 日程変更: `FeeCalculator.quoteFee` に `plan` を渡し、変更先の平日/土日祝でプラン料金を再計算（平日⇔土日祝で5,000円⇔6,000円、差額精算は既存の仕組み）。3時間未満へ短縮するとプラン料金は自動算出できず（`PLAN_DURATION_INVALID`）手動確認が必須。`buildFeeQuoteToken_` に `plan` を含める。
+
+### 会員限定シャワー（OptionOrder系。SNB / mensのみ）
+
+- 正本: `BookingOptions.gs`（`SHOWER_PRICE_JPY_`）。`category=MEMBER_SERVICE`・`items=['SHOWER']`・金額1,000円・承認不要・`AWAITING_PAYMENT` から Checkout 決済。1予約1回（重複は `DUPLICATE_OPTION`）。Studio Xには出さない（選択は `OPTIONS_NOT_AVAILABLE`）。SNB / mensではシャワー以外（Studio Xの機材・セッティング）を同時に申し込めない。
+- `BookingOptions.isBrandEnabled` は snb / mens も真になるが、`buildCatalog` は `showerOnly` のカタログ（機材・スタッフ対応を含まない）。申込・お支払いページは `/booking/options/`（SNB）・`/mens/booking/options/`（mens）。戻り先は `option-payment-complete.html`（ブランド別・既存の導出ロジックのまま）。
+
+### Studio X: 有料オプション全般の会員限定化
+
+- `rental` 全件 + `staffService` 全件を、金額ではなくカタログ区分で actual membership 必須にした（`planOrders`）。セット無料で0円になる品（`freeWhenWith`）も、元が `rental` である限り会員限定。無料のセルフ利用（セルフ設営・原状復帰・メールサポート・`freeSelf`）は非会員でも可。非会員は保留にせず即拒否。**判定は「FREE以外は既定で会員必須」のfail-closed**（`orderRequiresActualMember`：FREEだけが明示的な無料例外。未知・将来追加される有料categoryも自動で会員必須。`planOrders` 末尾にも、12/1以降の非会員がFREE以外の注文を作れない最終防御あり）。
+- スペースマーケット等の外部経路（現行コード・運用の確認結果）: コード上、スペースマーケットの予約はGoogle Calendarの占有イベントとして空き判定に使われるだけで（`CalendarRepository` / `Availability`）、Bookings台帳にもOptionOrdersにも行を作らない。当サイトの機材・スタッフ対応の申込（`createBooking` の `options`・`submitOptions`）は Bookings 台帳の予約ID＋登録メールを前提とするため、**当サイト経由の申込は経路・`source`・備考に依存せず同じ会員判定が適用される**（スペマ経由の非会員の例外はコードに無い）。一方、スペースマーケット上で直接販売・提供される機材や、運営がDM等でシステム外で受ける申込は外部仕様・手運用のため、**このコードでは会員限定を強制できない**（対象外。運営側で実会員を確認する運用が必要）。部屋料金・スペースマーケット側の運用は変更していない。
+
+### SNB / mens の既存有料機材（「機材レンタルオプション（会員限定）」）
+
+- 申告はDM・予約フォーム連絡事項の手運用でシステム外。サイト表示・規約・特商法・FAQに「2026/12/1以降に作成するご予約・お申し込み分からSNB MEMBERの会員資格が必要」と明記した（運用側で実会員を確認する）。
+
+### データモデル（本番で必要な手動作業）
+
+- **Bookingsシートのヘッダー行の末尾（`membershipStatus` の右隣）に `planCode` を手動で追記する**（#470 `priceGeneration`・#471 `membershipStatus` と同じ方式。`HEADERS_` は末尾追記のため、既存行は空＝通常料金として読める）。追記前に新コードを反映すると `planCode` が読み書きされず、ペアパック予約が通常料金として再計算されるため、**反映順は「ヘッダー追記 → Booking Admin → Booking Web App」**。
+- OptionOrdersシートに新しい列は無い（`category` に `MEMBER_SERVICE` が増えるだけ）。OptionEligibilityシートも変更なし。
+
+### デプロイ
+
+- 新しい `.gs` ファイルは追加していない（配布表の変更なし）。更新: `MembershipRules.gs` / `BookingPricing.gs` / `FeeCalculator.gs` / `Booking.gs` / `SpreadsheetRepository.gs` / `BookingOptions.gs` / `OptionOrderService.gs` / `BookingRepository.gs` / `Code.gs`（Booking Web App・Booking Admin）、`BookingReschedule.gs`（Booking Admin）。`BookingOptions.gs` は `MembershipRules.gs` を参照する（どちらも同じプロジェクトに配布済み）。Booking Webhookは変更なし。
+- 既存の `/exec` URL・Deploymentは作り直さず既存Deploymentを更新する。PRブランチからの本番デプロイは行わない。

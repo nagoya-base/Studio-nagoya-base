@@ -1,16 +1,17 @@
 ---
 ---
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" data-theme="kinari">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>SNB MEMBER（月額会員）のご案内 | Studio Nagoya Base</title>
+<title>SNB MEMBER（月額会員）のご案内｜2名ペアパック・シャワー｜Studio Nagoya Base</title>
 
 <!-- SEO -->
-<meta name="description" content="Studio Nagoya Baseの月額会員「SNB MEMBER」（月額1,000円）のご案内。継続・長時間ご利用の方向けの優遇制度です。会員料金は3時間以上のご利用で一般料金より安くなります。初めてご利用の方も加入できます。">
+<meta name="description" content="Studio Nagoya Baseの月額会員「SNB MEMBER」（月額1,000円）のご案内。会員限定の2名ペアパック（平日3時間5,000円／土日祝3時間6,000円）、シャワー（1回1,000円）をご利用いただけます。SNB・SNB mens・Studio X共通の会員資格です。">
 <link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/membership/">
+<link rel="preload" as="image" href="../images/studio-nagoya-base-hero-ogp.webp" type="image/webp" fetchpriority="high">
 
 <!-- Favicon -->
 <link rel="icon" href="../images/favicon.svg" type="image/svg+xml">
@@ -25,7 +26,61 @@
   gtag('config', 'G-6TWDLEFWJT');
 </script>
 
-<link rel="stylesheet" href="../styles/common.css">
+<!-- OGP（SNBトップと同じ画像資産。タイトル・説明・URLはこのページ固有） -->
+<meta property="og:title" content="SNB MEMBER｜ふたりで、3時間。縄に集中できる2名ペアパック | Studio Nagoya Base">
+<meta property="og:description" content="会員限定の2名ペアパック（平日3時間5,000円／土日祝3時間6,000円）とシャワー（1回1,000円）。月額1,000円のSNB MEMBERは、SNB・SNB mens・Studio X共通の会員資格です。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/membership/">
+<meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/studio-nagoya-base-hero-ogp.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="SNB MEMBER｜ふたりで、3時間。縄に集中できる2名ペアパック | Studio Nagoya Base">
+<meta name="twitter:description" content="会員限定の2名ペアパック（平日3時間5,000円／土日祝3時間6,000円）とシャワー（1回1,000円）。月額1,000円のSNB MEMBERは、SNB・SNB mens・Studio X共通の会員資格です。">
+<meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/studio-nagoya-base-hero-ogp.jpg">
+
+<link rel="stylesheet" href="../styles/common.css?v={{ site.time | date: '%s' }}">
+<link rel="stylesheet" href="../styles/bondage.css?v={{ site.time | date: '%s' }}">
+
+<!-- 構造化データ（FAQ。表示中のFAQと同じ内容） -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "2名ペアパックとは何ですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "SNB MEMBER会員限定の、3時間・1〜2名の定額プランです。平日5,000円、土日祝6,000円（税込）。通常の時間貸しの会員料金とは別商品で、他の割引・優待とは併用できません。延長する場合は通常の会員延長料金です。3名以上のご予約では選べません。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "シャワーは使えますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "SNB MEMBER会員限定のオプションとして、1予約につき1回1,000円（税込）でご利用いただけます。同じご予約の利用者2名まで共有でき、ご利用は予約時間内に限ります。2026年12月1日から提供します。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "翌月のペアパック・シャワーはいつから確定できますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "会員資格はご利用日の属する月の会費のお支払い（決済成功）で決まります。翌月のお部屋は通常どおりご予約いただけますが、翌月分のペアパック・シャワー・会員限定の有料機材は、その月の1日以降、当月の会費の決済が成功してから確定できます。毎月1日も決済成功が反映されるまではご利用いただけません（猶予期間はありません）。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "SNB MEMBERはSNB mensやStudio Xでも使えますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "はい。会員資格はStudio Nagoya Base・SNB mens・Studio Xで共通の1つのSNB MEMBER（月額1,000円）です。専用の別会員やブランド別の別契約はありません。"
+      }
+    }
+  ]
+}
+</script>
 </head>
 
 <body data-page-type="membership" data-site-section="studio_main">
@@ -36,14 +91,37 @@
 
 <main id="main-content">
 
+<!-- ヒーロー（SNBトップと同じhero-ad構造・同じ画像資産。緊縛向けの会員訴求） -->
+<section class="hero-ad" aria-labelledby="membership-hero-title">
+  <div class="hero-ad-media">
+    <picture>
+      <source srcset="../images/studio-nagoya-base-hero-ogp.webp" type="image/webp">
+      <img src="../images/studio-nagoya-base-hero-ogp.jpg" alt="縄師・ショー練習・講習会に。名古屋でも希少な吊り床スタジオ。Studio Nagoya Base" width="1200" height="630" class="hero-ad-image" fetchpriority="high" decoding="async">
+    </picture>
+  </div>
+  <div class="hero-ad-content">
+    <h1 id="membership-hero-title" class="hero-ad-title">ふたりで、3時間。縄に集中できる時間を。<span class="hero-ad-title-sub">SNB MEMBER限定「2名ペアパック」</span></h1>
+    <p class="hero-ad-price">
+      平日3時間 <span class="hero-ad-price-amount">5,000円</span> / 土日祝3時間 <span class="hero-ad-price-amount">6,000円</span>
+    </p>
+    <p class="hero-ad-subcopy">緊縛・縄撮影・自主練に使いやすい、2名までの会員専用プランです。</p>
+    <p class="hero-ad-note">月額1,000円 / SNB・SNB mens・Studio X共通会員</p>
+    <div class="hero-buttons">
+      <a class="btn-primary" href="#join" data-analytics-event="cta_click" data-analytics-location="membership_hero" data-analytics-type="membership_join" data-analytics-destination="membership_join_form">SNB MEMBERに加入する</a>
+      <a class="btn-secondary" href="#pair-pack">2名ペアパックの内容を見る</a>
+    </div>
+  </div>
+</section>
+
 <section id="membership" class="bg-section">
   <div class="container">
     {% include subpage_backlink_ja.html %}
-    <h1 class="section-title">SNB MEMBER（月額会員）</h1>
+    <h2 class="section-title">SNB MEMBER（月額会員）</h2>
     <p class="section-subtitle">Membership</p>
 
     <div class="membership-page">
       <p class="membership-lead">SNB MEMBERは、継続してご利用の方・長時間ご利用の方向けの優遇制度です（月額1,000円）。会員料金は、3時間以上のご利用で一般料金より安くなります。初めてご利用の方も加入できます。</p>
+      <p class="membership-lead">会員資格は、<strong>Studio Nagoya Base・SNB mens・Studio Xで共通</strong>の1つのSNB MEMBERです。ブランドごとの別会員・別契約はありません。会員限定の2名ペアパック・シャワーなどの特典は、以下のとおりです。</p>
 
       <h2 class="membership-heading">料金の比べ方</h2>
       <div class="pricing-card">
@@ -71,6 +149,8 @@
         </div>
       </div>
       <p class="membership-note">3時間以上のご利用で、会員料金は一般料金より安くなります。4時間のご利用では、一般料金との差額が月会費（1,000円）相当になります（3時間は500円、延長1時間ごとに500円）。1〜2時間のご利用では、一般料金と同額です。ご利用の時間や頻度に合わせて、必要な方がご検討ください。</p>
+
+      {% include membership_benefits_ja.html brand="snb" %}
 
       <h2 class="membership-heading">SNB MEMBERの条件</h2>
       {% include membership_terms_ja.html %}
@@ -107,6 +187,22 @@
         <details class="faq-item">
           <summary>SNB mensのページから予約すると会員になりますか？</summary>
           <div class="faq-answer">いいえ。SNB mensの予約ページからのご予約は、SNB MEMBERへの加入有無にかかわらず会員料金で利用できますが、これは料金の優遇です。SNB MEMBERの会員資格が付与されるものではありません。</div>
+        </details>
+        <details class="faq-item">
+          <summary>2名ペアパックとは何ですか？</summary>
+          <div class="faq-answer">SNB MEMBER会員限定の、3時間・1〜2名の定額プランです。平日5,000円、土日祝6,000円（税込）。通常の時間貸しの会員料金とは別商品で、他の割引・優待とは併用できません。延長する場合は通常の会員延長料金です。3名以上のご予約では選べません。</div>
+        </details>
+        <details class="faq-item">
+          <summary>シャワーは使えますか？</summary>
+          <div class="faq-answer">SNB MEMBER会員限定のオプションとして、1予約につき1回1,000円（税込）でご利用いただけます。同じご予約の利用者2名まで共有でき、ご利用は予約時間内に限ります。2026年12月1日から提供します。</div>
+        </details>
+        <details class="faq-item">
+          <summary>翌月のペアパック・シャワーはいつから確定できますか？</summary>
+          <div class="faq-answer">会員資格はご利用日の属する月の会費のお支払い（決済成功）で決まります。翌月のお部屋は通常どおりご予約いただけますが、翌月分のペアパック・シャワー・会員限定の有料機材は、その月の1日以降、当月の会費の決済が成功してから確定できます。毎月1日も決済成功が反映されるまではご利用いただけません（猶予期間はありません）。</div>
+        </details>
+        <details class="faq-item">
+          <summary>SNB MEMBERはSNB mensやStudio Xでも使えますか？</summary>
+          <div class="faq-answer">はい。会員資格はStudio Nagoya Base・SNB mens・Studio Xで共通の1つのSNB MEMBER（月額1,000円）です。専用の別会員やブランド別の別契約はありません。</div>
         </details>
         <details class="faq-item">
           <summary>解約するとすぐに使えなくなりますか？</summary>

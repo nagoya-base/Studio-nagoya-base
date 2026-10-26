@@ -97,6 +97,12 @@
       LOCK_TIMEOUT: '一時的に混み合っています。もう一度お試しください。',
       BOOKING_SAVE_FAILED: '予約の保存に失敗しました。しばらくしてから再度お試しください。',
       INVALID_JSON: '送信内容の形式が正しくありませんでした。もう一度お試しください。',
+      /* Issue #478: 会員限定特典（2名ペアパック・シャワー）。資格の内訳（非会員・メール不一致・利用月不一致等）は出し分けない。 */
+      MEMBER_BENEFIT_NOT_AVAILABLE: 'この特典は、ご利用日の属する月のSNB MEMBER会員資格を確認できた場合のみご利用いただけます。ご予約のメールアドレスは会員登録と同じものをご入力ください。翌月分は、その月の1日以降、当月の会費の決済が成功してから確定できます。',
+      PAIR_PACK_PEOPLE_EXCEEDED: '2名ペアパックのご利用は1〜2名までです。人数を変更するか、ペアパックの選択を外してください。',
+      PLAN_DURATION_INVALID: '2名ペアパックは3時間以上でご利用ください。',
+      PLAN_NOT_AVAILABLE: 'このプランは現在ご利用いただけません（会員限定の2名ペアパックは2026年12月1日からのご提供です）。',
+      INVALID_PLAN: 'プランの指定が正しくありません。ページを開き直してください。',
       INTERNAL_ERROR: '予約処理中にエラーが発生しました。しばらくしてから再度お試しください。'
     },
     en: {
@@ -123,6 +129,11 @@
       LOCK_TIMEOUT: 'The system is currently busy. Please try again.',
       BOOKING_SAVE_FAILED: 'We couldn’t save your booking. Please try again in a moment.',
       INVALID_JSON: 'Your submission could not be read correctly. Please try again.',
+      MEMBER_BENEFIT_NOT_AVAILABLE: 'This member-only benefit requires an SNB MEMBER membership confirmed for the month of your visit. Please use the same email address as your membership.',
+      PAIR_PACK_PEOPLE_EXCEEDED: 'The pair pack is for 1 to 2 guests.',
+      PLAN_DURATION_INVALID: 'The pair pack requires at least 3 hours.',
+      PLAN_NOT_AVAILABLE: 'This plan is not available right now.',
+      INVALID_PLAN: 'The plan is not valid. Please reload the page.',
       INTERNAL_ERROR: 'An error occurred while processing your request. Please try again in a moment.'
     }
   };
@@ -187,7 +198,13 @@
       code === 'INVALID_PAYMENT_METHOD' ||
       code === 'INVALID_NOTE' ||
       /* Issue #407: 初回利用はカード決済のみ。支払方法を直せば解消する。 */
-      code === 'FIRST_TIME_CARD_PAYMENT_REQUIRED'
+      code === 'FIRST_TIME_CARD_PAYMENT_REQUIRED' ||
+      /* Issue #478: ペアパックの人数・特典の選択は、内容を直せば解消する。 */
+      code === 'PAIR_PACK_PEOPLE_EXCEEDED' ||
+      code === 'MEMBER_BENEFIT_NOT_AVAILABLE' ||
+      code === 'PLAN_DURATION_INVALID' ||
+      code === 'PLAN_NOT_AVAILABLE' ||
+      code === 'INVALID_PLAN'
     ) {
       return 'edit-details';
     }
@@ -383,7 +400,7 @@
   function buildCreateBookingPayload(state) {
     var s = state || {};
     var brandMeta = getBrandMeta(s.brand);
-    return {
+    var payload = {
       brand: s.brand,
       customerType: s.customerType,
       date: s.date,
@@ -399,6 +416,11 @@
       source: brandMeta ? brandMeta.source : 'unknown',
       isMember: s.isMember === true
     };
+    /* Issue #478: 会員限定の2名ペアパック（独立プラン）とシャワー。選択したときだけ送る（未選択ならキー自体を付けず、
+       従来のペイロードは1バイトも変わらない）。金額・会員資格は送らない（サーバーが再計算・確認する）。 */
+    if (s.plan === PAIR_PACK_PLAN_CODE) payload.plan = PAIR_PACK_PLAN_CODE;
+    if (s.shower === true) payload.options = { shower: true };
+    return payload;
   }
 
   function isDateLike_(value) {
@@ -892,6 +914,27 @@
      されるため出さない（BookingPricing.gsのresolveTier_と同じ分岐。ここでは表示制御のみで、
      最終的な料金はサーバーが予約作成時刻で判定する）。 */
   var MEMBER_OPTION_BRANDS_ = ['snb', 'studio_x'];
+
+  /*
+   * Issue #478: 会員限定の2名ペアパック・シャワーを予約フォームに出すブランドと提供開始（2026/12/1 0:00 JST）。
+   * 表示制御のみで、実際の可否（作成時刻・会員資格・人数）はサーバーが判定する。
+   */
+  var MEMBER_BENEFIT_BRANDS_ = ['snb', 'mens'];
+  var MEMBER_BENEFITS_START_MS_ = Date.parse('2026-12-01T00:00:00+09:00');
+
+  function brandShowsMemberBenefits(brand, nowMs) {
+    if (MEMBER_BENEFIT_BRANDS_.indexOf(brand) === -1) return false;
+    var now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+    return now >= MEMBER_BENEFITS_START_MS_;
+  }
+
+  /* ペアパックの人数条件（'1名'|'2名'）。未選択は判定せずtrue（人数の必須チェックは別）。 */
+  function isPairPackPeopleValue(people) {
+    if (!people) return true;
+    return people === '1名' || people === '2名';
+  }
+
+  var PAIR_PACK_PLAN_CODE = 'member_pair_3h';
   var STUDIO_X_MEMBER_OPTION_END_MS_ = Date.parse('2026-12-01T00:00:00+09:00');
 
   function brandShowsMemberOption(brand, nowMs) {
@@ -992,6 +1035,9 @@
     cardCheckoutButtonLabel: cardCheckoutButtonLabel,
     cardCheckoutUncertainNoticeLines: cardCheckoutUncertainNoticeLines,
     brandShowsMemberOption: brandShowsMemberOption,
+    brandShowsMemberBenefits: brandShowsMemberBenefits,
+    isPairPackPeopleValue: isPairPackPeopleValue,
+    PAIR_PACK_PLAN_CODE: PAIR_PACK_PLAN_CODE,
     formatJpyAmount: formatJpyAmount,
     priceComputingLabel: priceComputingLabel,
     priceUnavailableLabel: priceUnavailableLabel

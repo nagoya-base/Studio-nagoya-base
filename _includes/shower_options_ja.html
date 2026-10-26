@@ -1,0 +1,56 @@
+{%- comment -%}
+  会員限定シャワー（Issue #478）の申込・お支払いページの本体。SNB（/booking/options/）とSNB mens（/mens/booking/options/）で共通。
+  操作は scripts/booking-shower.js（既存の optionSummary / submitOptions / startOptionCheckout を呼ぶ）。金額・会員資格の判定は
+  すべてサーバー側で、このページは表示と送信だけを行う。メールアドレスは画面のメモリ内にのみ保持する。
+{%- endcomment -%}
+<div class="booking-app" id="booking-shower-app" data-brand="{{ include.brand }}">
+  <p class="ba-banner ba-banner--notice">予約IDと、ご予約時にご登録のメールアドレスを入力してください（本人確認のため。予約IDだけでは操作できません）。</p>
+
+  <form id="bs-lookup-form" novalidate>
+    <div class="ba-field">
+      <label for="bs-booking-id">予約ID</label>
+      <input type="text" id="bs-booking-id" autocomplete="off" maxlength="64" required>
+    </div>
+    <div class="ba-field">
+      <label for="bs-email">ご登録のメールアドレス</label>
+      <input type="email" id="bs-email" autocomplete="email" maxlength="254" required>
+    </div>
+    <p class="ba-field-error" id="bs-lookup-error" role="alert" hidden></p>
+    <div class="ba-actions">
+      <button type="submit" class="ba-btn ba-btn-primary" id="bs-lookup-submit">予約を確認する</button>
+    </div>
+  </form>
+
+  <div id="bs-detail" hidden>
+    <h2>ご予約の内容</h2>
+    <table class="ba-summary">
+      <tbody>
+        <tr><th>予約ID</th><td id="bs-d-booking-id"></td></tr>
+        <tr><th>利用日</th><td id="bs-d-date"></td></tr>
+        <tr><th>利用時間</th><td id="bs-d-time"></td></tr>
+        <tr><th>予約の状態</th><td id="bs-d-status"></td></tr>
+      </tbody>
+    </table>
+
+    <h2>お申し込み済みのオプション</h2>
+    <div id="bs-orders"></div>
+    <p class="ba-banner ba-banner--notice" id="bs-pay-notice" hidden></p>
+    <p class="ba-field-error" id="bs-pay-error" role="alert" hidden></p>
+
+    <div id="bs-add" hidden>
+      <h2>会員限定シャワーを申し込む</h2>
+      <ul>
+        <li>1予約につき1回 <strong id="bs-price">1,000円</strong>（税込）。同じご予約の利用者2名まで共有できます。</li>
+        <li>ご利用は予約時間内に限ります。</li>
+        <li>SNB MEMBERの会員資格（ご利用日の属する月の会費のお支払い）が必要です。確認できない場合はお申し込みいただけません。</li>
+        <li>お申し込み後、ご予約が確定してから、このページでお支払いください（部屋代とは別のお支払いです）。</li>
+      </ul>
+      <p class="ba-field-error" id="bs-submit-error" role="alert" hidden></p>
+      <p class="ba-banner ba-banner--notice" id="bs-submit-message" hidden></p>
+      <div class="ba-actions">
+        <button type="button" class="ba-btn ba-btn-primary" id="bs-submit">シャワーを申し込む（1,000円）</button>
+      </div>
+    </div>
+    <p class="ba-banner ba-banner--notice" id="bs-add-closed" hidden></p>
+  </div>
+</div>

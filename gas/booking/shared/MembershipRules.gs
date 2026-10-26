@@ -45,6 +45,22 @@ var MembershipRules = (function () {
   /* 当方が作るStripe subscription/checkoutの目印。Stripe側のmetadataに入れる。 */
   var METADATA_ORDER_TYPE = 'membership';
 
+  /*
+   * Issue #478: 会員限定特典（2名ペアパック・シャワー・Studio X有料オプション全般・SNB/mens既存有料機材）の
+   * 適用開始。**2026/12/1 00:00 JST以降に新規作成された予約・OptionOrderから**適用する。それ以前に作成済みの
+   * 予約・OptionOrder（AWAITING_PAYMENT / PENDING_APPROVAL等を含む）は旧ルールのまま処理する
+   * （作成時刻 createdAt で判定。日程変更・承認・決済の時点では世代を切り替えない）。
+   * BookingPricing.GENERATION_V2_START_MS_（料金世代V2）と同じ境界。
+   */
+  var BENEFITS_START_MS_ = Date.parse('2026-12-01T00:00:00+09:00');
+
+  /*
+   * 会員特典の外部向け共通メッセージ。非会員／メール不一致／利用月不一致／台帳エラーを細かく出し分けず、
+   * 任意のメールアドレスの会員有無を推測できないようにする（Issue #478）。内訳はLoggerにも出さない。
+   */
+  var MEMBER_BENEFIT_DENIED_CODE = 'MEMBER_BENEFIT_NOT_AVAILABLE';
+  var MEMBER_BENEFIT_DENIED_MESSAGE = 'この特典は、ご利用日の属する月のSNB MEMBER会員資格を確認できた場合のみご利用いただけます。会員資格をご確認のうえ、改めてお申し込みください。';
+
   var STATUS = { INCOMPLETE: 'incomplete', ACTIVE: 'active', PAST_DUE: 'past_due', CANCELED: 'canceled' };
 
   /*
@@ -170,7 +186,36 @@ var MembershipRules = (function () {
     return month ? { ok: true, month: month } : { ok: false, code: 'INVALID_PERIOD' };
   }
 
+  /* 作成時刻（Date|ms）が会員特典の新ルール（2026/12/1 JST以降）の対象か。不正値は旧ルール側（grandfather）。 */
+  function isBenefitsRuleActive(createdAt) {
+    var ms = createdAt && typeof createdAt.getTime === 'function' ? createdAt.getTime() : Number(createdAt);
+    return Number.isFinite(ms) && ms >= BENEFITS_START_MS_;
+  }
+
+  /*
+   * 実会員資格（actual membership）の判定。正本は会員台帳（MemberRepository.isMemberForMonth＝
+   * 利用日の属する暦月の支払い事実）。priceIsMember・mens経路・価格overrideは一切見ない。
+   * メール・利用日が不正（利用月を決められない）、台帳を読めない（例外）場合はすべて資格なし（fail-closed）。
+   * 戻り値: { ok: true } | { ok: false, reason: 'INVALID_INPUT'|'NOT_MEMBER'|'LEDGER_ERROR' }。
+   * reasonは内部判定用。利用者・外部向けにはMEMBER_BENEFIT_DENIED_*だけを返す（列挙対策）。
+   */
+  function verifyActualMembership(email, dateString) {
+    var normalized = normalizeEmail(email);
+    var monthKey = monthKeyOfDateString(dateString);
+    if (!normalized || !monthKey) return { ok: false, reason: 'INVALID_INPUT' };
+    try {
+      return MemberRepository.isMemberForMonth(normalized, monthKey) === true ? { ok: true } : { ok: false, reason: 'NOT_MEMBER' };
+    } catch (lookupError) {
+      return { ok: false, reason: 'LEDGER_ERROR' };
+    }
+  }
+
   return {
+    BENEFITS_START_MS: BENEFITS_START_MS_,
+    MEMBER_BENEFIT_DENIED_CODE: MEMBER_BENEFIT_DENIED_CODE,
+    MEMBER_BENEFIT_DENIED_MESSAGE: MEMBER_BENEFIT_DENIED_MESSAGE,
+    isBenefitsRuleActive: isBenefitsRuleActive,
+    verifyActualMembership: verifyActualMembership,
     MONTHLY_FEE_JPY: MONTHLY_FEE_JPY,
     CURRENCY: CURRENCY,
     METADATA_ORDER_TYPE: METADATA_ORDER_TYPE,
