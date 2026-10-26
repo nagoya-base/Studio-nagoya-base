@@ -8,7 +8,7 @@
  * - すべての呼び出しはmuteHttpExceptions:trueで行い、Stripe側の4xx/5xxをUrlFetchAppの例外
  *   ではなくレスポンスとして受け取り、呼び出し元が状況を判別できるようにする。
  * - 戻り値は常に { ok: true, session: {...} } または
- *   { ok: false, errorType, message, httpStatus?, stripeErrorCode? } の形。errorTypeは
+ *   { ok: false, errorType, message, httpStatus?, stripeErrorCode?, stripeErrorParam? } の形。errorTypeは
  *   呼び出し元（BookingRepository.gs）が「新しいSessionを発行してよいか」を判断するために
  *   使う一次分類であり、Stripe側のエラーコードそのものではない:
  *   - 'NOT_CONFIGURED': secretKey未設定。Stripeへは到達していない。
@@ -176,6 +176,7 @@ var StripeGateway = (function () {
       errorType: classifyHttpError_(code, parsed),
       httpStatus: code,
       stripeErrorCode: (parsed && parsed.error && parsed.error.code) || '',
+      stripeErrorParam: (parsed && parsed.error && parsed.error.param) || '',
       stripeErrorType: (parsed && parsed.error && parsed.error.type) || '',
       message: (parsed && parsed.error && parsed.error.message) || 'Stripe APIがエラーを返しました。'
     };
@@ -455,18 +456,77 @@ var StripeGateway = (function () {
   }
 
   /*
-   * SNB MEMBERの月額subscription作成（Issue #471）。billing_cycle_anchorは翌月1日 00:00 UTC、
-   * proration_behavior=none（入会月は既にCheckoutで満額決済済みのため、入会月ぶんの請求を
-   * 作らない）。以後は毎月1日（UTC）に500円が自動請求される。価格はprice_dataで渡す
-   * （Stripe Dashboardでの商品・価格の事前作成は不要）。
-   * params: { customerId, paymentMethodId, amountJpy, productName, anchorSeconds, memberId }
+   * SNB MEMBERの月額Productを用意する（Issue #528）。POST /v1/subscriptionsのitems[].price_dataは
+   * product_data（その場限りの商品名）を受け付けず、既存のProduct IDを要求する（Checkout Sessionの
+   * line_items[].price_dataとは仕様が異なる）。Dashboardでの事前作成を不要にするため、固定IDの
+   * Productを取得し、無ければ作成する。同時実行で作成が競合した場合（resource_already_exists）は
+   * 取得し直す。戻り値: { ok: true, productId } またはperformRequest_のエラー形式。
+   */
+  function ensureMembershipProduct(stripeConfig, productId, productName) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!productId || !productName) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'Productの指定が不足しています。' };
+    }
+    var url = API_BASE_ + '/products/' + encodeURIComponent(productId);
+    var found = performRequest_('get', url, stripeConfig.secretKey, null, null);
+    if (found.ok) return { ok: true, productId: found.raw.id || productId };
+    if (found.stripeErrorCode !== 'resource_missing') return found;
+
+    var created = performRequest_('post', API_BASE_ + '/products', stripeConfig.secretKey,
+      encodeFormPayload_({ 'id': productId, 'name': productName, 'metadata[orderType]': 'membership' }), null);
+    if (created.ok) return { ok: true, productId: created.raw.id || productId };
+    if (created.stripeErrorCode !== 'resource_already_exists') return created;
+
+    var again = performRequest_('get', url, stripeConfig.secretKey, null, null);
+    if (!again.ok) return again;
+    return { ok: true, productId: again.raw.id || productId };
+  }
+
+  /*
+   * 同じ会員のsubscriptionがStripe上に既にあるかを確認する（Issue #528）。ペイロード変更後も
+   * Idempotency-Key（保持24時間）に頼らず二重作成を防ぐため、作成前に必ず呼ぶ。
+   * Customerのsubscriptionをmetadata.memberIdで絞り、キャンセル済み・期限切れ以外の1件を返す。
+   * 一覧を完全に取得できない場合はAMBIGUOUS（作成してはならない）。
+   * 戻り値: { ok: true, subscription: {id,status,raw} | null }
+   */
+  function findMembershipSubscription(stripeConfig, customerId, memberId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!customerId || !memberId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'customerIdまたはmemberIdが指定されていません。' };
+    }
+    var url = API_BASE_ + '/subscriptions?customer=' + encodeURIComponent(customerId) + '&status=all&limit=100';
+    var result = performRequest_('get', url, stripeConfig.secretKey, null, null);
+    if (!result.ok) return result;
+    if (!Array.isArray(result.raw.data) || result.raw.has_more) {
+      return { ok: false, errorType: 'AMBIGUOUS', message: 'Stripeのsubscription一覧を完全には取得できませんでした。' };
+    }
+    var match = null;
+    result.raw.data.forEach(function (item) {
+      if (match || !item || !item.metadata || item.metadata.memberId !== memberId) return;
+      if (item.status === 'canceled' || item.status === 'incomplete_expired') return;
+      match = { id: item.id, status: item.status || '', raw: item };
+    });
+    return { ok: true, subscription: match };
+  }
+
+  /*
+   * SNB MEMBERの月額subscription作成（Issue #471）。billing_cycle_anchorは入会月に応じた1日
+   * 00:00 UTC（プレスタートは12/1）、proration_behavior=none（入会月は既にCheckoutで満額決済済みの
+   * ため、入会月ぶんの請求を作らない）。以後は毎月1日（UTC）に500円が自動請求される。
+   * 価格はprice_dataで渡すが、subscriptionではproduct_dataが使えないため、
+   * ensureMembershipProductで用意したProduct IDを渡す（Issue #528）。
+   * params: { customerId, paymentMethodId, amountJpy, productId, anchorSeconds, memberId }
    * idempotencyKey: 入会Checkout Session IDから導出した固定値（同じ入会で二重作成しない）。
    */
   function createMembershipSubscription(stripeConfig, params, idempotencyKey) {
     if (!stripeConfig || !stripeConfig.secretKey) {
       return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
     }
-    if (!params || !params.customerId || !params.paymentMethodId || !params.anchorSeconds || !idempotencyKey) {
+    if (!params || !params.customerId || !params.paymentMethodId || !params.productId || !params.anchorSeconds || !idempotencyKey) {
       return { ok: false, errorType: 'INVALID_REQUEST', message: 'subscription作成に必要な情報が不足しています。' };
     }
     var payload = {
@@ -478,7 +538,7 @@ var StripeGateway = (function () {
       'items[0][price_data][currency]': 'jpy',
       'items[0][price_data][unit_amount]': String(params.amountJpy),
       'items[0][price_data][recurring][interval]': 'month',
-      'items[0][price_data][product_data][name]': params.productName,
+      'items[0][price_data][product]': params.productId,
       'metadata[orderType]': 'membership',
       'metadata[memberId]': params.memberId
     };
@@ -524,6 +584,8 @@ var StripeGateway = (function () {
   return {
     setSubscriptionCancelAtPeriodEnd: setSubscriptionCancelAtPeriodEnd,
     createMembershipCheckoutSession: createMembershipCheckoutSession,
+    ensureMembershipProduct: ensureMembershipProduct,
+    findMembershipSubscription: findMembershipSubscription,
     createMembershipSubscription: createMembershipSubscription,
     createCheckoutSession: createCheckoutSession,
     retrieveCheckoutSession: retrieveCheckoutSession,

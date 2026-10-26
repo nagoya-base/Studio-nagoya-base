@@ -81,7 +81,7 @@ Stripe Checkout Studioで設定したHosted CheckoutのUIパラメータを、�
 
 ### SNB MEMBERに関する注意（本Issueの対象外）
 
-SNB MEMBERは、初回Checkout（mode=payment）後に別途 `createMembershipSubscription()` でSubscriptionを作成する構成。以下は**別問題**であり、#516では一切変更していない。
+SNB MEMBERは、初回Checkout（mode=payment）後に別途 `createMembershipSubscription()` でSubscriptionを作成する構成。以下は**別問題**であり、#516では一切変更していない（Subscription作成失敗は #528 で修正済み。`docs/membership-subscription-recovery.md` 参照）。
 
 - `POST /v1/subscriptions` の `STRIPE_ERROR`（Subscription作成失敗）の修正
 - 返金後も会員資格が残る問題（返金後の会員資格取消ロジック）

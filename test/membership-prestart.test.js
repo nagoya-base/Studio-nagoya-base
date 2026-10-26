@@ -6,6 +6,7 @@ var test = require('node:test');
 var assert = require('node:assert');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
+var membershipLookupResponse = require('./helpers/stripe-membership-mock').membershipLookupResponse;
 
 var FILES = [
   'Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Booking.gs', 'CardPayment.gs',
@@ -57,6 +58,8 @@ function makeStripeResponder(state, calls) {
     if (url.indexOf('/checkout/sessions') !== -1 && options.method === 'post') {
       return { responseCode: 200, body: { id: 'cs_new', url: 'https://checkout.stripe.com/c/pay/cs_new', metadata: {} } };
     }
+    var lookup = membershipLookupResponse(url, options, state);
+    if (lookup) return lookup;
     throw new Error('未対応のURL: ' + url);
   };
 }
@@ -159,7 +162,7 @@ function joinAt(ctxOptions, iso) {
 }
 
 function subscriptionBody(ctx) {
-  var post = ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/subscriptions') !== -1; });
+  var post = ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/subscriptions') !== -1 && c.url.indexOf('/subscriptions?') === -1; });
   assert.strictEqual(post.length, 1);
   return decodeURIComponent(post[0].options.payload);
 }

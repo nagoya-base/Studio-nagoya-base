@@ -8,6 +8,7 @@ var fs = require('node:fs');
 var path = require('node:path');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
+var membershipLookupResponse = require('./helpers/stripe-membership-mock').membershipLookupResponse;
 
 var FILES = [
   'Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Booking.gs', 'CardPayment.gs',
@@ -61,6 +62,8 @@ function makeResponder(state, calls) {
         items: { data: [{ current_period_start: sec(JOIN_AT), current_period_end: sec(RENEWAL_AT) }] }
       } };
     }
+    var lookup = membershipLookupResponse(url, options, state);
+    if (lookup) return lookup;
     throw new Error('未対応のURL: ' + url);
   };
 }
