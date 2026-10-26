@@ -102,10 +102,11 @@
       ADVANCE_BOOKING_MEMBER_ONLY: '30日より先の日程は、SNB MEMBERの先行予約（90日先まで）の対象です。会員登録と同じメールアドレスでご入力いただくか、30日以内の日程を選択してください。',
       MEMBER_BENEFIT_NOT_AVAILABLE: 'この特典は、ご利用日の属する月のSNB MEMBER会員資格を確認できた場合のみご利用いただけます。ご予約のメールアドレスは会員登録と同じものをご入力ください。翌月分は、その月の1日以降、当月の会費の決済が成功してから確定できます。',
       PAIR_PACK_PEOPLE_EXCEEDED: '2名ペアパックのご利用は1〜2名までです。人数を変更するか、ペアパックの選択を外してください。',
-      PLAN_DURATION_INVALID: '2名ペアパックは3時間以上でご利用ください。',
+      PLAN_DURATION_INVALID: 'ご選択のプランの利用時間が条件を満たしていません（2名ペアパックは3時間以上、貸切ベースプランは最低6時間から1時間単位）。',
+      PLAN_HOURS_OUT_OF_RANGE: '貸切ベースプランは8:00〜21:00の範囲内でご利用ください。終了が21:00を超える時間は選べません。開始時刻か利用時間を変更してください。',
       PLAN_NOT_AVAILABLE: 'このプランは現在ご利用いただけません（会員限定の2名ペアパックは2026年12月1日からのご提供です）。',
       INVALID_PLAN: 'プランの指定が正しくありません。ページを開き直してください。',
-      /* Issue #488 / #492: 6時間貸切ベースプラン（常設）。 */
+      /* Issue #488 / #492 / #510: 6時間貸切ベースプラン（常設）。 */
       EVENT_PLAN_PEOPLE_EXCEEDED: '貸切ベースプランのご利用は1〜4名までです。人数を変更するか、プランの選択を外してください。',
       INTERNAL_ERROR: '予約処理中にエラーが発生しました。しばらくしてから再度お試しください。'
     },
@@ -137,7 +138,8 @@
       ADVANCE_BOOKING_MEMBER_ONLY: 'Dates more than 30 days ahead are open only to SNB MEMBERS (advance booking up to 90 days). Please use the email address registered for your membership, or choose a date within 30 days.',
       MEMBER_BENEFIT_NOT_AVAILABLE: 'This member-only benefit requires an SNB MEMBER membership confirmed for the month of your visit. Please use the same email address as your membership.',
       PAIR_PACK_PEOPLE_EXCEEDED: 'The pair pack is for 1 to 2 guests.',
-      PLAN_DURATION_INVALID: 'The pair pack requires at least 3 hours.',
+      PLAN_DURATION_INVALID: 'The selected plan’s duration is not allowed (pair pack: 3+ hours; private base plan: 6+ hours in 1-hour steps).',
+      PLAN_HOURS_OUT_OF_RANGE: 'The private base plan must fall within 08:00–21:00. Please change the start time or duration.',
       PLAN_NOT_AVAILABLE: 'This plan is not available right now.',
       INVALID_PLAN: 'The plan is not valid. Please reload the page.',
       EVENT_PLAN_PEOPLE_EXCEEDED: 'The 6-hour private base plan is for 1 to 4 guests.',
@@ -210,6 +212,7 @@
       code === 'PAIR_PACK_PEOPLE_EXCEEDED' ||
       code === 'MEMBER_BENEFIT_NOT_AVAILABLE' ||
       code === 'PLAN_DURATION_INVALID' ||
+      code === 'PLAN_HOURS_OUT_OF_RANGE' ||
       code === 'PLAN_NOT_AVAILABLE' ||
       code === 'INVALID_PLAN' ||
       /* Issue #488: 貸切ベースプランの人数も、選択を直せば解消する。 */
@@ -949,13 +952,17 @@
 
   var PAIR_PACK_PLAN_CODE = 'member_pair_3h';
 
-  /* Issue #488 / #492: 6時間貸切ベースプラン（常設）。6時間固定・最大4名・6,000円。
-     可否の正本はGAS。ここは画面の早期ガードと表示用の定数だけを持つ。 */
+  /* Issue #488 / #492 / #510: 6時間貸切ベースプラン（常設）。8:00〜21:00の範囲で最低6時間・1時間1,000円・最大4名。
+     利用時間は予約時に確定し、利用開始後の途中延長はない。可否・金額の正本はGAS。ここは画面の早期ガードと表示用の定数だけを持つ。 */
   var EVENT_BASE_PLAN_CODE = 'osu_cosplay_base_6h';
-  var EVENT_BASE_PLAN_HOURS = 6;
+  var EVENT_BASE_PLAN_MIN_HOURS = 6;
+  var EVENT_BASE_PLAN_OPEN_MINUTES = 8 * 60;
+  var EVENT_BASE_PLAN_CLOSE_MINUTES = 21 * 60;
+  var EVENT_BASE_PLAN_MAX_HOURS = (EVENT_BASE_PLAN_CLOSE_MINUTES - EVENT_BASE_PLAN_OPEN_MINUTES) / 60;
+  var EVENT_BASE_PLAN_HOURLY_RATE = 1000;
   /* 通常予約の利用時間の初期値（全ブランド共通・Issue #494）。貸切プラン解除時もこの値へ戻す。 */
   var DEFAULT_DURATION_HOURS = 3;
-  var EVENT_BASE_PLAN_LABEL = 'Studio X｜6時間貸切ベースプラン（6,000円）';
+  var EVENT_BASE_PLAN_LABEL = 'Studio X｜6時間貸切ベースプラン（最低6時間・1時間1,000円）';
 
   /* Issue #500: URLの ?plan= から予約フォームの初期プランを決める。許可リストにある値だけを返し、
      未知の値・他ブランド用の値・複数指定などは空文字（通常予約）にする。UIの初期状態を作るヒントにすぎず、
@@ -967,6 +974,24 @@
     var value;
     try { value = decodeURIComponent(matches[0].replace(/^[?&]?plan=/, '')); } catch (e) { return ''; }
     return value === EVENT_BASE_PLAN_CODE ? EVENT_BASE_PLAN_CODE : '';
+  }
+
+  /* ベースプランで選べる利用時間（時間）か。6時間以上、8:00開始での最大（13時間）まで、1時間単位。 */
+  function isEventPlanDurationHours(hours) {
+    var n = Number(hours);
+    return Number.isInteger(n) && n >= EVENT_BASE_PLAN_MIN_HOURS && n <= EVENT_BASE_PLAN_MAX_HOURS;
+  }
+
+  /* ベースプランの開始時刻候補（'HH:mm'）を、終了が21:00以内・開始が8:00以降のものだけに絞る。表示制御のみ（正本はGAS）。 */
+  function filterStartTimesForEventPlan(times, durationMinutes) {
+    var minutes = Number(durationMinutes);
+    if (!Array.isArray(times) || !Number.isFinite(minutes)) return [];
+    return times.filter(function (time) {
+      var m = /^(\d{1,2}):(\d{2})$/.exec(String(time));
+      if (!m) return false;
+      var start = Number(m[1]) * 60 + Number(m[2]);
+      return start >= EVENT_BASE_PLAN_OPEN_MINUTES && start + minutes <= EVENT_BASE_PLAN_CLOSE_MINUTES;
+    });
   }
 
   function isEventPlanPeopleValue(people) {
@@ -1078,7 +1103,11 @@
     isPairPackPeopleValue: isPairPackPeopleValue,
     PAIR_PACK_PLAN_CODE: PAIR_PACK_PLAN_CODE,
     EVENT_BASE_PLAN_CODE: EVENT_BASE_PLAN_CODE,
-    EVENT_BASE_PLAN_HOURS: EVENT_BASE_PLAN_HOURS,
+    EVENT_BASE_PLAN_MIN_HOURS: EVENT_BASE_PLAN_MIN_HOURS,
+    EVENT_BASE_PLAN_MAX_HOURS: EVENT_BASE_PLAN_MAX_HOURS,
+    EVENT_BASE_PLAN_HOURLY_RATE: EVENT_BASE_PLAN_HOURLY_RATE,
+    isEventPlanDurationHours: isEventPlanDurationHours,
+    filterStartTimesForEventPlan: filterStartTimesForEventPlan,
     DEFAULT_DURATION_HOURS: DEFAULT_DURATION_HOURS,
     EVENT_BASE_PLAN_LABEL: EVENT_BASE_PLAN_LABEL,
     isEventPlanPeopleValue: isEventPlanPeopleValue,

@@ -459,6 +459,7 @@ function handleEstimatePrice_(params) {
     date: params.date,
     durationMinutes: durationMinutes,
     isMember: parseBooleanParam_(params.isMember),
+    startTime: params.startTime,
     generation: BookingPricing.generationAt(new Date(), params.brand),
     /* Issue #478: 2名ペアパックの見積り。見積りAPIでは会員台帳を一切照会しない（会員の有無を
        探る口にしない）。資格の確認は予約作成時のサーバー側だけで行う。 */

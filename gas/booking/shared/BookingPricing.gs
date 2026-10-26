@@ -89,7 +89,8 @@ var BookingPricing = (function () {
   /*
    * Issue #488 / #492: 貸切ベースプラン（Studio Xのみ・常設）。通常の時間貸し料金表
    * （RATE_TABLES_）には一切手を入れず、独立プランとしてここに固定額を持つ。
-   * - 6時間固定・6,000円/1室・最大4名（4名なら1人1,500円相当）。延長・時間変更は無い。
+   * - Issue #510: 可変時間制。8:00〜21:00の範囲で最低6時間・1時間1,000円/1室・最大4名（6時間=6,000円、7時間=7,000円…）。
+   *   利用時間は予約時に確定し、利用開始後の途中延長は無い。終了が21:00を超える組み合わせ・6時間未満・1時間単位でない時間は拒否する。
    * - 会員区分・料金世代・曜日区分の影響を受けない（isMemberも無視。会員特典ではない）。
    * - Issue #492で対象イベント日の制限（EventPlanDates）を廃止した。利用者が明示的にプランを選んだときだけ
    *   適用し、通常予約へ自動適用しない。Studio Xの予約可能日であればいつでも選べる。
@@ -97,9 +98,11 @@ var BookingPricing = (function () {
    */
   var EVENT_BASE_PLAN_ = {
     brands: ['studio_x'],
-    hours: 6,
+    minHours: 6,
+    hourlyRate: 1000,
+    openMinutes: 8 * 60,
+    closeMinutes: 21 * 60,
     maxPeople: 4,
-    amount: 6000,
     label: 'Studio X｜6時間貸切ベースプラン'
   };
 
@@ -248,6 +251,29 @@ var BookingPricing = (function () {
     return !!m && Number(m[1]) >= 1 && Number(m[1]) <= EVENT_BASE_PLAN_.maxPeople;
   }
 
+  /*
+   * Issue #510: 貸切ベースプランの利用時間・時間帯の検証。durationMinutesは最低6時間かつ1時間単位。
+   * startTime（'HH:mm'）が与えられたときは、開始が8:00以降・終了が21:00以内であることも確認する
+   * （料金見積りなど開始時刻を持たない呼び出しでは時間帯の確認を省き、予約作成・日程変更では必ず渡す）。
+   * 問題なければnull、違反ならエラー{code, message}を返す。
+   */
+  function eventPlanScheduleError(durationMinutes, startTime) {
+    var minutes = Number(durationMinutes);
+    var label = EVENT_BASE_PLAN_.label;
+    if (!Number.isFinite(minutes) || minutes < EVENT_BASE_PLAN_.minHours * 60 || minutes % 60 !== 0) {
+      return { code: 'PLAN_DURATION_INVALID', message: label + 'は最低' + EVENT_BASE_PLAN_.minHours + '時間から、1時間単位でご利用ください。' };
+    }
+    if (startTime !== undefined && startTime !== null && startTime !== '') {
+      var m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(startTime));
+      if (!m) return { code: 'INVALID_TIME', message: '開始時刻の形式が正しくありません（HH:mm）。' };
+      var start = Number(m[1]) * 60 + Number(m[2]);
+      if (start < EVENT_BASE_PLAN_.openMinutes || start + minutes > EVENT_BASE_PLAN_.closeMinutes) {
+        return { code: 'PLAN_HOURS_OUT_OF_RANGE', message: label + 'は8:00〜21:00の範囲内でご利用ください（終了が21:00を超える時間は選べません）。' };
+      }
+    }
+    return null;
+  }
+
   /* 管理画面・メール・料金サマリーに出すプラン名（通常料金・未知の値は''）。 */
   function planLabel(plan) {
     return plan === PLAN.OSU_COSPLAY_BASE_6H ? EVENT_BASE_PLAN_.label : '';
@@ -283,7 +309,7 @@ var BookingPricing = (function () {
   }
 
   /*
-   * input: { brand, date ('YYYY-MM-DD'), durationMinutes, isMember, generation, plan }
+   * input: { brand, date ('YYYY-MM-DD'), durationMinutes, isMember, generation, plan, startTime（任意。貸切ベースプランの時間帯検証用） }
    * generation: 料金世代（'V1'|'V2'。省略・不正値はV1）。新規予約は呼び出し側がgenerationAt(now)で渡し、
    * 既存予約の再見積りは保存済みの世代を渡す。
    * 戻り値: { valid: true, price: {...} } または { valid: false, error: {code, message} }。
@@ -324,13 +350,12 @@ var BookingPricing = (function () {
       }
     }
     if (plan === PLAN.OSU_COSPLAY_BASE_6H) {
-      /* Issue #488 / #492: 独立プラン。ブランド・利用時間（6時間ちょうど）を満たさなければ通常料金へ倒さず拒否する（対象日の制限は無い）。 */
+      /* Issue #488 / #492 / #510: 独立プラン。ブランド・利用時間（最低6時間・1時間単位。startTimeがあれば8:00〜21:00の範囲）を満たさなければ通常料金へ倒さず拒否する（対象日の制限は無い）。 */
       if (EVENT_BASE_PLAN_.brands.indexOf(brand) === -1) {
         return { valid: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
       }
-      if (Number(durationMinutes) !== EVENT_BASE_PLAN_.hours * 60) {
-        return { valid: false, error: { code: 'PLAN_DURATION_INVALID', message: EVENT_BASE_PLAN_.label + 'は6時間固定です。' } };
-      }
+      var scheduleError = eventPlanScheduleError(durationMinutes, params.startTime);
+      if (scheduleError) return { valid: false, error: scheduleError };
     }
     var tier = plan === PLAN.MEMBER_PAIR_3H
       ? TIER.MEMBER
@@ -343,7 +368,7 @@ var BookingPricing = (function () {
     var hours = billableHours_(durationMinutes);
     var amount;
     if (plan === PLAN.MEMBER_PAIR_3H) amount = computePairPackAmount_(dayType, hours);
-    else if (plan === PLAN.OSU_COSPLAY_BASE_6H) amount = EVENT_BASE_PLAN_.amount;
+    else if (plan === PLAN.OSU_COSPLAY_BASE_6H) amount = hours * EVENT_BASE_PLAN_.hourlyRate;
     else amount = computeAmount_(brand, generation, tier, dayType, hours);
 
     return {
@@ -377,8 +402,9 @@ var BookingPricing = (function () {
     PAIR_PACK_MAX_PEOPLE: PAIR_PACK_.maxPeople,
     PAIR_PACK_BASE_HOURS: PAIR_PACK_.baseHours,
     EVENT_BASE_PLAN_MAX_PEOPLE: EVENT_BASE_PLAN_.maxPeople,
-    EVENT_BASE_PLAN_HOURS: EVENT_BASE_PLAN_.hours,
-    EVENT_BASE_PLAN_AMOUNT: EVENT_BASE_PLAN_.amount,
+    EVENT_BASE_PLAN_MIN_HOURS: EVENT_BASE_PLAN_.minHours,
+    EVENT_BASE_PLAN_HOURLY_RATE: EVENT_BASE_PLAN_.hourlyRate,
+    eventPlanScheduleError: eventPlanScheduleError,
     EVENT_BASE_PLAN_LABEL: EVENT_BASE_PLAN_.label,
     normalizePlan: normalizePlan,
     isEventPlan: isEventPlan,

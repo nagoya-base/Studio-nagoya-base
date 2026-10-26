@@ -92,7 +92,7 @@ function calendarEventCount(ctx) {
 // 料金（純粋ロジック）
 // ============================================================================
 
-test('料金: 6時間はStudio Xで日付に関わらず6,000円固定。会員区分・料金世代・曜日区分に依存せず、会員特典扱いにもならない', function () {
+test('料金: 6時間はStudio Xで日付に関わらず6,000円（1時間1,000円）。会員区分・料金世代・曜日区分に依存せず、会員特典扱いにもならない', function () {
   var P = setup().sandbox.BookingPricing;
   ['V1', 'V2'].forEach(function (generation) {
     [true, false].forEach(function (isMember) {
@@ -111,7 +111,42 @@ test('料金: 6時間はStudio Xで日付に関わらず6,000円固定。会員�
   assert.strictEqual(P.isEventPlan('member_pair_3h'), false);
 });
 
-test('料金: 日付の制限は無く（対象日の指定不要）、Studio X以外・6時間以外は通常料金へ倒さず拒否する', function () {
+test('料金(#510): 1時間1,000円×利用時間（6h=6,000円/7h=7,000円/8h=8,000円…13h=13,000円）。会員区分・日付・世代に依存しない', function () {
+  var P = setup().sandbox.BookingPricing;
+  [[6, 6000], [7, 7000], [8, 8000], [9, 9000], [13, 13000]].forEach(function (c) {
+    ['V1', 'V2'].forEach(function (generation) {
+      [EVENT_DAY, OTHER_DAY, EVENT_DAY_2].forEach(function (date) {
+        var r = P.computeBookingPrice({ brand: 'studio_x', date: date, durationMinutes: c[0] * 60, generation: generation, isMember: true, plan: PLAN });
+        assert.strictEqual(r.valid, true, JSON.stringify(r));
+        assert.strictEqual(r.price.amount, c[1], c[0] + '時間');
+      });
+    });
+  });
+});
+
+test('料金(#510): 6時間未満・1時間単位でない時間・8:00前開始・21:00超過は通常料金へ倒さず拒否する（15:00開始6時間は可、16:00開始6時間は不可）', function () {
+  var P = setup().sandbox.BookingPricing;
+  function price(minutes, startTime) {
+    return P.computeBookingPrice({ brand: 'studio_x', date: EVENT_DAY, durationMinutes: minutes, generation: 'V2', plan: PLAN, startTime: startTime });
+  }
+  [60, 180, 300, 330, 390, 450].forEach(function (m) {
+    assert.strictEqual(price(m).error.code, 'PLAN_DURATION_INVALID', m + '分');
+  });
+  assert.strictEqual(price(360, '08:00').valid, true, '8:00〜14:00');
+  assert.strictEqual(price(360, '15:00').valid, true, '15:00〜21:00');
+  assert.strictEqual(price(360, '15:00').price.amount, 6000);
+  assert.strictEqual(price(360, '16:00').error.code, 'PLAN_HOURS_OUT_OF_RANGE', '16:00〜22:00');
+  assert.strictEqual(price(360, '15:15').error.code, 'PLAN_HOURS_OUT_OF_RANGE', '15:15〜21:15');
+  assert.strictEqual(price(360, '07:45').error.code, 'PLAN_HOURS_OUT_OF_RANGE', '8:00より前');
+  assert.strictEqual(price(780, '08:00').valid, true, '8:00開始なら最大13時間');
+  assert.strictEqual(price(780, '08:00').price.amount, 13000);
+  assert.strictEqual(price(840, '08:00').error.code, 'PLAN_HOURS_OUT_OF_RANGE', '14時間は21:00を超える');
+  assert.strictEqual(price(660, '10:00').valid, true, '10:00開始は最大11時間');
+  assert.strictEqual(price(720, '10:00').error.code, 'PLAN_HOURS_OUT_OF_RANGE');
+  assert.strictEqual(price(360, 'abc').error.code, 'INVALID_TIME');
+});
+
+test('料金: 日付の制限は無く（対象日の指定不要）、Studio X以外は通常料金へ倒さず拒否する', function () {
   var P = setup().sandbox.BookingPricing;
   function price(over) {
     return P.computeBookingPrice(Object.assign({ brand: 'studio_x', date: EVENT_DAY, durationMinutes: 360, generation: 'V2', plan: PLAN }, over));
@@ -125,7 +160,7 @@ test('料金: 日付の制限は無く（対象日の指定不要）、Studio X�
   ['snb', 'mens'].forEach(function (brand) {
     assert.strictEqual(price({ brand: brand }).error.code, 'PLAN_NOT_AVAILABLE');
   });
-  [60, 180, 300, 420, 480].forEach(function (minutes) {
+  [60, 180, 300].forEach(function (minutes) {
     assert.strictEqual(price({ durationMinutes: minutes }).error.code, 'PLAN_DURATION_INVALID', minutes + '分');
   });
   assert.strictEqual(P.normalizePlan('osu_cosplay_base_6h'), PLAN);
@@ -195,10 +230,24 @@ test('createBooking: 対象日の登録なしで、どの日でも貸切ベー�
   assert.strictEqual(ctx.spreadsheet.getSheetByName('EventPlanDates'), null, '対象日シートを作らない');
 });
 
-test('createBooking: 6時間以外・Studio X以外は拒否。会員自己申告（isMember）は料金に影響しない', function () {
+test('createBooking(#510): 7時間・8時間は1時間1,000円で保存される。6時間未満・21:00超過・8:00前は拒否', function () {
+  var ctx = setup();
+  var seven = book(ctx, { startTime: '09:00', durationMinutes: 420, email: 'seven@example.com' });
+  assert.strictEqual(seven.success, true, JSON.stringify(seven));
+  assert.strictEqual(seven.price.amount, 7000);
+  assert.strictEqual(record(ctx, seven.bookingId).priceAmount, 7000, '保存料金も一致');
+  assert.strictEqual(record(ctx, seven.bookingId).planCode, PLAN);
+  assert.strictEqual(book(ctx, { startTime: '16:00', durationMinutes: 360, email: 'late@example.com' }).error.code, 'PLAN_HOURS_OUT_OF_RANGE');
+  assert.strictEqual(book(ctx, { startTime: '15:00', durationMinutes: 420, email: 'late2@example.com' }).error.code, 'PLAN_HOURS_OUT_OF_RANGE');
+  assert.strictEqual(book(ctx, { startTime: '10:00', durationMinutes: 300, email: 'short@example.com' }).error.code, 'PLAN_DURATION_INVALID');
+  assert.strictEqual(book(ctx, { startTime: '10:00', durationMinutes: 390, email: 'odd@example.com' }).error.code, 'PLAN_DURATION_INVALID');
+  var edge = book(setup(), { startTime: '15:00', durationMinutes: 360, email: 'edge@example.com' });
+  assert.strictEqual(edge.success, true, '15:00開始6時間（〜21:00）は可: ' + JSON.stringify(edge));
+});
+
+test('createBooking: 6時間未満・Studio X以外は拒否。会員自己申告（isMember）は料金に影響しない', function () {
   var ctx = setup();
   assert.strictEqual(book(ctx, { durationMinutes: 180 }).error.code, 'PLAN_DURATION_INVALID');
-  assert.strictEqual(book(ctx, { durationMinutes: 420 }).error.code, 'PLAN_DURATION_INVALID');
   ['snb', 'mens'].forEach(function (brand) {
     assert.strictEqual(book(ctx, { brand: brand }).error.code, 'PLAN_NOT_AVAILABLE', brand);
   });
@@ -409,7 +458,7 @@ test('日程変更: 6時間固定を外す変更は拒否（通常料金へ化�
   assert.strictEqual(f.sb.Booking.getEffectivePriceAmount(record(f.ctx, 'SX-EVENT-1')), 6000);
 });
 
-test('日程変更: 6時間以外への変更は拒否。別の日への変更は6,000円・プランを保持', function () {
+test('日程変更: 6時間未満への変更は拒否。別の日への変更は6,000円・プランを保持', function () {
   var f = rescheduleFixture();
   var shorter = f.sb.adminPreviewBookingReschedule('SX-EVENT-1', { date: EVENT_DAY, startTime: '10:00', endTime: '14:00' }, f.version);
   assert.strictEqual(shorter.success, false);
@@ -425,6 +474,19 @@ test('日程変更: 6時間以外への変更は拒否。別の日への変更�
   var rec = record(f.ctx, 'SX-EVENT-1');
   assert.strictEqual(rec.planCode, PLAN);
   assert.strictEqual(f.sb.Booking.getEffectivePriceAmount(rec), 6000);
+});
+
+test('日程変更(#510): 7時間への変更は7,000円で再計算される。6時間未満・21:00超過は拒否', function () {
+  var f = rescheduleFixture();
+  var seven = f.sb.adminPreviewBookingReschedule('SX-EVENT-1', { date: EVENT_DAY, startTime: '10:00', endTime: '17:00' }, f.version);
+  assert.strictEqual(seven.success, true, JSON.stringify(seven));
+  assert.strictEqual(seven.newFeeAmount, 7000);
+  assert.strictEqual(seven.feeDifference, 1000);
+  var over = f.sb.adminPreviewBookingReschedule('SX-EVENT-1', { date: EVENT_DAY, startTime: '16:00', endTime: '22:00' }, f.version);
+  assert.strictEqual(over.success, false);
+  assert.strictEqual(over.error.code, 'PLAN_HOURS_OUT_OF_RANGE');
+  var early = f.sb.adminPreviewBookingReschedule('SX-EVENT-1', { date: EVENT_DAY, startTime: '15:00', endTime: '21:00' }, f.version);
+  assert.strictEqual(early.success, true, '15:00〜21:00は可: ' + JSON.stringify(early));
 });
 
 // ============================================================================
@@ -461,33 +523,46 @@ test('予約UIのロジック: プランをpayloadへ載せ、人数の早期ガ
   new Function('window', read('scripts/booking-logic.js'))(sandbox.window);
   var Logic = sandbox.window.BookingLogic;
   assert.strictEqual(Logic.EVENT_BASE_PLAN_CODE, PLAN);
-  assert.strictEqual(Logic.EVENT_BASE_PLAN_HOURS, 6);
+  assert.strictEqual(Logic.EVENT_BASE_PLAN_MIN_HOURS, 6);
+  assert.strictEqual(Logic.EVENT_BASE_PLAN_MAX_HOURS, 13);
+  assert.strictEqual(Logic.EVENT_BASE_PLAN_HOURLY_RATE, 1000);
+  assert.strictEqual(Logic.isEventPlanDurationHours(6), true);
+  assert.strictEqual(Logic.isEventPlanDurationHours('8'), true);
+  assert.strictEqual(Logic.isEventPlanDurationHours(5), false);
+  assert.strictEqual(Logic.isEventPlanDurationHours(14), false);
+  assert.strictEqual(Logic.isEventPlanDurationHours(6.5), false);
+  var times = ['08:00', '10:00', '15:00', '15:15', '16:00', '21:00'];
+  assert.deepStrictEqual(Logic.filterStartTimesForEventPlan(times, 360), ['08:00', '10:00', '15:00']);
+  assert.deepStrictEqual(Logic.filterStartTimesForEventPlan(times, 480), ['08:00', '10:00']);
+  assert.deepStrictEqual(Logic.filterStartTimesForEventPlan(times, 840), []);
   var p = Logic.buildCreateBookingPayload({ brand: 'studio_x', plan: PLAN, date: EVENT_DAY, startTime: '10:00', durationMinutes: 360, name: 'a', email: 'a@example.com', people: '4名', purpose: 'コスプレ撮影', paymentMethod: '現金' });
   assert.strictEqual(p.plan, PLAN);
   assert.ok(!('amount' in p) && !('price' in p), '金額は送らない');
   assert.strictEqual('plan' in Logic.buildCreateBookingPayload({ brand: 'studio_x', date: EVENT_DAY, startTime: '10:00', durationMinutes: 120 }), false, '未選択ならキー自体を付けない');
   assert.strictEqual(Logic.isEventPlanPeopleValue('4名'), true);
   assert.strictEqual(Logic.isEventPlanPeopleValue('5名以上・要相談'), false);
-  assert.strictEqual(Logic.EVENT_BASE_PLAN_LABEL, 'Studio X｜6時間貸切ベースプラン（6,000円）');
+  assert.strictEqual(Logic.EVENT_BASE_PLAN_LABEL, 'Studio X｜6時間貸切ベースプラン（最低6時間・1時間1,000円）');
   assert.strictEqual(Logic.isEventPlanDate, undefined, '対象日判定は廃止');
   assert.strictEqual(Logic.formatEventPlanDate, undefined);
   assert.strictEqual(Logic.messageForErrorCode('EVENT_PLAN_DATE_NOT_ELIGIBLE', 'ja'), Logic.messageForErrorCode('UNKNOWN_CODE_FOR_TEST', 'ja'), '対象日エラーの専用文言は持たない');
   assert.ok(Logic.messageForErrorCode('EVENT_PLAN_PEOPLE_EXCEEDED', 'ja').indexOf('1〜4名') !== -1);
 });
 
-test('予約フォーム: Studio Xのみに貸切ベースプラン欄（常時表示・チェックで6時間固定）があり、SNB / mensには出ない', function () {
+test('予約フォーム: Studio Xのみに貸切ベースプラン欄（常時表示・チェックで6時間以上の可変時間制）があり、SNB / mensには出ない', function () {
   var html = read('_includes/booking_app_ja.html');
   var m = /\{% if include\.brand == "studio_x" %\}\s*<!--[\s\S]*?<fieldset class="ba-fieldset" id="ba-event-plan-field">[\s\S]*?<\/fieldset>\s*\{% endif %\}/.exec(html);
   assert.ok(m, 'studio_x限定の{% if %}内にある');
   assert.ok(m[0].indexOf('id="ba-plan-event"') !== -1 && m[0].indexOf('value="osu_cosplay_base_6h"') !== -1);
   assert.ok(m[0].indexOf('有人クロークではありません') !== -1);
-  assert.ok(m[0].indexOf('6,000円') !== -1 && m[0].indexOf('最大4名') !== -1);
+  assert.ok(m[0].indexOf('1時間 1,000円') !== -1 && m[0].indexOf('最低6時間') !== -1 && m[0].indexOf('最大4名') !== -1);
+  assert.ok(m[0].indexOf('利用開始後の途中延長はできません') !== -1, '予約UIに途中延長不可');
+  assert.ok(!/6時間 6,000円|6時間に固定/.test(html), '固定額・固定時間の表現を残さない');
   assert.ok(m[0].indexOf('再入室') !== -1 && m[0].indexOf('荷物・貴重品') !== -1);
   assert.ok(m[0].indexOf('hidden') === -1, '常時表示（初期非表示にしない）');
   assert.ok(!/イベント開催日|対象日|大須コスプレ/.test(m[0]), 'イベント日限定の表現を残さない');
   var app = read('scripts/booking-app.js');
   assert.ok(app.indexOf('action=eventPlan') === -1 && app.indexOf('loadEventPlan_') === -1, '対象日APIを呼ばない');
-  assert.ok(app.indexOf('els.duration.disabled = true') !== -1);
+  assert.ok(app.indexOf('els.duration.disabled = true') === -1, '6時間固定にしない');
   var booking = read('studio-x/booking/index.html');
   assert.ok(booking.indexOf('../base-plan/') !== -1, '予約ページからプラン説明への導線');
   ['booking/index.html', 'mens/booking/index.html'].forEach(function (rel) {
@@ -495,13 +570,13 @@ test('予約フォーム: Studio Xのみに貸切ベースプラン欄（常時�
   });
 });
 
-test('公式サイト /studio-x/: プラン名・6時間6,000円・最大4名・4名で1人1,500円・再入室・責任範囲の表記があり、誤認表現・禁止表現がない', function () {
+test('公式サイト /studio-x/: プラン名・1時間1,000円・最低6時間・8:00〜21:00・最大4名・再入室・途中延長不可・責任範囲の表記があり、誤認表現・禁止表現がない', function () {
   var html = read('studio-x/index.html');
   var start = html.indexOf('id="osu-base-plan"');
   assert.ok(start !== -1);
   var section = html.slice(start, html.indexOf('id="access"', start));
   var text = section.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-  ['6時間貸切', 'ベースプラン', '6,000', '6時間', '最大4名', '1名あたり1,500円', '着替え', '荷物置き', '休憩',
+  ['6時間貸切', 'ベースプラン', '1,000', '最低6時間', '8:00〜21:00', '最大4名', '利用開始後の途中延長はできません', '着替え', '荷物置き', '休憩',
     '再入室', '大型ミラー', '有人クロークではありません', '荷物は貸切中のお部屋内で各自管理', '貴重品の管理は利用者ご自身',
     'スタッフは常駐しません', 'シャワー利用は含まれません', '共用部や建物内に荷物を放置しない', '他の利用者とお部屋を共用することはありません',
     '原状復帰', '利用規約の責任範囲'].forEach(function (needle) {
@@ -522,7 +597,9 @@ test('公式サイト /studio-x/: プラン名・6時間6,000円・最大4名・
   assert.ok(ld, 'JSON-LDがある');
   var data = JSON.parse(ld[1]);
   var offer = data['@graph'].filter(function (n) { return n['@type'] === 'Offer'; })[0];
-  assert.strictEqual(offer.price, '6000');
+  assert.strictEqual(offer.price, '1000');
+  assert.strictEqual(offer.priceSpecification.eligibleQuantity.minValue, 6);
+  assert.ok(!/6時間固定|時間の延長や短縮はできません/.test(html), '固定時間の表現を残さない');
   assert.strictEqual(offer.priceCurrency, 'JPY');
   assert.ok(data['@graph'].some(function (n) { return n['@type'] === 'FAQPage' && n.mainEntity.length === 3; }));
 });

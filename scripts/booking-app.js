@@ -261,7 +261,7 @@
   var benefitsVisible = Logic.brandShowsMemberBenefits(brand);
   if (els.benefitsField) els.benefitsField.hidden = !benefitsVisible;
   /* 貸切ベースプラン（Issue #488 / #492。Studio Xのみ・常設）。欄は常に表示し、利用者が明示的に選んだときだけ
-     プランを送る。表示制御のみで、可否（ブランド・人数・6時間固定）はサーバーが全入口で判定する。 */
+     プランを送る。表示制御のみで、可否（ブランド・人数・6時間以上・8:00〜21:00）はサーバーが全入口で判定する。 */
   function eventPlanSelected_() {
     return !!els.planEvent && els.planEvent.checked;
   }
@@ -913,20 +913,27 @@
     if (control) control.addEventListener('change', function () { refreshPriceEstimate_(); });
   });
 
-  /* 貸切ベースプランの選択に合わせ、利用時間を6時間に固定し会員区分欄を隠す。外すと元の入力に戻す。 */
+  /* 貸切ベースプラン（Issue #510）の選択に合わせ、利用時間の選択肢を6〜13時間（1時間単位）に絞り、初期値を6時間にする。
+     6時間固定ではなく、7時間・8時間…と増やせる。外すと元の入力に戻す。終了が21:00を超える開始時刻は一覧から外す（fetchAvailability）。 */
+  var eventPlanDurationApplied_ = false;
+  function applyEventPlanDurationOptions_(selected) {
+    Array.prototype.slice.call(els.duration.options).forEach(function (option) {
+      option.disabled = selected && !Logic.isEventPlanDurationHours(option.value);
+    });
+  }
   function applyEventPlanState_() {
     var selected = eventPlanSelected_();
     if (els.duration) {
+      applyEventPlanDurationOptions_(selected);
       if (selected) {
-        els.duration.value = String(Logic.EVENT_BASE_PLAN_HOURS);
-        els.duration.disabled = true;
+        if (!Logic.isEventPlanDurationHours(els.duration.value)) els.duration.value = String(Logic.EVENT_BASE_PLAN_MIN_HOURS);
         if (els.durationOther) { els.durationOther.value = ''; els.durationOther.disabled = true; }
       } else {
-        /* 解除時は通常の時間選択へ戻し、固定中の6時間のままにせず初期値（3時間）へ戻す（Issue #494） */
-        if (els.duration.disabled) els.duration.value = String(Logic.DEFAULT_DURATION_HOURS || 3);
-        els.duration.disabled = false;
+        /* 解除時は通常の時間選択へ戻し、プラン用の初期値のままにせず初期値（3時間）へ戻す（Issue #494） */
+        if (eventPlanDurationApplied_) els.duration.value = String(Logic.DEFAULT_DURATION_HOURS || 3);
         if (els.durationOther) els.durationOther.disabled = false;
       }
+      eventPlanDurationApplied_ = selected;
       syncDurationOther_();
     }
     if (els.memberField) els.memberField.hidden = selected || !Logic.brandShowsMemberOption(brand);
@@ -1171,7 +1178,9 @@
         /* 開始時刻一覧も、月間カレンダーで選んだ日と同じtimeBandで絞り込む
            （Issue #324本文レビュー追記2）。GAS側の単日getAvailability自体・
            このリクエストURLは変更しない（フロント側フィルタのみ）。 */
-        renderStartTimes(Logic.filterStartTimesByTimeBand(body.bookableStartTimes || [], state.timeBand));
+        var bandTimes = Logic.filterStartTimesByTimeBand(body.bookableStartTimes || [], state.timeBand);
+        /* Issue #510: 貸切ベースプランは8:00〜21:00の範囲。終了が21:00を超える開始時刻は出さない（サーバーでも拒否する）。 */
+        renderStartTimes(eventPlanSelected_() ? Logic.filterStartTimesForEventPlan(bandTimes, state.durationMinutes) : bandTimes);
       })
       .catch(function () {
         if (requestSeq !== availabilityRequestSeq) return;
@@ -1334,7 +1343,7 @@
       };
       var errors = Logic.validateDetailsForm(fields, locale);
 
-      /* 貸切ベースプランは最大4名・6時間固定（サーバー側でも同じ条件で拒否する）。 */
+      /* 貸切ベースプランは最大4名・最低6時間（8:00〜21:00。サーバー側でも同じ条件で拒否する）。 */
       if (eventPlanSelected_()) {
         if (fields.people && !Logic.isEventPlanPeopleValue(fields.people)) {
           errors.people = Logic.messageForErrorCode('EVENT_PLAN_PEOPLE_EXCEEDED', locale);
