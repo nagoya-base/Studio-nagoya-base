@@ -303,6 +303,41 @@ var MembershipRules = (function () {
   }
 
   /*
+   * 入会Checkout（mode=subscription）の完了時に、初回invoice（billing_reason=subscription_create）から
+   * 初回の支払済み期間を確定する（Issue #535）。invoice.paidが届かない・処理されない場合でも、初回の資格を
+   * Checkout完了の経路で記録するために使う。invoice.paidと同じ根拠（同じinvoice・同じline item期間）で判定し、
+   * 記録時のsourceはどちらも(invoice, invoice ID)とするため、どちらが先に処理されても1行に収束する。
+   * - 初回invoiceでない（subscription_cycle等）・別Subscriptionのinvoice・未払い（status!=paid）・
+   *   金額/通貨/期間が想定外はすべて ok:false（Periodを作らない。fail-closed）。
+   * - Subscriptionが incomplete / incomplete_expired の場合も作らない。
+   * 戻り値: { ok: true, invoiceId, periodStartSeconds, periodEndSeconds, paidAtSeconds, range } | { ok: false, code }
+   */
+  function resolveInitialPeriodOfSubscriptionJoin(invoice, subscription) {
+    if (!invoice || typeof invoice !== 'object' || typeof invoice.id !== 'string' || !invoice.id) {
+      return { ok: false, code: 'INVALID_INVOICE' };
+    }
+    if (!subscription || typeof subscription !== 'object' || typeof subscription.id !== 'string' || !subscription.id) {
+      return { ok: false, code: 'INVALID_SUBSCRIPTION' };
+    }
+    if (subscription.status === 'incomplete' || subscription.status === 'incomplete_expired') {
+      return { ok: false, code: 'SUBSCRIPTION_INCOMPLETE' };
+    }
+    if (invoice.billing_reason !== 'subscription_create') return { ok: false, code: 'NOT_INITIAL_INVOICE' };
+    if (readInvoiceSubscription(invoice).subscriptionId !== subscription.id) return { ok: false, code: 'SUBSCRIPTION_MISMATCH' };
+    var paid = resolvePaidPeriodOfInvoice(invoice);
+    if (!paid.ok) return { ok: false, code: paid.code };
+    var paidAt = Number(invoice.status_transitions && invoice.status_transitions.paid_at);
+    return {
+      ok: true,
+      invoiceId: invoice.id,
+      periodStartSeconds: paid.periodStartSeconds,
+      periodEndSeconds: paid.periodEndSeconds,
+      paidAtSeconds: Number.isFinite(paidAt) && paidAt > 0 ? paidAt : null,
+      range: paid.range
+    };
+  }
+
+  /*
    * 入会（決済成功）時刻から、初回500円でカバーする利用月（支払い事実を作る月）を決める（Issue #490）。
    * プレスタート期間（2026/10/26 JST〜11/30）は入会月〜プレスタート最終月（2026-11）まで。それ以外は入会月のみ。
    * 戻り値: 'YYYY-MM'の配列（昇順）。判定不能は空配列。
@@ -522,6 +557,7 @@ var MembershipRules = (function () {
     readSubscriptionPeriod: readSubscriptionPeriod,
     existingSubscriptionProblems: existingSubscriptionProblems,
     readInvoiceSubscription: readInvoiceSubscription,
-    resolvePaidPeriodOfInvoice: resolvePaidPeriodOfInvoice
+    resolvePaidPeriodOfInvoice: resolvePaidPeriodOfInvoice,
+    resolveInitialPeriodOfSubscriptionJoin: resolveInitialPeriodOfSubscriptionJoin
   };
 })();

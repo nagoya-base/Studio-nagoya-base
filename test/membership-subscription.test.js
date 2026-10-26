@@ -76,7 +76,15 @@ function makeStripeResponder(state, calls) {
       return { responseCode: 200, body: { object: 'list', has_more: false, data: state.invoicePayments || [] } };
     }
     if (url.indexOf('/invoices/') !== -1) {
-      return { responseCode: 200, body: state.invoices[decodeURIComponent(url.split('/invoices/')[1])] };
+      var invoiceId = decodeURIComponent(url.split('/invoices/')[1]);
+      if (state.invoiceNetworkFailures > 0) { state.invoiceNetworkFailures--; return { thrown: new Error('network down') }; }
+      var invoice = (state.invoices || {})[invoiceId];
+      /* Issue #535: 入会Checkout完了時に初回invoiceを再取得する。既定は入会時刻の初回500円invoice（支払済み）。 */
+      if (!invoice && invoiceId === FIRST_INVOICE_ID && !state.noDefaultFirstInvoice) {
+        invoice = feeInvoice(FIRST_INVOICE_ID, JOIN_AT, 'subscription_create');
+      }
+      if (!invoice) return { responseCode: 404, body: { error: { type: 'invalid_request_error', code: 'resource_missing', message: 'No such invoice' } } };
+      return { responseCode: 200, body: invoice };
     }
     if (url.indexOf('/charges/') !== -1) {
       return { responseCode: 200, body: state.charge };
@@ -170,9 +178,10 @@ test('順序: checkout.session.completed → invoice.paid（会員行が先）�
   var ctx = setup();
   var join = receiveAndProcess(ctx, joinEvent());
   assert.strictEqual(join.code, 'MEMBERSHIP_JOINED');
-  assert.strictEqual(memberOn(ctx, '2026-10-26'), false, 'invoice.paid前はPeriodが無いので未確定');
+  assert.strictEqual(memberOn(ctx, '2026-10-26'), true, 'Issue #535: Checkout完了時に初回invoiceを確認して初回Periodを記録する');
   var paid = receiveAndProcess(ctx, firstInvoiceEvent());
   assert.strictEqual(paid.code, 'MEMBERSHIP_PERIOD_PAID');
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1, '後から届いた同じ初回invoiceのinvoice.paidは追記しない');
   assert.deepStrictEqual(finalState(ctx).membership, [false, true, true, false]);
 });
 
@@ -234,6 +243,172 @@ test('入会: 未決済・金額不一致・Subscriptionのmetadata不一致は�
   var mismatch = setup({ stripeState: { subscription: { id: SUBSCRIPTION_ID, status: 'active', metadata: { orderType: 'membership', memberId: 'MBR-other' }, items: { data: [] } } } });
   assert.strictEqual(receiveAndProcess(mismatch, joinEvent()).code, 'MEMBERSHIP_JOIN_SUBSCRIPTION_MISMATCH');
   assert.strictEqual(rowsOf(mismatch, 'Members').length, 0);
+});
+
+/* ===== Issue #535: invoice.paidが届かなくても初回Periodを記録する ===== */
+
+function periodRows(ctx) {
+  /* recordedAt・eventIdは処理したイベントで変わるため比較から外す。 */
+  return plain(rowsOf(ctx, 'MemberPeriods').map(function (r) { return r.slice(0, 8); }));
+}
+
+function joinAtInvoice(startIso, endIso) {
+  return feeInvoice(FIRST_INVOICE_ID, startIso, 'subscription_create', {
+    lines: { data: [{ amount: 500, period: { start: sec(startIso), end: sec(endIso) } }] }
+  });
+}
+
+test('#535: Checkout完了だけ届く（invoice.paidが来ない）→ 初回Periodを(invoice, 初回invoice ID)で記録し資格が有効になる', function () {
+  var ctx = setup();
+  var join = receiveAndProcess(ctx, joinEvent());
+  assert.strictEqual(join.code, 'MEMBERSHIP_JOINED');
+  var periods = rowsOf(ctx, 'MemberPeriods');
+  assert.strictEqual(periods.length, 1);
+  assert.strictEqual(periods[0][0], MEMBER_ID);
+  assert.strictEqual(periods[0][1], SUBSCRIPTION_ID);
+  assert.strictEqual(periods[0][4], 'invoice');
+  assert.strictEqual(periods[0][5], FIRST_INVOICE_ID);
+  assert.strictEqual(periods[0][6], 500);
+  assert.deepStrictEqual(finalState(ctx).membership, [false, true, true, false]);
+  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 0);
+  assert.ok(ctx.stripeCalls.some(function (c) { return c.url.indexOf('/invoices/' + FIRST_INVOICE_ID) !== -1; }), '初回invoiceをStripeから再取得する');
+});
+
+test('#535: 到着順（Checkoutのみ／Checkout→invoice.paid／invoice.paid→Checkout）に依存せずPeriodは同一の1行', function () {
+  var only = setup();
+  receiveAndProcess(only, joinEvent());
+
+  var joinFirst = setup();
+  receiveAndProcess(joinFirst, joinEvent());
+  receiveAndProcess(joinFirst, firstInvoiceEvent());
+
+  var invoiceFirst = setup();
+  receiveAndProcess(invoiceFirst, firstInvoiceEvent());
+  receiveAndProcess(invoiceFirst, joinEvent());
+
+  [joinFirst, invoiceFirst].forEach(function (ctx) {
+    assert.deepStrictEqual(periodRows(ctx), periodRows(only), '期間・source・金額・paidAtまで同一');
+    assert.deepStrictEqual(finalState(ctx), finalState(only));
+  });
+  assert.strictEqual(rowsOf(only, 'MemberPeriods').length, 1);
+});
+
+test('#535: 同一Checkoutイベントの再送・別イベントIDでの再送でもPeriodは1行', function () {
+  var ctx = setup();
+  receiveAndProcess(ctx, joinEvent('evt_a'));
+  var resend = receiveAndProcess(ctx, joinEvent('evt_a'));
+  assert.notStrictEqual(resend.code, 'MEMBERSHIP_JOIN_INITIAL_PERIOD_UNCONFIRMED');
+  receiveAndProcess(ctx, joinEvent('evt_b'));
+  assert.strictEqual(rowsOf(ctx, 'Members').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
+});
+
+test('#535: Checkoutが未決済ならPeriodを作らない（初回invoiceも照会しない）', function () {
+  var ctx = setup({ stripeState: { session: { id: SESSION_ID, mode: 'subscription', payment_status: 'unpaid', amount_total: 500, currency: 'jpy', customer: CUSTOMER_ID, customer_email: MEMBER_EMAIL, subscription: SUBSCRIPTION_ID, invoice: FIRST_INVOICE_ID, metadata: { orderType: 'membership', memberId: MEMBER_ID } } } });
+  assert.strictEqual(receiveAndProcess(ctx, joinEvent()).code, 'PAYMENT_NOT_YET_COMPLETE');
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 0);
+  assert.strictEqual(ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/invoices/') !== -1; }).length, 0);
+});
+
+test('#535: 初回invoiceが未払い・不完全Subscription・更新invoice・別Subscriptionのinvoiceは、会員行だけ作りPeriodは作らず要復旧', function () {
+  var cases = [
+    { name: '未払い', invoices: { in_test_first: feeInvoice(FIRST_INVOICE_ID, JOIN_AT, 'subscription_create', { status: 'open', amount_paid: 0 }) } },
+    { name: '更新invoice', invoices: { in_test_first: feeInvoice(FIRST_INVOICE_ID, JOIN_AT, 'subscription_cycle') } },
+    { name: '別Subscription', invoices: { in_test_first: feeInvoice(FIRST_INVOICE_ID, JOIN_AT, 'subscription_create', { parent: { subscription_details: { subscription: 'sub_other', metadata: {} } } }) } },
+    { name: '金額違い', invoices: { in_test_first: feeInvoice(FIRST_INVOICE_ID, JOIN_AT, 'subscription_create', { amount_paid: 1000 }) } },
+    { name: '不完全Subscription', subscription: { id: SUBSCRIPTION_ID, status: 'incomplete', customer: CUSTOMER_ID, metadata: { orderType: 'membership', memberId: MEMBER_ID }, items: { data: [] } } },
+    { name: 'invoiceが存在しない', noDefaultFirstInvoice: true, invoices: {} }
+  ];
+  cases.forEach(function (c) {
+    var ctx = setup({ stripeState: { invoices: c.invoices, subscription: c.subscription, noDefaultFirstInvoice: c.noDefaultFirstInvoice } });
+    var res = receiveAndProcess(ctx, joinEvent());
+    assert.strictEqual(res.code, 'MEMBERSHIP_JOIN_INITIAL_PERIOD_UNCONFIRMED', c.name);
+    assert.strictEqual(rowsOf(ctx, 'Members').length, 1, c.name + ': 会員行は作る（後からinvoice.paidで結び付く）');
+    assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 0, c.name + ': Periodは作らない');
+    assert.strictEqual(memberOn(ctx, '2026-10-26'), false, c.name);
+    assert.ok(rowsOf(ctx, 'Recovery').length >= 1, c.name + ': 要復旧として記録');
+  });
+});
+
+test('#535: 初回invoiceの照会が一時的に失敗したら何も書かずに再試行し、次回で記録する', function () {
+  var ctx = setup({ stripeState: { invoiceNetworkFailures: 1 } });
+  var first = receiveAndProcess(ctx, joinEvent());
+  assert.strictEqual(first.finalized, false);
+  assert.strictEqual(first.code, 'STRIPE_LOOKUP_FAILED');
+  assert.strictEqual(rowsOf(ctx, 'Members').length, 0, '書き込み前に照会するので会員行も作らない');
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 0);
+  var retry = receiveAndProcess(ctx, joinEvent());
+  assert.strictEqual(retry.code, 'MEMBERSHIP_JOINED');
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
+});
+
+test('#535: Checkout SessionにinvoiceIDが無い場合はSubscriptionのlatest_invoiceで初回invoiceを特定する', function () {
+  var ctx = setup({ stripeState: {
+    session: { id: SESSION_ID, mode: 'subscription', status: 'complete', payment_status: 'paid', amount_total: 500, currency: 'jpy', customer: CUSTOMER_ID, customer_email: MEMBER_EMAIL, subscription: SUBSCRIPTION_ID, invoice: null, metadata: { orderType: 'membership', memberId: MEMBER_ID } },
+    subscription: { id: SUBSCRIPTION_ID, status: 'active', customer: CUSTOMER_ID, cancel_at_period_end: false, latest_invoice: FIRST_INVOICE_ID,
+      metadata: { orderType: 'membership', memberId: MEMBER_ID }, items: { data: [{ current_period_start: sec(JOIN_AT), current_period_end: sec(RENEW1_AT) }] } }
+  } });
+  assert.strictEqual(receiveAndProcess(ctx, joinEvent()).code, 'MEMBERSHIP_JOINED');
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods')[0][5], FIRST_INVOICE_ID);
+});
+
+test('#535: 月末境界 1/31入会（2027・2028年）をCheckout完了だけで記録できる（2/29を含む年）', function () {
+  [
+    { start: '2027-01-31T10:00:00+09:00', end: '2027-02-28T10:00:00+09:00', last: '2027-02-27', next: '2027-02-28' },
+    { start: '2028-01-31T10:00:00+09:00', end: '2028-02-29T10:00:00+09:00', last: '2028-02-28', next: '2028-02-29' }
+  ].forEach(function (c) {
+    var ctx = setup({ stripeState: { invoices: { in_test_first: joinAtInvoice(c.start, c.end) } } });
+    assert.strictEqual(receiveAndProcess(ctx, joinEvent()).code, 'MEMBERSHIP_JOINED');
+    assert.strictEqual(memberOn(ctx, c.start.slice(0, 10)), true, c.start);
+    assert.strictEqual(memberOn(ctx, c.last), true, c.last);
+    assert.strictEqual(memberOn(ctx, c.next), false, c.next + ' は更新invoice.paidまで無効');
+    /* 同じ初回invoiceのinvoice.paidが後から届いても同じ1行。 */
+    receiveAndProcess(ctx, invoiceEvent('evt_late', sec(c.start) + 60, joinAtInvoice(c.start, c.end)));
+    assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
+  });
+});
+
+test('#535: Checkout経路で記録した初回Periodも、初回invoiceの全額返金で無効になる（返金が先でも後でも）', function () {
+  function refundFirst(ctx, id) {
+    ctx.stripeState.invoicePayments = [{ invoice: FIRST_INVOICE_ID }];
+    ctx.stripeState.charge = { id: 'ch_first', payment_intent: 'pi_first', amount: 500, amount_refunded: 500, currency: 'jpy' };
+    return receiveAndProcess(ctx, { id: id, type: 'charge.refunded', created: sec(JOIN_AT) + 600, data: { object: { id: 'ch_first', object: 'charge' } } });
+  }
+  var after = setup();
+  receiveAndProcess(after, joinEvent());
+  assert.strictEqual(memberOn(after, '2026-10-26'), true);
+  refundFirst(after, 'evt_refund_after');
+  assert.strictEqual(memberOn(after, '2026-10-26'), false);
+  assert.strictEqual(rowsOf(after, 'MemberPeriods').length, 1, 'Periodは削除しない（MemberRefundsで差し引く）');
+  assert.strictEqual(rowsOf(after, 'MemberRefunds')[0][1], FIRST_INVOICE_ID);
+
+  var before = setup();
+  refundFirst(before, 'evt_refund_before');
+  var join = receiveAndProcess(before, joinEvent());
+  assert.strictEqual(join.code, 'MEMBERSHIP_REFUNDED_SUBSCRIPTION_ACTIVE');
+  assert.strictEqual(memberOn(before, '2026-10-26'), false);
+  assert.strictEqual(rowsOf(before, 'MemberPeriods').length, 1);
+});
+
+test('#535: 更新は従来どおりinvoice.paidで追加される（Checkout経路は初回だけ）', function () {
+  var ctx = setup();
+  receiveAndProcess(ctx, joinEvent());
+  assert.strictEqual(memberOn(ctx, '2026-11-26'), false);
+  var renew = receiveAndProcess(ctx, invoiceEvent('evt_inv_r1', sec(RENEW1_AT) + 3, feeInvoice('in_test_r1', RENEW1_AT, 'subscription_cycle')));
+  assert.strictEqual(renew.code, 'MEMBERSHIP_PERIOD_PAID');
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 2);
+  assert.strictEqual(memberOn(ctx, '2026-11-26'), true);
+  assert.strictEqual(memberOn(ctx, '2026-12-26'), false);
+});
+
+test('#535: ログにStripe ID・メールアドレス・秘密鍵を出さない（初回invoice照会失敗時）', function () {
+  var ctx = setup({ stripeState: { invoiceNetworkFailures: 1 } });
+  receiveAndProcess(ctx, joinEvent());
+  var logged = ctx.globals.Logger._logs.join('\n');
+  assert.ok(logged.indexOf('初回invoice再取得に失敗') !== -1);
+  [FIRST_INVOICE_ID, SUBSCRIPTION_ID, CUSTOMER_ID, SESSION_ID, MEMBER_EMAIL, 'sk_test_dummy_value', 'prod_fixture_member'].forEach(function (secret) {
+    assert.strictEqual(logged.indexOf(secret), -1, secret);
+  });
 });
 
 /* ===== 有効日の境界・更新 ===== */
