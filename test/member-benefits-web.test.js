@@ -524,7 +524,7 @@ test('Issue #539: 予約フォームはペアパック欄を利用日で同期�
   assert.match(app, /Logic\.pairPackAvailableOnDate\(brand,/);
   assert.match(app, /function syncBenefitsVisibility_\(\)/);
   assert.match(app, /function refreshPriceEstimate_\(\) \{\n    syncBenefitsVisibility_\(\);/, '日付・条件変更で見積りと同時に同期');
-  assert.match(app, /if \(\(!pairVisible \|\| !unlocked\) && els\.planPair\) els\.planPair\.checked = false;/, '出せなくなったら（会員向けUI無効も含む）選択を外す');
+  assert.match(app, /if \(\(!pairVisible \|\| !unlocked \|\| !pairDurationOk\) && els\.planPair\) els\.planPair\.checked = false;/, '出せなくなったら（会員向けUI無効も含む）選択を外す');
   var tpl = read('_includes/booking_app_ja.html');
   assert.ok(tpl.indexOf('id="ba-plan-pair"') > tpl.indexOf('{% if include.brand == "snb" or include.brand == "mens" %}'));
 });

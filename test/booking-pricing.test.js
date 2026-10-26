@@ -345,3 +345,19 @@ test('computeBookingPrice: 戻り値にcurrency/durationMinutes/billableHoursを
   assert.strictEqual(result.price.billableHours, 3);
   assert.strictEqual(result.price.brand, 'snb');
 });
+
+/* Issue #552: フロントの早期ガード（BookingLogic.PAIR_PACK_MIN_MINUTES）とサーバーの最低時間の一致と、
+   DOM改ざんで3時間未満 + member_pair_3h が送られた場合のサーバー側拒否を固定する。 */
+test('Issue #552: ペアパックの最低時間はフロントの早期ガードと一致し、3時間未満はサーバーが拒否し続ける', function () {
+  var Pricing = loadPricing();
+  var Logic = require('../scripts/booking-logic.js');
+  assert.strictEqual(Logic.PAIR_PACK_MIN_MINUTES, Pricing.PAIR_PACK_BASE_HOURS * 60);
+  ['snb', 'mens'].forEach(function (brand) {
+    [60, 120, 179].forEach(function (minutes) {
+      var result = Pricing.computeBookingPrice({ brand: brand, date: '2026-12-10', durationMinutes: minutes, isMember: true, generation: 'V1', plan: 'member_pair_3h' });
+      assert.strictEqual(result.valid, false, brand + ' ' + minutes + '分は拒否');
+      assert.strictEqual(result.error.code, 'PLAN_DURATION_INVALID');
+    });
+    assert.strictEqual(Pricing.computeBookingPrice({ brand: brand, date: '2026-12-10', durationMinutes: 180, isMember: true, generation: 'V1', plan: 'member_pair_3h' }).valid, true);
+  });
+});

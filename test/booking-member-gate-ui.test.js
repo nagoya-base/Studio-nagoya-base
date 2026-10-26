@@ -556,3 +556,78 @@ test('利用時間を変えても日付を選び直した場合は、前の開�
   assert.strictEqual(ctx.elements['ba-date'].value, '2026-12-11');
   assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, true, '別日は開始時刻を選び直す');
 });
+
+/* ── Issue #552: ペアパックは3時間未満で選択不可。利用時間の変更で自動解除し、通常/会員料金へ再見積りする ── */
+
+[['snb', 'V1'], ['mens', 'V1']].forEach(function (c) {
+  var brand = c[0], generation = c[1];
+  var label = brand === 'snb' ? 'SNB' : 'SNB mens';
+
+  async function memberReady(duration) {
+    var ctx = await ready({ brand: brand, generation: generation, duration: duration });
+    if (brand === 'snb') ctx.setMember('member');
+    else { await ctx.dayButton(1); await flushPromises(); ctx.setUnlock(true); }
+    await ctx.pick(20); /* 2026-12-10 */
+    await flushPromises();
+    return ctx;
+  }
+
+  test(label + ': 1時間・2時間ではペアパックが選択不可で補足を出し、シャワーは選択可能のまま', async function () {
+    var ctx = await memberReady(2);
+    assert.strictEqual(ctx.elements['ba-plan-pair'].disabled, true);
+    assert.strictEqual(ctx.elements['ba-plan-pair-note'].hidden, false, '3時間以上で選べる旨の補足');
+    assert.strictEqual(ctx.elements['ba-shower'].disabled, false, 'シャワーは独立オプション');
+    ctx.setDuration(1);
+    assert.strictEqual(ctx.elements['ba-plan-pair'].disabled, true);
+    assert.strictEqual(ctx.elements['ba-shower'].disabled, false);
+    ctx.setBenefit('ba-shower', true);
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-shower'].checked, true);
+  });
+
+  test(label + ': 2h→3h→4hで選択可能になるが、自動ではチェックしない', async function () {
+    var ctx = await memberReady(2);
+    ctx.setDuration(3);
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-plan-pair'].disabled, false);
+    assert.strictEqual(ctx.elements['ba-plan-pair'].checked, false, '自動でチェックしない');
+    assert.strictEqual(ctx.elements['ba-plan-pair-note'].hidden, true);
+    ctx.setDuration(4);
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-plan-pair'].disabled, false);
+  });
+
+  [[3, 2], [4, 2]].forEach(function (t) {
+    test(label + ': ペアパック選択中に' + t[0] + 'h→' + t[1] + 'hで自動解除し、通常料金の見積りへ戻る（適用プラン・旧金額を残さない）', async function () {
+      var ctx = await memberReady(t[0]);
+      ctx.setBenefit('ba-plan-pair', true);
+      ctx.setBenefit('ba-shower', true);
+      await flushPromises();
+      assert.ok(/plan=member_pair_3h/.test(lastEstimateUrl(ctx)));
+      assert.ok(ctx.elements['ba-price-line'].textContent.indexOf('5,000') !== -1);
+
+      ctx.setDuration(t[1]);
+      await flushPromises();
+      assert.strictEqual(ctx.elements['ba-plan-pair'].checked, false, '自動解除');
+      assert.strictEqual(ctx.elements['ba-plan-pair'].disabled, true);
+      assert.ok(!/plan=/.test(lastEstimateUrl(ctx)), '見積りへ member_pair_3h を載せない: ' + lastEstimateUrl(ctx));
+      assert.ok(new RegExp('durationMinutes=' + t[1] * 60).test(lastEstimateUrl(ctx)), '2時間の新しい見積り');
+      assert.ok(ctx.elements['ba-price-line'].textContent.indexOf('6,600') !== -1, '通常の見積りを表示: ' + ctx.elements['ba-price-line'].textContent);
+      assert.ok(ctx.elements['ba-price-line'].textContent.indexOf('5,000') === -1, '旧ペアパック金額を残さない');
+      assert.ok(!/ペアパック/.test(ctx.elements['ba-price-applied'].textContent), '適用プラン表示を残さない: ' + ctx.elements['ba-price-applied'].textContent);
+      assert.ok(!/ペアパック/.test(ctx.elements['ba-confirm-applied'].textContent), '確認画面の適用プランも残さない');
+      assert.strictEqual(ctx.elements['ba-shower'].checked, true, 'シャワー選択は維持');
+      assert.strictEqual(ctx.Logic.pairPackDurationAllowed(t[1] * 60), false);
+    });
+  });
+});
+
+test('Logic.pairPackDurationAllowed: 179分以下は不可、180分以上は可', function () {
+  var Logic = require('../scripts/booking-logic.js');
+  assert.strictEqual(Logic.pairPackDurationAllowed(60), false);
+  assert.strictEqual(Logic.pairPackDurationAllowed(120), false);
+  assert.strictEqual(Logic.pairPackDurationAllowed(179), false);
+  assert.strictEqual(Logic.pairPackDurationAllowed(180), true);
+  assert.strictEqual(Logic.pairPackDurationAllowed(240), true);
+  assert.strictEqual(Logic.pairPackDurationAllowed(NaN), false);
+});
