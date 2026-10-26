@@ -162,14 +162,24 @@ test('SNB(/equipment/)とStudio X(/studio-x/equipment/)は同じ共通include・
     assert.ok(gated.indexOf(w) === -1, 'Studio X専用文言「' + w + '」がブランド分岐の外にある');
   });
   assert.ok(!/保有機材（応相談）|保有・要相談/.test(snb + sx + catalog + read('_includes/equipment_photo_cards.html') + read('_includes/equipment_caution_ja.html')));
-  // how-to / mens が使う従来の共通表は今回の対象外（変更しない）
-  assert.ok(read('_includes/equipment_table.html').indexOf('保有機材（応相談）') !== -1);
-  // 旧「応相談」表は価格を持たず、価格・最新条件の正本として /equipment/ へ誘導する（#433追加方針）
-  var oldTable = read('_includes/equipment_table.html');
-  assert.ok(oldTable.indexOf('equipment_url | default: \'../equipment/\'') !== -1);
-  assert.match(oldTable, /が正本です/);
-  assert.ok(!/\d+円/.test(stripComments(oldTable)), '旧表へ価格を重複掲載しない');
-  assert.ok(read('mens/how-to/index.html').indexOf('equipment_url="../../equipment/"') !== -1);
+  // 有料レンタル機材はStudio Xのサービス: SNB(brand未指定)では機材一覧・写真カード・注意事項に出さない（Issue #502）
+  var rentalAt = catalog.indexOf('id="equipment-rental"');
+  var gateAt = catalog.lastIndexOf('{%- if is_studio_x %}', rentalAt);
+  var selfAt = catalog.indexOf('id="equipment-self"');
+  assert.ok(gateAt !== -1 && gateAt < rentalAt && catalog.slice(rentalAt, selfAt).indexOf('{%- endif %}') !== -1, '有料レンタル表はStudio X分岐の中だけ');
+  var cards = read('_includes/equipment_photo_cards.html');
+  var cardGate = cards.indexOf('{%- if include.brand == "studio-x" %}');
+  assert.ok(cardGate !== -1 && cardGate < cards.indexOf('is-rental') && cards.indexOf('is-rental') !== -1, '有料レンタルの写真カードはStudio X分岐の中だけ');
+  assert.ok(cards.slice(0, cardGate).indexOf('is-rental') === -1);
+  assert.ok(read('_includes/equipment_caution_ja.html').indexOf('有料レンタル機材') === -1);
+  // 旧共通表(how-to / mens/how-to)にも保有機材(応相談)＝有料機材の一覧を出さない
+  assert.ok(read('_includes/equipment_table.html').indexOf('保有機材') === -1);
+  ['index.html', 'mens/index.html', 'legal/index.html', 'mens/legal/index.html', 'legal/en.html', '_includes/legal_ja.html', 'equipment/index.html', 'membership/index.html', 'mens/membership/index.html'].forEach(function (f) {
+    var t = read(f);
+    ['機材レンタルオプション', '有料機材オプション', 'Paid Equipment Option', '有料レンタル機材', '会員限定の有料機材'].forEach(function (w) {
+      assert.ok(t.indexOf(w) === -1, f + ' にSNB/mensの有料機材案内「' + w + '」が残っている');
+    });
+  });
 });
 
 test('写真カードの有料機材はレンタル価格を正本(unitPriceJpy)から表示し、金額を直書きしない（Issue #432）', function () {
