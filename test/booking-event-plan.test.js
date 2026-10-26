@@ -38,10 +38,10 @@ var FILES = [
   'BookingAdmin.gs', 'BookingAdminWeb.gs', 'Code.gs'
 ];
 
-/* 実行日から独立した未来日（JST）。イベント開催日はこの2日、それ以外は通常日。 */
-var EVENT_DAY = futureDate.futureJstDate(40);
-var EVENT_DAY_2 = futureDate.futureJstDate(47);
-var OTHER_DAY = futureDate.futureJstDate(41);
+/* 実行日から独立した未来日（JST）。公開経路は30日先まで（Issue #480）のため30日以内に置く。イベント開催日はこの2日、それ以外は通常日。 */
+var EVENT_DAY = futureDate.futureJstDate(20);
+var EVENT_DAY_2 = futureDate.futureJstDate(27);
+var OTHER_DAY = futureDate.futureJstDate(21);
 
 function setup(opts) {
   var o = opts || {};
