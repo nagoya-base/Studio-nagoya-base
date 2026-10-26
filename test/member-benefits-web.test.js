@@ -170,17 +170,22 @@ test('SNB / mens 会員ページ: ペアパック・シャワー・既存有料�
     assert.ok(t.indexOf('通常の会員延長料金（1時間ごとに平日' + yen(extWk) + '／土日祝' + yen(extWe) + '）') !== -1, '延長は通常の会員延長料金');
     assert.ok(t.indexOf('別商品') !== -1, '通常の会員料金表とは別商品');
     assert.ok(t.indexOf('シャワー（1予約につき1回）' + yen(Options.SHOWER_PRICE_JPY)) !== -1, brand + ' シャワー料金');
-    assert.ok(t.indexOf('同じご予約の利用者2名まで共有') !== -1 && t.indexOf('予約時間内に限ります') !== -1);
+    assert.ok(t.indexOf('同じご予約の利用者全員でご利用いただけます') !== -1 && t.indexOf('予約時間内に限ります') !== -1);
+    assert.ok(t.indexOf('利用者2名まで') === -1, brand + ' シャワーの人数上限が残っていない');
     assert.ok(t.indexOf('Studio Xでは提供していません') !== -1);
-    assert.ok(t.indexOf('機材レンタルオプション（会員限定）') !== -1 && t.indexOf('2026年12月1日以降に作成するご予約・お申し込み分から、SNB MEMBERの会員資格が必要') !== -1);
-    assert.ok(t.indexOf('翌月分の2名ペアパック・シャワー・会員限定の有料機材は、その月の1日以降、当月の会費の決済が成功してから確定できます') !== -1, brand + ' 翌月の注意');
+    assert.ok(t.indexOf('有料機材レンタル') === -1 && t.indexOf('会員限定の有料機材') === -1, brand + ' 会員特典に有料機材レンタルを載せない');
+    assert.ok(t.indexOf('SNB MEMBERは90日先まで予約可能です') !== -1, brand + ' 90日先行予約は別項目で説明');
+    assert.ok(t.indexOf('翌月分の2名ペアパック・シャワーは、その月の1日以降、当月の会費の決済が成功してから確定できます') !== -1, brand + ' 翌月の注意');
     assert.ok(t.indexOf('猶予期間はありません') !== -1);
     assert.ok(t.indexOf('変更先の月の会員資格を改めて確認します') !== -1);
     assert.ok(t.indexOf('Studio Nagoya Base・SNB mens・Studio Xで共通') !== -1, brand + ' 共通会員');
   });
   var mens = textOf(expandIncludes(read(PAGES.mens.file)));
   assert.ok(mens.indexOf('従来どおり、会員加入なしでも会員料金でご利用いただけます') !== -1);
-  assert.ok(mens.indexOf('料金の優遇であり、SNB MEMBERの会員資格が付与されるものではありません') !== -1);
+  assert.ok(mens.indexOf('SNB mensは、会員加入の有無にかかわらず会員料金でご利用いただけます') !== -1);
+  /* 共通会員ページにはmens固有の料金優遇を出さない */
+  var snbPage = textOf(expandIncludes(read(PAGES.snb.file)));
+  assert.ok(snbPage.indexOf('SNB mensの予約ページ') === -1 && snbPage.indexOf('料金の優遇') === -1 && snbPage.indexOf('だけでは、先行予約') === -1);
   assert.ok(mens.indexOf('SNB mens専用の別会員・別契約はありません') !== -1);
   assert.ok(mens.indexOf('月額500円') !== -1);
   /* 通常の会員料金表は残している（SNB） */
@@ -260,7 +265,7 @@ test('各トップから対応する会員ページへの導線がある（SNB�
 test('規約・特商法・会員条件に、新料金（5,000/6,000/1,000円）・利用月ルール・共通会員・適用開始日が載っている', function () {
   var terms = textOf(read('_includes/membership_terms_ja.html'));
   ['2026年12月1日以降に作成するご予約・お申し込みから', '2名ペアパック', '平日5,000円／土日祝6,000円', 'シャワー（1予約につき1回1,000円', '他の割引・優待と併用できず',
-    '料金優遇', 'だけでは、これらの特典はご利用いただけません', 'その月の1日以降、当月の会費の決済が成功してから確定できます', '猶予期間はありません',
+    'その月の1日以降、当月の会費の決済が成功してから確定できます', '猶予期間はありません',
     '変更先の月の会員資格を改めて確認', 'Studio Nagoya Base・SNB mens・Studio Xで共通の1つのSNB MEMBER'].forEach(function (w) {
     assert.ok(terms.indexOf(w) !== -1, '会員条件に「' + w + '」');
   });
@@ -269,7 +274,8 @@ test('規約・特商法・会員条件に、新料金（5,000/6,000/1,000円）
   assert.ok(lt.indexOf('会員限定の2名ペアパック・シャワー') !== -1);
   assert.ok(lt.indexOf('2名ペアパックは、SNB・SNB mensで、SNB MEMBERの会員資格がある方に限りご利用いただける、3時間・1〜2名の定額プランです（平日5,000円／土日祝6,000円・税込）') !== -1);
   assert.ok(lt.indexOf('シャワーは、SNB・SNB mensで、SNB MEMBERの会員資格がある方に限りご利用いただける有料オプションです（1予約につき1回1,000円・税込）') !== -1);
-  assert.ok(lt.indexOf('2026年12月1日以降に作成するご予約・お申し込み分から、有料機材オプションのご利用にはSNB MEMBERの会員資格') !== -1);
+  assert.ok(lt.indexOf('有料機材オプションのご利用にはSNB MEMBERの会員資格') === -1);
+  assert.ok(lt.indexOf('利用者2名まで共有') === -1 && lt.indexOf('同じご予約の利用者全員でご利用いただけます') !== -1);
   var law = textOf(legal.slice(legal.indexOf('特定商取引法に基づく表記')));
   ['会員限定の2名ペアパックは平日5,000円・土日祝6,000円（3時間・1〜2名、税込）', '会員限定のシャワーは1予約につき1回1,000円（税込）', '会員限定の特典：', '会員資格はStudio Nagoya Base・SNB mens・Studio Xで共通です']
     .forEach(function (w) { assert.ok(law.indexOf(w) !== -1, '特商法表記に「' + w + '」'); });
@@ -295,15 +301,15 @@ test('FAQ: JSON-LDと表示が一致する（SNBトップ・規約ページの�
     assert.strictEqual(q.length, 1, p);
     assert.ok(html.indexOf('<div class="faq-answer">' + q[0].acceptedAnswer.text + '</div>') !== -1, p + ' 表示とJSON-LD');
     assert.ok(q[0].acceptedAnswer.text.indexOf('平日5,000円・土日祝6,000円') !== -1 && q[0].acceptedAnswer.text.indexOf('1,000円') !== -1);
-    /* 機材FAQにも会員資格を追記し、表示とJSON-LDが一致 */
+    /* 機材FAQは会員限定にせず、表示とJSON-LDが一致 */
     var eq = ld.mainEntity.filter(function (e) { return /機材/.test(e.name); })[0];
-    assert.ok(eq.acceptedAnswer.text.indexOf('2026年12月1日以降に作成するご予約・お申し込み分から、SNB MEMBERの会員資格が必要です') !== -1);
+    assert.ok(eq.acceptedAnswer.text.indexOf('SNB MEMBERの会員資格が必要です') === -1);
     assert.ok(html.indexOf('<div class="faq-answer">' + eq.acceptedAnswer.text + '</div>') !== -1, p + ' 機材FAQ');
   });
   var mensLegal = read('mens/legal/index.html');
   var mensEq = faqLd(mensLegal).mainEntity.filter(function (e) { return /機材/.test(e.name); })[0];
   assert.ok(mensLegal.indexOf('<div class="faq-answer">' + mensEq.acceptedAnswer.text + '</div>') !== -1);
-  assert.ok(mensEq.acceptedAnswer.text.indexOf('SNB MEMBERの会員資格が必要です') !== -1);
+  assert.ok(mensEq.acceptedAnswer.text.indexOf('SNB MEMBERの会員資格が必要です') === -1);
 
   ['snb', 'mens'].forEach(function (brand) {
     var html = read(PAGES[brand].file);
