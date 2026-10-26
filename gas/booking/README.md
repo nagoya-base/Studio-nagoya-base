@@ -4,6 +4,11 @@ Issue #535の本文を正本とした修正（GAS・テストのみ。サイト�
 
 - 背景: #532の新方式は初回Periodの記録を `invoice.paid` だけに依存していたため、本番で初回500円の決済が成功しても `invoice.paid` が届かない・処理されない場合に `MemberPeriods` が0件のまま資格が無効になった。
 - `checkout.session.completed`（`mode=subscription`・`payment_status=paid`）の処理（`handleMembershipSubscriptionJoin_`）で、Subscriptionに加えて**初回invoice**（Checkout Sessionの `invoice`、無ければSubscriptionの `latest_invoice`）をStripeから再取得し、`MembershipRules.resolveInitialPeriodOfSubscriptionJoin` で確認できた場合だけ初回Periodを記録する。条件: `billing_reason=subscription_create`・invoiceのSubscriptionが当該Subscription・`status=paid`・500円・JPY・500円line itemの期間が正しい・Subscriptionが `incomplete` / `incomplete_expired` でない。期間はinvoice.paidと同じ（500円line itemの `period.start` / `period.end`）。
+- **処理済み初回Subscription決済の復旧（Issue #537。`admin/MembershipRecovery.gs`）**: PR #536より前に処理済みで、会員行はあるが初回Period（MemberPeriods）だけ欠落している対象を、管理者が明示して復旧する。`StripeEvents`の書換え・再送、MemberPeriods／会員台帳／返金台帳の手編集は行わない。Webhook本体にも特例を足していない。
+  - 実行: Booking Adminの `adminRecoverInitialMembershipPeriod(target)`（管理者認証必須）またはGASエディタから `recoverInitialMembershipPeriod(target)`。`target` は `{ checkoutSessionId: 'cs_…' }` か `{ subscriptionId: 'sub_…' }`（どちらか一方。Subscription ID指定は最新invoiceが初回invoiceのときだけ。更新済みはCheckout Session IDを使う）。
+  - 手順: ①`execute`なし（dry-run。書き込まない）で `DRY_RUN_RECOVERABLE` を確認 → ②`execute: true` で実行。同じ対象への再実行は `ALREADY_RECORDED`（Periodは1行のまま）。
+  - 検証: Checkout Session / Subscription / 初回invoiceをStripeから再取得し、`resolveInitialPeriodOfSubscriptionJoin` で再検証（subscription_create・Subscription一致・paid・500円JPY・期間・incomplete除外）。会員行が無い・Subscription不一致・全額返金済み（`REFUNDED_NO_CHANGE`）は記録しない。記録は `MemberRepository.recordPeriod`（source=`(invoice, 初回invoice ID)`）で通常処理と同一。
+  - 戻り値・ログのIDは末尾4文字のみ表示（メール・Secret・完全IDは出さない）。復旧完了とStripe側の`invoice.paid`購読確認が終わるまで`MEMBERSHIP_JOIN_PAUSED=true`を維持する。
 - source は `invoice.paid` と同じ **`(invoice, 初回invoice ID)`**。`MemberRepository.recordPeriod` がsourceで冪等なため、Checkoutのみ・Checkout→invoice.paid・invoice.paid→Checkout・同一イベント再送のいずれでも1行に収束する（`paidAt` もinvoiceの `status_transitions.paid_at` を使うので同じ値になる。`eventId` だけは最初に記録したイベント）。
 - 全額返金は既存どおり `MemberRefunds` の `(invoice, invoice ID)` で差し引く（Periodは削除・改変しない）。返金がCheckout処理より先でも、Periodを記録したうえで資格判定から外れる。
 - 初回invoiceを確認できない（未払い・更新invoice・別Subscription・金額違い・不完全Subscription・invoiceが存在しない）場合は、会員行だけ作り、Periodは作らず要復旧 `MEMBERSHIP_JOIN_INITIAL_PERIOD_UNCONFIRMED` にする。初回invoiceの照会が一時的に失敗した場合は何も書かずに再試行する。
@@ -3226,6 +3231,7 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `StripeWebhookAuth.gs`（Issue #341 PR-C。中継基盤からの呼び出し認証） | – | – | ✓ | `gas/booking/webhook/StripeWebhookAuth.gs` |
 | `StripeEventRepository.gs`（Issue #341 PR-C。Stripe Webhookイベントの受信・処理台帳。レビュー対応・4回目でBooking Admin/Webhookの両方が使う共有ファイルへ再設計） | – | ✓ | ✓ | `gas/booking/shared/StripeEventRepository.gs` |
 | `StripeWebhookProcessor.gs`（Issue #341 PR-C。レビュー対応・4回目で新設。決済照合・予約自動確定の本体。Booking Adminの時間主導トリガーから呼ばれる。旧`StripeWebhookHandler.gs`から移動・再設計） | – | ✓ | – | `gas/booking/admin/StripeWebhookProcessor.gs` |
+| `MembershipRecovery.gs`（Issue #537。処理済み初回Subscription決済の初回Period復旧。dry-run既定の管理者専用） | – | ✓ | – | `gas/booking/admin/MembershipRecovery.gs` |
 | `BookingRefund.gs`（Issue #341 PR-D。管理者の取消・返金・返金状態の照会・決済Recoveryの一覧と解消） | – | ✓ | – | `gas/booking/admin/BookingRefund.gs` |
 | `BookingAdminAlerts.gs`（Issue #341 PR-D。来場案内を送れなかった予約・返金要対応の管理者通知） | – | ✓ | – | `gas/booking/admin/BookingAdminAlerts.gs` |
 | `BookingWebhookEndpoint.gs`（Issue #341 PR-C。Stripe Webhook中継基盤を受け付ける唯一の`doPost`。レビュー対応・4回目で受信・永続化専用に再設計） | – | – | ✓ | `gas/booking/webhook/BookingWebhookEndpoint.gs` |

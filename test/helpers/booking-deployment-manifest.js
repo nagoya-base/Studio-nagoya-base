@@ -66,6 +66,8 @@ var BOOKING_ADMIN_FILES = [
    * confirmBooking）まで行う。BookingRepository.gsより後に置く（依存順）。
    */
   'StripeWebhookProcessor.gs',
+  /* Issue #537: 処理済み初回Subscription決済の初回Period復旧（管理者専用。Webhook本体には特例を足さない）。 */
+  'MembershipRecovery.gs',
   /*
    * Issue #341 PR-D（管理者の取消・返金・来場案内）で追加。いずれも
    * BookingRepository.gs/BookingMailer.gsより後に置く（依存順）。Booking Admin専用で、
