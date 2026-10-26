@@ -144,13 +144,12 @@ test('通常のStudio X料金は変更されない（プラン指定なしの料
   function amount(date, minutes, generation, isMember) {
     return P.computeBookingPrice({ brand: 'studio_x', date: date, durationMinutes: minutes, generation: generation, isMember: isMember }).price.amount;
   }
-  /* V2（GENERAL）= 現行MEMBER表。平日: 3h 5,500 / 4h 7,000 / 延長1,500。土日祝: 3h 7,000 / 4h 9,000 / 延長2,000。 */
   var cases = [EVENT_DAY, OTHER_DAY, EVENT_DAY_2];
   cases.forEach(function (date) {
     var r4 = amount(date, 240, 'V2', false);
     var r6 = amount(date, 360, 'V2', false);
     assert.ok(r6 > 6000, '通常の6時間料金は6,000円ではない: ' + date + ' ' + r6);
-    assert.ok(r6 === r4 + 2 * 1500 || r6 === r4 + 2 * 2000, '通常の延長料金のまま');
+    assert.ok(r6 === r4 + 2 * 1200 || r6 === r4 + 2 * 1500, '通常の延長料金のまま');
   });
   var computed = P.computeBookingPrice({ brand: 'studio_x', date: EVENT_DAY, durationMinutes: 360, generation: 'V2' });
   assert.strictEqual(computed.price.plan, '', '通常予約にプランは付かない');
@@ -496,7 +495,7 @@ test('公式サイト /studio-x/: プラン名・6時間6,000円・最大4名・
   assert.ok(text.replace(/有人クローク(ではありません|ではなく)/g, '').indexOf('クローク') === -1);
   assert.ok(!/スペースマーケット|スペマ/.test(html.slice(start, html.indexOf('id="access"', start))), '公式サイト向け。スペースマーケット表記を入れない');
   /* 通常料金は不変（既存の料金カードのまま）。 */
-  assert.ok(html.indexOf('2,000<small>円〜 / 1時間</small>') !== -1 && html.indexOf('2,500<small>円〜 / 1時間</small>') !== -1);
+  assert.ok(html.indexOf('1,200<small>円〜 / 1時間</small>') !== -1 && html.indexOf('1,500<small>円〜 / 1時間</small>') !== -1);
   /* 対象日はハードコードせず、特定イベント名も料金ロジックに持たない。 */
   assert.ok(!/20\d\d-\d\d-\d\d/.test(section));
   /* 構造化データ（Offer + FAQPage）。JSONとして妥当で、金額・通貨が正しい。 */
@@ -512,11 +511,12 @@ test('公式サイト /studio-x/: プラン名・6時間6,000円・最大4名・
 test('通常のStudio X料金表示（/studio-x/ の料金カード・最低利用・追加料金なし）は変更されていない', function () {
   var html = read('studio-x/index.html');
   var price = html.slice(html.indexOf('id="price"'), html.indexOf('id="osu-base-plan"'));
-  assert.ok(price.indexOf('2,000<small>円〜 / 1時間</small>') !== -1);
-  assert.ok(price.indexOf('2時間 4,000円 / 延長1時間 1,500円') !== -1);
-  assert.ok(price.indexOf('2時間 5,000円 / 延長1時間 2,000円') !== -1);
+  /* #486で改定された現行の通常料金（平日1,200円/時・土日祝1,500円/時）のまま。 */
+  assert.ok(price.indexOf('1,200<small>円〜 / 1時間</small>') !== -1);
+  assert.ok(price.indexOf('2時間 2,400円 / 延長1時間 1,200円') !== -1);
+  assert.ok(price.indexOf('2時間 3,000円 / 延長1時間 1,500円') !== -1);
   assert.ok(price.indexOf('人数追加料金なし（最大4名）') !== -1);
-  assert.ok(price.indexOf('6,000') === -1, '通常料金のエリアに貸切ベースの金額を混ぜない');
+  assert.ok(price.indexOf('貸切ベース') === -1 && price.indexOf('開催日限定') === -1, '通常料金のエリアにイベント限定プランを混ぜない');
 });
 
 // ============================================================================
