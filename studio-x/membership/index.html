@@ -178,9 +178,9 @@
             <p class="member-card-tag">会員限定</p>
             <h3>スタッフによる事前設営・片付け</h3>
             <ul>
-              <li>事前設営 {{ site.data.studio_x_equipment.staffService.services.PRE_SETUP.priceJpy }}円</li>
-              <li>片付け {{ site.data.studio_x_equipment.staffService.services.CLEANUP.priceJpy }}円</li>
-              <li>設営＋片付けセット {{ site.data.studio_x_equipment.staffService.services.BOTH.priceJpy }}円</li>
+              <li>事前設営 {% assign p = site.data.studio_x_equipment.staffService.services.PRE_SETUP.priceJpy %}{{ p | divided_by: 1000 }},{{ p | modulo: 1000 | plus: 1000 | append: "" | slice: 1, 3 }}円</li>
+              <li>片付け {% assign p = site.data.studio_x_equipment.staffService.services.CLEANUP.priceJpy %}{{ p | divided_by: 1000 }},{{ p | modulo: 1000 | plus: 1000 | append: "" | slice: 1, 3 }}円</li>
+              <li>設営＋片付けセット {% assign p = site.data.studio_x_equipment.staffService.services.BOTH.priceJpy %}{{ p | divided_by: 1000 }},{{ p | modulo: 1000 | plus: 1000 | append: "" | slice: 1, 3 }}円</li>
             </ul>
             <p>スタッフの日程を確認してからご案内します。ご利用可能な場合のみお支払いをお願いします。</p>
           </article>
