@@ -43,6 +43,7 @@
       customerTypeRequired: '利用区分を選択してください。',
       memberRequired: '会員区分を選択してください。',
       startTimeSummary: function (date, hours) { return date + '　' + hours + '時間利用'; },
+      startTimeReselect: function (time) { return '※' + time + '開始は、変更後の利用時間では空きがありません。開始時刻を選び直してください。'; },
       searchingStartTimes: '予約できる時間を検索しています…',
       retryCheck: 'もう一度確認する',
       confirmTime: function (startTime, endTime, hours) { return startTime + '〜' + endTime + '（' + hours + '時間）'; },
@@ -64,6 +65,7 @@
       customerTypeRequired: 'Please select a customer type.',
       memberRequired: 'Please select a membership type.',
       startTimeSummary: function (date, hours) { return date + ' · ' + hours + (hours === 1 ? ' hour' : ' hours'); },
+      startTimeReselect: function (time) { return '* ' + time + ' is not available for the new duration. Please choose a start time again.'; },
       searchingStartTimes: 'Searching available start times…',
       retryCheck: 'Check again',
       confirmTime: function (startTime, endTime, hours) { return startTime + '–' + endTime + ' (' + hours + (hours === 1 ? ' hour)' : ' hours)'); },
@@ -140,6 +142,15 @@
     planBanner: document.getElementById('ba-plan-banner'),
     planRelease: document.getElementById('ba-plan-release'),
     shower: document.getElementById('ba-shower'),
+    memberUnlockField: document.getElementById('ba-member-unlock-field'),
+    memberUnlock: document.getElementById('ba-member-unlock'),
+    benefitsLocked: document.getElementById('ba-benefits-locked'),
+    priceExtra: document.getElementById('ba-price-extra'),
+    priceExtraLine: document.getElementById('ba-price-extra-line'),
+    priceExtraNote: document.getElementById('ba-price-extra-note'),
+    confirmShowerRow: document.getElementById('ba-confirm-shower-row'),
+    confirmShowerLabel: document.getElementById('ba-confirm-shower-label'),
+    confirmShower: document.getElementById('ba-confirm-shower'),
     benefitsError: document.getElementById('ba-benefits-error'),
     memberError: document.getElementById('ba-member-error'),
     priceTime: document.getElementById('ba-price-time'),
@@ -279,7 +290,7 @@
     serverGeneration = value;
     if (els.memberField) els.memberField.hidden = eventPlanSelected_() || !memberOptionVisible_();
     if (value === 'V2') memberStatusRadios_().forEach(function (radio) { radio.checked = false; });
-    refreshPriceEstimate_();
+    applyMemberGate_();
   }
 
   /* 会員限定の特典（Issue #478。SNB / SNB mens）。表示制御のみで、可否はサーバーが判定する。
@@ -296,15 +307,33 @@
   }
   /* 利用日・日付変更のたびに特典欄の表示を同期する。ペアパックが出せなくなったら選択も外す（古い選択を送らない）。 */
   function syncBenefitsVisibility_() {
+    /* Issue #546: 会員向けUIが有効でない間は、表示してもdisabledにし、選択済みも外す（UXのみ。資格の最終判定はサーバー）。 */
+    var unlocked = memberFeaturesEnabled_();
     var pairVisible = pairPackVisible_();
-    if (!pairVisible && els.planPair) els.planPair.checked = false;
+    if ((!pairVisible || !unlocked) && els.planPair) els.planPair.checked = false;
+    if (els.planPair) els.planPair.disabled = !unlocked;
     var pairChoice = benefitChoiceOf_(els.planPair);
     if (pairChoice) pairChoice.hidden = !pairVisible;
     var showerVisible = showerVisible_();
-    if (!showerVisible && els.shower) els.shower.checked = false;
+    if ((!showerVisible || !unlocked) && els.shower) els.shower.checked = false;
+    if (els.shower) els.shower.disabled = !unlocked;
     var showerChoice = benefitChoiceOf_(els.shower);
     if (showerChoice) showerChoice.hidden = !showerVisible;
     if (els.benefitsField) els.benefitsField.hidden = !(pairVisible || showerVisible);
+    if (els.benefitsLocked) els.benefitsLocked.hidden = unlocked || !(pairVisible || showerVisible);
+  }
+
+  /*
+   * Issue #546: 会員限定の特典・31〜90日先の先行予約を選べるか（UX上の可否だけ。実会員資格の正本ではない）。
+   * - SNB V1（会員区分ラジオ表示中）: 「会員」を選んだときだけ。
+   * - SNB V2 / SNB mens（ラジオなし）: 「SNB MEMBERの特典・先行予約を利用する」を明示チェックしたときだけ。
+   *   このチェックでisMember=true等は決めず、料金・資格は送らない。最終判定は予約メールと会員台帳によるサーバー側。
+   * - Studio Xは対象外（既存仕様のまま常に有効扱い）。
+   */
+  function memberFeaturesEnabled_() {
+    if (!Logic.brandGatesMemberFeatures(brand)) return true;
+    if (memberOptionVisible_() && memberStatusRadios_().length > 0) return checkedMemberStatus_() === 'member';
+    return !!els.memberUnlock && els.memberUnlock.checked;
   }
   syncBenefitsVisibility_();
   /* 貸切ベースプラン（Issue #488 / #492。Studio Xのみ・常設）。欄は常に表示し、利用者が明示的に選んだときだけ
@@ -314,10 +343,10 @@
   }
   function selectedPlan_() {
     if (eventPlanSelected_()) return Logic.EVENT_BASE_PLAN_CODE;
-    return pairPackVisible_() && els.planPair && els.planPair.checked ? Logic.PAIR_PACK_PLAN_CODE : '';
+    return pairPackVisible_() && memberFeaturesEnabled_() && els.planPair && els.planPair.checked ? Logic.PAIR_PACK_PLAN_CODE : '';
   }
   function showerSelected_() {
-    return showerVisible_() && !!els.shower && els.shower.checked;
+    return showerVisible_() && memberFeaturesEnabled_() && !!els.shower && els.shower.checked;
   }
 
   /* 会員区分は「一般 / 会員」のラジオ（name="memberStatus"）。単一checkboxでは「非会員と回答した」
@@ -507,6 +536,11 @@
    * （表示中の月以外の選択日は検証できないため、その成功描画で選択を解除する）。
    */
   var calendarSelectionStale_ = false;
+  /* Issue #546: 選択中の日付が31〜90日先の会員先行枠か（月間APIのmemberAdvanceの印。日数はフロントで再計算しない）。 */
+  var selectedDateMemberAdvance_ = false;
+  /* Issue #546追記: 利用時間などの条件変更では、選択済みの開始時刻を無条件に捨てない。新条件で空き一覧を取り直し、
+     同じ日付・同じ開始時刻が一覧にあれば再選択状態に戻す（無ければ選び直しを案内）。日付を選び直したら破棄する。 */
+  var preservedStart_ = null; /* { date, time } | null */
 
   /*
    * resumeStartTimesAfterRecheck_: 開始時刻エリアを表示していた状態で条件（利用時間・利用区分・
@@ -579,6 +613,10 @@
     /* 条件（利用時間・利用区分・希望時間帯）が変わると、表示中の開始時刻一覧は旧条件の
        ものになる。古い一覧を確定値のように残さず、進行中のfetchの応答も破棄する（#365/#367）。 */
     if (els.startTimeArea && !els.startTimeArea.hidden) resumeStartTimesAfterRecheck_ = true;
+    /* 連続して条件が変わっても、最初に選んでいた開始時刻を失わない（2回目の呼び出しではstate.startTimeは既にnull）。 */
+    if (state.date && state.startTime && els.date && els.date.value === state.date) {
+      preservedStart_ = { date: state.date, time: state.startTime };
+    }
     resetStartTimeArea_();
     if (els.date && els.date.value) calendarSelectionStale_ = true;
     if (!isCalendarReady_()) {
@@ -723,16 +761,20 @@
     if (isSuccess && selectedDate && selectedDate.indexOf(monthPrefix) === 0) {
       var selectedDayInfo = days[selectedDate];
       var selectedStatus = selectedDayInfo ? selectedDayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
-      if (!Logic.isCalendarDaySelectable(selectedDate, selectedStatus, customerType, todayValue)) {
+      if (!Logic.isCalendarDaySelectable(selectedDate, selectedStatus, customerType, todayValue, !!(selectedDayInfo && selectedDayInfo.memberAdvance), memberFeaturesEnabled_())) {
         els.date.value = '';
         selectedDate = '';
+        selectedDateMemberAdvance_ = false;
         if (els.calendarSelected) els.calendarSelected.textContent = '';
+      } else {
+        selectedDateMemberAdvance_ = !!(selectedDayInfo && selectedDayInfo.memberAdvance);
       }
       calendarSelectionStale_ = false;
     } else if (isSuccess && selectedDate && calendarSelectionStale_) {
       /* 条件変更後に別の月を表示しており、選択日は新条件で検証できないため解除する。 */
       els.date.value = '';
       selectedDate = '';
+      selectedDateMemberAdvance_ = false;
       calendarSelectionStale_ = false;
       if (els.calendarSelected) els.calendarSelected.textContent = '';
     }
@@ -770,10 +812,10 @@
         }
         var dayInfo = days[cell.dateValue];
         var status = dayInfo ? dayInfo.status : Logic.DAY_STATUSES.OUT_OF_RANGE;
-        var selectable = Logic.isCalendarDaySelectable(cell.dateValue, status, customerType, todayValue);
-
-        /* 31〜90日先は会員先行枠（Issue #480。APIが全員に同じ印を返す。資格の最終確認は予約送信時のサーバー側）。 */
+        /* 31〜90日先は会員先行枠（Issue #480。APIが全員に同じ印を返す。資格の最終確認は予約送信時のサーバー側）。
+           Issue #546: 会員向けUIが有効でない間は表示のみで選択不可にする（月間APIは会員別に分けない）。 */
         var memberAdvance = !!(dayInfo && dayInfo.memberAdvance);
+        var selectable = Logic.isCalendarDaySelectable(cell.dateValue, status, customerType, todayValue, memberAdvance, memberFeaturesEnabled_());
         button.className = memberAdvance ? 'ba-cal-day ba-cal-day--member-advance' : 'ba-cal-day';
         button.textContent = cell.day + Logic.dayStatusSymbol(status);
         button.setAttribute('aria-label', Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale, memberAdvance));
@@ -782,6 +824,8 @@
         if (selectable) {
           button.addEventListener('click', function () {
             els.date.value = cell.dateValue;
+            if (preservedStart_ && preservedStart_.date !== cell.dateValue) preservedStart_ = null;
+            selectedDateMemberAdvance_ = memberAdvance;
             setFieldError_(els.date, els.dateError, '');
             hideGlobalError();
             if (els.calendarSelected) {
@@ -928,6 +972,7 @@
     if (optionsPanel && optionsPanel.refreshSummary) optionsPanel.refreshSummary();
     renderPriceEntryInto_(els.priceLine, els.priceNote, entry);
     renderAppliedRate_(entry);
+    renderShowerExtra_();
     renderPriceTimeRange_();
     if (els.confirmPrice) els.confirmPrice.textContent = priceDisplayText_(entry);
   }
@@ -989,6 +1034,69 @@
         priceEstimateCache[key] = networkErrorEntry;
         renderPriceEverywhereIfCurrent_(key, networkErrorEntry);
       });
+  }
+
+  /* Issue #546: 会員向けUIの切替（会員区分・UI解除・料金世代）で、会員限定の選択状態を同期する。
+     無効になったら、ペアパック・シャワーを外し、31〜90日先を選択済みなら利用日・開始時刻・見積りも解除する
+     （古い日付・料金・確認画面の内容を残さない）。有効になった場合は選択可否の再描画だけ行う。 */
+  function syncMemberUnlockField_() {
+    if (!els.memberUnlockField) return;
+    var radiosShown = memberOptionVisible_() && !eventPlanSelected_();
+    els.memberUnlockField.hidden = !Logic.brandGatesMemberFeatures(brand) || radiosShown;
+    if (radiosShown && els.memberUnlock) els.memberUnlock.checked = false;
+  }
+  function clearSelectedDate_() {
+    if (els.date) els.date.value = '';
+    if (els.calendarSelected) els.calendarSelected.textContent = '';
+    selectedDateMemberAdvance_ = false;
+    preservedStart_ = null;
+    calendarSelectionStale_ = false;
+    resumeStartTimesAfterRecheck_ = false;
+    state.date = '';
+    resetStartTimeArea_();
+    syncStep1NextEnabled_();
+  }
+  function applyMemberGate_() {
+    syncMemberUnlockField_();
+    if (!memberFeaturesEnabled_()) {
+      if (els.planPair) els.planPair.checked = false;
+      if (els.shower) els.shower.checked = false;
+      if (selectedDateMemberAdvance_) clearSelectedDate_();
+    }
+    if (calendarMonth && isCalendarReady_()) {
+      var cached = calendarCache[calendarCacheKey_(calendarMonth.year, calendarMonth.month, currentCalendarDurationMinutes_(), currentTimeBand_())];
+      if (cached) renderCalendarGrid_(cached);
+    }
+    refreshPriceEstimate_();
+  }
+
+  /* Issue #546: シャワーは部屋料金に含めず、承認後に別途決済する追加オプション。確定合計へ加算せず別行で表示する。
+     金額はoptionCatalog（サーバーの正本）のshower.priceJpyだけを使い、フロントに価格を持たない。 */
+  var showerPriceJpy_ = null;
+  var showerPriceRequested_ = false;
+  function ensureShowerPrice_() {
+    if (showerPriceRequested_ || !API_BASE_URL || typeof fetch !== 'function') return;
+    showerPriceRequested_ = true;
+    try {
+      fetch(API_BASE_URL + (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') + 'action=optionCatalog&brand=' + encodeURIComponent(brand))
+        .then(function (response) { return response.json(); })
+        .then(function (body) {
+          var price = body && body.success === true && body.catalog && body.catalog.shower ? Number(body.catalog.shower.priceJpy) : NaN;
+          if (Number.isFinite(price)) { showerPriceJpy_ = price; renderShowerExtra_(); }
+        })
+        .catch(function () { showerPriceRequested_ = false; });
+    } catch (e) { showerPriceRequested_ = false; }
+  }
+  function renderShowerExtra_() {
+    var selected = showerSelected_();
+    var info = selected ? Logic.showerExtraInfo(showerPriceJpy_, locale) : null;
+    if (selected && showerPriceJpy_ === null) ensureShowerPrice_();
+    if (els.priceExtra) els.priceExtra.hidden = !info;
+    if (els.priceExtraLine) els.priceExtraLine.textContent = info ? info.text : '';
+    if (els.priceExtraNote) els.priceExtraNote.textContent = info ? info.notes.join(' ') : '';
+    if (els.confirmShowerRow) els.confirmShowerRow.hidden = !info;
+    if (els.confirmShowerLabel && info) els.confirmShowerLabel.textContent = info.label;
+    if (els.confirmShower) els.confirmShower.textContent = info ? info.value + '（' + info.confirmNote + '）' : '';
   }
 
   [els.planPair, els.shower].forEach(function (control) {
@@ -1082,9 +1190,10 @@
   memberStatusRadios_().forEach(function (radio) {
     radio.addEventListener('change', function () {
       setFieldError_(null, els.memberError, '');
-      refreshPriceEstimate_();
+      applyMemberGate_();
     });
   });
+  if (els.memberUnlock) els.memberUnlock.addEventListener('change', applyMemberGate_);
   root.querySelectorAll('input[name="customerType"]').forEach(function (radio) {
     radio.addEventListener('change', handleCalendarPrereqChange_);
   });
@@ -1131,7 +1240,7 @@
    * falseのままなので、この呼び出しは何もしない。
    */
   handleCalendarPrereqChange_();
-  refreshPriceEstimate_();
+  applyMemberGate_();
 
   /*
    * Step1の検証・state反映・開始時刻エリアの表示・空き時間取得を行う共通処理。
@@ -1326,6 +1435,8 @@
 
   function renderStartTimes(times) {
     els.startTimeGrid.innerHTML = '';
+    var preserved = preservedStart_;
+    preservedStart_ = null;
     if (!times.length) {
       els.startTimeEmpty.hidden = false;
       els.startTimeGrid.hidden = true;
@@ -1333,13 +1444,14 @@
     }
     els.startTimeEmpty.hidden = true;
     els.startTimeGrid.hidden = false;
+    var restored = false;
     times.forEach(function (time) {
       var button = document.createElement('button');
       button.type = 'button';
       button.className = 'ba-time-slot';
       button.textContent = time;
       button.setAttribute('aria-pressed', 'false');
-      button.addEventListener('click', function () {
+      function select() {
         state.startTime = time;
         renderPriceTimeRange_();
         els.startTimeGrid.querySelectorAll('.ba-time-slot').forEach(function (el) {
@@ -1347,9 +1459,15 @@
         });
         setStepDisabled_(els.step2Next, false);
         hideGlobalError();
-      });
+      }
+      button.addEventListener('click', select);
       els.startTimeGrid.appendChild(button);
+      /* 条件変更前と同じ日付・同じ開始時刻が新条件でも空いていれば、そのまま選択状態に戻す。 */
+      if (preserved && preserved.date === state.date && preserved.time === time) { select(); restored = true; }
     });
+    if (preserved && preserved.date === state.date && !restored && els.startTimeSummary) {
+      els.startTimeSummary.textContent += ' ' + UI_TEXT.startTimeReselect(preserved.time);
+    }
   }
 
   if (els.step2Next) {

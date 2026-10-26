@@ -221,6 +221,16 @@
   color: var(--ba-text);
 }
 
+/* Issue #546: シャワーなど承認後に別途決済する追加オプション。部屋料金と視覚的に分け、確定合計には含めない。 */
+.ba-price-extra {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--ba-border, currentColor);
+}
+.ba-price-extra[hidden] { display: none; }
+.ba-price-extra-line { margin: 0; font-size: 0.95rem; font-weight: 700; color: var(--ba-text); }
+.ba-price-extra .ba-field-help { margin: 2px 0 0; }
+
 .ba-price-note {
   margin: 0;
   color: var(--ba-muted);

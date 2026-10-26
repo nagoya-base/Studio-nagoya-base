@@ -250,6 +250,19 @@
       <p class="ba-field-error" id="ba-member-error" hidden></p>
     </fieldset>
 
+{% if include.brand == "snb" or include.brand == "mens" %}
+    <!-- Issue #546: UI unlock for SNB MEMBER advance booking (31-90 days ahead) when the Membership radios are not shown
+         (SNB V2 / SNB mens). UX guard only: it is never the source of truth for membership or pricing; the server
+         makes the final decision from the booking email and the member ledger. JS hides this while the radios are shown (SNB V1). -->
+    <fieldset class="ba-fieldset" id="ba-member-unlock-field" hidden>
+      <legend>SNB MEMBER advance booking</legend>
+      <div class="ba-choices">
+        <label class="ba-choice"><input type="checkbox" id="ba-member-unlock" value="1"> <span>I want to use SNB MEMBER advance booking (31-90 days ahead)</span></label>
+      </div>
+      <p class="ba-field-help">Dates 31 to 90 days ahead are open only to SNB MEMBERS. Checking this only unlocks the dates; membership is confirmed from your booking email and does not change your rate by itself.</p>
+    </fieldset>
+{% endif %}
+
     <!-- Price estimate (Issue #342). Shown once date, duration (and member
          self-declaration) are available, via GAS's estimatePrice. The rate table itself
          is never duplicated here; the displayed value always comes from GAS
