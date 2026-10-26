@@ -83,9 +83,25 @@ var BookingMailTemplates = (function () {
     return value.toLocaleString('ja-JP') + '円';
   }
 
+  /* イベント開催日限定プラン（Issue #488）の予約か。BookingPricing.gsは本番の両プロジェクトに配布済みだが、
+     メール文面の単体利用（BookingPricing未読込）でも従来の通常予約の本文を壊さないよう、未定義なら通常予約扱いにする。 */
+  function isEventPlanRecord_(record) {
+    return typeof BookingPricing !== 'undefined' && BookingPricing.isEventPlan(record.planCode);
+  }
+
   function priceLine_(record) {
     var formatted = formatJpyAmount_(record.priceAmount);
-    return formatted ? '利用料金: ' + formatted + '（税込）' : '';
+    var line = formatted ? '利用料金: ' + formatted + '（税込）' : '';
+    /* Issue #488: イベント開催日限定の貸切ベースプランは、プラン名と責任範囲（有人クロークではない）を
+       料金と一緒に必ず示す。通常料金の予約（planCodeなし）の本文は1バイトも変えない。 */
+    if (line && isEventPlanRecord_(record)) {
+      return [
+        'ご利用プラン: ' + BookingPricing.planLabel(record.planCode),
+        line,
+        '※本プランは有人クロークではありません。荷物・貴重品はお部屋の中でご自身で管理してください（スタッフによるお預かり・常駐はありません）。'
+      ].join('\n');
+    }
+    return line;
   }
 
   /*

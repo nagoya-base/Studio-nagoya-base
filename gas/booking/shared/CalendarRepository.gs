@@ -172,6 +172,8 @@ var CalendarRepository = (function () {
     event.setTag('bookingId', params.bookingId);
     event.setTag('status', 'PENDING');
     event.setTag('brand', params.brand);
+    /* Issue #488: 独立プラン（イベント限定の貸切ベース等）を台帳を開かずCalendar上でも識別できるようにする。空は付けない。 */
+    if (params.planCode) event.setTag('planCode', params.planCode);
     return event.getId();
   }
 
