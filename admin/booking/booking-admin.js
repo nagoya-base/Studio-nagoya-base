@@ -55,6 +55,8 @@ var DETAIL_FIELDS = [
    * いずれか。Booking.getEffectivePriceAmountと同じ判定をサーバー側で行った結果）。
    * 金額の修正操作自体は下の「利用料金の修正」欄（renderPriceEditSection_）で行う。
    */
+  /* Issue #488: イベント開催日限定プランの予約のみサーバーが非空で返す（通常予約は下のrenderで行ごと省く）。 */
+  ['planLabel', 'ご利用プラン'],
   ['priceAmount', '自動計算金額（税込）'],
   ['priceTier', '料金区分'],
   ['priceDayType', '曜日区分'],
@@ -438,6 +440,9 @@ function render() {
        自動計算値との内訳はモーダル詳細（DETAIL_FIELDS）でのみ表示する。
        未計算（過去の予約データ等でformatYen_が空文字を返す場合）は行自体を出さない。 */
     var formattedPrice = formatYen_(b.effectivePriceAmount);
+    var planLine = b.planLabel
+      ? '<div class="card-plan">プラン: ' + escapeHtml(b.planLabel) + '</div>'
+      : '';
     var priceLine = formattedPrice
       ? '<div class="card-price">利用料金: ' + escapeHtml(formattedPrice) + (b.priceOverridden ? '（修正済み）' : '') + '</div>'
       : '';
@@ -459,6 +464,7 @@ function render() {
         '<div class="card-name">' + escapeHtml(b.name) + '</div>' +
         '<div class="card-meta">' + escapeHtml(b.people) + ' / ' + escapeHtml(customerTypeLabel(b.customerType)) + '</div>' +
         '<div class="card-sub">' + escapeHtml(b.paymentMethod) + ' ・ ' + escapeHtml(b.purpose) + '</div>' +
+        planLine +
         priceLine +
         priceUpdateWarningLine +
         (b.paymentRecoveryRequired ? '<div class="card-price-warning">⚠ 決済要対応</div>' : '') +
@@ -561,6 +567,8 @@ function showDetailModal(booking) {
   body.innerHTML = DETAIL_FIELDS.map(function (pair) {
     var key = pair[0];
     var label = pair[1];
+    /* Issue #488: プラン名はイベント限定プランの予約だけに出す（通常予約に「（未設定）」の行を増やさない）。 */
+    if (key === 'planLabel' && !booking.planLabel) return '';
     return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
   }).join('');
   renderPaymentLinkSection_(booking);

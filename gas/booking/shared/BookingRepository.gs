@@ -78,7 +78,7 @@ var BookingRepository = (function () {
     if (!planResult.ok) {
       return { success: false, error: planResult.error };
     }
-    var membership = planResult.plan
+    var membership = planResult.plan === BookingPricing.PLAN.MEMBER_PAIR_3H
       ? { isMember: true, status: 'ACTIVE' }
       : resolveMembershipForPricing_(input, priceGeneration);
     var priceResult = BookingPricing.computeBookingPrice({
@@ -87,7 +87,9 @@ var BookingRepository = (function () {
       durationMinutes: input.durationMinutes,
       isMember: membership.isMember,
       generation: priceGeneration,
-      plan: planResult.plan
+      plan: planResult.plan,
+      /* Issue #488: イベント限定プランは管理者が設定した対象日（EventPlanDates）に利用日が含まれる場合のみ販売する。 */
+      eventDates: planResult.eventDates
     });
     if (!priceResult.valid) {
       return { success: false, error: priceResult.error };
@@ -177,7 +179,8 @@ var BookingRepository = (function () {
         durationMinutes: input.durationMinutes,
         timezone: availabilityConfig.timezone,
         bookingId: bookingId,
-        brand: input.brand
+        brand: input.brand,
+        planCode: priceResult.price.plan
       });
 
       var startAt = CalendarRepository.parseDateTime(input.date, input.startTime, availabilityConfig.timezone);
@@ -299,6 +302,7 @@ var BookingRepository = (function () {
       return { ok: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
     }
     if (!plan) return { ok: true, plan: '' };
+    if (BookingPricing.isEventPlan(plan)) return resolveEventPlanForNewBooking_(input, plan);
     if ((input.brand !== 'snb' && input.brand !== 'mens') || generation !== BookingPricing.GENERATION.V2) {
       return { ok: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
     }
@@ -316,6 +320,29 @@ var BookingRepository = (function () {
       return { ok: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE } };
     }
     return { ok: true, plan: plan };
+  }
+
+  /*
+   * 大須コスプレイベント開催日限定の貸切ベースプラン（Issue #488）の申込検証。会員資格は不要。
+   * 確認順: ブランド（Studio Xのみ） → 人数（5名以上はサーバー側で拒否） → 利用時間（6時間固定） → 対象日。
+   * 対象日はUIの選択可否に関わらず、直接APIで指定されてもここ（と料金計算）で必ず拒否する。
+   * 対象日の台帳（EventPlanDates）を読めない場合は対象日なしとして拒否する（fail-closed）。
+   */
+  function resolveEventPlanForNewBooking_(input, plan) {
+    if (input.brand !== 'studio_x') {
+      return { ok: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
+    }
+    if (!BookingPricing.isEventBasePlanPeople(input.people)) {
+      return { ok: false, error: { code: 'EVENT_PLAN_PEOPLE_EXCEEDED', message: BookingPricing.EVENT_BASE_PLAN_LABEL + 'のご利用は1〜4名までです。' } };
+    }
+    if (Number(input.durationMinutes) !== BookingPricing.EVENT_BASE_PLAN_HOURS * 60) {
+      return { ok: false, error: { code: 'PLAN_DURATION_INVALID', message: BookingPricing.EVENT_BASE_PLAN_LABEL + 'は6時間固定です。' } };
+    }
+    var eventDates = EventPlanRepository.listEligibleDates(plan);
+    if (eventDates.indexOf(input.date) === -1) {
+      return { ok: false, error: { code: 'EVENT_PLAN_DATE_NOT_ELIGIBLE', message: BookingPricing.EVENT_BASE_PLAN_LABEL + 'は対象のイベント開催日のみご利用いただけます。' } };
+    }
+    return { ok: true, plan: plan, eventDates: eventDates };
   }
 
   /*

@@ -79,6 +79,20 @@
       <p class="ba-field-error" id="ba-duration-error" hidden></p>
     </div>
 
+{% if include.brand == "studio_x" %}
+    <!-- 大須コスプレイベント開催日限定の貸切ベースプラン（Issue #488）。対象日が1日以上あるときだけJS側が表示する
+         （GASのeventPlan）。選ぶと利用時間が6時間に固定される。通常の時間貸し料金とは別の独立プランで、
+         対象日・人数・時間の可否は予約作成時にサーバー側でも必ず判定する。 -->
+    <fieldset class="ba-fieldset" id="ba-event-plan-field" hidden>
+      <legend>大須コスプレイベント開催日限定プラン（任意）</legend>
+      <div class="ba-choices">
+        <label class="ba-choice"><input type="checkbox" id="ba-plan-event" value="osu_cosplay_base_6h"> <span>貸切ベースプラン（6時間 6,000円／1室・最大4名）</span></label>
+      </div>
+      <p class="ba-field-help">着替え・荷物置き・休憩のためのグループ専用ベースです。<strong>有人クロークではありません。</strong>荷物・貴重品はお部屋の中でご自身で管理してください（スタッフの常駐・お預かりはありません）。選べる日: <span id="ba-event-plan-dates"></span>。選ぶと利用時間は6時間に固定され、会員区分の入力は不要です。<a href="{{ '/studio-x/#osu-base-plan' | relative_url }}" target="_blank" rel="noopener">プランの詳細を見る</a></p>
+      <p class="ba-field-error" id="ba-event-plan-error" hidden></p>
+    </fieldset>
+{% endif %}
+
     <!-- 利用区分（Issue #270）: 「会員かどうか」ではなく、SNB／SNB mens／Studio Xという
          同一施設の利用経験の有無で支払方法を分ける。Issue #407以降、初回利用は当日予約も可能だが
          支払方法はオンラインクレジットカード決済のみ（最終的な可否の正はcreateBookingの
@@ -377,6 +391,9 @@
         <tr><th>利用区分</th><td id="ba-confirm-customer-type"></td></tr>
         <tr><th>利用日</th><td id="ba-confirm-date"></td></tr>
         <tr><th>利用時間</th><td id="ba-confirm-time"></td></tr>
+{% if include.brand == "studio_x" %}
+        <tr id="ba-confirm-plan-row" hidden><th>ご利用プラン</th><td id="ba-confirm-plan"></td></tr>
+{% endif %}
         <tr><th>利用料金</th><td id="ba-confirm-price"></td></tr>
         <tr><th>お名前</th><td id="ba-confirm-name"></td></tr>
         <tr><th>メールアドレス</th><td id="ba-confirm-email"></td></tr>
