@@ -1414,3 +1414,34 @@ test('会員区分（snb/studio_x）が未回答の間は料金を表示せず�
   ctx.elements['ba-step-start-time-next']._listeners.click();
   assert.strictEqual(currentProgressStep(ctx), 'details');
 });
+
+/* ── Issue #494: 利用時間「その他」（12時間超）は数値入力で従来どおり上限なしに指定できる ── */
+
+test('Issue #494: 利用時間で「その他」を選ぶと数値入力欄の値（15時間）で月間空きを再取得する', async function () {
+  var ctx = setup({ initialDurationHours: '3', initialCustomerType: 'first_time', initialTimeBand: 'all' });
+  await flushPromises();
+  assert.strictEqual(ctx.elements["ba-duration-other"].hidden, true, "初期は非表示");
+
+  var before = ctx.fetchCalls.length;
+  ctx.elements['ba-duration'].value = 'other';
+  ctx.elements['ba-duration']._listeners.change();
+  assert.strictEqual(ctx.elements['ba-duration-other'].hidden, false, '「その他」で数値入力が表示される');
+
+  ctx.elements['ba-duration-other'].value = '15';
+  ctx.elements['ba-duration-other']._listeners.input();
+  await flushPromises();
+  var urls = ctx.fetchCalls.slice(before).map(function (c) { return c.url; });
+  assert.ok(urls.some(function (u) { return u.indexOf('durationMinutes=900') !== -1; }), '15時間=900分で取得する');
+});
+
+test('Issue #494: 「その他」から通常の時間へ戻すと数値入力は隠れ、選択値が使われる', async function () {
+  var ctx = setup({ initialDurationHours: '3', initialCustomerType: 'first_time', initialTimeBand: 'all' });
+  await flushPromises();
+  ctx.elements['ba-duration'].value = 'other';
+  ctx.elements['ba-duration']._listeners.change();
+  ctx.elements['ba-duration'].value = '4';
+  ctx.elements['ba-duration']._listeners.change();
+  assert.strictEqual(ctx.elements['ba-duration-other'].hidden, true);
+  await flushPromises();
+  assert.ok(ctx.fetchCalls[ctx.fetchCalls.length - 1].url.indexOf('durationMinutes=240') !== -1);
+});

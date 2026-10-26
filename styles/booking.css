@@ -666,3 +666,7 @@
   .booking-app .ba-lighting-options { grid-template-columns: minmax(0, 1fr); }
   .booking-app .ba-lighting-apply { width: 100%; }
 }
+
+/* 利用時間「その他」選択時に出す数値入力（Issue #494） */
+#ba-duration-other { margin-top: 8px; }
+#ba-duration-other[hidden] { display: none; }

@@ -128,6 +128,7 @@
     date: document.getElementById('ba-date'),
     dateError: document.getElementById('ba-date-error'),
     duration: document.getElementById('ba-duration'),
+    durationOther: document.getElementById('ba-duration-other'),
     durationError: document.getElementById('ba-duration-error'),
     customerTypeError: document.getElementById('ba-customer-type-error'),
     memberField: document.getElementById('ba-member-field'),
@@ -480,8 +481,19 @@
     renderCalendarGrid_({ status: 'loading' });
   }
 
+  /* 利用時間（時間）の入力値。プルダウンが「その他」のときは数値入力欄の値を使う（Issue #494） */
+  function durationHoursValue_() {
+    if (!els.duration) return '';
+    if (els.duration.value === 'other') return els.durationOther ? els.durationOther.value : '';
+    return els.duration.value;
+  }
+  function syncDurationOther_() {
+    if (!els.durationOther || !els.duration) return;
+    els.durationOther.hidden = els.duration.value !== 'other';
+  }
+
   function currentCalendarDurationMinutes_() {
-    return Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
+    return Logic.durationHoursToMinutes(durationHoursValue_());
   }
 
   function currentTimeBand_() {
@@ -906,11 +918,14 @@
       if (selected) {
         els.duration.value = String(Logic.EVENT_BASE_PLAN_HOURS);
         els.duration.disabled = true;
+        if (els.durationOther) { els.durationOther.value = ''; els.durationOther.disabled = true; }
       } else {
         /* 解除時は通常の時間選択へ戻し、固定中の6時間のままにせず初期値（3時間）へ戻す（Issue #494） */
         if (els.duration.disabled) els.duration.value = String(Logic.DEFAULT_DURATION_HOURS || 3);
         els.duration.disabled = false;
+        if (els.durationOther) els.durationOther.disabled = false;
       }
+      syncDurationOther_();
     }
     if (els.memberField) els.memberField.hidden = selected || !Logic.brandShowsMemberOption(brand);
     handleCalendarPrereqChange_();
@@ -919,8 +934,12 @@
   if (els.planEvent) els.planEvent.addEventListener('change', applyEventPlanState_);
 
   if (els.duration) {
-    els.duration.addEventListener('input', handleCalendarPrereqChange_);
-    els.duration.addEventListener('change', handleCalendarPrereqChange_);
+    els.duration.addEventListener('input', function () { syncDurationOther_(); handleCalendarPrereqChange_(); });
+    els.duration.addEventListener('change', function () { syncDurationOther_(); handleCalendarPrereqChange_(); });
+  }
+  if (els.durationOther) {
+    els.durationOther.addEventListener('input', handleCalendarPrereqChange_);
+    els.durationOther.addEventListener('change', handleCalendarPrereqChange_);
   }
   memberStatusRadios_().forEach(function (radio) {
     radio.addEventListener('change', function () {
@@ -986,7 +1005,7 @@
     if (isCalendarReady_() && calendarSelectionStale_) return;
     resumeStartTimesAfterRecheck_ = false;
     var dateValue = els.date ? els.date.value : '';
-    var durationMinutes = Logic.durationHoursToMinutes(els.duration ? els.duration.value : '');
+    var durationMinutes = Logic.durationHoursToMinutes(durationHoursValue_());
     /* Issue #301/#410: 最低利用時間（1時間）未満はStep 1で止める（UX guard）。最終判定の正はGAS側
        MIN_BOOKING_MINUTESであり、ここではUI側の入力を早期に拒否するだけ。 */
     var durationValid = Logic.isDurationAtLeastUiMinimum(durationMinutes);

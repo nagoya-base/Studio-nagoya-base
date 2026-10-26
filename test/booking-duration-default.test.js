@@ -18,6 +18,8 @@ function read(rel) { return fs.readFileSync(path.join(__dirname, '..', rel), 'ut
     var m = read(c[1]).match(/<select id="ba-duration"[^>]*>([\s\S]*?)<\/select>/);
     assert.ok(m, '#ba-durationはselect');
     var options = m[1].match(/<option value="\d+"[^>]*>/g);
+    assert.ok(/<option value="other">/.test(m[1]), '12時間超は「その他」で数値入力できる');
+    assert.ok(/<input type="number" id="ba-duration-other"[^>]* hidden>/.test(read(c[1])), '数値入力は初期非表示');
     assert.deepStrictEqual(options.map(function (o) { return o.match(/value="(\d+)"/)[1]; }),
       ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']);
     var selected = options.filter(function (o) { return o.indexOf('selected') !== -1; });
