@@ -89,7 +89,7 @@ var BookingPricing = (function () {
   /*
    * Issue #488 / #492: 貸切ベースプラン（Studio Xのみ・常設）。通常の時間貸し料金表
    * （RATE_TABLES_）には一切手を入れず、独立プランとしてここに固定額を持つ。
-   * - Issue #510: 可変時間制。8:00〜21:00の範囲で最低6時間・1時間1,000円/1室・最大4名（6時間=6,000円、7時間=7,000円…）。
+   * - Issue #510: 可変時間制。8:00〜21:00の範囲で最低6時間・1時間1,000円/1室（6時間=6,000円、7時間=7,000円…）。
    *   利用時間は予約時に確定し、利用開始後の途中延長は無い。終了が21:00を超える組み合わせ・6時間未満・1時間単位でない時間は拒否する。
    * - 会員区分・料金世代・曜日区分の影響を受けない（isMemberも無視。会員特典ではない）。
    * - Issue #492で対象イベント日の制限（EventPlanDates）を廃止した。利用者が明示的にプランを選んだときだけ
@@ -102,7 +102,7 @@ var BookingPricing = (function () {
     hourlyRate: 1000,
     openMinutes: 8 * 60,
     closeMinutes: 21 * 60,
-    maxPeople: 4,
+    maxPeople: 10, // Issue #513: 10名まで同一料金（人数課金なし）
     label: 'Studio X｜6時間貸切ベースプラン'
   };
 
@@ -245,7 +245,7 @@ var BookingPricing = (function () {
     return null;
   }
 
-  /* 利用人数（'1名'〜）が貸切ベースプランの人数条件（1〜4名）か。5名以上・要相談・数値以外はfalse。 */
+  /* 利用人数（'1名'〜）が貸切ベースプランの人数条件（1〜10名）か。11名以上・要相談・数値以外はfalse。 */
   function isEventBasePlanPeople(people) {
     var m = /^\s*([1-9]\d*)\s*名\s*$/.exec(String(people === undefined || people === null ? '' : people));
     return !!m && Number(m[1]) >= 1 && Number(m[1]) <= EVENT_BASE_PLAN_.maxPeople;

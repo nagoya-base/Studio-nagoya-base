@@ -204,18 +204,20 @@ test('createBooking: 貸切ベースプランを選ぶと6時間6,000円で保�
   assert.strictEqual(event.getTag('planCode'), PLAN);
 });
 
-test('createBooking: 最大4名まで同一料金（1〜4名すべて6,000円）。5名以上は拒否', function () {
-  ['1名', '2名', '3名', '4名'].forEach(function (people, i) {
+test('createBooking: 10名まで同一料金（1〜10名すべて6,000円）。11名以上・要相談は拒否（Issue #513）', function () {
+  ['1名', '2名', '3名', '4名', '5名', '9名', '10名'].forEach(function (people, i) {
     var ctx = setup();
     var r = book(ctx, { people: people, email: 'p' + i + '@example.com' });
     assert.strictEqual(r.success, true, people + ' ' + JSON.stringify(r));
     assert.strictEqual(r.price.amount, 6000);
   });
-  var ctx2 = setup();
-  var over = book(ctx2, { people: '5名以上・要相談' });
-  assert.strictEqual(over.success, false);
-  assert.strictEqual(over.error.code, 'EVENT_PLAN_PEOPLE_EXCEEDED');
-  assert.strictEqual(calendarEventCount(ctx2), 0, '拒否時はCalendarへ何も作らない');
+  ['11名', '12名', '5名以上・要相談', '0名', '10人'].forEach(function (people) {
+    var ctx2 = setup();
+    var over = book(ctx2, { people: people });
+    assert.strictEqual(over.success, false, people);
+    assert.strictEqual(over.error.code, 'EVENT_PLAN_PEOPLE_EXCEEDED', people);
+    assert.strictEqual(calendarEventCount(ctx2), 0, '拒否時はCalendarへ何も作らない');
+  });
 });
 
 test('createBooking: 対象日の登録なしで、どの日でも貸切ベースプランを選べる（EventPlanDatesに依存しない）', function () {
@@ -541,11 +543,14 @@ test('予約UIのロジック: プランをpayloadへ載せ、人数の早期ガ
   assert.strictEqual('plan' in Logic.buildCreateBookingPayload({ brand: 'studio_x', date: EVENT_DAY, startTime: '10:00', durationMinutes: 120 }), false, '未選択ならキー自体を付けない');
   assert.strictEqual(Logic.isEventPlanPeopleValue('4名'), true);
   assert.strictEqual(Logic.isEventPlanPeopleValue('5名以上・要相談'), false);
+  for (var n = 1; n <= 10; n++) assert.strictEqual(Logic.isEventPlanPeopleValue(n + '名'), true, n + '名');
+  ['11名', '0名', '100名', '10人'].forEach(function (v) { assert.strictEqual(Logic.isEventPlanPeopleValue(v), false, v); });
+  assert.strictEqual(Logic.EVENT_BASE_PLAN_MAX_PEOPLE, 10);
   assert.strictEqual(Logic.EVENT_BASE_PLAN_LABEL, 'Studio X｜6時間貸切ベースプラン（最低6時間・1時間1,000円）');
   assert.strictEqual(Logic.isEventPlanDate, undefined, '対象日判定は廃止');
   assert.strictEqual(Logic.formatEventPlanDate, undefined);
   assert.strictEqual(Logic.messageForErrorCode('EVENT_PLAN_DATE_NOT_ELIGIBLE', 'ja'), Logic.messageForErrorCode('UNKNOWN_CODE_FOR_TEST', 'ja'), '対象日エラーの専用文言は持たない');
-  assert.ok(Logic.messageForErrorCode('EVENT_PLAN_PEOPLE_EXCEEDED', 'ja').indexOf('1〜4名') !== -1);
+  assert.ok(Logic.messageForErrorCode('EVENT_PLAN_PEOPLE_EXCEEDED', 'ja').indexOf('1〜10名') !== -1);
 });
 
 test('予約フォーム: Studio Xのみに貸切ベースプラン欄（常時表示・チェックで6時間以上の可変時間制）があり、SNB / mensには出ない', function () {
@@ -554,7 +559,7 @@ test('予約フォーム: Studio Xのみに貸切ベースプラン欄（常時�
   assert.ok(m, 'studio_x限定の{% if %}内にある');
   assert.ok(m[0].indexOf('id="ba-plan-event"') !== -1 && m[0].indexOf('value="osu_cosplay_base_6h"') !== -1);
   assert.ok(m[0].indexOf('有人クロークではありません') !== -1);
-  assert.ok(m[0].indexOf('1時間 1,000円') !== -1 && m[0].indexOf('最低6時間') !== -1 && m[0].indexOf('最大4名') !== -1);
+  assert.ok(m[0].indexOf('1時間 1,000円') !== -1 && m[0].indexOf('最低6時間') !== -1 && m[0].indexOf('10名程度まで') !== -1);
   assert.ok(m[0].indexOf('利用開始後の途中延長はできません') !== -1, '予約UIに途中延長不可');
   assert.ok(!/6時間 6,000円|6時間に固定/.test(html), '固定額・固定時間の表現を残さない');
   assert.ok(m[0].indexOf('再入室') !== -1 && m[0].indexOf('荷物・貴重品') !== -1);
@@ -570,13 +575,13 @@ test('予約フォーム: Studio Xのみに貸切ベースプラン欄（常時�
   });
 });
 
-test('公式サイト /studio-x/: プラン名・1時間1,000円・最低6時間・8:00〜21:00・最大4名・再入室・途中延長不可・責任範囲の表記があり、誤認表現・禁止表現がない', function () {
+test('公式サイト /studio-x/: プラン名・1時間1,000円・最低6時間・8:00〜21:00・10名程度まで・再入室・途中延長不可・責任範囲の表記があり、誤認表現・禁止表現がない', function () {
   var html = read('studio-x/index.html');
   var start = html.indexOf('id="osu-base-plan"');
   assert.ok(start !== -1);
   var section = html.slice(start, html.indexOf('id="access"', start));
   var text = section.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-  ['6時間貸切', 'ベースプラン', '1,000', '最低6時間', '8:00〜21:00', '最大4名', '利用開始後の途中延長はできません', '着替え', '荷物置き', '休憩',
+  ['6時間貸切', 'ベースプラン', '1,000', '最低6時間', '8:00〜21:00', '10名程度まで', '利用開始後の途中延長はできません', '着替え', '荷物置き', '休憩',
     '再入室', '大型ミラー', '有人クロークではありません', '荷物は貸切中のお部屋内で各自管理', '貴重品の管理は利用者ご自身',
     'スタッフは常駐しません', 'シャワー利用は含まれません', '共用部や建物内に荷物を放置しない', '他の利用者とお部屋を共用することはありません',
     '原状復帰', '利用規約の責任範囲'].forEach(function (needle) {
@@ -636,4 +641,30 @@ test('SNB / mens: 料金表・プラン処理は変わらない（ペアパッ�
   var pair = P.computeBookingPrice({ brand: 'snb', date: EVENT_DAY, durationMinutes: 180, generation: 'V2', plan: 'member_pair_3h' });
   assert.strictEqual(pair.valid, true);
   assert.ok(pair.price.amount === 5000 || pair.price.amount === 6000);
+});
+
+test('Issue #513: 人数選択は5〜10名がプラン限定（data-event-plan-only）で、解除時に通常の上限へ戻す', function () {
+  var html = read('_includes/booking_app_ja.html');
+  var sel = /<select id="ba-people"[\s\S]*?<\/select>/.exec(html)[0];
+  var planOnly = sel.match(/data-event-plan-only="1"/g) || [];
+  assert.strictEqual(planOnly.length, 6, '5〜10名の6択');
+  ['5名', '6名', '7名', '8名', '9名', '10名'].forEach(function (v) {
+    assert.ok(sel.indexOf('value="' + v + '" data-event-plan-only="1" disabled hidden') !== -1, v + 'は初期無効');
+  });
+  assert.ok(!/value="11名/.test(sel), '11名以上の選択肢は無い');
+  assert.ok(/\{% if include\.brand == "studio_x" %\}[\s\S]*?data-event-plan-only[\s\S]*?\{% endif %\}/.test(sel), 'Studio Xのみ');
+  assert.ok(html.indexOf('id="ba-people-plan-help"') !== -1);
+  var app = read('scripts/booking-app.js');
+  assert.ok(app.indexOf('applyEventPlanPeopleOptions_(selected);') !== -1, 'プラン切替で人数選択肢を更新');
+  assert.ok(/\[5-9\]\|10/.test(app) && /els\.people\.value = ''/.test(app), '解除時は5〜10名を残さない');
+});
+
+test('Issue #513: 通常予約・SNB / mensの人数仕様は変更しない（ペアパックは1〜2名のまま）', function () {
+  var sandbox = { window: {} };
+  new Function('window', read('scripts/booking-logic.js'))(sandbox.window);
+  var Logic = sandbox.window.BookingLogic;
+  assert.strictEqual(Logic.isPairPackPeopleValue('2名'), true);
+  assert.strictEqual(Logic.isPairPackPeopleValue('3名'), false);
+  var snb = read('_includes/booking_app_ja.html');
+  assert.strictEqual((snb.match(/value="5名" data-event-plan-only/g) || []).length, 1, 'テンプレート内の5〜10名はstudio_x分岐の1箇所だけ');
 });
