@@ -156,11 +156,22 @@ var MembershipRules = (function () {
   }
 
   /*
+   * 入会時刻から求めた、次回請求（現在の請求期間の終了）の期待値。入会直後の処理なら入会時のアンカー
+   * （プレスタートは12/1 00:00 UTC）。復旧が後日でアンカー経過後なら、その時点の次の月初 00:00 UTC。
+   */
+  function expectedRenewalEndSeconds(joinEpochSeconds, nowSeconds) {
+    var anchor = renewalAnchorSecondsForJoin(joinEpochSeconds);
+    if (anchor > nowSeconds) return anchor;
+    var now = new Date(nowSeconds * 1000);
+    return Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1) / 1000);
+  }
+
+  /*
    * 既存subscriptionをSNB MEMBERの自動更新として採用してよいかの検証（Issue #528）。
    * 採用すると呼び出し元は作成をスキップして入会完了にするため、12/1から毎月500円で更新できる
    * 状態であることを確認する。戻り値は不一致項目名の配列（空なら採用可。IDや個人情報は含めない）。
    */
-  function existingSubscriptionProblems(subscription, productId, nowSeconds) {
+  function existingSubscriptionProblems(subscription, productId, nowSeconds, joinEpochSeconds) {
     var problems = [];
     var sub = subscription && typeof subscription === 'object' ? subscription : {};
     if (['active', 'trialing'].indexOf(sub.status) === -1) problems.push('status');
@@ -181,8 +192,13 @@ var MembershipRules = (function () {
       if (recurring.interval !== 'month' || Number(recurring.interval_count === undefined ? 1 : recurring.interval_count) !== 1) problems.push('interval');
       if (!productId || itemProduct !== productId) problems.push('product');
     }
+    if (sub.collection_method !== 'charge_automatically') problems.push('collection_method');
     var end = readSubscriptionPeriod(sub).end;
-    if (!end || end <= nowSeconds) problems.push('next_billing');
+    if (!end || end <= nowSeconds) {
+      problems.push('next_billing');
+    } else if (end !== expectedRenewalEndSeconds(joinEpochSeconds, nowSeconds)) {
+      problems.push('billing_anchor');
+    }
     return problems;
   }
 

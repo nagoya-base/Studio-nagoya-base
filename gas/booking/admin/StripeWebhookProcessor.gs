@@ -797,7 +797,7 @@ var StripeWebhookProcessor = (function () {
     var productId = configuredProductId || MEMBERSHIP_PRODUCT_ID_;
     if (subscription) {
       /* 既存を採用する前に、12/1から毎月500円で自動更新できる内容か検証する。不一致は新規作成せず要復旧。 */
-      var problems = MembershipRules.existingSubscriptionProblems(subscription.raw, productId, Math.floor(new Date().getTime() / 1000));
+      var problems = MembershipRules.existingSubscriptionProblems(subscription.raw, productId, Math.floor(new Date().getTime() / 1000), parsed.created);
       if (problems.length) {
         return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_EXISTING_SUBSCRIPTION_INVALID',
           'Stripe上の既存subscriptionが自動更新の条件（' + problems.join(',') + '）を満たしません。新規作成は行っていません。入会月の資格は記録済みです。Stripeで確認し、修正または解約のうえ復旧してください。eventId=' + eventId, now);

@@ -858,7 +858,7 @@ test('#528 Product未作成なら固定IDで作成してからsubscriptionを作
 function existingSubscription(overrides) {
   return Object.assign({
     id: SUBSCRIPTION_ID, status: 'active', metadata: { orderType: 'membership', memberId: MEMBER_ID },
-    cancel_at_period_end: false, cancel_at: null, pause_collection: null,
+    cancel_at_period_end: false, cancel_at: null, pause_collection: null, collection_method: 'charge_automatically',
     items: { data: [{ quantity: 1,
       price: { unit_amount: 500, currency: 'jpy', product: 'snb_member_monthly', recurring: { interval: 'month', interval_count: 1 } },
       current_period_start: sec(JOIN_AT), current_period_end: sec(JAN_RENEWAL_AT) }] }
@@ -878,6 +878,7 @@ test('#528 既存subscriptionが自動更新の条件を満たさなければ新
   var price = function (o) { return { items: { data: [{ quantity: 1,
     price: Object.assign({ unit_amount: 500, currency: 'jpy', product: 'snb_member_monthly', recurring: { interval: 'month', interval_count: 1 } }, o),
     current_period_end: sec(JAN_RENEWAL_AT) }] } }; };
+  var periodEnd = function (iso) { var o = existingSubscription(); o.items.data[0].current_period_end = sec(iso); return { items: o.items }; };
   var cases = {
     incomplete: { status: 'incomplete' },
     paused: { pause_collection: { behavior: 'void' } },
@@ -885,6 +886,8 @@ test('#528 既存subscriptionが自動更新の条件を満たさなければ新
     otherOrderType: { metadata: { orderType: 'other', memberId: MEMBER_ID } },
     annual1000: price({ unit_amount: 1000, recurring: { interval: 'year', interval_count: 1 } }),
     otherProduct: price({ product: 'prod_other' }),
+    sendInvoice: { collection_method: 'send_invoice' },
+    wrongAnchorNov15: periodEnd('2026-11-15T00:00:00Z'),
     noNextBilling: { items: { data: [{ quantity: 1, price: { unit_amount: 500, currency: 'jpy', product: 'snb_member_monthly', recurring: { interval: 'month' } } }] } }
   };
   Object.keys(cases).forEach(function (name) {
@@ -960,4 +963,24 @@ test('#528 再送: 同じ入会イベントを再処理してもsubscription・�
   assert.strictEqual(subscriptionPosts(ctx).length, 1);
   assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
   assert.strictEqual(ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/checkout/sessions') !== -1 && c.options.method === 'post'; }).length, 0);
+});
+
+test('#528 既存subscriptionの請求日: プレスタート入会は12/1のみ可（11/15は不可）。アンカー経過後の復旧はその時点の次の月初', function () {
+  var R = setup().sandbox.MembershipRules;
+  var sub = function (endIso, overrides) {
+    var o = existingSubscription(Object.assign({ metadata: { orderType: 'membership', memberId: MEMBER_ID } }, overrides || {}));
+    o.items.data[0].current_period_end = sec(endIso);
+    return JSON.parse(JSON.stringify(o));
+  };
+  var problems = function (obj, nowIso, joinIso) {
+    return Array.from(R.existingSubscriptionProblems(obj, 'snb_member_monthly', sec(nowIso), sec(joinIso)));
+  };
+  var OCT = '2026-10-26T10:00:00+09:00';
+  assert.deepStrictEqual(problems(sub('2026-12-01T00:00:00Z'), OCT, OCT), []);
+  assert.deepStrictEqual(problems(sub('2026-11-15T00:00:00Z'), OCT, OCT), ['billing_anchor']);
+  assert.deepStrictEqual(problems(sub('2026-11-01T00:00:00Z'), OCT, OCT), ['billing_anchor'], '11/1追加課金は不可');
+  assert.deepStrictEqual(problems(sub('2026-12-01T00:00:00Z', { collection_method: 'send_invoice' }), OCT, OCT), ['collection_method']);
+  /* 12/1以降に復旧する場合は、その時点の次の月初（1/1）が正しい。 */
+  assert.deepStrictEqual(problems(sub('2027-01-01T00:00:00Z'), '2026-12-10T10:00:00+09:00', OCT), []);
+  assert.deepStrictEqual(problems(sub('2027-01-15T00:00:00Z'), '2026-12-10T10:00:00+09:00', OCT), ['billing_anchor']);
 });

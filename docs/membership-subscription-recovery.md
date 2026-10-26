@@ -24,7 +24,7 @@ Subscription作成が `invalid_request_error`（`STRIPE_ERROR`）となり `MEMB
 - Subscription作成の前に、同じCustomerの `metadata.memberId` 一致・非キャンセルのSubscriptionをStripeで確認し、
   あれば作成せず台帳へ紐付ける（`findMembershipSubscription`）。**採用前に自動更新条件を検証**し
   （status が active/trialing、`orderType=membership`、cancel予約・一時停止なし、数量1・500円・JPY・毎月1回・
-  上記Product、次回請求の期間終了が未来）、不一致なら新規作成も採用もせず `MEMBERSHIP_EXISTING_SUBSCRIPTION_INVALID`
+  上記Product、`collection_method=charge_automatically`、次回請求の期間終了が入会時刻から求めた期待アンカー（プレスタートは2026-12-01 00:00 UTC。復旧がアンカー経過後ならその時点の次の月初 00:00 UTC）と一致）、不一致なら新規作成も採用もせず `MEMBERSHIP_EXISTING_SUBSCRIPTION_INVALID`
   （要復旧・Recovery記録）で停止する。この場合はStripeで該当Subscriptionを修正または解約し、手順3で再処理する。台帳保存失敗後の再処理、手動作成済み、
   ペイロード変更後の冪等キー不一致でも二重作成しない。一覧を取得できない場合は作成せず再試行する。
 - 冪等キーを `snb-membership-sub-v2-<Checkout Session ID>` に変更（旧キーは別パラメータで衝突し得るため）。
@@ -52,7 +52,7 @@ Subscription作成が `invalid_request_error`（`STRIPE_ERROR`）となり `MEMB
    - 再処理は既存Subscriptionがあれば紐付けのみ、無ければ作成する。会員・MemberMonthsは冪等で、
      Checkoutの再作成・再課金は行わない。
    - `MEMBERSHIP_EXISTING_SUBSCRIPTION_INVALID` になった行は、メッセージの不一致項目（status / product / amount /
-     interval / cancel_scheduled / paused / next_billing 等）をStripeで直してから再処理する。
+     interval / cancel_scheduled / paused / collection_method / next_billing / billing_anchor 等）をStripeで直してから再処理する。
    - 手動作成したSubscriptionを紐付けたい場合は `metadata[memberId]` に台帳の memberId を設定しておく。
 4. **アンカー経過済み**: 入会月を過ぎ、アンカー（プレスタートは 2026-12-01 00:00 UTC）から60秒以内または
    経過後に再処理すると `MEMBERSHIP_JOIN_MONTH_ELAPSED` になりSubscriptionは作られない。この場合は
