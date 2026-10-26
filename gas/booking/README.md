@@ -7504,8 +7504,19 @@ SNB MEMBER（月額500円）の実会員資格を、Stripeの決済事実から�
 | `invoice.paid` | 月次更新（上記条件）なら利用月の支払い事実を追記。入会時の$0 invoice等は無視 |
 | `invoice.payment_failed` | 月次更新の失敗なら`Members.status=past_due`（資格は増減しない） |
 | `customer.subscription.created/updated/deleted` | `status`・期間・`canceledAt`・`cancelAtPeriodEnd`を反映（順序判定つき） |
+| `charge.refunded`（Issue #517） | 入会Checkoutの500円が**全額返金**されたら、その決済を根拠とする月の資格を無効にする（下記「入会決済の返金」） |
 
 冪等性: ①StripeEventsのイベントID台帳、②`(memberId, month)`の支払い事実、③subscription作成のIdempotency-Key（`snb-membership-sub-<入会Checkout Session ID>`）と「会員行にsubscription IDがあれば作らない」確認。書き込みはすべて処理権の世代確認つきロック内。署名検証・受信はBooking Webhook/中継基盤の既存方式のまま変更なし。ログにメール・Stripe ID・秘密鍵は出さない。
+
+### 入会決済の返金（Issue #517）
+
+- **正本**: `charge.refunded`を契機に、イベント本文ではなく`GET /charges/{id}`で返金額（`amount_refunded`）を再取得して判定する。`GET /checkout/sessions?payment_intent=`で入会Checkout（`metadata.orderType=membership`・500円）の決済か確認し、部屋予約・オプション・月次更新の返金は対象外（`NOT_MEMBERSHIP_JOIN_PAYMENT`で無視。既存の予約返金ロジックは変更なし）。
+- **全額返金**: `MemberRefunds`シート（`sourceType`/`sourceId`/`memberId`/`amount`/`refundedAmount`/`refundedAt`/`eventId`/`recordedAt`。追記専用）へ`(checkout_session, 入会Session ID)`を1行追記する。`MemberMonths`の行は削除・改変せず、`MemberRepository`の資格判定（`isMemberForMonth`・`findLiveMemberByEmail`・`statusFactsForEmail`）が「全額返金された支払いを根拠とする月」を差し引く。90日先行予約・ペアパック・シャワー・Studio Xオプション・`/membership/status/`はすべてこの判定を通るため同じ結果になる。プレスタートの追加月（10月入会の11月分）も同じSession IDを根拠にしているため、初回500円の全額返金で一緒に無効になる。
+- **冪等・順序**: `(sourceType, sourceId)`で1行（別イベントIDの再送でも二重にならない）。返金イベントが入会イベントより先に処理されても、後から追記される同じSession IDの月が無効扱いになり、入会処理は`MEMBERSHIP_JOIN_REFUNDED`としてsubscriptionを作らない。
+- **一部返金**: 日割り返金をしない会費方針のため資格は変えない（`MEMBERSHIP_PARTIAL_REFUND_NO_CHANGE`）。後から累計が全額になった時点で無効になる。
+- **subscriptionが既にある会員**: 初回決済だけが返金された場合、次回以降の月次更新は通常どおり資格を作る（継続課金ルールのまま）。自動更新を止めるかは運営判断のため、`MEMBERSHIP_REFUNDED_SUBSCRIPTION_ACTIVE`としてRecoveryへ記録して知らせる。
+- **制約**: 返金の取消・失敗（`amount_refunded`が後から減る）は反映しない（追記専用のため）。必要なら運営が`MemberRefunds`の該当行を手動で除く。
+- **手動設定**: Stripe Dashboard→Webhookの送信イベントへ`charge.refunded`を追加する（追加するまで返金は検知されない）。新規のSecret・Script Propertyはなし。`MemberRepository.gs`・`StripeGateway.gs`・`StripeWebhookProcessor.gs`は既存の配布先のまま。
 
 ### 入会受付と二重加入・二重課金の防止
 

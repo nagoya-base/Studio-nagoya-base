@@ -210,6 +210,20 @@ var StripeGateway = (function () {
   }
 
   /*
+   * Chargeの正規化（Issue #517）。返金状態（amountRefunded）の正本として、Webhook本文ではなく
+   * Stripe APIから再取得した値を使う。
+   */
+  function normalizeCharge_(raw) {
+    return {
+      id: raw.id,
+      paymentIntentId: typeof raw.payment_intent === 'string' ? raw.payment_intent : ((raw.payment_intent && raw.payment_intent.id) || ''),
+      amount: raw.amount,
+      amountRefunded: Number(raw.amount_refunded) || 0,
+      currency: typeof raw.currency === 'string' ? raw.currency.toUpperCase() : ''
+    };
+  }
+
+  /*
    * params: { amountJpy, currency, bookingId, brand, paymentAttemptId, expiresAtSeconds,
    *   successUrl, cancelUrl, customerEmail?, lineItemName? }
    * idempotencyKey: 呼び出し元（BookingRepository.reservePaymentAttempt_で発行・永続化済みの
@@ -237,6 +251,36 @@ var StripeGateway = (function () {
     var result = performRequest_('get', url, stripeConfig.secretKey, null, null);
     if (!result.ok) return result;
     return { ok: true, session: normalizeSession_(result.raw) };
+  }
+
+  /* Chargeの再取得（Issue #517。SNB MEMBER初回決済の返金検知）。 */
+  function retrieveCharge(stripeConfig, chargeId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!chargeId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripeChargeIdが指定されていません。' };
+    }
+    var result = performRequest_('get', API_BASE_ + '/charges/' + encodeURIComponent(chargeId), stripeConfig.secretKey, null, null);
+    if (!result.ok) return result;
+    return { ok: true, charge: normalizeCharge_(result.raw) };
+  }
+
+  /* PaymentIntentから、それを作ったCheckout Sessionを引く（Issue #517。返金された決済が入会Checkoutか判定する）。 */
+  function listCheckoutSessionsForPaymentIntent(stripeConfig, paymentIntentId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!paymentIntentId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripePaymentIntentIdが指定されていません。' };
+    }
+    var url = API_BASE_ + '/checkout/sessions?payment_intent=' + encodeURIComponent(paymentIntentId) + '&limit=10';
+    var result = performRequest_('get', url, stripeConfig.secretKey, null, null);
+    if (!result.ok) return result;
+    if (!result.raw || !Array.isArray(result.raw.data)) {
+      return { ok: false, errorType: 'AMBIGUOUS', message: 'Stripeからの応答を解析できませんでした。' };
+    }
+    return { ok: true, sessions: result.raw.data.map(normalizeSession_) };
   }
 
   /*
@@ -463,6 +507,8 @@ var StripeGateway = (function () {
     retrieveCheckoutSession: retrieveCheckoutSession,
     expireCheckoutSession: expireCheckoutSession,
     retrievePaymentIntent: retrievePaymentIntent,
+    retrieveCharge: retrieveCharge,
+    listCheckoutSessionsForPaymentIntent: listCheckoutSessionsForPaymentIntent,
     createRefund: createRefund,
     retrieveRefund: retrieveRefund,
     listRefundsForPaymentIntent: listRefundsForPaymentIntent
