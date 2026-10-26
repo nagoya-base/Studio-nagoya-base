@@ -47,38 +47,6 @@ var StripeGateway = (function () {
   }
 
   /*
-   * Issue #516: Stripe Checkout Studioで設定したHosted CheckoutのUIパラメータ（fixed_by_ui）。
-   * Checkout Session作成時のパラメータだけに反映し、mode / success_url / cancel_url /
-   * line_itemsなどの既存値は変更しない。Stripe-Versionヘッダは指定しない（REST API直叩きの
-   * 現行方式・アカウント既定のAPIバージョンを維持）。ui_modeは'hosted_page'。アカウント既定の
-   * APIバージョンが2025-09-30.clover未満の場合は'hosted'が必要（STRIPE_INTEGRATION_TODO.md参照）。
-   * payment_method_collectionはmode=subscriptionのSessionにだけ付ける。本リポジトリのSessionは
-   * すべてmode=paymentのため、現状は付与されない。
-   */
-  var CHECKOUT_STUDIO_PARAMS_ = {
-    'ui_mode': 'hosted_page',
-    'billing_address_collection': 'auto',
-    'phone_number_collection[enabled]': 'false',
-    'automatic_tax[enabled]': 'false',
-    'allow_promotion_codes': 'false',
-    'submit_type': 'auto',
-    'name_collection[individual][enabled]': 'true',
-    'name_collection[individual][optional]': 'true',
-    'integration_identifier': 'hosted_web_0001',
-    'origin_context': 'web'
-  };
-
-  function applyCheckoutStudioParams_(payload) {
-    Object.keys(CHECKOUT_STUDIO_PARAMS_).forEach(function (key) {
-      payload[key] = CHECKOUT_STUDIO_PARAMS_[key];
-    });
-    if (payload.mode === 'subscription') {
-      payload.payment_method_collection = 'always';
-    }
-    return payload;
-  }
-
-  /*
    * 予約1件・カード決済1回ぶんのCheckout Session作成に必要な最小限のline_itemのみを送る
    * （複数商品・数量変更等は本Issueの対象外）。line_items[0][price_data]でその場限りの
    * 商品情報を渡す方式（事前にStripe Dashboard側でProduct/Priceを作成しない）を採用する。
@@ -95,7 +63,18 @@ var StripeGateway = (function () {
       'line_items[0][price_data][product_data][name]': params.lineItemName || ('予約 ' + params.bookingId),
       'metadata[bookingId]': params.bookingId,
       'metadata[brand]': params.brand,
-      'metadata[paymentAttemptId]': params.paymentAttemptId
+      'metadata[paymentAttemptId]': params.paymentAttemptId,
+      /* Issue #516: Checkout Studio固定値（fixed_by_ui）。mode=paymentのためpayment_method_collectionは付けない。 */
+      'ui_mode': 'hosted_page',
+      'billing_address_collection': 'auto',
+      'phone_number_collection[enabled]': 'false',
+      'automatic_tax[enabled]': 'false',
+      'allow_promotion_codes': 'false',
+      'submit_type': 'auto',
+      'name_collection[individual][enabled]': 'true',
+      'name_collection[individual][optional]': 'true',
+      'integration_identifier': 'hosted_web_0001',
+      'origin_context': 'web'
     };
     if (params.customerEmail) {
       payload.customer_email = params.customerEmail;
@@ -111,7 +90,7 @@ var StripeGateway = (function () {
         payload['metadata[' + key + ']'] = params.extraMetadata[key];
       });
     }
-    return applyCheckoutStudioParams_(payload);
+    return payload;
   }
 
   /*
@@ -412,10 +391,20 @@ var StripeGateway = (function () {
       'line_items[0][price_data][product_data][name]': params.productName,
       'metadata[orderType]': 'membership',
       'metadata[memberId]': params.memberId,
-      'client_reference_id': params.memberId
+      'client_reference_id': params.memberId,
+      /* Issue #516: Checkout Studio固定値（fixed_by_ui）。mode=paymentのためpayment_method_collectionは付けない。 */
+      'ui_mode': 'hosted_page',
+      'billing_address_collection': 'auto',
+      'phone_number_collection[enabled]': 'false',
+      'automatic_tax[enabled]': 'false',
+      'allow_promotion_codes': 'false',
+      'submit_type': 'auto',
+      'name_collection[individual][enabled]': 'true',
+      'name_collection[individual][optional]': 'true',
+      'integration_identifier': 'hosted_web_0001',
+      'origin_context': 'web'
     };
     if (params.expiresAtSeconds) payload.expires_at = String(params.expiresAtSeconds);
-    applyCheckoutStudioParams_(payload);
     var result = performRequest_('post', API_BASE_ + '/checkout/sessions', stripeConfig.secretKey, encodeFormPayload_(payload), idempotencyKey);
     if (!result.ok) return result;
     return { ok: true, session: normalizeSession_(result.raw) };

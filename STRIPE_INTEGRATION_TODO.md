@@ -16,7 +16,7 @@ Stripe Checkout Studioで設定したHosted CheckoutのUIパラメータを、�
 
 ## Configured Parameters
 
-[gas/booking/shared/StripeGateway.gs](gas/booking/shared/StripeGateway.gs) の `CHECKOUT_STUDIO_PARAMS_` / `applyCheckoutStudioParams_` に集約した。
+[gas/booking/shared/StripeGateway.gs](gas/booking/shared/StripeGateway.gs) の既存2箇所のSession作成payload（`buildCreateSessionPayload_` / `createMembershipCheckoutSession`）へ直接追加した（共通化・リファクタリングはしていない）。
 
 | パラメータ | 値 |
 | --- | --- |
@@ -63,9 +63,9 @@ Stripe Checkout Studioで設定したHosted CheckoutのUIパラメータを、�
 3. 返却された `url` へ利用者を遷移（Hosted Checkout）。
 4. 決済完了はStripe Webhook（既存）→ `StripeWebhookProcessor` が Checkout Session / PaymentIntent を再取得して照合（変更なし）。
 
-### 要確認: `ui_mode` の値とAPIバージョン
+### `ui_mode` について
 
-`ui_mode` は Issue の指示どおり `hosted_page` を送る。`Stripe-Version` は固定していない（推測固定の禁止）ため、**アカウント既定のAPIバージョンが `2025-09-30.clover` 未満の場合は `hosted` でないと拒否される可能性がある**（`invalid_request_error` → `STRIPE_ERROR`）。本番反映前に、Stripe Dashboard（開発者 > APIバージョン）で既定バージョンを確認し、テストモードで必ずSession作成が成功することを確認すること。旧バージョンの場合は `CHECKOUT_STUDIO_PARAMS_.ui_mode` を `hosted` に変更する。
+本リポジトリはStripe SDKを使わずREST APIを直接呼んでいるため、Issueの「SDK 21未満のみ `hosted`」は該当せず、`ui_mode=hosted_page` を使用する。`Stripe-Version` は固定していない。本番反映前に、テストモードでSession作成が成功することを必ず確認すること。
 
 ### 要注意: 未解決の決済試行とIdempotency-Key
 
