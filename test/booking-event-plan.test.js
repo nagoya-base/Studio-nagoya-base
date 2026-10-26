@@ -267,6 +267,62 @@ test('estimatePrice: 任意の日で6,000円。6時間以外・Studio X以外は
   assert.strictEqual(doGet(ctx, Object.assign({}, base, { brand: 'snb' })).error.code, 'PLAN_NOT_AVAILABLE');
 });
 
+// ============================================================================
+// Issue #496: 貸切ベースプランと追加オプションの併用不可（サーバー側）
+// ============================================================================
+
+var OPTIONS_SELECTION = { equipment: { STAND_260: 1 }, layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: true };
+
+test('Issue #496 createBooking: 貸切ベースプラン＋オプションは明示エラーで拒否し、Calendar/Sheetsへ何も書かない', function () {
+  var ctx = setup();
+  var rejected = book(ctx, { options: OPTIONS_SELECTION });
+  assert.strictEqual(rejected.success, false);
+  assert.strictEqual(rejected.error.code, 'EVENT_PLAN_OPTIONS_NOT_ALLOWED');
+  assert.strictEqual(calendarEventCount(ctx), 0);
+  var shower = book(ctx, { options: { shower: true } });
+  assert.strictEqual(shower.error.code, 'EVENT_PLAN_OPTIONS_NOT_ALLOWED', '形式を問わずオプション指定は併用不可');
+  assert.strictEqual(calendarEventCount(ctx), 0);
+});
+
+test('Issue #496 createBooking: オプション指定なし（未指定・null・空オブジェクト）の貸切ベースプランは従来どおり6,000円で成立する', function () {
+  [undefined, null, {}].forEach(function (options, i) {
+    var ctx = setup();
+    var overrides = i === 0 ? {} : { options: options };
+    var ok = book(ctx, overrides);
+    assert.strictEqual(ok.success, true, JSON.stringify(ok));
+    assert.strictEqual(ok.price.amount, 6000);
+    assert.strictEqual(ok.options, undefined);
+  });
+});
+
+test('Issue #496 createBooking: 通常のStudio X予約はオプションを従来どおり検証し、この併用不可の拒否にはならない', function () {
+  var ctx = setup();
+  var r = book(ctx, { plan: '', durationMinutes: 180, options: OPTIONS_SELECTION });
+  assert.ok(!r.error || r.error.code !== 'EVENT_PLAN_OPTIONS_NOT_ALLOWED', JSON.stringify(r));
+});
+
+test('Issue #496 estimatePrice: オプション付きの貸切ベースプラン見積りは正常な見積りを返さない。オプション無しは6,000円のまま', function () {
+  var ctx = setup();
+  var base = { action: 'estimatePrice', brand: 'studio_x', date: EVENT_DAY, durationMinutes: '360', plan: PLAN };
+  var rejected = doGet(ctx, Object.assign({}, base, { options: 'STAND_260' }));
+  assert.strictEqual(rejected.success, false);
+  assert.strictEqual(rejected.error.code, 'EVENT_PLAN_OPTIONS_NOT_ALLOWED');
+  assert.strictEqual(doGet(ctx, base).price.amount, 6000);
+  assert.strictEqual(doGet(ctx, Object.assign({}, base, { options: '' })).price.amount, 6000);
+});
+
+test('Issue #496 後付け申込: 貸切ベースプランの予約へは本人確認後でもオプションを追加できず、案内ページも受付不可にする', function () {
+  var ctx = setup();
+  var ok = book(ctx, {});
+  assert.strictEqual(ok.success, true, JSON.stringify(ok));
+  var addon = ctx.sandbox.OptionOrderService.submitAddonOptions(ok.bookingId, EMAIL, { emailSupport: true });
+  assert.strictEqual(addon.success, false);
+  assert.strictEqual(addon.error.code, 'EVENT_PLAN_OPTIONS_NOT_ALLOWED');
+  var summary = ctx.sandbox.OptionOrderService.getCustomerSummary(ok.bookingId, EMAIL);
+  assert.strictEqual(summary.acceptsOptions, false);
+  assert.strictEqual(summary.acceptsOptionsReason, 'EVENT_PLAN_OPTIONS_NOT_ALLOWED');
+});
+
 test('対象日API（action=eventPlan）は廃止され、通常の空き状況応答にフォールバックする', function () {
   var ctx = setup();
   var body = doGet(ctx, { action: 'eventPlan', brand: 'studio_x' });

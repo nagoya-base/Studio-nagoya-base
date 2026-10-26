@@ -30,7 +30,8 @@
   /* 利用条件が変わらない画面の短い補足文（Issue #453）。詳細は機材ページへ逃がし、同じ注意を複数箇所で繰り返さない。 */
   var TEXT = {
     selfGuidance: '保管場所・セット方法・原状復帰方法は予約案内に記載します。',
-    emailSupport: '予約後の設営方法についてメールで確認できます。'
+    emailSupport: '予約後の設営方法についてメールで確認できます。',
+    suspended: '6時間貸切ベースプランでは追加オプションは利用できません。'
   };
 
   /*
@@ -106,6 +107,7 @@
     STAFF_SERVICE_SINGLE_THEME: 'スタッフ対応を依頼できるセッティングは1種類です。複数ある場合は残りをセルフ設営にするか、メールでご相談ください。',
     DUPLICATE_OPTION: '既に申し込み済みのオプションは重複して追加できません。',
     STAFF_SERVICE_THEME_MISMATCH: '既に申し込み済みのスタッフ対応と同じセッティングを指定してください。',
+    EVENT_PLAN_OPTIONS_NOT_ALLOWED: '6時間貸切ベースプランでは追加オプションは利用できません。',
     STAFF_SERVICE_MEMBERS_ONLY: 'スタッフ設営・片付けは会員限定です。会員でない方はお申し込みいただけません。セルフ設営・セルフ片付け（無料）をご利用ください。',
     SERVICE_MODE_CONFLICT: '同じセッティングの設営・片付けは、セルフとスタッフ対応を同時に選べません。',
     BOOKING_NOT_FOUND: '予約が見つかりません。',
@@ -544,14 +546,24 @@
     var lightingChoice = { kind: '', count: '', softbox: '' };
     var lightingNotice = '';
     var dependencyNotice = '';
+    /* Issue #496: 6時間貸切ベースプラン中はオプション欄を畳み、選択・検証・サマリーをすべて空にする。 */
+    var suspended = false;
     var controller = {
       isAvailable: function () { return !!(catalog && catalog.enabled); },
       getState: function () { return JSON.parse(JSON.stringify(state)); },
-      getSelection: function () { return buildSelection(state); },
-      validate: function () { return validateSelection(state, catalog, existingOrders); },
+      getSelection: function () { return suspended ? null : buildSelection(state); },
+      validate: function () { return suspended ? '' : validateSelection(state, catalog, existingOrders); },
+      /* 併用不可の間は選択内容を破棄して欄を畳む（解除後も自動復元しない）。解除すると初期状態の欄を再表示する。 */
+      setSuspended: function (next) {
+        next = !!next;
+        if (next === suspended) return;
+        suspended = next;
+        if (suspended) controller.reset(); else render();
+      },
+      isSuspended: function () { return suspended; },
       getSummary: function () { return computeSummary(catalog, state, existingOrders); },
       setExistingOrders: function (orders) { existingOrders = orders || []; render(); },
-      summaryLines: function () { return summarize(catalog, state); },
+      summaryLines: function () { return suspended ? [] : summarize(catalog, state); },
       reset: function () { state = { equipment: {}, layouts: [], setupService: 'SELF', setupChosen: false, cleanupService: 'SELF', cleanupChosen: false, emailSupport: false }; lightingChoice = { kind: '', count: '', softbox: '' }; lightingNotice = ''; dependencyNotice = ''; render(); },
       setCatalog: function (next) { catalog = next; render(); },
       /* 部屋代の見積り・予約済み部屋代が変わったとき、サマリーだけを描き直す（入力中のパネルは触らない）。 */
@@ -658,9 +670,16 @@
       slot.textContent = '';
       if (!catalog || !catalog.enabled) {
         slot.hidden = true;
+        if (config.summarySlot) { config.summarySlot.textContent = ''; config.summarySlot.hidden = true; }
         return;
       }
       slot.hidden = false;
+      if (suspended) {
+        /* 入力欄は残さず、理由だけを短く示す。 */
+        slot.appendChild(el('p', { className: 'ba-field-help ba-option-suspended', text: TEXT.suspended }));
+        renderSummary();
+        return;
+      }
       var root = el('fieldset', { className: 'ba-fieldset' });
       root.appendChild(el('legend', { text: 'オプション（任意）' }));
       /* 長い説明は案内ページへ逃がし、予約フォームは選択・申込に集中させる（Issue #457）。 */
@@ -814,7 +833,7 @@
       var target = config.summarySlot || null;
       if (!target) return;
       target.textContent = '';
-      if (!catalog || !catalog.enabled) {
+      if (!catalog || !catalog.enabled || suspended) {
         target.hidden = true;
         return;
       }

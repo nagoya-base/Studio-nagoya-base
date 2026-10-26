@@ -443,6 +443,11 @@ function handleEstimatePrice_(params) {
     return { success: false, error: validationError };
   }
 
+  /* Issue #496: 貸切ベースプランの見積りにオプション指定が付いていれば、正常な見積りを返さず拒否する。 */
+  if (BookingPricing.isEventPlan(BookingPricing.normalizePlan(params.plan)) && BookingPricing.hasOptionSelection(params.options)) {
+    return { success: false, error: BookingPricing.eventPlanOptionsError() };
+  }
+
   var priceResult = BookingPricing.computeBookingPrice({
     brand: params.brand,
     date: params.date,

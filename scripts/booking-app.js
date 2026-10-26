@@ -928,6 +928,13 @@
       syncDurationOther_();
     }
     if (els.memberField) els.memberField.hidden = selected || !Logic.brandShowsMemberOption(brand);
+    /* Issue #496: ベースプラン中は追加オプション欄を畳み、選択済みの内容（数量・スタッフサービス含む）を破棄する。
+       解除しても以前の選択は復元しない。確認画面・payload・見積りはパネルが空を返すため自動で除外される。 */
+    if (optionsPanel && optionsPanel.setSuspended) {
+      optionsPanel.setSuspended(selected);
+      var optionsErrorEl = document.getElementById('ba-options-error');
+      if (optionsErrorEl) { optionsErrorEl.textContent = ''; optionsErrorEl.hidden = true; }
+    }
     handleCalendarPrereqChange_();
     refreshPriceEstimate_();
   }
@@ -1477,7 +1484,7 @@
   var OPTION_ERROR_CODES_ = [
     'INVALID_OPTIONS', 'UNKNOWN_OPTION', 'SETUP_METHOD_REQUIRED', 'CLEANUP_METHOD_REQUIRED', 'LAYOUT_REQUIRED_FOR_STAFF_SERVICE', 'STAFF_SERVICE_SINGLE_THEME',
     'OPTIONS_NOT_AVAILABLE', 'PRICE_NOT_CONFIGURED', 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE',
-    'DUPLICATE_OPTION', 'SERVICE_MODE_CONFLICT', 'STAFF_SERVICE_THEME_MISMATCH'
+    'DUPLICATE_OPTION', 'SERVICE_MODE_CONFLICT', 'STAFF_SERVICE_THEME_MISMATCH', 'EVENT_PLAN_OPTIONS_NOT_ALLOWED'
   ];
 
   /* 完了画面のオプション結果（Issue #423）。部屋予約とは別の状態であることを明示する。 */

@@ -77,8 +77,15 @@ var OptionOrderService = (function () {
       endAt: record.endAt,
       timezone: timezone,
       /* 予約済みの部屋代。予約本体の正本（Booking.getEffectivePriceAmount）だけを使い、取得できなければnull。 */
-      roomPriceJpy: Booking.getEffectivePriceAmount(record)
+      roomPriceJpy: Booking.getEffectivePriceAmount(record),
+      /* Issue #496: 貸切ベースプランの予約へはオプションを追加できない（併用不可の判定に使う）。 */
+      planCode: record.planCode || ''
     };
+  }
+
+  /* Issue #496: 貸切ベースプランの予約はオプションを受け付けない。受け付ける場合はnull、拒否する場合はerror。 */
+  function eventPlanRejection_(booking) {
+    return booking && BookingPricing.isEventPlan(booking.planCode) ? BookingPricing.eventPlanOptionsError() : null;
   }
 
   function findBookingView_(bookingId) {
@@ -291,6 +298,8 @@ var OptionOrderService = (function () {
       booking = findBookingView_(bookingId);
       var accepts = BookingOptions.checkBookingAcceptsOptions(booking, optionsConfig, effectiveNow);
       if (!accepts.ok) return { success: false, error: accepts.error };
+      var planRejection = eventPlanRejection_(booking);
+      if (planRejection) return { success: false, error: planRejection };
 
       var existingRows = OptionOrderRepository.listAll();
       var existingForBooking = existingRows.map(function (r) { return r.record; }).filter(function (r) { return r.bookingId === bookingId; });
@@ -349,6 +358,9 @@ var OptionOrderService = (function () {
   function submitAddonOptions(bookingId, email, selection, now) {
     var booking = verifyBookingIdentity_(bookingId, email);
     if (!booking) return FORBIDDEN_();
+    /* Issue #496: 貸切ベースプランの予約へは後付けでもオプションを追加できない。 */
+    var planRejection = eventPlanRejection_(booking);
+    if (planRejection) return { success: false, error: planRejection };
     var normalizedResult = BookingOptions.normalizeSelection(selection, booking.brand);
     if (!normalizedResult.ok) return { success: false, error: normalizedResult.error };
     if (normalizedResult.empty) return fail_('NO_OPTIONS_SELECTED', '追加するオプションを選択してください。');
@@ -364,6 +376,8 @@ var OptionOrderService = (function () {
     if (!booking) return FORBIDDEN_();
     var optionsConfig = BookingConfig.getOptionsConfig();
     var accepts = BookingOptions.checkBookingAcceptsOptions(booking, optionsConfig, nowOrDefault_(now));
+    var planRejection = eventPlanRejection_(booking);
+    if (accepts.ok && planRejection) accepts = { ok: false, error: planRejection };
     var orders = activeExistingOrders_(bookingId).map(BookingOptions.summarizeOrder);
     return {
       success: true,

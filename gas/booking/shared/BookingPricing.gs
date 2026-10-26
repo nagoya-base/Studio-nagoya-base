@@ -258,6 +258,18 @@ var BookingPricing = (function () {
     return plan === PLAN.OSU_COSPLAY_BASE_6H;
   }
 
+  /* Issue #496: 貸切ベースプランと追加オプションの併用不可。optionsに何らかの選択（空でないオブジェクト等）が
+     含まれるか。未指定・null・空オブジェクト・空配列は「指定なし」。形式が不正な値は指定ありとして扱う（fail-closed）。 */
+  function hasOptionSelection(options) {
+    if (options === undefined || options === null || options === '') return false;
+    if (typeof options !== 'object') return true;
+    return Object.keys(options).length > 0;
+  }
+
+  function eventPlanOptionsError() {
+    return { code: 'EVENT_PLAN_OPTIONS_NOT_ALLOWED', message: EVENT_BASE_PLAN_.label + 'では追加オプションをご利用いただけません。' };
+  }
+
   /* 利用人数（フォームの'1名'|'2名'|'3名'…）がペアパックの人数条件（1〜2名）か。数値以外・3名以上・5名以上はfalse。 */
   function isPairPackPeople(people) {
     var m = /^\s*([1-9]\d*)\s*名\s*$/.exec(String(people === undefined || people === null ? '' : people));
@@ -371,6 +383,8 @@ var BookingPricing = (function () {
     normalizePlan: normalizePlan,
     isEventPlan: isEventPlan,
     isEventBasePlanPeople: isEventBasePlanPeople,
+    hasOptionSelection: hasOptionSelection,
+    eventPlanOptionsError: eventPlanOptionsError,
     planLabel: planLabel,
     isPairPackPeople: isPairPackPeople,
     generationAt: generationAt,
