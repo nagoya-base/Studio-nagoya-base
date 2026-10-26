@@ -7404,6 +7404,14 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
 - Web表示（トップ・mens・Studio X・英語版・予約フォーム・how-to）を1時間基準へ更新。
 - Stripe Checkout・当日予約・初回利用者のカード必須ルール（Issue #407 / PR #409）には触れていない。
 
+## Issue #483: SNB MEMBER月会費を1,000円から500円へ変更
+
+- 変更点は月会費のみ（`MembershipRules.MONTHLY_FEE_JPY`＝500）。入会Checkout（`mode=payment`）・`subscription`作成（`price_data.unit_amount`）・`invoice.paid`／`checkout.session.completed`の金額照合は、すべてこの1定数を参照する。会員資格の判定・永久会員・ペアパック・シャワー（1,000円）・Studio X有料オプション・90日先行予約は変更していない。
+- Stripe側: subscriptionは固定のPrice／Product IDを持たず、`price_data`（インライン、`product_data`は「SNB MEMBER 月会費」）で都度作成する。そのため**既存のPriceを変更する作業は不要**で、デプロイ後に作られる入会Checkout・subscriptionから500円になる。ブランド別のProduct／subscriptionは作らない。`STRIPE_CHECKOUT_ENABLED`はこのPRでは変更しない。
+- **切替の順序**: 本番で1,000円の入会Checkoutが作られる前に反映する（`STRIPE_CHECKOUT_ENABLED`を有効化する前にマージ・反映する）。
+- **すでに1,000円で作成済みの本番subscriptionがある場合**（有効化後に反映した場合）: コードの変更だけでは既存subscriptionの金額は変わらず、旧金額のinvoiceは500円と一致しないため会員月として記録されない。Stripe Dashboardで該当subscriptionを確認し、対象者の扱い（subscriptionの金額更新または再加入、差額の取り扱い）を運用判断としてから実施する。勝手に課金を変更しない。
+- 反映後の確認: テストモードで入会Checkout（500円）→ `billing_cycle_anchor`が翌月1日00:00 UTCのsubscription（500円/月）ができ、翌月1日の`invoice.paid`（500円）で当月が記録されること。
+
 ## Issue #475: SNB一般料金の値上げ撤回
 
 - `BookingPricing.gs`のSNB V2 GENERALをV1と同じ現行一般料金（平日2,000/4,000/6,000/8,000円・延長2,000円、土日祝2,500/5,000/7,500/10,000円・延長2,500円）へ戻した。V1/V2/Studio X V1のGENERALは共通定数`CURRENT_GENERAL_RATES_`を参照する。
@@ -7419,19 +7427,19 @@ not_startedのまま）の場合は、`paymentHoldExpiresAt`（Stripe Sessionの
 
 ## Issue #471: SNB MEMBER（月額会員）のStripe管理・毎月1日更新・Webhook連携
 
-SNB MEMBER（月額1,000円）の実会員資格を、Stripeの決済事実から予約システムへ反映する。料金表・料金世代（#470）、Web表示・規約（#472）は対象外。
+SNB MEMBER（月額500円）の実会員資格を、Stripeの決済事実から予約システムへ反映する。料金表・料金世代（#470）、Web表示・規約（#472）は対象外。
 
 ### 会員制度（固定仕様）
 
-月額1,000円・自動更新・更新基準日は毎月1日・入会月は日割りせず満額・入会日から当月末まで有効・翌月1日の課金成功で翌月分を有効化・更新失敗は猶予なしでその月はinactive・解約しても支払済みの当月末まではactive・日割り返金なし。既存会員は自動移行しない（初回利用者から加入可）。
+月額500円・自動更新・更新基準日は毎月1日・入会月は日割りせず満額・入会日から当月末まで有効・翌月1日の課金成功で翌月分を有効化・更新失敗は猶予なしでその月はinactive・解約しても支払済みの当月末まではactive・日割り返金なし。既存会員は自動移行しない（初回利用者から加入可）。
 
 ### Stripeでの実現方法（Stripe公式仕様を確認して採用）
 
 | 論点 | 確認した仕様 | 採用した方法 |
 | --- | --- | --- |
-| Checkout subscriptionモードで`billing_cycle_anchor`＋`proration_behavior=none` | 入会時の課金は発生しない（アンカーまでの初回期間は無料でinvoiceも作られない）。この組み合わせでは単発（one-time）価格を同一Sessionに含められず、trialも併用できない | 使わない。入会月の1,000円を取れないため |
-| Checkout subscriptionモードで`billing_cycle_anchor`のみ（日割りあり） | 入会時に日割り額が課金される | 使わない。入会月は満額1,000円の固定仕様のため |
-| 採用 | — | **入会**: Checkout Session（`mode=payment`、1,000円、`setup_future_usage=off_session`、`customer_creation=always`）で入会月ぶんを満額決済。決済完了Webhook後にサーバーが`subscription`を作成（`billing_cycle_anchor`＝入会月の翌月1日00:00 UTC、`proration_behavior=none`、保存した決済手段を既定に設定）。入会月は追加課金されず、翌月1日から毎月1,000円が自動請求される |
+| Checkout subscriptionモードで`billing_cycle_anchor`＋`proration_behavior=none` | 入会時の課金は発生しない（アンカーまでの初回期間は無料でinvoiceも作られない）。この組み合わせでは単発（one-time）価格を同一Sessionに含められず、trialも併用できない | 使わない。入会月の500円を取れないため |
+| Checkout subscriptionモードで`billing_cycle_anchor`のみ（日割りあり） | 入会時に日割り額が課金される | 使わない。入会月は満額500円の固定仕様のため |
+| 採用 | — | **入会**: Checkout Session（`mode=payment`、500円、`setup_future_usage=off_session`、`customer_creation=always`）で入会月ぶんを満額決済。決済完了Webhook後にサーバーが`subscription`を作成（`billing_cycle_anchor`＝入会月の翌月1日00:00 UTC、`proration_behavior=none`、保存した決済手段を既定に設定）。入会月は追加課金されず、翌月1日から毎月500円が自動請求される |
 | アンカーの時刻 | Stripeの月次の繰り返しはUTCの「日」を維持する | JSTの月初0:00（＝前日15:00 UTC）をアンカーにすると請求日が月末にずれるため、**00:00 UTC（＝毎月1日09:00 JST）**をアンカーにする。1日の00:00〜09:00 JSTは新しい月の支払い事実がまだ無く、その間に作った当月利用の予約は一般料金になる（fail-closed） |
 | API version差 | 2025-03-31.basil以降は`invoice.parent.subscription_details`・期間は`items.data[]`直下 | 新旧どちらの形でも読む（`MembershipRules.readInvoiceSubscription`/`readSubscriptionPeriod`） |
 
@@ -7440,8 +7448,8 @@ SNB MEMBER（月額1,000円）の実会員資格を、Stripeの決済事実か�
 ### 会員資格の設計
 
 - 会員資格の判定根拠は、**「会員 × 利用月」の支払い事実**（`MemberMonths`シート、1会員×1か月=1行、追記専用、`(memberId, month)`で冪等）だけ。Stripeの現在のsubscription状態（active等）から未来月の資格を推測しない。
-  - 入会月: 入会Checkoutの決済完了（`checkout.session.completed`、1,000円・paid）。
-  - 翌月以降: `invoice.paid`（`billing_reason=subscription_cycle`・1,000円・JPY・paid）。利用月は**1,000円のline itemの`period.start`のJST月**（`invoice.period_start`は旧API versionで直前の期間を指すため使わない）。1日でない・金額違い・line無しはfail-closed（記録せずRecoveryへ）。
+  - 入会月: 入会Checkoutの決済完了（`checkout.session.completed`、500円・paid）。
+  - 翌月以降: `invoice.paid`（`billing_reason=subscription_cycle`・500円・JPY・paid）。利用月は**500円のline itemの`period.start`のJST月**（`invoice.period_start`は旧API versionで直前の期間を指すため使わない）。1日でない・金額違い・line無しはfail-closed（記録せずRecoveryへ）。
   - 更新失敗・解約は「翌月の支払い事実が作られない」ことで猶予なくinactiveになる（猶予のロジックを別に持たない）。
 - `Members`シートはStripe subscription状態の写し（運用確認用。資格判定には使わない）: `memberId`/`email`（正規化済み）/`stripeCustomerId`/`stripeSubscriptionId`/`status`（active・past_due・canceled・incomplete）/`currentPeriodStart`/`currentPeriodEnd`/`canceledAt`/`cancelAtPeriodEnd`/`latestInvoiceId`/`latestEventId`/`latestEventCreated`/`createdAt`/`updatedAt`。`status`系の列は`latestEventCreated`（Stripeイベント発生時刻）より古いイベントでは更新しない。`canceled`は終端。ID類は空欄のときだけ埋める。
 - 予約メールと会員メールは`MembershipRules.normalizeEmail`（前後空白除去・小文字化）で正規化して完全一致で照合する。
@@ -7468,12 +7476,12 @@ SNB MEMBER（月額1,000円）の実会員資格を、Stripeの決済事実か�
 
 ### 入会受付と二重加入・二重課金の防止
 
-`POST ?action=startMembershipCheckout`（本文`{ "email": "..." }`のみ）。既存のカード決済と同じキルスイッチ（`STRIPE_CHECKOUT_ENABLED`）に従い、有効でなければ発行しない（**この変更でSTRIPE_CHECKOUT_ENABLEDは変更していない**）。金額は固定1,000円。
+`POST ?action=startMembershipCheckout`（本文`{ "email": "..." }`のみ）。既存のカード決済と同じキルスイッチ（`STRIPE_CHECKOUT_ENABLED`）に従い、有効でなければ発行しない（**この変更でSTRIPE_CHECKOUT_ENABLEDは変更していない**）。金額は固定500円。
 
 - **応答は常に同じ形・同じ文言**（`{ success: true, message: "入力されたメールアドレス宛に、入会のご案内をお送りしました…" }`）。結果はメール宛にだけ伝える: 新規→35分有効の決済URL、既存会員→登録済みである旨（Checkoutは発行しない）。これにより、外部応答からそのメールが会員かどうかを判別できず、決済URLも本人のメールにしか届かない。
 - 「既存会員」＝同じメールに、subscriptionが有効（`status=active`。解約予約中も期間末までは有効）、または当月の支払い事実がある会員がいる（`MemberRepository.findLiveMemberByEmail`）。
 - 並行リクエスト・二重課金: `LockService`内で「既存有効会員の確認 → 有効な保留中入会の確認 → 保留中の永続化 → Checkout発行 → セッションID記録」を行う。保留中は**永続台帳`MemberCheckouts`シート**（`memberId`/`email`/`checkoutSessionId`/`pendingUntil`/`state`=PENDING・COMPLETED・EXPIRED）が正本で、`CacheService`は使わない（消失し得るため）。`pendingUntil`＝Checkout失効（35分）＋Webhook反映の猶予（10分）で、この間は同じメールへ新しいCheckoutを発行しない。決済完了Webhookで`COMPLETED`、Stripeの確定的な発行失敗で`EXPIRED`（解放）。応答不明（5xx・ネットワーク）の場合は決済可能なSessionが残る恐れがあるため解放しない。期限切れは`pendingUntil`の経過で判定する。ロックを取れなければ発行しない。
-- 最終防御（Webhook）: 入会決済の完了時に同じメールの有効な別会員（自分自身の再送・再試行は除外）がいれば、会員行もsubscriptionも作らず`MEMBERSHIP_DUPLICATE_JOIN`として**Recoveryへ記録**する。入金は済んでいるため、運営が入会Checkoutの1,000円を**返金**すること。
+- 最終防御（Webhook）: 入会決済の完了時に同じメールの有効な別会員（自分自身の再送・再試行は除外）がいれば、会員行もsubscriptionも作らず`MEMBERSHIP_DUPLICATE_JOIN`として**Recoveryへ記録**する。入金は済んでいるため、運営が入会Checkoutの500円を**返金**すること。
 
 ### 手動設定（Secretの値はここに書かない）
 
@@ -7486,7 +7494,7 @@ SNB MEMBER（月額1,000円）の実会員資格を、Stripeの決済事実か�
 
 ### 本番反映前の確認（Stripeテストモード。本番へ実課金しない）
 
-1. 入会Checkout（テストカード）→ `Members`・`MemberMonths`に入会月が記録され、Dashboardに`billing_cycle_anchor`＝翌月1日00:00 UTCのsubscriptionができ、入会時の請求が1,000円のみ（subscription側に日割り請求が無い）。
+1. 入会Checkout（テストカード）→ `Members`・`MemberMonths`に入会月が記録され、Dashboardに`billing_cycle_anchor`＝翌月1日00:00 UTCのsubscriptionができ、入会時の請求が500円のみ（subscription側に日割り請求が無い）。
 2. Test clock等で月を進め、1日の更新invoice（`billing_reason=subscription_cycle`）の`lines.data[].period.start`が翌月1日（JST 09:00）で、`invoice.paid`後に翌月の行が増える。
 3. 失敗するテストカードで更新を失敗させ、再試行されず翌月の行が増えないこと。
 4. `cancel_at_period_end`を設定し、当月は有効・翌月の請求が作られないこと。
@@ -7541,7 +7549,7 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 
 ### 会員限定シャワー（OptionOrder系。SNB / mensのみ）
 
-- 正本: `BookingOptions.gs`（`SHOWER_PRICE_JPY_`）。`category=MEMBER_SERVICE`・`items=['SHOWER']`・金額1,000円・承認不要・`AWAITING_PAYMENT` から Checkout 決済。1予約1回（重複は `DUPLICATE_OPTION`）。Studio Xには出さない（選択は `OPTIONS_NOT_AVAILABLE`）。SNB / mensではシャワー以外（Studio Xの機材・セッティング）を同時に申し込めない。
+- 正本: `BookingOptions.gs`（`SHOWER_PRICE_JPY_`）。`category=MEMBER_SERVICE`・`items=['SHOWER']`・金額1,000円。**Issue #481で承認制に変更**: 申込は `approvalStatus=PENDING_APPROVAL / status=PENDING_APPROVAL`（Checkout不可・`APPROVAL_REQUIRED`）→ Booking Adminの既存OptionOrder承認（`decide_`。スタッフ対応と同じ処理。承認時にもactual membershipを再確認）→ `AWAITING_PAYMENT` → Checkout（開始時に再確認）→ Webhookで `CONFIRMED`（決済済みは会員再確認で巻き戻さない）。否認は `DECLINED`（重複判定から外れ再申込可）。1予約1回（重複は `DUPLICATE_OPTION`）。Studio Xには出さない（選択は `OPTIONS_NOT_AVAILABLE`）。SNB / mensではシャワー以外（Studio Xの機材・セッティング）を同時に申し込めない。
 - `BookingOptions.isBrandEnabled` は snb / mens も真になるが、`buildCatalog` は `showerOnly` のカタログ（機材・スタッフ対応を含まない）。申込・お支払いページは `/booking/options/`（SNB）・`/mens/booking/options/`（mens）。戻り先は `option-payment-complete.html`（ブランド別・既存の導出ロジックのまま）。
 
 ### Studio X: 有料オプション全般の会員限定化

@@ -547,7 +547,7 @@ var StripeWebhookProcessor = (function () {
    * 設計はMembershipRules.gs冒頭・README「SNB MEMBER」節を参照。要点:
    * - 資格の根拠は「会員×利用月の支払い事実」（MemberRepository.recordPaidMonth）だけ。
    *   入会月の事実は入会Checkout（mode=payment）の決済完了、翌月以降の事実は月次更新invoice
-   *   （billing_reason=subscription_cycle・1,000円）の支払い成功から作る。
+   *   （billing_reason=subscription_cycle・500円）の支払い成功から作る。
    * - subscription.*・invoice.payment_failedはMembersの表示用statusを更新するだけで、
    *   資格（支払い事実）は増減しない。更新失敗・解約は「翌月の事実が作られない」ことで
    *   猶予なくinactiveになる。
@@ -738,7 +738,7 @@ var StripeWebhookProcessor = (function () {
     if (fenced) return fenced;
     if (duplicateOf) {
       return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_DUPLICATE_JOIN',
-        '同じメールアドレスの有効な会員が既にいるため、二重加入として会員登録・subscription作成を行いませんでした。入会Checkoutの決済（1,000円）の返金を確認してください。eventId=' + eventId, now);
+        '同じメールアドレスの有効な会員が既にいるため、二重加入として会員登録・subscription作成を行いませんでした。入会Checkoutの決済（500円）の返金を確認してください。eventId=' + eventId, now);
     }
     if (existingSubscriptionId) {
       return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_JOINED', '入会処理は完了済みです。', now);

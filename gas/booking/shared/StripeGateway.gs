@@ -391,7 +391,7 @@ var StripeGateway = (function () {
   /*
    * SNB MEMBERの月額subscription作成（Issue #471）。billing_cycle_anchorは翌月1日 00:00 UTC、
    * proration_behavior=none（入会月は既にCheckoutで満額決済済みのため、入会月ぶんの請求を
-   * 作らない）。以後は毎月1日（UTC）に1,000円が自動請求される。価格はprice_dataで渡す
+   * 作らない）。以後は毎月1日（UTC）に500円が自動請求される。価格はprice_dataで渡す
    * （Stripe Dashboardでの商品・価格の事前作成は不要）。
    * params: { customerId, paymentMethodId, amountJpy, productName, anchorSeconds, memberId }
    * idempotencyKey: 入会Checkout Session IDから導出した固定値（同じ入会で二重作成しない）。

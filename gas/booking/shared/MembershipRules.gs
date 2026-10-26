@@ -3,8 +3,8 @@
  * GAS実行環境（Sheets・Stripe）に依存しない関数のみを置く（node --testでそのままvm実行できる）。
  *
  * 【会員制度（Issue #469/#471で固定。Stripe都合で変えない）】
- * - 月額1,000円・自動更新・更新基準日は毎月1日。
- * - 入会月は日割りせず1,000円満額。入会日から当月末まで有効。
+ * - 月額500円・自動更新・更新基準日は毎月1日。
+ * - 入会月は日割りせず500円満額。入会日から当月末まで有効。
  * - 翌月1日の課金成功で翌月分を有効化。更新失敗は猶予期間なし（その月はinactive）。
  * - 解約しても支払済みの当月末まではactive。日割り返金なし。
  *
@@ -18,15 +18,15 @@
  *   結果が変わらない。
  *
  * 【Stripeの課金方式（Stripe公式仕様の確認結果。README「SNB MEMBER」節参照）】
- * 1. 入会: Checkout Session（mode=payment）で入会月ぶん1,000円を満額で決済し、決済手段を
+ * 1. 入会: Checkout Session（mode=payment）で入会月ぶん500円を満額で決済し、決済手段を
  *    将来の請求用に保存する（setup_future_usage=off_session）。Checkoutのsubscriptionモードは
  *    使わない。理由: Checkoutでbilling_cycle_anchorを指定してproration_behavior=noneにすると
  *    入会時の課金が発生せず、かつその組み合わせでは単発（one-time）価格を同じSessionに
- *    含められないため、「入会月に満額1,000円を課金し、翌月1日に更新」を1回のCheckoutでは
+ *    含められないため、「入会月に満額500円を課金し、翌月1日に更新」を1回のCheckoutでは
  *    表現できない。
  * 2. 決済完了後、サーバー側でsubscriptionを作成する。billing_cycle_anchor＝翌月1日 00:00 UTC、
  *    proration_behavior=none。入会月は課金されず（既に満額を決済済み）、翌月1日から
- *    毎月1,000円が自動請求される。
+ *    毎月500円が自動請求される。
  * 3. アンカーを00:00 UTCにする理由: Stripeの請求日は日付ではなくタイムスタンプで、月次の
  *    繰り返しはUTCの「日」を維持する。JSTの月初0:00（＝前日15:00 UTC）をアンカーにすると
  *    UTCの「30日/31日」基準になり、翌月以降の請求がJSTの月末に前倒しされたり月ごとに
@@ -38,7 +38,7 @@
 'use strict';
 
 var MembershipRules = (function () {
-  var MONTHLY_FEE_JPY = 1000;
+  var MONTHLY_FEE_JPY = 500;
   var CURRENCY = 'JPY';
   var JST_OFFSET_MS_ = 9 * 60 * 60 * 1000;
 
@@ -159,9 +159,9 @@ var MembershipRules = (function () {
   }
 
   /*
-   * 月次更新invoice（billing_reason=subscription_cycle・1,000円・JPY・支払済み）から、
+   * 月次更新invoice（billing_reason=subscription_cycle・500円・JPY・支払済み）から、
    * 支払われた「利用月」を決める。invoice自体のperiod_start/endは旧API versionでは
-   * 「直前の期間」を指すため使わず、1,000円のline itemのperiod.startを使う
+   * 「直前の期間」を指すため使わず、500円のline itemのperiod.startを使う
    * （更新後の新しい期間の開始＝その月の1日）。判定できない・想定外（日が1日でない等）は
    * fail-closedに ok:false を返し、月の支払い事実を作らない。
    */

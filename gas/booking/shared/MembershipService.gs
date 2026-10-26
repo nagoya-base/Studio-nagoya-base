@@ -1,7 +1,7 @@
 /*
  * MembershipService.gs — SNB MEMBER（Issue #471）の入会受付。Booking Web Appから呼ぶ。
  *
- * 入会は「入会月ぶん1,000円の満額決済（Checkout mode=payment）」から始まり、決済完了Webhookを
+ * 入会は「入会月ぶん500円の満額決済（Checkout mode=payment）」から始まり、決済完了Webhookを
  * 受けてBooking Admin側（StripeWebhookProcessor.handleMembershipJoin_）が会員登録と、
  * 翌月1日からの月額subscriptionを作る（MembershipRules.gs冒頭コメント参照）。
  *
@@ -124,10 +124,10 @@ var MembershipService = (function () {
         return fail_('CHECKOUT_UNAVAILABLE', '入会の受付を開始できませんでした。しばらくしてから再度お試しください。');
       }
       MemberRepository.updatePending(memberId, { checkoutSessionId: result.session.id }, new Date());
-      sendMail_(email, 'SNB MEMBER（月額1,000円）の入会手続きは、下記のお支払いページから行えます（35分間有効）。\n\n' +
+      sendMail_(email, 'SNB MEMBER（月額500円）の入会手続きは、下記のお支払いページから行えます（35分間有効）。\n\n' +
         result.session.url + '\n\n' +
-        '・入会月は日割りなしで1,000円、入会日から当月末まで有効です。\n' +
-        '・翌月以降は毎月1日に1,000円が自動更新されます。\n' +
+        '・入会月は日割りなしで500円、入会日から当月末まで有効です。\n' +
+        '・翌月以降は毎月1日に500円が自動更新されます。\n' +
         '・心当たりがない場合は、このメールを破棄してください。');
       return accepted_();
     } catch (error) {
