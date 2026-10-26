@@ -15,11 +15,11 @@ Subscription作成が `invalid_request_error`（`STRIPE_ERROR`）となり `MEMB
 ## 修正内容
 
 - `price_data` に `product` を渡す。Productの運用方針:
-  - **本番は既存Product `prod_VVis8VOblDg2Pg` を使う**。Script Property `STRIPE_MEMBER_PRODUCT_ID` に設定する
+  - **本番は既存のSNB MEMBER Productを使う**。Script Property `STRIPE_MEMBER_PRODUCT_ID` に本番用の既存SNB MEMBER Product IDを設定する
     （設定時はそのProductを取得するのみで自動作成しない。存在しなければ要復旧として停止）。
   - 未設定の環境（テストモード等）は固定ID `snb_member_monthly` を取得し、無ければ作成する（`ensureMembershipProduct`）。
     テストモードと本番でProduct IDは異なるため、IDはコードに埋め込まない。
-  - **本番反映前に `STRIPE_MEMBER_PRODUCT_ID=prod_VVis8VOblDg2Pg` を設定すること。** 未設定のまま反映すると
+  - **本番反映前に `STRIPE_MEMBER_PRODUCT_ID` へ本番用の既存SNB MEMBER Product IDを設定すること**（値はドキュメント・Issue・PRへ書かない）。未設定のまま反映すると
     別Product `snb_member_monthly` が本番に新設される。
 - Subscription作成の前に、同じCustomerの `metadata.memberId` 一致・非キャンセルのSubscriptionをStripeで確認し、
   あれば作成せず台帳へ紐付ける（`findMembershipSubscription`）。**採用前に自動更新条件を検証**し

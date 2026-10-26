@@ -792,7 +792,7 @@ var StripeWebhookProcessor = (function () {
       return outcome_(false, 'SUBSCRIPTION_CREATE_RETRY', 'subscriptionの有無を確認できません。再試行します。');
     }
     var subscription = existingLookup.subscription;
-    /* 運営指定の既存Product（STRIPE_MEMBERSHIP_PRODUCT_ID）があればそれを使い、無ければ固定IDを使う。 */
+    /* 運営指定の既存Product（Script Property STRIPE_MEMBER_PRODUCT_ID）があればそれを使い、無ければ固定IDを使う。 */
     var configuredProductId = (stripeConfig && stripeConfig.membershipProductId) || '';
     var productId = configuredProductId || MEMBERSHIP_PRODUCT_ID_;
     if (subscription) {
