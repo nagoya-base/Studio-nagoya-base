@@ -96,7 +96,7 @@ test('createCheckoutSession: 正常系はAuthorization/Idempotency-Keyヘッダ�
 /* ===== Issue #516: Checkout Studio固定値（fixed_by_ui） ===== */
 
 var CHECKOUT_STUDIO_FORM = {
-  'ui_mode': 'hosted_page',
+  'ui_mode': 'hosted',
   'billing_address_collection': 'auto',
   'phone_number_collection[enabled]': 'false',
   'automatic_tax[enabled]': 'false',
