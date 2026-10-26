@@ -354,6 +354,7 @@
         <p>予約フォーム送信時点では予約は確定しません。内容を確認後、当方からの確定連絡をもって成立します。</p>
       </div>
 
+      {% include studio_x_booking_notice_ja.html consult_url="reservation/?intent=consult" %}
       <a class="button button-primary reveal" href="booking/" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="price" data-analytics-destination="booking_app">日時を選んで予約する</a>
 
       <div class="price-preview reveal">

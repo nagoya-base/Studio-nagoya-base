@@ -33,12 +33,12 @@
   <header class="site-header">
     <a class="brand" href="../" aria-label="Studio X トップへ"><span class="brand-name">STUDIO <b>X</b></span><span class="brand-place">KAMIMAEZU / NAGOYA</span></a>
     <nav class="desktop-nav" aria-label="メインナビゲーション"><a href="../">トップ</a><a href="../how-to/">利用ガイド</a><a href="../legal/">規約</a></nav>
-    <a class="header-cta" href="#booking-app">予約フォームへ</a>
+    <a class="header-cta" href="#booking-app-section">予約フォームへ</a>
     <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="メニューを開く"><span></span><span></span></button>
   </header>
   <div class="mobile-menu" id="mobile-menu" hidden>
     <a href="../">トップ</a><a href="../base-plan/" data-analytics-event="cta_click" data-analytics-type="base_plan_menu" data-analytics-location="header_mobile_menu" data-analytics-destination="base_plan_page">6時間貸切ベースプラン</a><a href="../how-to/">ご利用ガイド</a><a href="../legal/">利用規約・プライバシー</a>
-    <a class="mobile-menu-cta" href="#booking-app">予約フォームへ</a>
+    <a class="mobile-menu-cta" href="#booking-app-section">予約フォームへ</a>
   </div>
 
   <main id="main-content" class="subpage-main">
@@ -52,6 +52,7 @@
       <a class="button button-ghost" href="../">← Studio Xトップへ戻る</a>
       <h2 style="margin-top:24px;">仮予約フォーム</h2>
       <p class="booking-event-plan-note">着替え・荷物置き・休憩など長時間の拠点利用には、<a href="../base-plan/">6時間貸切ベースプラン（1時間1,000円・最低6時間から・8:00〜21:00・10名程度まで）</a>を下のフォームでいつでも選べます（利用開始後の途中延長はできません。有人クロークではありません）。</p>
+      {% include studio_x_booking_notice_ja.html consult_url="../reservation/?intent=consult" %}
       {% assign booking_back_url = "/studio-x/" | relative_url %}
       {% include booking_app_ja.html
         brand="studio_x"

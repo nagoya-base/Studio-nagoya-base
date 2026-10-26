@@ -558,6 +558,19 @@ footer {
 .footer-links { display: flex; gap: 24px; flex-wrap: wrap; }
 .footer-links a, footer > p { margin: 0; color: var(--muted); font-size: .67rem; text-decoration: none; }
 .footer-links a:hover { color: var(--text); }
+.booking-option-notice {
+  margin: 28px 0;
+  padding: clamp(20px, 4vw, 32px);
+  border: 1px solid var(--accent);
+  border-left-width: 4px;
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+.booking-option-notice h3 { margin: 0 0 16px; font-size: clamp(1.1rem, 3vw, 1.4rem); line-height: 1.6; }
+.booking-option-notice p:not(.section-kicker) { color: var(--muted); font-size: .88rem; }
+.booking-option-notice strong { color: var(--text); }
+.booking-option-notice .button { max-width: 100%; white-space: normal; text-align: center; }
+
 .mobile-booking { display: none; }
 
 .reveal { opacity: 0; transform: translateY(24px); transition: opacity .7s ease, transform .7s ease; }
