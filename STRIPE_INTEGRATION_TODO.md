@@ -50,7 +50,7 @@ Stripe Checkout Studioで設定したHosted CheckoutのUIパラメータを、�
 
 ### 変更ファイル構成
 
-- `gas/booking/shared/StripeGateway.gs`: Checkout Studio固定値の定数と適用関数を追加し、上記2つのSession作成ペイロードへ適用
+- `gas/booking/shared/StripeGateway.gs`: 上記2つのSession作成payloadへ、Checkout Studio固定値を直接追加（共通化・リファクタリングなし）
 - `test/stripe-gateway.test.js`: 固定値・既存値維持・mode=paymentに `payment_method_collection` が付かないことのテストを追加
 - `STRIPE_INTEGRATION_TODO.md`: 本ファイル
 
