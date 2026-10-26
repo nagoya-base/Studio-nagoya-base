@@ -109,7 +109,7 @@ test('SNB membership: SNBトップと同系統のhero（hero-ad）で、緊縛�
   var hero = textOf(html.slice(html.indexOf('<section class="hero-ad"'), html.indexOf('<section id="membership"')));
   /* textOfは日本語の前後の空白を詰めるため、空白を除いた形で比べる。 */
   ['ふたりで、3時間。縄に集中できる時間を。', 'SNB MEMBER限定「2名ペアパック」', '平日3時間 5,000円', '土日祝3時間 6,000円',
-    '緊縛・縄撮影・自主練に使いやすい、2名までの会員専用プランです。', '月額1,000円 / SNB・SNB mens・Studio X共通会員'].forEach(function (w) {
+    '緊縛・縄撮影・自主練に使いやすい、2名までの会員専用プランです。', '月額500円 / SNB・SNB mens・Studio X共通会員'].forEach(function (w) {
     assert.ok(hero.replace(/\s+/g, '').indexOf(w.replace(/\s+/g, '')) !== -1, 'heroに「' + w + '」');
   });
   assert.match(html, /<link rel="stylesheet" href="\.\.\/styles\/bondage\.css/, 'トップと同じhero用CSS');
@@ -142,7 +142,7 @@ test('Studio X membership: 「部屋料金は同じ。できることが増え�
   assert.ok(!/縄|緊縛/.test(textOf(html)), 'SNBの緊縛向け訴求を流用しない');
   /* 制度説明では共通会員 SNB MEMBER と明示 */
   var about = textOf(html.slice(html.indexOf('id="about-membership"'), html.indexOf('id="join"')));
-  assert.ok(about.replace(/\s+/g, '').indexOf('月額1,000円の共通会員SNB MEMBER'.replace(/\s+/g, '')) !== -1);
+  assert.ok(about.replace(/\s+/g, '').indexOf('月額500円の共通会員SNB MEMBER'.replace(/\s+/g, '')) !== -1);
   assert.ok(about.indexOf('Studio Nagoya Base・SNB mens・Studio Xで共通') !== -1);
   /* hero画像資産はトップと同じ */
   assert.ok(html.indexOf('images/sample_03_slant_light_1200.webp') !== -1 && read('studio-x/index.html').indexOf('images/sample_03_slant_light_1200.webp') !== -1);
@@ -180,7 +180,7 @@ test('SNB / mens 会員ページ: ペアパック・シャワー・既存有料�
   assert.ok(mens.indexOf('従来どおり、会員加入なしでも会員料金でご利用いただけます') !== -1);
   assert.ok(mens.indexOf('料金の優遇であり、SNB MEMBERの会員資格が付与されるものではありません') !== -1);
   assert.ok(mens.indexOf('SNB mens専用の別会員・別契約はありません') !== -1);
-  assert.ok(mens.indexOf('月額1,000円') !== -1);
+  assert.ok(mens.indexOf('月額500円') !== -1);
   /* 通常の会員料金表は残している（SNB） */
   assert.match(read(PAGES.snb.file), /一般料金と会員料金/);
 });
@@ -204,7 +204,7 @@ test('Studio X 会員ページ: 有料オプション全般が会員限定・無
   /* シャワー・ペアパックはStudio Xでは出さない */
   assert.ok(!/シャワー|ペアパック/.test(t.replace(/Studio Xでは提供していません/g, '')), 'Studio Xの会員ページにシャワー・ペアパックを出さない');
   assert.ok(!/シャワー|ペアパック/.test(textOf(read('studio-x/index.html'))));
-  assert.ok(t.indexOf('月額1,000円') !== -1 && t.indexOf('猶予期間はありません') !== -1);
+  assert.ok(t.indexOf('月額500円') !== -1 && t.indexOf('猶予期間はありません') !== -1);
   /* 共通の加入フォーム（専用商品・専用Success URLなし） */
   assert.match(html, /id="membership-join-form"/);
   assert.match(html, /\.\.\/\.\.\/scripts\/membership-join\.js/);
@@ -274,7 +274,7 @@ test('規約・特商法・会員条件に、新料金（5,000/6,000/1,000円）
   var xl = textOf(read('studio-x/legal/index.html'));
   ['有料のオプション（有料の機材レンタル全件、およびスタッフによる事前設営・片付け', 'セット利用などで0円になる機材も、元が有料のオプションであれば会員限定です',
     '承認時', '有料機材レンタルの会員限定は、2026年12月1日以降に作成するご予約・お申込みから適用します', 'セルフ設営・セルフ片付け（無料）、常設備品、無料のセルフ備品は、会員でない方もご利用いただけます',
-    '共通の月額会員（月額1,000円）'].forEach(function (w) { assert.ok(xl.indexOf(w) !== -1, 'Studio X規約に「' + w + '」'); });
+    '共通の月額会員（月額500円）'].forEach(function (w) { assert.ok(xl.indexOf(w) !== -1, 'Studio X規約に「' + w + '」'); });
   /* 旧前提「機材レンタル自体は会員限定ではない」が公開コピーに残っていない */
   ['studio-x/index.html', 'studio-x/legal/index.html', '_includes/equipment_catalog_ja.html', '_includes/studio_x_option_flow_ja.html', 'docs/membership-pricing-2026-12.md'].forEach(function (p) {
     var t = textOf(read(p));
