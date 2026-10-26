@@ -107,6 +107,10 @@ function setup(opts) {
     if (ctx.members === 'THROW') throw new Error('Sheets error');
     return (ctx.members[String(email).toLowerCase()] || []).indexOf(month) !== -1;
   };
+  /* Issue #532: 資格判定は日付（isMemberOnDate）。月単位のスタブへ委譲して、既存の利用月ごとの試験を保つ。 */
+  sandbox.MemberRepository.isMemberOnDate = function (email, date) {
+    return sandbox.MemberRepository.isMemberForMonth(email, String(date).substring(0, 7));
+  };
   return ctx;
 }
 

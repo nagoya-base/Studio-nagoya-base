@@ -36,6 +36,14 @@ var REFUND_AT = '2026-12-16T12:00:00+09:00';
 
 function makeStripeResponder(state) {
   return function (url, options) {
+    /* Issue #532: PaymentIntent→invoice。旧mode=payment入会Checkoutはinvoiceに紐づかない（空）。 */
+    if (url.indexOf('/invoice_payments?') !== -1) {
+      if (state.invoicePaymentsFails) return { responseCode: 500, body: { error: { type: 'api_error' } } };
+      return { responseCode: 200, body: { object: 'list', has_more: false, data: state.invoicePayments || [] } };
+    }
+    if (url.indexOf('/invoices/') !== -1) {
+      return { responseCode: 200, body: state.invoices[decodeURIComponent(url.split('/invoices/')[1])] };
+    }
     if (url.indexOf('/checkout/sessions?payment_intent=') !== -1) {
       if (state.sessionsListFails) return { responseCode: 500, body: { error: { type: 'api_error' } } };
       return { responseCode: 200, body: { data: state.sessionsForIntent } };
@@ -123,7 +131,10 @@ function refundEvent(id) {
   return { id: id, type: 'charge.refunded', created: sec(REFUND_AT), data: { object: { id: 'ch_join', object: 'charge' } } };
 }
 
-function isMember(ctx, month) { return ctx.sandbox.MemberRepository.isMemberForMonth(MEMBER_EMAIL, month); }
+/* 資格は日付（JST）で判定する（Issue #532）。月単位の既存シナリオは、その月の末日が有効かで確認する。 */
+function isMember(ctx, month) {
+  return ctx.sandbox.MemberRepository.isMemberOnDate(MEMBER_EMAIL, ctx.sandbox.MembershipRules.lastDateOfMonth(month));
+}
 function rowsOf(ctx, name) { return ctx.sheets[name] ? ctx.sheets[name]._rows.slice(1) : []; }
 
 function joined(ctx, at) {
@@ -141,7 +152,7 @@ test('全額返金: 初回決済を全額返金すると会員資格が無効に
   /* subscriptionは存在するため運営への通知つき（REJECTED）で確定するが、入会分の資格は無効になる。 */
   assert.strictEqual(result.code, 'MEMBERSHIP_REFUNDED_SUBSCRIPTION_ACTIVE');
   assert.strictEqual(isMember(ctx, '2026-12'), false);
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1, 'MemberMonthsの行は削除・改変しない');
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1, 'MemberPeriodsの行は削除・改変しない');
   assert.strictEqual(rowsOf(ctx, 'MemberRefunds').length, 1);
 
   /* 会員資格確認・二重加入判定も同じ結果を使う。 */
@@ -196,7 +207,7 @@ test('プレスタート: 10月入会の初回500円を全額返金すると、1
   receiveAndProcess(ctx, refundEvent('evt_refund_1'));
   assert.strictEqual(isMember(ctx, '2026-10'), false);
   assert.strictEqual(isMember(ctx, '2026-11'), false);
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 2);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1, '旧プレスタートの入会は1行のPeriod（入会日〜11/30）で、1つの返金で全体が無効になる');
 });
 
 test('一部返金: 全額返金と同じ扱いにせず、資格は変えない', function () {
@@ -222,7 +233,7 @@ test('継続課金: 初回決済だけ返金しても、その後の月次更新
     id: 'in_jan', object: 'invoice', billing_reason: 'subscription_cycle', status: 'paid',
     amount_paid: 500, currency: 'jpy', customer: CUSTOMER_ID,
     parent: { subscription_details: { subscription: SUBSCRIPTION_ID, metadata: { orderType: 'membership', memberId: MEMBER_ID } } },
-    lines: { data: [{ amount: 500, period: { start: sec(JAN_RENEWAL_AT), end: sec(JAN_RENEWAL_AT) + 86400 * 30 } }] },
+    lines: { data: [{ amount: 500, period: { start: sec(JAN_RENEWAL_AT), end: sec(JAN_RENEWAL_AT) + 86400 * 31 } }] },
     status_transitions: { paid_at: sec(JAN_RENEWAL_AT) + 5 }
   };
   receiveAndProcess(ctx, { id: 'evt_inv', type: 'invoice.paid', created: sec(JAN_RENEWAL_AT) + 10, data: { object: invoice } });
@@ -302,7 +313,7 @@ test('再入会: 全額返金で資格が無効になりsubscriptionも無い会
   assert.ok(mails[0].body.indexOf('checkout.stripe.com') !== -1);
   assert.ok(mails[0].body.indexOf('登録済み') === -1);
   assert.strictEqual(rowsOf(ctx, 'MemberRefunds').length, 1, '履歴は削除しない');
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
 });
 
 test('再入会: 新しい入会決済は旧返金済みの支払いに引きずられず、新しい会員資格として反映される', function () {
@@ -332,10 +343,10 @@ test('再入会: 新しい入会決済は旧返金済みの支払いに引きず
   var rejoin = receiveAndProcess(ctx, { id: 'evt_rejoin_1', type: 'checkout.session.completed', created: sec(JOIN_AT) + 3600, data: { object: { id: NEW_SESSION_ID } } });
   assert.strictEqual(rejoin.code, 'MEMBERSHIP_JOINED');
   assert.strictEqual(isMember(ctx, '2026-12'), true, '新しい支払いで資格が有効になる');
-  var months = rowsOf(ctx, 'MemberMonths');
+  var months = rowsOf(ctx, 'MemberPeriods');
   assert.strictEqual(months.length, 2, '旧履歴は残し、新しい行が追加される');
-  assert.strictEqual(months[0][3], JOIN_SESSION_ID, '旧行は改変しない');
-  assert.strictEqual(months[1][3], NEW_SESSION_ID);
+  assert.strictEqual(months[0][5], JOIN_SESSION_ID, '旧行は改変しない');
+  assert.strictEqual(months[1][5], NEW_SESSION_ID);
   assert.strictEqual(rowsOf(ctx, 'MemberRefunds').length, 1, '旧返金履歴は残る');
 });
 

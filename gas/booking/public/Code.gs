@@ -419,7 +419,24 @@ function handleGetMonthlyAvailability_(params) {
   var calendarId = BookingConfig.getCalendarId();
   var busyIntervalsByDate = CalendarRepository.getBusyIntervalsForRange(calendarId, startDate, endDate, config.timezone);
 
-  return BookingAvailability.getMonthlyAvailability(request, busyIntervalsByDate, config, new Date());
+  return withPriceGeneration_(BookingAvailability.getMonthlyAvailability(request, busyIntervalsByDate, config, new Date()), brand);
+}
+
+/*
+ * 料金世代（'V1'|'V2'）をGET応答へ付ける（Issue #532）。予約フォームがV2（SNBは2026/12/1 00:00 JST以降）で
+ * 会員の自己申告ラジオを出さないための判断を、ブラウザ端末の時計ではなくサーバーの現在時刻
+ * （BookingPricing.generationAt。createBookingの最終判定と同じ関数）に基づかせる。会員情報は一切含めない。
+ * ブランド不明・失敗応答にはそのまま返す（フォームは世代を判定できなければラジオを表示する側へ倒す）。
+ */
+function withPriceGeneration_(result, brand) {
+  if (result && result.success === true && typeof brand === 'string' && brand) {
+    try {
+      result.priceGeneration = BookingPricing.generationAt(new Date(), brand);
+    } catch (generationError) {
+      /* 世代を付けられなくても応答は変えない（フォームはラジオを表示する側へ倒す）。 */
+    }
+  }
+  return result;
 }
 
 /*
@@ -474,7 +491,8 @@ function handleEstimatePrice_(params) {
     brand: params.brand,
     date: params.date,
     durationMinutes: durationMinutes,
-    price: priceResult.price
+    price: priceResult.price,
+    priceGeneration: BookingPricing.generationAt(new Date(), params.brand)
   };
 }
 

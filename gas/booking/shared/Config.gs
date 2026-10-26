@@ -224,6 +224,12 @@ var BookingConfig = (function () {
       /* Issue #528: SNB MEMBER月会費の既存Product ID（任意）。設定時はそのProductを使い自動作成しない。
          未設定なら固定ID snb_member_monthly を取得/作成する。テスト/本番でIDが異なるためScript Propertiesで持つ。 */
       membershipProductId: properties.getProperty('STRIPE_MEMBER_PRODUCT_ID') || '',
+      /* Issue #532: SNB MEMBER月会費の既存Recurring Price ID（任意）。設定時は入会CheckoutがそのPriceを使う。
+         未設定ならProduct（上記または固定ID）に対する月額500円のprice_dataで発行する。 */
+      membershipPriceId: properties.getProperty('STRIPE_MEMBER_PRICE_ID') || '',
+      /* Issue #532: 入会受付の一時停止スイッチ。'true'のときだけ新しい入会Checkoutを発行しない
+         （STRIPE_CHECKOUT_ENABLEDとは独立。部屋予約・オプション決済・本人確認・解約・Webhookには影響しない）。 */
+      membershipJoinPaused: properties.getProperty('MEMBERSHIP_JOIN_PAUSED') === 'true',
       /* Issue #490: 会員資格確認ページ（/membership/status/）のURL。未設定なら入会Success URL（…/membership/complete.html）から導出する。 */
       membershipStatusUrl: properties.getProperty('MEMBERSHIP_STATUS_URL') || deriveMembershipStatusUrl_(properties.getProperty('STRIPE_MEMBERSHIP_SUCCESS_URL') || ''),
       /* Issue #422: ブランド別の戻り先（任意）。未設定ならBooking.resolveCheckoutReturnUrlsが
@@ -285,7 +291,7 @@ var BookingConfig = (function () {
 
   /*
    * 永久会員（Issue #480）のメールアドレス。Stripe月額会費の支払い有無・利用月に関係なく、常にactual
-   * SNB MEMBERとして扱う（MemberRepository.isMemberForMonthが唯一の判定点）。Stripe台帳は偽造しない。
+   * SNB MEMBERとして扱う（MemberRepository.isMemberOnDateが唯一の判定点）。Stripe台帳は偽造しない。
    * 既定値（下のコード内定数）に、Script Properties PERMANENT_MEMBER_EMAILS（カンマ区切り）を加える。
    * 未設定でも既定値は有効で、通常の会員判定は壊れない。公開API・フロントJSへは一切返さない。
    */

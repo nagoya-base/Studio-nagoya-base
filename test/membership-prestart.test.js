@@ -124,7 +124,7 @@ function renewalInvoice(id, periodStartIso, overrides) {
     id: id, object: 'invoice', billing_reason: 'subscription_cycle', status: 'paid',
     amount_paid: 500, currency: 'jpy', customer: CUSTOMER_ID,
     parent: { subscription_details: { subscription: SUBSCRIPTION_ID, metadata: { orderType: 'membership', memberId: MEMBER_ID } } },
-    lines: { data: [{ amount: 500, period: { start: sec(periodStartIso), end: sec(periodStartIso) + 86400 * 30 } }] },
+    lines: { data: [{ amount: 500, period: { start: sec(periodStartIso), end: sec(periodStartIso) + 86400 * 31 } }] },
     status_transitions: { paid_at: sec(periodStartIso) + 5 }
   }, overrides || {});
 }
@@ -134,7 +134,8 @@ function invoiceEvent(id, type, created, invoice) {
 }
 
 function isMember(ctx, email, month) {
-  return ctx.sandbox.MemberRepository.isMemberForMonth(email, month);
+  /* 資格は日付（JST）で判定する（Issue #532）。月単位の既存シナリオは、その月の末日が有効かで確認する。 */
+  return ctx.sandbox.MemberRepository.isMemberOnDate(email, ctx.sandbox.MembershipRules.lastDateOfMonth(month));
 }
 
 function rowsOf(ctx, sheetName) {
@@ -168,7 +169,7 @@ function subscriptionBody(ctx) {
 }
 
 function monthRows(ctx) {
-  return ctx.sheets.MemberMonths._rows.slice(1);
+  return ctx.sheets.MemberPeriods._rows.slice(1);
 }
 
 test('MembershipRules: プレスタート期間の入会は11月までをカバーし、アンカーは12/1 00:00 UTC。期間外は入会月のみ', function () {
@@ -196,9 +197,9 @@ test('プレスタート: 10/26入会は初回500円で10月・11月が有効、
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-11'), true);
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), false, '12月分は12/1の更新成功まで有効にならない');
   var rows = monthRows(ctx);
-  assert.strictEqual(rows.length, 2);
-  var total = rows.reduce(function (sum, r) { return sum + Number(r[4]); }, 0);
-  assert.strictEqual(total, 500, '課金は初回500円のみ（11月分の行は0円）');
+  assert.strictEqual(rows.length, 1, '旧mode=payment Checkoutは入会日〜11/30の1行のPeriodとして記録する（MemberMonthsへは追記しない）');
+  assert.strictEqual(ctx.sheets.MemberMonths ? ctx.sheets.MemberMonths._rows.length - 1 : 0, 0, 'MemberMonthsには新しい支払行を追記しない（凍結）');
+  assert.strictEqual(Number(rows[0][6]), 500, '課金は初回500円のみ');
   var body = subscriptionBody(ctx);
   assert.ok(body.indexOf('billing_cycle_anchor=' + sec('2026-12-01T00:00:00Z')) !== -1);
   assert.ok(body.indexOf('proration_behavior=none') !== -1);
@@ -227,14 +228,14 @@ test('プレスタート: 10月入会の再送でも支払い事実は重複せ�
   var again = joinEvent('evt_join_2');
   again.created = sec('2026-10-26T10:00:00+09:00');
   receiveAndProcess(ctx, again);
-  assert.strictEqual(monthRows(ctx).length, 2);
+  assert.strictEqual(monthRows(ctx).length, 1);
   var res = receiveAndProcess(ctx, invoiceEvent('evt_inv_dec', 'invoice.paid', sec('2026-12-01T00:00:00Z') + 10, renewalInvoice('in_dec', '2026-12-01T00:00:00Z')));
   assert.strictEqual(res.finalized, true);
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), true);
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), false);
 });
 
-test('プレスタート: 入会Checkoutメールにプレスタート条件（11/30まで・次回12/1・特典は12/1開始）を案内する', function () {
+test('入会Checkoutメール（Issue #532）: プレスタートの案内は出さず、入会日から1か月有効・入会日基準の自動更新を案内する', function () {
   var ctx = setup({ clockAt: '2026-10-26T10:00:00+09:00', properties: {
     STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/membership/complete.html', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/membership/',
     BOOKING_MAIL_DISPLAY_NAME: 'SNB', BOOKING_MAIL_REPLY_TO: 'noreply@example.com', BOOKING_CONTACT_EMAIL: 'contact@example.com'
@@ -245,8 +246,10 @@ test('プレスタート: 入会Checkoutメールにプレスタート条件（1
   assert.strictEqual(r.success, true);
   assert.ok(sent.length >= 1);
   var body = sent[0].body;
-  assert.ok(body.indexOf('11月30日まで有効') !== -1);
-  assert.ok(body.indexOf('2026年12月1日') !== -1);
+  assert.ok(body.indexOf('入会日から1か月有効') !== -1);
+  assert.ok(body.indexOf('入会日を基準に毎月自動更新') !== -1);
+  assert.strictEqual(body.indexOf('プレスタート'), -1);
+  assert.strictEqual(body.indexOf('11月30日まで有効'), -1);
 });
 
 /* ===== Web表示 ===== */

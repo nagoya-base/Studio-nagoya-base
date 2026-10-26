@@ -136,7 +136,7 @@ var OptionOrderService = (function () {
   }
 
   /*
-   * スタッフ対応は会員限定（Issue #472）。会員資格の正本は#471の会員台帳（MemberRepository.isMemberForMonth。
+   * スタッフ対応は会員限定（Issue #472）。会員資格の正本は#471の会員台帳（MemberRepository.isMemberOnDate。
    * 利用日の属する暦月の支払い事実）。新しい判定方式は持たない。メール・利用日が不正、台帳を読めない場合は
    * すべて非会員（fail-closed）。予約の経路（自社予約・スペースマーケット経由等）による例外は無い。
    */

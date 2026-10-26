@@ -143,8 +143,17 @@ test('doGet: action=estimatePriceのレスポンスはJSON MIMEタイプで返�
 test('doGet: action=estimatePriceはPIIを一切含まないレスポンスを返す（許可されたキーのみ）', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' });
   var body = callDoGet(sandbox, { action: 'estimatePrice', brand: 'snb', date: FIXED_WEEKDAY_DATE, durationMinutes: '120' });
-  var allowedKeys = ['success', 'brand', 'date', 'durationMinutes', 'price'];
+  var allowedKeys = ['success', 'brand', 'date', 'durationMinutes', 'price', 'priceGeneration'];
   Object.keys(body).forEach(function (key) {
     assert.ok(allowedKeys.indexOf(key) !== -1, '想定外のキーが含まれている: ' + key);
   });
+});
+
+test('doGet: estimatePriceはサーバーの現在時刻に基づく料金世代（priceGeneration）を返す。会員情報は含めない（Issue #532）', function () {
+  var sandbox = loadCode({ CALENDAR_ID: 'cal1' });
+  var body = callDoGet(sandbox, { action: 'estimatePrice', brand: 'snb', date: FIXED_WEEKDAY_DATE, durationMinutes: '120', email: 'taro@example.com' });
+  assert.strictEqual(body.success, true);
+  assert.ok(body.priceGeneration === 'V1' || body.priceGeneration === 'V2');
+  assert.strictEqual(JSON.stringify(body).indexOf('taro@example.com'), -1);
+  assert.strictEqual(body.priceGeneration, sandbox.BookingPricing.generationAt(new Date(), 'snb'));
 });

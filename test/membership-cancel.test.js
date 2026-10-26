@@ -177,8 +177,8 @@ test('解約: cancel_at_period_endだけをStripeへ送り（即時キャンセ�
   assert.strictEqual(memberRow(ctx).cancelAtPeriodEnd, 'TRUE');
   assert.strictEqual(memberRow(ctx).status, 'active', '即時失効しない');
   /* 支払い済みの月の末日までは有効（判定は支払い事実のまま） */
-  assert.strictEqual(ctx.sandbox.MemberRepository.isMemberForMonth(MEMBER_EMAIL, '2026-12'), true);
-  assert.strictEqual(ctx.sandbox.MemberRepository.isMemberForMonth(MEMBER_EMAIL, '2027-01'), false);
+  assert.strictEqual(ctx.sandbox.MemberRepository.isMemberOnDate(MEMBER_EMAIL, '2026-12-31'), true);
+  assert.strictEqual(ctx.sandbox.MemberRepository.isMemberOnDate(MEMBER_EMAIL, '2027-01-01'), false);
   /* 確認メール（確認リンクのメールの次） */
   var mail = ctx.sent[ctx.sent.length - 1];
   assert.strictEqual(mail.to, MEMBER_EMAIL);
@@ -312,7 +312,7 @@ test('解約: 解約後も支払済み月の末日まで有効で、Webhook（cu
   assert.strictEqual(run.results[0].finalized, true);
   assert.strictEqual(memberRow(ctx).cancelAtPeriodEnd, 'TRUE');
   assert.strictEqual(memberRow(ctx).status, 'active');
-  assert.strictEqual(ctx.sandbox.MemberRepository.isMemberForMonth(MEMBER_EMAIL, '2026-12'), true);
+  assert.strictEqual(ctx.sandbox.MemberRepository.isMemberOnDate(MEMBER_EMAIL, '2026-12-31'), true);
   var again = verify(ctx, MEMBER_EMAIL);
   assert.strictEqual(again.cancel.state, 'SCHEDULED');
   assert.strictEqual(again.status.validUntil, '2026-12-31');

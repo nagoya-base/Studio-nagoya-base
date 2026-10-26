@@ -134,12 +134,18 @@ function subscriptionEvent(id, type, created, overrides) {
   return { id: id, type: type, created: created, data: { object: subscriptionObject(overrides) } };
 }
 
+function oneMonthLater(iso) {
+  var d = new Date(Date.parse(iso));
+  d.setUTCMonth(d.getUTCMonth() + 1);
+  return d.toISOString();
+}
+
 function renewalInvoice(id, periodStartIso, overrides) {
   return Object.assign({
     id: id, object: 'invoice', billing_reason: 'subscription_cycle', status: 'paid',
     amount_paid: 500, currency: 'jpy', customer: CUSTOMER_ID,
     parent: { subscription_details: { subscription: SUBSCRIPTION_ID, metadata: { orderType: 'membership', memberId: MEMBER_ID } } },
-    lines: { data: [{ amount: 500, period: { start: sec(periodStartIso), end: sec(periodStartIso) + 86400 * 30 } }] },
+    lines: { data: [{ amount: 500, period: { start: sec(periodStartIso), end: sec(oneMonthLater(periodStartIso)) } }] },
     status_transitions: { paid_at: sec(periodStartIso) + 5 }
   }, overrides || {});
 }
@@ -148,8 +154,13 @@ function invoiceEvent(id, type, created, invoice) {
   return { id: id, type: type, created: created, data: { object: invoice } };
 }
 
+/* 資格は日付（JST）で判定する（Issue #532）。月単位の既存シナリオは、その月の末日が有効かで確認する。 */
 function isMember(ctx, email, month) {
-  return ctx.sandbox.MemberRepository.isMemberForMonth(email, month);
+  return ctx.sandbox.MemberRepository.isMemberOnDate(email, ctx.sandbox.MembershipRules.lastDateOfMonth(month));
+}
+
+function isMemberOn(ctx, email, date) {
+  return ctx.sandbox.MemberRepository.isMemberOnDate(email, date);
 }
 
 function rowsOf(ctx, sheetName) {
@@ -182,18 +193,54 @@ test('MembershipRules: メール正規化・利用月・JST月境界・翌月1�
   assert.strictEqual(R.renewalAnchorSecondsAfterMonth('2027-01'), sec('2027-02-01T00:00:00Z'));
 });
 
-test('MembershipRules: 月次更新invoiceの利用月はline itemのperiod.startから決め、想定外はfail-closed', function () {
+test('MembershipRules: 会費invoiceの有効期間はline itemのperiod.start〜endから決め（JSTの日付範囲）、想定外はfail-closed', function () {
   var R = setup().sandbox.MembershipRules;
-  assert.strictEqual(R.resolvePaidMonthOfRenewalInvoice(renewalInvoice('in_1', JAN_RENEWAL_AT)).month, '2027-01');
-  /* 旧API versionのsubscription直下のperiodと違い、invoice.period_startは「直前の期間」を指し得るため使わない。 */
+  function plain(v) { return JSON.parse(JSON.stringify(v)); }
+  /* 更新invoice: 1/1 00:00 UTC（=1/1 09:00 JST）〜2/1 00:00 UTC → 有効日は1/1〜1/31。 */
+  var jan = R.resolvePaidPeriodOfInvoice(renewalInvoice('in_1', JAN_RENEWAL_AT));
+  assert.strictEqual(jan.ok, true);
+  assert.deepStrictEqual(plain(jan.range), { startDate: '2027-01-01', endDate: '2027-01-31' });
+  /* 旧API versionのinvoice.period_start/endは「直前の期間」を指し得るため使わない。 */
   var old = renewalInvoice('in_2', FEB_RENEWAL_AT, { period_start: sec(JAN_RENEWAL_AT), period_end: sec(FEB_RENEWAL_AT) });
-  assert.strictEqual(R.resolvePaidMonthOfRenewalInvoice(old).month, '2027-02');
-  assert.strictEqual(R.resolvePaidMonthOfRenewalInvoice(renewalInvoice('in_3', JAN_RENEWAL_AT, { amount_paid: 0 })).ok, false);
-  assert.strictEqual(R.resolvePaidMonthOfRenewalInvoice(renewalInvoice('in_4', JAN_RENEWAL_AT, { status: 'open' })).ok, false);
-  assert.strictEqual(R.resolvePaidMonthOfRenewalInvoice(renewalInvoice('in_5', '2027-01-15T00:00:00Z')).code, 'PERIOD_NOT_MONTH_START');
-  var initial = R.resolvePaidMonthOfRenewalInvoice(renewalInvoice('in_6', JAN_RENEWAL_AT, { billing_reason: 'subscription_create' }));
-  assert.strictEqual(initial.ok, false);
-  assert.strictEqual(initial.ignorable, true);
+  assert.strictEqual(R.resolvePaidPeriodOfInvoice(old).range.startDate, '2027-02-01');
+  /* 新規加入（subscription_create・500円）も同じ形で期間になる。入会日基準（10/26 22:40 JST〜11/26 22:40 JST → 10/26〜11/25）。 */
+  var created = R.resolvePaidPeriodOfInvoice(renewalInvoice('in_c', '2026-10-26T22:40:00+09:00', { billing_reason: 'subscription_create' }));
+  assert.strictEqual(created.ok, true);
+  assert.deepStrictEqual(plain(created.range), { startDate: '2026-10-26', endDate: '2026-11-25' });
+  assert.strictEqual(R.resolvePaidPeriodOfInvoice(renewalInvoice('in_3', JAN_RENEWAL_AT, { amount_paid: 0 })).ok, false);
+  assert.strictEqual(R.resolvePaidPeriodOfInvoice(renewalInvoice('in_4', JAN_RENEWAL_AT, { status: 'open' })).ok, false);
+  assert.strictEqual(R.resolvePaidPeriodOfInvoice(renewalInvoice('in_4b', JAN_RENEWAL_AT, { currency: 'usd' })).code, 'UNEXPECTED_AMOUNT');
+  var noEnd = renewalInvoice('in_5', JAN_RENEWAL_AT);
+  noEnd.lines.data[0].period.end = noEnd.lines.data[0].period.start;
+  assert.strictEqual(R.resolvePaidPeriodOfInvoice(noEnd).code, 'NO_MONTHLY_LINE');
+  /* 旧方式（プレスタート会員）のsubscription作成時の$0 invoiceと、他のbilling_reasonは無視（エラーにしない）。 */
+  var zeroCreate = R.resolvePaidPeriodOfInvoice(renewalInvoice('in_6', JAN_RENEWAL_AT, { billing_reason: 'subscription_create', amount_paid: 0 }));
+  assert.strictEqual(zeroCreate.ok, false);
+  assert.strictEqual(zeroCreate.ignorable, true);
+  assert.strictEqual(R.resolvePaidPeriodOfInvoice(renewalInvoice('in_7', JAN_RENEWAL_AT, { billing_reason: 'manual' })).ignorable, true);
+});
+
+test('MembershipRules: JST日付ヘルパー（月末・2/29・年またぎ）と有効日範囲の連続判定', function () {
+  var R = setup().sandbox.MembershipRules;
+  function plain(v) { return JSON.parse(JSON.stringify(v)); }
+  assert.strictEqual(R.jstDateStringOfEpochSeconds(sec('2026-12-31T23:59:59+09:00')), '2026-12-31');
+  assert.strictEqual(R.jstDateStringOfEpochSeconds(sec('2026-12-31T15:00:00Z')), '2027-01-01');
+  assert.strictEqual(R.addDaysToDateString('2027-02-28', 1), '2027-03-01');
+  assert.strictEqual(R.addDaysToDateString('2028-02-28', 1), '2028-02-29');
+  assert.strictEqual(R.addDaysToDateString('2028-03-01', -1), '2028-02-29');
+  assert.strictEqual(R.addDaysToDateString('bad', 1), '');
+  assert.strictEqual(R.isDateString('2027-02-29'), false, '存在しない日付は不正');
+  assert.strictEqual(R.isDateString('2028-02-29'), true);
+  /* 1/31入会: 期間 1/31〜2/28（Stripeは月末に丸める）→ 有効日1/31〜2/27、更新後 2/28〜3/28 → 2/28〜3/27。切れ目なし。 */
+  assert.deepStrictEqual(plain(R.periodToValidDateRange(sec('2027-01-31T10:00:00+09:00'), sec('2027-02-28T10:00:00+09:00'))), { startDate: '2027-01-31', endDate: '2027-02-27' });
+  assert.deepStrictEqual(plain(R.periodToValidDateRange(sec('2027-02-28T10:00:00+09:00'), sec('2027-03-28T10:00:00+09:00'))), { startDate: '2027-02-28', endDate: '2027-03-27' });
+  /* うるう年: 2/29入会 → 3/29更新。 */
+  assert.deepStrictEqual(plain(R.periodToValidDateRange(sec('2028-02-29T10:00:00+09:00'), sec('2028-03-29T10:00:00+09:00'))), { startDate: '2028-02-29', endDate: '2028-03-28' });
+  assert.strictEqual(R.periodToValidDateRange(0, 1), null);
+  var ranges = [{ startDate: '2027-01-31', endDate: '2027-02-27' }, { startDate: '2027-02-28', endDate: '2027-03-27' }];
+  assert.strictEqual(R.validUntilOfRanges(ranges, '2027-02-10'), '2027-03-27', '切れ目なく更新された期間は連続として最新の末日まで');
+  assert.strictEqual(R.validUntilOfRanges(ranges, '2027-03-28'), '', '範囲外は空');
+  assert.strictEqual(R.validUntilOfRanges([{ startDate: '2027-01-31', endDate: '2027-02-27' }, { startDate: '2027-03-05', endDate: '2027-04-04' }], '2027-02-10'), '2027-02-27', '空白がある場合は延長しない');
 });
 
 test('MembershipRules: API version差（basil以降のitems.data[]直下のperiodとparent.subscription_details）を読める', function () {
@@ -218,14 +265,21 @@ test('入会: 月途中の入会は満額1,000円。日割りせず、入会日�
   assert.strictEqual(m.stripeSubscriptionId, SUBSCRIPTION_ID);
   assert.strictEqual(m.status, 'active');
 
-  var months = rowsOf(ctx, 'MemberMonths');
-  assert.strictEqual(months.length, 1);
-  assert.strictEqual(months[0][2], 'checkout_session');
-  assert.strictEqual(months[0][4], 500, '入会月は満額500円');
+  /* 旧mode=paymentのCheckoutの完了もMemberPeriodsへ記録する（MemberMonthsへは追記しない＝凍結。Issue #532）。 */
+  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 0);
+  var periods = rowsOf(ctx, 'MemberPeriods');
+  assert.strictEqual(periods.length, 1);
+  assert.strictEqual(periods[0][4], 'checkout_session');
+  assert.strictEqual(periods[0][6], 500, '入会月は満額500円');
 
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), true, '入会月は有効');
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), false, '翌月分は更新の課金成功まで有効にならない');
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-11'), false);
+  /* 入会日（12/15 JST）から当月末まで有効。入会日より前は無効。 */
+  assert.strictEqual(isMemberOn(ctx, MEMBER_EMAIL, '2026-12-14'), false);
+  assert.strictEqual(isMemberOn(ctx, MEMBER_EMAIL, '2026-12-15'), true);
+  assert.strictEqual(isMemberOn(ctx, MEMBER_EMAIL, '2026-12-31'), true);
+  assert.strictEqual(isMemberOn(ctx, MEMBER_EMAIL, '2027-01-01'), false);
 
   /* subscriptionは翌月1日00:00 UTCアンカー・日割りなし・月額500円で作成する。 */
   var post = ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/subscriptions') !== -1 && c.url.indexOf('/subscriptions?') === -1; });
@@ -272,7 +326,7 @@ test('入会: subscription作成が一時失敗しても会員・入会月は重
   assert.strictEqual(second.finalized, true);
   assert.strictEqual(second.code, 'MEMBERSHIP_JOINED');
   assert.strictEqual(rowsOf(ctx, 'Members').length, 1);
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
   assert.strictEqual(ctx.sandbox.MemberRepository.findMember({ memberId: MEMBER_ID }).record.stripeSubscriptionId, SUBSCRIPTION_ID);
 });
 
@@ -292,7 +346,7 @@ test('更新: 翌月1日の課金成功で翌月分が有効になる。翌々�
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), false);
 
   var paid = receiveAndProcess(ctx, invoiceEvent('evt_inv_jan', 'invoice.paid', sec(JAN_RENEWAL_AT) + 10, renewalInvoice('in_jan', JAN_RENEWAL_AT)));
-  assert.strictEqual(paid.code, 'MEMBERSHIP_MONTH_PAID');
+  assert.strictEqual(paid.code, 'MEMBERSHIP_PERIOD_PAID');
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), true);
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), true, '入会月の資格は維持');
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-02'), false);
@@ -302,11 +356,11 @@ test('更新: 入会時の$0 invoice（billing_reason=subscription_create）や�
   var ctx = setup();
   joined(ctx);
   var zero = renewalInvoice('in_zero', JAN_RENEWAL_AT, { billing_reason: 'subscription_create', amount_paid: 0 });
-  assert.strictEqual(receiveAndProcess(ctx, invoiceEvent('evt_zero', 'invoice.paid', sec(JOIN_AT), zero)).code, 'NOT_MONTHLY_RENEWAL');
+  assert.strictEqual(receiveAndProcess(ctx, invoiceEvent('evt_zero', 'invoice.paid', sec(JOIN_AT), zero)).code, 'NOT_MEMBERSHIP_PERIOD');
   var other = { id: 'in_other', billing_reason: 'subscription_cycle', status: 'paid', amount_paid: 3000, currency: 'jpy',
     parent: { subscription_details: { subscription: 'sub_other', metadata: {} } }, lines: { data: [] } };
   assert.strictEqual(receiveAndProcess(ctx, invoiceEvent('evt_other', 'invoice.paid', sec(JAN_RENEWAL_AT), other)).code, 'NOT_MEMBERSHIP');
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
 });
 
 /* ===== 3. 更新失敗 ===== */
@@ -366,12 +420,12 @@ test('再送: 同一イベントを複数回受けても会員・支払い事実
   var again = receiveAndProcess(ctx, event);
   assert.strictEqual(again.code, 'NOT_PROCESSED');
   assert.strictEqual(rowsOf(ctx, 'Members').length, 1);
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
 
   var inv = invoiceEvent('evt_inv_dup', 'invoice.paid', sec(JAN_RENEWAL_AT) + 10, renewalInvoice('in_jan', JAN_RENEWAL_AT));
   receiveAndProcess(ctx, inv);
   receiveAndProcess(ctx, inv);
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 2);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 2);
   assert.strictEqual(ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/subscriptions') !== -1 && c.url.indexOf('/subscriptions?') === -1; }).length, 1);
 });
 
@@ -381,12 +435,12 @@ test('再送: イベントIDが異なっても同じ入会・同じ請求なら�
   var secondJoin = receiveAndProcess(ctx, joinEvent('evt_join_other_id'));
   assert.strictEqual(secondJoin.code, 'MEMBERSHIP_JOINED');
   assert.strictEqual(rowsOf(ctx, 'Members').length, 1);
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
   assert.strictEqual(ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/subscriptions') !== -1 && c.url.indexOf('/subscriptions?') === -1; }).length, 1, 'subscriptionを二重作成しない');
 
   receiveAndProcess(ctx, invoiceEvent('evt_inv_a', 'invoice.paid', sec(JAN_RENEWAL_AT) + 10, renewalInvoice('in_jan', JAN_RENEWAL_AT)));
   receiveAndProcess(ctx, invoiceEvent('evt_inv_b', 'invoice.paid', sec(JAN_RENEWAL_AT) + 11, renewalInvoice('in_jan', JAN_RENEWAL_AT)));
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 2);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 2);
 });
 
 /* ===== 6. Webhook順序逆転 ===== */
@@ -463,7 +517,7 @@ test('予約: 台帳が空・読めない場合もfail-closedで一般料金', f
   assert.strictEqual(empty.price.tier, 'GENERAL');
 
   var broken = setup();
-  broken.sandbox.MemberRepository.isMemberForMonth = function () { throw new Error('Sheets error'); };
+  broken.sandbox.MemberRepository.isMemberOnDate = function () { throw new Error('Sheets error'); };
   var result = book(broken, { isMember: true });
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.price.tier, 'GENERAL');
@@ -496,7 +550,7 @@ test('mens: MEMBER料金でも実会員資格は付かない（会員台帳へ�
   assert.strictEqual(record.priceIsMember, true, '価格優遇フラグ');
   assert.strictEqual(record.membershipStatus, 'NOT_CHECKED', '実会員資格は付与も確認もしない');
   assert.strictEqual(rowsOf(ctx, 'Members').length, 0);
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 0);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 0);
   assert.strictEqual(isMember(ctx, 'mens-user@example.com', '2026-12'), false);
 
   /* mens予約を重ねても、SNBの会員資格には影響しない。 */
@@ -562,7 +616,7 @@ function checkoutPosts(ctx) {
   return ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/checkout/sessions') !== -1 && c.options.method === 'post'; });
 }
 
-test('入会受付: 金額はサーバー固定の1,000円・メール固定・決済手段保存つきでCheckoutを発行し、決済URLはメールでだけ伝える', function () {
+test('入会受付: 金額はサーバー固定の500円・メール固定でmode=subscriptionのCheckoutを発行し、決済URLはメールでだけ伝える（Issue #532）', function () {
   var ctx = setup({ properties: CHECKOUT_PROPERTIES });
   var result = ctx.sandbox.MembershipService.startCheckout({ email: ' Taro@Example.com ', amount: 1 });
   assert.strictEqual(result.success, true);
@@ -570,20 +624,49 @@ test('入会受付: 金額はサーバー固定の1,000円・メール固定・�
   assert.ok(JSON.stringify(result).indexOf('checkout.stripe.com') === -1, '応答に決済URLを含めない');
 
   var body = decodeURIComponent(checkoutPosts(ctx)[0].options.payload);
-  assert.ok(body.indexOf('mode=payment') !== -1);
+  assert.ok(body.indexOf('mode=subscription') !== -1);
+  assert.ok(body.indexOf('mode=payment') === -1);
   assert.ok(body.indexOf('line_items[0][price_data][unit_amount]=500') !== -1);
+  assert.ok(body.indexOf('line_items[0][price_data][recurring][interval]=month') !== -1);
+  assert.ok(body.indexOf('line_items[0][price_data][product]=snb_member_monthly') !== -1, '固定IDのProductに対する月額price_data');
   assert.ok(body.indexOf('customer_email=taro@example.com') !== -1);
-  assert.ok(body.indexOf('payment_intent_data[setup_future_usage]=off_session') !== -1);
-  assert.ok(body.indexOf('customer_creation=always') !== -1);
   assert.ok(body.indexOf('metadata[orderType]=membership') !== -1);
   assert.ok(body.indexOf('expires_at=') !== -1, 'Checkoutは短時間で失効させる');
+  /* Subscriptionへ明示的にmetadataを設定する（invoice.paid等が会員を識別できるように）。 */
+  assert.ok(body.indexOf('subscription_data[metadata][orderType]=membership') !== -1);
+  assert.ok(/subscription_data\[metadata\]\[memberId\]=MBR-/.test(body));
+  /* 旧二段階方式・毎月1日固定anchorは新規加入では使わない。 */
+  assert.ok(body.indexOf('setup_future_usage') === -1);
+  assert.ok(body.indexOf('customer_creation') === -1);
+  assert.ok(body.indexOf('billing_cycle_anchor') === -1);
+  assert.ok(body.indexOf('payment_method_collection=always') !== -1);
+  assert.ok(body.indexOf('submit_type') === -1, 'submit_typeはmode=paymentのみ');
 
   var mails = ctx.globals.MailApp._sentEmails;
   assert.strictEqual(mails.length, 1);
   assert.strictEqual(mails[0].to, 'taro@example.com');
   assert.ok(mails[0].body.indexOf('https://checkout.stripe.com/c/pay/cs_new') !== -1);
+  assert.ok(mails[0].body.indexOf('入会日から1か月有効') !== -1);
+  assert.ok(mails[0].body.indexOf('プレスタート') === -1, 'プレスタートの案内は新規加入に出さない');
 
   assert.strictEqual(ctx.sandbox.MembershipService.startCheckout({ email: 'bad' }).error.code, 'INVALID_EMAIL');
+});
+
+test('入会受付: STRIPE_MEMBER_PRICE_ID（既存Recurring Price）があればそのPriceを使いprice_dataを送らない', function () {
+  var ctx = setup({ properties: Object.assign({ STRIPE_MEMBER_PRICE_ID: 'price_fixture_member' }, CHECKOUT_PROPERTIES) });
+  assert.strictEqual(ctx.sandbox.MembershipService.startCheckout({ email: MEMBER_EMAIL }).success, true);
+  var body = decodeURIComponent(checkoutPosts(ctx)[0].options.payload);
+  assert.ok(body.indexOf('line_items[0][price]=price_fixture_member') !== -1);
+  assert.ok(body.indexOf('price_data') === -1);
+  assert.ok(body.indexOf('mode=subscription') !== -1);
+});
+
+test('入会受付: STRIPE_MEMBER_PRODUCT_ID指定時はその既存Productを使い、Productを新規作成しない', function () {
+  var ctx = setup({ properties: Object.assign({ STRIPE_MEMBER_PRODUCT_ID: 'prod_fixture_member' }, CHECKOUT_PROPERTIES) });
+  assert.strictEqual(ctx.sandbox.MembershipService.startCheckout({ email: MEMBER_EMAIL }).success, true);
+  var body = decodeURIComponent(checkoutPosts(ctx)[0].options.payload);
+  assert.ok(body.indexOf('line_items[0][price_data][product]=prod_fixture_member') !== -1);
+  assert.strictEqual(ctx.stripeCalls.filter(function (c) { return /\/v1\/products$/.test(c.url); }).length, 0);
 });
 
 /* ===== 入会元ブランド別の戻り先（Issue #504） ===== */
@@ -778,7 +861,7 @@ test('二重加入防止（Webhook最終防御）: 同一メール・同一月�
   assert.strictEqual(result.code, 'MEMBERSHIP_DUPLICATE_JOIN');
   assert.strictEqual(result.finalized, true);
   assert.strictEqual(rowsOf(ctx, 'Members').length, 1);
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
   assert.strictEqual(subCalls(), 1, '二重にsubscriptionを作らない');
   var recorded = Object.keys(ctx.sheets).some(function (name) {
     return ctx.sheets[name]._rows.some(function (row) { return row.indexOf('STRIPE_WEBHOOK_MEMBERSHIP_DUPLICATE_JOIN') !== -1; });
@@ -871,7 +954,7 @@ test('#528 Stripeに同じ会員のsubscriptionが既にあれば作成せず台
   assert.strictEqual(result.code, 'MEMBERSHIP_JOINED');
   assert.strictEqual(subscriptionPosts(ctx).length, 0, '既存があれば作成しない');
   assert.strictEqual(ctx.sandbox.MemberRepository.findMember({ memberId: MEMBER_ID }).record.stripeSubscriptionId, SUBSCRIPTION_ID);
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
 });
 
 test('#528 既存subscriptionが自動更新の条件を満たさなければ新規作成も採用もせず要復旧にする', function () {
@@ -945,7 +1028,7 @@ test('#528 subscription作成の確定的な失敗: 初回分の資格は維持�
   assert.strictEqual(result.finalized, true);
   assert.strictEqual(result.code, 'MEMBERSHIP_SUBSCRIPTION_CREATE_FAILED');
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), true, '初回支払済みの資格は取り消さない');
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
   var logs = ctx.globals.Logger._logs.map(String).filter(function (l) { return l.indexOf('subscription作成に失敗') !== -1; });
   assert.strictEqual(logs.length, 1);
   assert.ok(logs[0].indexOf('httpStatus=400') !== -1);
@@ -961,7 +1044,7 @@ test('#528 再送: 同じ入会イベントを再処理してもsubscription・�
   receiveAndProcess(ctx, joinEvent());
   receiveAndProcess(ctx, joinEvent('evt_join_dup'));
   assert.strictEqual(subscriptionPosts(ctx).length, 1);
-  assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 1);
   assert.strictEqual(ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/checkout/sessions') !== -1 && c.options.method === 'post'; }).length, 0);
 });
 

@@ -1,3 +1,44 @@
+## Issue #532: SNB MEMBERを入会日基準の月額Subscriptionへ簡素化（PR-A: GAS・テスト）
+
+Issue #532の本文を正本として、新規加入をStripe標準に近い月額Subscriptionへ簡素化した。**PR-A（このREADMEを含むGAS・テスト）とPR-B（サイト・UI）は別PR**で、本番への切り替えは「Issue #532 §12」の手順（オーナーが手動）で行う。PRブランチから本番デプロイしない。
+
+### 新規加入（入会日基準）
+- 月額500円（税込）。Checkout `mode=subscription` で、入会日に初回500円を請求し、入会日から1か月有効・以後は入会日を基準に毎月自動更新する（毎月1日固定の `billing_cycle_anchor` は使わない）。例: 10/26入会 → 10/26〜11/25有効 → 11/26に自動更新。
+- 初回単発Checkout（`mode=payment`）→ 後段のSubscription作成（`createMembershipSubscription`）の二段階方式は新規加入では使わない。3Dセキュア/SCAはStripe CheckoutのSubscriptionフローに委ねる。
+- Subscriptionへ明示的にmetadata（`subscription_data[metadata][orderType]=membership` / `[memberId]`）を設定する（`invoice.paid` が `invoice.parent.subscription_details.metadata` から会員を識別できる）。
+- 価格: `STRIPE_MEMBER_PRICE_ID`（既存のRecurring Price。任意）があればそれを使う。無ければProduct（`STRIPE_MEMBER_PRODUCT_ID`、未設定なら固定ID `snb_member_monthly` を取得/作成）に対する月額500円の `price_data`。**Product ID / Price ID等の実値はコード・Issue・PR・ログに書かない**（Script Propertiesで持つ）。
+- 既存プレスタート会員は課金日を移行しない（11/30まで有効・12/1更新・以後毎月1日。Subscriptionの再作成・anchor変更・追加請求なし）。プレスタートの新規受付は、Booking Publicの切り替え時点で終了する。
+- デプロイ前に発行済みの旧 `mode=payment` Checkoutの完了は、Webhook側の旧経路（`handleMembershipJoin_`）が処理する（即削除しない）。旧経路の資格も `MemberMonths` ではなく `MemberPeriods`（入会日〜当月末／プレスタートは11/30）へ記録する。`existingSubscriptionProblems`（#528）の月初アンカー検証は旧経路のみ。
+
+### 会員資格の正本＝支払済みPeriod（`MemberPeriods`）
+- 追記専用の新シート `MemberPeriods`（`memberId / subscriptionId / periodStart / periodEnd / sourceType / sourceId / amount / paidAt / eventId / recordedAt`）。`sourceId`（invoice ID）で冪等。記録契機は `invoice.paid`（`billing_reason=subscription_create` / `subscription_cycle`・500円・JPY・paid）で、期間は対象line itemの `period.start` / `period.end`。旧方式（プレスタート会員）のSubscription作成時の$0 invoiceと他のbilling_reasonは無視する。
+- **到着順に依存しない**: `checkout.session.completed`（会員行の作成）と `invoice.paid`（Period記録）はどちらが先に届いても同じ結果になる。`invoice.paid` はinvoiceのmetadata（orderType / memberId）とsubscription IDを根拠に会員行が無くても記録し（`MEMBERSHIP_MEMBER_NOT_FOUND` で確定しない）、会員行とは `memberId` または `subscriptionId` で結び付く。入会Checkout完了前に届いたsubscription系イベントは、保留中の入会に限り対象外にし、完了時にSubscriptionの最新状態を取得して記録する。
+- 有効日はJSTの日付単位: `periodStart`のJST日付〜`periodEnd`のJST日付の前日（例: 10/26 22:40 JST〜11/26 22:40 JST → 10/26〜11/25）。更新の課金成功（`invoice.paid`）が記録されるまで、未来のPeriodは会員扱いしない。
+- `MembershipRules.verifyActualMembership(email, dateString)` のシグネチャは維持し、中身を `MemberRepository.isMemberOnDate`（支払済みPeriod ＋ 旧 `MemberMonths` の支払済み暦月 ＋ 永久会員の合算。全額返金された支払いは除外）へ差し替えた。Subscriptionの `status` / `cancel_at_period_end` / `past_due` は状態表示・運用判断には使うが、資格の直接の正本にはしない。
+- **`MemberMonths` は凍結**: デプロイ以降、新しい支払行を追記しない（旧1日anchor会員の12/1以降の更新も `MemberPeriods` へ）。既存行は削除せず過去分として合算する。
+
+### 料金・特典・90日先行予約
+- 会員料金・ペアパック・シャワー・Studio X会員限定オプションは**利用日**が有効期間内の場合のみ適用する（予約作成日が会員でも、利用日が未決済の未来期間なら一般料金。確定済みの予約は更新成功後も再計算しない）。
+- 90日先行予約の可否だけは**予約作成日（JSTの今日）**が有効日範囲に入るかで判定する（`verifyAdvanceBookingMembership` の意味は維持）。
+- 送信前の会員照会APIは作らない。`estimatePrice` は従来どおり会員台帳を読まず一般料金で見積もる。確定額は `createBooking` の応答が正。
+- V1（〜2026/11/30作成）は自己申告（`isMember`）の経路を残す。V2（2026/12/1 00:00 JST以降）はサーバーが予約メールと会員台帳から自動判定し、`isMember=true` を改ざん送信されても台帳の結果を正とする。フォームのV1/V2表示切替はブラウザ端末の時計ではなく、GET応答（`estimatePrice` / `monthly`）に追加した `priceGeneration`（`BookingPricing.generationAt` による料金世代。会員情報は含まない）に従う。
+
+### 返金（更新invoiceの全額返金）
+- `charge.refunded` → Chargeを再取得 → **invoiceを特定**: 2025-03-31.basil より前のAPI versionでは `Charge.invoice`、それ以降は ChargeとPaymentIntentから `invoice` が削除されているため Invoice Payments API（`GET /v1/invoice_payments?payment[type]=payment_intent&payment[payment_intent]=...`）で引く（Stripe公式仕様）。invoiceが会費invoice（`subscription_create` / `subscription_cycle`・500円・orderType=membershipまたは既知のSubscription）なら `MemberRefunds` へ `(invoice, invoice ID)` を追記し、`MemberPeriods.sourceId` と照合して該当Periodを資格判定から外す。全額返金のみ除外し、一部返金は変えない。invoiceに紐づかない決済は旧 `mode=payment` 入会Checkout（Charge→PaymentIntent→Checkout Session）として照合する。旧 `MemberMonths` は既存の返金台帳との整合を維持する。
+- 本番で実際に使用されているStripe APIバージョンの確認結果はPR本文を参照（コードは両方式に対応している）。
+
+### status表示（`/membership/status/`）と解約
+- 有効期限: 新方式は資格のある最新Periodの `periodEnd` の前日（JST）、旧 `MemberMonths` のみの会員はその月の末日。次回更新日: Subscriptionが有効で `cancel_at_period_end=false` の場合のみ、最新Periodの `periodEnd` の日付（JST。旧1日anchor会員は毎月1日）。解約予約済みは次回更新なし。
+- 解約は `cancel_at_period_end=true`（支払済み期間末まで有効・日割り返金なし）。
+
+### 二重加入
+- 受付時: 会員資格あり（支払済みPeriod・旧MemberMonths・永久会員・subscription有効）／保留中Checkoutあり → 新しい加入Checkoutを発行しない（応答は常に同じ形）。
+- `mode=subscription` ではWebhook到着時点で既に請求済みになり得るため、同じメールで有効な別会員が判明した場合は、**新しいSubscriptionを即時キャンセル**（`DELETE /v1/subscriptions/{id}`）し、会員行を作らず要復旧として管理者へ通知する（自動返金はしない。返金の要否は運営が判断）。
+
+### 入会受付の一時停止スイッチ（本番切替用）
+- Script Property `MEMBERSHIP_JOIN_PAUSED`: 値が `'true'` のときだけ `MembershipService.startCheckout` は新しい入会Checkout Sessionを発行せず、`MEMBERSHIP_JOIN_PAUSED`（「現在、入会受付を一時停止しています。しばらくしてから再度お試しください。」。`CHECKOUT_DISABLED` と同じ応答形）を返す。未設定・`'true'` 以外は従来どおり。`STRIPE_CHECKOUT_ENABLED` とは完全に独立で、部屋予約・オプションのカード決済・本人確認リンク・解約・Webhook処理は止めない。
+- 本番切替手順（オーナーが手動。Issue #532 §12）: ①PR-Aをmain→②Booking Admin / Webhookを本番デプロイして `mode=subscription` / `invoice.paid` / `MemberPeriods` / 返金処理が受けられる状態を確認→③`MEMBERSHIP_JOIN_PAUSED=true`→④旧Checkoutの有効期限（最大35分、Webhook猶予込みで45分）待ち→⑤Booking Public本番デプロイ→⑥直後にPR-Bをmain（GitHub Pages公開）→⑦`MEMBERSHIP_JOIN_PAUSED`を削除して受付再開。手順3〜7の間は新しい入会Checkout Sessionを発行しない。
+
 
 ## Issue #492: Studio X新料金の即時適用（2026/10/26）と6時間貸切ベースプランの常設化
 
