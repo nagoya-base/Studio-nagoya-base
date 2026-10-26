@@ -35,15 +35,15 @@ test('doGet: action=estimatePriceは料金計算を返す（studio_x・平日3�
   var body = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: '180' });
 
   assert.strictEqual(body.success, true);
-  /* 見積りは現在時刻の料金世代で計算する。Studio Xの非会員はV1=6,000円、V2（2026/12/1〜）は共通のセルフ利用基本料金3,600円（Issue #486）。 */
-  assert.strictEqual(body.price.amount, Date.now() >= Date.parse('2026-12-01T00:00:00+09:00') ? 3600 : 6000);
+  /* 見積りは現在時刻の料金世代で計算する。Studio Xの非会員はV1=6,000円、V2（2026/10/26〜。Issue #492で前倒し）は共通のセルフ利用基本料金3,600円（Issue #486）。 */
+  assert.strictEqual(body.price.amount, Date.now() >= Date.parse('2026-10-26T00:00:00+09:00') ? 3600 : 6000);
   assert.strictEqual(body.price.tier, 'GENERAL');
   assert.strictEqual(body.price.dayType, 'WEEKDAY');
 });
 
-test('doGet: action=estimatePriceのstudio_x会員料金は2026/12/1 0:00 JSTで廃止される（Issue #470。見積りは現在時刻の料金世代）', function () {
+test('doGet: action=estimatePriceのstudio_x会員料金は2026/10/26 0:00 JSTで廃止される（Issue #470 / #492。見積りは現在時刻の料金世代）', function () {
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' });
-  var abolished = Date.now() >= Date.parse('2026-12-01T00:00:00+09:00');
+  var abolished = Date.now() >= Date.parse('2026-10-26T00:00:00+09:00');
   var member = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: '180', isMember: '1' });
   assert.strictEqual(member.price.tier, abolished ? 'GENERAL' : 'MEMBER');
   assert.strictEqual(member.price.amount, abolished ? 3600 : 5500);
@@ -83,7 +83,7 @@ test('doGet: action=estimatePriceは平日に当たる祝日も土日祝料金�
   var body = callDoGet(sandbox, { action: 'estimatePrice', brand: 'studio_x', date: '2026-11-23', durationMinutes: '120' });
   assert.strictEqual(body.success, true);
   assert.strictEqual(body.price.dayType, 'WEEKEND_HOLIDAY');
-  assert.strictEqual(body.price.amount, 5000);
+  assert.strictEqual(body.price.amount, Date.now() >= Date.parse('2026-10-26T00:00:00+09:00') ? 3000 : 5000);
 });
 
 test('doGet: action=estimatePriceは祝日判定に対応していない年（対応範囲外）を明示的なエラーとして返す（Issue #346。黙って平日料金にしない）', function () {

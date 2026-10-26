@@ -279,13 +279,13 @@ test('createBooking: 利用料金をGAS側で計算し、Sheetsへ保存する�
   );
 
   assert.strictEqual(result.success, true);
-  assert.strictEqual(result.price.amount, 6000);
+  assert.strictEqual(result.price.amount, 3600, 'Studio Xは2026/10/26以降の作成分からセルフ利用基本料金（Issue #492）');
   assert.strictEqual(result.price.tier, 'GENERAL');
   assert.strictEqual(result.price.dayType, 'WEEKDAY');
   assert.strictEqual(result.price.currency, 'JPY');
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
-  assert.strictEqual(found.record.priceAmount, 6000, '保存された金額はレスポンスと一致するべき');
+  assert.strictEqual(found.record.priceAmount, 3600, '保存された金額はレスポンスと一致するべき');
   assert.strictEqual(found.record.priceTier, 'GENERAL');
   assert.strictEqual(found.record.priceDayType, 'WEEKDAY');
   assert.strictEqual(found.record.priceIsMember, false);
@@ -303,22 +303,33 @@ test('createBooking: mensはisMember未送信でも常に会員料金で保存�
   assert.strictEqual(mensFound.record.priceIsMember, true);
 });
 
-test('createBooking: studio_xの会員料金は2026/11/30までの新規予約（V1）では有効、2026/12/1以降（V2）は廃止（Issue #470 / #486。V2は共通のセルフ利用基本料金）', function () {
+test('createBooking: studio_xの会員料金は2026/10/25までの新規予約（V1）では有効、2026/10/26以降（V2）は廃止（Issue #470 / #486 / #492。V2は共通のセルフ利用基本料金）', function () {
   [
-    { now: '2026-11-30T23:59:59+09:00', isMember: true, amount: 5500, tier: 'MEMBER', generation: 'V1' },
-    { now: '2026-11-30T23:59:59+09:00', isMember: false, amount: 6000, tier: 'GENERAL', generation: 'V1' },
-    { now: '2026-12-01T00:00:00+09:00', isMember: true, amount: 3600, tier: 'GENERAL', generation: 'V2' },
-    { now: '2026-12-01T00:00:00+09:00', isMember: false, amount: 3600, tier: 'GENERAL', generation: 'V2' }
+    { now: '2026-10-25T23:59:59+09:00', isMember: true, amount: 5500, tier: 'MEMBER', generation: 'V1' },
+    { now: '2026-10-25T23:59:59+09:00', isMember: false, amount: 6000, tier: 'GENERAL', generation: 'V1' },
+    { now: '2026-10-26T00:00:00+09:00', isMember: true, amount: 3600, tier: 'GENERAL', generation: 'V2' },
+    { now: '2026-10-26T00:00:00+09:00', isMember: false, amount: 3600, tier: 'GENERAL', generation: 'V2' }
   ].forEach(function (c) {
     var ctx = setup();
     var result = ctx.sandbox.BookingRepository.createBooking(
-      validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180, isMember: c.isMember }), new Date(c.now)
+      validPayload({ brand: 'studio_x', date: '2026-11-16', durationMinutes: 180, isMember: c.isMember }), new Date(c.now)
     );
     assert.strictEqual(result.price.amount, c.amount, JSON.stringify(c));
     assert.strictEqual(result.price.tier, c.tier);
     var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId).record;
     assert.strictEqual(record.priceGeneration, c.generation);
     assert.strictEqual(record.priceIsMember, c.tier === 'MEMBER');
+  });
+});
+
+test('createBooking: SNB / mensの料金世代の境界は2026/12/1のまま。Studio Xだけ2026/10/26へ前倒し（Issue #492）', function () {
+  ['snb', 'mens'].forEach(function (brand) {
+    var ctx = setup();
+    var result = ctx.sandbox.BookingRepository.createBooking(
+      validPayload({ brand: brand, date: '2026-11-16', durationMinutes: 180 }), new Date('2026-10-26T00:00:00+09:00')
+    );
+    assert.strictEqual(result.success, true, brand);
+    assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId).record.priceGeneration, 'V1', brand + ': 10/26時点はまだV1');
   });
 });
 
@@ -359,7 +370,7 @@ test('createBooking: 土曜・日曜はいずれも土日祝料金として保�
   var result = ctx.sandbox.BookingRepository.createBooking(
     validPayload({ brand: 'studio_x', date: FIXED_SATURDAY_DATE, durationMinutes: 120 }), FIXED_NOW
   );
-  assert.strictEqual(result.price.amount, 5000);
+  assert.strictEqual(result.price.amount, 3000);
   assert.strictEqual(result.price.dayType, 'WEEKEND_HOLIDAY');
 });
 
@@ -370,11 +381,11 @@ test('createBooking: 平日に当たる祝日も土日祝料金として保存�
     validPayload({ brand: 'studio_x', date: '2026-11-23', durationMinutes: 120 }), new Date('2026-11-01T12:00:00+09:00')
   );
   assert.strictEqual(result.success, true);
-  assert.strictEqual(result.price.amount, 5000);
+  assert.strictEqual(result.price.amount, 3000);
   assert.strictEqual(result.price.dayType, 'WEEKEND_HOLIDAY');
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
-  assert.strictEqual(found.record.priceAmount, 5000, '保存された金額は祝日料金であるべき');
+  assert.strictEqual(found.record.priceAmount, 3000, '保存された金額は祝日料金であるべき');
   assert.strictEqual(found.record.priceDayType, 'WEEKEND_HOLIDAY');
 });
 
@@ -409,10 +420,10 @@ test('createBooking: フロントエンドから送られた金額・料金関�
 
   var result = ctx.sandbox.BookingRepository.createBooking(tamperedPayload, FIXED_NOW);
   assert.strictEqual(result.success, true);
-  assert.strictEqual(result.price.amount, 6000, '改ざんされた金額(1円)ではなく、サーバー計算値(6,000円)が使われるべき');
+  assert.strictEqual(result.price.amount, 3600, '改ざんされた金額(1円)ではなく、サーバー計算値(3,600円)が使われるべき');
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
-  assert.strictEqual(found.record.priceAmount, 6000);
+  assert.strictEqual(found.record.priceAmount, 3600);
 });
 
 test('createBooking: 予約完了画面が使うレスポンスのpriceは、Sheetsへ保存された金額と一致する', function () {
@@ -1230,7 +1241,7 @@ test('管理者通知 (Issue #342): 利用者向け仮予約受付メールと�
 
   var adminMail = mailApp._sentEmails.filter(function (m) { return m.to === 'admin@example.com'; })[0];
   assert.ok(adminMail, '管理者通知メールが送られるべき');
-  assert.match(adminMail.body, /利用料金: 6,000円（税込）/);
+  assert.match(adminMail.body, /利用料金: 3,600円（税込）/);
   assert.match(adminMail.body, new RegExp(result.bookingId));
 });
 

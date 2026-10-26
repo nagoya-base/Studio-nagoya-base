@@ -99,19 +99,17 @@ var BookingReschedule = (function () {
   }
 
   /*
-   * イベント開催日限定プラン（Issue #488）の日程変更時の扱い。プラン付きの予約は6時間固定・対象日のみで
-   * 成立する商品のため、変更先が対象日でない・6時間でない場合は、通常料金へ黙って切り替えず、
-   * 全入口（Admin画面・直接呼び出し）で同じコードにより拒否する。管理者は対象日へ変更するか、
-   * 予約を取り消して通常料金で取り直す（既存の取消・返金手順）。プラン付きでない予約には何もしない。
+   * 貸切ベースプラン（Issue #488 / #492。常設）の日程変更時の扱い。プラン付きの予約は6時間固定の商品のため、
+   * 変更先が6時間でない場合は、通常料金へ黙って切り替えず、全入口（Admin画面・直接呼び出し）で同じコードにより
+   * 拒否する。Issue #492で対象イベント日の条件は廃止したので、Studio Xの予約可能日であれば変更できる。
+   * 通常予約への変換は未対応のため、通常料金に切り替える場合は予約を取り消して取り直す（既存の取消・返金手順）。
+   * プラン付きでない予約には何もしない。
    */
   function eventPlanRejection_(record, newDateString, newDurationMinutes) {
     if (!BookingPricing.isEventPlan(record.planCode)) return null;
     var label = BookingPricing.planLabel(record.planCode);
     if (newDurationMinutes !== BookingPricing.EVENT_BASE_PLAN_HOURS * 60) {
       return error_('PLAN_DURATION_INVALID', label + 'は6時間固定のため、利用時間は変更できません。');
-    }
-    if (EventPlanRepository.listEligibleDates(record.planCode).indexOf(newDateString) === -1) {
-      return error_('EVENT_PLAN_DATE_NOT_ELIGIBLE', label + 'は対象のイベント開催日のみご利用いただけます。対象日へ変更するか、予約を取り消して通常料金で予約し直してください。');
     }
     return null;
   }
@@ -299,7 +297,6 @@ var BookingReschedule = (function () {
     var quote = FeeCalculator.quoteFee({
       brand: record.brand, priceTier: baseline.priceTier, generation: baseline.priceGeneration,
       plan: baseline.plan,
-      eventDates: BookingPricing.isEventPlan(baseline.plan) ? EventPlanRepository.listEligibleDates(baseline.plan) : undefined,
       durationMinutes: newDurationMinutes, dateString: newDateString
     });
     if (!quote.supported) {

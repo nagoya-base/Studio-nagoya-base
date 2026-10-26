@@ -105,8 +105,7 @@
       PLAN_DURATION_INVALID: '2名ペアパックは3時間以上でご利用ください。',
       PLAN_NOT_AVAILABLE: 'このプランは現在ご利用いただけません（会員限定の2名ペアパックは2026年12月1日からのご提供です）。',
       INVALID_PLAN: 'プランの指定が正しくありません。ページを開き直してください。',
-      /* Issue #488: 大須コスプレイベント開催日限定の貸切ベースプラン。 */
-      EVENT_PLAN_DATE_NOT_ELIGIBLE: '貸切ベースプランは、対象のイベント開催日のみご利用いただけます。対象日を選ぶか、プランの選択を外して通常料金でご予約ください。',
+      /* Issue #488 / #492: 6時間貸切ベースプラン（常設）。 */
       EVENT_PLAN_PEOPLE_EXCEEDED: '貸切ベースプランのご利用は1〜4名までです。人数を変更するか、プランの選択を外してください。',
       INTERNAL_ERROR: '予約処理中にエラーが発生しました。しばらくしてから再度お試しください。'
     },
@@ -141,8 +140,7 @@
       PLAN_DURATION_INVALID: 'The pair pack requires at least 3 hours.',
       PLAN_NOT_AVAILABLE: 'This plan is not available right now.',
       INVALID_PLAN: 'The plan is not valid. Please reload the page.',
-      EVENT_PLAN_DATE_NOT_ELIGIBLE: 'The event-day private base plan is available only on the designated event dates.',
-      EVENT_PLAN_PEOPLE_EXCEEDED: 'The event-day private base plan is for 1 to 4 guests.',
+      EVENT_PLAN_PEOPLE_EXCEEDED: 'The 6-hour private base plan is for 1 to 4 guests.',
       INTERNAL_ERROR: 'An error occurred while processing your request. Please try again in a moment.'
     }
   };
@@ -214,8 +212,7 @@
       code === 'PLAN_DURATION_INVALID' ||
       code === 'PLAN_NOT_AVAILABLE' ||
       code === 'INVALID_PLAN' ||
-      /* Issue #488: 貸切ベースプランの対象日・人数も、選択を直せば解消する。 */
-      code === 'EVENT_PLAN_DATE_NOT_ELIGIBLE' ||
+      /* Issue #488: 貸切ベースプランの人数も、選択を直せば解消する。 */
       code === 'EVENT_PLAN_PEOPLE_EXCEEDED'
     ) {
       return 'edit-details';
@@ -431,7 +428,7 @@
     /* Issue #478: 会員限定の2名ペアパック（独立プラン）とシャワー。選択したときだけ送る（未選択ならキー自体を付けず、
        従来のペイロードは1バイトも変わらない）。金額・会員資格は送らない（サーバーが再計算・確認する）。 */
     if (s.plan === PAIR_PACK_PLAN_CODE) payload.plan = PAIR_PACK_PLAN_CODE;
-    /* Issue #488: 大須コスプレイベント開催日限定の貸切ベースプラン。金額・対象日の可否は送らない（サーバーが判定する）。 */
+    /* Issue #488 / #492: 6時間貸切ベースプラン（常設）。金額・可否は送らない（サーバーが判定する）。 */
     if (s.plan === EVENT_BASE_PLAN_CODE) payload.plan = EVENT_BASE_PLAN_CODE;
     if (s.shower === true) payload.options = { shower: true };
     return payload;
@@ -925,7 +922,7 @@
    * （estimatePrice/createBooking。gas/booking/shared/BookingPricing.gs）から取得する。
    */
 
-  /* snbは会員自己申告欄を出す。Studio Xは会員料金の廃止（Issue #470）が2026/12/1 0:00 JST
+  /* snbは会員自己申告欄を出す。Studio Xは会員料金の廃止（Issue #470 / #492）が2026/10/26 0:00 JST
      から（新料金世代V2）のため、それ以前だけ出す。mensは予約導線で常にMEMBER料金が自動適用
      されるため出さない（BookingPricing.gsのresolveTier_と同じ分岐。ここでは表示制御のみで、
      最終的な料金はサーバーが予約作成時刻で判定する）。 */
@@ -952,28 +949,18 @@
 
   var PAIR_PACK_PLAN_CODE = 'member_pair_3h';
 
-  /* Issue #488: 貸切ベースプラン。6時間固定・最大4名。対象日の正本はGAS（EventPlanDatesシート）で、
-     ここは画面の早期ガードと表示用の整形だけを持つ。 */
+  /* Issue #488 / #492: 6時間貸切ベースプラン（常設）。6時間固定・最大4名・6,000円。
+     可否の正本はGAS。ここは画面の早期ガードと表示用の定数だけを持つ。 */
   var EVENT_BASE_PLAN_CODE = 'osu_cosplay_base_6h';
   var EVENT_BASE_PLAN_HOURS = 6;
+  var EVENT_BASE_PLAN_LABEL = 'Studio X｜6時間貸切ベースプラン（6,000円）';
 
   function isEventPlanPeopleValue(people) {
     if (!people) return true;
     return people === '1名' || people === '2名' || people === '3名' || people === '4名';
   }
 
-  function isEventPlanDate(dateValue, dates) {
-    return Array.isArray(dates) && dates.indexOf(dateValue) !== -1;
-  }
-
-  /* 'YYYY-MM-DD' → '11月3日(月)'。曜日はUTC基準で求める（ブラウザのtimezoneに依存しない）。 */
-  function formatEventPlanDate(dateValue) {
-    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateValue));
-    if (!m) return String(dateValue);
-    var weekday = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).getUTCDay();
-    return Number(m[2]) + '月' + Number(m[3]) + '日(' + '日月火水木金土'.charAt(weekday) + ')';
-  }
-  var STUDIO_X_MEMBER_OPTION_END_MS_ = Date.parse('2026-12-01T00:00:00+09:00');
+  var STUDIO_X_MEMBER_OPTION_END_MS_ = Date.parse('2026-10-26T00:00:00+09:00');
 
   function brandShowsMemberOption(brand, nowMs) {
     if (MEMBER_OPTION_BRANDS_.indexOf(brand) === -1) return false;
@@ -1078,9 +1065,8 @@
     PAIR_PACK_PLAN_CODE: PAIR_PACK_PLAN_CODE,
     EVENT_BASE_PLAN_CODE: EVENT_BASE_PLAN_CODE,
     EVENT_BASE_PLAN_HOURS: EVENT_BASE_PLAN_HOURS,
+    EVENT_BASE_PLAN_LABEL: EVENT_BASE_PLAN_LABEL,
     isEventPlanPeopleValue: isEventPlanPeopleValue,
-    isEventPlanDate: isEventPlanDate,
-    formatEventPlanDate: formatEventPlanDate,
     formatJpyAmount: formatJpyAmount,
     priceComputingLabel: priceComputingLabel,
     priceUnavailableLabel: priceUnavailableLabel

@@ -270,9 +270,9 @@ function setupForBrand(brand) {
   return { elements: elements };
 }
 
-test('Issue #470: 会員自己申告欄はsnbで表示、studio_xは2026/12/1 0:00 JSTまで表示（以後は非表示）、mensは非表示', function () {
+test('Issue #470 / #492: 会員自己申告欄はsnbで表示、studio_xは2026/10/26 0:00 JSTまで表示（以後は非表示）、mensは非表示', function () {
   assert.strictEqual(setupForBrand('snb').elements['ba-member-field'].hidden, false);
-  var studioXVisible = Date.now() < Date.parse('2026-12-01T00:00:00+09:00');
+  var studioXVisible = Date.now() < Date.parse('2026-10-26T00:00:00+09:00');
   assert.strictEqual(setupForBrand('studio_x').elements['ba-member-field'].hidden, !studioXVisible);
   assert.strictEqual(setupForBrand('mens').elements['ba-member-field'].hidden, true);
 });

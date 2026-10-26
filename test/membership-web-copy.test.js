@@ -202,7 +202,7 @@ test('mens: MEMBER料金は加入有無に関係なく自動適用、料金優�
   assert.ok(textOf(read('mens/legal/index.html')).indexOf('会員資格は付与されません') !== -1);
 });
 
-test('Studio X: 2026/12/1以降の料金はセルフ利用基本料金（Issue #486）で、旧一般料金・旧制度・旧スライド料金に戻っていない', function () {
+test('Studio X: 2026/10/26以降の料金はセルフ利用基本料金（Issue #486 / #492）で、旧一般料金・旧制度・旧スライド料金に戻っていない', function () {
   var html = read('studio-x/index.html');
   var t = textOf(html);
   /* 料金ロジック(V2 GENERAL)の値がそのまま表示されている */
@@ -225,8 +225,8 @@ test('Studio X: 2026/12/1以降の料金はセルフ利用基本料金（Issue #
   assert.ok(!/7,500円（平日）|10,000円（平日）|2,500円（平日）|3時間5,500円|4時間7,000円/.test(t));
   /* V2では会員価格表示・会員区分選択が無い（予約UI） */
   var logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
-  assert.strictEqual(logic.brandShowsMemberOption('studio_x', Date.parse('2026-12-01T00:00:00+09:00')), false);
-  assert.strictEqual(logic.brandShowsMemberOption('studio_x', Date.parse('2026-11-30T23:59:59+09:00')), true, '11/30までは現行のまま');
+  assert.strictEqual(logic.brandShowsMemberOption('studio_x', Date.parse('2026-10-26T00:00:00+09:00')), false);
+  assert.strictEqual(logic.brandShowsMemberOption('studio_x', Date.parse('2026-10-25T23:59:59+09:00')), true, '10/25までは現行のまま');
   assert.strictEqual(logic.brandShowsMemberOption('mens', 0), false);
   assert.ok(!/会員価格|会員料金|会員区分/.test(t), 'Studio Xトップに会員価格・会員区分の表示がない');
 });
@@ -286,11 +286,11 @@ test('スペースマーケット: 経由でもスタッフ対応は申込可だ
   assert.ok(src.indexOf('V2: {\n        GENERAL: STUDIO_X_V2_SELF_RATES_\n      }') !== -1);
 });
 
-test('Studio X 規約・特商法: 会員限定のスタッフ対応料金が正本と一致し、2026/12/1適用と明記する', function () {
+test('Studio X 規約・特商法: 会員限定のスタッフ対応料金が正本と一致し、部屋料金は2026/10/26・会員限定は2026/12/1適用と明記する（Issue #492）', function () {
   var legal = textOf(read('studio-x/legal/index.html'));
   assert.ok(legal.indexOf('事前設営3,000円／片付け3,000円／セット5,000円') !== -1);
-  assert.ok(legal.indexOf('2026年12月1日以降に作成するご予約の部屋の利用料金は、会員・非会員の区別なく同額') !== -1);
-  assert.ok(legal.indexOf('第14条は2026年12月1日から適用') !== -1);
+  assert.ok(legal.indexOf('2026年10月26日以降に作成するご予約の部屋の利用料金は、会員・非会員の区別なく同額') !== -1);
+  assert.ok(legal.indexOf('部屋の利用料金は2026年10月26日から、有料オプションの会員限定は2026年12月1日から適用') !== -1);
 });
 
 test('入会フォーム: メールだけをstartMembershipCheckoutへ送り、STRIPE_CHECKOUT_ENABLEDを変更していない', function () {
