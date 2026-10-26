@@ -56,7 +56,7 @@ function makeStripeResponder(state, calls) {
       } };
     }
     if (url.indexOf('/payment_intents/pi_join') !== -1) {
-      return { responseCode: 200, body: { id: 'pi_join', status: 'succeeded', amount_received: 1000, currency: 'jpy', payment_method: 'pm_saved_1' } };
+      return { responseCode: 200, body: { id: 'pi_join', status: 'succeeded', amount_received: 500, currency: 'jpy', payment_method: 'pm_saved_1' } };
     }
     if (url.indexOf('/subscriptions') !== -1 && options.method === 'post') {
       if (state.subscriptionFailures > 0) {
@@ -79,7 +79,7 @@ function setup(options) {
   var opts = options || {};
   var spreadsheetsById = {};
   spreadsheetsById[SPREADSHEET_ID] = {};
-  var stripeState = Object.assign({ paymentStatus: 'paid', amountTotal: 1000, subscriptionFailures: 0 }, opts.stripeState || {});
+  var stripeState = Object.assign({ paymentStatus: 'paid', amountTotal: 500, subscriptionFailures: 0 }, opts.stripeState || {});
   var stripeCalls = [];
   var clock = stubs.createControllableClock(opts.clockAt || JOIN_AT);
   var properties = Object.assign({
@@ -133,9 +133,9 @@ function subscriptionEvent(id, type, created, overrides) {
 function renewalInvoice(id, periodStartIso, overrides) {
   return Object.assign({
     id: id, object: 'invoice', billing_reason: 'subscription_cycle', status: 'paid',
-    amount_paid: 1000, currency: 'jpy', customer: CUSTOMER_ID,
+    amount_paid: 500, currency: 'jpy', customer: CUSTOMER_ID,
     parent: { subscription_details: { subscription: SUBSCRIPTION_ID, metadata: { orderType: 'membership', memberId: MEMBER_ID } } },
-    lines: { data: [{ amount: 1000, period: { start: sec(periodStartIso), end: sec(periodStartIso) + 86400 * 30 } }] },
+    lines: { data: [{ amount: 500, period: { start: sec(periodStartIso), end: sec(periodStartIso) + 86400 * 30 } }] },
     status_transitions: { paid_at: sec(periodStartIso) + 5 }
   }, overrides || {});
 }
@@ -217,19 +217,19 @@ test('入会: 月途中の入会は満額1,000円。日割りせず、入会日�
   var months = rowsOf(ctx, 'MemberMonths');
   assert.strictEqual(months.length, 1);
   assert.strictEqual(months[0][2], 'checkout_session');
-  assert.strictEqual(months[0][4], 1000, '入会月は満額1,000円');
+  assert.strictEqual(months[0][4], 500, '入会月は満額500円');
 
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), true, '入会月は有効');
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2027-01'), false, '翌月分は更新の課金成功まで有効にならない');
   assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-11'), false);
 
-  /* subscriptionは翌月1日00:00 UTCアンカー・日割りなし・月額1,000円で作成する。 */
+  /* subscriptionは翌月1日00:00 UTCアンカー・日割りなし・月額500円で作成する。 */
   var post = ctx.stripeCalls.filter(function (c) { return c.url.indexOf('/subscriptions') !== -1; });
   assert.strictEqual(post.length, 1);
   var body = decodeURIComponent(post[0].options.payload);
   assert.ok(body.indexOf('billing_cycle_anchor=' + sec(JAN_RENEWAL_AT)) !== -1);
   assert.ok(body.indexOf('proration_behavior=none') !== -1);
-  assert.ok(body.indexOf('items[0][price_data][unit_amount]=1000') !== -1);
+  assert.ok(body.indexOf('items[0][price_data][unit_amount]=500') !== -1);
   assert.ok(body.indexOf('items[0][price_data][recurring][interval]=month') !== -1);
   assert.ok(body.indexOf('default_payment_method=pm_saved_1') !== -1);
   assert.strictEqual(post[0].options.headers['Idempotency-Key'], 'snb-membership-sub-' + JOIN_SESSION_ID);
@@ -250,7 +250,7 @@ test('入会: 未決済・金額不一致は会員を作らない', function () 
   assert.strictEqual(receiveAndProcess(unpaid, joinEvent()).code, 'PAYMENT_NOT_YET_COMPLETE');
   assert.strictEqual(rowsOf(unpaid, 'Members').length, 0);
 
-  var wrong = setup({ stripeState: { amountTotal: 500 } });
+  var wrong = setup({ stripeState: { amountTotal: 1000 } });
   var result = receiveAndProcess(wrong, joinEvent());
   assert.strictEqual(result.code, 'MEMBERSHIP_JOIN_AMOUNT_MISMATCH');
   assert.strictEqual(rowsOf(wrong, 'Members').length, 0);
@@ -567,7 +567,7 @@ test('入会受付: 金額はサーバー固定の1,000円・メール固定・�
 
   var body = decodeURIComponent(checkoutPosts(ctx)[0].options.payload);
   assert.ok(body.indexOf('mode=payment') !== -1);
-  assert.ok(body.indexOf('line_items[0][price_data][unit_amount]=1000') !== -1);
+  assert.ok(body.indexOf('line_items[0][price_data][unit_amount]=500') !== -1);
   assert.ok(body.indexOf('customer_email=taro@example.com') !== -1);
   assert.ok(body.indexOf('payment_intent_data[setup_future_usage]=off_session') !== -1);
   assert.ok(body.indexOf('customer_creation=always') !== -1);
@@ -692,7 +692,7 @@ test('二重加入防止（Webhook最終防御）: 同一メール・同一月�
   ctx.sandbox.UrlFetchApp.fetch = function (url, options) {
     if (url.indexOf('/checkout/sessions/cs_second') !== -1) {
       return { getResponseCode: function () { return 200; }, getContentText: function () {
-        return JSON.stringify({ id: 'cs_second', mode: 'payment', status: 'complete', payment_status: 'paid', amount_total: 1000, currency: 'jpy',
+        return JSON.stringify({ id: 'cs_second', mode: 'payment', status: 'complete', payment_status: 'paid', amount_total: 500, currency: 'jpy',
           payment_intent: 'pi_join', customer: 'cus_second', customer_email: 'taro@example.com', metadata: { orderType: 'membership', memberId: 'MBR-second' } });
       } };
     }
