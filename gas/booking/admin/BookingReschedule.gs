@@ -99,19 +99,16 @@ var BookingReschedule = (function () {
   }
 
   /*
-   * 貸切ベースプラン（Issue #488 / #492。常設）の日程変更時の扱い。プラン付きの予約は6時間固定の商品のため、
-   * 変更先が6時間でない場合は、通常料金へ黙って切り替えず、全入口（Admin画面・直接呼び出し）で同じコードにより
-   * 拒否する。Issue #492で対象イベント日の条件は廃止したので、Studio Xの予約可能日であれば変更できる。
+   * 貸切ベースプラン（Issue #488 / #492 / #510。常設）の日程変更時の扱い。プラン付きの予約は可変時間制（最低6時間・1時間単位・
+   * 8:00〜21:00の範囲）の商品のため、変更先がこの条件を満たさない場合は、通常料金へ黙って切り替えず、
+   * 全入口（Admin画面・直接呼び出し）で同じコードにより拒否する。条件を満たせば、変更先の利用時間で料金（1時間1,000円）を再計算する。
    * 通常予約への変換は未対応のため、通常料金に切り替える場合は予約を取り消して取り直す（既存の取消・返金手順）。
    * プラン付きでない予約には何もしない。
    */
-  function eventPlanRejection_(record, newDateString, newDurationMinutes) {
+  function eventPlanRejection_(record, newStartTime, newDurationMinutes) {
     if (!BookingPricing.isEventPlan(record.planCode)) return null;
-    var label = BookingPricing.planLabel(record.planCode);
-    if (newDurationMinutes !== BookingPricing.EVENT_BASE_PLAN_HOURS * 60) {
-      return error_('PLAN_DURATION_INVALID', label + 'は6時間固定のため、利用時間は変更できません。');
-    }
-    return null;
+    var scheduleError = BookingPricing.eventPlanScheduleError(newDurationMinutes, newStartTime);
+    return scheduleError ? error_(scheduleError.code, scheduleError.message) : null;
   }
 
   function parse_(bookingId, input, expectedVersion, now) {
@@ -156,7 +153,7 @@ var BookingReschedule = (function () {
     }
     var benefitRejection = memberBenefitRejection_(record, date);
     if (benefitRejection) return benefitRejection;
-    var eventPlanRejection = eventPlanRejection_(record, date, duration);
+    var eventPlanRejection = eventPlanRejection_(record, startTime, duration);
     if (eventPlanRejection) return eventPlanRejection;
     var calendarId = BookingConfig.getCalendarId();
     var own = CalendarRepository.getEventById(calendarId, record.calendarEventId);

@@ -12,11 +12,11 @@ Issue #492の本文を正本として、#486（Studio X新料金）と#488（貸
 
 ### 2. 6時間貸切ベースプランの常設化
 
-- 名称「**Studio X｜6時間貸切ベースプラン**」、6時間固定・6,000円/1室・最大4名同一料金。プラン識別子`osu_cosplay_base_6h`は既存予約・台帳との互換性のため維持（`Bookings.planCode`・Calendarの`planCode`タグ）。
+- 名称「**Studio X｜6時間貸切ベースプラン**」、Issue #510で可変時間制に変更: 8:00〜21:00の範囲で最低6時間・1時間単位・1時間1,000円/1室（6時間=6,000円、7時間=7,000円…）・最大4名同一料金。利用時間は予約時に確定し、利用開始後の途中延長は不可。プラン識別子`osu_cosplay_base_6h`は既存予約・台帳との互換性のため維持（`Bookings.planCode`・Calendarの`planCode`タグ）。
 - **廃止**: `EventPlanDates`シート、`EventPlanRepository.gs`（配布対象からも除外）、`action=eventPlan`（`handleEventPlan_`）、`EVENT_PLAN_DATE_NOT_ELIGIBLE`、`computeBookingPrice`の`eventDates`入力、日程変更時の対象日チェック、フロントの対象日取得・判定。
 - 利用者が予約フォーム（`/studio-x/booking/`）で明示的にプランを選んだときだけ適用（通常予約へ自動適用しない）。Studio Xの予約可能な日ならいつでも選べる。
-- 残した検証: Studio Xのみ（`PLAN_NOT_AVAILABLE`）、6時間固定（`PLAN_DURATION_INVALID`）、最大4名（`EVENT_PLAN_PEOPLE_EXCEEDED`）。通常予約と同じCalendarの6時間枠で確保するため、二重販売は`SLOT_CONFLICT`で防止される。
-- 日程変更: `BookingReschedule.eventPlanRejection_`は6時間以外への変更のみ拒否する。日付の条件は無く、6時間・6,000円・プランを保持して変更できる。通常予約への変換は未対応のため、通常料金に切り替える場合は予約を取り消して取り直す。
+- 残した検証: Studio Xのみ（`PLAN_NOT_AVAILABLE`）、最低6時間・1時間単位（`PLAN_DURATION_INVALID`）、8:00開始以降・21:00終了まで（`PLAN_HOURS_OUT_OF_RANGE`）、最大4名（`EVENT_PLAN_PEOPLE_EXCEEDED`）。通常予約と同じCalendarの枠で確保するため、二重販売は`SLOT_CONFLICT`で防止される。
+- 日程変更: `BookingReschedule.eventPlanRejection_`は6時間未満・1時間単位でない・8:00〜21:00の範囲外への変更を拒否する。日付の条件は無く、変更先の利用時間で1時間1,000円を再計算し、プランを保持して変更できる。通常予約への変換は未対応のため、通常料金に切り替える場合は予約を取り消して取り直す。
 - 識別: Booking Admin（一覧・詳細の`planLabel`）、確認画面、予約メール、管理者通知、Calendarタグ、Bookings台帳の`planCode`。
 - 公式サイト: `/studio-x/#osu-base-plan`と`/studio-x/booking/`のプラン説明・FAQ・JSON-LDを常設仕様へ更新（イベント日限定の表現は削除。有人クロークではない・荷物貴重品は自己管理・再入室可は維持）。
 

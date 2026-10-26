@@ -46,10 +46,10 @@ test('初期値定数は3時間で、選択値は180分のdurationMinutesにな�
   assert.strictEqual(Logic.durationHoursToMinutes('4'), 240);
 });
 
-test('貸切プランは6時間固定、解除すると3時間へ戻り選択可能になる', function () {
+test('貸切プラン(#510)は初期6時間・6時間未満は選べず7時間以上へ変更でき、解除すると3時間へ戻り通常の選択肢に戻る', function () {
   var app = read('scripts/booking-app.js');
-  assert.ok(app.indexOf('els.duration.value = String(Logic.EVENT_BASE_PLAN_HOURS)') !== -1);
-  assert.ok(app.indexOf('els.duration.disabled = true') !== -1);
-  assert.ok(app.indexOf('els.duration.value = String(Logic.DEFAULT_DURATION_HOURS || 3)') !== -1);
-  assert.ok(app.indexOf('els.duration.disabled = false') !== -1);
+  assert.ok(app.indexOf('els.duration.value = String(Logic.EVENT_BASE_PLAN_MIN_HOURS)') !== -1, '初期値は最低の6時間');
+  assert.ok(app.indexOf('option.disabled = selected && !Logic.isEventPlanDurationHours(option.value)') !== -1, '6時間未満・14時間以上・その他は無効化');
+  assert.ok(app.indexOf('els.duration.disabled = true') === -1, '6時間固定にしない（プルダウンは操作できる）');
+  assert.ok(app.indexOf('els.duration.value = String(Logic.DEFAULT_DURATION_HOURS || 3)') !== -1, '解除時は3時間へ戻す');
 });

@@ -41,7 +41,7 @@ test('予約フォーム: URLの初期選択は初期化の最後に1回だけ�
   assert.ok(m, '初期化の末尾で1回だけ適用する');
   assert.strictEqual(app.split('Logic.planFromSearch(').length - 1, 1, '他の箇所で再適用しない（解除後に勝手に再選択しない）');
   var fn = app.slice(app.indexOf('function applyEventPlanState_'), app.indexOf("if (els.planEvent) els.planEvent.addEventListener('change', applyEventPlanState_)"));
-  assert.ok(fn.indexOf('els.duration.value = String(Logic.EVENT_BASE_PLAN_HOURS)') !== -1, '6時間固定');
+  assert.ok(fn.indexOf('els.duration.value = String(Logic.EVENT_BASE_PLAN_MIN_HOURS)') !== -1, '初期値は6時間（固定ではない）');
   assert.ok(fn.indexOf('optionsPanel.setSuspended(selected)') !== -1, 'オプション欄を畳む（#496）');
   assert.ok(fn.indexOf('els.planBanner.hidden = !selected') !== -1, 'プラン選択済みバナー');
   assert.ok(fn.indexOf('Logic.DEFAULT_DURATION_HOURS') !== -1, '解除時は3時間へ戻す（#494）');
@@ -68,19 +68,20 @@ test('特設ページ(#507): X直リンク向けミニマム構成。ファー�
   var html = read('studio-x/base-plan/index.html');
   var hero = html.slice(html.indexOf('<header class="subpage-hero'), html.indexOf('id="about"'));
   var heroText = hero.replace(/<[^>]+>/g, ' ');
-  ['6時間', '6,000円', '1室', '最大4名', '1名あたり1,500円', '着替え', '荷物置き', '休憩', '再入室', '上前津', '大須'].forEach(function (n) {
+  ['1時間', '1,000円', '最低6時間', '8:00〜21:00', '6時間 6,000円', '8時間 8,000円', '1室', '最大4名', '着替え', '荷物置き', '休憩', '再入室', '上前津', '大須'].forEach(function (n) {
     assert.ok(heroText.indexOf(n) !== -1, 'ファーストビュー: ' + n);
   });
   assert.ok(hero.indexOf('このプランで予約する') !== -1, 'ファーストビューに予約CTA');
   var body = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
   var text = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   ['これだけ知っておけばOK', '有人クロークではありません', '荷物・貴重品は室内で各自管理してください', 'スタッフ常駐なし', 'シャワーなし',
-    '追加オプションは利用できません', '常設', '外出・再入室OK', '簡易撮影', '通常のStudio X予約'].forEach(function (n) {
+    '追加オプションは利用できません', '利用開始後の途中延長はできません', '常設', '外出・再入室OK', '簡易撮影', '通常のStudio X予約'].forEach(function (n) {
     assert.ok(text.indexOf(n) !== -1, n);
   });
   /* 長い比較表・FAQ・長文に依存しない */
   assert.ok(!/<table|<details|faq-list/.test(body), '比較表・FAQを置かない');
-  assert.ok(text.length < 900, '本文は短く保つ: ' + text.length);
+  assert.ok(text.length < 1100, '本文は短く保つ: ' + text.length);
+  assert.ok(!/6時間固定|6,000円固定|固定6,000円|6時間\s*6,000円（1室）/.test(html), '固定額・固定時間と誤解させる表現を残さない');
   assert.ok(!/荷物を?お預かりします|預かりサービスです|クロークです|クロークをご利用/.test(text));
   assert.ok(text.replace(/有人クローク(ではありません|ではなく)/g, '').indexOf('クローク') === -1);
   assert.ok(!/20\d\d-\d\d-\d\d/.test(body), '日付をハードコードしない');
@@ -108,14 +109,16 @@ test('特設ページ: SEO / OGP / canonical / Offer構造化データ / sitemap
   var html = read('studio-x/base-plan/index.html');
   var URL = 'https://nagoya-base.github.io/Studio-nagoya-base/studio-x/base-plan/';
   assert.ok(html.indexOf('<title>Studio X｜6時間貸切ベースプラン') !== -1);
-  assert.ok(/<meta name="description" content="[^"]*6,000円[^"]*">/.test(html));
+  assert.ok(/<meta name="description" content="[^"]*1時間1,000円[^"]*最低6時間[^"]*">/.test(html));
   assert.ok(html.indexOf('<link rel="canonical" href="' + URL + '">') !== -1);
   assert.ok(html.indexOf('<meta name="robots" content="index, follow">') !== -1);
   ['og:title', 'og:description', 'og:url', 'og:image'].forEach(function (p) { assert.ok(html.indexOf('property="' + p + '"') !== -1, p); });
   ['twitter:card', 'twitter:title', 'twitter:description', 'twitter:image'].forEach(function (p) { assert.ok(html.indexOf('name="' + p + '"') !== -1, p); });
   var data = JSON.parse(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html)[1]);
   assert.strictEqual(data['@type'], 'Offer');
-  assert.strictEqual(data.price, '6000');
+  assert.strictEqual(data.price, '1000');
+  assert.strictEqual(data.priceSpecification.unitCode, 'HUR');
+  assert.strictEqual(data.priceSpecification.eligibleQuantity.minValue, 6);
   assert.strictEqual(data.url, URL);
   assert.ok(html.indexOf('FAQPage') === -1, 'FAQを削ったのでFAQPageも置かない');
   assert.ok(read('sitemap.xml').indexOf('<loc>' + URL + '</loc>') !== -1);
@@ -140,4 +143,17 @@ test('ハンバーガーメニュー(#507): Studio X全ページのモバイル�
     assert.ok(/data-analytics-event="cta_click"/.test(a[0]) && /data-analytics-location="header_mobile_menu"/.test(a[0]) && /data-analytics-destination="base_plan_page"/.test(a[0]), f);
   });
   assert.ok(/<a href="\.\/" aria-current="page">6時間貸切ベースプラン<\/a>/.test(read('studio-x/base-plan/index.html')), '特設ページ自身のメニューにも現在地として表示');
+});
+
+test('ハンバーガーメニュー(#510): 項目が多くても届くようスクロール可能で、特設ページ導線は長いメニューで上位に置く', function () {
+  var css = read('studio-x/style.css');
+  var rule = /\.mobile-menu \{[^}]*\}/.exec(css.slice(css.indexOf('@media (max-width: 1040px)') === -1 ? 0 : css.indexOf('@media (max-width: 1040px)')))[0];
+  assert.ok(/overflow-y:\s*auto/.test(rule), 'メニューをスクロールできる');
+  ['studio-x/index.html', 'studio-x/how-to/index.html', 'studio-x/membership/index.html'].forEach(function (f) {
+    var html = read(f);
+    var i = html.indexOf('id="mobile-menu"');
+    var links = html.slice(i, html.indexOf('</div>', i)).match(/<a [^>]*>/g);
+    var idx = links.findIndex(function (a) { return a.indexOf('base-plan/') !== -1; });
+    assert.ok(idx !== -1 && idx <= 1, f + ': 先頭付近にある（' + idx + '）');
+  });
 });
