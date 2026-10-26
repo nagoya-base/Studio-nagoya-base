@@ -817,6 +817,17 @@ function adminResolvePaymentRecovery(bookingId, note) {
 }
 
 /*
+ * 処理済み初回Subscription決済の初回Period復旧（Issue #537。MembershipRecovery.gs）。管理者認証済みのときだけ実行し、
+ * execute:true でない限りdry-run（書き込まない）。返すIDはマスク済み。
+ */
+function adminRecoverInitialMembershipPeriod(target) {
+  if (!isBookingAdminVerified_()) {
+    return { success: false, error: { code: 'FORBIDDEN', message: '管理者として認証できませんでした。' } };
+  }
+  return sanitizeForClient_(MembershipRecovery.recoverInitialPeriod(target));
+}
+
+/*
  * Booking Adminの認証済み管理者か（Issue #480）。予約可能期間の上限を外せる唯一の判定で、
  * Session.getActiveUser()（Googleアカウントでサーバー側が本人性を確認できた値）だけを使う。
  * 公開予約フォームの予約メールアドレスは見ない（第三者が管理者メールを入力しても管理者扱いにならない）。

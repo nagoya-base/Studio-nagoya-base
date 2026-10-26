@@ -315,6 +315,16 @@ var MemberRepository = (function () {
     return { recorded: true };
   }
 
+  /* 指定のsource（既定: invoice）で記録済みのPeriodがあるか（読み取りのみ。復旧処理のdry-run用。Issue #537）。 */
+  function hasPeriodForSource(sourceType, sourceId) {
+    if (!sourceId) return false;
+    var values = ensureSheet_(PERIODS_SHEET_, PERIOD_HEADERS_).getDataRange().getValues();
+    for (var i = 1; i < values.length; i++) {
+      if (String(values[i][4]) === (sourceType || 'invoice') && String(values[i][5]) === String(sourceId)) return true;
+    }
+    return false;
+  }
+
   /* 指定メールの会員行（email一致）。memberId・subscriptionIdの集合（Periodとの結び付け用）も返す。 */
   function identitiesOfEmail_(normalized, excludeMemberId) {
     var ids = { memberIds: {}, subscriptionIds: {}, members: [] };
@@ -658,6 +668,7 @@ var MemberRepository = (function () {
     recordPaidMonth: recordPaidMonth,
     PERIOD_HEADERS: PERIOD_HEADERS_,
     recordPeriod: recordPeriod,
+    hasPeriodForSource: hasPeriodForSource,
     isMemberOnDate: isMemberOnDate,
     isMemberForMonth: isMemberForMonth
   };

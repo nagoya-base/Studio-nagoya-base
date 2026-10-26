@@ -117,6 +117,9 @@ test('Booking Webhookプロジェクトには管理者向けのサーバー関�
     'resolveBookingPaymentRecovery',
     'adminReconcileCheckoutExpiry',
     'reconcileBookingCheckoutExpiry',
+    'adminRecoverInitialMembershipPeriod',
+    'recoverInitialMembershipPeriod',
+    'MembershipRecovery',
     'BookingRefund'
   ];
 
@@ -145,7 +148,7 @@ test('BOOKING_WEBHOOK_FILESには管理者専用ファイルが1つも含まれ�
   var adminOnlyFiles = [
     'BookingAdmin.gs', 'BookingAdminWeb.gs', 'BookingTriggers.gs',
     'BookingReminderTriggers.gs', 'BookingReminderDiagnostics.gs',
-    'BookingRefund.gs', 'BookingAdminAlerts.gs'
+    'BookingRefund.gs', 'BookingAdminAlerts.gs', 'MembershipRecovery.gs'
   ];
   adminOnlyFiles.forEach(function (fileName) {
     assert.strictEqual(
