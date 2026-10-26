@@ -217,7 +217,7 @@ function handleStartCardCheckout_(e) {
 }
 
 /*
- * SNB MEMBER入会Checkoutの開始（Issue #471）。{ email }のみを受け取る（金額等は受け取らない）。
+ * SNB MEMBER入会Checkoutの開始（Issue #471）。{ email, brand }のみを受け取る（金額・戻り先URLは受け取らない。brandはsnb/mens/studio_xのコードのみ。Issue #504）。
  * 既存会員かどうかは応答に含めない（結果はメールで伝える）。想定外の例外は汎用のINTERNAL_ERRORとして返す。
  */
 function handleStartMembershipCheckout_(e) {
@@ -229,7 +229,7 @@ function handleStartMembershipCheckout_(e) {
     return { success: false, error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' }, requestId: requestId };
   }
   try {
-    var result = MembershipService.startCheckout({ email: payload && payload.email });
+    var result = MembershipService.startCheckout({ email: payload && payload.email, brand: payload && payload.brand });
     if (!result || typeof result !== 'object') {
       result = { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' } };
     }

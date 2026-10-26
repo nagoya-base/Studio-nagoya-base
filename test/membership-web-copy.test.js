@@ -124,7 +124,7 @@ test('SNB: 加入前に「月額500円」「自動更新」「初月日割りな
   assert.match(form, /id="membership-consent"[^>]*required/, '同意チェック必須');
   assert.ok(!/stripe\.com|buy\.stripe|checkout\.stripe/.test(html + read('scripts/membership-join.js')), 'Checkout URLを固定記載しない');
   var js = read('scripts/membership-join.js');
-  assert.ok(js.indexOf('action=startMembershipCheckout') !== -1 && js.indexOf('JSON.stringify({ email: email })') !== -1, '金額・会員判定をフロントで持たず、メールのみ既存APIへ送る');
+  assert.ok(js.indexOf('action=startMembershipCheckout') !== -1 && js.indexOf('JSON.stringify({ email: email, brand: brand })') !== -1, '金額・会員判定をフロントで持たず、メールのみ既存APIへ送る');
 });
 
 test('SNB: 会員加入CTAがあり、会員案内ページへ接続し、初回利用者から加入可・旧会員は自動移行しないと案内する', function () {
@@ -296,7 +296,7 @@ test('Studio X 規約・特商法: 会員限定のスタッフ対応料金が正
 test('入会フォーム: メールだけをstartMembershipCheckoutへ送り、STRIPE_CHECKOUT_ENABLEDを変更していない', function () {
   var js = read('scripts/membership-join.js');
   assert.ok(js.indexOf("action=startMembershipCheckout") !== -1);
-  assert.ok(js.indexOf('JSON.stringify({ email: email })') !== -1);
+  assert.ok(js.indexOf('JSON.stringify({ email: email, brand: brand })') !== -1);
   assert.ok(!/STRIPE_CHECKOUT_ENABLED|checkoutUrl|secret/i.test(js), 'フロントに決済URL・秘密情報を持たない');
   assert.ok(js.indexOf('CHECKOUT_DISABLED') !== -1, '受付停止中の表示を持つ');
   /* キルスイッチの既定値(Config.gs)は変更しない */
@@ -343,3 +343,20 @@ test('更新・解約の表現: 毎月1日は「当月分」を請求し当月�
   assert.ok(textOf(read('docs/membership-pricing-2026-12.md')).indexOf('締切日は設けていない') !== -1);
 });
 
+
+test('入会元ブランド別の戻り先（Issue #504）: フォームはブランドコードだけを持ち、完了ページはブランド別導線に戻す', function () {
+  assert.match(read('membership/index.html'), /id="membership-join-form" data-membership-brand="snb"/);
+  assert.match(read('mens/membership/index.html'), /id="membership-join-form" data-membership-brand="mens"/);
+  assert.match(read('studio-x/membership/index.html'), /id="membership-join-form" data-membership-brand="studio_x"/);
+  var js = read('scripts/membership-join.js');
+  assert.ok(/\['snb', 'mens', 'studio_x'\]\.indexOf\(brand\)/.test(js), 'ブランドは許可コードのみ');
+  assert.ok(!/successUrl|cancelUrl|success_url|cancel_url/.test(js), 'クライアントは戻り先URLを扱わない');
+
+  var mens = read('mens/membership/complete.html');
+  assert.ok(mens.indexOf("'/mens/booking/'") !== -1 && mens.indexOf("'/mens/membership/'") !== -1);
+  assert.ok(mens.indexOf("'/booking/' |") === -1, 'mens完了ページからSNB予約へ誘導しない');
+  var sx = read('studio-x/membership/complete.html');
+  assert.ok(sx.indexOf('href="../booking/"') !== -1 && sx.indexOf('href="../membership/"') !== -1);
+  assert.ok(/<meta name="robots" content="noindex/.test(mens) && /<meta name="robots" content="noindex/.test(sx));
+  assert.ok(mens.indexOf("'/membership/status/'") !== -1 && sx.indexOf("'/membership/status/'") !== -1, '会員資格確認ページは共通');
+});

@@ -184,7 +184,7 @@
         </ul>
       </div>
       <p>会費のお支払いは、メールでお送りする専用のお支払いページから行います。会員登録に使うメールアドレスは、<strong>ご予約の際に入力するメールアドレスと同じもの</strong>をご入力ください。</p>
-      <form class="membership-join" id="membership-join-form" novalidate>
+      <form class="membership-join" id="membership-join-form" data-membership-brand="snb" novalidate>
         <label for="membership-email">メールアドレス</label>
         <input type="email" id="membership-email" name="email" autocomplete="email" inputmode="email" required aria-describedby="membership-join-status">
         <label class="membership-consent"><input type="checkbox" id="membership-consent" required> <span>上記の内容（月額500円・毎月1日の自動更新・入会月は日割りなし・返金なし）と<a href="{{ '/legal/' | relative_url }}#membership-terms">利用規約の「会員資格」</a>に同意します。</span></label>

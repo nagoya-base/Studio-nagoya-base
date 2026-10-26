@@ -582,6 +582,78 @@ test('入会受付: 金額はサーバー固定の1,000円・メール固定・�
   assert.strictEqual(ctx.sandbox.MembershipService.startCheckout({ email: 'bad' }).error.code, 'INVALID_EMAIL');
 });
 
+/* ===== 入会元ブランド別の戻り先（Issue #504） ===== */
+
+var BRAND_PROPERTIES = {
+  STRIPE_CHECKOUT_ENABLED: 'true',
+  STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/Studio-nagoya-base/membership/complete.html',
+  STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/Studio-nagoya-base/membership/'
+};
+
+function checkoutReturnUrls(ctx) {
+  var body = decodeURIComponent(checkoutPosts(ctx)[0].options.payload);
+  return {
+    success: (/success_url=([^&]*)/.exec(body) || [])[1],
+    cancel: (/cancel_url=([^&]*)/.exec(body) || [])[1]
+  };
+}
+
+test('入会戻り先: brand未指定・snbは既存のSNB用URLのまま（後方互換）', function () {
+  ['', 'snb'].forEach(function (brand) {
+    var ctx = setup({ properties: BRAND_PROPERTIES });
+    var input = { email: MEMBER_EMAIL };
+    if (brand) input.brand = brand;
+    assert.strictEqual(ctx.sandbox.MembershipService.startCheckout(input).success, true);
+    var urls = checkoutReturnUrls(ctx);
+    assert.strictEqual(urls.success, 'https://example.com/Studio-nagoya-base/membership/complete.html');
+    assert.strictEqual(urls.cancel, 'https://example.com/Studio-nagoya-base/membership/');
+  });
+});
+
+test('入会戻り先: mens / studio_x はサーバー側でブランド別パスへ解決する', function () {
+  [['mens', '/mens'], ['studio_x', '/studio-x']].forEach(function (pair) {
+    var ctx = setup({ properties: BRAND_PROPERTIES });
+    assert.strictEqual(ctx.sandbox.MembershipService.startCheckout({ email: MEMBER_EMAIL, brand: pair[0] }).success, true);
+    var urls = checkoutReturnUrls(ctx);
+    assert.strictEqual(urls.success, 'https://example.com/Studio-nagoya-base' + pair[1] + '/membership/complete.html');
+    assert.strictEqual(urls.cancel, 'https://example.com/Studio-nagoya-base' + pair[1] + '/membership/');
+  });
+});
+
+test('入会戻り先: ブランド別Script Propertyがあれば優先し、導出できないときはSNBへ黙ってフォールバックしない', function () {
+  var ctx = setup({ properties: Object.assign({}, BRAND_PROPERTIES, {
+    STRIPE_MEMBERSHIP_SUCCESS_URL_MENS: 'https://example.com/m/ok', STRIPE_MEMBERSHIP_CANCEL_URL_MENS: 'https://example.com/m/ng'
+  }) });
+  assert.strictEqual(ctx.sandbox.MembershipService.startCheckout({ email: MEMBER_EMAIL, brand: 'mens' }).success, true);
+  assert.deepStrictEqual(checkoutReturnUrls(ctx), { success: 'https://example.com/m/ok', cancel: 'https://example.com/m/ng' });
+
+  var bad = setup({ properties: CHECKOUT_PROPERTIES });
+  var result = bad.sandbox.MembershipService.startCheckout({ email: MEMBER_EMAIL, brand: 'studio_x' });
+  assert.strictEqual(result.error.code, 'STRIPE_NOT_CONFIGURED');
+  assert.strictEqual(checkoutPosts(bad).length, 0);
+});
+
+test('入会戻り先: 許可外のbrand（URL等の任意文字列）は拒否し、Stripeへ渡さない', function () {
+  ['https://evil.example/', 'MENS', 'constructor', '__proto__', 'toString', 5, {}].forEach(function (brand) {
+    var ctx = setup({ properties: BRAND_PROPERTIES });
+    var result = ctx.sandbox.MembershipService.startCheckout({ email: MEMBER_EMAIL, brand: brand, successUrl: 'https://evil.example/' });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error.code, 'INVALID_BRAND');
+    assert.strictEqual(ctx.stripeCalls.length, 0);
+  });
+});
+
+test('入会戻り先: doPostはbrandだけを渡し、クライアント指定のURLは使わない', function () {
+  var ctx = setup({ properties: BRAND_PROPERTIES });
+  var res = JSON.parse(ctx.sandbox.doPost({ parameter: { action: 'startMembershipCheckout' }, postData: { contents: JSON.stringify({
+    email: MEMBER_EMAIL, brand: 'mens', successUrl: 'https://evil.example/ok', cancelUrl: 'https://evil.example/ng'
+  }) } }).text);
+  assert.strictEqual(res.success, true);
+  var urls = checkoutReturnUrls(ctx);
+  assert.ok(urls.success.indexOf('evil.example') === -1 && urls.cancel.indexOf('evil.example') === -1);
+  assert.strictEqual(urls.success, 'https://example.com/Studio-nagoya-base/mens/membership/complete.html');
+});
+
 test('二重加入防止: 既存会員（当月支払済み/subscription有効）にはCheckoutを発行せず、応答は新規と同一でメールだけが異なる', function () {
   var ctx = setup({ properties: CHECKOUT_PROPERTIES });
   joined(ctx);

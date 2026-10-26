@@ -311,6 +311,34 @@ var Booking = (function () {
   }
 
   /*
+   * SNB MEMBER入会Checkoutの戻り先をブランド別に解決する（Issue #504）。
+   * - 受け取るのはブランドコード（snb / mens / studio_x）のみ。URLはクライアントから受け取らず、
+   *   Script Properties由来の値、またはSNB用入会URLの末尾パス差し替えでサーバー側だけが決める（open redirect防止）。
+   * - snb: 既存のSTRIPE_MEMBERSHIP_SUCCESS_URL / CANCEL_URLをそのまま使う（後方互換）。
+   * - mens / studio_x: stripeConfig.membershipSuccessUrls / membershipCancelUrls[brand] → なければSNB用URLの
+   *   末尾'/membership/complete.html' / '/membership/'をブランド別パスへ差し替えて導出。導出できない場合は
+   *   SNB用URLへ黙ってフォールバックせずok:falseを返す（ブランド混在の防止）。
+   * 会員資格・金額・有効期限には関与しない（戻り先URLのみ）。
+   */
+  var MEMBERSHIP_SUCCESS_PATH_SUFFIX_ = '/membership/complete.html';
+  var MEMBERSHIP_CANCEL_PATH_SUFFIX_ = '/membership/';
+
+  function resolveMembershipReturnUrls(brand, stripeConfig) {
+    var config = stripeConfig || {};
+    if (!BRAND_PROFILES_.hasOwnProperty(brand)) return { ok: false, successUrl: '', cancelUrl: '' };
+    var profile = BRAND_PROFILES_[brand];
+    var successUrl = config.membershipSuccessUrl || '';
+    var cancelUrl = config.membershipCancelUrl || '';
+    if (profile.key !== 'snb') {
+      var successOverride = config.membershipSuccessUrls && config.membershipSuccessUrls[profile.key];
+      var cancelOverride = config.membershipCancelUrls && config.membershipCancelUrls[profile.key];
+      successUrl = successOverride || swapBrandPath_(successUrl, MEMBERSHIP_SUCCESS_PATH_SUFFIX_, profile.pathPrefix) || '';
+      cancelUrl = cancelOverride || swapBrandPath_(cancelUrl, MEMBERSHIP_CANCEL_PATH_SUFFIX_, profile.pathPrefix) || '';
+    }
+    return { ok: !!successUrl && !!cancelUrl, successUrl: successUrl, cancelUrl: cancelUrl };
+  }
+
+  /*
    * PENDINGからCONFIRMED/CANCELLED/EXPIREDへ、CONFIRMEDからCANCELLEDへの遷移のみを許可する
    * （Issue #272で管理者キャンセルを追加し、CONFIRMEDを終端状態から外した）。
    * CANCELLED/EXPIREDはいずれも終端状態のまま（CANCELLED→CANCELLEDの二重実行は
@@ -820,6 +848,7 @@ var Booking = (function () {
     getBrandLabel: getBrandLabel,
     getBrandProfile: getBrandProfile,
     resolveCheckoutReturnUrls: resolveCheckoutReturnUrls,
+    resolveMembershipReturnUrls: resolveMembershipReturnUrls,
     getCustomerTypeLabel: getCustomerTypeLabel,
     canTransition: canTransition,
     isAllowedBrand: isAllowedBrand,
