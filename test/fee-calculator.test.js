@@ -155,6 +155,6 @@ test('quoteFee: Studio X legacy MEMBER booking keeps MEMBER in V1 only', functio
   var base = { brand: 'studio_x', priceTier: 'MEMBER', durationMinutes: 180, dateString: '2026-12-15' };
   assert.strictEqual(f.FeeCalculator.quoteFee(Object.assign({ generation: 'V1' }, base)).amount, 5500);
   var v2 = f.FeeCalculator.quoteFee(Object.assign({ generation: 'V2' }, base));
-  assert.strictEqual(v2.amount, 5500, 'V2の共通料金は現行MEMBER料金');
+  assert.strictEqual(v2.amount, 3600, 'V2はセルフ利用基本料金（Issue #486）');
   assert.strictEqual(v2.tier, 'GENERAL');
 });

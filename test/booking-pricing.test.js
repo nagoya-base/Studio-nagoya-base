@@ -63,7 +63,7 @@ test('computeBookingPrice: studio_xのV1土日祝一般料金（2h/3h/4h・延�
   });
 });
 
-test('computeBookingPrice: studio_xはV1で従来会員料金、V2で現行MEMBER料金を新GENERALへスライドする（Issue #470）', function () {
+test('computeBookingPrice: studio_xはV1で従来会員料金、V2で会員・非会員共通のセルフ利用基本料金になる（Issue #470 / #486）', function () {
   var Pricing = loadPricing();
   var v1 = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: true, generation: 'V1' });
   assert.strictEqual(v1.price.tier, 'MEMBER');
@@ -77,15 +77,16 @@ test('computeBookingPrice: studio_xはV1で従来会員料金、V2で現行MEMBE
     var v2 = Pricing.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY_DATE, durationMinutes: 180, isMember: isMember, generation: 'V2' });
     assert.strictEqual(v2.price.tier, 'GENERAL');
     assert.strictEqual(v2.price.isMember, false);
-    assert.strictEqual(v2.price.amount, 5500, 'V2は現行MEMBER料金を新GENERALへスライドする');
+    assert.strictEqual(v2.price.amount, 3600, 'V2はセルフ利用基本料金（Issue #486）');
   });
 });
 
-test('computeBookingPrice: studio_x V2の全時間帯は現行MEMBER料金と一致する', function () {
+test('computeBookingPrice: studio_x V2の全時間帯はセルフ利用基本料金（平日1,200円/時・土日祝1,500円/時の単純時間比例。Issue #486）', function () {
   var Pricing = loadPricing();
   var cases = [
-    [WEEKDAY_DATE, 60, 2000], [WEEKDAY_DATE, 120, 4000], [WEEKDAY_DATE, 180, 5500], [WEEKDAY_DATE, 240, 7000], [WEEKDAY_DATE, 300, 8500],
-    [SATURDAY_DATE, 60, 2500], [SATURDAY_DATE, 120, 5000], [SATURDAY_DATE, 180, 7000], [SATURDAY_DATE, 240, 9000], [SATURDAY_DATE, 300, 11000]
+    [WEEKDAY_DATE, 60, 1200], [WEEKDAY_DATE, 120, 2400], [WEEKDAY_DATE, 180, 3600], [WEEKDAY_DATE, 240, 4800], [WEEKDAY_DATE, 300, 6000], [WEEKDAY_DATE, 360, 7200],
+    [SATURDAY_DATE, 60, 1500], [SATURDAY_DATE, 120, 3000], [SATURDAY_DATE, 180, 4500], [SATURDAY_DATE, 240, 6000], [SATURDAY_DATE, 300, 7500], [SUNDAY_DATE, 360, 9000],
+    ['2026-11-23', 60, 1500], ['2026-11-23', 240, 6000]
   ];
   cases.forEach(function (c) {
     var result = Pricing.computeBookingPrice({ brand: 'studio_x', date: c[0], durationMinutes: c[1], generation: 'V2', isMember: false });

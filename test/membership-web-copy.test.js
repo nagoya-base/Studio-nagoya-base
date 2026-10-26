@@ -202,23 +202,27 @@ test('mens: MEMBER料金は加入有無に関係なく自動適用、料金優�
   assert.ok(textOf(read('mens/legal/index.html')).indexOf('会員資格は付与されません') !== -1);
 });
 
-test('Studio X: 2026/12/1以降の料金は現行MEMBER料金（スライド）で、旧一般料金・旧制度に戻っていない', function () {
+test('Studio X: 2026/12/1以降の料金はセルフ利用基本料金（Issue #486）で、旧一般料金・旧制度・旧スライド料金に戻っていない', function () {
   var html = read('studio-x/index.html');
   var t = textOf(html);
   /* 料金ロジック(V2 GENERAL)の値がそのまま表示されている */
   [1, 2, 3, 4].forEach(function (h) {
-    assert.strictEqual(price('studio_x', WEEKDAY, h, false, 'V2'), price('snb', WEEKDAY, h, true, 'V2'), 'Studio X V2平日=現行MEMBER');
-    assert.strictEqual(price('studio_x', WEEKEND, h, false, 'V2'), price('snb', WEEKEND, h, true, 'V2'), 'Studio X V2土日祝=現行MEMBER');
+    assert.strictEqual(price('studio_x', WEEKDAY, h, false, 'V2'), 1200 * h, 'Studio X V2平日=1,200円/時');
+    assert.strictEqual(price('studio_x', WEEKEND, h, false, 'V2'), 1500 * h, 'Studio X V2土日祝=1,500円/時');
   });
-  assert.ok(t.indexOf('3時間5,500円（平日）／7,000円（土日祝）') !== -1);
-  assert.ok(t.indexOf('4時間7,000円（平日）／9,000円（土日祝）') !== -1);
-  assert.ok(t.indexOf('延長1時間ごと1,500円（平日）／2,000円（土日祝）') !== -1);
-  assert.ok(t.indexOf('2時間4,000円/延長1時間1,500円') !== -1 && t.indexOf('2時間5,000円/延長1時間2,000円') !== -1);
+  assert.ok(t.indexOf('3時間3,600円（平日）／4,500円（土日祝）') !== -1);
+  assert.ok(t.indexOf('4時間4,800円（平日）／6,000円（土日祝）') !== -1);
+  assert.ok(t.indexOf('延長1時間ごと1,200円（平日）／1,500円（土日祝）') !== -1);
+  assert.ok(t.indexOf('2時間2,400円/延長1時間1,200円') !== -1 && t.indexOf('2時間3,000円/延長1時間1,500円') !== -1);
+  assert.ok(t.indexOf('1,200円〜/ 1時間') !== -1 && t.indexOf('1,500円〜/ 1時間') !== -1);
+  /* Issue #486: スタッフ設営はプレミアムオプションとして訴求し、料金は維持 */
+  assert.ok(t.indexOf('プレミアムオプション') !== -1);
+  assert.ok(t.indexOf('事前設営3,000円／片付け3,000円／設営＋片付けセット5,000円') !== -1);
   assert.ok(t.indexOf('会員・非会員の区別なく、どなたも同じ料金') !== -1);
   /* 「現行一般料金へ一本化」や旧「3時間以内2,000円」「SNB新一般料金」への追従になっていない */
   assert.ok(!/3時間6,000円（平日）|4時間8,000円（平日）|延長1時間ごと2,000円（平日）/.test(t.replace(/従来の料金/g, '')));
   assert.ok(!/3時間以内2,000円|4時間目以降\+?1,000円/.test(t));
-  assert.ok(!/7,500円（平日）|10,000円（平日）|2,500円（平日）/.test(t));
+  assert.ok(!/7,500円（平日）|10,000円（平日）|2,500円（平日）|3時間5,500円|4時間7,000円/.test(t));
   /* V2では会員価格表示・会員区分選択が無い（予約UI） */
   var logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
   assert.strictEqual(logic.brandShowsMemberOption('studio_x', Date.parse('2026-12-01T00:00:00+09:00')), false);
@@ -242,7 +246,7 @@ test('Studio X: 機材料金は変更なし・セルフ設営無料・有料オ�
   assert.ok(data.freeSelf.length > 0, 'セルフ設営の無料備品を維持');
 
   var catalog = read('_includes/equipment_catalog_ja.html');
-  assert.match(catalog, /スタッフ設営・片付け料金（会員限定）/);
+  assert.match(catalog, /プレミアムオプション：スタッフ設営・片付け（会員限定）/);
   assert.match(catalog, /<th>セルフ設営<\/th><td>無料<\/td>/);
   assert.match(catalog, /<th>セルフ原状復帰<\/th><td>無料<\/td>/);
   assert.match(catalog, /\{\{ pair\[1\]\.priceJpy \}\}円/, '料金は正本から表示（直書きしない）');
@@ -277,9 +281,9 @@ test('スペースマーケット: 経由でもスタッフ対応は申込可だ
   assert.ok(t.indexOf('非会員でもスタッフ対応可') === -1 && !/スペースマーケット経由(なら|の場合は)非会員/.test(t));
   var legal = textOf(read('studio-x/legal/index.html'));
   assert.ok(legal.indexOf('スペースマーケット経由のご予約でもスタッフ対応をお申込みいただけますが、会員限定の条件は同じです') !== -1);
-  /* 部屋料金の計算ロジックは変更していない（V2 Studio X = 現行MEMBER料金スライド） */
+  /* Studio X V2の部屋料金はセルフ利用基本料金（Issue #486）。SNB / mensの料金表は参照しない */
   var src = read('gas/booking/shared/BookingPricing.gs');
-  assert.ok(src.indexOf('V2: {\n        GENERAL: MEMBER_RATES_\n      }') !== -1);
+  assert.ok(src.indexOf('V2: {\n        GENERAL: STUDIO_X_V2_SELF_RATES_\n      }') !== -1);
 });
 
 test('Studio X 規約・特商法: 会員限定のスタッフ対応料金が正本と一致し、2026/12/1適用と明記する', function () {
@@ -308,7 +312,7 @@ test('モバイル表示: 会員比較表は横スクロール枠に入り、フ
 
 test('内部資料: 料金表・ブランド分離基準が新ルールで、チェックリストに旧会員制度の定義が残っていない', function () {
   var doc = read('docs/membership-pricing-2026-12.md');
-  ['SNB: 会員 / 非会員で部屋料金が異なる', '全員', 'MEMBER料金', '現行MEMBER料金を一般料金へスライド', '有料オプション全般が会員限定', '3,000円', '5,000円'].forEach(function (w) {
+  ['SNB: 会員 / 非会員で部屋料金が異なる', '全員', 'MEMBER料金', 'セルフ利用の基本料金', '平日1,200円/時・土日祝1,500円/時', '有料オプション全般が会員限定', '3,000円', '5,000円'].forEach(function (w) {
     assert.ok(doc.indexOf(w.replace('SNB: 会員 / 非会員で部屋料金が異なる', '会員 / 非会員で部屋料金が異なる')) !== -1, w);
   });
   assert.ok(!/「承認した会員のみ」が正/.test(read('REVIEW_CHECKLIST.md')));
