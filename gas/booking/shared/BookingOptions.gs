@@ -627,12 +627,23 @@ var BookingOptions = (function () {
     return MembershipRules.isBenefitsRuleActive(input.now || new Date());
   }
 
+  /*
+   * Issue #541: 会員限定シャワーの提供可否は、注文の作成日ではなく**利用日が2026/12/1以降**で決める
+   * （2名ペアパックと同じ。JSTの暦日 'YYYY-MM-DD'。ゼロ埋め固定のため文字列比較で足りる）。形式不正・未指定はfalse（fail-closed）。
+   */
+  var SHOWER_START_DATE_ = '2026-12-01';
+  var SHOWER_NOT_AVAILABLE_MESSAGE_ = '会員限定シャワーは、ご利用日が2026年12月1日以降の予約でお申し込みいただけます。';
+
+  function isShowerAvailableOnDate(dateString) {
+    return typeof dateString === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateString) && dateString >= SHOWER_START_DATE_;
+  }
+
   var MEMBER_ONLY_OPTION_MESSAGE_ = 'この有料オプションは会員限定です。会員資格を確認できた場合のみお申し込みいただけます。セルフ設営・セルフ片付け（無料）はどなたでもご利用いただけます。';
 
   /*
    * この注文は実会員資格が必須か（Issue #478）。注文の作成時刻（order.createdAt）で新旧ルールを分け、
    * 2026/11/30までに作成済みの注文は旧ルールのまま（grandfather）。
-   * - MEMBER_SERVICE（シャワー）: 2026/12/1以降にしか作れないため常に必須。
+   * - MEMBER_SERVICE（シャワー）: 利用日が2026/12/1以降の予約にしか作れない（Issue #541）ため常に必須。
    * - STAFF_SERVICE: #472から会員限定（作成時刻に依らず従来どおり必須）。
    * - EQUIPMENT: Studio Xの有料レンタル機材は金額ではなくカタログ区分（rental）で判定。セット無料で0円に
    *   なった品も、元がrentalである限り必須（2026/12/1以降に作成された注文のみ）。
@@ -668,8 +679,8 @@ var BookingOptions = (function () {
       if (!isShowerBrand(input.brand)) {
         return { ok: false, error: err_('OPTIONS_NOT_AVAILABLE', 'このブランドの予約ではシャワーをお申し込みいただけません。') };
       }
-      if (!memberRulesActive) {
-        return { ok: false, error: err_('OPTIONS_NOT_AVAILABLE', '会員限定シャワーは2026年12月1日からのご提供です。') };
+      if (!isShowerAvailableOnDate(input.date)) {
+        return { ok: false, error: err_('OPTIONS_NOT_AVAILABLE', SHOWER_NOT_AVAILABLE_MESSAGE_) };
       }
       if (!actualMember) {
         return { ok: false, error: err_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE) };
@@ -1139,6 +1150,9 @@ var BookingOptions = (function () {
     equipmentCodeOfItem: equipmentCodeOfItem,
     computeStaffServiceCharge: computeStaffServiceCharge,
     planOrders: planOrders,
+    isShowerAvailableOnDate: isShowerAvailableOnDate,
+    SHOWER_START_DATE: SHOWER_START_DATE_,
+    SHOWER_NOT_AVAILABLE_MESSAGE: SHOWER_NOT_AVAILABLE_MESSAGE_,
     requestsStaffService: requestsStaffService,
     checkBookingAcceptsOptions: checkBookingAcceptsOptions,
     buildCheckoutReference: buildCheckoutReference,

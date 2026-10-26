@@ -43,7 +43,7 @@
 - [ ] Studio Xは2026/10/26以降（Issue #492で前倒し）の会員料金区分が無く、部屋料金は会員・非会員共通のセルフ利用基本料金（平日1,200円/h・土日祝1,500円/h。Issue #486で独立改定）、有料オプション全般（rental全件 + staffService全件。0円化された品も）が会員限定。セルフ設営・原状復帰等の無料利用は非会員でも可（#478で#469/#472の「機材レンタルは会員限定ではない」を上書き）
 - [ ] 料金表は `docs/membership-pricing-2026-12.md`、サイト表示・規約・特商法・FAQと一致
 - [ ] 会員限定特典（#478）: 2名ペアパック（平日5,000円/土日祝6,000円・3時間・1〜2名）とシャワー（1予約1回1,000円・SNB/mensのみ）が `/membership/`・`/mens/membership/`・規約・特商法・FAQ・JSON-LDで一致し、Studio Xにシャワーを出していない
-- [ ] 会員限定特典のうち2名ペアパックは**利用日が2026/12/1以降**（#539。作成日は問わない）、シャワー・Studio X有料オプション等は2026/12/1以降の新規作成分のみ。11/30までに作成済みの予約・OptionOrderは旧ルールのまま（grandfather）
+- [ ] 会員限定特典のうち2名ペアパックとシャワーは**利用日が2026/12/1以降**（#539 / #541。作成日は問わない）、Studio X有料オプション等は2026/12/1以降の新規作成分のみ。11/30までに作成済みの予約・OptionOrderは旧ルールのまま（grandfather）
 - [ ] actual membershipの再確認箇所（予約作成・OptionOrder作成・Checkout・日程変更・Admin承認・0円確定・手動確定・現地精算）がfail-closed。見積りAPI・決済済みWebhookでは会員照会/巻き戻しをしない
 - [ ] 3つの会員ページ（`/membership/`・`/mens/membership/`・`/studio-x/membership/`）のog:title/description/url・canonical・twitterメタがページ固有で、各ブランドトップの画像資産を使い他ブランドの画像を流用していない
 - [ ] 各トップ（SNB・mens・Studio X）から対応する会員ページへの導線がある（Studio Xのヒーローは「SNB MEMBER」を前面に出さない）

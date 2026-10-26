@@ -7744,3 +7744,10 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - **変えていないもの**: ペアパックの価格・人数・対象ブランド、actual membership必須（非会員・資格不一致は `MEMBER_BENEFIT_NOT_AVAILABLE`）、会員資格の正本・料金世代の境界（`generationAt`）、90日先行予約の判定、シャワー（従来どおり作成日2026/12/1以降）、Stripe関連。見積りAPIは引き続き会員台帳を照会しない。
 - **フロント**: `BookingLogic.pairPackAvailableOnDate(brand, date)` は表示制御のみ（正本はGAS）。利用日が選ばれた時点でペアパック欄を出し、出せない日付に変えたら選択を外す。
 - **適用料金の表示**: `BookingLogic.appliedRateInfo(price, locale)` が見積り応答の `price.plan / tier / brand` だけから「適用料金：一般料金／SNB MEMBER 会員料金」「適用プラン：SNB MEMBER限定 2名ペアパック」を導出する（料金表はフロントに持たない）。成功した見積りのときだけ表示し、計算中・失敗時は隠す。
+
+## Issue #541: シャワーの提供開始条件を利用日基準へ
+
+- **シャワーの提供可否は利用日基準**（2名ペアパックと同じ）: 利用日が2026/12/1以降（`BookingOptions.isShowerAvailableOnDate`）であれば、予約・注文の作成日に関わらずSNB / mensで申し込める。`BookingOptions.planOrders` は `input.date`（予約同時申込は `preflightForNewBooking` の `options.date`、後付けは予約の利用日）で判定し、11/30以前・利用日不明は `OPTIONS_NOT_AVAILABLE`（fail-closed）。
+- **同じ判定を使う箇所**: 日程変更（`BookingReschedule.memberBenefitRejection_`。有効なシャワー注文がある予約を11/30以前へ移せない）、Checkout開始前の最終確認（`startOptionCheckout` フェーズ1）。
+- **変えていないもの**: 1,000円・承認制（PENDING_APPROVAL→承認後に支払い）・actual membership必須（利用日の属する月で判定。非会員・資格不一致は `MEMBER_BENEFIT_NOT_AVAILABLE`）・SNB / SNB mensのみ（Studio X非対象）・Studio Xの有料オプション開始条件（作成日基準）・90日先行予約・Stripe関連。
+- **フロント**: `BookingLogic.showerAvailableOnDate(brand, date)` は表示制御のみ（正本はGAS）。利用日変更のたびに同期し、出せない日付に変えたらシャワーの選択を外す。端末時刻は見ない。

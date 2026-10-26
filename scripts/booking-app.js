@@ -283,9 +283,11 @@
   }
 
   /* 会員限定の特典（Issue #478。SNB / SNB mens）。表示制御のみで、可否はサーバーが判定する。
-     シャワーは従来どおり2026/12/1以降（端末時刻）に表示。2名ペアパックは Issue #539 で「利用日が2026/12/1以降」基準に変更し、
+     2名ペアパック（Issue #539）とシャワー（Issue #541）は「利用日が2026/12/1以降」基準で、
      利用日を選んだ時点で（予約フォームを12/1より前に開いていても）表示・選択できる。 */
-  var showerVisible = Logic.brandShowsMemberBenefits(brand);
+  function showerVisible_() {
+    return Logic.showerAvailableOnDate(brand, els.date ? els.date.value : '');
+  }
   function pairPackVisible_() {
     return Logic.pairPackAvailableOnDate(brand, els.date ? els.date.value : '');
   }
@@ -298,6 +300,8 @@
     if (!pairVisible && els.planPair) els.planPair.checked = false;
     var pairChoice = benefitChoiceOf_(els.planPair);
     if (pairChoice) pairChoice.hidden = !pairVisible;
+    var showerVisible = showerVisible_();
+    if (!showerVisible && els.shower) els.shower.checked = false;
     var showerChoice = benefitChoiceOf_(els.shower);
     if (showerChoice) showerChoice.hidden = !showerVisible;
     if (els.benefitsField) els.benefitsField.hidden = !(pairVisible || showerVisible);
@@ -313,7 +317,7 @@
     return pairPackVisible_() && els.planPair && els.planPair.checked ? Logic.PAIR_PACK_PLAN_CODE : '';
   }
   function showerSelected_() {
-    return showerVisible && !!els.shower && els.shower.checked;
+    return showerVisible_() && !!els.shower && els.shower.checked;
   }
 
   /* 会員区分は「一般 / 会員」のラジオ（name="memberStatus"）。単一checkboxでは「非会員と回答した」

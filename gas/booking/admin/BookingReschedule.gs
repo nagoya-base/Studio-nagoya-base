@@ -92,6 +92,10 @@ var BookingReschedule = (function () {
       } catch (lookupError) {
         hasBenefit = true;
       }
+      /* Issue #541: シャワーは利用日が2026/12/1以降の予約のみ。11/30以前へは移せない（ペアパックは quoteFee 側で判定）。 */
+      if (hasBenefit && !BookingOptions.isShowerAvailableOnDate(newDateString)) {
+        return error_('OPTIONS_NOT_AVAILABLE', BookingOptions.SHOWER_NOT_AVAILABLE_MESSAGE);
+      }
     }
     if (!hasBenefit) return null;
     if (MembershipRules.verifyActualMembership(record.email, newDateString).ok) return null;
