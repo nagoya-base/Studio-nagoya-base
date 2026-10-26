@@ -110,7 +110,8 @@ var MembershipRecovery = (function () {
     var member = MemberRepository.findMember({ memberId: memberId });
     if (!member) return { ok: false, result: result_(false, 'MEMBER_NOT_FOUND', '会員行が存在しません。通常の入会処理で会員行を作成してください。') };
     var recordedSubscriptionId = member.record.stripeSubscriptionId;
-    if (recordedSubscriptionId && recordedSubscriptionId !== subscription.id) {
+    /* 空欄も不一致として拒否する（fail-closed。同じSubscriptionに結び付いていると確認できた会員行だけを対象にする）。 */
+    if (recordedSubscriptionId !== subscription.id) {
       return { ok: false, result: result_(false, 'MEMBER_SUBSCRIPTION_MISMATCH', '会員行のSubscriptionが対象と一致しません。') };
     }
     return { ok: true, plan: { memberId: memberId, email: member.record.email, subscriptionId: subscription.id, initial: initial } };

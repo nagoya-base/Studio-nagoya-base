@@ -199,6 +199,16 @@ test('会員行のSubscriptionが対象と異なるときは記録しない', fu
   assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 0);
 });
 
+test('会員行のSubscription IDが空欄のときも記録しない（fail-closed）', function () {
+  var ctx = setup();
+  ctx.sheets.Members._rows[1][3] = '';
+  var r = recover(ctx, { checkoutSessionId: SESSION_ID, execute: true });
+  assert.strictEqual(r.code, 'MEMBER_SUBSCRIPTION_MISMATCH');
+  assert.strictEqual(r.success, false);
+  assert.strictEqual(rowsOf(ctx, 'MemberPeriods').length, 0);
+  assert.strictEqual(recover(ctx, { checkoutSessionId: SESSION_ID }).code, 'MEMBER_SUBSCRIPTION_MISMATCH', 'dry-runでも復旧可と判定しない');
+});
+
 test('全額返金済みは記録せず、資格を有効化しない', function () {
   var ctx = setup();
   ctx.sandbox.MemberRepository.recordRefundedSource({ sourceType: 'invoice', sourceId: FIRST_INVOICE_ID, memberId: MEMBER_ID, amount: 500, refundedAmount: 500 }, ctx.clock.currentDate());
