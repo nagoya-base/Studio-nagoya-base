@@ -638,17 +638,13 @@ var BookingOptions = (function () {
    */
   function orderRequiresActualMember(order) {
     if (!order) return false;
-    if (order.category === CATEGORY.MEMBER_SERVICE) return true;
-    if (order.category === CATEGORY.STAFF_SERVICE) return true;
-    if (order.category === CATEGORY.EQUIPMENT) {
-      if (!MembershipRules.isBenefitsRuleActive(order.createdAt)) return false;
-      ensureCatalogInitialized_();
-      return (order.items || []).some(function (item) {
-        var parsed = parseEquipmentItem_(item);
-        return !!parsed && !!equipmentRental_(parsed.code);
-      });
-    }
-    return false;
+    /* 無料の明示例外（FREE: セルフ設営・原状復帰・メールサポート・無料のセルフ備品）だけが会員不要。 */
+    if (order.category === CATEGORY.FREE) return false;
+    /* 2026/12/1以降の作成分に新ルールを適用。EQUIPMENTのみ、旧注文を旧ルールのままにするため作成時刻で分ける。 */
+    if (order.category === CATEGORY.EQUIPMENT) return MembershipRules.isBenefitsRuleActive(order.createdAt);
+    /* それ以外（MEMBER_SERVICE・STAFF_SERVICE、および将来追加される有料categoryを含む未知のcategory）は
+       fail-closedで常に会員必須（Studio Xの「今後追加される有料オプションも明示的な例外がない限り会員限定」）。 */
+    return true;
   }
 
   /* 選択に、実会員資格の照会が必要な項目（スタッフ対応・Studio Xの有料レンタル機材・シャワー）が含まれるか。 */
@@ -849,6 +845,12 @@ var BookingOptions = (function () {
       if (setupConflict || cleanupConflict) {
         return { ok: false, error: err_('SERVICE_MODE_CONFLICT', THEMES[t].label + 'の設営・片付けは、セルフとスタッフ対応を同時に選べません。') };
       }
+    }
+
+    /* 最終防御（fail-closed）: 2026/12/1以降に作成する注文は、FREE以外の注文が1件でもあれば会員必須。
+       将来categoryを追加してこの関数より上で個別の会員判定を入れ忘れても、非会員は有料注文を作れない。 */
+    if (memberRulesActive && !actualMember && orders.some(function (o) { return o.category !== CATEGORY.FREE; })) {
+      return { ok: false, error: err_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MEMBER_ONLY_OPTION_MESSAGE_) };
     }
 
     return { ok: true, orders: orders };

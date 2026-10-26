@@ -58,6 +58,7 @@ Issue #469（親）/ #470（料金ロジック）/ #471（Stripe会員管理）/
 - SNB / SNB mens / Studio X で共通の SNB MEMBER（月額1,000円）。mens専用・Studio X専用の会員制度・Stripe subscription・Success URLは作らない（加入完了は共通の `/membership/complete.html`）。
 - **actual membership（実会員資格）= 利用日の属する月の支払い事実**（`MemberRepository.isMemberForMonth`）。`priceIsMember`・mens経路・価格overrideは実会員資格ではない（混同しない）。mensの通常部屋料金は従来どおり、非会員でもMEMBER相当を維持する。
 - 翌月の部屋は通常どおり予約可能。翌月分のペアパック・シャワー・会員限定有料機材は、その月の1日以降、当月会費の決済成功が台帳に反映されてから確定できる（猶予期間なし）。月跨ぎの日程変更は変更先月のactual membershipを再確認し、無ければペアパック・シャワーを維持したままの変更は拒否する。
+- Studio Xは「FREE以外は既定で会員必須」のfail-closed設計（未知・将来追加される有料categoryも自動で会員必須。`BookingOptions.orderRequiresActualMember` と `planOrders` の最終防御）。
 - 会員資格を再確認する箇所（fail-closed。非会員・利用月不一致・台帳エラーはすべて同一の外部向けエラー `MEMBER_BENEFIT_NOT_AVAILABLE` で拒否）: 予約作成 / OptionOrder作成 / Checkout開始 / 日程変更 / Admin承認 / 0円バンドルの確定 / 管理者の手動確定・EXPIRED復活 / 現地精算（入金記録）の確定。
 - 会員照会は既存の資格照会と同じメール単位のレート制限（`opt_elig_`）に載せ、メールアドレスから会員の有無を推測できないようにする。
 - 見積りAPI（`estimatePrice`）は会員台帳を照会しない。決済済み（Stripe Webhook）の注文・予約は、後から会員資格不足を理由に拒否・巻き戻ししない。
@@ -69,7 +70,7 @@ Issue #469（親）/ #470（料金ロジック）/ #471（Stripe会員管理）/
 | 2名ペアパック（3時間・1〜2名） | 5,000円 | 6,000円 |
 
 - 通常料金tier（GENERAL / MEMBER）の置換ではなく、独立プラン `member_pair_3h`（`Bookings.planCode` に保存）。通常の会員3時間料金（5,500円 / 7,000円）とは別商品。
-- 3時間固定・1〜2名（3名以上はサーバー側で拒否）。他の割引・優待と併用不可。延長は通常の会員延長料金（平日+1,500円 / 土日祝+2,000円）。
+- 3時間が基本（3時間未満は不可）・1〜2名（3名以上はサーバー側で拒否）。他の割引・優待と併用不可。4時間以上へ延ばす場合は、延長分に通常の会員延長料金（平日+1,500円 / 土日祝+2,000円）。
 - 日程変更後もプランを保持し、平日⇔土日祝の変更では変更先の曜日区分で5,000円 / 6,000円を再計算する（`FeeCalculator` / `BookingReschedule`）。3時間未満へ短縮するとプラン料金を自動算出できず手動確認が必須（通常料金に化けない）。
 - 正本: `BookingPricing.gs`（`PAIR_PACK_`）。表示は `_includes/membership_benefits_ja.html`。
 

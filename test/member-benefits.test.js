@@ -773,3 +773,28 @@ test('orderRequiresActualMember: シャワー・スタッフ・12/1以降のrent
   assert.strictEqual(B.orderRequiresActualMember({ category: 'EQUIPMENT', items: ['EQ:STROBE_MONOBLOCK:1'], createdAt: old }), false);
   assert.strictEqual(B.orderRequiresActualMember({ category: 'FREE', items: ['SELF_SETUP:CLASSROOM'], createdAt: cur }), false);
 });
+
+test('将来追加される有料category（未知category）も、既定で会員必須（fail-closed）。明示的な無料例外FREEだけが会員不要', function () {
+  var B = setup().sandbox.BookingOptions;
+  var old = new Date('2026-11-01T00:00:00+09:00');
+  var cur = new Date('2026-12-02T00:00:00+09:00');
+  ['PAID_SERVICE', 'FUTURE_PAID', '', undefined].forEach(function (category) {
+    assert.strictEqual(B.orderRequiresActualMember({ category: category, items: ['X'], createdAt: cur }), true, String(category));
+    assert.strictEqual(B.orderRequiresActualMember({ category: category, items: ['X'], createdAt: old }), true, String(category) + '（作成時刻に依らず）');
+  });
+  assert.strictEqual(B.orderRequiresActualMember({ category: 'FREE', items: ['SELF_SETUP:CLASSROOM'], createdAt: cur }), false);
+});
+
+test('planOrdersの最終防御: 12/1以降は非会員がFREE以外の注文を作れない（有料categoryの追加時の判定漏れ対策）', function () {
+  var ctx = setup();
+  /* 全rentalと全staffServiceを含む選択が、非会員ではどれも注文を1件も返さない。 */
+  var rentals = ctx.sandbox.StudioXEquipmentCatalog.rental;
+  rentals.forEach(function (item) {
+    var r = xPlan(ctx, { equipment: { [item.code]: 1 }, setupService: 'SELF', cleanupService: 'SELF' }, false);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.orders, undefined);
+  });
+  var free = xPlan(ctx, { layouts: ['CLASSROOM'], setupService: 'SELF', cleanupService: 'SELF' }, false);
+  assert.strictEqual(free.ok, true);
+  assert.ok(free.orders.every(function (o) { return o.category === 'FREE'; }));
+});

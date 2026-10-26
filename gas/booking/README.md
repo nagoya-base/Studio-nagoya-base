@@ -7534,7 +7534,7 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 
 ### 会員限定2名ペアパック（独立プラン `member_pair_3h`）
 
-- 正本: `BookingPricing.gs`（`PAIR_PACK_`）。3時間固定・1〜2名・平日5,000円 / 土日祝6,000円・延長は通常の会員延長料金（平日+1,500円 / 土日祝+2,000円）・SNB / mensのみ・V2（12/1以降の作成）のみ。通常料金tier（GENERAL / MEMBER）の置換ではない。
+- 正本: `BookingPricing.gs`（`PAIR_PACK_`）。3時間が基本（3時間未満は不可）・1〜2名・平日5,000円 / 土日祝6,000円・4時間以上は延長分に通常の会員延長料金（平日+1,500円 / 土日祝+2,000円）・SNB / mensのみ・V2（12/1以降の作成）のみ。通常料金tier（GENERAL / MEMBER）の置換ではない。
 - 予約にプラン識別子を保存（`Bookings.planCode`）。`createBooking` の入力は `plan: 'member_pair_3h'`。3名以上（`people` が1名/2名以外）・3時間未満・Studio X・未知のプランはサーバー側で拒否（通常料金へ黙って倒さない）。
 - 日程変更: `FeeCalculator.quoteFee` に `plan` を渡し、変更先の平日/土日祝でプラン料金を再計算（平日⇔土日祝で5,000円⇔6,000円、差額精算は既存の仕組み）。3時間未満へ短縮するとプラン料金は自動算出できず（`PLAN_DURATION_INVALID`）手動確認が必須。`buildFeeQuoteToken_` に `plan` を含める。
 
@@ -7545,7 +7545,7 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 
 ### Studio X: 有料オプション全般の会員限定化
 
-- `rental` 全件 + `staffService` 全件を、金額ではなくカタログ区分で actual membership 必須にした（`planOrders`）。セット無料で0円になる品（`freeWhenWith`）も、元が `rental` である限り会員限定。無料のセルフ利用（セルフ設営・原状復帰・メールサポート・`freeSelf`）は非会員でも可。非会員は保留にせず即拒否。将来追加される `rental` / `staffService` も同じ区分で自動的に対象。
+- `rental` 全件 + `staffService` 全件を、金額ではなくカタログ区分で actual membership 必須にした（`planOrders`）。セット無料で0円になる品（`freeWhenWith`）も、元が `rental` である限り会員限定。無料のセルフ利用（セルフ設営・原状復帰・メールサポート・`freeSelf`）は非会員でも可。非会員は保留にせず即拒否。**判定は「FREE以外は既定で会員必須」のfail-closed**（`orderRequiresActualMember`：FREEだけが明示的な無料例外。未知・将来追加される有料categoryも自動で会員必須。`planOrders` 末尾にも、12/1以降の非会員がFREE以外の注文を作れない最終防御あり）。
 - スペースマーケット等の外部経路（現行コード・運用の確認結果）: コード上、スペースマーケットの予約はGoogle Calendarの占有イベントとして空き判定に使われるだけで（`CalendarRepository` / `Availability`）、Bookings台帳にもOptionOrdersにも行を作らない。当サイトの機材・スタッフ対応の申込（`createBooking` の `options`・`submitOptions`）は Bookings 台帳の予約ID＋登録メールを前提とするため、**当サイト経由の申込は経路・`source`・備考に依存せず同じ会員判定が適用される**（スペマ経由の非会員の例外はコードに無い）。一方、スペースマーケット上で直接販売・提供される機材や、運営がDM等でシステム外で受ける申込は外部仕様・手運用のため、**このコードでは会員限定を強制できない**（対象外。運営側で実会員を確認する運用が必要）。部屋料金・スペースマーケット側の運用は変更していない。
 
 ### SNB / mens の既存有料機材（「機材レンタルオプション（会員限定）」）
