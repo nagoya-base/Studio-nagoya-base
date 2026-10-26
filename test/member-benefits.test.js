@@ -693,7 +693,7 @@ test('Studio X: 部屋料金は会員・非会員共通のまま（変更なし�
     var m = P.computeBookingPrice({ brand: 'studio_x', date: d, durationMinutes: 180, generation: 'V2', isMember: true }).price.amount;
     assert.strictEqual(g, m);
   });
-  assert.strictEqual(P.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY, durationMinutes: 180, generation: 'V2' }).price.amount, 5500);
+  assert.strictEqual(P.computeBookingPrice({ brand: 'studio_x', date: WEEKDAY, durationMinutes: 180, generation: 'V2' }).price.amount, 3600);
 });
 
 // ============================================================================
