@@ -429,7 +429,34 @@ var StripeGateway = (function () {
     };
   }
 
+  /*
+   * SNB MEMBERの次回更新停止（Issue #506）。subscriptionを即時キャンセルせず、現在の請求期間の末日で
+   * 終わる設定（cancel_at_period_end=true）にする。支払い済み期間は維持され、以降の自動請求だけが止まる。
+   * 同じ指定の再送は同じ結果になる（冪等）ため、Idempotency-Keyは付けない（応答不明後の再試行で
+   * 古い応答が返らないようにする）。会員台帳への反映はcustomer.subscription.updated Webhookが正本。
+   * 戻り値のsubscriptionにはcancelAtPeriodEnd・statusだけを持たせ、IDは呼び出し元の外へ出さない。
+   */
+  function setSubscriptionCancelAtPeriodEnd(stripeConfig, subscriptionId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!subscriptionId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripeSubscriptionIdが指定されていません。' };
+    }
+    var url = API_BASE_ + '/subscriptions/' + encodeURIComponent(subscriptionId);
+    var result = performRequest_('post', url, stripeConfig.secretKey, encodeFormPayload_({ 'cancel_at_period_end': 'true' }), null);
+    if (!result.ok) return result;
+    return {
+      ok: true,
+      subscription: {
+        status: result.raw.status || '',
+        cancelAtPeriodEnd: result.raw.cancel_at_period_end === true || !!result.raw.cancel_at
+      }
+    };
+  }
+
   return {
+    setSubscriptionCancelAtPeriodEnd: setSubscriptionCancelAtPeriodEnd,
     createMembershipCheckoutSession: createMembershipCheckoutSession,
     createMembershipSubscription: createMembershipSubscription,
     createCheckoutSession: createCheckoutSession,

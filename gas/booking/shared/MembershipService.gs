@@ -225,6 +225,113 @@ var MembershipService = (function () {
     return { success: true, message: STATUS_ACCEPTED_MESSAGE_ };
   }
 
+  /*
+   * 解約（Issue #506）。本人確認（verifyStatusLink）に成功した応答にだけ、解約操作用の短命トークンを載せる。
+   * - 解約を出すのは、現在の会員資格が有効で、Stripe subscriptionが有効な通常会員だけ（永久会員・非会員・
+   *   subscriptionなしには出さない）。既に次回更新停止済みならトークンなしで state=SCHEDULED。
+   * - 解約トークンは確認リンクとは別のHMAC鍵で保存し（取り違え防止）、10分・1回限り。画面のメモリにだけ置く。
+   * - Stripe ID・会員IDは応答に含めない。
+   */
+  var CANCEL_TOKEN_KEY_ = 'snb-member-cancel-token-v1';
+  var CANCEL_TOKEN_TTL_MS_ = 10 * 60 * 1000;
+  var CANCEL_RATE_LIMIT_GLOBAL_ = { windowMinutes: 1, maxCount: 20 };
+  var CANCEL_RATE_LIMIT_PER_EMAIL_ = { windowMinutes: 10, maxCount: 5 };
+  var CANCEL_MAIL_SUBJECT_ = '【Studio Nagoya Base】SNB MEMBER 解約手続き完了のお知らせ';
+
+  function hashCancelToken_(token) {
+    var bytes = Utilities.computeHmacSha256Signature(token, CANCEL_TOKEN_KEY_, Utilities.Charset.UTF_8);
+    return bytes.map(function (b) { var v = (b < 0 ? b + 256 : b).toString(16); return v.length < 2 ? '0' + v : v; }).join('');
+  }
+
+  function issueCancelOffer_(email, status, now) {
+    var unavailable = { state: 'UNAVAILABLE' };
+    if (!status || status.active !== true || MembershipRules.isPermanentMember(email)) return unavailable;
+    var target = MemberRepository.findCancelTargetForEmail(email);
+    if (!target) return unavailable;
+    if (target.cancelAtPeriodEnd) return { state: 'SCHEDULED' };
+    var token = (Utilities.getUuid() + Utilities.getUuid()).replace(/[^A-Za-z0-9]/g, '');
+    MemberRepository.addStatusToken({ tokenHash: hashCancelToken_(token), email: email, expiresAt: new Date(now.getTime() + CANCEL_TOKEN_TTL_MS_) }, now);
+    return { state: 'AVAILABLE', token: token };
+  }
+
+  function sendCancelMail_(email, validUntil) {
+    var mailConfig = BookingConfig.getMailConfig();
+    var message = {
+      to: email,
+      subject: CANCEL_MAIL_SUBJECT_,
+      body: 'SNB MEMBERの解約手続きを受け付けました。次回以降の自動更新を停止しました。\n\n' +
+        '・会員資格の有効最終日：' + validUntil + '\n' +
+        '・現在のお支払い済み期間の末日までは、引き続きSNB MEMBERをご利用いただけます（即時に失効はしません）。\n' +
+        '・お支払い済みの会費は、日割りを含め返金しません。\n' +
+        '・心当たりがない場合は、お手数ですがお問い合わせください。'
+    };
+    if (mailConfig.displayName) message.name = mailConfig.displayName;
+    if (mailConfig.replyTo) message.replyTo = mailConfig.replyTo;
+    MailApp.sendEmail(message);
+  }
+
+  function cancelResult_(validUntil, alreadyScheduled) {
+    return { success: true, cancel: { state: 'SCHEDULED', validUntil: validUntil, alreadyScheduled: alreadyScheduled } };
+  }
+
+  /* input: { cancelToken }。確認ステップ後の「解約を確定する」から呼ばれる。冪等（二重実行しても1回分の結果）。 */
+  function cancelMembership(input) {
+    var token = input && typeof input.cancelToken === 'string' ? input.cancelToken : '';
+    var invalid = fail_('INVALID_TOKEN', '操作の有効期限が切れています。お手数ですが、もう一度メールアドレスを入力して確認用リンクを再発行してください。');
+    if (!/^[A-Za-z0-9]{16,128}$/.test(token)) return invalid;
+    if (!RateLimiter.limitByKey('member_cancel_all', CANCEL_RATE_LIMIT_GLOBAL_.windowMinutes, CANCEL_RATE_LIMIT_GLOBAL_.maxCount)) {
+      return fail_('RATE_LIMITED', '操作回数が多すぎます。しばらく時間を置いてから再度お試しください。');
+    }
+    var stripeConfig = BookingConfig.getStripeConfig();
+    if (!stripeConfig.secretKey) {
+      return fail_('CANCEL_UNAVAILABLE', '現在、オンラインでの解約を受け付けていません。お手数ですが、お問い合わせフォームからご連絡ください。');
+    }
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS_)) {
+      return fail_('LOCK_TIMEOUT', '一時的に混み合っています。しばらくしてから再度お試しください。');
+    }
+    try {
+      var now = new Date();
+      var row = MemberRepository.findStatusTokenAnyState(hashCancelToken_(token), now);
+      if (!row || row.expired) return invalid;
+      if (!RateLimiter.limitByKey('member_cancel_' + row.email, CANCEL_RATE_LIMIT_PER_EMAIL_.windowMinutes, CANCEL_RATE_LIMIT_PER_EMAIL_.maxCount)) {
+        return fail_('RATE_LIMITED', '操作回数が多すぎます。しばらく時間を置いてから再度お試しください。');
+      }
+
+      var facts = MemberRepository.statusFactsForEmail(row.email);
+      var status = MembershipRules.describeMembershipStatus(row.email, facts, { permanent: false, nowMs: now.getTime() });
+      var target = MemberRepository.findCancelTargetForEmail(row.email);
+      if (!status.active || !target || MembershipRules.isPermanentMember(row.email)) return invalid;
+      var validUntil = status.validUntil;
+
+      /* 既に次回更新停止済み（二重送信・再操作）。Stripeへは送らず、メールも重ねて送らない。 */
+      if (target.cancelAtPeriodEnd) {
+        if (!row.used) MemberRepository.markStatusTokenUsed(row.rowNumber, now);
+        return cancelResult_(validUntil, true);
+      }
+      if (row.used) return invalid;
+
+      var result = StripeGateway.setSubscriptionCancelAtPeriodEnd(stripeConfig, target.subscriptionId);
+      if (!result.ok || !result.subscription || result.subscription.cancelAtPeriodEnd !== true) {
+        Logger.log('MembershipService: 解約を受け付けられませんでした errorType=' + (result.errorType || 'UNKNOWN'));
+        return fail_('CANCEL_UNAVAILABLE', '解約を受け付けられませんでした。しばらくしてから再度お試しください。解決しない場合は、お問い合わせフォームからご連絡ください。');
+      }
+      MemberRepository.markCancelRequested(target.memberId, now);
+      MemberRepository.markStatusTokenUsed(row.rowNumber, now);
+      try {
+        sendCancelMail_(row.email, validUntil);
+      } catch (mailError) {
+        Logger.log('MembershipService: 解約確認メールを送信できませんでした');
+      }
+      return cancelResult_(validUntil, false);
+    } catch (error) {
+      Logger.log('MembershipService: 解約処理中にエラーが発生しました');
+      return fail_('CANCEL_UNAVAILABLE', '解約を受け付けられませんでした。しばらくしてから再度お試しください。解決しない場合は、お問い合わせフォームからご連絡ください。');
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
   function verifyStatusLink(input) {
     var token = input && typeof input.token === 'string' ? input.token : '';
     var invalid = fail_('INVALID_TOKEN', 'リンクが無効か、有効期限が切れています。お手数ですが、もう一度メールアドレスを入力してリンクを再発行してください。');
@@ -245,8 +352,9 @@ var MembershipService = (function () {
         permanent: MembershipRules.isPermanentMember(row.email),
         nowMs: now.getTime()
       });
+      var cancel = issueCancelOffer_(row.email, status, now);
       MemberRepository.markStatusTokenUsed(row.rowNumber, now);
-      return { success: true, status: status };
+      return { success: true, status: status, cancel: cancel };
     } catch (error) {
       Logger.log('MembershipService: 会員資格を確認できませんでした');
       return fail_('STATUS_UNAVAILABLE', '会員資格を確認できませんでした。しばらくしてから再度お試しください。');
@@ -255,5 +363,5 @@ var MembershipService = (function () {
     }
   }
 
-  return { startCheckout: startCheckout, requestStatusLink: requestStatusLink, verifyStatusLink: verifyStatusLink };
+  return { startCheckout: startCheckout, requestStatusLink: requestStatusLink, verifyStatusLink: verifyStatusLink, cancelMembership: cancelMembership };
 })();

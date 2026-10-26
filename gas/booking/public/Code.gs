@@ -49,7 +49,7 @@ function doPost(e) {
   if (params.action === 'startMembershipCheckout') {
     return jsonOutput_(handleStartMembershipCheckout_(e));
   }
-  if (params.action === 'requestMembershipStatus' || params.action === 'membershipStatus') {
+  if (params.action === 'requestMembershipStatus' || params.action === 'membershipStatus' || params.action === 'cancelMembership') {
     return jsonOutput_(handleMembershipStatusAction_(params.action, e));
   }
   if (params.action === 'optionSummary' || params.action === 'submitOptions' || params.action === 'startOptionCheckout') {
@@ -246,6 +246,7 @@ function handleStartMembershipCheckout_(e) {
  * 会員資格確認（Issue #490）。requestMembershipStatus={ email }: 会員の有無にかかわらず同一応答で本人確認リンクを
  * メール送信。membershipStatus={ token }: ワンタイムトークンの本人にだけ会員状態を返す。PII・トークンを扱うためPOST専用で、
  * リクエスト本文・トークンはログに出さない。想定外の例外は汎用のINTERNAL_ERROR。
+ * cancelMembership={ cancelToken }（Issue #506）: 本人確認の応答で渡した短命トークンの本人にだけ、次回更新停止を行う。
  */
 function handleMembershipStatusAction_(action, e) {
   var requestId = Utilities.getUuid();
@@ -256,9 +257,14 @@ function handleMembershipStatusAction_(action, e) {
     return { success: false, error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' }, requestId: requestId };
   }
   try {
-    var result = action === 'membershipStatus'
-      ? MembershipService.verifyStatusLink({ token: payload && payload.token })
-      : MembershipService.requestStatusLink({ email: payload && payload.email });
+    var result;
+    if (action === 'membershipStatus') {
+      result = MembershipService.verifyStatusLink({ token: payload && payload.token });
+    } else if (action === 'cancelMembership') {
+      result = MembershipService.cancelMembership({ cancelToken: payload && payload.cancelToken });
+    } else {
+      result = MembershipService.requestStatusLink({ email: payload && payload.email });
+    }
     if (!result || typeof result !== 'object') {
       result = { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' } };
     }
