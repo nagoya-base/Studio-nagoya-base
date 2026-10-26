@@ -153,6 +153,8 @@ var StripeWebhookProcessor = (function () {
      入れず、専用経路（下記のhandleMembership*_）で処理する。 */
   var MEMBERSHIP_SUBSCRIPTION_TYPES_ = ['customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted'];
   var MEMBERSHIP_INVOICE_TYPES_ = ['invoice.paid', 'invoice.payment_failed'];
+  /* 入会決済（Issue #517）の返金検知。イベント本文は信用せず、Chargeを再取得して返金額を確認する。 */
+  var MEMBERSHIP_REFUND_TYPES_ = ['charge.refunded'];
   var MEMBERSHIP_PRODUCT_NAME_ = 'SNB MEMBER 月会費';
 
   /*
@@ -715,6 +717,7 @@ var StripeWebhookProcessor = (function () {
     /* 1) 会員行＋入会月（プレスタート中は11/30まで）の支払い事実（冪等）。 */
     var existingSubscriptionId = '';
     var duplicateOf = null;
+    var alreadyRefunded = false;
     var fenced = runFenced_(rowNumber, generation, function () {
       /* 二重加入の最終防御（Issue #471レビュー対応）。同じメールに有効な別会員（subscription有効、
          または入会月の支払い事実あり）が既にいる場合、会員行もsubscriptionも作らない。
@@ -739,11 +742,18 @@ var StripeWebhookProcessor = (function () {
       });
       var found = MemberRepository.findMember({ memberId: upsert.memberId });
       existingSubscriptionId = (found && found.record.stripeSubscriptionId) || '';
+      /* 返金イベントが入会決済の処理より先に処理されていた場合（Issue #517）。月の支払い事実は
+         返金済みの根拠として資格判定から差し引かれるため、subscription（将来の課金）だけ作らない。 */
+      alreadyRefunded = MemberRepository.isSourceRefunded('checkout_session', session.id);
     });
     if (fenced) return fenced;
     if (duplicateOf) {
       return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_DUPLICATE_JOIN',
         '同じメールアドレスの有効な会員が既にいるため、二重加入として会員登録・subscription作成を行いませんでした。入会Checkoutの決済（500円）の返金を確認してください。eventId=' + eventId, now);
+    }
+    if (alreadyRefunded) {
+      return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_JOIN_REFUNDED',
+        '入会の決済は全額返金済みのため、資格は無効としsubscriptionも作成しません。', now);
     }
     if (existingSubscriptionId) {
       return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_JOINED', '入会処理は完了済みです。', now);
@@ -775,7 +785,9 @@ var StripeWebhookProcessor = (function () {
     /* 3) subscription IDと初期状態の記録。 */
     var subscription = subscriptionResult.subscription;
     var period = MembershipRules.readSubscriptionPeriod(subscription.raw);
+    var refundedDuringJoin = false;
     var fencedFinal = runFenced_(rowNumber, generation, function () {
+      refundedDuringJoin = MemberRepository.isSourceRefunded('checkout_session', session.id);
       MemberRepository.upsertMember({ memberId: memberId }, {
         subscriptionId: subscription.id,
         customerId: session.customerId,
@@ -788,7 +800,87 @@ var StripeWebhookProcessor = (function () {
       }, { id: eventId, created: parsed.created }, { create: false }, now);
     });
     if (fencedFinal) return fencedFinal;
+    if (refundedDuringJoin) {
+      return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_REFUNDED_SUBSCRIPTION_ACTIVE',
+        '入会の決済が全額返金された後にsubscriptionが作成されました。資格は無効のままです。自動更新を続けない場合はsubscriptionを解約してください。eventId=' + eventId, now);
+    }
     return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_JOINED', '入会を記録し、自動更新を設定しました。', now);
+  }
+
+  /*
+   * 入会決済の返金（Issue #517）。charge.refundedを契機に、Chargeを再取得して返金額を確認する
+   * （イベント本文だけで完結させない。到着順が前後しても、常に最新の返金状態で判定する）。
+   * - 入会Checkoutの決済（metadata.orderType=membership・500円）以外の返金（部屋予約・オプション・月次更新）は対象外。
+   * - 全額返金: MemberRefundsへ(checkout_session, session ID)を追記する。MemberMonthsは変更せず、
+   *   資格判定側がこの支払いを根拠とする月（プレスタートの追加月を含む）を差し引く。冪等。
+   * - 一部返金: 会費は日割り返金をしない方針のため、資格は変えない（全額返金のときだけ無効化）。
+   * - すでにsubscriptionがある会員は自動更新が続くため、初回の返金で新たに無効化した場合は
+   *   Recoveryへ記録して運営に知らせる（解約するかは運営判断。次回以降の更新は通常どおり資格を作る）。
+   */
+  function handleMembershipRefund_(rowNumber, generation, eventId, parsed, objectData, stripeConfig, now) {
+    if (!objectData || typeof objectData !== 'object' || typeof objectData.id !== 'string' || !objectData.id) {
+      return rejectAndFinalize_(rowNumber, generation, '', 'INVALID_EVENT_OBJECT', 'イベント本文にChargeのIDが含まれていません。eventId=' + eventId, now);
+    }
+    var chargeResult = StripeGateway.retrieveCharge(stripeConfig, objectData.id);
+    if (!chargeResult.ok) {
+      Logger.log('StripeWebhookProcessor: Charge再取得に失敗しました eventId=' + eventId + ' errorType=' + chargeResult.errorType);
+      return outcome_(false, 'STRIPE_LOOKUP_FAILED', 'Stripeへの照会に失敗しました。再試行します。');
+    }
+    var charge = chargeResult.charge;
+    if (!charge.paymentIntentId || charge.amount !== MembershipRules.MONTHLY_FEE_JPY || charge.currency !== MembershipRules.CURRENCY) {
+      return finalizeIgnored_(rowNumber, generation, 'NOT_MEMBERSHIP_JOIN_PAYMENT', 'SNB MEMBER入会決済の返金ではありません。', now);
+    }
+    var sessionsResult = StripeGateway.listCheckoutSessionsForPaymentIntent(stripeConfig, charge.paymentIntentId);
+    if (!sessionsResult.ok) {
+      Logger.log('StripeWebhookProcessor: 返金対象のCheckout Session照会に失敗しました eventId=' + eventId + ' errorType=' + sessionsResult.errorType);
+      return outcome_(false, 'STRIPE_LOOKUP_FAILED', 'Stripeへの照会に失敗しました。再試行します。');
+    }
+    var joinSession = null;
+    sessionsResult.sessions.forEach(function (candidate) {
+      if (!joinSession && candidate.metadata && candidate.metadata.orderType === MembershipRules.METADATA_ORDER_TYPE &&
+          candidate.paymentIntentId === charge.paymentIntentId) {
+        joinSession = candidate;
+      }
+    });
+    if (!joinSession) {
+      return finalizeIgnored_(rowNumber, generation, 'NOT_MEMBERSHIP_JOIN_PAYMENT', 'SNB MEMBER入会決済の返金ではありません。', now);
+    }
+    if (charge.amountRefunded <= 0) {
+      return finalizeIgnored_(rowNumber, generation, 'NO_REFUND', '返金済みの金額がありません。', now);
+    }
+    if (charge.amountRefunded < charge.amount) {
+      return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_PARTIAL_REFUND_NO_CHANGE',
+        '一部返金のため会員資格は変更しません（全額返金されると無効になります）。', now);
+    }
+
+    var superseded = confirmClaimOrSupersededOutcome_(rowNumber, generation);
+    if (superseded) return superseded;
+
+    var memberId = typeof joinSession.metadata.memberId === 'string' ? joinSession.metadata.memberId : '';
+    var newlyRecorded = false;
+    var subscriptionActive = false;
+    var fenced = runFenced_(rowNumber, generation, function () {
+      newlyRecorded = MemberRepository.recordRefundedSource({
+        sourceType: 'checkout_session',
+        sourceId: joinSession.id,
+        memberId: memberId,
+        amount: charge.amount,
+        refundedAmount: charge.amountRefunded,
+        refundedAt: secondsToDate_(parsed.created),
+        eventId: eventId
+      }, now).recorded;
+      var found = memberId ? MemberRepository.findMember({ memberId: memberId }) : null;
+      subscriptionActive = !!(found && found.record.stripeSubscriptionId && found.record.status !== MembershipRules.STATUS.CANCELED);
+    });
+    if (fenced) return fenced;
+    if (!newlyRecorded) {
+      return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_REFUND_ALREADY_APPLIED', '返金は反映済みです。', now);
+    }
+    if (subscriptionActive) {
+      return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_REFUNDED_SUBSCRIPTION_ACTIVE',
+        '入会の決済が全額返金され、入会分の資格を無効にしました。ただしsubscriptionが有効なため次回以降の自動更新は続きます。続けない場合はsubscriptionを解約してください。eventId=' + eventId, now);
+    }
+    return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_REFUND_APPLIED', '入会決済の全額返金を反映し、会員資格を無効にしました。', now);
   }
 
   function processSingleEvent_(rowNumber, record, now, generation) {
@@ -807,6 +899,10 @@ var StripeWebhookProcessor = (function () {
 
     if (MEMBERSHIP_SUBSCRIPTION_TYPES_.indexOf(eventType) !== -1 || MEMBERSHIP_INVOICE_TYPES_.indexOf(eventType) !== -1) {
       return handleMembershipObjectEvent_(rowNumber, generation, eventId, eventType, parsed, objectData, effectiveNow);
+    }
+
+    if (MEMBERSHIP_REFUND_TYPES_.indexOf(eventType) !== -1) {
+      return handleMembershipRefund_(rowNumber, generation, eventId, parsed, objectData, BookingConfig.getStripeConfig(), effectiveNow);
     }
 
     var isSuccessType = RELEVANT_SUCCESS_TYPES_.indexOf(eventType) !== -1;
