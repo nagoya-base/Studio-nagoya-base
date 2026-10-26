@@ -8,6 +8,12 @@
  * - 翌月1日の課金成功で翌月分を有効化。更新失敗は猶予期間なし（その月はinactive）。
  * - 解約しても支払済みの当月末まではactive。日割り返金なし。
  *
+ * 【プレスタート（Issue #490）】2026/10/26 00:00 JST〜2026/11/30に入会した場合、初回500円で入会日から
+ * 2026/11/30まで有効にし、11/1には課金しない（二重課金なし）。次回更新は2026/12/1（以降は毎月1日500円）。
+ * 10月入会は「10月」と「11月」の2か月分の支払い事実を記録し、11月入会は通常どおり11月のみ。
+ * subscriptionのアンカーはどちらも2026/12/1 00:00 UTC（＝通常の「入会月の翌月1日」と一致）。
+ * 会員限定特典の開始（BENEFITS_START_MS_）はこの変更では動かさない。
+ *
  * 【資格判定の考え方】資格は「利用日の属する暦月（JST）の分が支払済みか」だけで決まる。
  * 支払済みの月は「月ごとの支払い事実」（MemberRepositoryのMemberMonthsシート。1会員×1か月＝1行）
  * として永続化し、資格判定はその事実の有無だけを見る。
@@ -52,6 +58,9 @@ var MembershipRules = (function () {
    * （作成時刻 createdAt で判定。日程変更・承認・決済の時点では世代を切り替えない）。
    * BookingPricing.GENERATION_V2_START_MS_（料金世代V2）と同じ境界。
    */
+  var PRESTART_START_MS_ = Date.parse('2026-10-26T00:00:00+09:00');
+  var PRESTART_LAST_MONTH_ = '2026-11';
+
   var BENEFITS_START_MS_ = Date.parse('2026-12-01T00:00:00+09:00');
 
   /*
@@ -186,6 +195,115 @@ var MembershipRules = (function () {
     return month ? { ok: true, month: month } : { ok: false, code: 'INVALID_PERIOD' };
   }
 
+  /*
+   * 入会（決済成功）時刻から、初回500円でカバーする利用月（支払い事実を作る月）を決める（Issue #490）。
+   * プレスタート期間（2026/10/26 JST〜11/30）は入会月〜プレスタート最終月（2026-11）まで。それ以外は入会月のみ。
+   * 戻り値: 'YYYY-MM'の配列（昇順）。判定不能は空配列。
+   */
+  function coveredMonthsForJoin(joinEpochSeconds) {
+    var joinMonth = jstMonthKeyOfEpochSeconds(joinEpochSeconds);
+    if (!joinMonth) return [];
+    var months = [joinMonth];
+    var joinMs = Number(joinEpochSeconds) * 1000;
+    if (joinMs >= PRESTART_START_MS_) {
+      var m = nextMonthKey(joinMonth);
+      while (m && m <= PRESTART_LAST_MONTH_) {
+        months.push(m);
+        m = nextMonthKey(m);
+      }
+    }
+    return months;
+  }
+
+  /* 入会（決済成功）時刻がプレスタート期間（2026/10/26 JST〜11/30）か。 */
+  function isPrestartJoin(joinEpochSeconds) {
+    var joinMonth = jstMonthKeyOfEpochSeconds(joinEpochSeconds);
+    return !!joinMonth && Number(joinEpochSeconds) * 1000 >= PRESTART_START_MS_ && joinMonth <= PRESTART_LAST_MONTH_;
+  }
+
+  /* 初回500円で有効な最終月の翌月1日 00:00 UTC。subscriptionのbilling_cycle_anchor。 */
+  function renewalAnchorSecondsForJoin(joinEpochSeconds) {
+    var months = coveredMonthsForJoin(joinEpochSeconds);
+    return months.length ? renewalAnchorSecondsAfterMonth(months[months.length - 1]) : 0;
+  }
+
+  /*
+   * 会員資格確認UI（Issue #490）用の純粋ロジック。外部へ返す表示用の値だけを作る
+   * （Stripe ID・台帳内部IDは一切含めない）。
+   */
+
+  /* メールアドレスのマスク表示。例: taro@example.com → t***@e***.com。不正値は空文字。 */
+  function maskEmail(value) {
+    var email = normalizeEmail(value);
+    var at = email.lastIndexOf('@');
+    if (at < 1 || at === email.length - 1) return '';
+    var local = email.substring(0, at);
+    var domain = email.substring(at + 1);
+    var dot = domain.lastIndexOf('.');
+    var host = dot > 0 ? domain.substring(0, dot) : domain;
+    var tld = dot > 0 ? domain.substring(dot) : '';
+    return local.charAt(0) + '***@' + host.charAt(0) + '***' + tld;
+  }
+
+  /* 'YYYY-MM'の末日 'YYYY-MM-DD'。不正値は空文字。 */
+  function lastDateOfMonth(monthKey) {
+    var m = /^(\d{4})-(\d{2})$/.exec(monthKey || '');
+    if (!m) return '';
+    var day = new Date(Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10), 0)).getUTCDate();
+    return monthKey + '-' + pad2_(day);
+  }
+
+  /* 利用者向けの特典表（表示順固定）。availableFromBenefitsStart=trueは2026/12/1開始の本特典。 */
+  var STATUS_BENEFITS_ = [
+    { key: 'advance_booking_90', label: '90日先行予約', fromBenefitsStart: false },
+    { key: 'pair_pack', label: '2名ペアパック（SNB / SNB mens）', fromBenefitsStart: true },
+    { key: 'shower', label: 'シャワー（SNB / SNB mens）', fromBenefitsStart: true },
+    { key: 'paid_equipment', label: '会員限定の有料機材レンタル（SNB / SNB mens）', fromBenefitsStart: true },
+    { key: 'studio_x_options', label: 'Studio X 会員限定の有料オプション', fromBenefitsStart: true }
+  ];
+
+  /*
+   * 会員資格確認の表示内容。
+   * facts: { paidMonths: ['YYYY-MM', ...]（支払い事実のある利用月）, autoRenew: boolean（自動更新が続く見込みか）}
+   * options: { permanent: boolean, nowMs: number }
+   * 永久会員は支払い事実が無くても通常の有効会員と同じ形で表示する（永久会員であること自体は返さない）。
+   * 戻り値は公開API用のプレーンなオブジェクト（IDを含まない）。
+   */
+  function describeMembershipStatus(email, facts, options) {
+    var opts = options || {};
+    var nowMs = Number.isFinite(opts.nowMs) ? opts.nowMs : Date.now();
+    var currentMonth = jstMonthKeyOfEpochSeconds(Math.floor(nowMs / 1000));
+    var paid = {};
+    ((facts && facts.paidMonths) || []).forEach(function (m) { paid[m] = true; });
+    var autoRenew = !!(facts && facts.autoRenew);
+    if (opts.permanent) { paid[currentMonth] = true; autoRenew = true; }
+
+    var active = !!currentMonth && paid[currentMonth] === true;
+    var result = {
+      active: active,
+      maskedEmail: maskEmail(email),
+      monthlyFeeJpy: MONTHLY_FEE_JPY,
+      validUntil: null,
+      nextRenewalDate: null,
+      autoRenew: false,
+      benefits: []
+    };
+    if (!active) return result;
+
+    var last = currentMonth;
+    while (paid[nextMonthKey(last)] === true) last = nextMonthKey(last);
+    result.validUntil = lastDateOfMonth(last);
+    result.autoRenew = autoRenew;
+    result.nextRenewalDate = autoRenew ? nextMonthKey(last) + '-01' : null;
+
+    var benefitsOpen = nowMs >= BENEFITS_START_MS_;
+    result.benefits = STATUS_BENEFITS_.map(function (b) {
+      var available = !b.fromBenefitsStart || benefitsOpen;
+      return { key: b.key, label: b.label, available: available, startsOn: available ? null : '2026-12-01' };
+    });
+    return result;
+  }
+
   /* 作成時刻（Date|ms）が会員特典の新ルール（2026/12/1 JST以降）の対象か。不正値は旧ルール側（grandfather）。 */
   function isBenefitsRuleActive(createdAt) {
     var ms = createdAt && typeof createdAt.getTime === 'function' ? createdAt.getTime() : Number(createdAt);
@@ -254,6 +372,13 @@ var MembershipRules = (function () {
     jstDayOfEpochSeconds: jstDayOfEpochSeconds,
     nextMonthKey: nextMonthKey,
     renewalAnchorSecondsAfterMonth: renewalAnchorSecondsAfterMonth,
+    PRESTART_START_MS: PRESTART_START_MS_,
+    isPrestartJoin: isPrestartJoin,
+    maskEmail: maskEmail,
+    lastDateOfMonth: lastDateOfMonth,
+    describeMembershipStatus: describeMembershipStatus,
+    coveredMonthsForJoin: coveredMonthsForJoin,
+    renewalAnchorSecondsForJoin: renewalAnchorSecondsForJoin,
     mapSubscriptionStatus: mapSubscriptionStatus,
     readSubscriptionPeriod: readSubscriptionPeriod,
     readInvoiceSubscription: readInvoiceSubscription,

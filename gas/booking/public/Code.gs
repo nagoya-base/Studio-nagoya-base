@@ -52,6 +52,9 @@ function doPost(e) {
   if (params.action === 'startMembershipCheckout') {
     return jsonOutput_(handleStartMembershipCheckout_(e));
   }
+  if (params.action === 'requestMembershipStatus' || params.action === 'membershipStatus') {
+    return jsonOutput_(handleMembershipStatusAction_(params.action, e));
+  }
   if (params.action === 'optionSummary' || params.action === 'submitOptions' || params.action === 'startOptionCheckout') {
     return jsonOutput_(handleOptionAction_(params.action, e));
   }
@@ -238,6 +241,35 @@ function handleStartMembershipCheckout_(e) {
     return result;
   } catch (unexpectedError) {
     Logger.log('requestId=' + requestId + ' startMembershipCheckout=result error.code=INTERNAL_ERROR');
+    return { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' }, requestId: requestId };
+  }
+}
+
+/*
+ * 会員資格確認（Issue #490）。requestMembershipStatus={ email }: 会員の有無にかかわらず同一応答で本人確認リンクを
+ * メール送信。membershipStatus={ token }: ワンタイムトークンの本人にだけ会員状態を返す。PII・トークンを扱うためPOST専用で、
+ * リクエスト本文・トークンはログに出さない。想定外の例外は汎用のINTERNAL_ERROR。
+ */
+function handleMembershipStatusAction_(action, e) {
+  var requestId = Utilities.getUuid();
+  var payload;
+  try {
+    payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (parseError) {
+    return { success: false, error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' }, requestId: requestId };
+  }
+  try {
+    var result = action === 'membershipStatus'
+      ? MembershipService.verifyStatusLink({ token: payload && payload.token })
+      : MembershipService.requestStatusLink({ email: payload && payload.email });
+    if (!result || typeof result !== 'object') {
+      result = { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' } };
+    }
+    Logger.log('requestId=' + requestId + ' ' + action + '=result ' + (result.success ? 'success' : 'error.code=' + sanitizeErrorCode_(result.error && result.error.code)));
+    result.requestId = requestId;
+    return result;
+  } catch (unexpectedError) {
+    Logger.log('requestId=' + requestId + ' ' + action + '=result error.code=INTERNAL_ERROR');
     return { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' }, requestId: requestId };
   }
 }

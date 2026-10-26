@@ -710,7 +710,9 @@ var StripeWebhookProcessor = (function () {
     var superseded = confirmClaimOrSupersededOutcome_(rowNumber, generation);
     if (superseded) return superseded;
 
-    /* 1) 会員行＋入会月の支払い事実（冪等）。 */
+    var coveredMonths = MembershipRules.coveredMonthsForJoin(parsed.created);
+
+    /* 1) 会員行＋入会月（プレスタート中は11/30まで）の支払い事実（冪等）。 */
     var existingSubscriptionId = '';
     var duplicateOf = null;
     var fenced = runFenced_(rowNumber, generation, function () {
@@ -723,15 +725,18 @@ var StripeWebhookProcessor = (function () {
       if (duplicateOf) return;
       var upsert = MemberRepository.upsertMember({ memberId: memberId, customerId: session.customerId },
         { memberId: memberId, email: email, customerId: session.customerId }, null, { create: true }, now);
-      MemberRepository.recordPaidMonth({
-        memberId: upsert.memberId,
-        month: joinMonth,
-        sourceType: 'checkout_session',
-        sourceId: session.id,
-        amount: MembershipRules.MONTHLY_FEE_JPY,
-        paidAt: secondsToDate_(parsed.created),
-        eventId: eventId
-      }, now);
+      /* 初回500円でカバーする月（通常は入会月のみ。プレスタート中は11/30まで。Issue #490）。 */
+      coveredMonths.forEach(function (month) {
+        MemberRepository.recordPaidMonth({
+          memberId: upsert.memberId,
+          month: month,
+          sourceType: 'checkout_session',
+          sourceId: session.id,
+          amount: month === joinMonth ? MembershipRules.MONTHLY_FEE_JPY : 0,
+          paidAt: secondsToDate_(parsed.created),
+          eventId: eventId
+        }, now);
+      });
       var found = MemberRepository.findMember({ memberId: upsert.memberId });
       existingSubscriptionId = (found && found.record.stripeSubscriptionId) || '';
     });
@@ -745,7 +750,7 @@ var StripeWebhookProcessor = (function () {
     }
 
     /* 2) subscription作成。 */
-    var anchorSeconds = MembershipRules.renewalAnchorSecondsAfterMonth(joinMonth);
+    var anchorSeconds = MembershipRules.renewalAnchorSecondsForJoin(parsed.created);
     if (!anchorSeconds || anchorSeconds * 1000 <= new Date().getTime() + 60 * 1000) {
       return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_JOIN_MONTH_ELAPSED',
         '入会月を過ぎたため自動更新の設定ができません。入会月の資格は記録済みです。手動でsubscriptionを設定してください。eventId=' + eventId, now);

@@ -183,6 +183,12 @@ var BookingConfig = (function () {
     };
   }
 
+  /* Issue #490: 入会Success URL（…/membership/complete.html）から会員資格確認ページ（…/membership/status/）のURLを導出する。 */
+  function deriveMembershipStatusUrl_(successUrl) {
+    var m = /^(https:\/\/[^?#]*\/)complete\.html(?:[?#].*)?$/.exec(successUrl);
+    return m ? m[1] + 'status/' : '';
+  }
+
   /*
    * Stripe Checkout関連の設定（Issue #341 PR-B）。APIキーはソースコード・台帳・ログへ
    * 一切記載せず、必ずScript Propertiesから読む。
@@ -205,6 +211,8 @@ var BookingConfig = (function () {
       /* Issue #471: SNB MEMBER入会Checkoutの戻り先（任意。未設定なら入会Checkoutを発行しない）。 */
       membershipSuccessUrl: properties.getProperty('STRIPE_MEMBERSHIP_SUCCESS_URL') || '',
       membershipCancelUrl: properties.getProperty('STRIPE_MEMBERSHIP_CANCEL_URL') || '',
+      /* Issue #490: 会員資格確認ページ（/membership/status/）のURL。未設定なら入会Success URL（…/membership/complete.html）から導出する。 */
+      membershipStatusUrl: properties.getProperty('MEMBERSHIP_STATUS_URL') || deriveMembershipStatusUrl_(properties.getProperty('STRIPE_MEMBERSHIP_SUCCESS_URL') || ''),
       /* Issue #422: ブランド別の戻り先（任意）。未設定ならBooking.resolveCheckoutReturnUrlsが
          SNB用URLから導出する。SNB用は既存のSTRIPE_CHECKOUT_SUCCESS_URL/CANCEL_URLを使う。 */
       successUrls: {

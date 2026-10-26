@@ -7629,3 +7629,23 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 ### 管理者（Script Properties `BOOKING_ADMIN_EMAILS`）
 
 `nagoyabase2023@gmail.com` は `Config.gs` の既定allowlistに持つ。`BOOKING_ADMIN_EMAILS`（カンマ区切り）で追加できる。メール取得不可・未設定・不一致はfail-closed。
+
+## Issue #490: SNB MEMBERプレスタート（2026/10/26〜11/30）
+
+本運用（2026/12/1）前に、実登録・決済・90日先行予約を本番で確認するため、2026/10/26 00:00 JSTからSNB MEMBERを開始する。
+
+- **課金**: 既存の共通SNB MEMBER構成（入会Checkout `mode=payment` 500円 → Webhookでsubscription作成）を維持。プレスタート中の入会（決済成功時刻が2026/10/26 JST〜11/30）は、`MembershipRules.coveredMonthsForJoin` が入会月〜2026-11を返し、`StripeWebhookProcessor.handleMembershipJoin_` が各月の支払い事実（`MemberMonths`）を追記する（10月入会は10月＋11月、11月入会は11月のみ。追加月の `amount` は0）。subscriptionの `billing_cycle_anchor` は `renewalAnchorSecondsForJoin` で **2026/12/1 00:00 UTC**（＝JST 9:00）。**11/1に課金は発生しない**。12/1に500円、以降は毎月1日500円（既存の更新invoice処理がそのまま働く）。日割りなし・解約後も支払済み期間の末日まで有効。
+- **90日先行予約**: #480の判定（`verifyAdvanceBookingMembership` ＝予約作成時点の当月のactual membership）は無変更。入会月の支払い事実が決済成功で記録されるため、決済成功後すぐ使える。`priceIsMember`・mens料金優遇・自己申告は対象外のまま。
+- **12/1開始のまま（前倒ししない）**: 2名ペアパック・シャワー・SNB/mensの会員限定有料機材・Studio Xの会員限定有料オプション・Studio X新部屋料金。`BENEFITS_START_MS` と料金世代V2の境界は変更していない（作成時刻 `createdAt` 判定）。11月までにactual membershipがあっても適用しない。2026/11/30までに作成する予約は既存の料金世代・料金を維持し、加入で既存予約の料金は自動変更しない。
+- **本番設定**: `STRIPE_CHECKOUT_ENABLED` はこのPRでは変更しない。デプロイ後、既存の運用手順（README「SNB MEMBER」節）に従って有効化する。
+- **Web**: `/membership/`・`/mens/membership/`・`/studio-x/membership/`（共通 `_includes/membership_prestart_ja.html`）、会員条件（`membership_terms_ja.html`）、特商法、FAQ、入会案内メールにプレスタートを明記。
+
+### Issue #490: 会員資格確認UI（`/membership/status/`）
+
+本人が「現在、自分の会員資格が有効か」を確認するページ。SNB / SNB mens / Studio X共通（ブランド別の会員状態は持たない）。
+
+- **フロー**: ①メールアドレス入力 → `POST ?action=requestMembershipStatus {email}`。**会員か否かにかかわらず同一応答**でワンタイムリンクをそのメール宛に送る（`MembershipService.requestStatusLink`）。②メール内リンク `…/membership/status/#t=<トークン>` を開く → `POST ?action=membershipStatus {token}` で、リンクを開いた本人にだけ状態を返す（`verifyStatusLink`）。メール入力だけでは状態を返さない。
+- **トークン**: `Utilities.getUuid()` 2本分（約244bit）。台帳 `MemberStatusTokens` には**ハッシュ（HMAC-SHA256）のみ**保存（`tokenHash / email / expiresAt / usedAt / createdAt`）。有効30分・1回利用（使用時に `usedAt` を記録）。トークンはURLフラグメントで運び（サーバーログ・Refererに残らない）、フロントは読んだら `history.replaceState` で消す。ログにはトークンを出さない。
+- **rate limit**: 要求は同一メール10分3件・全体1分20件（`member_status_*`）、検証は全体1分60件。
+- **応答**: 有効/無効、有効期間（支払済み期間の末日）、次回更新日（解約済みは無し）、月額500円、マスク済みメール（`t***@e***.com`）、特典（90日先行予約=利用可、ペアパック/シャワー/有料機材/Studio Xオプション=12/1から。12/1以降は利用可）。Stripe ID・内部IDは返さない。台帳エラーは `STATUS_UNAVAILABLE`（内部詳細なし・トークン未消費）。永久会員は通常の有効会員と同じ形（`describeMembershipStatus` で支払い事実なしでも当月有効・自動更新ありとして描画。永久会員であることは返さない）。
+- **設定**: リンク先は `MEMBERSHIP_STATUS_URL`（任意）。未設定なら `STRIPE_MEMBERSHIP_SUCCESS_URL`（`…/membership/complete.html`）から `…/membership/status/` を導出。どちらも無ければ要求は `STATUS_UNAVAILABLE`。Booking Web Appの再デプロイが必要（既存Deploymentの作り直しは不要）。

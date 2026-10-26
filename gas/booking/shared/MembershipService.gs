@@ -126,8 +126,12 @@ var MembershipService = (function () {
       MemberRepository.updatePending(memberId, { checkoutSessionId: result.session.id }, new Date());
       sendMail_(email, 'SNB MEMBER（月額500円）の入会手続きは、下記のお支払いページから行えます（35分間有効）。\n\n' +
         result.session.url + '\n\n' +
-        '・入会月は日割りなしで500円、入会日から当月末まで有効です。\n' +
-        '・翌月以降は毎月1日に500円が自動更新されます。\n' +
+        (MembershipRules.isPrestartJoin(Math.floor(now.getTime() / 1000))
+          ? '・SNB MEMBERプレスタート中です。初回500円で2026年11月30日まで有効です（11月1日の追加課金はありません）。\n' +
+            '・次回更新は2026年12月1日（500円）、以降は毎月1日に自動更新されます。\n' +
+            '・2名ペアパック・シャワー・会員限定の有料機材などの本特典は2026年12月1日から開始します。90日先行予約は決済完了後すぐご利用いただけます。\n'
+          : '・入会月は日割りなしで500円、入会日から当月末まで有効です。\n' +
+            '・翌月以降は毎月1日に500円が自動更新されます。\n') +
         '・心当たりがない場合は、このメールを破棄してください。');
       return accepted_();
     } catch (error) {
@@ -138,5 +142,104 @@ var MembershipService = (function () {
     }
   }
 
-  return { startCheckout: startCheckout };
+  /*
+   * 会員資格確認（Issue #490）。
+   * requestStatusLink: メールアドレスを受け取り、**会員かどうかにかかわらず**同一の応答を返して、
+   *   本人確認用のワンタイムリンク（URLのフラグメントにトークン。サーバーログ・Refererに残さない）を
+   *   そのメール宛に送る。会員の有無は応答にも送信有無にも出さない。
+   * verifyStatusLink: トークンを検証し、リンクを開いた本人（メール受信者）にだけ会員状態を返す。トークンは
+   *   有効期限・1回利用・使用後無効化。トークン本体はログに出さず、台帳にはハッシュのみ保存する。
+   *   台帳を読めないときはトークンを消費せず汎用エラー（fail-closed。内部詳細は出さない）。
+   */
+  var STATUS_MAIL_SUBJECT_ = '【Studio Nagoya Base】SNB MEMBER 会員資格の確認';
+  var STATUS_TOKEN_TTL_MS_ = 30 * 60 * 1000;
+  var STATUS_RATE_LIMIT_PER_EMAIL_ = { windowMinutes: 10, maxCount: 3 };
+  var STATUS_RATE_LIMIT_GLOBAL_ = { windowMinutes: 1, maxCount: 20 };
+  var STATUS_VERIFY_RATE_LIMIT_ = { windowMinutes: 1, maxCount: 60 };
+  var STATUS_TOKEN_KEY_ = 'snb-member-status-token-v1';
+  var STATUS_ACCEPTED_MESSAGE_ = '入力されたメールアドレス宛に、会員資格を確認するためのリンクをお送りしました（30分間有効・1回のみ使えます）。メールをご確認ください（届かない場合は迷惑メールフォルダもご確認ください）。';
+
+  function hashStatusToken_(token) {
+    var bytes = Utilities.computeHmacSha256Signature(token, STATUS_TOKEN_KEY_, Utilities.Charset.UTF_8);
+    return bytes.map(function (b) { var v = (b < 0 ? b + 256 : b).toString(16); return v.length < 2 ? '0' + v : v; }).join('');
+  }
+
+  function sendStatusMail_(email, link) {
+    var mailConfig = BookingConfig.getMailConfig();
+    var message = {
+      to: email,
+      subject: STATUS_MAIL_SUBJECT_,
+      body: 'SNB MEMBERの会員資格を確認するリンクです（30分間有効・1回のみ使えます）。\n\n' + link + '\n\n' +
+        '・このリンクを開いた方にだけ、このメールアドレスの会員状態を表示します。他の方に転送しないでください。\n' +
+        '・心当たりがない場合は、このメールを破棄してください。'
+    };
+    if (mailConfig.displayName) message.name = mailConfig.displayName;
+    if (mailConfig.replyTo) message.replyTo = mailConfig.replyTo;
+    MailApp.sendEmail(message);
+  }
+
+  function requestStatusLink(input) {
+    var email = MembershipRules.normalizeEmail(input && input.email);
+    if (!MembershipRules.isValidEmail(email)) {
+      return fail_('INVALID_EMAIL', 'メールアドレスの形式が正しくありません。');
+    }
+    var allowed = RateLimiter.limitByKey('member_status_all', STATUS_RATE_LIMIT_GLOBAL_.windowMinutes, STATUS_RATE_LIMIT_GLOBAL_.maxCount) &&
+      RateLimiter.limitByKey('member_status_' + email, STATUS_RATE_LIMIT_PER_EMAIL_.windowMinutes, STATUS_RATE_LIMIT_PER_EMAIL_.maxCount);
+    if (!allowed) {
+      return fail_('RATE_LIMITED', '操作回数が多すぎます。しばらく時間を置いてから再度お試しください。');
+    }
+    var statusUrl = BookingConfig.getStripeConfig().membershipStatusUrl;
+    if (!statusUrl) {
+      return fail_('STATUS_UNAVAILABLE', '現在、会員資格の確認を受け付けていません。');
+    }
+
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS_)) {
+      return fail_('LOCK_TIMEOUT', '一時的に混み合っています。しばらくしてから再度お試しください。');
+    }
+    try {
+      var now = new Date();
+      var token = (Utilities.getUuid() + Utilities.getUuid()).replace(/[^A-Za-z0-9]/g, '');
+      MemberRepository.addStatusToken({ tokenHash: hashStatusToken_(token), email: email, expiresAt: new Date(now.getTime() + STATUS_TOKEN_TTL_MS_) }, now);
+      sendStatusMail_(email, statusUrl.split('#')[0] + '#t=' + token);
+    } catch (error) {
+      Logger.log('MembershipService: 会員資格確認リンクを送信できませんでした');
+      return fail_('STATUS_UNAVAILABLE', '現在、会員資格の確認を受け付けていません。しばらくしてから再度お試しください。');
+    } finally {
+      lock.releaseLock();
+    }
+    return { success: true, message: STATUS_ACCEPTED_MESSAGE_ };
+  }
+
+  function verifyStatusLink(input) {
+    var token = input && typeof input.token === 'string' ? input.token : '';
+    var invalid = fail_('INVALID_TOKEN', 'リンクが無効か、有効期限が切れています。お手数ですが、もう一度メールアドレスを入力してリンクを再発行してください。');
+    if (!/^[A-Za-z0-9]{16,128}$/.test(token)) return invalid;
+    if (!RateLimiter.limitByKey('member_status_verify_all', STATUS_VERIFY_RATE_LIMIT_.windowMinutes, STATUS_VERIFY_RATE_LIMIT_.maxCount)) {
+      return fail_('RATE_LIMITED', '操作回数が多すぎます。しばらく時間を置いてから再度お試しください。');
+    }
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS_)) {
+      return fail_('LOCK_TIMEOUT', '一時的に混み合っています。しばらくしてから再度お試しください。');
+    }
+    try {
+      var now = new Date();
+      var row = MemberRepository.findUsableStatusToken(hashStatusToken_(token), now);
+      if (!row) return invalid;
+      var facts = MemberRepository.statusFactsForEmail(row.email);
+      var status = MembershipRules.describeMembershipStatus(row.email, facts, {
+        permanent: MembershipRules.isPermanentMember(row.email),
+        nowMs: now.getTime()
+      });
+      MemberRepository.markStatusTokenUsed(row.rowNumber, now);
+      return { success: true, status: status };
+    } catch (error) {
+      Logger.log('MembershipService: 会員資格を確認できませんでした');
+      return fail_('STATUS_UNAVAILABLE', '会員資格を確認できませんでした。しばらくしてから再度お試しください。');
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  return { startCheckout: startCheckout, requestStatusLink: requestStatusLink, verifyStatusLink: verifyStatusLink };
 })();
