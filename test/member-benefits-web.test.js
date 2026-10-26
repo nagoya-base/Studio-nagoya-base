@@ -435,3 +435,75 @@ test('シャワー(#481): 予約フォーム・会員案内・申込ページに
   var form = fs.readFileSync(__dirname + '/../_includes/booking_app_ja.html', 'utf8');
   assert.ok(form.indexOf('選択だけでは利用確定になりません') !== -1);
 });
+
+// ============================================================================
+// Issue #539: 利用日基準のペアパック表示と、料金サマリーの適用料金区分
+// ============================================================================
+
+test('Issue #539: ペアパックの表示は利用日が2026/12/1以降のSNB / mensのみ（予約フォームを開いた日は問わない）', function () {
+  var Logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
+  assert.strictEqual(Logic.pairPackAvailableOnDate('snb', '2026-12-10'), true, '作成日10/27でも利用日12/10なら表示');
+  assert.strictEqual(Logic.pairPackAvailableOnDate('snb', '2026-12-01'), true, '境界');
+  assert.strictEqual(Logic.pairPackAvailableOnDate('mens', '2026-12-01'), true);
+  assert.strictEqual(Logic.pairPackAvailableOnDate('snb', '2026-11-30'), false, '利用日が11/30以前は表示しない');
+  assert.strictEqual(Logic.pairPackAvailableOnDate('studio_x', '2026-12-10'), false, 'Studio Xには出さない');
+  assert.strictEqual(Logic.pairPackAvailableOnDate('snb', ''), false, '利用日未選択');
+  assert.strictEqual(Logic.pairPackAvailableOnDate('snb', undefined), false);
+  assert.strictEqual(Logic.pairPackAvailableOnDate('snb', '2026/12/10'), false, '形式不正');
+});
+
+test('Issue #539: 適用料金の表示はサーバーの見積り結果（plan / tier / brand）だけから導出する', function () {
+  var Logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
+  function info(price, locale) { return Logic.appliedRateInfo(price, locale || 'ja'); }
+  assert.strictEqual(info({ brand: 'snb', tier: 'GENERAL', plan: '' }).text, '適用料金：一般料金');
+  assert.strictEqual(info({ brand: 'snb', tier: 'MEMBER', plan: '' }).text, '適用料金：SNB MEMBER 会員料金');
+  assert.strictEqual(info({ brand: 'mens', tier: 'MEMBER', plan: '' }).text, '適用料金：SNB MEMBER 会員料金');
+  assert.strictEqual(info({ brand: 'snb', tier: 'MEMBER', plan: 'member_pair_3h' }).text, '適用プラン：SNB MEMBER限定 2名ペアパック', 'ペアパックはtier=MEMBERでも会員料金とは表示しない');
+  assert.strictEqual(info({ brand: 'studio_x', tier: 'GENERAL', plan: 'osu_cosplay_base_6h' }).text, '適用プラン：Studio X｜6時間貸切ベースプラン', '貸切プランを一般料金と表示しない');
+  assert.strictEqual(info({ brand: 'studio_x', tier: 'GENERAL', plan: '' }).text, '適用料金：一般料金', 'Studio X V2は会員料金が存在しない');
+  assert.strictEqual(info({ brand: 'studio_x', tier: 'MEMBER', plan: '' }).text, '適用料金：会員料金', 'Studio X旧世代の会員料金はSNB MEMBERと表示しない');
+  assert.strictEqual(info(null), null);
+  assert.strictEqual(info({ brand: 'snb' }), null, 'tier不明は何も表示しない');
+  assert.strictEqual(info({ brand: 'snb', tier: 'GENERAL', plan: 'unknown_plan' }), null, '未知のプランは区分を推測しない');
+  assert.strictEqual(info({ brand: 'snb', tier: 'MEMBER', plan: 'member_pair_3h' }, 'en').text, 'Applied plan: SNB MEMBER-only Pair Pack (2 guests)');
+  assert.strictEqual(info({ brand: 'snb', tier: 'GENERAL', plan: '' }, 'en').text, 'Applied rate: Standard rate');
+});
+
+test('Issue #539: 実際の料金計算（BookingPricing）の結果と適用料金表示が食い違わない（平日5,500円・土日祝7,000円の会員料金）', function () {
+  var P = gas.BookingPricing;
+  var Logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
+  function plainJson(v) { return JSON.parse(JSON.stringify(v)); }
+  function shown(input) {
+    var r = P.computeBookingPrice(Object.assign({ brand: 'snb', durationMinutes: 180, generation: 'V2' }, input));
+    return { amount: r.price.amount, text: Logic.appliedRateInfo(r.price, 'ja').text };
+  }
+  assert.deepStrictEqual(plainJson(shown({ date: '2026-12-07', isMember: false })), { amount: 6000, text: '適用料金：一般料金' });
+  assert.deepStrictEqual(plainJson(shown({ date: '2026-12-07', isMember: true })), { amount: 5500, text: '適用料金：SNB MEMBER 会員料金' });
+  assert.deepStrictEqual(plainJson(shown({ date: '2026-12-12', isMember: true })), { amount: 7000, text: '適用料金：SNB MEMBER 会員料金' });
+  assert.deepStrictEqual(plainJson(shown({ date: '2026-12-07', plan: 'member_pair_3h' })), { amount: 5000, text: '適用プラン：SNB MEMBER限定 2名ペアパック' });
+  assert.deepStrictEqual(plainJson(shown({ date: '2026-12-12', plan: 'member_pair_3h' })), { amount: 6000, text: '適用プラン：SNB MEMBER限定 2名ペアパック' });
+  assert.deepStrictEqual(plainJson(shown({ brand: 'studio_x', date: '2026-12-07', isMember: true })), { amount: 3600, text: '適用料金：一般料金' });
+});
+
+test('Issue #539: 料金サマリーのテンプレート（ja / en）に適用料金欄があり、booking-appは見積り応答からだけ描画する', function () {
+  ['_includes/booking_app_ja.html', '_includes/booking_app_en.html'].forEach(function (rel) {
+    var tpl = read(rel);
+    assert.match(tpl, /id="ba-price-applied"/, rel);
+    assert.match(tpl, /id="ba-confirm-applied-row" hidden/, rel);
+    assert.match(tpl, /id="ba-confirm-applied"/, rel);
+  });
+  var app = read('scripts/booking-app.js');
+  assert.match(app, /function renderAppliedRate_\(entry\)/);
+  assert.match(app, /entry\.status === 'success'/, '成功した見積りのときだけ表示（計算中・失敗では隠す）');
+  assert.ok(!/RATE_TABLES|5500|5,500/.test(app), 'フロントに料金表を複製しない');
+});
+
+test('Issue #539: 予約フォームはペアパック欄を利用日で同期し、Studio Xのテンプレートには欄を出さない', function () {
+  var app = read('scripts/booking-app.js');
+  assert.match(app, /Logic\.pairPackAvailableOnDate\(brand,/);
+  assert.match(app, /function syncBenefitsVisibility_\(\)/);
+  assert.match(app, /function refreshPriceEstimate_\(\) \{\n    syncBenefitsVisibility_\(\);/, '日付・条件変更で見積りと同時に同期');
+  assert.match(app, /if \(!pairVisible && els\.planPair\) els\.planPair\.checked = false;/, '出せなくなったら選択を外す');
+  var tpl = read('_includes/booking_app_ja.html');
+  assert.ok(tpl.indexOf('id="ba-plan-pair"') > tpl.indexOf('{% if include.brand == "snb" or include.brand == "mens" %}'));
+});

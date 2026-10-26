@@ -283,7 +283,7 @@
     </fieldset>
 
 {% if include.brand == "snb" or include.brand == "mens" %}
-    <!-- 会員限定の特典（Issue #478）。2026/12/1以降のみJS側が表示する（brandShowsMemberBenefits）。
+    <!-- 会員限定の特典（Issue #478）。シャワーは2026/12/1以降（brandShowsMemberBenefits）、ペアパックは利用日が2026/12/1以降（pairPackAvailableOnDate。Issue #539）のときだけJS側が表示する。
          どちらも実会員資格（SNB MEMBER。利用日がお支払い済みの有効期間に入っていること）が必要で、確認はサーバー側で行う
          （mensの会員料金の自動適用では代用できない）。ペアパックは独立プラン（通常の会員料金表とは別商品）。 -->
     <fieldset class="ba-fieldset" id="ba-benefits-field" hidden>
@@ -304,6 +304,7 @@
     <div class="ba-price-box" id="ba-price-box" aria-live="polite">
       <p class="ba-price-time" id="ba-price-time" hidden></p>
       <p class="ba-price-line" id="ba-price-line" hidden></p>
+      <p class="ba-price-applied" id="ba-price-applied" hidden></p>
       <p class="ba-price-note" id="ba-price-note"></p>
     </div>
 
@@ -431,6 +432,7 @@
         <tr id="ba-confirm-plan-row" hidden><th>ご利用プラン</th><td id="ba-confirm-plan"></td></tr>
 {% endif %}
         <tr><th>利用料金</th><td id="ba-confirm-price"></td></tr>
+        <tr id="ba-confirm-applied-row" hidden><th id="ba-confirm-applied-label">適用料金</th><td id="ba-confirm-applied"></td></tr>
         <tr><th>お名前</th><td id="ba-confirm-name"></td></tr>
         <tr><th>メールアドレス</th><td id="ba-confirm-email"></td></tr>
         <tr><th>電話番号</th><td id="ba-confirm-phone"></td></tr>

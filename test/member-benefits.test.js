@@ -167,7 +167,9 @@ test('ペアパック料金: 3時間未満・Studio X・V1(2026/11/30まで)・�
   function r(extra) { return P.computeBookingPrice(Object.assign({ brand: 'snb', date: WEEKDAY, durationMinutes: 180, generation: 'V2', plan: 'member_pair_3h' }, extra)); }
   assert.strictEqual(r({ durationMinutes: 120 }).error.code, 'PLAN_DURATION_INVALID');
   assert.strictEqual(r({ brand: 'studio_x' }).error.code, 'PLAN_NOT_AVAILABLE');
-  assert.strictEqual(r({ generation: 'V1' }).error.code, 'PLAN_NOT_AVAILABLE');
+  /* Issue #539: 可否は予約作成日（料金世代）ではなく利用日で決まる。利用日が11/30以前なら世代に関わらず拒否する。 */
+  assert.strictEqual(r({ date: '2026-11-30' }).error.code, 'PLAN_NOT_AVAILABLE');
+  assert.strictEqual(r({ date: '2026-11-30', generation: 'V2' }).error.code, 'PLAN_NOT_AVAILABLE');
   assert.strictEqual(r({ plan: 'member_pair_9h' }).error.code, 'INVALID_PLAN');
   assert.strictEqual(r({ plan: '' }).price.plan, '', 'プラン無しは従来どおり');
 });
@@ -238,8 +240,9 @@ test('ペアパックはSNB / mensのみ・3時間以上・2026/12/1以降の作
   assert.strictEqual(book(ctx, { brand: 'studio_x' }).error.code, 'PLAN_NOT_AVAILABLE');
   assert.strictEqual(book(ctx, { durationMinutes: 120 }).error.code, 'PLAN_DURATION_INVALID');
   assert.strictEqual(book(ctx, { plan: 'bogus' }).error.code, 'INVALID_PLAN');
-  assert.strictEqual(book(ctx, {}, NOW_BEFORE).error.code, 'PLAN_NOT_AVAILABLE', '11/30 23:59:59までは提供開始前');
-  assert.strictEqual(book(ctx, {}, NOW_START).success, true, '12/1 00:00 JSTから提供');
+  /* Issue #539: 提供開始は予約作成日ではなく利用日（2026/12/1以降）で判定する。 */
+  assert.strictEqual(book(ctx, { date: '2026-11-30' }, new Date('2026-11-20T12:00:00+09:00')).error.code, 'PLAN_NOT_AVAILABLE', '利用日が11/30以前は不可');
+  assert.strictEqual(book(ctx, {}, NOW_START).success, true, '利用日が12/1以降なら12/1 00:00 JST以降の作成で可');
 });
 
 test('会員判定月: 利用日の属する月で判定する（翌月の予約は翌月の支払い事実が必要・月境界）', function () {
@@ -849,4 +852,56 @@ test('planOrdersの最終防御: 12/1以降は非会員がFREE以外の注文を
   var free = xPlan(ctx, { layouts: ['CLASSROOM'], setupService: 'SELF', cleanupService: 'SELF' }, false);
   assert.strictEqual(free.ok, true);
   assert.ok(free.orders.every(function (o) { return o.category === 'FREE'; }));
+});
+
+// ============================================================================
+// Issue #539: ペアパックの提供可否は「利用日 >= 2026/12/1」（予約作成日は問わない）
+// ============================================================================
+
+test('Issue #539: 予約作成日が11/30以前でも、利用日が12/1以降ならペアパックを予約できる（actual membershipは必須のまま）', function () {
+  /* 90日先行予約の資格（予約作成時の当月会員）は既存仕様のまま。10/27作成・12/10利用は30日超のため10月分の会員も要る。 */
+  var ctx = setup({ members: { [EMAIL]: ['2026-10', '2026-12'] } });
+  var early = new Date('2026-10-27T12:00:00+09:00');
+  var ok = book(ctx, { brand: 'snb', date: '2026-12-10', startTime: '10:00' }, early);
+  assert.strictEqual(ok.success, true, JSON.stringify(ok));
+  assert.strictEqual(ok.price.amount, 5000);
+  assert.strictEqual(ok.price.plan, 'member_pair_3h');
+  var rec = bookingRecord(ctx, ok.bookingId);
+  assert.strictEqual(rec.planCode, 'member_pair_3h');
+  assert.strictEqual(rec.priceGeneration, 'V1', '料金世代（作成日基準）は変えない');
+  assert.strictEqual(rec.membershipStatus, 'ACTIVE');
+
+  var edge = book(ctx, { brand: 'mens', date: '2026-12-01', startTime: '10:00' }, new Date('2026-11-30T12:00:00+09:00'));
+  assert.strictEqual(edge.success, true, '作成日11/30・利用日12/1');
+  assert.strictEqual(edge.price.amount, 5000);
+});
+
+test('Issue #539: 作成日が11/30以前・利用日が12/1以降でも、非会員・利用月不一致は MEMBER_BENEFIT_NOT_AVAILABLE（資格を緩和しない）', function () {
+  var early = new Date('2026-11-15T12:00:00+09:00');
+  var nonMember = setup({ members: {} });
+  assert.strictEqual(book(nonMember, { date: '2026-12-10' }, early).error.code, DENIED_CODE);
+  var mismatch = setup({ members: { [EMAIL]: ['2026-11'] } });
+  assert.strictEqual(book(mismatch, { date: '2026-12-10' }, early).error.code, DENIED_CODE);
+});
+
+test('Issue #539: 利用日が11/30以前・Studio Xでは、作成日に関わらずペアパックを拒否する', function () {
+  var ctx = setup({ members: { [EMAIL]: ['2026-11', '2026-12'] } });
+  var early = new Date('2026-11-15T12:00:00+09:00');
+  assert.strictEqual(book(ctx, { date: '2026-11-30' }, early).error.code, 'PLAN_NOT_AVAILABLE');
+  assert.strictEqual(book(ctx, { brand: 'studio_x', date: '2026-12-10' }, early).error.code, 'PLAN_NOT_AVAILABLE');
+});
+
+test('Issue #539: 見積り（BookingPricing）は利用日基準。V1世代でも12/1以降ならペアパック料金、11/30以前は拒否。金額は#478のまま', function () {
+  var P = setup().sandbox.BookingPricing;
+  function r(date, extra) { return P.computeBookingPrice(Object.assign({ brand: 'snb', date: date, durationMinutes: 180, generation: 'V1', plan: 'member_pair_3h' }, extra || {})); }
+  assert.strictEqual(r('2026-12-01').valid, true);
+  assert.strictEqual(r('2026-12-07').price.amount, 5000);
+  assert.strictEqual(r('2026-12-12').price.amount, 6000);
+  assert.strictEqual(r('2026-11-30').valid, false);
+  assert.strictEqual(r('2026-11-30').error.code, 'PLAN_NOT_AVAILABLE');
+  assert.strictEqual(P.isPairPackAvailableOnDate('2026-11-30'), false);
+  assert.strictEqual(P.isPairPackAvailableOnDate('2026-12-01'), true);
+  assert.strictEqual(P.isPairPackAvailableOnDate('2027-01-05'), true);
+  assert.strictEqual(P.isPairPackAvailableOnDate(''), false);
+  assert.strictEqual(P.isPairPackAvailableOnDate('2026/12/10'), false);
 });

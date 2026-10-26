@@ -144,6 +144,7 @@
     memberError: document.getElementById('ba-member-error'),
     priceTime: document.getElementById('ba-price-time'),
     priceLine: document.getElementById('ba-price-line'),
+    priceApplied: document.getElementById('ba-price-applied'),
     priceNote: document.getElementById('ba-price-note'),
     step1Next: document.getElementById('ba-step-datetime-next'),
 
@@ -207,6 +208,9 @@
     confirmDate: document.getElementById('ba-confirm-date'),
     confirmTime: document.getElementById('ba-confirm-time'),
     confirmPrice: document.getElementById('ba-confirm-price'),
+    confirmAppliedRow: document.getElementById('ba-confirm-applied-row'),
+    confirmAppliedLabel: document.getElementById('ba-confirm-applied-label'),
+    confirmApplied: document.getElementById('ba-confirm-applied'),
     confirmPlanRow: document.getElementById('ba-confirm-plan-row'),
     confirmPlan: document.getElementById('ba-confirm-plan'),
     confirmName: document.getElementById('ba-confirm-name'),
@@ -278,9 +282,27 @@
     refreshPriceEstimate_();
   }
 
-  /* 会員限定の特典（Issue #478。SNB / SNB mens、2026/12/1以降の表示）。表示制御のみで、可否はサーバーが判定する。 */
-  var benefitsVisible = Logic.brandShowsMemberBenefits(brand);
-  if (els.benefitsField) els.benefitsField.hidden = !benefitsVisible;
+  /* 会員限定の特典（Issue #478。SNB / SNB mens）。表示制御のみで、可否はサーバーが判定する。
+     シャワーは従来どおり2026/12/1以降（端末時刻）に表示。2名ペアパックは Issue #539 で「利用日が2026/12/1以降」基準に変更し、
+     利用日を選んだ時点で（予約フォームを12/1より前に開いていても）表示・選択できる。 */
+  var showerVisible = Logic.brandShowsMemberBenefits(brand);
+  function pairPackVisible_() {
+    return Logic.pairPackAvailableOnDate(brand, els.date ? els.date.value : '');
+  }
+  function benefitChoiceOf_(control) {
+    return control && control.parentNode ? control.parentNode : null;
+  }
+  /* 利用日・日付変更のたびに特典欄の表示を同期する。ペアパックが出せなくなったら選択も外す（古い選択を送らない）。 */
+  function syncBenefitsVisibility_() {
+    var pairVisible = pairPackVisible_();
+    if (!pairVisible && els.planPair) els.planPair.checked = false;
+    var pairChoice = benefitChoiceOf_(els.planPair);
+    if (pairChoice) pairChoice.hidden = !pairVisible;
+    var showerChoice = benefitChoiceOf_(els.shower);
+    if (showerChoice) showerChoice.hidden = !showerVisible;
+    if (els.benefitsField) els.benefitsField.hidden = !(pairVisible || showerVisible);
+  }
+  syncBenefitsVisibility_();
   /* 貸切ベースプラン（Issue #488 / #492。Studio Xのみ・常設）。欄は常に表示し、利用者が明示的に選んだときだけ
      プランを送る。表示制御のみで、可否（ブランド・人数・6時間以上・8:00〜21:00）はサーバーが全入口で判定する。 */
   function eventPlanSelected_() {
@@ -288,10 +310,10 @@
   }
   function selectedPlan_() {
     if (eventPlanSelected_()) return Logic.EVENT_BASE_PLAN_CODE;
-    return benefitsVisible && els.planPair && els.planPair.checked ? Logic.PAIR_PACK_PLAN_CODE : '';
+    return pairPackVisible_() && els.planPair && els.planPair.checked ? Logic.PAIR_PACK_PLAN_CODE : '';
   }
   function showerSelected_() {
-    return benefitsVisible && !!els.shower && els.shower.checked;
+    return showerVisible && !!els.shower && els.shower.checked;
   }
 
   /* 会員区分は「一般 / 会員」のラジオ（name="memberStatus"）。単一checkboxでは「非会員と回答した」
@@ -882,10 +904,26 @@
    * Step4の表示も含めて常に最新化される。els.confirmPriceが存在しない（まだStep4に
    * 到達していない）場合はrenderPriceEntryInto_同様に何もしない。
    */
+  /* Issue #539: 適用料金／適用プランは、金額と同じ見積り応答（entry.price）からだけ導出する。成功した見積り以外
+     （計算中・失敗・未確定）では必ず隠し、古い区分を金額と食い違ったまま残さない。 */
+  function renderAppliedRate_(entry) {
+    var info = entry && entry.status === 'success' && Logic.formatJpyAmount(entry.price && entry.price.amount)
+      ? Logic.appliedRateInfo(entry.price, locale)
+      : null;
+    if (els.priceApplied) {
+      els.priceApplied.textContent = info ? info.text : '';
+      els.priceApplied.hidden = !info;
+    }
+    if (els.confirmAppliedRow) els.confirmAppliedRow.hidden = !info;
+    if (els.confirmAppliedLabel && info) els.confirmAppliedLabel.textContent = info.label;
+    if (els.confirmApplied) els.confirmApplied.textContent = info ? info.value : '';
+  }
+
   function renderPriceEverywhere_(entry) {
     latestPriceEntry = entry;
     if (optionsPanel && optionsPanel.refreshSummary) optionsPanel.refreshSummary();
     renderPriceEntryInto_(els.priceLine, els.priceNote, entry);
+    renderAppliedRate_(entry);
     renderPriceTimeRange_();
     if (els.confirmPrice) els.confirmPrice.textContent = priceDisplayText_(entry);
   }
@@ -896,6 +934,7 @@
   }
 
   function refreshPriceEstimate_() {
+    syncBenefitsVisibility_();
     var dateValue = els.date ? els.date.value : '';
     var durationMinutes = currentCalendarDurationMinutes_();
     var memberFlag = isMemberChecked_();

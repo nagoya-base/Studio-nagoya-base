@@ -74,8 +74,9 @@ var BookingPricing = (function () {
    * Issue #478: 会員限定2名ペアパック。通常料金tier（GENERAL/MEMBER）の置換ではなく、独立したプランとして
    * 予約へプラン識別子（Bookings.planCode）を保存する。日程変更後も保持し、通常3時間料金へ化けない。
    * - 3時間（BASE_HOURS）が基本、1〜2名、平日5,000円／土日祝6,000円。延長は通常の会員延長料金（MEMBER_RATES_）。
-   * - SNB / SNB mensのみ。2026/12/1以降に作成された予約（V2）のみ。actual membershipが必須（資格の確認は
-   *   予約作成・日程変更・確定の各サーバー側処理が行い、この純粋関数は料金だけを決める）。
+   * - SNB / SNB mensのみ。Issue #539: 提供の可否は予約作成日（料金世代）ではなく**利用日が2026/12/1以降**かで決める
+   *   （2026/11/30以前に作成した予約でも、利用日が12/1以降ならペアパックを選べる）。actual membershipが必須
+   *   （資格の確認は予約作成・日程変更・確定の各サーバー側処理が行い、この純粋関数は料金だけを決める）。
    * - 他の割引・優待との併用は無い（このプランの料金はisMember・価格overrideの影響を受けない）。
    */
   var PLAN = { MEMBER_PAIR_3H: 'member_pair_3h', OSU_COSPLAY_BASE_6H: 'osu_cosplay_base_6h' };
@@ -83,7 +84,9 @@ var BookingPricing = (function () {
     brands: ['snb', 'mens'],
     baseHours: 3,
     maxPeople: 2,
-    base: { WEEKDAY: 5000, WEEKEND_HOLIDAY: 6000 }
+    base: { WEEKDAY: 5000, WEEKEND_HOLIDAY: 6000 },
+    /* Issue #539: 提供開始の利用日（JSTの暦日 'YYYY-MM-DD'。ゼロ埋め固定のため文字列比較で足りる）。 */
+    startDate: '2026-12-01'
   };
 
   /*
@@ -232,6 +235,11 @@ var BookingPricing = (function () {
     return brand === 'studio_x' ? RATE_TABLES_.studio_x : RATE_TABLES_.snb;
   }
 
+  /* Issue #539: ペアパックを提供する利用日か（利用日 >= 2026/12/1）。形式不正はfalse（fail-closed）。 */
+  function isPairPackAvailableOnDate(dateString) {
+    return isValidDateString_(dateString) && dateString >= PAIR_PACK_.startDate;
+  }
+
   function computePairPackAmount_(dayType, hours) {
     var extra = hours - PAIR_PACK_.baseHours;
     return PAIR_PACK_.base[dayType] + (extra > 0 ? extra * MEMBER_RATES_[dayType].extensionPerHour : 0);
@@ -341,8 +349,9 @@ var BookingPricing = (function () {
       return { valid: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
     }
     if (plan === PLAN.MEMBER_PAIR_3H) {
-      /* 独立プラン: 対象ブランド・料金世代（V2）・最低3時間を満たさなければ通常料金へ倒さず拒否する。 */
-      if (PAIR_PACK_.brands.indexOf(brand) === -1 || generation !== GENERATION.V2) {
+      /* 独立プラン: 対象ブランド・利用日（2026/12/1以降。Issue #539）・最低3時間を満たさなければ通常料金へ倒さず拒否する。
+         料金世代は問わない（会員料金表はV1/V2で同額で、ペアパックは独立した固定料金）。 */
+      if (PAIR_PACK_.brands.indexOf(brand) === -1 || !isPairPackAvailableOnDate(date)) {
         return { valid: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
       }
       if (billableHours_(durationMinutes) < PAIR_PACK_.baseHours || Number(durationMinutes) < PAIR_PACK_.baseHours * 60) {
@@ -413,6 +422,8 @@ var BookingPricing = (function () {
     eventPlanOptionsError: eventPlanOptionsError,
     planLabel: planLabel,
     isPairPackPeople: isPairPackPeople,
+    isPairPackAvailableOnDate: isPairPackAvailableOnDate,
+    PAIR_PACK_START_DATE: PAIR_PACK_.startDate,
     generationAt: generationAt,
     normalizeGeneration: normalizeGeneration,
     computeBookingPrice: computeBookingPrice

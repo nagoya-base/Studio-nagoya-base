@@ -113,6 +113,8 @@ function setup(responseBody) {
        最低限の実装を用意する。 */
     brandShowsMemberOption: function (b) { return b === 'snb' || b === 'studio_x'; },
     brandShowsMemberBenefits: function () { return false; },
+    pairPackAvailableOnDate: function () { return false; },
+    appliedRateInfo: function () { return null; },
     isPairPackPeopleValue: function () { return true; },
     PAIR_PACK_PLAN_CODE: 'member_pair_3h',
     /* Issue #500: 初期化末尾でURLのplanを読む。このstub群はURLのplanを持たない。 */
