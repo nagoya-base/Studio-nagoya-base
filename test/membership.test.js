@@ -505,7 +505,7 @@ test('Studio X V2は会員資格に関係なく共通料金（会員台帳を参
   joined(ctx);
   var result = book(ctx, { brand: 'studio_x', isMember: true });
   assert.strictEqual(result.price.tier, 'GENERAL');
-  assert.strictEqual(result.price.amount, 5500);
+  assert.strictEqual(result.price.amount, 3600, 'Issue #486: セルフ利用基本料金（平日3h）');
   assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId).record.membershipStatus, 'NOT_CHECKED');
 });
 
