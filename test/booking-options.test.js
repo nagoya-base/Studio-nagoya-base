@@ -13,7 +13,7 @@ var fs = require('node:fs');
 var path = require('node:path');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 
-var sandbox = loadBookingSandbox(['EquipmentCatalog.gs', 'BookingOptions.gs'], {});
+var sandbox = loadBookingSandbox(['MembershipRules.gs', 'EquipmentCatalog.gs', 'BookingOptions.gs'], {});
 var BookingOptions = sandbox.BookingOptions;
 
 var CONFIG_WITH_PRICES = { addonDeadlineHoursBeforeStart: '' };
@@ -46,12 +46,20 @@ var THEMES = ['CLASSROOM', 'JAPANESE', 'GRUNGE', 'WHITE_BACKDROP', 'BLACK_BACKDR
 
 // ---- ブランド・カタログ ----
 
-test('初期リリースはStudio Xのみ: SNB / mensではカタログが無効', function () {
+test('Studio Xは全カタログ。SNB / mensは会員限定シャワーのみ（機材・スタッフ対応のカタログは出さない。Issue #478）', function () {
   assert.strictEqual(BookingOptions.isBrandEnabled('studio_x'), true);
-  assert.strictEqual(BookingOptions.isBrandEnabled('snb'), false);
-  assert.strictEqual(BookingOptions.isBrandEnabled('mens'), false);
-  assert.strictEqual(BookingOptions.buildCatalog('snb', CONFIG_WITH_PRICES).enabled, false);
-  assert.strictEqual(BookingOptions.buildCatalog('mens', CONFIG_WITH_PRICES).enabled, false);
+  assert.strictEqual(BookingOptions.isBrandEnabled('snb'), true);
+  assert.strictEqual(BookingOptions.isBrandEnabled('mens'), true);
+  assert.strictEqual(BookingOptions.isBrandEnabled('zzz'), false);
+  ['snb', 'mens'].forEach(function (brand) {
+    var c = BookingOptions.buildCatalog(brand, CONFIG_WITH_PRICES);
+    assert.strictEqual(c.enabled, true);
+    assert.strictEqual(c.showerOnly, true);
+    assert.strictEqual(c.shower.priceJpy, 1000);
+    assert.strictEqual(c.equipment, undefined);
+    assert.strictEqual(c.staffServices, undefined);
+  });
+  assert.strictEqual(BookingOptions.buildCatalog('studio_x', CONFIG_WITH_PRICES).shower, undefined, 'Studio Xにはシャワーを出さない');
 });
 
 test('カタログ: スタッフ対応料金は3,000/3,000/5,000円、5テーマ、機材は個別単価・在庫つき', function () {
@@ -382,7 +390,7 @@ test('isPayable: 承認前・不承認・確定済み・金額不正は支払え
 
 // ---- 予約側の受付可否 ----
 
-test('checkBookingAcceptsOptions: PENDING/CONFIRMEDかつ利用開始前のStudio Xのみ', function () {
+test('checkBookingAcceptsOptions: PENDING/CONFIRMEDかつ利用開始前の対象ブランドのみ', function () {
   var now = new Date('2026-10-24T10:00:00+09:00');
   var future = new Date('2026-11-01T10:00:00+09:00');
   var ok = function (o) { return BookingOptions.checkBookingAcceptsOptions(Object.assign({ status: 'CONFIRMED', brand: 'studio_x', startAt: future }, o), {}, now); };
@@ -391,8 +399,9 @@ test('checkBookingAcceptsOptions: PENDING/CONFIRMEDかつ利用開始前のStudi
   assert.strictEqual(ok({ status: 'CANCELLED' }).error.code, 'BOOKING_NOT_ELIGIBLE');
   assert.strictEqual(ok({ status: 'EXPIRED' }).error.code, 'BOOKING_NOT_ELIGIBLE');
   assert.strictEqual(ok({ startAt: new Date('2026-10-24T09:00:00+09:00') }).error.code, 'BOOKING_ALREADY_STARTED');
-  assert.strictEqual(ok({ brand: 'snb' }).error.code, 'OPTIONS_NOT_AVAILABLE');
-  assert.strictEqual(ok({ brand: 'mens' }).error.code, 'OPTIONS_NOT_AVAILABLE');
+  assert.strictEqual(ok({ brand: 'snb' }).ok, true, 'SNB / mensはシャワー用に受け付ける（Issue #478）');
+  assert.strictEqual(ok({ brand: 'mens' }).ok, true);
+  assert.strictEqual(ok({ brand: 'zzz' }).error.code, 'OPTIONS_NOT_AVAILABLE');
   assert.strictEqual(BookingOptions.checkBookingAcceptsOptions(null, {}, now).error.code, 'BOOKING_NOT_FOUND');
 });
 

@@ -79,7 +79,7 @@ var Panel = require('../scripts/booking-options.js');
 
 /* ---- 実際のGASが返す公開カタログを使う ---- */
 
-var sandbox = loadBookingSandbox(['EquipmentCatalog.gs', 'BookingOptions.gs'], {});
+var sandbox = loadBookingSandbox(['MembershipRules.gs', 'EquipmentCatalog.gs', 'BookingOptions.gs'], {});
 var BookingOptions = sandbox.BookingOptions;
 var CATALOG = JSON.parse(JSON.stringify(BookingOptions.buildCatalog('studio_x', { addonDeadlineHoursBeforeStart: '' })));
 

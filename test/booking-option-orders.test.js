@@ -917,14 +917,20 @@ function callPost(ctx, action, body) {
   return JSON.parse(ctx.sandbox.doPost({ parameter: { action: action }, postData: { contents: JSON.stringify(body) } }).text);
 }
 
-test('Code.gs: optionCatalogはPIIを含まず、Studio Xのみ有効。SNB / mensは無効カタログ', function () {
+test('Code.gs: optionCatalogはPIIを含まず、Studio Xは全カタログ・SNB / mensはシャワーのみ', function () {
   var ctx = setup();
   var x = callGet(ctx, { action: 'optionCatalog', brand: 'studio_x' });
   assert.strictEqual(x.success, true);
   assert.strictEqual(x.catalog.enabled, true);
   assert.strictEqual(x.catalog.staffServices.BOTH.priceJpy, 5000);
-  assert.strictEqual(callGet(ctx, { action: 'optionCatalog', brand: 'snb' }).catalog.enabled, false);
-  assert.strictEqual(callGet(ctx, { action: 'optionCatalog', brand: 'mens' }).catalog.enabled, false);
+  /* Issue #478: SNB / mensはシャワーのみのカタログ（Studio Xの機材・スタッフ対応は出さない）。 */
+  ['snb', 'mens'].forEach(function (brand) {
+    var c = callGet(ctx, { action: 'optionCatalog', brand: brand }).catalog;
+    assert.strictEqual(c.enabled, true);
+    assert.strictEqual(c.showerOnly, true);
+    assert.strictEqual(c.shower.priceJpy, 1000);
+    assert.strictEqual(c.staffServices, undefined);
+  });
   assert.strictEqual(callGet(ctx, { action: 'optionCatalog', brand: 'zzz' }).error.code, 'INVALID_BRAND');
 });
 

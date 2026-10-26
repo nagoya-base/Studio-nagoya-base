@@ -27,7 +27,7 @@ function fakeNode(tag) {
 global.document = { createElement: fakeNode };
 var Panel = require('../scripts/booking-options.js');
 
-var gasSandbox = loadBookingSandbox(['EquipmentCatalog.gs', 'BookingOptions.gs'], {});
+var gasSandbox = loadBookingSandbox(['MembershipRules.gs', 'EquipmentCatalog.gs', 'BookingOptions.gs'], {});
 var CATALOG = JSON.parse(JSON.stringify(gasSandbox.BookingOptions.buildCatalog('studio_x', {})));
 
 function dlPairs(summarySlot) {

@@ -76,6 +76,28 @@ var BookingReschedule = (function () {
     return value;
   }
 
+  /*
+   * 会員限定特典（Issue #478）の日程変更時のactual membership再確認（fail-closed）。
+   * 対象: 2名ペアパック（planCode）が付いた予約、または有効なシャワー注文（OptionOrder）がある予約。
+   * 利用日の属する月の支払い事実を、変更先の日付で改めて確認する（月跨ぎでは変更先月の資格が必要）。
+   * 資格を確認できない（非会員・利用月不一致・台帳エラー）場合は、特典を維持したまま黙って変更せず、
+   * 全理由を同一コードで拒否する。管理者は特典を外す手続き（取消・再予約等）を別途行う。
+   * 判定は予約の保存済みメールで行う。特典を持たない予約には何も照会しない（従来どおり）。
+   */
+  function memberBenefitRejection_(record, newDateString) {
+    var hasBenefit = record.planCode === BookingPricing.PLAN.MEMBER_PAIR_3H;
+    if (!hasBenefit && (record.brand === 'snb' || record.brand === 'mens')) {
+      try {
+        hasBenefit = OptionOrderService.hasActiveShowerOrder(record.bookingId);
+      } catch (lookupError) {
+        hasBenefit = true;
+      }
+    }
+    if (!hasBenefit) return null;
+    if (MembershipRules.verifyActualMembership(record.email, newDateString).ok) return null;
+    return error_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE);
+  }
+
   function parse_(bookingId, input, expectedVersion, now) {
     if (typeof bookingId !== 'string' || !bookingId.trim()) return error_('INVALID_ID', '予約IDが必要です。');
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
@@ -116,6 +138,8 @@ var BookingReschedule = (function () {
     if (startAt.getTime() === record.startAt.getTime() && endAt.getTime() === record.endAt.getTime()) {
       return error_('UNCHANGED', '変更前と同じ日時です。');
     }
+    var benefitRejection = memberBenefitRejection_(record, date);
+    if (benefitRejection) return benefitRejection;
     var calendarId = BookingConfig.getCalendarId();
     var own = CalendarRepository.getEventById(calendarId, record.calendarEventId);
     if (!own || own.getTag('bookingId') !== bookingId || own.getTag('status') !== record.status ||
@@ -146,6 +170,8 @@ var BookingReschedule = (function () {
       oldAmount: Booking.getEffectivePriceAmount(record),
       priceTier: record.priceTier || '',
       priceGeneration: BookingPricing.normalizeGeneration(record.priceGeneration),
+      /* Issue #478: 独立プラン識別子（空＝通常料金）。日程変更でも保持し、変更先の条件で再計算する。 */
+      plan: record.planCode || '',
       scheduleChangeCount: isFiniteNumber_(record.scheduleChangeCount) ? Number(record.scheduleChangeCount) : 0,
       feePaidAmount: isFiniteNumber_(record.feePaidAmount) ? Number(record.feePaidAmount) : 0,
       feeRefundedAmount: isFiniteNumber_(record.feeRefundedAmount) ? Number(record.feeRefundedAmount) : 0,
@@ -252,6 +278,7 @@ var BookingReschedule = (function () {
     }
     var quote = FeeCalculator.quoteFee({
       brand: record.brand, priceTier: baseline.priceTier, generation: baseline.priceGeneration,
+      plan: baseline.plan,
       durationMinutes: newDurationMinutes, dateString: newDateString
     });
     if (!quote.supported) {
@@ -599,6 +626,7 @@ var BookingReschedule = (function () {
       feeReady: feeCtx.ready,
       feeStatus: feeCtx.status,
       priceTier: feeCtx.baseline.priceTier,
+      plan: feeCtx.baseline.plan,
       oldFeeAmount: feeCtx.baseline.oldAmount,
       scheduleChangeCount: feeCtx.baseline.scheduleChangeCount
     };
@@ -1072,6 +1100,15 @@ var BookingReschedule = (function () {
     try {
       var found = SpreadsheetRepository.findRowByBookingId(bookingId);
       if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
+      /* Issue #478: 2名ペアパックの現地精算（入金の確定）も、利用日の属する月のactual membershipを再確認する。
+         返金のみ（入金0円）は特典の利用ではないため止めない。 */
+      if (paidDelta > 0 && found.record.planCode === BookingPricing.PLAN.MEMBER_PAIR_3H) {
+        var settleTimezone = BookingConfig.getAvailabilityConfig().timezone;
+        var settleDate = isDate_(found.record.startAt) ? dateStringOf_(found.record.startAt, settleTimezone) : '';
+        if (!MembershipRules.verifyActualMembership(found.record.email, settleDate).ok) {
+          return error_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE);
+        }
+      }
       if (isInFeeRecovery_(found.record)) {
         return error_('FEE_RECOVERY_REQUIRED', 'この予約は料金の整合性確認が必要な状態です。resolveFeeRecoveryで解消してから精算を記録してください。');
       }

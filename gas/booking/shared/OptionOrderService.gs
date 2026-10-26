@@ -134,12 +134,23 @@ var OptionOrderService = (function () {
    * すべて非会員（fail-closed）。予約の経路（自社予約・スペースマーケット経由等）による例外は無い。
    */
   function isStaffServiceMember_(email, dateString) {
-    try {
-      return MemberRepository.isMemberForMonth(email, MembershipRules.monthKeyOfDateString(dateString)) === true;
-    } catch (lookupError) {
-      Logger.log('OptionOrderService: 会員資格の確認に失敗したためスタッフ対応は受け付けません');
-      return false;
+    /* Issue #478: 会員限定オプション全般（スタッフ対応・Studio Xの有料機材・シャワー）で同じ判定構造を使う。
+       台帳エラー・利用月不一致・非会員はすべてfalse（fail-closed）で、理由は外部へ出し分けない。 */
+    var verified = MembershipRules.verifyActualMembership(email, dateString);
+    if (!verified.ok && verified.reason === 'LEDGER_ERROR') {
+      Logger.log('OptionOrderService: 会員資格の確認に失敗したため会員限定オプションは受け付けません');
     }
+    return verified.ok;
+  }
+
+  /* 会員限定オプション（シャワー・Studio Xの有料機材）の外部向け共通エラー。内訳を出し分けない。 */
+  function memberDeniedError_() {
+    return fail_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE);
+  }
+
+  /* 注文の種類に応じた、実会員資格がない場合のエラー（スタッフ対応は#472の既存コードを維持）。 */
+  function memberRequiredErrorFor_(order) {
+    return order.category === BookingOptions.CATEGORY.STAFF_SERVICE ? staffMembersOnlyError_() : memberDeniedError_();
   }
 
   function staffMembersOnlyError_() {
@@ -150,6 +161,13 @@ var OptionOrderService = (function () {
     return fail_('VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE',
       codes.map(BookingOptions.equipmentLabel).join('・') + 'は施錠管理している有料レンタル機材のため、管理者の利用許可を得た方のみご利用いただけます。お支払いには進めません。メールでご相談ください。',
       { items: codes });
+  }
+
+  /* 予約に有効なシャワー注文（不承認・取消を除く）があるか。日程変更時のactual membership再確認の要否判定に使う。 */
+  function hasActiveShowerOrder(bookingId) {
+    return OptionOrderRepository.listByBookingId(bookingId).some(function (row) {
+      return BookingOptions.isActiveStatus(row.record.status) && (row.record.items || []).indexOf(BookingOptions.SHOWER_ITEM_CODE) !== -1;
+    });
   }
 
   function activeExistingOrders_(bookingId) {
@@ -170,14 +188,16 @@ var OptionOrderService = (function () {
    * 戻り値: { success:true, normalized, empty } | { success:false, error }
    */
   function preflightForNewBooking(brand, selection, email, options) {
-    var normalizedResult = BookingOptions.normalizeSelection(selection);
+    var normalizedResult = BookingOptions.normalizeSelection(selection, brand);
     if (!normalizedResult.ok) return { success: false, error: normalizedResult.error };
     if (normalizedResult.empty) return { success: true, empty: true, normalized: normalizedResult.normalized };
     if (!BookingOptions.isBrandEnabled(brand)) {
       return fail_('OPTIONS_NOT_AVAILABLE', 'このブランドの予約ではオプションをお申し込みいただけません。');
     }
     var needsEligibility = requiresEligibility_(normalizedResult.normalized);
-    var needsStaffMember = BookingOptions.requestsStaffService(normalizedResult.normalized);
+    var preflightNow = nowOrDefault_(options && options.now);
+    /* 実会員資格の照会が要る選択（スタッフ対応・2026/12/1以降のStudio X有料機材・シャワー）。 */
+    var needsStaffMember = BookingOptions.requestsMemberOnlyOption(normalizedResult.normalized, preflightNow);
     var lookupAllowed = !(needsEligibility || needsStaffMember) || !options || typeof options.allowEligibilityLookup !== 'function' || options.allowEligibilityLookup(email) === true;
     if (!lookupAllowed) {
       return fail_('RATE_LIMITED', '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。');
@@ -187,7 +207,9 @@ var OptionOrderService = (function () {
       existingOrders: [],
       optionsConfig: BookingConfig.getOptionsConfig(),
       eligibility: needsEligibility ? resolveEligibility_(email) : { eligibleEquipmentCodes: [] },
-      staffServiceMember: needsStaffMember ? isStaffServiceMember_(email, options && options.date) : false
+      brand: brand,
+      now: preflightNow,
+      actualMember: needsStaffMember ? isStaffServiceMember_(email, options && options.date) : false
     });
     if (!plan.ok) return { success: false, error: plan.error };
     return { success: true, empty: false, normalized: normalizedResult.normalized };
@@ -277,7 +299,9 @@ var OptionOrderService = (function () {
         existingOrders: existingForBooking,
         optionsConfig: optionsConfig,
         eligibility: requiresEligibility_(normalized) ? resolveEligibility_(booking.email) : { eligibleEquipmentCodes: [] },
-        staffServiceMember: BookingOptions.requestsStaffService(normalized) ? isStaffServiceMember_(booking.email, booking.date) : false
+        brand: booking.brand,
+        now: effectiveNow,
+        actualMember: BookingOptions.requestsMemberOnlyOption(normalized, effectiveNow) ? isStaffServiceMember_(booking.email, booking.date) : false
       });
       if (!plan.ok) return { success: false, error: plan.error };
       if (plan.orders.length === 0) return fail_('NO_OPTIONS_SELECTED', '追加するオプションを選択してください。');
@@ -325,7 +349,7 @@ var OptionOrderService = (function () {
   function submitAddonOptions(bookingId, email, selection, now) {
     var booking = verifyBookingIdentity_(bookingId, email);
     if (!booking) return FORBIDDEN_();
-    var normalizedResult = BookingOptions.normalizeSelection(selection);
+    var normalizedResult = BookingOptions.normalizeSelection(selection, booking.brand);
     if (!normalizedResult.ok) return { success: false, error: normalizedResult.error };
     if (normalizedResult.empty) return fail_('NO_OPTIONS_SELECTED', '追加するオプションを選択してください。');
     if (!BookingOptions.isBrandEnabled(booking.brand)) {
@@ -443,9 +467,11 @@ var OptionOrderService = (function () {
       /* 資格の再検証: 許可を確認できないビデオライト系は、Stripeを呼ばず支払い不可（管理者が否認できる）。 */
       var missing1 = missingLectureCodes_(order);
       if (missing1.length > 0) return notEligibleError_(missing1);
-      /* 会員資格の再検証: スタッフ対応は、支払い（確定）の時点でも有効会員でなければ進ませない。 */
-      if (order.category === BookingOptions.CATEGORY.STAFF_SERVICE && !isStaffServiceMember_(freshBooking.email, freshBooking.date)) {
-        return staffMembersOnlyError_();
+      /* 会員資格の再検証（Issue #478）: スタッフ対応・シャワー・2026/12/1以降作成のStudio X有料機材は、
+         支払い（Checkout開始）の時点でも利用日の属する月のactual membershipを確認できなければ進ませない。
+         2026/11/30までに作成済みの機材注文は旧ルールのまま（スタッフ対応は#472から常に会員限定）。 */
+      if (BookingOptions.orderRequiresActualMember(order) && !isStaffServiceMember_(freshBooking.email, freshBooking.date)) {
+        return memberRequiredErrorFor_(order);
       }
       return { success: true, order: order };
     });
@@ -476,9 +502,9 @@ var OptionOrderService = (function () {
       var order = found.record;
       var missing2 = missingLectureCodes_(order);
       if (missing2.length > 0) return notEligibleError_(missing2);
-      if (order.category === BookingOptions.CATEGORY.STAFF_SERVICE) {
+      if (BookingOptions.orderRequiresActualMember(order)) {
         var bookingForMember = findBookingView_(bookingId);
-        if (!bookingForMember || !isStaffServiceMember_(bookingForMember.email, bookingForMember.date)) return staffMembersOnlyError_();
+        if (!bookingForMember || !isStaffServiceMember_(bookingForMember.email, bookingForMember.date)) return memberRequiredErrorFor_(order);
       }
       /* 結果不明のまま残っている試行（Session ID未記録）は同じ試行ID・同じ要求内容で再送する
          （Stripeの冪等キーにより二重Sessionにならない）。 */
@@ -647,6 +673,12 @@ var OptionOrderService = (function () {
         var booking = findBookingView_(order.bookingId);
         var accepts = BookingOptions.checkBookingAcceptsOptions(booking, { addonDeadlineHoursBeforeStart: '' }, effectiveNow);
         if (!accepts.ok) return { success: false, error: accepts.error };
+        /* Issue #478: 管理者の承認（approveOrder）・請求0円のセット無料注文の支払いなし確定（PENDING_APPROVAL→CONFIRMED）も、
+           実会員資格をその場で再確認する。元が有料オプション（rental）なら0円でも会員限定のまま。
+           不承認（DECLINE）は資格を要しない。 */
+        if (BookingOptions.orderRequiresActualMember(order) && !isStaffServiceMember_(booking.email, booking.date)) {
+          return memberRequiredErrorFor_(order);
+        }
       }
       if (approving && isEligibilityHold) {
         /* 「許可済みにして進める」: 管理者の承認操作そのものが管理者の利用許可の付与。
@@ -899,6 +931,7 @@ var OptionOrderService = (function () {
     revokeVideoLightEligibility: revokeVideoLightEligibility,
     applyAddonPaymentSucceeded: applyAddonPaymentSucceeded,
     applyAddonPaymentFailed: applyAddonPaymentFailed,
+    hasActiveShowerOrder: hasActiveShowerOrder,
     verifyBookingIdentity_: verifyBookingIdentity_
   };
 })();

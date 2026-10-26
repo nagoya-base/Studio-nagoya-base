@@ -108,6 +108,12 @@ test('Booking Admin配布ファイルセット: 予約詳細にオプション�
   assert.ok(!JSON.stringify(options).match(/example\.com|stripe|paymentAttempt/i), '内部情報・メールアドレスを返さない');
 
   var roomBefore = JSON.stringify(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record);
+  /* Issue #478: Admin承認の時点でもactual membershipを再確認する。会員でなければ承認できない（不承認は資格不要）。 */
+  var deniedApprove = ctx.sandbox.adminApproveOptionOrder('OPT-STAFF001');
+  assert.strictEqual(deniedApprove.success, false);
+  assert.strictEqual(deniedApprove.error.code, 'STAFF_SERVICE_MEMBERS_ONLY');
+  ctx.sandbox.MemberRepository.upsertMember({ memberId: 'MBR-D1' }, { email: 'taro@example.com' }, { id: 'evt_seed', created: 1 }, { create: true }, new Date());
+  ctx.sandbox.MemberRepository.recordPaidMonth({ memberId: 'MBR-D1', month: '2099-10', amount: 1000 }, new Date());
   var approved = ctx.sandbox.adminApproveOptionOrder('OPT-STAFF001');
   assert.strictEqual(approved.success, true);
   assert.strictEqual(approved.order.status, 'AWAITING_PAYMENT');

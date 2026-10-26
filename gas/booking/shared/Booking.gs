@@ -553,6 +553,9 @@ var Booking = (function () {
          * ここでは入力をそのまま真偽値へ正規化するだけ。
          */
         isMember: input.isMember === true,
+        /* Issue #478: 独立プラン識別子（'member_pair_3h'）。値の検証・会員資格の確認は
+           BookingRepository.createBooking（BookingPricing.normalizePlan＋MembershipRules.verifyActualMembership）。 */
+        plan: input.plan === undefined || input.plan === null ? '' : String(input.plan).trim().slice(0, 50),
         date: input.date,
         startTime: input.startTime,
         durationMinutes: durationMinutes,

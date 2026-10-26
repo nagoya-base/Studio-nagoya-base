@@ -68,13 +68,26 @@ var BookingRepository = (function () {
      * 一切作らずに済む。
      */
     var priceGeneration = BookingPricing.generationAt(now);
-    var membership = resolveMembershipForPricing_(input, priceGeneration);
+    /*
+     * Issue #478: 会員限定2名ペアパック（独立プラン）。プラン指定がある場合のみ、ブランド・人数・料金世代と
+     * actual membership（利用日の属する月の支払い事実。priceIsMember・mens経路では代用しない）を
+     * サーバー側で必ず確認する。確認できなければ（非会員・利用月不一致・台帳エラーすべて）同一の
+     * 外部向けエラーで拒否し、通常料金へ黙って倒さない。プラン指定が無い従来の予約は一切変わらない。
+     */
+    var planResult = resolvePlanForNewBooking_(input, priceGeneration, now);
+    if (!planResult.ok) {
+      return { success: false, error: planResult.error };
+    }
+    var membership = planResult.plan
+      ? { isMember: true, status: 'ACTIVE' }
+      : resolveMembershipForPricing_(input, priceGeneration);
     var priceResult = BookingPricing.computeBookingPrice({
       brand: input.brand,
       date: input.date,
       durationMinutes: input.durationMinutes,
       isMember: membership.isMember,
-      generation: priceGeneration
+      generation: priceGeneration,
+      plan: planResult.plan
     });
     if (!priceResult.valid) {
       return { success: false, error: priceResult.error };
@@ -92,6 +105,7 @@ var BookingRepository = (function () {
     var optionsPreflight = hasOptionsPayload
       ? OptionOrderService.preflightForNewBooking(input.brand, rawInput.options, input.email, {
         date: input.date,
+        now: now,
         allowEligibilityLookup: function (email) {
           return RateLimiter.limitByKey('opt_elig_' + String(email).trim().toLowerCase(), 10, 5, now.getTime());
         }
@@ -198,6 +212,7 @@ var BookingRepository = (function () {
         priceComputedAt: now,
         priceGeneration: priceResult.price.generation,
         membershipStatus: membership.status,
+        planCode: priceResult.price.plan,
         checkoutAccessToken: checkoutAccessToken
       };
 
@@ -265,11 +280,42 @@ var BookingRepository = (function () {
         currency: priceResult.price.currency,
         tier: priceResult.price.tier,
         isMember: priceResult.price.isMember,
-        dayType: priceResult.price.dayType
+        dayType: priceResult.price.dayType,
+        plan: priceResult.price.plan
       }
     };
     if (optionsResponse) response.options = optionsResponse;
     return response;
+  }
+
+  /*
+   * 会員限定2名ペアパック（Issue #478）の申込検証。戻り値: { ok:true, plan:'' | 'member_pair_3h' } | { ok:false, error }。
+   * 確認順: プラン値 → ブランド/料金世代 → 人数（3名以上はサーバー側で拒否） → 照会のレート制限 → actual membership。
+   * 会員の有無を任意のメールで探れないよう、資格関連の失敗は常に同一のコード・メッセージで返す。
+   */
+  function resolvePlanForNewBooking_(input, generation, now) {
+    var plan = BookingPricing.normalizePlan(input.plan);
+    if (plan === null) {
+      return { ok: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
+    }
+    if (!plan) return { ok: true, plan: '' };
+    if ((input.brand !== 'snb' && input.brand !== 'mens') || generation !== BookingPricing.GENERATION.V2) {
+      return { ok: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
+    }
+    if (!BookingPricing.isPairPackPeople(input.people)) {
+      return { ok: false, error: { code: 'PAIR_PACK_PEOPLE_EXCEEDED', message: '2名ペアパックのご利用は1〜2名までです。' } };
+    }
+    if (Number(input.durationMinutes) < BookingPricing.PAIR_PACK_BASE_HOURS * 60) {
+      return { ok: false, error: { code: 'PLAN_DURATION_INVALID', message: '2名ペアパックは3時間以上でご利用ください。' } };
+    }
+    var lookupAllowed = RateLimiter.limitByKey('opt_elig_' + MembershipRules.normalizeEmail(input.email), 10, 5, now.getTime());
+    if (lookupAllowed !== true) {
+      return { ok: false, error: { code: 'RATE_LIMITED', message: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。' } };
+    }
+    if (!MembershipRules.verifyActualMembership(input.email, input.date).ok) {
+      return { ok: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE } };
+    }
+    return { ok: true, plan: plan };
   }
 
   /*
@@ -551,7 +597,7 @@ var BookingRepository = (function () {
       var guardRejection = writeGuardRejection_(options);
       outcome = guardRejection
         ? { response: guardRejection, shouldTryMail: false }
-        : confirmBookingLocked_(bookingId);
+        : confirmBookingLocked_(bookingId, !!(options && typeof options.writeGuard === 'function'));
     } finally {
       lock.releaseLock();
     }
@@ -587,11 +633,31 @@ var BookingRepository = (function () {
     };
   }
 
+  /*
+   * 会員限定2名ペアパック（Issue #478）の、管理者操作による確定時のactual membership再確認（fail-closed）。
+   * 対象は管理者の手動確定（confirmBooking）・EXPIRED復活（reviveExpiredBooking）。Stripe決済済みとして
+   * Webhookが確定する経路（options.writeGuardあり）は呼び出し側が除外する＝決済済みを後から会員資格不足で覆さない。
+   * プラン付きでない予約・日付を決められない予約は対象外（従来どおり）。資格が確認できなければ全理由を同一コードで拒否する。
+   */
+  function pairPackMembershipRejection_(record) {
+    if (!record || record.planCode !== BookingPricing.PLAN.MEMBER_PAIR_3H) return null;
+    var timezone = BookingConfig.getAvailabilityConfig().timezone;
+    var dateString = isDateLike_(record.startAt) ? BookingAvailability.formatDateInTimezone(record.startAt, timezone) : '';
+    if (MembershipRules.verifyActualMembership(record.email, dateString).ok) return null;
+    return {
+      response: {
+        success: false,
+        error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE }
+      },
+      shouldTryMail: false
+    };
+  }
+
   /* confirmBookingのLock保持区間の本体。戻り値: { response, shouldTryMail }。
      shouldTryMailは「CalendarとSheetsが正常な状態（新規確定 or 確定済みでメール未送信）」
      の場合のみtrueにし、確定処理自体が失敗した場合はfalseにする（Lockを保持したまま
      メール送信を行わないための分離）。 */
-  function confirmBookingLocked_(bookingId) {
+  function confirmBookingLocked_(bookingId, viaStripeWebhook) {
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
     if (!found) {
       return {
@@ -634,6 +700,11 @@ var BookingRepository = (function () {
         },
         shouldTryMail: false
       };
+    }
+
+    if (!viaStripeWebhook) {
+      var memberRejection = pairPackMembershipRejection_(record);
+      if (memberRejection) return memberRejection;
     }
 
     /*
@@ -1236,6 +1307,9 @@ var BookingRepository = (function () {
         shouldTryMail: false
       };
     }
+
+    var reviveMemberRejection = pairPackMembershipRejection_(record);
+    if (reviveMemberRejection) return reviveMemberRejection;
 
     var startAtMillis = isDateLike_(record.startAt) ? record.startAt.getTime() : NaN;
     if (isNaN(startAtMillis) || now.getTime() >= startAtMillis) {

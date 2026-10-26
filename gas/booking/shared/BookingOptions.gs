@@ -33,10 +33,18 @@
 
 var BookingOptions = (function () {
   var ENABLED_BRANDS_ = ['studio_x'];
+  /*
+   * Issue #478: 会員限定シャワー（1予約1回1,000円。OptionOrder系の有料オプション）はSNB / SNB mensのみ。
+   * 機材・スタッフ対応等のStudio Xのカタログはこれらのブランドに一切出さず、Studio Xにはシャワーを出さない。
+   * 2026/12/1以降に作成されるOptionOrderから（それ以前は提供開始前）。実会員資格が必須（mensの価格優遇では不可）。
+   */
+  var SHOWER_BRANDS_ = ['snb', 'mens'];
+  var SHOWER_PRICE_JPY_ = 1000;
+  var SHOWER_ITEM_CODE = 'SHOWER';
   var CURRENCY_ = 'JPY';
   var ORDER_TYPE_ADDON = 'addon';
 
-  var CATEGORY = { FREE: 'FREE', EQUIPMENT: 'EQUIPMENT', STAFF_SERVICE: 'STAFF_SERVICE' };
+  var CATEGORY = { FREE: 'FREE', EQUIPMENT: 'EQUIPMENT', STAFF_SERVICE: 'STAFF_SERVICE', MEMBER_SERVICE: 'MEMBER_SERVICE' };
 
   /* 'WITH_BOOKING'=部屋予約と同時申込 / 'ADDON'=既存予約への後付け。 */
   var SOURCE = { WITH_BOOKING: 'WITH_BOOKING', ADDON: 'ADDON' };
@@ -183,6 +191,7 @@ var BookingOptions = (function () {
   /* スタッフ対応の料金（Issue #423 追加コメント。テーマ別の個別価格は持たない）。
      正本は _data/studio_x_equipment.json の staffService（生成物 EquipmentCatalog.gs 経由）。機材ページも同じJSONを読むため食い違わない。
      画面はoptionCatalog APIで取得して表示し、GAS・Webhookも必ずここを参照する。 */
+  var SHOWER_LABEL_ = '会員限定シャワー（1予約1回）';
   var STAFF_SERVICE_MEMBERS_ONLY_MESSAGE_ = 'スタッフ設営・片付けは会員限定です。会員でない方はお申し込みいただけません。セルフ設営・セルフ片付け（無料）をご利用ください。';
   var STAFF_SERVICE_PRICES_ = {};
   var STAFF_SERVICE_LABELS_ = {};
@@ -307,8 +316,12 @@ var BookingOptions = (function () {
     return Number.isFinite(n) && n > 0 && Math.round(n) === n ? n : null;
   }
 
+  function isShowerBrand(brand) {
+    return SHOWER_BRANDS_.indexOf(brand) !== -1;
+  }
+
   function isBrandEnabled(brand) {
-    return ENABLED_BRANDS_.indexOf(brand) !== -1;
+    return ENABLED_BRANDS_.indexOf(brand) !== -1 || isShowerBrand(brand);
   }
 
   function err_(code, message, extra) {
@@ -321,6 +334,16 @@ var BookingOptions = (function () {
   function buildCatalog(brand, config) {
     if (!isBrandEnabled(brand)) {
       return { enabled: false, brand: brand, currency: CURRENCY_ };
+    }
+    if (isShowerBrand(brand)) {
+      /* SNB / mens: シャワーのみ（Studio Xの機材・スタッフ対応は含めない）。金額はここ（SHOWER_PRICE_JPY_）が唯一の正本。 */
+      return {
+        enabled: true,
+        brand: brand,
+        currency: CURRENCY_,
+        showerOnly: true,
+        shower: { code: SHOWER_ITEM_CODE, label: SHOWER_LABEL_, priceJpy: SHOWER_PRICE_JPY_, memberOnly: true, maxUsersPerBooking: 2, perBooking: 1 }
+      };
     }
     ensureCatalogInitialized_();
     return {
@@ -371,13 +394,38 @@ var BookingOptions = (function () {
     return out;
   }
 
-  function normalizeSelection(selection) {
+  function normalizeSelection(selection, brand) {
     ensureCatalogInitialized_();
     if (selection === undefined || selection === null) {
       return { ok: true, empty: true, normalized: emptySelection_() };
     }
     if (!isPlainObject_(selection)) {
       return { ok: false, error: err_('INVALID_OPTIONS', 'オプションの指定形式が正しくありません。') };
+    }
+    /* Issue #478: シャワーはSNB / mensのみ。brandを渡されない場合・Studio Xでは選べない（直接APIを叩いても拒否）。 */
+    if (selection.shower !== undefined && selection.shower !== null && typeof selection.shower !== 'boolean') {
+      return { ok: false, error: err_('INVALID_OPTIONS', 'シャワーの指定が正しくありません。') };
+    }
+    var showerRequested = selection.shower === true;
+    if (showerRequested && !isShowerBrand(brand)) {
+      return { ok: false, error: err_('OPTIONS_NOT_AVAILABLE', 'このブランドの予約ではシャワーをお申し込みいただけません。') };
+    }
+    if (isShowerBrand(brand)) {
+      /* SNB / mensで選べるのはシャワーのみ。Studio Xの機材・セッティング等が混ざっていれば全体を拒否する。 */
+      var foreignKeys = Object.keys(selection).filter(function (key) { return key !== 'shower'; });
+      var carriesForeign = foreignKeys.some(function (key) {
+        var v = selection[key];
+        if (v === undefined || v === null || v === false || v === '') return false;
+        if (Array.isArray(v)) return v.length > 0;
+        if (isPlainObject_(v)) return Object.keys(v).length > 0;
+        return !((key === 'setupService' || key === 'cleanupService') && v === 'SELF');
+      });
+      if (carriesForeign) {
+        return { ok: false, error: err_('OPTIONS_NOT_AVAILABLE', 'このブランドの予約ではこのオプションをお申し込みいただけません。') };
+      }
+      var showerSelection = emptySelection_();
+      showerSelection.shower = showerRequested;
+      return { ok: true, empty: !showerRequested, normalized: showerSelection };
     }
     var equipmentInput = selection.equipment === undefined || selection.equipment === null ? {} : selection.equipment;
     var layouts = selection.layouts === undefined || selection.layouts === null ? [] : selection.layouts;
@@ -437,7 +485,8 @@ var BookingOptions = (function () {
       layouts: uniqueStrings_(layouts),
       setupService: setupService,
       cleanupService: cleanupService,
-      emailSupport: selection.emailSupport === true
+      emailSupport: selection.emailSupport === true,
+      shower: false
     };
 
     /* テーマ未選択で「スタッフ対応」だけが指定されても作業対象が決まらないため拒否する。
@@ -463,7 +512,7 @@ var BookingOptions = (function () {
   }
 
   function emptySelection_() {
-    return { equipment: {}, equipmentSetup: '', equipmentCleanup: '', layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false };
+    return { equipment: {}, equipmentSetup: '', equipmentCleanup: '', layouts: [], setupService: 'SELF', cleanupService: 'SELF', emailSupport: false, shower: false };
   }
 
   /* ---- 項目コード ----
@@ -487,6 +536,7 @@ var BookingOptions = (function () {
       return (eqDef ? eqDef.label : eq.code) + (eq.quantity > 1 ? ' ×' + eq.quantity : '') + freeNote;
     }
     if (code === ITEM_PREFIX.EMAIL_SUPPORT) return 'メールサポート';
+    if (code === SHOWER_ITEM_CODE) return SHOWER_LABEL_;
     var themeOf = function (prefix) {
       if (code.slice(prefix.length) === STAFF_NO_THEME_) return prefix === ITEM_PREFIX.STAFF_CLEANUP ? '機材の片付け' : '機材の設営';
       var t = THEMES[code.slice(prefix.length)];
@@ -561,9 +611,89 @@ var BookingOptions = (function () {
       (normalized.cleanupService === 'STAFF' && (hasTarget || normalized.equipmentCleanup === 'STAFF'));
   }
 
+  /*
+   * 会員限定の判定（Issue #478）。呼び出し側（OptionOrderService）が会員台帳で判定した結果を
+   * input.actualMember（真偽値）で渡す。undefined・不明はfail-closedで非会員。
+   * input.staffServiceMember は#472時点の旧名で、同じ意味の別名として受け付ける。
+   */
+  function isActualMemberInput_(input) {
+    return input.actualMember === true || input.staffServiceMember === true;
+  }
+
+  /* 2026/12/1以降に作成される注文か（input.now＝注文の作成時刻。省略時は現在時刻）。 */
+  function memberRulesActiveFor_(input) {
+    return MembershipRules.isBenefitsRuleActive(input.now || new Date());
+  }
+
+  var MEMBER_ONLY_OPTION_MESSAGE_ = 'この有料オプションは会員限定です。会員資格を確認できた場合のみお申し込みいただけます。セルフ設営・セルフ片付け（無料）はどなたでもご利用いただけます。';
+
+  /*
+   * この注文は実会員資格が必須か（Issue #478）。注文の作成時刻（order.createdAt）で新旧ルールを分け、
+   * 2026/11/30までに作成済みの注文は旧ルールのまま（grandfather）。
+   * - MEMBER_SERVICE（シャワー）: 2026/12/1以降にしか作れないため常に必須。
+   * - STAFF_SERVICE: #472から会員限定（作成時刻に依らず従来どおり必須）。
+   * - EQUIPMENT: Studio Xの有料レンタル機材は金額ではなくカタログ区分（rental）で判定。セット無料で0円に
+   *   なった品も、元がrentalである限り必須（2026/12/1以降に作成された注文のみ）。
+   * - FREE（セルフ設営・原状復帰・メールサポート・無料のセルフ機材）: 不要。
+   */
+  function orderRequiresActualMember(order) {
+    if (!order) return false;
+    if (order.category === CATEGORY.MEMBER_SERVICE) return true;
+    if (order.category === CATEGORY.STAFF_SERVICE) return true;
+    if (order.category === CATEGORY.EQUIPMENT) {
+      if (!MembershipRules.isBenefitsRuleActive(order.createdAt)) return false;
+      ensureCatalogInitialized_();
+      return (order.items || []).some(function (item) {
+        var parsed = parseEquipmentItem_(item);
+        return !!parsed && !!equipmentRental_(parsed.code);
+      });
+    }
+    return false;
+  }
+
+  /* 選択に、実会員資格の照会が必要な項目（スタッフ対応・Studio Xの有料レンタル機材・シャワー）が含まれるか。 */
+  function requestsMemberOnlyOption(normalized, now) {
+    if (normalized.shower === true) return true;
+    if (requestsStaffService(normalized)) return true;
+    if (!MembershipRules.isBenefitsRuleActive(now || new Date())) return false;
+    return Object.keys(normalized.equipment || {}).some(function (code) { return !!equipmentRental_(code); });
+  }
+
   function planOrders(input) {
     ensureCatalogInitialized_();
     var normalized = input.normalized;
+    var actualMember = isActualMemberInput_(input);
+    var memberRulesActive = memberRulesActiveFor_(input);
+
+    /* 会員限定シャワー（SNB / mens）。独立したOptionOrderとして作り、部屋料金へは埋め込まない。 */
+    if (normalized.shower === true) {
+      if (!isShowerBrand(input.brand)) {
+        return { ok: false, error: err_('OPTIONS_NOT_AVAILABLE', 'このブランドの予約ではシャワーをお申し込みいただけません。') };
+      }
+      if (!memberRulesActive) {
+        return { ok: false, error: err_('OPTIONS_NOT_AVAILABLE', '会員限定シャワーは2026年12月1日からのご提供です。') };
+      }
+      if (!actualMember) {
+        return { ok: false, error: err_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE) };
+      }
+      var activeShower = (input.existingOrders || []).some(function (o) {
+        return isActiveStatus(o.status) && (o.items || []).indexOf(SHOWER_ITEM_CODE) !== -1;
+      });
+      if (activeShower) {
+        return { ok: false, error: err_('DUPLICATE_OPTION', 'シャワーは1予約につき1回までです。既にお申し込み済みです。') };
+      }
+      return {
+        ok: true,
+        orders: [{
+          category: CATEGORY.MEMBER_SERVICE,
+          items: [SHOWER_ITEM_CODE],
+          amountJpy: SHOWER_PRICE_JPY_,
+          approvalStatus: APPROVAL_STATUS.NOT_REQUIRED,
+          paymentStatus: PAYMENT_STATUS.NOT_STARTED,
+          status: STATUS.AWAITING_PAYMENT
+        }]
+      };
+    }
     var existing = (input.existingOrders || []).filter(function (o) { return isActiveStatus(o.status); });
     var existingItems = [];
     existing.forEach(function (o) { (o.items || []).forEach(function (it) { existingItems.push(it); }); });
@@ -592,6 +722,12 @@ var BookingOptions = (function () {
       if (!def) return { ok: false, error: err_('UNKNOWN_OPTION', '選択できないオプションが含まれています。') };
       if ((existingQuantity[code] || 0) + quantity > def.stock) {
         return { ok: false, error: err_('STOCK_EXCEEDED', def.label + 'は在庫数（' + def.stock + '点）を超えて申し込めません。', { items: [code] }) };
+      }
+      if (rental && memberRulesActive && !actualMember) {
+        /* Issue #478: 2026/12/1以降に作成されるStudio Xの有料レンタル機材は、金額ではなくカタログ区分
+           （rental全件）でactual membership必須。セット無料で0円になる品（STAND_260等）も対象。
+           非会員は保留にせず即拒否する（管理者の利用許可の確認へ進める前に止める）。 */
+        return { ok: false, error: err_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MEMBER_ONLY_OPTION_MESSAGE_) };
       }
       if (rental) {
         /* 資格は機材コード単位: 管理者が管理者が利用を許可した機材だけが即時の支払い対象。
@@ -654,7 +790,7 @@ var BookingOptions = (function () {
     /* スタッフ対応は会員限定（Issue #472）。会員資格の判定は呼び出し側（OptionOrderService）が会員台帳（#471）で行い、
        input.staffServiceMember === true のときだけ通す。未指定・不明はfail-closedで拒否（スペースマーケット経由等の
        例外もここには無い。セルフ設営・セルフ片付け＝無料は会員でなくても選べる）。 */
-    if ((staffPre || staffCleanup) && input.staffServiceMember !== true) {
+    if ((staffPre || staffCleanup) && !actualMember) {
       return { ok: false, error: err_('STAFF_SERVICE_MEMBERS_ONLY', STAFF_SERVICE_MEMBERS_ONLY_MESSAGE_) };
     }
     normalized.layouts.forEach(function (theme) {
@@ -915,6 +1051,7 @@ var BookingOptions = (function () {
     var staffCleanup = false;
     var equipmentPoints = 0;
     var freeSelf = false;
+    var shower = false;
     list.forEach(function (order) {
       var status = order.status;
       if (status === STATUS.PENDING_APPROVAL) counts.pendingApproval++;
@@ -926,6 +1063,7 @@ var BookingOptions = (function () {
         var code = String(item || '');
         var eq = parseEquipmentItem_(code);
         if (eq) { equipmentPoints += eq.quantity; return; }
+        if (code === SHOWER_ITEM_CODE) { shower = true; return; }
         if (code.indexOf(ITEM_PREFIX.STAFF_PRE_SETUP) === 0) { staffPre = true; return; }
         if (code.indexOf(ITEM_PREFIX.STAFF_CLEANUP) === 0) { staffCleanup = true; return; }
         if (code.indexOf(ITEM_PREFIX.SELF_SETUP) === 0 || code.indexOf(ITEM_PREFIX.SELF_CLEANUP) === 0 || code === ITEM_PREFIX.EMAIL_SUPPORT) freeSelf = true;
@@ -950,6 +1088,7 @@ var BookingOptions = (function () {
     if (staffPre) staffLine_('PRE_SETUP', '事前設営（スタッフ）');
     if (staffCleanup) staffLine_('CLEANUP', '片付け（スタッフ）');
     if (equipmentPoints > 0) lines.push('機材レンタル ' + equipmentPoints + '点');
+    if (shower) lines.push(SHOWER_LABEL_);
     if (freeSelf) lines.push('無料セルフ対応');
     return {
       available: true,
@@ -976,7 +1115,12 @@ var BookingOptions = (function () {
     NOTICES: NOTICES,
     PUBLIC_POLICY: PUBLIC_POLICY_,
     ITEM_PREFIX: ITEM_PREFIX,
+    SHOWER_PRICE_JPY: SHOWER_PRICE_JPY_,
+    SHOWER_ITEM_CODE: SHOWER_ITEM_CODE,
     isBrandEnabled: isBrandEnabled,
+    isShowerBrand: isShowerBrand,
+    orderRequiresActualMember: orderRequiresActualMember,
+    requestsMemberOnlyOption: requestsMemberOnlyOption,
     isActiveStatus: isActiveStatus,
     canTransition: canTransition,
     buildCatalog: buildCatalog,

@@ -68,6 +68,22 @@ var BookingPricing = (function () {
   var GENERATION = { V1: 'V1', V2: 'V2' };
   var GENERATION_V2_START_MS_ = Date.parse('2026-12-01T00:00:00+09:00');
 
+  /*
+   * Issue #478: 会員限定2名ペアパック。通常料金tier（GENERAL/MEMBER）の置換ではなく、独立したプランとして
+   * 予約へプラン識別子（Bookings.planCode）を保存する。日程変更後も保持し、通常3時間料金へ化けない。
+   * - 3時間（BASE_HOURS）が基本、1〜2名、平日5,000円／土日祝6,000円。延長は通常の会員延長料金（MEMBER_RATES_）。
+   * - SNB / SNB mensのみ。2026/12/1以降に作成された予約（V2）のみ。actual membershipが必須（資格の確認は
+   *   予約作成・日程変更・確定の各サーバー側処理が行い、この純粋関数は料金だけを決める）。
+   * - 他の割引・優待との併用は無い（このプランの料金はisMember・価格overrideの影響を受けない）。
+   */
+  var PLAN = { MEMBER_PAIR_3H: 'member_pair_3h' };
+  var PAIR_PACK_ = {
+    brands: ['snb', 'mens'],
+    baseHours: 3,
+    maxPeople: 2,
+    base: { WEEKDAY: 5000, WEEKEND_HOLIDAY: 6000 }
+  };
+
   var MEMBER_RATES_ = {
     WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 5500, 4: 7000 }, extensionPerHour: 1500 },
     WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7000, 4: 9000 }, extensionPerHour: 2000 }
@@ -186,6 +202,23 @@ var BookingPricing = (function () {
     return brand === 'studio_x' ? RATE_TABLES_.studio_x : RATE_TABLES_.snb;
   }
 
+  function computePairPackAmount_(dayType, hours) {
+    var extra = hours - PAIR_PACK_.baseHours;
+    return PAIR_PACK_.base[dayType] + (extra > 0 ? extra * MEMBER_RATES_[dayType].extensionPerHour : 0);
+  }
+
+  /* プラン識別子の正規化。空・未指定は''（通常料金）。未知の値はnull（呼び出し側が拒否する。通常料金へ黙って倒さない）。 */
+  function normalizePlan(value) {
+    if (value === undefined || value === null || value === '') return '';
+    return value === PLAN.MEMBER_PAIR_3H ? PLAN.MEMBER_PAIR_3H : null;
+  }
+
+  /* 利用人数（フォームの'1名'|'2名'|'3名'…）がペアパックの人数条件（1〜2名）か。数値以外・3名以上・5名以上はfalse。 */
+  function isPairPackPeople(people) {
+    var m = /^\s*([1-9]\d*)\s*名\s*$/.exec(String(people === undefined || people === null ? '' : people));
+    return !!m && Number(m[1]) >= 1 && Number(m[1]) <= PAIR_PACK_.maxPeople;
+  }
+
   function computeAmount_(brand, generation, tier, dayType, hours) {
     var table = rateTableGroupOf_(brand)[generation][tier][dayType];
     if (hours <= 4) return table.base[hours];
@@ -220,14 +253,29 @@ var BookingPricing = (function () {
     }
 
     var generation = normalizeGeneration(params.generation);
-    var tier = resolveTier_(brand, params.isMember === true, generation);
+    var plan = normalizePlan(params.plan);
+    if (plan === null) {
+      return { valid: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
+    }
+    if (plan === PLAN.MEMBER_PAIR_3H) {
+      /* 独立プラン: 対象ブランド・料金世代（V2）・最低3時間を満たさなければ通常料金へ倒さず拒否する。 */
+      if (PAIR_PACK_.brands.indexOf(brand) === -1 || generation !== GENERATION.V2) {
+        return { valid: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
+      }
+      if (billableHours_(durationMinutes) < PAIR_PACK_.baseHours || Number(durationMinutes) < PAIR_PACK_.baseHours * 60) {
+        return { valid: false, error: { code: 'PLAN_DURATION_INVALID', message: '2名ペアパックは3時間以上でご利用ください。' } };
+      }
+    }
+    var tier = plan ? TIER.MEMBER : resolveTier_(brand, params.isMember === true, generation);
     var dayTypeResult = resolveDayType_(date);
     if (!dayTypeResult.ok) {
       return { valid: false, error: dayTypeResult.error };
     }
     var dayType = dayTypeResult.dayType;
     var hours = billableHours_(durationMinutes);
-    var amount = computeAmount_(brand, generation, tier, dayType, hours);
+    var amount = plan === PLAN.MEMBER_PAIR_3H
+      ? computePairPackAmount_(dayType, hours)
+      : computeAmount_(brand, generation, tier, dayType, hours);
 
     return {
       valid: true,
@@ -237,6 +285,8 @@ var BookingPricing = (function () {
         brand: brand,
         tier: tier,
         generation: generation,
+        /* 独立プラン識別子（通常料金は''）。tierはプランでも'MEMBER'だが、料金は通常のMEMBER表ではなくプラン料金。 */
+        plan: plan,
         /* 価格優遇（MEMBER料金）の適用有無であり、実会員資格ではない。
            mensではisMemberInputを無視して上書きした結果（実際に適用されたtier）を返す。
            呼び出し側はこの値をSheetsへ保存し、入力値ではなく「実際に何が適用されたか」を
@@ -254,6 +304,11 @@ var BookingPricing = (function () {
     DAY_TYPE: DAY_TYPE,
     CURRENCY: CURRENCY_,
     GENERATION: GENERATION,
+    PLAN: PLAN,
+    PAIR_PACK_MAX_PEOPLE: PAIR_PACK_.maxPeople,
+    PAIR_PACK_BASE_HOURS: PAIR_PACK_.baseHours,
+    normalizePlan: normalizePlan,
+    isPairPackPeople: isPairPackPeople,
     generationAt: generationAt,
     normalizeGeneration: normalizeGeneration,
     computeBookingPrice: computeBookingPrice

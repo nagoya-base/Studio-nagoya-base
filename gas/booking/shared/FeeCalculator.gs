@@ -69,7 +69,7 @@ var FeeCalculator = (function () {
   }
 
   /*
-   * params: { brand, priceTier ('GENERAL'|'MEMBER'), durationMinutes, dateString, generation }
+   * params: { brand, priceTier ('GENERAL'|'MEMBER'), durationMinutes, dateString, generation, plan(任意。Issue #478) }
    * dateStringは変更後の利用日（'YYYY-MM-DD'。土日祝判定に使う）。
    * 戻り値:
    *   { supported: true, amount, dayType, tier, roundedMinutes, billableHours }
@@ -96,6 +96,9 @@ var FeeCalculator = (function () {
     var priceResult = BookingPricing.computeBookingPrice({
       brand: params.brand, date: params.dateString, durationMinutes: roundedMinutes,
       isMember: params.priceTier === 'MEMBER',
+      /* Issue #478: 独立プラン（member_pair_3h）は日程変更でも保持し、変更先の曜日区分で5,000円/6,000円を
+         再計算する。プラン付きの予約を通常の3時間料金へ化けさせない（プランを満たさなければ見積り不可）。 */
+      plan: params.plan,
       /* 日程変更でも元予約の料金世代を維持する（現行表で再計算しない）。空は旧世代V1。 */
       generation: BookingPricing.normalizeGeneration(params.generation)
     });
