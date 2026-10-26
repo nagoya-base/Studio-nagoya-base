@@ -2,7 +2,14 @@
  * MembershipRules.gs — SNB MEMBER（月額会員。Issue #471）の純粋ロジック。
  * GAS実行環境（Sheets・Stripe）に依存しない関数のみを置く（node --testでそのままvm実行できる）。
  *
- * 【会員制度（Issue #469/#471で固定。Stripe都合で変えない）】
+ * 【Issue #532（現行）】新規加入は入会日基準の月額Subscription（Checkout mode=subscription。初回500円を入会日に請求し、
+ * 入会日から1か月有効・以後入会日基準で毎月自動更新）。資格の正本は「支払済みPeriod」（MemberRepositoryの
+ * MemberPeriods。invoice.paidのline item period.start〜period.endをJSTの有効日範囲へ変換）で、旧MemberMonths
+ * （JSTの暦月まるごと）・永久会員と合算して判定する。MemberMonthsはデプロイ以降追記しない（凍結。既存行は過去分として有効）。
+ * 以下の「毎月1日」「入会月」「プレスタート」の記述は、既存プレスタート会員（課金日を移行しない）と旧mode=payment
+ * Checkoutの後処理のために残している旧仕様の説明。
+ *
+ * 【旧会員制度（Issue #469/#471）】
  * - 月額500円・自動更新・更新基準日は毎月1日。
  * - 入会月は日割りせず500円満額。入会日から当月末まで有効。
  * - 翌月1日の課金成功で翌月分を有効化。更新失敗は猶予期間なし（その月はinactive）。
@@ -68,7 +75,7 @@ var MembershipRules = (function () {
    * 任意のメールアドレスの会員有無を推測できないようにする（Issue #478）。内訳はLoggerにも出さない。
    */
   var MEMBER_BENEFIT_DENIED_CODE = 'MEMBER_BENEFIT_NOT_AVAILABLE';
-  var MEMBER_BENEFIT_DENIED_MESSAGE = 'この特典は、ご利用日の属する月のSNB MEMBER会員資格を確認できた場合のみご利用いただけます。会員資格をご確認のうえ、改めてお申し込みください。';
+  var MEMBER_BENEFIT_DENIED_MESSAGE = 'この特典は、ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できた場合のみご利用いただけます。会員資格をご確認のうえ、改めてお申し込みください。';
 
   var STATUS = { INCOMPLETE: 'incomplete', ACTIVE: 'active', PAST_DUE: 'past_due', CANCELED: 'canceled' };
 
@@ -93,6 +100,11 @@ var MembershipRules = (function () {
     return dateString.substring(0, 7);
   }
 
+  /* 実在する 'YYYY-MM-DD'（JSTの暦日）か。 */
+  function isDateString(value) {
+    return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && addDaysToDateString(value, 0) === value;
+  }
+
   function pad2_(n) {
     return n < 10 ? '0' + n : String(n);
   }
@@ -110,6 +122,38 @@ var MembershipRules = (function () {
     var value = Number(seconds);
     if (!Number.isFinite(value) || value <= 0) return 0;
     return new Date(value * 1000 + JST_OFFSET_MS_).getUTCDate();
+  }
+
+
+  /* Unix秒 → JSTの日付 'YYYY-MM-DD'。不正値は空文字。 */
+  function jstDateStringOfEpochSeconds(seconds) {
+    var value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    var shifted = new Date(value * 1000 + JST_OFFSET_MS_);
+    return shifted.getUTCFullYear() + '-' + pad2_(shifted.getUTCMonth() + 1) + '-' + pad2_(shifted.getUTCDate());
+  }
+
+  /* 'YYYY-MM-DD' の n日後 'YYYY-MM-DD'（nは負も可）。形式不正は空文字。 */
+  function addDaysToDateString(dateString, days) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateString || '');
+    if (!m) return '';
+    var ms = Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10)) + Number(days) * 86400000;
+    var d = new Date(ms);
+    return d.getUTCFullYear() + '-' + pad2_(d.getUTCMonth() + 1) + '-' + pad2_(d.getUTCDate());
+  }
+
+  /*
+   * 支払済みPeriod（Stripeのperiod.start / period.end。Unix秒）→ 会員有効日の範囲（JSTの日付。両端を含む）。
+   * 例: 10/26 22:40 JST 〜 11/26 22:40 JST → 10/26 〜 11/25（更新日の前日まで）。
+   * 終了が開始と同じ日以前になる極端に短い期間でも、開始日1日は有効とする。判定不能は null。
+   */
+  function periodToValidDateRange(startSeconds, endSeconds) {
+    var startDate = jstDateStringOfEpochSeconds(startSeconds);
+    var endExclusive = jstDateStringOfEpochSeconds(endSeconds);
+    if (!startDate || !endExclusive) return null;
+    var endDate = addDaysToDateString(endExclusive, -1);
+    if (endDate < startDate) endDate = startDate;
+    return { startDate: startDate, endDate: endDate };
   }
 
   function nextMonthKey(monthKey) {
@@ -215,31 +259,47 @@ var MembershipRules = (function () {
   }
 
   /*
-   * 月次更新invoice（billing_reason=subscription_cycle・500円・JPY・支払済み）から、
-   * 支払われた「利用月」を決める。invoice自体のperiod_start/endは旧API versionでは
-   * 「直前の期間」を指すため使わず、500円のline itemのperiod.startを使う
-   * （更新後の新しい期間の開始＝その月の1日）。判定できない・想定外（日が1日でない等）は
-   * fail-closedに ok:false を返し、月の支払い事実を作らない。
+   * 会費invoice（billing_reason=subscription_create / subscription_cycle・500円・JPY・支払済み）から、
+   * 支払われた「有効期間」（Issue #532）を決める。invoice自体のperiod_start/endは旧API versionでは
+   * 「直前の期間」を指すため使わず、500円のline itemのperiod.start / period.endを使う。
+   * - 他のbilling_reason、および旧方式（プレスタート会員）のsubscription作成時の$0 invoiceは ignorable
+   *   （Periodを作らない。エラーにもしない）。
+   * - 判定できない・想定外（金額・通貨・期間）はfail-closedに ok:false を返し、Periodを作らない。
+   * 戻り値: { ok: true, billingReason, periodStartSeconds, periodEndSeconds, range: {startDate,endDate} } |
+   *         { ok: false, code, ignorable? }
    */
-  function resolvePaidMonthOfRenewalInvoice(invoice) {
+  function resolvePaidPeriodOfInvoice(invoice) {
     if (!invoice || typeof invoice !== 'object') return { ok: false, code: 'INVALID_INVOICE' };
-    if (invoice.billing_reason !== 'subscription_cycle') return { ok: false, code: 'NOT_RENEWAL', ignorable: true };
+    var reason = invoice.billing_reason;
+    if (reason !== 'subscription_create' && reason !== 'subscription_cycle') {
+      return { ok: false, code: 'NOT_MEMBERSHIP_PERIOD', ignorable: true };
+    }
     if (invoice.status !== 'paid') return { ok: false, code: 'NOT_PAID' };
+    if (reason === 'subscription_create' && Number(invoice.amount_paid) === 0) {
+      return { ok: false, code: 'ZERO_AMOUNT_CREATE', ignorable: true };
+    }
     if (Number(invoice.amount_paid) !== MONTHLY_FEE_JPY || String(invoice.currency || '').toUpperCase() !== CURRENCY) {
       return { ok: false, code: 'UNEXPECTED_AMOUNT' };
     }
     var lines = (invoice.lines && invoice.lines.data) || [];
     var line = null;
     for (var i = 0; i < lines.length; i++) {
-      if (Number(lines[i].amount) === MONTHLY_FEE_JPY && lines[i].period && lines[i].period.start) {
+      var p = lines[i] && lines[i].period;
+      if (Number(lines[i].amount) === MONTHLY_FEE_JPY && p && Number(p.start) > 0 && Number(p.end) > Number(p.start)) {
         line = lines[i];
         break;
       }
     }
     if (!line) return { ok: false, code: 'NO_MONTHLY_LINE' };
-    if (jstDayOfEpochSeconds(line.period.start) !== 1) return { ok: false, code: 'PERIOD_NOT_MONTH_START' };
-    var month = jstMonthKeyOfEpochSeconds(line.period.start);
-    return month ? { ok: true, month: month } : { ok: false, code: 'INVALID_PERIOD' };
+    var range = periodToValidDateRange(line.period.start, line.period.end);
+    if (!range) return { ok: false, code: 'INVALID_PERIOD' };
+    return {
+      ok: true,
+      billingReason: reason,
+      periodStartSeconds: Number(line.period.start),
+      periodEndSeconds: Number(line.period.end),
+      range: range
+    };
   }
 
   /*
@@ -309,22 +369,52 @@ var MembershipRules = (function () {
   ];
 
   /*
-   * 会員資格確認の表示内容。
-   * facts: { paidMonths: ['YYYY-MM', ...]（支払い事実のある利用月）, autoRenew: boolean（自動更新が続く見込みか）}
+   * 有効日範囲（両端を含む 'YYYY-MM-DD'）の集合から、基準日（JST）を含む連続した範囲の末日を返す。
+   * 翌日から始まる範囲は連続とみなして延長する（更新が途切れず続いている場合の「有効期限」）。含まなければ空文字。
+   */
+  function validUntilOfRanges(ranges, today) {
+    var list = (ranges || []).filter(function (r) { return r && r.startDate && r.endDate; })
+      .slice().sort(function (a, b) { return a.startDate < b.startDate ? -1 : (a.startDate > b.startDate ? 1 : 0); });
+    var end = '';
+    for (var i = 0; i < list.length; i++) {
+      if (!end) {
+        if (list[i].startDate <= today && today <= list[i].endDate) end = list[i].endDate;
+      } else if (list[i].startDate <= addDaysToDateString(end, 1) && list[i].endDate > end) {
+        end = list[i].endDate;
+      }
+    }
+    return end;
+  }
+
+  /*
+   * 会員資格確認の表示内容（Issue #532で、支払済みPeriod＋旧暦月の合算へ変更）。
+   * facts: { periods: [{ startDate, endDate }]（MemberPeriods由来。有効日範囲・両端を含むJST日付）,
+   *          paidMonths: ['YYYY-MM', ...]（旧MemberMonths由来。暦月まるごと）, autoRenew: boolean }
    * options: { permanent: boolean, nowMs: number }
    * 永久会員は支払い事実が無くても通常の有効会員と同じ形で表示する（永久会員であること自体は返さない）。
+   * - 有効期限: 基準日（JSTの今日）を含む連続範囲の末日。新方式は最新Periodのperiod.endの前日、旧方式のみなら月末日。
+   * - 次回更新日: 自動更新が続く（subscription有効かつcancel_at_period_endでない）場合のみ、有効期限の翌日
+   *   （＝新方式は最新Periodのperiod.endの日付、旧1日anchor会員は翌月1日）。解約予約済みはnull。
    * 戻り値は公開API用のプレーンなオブジェクト（IDを含まない）。
    */
   function describeMembershipStatus(email, facts, options) {
     var opts = options || {};
     var nowMs = Number.isFinite(opts.nowMs) ? opts.nowMs : Date.now();
-    var currentMonth = jstMonthKeyOfEpochSeconds(Math.floor(nowMs / 1000));
-    var paid = {};
-    ((facts && facts.paidMonths) || []).forEach(function (m) { paid[m] = true; });
+    var nowSeconds = Math.floor(nowMs / 1000);
+    var today = jstDateStringOfEpochSeconds(nowSeconds);
+    var currentMonth = jstMonthKeyOfEpochSeconds(nowSeconds);
+    var ranges = ((facts && facts.periods) || []).slice();
+    ((facts && facts.paidMonths) || []).forEach(function (m) {
+      if (/^\d{4}-\d{2}$/.test(m)) ranges.push({ startDate: m + '-01', endDate: lastDateOfMonth(m) });
+    });
     var autoRenew = !!(facts && facts.autoRenew);
-    if (opts.permanent) { paid[currentMonth] = true; autoRenew = true; }
+    if (opts.permanent && currentMonth) {
+      ranges.push({ startDate: currentMonth + '-01', endDate: lastDateOfMonth(currentMonth) });
+      autoRenew = true;
+    }
 
-    var active = !!currentMonth && paid[currentMonth] === true;
+    var validUntil = today ? validUntilOfRanges(ranges, today) : '';
+    var active = !!validUntil;
     var result = {
       active: active,
       maskedEmail: maskEmail(email),
@@ -336,11 +426,9 @@ var MembershipRules = (function () {
     };
     if (!active) return result;
 
-    var last = currentMonth;
-    while (paid[nextMonthKey(last)] === true) last = nextMonthKey(last);
-    result.validUntil = lastDateOfMonth(last);
+    result.validUntil = validUntil;
     result.autoRenew = autoRenew;
-    result.nextRenewalDate = autoRenew ? nextMonthKey(last) + '-01' : null;
+    result.nextRenewalDate = autoRenew ? addDaysToDateString(validUntil, 1) : null;
 
     var benefitsOpen = nowMs >= BENEFITS_START_MS_;
     result.benefits = STATUS_BENEFITS_.map(function (b) {
@@ -357,18 +445,18 @@ var MembershipRules = (function () {
   }
 
   /*
-   * 実会員資格（actual membership）の判定。正本は会員台帳（MemberRepository.isMemberForMonth＝
-   * 利用日の属する暦月の支払い事実）。priceIsMember・mens経路・価格overrideは一切見ない。
-   * メール・利用日が不正（利用月を決められない）、台帳を読めない（例外）場合はすべて資格なし（fail-closed）。
+   * 実会員資格（actual membership）の判定。正本は会員台帳（MemberRepository.isMemberOnDate＝指定日（JST）が
+   * 支払済みPeriod（MemberPeriods）の有効日範囲、旧MemberMonthsの支払済み暦月、または永久会員に入るか。Issue #532）。
+   * priceIsMember・mens経路・価格overrideは一切見ない。Subscriptionのstatus等は資格の直接の正本にしない。
+   * メール・日付が不正、台帳を読めない（例外）場合はすべて資格なし（fail-closed）。
    * 戻り値: { ok: true } | { ok: false, reason: 'INVALID_INPUT'|'NOT_MEMBER'|'LEDGER_ERROR' }。
    * reasonは内部判定用。利用者・外部向けにはMEMBER_BENEFIT_DENIED_*だけを返す（列挙対策）。
    */
   function verifyActualMembership(email, dateString) {
     var normalized = normalizeEmail(email);
-    var monthKey = monthKeyOfDateString(dateString);
-    if (!normalized || !monthKey) return { ok: false, reason: 'INVALID_INPUT' };
+    if (!normalized || !isDateString(dateString)) return { ok: false, reason: 'INVALID_INPUT' };
     try {
-      return MemberRepository.isMemberForMonth(normalized, monthKey) === true ? { ok: true } : { ok: false, reason: 'NOT_MEMBER' };
+      return MemberRepository.isMemberOnDate(normalized, dateString) === true ? { ok: true } : { ok: false, reason: 'NOT_MEMBER' };
     } catch (lookupError) {
       return { ok: false, reason: 'LEDGER_ERROR' };
     }
@@ -376,7 +464,7 @@ var MembershipRules = (function () {
 
   /*
    * 永久会員（Issue #480）か。判定の正本は BookingConfig.getPermanentMemberEmails（サーバー側のみ）。
-   * 各機能へメールを直書きせず、MemberRepository.isMemberForMonth経由で全特典に効く。
+   * 各機能へメールを直書きせず、MemberRepository.isMemberOnDate経由で全特典に効く。
    * 設定を読めない場合は永久会員扱いにしない（通常の台帳判定へ進む）。
    */
   function isPermanentMember(email) {
@@ -416,6 +504,11 @@ var MembershipRules = (function () {
     monthKeyOfDateString: monthKeyOfDateString,
     jstMonthKeyOfEpochSeconds: jstMonthKeyOfEpochSeconds,
     jstDayOfEpochSeconds: jstDayOfEpochSeconds,
+    jstDateStringOfEpochSeconds: jstDateStringOfEpochSeconds,
+    addDaysToDateString: addDaysToDateString,
+    isDateString: isDateString,
+    periodToValidDateRange: periodToValidDateRange,
+    validUntilOfRanges: validUntilOfRanges,
     nextMonthKey: nextMonthKey,
     renewalAnchorSecondsAfterMonth: renewalAnchorSecondsAfterMonth,
     PRESTART_START_MS: PRESTART_START_MS_,
@@ -429,6 +522,6 @@ var MembershipRules = (function () {
     readSubscriptionPeriod: readSubscriptionPeriod,
     existingSubscriptionProblems: existingSubscriptionProblems,
     readInvoiceSubscription: readInvoiceSubscription,
-    resolvePaidMonthOfRenewalInvoice: resolvePaidMonthOfRenewalInvoice
+    resolvePaidPeriodOfInvoice: resolvePaidPeriodOfInvoice
   };
 })();

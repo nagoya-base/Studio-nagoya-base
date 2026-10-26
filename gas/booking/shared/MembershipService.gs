@@ -1,9 +1,10 @@
 /*
  * MembershipService.gs — SNB MEMBER（Issue #471）の入会受付。Booking Web Appから呼ぶ。
  *
- * 入会は「入会月ぶん500円の満額決済（Checkout mode=payment）」から始まり、決済完了Webhookを
- * 受けてBooking Admin側（StripeWebhookProcessor.handleMembershipJoin_）が会員登録と、
- * 翌月1日からの月額subscriptionを作る（MembershipRules.gs冒頭コメント参照）。
+ * 入会はStripe Checkout mode=subscription（Issue #532）。入会日に初回500円を請求し、入会日から1か月有効・以後
+ * 入会日基準で毎月自動更新する。会員登録はBooking Admin側（StripeWebhookProcessor.handleMembershipSubscriptionJoin_）、
+ * 支払済み期間の記録はinvoice.paid（MemberPeriods）が担い、どちらが先に届いても同じ結果になる。
+ * 旧mode=payment方式（二段階）は新規加入では使わない（発行済みの旧Checkoutの完了はWebhook側の旧経路が処理する）。
  *
  * 【二重加入・二重課金の防止（レビュー対応）】
  * - 受付時: 同じメールに有効な会員（subscription有効、または当月の支払い事実あり）が既にいる場合は
@@ -20,13 +21,14 @@
  *
  * - 新しいCheckout導線は既存と同じキルスイッチ（STRIPE_CHECKOUT_ENABLED）に従う。未設定・
  *   'true'以外では入会Checkoutを発行しない（この変更でSTRIPE_CHECKOUT_ENABLEDは変更しない）。
+ * - 入会受付の一時停止（Issue #532）: Script Property MEMBERSHIP_JOIN_PAUSED='true' のときだけ新しい入会Checkoutを発行しない。
+ *   STRIPE_CHECKOUT_ENABLEDとは独立で、部屋予約・オプションのカード決済・本人確認・解約・Webhook処理は止めない。
  * - 金額はサーバー側の固定値（MembershipRules.MONTHLY_FEE_JPY）のみ。クライアントから金額は
  *   受け取らない。メールアドレスは入力値をCheckoutへ固定する。予約メールとの照合は正規化した完全一致。
  */
 'use strict';
 
 var MembershipService = (function () {
-  var PRODUCT_NAME_ = 'SNB MEMBER 月会費（入会月）';
   var RATE_LIMIT_PER_EMAIL_ = { windowMinutes: 10, maxCount: 3 };
   var RATE_LIMIT_GLOBAL_ = { windowMinutes: 1, maxCount: 20 };
   var CHECKOUT_TTL_SECONDS_ = 35 * 60;
@@ -85,8 +87,8 @@ var MembershipService = (function () {
     MailApp.sendEmail(message);
   }
 
-  function currentMonthKey_() {
-    return MembershipRules.jstMonthKeyOfEpochSeconds(Math.floor(new Date().getTime() / 1000));
+  function todayDateString_() {
+    return MembershipRules.jstDateStringOfEpochSeconds(Math.floor(new Date().getTime() / 1000));
   }
 
   /* 入会元ブランド（Issue #504）。未指定はSNB（後方互換）。許可コード以外は拒否し、任意文字列をURL解決へ渡さない。 */
@@ -110,11 +112,14 @@ var MembershipService = (function () {
     }
 
     var stripeConfig = BookingConfig.getStripeConfig();
+    if (stripeConfig.membershipJoinPaused === true) {
+      return fail_('MEMBERSHIP_JOIN_PAUSED', '現在、入会受付を一時停止しています。しばらくしてから再度お試しください。');
+    }
     if (!stripeConfig.checkoutEnabled) {
       return fail_('CHECKOUT_DISABLED', '現在オンラインでの入会受付は行っていません。');
     }
     var returnUrls = Booking.resolveMembershipReturnUrls(brand, stripeConfig);
-    if (!stripeConfig.secretKey || !returnUrls.ok) {
+    if (!stripeConfig.secretKey || !returnUrls.ok || (!stripeConfig.membershipPriceId && !stripeConfig.membershipProductId)) {
       return fail_('STRIPE_NOT_CONFIGURED', '入会受付の設定が完了していません。');
     }
 
@@ -129,7 +134,9 @@ var MembershipService = (function () {
       return fail_('LOCK_TIMEOUT', '一時的に混み合っています。しばらくしてから再度お試しください。');
     }
     try {
-      var existing = MemberRepository.findLiveMemberByEmail(email, currentMonthKey_(), '');
+      /* 既存会員の判定は支払済み期間（MemberPeriods＋旧MemberMonths＋永久会員。JSTの今日）またはsubscription有効（Issue #532）。 */
+      var today = todayDateString_();
+      var existing = MemberRepository.findLiveMemberByEmail(email, today, '') || MemberRepository.isMemberOnDate(email, today);
       if (existing) {
         sendMail_(email, 'このメールアドレスは既にSNB MEMBERとしてご登録済みです。新たにお手続きいただく必要はありません。\n' +
           '更新・解約などについてご不明な点は、お問い合わせください。');
@@ -150,13 +157,16 @@ var MembershipService = (function () {
         memberId: memberId, email: email,
         pendingUntil: new Date((expiresAtSeconds + PENDING_GRACE_SECONDS_) * 1000)
       }, now);
+      /* Price ID（STRIPE_MEMBER_PRICE_ID）→ Product ID（STRIPE_MEMBER_PRODUCT_ID）の順にScript Propertiesの値を使う。
+         どちらも無い場合は設定不足として安全に失敗する（Product ID等をコードに固定しない。Issue #532）。 */
       var result = StripeGateway.createMembershipCheckoutSession(stripeConfig, {
         amountJpy: MembershipRules.MONTHLY_FEE_JPY,
         email: email,
         memberId: memberId,
         successUrl: returnUrls.successUrl,
         cancelUrl: returnUrls.cancelUrl,
-        productName: PRODUCT_NAME_,
+        priceId: stripeConfig.membershipPriceId || '',
+        productId: stripeConfig.membershipProductId || '',
         expiresAtSeconds: expiresAtSeconds
       }, memberId);
       if (!result.ok || !result.session || !result.session.url) {
@@ -171,12 +181,9 @@ var MembershipService = (function () {
       MemberRepository.updatePending(memberId, { checkoutSessionId: result.session.id }, new Date());
       sendMail_(email, 'SNB MEMBER（月額500円）の入会手続きは、下記のお支払いページから行えます（35分間有効）。\n\n' +
         result.session.url + '\n\n' +
-        (MembershipRules.isPrestartJoin(Math.floor(now.getTime() / 1000))
-          ? '・SNB MEMBERプレスタート中です。初回500円で2026年11月30日まで有効です（11月1日の追加課金はありません）。\n' +
-            '・次回更新は2026年12月1日（500円）、以降は毎月1日に自動更新されます。\n' +
-            '・2名ペアパック・シャワー・Studio Xの会員限定有料オプションなどの本特典は2026年12月1日から開始します。90日先行予約は決済完了後すぐご利用いただけます。\n'
-          : '・入会月は日割りなしで500円、入会日から当月末まで有効です。\n' +
-            '・翌月以降は毎月1日に500円が自動更新されます。\n') +
+        '・入会日に初回500円をお支払いいただき、入会日から1か月有効です。\n' +
+        '・以後、入会日を基準に毎月自動更新されます（例: 10月15日入会 → 11月15日に500円が自動更新）。\n' +
+        '・解約しても、お支払い済みの期間の末日まではご利用いただけます（日割り返金はありません）。\n' +
         '・心当たりがない場合は、このメールを破棄してください。');
       return accepted_();
     } catch (error) {

@@ -108,11 +108,17 @@ var CHECKOUT_STUDIO_FORM = {
   'origin_context': 'web'
 };
 
-function assertCheckoutStudioForm(form) {
+function assertCheckoutStudioForm(form, subscriptionMode) {
   Object.keys(CHECKOUT_STUDIO_FORM).forEach(function (key) {
+    /* submit_typeはmode=paymentのみ指定できる（Stripe公式仕様）。 */
+    if (subscriptionMode && key === 'submit_type') return;
     assert.strictEqual(form[key], CHECKOUT_STUDIO_FORM[key], key);
   });
-  assert.strictEqual(form.payment_method_collection, undefined, 'mode=paymentにpayment_method_collectionを付けない');
+  if (subscriptionMode) {
+    assert.strictEqual(form.payment_method_collection, 'always');
+  } else {
+    assert.strictEqual(form.payment_method_collection, undefined, 'mode=paymentにpayment_method_collectionを付けない');
+  }
 }
 
 test('createCheckoutSession: Checkout Studio固定値を送り、mode/success_url/cancel_url/line_itemsの既存値は維持する（Issue #516）', function () {
@@ -133,24 +139,77 @@ test('createCheckoutSession: Checkout Studio固定値を送り、mode/success_ur
   assert.strictEqual(form['line_items[0][price_data][unit_amount]'], '8000');
 });
 
-test('createMembershipCheckoutSession: Checkout Studio固定値を送り、決済手段保存・メール固定などの既存値は維持する（Issue #516）', function () {
+test('createMembershipCheckoutSession: mode=subscriptionでCheckout Studio固定値・メール固定・Subscription metadataを送る（Issue #516 / #532）', function () {
   var urlFetchApp = stubs.createUrlFetchAppStub(function () {
     return { responseCode: 200, body: { id: 'cs_test_m', url: 'https://checkout.stripe.com/pay/cs_test_m', status: 'open', payment_status: 'unpaid' } };
   });
   var sandbox = loadStripeGateway(urlFetchApp);
   sandbox.StripeGateway.createMembershipCheckoutSession(STRIPE_CONFIG, {
-    amountJpy: 500, email: 'taro@example.com', memberId: 'M-1', productName: 'SNB MEMBER',
+    amountJpy: 500, email: 'taro@example.com', memberId: 'M-1', productId: 'prod_fixture',
     successUrl: 'https://example.com/ok', cancelUrl: 'https://example.com/ng', expiresAtSeconds: 1999999999
   }, 'idem-m');
   var form = parseFormPayload(urlFetchApp._calls[0].options.payload);
-  assertCheckoutStudioForm(form);
-  assert.strictEqual(form.mode, 'payment');
+  assertCheckoutStudioForm(form, true);
+  assert.strictEqual(form.mode, 'subscription');
   assert.strictEqual(form.success_url, 'https://example.com/ok');
   assert.strictEqual(form.cancel_url, 'https://example.com/ng');
   assert.strictEqual(form.customer_email, 'taro@example.com');
-  assert.strictEqual(form.customer_creation, 'always');
-  assert.strictEqual(form['payment_intent_data[setup_future_usage]'], 'off_session');
   assert.strictEqual(form['line_items[0][price_data][unit_amount]'], '500');
+  assert.strictEqual(form['line_items[0][price_data][recurring][interval]'], 'month');
+  assert.strictEqual(form['line_items[0][price_data][product]'], 'prod_fixture');
+  assert.strictEqual(form['metadata[orderType]'], 'membership');
+  assert.strictEqual(form['metadata[memberId]'], 'M-1');
+  assert.strictEqual(form['subscription_data[metadata][orderType]'], 'membership');
+  assert.strictEqual(form['subscription_data[metadata][memberId]'], 'M-1');
+  ['customer_creation', 'payment_intent_data[setup_future_usage]', 'billing_cycle_anchor', 'submit_type'].forEach(function (key) {
+    assert.strictEqual(form[key], undefined, key + 'はmode=subscriptionの新規加入では送らない');
+  });
+});
+
+test('createMembershipCheckoutSession: 既存Recurring Priceを指定した場合はprice_dataを送らずそのPriceを使う。Price/Productが無ければ送信しない', function () {
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 200, body: { id: 'cs_test_m', url: 'https://checkout.stripe.com/pay/cs_test_m' } };
+  });
+  var sandbox = loadStripeGateway(urlFetchApp);
+  sandbox.StripeGateway.createMembershipCheckoutSession(STRIPE_CONFIG, {
+    amountJpy: 500, email: 'taro@example.com', memberId: 'M-1', priceId: 'price_fixture',
+    successUrl: 'https://example.com/ok', cancelUrl: 'https://example.com/ng'
+  }, 'idem-m');
+  var form = parseFormPayload(urlFetchApp._calls[0].options.payload);
+  assert.strictEqual(form['line_items[0][price]'], 'price_fixture');
+  assert.strictEqual(Object.keys(form).filter(function (k) { return k.indexOf('price_data') !== -1; }).length, 0);
+
+  var none = sandbox.StripeGateway.createMembershipCheckoutSession(STRIPE_CONFIG, { amountJpy: 500, email: 'a@b.co', memberId: 'M-2' }, 'idem-x');
+  assert.strictEqual(none.ok, false);
+  assert.strictEqual(none.errorType, 'INVALID_REQUEST');
+  assert.strictEqual(urlFetchApp._calls.length, 1, 'Stripeへ送らない');
+});
+
+test('retrieveInvoiceIdForPaymentIntent: Invoice Payments APIでPaymentIntentからinvoiceを引く。紐づかない決済は空、一覧が不完全ならAMBIGUOUS', function () {
+  var calls = [];
+  var urlFetchApp = stubs.createUrlFetchAppStub(function (url) {
+    calls.push(url);
+    if (url.indexOf('pi_none') !== -1) return { responseCode: 200, body: { object: 'list', has_more: false, data: [] } };
+    if (url.indexOf('pi_more') !== -1) return { responseCode: 200, body: { object: 'list', has_more: true, data: [{ invoice: 'in_x' }] } };
+    return { responseCode: 200, body: { object: 'list', has_more: false, data: [{ invoice: 'in_fixture' }] } };
+  });
+  var sandbox = loadStripeGateway(urlFetchApp);
+  var found = sandbox.StripeGateway.retrieveInvoiceIdForPaymentIntent(STRIPE_CONFIG, 'pi_ok');
+  assert.strictEqual(found.invoiceId, 'in_fixture');
+  assert.ok(calls[0].indexOf('/v1/invoice_payments?payment[type]=payment_intent&payment[payment_intent]=pi_ok') !== -1);
+  assert.strictEqual(sandbox.StripeGateway.retrieveInvoiceIdForPaymentIntent(STRIPE_CONFIG, 'pi_none').invoiceId, '');
+  assert.strictEqual(sandbox.StripeGateway.retrieveInvoiceIdForPaymentIntent(STRIPE_CONFIG, 'pi_more').errorType, 'AMBIGUOUS');
+});
+
+test('cancelSubscriptionImmediately: DELETEでSubscriptionを即時キャンセルする', function () {
+  var urlFetchApp = stubs.createUrlFetchAppStub(function () {
+    return { responseCode: 200, body: { id: 'sub_fixture', status: 'canceled' } };
+  });
+  var sandbox = loadStripeGateway(urlFetchApp);
+  var result = sandbox.StripeGateway.cancelSubscriptionImmediately(STRIPE_CONFIG, 'sub_fixture');
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(urlFetchApp._calls[0].options.method, 'delete');
+  assert.ok(urlFetchApp._calls[0].url.indexOf('/v1/subscriptions/sub_fixture') !== -1);
 });
 
 test('createCheckoutSession: UrlFetchApp.fetchが例外を投げた場合はNETWORKを返す（Stripe側の処理結果は不明のまま）', function () {

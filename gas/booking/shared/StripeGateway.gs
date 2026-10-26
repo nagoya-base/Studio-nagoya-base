@@ -200,7 +200,10 @@ var StripeGateway = (function () {
       /* Issue #471（SNB MEMBER入会）。既存の部屋予約・オプション決済は参照しない。 */
       mode: raw.mode || '',
       customerId: typeof raw.customer === 'string' ? raw.customer : ((raw.customer && raw.customer.id) || ''),
-      customerEmail: String(raw.customer_email || (raw.customer_details && raw.customer_details.email) || '')
+      customerEmail: String(raw.customer_email || (raw.customer_details && raw.customer_details.email) || ''),
+      /* Issue #532: mode=subscriptionの入会Checkoutが作ったSubscription / 初回invoice。 */
+      subscriptionId: typeof raw.subscription === 'string' ? raw.subscription : ((raw.subscription && raw.subscription.id) || ''),
+      invoiceId: typeof raw.invoice === 'string' ? raw.invoice : ((raw.invoice && raw.invoice.id) || '')
     };
   }
 
@@ -231,7 +234,9 @@ var StripeGateway = (function () {
       paymentIntentId: typeof raw.payment_intent === 'string' ? raw.payment_intent : ((raw.payment_intent && raw.payment_intent.id) || ''),
       amount: raw.amount,
       amountRefunded: Number(raw.amount_refunded) || 0,
-      currency: typeof raw.currency === 'string' ? raw.currency.toUpperCase() : ''
+      currency: typeof raw.currency === 'string' ? raw.currency.toUpperCase() : '',
+      /* API versionによってはChargeがinvoiceを持つ。持たない場合はretrieveInvoiceIdForPaymentIntentで引く（どのversionで外れたかは断定しない）。 */
+      invoiceId: typeof raw.invoice === 'string' ? raw.invoice : ((raw.invoice && raw.invoice.id) || '')
     };
   }
 
@@ -412,47 +417,134 @@ var StripeGateway = (function () {
   }
 
   /*
-   * SNB MEMBER入会のCheckout Session（Issue #471）。mode=payment（入会月ぶん1,000円の満額決済）で、
-   * 決済手段を翌月以降の自動請求用に保存する（setup_future_usage=off_session）。customer_creation=
-   * alwaysでStripe Customerを作る。メールアドレスは入力値をcustomer_emailで固定する（Checkout上で
-   * 変更させない。予約メールとの照合を安定させるため）。サブスクリプション本体は、この決済の完了
-   * Webhookを受けてcreateMembershipSubscriptionで作る（MembershipRules.gs冒頭コメント参照）。
-   * params: { amountJpy, email, memberId, successUrl, cancelUrl, productName, expiresAtSeconds? }
+   * SNB MEMBER入会のCheckout Session（Issue #532）。mode=subscriptionで、入会日に初回500円を請求し、以後は
+   * 入会日基準で毎月自動更新する（billing_cycle_anchorは指定しない）。3Dセキュア/SCAはStripe Checkoutの
+   * Subscriptionフローに委ねる。メールアドレスは入力値をcustomer_emailで固定する（予約メールとの照合を安定させるため）。
+   * Subscription作成時のmetadataはCheckout側のmetadataとは別に subscription_data[metadata] で明示的に設定する
+   * （invoice.paid等が invoice.parent.subscription_details.metadata から会員を識別できるようにするため）。
+   * 価格は params.priceId（既存のRecurring Price）があればそれを使い、無ければ params.productId（既存Product）に対する
+   * 月額のprice_dataを使う。ID類はコードへ直書きしない（Script Properties / 台帳から渡す）。
+   * params: { amountJpy, email, memberId, successUrl, cancelUrl, priceId?, productId?, expiresAtSeconds? }
    */
   function createMembershipCheckoutSession(stripeConfig, params, idempotencyKey) {
     if (!stripeConfig || !stripeConfig.secretKey) {
       return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
     }
+    if (!params || (!params.priceId && !params.productId)) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: '月会費のPriceまたはProductが指定されていません。' };
+    }
     var payload = {
-      'mode': 'payment',
+      'mode': 'subscription',
       'success_url': params.successUrl,
       'cancel_url': params.cancelUrl,
       'customer_email': params.email,
-      'customer_creation': 'always',
-      'payment_intent_data[setup_future_usage]': 'off_session',
       'line_items[0][quantity]': '1',
-      'line_items[0][price_data][currency]': 'jpy',
-      'line_items[0][price_data][unit_amount]': String(params.amountJpy),
-      'line_items[0][price_data][product_data][name]': params.productName,
       'metadata[orderType]': 'membership',
       'metadata[memberId]': params.memberId,
+      'subscription_data[metadata][orderType]': 'membership',
+      'subscription_data[metadata][memberId]': params.memberId,
       'client_reference_id': params.memberId,
-      /* Issue #516: Checkout Studio固定値（fixed_by_ui）。mode=paymentのためpayment_method_collectionは付けない。 */
+      /* Issue #516: Checkout Studio固定値（fixed_by_ui）。submit_typeはmode=paymentのみのため付けない。 */
       'ui_mode': 'hosted',
       'billing_address_collection': 'auto',
       'phone_number_collection[enabled]': 'false',
       'automatic_tax[enabled]': 'false',
       'allow_promotion_codes': 'false',
-      'submit_type': 'auto',
+      'payment_method_collection': 'always',
       'name_collection[individual][enabled]': 'true',
       'name_collection[individual][optional]': 'true',
       'integration_identifier': 'hosted_web_0001',
       'origin_context': 'web'
     };
+    if (params.priceId) {
+      payload['line_items[0][price]'] = params.priceId;
+    } else {
+      payload['line_items[0][price_data][currency]'] = 'jpy';
+      payload['line_items[0][price_data][unit_amount]'] = String(params.amountJpy);
+      payload['line_items[0][price_data][recurring][interval]'] = 'month';
+      payload['line_items[0][price_data][product]'] = params.productId;
+    }
     if (params.expiresAtSeconds) payload.expires_at = String(params.expiresAtSeconds);
     var result = performRequest_('post', API_BASE_ + '/checkout/sessions', stripeConfig.secretKey, encodeFormPayload_(payload), idempotencyKey);
     if (!result.ok) return result;
     return { ok: true, session: normalizeSession_(result.raw) };
+  }
+
+  /*
+   * Subscriptionの再取得（Issue #532。入会Checkout完了時にstatus・現在期間・解約予約を台帳へ写すために使う）。
+   * 戻り値: { ok: true, subscription: { id, status, raw } }
+   */
+  function retrieveSubscription(stripeConfig, subscriptionId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!subscriptionId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripeSubscriptionIdが指定されていません。' };
+    }
+    var result = performRequest_('get', API_BASE_ + '/subscriptions/' + encodeURIComponent(subscriptionId), stripeConfig.secretKey, null, null);
+    if (!result.ok) return result;
+    return { ok: true, subscription: { id: result.raw.id, status: result.raw.status || '', raw: result.raw } };
+  }
+
+  /*
+   * Subscriptionの即時キャンセル（Issue #532。二重加入が判明した新しいSubscriptionを止める）。
+   * 以後の請求を作らない。返金はしない（要復旧として運営が判断する）。同じ指定の再送は同じ結果へ収束するため
+   * Idempotency-Keyは付けない（既にキャンセル済みの場合はStripeがエラーを返すので、呼び出し側が照会で確認する）。
+   */
+  function cancelSubscriptionImmediately(stripeConfig, subscriptionId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!subscriptionId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripeSubscriptionIdが指定されていません。' };
+    }
+    var result = performRequest_('delete', API_BASE_ + '/subscriptions/' + encodeURIComponent(subscriptionId), stripeConfig.secretKey, null, null);
+    if (!result.ok) return result;
+    return { ok: true, subscription: { id: result.raw.id, status: result.raw.status || '' } };
+  }
+
+  /*
+   * invoiceの再取得（Issue #532。返金されたChargeが会費invoiceか確認する）。
+   * 戻り値: { ok: true, invoice: raw } （billing_reason・metadata・lines等はraw本文を読む）
+   */
+  function retrieveInvoice(stripeConfig, invoiceId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!invoiceId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripeInvoiceIdが指定されていません。' };
+    }
+    var result = performRequest_('get', API_BASE_ + '/invoices/' + encodeURIComponent(invoiceId), stripeConfig.secretKey, null, null);
+    if (!result.ok) return result;
+    return { ok: true, invoice: result.raw };
+  }
+
+  /*
+   * PaymentIntentが支払ったinvoiceのIDを引く（Issue #532。Subscription更新invoiceの返金を特定する）。
+   * Charge.invoiceが無い場合に、Invoice Payments API（PaymentIntentとInvoiceの対応付けリソース。
+   * GET /v1/invoice_payments?payment[type]=payment_intent&payment[payment_intent]=pi_...）で引く
+   * （呼び出し側でcharge.invoiceIdを先に見る。どのAPI versionでChargeからinvoiceが外れたかは公式の変更履歴で未確認のため断定しない）。
+   * 戻り値: { ok: true, invoiceId: '' | 'in_...' }（invoiceに紐づかない決済は空文字）。一覧を完全に取得できない場合はAMBIGUOUS。
+   */
+  function retrieveInvoiceIdForPaymentIntent(stripeConfig, paymentIntentId) {
+    if (!stripeConfig || !stripeConfig.secretKey) {
+      return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
+    }
+    if (!paymentIntentId) {
+      return { ok: false, errorType: 'INVALID_REQUEST', message: 'stripePaymentIntentIdが指定されていません。' };
+    }
+    var url = API_BASE_ + '/invoice_payments?payment[type]=payment_intent&payment[payment_intent]=' + encodeURIComponent(paymentIntentId) + '&limit=10';
+    var result = performRequest_('get', url, stripeConfig.secretKey, null, null);
+    if (!result.ok) return result;
+    if (!result.raw || !Array.isArray(result.raw.data) || result.raw.has_more) {
+      return { ok: false, errorType: 'AMBIGUOUS', message: 'Stripeからの応答を解析できませんでした。' };
+    }
+    var invoiceId = '';
+    result.raw.data.forEach(function (item) {
+      if (invoiceId || !item) return;
+      invoiceId = typeof item.invoice === 'string' ? item.invoice : ((item.invoice && item.invoice.id) || '');
+    });
+    return { ok: true, invoiceId: invoiceId };
   }
 
   /*
@@ -584,6 +676,10 @@ var StripeGateway = (function () {
   return {
     setSubscriptionCancelAtPeriodEnd: setSubscriptionCancelAtPeriodEnd,
     createMembershipCheckoutSession: createMembershipCheckoutSession,
+    retrieveSubscription: retrieveSubscription,
+    cancelSubscriptionImmediately: cancelSubscriptionImmediately,
+    retrieveInvoice: retrieveInvoice,
+    retrieveInvoiceIdForPaymentIntent: retrieveInvoiceIdForPaymentIntent,
     ensureMembershipProduct: ensureMembershipProduct,
     findMembershipSubscription: findMembershipSubscription,
     createMembershipSubscription: createMembershipSubscription,

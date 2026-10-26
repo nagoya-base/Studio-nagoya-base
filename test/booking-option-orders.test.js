@@ -150,6 +150,10 @@ function setup(options) {
     if (memberState.rule === true || memberState.rule === false) return memberState.rule;
     return (memberState.rule[String(email).toLowerCase()] || []).indexOf(month) !== -1;
   };
+  /* Issue #532: 資格判定は日付（isMemberOnDate）。月単位のスタブへ委譲して、既存の利用月ごとの試験を保つ。 */
+  if (opts.members !== 'LEDGER') sandbox.MemberRepository.isMemberOnDate = function (email, date) {
+    return sandbox.MemberRepository.isMemberForMonth(email, String(date).substring(0, 7));
+  };
   /* 有料レンタル機材は全件Admin許可制（Issue #430）。既定ではストロボだけ許可済みにして、
      「許可済みなら即決済待ち」の経路を試験する。許可の保留・付与を試験するテストは COB 等を使う。 */
   if (opts.grantStrobe !== false) {
@@ -647,6 +651,16 @@ test('Checkout: 本人確認に失敗した／別予約の注文IDではCheckout
   assert.strictEqual(ctx.sandbox.OptionOrderService.startOptionCheckout(b.bookingId, EMAIL, orderA).error.code, 'FORBIDDEN', '他の予約の注文IDでは操作できない');
   assert.strictEqual(ctx.sandbox.OptionOrderService.startOptionCheckout(a.bookingId, EMAIL, '').error.code, 'FORBIDDEN');
   assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
+});
+
+test('Checkout: 入会受付の一時停止（MEMBERSHIP_JOIN_PAUSED=true。Issue #532）はオプション決済に影響しない', function () {
+  var ctx = setup({ properties: { MEMBERSHIP_JOIN_PAUSED: 'true' } });
+  var s = stagedStaffOrder(ctx);
+  ctx.sandbox.OptionOrderService.approveOrder(s.optionOrderId);
+  var out = ctx.sandbox.OptionOrderService.startOptionCheckout(s.bookingId, EMAIL, s.optionOrderId);
+  assert.strictEqual(out.success, true, JSON.stringify(out));
+  assert.match(out.checkoutUrl, /^https:\/\/checkout\.stripe\.com\//);
+  assert.strictEqual(ctx.stripe.createCalls.length, 1);
 });
 
 test('Checkout: 承認後にのみ生成され、bookingId/optionOrderId/orderType=addonがmetadataとclient_reference_idに載る。再実行しても二重生成しない', function () {

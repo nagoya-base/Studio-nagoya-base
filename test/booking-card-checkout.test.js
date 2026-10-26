@@ -168,6 +168,15 @@ test('beginCardCheckout: 正しいトークンを渡した場合のみCheckout S
   assert.strictEqual(result.success, true, JSON.stringify(result));
 });
 
+test('beginCardCheckout: 入会受付の一時停止（MEMBERSHIP_JOIN_PAUSED=true。Issue #532）は部屋予約のカード決済に影響しない', function () {
+  var ctx = setup({ properties: { MEMBERSHIP_JOIN_PAUSED: 'true' } });
+  var bookingId = createBookingRow(ctx);
+
+  var result = ctx.sandbox.BookingRepository.beginCardCheckout(bookingId, TOKEN);
+  assert.strictEqual(result.success, true, JSON.stringify(result));
+  assert.strictEqual(ctx.urlFetchApp._calls.length, 1, '部屋予約のCheckout Sessionは発行できる');
+});
+
 test('beginCardCheckout: bookingIdのみ（トークン省略）ではFORBIDDENで拒否し、Stripeを一切呼ばない', function () {
   var ctx = setup();
   var bookingId = createBookingRow(ctx);

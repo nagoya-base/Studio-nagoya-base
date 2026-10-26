@@ -371,8 +371,8 @@ var BookingRepository = (function () {
   /*
    * SNB MEMBER料金の適用可否（Issue #471）。新料金世代（V2）のSNB予約では、フォームの自己申告
    * （isMember）を信用せず、予約メールアドレスと会員登録メールアドレスを正規化して照合し、
-   * 「利用日の属する暦月」の支払い事実があるときだけMEMBER料金にする（予約を作った月ではない。
-   * 現在月の状態から未来月を推測しない。MemberRepository.isMemberForMonth参照）。
+   * 「利用日（JST）」が支払済みPeriod（MemberPeriods）・旧MemberMonths・永久会員の有効範囲に入るときだけMEMBER料金にする
+   * （予約を作った日ではない。未決済の未来Periodを推測しない。MemberRepository.isMemberOnDate参照）。
    * 照合できない・会員台帳を読めない場合はすべてfail-closedで一般料金。
    * V1（〜2026/11/30作成）・mens（価格優遇のみ。実会員資格は付与しない）・studio_x（V2は会員区分廃止）は
    * 従来どおり自己申告/固定の扱いで、会員台帳を参照しない（status='NOT_CHECKED'）。
@@ -402,9 +402,12 @@ var BookingRepository = (function () {
     if (input.brand !== 'snb' || generation !== BookingPricing.GENERATION.V2) {
       return { isMember: input.isMember, status: 'NOT_CHECKED' };
     }
+    /* 利用日（JST）が支払済みPeriod・旧MemberMonths・永久会員の有効範囲に入るか（Issue #532）。台帳エラーはfail-closed。 */
     var eligible = false;
     try {
-      eligible = MemberRepository.isMemberForMonth(input.email, MembershipRules.monthKeyOfDateString(input.date)) === true;
+      var verified = MembershipRules.verifyActualMembership(input.email, input.date);
+      if (verified.reason === 'LEDGER_ERROR') Logger.log('BookingRepository: 会員資格の確認に失敗したため一般料金とします');
+      eligible = verified.ok === true;
     } catch (lookupError) {
       Logger.log('BookingRepository: 会員資格の確認に失敗したため一般料金とします');
     }
