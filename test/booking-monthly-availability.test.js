@@ -21,7 +21,7 @@ var DEFAULT_CONFIG = {
 
 /* このファイルの日付リテラルは実行時の実時刻に依存しない固定の未来月を使う
    （test/booking-availability.test.jsのGENERIC_NOWと同じ方針）。 */
-var NOW = new Date('2026-01-01T00:00:00+09:00');
+var NOW = new Date('2026-09-20T00:00:00+09:00');
 
 function busy(startMinutes, endMinutes) {
   return { startMinutes: startMinutes, endMinutes: endMinutes, isAllDay: false };
@@ -205,12 +205,12 @@ test('getMonthlyAvailabilityのレスポンスにPIIやイベント詳細を一�
     DEFAULT_CONFIG,
     NOW
   );
-  var allowedTopKeys = ['success', 'month', 'durationMinutes', 'brand', 'days'];
+  var allowedTopKeys = ['success', 'month', 'durationMinutes', 'brand', 'days', 'generalMaxDate', 'memberMaxDate'];
   Object.keys(result).forEach(function (key) {
     assert.ok(allowedTopKeys.indexOf(key) !== -1, '想定外のトップレベルキー: ' + key);
   });
   Object.keys(result.days).forEach(function (dateString) {
-    var allowedDayKeys = ['status', 'availableStartTimes'];
+    var allowedDayKeys = ['status', 'availableStartTimes', 'memberAdvance'];
     Object.keys(result.days[dateString]).forEach(function (key) {
       assert.ok(allowedDayKeys.indexOf(key) !== -1, dateString + ' に想定外のキー: ' + key);
     });

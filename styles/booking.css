@@ -350,6 +350,12 @@
   opacity: 0.7;
 }
 
+/* SNB MEMBER先行枠（31〜90日先。Issue #480）。色だけに依存せず、点線の枠で区別する。 */
+.ba-cal-day--member-advance:not(:disabled) {
+  border-style: dotted;
+  border-width: 2px;
+}
+
 /* 空き状況の確認中／取得失敗: 日付のみ表示し、薄いグレーの「未確定」状態にする。 */
 .ba-cal-day--pending:disabled {
   opacity: 0.55;

@@ -389,7 +389,7 @@ var Booking = (function () {
    * normalizedはtrim済み・型を揃えた値のみを含み、以降の処理（bookingId発行・Calendar/Sheets保存）は
    * すべてこのnormalizedを使う（生入力を直接使わない）。
    */
-  function validateCreateBookingInput(rawInput, availabilityConfig, now) {
+  function validateCreateBookingInput(rawInput, availabilityConfig, now, windowTier) {
     var input = rawInput || {};
     var receivedAt = isDateLike_(now) ? now : new Date();
 
@@ -440,6 +440,14 @@ var Booking = (function () {
     }
     if (input.date < todayString) {
       return { valid: false, error: err_('INVALID_DATE', '過去の日付は指定できません。') };
+    }
+    /*
+     * 予約可能期間の絶対上限（Issue #480）。会員先行枠を含む90日を超える日は、公開経路では誰も予約できない
+     * （管理者の上限解除は、認証済みのBooking Admin経路だけが渡すwindowTier=ADMINのときのみ）。31〜90日先の会員資格は
+     * BookingRepository.createBookingがメールアドレスで確認する。
+     */
+    if (windowTier !== BookingWindow.TIER.ADMIN && BookingWindow.classifyDate(input.date, todayString) === BookingWindow.BAND.OUT_OF_RANGE) {
+      return { valid: false, error: err_('DATE_OUT_OF_RANGE', '予約できるのは' + BookingWindow.MEMBER_DAYS + '日先までです。') };
     }
     var isSameDayBooking = input.date === todayString;
 

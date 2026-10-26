@@ -352,6 +352,17 @@ var BookingAvailability = (function () {
       return { success: false, error: { code: 'INVALID_DATE', message: '過去の日付は指定できません。' } };
     }
 
+    /*
+     * 予約可能期間（Issue #480）。判定の正本はBookingWindow（createBookingと同じ）。このAPIは
+     * メールを受け取らないため会員有無は判定せず、31〜90日先は「会員先行枠」(memberAdvance)として
+     * 全員に同じ応答を返す（会員有無を推測させない）。会員資格の最終確認はcreateBooking側。
+     * 90日を超える日は誰にも提示しない（管理者の上限解除は認証済みのBooking Admin経路のみ）。
+     */
+    var windowBand = BookingWindow.classifyDate(date, todayString);
+    if (windowBand === BookingWindow.BAND.OUT_OF_RANGE || windowBand === BookingWindow.BAND.INVALID) {
+      return { success: false, error: { code: 'DATE_OUT_OF_RANGE', message: '予約できるのは' + BookingWindow.MEMBER_DAYS + '日先までです。' } };
+    }
+
     var minimumStartMinutes = null;
     if (date === todayString) {
       minimumStartMinutes = getCurrentMinutesInTimezone(receivedAt, config.timezone);
@@ -367,6 +378,9 @@ var BookingAvailability = (function () {
       date: date,
       durationMinutes: durationMinutes,
       brand: brand,
+      memberAdvance: windowBand === BookingWindow.BAND.MEMBER_ONLY,
+      generalMaxDate: BookingWindow.generalMaxDate(todayString),
+      memberMaxDate: BookingWindow.memberMaxDate(todayString),
       bookableStartTimes: bookableStartTimes
     };
   }
@@ -548,6 +562,13 @@ var BookingAvailability = (function () {
         continue;
       }
 
+      /* 予約可能期間（Issue #480）: 90日超は誰にも提示しない。31〜90日は会員先行枠として印を付ける。 */
+      var windowBand = BookingWindow.classifyDate(dateString, todayString);
+      if (windowBand !== BookingWindow.BAND.GENERAL && windowBand !== BookingWindow.BAND.MEMBER_ONLY) {
+        days[dateString] = { status: DAY_STATUS.OUT_OF_RANGE, availableStartTimes: 0 };
+        continue;
+      }
+
       var minimumStartMinutes = null;
       if (dateString === todayString) {
         minimumStartMinutes = getCurrentMinutesInTimezone(receivedAt, config.timezone);
@@ -570,6 +591,7 @@ var BookingAvailability = (function () {
         status: classifyDayStatus_(bookable.length, maxPossible.length),
         availableStartTimes: bookable.length
       };
+      if (windowBand === BookingWindow.BAND.MEMBER_ONLY) days[dateString].memberAdvance = true;
     }
 
     return {
@@ -577,6 +599,8 @@ var BookingAvailability = (function () {
       month: monthString,
       durationMinutes: durationMinutes,
       brand: brand,
+      generalMaxDate: BookingWindow.generalMaxDate(todayString),
+      memberMaxDate: BookingWindow.memberMaxDate(todayString),
       days: days
     };
   }

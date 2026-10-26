@@ -48,11 +48,18 @@ var BookingRepository = (function () {
   var LOCK_TIMEOUT_MS_ = 10000;
   var EXPIRE_LOCK_TIMEOUT_MS_ = 5000;
 
-  function createBooking(rawInput, now, requestId) {
+  /*
+   * windowTier（Issue #480）: サーバー内部の呼び出し元だけが渡す第4引数。BookingWindow.TIER.ADMINのときだけ
+   * 予約可能期間の上限を解除する（Booking Adminの認証済み管理者関数adminCreateBooking専用）。公開Web App
+   * （Code.gs）は渡さず、リクエストの内容（予約メールアドレス・payload）から導出することも決してない。
+   * ADMIN以外の値はすべて通常判定（一般30日／会員90日）。管理者でも営業時間・重複予約・料金などの検証は同じ。
+   */
+  function createBooking(rawInput, now, requestId, windowTier) {
     now = isDateLike_(now) ? now : new Date();
+    var isAdminWindow = windowTier === BookingWindow.TIER.ADMIN;
 
     var availabilityConfig = BookingConfig.getAvailabilityConfig();
-    var validation = Booking.validateCreateBookingInput(rawInput, availabilityConfig, now);
+    var validation = Booking.validateCreateBookingInput(rawInput, availabilityConfig, now, isAdminWindow ? BookingWindow.TIER.ADMIN : undefined);
     if (!validation.valid) {
       return { success: false, error: validation.error };
     }
@@ -104,6 +111,10 @@ var BookingRepository = (function () {
      * メールアドレス単位で別枠に制限する（許可の有無を無制限に探られないようにするため）。
      */
     var hasOptionsPayload = !!rawInput && rawInput.options !== undefined && rawInput.options !== null;
+    if (isAdminWindow && hasOptionsPayload) {
+      /* 管理者の新規予約はお部屋の予約のみ（オプションの申込・本人確認・rate limitは公開経路の仕組み）。 */
+      return { success: false, error: { code: 'OPTIONS_NOT_SUPPORTED', message: '管理者の新規予約ではオプションを同時に申し込めません。' } };
+    }
     var optionsPreflight = hasOptionsPayload
       ? OptionOrderService.preflightForNewBooking(input.brand, rawInput.options, input.email, {
         date: input.date,
@@ -118,7 +129,8 @@ var BookingRepository = (function () {
     }
 
     var rateLimitConfig = BookingConfig.getRateLimitConfig();
-    var rateLimitResult = RateLimiter.evaluate(input, rateLimitConfig, now.getTime());
+    /* 認証済み管理者の操作は公開フォーム向けのrate limitの対象外（RateLimiter.gsは公開Web Appのみに配布）。 */
+    var rateLimitResult = isAdminWindow ? { allowed: true } : RateLimiter.evaluate(input, rateLimitConfig, now.getTime());
     if (!rateLimitResult.allowed) {
       return {
         success: false,
@@ -128,6 +140,18 @@ var BookingRepository = (function () {
           reason: rateLimitResult.reason
         }
       };
+    }
+
+    /*
+     * 予約可能期間（Issue #480）。一般30日を超える日（〜90日）は、予約作成時点（JSTの当日）の当月
+     * actual membershipがある場合のみ受け付ける。利用日の月ではない（90日前には利用月の会費がまだ無いため）。
+     * priceIsMember・mens料金優遇・自己申告isMemberは使わない。台帳エラーはfail-closed（拒否）。
+     * 会員有無を探られないよう、非会員・台帳エラーは同一のエラーを返し、判定はrate limit計上後に行う。
+     * 予約成立後に退会しても、この予約自体は維持される（ここでしか判定しない）。
+     */
+    var windowResult = isAdminWindow ? { ok: true } : verifyBookingWindowForNewBooking_(input, availabilityConfig, now);
+    if (!windowResult.ok) {
+      return { success: false, error: windowResult.error };
     }
 
     var calendarId = BookingConfig.getCalendarId();
@@ -243,7 +267,8 @@ var BookingRepository = (function () {
     if (!shouldDeferPendingMailToCheckout_(record)) {
       notifyCustomerPendingBestEffort_(record);
     }
-    notifyAdminBestEffort_(record);
+    /* 管理者自身が作成した予約は管理者通知メールを送らない（AdminNotifier.gsは公開Web Appのみに配布）。 */
+    if (!isAdminWindow) notifyAdminBestEffort_(record);
 
     /*
      * オプション注文は既存のbookingIdを親キーとして紐付ける（Issue #423）。部屋予約はここまでで
@@ -355,6 +380,26 @@ var BookingRepository = (function () {
    * 従来どおり自己申告/固定の扱いで、会員台帳を参照しない（status='NOT_CHECKED'）。
    * 戻り値: { isMember: 料金計算へ渡す値, status: 'ACTIVE'|'INACTIVE'|'NOT_CHECKED' }
    */
+  var ADVANCE_MEMBER_ONLY_ERROR_ = {
+    code: 'ADVANCE_BOOKING_MEMBER_ONLY',
+    message: '30日より先の日程は、SNB MEMBERの先行予約対象です。会員登録メールアドレスでのご予約をお願いします。'
+  };
+
+  function verifyBookingWindowForNewBooking_(input, availabilityConfig, now) {
+    var todayString = BookingAvailability.formatDateInTimezone(now, availabilityConfig.timezone);
+    var band = BookingWindow.classifyDate(input.date, todayString);
+    if (band === BookingWindow.BAND.GENERAL) return { ok: true };
+    if (band !== BookingWindow.BAND.MEMBER_ONLY) {
+      return { ok: false, error: { code: 'DATE_OUT_OF_RANGE', message: '予約できるのは' + BookingWindow.MEMBER_DAYS + '日先までです。' } };
+    }
+    var membership = MembershipRules.verifyAdvanceBookingMembership(input.email, todayString);
+    if (!membership.ok) {
+      if (membership.reason === 'LEDGER_ERROR') Logger.log('BookingRepository: 会員台帳を確認できないため先行予約を拒否しました');
+      return { ok: false, error: { code: ADVANCE_MEMBER_ONLY_ERROR_.code, message: ADVANCE_MEMBER_ONLY_ERROR_.message } };
+    }
+    return { ok: true };
+  }
+
   function resolveMembershipForPricing_(input, generation) {
     if (input.brand !== 'snb' || generation !== BookingPricing.GENERATION.V2) {
       return { isMember: input.isMember, status: 'NOT_CHECKED' };

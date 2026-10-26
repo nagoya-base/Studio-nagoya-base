@@ -268,7 +268,7 @@ test('doGet: レスポンスにイベント詳細やPIIを含む余分なキー�
   });
   var sandbox = loadCode({ CALENDAR_ID: 'cal1' }, { cal1: { events: [event] } });
   var body = callDoGet(sandbox, { date: FUTURE_DATE, durationMinutes: '120', brand: 'studio_x' });
-  var allowedKeys = ['success', 'date', 'durationMinutes', 'brand', 'bookableStartTimes'];
+  var allowedKeys = ['success', 'date', 'durationMinutes', 'brand', 'bookableStartTimes', 'memberAdvance', 'generalMaxDate', 'memberMaxDate'];
   Object.keys(body).forEach(function (key) {
     assert.ok(allowedKeys.indexOf(key) !== -1, '想定外のキーが含まれている: ' + key);
   });

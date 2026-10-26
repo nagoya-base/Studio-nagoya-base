@@ -54,6 +54,8 @@ var CALENDAR_ID = 'cal1';
 var EMAIL = 'taro@example.com';
 
 function futureDateJst_(daysAhead) {
+  /* Issue #480: 公開経路の予約は30日先まで（会員先行枠を除く）。テストの日付は互いに衝突しない範囲で30日以内へ畳む。 */
+  if (daysAhead > 28) daysAhead = 2 + (daysAhead % 27);
   var d = new Date(Date.now() + daysAhead * 24 * 3600000);
   var parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
   var out = {};

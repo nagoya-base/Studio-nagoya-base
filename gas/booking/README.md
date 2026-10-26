@@ -3146,6 +3146,7 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | --- | :---: | :---: | :---: | --- |
 | `Code.gs` | ✓ | – | – | `gas/booking/public/Code.gs` |
 | `Availability.gs` | ✓ | ✓ | – | `gas/booking/shared/Availability.gs` |
+| `BookingWindow.gs`（Issue #480。予約可能期間＝一般30日・会員90日・管理者無制限の正本） | ✓ | ✓ | – | `gas/booking/shared/BookingWindow.gs` |
 | `Config.gs` | ✓ | ✓ | ✓ | `gas/booking/shared/Config.gs` |
 | `CalendarRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/CalendarRepository.gs` |
 | `Booking.gs` | ✓ | ✓ | – | `gas/booking/shared/Booking.gs` |
@@ -7604,3 +7605,27 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 
 - 新しい `.gs` ファイルは追加していない（配布表の変更なし）。更新: `MembershipRules.gs` / `BookingPricing.gs` / `FeeCalculator.gs` / `Booking.gs` / `SpreadsheetRepository.gs` / `BookingOptions.gs` / `OptionOrderService.gs` / `BookingRepository.gs` / `Code.gs`（Booking Web App・Booking Admin）、`BookingReschedule.gs`（Booking Admin）。`BookingOptions.gs` は `MembershipRules.gs` を参照する（どちらも同じプロジェクトに配布済み）。Booking Webhookは変更なし。
 - 既存の `/exec` URL・Deploymentは作り直さず既存Deploymentを更新する。PRブランチからの本番デプロイは行わない。
+
+## Issue #480: 予約可能期間（一般30日・SNB MEMBER 90日・管理者無制限）
+
+予約作成日時（Asia/Tokyo）の暦日を基準に、利用日までの予約可能期間を分ける（境界日を含む）。判定の正本は `BookingWindow.gs`。
+
+| 区分 | 予約可能期間 | 判定 |
+| --- | --- | --- |
+| 一般 | 30日先まで | 既定 |
+| actual SNB MEMBER | 90日先まで | **予約作成時点（JST当日）の当月**のactual membership（`MembershipRules.verifyAdvanceBookingMembership` → `MemberRepository.isMemberForMonth`）。利用日の月ではない |
+| 管理者 | 上限なし | Booking Adminの認証済みGoogleアカウント × `BOOKING_ADMIN_EMAILS`（`isBookingAdminVerified_`）。公開フォームの予約メールでは判定しない |
+
+- Availability（`getAvailability` / `getMonthlyAvailability`）は予約メールを受け取らず、31〜90日先に「会員先行枠」(`memberAdvance`) の印を付けて**全員に同じ応答**を返す（会員有無を推測させない）。91日以降は `OUT_OF_RANGE` / `DATE_OUT_OF_RANGE`。応答の `generalMaxDate` / `memberMaxDate` をフロントは表示に使い、日数はフロントで再実装しない。
+- `createBooking` が最終検証する。91日以降は `DATE_OUT_OF_RANGE`、31〜90日で会員資格なし・台帳エラーは同一の `ADVANCE_BOOKING_MEMBER_ONLY`（fail-closed。rate limit計上後に判定）。`priceIsMember`・SNB mens料金優遇・自己申告 `isMember` は資格にならない。
+- 予約成立後に退会しても通常の部屋予約は維持する。2名ペアパック・シャワー・Studio X有料オプションは従来どおり利用月の会員資格で判定する（変更なし）。
+- 管理者の新規予約は `adminCreateBooking(payload)`（Booking Admin）。`isBookingAdminVerified_()` で認証できた場合のみ、サーバー内部の第4引数 `BookingWindow.TIER.ADMIN` を `createBooking` へ渡して上限を解除する（公開Web Appは渡さず、payload・予約メールからは導出しない）。営業時間・重複予約・料金などの検証は公開経路と同じ。公開フォーム向けのrate limit・管理者通知メールは対象外で、オプションの同時申込は不可。
+- Booking Adminの日程変更は公開経路ではないため、この上限を適用しない。
+
+### 永久会員（Script Properties `PERMANENT_MEMBER_EMAILS`）
+
+`koishi.s@gmail.com` は `Config.gs` の既定allowlistに持ち、Stripe月額会費の支払い有無・対象年月に関係なく、`MemberRepository.isMemberForMonth` が常に会員と判定する（共通の正本。90日先行予約・SNB/mens会員資格・ペアパック・シャワー・Studio X有料オプション・今後のactual member特典すべてに効く）。Stripe subscription / invoice / 会員台帳（Members・MemberMonths）は作らない・書かない。`PERMANENT_MEMBER_EMAILS`（カンマ区切り）で追加でき、未設定でも既定は有効で通常の会員判定は変わらない。公開API・フロントJSへは返さない。
+
+### 管理者（Script Properties `BOOKING_ADMIN_EMAILS`）
+
+`nagoyabase2023@gmail.com` は `Config.gs` の既定allowlistに持つ。`BOOKING_ADMIN_EMAILS`（カンマ区切り）で追加できる。メール取得不可・未設定・不一致はfail-closed。

@@ -37,6 +37,8 @@ var SPREADSHEET_ID = 'ss1';
    validPayload()の既定dateを固定文字列にすると実行日がその日付を過ぎた時点で
    now省略呼び出しが一斉にINVALID_DATEへ変わり自然故障する。 */
 function futureDateJst_(daysAhead) {
+  /* Issue #480: 公開経路の予約は30日先まで（会員先行枠を除く）。テストの日付は互いに衝突しない範囲で30日以内へ畳む。 */
+  if (daysAhead > 28) daysAhead = 2 + (daysAhead % 27);
   var d = new Date(Date.now() + daysAhead * 24 * 3600000);
   var parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
@@ -262,16 +264,18 @@ test('createBooking (Issue #269): snb/mens/studio_xの3ブランドすべてでP
  * ── 利用料金の自動計算・保存（Issue #342） ──
  * DEFAULT_FUTURE_DATEはテスト実行日から動的に算出されるため（実行日に応じて曜日が
  * 変わってしまう）、料金の平日/土日祝判定に依存するテストでは使わず、遠い未来の
- * 固定日付（2099-01-05=月曜/平日、2099-01-03=土曜/2099-01-04=日曜=いずれも土日祝。
- * date -d で確認済み）を使う。
+ * 固定日付（2026-12-14=月曜/平日、2026-12-12=土曜/2026-12-13=日曜=いずれも土日祝。
+ * date -d で確認済み。受付時刻もFIXED_NOWで固定する）を使う。
  */
-var FIXED_WEEKDAY_DATE = '2099-01-05';
-var FIXED_SATURDAY_DATE = '2099-01-03';
+var FIXED_WEEKDAY_DATE = '2026-12-14';
+var FIXED_SATURDAY_DATE = '2026-12-12';
+/* Issue #480: 公開経路の予約は30日先まで。固定日付に合わせて受付時刻も固定する（料金世代V1の最終日）。 */
+var FIXED_NOW = new Date('2026-11-30T12:00:00+09:00');
 
 test('createBooking: 利用料金をGAS側で計算し、Sheetsへ保存する（studio_x・平日3時間）', function () {
   var ctx = setup();
   var result = ctx.sandbox.BookingRepository.createBooking(
-    validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 })
+    validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 }), FIXED_NOW
   );
 
   assert.strictEqual(result.success, true);
@@ -291,7 +295,7 @@ test('createBooking: 利用料金をGAS側で計算し、Sheetsへ保存する�
 test('createBooking: mensはisMember未送信でも常に会員料金で保存される', function () {
   var mensCtx = setup();
   var mensResult = mensCtx.sandbox.BookingRepository.createBooking(
-    validPayload({ brand: 'mens', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 })
+    validPayload({ brand: 'mens', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 }), FIXED_NOW
   );
   assert.strictEqual(mensResult.price.amount, 5500, 'mensは常に会員料金（5,500円）');
   assert.strictEqual(mensResult.price.tier, 'MEMBER');
@@ -353,7 +357,7 @@ test('createBooking: snbはisMember:trueを送ると会員料金で保存され�
 test('createBooking: 土曜・日曜はいずれも土日祝料金として保存される', function () {
   var ctx = setup();
   var result = ctx.sandbox.BookingRepository.createBooking(
-    validPayload({ brand: 'studio_x', date: FIXED_SATURDAY_DATE, durationMinutes: 120 })
+    validPayload({ brand: 'studio_x', date: FIXED_SATURDAY_DATE, durationMinutes: 120 }), FIXED_NOW
   );
   assert.strictEqual(result.price.amount, 5000);
   assert.strictEqual(result.price.dayType, 'WEEKEND_HOLIDAY');
@@ -361,10 +365,9 @@ test('createBooking: 土曜・日曜はいずれも土日祝料金として保�
 
 test('createBooking: 平日に当たる祝日も土日祝料金として保存される（Issue #346）', function () {
   var ctx = setup();
-  /* 2099-11-23（勤労感謝の日）は月曜（date -d で確認済み。他のテストと同じくFIXED_
-     WEEKDAY_DATE/FIXED_SATURDAY_DATEに合わせて2099年を使い、実行時刻に依存しない）。 */
+  /* 2026-11-23（勤労感謝の日）は月曜（date -d で確認済み。受付時刻を固定して実行時刻に依存しない）。 */
   var result = ctx.sandbox.BookingRepository.createBooking(
-    validPayload({ brand: 'studio_x', date: '2099-11-23', durationMinutes: 120 })
+    validPayload({ brand: 'studio_x', date: '2026-11-23', durationMinutes: 120 }), new Date('2026-11-01T12:00:00+09:00')
   );
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.price.amount, 5000);
@@ -404,7 +407,7 @@ test('createBooking: フロントエンドから送られた金額・料金関�
   tamperedPayload.priceAmount = 1;
   tamperedPayload.amount = 1;
 
-  var result = ctx.sandbox.BookingRepository.createBooking(tamperedPayload);
+  var result = ctx.sandbox.BookingRepository.createBooking(tamperedPayload, FIXED_NOW);
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.price.amount, 6000, '改ざんされた金額(1円)ではなく、サーバー計算値(6,000円)が使われるべき');
 
@@ -415,7 +418,7 @@ test('createBooking: フロントエンドから送られた金額・料金関�
 test('createBooking: 予約完了画面が使うレスポンスのpriceは、Sheetsへ保存された金額と一致する', function () {
   var ctx = setup();
   var result = ctx.sandbox.BookingRepository.createBooking(
-    validPayload({ brand: 'mens', date: FIXED_SATURDAY_DATE, durationMinutes: 240 })
+    validPayload({ brand: 'mens', date: FIXED_SATURDAY_DATE, durationMinutes: 240 }), FIXED_NOW
   );
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(result.bookingId);
   assert.strictEqual(result.price.amount, found.record.priceAmount);
@@ -1222,7 +1225,7 @@ test('管理者通知 (Issue #342): 利用者向け仮予約受付メールと�
   var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' }, mailApp: mailApp });
 
   var result = ctx.sandbox.BookingRepository.createBooking(
-    validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 })
+    validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, durationMinutes: 180 }), FIXED_NOW
   );
 
   var adminMail = mailApp._sentEmails.filter(function (m) { return m.to === 'admin@example.com'; })[0];

@@ -98,6 +98,8 @@
       BOOKING_SAVE_FAILED: '予約の保存に失敗しました。しばらくしてから再度お試しください。',
       INVALID_JSON: '送信内容の形式が正しくありませんでした。もう一度お試しください。',
       /* Issue #478: 会員限定特典（2名ペアパック・シャワー）。資格の内訳（非会員・メール不一致・利用月不一致等）は出し分けない。 */
+      DATE_OUT_OF_RANGE: 'ご予約いただけるのは90日先までです。別の日付を選択してください。',
+      ADVANCE_BOOKING_MEMBER_ONLY: '30日より先の日程は、SNB MEMBERの先行予約（90日先まで）の対象です。会員登録と同じメールアドレスでご入力いただくか、30日以内の日程を選択してください。',
       MEMBER_BENEFIT_NOT_AVAILABLE: 'この特典は、ご利用日の属する月のSNB MEMBER会員資格を確認できた場合のみご利用いただけます。ご予約のメールアドレスは会員登録と同じものをご入力ください。翌月分は、その月の1日以降、当月の会費の決済が成功してから確定できます。',
       PAIR_PACK_PEOPLE_EXCEEDED: '2名ペアパックのご利用は1〜2名までです。人数を変更するか、ペアパックの選択を外してください。',
       PLAN_DURATION_INVALID: '2名ペアパックは3時間以上でご利用ください。',
@@ -132,6 +134,8 @@
       LOCK_TIMEOUT: 'The system is currently busy. Please try again.',
       BOOKING_SAVE_FAILED: 'We couldn’t save your booking. Please try again in a moment.',
       INVALID_JSON: 'Your submission could not be read correctly. Please try again.',
+      DATE_OUT_OF_RANGE: 'Bookings can be made up to 90 days ahead. Please choose another date.',
+      ADVANCE_BOOKING_MEMBER_ONLY: 'Dates more than 30 days ahead are open only to SNB MEMBERS (advance booking up to 90 days). Please use the email address registered for your membership, or choose a date within 30 days.',
       MEMBER_BENEFIT_NOT_AVAILABLE: 'This member-only benefit requires an SNB MEMBER membership confirmed for the month of your visit. Please use the same email address as your membership.',
       PAIR_PACK_PEOPLE_EXCEEDED: 'The pair pack is for 1 to 2 guests.',
       PLAN_DURATION_INVALID: 'The pair pack requires at least 3 hours.',
@@ -183,7 +187,7 @@
      解決しないため、'reselect-time'とは区別する（Issue #270）。
      UIの導線分岐のみを担い、エラーメッセージ自体はmessageForErrorCode()を使う。 */
   function recoveryActionForErrorCode(code) {
-    if (code === 'INVALID_CUSTOMER_TYPE') {
+    if (code === 'INVALID_CUSTOMER_TYPE' || code === 'DATE_OUT_OF_RANGE' || code === 'ADVANCE_BOOKING_MEMBER_ONLY') {
       return 'reselect-date';
     }
     if (
@@ -832,10 +836,12 @@
 
   /* カレンダーの日セルのaria-label。記号・色だけに依存しないアクセシビリティ対応
      （Issue #318要件）。 */
-  function dayAriaLabel(dateValue, status, customerType, todayValue, locale) {
+  function dayAriaLabel(dateValue, status, customerType, todayValue, locale, memberAdvance) {
     var loc = normalizeLocale(locale);
     var dayLabel = formatCalendarDayLabel(dateValue, loc);
-    return dayLabel + '　' + dayStatusLabel(status, loc);
+    var label = dayLabel + '　' + dayStatusLabel(status, loc);
+    if (memberAdvance) label += loc === 'en' ? '　SNB MEMBER advance booking' : '　SNB MEMBER先行予約枠';
+    return label;
   }
 
   function daysInCalendarMonth_(year, month) {
