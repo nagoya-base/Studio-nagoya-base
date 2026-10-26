@@ -649,14 +649,16 @@ test('CARD_PAYMENT_METHOD_VALUE: gas/booking/shared/Booking.gsの値と一致す
 
 /* ── 利用料金表示（Issue #342） ── */
 
-test('brandShowsMemberOption: snbはtrue、studio_xは2026/10/26 0:00 JSTまでtrue（Issue #470 / #492）、mens/未知のbrandはfalse', function () {
+test('brandShowsMemberOption: snb・studio_xはサーバーの料金世代がV2でなければtrue（Issue #470 / #492 / #532。端末時刻では判断しない）、mens/未知のbrandはfalse', function () {
   var Logic = loadLogic();
   assert.strictEqual(Logic.brandShowsMemberOption('snb'), true);
   var beforeCutover = Date.parse('2026-10-25T23:59:59+09:00');
   var afterCutover = Date.parse('2026-10-26T00:00:00+09:00');
-  assert.strictEqual(Logic.brandShowsMemberOption('studio_x', beforeCutover), true);
-  assert.strictEqual(Logic.brandShowsMemberOption('studio_x', afterCutover), false);
+  assert.strictEqual(Logic.brandShowsMemberOption('studio_x', beforeCutover, 'V1'), true);
+  assert.strictEqual(Logic.brandShowsMemberOption('studio_x', afterCutover, 'V2'), false);
+  assert.strictEqual(Logic.brandShowsMemberOption('studio_x', afterCutover), true, '世代が分からなければ端末時刻が境界後でも表示する側へ倒す');
   assert.strictEqual(Logic.brandShowsMemberOption('snb', afterCutover), true);
+  assert.strictEqual(Logic.brandShowsMemberOption('snb', afterCutover, 'V2'), false, 'V2は自己申告ラジオを廃止');
   assert.strictEqual(Logic.brandShowsMemberOption('mens', beforeCutover), false);
   assert.strictEqual(Logic.brandShowsMemberOption('mens'), false);
   assert.strictEqual(Logic.brandShowsMemberOption('ataru'), false);

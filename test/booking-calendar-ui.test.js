@@ -37,7 +37,8 @@ function createElement(id) {
     hidden: true,
     disabled: false,
     checked: false,
-    value: '',
+    /* メールアドレスは予約フォーム前半（Step1）で入力済みの前提（Issue #532）。 */
+    value: id === 'ba-email' ? 'taro@example.com' : '',
     textContent: '',
     className: '',
     children: [],

@@ -1,9 +1,12 @@
 {%- comment -%}
-  SNB MEMBERプレスタート（Issue #490。2026/10/26〜11/30）の共通告知。会員案内3ページ（/membership/・/mens/membership/・/studio-x/membership/）が同じ文言を指す。
+  SNB MEMBER 加入のご案内と、会員限定特典の開始時期（2026/12/1）の共通告知（Issue #490で新設・Issue #532で新規加入の仕様へ更新）。
+  会員案内3ページ（/membership/・/mens/membership/・/studio-x/membership/）が同じ文言を指す。ファイル名・id・data属性は既存の
+  表示切替（scripts/membership-prestart-hero.js。2026/12/1 00:00 JSTで切り替え）を引き継ぐため変更しない。
+  新規加入は入会日基準の月額Subscription。プレスタートの新規受付は終了している（既存のプレスタート会員は課金日を変えない）。
   本特典（2名ペアパック・シャワー・Studio Xの会員限定有料オプション）は2026/12/1開始のまま（前倒ししない）。
 {%- endcomment -%}
-<div class="membership-summary membership-prestart" id="membership-prestart" data-membership-phase="prestart"{% unless membership_is_prestart %} hidden{% endunless %} role="note" aria-label="SNB MEMBERプレスタートのご案内">
-  <p class="membership-summary-title">SNB MEMBER プレスタート中（2026年10月26日〜11月30日）</p>
-  <p>SNB MEMBER プレスタート中。月額500円。登録・決済後すぐに90日先行予約をご利用いただけます。プレスタート期間中の初回500円で11月30日まで有効、次回更新は12月1日です。2名ペアパック・シャワー・Studio Xの会員限定有料オプションなどの本特典は12月1日から開始します。</p>
+<div class="membership-summary membership-prestart" id="membership-prestart" data-membership-phase="prestart"{% unless membership_is_prestart %} hidden{% endunless %} role="note" aria-label="SNB MEMBERのご案内（会員限定特典の開始時期）">
+  <p class="membership-summary-title">SNB MEMBER（会員限定の特典は2026年12月1日からスタート）</p>
+  <p>月額500円。登録・決済後すぐに90日先行予約をご利用いただけます。入会日から1か月有効で、以後、入会日を基準に毎月自動更新されます。2名ペアパック・シャワー・Studio Xの会員限定有料オプションなどの本特典は12月1日から開始します。</p>
   <p><a href="{{ '/membership/status/' | relative_url }}">ご自身の会員資格を確認する（メールで本人確認）</a></p>
 </div>

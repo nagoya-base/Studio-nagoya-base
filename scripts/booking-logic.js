@@ -100,7 +100,7 @@
       /* Issue #478: 会員限定特典（2名ペアパック・シャワー）。資格の内訳（非会員・メール不一致・利用月不一致等）は出し分けない。 */
       DATE_OUT_OF_RANGE: 'ご予約いただけるのは90日先までです。別の日付を選択してください。',
       ADVANCE_BOOKING_MEMBER_ONLY: '30日より先の日程は、SNB MEMBERの先行予約（90日先まで）の対象です。会員登録と同じメールアドレスでご入力いただくか、30日以内の日程を選択してください。',
-      MEMBER_BENEFIT_NOT_AVAILABLE: 'この特典は、ご利用日の属する月のSNB MEMBER会員資格を確認できた場合のみご利用いただけます。ご予約のメールアドレスは会員登録と同じものをご入力ください。翌月分は、その月の1日以降、当月の会費の決済が成功してから確定できます。',
+      MEMBER_BENEFIT_NOT_AVAILABLE: 'この特典は、ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できた場合のみご利用いただけます。ご予約のメールアドレスは会員登録と同じものをご入力ください。次回更新前の未払いの期間は、更新の決済が成功してから確定できます。',
       PAIR_PACK_PEOPLE_EXCEEDED: '2名ペアパックのご利用は1〜2名までです。人数を変更するか、ペアパックの選択を外してください。',
       PLAN_DURATION_INVALID: 'ご選択のプランの利用時間が条件を満たしていません（2名ペアパックは3時間以上、貸切ベースプランは最低6時間から1時間単位）。',
       PLAN_HOURS_OUT_OF_RANGE: '貸切ベースプランは8:00〜21:00の範囲内でご利用ください。終了が21:00を超える時間は選べません。開始時刻か利用時間を変更してください。',
@@ -327,6 +327,11 @@
     if (f.note && f.note.length > 1000) errors.note = m.noteTooLong;
 
     return errors;
+  }
+
+  /* メールアドレス単体の検証（Issue #532: 予約フォーム前半でメールを入力させ、Step2では再入力させない）。エラー文言または空文字。 */
+  function validateEmailField(email, locale) {
+    return validateDetailsForm({ email: email }, locale).email || '';
   }
 
   function buildPurposeValue(purpose, purposeOther) {
@@ -1001,13 +1006,15 @@
     return !!m && Number(m[1]) <= EVENT_BASE_PLAN_MAX_PEOPLE;
   }
 
-  var STUDIO_X_MEMBER_OPTION_END_MS_ = Date.parse('2026-10-26T00:00:00+09:00');
-
-  function brandShowsMemberOption(brand, nowMs) {
+  /*
+   * 会員の自己申告（「一般／会員」ラジオ）を表示するか（Issue #532）。V1（SNBは2026/11/30まで・Studio Xは2026/10/25までに作成する予約）
+   * だけが自己申告で、V2はサーバーが予約メールと会員台帳から自動判定するため表示しない。
+   * 世代の判定をブラウザ端末の時計で行わない: generationはサーバーが返す料金世代（GET応答の priceGeneration。'V1'|'V2'）。
+   * 判定できない（未取得・取得失敗・不明な値）ときはラジオを表示する側へ倒す。第2引数（旧: 端末時刻）は互換のため残し、使わない。
+   */
+  function brandShowsMemberOption(brand, nowMs, generation) {
     if (MEMBER_OPTION_BRANDS_.indexOf(brand) === -1) return false;
-    if (brand !== 'studio_x') return true;
-    var now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
-    return now < STUDIO_X_MEMBER_OPTION_END_MS_;
+    return generation !== 'V2';
   }
 
   /* amount（数値）を'¥4,000'へ整形する。数値化できない場合は空文字を返す
@@ -1067,6 +1074,7 @@
     isDurationAtLeastUiMinimum: isDurationAtLeastUiMinimum,
     computeEndTime: computeEndTime,
     validateDetailsForm: validateDetailsForm,
+    validateEmailField: validateEmailField,
     buildPurposeValue: buildPurposeValue,
     peopleLabel: peopleLabel,
     purposeLabel: purposeLabel,

@@ -30,7 +30,7 @@
   </p>
 
   <ol class="ba-progress" id="ba-progress" aria-label="Booking progress">
-    <li data-step="datetime">1. Date &amp; Time</li>
+    <li data-step="datetime">1. Email &amp; Date</li>
     <li data-step="details">2. Your Details</li>
     <li data-step="confirm">3. Review</li>
     <li data-step="complete">4. Complete</li>
@@ -43,8 +43,17 @@
 
   <!-- Step 1: 利用日・利用時間 -->
   <section class="ba-step" id="ba-step-datetime" data-step="datetime">
-    <h2>Choose Date &amp; Duration</h2>
-    <p class="ba-step-desc">Start by checking availability below. The calendar initially shows results for a 2-hour stay, first-time guest, and any time of day — change any of these to refresh it.</p>
+    <h2>Email, Date &amp; Duration</h2>
+    <p class="ba-step-desc">Start by entering your email address and checking availability below. The calendar initially shows results for a 2-hour stay, first-time guest, and any time of day — change any of these to refresh it.</p>
+
+    <!-- Email is entered once, in Step 1 (Issue #532). It is not asked again in Step 2 and is used as-is for the final submission.
+         Membership is checked automatically by the server on submission from the booking email and the date of use (no lookup before submission). -->
+    <div class="ba-field" id="ba-email-field">
+      <label for="ba-email">Email Address<span class="ba-required">Required</span></label>
+      <input type="email" id="ba-email" name="email" autocomplete="email" inputmode="email" maxlength="254">
+      <p class="ba-field-help">Please use an address where you can receive our confirmation. SNB MEMBER members: when you submit, the registered email address is checked automatically, and member rates and benefits apply to bookings whose date of use falls within the membership period (please enter the same email address as your membership registration). Whether you are a member is not shown on this screen.</p>
+      <p class="ba-field-error" id="ba-email-error" hidden></p>
+    </div>
 
     <!-- Preferred time of day (Issue #324). Defaults to "Any time" (all) checked.
          This selection only filters the monthly calendar symbols and the Step1 start
@@ -272,13 +281,6 @@
       <label for="ba-name">Name<span class="ba-required">Required</span></label>
       <input type="text" id="ba-name" name="name" autocomplete="name" maxlength="100">
       <p class="ba-field-error" id="ba-name-error" hidden></p>
-    </div>
-
-    <div class="ba-field">
-      <label for="ba-email">Email Address<span class="ba-required">Required</span></label>
-      <input type="email" id="ba-email" name="email" autocomplete="email" inputmode="email" maxlength="254">
-      <p class="ba-field-help">Please use an address where you can receive our confirmation.</p>
-      <p class="ba-field-error" id="ba-email-error" hidden></p>
     </div>
 
     <div class="ba-field">

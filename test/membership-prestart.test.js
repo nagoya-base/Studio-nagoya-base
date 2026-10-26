@@ -258,19 +258,32 @@ var fs = require('node:fs');
 var path = require('node:path');
 function read(rel) { return fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'); }
 
-test('Web: 会員案内3ページ・会員条件・特商法・FAQにプレスタート（11/30まで・次回12/1・本特典12/1開始）を明記する', function () {
+test('Web（Issue #532）: 会員案内3ページ・会員条件・特商法・FAQは新規加入を入会日基準で案内し、プレスタートは既存会員向けの例外としてだけ残す', function () {
   var prestart = read('_includes/membership_prestart_ja.html');
-  ['プレスタート中', '月額500円', '90日先行予約', '初回500円で11月30日まで有効', '次回更新は12月1日', '12月1日から開始'].forEach(function (s) {
+  ['月額500円', '90日先行予約', '入会日から1か月有効', '入会日を基準に毎月自動更新', '12月1日から開始'].forEach(function (s) {
     assert.ok(prestart.indexOf(s) !== -1, s);
   });
+  assert.ok(prestart.indexOf('プレスタート中') === -1, '新規加入向けの「プレスタート中」告知は終了');
+  assert.ok(prestart.indexOf('初回500円で11月30日まで有効') === -1);
   ['membership/index.html', 'mens/membership/index.html', 'studio-x/membership/index.html'].forEach(function (f) {
     var html = read(f);
     assert.ok(html.indexOf('membership_prestart_ja.html') !== -1, f);
-    assert.ok(html.indexOf('11月30日') !== -1 && html.indexOf('12月1日') !== -1, f);
+    assert.ok(html.indexOf('12月1日') !== -1, f);
+    assert.ok(html.indexOf('プレスタート中') === -1, f + ' に新規向けの「プレスタート中」が残っている');
+    assert.ok(html.indexOf('入会日から1か月有効') !== -1, f);
   });
-  assert.ok(read('_includes/membership_terms_ja.html').indexOf('プレスタート（2026年10月26日〜11月30日）') !== -1);
-  assert.ok(read('_includes/legal_ja.html').indexOf('プレスタート（2026年10月26日〜11月30日）') !== -1);
-  assert.ok(read('legal/index.html').indexOf('SNB MEMBERのプレスタートについて') !== -1);
+  var terms = read('_includes/membership_terms_ja.html');
+  assert.ok(terms.indexOf('既にプレスタートでご加入済みの会員') !== -1 && terms.indexOf('課金日は変更しません') !== -1);
+  assert.ok(terms.indexOf('2026年11月30日まで有効で、2026年12月1日に更新され、以降は毎月1日に500円で更新されます') !== -1);
+  assert.ok(terms.indexOf('プレスタートの新規受付は終了しました') !== -1);
+  assert.ok(read('_includes/legal_ja.html').indexOf('既にプレスタートでご加入済みの会員') !== -1);
+  assert.ok(read('legal/index.html').indexOf('SNB MEMBERの加入と有効期間について') !== -1);
+  ['membership/complete.html', 'mens/membership/complete.html', 'studio-x/membership/complete.html'].forEach(function (f) {
+    var html = read(f);
+    assert.ok(html.indexOf('入会日から1か月有効です') !== -1 && html.indexOf('入会日を基準に毎月自動更新されます') !== -1, f);
+    assert.ok(html.indexOf('既にプレスタートでご加入済みの会員の更新日は、従来どおり毎月1日です') !== -1, f);
+    assert.ok(html.indexOf('当月末まで有効') === -1, f + ' に旧仕様');
+  });
 });
 
 test('会員限定特典の開始は2026/12/1のまま（プレスタートで前倒ししない）', function () {

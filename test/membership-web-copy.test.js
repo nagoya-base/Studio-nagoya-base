@@ -116,11 +116,11 @@ test('SNB: 会員訴求は「3時間以上で割引」「3時間で月会費相�
   assert.ok(faq.indexOf('3時間以上のご利用で一般料金より安くなり、3時間のご利用で一般料金との差額が月会費500円相当') !== -1);
 });
 
-test('SNB: 加入前に「月額500円」「自動更新」「初月日割りなし」を表示し、同意のうえ既存の入会APIへ接続する（決済URL固定なし）', function () {
+test('SNB: 加入前に「月額500円」「入会日基準の自動更新」「日割りなし」を表示し、同意のうえ既存の入会APIへ接続する（決済URL固定なし）', function () {
   var html = read('membership/index.html');
   var form = html.slice(html.indexOf('class="membership-summary"'), html.indexOf('</form>'));
   var t = textOf(form);
-  ['月額500円', '毎月1日に自動更新', '入会月は日割りなし', '日割りでの返金はありません'].forEach(function (w) { assert.ok(t.indexOf(w) !== -1, '入会前の表示に「' + w + '」'); });
+  ['月額500円', '入会日を基準に毎月自動更新', '入会日から1か月有効', '日割りなし', '日割りでの返金はありません'].forEach(function (w) { assert.ok(t.indexOf(w) !== -1, '入会前の表示に「' + w + '」'); });
   assert.match(form, /id="membership-consent"[^>]*required/, '同意チェック必須');
   assert.ok(!/stripe\.com|buy\.stripe|checkout\.stripe/.test(html + read('scripts/membership-join.js')), 'Checkout URLを固定記載しない');
   var js = read('scripts/membership-join.js');
@@ -143,8 +143,8 @@ test('SNB: 会員加入CTAがあり、会員案内ページへ接続し、初回
 test('会員条件: 会員案内ページ・利用規約・特商法・FAQが同じ必須項目を明記し、旧制度の記述が残っていない', function () {
   var terms = textOf(read('_includes/membership_terms_ja.html'));
   [
-    ['月額500円', '月額500円'], ['Stripe', 'Stripe'], ['毎月1日', '毎月1日'], ['入会月は日割りなし', '日割りはありません'],
-    ['日割り返金なし', '日割りを含め返金しません'], ['解約方法', '予約フォーム'], ['解約後', '支払い済みの月の末日まで'],
+    ['月額500円', '月額500円'], ['Stripe', 'Stripe'], ['入会日基準の自動更新', '入会日を基準に毎月自動更新'], ['入会日から1か月有効', '入会日から1か月間、会員資格が有効'], ['日割りなし', '日割りはありません'],
+    ['既存プレスタート会員の例外', '既にプレスタートでご加入済みの会員'], ['日割り返金なし', '日割りを含め返金しません'], ['解約方法', '予約フォーム'], ['解約後', '支払い済みの期間の末日'],
     ['決済失敗', '猶予期間なく'], ['初回利用者', '初めてご利用の方も'], ['自動移行しない', '自動では移行しません']
   ].forEach(function (c) { assert.ok(terms.indexOf(c[1]) !== -1, '会員条件に「' + c[0] + '」が必要'); });
 
@@ -153,12 +153,12 @@ test('会員条件: 会員案内ページ・利用規約・特商法・FAQが同
   assert.ok(read('membership/index.html').indexOf("{% include membership_terms_ja.html %}") !== -1, '会員案内が共通の会員条件を参照');
   var law = legal.slice(legal.indexOf('特定商取引法に基づく表記'));
   var lawText = textOf(law);
-  ['月額500円', '毎月1日に自動更新', 'Stripe', '日割りなしの満額', '解約', 'お支払い済みの月の末日まで', '日割りを含め返金しません', '失敗した月', '初めてご利用の方から加入できます', '自動では移行しません']
+  ['月額500円', '入会日を基準に毎月自動更新', 'Stripe', '日割りなしで入会日から1か月有効', '既にプレスタートでご加入済みの会員', '解約', 'お支払い済みの期間の末日まで', '日割りを含め返金しません', '失敗した更新分', '初めてご利用の方から加入できます', '自動では移行しません']
     .forEach(function (w) { assert.ok(lawText.indexOf(w) !== -1, '特商法表記に「' + w + '」が必要'); });
 
   ['index.html', 'legal/index.html'].forEach(function (p) {
     var t = textOf(read(p));
-    ['月額500円', 'Stripe', '毎月1日', '日割りなし', '解約', '返金しません', '決済に失敗した月', '初めてご利用の方も加入できます', '自動では移行しない']
+    ['月額500円', 'Stripe', '入会日を基準に毎月自動更新', '日割りはありません', '解約', '返金しません', '更新時の決済に失敗した場合', '初めてご利用の方も加入できます', '自動では移行しない']
       .forEach(function (w) { assert.ok(t.indexOf(w) !== -1, p + ' のFAQに「' + w + '」が必要'); });
   });
 
@@ -225,8 +225,8 @@ test('Studio X: 2026/10/26以降の料金はセルフ利用基本料金（Issue 
   assert.ok(!/7,500円（平日）|10,000円（平日）|2,500円（平日）|3時間5,500円|4時間7,000円/.test(t));
   /* V2では会員価格表示・会員区分選択が無い（予約UI） */
   var logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
-  assert.strictEqual(logic.brandShowsMemberOption('studio_x', Date.parse('2026-10-26T00:00:00+09:00')), false);
-  assert.strictEqual(logic.brandShowsMemberOption('studio_x', Date.parse('2026-10-25T23:59:59+09:00')), true, '10/25までは現行のまま');
+  assert.strictEqual(logic.brandShowsMemberOption('studio_x', Date.parse('2026-10-26T00:00:00+09:00'), 'V2'), false, 'サーバーの料金世代がV2なら会員区分を出さない（Issue #532）');
+  assert.strictEqual(logic.brandShowsMemberOption('studio_x', Date.parse('2026-10-25T23:59:59+09:00'), 'V1'), true, 'V1は現行のまま');
   assert.strictEqual(logic.brandShowsMemberOption('mens', 0), false);
   assert.ok(!/会員価格|会員料金|会員区分/.test(t), 'Studio Xトップに会員価格・会員区分の表示がない');
 });
@@ -321,7 +321,7 @@ test('内部資料: 料金表・ブランド分離基準が新ルールで、チ
   });
 });
 
-test('更新・解約の表現: 毎月1日は「当月分」を請求し当月の資格が成立。解約に25日などの締切を設けず、「翌月分」と書かない（#471の仕様どおり）', function () {
+test('更新・解約の表現（Issue #532）: 入会日基準の更新日に請求し、支払済みの期間の資格が成立。解約に25日などの締切を設けず、「翌月分」と書かない', function () {
   var pages = ['_includes/membership_terms_ja.html', '_includes/legal_ja.html', 'index.html', 'legal/index.html', 'membership/index.html', 'legal/en.html', 'en.html'];
   pages.forEach(function (p) {
     var raw = read(p);
@@ -331,15 +331,15 @@ test('更新・解約の表現: 毎月1日は「当月分」を請求し当月�
     assert.ok(!/翌月分の会費|翌月分を|next month['’]s (fee|membership)/i.test(body), p + ' に「翌月分」の表現が残っている');
   });
   var terms = textOf(read('_includes/membership_terms_ja.html'));
-  assert.ok(terms.indexOf('毎月1日に当月分の会費が自動で請求され、決済が成功すると、その月の会員資格が有効になります') !== -1);
+  assert.ok(terms.indexOf('入会日を基準とした毎月の更新日に会費が自動で請求され、決済が成功すると、お支払い済みの期間（次の更新日の前日まで）の会員資格が有効になります') !== -1);
   assert.ok(terms.indexOf('次回の更新前に解約の手続きが完了した場合、次回以降の自動更新を停止します') !== -1);
-  assert.ok(terms.indexOf('お支払い済みの月の末日までは会員資格が有効') !== -1);
+  assert.ok(terms.indexOf('お支払い済みの期間の末日（次の更新日の前日）までは会員資格が有効') !== -1);
   ['index.html', 'legal/index.html'].forEach(function (p) {
     var raw = read(p);
-    assert.ok(textOf(raw).indexOf('毎月1日に当月分が自動請求され、決済が成功した月の会員資格が有効になります') !== -1, p);
+    assert.ok(textOf(raw).indexOf('入会日を基準に毎月自動更新され、決済が成功した期間の会員資格が有効になります') !== -1, p);
     assert.ok(textOf(raw).indexOf('次回の更新前に解約の手続きが完了した場合、次回以降の自動更新を停止します') !== -1, p);
   });
-  assert.ok(textOf(read('_includes/legal_ja.html')).indexOf('当月分を自動請求します（決済が成功した月の会員資格が有効になります）') !== -1);
+  assert.ok(textOf(read('_includes/legal_ja.html')).indexOf('更新日に自動請求します（決済が成功した期間の会員資格が有効になります）') !== -1);
   assert.ok(textOf(read('docs/membership-pricing-2026-12.md')).indexOf('締切日は設けていない') !== -1);
 });
 

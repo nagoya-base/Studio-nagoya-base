@@ -259,7 +259,24 @@
    * studio_xで表示する（Logic.brandShowsMemberOption）。SNB mensは常に会員相当の価格が
    * 適用されるため表示しない。HTML自体は3ブランド共通のため、表示制御だけをここで行う。
    */
-  if (els.memberField) els.memberField.hidden = !Logic.brandShowsMemberOption(brand);
+  /*
+   * 料金世代（'V1'|'V2'）はサーバーが返す値を正とする（Issue #532）。ブラウザ端末の時計では判断しない。
+   * 月間空き状況・見積りのGET応答（priceGeneration）で更新し、判定できない間は会員区分ラジオを表示する側へ倒す。
+   */
+  var serverGeneration = null;
+  function memberOptionVisible_() {
+    return Logic.brandShowsMemberOption(brand, undefined, serverGeneration);
+  }
+  if (els.memberField) els.memberField.hidden = !memberOptionVisible_();
+
+  /* サーバーが返した料金世代を反映する。V2は自己申告を使わないため、会員区分欄を隠し、選択済みの回答も破棄して見積りを取り直す。 */
+  function applyServerGeneration_(value) {
+    if ((value !== 'V1' && value !== 'V2') || value === serverGeneration) return;
+    serverGeneration = value;
+    if (els.memberField) els.memberField.hidden = eventPlanSelected_() || !memberOptionVisible_();
+    if (value === 'V2') memberStatusRadios_().forEach(function (radio) { radio.checked = false; });
+    refreshPriceEstimate_();
+  }
 
   /* 会員限定の特典（Issue #478。SNB / SNB mens、2026/12/1以降の表示）。表示制御のみで、可否はサーバーが判定する。 */
   var benefitsVisible = Logic.brandShowsMemberBenefits(brand);
@@ -290,13 +307,13 @@
   }
 
   function isMemberChecked_() {
-    return Logic.brandShowsMemberOption(brand) && !eventPlanSelected_() && checkedMemberStatus_() === 'member';
+    return memberOptionVisible_() && !eventPlanSelected_() && checkedMemberStatus_() === 'member';
   }
 
   /* 会員区分の回答が必要か（snb/studio_xでラジオが存在する場合のみ。mensは常に会員相当で表示しない）。 */
   function memberAnswerRequired_() {
     /* イベント限定プランは会員区分と無関係の固定料金のため、会員区分の回答を求めない。 */
-    return Logic.brandShowsMemberOption(brand) && !eventPlanSelected_() && memberStatusRadios_().length > 0;
+    return memberOptionVisible_() && !eventPlanSelected_() && memberStatusRadios_().length > 0;
   }
 
   function memberAnswered_() {
@@ -626,6 +643,7 @@
            後からこのキーへ戻ってきたときに再取得せず使えるようにするため）。 */
         calendarCache[key] = entry;
         renderCalendarGridIfCurrent_(year, month, durationMinutes, timeBand, entry);
+        if (entry.status === 'success') applyServerGeneration_(body.priceGeneration);
       })
       .catch(function () {
         delete calendarInFlight[key];
@@ -920,6 +938,7 @@
         }
         priceEstimateCache[key] = entry;
         renderPriceEverywhereIfCurrent_(key, entry);
+        if (entry.status === 'success') applyServerGeneration_(body.priceGeneration);
       })
       .catch(function () {
         delete priceEstimateInFlight[key];
@@ -976,7 +995,7 @@
       eventPlanDurationApplied_ = selected;
       syncDurationOther_();
     }
-    if (els.memberField) els.memberField.hidden = selected || !Logic.brandShowsMemberOption(brand);
+    if (els.memberField) els.memberField.hidden = selected || !memberOptionVisible_();
     /* Issue #496: ベースプラン中は追加オプション欄を畳み、選択済みの内容（数量・スタッフサービス含む）を破棄する。
        解除しても以前の選択は復元しない。確認画面・payload・見積りはパネルが空を返すため自動で除外される。 */
     if (optionsPanel && optionsPanel.setSuspended) {
@@ -1087,10 +1106,16 @@
     var durationValid = Logic.isDurationAtLeastUiMinimum(durationMinutes);
     var customerType = checkedCustomerType();
 
+    /* メールアドレスは予約フォームの前半（Step1）で1回だけ入力する（Issue #532）。Step2で再入力させず、
+       最終送信にもこの値をそのまま使う。会員資格は送信時にサーバーが予約メールと利用日で自動判定する。 */
+    var emailMessage = emailErrorMessage_();
+    setFieldError_(els.email, els.emailError, emailMessage);
     setFieldError_(els.date, els.dateError, dateValue ? '' : UI_TEXT.dateRequired);
     setFieldError_(els.duration, els.durationError, durationValid ? '' : UI_TEXT.durationRequired);
     setFieldError_(null, els.customerTypeError, customerType ? '' : UI_TEXT.customerTypeRequired);
+    if (emailMessage) { resetStartTimeArea_(); focusEmail_(); return; }
     if (!dateValue || !durationValid || !customerType) { resetStartTimeArea_(); return; }
+    state.email = els.email.value;
 
     state.date = dateValue;
     state.durationMinutes = durationMinutes;
@@ -1126,6 +1151,27 @@
 
   if (els.step1Next) {
     els.step1Next.addEventListener('click', proceedFromSelectedDate_);
+  }
+
+  /* メールアドレス（Step1）。入力が有効になった時点でエラーを消し、日付が選択済みで開始時刻エリアが未表示なら先へ進める。 */
+  function emailErrorMessage_() {
+    return Logic.validateEmailField(els.email ? els.email.value : '', locale);
+  }
+
+  function focusEmail_() {
+    if (!els.email) return;
+    if (typeof els.email.scrollIntoView === 'function') els.email.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (typeof els.email.focus === 'function') els.email.focus();
+  }
+
+  if (els.email) {
+    els.email.addEventListener('change', function () {
+      var message = emailErrorMessage_();
+      setFieldError_(els.email, els.emailError, message);
+      if (message) return;
+      state.email = els.email.value;
+      if (els.date && els.date.value && els.startTimeArea && els.startTimeArea.hidden) proceedFromSelectedDate_();
+    });
   }
 
   /* ── 開始時刻（Step1最下部のエリア） ── */
@@ -1410,8 +1456,14 @@
         errors.paymentMethod = Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale);
       }
 
-      setFieldError_(els.name, els.nameError, errors.name);
+      /* メールアドレスの入力欄はStep1にある。ここで不正（Step1を経ずに値が変わった等）なら、Step1へ戻して直させる。 */
       setFieldError_(els.email, els.emailError, errors.email);
+      if (errors.email) {
+        goToStep('datetime');
+        focusEmail_();
+        return;
+      }
+      setFieldError_(els.name, els.nameError, errors.name);
       setFieldError_(els.phone, els.phoneError, errors.phone);
       setFieldError_(els.people, els.peopleError, errors.people);
       setFieldError_(els.purpose, els.purposeError, errors.purpose);
