@@ -7513,6 +7513,7 @@ SNB MEMBER（月額500円）の実会員資格を、Stripeの決済事実から�
 ### 手動設定（Secretの値はここに書かない）
 
 - Script Properties（Booking Web App）: `STRIPE_MEMBERSHIP_SUCCESS_URL` / `STRIPE_MEMBERSHIP_CANCEL_URL`（入会Checkoutの戻り先URL）。新規のSecretはなし（既存の`STRIPE_SECRET_KEY`を使用）。
+- **入会元ブランド別の戻り先（Issue #504）**: `startMembershipCheckout` は本文`{ email, brand }`（`brand`は`snb`/`mens`/`studio_x`のコードのみ。未指定は`snb`、許可外は`INVALID_BRAND`）。Success/Cancel URLはクライアントから受け取らず、サーバー側で `Booking.resolveMembershipReturnUrls` が解決する。`snb`は上記2つのScript Propertiesをそのまま使い、`mens`/`studio_x`は任意の `STRIPE_MEMBERSHIP_SUCCESS_URL_MENS` / `_CANCEL_URL_MENS` / `STRIPE_MEMBERSHIP_SUCCESS_URL_STUDIO_X` / `_CANCEL_URL_STUDIO_X`（キー名のみ記載。実値はコミットしない）があれば優先し、無ければSNB用URLの末尾`/membership/complete.html`・`/membership/`を`/mens`・`/studio-x`配下へ差し替えて導出する（導出不能時はSNBへ黙ってフォールバックせず`STRIPE_NOT_CONFIGURED`）。完了ページは `/mens/membership/complete.html` / `/studio-x/membership/complete.html`。会員資格は3ブランド共通のまま。
 - Bookingsシートのヘッダー行末尾（`priceGeneration`の右）へ`membershipStatus`を手動で追記。`Members`・`MemberMonths`・`MemberCheckouts`シートは初回書き込み時に自動作成される。
 - Stripe Dashboard→Webhook（中継基盤が受けているエンドポイント）の送信イベントへ追加: `invoice.paid` / `invoice.payment_failed` / `customer.subscription.created` / `customer.subscription.updated` / `customer.subscription.deleted`（`checkout.session.completed`は既存）。
 - Stripe Dashboard→設定→Billing→サブスクリプションと請求メール→支払い失敗の管理: **Smart Retries（再試行）をオフ**にし、最終的に失敗した場合は**サブスクリプションをキャンセル**に設定（猶予期間なしの仕様のため）。

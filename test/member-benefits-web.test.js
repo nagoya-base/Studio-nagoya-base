@@ -213,19 +213,19 @@ test('Studio X 会員ページ: 有料オプション全般が会員限定・無
   assert.match(html, /\.\.\/\.\.\/scripts\/membership-join\.js/);
 });
 
-test('mens専用・Studio X専用のStripe商品・Success URLを作っていない（共通の加入フォーム・共通の完了ページを維持）', function () {
+test('mens専用・Studio X専用のStripe商品を作らない（共通の加入フォーム・共通の会員資格。戻り先のみブランド別: Issue #504）', function () {
   Object.keys(PAGES).forEach(function (brand) {
     var html = read(PAGES[brand].file);
     assert.ok(!/stripe\.com|buy\.stripe|checkout\.stripe|price_[A-Za-z0-9]|prod_[A-Za-z0-9]|sk_(live|test)/.test(html), brand + ' に決済URL・商品ID・秘密情報');
     assert.match(html, /id="membership-join-form"/);
   });
-  assert.ok(exists('membership/complete.html'));
-  assert.ok(!exists('mens/membership/complete.html') && !exists('studio-x/membership/complete.html'), 'ブランド別の完了ページは作らない');
+  /* 完了ページは入会元ブランド別（導線のみ。会員資格・商品・金額は共通）。 */
+  assert.ok(exists('membership/complete.html') && exists('mens/membership/complete.html') && exists('studio-x/membership/complete.html'));
   var cfg = read('gas/booking/shared/Config.gs');
-  assert.ok(/membershipSuccessUrl: properties\.getProperty\('STRIPE_MEMBERSHIP_SUCCESS_URL'\)/.test(cfg), '共通の入会Success URL設定のみ');
-  assert.ok(!/MENS.*MEMBERSHIP|STUDIO_X.*MEMBERSHIP_SUCCESS/.test(cfg));
+  assert.ok(/membershipSuccessUrl: properties\.getProperty\('STRIPE_MEMBERSHIP_SUCCESS_URL'\)/.test(cfg), 'SNB共通のフォールバックURL設定を維持');
+  assert.ok(!/STRIPE_MEMBERSHIP_(PRICE|PRODUCT)/.test(cfg), 'ブランド別の商品・Priceは持たない');
   var js = read('scripts/membership-join.js');
-  assert.ok(js.indexOf("action=startMembershipCheckout") !== -1 && js.indexOf('JSON.stringify({ email: email })') !== -1);
+  assert.ok(js.indexOf("action=startMembershipCheckout") !== -1 && js.indexOf('JSON.stringify({ email: email, brand: brand })') !== -1);
 });
 
 // ============================================================================

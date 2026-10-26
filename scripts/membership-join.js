@@ -1,6 +1,6 @@
 /*
  * scripts/membership-join.js — SNB MEMBER入会フォーム（Issue #472）。
- * メールアドレスだけをBooking Web Appの startMembershipCheckout（Issue #471）へ送る。
+ * メールアドレスと入会元ブランドコードだけをBooking Web Appの startMembershipCheckout（Issue #471 / #504）へ送る。
  * 応答は常に同じ形・同じ文言で返る仕様のため、このスクリプトも「会員かどうか」を推測させる表示をしない。
  * 決済URLはサーバーが入力されたメールアドレス宛にだけ送る（画面には出さない）。
  */
@@ -21,6 +21,9 @@
   var consent = document.getElementById('membership-consent');
   var submit = document.getElementById('membership-join-submit');
   var status = document.getElementById('membership-join-status');
+  /* 入会元ブランド（snb / mens / studio_x）。コードのみ送り、戻り先URLはサーバーが決める（Issue #504）。 */
+  var brand = form.getAttribute('data-membership-brand') || 'snb';
+  if (['snb', 'mens', 'studio_x'].indexOf(brand) === -1) brand = 'snb';
   var apiBase = (window.BookingApiConfig && window.BookingApiConfig.BASE_URL) || '';
   var sending = false;
 
@@ -44,7 +47,7 @@
     fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ email: email })
+      body: JSON.stringify({ email: email, brand: brand })
     })
       .then(function (response) { return response.json(); })
       .then(function (result) {

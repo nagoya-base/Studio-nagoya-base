@@ -58,18 +58,32 @@ var MembershipService = (function () {
     return MembershipRules.jstMonthKeyOfEpochSeconds(Math.floor(new Date().getTime() / 1000));
   }
 
-  /* input: { email }。戻り値: { success: true, message } または { success: false, error }。 */
+  /* 入会元ブランド（Issue #504）。未指定はSNB（後方互換）。許可コード以外は拒否し、任意文字列をURL解決へ渡さない。 */
+  var JOIN_BRANDS_ = ['snb', 'mens', 'studio_x'];
+
+  function normalizeJoinBrand_(value) {
+    if (value === undefined || value === null || value === '') return 'snb';
+    return typeof value === 'string' && JOIN_BRANDS_.indexOf(value) !== -1 ? value : '';
+  }
+
+  /* input: { email, brand? }。戻り値: { success: true, message } または { success: false, error }。 */
   function startCheckout(input) {
     var email = MembershipRules.normalizeEmail(input && input.email);
     if (!MembershipRules.isValidEmail(email)) {
       return fail_('INVALID_EMAIL', 'メールアドレスの形式が正しくありません。');
     }
 
+    var brand = normalizeJoinBrand_(input && input.brand);
+    if (!brand) {
+      return fail_('INVALID_BRAND', 'リクエストの形式が正しくありません。');
+    }
+
     var stripeConfig = BookingConfig.getStripeConfig();
     if (!stripeConfig.checkoutEnabled) {
       return fail_('CHECKOUT_DISABLED', '現在オンラインでの入会受付は行っていません。');
     }
-    if (!stripeConfig.secretKey || !stripeConfig.membershipSuccessUrl || !stripeConfig.membershipCancelUrl) {
+    var returnUrls = Booking.resolveMembershipReturnUrls(brand, stripeConfig);
+    if (!stripeConfig.secretKey || !returnUrls.ok) {
       return fail_('STRIPE_NOT_CONFIGURED', '入会受付の設定が完了していません。');
     }
 
@@ -109,8 +123,8 @@ var MembershipService = (function () {
         amountJpy: MembershipRules.MONTHLY_FEE_JPY,
         email: email,
         memberId: memberId,
-        successUrl: stripeConfig.membershipSuccessUrl,
-        cancelUrl: stripeConfig.membershipCancelUrl,
+        successUrl: returnUrls.successUrl,
+        cancelUrl: returnUrls.cancelUrl,
         productName: PRODUCT_NAME_,
         expiresAtSeconds: expiresAtSeconds
       }, memberId);
