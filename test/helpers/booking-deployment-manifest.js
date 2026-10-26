@@ -42,6 +42,8 @@ var BOOKING_ADMIN_FILES = [
   'SpreadsheetRepository.gs',
   /* Issue #423: OptionOrders / OptionEligibilityシートの台帳。Bookings台帳には列を足さない。 */
   'OptionOrderRepository.gs',
+  /* Issue #488: イベント開催日限定プランの対象日台帳（EventPlanDatesシート）。 */
+  'EventPlanRepository.gs',
   'RecoveryRepository.gs',
   /*
    * Issue #341 PR-Cレビュー対応・4回目で追加。独立したBooking Webhookプロジェクトが
@@ -118,6 +120,7 @@ var BOOKING_WEB_APP_FILES = [
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',
   'OptionOrderRepository.gs',
+  'EventPlanRepository.gs',
   'RecoveryRepository.gs',
   'BookingRepository.gs',
   'AdminNotifier.gs',

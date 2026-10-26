@@ -18,9 +18,9 @@
  *
  * 会員区分（tier）の決定方針（Issue #342のユーザー確認、およびPR #343レビュー
  * （ブランド分離基準書v1.1）を反映。studio_xの扱いをPR #343レビューで修正）:
- * - studio_x（Issue #470）: 会員料金の廃止は2026/12/1以降に作成される予約（V2）から。V2は
- *   isMember入力を無視して常にGENERALとするが、GENERAL料金そのものは現行MEMBER料金を
- *   スライドした共通料金とする。V1（〜2026/11/30作成）は従来どおり自己申告（isMember）で
+ * - studio_x（Issue #470 / #486）: 会員料金の廃止は2026/12/1以降に作成される予約（V2）から。V2は
+ *   isMember入力を無視して常にGENERALとし、GENERAL料金そのものは会員・非会員共通のセルフ利用
+ *   基本料金（平日1,200円/時・土日祝1,500円/時の単純時間比例。Issue #486）とする。V1（〜2026/11/30作成）は従来どおり自己申告（isMember）で
  *   GENERAL/MEMBERを使い分ける。
  * - 料金世代（Issue #470）: 予約作成時刻でV1（〜2026/11/30）/V2（2026/12/1〜）を決めて
  *   予約へ保存し、日程変更でも保存済みの世代で再見積りする（現行表で再計算しない）。
@@ -76,7 +76,7 @@ var BookingPricing = (function () {
    *   予約作成・日程変更・確定の各サーバー側処理が行い、この純粋関数は料金だけを決める）。
    * - 他の割引・優待との併用は無い（このプランの料金はisMember・価格overrideの影響を受けない）。
    */
-  var PLAN = { MEMBER_PAIR_3H: 'member_pair_3h' };
+  var PLAN = { MEMBER_PAIR_3H: 'member_pair_3h', OSU_COSPLAY_BASE_6H: 'osu_cosplay_base_6h' };
   var PAIR_PACK_ = {
     brands: ['snb', 'mens'],
     baseHours: 3,
@@ -84,9 +84,33 @@ var BookingPricing = (function () {
     base: { WEEKDAY: 5000, WEEKEND_HOLIDAY: 6000 }
   };
 
+  /*
+   * Issue #488: 大須コスプレイベント開催日限定の貸切ベースプラン（Studio Xのみ）。通常の時間貸し料金表
+   * （RATE_TABLES_）には一切手を入れず、独立プランとしてここに固定額を持つ。
+   * - 6時間固定・6,000円/1室・最大4名（4名なら1人1,500円相当）。延長・時間変更は無い。
+   * - 会員区分・料金世代・曜日区分の影響を受けない（isMemberも無視。会員特典ではない）。
+   * - 対象日は管理者が設定した日（EventPlanRepository）のみ。この純粋関数は呼び出し側が渡す
+   *   eventDatesに利用日が含まれるときだけ料金を返し、渡されない・含まれない場合は拒否する
+   *   （通常料金へ黙って倒さない。UIだけでなくサーバー側の全入口で強制するための唯一の関門）。
+   */
+  var EVENT_BASE_PLAN_ = {
+    brands: ['studio_x'],
+    hours: 6,
+    maxPeople: 4,
+    amount: 6000,
+    label: '大須コスプレイベント開催日限定｜貸切ベースプラン'
+  };
+
   var MEMBER_RATES_ = {
     WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 5500, 4: 7000 }, extensionPerHour: 1500 },
     WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7000, 4: 9000 }, extensionPerHour: 2000 }
+  };
+  /* Issue #486: Studio X V2のセルフ利用基本料金（会員・非会員共通）。単純時間比例（1時間=平日1,200円/土日祝1,500円）。
+     セルフ設営・原状復帰を含み、スタッフ設営等はプレミアムオプション（BookingOptions.gs）として別建て。
+     SNB / mensの料金表には連動させない。 */
+  var STUDIO_X_V2_SELF_RATES_ = {
+    WEEKDAY: { base: { 1: 1200, 2: 2400, 3: 3600, 4: 4800 }, extensionPerHour: 1200 },
+    WEEKEND_HOLIDAY: { base: { 1: 1500, 2: 3000, 3: 4500, 4: 6000 }, extensionPerHour: 1500 }
   };
   /* 現行一般料金。SNB V1/V2とStudio X V1のGENERALで共通（Issue #475でSNB V2の値上げを撤回）。 */
   var CURRENT_GENERAL_RATES_ = {
@@ -113,15 +137,15 @@ var BookingPricing = (function () {
         MEMBER: MEMBER_RATES_
       }
     },
-    /* Studio XはV2で会員区分を廃止するが、V2のGENERAL料金には現行MEMBER料金をスライドする。
-       V1は2026/11/30までの新規予約と旧世代予約の日程変更見積りのためGENERAL/MEMBER双方を保持。 */
+    /* Studio XはV2で会員区分を廃止し、V2のGENERAL料金は会員・非会員共通のセルフ利用基本料金（Issue #486。
+       #470の「現行MEMBER料金スライド」を上書き）。V1は2026/11/30までの新規予約と旧世代予約の日程変更見積りのためGENERAL/MEMBER双方を保持。 */
     studio_x: {
       V1: {
         GENERAL: CURRENT_GENERAL_RATES_,
         MEMBER: MEMBER_RATES_
       },
       V2: {
-        GENERAL: MEMBER_RATES_
+        GENERAL: STUDIO_X_V2_SELF_RATES_
       }
     }
   };
@@ -132,8 +156,8 @@ var BookingPricing = (function () {
    * - mens: 予約導線で自動判定し、会員加入の有無・isMember入力に関係なく常にMEMBER料金。
    * - snb: 予約フォームの自己申告（isMember）でGENERAL/MEMBER。未指定はGENERAL。
    * - studio_x: 会員料金の廃止は新料金世代（V2）から。V1（〜2026/11/30作成）は従来どおり
-   *   自己申告（isMember）でGENERAL/MEMBER、V2は常にGENERAL。ただしV2 GENERALの金額は
-   *   現行MEMBER料金をスライドした共通料金。
+   *   自己申告（isMember）でGENERAL/MEMBER、V2は常にGENERAL。V2 GENERALの金額は
+   *   会員・非会員共通のセルフ利用基本料金（Issue #486）。
    */
   function resolveTier_(brand, isMemberInput, generation) {
     if (brand === 'mens') return TIER.MEMBER;
@@ -210,7 +234,25 @@ var BookingPricing = (function () {
   /* プラン識別子の正規化。空・未指定は''（通常料金）。未知の値はnull（呼び出し側が拒否する。通常料金へ黙って倒さない）。 */
   function normalizePlan(value) {
     if (value === undefined || value === null || value === '') return '';
-    return value === PLAN.MEMBER_PAIR_3H ? PLAN.MEMBER_PAIR_3H : null;
+    if (value === PLAN.MEMBER_PAIR_3H) return PLAN.MEMBER_PAIR_3H;
+    if (value === PLAN.OSU_COSPLAY_BASE_6H) return PLAN.OSU_COSPLAY_BASE_6H;
+    return null;
+  }
+
+  /* 利用人数（'1名'〜）が貸切ベースプランの人数条件（1〜4名）か。5名以上・要相談・数値以外はfalse。 */
+  function isEventBasePlanPeople(people) {
+    var m = /^\s*([1-9]\d*)\s*名\s*$/.exec(String(people === undefined || people === null ? '' : people));
+    return !!m && Number(m[1]) >= 1 && Number(m[1]) <= EVENT_BASE_PLAN_.maxPeople;
+  }
+
+  /* 管理画面・メール・料金サマリーに出すプラン名（通常料金・未知の値は''）。 */
+  function planLabel(plan) {
+    return plan === PLAN.OSU_COSPLAY_BASE_6H ? EVENT_BASE_PLAN_.label : '';
+  }
+
+  /* イベント開催日限定プランか（対象日の判定・人数上限・二重販売防止の対象）。 */
+  function isEventPlan(plan) {
+    return plan === PLAN.OSU_COSPLAY_BASE_6H;
   }
 
   /* 利用人数（フォームの'1名'|'2名'|'3名'…）がペアパックの人数条件（1〜2名）か。数値以外・3名以上・5名以上はfalse。 */
@@ -226,7 +268,7 @@ var BookingPricing = (function () {
   }
 
   /*
-   * input: { brand, date ('YYYY-MM-DD'), durationMinutes, isMember, generation }
+   * input: { brand, date ('YYYY-MM-DD'), durationMinutes, isMember, generation, plan, eventDates(Issue #488。イベント限定プランでは必須) }
    * generation: 料金世代（'V1'|'V2'。省略・不正値はV1）。新規予約は呼び出し側がgenerationAt(now)で渡し、
    * 既存予約の再見積りは保存済みの世代を渡す。
    * 戻り値: { valid: true, price: {...} } または { valid: false, error: {code, message} }。
@@ -266,16 +308,31 @@ var BookingPricing = (function () {
         return { valid: false, error: { code: 'PLAN_DURATION_INVALID', message: '2名ペアパックは3時間以上でご利用ください。' } };
       }
     }
-    var tier = plan ? TIER.MEMBER : resolveTier_(brand, params.isMember === true, generation);
+    if (plan === PLAN.OSU_COSPLAY_BASE_6H) {
+      /* Issue #488: 独立プラン。ブランド・利用時間（6時間ちょうど）・対象日を満たさなければ通常料金へ倒さず拒否する。 */
+      if (EVENT_BASE_PLAN_.brands.indexOf(brand) === -1) {
+        return { valid: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
+      }
+      if (Number(durationMinutes) !== EVENT_BASE_PLAN_.hours * 60) {
+        return { valid: false, error: { code: 'PLAN_DURATION_INVALID', message: EVENT_BASE_PLAN_.label + 'は6時間固定です。' } };
+      }
+      if (!Array.isArray(params.eventDates) || params.eventDates.indexOf(date) === -1) {
+        return { valid: false, error: { code: 'EVENT_PLAN_DATE_NOT_ELIGIBLE', message: EVENT_BASE_PLAN_.label + 'は対象のイベント開催日のみご利用いただけます。' } };
+      }
+    }
+    var tier = plan === PLAN.MEMBER_PAIR_3H
+      ? TIER.MEMBER
+      : (plan ? TIER.GENERAL : resolveTier_(brand, params.isMember === true, generation));
     var dayTypeResult = resolveDayType_(date);
     if (!dayTypeResult.ok) {
       return { valid: false, error: dayTypeResult.error };
     }
     var dayType = dayTypeResult.dayType;
     var hours = billableHours_(durationMinutes);
-    var amount = plan === PLAN.MEMBER_PAIR_3H
-      ? computePairPackAmount_(dayType, hours)
-      : computeAmount_(brand, generation, tier, dayType, hours);
+    var amount;
+    if (plan === PLAN.MEMBER_PAIR_3H) amount = computePairPackAmount_(dayType, hours);
+    else if (plan === PLAN.OSU_COSPLAY_BASE_6H) amount = EVENT_BASE_PLAN_.amount;
+    else amount = computeAmount_(brand, generation, tier, dayType, hours);
 
     return {
       valid: true,
@@ -307,7 +364,14 @@ var BookingPricing = (function () {
     PLAN: PLAN,
     PAIR_PACK_MAX_PEOPLE: PAIR_PACK_.maxPeople,
     PAIR_PACK_BASE_HOURS: PAIR_PACK_.baseHours,
+    EVENT_BASE_PLAN_MAX_PEOPLE: EVENT_BASE_PLAN_.maxPeople,
+    EVENT_BASE_PLAN_HOURS: EVENT_BASE_PLAN_.hours,
+    EVENT_BASE_PLAN_AMOUNT: EVENT_BASE_PLAN_.amount,
+    EVENT_BASE_PLAN_LABEL: EVENT_BASE_PLAN_.label,
     normalizePlan: normalizePlan,
+    isEventPlan: isEventPlan,
+    isEventBasePlanPeople: isEventBasePlanPeople,
+    planLabel: planLabel,
     isPairPackPeople: isPairPackPeople,
     generationAt: generationAt,
     normalizeGeneration: normalizeGeneration,

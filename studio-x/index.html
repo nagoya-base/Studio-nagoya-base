@@ -27,6 +27,44 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 
+  <!-- 大須コスプレイベント開催日限定プランの構造化データ（Issue #488）。対象日は管理者が都度設定するため、日付・在庫は載せない。 -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Offer",
+        "name": "大須コスプレイベント開催日限定｜貸切ベースプラン",
+        "description": "大須のコスプレイベント開催日限定。着替え・荷物置き・休憩のためのStudio X貸切ベース（6時間・最大4名）。有人クロークではなく、荷物は利用者自身で管理します。",
+        "price": "6000",
+        "priceCurrency": "JPY",
+        "url": "https://nagoya-base.github.io/Studio-nagoya-base/studio-x/#osu-base-plan",
+        "seller": { "@type": "LocalBusiness", "name": "Studio X" }
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "貸切ベースプランは荷物を預かってもらえますか？",
+            "acceptedAnswer": { "@type": "Answer", "text": "いいえ。有人クロークではなく、スタッフによる荷物のお預かりサービスではありません。貸切中のお部屋内で、荷物・貴重品をご自身で管理していただくプランです。" }
+          },
+          {
+            "@type": "Question",
+            "name": "貸切ベースプランはいつでも予約できますか？",
+            "acceptedAnswer": { "@type": "Answer", "text": "いいえ。大須周辺で大型コスプレイベントが開催される日のみの限定プランです。対象外の日は選択できません。" }
+          },
+          {
+            "@type": "Question",
+            "name": "貸切ベースプランの時間と人数は？",
+            "acceptedAnswer": { "@type": "Answer", "text": "6時間固定で、1室6,000円、最大4名まで同一料金です。利用時間内であれば自由に再入室できます。" }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+
   <!-- Google Analytics 4 -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
   <script>
@@ -287,28 +325,29 @@
       <div class="price-intro reveal">
         <p class="section-kicker">PRICE</p>
         <h2 id="price-title">一室貸切。<br>4名まで同一料金。</h2>
-        <p>最短1時間から。予約フォームからの直接予約料金です。会員・非会員の区別なく、どなたも同じ料金です。</p>
+        <p>最短1時間から。セルフ利用の基本料金です（セルフ設営・セルフ片付け込み）。予約フォームからの直接予約料金で、会員・非会員の区別なく、どなたも同じ料金です。</p>
       </div>
 
       <div class="price-cards">
         <article class="price-card reveal">
           <p class="price-label">WEEKDAY</p>
-          <p class="price-value">2,000<small>円〜 / 1時間</small></p>
-          <p class="price-value-sub">2時間 4,000円 / 延長1時間 1,500円</p>
+          <p class="price-value">1,200<small>円〜 / 1時間</small></p>
+          <p class="price-value-sub">2時間 2,400円 / 延長1時間 1,200円</p>
           <p>平日 / 最低利用1時間</p>
         </article>
         <article class="price-card price-card-accent reveal">
           <p class="price-label">WEEKEND &amp; HOLIDAY</p>
-          <p class="price-value">2,500<small>円〜 / 1時間</small></p>
-          <p class="price-value-sub">2時間 5,000円 / 延長1時間 2,000円</p>
+          <p class="price-value">1,500<small>円〜 / 1時間</small></p>
+          <p class="price-value-sub">2時間 3,000円 / 延長1時間 1,500円</p>
           <p>土日祝 / 最低利用1時間</p>
         </article>
       </div>
 
       <div class="price-notes reveal">
         <p>人数追加料金なし（最大4名）</p>
-        <p>3時間5,500円（平日）／7,000円（土日祝）、4時間7,000円（平日）／9,000円（土日祝）、延長1時間ごと1,500円（平日）／2,000円（土日祝）</p>
+        <p>3時間3,600円（平日）／4,500円（土日祝）、4時間4,800円（平日）／6,000円（土日祝）、延長1時間ごと1,200円（平日）／1,500円（土日祝）</p>
         <p>この料金は、2026年12月1日以降に作成するご予約に適用します。2026年11月30日までに作成したご予約は、利用日が12月以降でも従来の料金が適用されます。</p>
+        <p>基本料金はセルフ利用でリーズナブルに。ライティングや機材準備を任せたい場合は、スタッフ設営の<strong>プレミアムオプション</strong>（事前設営3,000円／片付け3,000円／設営＋片付けセット5,000円）をご利用いただけます。撮影前に照明・機材を希望内容に合わせて準備し、来場後すぐ撮影を始められます。</p>
         <p>有料オプションは会員限定です。機材のレンタルは1点ごとの個別料金で会員限定、スタッフによる事前設営・片付けは会員限定です（事前設営3,000円／片付け3,000円／セット5,000円）。セルフ設営・セルフ片付けは無料で、どなたでもご利用いただけます。詳しくは<a href="equipment/#staff-service">機材と料金</a>、<a href="membership/">会員限定オプションのご案内</a>をご覧ください。</p>
         <p>予約フォーム送信時点では予約は確定しません。内容を確認後、当方からの確定連絡をもって成立します。</p>
       </div>
@@ -322,6 +361,51 @@
           <p class="price-preview-desc">室内・背景・教室セット・照明などを実際に確認できます。<br>下見後60日以内に3時間以上のご予約で、1,000円分を利用料金に充当。</p>
           <a class="button button-ghost" href="reservation/?intent=preview" data-analytics-event="cta_click" data-analytics-type="preview" data-analytics-location="price" data-analytics-destination="direct_form">下見を申し込む</a>
         </div>
+      </div>
+    </section>
+
+    <section class="price section-shell" id="osu-base-plan" data-analytics-section-view="osu_base_plan" aria-labelledby="osu-base-plan-title">
+      <div class="price-intro reveal">
+        <p class="section-kicker">EVENT DAY ONLY</p>
+        <h2 id="osu-base-plan-title">大須コスプレイベント開催日限定<br>貸切ベースプラン</h2>
+        <p>大須エリアのコスプレイベント参加者向けに、Studio Xをグループ専用の「着替え・荷物置き・休憩拠点」としてご利用いただける限定プランです。イベント会場へ出かけている間もお部屋を確保でき、利用時間内であれば自由に出入りできます。</p>
+      </div>
+
+      <div class="price-cards">
+        <article class="price-card price-card-accent reveal">
+          <p class="price-label">EVENT DAY PLAN</p>
+          <p class="price-value">6,000<small>円 / 6時間・1室</small></p>
+          <p class="price-value-sub">最大4名まで同一料金（4名利用なら1名あたり1,500円）</p>
+          <p>イベント開催日のみ / 6時間固定</p>
+        </article>
+      </div>
+
+      <div class="price-notes reveal">
+        <p>こんな方におすすめ: 友人同士で落ち着いて着替えたい／キャリーケースや衣装を置いて身軽にイベントを回りたい／イベント途中に休憩したい／メイク直し・衣装直しのために戻れる場所がほしい／公式更衣室の混雑を避けたい</p>
+        <p>ご利用内容: 1室貸切・最大4名・着替え・メイク・荷物置き・休憩・大型ミラー利用・利用時間内の再入室OK・スマートフォン等での簡易撮影OK</p>
+        <p>対象日は大須周辺で大型コスプレイベントが開催される日のみです。対象日は予約フォームの「大須コスプレイベント開催日限定プラン」欄に表示され、対象外の日にはお選びいただけません（対象外の日は通常料金でご予約ください）。</p>
+        <p>本プランは有人クロークではありません。スタッフによる荷物のお預かりサービスではなく、荷物は貸切中のお部屋内で各自管理してください。貴重品の管理は利用者ご自身でお願いいたします。紛失・盗難等については利用規約の責任範囲を適用します。</p>
+        <p>スタッフは常駐しません。シャワー利用は含まれません。他の利用者とお部屋を共用することはありません。共用部や建物内に荷物を放置しないでください。</p>
+        <p>本格的な撮影機材の利用やスタッフによるライティング設営をご希望の場合は、別途対象オプションをご確認ください（<a href="equipment/#staff-service">機材と料金</a>、<a href="membership/">会員限定オプションのご案内</a>）。</p>
+        <p>室内を離れる際も、利用終了時刻までに必ず戻り、原状復帰のうえ退出してください。利用時間の超過は通常のStudio Xと同じルールです。</p>
+        <p>通常のStudio X時間貸し料金（上の料金表）とは別の、イベント開催日限定パッケージです。通常の予約に6時間6,000円が自動で適用されることはありません。予約フォームで本プランを選択した場合のみ適用されます。</p>
+      </div>
+
+      <a class="button button-primary reveal" href="booking/#booking-app-section" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="osu_base_plan" data-analytics-destination="booking_app">予約フォームで日時とプランを選ぶ</a>
+
+      <div class="faq-list reveal">
+        <details>
+          <summary>貸切ベースプランは荷物を預かってもらえますか？</summary>
+          <p>いいえ。有人クロークではなく、スタッフによる荷物のお預かりサービスではありません。貸切中のお部屋内で、荷物・貴重品をご自身で管理していただくプランです。紛失・盗難等については利用規約の責任範囲を適用します。</p>
+        </details>
+        <details>
+          <summary>貸切ベースプランはいつでも予約できますか？</summary>
+          <p>いいえ。大須周辺で大型コスプレイベントが開催される日のみの限定プランです。対象日は予約フォームに表示され、対象外の日は選択できません。通常の撮影利用は通常料金でご予約ください。</p>
+        </details>
+        <details>
+          <summary>貸切ベースプランの時間と人数は？</summary>
+          <p>6時間固定で、1室6,000円、最大4名まで同一料金です。利用時間内であれば自由に再入室できます。時間の延長や短縮はできません。</p>
+        </details>
       </div>
     </section>
 

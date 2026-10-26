@@ -133,6 +133,10 @@
     memberField: document.getElementById('ba-member-field'),
     benefitsField: document.getElementById('ba-benefits-field'),
     planPair: document.getElementById('ba-plan-pair'),
+    eventPlanField: document.getElementById('ba-event-plan-field'),
+    planEvent: document.getElementById('ba-plan-event'),
+    eventPlanDates: document.getElementById('ba-event-plan-dates'),
+    eventPlanError: document.getElementById('ba-event-plan-error'),
     shower: document.getElementById('ba-shower'),
     benefitsError: document.getElementById('ba-benefits-error'),
     memberError: document.getElementById('ba-member-error'),
@@ -199,6 +203,8 @@
     confirmDate: document.getElementById('ba-confirm-date'),
     confirmTime: document.getElementById('ba-confirm-time'),
     confirmPrice: document.getElementById('ba-confirm-price'),
+    confirmPlanRow: document.getElementById('ba-confirm-plan-row'),
+    confirmPlan: document.getElementById('ba-confirm-plan'),
     confirmName: document.getElementById('ba-confirm-name'),
     confirmEmail: document.getElementById('ba-confirm-email'),
     confirmPhone: document.getElementById('ba-confirm-phone'),
@@ -254,7 +260,14 @@
   /* 会員限定の特典（Issue #478。SNB / SNB mens、2026/12/1以降の表示）。表示制御のみで、可否はサーバーが判定する。 */
   var benefitsVisible = Logic.brandShowsMemberBenefits(brand);
   if (els.benefitsField) els.benefitsField.hidden = !benefitsVisible;
+  /* 大須コスプレイベント開催日限定の貸切ベースプラン（Issue #488。Studio Xのみ）。対象日が1日以上あるときだけ
+     欄を出す（eventPlanInfoはGASのeventPlanから取得。表示制御のみで、可否はサーバーが全入口で判定する）。 */
+  var eventPlanInfo = null;
+  function eventPlanSelected_() {
+    return !!eventPlanInfo && !!els.planEvent && els.planEvent.checked;
+  }
   function selectedPlan_() {
+    if (eventPlanSelected_()) return Logic.EVENT_BASE_PLAN_CODE;
     return benefitsVisible && els.planPair && els.planPair.checked ? Logic.PAIR_PACK_PLAN_CODE : '';
   }
   function showerSelected_() {
@@ -274,12 +287,13 @@
   }
 
   function isMemberChecked_() {
-    return Logic.brandShowsMemberOption(brand) && checkedMemberStatus_() === 'member';
+    return Logic.brandShowsMemberOption(brand) && !eventPlanSelected_() && checkedMemberStatus_() === 'member';
   }
 
   /* 会員区分の回答が必要か（snb/studio_xでラジオが存在する場合のみ。mensは常に会員相当で表示しない）。 */
   function memberAnswerRequired_() {
-    return Logic.brandShowsMemberOption(brand) && memberStatusRadios_().length > 0;
+    /* イベント限定プランは会員区分と無関係の固定料金のため、会員区分の回答を求めない。 */
+    return Logic.brandShowsMemberOption(brand) && !eventPlanSelected_() && memberStatusRadios_().length > 0;
   }
 
   function memberAnswered_() {
@@ -889,6 +903,39 @@
     if (control) control.addEventListener('change', function () { refreshPriceEstimate_(); });
   });
 
+  /* 貸切ベースプランの選択に合わせ、利用時間を6時間に固定し会員区分欄を隠す。外すと元の入力に戻す。 */
+  function applyEventPlanState_() {
+    var selected = eventPlanSelected_();
+    if (els.duration) {
+      if (selected) {
+        els.duration.value = String(Logic.EVENT_BASE_PLAN_HOURS);
+        els.duration.disabled = true;
+      } else {
+        els.duration.disabled = false;
+      }
+    }
+    if (els.memberField) els.memberField.hidden = selected || !Logic.brandShowsMemberOption(brand);
+    setFieldError_(null, els.eventPlanError, '');
+    handleCalendarPrereqChange_();
+    refreshPriceEstimate_();
+  }
+  if (els.planEvent) els.planEvent.addEventListener('change', applyEventPlanState_);
+
+  function loadEventPlan_() {
+    if (!els.eventPlanField || !API_BASE_URL || brand !== 'studio_x') return;
+    fetch(API_BASE_URL + (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') + 'action=eventPlan&brand=studio_x', { method: 'GET' })
+      .then(function (response) { return response.json(); })
+      .then(function (body) {
+        var plan = body && body.success === true ? body.plan : null;
+        if (!plan || !Array.isArray(plan.dates) || !plan.dates.length) return;
+        eventPlanInfo = plan;
+        if (els.eventPlanDates) els.eventPlanDates.textContent = plan.dates.map(Logic.formatEventPlanDate).join('、');
+        els.eventPlanField.hidden = false;
+      })
+      .catch(function () { /* 任意の案内欄。取得できなければ表示せず、通常の予約導線のまま。 */ });
+  }
+  loadEventPlan_();
+
   if (els.duration) {
     els.duration.addEventListener('input', handleCalendarPrereqChange_);
     els.duration.addEventListener('change', handleCalendarPrereqChange_);
@@ -967,6 +1014,13 @@
     setFieldError_(els.duration, els.durationError, durationValid ? '' : UI_TEXT.durationRequired);
     setFieldError_(null, els.customerTypeError, customerType ? '' : UI_TEXT.customerTypeRequired);
     if (!dateValue || !durationValid || !customerType) { resetStartTimeArea_(); return; }
+    /* Issue #488: 貸切ベースプランは対象のイベント開催日のみ。UI側の早期ガードで、最終判定はサーバー。 */
+    if (eventPlanSelected_() && !Logic.isEventPlanDate(dateValue, eventPlanInfo.dates)) {
+      setFieldError_(null, els.eventPlanError, Logic.messageForErrorCode('EVENT_PLAN_DATE_NOT_ELIGIBLE', locale));
+      resetStartTimeArea_();
+      return;
+    }
+    setFieldError_(null, els.eventPlanError, '');
 
     state.date = dateValue;
     state.durationMinutes = durationMinutes;
@@ -1257,8 +1311,13 @@
       };
       var errors = Logic.validateDetailsForm(fields, locale);
 
-      /* 2名ペアパックは1〜2名・3時間以上（サーバー側でも同じ条件で拒否する）。 */
-      if (selectedPlan_()) {
+      /* 貸切ベースプランは最大4名・6時間固定（サーバー側でも同じ条件で拒否する）。 */
+      if (eventPlanSelected_()) {
+        if (fields.people && !Logic.isEventPlanPeopleValue(fields.people)) {
+          errors.people = Logic.messageForErrorCode('EVENT_PLAN_PEOPLE_EXCEEDED', locale);
+        }
+      } else if (selectedPlan_()) {
+        /* 2名ペアパックは1〜2名・3時間以上（サーバー側でも同じ条件で拒否する）。 */
         if (fields.people && !Logic.isPairPackPeopleValue(fields.people)) {
           errors.people = Logic.messageForErrorCode('PAIR_PACK_PEOPLE_EXCEEDED', locale);
         }
@@ -1314,6 +1373,11 @@
     els.confirmBrand.textContent = brandMeta.displayName;
     els.confirmCustomerType.textContent = Logic.customerTypeLabel(state.customerType, locale);
     els.confirmDate.textContent = state.date;
+    /* Issue #488: 貸切ベースプランを選んだときだけ、プラン名と責任範囲を確認画面に出す。 */
+    if (els.confirmPlanRow) {
+      els.confirmPlanRow.hidden = !eventPlanSelected_();
+      if (els.confirmPlan) els.confirmPlan.textContent = eventPlanSelected_() ? eventPlanInfo.label : '';
+    }
     els.confirmTime.textContent = UI_TEXT.confirmTime(state.startTime, endTime, state.durationMinutes / 60);
     /*
      * 利用料金（Issue #342。PRレビュー対応）。ここでは表示更新のトリガーとして

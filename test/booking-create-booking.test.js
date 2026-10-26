@@ -303,12 +303,12 @@ test('createBooking: mensはisMember未送信でも常に会員料金で保存�
   assert.strictEqual(mensFound.record.priceIsMember, true);
 });
 
-test('createBooking: studio_xの会員料金は2026/11/30までの新規予約（V1）では有効、2026/12/1以降（V2）は廃止（Issue #470）', function () {
+test('createBooking: studio_xの会員料金は2026/11/30までの新規予約（V1）では有効、2026/12/1以降（V2）は廃止（Issue #470 / #486。V2は共通のセルフ利用基本料金）', function () {
   [
     { now: '2026-11-30T23:59:59+09:00', isMember: true, amount: 5500, tier: 'MEMBER', generation: 'V1' },
     { now: '2026-11-30T23:59:59+09:00', isMember: false, amount: 6000, tier: 'GENERAL', generation: 'V1' },
-    { now: '2026-12-01T00:00:00+09:00', isMember: true, amount: 5500, tier: 'GENERAL', generation: 'V2' },
-    { now: '2026-12-01T00:00:00+09:00', isMember: false, amount: 5500, tier: 'GENERAL', generation: 'V2' }
+    { now: '2026-12-01T00:00:00+09:00', isMember: true, amount: 3600, tier: 'GENERAL', generation: 'V2' },
+    { now: '2026-12-01T00:00:00+09:00', isMember: false, amount: 3600, tier: 'GENERAL', generation: 'V2' }
   ].forEach(function (c) {
     var ctx = setup();
     var result = ctx.sandbox.BookingRepository.createBooking(

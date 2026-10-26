@@ -203,7 +203,8 @@ test('Studio X 会員ページ: 有料オプション全般が会員限定・無
   assert.deepStrictEqual([data.staffService.services.PRE_SETUP.priceJpy, data.staffService.services.CLEANUP.priceJpy, data.staffService.services.BOTH.priceJpy], [3000, 3000, 5000]);
   /* シャワー・ペアパックはStudio Xでは出さない */
   assert.ok(!/シャワー|ペアパック/.test(t.replace(/Studio Xでは提供していません/g, '')), 'Studio Xの会員ページにシャワー・ペアパックを出さない');
-  assert.ok(!/シャワー|ペアパック/.test(textOf(read('studio-x/index.html'))));
+  /* Issue #488: 貸切ベースプランの注意書き「シャワー利用は含まれません」（否定表現）だけは許可する。 */
+  assert.ok(!/シャワー|ペアパック/.test(textOf(read('studio-x/index.html')).replace(/シャワー利用は含まれません/g, '')));
   assert.ok(t.indexOf('月額500円') !== -1 && t.indexOf('猶予期間はありません') !== -1);
   /* 共通の加入フォーム（専用商品・専用Success URLなし） */
   assert.match(html, /id="membership-join-form"/);
