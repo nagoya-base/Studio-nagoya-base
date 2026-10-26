@@ -64,23 +64,28 @@ test('サーバー検証は維持: planはsubmit/見積りでチェックボッ�
   assert.ok(/function selectedPlan_\(\) \{\s*if \(eventPlanSelected_\(\)\) return Logic\.EVENT_BASE_PLAN_CODE;/.test(app));
 });
 
-test('特設ページ: ファーストビューの価格・人数・用途、誤認防止、オプション不可、比較、FAQ', function () {
+test('特設ページ(#507): X直リンク向けミニマム構成。ファーストビューの価格・人数・用途、誤認防止、オプション不可', function () {
   var html = read('studio-x/base-plan/index.html');
-  var hero = html.slice(html.indexOf('<header class="subpage-hero">'), html.indexOf('id="about"'));
+  var hero = html.slice(html.indexOf('<header class="subpage-hero'), html.indexOf('id="about"'));
   var heroText = hero.replace(/<[^>]+>/g, ' ');
-  ['6時間', '6,000円', '1室', '最大4名', '1名あたり1,500円', '着替え', '荷物置き', '休憩', '再入室', '有人クロークではありません', '追加オプション', '常設'].forEach(function (n) {
+  ['6時間', '6,000円', '1室', '最大4名', '1名あたり1,500円', '着替え', '荷物置き', '休憩', '再入室', '上前津', '大須'].forEach(function (n) {
     assert.ok(heroText.indexOf(n) !== -1, 'ファーストビュー: ' + n);
   });
+  assert.ok(hero.indexOf('このプランで予約する') !== -1, 'ファーストビューに予約CTA');
   var body = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
   var text = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-  ['荷物・貴重品は貸切室内で各自管理してください', 'スタッフ常駐', 'シャワー', '有料機材レンタル', 'スタッフによる設営・片付け', '利用できません',
-    '通常のStudio X予約との違い', '6時間固定', '6,000円固定', '大型ミラー', 'スマートフォン等での簡易撮影', 'コスプレイベント参加者専用ではなく'].forEach(function (n) {
+  ['これだけ知っておけばOK', '有人クロークではありません', '荷物・貴重品は室内で各自管理してください', 'スタッフ常駐なし', 'シャワーなし',
+    '追加オプションは利用できません', '常設', '外出・再入室OK', '簡易撮影', '通常のStudio X予約'].forEach(function (n) {
     assert.ok(text.indexOf(n) !== -1, n);
   });
-  assert.strictEqual((body.match(/<details>/g) || []).length, 6, 'FAQ6件');
+  /* 長い比較表・FAQ・長文に依存しない */
+  assert.ok(!/<table|<details|faq-list/.test(body), '比較表・FAQを置かない');
+  assert.ok(text.length < 900, '本文は短く保つ: ' + text.length);
   assert.ok(!/荷物を?お預かりします|預かりサービスです|クロークです|クロークをご利用/.test(text));
-  assert.ok(text.replace(/有人クローク(ではありません|ではなく)/g, '').replace(/有人クローク／/g, '').indexOf('クローク') === -1);
+  assert.ok(text.replace(/有人クローク(ではありません|ではなく)/g, '').indexOf('クローク') === -1);
   assert.ok(!/20\d\d-\d\d-\d\d/.test(body), '日付をハードコードしない');
+  /* 後からヒーロー画像を足せる構造 */
+  assert.ok(html.indexOf('base-plan-hero-media') !== -1 && read('studio-x/pages.css').indexOf('.base-plan-hero-media') !== -1);
 });
 
 test('特設ページ: CTAは上部・下部ともプラン選択済み予約へ直結し、GA4は既存のcta_click規約を使う', function () {
@@ -99,7 +104,7 @@ test('特設ページ: CTAは上部・下部ともプラン選択済み予約へ
   assert.ok(top.indexOf('href="booking/?plan=osu_cosplay_base_6h#booking-app-section"') !== -1, 'トップ→直結予約');
 });
 
-test('特設ページ: SEO / OGP / canonical / FAQPage構造化データ / sitemap', function () {
+test('特設ページ: SEO / OGP / canonical / Offer構造化データ / sitemap', function () {
   var html = read('studio-x/base-plan/index.html');
   var URL = 'https://nagoya-base.github.io/Studio-nagoya-base/studio-x/base-plan/';
   assert.ok(html.indexOf('<title>Studio X｜6時間貸切ベースプラン') !== -1);
@@ -109,10 +114,10 @@ test('特設ページ: SEO / OGP / canonical / FAQPage構造化データ / sitem
   ['og:title', 'og:description', 'og:url', 'og:image'].forEach(function (p) { assert.ok(html.indexOf('property="' + p + '"') !== -1, p); });
   ['twitter:card', 'twitter:title', 'twitter:description', 'twitter:image'].forEach(function (p) { assert.ok(html.indexOf('name="' + p + '"') !== -1, p); });
   var data = JSON.parse(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html)[1]);
-  var offer = data['@graph'].filter(function (n) { return n['@type'] === 'Offer'; })[0];
-  assert.strictEqual(offer.price, '6000');
-  assert.strictEqual(offer.url, URL);
-  assert.ok(data['@graph'].some(function (n) { return n['@type'] === 'FAQPage' && n.mainEntity.length === 6; }));
+  assert.strictEqual(data['@type'], 'Offer');
+  assert.strictEqual(data.price, '6000');
+  assert.strictEqual(data.url, URL);
+  assert.ok(html.indexOf('FAQPage') === -1, 'FAQを削ったのでFAQPageも置かない');
   assert.ok(read('sitemap.xml').indexOf('<loc>' + URL + '</loc>') !== -1);
 });
 
@@ -121,4 +126,18 @@ test('通常のStudio X予約URL・SNB・mensは従来どおり（planなしで�
   assert.ok(booking.indexOf('booking_app_ja.html') !== -1);
   assert.ok(/id="ba-plan-event" value="osu_cosplay_base_6h">/.test(read('_includes/booking_app_ja.html')), 'checkboxは未チェックが初期値');
   assert.ok(!/id="ba-plan-event"[^>]*checked/.test(read('_includes/booking_app_ja.html')));
+});
+
+test('ハンバーガーメニュー(#507): Studio X全ページのモバイルメニューに特設ページ導線があり、GA4は既存のcta_click規約', function () {
+  var pages = { 'studio-x/index.html': '', 'studio-x/booking/index.html': '../', 'studio-x/equipment/index.html': '../', 'studio-x/how-to/index.html': '../',
+    'studio-x/legal/index.html': '../', 'studio-x/membership/index.html': '../', 'studio-x/reservation/index.html': '../' };
+  Object.keys(pages).forEach(function (f) {
+    var html = read(f);
+    var i = html.indexOf('id="mobile-menu"');
+    var menu = html.slice(i, html.indexOf('</div>', i));
+    var a = new RegExp('<a href="' + pages[f] + 'base-plan/"[^>]*>6時間貸切ベースプラン</a>').exec(menu);
+    assert.ok(a, f);
+    assert.ok(/data-analytics-event="cta_click"/.test(a[0]) && /data-analytics-location="header_mobile_menu"/.test(a[0]) && /data-analytics-destination="base_plan_page"/.test(a[0]), f);
+  });
+  assert.ok(/<a href="\.\/" aria-current="page">6時間貸切ベースプラン<\/a>/.test(read('studio-x/base-plan/index.html')), '特設ページ自身のメニューにも現在地として表示');
 });
