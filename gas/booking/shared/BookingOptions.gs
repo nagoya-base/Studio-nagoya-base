@@ -300,6 +300,8 @@ var BookingOptions = (function () {
   var NOTICES = {
     STAFF_SERVICE_APPROVAL:
       'スタッフ設営・片付けは事前確認制です。お申し込み後に対応可否をご案内し、承認後にオンライン決済をお願いします。申込時点ではスタッフ対応は確定していません。',
+    SHOWER_APPROVAL:
+      'シャワー利用は事前確認が必要です。利用希望の場合は事前にご連絡ください。対応可能な場合のみご案内し、承認後にお支払いをお願いします。申込時点ではシャワー利用は確定していません。',
     EQUIPMENT_SETUP:
       '有料の機材レンタルでは、設営方法・片付け方法の選択が必要です（セルフ＝無料／スタッフ＝有料・事前確認制）。',
     SELF_VS_STAFF:
@@ -684,9 +686,11 @@ var BookingOptions = (function () {
           category: CATEGORY.MEMBER_SERVICE,
           items: [SHOWER_ITEM_CODE],
           amountJpy: SHOWER_PRICE_JPY_,
-          approvalStatus: APPROVAL_STATUS.NOT_REQUIRED,
+          /* Issue #481: シャワーは事前連絡・管理者確認が必須。スタッフ設営と同じく必ずPENDING_APPROVALから開始し、
+             この時点では課金しない（承認後にAWAITING_PAYMENT→Checkout→CONFIRMED）。 */
+          approvalStatus: APPROVAL_STATUS.PENDING_APPROVAL,
           paymentStatus: PAYMENT_STATUS.NOT_STARTED,
-          status: STATUS.AWAITING_PAYMENT
+          status: STATUS.PENDING_APPROVAL
         }]
       };
     }
@@ -980,7 +984,7 @@ var BookingOptions = (function () {
       paymentStatus: order.paymentStatus,
       status: order.status,
       /* スタッフ対応、および利用許可の確認待ちの機材注文は承認制。 */
-      requiresApproval: order.category === CATEGORY.STAFF_SERVICE || order.approvalStatus !== APPROVAL_STATUS.NOT_REQUIRED,
+      requiresApproval: order.category === CATEGORY.STAFF_SERVICE || order.category === CATEGORY.MEMBER_SERVICE || order.approvalStatus !== APPROVAL_STATUS.NOT_REQUIRED,
       /* 未許可のビデオライト系の申込（Checkoutを発行しない保留注文。管理者が許可して進める／不承認）。 */
       eligibilityHold: order.category === CATEGORY.EQUIPMENT && order.approvalStatus !== APPROVAL_STATUS.NOT_REQUIRED,
       payable: isPayable(order)
