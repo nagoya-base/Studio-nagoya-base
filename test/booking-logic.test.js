@@ -649,11 +649,11 @@ test('CARD_PAYMENT_METHOD_VALUE: gas/booking/shared/Booking.gsの値と一致す
 
 /* ── 利用料金表示（Issue #342） ── */
 
-test('brandShowsMemberOption: snbはtrue、studio_xは2026/12/1 0:00 JSTまでtrue（Issue #470）、mens/未知のbrandはfalse', function () {
+test('brandShowsMemberOption: snbはtrue、studio_xは2026/10/26 0:00 JSTまでtrue（Issue #470 / #492）、mens/未知のbrandはfalse', function () {
   var Logic = loadLogic();
   assert.strictEqual(Logic.brandShowsMemberOption('snb'), true);
-  var beforeCutover = Date.parse('2026-11-30T23:59:59+09:00');
-  var afterCutover = Date.parse('2026-12-01T00:00:00+09:00');
+  var beforeCutover = Date.parse('2026-10-25T23:59:59+09:00');
+  var afterCutover = Date.parse('2026-10-26T00:00:00+09:00');
   assert.strictEqual(Logic.brandShowsMemberOption('studio_x', beforeCutover), true);
   assert.strictEqual(Logic.brandShowsMemberOption('studio_x', afterCutover), false);
   assert.strictEqual(Logic.brandShowsMemberOption('snb', afterCutover), true);

@@ -74,7 +74,7 @@ var BookingRepository = (function () {
      * 既に検証済みのため通常は発生しない）で失敗した場合でもCalendarイベント等を
      * 一切作らずに済む。
      */
-    var priceGeneration = BookingPricing.generationAt(now);
+    var priceGeneration = BookingPricing.generationAt(now, input.brand);
     /*
      * Issue #478: 会員限定2名ペアパック（独立プラン）。プラン指定がある場合のみ、ブランド・人数・料金世代と
      * actual membership（利用日の属する月の支払い事実。priceIsMember・mens経路では代用しない）を
@@ -94,9 +94,7 @@ var BookingRepository = (function () {
       durationMinutes: input.durationMinutes,
       isMember: membership.isMember,
       generation: priceGeneration,
-      plan: planResult.plan,
-      /* Issue #488: イベント限定プランは管理者が設定した対象日（EventPlanDates）に利用日が含まれる場合のみ販売する。 */
-      eventDates: planResult.eventDates
+      plan: planResult.plan
     });
     if (!priceResult.valid) {
       return { success: false, error: priceResult.error };
@@ -348,10 +346,9 @@ var BookingRepository = (function () {
   }
 
   /*
-   * 大須コスプレイベント開催日限定の貸切ベースプラン（Issue #488）の申込検証。会員資格は不要。
-   * 確認順: ブランド（Studio Xのみ） → 人数（5名以上はサーバー側で拒否） → 利用時間（6時間固定） → 対象日。
-   * 対象日はUIの選択可否に関わらず、直接APIで指定されてもここ（と料金計算）で必ず拒否する。
-   * 対象日の台帳（EventPlanDates）を読めない場合は対象日なしとして拒否する（fail-closed）。
+   * 貸切ベースプラン（Issue #488 / #492。常設）の申込検証。会員資格は不要。
+   * 確認順: ブランド（Studio Xのみ） → 人数（5名以上はサーバー側で拒否） → 利用時間（6時間固定）。
+   * Issue #492で対象イベント日の制限は廃止した。Studio Xの予約可能日であれば、利用者が明示的に選んだときだけ成立する。
    */
   function resolveEventPlanForNewBooking_(input, plan) {
     if (input.brand !== 'studio_x') {
@@ -363,11 +360,7 @@ var BookingRepository = (function () {
     if (Number(input.durationMinutes) !== BookingPricing.EVENT_BASE_PLAN_HOURS * 60) {
       return { ok: false, error: { code: 'PLAN_DURATION_INVALID', message: BookingPricing.EVENT_BASE_PLAN_LABEL + 'は6時間固定です。' } };
     }
-    var eventDates = EventPlanRepository.listEligibleDates(plan);
-    if (eventDates.indexOf(input.date) === -1) {
-      return { ok: false, error: { code: 'EVENT_PLAN_DATE_NOT_ELIGIBLE', message: BookingPricing.EVENT_BASE_PLAN_LABEL + 'は対象のイベント開催日のみご利用いただけます。' } };
-    }
-    return { ok: true, plan: plan, eventDates: eventDates };
+    return { ok: true, plan: plan };
   }
 
   /*

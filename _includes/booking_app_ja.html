@@ -80,16 +80,15 @@
     </div>
 
 {% if include.brand == "studio_x" %}
-    <!-- 大須コスプレイベント開催日限定の貸切ベースプラン（Issue #488）。対象日が1日以上あるときだけJS側が表示する
-         （GASのeventPlan）。選ぶと利用時間が6時間に固定される。通常の時間貸し料金とは別の独立プランで、
-         対象日・人数・時間の可否は予約作成時にサーバー側でも必ず判定する。 -->
-    <fieldset class="ba-fieldset" id="ba-event-plan-field" hidden>
-      <legend>大須コスプレイベント開催日限定プラン（任意）</legend>
+    <!-- 6時間貸切ベースプラン（Issue #488 / #492）。常設で、Studio Xの予約フォームに常時表示する。
+         選ぶと利用時間が6時間に固定される。通常の時間貸し料金とは別の独立プランで、
+         利用者が明示的に選んだときだけ適用され、人数・時間の可否は予約作成時にサーバー側でも必ず判定する。 -->
+    <fieldset class="ba-fieldset" id="ba-event-plan-field">
+      <legend>6時間貸切ベースプラン（任意）</legend>
       <div class="ba-choices">
-        <label class="ba-choice"><input type="checkbox" id="ba-plan-event" value="osu_cosplay_base_6h"> <span>貸切ベースプラン（6時間 6,000円／1室・最大4名）</span></label>
+        <label class="ba-choice"><input type="checkbox" id="ba-plan-event" value="osu_cosplay_base_6h"> <span>6時間 6,000円／1室・最大4名</span></label>
       </div>
-      <p class="ba-field-help">着替え・荷物置き・休憩のためのグループ専用ベースです。<strong>有人クロークではありません。</strong>荷物・貴重品はお部屋の中でご自身で管理してください（スタッフの常駐・お預かりはありません）。選べる日: <span id="ba-event-plan-dates"></span>。選ぶと利用時間は6時間に固定され、会員区分の入力は不要です。<a href="{{ '/studio-x/#osu-base-plan' | relative_url }}" target="_blank" rel="noopener">プランの詳細を見る</a></p>
-      <p class="ba-field-error" id="ba-event-plan-error" hidden></p>
+      <p class="ba-field-help">着替え・荷物置き・休憩など、長時間の拠点利用向けです。利用時間内は再入室できます。<strong>有人クロークではありません。</strong>荷物・貴重品はお部屋の中でご自身で管理してください（スタッフの常駐・お預かりはありません）。選ぶと利用時間は6時間に固定されます。通常の時間貸し料金には自動で適用されません。撮影設備・有料オプションを使った本格的な撮影は、プランを選ばず通常の予約をご利用ください。<a href="{{ '/studio-x/#osu-base-plan' | relative_url }}" target="_blank" rel="noopener">プランの詳細を見る</a></p>
     </fieldset>
 {% endif %}
 
@@ -235,8 +234,8 @@
       </div>
     </div>
 
-    <!-- 会員区分（Issue #342。Issue #470でStudio Xの会員料金は2026/12/1から廃止）。
-         snb、およびStudio Xは2026/11/30までJS側が表示する（brandShowsMemberOption）。SNB mensは常に会員相当の
+    <!-- 会員区分（Issue #342。Issue #470 / #492でStudio Xの会員料金は2026/10/26から廃止）。
+         snb、およびStudio Xは2026/10/25までJS側が表示する（brandShowsMemberOption）。SNB mensは常に会員相当の
          価格が適用されるため、この項目自体を表示しない。単一checkboxでは「非会員と回答した」
          のか「未回答」なのか区別できないため「一般 / 会員」のラジオにし、初期は未選択。
          サーバーへ送るisMember・estimatePriceの仕様は変更しない。実際の会員資格の確認は

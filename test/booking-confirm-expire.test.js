@@ -1078,22 +1078,22 @@ test('onOpen: container-boundスクリプトの単純トリガーとしてaddBoo
 
 test('updateBookingPrice: PENDINGの予約は金額を修正でき、priceAmountは変えずpriceOverrideAmount/priceOverrideAtへ記録する', function () {
   var ctx = setup();
-  /* 一般・平日3時間（6,000円）を検証する。60日後の既定日は曜日が変わるため固定する。 */
+  /* 一般・平日3時間（Issue #492以降のStudio X新料金3,600円）を検証する。60日後の既定日は曜日が変わるため固定する。 */
   var bookingId = createPending(ctx, {
     brand: 'studio_x', date: '2026-11-27', durationMinutes: 180
   }, new Date('2026-11-01T00:00:00+09:00'));
   var before = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
   assert.strictEqual(before.priceTier, 'GENERAL');
   assert.strictEqual(before.priceDayType, 'WEEKDAY');
-  assert.strictEqual(before.priceAmount, 6000);
+  assert.strictEqual(before.priceAmount, 3600);
 
   var result = ctx.sandbox.BookingRepository.updateBookingPrice(bookingId, 5000);
   assert.strictEqual(result.success, true);
-  assert.strictEqual(result.priceAmount, 6000, '自動計算値（修正前）を参考情報として返す');
+  assert.strictEqual(result.priceAmount, 3600, '自動計算値（修正前）を参考情報として返す');
   assert.strictEqual(result.priceOverrideAmount, 5000);
 
   var after = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
-  assert.strictEqual(after.priceAmount, 6000, '自動計算値そのものは変更しない');
+  assert.strictEqual(after.priceAmount, 3600, '自動計算値そのものは変更しない');
   assert.strictEqual(after.priceOverrideAmount, 5000);
   assert.ok(after.priceOverrideAt, 'priceOverrideAtが記録されるべき');
   assert.strictEqual(ctx.sandbox.Booking.getEffectivePriceAmount(after), 5000, '実効金額は修正後の値になるべき');

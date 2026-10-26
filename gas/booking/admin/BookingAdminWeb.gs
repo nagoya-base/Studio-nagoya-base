@@ -238,7 +238,7 @@ function getAdminBookings() {
       refundDecisionRequired: paymentSummary.refundDecisionRequired,
       paymentRecoveryRequired: paymentSummary.paymentRecoveryRequired
     };
-    /* Issue #488: イベント開催日限定プランの予約だけプラン名を付ける（通常予約はキー自体を付けず従来の応答のまま）。 */
+    /* Issue #488 / #492: 貸切ベースプランの予約だけプラン名を付ける（通常予約はキー自体を付けず従来の応答のまま）。 */
     if (BookingPricing.isEventPlan(record.planCode)) {
       listItem.planCode = record.planCode;
       listItem.planLabel = BookingPricing.planLabel(record.planCode);
@@ -545,7 +545,7 @@ function getAdminBookingDetail(bookingId) {
       options: buildAdminOptionSummary_(bookingId, timezone, buildAdminBookingSchedule_(record, timezone))
     }
   };
-  /* Issue #488: イベント開催日限定プランの予約だけプラン名を付ける（通常予約はキー自体を付けず従来の応答のまま）。 */
+  /* Issue #488 / #492: 貸切ベースプランの予約だけプラン名を付ける（通常予約はキー自体を付けず従来の応答のまま）。 */
   if (BookingPricing.isEventPlan(record.planCode)) {
     detailResult.booking.planCode = record.planCode;
     detailResult.booking.planLabel = BookingPricing.planLabel(record.planCode);

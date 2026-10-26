@@ -133,10 +133,7 @@
     memberField: document.getElementById('ba-member-field'),
     benefitsField: document.getElementById('ba-benefits-field'),
     planPair: document.getElementById('ba-plan-pair'),
-    eventPlanField: document.getElementById('ba-event-plan-field'),
     planEvent: document.getElementById('ba-plan-event'),
-    eventPlanDates: document.getElementById('ba-event-plan-dates'),
-    eventPlanError: document.getElementById('ba-event-plan-error'),
     shower: document.getElementById('ba-shower'),
     benefitsError: document.getElementById('ba-benefits-error'),
     memberError: document.getElementById('ba-member-error'),
@@ -260,11 +257,10 @@
   /* 会員限定の特典（Issue #478。SNB / SNB mens、2026/12/1以降の表示）。表示制御のみで、可否はサーバーが判定する。 */
   var benefitsVisible = Logic.brandShowsMemberBenefits(brand);
   if (els.benefitsField) els.benefitsField.hidden = !benefitsVisible;
-  /* 大須コスプレイベント開催日限定の貸切ベースプラン（Issue #488。Studio Xのみ）。対象日が1日以上あるときだけ
-     欄を出す（eventPlanInfoはGASのeventPlanから取得。表示制御のみで、可否はサーバーが全入口で判定する）。 */
-  var eventPlanInfo = null;
+  /* 貸切ベースプラン（Issue #488 / #492。Studio Xのみ・常設）。欄は常に表示し、利用者が明示的に選んだときだけ
+     プランを送る。表示制御のみで、可否（ブランド・人数・6時間固定）はサーバーが全入口で判定する。 */
   function eventPlanSelected_() {
-    return !!eventPlanInfo && !!els.planEvent && els.planEvent.checked;
+    return !!els.planEvent && els.planEvent.checked;
   }
   function selectedPlan_() {
     if (eventPlanSelected_()) return Logic.EVENT_BASE_PLAN_CODE;
@@ -915,26 +911,10 @@
       }
     }
     if (els.memberField) els.memberField.hidden = selected || !Logic.brandShowsMemberOption(brand);
-    setFieldError_(null, els.eventPlanError, '');
     handleCalendarPrereqChange_();
     refreshPriceEstimate_();
   }
   if (els.planEvent) els.planEvent.addEventListener('change', applyEventPlanState_);
-
-  function loadEventPlan_() {
-    if (!els.eventPlanField || !API_BASE_URL || brand !== 'studio_x') return;
-    fetch(API_BASE_URL + (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') + 'action=eventPlan&brand=studio_x', { method: 'GET' })
-      .then(function (response) { return response.json(); })
-      .then(function (body) {
-        var plan = body && body.success === true ? body.plan : null;
-        if (!plan || !Array.isArray(plan.dates) || !plan.dates.length) return;
-        eventPlanInfo = plan;
-        if (els.eventPlanDates) els.eventPlanDates.textContent = plan.dates.map(Logic.formatEventPlanDate).join('、');
-        els.eventPlanField.hidden = false;
-      })
-      .catch(function () { /* 任意の案内欄。取得できなければ表示せず、通常の予約導線のまま。 */ });
-  }
-  loadEventPlan_();
 
   if (els.duration) {
     els.duration.addEventListener('input', handleCalendarPrereqChange_);
@@ -1014,13 +994,6 @@
     setFieldError_(els.duration, els.durationError, durationValid ? '' : UI_TEXT.durationRequired);
     setFieldError_(null, els.customerTypeError, customerType ? '' : UI_TEXT.customerTypeRequired);
     if (!dateValue || !durationValid || !customerType) { resetStartTimeArea_(); return; }
-    /* Issue #488: 貸切ベースプランは対象のイベント開催日のみ。UI側の早期ガードで、最終判定はサーバー。 */
-    if (eventPlanSelected_() && !Logic.isEventPlanDate(dateValue, eventPlanInfo.dates)) {
-      setFieldError_(null, els.eventPlanError, Logic.messageForErrorCode('EVENT_PLAN_DATE_NOT_ELIGIBLE', locale));
-      resetStartTimeArea_();
-      return;
-    }
-    setFieldError_(null, els.eventPlanError, '');
 
     state.date = dateValue;
     state.durationMinutes = durationMinutes;
@@ -1373,10 +1346,10 @@
     els.confirmBrand.textContent = brandMeta.displayName;
     els.confirmCustomerType.textContent = Logic.customerTypeLabel(state.customerType, locale);
     els.confirmDate.textContent = state.date;
-    /* Issue #488: 貸切ベースプランを選んだときだけ、プラン名と責任範囲を確認画面に出す。 */
+    /* Issue #488 / #492: 貸切ベースプランを選んだときだけ、プラン名と責任範囲を確認画面に出す。 */
     if (els.confirmPlanRow) {
       els.confirmPlanRow.hidden = !eventPlanSelected_();
-      if (els.confirmPlan) els.confirmPlan.textContent = eventPlanSelected_() ? eventPlanInfo.label : '';
+      if (els.confirmPlan) els.confirmPlan.textContent = eventPlanSelected_() ? Logic.EVENT_BASE_PLAN_LABEL : '';
     }
     els.confirmTime.textContent = UI_TEXT.confirmTime(state.startTime, endTime, state.durationMinutes / 60);
     /*

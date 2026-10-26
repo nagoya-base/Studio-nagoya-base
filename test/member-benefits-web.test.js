@@ -188,7 +188,7 @@ test('SNB / mens 会員ページ: ペアパック・シャワー・既存有料�
 test('Studio X 会員ページ: 有料オプション全般が会員限定・無料セルフは非会員でも可・スタッフ料金は正本どおり', function () {
   var html = read(PAGES.studio_x.file);
   var t = textOf(html);
-  assert.ok(t.indexOf('2026年12月1日以降に作成するご予約の部屋料金は、会員・非会員の区別なく同額です') !== -1);
+  assert.ok(t.indexOf('2026年10月26日以降に作成するご予約の部屋料金は、会員・非会員の区別なく同額です') !== -1);
   assert.ok(t.indexOf('会員資格は、有料オプションを利用するための資格です') !== -1);
   assert.ok(t.indexOf('有料オプションは、すべて会員限定') !== -1);
   assert.ok(t.indexOf('有料の機材レンタルすべて') === -1 || true);

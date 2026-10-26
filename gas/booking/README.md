@@ -1,37 +1,30 @@
 
-## Issue #488: 大須コスプレイベント開催日限定の貸切ベースプラン（Studio X・実装レビュー中）
+## Issue #492: Studio X新料金の即時適用（2026/10/26）と6時間貸切ベースプランの常設化
 
-Issue #488の本文を正本として実装した。Studio X公式ホームページ向けの**独立プラン**（プラン識別子`osu_cosplay_base_6h`、名称「大須コスプレイベント開催日限定｜貸切ベースプラン」）。
-有人クロークではなく、1室貸切・再入室自由の「着替え・荷物置き・休憩拠点」。**通常のStudio X料金表（`BookingPricing.gs`の`RATE_TABLES_`）・SNB / SNB mens・有料オプション（機材・スタッフ設営）・Stripe / 会員制度には手を入れていない。**
+Issue #492の本文を正本として、#486（Studio X新料金）と#488（貸切ベースプラン）のうち次の2点を変更した。#488の「イベント開催日限定」運用は廃止済み。
 
-| 要件 | 実装 |
-| --- | --- |
-| 6時間6,000円/1室、最大4名同一料金（4名なら1名1,500円相当） | `BookingPricing.gs`の`EVENT_BASE_PLAN_`が唯一の正本。6時間ちょうど・Studio Xのみ・利用日が対象日のときだけ6,000円を返す。会員区分・料金世代・曜日区分は無関係（`tier`は`GENERAL`、`isMember`は`false`。会員特典ではない） |
-| 対象日は管理者が都度設定（特定イベント名・日付のハードコード禁止） | 共有Spreadsheetの`EventPlanDates`シート（列: `planCode, date, note`）。`planCode=osu_cosplay_base_6h`の行の`date`（`YYYY-MM-DD`）が販売日。`EventPlanRepository.gs`が読み取る（シート未作成なら初回参照時にヘッダー付きで自動作成）。**Script Propertiesではなくシートにしたのは、Booking Web AppとBooking Adminが別プロジェクトで、プロパティだと二重設定になり食い違うため** |
-| 通常料金を変更しない・自動適用しない | プラン指定（`plan: "osu_cosplay_base_6h"`）がある予約だけがプラン料金。指定なしの予約は対象日でも従来どおり通常料金（`planCode`は空） |
-| 対象外日は直接APIでも拒否 | `BookingPricing.computeBookingPrice`が`eventDates`（台帳の対象日）に利用日を含まなければ`EVENT_PLAN_DATE_NOT_ELIGIBLE`で拒否する**唯一の関門**。`eventDates`を渡し忘れてもfail-closed。`createBooking`・`estimatePrice`・日程変更の全入口がこの関門を通る。台帳が読めない・空・日付形式不正の行は「対象日なし」（通常料金へ倒さない） |
-| 人数・時間・ブランド | `createBooking`が`EVENT_PLAN_PEOPLE_EXCEEDED`（5名以上・要相談）／`PLAN_DURATION_INVALID`（6時間以外）／`PLAN_NOT_AVAILABLE`（SNB・mens）で拒否。Calendar・Sheetsへ何も書く前に判定 |
-| 通常予約との二重販売防止 | 別在庫を持たず、通常予約と**同じCalendarの6時間枠**として確保する。`createBooking`のLock内でCalendarを再取得して競合判定するため、重なる通常予約・別のプラン予約は`SLOT_CONFLICT`。先に通常予約があれば逆も同じ（テストで双方向を検証）。スペースマーケット等の外部書き込みとはLockを共有できない点は従来と同じ |
-| 通常料金かプランかの識別 | Bookings台帳の`planCode`（#478で追加済みの列を共用）、Calendarイベントの`planCode`タグ、Booking Adminの一覧カード・詳細（`planLabel`。通常予約にはキー自体を付けない）、仮予約受付メール（プラン名・6,000円・有人クロークではない旨）、管理者通知メール |
-| 日程変更 | `BookingReschedule.eventPlanRejection_`: プラン付き予約は**対象日以外・6時間以外への変更を`EVENT_PLAN_DATE_NOT_ELIGIBLE`／`PLAN_DURATION_INVALID`で拒否**（プレビューも確定も。料金の手動入力でも回避できない）。管理者は対象日へ変更するか、予約を取り消して通常料金で取り直す（既存の取消・返金手順）。対象日内の変更は6,000円・プランを保持。プランを持たない通常予約の日程変更は従来どおり |
-| 公式サイト | `/studio-x/#osu-base-plan`（プラン説明・注意・FAQ・JSON-LD `Offer`/`FAQPage`）、`/studio-x/booking/`（導線＋予約フォームの「大須コスプレイベント開催日限定プラン」欄。対象日が1日以上あるときだけ表示し、選ぶと利用時間を6時間に固定）。対象日は`doGet?action=eventPlan&brand=studio_x`（今日以降の対象日のみ・PIIなし）で取得し、画面に日付を持たない |
+### 1. Studio X新料金を2026/10/26から適用（料金世代の境界をブランド別に）
 
-### 運用（対象日の設定）
+- `BookingPricing.generationAt(createdAt, brand)`: **Studio Xは2026/10/26 0:00 JST**、SNB / mensは従来どおり2026/12/1 0:00 JSTが V1→V2 の境界。予約作成時刻で世代を決めて`priceGeneration`へ保存し、日程変更でも保存済みの世代で再見積りする（既存予約は旧料金を維持）。
+- 新料金（Studio X V2・会員／非会員共通）: 平日1,200円/時・土日祝1,500円/時、延長+1時間も同額（`STUDIO_X_V2_SELF_RATES_`は#486のまま）。2026/10/25までに作成済みの予約はV1（旧料金）。
+- フロント: Studio Xの会員区分欄の表示終了も2026/10/26（`brandShowsMemberOption`）。表示制御のみで、料金はサーバーが予約作成時刻で判定する。
+- 変更していないもの: SNB / mens料金・料金世代、SNB MEMBER制度、会員限定特典（ペアパック・シャワー・有料機材/スタッフ設営の会員限定。いずれも2026/12/1のまま）、有料オプション料金、Stripe / `STRIPE_CHECKOUT_ENABLED`。
 
-1. Booking Webアプリ・Booking Adminが共有するSpreadsheetの`EventPlanDates`シートに1日1行で追加する: `planCode`=`osu_cosplay_base_6h`、`date`=`2026-11-03`のような`YYYY-MM-DD`、`note`=任意（イベント名メモ）。行を消せばその日の販売は止まる。
-2. 反映は即時（キャッシュなし）。既に取得済みの予約は対象日を外しても残る（日程変更時のみ再判定）。
-3. 荷物・貴重品は利用者自身で管理（有人クロークではない）。入退室・キーボックスは既存のStudio X運用、超過・原状復帰も既存ルール。責任範囲は既存利用規約（盗難・紛失の免責）を適用。
+### 2. 6時間貸切ベースプランの常設化
+
+- 名称「**Studio X｜6時間貸切ベースプラン**」、6時間固定・6,000円/1室・最大4名同一料金。プラン識別子`osu_cosplay_base_6h`は既存予約・台帳との互換性のため維持（`Bookings.planCode`・Calendarの`planCode`タグ）。
+- **廃止**: `EventPlanDates`シート、`EventPlanRepository.gs`（配布対象からも除外）、`action=eventPlan`（`handleEventPlan_`）、`EVENT_PLAN_DATE_NOT_ELIGIBLE`、`computeBookingPrice`の`eventDates`入力、日程変更時の対象日チェック、フロントの対象日取得・判定。
+- 利用者が予約フォーム（`/studio-x/booking/`）で明示的にプランを選んだときだけ適用（通常予約へ自動適用しない）。Studio Xの予約可能な日ならいつでも選べる。
+- 残した検証: Studio Xのみ（`PLAN_NOT_AVAILABLE`）、6時間固定（`PLAN_DURATION_INVALID`）、最大4名（`EVENT_PLAN_PEOPLE_EXCEEDED`）。通常予約と同じCalendarの6時間枠で確保するため、二重販売は`SLOT_CONFLICT`で防止される。
+- 日程変更: `BookingReschedule.eventPlanRejection_`は6時間以外への変更のみ拒否する。日付の条件は無く、6時間・6,000円・プランを保持して変更できる。通常予約への変換は未対応のため、通常料金に切り替える場合は予約を取り消して取り直す。
+- 識別: Booking Admin（一覧・詳細の`planLabel`）、確認画面、予約メール、管理者通知、Calendarタグ、Bookings台帳の`planCode`。
+- 公式サイト: `/studio-x/#osu-base-plan`と`/studio-x/booking/`のプラン説明・FAQ・JSON-LDを常設仕様へ更新（イベント日限定の表現は削除。有人クロークではない・荷物貴重品は自己管理・再入室可は維持）。
 
 ### デプロイ・注意
 
-- 追加ファイル: `EventPlanRepository.gs`（Booking Web App・Booking Admin。Booking Webhookには**配布しない**）。更新: `BookingPricing.gs`・`BookingRepository.gs`・`CalendarRepository.gs`・`FeeCalculator.gs`・`BookingMailTemplates.gs`・`AdminNotifier.gs`・`Code.gs`・`BookingReschedule.gs`・`BookingAdminWeb.gs`、GitHub Pages側`admin/booking/booking-admin.js`/`.css`。
-- **反映順: Booking Adminを先に**（日程変更で対象日・6時間の拒否が効く状態にしてから、Booking Web Appでプラン予約を受け付ける）。既存の`/exec` URL・Deploymentは作り直さず、既存Deploymentを更新する。PRブランチからの本番デプロイは行わない。
-- Bookings台帳の`planCode`列は#478で追加済みの列を使う。未追記の本番シートは、ヘッダー行末尾（`membershipStatus`の右隣）へ`planCode`を追記してから反映する。
+- Booking Web App・Booking Adminの両方に`BookingPricing.gs`・`BookingRepository.gs`・`FeeCalculator.gs`・`BookingReschedule.gs`（Adminのみ）・`Code.gs`（Web Appのみ）ほか更新ファイルを反映する。`EventPlanRepository.gs`はプロジェクトから削除する。**反映順: Booking Adminを先に**。既存の`/exec` URL・Deploymentは作り直さず、既存Deploymentを更新する。PRブランチからの本番デプロイは行わない。
+- 既存の`EventPlanDates`シートは不要になる（残っていても参照されない。削除は任意）。
 - `STRIPE_CHECKOUT_ENABLED`・Stripe商品・会員制度は変更していない。
-
-### テスト
-
-`node --test test/booking-event-plan.test.js`（料金・対象日強制・人数/時間/ブランド・二重販売防止・見積り/案内API・メール/Admin識別・日程変更・掲載内容・配布ファイル）。Stripe・Calendar・Sheets・Mailはすべてスタブで、本番GAS・Stripeには接続しない。`cloud-run/stripe-webhook-relay`のテストは`stripe`パッケージ未導入の環境では本変更と無関係に失敗する（mainでも同じ）。
 
 ## Issue #423: 予約オプション（Studio X限定・実装レビュー中）
 
@@ -3164,7 +3157,6 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `EquipmentCatalog.gs`（Issue #423追加要件。Studio Xの機材料金・数量・在庫。`_data/studio_x_equipment.json`から`scripts/sync-studio-x-equipment.js`で自動生成。直接編集しない） | ✓ | ✓ | – | `gas/booking/shared/EquipmentCatalog.gs` |
 | `BookingOptions.gs`（Issue #423。予約オプションのカタログ・料金・状態遷移・定型案内の純粋ロジック） | ✓ | ✓ | – | `gas/booking/shared/BookingOptions.gs` |
 | `OptionOrderRepository.gs`（Issue #423。`OptionOrders`・`OptionEligibility`シートの台帳） | ✓ | ✓ | – | `gas/booking/shared/OptionOrderRepository.gs` |
-| `EventPlanRepository.gs`（Issue #488。`EventPlanDates`シートの、イベント開催日限定プランの対象日台帳） | ✓ | ✓ | – | `gas/booking/shared/EventPlanRepository.gs` |
 | `OptionMailTemplates.gs`（Issue #423。オプションの受付・承認・不承認・確定メール文面） | ✓ | ✓ | – | `gas/booking/shared/OptionMailTemplates.gs` |
 | `OptionOrderService.gs`（Issue #423。申込・本人確認・追加Checkout・承認・Webhook反映の業務フロー） | ✓ | ✓ | – | `gas/booking/shared/OptionOrderService.gs` |
 | `MembershipRules.gs`（Issue #471。SNB MEMBERの月・メール正規化・Stripe請求の解釈などの純粋ロジック） | ✓ | ✓ | – | `gas/booking/shared/MembershipRules.gs` |

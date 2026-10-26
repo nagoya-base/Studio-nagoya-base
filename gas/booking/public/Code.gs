@@ -38,9 +38,6 @@ function doGet(e) {
   if (params.action === 'optionCatalog') {
     return jsonOutput_(handleOptionCatalog_(params));
   }
-  if (params.action === 'eventPlan') {
-    return jsonOutput_(handleEventPlan_(params));
-  }
   return jsonOutput_(handleGetAvailability_(params));
 }
 
@@ -451,9 +448,7 @@ function handleEstimatePrice_(params) {
     date: params.date,
     durationMinutes: durationMinutes,
     isMember: parseBooleanParam_(params.isMember),
-    generation: BookingPricing.generationAt(new Date()),
-    /* Issue #488: イベント限定プランの見積りは、対象日台帳に利用日がある場合のみ成立する（予約作成時と同じ判定）。 */
-    eventDates: BookingPricing.isEventPlan(BookingPricing.normalizePlan(params.plan)) ? EventPlanRepository.listEligibleDates(params.plan) : undefined,
+    generation: BookingPricing.generationAt(new Date(), params.brand),
     /* Issue #478: 2名ペアパックの見積り。見積りAPIでは会員台帳を一切照会しない（会員の有無を
        探る口にしない）。資格の確認は予約作成時のサーバー側だけで行う。 */
     plan: params.plan
@@ -468,33 +463,6 @@ function handleEstimatePrice_(params) {
     date: params.date,
     durationMinutes: durationMinutes,
     price: priceResult.price
-  };
-}
-
-/*
- * イベント開催日限定プラン（Issue #488）の案内用データ。読み取り専用・PIIなし。
- * 画面が「どの日にこのプランを選べるか」を表示するためだけに使い、販売可否の最終判定は
- * createBooking / estimatePrice / 日程変更のサーバー側が必ず再度行う（ここの応答は信用されない）。
- * 今日以降の対象日だけを返す。対象日台帳が読めない・空なら dates は空配列（＝販売なし）。
- */
-function handleEventPlan_(params) {
-  var plan = BookingPricing.PLAN.OSU_COSPLAY_BASE_6H;
-  if (params.brand !== 'studio_x') {
-    return { success: false, error: { code: 'INVALID_BRAND', message: 'このブランドではご利用いただけないプランです。' } };
-  }
-  var config = BookingConfig.getAvailabilityConfig();
-  var todayString = BookingAvailability.formatDateInTimezone(new Date(), config.timezone);
-  var dates = EventPlanRepository.listEligibleDates(plan).filter(function (date) { return date >= todayString; });
-  return {
-    success: true,
-    plan: {
-      code: plan,
-      label: BookingPricing.planLabel(plan),
-      durationMinutes: BookingPricing.EVENT_BASE_PLAN_HOURS * 60,
-      amount: BookingPricing.EVENT_BASE_PLAN_AMOUNT,
-      maxPeople: BookingPricing.EVENT_BASE_PLAN_MAX_PEOPLE,
-      dates: dates
-    }
   };
 }
 
