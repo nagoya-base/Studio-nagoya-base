@@ -264,7 +264,7 @@ test('各トップから対応する会員ページへの導線がある（SNB�
 
 test('規約・特商法・会員条件に、新料金（5,000/6,000/1,000円）・利用日ルール・共通会員・適用開始日が載っている', function () {
   var terms = textOf(read('_includes/membership_terms_ja.html'));
-  ['2026年12月1日以降に作成するご予約・お申し込みから', '2名ペアパック', '平日5,000円／土日祝6,000円', 'シャワー（1予約につき1回1,000円', '他の割引・優待と併用できず',
+  ['ご利用日が2026年12月1日以降のご予約からご利用いただけます', '2026年12月1日以降に作成するご予約・お申し込みから', '2名ペアパック', '平日5,000円／土日祝6,000円', 'シャワー（1予約につき1回1,000円', '他の割引・優待と併用できず',
     'その期間の特典は、更新の決済が成功してから確定できます', '猶予期間はありません',
     '変更先の利用日の会員資格を改めて確認', 'Studio Nagoya Base・SNB mens・Studio Xで共通の1つのSNB MEMBER'].forEach(function (w) {
     assert.ok(terms.indexOf(w) !== -1, '会員条件に「' + w + '」');
@@ -506,4 +506,18 @@ test('Issue #539: 予約フォームはペアパック欄を利用日で同期�
   assert.match(app, /if \(!pairVisible && els\.planPair\) els\.planPair\.checked = false;/, '出せなくなったら選択を外す');
   var tpl = read('_includes/booking_app_ja.html');
   assert.ok(tpl.indexOf('id="ba-plan-pair"') > tpl.indexOf('{% if include.brand == "snb" or include.brand == "mens" %}'));
+});
+
+test('Issue #539: 公開文言は、ペアパック=利用日基準 / シャワー等=作成日基準 に分けて一致している（規約・特商法・特典ページ）', function () {
+  var pairRule = 'ご利用日が2026年12月1日以降のご予約から';
+  var showerRule = '2026年12月1日以降に作成するご予約・お申し込みから';
+  var terms = textOf(read('_includes/membership_terms_ja.html'));
+  var legal = textOf(read('_includes/legal_ja.html'));
+  var benefits = textOf(read('_includes/membership_benefits_ja.html'));
+  [terms, legal].forEach(function (t) {
+    assert.ok(t.indexOf(pairRule) !== -1 && t.indexOf(showerRule) !== -1);
+  });
+  assert.ok(legal.indexOf('いずれも2026年12月1日以降に作成するご予約') === -1, '旧「いずれも作成日基準」の文言を残さない');
+  assert.ok(benefits.indexOf('2名ペアパックはご利用日が2026年12月1日以降のご予約から') !== -1);
+  assert.ok(benefits.indexOf(showerRule) !== -1);
 });
