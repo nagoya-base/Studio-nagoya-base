@@ -43,6 +43,7 @@
       customerTypeRequired: '利用区分を選択してください。',
       memberRequired: '会員区分を選択してください。',
       startTimeSummary: function (date, hours) { return date + '　' + hours + '時間利用'; },
+      startTimeReselect: function (time) { return '※' + time + '開始は、変更後の利用時間では空きがありません。開始時刻を選び直してください。'; },
       searchingStartTimes: '予約できる時間を検索しています…',
       retryCheck: 'もう一度確認する',
       confirmTime: function (startTime, endTime, hours) { return startTime + '〜' + endTime + '（' + hours + '時間）'; },
@@ -64,6 +65,7 @@
       customerTypeRequired: 'Please select a customer type.',
       memberRequired: 'Please select a membership type.',
       startTimeSummary: function (date, hours) { return date + ' · ' + hours + (hours === 1 ? ' hour' : ' hours'); },
+      startTimeReselect: function (time) { return '* ' + time + ' is not available for the new duration. Please choose a start time again.'; },
       searchingStartTimes: 'Searching available start times…',
       retryCheck: 'Check again',
       confirmTime: function (startTime, endTime, hours) { return startTime + '–' + endTime + ' (' + hours + (hours === 1 ? ' hour)' : ' hours)'); },
@@ -536,6 +538,9 @@
   var calendarSelectionStale_ = false;
   /* Issue #546: 選択中の日付が31〜90日先の会員先行枠か（月間APIのmemberAdvanceの印。日数はフロントで再計算しない）。 */
   var selectedDateMemberAdvance_ = false;
+  /* Issue #546追記: 利用時間などの条件変更では、選択済みの開始時刻を無条件に捨てない。新条件で空き一覧を取り直し、
+     同じ日付・同じ開始時刻が一覧にあれば再選択状態に戻す（無ければ選び直しを案内）。日付を選び直したら破棄する。 */
+  var preservedStart_ = null; /* { date, time } | null */
 
   /*
    * resumeStartTimesAfterRecheck_: 開始時刻エリアを表示していた状態で条件（利用時間・利用区分・
@@ -608,6 +613,10 @@
     /* 条件（利用時間・利用区分・希望時間帯）が変わると、表示中の開始時刻一覧は旧条件の
        ものになる。古い一覧を確定値のように残さず、進行中のfetchの応答も破棄する（#365/#367）。 */
     if (els.startTimeArea && !els.startTimeArea.hidden) resumeStartTimesAfterRecheck_ = true;
+    /* 連続して条件が変わっても、最初に選んでいた開始時刻を失わない（2回目の呼び出しではstate.startTimeは既にnull）。 */
+    if (state.date && state.startTime && els.date && els.date.value === state.date) {
+      preservedStart_ = { date: state.date, time: state.startTime };
+    }
     resetStartTimeArea_();
     if (els.date && els.date.value) calendarSelectionStale_ = true;
     if (!isCalendarReady_()) {
@@ -815,6 +824,7 @@
         if (selectable) {
           button.addEventListener('click', function () {
             els.date.value = cell.dateValue;
+            if (preservedStart_ && preservedStart_.date !== cell.dateValue) preservedStart_ = null;
             selectedDateMemberAdvance_ = memberAdvance;
             setFieldError_(els.date, els.dateError, '');
             hideGlobalError();
@@ -1039,6 +1049,7 @@
     if (els.date) els.date.value = '';
     if (els.calendarSelected) els.calendarSelected.textContent = '';
     selectedDateMemberAdvance_ = false;
+    preservedStart_ = null;
     calendarSelectionStale_ = false;
     resumeStartTimesAfterRecheck_ = false;
     state.date = '';
@@ -1424,6 +1435,8 @@
 
   function renderStartTimes(times) {
     els.startTimeGrid.innerHTML = '';
+    var preserved = preservedStart_;
+    preservedStart_ = null;
     if (!times.length) {
       els.startTimeEmpty.hidden = false;
       els.startTimeGrid.hidden = true;
@@ -1431,13 +1444,14 @@
     }
     els.startTimeEmpty.hidden = true;
     els.startTimeGrid.hidden = false;
+    var restored = false;
     times.forEach(function (time) {
       var button = document.createElement('button');
       button.type = 'button';
       button.className = 'ba-time-slot';
       button.textContent = time;
       button.setAttribute('aria-pressed', 'false');
-      button.addEventListener('click', function () {
+      function select() {
         state.startTime = time;
         renderPriceTimeRange_();
         els.startTimeGrid.querySelectorAll('.ba-time-slot').forEach(function (el) {
@@ -1445,9 +1459,15 @@
         });
         setStepDisabled_(els.step2Next, false);
         hideGlobalError();
-      });
+      }
+      button.addEventListener('click', select);
       els.startTimeGrid.appendChild(button);
+      /* 条件変更前と同じ日付・同じ開始時刻が新条件でも空いていれば、そのまま選択状態に戻す。 */
+      if (preserved && preserved.date === state.date && preserved.time === time) { select(); restored = true; }
     });
+    if (preserved && preserved.date === state.date && !restored && els.startTimeSummary) {
+      els.startTimeSummary.textContent += ' ' + UI_TEXT.startTimeReselect(preserved.time);
+    }
   }
 
   if (els.step2Next) {

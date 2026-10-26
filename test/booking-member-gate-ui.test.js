@@ -138,7 +138,7 @@ function setup(opts) {
   elements['booking-app'] = root;
 
   var durationEl = createElement('ba-duration');
-  durationEl.value = '3';
+  durationEl.value = String(opts.duration || 3);
   elements['ba-duration'] = durationEl;
   /* 会員限定の特典はSNB / mensのテンプレートだけにある。各checkboxは親（label）要素を持つ。 */
   if (brand === 'snb' || brand === 'mens') {
@@ -173,7 +173,8 @@ function setup(opts) {
     } else if (url.indexOf('action=optionCatalog') !== -1) {
       body = { success: true, catalog: { enabled: true, showerOnly: true, shower: { code: 'SHOWER', priceJpy: 1000 } } };
     } else {
-      body = { success: true, bookableStartTimes: ['10:00', '10:15'] };
+      var minutes = Number((/[?&]durationMinutes=(\d+)/.exec(url) || [])[1]);
+      body = { success: true, bookableStartTimes: opts.availability ? opts.availability(minutes) : ['10:00', '10:15'] };
     }
     return Promise.resolve({ json: function () { return Promise.resolve(body); } });
   }
@@ -187,6 +188,10 @@ function setup(opts) {
     fetchCalls: fetchCalls,
     Logic: windowStub.BookingLogic,
     setMember: function (value) { selectedMemberStatus = value; checkedValue = !!value; memberRadio._listeners.change(); },
+    setDuration: function (hours) { durationEl.value = String(hours); durationEl._listeners.input(); },
+    startTimeButton: function (time) {
+      return (elements['ba-start-time-grid'].children || []).filter(function (b) { return b.textContent === time; })[0] || null;
+    },
     setUnlock: function (checked) { elements['ba-member-unlock'].checked = checked; elements['ba-member-unlock']._listeners.change(); },
     setBenefit: function (id, checked) { elements[id].checked = checked; elements[id]._listeners.change(); },
     gridBody: function () { return elements['ba-calendar-grid-body']; },
@@ -469,4 +474,85 @@ test('最終判定はサーバーが正本: ADVANCE_BOOKING_MEMBER_ONLY等のサ
   assert.ok(/ADVANCE_BOOKING_MEMBER_ONLY/.test(logic), 'サーバーの拒否コードの案内文言は維持');
   assert.ok(!/memberUnlock[^;\n]*isMember|isMember[^;\n]*memberUnlock/.test(app), 'UI解除をisMemberへ結び付けない');
   assert.ok(!/action=(member|membership)/i.test(app), '公開会員照会APIを呼ばない');
+});
+
+/* ── 追記: 利用時間の変更だけでは開始時刻を捨てない ── */
+
+function durationAvailability(minutes) {
+  if (minutes === 240) return ['13:00', '14:00'];
+  if (minutes === 180) return ['13:00', '14:00', '15:00'];
+  if (minutes === 120) return ['13:00', '14:00', '15:00', '16:00'];
+  return ['10:00', '11:00']; /* 5時間以上は14:00開始が成立しない */
+}
+
+async function pickWithStartTime(ctx, time) {
+  await ctx.pick(20); /* 2026-12-10 */
+  await flushPromises();
+  var button = ctx.startTimeButton(time);
+  assert.ok(button, time + 'の開始時刻ボタンがある');
+  button._listeners.click();
+  assert.ok(ctx.elements['ba-price-time'].textContent.indexOf(time) !== -1);
+}
+
+test('利用時間を4→3時間へ短縮: 日付・14:00開始を保持し、終了時刻と見積りだけ新しい利用時間に同期する', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1', duration: 4, availability: durationAvailability });
+  ctx.setMember('general');
+  ctx.elements['ba-name'] = ctx.elements['ba-name'] || createElement('ba-name');
+  ctx.elements['ba-name'].value = '山田 太郎';
+  await pickWithStartTime(ctx, '14:00');
+  assert.ok(ctx.elements['ba-price-time'].textContent.indexOf('18:00') !== -1, '4時間なら終了18:00');
+
+  ctx.setDuration(3);
+  await flushPromises();
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-date'].value, '2026-12-10', '利用日は保持');
+  assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, false, '開始時刻が保持され「次へ」を押せる');
+  var timeText = ctx.elements['ba-price-time'].textContent;
+  assert.ok(timeText.indexOf('14:00') !== -1 && timeText.indexOf('17:00') !== -1, '終了時刻は新しい利用時間(17:00): ' + timeText);
+  assert.ok(timeText.indexOf('18:00') === -1, '古い終了時刻を残さない');
+  assert.ok(ctx.elements['ba-start-time-summary'].textContent.indexOf('3時間') !== -1);
+  assert.ok(ctx.elements['ba-start-time-summary'].textContent.indexOf('選び直') === -1, '選び直しの案内は出さない');
+  assert.ok(/durationMinutes=180/.test(lastEstimateUrl(ctx)), '料金見積りは新しい利用時間で取り直す: ' + lastEstimateUrl(ctx));
+  assert.strictEqual(ctx.elements['ba-email'].value, 'taro@example.com', 'メールアドレスは失われない');
+  assert.strictEqual(ctx.elements['ba-name'].value, '山田 太郎', '氏名は失われない');
+});
+
+test('利用時間を3→5時間へ延長して14:00開始が成立しなくなった場合だけ、開始時刻を解除して選び直しを案内する（他の入力は残す）', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1', duration: 3, availability: durationAvailability });
+  await pickWithStartTime(ctx, '14:00');
+
+  ctx.setDuration(5);
+  await flushPromises();
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-date'].value, '2026-12-10', '利用日は保持');
+  assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, true, '開始時刻は未選択（再選択が必要）');
+  assert.strictEqual(ctx.elements['ba-price-time'].hidden, true, '古い終了時刻を残さない');
+  var summary = ctx.elements['ba-start-time-summary'].textContent;
+  assert.ok(summary.indexOf('14:00') !== -1 && summary.indexOf('選び直') !== -1, '再選択を明確に案内: ' + summary);
+  assert.ok(ctx.startTimeButton('14:00') === null && ctx.startTimeButton('10:00'), '新しい利用時間で空く開始時刻だけを出す');
+  assert.strictEqual(ctx.elements['ba-email'].value, 'taro@example.com');
+});
+
+test('利用時間を続けて変えても、最初に選んだ開始時刻を失わない（4→3→2時間）', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1', duration: 4, availability: durationAvailability });
+  await pickWithStartTime(ctx, '14:00');
+  ctx.setDuration(3);
+  ctx.setDuration(2); /* 応答を待たずに再変更 */
+  await flushPromises();
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, false);
+  var timeText = ctx.elements['ba-price-time'].textContent;
+  assert.ok(timeText.indexOf('14:00') !== -1 && timeText.indexOf('16:00') !== -1, timeText);
+});
+
+test('利用時間を変えても日付を選び直した場合は、前の開始時刻を自動選択しない', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1', duration: 4, availability: durationAvailability });
+  await pickWithStartTime(ctx, '14:00');
+  ctx.setDuration(3);
+  await flushPromises();
+  await flushPromises();
+  await ctx.pick(21); /* 別の日を選択 */
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-date'].value, '2026-12-11');
+  assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, true, '別日は開始時刻を選び直す');
 });
