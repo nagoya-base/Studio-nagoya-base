@@ -60,11 +60,26 @@
       <p class="ba-field-help">Choosing a time of day recalculates the monthly calendar using only start times within that range.</p>
     </fieldset>
 
-    <!-- Initial value: 2 hours. -->
+    <!-- Initial value: 3 hours (all brands, Issue #494). -->
     <div class="ba-field">
-      <label for="ba-duration">Duration (hours)<span class="ba-required">Required</span></label>
-      <input type="number" id="ba-duration" name="durationHours" inputmode="numeric" min="1" step="1" placeholder="e.g. 3" value="2">
-      <p class="ba-field-help">Minimum duration is 1 hour. Long sessions can be entered here too.</p>
+      <label for="ba-duration">Duration<span class="ba-required">Required</span></label>
+      <select id="ba-duration" name="durationHours">
+        <option value="1">1 hour</option>
+        <option value="2">2 hours</option>
+        <option value="3" selected>3 hours</option>
+        <option value="4">4 hours</option>
+        <option value="5">5 hours</option>
+        <option value="6">6 hours</option>
+        <option value="7">7 hours</option>
+        <option value="8">8 hours</option>
+        <option value="9">9 hours</option>
+        <option value="10">10 hours</option>
+        <option value="11">11 hours</option>
+        <option value="12">12 hours</option>
+        <option value="other">Other (13+ hours, etc.)</option>
+      </select>
+      <input type="number" id="ba-duration-other" name="durationHoursOther" inputmode="numeric" min="1" step="1" placeholder="e.g. 13" aria-label="Duration in hours" hidden>
+      <p class="ba-field-help">Please select your preferred duration.</p>
       <p class="ba-field-error" id="ba-duration-error" hidden></p>
     </div>
 

@@ -71,11 +71,26 @@
     <!-- 利用時間の上限をUI側で決め打ちしない（長時間利用もサーバー側の判定に委ねる。
          最低利用時間・15分刻み・営業時間内かどうかはgetAvailability/createBookingが正）。
          Issue #318: 利用時間・利用区分を先に確定してからカレンダーを描画・取得する。
-         初期値は2時間（value="2"）。 -->
+         初期値は3時間（全ブランド共通・Issue #494）。プルダウンで1〜12時間から選ぶ。 -->
     <div class="ba-field">
-      <label for="ba-duration">利用時間（時間単位）<span class="ba-required">必須</span></label>
-      <input type="number" id="ba-duration" name="durationHours" inputmode="numeric" min="1" step="1" placeholder="例：3" value="2">
-      <p class="ba-field-help">最低利用時間は1時間です。長時間のご利用も入力できます。</p>
+      <label for="ba-duration">利用時間<span class="ba-required">必須</span></label>
+      <select id="ba-duration" name="durationHours">
+        <option value="1">1時間</option>
+        <option value="2">2時間</option>
+        <option value="3" selected>3時間</option>
+        <option value="4">4時間</option>
+        <option value="5">5時間</option>
+        <option value="6">6時間</option>
+        <option value="7">7時間</option>
+        <option value="8">8時間</option>
+        <option value="9">9時間</option>
+        <option value="10">10時間</option>
+        <option value="11">11時間</option>
+        <option value="12">12時間</option>
+        <option value="other">その他（13時間以上など）</option>
+      </select>
+      <input type="number" id="ba-duration-other" name="durationHoursOther" inputmode="numeric" min="1" step="1" placeholder="例：13" aria-label="利用時間（時間単位）" hidden>
+      <p class="ba-field-help">ご希望の利用時間を選択してください。</p>
       <p class="ba-field-error" id="ba-duration-error" hidden></p>
     </div>
 
