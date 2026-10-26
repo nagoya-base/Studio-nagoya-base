@@ -18,7 +18,8 @@ function createElement(id) {
     hidden: true,
     disabled: false,
     checked: id === 'ba-confirm-consent',
-    value: '',
+    /* メールアドレスは予約フォーム前半（Step1）で入力する（Issue #532）。Step1で日付を選ぶ前に入力済みの前提。 */
+    value: id === 'ba-email' ? 'taro@example.com' : '',
     textContent: '',
     innerHTML: '',
     className: '',
@@ -79,6 +80,7 @@ function setup(responseBody) {
     recoveryActionForErrorCode: function () { return 'retry'; },
     customerTypeLabel: function () { return ''; },
     validateDetailsForm: function () { return {}; },
+    validateEmailField: function (email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '') ? '' : 'メールアドレスの形式が正しくありません。'; },
     peopleLabel: function (v) { return v; },
     purposeLabel: function (v) { return v; },
     paymentMethodLabel: function (v) { return v; },
@@ -272,11 +274,84 @@ function setupForBrand(brand) {
   return { elements: elements };
 }
 
-test('Issue #470 / #492: 会員自己申告欄はsnbで表示、studio_xは2026/10/26 0:00 JSTまで表示（以後は非表示）、mensは非表示', function () {
+test('Issue #470 / #492 / #532: 会員自己申告欄はsnb・studio_xで世代が判定できない間は表示（ブラウザ端末の時計では判断しない）、mensは非表示', function () {
   assert.strictEqual(setupForBrand('snb').elements['ba-member-field'].hidden, false);
-  var studioXVisible = Date.now() < Date.parse('2026-10-26T00:00:00+09:00');
-  assert.strictEqual(setupForBrand('studio_x').elements['ba-member-field'].hidden, !studioXVisible);
+  /* 以前は端末時刻（2026/10/26 0:00 JST）でstudio_xを隠していた。サーバーが返す料金世代が分かるまでは、端末の時計に関わらず表示する側へ倒す。 */
+  assert.strictEqual(setupForBrand('studio_x').elements['ba-member-field'].hidden, false);
   assert.strictEqual(setupForBrand('mens').elements['ba-member-field'].hidden, true);
+});
+
+test('Issue #532: 自己申告ラジオの表示はサーバーの料金世代で決まる（V1は表示・V2は廃止・不明は表示・端末時刻は見ない）', function () {
+  var Logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
+  var far = Date.parse('2030-01-01T00:00:00+09:00');
+  var past = Date.parse('2020-01-01T00:00:00+09:00');
+  ['snb', 'studio_x'].forEach(function (brand) {
+    assert.strictEqual(Logic.brandShowsMemberOption(brand, far, 'V1'), true, brand + ' V1は自己申告');
+    assert.strictEqual(Logic.brandShowsMemberOption(brand, past, 'V2'), false, brand + ' V2は端末時刻が過去でも廃止');
+    assert.strictEqual(Logic.brandShowsMemberOption(brand, far, undefined), true, brand + ' 世代不明は端末時刻が未来でも表示');
+    assert.strictEqual(Logic.brandShowsMemberOption(brand, far, 'bad'), true, brand + ' 不明な値は表示');
+  });
+  assert.strictEqual(Logic.brandShowsMemberOption('mens', 0, 'V1'), false);
+  assert.strictEqual(Logic.brandShowsMemberOption('mens', 0, undefined), false);
+});
+
+test('Issue #532: 見積りのGET応答の料金世代がV2なら会員区分欄を隠し、V1なら表示のまま（サーバー応答が正）', async function () {
+  var v2 = setupFullFlow(null, { estimateExtra: { priceGeneration: 'V2' } });
+  v2.elements['ba-date'].value = '2026-12-10';
+  v2.elements['ba-duration'].value = '2';
+  v2.setCustomerType('returning');
+  v2.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(v2.elements['ba-member-field'].hidden, true, 'V2は自己申告欄を出さない');
+
+  var v1 = setupFullFlow(null, { estimateExtra: { priceGeneration: 'V1' } });
+  v1.elements['ba-date'].value = '2026-11-10';
+  v1.elements['ba-duration'].value = '2';
+  v1.setCustomerType('returning');
+  v1.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(v1.elements['ba-member-field'].hidden, false, 'V1は自己申告欄を表示');
+});
+
+test('Issue #532: メールアドレスはStep1で1回だけ入力する。未入力・形式不正ではStep1で止まり、有効なら進んで、Step2で再入力せず最終送信へそのまま使う', async function () {
+  var ctx = setupFullFlow(null);
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+
+  ctx.elements['ba-email'].value = '';
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-email-error'].hidden, false, '未入力はStep1にエラー');
+  assert.strictEqual(ctx.getFetchCallCount(), 0, 'availabilityを取得しない');
+
+  ctx.elements['ba-email'].value = 'not-an-email';
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-email-error'].hidden, false, '形式不正はStep1にエラー');
+  assert.strictEqual(ctx.getFetchCallCount(), 0);
+
+  ctx.elements['ba-email'].value = 'step1@example.com';
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-email-error'].hidden, true);
+  assert.strictEqual(ctx.getFetchCallCount(), 1, '有効なメールで先へ進む');
+
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+  /* Step2ではメールを再入力しない（入力欄はStep1にある1つだけ）。 */
+  ctx.elements['ba-name'].value = '山田太郎';
+  ctx.elements['ba-people'].value = '2名';
+  ctx.elements['ba-purpose'].value = 'セルフ撮影';
+  ctx.setPaymentMethod('現金');
+  ctx.elements['ba-step-details-next']._listeners.click();
+  assert.strictEqual(ctx.elements['ba-confirm-email'].textContent, 'step1@example.com');
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(ctx.requests.length, 1);
+  assert.strictEqual(ctx.requests[0].body.email, 'step1@example.com', 'Step1のメールをそのまま最終送信に使う');
 });
 
 /* ── English locale（Issue #297）: 実際のscripts/booking-logic.jsをbooking-app.jsと
@@ -435,7 +510,7 @@ function setupFullFlow(locale, options) {
     fetch: function (url, options) {
       if (url.indexOf('action=estimatePrice') !== -1) {
         return Promise.resolve({ json: function () {
-          return Promise.resolve({ success: true, price: { amount: 4000, currency: 'JPY', tier: 'GENERAL', isMember: false, dayType: 'WEEKDAY' } });
+          return Promise.resolve(Object.assign({ success: true, price: { amount: 4000, currency: 'JPY', tier: 'GENERAL', isMember: false, dayType: 'WEEKDAY' } }, opts.estimateExtra || {}));
         } });
       }
       fetchCallCount += 1;

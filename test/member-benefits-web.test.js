@@ -155,7 +155,7 @@ test('Studio X membership: 「部屋料金は同じ。できることが増え�
 // 内容: 金額が正本と一致 / 共通会員 / 特典
 // ============================================================================
 
-test('SNB / mens 会員ページ: ペアパック・シャワー・既存有料機材・利用月ルールが正本の金額で載っている', function () {
+test('SNB / mens 会員ページ: ペアパック・シャワー・既存有料機材・利用日ルールが正本の金額で載っている', function () {
   var wk = Pricing.computeBookingPrice({ brand: 'snb', date: '2026-12-07', durationMinutes: 180, generation: 'V2', plan: 'member_pair_3h' }).price.amount;
   var we = Pricing.computeBookingPrice({ brand: 'mens', date: '2026-12-12', durationMinutes: 180, generation: 'V2', plan: 'member_pair_3h' }).price.amount;
   var extWk = Pricing.computeBookingPrice({ brand: 'snb', date: '2026-12-07', durationMinutes: 240, generation: 'V2', plan: 'member_pair_3h' }).price.amount - wk;
@@ -175,9 +175,9 @@ test('SNB / mens 会員ページ: ペアパック・シャワー・既存有料�
     assert.ok(t.indexOf('Studio Xでは提供していません') !== -1);
     assert.ok(t.indexOf('有料機材レンタル') === -1 && t.indexOf('会員限定の有料機材') === -1, brand + ' 会員特典に有料機材レンタルを載せない');
     assert.ok(t.indexOf('SNB MEMBERは90日先まで予約可能です') !== -1, brand + ' 90日先行予約は別項目で説明');
-    assert.ok(t.indexOf('翌月分の2名ペアパック・シャワーは、その月の1日以降、当月の会費の決済が成功してから確定できます') !== -1, brand + ' 翌月の注意');
+    assert.ok(t.indexOf('その期間の2名ペアパック・シャワーは、更新の決済が成功してから確定できます') !== -1, brand + ' 更新前の期間の注意');
     assert.ok(t.indexOf('猶予期間はありません') !== -1);
-    assert.ok(t.indexOf('変更先の月の会員資格を改めて確認します') !== -1);
+    assert.ok(t.indexOf('変更先の利用日の会員資格を改めて確認します') !== -1);
     assert.ok(t.indexOf('Studio Nagoya Base・SNB mens・Studio Xで共通') !== -1, brand + ' 共通会員');
   });
   var mens = textOf(expandIncludes(read(PAGES.mens.file)));
@@ -262,11 +262,11 @@ test('各トップから対応する会員ページへの導線がある（SNB�
 // 規約・特商法・FAQ・JSON-LD・sitemap・docs
 // ============================================================================
 
-test('規約・特商法・会員条件に、新料金（5,000/6,000/1,000円）・利用月ルール・共通会員・適用開始日が載っている', function () {
+test('規約・特商法・会員条件に、新料金（5,000/6,000/1,000円）・利用日ルール・共通会員・適用開始日が載っている', function () {
   var terms = textOf(read('_includes/membership_terms_ja.html'));
   ['2026年12月1日以降に作成するご予約・お申し込みから', '2名ペアパック', '平日5,000円／土日祝6,000円', 'シャワー（1予約につき1回1,000円', '他の割引・優待と併用できず',
-    'その月の1日以降、当月の会費の決済が成功してから確定できます', '猶予期間はありません',
-    '変更先の月の会員資格を改めて確認', 'Studio Nagoya Base・SNB mens・Studio Xで共通の1つのSNB MEMBER'].forEach(function (w) {
+    'その期間の特典は、更新の決済が成功してから確定できます', '猶予期間はありません',
+    '変更先の利用日の会員資格を改めて確認', 'Studio Nagoya Base・SNB mens・Studio Xで共通の1つのSNB MEMBER'].forEach(function (w) {
     assert.ok(terms.indexOf(w) !== -1, '会員条件に「' + w + '」');
   });
   var legal = read('_includes/legal_ja.html');
@@ -333,7 +333,7 @@ test('sitemap・docs・REVIEW_CHECKLIST: 新ページと新仕様を反映', fun
     assert.strictEqual(sm.split('<loc>' + BASE + u + '</loc>').length - 1, 1, u + ' がsitemapに1回だけ載る');
   });
   var doc = read('docs/membership-pricing-2026-12.md');
-  ['member_pair_3h', '5,000円', '6,000円', '1,000円', '2026/12/1', 'grandfather'.replace('grandfather', '作成時刻'), '#469 / #472', '上書き', '利用日の属する月の支払い事実', 'rental', 'staffService', '0円'].forEach(function (w) {
+  ['member_pair_3h', '5,000円', '6,000円', '1,000円', '2026/12/1', 'grandfather'.replace('grandfather', '作成時刻'), '#469 / #472', '上書き', '利用日（JST）が支払済みPeriod', 'rental', 'staffService', '0円'].forEach(function (w) {
     assert.ok(doc.indexOf(w) !== -1, 'docs に「' + w + '」');
   });
   var chk = read('REVIEW_CHECKLIST.md');

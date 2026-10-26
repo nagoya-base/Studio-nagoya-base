@@ -11,14 +11,19 @@ var path = require('path');
 
 function read(rel) { return fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'); }
 
-[['ja', '_includes/booking_app_ja.html', '予約できる時間を検索しています…', '利用時間と日付を指定すると、予約可能な開始時刻が表示されます。', '1. 日時を選択'],
- ['en', '_includes/booking_app_en.html', 'Searching available start times…', 'Select a duration and date to see available start times.', '1. Date &amp; Time']].forEach(function (c) {
+[['ja', '_includes/booking_app_ja.html', '予約できる時間を検索しています…', '利用時間と日付を指定すると、予約可能な開始時刻が表示されます。', '1. メール・日時を選択'],
+ ['en', '_includes/booking_app_en.html', 'Searching available start times…', 'Select a duration and date to see available start times.', '1. Email &amp; Date']].forEach(function (c) {
   var html = read(c[1]);
-  test(c[0] + ': Step1は「希望時間帯→利用時間→利用区分→カレンダー→開始時刻→会員区分→料金→次へ」の順で、独立したStep2セクションは存在しない', function () {
+  test(c[0] + ': Step1は「メールアドレス→希望時間帯→利用時間→利用区分→カレンダー→開始時刻→会員区分→料金→次へ」の順で、独立したStep2セクションは存在しない（Issue #532: メールはStep1の先頭で1回だけ入力）', function () {
     assert.ok(html.indexOf('id="ba-step-start-time"') === -1, '旧Step2セクションは無い');
     assert.ok(html.indexOf('id="ba-step-start-time-back"') === -1, '戻るボタンは不要');
     var step1End = html.indexOf('id="ba-step-details"');
     var step1Close = html.lastIndexOf('</section>', step1End);
+    /* メールアドレス（Issue #532）はStep1の先頭にあり、Step2（利用者情報）には無い（再入力させない）。 */
+    var emailPos = html.indexOf('id="ba-email"');
+    assert.ok(emailPos > html.indexOf('id="ba-step-datetime"') && emailPos < html.indexOf('id="ba-time-band-choices"'), 'メールはStep1の先頭');
+    assert.strictEqual(html.split('id="ba-email"').length - 1, 1, 'メール入力欄は1つだけ');
+    assert.ok(html.slice(html.indexOf('id="ba-step-details"'), html.indexOf('id="ba-step-confirm"')).indexOf('type="email"') === -1, 'Step2にメール入力欄は無い');
     var order = ['id="ba-time-band-choices"', 'id="ba-duration"', 'id="ba-customer-type-choices"', 'id="ba-calendar-selected"',
       'id="ba-start-time-hint"', 'id="ba-start-time-area"', 'id="ba-member-field"', 'id="ba-price-box"', 'id="ba-step-start-time-next"']
       .map(function (key) { var i = html.indexOf(key); assert.ok(i !== -1, key); return i; });
@@ -64,7 +69,7 @@ test('JS: 開始時刻側の料金DOM参照が無く、scrollは日付クリッ�
   var js = read('scripts/booking-app.js');
   assert.ok(js.indexOf('startTimePrice') === -1 && js.indexOf('ba-start-time-price') === -1);
   var calls = js.match(/\.scrollIntoView\(\{[^)]*\}\)/g) || [];
-  assert.strictEqual(calls.length, 2, 'scrollIntoViewはgoToStep（start-time以外）とreveal（日付クリック時）のみ');
+  assert.strictEqual(calls.length, 3, 'scrollIntoViewはgoToStep（start-time以外）・reveal（日付クリック時）・メール欄へのfocus（Issue #532）のみ');
   assert.ok(/scrollToStartTime: true/.test(js));
   var goTo = js.slice(js.indexOf('function goToStep'), js.indexOf('function setStepDisabled_'));
   assert.ok(goTo.indexOf('startTimeArea.scrollIntoView') === -1 && /stepName !== 'start-time'/.test(goTo), 'goToStepはstart-timeでスクロールしない');

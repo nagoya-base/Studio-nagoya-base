@@ -74,7 +74,7 @@
         "name": "会員資格はどのように決まりますか？",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "月額500円の共通会員 SNB MEMBER（Studio Nagoya Base・SNB mens・Studio X共通）です。ご利用日の属する月の会費のお支払い（決済成功）で決まります。翌月のお部屋は通常どおり予約できますが、翌月分の有料オプションは、その月の1日以降、当月の会費の決済が成功してから確定できます。毎月1日も決済成功が反映されるまではご利用いただけません（猶予期間はありません）。"
+          "text": "月額500円の共通会員 SNB MEMBER（Studio Nagoya Base・SNB mens・Studio X共通）です。お支払い済みの有効期間（入会日から1か月、以後は毎月の自動更新ごとに1か月）にご利用日が入っているかで決まります。ご利用日が次回更新前の未決済の期間にある予約は、予約時点では会員特典を確定できません。更新の決済が成功してから、有料オプションをお申し込みください。更新の決済成功が反映されるまでは会員資格は有効になりません（猶予期間はありません）。"
         }
       }
     ]
@@ -119,7 +119,7 @@
       <div class="hero-copy">
         <div data-membership-phase="prestart"{% unless membership_is_prestart %} hidden{% endunless %}>
           <p class="eyebrow">MEMBER PRESTART / ROOM RATE IS THE SAME</p>
-          <p class="hero-usage-line">月額500円・プレスタート中。</p>
+          <p class="hero-usage-line">月額500円・入会日から1か月有効。</p>
           <h1 id="hero-title">今すぐ使える特典は、<br><em>90日先行予約。</em></h1>
           <p class="hero-lead">一般は30日先まで、会員は90日先まで予約できます。Studio Xの部屋料金は、会員でも非会員でも同じです。</p>
           <div class="membership-prestart-start" role="note" aria-label="2026年12月1日スタートの特典">
@@ -226,11 +226,11 @@
         {% include membership_prestart_ja.html %}
         <p>会員資格は、Studio Nagoya Base・SNB mens・Studio Xで共通の1つの会員「SNB MEMBER」です。Studio X専用の別会員・別契約はありません。</p>
         <ol class="member-terms">
-          <li><strong>会費</strong>：月額500円（税込）。クレジットカード決済（Stripe）で、毎月1日に当月分が自動で請求されます。</li>
-          <li><strong>入会月</strong>：日割りはありません。入会月は満額の500円で、入会日から当月末まで有効です。プレスタート期間（2026年10月26日〜11月30日）の加入は、初回500円で11月30日まで有効で、次回更新は12月1日です。</li>
-          <li><strong>資格を確認する月</strong>：ご利用日の属する月の会費のお支払い（決済成功）で決まります。ご予約のメールアドレスは、会員登録のメールアドレスと同じものをご入力ください。</li>
-          <li><strong>翌月のオプション</strong>：翌月のお部屋は通常どおり予約できます。翌月分の有料オプションは、その月の1日以降、当月の会費の決済が成功してから確定できます。毎月1日も、決済成功が反映されるまではご利用いただけません（猶予期間はありません）。</li>
-          <li><strong>日程変更</strong>：利用日の月が変わる場合は、変更先の月の会員資格を改めて確認します。</li>
+          <li><strong>会費</strong>：月額500円（税込）。クレジットカード決済（Stripe）で、入会日を基準に毎月自動更新されます。</li>
+          <li><strong>有効期間</strong>：入会日から1か月有効です。入会日に初回の500円をお支払いいただき、日割りはありません。以後、入会日を基準に毎月自動更新されます。</li>
+          <li><strong>資格を確認する日</strong>：ご利用日がお支払い済みの有効期間に入っているかで決まります。ご予約のメールアドレスは、会員登録のメールアドレスと同じものをご入力ください。</li>
+          <li><strong>更新前のオプション</strong>：次回更新前の未決済の期間にあるご利用日のお部屋は、通常どおり予約できます。その期間の有料オプションは、更新の決済が成功してから確定できます。決済成功が反映されるまではご利用いただけません（猶予期間はありません）。</li>
+          <li><strong>日程変更</strong>：変更先の利用日が有効期間に入っているか、改めて確認します。</li>
           <li><strong>解約・返金</strong>：解約しても、お支払い済みの月の末日までは有効です。日割りでの返金はありません。</li>
         </ol>
         <p>詳しい条件は<a href="../legal/">利用規約・特定商取引法に基づく表記</a>をご確認ください。会員全体の案内は<a href="{{ '/membership/' | relative_url }}">SNB MEMBERのご案内ページ</a>にあります。</p>
@@ -240,12 +240,12 @@
         <p class="section-kicker">JOIN</p>
         <h2 id="join-title">会員になる</h2>
         <div class="notice">
-          <p><strong>入会前にご確認ください。</strong>月額500円（税込）・毎月1日に自動更新・入会月は日割りなし・日割りでの返金なし。プレスタート中（〜11月30日）の加入は初回500円で11月30日まで有効・次回更新12月1日。会費のお支払いは、メールでお送りする専用のお支払いページから行います。</p>
+          <p><strong>入会前にご確認ください。</strong>月額500円（税込）・入会日から1か月有効・入会日を基準に毎月自動更新・日割りなし・日割りでの返金なし。会費のお支払いは、メールでお送りする専用のお支払いページから行います。</p>
         </div>
         <form class="membership-join" id="membership-join-form" data-membership-brand="studio_x" novalidate>
           <label for="membership-email">メールアドレス（ご予約と同じメールアドレス）</label>
           <input type="email" id="membership-email" name="email" autocomplete="email" inputmode="email" required aria-describedby="membership-join-status">
-          <label class="membership-consent"><input type="checkbox" id="membership-consent" required> <span>上記の内容（月額500円・毎月1日の自動更新・入会月は日割りなし・返金なし）と<a href="../legal/">利用規約の「会員資格」</a>に同意します。</span></label>
+          <label class="membership-consent"><input type="checkbox" id="membership-consent" required> <span>上記の内容（月額500円・入会日基準の毎月自動更新・日割りなし・返金なし）と<a href="../legal/">利用規約の「会員資格」</a>に同意します。</span></label>
           <button type="submit" class="button button-primary" id="membership-join-submit" data-analytics-event="cta_click" data-analytics-type="membership_join" data-analytics-location="studio_x_membership_page">会員になる（月額500円）</button>
           <p class="membership-status" id="membership-join-status" role="status" aria-live="polite"></p>
         </form>
@@ -270,7 +270,7 @@
           </details>
           <details>
             <summary>会員資格はどのように決まりますか？</summary>
-            <p>月額500円の共通会員 SNB MEMBER（Studio Nagoya Base・SNB mens・Studio X共通）です。ご利用日の属する月の会費のお支払い（決済成功）で決まります。翌月のお部屋は通常どおり予約できますが、翌月分の有料オプションは、その月の1日以降、当月の会費の決済が成功してから確定できます。毎月1日も決済成功が反映されるまではご利用いただけません（猶予期間はありません）。</p>
+            <p>月額500円の共通会員 SNB MEMBER（Studio Nagoya Base・SNB mens・Studio X共通）です。お支払い済みの有効期間（入会日から1か月、以後は毎月の自動更新ごとに1か月）にご利用日が入っているかで決まります。ご利用日が次回更新前の未決済の期間にある予約は、予約時点では会員特典を確定できません。更新の決済が成功してから、有料オプションをお申し込みください。更新の決済成功が反映されるまでは会員資格は有効になりません（猶予期間はありません）。</p>
           </details>
         </div>
       </section>

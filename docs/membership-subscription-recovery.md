@@ -1,5 +1,8 @@
 # SNB MEMBER Subscription作成失敗の修正と既存失敗分の復旧（Issue #528）
 
+> **Issue #532（入会日基準の月額Subscription）以降の注意**: 新規加入は `mode=subscription` のCheckoutで、Subscriptionの作成・金額・請求日はStripe Checkoutが決める（このドキュメントの「決済後にSubscriptionを作成する」復旧手順は、デプロイ前に発行された旧 `mode=payment` Checkoutの入会にのみ当てはまる）。資格は `MemberPeriods`（支払済み期間）が正本で、`MemberMonths` は凍結（既存行は過去分として有効）。
+
+
 ## 原因
 
 `POST /v1/subscriptions` の `items[0][price_data]` に `product_data[name]` を渡していた。Stripeの

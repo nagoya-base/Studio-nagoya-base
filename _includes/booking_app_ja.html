@@ -38,7 +38,7 @@
   </p>
 
   <ol class="ba-progress" id="ba-progress" aria-label="予約手続きの進み具合">
-    <li data-step="datetime">1. 日時を選択</li>
+    <li data-step="datetime">1. メール・日時を選択</li>
     <li data-step="details">2. 利用者情報</li>
     <li data-step="confirm">3. 内容確認</li>
     <li data-step="complete">4. 完了</li>
@@ -51,8 +51,17 @@
 
   <!-- Step 1: 利用日・利用時間 -->
   <section class="ba-step" id="ba-step-datetime" data-step="datetime">
-    <h2>利用日・利用時間を選択</h2>
-    <p class="ba-step-desc">まず空き状況をご確認ください。初期表示は「2時間・初回利用・指定なし」です。条件を変更するとカレンダーが更新されます。</p>
+    <h2>メールアドレス・利用日・利用時間を選択</h2>
+    <p class="ba-step-desc">まずメールアドレスを入力し、空き状況をご確認ください。初期表示は「2時間・初回利用・指定なし」です。条件を変更するとカレンダーが更新されます。</p>
+
+    <!-- メールアドレスは予約フォームの前半（Step1）で1回だけ入力する（Issue #532）。Step2では再入力させず、最終送信にもこの値を使う。
+         会員資格は送信時にサーバーが予約メールと利用日で自動判定する（送信前の会員照会は行わない。会員かどうかはここでは表示しない）。 -->
+    <div class="ba-field" id="ba-email-field">
+      <label for="ba-email">メールアドレス<span class="ba-required">必須</span></label>
+      <input type="email" id="ba-email" name="email" autocomplete="email" inputmode="email" maxlength="254">
+      <p class="ba-field-help">確定連絡を受け取れるアドレスをご入力ください。SNB MEMBERの方は、予約送信時に登録メールアドレスで自動確認し、ご利用日が会員有効期間内のご予約に会員料金・会員特典を適用します（会員登録と同じメールアドレスをご入力ください）。会員かどうかはこの画面には表示されません。</p>
+      <p class="ba-field-error" id="ba-email-error" hidden></p>
+    </div>
 
     <!-- 希望時間帯（Issue #324）。既定は「指定なし（all）」をchecked。この選択は
          月間カレンダーの記号判定・Step1内の開始時刻一覧の絞り込みにのみ使う一次フィルタで、
@@ -269,13 +278,13 @@
         <label class="ba-choice"><input type="radio" name="memberStatus" value="general"> <span>一般</span></label>
         <label class="ba-choice"><input type="radio" name="memberStatus" value="member"> <span>{% if include.brand == "studio_x" %}会員（当施設が承認した会員の方のみ）{% else %}会員（SNB MEMBERの方のみ）{% endif %}</span></label>
       </div>
-      <p class="ba-field-help">{% if include.brand == "studio_x" %}会員資格は予約確定前に確認します。実際には会員でない場合、料金が修正されることがあります。会員区分を選択すると利用料金が表示されます。{% else %}2026年12月1日以降に作成するご予約では、予約時のメールアドレスが会員登録のメールアドレスと一致し、利用日の属する月の会費が支払済みの場合に会員料金が適用されます。確認できない場合は一般料金になります。会員でない方は<a href="{{ '/membership/' | relative_url }}">SNB MEMBERのご案内</a>をご覧ください。{% endif %}</p>
+      <p class="ba-field-help">{% if include.brand == "studio_x" %}会員資格は予約確定前に確認します。実際には会員でない場合、料金が修正されることがあります。会員区分を選択すると利用料金が表示されます。{% else %}2026年12月1日以降に作成するご予約では、予約時のメールアドレスが会員登録のメールアドレスと一致し、利用日がお支払い済みの有効期間に入っている場合に会員料金が適用されます。確認できない場合は一般料金になります。会員でない方は<a href="{{ '/membership/' | relative_url }}">SNB MEMBERのご案内</a>をご覧ください。{% endif %}</p>
       <p class="ba-field-error" id="ba-member-error" hidden></p>
     </fieldset>
 
 {% if include.brand == "snb" or include.brand == "mens" %}
     <!-- 会員限定の特典（Issue #478）。2026/12/1以降のみJS側が表示する（brandShowsMemberBenefits）。
-         どちらも実会員資格（SNB MEMBER。利用日の属する月の会費が支払済み）が必要で、確認はサーバー側で行う
+         どちらも実会員資格（SNB MEMBER。利用日がお支払い済みの有効期間に入っていること）が必要で、確認はサーバー側で行う
          （mensの会員料金の自動適用では代用できない）。ペアパックは独立プラン（通常の会員料金表とは別商品）。 -->
     <fieldset class="ba-fieldset" id="ba-benefits-field" hidden>
       <legend>会員限定の特典（SNB MEMBER・任意）</legend>
@@ -283,7 +292,7 @@
         <label class="ba-choice"><input type="checkbox" id="ba-plan-pair" value="member_pair_3h"> <span>2名ペアパック（3時間・1〜2名／平日5,000円・土日祝6,000円）</span></label>
         <label class="ba-choice"><input type="checkbox" id="ba-shower" value="shower"> <span>シャワー（1予約1回・1,000円。事前確認・承認制で、選択だけでは利用確定になりません。承認後にお支払い）</span></label>
       </div>
-      <p class="ba-field-help">会員限定です。シャワー利用は事前確認が必要です。利用希望の場合は事前にご連絡ください。対応可能な場合のみご案内し、承認後にお支払いをお願いします。ここでの選択は利用希望の連絡であり、承認とお支払いの完了までは利用確定ではありません。ご利用日の属する月のSNB MEMBER会員資格（当月の会費のお支払い）を確認できない場合は、お申し込みいただけません。予約のメールアドレスは会員登録と同じものをご入力ください。2名ペアパックは他の割引・優待と併用できず、延長は通常の会員延長料金です。<a href="{{ '/' | relative_url }}{% if include.brand == "mens" %}mens/{% endif %}membership/" target="_blank" rel="noopener">会員案内を見る</a></p>
+      <p class="ba-field-help">会員限定です。シャワー利用は事前確認が必要です。利用希望の場合は事前にご連絡ください。対応可能な場合のみご案内し、承認後にお支払いをお願いします。ここでの選択は利用希望の連絡であり、承認とお支払いの完了までは利用確定ではありません。ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できない場合は、お申し込みいただけません。予約のメールアドレスは会員登録と同じものをご入力ください。2名ペアパックは他の割引・優待と併用できず、延長は通常の会員延長料金です。<a href="{{ '/' | relative_url }}{% if include.brand == "mens" %}mens/{% endif %}membership/" target="_blank" rel="noopener">会員案内を見る</a></p>
       <p class="ba-field-error" id="ba-benefits-error" hidden></p>
     </fieldset>
 {% endif %}
@@ -319,13 +328,6 @@
       <label for="ba-name">お名前<span class="ba-required">必須</span></label>
       <input type="text" id="ba-name" name="name" autocomplete="name" maxlength="100">
       <p class="ba-field-error" id="ba-name-error" hidden></p>
-    </div>
-
-    <div class="ba-field">
-      <label for="ba-email">メールアドレス<span class="ba-required">必須</span></label>
-      <input type="email" id="ba-email" name="email" autocomplete="email" inputmode="email" maxlength="254">
-      <p class="ba-field-help">確定連絡を受け取れるアドレスをご入力ください。</p>
-      <p class="ba-field-error" id="ba-email-error" hidden></p>
     </div>
 
     <div class="ba-field">
