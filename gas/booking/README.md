@@ -1,3 +1,17 @@
+## Issue #535: 新規Subscription入会でinvoice.paidが届かなくても初回Periodを記録する
+
+Issue #535の本文を正本とした修正（GAS・テストのみ。サイト・料金・会員特典ルールは変更しない）。
+
+- 背景: #532の新方式は初回Periodの記録を `invoice.paid` だけに依存していたため、本番で初回500円の決済が成功しても `invoice.paid` が届かない・処理されない場合に `MemberPeriods` が0件のまま資格が無効になった。
+- `checkout.session.completed`（`mode=subscription`・`payment_status=paid`）の処理（`handleMembershipSubscriptionJoin_`）で、Subscriptionに加えて**初回invoice**（Checkout Sessionの `invoice`、無ければSubscriptionの `latest_invoice`）をStripeから再取得し、`MembershipRules.resolveInitialPeriodOfSubscriptionJoin` で確認できた場合だけ初回Periodを記録する。条件: `billing_reason=subscription_create`・invoiceのSubscriptionが当該Subscription・`status=paid`・500円・JPY・500円line itemの期間が正しい・Subscriptionが `incomplete` / `incomplete_expired` でない。期間はinvoice.paidと同じ（500円line itemの `period.start` / `period.end`）。
+- source は `invoice.paid` と同じ **`(invoice, 初回invoice ID)`**。`MemberRepository.recordPeriod` がsourceで冪等なため、Checkoutのみ・Checkout→invoice.paid・invoice.paid→Checkout・同一イベント再送のいずれでも1行に収束する（`paidAt` もinvoiceの `status_transitions.paid_at` を使うので同じ値になる。`eventId` だけは最初に記録したイベント）。
+- 全額返金は既存どおり `MemberRefunds` の `(invoice, invoice ID)` で差し引く（Periodは削除・改変しない）。返金がCheckout処理より先でも、Periodを記録したうえで資格判定から外れる。
+- 初回invoiceを確認できない（未払い・更新invoice・別Subscription・金額違い・不完全Subscription・invoiceが存在しない）場合は、会員行だけ作り、Periodは作らず要復旧 `MEMBERSHIP_JOIN_INITIAL_PERIOD_UNCONFIRMED` にする。初回invoiceの照会が一時的に失敗した場合は何も書かずに再試行する。
+- 更新（`subscription_cycle`）は従来どおり `invoice.paid` だけが記録する。プレスタート会員・旧 `mode=payment` 経路・旧 `MemberMonths` の判定は変更しない。
+- ログはeventIdとerrorTypeのみ（invoice / Subscription / Customer ID・メールは出さない）。`STRIPE_CHECKOUT_ENABLED`・Deploymentは変更しない。
+- 本番反映まで `MEMBERSHIP_JOIN_PAUSED=true` を維持する。すでに成功した本番テスト決済の再処理は本PRの対象外（`MemberPeriods` を手動編集しない）。
+
+
 ## Issue #532: SNB MEMBERを入会日基準の月額Subscriptionへ簡素化（PR-A: GAS・テスト）
 
 Issue #532の本文を正本として、新規加入をStripe標準に近い月額Subscriptionへ簡素化した。**PR-A（このREADMEを含むGAS・テスト）とPR-B（サイト・UI）は別PR**で、本番への切り替えは「Issue #532 §12」の手順（オーナーが手動）で行う。PRブランチから本番デプロイしない。

@@ -865,9 +865,13 @@ var StripeWebhookProcessor = (function () {
 
   /*
    * 入会Checkout（mode=subscription・metadata.orderType=membership。Issue #532）の完了。
-   * 会員行の作成（email・Customer・Subscription IDと、Subscriptionの最新状態）だけを行う。支払済みの有効期間
-   * （MemberPeriods）はinvoice.paidが記録する。**checkout.session.completedとinvoice.paidはどちらが先に届いても同じ結果**
-   * になる（invoice.paidは会員行が無くてもmemberId・subscription IDで記録し、後から結び付く）。
+   * 会員行の作成（email・Customer・Subscription IDと、Subscriptionの最新状態）と、初回の支払済み期間（MemberPeriods）の記録を行う。
+   * Issue #535: 初回Periodをinvoice.paidだけに依存すると、invoice.paidが届かない・処理されない場合に決済済みでも資格が付かない。
+   * そのため、Subscriptionと初回invoice（subscription_create）をStripeから再取得し、invoiceが支払済み（500円・JPY）と
+   * 確認できた場合だけ、invoice.paidと同じ根拠（同じline item期間）・同じsource（invoice, invoice ID）で記録する。
+   * **checkout.session.completedとinvoice.paidはどちらが先に届いても、どちらか片方だけでも同じ結果**になる
+   * （MemberRepository.recordPeriodはsourceで冪等。invoice.paidは会員行が無くてもmemberId・subscription IDで記録し、後から結び付く）。
+   * 更新（subscription_cycle）は引き続きinvoice.paidだけが記録する。
    * 二重加入の最終防御: 同じメールの有効な別会員がいる場合は、会員行を作らず、新しいSubscriptionを即時キャンセルし、
    * 要復旧として管理者へ通知する（初回500円は請求済みのため、返金は運営が判断する。自動返金はしない）。
    */
@@ -895,6 +899,23 @@ var StripeWebhookProcessor = (function () {
         '入会Checkoutで作成されたSubscriptionのmetadataが想定と一致しません。会員登録は行っていません。eventId=' + eventId, now);
     }
 
+    /* Issue #535: 初回invoiceを再取得し、初回の支払済み期間を確定する。書き込み前に行い、一時的な照会失敗は
+       何も書かずに再試行する（確定的な4xxは会員行だけ作り、Periodは記録せず要復旧にする）。 */
+    var initialInvoiceId = session.invoiceId || latestInvoiceIdOf_(subscription.raw);
+    var initialPeriod = { ok: false, code: 'NO_INITIAL_INVOICE' };
+    if (initialInvoiceId) {
+      var invoiceResult = StripeGateway.retrieveInvoice(stripeConfig, initialInvoiceId);
+      if (!invoiceResult.ok) {
+        Logger.log('StripeWebhookProcessor: 入会の初回invoice再取得に失敗しました eventId=' + eventId + ' errorType=' + invoiceResult.errorType);
+        if (invoiceResult.errorType !== 'STRIPE_ERROR') {
+          return outcome_(false, 'STRIPE_LOOKUP_FAILED', 'Stripeへの照会に失敗しました。再試行します。');
+        }
+        initialPeriod = { ok: false, code: 'INVOICE_LOOKUP_REJECTED' };
+      } else {
+        initialPeriod = MembershipRules.resolveInitialPeriodOfSubscriptionJoin(invoiceResult.invoice, subscription.raw);
+      }
+    }
+
     var superseded = confirmClaimOrSupersededOutcome_(rowNumber, generation);
     if (superseded) return superseded;
 
@@ -917,7 +938,22 @@ var StripeWebhookProcessor = (function () {
             cancelAtPeriodEnd: !!(subscription.raw.cancel_at_period_end || subscription.raw.cancel_at)
           }
         }, { id: eventId, created: parsed.created }, { create: true }, now);
-      refundedDuringJoin = !!session.invoiceId && MemberRepository.isSourceRefunded('invoice', session.invoiceId);
+      if (initialPeriod.ok) {
+        /* invoice.paidと同じsource（invoice, invoice ID）で記録する。先にinvoice.paidが記録済みなら追記しない（冪等）。
+           全額返金済みでも記録し、資格判定側がMemberRefundsの(invoice, invoice ID)で差し引く（invoice.paidと同じ扱い）。 */
+        MemberRepository.recordPeriod({
+          memberId: memberId,
+          subscriptionId: subscription.id,
+          periodStartSeconds: initialPeriod.periodStartSeconds,
+          periodEndSeconds: initialPeriod.periodEndSeconds,
+          sourceType: 'invoice',
+          sourceId: initialPeriod.invoiceId,
+          amount: MembershipRules.MONTHLY_FEE_JPY,
+          paidAt: secondsToDate_(initialPeriod.paidAtSeconds || parsed.created),
+          eventId: eventId
+        }, now);
+      }
+      refundedDuringJoin = !!initialInvoiceId && MemberRepository.isSourceRefunded('invoice', initialInvoiceId);
     });
     if (fenced) return fenced;
 
@@ -943,7 +979,21 @@ var StripeWebhookProcessor = (function () {
       return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_REFUNDED_SUBSCRIPTION_ACTIVE',
         '入会の決済が全額返金済みのためその期間の資格は無効のままですが、Subscriptionは有効です。自動更新を続けない場合はSubscriptionを解約してください。eventId=' + eventId, now);
     }
-    return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_JOINED', '入会を記録しました（支払済み期間はinvoice.paidで記録します）。', now);
+    if (!initialPeriod.ok) {
+      /* Checkoutは支払済みだが、初回invoiceの支払いを確認できない（想定外）。Periodは作らず要復旧にする。
+         後から同じ初回invoiceのinvoice.paidが正しく処理されれば、そちらでPeriodが記録される。 */
+      return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_JOIN_INITIAL_PERIOD_UNCONFIRMED',
+        '会員行は作成しましたが、初回invoiceの支払いを確認できないため資格期間を記録していません（' + initialPeriod.code +
+        '）。Stripeで初回invoiceを確認してください。MemberPeriodsは手動で編集しないでください。eventId=' + eventId, now);
+    }
+    return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_JOINED', '入会と初回の支払済み期間を記録しました。', now);
+  }
+
+  /* Subscriptionの最新invoice ID（Checkout SessionにinvoiceIDが無い場合の補助。文字列・展開済みオブジェクトの両方）。 */
+  function latestInvoiceIdOf_(subscriptionRaw) {
+    var raw = subscriptionRaw && subscriptionRaw.latest_invoice;
+    if (typeof raw === 'string') return raw;
+    return (raw && typeof raw.id === 'string') ? raw.id : '';
   }
 
   /*
