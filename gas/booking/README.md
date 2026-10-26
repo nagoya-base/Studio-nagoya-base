@@ -20,6 +20,12 @@ Issue #492の本文を正本として、#486（Studio X新料金）と#488（貸
 - 識別: Booking Admin（一覧・詳細の`planLabel`）、確認画面、予約メール、管理者通知、Calendarタグ、Bookings台帳の`planCode`。
 - 公式サイト: `/studio-x/#osu-base-plan`と`/studio-x/booking/`のプラン説明・FAQ・JSON-LDを常設仕様へ更新（イベント日限定の表現は削除。有人クロークではない・荷物貴重品は自己管理・再入室可は維持）。
 
+### Issue #513: 貸切ベースプランの人数上限を10名へ
+
+- 予約システム上の上限を10名に変更（`EVENT_BASE_PLAN_.maxPeople`・`isEventBasePlanPeople`・`EVENT_PLAN_PEOPLE_EXCEEDED`）。11名以上・「5名以上・要相談」はサーバー側で拒否。公開ページでは「10名程度まで」と表現する。
+- 料金は変更なし（1室1,000円/時・最低6時間・人数加算なし。10名・6時間でも6,000円）。参考訴求は「10名利用なら1人あたり100円/時相当」。
+- 予約UIはプラン選択中のみ5〜10名を選択可（解除時は5〜10名の選択を空に戻す）。通常Studio X / SNB / SNB mensの人数仕様は不変。
+
 ### デプロイ・注意
 
 - Booking Web App・Booking Adminの両方に`BookingPricing.gs`・`BookingRepository.gs`・`FeeCalculator.gs`・`BookingReschedule.gs`（Adminのみ）・`Code.gs`（Web Appのみ）ほか更新ファイルを反映する。`EventPlanRepository.gs`はプロジェクトから削除する。**反映順: Booking Adminを先に**。既存の`/exec` URL・Deploymentは作り直さず、既存Deploymentを更新する。PRブランチからの本番デプロイは行わない。

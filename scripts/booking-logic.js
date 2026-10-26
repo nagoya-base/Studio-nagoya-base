@@ -107,7 +107,7 @@
       PLAN_NOT_AVAILABLE: 'このプランは現在ご利用いただけません（会員限定の2名ペアパックは2026年12月1日からのご提供です）。',
       INVALID_PLAN: 'プランの指定が正しくありません。ページを開き直してください。',
       /* Issue #488 / #492 / #510: 6時間貸切ベースプラン（常設）。 */
-      EVENT_PLAN_PEOPLE_EXCEEDED: '貸切ベースプランのご利用は1〜4名までです。人数を変更するか、プランの選択を外してください。',
+      EVENT_PLAN_PEOPLE_EXCEEDED: '貸切ベースプランのご利用は1〜10名までです。人数を変更するか、プランの選択を外してください。',
       INTERNAL_ERROR: '予約処理中にエラーが発生しました。しばらくしてから再度お試しください。'
     },
     en: {
@@ -952,7 +952,7 @@
 
   var PAIR_PACK_PLAN_CODE = 'member_pair_3h';
 
-  /* Issue #488 / #492 / #510: 6時間貸切ベースプラン（常設）。8:00〜21:00の範囲で最低6時間・1時間1,000円・最大4名。
+  /* Issue #488 / #492 / #510: 6時間貸切ベースプラン（常設）。8:00〜21:00の範囲で最低6時間・1時間1,000円・10名まで（Issue #513。人数による追加料金なし）。
      利用時間は予約時に確定し、利用開始後の途中延長はない。可否・金額の正本はGAS。ここは画面の早期ガードと表示用の定数だけを持つ。 */
   var EVENT_BASE_PLAN_CODE = 'osu_cosplay_base_6h';
   var EVENT_BASE_PLAN_MIN_HOURS = 6;
@@ -960,6 +960,7 @@
   var EVENT_BASE_PLAN_CLOSE_MINUTES = 21 * 60;
   var EVENT_BASE_PLAN_MAX_HOURS = (EVENT_BASE_PLAN_CLOSE_MINUTES - EVENT_BASE_PLAN_OPEN_MINUTES) / 60;
   var EVENT_BASE_PLAN_HOURLY_RATE = 1000;
+  var EVENT_BASE_PLAN_MAX_PEOPLE = 10;
   /* 通常予約の利用時間の初期値（全ブランド共通・Issue #494）。貸切プラン解除時もこの値へ戻す。 */
   var DEFAULT_DURATION_HOURS = 3;
   var EVENT_BASE_PLAN_LABEL = 'Studio X｜6時間貸切ベースプラン（最低6時間・1時間1,000円）';
@@ -996,7 +997,8 @@
 
   function isEventPlanPeopleValue(people) {
     if (!people) return true;
-    return people === '1名' || people === '2名' || people === '3名' || people === '4名';
+    var m = /^([1-9]\d*)名$/.exec(String(people));
+    return !!m && Number(m[1]) <= EVENT_BASE_PLAN_MAX_PEOPLE;
   }
 
   var STUDIO_X_MEMBER_OPTION_END_MS_ = Date.parse('2026-10-26T00:00:00+09:00');
@@ -1106,6 +1108,7 @@
     EVENT_BASE_PLAN_MIN_HOURS: EVENT_BASE_PLAN_MIN_HOURS,
     EVENT_BASE_PLAN_MAX_HOURS: EVENT_BASE_PLAN_MAX_HOURS,
     EVENT_BASE_PLAN_HOURLY_RATE: EVENT_BASE_PLAN_HOURLY_RATE,
+    EVENT_BASE_PLAN_MAX_PEOPLE: EVENT_BASE_PLAN_MAX_PEOPLE,
     isEventPlanDurationHours: isEventPlanDurationHours,
     filterStartTimesForEventPlan: filterStartTimesForEventPlan,
     DEFAULT_DURATION_HOURS: DEFAULT_DURATION_HOURS,
