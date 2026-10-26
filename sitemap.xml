@@ -25,6 +25,10 @@
     <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/" />
   </url>
   <url>
+    <loc>https://nagoya-base.github.io/Studio-nagoya-base/studio-x/base-plan/</loc>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/studio-x/base-plan/" />
+  </url>
+  <url>
     <loc>https://nagoya-base.github.io/Studio-nagoya-base/how-to/</loc>
     <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/how-to/" />
     <xhtml:link rel="alternate" hreflang="en" href="https://nagoya-base.github.io/Studio-nagoya-base/how-to/en.html" />

@@ -670,3 +670,15 @@
 /* 利用時間「その他」選択時に出す数値入力（Issue #494） */
 #ba-duration-other { margin-top: 8px; }
 #ba-duration-other[hidden] { display: none; }
+
+/* 貸切ベースプランの選択済みバナー（Issue #500）。hidden属性で出し分け、解除ボタンで通常予約へ戻す。 */
+.ba-plan-banner {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--ba-accent, currentColor);
+  border-radius: 8px;
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+.ba-plan-banner[hidden] { display: none; }
+.ba-plan-banner p { margin: 0 0 8px; }

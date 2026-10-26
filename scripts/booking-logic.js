@@ -957,6 +957,18 @@
   var DEFAULT_DURATION_HOURS = 3;
   var EVENT_BASE_PLAN_LABEL = 'Studio X｜6時間貸切ベースプラン（6,000円）';
 
+  /* Issue #500: URLの ?plan= から予約フォームの初期プランを決める。許可リストにある値だけを返し、
+     未知の値・他ブランド用の値・複数指定などは空文字（通常予約）にする。UIの初期状態を作るヒントにすぎず、
+     可否はサーバーが予約作成時に必ず判定する。 */
+  function planFromSearch(search, brand) {
+    if (brand !== 'studio_x') return '';
+    var matches = String(search || '').match(/(?:^|[?&])plan=([^&#]*)/g) || [];
+    if (matches.length !== 1) return '';
+    var value;
+    try { value = decodeURIComponent(matches[0].replace(/^[?&]?plan=/, '')); } catch (e) { return ''; }
+    return value === EVENT_BASE_PLAN_CODE ? EVENT_BASE_PLAN_CODE : '';
+  }
+
   function isEventPlanPeopleValue(people) {
     if (!people) return true;
     return people === '1名' || people === '2名' || people === '3名' || people === '4名';
@@ -1070,6 +1082,7 @@
     DEFAULT_DURATION_HOURS: DEFAULT_DURATION_HOURS,
     EVENT_BASE_PLAN_LABEL: EVENT_BASE_PLAN_LABEL,
     isEventPlanPeopleValue: isEventPlanPeopleValue,
+    planFromSearch: planFromSearch,
     formatJpyAmount: formatJpyAmount,
     priceComputingLabel: priceComputingLabel,
     priceUnavailableLabel: priceUnavailableLabel

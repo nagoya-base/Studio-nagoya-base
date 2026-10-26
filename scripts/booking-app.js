@@ -135,6 +135,8 @@
     benefitsField: document.getElementById('ba-benefits-field'),
     planPair: document.getElementById('ba-plan-pair'),
     planEvent: document.getElementById('ba-plan-event'),
+    planBanner: document.getElementById('ba-plan-banner'),
+    planRelease: document.getElementById('ba-plan-release'),
     shower: document.getElementById('ba-shower'),
     benefitsError: document.getElementById('ba-benefits-error'),
     memberError: document.getElementById('ba-member-error'),
@@ -935,10 +937,30 @@
       var optionsErrorEl = document.getElementById('ba-options-error');
       if (optionsErrorEl) { optionsErrorEl.textContent = ''; optionsErrorEl.hidden = true; }
     }
+    /* Issue #500: プラン選択済みであることを示すバナー。解除すると通常予約へ戻る。 */
+    if (els.planBanner) els.planBanner.hidden = !selected;
     handleCalendarPrereqChange_();
     refreshPriceEstimate_();
   }
   if (els.planEvent) els.planEvent.addEventListener('change', applyEventPlanState_);
+
+  /* Issue #500: 解除したらURLの plan も外し、再読込や戻る操作で勝手に再選択されないようにする。 */
+  function clearPlanParam_() {
+    try {
+      var params = window.location.search.replace(/^\?/, '').split('&').filter(function (kv) { return kv && kv.split('=')[0] !== 'plan'; });
+      var url = window.location.pathname + (params.length ? '?' + params.join('&') : '') + window.location.hash;
+      if (window.history && window.history.replaceState) window.history.replaceState(null, '', url);
+    } catch (e) { /* URL書き換えに失敗しても予約操作は続行する */ }
+  }
+  if (els.planEvent) els.planEvent.addEventListener('change', function () { if (!els.planEvent.checked) clearPlanParam_(); });
+  if (els.planRelease && els.planEvent) {
+    els.planRelease.addEventListener('click', function () {
+      els.planEvent.checked = false;
+      applyEventPlanState_();
+      clearPlanParam_();
+      els.planEvent.focus();
+    });
+  }
 
   if (els.duration) {
     els.duration.addEventListener('input', function () { syncDurationOther_(); handleCalendarPrereqChange_(); });
@@ -1719,5 +1741,12 @@
           els.submitError.focus();
         });
     });
+  }
+
+  /* Issue #500: /studio-x/booking/?plan=osu_cosplay_base_6h は貸切ベースプランの初期選択だけを行う。初期化の最後に1回だけ適用し、
+     以降はユーザー操作を優先する（解除後に再選択しない）。可否はサーバーが予約作成時に必ず判定する。 */
+  if (els.planEvent && Logic.planFromSearch(window.location && window.location.search, brand) === Logic.EVENT_BASE_PLAN_CODE) {
+    els.planEvent.checked = true;
+    applyEventPlanState_();
   }
 })();

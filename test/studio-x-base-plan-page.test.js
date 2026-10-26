@@ -1,0 +1,124 @@
+/*
+ * Issue #500: 6時間貸切ベースプランの特設ページ（/studio-x/base-plan/）と、
+ * ?plan=osu_cosplay_base_6h によるプラン選択済み予約フォームへの直結。
+ * ?plan= はUIの初期状態を作るヒントにすぎず、可否はサーバー側検証が正（booking-event-plan.test.js）。
+ */
+'use strict';
+
+var test = require('node:test');
+var assert = require('node:assert');
+var fs = require('fs');
+var path = require('path');
+var Logic = require('../scripts/booking-logic.js');
+
+function read(rel) { return fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'); }
+var PLAN = 'osu_cosplay_base_6h';
+
+test('planFromSearch: studio_xの有効なplanだけを返し、なし・不正値・他ブランドは通常予約（空）', function () {
+  assert.strictEqual(Logic.planFromSearch('?plan=' + PLAN, 'studio_x'), PLAN);
+  assert.strictEqual(Logic.planFromSearch('?foo=1&plan=' + PLAN, 'studio_x'), PLAN);
+  assert.strictEqual(Logic.planFromSearch('?plan=' + PLAN + '&foo=1', 'studio_x'), PLAN);
+  assert.strictEqual(Logic.planFromSearch('', 'studio_x'), '');
+  assert.strictEqual(Logic.planFromSearch(undefined, 'studio_x'), '');
+  assert.strictEqual(Logic.planFromSearch('?plan=', 'studio_x'), '');
+  ['unknown', 'member_pair_3h', PLAN + 'x', 'x' + PLAN, PLAN.toUpperCase(), '%E0%A4%A', '<script>', '../' + PLAN].forEach(function (v) {
+    assert.strictEqual(Logic.planFromSearch('?plan=' + v, 'studio_x'), '', v);
+  });
+  /* SNB / SNB mens / ブランド不明には影響しない */
+  ['snb', 'mens', '', undefined].forEach(function (b) {
+    assert.strictEqual(Logic.planFromSearch('?plan=' + PLAN, b), '', String(b));
+  });
+  assert.strictEqual(Logic.planFromSearch('?xplan=' + PLAN, 'studio_x'), '');
+  /* 複数指定は無効（どちらが有効か曖昧なため通常予約） */
+  assert.strictEqual(Logic.planFromSearch('?plan=' + PLAN + '&plan=xxx', 'studio_x'), '');
+  assert.strictEqual(Logic.planFromSearch('?plan=xxx&plan=' + PLAN, 'studio_x'), '');
+  assert.strictEqual(Logic.planFromSearch('?plan=' + PLAN + '&plan=' + PLAN, 'studio_x'), '');
+});
+
+test('予約フォーム: URLの初期選択は初期化の最後に1回だけ。6時間固定・オプション畳み込みは既存の applyEventPlanState_ を通す', function () {
+  var app = read('scripts/booking-app.js');
+  var m = /if \(els\.planEvent && Logic\.planFromSearch\(window\.location && window\.location\.search, brand\) === Logic\.EVENT_BASE_PLAN_CODE\) \{\s*els\.planEvent\.checked = true;\s*applyEventPlanState_\(\);\s*\}\s*\}\)\(\);\s*$/.exec(app);
+  assert.ok(m, '初期化の末尾で1回だけ適用する');
+  assert.strictEqual(app.split('Logic.planFromSearch(').length - 1, 1, '他の箇所で再適用しない（解除後に勝手に再選択しない）');
+  var fn = app.slice(app.indexOf('function applyEventPlanState_'), app.indexOf("if (els.planEvent) els.planEvent.addEventListener('change', applyEventPlanState_)"));
+  assert.ok(fn.indexOf('els.duration.value = String(Logic.EVENT_BASE_PLAN_HOURS)') !== -1, '6時間固定');
+  assert.ok(fn.indexOf('optionsPanel.setSuspended(selected)') !== -1, 'オプション欄を畳む（#496）');
+  assert.ok(fn.indexOf('els.planBanner.hidden = !selected') !== -1, 'プラン選択済みバナー');
+  assert.ok(fn.indexOf('Logic.DEFAULT_DURATION_HOURS') !== -1, '解除時は3時間へ戻す（#494）');
+});
+
+test('プラン解除: バナーのボタンで通常予約へ戻り、URLのplanも外す', function () {
+  var app = read('scripts/booking-app.js');
+  assert.ok(/els\.planRelease\.addEventListener\('click'[\s\S]*?els\.planEvent\.checked = false;\s*applyEventPlanState_\(\);\s*clearPlanParam_\(\);/.test(app));
+  assert.ok(app.indexOf('history.replaceState') !== -1);
+  assert.ok(/els\.planEvent\.addEventListener\('change', function \(\) \{ if \(!els\.planEvent\.checked\) clearPlanParam_\(\); \}\)/.test(app), 'チェックボックスで解除してもURLから外す');
+  var html = read('_includes/booking_app_ja.html');
+  var block = /\{% if include\.brand == "studio_x" %\}[\s\S]*?\{% endif %\}/.exec(html.slice(html.indexOf('ba-plan-banner') - 400))[0];
+  assert.ok(block.indexOf('id="ba-plan-banner"') !== -1 && block.indexOf('id="ba-plan-release"') !== -1, 'Studio X限定ブロック内');
+  assert.ok(/id="ba-plan-banner"[^>]* hidden>/.test(html), '初期は非表示');
+  assert.ok(read('mens/booking/index.html').indexOf('ba-plan-banner') === -1 && read('booking/index.html').indexOf('ba-plan-banner') === -1);
+});
+
+test('サーバー検証は維持: planはsubmit/見積りでチェックボックスの状態から作り、URLを直接payloadへ入れない', function () {
+  var app = read('scripts/booking-app.js');
+  assert.ok(/function selectedPlan_\(\) \{\s*if \(eventPlanSelected_\(\)\) return Logic\.EVENT_BASE_PLAN_CODE;/.test(app));
+});
+
+test('特設ページ: ファーストビューの価格・人数・用途、誤認防止、オプション不可、比較、FAQ', function () {
+  var html = read('studio-x/base-plan/index.html');
+  var hero = html.slice(html.indexOf('<header class="subpage-hero">'), html.indexOf('id="about"'));
+  var heroText = hero.replace(/<[^>]+>/g, ' ');
+  ['6時間', '6,000円', '1室', '最大4名', '1名あたり1,500円', '着替え', '荷物置き', '休憩', '再入室', '有人クロークではありません', '追加オプション', '常設'].forEach(function (n) {
+    assert.ok(heroText.indexOf(n) !== -1, 'ファーストビュー: ' + n);
+  });
+  var body = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+  var text = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  ['荷物・貴重品は貸切室内で各自管理してください', 'スタッフ常駐', 'シャワー', '有料機材レンタル', 'スタッフによる設営・片付け', '利用できません',
+    '通常のStudio X予約との違い', '6時間固定', '6,000円固定', '大型ミラー', 'スマートフォン等での簡易撮影', 'コスプレイベント参加者専用ではなく'].forEach(function (n) {
+    assert.ok(text.indexOf(n) !== -1, n);
+  });
+  assert.strictEqual((body.match(/<details>/g) || []).length, 6, 'FAQ6件');
+  assert.ok(!/荷物を?お預かりします|預かりサービスです|クロークです|クロークをご利用/.test(text));
+  assert.ok(text.replace(/有人クローク(ではありません|ではなく)/g, '').replace(/有人クローク／/g, '').indexOf('クローク') === -1);
+  assert.ok(!/20\d\d-\d\d-\d\d/.test(body), '日付をハードコードしない');
+});
+
+test('特設ページ: CTAは上部・下部ともプラン選択済み予約へ直結し、GA4は既存のcta_click規約を使う', function () {
+  var html = read('studio-x/base-plan/index.html');
+  /* /studio-x/base-plan/ から見て ../booking/（= /studio-x/booking/）へ解決されること。booking/ だけだと /studio-x/base-plan/booking/ になる。 */
+  var ctas = html.match(/<a [^>]*href="\.\.\/booking\/\?plan=osu_cosplay_base_6h#booking-app-section"[^>]*>/g) || [];
+  assert.strictEqual(ctas.length, 4, 'ヘッダー・モバイルメニュー・ファーストビュー・下部');
+  var hrefs = html.match(/href="[^"]*booking\/[^"]*"/g) || [];
+  hrefs.forEach(function (h) { assert.ok(h.indexOf('href="../booking/') === 0, '相対階層: ' + h); });
+  assert.ok(html.indexOf('href="../booking/">通常のStudio X予約</a>') !== -1, '通常予約リンク');
+  ctas.forEach(function (a) { assert.ok(/data-analytics-event="cta_click"/.test(a) && /data-analytics-location="[a-z_]+"/.test(a)); });
+  assert.ok(html.indexOf('base_plan_hero') !== -1 && html.indexOf('base_plan_footer') !== -1);
+  assert.ok(!/generate_lead|gtag\('event'/.test(html), '成果イベントを増やさない');
+  var top = read('studio-x/index.html');
+  assert.ok(top.indexOf('href="base-plan/"') !== -1 && top.indexOf('data-analytics-destination="base_plan_page"') !== -1, 'トップ→特設ページ');
+  assert.ok(top.indexOf('href="booking/?plan=osu_cosplay_base_6h#booking-app-section"') !== -1, 'トップ→直結予約');
+});
+
+test('特設ページ: SEO / OGP / canonical / FAQPage構造化データ / sitemap', function () {
+  var html = read('studio-x/base-plan/index.html');
+  var URL = 'https://nagoya-base.github.io/Studio-nagoya-base/studio-x/base-plan/';
+  assert.ok(html.indexOf('<title>Studio X｜6時間貸切ベースプラン') !== -1);
+  assert.ok(/<meta name="description" content="[^"]*6,000円[^"]*">/.test(html));
+  assert.ok(html.indexOf('<link rel="canonical" href="' + URL + '">') !== -1);
+  assert.ok(html.indexOf('<meta name="robots" content="index, follow">') !== -1);
+  ['og:title', 'og:description', 'og:url', 'og:image'].forEach(function (p) { assert.ok(html.indexOf('property="' + p + '"') !== -1, p); });
+  ['twitter:card', 'twitter:title', 'twitter:description', 'twitter:image'].forEach(function (p) { assert.ok(html.indexOf('name="' + p + '"') !== -1, p); });
+  var data = JSON.parse(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html)[1]);
+  var offer = data['@graph'].filter(function (n) { return n['@type'] === 'Offer'; })[0];
+  assert.strictEqual(offer.price, '6000');
+  assert.strictEqual(offer.url, URL);
+  assert.ok(data['@graph'].some(function (n) { return n['@type'] === 'FAQPage' && n.mainEntity.length === 6; }));
+  assert.ok(read('sitemap.xml').indexOf('<loc>' + URL + '</loc>') !== -1);
+});
+
+test('通常のStudio X予約URL・SNB・mensは従来どおり（planなしで自動選択しない）', function () {
+  var booking = read('studio-x/booking/index.html');
+  assert.ok(booking.indexOf('booking_app_ja.html') !== -1);
+  assert.ok(/id="ba-plan-event" value="osu_cosplay_base_6h">/.test(read('_includes/booking_app_ja.html')), 'checkboxは未チェックが初期値');
+  assert.ok(!/id="ba-plan-event"[^>]*checked/.test(read('_includes/booking_app_ja.html')));
+});

@@ -95,6 +95,13 @@
     </div>
 
 {% if include.brand == "studio_x" %}
+    <div class="ba-plan-banner" id="ba-plan-banner" role="status" hidden>
+      <p><strong>6時間貸切ベースプランで予約中</strong>（6時間 6,000円／1室・最大4名・追加オプションは利用できません）</p>
+      <button type="button" class="button button-ghost" id="ba-plan-release">プランを解除して通常予約に戻る</button>
+    </div>
+{% endif %}
+
+{% if include.brand == "studio_x" %}
     <!-- 6時間貸切ベースプラン（Issue #488 / #492）。常設で、Studio Xの予約フォームに常時表示する。
          選ぶと利用時間が6時間に固定される。通常の時間貸し料金とは別の独立プランで、
          利用者が明示的に選んだときだけ適用され、人数・時間の可否は予約作成時にサーバー側でも必ず判定する。 -->
@@ -103,7 +110,7 @@
       <div class="ba-choices">
         <label class="ba-choice"><input type="checkbox" id="ba-plan-event" value="osu_cosplay_base_6h"> <span>6時間 6,000円／1室・最大4名</span></label>
       </div>
-      <p class="ba-field-help">着替え・荷物置き・休憩など、長時間の拠点利用向けです。利用時間内は再入室できます。<strong>有人クロークではありません。</strong>荷物・貴重品はお部屋の中でご自身で管理してください（スタッフの常駐・お預かりはありません）。選ぶと利用時間は6時間に固定されます。通常の時間貸し料金には自動で適用されません。撮影設備・有料オプションを使った本格的な撮影は、プランを選ばず通常の予約をご利用ください。<a href="{{ '/studio-x/#osu-base-plan' | relative_url }}" target="_blank" rel="noopener">プランの詳細を見る</a></p>
+      <p class="ba-field-help">着替え・荷物置き・休憩など、長時間の拠点利用向けです。利用時間内は再入室できます。<strong>有人クロークではありません。</strong>荷物・貴重品はお部屋の中でご自身で管理してください（スタッフの常駐・お預かりはありません）。選ぶと利用時間は6時間に固定されます。通常の時間貸し料金には自動で適用されません。撮影設備・有料オプションを使った本格的な撮影は、プランを選ばず通常の予約をご利用ください。<a href="{{ '/studio-x/base-plan/' | relative_url }}" target="_blank" rel="noopener">プランの詳細を見る</a></p>
     </fieldset>
 {% endif %}
 
