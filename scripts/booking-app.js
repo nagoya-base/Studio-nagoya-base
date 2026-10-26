@@ -53,7 +53,8 @@
       submitLabel: 'この内容で仮予約を送信する',
       diagnosticIdLabel: '\n診断ID: ',
       pendingStatusLabel: '仮予約受付（未確定）',
-      priceLine: function (amount) { return '利用料金: ' + amount + '（税込）'; }
+      priceLine: function (amount) { return '利用料金: ' + amount + '（税込）'; },
+      timeRangeLine: function (range) { return '利用時間：' + range; }
     },
     en: {
       backLabelDefault: 'Back to Studio Nagoya Base',
@@ -73,7 +74,8 @@
       submitLabel: 'Submit Pending Booking',
       diagnosticIdLabel: '\nDiagnostic ID: ',
       pendingStatusLabel: 'Pending — not confirmed yet',
-      priceLine: function (amount) { return 'Price: ' + amount + ' (tax included)'; }
+      priceLine: function (amount) { return 'Price: ' + amount + ' (tax included)'; },
+      timeRangeLine: function (range) { return 'Time: ' + range; }
     }
   }[locale];
 
@@ -140,6 +142,7 @@
     shower: document.getElementById('ba-shower'),
     benefitsError: document.getElementById('ba-benefits-error'),
     memberError: document.getElementById('ba-member-error'),
+    priceTime: document.getElementById('ba-price-time'),
     priceLine: document.getElementById('ba-price-line'),
     priceNote: document.getElementById('ba-price-note'),
     step1Next: document.getElementById('ba-step-datetime-next'),
@@ -822,6 +825,21 @@
     }
   }
 
+  /* Issue #520: 料金表示の近くに、選択済みの開始〜終了時刻（と利用時間）を出す。
+     開始時刻・利用時間はstate（開始時刻ボタンのclickで設定、条件変更で必ずnullへ戻る）だけを
+     参照し、未選択なら隠す。料金計算・見積りとは独立した表示専用の描画。 */
+  function renderPriceTimeRange_() {
+    if (!els.priceTime) return;
+    var endTime = state.startTime && state.durationMinutes ? Logic.computeEndTime(state.startTime, state.durationMinutes) : '';
+    if (!endTime) {
+      els.priceTime.textContent = '';
+      els.priceTime.hidden = true;
+      return;
+    }
+    els.priceTime.textContent = UI_TEXT.timeRangeLine(UI_TEXT.confirmTime(state.startTime, endTime, state.durationMinutes / 60));
+    els.priceTime.hidden = false;
+  }
+
   /* latestPriceEntryはStep4確認画面（renderConfirmSummary）・送信直前の再確認からも
      参照する共有状態（「今わかっている最新の見積り」）。 */
   var latestPriceEntry = { status: 'unset' };
@@ -850,6 +868,7 @@
     latestPriceEntry = entry;
     if (optionsPanel && optionsPanel.refreshSummary) optionsPanel.refreshSummary();
     renderPriceEntryInto_(els.priceLine, els.priceNote, entry);
+    renderPriceTimeRange_();
     if (els.confirmPrice) els.confirmPrice.textContent = priceDisplayText_(entry);
   }
 
@@ -1079,6 +1098,7 @@
     state.timeBand = checkedTimeBand();
     state.isMember = isMemberChecked_();
     state.startTime = null;
+    renderPriceTimeRange_();
 
     /* カレンダーは隠さない（goToStep('start-time')でStep1全体を切り替えない）。
        Step1最下部の開始時刻エリアを表示し、その中だけをローディング→一覧へ切り替える。 */
@@ -1139,6 +1159,7 @@
     isFetchingAvailability = false;
     availabilityInFlightKey = null;
     state.startTime = null;
+    renderPriceTimeRange_();
     setStartTimeAreaVisible_(false);
     if (els.startTimeLoading) els.startTimeLoading.hidden = true;
     if (els.startTimeGrid) { els.startTimeGrid.hidden = true; els.startTimeGrid.innerHTML = ''; }
@@ -1161,6 +1182,7 @@
     /* fetch開始前に必ず「検索中」を表示する。旧日付の一覧・エラーは即クリアし、
        状態が変わる間も領域を空白にしない。 */
     state.startTime = null;
+    renderPriceTimeRange_();
     els.startTimeSummary.textContent = UI_TEXT.startTimeSummary(state.date, state.durationMinutes / 60);
     els.startTimeLoading.textContent = UI_TEXT.searchingStartTimes;
     els.startTimeLoading.hidden = false;
@@ -1230,6 +1252,7 @@
       button.setAttribute('aria-pressed', 'false');
       button.addEventListener('click', function () {
         state.startTime = time;
+        renderPriceTimeRange_();
         els.startTimeGrid.querySelectorAll('.ba-time-slot').forEach(function (el) {
           el.setAttribute('aria-pressed', el === button ? 'true' : 'false');
         });

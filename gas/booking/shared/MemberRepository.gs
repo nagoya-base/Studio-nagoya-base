@@ -13,6 +13,11 @@
  * - MemberMonths: 「会員 × 利用月」が支払済みである事実を1行ずつ追記する。資格判定の唯一の
  *   根拠。(memberId, month)で冪等（同じ月を2回記録しない）。追記専用で、更新・削除しない。
  *     memberId / month（YYYYMMの整数・JST。例: 202612）/ sourceType / sourceId / amount / paidAt / eventId / recordedAt
+ * - MemberRefunds（Issue #517）: 全額返金された支払い（sourceType + sourceId）を1行ずつ追記する。
+ *   MemberMonthsの行は削除・改変せず、資格判定時に「全額返金された支払いを根拠とする月」を差し引く。
+ *   (sourceType, sourceId)で冪等。返金イベントが入会決済の処理より先に届いても、後から追記される
+ *   同じsourceIdの月が自動的に無効になるため、到着順に依存せず収束する。
+ *     sourceType / sourceId / memberId / amount / refundedAmount / refundedAt / eventId / recordedAt
  *
  * 【ロック】書き込み関数（upsertMember・recordPaidMonth）はロックを取らない。呼び出し側が
  * LockService.getScriptLock()を保持した状態で呼ぶこと（StripeWebhookProcessorのrunFenced_経由。
@@ -39,6 +44,8 @@ var MemberRepository = (function () {
     'currentPeriodStart', 'currentPeriodEnd', 'canceledAt', 'cancelAtPeriodEnd',
     'latestInvoiceId', 'latestEventId', 'latestEventCreated', 'createdAt', 'updatedAt'
   ];
+  var REFUNDS_SHEET_ = 'MemberRefunds';
+  var REFUND_HEADERS_ = ['sourceType', 'sourceId', 'memberId', 'amount', 'refundedAmount', 'refundedAt', 'eventId', 'recordedAt'];
   var MONTH_HEADERS_ = ['memberId', 'month', 'sourceType', 'sourceId', 'amount', 'paidAt', 'eventId', 'recordedAt'];
 
   /*
@@ -59,6 +66,23 @@ var MemberRepository = (function () {
     if (!sheet) sheet = spreadsheet.insertSheet(name);
     if (sheet.getLastRow() < 1) sheet.appendRow(headers);
     return sheet;
+  }
+
+  function sourceKey_(sourceType, sourceId) {
+    return String(sourceType || '') + '\n' + String(sourceId || '');
+  }
+
+  /* 全額返金済みの支払い（sourceType + sourceId）の集合。台帳を読めない場合は例外（呼び出し側でfail-closed）。 */
+  function readRefundedSources_() {
+    var values = ensureSheet_(REFUNDS_SHEET_, REFUND_HEADERS_).getDataRange().getValues();
+    var refunded = {};
+    for (var i = 1; i < values.length; i++) refunded[sourceKey_(values[i][0], values[i][1])] = true;
+    return refunded;
+  }
+
+  /* MemberMonthsの行（values[i]）が、全額返金された支払いを根拠にしているか。 */
+  function isRefundedMonthRow_(refunded, row) {
+    return refunded[sourceKey_(row[2], row[3])] === true;
   }
 
   function rowToRecord_(headers, row) {
@@ -197,7 +221,9 @@ var MemberRepository = (function () {
     }
     var sheet = ensureSheet_(MONTHS_SHEET_, MONTH_HEADERS_);
     var values = sheet.getDataRange().getValues();
+    var refunded = readRefundedSources_();
     for (var i = 1; i < values.length; i++) {
+      if (isRefundedMonthRow_(refunded, values[i])) continue;
       if (values[i][0] === entry.memberId && Number(values[i][1]) === monthToCell_(entry.month)) return { recorded: false };
     }
     sheet.appendRow(recordToRow_(MONTH_HEADERS_, {
@@ -211,6 +237,34 @@ var MemberRepository = (function () {
       recordedAt: now instanceof Date ? now : new Date()
     }));
     return { recorded: true };
+  }
+
+  /*
+   * 全額返金された支払いを記録する（Issue #517）。ロック保持下で呼ぶこと。MemberMonthsは変更しない。
+   * (sourceType, sourceId)が既にあれば何もしない（冪等。同じ返金イベントの再送・別イベントでも1行）。
+   * entry: { sourceType, sourceId, memberId, amount, refundedAmount, refundedAt, eventId }
+   * 戻り値: { recorded: boolean }
+   */
+  function recordRefundedSource(entry, now) {
+    if (!entry || !entry.sourceType || !entry.sourceId) throw new Error('sourceTypeとsourceIdが必要です。');
+    var sheet = ensureSheet_(REFUNDS_SHEET_, REFUND_HEADERS_);
+    if (readRefundedSources_()[sourceKey_(entry.sourceType, entry.sourceId)]) return { recorded: false };
+    sheet.appendRow(recordToRow_(REFUND_HEADERS_, {
+      sourceType: entry.sourceType,
+      sourceId: entry.sourceId,
+      memberId: entry.memberId || '',
+      amount: entry.amount,
+      refundedAmount: entry.refundedAmount,
+      refundedAt: entry.refundedAt || '',
+      eventId: entry.eventId || '',
+      recordedAt: now instanceof Date ? now : new Date()
+    }));
+    return { recorded: true };
+  }
+
+  /* 指定の支払いが全額返金済みとして記録されているか。台帳を読めない場合は例外。 */
+  function isSourceRefunded(sourceType, sourceId) {
+    return readRefundedSources_()[sourceKey_(sourceType, sourceId)] === true;
   }
 
   /*
@@ -234,8 +288,11 @@ var MemberRepository = (function () {
 
     var monthsSheet = ensureSheet_(MONTHS_SHEET_, MONTH_HEADERS_);
     var values = monthsSheet.getDataRange().getValues();
+    var refunded = readRefundedSources_();
     for (var i = 1; i < values.length; i++) {
-      if (memberIds[values[i][0]] && Number(values[i][1]) === monthToCell_(monthKey)) return true;
+      if (!memberIds[values[i][0]] || Number(values[i][1]) !== monthToCell_(monthKey)) continue;
+      if (isRefundedMonthRow_(refunded, values[i])) continue;
+      return true;
     }
     return false;
   }
@@ -259,8 +316,10 @@ var MemberRepository = (function () {
     }
     if (!/^\d{4}-\d{2}$/.test(monthKey || '')) return null;
     var values = ensureSheet_(MONTHS_SHEET_, MONTH_HEADERS_).getDataRange().getValues();
+    var refunded = readRefundedSources_();
     for (var j = 1; j < values.length; j++) {
       if (Number(values[j][1]) !== monthToCell_(monthKey)) continue;
+      if (isRefundedMonthRow_(refunded, values[j])) continue;
       for (var k = 0; k < matches.length; k++) {
         if (matches[k].record.memberId === values[j][0]) return matches[k];
       }
@@ -343,8 +402,10 @@ var MemberRepository = (function () {
     if (Object.keys(ids).length === 0) return facts;
     var values = ensureSheet_(MONTHS_SHEET_, MONTH_HEADERS_).getDataRange().getValues();
     var seen = {};
+    var refundedSources = readRefundedSources_();
     for (var i = 1; i < values.length; i++) {
       if (!ids[values[i][0]]) continue;
+      if (isRefundedMonthRow_(refundedSources, values[i])) continue;
       var cell = String(values[i][1]);
       if (!/^\d{6}$/.test(cell)) continue;
       var key = cell.substring(0, 4) + '-' + cell.substring(4);
@@ -455,6 +516,9 @@ var MemberRepository = (function () {
     findLiveMemberByEmail: findLiveMemberByEmail,
     MEMBER_HEADERS: MEMBER_HEADERS_,
     MONTH_HEADERS: MONTH_HEADERS_,
+    REFUND_HEADERS: REFUND_HEADERS_,
+    recordRefundedSource: recordRefundedSource,
+    isSourceRefunded: isSourceRefunded,
     findMember: findMember,
     upsertMember: upsertMember,
     recordPaidMonth: recordPaidMonth,
