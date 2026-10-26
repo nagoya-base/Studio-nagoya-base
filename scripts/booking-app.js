@@ -907,6 +907,8 @@
         els.duration.value = String(Logic.EVENT_BASE_PLAN_HOURS);
         els.duration.disabled = true;
       } else {
+        /* 解除時は通常の時間選択へ戻し、固定中の6時間のままにせず初期値（3時間）へ戻す（Issue #494） */
+        if (els.duration.disabled) els.duration.value = String(Logic.DEFAULT_DURATION_HOURS || 3);
         els.duration.disabled = false;
       }
     }

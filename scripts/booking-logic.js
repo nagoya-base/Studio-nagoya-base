@@ -953,6 +953,8 @@
      可否の正本はGAS。ここは画面の早期ガードと表示用の定数だけを持つ。 */
   var EVENT_BASE_PLAN_CODE = 'osu_cosplay_base_6h';
   var EVENT_BASE_PLAN_HOURS = 6;
+  /* 通常予約の利用時間の初期値（全ブランド共通・Issue #494）。貸切プラン解除時もこの値へ戻す。 */
+  var DEFAULT_DURATION_HOURS = 3;
   var EVENT_BASE_PLAN_LABEL = 'Studio X｜6時間貸切ベースプラン（6,000円）';
 
   function isEventPlanPeopleValue(people) {
@@ -1065,6 +1067,7 @@
     PAIR_PACK_PLAN_CODE: PAIR_PACK_PLAN_CODE,
     EVENT_BASE_PLAN_CODE: EVENT_BASE_PLAN_CODE,
     EVENT_BASE_PLAN_HOURS: EVENT_BASE_PLAN_HOURS,
+    DEFAULT_DURATION_HOURS: DEFAULT_DURATION_HOURS,
     EVENT_BASE_PLAN_LABEL: EVENT_BASE_PLAN_LABEL,
     isEventPlanPeopleValue: isEventPlanPeopleValue,
     formatJpyAmount: formatJpyAmount,
