@@ -340,10 +340,11 @@ test('会員資格確認: プレスタート加入者はリンクを開いた本
   var by = {};
   st.benefits.forEach(function (b) { by[b.key] = b; });
   assert.strictEqual(by.advance_booking_90.available, true);
-  ['pair_pack', 'shower', 'paid_equipment', 'studio_x_options'].forEach(function (k) {
+  ['pair_pack', 'shower', 'studio_x_options'].forEach(function (k) {
     assert.strictEqual(by[k].available, false, k);
     assert.strictEqual(by[k].startsOn, '2026-12-01', k);
   });
+  assert.strictEqual(by.paid_equipment, undefined);
   var json = JSON.stringify(out);
   ['MBR-', CUSTOMER_ID, SUBSCRIPTION_ID, MEMBER_EMAIL, 'cus_', 'sub_'].forEach(function (s) { assert.strictEqual(json.indexOf(s), -1, s); });
 });
