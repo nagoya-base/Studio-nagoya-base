@@ -221,6 +221,9 @@ var BookingConfig = (function () {
         mens: properties.getProperty('STRIPE_MEMBERSHIP_CANCEL_URL_MENS') || '',
         studio_x: properties.getProperty('STRIPE_MEMBERSHIP_CANCEL_URL_STUDIO_X') || ''
       },
+      /* Issue #528: SNB MEMBER月会費の既存Product ID（任意）。設定時はそのProductを使い自動作成しない。
+         未設定なら固定ID snb_member_monthly を取得/作成する。テスト/本番でIDが異なるためScript Propertiesで持つ。 */
+      membershipProductId: properties.getProperty('STRIPE_MEMBER_PRODUCT_ID') || '',
       /* Issue #490: 会員資格確認ページ（/membership/status/）のURL。未設定なら入会Success URL（…/membership/complete.html）から導出する。 */
       membershipStatusUrl: properties.getProperty('MEMBERSHIP_STATUS_URL') || deriveMembershipStatusUrl_(properties.getProperty('STRIPE_MEMBERSHIP_SUCCESS_URL') || ''),
       /* Issue #422: ブランド別の戻り先（任意）。未設定ならBooking.resolveCheckoutReturnUrlsが

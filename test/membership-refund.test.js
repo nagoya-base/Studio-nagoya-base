@@ -7,6 +7,7 @@ var test = require('node:test');
 var assert = require('node:assert');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
+var membershipLookupResponse = require('./helpers/stripe-membership-mock').membershipLookupResponse;
 
 var FILES = [
   'Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Booking.gs', 'CardPayment.gs',
@@ -62,6 +63,8 @@ function makeStripeResponder(state) {
     if (url.indexOf('/checkout/sessions') !== -1 && options.method === 'post') {
       return { responseCode: 200, body: { id: 'cs_new_' + (++state.newCheckouts), url: 'https://checkout.stripe.com/c/pay/cs_new_' + state.newCheckouts, metadata: {} } };
     }
+    var lookup = membershipLookupResponse(url, options, state);
+    if (lookup) return lookup;
     throw new Error('未対応のURL: ' + url);
   };
 }
@@ -181,7 +184,7 @@ test('順序逆転: 返金イベントが入会イベントより先に処理さ
   var join = receiveAndProcess(ctx, joinEvent());
   assert.strictEqual(join.code, 'MEMBERSHIP_JOIN_REFUNDED');
   assert.strictEqual(isMember(ctx, '2026-12'), false);
-  assert.strictEqual(ctx.stripeCalls.filter(function (u) { return u.indexOf('/subscriptions') !== -1; }).length, 0, '返金済みならsubscriptionを作らない');
+  assert.strictEqual(ctx.stripeCalls.filter(function (u) { return u.indexOf('/subscriptions') !== -1 && u.indexOf('/subscriptions?') === -1; }).length, 0, '返金済みならsubscriptionを作らない');
 });
 
 test('プレスタート: 10月入会の初回500円を全額返金すると、10月・11月の資格がどちらも無効になる', function () {

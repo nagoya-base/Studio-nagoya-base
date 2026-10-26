@@ -156,6 +156,11 @@ var StripeWebhookProcessor = (function () {
   /* 入会決済（Issue #517）の返金検知。イベント本文は信用せず、Chargeを再取得して返金額を確認する。 */
   var MEMBERSHIP_REFUND_TYPES_ = ['charge.refunded'];
   var MEMBERSHIP_PRODUCT_NAME_ = 'SNB MEMBER 月会費';
+  /* Issue #528: subscriptionのprice_dataはProduct IDが必須のため固定IDのProductを使う。 */
+  var MEMBERSHIP_PRODUCT_ID_ = 'snb_member_monthly';
+  /* Issue #528: price_dataの構造変更に伴い旧キー(snb-membership-sub-)から切り替える。旧キーは
+     同一キー・別パラメータでIDEMPOTENCY_CONFLICTになり得るため。二重作成の防止は作成前の既存確認が担う。 */
+  var MEMBERSHIP_SUBSCRIPTION_KEY_PREFIX_ = 'snb-membership-sub-v2-';
 
   /*
    * 処理権の有効期限（レビュー対応・7回目。6回目までのADMIN_CLAIM_STALE_AFTER_MS_＝
@@ -675,10 +680,29 @@ var StripeWebhookProcessor = (function () {
       result.stateApplied ? '会員状態を更新しました。' : 'より新しい状態が記録済みのため反映しませんでした。', now);
   }
 
+  /* 管理者向けの診断ログ（Issue #528）。HTTP status・Stripeのerror type/code/paramと、ID・URLを
+     伏せたmessageだけを残す（レスポンス全文・秘密鍵・個人情報は出さない）。 */
+  function logSubscriptionFailure_(step, eventId, result) {
+    var r = result || {};
+    var message = String(r.message || '')
+      .replace(/\b(?:sk|rk|pk|whsec)_[A-Za-z0-9_*]+/g, '[REDACTED]')
+      .replace(/\b(?:cus|sub|si|pi|pm|ch|re|in|cs|price|prod|evt|seti|txn)_[A-Za-z0-9]+/g, '[ID]')
+      .replace(/https?:\/\/\S+/gi, '[URL]')
+      .replace(/[\r\n]+/g, ' ')
+      .substring(0, 200);
+    Logger.log('StripeWebhookProcessor: 会員' + step + 'に失敗しました eventId=' + eventId +
+      ' errorType=' + (r.errorType || 'UNKNOWN') +
+      ' httpStatus=' + (r.httpStatus || '') +
+      ' stripeErrorType=' + (r.stripeErrorType || '') +
+      ' stripeErrorCode=' + (r.stripeErrorCode || '') +
+      ' stripeErrorParam=' + (r.stripeErrorParam || '') +
+      ' message=' + message);
+  }
+
   /*
    * 入会Checkout（mode=payment・metadata.orderType=membership）の決済完了。
-   * 1) 会員行の作成と入会月の支払い事実の記録（冪等）→ 2) subscription作成（翌月1日 00:00 UTC
-   * アンカー・日割りなし。Idempotency-Keyで二重作成しない）→ 3) subscription IDの記録。
+   * 1) 会員行の作成と入会月の支払い事実の記録（冪等）→ 2) 既存subscription確認→無ければ作成（翌月1日 00:00 UTC
+   * アンカー・日割りなし。Idempotency-Keyと既存確認で二重作成しない）→ 3) subscription IDの記録。
    * 2)が一時的に失敗した場合は未完了のまま終え、次回の実行で1)をやり直さず2)から再開する
    * （1)・3)が冪等のため、何度再試行しても会員・支払い事実は重複しない）。
    */
@@ -759,31 +783,52 @@ var StripeWebhookProcessor = (function () {
       return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_JOINED', '入会処理は完了済みです。', now);
     }
 
-    /* 2) subscription作成。 */
-    var anchorSeconds = MembershipRules.renewalAnchorSecondsForJoin(parsed.created);
-    if (!anchorSeconds || anchorSeconds * 1000 <= new Date().getTime() + 60 * 1000) {
-      return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_JOIN_MONTH_ELAPSED',
-        '入会月を過ぎたため自動更新の設定ができません。入会月の資格は記録済みです。手動でsubscriptionを設定してください。eventId=' + eventId, now);
+    /* 2) subscription作成。作成前にStripe上の既存subscription（同じ会員）を確認し、あれば作らず
+       台帳へ紐付ける（Issue #528: 台帳保存失敗後の再処理・手動作成済み・ペイロード変更後の
+       Idempotency-Key不一致でも二重作成しない）。確認できない場合は作成せず再試行する。 */
+    var existingLookup = StripeGateway.findMembershipSubscription(stripeConfig, session.customerId, memberId);
+    if (!existingLookup.ok) {
+      logSubscriptionFailure_('既存subscription照会', eventId, existingLookup);
+      return outcome_(false, 'SUBSCRIPTION_CREATE_RETRY', 'subscriptionの有無を確認できません。再試行します。');
     }
-    var subscriptionResult = StripeGateway.createMembershipSubscription(stripeConfig, {
-      customerId: session.customerId,
-      paymentMethodId: intent.paymentMethodId,
-      amountJpy: MembershipRules.MONTHLY_FEE_JPY,
-      productName: MEMBERSHIP_PRODUCT_NAME_,
-      anchorSeconds: anchorSeconds,
-      memberId: memberId
-    }, 'snb-membership-sub-' + session.id);
-    if (!subscriptionResult.ok) {
-      Logger.log('StripeWebhookProcessor: 会員subscription作成に失敗しました eventId=' + eventId + ' errorType=' + subscriptionResult.errorType);
-      if (subscriptionResult.errorType === 'STRIPE_ERROR' || subscriptionResult.errorType === 'IDEMPOTENCY_CONFLICT') {
-        return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_SUBSCRIPTION_CREATE_FAILED',
-          '自動更新のsubscriptionを作成できませんでした。入会月の資格は記録済みです。eventId=' + eventId, now);
+    var subscription = existingLookup.subscription;
+    /* 運営指定の既存Product（STRIPE_MEMBERSHIP_PRODUCT_ID）があればそれを使い、無ければ固定IDを使う。 */
+    var configuredProductId = (stripeConfig && stripeConfig.membershipProductId) || '';
+    var productId = configuredProductId || MEMBERSHIP_PRODUCT_ID_;
+    if (subscription) {
+      /* 既存を採用する前に、12/1から毎月500円で自動更新できる内容か検証する。不一致は新規作成せず要復旧。 */
+      var problems = MembershipRules.existingSubscriptionProblems(subscription.raw, productId, Math.floor(new Date().getTime() / 1000), parsed.created);
+      if (problems.length) {
+        return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_EXISTING_SUBSCRIPTION_INVALID',
+          'Stripe上の既存subscriptionが自動更新の条件（' + problems.join(',') + '）を満たしません。新規作成は行っていません。入会月の資格は記録済みです。Stripeで確認し、修正または解約のうえ復旧してください。eventId=' + eventId, now);
       }
-      return outcome_(false, 'SUBSCRIPTION_CREATE_RETRY', 'subscriptionの作成を再試行します。');
+    } else {
+      var anchorSeconds = MembershipRules.renewalAnchorSecondsForJoin(parsed.created);
+      if (!anchorSeconds || anchorSeconds * 1000 <= new Date().getTime() + 60 * 1000) {
+        return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_JOIN_MONTH_ELAPSED',
+          '入会月を過ぎたため自動更新の設定ができません。入会月の資格は記録済みです。手動でsubscriptionを設定してください。eventId=' + eventId, now);
+      }
+      var productResult = StripeGateway.ensureMembershipProduct(stripeConfig, productId, MEMBERSHIP_PRODUCT_NAME_, !configuredProductId);
+      var subscriptionResult = productResult.ok ? StripeGateway.createMembershipSubscription(stripeConfig, {
+        customerId: session.customerId,
+        paymentMethodId: intent.paymentMethodId,
+        amountJpy: MembershipRules.MONTHLY_FEE_JPY,
+        productId: productResult.productId,
+        anchorSeconds: anchorSeconds,
+        memberId: memberId
+      }, MEMBERSHIP_SUBSCRIPTION_KEY_PREFIX_ + session.id) : productResult;
+      if (!subscriptionResult.ok) {
+        logSubscriptionFailure_(productResult.ok ? 'subscription作成' : 'Product準備', eventId, subscriptionResult);
+        if (subscriptionResult.errorType === 'STRIPE_ERROR' || subscriptionResult.errorType === 'IDEMPOTENCY_CONFLICT') {
+          return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_SUBSCRIPTION_CREATE_FAILED',
+            '自動更新のsubscriptionを作成できませんでした。入会月の資格は記録済みです。eventId=' + eventId, now);
+        }
+        return outcome_(false, 'SUBSCRIPTION_CREATE_RETRY', 'subscriptionの作成を再試行します。');
+      }
+      subscription = subscriptionResult.subscription;
     }
 
     /* 3) subscription IDと初期状態の記録。 */
-    var subscription = subscriptionResult.subscription;
     var period = MembershipRules.readSubscriptionPeriod(subscription.raw);
     var refundedDuringJoin = false;
     var fencedFinal = runFenced_(rowNumber, generation, function () {
