@@ -503,6 +503,11 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .price-notes { margin: 24px 0 40px; display: flex; gap: 18px 40px; flex-wrap: wrap; color: var(--muted); }
 .price-notes p { margin: 0; font-size: .72rem; }
 .price-notes p::before { content: '—'; margin-right: 10px; color: var(--accent); }
+.shower-notice { margin: 0 0 32px; padding: 20px 22px; border: 1px solid var(--accent); border-radius: 8px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.shower-notice > * { margin: 0; max-width: 100%; }
+.shower-notice-label { font-size: .68rem; letter-spacing: .12em; color: var(--accent); }
+.shower-notice h3 { font-size: 1rem; }
+.shower-notice p:not(.shower-notice-label) { font-size: .82rem; line-height: 1.8; overflow-wrap: anywhere; }
 
 .price-preview { margin-top: 44px; }
 .price-preview-card { max-width: 560px; padding: 24px clamp(20px, 4vw, 32px); border: 1px solid var(--line); }
