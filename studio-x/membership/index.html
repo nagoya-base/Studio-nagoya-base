@@ -112,17 +112,35 @@
   </div>
 
   <main id="main-content">
+{% include membership_phase_ja.html %}
     <!-- ヒーロー（Studio Xトップと同じ hero 構造・同じ撮影イメージ資産・同じOGP画像。SNB MEMBERは前面に出さない） -->
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-copy">
-        <p class="eyebrow">MEMBER OPTIONS / ROOM RATE IS THE SAME</p>
-        <p class="hero-usage-line">撮影の幅を、もう一段広げたい方に。</p>
-        <h1 id="hero-title">部屋料金は同じ。<br><em>できることが増える。</em></h1>
-        <p class="hero-lead">Studio Xの部屋料金は、会員でも非会員でも同じです。有料の機材レンタルとスタッフ設営・片付けを使いたいときだけ、会員になれば大丈夫です。</p>
+        <div data-membership-phase="prestart"{% unless membership_is_prestart %} hidden{% endunless %}>
+          <p class="eyebrow">MEMBER PRESTART / ROOM RATE IS THE SAME</p>
+          <p class="hero-usage-line">月額500円・プレスタート中。</p>
+          <h1 id="hero-title">今すぐ使える特典は、<br><em>90日先行予約。</em></h1>
+          <p class="hero-lead">一般は30日先まで、会員は90日先まで予約できます。Studio Xの部屋料金は、会員でも非会員でも同じです。</p>
+          <div class="membership-prestart-start" role="note" aria-label="2026年12月1日スタートの特典">
+            <p class="membership-prestart-start-title">Studio X会員限定の有料オプション <span class="membership-prestart-start-date">2026年12月1日スタート</span></p>
+            <p class="membership-prestart-start-note">有料の機材レンタル・スタッフによる設営/片付けなど、会員限定の有料オプションは2026年12月1日からご利用いただけます。</p>
+          </div>
 
-        <div class="hero-actions">
-          <a class="button button-primary" href="#join" data-analytics-event="cta_click" data-analytics-type="membership_join" data-analytics-location="studio_x_membership_hero" data-analytics-destination="membership_join_form">会員になる（月額500円）</a>
-          <a class="button button-ghost" href="../booking/" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="studio_x_membership_hero" data-analytics-destination="booking_app">日時を選んで予約する</a>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#join" data-analytics-event="cta_click" data-analytics-type="membership_join" data-analytics-location="studio_x_membership_hero" data-analytics-destination="membership_join_form">会員になる（月額500円）</a>
+            <a class="button button-ghost" href="#membership-prestart" data-analytics-event="cta_click" data-analytics-type="membership_prestart_info" data-analytics-location="studio_x_membership_hero" data-analytics-destination="membership_prestart">90日先行予約について見る</a>
+          </div>
+        </div>
+        <div data-membership-phase="regular"{% if membership_is_prestart %} hidden{% endif %}>
+          <p class="eyebrow">MEMBER OPTIONS / ROOM RATE IS THE SAME</p>
+          <p class="hero-usage-line">撮影の幅を、もう一段広げたい方に。</p>
+          <h1 id="hero-title">部屋料金は同じ。<br><em>できることが増える。</em></h1>
+          <p class="hero-lead">Studio Xの部屋料金は、会員でも非会員でも同じです。有料の機材レンタルとスタッフ設営・片付けを使いたいときだけ、会員になれば大丈夫です。</p>
+
+          <div class="hero-actions">
+            <a class="button button-primary" href="#join" data-analytics-event="cta_click" data-analytics-type="membership_join" data-analytics-location="studio_x_membership_hero" data-analytics-destination="membership_join_form">会員になる（月額500円）</a>
+            <a class="button button-ghost" href="../booking/" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="studio_x_membership_hero" data-analytics-destination="booking_app">日時を選んで予約する</a>
+          </div>
         </div>
 
         <dl class="hero-facts">
@@ -288,6 +306,7 @@
   <a class="mobile-booking" href="../booking/" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="membership_mobile_fixed" data-analytics-destination="booking_app">日時を選んで予約する</a>
 
   <script src="../../scripts/booking-config.js"></script>
+  <script src="../../scripts/membership-prestart-hero.js"></script>
   <script src="../../scripts/membership-join.js"></script>
   <script src="../analytics.js"></script>
   <script src="../main.js"></script>

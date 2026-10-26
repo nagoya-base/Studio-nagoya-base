@@ -114,7 +114,8 @@ test('SNB membership: SNBトップと同系統のhero（hero-ad）で、緊縛�
   });
   assert.match(html, /<link rel="stylesheet" href="\.\.\/styles\/bondage\.css/, 'トップと同じhero用CSS');
   assert.match(html, /<h1 [^>]*class="hero-ad-title"/, 'h1は1つ（heroの見出し）');
-  assert.strictEqual((html.match(/<h1[ >]/g) || []).length, 1);
+  /* Issue #498: プレスタート用とregular用のヒーローを同居させ、日付で片方だけ表示する（見出しはh1が各1つ＝計2つ）。 */
+  assert.strictEqual((html.match(/<h1[ >]/g) || []).length, 2);
 });
 
 test('mens membership: mensトップと同じhero構造・OGP画像・ブランドトーン。SNB本体のhero画像を使わない', function () {
@@ -128,7 +129,8 @@ test('mens membership: mensトップと同じhero構造・OGP画像・ブラン�
   assert.ok(t.indexOf("Men's Private Studio") !== -1);
   assert.ok(t.indexOf('会員資格は、Studio Nagoya Base・SNB mens・Studio Xで共通のSNB MEMBERです') !== -1);
   assert.ok(!/ふたりで、3時間。縄に集中できる時間を。/.test(t), 'SNBの緊縛向けヒーロー文言を流用しない');
-  assert.strictEqual((html.match(/<h1[ >]/g) || []).length, 1);
+  /* Issue #498: プレスタート用とregular用のヒーローを同居させ、日付で片方だけ表示する（見出しはh1が各1つ＝計2つ）。 */
+  assert.strictEqual((html.match(/<h1[ >]/g) || []).length, 2);
 });
 
 test('Studio X membership: 「部屋料金は同じ。できることが増える。」を軸に、トップと同じhero・OGP。ヒーローにSNB MEMBERを出さない', function () {
@@ -146,7 +148,7 @@ test('Studio X membership: 「部屋料金は同じ。できることが増え�
   assert.ok(about.indexOf('Studio Nagoya Base・SNB mens・Studio Xで共通') !== -1);
   /* hero画像資産はトップと同じ */
   assert.ok(html.indexOf('images/sample_03_slant_light_1200.webp') !== -1 && read('studio-x/index.html').indexOf('images/sample_03_slant_light_1200.webp') !== -1);
-  assert.strictEqual((html.match(/<h1[ >]/g) || []).length, 1);
+  assert.strictEqual((html.match(/<h1[ >]/g) || []).length, 2);
 });
 
 // ============================================================================

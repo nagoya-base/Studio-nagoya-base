@@ -1,0 +1,6 @@
+{%- comment -%}
+  SNB MEMBERプレスタート（Issue #498）のビルド時の表示フェーズ判定。2026/12/1 00:00 JST（=1796050800）より前なら membership_is_prestart=true。
+  ブラウザ側でも scripts/membership-prestart-hero.js が同じ境界で切り替える（ビルド後に日付をまたいでも「プレスタート中」を残さないため）。
+{%- endcomment -%}
+{%- assign membership_now_ts = site.time | date: '%s' | plus: 0 -%}
+{%- if membership_now_ts < 1796050800 -%}{%- assign membership_is_prestart = true -%}{%- else -%}{%- assign membership_is_prestart = false -%}{%- endif -%}
