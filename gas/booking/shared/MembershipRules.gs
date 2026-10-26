@@ -79,7 +79,7 @@ var MembershipRules = (function () {
    * 任意のメールアドレスの会員有無を推測できないようにする（Issue #478）。内訳はLoggerにも出さない。
    */
   var MEMBER_BENEFIT_DENIED_CODE = 'MEMBER_BENEFIT_NOT_AVAILABLE';
-  var MEMBER_BENEFIT_DENIED_MESSAGE = 'この特典は、ご利用日の属する月のSNB MEMBER会員資格を確認できた場合のみご利用いただけます。会員資格をご確認のうえ、改めてお申し込みください。';
+  var MEMBER_BENEFIT_DENIED_MESSAGE = 'この特典は、ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できた場合のみご利用いただけます。会員資格をご確認のうえ、改めてお申し込みください。';
 
   var STATUS = { INCOMPLETE: 'incomplete', ACTIVE: 'active', PAST_DUE: 'past_due', CANCELED: 'canceled' };
 
