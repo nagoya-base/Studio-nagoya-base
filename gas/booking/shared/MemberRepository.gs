@@ -389,7 +389,59 @@ var MemberRepository = (function () {
     sheet.getRange(rowNumber, TOKEN_HEADERS_.indexOf('usedAt') + 1, 1, 1).setValues([[now]]);
   }
 
+  /*
+   * 解約（Issue #506）の対象会員。メール1件に対し、subscriptionが有効（status=active）で、subscription IDを持つ
+   * 会員行を返す（無ければnull）。**内部用**で、返す行（Stripe ID）を公開APIへ出さない。
+   * 戻り値: { rowNumber, memberId, subscriptionId, cancelAtPeriodEnd }。台帳を読めない場合は例外。
+   */
+  function findCancelTargetForEmail(email) {
+    var normalized = MembershipRules.normalizeEmail(email);
+    if (!normalized) return null;
+    var found = null;
+    readMembers_().members.forEach(function (m) {
+      var r = m.record;
+      if (found || r.email !== normalized || !r.memberId || !r.stripeSubscriptionId) return;
+      if (r.status !== MembershipRules.STATUS.ACTIVE) return;
+      found = { rowNumber: m.rowNumber, memberId: r.memberId, subscriptionId: r.stripeSubscriptionId, cancelAtPeriodEnd: !!r.cancelAtPeriodEnd };
+    });
+    return found;
+  }
+
+  /*
+   * 解約受付後、表示用のcancelAtPeriodEndだけを先に立てる。ロック保持下で呼ぶ。latestEventCreated等の
+   * イベント順序列は変えない（後続の customer.subscription.updated Webhook が正本として上書きできる）。
+   */
+  function markCancelRequested(memberId, now) {
+    var data = readMembers_();
+    for (var i = 0; i < data.members.length; i++) {
+      var record = data.members[i].record;
+      if (record.memberId !== memberId) continue;
+      if (record.status === MembershipRules.STATUS.CANCELED) return false;
+      record.cancelAtPeriodEnd = 'TRUE';
+      record.updatedAt = now instanceof Date ? now : new Date();
+      writeMemberRow_(data.sheet, data.members[i].rowNumber, record);
+      return true;
+    }
+    return false;
+  }
+
+  /* トークン行を使用済みかどうかにかかわらず返す（無ければnull）。{ rowNumber, email, used, expired }。 */
+  function findStatusTokenAnyState(tokenHash, now) {
+    if (!tokenHash) return null;
+    var values = ensureSheet_(TOKEN_SHEET_, TOKEN_HEADERS_).getDataRange().getValues();
+    var nowMs = toMillis_(now);
+    for (var i = 1; i < values.length; i++) {
+      var record = rowToRecord_(TOKEN_HEADERS_, values[i]);
+      if (record.tokenHash !== tokenHash) continue;
+      return { rowNumber: i + 1, email: record.email, used: !!record.usedAt, expired: !(toMillis_(record.expiresAt) > nowMs) };
+    }
+    return null;
+  }
+
   return {
+    findCancelTargetForEmail: findCancelTargetForEmail,
+    markCancelRequested: markCancelRequested,
+    findStatusTokenAnyState: findStatusTokenAnyState,
     statusFactsForEmail: statusFactsForEmail,
     addStatusToken: addStatusToken,
     findUsableStatusToken: findUsableStatusToken,

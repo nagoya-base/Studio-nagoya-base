@@ -7533,7 +7533,7 @@ SNB MEMBER（月額500円）の実会員資格を、Stripeの決済事実から�
 
 - 会員案内ページ `/membership/`（入会フォームは `POST ?action=startMembershipCheckout` に `{ email }` だけを送る。`STRIPE_CHECKOUT_ENABLED` が有効でない間は「現在オンラインでの入会受付は行っていません」と表示される。この変更で `STRIPE_CHECKOUT_ENABLED` は変更していない）。入会完了ページ `/membership/complete.html` は `STRIPE_MEMBERSHIP_SUCCESS_URL` に、`/membership/` は `STRIPE_MEMBERSHIP_CANCEL_URL` に設定する想定（Script Propertiesの設定はデプロイ作業側）。
 - 会員条件の文言は `_includes/membership_terms_ja.html` の1か所に持ち、会員案内ページ・利用規約13条・特商法が同じ条件を参照する。
-- 解約は予約フォーム等で受付（締切日は設けていない。次回の更新前に解約処理が完了した場合は次回以降の自動更新を停止。締切日を設ける場合は別Issueで事業ルールとして決めてから反映する）。運営側はStripeでsubscriptionを`cancel_at_period_end`にする（カスタマーポータルを用意した場合は導線と文言を差し替える）。
+- 解約は会員資格確認ページ（`/membership/status/`）の専用UIで受付（Issue #506）。UIを使えない場合は予約フォーム等でも受付（締切日は設けていない。次回の更新前に解約処理が完了した場合は次回以降の自動更新を停止。締切日を設ける場合は別Issueで事業ルールとして決めてから反映する）。運営側はStripeでsubscriptionを`cancel_at_period_end`にする（カスタマーポータルを用意した場合は導線と文言を差し替える）。
 - Studio Xのスタッフ対応（事前設営3,000円／片付け3,000円／セット5,000円。正本は `_data/studio_x_equipment.json`）は会員限定。表示だけでなく申込経路でも判定する（新しい会員判定方式は作らず、#471の会員台帳を正本として使う）:
   - `BookingOptions.planOrders` は `input.staffServiceMember === true` のときだけスタッフ対応を通す（未指定・false・不明は `STAFF_SERVICE_MEMBERS_ONLY` で拒否。fail-closed）。
   - `OptionOrderService` が `MemberRepository.isMemberForMonth(予約メール, 利用日の属する月)` で判定し、①同時申込の事前検証（予約を作る前）、②同時申込・後付けの注文作成、③追加決済（Checkout）開始の2段階（状態確認・試行予約）で確認する。台帳を読めない場合も非会員扱い。
@@ -7642,3 +7642,19 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - **rate limit**: 要求は同一メール10分3件・全体1分20件（`member_status_*`）、検証は全体1分60件。
 - **応答**: 有効/無効、有効期間（支払済み期間の末日）、次回更新日（解約済みは無し）、月額500円、マスク済みメール（`t***@e***.com`）、特典（90日先行予約=利用可、ペアパック/シャワー/有料機材/Studio Xオプション=12/1から。12/1以降は利用可）。Stripe ID・内部IDは返さない。台帳エラーは `STATUS_UNAVAILABLE`（内部詳細なし・トークン未消費）。永久会員は通常の有効会員と同じ形（`describeMembershipStatus` で支払い事実なしでも当月有効・自動更新ありとして描画。永久会員であることは返さない）。
 - **設定**: リンク先は `MEMBERSHIP_STATUS_URL`（任意）。未設定なら `STRIPE_MEMBERSHIP_SUCCESS_URL`（`…/membership/complete.html`）から `…/membership/status/` を導出。どちらも無ければ要求は `STATUS_UNAVAILABLE`。Booking Web Appの再デプロイが必要（既存Deploymentの作り直しは不要）。
+
+### Issue #506: 会員の退会専用UI（`/membership/status/` から次回更新を停止）
+
+本人確認済みの実会員が、`/membership/status/` から自分で次回以降の自動更新を停止できる。**即時失効にはしない**（支払い済み期間の末日までは会員資格が有効）。SNB / SNB mens / Studio X共通。
+
+- **表示条件**: `verifyStatusLink` の応答に `cancel` を付ける。現在の会員資格が有効で、Stripe subscriptionが有効（`Members.status=active` かつsubscription IDあり）な通常会員だけ `cancel.state=AVAILABLE` ＋短命トークン。既に停止済みは `SCHEDULED`（「次回更新は停止済みです」）。非会員・永久会員（subscriptionなし）・無効/期限切れ/使用済みの確認リンクには解約操作を出さない（`UNAVAILABLE`。確認リンク自体の検証は従来どおり）。
+- **フロー**: ①本人確認（従来どおり。確認リンクは1回限りで、ここで消費される）→ ②「SNB MEMBERを解約する」→ ③確認ステップ（有効最終日・すぐには失効しない・停止するのは次回以降の自動更新のみ・日割りを含め返金なし）→ ④「解約を確定する」で `POST ?action=cancelMembership {cancelToken}` → ⑤完了表示＋確認メール。
+- **解約トークン**: 確認リンクとは別のHMAC鍵でハッシュ化して同じ `MemberStatusTokens` に保存（取り違え不可。スキーマ変更なし）。有効10分・1回限り。画面のメモリにだけ置き、URL・ストレージ・ログには出さない。メールアドレスだけでは解約できず、他人のsubscriptionは対象にできない（対象は常にトークンに紐づくメールの会員行から決める。クライアントからsubscription ID等は受け取らない）。POSTのJSON（`text/plain`）・Cookie無しのため、トークンを持たない第三者サイトからのCSRFは成立しない。
+- **Stripe**: `StripeGateway.setSubscriptionCancelAtPeriodEnd` が `POST /v1/subscriptions/{id}` に `cancel_at_period_end=true` だけを送る（即時キャンセルではない）。何度送っても同じ結果。応答の `cancel_at_period_end` が真でなければ失敗扱い。
+- **台帳との整合**: 成功後、`MemberRepository.markCancelRequested` が `Members.cancelAtPeriodEnd` だけを先に立てる（イベント順序列 `latestEventCreated` は触らない）。正本は従来どおり `customer.subscription.updated` Webhook（`StripeWebhookProcessor` は変更なし）で、後から届く新しいイベントがそのまま上書きする。資格判定は `MemberMonths` の支払い事実のままで、翌月の更新が作られないことで自然に失効する。
+- **冪等性**: 同一ロック（ScriptLock）内で処理。既に停止済みならStripeへ送らず、メールも重ねて送らず、`alreadyScheduled: true` で同じ有効最終日を返す。二重送信・使用済みトークンでの再送も安全（エラーにしない）。
+- **メール**: 成功時に登録メールアドレス宛へ、解約受付・有効最終日・返金なしを送る。メール送信に失敗しても解約自体は成功として扱う（ログには汎用文言のみ）。
+- **rate limit**: 全体1分20件・同一メール10分5件（`member_cancel_*`）。
+- **エラー**: `INVALID_TOKEN`（期限切れ・不正）/ `RATE_LIMITED` / `LOCK_TIMEOUT` / `CANCEL_UNAVAILABLE`（Stripe未設定・Stripeの失敗。内部詳細・Stripe IDは返さない）。
+- **手動の予備導線**: 予約フォーム等から運営へ連絡する方法は残す（UIを使えない場合）。規約・特商法・FAQは「通常は専用UI、できない場合は連絡」に更新済み。
+- 配布: `StripeGateway.gs` / `MemberRepository.gs` / `MembershipService.gs` / `Code.gs` をBooking Web Appへ。Booking Admin・Webhookは変更なし。
