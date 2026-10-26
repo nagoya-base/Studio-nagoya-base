@@ -156,6 +156,37 @@ var MembershipRules = (function () {
   }
 
   /*
+   * 既存subscriptionをSNB MEMBERの自動更新として採用してよいかの検証（Issue #528）。
+   * 採用すると呼び出し元は作成をスキップして入会完了にするため、12/1から毎月500円で更新できる
+   * 状態であることを確認する。戻り値は不一致項目名の配列（空なら採用可。IDや個人情報は含めない）。
+   */
+  function existingSubscriptionProblems(subscription, productId, nowSeconds) {
+    var problems = [];
+    var sub = subscription && typeof subscription === 'object' ? subscription : {};
+    if (['active', 'trialing'].indexOf(sub.status) === -1) problems.push('status');
+    if (!sub.metadata || sub.metadata.orderType !== METADATA_ORDER_TYPE) problems.push('orderType');
+    if (sub.cancel_at_period_end || sub.cancel_at) problems.push('cancel_scheduled');
+    if (sub.pause_collection) problems.push('paused');
+    var items = sub.items && Array.isArray(sub.items.data) ? sub.items.data : [];
+    var item = items.length === 1 ? items[0] : null;
+    if (!item) {
+      problems.push('items');
+    } else {
+      var price = item.price || {};
+      var recurring = price.recurring || {};
+      var itemProduct = price.product && typeof price.product === 'object' ? price.product.id : price.product;
+      if (Number(item.quantity === undefined ? 1 : item.quantity) !== 1) problems.push('quantity');
+      if (Number(price.unit_amount) !== MONTHLY_FEE_JPY) problems.push('amount');
+      if (String(price.currency || '').toUpperCase() !== CURRENCY) problems.push('currency');
+      if (recurring.interval !== 'month' || Number(recurring.interval_count === undefined ? 1 : recurring.interval_count) !== 1) problems.push('interval');
+      if (!productId || itemProduct !== productId) problems.push('product');
+    }
+    var end = readSubscriptionPeriod(sub).end;
+    if (!end || end <= nowSeconds) problems.push('next_billing');
+    return problems;
+  }
+
+  /*
    * invoiceから所属subscriptionのIDとmetadataを取り出す。API version 2025-03-31.basil以降は
    * invoice.parent.subscription_details、旧versionは invoice.subscription / invoice.subscription_details。
    */
@@ -380,6 +411,7 @@ var MembershipRules = (function () {
     renewalAnchorSecondsForJoin: renewalAnchorSecondsForJoin,
     mapSubscriptionStatus: mapSubscriptionStatus,
     readSubscriptionPeriod: readSubscriptionPeriod,
+    existingSubscriptionProblems: existingSubscriptionProblems,
     readInvoiceSubscription: readInvoiceSubscription,
     resolvePaidMonthOfRenewalInvoice: resolvePaidMonthOfRenewalInvoice
   };

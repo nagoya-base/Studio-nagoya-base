@@ -460,9 +460,9 @@ var StripeGateway = (function () {
    * product_data（その場限りの商品名）を受け付けず、既存のProduct IDを要求する（Checkout Sessionの
    * line_items[].price_dataとは仕様が異なる）。Dashboardでの事前作成を不要にするため、固定IDの
    * Productを取得し、無ければ作成する。同時実行で作成が競合した場合（resource_already_exists）は
-   * 取得し直す。戻り値: { ok: true, productId } またはperformRequest_のエラー形式。
+   * 取得し直す。allowCreate=falseなら取得のみ（運営が指定した既存Productは作らない）。戻り値: { ok: true, productId } またはperformRequest_のエラー形式。
    */
-  function ensureMembershipProduct(stripeConfig, productId, productName) {
+  function ensureMembershipProduct(stripeConfig, productId, productName, allowCreate) {
     if (!stripeConfig || !stripeConfig.secretKey) {
       return { ok: false, errorType: 'NOT_CONFIGURED', message: 'Stripeの秘密鍵が設定されていません。' };
     }
@@ -472,7 +472,7 @@ var StripeGateway = (function () {
     var url = API_BASE_ + '/products/' + encodeURIComponent(productId);
     var found = performRequest_('get', url, stripeConfig.secretKey, null, null);
     if (found.ok) return { ok: true, productId: found.raw.id || productId };
-    if (found.stripeErrorCode !== 'resource_missing') return found;
+    if (found.stripeErrorCode !== 'resource_missing' || allowCreate === false) return found;
 
     var created = performRequest_('post', API_BASE_ + '/products', stripeConfig.secretKey,
       encodeFormPayload_({ 'id': productId, 'name': productName, 'metadata[orderType]': 'membership' }), null);

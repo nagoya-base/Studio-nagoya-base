@@ -792,13 +792,23 @@ var StripeWebhookProcessor = (function () {
       return outcome_(false, 'SUBSCRIPTION_CREATE_RETRY', 'subscriptionの有無を確認できません。再試行します。');
     }
     var subscription = existingLookup.subscription;
-    if (!subscription) {
+    /* 運営指定の既存Product（STRIPE_MEMBERSHIP_PRODUCT_ID）があればそれを使い、無ければ固定IDを使う。 */
+    var configuredProductId = (stripeConfig && stripeConfig.membershipProductId) || '';
+    var productId = configuredProductId || MEMBERSHIP_PRODUCT_ID_;
+    if (subscription) {
+      /* 既存を採用する前に、12/1から毎月500円で自動更新できる内容か検証する。不一致は新規作成せず要復旧。 */
+      var problems = MembershipRules.existingSubscriptionProblems(subscription.raw, productId, Math.floor(new Date().getTime() / 1000));
+      if (problems.length) {
+        return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_EXISTING_SUBSCRIPTION_INVALID',
+          'Stripe上の既存subscriptionが自動更新の条件（' + problems.join(',') + '）を満たしません。新規作成は行っていません。入会月の資格は記録済みです。Stripeで確認し、修正または解約のうえ復旧してください。eventId=' + eventId, now);
+      }
+    } else {
       var anchorSeconds = MembershipRules.renewalAnchorSecondsForJoin(parsed.created);
       if (!anchorSeconds || anchorSeconds * 1000 <= new Date().getTime() + 60 * 1000) {
         return rejectAndFinalize_(rowNumber, generation, memberId, 'MEMBERSHIP_JOIN_MONTH_ELAPSED',
           '入会月を過ぎたため自動更新の設定ができません。入会月の資格は記録済みです。手動でsubscriptionを設定してください。eventId=' + eventId, now);
       }
-      var productResult = StripeGateway.ensureMembershipProduct(stripeConfig, MEMBERSHIP_PRODUCT_ID_, MEMBERSHIP_PRODUCT_NAME_);
+      var productResult = StripeGateway.ensureMembershipProduct(stripeConfig, productId, MEMBERSHIP_PRODUCT_NAME_, !configuredProductId);
       var subscriptionResult = productResult.ok ? StripeGateway.createMembershipSubscription(stripeConfig, {
         customerId: session.customerId,
         paymentMethodId: intent.paymentMethodId,

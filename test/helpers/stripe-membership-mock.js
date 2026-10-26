@@ -13,7 +13,7 @@ function membershipLookupResponse(url, options, state) {
     if (state.productMissing && !state.productCreated) {
       return { responseCode: 404, body: { error: { type: 'invalid_request_error', code: 'resource_missing', message: 'No such product' } } };
     }
-    return { responseCode: 200, body: { id: 'snb_member_monthly', object: 'product' } };
+    return { responseCode: 200, body: { id: decodeURIComponent(url.split('/v1/products/')[1].split('?')[0]), object: 'product' } };
   }
   if (/\/v1\/products$/.test(url) && method === 'post') {
     state.productCreated = true;

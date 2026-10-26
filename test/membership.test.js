@@ -855,16 +855,59 @@ test('#528 Product未作成なら固定IDで作成してからsubscriptionを作
   assert.strictEqual(again.stripeCalls.filter(function (c) { return /\/v1\/products$/.test(c.url); }).length, 0);
 });
 
+function existingSubscription(overrides) {
+  return Object.assign({
+    id: SUBSCRIPTION_ID, status: 'active', metadata: { orderType: 'membership', memberId: MEMBER_ID },
+    cancel_at_period_end: false, cancel_at: null, pause_collection: null,
+    items: { data: [{ quantity: 1,
+      price: { unit_amount: 500, currency: 'jpy', product: 'snb_member_monthly', recurring: { interval: 'month', interval_count: 1 } },
+      current_period_start: sec(JOIN_AT), current_period_end: sec(JAN_RENEWAL_AT) }] }
+  }, overrides || {});
+}
+
 test('#528 Stripeに同じ会員のsubscriptionが既にあれば作成せず台帳へ紐付ける（保存失敗後の再処理・二重作成防止）', function () {
-  var ctx = setup({ stripeState: { existingSubscriptions: [
-    { id: SUBSCRIPTION_ID, status: 'active', metadata: { orderType: 'membership', memberId: MEMBER_ID },
-      items: { data: [{ current_period_start: sec(JOIN_AT), current_period_end: sec(JAN_RENEWAL_AT) }] } }
-  ] } });
+  var ctx = setup({ stripeState: { existingSubscriptions: [existingSubscription()] } });
   var result = receiveAndProcess(ctx, joinEvent());
   assert.strictEqual(result.code, 'MEMBERSHIP_JOINED');
   assert.strictEqual(subscriptionPosts(ctx).length, 0, '既存があれば作成しない');
   assert.strictEqual(ctx.sandbox.MemberRepository.findMember({ memberId: MEMBER_ID }).record.stripeSubscriptionId, SUBSCRIPTION_ID);
   assert.strictEqual(rowsOf(ctx, 'MemberMonths').length, 1);
+});
+
+test('#528 既存subscriptionが自動更新の条件を満たさなければ新規作成も採用もせず要復旧にする', function () {
+  var price = function (o) { return { items: { data: [{ quantity: 1,
+    price: Object.assign({ unit_amount: 500, currency: 'jpy', product: 'snb_member_monthly', recurring: { interval: 'month', interval_count: 1 } }, o),
+    current_period_end: sec(JAN_RENEWAL_AT) }] } }; };
+  var cases = {
+    incomplete: { status: 'incomplete' },
+    paused: { pause_collection: { behavior: 'void' } },
+    cancelAtPeriodEnd: { cancel_at_period_end: true },
+    otherOrderType: { metadata: { orderType: 'other', memberId: MEMBER_ID } },
+    annual1000: price({ unit_amount: 1000, recurring: { interval: 'year', interval_count: 1 } }),
+    otherProduct: price({ product: 'prod_other' }),
+    noNextBilling: { items: { data: [{ quantity: 1, price: { unit_amount: 500, currency: 'jpy', product: 'snb_member_monthly', recurring: { interval: 'month' } } }] } }
+  };
+  Object.keys(cases).forEach(function (name) {
+    var ctx = setup({ stripeState: { existingSubscriptions: [existingSubscription(cases[name])] } });
+    var result = receiveAndProcess(ctx, joinEvent());
+    assert.strictEqual(result.code, 'MEMBERSHIP_EXISTING_SUBSCRIPTION_INVALID', name);
+    assert.strictEqual(subscriptionPosts(ctx).length, 0, name + ': 新規作成しない');
+    assert.strictEqual(ctx.sandbox.MemberRepository.findMember({ memberId: MEMBER_ID }).record.stripeSubscriptionId || '', '', name + ': 台帳に紐付けない');
+    assert.strictEqual(isMember(ctx, MEMBER_EMAIL, '2026-12'), true, name + ': 初回分の資格は維持');
+  });
+});
+
+test('#528 STRIPE_MEMBER_PRODUCT_ID指定時はその既存Productで作成し、Productを新規作成しない。存在しなければ要復旧', function () {
+  var ctx = setup({ properties: { STRIPE_MEMBER_PRODUCT_ID: 'prod_existing1' } });
+  assert.strictEqual(receiveAndProcess(ctx, joinEvent()).code, 'MEMBERSHIP_JOINED');
+  var body = decodeURIComponent(subscriptionPosts(ctx)[0].options.payload);
+  assert.ok(body.indexOf('items[0][price_data][product]=prod_existing1') !== -1);
+  assert.strictEqual(ctx.stripeCalls.filter(function (c) { return /\/v1\/products$/.test(c.url); }).length, 0);
+
+  var missing = setup({ properties: { STRIPE_MEMBER_PRODUCT_ID: 'prod_existing1' }, stripeState: { productMissing: true } });
+  assert.strictEqual(receiveAndProcess(missing, joinEvent()).code, 'MEMBERSHIP_SUBSCRIPTION_CREATE_FAILED');
+  assert.strictEqual(missing.stripeCalls.filter(function (c) { return /\/v1\/products$/.test(c.url); }).length, 0, '指定Productは自動作成しない');
+  assert.strictEqual(subscriptionPosts(missing).length, 0);
 });
 
 test('#528 キャンセル済みや別会員のsubscriptionは既存扱いにせず、新規作成する', function () {

@@ -14,10 +14,18 @@ Subscription作成が `invalid_request_error`（`STRIPE_ERROR`）となり `MEMB
 
 ## 修正内容
 
-- `price_data` に `product` を渡す。Productは固定ID `snb_member_monthly` を取得し、無ければ作成する
-  （Dashboardでの事前作成は不要。`ensureMembershipProduct`）。
+- `price_data` に `product` を渡す。Productの運用方針:
+  - **本番は既存Product `prod_VVis8VOblDg2Pg` を使う**。Script Property `STRIPE_MEMBER_PRODUCT_ID` に設定する
+    （設定時はそのProductを取得するのみで自動作成しない。存在しなければ要復旧として停止）。
+  - 未設定の環境（テストモード等）は固定ID `snb_member_monthly` を取得し、無ければ作成する（`ensureMembershipProduct`）。
+    テストモードと本番でProduct IDは異なるため、IDはコードに埋め込まない。
+  - **本番反映前に `STRIPE_MEMBER_PRODUCT_ID=prod_VVis8VOblDg2Pg` を設定すること。** 未設定のまま反映すると
+    別Product `snb_member_monthly` が本番に新設される。
 - Subscription作成の前に、同じCustomerの `metadata.memberId` 一致・非キャンセルのSubscriptionをStripeで確認し、
-  あれば作成せず台帳へ紐付ける（`findMembershipSubscription`）。台帳保存失敗後の再処理、手動作成済み、
+  あれば作成せず台帳へ紐付ける（`findMembershipSubscription`）。**採用前に自動更新条件を検証**し
+  （status が active/trialing、`orderType=membership`、cancel予約・一時停止なし、数量1・500円・JPY・毎月1回・
+  上記Product、次回請求の期間終了が未来）、不一致なら新規作成も採用もせず `MEMBERSHIP_EXISTING_SUBSCRIPTION_INVALID`
+  （要復旧・Recovery記録）で停止する。この場合はStripeで該当Subscriptionを修正または解約し、手順3で再処理する。台帳保存失敗後の再処理、手動作成済み、
   ペイロード変更後の冪等キー不一致でも二重作成しない。一覧を取得できない場合は作成せず再試行する。
 - 冪等キーを `snb-membership-sub-v2-<Checkout Session ID>` に変更（旧キーは別パラメータで衝突し得るため）。
 - 失敗時のGASログに `httpStatus` / `stripeErrorType` / `stripeErrorCode` / `stripeErrorParam` と、ID・URL・秘密鍵を
@@ -43,6 +51,8 @@ Subscription作成が `invalid_request_error`（`STRIPE_ERROR`）となり `MEMB
      （または `processPendingStripeWebhookEvents` の手動実行）で再処理される。
    - 再処理は既存Subscriptionがあれば紐付けのみ、無ければ作成する。会員・MemberMonthsは冪等で、
      Checkoutの再作成・再課金は行わない。
+   - `MEMBERSHIP_EXISTING_SUBSCRIPTION_INVALID` になった行は、メッセージの不一致項目（status / product / amount /
+     interval / cancel_scheduled / paused / next_billing 等）をStripeで直してから再処理する。
    - 手動作成したSubscriptionを紐付けたい場合は `metadata[memberId]` に台帳の memberId を設定しておく。
 4. **アンカー経過済み**: 入会月を過ぎ、アンカー（プレスタートは 2026-12-01 00:00 UTC）から60秒以内または
    経過後に再処理すると `MEMBERSHIP_JOIN_MONTH_ELAPSED` になりSubscriptionは作られない。この場合は
@@ -51,6 +61,8 @@ Subscription作成が `invalid_request_error`（`STRIPE_ERROR`）となり `MEMB
 
 ## マージ後の本番確認（テストモード→本番）
 
+0. （未完了・マージ後に必須）本番Stripeログの `POST /v1/subscriptions` で、失敗時の `error.param` が
+   `product_data` 起因であることの照合。CIとモックのテストだけでは本番不具合の解消とは判断しない。
 1. テストモードで入会し、Subscriptionが1件作成され、`billing_cycle_anchor` が 2026-12-01 00:00 UTC、
    月額500円、`metadata.memberId` が付いていること。
 2. Members の `stripeSubscriptionId` / 状態 / 期間が正しく紐付いていること。
