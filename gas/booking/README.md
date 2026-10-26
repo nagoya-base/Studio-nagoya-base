@@ -6,7 +6,7 @@ Issue #532の本文を正本として、新規加入をStripe標準に近い月�
 - 月額500円（税込）。Checkout `mode=subscription` で、入会日に初回500円を請求し、入会日から1か月有効・以後は入会日を基準に毎月自動更新する（毎月1日固定の `billing_cycle_anchor` は使わない）。例: 10/26入会 → 10/26〜11/25有効 → 11/26に自動更新。
 - 初回単発Checkout（`mode=payment`）→ 後段のSubscription作成（`createMembershipSubscription`）の二段階方式は新規加入では使わない。3Dセキュア/SCAはStripe CheckoutのSubscriptionフローに委ねる。
 - Subscriptionへ明示的にmetadata（`subscription_data[metadata][orderType]=membership` / `[memberId]`）を設定する（`invoice.paid` が `invoice.parent.subscription_details.metadata` から会員を識別できる）。
-- 価格: `STRIPE_MEMBER_PRICE_ID`（既存のRecurring Price。任意）があればそれを使う。無ければProduct（`STRIPE_MEMBER_PRODUCT_ID`、未設定なら固定ID `snb_member_monthly` を取得/作成）に対する月額500円の `price_data`。**Product ID / Price ID等の実値はコード・Issue・PR・ログに書かない**（Script Propertiesで持つ）。
+- 価格: `STRIPE_MEMBER_PRICE_ID`（既存のRecurring Price）があればそれを使う。無ければ `STRIPE_MEMBER_PRODUCT_ID`（既存Product）に対する月額500円の `price_data`。**どちらも未設定なら設定不足（`STRIPE_NOT_CONFIGURED`）として安全に失敗し、固定IDへはフォールバックしない**。Product ID / Price ID等の実値はコード・Issue・PR・ログに書かない（Script Propertiesで持つ。新規加入経路にID固定値はない。固定ID `snb_member_monthly` は旧mode=payment経路の後処理にのみ残る）。
 - 既存プレスタート会員は課金日を移行しない（11/30まで有効・12/1更新・以後毎月1日。Subscriptionの再作成・anchor変更・追加請求なし）。プレスタートの新規受付は、Booking Publicの切り替え時点で終了する。
 - デプロイ前に発行済みの旧 `mode=payment` Checkoutの完了は、Webhook側の旧経路（`handleMembershipJoin_`）が処理する（即削除しない）。旧経路の資格も `MemberMonths` ではなく `MemberPeriods`（入会日〜当月末／プレスタートは11/30）へ記録する。`existingSubscriptionProblems`（#528）の月初アンカー検証は旧経路のみ。
 
@@ -24,7 +24,7 @@ Issue #532の本文を正本として、新規加入をStripe標準に近い月�
 - V1（〜2026/11/30作成）は自己申告（`isMember`）の経路を残す。V2（2026/12/1 00:00 JST以降）はサーバーが予約メールと会員台帳から自動判定し、`isMember=true` を改ざん送信されても台帳の結果を正とする。フォームのV1/V2表示切替はブラウザ端末の時計ではなく、GET応答（`estimatePrice` / `monthly`）に追加した `priceGeneration`（`BookingPricing.generationAt` による料金世代。会員情報は含まない）に従う。
 
 ### 返金（更新invoiceの全額返金）
-- `charge.refunded` → Chargeを再取得 → **invoiceを特定**: 2025-03-31.basil より前のAPI versionでは `Charge.invoice`、それ以降は ChargeとPaymentIntentから `invoice` が削除されているため Invoice Payments API（`GET /v1/invoice_payments?payment[type]=payment_intent&payment[payment_intent]=...`）で引く（Stripe公式仕様）。invoiceが会費invoice（`subscription_create` / `subscription_cycle`・500円・orderType=membershipまたは既知のSubscription）なら `MemberRefunds` へ `(invoice, invoice ID)` を追記し、`MemberPeriods.sourceId` と照合して該当Periodを資格判定から外す。全額返金のみ除外し、一部返金は変えない。invoiceに紐づかない決済は旧 `mode=payment` 入会Checkout（Charge→PaymentIntent→Checkout Session）として照合する。旧 `MemberMonths` は既存の返金台帳との整合を維持する。
+- `charge.refunded` → Chargeを再取得 → **invoiceを特定**: `Charge.invoice` があればそれを使い、無ければ Invoice Payments API（`GET /v1/invoice_payments?payment[type]=payment_intent&payment[payment_intent]=...`。PaymentIntentとInvoiceの対応付けリソース）で引く。※どのAPI versionでChargeからinvoiceが外れたかは公式の変更履歴で未確認のため、特定のversionを断定せず両経路を持つ。invoiceが会費invoice（`subscription_create` / `subscription_cycle`・500円・orderType=membershipまたは既知のSubscription）なら `MemberRefunds` へ `(invoice, invoice ID)` を追記し、`MemberPeriods.sourceId` と照合して該当Periodを資格判定から外す。全額返金のみ除外し、一部返金は変えない。invoiceに紐づかない決済は旧 `mode=payment` 入会Checkout（Charge→PaymentIntent→Checkout Session）として照合する。Invoice Payments照会が確定的に失敗し、旧Checkoutにも該当しない場合は「対象外」と確定せず、要復旧（`MEMBERSHIP_REFUND_INVOICE_UNCONFIRMED`）として記録する（返金イベントを失わない）。照会が一時的に失敗した場合は未確定のまま再試行する。旧 `MemberMonths` は既存の返金台帳との整合を維持する。
 - 本番で実際に使用されているStripe APIバージョンの確認結果はPR本文を参照（コードは両方式に対応している）。
 
 ### status表示（`/membership/status/`）と解約

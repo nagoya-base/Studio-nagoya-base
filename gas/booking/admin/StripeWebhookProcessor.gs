@@ -949,8 +949,8 @@ var StripeWebhookProcessor = (function () {
   /*
    * 会費の返金（Issue #517・#532）。charge.refundedを契機に、Chargeを再取得して返金額を確認する
    * （イベント本文だけで完結させない。到着順が前後しても、常に最新の返金状態で判定する）。
-   * - 対象の特定（#532）: ChargeからSubscriptionのinvoice（初回・更新とも）を特定する。2025-03-31.basil より前のAPI versionでは
-   *   Charge.invoice、以降はInvoice Payments API（PaymentIntent→invoice）で引き、そのinvoiceが会費invoice
+   * - 対象の特定（#532）: ChargeからSubscriptionのinvoice（初回・更新とも）を特定する。Charge.invoice があればそれを、
+   *   無ければInvoice Payments API（PaymentIntent→invoice）で引き、そのinvoiceが会費invoice
    *   （subscription_create / subscription_cycle・500円・metadata.orderType=membershipまたは既知のSubscription）か確認する。
    *   invoiceに紐づかない決済は、旧mode=payment入会Checkout（Charge→PaymentIntent→Checkout Session）として照合する。
    * - 全額返金: MemberRefundsへ(invoice, invoice ID)（旧方式は(checkout_session, session ID)）を追記する。
@@ -975,6 +975,7 @@ var StripeWebhookProcessor = (function () {
 
     /* 1) Subscriptionのinvoice（初回・更新）か。Charge.invoice（旧API version）→ Invoice Payments API の順で特定する。 */
     var invoiceId = charge.invoiceId || '';
+    var invoiceLookupUnconfirmed = false;
     if (!invoiceId) {
       var invoiceLookup = StripeGateway.retrieveInvoiceIdForPaymentIntent(stripeConfig, charge.paymentIntentId);
       if (invoiceLookup.ok) {
@@ -983,7 +984,9 @@ var StripeWebhookProcessor = (function () {
         Logger.log('StripeWebhookProcessor: 返金対象のinvoice照会に失敗しました eventId=' + eventId + ' errorType=' + invoiceLookup.errorType);
         return outcome_(false, 'STRIPE_LOOKUP_FAILED', 'Stripeへの照会に失敗しました。再試行します。');
       }
-      /* STRIPE_ERROR（このAPI versionで照会できない等の確定的な失敗）は、invoiceに紐づかない決済として旧経路で照合する。 */
+      /* STRIPE_ERROR（確定的な4xx）は「invoiceに紐づかない」とは限らない（API versionの差・パラメータ不整合等）。
+         旧経路（Checkout Session）でも見つからなければ、対象外と確定せず要復旧にする（下記）。 */
+      invoiceLookupUnconfirmed = !invoiceLookup.ok;
     }
 
     var source = null;
@@ -1021,6 +1024,10 @@ var StripeWebhookProcessor = (function () {
         }
       });
       if (!joinSession) {
+        if (invoiceLookupUnconfirmed) {
+          return rejectAndFinalize_(rowNumber, generation, '', 'MEMBERSHIP_REFUND_INVOICE_UNCONFIRMED',
+            '500円の決済の返金ですが、Subscriptionのinvoiceか確認できませんでした（Invoice Payments APIの照会が失敗し、旧Checkoutにも該当しません）。会費の更新invoiceの返金であれば手動でMemberRefundsへ反映してください。eventId=' + eventId, now);
+        }
         return finalizeIgnored_(rowNumber, generation, 'NOT_MEMBERSHIP_JOIN_PAYMENT', 'SNB MEMBER会費の返金ではありません。', now);
       }
       source = { type: 'checkout_session', id: joinSession.id };

@@ -99,7 +99,7 @@ function setup(options) {
   var clock = stubs.createControllableClock(opts.clockAt || RENEW1_AT);
   var properties = Object.assign({
     SPREADSHEET_ID: SPREADSHEET_ID, CALENDAR_ID: 'cal1', STRIPE_SECRET_KEY: 'sk_test_dummy_value',
-    STRIPE_CHECKOUT_ENABLED: 'true',
+    STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBER_PRODUCT_ID: 'prod_fixture_member',
     STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/Studio-nagoya-base/membership/complete.html',
     STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/Studio-nagoya-base/membership/'
   }, opts.properties || {});
@@ -422,6 +422,22 @@ test('返金: 初回invoiceの全額返金（初回Period除外）／返金が�
   receiveAndProcess(late, refundEvent('evt_refund_early'));
   receiveAndProcess(late, firstInvoiceEvent());
   assert.strictEqual(memberOn(late, '2026-11-01'), false);
+});
+
+test('返金: Invoice Payments照会が確定的な失敗で、旧Checkoutにも該当しない場合は「対象外」と確定せず要復旧にする（返金イベントを失わない）', function () {
+  var ctx = refundSetup();
+  var original = ctx.globals.UrlFetchApp.fetch;
+  ctx.globals.UrlFetchApp.fetch = function (url, o) {
+    function json(code, body) { return { getResponseCode: function () { return code; }, getContentText: function () { return JSON.stringify(body); }, getHeaders: function () { return {}; } }; }
+    if (url.indexOf('/invoice_payments?') !== -1) return json(400, { error: { type: 'invalid_request_error', message: 'bad param' } });
+    if (url.indexOf('/checkout/sessions?payment_intent=') !== -1) return json(200, { data: [] });
+    return original.call(this, url, o);
+  };
+  var res = receiveAndProcess(ctx, refundEvent('evt_refund_u'));
+  assert.strictEqual(res.finalized, true);
+  assert.strictEqual(res.code, 'MEMBERSHIP_REFUND_INVOICE_UNCONFIRMED');
+  assert.notStrictEqual(res.code, 'NOT_MEMBERSHIP_JOIN_PAYMENT');
+  assert.strictEqual(rowsOf(ctx, 'MemberRefunds').length, 0);
 });
 
 test('返金: 会費invoiceでない500円の決済（部屋予約等）の返金は何もしない', function () {

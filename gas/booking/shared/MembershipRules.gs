@@ -58,10 +58,6 @@ var MembershipRules = (function () {
   /* 当方が作るStripe subscription/checkoutの目印。Stripe側のmetadataに入れる。 */
   var METADATA_ORDER_TYPE = 'membership';
 
-  /* 月額会費のStripe Product（Issue #528。運営指定のSTRIPE_MEMBER_PRODUCT_IDが無い場合の固定ID/名称）。 */
-  var MEMBERSHIP_PRODUCT_ID_ = 'snb_member_monthly';
-  var MEMBERSHIP_PRODUCT_NAME_ = 'SNB MEMBER 月会費';
-
   /*
    * Issue #478: 会員限定特典（2名ペアパック・シャワー・Studio X有料オプション全般・SNB/mens既存有料機材）の
    * 適用開始。**2026/12/1 00:00 JST以降に新規作成された予約・OptionOrderから**適用する。それ以前に作成済みの
@@ -513,8 +509,6 @@ var MembershipRules = (function () {
     isDateString: isDateString,
     periodToValidDateRange: periodToValidDateRange,
     validUntilOfRanges: validUntilOfRanges,
-    MEMBERSHIP_PRODUCT_ID: MEMBERSHIP_PRODUCT_ID_,
-    MEMBERSHIP_PRODUCT_NAME: MEMBERSHIP_PRODUCT_NAME_,
     nextMonthKey: nextMonthKey,
     renewalAnchorSecondsAfterMonth: renewalAnchorSecondsAfterMonth,
     PRESTART_START_MS: PRESTART_START_MS_,

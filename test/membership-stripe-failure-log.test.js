@@ -25,7 +25,7 @@ function setup(stripeResponse) {
   var spreadsheetsById = { ss1: {} };
   var globals = {
     PropertiesService: stubs.createPropertiesServiceStub({ SPREADSHEET_ID: 'ss1', CALENDAR_ID: 'cal1', STRIPE_SECRET_KEY: SECRET_KEY,
-      STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/ok', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/ng' }),
+      STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBER_PRODUCT_ID: 'prod_fixture_member', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/ok', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/ng' }),
     LockService: stubs.createLockServiceStub(),
     CacheService: stubs.createCacheServiceStub(),
     SpreadsheetApp: stubs.createSpreadsheetAppStub(spreadsheetsById),

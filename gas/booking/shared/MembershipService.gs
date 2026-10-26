@@ -119,7 +119,7 @@ var MembershipService = (function () {
       return fail_('CHECKOUT_DISABLED', '現在オンラインでの入会受付は行っていません。');
     }
     var returnUrls = Booking.resolveMembershipReturnUrls(brand, stripeConfig);
-    if (!stripeConfig.secretKey || !returnUrls.ok) {
+    if (!stripeConfig.secretKey || !returnUrls.ok || (!stripeConfig.membershipPriceId && !stripeConfig.membershipProductId)) {
       return fail_('STRIPE_NOT_CONFIGURED', '入会受付の設定が完了していません。');
     }
 
@@ -157,21 +157,16 @@ var MembershipService = (function () {
         memberId: memberId, email: email,
         pendingUntil: new Date((expiresAtSeconds + PENDING_GRACE_SECONDS_) * 1000)
       }, now);
-      var productResult = null;
-      if (!stripeConfig.membershipPriceId) {
-        /* 既存のPrice IDが無いときは、Product（運営指定または固定ID）に対する月額price_dataで発行する。 */
-        var configuredProductId = stripeConfig.membershipProductId || '';
-        productResult = StripeGateway.ensureMembershipProduct(stripeConfig,
-          configuredProductId || MembershipRules.MEMBERSHIP_PRODUCT_ID, MembershipRules.MEMBERSHIP_PRODUCT_NAME, !configuredProductId);
-      }
-      var result = productResult && !productResult.ok ? productResult : StripeGateway.createMembershipCheckoutSession(stripeConfig, {
+      /* Price ID（STRIPE_MEMBER_PRICE_ID）→ Product ID（STRIPE_MEMBER_PRODUCT_ID）の順にScript Propertiesの値を使う。
+         どちらも無い場合は設定不足として安全に失敗する（Product ID等をコードに固定しない。Issue #532）。 */
+      var result = StripeGateway.createMembershipCheckoutSession(stripeConfig, {
         amountJpy: MembershipRules.MONTHLY_FEE_JPY,
         email: email,
         memberId: memberId,
         successUrl: returnUrls.successUrl,
         cancelUrl: returnUrls.cancelUrl,
         priceId: stripeConfig.membershipPriceId || '',
-        productId: productResult ? productResult.productId : '',
+        productId: stripeConfig.membershipProductId || '',
         expiresAtSeconds: expiresAtSeconds
       }, memberId);
       if (!result.ok || !result.session || !result.session.url) {

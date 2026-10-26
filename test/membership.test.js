@@ -609,7 +609,7 @@ test('入会Checkout: STRIPE_CHECKOUT_ENABLEDが有効でない限り発行し�
 });
 
 var CHECKOUT_PROPERTIES = {
-  STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/ok', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/ng'
+  STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBER_PRODUCT_ID: 'prod_fixture_member', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/ok', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/ng'
 };
 
 function checkoutPosts(ctx) {
@@ -628,7 +628,7 @@ test('入会受付: 金額はサーバー固定の500円・メール固定でmod
   assert.ok(body.indexOf('mode=payment') === -1);
   assert.ok(body.indexOf('line_items[0][price_data][unit_amount]=500') !== -1);
   assert.ok(body.indexOf('line_items[0][price_data][recurring][interval]=month') !== -1);
-  assert.ok(body.indexOf('line_items[0][price_data][product]=snb_member_monthly') !== -1, '固定IDのProductに対する月額price_data');
+  assert.ok(body.indexOf('line_items[0][price_data][product]=prod_fixture_member') !== -1, 'Script Propertiesで指定したProductに対する月額price_data（IDをコードに固定しない）');
   assert.ok(body.indexOf('customer_email=taro@example.com') !== -1);
   assert.ok(body.indexOf('metadata[orderType]=membership') !== -1);
   assert.ok(body.indexOf('expires_at=') !== -1, 'Checkoutは短時間で失効させる');
@@ -653,7 +653,7 @@ test('入会受付: 金額はサーバー固定の500円・メール固定でmod
 });
 
 test('入会受付: STRIPE_MEMBER_PRICE_ID（既存Recurring Price）があればそのPriceを使いprice_dataを送らない', function () {
-  var ctx = setup({ properties: Object.assign({ STRIPE_MEMBER_PRICE_ID: 'price_fixture_member' }, CHECKOUT_PROPERTIES) });
+  var ctx = setup({ properties: Object.assign({}, CHECKOUT_PROPERTIES, { STRIPE_MEMBER_PRICE_ID: 'price_fixture_member' }) });
   assert.strictEqual(ctx.sandbox.MembershipService.startCheckout({ email: MEMBER_EMAIL }).success, true);
   var body = decodeURIComponent(checkoutPosts(ctx)[0].options.payload);
   assert.ok(body.indexOf('line_items[0][price]=price_fixture_member') !== -1);
@@ -661,18 +661,29 @@ test('入会受付: STRIPE_MEMBER_PRICE_ID（既存Recurring Price）があれ�
   assert.ok(body.indexOf('mode=subscription') !== -1);
 });
 
+test('入会受付: Price IDもProduct IDも未設定なら設定不足として安全に失敗する（固定IDにフォールバックしない。Stripeを呼ばない）', function () {
+  var props = Object.assign({}, CHECKOUT_PROPERTIES);
+  delete props.STRIPE_MEMBER_PRODUCT_ID;
+  var ctx = setup({ properties: props });
+  var res = JSON.parse(JSON.stringify(ctx.sandbox.MembershipService.startCheckout({ email: MEMBER_EMAIL })));
+  assert.strictEqual(res.success, false);
+  assert.strictEqual(res.error.code, 'STRIPE_NOT_CONFIGURED');
+  assert.strictEqual(ctx.stripeCalls.length, 0);
+  assert.ok(!/snb_member_monthly/.test(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'gas/booking/shared/MembershipService.gs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')), '新規加入経路にProduct IDの固定値が無い');
+});
+
 test('入会受付: STRIPE_MEMBER_PRODUCT_ID指定時はその既存Productを使い、Productを新規作成しない', function () {
-  var ctx = setup({ properties: Object.assign({ STRIPE_MEMBER_PRODUCT_ID: 'prod_fixture_member' }, CHECKOUT_PROPERTIES) });
+  var ctx = setup({ properties: Object.assign({}, CHECKOUT_PROPERTIES, { STRIPE_MEMBER_PRODUCT_ID: 'prod_fixture_member2' }) });
   assert.strictEqual(ctx.sandbox.MembershipService.startCheckout({ email: MEMBER_EMAIL }).success, true);
   var body = decodeURIComponent(checkoutPosts(ctx)[0].options.payload);
-  assert.ok(body.indexOf('line_items[0][price_data][product]=prod_fixture_member') !== -1);
+  assert.ok(body.indexOf('line_items[0][price_data][product]=prod_fixture_member2') !== -1);
   assert.strictEqual(ctx.stripeCalls.filter(function (c) { return /\/v1\/products$/.test(c.url); }).length, 0);
 });
 
 /* ===== 入会元ブランド別の戻り先（Issue #504） ===== */
 
 var BRAND_PROPERTIES = {
-  STRIPE_CHECKOUT_ENABLED: 'true',
+  STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBER_PRODUCT_ID: 'prod_fixture_member',
   STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/Studio-nagoya-base/membership/complete.html',
   STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/Studio-nagoya-base/membership/'
 };

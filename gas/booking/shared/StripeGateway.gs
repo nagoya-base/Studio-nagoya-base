@@ -235,7 +235,7 @@ var StripeGateway = (function () {
       amount: raw.amount,
       amountRefunded: Number(raw.amount_refunded) || 0,
       currency: typeof raw.currency === 'string' ? raw.currency.toUpperCase() : '',
-      /* 2025-03-31.basil より前のAPI versionのみChargeがinvoiceを持つ（以降は削除。retrieveInvoiceIdForPaymentIntentで引く）。 */
+      /* API versionによってはChargeがinvoiceを持つ。持たない場合はretrieveInvoiceIdForPaymentIntentで引く（どのversionで外れたかは断定しない）。 */
       invoiceId: typeof raw.invoice === 'string' ? raw.invoice : ((raw.invoice && raw.invoice.id) || '')
     };
   }
@@ -521,9 +521,9 @@ var StripeGateway = (function () {
 
   /*
    * PaymentIntentが支払ったinvoiceのIDを引く（Issue #532。Subscription更新invoiceの返金を特定する）。
-   * Stripe公式仕様（2025-03-31.basil 以降）: ChargeとPaymentIntentからinvoiceフィールドが削除され、
-   * Invoice Payments API（GET /v1/invoice_payments?payment[type]=payment_intent&payment[payment_intent]=pi_...）で
-   * 引く。それより前のAPI versionではCharge.invoiceを使う（呼び出し側でcharge.invoiceIdを先に見る）。
+   * Charge.invoiceが無い場合に、Invoice Payments API（PaymentIntentとInvoiceの対応付けリソース。
+   * GET /v1/invoice_payments?payment[type]=payment_intent&payment[payment_intent]=pi_...）で引く
+   * （呼び出し側でcharge.invoiceIdを先に見る。どのAPI versionでChargeからinvoiceが外れたかは公式の変更履歴で未確認のため断定しない）。
    * 戻り値: { ok: true, invoiceId: '' | 'in_...' }（invoiceに紐づかない決済は空文字）。一覧を完全に取得できない場合はAMBIGUOUS。
    */
   function retrieveInvoiceIdForPaymentIntent(stripeConfig, paymentIntentId) {

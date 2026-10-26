@@ -237,7 +237,7 @@ test('プレスタート: 10月入会の再送でも支払い事実は重複せ�
 
 test('入会Checkoutメール（Issue #532）: プレスタートの案内は出さず、入会日から1か月有効・入会日基準の自動更新を案内する', function () {
   var ctx = setup({ clockAt: '2026-10-26T10:00:00+09:00', properties: {
-    STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/membership/complete.html', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/membership/',
+    STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBER_PRODUCT_ID: 'prod_fixture_member', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/membership/complete.html', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/membership/',
     BOOKING_MAIL_DISPLAY_NAME: 'SNB', BOOKING_MAIL_REPLY_TO: 'noreply@example.com', BOOKING_CONTACT_EMAIL: 'contact@example.com'
   } });
   var sent = [];

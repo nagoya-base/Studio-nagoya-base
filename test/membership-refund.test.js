@@ -99,7 +99,7 @@ function setup(options) {
   var clock = stubs.createControllableClock(opts.clockAt || JOIN_AT);
   var globals = {
     PropertiesService: stubs.createPropertiesServiceStub({ SPREADSHEET_ID: SPREADSHEET_ID, CALENDAR_ID: 'cal1', STRIPE_SECRET_KEY: 'sk_test_dummy_value',
-      STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/ok', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/ng' }),
+      STRIPE_CHECKOUT_ENABLED: 'true', STRIPE_MEMBER_PRODUCT_ID: 'prod_fixture_member', STRIPE_MEMBERSHIP_SUCCESS_URL: 'https://example.com/ok', STRIPE_MEMBERSHIP_CANCEL_URL: 'https://example.com/ng' }),
     LockService: stubs.createLockServiceStub(),
     CacheService: stubs.createCacheServiceStub(),
     SpreadsheetApp: stubs.createSpreadsheetAppStub(spreadsheetsById),
