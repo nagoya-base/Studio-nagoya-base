@@ -1623,3 +1623,41 @@ test('Issue #445レビュー: Checkout作成後の完了画面は、paymentHoldE
   assert.doesNotMatch(without, /お支払い期限：/);
   assert.match(without, /予約申込後30分以内にお支払いを完了してください/);
 });
+
+/* ── Issue #520: 料金表示エリアに選択した利用時間帯（開始〜終了）を表示する ── */
+test('Issue #520: 開始時刻を選ぶと料金表示エリアに「利用時間：開始〜終了（N時間）」が出る', async function () {
+  var ctx = setupFullFlow(null, { bookableStartTimes: ['11:00', '12:15'] });
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '6';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+
+  assert.strictEqual(ctx.elements['ba-price-time'].hidden, true, '開始時刻の未選択時は出さない');
+  assert.strictEqual(ctx.elements['ba-price-time'].textContent, '');
+
+  ctx.startTimeButtons[0]._listeners.click();
+  assert.strictEqual(ctx.elements['ba-price-time'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-price-time'].textContent, '利用時間：11:00〜17:00（6時間）');
+
+  ctx.startTimeButtons[1]._listeners.click();
+  assert.strictEqual(ctx.elements['ba-price-time'].textContent, '利用時間：12:15〜18:15（6時間）', '開始時刻の変更で即時更新');
+  assert.strictEqual(ctx.elements['ba-price-line'].textContent, '利用料金: ¥4,000（税込）', '料金表示は変わらない');
+});
+
+test('Issue #520: 利用時間を変更すると開始時刻が未選択に戻り、利用時間帯は消える', async function () {
+  var ctx = setupFullFlow(null, { bookableStartTimes: ['11:00'] });
+
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '6';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  assert.strictEqual(ctx.elements['ba-price-time'].hidden, false);
+
+  ctx.elements['ba-duration'].value = '3';
+  ctx.elements['ba-duration']._listeners.change();
+  assert.strictEqual(ctx.elements['ba-price-time'].hidden, true, '古い時間帯を残さない');
+});

@@ -201,6 +201,13 @@
   background: var(--ba-surface);
 }
 
+.ba-price-time {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ba-text);
+}
+
 .ba-price-line {
   margin: 0;
   font-size: 1rem;
