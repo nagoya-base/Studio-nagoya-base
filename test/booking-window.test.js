@@ -391,3 +391,61 @@ test('フロント: 先行予約系エラーは日付選び直しへ誘導し、
   assert.ok(advance.indexOf('SNB MEMBER先行予約枠') !== -1 && plain.indexOf('先行') === -1);
   assert.ok(Logic.dayAriaLabel('2026-11-26', 'AVAILABLE', 'returning', TODAY, 'en', true).indexOf('advance booking') !== -1);
 });
+
+/* ---------- 管理者の新規予約作成（adminCreateBooking。上限解除の唯一の経路） ---------- */
+
+function adminCtx(sessionEmail, properties) {
+  var vm = require('node:vm');
+  var session = { getActiveUser: function () { return { getEmail: function () { return sessionEmail; } }; } };
+  var ctx = setup({ session: session, properties: properties });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'gas', 'booking', 'admin', 'BookingAdminWeb.gs'), 'utf8'), ctx.sandbox);
+  ctx.admin = function (p) { return vm.runInContext('adminCreateBooking', ctx.sandbox)(p); };
+  return ctx;
+}
+
+var farDate = require('./helpers/future-date').futureJstDate(150); /* 90日を大きく超える（実行日に依存しない） */
+
+test('管理者: 認証済みnagoyabase2023@gmail.comは91日超の新規予約を作成できる（会員資格不要・台帳を照会しない）', function () {
+  var ctx = adminCtx(ADMIN_EMAIL);
+  var r = ctx.admin(payload({ date: farDate, email: 'guest@example.com' }));
+  assert.strictEqual(r.success, true);
+  var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(r.bookingId);
+  assert.strictEqual(found.record.date, farDate);
+  assert.strictEqual(found.record.status, 'PENDING');
+  assert.strictEqual(ctx.lookups.length, 0);
+});
+
+test('管理者: allowlist外・メール取得不可のアカウントは91日超を作成できず、何も作られない', function () {
+  ['attacker@example.com', ''].forEach(function (email) {
+    var ctx = adminCtx(email);
+    var r = ctx.admin(payload({ date: farDate }));
+    assert.strictEqual(r.success, false);
+    assert.strictEqual(r.error.code, 'FORBIDDEN');
+    assert.strictEqual(ctx.sandbox.SpreadsheetRepository.getAllPendingBookings().length, 0);
+  });
+});
+
+test('管理者: 公開経路ではpayloadのメール・フラグ・第4引数相当のフィールドを入れても上限は解除されない', function () {
+  var ctx = setup();
+  var r = ctx.sandbox.BookingRepository.createBooking(
+    Object.assign(payload({ date: farDate, email: ADMIN_EMAIL }), { windowTier: 'ADMIN', isAdmin: true, admin: true, tier: 'ADMIN' }), new Date()
+  );
+  assert.strictEqual(r.success, false);
+  assert.strictEqual(r.error.code, 'DATE_OUT_OF_RANGE');
+});
+
+test('管理者: 上限だけを解除し、重複予約・営業時間・過去日・オプション同時申込の既存制約は維持される', function () {
+  var ctx = adminCtx(ADMIN_EMAIL);
+  assert.strictEqual(ctx.admin(payload({ date: farDate, startTime: '10:00' })).success, true);
+  var dup = ctx.admin(payload({ date: farDate, startTime: '11:00', email: 'b@example.com' }));
+  assert.strictEqual(dup.success, false);
+  assert.strictEqual(dup.error.code, 'SLOT_CONFLICT');
+  var early = ctx.admin(payload({ date: farDate, startTime: '06:00', email: 'c@example.com' }));
+  assert.strictEqual(early.success, false);
+  var past = ctx.admin(payload({ date: '2020-01-01' }));
+  assert.strictEqual(past.success, false);
+  assert.strictEqual(past.error.code, 'INVALID_DATE');
+  var withOptions = ctx.admin(Object.assign(payload({ date: farDate, startTime: '15:00', email: 'd@example.com' }), { options: { shower: true } }));
+  assert.strictEqual(withOptions.success, false);
+  assert.strictEqual(withOptions.error.code, 'OPTIONS_NOT_SUPPORTED');
+});

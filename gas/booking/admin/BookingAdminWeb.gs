@@ -818,3 +818,18 @@ function isBookingAdminVerified_() {
     return false;
   }
 }
+
+/*
+ * 管理者による新規予約作成（Issue #480）。予約可能期間の上限（一般30日／会員90日）を受けない唯一の作成経路。
+ * Session.getActiveUser() × BOOKING_ADMIN_EMAILS で認証済みの管理者のときだけ、BookingWindow.TIER.ADMINを
+ * createBookingへ渡す。payloadの予約メールアドレスや任意のフラグでは管理者扱いにならない（認証は常にこの関数内で行う）。
+ * 営業時間・重複予約・休業日・料金などの検証は公開経路と同じcreateBookingが行う。オプションの同時申込は不可。
+ */
+function adminCreateBooking(payload) {
+  if (!isBookingAdminVerified_()) {
+    return { success: false, error: { code: 'FORBIDDEN', message: '管理者として認証できませんでした。' } };
+  }
+  var input = Object.assign({}, payload || {});
+  var result = BookingRepository.createBooking(input, undefined, undefined, BookingWindow.TIER.ADMIN);
+  return sanitizeForClient_(result);
+}

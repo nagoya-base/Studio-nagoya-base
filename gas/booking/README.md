@@ -7576,6 +7576,7 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - Availability（`getAvailability` / `getMonthlyAvailability`）は予約メールを受け取らず、31〜90日先に「会員先行枠」(`memberAdvance`) の印を付けて**全員に同じ応答**を返す（会員有無を推測させない）。91日以降は `OUT_OF_RANGE` / `DATE_OUT_OF_RANGE`。応答の `generalMaxDate` / `memberMaxDate` をフロントは表示に使い、日数はフロントで再実装しない。
 - `createBooking` が最終検証する。91日以降は `DATE_OUT_OF_RANGE`、31〜90日で会員資格なし・台帳エラーは同一の `ADVANCE_BOOKING_MEMBER_ONLY`（fail-closed。rate limit計上後に判定）。`priceIsMember`・SNB mens料金優遇・自己申告 `isMember` は資格にならない。
 - 予約成立後に退会しても通常の部屋予約は維持する。2名ペアパック・シャワー・Studio X有料オプションは従来どおり利用月の会員資格で判定する（変更なし）。
+- 管理者の新規予約は `adminCreateBooking(payload)`（Booking Admin）。`isBookingAdminVerified_()` で認証できた場合のみ、サーバー内部の第4引数 `BookingWindow.TIER.ADMIN` を `createBooking` へ渡して上限を解除する（公開Web Appは渡さず、payload・予約メールからは導出しない）。営業時間・重複予約・料金などの検証は公開経路と同じ。公開フォーム向けのrate limit・管理者通知メールは対象外で、オプションの同時申込は不可。
 - Booking Adminの日程変更は公開経路ではないため、この上限を適用しない。
 
 ### 永久会員（Script Properties `PERMANENT_MEMBER_EMAILS`）
