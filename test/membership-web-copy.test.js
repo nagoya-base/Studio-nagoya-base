@@ -182,7 +182,7 @@ test('FAQのJSON-LDと表示が一致する（SNB MEMBER項目）', function () 
     });
     assert.ok(ld, p + ' にFAQPageのJSON-LD');
     var q = ld.mainEntity.filter(function (e) { return /SNB MEMBER/.test(e.name); });
-    assert.strictEqual(q.length, 2, p);
+    assert.strictEqual(q.length, p === 'legal/index.html' ? 3 : 2, p); /* legalはプレスタートFAQ（#490）を含む */
     q.forEach(function (e) { assert.ok(html.indexOf('<div class="faq-answer">' + e.acceptedAnswer.text + '</div>') !== -1, p + ': ' + e.name); });
   });
 });

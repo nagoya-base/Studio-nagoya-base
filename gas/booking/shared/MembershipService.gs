@@ -126,8 +126,12 @@ var MembershipService = (function () {
       MemberRepository.updatePending(memberId, { checkoutSessionId: result.session.id }, new Date());
       sendMail_(email, 'SNB MEMBER（月額500円）の入会手続きは、下記のお支払いページから行えます（35分間有効）。\n\n' +
         result.session.url + '\n\n' +
-        '・入会月は日割りなしで500円、入会日から当月末まで有効です。\n' +
-        '・翌月以降は毎月1日に500円が自動更新されます。\n' +
+        (MembershipRules.isPrestartJoin(Math.floor(now.getTime() / 1000))
+          ? '・SNB MEMBERプレスタート中です。初回500円で2026年11月30日まで有効です（11月1日の追加課金はありません）。\n' +
+            '・次回更新は2026年12月1日（500円）、以降は毎月1日に自動更新されます。\n' +
+            '・2名ペアパック・シャワー・会員限定の有料機材などの本特典は2026年12月1日から開始します。90日先行予約は決済完了後すぐご利用いただけます。\n'
+          : '・入会月は日割りなしで500円、入会日から当月末まで有効です。\n' +
+            '・翌月以降は毎月1日に500円が自動更新されます。\n') +
         '・心当たりがない場合は、このメールを破棄してください。');
       return accepted_();
     } catch (error) {

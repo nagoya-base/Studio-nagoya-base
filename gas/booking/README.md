@@ -7629,3 +7629,13 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 ### 管理者（Script Properties `BOOKING_ADMIN_EMAILS`）
 
 `nagoyabase2023@gmail.com` は `Config.gs` の既定allowlistに持つ。`BOOKING_ADMIN_EMAILS`（カンマ区切り）で追加できる。メール取得不可・未設定・不一致はfail-closed。
+
+## Issue #490: SNB MEMBERプレスタート（2026/10/26〜11/30）
+
+本運用（2026/12/1）前に、実登録・決済・90日先行予約を本番で確認するため、2026/10/26 00:00 JSTからSNB MEMBERを開始する。
+
+- **課金**: 既存の共通SNB MEMBER構成（入会Checkout `mode=payment` 500円 → Webhookでsubscription作成）を維持。プレスタート中の入会（決済成功時刻が2026/10/26 JST〜11/30）は、`MembershipRules.coveredMonthsForJoin` が入会月〜2026-11を返し、`StripeWebhookProcessor.handleMembershipJoin_` が各月の支払い事実（`MemberMonths`）を追記する（10月入会は10月＋11月、11月入会は11月のみ。追加月の `amount` は0）。subscriptionの `billing_cycle_anchor` は `renewalAnchorSecondsForJoin` で **2026/12/1 00:00 UTC**（＝JST 9:00）。**11/1に課金は発生しない**。12/1に500円、以降は毎月1日500円（既存の更新invoice処理がそのまま働く）。日割りなし・解約後も支払済み期間の末日まで有効。
+- **90日先行予約**: #480の判定（`verifyAdvanceBookingMembership` ＝予約作成時点の当月のactual membership）は無変更。入会月の支払い事実が決済成功で記録されるため、決済成功後すぐ使える。`priceIsMember`・mens料金優遇・自己申告は対象外のまま。
+- **12/1開始のまま（前倒ししない）**: 2名ペアパック・シャワー・SNB/mensの会員限定有料機材・Studio Xの会員限定有料オプション・Studio X新部屋料金。`BENEFITS_START_MS` と料金世代V2の境界は変更していない（作成時刻 `createdAt` 判定）。11月までにactual membershipがあっても適用しない。2026/11/30までに作成する予約は既存の料金世代・料金を維持し、加入で既存予約の料金は自動変更しない。
+- **本番設定**: `STRIPE_CHECKOUT_ENABLED` はこのPRでは変更しない。デプロイ後、既存の運用手順（README「SNB MEMBER」節）に従って有効化する。
+- **Web**: `/membership/`・`/mens/membership/`・`/studio-x/membership/`（共通 `_includes/membership_prestart_ja.html`）、会員条件（`membership_terms_ja.html`）、特商法、FAQ、入会案内メールにプレスタートを明記。
