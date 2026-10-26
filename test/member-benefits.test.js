@@ -465,7 +465,7 @@ test('シャワー: mensで priceIsMember 相当（価格優遇）でも actual 
   assert.strictEqual(ctx.sandbox.OptionOrderRepository.listByBookingId(id).length, 0);
 });
 
-test('シャワー: actual membershipありなら1,000円のOptionOrder（MEMBER_SERVICE）。部屋料金へ埋め込まず、承認不要・決済待ち', function () {
+test('シャワー: actual membershipありなら1,000円のOptionOrder（MEMBER_SERVICE）。部屋料金へ埋め込まず、承認待ち（Issue #481）', function () {
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   ['snb', 'mens'].forEach(function (brand, i) {
     var id = seedRoom(ctx, { brand: brand, bookingId: 'X-2026120' + (i + 1) + '-BBBB000' + i });
@@ -475,8 +475,10 @@ test('シャワー: actual membershipありなら1,000円のOptionOrder（MEMBER
     var order = r.orders[0];
     assert.strictEqual(order.category, 'MEMBER_SERVICE');
     assert.strictEqual(order.amountJpy, 1000);
-    assert.strictEqual(order.status, 'AWAITING_PAYMENT');
-    assert.strictEqual(order.approvalStatus, 'NOT_REQUIRED');
+    assert.strictEqual(order.status, 'PENDING_APPROVAL');
+    assert.strictEqual(order.approvalStatus, 'PENDING_APPROVAL');
+    assert.strictEqual(order.requiresApproval, true);
+    assert.strictEqual(order.payable, false);
     assert.strictEqual(order.items[0].code, 'SHOWER');
     assert.ok(/シャワー/.test(order.items[0].label));
   });
@@ -531,6 +533,7 @@ test('シャワーのCheckout開始でも actual membership を再確認（失�
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   var id = seedRoom(ctx, {});
   var order = addon(ctx, id, { shower: true }).orders[0];
+  assert.strictEqual(ctx.sandbox.OptionOrderService.approveOrder(order.optionOrderId, NOW_DEC).success, true);
   ctx.members = {};
   var denied = ctx.sandbox.OptionOrderService.startOptionCheckout(id, EMAIL, order.optionOrderId, NOW_DEC);
   assert.strictEqual(denied.success, false);
@@ -547,6 +550,7 @@ test('決済済みWebhook後は会員資格不足を理由に覆さない（シ�
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   var id = seedRoom(ctx, {});
   var order = addon(ctx, id, { shower: true }).orders[0];
+  assert.strictEqual(ctx.sandbox.OptionOrderService.approveOrder(order.optionOrderId, NOW_DEC).success, true);
   var started = ctx.sandbox.OptionOrderService.startOptionCheckout(id, EMAIL, order.optionOrderId, NOW_DEC);
   assert.strictEqual(started.success, true);
   var sessionId = Object.keys(ctx.stripe.sessions)[0];
@@ -564,6 +568,50 @@ test('決済済みWebhook後は会員資格不足を理由に覆さない（シ�
   var row = ctx.sandbox.OptionOrderRepository.findByOptionOrderId(order.optionOrderId).record;
   assert.strictEqual(row.status, 'CONFIRMED');
   assert.strictEqual(row.paymentStatus, 'PAID');
+});
+
+test('シャワー(#481): 承認前のCheckoutは直接APIでも拒否（Stripeを呼ばない）。承認後のみ1,000円のCheckoutへ進める', function () {
+  var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
+  var id = seedRoom(ctx, {});
+  var order = addon(ctx, id, { shower: true }).orders[0];
+  var early = ctx.sandbox.OptionOrderService.startOptionCheckout(id, EMAIL, order.optionOrderId, NOW_DEC);
+  assert.strictEqual(early.success, false);
+  assert.strictEqual(early.error.code, 'APPROVAL_REQUIRED');
+  assert.strictEqual(ctx.stripe.createCalls.length, 0);
+  var approved = ctx.sandbox.OptionOrderService.approveOrder(order.optionOrderId, NOW_DEC);
+  assert.strictEqual(approved.success, true, JSON.stringify(approved));
+  assert.strictEqual(approved.order.status, 'AWAITING_PAYMENT');
+  assert.strictEqual(approved.order.approvalStatus, 'APPROVED');
+  var ok = ctx.sandbox.OptionOrderService.startOptionCheckout(id, EMAIL, order.optionOrderId, NOW_DEC);
+  assert.strictEqual(ok.success, true, JSON.stringify(ok));
+  assert.strictEqual(ctx.stripe.createCalls.length, 1);
+});
+
+test('シャワー(#481): 管理者が否認するとCheckout不可。承認時にもactual membershipを再確認する。否認後は再申込できる', function () {
+  var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
+  var id = seedRoom(ctx, {});
+  var order = addon(ctx, id, { shower: true }).orders[0];
+  ctx.members = {};
+  var denied = ctx.sandbox.OptionOrderService.approveOrder(order.optionOrderId, NOW_DEC);
+  assert.strictEqual(denied.success, false);
+  assert.strictEqual(denied.error.code, DENIED_CODE);
+  ctx.members = { [EMAIL]: ['2026-12'] };
+  var declined = ctx.sandbox.OptionOrderService.declineOrder(order.optionOrderId, '対応不可', NOW_DEC);
+  assert.strictEqual(declined.success, true, JSON.stringify(declined));
+  assert.strictEqual(declined.order.status, 'DECLINED');
+  var pay = ctx.sandbox.OptionOrderService.startOptionCheckout(id, EMAIL, order.optionOrderId, NOW_DEC);
+  assert.strictEqual(pay.success, false);
+  assert.strictEqual(ctx.stripe.createCalls.length, 0);
+  assert.strictEqual(addon(ctx, id, { shower: true }).success, true, '否認済みは重複に数えない');
+});
+
+test('シャワー(#481): 承認待ち・承認済みの有効注文がある間は重複申込を拒否', function () {
+  var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
+  var id = seedRoom(ctx, {});
+  var order = addon(ctx, id, { shower: true }).orders[0];
+  assert.strictEqual(addon(ctx, id, { shower: true }).error.code, 'DUPLICATE_OPTION');
+  ctx.sandbox.OptionOrderService.approveOrder(order.optionOrderId, NOW_DEC);
+  assert.strictEqual(addon(ctx, id, { shower: true }).error.code, 'DUPLICATE_OPTION');
 });
 
 // ============================================================================

@@ -244,9 +244,9 @@
       <legend>会員限定の特典（SNB MEMBER・任意）</legend>
       <div class="ba-choices">
         <label class="ba-choice"><input type="checkbox" id="ba-plan-pair" value="member_pair_3h"> <span>2名ペアパック（3時間・1〜2名／平日5,000円・土日祝6,000円）</span></label>
-        <label class="ba-choice"><input type="checkbox" id="ba-shower" value="shower"> <span>シャワー（1予約1回・1,000円。予約確定後に「オプションのお支払い」ページでお支払い）</span></label>
+        <label class="ba-choice"><input type="checkbox" id="ba-shower" value="shower"> <span>シャワー（1予約1回・1,000円。事前確認・承認制で、選択だけでは利用確定になりません。承認後にお支払い）</span></label>
       </div>
-      <p class="ba-field-help">会員限定です。ご利用日の属する月のSNB MEMBER会員資格（当月の会費のお支払い）を確認できない場合は、お申し込みいただけません。予約のメールアドレスは会員登録と同じものをご入力ください。2名ペアパックは他の割引・優待と併用できず、延長は通常の会員延長料金です。<a href="{{ '/' | relative_url }}{% if include.brand == "mens" %}mens/{% endif %}membership/" target="_blank" rel="noopener">会員案内を見る</a></p>
+      <p class="ba-field-help">会員限定です。シャワー利用は事前確認が必要です。利用希望の場合は事前にご連絡ください。対応可能な場合のみご案内し、承認後にお支払いをお願いします。ここでの選択は利用希望の連絡であり、承認とお支払いの完了までは利用確定ではありません。ご利用日の属する月のSNB MEMBER会員資格（当月の会費のお支払い）を確認できない場合は、お申し込みいただけません。予約のメールアドレスは会員登録と同じものをご入力ください。2名ペアパックは他の割引・優待と併用できず、延長は通常の会員延長料金です。<a href="{{ '/' | relative_url }}{% if include.brand == "mens" %}mens/{% endif %}membership/" target="_blank" rel="noopener">会員案内を見る</a></p>
       <p class="ba-field-error" id="ba-benefits-error" hidden></p>
     </fieldset>
 {% endif %}

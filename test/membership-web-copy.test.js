@@ -76,7 +76,7 @@ test('SNB: SNB MEMBER料金の表が料金ロジックと一致する（現行�
   assert.strictEqual(t['延長（1h）'].weekend, yen(price('snb', WEEKEND, 5, true, 'V2') - price('snb', WEEKEND, 4, true, 'V2')));
 });
 
-test('SNB: 会員案内ページの比較表（一般/会員/差額）が料金ロジックと一致し、3時間以上で割引・4時間で月会費相当の差額になる', function () {
+test('SNB: 会員案内ページの比較表（一般/会員/差額）が料金ロジックと一致し、3時間以上で割引・3時間で月会費相当・4時間で1,000円の差額になる', function () {
   var html = read('membership/index.html');
   var rows = {};
   var re = /<tr[^>]*><td>([^<]*)<\/td><td>([^<]*)<\/td><td>([^<]*)<\/td><td>([^<]*)<\/td><td>([^<]*)<\/td><td>([^<]*)<\/td><\/tr>/g;
@@ -90,12 +90,13 @@ test('SNB: 会員案内ページの比較表（一般/会員/差額）が料金�
     if (h >= 3) assert.ok(wdG - wdM > 0, h + '時間は会員料金の方が安い');
     else assert.strictEqual(wdG - wdM, 0, h + '時間は一般料金と同額');
   });
-  assert.strictEqual(price('snb', WEEKDAY, 4, false, 'V2') - price('snb', WEEKDAY, 4, true, 'V2'), 1000, '4時間の差額は月会費1,000円相当');
+  assert.strictEqual(price('snb', WEEKDAY, 4, false, 'V2') - price('snb', WEEKDAY, 4, true, 'V2'), 1000, '4時間の差額は1,000円（月会費500円の2倍）');
+  assert.strictEqual(price('snb', WEEKDAY, 3, false, 'V2') - price('snb', WEEKDAY, 3, true, 'V2'), 500, '3時間の差額は月会費500円相当');
   assert.strictEqual(price('snb', WEEKEND, 4, false, 'V2') - price('snb', WEEKEND, 4, true, 'V2'), 1000);
   assert.deepStrictEqual(rows['4時間'][4], '1,000円');
 });
 
-test('SNB: 会員訴求は「3時間以上で割引」「4時間で月会費相当」。旧「2時間以上で会費相当以上」・値上げ・過剰表現が無い', function () {
+test('SNB: 会員訴求は「3時間以上で割引」「3時間で月会費相当」。旧「2時間以上で会費相当以上」・値上げ・過剰表現が無い', function () {
   var pages = ['index.html', 'membership/index.html', 'legal/index.html', '_includes/legal_ja.html', 'mens/index.html', 'en.html', 'legal/en.html', '_data/news_ja.yml'];
   pages.forEach(function (p) {
     var t = textOf(read(p));
@@ -106,20 +107,20 @@ test('SNB: 会員訴求は「3時間以上で割引」「4時間で月会費相�
   });
   var idx = textOf(read('index.html'));
   assert.ok(idx.indexOf('3時間以上のご利用で一般料金より安く') !== -1);
-  assert.ok(idx.indexOf('4時間のご利用では、一般料金との差額が月会費1,000円相当') !== -1);
+  assert.ok(idx.indexOf('3時間のご利用で、一般料金との差額が月会費500円相当') !== -1);
   assert.ok(idx.indexOf('継続・長時間ご利用の方向けの優遇制度') !== -1);
   var m = textOf(read('membership/index.html'));
   assert.ok(m.indexOf('3時間以上のご利用で、会員料金は一般料金より安くなります') !== -1);
-  assert.ok(m.indexOf('4時間のご利用では、一般料金との差額が月会費（1,000円）相当') !== -1);
+  assert.ok(m.indexOf('3時間のご利用で、一般料金との差額が月会費（500円）相当') !== -1);
   var faq = textOf(read('legal/index.html'));
-  assert.ok(faq.indexOf('3時間以上のご利用で一般料金より安くなり、4時間のご利用では一般料金との差額が月会費1,000円相当') !== -1);
+  assert.ok(faq.indexOf('3時間以上のご利用で一般料金より安くなり、3時間のご利用で一般料金との差額が月会費500円相当') !== -1);
 });
 
-test('SNB: 加入前に「月額1,000円」「自動更新」「初月日割りなし」を表示し、同意のうえ既存の入会APIへ接続する（決済URL固定なし）', function () {
+test('SNB: 加入前に「月額500円」「自動更新」「初月日割りなし」を表示し、同意のうえ既存の入会APIへ接続する（決済URL固定なし）', function () {
   var html = read('membership/index.html');
   var form = html.slice(html.indexOf('class="membership-summary"'), html.indexOf('</form>'));
   var t = textOf(form);
-  ['月額1,000円', '毎月1日に自動更新', '入会月は日割りなし', '日割りでの返金はありません'].forEach(function (w) { assert.ok(t.indexOf(w) !== -1, '入会前の表示に「' + w + '」'); });
+  ['月額500円', '毎月1日に自動更新', '入会月は日割りなし', '日割りでの返金はありません'].forEach(function (w) { assert.ok(t.indexOf(w) !== -1, '入会前の表示に「' + w + '」'); });
   assert.match(form, /id="membership-consent"[^>]*required/, '同意チェック必須');
   assert.ok(!/stripe\.com|buy\.stripe|checkout\.stripe/.test(html + read('scripts/membership-join.js')), 'Checkout URLを固定記載しない');
   var js = read('scripts/membership-join.js');
@@ -142,7 +143,7 @@ test('SNB: 会員加入CTAがあり、会員案内ページへ接続し、初回
 test('会員条件: 会員案内ページ・利用規約・特商法・FAQが同じ必須項目を明記し、旧制度の記述が残っていない', function () {
   var terms = textOf(read('_includes/membership_terms_ja.html'));
   [
-    ['月額1,000円', '月額1,000円'], ['Stripe', 'Stripe'], ['毎月1日', '毎月1日'], ['入会月は日割りなし', '日割りはありません'],
+    ['月額500円', '月額500円'], ['Stripe', 'Stripe'], ['毎月1日', '毎月1日'], ['入会月は日割りなし', '日割りはありません'],
     ['日割り返金なし', '日割りを含め返金しません'], ['解約方法', '予約フォーム'], ['解約後', '支払い済みの月の末日まで'],
     ['決済失敗', '猶予期間なく'], ['初回利用者', '初めてご利用の方も'], ['自動移行しない', '自動では移行しません']
   ].forEach(function (c) { assert.ok(terms.indexOf(c[1]) !== -1, '会員条件に「' + c[0] + '」が必要'); });
@@ -152,12 +153,12 @@ test('会員条件: 会員案内ページ・利用規約・特商法・FAQが同
   assert.ok(read('membership/index.html').indexOf("{% include membership_terms_ja.html %}") !== -1, '会員案内が共通の会員条件を参照');
   var law = legal.slice(legal.indexOf('特定商取引法に基づく表記'));
   var lawText = textOf(law);
-  ['月額1,000円', '毎月1日に自動更新', 'Stripe', '日割りなしの満額', '解約', 'お支払い済みの月の末日まで', '日割りを含め返金しません', '失敗した月', '初めてご利用の方から加入できます', '自動では移行しません']
+  ['月額500円', '毎月1日に自動更新', 'Stripe', '日割りなしの満額', '解約', 'お支払い済みの月の末日まで', '日割りを含め返金しません', '失敗した月', '初めてご利用の方から加入できます', '自動では移行しません']
     .forEach(function (w) { assert.ok(lawText.indexOf(w) !== -1, '特商法表記に「' + w + '」が必要'); });
 
   ['index.html', 'legal/index.html'].forEach(function (p) {
     var t = textOf(read(p));
-    ['月額1,000円', 'Stripe', '毎月1日', '日割りなし', '解約', '返金しません', '決済に失敗した月', '初めてご利用の方も加入できます', '自動では移行しない']
+    ['月額500円', 'Stripe', '毎月1日', '日割りなし', '解約', '返金しません', '決済に失敗した月', '初めてご利用の方も加入できます', '自動では移行しない']
       .forEach(function (w) { assert.ok(t.indexOf(w) !== -1, p + ' のFAQに「' + w + '」が必要'); });
   });
 
