@@ -65,7 +65,7 @@ var StripeGateway = (function () {
       'metadata[brand]': params.brand,
       'metadata[paymentAttemptId]': params.paymentAttemptId,
       /* Issue #516: Checkout Studio固定値（fixed_by_ui）。mode=paymentのためpayment_method_collectionは付けない。 */
-      'ui_mode': 'hosted_page',
+      'ui_mode': 'hosted',
       'billing_address_collection': 'auto',
       'phone_number_collection[enabled]': 'false',
       'automatic_tax[enabled]': 'false',
@@ -437,7 +437,7 @@ var StripeGateway = (function () {
       'metadata[memberId]': params.memberId,
       'client_reference_id': params.memberId,
       /* Issue #516: Checkout Studio固定値（fixed_by_ui）。mode=paymentのためpayment_method_collectionは付けない。 */
-      'ui_mode': 'hosted_page',
+      'ui_mode': 'hosted',
       'billing_address_collection': 'auto',
       'phone_number_collection[enabled]': 'false',
       'automatic_tax[enabled]': 'false',

@@ -20,7 +20,7 @@ Stripe Checkout Studioで設定したHosted CheckoutのUIパラメータを、�
 
 | パラメータ | 値 |
 | --- | --- |
-| `ui_mode` | `hosted_page` |
+| `ui_mode` | `hosted` |
 | `billing_address_collection` | `auto` |
 | `phone_number_collection[enabled]` | `false` |
 | `automatic_tax[enabled]` | `false` |
@@ -65,7 +65,7 @@ Stripe Checkout Studioで設定したHosted CheckoutのUIパラメータを、�
 
 ### `ui_mode` について
 
-本リポジトリはStripe SDKを使わずREST APIを直接呼んでいるため、Issueの「SDK 21未満のみ `hosted`」は該当せず、`ui_mode=hosted_page` を使用する。`Stripe-Version` は固定していない。本番反映前に、テストモードでSession作成が成功することを必ず確認すること。
+本リポジトリはStripe SDKを使わずREST APIを直接呼んでいるため、現行APIバージョン `2025-10-29.clover` では `hosted_page` が400（`2026-03-25.dahlia` 以上が必要）となるため、`ui_mode=hosted` を使用する（Issue #525）。`Stripe-Version` は固定せず、アップグレードもしない。本番反映前に、テストモードでSession作成が成功することを必ず確認すること。
 
 ### 要注意: 未解決の決済試行とIdempotency-Key
 
