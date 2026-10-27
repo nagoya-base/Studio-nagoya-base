@@ -59,7 +59,11 @@
     <div class="ba-field" id="ba-email-field">
       <label for="ba-email">メールアドレス<span class="ba-required">必須</span></label>
       <input type="email" id="ba-email" name="email" autocomplete="email" inputmode="email" maxlength="254">
+{% if include.brand == "studio_x" %}
+      <p class="ba-field-help">予約の確定連絡を受け取れるメールアドレスをご入力ください。</p>
+{% else %}
       <p class="ba-field-help">確定連絡を受け取れるアドレスをご入力ください。2026年12月1日以降に作成するご予約で、SNB MEMBERの会員料金・会員特典・先行予約（31〜90日先）をご利用の方は、会員登録と同じメールアドレスをご入力のうえ、下の「SNB MEMBERの方」で確認コード（6桁）による会員確認を行ってください。会員確認をしない場合は一般のご予約として進められます。会員かどうかはこの画面には表示されません。</p>
+{% endif %}
       <p class="ba-field-error" id="ba-email-error" hidden></p>
     </div>
 
@@ -410,6 +414,17 @@
       <label for="ba-purpose">利用目的<span class="ba-required">必須</span></label>
       <select id="ba-purpose" name="purpose">
         <option value="">選択してください</option>
+{% if include.brand == "studio_x" %}
+        <option value="コスプレ撮影">コスプレ撮影</option>
+        <option value="ポートレート撮影">ポートレート撮影</option>
+        <option value="セルフ撮影">セルフ撮影</option>
+        <option value="作品撮り">作品撮り</option>
+        <option value="商品・物撮り">商品・物撮り</option>
+        <option value="動画撮影">動画撮影</option>
+        <option value="衣装テスト">衣装テスト</option>
+        <option value="着替え・荷物置き等の拠点利用">着替え・荷物置き等の拠点利用</option>
+        <option value="その他">その他</option>
+{% else %}
         <option value="緊縛・ロープ表現の自主練習">緊縛・ロープ表現の自主練習</option>
         <option value="コスプレ撮影">コスプレ撮影</option>
         <option value="ポートレート撮影">ポートレート撮影</option>
@@ -419,6 +434,7 @@
         <option value="動画撮影">動画撮影</option>
         <option value="講習会・ワークショップ">講習会・ワークショップ</option>
         <option value="その他">その他</option>
+{% endif %}
       </select>
       <p class="ba-field-error" id="ba-purpose-error" hidden></p>
     </div>
