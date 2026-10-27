@@ -22,6 +22,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Set up Ruby and Jekyll (Gemfile.lock)
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
       - name: Install stripe-webhook-relay dependencies
         run: npm ci
         working-directory: cloud-run/stripe-webhook-relay
