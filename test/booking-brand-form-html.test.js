@@ -48,6 +48,10 @@ function build() {
   assert.strictEqual(r.status, 0, 'jekyll build failed: ' + r.stderr + r.stdout);
   return dest;
 }
+test.after(function () {
+  if (dest) fs.rmSync(dest, { recursive: true, force: true });
+});
+
 function html(rel) { return fs.readFileSync(path.join(build(), rel), 'utf8'); }
 function section(src, startMarker, endMarker) {
   var s = src.indexOf(startMarker);
