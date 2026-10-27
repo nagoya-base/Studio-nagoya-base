@@ -134,6 +134,8 @@ var BOOKING_WEB_APP_FILES = [
   'MembershipService.gs',
   /* Issue #548: V2予約の会員確認（メールOTP・確認済み証明）。createBooking・Code.gsから呼ぶ。RateLimiter.gsに依存するためWeb App専用。 */
   'BookingMemberVerification.gs',
+  /* Issue #557: 期限切れOTP・証明の定期削除。OTP発行と同じプロジェクト＝同じスクリプトロックで直列化するためWeb App専用。 */
+  'BookingVerificationCleanup.gs',
   'Code.gs'
 ];
 

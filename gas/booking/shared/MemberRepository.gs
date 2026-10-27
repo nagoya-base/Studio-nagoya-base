@@ -652,6 +652,94 @@ var MemberRepository = (function () {
   }
 
   /*
+   * 期限切れOTP・確認済み証明の定期削除（Issue #557）。BookingMemberVerifications**だけ**を対象にする。
+   * **ロック保持下で呼ぶこと**（BookingVerificationCleanup.gsがrequestCode/verifyCodeと同じ
+   * LockService.getScriptLock()を取って呼ぶ）。
+   *
+   * 削除するのは「明確に期限切れ」と判定できる行だけ: kind=otp|proof かつ purpose=booking_membership かつ
+   * expiresAtが正しいDateで、現在時刻より保持猶予（EXPIRED_VERIFICATION_RETENTION_MS_）以上前に切れているもの。
+   * 猶予は時計のずれ・実行中の判定との競合に対する安全側のマージン（期限切れ直後は残す）。
+   * 空欄・日時不正・未知のkind/purposeの行は判断不能として**削除せず**skippedUndecidableに数える。
+   * ヘッダー行が想定と異なるときは何も削除せず例外にする。
+   *
+   * 行番号ずれを避けるため、連続する対象行をまとめ、シートの下（行番号の大きい方）から deleteRows する。
+   * 各ブロックは削除直前に対象行を読み直して再判定する（人手の編集等で変わっていたら、その行を含むブロックは削除しない）。
+   * 1回あたりの削除は options.maxRows（既定2000行）・options.timeBudgetMs（既定4分）までで、
+   * 超えたらtruncated=trueで安全に終える。残りは次回実行で消える（再実行は冪等）。
+   * 戻り値は件数のみ（メールアドレス・ハッシュ・行内容を含まない）:
+   * { scanned, deleted, retained, skippedUndecidable, candidates, truncated, failed }
+   */
+  var EXPIRED_VERIFICATION_RETENTION_MS_ = 24 * 60 * 60 * 1000;
+  var PURGE_MAX_ROWS_DEFAULT_ = 2000;
+  var PURGE_TIME_BUDGET_MS_DEFAULT_ = 4 * 60 * 1000;
+
+  /* 行が削除してよいか。'purge'（明確に期限切れ）/ 'keep'（有効期限内・猶予内）/ 'undecidable'（判断不能）。 */
+  function classifyBookingVerificationRow_(row, nowMs) {
+    var record = rowToRecord_(BOOKING_VERIFICATION_HEADERS_, row);
+    if (record.kind !== 'otp' && record.kind !== 'proof') return 'undecidable';
+    if (record.purpose !== 'booking_membership') return 'undecidable';
+    var expiresAt = record.expiresAt;
+    if (!expiresAt || typeof expiresAt.getTime !== 'function' || isNaN(expiresAt.getTime())) return 'undecidable';
+    return expiresAt.getTime() <= nowMs - EXPIRED_VERIFICATION_RETENTION_MS_ ? 'purge' : 'keep';
+  }
+
+  function purgeExpiredBookingVerifications(now, options) {
+    var opts = options || {};
+    var maxRows = opts.maxRows > 0 ? opts.maxRows : PURGE_MAX_ROWS_DEFAULT_;
+    var budgetMs = opts.timeBudgetMs > 0 ? opts.timeBudgetMs : PURGE_TIME_BUDGET_MS_DEFAULT_;
+    var clock = typeof opts.clock === 'function' ? opts.clock : function () { return Date.now(); };
+    var startedAt = clock();
+    var nowMs = toMillis_(now);
+    if (isNaN(nowMs)) throw new Error('現在時刻が不正です。');
+    var result = { scanned: 0, deleted: 0, retained: 0, skippedUndecidable: 0, candidates: 0, truncated: false, failed: false };
+
+    var sheet = getSpreadsheet_().getSheetByName(BOOKING_VERIFICATION_SHEET_);
+    if (!sheet || sheet.getLastRow() < 1) return result;
+    var values = sheet.getDataRange().getValues();
+    var header = values[0] || [];
+    for (var h = 0; h < BOOKING_VERIFICATION_HEADERS_.length; h++) {
+      if (header[h] !== BOOKING_VERIFICATION_HEADERS_[h]) throw new Error('BookingMemberVerificationsのヘッダーが想定と異なるため削除しません。');
+    }
+
+    var purgeRows = [];
+    for (var i = 1; i < values.length; i++) {
+      result.scanned++;
+      var verdict = classifyBookingVerificationRow_(values[i], nowMs);
+      if (verdict === 'purge') purgeRows.push(i + 1);
+      else if (verdict === 'keep') result.retained++;
+      else result.skippedUndecidable++;
+    }
+    result.candidates = purgeRows.length;
+    if (purgeRows.length > maxRows) {
+      purgeRows = purgeRows.slice(0, maxRows);
+      result.truncated = true;
+    }
+
+    /* 連続する行を[start, count]のブロックにまとめ、下のブロックから削除する。 */
+    var blocks = [];
+    purgeRows.forEach(function (rowNumber) {
+      var last = blocks[blocks.length - 1];
+      if (last && last.start + last.count === rowNumber) last.count++;
+      else blocks.push({ start: rowNumber, count: 1 });
+    });
+    for (var b = blocks.length - 1; b >= 0; b--) {
+      if (clock() - startedAt >= budgetMs) { result.truncated = true; break; }
+      var block = blocks[b];
+      try {
+        var fresh = sheet.getRange(block.start, 1, block.count, BOOKING_VERIFICATION_HEADERS_.length).getValues();
+        var stillExpired = fresh.every(function (row) { return classifyBookingVerificationRow_(row, nowMs) === 'purge'; });
+        if (!stillExpired) { result.skippedUndecidable += block.count; continue; }
+        sheet.deleteRows(block.start, block.count);
+        result.deleted += block.count;
+      } catch (error) {
+        result.failed = true;
+        break;
+      }
+    }
+    return result;
+  }
+
+  /*
    * 解約（Issue #506）の対象会員。メール1件に対し、subscriptionが有効（status=active）で、subscription IDを持つ
    * 会員行を返す（無ければnull）。**内部用**で、返す行（Stripe ID）を公開APIへ出さない。
    * 戻り値: { rowNumber, memberId, subscriptionId, cancelAtPeriodEnd }。台帳を読めない場合は例外。
@@ -711,6 +799,7 @@ var MemberRepository = (function () {
     setBookingVerificationAttempts: setBookingVerificationAttempts,
     markBookingVerificationUsed: markBookingVerificationUsed,
     findBookingProof: findBookingProof,
+    purgeExpiredBookingVerifications: purgeExpiredBookingVerifications,
     BOOKING_VERIFICATION_HEADERS: BOOKING_VERIFICATION_HEADERS_,
     findUsableStatusToken: findUsableStatusToken,
     markStatusTokenUsed: markStatusTokenUsed,

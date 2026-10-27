@@ -1,3 +1,26 @@
+## Issue #557: 期限切れOTP・会員確認証明の定期削除
+
+`BookingMemberVerifications`（#548）は `findLatestBookingOtp` / `findBookingProof` が全行走査するため、期限切れ行の蓄積を日次で削除する。
+
+- **置き場所: Booking Web App（スタンドアロン）**。`BookingVerificationCleanup.gs`（新規。`gas/booking/public/`）。OTP発行・検証・証明発行（`BookingMemberVerification.gs`）と**同じプロジェクト＝同じ `LockService.getScriptLock()`** で直列化するため。Booking Adminは別プロジェクト（別ロック）なので置かない。配布はWeb Appのみ（Admin / Webhookには配布しない）。削除ロジック本体は `MemberRepository.purgeExpiredBookingVerifications`（シート操作はここに集約）。
+- **削除対象**: `kind=otp|proof` かつ `purpose=booking_membership` で、`expiresAt` が正しい日時かつ**現在時刻より24時間以上前に期限切れ**の行のみ（期限切れ直後の判定競合・時計ずれ対策の保持猶予。使用済みでも期限切れなら対象）。空欄・日時不正・未知のkind/purposeは判断不能として**削除せずスキップ**（件数のみ記録）。ヘッダーが想定と異なれば何も削除せずエラー。
+- **触らないもの**: 有効期限内（猶予内を含む）の行、他シート（`Members` / `MemberMonths` / `MemberPeriods` / `MemberRefunds` / `MemberStatusTokens` / 予約台帳 / Stripe関連）。`requestCode` / `verifyCode` / `checkProof` / `createBooking` と #551 の認証・予約・料金判定は無変更（期限切れ証明は削除前後とも `REVERIFY_REQUIRED` で、利用者向け挙動は同じ）。`STRIPE_CHECKOUT_ENABLED` も変更しない。
+- **安全策**: ロック取得失敗（10秒）時は削除せず `LOCK_TIMEOUT` を記録して終了。連続行をまとめて**下の行から** `deleteRows`（行番号ずれ回避）し、各ブロックは削除直前に再読込して再判定。1回あたり**最大2000行・4分**で打ち切り（`TRUNCATED`）、残りは翌日以降に消える。再実行は冪等（毎回シートを読み直して判定）。途中失敗は `PARTIAL_FAILURE` として記録し例外で終了（実行履歴に失敗が出る）。
+- **ログ（Logger）**: 実行時刻・`status`（OK / TRUNCATED / PARTIAL_FAILURE / LOCK_TIMEOUT / ERROR）・scanned / deleted / retained / skippedUndecidable / candidates の件数のみ。メールアドレス・OTP・証明・ハッシュ・行内容・Secretは出さない。
+
+### 手動トリガー設定手順（本番へ自動作成はしない）
+
+1. **Booking Web Appプロジェクト**のGASエディタを開く（Adminではない）。
+2. 左メニュー「トリガー」を開き、`cleanupExpiredBookingVerifications` のトリガーが**既にないこと**を確認する（二重登録防止。あれば作らない）。
+3. 「トリガーを追加」→ 関数 `cleanupExpiredBookingVerifications` / イベントのソース「時間主導型」/ 「日付ベースのタイマー」/ 午前4〜5時（アクセスの少ない時間）。通知は「失敗した場合」を推奨。
+4. 初回は `cleanupExpiredBookingVerifications` をエディタから手動実行し、実行ログの件数を確認する。
+
+トリガー作成用の補助関数（`ScriptApp.newTrigger`）は置いていない: `script.scriptapp` スコープが必要で、公開Web Appの `appsscript.json` を変えると再承認が要るため。
+
+### ロールバック
+
+トリガー画面で `cleanupExpiredBookingVerifications` のトリガーを削除すれば削除処理は止まる（関数が残っても呼ばれない）。削除済みの期限切れ行は復元できないが、再び発行・参照されないため業務影響はない。コードを戻す場合は `BookingVerificationCleanup.gs` と `MemberRepository.purgeExpiredBookingVerifications` を取り除く（他機能は依存しない）。既存Deploymentは作り直さず更新し、PRブランチから本番デプロイはしない。
+
 ## Issue #548: V2予約の会員確認（メール6桁OTP）で会員料金・特典・先行予約を開放する
 
 V2（SNB / SNB mensの**2026/12/1 00:00 JST以降に作成**する直接予約）では、予約メールアドレスだけでは会員扱いしない。**メール所有確認（6桁OTP）が済んだ予約フローだけ**に、会員料金・会員限定特典（2名ペアパック・シャワー）・31〜90日先行予約を開放する。V1（〜2026/11/30作成）は#532の従来仕様のまま（OTPを要求しない）。Studio X・スペースマーケットは対象外。
@@ -3252,6 +3275,7 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `MemberRepository.gs`（Issue #471。`Members`・`MemberMonths`シートの会員台帳） | ✓ | ✓ | – | `gas/booking/shared/MemberRepository.gs` |
 | `MembershipService.gs`（Issue #471。SNB MEMBER入会Checkoutの開始） | ✓ | – | – | `gas/booking/shared/MembershipService.gs` |
 | `BookingMemberVerification.gs`（Issue #548。V2予約の会員確認。6桁OTPのメール送信・検証と、メール・用途に拘束した確認済み証明の発行・検証） | ✓ | – | – | `gas/booking/shared/BookingMemberVerification.gs` |
+| `BookingVerificationCleanup.gs`（Issue #557。期限切れOTP・確認済み証明の日次削除。`cleanupExpiredBookingVerifications`が時間主導トリガーのハンドラ） | ✓ | – | – | `gas/booking/public/BookingVerificationCleanup.gs` |
 | `StripeWebhookAuth.gs`（Issue #341 PR-C。中継基盤からの呼び出し認証） | – | – | ✓ | `gas/booking/webhook/StripeWebhookAuth.gs` |
 | `StripeEventRepository.gs`（Issue #341 PR-C。Stripe Webhookイベントの受信・処理台帳。レビュー対応・4回目でBooking Admin/Webhookの両方が使う共有ファイルへ再設計） | – | ✓ | ✓ | `gas/booking/shared/StripeEventRepository.gs` |
 | `StripeWebhookProcessor.gs`（Issue #341 PR-C。レビュー対応・4回目で新設。決済照合・予約自動確定の本体。Booking Adminの時間主導トリガーから呼ばれる。旧`StripeWebhookHandler.gs`から移動・再設計） | – | ✓ | – | `gas/booking/admin/StripeWebhookProcessor.gs` |

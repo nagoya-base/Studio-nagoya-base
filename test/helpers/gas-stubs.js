@@ -222,6 +222,7 @@ function createCacheServiceStub() {
  */
 function createSheetStub(name) {
   var rows = [];
+  var sheetStubHooks = {};
   var setValuesCalls = [];
   return {
     getName: function () { return name; },
@@ -229,6 +230,10 @@ function createSheetStub(name) {
       rows.push(row.slice());
     },
     getLastRow: function () { return rows.length; },
+    deleteRows: function (start, count) {
+      if (typeof sheetStubHooks.beforeDeleteRows === 'function') sheetStubHooks.beforeDeleteRows(start, count, rows);
+      rows.splice(start - 1, count);
+    },
     getDataRange: function () {
       return {
         getValues: function () { return rows.map(function (r) { return r.slice(); }); }
@@ -264,6 +269,7 @@ function createSheetStub(name) {
       };
     },
     _rows: rows,
+    _hooks: sheetStubHooks,
     _setValuesCalls: setValuesCalls
   };
 }
