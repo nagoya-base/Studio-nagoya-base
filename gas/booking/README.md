@@ -7982,3 +7982,9 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - **同じ判定を使う箇所**: 日程変更（`BookingReschedule.memberBenefitRejection_`。有効なシャワー注文がある予約を11/30以前へ移せない）、Checkout開始前の最終確認（`startOptionCheckout` フェーズ1）。
 - **変えていないもの**: 1,000円・承認制（PENDING_APPROVAL→承認後に支払い）・actual membership必須（利用日の属する月で判定。非会員・資格不一致は `MEMBER_BENEFIT_NOT_AVAILABLE`）・SNB / SNB mensのみ（Studio X非対象）・Studio Xの有料オプション開始条件（作成日基準）・90日先行予約・Stripe関連。
 - **フロント**: `BookingLogic.showerAvailableOnDate(brand, date)` は表示制御のみ（正本はGAS）。利用日変更のたびに同期し、出せない日付に変えたらシャワーの選択を外す。端末時刻は見ない。
+
+### Issue #570: 貸切ベースプランの人数上限を6名へ
+
+- 予約システム上の上限を10名→6名に変更（`EVENT_BASE_PLAN_.maxPeople`・`isEventBasePlanPeople`・`EVENT_PLAN_PEOPLE_EXCEEDED`、クライアント側`EVENT_BASE_PLAN_MAX_PEOPLE`）。7名以上・「5名以上・要相談」はサーバー側で拒否。公開ページでは「6名まで」と表現する。
+- 料金は変更なし（1室1,000円/時・最低6時間・人数加算なし。6名・6時間でも6,000円＝1人あたり1,000円相当）。
+- 予約UIはプラン選択中のみ5〜6名を選択可（7〜10名の選択肢は削除）。通常Studio X / SNB / SNB mensの人数仕様は不変。

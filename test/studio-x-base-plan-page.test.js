@@ -68,7 +68,7 @@ test('特設ページ(#507): X直リンク向けミニマム構成。ファー�
   var html = read('studio-x/base-plan/index.html');
   var hero = html.slice(html.indexOf('<header class="subpage-hero'), html.indexOf('id="about"'));
   var heroText = hero.replace(/<[^>]+>/g, ' ');
-  ['1時間', '1,000円', '最低6時間', '8:00〜21:00', '6時間 6,000円', '8時間 8,000円', '1室', '10名程度まで', '1人あたり100円/時相当', '着替え', '荷物置き', '休憩', '再入室', '上前津', '大須'].forEach(function (n) {
+  ['1時間', '1,000円', '最低6時間', '8:00〜21:00', '6時間 6,000円', '8時間 8,000円', '1室', '6名まで', '1人あたり1,000円相当', '着替え', '荷物置き', '休憩', '再入室', '上前津', '大須'].forEach(function (n) {
     assert.ok(heroText.indexOf(n) !== -1, 'ファーストビュー: ' + n);
   });
   assert.ok(hero.indexOf('このプランで予約する') !== -1, 'ファーストビューに予約CTA');
