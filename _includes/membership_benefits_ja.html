@@ -55,6 +55,11 @@
     <li>部屋料金とは別のオプションです。事前にご連絡のうえ、予約ID・ご登録のメールアドレスで確認する「オプションのお申し込み・お支払い」ページからご希望をお送りください。申込（選択）だけでは利用は確定せず、運営の承認後にそのページからお支払いいただき、お支払いの完了をもって確定となります。</li>
     <li>SNB・SNB mens でご利用いただけます（Studio Xでは提供していません）。ご利用日が2026年12月1日以降のご予約から提供します。</li>
   </ul>
+  {%- if is_mens %}{% assign shower_inquiry_url = '/mens/' | relative_url | append: '#reservation-form' %}{% else %}{% assign shower_inquiry_url = '/' | relative_url | append: '#reservation-form' %}{% endif %}
+  <p class="membership-benefit-cta">
+    <a class="btn-secondary" href="{{ shower_inquiry_url }}" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="membership_shower" data-analytics-destination="reservation_form">シャワー利用について問い合わせる</a>
+  </p>
+  <p class="membership-benefit-cta-note">問い合わせだけではシャワーの利用・予約・お支払いは確定しません。</p>
 </div>
 
 <div class="membership-benefit-card" id="member-month-rule">

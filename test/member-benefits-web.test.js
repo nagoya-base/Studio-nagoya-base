@@ -395,6 +395,25 @@ test('見積りは plan を estimatePrice に渡すだけ（フロントに料�
   assert.ok(!/5000|6000|5,000|6,000/.test(js.replace(/\/\*[\s\S]*?\*\//g, '')), 'フロントに5,000/6,000円を持たない');
 });
 
+test('シャワー紹介: ブランド別の問い合わせフォームへ誘導し、申込・決済ページへは直接送らない（Issue #584）', function () {
+  var inc = read('_includes/membership_benefits_ja.html');
+  var card = /<div class="membership-benefit-card" id="shower">[\s\S]*?\n<\/div>/.exec(inc)[0];
+  var link = /<a [^>]*>シャワー利用について問い合わせる<\/a>/.exec(card);
+  assert.ok(link, 'CTA文言');
+  assert.match(link[0], /href="\{\{ shower_inquiry_url \}\}"/);
+  assert.match(card, /assign shower_inquiry_url = '\/mens\/' \| relative_url \| append: '#reservation-form'/, 'mens');
+  assert.match(card, /assign shower_inquiry_url = '\/' \| relative_url \| append: '#reservation-form'/, 'snb');
+  assert.match(link[0], /data-analytics-event="cta_click"/);
+  assert.match(link[0], /data-analytics-type="consult"/);
+  assert.match(link[0], /data-analytics-location="membership_shower"/);
+  assert.match(link[0], /data-analytics-destination="reservation_form"/);
+  assert.ok(!/href="[^"]*booking\/options/.test(link[0]), '申込・決済ページへ直接送らない');
+  assert.ok(/membership_benefits_ja\.html brand="mens"/.test(read('mens/membership/index.html')));
+  assert.ok(/membership_benefits_ja\.html brand="snb"/.test(read('membership/index.html')));
+  assert.ok(read('studio-x/membership/index.html').indexOf('membership_benefits_ja') === -1, 'Studio Xには共通特典を出さない');
+  assert.ok(read('_includes/reservation_form_ja.html').indexOf('id="reservation-form"') !== -1 && read('index.html').indexOf('include reservation_form_ja.html') !== -1 && read('mens/index.html').indexOf('include reservation_form_ja.html') !== -1, '遷移先のフォームが存在する');
+});
+
 test('シャワー: SNB / mens の申込・お支払いページがあり、ブランド別の戻り先（option-payment-complete）も用意されている', function () {
   ['booking/options/index.html', 'mens/booking/options/index.html', 'booking/option-payment-complete.html', 'mens/booking/option-payment-complete.html'].forEach(function (p) {
     assert.ok(exists(p), p);

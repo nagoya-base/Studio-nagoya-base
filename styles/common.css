@@ -2263,6 +2263,9 @@ p.pricing-note + p.pricing-note {
 .membership-benefit-table th, .membership-benefit-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; font-size: 0.92rem; }
 .membership-benefit-list { padding-left: 1.3em; font-size: 0.9rem; }
 .membership-benefit-list li { margin-bottom: 6px; }
+.membership-benefit-cta { margin: 14px 0 6px; }
+.membership-benefit-cta .btn-secondary { max-width: 100%; padding: 14px 20px; letter-spacing: 0.08em; text-align: center; line-height: 1.5; }
+.membership-benefit-cta-note { margin: 0; font-size: 0.8rem; color: var(--text-muted); }
 .pricing-table-scroll .membership-benefit-table { min-width: 0; }
 .membership-benefit-table th, .membership-benefit-table td { padding: 8px 8px; font-size: 0.88rem; }
 .membership-benefit-table td:not(:first-child), .membership-benefit-table th:not(:first-child) { white-space: nowrap; }
