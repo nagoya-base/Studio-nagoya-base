@@ -74,7 +74,24 @@ var BookingRepository = (function () {
      * 既に検証済みのため通常は発生しない）で失敗した場合でもCalendarイベント等を
      * 一切作らずに済む。
      */
-    var priceGeneration = BookingPricing.generationAt(now, input.brand);
+    /*
+     * Issue #559: 料金世代の判定はBookingGenerationModeへ一元化した（緊急停止 ＞ 12/1前のTEST / LEGACY設定 ＞ サーバー時刻）。
+     * テスト資格（rawInput.testCredential。Web AppのPOST本文）は予約メールに拘束して検証する。管理者の新規予約（ADMIN window）は
+     * 資格を扱わない（Booking AdminはTEST資格を検証せず、緊急停止と時刻だけで判定する）。クライアントが世代・モードを指定する口は無い。
+     */
+    var generationDecision = BookingGenerationMode.decide(now, input.brand, isAdminWindow ? undefined : {
+      testCredential: rawInput && typeof rawInput.testCredential === 'string' ? rawInput.testCredential : '',
+      email: input.email
+    });
+    var priceGeneration = generationDecision.generation;
+    if (generationDecision.source !== BookingGenerationMode.SOURCE.TIME || generationDecision.testCredential === BookingGenerationMode.CREDENTIAL.INVALID) {
+      /* 非機密の監査ログ（世代の決まり方だけ。メール・資格・OTPは出さない）。 */
+      Logger.log('requestId=' + sanitizeRequestId_(requestId) + ' generation=' + priceGeneration + ' source=' + generationDecision.source + ' testCredential=' + generationDecision.testCredential);
+    }
+    if (generationDecision.testCredential === BookingGenerationMode.CREDENTIAL.INVALID) {
+      /* テスト資格の期限切れ・失効・メール変更・モード変更。料金・特典を黙って変えず、世代を取り直して入力し直してもらう。 */
+      return { success: false, error: { code: 'TEST_CREDENTIAL_INVALID', message: 'テスト用の資格が無効になりました。ページを開き直し、日程と内容を選び直してください。' } };
+    }
     /*
      * Issue #548: V2（SNB / mensの2026/12/1 0:00 JST以降に作成する直接予約）の会員機能（会員料金・会員限定特典・31〜90日先行予約）は、
      * メールOTPで確認済みの証明が有効な場合だけ開放する。V1/V2はサーバー時刻（generationAt）だけで決め、クライアント指定では切り替えない。

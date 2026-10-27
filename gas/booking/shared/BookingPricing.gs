@@ -425,6 +425,8 @@ var BookingPricing = (function () {
     isPairPackAvailableOnDate: isPairPackAvailableOnDate,
     PAIR_PACK_START_DATE: PAIR_PACK_.startDate,
     generationAt: generationAt,
+    /* Issue #559: SNB / mensの料金世代V2境界（2026/12/1 0:00 JST）。TESTモードの終了期限も同じ値に固定する（Script Propertiesでは延長できない）。 */
+    GENERATION_V2_START_MS: GENERATION_V2_START_MS_,
     normalizeGeneration: normalizeGeneration,
     computeBookingPrice: computeBookingPrice
   };

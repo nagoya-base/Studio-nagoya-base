@@ -17,6 +17,34 @@
 <link rel="icon" href="../images/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" sizes="180x180" href="../images/apple-touch-icon.png">
 
+<!-- Issue #559: テスト資格（管理者が12/1前にV2を試す署名付き文字列）の取り込み。URLフラグメント（#bt=...）から受け取り、
+     **gtag設定・page_view送信より前**に直ちにURLから除去してsessionStorageへ保存する（クエリ・Cookie・アクセスログ・GA4・dataLayerへ送らない）。
+     資格の有効性はサーバーだけが判定する。通常の利用者（フラグメント無し）では何もしない。 -->
+<script id="ba-test-credential-intake">
+(function () {
+  try {
+    var hash = window.location.hash || '';
+    if (hash.indexOf('bt=') === -1) return;
+    var parts = hash.replace(/^#/, '').split('&');
+    var token = '';
+    var rest = parts.filter(function (part) {
+      if (part.indexOf('bt=') !== 0) return true;
+      token = part.substring(3);
+      return false;
+    });
+    var cleaned = window.location.pathname + window.location.search + (rest.length ? '#' + rest.join('&') : '');
+    try {
+      window.history.replaceState(window.history.state, '', cleaned);
+    } catch (e) {
+      window.location.hash = rest.join('&');
+    }
+    if (/^t1\.[0-9a-f]{16}\.[0-9]{10}\.[0-9]{10}\.[0-9a-f]{32}\.[0-9a-f]{64}$/.test(token)) {
+      window.sessionStorage.setItem('snbBookingTestCredential', token);
+    }
+  } catch (e) { /* 取り込めなくても通常の予約フォームとして動く */ }
+})();
+</script>
+
 <!-- Google Analytics 4 -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
 <script>

@@ -43,6 +43,12 @@ function loadBookingSandbox(files, globals) {
   if (files.indexOf('Availability.gs') !== -1 && files.indexOf('BookingWindow.gs') === -1) {
     files = ['BookingWindow.gs'].concat(files);
   }
+  /* Issue #559: 料金世代の判定（BookingGenerationMode.gs）はBookingPricing.gsに依存する層で、BookingRepository.gs・Code.gsから呼ばれる。
+     BookingPricing.gsを読むテストが全て追記しなくて済むよう、その直後に読み込む（配布対象の網羅はmanifest-sync / deploymentテストが検証する）。 */
+  if (files.indexOf('BookingPricing.gs') !== -1 && files.indexOf('BookingGenerationMode.gs') === -1) {
+    var pricingIndex = files.indexOf('BookingPricing.gs');
+    files = files.slice(0, pricingIndex + 1).concat(['BookingGenerationMode.gs'], files.slice(pricingIndex + 1));
+  }
   files.forEach(function (file) {
     var filePath = resolveBookingFilePath(file);
     vm.runInContext(fs.readFileSync(filePath, 'utf8'), sandbox, { filename: filePath });
