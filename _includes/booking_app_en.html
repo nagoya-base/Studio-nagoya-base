@@ -120,6 +120,20 @@
       <p class="ba-field-error" id="ba-duration-error" hidden></p>
     </div>
 
+    <!-- Issue #580: 利用人数は料金見積り（2名ペアパックの自動適用）に必要なため、利用時間と同じStep1で入力する。 -->
+    <div class="ba-field">
+      <label for="ba-people">Number of Guests<span class="ba-required">Required</span></label>
+      <select id="ba-people" name="people">
+        <option value="">Select</option>
+        <option value="1名">1 guest</option>
+        <option value="2名">2 guests</option>
+        <option value="3名">3 guests</option>
+        <option value="4名">4 guests</option>
+        <option value="5名以上・要相談">5 or more (please contact us)</option>
+      </select>
+      <p class="ba-field-error" id="ba-people-error" hidden></p>
+    </div>
+
     <!-- Initial value: First-time guest (checked). -->
     <fieldset class="ba-fieldset">
       <legend>Customer Type<span class="ba-required">Required</span></legend>
@@ -329,19 +343,6 @@
       <label for="ba-phone">Phone Number<span class="ba-optional">Optional</span></label>
       <input type="tel" id="ba-phone" name="phone" autocomplete="tel" inputmode="tel" maxlength="20">
       <p class="ba-field-error" id="ba-phone-error" hidden></p>
-    </div>
-
-    <div class="ba-field">
-      <label for="ba-people">Number of Guests<span class="ba-required">Required</span></label>
-      <select id="ba-people" name="people">
-        <option value="">Select</option>
-        <option value="1名">1 guest</option>
-        <option value="2名">2 guests</option>
-        <option value="3名">3 guests</option>
-        <option value="4名">4 guests</option>
-        <option value="5名以上・要相談">5 or more (please contact us)</option>
-      </select>
-      <p class="ba-field-error" id="ba-people-error" hidden></p>
     </div>
 
     <div class="ba-field">

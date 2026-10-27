@@ -521,7 +521,7 @@
       var pairText = '';
       var peopleValue = els.people ? els.people.value : '';
       if (pairVisible && unlocked && pairDurationOk) {
-        if (!peopleValue) pairText = '人数（ご利用情報の入力）が1〜2名の場合、2名ペアパック（3時間）が自動適用されます。人数を入力するまでは通常料金の目安です。4時間以上は会員の延長料金が加算されます。';
+        if (!peopleValue) pairText = '利用人数を選択すると、1〜2名の場合に2名ペアパック（3時間）が自動適用された料金を表示します。4時間以上は会員の延長料金が加算されます。';
         else if (Logic.isPairPackPeopleValue(peopleValue)) pairText = '2名ペアパック（3時間）が自動適用されます。4時間以上の場合は、3時間を超える分の会員延長料金が加算されます。';
         else pairText = '3名以上のご利用は2名ペアパックの対象外のため、通常料金です。';
       }
@@ -564,6 +564,11 @@
   function selectedPlan_() {
     if (eventPlanSelected_()) return Logic.EVENT_BASE_PLAN_CODE;
     return pairPackVisible_() && memberFeaturesEnabled_() && pairPackDurationOk_() && els.people && els.people.value && Logic.isPairPackPeopleValue(els.people.value) ? Logic.PAIR_PACK_PLAN_CODE : '';
+  }
+  /* Issue #580: ペアパック対象になり得る条件（対象日・会員確認・3時間以上）が揃っているのに人数が未選択の間は、
+     人数で料金が変わるため通常料金を先に出さない（人数を選ぶと初回から正しい料金を表示する）。 */
+  function pairPackAwaitingPeople_() {
+    return pairPackVisible_() && memberFeaturesEnabled_() && pairPackDurationOk_() && !(els.people && els.people.value);
   }
   function showerSelected_() {
     return showerVisible_() && memberFeaturesEnabled_() && !!els.shower && els.shower.checked;
@@ -1200,6 +1205,8 @@
   }
 
   function renderPriceEverywhere_(entry) {
+    /* Issue #580: 人数未選択の間は、人数で変わる料金（通常料金／ペアパック）を確定表示しない。 */
+    if (entry && entry.status !== 'unset' && pairPackAwaitingPeople_()) entry = { status: 'unset' };
     latestPriceEntry = entry;
     if (optionsPanel && optionsPanel.refreshSummary) optionsPanel.refreshSummary();
     renderPriceEntryInto_(els.priceLine, els.priceNote, entry);
@@ -1514,7 +1521,10 @@
   }
 
   [els.people, els.shower].forEach(function (control) {
-    if (control) control.addEventListener('change', function () { refreshPriceEstimate_(); });
+    if (control) control.addEventListener('change', function () {
+      if (control === els.people && els.people.value) setFieldError_(els.people, els.peopleError, '');
+      refreshPriceEstimate_();
+    });
   });
   /* Issue #578: 人数はStep2で入力する。キー入力・選択のどちらでも、古い通常料金を残さず自動適用後の見積りへ同期する。 */
   if (els.people) els.people.addEventListener('input', function () { refreshPriceEstimate_(); });
@@ -1913,6 +1923,12 @@
       /* 会員区分（snb/studio_x）は未回答のまま進ませない。料金も会員区分の確定後にだけ表示する。 */
       if (!memberAnswered_()) {
         setFieldError_(null, els.memberError, UI_TEXT.memberRequired);
+        return;
+      }
+      /* Issue #580: 利用人数はStep1で入力する。未選択のまま利用者情報へ進ませない。 */
+      if (els.people && !els.people.value) {
+        setFieldError_(els.people, els.peopleError, Logic.validateDetailsForm({ people: '' }, locale).people);
+        els.people.focus();
         return;
       }
       state.isMember = isMemberChecked_();
