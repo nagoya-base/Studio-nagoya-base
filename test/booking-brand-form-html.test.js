@@ -68,15 +68,21 @@ function purposeValues(src) {
   return out;
 }
 
-test('Studio X: メール補足は一般案内のみで、SNB専用文言・OTP UIが出ない', { skip: skipReason }, function () {
+test('Studio X: メール補足は一般案内のみ。会員確認（OTP）欄は初期非表示（サーバーがOTPフェーズを返すまで出ない）で、SNB MEMBERの文言が出ない', { skip: skipReason }, function () {
   var src = html('studio-x/booking/index.html');
   var help = emailHelp(src);
   assert.ok(help.indexOf('予約の確定連絡を受け取れるメールアドレスをご入力ください。') >= 0);
   ['2026年12月1日', 'SNB MEMBER', '確認コード', '6桁'].forEach(function (w) {
     assert.ok(help.indexOf(w) === -1, 'メール補足に「' + w + '」が含まれる');
   });
-  assert.ok(src.indexOf('id="ba-member-verify-field"') === -1, 'Studio XにOTP UIがある');
-  assert.ok(src.indexOf('id="ba-member-code"') === -1);
+  /* Issue #563: Studio Xも共通OTP基盤の欄を持つ。既定は台帳照合なので hidden のまま。 */
+  assert.ok(/<fieldset[^>]*id="ba-member-verify-field"[^>]*\shidden/.test(src), 'OTP欄は初期非表示');
+  var verify = section(src, 'id="ba-member-verify-field"', '</fieldset>');
+  assert.ok(verify.indexOf('SNB') === -1 && verify.indexOf('会員料金') === -1, 'Studio XのOTP欄にSNB MEMBER・会員料金を出さない');
+  assert.ok(verify.indexOf('会員限定のオプション・31〜90日先の先行予約') >= 0);
+  var legend = section(src, 'class="ba-calendar-legend"', '</ul>');
+  assert.ok(legend.indexOf('SNB') === -1 && legend.indexOf('会員は90日先まで') >= 0, 'カレンダー凡例にSNB MEMBERを出さない');
+  assert.ok(src.indexOf('id="ba-test-credential-intake"') >= 0, 'テスト資格の取り込み（Studio Xの認証フェーズTEST用）');
 });
 
 test('Studio X: 利用目的は確定9項目のみ（緊縛・講習会なし、値とラベルが一致）', { skip: skipReason }, function () {

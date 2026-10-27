@@ -87,6 +87,30 @@ var MembershipRules = (function () {
   var BOOKING_REVERIFY_REQUIRED_CODE = 'MEMBER_REVERIFY_REQUIRED';
   var BOOKING_REVERIFY_REQUIRED_MESSAGE = '会員確認の有効期限が切れました。会員料金・会員特典を利用する場合は、確認コードを再送してもう一度確認してください。';
 
+  /*
+   * Studio X向けの文言（Issue #563）。Studio Xの画面・メール・エラーには「SNB MEMBER」を出さず、原則「会員限定」と書く
+   * （docs/membership-pricing-2026-12.md のブランド分離ルール）。コードは共通で、文言だけをブランドで分岐する。
+   */
+  var STUDIO_X_MESSAGES_ = {
+    benefitDenied: 'この有料オプションは会員限定です。ご利用日がお支払い済みの有効期間に入る会員資格を確認できた場合のみご利用いただけます。会員資格をご確認のうえ、改めてお申し込みください。',
+    verificationRequired: '会員限定のオプション・先行予約（31〜90日先）をご利用いただくには、メールアドレスの確認コードによる会員確認が必要です。確認コードを送信して確認してください。',
+    reverifyRequired: '会員確認の有効期限が切れました。会員限定のオプション・先行予約を利用する場合は、確認コードを再送してもう一度確認してください。',
+    advanceMemberOnly: '30日より先の日程は、会員限定の先行予約対象です。会員登録メールアドレスでのご予約をお願いします。'
+  };
+
+  function memberBenefitDeniedMessage(brand) {
+    return brand === 'studio_x' ? STUDIO_X_MESSAGES_.benefitDenied : MEMBER_BENEFIT_DENIED_MESSAGE;
+  }
+  function bookingVerificationRequiredMessage(brand) {
+    return brand === 'studio_x' ? STUDIO_X_MESSAGES_.verificationRequired : BOOKING_VERIFICATION_REQUIRED_MESSAGE;
+  }
+  function bookingReverifyRequiredMessage(brand) {
+    return brand === 'studio_x' ? STUDIO_X_MESSAGES_.reverifyRequired : BOOKING_REVERIFY_REQUIRED_MESSAGE;
+  }
+  function advanceBookingMemberOnlyMessage(brand) {
+    return brand === 'studio_x' ? STUDIO_X_MESSAGES_.advanceMemberOnly : '30日より先の日程は、SNB MEMBERの先行予約対象です。会員登録メールアドレスでのご予約をお願いします。';
+  }
+
   var STATUS = { INCOMPLETE: 'incomplete', ACTIVE: 'active', PAST_DUE: 'past_due', CANCELED: 'canceled' };
 
   /*
@@ -536,6 +560,10 @@ var MembershipRules = (function () {
     BENEFITS_START_MS: BENEFITS_START_MS_,
     MEMBER_BENEFIT_DENIED_CODE: MEMBER_BENEFIT_DENIED_CODE,
     MEMBER_BENEFIT_DENIED_MESSAGE: MEMBER_BENEFIT_DENIED_MESSAGE,
+    memberBenefitDeniedMessage: memberBenefitDeniedMessage,
+    bookingVerificationRequiredMessage: bookingVerificationRequiredMessage,
+    bookingReverifyRequiredMessage: bookingReverifyRequiredMessage,
+    advanceBookingMemberOnlyMessage: advanceBookingMemberOnlyMessage,
     BOOKING_VERIFICATION_REQUIRED_CODE: BOOKING_VERIFICATION_REQUIRED_CODE,
     BOOKING_VERIFICATION_REQUIRED_MESSAGE: BOOKING_VERIFICATION_REQUIRED_MESSAGE,
     BOOKING_REVERIFY_REQUIRED_CODE: BOOKING_REVERIFY_REQUIRED_CODE,

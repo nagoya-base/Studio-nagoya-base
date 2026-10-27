@@ -306,7 +306,7 @@ function handleBookingMemberAction_(action, e) {
     } else if (action === 'bookingMemberStatus') {
       result = handleBookingMemberStatus_(payload || {});
     } else {
-      result = BookingMemberVerification.requestCode({ email: payload && payload.email });
+      result = handleRequestBookingMemberCode_(payload || {});
     }
     if (!result || typeof result !== 'object') {
       result = { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' } };
@@ -321,23 +321,39 @@ function handleBookingMemberAction_(action, e) {
 }
 
 /*
+ * 確認コードの送信（requestBookingMemberCode）。brand='studio_x'（Issue #563）は、Studio Xの認証フェーズがOTP（またはTESTで有効なテスト資格付き）の
+ * ときだけ受け付け、メール本文はStudio X向け文言（SNB MEMBERを出さない）にする。LEGACYの間はコードを送らない（台帳照合のまま）。
+ * snb / mens・brand未指定は従来どおり。
+ */
+function handleRequestBookingMemberCode_(payload) {
+  if (payload.brand === 'studio_x') {
+    var decision = BookingGenerationMode.decide(new Date(), 'studio_x', testContext_(payload));
+    if (decision.memberAuthRequired !== true) {
+      return withTestCredentialStatus_({ success: false, error: { code: 'MEMBER_VERIFICATION_NOT_REQUIRED', message: 'この予約では会員確認は不要です。' } }, decision);
+    }
+  }
+  return BookingMemberVerification.requestCode({ email: payload.email, brand: payload.brand });
+}
+
+/*
  * 会員結果の再取得と会員料金の見積り。V1/V2はサーバー側の判定（BookingGenerationMode。緊急停止 ＞ 12/1前のTEST設定 ＞ サーバー時刻）で決め、クライアント指定では切り替えない。
  * V1・対象外ブランド（snb / mens以外）は、この確認の仕組みを使わないためエラー。会員料金は、確認済み証明が有効かつ利用日が会員資格内のときだけ。
  */
 function handleBookingMemberStatus_(payload) {
   var brand = payload.brand;
-  if (brand !== 'snb' && brand !== 'mens') {
+  if (brand !== 'snb' && brand !== 'mens' && brand !== 'studio_x') {
     return { success: false, error: { code: 'INVALID_BRAND', message: 'このブランドでは会員確認を使用しません。' } };
   }
   var now = new Date();
   /* Issue #559: createBookingと同じ世代判定（テスト資格はPOST本文のtestCredentialを予約メールに拘束して検証する）。 */
   var decision = BookingGenerationMode.decide(now, brand, testContext_(payload));
   var generation = decision.generation;
-  if (generation !== BookingPricing.GENERATION.V2) {
+  /* Issue #563: Studio Xは料金世代がV2でも、認証フェーズがOTPでなければ（LEGACY・資格なしのTEST）会員確認は使わない。 */
+  if (generation !== BookingPricing.GENERATION.V2 || (brand === 'studio_x' && decision.memberAuthRequired !== true)) {
     return withTestCredentialStatus_({ success: false, error: { code: 'MEMBER_VERIFICATION_NOT_REQUIRED', message: 'この予約では会員確認は不要です。' }, priceGeneration: generation }, decision);
   }
   var date = typeof payload.date === 'string' ? payload.date : '';
-  var status = BookingMemberVerification.memberStatus({ email: payload.email, proof: payload.proof, date: date }, now);
+  var status = BookingMemberVerification.memberStatus({ email: payload.email, proof: payload.proof, date: date, brand: brand }, now);
   if (!status.success) return status;
   status.priceGeneration = generation;
   withTestCredentialStatus_(status, decision);
@@ -345,11 +361,13 @@ function handleBookingMemberStatus_(payload) {
   var durationMinutes = typeof payload.durationMinutes === 'number' ? payload.durationMinutes : parseDurationParam_(payload.durationMinutes);
   if (date && durationMinutes && !BookingAvailability.validateInput(date, durationMinutes, config)) {
     var plan = BookingPricing.normalizePlan(payload.plan);
-    if (plan === null || BookingPricing.isEventPlan(plan)) {
+    /* Studio Xは貸切ベースプランだけを扱う（会員限定のペアパックは無い）。SNB / mensは従来どおり貸切ベースプランをここでは扱わない。 */
+    var planAllowed = brand === 'studio_x' ? (!plan || BookingPricing.isEventPlan(plan)) : !BookingPricing.isEventPlan(plan);
+    if (plan === null || !planAllowed) {
       return { success: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
     }
-    if (plan && status.memberOnDate !== true) {
-      return { success: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE } };
+    if (plan && !BookingPricing.isEventPlan(plan) && status.memberOnDate !== true) {
+      return { success: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.memberBenefitDeniedMessage(brand) } };
     }
     var priceResult = BookingPricing.computeBookingPrice({
       brand: brand,
@@ -522,6 +540,8 @@ function withPriceGeneration_(result, brand, context) {
       /* Issue #559: createBookingと同じ判定（BookingGenerationMode）。contextはテスト資格付きPOST（testMonthly）だけが渡す。 */
       var decision = BookingGenerationMode.decide(new Date(), brand, context);
       result.priceGeneration = decision.generation;
+      /* Issue #563: Studio Xの会員確認（OTP）が必須かどうか。フロントはこれを見てOTP UIへ切り替える（料金世代とは独立）。 */
+      if (brand === 'studio_x') result.memberAuthRequired = decision.memberAuthRequired === true;
       withTestCredentialStatus_(result, decision);
     } catch (generationError) {
       /* 世代を付けられなくても応答は変えない（フォームはラジオを表示する側へ倒す）。 */
@@ -582,14 +602,16 @@ function handleEstimatePrice_(params, context) {
     return { success: false, error: priceResult.error };
   }
 
-  return withTestCredentialStatus_({
+  var estimate = {
     success: true,
     brand: params.brand,
     date: params.date,
     durationMinutes: durationMinutes,
     price: priceResult.price,
     priceGeneration: generation
-  }, decision);
+  };
+  if (params.brand === 'studio_x') estimate.memberAuthRequired = decision.memberAuthRequired === true;
+  return withTestCredentialStatus_(estimate, decision);
 }
 
 function isEstimateMemberTierLocked_(brand, generation) {

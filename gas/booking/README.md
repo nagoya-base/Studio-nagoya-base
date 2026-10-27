@@ -1,3 +1,81 @@
+## Issue #563: Studio X 正式V2（共通OTP）の先行移行 — 認証フェーズ切替（既定OFF）
+
+**この実装は本番切替を含みません。** Studio Xの本番切替（`OTP`）は、テストモード検証に合格し、運用者が明示承認した後にだけ行います。PRブランチから本番デプロイしません。`STRIPE_CHECKOUT_ENABLED` は変更しません。
+
+### 何が変わるか（変わらないか）
+
+| 項目 | V1.5（現行・切替前＝既定） | 正式V2（`OTP`） |
+|---|---|---|
+| 料金世代 | V2（2026/10/26〜）。**変更なし** | 同じ（**認証フェーズとは独立**） |
+| 会員確認 | 予約メールを会員台帳と照合（OTPなし） | メール6桁OTP（共通OTP基盤。SNB / mensと同じ `BookingMemberVerification`） |
+| 一般利用者 | 30日先まで | 30日先まで |
+| 会員 | 31〜90日先（台帳照合で最終判定。フロントは現状どおり選択可） | **OTP認証済み＋台帳の会員資格**で31〜90日先 |
+| 有料オプション（機材レンタル・スタッフ対応） | 種類・価格・条件は**変更なし**。会員限定の判定は台帳照合 | 会員限定のオプションはOTP確認済みが必要。種類・価格は変更なし |
+| 記録される `membershipStatus` | `NOT_CHECKED` | `ACTIVE` / `INACTIVE`（OTP確認済み）/ `UNVERIFIED`（未確認） |
+
+### Script Property（Web App。Adminは読まない）
+
+| キー | 値 | 備考 |
+|---|---|---|
+| `STUDIO_X_BOOKING_AUTH_PHASE` | `LEGACY`（既定）/ `TEST` / `OTP` | **大文字の完全一致のみ有効**。未設定・空値・小文字・前後空白・その他の値＝`LEGACY`（安全側）。クライアントから指定する口はない |
+
+- `LEGACY` … 現状維持。OTPメールは送らない（`requestBookingMemberCode` は `brand=studio_x` を `MEMBER_VERIFICATION_NOT_REQUIRED` で拒否）。
+- `TEST` … 検証済みテスト資格（許可メールに拘束・署名・期限・失効）を持つリクエストだけOTP必須。一般利用者は `LEGACY` と同じ。**SNB / mensの12/1やTEST期限に縛られない**（資格自体の期限・最大7日だけ）。
+- `OTP` … 全リクエストでOTP必須（正式V2）。
+- SNB / mensの `BOOKING_AUTH_MODE` / `BOOKING_AUTH_EMERGENCY_LEGACY` / 2026/12/1 はStudio Xの料金・認証に**影響しない**。逆にStudio Xを `OTP` にしてもSNB / mensは変わらない。
+
+### 予約作成時の認証フェーズの記録と、切替前の予約への後付けオプション（ADDON）
+
+予約作成時の認証フェーズは、サーバーが書く `membershipStatus` で区別する（クライアント入力は使わない）。
+
+- 切替前（または切戻し中）に作成した予約: `NOT_CHECKED`。後付けの機材・スタッフ対応は**旧台帳照合のまま**（`OptionOrderService` が必ず会員台帳で実会員資格を確認する。認証の無条件免除ではない。非会員は既存ルールどおり拒否）。`priceGeneration === 'V2'` だけでOTPを要求しない。
+- OTPフェーズで作成した予約: `ACTIVE` / `INACTIVE`＝OTP確認済み（後付け時点で台帳の会員資格を再確認する）。`UNVERIFIED`＝未確認で、後付けではメール所有確認をやり直せないため会員限定オプションは付けられない。OTPフェーズの予約は `NOT_CHECKED` にならない。
+- 管理者の新規予約・外部（スペースマーケット等）の予約は従来どおり `NOT_CHECKED`（旧台帳照合）。
+
+### テストモード手順（本番影響なし）
+
+1. Web AppのScript Propertiesに `BOOKING_TEST_CREDENTIAL_KEY`（32文字以上）と `BOOKING_TEST_ALLOWED_EMAILS`（検証者のみ）を設定し、`STUDIO_X_BOOKING_AUTH_PHASE` = `TEST` にする。`showBookingAuthModeStatus` で `studioXAuthPhase: 'TEST'` と `generalUser.studio_x: 'V2'` を確認。
+2. `BOOKING_TEST_ISSUE_EMAIL` を設定し、エディタから引数なしで `issueStudioXBookingTestLinkFromSettings` を実行（許可メール宛にStudio Xの予約ページ `/studio-x/booking/#bt=…` だけを送る。SNB / mens / 英語版のリンクは混ぜない）。
+3. リンクを開き、同じメールでOTP発行・検証・再送・失効・再認証・不正入力・31日目/90日目/91日目・機材/スタッフ対応（会員／非会員）を確認。資格のない一般利用者の画面・予約は台帳照合のまま変わらないことも確認。
+4. 資格はURLフラグメント→sessionStorage→**POST本文だけ**で送る。URLクエリ・ログ・予約記録・分析へ出さない。
+   **TESTの予約送信はドライラン**: 入力・料金・OTP証明・予約期間・オプション・会員資格・空き状況は本番と同じ判定で検証するが、Calendar・Bookings・オプション注文・予約/運営通知メール・Stripeへは**一切書かない**（応答は `dryRun:true`・`bookingId=DRYRUN-…`・`status=TEST_DRY_RUN`。完了画面に「予約は作成されていません」と表示）。送られるのは検証者本人宛のOTPメールだけ。実予約が必要な項目（後付けオプション・実カレンダー反映）は、本番切替直後の確認項目（下記）で実施する。
+5. 失効: `revokeBookingTestCredentialFromSettings`、一括は署名鍵の差し替え、または `STUDIO_X_BOOKING_AUTH_PHASE` を `LEGACY` へ。
+
+### 検証の区分（自動テストと手動確認）
+
+- **Nodeテスト（自動・スタブ上）**: GASコードをCalendar/Sheets/MailApp/Stripeのスタブ上で実行する。実GAS・実メール・実カレンダーでは検証していない。
+- **実GAS・実メールの手動確認（運用者。未実施）**: テストモード（ドライラン）でのOTPメール実受信（件名・本文にSNB MEMBERが出ないこと）、OTP発行・検証・再送・失効、31/90/91日目の拒否表示。本番切替直後に、実予約での後付けオプションとカレンダー反映を確認する。
+
+### 確認コード送信のブランド境界
+
+`requestBookingMemberCode` は `brand=studio_x` のときだけStudio X文面（Studio X予約ページは常に `brand` を送る）。**`brand` 未指定は従来どおりSNB文面**（SNB / mensの既存挙動を変えないため。Studio Xのフェーズが `OTP` の間でも、brand未指定のリクエストはSNB向けとして扱う）。`brand=studio_x` はフェーズがOTP（またはTEST＋有効な資格）のときだけ受け付ける。
+
+### 本番切替手順（運用者の明示承認後）
+
+1. 事前確認: 既存の31〜90日先予約・スタッフ対応・機材レンタル・12/1境界・既存会員の導線の回帰（`node --test` 全緑、テストモード検証結果をPRへ記載済み）。
+2. フロント（Pages）のデプロイ後、Web Appに `STUDIO_X_BOOKING_AUTH_PHASE` = `OTP` を設定（Deploymentの作り直しは不要。Script Propertyの変更だけ）。
+3. 切替直後の確認: `showBookingAuthModeStatus` → `studioXAuthPhase: 'OTP'`／`generalUser.studio_x: 'V2'`。Studio Xの予約ページで会員確認欄が表示され、確認コードメールに「SNB MEMBER」が出ないこと。一般30日・認証済み会員90日。既存予約の後付けオプションが従来どおり通ること。SNB / mensの予約・OTPに変化がないこと。
+4. SNB / mensの2026-12-01開始は変更しない。
+
+### 切戻し手順（OTP不具合時。Studio Xだけ・認証方式だけ）
+
+- `STUDIO_X_BOOKING_AUTH_PHASE` を `LEGACY`（または削除）に戻す。**V2料金世代・既存予約の料金・有料オプション価格は変わらない**（`BOOKING_AUTH_EMERGENCY_LEGACY`＝V1世代への退避はStudio Xには使わない・影響しない）。
+- 戻した後の新規予約は台帳照合（`NOT_CHECKED`）。OTPフェーズで作成した予約はそのまま区別される。フロントはサーバー応答（`memberAuthRequired`）で自動的に旧導線へ戻る（ページ再読込不要・再デプロイ不要）。
+
+### 既存予約への影響評価
+
+- 既存の31〜90日先予約は取り消さない・書き換えない（`membershipStatus` / `priceGeneration` は予約作成時の値のまま）。
+- 切替前に作成した予約の後付けは旧台帳照合のまま（上記）。切替後はOTPを要求するのは**切替後に作成した予約のみ**。
+- 料金・オプション価格・機材の会員限定化（2026/12/1以降の作成）は変更なし。
+
+### 文言のブランド分離
+
+Studio Xの画面・OTPメール・エラー（`ADVANCE_BOOKING_MEMBER_ONLY` / `MEMBER_BENEFIT_NOT_AVAILABLE` / `MEMBER_VERIFICATION_REQUIRED` / `MEMBER_REVERIFY_REQUIRED` 等）に「SNB MEMBER」を出さない（原則「会員限定」）。コードは共通で、文言だけ `MembershipRules` / `BookingMemberVerification` / `booking-logic.js` でブランド分岐する。
+
+### テスト
+
+`test/studio-x-member-auth.test.js`（GAS: フェーズ・境界・ADDON互換・切戻し・文言・テスト資格・SNB / mens回帰）、`test/booking-test-credential-ui.test.js`（フロント: OTP UIの出し分け・切戻し・資格のPOST本文送信・文言）。
+
 ## Issue #559: V1/V2認証の LEGACY・TEST・LIVE 3モード切替と 12/1 自動適用
 
 Issue #548 / PR #551 の「予約作成時刻（サーバー時刻）でV1/V2を分ける」判定（SNB / SNB mensは2026/12/1 00:00 JST）を `BookingGenerationMode.gs` に一元化し、11月のプレ期間に**本番と同じGAS・台帳のまま、管理者だけがV2（メールOTP）を実メールで検証**できるようにする。専用のテストGAS・スプレッドシートは作らない。**本Issueのコード反映（本番デプロイ・トリガー作成）はPRでは行わない**。`STRIPE_CHECKOUT_ENABLED` は変更しない。

@@ -110,7 +110,7 @@ var BookingTestCredential = (function () {
    * 戻り値: { ok:true, id } | { ok:false, reason }。reasonは監査用の固定識別子（クライアントへは返さず、INVALIDとだけ伝える）。
    * 署名・用途（署名対象に含む）・期限・失効状態・許可メールとの一致を、この順にすべて検証する。
    */
-  function verify(token, email, now) {
+  function verify(token, email, now, options) {
     now = isDateLike_(now) ? now : new Date();
     var match = typeof token === 'string' ? TOKEN_PATTERN_.exec(token) : null;
     if (!match) return { ok: false, reason: 'FORMAT' };
@@ -120,7 +120,9 @@ var BookingTestCredential = (function () {
     var body = VERSION + '.' + id + '.' + match[2] + '.' + match[3] + '.' + match[4];
     if (!safeEquals_(match[5], signBody_(key, body))) return { ok: false, reason: 'SIGNATURE' };
     var nowSeconds = Math.floor(now.getTime() / 1000);
-    if (nowSeconds >= Number(match[3]) || now.getTime() >= BookingPricing.GENERATION_V2_START_MS) return { ok: false, reason: 'EXPIRED' };
+    /* ignoreSwitchBoundary: Studio Xの認証フェーズTEST（Issue #563）。SNB / mensの2026/12/1に縛られず、資格自体の有効期限だけで判定する。 */
+    var pastSwitch = !(options && options.ignoreSwitchBoundary === true) && now.getTime() >= BookingPricing.GENERATION_V2_START_MS;
+    if (nowSeconds >= Number(match[3]) || pastSwitch) return { ok: false, reason: 'EXPIRED' };
     if (revokedIds_().indexOf(id) !== -1) return { ok: false, reason: 'REVOKED' };
     var normalized = normalizeEmail_(email);
     if (!normalized || !MembershipRules.isValidEmail(normalized)) return { ok: false, reason: 'EMAIL_MISMATCH' };
@@ -133,14 +135,15 @@ var BookingTestCredential = (function () {
    * 資格を発行する（エディタ実行用のissueBookingTestLinkからだけ呼ぶ）。戻り値の token は呼び出し元が配送にだけ使い、ログへ出さない。
    * 失敗は例外（メッセージに機密情報を含めない）。
    */
-  function issue(email, ttlMinutes, now) {
+  function issue(email, ttlMinutes, now, options) {
     now = isDateLike_(now) ? now : new Date();
     var key = getKey_();
     if (!key) throw new Error(KEY_PROPERTY + ' が未設定、または' + MIN_KEY_LENGTH_ + '文字未満です。');
     var normalized = normalizeEmail_(email);
     if (!normalized || !MembershipRules.isValidEmail(normalized)) throw new Error('メールアドレスの形式が正しくありません。');
     if (allowedEmails_().indexOf(normalized) === -1) throw new Error('このメールアドレスは ' + ALLOWED_EMAILS_PROPERTY + ' に登録されていません。');
-    var boundary = BookingPricing.GENERATION_V2_START_MS;
+    /* options.studioX: Studio Xの認証フェーズTEST用（Issue #563）。12/1の境界に縛られない（最大7日）。 */
+    var boundary = options && options.studioX === true ? Infinity : BookingPricing.GENERATION_V2_START_MS;
     if (now.getTime() >= boundary) throw new Error('2026/12/1 0:00 JST以降はテスト資格を発行できません。');
     var ttl = ttlMinutes === undefined || ttlMinutes === null || ttlMinutes === '' ? DEFAULT_TTL_MINUTES_ : Number(ttlMinutes);
     if (!Number.isInteger(ttl) || ttl < 1 || ttl > MAX_TTL_MINUTES_) throw new Error('有効分数は1〜' + MAX_TTL_MINUTES_ + 'の整数で指定してください。');
@@ -164,7 +167,7 @@ var BookingTestCredential = (function () {
   }
 
   /* 拘束先の許可メールアドレス宛に、3つの予約ページ（SNB・mens・英語版）のテスト用リンクをメール送信する。本文以外に資格を出さない。 */
-  function sendLinks(email, token, expiresAt) {
+  function sendLinks(email, token, expiresAt, options) {
     var reserve = BookingMemberVerification.MAIL_QUOTA_RESERVE;
     var quota;
     try {
@@ -175,14 +178,19 @@ var BookingTestCredential = (function () {
     if (!(quota > reserve)) throw new Error('メール送信の残枠が不足しているため送信しません。');
     var fragment = '#bt=' + token;
     var mailConfig = BookingConfig.getMailConfig();
+    var studioX = !!(options && options.studioX === true);
     var message = {
       to: normalizeEmail_(email),
-      subject: '【Studio Nagoya Base】予約フォームのテスト用リンク（V2確認）',
-      body: '2026/12/1より前に、会員確認コード（メールOTP）を使うV2の予約フォームを試すためのリンクです。\n\n' +
-        '有効期限：' + jstText_(expiresAt) + '\n\n' +
-        'SNB：' + SITE_BASE_URL_ + '/booking/' + fragment + '\n' +
-        'SNB mens：' + SITE_BASE_URL_ + '/mens/booking/' + fragment + '\n' +
-        'English：' + SITE_BASE_URL_ + '/booking/en.html' + fragment + '\n\n' +
+      subject: studioX ? '【Studio X】予約フォームのテスト用リンク（会員確認）' : '【Studio Nagoya Base】予約フォームのテスト用リンク（V2確認）',
+      body: (studioX
+        ? 'Studio Xの正式V2（メールの確認コードによる会員確認）の予約フォームを、本番切替の前に試すためのリンクです。\n\n' +
+          '有効期限：' + jstText_(expiresAt) + '\n\n' +
+          'Studio X：' + SITE_BASE_URL_ + '/studio-x/booking/' + fragment + '\n\n'
+        : '2026/12/1より前に、会員確認コード（メールOTP）を使うV2の予約フォームを試すためのリンクです。\n\n' +
+          '有効期限：' + jstText_(expiresAt) + '\n\n' +
+          'SNB：' + SITE_BASE_URL_ + '/booking/' + fragment + '\n' +
+          'SNB mens：' + SITE_BASE_URL_ + '/mens/booking/' + fragment + '\n' +
+          'English：' + SITE_BASE_URL_ + '/booking/en.html' + fragment + '\n\n') +
         '・このリンクを開いたブラウザのこのタブだけで有効です。他の方に転送しないでください。\n' +
         '・予約フォームには、このメールアドレスを入力してください（他のメールアドレスでは使えません）。\n' +
         '・テストで作成した予約は本番の予約・通知・カレンダー・決済に反映されます。READMEの手順に従い、識別と取消を行ってください。\n' +
@@ -219,6 +227,17 @@ function issueBookingTestLink(email, ttlMinutes) {
   return { credentialId: issued.id, expiresAt: issued.expiresAt.toISOString() };
 }
 
+/*
+ * Studio X専用のテスト資格（Issue #563）。Script Property STUDIO_X_BOOKING_AUTH_PHASE=TEST の間だけ有効で、Studio Xの予約ページ（/studio-x/booking/）だけに
+ * 送るリンクを許可メール宛へ送る。12/1の境界に縛られない（有効分数は最大7日）。資格そのもの・メールアドレスはログ・戻り値へ出さない。
+ */
+function issueStudioXBookingTestLink(email, ttlMinutes) {
+  var issued = BookingTestCredential.issue(email, ttlMinutes, undefined, { studioX: true });
+  BookingTestCredential.sendLinks(email, issued.token, issued.expiresAt, { studioX: true });
+  Logger.log('BookingTestCredential: Studio X用に発行しました id=' + issued.id + ' expiresAt=' + issued.expiresAt.toISOString());
+  return { credentialId: issued.id, expiresAt: issued.expiresAt.toISOString() };
+}
+
 /* 資格IDを失効リストへ追記する（全資格を一括で無効にするには署名鍵BOOKING_TEST_CREDENTIAL_KEYを差し替える）。 */
 function revokeBookingTestCredential(credentialId) {
   var count = BookingTestCredential.revoke(credentialId);
@@ -239,6 +258,15 @@ function issueBookingTestLinkFromSettings() {
   if (!email) throw new Error('BOOKING_TEST_ISSUE_EMAIL が未設定です。');
   var ttl = properties.getProperty('BOOKING_TEST_ISSUE_TTL_MINUTES');
   return issueBookingTestLink(email, ttl ? Number(ttl) : undefined);
+}
+
+/* issueStudioXBookingTestLink を引数なしで実行するエントリポイント（BOOKING_TEST_ISSUE_EMAIL / 任意のBOOKING_TEST_ISSUE_TTL_MINUTESを読む）。 */
+function issueStudioXBookingTestLinkFromSettings() {
+  var properties = PropertiesService.getScriptProperties();
+  var email = properties.getProperty('BOOKING_TEST_ISSUE_EMAIL');
+  if (!email) throw new Error('BOOKING_TEST_ISSUE_EMAIL が未設定です。');
+  var ttl = properties.getProperty('BOOKING_TEST_ISSUE_TTL_MINUTES');
+  return issueStudioXBookingTestLink(email, ttl ? Number(ttl) : undefined);
 }
 
 function revokeBookingTestCredentialFromSettings() {

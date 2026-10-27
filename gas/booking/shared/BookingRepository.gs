@@ -98,7 +98,7 @@ var BookingRepository = (function () {
      * 証明を送ってきたのに期限切れ・不正・メール不一致の場合は、会員利用中かどうかにかかわらず、黙って一般扱いにせず再確認を要求する
      * （一般予約へ戻すのは利用者自身が証明を外して再送する明示操作）。管理者の新規予約（ADMIN window）は対象外。
      */
-    var memberAuth = newMemberAuth_(rawInput, input, priceGeneration, now, isAdminWindow);
+    var memberAuth = newMemberAuth_(rawInput, input, priceGeneration, now, isAdminWindow, generationDecision);
     if (memberAuth.rejection) {
       return { success: false, error: memberAuth.rejection };
     }
@@ -186,6 +186,38 @@ var BookingRepository = (function () {
     var windowResult = isAdminWindow ? { ok: true } : verifyBookingWindowForNewBooking_(input, availabilityConfig, now, memberAuth);
     if (!windowResult.ok) {
       return { success: false, error: windowResult.error };
+    }
+
+    /*
+     * Issue #563: Studio Xの認証フェーズTEST（有効なテスト資格付き）は**ドライラン**。ここまでの検証（入力・料金・OTP証明・予約期間・オプション・
+     * 会員資格・営業時間内の空き）はすべて本番と同じ判定で行い、Calendar・Bookings・オプション注文・メール・Stripeへは一切書かない
+     * （テスト認証が本番の予約・通知・課金・特典へ流入しない）。応答は dryRun:true の模擬結果（bookingIdはDRYRUN-で始まり、実在しない）。
+     * 予約後の機能（後付けオプション等）は実予約でしか検証できないため、本番切替後の確認項目（README）で行う。
+     */
+    if (!isAdminWindow && input.brand === 'studio_x' && generationDecision.testCredential === BookingGenerationMode.CREDENTIAL.VALID) {
+      var dryBusy = CalendarRepository.getBusyIntervalsForDate(BookingConfig.getCalendarId(), input.date, availabilityConfig.timezone);
+      if (!BookingAvailability.isStartTimeBookable(BookingAvailability.parseTimeToMinutes(input.startTime), input.durationMinutes, dryBusy, availabilityConfig.bufferMinutes)) {
+        return { success: false, error: { code: 'SLOT_CONFLICT', message: '指定の時間帯はすでに埋まっています。空き状況を確認して再度お試しください。' } };
+      }
+      return {
+        success: true,
+        dryRun: true,
+        bookingId: 'DRYRUN-' + Utilities.getUuid().replace(/-/g, '').substring(0, 8).toUpperCase(),
+        status: 'TEST_DRY_RUN',
+        date: input.date,
+        startTime: input.startTime,
+        durationMinutes: input.durationMinutes,
+        brand: input.brand,
+        people: input.people,
+        paymentMethod: input.paymentMethod,
+        checkoutAccessToken: '',
+        memberAuthRequired: memberAuth.required,
+        memberVerified: memberAuth.verified,
+        price: {
+          amount: priceResult.price.amount, currency: priceResult.price.currency, tier: priceResult.price.tier,
+          isMember: priceResult.price.isMember, dayType: priceResult.price.dayType, plan: priceResult.price.plan
+        }
+      };
     }
 
     var calendarId = BookingConfig.getCalendarId();
@@ -428,13 +460,19 @@ var BookingRepository = (function () {
     var membership = MembershipRules.verifyAdvanceBookingMembership(input.email, todayString);
     if (!membership.ok) {
       if (membership.reason === 'LEDGER_ERROR') Logger.log('BookingRepository: 会員台帳を確認できないため先行予約を拒否しました');
-      return { ok: false, error: { code: ADVANCE_MEMBER_ONLY_ERROR_.code, message: ADVANCE_MEMBER_ONLY_ERROR_.message } };
+      return { ok: false, error: { code: ADVANCE_MEMBER_ONLY_ERROR_.code, message: MembershipRules.advanceBookingMemberOnlyMessage(input.brand) } };
     }
     return { ok: true };
   }
 
   function resolveMembershipForPricing_(input, generation, memberAuth) {
     var gated = !!memberAuth && memberAuth.required;
+    if (input.brand === 'studio_x' && gated) {
+      /* Issue #563: Studio Xの正式V2（OTPフェーズ）で作成する予約は、membershipStatusへ必ず ACTIVE / INACTIVE（OTP確認済み）か UNVERIFIED（未確認）を記録する。
+         NOT_CHECKEDにしない＝切替前（台帳照合）に作成した予約と、サーバー側で確実に区別できる（後付けオプションの本人確認で使う。OptionOrderService参照）。
+         Studio XのV2は会員区分が無く、料金は会員資格で変わらない（isMemberはそのまま。tierはBookingPricingがGENERAL固定）。 */
+      return { isMember: input.isMember, status: memberAuth.verified ? actualMembershipStatus_(input) : StudioXMemberAuth.STATUS.UNVERIFIED };
+    }
     if (input.brand !== 'snb' || generation !== BookingPricing.GENERATION.V2) {
       /* mensの部屋料金優遇は実会員資格と別概念（常にMEMBER料金）。V2ではメールOTP確認済みかつ利用日に会員資格がある場合だけ
          membershipStatus=ACTIVEを記録する（後付けオプションの会員限定判定に使う。料金には影響しない）。それ以外は従来どおりNOT_CHECKED。 */
@@ -471,18 +509,20 @@ var BookingRepository = (function () {
    * - requiredError: 証明が無いまま会員機能（先行予約・ペアパック・会員限定オプション）を使おうとしたときの確認要求エラー。
    * クライアントの verified / isMember 等は参照しない。
    */
-  function newMemberAuth_(rawInput, input, generation, now, isAdminWindow) {
-    var required = !isAdminWindow && (input.brand === 'snb' || input.brand === 'mens') && generation === BookingPricing.GENERATION.V2;
+  function newMemberAuth_(rawInput, input, generation, now, isAdminWindow, generationDecision) {
+    /* Issue #563: Studio Xは料金世代と独立した認証フェーズ（StudioXMemberAuth。既定LEGACY=台帳照合）がOTPのときだけ必須。 */
+    var required = !isAdminWindow && generation === BookingPricing.GENERATION.V2 &&
+      ((input.brand === 'snb' || input.brand === 'mens') || (input.brand === 'studio_x' && !!generationDecision && generationDecision.memberAuthRequired === true));
     var auth = { required: required, verified: false, rejection: null, requiredError: null };
     if (!required) return auth;
-    auth.requiredError = { code: MembershipRules.BOOKING_VERIFICATION_REQUIRED_CODE, message: MembershipRules.BOOKING_VERIFICATION_REQUIRED_MESSAGE };
+    auth.requiredError = { code: MembershipRules.BOOKING_VERIFICATION_REQUIRED_CODE, message: MembershipRules.bookingVerificationRequiredMessage(input.brand) };
     var proof = rawInput && typeof rawInput.memberProof === 'string' ? rawInput.memberProof : '';
     if (!proof) return auth;
     var checked = BookingMemberVerification.checkProof(input.email, proof, now);
     if (checked.ok) {
       auth.verified = true;
     } else {
-      auth.rejection = BookingMemberVerification.proofError(checked.reason === 'MISSING' ? 'INVALID' : checked.reason);
+      auth.rejection = BookingMemberVerification.proofError(checked.reason === 'MISSING' ? 'INVALID' : checked.reason, input.brand);
     }
     return auth;
   }

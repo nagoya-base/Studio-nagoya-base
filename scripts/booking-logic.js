@@ -180,9 +180,29 @@
   var NETWORK_ERROR_MESSAGE = NETWORK_ERROR_MESSAGES.ja;
   var API_NOT_CONFIGURED_MESSAGE = API_NOT_CONFIGURED_MESSAGES.ja;
 
-  /* messageForErrorCode(code, locale) — localeは任意。未指定・未知値はja（既存呼び出しとの後方互換）。 */
-  function messageForErrorCode(code, locale) {
+  /*
+   * Studio X向けの文言（Issue #563）。Studio Xの画面・エラーには「SNB MEMBER」を出さず、原則「会員限定」と書く
+   * （GAS側 MembershipRules の Studio X 文言と同じ。コードは共通で、文言だけをブランドで分岐する）。
+   */
+  var STUDIO_X_ERROR_MESSAGES = {
+    ja: {
+      MEMBER_VERIFICATION_REQUIRED: '会員限定のオプション・先行予約（31〜90日先）をご利用いただくには、メールアドレスの確認コードによる会員確認が必要です。確認コードを送信して確認するか、会員限定の機能を使わない一般のご予約としてお進みください。',
+      MEMBER_REVERIFY_REQUIRED: '会員確認の有効期限が切れました。会員限定のオプション・先行予約を利用する場合は、確認コードを再送してもう一度確認してください。',
+      ADVANCE_BOOKING_MEMBER_ONLY: '30日より先の日程は、会員限定の先行予約（90日先まで）の対象です。会員登録と同じメールアドレスでご入力いただくか、30日以内の日程を選択してください。',
+      MEMBER_BENEFIT_NOT_AVAILABLE: 'この有料オプションは会員限定です。ご利用日がお支払い済みの有効期間に入る会員資格を確認できた場合のみご利用いただけます。ご予約のメールアドレスは会員登録と同じものをご入力ください。'
+    },
+    en: {
+      MEMBER_VERIFICATION_REQUIRED: 'Member-only options and advance booking (31–90 days ahead) require email verification with a 6-digit code. Please send a verification code and confirm it, or continue as a general booking.',
+      MEMBER_REVERIFY_REQUIRED: 'Your member verification has expired. To use member-only options or advance booking, please resend the verification code and confirm it again.',
+      ADVANCE_BOOKING_MEMBER_ONLY: 'Dates more than 30 days ahead are open only to members (advance booking up to 90 days). Please use the email address registered for your membership, or choose a date within 30 days.',
+      MEMBER_BENEFIT_NOT_AVAILABLE: 'This paid option is for members only. It requires a membership confirmed for the month of your visit. Please use the same email address as your membership.'
+    }
+  };
+
+  /* messageForErrorCode(code, locale, brand) — localeは任意。未指定・未知値はja（既存呼び出しとの後方互換）。brand='studio_x'だけ会員文言を差し替える。 */
+  function messageForErrorCode(code, locale, brand) {
     var loc = normalizeLocale(locale);
+    if (brand === 'studio_x' && STUDIO_X_ERROR_MESSAGES[loc][code]) return STUDIO_X_ERROR_MESSAGES[loc][code];
     return ERROR_MESSAGES[loc][code] || GENERIC_ERROR_MESSAGE[loc];
   }
 
@@ -869,11 +889,15 @@
 
   /* カレンダーの日セルのaria-label。記号・色だけに依存しないアクセシビリティ対応
      （Issue #318要件）。 */
-  function dayAriaLabel(dateValue, status, customerType, todayValue, locale, memberAdvance) {
+  function dayAriaLabel(dateValue, status, customerType, todayValue, locale, memberAdvance, brand) {
     var loc = normalizeLocale(locale);
     var dayLabel = formatCalendarDayLabel(dateValue, loc);
     var label = dayLabel + '　' + dayStatusLabel(status, loc);
-    if (memberAdvance) label += loc === 'en' ? '　SNB MEMBER advance booking' : '　SNB MEMBER先行予約枠';
+    /* Studio X（Issue #563）は「SNB MEMBER」を出さず「会員限定」。 */
+    if (memberAdvance) {
+      if (brand === 'studio_x') label += loc === 'en' ? '　Members-only advance booking' : '　会員限定の先行予約枠';
+      else label += loc === 'en' ? '　SNB MEMBER advance booking' : '　SNB MEMBER先行予約枠';
+    }
     return label;
   }
 
@@ -978,6 +1002,24 @@
    */
   function brandGatesMemberFeatures(brand) {
     return MEMBER_BENEFIT_BRANDS_.indexOf(brand) !== -1;
+  }
+
+  /*
+   * Issue #563: 会員確認（メールOTP）の仕組みを持つブランド（Studio Xを含む）。brandGatesMemberFeaturesとは別概念:
+   * こちらはOTPのUI・テスト資格・証明を扱えるか、brandGatesMemberFeaturesは切替前のUIで会員向け機能を自己申告で解除するか。
+   */
+  function brandSupportsMemberAuth(brand) {
+    return MEMBER_BENEFIT_BRANDS_.indexOf(brand) !== -1 || brand === 'studio_x';
+  }
+
+  /*
+   * Issue #563: 今この予約でOTPの会員確認が必須か（サーバーの応答だけが根拠。フロントは日付・端末時計で決めない）。
+   * - SNB / mens: サーバーの料金世代がV2。
+   * - Studio X: 料金世代とは独立に、サーバーが認証フェーズ（OTP）を返したとき（memberAuthRequired===true）だけ。それ以外は従来どおり。
+   */
+  function usesMemberOtp(brand, generation, memberAuthRequired) {
+    if (brand === 'studio_x') return generation === 'V2' && memberAuthRequired === true;
+    return MEMBER_BENEFIT_BRANDS_.indexOf(brand) !== -1 && generation === 'V2';
   }
 
   function brandShowsMemberBenefits(brand, nowMs) {
@@ -1238,6 +1280,8 @@
     brandShowsMemberOption: brandShowsMemberOption,
     brandShowsMemberBenefits: brandShowsMemberBenefits,
     brandGatesMemberFeatures: brandGatesMemberFeatures,
+    brandSupportsMemberAuth: brandSupportsMemberAuth,
+    usesMemberOtp: usesMemberOtp,
     showerExtraInfo: showerExtraInfo,
     pairPackAvailableOnDate: pairPackAvailableOnDate,
     showerAvailableOnDate: showerAvailableOnDate,

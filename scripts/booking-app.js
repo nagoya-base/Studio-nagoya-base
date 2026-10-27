@@ -89,6 +89,17 @@
     }
   }[locale];
 
+  /* Issue #563: Studio Xの会員確認の文言は「SNB MEMBER」「会員料金」を出さず、会員限定のオプション・先行予約として案内する。 */
+  if (brand === 'studio_x') {
+    if (locale === 'ja') {
+      UI_TEXT.memberVerified = 'メールアドレスの確認が完了しました（60分間有効）。会員限定のオプション・先行予約の対象かどうかは、利用日に応じて自動で判定されます。';
+      UI_TEXT.memberGeneralContinued = '一般のご予約として進めます。会員限定のオプション・先行予約を利用する場合は、確認コードを送信して会員確認をしてください。';
+    } else {
+      UI_TEXT.memberVerified = 'Your email address is verified (valid for 60 minutes). Whether member-only options and advance booking apply is determined automatically for your date of use.';
+      UI_TEXT.memberGeneralContinued = 'Continuing as a general booking. To use member-only options or advance booking, send a verification code and verify your membership.';
+    }
+  }
+
   var backLabel = root.getAttribute('data-back-label') || UI_TEXT.backLabelDefault;
 
   var API_BASE_URL = (window.BookingApiConfig && window.BookingApiConfig.BASE_URL) || '';
@@ -298,6 +309,8 @@
    * 月間空き状況・見積りのGET応答（priceGeneration）で更新し、判定できない間は会員区分ラジオを表示する側へ倒す。
    */
   var serverGeneration = null;
+  /* Issue #563: Studio Xの会員確認（OTP）がサーバー側で必須か。料金世代とは独立（サーバーの認証フェーズ。既定は台帳照合＝false）。 */
+  var serverMemberAuthRequired = false;
 
   /*
    * Issue #548: V2（サーバーが返す料金世代がV2。SNB / SNB mensの2026/12/1 0:00 JST以降に作成する予約）の会員確認。
@@ -338,7 +351,7 @@
     } catch (e) { /* 保存先が使えなくても通常フローで動く */ }
   }
   function loadStoredTestCredential_() {
-    if (!Logic.brandGatesMemberFeatures(brand)) return '';
+    if (!Logic.brandSupportsMemberAuth(brand)) return '';
     try {
       var store = sessionStore_();
       var stored = store ? store.getItem(TEST_CREDENTIAL_STORAGE_KEY_) : null;
@@ -391,7 +404,7 @@
       resetMemberAuth_();
       clearSelectedDate_();
       goToStep('datetime');
-      showGlobalError(Logic.messageForErrorCode('TEST_CREDENTIAL_INVALID', locale), []);
+      showGlobalError(Logic.messageForErrorCode('TEST_CREDENTIAL_INVALID', locale, brand), []);
       ensureCalendarMonthLoaded_();
       refreshPriceEstimate_();
     } finally {
@@ -418,7 +431,7 @@
     return String(els.email ? els.email.value : '').trim().toLowerCase();
   }
   function otpMode_() {
-    return Logic.brandGatesMemberFeatures(brand) && serverGeneration === 'V2';
+    return Logic.usesMemberOtp(brand, serverGeneration, serverMemberAuthRequired);
   }
   function memberVerified_() {
     return otpMode_() && !!memberAuth.proof && memberAuth.email === normalizedEmail_();
@@ -441,11 +454,17 @@
   if (els.memberField) els.memberField.hidden = !memberOptionVisible_();
 
   /* サーバーが返した料金世代を反映する。V2は自己申告を使わないため、会員区分欄を隠し、選択済みの回答も破棄して見積りを取り直す。 */
-  function applyServerGeneration_(value) {
-    if ((value !== 'V1' && value !== 'V2') || value === serverGeneration) return;
-    serverGeneration = value;
+  function applyServerGeneration_(value, memberAuthRequired) {
+    var generationChanged = (value === 'V1' || value === 'V2') && value !== serverGeneration;
+    /* Studio X（Issue #563）: 認証フェーズの切替（台帳照合⇄OTP）も、料金世代が同じでもUIへ反映する。 */
+    var authChanged = brand === 'studio_x' && (memberAuthRequired === true) !== serverMemberAuthRequired;
+    if (!generationChanged && !authChanged) return;
+    if (generationChanged) serverGeneration = value;
+    if (authChanged) serverMemberAuthRequired = memberAuthRequired === true;
     if (els.memberField) els.memberField.hidden = eventPlanSelected_() || !memberOptionVisible_();
-    if (value === 'V2') memberStatusRadios_().forEach(function (radio) { radio.checked = false; });
+    if (serverGeneration === 'V2') memberStatusRadios_().forEach(function (radio) { radio.checked = false; });
+    /* OTPが不要になった（切戻し等）ら、確認済み証明は破棄する。 */
+    if (authChanged && !serverMemberAuthRequired && memberAuth.proof) memberAuth = emptyMemberAuth_(memberAuth.epoch + 1);
     applyMemberGate_();
   }
 
@@ -493,9 +512,10 @@
    * - Studio Xは対象外（既存仕様のまま常に有効扱い）。
    */
   function memberFeaturesEnabled_() {
-    if (!Logic.brandGatesMemberFeatures(brand)) return true;
-    /* Issue #548: V2はメールOTPの確認済み証明があるときだけ（自己申告のチェックでは解除できない）。 */
+    /* Issue #548 / #563: OTPが必須のときは、メールOTPの確認済み証明があるときだけ（自己申告のチェックでは解除できない）。
+       切替前のStudio X（台帳照合）は従来どおり常に有効扱い（31〜90日先も選べる。最終判定はサーバーの台帳照合）。 */
     if (otpMode_()) return memberVerified_();
+    if (!Logic.brandGatesMemberFeatures(brand)) return true;
     if (memberOptionVisible_() && memberStatusRadios_().length > 0) return checkedMemberStatus_() === 'member';
     return !!els.memberUnlock && els.memberUnlock.checked;
   }
@@ -871,7 +891,7 @@
         var entry;
         if (!body || body.success !== true) {
           var code = body && body.error && body.error.code;
-          entry = { status: 'error', message: Logic.messageForErrorCode(code, locale) };
+          entry = { status: 'error', message: Logic.messageForErrorCode(code, locale, brand) };
         } else {
           entry = { status: 'success', days: body.days || {} };
         }
@@ -881,7 +901,7 @@
         /* 資格の状態が変わった後に届いた古い応答は描画しない（取り直しは資格の切替時に済んでいる）。 */
         if (epoch !== testCredentialEpoch_) return;
         renderCalendarGridIfCurrent_(year, month, durationMinutes, timeBand, entry);
-        if (entry.status === 'success') applyServerGeneration_(body.priceGeneration);
+        if (entry.status === 'success') applyServerGeneration_(body.priceGeneration, body.memberAuthRequired);
         if (credentialBody && body) applyTestCredentialStatus_(body.testCredentialStatus);
       })
       .catch(function () {
@@ -993,7 +1013,7 @@
         var selectable = Logic.isCalendarDaySelectable(cell.dateValue, status, customerType, todayValue, memberAdvance, advanceFeaturesEnabled_());
         button.className = memberAdvance ? 'ba-cal-day ba-cal-day--member-advance' : 'ba-cal-day';
         button.textContent = cell.day + Logic.dayStatusSymbol(status);
-        button.setAttribute('aria-label', Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale, memberAdvance));
+        button.setAttribute('aria-label', Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale, memberAdvance, brand));
         button.disabled = !selectable;
         button.setAttribute('aria-pressed', cell.dateValue === selectedDate ? 'true' : 'false');
         if (selectable) {
@@ -1004,7 +1024,7 @@
             setFieldError_(els.date, els.dateError, '');
             hideGlobalError();
             if (els.calendarSelected) {
-              els.calendarSelected.textContent = Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale, memberAdvance);
+              els.calendarSelected.textContent = Logic.dayAriaLabel(cell.dateValue, status, customerType, todayValue, locale, memberAdvance, brand);
             }
             renderCalendarGrid_(entry);
             refreshPriceEstimate_();
@@ -1218,13 +1238,13 @@
         }
         if (!body || body.success !== true || (verifiedQuote && !body.price)) {
           var code = body && body.error && body.error.code;
-          entry = { status: 'error', message: Logic.messageForErrorCode(code, locale) };
+          entry = { status: 'error', message: Logic.messageForErrorCode(code, locale, brand) };
         } else {
           entry = { status: 'success', price: body.price };
         }
         priceEstimateCache[key] = entry;
         renderPriceEverywhereIfCurrent_(key, entry);
-        if (entry.status === 'success') applyServerGeneration_(body.priceGeneration);
+        if (entry.status === 'success') applyServerGeneration_(body.priceGeneration, body.memberAuthRequired);
         if (credentialBody && body) applyTestCredentialStatus_(body.testCredentialStatus);
       })
       .catch(function () {
@@ -1275,7 +1295,7 @@
     if (els.memberVerifyField) els.memberVerifyField.hidden = !otp;
     if (els.memberCodeEntry) els.memberCodeEntry.hidden = !otp || !memberCodeSent_ || memberVerified_();
     if (els.memberReverify) els.memberReverify.hidden = !otp || !memberAuth.reverifyPending;
-    if (els.memberReverifyMessage) els.memberReverifyMessage.textContent = Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale);
+    if (els.memberReverifyMessage) els.memberReverifyMessage.textContent = Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale, brand);
     if (memberVerified_()) setMemberVerifyStatus_(UI_TEXT.memberVerified);
     else if (!memberCodeSent_) setMemberVerifyStatus_('');
   }
@@ -1308,7 +1328,7 @@
   function reverifyBlocked_() {
     if (memberProofExpiredLocally_()) handleReverifyRequired_();
     if (!otpMode_() || !memberAuth.reverifyPending) return false;
-    showGlobalError(Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale), []);
+    showGlobalError(Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale, brand), []);
     revealMemberVerify_();
     return true;
   }
@@ -1323,10 +1343,15 @@
       memberCodeBusy_ = true;
       els.memberCodeSend.disabled = true;
       showMemberVerifyError_('');
-      postApi_('requestBookingMemberCode', { email: String(els.email.value).trim() })
+      var codeRequest = { email: String(els.email.value).trim() };
+      if (brand === 'studio_x') codeRequest.brand = brand;
+      /* Issue #563: Studio XのTESTフェーズでは、テスト資格を送ってOTP対象のリクエストとして扱わせる（資格が無ければサーバーはLEGACYのまま）。 */
+      var codeCredential = activeTestCredentialBody_();
+      if (codeCredential) codeRequest.testCredential = codeCredential.testCredential;
+      postApi_('requestBookingMemberCode', codeRequest)
         .then(function (body) {
           if (!body || body.success !== true) {
-            showMemberVerifyError_(Logic.messageForErrorCode(body && body.error && body.error.code, locale));
+            showMemberVerifyError_(Logic.messageForErrorCode(body && body.error && body.error.code, locale, brand));
             return;
           }
           memberCodeSent_ = true;
@@ -1352,11 +1377,11 @@
       postApi_('verifyBookingMemberCode', { email: String(els.email.value).trim(), code: code })
         .then(function (body) {
           if (!body || body.success !== true || !body.proof) {
-            showMemberVerifyError_(Logic.messageForErrorCode(body && body.error && body.error.code, locale));
+            showMemberVerifyError_(Logic.messageForErrorCode(body && body.error && body.error.code, locale, brand));
             return;
           }
           /* 確認コードの入力中にメールアドレスが変わっていたら、その証明は使わない（証明はメールに拘束される）。 */
-          if (emailAtRequest !== normalizedEmail_()) { showMemberVerifyError_(Logic.messageForErrorCode('INVALID_CODE', locale)); return; }
+          if (emailAtRequest !== normalizedEmail_()) { showMemberVerifyError_(Logic.messageForErrorCode('INVALID_CODE', locale, brand)); return; }
           memberAuth = {
             proof: body.proof,
             email: emailAtRequest,
@@ -1774,7 +1799,7 @@
         els.startTimeLoading.hidden = true;
         if (!body || body.success !== true) {
           var code = body && body.error && body.error.code;
-          showStartTimeError_(Logic.messageForErrorCode(code, locale), [
+          showStartTimeError_(Logic.messageForErrorCode(code, locale, brand), [
             { label: UI_TEXT.retryCheck, onClick: fetchAvailability }
           ]);
           return;
@@ -1961,15 +1986,15 @@
       /* 貸切ベースプランは10名まで・最低6時間（8:00〜21:00。サーバー側でも同じ条件で拒否する）。 */
       if (eventPlanSelected_()) {
         if (fields.people && !Logic.isEventPlanPeopleValue(fields.people)) {
-          errors.people = Logic.messageForErrorCode('EVENT_PLAN_PEOPLE_EXCEEDED', locale);
+          errors.people = Logic.messageForErrorCode('EVENT_PLAN_PEOPLE_EXCEEDED', locale, brand);
         }
       } else if (selectedPlan_()) {
         /* 2名ペアパックは1〜2名・3時間以上（サーバー側でも同じ条件で拒否する）。 */
         if (fields.people && !Logic.isPairPackPeopleValue(fields.people)) {
-          errors.people = Logic.messageForErrorCode('PAIR_PACK_PEOPLE_EXCEEDED', locale);
+          errors.people = Logic.messageForErrorCode('PAIR_PACK_PEOPLE_EXCEEDED', locale, brand);
         }
         if (state.durationMinutes < 180 && els.benefitsError) {
-          els.benefitsError.textContent = Logic.messageForErrorCode('PLAN_DURATION_INVALID', locale);
+          els.benefitsError.textContent = Logic.messageForErrorCode('PLAN_DURATION_INVALID', locale, brand);
           els.benefitsError.hidden = false;
           return;
         }
@@ -1978,7 +2003,7 @@
 
       /* 二重チェック（Issue #407）: 初回利用はカード以外を送信させない（サーバー側と同じ条件）。 */
       if (fields.paymentMethod && !Logic.isPaymentMethodAllowedForCustomer(state.customerType, fields.paymentMethod)) {
-        errors.paymentMethod = Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale);
+        errors.paymentMethod = Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale, brand);
       }
 
       /* メールアドレスの入力欄はStep1にある。ここで不正（Step1を経ずに値が変わった等）なら、Step1へ戻して直させる。 */
@@ -2088,7 +2113,7 @@
   }
 
   function showSubmitError(code, requestId) {
-    var message = appendDiagnosticRequestId_(Logic.messageForErrorCode(code, locale), requestId);
+    var message = appendDiagnosticRequestId_(Logic.messageForErrorCode(code, locale, brand), requestId);
     var action = Logic.recoveryActionForErrorCode(code);
 
     /* Issue #559: テスト資格が送信時点で無効（期限切れ・失効・モード変更）。予約は作られていない。資格を破棄して通常フローで選び直してもらう。 */
@@ -2223,7 +2248,7 @@
       if (isSubmitting || hasSubmittedSuccessfully) return;
 
       /* Issue #548: 会員確認が期限切れ（端末の時計）または再確認待ちなら、送信せずStep1の会員確認へ戻す（黙って一般料金で送らない）。 */
-      if (reverifyBlocked_()) { goToStep('datetime'); showGlobalError(Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale), []); return; }
+      if (reverifyBlocked_()) { goToStep('datetime'); showGlobalError(Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale, brand), []); return; }
 
       hideSubmitError();
       setFieldError_(els.consent, els.consentError, els.consent.checked ? '' : UI_TEXT.consentRequired);
@@ -2234,7 +2259,7 @@
       if (!Logic.isPaymentMethodAllowedForCustomer(state.customerType, state.paymentMethod)) {
         updatePaymentMethodGating();
         goToStep('details');
-        showGlobalError(Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale), []);
+        showGlobalError(Logic.messageForErrorCode('FIRST_TIME_CARD_PAYMENT_REQUIRED', locale, brand), []);
         return;
       }
       if (!API_BASE_URL) {
@@ -2331,7 +2356,10 @@
           setText_(els.completeHeading, completeCopy.completeHeading);
           setText_(els.completeStatusLabel, completeCopy.statusLabel);
           if (els.completeStatus) {
-            els.completeStatus.textContent = body.status === 'PENDING'
+            /* Issue #563: テスト資格のドライラン。実予約は作成されていない。 */
+            els.completeStatus.textContent = body.dryRun === true
+              ? (locale === 'en' ? 'TEST: no booking was created' : 'テスト（予約は作成されていません）')
+              : body.status === 'PENDING'
               ? (completeIsCard ? completeCopy.statusValue : UI_TEXT.pendingStatusLabel)
               : (body.status || '');
           }
@@ -2339,7 +2367,7 @@
              確定連絡そのものが24時間以内に届くという前提の文言のため、カード決済では
              出さない（カードは決済ページでの支払い完了で確定する）。代わりにカード注意書きを表示する。現金・PayPay・
              未定は既存文言のまま変更しない。 */
-          if (Logic.isCardPaymentMethodValue(state.paymentMethod)) {
+          if (Logic.isCardPaymentMethodValue(state.paymentMethod) && body.dryRun !== true) {
             if (els.completeGenericNotice) els.completeGenericNotice.hidden = true;
             /*
              * Issue #341 PR-B / PR #354レビュー対応・項目3: startCardCheckoutを追加で

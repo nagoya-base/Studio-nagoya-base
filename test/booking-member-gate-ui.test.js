@@ -835,7 +835,7 @@ test('配線: 確認済み証明はcreateBookingの送信にだけ付け、フ�
   assert.ok((appCode.match(/sessionStorage/g) || []).length === 2 && /getItem\(TEST_CREDENTIAL_STORAGE_KEY_\)/.test(appCode) && /removeItem\(TEST_CREDENTIAL_STORAGE_KEY_\)/.test(appCode), 'sessionStorageはテスト資格の読み取り・破棄だけに使い、証明は保存しない');
   assert.ok(!/console\./.test(app), '証明・コードをconsoleへ出さない');
   var tpl = fs.readFileSync(path.join(__dirname, '..', '_includes', 'booking_app_ja.html'), 'utf8');
-  assert.ok(tpl.indexOf('id="ba-member-verify-field"') > tpl.indexOf('{% if include.brand == "snb" or include.brand == "mens" %}'), '会員確認欄はSNB / mensのテンプレート内だけ');
+  assert.ok(tpl.indexOf('id="ba-member-verify-field"') > tpl.indexOf('{% if include.brand == "snb" or include.brand == "mens" or include.brand == "studio_x" %}'), '会員確認欄はSNB / mens / Studio Xのテンプレート内だけ（Studio XはサーバーがOTPフェーズを返すまでJSが隠す）');
   assert.ok(/autocomplete="one-time-code"/.test(tpl));
 });
 /* ── Issue #552: ペアパックは3時間未満で選択不可。利用時間の変更で自動解除し、通常/会員料金へ再見積りする ── */
