@@ -418,7 +418,7 @@ var BookingRepository = (function () {
 
   /*
    * 貸切ベースプラン（Issue #488 / #492。常設）の申込検証。会員資格は不要。
-   * 確認順: ブランド（Studio Xのみ） → 人数（11名以上はサーバー側で拒否） → 利用時間（最低6時間・1時間単位・8:00〜21:00の範囲。Issue #510）。
+   * 確認順: ブランド（Studio Xのみ） → 人数（7名以上はサーバー側で拒否） → 利用時間（最低6時間・1時間単位・8:00〜21:00の範囲。Issue #510）。
    * Issue #492で対象イベント日の制限は廃止した。Studio Xの予約可能日であれば、利用者が明示的に選んだときだけ成立する。
    */
   function resolveEventPlanForNewBooking_(input, plan) {
@@ -426,7 +426,7 @@ var BookingRepository = (function () {
       return { ok: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
     }
     if (!BookingPricing.isEventBasePlanPeople(input.people)) {
-      return { ok: false, error: { code: 'EVENT_PLAN_PEOPLE_EXCEEDED', message: BookingPricing.EVENT_BASE_PLAN_LABEL + 'のご利用は1〜10名までです。' } };
+      return { ok: false, error: { code: 'EVENT_PLAN_PEOPLE_EXCEEDED', message: BookingPricing.EVENT_BASE_PLAN_LABEL + 'のご利用は1〜6名までです。' } };
     }
     var scheduleError = BookingPricing.eventPlanScheduleError(input.durationMinutes, input.startTime);
     if (scheduleError) return { ok: false, error: scheduleError };

@@ -1497,8 +1497,8 @@
       option.disabled = selected && !Logic.isEventPlanDurationHours(option.value);
     });
   }
-  /* Issue #513: 貸切ベースプラン中だけ5〜10名を選べる（'5名以上・要相談'は選べない）。解除時は通常の選択肢に戻し、
-     5〜10名が選ばれていたら空に戻して通常予約の上限を超える値を残さない。サーバー側でも同じ上限で拒否する。 */
+  /* Issue #513: 貸切ベースプラン中だけ5〜6名を選べる（'5名以上・要相談'は選べない）。解除時は通常の選択肢に戻し、
+     5〜6名が選ばれていたら空に戻して通常予約の上限を超える値を残さない。サーバー側でも同じ上限で拒否する。 */
   function applyEventPlanPeopleOptions_(selected) {
     if (!els.people) return;
     Array.prototype.slice.call(els.people.options).forEach(function (option) {
@@ -1512,7 +1512,7 @@
       }
     });
     var current = els.people.value;
-    var invalid = selected ? (current && !Logic.isEventPlanPeopleValue(current)) : /^(?:[5-9]|10)名$/.test(current);
+    var invalid = selected ? (current && !Logic.isEventPlanPeopleValue(current)) : /^[56]名$/.test(current);
     if (invalid) els.people.value = '';
     if (els.peoplePlanHelp) els.peoplePlanHelp.hidden = !selected;
   }
@@ -2001,7 +2001,7 @@
       };
       var errors = Logic.validateDetailsForm(fields, locale);
 
-      /* 貸切ベースプランは10名まで・最低6時間（8:00〜21:00。サーバー側でも同じ条件で拒否する）。 */
+      /* 貸切ベースプランは6名まで・最低6時間（8:00〜21:00。サーバー側でも同じ条件で拒否する）。 */
       if (eventPlanSelected_()) {
         if (fields.people && !Logic.isEventPlanPeopleValue(fields.people)) {
           errors.people = Logic.messageForErrorCode('EVENT_PLAN_PEOPLE_EXCEEDED', locale, brand);

@@ -105,7 +105,7 @@ var BookingPricing = (function () {
     hourlyRate: 1000,
     openMinutes: 8 * 60,
     closeMinutes: 21 * 60,
-    maxPeople: 10, // Issue #513: 10名まで同一料金（人数課金なし）
+    maxPeople: 6, // Issue #513 / #570: 6名まで同一料金（人数課金なし）
     label: 'Studio X｜6時間貸切ベースプラン'
   };
 
@@ -253,7 +253,7 @@ var BookingPricing = (function () {
     return null;
   }
 
-  /* 利用人数（'1名'〜）が貸切ベースプランの人数条件（1〜10名）か。11名以上・要相談・数値以外はfalse。 */
+  /* 利用人数（'1名'〜）が貸切ベースプランの人数条件（1〜6名）か。11名以上・要相談・数値以外はfalse。 */
   function isEventBasePlanPeople(people) {
     var m = /^\s*([1-9]\d*)\s*名\s*$/.exec(String(people === undefined || people === null ? '' : people));
     return !!m && Number(m[1]) >= 1 && Number(m[1]) <= EVENT_BASE_PLAN_.maxPeople;
