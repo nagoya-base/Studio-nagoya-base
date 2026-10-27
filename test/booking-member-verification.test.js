@@ -599,3 +599,24 @@ test('会員料金の見積り（POST）: SNB / mensの料金は開始時刻に�
     assert.strictEqual(new Set(prices).size, 1, brand + ': 開始時刻を変えても見積りは同じ');
   });
 });
+
+test('会員料金の見積り（POST）は、正常な日付・利用時間で料金を返し、同じ条件のcreateBooking確定額と一致する。不正な条件では料金を返さない', function () {
+  ['snb', 'mens'].forEach(function (brand) {
+    var ctx = setup({ members: { [MEMBER]: ['2026-12'] } });
+    pinGeneration(ctx, V2_NOW);
+    var proof = issue(ctx, MEMBER);
+    var quote = post(ctx, 'bookingMemberStatus', { brand: brand, email: MEMBER, proof: proof, date: NEAR_DATE, durationMinutes: 180, startTime: '10:00' });
+    assert.strictEqual(quote.success, true, JSON.stringify(quote));
+    assert.ok(quote.price && quote.price.amount > 0, 'validateInputが通る入力では料金を返す');
+    var booked = book(ctx, { brand: brand, memberProof: proof, date: NEAR_DATE, startTime: '10:00', durationMinutes: 180 });
+    assert.strictEqual(booked.success, true, JSON.stringify(booked));
+    assert.strictEqual(booked.price.amount, quote.price.amount, brand + ': 見積りと確定額が一致');
+    assert.strictEqual(booked.price.tier, quote.price.tier);
+    ['bad-date', ''].forEach(function (date) {
+      var bad = post(ctx, 'bookingMemberStatus', { brand: brand, email: MEMBER, proof: proof, date: date, durationMinutes: 180 });
+      assert.strictEqual('price' in bad, false);
+    });
+    var tooShort = post(ctx, 'bookingMemberStatus', { brand: brand, email: MEMBER, proof: proof, date: NEAR_DATE, durationMinutes: 5 });
+    assert.strictEqual('price' in tooShort, false, '不正な利用時間では料金を返さない');
+  });
+});
