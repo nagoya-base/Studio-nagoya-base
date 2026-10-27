@@ -81,6 +81,21 @@ Issue #469（親）/ #470（料金ロジック）/ #471（Stripe会員管理）/
 - 日程変更後もプランを保持し、平日⇔土日祝の変更では変更先の曜日区分で5,000円 / 6,000円を再計算する（`FeeCalculator` / `BookingReschedule`）。3時間未満へ短縮するとプラン料金を自動算出できず手動確認が必須（通常料金に化けない）。
 - 正本: `BookingPricing.gs`（`PAIR_PACK_`）。表示は `_includes/membership_benefits_ja.html`。
 
+### SNB mens限定 土日祝4時間シャワーパック（Issue #586）
+
+SNB mensだけの独立プラン `mens_weekend_shower_4h`（`Bookings.planCode` に保存）。**通常の4時間会員料金（土日祝9,000円）＋シャワー（1,000円）の値下げではなく、「mens・土日祝・4時間ちょうど・シャワー1回込み」の組み合わせだけに適用する固定価格**。
+
+| 内容 | 土日祝 |
+|---|---:|
+| SNB mens 土日祝4時間シャワーパック（4時間固定・シャワー1回込み・税込） | 6,500円 |
+
+- 通常SNB・Studio Xでは表示も適用もしない。平日・4時間以外（3時間・5時間等）・非会員では成立しない（通常料金へ黙って倒さず、`PLAN_DAY_INVALID` / `PLAN_DURATION_INVALID` / `MEMBER_BENEFIT_NOT_AVAILABLE` で拒否）。
+- 提供開始はシャワーと同じく**利用日が2026/12/1以降**。SNB MEMBERの**実会員資格**（利用日が支払済み期間）が必須。mensの部屋料金優遇とは混同しない。予約作成・日程変更・手動確定・現地精算で再確認する（ペアパックと同じ）。
+- 利用者が予約フォームで**明示的に選んだとき**だけ適用（ペアパックの自動適用では上書きしない）。パックを選ぶとシャワー（日程調整の確認つき）の申込が必須。
+- シャワーは**二重加算しない**: パック予約に紐づくシャワー注文（OptionOrder）は0円。事前確認（PENDING_APPROVAL）・承認・予約時間内のみ・利用人数条件など既存のシャワー条件は維持し、承認すると支払いなしで確定する。パック予約への単体シャワー（1,000円）の申込・Checkoutは発生しない（重複申込は `DUPLICATE_OPTION`）。
+- 既存料金（通常の時間貸し・2名ペアパック・シャワー単体1,000円・SNB MEMBER月額）は変更しない。`STRIPE_CHECKOUT_ENABLED` も変更しない。
+- 正本: `BookingPricing.gs`（`SHOWER_PACK_`）/ シャワー0円化: `BookingOptions.gs`（`planOrders` の `showerIncluded`）。表示は `_includes/membership_benefits_ja.html`（mensのみ）・`mens/index.html`・予約フォーム（`_includes/booking_app_ja.html`、mensのみ）。
+
 ### 会員限定シャワー（SNB / SNB mensのみ。Studio Xでは表示しない）
 
 - 1予約につき1回 1,000円。同一予約の利用者2名まで共有可・予約時間内のみ。OptionOrder系の有料オプション（`category=MEMBER_SERVICE`・`items=['SHOWER']`・Issue #481で事前連絡・管理者承認制に変更: `PENDING_APPROVAL` → 承認 → `AWAITING_PAYMENT` → Checkout決済 → `CONFIRMED`）。正本: `BookingOptions.gs`（`SHOWER_PRICE_JPY_`）。

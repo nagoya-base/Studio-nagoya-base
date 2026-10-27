@@ -240,6 +240,7 @@ var OptionOrderService = (function () {
       brand: brand,
       date: options && options.date,
       now: preflightNow,
+      showerIncluded: !!options && options.showerIncluded === true,
       actualMember: needsStaffMember ? isStaffServiceMember_(email, options && options.date) : false
     });
     if (!plan.ok) return { success: false, error: plan.error };
@@ -335,6 +336,8 @@ var OptionOrderService = (function () {
         brand: booking.brand,
         date: booking.date,
         now: effectiveNow,
+        /* Issue #586: シャワーパックの予約では、シャワー料金はパック固定額に含まれる（同時申込・後付けとも0円。1,000円を別に請求しない）。 */
+        showerIncluded: BookingPricing.isShowerPack(booking.planCode),
         actualMember: BookingOptions.requestsMemberOnlyOption(normalized, effectiveNow) && bookingMemberVerified_(booking) ? isStaffServiceMember_(booking.email, booking.date) : false
       });
       if (!plan.ok) return { success: false, error: plan.error };
@@ -705,7 +708,9 @@ var OptionOrderService = (function () {
         return fail_('APPROVAL_NOT_REQUIRED', 'この注文は承認の対象ではありません。');
       }
       /* 請求額0円（セット無料の付帯機材のみ）の機材注文は、Adminの許可でそのまま確定する（Checkoutなし）。 */
-      var freeOfCharge = approving && isEquipment && Number(order.amountJpy) === 0;
+      /* Issue #586: シャワーパック予約のシャワー（料金に含まれる0円の注文）も、事前確認（承認）のうえ支払いなしで確定する。 */
+      var isIncludedShower = order.category === BookingOptions.CATEGORY.MEMBER_SERVICE && Number(order.amountJpy) === 0;
+      var freeOfCharge = approving && (isEquipment || isIncludedShower) && Number(order.amountJpy) === 0;
       var targetStatus = approving ? (freeOfCharge ? BookingOptions.STATUS.CONFIRMED : BookingOptions.STATUS.AWAITING_PAYMENT) : BookingOptions.STATUS.DECLINED;
       /* 二重承認・二重不承認は何も変えずに現在の結果を返す（冪等）。 */
       if (order.status === targetStatus) {

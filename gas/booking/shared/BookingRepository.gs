@@ -112,7 +112,7 @@ var BookingRepository = (function () {
     if (!planResult.ok) {
       return { success: false, error: planResult.error };
     }
-    var membership = planResult.plan === BookingPricing.PLAN.MEMBER_PAIR_3H
+    var membership = BookingPricing.isMemberPlan(planResult.plan)
       ? { isMember: true, status: 'ACTIVE' }
       : resolveMembershipForPricing_(input, priceGeneration, memberAuth);
     var priceResult = BookingPricing.computeBookingPrice({
@@ -142,6 +142,12 @@ var BookingRepository = (function () {
     if (hasOptionsPayload && BookingPricing.isEventPlan(planResult.plan) && BookingPricing.hasOptionSelection(rawInput.options)) {
       return { success: false, error: BookingPricing.eventPlanOptionsError() };
     }
+    /* Issue #586: シャワーパックはシャワー1回込みの商品。シャワーの申込（連絡事項の確認を含む）が無い予約は作らない
+       （シャワー込みの金額だけ請求して、シャワーの事前確認が始まらない状態を作らない）。 */
+    if (BookingPricing.isShowerPack(planResult.plan) &&
+        !(hasOptionsPayload && rawInput.options && rawInput.options.shower === true)) {
+      return { success: false, error: { code: 'SHOWER_PACK_SHOWER_REQUIRED', message: BookingPricing.SHOWER_PACK_LABEL + 'には、シャワー利用の事前確認のお申し込みが必要です。' } };
+    }
     if (isAdminWindow && hasOptionsPayload) {
       /* 管理者の新規予約はお部屋の予約のみ（オプションの申込・本人確認・rate limitは公開経路の仕組み）。 */
       return { success: false, error: { code: 'OPTIONS_NOT_SUPPORTED', message: '管理者の新規予約ではオプションを同時に申し込めません。' } };
@@ -153,6 +159,7 @@ var BookingRepository = (function () {
         /* Issue #548: V2のSNB / mensは、会員限定オプション（シャワー等）にもメールOTPの確認済み証明が必須。 */
         memberVerificationRequired: memberAuth.required,
         memberVerified: memberAuth.verified,
+        showerIncluded: BookingPricing.isShowerPack(planResult.plan),
         allowEligibilityLookup: function (email) {
           return RateLimiter.limitByKey('opt_elig_' + String(email).trim().toLowerCase(), 10, 5, now.getTime());
         }
@@ -392,7 +399,7 @@ var BookingRepository = (function () {
     if (plan === null) {
       return { ok: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
     }
-    if (automatic && !BookingPricing.isEventPlan(plan)) {
+    if (automatic && !BookingPricing.isEventPlan(plan) && !BookingPricing.isShowerPack(plan)) {
       if ((input.brand !== 'snb' && input.brand !== 'mens') ||
           !BookingPricing.isPairPackAvailableOnDate(input.date) ||
           !BookingPricing.isPairPackPeople(input.people) || Number(input.durationMinutes) < 180 ||
@@ -403,6 +410,7 @@ var BookingRepository = (function () {
     }
     if (!plan) return { ok: true, plan: '' };
     if (BookingPricing.isEventPlan(plan)) return resolveEventPlanForNewBooking_(input, plan);
+    if (BookingPricing.isShowerPack(plan)) return resolveShowerPackForNewBooking_(input, now, memberAuth);
     /* Issue #539: 提供可否は予約作成日（料金世代）ではなく利用日（2026/12/1以降）で判定する。 */
     if ((input.brand !== 'snb' && input.brand !== 'mens') || !BookingPricing.isPairPackAvailableOnDate(input.date)) {
       return { ok: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
@@ -424,6 +432,31 @@ var BookingRepository = (function () {
       return { ok: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE } };
     }
     return { ok: true, plan: plan };
+  }
+
+  /*
+   * SNB mens限定シャワーパック（Issue #586）の申込検証。必ず利用者が明示的に選んだときだけ成立する（自動適用しない）。
+   * 確認順: ブランド（mensのみ）・利用日（2026/12/1以降） → 4時間ちょうど → 土日祝（BookingPricingが曜日区分で拒否） →
+   * メールOTPの確認済み証明（V2） → 照会のレート制限 → actual membership。
+   * 部屋料金の優遇（mensの通常MEMBER料金）は実会員資格ではないため、資格は必ず台帳（利用日）で確認する。
+   * 資格関連の失敗は、会員の有無を探れないよう常に同一のコード・メッセージで返す（ペアパックと同じ）。
+   */
+  function resolveShowerPackForNewBooking_(input, now, memberAuth) {
+    if (input.brand !== 'mens' || !BookingPricing.isShowerPackAvailableOnDate(input.date)) {
+      return { ok: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
+    }
+    if (Number(input.durationMinutes) !== BookingPricing.SHOWER_PACK_HOURS * 60) {
+      return { ok: false, error: { code: 'PLAN_DURATION_INVALID', message: BookingPricing.SHOWER_PACK_LABEL + 'は4時間でご利用ください。' } };
+    }
+    if (memberAuth && memberAuth.required && !memberAuth.verified) return { ok: false, error: memberAuth.requiredError };
+    var lookupAllowed = RateLimiter.limitByKey('opt_elig_' + MembershipRules.normalizeEmail(input.email), 10, 5, now.getTime());
+    if (lookupAllowed !== true) {
+      return { ok: false, error: { code: 'RATE_LIMITED', message: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。' } };
+    }
+    if (!MembershipRules.verifyActualMembership(input.email, input.date).ok) {
+      return { ok: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE } };
+    }
+    return { ok: true, plan: BookingPricing.PLAN.MENS_WEEKEND_SHOWER_4H };
   }
 
   /*
@@ -836,7 +869,7 @@ var BookingRepository = (function () {
    * プラン付きでない予約・日付を決められない予約は対象外（従来どおり）。資格が確認できなければ全理由を同一コードで拒否する。
    */
   function pairPackMembershipRejection_(record) {
-    if (!record || record.planCode !== BookingPricing.PLAN.MEMBER_PAIR_3H) return null;
+    if (!record || !BookingPricing.isMemberPlan(record.planCode)) return null;
     var timezone = BookingConfig.getAvailabilityConfig().timezone;
     var dateString = isDateLike_(record.startAt) ? BookingAvailability.formatDateInTimezone(record.startAt, timezone) : '';
     if (MembershipRules.verifyActualMembership(record.email, dateString).ok) return null;

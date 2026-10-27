@@ -726,7 +726,9 @@ var BookingOptions = (function () {
         orders: [{
           category: CATEGORY.MEMBER_SERVICE,
           items: [SHOWER_ITEM_CODE],
-          amountJpy: SHOWER_PRICE_JPY_,
+          /* Issue #586: シャワーパックの予約に紐づくシャワーは料金（パック固定額）に含まれるため0円（二重加算しない）。
+             事前確認・承認・利用条件は通常のシャワーと同じ（PENDING_APPROVALから開始し、承認で支払いなしに確定する）。 */
+          amountJpy: input.showerIncluded === true ? 0 : SHOWER_PRICE_JPY_,
           /* Issue #481: シャワーは事前連絡・管理者確認が必須。スタッフ設営と同じく必ずPENDING_APPROVALから開始し、
              この時点では課金しない（承認後にAWAITING_PAYMENT→Checkout→CONFIRMED）。 */
           approvalStatus: APPROVAL_STATUS.PENDING_APPROVAL,

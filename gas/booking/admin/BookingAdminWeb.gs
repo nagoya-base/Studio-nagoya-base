@@ -239,7 +239,7 @@ function getAdminBookings() {
       paymentRecoveryRequired: paymentSummary.paymentRecoveryRequired
     };
     /* Issue #488 / #492: 貸切ベースプランの予約だけプラン名を付ける（通常予約はキー自体を付けず従来の応答のまま）。 */
-    if (BookingPricing.isEventPlan(record.planCode)) {
+    if (BookingPricing.planLabel(record.planCode)) {
       listItem.planCode = record.planCode;
       listItem.planLabel = BookingPricing.planLabel(record.planCode);
     }
@@ -546,7 +546,7 @@ function getAdminBookingDetail(bookingId) {
     }
   };
   /* Issue #488 / #492: 貸切ベースプランの予約だけプラン名を付ける（通常予約はキー自体を付けず従来の応答のまま）。 */
-  if (BookingPricing.isEventPlan(record.planCode)) {
+  if (BookingPricing.planLabel(record.planCode)) {
     detailResult.booking.planCode = record.planCode;
     detailResult.booking.planLabel = BookingPricing.planLabel(record.planCode);
   }

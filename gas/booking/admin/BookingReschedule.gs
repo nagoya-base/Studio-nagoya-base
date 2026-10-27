@@ -85,7 +85,7 @@ var BookingReschedule = (function () {
    * 判定は予約の保存済みメールで行う。特典を持たない予約には何も照会しない（従来どおり）。
    */
   function memberBenefitRejection_(record, newDateString) {
-    var hasBenefit = record.planCode === BookingPricing.PLAN.MEMBER_PAIR_3H;
+    var hasBenefit = BookingPricing.isMemberPlan(record.planCode);
     if (!hasBenefit && (record.brand === 'snb' || record.brand === 'mens')) {
       try {
         hasBenefit = OptionOrderService.hasActiveShowerOrder(record.bookingId);
@@ -1121,7 +1121,7 @@ var BookingReschedule = (function () {
       if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
       /* Issue #478: 2名ペアパックの現地精算（入金の確定）も、利用日の属する月のactual membershipを再確認する。
          返金のみ（入金0円）は特典の利用ではないため止めない。 */
-      if (paidDelta > 0 && found.record.planCode === BookingPricing.PLAN.MEMBER_PAIR_3H) {
+      if (paidDelta > 0 && BookingPricing.isMemberPlan(found.record.planCode)) {
         var settleTimezone = BookingConfig.getAvailabilityConfig().timezone;
         var settleDate = isDate_(found.record.startAt) ? dateStringOf_(found.record.startAt, settleTimezone) : '';
         if (!MembershipRules.verifyActualMembership(found.record.email, settleDate).ok) {

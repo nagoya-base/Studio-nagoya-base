@@ -47,6 +47,8 @@ var OptionMailTemplates = (function () {
   function orderLines_(order) {
     var lines = (order.items || []).map(function (code) { return '  ・' + BookingOptions.describeItem(code); });
     if (order.amountJpy > 0) lines.push('  料金: ' + formatJpy_(order.amountJpy) + '（税込）');
+    /* Issue #586: シャワーパックのシャワーは0円だが「無料」ではなく、パック料金に含まれる。 */
+    else if (order.category === BookingOptions.CATEGORY.MEMBER_SERVICE) lines.push('  料金: シャワーパックの料金に含まれます（追加のお支払いはありません）');
     else lines.push('  料金: 無料');
     return ['注文ID: ' + order.optionOrderId].concat(lines);
   }
@@ -96,6 +98,9 @@ var OptionMailTemplates = (function () {
     if (hasShower) {
       lines.push('');
       lines.push(BookingOptions.NOTICES.SHOWER_APPROVAL);
+      if (orders.some(function (o) { return o.category === BookingOptions.CATEGORY.MEMBER_SERVICE && Number(o.amountJpy) === 0; })) {
+        lines.push('※シャワーパックの料金にシャワー1回分が含まれているため、承認後も追加のお支払いはありません。ただし事前確認で対応できない場合があります。');
+      }
     }
     if (hasHold) {
       lines.push('');
@@ -123,7 +128,15 @@ var OptionMailTemplates = (function () {
     var isEquipment = order.category === BookingOptions.CATEGORY.EQUIPMENT;
     var isShower = order.category === BookingOptions.CATEGORY.MEMBER_SERVICE;
     var freeSet = isEquipment && Number(order.amountJpy) === 0;
-    var lines = (freeSet ? [
+    /* Issue #586: シャワーパックに含まれるシャワー（0円）。承認で確定し、お支払いは不要。 */
+    var includedShower = isShower && Number(order.amountJpy) === 0;
+    var lines = (includedShower ? [
+      booking.name + ' 様',
+      '',
+      'ご希望のシャワー利用について、対応可能と確認できました。',
+      'シャワーは「SNB mens 土日祝4時間シャワーパック」の料金に含まれているため、追加のお支払いは不要です。下記の内容で確定しました。ご利用はご予約の時間内のみです。',
+      ''
+    ] : freeSet ? [
       booking.name + ' 様',
       '',
       '有料レンタル機材のセルフレンタルについて、利用許可を確認しました。',
@@ -147,7 +160,7 @@ var OptionMailTemplates = (function () {
       'お申し込みのスタッフ対応について、対応可能と確認できました。',
       '下記のページからオンライン決済をお願いします。お支払いの完了をもって確定となります。',
       ''
-    ]).concat(bookingLines_(booking, config)).concat(orderLines_(order)).concat(freeSet ? [] : [
+    ]).concat(bookingLines_(booking, config)).concat(orderLines_(order)).concat(freeSet || includedShower ? [] : [
       '',
       'お支払いはこちら（予約IDとご登録のメールアドレスで確認します）:',
       buildOptionsPageUrl(booking)
@@ -156,7 +169,7 @@ var OptionMailTemplates = (function () {
       contactLine_(config),
       signature_(booking)
     ]);
-    return { subject: '【' + brandLabel + '】' + (freeSet ? '有料レンタル機材の利用を許可しました（セット無料・確定）' : isEquipment ? '有料レンタル機材の利用を許可しました（お支払いのお願い）' : isShower ? 'シャワー利用を承認しました（お支払いのお願い）' : 'スタッフ対応を承認しました（お支払いのお願い）'), body: joinNonEmpty_(lines) };
+    return { subject: '【' + brandLabel + '】' + (includedShower ? 'シャワー利用を承認しました（パック料金に含まれます・確定）' : freeSet ? '有料レンタル機材の利用を許可しました（セット無料・確定）' : isEquipment ? '有料レンタル機材の利用を許可しました（お支払いのお願い）' : isShower ? 'シャワー利用を承認しました（お支払いのお願い）' : 'スタッフ対応を承認しました（お支払いのお願い）'), body: joinNonEmpty_(lines) };
   }
 
   /* 不承認メール。部屋のご予約には影響しないことを明記する。 */

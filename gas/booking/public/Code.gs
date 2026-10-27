@@ -369,7 +369,8 @@ function handleBookingMemberStatus_(payload) {
       return { success: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
     }
     /* Automatic pack selection uses the same date, people, duration and actual membership conditions as creation. */
-    if (payload.autoPairPack === true && brand !== 'studio_x') {
+    /* Issue #586: 利用者が明示的に選んだシャワーパックは、ペアパックの自動適用で上書きしない。 */
+    if (payload.autoPairPack === true && brand !== 'studio_x' && !BookingPricing.isShowerPack(plan)) {
       plan = status.memberOnDate === true && BookingPricing.isPairPackAvailableOnDate(date) &&
         BookingPricing.isPairPackPeople(payload.people) && durationMinutes >= 180
         ? BookingPricing.PLAN.MEMBER_PAIR_3H : '';
