@@ -481,14 +481,19 @@ test('フロント: パックのエラーコードは利用者向け文言に変
   });
 });
 
-test('公開コピー: 新パックの説明（予約フォーム・会員特典・mens料金案内）に「1〜2名限定」を明示し、予約フォーム・会員特典にはシャワー2名までも明示する', function () {
+test('公開コピー: 新パックの説明（予約フォーム・会員特典・mens料金案内）に「1〜2名」を明示し、会員特典にはシャワー2名までも明示する', function () {
   var fs = require('node:fs');
   var path = require('node:path');
   function read(p) { return fs.readFileSync(path.join(__dirname, '..', p), 'utf8'); }
   var form = read('_includes/booking_app_ja.html');
   var packLabel = form.slice(form.indexOf('id="ba-plan-shower-pack"'));
   packLabel = packLabel.slice(0, packLabel.indexOf('</label>'));
-  assert.ok(packLabel.indexOf('1〜2名限定') !== -1 && packLabel.indexOf('同一予約で2名まで') !== -1, '予約フォーム');
+  /* Issue #588: 予約フォームの説明は短く（スマホで一目で条件が分かる長さ）。詳しい説明は会員特典ページに残す。 */
+  assert.ok(packLabel.indexOf('12/1〜｜4時間｜1〜2名｜シャワー1回込み｜SNB MEMBER限定') !== -1, '予約フォームの1行要約');
+  assert.ok(packLabel.indexOf('2026年12月1日以降の利用日から') !== -1, '開始日の明示');
+  assert.ok(packLabel.indexOf('シャワーは事前確認・承認制です') !== -1);
+  assert.ok(packLabel.slice(packLabel.indexOf('<span>')).replace(/<[^>]+>/g, '').length < 100, '予約フォームの説明は短い');
+  assert.ok(packLabel.indexOf('9,000円') === -1, '通常料金との比較は予約フォームに書かない');
   var benefits = read('_includes/membership_benefits_ja.html');
   var card = benefits.slice(benefits.indexOf('id="shower-pack"'), benefits.indexOf('id="shower"'));
   assert.ok(card.indexOf('1〜2名') !== -1 && card.indexOf('同一予約で2名まで') !== -1, '会員特典');

@@ -45,6 +45,7 @@
       startTimeSummary: function (date, hours) { return date + '　' + hours + '時間利用'; },
       startTimeReselect: function (time) { return '※' + time + '開始は、変更後の利用時間では空きがありません。開始時刻を選び直してください。'; },
       searchingStartTimes: '予約できる時間を検索しています…',
+      showerPackFourHoursUnavailable: function (time) { return time ? '※' + time + '開始では4時間を確保できないため、利用時間は変更していません。開始時刻を選び直すか、パックの選択を外してください。' : '※この日は4時間を確保できる開始時刻がないため、利用時間は変更していません。'; },
       retryCheck: 'もう一度確認する',
       confirmTime: function (startTime, endTime, hours) { return startTime + '〜' + endTime + '（' + hours + '時間）'; },
       phoneUnset: '（未入力）',
@@ -72,6 +73,7 @@
       startTimeSummary: function (date, hours) { return date + ' · ' + hours + (hours === 1 ? ' hour' : ' hours'); },
       startTimeReselect: function (time) { return '* ' + time + ' is not available for the new duration. Please choose a start time again.'; },
       searchingStartTimes: 'Searching available start times…',
+      showerPackFourHoursUnavailable: function (time) { return time ? '* A 4-hour slot is not available from ' + time + ', so the duration was not changed.' : '* No 4-hour slot is available on this day, so the duration was not changed.'; },
       retryCheck: 'Check again',
       confirmTime: function (startTime, endTime, hours) { return startTime + '–' + endTime + ' (' + hours + (hours === 1 ? ' hour)' : ' hours)'); },
       phoneUnset: '(not provided)',
@@ -506,6 +508,14 @@
   function showerPackPeopleOk_() {
     return Logic.showerPackPeopleAllowed(els.people ? els.people.value : '');
   }
+  /* Issue #588: 時間以外のパック条件（mens・12/1以降・会員確認済み・1〜2名）を満たしていれば、利用時間が4時間でなくても
+     チェックできる（チェック時に4時間へ自動変更する）。土日祝・4時間の空き・資格の最終判定はサーバー。 */
+  var showerPackAutoSetPending_ = false;
+  var showerPackAutoSetSeq_ = 0;
+  var showerPackMessage_ = '';
+  function showerPackSelectable_() {
+    return showerPackVisible_() && memberFeaturesEnabled_() && showerPackPeopleOk_();
+  }
   function showerPackSelected_() {
     return !!els.planShowerPack && els.planShowerPack.checked && showerPackVisible_() && memberFeaturesEnabled_() && showerPackDurationOk_() && showerPackPeopleOk_();
   }
@@ -523,15 +533,18 @@
     var packDurationOk = showerPackDurationOk_();
     var packPeopleOk = showerPackPeopleOk_();
     if (els.planShowerPack) {
-      if (!packVisible || !unlocked || !packDurationOk || !packPeopleOk) els.planShowerPack.checked = false;
-      els.planShowerPack.disabled = !packVisible || !unlocked || !packDurationOk || !packPeopleOk;
+      var packSelectable = packVisible && unlocked && packPeopleOk;
+      if (!packSelectable || (!packDurationOk && !showerPackAutoSetPending_)) els.planShowerPack.checked = false;
+      els.planShowerPack.disabled = !packSelectable || showerPackAutoSetPending_;
       if (els.planShowerPackNote) {
         var packNote = '';
-        if (!packVisible) packNote = els.date && els.date.value ? 'シャワーパックは2026年12月1日以降のご利用日から選択できます。' : 'ご利用日を選ぶとシャワーパックの選択可否をご案内します（2026年12月1日以降のご利用日が対象）。';
-        else if (!unlocked) packNote = 'シャワーパックはSNB MEMBERの会員確認が済むと選択できます（上の会員確認をご利用ください）。';
-        else if (!packDurationOk) packNote = 'シャワーパックは利用時間が4時間のときだけ選択できます（3時間・5時間などでは適用されません）。';
-        else if (!packPeopleOk) packNote = 'シャワーパックは1〜2名のご利用のときだけ選択できます（3名以上では適用されません）。';
-        else if (els.planShowerPack.checked) packNote = '土日祝4時間シャワーパック（6,500円・1〜2名・シャワー1回込み）が適用されます。平日はご利用いただけません。シャワーは事前確認制で、下の日程調整の確認が必要です。';
+        if (!packVisible) packNote = els.date && els.date.value ? '※シャワーパックは2026年12月1日以降の利用日から選択できます。' : '※利用日を選ぶとシャワーパックの選択可否をご案内します（2026年12月1日以降の利用日が対象）。';
+        else if (!unlocked) packNote = '※SNB MEMBERの会員確認が済むと選択できます（上の会員確認をご利用ください）。';
+        else if (!packPeopleOk) packNote = '※1〜2名のご利用のときだけ選択できます（3名以上は対象外）。';
+        else if (showerPackAutoSetPending_) packNote = '※4時間の空き状況を確認しています…';
+        else if (showerPackMessage_ && !els.planShowerPack.checked) packNote = showerPackMessage_;
+        else if (els.planShowerPack.checked) packNote = '※適用中（土日祝のみ）。下の日程調整の確認が必要です。';
+        else if (!packDurationOk) packNote = '※チェックすると利用時間を4時間に変更します。';
         els.planShowerPackNote.textContent = packNote;
         els.planShowerPackNote.hidden = !packNote;
       }
@@ -1565,7 +1578,71 @@
     if (els.confirmShower) els.confirmShower.textContent = info ? info.value + '（' + info.confirmNote + '）' : '';
   }
 
-  [els.people, els.shower, els.planShowerPack].forEach(function (control) {
+  /* Issue #588: パックをチェックしたとき、利用時間が4時間以外なら4時間へ自動変更して即時に再見積りする。
+     先に「土日祝などパック料金が成立すること」「今の開始時刻から4時間を確保できること」をサーバーで確認し、
+     成立しない場合は利用時間を変えずにチェックを外して理由を示す（成立の正本はサーバー。ここは操作の簡略化のみ）。 */
+  function showerPackAutoSetFail_(message) {
+    showerPackAutoSetPending_ = false;
+    if (els.planShowerPack) els.planShowerPack.checked = false;
+    showerPackMessage_ = message;
+    refreshPriceEstimate_();
+  }
+  function applyShowerPackDuration_() {
+    showerPackAutoSetPending_ = false;
+    if (els.duration) els.duration.value = String(Logic.SHOWER_PACK_DURATION_MINUTES / 60);
+    syncDurationOther_();
+    /* 利用時間の手動変更と同じ経路: 開始時刻を保持して空きを取り直し、見積り（6,500円）を再実行する。 */
+    handleCalendarPrereqChange_();
+  }
+  function startShowerPackAutoSet_() {
+    var dateValue = els.date ? els.date.value : '';
+    var minutes = Logic.SHOWER_PACK_DURATION_MINUTES;
+    var heldStart = state.date === dateValue && state.startTime ? state.startTime : '';
+    var seq = ++showerPackAutoSetSeq_;
+    if (!API_BASE_URL) { showerPackAutoSetFail_(Logic.apiNotConfiguredMessage(locale)); return; }
+    showerPackAutoSetPending_ = true;
+    syncBenefitsVisibility_();
+    var availabilityUrl = API_BASE_URL + (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') +
+      'date=' + encodeURIComponent(dateValue) + '&durationMinutes=' + encodeURIComponent(String(minutes)) + '&brand=' + encodeURIComponent(brand);
+    Promise.all([
+      fetch(priceEstimateUrl_(dateValue, minutes, false, Logic.SHOWER_PACK_PLAN_CODE), { method: 'GET' }).then(function (response) { return response.json(); }),
+      fetch(availabilityUrl, { method: 'GET' }).then(function (response) { return response.json(); })
+    ]).then(function (results) {
+      if (seq !== showerPackAutoSetSeq_) return;
+      var estimate = results[0];
+      var availability = results[1];
+      if (!estimate || estimate.success !== true) {
+        showerPackAutoSetFail_(Logic.messageForErrorCode(estimate && estimate.error && estimate.error.code, locale, brand));
+        return;
+      }
+      if (!availability || availability.success !== true) {
+        showerPackAutoSetFail_(Logic.messageForErrorCode(availability && availability.error && availability.error.code, locale, brand));
+        return;
+      }
+      var times = Logic.filterStartTimesByTimeBand(availability.bookableStartTimes || [], state.timeBand);
+      if (heldStart ? times.indexOf(heldStart) === -1 : !times.length) {
+        showerPackAutoSetFail_(UI_TEXT.showerPackFourHoursUnavailable(heldStart));
+        return;
+      }
+      applyShowerPackDuration_();
+    }).catch(function () {
+      if (seq !== showerPackAutoSetSeq_) return;
+      showerPackAutoSetFail_(Logic.networkErrorMessage(locale));
+    });
+  }
+  function handleShowerPackToggle_() {
+    showerPackAutoSetSeq_++;
+    showerPackAutoSetPending_ = false;
+    showerPackMessage_ = '';
+    if (els.planShowerPack.checked && !showerPackDurationOk_() && showerPackSelectable_()) {
+      startShowerPackAutoSet_();
+      return;
+    }
+    refreshPriceEstimate_();
+  }
+  if (els.planShowerPack) els.planShowerPack.addEventListener('change', handleShowerPackToggle_);
+
+  [els.people, els.shower].forEach(function (control) {
     if (control) control.addEventListener('change', function () {
       if (control === els.people && els.people.value) setFieldError_(els.people, els.peopleError, '');
       refreshPriceEstimate_();
