@@ -417,7 +417,7 @@ test('V2: ペアパック・会員限定シャワーは確認済み証明が無�
   var pair = book(ctx, { brand: 'mens', plan: 'member_pair_3h' });
   assert.strictEqual(pair.success, false);
   assert.strictEqual(pair.error.code, 'MEMBER_VERIFICATION_REQUIRED');
-  var shower = book(ctx, { options: { shower: true } });
+  var shower = book(ctx, { options: { shower: true, showerScheduleConfirmed: true } });
   assert.strictEqual(shower.success, false);
   assert.strictEqual(shower.error.code, 'MEMBER_VERIFICATION_REQUIRED');
   assert.strictEqual(bookingRows(ctx), 0);
@@ -427,7 +427,7 @@ test('V2: ペアパック・会員限定シャワーは確認済み証明が無�
   var ok = book(ctx, { brand: 'mens', plan: 'member_pair_3h', memberProof: proof });
   assert.strictEqual(ok.success, true, JSON.stringify(ok));
   assert.strictEqual(ok.price.amount, 5000);
-  var withShower = book(ctx, { options: { shower: true }, memberProof: proof, startTime: '15:00' });
+  var withShower = book(ctx, { options: { shower: true, showerScheduleConfirmed: true }, memberProof: proof, startTime: '15:00' });
   assert.strictEqual(withShower.success, true, JSON.stringify(withShower));
   assert.strictEqual(withShower.options.orders[0].category, 'MEMBER_SERVICE');
 });
@@ -453,13 +453,13 @@ test('V2: Studio Xは対象外（証明を求めず、証明が付いていて�
 test('V2: 後付けのシャワー申込は、予約作成時にメールOTP確認済みで会員資格があった予約だけ（未確認のV2予約には付けられない）', function () {
   var ctx = setup({ members: { [MEMBER]: ['2026-12'] } });
   var unverified = book(ctx, { startTime: '10:00' });
-  var denied = plain(ctx.sandbox.OptionOrderService.submitAddonOptions(unverified.bookingId, MEMBER, { shower: true }, V2_NOW));
+  var denied = plain(ctx.sandbox.OptionOrderService.submitAddonOptions(unverified.bookingId, MEMBER, { shower: true, showerScheduleConfirmed: true }, V2_NOW));
   assert.strictEqual(denied.success, false);
   assert.strictEqual(denied.error.code, 'MEMBER_BENEFIT_NOT_AVAILABLE');
 
   var proof = issue(ctx, MEMBER);
   var verified = book(ctx, { memberProof: proof, startTime: '15:00' });
-  var ok = plain(ctx.sandbox.OptionOrderService.submitAddonOptions(verified.bookingId, MEMBER, { shower: true }, V2_NOW));
+  var ok = plain(ctx.sandbox.OptionOrderService.submitAddonOptions(verified.bookingId, MEMBER, { shower: true, showerScheduleConfirmed: true }, V2_NOW));
   assert.strictEqual(ok.success, true, JSON.stringify(ok));
 });
 
@@ -621,4 +621,66 @@ test('会員料金の見積り（POST）は、正常な日付・利用時間で�
     var tooShort = post(ctx, 'bookingMemberStatus', { brand: brand, email: MEMBER, proof: proof, date: NEAR_DATE, durationMinutes: 5 });
     assert.strictEqual('price' in tooShort, false, '不正な利用時間では料金を返さない');
   });
+});
+
+// Automatic pack: no client prices or membership assertions are trusted.
+for (var brand of ['snb', 'mens']) {
+  for (var hours of [3, 4, 6]) {
+    test('automatic pair pack: ' + brand + ' / ' + hours + ' hours persists the plan and extension', function (brand, hours) { return function () {
+      var ctx = setup({ members: { [MEMBER]: ['2026-12'] } });
+      var proof = issue(ctx, MEMBER);
+      var result = book(ctx, { brand: brand, durationMinutes: hours * 60, memberProof: proof, autoPairPack: true });
+      assert.strictEqual(result.success, true, JSON.stringify(result));
+      assert.strictEqual(result.price.plan, 'member_pair_3h');
+      assert.strictEqual(result.price.amount, 5000 + (hours - 3) * 1500);
+      assert.strictEqual(record(ctx, result.bookingId).planCode, 'member_pair_3h');
+    }; }(brand, hours));
+  }
+}
+for (var scenario of [
+  { name: 'two hours', extra: { durationMinutes: 120 } },
+  { name: 'three guests', extra: { people: '3名' } },
+  { name: 'not a member', members: {} },
+  { name: 'no verified proof', proof: false }
+]) {
+  test('automatic pair pack: normal booking remains possible for ' + scenario.name, function (scenario) { return function () {
+    var ctx = setup({ members: scenario.members || { [MEMBER]: ['2026-12'] } });
+    var proof = scenario.proof === false ? '' : issue(ctx, MEMBER);
+    var result = book(ctx, Object.assign({ memberProof: proof, autoPairPack: true }, scenario.extra || {}));
+    assert.strictEqual(result.success, true, JSON.stringify(result));
+    assert.ok(!result.price.plan);
+  }; }(scenario));
+}
+test('automatic quote: authenticated estimate agrees with booking and excludes ineligible people and periods', function () {
+  var ctx = setup({ members: { [MEMBER]: ['2026-12'] } });
+  pinGeneration(ctx, V2_NOW);
+  assert.strictEqual(post(ctx, 'requestBookingMemberCode', { email: MEMBER }).success, true);
+  var code = /確認コード：(\d{6})/.exec(ctx.mailApp._sentEmails[0].body)[1];
+  var verified = post(ctx, 'verifyBookingMemberCode', { email: MEMBER, code: code });
+  var input = { brand: 'snb', email: MEMBER, proof: verified.proof, date: NEAR_DATE, durationMinutes: 240, people: '2名', autoPairPack: true };
+  var quote = post(ctx, 'bookingMemberStatus', input);
+  assert.strictEqual(quote.success, true, JSON.stringify(quote));
+  assert.strictEqual(quote.price.amount, 6500);
+  assert.strictEqual(quote.price.plan, 'member_pair_3h');
+  var three = post(ctx, 'bookingMemberStatus', Object.assign({}, input, { people: '3名' }));
+  assert.ok(!three.price.plan);
+  var outside = post(ctx, 'bookingMemberStatus', Object.assign({}, input, { date: '2027-02-02' }));
+  assert.ok(!outside.price.plan);
+  assert.strictEqual(outside.price.tier, 'GENERAL');
+});
+test('shower schedule: true boolean confirmation is required before a room or addon is written', function () {
+  var ctx = setup({ members: { [MEMBER]: ['2026-12'] } });
+  var proof = issue(ctx, MEMBER);
+  for (var value of [undefined, false, 'true', 1]) {
+    var result = book(ctx, { memberProof: proof, options: { shower: true, showerScheduleConfirmed: value } });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error.code, 'SHOWER_SCHEDULE_CONFIRMATION_REQUIRED');
+    assert.strictEqual(bookingRows(ctx), 0);
+  }
+  var room = book(ctx, { memberProof: proof });
+  var rejected = ctx.sandbox.OptionOrderService.submitAddonOptions(room.bookingId, MEMBER, { shower: true }, V2_NOW);
+  assert.strictEqual(rejected.error.code, 'SHOWER_SCHEDULE_CONFIRMATION_REQUIRED');
+  var accepted = ctx.sandbox.OptionOrderService.submitAddonOptions(room.bookingId, MEMBER, { shower: true, showerScheduleConfirmed: true }, V2_NOW);
+  assert.strictEqual(accepted.success, true, JSON.stringify(accepted));
+  assert.strictEqual(accepted.orders[0].status, 'PENDING_APPROVAL');
 });

@@ -145,7 +145,7 @@ function setup(opts) {
   elements['ba-duration'] = durationEl;
   /* 会員限定の特典はSNB / mensのテンプレートだけにある。各checkboxは親（label）要素を持つ。 */
   if (brand === 'snb' || brand === 'mens') {
-    ['ba-plan-pair', 'ba-shower'].forEach(function (id) {
+    ['ba-plan-pair', 'ba-shower', 'ba-shower-schedule'].forEach(function (id) {
       var control = createElement(id);
       control.parentNode = { hidden: true };
       elements[id] = control;
@@ -230,6 +230,7 @@ function setup(opts) {
       return (elements['ba-start-time-grid'].children || []).filter(function (b) { return b.textContent === time; })[0] || null;
     },
     setUnlock: function (checked) { elements['ba-member-unlock'].checked = checked; elements['ba-member-unlock']._listeners.change(); },
+    setPeople: function (people) { elements['ba-people'].value = people; elements['ba-people']._listeners.change(); },
     setBenefit: function (id, checked) { elements[id].checked = checked; elements[id]._listeners.change(); },
     gridBody: function () { return elements['ba-calendar-grid-body']; },
     /* 日付を含む月までカレンダーを送る（初期表示月は2026-11）。 */
@@ -329,7 +330,7 @@ test('会員→一般: ペアパック・シャワーが自動解除され、見
   var ctx = await ready({ brand: 'snb', generation: 'V1' });
   ctx.setMember('member');
   await ctx.pick(20);
-  ctx.setBenefit('ba-plan-pair', true);
+  ctx.setPeople('2名');
   ctx.setBenefit('ba-shower', true);
   await flushPromises();
   assert.ok(/plan=member_pair_3h/.test(lastEstimateUrl(ctx)), 'ペアパック選択中はplanを見積りへ渡す');
@@ -397,7 +398,7 @@ test('会員→一般: 31〜90日先を選択済みなら、利用日・開始�
     await ctx.pick(20);
     assert.strictEqual(ctx.elements['ba-plan-pair'].disabled, false);
     assert.strictEqual(ctx.elements['ba-shower'].disabled, false);
-    ctx.setBenefit('ba-plan-pair', true);
+    ctx.setPeople('2名');
     await flushPromises();
     assert.ok(/isMember=0/.test(lastEstimateUrl(ctx)), 'UI解除は見積りへisMember=1を送らない: ' + lastEstimateUrl(ctx));
     assert.ok(!/unlock/i.test(lastEstimateUrl(ctx)), 'UI解除そのものはAPIへ渡さない');
@@ -420,7 +421,7 @@ test('会員→一般: 31〜90日先を選択済みなら、利用日・開始�
 
     ctx.setUnlock(true);
     await ctx.pick(20);
-    ctx.setBenefit('ba-plan-pair', true);
+    ctx.setPeople('2名');
     ctx.setBenefit('ba-shower', true);
     ctx.setUnlock(false);
     await flushPromises();
@@ -883,7 +884,7 @@ test('配線: 確認済み証明はcreateBookingの送信にだけ付け、フ�
   [[3, 2], [4, 2]].forEach(function (t) {
     test(label + ': ペアパック選択中に' + t[0] + 'h→' + t[1] + 'hで自動解除し、通常料金の見積りへ戻る（適用プラン・旧金額を残さない）', async function () {
       var ctx = await memberReady(t[0]);
-      ctx.setBenefit('ba-plan-pair', true);
+      ctx.setPeople('2名');
       ctx.setBenefit('ba-shower', true);
       await flushPromises();
       assert.ok(/plan=member_pair_3h/.test(lastEstimateUrl(ctx)));
@@ -994,4 +995,40 @@ test('Issue #567: レイアウトシフト抑制のCSS（ステータス・エ�
   assert.ok(/#ba-member-verify-status,\s*#ba-member-verify-error\s*\{\s*min-height:/.test(css));
   assert.ok(/\.ba-price-box \{ min-height:/.test(css));
   assert.ok(/#ba-calendar-body \{ min-height:/.test(css));
+});
+
+test('automatic pair pack: people changes apply and remove the plan without a pack checkbox', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1' });
+  ctx.setMember('member');
+  await ctx.pick(20);
+  ctx.setPeople('2名');
+  await flushPromises();
+  assert.ok(/plan=member_pair_3h/.test(lastEstimateUrl(ctx)));
+  ctx.setPeople('3名');
+  await flushPromises();
+  assert.ok(!/plan=/.test(lastEstimateUrl(ctx)));
+  ctx.setPeople('1名');
+  await flushPromises();
+  assert.ok(/plan=member_pair_3h/.test(lastEstimateUrl(ctx)));
+  ctx.setDuration(2);
+  await flushPromises();
+  assert.ok(!/plan=/.test(lastEstimateUrl(ctx)));
+});
+
+test('shower: schedule confirmation is required and cleared when shower is deselected', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1' });
+  ctx.setMember('member');
+  await ctx.pick(20);
+  ctx.setBenefit('ba-shower', true);
+  await flushPromises();
+  var check = ctx.elements['ba-shower-schedule'];
+  assert.strictEqual(check.parentNode.hidden, false);
+  ctx.elements['ba-step-details-next']._listeners.click();
+  assert.strictEqual(ctx.elements['ba-benefits-error'].hidden, false);
+  assert.match(ctx.elements['ba-benefits-error'].textContent, /1週間前までにスタッフとの日程調整/);
+  check.checked = true;
+  ctx.setBenefit('ba-shower', false);
+  await flushPromises();
+  assert.strictEqual(check.checked, false);
+  assert.strictEqual(check.parentNode.hidden, true);
 });

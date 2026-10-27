@@ -106,9 +106,9 @@ var BookingRepository = (function () {
      * Issue #478: 会員限定2名ペアパック（独立プラン）。プラン指定がある場合のみ、ブランド・人数・料金世代と
      * actual membership（利用日の属する月の支払い事実。priceIsMember・mens経路では代用しない）を
      * サーバー側で必ず確認する。確認できなければ（非会員・利用月不一致・台帳エラーすべて）同一の
-     * 外部向けエラーで拒否し、通常料金へ黙って倒さない。プラン指定が無い従来の予約は一切変わらない。
+     * 外部向けエラーで拒否し、通常料金へ黙って倒さない。自動適用を求める予約は、対象外なら通常料金で受け付ける。明示プランを使う従来クライアントの拒否条件は維持する。
      */
-    var planResult = resolvePlanForNewBooking_(input, priceGeneration, now, memberAuth);
+    var planResult = resolvePlanForNewBooking_(input, priceGeneration, now, memberAuth, rawInput.autoPairPack === true);
     if (!planResult.ok) {
       return { success: false, error: planResult.error };
     }
@@ -387,10 +387,19 @@ var BookingRepository = (function () {
    * 確認順: プラン値 → ブランド/料金世代 → 人数（3名以上はサーバー側で拒否） → 照会のレート制限 → actual membership。
    * 会員の有無を任意のメールで探れないよう、資格関連の失敗は常に同一のコード・メッセージで返す。
    */
-  function resolvePlanForNewBooking_(input, generation, now, memberAuth) {
+  function resolvePlanForNewBooking_(input, generation, now, memberAuth, automatic) {
     var plan = BookingPricing.normalizePlan(input.plan);
     if (plan === null) {
       return { ok: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
+    }
+    if (automatic && !BookingPricing.isEventPlan(plan)) {
+      if ((input.brand !== 'snb' && input.brand !== 'mens') ||
+          !BookingPricing.isPairPackAvailableOnDate(input.date) ||
+          !BookingPricing.isPairPackPeople(input.people) || Number(input.durationMinutes) < 180 ||
+          (memberAuth && memberAuth.required && !memberAuth.verified)) {
+        return { ok: true, plan: '' };
+      }
+      plan = BookingPricing.PLAN.MEMBER_PAIR_3H;
     }
     if (!plan) return { ok: true, plan: '' };
     if (BookingPricing.isEventPlan(plan)) return resolveEventPlanForNewBooking_(input, plan);
@@ -411,6 +420,7 @@ var BookingRepository = (function () {
       return { ok: false, error: { code: 'RATE_LIMITED', message: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。' } };
     }
     if (!MembershipRules.verifyActualMembership(input.email, input.date).ok) {
+      if (automatic) return { ok: true, plan: '' };
       return { ok: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE } };
     }
     return { ok: true, plan: plan };

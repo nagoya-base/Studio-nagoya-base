@@ -98,6 +98,7 @@
   /* error.code → 利用者向け文言。サーバーのerror.messageは表示しない（文言の責任はフロント）。 */
   var GENERIC_ERROR_TEXT = 'オプションのお申し込みを処理できませんでした。時間を置いて再度お試しください。';
   var ERROR_COPY = {
+    SHOWER_SCHEDULE_CONFIRMATION_REQUIRED: 'ご利用日の1週間前までにスタッフとの日程調整を済ませたことを確認してください。',
     INVALID_OPTIONS: 'オプションの指定内容を確認してください。',
     UNKNOWN_OPTION: '選択できないオプションが含まれています。選び直してください。',
     STOCK_EXCEEDED: '在庫数を超える数量は選択できません。数量を見直してください。',

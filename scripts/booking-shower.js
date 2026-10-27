@@ -25,7 +25,7 @@
     lookupError: $('bs-lookup-error'), lookupSubmit: $('bs-lookup-submit'),
     detail: $('bs-detail'), dBookingId: $('bs-d-booking-id'), dDate: $('bs-d-date'), dTime: $('bs-d-time'), dStatus: $('bs-d-status'),
     orders: $('bs-orders'), payNotice: $('bs-pay-notice'), payError: $('bs-pay-error'),
-    add: $('bs-add'), submit: $('bs-submit'), submitError: $('bs-submit-error'), submitMessage: $('bs-submit-message'),
+    add: $('bs-add'), schedule: $('bs-shower-schedule'), submit: $('bs-submit'), submitError: $('bs-submit-error'), submitMessage: $('bs-submit-message'),
     addClosed: $('bs-add-closed')
   };
 
@@ -46,6 +46,7 @@
   };
   /* error.code → 利用者向け文言（サーバーのerror.messageは表示しない）。資格関連は常に同一文言。 */
   var ERROR_COPY = {
+    SHOWER_SCHEDULE_CONFIRMATION_REQUIRED: 'ご利用日の1週間前までにスタッフとの日程調整を済ませたことを確認してください。',
     MEMBER_BENEFIT_NOT_AVAILABLE: 'この特典は、ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できた場合のみご利用いただけます。ご予約のメールアドレスは会員登録と同じものをご入力ください。次回更新前の未払いの期間は、更新の決済が成功してから確定できます。',
     OPTIONS_NOT_AVAILABLE: 'この予約ではシャワーをお申し込みいただけません（会員限定シャワーは、ご利用日が2026年12月1日以降の予約でお申し込みいただけます）。',
     APPROVAL_REQUIRED: 'シャワー利用は事前確認が必要です。運営の承認後にお支払いいただけます。承認をお待ちください。',
@@ -197,6 +198,7 @@
       return;
     }
     session = { bookingId: bookingId, email: email };
+    els.schedule.checked = false;
     setBusy(true);
     lookup(false).then(function () { setBusy(false); });
   });
@@ -205,8 +207,13 @@
     if (busy) return;
     show(els.submitError, '');
     show(els.submitMessage, '');
+    if (!els.schedule.checked) {
+      show(els.submitError, 'ご利用日の1週間前までにスタッフとの日程調整を済ませたことを確認してください。');
+      els.schedule.focus();
+      return;
+    }
     setBusy(true);
-    post('submitOptions', { bookingId: session.bookingId, email: session.email, options: { shower: true } })
+    post('submitOptions', { bookingId: session.bookingId, email: session.email, options: { shower: true, showerScheduleConfirmed: true } })
       .then(function (body) {
         if (!body || body.success !== true) {
           show(els.submitError, describeError(body && body.error));

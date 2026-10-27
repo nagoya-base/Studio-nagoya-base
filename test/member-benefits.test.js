@@ -484,7 +484,7 @@ function addon(ctx, bookingId, selection, now, email) {
 test('シャワー: mensで priceIsMember 相当（価格優遇）でも actual membership が無ければ拒否', function () {
   var ctx = setup({ members: {} });
   var id = seedRoom(ctx, { brand: 'mens' });
-  var r = addon(ctx, id, { shower: true });
+  var r = addon(ctx, id, { shower: true, showerScheduleConfirmed: true });
   assert.strictEqual(r.success, false);
   assert.strictEqual(r.error.code, DENIED_CODE);
   assert.strictEqual(ctx.sandbox.OptionOrderRepository.listByBookingId(id).length, 0);
@@ -494,7 +494,7 @@ test('シャワー: actual membershipありなら1,000円のOptionOrder（MEMBER
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   ['snb', 'mens'].forEach(function (brand, i) {
     var id = seedRoom(ctx, { brand: brand, bookingId: 'X-2026120' + (i + 1) + '-BBBB000' + i });
-    var r = addon(ctx, id, { shower: true });
+    var r = addon(ctx, id, { shower: true, showerScheduleConfirmed: true });
     assert.strictEqual(r.success, true, JSON.stringify(r.error));
     assert.strictEqual(r.orders.length, 1);
     var order = r.orders[0];
@@ -512,8 +512,8 @@ test('シャワー: actual membershipありなら1,000円のOptionOrder（MEMBER
 test('シャワーは1予約につき1回（重複申込は拒否。取消済みは数えない）', function () {
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   var id = seedRoom(ctx, {});
-  assert.strictEqual(addon(ctx, id, { shower: true }).success, true);
-  var dup = addon(ctx, id, { shower: true });
+  assert.strictEqual(addon(ctx, id, { shower: true, showerScheduleConfirmed: true }).success, true);
+  var dup = addon(ctx, id, { shower: true, showerScheduleConfirmed: true });
   assert.strictEqual(dup.success, false);
   assert.strictEqual(dup.error.code, 'DUPLICATE_OPTION');
   assert.strictEqual(ctx.sandbox.OptionOrderRepository.listByBookingId(id).length, 1);
@@ -522,14 +522,14 @@ test('シャワーは1予約につき1回（重複申込は拒否。取消済み
 test('シャワーはStudio Xでは選べない。SNB / mensではStudio Xの機材・スタッフ対応を同時に申し込めない', function () {
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   var x = seedRoom(ctx, { brand: 'studio_x', bookingId: 'SX-20261207-CCCC0001' });
-  var r = addon(ctx, x, { shower: true });
+  var r = addon(ctx, x, { shower: true, showerScheduleConfirmed: true });
   assert.strictEqual(r.success, false);
   assert.strictEqual(r.error.code, 'OPTIONS_NOT_AVAILABLE');
   var cat = ctx.sandbox.OptionOrderService.getCatalog('studio_x');
   assert.strictEqual(cat.shower, undefined, 'Studio Xのカタログにシャワーを出さない');
 
   var m = seedRoom(ctx, { brand: 'mens', bookingId: 'MENS-20261207-CCCC0002' });
-  var mixed = addon(ctx, m, { shower: true, equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' });
+  var mixed = addon(ctx, m, { shower: true, showerScheduleConfirmed: true, equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' });
   assert.strictEqual(mixed.success, false);
   assert.strictEqual(mixed.error.code, 'OPTIONS_NOT_AVAILABLE');
   assert.strictEqual(addon(ctx, m, { layouts: ['CLASSROOM'], setupService: 'SELF', cleanupService: 'SELF' }).success === false, true, 'SNB/mensはシャワー以外のオプションを受け付けない');
@@ -540,13 +540,13 @@ test('シャワーは利用日が2026/12/1以降の予約のみ（Issue #541。�
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   /* 作成日10/27・利用日12/10 → 可（提供開始前に作る注文でも利用日が12/1以降なら受け付ける）。 */
   var dec = seedRoom(ctx, { date: '2026-12-10', bookingId: 'MENS-20261210-EEEE0001' });
-  assert.strictEqual(addon(ctx, dec, { shower: true }, NOW_OCT).success, true);
+  assert.strictEqual(addon(ctx, dec, { shower: true, showerScheduleConfirmed: true }, NOW_OCT).success, true);
   /* 境界: 作成日11/30・利用日12/1 → 可。 */
   var edge = seedRoom(ctx, { date: '2026-12-01', bookingId: 'MENS-20261201-EEEE0002' });
-  assert.strictEqual(addon(ctx, edge, { shower: true }, new Date('2026-11-30T12:00:00+09:00')).success, true);
+  assert.strictEqual(addon(ctx, edge, { shower: true, showerScheduleConfirmed: true }, new Date('2026-11-30T12:00:00+09:00')).success, true);
   /* 境界: 利用日11/30 → 不可（作成日が12/1以降でも利用日で判定）。 */
   var nov = seedRoom(ctx, { date: '2026-11-30', bookingId: 'MENS-20261130-EEEE0003' });
-  var denied = addon(ctx, nov, { shower: true }, NOW_OCT);
+  var denied = addon(ctx, nov, { shower: true, showerScheduleConfirmed: true }, NOW_OCT);
   assert.strictEqual(denied.success, false);
   assert.strictEqual(denied.error.code, 'OPTIONS_NOT_AVAILABLE');
   assert.strictEqual(ctx.sandbox.OptionOrderRepository.listByBookingId(nov).length, 0);
@@ -556,7 +556,7 @@ test('シャワー(#541): 予約同時申込の事前検証（preflight）も利
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   var OOS = ctx.sandbox.OptionOrderService;
   var NOW_OCT = new Date('2026-10-27T12:00:00+09:00');
-  function pre(brand, date, email) { return OOS.preflightForNewBooking(brand, { shower: true }, email || EMAIL, { date: date, now: NOW_OCT }); }
+  function pre(brand, date, email) { return OOS.preflightForNewBooking(brand, { shower: true, showerScheduleConfirmed: true }, email || EMAIL, { date: date, now: NOW_OCT }); }
   assert.strictEqual(pre('mens', '2026-12-10').success, true);
   assert.strictEqual(pre('snb', '2026-12-01').success, true);
   var early = pre('snb', '2026-11-30');
@@ -585,17 +585,17 @@ test('シャワー(#541): 提供可否の純粋判定は利用日の境界（11/
 test('シャワーの会員判定月: 翌月分は翌月の当月会費決済成功後に確定可能（月境界）', function () {
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   var jan = seedRoom(ctx, { date: JAN_WEEKDAY, bookingId: 'MENS-20270112-DDDD0001' });
-  var denied = addon(ctx, jan, { shower: true });
+  var denied = addon(ctx, jan, { shower: true, showerScheduleConfirmed: true });
   assert.strictEqual(denied.success, false);
   assert.strictEqual(denied.error.code, DENIED_CODE);
   ctx.members[EMAIL] = ['2026-12', '2027-01'];
-  assert.strictEqual(addon(ctx, jan, { shower: true }).success, true);
+  assert.strictEqual(addon(ctx, jan, { shower: true, showerScheduleConfirmed: true }).success, true);
 });
 
 test('シャワーのCheckout開始でも actual membership を再確認（失効したらStripeを呼ばない）', function () {
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   var id = seedRoom(ctx, {});
-  var order = addon(ctx, id, { shower: true }).orders[0];
+  var order = addon(ctx, id, { shower: true, showerScheduleConfirmed: true }).orders[0];
   assert.strictEqual(ctx.sandbox.OptionOrderService.approveOrder(order.optionOrderId, NOW_DEC).success, true);
   ctx.members = {};
   var denied = ctx.sandbox.OptionOrderService.startOptionCheckout(id, EMAIL, order.optionOrderId, NOW_DEC);
@@ -612,7 +612,7 @@ test('シャワーのCheckout開始でも actual membership を再確認（失�
 test('決済済みWebhook後は会員資格不足を理由に覆さない（シャワーの決済反映）', function () {
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   var id = seedRoom(ctx, {});
-  var order = addon(ctx, id, { shower: true }).orders[0];
+  var order = addon(ctx, id, { shower: true, showerScheduleConfirmed: true }).orders[0];
   assert.strictEqual(ctx.sandbox.OptionOrderService.approveOrder(order.optionOrderId, NOW_DEC).success, true);
   var started = ctx.sandbox.OptionOrderService.startOptionCheckout(id, EMAIL, order.optionOrderId, NOW_DEC);
   assert.strictEqual(started.success, true);
@@ -636,7 +636,7 @@ test('決済済みWebhook後は会員資格不足を理由に覆さない（シ�
 test('シャワー(#481): 承認前のCheckoutは直接APIでも拒否（Stripeを呼ばない）。承認後のみ1,000円のCheckoutへ進める', function () {
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   var id = seedRoom(ctx, {});
-  var order = addon(ctx, id, { shower: true }).orders[0];
+  var order = addon(ctx, id, { shower: true, showerScheduleConfirmed: true }).orders[0];
   var early = ctx.sandbox.OptionOrderService.startOptionCheckout(id, EMAIL, order.optionOrderId, NOW_DEC);
   assert.strictEqual(early.success, false);
   assert.strictEqual(early.error.code, 'APPROVAL_REQUIRED');
@@ -653,7 +653,7 @@ test('シャワー(#481): 承認前のCheckoutは直接APIでも拒否（Stripe�
 test('シャワー(#481): 管理者が否認するとCheckout不可。承認時にもactual membershipを再確認する。否認後は再申込できる', function () {
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   var id = seedRoom(ctx, {});
-  var order = addon(ctx, id, { shower: true }).orders[0];
+  var order = addon(ctx, id, { shower: true, showerScheduleConfirmed: true }).orders[0];
   ctx.members = {};
   var denied = ctx.sandbox.OptionOrderService.approveOrder(order.optionOrderId, NOW_DEC);
   assert.strictEqual(denied.success, false);
@@ -665,16 +665,16 @@ test('シャワー(#481): 管理者が否認するとCheckout不可。承認時�
   var pay = ctx.sandbox.OptionOrderService.startOptionCheckout(id, EMAIL, order.optionOrderId, NOW_DEC);
   assert.strictEqual(pay.success, false);
   assert.strictEqual(ctx.stripe.createCalls.length, 0);
-  assert.strictEqual(addon(ctx, id, { shower: true }).success, true, '否認済みは重複に数えない');
+  assert.strictEqual(addon(ctx, id, { shower: true, showerScheduleConfirmed: true }).success, true, '否認済みは重複に数えない');
 });
 
 test('シャワー(#481): 承認待ち・承認済みの有効注文がある間は重複申込を拒否', function () {
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
   var id = seedRoom(ctx, {});
-  var order = addon(ctx, id, { shower: true }).orders[0];
-  assert.strictEqual(addon(ctx, id, { shower: true }).error.code, 'DUPLICATE_OPTION');
+  var order = addon(ctx, id, { shower: true, showerScheduleConfirmed: true }).orders[0];
+  assert.strictEqual(addon(ctx, id, { shower: true, showerScheduleConfirmed: true }).error.code, 'DUPLICATE_OPTION');
   ctx.sandbox.OptionOrderService.approveOrder(order.optionOrderId, NOW_DEC);
-  assert.strictEqual(addon(ctx, id, { shower: true }).error.code, 'DUPLICATE_OPTION');
+  assert.strictEqual(addon(ctx, id, { shower: true, showerScheduleConfirmed: true }).error.code, 'DUPLICATE_OPTION');
 });
 
 // ============================================================================
