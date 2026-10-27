@@ -1604,14 +1604,29 @@
     syncBenefitsVisibility_();
     var availabilityUrl = API_BASE_URL + (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') +
       'date=' + encodeURIComponent(dateValue) + '&durationMinutes=' + encodeURIComponent(String(minutes)) + '&brand=' + encodeURIComponent(brand);
+    /* V2（メールOTP確認済み）は、確認済み会員見積りと同じ bookingMemberStatus（proof＋actual membership照合）で成立を確認する。
+       OTP確認だけでは会員資格の成立ではないため、GETの見積りでは代用しない。 */
+    var verifiedQuote = memberVerified_();
+    var estimateRequest = verifiedQuote
+      ? postApi_('bookingMemberStatus', {
+        brand: brand, email: memberAuth.email, proof: memberAuth.proof, date: dateValue, durationMinutes: minutes,
+        plan: Logic.SHOWER_PACK_PLAN_CODE, people: els.people ? els.people.value : '', autoPairPack: false
+      })
+      : fetch(priceEstimateUrl_(dateValue, minutes, false, Logic.SHOWER_PACK_PLAN_CODE), { method: 'GET' }).then(function (response) { return response.json(); });
     Promise.all([
-      fetch(priceEstimateUrl_(dateValue, minutes, false, Logic.SHOWER_PACK_PLAN_CODE), { method: 'GET' }).then(function (response) { return response.json(); }),
+      estimateRequest,
       fetch(availabilityUrl, { method: 'GET' }).then(function (response) { return response.json(); })
     ]).then(function (results) {
       if (seq !== showerPackAutoSetSeq_) return;
       var estimate = results[0];
       var availability = results[1];
-      if (!estimate || estimate.success !== true) {
+      if (verifiedQuote && estimate && estimate.success !== true && estimate.error && estimate.error.code === 'MEMBER_REVERIFY_REQUIRED') {
+        showerPackAutoSetPending_ = false;
+        if (els.planShowerPack) els.planShowerPack.checked = false;
+        handleReverifyRequired_();
+        return;
+      }
+      if (!estimate || estimate.success !== true || (verifiedQuote && !estimate.price)) {
         showerPackAutoSetFail_(Logic.messageForErrorCode(estimate && estimate.error && estimate.error.code, locale, brand));
         return;
       }

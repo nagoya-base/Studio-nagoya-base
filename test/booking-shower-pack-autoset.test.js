@@ -484,3 +484,88 @@ test('チェックの確認中に条件を変えた古い応答は無視する�
   assert.strictEqual(ctx.elements['ba-duration'].value, '3', '取り消した操作の応答で利用時間を変えない');
   assert.strictEqual(ctx.elements[PACK_ID].checked, false);
 });
+
+/* ── V2（メールOTP）: 自動4時間化の成立確認は actual membership を照合する bookingMemberStatus で行う ── */
+
+function v2MemberStatus(member, reverify) {
+  return function (body) {
+    if (reverify) return { success: false, error: { code: 'MEMBER_REVERIFY_REQUIRED' } };
+    var date = new Date(body.date + 'T00:00:00Z').getUTCDay();
+    if (body.plan === PACK && !member) return { success: false, error: { code: 'MEMBER_BENEFIT_NOT_AVAILABLE' } };
+    if (body.plan === PACK && (date >= 1 && date <= 5)) return { success: false, error: { code: 'PLAN_DAY_INVALID' } };
+    return {
+      success: true, verified: true, advanceEligible: true, memberOnDate: member, priceGeneration: 'V2', memberAuthRequired: false,
+      price: { amount: body.plan === PACK ? 6500 : 9000, tier: 'MEMBER', brand: 'mens', plan: body.plan || '' }
+    };
+  };
+}
+
+async function v2PackReady(member, reverify) {
+  var ctx = await ready({ brand: 'mens', generation: 'V2', memberStatus: v2MemberStatus(member, reverify) });
+  await ctx.dayButton(1);
+  await flushPromises();
+  await ctx.verifyMember();
+  ctx.setDuration(3);
+  await flushPromises();
+  await pickWithStart(ctx, SATURDAY_AHEAD, '10:00');
+  ctx.setPeople('2名');
+  return ctx;
+}
+
+test('V2・actual membershipあり: bookingMemberStatus（email＋proof＋日付＋240分＋パック＋人数）で成立を確認してから4時間へ変更し、6,500円を表示する', async function () {
+  var ctx = await v2PackReady(true);
+  var before = ctx.postsOf('bookingMemberStatus').length;
+  ctx.setBenefit(PACK_ID, true);
+  await flushPromises();
+  await flushPromises();
+  var preflight = ctx.postsOf('bookingMemberStatus').slice(before)[0].body;
+  assert.strictEqual(preflight.plan, PACK);
+  assert.strictEqual(preflight.durationMinutes, 240);
+  assert.strictEqual(preflight.date, dateAfter(SATURDAY_AHEAD));
+  assert.strictEqual(preflight.people, '2名');
+  assert.strictEqual(preflight.email, 'taro@example.com');
+  assert.strictEqual(preflight.proof, 'P'.repeat(40));
+  assert.strictEqual(preflight.autoPairPack, false);
+  assert.strictEqual(ctx.elements['ba-duration'].value, '4');
+  assert.strictEqual(ctx.elements[PACK_ID].checked, true);
+  assert.ok(/6,500/.test(priceText(ctx)), priceText(ctx));
+  assert.ok(!ctx.fetchCalls.some(function (u) { return /action=estimatePrice/.test(u) && /plan=mens_weekend_shower_4h/.test(u); }), 'V2では会員確認なしのGET見積りで成立確認しない');
+});
+
+[['2', 2], ['3', 3], ['5', 5]].forEach(function (c) {
+  test('V2・OTP確認済みでもactual membershipなし: ' + c[0] + '時間のまま変更せず、チェックを外す（MEMBER_BENEFIT_NOT_AVAILABLE）', async function () {
+    var ctx = await ready({ brand: 'mens', generation: 'V2', memberStatus: v2MemberStatus(false) });
+    await ctx.dayButton(1);
+    await flushPromises();
+    await ctx.verifyMember();
+    ctx.setDuration(c[1]);
+    await flushPromises();
+    await pickWithStart(ctx, SATURDAY_AHEAD, '10:00');
+    ctx.setPeople('2名');
+    ctx.setBenefit(PACK_ID, true);
+    await flushPromises();
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-duration'].value, String(c[1]), '利用時間は元のまま');
+    assert.strictEqual(ctx.elements[PACK_ID].checked, false);
+    assert.ok(packNote(ctx).length > 0 && packNote(ctx).indexOf('MEMBER_BENEFIT_NOT_AVAILABLE') === -1, '利用者向けの案内: ' + packNote(ctx));
+    assert.ok(!/6,500/.test(priceText(ctx)));
+  });
+});
+
+test('V2・確認済み証明が無効（MEMBER_REVERIFY_REQUIRED）: 利用時間は変えず、チェックを外して既存の再確認導線へ進む', async function () {
+  var reverify = await ready({ brand: 'mens', generation: 'V2', memberStatus: function (body) {
+    return body.plan === PACK ? { success: false, error: { code: 'MEMBER_REVERIFY_REQUIRED' } } : v2MemberStatus(true)(body);
+  } });
+  await reverify.dayButton(1);
+  await flushPromises();
+  await reverify.verifyMember();
+  reverify.setDuration(3);
+  await flushPromises();
+  await pickWithStart(reverify, SATURDAY_AHEAD, '10:00');
+  reverify.setPeople('2名');
+  reverify.setBenefit(PACK_ID, true);
+  await flushPromises();
+  await flushPromises();
+  assert.strictEqual(reverify.elements['ba-duration'].value, '3');
+  assert.strictEqual(reverify.elements[PACK_ID].checked, false);
+});
