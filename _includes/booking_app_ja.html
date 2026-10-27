@@ -372,14 +372,16 @@
          どちらも実会員資格（SNB MEMBER。利用日がお支払い済みの有効期間に入っていること）が必要で、確認はサーバー側で行う
          （mensの会員料金の自動適用では代用できない）。ペアパックは独立プラン（通常の会員料金表とは別商品）。 -->
     <fieldset class="ba-fieldset" id="ba-benefits-field" hidden>
-      <legend>会員限定の特典（SNB MEMBER・任意）</legend>
+      <legend>3時間パック・シャワー（SNB MEMBER限定）</legend>
       <div class="ba-choices">
-        <label class="ba-choice"><input type="checkbox" id="ba-plan-pair" value="member_pair_3h"> <span>2名ペアパック（3時間・1〜2名／平日5,000円・土日祝6,000円）</span></label>
-        <p class="ba-field-help" id="ba-plan-pair-note" hidden>2名ペアパックは3時間以上の利用で選択できます。</p>
+        <div class="ba-choice"><input type="hidden" id="ba-plan-pair" value="member_pair_3h"> <span>2名ペアパック（3時間・1〜2名／平日5,000円・土日祝6,000円）— 対象のご予約に自動適用</span></div>
+        <p class="ba-field-help" id="ba-plan-pair-note" hidden>2名ペアパックは3時間以上の利用で自動適用されます。</p>
         <label class="ba-choice"><input type="checkbox" id="ba-shower" value="shower"> <span>シャワー（1予約1回・1,000円。事前確認・承認制で、選択だけでは利用確定になりません。承認後にお支払い）</span></label>
       </div>
-      <p class="ba-field-help" id="ba-benefits-locked" hidden>SNB MEMBER会員のみ選択できます。2026年12月1日以降に作成するご予約では、メールアドレスの確認コードによる会員確認（上の「SNB MEMBERの方」）が済むと選択できます。{% if include.brand == "mens" %}2026年11月30日までに作成するご予約では「SNB MEMBERの会員特典・先行予約を利用する」にチェックすると選択できます。{% else %}2026年11月30日までに作成するご予約では、会員区分で「会員」を選ぶと選択できます。{% endif %}</p>
-      <p class="ba-field-help">会員限定です。シャワー利用は事前確認が必要です。利用希望の場合は事前にご連絡ください。対応可能な場合のみご案内し、承認後にお支払いをお願いします。ここでの選択は利用希望の連絡であり、承認とお支払いの完了までは利用確定ではありません。ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できない場合は、お申し込みいただけません。予約のメールアドレスは会員登録と同じものをご入力ください。2名ペアパックは他の割引・優待と併用できず、延長は通常の会員延長料金です。<a href="{{ '/' | relative_url }}{% if include.brand == "mens" %}mens/{% endif %}membership/" target="_blank" rel="noopener">会員案内を見る</a></p>
+      <p class="ba-field-help" id="ba-benefits-locked" hidden>パックとシャワーのご利用にはSNB MEMBER会員資格が必要です。2026年12月1日以降に作成するご予約では、メールアドレスの確認コードによる会員確認（上の「SNB MEMBERの方」）が済むとパックの自動適用・シャワーの選択が可能になります。{% if include.brand == "mens" %}2026年11月30日までに作成するご予約では「SNB MEMBERの会員特典・先行予約を利用する」にチェックすると選択できます。{% else %}2026年11月30日までに作成するご予約では、会員区分で「会員」を選ぶと選択できます。{% endif %}</p>
+      <p class="ba-field-help">ご利用日が2026年12月1日以降のサービスです。利用日の会員資格を確認できる1〜2名・3時間以上のご予約には、パックと延長料金を自動適用します。対象外は通常料金です。</p>
+      <label class="ba-choice" hidden><input type="checkbox" id="ba-shower-schedule"> <span>シャワー利用について、ご利用日の1週間前までにスタッフとの日程調整を済ませました。</span></label>
+      <p class="ba-field-help">会員限定です。シャワー利用は、ご利用日の1週間前までにスタッフとの日程調整を済ませてからお申し込みください。対応可能な場合のみご案内し、承認後にお支払いをお願いします。ここでの選択は利用希望の連絡であり、承認とお支払いの完了までは利用確定ではありません。ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できない場合は、お申し込みいただけません。予約のメールアドレスは会員登録と同じものをご入力ください。2名ペアパックは他の割引・優待と併用できず、延長は通常の会員延長料金です。<a href="{{ '/' | relative_url }}{% if include.brand == "mens" %}mens/{% endif %}membership/" target="_blank" rel="noopener">会員案内を見る</a></p>
       <p class="ba-field-error" id="ba-benefits-error" hidden></p>
     </fieldset>
 {% endif %}

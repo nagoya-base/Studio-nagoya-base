@@ -414,7 +414,10 @@ var BookingOptions = (function () {
     }
     if (isShowerBrand(brand)) {
       /* SNB / mensで選べるのはシャワーのみ。Studio Xの機材・セッティング等が混ざっていれば全体を拒否する。 */
-      var foreignKeys = Object.keys(selection).filter(function (key) { return key !== 'shower'; });
+      if (showerRequested && selection.showerScheduleConfirmed !== true) {
+        return { ok: false, error: err_('SHOWER_SCHEDULE_CONFIRMATION_REQUIRED', 'シャワー利用は、ご利用日の1週間前までにスタッフとの日程調整を済ませたことを確認してください。') };
+      }
+      var foreignKeys = Object.keys(selection).filter(function (key) { return key !== 'shower' && key !== 'showerScheduleConfirmed'; });
       var carriesForeign = foreignKeys.some(function (key) {
         var v = selection[key];
         if (v === undefined || v === null || v === false || v === '') return false;
@@ -427,6 +430,7 @@ var BookingOptions = (function () {
       }
       var showerSelection = emptySelection_();
       showerSelection.shower = showerRequested;
+      showerSelection.showerScheduleConfirmed = showerRequested && selection.showerScheduleConfirmed === true;
       return { ok: true, empty: !showerRequested, normalized: showerSelection };
     }
     var equipmentInput = selection.equipment === undefined || selection.equipment === null ? {} : selection.equipment;

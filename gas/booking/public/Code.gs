@@ -368,6 +368,12 @@ function handleBookingMemberStatus_(payload) {
     if (plan === null || !planAllowed) {
       return { success: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
     }
+    /* Automatic pack selection uses the same date, people, duration and actual membership conditions as creation. */
+    if (payload.autoPairPack === true && brand !== 'studio_x') {
+      plan = status.memberOnDate === true && BookingPricing.isPairPackAvailableOnDate(date) &&
+        BookingPricing.isPairPackPeople(payload.people) && durationMinutes >= 180
+        ? BookingPricing.PLAN.MEMBER_PAIR_3H : '';
+    }
     if (plan && !BookingPricing.isEventPlan(plan) && status.memberOnDate !== true) {
       return { success: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.memberBenefitDeniedMessage(brand) } };
     }

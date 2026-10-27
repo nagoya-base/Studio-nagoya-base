@@ -164,6 +164,7 @@
     planBanner: document.getElementById('ba-plan-banner'),
     planRelease: document.getElementById('ba-plan-release'),
     shower: document.getElementById('ba-shower'),
+    showerSchedule: document.getElementById('ba-shower-schedule'),
     memberVerifyField: document.getElementById('ba-member-verify-field'),
     memberCodeSend: document.getElementById('ba-member-code-send'),
     memberCodeEntry: document.getElementById('ba-member-code-entry'),
@@ -492,23 +493,28 @@
   function benefitChoiceOf_(control) {
     return control && control.parentNode ? control.parentNode : null;
   }
-  /* 利用日・日付変更のたびに特典欄の表示を同期する。ペアパックが出せなくなったら選択も外す（古い選択を送らない）。 */
+  /* 案内は常に表示する。日付・時間・人数・会員確認に合わせてパックを自動選択し、シャワーの申込可否を同期する。 */
   function syncBenefitsVisibility_() {
     /* Issue #546: 会員向けUIが有効でない間は、表示してもdisabledにし、選択済みも外す（UXのみ。資格の最終判定はサーバー）。 */
     var unlocked = memberFeaturesEnabled_();
     var pairVisible = pairPackVisible_();
     var pairDurationOk = pairPackDurationOk_();
-    if ((!pairVisible || !unlocked || !pairDurationOk) && els.planPair) els.planPair.checked = false;
+    if (els.planPair) els.planPair.checked = pairVisible && unlocked && pairDurationOk &&
+      !!els.people && !!els.people.value && Logic.isPairPackPeopleValue(els.people.value);
     if (els.planPair) els.planPair.disabled = !unlocked || !pairDurationOk;
     if (els.planPairNote) els.planPairNote.hidden = !(pairVisible && unlocked && !pairDurationOk);
     var pairChoice = benefitChoiceOf_(els.planPair);
-    if (pairChoice) pairChoice.hidden = !pairVisible;
+    if (pairChoice) pairChoice.hidden = false;
     var showerVisible = showerVisible_();
     if ((!showerVisible || !unlocked) && els.shower) els.shower.checked = false;
-    if (els.shower) els.shower.disabled = !unlocked;
+    if (els.shower) els.shower.disabled = !unlocked || !showerVisible;
+    if (els.showerSchedule) {
+      if (els.showerSchedule.parentNode) els.showerSchedule.parentNode.hidden = !showerSelected_();
+      if (!showerSelected_()) els.showerSchedule.checked = false;
+    }
     var showerChoice = benefitChoiceOf_(els.shower);
-    if (showerChoice) showerChoice.hidden = !showerVisible;
-    if (els.benefitsField) els.benefitsField.hidden = !(pairVisible || showerVisible);
+    if (showerChoice) showerChoice.hidden = false;
+    if (els.benefitsField) els.benefitsField.hidden = brand !== 'snb' && brand !== 'mens';
     if (els.benefitsLocked) els.benefitsLocked.hidden = unlocked || !(pairVisible || showerVisible);
   }
 
@@ -535,7 +541,7 @@
   }
   function selectedPlan_() {
     if (eventPlanSelected_()) return Logic.EVENT_BASE_PLAN_CODE;
-    return pairPackVisible_() && memberFeaturesEnabled_() && pairPackDurationOk_() && els.planPair && els.planPair.checked ? Logic.PAIR_PACK_PLAN_CODE : '';
+    return pairPackVisible_() && memberFeaturesEnabled_() && pairPackDurationOk_() && els.people && els.people.value && Logic.isPairPackPeopleValue(els.people.value) ? Logic.PAIR_PACK_PLAN_CODE : '';
   }
   function showerSelected_() {
     return showerVisible_() && memberFeaturesEnabled_() && !!els.shower && els.shower.checked;
@@ -1065,7 +1071,7 @@
 
   function priceEstimateKey_(dateValue, durationMinutes, memberFlag, plan) {
     var flag = typeof memberFlag === 'string' ? memberFlag : (memberFlag ? '1' : '0');
-    return dateValue + '|' + durationMinutes + '|' + flag + '|' + (plan || '') + calendarEpochSuffix_();
+    return dateValue + '|' + durationMinutes + '|' + flag + '|' + (plan || '') + '|' + (els.people ? els.people.value : '') + calendarEpochSuffix_();
   }
 
   function currentPriceEstimateKey_() {
@@ -1223,7 +1229,7 @@
     /* Issue #548: V2で確認済みなら、会員料金の見積りは証明を検証するPOST（bookingMemberStatus）で取得する（GETのisMemberは使わない）。 */
     var verifiedQuote = memberVerified_();
     var estimateEpoch = testCredentialEpoch_;
-    var memberStatusPayload = { brand: brand, email: memberAuth.email, proof: memberAuth.proof, date: dateValue, durationMinutes: durationMinutes, plan: plan };
+    var memberStatusPayload = { brand: brand, email: memberAuth.email, proof: memberAuth.proof, date: dateValue, durationMinutes: durationMinutes, plan: plan, people: els.people ? els.people.value : '', autoPairPack: true };
     if (credentialBody) memberStatusPayload.testCredential = credentialBody.testCredential;
     var pendingEstimate = verifiedQuote
       ? postApi_('bookingMemberStatus', memberStatusPayload)
@@ -1485,7 +1491,7 @@
     if (els.confirmShower) els.confirmShower.textContent = info ? info.value + '（' + info.confirmNote + '）' : '';
   }
 
-  [els.planPair, els.shower].forEach(function (control) {
+  [els.people, els.shower].forEach(function (control) {
     if (control) control.addEventListener('change', function () { refreshPriceEstimate_(); });
   });
 
@@ -2018,6 +2024,14 @@
         }
       }
       if (els.benefitsError) els.benefitsError.hidden = true;
+      if (showerSelected_() && (!els.showerSchedule || !els.showerSchedule.checked)) {
+        if (els.benefitsError) {
+          els.benefitsError.textContent = Logic.messageForErrorCode('SHOWER_SCHEDULE_CONFIRMATION_REQUIRED', locale);
+          els.benefitsError.hidden = false;
+        }
+        if (els.showerSchedule) els.showerSchedule.focus();
+        return;
+      }
 
       /* 二重チェック（Issue #407）: 初回利用はカード以外を送信させない（サーバー側と同じ条件）。 */
       if (fields.paymentMethod && !Logic.isPaymentMethodAllowedForCustomer(state.customerType, fields.paymentMethod)) {
@@ -2314,6 +2328,8 @@
         isMember: state.isMember,
         plan: selectedPlan_(),
         shower: showerSelected_(),
+        showerScheduleConfirmed: !!els.showerSchedule && els.showerSchedule.checked,
+        autoPairPack: (brand === 'snb' || brand === 'mens') && memberFeaturesEnabled_(),
         /* Issue #548: V2で確認済みなら、サーバーが発行した証明を送る。有効性・予約メールとの一致・会員資格はサーバーが再判定する。 */
         memberProof: memberVerified_() ? memberAuth.proof : '',
         /* Issue #559: テスト資格はPOST本文のJSONだけで送る。有効性・予約メールとの一致・モードはサーバーが判定する。 */

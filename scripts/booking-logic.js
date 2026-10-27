@@ -109,6 +109,7 @@
       ADVANCE_BOOKING_MEMBER_ONLY: '30日より先の日程は、SNB MEMBERの先行予約（90日先まで）の対象です。会員登録と同じメールアドレスでご入力いただくか、30日以内の日程を選択してください。',
       MEMBER_BENEFIT_NOT_AVAILABLE: 'この特典は、ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できた場合のみご利用いただけます。ご予約のメールアドレスは会員登録と同じものをご入力ください。次回更新前の未払いの期間は、更新の決済が成功してから確定できます。',
       PAIR_PACK_PEOPLE_EXCEEDED: '2名ペアパックのご利用は1〜2名までです。人数を変更するか、ペアパックの選択を外してください。',
+      SHOWER_SCHEDULE_CONFIRMATION_REQUIRED: 'シャワー利用は、ご利用日の1週間前までにスタッフとの日程調整を済ませたことを確認してください。',
       PLAN_DURATION_INVALID: 'ご選択のプランの利用時間が条件を満たしていません（2名ペアパックは3時間以上、貸切ベースプランは最低6時間から1時間単位）。',
       PLAN_HOURS_OUT_OF_RANGE: '貸切ベースプランは8:00〜21:00の範囲内でご利用ください。終了が21:00を超える時間は選べません。開始時刻か利用時間を変更してください。',
       PLAN_NOT_AVAILABLE: 'このプランは現在ご利用いただけません（会員限定の2名ペアパックは、ご利用日が2026年12月1日以降の場合のみご選択いただけます）。',
@@ -152,6 +153,7 @@
       ADVANCE_BOOKING_MEMBER_ONLY: 'Dates more than 30 days ahead are open only to SNB MEMBERS (advance booking up to 90 days). Please use the email address registered for your membership, or choose a date within 30 days.',
       MEMBER_BENEFIT_NOT_AVAILABLE: 'This member-only benefit requires an SNB MEMBER membership confirmed for the month of your visit. Please use the same email address as your membership.',
       PAIR_PACK_PEOPLE_EXCEEDED: 'The pair pack is for 1 to 2 guests.',
+      SHOWER_SCHEDULE_CONFIRMATION_REQUIRED: 'Please confirm that you completed scheduling with staff at least one week before your visit.',
       PLAN_DURATION_INVALID: 'The selected plan’s duration is not allowed (pair pack: 3+ hours; private base plan: 6+ hours in 1-hour steps).',
       PLAN_HOURS_OUT_OF_RANGE: 'The private base plan must fall within 08:00–21:00. Please change the start time or duration.',
       PLAN_NOT_AVAILABLE: 'This plan is not available right now.',
@@ -249,6 +251,7 @@
       /* Issue #478: ペアパックの人数・特典の選択は、内容を直せば解消する。 */
       code === 'PAIR_PACK_PEOPLE_EXCEEDED' ||
       code === 'MEMBER_BENEFIT_NOT_AVAILABLE' ||
+      code === 'SHOWER_SCHEDULE_CONFIRMATION_REQUIRED' ||
       code === 'PLAN_DURATION_INVALID' ||
       code === 'PLAN_HOURS_OUT_OF_RANGE' ||
       code === 'PLAN_NOT_AVAILABLE' ||
@@ -476,7 +479,8 @@
     if (s.plan === PAIR_PACK_PLAN_CODE) payload.plan = PAIR_PACK_PLAN_CODE;
     /* Issue #488 / #492: 6時間貸切ベースプラン（常設）。金額・可否は送らない（サーバーが判定する）。 */
     if (s.plan === EVENT_BASE_PLAN_CODE) payload.plan = EVENT_BASE_PLAN_CODE;
-    if (s.shower === true) payload.options = { shower: true };
+    if (s.shower === true) payload.options = { shower: true, showerScheduleConfirmed: s.showerScheduleConfirmed === true };
+    if (s.autoPairPack === true) payload.autoPairPack = true;
     /* Issue #548: V2のメールOTP確認済み証明（サーバーが発行した不透明な文字列）。保持している場合だけ送る。verified等の真偽値は送らない。
        有効か・予約メールに拘束されているか・会員資格があるかはすべてサーバーが判定する。 */
     if (typeof s.memberProof === 'string' && s.memberProof) payload.memberProof = s.memberProof;

@@ -449,7 +449,7 @@ test('管理者: 上限だけを解除し、重複予約・営業時間・過去
   var past = ctx.admin(payload({ date: '2020-01-01' }));
   assert.strictEqual(past.success, false);
   assert.strictEqual(past.error.code, 'INVALID_DATE');
-  var withOptions = ctx.admin(Object.assign(payload({ date: farDate, startTime: '15:00', email: 'd@example.com' }), { options: { shower: true } }));
+  var withOptions = ctx.admin(Object.assign(payload({ date: farDate, startTime: '15:00', email: 'd@example.com' }), { options: { shower: true, showerScheduleConfirmed: true } }));
   assert.strictEqual(withOptions.success, false);
   assert.strictEqual(withOptions.error.code, 'OPTIONS_NOT_SUPPORTED');
 });

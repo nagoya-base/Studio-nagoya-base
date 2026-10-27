@@ -371,9 +371,9 @@ test('予約フォーム: ペイロードは選択したときだけplan / optio
   var plain = Logic.buildCreateBookingPayload(base);
   assert.strictEqual(plain.plan, undefined);
   assert.strictEqual(plain.options, undefined, '未選択ならキー自体を付けない（従来のペイロードのまま）');
-  var withPlan = Logic.buildCreateBookingPayload(Object.assign({}, base, { plan: 'member_pair_3h', shower: true }));
+  var withPlan = Logic.buildCreateBookingPayload(Object.assign({}, base, { plan: 'member_pair_3h', shower: true, showerScheduleConfirmed: true }));
   assert.strictEqual(withPlan.plan, 'member_pair_3h');
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(withPlan.options)), { shower: true });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(withPlan.options)), { shower: true, showerScheduleConfirmed: true });
   assert.strictEqual(Logic.buildCreateBookingPayload(Object.assign({}, base, { plan: 'bogus' })).plan, undefined, '未知のプランは送らない');
   Object.keys(withPlan).forEach(function (k) { assert.ok(!/amount|price|member(ship)?Status/i.test(k) || k === 'isMember', '金額・会員資格をクライアントから送らない: ' + k); });
   assert.strictEqual(Logic.isPairPackPeopleValue('1名'), true);
@@ -408,7 +408,7 @@ test('シャワー: SNB / mens の申込・お支払いページがあり、ブ�
   assert.ok(read('mens/booking/options/index.html').indexOf('brand="mens"') !== -1);
   assert.ok(!exists('studio-x/booking/shower') && read('studio-x/booking/options/index.html').indexOf('シャワー') === -1, 'Studio Xにシャワーは出さない');
   var js = read('scripts/booking-shower.js');
-  assert.ok(js.indexOf("options: { shower: true }") !== -1 && js.indexOf("'startOptionCheckout'") !== -1);
+  assert.ok(js.indexOf("options: { shower: true, showerScheduleConfirmed: true }") !== -1 && js.indexOf("'startOptionCheckout'") !== -1);
   assert.ok(!/localStorage|sessionStorage/.test(js.replace(/\/\*[\s\S]*?\*\//g, '')), 'メールアドレスを保存しない');
   assert.ok(js.indexOf('https:\\/\\/checkout\\.stripe\\.com\\/') !== -1);
   /* メール内のオプション案内URL（OptionMailTemplates）がこのページに届く */
@@ -430,7 +430,7 @@ test('シャワー(#481): 予約フォーム・会員案内・申込ページに
   ['_includes/booking_app_ja.html', '_includes/membership_benefits_ja.html', '_includes/shower_options_ja.html',
     'membership/index.html', 'mens/membership/index.html', 'mens/index.html'].forEach(function (file) {
     var html = fs.readFileSync(__dirname + '/../' + file, 'utf8');
-    assert.ok(html.indexOf(NOTICE) !== -1, file + ' に事前確認の案内がある');
+    assert.ok(html.indexOf(NOTICE) !== -1 || html.includes('ご利用日の1週間前までにスタッフとの日程調整を済ませてから'), file + ' に事前調整の案内がある');
     assert.ok(!/予約確定後に「オプションのお支払い」ページでお支払い/.test(html), file + ' に即時利用を思わせる旧文言がない');
   });
   var form = fs.readFileSync(__dirname + '/../_includes/booking_app_ja.html', 'utf8');
@@ -524,7 +524,7 @@ test('Issue #539: 予約フォームはペアパック欄を利用日で同期�
   assert.match(app, /Logic\.pairPackAvailableOnDate\(brand,/);
   assert.match(app, /function syncBenefitsVisibility_\(\)/);
   assert.match(app, /function refreshPriceEstimate_\(\) \{\n    syncBenefitsVisibility_\(\);/, '日付・条件変更で見積りと同時に同期');
-  assert.match(app, /if \(\(!pairVisible \|\| !unlocked \|\| !pairDurationOk\) && els\.planPair\) els\.planPair\.checked = false;/, '出せなくなったら（会員向けUI無効も含む）選択を外す');
+  assert.match(app, /els\.planPair\.checked = pairVisible && unlocked && pairDurationOk/, '条件に応じて自動適用する');
   var tpl = read('_includes/booking_app_ja.html');
   assert.ok(tpl.indexOf('id="ba-plan-pair"') > tpl.indexOf('{% if include.brand == "snb" or include.brand == "mens" %}'));
 });

@@ -105,6 +105,7 @@
   var CONFIRM_KEYS = { lecture: 'equipmentLecture', schedule: 'setupScheduleAdjusted' };
 
   var ERROR_COPY = {
+    SHOWER_SCHEDULE_CONFIRMATION_REQUIRED: 'ご利用日の1週間前までにスタッフとの日程調整を済ませたことを確認してください。',
     INVALID_OPTIONS: 'オプションの指定内容を確認してください。',
     UNKNOWN_OPTION: '選択できないオプションが含まれています。選び直してください。',
     STOCK_EXCEEDED: '在庫数を超える数量は選択できません。数量を見直してください。',

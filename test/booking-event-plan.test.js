@@ -330,7 +330,7 @@ test('Issue #496 createBooking: 貸切ベースプラン＋オプションは明
   assert.strictEqual(rejected.success, false);
   assert.strictEqual(rejected.error.code, 'EVENT_PLAN_OPTIONS_NOT_ALLOWED');
   assert.strictEqual(calendarEventCount(ctx), 0);
-  var shower = book(ctx, { options: { shower: true } });
+  var shower = book(ctx, { options: { shower: true, showerScheduleConfirmed: true } });
   assert.strictEqual(shower.error.code, 'EVENT_PLAN_OPTIONS_NOT_ALLOWED', '形式を問わずオプション指定は併用不可');
   assert.strictEqual(calendarEventCount(ctx), 0);
 });
