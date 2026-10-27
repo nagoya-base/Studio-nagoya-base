@@ -71,7 +71,7 @@ test('JS: 開始時刻側の料金DOM参照が無く、scrollは日付クリッ�
   var js = read('scripts/booking-app.js');
   assert.ok(js.indexOf('startTimePrice') === -1 && js.indexOf('ba-start-time-price') === -1);
   var calls = js.match(/\.scrollIntoView\(\{[^)]*\}\)/g) || [];
-  assert.strictEqual(calls.length, 3, 'scrollIntoViewはgoToStep（start-time以外）・reveal（日付クリック時）・メール欄へのfocus（Issue #532）のみ');
+  assert.strictEqual(calls.length, 4, 'scrollIntoViewはgoToStep（start-time以外）・reveal（日付クリック時）・メール欄へのfocus（Issue #532）・会員確認欄への誘導（Issue #548）のみ');
   assert.ok(/scrollToStartTime: true/.test(js));
   var goTo = js.slice(js.indexOf('function goToStep'), js.indexOf('function setStepDisabled_'));
   assert.ok(goTo.indexOf('startTimeArea.scrollIntoView') === -1 && /stepName !== 'start-time'/.test(goTo), 'goToStepはstart-timeでスクロールしない');

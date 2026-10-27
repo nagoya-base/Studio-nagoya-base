@@ -44,6 +44,7 @@
 - [ ] 料金表は `docs/membership-pricing-2026-12.md`、サイト表示・規約・特商法・FAQと一致
 - [ ] 会員限定特典（#478）: 2名ペアパック（平日5,000円/土日祝6,000円・3時間・1〜2名）とシャワー（1予約1回1,000円・SNB/mensのみ）が `/membership/`・`/mens/membership/`・規約・特商法・FAQ・JSON-LDで一致し、Studio Xにシャワーを出していない
 - [ ] 会員限定特典のうち2名ペアパックとシャワーは**利用日が2026/12/1以降**（#539 / #541。作成日は問わない）、Studio X有料オプション等は2026/12/1以降の新規作成分のみ。11/30までに作成済みの予約・OptionOrderは旧ルールのまま（grandfather）
+- [ ] V2（2026/12/1 0:00 JST以降に作成するSNB / SNB mensの直接予約。サーバー時刻が正本）では、会員料金・会員限定特典・31〜90日先行予約にメールOTP（6桁・60分・1回利用・試行/再送制限）の確認済み証明が必須（#548）。メールだけで会員料金にならず、証明切れで黙って一般料金へ降格せず再認証を要求する。V1は従来仕様（OTP不要）
 - [ ] actual membershipの再確認箇所（予約作成・OptionOrder作成・Checkout・日程変更・Admin承認・0円確定・手動確定・現地精算）がfail-closed。見積りAPI・決済済みWebhookでは会員照会/巻き戻しをしない
 - [ ] 3つの会員ページ（`/membership/`・`/mens/membership/`・`/studio-x/membership/`）のog:title/description/url・canonical・twitterメタがページ固有で、各ブランドトップの画像資産を使い他ブランドの画像を流用していない
 - [ ] 各トップ（SNB・mens・Studio X）から対応する会員ページへの導線がある（Studio Xのヒーローは「SNB MEMBER」を前面に出さない）

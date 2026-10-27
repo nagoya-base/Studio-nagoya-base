@@ -76,18 +76,28 @@ var BookingRepository = (function () {
      */
     var priceGeneration = BookingPricing.generationAt(now, input.brand);
     /*
+     * Issue #548: V2（SNB / mensの2026/12/1 0:00 JST以降に作成する直接予約）の会員機能（会員料金・会員限定特典・31〜90日先行予約）は、
+     * メールOTPで確認済みの証明が有効な場合だけ開放する。V1/V2はサーバー時刻（generationAt）だけで決め、クライアント指定では切り替えない。
+     * 証明を送ってきたのに期限切れ・不正・メール不一致の場合は、会員利用中かどうかにかかわらず、黙って一般扱いにせず再確認を要求する
+     * （一般予約へ戻すのは利用者自身が証明を外して再送する明示操作）。管理者の新規予約（ADMIN window）は対象外。
+     */
+    var memberAuth = newMemberAuth_(rawInput, input, priceGeneration, now, isAdminWindow);
+    if (memberAuth.rejection) {
+      return { success: false, error: memberAuth.rejection };
+    }
+    /*
      * Issue #478: 会員限定2名ペアパック（独立プラン）。プラン指定がある場合のみ、ブランド・人数・料金世代と
      * actual membership（利用日の属する月の支払い事実。priceIsMember・mens経路では代用しない）を
      * サーバー側で必ず確認する。確認できなければ（非会員・利用月不一致・台帳エラーすべて）同一の
      * 外部向けエラーで拒否し、通常料金へ黙って倒さない。プラン指定が無い従来の予約は一切変わらない。
      */
-    var planResult = resolvePlanForNewBooking_(input, priceGeneration, now);
+    var planResult = resolvePlanForNewBooking_(input, priceGeneration, now, memberAuth);
     if (!planResult.ok) {
       return { success: false, error: planResult.error };
     }
     var membership = planResult.plan === BookingPricing.PLAN.MEMBER_PAIR_3H
       ? { isMember: true, status: 'ACTIVE' }
-      : resolveMembershipForPricing_(input, priceGeneration);
+      : resolveMembershipForPricing_(input, priceGeneration, memberAuth);
     var priceResult = BookingPricing.computeBookingPrice({
       brand: input.brand,
       date: input.date,
@@ -123,6 +133,9 @@ var BookingRepository = (function () {
       ? OptionOrderService.preflightForNewBooking(input.brand, rawInput.options, input.email, {
         date: input.date,
         now: now,
+        /* Issue #548: V2のSNB / mensは、会員限定オプション（シャワー等）にもメールOTPの確認済み証明が必須。 */
+        memberVerificationRequired: memberAuth.required,
+        memberVerified: memberAuth.verified,
         allowEligibilityLookup: function (email) {
           return RateLimiter.limitByKey('opt_elig_' + String(email).trim().toLowerCase(), 10, 5, now.getTime());
         }
@@ -153,7 +166,7 @@ var BookingRepository = (function () {
      * 会員有無を探られないよう、非会員・台帳エラーは同一のエラーを返し、判定はrate limit計上後に行う。
      * 予約成立後に退会しても、この予約自体は維持される（ここでしか判定しない）。
      */
-    var windowResult = isAdminWindow ? { ok: true } : verifyBookingWindowForNewBooking_(input, availabilityConfig, now);
+    var windowResult = isAdminWindow ? { ok: true } : verifyBookingWindowForNewBooking_(input, availabilityConfig, now, memberAuth);
     if (!windowResult.ok) {
       return { success: false, error: windowResult.error };
     }
@@ -325,7 +338,7 @@ var BookingRepository = (function () {
    * 確認順: プラン値 → ブランド/料金世代 → 人数（3名以上はサーバー側で拒否） → 照会のレート制限 → actual membership。
    * 会員の有無を任意のメールで探れないよう、資格関連の失敗は常に同一のコード・メッセージで返す。
    */
-  function resolvePlanForNewBooking_(input, generation, now) {
+  function resolvePlanForNewBooking_(input, generation, now, memberAuth) {
     var plan = BookingPricing.normalizePlan(input.plan);
     if (plan === null) {
       return { ok: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
@@ -342,6 +355,8 @@ var BookingRepository = (function () {
     if (Number(input.durationMinutes) < BookingPricing.PAIR_PACK_BASE_HOURS * 60) {
       return { ok: false, error: { code: 'PLAN_DURATION_INVALID', message: '2名ペアパックは3時間以上でご利用ください。' } };
     }
+    /* Issue #548: V2のSNB / mensは、メールOTPの確認済み証明が無ければ会員台帳を見ずに確認を要求する（V1は従来どおり）。 */
+    if (memberAuth && memberAuth.required && !memberAuth.verified) return { ok: false, error: memberAuth.requiredError };
     var lookupAllowed = RateLimiter.limitByKey('opt_elig_' + MembershipRules.normalizeEmail(input.email), 10, 5, now.getTime());
     if (lookupAllowed !== true) {
       return { ok: false, error: { code: 'RATE_LIMITED', message: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。' } };
@@ -384,13 +399,15 @@ var BookingRepository = (function () {
     message: '30日より先の日程は、SNB MEMBERの先行予約対象です。会員登録メールアドレスでのご予約をお願いします。'
   };
 
-  function verifyBookingWindowForNewBooking_(input, availabilityConfig, now) {
+  function verifyBookingWindowForNewBooking_(input, availabilityConfig, now, memberAuth) {
     var todayString = BookingAvailability.formatDateInTimezone(now, availabilityConfig.timezone);
     var band = BookingWindow.classifyDate(input.date, todayString);
     if (band === BookingWindow.BAND.GENERAL) return { ok: true };
     if (band !== BookingWindow.BAND.MEMBER_ONLY) {
       return { ok: false, error: { code: 'DATE_OUT_OF_RANGE', message: '予約できるのは' + BookingWindow.MEMBER_DAYS + '日先までです。' } };
     }
+    /* Issue #548: V2は確認済み証明が無ければ先行予約の資格照会に進まない（会員台帳の有無で結果を変えない）。 */
+    if (memberAuth && memberAuth.required && !memberAuth.verified) return { ok: false, error: memberAuth.requiredError };
     var membership = MembershipRules.verifyAdvanceBookingMembership(input.email, todayString);
     if (!membership.ok) {
       if (membership.reason === 'LEDGER_ERROR') Logger.log('BookingRepository: 会員台帳を確認できないため先行予約を拒否しました');
@@ -399,11 +416,25 @@ var BookingRepository = (function () {
     return { ok: true };
   }
 
-  function resolveMembershipForPricing_(input, generation) {
+  function resolveMembershipForPricing_(input, generation, memberAuth) {
+    var gated = !!memberAuth && memberAuth.required;
     if (input.brand !== 'snb' || generation !== BookingPricing.GENERATION.V2) {
+      /* mensの部屋料金優遇は実会員資格と別概念（常にMEMBER料金）。V2ではメールOTP確認済みかつ利用日に会員資格がある場合だけ
+         membershipStatus=ACTIVEを記録する（後付けオプションの会員限定判定に使う。料金には影響しない）。それ以外は従来どおりNOT_CHECKED。 */
+      if (gated && input.brand === 'mens' && memberAuth.verified && actualMembershipStatus_(input) === 'ACTIVE') {
+        return { isMember: input.isMember, status: 'ACTIVE' };
+      }
       return { isMember: input.isMember, status: 'NOT_CHECKED' };
     }
+    /* Issue #548: V2のSNBは、メールOTPの確認済み証明が無ければメールが会員台帳にあっても一般料金（台帳は参照しない）。 */
+    if (gated && !memberAuth.verified) return { isMember: false, status: 'UNVERIFIED' };
     /* 利用日（JST）が支払済みPeriod・旧MemberMonths・永久会員の有効範囲に入るか（Issue #532）。台帳エラーはfail-closed。 */
+    var status = actualMembershipStatus_(input);
+    return { isMember: status === 'ACTIVE', status: status };
+  }
+
+  /* 利用日のactual membership（'ACTIVE'|'INACTIVE'）。台帳エラー・例外はINACTIVE（fail-closed）。 */
+  function actualMembershipStatus_(input) {
     var eligible = false;
     try {
       var verified = MembershipRules.verifyActualMembership(input.email, input.date);
@@ -412,7 +443,31 @@ var BookingRepository = (function () {
     } catch (lookupError) {
       Logger.log('BookingRepository: 会員資格の確認に失敗したため一般料金とします');
     }
-    return { isMember: eligible, status: eligible ? 'ACTIVE' : 'INACTIVE' };
+    return eligible ? 'ACTIVE' : 'INACTIVE';
+  }
+
+  /*
+   * V2会員機能のメールOTP確認状態（Issue #548）。
+   * - required: V2（サーバー時刻で決まる料金世代）のSNB / mensの公開直接予約。管理者の新規予約は対象外。Studio Xは対象外。
+   * - verified: required かつ、payloadのmemberProof（クライアント保持の証明トークン）が予約メール・用途に拘束された有効な証明であること。
+   * - rejection: 証明を送ったのに無効（期限切れ・不正・メール不一致）なとき。再確認要求エラー（黙って一般扱いにしない）。
+   * - requiredError: 証明が無いまま会員機能（先行予約・ペアパック・会員限定オプション）を使おうとしたときの確認要求エラー。
+   * クライアントの verified / isMember 等は参照しない。
+   */
+  function newMemberAuth_(rawInput, input, generation, now, isAdminWindow) {
+    var required = !isAdminWindow && (input.brand === 'snb' || input.brand === 'mens') && generation === BookingPricing.GENERATION.V2;
+    var auth = { required: required, verified: false, rejection: null, requiredError: null };
+    if (!required) return auth;
+    auth.requiredError = { code: MembershipRules.BOOKING_VERIFICATION_REQUIRED_CODE, message: MembershipRules.BOOKING_VERIFICATION_REQUIRED_MESSAGE };
+    var proof = rawInput && typeof rawInput.memberProof === 'string' ? rawInput.memberProof : '';
+    if (!proof) return auth;
+    var checked = BookingMemberVerification.checkProof(input.email, proof, now);
+    if (checked.ok) {
+      auth.verified = true;
+    } else {
+      auth.rejection = BookingMemberVerification.proofError(checked.reason === 'MISSING' ? 'INVALID' : checked.reason);
+    }
+    return auth;
   }
 
   /* 予約作成後のオプション注文保存（失敗しても予約は成功のまま。例外は握りつぶして結果に載せる）。 */

@@ -17,6 +17,7 @@ var assert = require('node:assert');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
 var futureDate = require('./helpers/future-date');
+var memberProof = require('./helpers/booking-member-proof');
 
 var FILES = [
   'Config.gs', 'CalendarRepository.gs', 'Availability.gs', 'Booking.gs', 'JapaneseHolidays.gs', 'BookingPricing.gs',
@@ -24,7 +25,7 @@ var FILES = [
   'BookingOptions.gs', 'StripeGateway.gs', 'RateLimiter.gs', 'SpreadsheetRepository.gs', 'OptionOrderRepository.gs',
   'RecoveryRepository.gs', 'FeeSettlementRepository.gs', 'StripeEventRepository.gs', 'BookingMailTemplates.gs',
   'BookingMailer.gs', 'OptionMailTemplates.gs', 'OptionOrderService.gs', 'BookingRepository.gs', 'AdminNotifier.gs',
-  'BookingAdminAlerts.gs', 'BookingReschedule.gs', 'Code.gs'
+  'BookingAdminAlerts.gs', 'BookingReschedule.gs', 'BookingMemberVerification.gs', 'Code.gs'
 ];
 
 var SPREADSHEET_ID = 'ss1';
@@ -101,7 +102,7 @@ function setup(opts) {
     Logger: stubs.createLoggerStub(), ContentService: stubs.createContentServiceStub()
   };
   var sandbox = loadBookingSandbox(FILES, globals);
-  var ctx = { sandbox: sandbox, stripe: stripe, mailApp: mailApp, sheets: spreadsheetsById[SPREADSHEET_ID], members: o.members || {}, lookups: [] };
+  var ctx = { sandbox: sandbox, stripe: stripe, mailApp: mailApp, sheets: spreadsheetsById[SPREADSHEET_ID], members: o.members || {}, lookups: [], proofs: {} };
   sandbox.MemberRepository.isMemberForMonth = function (email, month) {
     ctx.lookups.push({ email: email, month: month });
     if (ctx.members === 'THROW') throw new Error('Sheets error');
@@ -122,8 +123,20 @@ function pairPayload(overrides) {
   }, overrides || {});
 }
 
+/*
+ * Issue #548: V2（2026/12/1 0:00 JST以降の作成）のSNB / mensは、メールOTPの確認済み証明（memberProof）が無ければ会員機能を使えない。
+ * 既定では予約メールのOTP確認を済ませた証明を付ける（本番と同じOTPメール→検証の経路）。memberProof: null で証明なしを送る。
+ */
+function withProof(ctx, payload, now) {
+  var out = Object.assign({}, payload);
+  if (out.memberProof === null) delete out.memberProof;
+  else if (out.memberProof === undefined) out.memberProof = memberProof.proofFor(ctx.proofs, ctx.sandbox, ctx.mailApp, out.email, now);
+  return out;
+}
+
 function book(ctx, overrides, now) {
-  return ctx.sandbox.BookingRepository.createBooking(pairPayload(overrides), now || NOW_DEC);
+  var at = now || NOW_DEC;
+  return ctx.sandbox.BookingRepository.createBooking(withProof(ctx, pairPayload(overrides), at), at);
 }
 
 function bookingRecord(ctx, bookingId) {
@@ -274,6 +287,9 @@ test('外部向けエラーは非会員・利用月不一致・台帳エラー�
 test('会員照会にレート制限: 同じメールの照会が上限を超えると拒否（RATE_LIMITED）', function () {
   var ctx = setup({ members: {} });
   var codes = [];
+  /* 確認コードの検証（今日の先行予約資格の照会）は上限と別なので、先に証明を発行して照会履歴を空にしてから数える。 */
+  memberProof.proofFor(ctx.proofs, ctx.sandbox, ctx.mailApp, 'probe@example.com', NOW_DEC);
+  ctx.lookups.length = 0;
   for (var i = 0; i < 7; i++) codes.push(book(ctx, { email: 'probe@example.com' }).error.code);
   assert.strictEqual(codes[0], DENIED_CODE);
   assert.strictEqual(codes[codes.length - 1], 'RATE_LIMITED');
@@ -454,7 +470,9 @@ function seedRoom(ctx, overrides) {
   ctx.sandbox.SpreadsheetRepository.appendBooking({
     bookingId: o.bookingId, createdAt: o.createdAt, date: o.date, startAt: start, endAt: end, brand: o.brand, name: '山田太郎',
     email: o.email, phone: '090-0000-0000', people: '2名', purpose: 'x', paymentMethod: '現金', status: o.status,
-    calendarEventId: 'ev-' + o.bookingId, source: 'test', customerType: 'returning', priceGeneration: 'V2'
+    calendarEventId: 'ev-' + o.bookingId, source: 'test', customerType: 'returning', priceGeneration: 'V2',
+    /* Issue #548: V2（SNB / mens）の予約は、作成時にメールOTP確認済みで利用日に会員資格があった場合だけ membershipStatus=ACTIVE。 */
+    membershipStatus: o.membershipStatus === undefined ? 'ACTIVE' : o.membershipStatus
   });
   return o.bookingId;
 }

@@ -381,6 +381,10 @@ function createMailAppStub(options) {
         sentEmails.push({ to: toOrMessage, subject: subject, body: body });
       }
     },
+    /* Issue #548: 会員確認コードの送信前に残り枠を確認する。opts.remainingQuotaで枠を制御できる（既定は十分な残り）。 */
+    getRemainingDailyQuota: function () {
+      return typeof opts.remainingQuota === 'number' ? opts.remainingQuota : 1500;
+    },
     _sentEmails: sentEmails
   };
 }

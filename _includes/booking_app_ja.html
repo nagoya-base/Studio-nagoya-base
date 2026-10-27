@@ -59,9 +59,37 @@
     <div class="ba-field" id="ba-email-field">
       <label for="ba-email">メールアドレス<span class="ba-required">必須</span></label>
       <input type="email" id="ba-email" name="email" autocomplete="email" inputmode="email" maxlength="254">
-      <p class="ba-field-help">確定連絡を受け取れるアドレスをご入力ください。SNB MEMBERの方は、予約送信時に登録メールアドレスで自動確認し、ご利用日が会員有効期間内のご予約に会員料金・会員特典を適用します（会員登録と同じメールアドレスをご入力ください）。会員かどうかはこの画面には表示されません。</p>
+      <p class="ba-field-help">確定連絡を受け取れるアドレスをご入力ください。2026年12月1日以降に作成するご予約で、SNB MEMBERの会員料金・会員特典・先行予約（31〜90日先）をご利用の方は、会員登録と同じメールアドレスをご入力のうえ、下の「SNB MEMBERの方」で確認コード（6桁）による会員確認を行ってください。会員確認をしない場合は一般のご予約として進められます。会員かどうかはこの画面には表示されません。</p>
       <p class="ba-field-error" id="ba-email-error" hidden></p>
     </div>
+
+{% if include.brand == "snb" or include.brand == "mens" %}
+    <!-- Issue #548: V2（SNB / SNB mensの2026/12/1 0:00 JST以降に作成する直接予約）の会員確認。予約メール宛の6桁確認コード（OTP）で
+         メール所有を確認した場合だけ、会員料金・会員限定特典・31〜90日先行予約を開放する。会員かどうかは確認コードの送信前後で表示を変えない
+         （確認コードを入力できた本人にだけ結果を返す）。V1/V2の判定はサーバーが返す料金世代（priceGeneration）で、V1の間はJS側が隠す。 -->
+    <fieldset class="ba-fieldset" id="ba-member-verify-field" hidden>
+      <legend>SNB MEMBERの方（会員確認）</legend>
+      <p class="ba-field-help">会員料金・会員限定の特典・31〜90日先の先行予約をご利用の方は、上でご入力のメールアドレス宛に確認コード（6桁）を送信し、届いたコードを入力してください（有効期間60分）。確認なしでも、一般のご予約は通常どおり進められます。</p>
+      <div class="ba-banner-actions">
+        <button type="button" class="ba-btn ba-btn-ghost" id="ba-member-code-send">確認コードを送信</button>
+      </div>
+      <div id="ba-member-code-entry" hidden>
+        <label for="ba-member-code">確認コード（6桁）</label>
+        <input type="text" id="ba-member-code" name="memberCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*">
+        <div class="ba-banner-actions">
+          <button type="button" class="ba-btn ba-btn-primary" id="ba-member-code-verify">確認する</button>
+        </div>
+      </div>
+      <p class="ba-field-help" id="ba-member-verify-status" role="status" aria-live="polite" hidden></p>
+      <p class="ba-field-error" id="ba-member-verify-error" role="alert" hidden></p>
+      <div id="ba-member-reverify" class="ba-banner ba-banner--error" role="alert" hidden>
+        <p id="ba-member-reverify-message"></p>
+        <div class="ba-banner-actions">
+          <button type="button" class="ba-btn ba-btn-ghost" id="ba-member-general-continue">一般予約として続ける</button>
+        </div>
+      </div>
+    </fieldset>
+{% endif %}
 
     <!-- 希望時間帯（Issue #324）。既定は「指定なし（all）」をchecked。この選択は
          月間カレンダーの記号判定・Step1内の開始時刻一覧の絞り込みにのみ使う一次フィルタで、
@@ -291,7 +319,7 @@
       <div class="ba-choices">
         <label class="ba-choice"><input type="checkbox" id="ba-member-unlock" value="1"> <span>SNB MEMBERの会員特典・先行予約（31〜90日先）を利用する</span></label>
       </div>
-      <p class="ba-field-help">チェックすると、31〜90日先の先行予約日と会員限定の特典を選べるようになります。会員資格の確認は予約のメールアドレスで行い、これだけでは会員料金や特典は確定しません。会員でない方は<a href="{{ '/membership/' | relative_url }}">SNB MEMBERのご案内</a>をご覧ください。</p>
+      <p class="ba-field-help">2026年11月30日までに作成するご予約でのみ表示します。チェックすると、31〜90日先の先行予約日と会員限定の特典を選べるようになります。会員資格の確認は予約のメールアドレスで行い、これだけでは会員料金や特典は確定しません。会員でない方は<a href="{{ '/membership/' | relative_url }}">SNB MEMBERのご案内</a>をご覧ください。</p>
     </fieldset>
 
     <!-- 会員限定の特典（Issue #478）。ペアパックは利用日が2026/12/1以降（pairPackAvailableOnDate。Issue #539）、シャワーも利用日が2026/12/1以降（showerAvailableOnDate。Issue #541）のときだけJS側が表示する。
@@ -304,7 +332,7 @@
         <p class="ba-field-help" id="ba-plan-pair-note" hidden>2名ペアパックは3時間以上の利用で選択できます。</p>
         <label class="ba-choice"><input type="checkbox" id="ba-shower" value="shower"> <span>シャワー（1予約1回・1,000円。事前確認・承認制で、選択だけでは利用確定になりません。承認後にお支払い）</span></label>
       </div>
-      <p class="ba-field-help" id="ba-benefits-locked" hidden>SNB MEMBER会員のみ選択できます。{% if include.brand == "mens" %}「SNB MEMBERの会員特典・先行予約を利用する」にチェックすると選択できます。{% else %}会員区分で「会員」を選ぶと選択できます（表示されない場合は「SNB MEMBERの会員特典・先行予約を利用する」にチェック）。{% endif %}</p>
+      <p class="ba-field-help" id="ba-benefits-locked" hidden>SNB MEMBER会員のみ選択できます。2026年12月1日以降に作成するご予約では、メールアドレスの確認コードによる会員確認（上の「SNB MEMBERの方」）が済むと選択できます。{% if include.brand == "mens" %}2026年11月30日までに作成するご予約では「SNB MEMBERの会員特典・先行予約を利用する」にチェックすると選択できます。{% else %}2026年11月30日までに作成するご予約では、会員区分で「会員」を選ぶと選択できます。{% endif %}</p>
       <p class="ba-field-help">会員限定です。シャワー利用は事前確認が必要です。利用希望の場合は事前にご連絡ください。対応可能な場合のみご案内し、承認後にお支払いをお願いします。ここでの選択は利用希望の連絡であり、承認とお支払いの完了までは利用確定ではありません。ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できない場合は、お申し込みいただけません。予約のメールアドレスは会員登録と同じものをご入力ください。2名ペアパックは他の割引・優待と併用できず、延長は通常の会員延長料金です。<a href="{{ '/' | relative_url }}{% if include.brand == "mens" %}mens/{% endif %}membership/" target="_blank" rel="noopener">会員案内を見る</a></p>
       <p class="ba-field-error" id="ba-benefits-error" hidden></p>
     </fieldset>
