@@ -161,6 +161,8 @@
     planPair: document.getElementById('ba-plan-pair'),
     planPairNote: document.getElementById('ba-plan-pair-note'),
     planPairStatus: document.getElementById('ba-plan-pair-status'),
+    planShowerPack: document.getElementById('ba-plan-shower-pack'),
+    planShowerPackNote: document.getElementById('ba-plan-shower-pack-note'),
     showerNote: document.getElementById('ba-shower-note'),
     planEvent: document.getElementById('ba-plan-event'),
     planBanner: document.getElementById('ba-plan-banner'),
@@ -492,6 +494,21 @@
   function pairPackDurationOk_() {
     return Logic.pairPackDurationAllowed(currentCalendarDurationMinutes_());
   }
+  /* Issue #586: SNB mens限定の土日祝4時間シャワーパック。利用日が2026/12/1以降・4時間ちょうどのときだけ選べる。
+     土日祝かどうか（祝日を含む）・会員資格の最終判定はサーバー（平日は見積りでエラーになる）。 */
+  function showerPackVisible_() {
+    return Logic.showerPackAvailableOnDate(brand, els.date ? els.date.value : '');
+  }
+  function showerPackDurationOk_() {
+    return Logic.showerPackDurationAllowed(currentCalendarDurationMinutes_());
+  }
+  /* 1〜2名限定。人数が未選択の間は選べる（人数の必須チェックは別）。 */
+  function showerPackPeopleOk_() {
+    return Logic.showerPackPeopleAllowed(els.people ? els.people.value : '');
+  }
+  function showerPackSelected_() {
+    return !!els.planShowerPack && els.planShowerPack.checked && showerPackVisible_() && memberFeaturesEnabled_() && showerPackDurationOk_() && showerPackPeopleOk_();
+  }
   function benefitChoiceOf_(control) {
     return control && control.parentNode ? control.parentNode : null;
   }
@@ -501,15 +518,37 @@
     var unlocked = memberFeaturesEnabled_();
     var pairVisible = pairPackVisible_();
     var pairDurationOk = pairPackDurationOk_();
+    /* Issue #586: シャワーパックを選んでいる間は、ペアパックを自動適用しない（独立した別商品）。 */
+    var packVisible = showerPackVisible_();
+    var packDurationOk = showerPackDurationOk_();
+    var packPeopleOk = showerPackPeopleOk_();
+    if (els.planShowerPack) {
+      if (!packVisible || !unlocked || !packDurationOk || !packPeopleOk) els.planShowerPack.checked = false;
+      els.planShowerPack.disabled = !packVisible || !unlocked || !packDurationOk || !packPeopleOk;
+      if (els.planShowerPackNote) {
+        var packNote = '';
+        if (!packVisible) packNote = els.date && els.date.value ? 'シャワーパックは2026年12月1日以降のご利用日から選択できます。' : 'ご利用日を選ぶとシャワーパックの選択可否をご案内します（2026年12月1日以降のご利用日が対象）。';
+        else if (!unlocked) packNote = 'シャワーパックはSNB MEMBERの会員確認が済むと選択できます（上の会員確認をご利用ください）。';
+        else if (!packDurationOk) packNote = 'シャワーパックは利用時間が4時間のときだけ選択できます（3時間・5時間などでは適用されません）。';
+        else if (!packPeopleOk) packNote = 'シャワーパックは1〜2名のご利用のときだけ選択できます（3名以上では適用されません）。';
+        else if (els.planShowerPack.checked) packNote = '土日祝4時間シャワーパック（6,500円・1〜2名・シャワー1回込み）が適用されます。平日はご利用いただけません。シャワーは事前確認制で、下の日程調整の確認が必要です。';
+        els.planShowerPackNote.textContent = packNote;
+        els.planShowerPackNote.hidden = !packNote;
+      }
+    }
+    var packSelected = showerPackSelected_();
     if (els.planPair) els.planPair.checked = pairVisible && unlocked && pairDurationOk &&
       !!els.people && !!els.people.value && Logic.isPairPackPeopleValue(els.people.value);
+    if (packSelected && els.planPair) els.planPair.checked = false;
     if (els.planPair) els.planPair.disabled = !unlocked || !pairDurationOk;
     if (els.planPairNote) els.planPairNote.hidden = !(pairVisible && unlocked && !pairDurationOk);
     var pairChoice = benefitChoiceOf_(els.planPair);
     if (pairChoice) pairChoice.hidden = false;
     var showerVisible = showerVisible_();
     if ((!showerVisible || !unlocked) && els.shower) els.shower.checked = false;
-    if (els.shower) els.shower.disabled = !unlocked || !showerVisible;
+    /* Issue #586: シャワーパック選択中はシャワー1回が料金に含まれるため、シャワーを必ず選択状態で固定する（単体のシャワーとの重複申込を防ぐ）。 */
+    if (packSelected && els.shower) els.shower.checked = true;
+    if (els.shower) els.shower.disabled = !unlocked || !showerVisible || packSelected;
     if (els.showerSchedule) {
       if (els.showerSchedule.parentNode) els.showerSchedule.parentNode.hidden = !showerSelected_();
       if (!showerSelected_()) els.showerSchedule.checked = false;
@@ -520,7 +559,9 @@
     if (els.planPairStatus) {
       var pairText = '';
       var peopleValue = els.people ? els.people.value : '';
-      if (pairVisible && unlocked && pairDurationOk) {
+      if (packSelected) {
+        pairText = '土日祝4時間シャワーパックを選択中のため、2名ペアパックは適用されません。';
+      } else if (pairVisible && unlocked && pairDurationOk) {
         if (!peopleValue) pairText = '利用人数を選択すると、1〜2名の場合に2名ペアパック（3時間）が自動適用された料金を表示します。4時間以上は会員の延長料金が加算されます。';
         else if (Logic.isPairPackPeopleValue(peopleValue)) pairText = '2名ペアパック（3時間）が自動適用されます。4時間以上の場合は、3時間を超える分の会員延長料金が加算されます。';
         else pairText = '3名以上のご利用は2名ペアパックの対象外のため、通常料金です。';
@@ -563,12 +604,13 @@
   }
   function selectedPlan_() {
     if (eventPlanSelected_()) return Logic.EVENT_BASE_PLAN_CODE;
+    if (showerPackSelected_()) return Logic.SHOWER_PACK_PLAN_CODE;
     return pairPackVisible_() && memberFeaturesEnabled_() && pairPackDurationOk_() && els.people && els.people.value && Logic.isPairPackPeopleValue(els.people.value) ? Logic.PAIR_PACK_PLAN_CODE : '';
   }
   /* Issue #580: ペアパック対象になり得る条件（対象日・会員確認・3時間以上）が揃っているのに人数が未選択の間は、
      人数で料金が変わるため通常料金を先に出さない（人数を選ぶと初回から正しい料金を表示する）。 */
   function pairPackAwaitingPeople_() {
-    return pairPackVisible_() && memberFeaturesEnabled_() && pairPackDurationOk_() && !(els.people && els.people.value);
+    return !showerPackSelected_() && pairPackVisible_() && memberFeaturesEnabled_() && pairPackDurationOk_() && !(els.people && els.people.value);
   }
   function showerSelected_() {
     return showerVisible_() && memberFeaturesEnabled_() && !!els.shower && els.shower.checked;
@@ -1258,7 +1300,7 @@
     /* Issue #548: V2で確認済みなら、会員料金の見積りは証明を検証するPOST（bookingMemberStatus）で取得する（GETのisMemberは使わない）。 */
     var verifiedQuote = memberVerified_();
     var estimateEpoch = testCredentialEpoch_;
-    var memberStatusPayload = { brand: brand, email: memberAuth.email, proof: memberAuth.proof, date: dateValue, durationMinutes: durationMinutes, plan: plan, people: els.people ? els.people.value : '', autoPairPack: true };
+    var memberStatusPayload = { brand: brand, email: memberAuth.email, proof: memberAuth.proof, date: dateValue, durationMinutes: durationMinutes, plan: plan, people: els.people ? els.people.value : '', autoPairPack: !showerPackSelected_() };
     if (credentialBody) memberStatusPayload.testCredential = credentialBody.testCredential;
     var pendingEstimate = verifiedQuote
       ? postApi_('bookingMemberStatus', memberStatusPayload)
@@ -1478,6 +1520,7 @@
     renderMemberVerify_();
     if (!memberFeaturesEnabled_()) {
       if (els.planPair) els.planPair.checked = false;
+      if (els.planShowerPack) els.planShowerPack.checked = false;
       if (els.shower) els.shower.checked = false;
       if (selectedDateMemberAdvance_) clearSelectedDate_();
     } else if (!advanceFeaturesEnabled_() && selectedDateMemberAdvance_) {
@@ -1510,8 +1553,10 @@
   }
   function renderShowerExtra_() {
     var selected = showerSelected_();
-    var info = selected ? Logic.showerExtraInfo(showerPriceJpy_, locale) : null;
-    if (selected && showerPriceJpy_ === null) ensureShowerPrice_();
+    /* Issue #586: シャワーパックではシャワー1,000円を別行で出さず、パック料金に含まれる旨を示す。 */
+    var included = showerPackSelected_();
+    var info = selected ? Logic.showerExtraInfo(showerPriceJpy_, locale, included) : null;
+    if (selected && !included && showerPriceJpy_ === null) ensureShowerPrice_();
     if (els.priceExtra) els.priceExtra.hidden = !info;
     if (els.priceExtraLine) els.priceExtraLine.textContent = info ? info.text : '';
     if (els.priceExtraNote) els.priceExtraNote.textContent = info ? info.notes.join(' ') : '';
@@ -1520,7 +1565,7 @@
     if (els.confirmShower) els.confirmShower.textContent = info ? info.value + '（' + info.confirmNote + '）' : '';
   }
 
-  [els.people, els.shower].forEach(function (control) {
+  [els.people, els.shower, els.planShowerPack].forEach(function (control) {
     if (control) control.addEventListener('change', function () {
       if (control === els.people && els.people.value) setFieldError_(els.people, els.peopleError, '');
       refreshPriceEstimate_();
@@ -2052,7 +2097,12 @@
         if (fields.people && !Logic.isEventPlanPeopleValue(fields.people)) {
           errors.people = Logic.messageForErrorCode('EVENT_PLAN_PEOPLE_EXCEEDED', locale, brand);
         }
-      } else if (selectedPlan_()) {
+      } else if (selectedPlan_() === Logic.SHOWER_PACK_PLAN_CODE) {
+        /* 土日祝4時間シャワーパックは1〜2名・4時間（サーバー側でも同じ条件で拒否する）。 */
+        if (fields.people && !Logic.showerPackPeopleAllowed(fields.people)) {
+          errors.people = Logic.messageForErrorCode('SHOWER_PACK_PEOPLE_EXCEEDED', locale, brand);
+        }
+      } else if (selectedPlan_() === Logic.PAIR_PACK_PLAN_CODE) {
         /* 2名ペアパックは1〜2名・3時間以上（サーバー側でも同じ条件で拒否する）。 */
         if (fields.people && !Logic.isPairPackPeopleValue(fields.people)) {
           errors.people = Logic.messageForErrorCode('PAIR_PACK_PEOPLE_EXCEEDED', locale, brand);
@@ -2369,7 +2419,7 @@
         plan: selectedPlan_(),
         shower: showerSelected_(),
         showerScheduleConfirmed: !!els.showerSchedule && els.showerSchedule.checked,
-        autoPairPack: (brand === 'snb' || brand === 'mens') && memberFeaturesEnabled_(),
+        autoPairPack: (brand === 'snb' || brand === 'mens') && memberFeaturesEnabled_() && !showerPackSelected_(),
         /* Issue #548: V2で確認済みなら、サーバーが発行した証明を送る。有効性・予約メールとの一致・会員資格はサーバーが再判定する。 */
         memberProof: memberVerified_() ? memberAuth.proof : '',
         /* Issue #559: テスト資格はPOST本文のJSONだけで送る。有効性・予約メールとの一致・モードはサーバーが判定する。 */

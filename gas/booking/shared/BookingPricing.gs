@@ -79,7 +79,7 @@ var BookingPricing = (function () {
    *   （資格の確認は予約作成・日程変更・確定の各サーバー側処理が行い、この純粋関数は料金だけを決める）。
    * - 他の割引・優待との併用は無い（このプランの料金はisMember・価格overrideの影響を受けない）。
    */
-  var PLAN = { MEMBER_PAIR_3H: 'member_pair_3h', OSU_COSPLAY_BASE_6H: 'osu_cosplay_base_6h' };
+  var PLAN = { MEMBER_PAIR_3H: 'member_pair_3h', MENS_WEEKEND_SHOWER_4H: 'mens_weekend_shower_4h', OSU_COSPLAY_BASE_6H: 'osu_cosplay_base_6h' };
   var PAIR_PACK_ = {
     brands: ['snb', 'mens'],
     baseHours: 3,
@@ -87,6 +87,24 @@ var BookingPricing = (function () {
     base: { WEEKDAY: 5000, WEEKEND_HOLIDAY: 6000 },
     /* Issue #539: 提供開始の利用日（JSTの暦日 'YYYY-MM-DD'。ゼロ埋め固定のため文字列比較で足りる）。 */
     startDate: '2026-12-01'
+  };
+
+  /*
+   * Issue #586: SNB mens限定「土日祝4時間シャワーパック」。2名ペアパックと同じく通常料金tierの置換ではなく独立プランで、
+   * 「mens・土日祝・4時間ちょうど・シャワー1回込み」の組み合わせにだけ適用する固定価格（金額はここが唯一の正本）。
+   * - 通常のMEMBER料金（4時間土日祝9,000円）・シャワー単体（BookingOptions.gsのSHOWER_PRICE_JPY_）・ペアパックの料金は変更しない。
+   *   シャワー分は6,500円に含まれ、この予約に紐づくシャワー注文は0円（二重加算しない。BookingOptions.planOrdersのshowerIncluded）。
+   * - 提供開始はシャワーと同じく利用日が2026/12/1以降。actual membershipが必須（資格確認は予約作成・日程変更・確定の各サーバー側処理）。
+   * - 利用人数は1〜2名まで（商品定義。人数はcomputeBookingPriceの入力ではないため、予約作成・見積り(POST)側で isShowerPackPeople により拒否する）。
+   * - 平日・4時間以外・mens以外では成立しない（通常料金へ黙って倒さず拒否する）。
+   */
+  var SHOWER_PACK_ = {
+    brands: ['mens'],
+    hours: 4,
+    maxPeople: 2,
+    price: 6500,
+    startDate: '2026-12-01',
+    label: 'SNB mens 土日祝4時間シャワーパック'
   };
 
   /*
@@ -240,6 +258,27 @@ var BookingPricing = (function () {
     return isValidDateString_(dateString) && dateString >= PAIR_PACK_.startDate;
   }
 
+  /* Issue #586: シャワーパックを提供する利用日か（利用日 >= 2026/12/1。シャワー・ペアパックと同じ基準）。 */
+  function isShowerPackAvailableOnDate(dateString) {
+    return isValidDateString_(dateString) && dateString >= SHOWER_PACK_.startDate;
+  }
+
+  /* Issue #586: シャワーパックの人数条件（1〜2名。ペアパックと同じ判定）。数値以外・3名以上はfalse。 */
+  function isShowerPackPeople(people) {
+    var m = /^\s*([1-9]\d*)\s*名\s*$/.exec(String(people === undefined || people === null ? '' : people));
+    return !!m && Number(m[1]) >= 1 && Number(m[1]) <= SHOWER_PACK_.maxPeople;
+  }
+
+  /* Issue #586: 会員限定の独立プラン（ペアパック・シャワーパック）か。実会員資格の確認・日程変更時の再確認の対象。 */
+  function isMemberPlan(plan) {
+    return plan === PLAN.MEMBER_PAIR_3H || plan === PLAN.MENS_WEEKEND_SHOWER_4H;
+  }
+
+  /* Issue #586: シャワーパックか（シャワー料金を部屋料金に含める＝シャワー注文を0円にする対象）。 */
+  function isShowerPack(plan) {
+    return plan === PLAN.MENS_WEEKEND_SHOWER_4H;
+  }
+
   function computePairPackAmount_(dayType, hours) {
     var extra = hours - PAIR_PACK_.baseHours;
     return PAIR_PACK_.base[dayType] + (extra > 0 ? extra * MEMBER_RATES_[dayType].extensionPerHour : 0);
@@ -249,6 +288,7 @@ var BookingPricing = (function () {
   function normalizePlan(value) {
     if (value === undefined || value === null || value === '') return '';
     if (value === PLAN.MEMBER_PAIR_3H) return PLAN.MEMBER_PAIR_3H;
+    if (value === PLAN.MENS_WEEKEND_SHOWER_4H) return PLAN.MENS_WEEKEND_SHOWER_4H;
     if (value === PLAN.OSU_COSPLAY_BASE_6H) return PLAN.OSU_COSPLAY_BASE_6H;
     return null;
   }
@@ -284,7 +324,9 @@ var BookingPricing = (function () {
 
   /* 管理画面・メール・料金サマリーに出すプラン名（通常料金・未知の値は''）。 */
   function planLabel(plan) {
-    return plan === PLAN.OSU_COSPLAY_BASE_6H ? EVENT_BASE_PLAN_.label : '';
+    if (plan === PLAN.OSU_COSPLAY_BASE_6H) return EVENT_BASE_PLAN_.label;
+    if (plan === PLAN.MENS_WEEKEND_SHOWER_4H) return SHOWER_PACK_.label;
+    return '';
   }
 
   /* 貸切ベースプラン（独立プラン）か（人数上限・6時間固定・二重販売防止の対象）。 */
@@ -358,6 +400,16 @@ var BookingPricing = (function () {
         return { valid: false, error: { code: 'PLAN_DURATION_INVALID', message: '2名ペアパックは3時間以上でご利用ください。' } };
       }
     }
+    if (plan === PLAN.MENS_WEEKEND_SHOWER_4H) {
+      /* Issue #586: 独立プラン。対象ブランド（mensのみ）・利用日（2026/12/1以降）・4時間ちょうどを満たさなければ通常料金へ倒さず拒否する。
+         土日祝かどうかは曜日区分の判定後に確認する。 */
+      if (SHOWER_PACK_.brands.indexOf(brand) === -1 || !isShowerPackAvailableOnDate(date)) {
+        return { valid: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
+      }
+      if (Number(durationMinutes) !== SHOWER_PACK_.hours * 60) {
+        return { valid: false, error: { code: 'PLAN_DURATION_INVALID', message: SHOWER_PACK_.label + 'は4時間でご利用ください。' } };
+      }
+    }
     if (plan === PLAN.OSU_COSPLAY_BASE_6H) {
       /* Issue #488 / #492 / #510: 独立プラン。ブランド・利用時間（最低6時間・1時間単位。startTimeがあれば8:00〜21:00の範囲）を満たさなければ通常料金へ倒さず拒否する（対象日の制限は無い）。 */
       if (EVENT_BASE_PLAN_.brands.indexOf(brand) === -1) {
@@ -366,7 +418,7 @@ var BookingPricing = (function () {
       var scheduleError = eventPlanScheduleError(durationMinutes, params.startTime);
       if (scheduleError) return { valid: false, error: scheduleError };
     }
-    var tier = plan === PLAN.MEMBER_PAIR_3H
+    var tier = isMemberPlan(plan)
       ? TIER.MEMBER
       : (plan ? TIER.GENERAL : resolveTier_(brand, params.isMember === true, generation));
     var dayTypeResult = resolveDayType_(date);
@@ -374,9 +426,13 @@ var BookingPricing = (function () {
       return { valid: false, error: dayTypeResult.error };
     }
     var dayType = dayTypeResult.dayType;
+    if (plan === PLAN.MENS_WEEKEND_SHOWER_4H && dayType !== DAY_TYPE.WEEKEND_HOLIDAY) {
+      return { valid: false, error: { code: 'PLAN_DAY_INVALID', message: SHOWER_PACK_.label + 'は土日祝のみご利用いただけます。' } };
+    }
     var hours = billableHours_(durationMinutes);
     var amount;
     if (plan === PLAN.MEMBER_PAIR_3H) amount = computePairPackAmount_(dayType, hours);
+    else if (plan === PLAN.MENS_WEEKEND_SHOWER_4H) amount = SHOWER_PACK_.price;
     else if (plan === PLAN.OSU_COSPLAY_BASE_6H) amount = hours * EVENT_BASE_PLAN_.hourlyRate;
     else amount = computeAmount_(brand, generation, tier, dayType, hours);
 
@@ -410,6 +466,15 @@ var BookingPricing = (function () {
     PLAN: PLAN,
     PAIR_PACK_MAX_PEOPLE: PAIR_PACK_.maxPeople,
     PAIR_PACK_BASE_HOURS: PAIR_PACK_.baseHours,
+    SHOWER_PACK_PRICE: SHOWER_PACK_.price,
+    SHOWER_PACK_HOURS: SHOWER_PACK_.hours,
+    SHOWER_PACK_MAX_PEOPLE: SHOWER_PACK_.maxPeople,
+    isShowerPackPeople: isShowerPackPeople,
+    SHOWER_PACK_START_DATE: SHOWER_PACK_.startDate,
+    SHOWER_PACK_LABEL: SHOWER_PACK_.label,
+    isShowerPack: isShowerPack,
+    isMemberPlan: isMemberPlan,
+    isShowerPackAvailableOnDate: isShowerPackAvailableOnDate,
     EVENT_BASE_PLAN_MAX_PEOPLE: EVENT_BASE_PLAN_.maxPeople,
     EVENT_BASE_PLAN_MIN_HOURS: EVENT_BASE_PLAN_.minHours,
     EVENT_BASE_PLAN_HOURLY_RATE: EVENT_BASE_PLAN_.hourlyRate,

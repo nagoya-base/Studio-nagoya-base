@@ -61,7 +61,7 @@ var AdminNotifier = (function () {
     ];
     var priceLine = formatAdminPriceLine_(record.priceAmount);
     /* Issue #488: 通常料金か貸切ベースプランかを管理者通知でも識別できるようにする（通常予約は変更なし）。 */
-    if (typeof BookingPricing !== 'undefined' && BookingPricing.isEventPlan(record.planCode)) lines.push('プラン: ' + BookingPricing.planLabel(record.planCode));
+    if (typeof BookingPricing !== 'undefined' && BookingPricing.planLabel(record.planCode)) lines.push('プラン: ' + BookingPricing.planLabel(record.planCode));
     if (priceLine) lines.push(priceLine);
     if (adminUrl) {
       lines.push('');

@@ -369,10 +369,15 @@ function handleBookingMemberStatus_(payload) {
       return { success: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
     }
     /* Automatic pack selection uses the same date, people, duration and actual membership conditions as creation. */
-    if (payload.autoPairPack === true && brand !== 'studio_x') {
+    /* Issue #586: 利用者が明示的に選んだシャワーパックは、ペアパックの自動適用で上書きしない。 */
+    if (payload.autoPairPack === true && brand !== 'studio_x' && !BookingPricing.isShowerPack(plan)) {
       plan = status.memberOnDate === true && BookingPricing.isPairPackAvailableOnDate(date) &&
         BookingPricing.isPairPackPeople(payload.people) && durationMinutes >= 180
         ? BookingPricing.PLAN.MEMBER_PAIR_3H : '';
+    }
+    /* Issue #586: シャワーパックは1〜2名限定（人数が未指定の見積りは人数を確認できないため通す。予約作成で必ず拒否される）。 */
+    if (BookingPricing.isShowerPack(plan) && payload.people && !BookingPricing.isShowerPackPeople(payload.people)) {
+      return { success: false, error: { code: 'SHOWER_PACK_PEOPLE_EXCEEDED', message: BookingPricing.SHOWER_PACK_LABEL + 'のご利用は1〜2名までです。' } };
     }
     if (plan && !BookingPricing.isEventPlan(plan) && status.memberOnDate !== true) {
       return { success: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.memberBenefitDeniedMessage(brand) } };

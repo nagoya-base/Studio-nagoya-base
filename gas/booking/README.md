@@ -7885,6 +7885,15 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - 予約にプラン識別子を保存（`Bookings.planCode`）。`createBooking` の入力は `plan: 'member_pair_3h'`。3名以上（`people` が1名/2名以外）・3時間未満・Studio X・未知のプランはサーバー側で拒否（通常料金へ黙って倒さない）。
 - 日程変更: `FeeCalculator.quoteFee` に `plan` を渡し、変更先の平日/土日祝でプラン料金を再計算（平日⇔土日祝で5,000円⇔6,000円、差額精算は既存の仕組み）。3時間未満へ短縮するとプラン料金は自動算出できず（`PLAN_DURATION_INVALID`）手動確認が必須。`buildFeeQuoteToken_` に `plan` を含める。
 
+### SNB mens限定 土日祝4時間シャワーパック（独立プラン `mens_weekend_shower_4h`。Issue #586）
+
+- 正本: `BookingPricing.gs`（`SHOWER_PACK_`）。mensのみ・土日祝のみ（祝日は `JapaneseHolidays` で判定）・4時間ちょうど・**1〜2名限定**（`isShowerPackPeople`。3名以上は `SHOWER_PACK_PEOPLE_EXCEEDED`）・利用日が2026/12/1以降・固定6,500円（税込）。通常料金tier・2名ペアパック・単体シャワー（`SHOWER_PRICE_JPY_`）の金額は変更しない。平日は `PLAN_DAY_INVALID`、4時間以外は `PLAN_DURATION_INVALID`、他ブランド・提供開始前は `PLAN_NOT_AVAILABLE`（通常料金へ黙って倒さない）。
+- 予約作成: `plan: 'mens_weekend_shower_4h'` を利用者が明示した場合のみ（`autoPairPack` でペアパックに上書きしない）。`BookingRepository.resolveShowerPackForNewBooking_` が、V2のメールOTP確認済み証明・`opt_elig_` レート制限・actual membership（`MembershipRules.verifyActualMembership`。mensの価格優遇では代用しない）を確認し、非会員は `MEMBER_BENEFIT_NOT_AVAILABLE`。`options.shower`（日程調整の確認つき）が無い申込は `SHOWER_PACK_SHOWER_REQUIRED`。
+- シャワーの二重加算防止: パック予約に紐づくシャワーOptionOrderは `amountJpy=0`（`BookingOptions.planOrders` の `showerIncluded`。同時申込は `OptionOrderService.preflightForNewBooking`、後付けは `createOrders` が `booking.planCode` から判定）。事前確認の `PENDING_APPROVAL` から始まり、管理者承認（`decide_`）で**支払いなしに `CONFIRMED`**（`paymentStatus=NOT_REQUIRED`）。0円のため `isPayable` が偽でCheckoutは開始できない。有効なシャワー注文がある間の重複申込は `DUPLICATE_OPTION`。承認メールは「追加のお支払い不要」と案内する。
+- 会員資格の再確認: `BookingPricing.isMemberPlan`（ペアパックと共通）が、管理者の手動確定・EXPIRED復活・日程変更・現地精算で actual membership を再確認する。日程変更は `FeeCalculator.quoteFee` に `plan` を渡して再見積りし、平日・4時間以外へ変更するとプラン料金は自動算出できない（`PLAN_DAY_INVALID` / `PLAN_DURATION_INVALID`）。
+- フロント: `scripts/booking-logic.js` の `showerPackAvailableOnDate` / `showerPackDurationAllowed` は表示制御のみ（正本はサーバー）。予約フォームはmens限定のチェックボックス（`#ba-plan-shower-pack`）で選び、選択中はシャワーを固定選択にして単体シャワーとの重複を防ぎ、料金サマリーのシャワー行は「パック料金に含まれる」と表示する。
+- テスト: `test/mens-weekend-shower-pack.test.js`。
+
 ### 会員限定シャワー（OptionOrder系。SNB / mensのみ）
 
 - 正本: `BookingOptions.gs`（`SHOWER_PRICE_JPY_`）。`category=MEMBER_SERVICE`・`items=['SHOWER']`・金額1,000円。**Issue #481で承認制に変更**: 申込は `approvalStatus=PENDING_APPROVAL / status=PENDING_APPROVAL`（Checkout不可・`APPROVAL_REQUIRED`）→ Booking Adminの既存OptionOrder承認（`decide_`。スタッフ対応と同じ処理。承認時にもactual membershipを再確認）→ `AWAITING_PAYMENT` → Checkout（開始時に再確認）→ Webhookで `CONFIRMED`（決済済みは会員再確認で巻き戻さない）。否認は `DECLINED`（重複判定から外れ再申込可）。1予約1回（重複は `DUPLICATE_OPTION`）。Studio Xには出さない（選択は `OPTIONS_NOT_AVAILABLE`）。SNB / mensではシャワー以外（Studio Xの機材・セッティング）を同時に申し込めない。

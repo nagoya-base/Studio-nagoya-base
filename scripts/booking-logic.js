@@ -110,9 +110,13 @@
       MEMBER_BENEFIT_NOT_AVAILABLE: 'この特典は、ご利用日がお支払い済みの有効期間に入るSNB MEMBER会員資格を確認できた場合のみご利用いただけます。ご予約のメールアドレスは会員登録と同じものをご入力ください。次回更新前の未払いの期間は、更新の決済が成功してから確定できます。',
       PAIR_PACK_PEOPLE_EXCEEDED: '2名ペアパックのご利用は1〜2名までです。人数を変更するか、ペアパックの選択を外してください。',
       SHOWER_SCHEDULE_CONFIRMATION_REQUIRED: 'シャワー利用は、ご利用日の1週間前までにスタッフとの日程調整を済ませたことを確認してください。',
-      PLAN_DURATION_INVALID: 'ご選択のプランの利用時間が条件を満たしていません（2名ペアパックは3時間以上、貸切ベースプランは最低6時間から1時間単位）。',
+      PLAN_DURATION_INVALID: 'ご選択のプランの利用時間が条件を満たしていません（2名ペアパックは3時間以上、土日祝4時間シャワーパックは4時間、貸切ベースプランは最低6時間から1時間単位）。',
+      /* Issue #586: SNB mens限定の土日祝4時間シャワーパック。 */
+      SHOWER_PACK_PEOPLE_EXCEEDED: '土日祝4時間シャワーパックのご利用は1〜2名までです。人数を変更するか、パックの選択を外してください。',
+      PLAN_DAY_INVALID: '土日祝4時間シャワーパックは、土日祝のご利用日のみご選択いただけます。ご利用日を変更するか、パックの選択を外してください。',
+      SHOWER_PACK_SHOWER_REQUIRED: '土日祝4時間シャワーパックには、シャワー利用の事前確認（日程調整の確認）が含まれます。確認にチェックしてお進みください。',
       PLAN_HOURS_OUT_OF_RANGE: '貸切ベースプランは8:00〜21:00の範囲内でご利用ください。終了が21:00を超える時間は選べません。開始時刻か利用時間を変更してください。',
-      PLAN_NOT_AVAILABLE: 'このプランは現在ご利用いただけません（会員限定の2名ペアパックは、ご利用日が2026年12月1日以降の場合のみご選択いただけます）。',
+      PLAN_NOT_AVAILABLE: 'このプランは現在ご利用いただけません（会員限定の2名ペアパック・SNB mens土日祝4時間シャワーパックは、ご利用日が2026年12月1日以降の場合のみご選択いただけます）。',
       INVALID_PLAN: 'プランの指定が正しくありません。ページを開き直してください。',
       /* Issue #488 / #492 / #510: 6時間貸切ベースプラン（常設）。 */
       EVENT_PLAN_PEOPLE_EXCEEDED: '貸切ベースプランのご利用は1〜6名までです。人数を変更するか、プランの選択を外してください。',
@@ -154,7 +158,10 @@
       MEMBER_BENEFIT_NOT_AVAILABLE: 'This member-only benefit requires an SNB MEMBER membership confirmed for the month of your visit. Please use the same email address as your membership.',
       PAIR_PACK_PEOPLE_EXCEEDED: 'The pair pack is for 1 to 2 guests.',
       SHOWER_SCHEDULE_CONFIRMATION_REQUIRED: 'Please confirm that you completed scheduling with staff at least one week before your visit.',
-      PLAN_DURATION_INVALID: 'The selected plan’s duration is not allowed (pair pack: 3+ hours; private base plan: 6+ hours in 1-hour steps).',
+      PLAN_DURATION_INVALID: 'The selected plan’s duration is not allowed (pair pack: 3+ hours; weekend/holiday 4-hour shower pack: 4 hours; private base plan: 6+ hours in 1-hour steps).',
+      SHOWER_PACK_PEOPLE_EXCEEDED: 'The 4-hour shower pack is for 1 to 2 guests.',
+      PLAN_DAY_INVALID: 'The 4-hour shower pack is available only on weekends and public holidays.',
+      SHOWER_PACK_SHOWER_REQUIRED: 'The 4-hour shower pack includes advance confirmation for shower use. Please tick the scheduling confirmation.',
       PLAN_HOURS_OUT_OF_RANGE: 'The private base plan must fall within 08:00–21:00. Please change the start time or duration.',
       PLAN_NOT_AVAILABLE: 'This plan is not available right now.',
       INVALID_PLAN: 'The plan is not valid. Please reload the page.',
@@ -253,6 +260,9 @@
       code === 'MEMBER_BENEFIT_NOT_AVAILABLE' ||
       code === 'SHOWER_SCHEDULE_CONFIRMATION_REQUIRED' ||
       code === 'PLAN_DURATION_INVALID' ||
+      code === 'PLAN_DAY_INVALID' ||
+      code === 'SHOWER_PACK_PEOPLE_EXCEEDED' ||
+      code === 'SHOWER_PACK_SHOWER_REQUIRED' ||
       code === 'PLAN_HOURS_OUT_OF_RANGE' ||
       code === 'PLAN_NOT_AVAILABLE' ||
       code === 'INVALID_PLAN' ||
@@ -477,6 +487,8 @@
     /* Issue #478: 会員限定の2名ペアパック（独立プラン）とシャワー。選択したときだけ送る（未選択ならキー自体を付けず、
        従来のペイロードは1バイトも変わらない）。金額・会員資格は送らない（サーバーが再計算・確認する）。 */
     if (s.plan === PAIR_PACK_PLAN_CODE) payload.plan = PAIR_PACK_PLAN_CODE;
+    /* Issue #586: SNB mens限定の土日祝4時間シャワーパック（利用者が明示的に選んだときだけ。金額・会員資格は送らない）。 */
+    if (s.plan === SHOWER_PACK_PLAN_CODE) payload.plan = SHOWER_PACK_PLAN_CODE;
     /* Issue #488 / #492: 6時間貸切ベースプラン（常設）。金額・可否は送らない（サーバーが判定する）。 */
     if (s.plan === EVENT_BASE_PLAN_CODE) payload.plan = EVENT_BASE_PLAN_CODE;
     if (s.shower === true) payload.options = { shower: true, showerScheduleConfirmed: s.showerScheduleConfirmed === true };
@@ -1067,12 +1079,12 @@
     ja: {
       rateLabel: '適用料金', planLabel: '適用プラン', general: '一般料金',
       member: 'SNB MEMBER 会員料金',
-      pairPlan: 'SNB MEMBER限定 2名ペアパック', eventPlan: 'Studio X｜6時間貸切ベースプラン', sep: '：'
+      pairPlan: 'SNB MEMBER限定 2名ペアパック', showerPackPlan: 'SNB mens 土日祝4時間シャワーパック（SNB MEMBER限定）', eventPlan: 'Studio X｜6時間貸切ベースプラン', sep: '：'
     },
     en: {
       rateLabel: 'Applied rate', planLabel: 'Applied plan', general: 'Standard rate',
       member: 'SNB MEMBER rate',
-      pairPlan: 'SNB MEMBER-only Pair Pack (2 guests)', eventPlan: 'Studio X 6-hour Private Base Plan', sep: ': '
+      pairPlan: 'SNB MEMBER-only Pair Pack (2 guests)', showerPackPlan: 'SNB mens Weekend/Holiday 4-hour Shower Pack (SNB MEMBER only)', eventPlan: 'Studio X 6-hour Private Base Plan', sep: ': '
     }
   };
 
@@ -1080,6 +1092,7 @@
     if (!price || typeof price !== 'object') return null;
     var t = APPLIED_RATE_TEXT_[locale === 'en' ? 'en' : 'ja'];
     if (price.plan === PAIR_PACK_PLAN_CODE) return { kind: 'plan', label: t.planLabel, value: t.pairPlan, text: t.planLabel + t.sep + t.pairPlan };
+    if (price.plan === SHOWER_PACK_PLAN_CODE) return { kind: 'plan', label: t.planLabel, value: t.showerPackPlan, text: t.planLabel + t.sep + t.showerPackPlan };
     if (price.plan === EVENT_BASE_PLAN_CODE) return { kind: 'plan', label: t.planLabel, value: t.eventPlan, text: t.planLabel + t.sep + t.eventPlan };
     if (price.plan) return null;
     /* Issue #572: Studio Xには一般／会員の料金区分を設けないため、適用料金の行そのものを出さない（金額計算には影響しない）。 */
@@ -1109,7 +1122,25 @@
     }
   };
 
-  function showerExtraInfo(priceJpy, locale) {
+  /* Issue #586: シャワーパックのシャワーはパック料金に含まれ、別途決済しない（追加の1,000円を出さない）。事前確認・承認は必要。 */
+  var SHOWER_INCLUDED_TEXT_ = {
+    ja: {
+      label: 'シャワー', value: '1回込み（パック料金に含まれます）',
+      notes: ['※シャワー1回分は上記のパック料金に含まれ、別途のお支払いはありません。', '※シャワーは事前確認・運営承認が必要で、申込だけでは利用確定になりません（対応できない場合があります）。'],
+      confirmNote: 'パック料金に含まれ、別途決済なし。事前確認・承認が必要'
+    },
+    en: {
+      label: 'Shower', value: 'One use included (in the pack price)',
+      notes: ['* One shower use is included in the pack price above; no separate payment.', '* Shower use requires advance confirmation and approval; the request alone does not confirm use.'],
+      confirmNote: 'Included in the pack price; advance confirmation and approval required'
+    }
+  };
+
+  function showerExtraInfo(priceJpy, locale, included) {
+    if (included === true) {
+      var inc = SHOWER_INCLUDED_TEXT_[locale === 'en' ? 'en' : 'ja'];
+      return { label: inc.label, value: inc.value, text: inc.label + (locale === 'en' ? ': ' : '：') + inc.value, notes: inc.notes.slice(), confirmNote: inc.confirmNote };
+    }
     var t = SHOWER_EXTRA_TEXT_[locale === 'en' ? 'en' : 'ja'];
     var formatted = formatJpyAmount(priceJpy);
     var value = t.name + (formatted ? ' ' + formatted + t.tax : t.noAmount);
@@ -1123,6 +1154,29 @@
   }
 
   var PAIR_PACK_PLAN_CODE = 'member_pair_3h';
+
+  /* Issue #586: SNB mens限定の土日祝4時間シャワーパック。表示制御・早期ガードだけで、金額・可否（土日祝・会員資格）の正本はサーバー
+     （BookingPricing.gs の SHOWER_PACK_）。値の一致は test/booking-pricing.test.js で検証する。 */
+  var SHOWER_PACK_PLAN_CODE = 'mens_weekend_shower_4h';
+  var SHOWER_PACK_DURATION_MINUTES = 240;
+  var SHOWER_PACK_START_DATE_ = '2026-12-01';
+
+  /* 利用日が2026/12/1以降のSNB mensのみ。通常SNB・Studio Xでは出さない。 */
+  function showerPackAvailableOnDate(brand, dateValue) {
+    if (brand !== 'mens') return false;
+    return typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue) && dateValue >= SHOWER_PACK_START_DATE_;
+  }
+
+  /* 1〜2名限定（ペアパックと同じ判定）。未選択は判定せずtrue（人数の必須チェックは別）。 */
+  function showerPackPeopleAllowed(people) {
+    if (!people) return true;
+    return people === '1名' || people === '2名';
+  }
+
+  /* 4時間ちょうどのときだけ選べる（3時間・5時間では選べない）。 */
+  function showerPackDurationAllowed(durationMinutes) {
+    return Number(durationMinutes) === SHOWER_PACK_DURATION_MINUTES;
+  }
 
   /* Issue #552: ペアパックは3時間未満では成立しない。UIで選べなくするための早期ガードで、
      正本はサーバー（BookingPricing.gs の PAIR_PACK_.baseHours = 3。拒否もサーバー側で維持）。
@@ -1295,6 +1349,11 @@
     appliedRateInfo: appliedRateInfo,
     isPairPackPeopleValue: isPairPackPeopleValue,
     pairPackDurationAllowed: pairPackDurationAllowed,
+    showerPackAvailableOnDate: showerPackAvailableOnDate,
+    showerPackDurationAllowed: showerPackDurationAllowed,
+    showerPackPeopleAllowed: showerPackPeopleAllowed,
+    SHOWER_PACK_PLAN_CODE: SHOWER_PACK_PLAN_CODE,
+    SHOWER_PACK_DURATION_MINUTES: SHOWER_PACK_DURATION_MINUTES,
     PAIR_PACK_MIN_MINUTES: PAIR_PACK_MIN_MINUTES,
     PAIR_PACK_PLAN_CODE: PAIR_PACK_PLAN_CODE,
     EVENT_BASE_PLAN_CODE: EVENT_BASE_PLAN_CODE,
