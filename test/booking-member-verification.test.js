@@ -585,3 +585,17 @@ test('見積りGET: V2のSNBはクライアントのisMemberを無視して一�
   var v1 = JSON.parse(ctx.sandbox.doGet({ parameter: { action: 'estimatePrice', brand: 'snb', date: NEAR_DATE, durationMinutes: '180', isMember: '1' } }).text);
   assert.strictEqual(v1.price.tier, 'MEMBER', 'V1は従来どおり自己申告');
 });
+
+test('会員料金の見積り（POST）: SNB / mensの料金は開始時刻に依存しない（startTimeは貸切ベースプランの時間帯検証だけに使う）', function () {
+  var ctx = setup({ members: { [MEMBER]: ['2026-12'] } });
+  pinGeneration(ctx, V2_NOW);
+  var proof = issue(ctx, MEMBER);
+  ['snb', 'mens'].forEach(function (brand) {
+    var prices = ['08:00', '10:00', '19:00', undefined].map(function (startTime) {
+      var r = post(ctx, 'bookingMemberStatus', { brand: brand, email: MEMBER, proof: proof, date: NEAR_DATE, durationMinutes: 180, startTime: startTime });
+      assert.strictEqual(r.success, true, JSON.stringify(r));
+      return JSON.stringify(r.price);
+    });
+    assert.strictEqual(new Set(prices).size, 1, brand + ': 開始時刻を変えても見積りは同じ');
+  });
+});
