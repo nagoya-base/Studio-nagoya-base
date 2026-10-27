@@ -735,5 +735,5 @@ test('確認チェック(サーバー): 不正な形式・未知キーは拒否�
   ['yes', [], { equipmentLecture: 'true' }, { other: true }].forEach(function (bad) {
     assert.strictEqual(BookingOptions.normalizeSelection(Object.assign({ confirmations: bad }, base), 'studio-x', REQUIRE_CONFIRM).error.code, 'INVALID_OPTIONS');
   });
-  assert.strictEqual(BookingOptions.normalizeSelection({ shower: true, confirmations: LECTURE }, 'snb', REQUIRE_CONFIRM).error.code, 'OPTIONS_NOT_AVAILABLE');
+  assert.strictEqual(BookingOptions.normalizeSelection({ shower: true, showerScheduleConfirmed: true, confirmations: LECTURE }, 'snb', REQUIRE_CONFIRM).error.code, 'OPTIONS_NOT_AVAILABLE');
 });
