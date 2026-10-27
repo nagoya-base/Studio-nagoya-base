@@ -54,12 +54,29 @@ test('モバイルメニューに同じリンク先・同じ表示名の重複�
   });
 });
 
-test('デスクトップナビの全リンクがモバイルメニューにも存在する（片方だけの追加を防ぐ）', function () {
+/*
+ * 意図的にモバイルメニューだけに存在するリンク（ページごとの allowlist）。
+ * ここに無いモバイルのみリンクは「片側だけ追加された」とみなして失敗させる。
+ * デスクトップのみのリンクは許容しない。
+ */
+var MOBILE_ONLY = {
+  'index.html': ['legal/'],              /* 利用規約・プライバシーはフッターと併せてモバイルのみ */
+  'legal/index.html': ['#cancel'],       /* 規約ページ内の細目アンカー */
+  'base-plan/index.html': ['./']         /* 現在地表示（aria-current） */
+};
+
+test('デスクトップナビとモバイルメニューのリンク集合が双方向で一致する（allowlist以外の片側のみリンクは失敗）', function () {
   ALL_PAGES.forEach(function (rel) {
     var n = navs(rel);
-    var mobileHrefs = n.mobile.map(function (l) { return l.href; });
-    n.desktop.forEach(function (l) {
-      assert.ok(mobileHrefs.indexOf(l.href) !== -1, rel + ': デスクトップのみのリンク ' + l.label + ' (' + l.href + ')');
+    var desktop = n.desktop.map(function (l) { return l.href; });
+    var mobile = n.mobile.map(function (l) { return l.href; });
+    var allowed = MOBILE_ONLY[rel] || [];
+    var desktopOnly = desktop.filter(function (h) { return mobile.indexOf(h) === -1; });
+    var mobileOnly = mobile.filter(function (h) { return desktop.indexOf(h) === -1 && allowed.indexOf(h) === -1; });
+    assert.deepStrictEqual(desktopOnly, [], rel + ': デスクトップのみのリンク');
+    assert.deepStrictEqual(mobileOnly, [], rel + ': モバイルのみのリンク（意図的ならMOBILE_ONLYに明記）');
+    allowed.forEach(function (h) {
+      assert.ok(mobile.indexOf(h) !== -1 && desktop.indexOf(h) === -1, rel + ': allowlistの ' + h + ' が実態と合わない（不要なら削除）');
     });
   });
 });
@@ -78,7 +95,7 @@ test('主要ページは「6時間貸切ベースプラン」へ、デスクト�
 
 test('Studio Xトップ: デスクトップとモバイルで主要ナビの順序が一致する', function () {
   var n = navs('index.html');
-  var mobileOnly = ['legal/'];
+  var mobileOnly = MOBILE_ONLY['index.html'];
   var desktop = n.desktop.map(function (l) { return l.href; });
   var mobile = n.mobile.map(function (l) { return l.href; }).filter(function (h) { return mobileOnly.indexOf(h) === -1; });
   assert.deepStrictEqual(mobile, desktop);
