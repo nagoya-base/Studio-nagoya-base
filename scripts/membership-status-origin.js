@@ -3,8 +3,10 @@
  * - 遷移元は ?from=mens|studio-x（SNBは指定なし）で受け取る。許可済みの2値だけを採用し、それ以外（未知・不正・URL風の値）はSNBへ。
  * - 戻り先のURL・文言はページ（includeが描画したデータ属性）から取り、URLパラメータの値はhrefに一切使わない（open redirect不可）。
  * - メールのワンタイムリンクは別タブ・別アプリから開かれて ?from を持たないため、?from付きで開かれたときだけ遷移元の「ブランド名」を
- *   localStorageに短時間（2時間）保存し、#t= 経路のときに限って引き継ぐ。保存するのはブランド名のみで、トークン・メールアドレスは含めない。
- *   ストレージが使えない・期限切れ・保存値が不正なときはSNBへ戻す。本人確認・レート制限・解約の処理（membership-status.js）には触れない。
+ *   ブランドごとに localStorage へ短時間（2時間）保存し、#t= 経路のときに限って引き継ぐ。保存するのはブランド名と時刻のみで、
+ *   トークン・メールアドレスは含めない。メールとブランドの対応は分からないため、有効な保存が複数ブランドにまたがる（別ブランドから
+ *   続けて確認を始めた）ときは誤誘導を避けてSNBへ戻す。#t= を使った時点で保存は破棄する。
+ *   ストレージが使えない・期限切れ・保存値が不正なときもSNBへ戻す。本人確認・レート制限・解約の処理（membership-status.js）には触れない。
  */
 (function (root) {
   'use strict';
@@ -21,31 +23,48 @@
     return ALLOWED.indexOf(value) !== -1 ? value : null;
   }
 
-  function loadStored(storage, nowMs) {
+  function readMap(storage) {
     try {
       var raw = storage && storage.getItem(STORAGE_KEY);
-      if (!raw) return null;
-      var data = JSON.parse(raw);
-      if (!data || ALLOWED.indexOf(data.brand) === -1) return null;
-      if (typeof data.savedAt !== 'number' || nowMs - data.savedAt < 0 || nowMs - data.savedAt > TTL_MS) return null;
-      return data.brand;
-    } catch (e) { return null; }
+      var data = raw ? JSON.parse(raw) : null;
+      return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    } catch (e) { return {}; }
   }
 
-  function save(storage, brand, nowMs) {
+  function writeMap(storage, map) {
     try {
       if (!storage) return;
-      if (brand) storage.setItem(STORAGE_KEY, JSON.stringify({ brand: brand, savedAt: nowMs }));
+      if (Object.keys(map).length) storage.setItem(STORAGE_KEY, JSON.stringify(map));
       else storage.removeItem(STORAGE_KEY);
     } catch (e) { /* ストレージ不可でもSNB既定で動く */ }
+  }
+
+  /* 期限内で許可済みブランドの保存だけを残す。 */
+  function liveMap(storage, nowMs) {
+    var raw = readMap(storage);
+    var map = {};
+    ALLOWED.forEach(function (brand) {
+      var savedAt = raw[brand];
+      if (typeof savedAt === 'number' && nowMs - savedAt >= 0 && nowMs - savedAt <= TTL_MS) map[brand] = savedAt;
+    });
+    return map;
   }
 
   /* 表示するブランドを決める。?from があればそれを最優先して保存し、なければ #t= 経路（メール再訪）のときだけ保存値を使う。 */
   function resolveBrand(search, hash, storage, nowMs) {
     var fromParam = parseFrom(search);
-    if (fromParam) { save(storage, fromParam, nowMs); return fromParam; }
-    if (/(?:^#|&)t=/.test(hash || '')) return loadStored(storage, nowMs);
-    save(storage, null, nowMs);
+    if (fromParam) {
+      var map = liveMap(storage, nowMs);
+      map[fromParam] = nowMs;
+      writeMap(storage, map);
+      return fromParam;
+    }
+    if (/(?:^#|&)t=/.test(hash || '')) {
+      var brands = Object.keys(liveMap(storage, nowMs));
+      writeMap(storage, {});
+      return brands.length === 1 ? brands[0] : null;
+    }
+    writeMap(storage, {});
     return null;
   }
 

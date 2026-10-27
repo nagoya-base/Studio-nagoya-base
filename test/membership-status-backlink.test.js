@@ -70,7 +70,7 @@ test('3ブランド: ?from=mens / ?from=studio-x / 指定なしで、戻り先�
 });
 
 test('直接アクセス: パラメータなしはSNBトップ（保存値があっても#t=経路でなければ使わない）', function () {
-  var stored = makeStorage({ snb_membership_status_from: JSON.stringify({ brand: 'mens', savedAt: NOW - 1000 }) });
+  var stored = makeStorage({ snb_membership_status_from: JSON.stringify({ mens: NOW - 1000 }) });
   var r = visit('', '', stored);
   assert.strictEqual(r.href, HREFS.snb);
   assert.strictEqual(r.text, LABELS.snb);
@@ -87,7 +87,7 @@ test('不正値: 未知のブランド・外部URL・スキーム・パス風・
     assert.strictEqual(r.text, LABELS.snb, search);
   });
   /* 不正値のときは保存値も消し、前回のブランドを引きずらない。 */
-  var stored = makeStorage({ snb_membership_status_from: JSON.stringify({ brand: 'mens', savedAt: NOW }) });
+  var stored = makeStorage({ snb_membership_status_from: JSON.stringify({ mens: NOW }) });
   visit('?from=evil', '', stored);
   assert.strictEqual(stored.data.snb_membership_status_from, undefined);
 });
@@ -106,9 +106,7 @@ test('hrefはデータ属性（自サイトパス）だけから決まり、URL�
 test('ワンタイムリンク経由: ?from付きで要求した同じブラウザで#t=を開くとブランドを引き継ぐ。保存は期限付き・ブランド名のみ', function () {
   var storage = makeStorage();
   visit('?from=studio-x', '', storage); /* 会員案内 → 確認ページ（メール送信前） */
-  var saved = JSON.parse(storage.data.snb_membership_status_from);
-  assert.deepStrictEqual(Object.keys(saved).sort(), ['brand', 'savedAt']);
-  assert.strictEqual(saved.brand, 'studio-x');
+  assert.deepStrictEqual(JSON.parse(storage.data.snb_membership_status_from), { 'studio-x': NOW });
 
   var token = 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4';
   var back = visit('', '#t=' + token, storage, NOW + 10 * 60 * 1000); /* メールのリンク（?fromなし） */
@@ -124,17 +122,39 @@ test('ワンタイムリンク経由: ?from付きで要求した同じブラウ�
 test('ワンタイムリンク経由のフォールバック: 保存なし・期限切れ・破損・不正ブランド・ストレージ不可はSNB', function () {
   var token = '#t=A1b2C3d4E5f6G7h8I9j0K1l2M3n4';
   assert.strictEqual(visit('', token, makeStorage()).href, HREFS.snb);
-  var expired = makeStorage({ snb_membership_status_from: JSON.stringify({ brand: 'mens', savedAt: NOW }) });
+  var expired = makeStorage({ snb_membership_status_from: JSON.stringify({ mens: NOW }) });
   assert.strictEqual(visit('', token, expired, NOW + 2 * 60 * 60 * 1000 + 1).href, HREFS.snb);
-  var future = makeStorage({ snb_membership_status_from: JSON.stringify({ brand: 'mens', savedAt: NOW + 99999 }) });
+  var future = makeStorage({ snb_membership_status_from: JSON.stringify({ mens: NOW + 99999 }) });
   assert.strictEqual(visit('', token, future).href, HREFS.snb);
-  var broken = makeStorage({ snb_membership_status_from: '{not json' });
-  assert.strictEqual(visit('', token, broken).href, HREFS.snb);
-  var evil = makeStorage({ snb_membership_status_from: JSON.stringify({ brand: 'https://evil.example/', savedAt: NOW }) });
-  assert.strictEqual(visit('', token, evil).href, HREFS.snb);
+  ['{not json', '[]', '"mens"', JSON.stringify({ brand: 'mens', savedAt: NOW }), JSON.stringify({ 'https://evil.example/': NOW }), JSON.stringify({ mens: 'x' })].forEach(function (raw) {
+    assert.strictEqual(visit('', token, makeStorage({ snb_membership_status_from: raw })).href, HREFS.snb, raw);
+  });
   assert.strictEqual(visit('?from=mens', token, makeStorage(undefined, true)).href, HREFS.mens, 'ストレージ不可でも?fromは効く');
   assert.strictEqual(visit('', token, makeStorage(undefined, true)).href, HREFS.snb);
   assert.strictEqual(visit('', token, null).href, HREFS.snb);
+});
+
+test('複数ブランドで確認が重なったら誤誘導せずSNB（Studio X→mensの順で開始→最初のメールを開く）。期限切れの側は無視', function () {
+  var token = '#t=A1b2C3d4E5f6G7h8I9j0K1l2M3n4';
+  var storage = makeStorage();
+  visit('?from=studio-x', '', storage, NOW);
+  visit('?from=mens', '', storage, NOW + 5 * 60 * 1000);
+  var r = visit('', token, storage, NOW + 10 * 60 * 1000);
+  assert.strictEqual(r.href, HREFS.snb);
+  assert.strictEqual(r.text, LABELS.snb);
+  assert.strictEqual(storage.data.snb_membership_status_from, undefined, '#t=を使ったら保存を破棄');
+
+  /* 片方が期限切れなら、有効な1つだけが残るので引き継ぐ。 */
+  var s2 = makeStorage();
+  visit('?from=studio-x', '', s2, NOW);
+  visit('?from=mens', '', s2, NOW + 3 * 60 * 60 * 1000);
+  assert.strictEqual(visit('', token, s2, NOW + 3 * 60 * 60 * 1000 + 1000).href, HREFS.mens);
+
+  /* 同じブランドを続けて開始しても曖昧ではない。 */
+  var s3 = makeStorage();
+  visit('?from=mens', '', s3, NOW);
+  visit('?from=mens', '', s3, NOW + 1000);
+  assert.strictEqual(visit('', token, s3, NOW + 2000).href, HREFS.mens);
 });
 
 test('ページ配線: 専用includeを使い、共通のsubpage_backlink_ja.html・本人確認/解約スクリプトは変更しない', function () {
