@@ -481,7 +481,7 @@ test('フロント: パックのエラーコードは利用者向け文言に変
   });
 });
 
-test('公開コピー: 新パックの説明（予約フォーム・会員特典・mens料金案内）に「1〜2名」を明示し、会員特典にはシャワー2名までも明示する', function () {
+test('公開コピー: 新パックの説明（予約フォーム・会員特典・mens料金案内）に「1〜2名」を明示し、会員特典ではシャワーの人数を当日のスタジオ利用人数に準ずると明示する', function () {
   var fs = require('node:fs');
   var path = require('node:path');
   function read(p) { return fs.readFileSync(path.join(__dirname, '..', p), 'utf8'); }
@@ -496,7 +496,7 @@ test('公開コピー: 新パックの説明（予約フォーム・会員特典
   assert.ok(packLabel.indexOf('9,000円') === -1, '通常料金との比較は予約フォームに書かない');
   var benefits = read('_includes/membership_benefits_ja.html');
   var card = benefits.slice(benefits.indexOf('id="shower-pack"'), benefits.indexOf('id="shower"'));
-  assert.ok(card.indexOf('1〜2名') !== -1 && card.indexOf('同一予約で2名まで') !== -1, '会員特典');
+  assert.ok(card.indexOf('1〜2名') !== -1 && card.indexOf('当日のスタジオ利用人数に準じます') !== -1 && card.indexOf('同一予約で2名まで') === -1, '会員特典');
   assert.ok(card.indexOf('3名以上でもパック料金は変わりません') === -1, '3名以上でも成立するとは書かない');
   var mens = read('mens/index.html');
   var para = mens.slice(mens.indexOf('土日祝4時間シャワーパック'));
