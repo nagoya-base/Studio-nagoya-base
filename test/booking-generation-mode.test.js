@@ -755,3 +755,23 @@ test('revokeBookingTestCredential / showBookingAuthModeStatus: 失効を失効�
     assert.strictEqual(logged[0].indexOf(secret), -1);
   });
 });
+
+test('エディタ実行用の引数なし関数: Script Propertiesから読んで発行・失効できる（未設定は例外・失効後にプロパティを削除）', function () {
+  var ctx = setup({ properties: { BOOKING_TEST_ISSUE_EMAIL: ADMIN, BOOKING_TEST_ISSUE_TTL_MINUTES: '90' } });
+  assert.strictEqual(ctx.sandbox.issueBookingTestLinkFromSettings.length, 0, '引数を取らない');
+  assert.strictEqual(ctx.sandbox.revokeBookingTestCredentialFromSettings.length, 0);
+  var result = plain(ctx.sandbox.issueBookingTestLinkFromSettings());
+  assert.strictEqual(ctx.mailApp._sentEmails.length, 1);
+  assert.strictEqual(ctx.mailApp._sentEmails[0].to, ADMIN);
+  assert.strictEqual(new Date(result.expiresAt).getTime() - ctx.clock.currentDate().getTime(), 90 * 60000);
+
+  var props = ctx.sandbox.PropertiesService.getScriptProperties();
+  assert.throws(function () { ctx.sandbox.revokeBookingTestCredentialFromSettings(); }, /BOOKING_TEST_REVOKE_ID/);
+  props.setProperty('BOOKING_TEST_REVOKE_ID', result.credentialId);
+  assert.strictEqual(ctx.sandbox.revokeBookingTestCredentialFromSettings(), 1);
+  assert.strictEqual(props.getProperty('BOOKING_TEST_REVOKE_ID'), null);
+  assert.ok(props.getProperty('BOOKING_TEST_REVOKED_IDS').indexOf(result.credentialId) !== -1);
+
+  props.deleteProperty('BOOKING_TEST_ISSUE_EMAIL');
+  assert.throws(function () { ctx.sandbox.issueBookingTestLinkFromSettings(); }, /BOOKING_TEST_ISSUE_EMAIL/);
+});

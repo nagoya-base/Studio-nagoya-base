@@ -225,3 +225,27 @@ function revokeBookingTestCredential(credentialId) {
   Logger.log('BookingTestCredential: 失効しました id=' + credentialId + ' revokedCount=' + count);
   return count;
 }
+
+/*
+ * GASエディタの「実行」ボタンは関数に引数を渡せないため、上の2関数を引数なしで実行できるエントリポイント。
+ * 値はWeb AppのScript Propertiesから読む（メールアドレス・資格ID以外の機密は読まない・出さない）。
+ * - issueBookingTestLinkFromSettings: BOOKING_TEST_ISSUE_EMAIL（許可メール。BOOKING_TEST_ALLOWED_EMAILSに登録済みであること）と
+ *   任意のBOOKING_TEST_ISSUE_TTL_MINUTES（省略時480分）を読んで発行・メール送信する。
+ * - revokeBookingTestCredentialFromSettings: BOOKING_TEST_REVOKE_ID（発行時ログのid=の値）を読んで失効し、成功したらその値を削除する。
+ */
+function issueBookingTestLinkFromSettings() {
+  var properties = PropertiesService.getScriptProperties();
+  var email = properties.getProperty('BOOKING_TEST_ISSUE_EMAIL');
+  if (!email) throw new Error('BOOKING_TEST_ISSUE_EMAIL が未設定です。');
+  var ttl = properties.getProperty('BOOKING_TEST_ISSUE_TTL_MINUTES');
+  return issueBookingTestLink(email, ttl ? Number(ttl) : undefined);
+}
+
+function revokeBookingTestCredentialFromSettings() {
+  var properties = PropertiesService.getScriptProperties();
+  var id = properties.getProperty('BOOKING_TEST_REVOKE_ID');
+  if (!id) throw new Error('BOOKING_TEST_REVOKE_ID が未設定です。');
+  var count = revokeBookingTestCredential(id.trim());
+  properties.deleteProperty('BOOKING_TEST_REVOKE_ID');
+  return count;
+}

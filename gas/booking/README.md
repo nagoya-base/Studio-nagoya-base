@@ -27,16 +27,18 @@ Issue #548 / PR #551 の「予約作成時刻（サーバー時刻）でV1/V2を
 | `BOOKING_AUTH_EMERGENCY_LEGACY` | **Web App と Admin の両方** | **`ENABLED` と完全一致のときだけ有効**（未設定・空文字・`enabled`・`Enabled`・前後の空白・`true`・`1`・その他はすべて無効） | 明示的緊急停止 |
 | `BOOKING_TEST_CREDENTIAL_KEY` | Web Appのみ | 32文字以上のランダム文字列（署名鍵） | テスト資格のHMAC署名鍵。**ソース・ログ・Issue・PR・チャットに出さない。Adminには置かない** |
 | `BOOKING_TEST_ALLOWED_EMAILS` | Web Appのみ | メールアドレスをカンマ・空白・改行区切り | TESTを試してよいメール（資格はこの中の1アドレスに拘束） |
+| `BOOKING_TEST_ISSUE_EMAIL` / `BOOKING_TEST_ISSUE_TTL_MINUTES` | Web Appのみ | 発行先の許可メール／有効分数（任意。省略時480） | 引数なしの発行関数 `issueBookingTestLinkFromSettings` が読む |
+| `BOOKING_TEST_REVOKE_ID` | Web Appのみ | 失効する資格ID | 引数なしの失効関数 `revokeBookingTestCredentialFromSettings` が読む（成功後に自動削除） |
 | `BOOKING_TEST_REVOKED_IDS` | Web Appのみ | 失効した資格IDのカンマ区切り（`revokeBookingTestCredential` が追記） | 失効リスト |
 
 ### テスト資格の発行・配送・検証・失効・権限境界
 
 公開Booking Web Appは `ANYONE_ANONYMOUS` / `USER_DEPLOYING` のため管理者のログインセッションに依存できない。そこで**Web AppのGASエディタから権限者が手動実行する関数**で署名付き資格を発行する。
 
-- **発行**: Web AppのGASエディタで `issueBookingTestLink('許可メール', 有効分数)` を実行（有効分数は省略時480分・最大7日。**12/1 00:00 JSTで打ち切る**）。許可メールは `BOOKING_TEST_ALLOWED_EMAILS` に登録済みであること。資格は `t1.<ID>.<発行>.<期限>.<メールタグ>.<署名>`（HMAC-SHA256。用途 `snb-booking-test-v2` を署名対象に含む）。**資格にメールアドレス本体は含まない**（鍵付きHMACのタグのみ）。
+- **発行**: GASエディタの「実行」は引数を渡せないため、Script Property `BOOKING_TEST_ISSUE_EMAIL`（任意で `BOOKING_TEST_ISSUE_TTL_MINUTES`）を設定して、Web Appのエディタで引数なしの `issueBookingTestLinkFromSettings` を実行する（内部で `issueBookingTestLink(メール, 有効分数)` を呼ぶ。有効分数は省略時480分・最大7日。**12/1 00:00 JSTで打ち切る**）。許可メールは `BOOKING_TEST_ALLOWED_EMAILS` に登録済みであること。資格は `t1.<ID>.<発行>.<期限>.<メールタグ>.<署名>`（HMAC-SHA256。用途 `snb-booking-test-v2` を署名対象に含む）。**資格にメールアドレス本体は含まない**（鍵付きHMACのタグのみ）。
 - **配送**: 資格は**拘束先の許可メールアドレス宛に、SNB・mens・英語版の3ページへのテスト用リンク（URLフラグメント `#bt=...`）としてメール送信**する。関数の戻り値とログには**資格を出さない**（資格ID・期限のみ）。メール送信は既存MailAppの日次残枠を守る（残り50通以下なら送らない）。権限者の手動実行専用で、`doGet` / `doPost` からは発行も失効もできない。
 - **検証（サーバー）**: ①形式 ②署名（鍵）③期限（`now >= exp` で無効。12/1 00:00 JSTを超えない）④失効リスト ⑤許可メールに含まれる ⑥リクエストの予約メールが発行時の拘束先と一致、をすべて確認する。**メールアドレスの入力だけではTESTを有効化しない**。許可メールを第三者が入力しても資格が無ければV1のまま。資格は**会員資格の代用にもOTP確認済み証明の代用にもならない**（`MEMBER_VERIFICATION_REQUIRED` / `MEMBER_REVERIFY_REQUIRED` の判定・actual membership・送信制限・レート制限は通常のV2と同一）。
-- **失効**: 個別 … `revokeBookingTestCredential('資格ID')`（発行時のログの `id=` を指定）。一括 … `BOOKING_TEST_CREDENTIAL_KEY` を別の値へ差し替える（発行済みの全資格が即無効）。許可メールからの削除、`BOOKING_AUTH_MODE` を `TEST` 以外へ変更、緊急停止でも資格は無効になる。
+- **失効**: 個別 … `BOOKING_TEST_REVOKE_ID` に発行時ログの `id=` の値を設定して、引数なしの `revokeBookingTestCredentialFromSettings` を実行（成功後にプロパティは自動削除）。一括 … `BOOKING_TEST_CREDENTIAL_KEY` を別の値へ差し替える（発行済みの全資格が即無効）。許可メールからの削除、`BOOKING_AUTH_MODE` を `TEST` 以外へ変更、緊急停止でも資格は無効になる。
 - **権限境界**: 発行・失効・鍵の保管は**Web AppのScript Propertiesを編集できるGAS権限者**に限る。Booking Adminには署名鍵も検証コードも置かない。フロントエンド・メール入力値・URLクエリ・hidden値・localStorage・Cookieでモードを昇格・偽装できない。
 - 資格の期限切れ・失効・メール変更・モード変更時は、サーバーが `testCredentialStatus: "INVALID"` を返し（`createBooking` は `TEST_CREDENTIAL_INVALID` で何も作らない）、フォームは資格を破棄して通常フローへ戻し、**黙って料金・特典を変えず日程の選び直しを案内**する。12/1以降など資格が不要になった場合（`INACTIVE`）は黙って破棄する（世代・料金は変わらない）。この「再取得・再入力」の案内は**TEST資格の期限切れ・失効・破棄時のみ**で、一般利用者が11/30から12/1へフォームを開いたまま境界をまたぐ挙動は現行mainと同じ。
 
@@ -64,11 +66,11 @@ Issue #548 / PR #551 の「予約作成時刻（サーバー時刻）でV1/V2を
 
 1. **前提確認**: 承認済みのコードが Booking Admin → Booking Web App → サイト（GitHub Pages）の順に反映済みであること。反映前にこの手順は実施しない。
 2. **Web AppのScript Properties設定**: `BOOKING_TEST_CREDENTIAL_KEY`（32文字以上のランダム値。コピーを他へ残さない）・`BOOKING_TEST_ALLOWED_EMAILS`（検証者のメールのみ）・`BOOKING_AUTH_MODE` = `TEST`。`showBookingAuthModeStatus` で `mode: 'TEST'`、`generalUser` がV1であることを確認する。
-3. **発行**: `issueBookingTestLink('許可メール', 480)` を実行し、許可メールに届いたリンクを**自分のブラウザで開く**（リンクを開いたタブでのみ有効。転送しない）。フォームにはリンク発行先のメールアドレスを入力する。
+3. **発行**: `BOOKING_TEST_ISSUE_EMAIL` を設定して `issueBookingTestLinkFromSettings` を実行し、許可メールに届いたリンクを**自分のブラウザで開く**（リンクを開いたタブでのみ有効。転送しない）。フォームにはリンク発行先のメールアドレスを入力する。
 4. **実メールOTP**: V2の会員確認欄（6桁コード。60分有効）が表示され、実メールでコードが届くこと。OTP・確認済み証明（60分）・メール拘束・actual membership・送信制限は通常のV2と同じ。確認コードの送信は日次MailApp残枠（予約通知用の50通を残す）を消費するので、必要最小限の回数に抑える。
 5. **テスト予約の識別**: テスト予約は**本番の予約・通知・カレンダー・決済へ実際に反映**される。①お名前に「【TEST】」を付ける ②備考に「Issue559 TEST」と記す ③支払方法は現金（カード決済は使わない）④利用日は営業に影響しない日時を選ぶ。**システム上の識別子**: SNB / mensの予約で `priceGeneration = V2` かつ `createdAt` が 2026-12-01 00:00 JST より前 なら、必ずテスト資格で作られた予約（通常は12/1前にV2は作られない）。
 6. **取消**: 検証が終わったテスト予約は、Booking Adminの既存の取消操作（`adminCancelBooking`）で管理者が手動取消する。**コードは予約を自動で削除・無効化しない**（Calendarのイベント・通知メール・台帳の行が残るため、取消後に目視確認する）。カード決済・返金を伴うテストは行わない。
-7. **終了**: 資格は期限（最大でも12/1 00:00 JST）で自動失効する。早く止める場合は `revokeBookingTestCredential('資格ID')`、全停止は `BOOKING_AUTH_MODE` を `LIVE` へ、または署名鍵の差し替え。
+7. **終了**: 資格は期限（最大でも12/1 00:00 JST）で自動失効する。早く止める場合は `revokeBookingTestCredentialFromSettings`、全停止は `BOOKING_AUTH_MODE` を `LIVE` へ、または署名鍵の差し替え。
 
 ### 12/1 自動移行
 
@@ -87,6 +89,13 @@ Issue #548 / PR #551 の「予約作成時刻（サーバー時刻）でV1/V2を
 2. **Booking Web App**（`BookingGenerationMode.gs` / `BookingTestCredential.gs` 追加、`BookingPricing.gs` / `BookingRepository.gs` / `Code.gs` 更新）を反映。既存の `/exec` URL・Deploymentは作り直さない。`appsscript.json` は変更しない（新しいOAuth scopeは不要）。
 3. サイト（GitHub Pages）を反映（予約ページ3つ・`booking-app.js` / `booking-logic.js`）。
 4. 両プロジェクトで `showBookingAuthModeStatus` を実行して設定を確認する。
+
+### 実環境での通し確認（自動テストとは別。反映前後に管理者が実施）
+
+- 11月中のTESTで、資格付きリンクからV2画面（会員確認欄）が表示される。
+- 実際の6桁認証メールが届き、OTP確認後に会員料金・特典が正しく適用される。
+- 一般利用者（リンクなし）は従来のV1方式のまま。
+- 資格を失効（上記）した後は、そのリンクでV2を継続利用できない。
 
 ### テスト
 
@@ -3371,7 +3380,7 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `BookingMemberVerification.gs`（Issue #548。V2予約の会員確認。6桁OTPのメール送信・検証と、メール・用途に拘束した確認済み証明の発行・検証） | ✓ | – | – | `gas/booking/shared/BookingMemberVerification.gs` |
 | `BookingVerificationCleanup.gs`（Issue #557。期限切れOTP・確認済み証明の日次削除。`cleanupExpiredBookingVerifications`が時間主導トリガーのハンドラ） | ✓ | – | – | `gas/booking/public/BookingVerificationCleanup.gs` |
 | `BookingGenerationMode.gs`（Issue #559。SNB / mensの料金世代判定。緊急停止 ＞ 12/1前のTEST / LEGACY設定 ＞ サーバー時刻。Adminはテスト資格の検証コード・署名鍵を持たない） | ✓ | ✓ | – | `gas/booking/shared/BookingGenerationMode.gs` |
-| `BookingTestCredential.gs`（Issue #559。12/1前にV2を試す署名付きテスト資格の発行・検証・失効。エディタ実行の `issueBookingTestLink` / `revokeBookingTestCredential`。署名鍵を持つWeb App専用） | ✓ | – | – | `gas/booking/public/BookingTestCredential.gs` |
+| `BookingTestCredential.gs`（Issue #559。12/1前にV2を試す署名付きテスト資格の発行・検証・失効。エディタ実行の引数なし関数 `issueBookingTestLinkFromSettings` / `revokeBookingTestCredentialFromSettings`（内部で `issueBookingTestLink` / `revokeBookingTestCredential`）。署名鍵を持つWeb App専用） | ✓ | – | – | `gas/booking/public/BookingTestCredential.gs` |
 | `StripeWebhookAuth.gs`（Issue #341 PR-C。中継基盤からの呼び出し認証） | – | – | ✓ | `gas/booking/webhook/StripeWebhookAuth.gs` |
 | `StripeEventRepository.gs`（Issue #341 PR-C。Stripe Webhookイベントの受信・処理台帳。レビュー対応・4回目でBooking Admin/Webhookの両方が使う共有ファイルへ再設計） | – | ✓ | ✓ | `gas/booking/shared/StripeEventRepository.gs` |
 | `StripeWebhookProcessor.gs`（Issue #341 PR-C。レビュー対応・4回目で新設。決済照合・予約自動確定の本体。Booking Adminの時間主導トリガーから呼ばれる。旧`StripeWebhookHandler.gs`から移動・再設計） | – | ✓ | – | `gas/booking/admin/StripeWebhookProcessor.gs` |
