@@ -37,8 +37,18 @@
 1. Web AppのScript Propertiesに `BOOKING_TEST_CREDENTIAL_KEY`（32文字以上）と `BOOKING_TEST_ALLOWED_EMAILS`（検証者のみ）を設定し、`STUDIO_X_BOOKING_AUTH_PHASE` = `TEST` にする。`showBookingAuthModeStatus` で `studioXAuthPhase: 'TEST'` と `generalUser.studio_x: 'V2'` を確認。
 2. `BOOKING_TEST_ISSUE_EMAIL` を設定し、エディタから引数なしで `issueStudioXBookingTestLinkFromSettings` を実行（許可メール宛にStudio Xの予約ページ `/studio-x/booking/#bt=…` だけを送る。SNB / mens / 英語版のリンクは混ぜない）。
 3. リンクを開き、同じメールでOTP発行・検証・再送・失効・再認証・不正入力・31日目/90日目/91日目・機材/スタッフ対応（会員／非会員）を確認。資格のない一般利用者の画面・予約は台帳照合のまま変わらないことも確認。
-4. 資格はURLフラグメント→sessionStorage→**POST本文だけ**で送る。URLクエリ・ログ・予約記録・分析へ出さない。テストで作成した予約は本番の予約・通知・カレンダーに反映されるため、識別して取消す（SNB TESTと同じ運用）。
+4. 資格はURLフラグメント→sessionStorage→**POST本文だけ**で送る。URLクエリ・ログ・予約記録・分析へ出さない。
+   **TESTの予約送信はドライラン**: 入力・料金・OTP証明・予約期間・オプション・会員資格・空き状況は本番と同じ判定で検証するが、Calendar・Bookings・オプション注文・予約/運営通知メール・Stripeへは**一切書かない**（応答は `dryRun:true`・`bookingId=DRYRUN-…`・`status=TEST_DRY_RUN`。完了画面に「予約は作成されていません」と表示）。送られるのは検証者本人宛のOTPメールだけ。実予約が必要な項目（後付けオプション・実カレンダー反映）は、本番切替直後の確認項目（下記）で実施する。
 5. 失効: `revokeBookingTestCredentialFromSettings`、一括は署名鍵の差し替え、または `STUDIO_X_BOOKING_AUTH_PHASE` を `LEGACY` へ。
+
+### 検証の区分（自動テストと手動確認）
+
+- **Nodeテスト（自動・スタブ上）**: GASコードをCalendar/Sheets/MailApp/Stripeのスタブ上で実行する。実GAS・実メール・実カレンダーでは検証していない。
+- **実GAS・実メールの手動確認（運用者。未実施）**: テストモード（ドライラン）でのOTPメール実受信（件名・本文にSNB MEMBERが出ないこと）、OTP発行・検証・再送・失効、31/90/91日目の拒否表示。本番切替直後に、実予約での後付けオプションとカレンダー反映を確認する。
+
+### 確認コード送信のブランド境界
+
+`requestBookingMemberCode` は `brand=studio_x` のときだけStudio X文面（Studio X予約ページは常に `brand` を送る）。**`brand` 未指定は従来どおりSNB文面**（SNB / mensの既存挙動を変えないため。Studio Xのフェーズが `OTP` の間でも、brand未指定のリクエストはSNB向けとして扱う）。`brand=studio_x` はフェーズがOTP（またはTEST＋有効な資格）のときだけ受け付ける。
 
 ### 本番切替手順（運用者の明示承認後）
 

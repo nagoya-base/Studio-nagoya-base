@@ -526,7 +526,8 @@ test('TEST: 資格付きcreateBookingはOTP必須（証明が必要）。資格�
   assert.strictEqual(noProof.error.code, 'MEMBER_VERIFICATION_REQUIRED');
   var ok = book(ctx, { email: TESTER, date: DAY31, testCredential: issued.token, memberProof: proof(ctx, TESTER) });
   assert.strictEqual(ok.success, true);
-  assert.strictEqual(record(ctx, ok.bookingId).membershipStatus, 'ACTIVE');
+  assert.strictEqual(ok.dryRun, true, 'TESTの資格付き予約はドライラン（実予約を作らない）');
+  assert.strictEqual(ok.memberVerified, true);
 
   /* 他のメールで同じ資格を使う → 資格が無効。黙って台帳照合へ落とさない。 */
   var otherEmail = book(ctx, { email: MEMBER, date: '2026-12-12', startTime: '13:00', testCredential: issued.token });
@@ -569,7 +570,7 @@ test('TEST: 許可メール以外には資格を発行できない。資格・�
 
   var booked = book(ctx, { email: TESTER, date: DAY30, testCredential: issued.token, memberProof: proof(ctx, TESTER) });
   assert.strictEqual(booked.success, true);
-  var dump = JSON.stringify(ctx.sheets.Bookings._rows) + JSON.stringify(ctx.logger._messages || []);
+  var dump = JSON.stringify(ctx.sheets.Bookings ? ctx.sheets.Bookings._rows : []) + JSON.stringify(ctx.logger._messages || []);
   assert.strictEqual(dump.indexOf(issued.token), -1, '資格を保存・ログへ出さない');
   assert.strictEqual(JSON.stringify(booked).indexOf(issued.token), -1);
 });
@@ -643,4 +644,47 @@ test('管理画面の確認表示（showBookingAuthModeStatus）にStudio Xの�
   var status = plain(ctx.sandbox.showBookingAuthModeStatus());
   assert.strictEqual(status.studioXAuthPhase, 'TEST');
   assert.ok(JSON.stringify(status).indexOf(KEY) === -1);
+});
+
+test('TEST（ドライラン）: 資格付きの予約は検証だけ本番と同じに行い、Calendar・Bookings・オプション注文・通知メールへ一切書かない。一般利用者は影響を受けない', function () {
+  var ctx = setup({ members: { [TESTER]: ['2026-11', '2026-12'] } });
+  ctx.setProperty(PHASE, 'TEST');
+  var issued = testCredential(ctx, TESTER);
+  var calendar = ctx.sandbox.CalendarApp.getCalendarById('cal1');
+  var eventsBefore = calendar.getEvents(new Date('2026-12-01T00:00:00+09:00'), new Date('2027-03-01T00:00:00+09:00')).length;
+  var mailsBefore = ctx.mailApp._sentEmails.length;
+  var p = proof(ctx, TESTER);
+  var mailsAfterOtp = ctx.mailApp._sentEmails.length;
+
+  var dry = book(ctx, { email: TESTER, date: DAY31, testCredential: issued.token, memberProof: p, options: STAFF_ADDON });
+  assert.strictEqual(dry.success, true, JSON.stringify(dry));
+  assert.strictEqual(dry.dryRun, true);
+  assert.ok(/^DRYRUN-/.test(dry.bookingId));
+  assert.strictEqual(dry.status, 'TEST_DRY_RUN');
+  assert.strictEqual(dry.checkoutAccessToken, '');
+  assert.strictEqual(dry.options, undefined, 'オプション注文を作らない');
+  assert.strictEqual(ctx.sheets.Bookings, undefined, 'Bookings台帳へ書かない');
+  assert.strictEqual(ctx.sheets.OptionOrders, undefined, 'OptionOrdersへ書かない');
+  assert.strictEqual(calendar.getEvents(new Date('2026-12-01T00:00:00+09:00'), new Date('2027-03-01T00:00:00+09:00')).length, eventsBefore, 'Calendarへ書かない');
+  assert.strictEqual(ctx.mailApp._sentEmails.length, mailsAfterOtp, '予約受付・運営通知メールを送らない（送るのはOTPのみ）');
+  assert.ok(mailsAfterOtp > mailsBefore);
+
+  /* 検証は本番と同じ: 非会員の31日目・証明なし・91日目・資格なしの一般利用者は通常どおり。 */
+  assert.strictEqual(book(ctx, { email: TESTER, date: DAY91, testCredential: issued.token, memberProof: p }).error.code, 'DATE_OUT_OF_RANGE');
+  assert.strictEqual(book(ctx, { email: TESTER, date: DAY31, testCredential: issued.token }).error.code, 'MEMBER_VERIFICATION_REQUIRED');
+  var real = book(ctx, { email: TESTER, date: DAY30 });
+  assert.strictEqual(real.success, true);
+  assert.strictEqual(real.dryRun, undefined, '資格なしの一般利用者は通常の実予約');
+  assert.strictEqual(record(ctx, real.bookingId).membershipStatus, 'NOT_CHECKED');
+});
+
+test('OTPフェーズ（本番）ではドライランにならない。資格を送っても実予約（資格はINACTIVEで破棄される）', function () {
+  var ctx = otpSetup();
+  ctx.setProperty(PHASE, 'TEST');
+  var issued = testCredential(ctx, TESTER);
+  ctx.setProperty(PHASE, 'OTP');
+  var res = book(ctx, { email: MEMBER, date: DAY30, testCredential: issued.token });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.dryRun, undefined);
+  assert.strictEqual(record(ctx, res.bookingId).membershipStatus, 'UNVERIFIED');
 });

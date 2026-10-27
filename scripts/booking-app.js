@@ -2356,7 +2356,10 @@
           setText_(els.completeHeading, completeCopy.completeHeading);
           setText_(els.completeStatusLabel, completeCopy.statusLabel);
           if (els.completeStatus) {
-            els.completeStatus.textContent = body.status === 'PENDING'
+            /* Issue #563: テスト資格のドライラン。実予約は作成されていない。 */
+            els.completeStatus.textContent = body.dryRun === true
+              ? (locale === 'en' ? 'TEST: no booking was created' : 'テスト（予約は作成されていません）')
+              : body.status === 'PENDING'
               ? (completeIsCard ? completeCopy.statusValue : UI_TEXT.pendingStatusLabel)
               : (body.status || '');
           }
@@ -2364,7 +2367,7 @@
              確定連絡そのものが24時間以内に届くという前提の文言のため、カード決済では
              出さない（カードは決済ページでの支払い完了で確定する）。代わりにカード注意書きを表示する。現金・PayPay・
              未定は既存文言のまま変更しない。 */
-          if (Logic.isCardPaymentMethodValue(state.paymentMethod)) {
+          if (Logic.isCardPaymentMethodValue(state.paymentMethod) && body.dryRun !== true) {
             if (els.completeGenericNotice) els.completeGenericNotice.hidden = true;
             /*
              * Issue #341 PR-B / PR #354レビュー対応・項目3: startCardCheckoutを追加で

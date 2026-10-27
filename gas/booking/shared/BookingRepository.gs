@@ -188,6 +188,38 @@ var BookingRepository = (function () {
       return { success: false, error: windowResult.error };
     }
 
+    /*
+     * Issue #563: Studio Xの認証フェーズTEST（有効なテスト資格付き）は**ドライラン**。ここまでの検証（入力・料金・OTP証明・予約期間・オプション・
+     * 会員資格・営業時間内の空き）はすべて本番と同じ判定で行い、Calendar・Bookings・オプション注文・メール・Stripeへは一切書かない
+     * （テスト認証が本番の予約・通知・課金・特典へ流入しない）。応答は dryRun:true の模擬結果（bookingIdはDRYRUN-で始まり、実在しない）。
+     * 予約後の機能（後付けオプション等）は実予約でしか検証できないため、本番切替後の確認項目（README）で行う。
+     */
+    if (!isAdminWindow && input.brand === 'studio_x' && generationDecision.testCredential === BookingGenerationMode.CREDENTIAL.VALID) {
+      var dryBusy = CalendarRepository.getBusyIntervalsForDate(BookingConfig.getCalendarId(), input.date, availabilityConfig.timezone);
+      if (!BookingAvailability.isStartTimeBookable(BookingAvailability.parseTimeToMinutes(input.startTime), input.durationMinutes, dryBusy, availabilityConfig.bufferMinutes)) {
+        return { success: false, error: { code: 'SLOT_CONFLICT', message: '指定の時間帯はすでに埋まっています。空き状況を確認して再度お試しください。' } };
+      }
+      return {
+        success: true,
+        dryRun: true,
+        bookingId: 'DRYRUN-' + Utilities.getUuid().replace(/-/g, '').substring(0, 8).toUpperCase(),
+        status: 'TEST_DRY_RUN',
+        date: input.date,
+        startTime: input.startTime,
+        durationMinutes: input.durationMinutes,
+        brand: input.brand,
+        people: input.people,
+        paymentMethod: input.paymentMethod,
+        checkoutAccessToken: '',
+        memberAuthRequired: memberAuth.required,
+        memberVerified: memberAuth.verified,
+        price: {
+          amount: priceResult.price.amount, currency: priceResult.price.currency, tier: priceResult.price.tier,
+          isMember: priceResult.price.isMember, dayType: priceResult.price.dayType, plan: priceResult.price.plan
+        }
+      };
+    }
+
     var calendarId = BookingConfig.getCalendarId();
     var lock = LockService.getScriptLock();
     var gotLock = lock.tryLock(LOCK_TIMEOUT_MS_);
