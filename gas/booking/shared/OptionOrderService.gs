@@ -160,19 +160,23 @@ var OptionOrderService = (function () {
    * V1・Studio Xの予約は従来どおり（true）。
    */
   function bookingMemberVerified_(booking) {
+    /* Issue #563: Studio Xは予約作成時の認証フェーズで区別する。正式V2（OTP）で作成した予約はOTP確認済み（ACTIVE / INACTIVE）だけ通し、
+       未確認（UNVERIFIED）は拒否する。切替前（台帳照合）に作成した予約（NOT_CHECKED・空）は旧来の台帳照合のまま通す
+       （認証を免除するわけではなく、呼び出し側が必ず会員台帳で実会員資格を確認する）。料金世代（V2）だけでOTPを要求しない。 */
+    if (booking && booking.brand === 'studio_x') return StudioXMemberAuth.bookingPhase(booking.membershipStatus).verified;
     if (!booking || (booking.brand !== 'snb' && booking.brand !== 'mens')) return true;
     if (booking.priceGeneration !== BookingPricing.GENERATION.V2) return true;
     return booking.membershipStatus === 'ACTIVE';
   }
 
   /* 会員限定オプション（シャワー・Studio Xの有料機材）の外部向け共通エラー。内訳を出し分けない。 */
-  function memberDeniedError_() {
-    return fail_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE);
+  function memberDeniedError_(brand) {
+    return fail_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MembershipRules.memberBenefitDeniedMessage(brand));
   }
 
   /* 注文の種類に応じた、実会員資格がない場合のエラー（スタッフ対応は#472の既存コードを維持）。 */
   function memberRequiredErrorFor_(order) {
-    return order.category === BookingOptions.CATEGORY.STAFF_SERVICE ? staffMembersOnlyError_() : memberDeniedError_();
+    return order.category === BookingOptions.CATEGORY.STAFF_SERVICE ? staffMembersOnlyError_() : memberDeniedError_(order.brand);
   }
 
   function staffMembersOnlyError_() {
@@ -226,7 +230,7 @@ var OptionOrderService = (function () {
     }
     /* Issue #548: V2のSNB / mensは、会員限定オプションにもメールOTPの確認済み証明が必須（証明が無ければ会員台帳を見ずに確認を要求）。 */
     if (needsStaffMember && options && options.memberVerificationRequired === true && options.memberVerified !== true) {
-      return fail_(MembershipRules.BOOKING_VERIFICATION_REQUIRED_CODE, MembershipRules.BOOKING_VERIFICATION_REQUIRED_MESSAGE);
+      return fail_(MembershipRules.BOOKING_VERIFICATION_REQUIRED_CODE, MembershipRules.bookingVerificationRequiredMessage(brand));
     }
     var plan = BookingOptions.planOrders({
       normalized: normalizedResult.normalized,

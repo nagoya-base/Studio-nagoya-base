@@ -537,7 +537,9 @@ test('Web App: requestBookingMemberCode / verifyBookingMemberCode / bookingMembe
   var noProof = post(ctx, 'bookingMemberStatus', { brand: 'snb', email: MEMBER, date: NEAR_DATE, durationMinutes: 180 });
   assert.strictEqual(noProof.success, false);
   assert.strictEqual(noProof.error.code, 'MEMBER_VERIFICATION_REQUIRED');
-  assert.strictEqual(post(ctx, 'bookingMemberStatus', { brand: 'studio_x', email: MEMBER, proof: verified.proof }).error.code, 'INVALID_BRAND');
+  /* Issue #563: Studio Xは認証フェーズが既定のLEGACYの間は会員確認を使わない（不明ブランドだけがINVALID_BRAND）。 */
+  assert.strictEqual(post(ctx, 'bookingMemberStatus', { brand: 'studio_x', email: MEMBER, proof: verified.proof }).error.code, 'MEMBER_VERIFICATION_NOT_REQUIRED');
+  assert.strictEqual(post(ctx, 'bookingMemberStatus', { brand: 'unknown', email: MEMBER, proof: verified.proof }).error.code, 'INVALID_BRAND');
 });
 
 test('Web App: V1の間は会員確認を使わない（bookingMemberStatusはMEMBER_VERIFICATION_NOT_REQUIRED。会員情報を返さない）', function () {

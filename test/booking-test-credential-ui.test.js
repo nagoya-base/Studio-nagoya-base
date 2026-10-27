@@ -16,7 +16,7 @@ var vm = require('node:vm');
 var loadFrontendSandbox = require('./helpers/frontend-sandbox').loadFrontendSandbox;
 
 var ROOT = path.join(__dirname, '..');
-var PAGES = ['booking/index.html', 'booking/en.html', 'mens/booking/index.html'];
+var PAGES = ['booking/index.html', 'booking/en.html', 'mens/booking/index.html', 'studio-x/booking/index.html'];
 var STORAGE_KEY = 'snbBookingTestCredential';
 
 function tokenWithExpiry(expSeconds) {
@@ -112,10 +112,6 @@ PAGES.forEach(function (page) {
     assert.strictEqual(fallback.window.location.hash, '', 'フォールバックでも資格をURLに残さない');
     assert.doesNotThrow(function () { runIntake(html, { hash: '#bt=' + token, sessionStorageThrows: true }); });
   });
-});
-
-test('Studio Xの予約ページにはテスト資格の取り込みを入れない（対象外）', function () {
-  assert.ok(readPage('studio-x/booking/index.html').indexOf('ba-test-credential-intake') === -1);
 });
 
 // ============================================================================
@@ -256,7 +252,9 @@ function setup(opts) {
     if (url.indexOf('action=testMonthly') !== -1 || url.indexOf('action=testEstimatePrice') !== -1) {
       body = opts.respond ? opts.respond(url, request.body) : null;
     } else if (url.indexOf('action=monthly') !== -1) {
-      body = monthlyBody(Number(/[?&]year=(\d+)/.exec(url)[1]), Number(/[?&]month=(\d+)/.exec(url)[1]), opts.generationOf ? opts.generationOf() : 'V1');
+      body = monthlyBody(Number(/[?&]year=(\d+)/.exec(url)[1]), Number(/[?&]month=(\d+)/.exec(url)[1]), opts.generationOf ? opts.generationOf() : 'V1', opts.monthlyExtra ? opts.monthlyExtra() : undefined);
+    } else if (url.indexOf('action=requestBookingMemberCode') !== -1) {
+      body = { success: true, message: 'sent' };
     } else if (url.indexOf('action=estimatePrice') !== -1) {
       body = { success: true, priceGeneration: 'V1', price: { amount: 6600, tier: 'GENERAL', brand: brand, plan: '' } };
     } else if (url.indexOf('action=optionCatalog') !== -1) {
@@ -441,11 +439,11 @@ test('一般利用者が11/30から12/1へフォームを開いたまま境界�
   assert.strictEqual(ctx.postsTo('testEstimatePrice').length, 0);
 });
 
-test('Studio X・資格が壊れた値の場合は資格を読み込まない（通常のGETのみ）', async function () {
+test('Studio X（Issue #563）は資格を読み込み、資格付きPOST（testMonthly）で認証フェーズTESTを試せる。壊れた値の場合は資格を読み込まない（通常のGETのみ）', async function () {
   var studioX = await ready({ brand: 'studio_x', credential: VALID_TOKEN, respond: v2Responder() });
   await studioX.enterEmail('admin@example.com');
-  assert.strictEqual(studioX.postsTo('testMonthly').length, 0);
-  assert.ok(studioX.gets('monthly').length >= 1);
+  assert.ok(studioX.postsTo('testMonthly').length >= 1);
+  assert.strictEqual(studioX.postsTo('testMonthly')[0].body.brand, 'studio_x');
 
   var broken = await ready({ brand: 'snb', credential: 'not-a-credential', respond: v2Responder() });
   await broken.enterEmail('admin@example.com');
@@ -483,4 +481,86 @@ test('booking-app.jsはURLフラグメントから資格を受け取らない（
   var code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   assert.ok(!/bt=|#bt|snbBookingTestCredential.*location|gtag\(|dataLayer|console\./.test(code), 'フラグメントの資格処理・分析・consoleに資格を出さない');
   assert.ok(!/setItem/.test(code), '資格を書き込むのは<head>のインライン処理だけ（booking-app.jsは読み取り・破棄のみ）');
+});
+
+// ============================================================================
+// Studio X（Issue #563）: 料金世代V2とは独立に、サーバーが認証フェーズ（OTP）を返したときだけ会員確認UIへ切り替わる
+// ============================================================================
+
+test('Studio X・切替前（サーバーがmemberAuthRequiredを返さない）: V2料金でも会員確認欄は出さず、31〜90日先は現状どおり（最終判定はサーバーの台帳照合）', async function () {
+  var ctx = await ready({ brand: 'studio_x', generationOf: function () { return 'V2'; } });
+  await ctx.enterEmail('taro@example.com');
+  assert.strictEqual(ctx.elements['ba-member-verify-field'].hidden, true, '切替前はOTP欄を出さない');
+  assert.strictEqual(ctx.postsTo('requestBookingMemberCode').length, 0);
+  var Logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
+  assert.strictEqual(Logic.usesMemberOtp('studio_x', 'V2', false), false);
+  assert.strictEqual(Logic.usesMemberOtp('studio_x', 'V2', undefined), false);
+});
+
+test('Studio X・正式V2（memberAuthRequired=true）: 会員確認欄が出て、確認コード送信にbrandを付ける。資格が無ければtestCredentialは付けない', async function () {
+  var ctx = await ready({ brand: 'studio_x', generationOf: function () { return 'V2'; }, monthlyExtra: function () { return { memberAuthRequired: true }; } });
+  await ctx.enterEmail('taro@example.com');
+  assert.strictEqual(ctx.elements['ba-member-verify-field'].hidden, false, 'OTPフェーズでは会員確認欄を出す');
+  ctx.elements['ba-member-code-send']._listeners.click();
+  await flushPromises();
+  await flushPromises();
+  var posts = ctx.postsTo('requestBookingMemberCode');
+  assert.strictEqual(posts.length, 1);
+  assert.deepStrictEqual(posts[0].body, { email: 'taro@example.com', brand: 'studio_x' });
+});
+
+test('Studio X・TESTフェーズ: 資格付きPOSTがOTP必須を返したら会員確認欄を出し、確認コード送信にも資格を本文で付ける', async function () {
+  var ctx = await ready({
+    brand: 'studio_x', credential: VALID_TOKEN,
+    respond: v2Responder({ memberAuthRequired: true })
+  });
+  await ctx.enterEmail('admin@example.com');
+  assert.ok(ctx.postsTo('testMonthly').length >= 1);
+  assert.strictEqual(ctx.elements['ba-member-verify-field'].hidden, false);
+  ctx.elements['ba-member-code-send']._listeners.click();
+  await flushPromises();
+  await flushPromises();
+  var post = ctx.postsTo('requestBookingMemberCode')[0];
+  assert.strictEqual(post.body.testCredential, VALID_TOKEN, '資格はPOST本文だけ');
+  assert.strictEqual(post.body.brand, 'studio_x');
+  assert.strictEqual(post.url.indexOf(VALID_TOKEN), -1);
+});
+
+test('Studio X・OTPが不要に戻ったら（切戻し）会員確認欄を隠す。SNBのコード送信ペイロードは従来どおりbrandを付けない', async function () {
+  var phase = { memberAuthRequired: true };
+  var ctx = await ready({ brand: 'studio_x', generationOf: function () { return 'V2'; }, monthlyExtra: function () { return phase; } });
+  await ctx.enterEmail('taro@example.com');
+  assert.strictEqual(ctx.elements['ba-member-verify-field'].hidden, false);
+  phase = { memberAuthRequired: false };
+  ctx.elements['ba-calendar-next']._listeners.click();
+  await flushPromises();
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-member-verify-field'].hidden, true, '切戻しで台帳照合の導線へ戻る');
+
+  var snb = await ready({ brand: 'snb', generationOf: function () { return 'V2'; } });
+  await snb.enterEmail('taro@example.com');
+  snb.elements['ba-member-code-send']._listeners.click();
+  await flushPromises();
+  await flushPromises();
+  assert.deepStrictEqual(snb.postsTo('requestBookingMemberCode')[0].body, { email: 'taro@example.com' });
+});
+
+test('Studio Xの文言: エラー・カレンダー表示・確認UIに「SNB MEMBER」を出さない（SNBは従来どおり）', function () {
+  var Logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
+  ['ja', 'en'].forEach(function (locale) {
+    ['MEMBER_VERIFICATION_REQUIRED', 'MEMBER_REVERIFY_REQUIRED', 'ADVANCE_BOOKING_MEMBER_ONLY', 'MEMBER_BENEFIT_NOT_AVAILABLE'].forEach(function (code) {
+      var studioX = Logic.messageForErrorCode(code, locale, 'studio_x');
+      assert.ok(studioX && !/SNB MEMBER/.test(studioX), code + '/' + locale + ': Studio Xに SNB MEMBER を出さない');
+    });
+    assert.ok(!/SNB MEMBER/.test(Logic.dayAriaLabel('2026-12-20', 'AVAILABLE', 'returning', '2026-11-20', locale, true, 'studio_x')));
+  });
+  assert.ok(/SNB MEMBER/.test(Logic.messageForErrorCode('ADVANCE_BOOKING_MEMBER_ONLY', 'ja', 'snb')), 'SNBの文言は変えない');
+  assert.ok(/SNB MEMBER/.test(Logic.messageForErrorCode('ADVANCE_BOOKING_MEMBER_ONLY', 'ja')), 'brand未指定は従来どおり');
+  assert.ok(/SNB MEMBER先行予約枠/.test(Logic.dayAriaLabel('2026-12-20', 'AVAILABLE', 'returning', '2026-11-20', 'ja', true, 'snb')));
+  /* テンプレート: Studio X向けの分岐にSNB MEMBERの文言が混ざらない。 */
+  var tpl = readPage('_includes/booking_app_ja.html');
+  var legend = /\{% if include\.brand == "studio_x" %\}\s*<legend>([^<]*)<\/legend>/.exec(tpl);
+  assert.ok(legend && !/SNB/.test(legend[1]), 'Studio Xの会員確認欄の見出し');
+  var calendar = /\{% if include\.brand == "studio_x" %\}\s*<li>([^<]*)<\/li>/.exec(tpl);
+  assert.ok(calendar && !/SNB/.test(calendar[1]), 'Studio Xのカレンダー凡例');
 });

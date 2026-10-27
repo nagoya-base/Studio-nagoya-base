@@ -21,9 +21,89 @@
  * Web App専用。Adminでは typeof BookingTestCredential === 'undefined' のため資格は常に無効）。Adminの世代判定は
  * 「緊急停止フラグ ＞ サーバー時刻」だけになる。Script Propertiesは両プロジェクトで別のため、緊急停止は両方へ設定する（README参照）。
  *
+ * Studio Xの認証フェーズ（Issue #563）: Studio Xの料金世代（V2。2026/10/26 0:00 JST）とは**独立**に、会員確認の認証方式
+ * （現行の会員台帳照合 ⇄ メール6桁OTP）を StudioXMemberAuth（下記。Script Property STUDIO_X_BOOKING_AUTH_PHASE）で切り替える。
+ * 既定はLEGACY（台帳照合・本番OFF）。SNB / mensの BOOKING_AUTH_MODE・BOOKING_AUTH_EMERGENCY_LEGACY・2026/12/1・TEST期限とは無関係で、
+ * 切戻し（OTP→LEGACY）でも料金世代・V2料金・オプション価格・既存予約の料金は一切変えない。
+ *
  * ログ・応答にメールアドレス・資格・鍵・OTPを出さない。
  */
 'use strict';
+
+/*
+ * StudioXMemberAuth — Studio Xの会員確認方式（認証フェーズ）の判定（Issue #563）。料金世代とは独立。
+ *   LEGACY（既定。未設定・空値・不正値もすべてLEGACY）… 現行どおり。予約メールを会員台帳と照合する（OTP不要・31〜90日先は台帳で最終判定）。
+ *   TEST … 検証済みテスト資格（BookingTestCredential。許可メールに拘束。Web Appのみ）を持つリクエストだけOTP必須。それ以外はLEGACY。
+ *          期限はSNB / mensの2026/12/1に縛られない（資格自体の有効期限だけ）。
+ *   OTP … 全リクエストでOTP必須（正式V2。運用者が本番切替を承認した後にだけ設定する）。
+ * 切戻しはこのプロパティをLEGACYに戻す（または削除する）だけ。認証方式だけが戻り、V2料金世代は変わらない。
+ * 値は大文字の完全一致だけ有効（前後の空白・小文字・その他はLEGACY＝安全側）。クライアントがフェーズを指定する口は無い。
+ */
+var StudioXMemberAuth = (function () {
+  var PHASE_PROPERTY = 'STUDIO_X_BOOKING_AUTH_PHASE';
+  var PHASE = { LEGACY: 'LEGACY', TEST: 'TEST', OTP: 'OTP' };
+  /* 予約作成時に membershipStatus へ記録する値。OTPフェーズの予約は必ずこの3値のどれか（NOT_CHECKEDにしない）。 */
+  var STATUS = { ACTIVE: 'ACTIVE', INACTIVE: 'INACTIVE', UNVERIFIED: 'UNVERIFIED' };
+
+  function readProperty_() {
+    try {
+      var value = PropertiesService.getScriptProperties().getProperty(PHASE_PROPERTY);
+      return typeof value === 'string' ? value : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function configuredPhase() {
+    var value = readProperty_();
+    return value === PHASE.OTP || value === PHASE.TEST ? value : PHASE.LEGACY;
+  }
+
+  /*
+   * context（Web Appのみ。省略可）: { testCredential, email }。
+   * 戻り値: { otp:boolean, phase, testCredential:'NONE'|'VALID'|'INVALID'|'INACTIVE' }（CREDENTIALはBookingGenerationMode.CREDENTIAL）
+   */
+  function decide(now, context) {
+    var phase = configuredPhase();
+    var supplied = !!context && typeof context.testCredential === 'string' && context.testCredential !== '';
+    if (phase === PHASE.OTP) return { otp: true, phase: phase, testCredential: supplied ? 'INACTIVE' : 'NONE' };
+    if (phase === PHASE.LEGACY) return { otp: false, phase: phase, testCredential: supplied ? 'INACTIVE' : 'NONE' };
+    if (!supplied) return { otp: false, phase: phase, testCredential: 'NONE' };
+    var valid = false;
+    if (typeof BookingTestCredential !== 'undefined') {
+      try {
+        valid = BookingTestCredential.verify(context.testCredential, context.email, now, { ignoreSwitchBoundary: true }).ok === true;
+      } catch (error) {
+        valid = false;
+      }
+    }
+    return valid
+      ? { otp: true, phase: phase, testCredential: 'VALID' }
+      : { otp: false, phase: phase, testCredential: 'INVALID' };
+  }
+
+  /*
+   * 予約の会員確認が「予約作成時にOTPで確認済みか」を、保存済みの membershipStatus から判定する（後付けオプションの本人確認用）。
+   * - ACTIVE / INACTIVE … OTPフェーズで確認済みの予約（メール所有確認は済み。会員資格の最終判定は後付けの時点でも台帳で再確認する）
+   * - UNVERIFIED … OTPフェーズで未確認の予約（後付けでは所有確認をやり直せないため会員限定オプションを付けられない）
+   * - それ以外（NOT_CHECKED・空・不明）… 正式V2切替前（または切戻し中）に作成された予約。旧来の台帳照合を適用する。
+   *   ここでは認証を免除しない（呼び出し側が必ず会員台帳で実会員資格を確認する）。
+   */
+  function bookingPhase(membershipStatus) {
+    if (membershipStatus === STATUS.UNVERIFIED) return { otp: true, verified: false };
+    if (membershipStatus === STATUS.ACTIVE || membershipStatus === STATUS.INACTIVE) return { otp: true, verified: true };
+    return { otp: false, verified: true };
+  }
+
+  return {
+    PHASE_PROPERTY: PHASE_PROPERTY,
+    PHASE: PHASE,
+    STATUS: STATUS,
+    configuredPhase: configuredPhase,
+    decide: decide,
+    bookingPhase: bookingPhase
+  };
+})();
 
 var BookingGenerationMode = (function () {
   var EMERGENCY_PROPERTY = 'BOOKING_AUTH_EMERGENCY_LEGACY';
@@ -81,6 +161,18 @@ var BookingGenerationMode = (function () {
    */
   function decide(now, brand, context) {
     var timeGeneration = BookingPricing.generationAt(now, brand);
+    if (brand === 'studio_x') {
+      /* Issue #563: Studio Xは料金世代（時刻判定）と認証フェーズ（StudioXMemberAuth）を分離する。SNB / mensの緊急停止・モード・12/1は影響しない。 */
+      var studioX = StudioXMemberAuth.decide(now, context);
+      return {
+        generation: timeGeneration,
+        source: SOURCE.TIME,
+        mode: null,
+        testCredential: studioX.testCredential,
+        memberAuthRequired: studioX.otp && timeGeneration === BookingPricing.GENERATION.V2,
+        authPhase: studioX.phase
+      };
+    }
     if (!isTargetBrand_(brand)) {
       return { generation: timeGeneration, source: SOURCE.TIME, mode: null, testCredential: hasCredential_(context) ? CREDENTIAL.INACTIVE : CREDENTIAL.NONE };
     }
@@ -121,6 +213,7 @@ var BookingGenerationMode = (function () {
       testDeadline: new Date(BookingPricing.GENERATION_V2_START_MS).toISOString(),
       beforeSwitch: at.getTime() < BookingPricing.GENERATION_V2_START_MS,
       credentialVerifierPresent: typeof BookingTestCredential !== 'undefined',
+      studioXAuthPhase: StudioXMemberAuth.configuredPhase(),
       generalUser: {
         snb: decide(at, 'snb').generation,
         mens: decide(at, 'mens').generation,

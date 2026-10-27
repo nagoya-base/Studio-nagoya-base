@@ -97,12 +97,18 @@ var BookingMemberVerification = (function () {
     return diff === 0;
   }
 
-  function sendCodeMail_(email, code) {
+  /* Studio X（Issue #563）の確認コードメール。「SNB MEMBER」を出さず、会員限定のオプション・先行予約として案内する。 */
+  var STUDIO_X_MAIL_SUBJECT_ = '【Studio X】予約フォームの会員確認コード';
+  var STUDIO_X_MAIL_LEAD_ = '予約フォームで、会員限定のオプション・先行予約（31〜90日先）を利用するための確認コードです（60分間有効）。';
+  var SNB_MAIL_LEAD_ = '予約フォームで、SNB MEMBERの会員料金・会員特典・先行予約を利用するための確認コードです（60分間有効）。';
+
+  function sendCodeMail_(email, code, brand) {
     var mailConfig = BookingConfig.getMailConfig();
+    var studioX = brand === 'studio_x';
     var message = {
       to: email,
-      subject: MAIL_SUBJECT_,
-      body: '予約フォームで、SNB MEMBERの会員料金・会員特典・先行予約を利用するための確認コードです（60分間有効）。\n\n' +
+      subject: studioX ? STUDIO_X_MAIL_SUBJECT_ : MAIL_SUBJECT_,
+      body: (studioX ? STUDIO_X_MAIL_LEAD_ : SNB_MAIL_LEAD_) + '\n\n' +
         '確認コード：' + code + '\n\n' +
         '・予約フォームの確認コード入力欄に、この6桁の数字を入力してください。他の方には教えないでください。\n' +
         '・心当たりがない場合は、このメールを破棄してください。'
@@ -134,6 +140,7 @@ var BookingMemberVerification = (function () {
     if (!MembershipRules.isValidEmail(email)) {
       return fail_('INVALID_EMAIL', 'メールアドレスの形式が正しくありません。');
     }
+    var brand = input && input.brand === 'studio_x' ? 'studio_x' : '';
     var key = emailKey_(email);
     var allowed = RateLimiter.limitByKey('bmv_resend_' + key, RESEND_LIMIT_.windowMinutes, RESEND_LIMIT_.maxCount, now.getTime()) &&
       RateLimiter.limitByKey('bmv_email_' + key, PER_EMAIL_LIMIT_.windowMinutes, PER_EMAIL_LIMIT_.maxCount, now.getTime()) &&
@@ -153,7 +160,7 @@ var BookingMemberVerification = (function () {
         kind: 'otp', secretHash: hashOtp_(email, code), email: email, purpose: PURPOSE,
         expiresAt: new Date(now.getTime() + OTP_TTL_MS_)
       }, now);
-      sendCodeMail_(email, code);
+      sendCodeMail_(email, code, brand);
     } catch (error) {
       Logger.log('BookingMemberVerification: 確認コードを送信できませんでした');
       return unavailable_();
@@ -239,11 +246,11 @@ var BookingMemberVerification = (function () {
   }
 
   /* checkProofの失敗を外部向けエラーへ。MISSINGは「確認が必要」、それ以外は「再確認が必要」。 */
-  function proofError(reason) {
+  function proofError(reason, brand) {
     if (reason === 'MISSING') {
-      return { code: MembershipRules.BOOKING_VERIFICATION_REQUIRED_CODE, message: MembershipRules.BOOKING_VERIFICATION_REQUIRED_MESSAGE };
+      return { code: MembershipRules.BOOKING_VERIFICATION_REQUIRED_CODE, message: MembershipRules.bookingVerificationRequiredMessage(brand) };
     }
-    return { code: MembershipRules.BOOKING_REVERIFY_REQUIRED_CODE, message: MembershipRules.BOOKING_REVERIFY_REQUIRED_MESSAGE };
+    return { code: MembershipRules.BOOKING_REVERIFY_REQUIRED_CODE, message: MembershipRules.bookingReverifyRequiredMessage(brand) };
   }
 
   /*
@@ -254,6 +261,7 @@ var BookingMemberVerification = (function () {
    */
   function memberStatus(input, now) {
     now = isDateLike_(now) ? now : new Date();
+    var brand = input && input.brand;
     var email = MembershipRules.normalizeEmail(input && input.email);
     if (!MembershipRules.isValidEmail(email)) return fail_('INVALID_EMAIL', 'メールアドレスの形式が正しくありません。');
     if (!RateLimiter.limitByKey('bmv_status_all', PROOF_LOOKUP_LIMIT_.windowMinutes, PROOF_LOOKUP_LIMIT_.maxCount, now.getTime())) {
@@ -261,7 +269,7 @@ var BookingMemberVerification = (function () {
     }
     var checked = checkProof(email, input && input.proof, now);
     if (!checked.ok) {
-      var error = proofError(checked.reason);
+      var error = proofError(checked.reason, brand);
       return fail_(error.code, error.message);
     }
     var result = { success: true, verified: true, advanceEligible: advanceEligible_(email, now) };

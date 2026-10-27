@@ -67,13 +67,19 @@
       <p class="ba-field-error" id="ba-email-error" hidden></p>
     </div>
 
-{% if include.brand == "snb" or include.brand == "mens" %}
+{% if include.brand == "snb" or include.brand == "mens" or include.brand == "studio_x" %}
+    <!-- Issue #563: Studio Xも同じ共通OTP基盤の会員確認欄を持つ。サーバーが認証フェーズ（OTP）を返すまでJS側が隠す（既定は台帳照合のまま現状維持）。文言は「会員限定」でSNB MEMBERを出さない。 -->
     <!-- Issue #548: V2（SNB / SNB mensの2026/12/1 0:00 JST以降に作成する直接予約）の会員確認。予約メール宛の6桁確認コード（OTP）で
          メール所有を確認した場合だけ、会員料金・会員限定特典・31〜90日先行予約を開放する。会員かどうかは確認コードの送信前後で表示を変えない
          （確認コードを入力できた本人にだけ結果を返す）。V1/V2の判定はサーバーが返す料金世代（priceGeneration）で、V1の間はJS側が隠す。 -->
     <fieldset class="ba-fieldset" id="ba-member-verify-field" hidden>
+{% if include.brand == "studio_x" %}
+      <legend>会員の方（会員確認）</legend>
+      <p class="ba-field-help">会員限定のオプション・31〜90日先の先行予約をご利用の方は、上でご入力のメールアドレス宛に確認コード（6桁）を送信し、届いたコードを入力してください（有効期間60分）。確認なしでも、一般のご予約は通常どおり進められます。</p>
+{% else %}
       <legend>SNB MEMBERの方（会員確認）</legend>
       <p class="ba-field-help">会員料金・会員限定の特典・31〜90日先の先行予約をご利用の方は、上でご入力のメールアドレス宛に確認コード（6桁）を送信し、届いたコードを入力してください（有効期間60分）。確認なしでも、一般のご予約は通常どおり進められます。</p>
+{% endif %}
       <div class="ba-banner-actions">
         <button type="button" class="ba-btn ba-btn-ghost" id="ba-member-code-send">確認コードを送信</button>
       </div>
@@ -269,7 +275,11 @@
             <li><span aria-hidden="true">△</span> 残り枠が少ないです</li>
             <li><span aria-hidden="true">×</span> 予約可能枠がありません</li>
             <li><span aria-hidden="true">－</span> 予約対象外です</li>
+{% if include.brand == "studio_x" %}
+            <li>ご予約は30日先まで、会員は90日先まで先行予約できます（点線の枠の日が会員先行枠・会員登録と同じメールアドレスが必要）</li>
+{% else %}
             <li>ご予約は30日先まで、SNB MEMBERは90日先まで先行予約できます（点線の枠の日がSNB MEMBER先行枠・会員登録と同じメールアドレスが必要）</li>
+{% endif %}
           </ul>
 
           <p class="ba-calendar-selected" id="ba-calendar-selected" aria-live="polite"></p>
