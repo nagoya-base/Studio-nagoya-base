@@ -160,6 +160,8 @@
     benefitsField: document.getElementById('ba-benefits-field'),
     planPair: document.getElementById('ba-plan-pair'),
     planPairNote: document.getElementById('ba-plan-pair-note'),
+    planPairStatus: document.getElementById('ba-plan-pair-status'),
+    showerNote: document.getElementById('ba-shower-note'),
     planEvent: document.getElementById('ba-plan-event'),
     planBanner: document.getElementById('ba-plan-banner'),
     planRelease: document.getElementById('ba-plan-release'),
@@ -514,6 +516,26 @@
     }
     var showerChoice = benefitChoiceOf_(els.shower);
     if (showerChoice) showerChoice.hidden = false;
+    /* Issue #578: ペアパックは自動適用。適用される／まだ確定しない／対象外のどれかを必ず文言で示し、対象外を適用済みと誤認させない。 */
+    if (els.planPairStatus) {
+      var pairText = '';
+      var peopleValue = els.people ? els.people.value : '';
+      if (pairVisible && unlocked && pairDurationOk) {
+        if (!peopleValue) pairText = '人数（ご利用情報の入力）が1〜2名の場合、2名ペアパック（3時間）が自動適用されます。人数を入力するまでは通常料金の目安です。4時間以上は会員の延長料金が加算されます。';
+        else if (Logic.isPairPackPeopleValue(peopleValue)) pairText = '2名ペアパック（3時間）が自動適用されます。4時間以上の場合は、3時間を超える分の会員延長料金が加算されます。';
+        else pairText = '3名以上のご利用は2名ペアパックの対象外のため、通常料金です。';
+      }
+      els.planPairStatus.textContent = pairText;
+      els.planPairStatus.hidden = !pairText;
+    }
+    /* Issue #578: シャワーが選べない理由を、グレーアウトの理由として画面に出す。 */
+    if (els.showerNote) {
+      var showerNoteText = '';
+      if (!showerVisible) showerNoteText = els.date && els.date.value ? 'シャワーは2026年12月1日以降のご利用日から選択できます。' : 'ご利用日を選ぶとシャワーの選択可否をご案内します（2026年12月1日以降のご利用日が対象）。';
+      else if (!unlocked) showerNoteText = 'シャワーはSNB MEMBERの会員確認が済むと選択できます（上の会員確認をご利用ください）。';
+      els.showerNote.textContent = showerNoteText;
+      els.showerNote.hidden = !showerNoteText;
+    }
     if (els.benefitsField) els.benefitsField.hidden = brand !== 'snb' && brand !== 'mens';
     if (els.benefitsLocked) els.benefitsLocked.hidden = unlocked || !(pairVisible || showerVisible);
   }
@@ -1494,6 +1516,8 @@
   [els.people, els.shower].forEach(function (control) {
     if (control) control.addEventListener('change', function () { refreshPriceEstimate_(); });
   });
+  /* Issue #578: 人数はStep2で入力する。キー入力・選択のどちらでも、古い通常料金を残さず自動適用後の見積りへ同期する。 */
+  if (els.people) els.people.addEventListener('input', function () { refreshPriceEstimate_(); });
 
   /* 貸切ベースプラン（Issue #510）の選択に合わせ、利用時間の選択肢を6〜13時間（1時間単位）に絞り、初期値を6時間にする。
      6時間固定ではなく、7時間・8時間…と増やせる。外すと元の入力に戻す。終了が21:00を超える開始時刻は一覧から外す（fetchAvailability）。 */
