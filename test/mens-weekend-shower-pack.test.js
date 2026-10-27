@@ -288,7 +288,7 @@ test('予約作成: パックを明示選択した予約は、ペアパックの
   assert.strictEqual(r.price.amount, 6500);
 });
 
-test('予約作成: 3名以上でもシャワーパックの金額は変わらない（人数による追加料金なし。シャワーの利用人数条件は現行運用のまま）', function () {
+test('予約作成: 予約人数が3名以上でも部屋料金は6,500円のまま。ただしシャワーを使えるのは同一予約2名まで（公開コピーで明示）', function () {
   var ctx = setup({ members: MEMBER });
   var r = book(ctx, { people: '3名' });
   assert.strictEqual(r.success, true, JSON.stringify(r));
@@ -460,4 +460,21 @@ test('フロント: パックのエラーコードは利用者向け文言に変
       assert.ok(text && text.indexOf(code) === -1, code + ' ' + locale);
     });
   });
+});
+
+test('公開コピー: 新パックの説明（予約フォーム・会員特典・mens料金案内）に「シャワーは同一予約2名まで」を明示する', function () {
+  var fs = require('node:fs');
+  var path = require('node:path');
+  function read(p) { return fs.readFileSync(path.join(__dirname, '..', p), 'utf8'); }
+  var form = read('_includes/booking_app_ja.html');
+  var packLabel = form.slice(form.indexOf('id="ba-plan-shower-pack"'));
+  packLabel = packLabel.slice(0, packLabel.indexOf('</label>'));
+  assert.ok(packLabel.indexOf('同一予約で2名まで') !== -1, '予約フォーム');
+  var benefits = read('_includes/membership_benefits_ja.html');
+  var card = benefits.slice(benefits.indexOf('id="shower-pack"'), benefits.indexOf('id="shower"'));
+  assert.ok(card.indexOf('同一予約で2名まで') !== -1, '会員特典');
+  var mens = read('mens/index.html');
+  var para = mens.slice(mens.indexOf('土日祝4時間シャワーパック'));
+  para = para.slice(0, para.indexOf('</p>'));
+  assert.ok(para.indexOf('同一予約2名まで') !== -1, 'mens料金案内');
 });
