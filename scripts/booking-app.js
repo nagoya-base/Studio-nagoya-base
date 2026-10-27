@@ -146,6 +146,7 @@
     memberField: document.getElementById('ba-member-field'),
     benefitsField: document.getElementById('ba-benefits-field'),
     planPair: document.getElementById('ba-plan-pair'),
+    planPairNote: document.getElementById('ba-plan-pair-note'),
     planEvent: document.getElementById('ba-plan-event'),
     planBanner: document.getElementById('ba-plan-banner'),
     planRelease: document.getElementById('ba-plan-release'),
@@ -355,6 +356,10 @@
   function pairPackVisible_() {
     return Logic.pairPackAvailableOnDate(brand, els.date ? els.date.value : '');
   }
+  /* Issue #552: 3時間未満ではペアパックを選べない（成立しない選択をUIで防ぐ。拒否の正本はサーバー）。 */
+  function pairPackDurationOk_() {
+    return Logic.pairPackDurationAllowed(currentCalendarDurationMinutes_());
+  }
   function benefitChoiceOf_(control) {
     return control && control.parentNode ? control.parentNode : null;
   }
@@ -363,8 +368,10 @@
     /* Issue #546: 会員向けUIが有効でない間は、表示してもdisabledにし、選択済みも外す（UXのみ。資格の最終判定はサーバー）。 */
     var unlocked = memberFeaturesEnabled_();
     var pairVisible = pairPackVisible_();
-    if ((!pairVisible || !unlocked) && els.planPair) els.planPair.checked = false;
-    if (els.planPair) els.planPair.disabled = !unlocked;
+    var pairDurationOk = pairPackDurationOk_();
+    if ((!pairVisible || !unlocked || !pairDurationOk) && els.planPair) els.planPair.checked = false;
+    if (els.planPair) els.planPair.disabled = !unlocked || !pairDurationOk;
+    if (els.planPairNote) els.planPairNote.hidden = !(pairVisible && unlocked && !pairDurationOk);
     var pairChoice = benefitChoiceOf_(els.planPair);
     if (pairChoice) pairChoice.hidden = !pairVisible;
     var showerVisible = showerVisible_();
@@ -398,7 +405,7 @@
   }
   function selectedPlan_() {
     if (eventPlanSelected_()) return Logic.EVENT_BASE_PLAN_CODE;
-    return pairPackVisible_() && memberFeaturesEnabled_() && els.planPair && els.planPair.checked ? Logic.PAIR_PACK_PLAN_CODE : '';
+    return pairPackVisible_() && memberFeaturesEnabled_() && pairPackDurationOk_() && els.planPair && els.planPair.checked ? Logic.PAIR_PACK_PLAN_CODE : '';
   }
   function showerSelected_() {
     return showerVisible_() && memberFeaturesEnabled_() && !!els.shower && els.shower.checked;

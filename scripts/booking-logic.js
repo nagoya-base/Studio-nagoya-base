@@ -1071,6 +1071,15 @@
 
   var PAIR_PACK_PLAN_CODE = 'member_pair_3h';
 
+  /* Issue #552: ペアパックは3時間未満では成立しない。UIで選べなくするための早期ガードで、
+     正本はサーバー（BookingPricing.gs の PAIR_PACK_.baseHours = 3。拒否もサーバー側で維持）。
+     値の一致は test/booking-pricing.test.js で検証する。 */
+  var PAIR_PACK_MIN_MINUTES = 180;
+
+  function pairPackDurationAllowed(durationMinutes) {
+    return Number(durationMinutes) >= PAIR_PACK_MIN_MINUTES;
+  }
+
   /* Issue #488 / #492 / #510: 6時間貸切ベースプラン（常設）。8:00〜21:00の範囲で最低6時間・1時間1,000円・10名まで（Issue #513。人数による追加料金なし）。
      利用時間は予約時に確定し、利用開始後の途中延長はない。可否・金額の正本はGAS。ここは画面の早期ガードと表示用の定数だけを持つ。 */
   var EVENT_BASE_PLAN_CODE = 'osu_cosplay_base_6h';
@@ -1230,6 +1239,8 @@
     showerAvailableOnDate: showerAvailableOnDate,
     appliedRateInfo: appliedRateInfo,
     isPairPackPeopleValue: isPairPackPeopleValue,
+    pairPackDurationAllowed: pairPackDurationAllowed,
+    PAIR_PACK_MIN_MINUTES: PAIR_PACK_MIN_MINUTES,
     PAIR_PACK_PLAN_CODE: PAIR_PACK_PLAN_CODE,
     EVENT_BASE_PLAN_CODE: EVENT_BASE_PLAN_CODE,
     EVENT_BASE_PLAN_MIN_HOURS: EVENT_BASE_PLAN_MIN_HOURS,
