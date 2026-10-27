@@ -95,11 +95,13 @@ var BookingPricing = (function () {
    * - 通常のMEMBER料金（4時間土日祝9,000円）・シャワー単体（BookingOptions.gsのSHOWER_PRICE_JPY_）・ペアパックの料金は変更しない。
    *   シャワー分は6,500円に含まれ、この予約に紐づくシャワー注文は0円（二重加算しない。BookingOptions.planOrdersのshowerIncluded）。
    * - 提供開始はシャワーと同じく利用日が2026/12/1以降。actual membershipが必須（資格確認は予約作成・日程変更・確定の各サーバー側処理）。
+   * - 利用人数は1〜2名まで（商品定義。人数はcomputeBookingPriceの入力ではないため、予約作成・見積り(POST)側で isShowerPackPeople により拒否する）。
    * - 平日・4時間以外・mens以外では成立しない（通常料金へ黙って倒さず拒否する）。
    */
   var SHOWER_PACK_ = {
     brands: ['mens'],
     hours: 4,
+    maxPeople: 2,
     price: 6500,
     startDate: '2026-12-01',
     label: 'SNB mens 土日祝4時間シャワーパック'
@@ -259,6 +261,12 @@ var BookingPricing = (function () {
   /* Issue #586: シャワーパックを提供する利用日か（利用日 >= 2026/12/1。シャワー・ペアパックと同じ基準）。 */
   function isShowerPackAvailableOnDate(dateString) {
     return isValidDateString_(dateString) && dateString >= SHOWER_PACK_.startDate;
+  }
+
+  /* Issue #586: シャワーパックの人数条件（1〜2名。ペアパックと同じ判定）。数値以外・3名以上はfalse。 */
+  function isShowerPackPeople(people) {
+    var m = /^\s*([1-9]\d*)\s*名\s*$/.exec(String(people === undefined || people === null ? '' : people));
+    return !!m && Number(m[1]) >= 1 && Number(m[1]) <= SHOWER_PACK_.maxPeople;
   }
 
   /* Issue #586: 会員限定の独立プラン（ペアパック・シャワーパック）か。実会員資格の確認・日程変更時の再確認の対象。 */
@@ -460,6 +468,8 @@ var BookingPricing = (function () {
     PAIR_PACK_BASE_HOURS: PAIR_PACK_.baseHours,
     SHOWER_PACK_PRICE: SHOWER_PACK_.price,
     SHOWER_PACK_HOURS: SHOWER_PACK_.hours,
+    SHOWER_PACK_MAX_PEOPLE: SHOWER_PACK_.maxPeople,
+    isShowerPackPeople: isShowerPackPeople,
     SHOWER_PACK_START_DATE: SHOWER_PACK_.startDate,
     SHOWER_PACK_LABEL: SHOWER_PACK_.label,
     isShowerPack: isShowerPack,

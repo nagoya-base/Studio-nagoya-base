@@ -112,6 +112,7 @@
       SHOWER_SCHEDULE_CONFIRMATION_REQUIRED: 'シャワー利用は、ご利用日の1週間前までにスタッフとの日程調整を済ませたことを確認してください。',
       PLAN_DURATION_INVALID: 'ご選択のプランの利用時間が条件を満たしていません（2名ペアパックは3時間以上、土日祝4時間シャワーパックは4時間、貸切ベースプランは最低6時間から1時間単位）。',
       /* Issue #586: SNB mens限定の土日祝4時間シャワーパック。 */
+      SHOWER_PACK_PEOPLE_EXCEEDED: '土日祝4時間シャワーパックのご利用は1〜2名までです。人数を変更するか、パックの選択を外してください。',
       PLAN_DAY_INVALID: '土日祝4時間シャワーパックは、土日祝のご利用日のみご選択いただけます。ご利用日を変更するか、パックの選択を外してください。',
       SHOWER_PACK_SHOWER_REQUIRED: '土日祝4時間シャワーパックには、シャワー利用の事前確認（日程調整の確認）が含まれます。確認にチェックしてお進みください。',
       PLAN_HOURS_OUT_OF_RANGE: '貸切ベースプランは8:00〜21:00の範囲内でご利用ください。終了が21:00を超える時間は選べません。開始時刻か利用時間を変更してください。',
@@ -158,6 +159,7 @@
       PAIR_PACK_PEOPLE_EXCEEDED: 'The pair pack is for 1 to 2 guests.',
       SHOWER_SCHEDULE_CONFIRMATION_REQUIRED: 'Please confirm that you completed scheduling with staff at least one week before your visit.',
       PLAN_DURATION_INVALID: 'The selected plan’s duration is not allowed (pair pack: 3+ hours; weekend/holiday 4-hour shower pack: 4 hours; private base plan: 6+ hours in 1-hour steps).',
+      SHOWER_PACK_PEOPLE_EXCEEDED: 'The 4-hour shower pack is for 1 to 2 guests.',
       PLAN_DAY_INVALID: 'The 4-hour shower pack is available only on weekends and public holidays.',
       SHOWER_PACK_SHOWER_REQUIRED: 'The 4-hour shower pack includes advance confirmation for shower use. Please tick the scheduling confirmation.',
       PLAN_HOURS_OUT_OF_RANGE: 'The private base plan must fall within 08:00–21:00. Please change the start time or duration.',
@@ -259,6 +261,7 @@
       code === 'SHOWER_SCHEDULE_CONFIRMATION_REQUIRED' ||
       code === 'PLAN_DURATION_INVALID' ||
       code === 'PLAN_DAY_INVALID' ||
+      code === 'SHOWER_PACK_PEOPLE_EXCEEDED' ||
       code === 'SHOWER_PACK_SHOWER_REQUIRED' ||
       code === 'PLAN_HOURS_OUT_OF_RANGE' ||
       code === 'PLAN_NOT_AVAILABLE' ||
@@ -1164,6 +1167,12 @@
     return typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue) && dateValue >= SHOWER_PACK_START_DATE_;
   }
 
+  /* 1〜2名限定（ペアパックと同じ判定）。未選択は判定せずtrue（人数の必須チェックは別）。 */
+  function showerPackPeopleAllowed(people) {
+    if (!people) return true;
+    return people === '1名' || people === '2名';
+  }
+
   /* 4時間ちょうどのときだけ選べる（3時間・5時間では選べない）。 */
   function showerPackDurationAllowed(durationMinutes) {
     return Number(durationMinutes) === SHOWER_PACK_DURATION_MINUTES;
@@ -1342,6 +1351,7 @@
     pairPackDurationAllowed: pairPackDurationAllowed,
     showerPackAvailableOnDate: showerPackAvailableOnDate,
     showerPackDurationAllowed: showerPackDurationAllowed,
+    showerPackPeopleAllowed: showerPackPeopleAllowed,
     SHOWER_PACK_PLAN_CODE: SHOWER_PACK_PLAN_CODE,
     SHOWER_PACK_DURATION_MINUTES: SHOWER_PACK_DURATION_MINUTES,
     PAIR_PACK_MIN_MINUTES: PAIR_PACK_MIN_MINUTES,

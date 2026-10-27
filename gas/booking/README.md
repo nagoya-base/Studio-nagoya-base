@@ -7887,7 +7887,7 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 
 ### SNB mens限定 土日祝4時間シャワーパック（独立プラン `mens_weekend_shower_4h`。Issue #586）
 
-- 正本: `BookingPricing.gs`（`SHOWER_PACK_`）。mensのみ・土日祝のみ（祝日は `JapaneseHolidays` で判定）・4時間ちょうど・利用日が2026/12/1以降・固定6,500円（税込）。通常料金tier・2名ペアパック・単体シャワー（`SHOWER_PRICE_JPY_`）の金額は変更しない。平日は `PLAN_DAY_INVALID`、4時間以外は `PLAN_DURATION_INVALID`、他ブランド・提供開始前は `PLAN_NOT_AVAILABLE`（通常料金へ黙って倒さない）。
+- 正本: `BookingPricing.gs`（`SHOWER_PACK_`）。mensのみ・土日祝のみ（祝日は `JapaneseHolidays` で判定）・4時間ちょうど・**1〜2名限定**（`isShowerPackPeople`。3名以上は `SHOWER_PACK_PEOPLE_EXCEEDED`）・利用日が2026/12/1以降・固定6,500円（税込）。通常料金tier・2名ペアパック・単体シャワー（`SHOWER_PRICE_JPY_`）の金額は変更しない。平日は `PLAN_DAY_INVALID`、4時間以外は `PLAN_DURATION_INVALID`、他ブランド・提供開始前は `PLAN_NOT_AVAILABLE`（通常料金へ黙って倒さない）。
 - 予約作成: `plan: 'mens_weekend_shower_4h'` を利用者が明示した場合のみ（`autoPairPack` でペアパックに上書きしない）。`BookingRepository.resolveShowerPackForNewBooking_` が、V2のメールOTP確認済み証明・`opt_elig_` レート制限・actual membership（`MembershipRules.verifyActualMembership`。mensの価格優遇では代用しない）を確認し、非会員は `MEMBER_BENEFIT_NOT_AVAILABLE`。`options.shower`（日程調整の確認つき）が無い申込は `SHOWER_PACK_SHOWER_REQUIRED`。
 - シャワーの二重加算防止: パック予約に紐づくシャワーOptionOrderは `amountJpy=0`（`BookingOptions.planOrders` の `showerIncluded`。同時申込は `OptionOrderService.preflightForNewBooking`、後付けは `createOrders` が `booking.planCode` から判定）。事前確認の `PENDING_APPROVAL` から始まり、管理者承認（`decide_`）で**支払いなしに `CONFIRMED`**（`paymentStatus=NOT_REQUIRED`）。0円のため `isPayable` が偽でCheckoutは開始できない。有効なシャワー注文がある間の重複申込は `DUPLICATE_OPTION`。承認メールは「追加のお支払い不要」と案内する。
 - 会員資格の再確認: `BookingPricing.isMemberPlan`（ペアパックと共通）が、管理者の手動確定・EXPIRED復活・日程変更・現地精算で actual membership を再確認する。日程変更は `FeeCalculator.quoteFee` に `plan` を渡して再見積りし、平日・4時間以外へ変更するとプラン料金は自動算出できない（`PLAN_DAY_INVALID` / `PLAN_DURATION_INVALID`）。

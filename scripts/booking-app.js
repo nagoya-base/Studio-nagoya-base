@@ -502,8 +502,12 @@
   function showerPackDurationOk_() {
     return Logic.showerPackDurationAllowed(currentCalendarDurationMinutes_());
   }
+  /* 1〜2名限定。人数が未選択の間は選べる（人数の必須チェックは別）。 */
+  function showerPackPeopleOk_() {
+    return Logic.showerPackPeopleAllowed(els.people ? els.people.value : '');
+  }
   function showerPackSelected_() {
-    return !!els.planShowerPack && els.planShowerPack.checked && showerPackVisible_() && memberFeaturesEnabled_() && showerPackDurationOk_();
+    return !!els.planShowerPack && els.planShowerPack.checked && showerPackVisible_() && memberFeaturesEnabled_() && showerPackDurationOk_() && showerPackPeopleOk_();
   }
   function benefitChoiceOf_(control) {
     return control && control.parentNode ? control.parentNode : null;
@@ -517,15 +521,17 @@
     /* Issue #586: シャワーパックを選んでいる間は、ペアパックを自動適用しない（独立した別商品）。 */
     var packVisible = showerPackVisible_();
     var packDurationOk = showerPackDurationOk_();
+    var packPeopleOk = showerPackPeopleOk_();
     if (els.planShowerPack) {
-      if (!packVisible || !unlocked || !packDurationOk) els.planShowerPack.checked = false;
-      els.planShowerPack.disabled = !packVisible || !unlocked || !packDurationOk;
+      if (!packVisible || !unlocked || !packDurationOk || !packPeopleOk) els.planShowerPack.checked = false;
+      els.planShowerPack.disabled = !packVisible || !unlocked || !packDurationOk || !packPeopleOk;
       if (els.planShowerPackNote) {
         var packNote = '';
         if (!packVisible) packNote = els.date && els.date.value ? 'シャワーパックは2026年12月1日以降のご利用日から選択できます。' : 'ご利用日を選ぶとシャワーパックの選択可否をご案内します（2026年12月1日以降のご利用日が対象）。';
         else if (!unlocked) packNote = 'シャワーパックはSNB MEMBERの会員確認が済むと選択できます（上の会員確認をご利用ください）。';
         else if (!packDurationOk) packNote = 'シャワーパックは利用時間が4時間のときだけ選択できます（3時間・5時間などでは適用されません）。';
-        else if (els.planShowerPack.checked) packNote = '土日祝4時間シャワーパック（6,500円・シャワー1回込み）が適用されます。平日はご利用いただけません。シャワーは事前確認制で、下の日程調整の確認が必要です。';
+        else if (!packPeopleOk) packNote = 'シャワーパックは1〜2名のご利用のときだけ選択できます（3名以上では適用されません）。';
+        else if (els.planShowerPack.checked) packNote = '土日祝4時間シャワーパック（6,500円・1〜2名・シャワー1回込み）が適用されます。平日はご利用いただけません。シャワーは事前確認制で、下の日程調整の確認が必要です。';
         els.planShowerPackNote.textContent = packNote;
         els.planShowerPackNote.hidden = !packNote;
       }
@@ -2090,6 +2096,11 @@
       if (eventPlanSelected_()) {
         if (fields.people && !Logic.isEventPlanPeopleValue(fields.people)) {
           errors.people = Logic.messageForErrorCode('EVENT_PLAN_PEOPLE_EXCEEDED', locale, brand);
+        }
+      } else if (selectedPlan_() === Logic.SHOWER_PACK_PLAN_CODE) {
+        /* 土日祝4時間シャワーパックは1〜2名・4時間（サーバー側でも同じ条件で拒否する）。 */
+        if (fields.people && !Logic.showerPackPeopleAllowed(fields.people)) {
+          errors.people = Logic.messageForErrorCode('SHOWER_PACK_PEOPLE_EXCEEDED', locale, brand);
         }
       } else if (selectedPlan_() === Logic.PAIR_PACK_PLAN_CODE) {
         /* 2名ペアパックは1〜2名・3時間以上（サーバー側でも同じ条件で拒否する）。 */

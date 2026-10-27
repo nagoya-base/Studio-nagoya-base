@@ -436,7 +436,7 @@ var BookingRepository = (function () {
 
   /*
    * SNB mens限定シャワーパック（Issue #586）の申込検証。必ず利用者が明示的に選んだときだけ成立する（自動適用しない）。
-   * 確認順: ブランド（mensのみ）・利用日（2026/12/1以降） → 4時間ちょうど → 土日祝（BookingPricingが曜日区分で拒否） →
+   * 確認順: ブランド（mensのみ）・利用日（2026/12/1以降） → 4時間ちょうど → 1〜2名 → 土日祝（BookingPricingが曜日区分で拒否） →
    * メールOTPの確認済み証明（V2） → 照会のレート制限 → actual membership。
    * 部屋料金の優遇（mensの通常MEMBER料金）は実会員資格ではないため、資格は必ず台帳（利用日）で確認する。
    * 資格関連の失敗は、会員の有無を探れないよう常に同一のコード・メッセージで返す（ペアパックと同じ）。
@@ -447,6 +447,9 @@ var BookingRepository = (function () {
     }
     if (Number(input.durationMinutes) !== BookingPricing.SHOWER_PACK_HOURS * 60) {
       return { ok: false, error: { code: 'PLAN_DURATION_INVALID', message: BookingPricing.SHOWER_PACK_LABEL + 'は4時間でご利用ください。' } };
+    }
+    if (!BookingPricing.isShowerPackPeople(input.people)) {
+      return { ok: false, error: { code: 'SHOWER_PACK_PEOPLE_EXCEEDED', message: BookingPricing.SHOWER_PACK_LABEL + 'のご利用は1〜2名までです。' } };
     }
     if (memberAuth && memberAuth.required && !memberAuth.verified) return { ok: false, error: memberAuth.requiredError };
     var lookupAllowed = RateLimiter.limitByKey('opt_elig_' + MembershipRules.normalizeEmail(input.email), 10, 5, now.getTime());

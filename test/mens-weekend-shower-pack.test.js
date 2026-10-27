@@ -288,11 +288,26 @@ test('予約作成: パックを明示選択した予約は、ペアパックの
   assert.strictEqual(r.price.amount, 6500);
 });
 
-test('予約作成: 予約人数が3名以上でも部屋料金は6,500円のまま。ただしシャワーを使えるのは同一予約2名まで（公開コピーで明示）', function () {
+test('予約作成: パックは1〜2名限定。1名・2名は成立し、3名以上・形式不正は拒否（予約は作られない）', function () {
   var ctx = setup({ members: MEMBER });
-  var r = book(ctx, { people: '3名' });
-  assert.strictEqual(r.success, true, JSON.stringify(r));
-  assert.strictEqual(r.price.amount, 6500);
+  ['1名', '2名'].forEach(function (people) {
+    var ok = book(ctx, { people: people, startTime: people === '1名' ? '10:00' : '16:00' });
+    assert.strictEqual(ok.success, true, people + JSON.stringify(ok));
+    assert.strictEqual(ok.price.amount, 6500);
+  });
+  var before = ctx.sheets.Bookings._rows.length;
+  ['3名', '4名', '5名以上・要相談', '', '二人'].forEach(function (people) {
+    var r = book(ctx, { people: people, date: SUNDAY });
+    assert.strictEqual(r.success, false, people);
+    assert.ok(r.error.code === 'SHOWER_PACK_PEOPLE_EXCEEDED' || r.error.code === 'INVALID_PEOPLE', people + ' ' + r.error.code);
+  });
+  assert.strictEqual(book(ctx, { people: '3名', date: SUNDAY }).error.code, 'SHOWER_PACK_PEOPLE_EXCEEDED');
+  assert.strictEqual(ctx.sheets.Bookings._rows.length, before, '拒否した申込は予約行を作らない');
+  assert.strictEqual(ctx.sandbox.BookingPricing.isShowerPackPeople('2名'), true);
+  assert.strictEqual(ctx.sandbox.BookingPricing.isShowerPackPeople('3名'), false);
+  /* パックを使わない通常予約は3名以上でも従来どおり。 */
+  var normal = book(ctx, { people: '3名', plan: '', options: undefined, date: SUNDAY });
+  assert.strictEqual(normal.success, true, JSON.stringify(normal));
 });
 
 // ============================================================================
@@ -414,6 +429,10 @@ test('フロント: シャワーパックはmensかつ利用日が2026/12/1以�
   assert.strictEqual(Logic.showerPackAvailableOnDate('mens', '2026/12/05'), false);
   assert.strictEqual(Logic.showerPackAvailableOnDate('snb', '2026-12-12'), false);
   assert.strictEqual(Logic.showerPackAvailableOnDate('studio_x', '2026-12-12'), false);
+  assert.strictEqual(Logic.showerPackPeopleAllowed('1名'), true);
+  assert.strictEqual(Logic.showerPackPeopleAllowed('2名'), true);
+  assert.strictEqual(Logic.showerPackPeopleAllowed(''), true, '未選択は人数の必須チェックに任せる');
+  ['3名', '4名', '5名以上・要相談'].forEach(function (p) { assert.strictEqual(Logic.showerPackPeopleAllowed(p), false, p); });
   assert.strictEqual(Logic.showerPackDurationAllowed(240), true);
   [60, 120, 180, 300, 360, 0, NaN].forEach(function (m) { assert.strictEqual(Logic.showerPackDurationAllowed(m), false, String(m)); });
 });
@@ -454,7 +473,7 @@ test('フロント: 料金サマリーはパック名を示し、シャワーは
 });
 
 test('フロント: パックのエラーコードは利用者向け文言に変換され、選択を直せば解消するエラーとして扱う', function () {
-  ['PLAN_DAY_INVALID', 'SHOWER_PACK_SHOWER_REQUIRED'].forEach(function (code) {
+  ['PLAN_DAY_INVALID', 'SHOWER_PACK_SHOWER_REQUIRED', 'SHOWER_PACK_PEOPLE_EXCEEDED'].forEach(function (code) {
     ['ja', 'en'].forEach(function (locale) {
       var text = Logic.messageForErrorCode(code, locale, 'mens');
       assert.ok(text && text.indexOf(code) === -1, code + ' ' + locale);
@@ -462,19 +481,20 @@ test('フロント: パックのエラーコードは利用者向け文言に変
   });
 });
 
-test('公開コピー: 新パックの説明（予約フォーム・会員特典・mens料金案内）に「シャワーは同一予約2名まで」を明示する', function () {
+test('公開コピー: 新パックの説明（予約フォーム・会員特典・mens料金案内）に「1〜2名限定」を明示し、予約フォーム・会員特典にはシャワー2名までも明示する', function () {
   var fs = require('node:fs');
   var path = require('node:path');
   function read(p) { return fs.readFileSync(path.join(__dirname, '..', p), 'utf8'); }
   var form = read('_includes/booking_app_ja.html');
   var packLabel = form.slice(form.indexOf('id="ba-plan-shower-pack"'));
   packLabel = packLabel.slice(0, packLabel.indexOf('</label>'));
-  assert.ok(packLabel.indexOf('同一予約で2名まで') !== -1, '予約フォーム');
+  assert.ok(packLabel.indexOf('1〜2名限定') !== -1 && packLabel.indexOf('同一予約で2名まで') !== -1, '予約フォーム');
   var benefits = read('_includes/membership_benefits_ja.html');
   var card = benefits.slice(benefits.indexOf('id="shower-pack"'), benefits.indexOf('id="shower"'));
-  assert.ok(card.indexOf('同一予約で2名まで') !== -1, '会員特典');
+  assert.ok(card.indexOf('1〜2名') !== -1 && card.indexOf('同一予約で2名まで') !== -1, '会員特典');
+  assert.ok(card.indexOf('3名以上でもパック料金は変わりません') === -1, '3名以上でも成立するとは書かない');
   var mens = read('mens/index.html');
   var para = mens.slice(mens.indexOf('土日祝4時間シャワーパック'));
   para = para.slice(0, para.indexOf('</p>'));
-  assert.ok(para.indexOf('同一予約2名まで') !== -1, 'mens料金案内');
+  assert.ok(para.indexOf('1〜2名限定') !== -1, 'mens料金案内');
 });

@@ -118,6 +118,7 @@ function setup(responseBody) {
     showerAvailableOnDate: function () { return false; },
     showerPackAvailableOnDate: function () { return false; },
     showerPackDurationAllowed: function () { return false; },
+    showerPackPeopleAllowed: function () { return true; },
     SHOWER_PACK_PLAN_CODE: 'mens_weekend_shower_4h',
     appliedRateInfo: function () { return null; },
     isPairPackPeopleValue: function () { return true; },

@@ -375,6 +375,10 @@ function handleBookingMemberStatus_(payload) {
         BookingPricing.isPairPackPeople(payload.people) && durationMinutes >= 180
         ? BookingPricing.PLAN.MEMBER_PAIR_3H : '';
     }
+    /* Issue #586: シャワーパックは1〜2名限定（人数が未指定の見積りは人数を確認できないため通す。予約作成で必ず拒否される）。 */
+    if (BookingPricing.isShowerPack(plan) && payload.people && !BookingPricing.isShowerPackPeople(payload.people)) {
+      return { success: false, error: { code: 'SHOWER_PACK_PEOPLE_EXCEEDED', message: BookingPricing.SHOWER_PACK_LABEL + 'のご利用は1〜2名までです。' } };
+    }
     if (plan && !BookingPricing.isEventPlan(plan) && status.memberOnDate !== true) {
       return { success: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.memberBenefitDeniedMessage(brand) } };
     }
