@@ -473,3 +473,45 @@ test('Issue #496 予約フォーム: ベースプランの変更でパネルを�
   assert.ok(typeof Panel.describeError({ code: 'EVENT_PLAN_OPTIONS_NOT_ALLOWED' }) === 'string');
   assert.ok(Panel.describeError({ code: 'EVENT_PLAN_OPTIONS_NOT_ALLOWED' }).indexOf('追加オプション') !== -1);
 });
+
+/* ---- Issue #575: 機材レンタル時の確認チェック（設営方法で出し分け・必須化） ---- */
+var CONFIRM_ON = { confirmEnabled: true, setupChosen: true, cleanupChosen: true, cleanupService: 'SELF' };
+function confirmState(overrides) { return Object.assign({ equipment: { COB_BICOLOR: 1 }, layouts: [], setupService: 'SELF' }, CONFIRM_ON, overrides); }
+
+test('確認チェック: 機材レンタル＋セルフ設営は機材レクチャーの確認が必須。未チェックでは検証エラー、チェックで通り、selectionに載る', function () {
+  assert.deepStrictEqual(Panel.requiredConfirmations(CATALOG, confirmState()), { lecture: true, schedule: false });
+  assert.strictEqual(Panel.validateSelection(confirmState(), CATALOG), Panel.ERROR_COPY.EQUIPMENT_LECTURE_CONFIRM_REQUIRED);
+  var ok = confirmState({ confirmLecture: true });
+  assert.strictEqual(Panel.validateSelection(ok, CATALOG), '');
+  assert.deepStrictEqual(Panel.buildSelection(ok, CATALOG).confirmations, { equipmentLecture: true });
+  assert.strictEqual(Panel.CONFIRM_TEXT.lecture, 'スタッフによる機材レクチャーを受けています');
+});
+
+test('確認チェック: 機材レンタル＋スタッフ設営は設営日時調整の確認が必須（機材セット展開後の機材も同じ）', function () {
+  var staff = confirmState({ setupService: 'STAFF', layouts: ['CLASSROOM'] });
+  assert.deepStrictEqual(Panel.requiredConfirmations(CATALOG, staff), { lecture: false, schedule: true });
+  assert.strictEqual(Panel.validateSelection(staff, CATALOG), Panel.ERROR_COPY.SETUP_SCHEDULE_CONFIRM_REQUIRED);
+  var ok = Object.assign({}, staff, { confirmSchedule: true });
+  assert.strictEqual(Panel.validateSelection(ok, CATALOG), '');
+  assert.deepStrictEqual(Panel.buildSelection(ok, CATALOG).confirmations, { setupScheduleAdjusted: true });
+  assert.strictEqual(Panel.CONFIRM_TEXT.schedule, '利用日の1週間前までに、スタッフと設営日時の調整を済ませています');
+});
+
+test('確認チェック: 条件外（機材なし／設営方法未選択／無料機材のみ／後付けページ）では要求せず、selectionにも載せない。条件が外れた値は送らない', function () {
+  assert.deepStrictEqual(Panel.requiredConfirmations(CATALOG, confirmState({ equipment: {} })), { lecture: false, schedule: false });
+  assert.deepStrictEqual(Panel.requiredConfirmations(CATALOG, confirmState({ setupChosen: false })), { lecture: false, schedule: false });
+  assert.deepStrictEqual(Panel.requiredConfirmations(CATALOG, confirmState({ confirmEnabled: false })), { lecture: false, schedule: false });
+  assert.strictEqual(Panel.validateSelection(confirmState({ confirmEnabled: false }), CATALOG), '');
+  var stale = confirmState({ setupService: 'STAFF', confirmLecture: true, confirmSchedule: false });
+  assert.strictEqual(Panel.buildSelection(stale, CATALOG).confirmations, undefined, 'セルフ→スタッフに切替後、古いレクチャー確認は送らない');
+  var gone = confirmState({ equipment: {}, layouts: ['CLASSROOM'], confirmLecture: true });
+  assert.strictEqual(Panel.buildSelection(gone, CATALOG).confirmations, undefined);
+});
+
+test('確認チェック: 予約画面だけが有効化し、料金計算（computeSummary）は確認値の影響を受けない', function () {
+  assert.ok(/confirmations: true/.test(read('scripts/booking-app.js')));
+  assert.ok(!/confirmations: true/.test(read('scripts/booking-options-addon.js')));
+  var a = confirmState({ confirmLecture: true });
+  var b = confirmState({ confirmLecture: false });
+  assert.deepStrictEqual(Panel.computeSummary(CATALOG, a), Panel.computeSummary(CATALOG, b));
+});

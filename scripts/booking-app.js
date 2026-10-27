@@ -123,7 +123,7 @@
   }
   var optionsSlot = document.getElementById('ba-options-slot');
   if (optionsSlot && root.getAttribute('data-options') === 'true' && window.BookingOptionsPanel) {
-    optionsPanel = window.BookingOptionsPanel.mount({ slot: optionsSlot, summarySlot: document.getElementById('ba-options-summary-slot'), getRoomPrice: currentRoomPrice_, apiBaseUrl: API_BASE_URL, brand: brand });
+    optionsPanel = window.BookingOptionsPanel.mount({ slot: optionsSlot, summarySlot: document.getElementById('ba-options-summary-slot'), getRoomPrice: currentRoomPrice_, apiBaseUrl: API_BASE_URL, brand: brand, confirmations: true });
   }
 
   var state = {
@@ -2196,7 +2196,7 @@
 
   /* オプション由来で予約が作られなかった場合のerror.code（BookingOptions.gs / OptionOrderService.gs）。 */
   var OPTION_ERROR_CODES_ = [
-    'INVALID_OPTIONS', 'UNKNOWN_OPTION', 'SETUP_METHOD_REQUIRED', 'CLEANUP_METHOD_REQUIRED', 'LAYOUT_REQUIRED_FOR_STAFF_SERVICE', 'STAFF_SERVICE_SINGLE_THEME',
+    'INVALID_OPTIONS', 'UNKNOWN_OPTION', 'SETUP_METHOD_REQUIRED', 'CLEANUP_METHOD_REQUIRED', 'EQUIPMENT_LECTURE_CONFIRM_REQUIRED', 'SETUP_SCHEDULE_CONFIRM_REQUIRED', 'LAYOUT_REQUIRED_FOR_STAFF_SERVICE', 'STAFF_SERVICE_SINGLE_THEME',
     'OPTIONS_NOT_AVAILABLE', 'PRICE_NOT_CONFIGURED', 'VIDEO_LIGHT_SELF_RENTAL_NOT_ELIGIBLE',
     'DUPLICATE_OPTION', 'SERVICE_MODE_CONFLICT', 'STAFF_SERVICE_THEME_MISMATCH', 'EVENT_PLAN_OPTIONS_NOT_ALLOWED'
   ];

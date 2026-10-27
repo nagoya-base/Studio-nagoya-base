@@ -696,3 +696,44 @@ test('planOrders: 会員資格が確認できない（未指定・false）スタ
   assert.strictEqual(BookingOptions.requestsStaffService(staff), true);
   assert.strictEqual(BookingOptions.requestsStaffService(self), false);
 });
+
+/* ---- Issue #575: 新規予約での機材レンタル確認チェック（サーバー側検証） ---- */
+var REQUIRE_CONFIRM = { requireConfirmations: true };
+var LECTURE = { equipmentLecture: true };
+var SCHEDULE = { setupScheduleAdjusted: true };
+
+test('確認チェック(サーバー): セルフ設営の機材レンタルはレクチャー確認が無ければ拒否。確認ありで通る', function () {
+  var base = { equipment: { STROBE_PORTABLE: 1 }, setupService: 'SELF', cleanupService: 'SELF' };
+  assert.strictEqual(BookingOptions.normalizeSelection(base, 'studio-x', REQUIRE_CONFIRM).error.code, 'EQUIPMENT_LECTURE_CONFIRM_REQUIRED');
+  assert.strictEqual(BookingOptions.normalizeSelection(Object.assign({ confirmations: { equipmentLecture: false } }, base), 'studio-x', REQUIRE_CONFIRM).error.code, 'EQUIPMENT_LECTURE_CONFIRM_REQUIRED');
+  assert.strictEqual(BookingOptions.normalizeSelection(Object.assign({ confirmations: SCHEDULE }, base), 'studio-x', REQUIRE_CONFIRM).error.code, 'EQUIPMENT_LECTURE_CONFIRM_REQUIRED', '別の確認では代用できない');
+  assert.strictEqual(BookingOptions.normalizeSelection(Object.assign({ confirmations: LECTURE }, base), 'studio-x', REQUIRE_CONFIRM).ok, true);
+});
+
+test('確認チェック(サーバー): スタッフ設営の機材レンタルは設営日時調整の確認が無ければ拒否', function () {
+  var base = { equipment: { STROBE_PORTABLE: 1 }, layouts: ['CLASSROOM'], setupService: 'STAFF', cleanupService: 'SELF' };
+  assert.strictEqual(BookingOptions.normalizeSelection(base, 'studio-x', REQUIRE_CONFIRM).error.code, 'SETUP_SCHEDULE_CONFIRM_REQUIRED');
+  assert.strictEqual(BookingOptions.normalizeSelection(Object.assign({ confirmations: LECTURE }, base), 'studio-x', REQUIRE_CONFIRM).error.code, 'SETUP_SCHEDULE_CONFIRM_REQUIRED');
+  assert.strictEqual(BookingOptions.normalizeSelection(Object.assign({ confirmations: SCHEDULE }, base), 'studio-x', REQUIRE_CONFIRM).ok, true);
+  /* テーマ未選択のスタッフ設営（機材の設営）も対象 */
+  var noTheme = { equipment: { STROBE_PORTABLE: 1 }, setupService: 'STAFF', cleanupService: 'SELF' };
+  assert.strictEqual(BookingOptions.normalizeSelection(noTheme, 'studio-x', REQUIRE_CONFIRM).error.code, 'SETUP_SCHEDULE_CONFIRM_REQUIRED');
+});
+
+test('確認チェック(サーバー): 条件外・後付け(rules無し)では要求せず、確認値はnormalizedに残さず料金計算にも影響しない', function () {
+  var noEquipment = BookingOptions.normalizeSelection({ layouts: ['CLASSROOM'], setupService: 'SELF', cleanupService: 'SELF' }, 'studio-x', REQUIRE_CONFIRM);
+  assert.strictEqual(noEquipment.ok, true);
+  var addon = BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'SELF', cleanupService: 'SELF' }, 'studio-x');
+  assert.strictEqual(addon.ok, true, '後付けは対象外');
+  var withConfirm = BookingOptions.normalizeSelection({ equipment: { STROBE_PORTABLE: 1 }, setupService: 'SELF', cleanupService: 'SELF', confirmations: { equipmentLecture: true, setupScheduleAdjusted: true } }, 'studio-x', REQUIRE_CONFIRM);
+  assert.strictEqual(withConfirm.ok, true);
+  assert.deepStrictEqual(withConfirm.normalized, addon.normalized, '確認値は保存対象に含めない');
+});
+
+test('確認チェック(サーバー): 不正な形式・未知キーは拒否し、SNB / mensではconfirmationsを受け付けない', function () {
+  var base = { equipment: { STROBE_PORTABLE: 1 }, setupService: 'SELF', cleanupService: 'SELF' };
+  ['yes', [], { equipmentLecture: 'true' }, { other: true }].forEach(function (bad) {
+    assert.strictEqual(BookingOptions.normalizeSelection(Object.assign({ confirmations: bad }, base), 'studio-x', REQUIRE_CONFIRM).error.code, 'INVALID_OPTIONS');
+  });
+  assert.strictEqual(BookingOptions.normalizeSelection({ shower: true, confirmations: LECTURE }, 'snb', REQUIRE_CONFIRM).error.code, 'OPTIONS_NOT_AVAILABLE');
+});

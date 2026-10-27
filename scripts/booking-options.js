@@ -97,10 +97,19 @@
 
   /* error.code → 利用者向け文言。サーバーのerror.messageは表示しない（文言の責任はフロント）。 */
   var GENERIC_ERROR_TEXT = 'オプションのお申し込みを処理できませんでした。時間を置いて再度お試しください。';
+  /* Issue #575: 機材レンタル時の確認チェック（Studio X予約画面のみ）。キーはサーバー（BookingOptions.gs）と同じ。 */
+  var CONFIRM_TEXT = {
+    lecture: 'スタッフによる機材レクチャーを受けています',
+    schedule: '利用日の1週間前までに、スタッフと設営日時の調整を済ませています'
+  };
+  var CONFIRM_KEYS = { lecture: 'equipmentLecture', schedule: 'setupScheduleAdjusted' };
+
   var ERROR_COPY = {
     INVALID_OPTIONS: 'オプションの指定内容を確認してください。',
     UNKNOWN_OPTION: '選択できないオプションが含まれています。選び直してください。',
     STOCK_EXCEEDED: '在庫数を超える数量は選択できません。数量を見直してください。',
+    EQUIPMENT_LECTURE_CONFIRM_REQUIRED: '「' + CONFIRM_TEXT.lecture + '」のチェックを入れてください。',
+    SETUP_SCHEDULE_CONFIRM_REQUIRED: '「' + CONFIRM_TEXT.schedule + '」のチェックを入れてください。',
     SETUP_METHOD_REQUIRED: '機材をレンタルする場合は、設営方法（セルフ設営／スタッフ設営）を選択してください。',
     CLEANUP_METHOD_REQUIRED: '機材をレンタルする場合は、片付け方法（セルフ片付け／スタッフ片付け）を選択してください。',
     LAYOUT_REQUIRED_FOR_STAFF_SERVICE: 'スタッフ対応を依頼するセッティング（テーマ）を選択してください。',
@@ -153,7 +162,7 @@
    * state: { equipment:[], layouts:[], setupService:'SELF'|'STAFF', cleanupService:'SELF'|'STAFF', emailSupport:bool }
    * 何も選ばれていなければnull（payloadにoptionsを付けない）。金額は含めない。
    */
-  function buildSelection(state) {
+  function buildSelection(state, catalog) {
     var s = state || {};
     /* 機材: { 機材コード: 数量 }。数量0以下は選ばない扱い。 */
     var equipment = {};
@@ -164,13 +173,33 @@
     var layouts = (s.layouts || []).slice();
     var emailSupport = s.emailSupport === true;
     if (Object.keys(equipment).length === 0 && layouts.length === 0 && !emailSupport) return null;
-    return {
+    var selection = {
       equipment: equipment,
       layouts: layouts,
       setupService: layouts.length > 0 || Object.keys(equipment).length > 0 ? normalizeService(s.setupService) : 'SELF',
       cleanupService: layouts.length > 0 || Object.keys(equipment).length > 0 ? normalizeService(s.cleanupService) : 'SELF',
       emailSupport: emailSupport
     };
+    /* 確認チェックは、今その条件に該当するものだけを送る（条件外れで残った値は送らない）。 */
+    var confirmations = {};
+    var required = requiredConfirmations(catalog, s);
+    if (required.lecture && s.confirmLecture === true) confirmations[CONFIRM_KEYS.lecture] = true;
+    if (required.schedule && s.confirmSchedule === true) confirmations[CONFIRM_KEYS.schedule] = true;
+    if (Object.keys(confirmations).length > 0) selection.confirmations = confirmations;
+    return selection;
+  }
+
+  /*
+   * Issue #575: 機材レンタル（おすすめ照明セットも機材に展開されるため含む）×設営方法で出す確認チェック。
+   * セルフ設営 → 機材レクチャー受講 / スタッフ設営 → 設営日時の事前調整。設営方法を明示選択するまでは出さない。
+   */
+  function requiredConfirmations(catalog, state) {
+    var s = state || {};
+    var result = { lecture: false, schedule: false };
+    if (s.confirmEnabled !== true || !catalog || !hasPaidEquipment(catalog, s.equipment) || s.setupChosen !== true) return result;
+    result.lecture = s.setupService === 'SELF';
+    result.schedule = s.setupService === 'STAFF';
+    return result;
   }
 
   /* スタッフ対応の表示料金。両方依頼ならカタログのセット価格（3,000円×2にしない）。 */
@@ -275,6 +304,9 @@
     if (staff && layouts.length !== 1) {
       return 'スタッフ対応（有料）を依頼できるセッティングは1種類です。複数選ぶ場合は、残りを' + copyFor(catalog).selfLabel + 'にするか、メールでご相談ください。';
     }
+    var confirmRequired = requiredConfirmations(catalog, s);
+    if (confirmRequired.lecture && s.confirmLecture !== true) return ERROR_COPY.EQUIPMENT_LECTURE_CONFIRM_REQUIRED;
+    if (confirmRequired.schedule && s.confirmSchedule !== true) return ERROR_COPY.SETUP_SCHEDULE_CONFIRM_REQUIRED;
     return '';
   }
 
@@ -540,7 +572,7 @@
   function mount(config) {
     var slot = config.slot;
     var catalog = config.catalog || null;
-    var state = { equipment: {}, layouts: [], setupService: 'SELF', setupChosen: false, cleanupService: 'SELF', cleanupChosen: false, emailSupport: false };
+    var state = { equipment: {}, layouts: [], setupService: 'SELF', setupChosen: false, cleanupService: 'SELF', cleanupChosen: false, emailSupport: false, confirmEnabled: config.confirmations === true, confirmLecture: false, confirmSchedule: false };
     var existingOrders = config.existingOrders || [];
     /* おすすめ照明セットの3ステップ選択（Issue #463）。料金計算に使う state には混ぜない。 */
     var lightingChoice = { kind: '', count: '', softbox: '' };
@@ -551,7 +583,7 @@
     var controller = {
       isAvailable: function () { return !!(catalog && catalog.enabled); },
       getState: function () { return JSON.parse(JSON.stringify(state)); },
-      getSelection: function () { return suspended ? null : buildSelection(state); },
+      getSelection: function () { return suspended ? null : buildSelection(state, catalog); },
       validate: function () { return suspended ? '' : validateSelection(state, catalog, existingOrders); },
       /* 併用不可の間は選択内容を破棄して欄を畳む（解除後も自動復元しない）。解除すると初期状態の欄を再表示する。 */
       setSuspended: function (next) {
@@ -564,7 +596,7 @@
       getSummary: function () { return computeSummary(catalog, state, existingOrders); },
       setExistingOrders: function (orders) { existingOrders = orders || []; render(); },
       summaryLines: function () { return suspended ? [] : summarize(catalog, state); },
-      reset: function () { state = { equipment: {}, layouts: [], setupService: 'SELF', setupChosen: false, cleanupService: 'SELF', cleanupChosen: false, emailSupport: false }; lightingChoice = { kind: '', count: '', softbox: '' }; lightingNotice = ''; dependencyNotice = ''; render(); },
+      reset: function () { state = { equipment: {}, layouts: [], setupService: 'SELF', setupChosen: false, cleanupService: 'SELF', cleanupChosen: false, emailSupport: false, confirmEnabled: config.confirmations === true, confirmLecture: false, confirmSchedule: false }; lightingChoice = { kind: '', count: '', softbox: '' }; lightingNotice = ''; dependencyNotice = ''; render(); },
       setCatalog: function (next) { catalog = next; render(); },
       /* 部屋代の見積り・予約済み部屋代が変わったとき、サマリーだけを描き直す（入力中のパネルは触らない）。 */
       refreshSummary: function () { renderSummary(); },
@@ -790,6 +822,18 @@
         });
         root.appendChild(cleanupGroup);
 
+        /* Issue #575: 設営方法に応じた事前確認チェック。条件外では出さず、外れたら値も捨てる。 */
+        var confirmNeeded = requiredConfirmations(catalog, state);
+        if (!confirmNeeded.lecture) state.confirmLecture = false;
+        if (!confirmNeeded.schedule) state.confirmSchedule = false;
+        [['lecture', 'confirmLecture', 'bo-confirm-lecture'], ['schedule', 'confirmSchedule', 'bo-confirm-schedule']].forEach(function (def) {
+          if (!confirmNeeded[def[0]]) return;
+          var c = choice(def[2], 'CONFIRM', CONFIRM_TEXT[def[0]], 'checkbox', false);
+          c.input.checked = state[def[1]] === true;
+          c.input.addEventListener('change', function () { state[def[1]] = c.input.checked; });
+          root.appendChild(el('div', { className: 'ba-choices ba-option-confirm' }, [c.label]));
+        });
+
         if (state.layouts.length > 0) {
           /* 設営について申込前に相談できる導線（Issue #423 追加要件）。既存の問い合わせフォームへのリンクのみで、
              相談してもオプション注文・Checkoutは一切作られない。別タブで開くので、相談後は
@@ -917,6 +961,8 @@
     lightingResultTitle: lightingResultTitle,
     applyLightingPreset: applyLightingPreset,
     requiredBracketQuantity: requiredBracketQuantity,
+    requiredConfirmations: requiredConfirmations,
+    CONFIRM_TEXT: CONFIRM_TEXT,
     ensureRequiredBracket: ensureRequiredBracket,
     LIGHTING_STEPS: LIGHTING_STEPS,
     LIGHTING_RESULT_TEXT: LIGHTING_RESULT_TEXT,

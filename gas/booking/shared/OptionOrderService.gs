@@ -214,7 +214,7 @@ var OptionOrderService = (function () {
    * 戻り値: { success:true, normalized, empty } | { success:false, error }
    */
   function preflightForNewBooking(brand, selection, email, options) {
-    var normalizedResult = BookingOptions.normalizeSelection(selection, brand);
+    var normalizedResult = BookingOptions.normalizeSelection(selection, brand, { requireConfirmations: true });
     if (!normalizedResult.ok) return { success: false, error: normalizedResult.error };
     if (normalizedResult.empty) return { success: true, empty: true, normalized: normalizedResult.normalized };
     if (!BookingOptions.isBrandEnabled(brand)) {
