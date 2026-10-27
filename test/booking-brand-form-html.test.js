@@ -114,3 +114,26 @@ test('SNB英語版: 利用目的の内部値が日本語版SNBと一致し、緊
   assert.deepStrictEqual(purposeValues(src), [''].concat(SNB_PURPOSES));
   assert.ok(src.indexOf('id="ba-member-verify-field"') >= 0);
 });
+
+/* Issue #567: OTP成功カードはブランドごとに実際に使える特典だけを出す。 */
+test('Issue #567 Studio X: 成功カードは会員確認完了・会員限定オプション・先行予約のみで、SNB固有の文言を含まない', { skip: skipReason }, function () {
+  var src = html('studio-x/booking/index.html');
+  var card = section(src, 'id="ba-member-success"', 'id="ba-member-code-send-row"');
+  ['会員確認が完了しました', 'いつもありがとうございます。会員特典をご利用いただけます。', '会員限定オプション', '31〜90日先の先行予約', '60分間有効'].forEach(function (w) {
+    assert.ok(card.indexOf(w) >= 0, w);
+  });
+  ['SNB', 'MEMBER', '会員料金', 'ペアパック', 'シャワー'].forEach(function (w) {
+    assert.ok(card.indexOf(w) === -1, 'Studio Xの成功カードに「' + w + '」が混入');
+  });
+  assert.ok(src.indexOf('id="ba-confirm-member-row"') >= 0);
+  assert.ok(card.indexOf('id="ba-member-confirmed"') >= 0 && card.indexOf('メールアドレスの確認が完了しました') >= 0, '会員資格を確認できない場合の中立表示がある');
+});
+
+['booking/index.html', 'mens/booking/index.html'].forEach(function (rel) {
+  test('Issue #567 ' + rel + ': 成功カードはSNB MEMBERの確認完了と会員料金・会員限定特典・先行予約を示す', { skip: skipReason }, function () {
+    var card = section(html(rel), 'id="ba-member-success"', 'id="ba-member-code-send-row"');
+    ['SNB MEMBERの確認が完了しました', 'いつもありがとうございます。会員料金・会員特典・先行予約をご利用いただけます。', '会員料金', '会員限定特典', '31〜90日先の先行予約', '60分間有効'].forEach(function (w) {
+      assert.ok(card.indexOf(w) >= 0, w);
+    });
+  });
+});

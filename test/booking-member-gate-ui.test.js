@@ -29,6 +29,7 @@ function monthsBetween(dateValue) {
 }
 
 /* APIと同じ規則の月間応答: 0〜30日先=通常、31〜90日先=会員先行枠（memberAdvance）、91日以降=範囲外。 */
+var memberAuthRequiredForTest = false; /* Studio XがOTPフェーズ（認証必須）のとき、setupのopts.memberAuthRequiredで有効にする */
 function monthlyBody(year, month, generation) {
   var days = {};
   var total = new Date(Date.UTC(year, month, 0)).getUTCDate();
@@ -39,7 +40,7 @@ function monthlyBody(year, month, generation) {
     else if (ahead > 30) days[dateValue] = { status: 'AVAILABLE', availableStartTimes: 8, memberAdvance: true };
     else days[dateValue] = { status: 'AVAILABLE', availableStartTimes: 8 };
   }
-  return { success: true, month: year + '-' + pad2(month), days: days, priceGeneration: generation };
+  return { success: true, month: year + '-' + pad2(month), days: days, priceGeneration: generation, memberAuthRequired: memberAuthRequiredForTest === true };
 }
 
 function createElement(id) {
@@ -89,6 +90,7 @@ function setup(opts) {
   opts = opts || {};
   var brand = opts.brand || 'snb';
   var generation = opts.generation || 'V1';
+  memberAuthRequiredForTest = opts.memberAuthRequired === true;
   var elements = {};
   var fetchCalls = [];
   var selectedMemberStatus = '';
@@ -176,7 +178,7 @@ function setup(opts) {
           : { success: false, error: { code: 'INVALID_CODE' } };
       } else if (url.indexOf('action=bookingMemberStatus') !== -1) {
         body = opts.memberStatus ? opts.memberStatus(requestBody) : {
-          success: true, verified: true, advanceEligible: true, memberOnDate: true, priceGeneration: 'V2',
+          success: true, verified: true, advanceEligible: true, memberOnDate: true, priceGeneration: 'V2', memberAuthRequired: memberAuthRequiredForTest === true,
           price: { amount: 5500, tier: 'MEMBER', brand: brand, plan: requestBody.plan || '' }
         };
       } else {
@@ -190,7 +192,7 @@ function setup(opts) {
       body = monthlyBody(year, month, generation);
     } else if (url.indexOf('action=estimatePrice') !== -1) {
       var plan = /[?&]plan=([^&]+)/.exec(url);
-      body = { success: true, priceGeneration: generation, price: { amount: plan ? 5000 : 6600, tier: 'GENERAL', brand: brand, plan: plan ? plan[1] : '' } };
+      body = { success: true, priceGeneration: generation, memberAuthRequired: memberAuthRequiredForTest === true, price: { amount: plan ? 5000 : 6600, tier: 'GENERAL', brand: brand, plan: plan ? plan[1] : '' } };
     } else if (url.indexOf('action=optionCatalog') !== -1) {
       body = { success: true, catalog: { enabled: true, showerOnly: true, shower: { code: 'SHOWER', priceJpy: 1000 } } };
     } else {
@@ -911,4 +913,85 @@ test('Logic.pairPackDurationAllowed: 179分以下は不可、180分以上は可'
   assert.strictEqual(Logic.pairPackDurationAllowed(180), true);
   assert.strictEqual(Logic.pairPackDurationAllowed(240), true);
   assert.strictEqual(Logic.pairPackDurationAllowed(NaN), false);
+});
+
+/* ── Issue #567: 会員確認成功の明示（同じカード内で切り替え）と、確認画面の会員確認行 ── */
+
+['snb', 'mens', 'studio_x'].forEach(function (brand) {
+  test('Issue #567 ' + brand + ': OTP成功で成功表示に切り替わり、失効・メール変更・一般へ戻るでは確認済み表示を残さない', async function () {
+    var ctx = await ready({ brand: brand, generation: 'V2', memberAuthRequired: true });
+    await ctx.dayButton(1);
+    await flushPromises();
+    var success = ctx.elements['ba-member-success'];
+    var sendRow = ctx.elements['ba-member-code-send-row'];
+
+    assert.strictEqual(success.hidden, true, '未送信では成功表示を出さない');
+    ctx.click('ba-member-code-send');
+    await flushPromises();
+    assert.strictEqual(success.hidden, true, 'コード送信済みでも成功表示は出さない');
+
+    ctx.elements['ba-member-code'].value = '000000';
+    ctx.click('ba-member-code-verify');
+    await flushPromises();
+    await flushPromises();
+    assert.strictEqual(success.hidden, true, '誤ったコードでは成功表示を出さない');
+
+    await ctx.verifyMember();
+    assert.strictEqual(success.hidden, false, 'OTP成功（会員資格あり）で成功表示');
+    assert.strictEqual(ctx.elements['ba-member-confirmed'].hidden, true, '会員向け表示のときは中立表示を出さない');
+    assert.strictEqual(sendRow.hidden, true, '同じカード内で送信ボタン行は成功表示に置き換わる');
+    assert.strictEqual(ctx.elements['ba-member-verify-status'].hidden, true, '成功文は成功カードへ集約し、二重に出さない');
+
+    /* メール変更で確認は失効し、成功表示は消えて送信ボタンが戻る。 */
+    ctx.typeEmail('other@example.com');
+    await flushPromises();
+    assert.strictEqual(success.hidden, true, 'メール変更後に確認済み表示を残さない');
+    assert.strictEqual(sendRow.hidden, false);
+  });
+
+  test('Issue #567 ' + brand + ': 端末時計で失効したら再確認待ちとなり、成功表示は消える', async function () {
+    var ctx = await ready({ brand: brand, generation: 'V2', memberAuthRequired: true });
+    await ctx.dayButton(1);
+    await flushPromises();
+    await ctx.verifyMember();
+    await ctx.pick(20);
+    assert.strictEqual(ctx.elements['ba-member-success'].hidden, false);
+    ctx.advanceClock(61 * 60 * 1000);
+    ctx.setDuration(4);
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-member-reverify'].hidden, false);
+    assert.strictEqual(ctx.elements['ba-member-success'].hidden, true, '失効後に確認済み表示を残さない');
+    ctx.click('ba-member-general-continue');
+    assert.strictEqual(ctx.elements['ba-member-success'].hidden, true, '一般予約へ戻っても確認済み表示は出ない');
+  });
+});
+
+['snb', 'mens', 'studio_x'].forEach(function (brand) {
+  test('Issue #567 ' + brand + ': OTP成功でも今日の会員資格が無ければ、会員特典を使えるとは断定しない中立表示にする', async function () {
+    var ctx = await ready({ brand: brand, generation: 'V2', memberAuthRequired: true, advanceEligible: false });
+    await ctx.dayButton(1);
+    await flushPromises();
+    await ctx.verifyMember();
+    assert.strictEqual(ctx.elements['ba-member-success'].hidden, true, '会員資格を確認できないので会員向け成功表示は出さない');
+    assert.strictEqual(ctx.elements['ba-member-confirmed'].hidden, false, 'メールアドレスの確認完了だけを示す');
+    assert.strictEqual(ctx.elements['ba-member-code-send-row'].hidden, true);
+    ctx.typeEmail('other@example.com');
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-member-confirmed'].hidden, true, 'メール変更後は残さない');
+  });
+});
+
+test('Issue #567: 確認画面の会員確認行は、確認済み（失効していない）ときだけ出す', function () {
+  var app = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'booking-app.js'), 'utf8');
+  assert.ok(/var memberConfirmed = memberVerified_\(\) && !memberProofExpiredLocally_\(\);/.test(app));
+  assert.ok(/els\.confirmMemberRow\.hidden = !memberConfirmed;/.test(app), '未確認では行ごと隠す');
+  var tpl = fs.readFileSync(path.join(__dirname, '..', '_includes', 'booking_app_ja.html'), 'utf8');
+  assert.ok(/id="ba-confirm-member-row" hidden/.test(tpl), '確認画面の会員確認行は初期非表示');
+});
+
+test('Issue #567: レイアウトシフト抑制のCSS（ステータス・エラー・料金・カレンダー領域の高さを確保）', function () {
+  var css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'booking.css'), 'utf8');
+  assert.ok(/#ba-member-verify-status,\s*#ba-member-verify-error\s*\{\s*min-height:/.test(css));
+  assert.ok(/\.ba-price-box \{ min-height:/.test(css));
+  assert.ok(/#ba-calendar-body \{ min-height:/.test(css));
 });
