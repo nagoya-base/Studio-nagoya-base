@@ -664,7 +664,7 @@ var MemberRepository = (function () {
    *
    * 行番号ずれを避けるため、連続する対象行をまとめ、シートの下（行番号の大きい方）から deleteRows する。
    * 各ブロックは削除直前に対象行を読み直して再判定する（人手の編集等で変わっていたら、その行を含むブロックは削除しない）。
-   * 1回あたりの削除は options.maxRows（既定2000行）・options.timeBudgetMs（既定4分）までで、
+   * 1回あたりの走査・削除は options.maxRows（既定2000行）・options.timeBudgetMs（既定4分。走査中も確認）までで、
    * 超えたらtruncated=trueで安全に終える。残りは次回実行で消える（再実行は冪等）。
    * 戻り値は件数のみ（メールアドレス・ハッシュ・行内容を含まない）:
    * { scanned, deleted, retained, skippedUndecidable, candidates, truncated, failed }
@@ -672,6 +672,7 @@ var MemberRepository = (function () {
   var EXPIRED_VERIFICATION_RETENTION_MS_ = 24 * 60 * 60 * 1000;
   var PURGE_MAX_ROWS_DEFAULT_ = 2000;
   var PURGE_TIME_BUDGET_MS_DEFAULT_ = 4 * 60 * 1000;
+  var PURGE_CLOCK_CHECK_INTERVAL_ = 500;
 
   /* 行が削除してよいか。'purge'（明確に期限切れ）/ 'keep'（有効期限内・猶予内）/ 'undecidable'（判断不能）。 */
   function classifyBookingVerificationRow_(row, nowMs) {
@@ -703,6 +704,9 @@ var MemberRepository = (function () {
 
     var purgeRows = [];
     for (var i = 1; i < values.length; i++) {
+      /* 走査にも時間予算を適用する。打ち切っても、ここまでに見つけた対象行は行番号が確定済み（上から順に走査し、
+         削除は下の行から行うため、未走査の行より上の行だけを消す＝行番号ずれ・取りこぼし誤削除は起きない）。 */
+      if (i % PURGE_CLOCK_CHECK_INTERVAL_ === 0 && clock() - startedAt >= budgetMs) { result.truncated = true; break; }
       result.scanned++;
       var verdict = classifyBookingVerificationRow_(values[i], nowMs);
       if (verdict === 'purge') purgeRows.push(i + 1);

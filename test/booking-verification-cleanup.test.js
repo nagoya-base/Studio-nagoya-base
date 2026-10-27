@@ -215,6 +215,25 @@ test('時間予算を超えたらTRUNCATEDで安全に打ち切り、再実行�
   assert.strictEqual(sheet._rows.length - 1, 10);
 });
 
+test('走査中に時間予算を超えたらTRUNCATEDで打ち切り、見つけた分だけ正しい行を削除し、再実行で収束する', function () {
+  var ctx = setup();
+  var rows = [];
+  for (var i = 0; i < 1500; i++) rows.push(i % 3 === 0 ? valid('otp', 'v' + i) : expired('proof', 'e' + i));
+  var sheet = seed(ctx, rows);
+  var validCount = rows.filter(function (r) { return r[1].charAt(0) === 'v'; }).length;
+  var calls = 0;
+  /* 2回目の時計確認（走査500行目）だけ予算超過とし、削除フェーズは時間内に収める。 */
+  var result = purge(ctx, { timeBudgetMs: 10, clock: function () { return calls++ === 1 ? 100 : 0; } });
+  assert.strictEqual(result.status, 'TRUNCATED');
+  assert.ok(result.scanned < 1500, '走査を途中で止める');
+  assert.ok(result.deleted > 0 && result.deleted < 1000);
+  assert.ok(hashes(sheet).filter(function (h) { return h.charAt(0) === 'v'; }).length === validCount, '有効行は1件も消えない');
+  var last = purge(ctx);
+  while (last.status === 'TRUNCATED') last = purge(ctx);
+  assert.strictEqual(sheet._rows.length - 1, validCount);
+  assert.ok(hashes(sheet).every(function (h) { return h.charAt(0) === 'v'; }));
+});
+
 test('途中失敗: PARTIAL_FAILUREで終了し、削除済みは戻らず未削除分は再実行で消える。有効行は無傷', function () {
   var ctx = setup();
   var sheet = seed(ctx, [
