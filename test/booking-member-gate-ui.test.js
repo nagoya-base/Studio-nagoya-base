@@ -1032,3 +1032,47 @@ test('shower: schedule confirmation is required and cleared when shower is desel
   assert.strictEqual(check.checked, false);
   assert.strictEqual(check.parentNode.hidden, true);
 });
+
+test('Issue #578: pair pack status text distinguishes pending people, applied, and not eligible', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1' });
+  ctx.setMember('member');
+  await ctx.pick(20);
+  var status = ctx.elements['ba-plan-pair-status'];
+  assert.strictEqual(status.hidden, false);
+  assert.ok(status.textContent.indexOf('人数') !== -1 && status.textContent.indexOf('自動適用されます') !== -1, '人数未入力: 入力後に自動適用');
+  assert.ok(!/plan=/.test(lastEstimateUrl(ctx)), '人数未入力の見積りは通常料金');
+  ctx.setPeople('2名');
+  await flushPromises();
+  assert.ok(status.textContent.indexOf('2名ペアパック（3時間）が自動適用されます') !== -1);
+  assert.ok(status.textContent.indexOf('延長料金') !== -1, '4時間以上の延長料金も案内');
+  assert.ok(/plan=member_pair_3h/.test(lastEstimateUrl(ctx)), '人数入力後は古い通常料金を残さず再見積り');
+  ctx.setPeople('3名');
+  await flushPromises();
+  assert.ok(status.textContent.indexOf('対象外') !== -1 && status.textContent.indexOf('が自動適用されます') === -1, '対象外を適用済みと誤認させない');
+  ctx.setMember('general');
+  await flushPromises();
+  assert.strictEqual(status.hidden, true, '会員でなければ自動適用の案内を出さない');
+});
+
+test('Issue #578: shower shows why it is disabled and the schedule confirmation toggles with the shower', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1' });
+  ctx.setMember('general');
+  await ctx.pick(20);
+  var note = ctx.elements['ba-shower-note'];
+  assert.strictEqual(ctx.elements['ba-shower'].disabled, true);
+  assert.strictEqual(note.hidden, false, '選べない理由を表示');
+  assert.ok(note.textContent.indexOf('会員確認') !== -1);
+  ctx.setMember('member');
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-shower'].disabled, false);
+  assert.strictEqual(note.hidden, true);
+  assert.strictEqual(ctx.elements['ba-shower-schedule'].parentNode.hidden, true, '未選択では確認チェックを出さない');
+  ctx.setBenefit('ba-shower', true);
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-shower-schedule'].parentNode.hidden, false, 'シャワー選択で確認チェックを表示');
+  ctx.elements['ba-shower-schedule'].checked = true;
+  ctx.setBenefit('ba-shower', false);
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-shower-schedule'].parentNode.hidden, true);
+  assert.strictEqual(ctx.elements['ba-shower-schedule'].checked, false, '解除で確認も外れる');
+});
