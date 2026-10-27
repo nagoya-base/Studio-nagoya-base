@@ -457,7 +457,8 @@
   function applyServerGeneration_(value, memberAuthRequired) {
     var generationChanged = (value === 'V1' || value === 'V2') && value !== serverGeneration;
     /* Studio X（Issue #563）: 認証フェーズの切替（台帳照合⇄OTP）も、料金世代が同じでもUIへ反映する。 */
-    var authChanged = brand === 'studio_x' && (memberAuthRequired === true) !== serverMemberAuthRequired;
+    /* 応答にmemberAuthRequiredが無い（undefined）場合はfalse扱いにせず、認証状態を変更しない。 */
+    var authChanged = brand === 'studio_x' && typeof memberAuthRequired === 'boolean' && memberAuthRequired !== serverMemberAuthRequired;
     if (!generationChanged && !authChanged) return;
     if (generationChanged) serverGeneration = value;
     if (authChanged) serverMemberAuthRequired = memberAuthRequired === true;

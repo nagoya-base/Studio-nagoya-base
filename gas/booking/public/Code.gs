@@ -356,6 +356,8 @@ function handleBookingMemberStatus_(payload) {
   var status = BookingMemberVerification.memberStatus({ email: payload.email, proof: payload.proof, date: date, brand: brand }, now);
   if (!status.success) return status;
   status.priceGeneration = generation;
+  /* Studio Xは認証フェーズも明示する。欠落するとフロントがOTP不要へ切り替わったと誤判定し、確認済み証明を破棄する。 */
+  if (brand === 'studio_x') status.memberAuthRequired = decision.memberAuthRequired === true;
   withTestCredentialStatus_(status, decision);
   var config = BookingConfig.getAvailabilityConfig();
   var durationMinutes = typeof payload.durationMinutes === 'number' ? payload.durationMinutes : parseDurationParam_(payload.durationMinutes);
