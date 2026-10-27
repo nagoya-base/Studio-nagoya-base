@@ -476,6 +476,7 @@ test('bookingMemberStatus（Studio X）: LEGACYはNOT_REQUIRED。OTPフェーズ
   assert.strictEqual(ok.verified, true);
   assert.strictEqual(ok.advanceEligible, true);
   assert.strictEqual(ok.priceGeneration, 'V2');
+  assert.strictEqual(ok.memberAuthRequired, true, 'Issue #566: 成功応答にも認証フェーズを明示する（欠落でフロントが証明を破棄しない）');
   var other = post(ctx, 'bookingMemberStatus', { brand: 'studio_x', email: STRANGER, proof: proof(ctx, STRANGER), date: DAY30, durationMinutes: 180 });
   assert.strictEqual(other.advanceEligible, false);
   assert.deepStrictEqual(plain(ok.price), plain(other.price), 'Studio Xの料金は会員かどうかで変わらない');

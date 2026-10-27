@@ -545,6 +545,23 @@ test('Studio X・OTPが不要に戻ったら（切戻し）会員確認欄を隠
   assert.deepStrictEqual(snb.postsTo('requestBookingMemberCode')[0].body, { email: 'taro@example.com' });
 });
 
+test('Studio X・応答にmemberAuthRequiredが無い（欠落）場合は認証状態を変えない。OTP必須のまま会員確認欄を維持する（Issue #566）', async function () {
+  var phase = { memberAuthRequired: true };
+  var ctx = await ready({ brand: 'studio_x', generationOf: function () { return 'V2'; }, monthlyExtra: function () { return phase; } });
+  await ctx.enterEmail('taro@example.com');
+  assert.strictEqual(ctx.elements['ba-member-verify-field'].hidden, false);
+  phase = {};
+  ctx.elements['ba-calendar-next']._listeners.click();
+  await flushPromises();
+  await flushPromises();
+  assert.strictEqual(ctx.elements['ba-member-verify-field'].hidden, false, 'undefinedをfalse（OTP不要）と解釈しない');
+});
+
+test('applyServerGeneration_: Studio Xは真偽値のmemberAuthRequiredだけを認証状態の変更とみなす（欠落では証明を破棄しない）', function () {
+  var source = fs.readFileSync(path.join(ROOT, 'scripts', 'booking-app.js'), 'utf8');
+  assert.ok(/typeof memberAuthRequired === 'boolean' && memberAuthRequired !== serverMemberAuthRequired/.test(source));
+});
+
 test('Studio Xの文言: エラー・カレンダー表示・確認UIに「SNB MEMBER」を出さない（SNBは従来どおり）', function () {
   var Logic = loadFrontendSandbox(['booking-logic.js'], {}).BookingLogic;
   ['ja', 'en'].forEach(function (locale) {
