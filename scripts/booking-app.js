@@ -60,7 +60,7 @@
       memberCodeSent: '入力されたメールアドレス宛に、6桁の確認コードをお送りしました（60分間有効）。',
       memberVerified: 'メールアドレスの確認が完了しました（60分間有効）。会員料金・会員特典・先行予約の対象かどうかは、利用日に応じて自動で判定されます。',
       memberGeneralContinued: '一般のご予約として進めます。会員料金・会員特典・先行予約を利用する場合は、確認コードを送信して会員確認をしてください。',
-      confirmMemberVerified: '確認済み（会員特典が利用可能です）'
+      confirmMemberVerified: '確認済み'
     },
     en: {
       backLabelDefault: 'Back to Studio Nagoya Base',
@@ -87,7 +87,7 @@
       memberCodeSent: 'We sent a 6-digit verification code to the email address you entered (valid for 60 minutes).',
       memberVerified: 'Your email address is verified (valid for 60 minutes). Whether member rates, benefits and advance booking apply is determined automatically for your date of use.',
       memberGeneralContinued: 'Continuing as a general booking. To use member rates, benefits or advance booking, send a verification code and verify your membership.',
-      confirmMemberVerified: 'Verified (member benefits are available)'
+      confirmMemberVerified: 'Verified'
     }
   }[locale];
 
@@ -171,6 +171,7 @@
     memberCodeVerify: document.getElementById('ba-member-code-verify'),
     memberVerifyStatus: document.getElementById('ba-member-verify-status'),
     memberSuccess: document.getElementById('ba-member-success'),
+    memberConfirmed: document.getElementById('ba-member-confirmed'),
     memberCodeSendRow: document.getElementById('ba-member-code-send-row'),
     confirmMemberRow: document.getElementById('ba-confirm-member-row'),
     confirmMember: document.getElementById('ba-confirm-member'),
@@ -1305,7 +1306,12 @@
     /* Issue #567: 確認済みは同じカード内の成功表示へ切り替える（送信ボタン行は非表示ではなく成功表示に置き換える）。
        確認済みでない状態（未送信・失効・再確認待ち）では成功表示を必ず隠し、誤って「確認済み」を残さない。 */
     var verified = memberVerified_();
-    if (els.memberSuccess) els.memberSuccess.hidden = !(otp && verified);
+    /* OTP成功はメール所有の確認であって会員資格の成立ではない。今日の会員資格が確認できた（advanceEligible）ときだけ会員向けの成功表示にし、
+       それ以外は「メールアドレスの確認完了」に留めて特典を使えるとは断定しない。 */
+    var memberCard = otp && verified && memberAuth.advanceEligible === true;
+    var neutralCard = otp && verified && !memberCard;
+    if (els.memberSuccess) els.memberSuccess.hidden = !memberCard;
+    if (els.memberConfirmed) els.memberConfirmed.hidden = !neutralCard;
     if (els.memberCodeSendRow) els.memberCodeSendRow.hidden = otp && verified;
     if (verified) setMemberVerifyStatus_(els.memberSuccess ? '' : UI_TEXT.memberVerified);
     else if (!memberCodeSent_) setMemberVerifyStatus_('');

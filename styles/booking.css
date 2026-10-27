@@ -717,7 +717,8 @@
 }
 .ba-member-success-title { margin: 0 0 4px; font-size: 1rem; font-weight: 700; color: var(--ba-text); }
 .ba-member-success-lead { margin: 0 0 6px; font-size: 0.9rem; color: var(--ba-text); }
-.ba-member-success-list { margin: 0 0 6px; padding-left: 1.2em; font-size: 0.88rem; color: var(--ba-text); }
+.ba-member-success-list { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 6px; padding: 0; list-style: none; font-size: 0.88rem; color: var(--ba-text); }
+.ba-member-success-list li::before { content: "✓ "; }
 .ba-member-success-note { margin: 0; font-size: 0.76rem; color: var(--ba-muted); }
 
 /* Issue #567: ステータス・エラー行は短い文言の出入りで周囲を押し下げないよう、非表示時も高さを確保する。 */
@@ -741,3 +742,7 @@
 
 /* Issue #567: カレンダーは再取得中も領域を保つ。 */
 #ba-calendar-body { min-height: 18rem; }
+
+/* Issue #567: 送信ボタン行と成功カードの切替で高さが大きく変わらないよう、カード領域に最小高さを持たせる。 */
+.ba-member-state { min-height: 8.5rem; }
+@media (max-width: 640px) { .ba-member-state { min-height: 15rem; } }

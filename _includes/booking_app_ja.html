@@ -80,6 +80,7 @@
       <legend>SNB MEMBERの方（会員確認）</legend>
       <p class="ba-field-help">会員料金・会員限定の特典・31〜90日先の先行予約をご利用の方は、上でご入力のメールアドレス宛に確認コード（6桁）を送信し、届いたコードを入力してください（有効期間60分）。確認なしでも、一般のご予約は通常どおり進められます。</p>
 {% endif %}
+      <div class="ba-member-state">
       {% comment %}Issue #567: 確認済みになったら同じカード内で成功状態へ切り替える。特典の一覧はブランドごとに実際に使えるものだけを出す。{% endcomment %}
       <div class="ba-member-success" id="ba-member-success" role="status" aria-live="polite" hidden>
 {% if include.brand == "studio_x" %}
@@ -98,10 +99,21 @@
           <li>31〜90日先の先行予約</li>
         </ul>
 {% endif %}
+        <p class="ba-member-success-note">特典の適用可否は利用日に応じて自動で判定されます。この確認は60分間有効です。</p>
+      </div>
+      {% comment %}Issue #567: OTPはメール所有の確認であり会員資格の成立ではない。今日の会員資格が確認できなかった場合は、特典を使えるとは断定しない表示にする。{% endcomment %}
+      <div class="ba-member-success" id="ba-member-confirmed" role="status" aria-live="polite" hidden>
+        <p class="ba-member-success-title">メールアドレスの確認が完了しました</p>
+{% if include.brand == "studio_x" %}
+        <p class="ba-member-success-lead">会員限定オプション・先行予約の適用可否は、利用日と会員資格に応じて自動で判定されます。</p>
+{% else %}
+        <p class="ba-member-success-lead">会員料金・会員特典・先行予約の適用可否は、利用日と会員資格に応じて自動で判定されます。</p>
+{% endif %}
         <p class="ba-member-success-note">この確認は60分間有効です。</p>
       </div>
       <div class="ba-banner-actions" id="ba-member-code-send-row">
         <button type="button" class="ba-btn ba-btn-ghost" id="ba-member-code-send">確認コードを送信</button>
+      </div>
       </div>
       <div id="ba-member-code-entry" hidden>
         <label for="ba-member-code">確認コード（6桁）</label>

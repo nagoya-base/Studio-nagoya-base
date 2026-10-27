@@ -126,6 +126,7 @@ test('Issue #567 Studio X: 成功カードは会員確認完了・会員限定�
     assert.ok(card.indexOf(w) === -1, 'Studio Xの成功カードに「' + w + '」が混入');
   });
   assert.ok(src.indexOf('id="ba-confirm-member-row"') >= 0);
+  assert.ok(card.indexOf('id="ba-member-confirmed"') >= 0 && card.indexOf('メールアドレスの確認が完了しました') >= 0, '会員資格を確認できない場合の中立表示がある');
 });
 
 ['booking/index.html', 'mens/booking/index.html'].forEach(function (rel) {

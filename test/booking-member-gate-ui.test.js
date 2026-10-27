@@ -937,7 +937,8 @@ test('Logic.pairPackDurationAllowed: 179分以下は不可、180分以上は可'
     assert.strictEqual(success.hidden, true, '誤ったコードでは成功表示を出さない');
 
     await ctx.verifyMember();
-    assert.strictEqual(success.hidden, false, 'OTP成功で成功表示');
+    assert.strictEqual(success.hidden, false, 'OTP成功（会員資格あり）で成功表示');
+    assert.strictEqual(ctx.elements['ba-member-confirmed'].hidden, true, '会員向け表示のときは中立表示を出さない');
     assert.strictEqual(sendRow.hidden, true, '同じカード内で送信ボタン行は成功表示に置き換わる');
     assert.strictEqual(ctx.elements['ba-member-verify-status'].hidden, true, '成功文は成功カードへ集約し、二重に出さない');
 
@@ -962,6 +963,21 @@ test('Logic.pairPackDurationAllowed: 179分以下は不可、180分以上は可'
     assert.strictEqual(ctx.elements['ba-member-success'].hidden, true, '失効後に確認済み表示を残さない');
     ctx.click('ba-member-general-continue');
     assert.strictEqual(ctx.elements['ba-member-success'].hidden, true, '一般予約へ戻っても確認済み表示は出ない');
+  });
+});
+
+['snb', 'mens', 'studio_x'].forEach(function (brand) {
+  test('Issue #567 ' + brand + ': OTP成功でも今日の会員資格が無ければ、会員特典を使えるとは断定しない中立表示にする', async function () {
+    var ctx = await ready({ brand: brand, generation: 'V2', memberAuthRequired: true, advanceEligible: false });
+    await ctx.dayButton(1);
+    await flushPromises();
+    await ctx.verifyMember();
+    assert.strictEqual(ctx.elements['ba-member-success'].hidden, true, '会員資格を確認できないので会員向け成功表示は出さない');
+    assert.strictEqual(ctx.elements['ba-member-confirmed'].hidden, false, 'メールアドレスの確認完了だけを示す');
+    assert.strictEqual(ctx.elements['ba-member-code-send-row'].hidden, true);
+    ctx.typeEmail('other@example.com');
+    await flushPromises();
+    assert.strictEqual(ctx.elements['ba-member-confirmed'].hidden, true, 'メール変更後は残さない');
   });
 });
 
