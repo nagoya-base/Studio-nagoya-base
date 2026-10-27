@@ -481,8 +481,8 @@ test('Issue #539: 適用料金の表示はサーバーの見積り結果（plan 
   assert.strictEqual(info({ brand: 'mens', tier: 'MEMBER', plan: '' }).text, '適用料金：SNB MEMBER 会員料金');
   assert.strictEqual(info({ brand: 'snb', tier: 'MEMBER', plan: 'member_pair_3h' }).text, '適用プラン：SNB MEMBER限定 2名ペアパック', 'ペアパックはtier=MEMBERでも会員料金とは表示しない');
   assert.strictEqual(info({ brand: 'studio_x', tier: 'GENERAL', plan: 'osu_cosplay_base_6h' }).text, '適用プラン：Studio X｜6時間貸切ベースプラン', '貸切プランを一般料金と表示しない');
-  assert.strictEqual(info({ brand: 'studio_x', tier: 'GENERAL', plan: '' }).text, '適用料金：一般料金', 'Studio X V2は会員料金が存在しない');
-  assert.strictEqual(info({ brand: 'studio_x', tier: 'MEMBER', plan: '' }).text, '適用料金：会員料金', 'Studio X旧世代の会員料金はSNB MEMBERと表示しない');
+  assert.strictEqual(info({ brand: 'studio_x', tier: 'GENERAL', plan: '' }), null, 'Issue #572: Studio Xは料金区分（一般料金）を表示しない');
+  assert.strictEqual(info({ brand: 'studio_x', tier: 'MEMBER', plan: '' }), null, 'Issue #572: Studio Xは料金区分（会員料金）を表示しない');
   assert.strictEqual(info(null), null);
   assert.strictEqual(info({ brand: 'snb' }), null, 'tier不明は何も表示しない');
   assert.strictEqual(info({ brand: 'snb', tier: 'GENERAL', plan: 'unknown_plan' }), null, '未知のプランは区分を推測しない');
@@ -496,14 +496,14 @@ test('Issue #539: 実際の料金計算（BookingPricing）の結果と適用料
   function plainJson(v) { return JSON.parse(JSON.stringify(v)); }
   function shown(input) {
     var r = P.computeBookingPrice(Object.assign({ brand: 'snb', durationMinutes: 180, generation: 'V2' }, input));
-    return { amount: r.price.amount, text: Logic.appliedRateInfo(r.price, 'ja').text };
+    return { amount: r.price.amount, text: (Logic.appliedRateInfo(r.price, 'ja') || {}).text || null };
   }
   assert.deepStrictEqual(plainJson(shown({ date: '2026-12-07', isMember: false })), { amount: 6000, text: '適用料金：一般料金' });
   assert.deepStrictEqual(plainJson(shown({ date: '2026-12-07', isMember: true })), { amount: 5500, text: '適用料金：SNB MEMBER 会員料金' });
   assert.deepStrictEqual(plainJson(shown({ date: '2026-12-12', isMember: true })), { amount: 7000, text: '適用料金：SNB MEMBER 会員料金' });
   assert.deepStrictEqual(plainJson(shown({ date: '2026-12-07', plan: 'member_pair_3h' })), { amount: 5000, text: '適用プラン：SNB MEMBER限定 2名ペアパック' });
   assert.deepStrictEqual(plainJson(shown({ date: '2026-12-12', plan: 'member_pair_3h' })), { amount: 6000, text: '適用プラン：SNB MEMBER限定 2名ペアパック' });
-  assert.deepStrictEqual(plainJson(shown({ brand: 'studio_x', date: '2026-12-07', isMember: true })), { amount: 3600, text: '適用料金：一般料金' });
+  assert.deepStrictEqual(plainJson(shown({ brand: 'studio_x', date: '2026-12-07', isMember: true })), { amount: 3600, text: null });
 });
 
 test('Issue #539: 料金サマリーのテンプレート（ja / en）に適用料金欄があり、booking-appは見積り応答からだけ描画する', function () {

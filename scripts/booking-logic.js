@@ -1054,19 +1054,20 @@
    * フロントに料金表は持たない。金額と同じ応答から作るため、金額と区分は必ず同時に更新される。
    * - plan=member_pair_3h → 適用プラン: SNB MEMBER限定 2名ペアパック
    * - plan=貸切ベースプラン → 適用プラン: Studio X｜6時間貸切ベースプラン（tierはGENERALだが一般料金とは表示しない）
-   * - tier=MEMBER → 適用料金: SNB MEMBER 会員料金（Studio Xの旧世代V1の会員料金は「会員料金」）
+   * - brand=studio_x（プラン以外） → null（Issue #572: Studio Xは料金区分を表示しない）
+   * - tier=MEMBER → 適用料金: SNB MEMBER 会員料金
    * - tier=GENERAL → 適用料金: 一般料金
    * 判定できない応答（priceなし・tier不明）はnull（何も表示しない。誤った区分を出さない）。
    */
   var APPLIED_RATE_TEXT_ = {
     ja: {
       rateLabel: '適用料金', planLabel: '適用プラン', general: '一般料金',
-      member: 'SNB MEMBER 会員料金', memberPlain: '会員料金',
+      member: 'SNB MEMBER 会員料金',
       pairPlan: 'SNB MEMBER限定 2名ペアパック', eventPlan: 'Studio X｜6時間貸切ベースプラン', sep: '：'
     },
     en: {
       rateLabel: 'Applied rate', planLabel: 'Applied plan', general: 'Standard rate',
-      member: 'SNB MEMBER rate', memberPlain: 'Member rate',
+      member: 'SNB MEMBER rate',
       pairPlan: 'SNB MEMBER-only Pair Pack (2 guests)', eventPlan: 'Studio X 6-hour Private Base Plan', sep: ': '
     }
   };
@@ -1077,8 +1078,10 @@
     if (price.plan === PAIR_PACK_PLAN_CODE) return { kind: 'plan', label: t.planLabel, value: t.pairPlan, text: t.planLabel + t.sep + t.pairPlan };
     if (price.plan === EVENT_BASE_PLAN_CODE) return { kind: 'plan', label: t.planLabel, value: t.eventPlan, text: t.planLabel + t.sep + t.eventPlan };
     if (price.plan) return null;
+    /* Issue #572: Studio Xには一般／会員の料金区分を設けないため、適用料金の行そのものを出さない（金額計算には影響しない）。 */
+    if (price.brand === 'studio_x') return null;
     var value;
-    if (price.tier === 'MEMBER') value = price.brand === 'studio_x' ? t.memberPlain : t.member;
+    if (price.tier === 'MEMBER') value = t.member;
     else if (price.tier === 'GENERAL') value = t.general;
     else return null;
     return { kind: 'rate', label: t.rateLabel, value: value, text: t.rateLabel + t.sep + value };
