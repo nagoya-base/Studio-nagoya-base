@@ -1153,6 +1153,7 @@ test('Issue #407: 初回利用はStep3でカードが選択済みになり、初
   ctx.elements['ba-step-datetime-next']._listeners.click();
   await flushPromises();
   ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-people'].value = '2名';
   ctx.elements['ba-step-start-time-next']._listeners.click();
 
   assert.strictEqual(ctx.cardRadio.checked, true, '初回利用はカードが選択済み');

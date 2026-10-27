@@ -351,6 +351,7 @@ test('会員→一般: 31〜90日先を選択済みなら、利用日・開始�
   var ctx = await ready({ brand: 'snb', generation: 'V1' });
   ctx.setMember('member');
   await ctx.pick(45); /* 2027-01-04（会員先行枠） */
+  ctx.setPeople('3名'); /* 人数未選択の間は料金を出さない（Issue #580）。3名はペアパック対象外 */
   await flushPromises();
   assert.strictEqual(ctx.elements['ba-date'].value, dateAfter(45));
   assert.ok(ctx.elements['ba-price-line'].hidden === false, '料金見積りが表示されている');
@@ -653,6 +654,8 @@ test('利用時間を変えても日付を選び直した場合は、前の開�
     assert.strictEqual((await ctx.dayButton(91)).disabled, true, '91日先は範囲外のまま');
 
     await ctx.pick(20);
+    ctx.setPeople('3名'); /* 人数未選択の間は料金を出さない（Issue #580）。3名はペアパック対象外 */
+    await flushPromises();
     assert.strictEqual(ctx.elements['ba-plan-pair'].disabled, false);
     assert.strictEqual(ctx.elements['ba-shower'].disabled, false);
     var statusPosts = ctx.postsOf('bookingMemberStatus');
@@ -1039,8 +1042,9 @@ test('Issue #578: pair pack status text distinguishes pending people, applied, a
   await ctx.pick(20);
   var status = ctx.elements['ba-plan-pair-status'];
   assert.strictEqual(status.hidden, false);
-  assert.ok(status.textContent.indexOf('人数') !== -1 && status.textContent.indexOf('自動適用されます') !== -1, '人数未入力: 入力後に自動適用');
-  assert.ok(!/plan=/.test(lastEstimateUrl(ctx)), '人数未入力の見積りは通常料金');
+  assert.ok(status.textContent.indexOf('人数') !== -1 && status.textContent.indexOf('自動適用') !== -1, '人数未選択: 選ぶと自動適用後の料金を表示');
+  assert.strictEqual(ctx.elements['ba-price-line'].hidden, true, '人数未選択の間は通常料金を先に出さない');
+  assert.ok(!/plan=/.test(lastEstimateUrl(ctx)), '人数未選択では plan を送らない');
   ctx.setPeople('2名');
   await flushPromises();
   assert.ok(status.textContent.indexOf('2名ペアパック（3時間）が自動適用されます') !== -1);
@@ -1075,4 +1079,55 @@ test('Issue #578: shower shows why it is disabled and the schedule confirmation 
   await flushPromises();
   assert.strictEqual(ctx.elements['ba-shower-schedule'].parentNode.hidden, true);
   assert.strictEqual(ctx.elements['ba-shower-schedule'].checked, false, '解除で確認も外れる');
+});
+
+test('Issue #580: 利用人数はStep1にあり、Step2には重複して置かない（ja / en）', function () {
+  ['ja', 'en'].forEach(function (lang) {
+    var html = fs.readFileSync(path.join(__dirname, '..', '_includes', 'booking_app_' + lang + '.html'), 'utf8');
+    var step1 = html.indexOf('id="ba-step-datetime"');
+    var step2 = html.indexOf('id="ba-step-details"');
+    var people = html.indexOf('id="ba-people"');
+    assert.ok(step1 !== -1 && step2 > step1 && people > step1 && people < step2, lang + ': 人数はStep1内');
+    assert.strictEqual(html.split('id="ba-people"').length - 1, 1, lang + ': 人数欄は1つだけ');
+  });
+});
+
+test('Issue #580: 人数を選んだ最初の見積りからペアパック料金になり、人数変更で即時に切り替わる', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1' });
+  ctx.setMember('member');
+  await ctx.pick(20);
+  assert.strictEqual(ctx.elements['ba-price-line'].hidden, true, '人数未選択では通常料金を出さない');
+  ctx.setPeople('2名');
+  await flushPromises();
+  assert.ok(/plan=member_pair_3h/.test(lastEstimateUrl(ctx)), '最初に表示する見積りからplan付き');
+  assert.strictEqual(ctx.elements['ba-price-line'].hidden, false);
+  ctx.setPeople('3名');
+  await flushPromises();
+  assert.ok(!/plan=/.test(lastEstimateUrl(ctx)), '3名で通常料金へ');
+  assert.strictEqual(ctx.elements['ba-price-line'].hidden, false);
+  ctx.setPeople('1名');
+  await flushPromises();
+  assert.ok(/plan=member_pair_3h/.test(lastEstimateUrl(ctx)), '1〜2名へ戻すとペアパックへ');
+});
+
+test('Issue #580: 4時間以上でも人数を選べばplan付きで見積る', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1', duration: 4 });
+  ctx.setMember('member');
+  await ctx.pick(20);
+  ctx.setPeople('1名');
+  await flushPromises();
+  assert.ok(/plan=member_pair_3h/.test(lastEstimateUrl(ctx)) && /durationMinutes=240/.test(lastEstimateUrl(ctx)), '4時間 + ペアパック（延長はサーバー計算）');
+});
+
+test('Issue #580: 人数が未選択のままではStep2へ進めない', async function () {
+  var ctx = await ready({ brand: 'snb', generation: 'V1', duration: 4, availability: durationAvailability });
+  ctx.setMember('member');
+  await pickWithStartTime(ctx, '14:00');
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+  assert.strictEqual(ctx.elements['ba-step-details'].hidden, true, '人数未選択ではStep2へ進まない');
+  assert.strictEqual(ctx.elements['ba-people-error'].hidden, false);
+  ctx.setPeople('2名');
+  assert.strictEqual(ctx.elements['ba-people-error'].hidden, true, '選択するとエラーが消える');
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+  assert.strictEqual(ctx.elements['ba-step-details'].hidden, false);
 });

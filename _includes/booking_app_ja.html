@@ -194,6 +194,26 @@
     </fieldset>
 {% endif %}
 
+    <!-- Issue #580: 利用人数は料金見積り（2名ペアパックの自動適用）に必要なため、利用時間と同じStep1で入力する。 -->
+    <div class="ba-field">
+      <label for="ba-people">利用人数<span class="ba-required">必須</span></label>
+      <select id="ba-people" name="people">
+        <option value="">選択してください</option>
+        <option value="1名">1名</option>
+        <option value="2名">2名</option>
+        <option value="3名">3名</option>
+        <option value="4名">4名</option>
+{% if include.brand == "studio_x" %}
+        <!-- Issue #513 / #570: 5〜6名は6時間貸切ベースプラン選択時のみ有効（data-event-plan-only）。料金は人数によらず1室1,000円/時 -->
+        <option value="5名" data-event-plan-only="1" disabled hidden>5名</option>
+        <option value="6名" data-event-plan-only="1" disabled hidden>6名</option>
+{% endif %}
+        <option value="5名以上・要相談">5名以上・要相談</option>
+      </select>
+      <p class="ba-field-help" id="ba-people-plan-help" hidden>6時間貸切ベースプランは6名まで選べます（人数による追加料金はありません）。7名以上はプランを解除して、予約・撮影相談フォームからご相談ください。</p>
+      <p class="ba-field-error" id="ba-people-error" hidden></p>
+    </div>
+
     <!-- 利用区分（Issue #270）: 「会員かどうか」ではなく、SNB／SNB mens／Studio Xという
          同一施設の利用経験の有無で支払方法を分ける。Issue #407以降、初回利用は当日予約も可能だが
          支払方法はオンラインクレジットカード決済のみ（最終的な可否の正はcreateBookingの
@@ -431,25 +451,6 @@
       <label for="ba-phone">電話番号<span class="ba-optional">任意</span></label>
       <input type="tel" id="ba-phone" name="phone" autocomplete="tel" inputmode="tel" maxlength="20">
       <p class="ba-field-error" id="ba-phone-error" hidden></p>
-    </div>
-
-    <div class="ba-field">
-      <label for="ba-people">利用人数<span class="ba-required">必須</span></label>
-      <select id="ba-people" name="people">
-        <option value="">選択してください</option>
-        <option value="1名">1名</option>
-        <option value="2名">2名</option>
-        <option value="3名">3名</option>
-        <option value="4名">4名</option>
-{% if include.brand == "studio_x" %}
-        <!-- Issue #513 / #570: 5〜6名は6時間貸切ベースプラン選択時のみ有効（data-event-plan-only）。料金は人数によらず1室1,000円/時 -->
-        <option value="5名" data-event-plan-only="1" disabled hidden>5名</option>
-        <option value="6名" data-event-plan-only="1" disabled hidden>6名</option>
-{% endif %}
-        <option value="5名以上・要相談">5名以上・要相談</option>
-      </select>
-      <p class="ba-field-help" id="ba-people-plan-help" hidden>6時間貸切ベースプランは6名まで選べます（人数による追加料金はありません）。7名以上はプランを解除して、予約・撮影相談フォームからご相談ください。</p>
-      <p class="ba-field-error" id="ba-people-error" hidden></p>
     </div>
 
     <div class="ba-field">

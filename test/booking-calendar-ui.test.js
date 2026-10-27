@@ -675,6 +675,7 @@ test('時刻を選択すると次へ進めて、利用者情報（Step3）へ遷
   assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, true, '時刻選択前はdisabled');
   slot._listeners.click();
   assert.strictEqual(ctx.elements['ba-step-start-time-next'].disabled, false);
+  ctx.elements['ba-people'].value = '2名';
   ctx.elements['ba-step-start-time-next']._listeners.click();
   assert.strictEqual(ctx.elements['ba-step-datetime'].hidden, true, 'Step3へ進むとStep1は隠れる');
   assert.strictEqual(ctx.elements['ba-step-details'].hidden, false, '利用者情報入力へ進む');
@@ -1374,6 +1375,7 @@ test('進捗表示は4段階（start-timeを独立項目として持たない）
   assert.strictEqual(currentProgressStep(ctx), 'datetime');
   ctx.elements['ba-start-time-grid'].children[0]._listeners.click();
   assert.strictEqual(currentProgressStep(ctx), 'datetime');
+  ctx.elements['ba-people'].value = '2名';
   ctx.elements['ba-step-start-time-next']._listeners.click();
   assert.strictEqual(currentProgressStep(ctx), 'details', '「次へ進む」で利用者情報へ進む');
 });
@@ -1412,6 +1414,7 @@ test('会員区分（snb/studio_x）が未回答の間は料金を表示せず�
   assert.strictEqual(priceCalls(ctx).length, 2);
   assert.ok(priceCalls(ctx)[1].url.indexOf('isMember=1') !== -1, '会員選択はisMember=1としてestimatePriceへ渡る');
 
+  ctx.elements['ba-people'].value = '2名';
   ctx.elements['ba-step-start-time-next']._listeners.click();
   assert.strictEqual(currentProgressStep(ctx), 'details');
 });
