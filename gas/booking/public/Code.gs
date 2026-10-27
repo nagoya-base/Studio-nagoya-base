@@ -52,6 +52,9 @@ function doPost(e) {
   if (params.action === 'requestMembershipStatus' || params.action === 'membershipStatus' || params.action === 'cancelMembership') {
     return jsonOutput_(handleMembershipStatusAction_(params.action, e));
   }
+  if (params.action === 'testMonthly' || params.action === 'testEstimatePrice') {
+    return jsonOutput_(handleTestCredentialRead_(params.action, e));
+  }
   if (params.action === 'requestBookingMemberCode' || params.action === 'verifyBookingMemberCode' || params.action === 'bookingMemberStatus') {
     return jsonOutput_(handleBookingMemberAction_(params.action, e));
   }
@@ -318,7 +321,7 @@ function handleBookingMemberAction_(action, e) {
 }
 
 /*
- * 会員結果の再取得と会員料金の見積り。V1/V2はサーバー時刻（BookingPricing.generationAt）で決め、クライアント指定では切り替えない。
+ * 会員結果の再取得と会員料金の見積り。V1/V2はサーバー側の判定（BookingGenerationMode。緊急停止 ＞ 12/1前のTEST設定 ＞ サーバー時刻）で決め、クライアント指定では切り替えない。
  * V1・対象外ブランド（snb / mens以外）は、この確認の仕組みを使わないためエラー。会員料金は、確認済み証明が有効かつ利用日が会員資格内のときだけ。
  */
 function handleBookingMemberStatus_(payload) {
@@ -327,14 +330,17 @@ function handleBookingMemberStatus_(payload) {
     return { success: false, error: { code: 'INVALID_BRAND', message: 'このブランドでは会員確認を使用しません。' } };
   }
   var now = new Date();
-  var generation = BookingPricing.generationAt(now, brand);
+  /* Issue #559: createBookingと同じ世代判定（テスト資格はPOST本文のtestCredentialを予約メールに拘束して検証する）。 */
+  var decision = BookingGenerationMode.decide(now, brand, testContext_(payload));
+  var generation = decision.generation;
   if (generation !== BookingPricing.GENERATION.V2) {
-    return { success: false, error: { code: 'MEMBER_VERIFICATION_NOT_REQUIRED', message: 'この予約では会員確認は不要です。' }, priceGeneration: generation };
+    return withTestCredentialStatus_({ success: false, error: { code: 'MEMBER_VERIFICATION_NOT_REQUIRED', message: 'この予約では会員確認は不要です。' }, priceGeneration: generation }, decision);
   }
   var date = typeof payload.date === 'string' ? payload.date : '';
   var status = BookingMemberVerification.memberStatus({ email: payload.email, proof: payload.proof, date: date }, now);
   if (!status.success) return status;
   status.priceGeneration = generation;
+  withTestCredentialStatus_(status, decision);
   var config = BookingConfig.getAvailabilityConfig();
   var durationMinutes = typeof payload.durationMinutes === 'number' ? payload.durationMinutes : parseDurationParam_(payload.durationMinutes);
   if (date && durationMinutes && !BookingAvailability.validateInput(date, durationMinutes, config)) {
@@ -474,7 +480,7 @@ function handleGetAvailability_(params) {
  * まとめて取得する。Issue #318追記のレビュー対応）。日ごとのステータス判定自体は
  * BookingAvailability.getMonthlyAvailabilityへ委譲し、ここでは配線のみを行う。
  */
-function handleGetMonthlyAvailability_(params) {
+function handleGetMonthlyAvailability_(params, context) {
   var config = BookingConfig.getAvailabilityConfig();
 
   var year = parsePositiveIntegerParam_(params.year);
@@ -501,19 +507,22 @@ function handleGetMonthlyAvailability_(params) {
   var calendarId = BookingConfig.getCalendarId();
   var busyIntervalsByDate = CalendarRepository.getBusyIntervalsForRange(calendarId, startDate, endDate, config.timezone);
 
-  return withPriceGeneration_(BookingAvailability.getMonthlyAvailability(request, busyIntervalsByDate, config, new Date()), brand);
+  return withPriceGeneration_(BookingAvailability.getMonthlyAvailability(request, busyIntervalsByDate, config, new Date()), brand, context);
 }
 
 /*
  * 料金世代（'V1'|'V2'）をGET応答へ付ける（Issue #532）。予約フォームがV2（SNBは2026/12/1 00:00 JST以降）で
  * 会員の自己申告ラジオを出さないための判断を、ブラウザ端末の時計ではなくサーバーの現在時刻
- * （BookingPricing.generationAt。createBookingの最終判定と同じ関数）に基づかせる。会員情報は一切含めない。
+ * （BookingGenerationMode.decide。createBookingの最終判定と同じ関数）に基づかせる。会員情報は一切含めない。
  * ブランド不明・失敗応答にはそのまま返す（フォームは世代を判定できなければラジオを表示する側へ倒す）。
  */
-function withPriceGeneration_(result, brand) {
+function withPriceGeneration_(result, brand, context) {
   if (result && result.success === true && typeof brand === 'string' && brand) {
     try {
-      result.priceGeneration = BookingPricing.generationAt(new Date(), brand);
+      /* Issue #559: createBookingと同じ判定（BookingGenerationMode）。contextはテスト資格付きPOST（testMonthly）だけが渡す。 */
+      var decision = BookingGenerationMode.decide(new Date(), brand, context);
+      result.priceGeneration = decision.generation;
+      withTestCredentialStatus_(result, decision);
     } catch (generationError) {
       /* 世代を付けられなくても応答は変えない（フォームはラジオを表示する側へ倒す）。 */
     }
@@ -535,7 +544,7 @@ function withPriceGeneration_(result, brand) {
  * パラメータのため）。いずれもPIIを含まないため、GET・クエリパラメータで問題ない
  * （handleGetAvailability_と同じ方針）。
  */
-function handleEstimatePrice_(params) {
+function handleEstimatePrice_(params, context) {
   var config = BookingConfig.getAvailabilityConfig();
 
   if (!Booking.isAllowedBrand(params.brand)) {
@@ -553,15 +562,18 @@ function handleEstimatePrice_(params) {
     return { success: false, error: BookingPricing.eventPlanOptionsError() };
   }
 
+  /* Issue #559: 世代はリクエスト1回につき1度だけ判定し、料金・応答のpriceGenerationに同じ値を使う。 */
+  var decision = BookingGenerationMode.decide(new Date(), params.brand, context);
+  var generation = decision.generation;
   var priceResult = BookingPricing.computeBookingPrice({
     brand: params.brand,
     date: params.date,
     durationMinutes: durationMinutes,
     /* Issue #548: V2のSNBはメールOTPの確認済み証明が無い限り会員料金にしない。見積りGETはクライアントのisMemberを無視して
        一般料金とし、会員料金の見積りは確認済み証明を検証するPOST（bookingMemberStatus）だけが返す。 */
-    isMember: isEstimateMemberTierLocked_(params.brand) ? false : parseBooleanParam_(params.isMember),
+    isMember: isEstimateMemberTierLocked_(params.brand, generation) ? false : parseBooleanParam_(params.isMember),
     startTime: params.startTime,
-    generation: BookingPricing.generationAt(new Date(), params.brand),
+    generation: generation,
     /* Issue #478: 2名ペアパックの見積り。見積りAPIでは会員台帳を一切照会しない（会員の有無を
        探る口にしない）。資格の確認は予約作成時のサーバー側だけで行う。 */
     plan: params.plan
@@ -570,18 +582,18 @@ function handleEstimatePrice_(params) {
     return { success: false, error: priceResult.error };
   }
 
-  return {
+  return withTestCredentialStatus_({
     success: true,
     brand: params.brand,
     date: params.date,
     durationMinutes: durationMinutes,
     price: priceResult.price,
-    priceGeneration: BookingPricing.generationAt(new Date(), params.brand)
-  };
+    priceGeneration: generation
+  }, decision);
 }
 
-function isEstimateMemberTierLocked_(brand) {
-  return brand === 'snb' && BookingPricing.generationAt(new Date(), brand) === BookingPricing.GENERATION.V2;
+function isEstimateMemberTierLocked_(brand, generation) {
+  return brand === 'snb' && generation === BookingPricing.GENERATION.V2;
 }
 
 /*
@@ -613,4 +625,58 @@ function parseDurationParam_(value) {
 
 function jsonOutput_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/*
+ * テスト資格（Issue #559）。Booking Web App専用で、クライアントがモード値・世代値を指定する口は無い。
+ * - testContext_: POST本文の { testCredential, email } だけを取り出す（文字列以外は無視）。URLクエリ・ヘッダーからは読まない。
+ * - withTestCredentialStatus_: 資格を送ったリクエストにだけ、資格の扱い（VALID / INVALID / INACTIVE）を応答へ付ける。
+ *   フォームはINVALID / INACTIVEで資格を破棄する。理由（期限切れ・失効・メール不一致等）は返さない（監査ログ側の識別子のみ）。
+ */
+function testContext_(payload) {
+  var credential = payload && typeof payload.testCredential === 'string' ? payload.testCredential : '';
+  var email = payload && typeof payload.email === 'string' ? payload.email : '';
+  return credential ? { testCredential: credential, email: email } : undefined;
+}
+
+function withTestCredentialStatus_(result, decision) {
+  if (decision && decision.testCredential !== BookingGenerationMode.CREDENTIAL.NONE) {
+    result.testCredentialStatus = decision.testCredential;
+  }
+  return result;
+}
+
+/*
+ * テスト資格付きの月間空き状況・見積り（POST。資格は本文のJSONに入れ、createBookingと同じContent-Type: text/plainで送る）。
+ * GAS Web Appはカスタムリクエストヘッダーを読めず、GETクエリには資格を載せないため、資格が必要な匿名GET経路はこのPOSTへ置き換える。
+ * 資格を持たない通常利用者の既存GET（action=monthly / estimatePrice）はそのまま。本文は { email, testCredential, ...GETと同じ項目 }。
+ * 想定外の例外は汎用のINTERNAL_ERRORとして返し、本文・資格・メールはログに出さない。
+ */
+function handleTestCredentialRead_(action, e) {
+  var requestId = Utilities.getUuid();
+  var payload;
+  try {
+    payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (parseError) {
+    return { success: false, error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' }, requestId: requestId };
+  }
+  try {
+    var params = {};
+    Object.keys(payload || {}).forEach(function (name) {
+      var value = payload[name];
+      /* GETクエリと同じく文字列として扱う（数値は文字列化。オブジェクト等はそのまま渡して下流の検証で拒否させる）。 */
+      params[name] = typeof value === 'number' ? String(value) : value;
+    });
+    var context = testContext_(payload);
+    var result = action === 'testMonthly' ? handleGetMonthlyAvailability_(params, context) : handleEstimatePrice_(params, context);
+    if (!result || typeof result !== 'object') {
+      result = { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' } };
+    }
+    Logger.log('requestId=' + requestId + ' ' + action + '=result ' + (result.success ? 'success' : 'error.code=' + sanitizeErrorCode_(result.error && result.error.code)));
+    result.requestId = requestId;
+    return result;
+  } catch (unexpectedError) {
+    Logger.log('requestId=' + requestId + ' ' + action + '=result error.code=INTERNAL_ERROR');
+    return { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' }, requestId: requestId };
+  }
 }

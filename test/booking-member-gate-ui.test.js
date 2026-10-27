@@ -829,7 +829,10 @@ test('配線: 確認済み証明はcreateBookingの送信にだけ付け、フ�
   var app = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'booking-app.js'), 'utf8');
   assert.ok(/memberProof: memberVerified_\(\) \? memberAuth\.proof : ''/.test(app), '送信ペイロードに証明を付ける');
   assert.ok(!/isMember: *true|verified *: *true/.test(app.replace(/\/\*[\s\S]*?\*\//g, '')), 'フロントでisMember/verifiedをtrueにして送らない');
-  assert.ok(!/localStorage|sessionStorage/.test(app), '証明をlocalStorage等へ保存しない（メモリのみ）');
+  /* Issue #559: sessionStorageを読むのは、<head>のインライン処理が保存したテスト資格（snbBookingTestCredential）だけ。OTP確認済み証明は書き込まない（メモリのみ）。 */
+  var appCode = app.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(!/localStorage|setItem|document\.cookie/.test(appCode), '証明をlocalStorage・Cookie等へ保存しない（メモリのみ）');
+  assert.ok((appCode.match(/sessionStorage/g) || []).length === 2 && /getItem\(TEST_CREDENTIAL_STORAGE_KEY_\)/.test(appCode) && /removeItem\(TEST_CREDENTIAL_STORAGE_KEY_\)/.test(appCode), 'sessionStorageはテスト資格の読み取り・破棄だけに使い、証明は保存しない');
   assert.ok(!/console\./.test(app), '証明・コードをconsoleへ出さない');
   var tpl = fs.readFileSync(path.join(__dirname, '..', '_includes', 'booking_app_ja.html'), 'utf8');
   assert.ok(tpl.indexOf('id="ba-member-verify-field"') > tpl.indexOf('{% if include.brand == "snb" or include.brand == "mens" %}'), '会員確認欄はSNB / mensのテンプレート内だけ');

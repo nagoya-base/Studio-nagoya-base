@@ -90,6 +90,8 @@ var BOOKING_ADMIN_FILES = [
    */
   'JapaneseHolidays.gs',
   'BookingPricing.gs',
+  /* Issue #559: SNB / mensの料金世代判定（緊急停止 ＞ 時刻）。Adminはテスト資格の検証コード・署名鍵を持たない（BookingTestCredential.gsは配布しない）。 */
+  'BookingGenerationMode.gs',
   'FeeCalculator.gs',
   'FeeSettlementRepository.gs',
   'BookingReschedule.gs'
@@ -117,6 +119,8 @@ var BOOKING_WEB_APP_FILES = [
   'StripeGateway.gs',
   'JapaneseHolidays.gs',
   'BookingPricing.gs',
+  /* Issue #559: 料金世代判定の一元化（緊急停止 ＞ 12/1前のTEST / LEGACY設定 ＞ サーバー時刻）。BookingRepository.gsより前。 */
+  'BookingGenerationMode.gs',
   'RateLimiter.gs',
   'SpreadsheetRepository.gs',
   'OptionOrderRepository.gs',
@@ -134,6 +138,8 @@ var BOOKING_WEB_APP_FILES = [
   'MembershipService.gs',
   /* Issue #548: V2予約の会員確認（メールOTP・確認済み証明）。createBooking・Code.gsから呼ぶ。RateLimiter.gsに依存するためWeb App専用。 */
   'BookingMemberVerification.gs',
+  /* Issue #559: V2を12/1前に試すテスト資格（署名・期限・失効・許可メール拘束。エディタ実行の発行関数）。署名鍵を持つWeb App専用。 */
+  'BookingTestCredential.gs',
   /* Issue #557: 期限切れOTP・証明の定期削除。OTP発行と同じプロジェクト＝同じスクリプトロックで直列化するためWeb App専用。 */
   'BookingVerificationCleanup.gs',
   'Code.gs'

@@ -309,6 +309,108 @@
     return { proof: '', email: '', expiresAt: 0, advanceEligible: false, epoch: epoch, reverifyPending: false };
   }
   var memberAuth = emptyMemberAuth_(0);
+
+  /*
+   * Issue #559: テスト資格（2026/12/1より前にV2を試す管理者用）。予約ページの<head>内インライン処理が、URLフラグメント（#bt=...）から
+   * 受け取って直ちにURLから除去し、sessionStorageへ保存している（gtag設定・page_viewより前。このファイルでは除去しない）。
+   * - 資格はURLクエリ・GET・カスタムヘッダー・Cookie・分析ログへ載せない。必要なリクエストだけ、**POST本文のJSON**（Content-Type: text/plain）で送る
+   *   （月間空き状況・見積りはテスト資格付きの専用POSTに切り替え、資格を持たない通常利用者の既存GETは変えない）。
+   * - 資格の有効性・モード・許可メールとの一致はサーバーだけが判定する。フロントは期限（トークン内のexp）を端末時計で確認するのみで、
+   *   モード値や世代値を送って昇格させる口は無い。
+   * - 期限切れ・失効・メール変更・モード変更で資格を破棄し、通常フローへ戻す。黙って料金・特典を変えず、日程の選び直しを案内する。
+   */
+  var TEST_CREDENTIAL_STORAGE_KEY_ = 'snbBookingTestCredential';
+  var TEST_CREDENTIAL_PATTERN_ = /^t1\.[0-9a-f]{16}\.\d{10}\.(\d{10})\.[0-9a-f]{32}\.[0-9a-f]{64}$/;
+  var testCredentialEpoch_ = 0;
+  var testCredentialEmail_ = '';
+  var testCredentialLostHandling_ = false;
+  function sessionStore_() {
+    try {
+      return typeof window !== 'undefined' && window.sessionStorage ? window.sessionStorage : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function clearStoredTestCredential_() {
+    try {
+      var store = sessionStore_();
+      if (store) store.removeItem(TEST_CREDENTIAL_STORAGE_KEY_);
+    } catch (e) { /* 保存先が使えなくても通常フローで動く */ }
+  }
+  function loadStoredTestCredential_() {
+    if (!Logic.brandGatesMemberFeatures(brand)) return '';
+    try {
+      var store = sessionStore_();
+      var stored = store ? store.getItem(TEST_CREDENTIAL_STORAGE_KEY_) : null;
+      if (!stored) return '';
+      var match = TEST_CREDENTIAL_PATTERN_.exec(stored);
+      if (!match || Date.now() >= Number(match[1]) * 1e3) {
+        clearStoredTestCredential_();
+        return '';
+      }
+      return stored;
+    } catch (e) {
+      return '';
+    }
+  }
+  var testCredential_ = loadStoredTestCredential_();
+  function testCredentialExpiredLocally_() {
+    var match = TEST_CREDENTIAL_PATTERN_.exec(testCredential_);
+    return !match || Date.now() >= Number(match[1]) * 1e3;
+  }
+  function calendarEpochSuffix_() {
+    return testCredentialEpoch_ ? '-c' + testCredentialEpoch_ : '';
+  }
+  /* 資格付きで送るべきときだけ { email, testCredential } を返す（メール未入力・不正の間は通常のGET＝一般利用者と同じ）。 */
+  function activeTestCredentialBody_() {
+    if (!testCredential_) return null;
+    if (testCredentialExpiredLocally_()) { handleTestCredentialLost_(); return null; }
+    if (emailErrorMessage_() !== '') return null;
+    var email = normalizedEmail_();
+    if (testCredentialEmail_ && testCredentialEmail_ !== email) { handleTestCredentialLost_(); return null; }
+    if (!testCredentialEmail_) { testCredentialEmail_ = email; testCredentialEpoch_++; }
+    return { email: email, testCredential: testCredential_ };
+  }
+  /* メールアドレスが確定したら資格を結び付け、空き状況・見積りを資格付きで取り直す（それまでの結果は一般利用者向け）。 */
+  function bindTestCredentialIfNeeded_() {
+    if (!testCredential_ || testCredentialEmail_ || emailErrorMessage_() !== '') return;
+    testCredentialEmail_ = normalizedEmail_();
+    testCredentialEpoch_++;
+    ensureCalendarMonthLoaded_();
+    refreshPriceEstimate_();
+  }
+  /* 資格の期限切れ・失効・メール変更・モード変更。資格と確認済み証明を破棄し、選択済みの日程を外して通常フローで取り直す。 */
+  function handleTestCredentialLost_() {
+    if (testCredentialLostHandling_) return;
+    testCredentialLostHandling_ = true;
+    try {
+      testCredential_ = '';
+      testCredentialEmail_ = '';
+      clearStoredTestCredential_();
+      testCredentialEpoch_++;
+      resetMemberAuth_();
+      clearSelectedDate_();
+      goToStep('datetime');
+      showGlobalError(Logic.messageForErrorCode('TEST_CREDENTIAL_INVALID', locale), []);
+      ensureCalendarMonthLoaded_();
+      refreshPriceEstimate_();
+    } finally {
+      testCredentialLostHandling_ = false;
+    }
+  }
+  /* 12/1以降など、資格が不要になった場合は黙って破棄する（世代・料金は変わらない）。 */
+  function dropTestCredentialQuietly_() {
+    testCredential_ = '';
+    testCredentialEmail_ = '';
+    clearStoredTestCredential_();
+  }
+  /* サーバー応答のtestCredentialStatus（VALID / INVALID / INACTIVE。資格を送ったリクエストにだけ付く）を反映する。 */
+  function applyTestCredentialStatus_(status) {
+    if (!testCredential_) return;
+    if (status === 'INVALID') handleTestCredentialLost_();
+    else if (status === 'INACTIVE') dropTestCredentialQuietly_();
+  }
+
   var memberCodeSent_ = false;
   var memberCodeEmail_ = '';
   var memberCodeBusy_ = false;
@@ -646,7 +748,7 @@
   }
 
   function calendarCacheKey_(year, month, durationMinutes, timeBand) {
-    return year + '-' + month + '-' + durationMinutes + '-' + timeBand;
+    return year + '-' + month + '-' + durationMinutes + '-' + timeBand + calendarEpochSuffix_();
   }
 
   function isCalendarReady_() {
@@ -701,6 +803,7 @@
 
   function ensureCalendarMonthLoaded_() {
     if (!calendarMonth) return;
+    var credentialBody = activeTestCredentialBody_();
     var durationMinutes = currentCalendarDurationMinutes_();
     if (!Logic.isDurationAtLeastUiMinimum(durationMinutes)) return;
     var timeBand = currentTimeBand_();
@@ -724,7 +827,7 @@
       showCalendarLoadingState_();
       return;
     }
-    fetchCalendarMonth_(calendarMonth.year, calendarMonth.month, durationMinutes, timeBand, key);
+    fetchCalendarMonth_(calendarMonth.year, calendarMonth.month, durationMinutes, timeBand, key, credentialBody);
   }
 
   function calendarMonthlyUrl_(year, month, durationMinutes, timeBand) {
@@ -743,7 +846,7 @@
    * Issue #318要件）。取得失敗時も日付グリッド自体は残し、◎○△×は表示せず、
    * エラー表示とともにどの日も選択できない状態にする。
    */
-  function fetchCalendarMonth_(year, month, durationMinutes, timeBand, key) {
+  function fetchCalendarMonth_(year, month, durationMinutes, timeBand, key, credentialBody) {
     if (!API_BASE_URL) {
       var notConfigured = { status: 'error', message: Logic.apiNotConfiguredMessage(locale) };
       calendarCache[key] = notConfigured;
@@ -754,8 +857,15 @@
     calendarInFlight[key] = true;
     showCalendarLoadingState_();
 
-    fetch(calendarMonthlyUrl_(year, month, durationMinutes, timeBand), { method: 'GET' })
-      .then(function (response) { return response.json(); })
+    /* Issue #559: テスト資格があれば、資格付きの専用POST（本文JSON・text/plain）。無ければ従来のGET（通常利用者は変わらない）。 */
+    var epoch = testCredentialEpoch_;
+    var pendingMonth = credentialBody
+      ? postApi_('testMonthly', {
+        year: String(year), month: String(month), durationMinutes: String(durationMinutes), brand: brand, timeBand: String(timeBand),
+        email: credentialBody.email, testCredential: credentialBody.testCredential
+      })
+      : fetch(calendarMonthlyUrl_(year, month, durationMinutes, timeBand), { method: 'GET' }).then(function (response) { return response.json(); });
+    pendingMonth
       .then(function (body) {
         delete calendarInFlight[key];
         var entry;
@@ -768,8 +878,11 @@
         /* 表示中かどうかに関わらずキャッシュへは常に保存する（月を往復した際、
            後からこのキーへ戻ってきたときに再取得せず使えるようにするため）。 */
         calendarCache[key] = entry;
+        /* 資格の状態が変わった後に届いた古い応答は描画しない（取り直しは資格の切替時に済んでいる）。 */
+        if (epoch !== testCredentialEpoch_) return;
         renderCalendarGridIfCurrent_(year, month, durationMinutes, timeBand, entry);
         if (entry.status === 'success') applyServerGeneration_(body.priceGeneration);
+        if (credentialBody && body) applyTestCredentialStatus_(body.testCredentialStatus);
       })
       .catch(function () {
         delete calendarInFlight[key];
@@ -924,7 +1037,7 @@
 
   function priceEstimateKey_(dateValue, durationMinutes, memberFlag, plan) {
     var flag = typeof memberFlag === 'string' ? memberFlag : (memberFlag ? '1' : '0');
-    return dateValue + '|' + durationMinutes + '|' + flag + '|' + (plan || '');
+    return dateValue + '|' + durationMinutes + '|' + flag + '|' + (plan || '') + calendarEpochSuffix_();
   }
 
   function currentPriceEstimateKey_() {
@@ -1049,6 +1162,7 @@
     syncBenefitsVisibility_();
     /* Issue #548: 保持している確認済み証明が（端末の時計で）期限切れなら、見積りの前に再確認を求める（黙って一般料金へ切り替えない）。 */
     if (memberProofExpiredLocally_()) { handleReverifyRequired_(); return; }
+    var credentialBody = activeTestCredentialBody_();
     var dateValue = els.date ? els.date.value : '';
     var durationMinutes = currentCalendarDurationMinutes_();
     var memberFlag = estimateMemberFlag_();
@@ -1080,12 +1194,22 @@
 
     /* Issue #548: V2で確認済みなら、会員料金の見積りは証明を検証するPOST（bookingMemberStatus）で取得する（GETのisMemberは使わない）。 */
     var verifiedQuote = memberVerified_();
+    var estimateEpoch = testCredentialEpoch_;
+    var memberStatusPayload = { brand: brand, email: memberAuth.email, proof: memberAuth.proof, date: dateValue, durationMinutes: durationMinutes, plan: plan };
+    if (credentialBody) memberStatusPayload.testCredential = credentialBody.testCredential;
     var pendingEstimate = verifiedQuote
-      ? postApi_('bookingMemberStatus', { brand: brand, email: memberAuth.email, proof: memberAuth.proof, date: dateValue, durationMinutes: durationMinutes, plan: plan })
-      : fetch(priceEstimateUrl_(dateValue, durationMinutes, memberFlag, plan), { method: 'GET' }).then(function (response) { return response.json(); });
+      ? postApi_('bookingMemberStatus', memberStatusPayload)
+      : credentialBody
+        /* Issue #559: テスト資格付きの見積りはPOST（本文JSON・text/plain）。資格が無い通常利用者は従来のGET。 */
+        ? postApi_('testEstimatePrice', {
+          brand: brand, date: dateValue, durationMinutes: String(durationMinutes), isMember: memberFlag ? '1' : '0', plan: plan || '',
+          email: credentialBody.email, testCredential: credentialBody.testCredential
+        })
+        : fetch(priceEstimateUrl_(dateValue, durationMinutes, memberFlag, plan), { method: 'GET' }).then(function (response) { return response.json(); });
     pendingEstimate
       .then(function (body) {
         delete priceEstimateInFlight[key];
+        if (estimateEpoch !== testCredentialEpoch_) return;
         var entry;
         if (verifiedQuote && body && body.success !== true && body.error && body.error.code === 'MEMBER_REVERIFY_REQUIRED') {
           /* 証明がサーバーで無効（期限切れ等）。古い見積りとして残さず再確認を求める。 */
@@ -1101,6 +1225,7 @@
         priceEstimateCache[key] = entry;
         renderPriceEverywhereIfCurrent_(key, entry);
         if (entry.status === 'success') applyServerGeneration_(body.priceGeneration);
+        if (credentialBody && body) applyTestCredentialStatus_(body.testCredentialStatus);
       })
       .catch(function () {
         delete priceEstimateInFlight[key];
@@ -1538,7 +1663,10 @@
 
   /* Issue #548: メールアドレスが変わったら、確認済み証明・先行予約資格・会員料金/特典を即破棄して安全側（一般・30日）へ戻す。 */
   function discardMemberAuthIfEmailChanged_() {
-    if (memberAuth.proof && memberAuth.email !== normalizedEmail_()) {
+    /* Issue #559: テスト資格を結び付けたメールアドレスから変わったら、資格を破棄して通常フローへ戻す。 */
+    if (testCredential_ && testCredentialEmail_ && testCredentialEmail_ !== normalizedEmail_()) {
+      handleTestCredentialLost_();
+    } else if (memberAuth.proof && memberAuth.email !== normalizedEmail_()) {
       resetMemberAuth_();
     } else if (memberCodeSent_ && memberCodeEmail_ !== normalizedEmail_()) {
       /* 別のメールアドレス宛に送った確認コードの入力欄は閉じる。 */
@@ -1556,6 +1684,7 @@
       setFieldError_(els.email, els.emailError, message);
       if (message) return;
       state.email = els.email.value;
+      bindTestCredentialIfNeeded_();
       if (els.date && els.date.value && els.startTimeArea && els.startTimeArea.hidden) proceedFromSelectedDate_();
     });
   }
@@ -1962,6 +2091,12 @@
     var message = appendDiagnosticRequestId_(Logic.messageForErrorCode(code, locale), requestId);
     var action = Logic.recoveryActionForErrorCode(code);
 
+    /* Issue #559: テスト資格が送信時点で無効（期限切れ・失効・モード変更）。予約は作られていない。資格を破棄して通常フローで選び直してもらう。 */
+    if (code === 'TEST_CREDENTIAL_INVALID') {
+      handleTestCredentialLost_();
+      return;
+    }
+
     /* 'reselect-time'/'edit-details' は別ステップへ移動するため、移動先でも
        #ba-global-error（ステップに関わらず常に表示できる領域）でメッセージを
        維持する。goToStep()はステップ切り替え時に一度エラーを隠すため、
@@ -2131,7 +2266,9 @@
         plan: selectedPlan_(),
         shower: showerSelected_(),
         /* Issue #548: V2で確認済みなら、サーバーが発行した証明を送る。有効性・予約メールとの一致・会員資格はサーバーが再判定する。 */
-        memberProof: memberVerified_() ? memberAuth.proof : ''
+        memberProof: memberVerified_() ? memberAuth.proof : '',
+        /* Issue #559: テスト資格はPOST本文のJSONだけで送る。有効性・予約メールとの一致・モードはサーバーが判定する。 */
+        testCredential: (function () { var body = activeTestCredentialBody_(); return body ? body.testCredential : ''; })()
       });
       /* オプションは選択内容のみ送る（金額・承認状態はサーバーが決める）。未選択ならキー自体を付けない。 */
       var optionsSelection = optionsPanel ? optionsPanel.getSelection() : null;
