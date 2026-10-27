@@ -1,0 +1,10 @@
+{%- comment -%}
+  会員資格確認ページ（/membership/status/）専用の「戻る」リンク（Issue #555）。共通の subpage_backlink_ja.html は他ページが使うため変更しない。
+  既定はSNBトップ。scripts/membership-status-origin.js が、遷移元（?from=mens|studio-x。許可済みの値のみ）に合わせて下の3つの
+  データ属性の組へ差し替える。リンク先はこのincludeが描画した自サイトパスだけで、URLパラメータの値をhrefに使わない。
+{%- endcomment -%}
+<a href="{{ '/' | relative_url }}" class="legal-back-link" id="membership-status-backlink"
+   data-brand-default="snb"
+   data-href-snb="{{ '/' | relative_url }}" data-label-snb="← Studio Nagoya Baseトップへ戻る"
+   data-href-mens="{{ '/mens/' | relative_url }}" data-label-mens="← 男性ポートレートページへ戻る"
+   data-href-studio-x="{{ '/studio-x/' | relative_url }}" data-label-studio-x="← Studio Xトップへ戻る">← Studio Nagoya Baseトップへ戻る</a>

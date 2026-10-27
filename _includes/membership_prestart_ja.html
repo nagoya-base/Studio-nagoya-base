@@ -8,5 +8,5 @@
 <div class="membership-summary membership-prestart" id="membership-prestart" data-membership-phase="prestart"{% unless membership_is_prestart %} hidden{% endunless %} role="note" aria-label="SNB MEMBERのご案内（会員限定特典の開始時期）">
   <p class="membership-summary-title">SNB MEMBER（会員限定の特典は2026年12月1日からスタート）</p>
   <p>月額500円。登録・決済後すぐに90日先行予約をご利用いただけます。入会日から1か月有効で、以後、入会日を基準に毎月自動更新されます。2名ペアパック・シャワー・Studio Xの会員限定有料オプションなどの本特典は12月1日から開始します。</p>
-  <p><a href="{{ '/membership/status/' | relative_url }}">ご自身の会員資格を確認する（メールで本人確認）</a></p>
+  <p><a href="{{ '/membership/status/' | relative_url }}{% if include.brand == 'mens' or include.brand == 'studio-x' %}?from={{ include.brand }}{% endif %}">ご自身の会員資格を確認する（メールで本人確認）</a></p>
 </div>
