@@ -147,7 +147,7 @@ test('Booking Web App配布ファイルセット: 同時申込・本人確認付
   var res = JSON.parse(ctx.sandbox.doPost({ postData: { contents: JSON.stringify({
     brand: 'studio_x', customerType: 'returning', date: date, startTime: '10:00', durationMinutes: 120, name: '山田太郎',
     email: 'taro@example.com', phone: '090-1234-5678', people: '2名', purpose: '作品撮り', paymentMethod: '現金', note: '', source: 'test',
-    options: { equipment: { STROBE_MONOBLOCK: 1 }, layouts: ['GRUNGE'], setupService: 'STAFF', cleanupService: 'SELF' }
+    options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true },  equipment: { STROBE_MONOBLOCK: 1 }, layouts: ['GRUNGE'], setupService: 'STAFF', cleanupService: 'SELF' }
   }) } }).text);
   assert.strictEqual(res.success, true, JSON.stringify(res.error));
   assert.strictEqual(res.options.success, true);

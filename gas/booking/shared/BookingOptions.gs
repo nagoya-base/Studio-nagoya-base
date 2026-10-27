@@ -396,7 +396,7 @@ var BookingOptions = (function () {
     return out;
   }
 
-  function normalizeSelection(selection, brand) {
+  function normalizeSelection(selection, brand, rules) {
     ensureCatalogInitialized_();
     if (selection === undefined || selection === null) {
       return { ok: true, empty: true, normalized: emptySelection_() };
@@ -480,6 +480,11 @@ var BookingOptions = (function () {
       return { ok: false, error: err_('CLEANUP_METHOD_REQUIRED', '機材をレンタルする場合は、片付け方法（セルフ片付け／スタッフ片付け）を選択してください。') };
     }
 
+    /* Issue #575: 新規予約（rules.requireConfirmations）では、機材レンタル×設営方法の確認チェックを必須にする。
+       確認値は検証にだけ使い、normalizedには含めない（条件外のtrueも保存・料金計算に影響させない）。 */
+    var confirmationError = validateConfirmations_(selection.confirmations, hasPaidRental, setupService, !!(rules && rules.requireConfirmations));
+    if (confirmationError) return { ok: false, error: confirmationError };
+
     var normalized = {
       equipment: equipment,
       equipmentSetup: hasPaidRental ? setupService : '',
@@ -511,6 +516,27 @@ var BookingOptions = (function () {
 
     var empty = Object.keys(normalized.equipment).length === 0 && normalized.layouts.length === 0 && !normalized.emailSupport;
     return { ok: true, empty: empty, normalized: normalized };
+  }
+
+  var CONFIRMATION_KEYS_ = { LECTURE: 'equipmentLecture', SCHEDULE: 'setupScheduleAdjusted' };
+
+  function validateConfirmations_(confirmations, hasPaidRental, setupService, required) {
+    if (confirmations !== undefined && confirmations !== null) {
+      if (!isPlainObject_(confirmations)) return err_('INVALID_OPTIONS', 'オプションの指定形式が正しくありません。');
+      var bad = Object.keys(confirmations).some(function (key) {
+        return (key !== CONFIRMATION_KEYS_.LECTURE && key !== CONFIRMATION_KEYS_.SCHEDULE) || typeof confirmations[key] !== 'boolean';
+      });
+      if (bad) return err_('INVALID_OPTIONS', 'オプションの指定形式が正しくありません。');
+    }
+    if (!required || !hasPaidRental) return null;
+    var given = confirmations || {};
+    if (setupService === 'SELF' && given[CONFIRMATION_KEYS_.LECTURE] !== true) {
+      return err_('EQUIPMENT_LECTURE_CONFIRM_REQUIRED', '「スタッフによる機材レクチャーを受けています」のチェックを入れてください。');
+    }
+    if (setupService === 'STAFF' && given[CONFIRMATION_KEYS_.SCHEDULE] !== true) {
+      return err_('SETUP_SCHEDULE_CONFIRM_REQUIRED', '「利用日の1週間前までに、スタッフと設営日時の調整を済ませています」のチェックを入れてください。');
+    }
+    return null;
   }
 
   function emptySelection_() {

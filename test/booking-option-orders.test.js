@@ -194,7 +194,7 @@ function mailsTo(ctx, to) {
   return ctx.mailApp._sentEmails.filter(function (m) { return m.to === to; });
 }
 
-var FULL_SELECTION = { equipment: { STROBE_MONOBLOCK: 1 }, layouts: ['CLASSROOM'], setupService: 'STAFF', cleanupService: 'STAFF', emailSupport: true };
+var FULL_SELECTION = { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true }, equipment: { STROBE_MONOBLOCK: 1 }, layouts: ['CLASSROOM'], setupService: 'STAFF', cleanupService: 'STAFF', emailSupport: true };
 
 // ============================================================================
 // 同時申込
@@ -293,9 +293,9 @@ test('同時: SNB / mensでoptions付きは予約自体を作らず拒否。opti
 
 test('同時: 不正なオプション指定・在庫超過は予約を作る前に拒否する', function () {
   var ctx = setup();
-  assert.strictEqual(ctx.sandbox.BookingRepository.createBooking(payload({ options: { equipment: { LASER: 1 }, setupService: 'SELF', cleanupService: 'SELF' } })).error.code, 'UNKNOWN_OPTION');
-  assert.strictEqual(ctx.sandbox.BookingRepository.createBooking(payload({ options: { equipment: { STAND_260: 4 }, setupService: 'SELF', cleanupService: 'SELF' } })).error.code, 'STOCK_EXCEEDED');
-  assert.strictEqual(ctx.sandbox.BookingRepository.createBooking(payload({ options: { equipment: { STAND_260: 1.5 }, setupService: 'SELF', cleanupService: 'SELF' } })).error.code, 'INVALID_OPTIONS');
+  assert.strictEqual(ctx.sandbox.BookingRepository.createBooking(payload({ options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true }, equipment: { LASER: 1 }, setupService: 'SELF', cleanupService: 'SELF' } })).error.code, 'UNKNOWN_OPTION');
+  assert.strictEqual(ctx.sandbox.BookingRepository.createBooking(payload({ options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true }, equipment: { STAND_260: 4 }, setupService: 'SELF', cleanupService: 'SELF' } })).error.code, 'STOCK_EXCEEDED');
+  assert.strictEqual(ctx.sandbox.BookingRepository.createBooking(payload({ options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true }, equipment: { STAND_260: 1.5 }, setupService: 'SELF', cleanupService: 'SELF' } })).error.code, 'INVALID_OPTIONS');
   assert.strictEqual(ctx.calendars.cal1.events.length, 0);
 });
 
@@ -315,7 +315,7 @@ test('ビデオライト: 未許可の申込は拒否して消さず保留注文
   var svc = ctx.sandbox.OptionOrderService;
 
   // 同時申込: 予約は成立し、定常光は保留注文になる（資格の無い申込でも予約は妨げない）
-  var first = ctx.sandbox.BookingRepository.createBooking(payload({ options: { equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' } }));
+  var first = ctx.sandbox.BookingRepository.createBooking(payload({ options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true }, equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' } }));
   assert.strictEqual(first.success, true, JSON.stringify(first.error));
   var held = first.options.orders[0];
   assert.strictEqual(held.status, 'PENDING_APPROVAL');
@@ -401,19 +401,19 @@ test('ビデオライト: 過去に支払い済みで借りた履歴があって
     status: 'CONFIRMED', customerEmail: EMAIL, createdAt: new Date(), updatedAt: new Date()
   }]);
 
-  var again = ctx.sandbox.BookingRepository.createBooking(payload({ date: futureDateJst_(61), options: { equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' } }));
+  var again = ctx.sandbox.BookingRepository.createBooking(payload({ date: futureDateJst_(61), options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true }, equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' } }));
   assert.strictEqual(again.success, true);
   assert.strictEqual(again.options.orders[0].status, 'PENDING_APPROVAL', '履歴があっても自動では資格ありにしない');
   assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
 
   // Adminが機材コード単位で付与した後の申込は、承認不要で支払い待ちになる
   assert.strictEqual(ctx.sandbox.OptionOrderService.grantVideoLightEligibility(EMAIL, 'COB_BICOLOR', '対面レクチャー済み').success, true);
-  var allowed = ctx.sandbox.BookingRepository.createBooking(payload({ date: futureDateJst_(62), options: { equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' } }));
+  var allowed = ctx.sandbox.BookingRepository.createBooking(payload({ date: futureDateJst_(62), options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true }, equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' } }));
   assert.strictEqual(allowed.success, true, JSON.stringify(allowed.error));
   assert.strictEqual(allowed.options.orders[0].status, 'AWAITING_PAYMENT');
 
   // 他人のメールアドレスの許可は引き継がれない
-  var other = ctx.sandbox.BookingRepository.createBooking(payload({ date: futureDateJst_(63), email: 'hanako@example.com', options: { equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' } }));
+  var other = ctx.sandbox.BookingRepository.createBooking(payload({ date: futureDateJst_(63), email: 'hanako@example.com', options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true }, equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' } }));
   assert.strictEqual(other.options.orders[0].status, 'PENDING_APPROVAL');
 });
 
@@ -622,7 +622,7 @@ test('Checkout: 承認前のスタッフ対応・無料の注文・未確定の�
   assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
 
   // 部屋がPENDINGの間は、機材(承認不要)でも決済に進めない
-  var pendingRoom = createRoom(ctx, { date: futureDateJst_(61), options: { equipment: { STROBE_MONOBLOCK: 1 }, setupService: 'SELF', cleanupService: 'SELF' } });
+  var pendingRoom = createRoom(ctx, { date: futureDateJst_(61), options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true },  equipment: { STROBE_MONOBLOCK: 1 }, setupService: 'SELF', cleanupService: 'SELF' } });
   var eq = orderRows(ctx, pendingRoom.bookingId)[0];
   assert.strictEqual(ctx.sandbox.OptionOrderService.startOptionCheckout(pendingRoom.bookingId, EMAIL, eq.optionOrderId).error.code, 'BOOKING_NOT_CONFIRMED');
   assert.strictEqual(ctx.urlFetchApp._calls.length, 0);
@@ -1025,7 +1025,7 @@ test('SNB / mens: Stripe戻り先・予約作成は従来どおり（オプシ�
 
 test('オプション由来で拒否された申込（不正な選択・在庫超過）は連投制限に計上されない（選択を直して同じ日時・メールで再送できる）', function () {
   var ctx = setup({ properties: { RATE_LIMIT_EMAIL_COUNT: '3' } });
-  var rejected = ctx.sandbox.BookingRepository.createBooking(payload({ options: { equipment: { STAND_260: 9 }, setupService: 'SELF', cleanupService: 'SELF' } }));
+  var rejected = ctx.sandbox.BookingRepository.createBooking(payload({ options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true }, equipment: { STAND_260: 9 }, setupService: 'SELF', cleanupService: 'SELF' } }));
   assert.strictEqual(rejected.error.code, 'STOCK_EXCEEDED');
   var retry = ctx.sandbox.BookingRepository.createBooking(payload({ options: { emailSupport: true } }));
   assert.strictEqual(retry.success, true, JSON.stringify(retry.error));
@@ -1035,7 +1035,7 @@ test('ビデオライトの資格(許可)の照会はメールアドレス単位
   var ctx = setup();
   var last;
   for (var i = 0; i < 6; i++) {
-    last = ctx.sandbox.BookingRepository.createBooking(payload({ options: { equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' } }));
+    last = ctx.sandbox.BookingRepository.createBooking(payload({ options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true }, equipment: { COB_BICOLOR: 1 }, setupService: 'SELF', cleanupService: 'SELF' } }));
   }
   assert.strictEqual(last.error.code, 'RATE_LIMITED');
 });
@@ -1298,7 +1298,7 @@ test('セット無料の付帯機材（0円の保留注文）はAdminの許可�
 
 test('機材のみでsetupService未指定の申込は予約作成・後付けの両方で拒否される（Issue #438）', function () {
   var ctx = setup();
-  var rejected = ctx.sandbox.BookingRepository.createBooking(payload({ options: { equipment: { STROBE_PORTABLE: 1 } } }));
+  var rejected = ctx.sandbox.BookingRepository.createBooking(payload({ options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true }, equipment: { STROBE_PORTABLE: 1 } } }));
   assert.strictEqual(rejected.error.code, 'SETUP_METHOD_REQUIRED');
   var r = createRoom(ctx);
   confirmRoom(ctx, r.bookingId);

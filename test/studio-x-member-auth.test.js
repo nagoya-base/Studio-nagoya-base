@@ -600,7 +600,7 @@ test('TEST: testMonthlyは資格付きだけOTP必須を返す。LEGACY・OTPフ
 
 test('切戻し: OTP→LEGACYでV2料金・オプション価格・既存予約の料金・世代は変わらない（認証方式だけが戻る）', function () {
   var ctx = otpSetup();
-  var optionsPayload = { options: { setupService: 'SELF', cleanupService: 'SELF', equipment: { COB_FULLCOLOR: 1 } } };
+  var optionsPayload = { options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true },  setupService: 'SELF', cleanupService: 'SELF', equipment: { COB_FULLCOLOR: 1 } } };
   var inOtp = book(ctx, Object.assign({ date: DAY30, email: STRANGER }, optionsPayload));
   assert.strictEqual(inOtp.success, true, JSON.stringify(inOtp));
   ctx.setProperty(PHASE, 'LEGACY');

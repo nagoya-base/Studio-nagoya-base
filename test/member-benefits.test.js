@@ -842,7 +842,7 @@ test('Studio X 同時申込: 12/1以降の非会員は部屋予約ごと拒否�
   var payload = {
     brand: 'studio_x', customerType: 'returning', date: '2026-12-15', startTime: '10:00', durationMinutes: 120,
     name: '山田太郎', email: EMAIL, phone: '090-1234-5678', people: '2名', purpose: '作品撮り', paymentMethod: '現金',
-    note: '', source: 'test', options: { equipment: { STROBE_MONOBLOCK: 1 }, setupService: 'SELF', cleanupService: 'SELF' }
+    note: '', source: 'test', options: { confirmations: { equipmentLecture: true, setupScheduleAdjusted: true },  equipment: { STROBE_MONOBLOCK: 1 }, setupService: 'SELF', cleanupService: 'SELF' }
   };
   var denied = ctx.sandbox.BookingRepository.createBooking(payload, NOW_DEC);
   assert.strictEqual(denied.success, false);
