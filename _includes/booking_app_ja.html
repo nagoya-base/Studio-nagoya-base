@@ -301,6 +301,7 @@
       <legend>会員限定の特典（SNB MEMBER・任意）</legend>
       <div class="ba-choices">
         <label class="ba-choice"><input type="checkbox" id="ba-plan-pair" value="member_pair_3h"> <span>2名ペアパック（3時間・1〜2名／平日5,000円・土日祝6,000円）</span></label>
+        <p class="ba-field-help" id="ba-plan-pair-note" hidden>2名ペアパックは3時間以上の利用で選択できます。</p>
         <label class="ba-choice"><input type="checkbox" id="ba-shower" value="shower"> <span>シャワー（1予約1回・1,000円。事前確認・承認制で、選択だけでは利用確定になりません。承認後にお支払い）</span></label>
       </div>
       <p class="ba-field-help" id="ba-benefits-locked" hidden>SNB MEMBER会員のみ選択できます。{% if include.brand == "mens" %}「SNB MEMBERの会員特典・先行予約を利用する」にチェックすると選択できます。{% else %}会員区分で「会員」を選ぶと選択できます（表示されない場合は「SNB MEMBERの会員特典・先行予約を利用する」にチェック）。{% endif %}</p>
