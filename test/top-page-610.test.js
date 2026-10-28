@@ -10,7 +10,7 @@ test('#610: トップ料金欄は「受付中」と12/1以降適用を正しい�
   var intro = pricing.match(/<p class="phase2-intro"><strong>SNB MEMBER<\/strong>([\s\S]*?)<\/p>/)[1];
   assert.ok(intro.indexOf('受付中') !== -1);
   assert.ok(intro.indexOf('会員料金・会員特典は2026年12月1日以降のご予約・ご利用から適用されます') !== -1);
-  assert.ok(intro.indexOf('/membership/') !== -1 || intro.indexOf("'/membership/' | relative_url") !== -1);
+  assert.ok(intro.indexOf("'/membership/' | relative_url") !== -1);
   assert.ok(pricing.indexOf('始めます') === -1, '「12月1日から始めます」の未来形に戻さない');
 });
 
