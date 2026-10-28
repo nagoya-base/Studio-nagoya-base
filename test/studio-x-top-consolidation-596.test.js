@@ -24,7 +24,7 @@ test('#596 WHY STUDIO Xと利用用途は1セクションに統合され、用�
   assert.ok(top.indexOf('class="statement') === -1);
   var sec = /<section class="for-you[\s\S]*?<\/section>/.exec(top)[0];
   assert.ok(sec.indexOf('WHY STUDIO X') !== -1 && sec.indexOf('世界観に入り込める部屋') !== -1);
-  assert.ok(textOf(sec).indexOf('カメラマンがいないセルフ撮影も、一眼カメラでの本格撮影も歓迎') !== -1);
+  assert.ok(textOf(sec).indexOf('カメラマンなしのセルフ撮影も、一眼カメラでの本格撮影も歓迎') !== -1);
   var cases = sec.match(/<article>[\s\S]*?<\/article>/g);
   assert.strictEqual(cases.length, 4);
   ['コスプレ・少人数併せ', 'ポートレート・創作', 'セルフ撮影・推し活制作', '撮影練習・ライティング'].forEach(function (h, i) {
@@ -46,7 +46,7 @@ test('#596 無料機材セクションとWHAT\'S INSIDEは1つの#specsに統合
   assert.ok(top.indexOf('equipment-highlight-card') === -1 && top.indexOf('id="equipment-highlight-title"') === -1);
   var specs = /<section class="specs[\s\S]*?<\/section>/.exec(top)[0];
   assert.strictEqual((specs.match(/<dt>/g) || []).length, 6);
-  ['白・黒の背景紙ロール', '天井フルカラーLED', 'バイカラーLEDパネルライト2基', 'レフ板5-in-1（80cm）', '大型全身ミラー', 'ユニットバス、カーテン内で着替え可能', 'カメラ、ストロボ、外部照明の持ち込み可'].forEach(function (w) {
+  ['白・黒の背景紙ロール', '天井フルカラーLED／バイカラーLEDパネル2灯／レフ板', '大型全身ミラー', 'ユニットバス、カーテン内で着替え可能', 'カメラ、ストロボ、外部照明の持ち込み可'].forEach(function (w) {
     assert.ok(specs.indexOf(w) !== -1, w);
   });
   assert.ok(specs.indexOf('href="equipment/"') !== -1);
@@ -79,7 +79,11 @@ test('#596 料金: 基本料金は常時表示、細かい適用条件は折り�
 
 test('#596 6時間貸切ベースプラン: トップは要約、詳細は専用ページに全て保持', function () {
   var sec = top.slice(top.indexOf('id="osu-base-plan"'), top.indexOf('id="access"'));
-  assert.ok(!/<details/.test(sec), 'トップは要約のみ');
+  var shown = sec.replace(/<details[\s\S]*?<\/details>/g, '').replace(/<div class="price-cards">[\s\S]*?<\/article>\s*<\/div>/, '');
+  assert.ok(textOf(shown).length < 330, '常時表示は要約のみ: ' + textOf(shown).length);
+  ['有人クロークではありません', '途中延長はできません', 'シャワー利用は含まれません', '本プランを選択した場合のみ適用'].forEach(function (w) {
+    assert.ok(shown.indexOf(w) === -1 && /<details class="price-more[\s\S]*?<\/details>/.exec(sec)[0].indexOf(w) !== -1, '条件は折りたたみ内: ' + w);
+  });
   assert.ok(textOf(sec).length < 900, '要約は短く保つ: ' + textOf(sec).length);
   ['こんな方におすすめ', '友人同士で落ち着いて着替えたい', 'キャリーケースや衣装を置いて身軽にイベントを回りたい', 'イベント途中に休憩したい', 'メイク直し・衣装直しのために戻れる場所がほしい', '公式更衣室の混雑を避けたい',
     'イベント参加時の拠点', '大型ミラー利用', 'スマートフォン等での簡易撮影OK', '利用時間は6時間以上（8:00〜21:00の範囲・1時間単位）'.replace('利用時間は', '利用時間は'),
@@ -116,4 +120,19 @@ test('#596 予約CTAは現行bookingへ統一。旧受付条件・ブランド�
 test('#596 ページ全体の分量: 整理前(HTML 35.6KB・表示テキスト約5,260字)より明確に短い', function () {
   assert.ok(top.length < 30000, 'HTMLサイズ: ' + top.length);
   assert.ok(topText.length < 4100, '表示テキスト量: ' + topText.length);
+});
+
+test('#596 スマホ初期表示: 常時表示の説明文は短く（原則1〜2文）、詳細条件は閉じた<details>か詳細ページへ', function () {
+  var shown = top.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<details[\s\S]*?<\/details>/g, '').replace(/<blockquote[\s\S]*?<\/blockquote>/g, '');
+  (shown.match(/<p[^>]*>[\s\S]*?<\/p>/g) || []).forEach(function (p) {
+    var t = textOf(p).trim();
+    assert.ok(t.length <= 130, '長文が常時表示: ' + t.slice(0, 40) + '… (' + t.length + ')');
+    assert.ok((t.match(/。/g) || []).length <= 2, '3文以上が常時表示: ' + t.slice(0, 40));
+  });
+  assert.ok(!/<details[^>]*\sopen/.test(top), '<details>は初期状態で閉じる');
+  /* 主要情報（基本料金・世界・用途・設備・アクセス・CTA）は折りたたまない */
+  var details = (top.match(/<details[\s\S]*?<\/details>/g) || []).join('');
+  ['1,200<small>', '1,500<small>', 'id="worlds"', '愛知県名古屋市中区富士見町5-24', 'class="button button-primary" href="booking/"'].forEach(function (w) {
+    assert.ok(details.indexOf(w) === -1, '折りたたみ内に主要情報: ' + w);
+  });
 });

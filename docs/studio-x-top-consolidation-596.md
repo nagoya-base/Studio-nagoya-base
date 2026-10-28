@@ -12,6 +12,7 @@
 | 料金補足（3h/4h/延長・10/26適用ルール・プレミアムオプション・会員限定） | 折りたたみ | トップ `#price` の `<details>`。会員特典の詳細は `/studio-x/membership/`、機材料金は `/studio-x/equipment/#staff-service` |
 | 予約成立条件（送信時点では確定しない） | 統合 | トップ「初めての方へ」STEP 02に一本化。詳細は `/studio-x/how-to/#before` |
 | ACCESS内「ON THE DAY」4ステップ | 移転（折りたたみ） | トップ「初めての方へ」の `<details>`、詳細は `/studio-x/how-to/` |
+| 6時間貸切ベースプランの条件（途中延長不可・有人クロークではない・スタッフ不在・シャワーなし・通常料金との違い） | 折りたたみ | トップ `#osu-base-plan` の `<details>`（常時表示は価格・6名まで・再入室OKのみ） |
 | 6時間貸切ベースプランの詳細（おすすめ・ご利用内容・予約欄の選び方・責任範囲・共用部放置禁止・原状復帰・通常予約との区別・FAQ3問） | 移転 | `/studio-x/base-plan/`（`#usecases` `#how-to-book` `#conditions` `#faq`）。トップは要約のみ |
 | 貸切ベースプランFAQ3問のJSON-LD（FAQPage） | 移転 | 表示FAQが特設ページへ移ったためトップのFAQPageは外した。特設ページは #507 の方針（FAQPageなし）のまま表示FAQとして保持。Offerは両ページに残す |
 | FAQ「当日でも予約できますか？」 | 移転 | `/studio-x/how-to/#faq`（全5問を掲載）。トップは4問＋リンク |
