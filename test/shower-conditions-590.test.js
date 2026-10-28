@@ -44,7 +44,9 @@ test('#590: 規約・会員案内・FAQに新条件（人数・1週間前・運�
 test('#590: 英語ページはSNBのシャワー条件を案内し、「No shower」を残さない', function () {
   var en = read('en.html');
   assert.ok(/Shower: SNB MEMBER-only option from Dec 1, 2026/.test(en));
-  assert.ok(/per booking \(not per person\)/.test(en) && /1 week before/.test(en));
+  var detail = read('how-to/en.html'); // #600: 条件の詳細はトップではなく詳細ページに保持する
+  assert.ok(/per booking \(not per person\)/.test(detail) && /1 week before/.test(detail));
+  assert.ok(en.indexOf('how-to/en.html#rules-details') !== -1, 'トップから詳細へ到達できる');
 });
 
 test('#590: Studio Xはシャワー対象外のまま', function () {

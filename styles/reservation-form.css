@@ -227,15 +227,34 @@
   width: min(100%, 420px);
   min-height: 52px;
   margin: 28px auto 0;
-  border: 0;
+  border: 1px solid var(--accent-dark);
+  border-radius: var(--radius);
+  background: var(--accent-dark);
+  color: #fff;
+  -webkit-appearance: none;
+  appearance: none;
   cursor: pointer;
   font: inherit;
   font-weight: 700;
 }
 
+.reservation-submit:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.reservation-submit:focus-visible {
+  outline: 3px solid var(--text);
+  outline-offset: 2px;
+}
+
 .reservation-submit:disabled {
+  background: var(--text-muted);
+  border-color: var(--text-muted);
+  color: #fff;
   cursor: wait;
-  opacity: 0.65;
+  opacity: 0.85;
 }
 
 .reservation-submit-state {

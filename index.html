@@ -169,9 +169,9 @@
     <p class="section-subtitle">Availability &amp; Booking</p>
 
     <ol class="reservation-steps">
-      <li><span class="reservation-steps-num">1</span>予約ページで空き状況を確認</li>
-      <li><span class="reservation-steps-num">2</span>空きがあれば当日も、予約ページから仮予約を送信（はじめての方はオンラインクレジットカード決済のみ）</li>
-      <li><span class="reservation-steps-num">3</span>運営からの確定連絡で予約成立</li>
+      <li><span class="reservation-steps-num">1</span>空き状況を確認</li>
+      <li><span class="reservation-steps-num">2</span>仮予約を送信</li>
+      <li><span class="reservation-steps-num">3</span>確定連絡で予約成立</li>
     </ol>
 
     <div class="section-cta-sm">
@@ -181,31 +181,18 @@
       </div>
     </div>
 
-    <p class="calendar-note">予約ページから日時を選んでお申し込みください。送信時点では予約未確定で、運営からの確定連絡をもって成立します。はじめてのご利用はオンラインクレジットカード決済のみです。</p>
     <details class="note-details">
-      <summary>予約・支払いの詳細（支払方法・決済期限・当日予約）</summary>
+      <summary>予約・支払いの詳細（成立条件・初回の方・ご利用経験のある方・支払方法・当日予約）</summary>
       <div class="note-details-body">
-        <p><strong>予約ページ・メール・DMのいずれも、送信だけでは予約確定ではありません。</strong>通常は24時間以内に運営から確定のご連絡をお送りし、この連絡をもって予約成立となります。</p>
+        <p><strong>予約ページ・メール・DMのいずれも、送信だけでは予約確定ではありません。</strong>通常は24時間以内に運営から確定のご連絡をお送りし、この連絡をもって予約成立となります。はじめてのご利用は、オンラインクレジットカード決済のみです。</p>
         <p>お支払いは現金・PayPay（現地決済）・オンラインクレジットカード決済がご利用いただけます。はじめてご利用の方はオンラインクレジットカード決済のみです。カード決済は当日を含め、日程にかかわらずお選びいただけます。</p>
         <p>オンラインクレジットカード決済は、予約申込後に表示される決済ページでお支払いください。決済ページの有効期限内にお支払いが完了した場合に予約が確定します。期限切れ・決済未完了の場合、予約は確定しません。</p>
         <p>空きがある場合は当日のご予約も予約ページから直接お申し込みいただけます（会員登録の有無は当日予約の条件ではありません）。</p>
+        <p><strong>はじめてご利用の方：</strong>予約ページから、利用目的・安全ルールへのご同意とあわせてお申し込みください。</p>
+        <p><strong>ご利用経験のある方：</strong>当日のご利用を含め、予約ページから直接空き状況を確認し、そのまま仮予約を申し込めます。予約内容のご相談や、既存予約の変更連絡は、前回のやり取りへのメール返信、またはXのDMをご利用ください。</p>
+        <p><a href="https://x.com/nagoyabase2023" target="_blank" rel="noopener noreferrer" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="repeat_dm" data-analytics-destination="x_dm">Xプロフィールを開く（@nagoyabase2023）</a></p>
       </div>
     </details>
-
-    <div class="reservation-path-grid">
-      <div class="reservation-path-card">
-        <h3 class="reservation-path-label">はじめてご利用の方</h3>
-        <p class="reservation-path-desc">予約ページから、利用目的・安全ルールへのご同意とあわせてお申し込みください。</p>
-      </div>
-      <div class="reservation-path-card">
-        <h3 class="reservation-path-label">ご利用経験のある方</h3>
-        <p class="reservation-path-desc">当日のご利用を含め、予約ページから直接空き状況を確認し、そのまま仮予約を申し込めます。</p>
-        <p class="reservation-path-note">予約内容のご相談や、既存予約の変更連絡は、前回のやり取りへのメール返信、またはXのDMをご利用ください。</p>
-        <div class="btn-group">
-          <a class="btn-secondary" href="https://x.com/nagoyabase2023" target="_blank" rel="noopener noreferrer" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="repeat_dm" data-analytics-destination="x_dm">Xプロフィールを開く（@nagoyabase2023）</a>
-        </div>
-      </div>
-    </div>
   </div>
 </section>
 
@@ -256,7 +243,7 @@
   <div class="container">
     <h2 class="section-title">練習・講習・作品づくりの拠点に</h2>
     <p class="section-subtitle">For Practice, Workshops &amp; Creative Work</p>
-    <p class="phase2-intro">Studio Nagoya Baseは、縄師と受け手の自主練、ショーや演目の練習、少人数の講習会、作品撮りに利用できる完全貸切のレンタルスタジオです。周囲の目を気にせず、1〜4名で落ち着いて利用できます。</p>
+    <p class="phase2-intro">自主練・ショー練習・少人数講習・作品撮りに。周囲の目を気にせず、1〜4名で落ち着いて使える完全貸切です。</p>
 
     {% assign featured_voice = site.data.voices_ja | where: "featured", true | first %}
     {% if featured_voice %}
@@ -270,25 +257,25 @@
       <article class="usage-card">
         <span class="usage-card-icon" aria-hidden="true">◈</span>
         <h3>定期的な自主練</h3>
-        <p>床縄から半吊り・本吊りまで、自宅では難しい練習や手順確認に利用できます。新しい手順の反復、フォーム確認、動画や写真を使った振り返りにも向いています。</p>
+        <p>床縄から吊りまで、自宅では難しい練習に。</p>
       </article>
       <article class="usage-card">
         <span class="usage-card-icon" aria-hidden="true">◈</span>
         <h3>ショー・演目の練習</h3>
-        <p>本番前の通し練習、吊り手順の確認、大型ミラーでの立ち位置・見せ方の確認に。畳を使った床演目の確認や、吊りから床へ移る流れの練習、照明の見え方確認にも利用できます。仕事帰りの通し練習にも、平日夜は2〜3時間のリハーサルに使いやすい料金設定です。</p>
+        <p>本番前の通し練習・立ち位置の確認に。</p>
       </article>
       <article class="usage-card">
         <span class="usage-card-icon" aria-hidden="true">◈</span>
         <h3>少人数講習・ワークショップ</h3>
-        <p>縄師による講習・個人レッスン・技術共有の場、自主練・ワークショップでの利用を歓迎します。事前にDMでご相談ください。</p>
+        <p>講習・個人レッスンの場として。</p>
       </article>
       <article class="usage-card">
         <span class="usage-card-icon" aria-hidden="true">◈</span>
         <h3>作品撮り・撮影の打ち合わせ</h3>
-        <p>完全貸切のプライベート空間で、緊縛・身体表現の作品撮りに集中できます。ライティングが整い、スマートフォンでも綺麗に撮影でき、一眼レフならさらに高いクオリティが実現できます。性別・性的指向・性自認を問わず、同性カップル・クィアな表現を含む撮影を歓迎しています（🏳️‍🌈 LGBTQ+歓迎）。</p>
-        <p>ショーの構成相談、作品撮りの企画、縄や技術の情報交換など、緊縛や撮影に関する少人数の集まりにも利用できます。条件を守れば、学校机やちゃぶ台を使い、飲食しながらの雑談や打ち合わせも可能です（<a href="{{ '/how-to/' | relative_url }}#food">飲食のルール</a>）。</p>
+        <p>完全貸切で、作品撮りに集中できます。</p>
       </article>
     </div>
+    <p class="pricing-note"><a href="{{ '/how-to/' | relative_url }}#usage-scenes" data-analytics-event="cta_click" data-analytics-type="how_to" data-analytics-location="usage">利用シーンの詳細を見る →</a></p>
   </div>
 </section>
 
@@ -374,7 +361,7 @@
   <div class="container">
     <h2 class="section-title">料金</h2>
     <p class="section-subtitle">Pricing</p>
-    <p class="phase2-intro">料金は1部屋単位で、人数に関わらず一定です（最大4名まで追加料金なし）。定期的な自主練や長時間の演目練習には、継続利用向けプラン（平日6時間パス）もあります。</p>
+    <p class="phase2-intro">料金は1部屋単位で、人数に関わらず一定です（最大4名まで追加料金なし）。</p>
     <p class="phase2-intro">2026年12月1日から、継続してご利用の方・長時間ご利用の方向けの優遇制度「<strong>SNB MEMBER</strong>」（月額500円）を始めます。</p>
 
     <div class="pricing-grid">
