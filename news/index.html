@@ -1,0 +1,82 @@
+---
+---
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>お知らせ一覧 | Studio Nagoya Base</title>
+
+<!-- SEO -->
+<meta name="description" content="Studio Nagoya Base（名古屋・上前津）のお知らせ一覧。料金・利用規約・会員制度・予約方法の更新履歴を掲載しています。">
+<link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/news/">
+
+<!-- Favicon -->
+<link rel="icon" href="../images/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="../images/apple-touch-icon.png">
+
+<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-6TWDLEFWJT');
+</script>
+
+<!-- OGP -->
+<meta property="og:title" content="お知らせ一覧 | Studio Nagoya Base">
+<meta property="og:description" content="Studio Nagoya Base（名古屋・上前津）のお知らせ一覧。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/news/">
+<meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/ogp-interior-rigging-frame_1200x675.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="お知らせ一覧 | Studio Nagoya Base">
+<meta name="twitter:description" content="Studio Nagoya Base（名古屋・上前津）のお知らせ一覧。">
+<meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/ogp-interior-rigging-frame_1200x675.jpg">
+
+<link rel="stylesheet" href="../styles/common.css">
+</head>
+
+<body data-page-type="news" data-site-section="studio_main">
+
+<a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
+
+{% include subpage_nav_ja.html %}
+
+<main id="main-content">
+
+<!-- お知らせ一覧（トップページには最新3件のみ表示。全件はこのページに保持） -->
+<section id="news-all" class="bg-section">
+  <div class="container">
+    {% include subpage_backlink_ja.html %}
+    <h1 class="section-title">お知らせ一覧</h1>
+    <p class="section-subtitle">News</p>
+
+    <!-- 運用メモ: 料金や利用規約を更新した場合は、_data/news_ja.yml に告知を追加する（トップは最新3件、全件はこのページ） -->
+    <div class="news-list">
+      {% for item in site.data.news_ja %}
+      <div class="news-item">
+        <span class="news-date">{{ item.date }}</span>
+        <span class="news-badge">{{ item.type }}</span>
+        <span class="news-text">{{ item.body }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<div class="container" style="text-align:center;padding-bottom:40px;">
+  {% include subpage_backlink_ja.html %}
+</div>
+
+</main>
+
+{% include subpage_footer_ja.html %}
+
+<script src="../scripts/main.js"></script>
+<script src="../scripts/analytics.js"></script>
+
+</body>
+</html>

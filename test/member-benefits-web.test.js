@@ -294,8 +294,8 @@ test('規約・特商法・会員条件に、新料金（5,000/6,000/1,000円）
   });
 });
 
-test('FAQ: JSON-LDと表示が一致する（SNBトップ・規約ページの新FAQ、3つの会員ページ）', function () {
-  ['index.html', 'legal/index.html'].forEach(function (p) {
+test('FAQ: JSON-LDと表示が一致する（SNB規約ページの全件FAQ、3つの会員ページ。トップは#594で4問に絞り、全件は規約ページに保持）', function () {
+  ['legal/index.html'].forEach(function (p) {
     var html = read(p);
     var ld = faqLd(html);
     var q = ld.mainEntity.filter(function (e) { return e.name === '会員限定の2名ペアパック・シャワーとは何ですか？'; });

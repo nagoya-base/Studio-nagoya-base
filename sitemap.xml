@@ -56,6 +56,11 @@
   </url>
 
   <url>
+    <loc>https://nagoya-base.github.io/Studio-nagoya-base/news/</loc>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/news/" />
+  </url>
+
+  <url>
     <loc>https://nagoya-base.github.io/Studio-nagoya-base/legal/</loc>
     <xhtml:link rel="alternate" hreflang="ja" href="https://nagoya-base.github.io/Studio-nagoya-base/legal/" />
     <xhtml:link rel="alternate" hreflang="en" href="https://nagoya-base.github.io/Studio-nagoya-base/legal/en.html" />
