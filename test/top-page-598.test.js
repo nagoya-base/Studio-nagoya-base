@@ -58,7 +58,7 @@ test('#598: SNB MEMBERの常時表示は要点のみで、契約条件・割引�
   });
 });
 
-test('#598: 平日6時間パスは閉じたアコーディオンで、トップでは長文展開しない', function () {
-  var m = top.match(/<details class="faq-item pricing-details">\s*<summary>📅 平日6時間パス[^<]*<\/summary>/);
-  assert.ok(m && m[0].indexOf(' open') === -1);
+test('#598: SNB平日6時間パスはトップ料金欄に残っていない（廃止）', function () {
+  var pricing = top.slice(top.indexOf('<section id="pricing">'), top.indexOf('</section>', top.indexOf('<section id="pricing">')));
+  assert.ok(!/平日6時間パス|¥9,800 \/ 月/.test(pricing));
 });

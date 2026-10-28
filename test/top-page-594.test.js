@@ -104,13 +104,13 @@ test('#594: お知らせはトップに最新3件、全件はお知らせ一覧�
   assert.ok(read('sitemap.xml').indexOf('/Studio-nagoya-base/news/') !== -1);
 });
 
-test('#594: 料金は基本料金を常時表示し、会員・6時間パス・適用条件の詳細は削除せずアコーディオンに保持する', function () {
+test('#594: 料金は基本料金を常時表示し、会員・適用条件の詳細は削除せずアコーディオンに保持する', function () {
   var pricing = top.slice(top.indexOf('<section id="pricing">'), top.indexOf('</section>', top.indexOf('<section id="pricing">')));
   var visible = pricing.slice(0, pricing.indexOf('<details'));
-  assert.strictEqual(visible.split('<table>').length - 1, 2, '通常・会員の2表は常時表示（6時間パスの表はアコーディオン内）');
+  assert.strictEqual(visible.split('<table>').length - 1, 2, '通常・会員の2表は常時表示');
   ['3時間以上のご利用で一般料金より安く', '継続・長時間ご利用の方向けの優遇制度'].forEach(function (w) { assert.ok(pricing.indexOf(w) !== -1, w); });
   var details = pricing.split('<details').slice(1).join('<details');
-  ['自動更新（Stripe）', '2名ペアパック', '5,000円', '6,000円', 'シャワー', '¥9,800 / 月', '追加利用（1時間ごと）', '講習会・ワークショップ・参加費を徴収する利用は対象外',
+  ['自動更新（Stripe）', '2名ペアパック', '5,000円', '6,000円', 'シャワー',
     'プラットフォーム経由のご予約には適用されません', '確認コード（6桁）'].forEach(function (w) {
     assert.ok(details.indexOf(w) !== -1, 'アコーディオン内: ' + w);
   });

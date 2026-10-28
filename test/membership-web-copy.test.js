@@ -328,7 +328,7 @@ test('更新・解約の表現（Issue #532）: 入会日基準の更新日に�
   pages.forEach(function (p) {
     var raw = read(p);
     var t = textOf(raw);
-    var body = p === '_includes/legal_ja.html' ? t.replace(/月額料金の決済はStripeによるクレジットカード自動課金とします。毎月同日に翌月分を請求します。/, '') : t; /* 平日6時間パスの条文は別仕様 */
+    var body = t;
     assert.ok(!/25日|25th/.test(body), p + ' に解約の締切日（25日）が残っている');
     assert.ok(!/翌月分の会費|翌月分を|next month['’]s (fee|membership)/i.test(body), p + ' に「翌月分」の表現が残っている');
   });
