@@ -93,10 +93,18 @@ test('#596 6時間貸切ベースプラン: トップは要約、詳細は専用
   });
 });
 
-test('#596 FAQ: トップは4問、全5問は利用ガイドに保持（当日予約を含む）', function () {
+test('#596/#624 FAQ: トップは本文と重複しない3問、全5問は利用ガイドに保持（当日予約を含む）', function () {
   var faq = /<section class="faq[\s\S]*?<\/section>/.exec(top)[0];
   var qs = faq.match(/<summary>[\s\S]*?<\/summary>/g);
-  assert.strictEqual(qs.length, 4);
+  assert.strictEqual(qs.length, 3);
+  assert.deepStrictEqual(qs.map(function (s) { return s.replace(/<\/?summary>/g, ''); }), [
+    'スマートフォンだけでも撮影できますか？', '着替える場所はありますか？', 'ストロボや照明を持ち込めますか？']);
+  assert.ok(faq.indexOf('何人まで利用できますか') === -1, '人数FAQはトップから外す（料金本文と重複）');
+  ['初めてご利用', '6時間貸切ベースプランとは'].forEach(function (w) {
+    assert.ok(faq.indexOf(w) === -1, w + ' は本文と重複するためFAQにしない');
+  });
+  assert.ok(top.indexOf('id="beginners"') !== -1 && top.indexOf('id="osu-base-plan"') !== -1, '本文アンカー維持');
+  assert.ok(top.indexOf('"FAQPage"') === -1 && faq.indexOf('data-analytics-faq-id') === -1, 'トップにFAQ構造化データ/GA4 FAQ IDなし');
   assert.ok(faq.indexOf('href="how-to/#faq"') !== -1);
   var guide = read('studio-x/how-to/index.html');
   var gfaq = /id="faq">[\s\S]*?<\/section>/.exec(guide)[0];
