@@ -44,7 +44,7 @@ test('#611: #legal は要点3点＋3リンク＋詳細導線1本に縮小', func
   var detail = legal.match(/<a href="\{\{ '\/legal\/' \| relative_url \}\}"[^>]*>([^<]*)</);
   assert.ok(detail && detail[1].indexOf('利用規約・法的事項') !== -1, '詳細導線は1本');
   assert.ok(legal.indexOf('全文は、法的事項ページでご確認') === -1, '自己参照的な説明を持たない');
-  assert.ok(legal.length < 1800, '説明量を縮小');
+  assert.strictEqual((legal.match(/<a /g) || []).length, 4, 'リンクは3点＋詳細導線1本のみ');
   var page = read('legal/index.html') + read('_includes/legal_ja.html');
   ['id="law"', 'id="terms"', 'id="cancel"', 'id="privacy"'].forEach(function (w) { assert.ok(page.indexOf(w) !== -1, '詳細ページに ' + w); });
 });

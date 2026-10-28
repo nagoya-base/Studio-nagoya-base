@@ -837,7 +837,7 @@ html:not([data-theme="kuro"]) .hero .btn-secondary:focus-visible {
 }
 
 @media (max-width: 600px) {
-  .hours-block {
+  .access-hours .hours-block {
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
