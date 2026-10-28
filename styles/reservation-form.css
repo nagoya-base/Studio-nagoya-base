@@ -209,6 +209,10 @@
   margin-top: 8px;
 }
 
+.reservation-carrier-notice .note-details {
+  margin-bottom: 0;
+}
+
 .reservation-consents {
   display: grid;
   gap: 12px;
@@ -294,6 +298,25 @@
 
   .reservation-form {
     padding: 24px 16px;
+  }
+
+  /* 確認・同意欄は文字サイズを変えず、余白のみで縦幅を抑える（Issue #598） */
+  .reservation-confirmation .reservation-privacy,
+  .reservation-confirmation .reservation-carrier-notice {
+    margin-top: 10px;
+    padding: 8px 10px;
+  }
+
+  .reservation-consents {
+    gap: 8px;
+  }
+
+  .reservation-consents label {
+    padding: 9px 11px;
+  }
+
+  .reservation-submit {
+    margin-top: 18px;
   }
 
   .reservation-fields {
