@@ -16,8 +16,8 @@ var EN = read('_includes/booking_app_en.html');
 var TERMS = read('_includes/booking_terms_consent_ja.html');
 
 test('日本語予約: 規約等同意は共通部品、安全ルール同意はSNB/mensのLiquid分岐の中でのみ生成される', function () {
-  var m = JA.match(/\{% if include\.brand == "snb" or include\.brand == "mens" %\}\s*\{% include booking_terms_consent_ja\.html brand=include\.brand safety="true" %\}\s*\{% endif %\}/);
-  assert.ok(m, 'SNB/mens限定のinclude');
+  var m = JA.match(/\{% if include\.brand == "snb" or include\.brand == "mens" %\}\s*\{% include booking_terms_consent_ja\.html brand=include\.brand safety="true" %\}\s*\{% elsif include\.brand == "studio_x" %\}/);
+  assert.ok(m, 'safety=trueのincludeはSNB/mens限定（Studio Xはelsifで別includeのみ）');
   /* Studio X向けに出力され得るテンプレート本体（コメント以外）にSNB固有語を直書きしない。 */
   var body = JA.replace(/\{% comment %\}[\s\S]*?\{% endcomment %\}/g, '');
   assert.ok(body.indexOf('ba-confirm-safety') === -1 && body.indexOf('ba-safety-error') === -1);
@@ -70,4 +70,48 @@ test('booking-app.js: terms/safety要素の存在有無で必須判定を切り�
   assert.ok(js.indexOf("safetyRequired: '安全ルールへの同意が必要です。'") >= 0);
   assert.ok(js.indexOf("termsRequired: 'Please agree to the Terms of Use, Cancellation Policy, and Privacy Policy.'") >= 0);
   assert.ok(js.indexOf("safetyRequired: 'Please agree to follow the safety rules.'") >= 0);
+});
+
+/* ── Issue #606: Studio X予約にも同じ共通部品で規約等同意を適用する ── */
+test('#606 Studio X: 共通部品をsafetyなしでincludeする（別系統の同意ロジックを持たない）', function () {
+  assert.ok(/\{% elsif include\.brand == "studio_x" %\}\s*\{% include booking_terms_consent_ja\.html brand=include\.brand %\}/.test(JA));
+  assert.ok(TERMS.indexOf("{%- assign ba_legal_base = '/studio-x/legal/' -%}") >= 0);
+  /* Studio X専用の同意IDやテキストをテンプレートに直書きしていない。 */
+  assert.strictEqual((JA.match(/id="ba-confirm-terms"/g) || []).length, 0);
+  var js = read('scripts/booking-app.js');
+  assert.ok(js.indexOf("var termsOk = !els.terms || els.terms.checked;") >= 0);
+  assert.ok(!/studio_x[^\n]*termsOk|termsOk[^\n]*studio_x/.test(js), '必須判定にbrand分岐を持たない');
+});
+
+test('#606 Studio X: Liquid展開結果にSNB固有の安全同意DOM・文言が出ない', function () {
+  /* 部品のLiquidを最小限に評価: safety未指定ではif節の中身は出力されない。 */
+  var withoutSafety = TERMS.replace(/\{%- if include\.safety == "true" %\}[\s\S]*?\{%- endif %\}/, '');
+  ['緊縛', '吊り床', '安全ルール', 'ba-confirm-safety', 'ba-safety-error', 'safety-rules'].forEach(function (w) {
+    var noComment = withoutSafety.replace(/\{%- comment -%\}[\s\S]*?\{%- endcomment -%\}/, '');
+    assert.ok(noComment.indexOf(w) === -1, w);
+  });
+  var studioXBranch = JA.match(/\{% elsif include\.brand == "studio_x" %\}[\s\S]*?\{% endif %\}/)[0];
+  assert.ok(studioXBranch.indexOf('safety=') === -1);
+  assert.ok(withoutSafety.indexOf('を確認し、同意します。') >= 0);
+  ['#terms', '#cancel', '#privacy'].forEach(function (a) {
+    assert.ok(withoutSafety.indexOf("append: '" + a + "'") >= 0, a);
+  });
+  /* 予約成立条件の確認は維持。 */
+  assert.ok(JA.indexOf('id="ba-confirm-consent"') >= 0);
+});
+
+test('#606 Studio X legal: リンク先アンカーが存在し、studio-x/reservation・規約本文・booking入口は未変更', function () {
+  var legal = read('studio-x/legal/index.html');
+  ['terms', 'cancel', 'privacy'].forEach(function (id) {
+    assert.ok(legal.indexOf('id="' + id + '"') >= 0, id);
+  });
+  var cp = require('node:child_process');
+  var changed = cp.execSync('git diff --name-only origin/main...HEAD; git diff --name-only; git ls-files --others --exclude-standard', { cwd: path.join(__dirname, '..') }).toString();
+  assert.ok(changed.indexOf('studio-x/reservation/') === -1);
+  assert.ok(changed.indexOf('studio-x/legal/') === -1);
+});
+
+test('#606 booking-app.js: 未同意でStudio Xの送信を止める（terms要素があれば必須）', function () {
+  var js = read('scripts/booking-app.js');
+  assert.ok(js.indexOf("if (!consentOk || !termsOk || !safetyOk) return;") >= 0);
 });
