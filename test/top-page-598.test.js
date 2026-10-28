@@ -49,7 +49,7 @@ test('#598: SNB MEMBERの常時表示は要点のみで、契約条件・割引�
   assert.ok(textOf(visible).length < 150, '常時表示本文が短い');
   assert.ok(visible.indexOf('1〜2時間') === -1 && visible.indexOf('延長1時間ごとに500円') === -1, '詳細は常時表示しない');
   var details = cta.slice(cta.indexOf('<details'));
-  ['3時間で500円、4時間で1,000円、延長1時間ごとに500円', '1〜2時間のご利用では一般料金との差はありません', '自動更新（Stripe）', '2名ペアパック'].forEach(function (w) {
+  ['3時間で500円、4時間で1,000円、延長1時間ごとに500円', '1〜2時間のご利用では一般料金との差はありません', '自動更新（Stripe）', '平日5,000円／土日祝6,000円'].forEach(function (w) {
     assert.strictEqual(top.split(w).length - 1, 1, w + ' は1回だけ');
     assert.ok(details.indexOf(w) !== -1, '詳細内: ' + w);
   });
