@@ -32,17 +32,34 @@ test('#598/#600: 予約セクションは短い3ステップ＋CTAのみ常時�
   assert.ok(textOf(visible.slice(visible.indexOf('<ol'), visible.indexOf('</ol>'))).replace(/\s+/g, '').length <= 40, 'ステップは短く');
 });
 
-test('#598: 問い合わせフォームの必須同意は維持し、注意書きは圧縮する', function () {
-  ['reservation-terms', 'reservation-safety', 'reservation-carrier-mail'].forEach(function (id) {
-    assert.ok(new RegExp('id="' + id + '"[^>]*required').test(form), id + ' は必須のまま');
+test('#602: 問い合わせフォームは相談受付に徹し、予約用同意チェックを持たない（注意書きは短く残す）', function () {
+  ['reservation-terms', 'reservation-safety', 'reservation-carrier-mail', 'reservation-x-dm-confirm', 'reservation-intent'].forEach(function (id) {
+    assert.strictEqual(form.indexOf(id), -1, id + ' は存在しない');
   });
-  var carrier = form.slice(form.indexOf('reservation-carrier-notice'), form.indexOf('<div class="reservation-consents">', form.indexOf('reservation-carrier-notice')));
+  assert.ok(!/type="checkbox"/.test(form) && !/type="radio"/.test(form), '確認チェック・ラジオを持たない');
+  assert.ok(!/name="(利用規約同意|安全ルール同意|メール受信設定確認|X DM受信設定確認)"/.test(form));
+  assert.ok(!/class="reservation-consents"/.test(form));
+  var msg = form.match(/<textarea id="reservation-message"[^>]*>/)[0];
+  assert.ok(/\srequired\s/.test(msg) && /field-badge--required">必須</.test(form.slice(form.indexOf('reservation-message-label'), form.indexOf('<textarea id="reservation-message"'))), '相談内容はHTML側で静的に必須');
+  assert.ok(/<legend>1\. 連絡先<\/legend>[\s\S]*<legend>2\. ご相談内容<\/legend>[\s\S]*<legend>3\. 送信前の確認<\/legend>/.test(form), 'セクション番号を詰める');
+  var xHelp = form.match(/id="reservation-x-account-help"[^>]*>([^<]*)</)[1];
+  assert.ok(xHelp.indexOf('DMを受信できる状態にしてください') !== -1, 'X欄のヘルプ文は残す');
+  var carrier = form.slice(form.indexOf('reservation-carrier-notice'), form.indexOf('<p class="reservation-privacy">'));
   assert.ok(/<details class="note-details">/.test(carrier) && !/\sopen/.test(carrier), 'キャリアメール注意の詳細は閉じたアコーディオン');
   assert.ok(carrier.indexOf('Gmailからのメールを受信できる設定') !== -1, '詳細の文言を保持');
   assert.strictEqual(form.indexOf('reservation-review-note'), -1, '送信前注意の独立カードは持たない');
   var privacy = form.match(/<p class="reservation-privacy">([\s\S]*?)<\/p>/)[1];
   assert.ok(privacy.indexOf('#privacy') !== -1 && privacy.indexOf('Formspree') !== -1 && privacy.indexOf('送信前に入力内容とメールアドレスをご確認ください') !== -1);
   assert.ok(textOf(privacy).length <= 110, 'プライバシー説明は短く');
+  var js = read('scripts/reservation-form.js');
+  assert.ok(!/intentRadios|applyIntentMode|getIntent|reservation-terms|reservation-safety|reservation-carrier-mail|x-dm-confirm/.test(js), 'JSに種別・同意依存を残さない');
+  assert.ok(!/(利用規約|安全ルール)(への)?同意/.test(textOf(form)), '問い合わせ段階で規約・安全ルール同意を求めない');
+});
+
+test('#602: 予約フロー側（#603/#606）の同意UIは問い合わせフォーム整理で変更されていない', function () {
+  var inc = read('_includes/booking_terms_consent_ja.html');
+  assert.ok(/ba-confirm-terms/.test(inc) && /ba-confirm-safety/.test(inc));
+  assert.ok(/ba-confirm-consent/.test(read('_includes/booking_app_ja.html')));
 });
 
 test('#598: SNB MEMBERの常時表示は要点のみで、契約条件・割引額は詳細に1回だけ保持する', function () {
