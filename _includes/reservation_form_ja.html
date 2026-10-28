@@ -96,8 +96,13 @@
       <fieldset class="reservation-group reservation-confirmation">
         <legend>4. 確認・同意</legend>
         <div class="reservation-carrier-notice">
-          <p><strong>携帯電話会社のメールアドレスをご利用の方へ</strong></p>
-          <p>docomo・au・SoftBankなどのキャリアメールでは、当方からのGmailが受信拒否される場合があります。Gmailからのメールを受信できる設定になっているか、迷惑メールフォルダに振り分けられていないかをご確認ください。</p>
+          <p><strong>キャリアメール（docomo・au・SoftBankなど）をご利用の方へ</strong>　当方からのGmailが受信拒否される場合があります。受信設定をご確認ください。</p>
+          <details class="note-details">
+            <summary>メール受信設定の確認方法</summary>
+            <div class="note-details-body">
+              <p>Gmailからのメールを受信できる設定になっているか、迷惑メールフォルダに振り分けられていないかをご確認ください。</p>
+            </div>
+          </details>
         </div>
         <div class="reservation-consents">
           <label for="reservation-terms"><input type="checkbox" id="reservation-terms" name="利用規約同意" value="同意する" required aria-describedby="reservation-terms-error"> <span><a href="{{ '/legal/' | relative_url }}#terms" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="reservation_form">利用規約</a>を確認し、内容に同意します。 <span class="field-badge field-badge--required">必須</span></span></label>
@@ -110,8 +115,7 @@
           <p id="reservation-carrier-mail-error" class="field-error" hidden></p>
         </div>
 
-        <p class="reservation-privacy">入力された情報は、お問い合わせへの回答、利用案内、ご連絡および必要な運営対応のために使用し、フォーム送信にはFormspreeを利用します。詳しくは<a href="{{ '/legal/' | relative_url }}#privacy">プライバシーポリシー</a>をご確認ください。</p>
-        <p class="reservation-review-note">送信前に、入力内容とメールアドレスをご確認ください。</p>
+        <p class="reservation-privacy">入力情報はご連絡・運営対応にのみ使用し、送信にはFormspreeを利用します（<a href="{{ '/legal/' | relative_url }}#privacy">プライバシーポリシー</a>）。送信前に入力内容とメールアドレスをご確認ください。</p>
         <button type="submit" id="reservation-submit" class="btn-primary reservation-submit">相談内容を送信する</button>
         <p id="reservation-submit-state" class="reservation-submit-state" role="status" aria-live="polite">送信内容を確認後、入力したメールアドレスへご連絡します。</p>
       </fieldset>

@@ -1443,6 +1443,37 @@ html[data-theme="kuro"] .calendar-wrapper iframe {
   margin-bottom: 24px;
 }
 
+/* 要約＋詳細アコーディオン（Issue #598）。常時表示は要約のみ、詳細は閉じた状態でページ高さを抑える */
+.calendar-note:has(+ .note-details) {
+  margin-bottom: 8px;
+}
+
+.note-details {
+  margin-bottom: 24px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.note-details summary {
+  display: inline-block;
+  padding: 4px 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.note-details-body {
+  margin-top: 6px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-card);
+  line-height: 1.8;
+}
+
+.note-details-body p + p {
+  margin-top: 8px;
+}
+
 /* =====================
    レスポンシブ
 ===================== */
