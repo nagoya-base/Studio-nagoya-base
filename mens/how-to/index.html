@@ -65,15 +65,15 @@
           <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">1</span>
           <div style="padding-top:4px;">
             <strong style="display:block;margin-bottom:4px;">日時を選んで予約</strong>
-            <span style="color:var(--text-muted);font-size:0.9rem;">予約ページで利用日・利用時間を選び、そのまま仮予約を送信できます。</span>
+            <span style="color:var(--text-muted);font-size:0.9rem;">予約ページで利用日・利用時間を選び、そのまま申し込めます。</span>
           </div>
         </li>
         <li style="display:flex;gap:16px;margin-bottom:24px;">
           <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">2</span>
           <div style="padding-top:4px;">
-            <strong style="display:block;margin-bottom:4px;">仮予約を送信</strong>
+            <strong style="display:block;margin-bottom:4px;">必要事項を入力して送信</strong>
             <span style="color:var(--text-muted);font-size:0.9rem;">
-              予約ページで利用人数、利用目的、支払方法など必要事項を入力してください。SNB mensの予約ページからのご予約には、SNB MEMBERへの加入有無にかかわらず会員料金が適用されます（料金の優遇であり、会員資格の付与ではありません）。送信時点では予約は確定せず、当方からの確定連絡をもって予約成立となります。<br>
+              予約ページで利用人数、利用目的、支払方法など必要事項を入力して申し込んでください。SNB mensの予約ページからのご予約には、SNB MEMBERへの加入有無にかかわらず会員料金が適用されます（料金の優遇であり、会員資格の付与ではありません）。予約が確定するタイミングは、支払方法によって異なります（次の手順をご確認ください）。<br>
               <a href="../booking/">予約ページへ進む →</a>
             </span>
           </div>
@@ -81,8 +81,12 @@
         <li style="display:flex;gap:16px;margin-bottom:24px;">
           <span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">3</span>
           <div style="padding-top:4px;">
-            <strong style="display:block;margin-bottom:4px;">予約確定連絡を受け取る</strong>
-            <span style="color:var(--text-muted);font-size:0.9rem;">通常は24時間以内に返信します。内容確認後、支払方法に応じて予約確定をご案内します（オンラインクレジットカード決済の場合は、24時間以内に決済リンクをお送りし、お支払い確認後の承認をもって予約確定となります）。</span>
+            <strong style="display:block;margin-bottom:4px;">お支払い・予約確定</strong>
+            <span style="color:var(--text-muted);font-size:0.9rem;">
+              <strong>オンラインクレジットカード決済：</strong>申込後、そのまま決済ページへ進みます。申込後30分以内にお支払いを完了すると予約確定です（未決済・期限切れの場合、予約は確定しません）。<br>
+              <strong>現金・PayPay：</strong>送信時点では仮受付で、予約は確定していません。通常24時間以内に当方から確定のご連絡をし、その連絡をもって予約成立となります。<br>
+              <strong>はじめてご利用の方：</strong>お支払いはオンラインクレジットカード決済のみです。
+            </span>
           </div>
         </li>
         {% include checkin_checkout_common_ja.html %}
