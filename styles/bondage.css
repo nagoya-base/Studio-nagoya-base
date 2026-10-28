@@ -148,10 +148,14 @@
 }
 
 /* 利用用途カード（こんな利用におすすめ） */
+#features {
+  --usage-card-gap: 20px;
+}
+
 .usage-cards-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
+  gap: var(--usage-card-gap, 20px);
 }
 
 .usage-card {
@@ -233,7 +237,7 @@
 /* 利用用途セクション（#features）内の一言レビュー */
 .assurance-voice {
   max-width: 480px;
-  margin: 16px auto 0;
+  margin: 16px auto var(--usage-card-gap, 20px);
   text-align: center;
 }
 
@@ -386,6 +390,7 @@
 
   #features .assurance-voice {
     margin-top: 12px;
+    margin-bottom: var(--usage-card-gap, 20px);
     padding: 16px;
   }
 }
