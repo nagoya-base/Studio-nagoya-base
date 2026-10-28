@@ -570,6 +570,11 @@
     </label>
     <p class="ba-field-error" id="ba-consent-error" hidden></p>
 
+{% comment %} Issue #603: 規約等同意は共通部品。SNB固有の同意はSNB/mensのみLiquidで生成し、Studio XのHTMLには出さない（Studio Xへの組み込みは #606）。{% endcomment %}
+{% if include.brand == "snb" or include.brand == "mens" %}
+    {% include booking_terms_consent_ja.html brand=include.brand safety="true" %}
+{% endif %}
+
     <div id="ba-submit-error" class="ba-banner ba-banner--error" role="alert" aria-live="assertive" hidden></div>
 
     <div class="ba-actions">

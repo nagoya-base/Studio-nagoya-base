@@ -51,6 +51,8 @@
       phoneUnset: '（未入力）',
       noteUnset: '（なし）',
       consentRequired: '予約成立条件の確認が必要です。',
+      termsRequired: '利用規約・キャンセルポリシー・プライバシーポリシーへの同意が必要です。',
+      safetyRequired: '安全ルールへの同意が必要です。',
       submitting: '送信中…',
       submitLabel: 'この内容で仮予約を送信する',
       diagnosticIdLabel: '\n診断ID: ',
@@ -79,6 +81,8 @@
       phoneUnset: '(not provided)',
       noteUnset: '(none)',
       consentRequired: 'Please confirm the pending booking condition.',
+      termsRequired: 'Please agree to the Terms of Use, Cancellation Policy, and Privacy Policy.',
+      safetyRequired: 'Please agree to follow the safety rules.',
       submitting: 'Submitting…',
       submitLabel: 'Submit Pending Booking',
       diagnosticIdLabel: '\nDiagnostic ID: ',
@@ -278,6 +282,11 @@
     confirmNote: document.getElementById('ba-confirm-note'),
     consent: document.getElementById('ba-confirm-consent'),
     consentError: document.getElementById('ba-consent-error'),
+    /* Issue #603: 規約等同意・安全ルール同意。安全ルール欄はSNB/mensのみLiquidで生成されるため、無い場合は判定しない。 */
+    terms: document.getElementById('ba-confirm-terms'),
+    termsError: document.getElementById('ba-terms-error'),
+    safety: document.getElementById('ba-confirm-safety'),
+    safetyError: document.getElementById('ba-safety-error'),
     submitError: document.getElementById('ba-submit-error'),
     step4Back: document.getElementById('ba-step-confirm-back'),
     submit: document.getElementById('ba-submit'),
@@ -2471,8 +2480,15 @@
       if (reverifyBlocked_()) { goToStep('datetime'); showGlobalError(Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale, brand), []); return; }
 
       hideSubmitError();
-      setFieldError_(els.consent, els.consentError, els.consent.checked ? '' : UI_TEXT.consentRequired);
-      if (!els.consent.checked) return;
+      /* 成立条件確認・規約等・安全ルールの3つを先に全部判定してから止める（エラーを1度で全て表示する）。
+         規約等・安全ルールはIssue #603。要素が存在するときだけ必須。 */
+      var consentOk = els.consent.checked;
+      var termsOk = !els.terms || els.terms.checked;
+      var safetyOk = !els.safety || els.safety.checked;
+      setFieldError_(els.consent, els.consentError, consentOk ? '' : UI_TEXT.consentRequired);
+      if (els.terms) setFieldError_(els.terms, els.termsError, termsOk ? '' : UI_TEXT.termsRequired);
+      if (els.safety) setFieldError_(els.safety, els.safetyError, safetyOk ? '' : UI_TEXT.safetyRequired);
+      if (!consentOk || !termsOk || !safetyOk) return;
 
       /* 送信直前にも初回利用のカード必須を再確認する（サーバー側のFIRST_TIME_CARD_PAYMENT_REQUIRED拒否と
          合わせた多層防御。ここで止められればfetch自体を発生させない）。 */
