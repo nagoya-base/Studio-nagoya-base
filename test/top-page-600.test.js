@@ -77,3 +77,33 @@ test('#600: 英語トップも要点のみで、移した説明はhow-to/en.html
   assert.strictEqual(en.indexOf('Apply at least 1 week'), -1);
   assert.ok(en.split('how-to/en.html#rules-details').length - 1 >= 3, '各所から詳細へ到達できる');
 });
+
+/* ---- トップ全体の説明量を固定（広告としての情報密度。再増殖防止） ---- */
+function sentences(t) { return (t.replace(/\s+/g, '').match(/[。.!?！？]/g) || []).length; }
+function stripDetails(html) { return html.replace(/<details[\s\S]*?<\/details>/g, ''); }
+function visibleParagraphs(html) {
+  var out = [], re = /<p\b[^>]*>([\s\S]*?)<\/p>/g, m;
+  stripDetails(html).replace(/<div class="reservation-legacy-rollback"[\s\S]*?<\/form>\s*<\/div>/, '').replace(re, function (_, inner) { out.push(textOf(inner)); return ''; });
+  return out;
+}
+
+test('#600: 日本語トップの利用用途カードは見出し＋1行キャッチのみ', function () {
+  var cards = top.match(/<article class="usage-card">[\s\S]*?<\/article>/g);
+  assert.strictEqual(cards.length, 4);
+  cards.forEach(function (c) {
+    var ps = c.match(/<p>[\s\S]*?<\/p>/g);
+    assert.strictEqual(ps.length, 1, '1行のみ');
+    assert.ok(sentences(textOf(ps[0])) <= 1 && textOf(ps[0]).length <= 40, textOf(ps[0]));
+  });
+});
+
+test('#600: 日本語トップ（index.html/phase2_trust）の常時表示の説明段落は原則1〜2文', function () {
+  var html = top + read('_includes/phase2_trust_ja.html');
+  var bad = visibleParagraphs(html).filter(function (t) { return sentences(t) > 2; });
+  assert.deepStrictEqual(bad, [], '2文超の常時表示段落: ' + bad.join(' / ').slice(0, 300));
+});
+
+test('#600: 英語トップの常時表示の説明段落は原則1〜2文で、legacyフォームを除く', function () {
+  var bad = visibleParagraphs(read('en.html')).filter(function (t) { return sentences(t) > 2; });
+  assert.deepStrictEqual(bad, [], '2文超の常時表示段落: ' + bad.join(' / ').slice(0, 300));
+});

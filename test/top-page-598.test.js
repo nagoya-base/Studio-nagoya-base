@@ -16,17 +16,20 @@ function textOf(html) { return html.replace(/<[^>]+>/g, ''); }
 var top = read('index.html');
 var form = read('_includes/reservation_form_ja.html');
 
-test('#598: 予約CTA直下は要約のみ常時表示し、支払い・期限・当日予約の詳細はアコーディオンに保持する', function () {
-  var m = top.match(/<p class="calendar-note">(予約ページから日時を選んで[\s\S]*?)<\/p>\s*<details class="note-details">([\s\S]*?)<\/details>/);
-  assert.ok(m, '要約＋予約・支払いの詳細');
-  assert.ok(textOf(m[1]).length <= 120, '常時表示は2〜3行程度');
-  ['予約未確定', '確定連絡', 'オンラインクレジットカード決済のみ'].forEach(function (w) { assert.ok(m[1].indexOf(w) !== -1, '要約: ' + w); });
-  assert.ok(/<summary>予約・支払いの詳細/.test(m[2]));
+test('#598/#600: 予約セクションは短い3ステップ＋CTAのみ常時表示し、支払い・期限・当日予約・経路別案内は閉じたアコーディオンに保持する', function () {
+  var sec = top.slice(top.indexOf('id="calendar"'), top.indexOf('{% include reservation_form_ja.html %}'));
+  var m = sec.match(/<details class="note-details">\s*<summary>(予約・支払いの詳細[^<]*)<\/summary>([\s\S]*?)<\/details>/);
+  assert.ok(m, '予約・支払いの詳細アコーディオン');
+  assert.ok(!/<details[^>]*\sopen/.test(m[0]), '初期は閉じている');
   ['送信だけでは予約確定ではありません', '24時間以内', '現金・PayPay', 'はじめてご利用の方はオンラインクレジットカード決済のみ', '決済ページの有効期限',
-    '期限切れ・決済未完了の場合、予約は確定しません', '当日のご予約', '会員登録の有無は当日予約の条件ではありません'].forEach(function (w) {
+    '期限切れ・決済未完了の場合、予約は確定しません', '当日のご予約', '会員登録の有無は当日予約の条件ではありません',
+    'はじめてご利用の方：', 'ご利用経験のある方：', '利用目的・安全ルールへのご同意', 'XのDM', 'x.com/nagoyabase2023'].forEach(function (w) {
     assert.ok(m[2].indexOf(w) !== -1, '詳細に保持: ' + w);
   });
-  assert.ok(!/<details[^>]*\sopen/.test(m[0]), '初期は閉じている');
+  var visible = sec.replace(m[0], '');
+  assert.ok(visible.indexOf('calendar-note') === -1 && visible.indexOf('reservation-path-card') === -1, '常時表示の説明ブロックを持たない');
+  assert.strictEqual((visible.match(/reservation-steps-num/g) || []).length, 3);
+  assert.ok(textOf(visible.slice(visible.indexOf('<ol'), visible.indexOf('</ol>'))).replace(/\s+/g, '').length <= 40, 'ステップは短く');
 });
 
 test('#598: 問い合わせフォームの必須同意は維持し、注意書きは圧縮する', function () {
