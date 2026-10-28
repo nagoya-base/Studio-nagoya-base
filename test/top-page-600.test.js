@@ -57,3 +57,23 @@ test('#600: トップから外した説明は詳細ページに保持されて�
   });
   assert.ok(top.indexOf('/how-to/\' | relative_url }}#usage-scenes') !== -1, 'トップから到達できる');
 });
+
+test('#600: 英語トップも要点のみで、移した説明はhow-to/en.htmlに保持され導線がある', function () {
+  var en = read('en.html');
+  var enHow = read('how-to/en.html');
+  var sec = enHow.slice(enHow.indexOf('id="rules-details"'), enHow.indexOf('id="food"'));
+  [
+    'Suspension use requires at least three people.', 'Suspension from the neck is strictly prohibited.',
+    'The studio does not provide rope instruction or technical lessons.', 'Users are responsible for their own safety and consent.',
+    'Follow all instructions regarding equipment and studio use.', 'Eating and drinking are prohibited in the tatami area',
+    'parties and drinking gatherings are not permitted', 'renews automatically by credit card', 'at 4 hours the difference equals the monthly fee',
+    '¥1,000 per booking (not per person)', 'Apply at least 1 week before your visit', 'a booking of 3 hours or longer is recommended'
+  ].forEach(function (w) { assert.ok(sec.indexOf(w) !== -1, 'how-to/en: ' + w); });
+  var safety = en.slice(en.indexOf('id="safety"'), en.indexOf('id="access"'));
+  assert.ok((safety.match(/<li>/g) || []).length <= 4, '安全ルールは要点のみ');
+  assert.strictEqual(safety.indexOf('rules-subnote'), -1);
+  assert.ok(safety.indexOf('how-to/en.html#rules-details') !== -1);
+  assert.strictEqual(en.indexOf('renews automatically by credit card'), -1);
+  assert.strictEqual(en.indexOf('Apply at least 1 week'), -1);
+  assert.ok(en.split('how-to/en.html#rules-details').length - 1 >= 3, '各所から詳細へ到達できる');
+});
