@@ -301,7 +301,7 @@ var BookingOptions = (function () {
     STAFF_SERVICE_APPROVAL:
       'スタッフ設営・片付けは事前確認制です。お申し込み後に対応可否をご案内し、承認後にオンライン決済をお願いします。申込時点ではスタッフ対応は確定していません。',
     SHOWER_APPROVAL:
-      'シャワー利用は事前確認が必要です。利用希望の場合は事前にご連絡ください。対応可能な場合のみご案内し、承認後にお支払いをお願いします。申込時点ではシャワー利用は確定していません。',
+      'シャワー利用は、準備・スケジュール調整のため、ご利用日の1週間前までのお申し込みが必要です。運営が確認のうえ利用可否をご案内し、ご利用いただける場合は承認後にお支払いをお願いします。申込時点ではシャワー利用は確定していません。',
     EQUIPMENT_SETUP:
       '有料の機材レンタルでは、設営方法・片付け方法の選択が必要です（セルフ＝無料／スタッフ＝有料・事前確認制）。',
     SELF_VS_STAFF:
@@ -344,7 +344,7 @@ var BookingOptions = (function () {
         brand: brand,
         currency: CURRENCY_,
         showerOnly: true,
-        shower: { code: SHOWER_ITEM_CODE, label: SHOWER_LABEL_, priceJpy: SHOWER_PRICE_JPY_, memberOnly: true, maxUsersPerBooking: 2, perBooking: 1 }
+        shower: { code: SHOWER_ITEM_CODE, label: SHOWER_LABEL_, priceJpy: SHOWER_PRICE_JPY_, memberOnly: true, perBooking: 1 }
       };
     }
     ensureCatalogInitialized_();
@@ -729,7 +729,7 @@ var BookingOptions = (function () {
           /* Issue #586: シャワーパックの予約に紐づくシャワーは料金（パック固定額）に含まれるため0円（二重加算しない）。
              事前確認・承認・利用条件は通常のシャワーと同じ（PENDING_APPROVALから開始し、承認で支払いなしに確定する）。 */
           amountJpy: input.showerIncluded === true ? 0 : SHOWER_PRICE_JPY_,
-          /* Issue #481: シャワーは事前連絡・管理者確認が必須。スタッフ設営と同じく必ずPENDING_APPROVALから開始し、
+          /* Issue #481: シャワーは利用日の1週間前までの申込・管理者確認が必須（人数上限は設けず、当日のスタジオ利用人数に準ずる）。スタッフ設営と同じく必ずPENDING_APPROVALから開始し、
              この時点では課金しない（承認後にAWAITING_PAYMENT→Checkout→CONFIRMED）。 */
           approvalStatus: APPROVAL_STATUS.PENDING_APPROVAL,
           paymentStatus: PAYMENT_STATUS.NOT_STARTED,

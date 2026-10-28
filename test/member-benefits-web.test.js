@@ -170,7 +170,7 @@ test('SNB / mens 会員ページ: ペアパック・シャワー・既存有料�
     assert.ok(t.indexOf('通常の会員延長料金（1時間ごとに平日' + yen(extWk) + '／土日祝' + yen(extWe) + '）') !== -1, '延長は通常の会員延長料金');
     assert.ok(t.indexOf('別商品') !== -1, '通常の会員料金表とは別商品');
     assert.ok(t.indexOf('シャワー（1予約につき1回）' + yen(Options.SHOWER_PRICE_JPY)) !== -1, brand + ' シャワー料金');
-    assert.ok(t.indexOf('同じご予約の利用者全員でご利用いただけます') !== -1 && t.indexOf('予約時間内に限ります') !== -1);
+    assert.ok(t.indexOf('利用人数は当日のスタジオ利用人数に準じます') !== -1 && t.indexOf('予約時間内に限ります') !== -1);
     assert.ok(t.indexOf('利用者2名まで') === -1, brand + ' シャワーの人数上限が残っていない');
     assert.ok(t.indexOf('Studio Xでは提供していません') !== -1);
     assert.ok(t.indexOf('有料機材レンタル') === -1 && t.indexOf('会員限定の有料機材') === -1, brand + ' 会員特典に有料機材レンタルを載せない');
@@ -276,7 +276,7 @@ test('規約・特商法・会員条件に、新料金（5,000/6,000/1,000円）
   assert.ok(lt.indexOf('2名ペアパックは、SNB・SNB mensで、SNB MEMBERの会員資格がある方に限りご利用いただける、3時間・1〜2名の定額プランです（平日5,000円／土日祝6,000円・税込）') !== -1);
   assert.ok(lt.indexOf('シャワーは、SNB・SNB mensで、SNB MEMBERの会員資格がある方に限りご利用いただける有料オプションです（1予約につき1回1,000円・税込）') !== -1);
   assert.ok(lt.indexOf('有料機材オプションのご利用にはSNB MEMBERの会員資格') === -1);
-  assert.ok(lt.indexOf('利用者2名まで共有') === -1 && lt.indexOf('同じご予約の利用者全員でご利用いただけます') !== -1);
+  assert.ok(lt.indexOf('利用者2名まで共有') === -1 && lt.indexOf('利用人数は当日のスタジオ利用人数に準じます') !== -1);
   var law = textOf(legal.slice(legal.indexOf('特定商取引法に基づく表記')));
   ['会員限定の2名ペアパックは平日5,000円・土日祝6,000円（3時間・1〜2名、税込）', '会員限定のシャワーは1予約につき1回1,000円（税込）', '会員限定の特典：', '会員資格はStudio Nagoya Base・SNB mens・Studio Xで共通です']
     .forEach(function (w) { assert.ok(law.indexOf(w) !== -1, '特商法表記に「' + w + '」'); });
@@ -445,7 +445,7 @@ test('STRIPE_CHECKOUT_ENABLED の既定は変更していない（未設定な�
 
 test('シャワー(#481): 予約フォーム・会員案内・申込ページに「事前確認が必要・承認後にお支払い」を明記し、即利用できる表現を出さない', function () {
   var fs = require('fs');
-  var NOTICE = 'シャワー利用は事前確認が必要です。利用希望の場合は事前にご連絡ください。対応可能な場合のみご案内し、承認後にお支払いをお願いします。';
+  var NOTICE = 'シャワー利用は、準備・スケジュール調整のため、ご利用日の1週間前までのお申し込みが必要です。運営が確認のうえ利用可否をご案内し、ご利用いただける場合は承認後にお支払いをお願いします。';
   ['_includes/booking_app_ja.html', '_includes/membership_benefits_ja.html', '_includes/shower_options_ja.html',
     'membership/index.html', 'mens/membership/index.html', 'mens/index.html'].forEach(function (file) {
     var html = fs.readFileSync(__dirname + '/../' + file, 'utf8');

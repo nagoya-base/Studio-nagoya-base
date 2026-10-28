@@ -98,7 +98,7 @@ SNB mensだけの独立プラン `mens_weekend_shower_4h`（`Bookings.planCode` 
 
 ### 会員限定シャワー（SNB / SNB mensのみ。Studio Xでは表示しない）
 
-- 1予約につき1回 1,000円。同一予約の利用者2名まで共有可・予約時間内のみ。OptionOrder系の有料オプション（`category=MEMBER_SERVICE`・`items=['SHOWER']`・Issue #481で事前連絡・管理者承認制に変更: `PENDING_APPROVAL` → 承認 → `AWAITING_PAYMENT` → Checkout決済 → `CONFIRMED`）。正本: `BookingOptions.gs`（`SHOWER_PRICE_JPY_`）。
+- 1予約につき1回 1,000円（1人あたりではない）。利用人数は当日のスタジオ利用人数に準ずる（Issue #590で「同一予約2名まで」を廃止）。予約時間内のみ・利用日の1週間前までに申込・運営確認後に利用可否を案内。OptionOrder系の有料オプション（`category=MEMBER_SERVICE`・`items=['SHOWER']`・Issue #481で管理者承認制に変更。#590で「事前連絡」を「利用日の1週間前まで」に統一: `PENDING_APPROVAL` → 承認 → `AWAITING_PAYMENT` → Checkout決済 → `CONFIRMED`）。正本: `BookingOptions.gs`（`SHOWER_PRICE_JPY_`）。
 
 ### SNB / mens の既存有料機材（「機材レンタルオプション（会員限定）」）
 
