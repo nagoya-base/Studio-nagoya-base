@@ -28,9 +28,11 @@ var legal = read('legal/index.html');
 
 test('#594: トップは重複セクションを統合し、ヘッダーナビ・既存アンカーの宛先が残っている', function () {
   var present = ids(top).concat(ids(read('_includes/phase2_trust_ja.html')));
-  ['calendar', 'first-time', 'safety', 'news', 'features', 'equipment', 'gallery', 'pricing', 'access', 'hours', 'faq', 'legal'].forEach(function (id) {
+  ['calendar', 'first-time', 'safety', 'news', 'features', 'equipment', 'gallery', 'pricing', 'access', 'faq', 'legal'].forEach(function (id) {
     assert.ok(present.indexOf(id) !== -1, '#' + id + ' が存在する');
   });
+  /* #611: 営業時間は #access に統合、X導線は #news に統合（独立セクションは持たない） */
+  assert.ok(!/<section[^>]*id="(hours|x-timeline)"/.test(top), '#hours / #x-timeline は独立セクションではない');
   assert.ok(ids(read('_includes/reservation_form_ja.html')).indexOf('reservation-form') !== -1 && top.indexOf('include reservation_form_ja.html') !== -1, '#reservation-form（相談フォーム）');
   /* 統合・削除したセクション（内容は features / equipment / hero / calendar へ集約） */
   ['show-practice', 'purpose', 'usage-section', 'featured-image', 'cta'].forEach(function (id) {
@@ -147,8 +149,9 @@ test('#594: 旧「問い合わせフォームから予約」導線の痕跡が�
   assert.ok(/id="reservation-submit"[^>]*>相談内容を送信する</.test(form));
   assert.ok(top.indexOf('利用内容を事前に相談する') !== -1, '予約前相談の導線は維持');
   /* 予約CTAは予約ページへ一本化 */
-  var cta = top.match(/href="\{\{ '\/booking\/' \| relative_url \}\}"[^>]*data-analytics-type="booking_app"/g) || [];
-  assert.ok(cta.length >= 4, 'ヒーロー・空き状況・料金・末尾の予約CTA');
+  ['hero', 'calendar', 'pricing', 'final_cta'].forEach(function (loc) {
+    assert.ok(new RegExp('href="\\{\\{ \'/booking/\' \\| relative_url \\}\\}"[^>]*data-analytics-location="' + loc + '"[^>]*data-analytics-type="booking_app"').test(top), loc + ' の予約CTA');
+  });
   assert.ok(top.indexOf('id="floatingBookingBtn"') !== -1);
   assert.ok(/reservation-form\.js/.test(top), '送信処理は変更しない');
 });

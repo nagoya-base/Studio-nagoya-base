@@ -169,7 +169,6 @@
     <div class="section-cta-sm">
       <div class="btn-group" style="justify-content: center;">
         <a class="btn-primary" href="{{ '/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="calendar" data-analytics-type="booking_app" data-analytics-destination="booking_app">日時を選んで予約する</a>
-        <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="calendar">利用内容を事前に相談する</a>
       </div>
     </div>
 
@@ -213,6 +212,7 @@
       {% endfor %}
     </div>
     <p class="pricing-note"><a href="{{ '/news/' | relative_url }}" data-analytics-event="cta_click" data-analytics-type="news_list" data-analytics-location="news">お知らせ一覧（過去のお知らせ）を見る →</a></p>
+    <p class="pricing-note">作例や空き情報は X でも発信しています：<a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer" data-analytics-event="cta_click" data-analytics-type="x_profile" data-analytics-location="news" data-analytics-destination="x_profile">@nagoyabase2023</a></p>
   </div>
 </section>
 
@@ -445,7 +445,7 @@
       <p>会員料金は、<strong>3時間以上のご利用で一般料金より安く</strong>なります。<strong>3時間のご利用で、一般料金との差額が月会費500円相当</strong>になります。</p>
       <p>主な特典：<strong>90日先行予約</strong>（2026年10月26日から利用中）、会員限定の<strong>2名ペアパック・シャワー</strong>。会員料金は2026年12月1日以降に作成したご予約から、ペアパック・シャワーは利用日が2026年12月1日以降のご予約から適用されます。</p>
       <div class="btn-group">
-        <a class="btn-primary" href="{{ '/membership/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="pricing" data-analytics-type="membership_join" data-analytics-destination="membership_page">SNB MEMBERの内容を見て加入する</a>
+        <a class="btn-secondary" href="{{ '/membership/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="pricing" data-analytics-type="membership_join" data-analytics-destination="membership_page">SNB MEMBERの内容を見て加入する</a>
       </div>
     </div>
 
@@ -484,16 +484,11 @@
       <a href="{{ '/pdf/access_guide.pdf' | relative_url }}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:12px;">📄 アクセスガイドを見る（PDF）</a><br>
       <a href="{{ '/how-to/' | relative_url }}#access" style="display:inline-block;margin-top:8px;">🗺 詳しいアクセス・地図を見る →</a>
     </div>
-  </div>
-</section>
 
-<!-- 営業時間 -->
-<section id="hours">
-  <div class="container">
-    <h2 class="section-title">営業時間</h2>
-    <p class="section-subtitle">Hours</p>
-
-    {% include hours_block_ja.html %}
+    <div id="hours" class="access-hours">
+      <h3 class="access-hours-title">営業時間</h3>
+      {% include hours_block_ja.html %}
+    </div>
   </div>
 </section>
 
@@ -536,21 +531,6 @@
   </div>
 </section>
 
-<!-- X タイムライン -->
-<section id="x-timeline">
-  <div class="container">
-    <h2 class="section-title">最新情報</h2>
-    <p class="section-subtitle">Latest Posts</p>
-
-    <div class="sns-section">
-      <p>緊縛・身体表現の作例や最新の作例・空き情報は X（Twitter）でご確認ください。</p>
-      <a class="btn-twitter" href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">
-        @nagoyabase2023 をフォロー
-      </a>
-    </div>
-  </div>
-</section>
-
 <!-- 法的事項 -->
 <section id="legal" class="bg-section">
   <div class="container">
@@ -562,16 +542,12 @@
       <li>キャンセル：前日50% ／ 当日100%</li>
       <li>防犯カメラ設置（無人運営・安全確認用途）</li>
     </ul>
-    <p class="pricing-note">利用規約・キャンセルポリシー・プライバシーポリシー・特定商取引法に基づく表記の全文は、法的事項ページでご確認いただけます。禁止事項（飲酒後の緊縛・吊り、性的行為を伴う撮影など）は上記の安全利用についてと利用規約をご確認ください。</p>
     <p class="pricing-note">
       <a href="{{ '/legal/' | relative_url }}#terms" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="legal_summary">利用規約</a>
       ／ <a href="{{ '/legal/' | relative_url }}#cancel" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="legal_summary">キャンセルポリシー</a>
       ／ <a href="{{ '/legal/' | relative_url }}#privacy" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="legal_summary">プライバシーポリシー</a>
-      ／ <a href="{{ '/legal/' | relative_url }}#law" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="legal_summary">特定商取引法に基づく表記</a>
     </p>
-    <div class="section-cta-sm">
-      <a class="btn-primary" href="{{ '/legal/' | relative_url }}" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="legal_summary">利用規約・法的事項の全文を見る →</a>
-    </div>
+    <p class="pricing-note"><a href="{{ '/legal/' | relative_url }}" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="legal_summary">利用規約・法的事項（特定商取引法に基づく表記ほか）→</a></p>
   </div>
 </section>
 
