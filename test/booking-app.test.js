@@ -17,7 +17,7 @@ function createElement(id) {
     id: id,
     hidden: true,
     disabled: false,
-    checked: id === 'ba-confirm-consent',
+    checked: id === 'ba-confirm-consent' || id === 'ba-confirm-terms' || id === 'ba-confirm-safety',
     /* メールアドレスは予約フォーム前半（Step1）で入力する（Issue #532）。Step1で日付を選ぶ前に入力済みの前提。 */
     value: id === 'ba-email' ? 'taro@example.com' : '',
     textContent: '',
@@ -365,6 +365,50 @@ test('Issue #532: メールアドレスはStep1で1回だけ入力する。未�
   await flushPromises();
   assert.strictEqual(ctx.requests.length, 1);
   assert.strictEqual(ctx.requests[0].body.email, 'step1@example.com', 'Step1のメールをそのまま最終送信に使う');
+});
+
+test('Issue #603: 規約等・安全ルールの同意が未チェックなら送信されず、チェックごとにエラーを出す', async function () {
+  var ctx = setupFullFlow(null);
+  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-duration'].value = '2';
+  ctx.setCustomerType('returning');
+  ctx.elements['ba-email'].value = 'step1@example.com';
+  ctx.elements['ba-step-datetime-next']._listeners.click();
+  await flushPromises();
+  ctx.startTimeButtons[0]._listeners.click();
+  ctx.elements['ba-step-start-time-next']._listeners.click();
+  ctx.elements['ba-name'].value = '山田太郎';
+  ctx.elements['ba-people'].value = '2名';
+  ctx.elements['ba-purpose'].value = 'セルフ撮影';
+  ctx.setPaymentMethod('現金');
+  ctx.elements['ba-step-details-next']._listeners.click();
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-confirm-terms'].checked = false;
+  ctx.elements['ba-confirm-safety'].checked = false;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(ctx.requests.length, 0, '未同意では送信しない');
+  assert.strictEqual(ctx.elements['ba-terms-error'].hidden, false);
+  assert.strictEqual(ctx.elements['ba-safety-error'].hidden, false);
+
+  ctx.elements['ba-confirm-terms'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(ctx.requests.length, 0, '安全ルール未同意では送信しない');
+  assert.strictEqual(ctx.elements['ba-terms-error'].hidden, true);
+  assert.strictEqual(ctx.elements['ba-safety-error'].hidden, false);
+
+  ctx.elements['ba-confirm-safety'].checked = true;
+  ctx.elements['ba-confirm-consent'].checked = false;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(ctx.requests.length, 0, '既存の予約成立条件確認も必須');
+
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
+  assert.strictEqual(ctx.requests.length, 1, '全て同意すれば送信する');
 });
 
 /* ── English locale（Issue #297）: 実際のscripts/booking-logic.jsをbooking-app.jsと

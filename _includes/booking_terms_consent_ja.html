@@ -1,0 +1,21 @@
+{%- comment -%}
+  予約確認ステップの規約等同意（Issue #603）。Studio X等でも使える共通部品。
+    include.brand  — 'snb' | 'mens' | 'studio_x'（リンク先の legal を切り替える）
+    include.safety — "true" のときだけ安全ルール同意（SNB固有）を生成する。
+                     Studio XではこのDOM・文言をHTMLソースに出さないため、JSではなくここで出し分ける。
+{%- endcomment -%}
+{%- assign ba_legal_base = '/legal/' -%}
+{%- if include.brand == "mens" -%}{%- assign ba_legal_base = '/mens/legal/' -%}{%- endif -%}
+{%- if include.brand == "studio_x" -%}{%- assign ba_legal_base = '/studio-x/legal/' -%}{%- endif -%}
+    <label class="ba-choice" style="align-items: flex-start;">
+      <input type="checkbox" id="ba-confirm-terms">
+      <span><span><a href="{{ ba_legal_base | append: '#terms' | relative_url }}" target="_blank" rel="noopener">利用規約</a>・<a href="{{ ba_legal_base | append: '#cancel' | relative_url }}" target="_blank" rel="noopener">キャンセルポリシー</a>・<a href="{{ ba_legal_base | append: '#privacy' | relative_url }}" target="_blank" rel="noopener">プライバシーポリシー</a>を確認し、同意します。</span><span class="ba-required">必須</span></span>
+    </label>
+    <p class="ba-field-error" id="ba-terms-error" hidden></p>
+{%- if include.safety == "true" %}
+    <label class="ba-choice" style="align-items: flex-start;">
+      <input type="checkbox" id="ba-confirm-safety">
+      <span><span>吊り床・緊縛を利用する場合は、利用者自身で安全管理を行い、<a href="{{ ba_legal_base | append: '#safety-rules' | relative_url }}" target="_blank" rel="noopener">安全ルール</a>を守ります。</span><span class="ba-required">必須</span></span>
+    </label>
+    <p class="ba-field-error" id="ba-safety-error" hidden></p>
+{%- endif %}
