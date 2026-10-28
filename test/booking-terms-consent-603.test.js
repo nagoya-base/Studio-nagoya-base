@@ -61,11 +61,11 @@ test('問い合わせフォーム・GAS・予約payloadは変更しない（本I
 
 test('booking-app.js: terms/safety要素の存在有無で必須判定を切り替えるロジックを持つ', function () {
   var js = read('scripts/booking-app.js');
+  assert.ok(js.indexOf("var consentOk = els.consent.checked;") >= 0);
   assert.ok(js.indexOf("var termsOk = !els.terms || els.terms.checked;") >= 0);
   assert.ok(js.indexOf("var safetyOk = !els.safety || els.safety.checked;") >= 0);
-  assert.ok(js.indexOf("if (!termsOk || !safetyOk) return;") >= 0);
-  /* 既存の予約成立条件確認（consent）の判定は先に残っている。 */
-  assert.ok(js.indexOf("if (!els.consent.checked) return;") >= 0);
+  /* 既存の予約成立条件確認（consent）も同じ判定にまとめて維持。 */
+  assert.ok(js.indexOf("if (!consentOk || !termsOk || !safetyOk) return;") >= 0);
   assert.ok(js.indexOf("termsRequired: '利用規約・キャンセルポリシー・プライバシーポリシーへの同意が必要です。'") >= 0);
   assert.ok(js.indexOf("safetyRequired: '安全ルールへの同意が必要です。'") >= 0);
   assert.ok(js.indexOf("termsRequired: 'Please agree to the Terms of Use, Cancellation Policy, and Privacy Policy.'") >= 0);

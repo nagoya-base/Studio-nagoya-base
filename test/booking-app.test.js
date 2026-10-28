@@ -383,12 +383,16 @@ test('Issue #603: 規約等・安全ルールの同意が未チェックなら�
   ctx.setPaymentMethod('現金');
   ctx.elements['ba-step-details-next']._listeners.click();
 
-  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-confirm-consent'].checked = false;
   ctx.elements['ba-confirm-terms'].checked = false;
   ctx.elements['ba-confirm-safety'].checked = false;
   ctx.elements['ba-submit']._listeners.click();
   await flushPromises();
   assert.strictEqual(ctx.requests.length, 0, '未同意では送信しない');
+  assert.strictEqual(ctx.elements['ba-consent-error'].hidden, false, '3つとも未チェックなら1回で全エラーを表示する');
+  ctx.elements['ba-confirm-consent'].checked = true;
+  ctx.elements['ba-submit']._listeners.click();
+  await flushPromises();
   assert.strictEqual(ctx.elements['ba-terms-error'].hidden, false);
   assert.strictEqual(ctx.elements['ba-safety-error'].hidden, false);
 

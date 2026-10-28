@@ -2480,14 +2480,15 @@
       if (reverifyBlocked_()) { goToStep('datetime'); showGlobalError(Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale, brand), []); return; }
 
       hideSubmitError();
-      setFieldError_(els.consent, els.consentError, els.consent.checked ? '' : UI_TEXT.consentRequired);
-      if (!els.consent.checked) return;
-      /* Issue #603: 規約等・安全ルールへの同意（要素が存在するときだけ必須）。 */
+      /* 成立条件確認・規約等・安全ルールの3つを先に全部判定してから止める（エラーを1度で全て表示する）。
+         規約等・安全ルールはIssue #603。要素が存在するときだけ必須。 */
+      var consentOk = els.consent.checked;
       var termsOk = !els.terms || els.terms.checked;
       var safetyOk = !els.safety || els.safety.checked;
+      setFieldError_(els.consent, els.consentError, consentOk ? '' : UI_TEXT.consentRequired);
       if (els.terms) setFieldError_(els.terms, els.termsError, termsOk ? '' : UI_TEXT.termsRequired);
       if (els.safety) setFieldError_(els.safety, els.safetyError, safetyOk ? '' : UI_TEXT.safetyRequired);
-      if (!termsOk || !safetyOk) return;
+      if (!consentOk || !termsOk || !safetyOk) return;
 
       /* 送信直前にも初回利用のカード必須を再確認する（サーバー側のFIRST_TIME_CARD_PAYMENT_REQUIRED拒否と
          合わせた多層防御。ここで止められればfetch自体を発生させない）。 */
