@@ -130,6 +130,11 @@ test('#594: 旧「問い合わせフォームから予約」導線の痕跡が�
   /* 問い合わせフォームは予約窓口ではなく、予約前相談・問い合わせの窓口として維持する */
   assert.ok(form.indexOf('id="reservation-form"') !== -1);
   assert.ok(form.indexOf('このフォームでは予約できません') !== -1);
+  var js = read('scripts/reservation-form.js');
+  [form, js].forEach(function (src) {
+    assert.ok(!/is-booking-only|data-required-if-booking|予約申込日時|reservation-condition|reservation-date|reservation-party-size|reservation-purpose|reservation-duration|reservation-start-time|吊り床利用予定|予約成立条件同意|SUBMIT_LABEL_BOOKING|intent === 'booking'|予約申込/.test(src), 'booking用フィールド/分岐が残っていない');
+  });
+  assert.ok(form.indexOf('name="送信日時"') !== -1);
   assert.ok(form.indexOf('data-intent="consult"') !== -1);
   assert.ok(/id="reservation-submit"[^>]*>相談内容を送信する</.test(form));
   assert.ok(top.indexOf('利用内容を事前に相談する') !== -1, '予約前相談の導線は維持');

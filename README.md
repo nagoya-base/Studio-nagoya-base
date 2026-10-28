@@ -143,8 +143,11 @@ API ready確認が完了するまでmainへマージしない**）
   相談・問い合わせ導線、および障害時ロールバック用として引き続き保持する
 - （Issue #594で追記）SNB / mens共通の`_includes/reservation_form_ja.html`からは、非表示だった
   「日程を決めて予約する」radioを削除し、見出し・送信ボタンを「予約前のご相談・お問い合わせ」
-  「相談内容を送信する」に改めた。予約は予約ページへ一本化済み。booking用の非表示フィールドと
-  `scripts/reservation-form.js`のbooking分岐は未整理（後続課題）。以下は#273時点の記述。
+  「相談内容を送信する」に改めた。予約は予約ページへ一本化済み。あわせてbooking用の非表示
+  フィールド（希望日時・人数・目的・吊り床・支払方法・利用区分・予約成立条件同意）、
+  `scripts/reservation-form.js`のbooking分岐、Formspree項目名「予約申込日時」（→「送信日時」）も
+  削除し、このフォームは相談・問い合わせ専用とした。以下は#273時点の記述で、booking intentの
+  復元手順は現行コードには適用できない。
 - 旧予約フォーム内の「日程を決めて予約する」（SNB / mens）・「空き状況を確認して予約したい」
   （Studio X）という`booking` intentの選択肢も、通常公開では非表示・選択不可にした
   （`hidden` + `disabled`、Studio X側は`?intent=booking`のプリフィルも無効化）。

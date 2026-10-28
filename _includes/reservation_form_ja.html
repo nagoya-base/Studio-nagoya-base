@@ -24,7 +24,7 @@
       data-endpoint-configured="{% if site.formspree_form_id %}true{% else %}false{% endif %}"
       novalidate>
       <input type="hidden" name="_subject" id="reservation-subject" value="【Studio Nagoya Base】予約前の相談">
-      <input type="hidden" name="予約申込日時" id="reservation-submitted-at" value="">
+      <input type="hidden" name="送信日時" id="reservation-submitted-at" value="">
       <input type="hidden" name="流入元ページ" id="reservation-source-page" value="">
       <input type="text" name="_gotcha" class="reservation-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
 
@@ -49,21 +49,21 @@
           <div class="reservation-field">
             <label for="reservation-name">お名前 <span class="field-badge field-badge--required">必須</span></label>
             <input type="text" id="reservation-name" name="お名前" autocomplete="name" required aria-describedby="reservation-name-help reservation-name-error">
-            <p id="reservation-name-help" class="field-help">予約時に確認できるお名前をご入力ください。</p>
+            <p id="reservation-name-help" class="field-help">ご連絡時に確認できるお名前をご入力ください。</p>
             <p id="reservation-name-error" class="field-error" hidden></p>
           </div>
 
           <div class="reservation-field">
             <label for="reservation-email">メールアドレス <span class="field-badge field-badge--required">必須</span></label>
             <input type="email" id="reservation-email" name="email" autocomplete="email" inputmode="email" required aria-describedby="reservation-email-help reservation-email-error">
-            <p id="reservation-email-help" class="field-help">予約確認の返信を受け取れるアドレスをご入力ください。</p>
+            <p id="reservation-email-help" class="field-help">ご返信を受け取れるアドレスをご入力ください。</p>
             <p id="reservation-email-error" class="field-error" hidden></p>
           </div>
 
           <div class="reservation-field reservation-field--full">
             <label for="reservation-x-account">Xアカウント <span class="field-badge">任意</span></label>
             <input type="text" id="reservation-x-account" name="Xアカウント" placeholder="@example" autocomplete="off" aria-describedby="reservation-x-account-help reservation-x-account-error">
-            <p id="reservation-x-account-help" class="field-help">予約確認やメール不達時の連絡に使用します。Xアカウントを入力した場合は、DMを受信できる状態にしてください。</p>
+            <p id="reservation-x-account-help" class="field-help">ご連絡やメール不達時の連絡に使用します。Xアカウントを入力した場合は、DMを受信できる状態にしてください。</p>
             <p id="reservation-x-account-error" class="field-error" hidden></p>
           </div>
 
@@ -83,117 +83,8 @@
         </div>
       </fieldset>
 
-      <fieldset class="reservation-group is-booking-only" data-scope="booking">
-        <legend>3. 希望日時</legend>
-        <div class="reservation-fields reservation-fields--compact">
-          <div class="reservation-field">
-            <label for="reservation-date">希望日 <span class="field-badge field-badge--required" id="reservation-date-badge">必須</span></label>
-            <input type="date" id="reservation-date" name="希望日" data-required-if-booking="true" aria-describedby="reservation-date-help reservation-date-error">
-            <p id="reservation-date-help" class="field-help">初めてご利用の方はオンラインクレジットカード決済のみとなります。空きがある場合は、当日のご予約も新しい予約ページから直接お申し込みいただけます。</p>
-            <p id="reservation-date-error" class="field-error" hidden></p>
-          </div>
-
-          <div class="reservation-field">
-            <label for="reservation-start-time">希望開始時間 <span class="field-badge field-badge--required" id="reservation-start-time-badge">必須</span></label>
-            <input type="time" id="reservation-start-time" name="希望開始時間" min="08:00" max="23:00" step="1800" data-required-if-booking="true" aria-describedby="reservation-start-time-help reservation-start-time-error">
-            <p id="reservation-start-time-help" class="field-help">営業時間は8:00〜23:00です。30分単位をおすすめします。</p>
-            <p id="reservation-start-time-error" class="field-error" hidden></p>
-          </div>
-
-          <div class="reservation-field">
-            <label for="reservation-duration">利用時間 <span class="field-badge field-badge--required" id="reservation-duration-badge">必須</span></label>
-            <select id="reservation-duration" name="利用時間" data-required-if-booking="true" aria-describedby="reservation-duration-help reservation-duration-error">
-              <option value="">選択してください</option>
-              <option value="1">1時間</option>
-              <option value="2">2時間</option>
-              <option value="3">3時間</option>
-              <option value="4">4時間</option>
-              <option value="5">5時間</option>
-              <option value="6">6時間</option>
-              <option value="7+">7時間以上・長時間利用</option>
-            </select>
-            <p id="reservation-duration-help" class="field-help">緊縛・吊り床を使用する場合は3時間以上をおすすめします。</p>
-            <p id="reservation-duration-error" class="field-error" hidden></p>
-          </div>
-        </div>
-        <p id="reservation-end-warning" class="reservation-warning" role="alert" hidden>利用終了時間が23:00を超えています。開始時間または利用時間を変更してください。</p>
-      </fieldset>
-
       <fieldset class="reservation-group">
-        <legend>4. 利用内容</legend>
-        <div class="reservation-fields">
-          <div class="reservation-field is-booking-only" data-scope="booking">
-            <label for="reservation-party-size">利用人数 <span class="field-badge field-badge--required" id="reservation-party-size-badge">必須</span></label>
-            <select id="reservation-party-size" name="利用人数" data-required-if-booking="true" aria-describedby="reservation-party-size-help reservation-party-size-error">
-              <option value="">選択してください</option>
-              <option value="1名">1名</option>
-              <option value="2名">2名</option>
-              <option value="3名">3名</option>
-              <option value="4名">4名</option>
-              <option value="5名以上・要相談">5名以上・要相談</option>
-            </select>
-            <p id="reservation-party-size-help" class="field-help">最大4名まで同一料金です。5名以上は内容を確認してご連絡します。</p>
-            <p id="reservation-party-size-error" class="field-error" hidden></p>
-          </div>
-
-          <div class="reservation-field is-booking-only" data-scope="booking">
-            <label for="reservation-purpose">利用目的 <span class="field-badge field-badge--required">必須</span></label>
-            <select id="reservation-purpose" name="利用目的" data-required-if-booking="true" aria-describedby="reservation-purpose-error">
-              <option value="">選択してください</option>
-              <option value="緊縛の自主練習">緊縛の自主練習</option>
-              <option value="ショー・パフォーマンス練習">ショー・パフォーマンス練習</option>
-              <option value="講習会・ワークショップ">講習会・ワークショップ</option>
-              <option value="緊縛・ロープ表現の撮影">緊縛・ロープ表現の撮影</option>
-              <option value="身体表現・作品撮り">身体表現・作品撮り</option>
-              <option value="静止画・動画撮影">静止画・動画撮影</option>
-              <option value="その他">その他</option>
-            </select>
-            <p id="reservation-purpose-error" class="field-error" hidden></p>
-          </div>
-
-          <div id="reservation-purpose-other-wrap" class="reservation-field reservation-field--full is-booking-only" data-scope="booking">
-            <label for="reservation-purpose-other">利用目的の詳細 <span class="field-badge">「その他」の場合は必須</span></label>
-            <input type="text" id="reservation-purpose-other" name="利用目的の詳細" aria-describedby="reservation-purpose-other-error">
-            <p id="reservation-purpose-other-error" class="field-error" hidden></p>
-          </div>
-        </div>
-
-        <fieldset class="reservation-choice-group is-booking-only" data-scope="booking">
-          <legend>吊り床の利用予定 <span class="field-badge field-badge--required">必須</span></legend>
-          <div class="reservation-choices">
-            <label><input type="radio" name="吊り床利用予定" value="利用する" data-required-if-booking="true" aria-describedby="reservation-suspension-error"> <span>利用する</span></label>
-            <label><input type="radio" name="吊り床利用予定" value="利用しない" aria-describedby="reservation-suspension-error"> <span>利用しない</span></label>
-            <label><input type="radio" name="吊り床利用予定" value="未定・相談したい" aria-describedby="reservation-suspension-error"> <span>未定・相談したい</span></label>
-          </div>
-          <p id="reservation-suspension-error" class="field-error" hidden></p>
-          <p id="reservation-suspension-note" class="reservation-warning" hidden>吊り床を利用する場合は、緊縛・リギングの知識を持つ方が安全管理を行ってください。</p>
-          <noscript><p class="reservation-warning">吊り床を利用する場合は、緊縛・リギングの知識を持つ方が安全管理を行ってください。</p></noscript>
-        </fieldset>
-
-        <fieldset class="reservation-choice-group is-booking-only" data-scope="booking">
-          <legend>希望する支払方法 <span class="field-badge field-badge--required">必須</span></legend>
-          <div class="reservation-choices">
-            <label><input type="radio" name="支払方法" value="現金" data-required-if-booking="true" aria-describedby="reservation-payment-error"> <span>現金</span></label>
-            <label><input type="radio" name="支払方法" value="PayPay" aria-describedby="reservation-payment-error"> <span>PayPay</span></label>
-            <label><input type="radio" name="支払方法" value="オンラインクレジットカード" aria-describedby="reservation-payment-error"> <span>オンラインクレジットカード</span></label>
-            <label><input type="radio" name="支払方法" value="未定" aria-describedby="reservation-payment-error"> <span>未定</span></label>
-          </div>
-          <p class="field-help">カード決済をご希望の場合は、予約確定後にお送りする案内からお支払いください。</p>
-          <p id="reservation-payment-error" class="field-error" hidden></p>
-        </fieldset>
-
-        <fieldset class="reservation-choice-group is-booking-only" data-scope="booking">
-          <legend>利用区分 <span class="field-badge field-badge--required">必須</span></legend>
-          <div class="reservation-choices">
-            <label><input type="radio" name="利用区分" value="初回利用" data-required-if-booking="true" aria-describedby="reservation-member-error"> <span>初回利用</span></label>
-            <label><input type="radio" name="利用区分" value="通常利用" aria-describedby="reservation-member-error"> <span>通常利用</span></label>
-            <label><input type="radio" name="利用区分" value="会員利用" aria-describedby="reservation-member-error"> <span>会員利用</span></label>
-            <label><input type="radio" name="利用区分" value="分からない" aria-describedby="reservation-member-error"> <span>分からない</span></label>
-          </div>
-          <p class="field-help">会員価格は、SNB MEMBERの方の直接予約に適用されます（予約時のメールアドレスが会員登録と一致し、利用日がお支払い済みの有効期間に入っている場合）。</p>
-          <p id="reservation-member-error" class="field-error" hidden></p>
-        </fieldset>
-
+        <legend>3. ご相談内容</legend>
         <div class="reservation-field reservation-field--full">
           <label for="reservation-message" id="reservation-message-label">連絡事項 <span class="field-badge" id="reservation-message-mark">任意</span></label>
           <textarea id="reservation-message" name="連絡事項" rows="5" maxlength="1000" placeholder="講習会の内容、持ち込み機材、長時間利用、その他ご相談があればご記入ください。" aria-describedby="reservation-message-help reservation-message-error"></textarea>
@@ -203,7 +94,7 @@
       </fieldset>
 
       <fieldset class="reservation-group reservation-confirmation">
-        <legend>5. 確認・同意</legend>
+        <legend>4. 確認・同意</legend>
         <div class="reservation-carrier-notice">
           <p><strong>携帯電話会社のメールアドレスをご利用の方へ</strong></p>
           <p>docomo・au・SoftBankなどのキャリアメールでは、当方からのGmailが受信拒否される場合があります。Gmailからのメールを受信できる設定になっているか、迷惑メールフォルダに振り分けられていないかをご確認ください。</p>
@@ -214,9 +105,6 @@
 
           <label for="reservation-safety"><input type="checkbox" id="reservation-safety" name="安全ルール同意" value="同意する" required aria-describedby="reservation-safety-error"> <span>吊り床・緊縛を利用する場合は、利用者自身で安全管理を行い、安全ルールを守ります。 <span class="field-badge field-badge--required">必須</span></span></label>
           <p id="reservation-safety-error" class="field-error" hidden></p>
-
-          <label for="reservation-condition" class="is-booking-only" data-scope="booking"><input type="checkbox" id="reservation-condition" name="予約成立条件同意" value="同意する" data-required-if-booking="true" aria-describedby="reservation-condition-error"> <span>フォーム送信時点では予約は確定せず、当方からの予約確定連絡をもって予約成立となることを確認しました。 <span class="field-badge field-badge--required">必須</span></span></label>
-          <p id="reservation-condition-error" class="field-error" hidden></p>
 
           <label for="reservation-carrier-mail"><input type="checkbox" id="reservation-carrier-mail" name="メール受信設定確認" value="確認しました" required aria-describedby="reservation-carrier-mail-error"> <span>上記のメール受信設定・迷惑メールフォルダについて確認しました <span class="field-badge field-badge--required">必須</span></span></label>
           <p id="reservation-carrier-mail-error" class="field-error" hidden></p>
