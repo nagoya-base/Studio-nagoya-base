@@ -62,16 +62,12 @@ test('#602: 予約フロー側（#603/#606）の同意UIは問い合わせフォ
   assert.ok(/ba-confirm-consent/.test(read('_includes/booking_app_ja.html')));
 });
 
-test('#598: SNB MEMBERの常時表示は要点のみで、契約条件・割引額は詳細に1回だけ保持する', function () {
-  var cta = top.slice(top.indexOf('<div class="snb-member-cta"'), top.indexOf('</details>', top.indexOf('<div class="snb-member-cta"')));
-  var visible = cta.slice(0, cta.indexOf('<details'));
-  ['月額500円', '3時間以上のご利用で一般料金より安く', '差額が月会費500円相当'].forEach(function (w) { assert.ok(visible.indexOf(w) !== -1, w); });
-  assert.ok(textOf(visible).length < 150, '常時表示本文が短い');
-  assert.ok(visible.indexOf('1〜2時間') === -1 && visible.indexOf('延長1時間ごとに500円') === -1, '詳細は常時表示しない');
-  var details = cta.slice(cta.indexOf('<details'));
-  ['3時間で500円、4時間で1,000円、延長1時間ごとに500円', '1〜2時間のご利用では一般料金との差はありません', '自動更新（Stripe）', '平日5,000円／土日祝6,000円'].forEach(function (w) {
-    assert.strictEqual(top.split(w).length - 1, 1, w + ' は1回だけ');
-    assert.ok(details.indexOf(w) !== -1, '詳細内: ' + w);
+test('#598/#610: SNB MEMBERのトップ表示は要点のみで、契約条件・割引額の詳細は/membership/へ委ねる', function () {
+  var cta = top.slice(top.indexOf('<div class="snb-member-cta"'), top.indexOf('</div>\n    </div>', top.indexOf('<div class="snb-member-cta"')));
+  ['月額500円', '3時間以上のご利用で一般料金より安く', '差額が月会費500円相当'].forEach(function (w) { assert.ok(cta.indexOf(w) !== -1, w); });
+  assert.ok(cta.indexOf('<details') === -1, 'トップに会員制度の詳細アコーディオンを持たない');
+  ['3時間で500円、4時間で1,000円', '1〜2時間のご利用では', '自動更新（Stripe）', '日割り', '旧制度', '平日5,000円／土日祝6,000円'].forEach(function (w) {
+    assert.strictEqual(top.indexOf(w), -1, w + ' はトップに重複して持たない');
   });
 });
 

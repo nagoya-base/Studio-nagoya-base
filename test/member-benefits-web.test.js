@@ -241,7 +241,8 @@ test('mens専用・Studio X専用のStripe商品を作らない（共通の加�
 test('各トップから対応する会員ページへの導線がある（SNB→/membership/・mens→/mens/membership/・Studio X→/studio-x/membership/）', function () {
   var snb = read('index.html');
   assert.match(snb, /href="\{\{ '\/membership\/' \| relative_url \}\}"[^>]*>SNB MEMBERの内容を見て加入する/);
-  assert.ok(textOf(snb).indexOf('会員限定の「2名ペアパック」') !== -1 && textOf(snb).indexOf('平日5,000円／土日祝6,000円') !== -1, 'SNBトップのCTAを強化');
+  assert.ok(textOf(snb).indexOf('2名ペアパック') !== -1, 'SNBトップのCTAで主な特典に触れる（金額等の詳細は会員ページが正本: #610）');
+  assert.ok(textOf(read('membership/index.html')).indexOf('平日5,000円') !== -1 || textOf(read('_includes/membership_benefits_ja.html')).indexOf('5,000円') !== -1);
   var mens = read('mens/index.html');
   assert.match(mens, /href="\{\{ '\/mens\/membership\/' \| relative_url \}\}"[^>]*>会員限定の特典と加入方法を見る/);
   assert.ok(textOf(mens).indexOf('通常のお部屋料金は、会員加入なしでもこのページの会員料金のままです') !== -1);
