@@ -25,6 +25,7 @@ function textOf(html) { return html.replace(/<[^>]+>/g, ''); }
 
 var top = read('index.html');
 var legal = read('legal/index.html');
+var howTo = read('how-to/index.html');
 
 test('#594: トップは重複セクションを統合し、ヘッダーナビ・既存アンカーの宛先が残っている', function () {
   var present = ids(top).concat(ids(read('_includes/phase2_trust_ja.html')));
@@ -69,15 +70,15 @@ test('#594: 初めての方へ・安全利用は要点を常時表示し、残�
   assert.ok(trust.indexOf('how-to/\' | relative_url }}#flow') !== -1, '使い方への導線');
 });
 
-test('#594: FAQ はトップ3問に絞り（初回利用は詳細FAQに保持）、外した質問はすべて /legal/#faq-full に同文で保持している', function () {
+test('#594: FAQ はトップ3問に絞り（初回利用は詳細FAQに保持）、外した質問はすべて /how-to/#faq-full（FAQ正本）に同文で保持している', function () {
   var shown = faqIds(top);
   assert.deepStrictEqual(shown, ['bondage_allowed', 'payment_method', 'parking']);
   assert.ok(top.indexOf('初めてでも利用できますか？') === -1, 'トップ本文・JSON-LDに初回FAQを置かない');
-  var legalIds = faqIds(legal);
-  assert.ok(legalIds.indexOf('first_time') !== -1 && legal.indexOf('初めてでも利用できますか？') !== -1, '詳細FAQには初回利用が残る');
+  var legalIds = faqIds(howTo);
+  assert.ok(legalIds.indexOf('first_time') !== -1 && howTo.indexOf('初めてでも利用できますか？') !== -1, 'FAQ正本には初回利用が残る');
   var removed = ['snb_member', 'snb_member_billing', 'snb_member_benefits', 'gender', 'alcohol', 'equipment_rental', 'cancellation', 'weather_cancellation'];
-  removed.concat(shown).forEach(function (id) { assert.ok(legalIds.indexOf(id) !== -1, id + ' は規約ページのFAQ全件にある'); });
-  assert.ok(top.indexOf('#faq-full') !== -1, 'FAQをすべて見る導線');
+  removed.concat(shown).forEach(function (id) { assert.ok(legalIds.indexOf(id) !== -1, id + ' はFAQ正本（how-to）にある'); });
+  assert.ok(top.indexOf("/how-to/' | relative_url }}#faq-full") !== -1, 'FAQをすべて見る導線（FAQ正本へ）');
   /* トップの表示FAQ = JSON-LD（構造化データは表示と一致させる） */
   [top].forEach(function (html) {
     var ld = null;

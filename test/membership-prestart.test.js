@@ -281,7 +281,7 @@ test('Web（Issue #532）: 会員案内3ページ・会員条件・特商法・F
     assert.ok(raw.indexOf('以降は毎月1日') === -1 && raw.indexOf('以後毎月1日') === -1, f + ' に「毎月1日更新」が残っている');
     assert.ok(raw.indexOf('プレスタートの新規受付') === -1, f);
   });
-  assert.ok(read('legal/index.html').indexOf('SNB MEMBERの加入と有効期間について') !== -1);
+  assert.ok(read('how-to/index.html').indexOf('SNB MEMBERの加入と有効期間について') !== -1);
   ['membership/complete.html', 'mens/membership/complete.html', 'studio-x/membership/complete.html'].forEach(function (f) {
     var html = read(f);
     assert.ok(html.indexOf('入会日から1か月有効です') !== -1 && html.indexOf('入会日を基準に毎月自動更新されます') !== -1, f);

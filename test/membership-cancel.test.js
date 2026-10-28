@@ -355,8 +355,8 @@ test('Web: 解約UIは確認ステップを挟み、有効最終日・返金な�
 });
 
 test('Web: 規約・特商法・FAQは通常は専用UI、できない場合は連絡という案内に揃い、旧文言のみの案内は残らない', function () {
-  /* トップのFAQは#594で4問に絞った。会員のFAQ全件（解約手順を含む）は legal/index.html に保持する */
-  ['_includes/membership_terms_ja.html', '_includes/legal_ja.html', 'legal/index.html'].forEach(function (f) {
+  /* トップのFAQは#594で4問に絞った。会員のFAQ全件（解約手順を含む）は how-to/index.html（FAQ正本, #612）に保持する */
+  ['_includes/membership_terms_ja.html', '_includes/legal_ja.html', 'how-to/index.html'].forEach(function (f) {
     var html = read(f);
     assert.ok(html.indexOf('membership/status/') !== -1, f + ': 専用UIへの案内');
     assert.ok(html.indexOf('SNB MEMBER解約') !== -1, f + ': 予備導線を残す');
