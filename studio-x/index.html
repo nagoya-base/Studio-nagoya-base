@@ -27,43 +27,32 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 
-  <!-- 6時間貸切ベースプラン（常設）の構造化データ（Issue #488 / #492）。日付・在庫は載せない。 -->
+  <!-- 6時間貸切ベースプラン（常設）の構造化データ（Issue #488 / #492）。日付・在庫は載せない。FAQは詳細ページ(base-plan/)へ移転（Issue #596）。 -->
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "Offer",
-        "name": "Studio X｜6時間貸切ベースプラン",
-        "description": "着替え・荷物置き・休憩など、長時間の拠点利用向けのStudio X貸切ベース（8:00〜21:00の範囲で最低6時間・1時間1,000円・6名まで・再入室可。利用時間は予約時に確定し、途中延長不可）。有人クロークではなく、荷物は利用者自身で管理します。",
-        "price": "1000",
-        "priceSpecification": { "@type": "UnitPriceSpecification", "price": "1000", "priceCurrency": "JPY", "unitCode": "HUR", "eligibleQuantity": { "@type": "QuantitativeValue", "minValue": 6, "unitCode": "HUR" } },
-        "priceCurrency": "JPY",
-        "url": "https://nagoya-base.github.io/Studio-nagoya-base/studio-x/base-plan/",
-        "seller": { "@type": "LocalBusiness", "name": "Studio X" }
-      },
-      {
-        "@type": "FAQPage",
-        "mainEntity": [
-          {
-            "@type": "Question",
-            "name": "貸切ベースプランは荷物を預かってもらえますか？",
-            "acceptedAnswer": { "@type": "Answer", "text": "いいえ。有人クロークではなく、スタッフによる荷物のお預かりサービスではありません。貸切中のお部屋内で、荷物・貴重品をご自身で管理していただくプランです。" }
-          },
-          {
-            "@type": "Question",
-            "name": "貸切ベースプランはいつでも予約できますか？",
-            "acceptedAnswer": { "@type": "Answer", "text": "はい。Studio Xの予約可能な日であれば、予約フォームでいつでもお選びいただけます。通常の予約に自動で適用されることはなく、ご自身でプランを選んだ場合のみ適用されます。" }
-          },
-          {
-            "@type": "Question",
-            "name": "貸切ベースプランの時間と人数は？",
-            "acceptedAnswer": { "@type": "Answer", "text": "8:00〜21:00の範囲で最低6時間から、1時間1,000円（6時間6,000円・8時間8,000円）、1室・6名まで同一料金です（6名利用なら6時間で1人あたり1,000円相当）。利用時間は予約時に確定し、利用開始後の途中延長はできません。利用時間内であれば自由に再入室できます。" }
-          }
-        ]
-      }
-    ]
+{
+  "@context": "https://schema.org",
+  "@type": "Offer",
+  "name": "Studio X｜6時間貸切ベースプラン",
+  "description": "着替え・荷物置き・休憩など、長時間の拠点利用向けのStudio X貸切ベース（8:00〜21:00の範囲で最低6時間・1時間1,000円・6名まで・再入室可。利用時間は予約時に確定し、途中延長不可）。有人クロークではなく、荷物は利用者自身で管理します。",
+  "price": "1000",
+  "priceSpecification": {
+    "@type": "UnitPriceSpecification",
+    "price": "1000",
+    "priceCurrency": "JPY",
+    "unitCode": "HUR",
+    "eligibleQuantity": {
+      "@type": "QuantitativeValue",
+      "minValue": 6,
+      "unitCode": "HUR"
+    }
+  },
+  "priceCurrency": "JPY",
+  "url": "https://nagoya-base.github.io/Studio-nagoya-base/studio-x/base-plan/",
+  "seller": {
+    "@type": "LocalBusiness",
+    "name": "Studio X"
   }
+}
   </script>
 
   <!-- Google Analytics 4 -->
@@ -132,8 +121,10 @@
         </div>
 
         <dl class="hero-facts">
-          <div><dt>PRIVATE</dt><dd>完全個室</dd></div>
-          <div><dt>CAPACITY</dt><dd>1〜4名</dd></div>
+          <div><dt>PRIVATE</dt><dd>完全個室・無人貸切</dd></div>
+          <div><dt>CAPACITY</dt><dd>1〜4名・人数追加料金なし</dd></div>
+          <div><dt>FREE SET</dt><dd>白黒背景・照明無料</dd></div>
+          <div><dt>SMARTPHONE</dt><dd>スマホ撮影OK</dd></div>
           <div><dt>ACCESS</dt><dd>上前津 徒歩8分</dd></div>
           <div><dt>HOURS</dt><dd>8:00〜23:00</dd></div>
         </dl>
@@ -158,24 +149,6 @@
           <button type="button" class="mood-button" data-mood="cyber" data-src="images/sample_04_neon_1200.webp" data-alt="紫色のカラー照明を使った撮影作例" data-label="CYBER PURPLE" data-number="02" aria-pressed="false">CYBER</button>
           <button type="button" class="mood-button" data-mood="dark" data-src="images/sample_05_blue_purple_full_body_1200.webp" data-alt="緑とマゼンタの照明を使った暗い雰囲気の撮影作例" data-label="DARK COLOR" data-number="03" aria-pressed="false">DARK</button>
           <button type="button" class="mood-button" data-mood="clean" data-src="images/studiox_white_1200.webp" data-alt="白背景を使った明るい撮影スペース" data-label="CLEAN WHITE" data-number="04" aria-pressed="false">WHITE</button>
-        </div>
-      </div>
-    </section>
-
-    <section class="trust-strip" aria-label="スタジオの特徴">
-      <p>スマホ撮影OK</p>
-      <p>人数追加料金なし</p>
-      <p>無人・完全貸切</p>
-      <p>白黒背景・照明無料</p>
-    </section>
-
-    <section class="statement section-shell reveal">
-      <p class="section-kicker">WHY STUDIO X</p>
-      <div class="statement-grid">
-        <h2>広いスタジオより、<br><span>世界観に入り込める部屋。</span></h2>
-        <div>
-          <p>Studio Xは、1〜4名の少人数撮影にちょうどいいワンルーム。大人数用の広さではなく、照明・背景・小物を近い距離で組み合わせ、短時間でも密度のある一枚を作ることに向いています。</p>
-          <p>カメラマンがいないセルフ撮影も、一眼カメラでの本格撮影も歓迎です。</p>
         </div>
       </div>
     </section>
@@ -214,7 +187,7 @@
         <article class="world-card reveal" style="--ratio:.667">
           <img src="images/sample_02_four_color_collage_1200.webp" width="1200" height="1800" alt="学校机と黒板を使った撮影作例" loading="lazy" decoding="async">
           <div class="world-overlay"></div>
-          <div class="world-copy"><span>04 / SCHOOL</span><h3>教室セット</h3><p>学校机、椅子、教卓、黒板を常設。</p></div>
+          <div class="world-copy"><span>04 / SCHOOL</span><h3>教室セット</h3><p>放課後の教室を、そのまま物語に。</p></div>
         </article>
 
         <article class="world-card reveal" style="--ratio:1.778">
@@ -233,13 +206,14 @@
       <a class="button button-ghost equipment-highlight-cta reveal" href="equipment/#worlds" data-analytics-event="cta_click" data-analytics-location="home_worlds" data-analytics-type="equipment_page" data-analytics-destination="studio_x_equipment_page">背景・テーマと設営オプションを見る →</a>
     </section>
 
-    <section class="for-you section-shell reveal" aria-labelledby="for-you-title">
-      <p class="section-kicker">MADE FOR SMALL CREWS</p>
-      <h2 id="for-you-title">こんな撮影に、ちょうどいい。</h2>
+    <section class="for-you section-shell reveal" id="usecases" aria-labelledby="for-you-title">
+      <p class="section-kicker">WHY STUDIO X / MADE FOR SMALL CREWS</p>
+      <h2 id="for-you-title">広いスタジオより、<br>世界観に入り込める部屋。</h2>
+      <p class="usecase-lead">1〜4名の少人数撮影にちょうどいいワンルーム。照明・背景・小物を近い距離で組み合わせ、短時間でも密度のある一枚を作れます（カメラマンなしのセルフ撮影も、一眼カメラでの本格撮影も歓迎）。</p>
       <div class="usecase-list">
-        <article><span>01</span><h3>コスプレ・少人数併せ</h3><p>衣装テストから1〜4名の少人数撮影まで。完全個室なので周囲を気にせず集中できます。</p></article>
+        <article><span>01</span><h3>コスプレ・少人数併せ</h3><p>衣装テストから1〜4名の併せまで。周囲を気にせず集中できます。</p></article>
         <article><span>02</span><h3>ポートレート・創作</h3><p>白背景のシンプルな一枚から、色と影を使ったダークポートレートまで。</p></article>
-        <article><span>03</span><h3>セルフ撮影・推し活制作</h3><p>スマホでも利用可能。大型ミラーで衣装を整えながら、自分たちのペースで撮れます。</p></article>
+        <article><span>03</span><h3>セルフ撮影・推し活制作</h3><p>スマホでもOK。大型ミラーで衣装を整えながら、自分たちのペースで撮れます。</p></article>
         <article><span>04</span><h3>撮影練習・ライティング</h3><p>照明の色や角度を試したい方にも。外部照明やストロボの持ち込みも可能です。</p></article>
       </div>
     </section>
@@ -253,46 +227,25 @@
 
       <ol class="step-list">
         <li class="reveal"><span>STEP 01</span><h3>撮りたい雰囲気を選ぶ</h3><p>白・黒・教室・カラー照明から、衣装に合う方向を決めます。</p></li>
-        <li class="reveal"><span>STEP 02</span><h3>日時を選んで予約</h3><p>予約フォームから希望日時を送信し、内容確認後の確定連絡で予約成立となります。</p></li>
-        <li class="reveal"><span>STEP 03</span><h3>パスコードで入室</h3><p>案内された番号で入室。無人運営なので、完全個室のまま撮影を始められます。</p></li>
+        <li class="reveal"><span>STEP 02</span><h3>日時を選んで予約</h3><p>予約ページから希望日時を送信します。送信時点では予約は確定せず、内容確認後の当方からの確定連絡をもって成立します。</p></li>
+        <li class="reveal"><span>STEP 03</span><h3>案内どおりに入室</h3><p>入室案内の番号で入室。無人運営なので、完全個室のまま撮影を始められます。</p></li>
       </ol>
+
+      <details class="beginners-more reveal">
+        <summary>当日の入室〜退室の流れ</summary>
+        <ol>
+          <li><span>1</span>予約後に入室案内を確認</li>
+          <li><span>2</span>キーボックスから鍵を受け取る</li>
+          <li><span>3</span>スマートロックで入室</li>
+          <li><span>4</span>撮影後に簡易清掃・原状復帰</li>
+        </ol>
+        <a href="how-to/">詳しいご利用ガイド（入退室・照明・清掃）を見る →</a>
+      </details>
 
       <figure class="review-card reveal">
         <blockquote>「ライトも2機あり、明るさも十分なので撮影に使いやすかったです。天井のライトも変えられるので、雰囲気に合わせて変えられるのが魅力的でした。」</blockquote>
         <figcaption>実際のご利用レビューより / 撮影・収録</figcaption>
       </figure>
-    </section>
-
-    <section class="equipment-highlight section-shell reveal" aria-labelledby="equipment-highlight-title">
-      <div class="section-heading reveal">
-        <div>
-          <p class="section-kicker">STANDING BY, FREE OF CHARGE</p>
-          <h2 id="equipment-highlight-title">常設・無料で使える、<br>2つの機材。</h2>
-        </div>
-        <p>点灯した状態を見ながら調整できる照明と、影をやわらげるレフ板。どちらも追加料金なしで使えます。</p>
-      </div>
-
-      <div class="equipment-highlight-grid">
-        <article class="equipment-highlight-card reveal">
-          <img src="../images/equipment/equipment-led-panel-light.webp" width="900" height="1600" alt="バイカラーパネルライトをライトスタンドに設置して2灯並べた様子" loading="lazy" decoding="async">
-          <div class="equipment-highlight-body">
-            <span class="equipment-highlight-badge">常設・無料</span>
-            <h3>バイカラーパネルライト ×2</h3>
-            <p>点灯した状態を見ながら、明るさと色温度を調整できる常設・無料の定常光です。</p>
-          </div>
-        </article>
-
-        <article class="equipment-highlight-card reveal">
-          <img src="../images/equipment/equipment-reflector-5in1.webp" width="1600" height="900" alt="銀面を広げた5-in-1レフ板" loading="lazy" decoding="async">
-          <div class="equipment-highlight-body">
-            <span class="equipment-highlight-badge">常設・無料</span>
-            <h3>レフ板 5-in-1（80cm）</h3>
-            <p>光を反射させて影をやわらげる、常設・無料のレフ板です。</p>
-          </div>
-        </article>
-      </div>
-
-      <a class="button button-ghost equipment-highlight-cta reveal" href="equipment/" data-analytics-event="cta_click" data-analytics-location="home_equipment" data-analytics-type="equipment_page" data-analytics-destination="studio_x_equipment_page">設備・背景・オプションを見る →</a>
     </section>
 
     <section class="specs section-shell" id="specs" aria-labelledby="specs-title">
@@ -301,7 +254,7 @@
           <p class="section-kicker">WHAT'S INSIDE</p>
           <h2 id="specs-title">持ってくるのは、<br>衣装と撮りたい気持ち。</h2>
         </div>
-        <p>基本の背景と照明は利用料金内。より本格的な機材の持ち込みもできます。</p>
+        <p>常設の背景・照明・レフ板は追加料金なしで使えます。より本格的な機材の持ち込みもできます。</p>
       </div>
 
       <div class="spec-layout">
@@ -310,20 +263,21 @@
         </div>
         <dl class="spec-list reveal">
           <div><dt>BACKGROUND</dt><dd>白・黒の背景紙ロール</dd></div>
-          <div><dt>LIGHTING</dt><dd>天井フルカラーLED、バイカラーLEDパネルライト2基</dd></div>
-          <div><dt>PROPS</dt><dd>学校机、椅子、教卓、黒板</dd></div>
+          <div><dt>LIGHTING</dt><dd>天井フルカラーLED／バイカラーLEDパネル2灯／レフ板</dd></div>
+          <div><dt>PROPS</dt><dd>教室セット：学校机、椅子、教卓、黒板</dd></div>
           <div><dt>CHECK</dt><dd>大型全身ミラー</dd></div>
           <div><dt>CHANGE</dt><dd>ユニットバス、カーテン内で着替え可能</dd></div>
           <div><dt>BRING IN</dt><dd>カメラ、ストロボ、外部照明の持ち込み可</dd></div>
         </dl>
       </div>
+      <a class="button button-ghost equipment-highlight-cta reveal" href="equipment/" data-analytics-event="cta_click" data-analytics-location="home_equipment" data-analytics-type="equipment_page" data-analytics-destination="studio_x_equipment_page">設備・背景・オプションを見る →</a>
     </section>
 
     <section class="price section-shell" id="price" data-analytics-section-view="price" aria-labelledby="price-title">
       <div class="price-intro reveal">
         <p class="section-kicker">PRICE</p>
         <h2 id="price-title">一室貸切。<br>4名まで同一料金。</h2>
-        <p>最短1時間から。セルフ利用の基本料金です（セルフ設営・セルフ片付け込み）。予約フォームからの直接予約料金で、会員・非会員の区別なく、どなたも同じ料金です。</p>
+        <p>最短1時間から、セルフ利用の基本料金（セルフ設営・セルフ片付け込み）。会員・非会員の区別なく、どなたも同じ料金です。</p>
       </div>
 
       <div class="price-cards">
@@ -343,12 +297,15 @@
 
       <div class="price-notes reveal">
         <p>人数追加料金なし（最大4名）</p>
+      </div>
+
+      <details class="price-more reveal">
+        <summary>料金の詳細・適用条件・オプション</summary>
         <p>3時間3,600円（平日）／4,500円（土日祝）、4時間4,800円（平日）／6,000円（土日祝）、延長1時間ごと1,200円（平日）／1,500円（土日祝）</p>
         <p>この料金は、2026年10月26日以降に作成するご予約に適用します。2026年10月25日までに作成したご予約は、利用日が10月26日以降でも従来の料金が適用されます。</p>
-        <p>基本料金はセルフ利用でリーズナブルに。ライティングや機材準備を任せたい場合は、スタッフ設営の<strong>プレミアムオプション</strong>（事前設営3,000円／片付け3,000円／設営＋片付けセット5,000円）をご利用いただけます。撮影前に照明・機材を希望内容に合わせて準備し、来場後すぐ撮影を始められます。</p>
-        <p>有料オプションは会員限定です。機材のレンタルは1点ごとの個別料金で会員限定、スタッフによる事前設営・片付けは会員限定です（事前設営3,000円／片付け3,000円／セット5,000円）。セルフ設営・セルフ片付けは無料で、どなたでもご利用いただけます。詳しくは<a href="equipment/#staff-service">機材と料金</a>、<a href="membership/">会員限定オプションのご案内</a>をご覧ください。</p>
-        <p>予約フォーム送信時点では予約は確定しません。内容を確認後、当方からの確定連絡をもって成立します。</p>
-      </div>
+        <p>セルフ設営・セルフ片付けは無料で、どなたでもご利用いただけます。ライティングや機材準備を任せたい場合は、スタッフ設営の<strong>プレミアムオプション</strong>（事前設営3,000円／片付け3,000円／設営＋片付けセット5,000円）をご利用いただけます。撮影前に照明・機材を希望内容に合わせて準備し、来場後すぐ撮影を始められます。</p>
+        <p>有料オプションは会員限定です。機材のレンタルは1点ごとの個別料金で会員限定、スタッフによる事前設営・片付けは会員限定です（事前設営3,000円／片付け3,000円／セット5,000円）。詳しくは<a href="equipment/#staff-service">機材と料金</a>、<a href="membership/">会員限定オプションのご案内</a>をご覧ください。</p>
+      </details>
 
       <a class="button button-primary reveal" href="booking/" data-analytics-event="cta_click" data-analytics-type="booking" data-analytics-location="price" data-analytics-destination="booking_app">日時を選んで予約する</a>
     </section>
@@ -357,7 +314,7 @@
       <div class="price-intro reveal">
         <p class="section-kicker">PRIVATE BASE PLAN</p>
         <h2 id="osu-base-plan-title">Studio X｜6時間貸切<br>ベースプラン</h2>
-        <p>Studio Xをグループ専用の「着替え・荷物置き・休憩拠点」としてご利用いただける貸切プラン（8:00〜21:00の範囲で最低6時間・1時間1,000円）です。外出している間もお部屋を確保でき、利用時間内であれば自由に出入りできます。イベント参加時の拠点としても、撮影前後の準備や休憩にもご利用いただけます。</p>
+        <p>着替え・荷物置き・休憩の拠点に使えるグループ専用の貸切プラン（8:00〜21:00の範囲）です。</p>
       </div>
 
       <div class="price-cards">
@@ -370,33 +327,18 @@
       </div>
 
       <div class="price-notes reveal">
-        <p>こんな方におすすめ: 友人同士で落ち着いて着替えたい／キャリーケースや衣装を置いて身軽にイベントを回りたい／イベント途中に休憩したい／メイク直し・衣装直しのために戻れる場所がほしい／公式更衣室の混雑を避けたい</p>
-        <p>ご利用内容: 1室貸切・6名まで・着替え・メイク・荷物置き・休憩・大型ミラー利用・利用時間内の再入室OK・スマートフォン等での簡易撮影OK</p>
-        <p>Studio Xの予約可能な日であれば、予約フォームの「6時間貸切ベースプラン」欄からいつでもお選びいただけます。選ぶと利用時間は6時間以上（8:00〜21:00の範囲・1時間単位）から選べます。利用時間は予約時に確定します。利用開始後の途中延長はできません。</p>
-        <p>本プランは有人クロークではありません。スタッフによる荷物のお預かりサービスではなく、荷物は貸切中のお部屋内で各自管理してください。貴重品の管理は利用者ご自身でお願いいたします。紛失・盗難等については利用規約の責任範囲を適用します。</p>
-        <p>スタッフは常駐しません。シャワー利用は含まれません。他の利用者とお部屋を共用することはありません。共用部や建物内に荷物を放置しないでください。</p>
-        <p>本格的な撮影用途で通常のStudio X設備・オプションをご利用になる場合は、プランを選ばず通常の予約をご利用ください。本格的な撮影機材の利用やスタッフによるライティング設営をご希望の場合は、別途対象オプションをご確認ください（<a href="equipment/#staff-service">機材と料金</a>、<a href="membership/">会員限定オプションのご案内</a>）。</p>
-        <p>室内を離れる際も、利用終了時刻までに必ず戻り、原状復帰のうえ退出してください。利用時間の超過は通常のStudio Xと同じルールです。</p>
-        <p>通常のStudio X時間貸し料金（上の料金表）とは別の、用途限定のパッケージ商品です。通常の予約にこのプランの料金が自動で適用されることはありません。予約フォームで本プランを選択した場合のみ適用されます。</p>
+        <p>1室貸切・6名まで同一料金・再入室OK</p>
       </div>
+
+      <details class="price-more reveal">
+        <summary>ご利用条件・注意事項</summary>
+        <p>スマートフォン等での簡易撮影OK。利用時間は予約時に確定し、利用開始後の途中延長はできません。</p>
+        <p>有人クロークではありません（荷物・貴重品は各自管理）。スタッフは常駐せず、シャワー利用は含まれません。</p>
+        <p>通常の時間貸し料金とは別の用途限定パッケージです。通常の予約に自動で適用されることはなく、予約フォームで本プランを選択した場合のみ適用されます。</p>
+      </details>
 
       <p class="reveal"><a class="button button-primary" href="booking/?plan=osu_cosplay_base_6h#booking-app-section" data-analytics-event="cta_click" data-analytics-type="base_plan_booking" data-analytics-location="osu_base_plan" data-analytics-destination="booking_app_plan_selected">このプランで予約する</a>
-        <a class="button button-ghost" href="base-plan/" data-analytics-event="cta_click" data-analytics-type="base_plan_detail" data-analytics-location="osu_base_plan" data-analytics-destination="base_plan_page">詳細を見る</a></p>
-
-      <div class="faq-list reveal">
-        <details>
-          <summary>貸切ベースプランは荷物を預かってもらえますか？</summary>
-          <p>いいえ。有人クロークではなく、スタッフによる荷物のお預かりサービスではありません。貸切中のお部屋内で、荷物・貴重品をご自身で管理していただくプランです。紛失・盗難等については利用規約の責任範囲を適用します。</p>
-        </details>
-        <details>
-          <summary>貸切ベースプランはいつでも予約できますか？</summary>
-          <p>はい。Studio Xの予約可能な日であれば、予約フォームでいつでもお選びいただけます。ただし通常の予約に自動で適用されることはなく、ご自身でプランを選んだ場合のみ適用されます。本格的な撮影利用は通常料金でご予約ください。</p>
-        </details>
-        <details>
-          <summary>貸切ベースプランの時間と人数は？</summary>
-          <p>8:00〜21:00の範囲で最低6時間から、1時間1,000円（6時間6,000円・8時間8,000円）、1室・6名まで同一料金です（6名利用なら6時間で1人あたり1,000円相当）。利用時間は予約時に確定し、利用開始後の途中延長はできません。終了が21:00を超える時間は選べません。利用時間内であれば自由に再入室できます。</p>
-        </details>
-      </div>
+        <a class="button button-ghost" href="base-plan/" data-analytics-event="cta_click" data-analytics-type="base_plan_detail" data-analytics-location="osu_base_plan" data-analytics-destination="base_plan_page">おすすめの使い方・注意事項・FAQを見る</a></p>
     </section>
 
     <section class="access section-shell" id="access" data-analytics-section-view="access" aria-labelledby="access-title">
@@ -410,18 +352,15 @@
             地下鉄「上前津駅」徒歩8分<br>
             地下鉄「東別院駅」徒歩8分
           </address>
-          <p class="access-note">営業時間 8:00〜23:00 / 年中無休<br>専用駐車場なし・近隣コインパーキングあり</p>
         </div>
 
         <div class="arrival-card reveal">
-          <p class="arrival-label">ON THE DAY</p>
+          <p class="arrival-label">HOURS &amp; PARKING</p>
           <ol>
-            <li><span>1</span>予約後に入室案内を確認</li>
-            <li><span>2</span>キーボックスから鍵を受け取る</li>
-            <li><span>3</span>スマートロックで入室</li>
-            <li><span>4</span>撮影後に簡易清掃・原状復帰</li>
+            <li><span>営</span>営業時間 8:00〜23:00 / 年中無休</li>
+            <li><span>駐</span>専用駐車場なし・近隣コインパーキングあり</li>
           </ol>
-          <a href="how-to/">詳しいご利用ガイドを見る →</a>
+          <a href="how-to/">アクセス・入室方法・ご利用ガイドを見る →</a>
         </div>
       </div>
     </section>
@@ -446,11 +385,8 @@
           <summary>ストロボや照明を持ち込めますか？</summary>
           <p>持ち込み可能です。白・黒背景紙、天井フルカラーLED、バイカラーLEDパネルライト2基などの常設備品は利用料金内で使えます。</p>
         </details>
-        <details>
-          <summary>当日でも予約できますか？</summary>
-          <p>はい、空きがあれば当日のご予約も可能です。初めてご利用の方はオンラインクレジットカード決済のみとなります。<a href="booking/">予約ページ</a>から直接お申し込みいただけます（会員登録の有無は当日予約の条件ではありません）。ご不明な点は<a href="reservation/?intent=same-day" rel="nofollow noreferrer">予約・撮影相談フォーム</a>の「当日利用について確認したい」からご相談ください。</p>
-        </details>
       </div>
+      <p class="faq-more reveal"><a href="how-to/#faq">当日予約・機材条件・会員条件などその他のよくある質問 →</a></p>
     </section>
 
     <section class="final-cta" aria-labelledby="final-cta-title">
