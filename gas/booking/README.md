@@ -253,7 +253,7 @@ Issue #532の本文を正本として、新規加入をStripe標準に近い月�
 - 初回単発Checkout（`mode=payment`）→ 後段のSubscription作成（`createMembershipSubscription`）の二段階方式は新規加入では使わない。3Dセキュア/SCAはStripe CheckoutのSubscriptionフローに委ねる。
 - Subscriptionへ明示的にmetadata（`subscription_data[metadata][orderType]=membership` / `[memberId]`）を設定する（`invoice.paid` が `invoice.parent.subscription_details.metadata` から会員を識別できる）。
 - 価格: `STRIPE_MEMBER_PRICE_ID`（既存のRecurring Price）があればそれを使う。無ければ `STRIPE_MEMBER_PRODUCT_ID`（既存Product）に対する月額500円の `price_data`。**どちらも未設定なら設定不足（`STRIPE_NOT_CONFIGURED`）として安全に失敗し、固定IDへはフォールバックしない**。Product ID / Price ID等の実値はコード・Issue・PR・ログに書かない（Script Propertiesで持つ。新規加入経路にID固定値はない。固定ID `snb_member_monthly` は旧mode=payment経路の後処理にのみ残る）。
-- 既存プレスタート会員は課金日を移行しない（11/30まで有効・12/1更新・以後毎月1日。Subscriptionの再作成・anchor変更・追加請求なし）。プレスタートの新規受付は、Booking Publicの切り替え時点で終了する。
+- プレスタートで加入済みの会員は存在しないため、公開文書では既存会員向けの例外（毎月1日更新）を案内しない（Issue #592）。旧 `mode=payment` 経路の互換コードは業務ロジックとして残す。
 - デプロイ前に発行済みの旧 `mode=payment` Checkoutの完了は、Webhook側の旧経路（`handleMembershipJoin_`）が処理する（即削除しない）。旧経路の資格も `MemberMonths` ではなく `MemberPeriods`（入会日〜当月末／プレスタートは11/30）へ記録する。`existingSubscriptionProblems`（#528）の月初アンカー検証は旧経路のみ。
 
 ### 会員資格の正本＝支払済みPeriod（`MemberPeriods`）
