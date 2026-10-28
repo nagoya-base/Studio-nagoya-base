@@ -258,7 +258,7 @@ var fs = require('node:fs');
 var path = require('node:path');
 function read(rel) { return fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'); }
 
-test('Web（Issue #532）: 会員案内3ページ・会員条件・特商法・FAQは新規加入を入会日基準で案内し、プレスタートは既存会員向けの例外としてだけ残す', function () {
+test('Web（Issue #532）: 会員案内3ページ・会員条件・特商法・FAQは新規加入を入会日基準で案内し、プレスタート既存会員向けの「毎月1日更新」の例外は案内しない（Issue #592）', function () {
   var prestart = read('_includes/membership_prestart_ja.html');
   ['月額500円', '90日先行予約', '入会日から1か月有効', '入会日を基準に毎月自動更新', '12月1日から開始'].forEach(function (s) {
     assert.ok(prestart.indexOf(s) !== -1, s);
@@ -273,15 +273,19 @@ test('Web（Issue #532）: 会員案内3ページ・会員条件・特商法・F
     assert.ok(html.indexOf('入会日から1か月有効') !== -1, f);
   });
   var terms = read('_includes/membership_terms_ja.html');
-  assert.ok(terms.indexOf('既にプレスタートでご加入済みの会員') !== -1 && terms.indexOf('課金日は変更しません') !== -1);
-  assert.ok(terms.indexOf('2026年11月30日まで有効で、2026年12月1日に更新され、以降は毎月1日に500円で更新されます') !== -1);
-  assert.ok(terms.indexOf('プレスタートの新規受付は終了しました') !== -1);
-  assert.ok(read('_includes/legal_ja.html').indexOf('既にプレスタートでご加入済みの会員') !== -1);
+  assert.ok(terms.indexOf('入会日から1か月間、会員資格が有効です') !== -1);
+  ['_includes/membership_terms_ja.html', '_includes/legal_ja.html', '_includes/membership_prestart_ja.html', 'legal/index.html', 'index.html',
+    'membership/index.html', 'mens/membership/index.html', 'studio-x/membership/index.html'].forEach(function (f) {
+    var raw = read(f);
+    assert.ok(raw.indexOf('既にプレスタート') === -1, f + ' に既存プレスタート会員向けの例外が残っている');
+    assert.ok(raw.indexOf('以降は毎月1日') === -1 && raw.indexOf('以後毎月1日') === -1, f + ' に「毎月1日更新」が残っている');
+    assert.ok(raw.indexOf('プレスタートの新規受付') === -1, f);
+  });
   assert.ok(read('legal/index.html').indexOf('SNB MEMBERの加入と有効期間について') !== -1);
   ['membership/complete.html', 'mens/membership/complete.html', 'studio-x/membership/complete.html'].forEach(function (f) {
     var html = read(f);
     assert.ok(html.indexOf('入会日から1か月有効です') !== -1 && html.indexOf('入会日を基準に毎月自動更新されます') !== -1, f);
-    assert.ok(html.indexOf('既にプレスタートでご加入済みの会員の更新日は、従来どおり毎月1日です') !== -1, f);
+    assert.ok(html.indexOf('既にプレスタート') === -1 && html.indexOf('毎月1日') === -1, f + ' に既存プレスタート会員向けの例外が残っている');
     assert.ok(html.indexOf('当月末まで有効') === -1, f + ' に旧仕様');
   });
 });
