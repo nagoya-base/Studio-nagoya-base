@@ -24,6 +24,7 @@
       data-endpoint-configured="{% if site.formspree_form_id %}true{% else %}false{% endif %}"
       novalidate>
       <input type="hidden" name="_subject" id="reservation-subject" value="【Studio Nagoya Base】予約前の相談">
+      <input type="hidden" name="お問い合わせ種別" value="予約前に相談する">
       <input type="hidden" name="送信日時" id="reservation-submitted-at" value="">
       <input type="hidden" name="流入元ページ" id="reservation-source-page" value="">
       <input type="text" name="_gotcha" class="reservation-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
@@ -34,17 +35,7 @@
       </div>
 
       <fieldset class="reservation-group">
-        <legend>1. お問い合わせ種別</legend>
-        <div class="reservation-choice-group">
-          <div class="reservation-choices">
-            <label><input type="radio" name="お問い合わせ種別" value="予約前に相談する" data-intent="consult" aria-describedby="reservation-intent-error"> <span>予約前に相談する</span></label>
-          </div>
-          <p id="reservation-intent-error" class="field-error" hidden></p>
-        </div>
-      </fieldset>
-
-      <fieldset class="reservation-group">
-        <legend>2. 連絡先</legend>
+        <legend>1. 連絡先</legend>
         <div class="reservation-fields">
           <div class="reservation-field">
             <label for="reservation-name">お名前 <span class="field-badge field-badge--required">必須</span></label>
@@ -67,14 +58,6 @@
             <p id="reservation-x-account-error" class="field-error" hidden></p>
           </div>
 
-          <div class="reservation-field reservation-field--full">
-            <div class="reservation-consents">
-              <label for="reservation-x-dm-confirm"><input type="checkbox" id="reservation-x-dm-confirm" name="X DM受信設定確認" value="確認しました" aria-describedby="reservation-x-dm-confirm-note reservation-x-dm-confirm-error"> <span>Studio Nagoya Base（@Nagoyabase2023）からDMを受信できる状態にしています。 <span class="field-badge">Xアカウント入力時は必須</span></span></label>
-              <p id="reservation-x-dm-confirm-note" class="field-help">XのDM設定をご確認ください。鍵アカウントの場合も、当アカウントから連絡できる状態にしてください。</p>
-              <p id="reservation-x-dm-confirm-error" class="field-error" hidden></p>
-            </div>
-          </div>
-
           <div class="reservation-field">
             <label for="reservation-tel">電話番号 <span class="field-badge">任意</span></label>
             <input type="tel" id="reservation-tel" name="電話番号" autocomplete="tel" inputmode="tel" aria-describedby="reservation-tel-help">
@@ -84,17 +67,17 @@
       </fieldset>
 
       <fieldset class="reservation-group">
-        <legend>3. ご相談内容</legend>
+        <legend>2. ご相談内容</legend>
         <div class="reservation-field reservation-field--full">
-          <label for="reservation-message" id="reservation-message-label">連絡事項 <span class="field-badge" id="reservation-message-mark">任意</span></label>
-          <textarea id="reservation-message" name="連絡事項" rows="5" maxlength="1000" placeholder="講習会の内容、持ち込み機材、長時間利用、その他ご相談があればご記入ください。" aria-describedby="reservation-message-help reservation-message-error"></textarea>
+          <label for="reservation-message" id="reservation-message-label">連絡事項 <span class="field-badge field-badge--required">必須</span></label>
+          <textarea id="reservation-message" name="連絡事項" rows="5" maxlength="1000" required placeholder="講習会の内容、持ち込み機材、長時間利用、その他ご相談があればご記入ください。" aria-describedby="reservation-message-help reservation-message-error"></textarea>
           <p id="reservation-message-help" class="field-help">1000文字以内でご入力ください。相談内容はここにご記入ください。</p>
           <p id="reservation-message-error" class="field-error" hidden></p>
         </div>
       </fieldset>
 
       <fieldset class="reservation-group reservation-confirmation">
-        <legend>4. 確認・同意</legend>
+        <legend>3. 送信前の確認</legend>
         <div class="reservation-carrier-notice">
           <p><strong>キャリアメール（docomo・au・SoftBankなど）をご利用の方へ</strong>　当方からのGmailが受信拒否される場合があります。受信設定をご確認ください。</p>
           <details class="note-details">
@@ -104,17 +87,6 @@
             </div>
           </details>
         </div>
-        <div class="reservation-consents">
-          <label for="reservation-terms"><input type="checkbox" id="reservation-terms" name="利用規約同意" value="同意する" required aria-describedby="reservation-terms-error"> <span><a href="{{ '/legal/' | relative_url }}#terms" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="reservation_form">利用規約</a>を確認し、内容に同意します。 <span class="field-badge field-badge--required">必須</span></span></label>
-          <p id="reservation-terms-error" class="field-error" hidden></p>
-
-          <label for="reservation-safety"><input type="checkbox" id="reservation-safety" name="安全ルール同意" value="同意する" required aria-describedby="reservation-safety-error"> <span>吊り床・緊縛を利用する場合は、利用者自身で安全管理を行い、安全ルールを守ります。 <span class="field-badge field-badge--required">必須</span></span></label>
-          <p id="reservation-safety-error" class="field-error" hidden></p>
-
-          <label for="reservation-carrier-mail"><input type="checkbox" id="reservation-carrier-mail" name="メール受信設定確認" value="確認しました" required aria-describedby="reservation-carrier-mail-error"> <span>上記のメール受信設定・迷惑メールフォルダについて確認しました <span class="field-badge field-badge--required">必須</span></span></label>
-          <p id="reservation-carrier-mail-error" class="field-error" hidden></p>
-        </div>
-
         <p class="reservation-privacy">入力情報はご連絡・運営対応にのみ使用し、送信にはFormspreeを利用します（<a href="{{ '/legal/' | relative_url }}#privacy">プライバシーポリシー</a>）。送信前に入力内容とメールアドレスをご確認ください。</p>
         <button type="submit" id="reservation-submit" class="btn-primary reservation-submit">相談内容を送信する</button>
         <p id="reservation-submit-state" class="reservation-submit-state" role="status" aria-live="polite">送信内容を確認後、入力したメールアドレスへご連絡します。</p>

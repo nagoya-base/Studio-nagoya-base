@@ -67,10 +67,12 @@ test('#594: 初めての方へ・安全利用は要点を常時表示し、残�
   assert.ok(trust.indexOf('how-to/\' | relative_url }}#flow') !== -1, '使い方への導線');
 });
 
-test('#594: FAQ はトップ4問に絞り、外した質問はすべて /legal/#faq-full に同文で保持している', function () {
+test('#594: FAQ はトップ3問に絞り（初回利用は詳細FAQに保持）、外した質問はすべて /legal/#faq-full に同文で保持している', function () {
   var shown = faqIds(top);
-  assert.deepStrictEqual(shown, ['first_time', 'bondage_allowed', 'payment_method', 'parking']);
+  assert.deepStrictEqual(shown, ['bondage_allowed', 'payment_method', 'parking']);
+  assert.ok(top.indexOf('初めてでも利用できますか？') === -1, 'トップ本文・JSON-LDに初回FAQを置かない');
   var legalIds = faqIds(legal);
+  assert.ok(legalIds.indexOf('first_time') !== -1 && legal.indexOf('初めてでも利用できますか？') !== -1, '詳細FAQには初回利用が残る');
   var removed = ['snb_member', 'snb_member_billing', 'snb_member_benefits', 'gender', 'alcohol', 'equipment_rental', 'cancellation', 'weather_cancellation'];
   removed.concat(shown).forEach(function (id) { assert.ok(legalIds.indexOf(id) !== -1, id + ' は規約ページのFAQ全件にある'); });
   assert.ok(top.indexOf('#faq-full') !== -1, 'FAQをすべて見る導線');
@@ -135,7 +137,9 @@ test('#594: 旧「問い合わせフォームから予約」導線の痕跡が�
     assert.ok(!/is-booking-only|data-required-if-booking|予約申込日時|reservation-condition|reservation-date|reservation-party-size|reservation-purpose|reservation-duration|reservation-start-time|吊り床利用予定|予約成立条件同意|SUBMIT_LABEL_BOOKING|intent === 'booking'|予約申込/.test(src), 'booking用フィールド/分岐が残っていない');
   });
   assert.ok(form.indexOf('name="送信日時"') !== -1);
-  assert.ok(form.indexOf('data-intent="consult"') !== -1);
+  assert.ok(/<input type="hidden" name="お問い合わせ種別" value="予約前に相談する">/.test(form), '種別は hidden 固定');
+  assert.ok(!/data-intent=|type="radio"/.test(form), '種別ラジオUIを持たない');
+  assert.ok(js.indexOf("CONTACT_INTENT = 'consult'") !== -1 && /contact_intent: CONTACT_INTENT/.test(js), 'GA4 contact_intent は consult 固定');
   assert.ok(/id="reservation-submit"[^>]*>相談内容を送信する</.test(form));
   assert.ok(top.indexOf('利用内容を事前に相談する') !== -1, '予約前相談の導線は維持');
   /* 予約CTAは予約ページへ一本化 */

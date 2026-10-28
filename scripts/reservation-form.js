@@ -6,10 +6,7 @@
   var form = document.getElementById('reservation-request-form');
   if (!form) return;
 
-  var intentRadios = form.querySelectorAll('input[name="お問い合わせ種別"]');
-  var intentError = document.getElementById('reservation-intent-error');
   var messageInput = document.getElementById('reservation-message');
-  var messageMark = document.getElementById('reservation-message-mark');
   var errorSummary = document.getElementById('reservation-error-summary');
   var successMessage = document.getElementById('reservation-success');
   var successTitle = document.getElementById('reservation-success-title');
@@ -26,28 +23,8 @@
   var submissionSeq = 0;
 
   var SUBMIT_LABEL = '相談内容を送信する';
-
-  function getIntent() {
-    for (var i = 0; i < intentRadios.length; i++) {
-      if (intentRadios[i].checked) return intentRadios[i].getAttribute('data-intent');
-    }
-    return null;
-  }
-
-  /* 「お問い合わせ種別」の選択に応じて、連絡事項の必須判定を切り替える */
-  function applyIntentMode(intent) {
-    if (messageInput && messageMark) {
-      if (intent === 'consult') {
-        messageInput.setAttribute('required', 'required');
-        messageMark.textContent = '必須';
-        messageMark.className = 'field-badge field-badge--required';
-      } else {
-        messageInput.removeAttribute('required');
-        messageMark.textContent = '任意';
-        messageMark.className = 'field-badge';
-      }
-    }
-  }
+  /* 問い合わせ種別は「予約前に相談する」のみ。GA4 contact_intent は過去データとの連続性のため consult 固定（Issue #602） */
+  var CONTACT_INTENT = 'consult';
 
   function trackFormStart() {
     if (window.StudioAnalytics) window.StudioAnalytics.trackFormStart();
@@ -83,25 +60,11 @@
     var nameInput = document.getElementById('reservation-name');
     var emailInput = document.getElementById('reservation-email');
     var xAccountInput = document.getElementById('reservation-x-account');
-    var xDmConfirmInput = document.getElementById('reservation-x-dm-confirm');
-    var termsInput = document.getElementById('reservation-terms');
-    var safetyInput = document.getElementById('reservation-safety');
-    var carrierMailInput = document.getElementById('reservation-carrier-mail');
-    var intent = getIntent();
 
     clearError(nameInput, 'reservation-name-error');
     clearError(emailInput, 'reservation-email-error');
     clearError(xAccountInput, 'reservation-x-account-error');
-    clearError(xDmConfirmInput, 'reservation-x-dm-confirm-error');
     clearError(messageInput, 'reservation-message-error');
-    clearError(termsInput, 'reservation-terms-error');
-    clearError(safetyInput, 'reservation-safety-error');
-    clearError(carrierMailInput, 'reservation-carrier-mail-error');
-    if (intentError) intentError.hidden = true;
-
-    if (!intent) {
-      errors.push(setError(intentRadios[0], 'reservation-intent-error', 'お問い合わせ種別を選択してください。', 'required_missing'));
-    }
 
     if (!nameInput.value.trim()) errors.push(setError(nameInput, 'reservation-name-error', 'お名前を入力してください。', 'required_missing'));
     if (!emailInput.value.trim()) {
@@ -110,17 +73,9 @@
       errors.push(setError(emailInput, 'reservation-email-error', 'メールアドレスを正しい形式で入力してください。', 'invalid_email'));
     }
 
-    if (xAccountInput.value.trim() && !xDmConfirmInput.checked) {
-      errors.push(setError(xDmConfirmInput, 'reservation-x-dm-confirm-error', 'Xアカウントを入力した場合は、DM受信設定の確認が必要です。', 'x_dm_not_confirmed'));
-    }
-
-    if (intent === 'consult' && !messageInput.value.trim()) {
+    if (!messageInput.value.trim()) {
       errors.push(setError(messageInput, 'reservation-message-error', '相談内容をご記入ください。', 'required_missing'));
     }
-
-    if (!termsInput.checked) errors.push(setError(termsInput, 'reservation-terms-error', '利用規約への同意が必要です。', 'terms_not_agreed'));
-    if (!safetyInput.checked) errors.push(setError(safetyInput, 'reservation-safety-error', '安全ルールへの同意が必要です。', 'safety_not_agreed'));
-    if (!carrierMailInput.checked) errors.push(setError(carrierMailInput, 'reservation-carrier-mail-error', 'メール受信設定・迷惑メールフォルダのご確認が必要です。', 'carrier_mail_not_confirmed'));
 
     var list = errorSummary.querySelector('ul');
     list.innerHTML = '';
@@ -138,14 +93,6 @@
     return errors.length === 0;
   }
 
-  intentRadios.forEach(function (radio) {
-    radio.addEventListener('change', function () {
-      if (intentError) intentError.hidden = true;
-      applyIntentMode(getIntent());
-    });
-  });
-  applyIntentMode(getIntent());
-
   form.addEventListener('submit', function (event) {
     event.preventDefault();
     if (isSubmitting || !validateForm()) return;
@@ -162,8 +109,6 @@
       failureMessage.focus();
       return;
     }
-
-    var intent = getIntent();
 
     isSubmitting = true;
     submitButton.disabled = true;
@@ -192,14 +137,13 @@
         httpError.failureType = 'server';
         throw httpError;
       }
-      var completionParams = { contact_intent: intent || 'unknown' };
+      var completionParams = { contact_intent: CONTACT_INTENT };
       if (successTitle && successBody) {
         successTitle.textContent = 'ご相談を受け付けました';
         successBody.innerHTML = 'お問い合わせありがとうございます。<br>内容を確認後、通常24時間以内にメールでご連絡します。';
       }
       successMessage.hidden = false;
       form.reset();
-      applyIntentMode(null);
       successMessage.focus();
       if (window.StudioAnalytics) {
         /* キーイベント：POST成功時のみ、1送信につき1回 */
