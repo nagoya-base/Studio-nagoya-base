@@ -1,12 +1,12 @@
 <section id="reservation-form" class="reservation-section" aria-labelledby="reservation-form-title">
   <div class="container reservation-container">
-    <h2 id="reservation-form-title" class="section-title">予約・相談を申し込む</h2>
-    <p class="section-subtitle">Reservation &amp; Consultation Request</p>
-    <p class="reservation-intro">日程が決まっている直接予約は、新しい予約ページで日時を選んで、そのまま仮予約を申し込めます。このフォームは、予約前のご相談や、ご利用経験のある方のメール・XのDMでのご連絡（既存予約の変更連絡等）に引き続きご利用いただけます。<br>送信時点ではご相談の受付であり、予約ではありません。内容を確認後、通常24時間以内にご連絡します。</p>
+    <h2 id="reservation-form-title" class="section-title">予約前のご相談・お問い合わせ</h2>
+    <p class="section-subtitle">Consultation &amp; Inquiry</p>
+    <p class="reservation-intro">吊り床の利用、講習会、長時間利用、持ち込み機材など、ご不明な点は予約前にご相談いただけます。ご予約は、予約ページで日時を選んで仮予約をお申し込みください（このフォームでは予約できません）。<br>送信時点ではご相談の受付であり、予約ではありません。内容を確認後、通常24時間以内にご連絡します。</p>
 
     <div id="reservation-success" class="reservation-status reservation-status--success" role="status" aria-live="polite" tabindex="-1" hidden>
-      <h3 id="reservation-success-title">予約申込を受け付けました</h3>
-      <p id="reservation-success-body">お申し込みありがとうございます。<br>フォーム送信時点では予約は確定していません。内容を確認後、通常24時間以内にメールでご連絡します。当方からの予約確定連絡をもって予約成立となります。</p>
+      <h3 id="reservation-success-title">ご相談を受け付けました</h3>
+      <p id="reservation-success-body">お問い合わせありがとうございます。<br>内容を確認後、通常24時間以内にメールでご連絡します。</p>
       <p>24時間を過ぎても返信がない場合は、迷惑メールフォルダをご確認のうえ、今しばらくお待ちください。</p>
     </div>
 
@@ -23,7 +23,7 @@
       accept-charset="UTF-8"
       data-endpoint-configured="{% if site.formspree_form_id %}true{% else %}false{% endif %}"
       novalidate>
-      <input type="hidden" name="_subject" id="reservation-subject" value="【Studio Nagoya Base】予約申込">
+      <input type="hidden" name="_subject" id="reservation-subject" value="【Studio Nagoya Base】予約前の相談">
       <input type="hidden" name="予約申込日時" id="reservation-submitted-at" value="">
       <input type="hidden" name="流入元ページ" id="reservation-source-page" value="">
       <input type="text" name="_gotcha" class="reservation-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
@@ -37,10 +37,6 @@
         <legend>1. お問い合わせ種別</legend>
         <div class="reservation-choice-group">
           <div class="reservation-choices">
-            <!-- #273: 通常公開では新予約UI（/booking/ /mens/booking/）が唯一の直接予約導線のため、
-                 このbooking intentは非表示・選択不可にしている。rollback資産としてフィールド・
-                 JSロジック（applyIntentMode等）は削除せず残す。 -->
-            <label hidden><input type="radio" name="お問い合わせ種別" value="日程を決めて予約する" data-intent="booking" disabled aria-describedby="reservation-intent-error"> <span>日程を決めて予約する</span></label>
             <label><input type="radio" name="お問い合わせ種別" value="予約前に相談する" data-intent="consult" aria-describedby="reservation-intent-error"> <span>予約前に相談する</span></label>
           </div>
           <p id="reservation-intent-error" class="field-error" hidden></p>
@@ -228,7 +224,7 @@
 
         <p class="reservation-privacy">入力された情報は、予約確認、利用案内、当日の連絡および必要な運営対応のために使用し、フォーム送信にはFormspreeを利用します。詳しくは<a href="{{ '/legal/' | relative_url }}#privacy">プライバシーポリシー</a>をご確認ください。</p>
         <p class="reservation-review-note">送信前に、入力内容とメールアドレスをご確認ください。</p>
-        <button type="submit" id="reservation-submit" class="btn-primary reservation-submit">予約を申し込む</button>
+        <button type="submit" id="reservation-submit" class="btn-primary reservation-submit">相談内容を送信する</button>
         <p id="reservation-submit-state" class="reservation-submit-state" role="status" aria-live="polite">送信内容を確認後、入力したメールアドレスへご連絡します。</p>
       </fieldset>
     </form>

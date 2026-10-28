@@ -157,7 +157,8 @@ test('会員条件: 会員案内ページ・利用規約・特商法・FAQが同
   ['月額500円', '入会日を基準に毎月自動更新', 'Stripe', '日割りなしで入会日から1か月有効', '解約', 'お支払い済みの期間の末日まで', '日割りを含め返金しません', '失敗した更新分', '初めてご利用の方から加入できます', '自動では移行しません']
     .forEach(function (w) { assert.ok(lawText.indexOf(w) !== -1, '特商法表記に「' + w + '」が必要'); });
 
-  ['index.html', 'legal/index.html'].forEach(function (p) {
+  /* トップのFAQは#594で4問に絞った。会員のFAQ全件は legal/index.html に保持する */
+  ['legal/index.html'].forEach(function (p) {
     var t = textOf(read(p));
     ['月額500円', 'Stripe', '入会日を基準に毎月自動更新', '日割りはありません', '解約', '返金しません', '更新時の決済に失敗した場合', '初めてご利用の方も加入できます', '自動では移行しない']
       .forEach(function (w) { assert.ok(t.indexOf(w) !== -1, p + ' のFAQに「' + w + '」が必要'); });
@@ -172,8 +173,8 @@ test('会員条件: 会員案内ページ・利用規約・特商法・FAQが同
   });
 });
 
-test('FAQのJSON-LDと表示が一致する（SNB MEMBER項目）', function () {
-  ['index.html', 'legal/index.html'].forEach(function (p) {
+test('FAQのJSON-LDと表示が一致する（SNB MEMBER項目。トップは#594で4問に絞ったため全件の規約ページで検査）', function () {
+  ['legal/index.html'].forEach(function (p) {
     var html = read(p);
     var ld = null;
     html.replace(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g, function (_, body) {
@@ -183,7 +184,7 @@ test('FAQのJSON-LDと表示が一致する（SNB MEMBER項目）', function () 
     });
     assert.ok(ld, p + ' にFAQPageのJSON-LD');
     var q = ld.mainEntity.filter(function (e) { return /SNB MEMBER/.test(e.name); });
-    assert.strictEqual(q.length, p === 'legal/index.html' ? 3 : 2, p); /* legalはプレスタートFAQ（#490）を含む */
+    assert.strictEqual(q.length, 3, p); /* legalはプレスタートFAQ（#490）を含む */
     q.forEach(function (e) { assert.ok(html.indexOf('<div class="faq-answer">' + e.acceptedAnswer.text + '</div>') !== -1, p + ': ' + e.name); });
   });
 });
@@ -335,7 +336,7 @@ test('更新・解約の表現（Issue #532）: 入会日基準の更新日に�
   assert.ok(terms.indexOf('入会日を基準とした毎月の更新日に会費が自動で請求され、決済が成功すると、お支払い済みの期間（次の更新日の前日まで）の会員資格が有効になります') !== -1);
   assert.ok(terms.indexOf('次回の更新前に解約の手続きが完了した場合、次回以降の自動更新を停止します') !== -1);
   assert.ok(terms.indexOf('お支払い済みの期間の末日（次の更新日の前日）までは会員資格が有効') !== -1);
-  ['index.html', 'legal/index.html'].forEach(function (p) {
+  ['legal/index.html'].forEach(function (p) {
     var raw = read(p);
     assert.ok(textOf(raw).indexOf('入会日を基準に毎月自動更新され、決済が成功した期間の会員資格が有効になります') !== -1, p);
     assert.ok(textOf(raw).indexOf('次回の更新前に解約の手続きが完了した場合、次回以降の自動更新を停止します') !== -1, p);

@@ -34,7 +34,7 @@
   /* 送信操作ごとに採番し、generate_lead の二重計測を防ぐ */
   var submissionSeq = 0;
 
-  var SUBMIT_LABEL_DEFAULT = '予約を申し込む';
+  var SUBMIT_LABEL_DEFAULT = '相談内容を送信する';
   var SUBMIT_LABEL_BOOKING = '予約を申し込む';
   var SUBMIT_LABEL_CONSULT = '相談内容を送信する';
 

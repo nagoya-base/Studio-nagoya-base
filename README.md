@@ -141,6 +141,10 @@ API ready確認が完了するまでmainへマージしない**）
   リポジトリに残す（通常ページからはincludeしない）
 - 旧予約フォーム（`_includes/reservation_form_ja.html` / `studio-x/reservation/`）は、
   相談・問い合わせ導線、および障害時ロールバック用として引き続き保持する
+- （Issue #594で追記）SNB / mens共通の`_includes/reservation_form_ja.html`からは、非表示だった
+  「日程を決めて予約する」radioを削除し、見出し・送信ボタンを「予約前のご相談・お問い合わせ」
+  「相談内容を送信する」に改めた。予約は予約ページへ一本化済み。booking用の非表示フィールドと
+  `scripts/reservation-form.js`のbooking分岐は未整理（後続課題）。以下は#273時点の記述。
 - 旧予約フォーム内の「日程を決めて予約する」（SNB / mens）・「空き状況を確認して予約したい」
   （Studio X）という`booking` intentの選択肢も、通常公開では非表示・選択不可にした
   （`hidden` + `disabled`、Studio X側は`?intent=booking`のプリフィルも無効化）。
