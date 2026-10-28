@@ -25,11 +25,11 @@ test('#590: SNB / mens の公開文面に旧条件（同一予約2名まで・�
     assert.ok(!/利用希望の場合は事前にご連絡ください/.test(html), file + ' に曖昧な「事前連絡」がない');
     assert.ok(!/No shower available/.test(html), file + ' に英語の旧表現がない');
   });
-  assert.ok(!/シャワーはご利用いただけません/.test(read('legal/index.html')), 'legalのFAQがシャワー不可のままではない');
+  assert.ok(!/シャワーはご利用いただけません/.test(read('how-to/index.html')), 'FAQ正本(how-to)がシャワー不可のままではない');
 });
 
 test('#590: 規約・会員案内・FAQに新条件（人数・1週間前・運営確認・1予約料金・12/1）が揃っている', function () {
-  ['_includes/legal_ja.html', '_includes/membership_benefits_ja.html', '_includes/membership_terms_ja.html', 'membership/index.html', 'legal/index.html'].forEach(function (file) {
+  ['_includes/legal_ja.html', '_includes/membership_benefits_ja.html', '_includes/membership_terms_ja.html', 'membership/index.html', 'how-to/index.html'].forEach(function (file) {
     var html = read(file);
     assert.ok(html.indexOf('当日のスタジオ利用人数に準じます') !== -1, file + ' 利用人数');
     assert.ok(html.indexOf('ご利用日の1週間前まで') !== -1, file + ' 申込期限');

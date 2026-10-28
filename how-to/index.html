@@ -39,6 +39,168 @@
 <meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/ogp-interior-rigging-frame_1200x675.jpg">
 
 <link rel="stylesheet" href="../styles/common.css">
+
+<!-- 構造化データ（FAQ本文と一致。トップ／会員ページで構造化済みの質問は重複させない） -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "SNB MEMBERとは何ですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "月額500円の会員制度で、継続してご利用の方・長時間ご利用の方向けの優遇制度です。会員料金は3時間以上のご利用で一般料金より安くなり、3時間のご利用で一般料金との差額が月会費500円相当になります（1〜2時間のご利用は一般料金と同額です）。初めてご利用の方も加入できます。旧制度の会員の方は、新しい会員制度へ自動では移行しないため、ご希望の場合はあらためてご加入ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "SNB MEMBERの加入と有効期間について教えてください。",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "SNB MEMBERは月額500円で、入会日から1か月有効、以後は入会日を基準に毎月自動更新されます。登録・決済後すぐに90日先行予約をご利用いただけます。2名ペアパック・シャワー・Studio Xの会員限定有料オプションなどの本特典は12月1日から開始します。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "SNB MEMBERの自動更新・解約・返金について教えてください。",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "会費の月額500円は、クレジットカード決済（Stripe）で入会日を基準に毎月自動更新され、決済が成功した期間の会員資格が有効になります（例：10月15日に入会した場合は、10月15日〜11月14日が有効で、11月15日に自動更新されます）。入会日に初回の500円をお支払いいただき、日割りはありません。解約は、会員資格の確認ページ（/membership/status/）でメールによる本人確認を行うと表示される「SNB MEMBERを解約する」から手続きできます。オンラインで手続きできない場合は、予約フォームなどで「SNB MEMBER解約」と登録メールアドレスをお知らせください（次回の更新前に解約の手続きが完了した場合、次回以降の自動更新を停止します）。解約後も、お支払い済みの期間の末日までは会員資格が有効です。日割りを含め、お支払い済みの会費は返金しません。更新時の決済に失敗した場合は、猶予期間なく会員資格が有効にならず、一般料金になります。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "会員限定の2名ペアパック・シャワーとは何ですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "SNB MEMBER会員限定の、3時間・1〜2名の定額プラン（2名ペアパック）が、平日5,000円・土日祝6,000円（税込）です。通常の時間貸しの会員料金とは別商品で、他の割引・優待とは併用できません。延長は通常の会員延長料金です。あわせて、会員限定のシャワー（1予約につき1回1,000円。利用人数は当日のスタジオ利用人数に準じます）も、2026年12月1日からご利用いただけます。会員資格はご利用日がお支払い済みの有効期間に入っているかで決まり、次回更新前の未払いの期間は、更新の決済が成功してから確定できます（猶予期間なし）。会員資格はStudio Nagoya Base・SNB mens・Studio Xで共通です。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "初めてでも利用できますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "はい、初めての方でもご利用いただけます。完全貸切・無人入室で、予約確定後に入室方法とパスコードをご案内します。利用時間中は予約者のみの完全貸切で、ほかの利用者と同室になることはありません（スタッフとの対面もありません）。初回利用時には、入室方法や設備の使い方を事前にご案内します。Studio Nagoya Baseは、緊縛サービスを提供する場所ではありません。利用者自身が練習・撮影・講習を行うための完全貸切レンタルスタジオです。男女、性的指向、性自認を問わずご利用いただけます。初めての方のお支払いはオンラインクレジットカード決済のみです。18歳以上（高校生不可）の方に限ります。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "男女問わず利用できますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "はい、男女、性的指向、性自認を問わずどなたでもご利用いただけます。ただし18歳以上（高校生不可）の方に限ります。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "スタジオ内での飲食はできますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "飲食物の持ち込みは可能ですが、ちゃぶ台および学校机周辺のみでお召し上がりください。畳スペースおよび吊り床周辺での飲食は禁止です。こぼれ・汚損・臭気残り等が発生した場合は清掃費用の実費をご請求する場合があります。ゴミは必ずお持ち帰りください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "アルコールの持ち込みはできますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "持ち込みは可能ですが、宴会・飲み会目的での利用は禁止しています。安全管理上の理由により、飲酒後の緊縛行為（練習・撮影・パフォーマンスを含む）は禁止です。泥酔状態での利用および近隣への迷惑行為もお断りしています。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "スマートフォンで撮影できますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "はい、問題ありません。ライティングが整っているため、スマートフォンでもクオリティの高い写真が撮影できます。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "機材の持ち込みはできますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "可能です。お持ち込み機材をご利用いただけるほか、常設の撮影機材・備品は利用料金内でご利用いただけます。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "キャンセルポリシーはどうなっていますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "2日前まで：無料 / 前日：料金の50% / 当日：料金の100% をキャンセル料としていただきます。台風・大雪・災害・交通障害等により安全な来場が困難な場合は、一定の条件のもとキャンセル料を免除します。詳しくはキャンセルポリシーをご確認ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "台風・大雪など悪天候時のキャンセル料はかかりますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "名古屋市への特別警報・暴風警報・暴風雪警報・大雪警報、警戒レベル4の避難指示、予約者本人が通常利用する主要交通機関の運休・計画運休により代替経路を利用しても開始時刻までの来場が困難な場合、通常利用する主要道路が通行止めで合理的な代替経路がない場合、施設の安全な利用が困難な場合など、当施設が定める条件に該当するときはキャンセル料をいただきません。支払済みの場合は全額返金または無料で日程変更します。予報や注意報のみの場合、通常範囲の遅延・渋滞、利用者の自主判断のみの場合は原則として通常のキャンセルポリシーを適用します。詳しくはキャンセルポリシーをご確認ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "縛り方を教えるサービスはありますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "当スタジオでは講習・技術指導等のサービスは行っておりません。あくまでスペースのご提供となります。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "当日延長は可能ですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "次の予約が空いている場合のみ可能です。当日は連絡がつかない場合もあるため、延長をご希望の場合は事前にご相談ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "鍵の受け渡しはどうなっていますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "予約時にお知らせします。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "予約日程の変更はできますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "前日までであれば1回に限り無料で変更できます。2回目以降はキャンセル扱いとなりますのでご注意ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "背景紙を床に敷いても良いですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "可能ですが、汚さないよう土足・素足でのご使用はご遠慮ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "営利利用は可能ですか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "可能です。有償コンテンツやファンサイト向けの撮影など、営利目的でのご利用に対応しています。ただし、撮影物の公開・販売にあたっては出演者全員の同意取得・法令遵守が必要です。詳細は利用規約 第5条をご確認ください。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "忘れ物をしました。",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "発見後7日間保管しています。予約フォームにてお早めにご連絡ください。食品・飲料など衛生上保管が困難なものは随時処分します。7日間経過後も引き取りがない場合は、遺失物法に基づき警察へ届け出ます。"
+      }
+    }
+  ]
+}
+</script>
 </head>
 
 <body data-page-type="guide" data-site-section="studio_main">
@@ -192,10 +354,138 @@
   </div>
 </section>
 
+<!-- よくある質問（FAQの正本。法的事項は legal/ を参照） -->
+<section id="faq-full" class="bg-section">
+  <div class="container">
+    <h2 class="section-title">よくある質問（全件）</h2>
+    <p class="section-subtitle">FAQ</p>
+
+    <div class="faq-list">
+      <details class="faq-item" data-analytics-faq-id="snb_member">
+        <summary>SNB MEMBERとは何ですか？</summary>
+        <div class="faq-answer">月額500円の会員制度で、継続してご利用の方・長時間ご利用の方向けの優遇制度です。会員料金は3時間以上のご利用で一般料金より安くなり、3時間のご利用で一般料金との差額が月会費500円相当になります（1〜2時間のご利用は一般料金と同額です）。初めてご利用の方も加入できます。旧制度の会員の方は、新しい会員制度へ自動では移行しないため、ご希望の場合はあらためてご加入ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="snb_member_prestart">
+        <summary>SNB MEMBERの加入と有効期間について教えてください。</summary>
+        <div class="faq-answer">SNB MEMBERは月額500円で、入会日から1か月有効、以後は入会日を基準に毎月自動更新されます。登録・決済後すぐに90日先行予約をご利用いただけます。2名ペアパック・シャワー・Studio Xの会員限定有料オプションなどの本特典は12月1日から開始します。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="snb_member_billing">
+        <summary>SNB MEMBERの自動更新・解約・返金について教えてください。</summary>
+        <div class="faq-answer">会費の月額500円は、クレジットカード決済（Stripe）で入会日を基準に毎月自動更新され、決済が成功した期間の会員資格が有効になります（例：10月15日に入会した場合は、10月15日〜11月14日が有効で、11月15日に自動更新されます）。入会日に初回の500円をお支払いいただき、日割りはありません。解約は、会員資格の確認ページ（/membership/status/）でメールによる本人確認を行うと表示される「SNB MEMBERを解約する」から手続きできます。オンラインで手続きできない場合は、予約フォームなどで「SNB MEMBER解約」と登録メールアドレスをお知らせください（次回の更新前に解約の手続きが完了した場合、次回以降の自動更新を停止します）。解約後も、お支払い済みの期間の末日までは会員資格が有効です。日割りを含め、お支払い済みの会費は返金しません。更新時の決済に失敗した場合は、猶予期間なく会員資格が有効にならず、一般料金になります。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="snb_member_benefits">
+        <summary>会員限定の2名ペアパック・シャワーとは何ですか？</summary>
+        <div class="faq-answer">SNB MEMBER会員限定の、3時間・1〜2名の定額プラン（2名ペアパック）が、平日5,000円・土日祝6,000円（税込）です。通常の時間貸しの会員料金とは別商品で、他の割引・優待とは併用できません。延長は通常の会員延長料金です。あわせて、会員限定のシャワー（1予約につき1回1,000円。利用人数は当日のスタジオ利用人数に準じます）も、2026年12月1日からご利用いただけます。会員資格はご利用日がお支払い済みの有効期間に入っているかで決まり、次回更新前の未払いの期間は、更新の決済が成功してから確定できます（猶予期間なし）。会員資格はStudio Nagoya Base・SNB mens・Studio Xで共通です。</div>
+      </details>
+
+      <details class="faq-item" id="faq-first-time" data-analytics-faq-id="first_time">
+        <summary>初めてでも利用できますか？</summary>
+        <div class="faq-answer">はい、初めての方でもご利用いただけます。完全貸切・無人入室で、予約確定後に入室方法とパスコードをご案内します。利用時間中は予約者のみの完全貸切で、ほかの利用者と同室になることはありません（スタッフとの対面もありません）。初回利用時には、入室方法や設備の使い方を事前にご案内します。Studio Nagoya Baseは、緊縛サービスを提供する場所ではありません。利用者自身が練習・撮影・講習を行うための完全貸切レンタルスタジオです。男女、性的指向、性自認を問わずご利用いただけます。初めての方のお支払いはオンラインクレジットカード決済のみです。18歳以上（高校生不可）の方に限ります。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="bondage_allowed">
+        <summary>緊縛撮影は可能ですか？</summary>
+        <div class="faq-answer">可能です。ただし、性的行為および性的な行為を伴う撮影は禁止しています。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="gender">
+        <summary>男女問わず利用できますか？</summary>
+        <div class="faq-answer">はい、男女、性的指向、性自認を問わずどなたでもご利用いただけます。ただし18歳以上（高校生不可）の方に限ります。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="food_drink">
+        <summary>スタジオ内での飲食はできますか？</summary>
+        <div class="faq-answer">飲食物の持ち込みは可能ですが、ちゃぶ台および学校机周辺のみでお召し上がりください。畳スペースおよび吊り床周辺での飲食は禁止です。こぼれ・汚損・臭気残り等が発生した場合は清掃費用の実費をご請求する場合があります。ゴミは必ずお持ち帰りください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="alcohol">
+        <summary>アルコールの持ち込みはできますか？</summary>
+        <div class="faq-answer">持ち込みは可能ですが、宴会・飲み会目的での利用は禁止しています。安全管理上の理由により、飲酒後の緊縛行為（練習・撮影・パフォーマンスを含む）は禁止です。泥酔状態での利用および近隣への迷惑行為もお断りしています。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="smartphone_photography">
+        <summary>スマートフォンで撮影できますか？</summary>
+        <div class="faq-answer">はい、問題ありません。ライティングが整っているため、スマートフォンでもクオリティの高い写真が撮影できます。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="equipment_rental">
+        <summary>機材の持ち込みはできますか？</summary>
+        <div class="faq-answer">可能です。お持ち込み機材をご利用いただけるほか、常設の撮影機材・備品は利用料金内でご利用いただけます。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="cancellation">
+        <summary>キャンセルポリシーはどうなっていますか？</summary>
+        <div class="faq-answer">2日前まで：無料 / 前日：料金の50% / 当日：料金の100% をキャンセル料としていただきます。台風・大雪・災害・交通障害等により安全な来場が困難な場合は、一定の条件のもとキャンセル料を免除します。詳しくは<a href="{{ '/legal/' | relative_url }}#cancel">キャンセルポリシー</a>をご確認ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="weather_cancellation">
+        <summary>台風・大雪など悪天候時のキャンセル料はかかりますか？</summary>
+        <div class="faq-answer">名古屋市への特別警報・暴風警報・暴風雪警報・大雪警報、警戒レベル4の避難指示、予約者本人が通常利用する主要交通機関の運休・計画運休により代替経路を利用しても開始時刻までの来場が困難な場合、通常利用する主要道路が通行止めで合理的な代替経路がない場合、施設の安全な利用が困難な場合など、当施設が定める条件に該当するときはキャンセル料をいただきません。支払済みの場合は全額返金または無料で日程変更します。予報や注意報のみの場合、通常範囲の遅延・渋滞、利用者の自主判断のみの場合は原則として通常のキャンセルポリシーを適用します。詳しくは<a href="{{ '/legal/' | relative_url }}#cancel">キャンセルポリシー</a>をご確認ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="payment_method">
+        <summary>支払い方法は何がありますか？</summary>
+        <div class="faq-answer">現金・PayPay（現地決済）・オンラインクレジットカード決済がご利用いただけます。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="instruction_service">
+        <summary>縛り方を教えるサービスはありますか？</summary>
+        <div class="faq-answer">当スタジオでは講習・技術指導等のサービスは行っておりません。あくまでスペースのご提供となります。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="same_day_extension">
+        <summary>当日延長は可能ですか？</summary>
+        <div class="faq-answer">次の予約が空いている場合のみ可能です。当日は連絡がつかない場合もあるため、延長をご希望の場合は事前にご相談ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="key_handover">
+        <summary>鍵の受け渡しはどうなっていますか？</summary>
+        <div class="faq-answer">予約時にお知らせします。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="reschedule">
+        <summary>予約日程の変更はできますか？</summary>
+        <div class="faq-answer">前日までであれば1回に限り無料で変更できます。2回目以降はキャンセル扱いとなりますのでご注意ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="backdrop_paper">
+        <summary>背景紙を床に敷いても良いですか？</summary>
+        <div class="faq-answer">可能ですが、汚さないよう土足・素足でのご使用はご遠慮ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="parking">
+        <summary>駐車場はありますか？</summary>
+        <div class="faq-answer">専用駐車場はございません。近隣のコインパーキングをご利用ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="commercial_use">
+        <summary>営利利用は可能ですか？</summary>
+        <div class="faq-answer">可能です。有償コンテンツやファンサイト向けの撮影など、営利目的でのご利用に対応しています。ただし、撮影物の公開・販売にあたっては出演者全員の同意取得・法令遵守が必要です。詳細は<a href="{{ '/legal/' | relative_url }}#terms">利用規約 第5条</a>をご確認ください。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="shower">
+        <summary>シャワーは使えますか？</summary>
+        <div class="faq-answer">SNB MEMBER会員限定のオプションとして、2026年12月1日から利用できます（Studio Xでは提供していません）。料金は1予約につき1,000円（税込・1人あたりではありません）で、利用人数は当日のスタジオ利用人数に準じます。ご利用は予約時間内に限ります。準備・スケジュール調整のため、ご利用日の1週間前までにお申し込みください。運営が確認のうえ利用可否をご案内し、ご利用いただける場合は承認後にお支払いをお願いします。</div>
+      </details>
+
+      <details class="faq-item" data-analytics-faq-id="lost_item">
+        <summary>忘れ物をしました。</summary>
+        <div class="faq-answer">発見後7日間保管しています。<a href="../#reservation-form">予約フォーム</a>にてお早めにご連絡ください。食品・飲料など衛生上保管が困難なものは随時処分します。7日間経過後も引き取りがない場合は、遺失物法に基づき警察へ届け出ます。</div>
+      </details>
+
+    </div>
+
+    <p class="pricing-note">キャンセル料・禁止事項・個人情報の取扱いなどの法的事項は、<a href="{{ '/legal/' | relative_url }}">利用規約・法的事項</a>をご確認ください。</p>
+  </div>
+</section>
+
 <!-- 法的事項へのリンク -->
 <section id="legal-link">
   <div class="container" style="text-align:center;">
-    <p class="pricing-note">利用規約・キャンセルポリシー・安全ルールの全文、および全FAQは法的事項ページでご確認いただけます。</p>
+    <p class="pricing-note">利用規約・キャンセルポリシー・安全ルール・プライバシーポリシーの全文は、法的事項ページでご確認いただけます。</p>
     <div class="section-cta-sm">
       <a class="btn-primary" href="{{ '/legal/' | relative_url }}">利用規約・法的事項を見る →</a>
     </div>
@@ -210,6 +500,10 @@
 
 {% include subpage_footer_ja.html %}
 
+<script>
+/* FAQへのアンカー遷移時は該当の質問を開く */
+(function(){var e=location.hash&&document.getElementById(location.hash.slice(1));if(e&&e.tagName==='DETAILS'){e.open=true;}})();
+</script>
 <script src="../scripts/main.js"></script>
 <script src="../scripts/analytics.js"></script>
 
