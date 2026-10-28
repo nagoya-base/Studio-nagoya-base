@@ -575,38 +575,52 @@ test('予約フォーム: Studio Xのみに貸切ベースプラン欄（常時�
   });
 });
 
-test('公式サイト /studio-x/: プラン名・1時間1,000円・最低6時間・8:00〜21:00・6名まで・再入室・途中延長不可・責任範囲の表記があり、誤認表現・禁止表現がない', function () {
+test('公式サイト /studio-x/: トップは貸切ベースプランの要約、詳細は特設ページに全て保持（Issue #596）。誤認表現・禁止表現がない', function () {
   var html = read('studio-x/index.html');
   var start = html.indexOf('id="osu-base-plan"');
   assert.ok(start !== -1);
   var section = html.slice(start, html.indexOf('id="access"', start));
   var text = section.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  /* トップ: 料金・時間・人数・最重要の利用条件だけを常時表示し、詳細は特設ページへ誘導する。 */
   ['6時間貸切', 'ベースプラン', '1,000', '最低6時間', '8:00〜21:00', '6名まで', '利用開始後の途中延長はできません', '着替え', '荷物置き', '休憩',
-    '再入室', '大型ミラー', '有人クロークではありません', '荷物は貸切中のお部屋内で各自管理', '貴重品の管理は利用者ご自身',
-    'スタッフは常駐しません', 'シャワー利用は含まれません', '共用部や建物内に荷物を放置しない', '他の利用者とお部屋を共用することはありません',
-    '原状復帰', '利用規約の責任範囲'].forEach(function (needle) {
-    assert.ok(text.indexOf(needle) !== -1, '掲載する: ' + needle);
+    '再入室', '有人クロークではありません', 'スタッフは常駐せず', 'シャワー利用は含まれません', '予約フォームで本プランを選択した場合のみ適用'].forEach(function (needle) {
+    assert.ok(text.indexOf(needle) !== -1, 'トップに掲載する: ' + needle);
+  });
+  assert.ok(section.indexOf('href="base-plan/"') !== -1, '詳細ページへの導線');
+  assert.ok(section.indexOf('href="booking/?plan=osu_cosplay_base_6h#booking-app-section"') !== -1, 'プラン選択済みの予約導線');
+  /* 特設ページ: トップから外した詳細をすべて保持している（移転先）。 */
+  var plan = read('studio-x/base-plan/index.html');
+  var planText = plan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  ['6時間貸切', 'ベースプラン', '1,000', '最低6時間', '8:00〜21:00', '6名まで', '利用開始後の途中延長はできません', '着替え', '荷物置き', '休憩',
+    '再入室', '大型ミラー', '有人クロークではありません', '貸切中のお部屋内で各自管理', '貴重品の管理は利用者ご自身',
+    'スタッフ常駐なし', 'シャワー利用は含まれません', '共用部や建物内に荷物を放置しない', '他の利用者とお部屋を共用することはありません',
+    '原状復帰', '利用規約の責任範囲', 'こんな方におすすめ', '友人同士で落ち着いて着替えたい', '公式更衣室の混雑を避けたい',
+    '「6時間貸切ベースプラン」欄からいつでも', '用途限定のパッケージ商品', '自動で適用されることはありません',
+    '貸切ベースプランは荷物を預かってもらえますか？', '貸切ベースプランはいつでも予約できますか？', '貸切ベースプランの時間と人数は？'].forEach(function (needle) {
+    assert.ok(planText.indexOf(needle) !== -1, '特設ページに保持: ' + needle);
   });
   /* 誤認表現: 「預かります」「クローク」を肯定的に使わない（「有人クロークではありません」の否定のみ）。 */
-  assert.ok(!/荷物を?お預かりします|預かりサービスです|クロークです|クロークをご利用/.test(text));
-  assert.ok(text.replace(/有人クローク(ではありません|ではなく)/g, '').indexOf('クローク') === -1);
-  assert.ok(!/スペースマーケット|スペマ/.test(html.slice(start, html.indexOf('id="access"', start))), '公式サイト向け。スペースマーケット表記を入れない');
+  [text, planText].forEach(function (t) {
+    assert.ok(!/荷物を?お預かりします|預かりサービスです|クロークです|クロークをご利用/.test(t));
+    assert.ok(t.replace(/有人クローク(ではありません|ではなく)/g, '').replace(/貸切ベースプランは荷物を預かってもらえますか？/g, '').indexOf('クローク') === -1);
+  });
+  assert.ok(!/スペースマーケット|スペマ/.test(section), '公式サイト向け。スペースマーケット表記を入れない');
   /* 通常料金は不変（既存の料金カードのまま）。 */
   assert.ok(html.indexOf('1,200<small>円〜 / 1時間</small>') !== -1 && html.indexOf('1,500<small>円〜 / 1時間</small>') !== -1);
   /* 常設プラン: イベント日限定の表現を残さない。日付もハードコードしない。 */
-  assert.ok(!/開催日限定|対象イベント日|対象日|大須コスプレイベント/.test(text), text);
+  assert.ok(!/開催日限定|対象イベント日|対象日|大須コスプレイベント/.test(text + planText));
   assert.ok(!/20\d\d-\d\d-\d\d/.test(section));
-  assert.ok(!/イベント開催日限定|対象のイベント開催日|大須周辺で大型コスプレイベントが開催される日のみ/.test(html), 'FAQ / JSON-LD / SEOメタにも残さない');
-  /* 構造化データ（Offer + FAQPage）。JSONとして妥当で、金額・通貨が正しい。 */
+  assert.ok(!/イベント開催日限定|対象のイベント開催日|大須周辺で大型コスプレイベントが開催される日のみ/.test(html + plan), 'FAQ / JSON-LD / SEOメタにも残さない');
+  /* 構造化データ（Offer）。JSONとして妥当で、金額・通貨が正しい。FAQは特設ページに表示FAQとして移転済み（#507の方針でFAQPageは置かない）。 */
   var ld = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html);
   assert.ok(ld, 'JSON-LDがある');
-  var data = JSON.parse(ld[1]);
-  var offer = data['@graph'].filter(function (n) { return n['@type'] === 'Offer'; })[0];
+  var offer = JSON.parse(ld[1]);
+  assert.strictEqual(offer['@type'], 'Offer');
   assert.strictEqual(offer.price, '1000');
   assert.strictEqual(offer.priceSpecification.eligibleQuantity.minValue, 6);
-  assert.ok(!/6時間固定|時間の延長や短縮はできません/.test(html), '固定時間の表現を残さない');
+  assert.ok(!/6時間固定|時間の延長や短縮はできません/.test(html + plan), '固定時間の表現を残さない');
   assert.strictEqual(offer.priceCurrency, 'JPY');
-  assert.ok(data['@graph'].some(function (n) { return n['@type'] === 'FAQPage' && n.mainEntity.length === 3; }));
+  assert.ok(html.indexOf('FAQPage') === -1, 'トップに表示のないFAQPageを残さない');
 });
 
 test('通常のStudio X料金表示（/studio-x/ の料金カード・最低利用・追加料金なし）は変更されていない', function () {

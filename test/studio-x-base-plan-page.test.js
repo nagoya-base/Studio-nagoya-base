@@ -72,7 +72,9 @@ test('特設ページ(#507): X直リンク向けミニマム構成。ファー�
     assert.ok(heroText.indexOf(n) !== -1, 'ファーストビュー: ' + n);
   });
   assert.ok(hero.indexOf('このプランで予約する') !== -1, 'ファーストビューに予約CTA');
-  var body = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+  /* ミニマム構成の対象は冒頭（POINT / NOTICE）。トップから移転した詳細（Issue #596）は #usecases 以降の「詳細・補足」ブロックに置く。 */
+  assert.ok(html.indexOf('id="usecases"') > html.indexOf('id="excluded"'), '詳細・補足はミニマム部分の後ろ');
+  var body = html.slice(html.indexOf('<main'), html.indexOf('id="usecases"'));
   var text = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   ['これだけ知っておけばOK', '有人クロークではありません', '荷物・貴重品は室内で各自管理してください', 'スタッフ常駐なし', 'シャワーなし',
     '追加オプションは利用できません', '利用開始後の途中延長はできません', '常設', '外出・再入室OK', '簡易撮影', '通常のStudio X予約'].forEach(function (n) {

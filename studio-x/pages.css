@@ -368,3 +368,12 @@
   .base-plan-hero .button { width: 100%; justify-content: center; text-align: center; }
   .base-plan-main .page-cta .button { width: 100%; justify-content: center; text-align: center; }
 }
+
+/* FAQ（<details>）— サブページ共通。トップの .faq と同じ見た目（Issue #596） */
+.content-section .faq-list { border-top: 1px solid var(--line); }
+.content-section .faq-list details { border-bottom: 1px solid var(--line); }
+.content-section .faq-list summary { position: relative; padding: 20px 48px 20px 0; font-size: .93rem; font-weight: 700; cursor: pointer; list-style: none; }
+.content-section .faq-list summary::-webkit-details-marker { display: none; }
+.content-section .faq-list summary::after { content: '+'; position: absolute; right: 8px; top: 17px; color: var(--accent); font-family: var(--font-display); font-size: 1.25rem; font-weight: 400; }
+.content-section .faq-list details[open] summary::after { content: '−'; }
+.content-section .faq-list details p { max-width: 850px; margin: -4px 0 0; padding: 0 48px 22px 0; }
