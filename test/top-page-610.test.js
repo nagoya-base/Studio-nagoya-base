@@ -9,15 +9,21 @@ var pricing = top.slice(top.indexOf('<section id="pricing">'), top.indexOf('</se
 test('#610: トップ料金欄は「受付中」と12/1以降適用を正しい時制で案内し、/membership/へ誘導する', function () {
   var intro = pricing.match(/<p class="phase2-intro"><strong>SNB MEMBER<\/strong>([\s\S]*?)<\/p>/)[1];
   assert.ok(intro.indexOf('受付中') !== -1);
-  assert.ok(intro.indexOf('会員料金・会員特典は2026年12月1日以降のご予約・ご利用から適用されます') !== -1);
+  assert.ok(intro.indexOf('会員料金は2026年12月1日以降のご予約から適用されます') !== -1);
   assert.ok(intro.indexOf("'/membership/' | relative_url") !== -1);
   assert.ok(pricing.indexOf('始めます') === -1, '「12月1日から始めます」の未来形に戻さない');
 });
 
-test('#610: 日付条件（作成日基準／利用日基準）と稼働開始日が正確', function () {
-  assert.ok(pricing.indexOf('2026年10月26日から利用中') !== -1);
-  assert.ok(pricing.indexOf('2026年12月1日以降に作成したご予約から') !== -1);
-  assert.ok(pricing.indexOf('利用日が2026年12月1日以降') !== -1);
+test('#610/#629: 日付条件（作成日基準／利用日基準）はトップ常時表示から外し、正本（membership / 規約）に正確に保持する', function () {
+  var visible = pricing.replace(/<details[\s\S]*?<\/details>/g, '');
+  ['2026年10月26日から利用中', '作成したご予約', '利用日が2026年12月1日以降'].forEach(function (w) {
+    assert.strictEqual(visible.indexOf(w), -1, w + ' はトップ常時表示に置かない');
+  });
+  var terms = fs.readFileSync(path.join(__dirname, '..', '_includes/membership_terms_ja.html'), 'utf8');
+  var benefits = fs.readFileSync(path.join(__dirname, '..', '_includes/membership_benefits_ja.html'), 'utf8');
+  assert.ok(terms.indexOf('2026年12月1日以降に作成するご予約') !== -1);
+  assert.ok(terms.indexOf('ご利用日が2026年12月1日以降') !== -1);
+  assert.ok(benefits.indexOf('ご利用日が2026年12月1日以降') !== -1);
 });
 
 test('#610: 固定Stripeリンクは削除せず、予約CTAとは別ブロックに分離', function () {

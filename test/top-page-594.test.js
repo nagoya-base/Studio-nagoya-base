@@ -113,7 +113,7 @@ test('#594: 料金は基本料金を常時表示し、会員・適用条件の�
   var pricing = top.slice(top.indexOf('<section id="pricing">'), top.indexOf('</section>', top.indexOf('<section id="pricing">')));
   var visible = pricing.slice(0, pricing.indexOf('<details'));
   assert.strictEqual(visible.split('<table>').length - 1, 2, '通常・会員の2表は常時表示');
-  ['3時間以上のご利用で一般料金より安く', '継続・長時間ご利用の方向けの優遇制度'].forEach(function (w) { assert.ok(pricing.indexOf(w) !== -1, w); });
+  ['3時間以上・長時間のご利用ほどお得', '継続・長時間ご利用の方向けの優遇制度'].forEach(function (w) { assert.ok(pricing.indexOf(w) !== -1, w); });
   var details = pricing.split('<details').slice(1).join('<details');
   ['プラットフォーム経由のご予約は対象外', '/membership/'].forEach(function (w) {
     assert.ok(details.indexOf(w) !== -1, 'アコーディオン内: ' + w);

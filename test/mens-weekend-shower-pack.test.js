@@ -498,8 +498,8 @@ test('公開コピー: 新パックの説明（予約フォーム・会員特典
   var card = benefits.slice(benefits.indexOf('id="shower-pack"'), benefits.indexOf('id="shower"'));
   assert.ok(card.indexOf('1〜2名') !== -1 && card.indexOf('当日のスタジオ利用人数に準じます') !== -1 && card.indexOf('同一予約で2名まで') === -1, '会員特典');
   assert.ok(card.indexOf('3名以上でもパック料金は変わりません') === -1, '3名以上でも成立するとは書かない');
-  var mens = read('mens/index.html');
-  var para = mens.slice(mens.indexOf('土日祝4時間シャワーパック'));
-  para = para.slice(0, para.indexOf('</p>'));
-  assert.ok(para.indexOf('1〜2名限定') !== -1, 'mens料金案内');
+  /* #629: mensトップは名称のみ。人数・金額・固定料金の詳細は会員特典（/mens/membership/）が正本 */
+  assert.ok(read('mens/index.html').indexOf('土日祝4時間シャワーパック') !== -1, 'mensトップに名称');
+  assert.ok(benefits.slice(benefits.indexOf('id="shower-pack"')).indexOf('6,500円') !== -1, 'mens会員特典に金額');
+  assert.ok(read('mens/membership/index.html').indexOf('membership_benefits_ja.html brand="mens"') !== -1, 'mens会員ページが特典を表示');
 });

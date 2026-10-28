@@ -106,9 +106,10 @@ test('SNB: 会員訴求は「3時間以上で割引」「3時間で月会費相�
     assert.ok(!/(安く(使う|利用)|お得に(使う|利用)|割引を受ける)(ため|なら|には)[^。]*(会員(に)?(なって|加入|登録)|ご加入)/.test(t), p + ' に加入を促しすぎる表現');
   });
   var idx = textOf(read('index.html'));
-  assert.ok(idx.indexOf('3時間以上のご利用で一般料金より安く') !== -1);
-  assert.ok(idx.indexOf('3時間のご利用で、一般料金との差額が月会費500円相当') !== -1);
+  /* #629: トップは「3時間以上・長時間ほどお得」の一言のみ。割引条件・差額の説明は /membership/ と FAQ が正本 */
+  assert.ok(idx.indexOf('3時間以上・長時間のご利用ほどお得') !== -1);
   assert.ok(idx.indexOf('継続・長時間ご利用の方向けの優遇制度') !== -1);
+  assert.ok(idx.indexOf('差額が月会費500円相当') === -1, '差額の詳細はトップに持たない');
   var m = textOf(read('membership/index.html'));
   assert.ok(m.indexOf('3時間以上のご利用で、会員料金は一般料金より安くなります') !== -1);
   assert.ok(m.indexOf('3時間のご利用で、一般料金との差額が月会費（500円）相当') !== -1);
