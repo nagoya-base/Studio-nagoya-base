@@ -118,7 +118,7 @@ test('予約オプション側(画面・GAS)にも機材の単価・在庫を重
 test('機材・料金ページへの導線: Studio Xトップ・ご利用ガイドの機材・予約フォームの機材オプション・後付け画面', function () {
   var label = '撮影機材・レンタル料金を見る';
   var guideLabel = '背景・照明・設営オプションを先に確認する';
-  assert.ok(read('studio-x/index.html').indexOf('設備・背景・オプションを見る') !== -1, 'トップは機材だけでなく設備・背景・オプション案内であることを示す（Issue #457）');
+  assert.ok(read('studio-x/index.html').indexOf('設備・機材の詳細を見る') !== -1, 'トップ#specsから設備ページ(詳細の正本)へ誘導する（Issue #457 / #626。背景・テーマは#worlds側の導線）');
   assert.ok(read('studio-x/index.html').indexOf('href="equipment/#worlds"') !== -1, '「一室で、6つの世界。」から背景・テーマ一覧へ');
   assert.ok(read('studio-x/how-to/index.html').indexOf(label) !== -1);
   assert.ok(read('studio-x/booking/options/index.html').indexOf(guideLabel) !== -1);
