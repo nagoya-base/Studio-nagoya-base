@@ -241,11 +241,13 @@ test('mens専用・Studio X専用のStripe商品を作らない（共通の加�
 test('各トップから対応する会員ページへの導線がある（SNB→/membership/・mens→/mens/membership/・Studio X→/studio-x/membership/）', function () {
   var snb = read('index.html');
   assert.match(snb, /href="\{\{ '\/membership\/' \| relative_url \}\}"[^>]*>SNB MEMBERの内容を見て加入する/);
-  assert.ok(textOf(snb).indexOf('2名ペアパック') !== -1, 'SNBトップのCTAで主な特典に触れる（金額等の詳細は会員ページが正本: #610）');
+  /* #629: SNBトップは特典名も持たない。特典の詳細（2名ペアパック・シャワー・90日先行予約）は会員ページが正本 */
+  assert.ok(textOf(snb).indexOf('2名ペアパック') === -1, 'SNBトップは特典詳細を持たない');
+  assert.ok(textOf(read('membership/index.html')).indexOf('2名ペアパック') !== -1 || textOf(read('_includes/membership_benefits_ja.html')).indexOf('2名ペアパック') !== -1, '特典詳細は会員ページ側');
   assert.ok(textOf(read('membership/index.html')).indexOf('平日5,000円') !== -1 || textOf(read('_includes/membership_benefits_ja.html')).indexOf('5,000円') !== -1);
   var mens = read('mens/index.html');
   assert.match(mens, /href="\{\{ '\/mens\/membership\/' \| relative_url \}\}"[^>]*>会員限定の特典と加入方法を見る/);
-  assert.ok(textOf(mens).indexOf('通常のお部屋料金は、会員加入なしでもこのページの会員料金のままです') !== -1);
+  assert.ok(textOf(mens).indexOf('通常のお部屋料金は、会員加入なしでも会員料金のままです') !== -1);
   var x = read('studio-x/index.html');
   assert.ok(/<a href="membership\/"[^>]*>会員限定オプション<\/a>/.test(x), 'Studio Xのナビ');
   assert.ok(x.indexOf('<a href="membership/">会員限定オプションのご案内</a>') !== -1, 'Studio Xの料金欄');
@@ -448,7 +450,7 @@ test('シャワー(#481): 予約フォーム・会員案内・申込ページに
   var fs = require('fs');
   var NOTICE = 'シャワー利用は、準備・スケジュール調整のため、ご利用日の1週間前までのお申し込みが必要です。運営が確認のうえ利用可否をご案内し、ご利用いただける場合は承認後にお支払いをお願いします。';
   ['_includes/booking_app_ja.html', '_includes/membership_benefits_ja.html', '_includes/shower_options_ja.html',
-    'membership/index.html', 'mens/membership/index.html', 'mens/index.html'].forEach(function (file) {
+    'membership/index.html', 'mens/membership/index.html'].forEach(function (file) {
     var html = fs.readFileSync(__dirname + '/../' + file, 'utf8');
     assert.ok(html.indexOf(NOTICE) !== -1 || html.includes('ご利用日の1週間前までにスタッフとの日程調整を済ませてから'), file + ' に事前調整の案内がある');
     assert.ok(!/予約確定後に「オプションのお支払い」ページでお支払い/.test(html), file + ' に即時利用を思わせる旧文言がない');
