@@ -112,9 +112,13 @@ test('#594: 料金は基本料金を常時表示し、会員・適用条件の�
   assert.strictEqual(visible.split('<table>').length - 1, 2, '通常・会員の2表は常時表示');
   ['3時間以上のご利用で一般料金より安く', '継続・長時間ご利用の方向けの優遇制度'].forEach(function (w) { assert.ok(pricing.indexOf(w) !== -1, w); });
   var details = pricing.split('<details').slice(1).join('<details');
-  ['自動更新（Stripe）', '2名ペアパック', '5,000円', '6,000円', 'シャワー',
-    'プラットフォーム経由のご予約には適用されません', '確認コード（6桁）'].forEach(function (w) {
+  ['プラットフォーム経由のご予約は対象外', '/membership/'].forEach(function (w) {
     assert.ok(details.indexOf(w) !== -1, 'アコーディオン内: ' + w);
+  });
+  // 契約・特典の詳細は #610 で /membership/ へ集約（トップでは重複保持しない）
+  var m = read('membership/index.html') + read('_includes/membership_terms_ja.html') + read('_includes/membership_benefits_ja.html');
+  ['自動更新', '2名ペアパック', '5,000円', '6,000円', 'シャワー', '確認コード（6桁'].forEach(function (w) {
+    assert.ok(m.indexOf(w) !== -1, '会員ページ側に保持: ' + w);
   });
 });
 

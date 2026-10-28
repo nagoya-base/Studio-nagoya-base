@@ -131,8 +131,10 @@ test('SNB: 会員加入CTAがあり、会員案内ページへ接続し、初回
   var idx = read('index.html');
   assert.match(idx, /id="snb-member"[\s\S]*?href="\{\{ '\/membership\/' \| relative_url \}\}"[^>]*>SNB MEMBERの内容を見て加入する/);
   var snb = textOf(idx);
-  assert.ok(snb.indexOf('初めてご利用の方も加入できます') !== -1);
-  assert.ok(snb.indexOf('自動では移行しない') !== -1);
+  /* 契約条件の詳細は #610 で会員案内ページ（membership_terms）へ集約 */
+  var terms = textOf(read('membership/index.html') + read('_includes/membership_terms_ja.html'));
+  assert.ok(terms.indexOf('初めてご利用の方も') !== -1);
+  assert.ok(terms.indexOf('自動では移行しません') !== -1);
   assert.ok(!/自動(的)?に(SNB MEMBER|会員)へ(移行|引き継)/.test(snb) && !/自動で(SNB MEMBER|会員)へ(移行|引き継)/.test(snb));
   var form = read('membership/index.html');
   assert.match(form, /id="membership-join-form"/);
