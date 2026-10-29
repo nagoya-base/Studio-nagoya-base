@@ -40,6 +40,12 @@ var ALLOWED_PREVIEW_ONLY_TEXT = [
 /* Issue #639: HEROから外した当日予約の説明は、予約セクションの既存 calendar-note と重複するため試作では削除する */
 var ALLOWED_CURRENT_ONLY_TEXT = ['予約ページで日時を選び、そのまま仮予約を送信できます。空きがあれば当日のご予約も可能です（はじめての方はオンラインクレジットカード決済のみ）。'];
 
+/* Issue #641: 利用者指定により、試作のヒーロー画像・OGP画像だけを差し替える（#633の画像維持ルールの明示的な例外）。他の画像・文言は照合を続ける */
+var CUR_OGP = 'https://nagoya-base.github.io/Studio-nagoya-base/images/ogp-mens-v2-1200x630.jpg';
+var PRE_OGP = 'https://nagoya-base.github.io/Studio-nagoya-base/images/mens-preview-ogp-1200x630.jpg';
+var HERO_EXCEPTION_PRE = '../images/mens-preview-hero.webp | 薄暗い和室で畳に座り横を見つめる男性。「用途によって、空気が変わる。安心できる、大人の秘密基地。Studio Nagoya Base mens」 | 1600x841';
+var HERO_EXCEPTION_CUR = '../images/ogp-mens-v2-1200x630.jpg | 男性同士のフェティッシュ撮影に対応するStudio Nagoya Baseの男性向け案内 | 1200x630';
+
 var built = null;
 function tryBuild() {
   var dest = fs.mkdtempSync(path.join(os.tmpdir(), 'snb-633-'));
@@ -198,6 +204,10 @@ test('#633: リンク先・CTA文言・data-analytics-* の対応が現行と一
 
 test('#633: 現行トップの写真（src/alt/寸法）をすべて維持している', { skip: skipBuilt }, function () {
   var cur = images(built.current), pre = images(built.preview);
+  assert.ok(cur.indexOf(HERO_EXCEPTION_CUR) !== -1, '現行のヒーロー画像が想定どおり');
+  assert.ok(pre.indexOf(HERO_EXCEPTION_PRE) !== -1, '試作のヒーロー画像が #641 の指定どおり');
+  cur = cur.filter(function (x) { return x !== HERO_EXCEPTION_CUR; });
+  pre = pre.filter(function (x) { return x !== HERO_EXCEPTION_PRE; });
   assert.deepStrictEqual(diff(cur, pre), []);
   assert.deepStrictEqual(diff(pre, cur), []);
 });
@@ -206,15 +216,18 @@ test('#633: title・description・OGP・Twitter・canonical・JSON-LD を維持�
   var t = function (h) { return (h.match(/<title>([\s\S]*?)<\/title>/) || [])[1]; };
   assert.strictEqual(t(built.preview), t(built.current));
   ['description'].forEach(function (k) { assert.strictEqual(metaContent(built.preview, 'name', k), metaContent(built.current, 'name', k)); });
-  ['og:title', 'og:description', 'og:type', 'og:url', 'og:image', 'og:locale', 'og:site_name'].forEach(function (k) {
+  assert.strictEqual(metaContent(built.current, 'property', 'og:image'), CUR_OGP);
+  assert.strictEqual(metaContent(built.preview, 'property', 'og:image'), PRE_OGP, '#641: 試作のog:imageは専用OGP');
+  assert.strictEqual(metaContent(built.preview, 'name', 'twitter:image'), PRE_OGP, '#641: 試作のtwitter:imageは専用OGP');
+  ['og:title', 'og:description', 'og:type', 'og:url', 'og:locale', 'og:site_name'].forEach(function (k) {
     assert.strictEqual(metaContent(built.preview, 'property', k), metaContent(built.current, 'property', k), k);
   });
-  ['twitter:card', 'twitter:title', 'twitter:description', 'twitter:image'].forEach(function (k) {
+  ['twitter:card', 'twitter:title', 'twitter:description'].forEach(function (k) {
     assert.strictEqual(metaContent(built.preview, 'name', k), metaContent(built.current, 'name', k), k);
   });
   var canon = function (h) { return (h.match(/<link rel="canonical" href="([^"]*)"/) || [])[1]; };
   assert.strictEqual(canon(built.preview), canon(built.current));
-  assert.deepStrictEqual(jsonld(built.preview), jsonld(built.current));
+  assert.deepStrictEqual(jsonld(built.preview), jsonld(built.current).map(function (j) { return j.split(CUR_OGP).join(PRE_OGP); }), '#641: JSON-LDはimageのみ専用OGPへ');
 });
 
 test('#633: 現行トップにあるIDは試作にも存在し、試作内でIDが重複しない', { skip: skipBuilt }, function () {
@@ -332,4 +345,37 @@ test('#639: スマホでは固定写真の下端より下にある最上段の�
   var css = read('styles/mens-preview-633.css');
   assert.match(css, /\.pv-scroll\.is-active \.pv-stage-photo \{[^}]*visibility: hidden; pointer-events: none/);
   assert.match(css, /\.pv-stage-photo\[data-photo="rope"\] \{ opacity: 1; visibility: visible; pointer-events: auto/);
+});
+
+/* Issue #641: ヒーロー・OGP画像の差し替え（生成画像の実寸・参照の整合） */
+function pngSize(buf) { return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) }; }
+function jpegSize(buf) {
+  var i = 2;
+  while (i < buf.length) {
+    if (buf[i] !== 0xFF) { i++; continue; }
+    var m = buf[i + 1];
+    if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) };
+    i += 2 + buf.readUInt16BE(i + 2);
+  }
+  return null;
+}
+test('#641: OGP画像は1200x630、ヒーロー画像は元画像と同じ縦横比で幅1600以内（拡大なし）', function () {
+  var ogp = jpegSize(fs.readFileSync(path.join(ROOT, 'images', 'mens-preview-ogp-1200x630.jpg')));
+  assert.deepStrictEqual(ogp, { w: 1200, h: 630 });
+  var src = pngSize(fs.readFileSync(path.join(ROOT, 'images', 'F035A90C-B055-4850-97DF-7EF808B832D9.png')));
+  var webp = fs.readFileSync(path.join(ROOT, 'images', 'mens-preview-hero.webp'));
+  assert.strictEqual(webp.slice(0, 4).toString(), 'RIFF');
+  assert.strictEqual(webp.slice(8, 12).toString(), 'WEBP');
+  assert.strictEqual(webp.slice(12, 16).toString(), 'VP8 ');
+  var w = webp.readUInt16LE(26) & 0x3FFF, h = webp.readUInt16LE(28) & 0x3FFF;
+  assert.ok(w <= 1600 && w <= src.w);
+  assert.ok(Math.abs(w / h - src.w / src.h) < 0.005, '縦横比が元画像と一致');
+  var html = read('mens/preview-633.html');
+  assert.ok(html.indexOf('src="../images/mens-preview-hero.webp"\n        width="' + w + '"\n        height="' + h + '"') !== -1, 'width/heightが生成画像と一致');
+  assert.ok(html.indexOf('<link rel="preload" as="image" href="../images/mens-preview-hero.webp"') !== -1);
+  assert.strictEqual(html.indexOf('ogp-mens-v2'), -1, '試作は旧OGPを参照しない');
+});
+test('#641: 現行トップと元画像は変更しない（現行は従来のOGPを参照）', function () {
+  assert.ok(fs.existsSync(path.join(ROOT, 'images', 'F035A90C-B055-4850-97DF-7EF808B832D9.png')));
+  assert.ok(read('mens/index.html').indexOf('images/ogp-mens-v2-1200x630.jpg') !== -1);
 });
