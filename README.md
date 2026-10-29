@@ -2,6 +2,14 @@
 
 Studio Nagoya Base の静的サイト一式です。GitHub Pages で公開する前提の構成です。
 
+## 内部運用資料（2026-10-29更新・Issue #573）
+
+会員制度・料金・ブランド別の適用条件は [`docs/membership-pricing-2026-12.md`](docs/membership-pricing-2026-12.md) を参照。
+Studio XはSNB共通の会員制度を継続し、基本利用料金は会員・非会員で同額。会員特典は有料機材、有料のスタッフ設営・片付け、31〜90日先の予約。Studio Xにシャワーオプションは設けない。
+Studio Xの値下げは、緊縛という唯一性がない分の価格設定と、有料セッティングプランを利用しやすくするための部屋代優遇を意図する（2026-10-29、運営者確認）。共通の部屋料金と別料金の有料スタッフ対応を組み合わせた利用のしやすさを重視する。詳細は内部料金資料を参照。
+
+SNB / SNB mensの会員料金制度は維持する。Issue #573は内部資料・コメントの修正であり、Web表示・実料金・料金計算ロジックは変更しない。
+
 公開 URL:
 - 日本語トップ: `https://nagoya-base.github.io/Studio-nagoya-base/`
 - 英語: `https://nagoya-base.github.io/Studio-nagoya-base/en.html`
