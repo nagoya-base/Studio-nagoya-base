@@ -137,12 +137,20 @@
   gap: 48px;
 }
 .pv-hero-title {
-  font-size: clamp(1.5rem, 4.6vw, 2.2rem);
+  font-size: clamp(1.9rem, 6vw, 2.9rem);
   font-weight: 600;
-  letter-spacing: 0.03em;
-  line-height: 1.45;
+  letter-spacing: 0.05em;
+  line-height: 1.35;
+  word-break: keep-all;
+  text-wrap: balance;
   color: var(--text);
-  margin-bottom: 18px;
+  margin-bottom: 14px;
+}
+.pv-hero-sub {
+  font-size: clamp(1.05rem, 3vw, 1.3rem);
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 20px;
 }
 .pv-hero-description {
   font-size: clamp(0.92rem, 2.4vw, 1.02rem);
@@ -150,12 +158,13 @@
   line-height: 1.9;
   margin-bottom: 22px;
 }
-.pv-hero-badges { justify-content: flex-start; }
+.pv-hero-seo { font-size: 0.8rem; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 22px; }
+.pv-hero-badges { justify-content: flex-start; margin-bottom: 28px; }
 .pv-hero .hero-badge { color: var(--text); border-color: rgba(238, 242, 248, 0.45); }
 .pv-hero-price { color: var(--text-muted); margin-bottom: 26px; letter-spacing: 0.03em; }
+.pv-price-lead { margin-bottom: 20px; }
 .pv-hero-price strong { color: var(--accent); font-weight: 600; }
 .pv-hero-actions { display: flex; gap: 14px; flex-wrap: wrap; }
-.pv-hero .hero-note { color: var(--text-muted); }
 .pv-hero-image {
   display: block;
   border-radius: 10px;
@@ -170,6 +179,12 @@
 .z-paper .notice-banner-text strong { color: var(--text); }
 .z-paper .feature-card { background: #fff; box-shadow: 0 1px 2px rgba(23, 32, 51, 0.06); }
 .z-paper .phase2-trust-strip { background: transparent; }
+.pv-private-title { word-break: keep-all; text-wrap: balance; font-size: clamp(1.7rem, 5vw, 2.5rem); font-weight: 600; letter-spacing: 0.05em; }
+.pv-private-lead { font-size: clamp(1rem, 2.8vw, 1.2rem); line-height: 1.9; margin: 8px 0 28px; }
+.pv-assure { list-style: none; margin: 0 0 48px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.pv-assure li { background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 6px; padding: 14px 16px; font-size: 0.95rem; line-height: 1.6; }
+.pv-about-title { font-size: 1.15rem; font-weight: 600; margin: 0 0 4px; }
+.pv-about-label { font-size: 0.75rem; letter-spacing: 0.12em; color: var(--text-muted); margin: 0 0 16px; }
 
 /* ===== 写真（ROPE / UNIFORM / GALLERY 共通） ===== */
 .pv-usage { margin-bottom: 32px; }
@@ -186,6 +201,26 @@
 .pv-photos--uniform { grid-template-columns: minmax(0, 1fr); max-width: 360px; }
 .z-wood .pv-photo { box-shadow: 0 14px 36px rgba(60, 36, 12, 0.28); }
 .z-sky .pv-photo { box-shadow: 0 14px 36px rgba(20, 50, 90, 0.2); }
+
+/* ===== ROPE / WOOD：スクロール連動（既定は通常配置。JSが .is-active を付けたときだけ sticky 化） ===== */
+.pv-scroll { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; align-items: start; }
+.pv-scroll-stage { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.pv-stage-photo { margin: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 14px 36px rgba(60, 36, 12, 0.28); background: var(--bg-card); }
+.pv-stage-photo img { display: block; width: 100%; height: auto; cursor: zoom-in; }
+.pv-scroll-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 20px; }
+.pv-step { padding: 20px 22px; background: rgba(255, 255, 255, 0.55); border-left: 4px solid var(--accent); border-radius: 6px; }
+.pv-step-label { font-size: 0.75rem; letter-spacing: 0.18em; color: var(--accent); margin: 0 0 6px; }
+.pv-step-title { font-size: 1.2rem; font-weight: 600; margin: 0 0 8px; }
+.pv-step-text { margin: 0; line-height: 1.85; color: var(--text-muted); }
+
+.pv-scroll.is-active .pv-scroll-stage { position: sticky; top: 128px; display: block; aspect-ratio: 1 / 1; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 14px 36px rgba(60, 36, 12, 0.28); background: #1a120a; }
+.pv-scroll.is-active .pv-stage-photo { position: absolute; inset: 0; border: 0; box-shadow: none; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.9s ease, visibility 0s linear 0.9s; }
+.pv-scroll.is-active[data-photo="frame"] .pv-stage-photo[data-photo="frame"],
+.pv-scroll.is-active[data-photo="rope"] .pv-stage-photo[data-photo="rope"] { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
+.pv-scroll.is-active .pv-stage-photo img { height: 100%; object-fit: cover; object-position: var(--pv-pos, 50% 50%); transform: scale(var(--pv-zoom, 1)); transform-origin: var(--pv-origin, 50% 50%); transition: transform 1.4s ease, object-position 1.4s ease; }
+.pv-scroll.is-active .pv-scroll-steps { gap: 0; }
+.pv-scroll.is-active .pv-step { min-height: 62vh; display: flex; flex-direction: column; justify-content: center; opacity: 0.35; transition: opacity 0.6s ease; background: transparent; }
+.pv-scroll.is-active .pv-step.is-current { opacity: 1; }
 
 /* ギャラリー：縦横比を保ったまま並べる（重要部分を切らない） */
 .pv-masonry { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; align-items: center; }
@@ -236,6 +271,7 @@ html.reveal-ready .reveal { opacity: 0; transform: translateY(18px); transition:
 html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) {
   html.reveal-ready .reveal { opacity: 1; transform: none; transition: none; }
+  .pv-scroll .pv-stage-photo, .pv-scroll .pv-stage-photo img, .pv-scroll .pv-step { transition: none; }
 }
 
 /* ===== レスポンシブ ===== */
@@ -243,9 +279,16 @@ html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
   .pv-hero-inner { grid-template-columns: minmax(0, 1fr); gap: 32px; }
   .pv-hero-image { order: -1; }
   .pv-photos--rope { grid-template-columns: minmax(0, 1fr); }
+  .pv-assure { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pv-scroll { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .pv-scroll.is-active .pv-scroll-stage { top: 116px; z-index: 2; aspect-ratio: 16 / 10; }
+  /* 固定写真の下で説明が読めるよう、段階は説明カードの高さだけにして間隔は margin で取る（監視帯が写真より下に来る） */
+  .pv-scroll.is-active .pv-step { min-height: 0; margin-bottom: 32vh; }
+  .pv-scroll.is-active .pv-step:last-child { margin-bottom: 8vh; }
   .z section { padding: 56px 0; }
 }
 @media (max-width: 520px) {
+  .pv-assure { grid-template-columns: minmax(0, 1fr); }
   .pv-hero-actions { flex-direction: column; align-items: stretch; }
   .pv-hero-actions .btn-primary, .pv-hero-actions .btn-secondary { text-align: center; }
   .pv-photos--uniform { gap: 10px; }
