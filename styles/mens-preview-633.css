@@ -191,7 +191,10 @@
 .pv-masonry { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; align-items: center; }
 .pv-masonry--single { grid-template-columns: minmax(0, 320px); }
 .pv-masonry .pv-photo img { height: auto; }
-.pv-masonry--pair { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); max-width: 520px; }
+/* 縦横を混在させない：横長同士・縦長同士を固定2列にし、上端を揃える（auto-fit の3列＋1枚を避ける） */
+.pv-masonry--landscape, .pv-masonry--portrait { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.pv-masonry--portrait { max-width: 520px; }
+.pv-masonry + .pv-masonry { margin-top: 12px; }
 .z .mens-intro-text { margin-left: 0; }
 .z-black .color-grid-label { color: var(--text-muted); }
 .z-black .gallery-note { color: var(--text-muted); }
@@ -246,4 +249,8 @@ html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
   .pv-hero-actions { flex-direction: column; align-items: stretch; }
   .pv-hero-actions .btn-primary, .pv-hero-actions .btn-secondary { text-align: center; }
   .pv-photos--uniform { gap: 10px; }
+  .pv-masonry--landscape { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 359px) {
+  .pv-masonry--portrait { grid-template-columns: minmax(0, 1fr); }
 }

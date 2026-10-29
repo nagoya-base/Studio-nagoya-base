@@ -212,3 +212,28 @@ test('#633: 現行トップにあるIDは試作にも存在し、試作内でID�
     assert.ok(html.indexOf('>予約ページ</a>から行えます') !== -1, '予約ページの名称は維持');
   });
 });
+
+/* Issue #637: 試作ギャラリーは横長同士・縦長同士で固定2列に整理し、混在や3列＋1枚を避ける */
+test('#637: 試作ギャラリーは横長グループ→縦長グループに分かれ、混在しない', function () {
+  var html = read('mens/preview-633.html');
+  var groups = html.match(/<div class="pv-masonry pv-masonry--(landscape|portrait)">[\s\S]*?<\/div>/g) || [];
+  assert.strictEqual(groups.length, 4, 'landscape/portrait グループ数');
+  groups.forEach(function (g) {
+    var isLandscape = g.indexOf('pv-masonry--landscape') !== -1;
+    var dims = g.match(/width="(\d+)" height="(\d+)"/g).map(function (d) { var m = d.match(/(\d+)" height="(\d+)/); return +m[1] > +m[2]; });
+    assert.ok(dims.length === 2, '各グループは2枚');
+    dims.forEach(function (wide) { assert.strictEqual(wide, isLandscape, '縦横がグループと一致する'); });
+  });
+  assert.ok(html.indexOf('<div class="pv-masonry">') === -1, 'auto-fit の汎用グリッドを残さない');
+  assert.ok(html.indexOf('gallery_lighting02_1200') < html.indexOf('gallery_lighting05_1200') &&
+    html.indexOf('gallery_lighting05_1200') < html.indexOf('gallery_white06_1200') &&
+    html.indexOf('gallery_white06_1200') < html.indexOf('gallery_white01_1200'), '横長2枚→縦長2枚の順');
+});
+
+test('#637: CSSは横長・縦長グループを固定2列・上端揃えにし、狭幅では1列へ切り替える', function () {
+  var css = read('styles/mens-preview-633.css');
+  assert.match(css, /\.pv-masonry--landscape, \.pv-masonry--portrait \{[^}]*repeat\(2, minmax\(0, 1fr\)\)[^}]*align-items: start/);
+  assert.match(css, /max-width: 520px\) \{[\s\S]*\.pv-masonry--landscape \{ grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(css, /max-width: 359px\) \{\s*\.pv-masonry--portrait \{ grid-template-columns: minmax\(0, 1fr\)/);
+  assert.strictEqual(css.indexOf('.pv-masonry .pv-photo img { height: auto; }') === -1, false, '写真は自然な縦横比（height:auto）を維持');
+});
