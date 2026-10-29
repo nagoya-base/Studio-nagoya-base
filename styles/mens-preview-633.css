@@ -1,0 +1,249 @@
+/* styles/mens-preview-633.css – mens/preview-633.html（Issue #633 試作）専用。
+   既存の共通CSSは変更せず、ゾーンごとにCSS変数を差し替えて配色の流れをつくる。
+   BLUE → WHITE → WOOD → BLUE/WHITE → BLACK → WHITE → BLUE */
+
+/* ===== ゾーン（配色） ===== */
+.z {
+  position: relative;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.z section {
+  border-bottom: 0;
+  padding: 72px 0;
+}
+
+.z-navy {
+  --bg: #0f1b2e;
+  --bg-card: #17283f;
+  --bg-section: #132238;
+  --text: #eef2f8;
+  --text-muted: #b8c4d6;
+  --accent: #9cc4f2;
+  --accent-dark: #6f9fd6;
+  --accent-rgb: 156, 196, 242;
+  --border: #2c4060;
+  --on-accent: #0b1626;
+}
+
+.z-paper {
+  --bg: #ffffff;
+  --bg-card: #f4f6fa;
+  --bg-section: #f1f4f9;
+  --text: #172033;
+  --text-muted: #46536a;
+  --accent: #1d4f91;
+  --accent-dark: #173f74;
+  --accent-rgb: 29, 79, 145;
+  --border: #d3dbe7;
+  --on-accent: #ffffff;
+}
+
+.z-wood {
+  --bg: #efe3cf;
+  --bg-card: #e6d5b8;
+  --bg-section: #e9dac0;
+  --text: #2b1d10;
+  --text-muted: #5a4631;
+  --accent: #8a4b1c;
+  --accent-dark: #6d3a14;
+  --accent-rgb: 138, 75, 28;
+  --border: #cdb78f;
+  --on-accent: #ffffff;
+}
+
+.z-sky {
+  --bg: #e8f0fa;
+  --bg-card: #ffffff;
+  --bg-section: #dde8f6;
+  --text: #14233a;
+  --text-muted: #435571;
+  --accent: #1d4f91;
+  --accent-dark: #173f74;
+  --accent-rgb: 29, 79, 145;
+  --border: #bccce2;
+  --on-accent: #ffffff;
+}
+
+.z-black {
+  --bg: #080808;
+  --bg-card: #161616;
+  --bg-section: #101010;
+  --text: #ececec;
+  --text-muted: #adadad;
+  --accent: #dcbc7c;
+  --accent-dark: #b8995d;
+  --accent-rgb: 220, 188, 124;
+  --border: #2e2e2e;
+  --on-accent: #111111;
+}
+
+/* ゾーン境界：直前ゾーンの色から静かに移行する（背景色の移行） */
+.z + .z::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 96px;
+  background: linear-gradient(to bottom, var(--from, transparent), transparent);
+  pointer-events: none;
+}
+.z-navy + .z-paper { --from: #0f1b2e; }
+.z-paper + .z-wood { --from: #ffffff; }
+.z-wood + .z-sky { --from: #efe3cf; }
+.z-sky + .z-black { --from: #e8f0fa; }
+.z-black + .z-paper { --from: #080808; }
+.z-paper + .z-navy { --from: #ffffff; }
+.z-navy + .z-sky { --from: #0f1b2e; }
+.z-sky + .z-navy { --from: #e8f0fa; }
+.z-navy + .z-navy { --from: transparent; }
+.z > * { position: relative; }
+
+/* ボタン：ゾーンの色に合わせて塗りで統一 */
+.z .btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.z .btn-primary:hover {
+  background: var(--accent-dark);
+  color: var(--on-accent);
+}
+.z .btn-secondary {
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+.z .btn-secondary:hover {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+.z a:not(.btn-primary):not(.btn-secondary) { color: var(--accent); }
+.z a:not(.btn-primary):not(.btn-secondary) { text-decoration: underline; text-underline-offset: 3px; }
+
+.z .section-title { font-weight: 400; }
+.z .hero-label { color: var(--accent); }
+.z details.faq-item summary:hover { background: rgba(var(--accent-rgb), 0.08); }
+.z .faq-answer { color: var(--text-muted); }
+
+/* ===== HERO ===== */
+.z section.pv-hero { padding: 72px 0 88px; }
+.pv-hero-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  align-items: center;
+  gap: 48px;
+}
+.pv-hero-title {
+  font-size: clamp(1.5rem, 4.6vw, 2.2rem);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1.45;
+  color: var(--text);
+  margin-bottom: 18px;
+}
+.pv-hero-description {
+  font-size: clamp(0.92rem, 2.4vw, 1.02rem);
+  color: var(--text-muted);
+  line-height: 1.9;
+  margin-bottom: 22px;
+}
+.pv-hero-badges { justify-content: flex-start; }
+.pv-hero .hero-badge { color: var(--text); border-color: rgba(238, 242, 248, 0.45); }
+.pv-hero-price { color: var(--text-muted); margin-bottom: 26px; letter-spacing: 0.03em; }
+.pv-hero-price strong { color: var(--accent); font-weight: 600; }
+.pv-hero-actions { display: flex; gap: 14px; flex-wrap: wrap; }
+.pv-hero .hero-note { color: var(--text-muted); }
+.pv-hero-image {
+  display: block;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--border);
+}
+.pv-hero-image img { width: 100%; height: auto; }
+
+/* ===== 安心・PRIVATE（白） ===== */
+.z-paper .notice-banner { max-width: 760px; background: #fff; border-color: var(--accent); border-left-width: 4px; }
+.z-paper .notice-banner-text strong { color: var(--text); }
+.z-paper .feature-card { background: #fff; box-shadow: 0 1px 2px rgba(23, 32, 51, 0.06); }
+.z-paper .phase2-trust-strip { background: transparent; }
+
+/* ===== 写真（ROPE / UNIFORM / GALLERY 共通） ===== */
+.pv-usage { margin-bottom: 32px; }
+.z-wood .usage-item { background: rgba(255, 255, 255, 0.55); }
+.z-sky .usage-item { background: #fff; }
+.z-black .usage-item { background: var(--bg-card); }
+.pv-photo { margin: 0; border-radius: 8px; overflow: hidden; background: var(--bg-card); border: 1px solid var(--border); }
+.pv-photo img { width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; }
+.pv-photo.is-portrait { aspect-ratio: 2 / 3; }
+.pv-photo.is-landscape { aspect-ratio: 3 / 2; }
+.pv-photo picture { display: block; height: 100%; }
+.pv-photos { display: grid; gap: 16px; align-items: start; }
+.pv-photos--rope { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); align-items: center; }
+.pv-photos--uniform { grid-template-columns: minmax(0, 1fr); max-width: 360px; }
+.z-wood .pv-photo { box-shadow: 0 14px 36px rgba(60, 36, 12, 0.28); }
+.z-sky .pv-photo { box-shadow: 0 14px 36px rgba(20, 50, 90, 0.2); }
+
+/* ギャラリー：縦横比を保ったまま並べる（重要部分を切らない） */
+.pv-masonry { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; align-items: center; }
+.pv-masonry--single { grid-template-columns: minmax(0, 320px); }
+.pv-masonry .pv-photo img { height: auto; }
+.pv-masonry--pair { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); max-width: 520px; }
+.z .mens-intro-text { margin-left: 0; }
+.z-black .color-grid-label { color: var(--text-muted); }
+.z-black .gallery-note { color: var(--text-muted); }
+
+/* ===== 情報（白・読みやすさ優先） ===== */
+.z-paper .pricing-card, .z-paper .equipment-card, .z-paper details.faq-item, .z-paper .mens-safety-item, .z-paper .mens-flow-list li, .z-paper .voice-card { background: #fff; }
+.z-paper .member-banner { background: #eef3fa; border-color: var(--accent); }
+.z-paper .mens-member-cta { background: #f4f6fa; border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 28px; }
+
+/* ===== 予約・相談（青） ===== */
+.z-navy .calendar-note { color: var(--text-muted); }
+.z-navy .cta-card { background: var(--bg-card); border-color: var(--accent-dark); }
+.z-navy .cta-hint { color: var(--text-muted); }
+.pv-form-zone { padding-top: 40px; }
+.pv-form-note-wrap { padding-bottom: 8px; }
+.pv-form-note {
+  margin: 0 auto;
+  max-width: 880px;
+  padding: 12px 16px;
+  border: 1px dashed #9a3b2e;
+  border-radius: var(--radius);
+  background: #fff7f5;
+  color: #7a2a20;
+  font-weight: 600;
+  text-align: center;
+}
+.pv-form-lock { border: 0; margin: 0; padding: 0; min-width: 0; }
+.pv-form-lock .reservation-form { opacity: 0.85; }
+.pv-form-zone .reservation-section { background: transparent; }
+.pv-form-zone .reservation-form input, .pv-form-zone .reservation-form select, .pv-form-zone .reservation-form textarea { cursor: not-allowed; }
+
+/* ===== 画像拡大：縦横比を保って表示（このページのみ） */
+.image-modal .modal-content { width: min(92vw, 900px); aspect-ratio: auto; max-height: 86vh; }
+.image-modal .modal-content img { width: auto; height: auto; max-width: 100%; max-height: 86vh; object-fit: contain; }
+.image-modal .modal-close { color: #fff; }
+
+/* ===== スクロール演出：Fade-up（reveal-ready時のみ。JS失敗時は表示される） ===== */
+html.reveal-ready .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.7s ease, transform 0.7s ease; }
+html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  html.reveal-ready .reveal { opacity: 1; transform: none; transition: none; }
+}
+
+/* ===== レスポンシブ ===== */
+@media (max-width: 800px) {
+  .pv-hero-inner { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .pv-hero-image { order: -1; }
+  .pv-photos--rope { grid-template-columns: minmax(0, 1fr); }
+  .z section { padding: 56px 0; }
+}
+@media (max-width: 520px) {
+  .pv-hero-actions { flex-direction: column; align-items: stretch; }
+  .pv-hero-actions .btn-primary, .pv-hero-actions .btn-secondary { text-align: center; }
+  .pv-photos--uniform { gap: 10px; }
+}
