@@ -11,8 +11,8 @@
  * 一切信用しない）。
  *
  * 料金表の出典（Issue #342調査結果。値はサイト掲載価格をそのまま転記）:
- * - GENERAL（一般/直接予約）: SNB本体（index.html）の「通常価格」表・Studio X
- *   （studio-x/index.html）の掲載価格と一致。
+ * - GENERAL: SNB本体（index.html）の「通常価格」表。Studio X V2では内部の互換キーであり、
+ *   会員・非会員共通の基本料金を指す（一般／会員の料金区分は設けない。Issue #573）。
  * - MEMBER（会員）: SNB本体の「会員価格」表・SNB mens（mens/index.html）の掲載価格
  *   （mensページは常にこの表のみを掲載しており、通常価格表はページ上に存在しない）と一致。
  *
@@ -163,7 +163,8 @@ var BookingPricing = (function () {
         MEMBER: MEMBER_RATES_
       }
     },
-    /* Studio XはV2で会員区分を廃止し、V2のGENERAL料金は会員・非会員共通のセルフ利用基本料金（Issue #486。
+    /* Studio XはV2で基本利用料金の会員区分のみ廃止。SNB共通の会員制度・資格は継続（Issue #573）。
+       V2のGENERALは内部の互換キーで、会員・非会員共通のセルフ利用基本料金（Issue #486。
        #470の「現行MEMBER料金スライド」を上書き）。V1は2026/10/25までに作成された旧世代予約の日程変更見積りのためGENERAL/MEMBER双方を保持。 */
     studio_x: {
       V1: {
