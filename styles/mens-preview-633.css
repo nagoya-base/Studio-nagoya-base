@@ -198,7 +198,6 @@
 .pv-photo picture { display: block; height: 100%; }
 .pv-photos { display: grid; gap: 16px; align-items: start; }
 .pv-photos--rope { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); align-items: center; }
-.pv-photos--uniform { grid-template-columns: minmax(0, 1fr); max-width: 360px; }
 .z-wood .pv-photo { box-shadow: 0 14px 36px rgba(60, 36, 12, 0.28); }
 .z-sky .pv-photo { box-shadow: 0 14px 36px rgba(20, 50, 90, 0.2); }
 
@@ -333,7 +332,6 @@ html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
   .pv-hero-title { font-size: clamp(1.35rem, 6.2vw, 1.9rem); word-break: normal; overflow-wrap: anywhere; }
   .pv-hero-actions { flex-direction: column; align-items: stretch; }
   .pv-hero-actions .btn-primary, .pv-hero-actions .btn-secondary { text-align: center; }
-  .pv-photos--uniform { gap: 10px; }
   .pv-masonry--landscape { grid-template-columns: minmax(0, 1fr); }
   .pv-scene-photos { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .pv-scene-photos .pv-captioned:nth-child(3) { grid-column: 1 / -1; width: 50%; justify-self: center; }
