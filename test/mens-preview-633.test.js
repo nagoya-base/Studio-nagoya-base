@@ -172,6 +172,18 @@ test('#633: sitemap.xml・他ページから試作への参照がない', functi
   assert.deepStrictEqual(hits, []);
 });
 
+/* Issue #641: 指定画像への差替えだけを正規化し、他の照合は維持する。 */
+function normalizePreviewImages(html) {
+  return html.replace(/mens-preview-ogp-1200x630\.jpg/g, 'ogp-mens-v2-1200x630.jpg');
+}
+test('#641: 指定ヒーロー・OGP画像が用途別に参照される', function () {
+  var src = read('mens/preview-633.html');
+  assert.match(src, /rel="preload" as="image" href="..\/images\/mens-preview-hero.webp"/);
+  assert.match(src, /src="..\/images\/mens-preview-hero.webp"\s+width="1600"\s+height="841"/);
+  assert.strictEqual((src.match(/https:\/\/nagoya-base\.github\.io\/Studio-nagoya-base\/images\/mens-preview-ogp-1200x630.jpg/g) || []).length, 3);
+  ['images/mens-preview-hero.webp', 'images/mens-preview-ogp-1200x630.jpg'].forEach(function (p) { assert.ok(fs.statSync(path.join(ROOT, p)).size > 0); });
+});
+
 /* ---- ビルド後の照合 ---- */
 test('#633: ビルド後の試作に googletagmanager / gtag( / analytics.js / reservation-form.js が含まれない', { skip: skipBuilt }, function () {
   assert.doesNotMatch(built.preview, /googletagmanager|gtag\(|analytics\.js|reservation-form\.js/);
@@ -197,7 +209,10 @@ test('#633: リンク先・CTA文言・data-analytics-* の対応が現行と一
 });
 
 test('#633: 現行トップの写真（src/alt/寸法）をすべて維持している', { skip: skipBuilt }, function () {
-  var cur = images(built.current), pre = images(built.preview);
+  var cur = images(built.current), pre = images(built.preview).map(function (img) {
+    var replacement = '../images/mens-preview-hero.webp | 青と暖色の照明に包まれた畳のスタジオに座る男性。用途によって、空気が変わる。安心できる、大人の秘密基地。 | 1600x841';
+    return img === replacement ? '../images/ogp-mens-v2-1200x630.jpg | 男性同士のフェティッシュ撮影に対応するStudio Nagoya Baseの男性向け案内 | 1200x630' : img;
+  });
   assert.deepStrictEqual(diff(cur, pre), []);
   assert.deepStrictEqual(diff(pre, cur), []);
 });
@@ -205,16 +220,16 @@ test('#633: 現行トップの写真（src/alt/寸法）をすべて維持して
 test('#633: title・description・OGP・Twitter・canonical・JSON-LD を維持している', { skip: skipBuilt }, function () {
   var t = function (h) { return (h.match(/<title>([\s\S]*?)<\/title>/) || [])[1]; };
   assert.strictEqual(t(built.preview), t(built.current));
-  ['description'].forEach(function (k) { assert.strictEqual(metaContent(built.preview, 'name', k), metaContent(built.current, 'name', k)); });
+  ['description'].forEach(function (k) { assert.strictEqual(metaContent(normalizePreviewImages(built.preview), 'name', k), metaContent(built.current, 'name', k)); });
   ['og:title', 'og:description', 'og:type', 'og:url', 'og:image', 'og:locale', 'og:site_name'].forEach(function (k) {
-    assert.strictEqual(metaContent(built.preview, 'property', k), metaContent(built.current, 'property', k), k);
+    assert.strictEqual(metaContent(normalizePreviewImages(built.preview), 'property', k), metaContent(built.current, 'property', k), k);
   });
   ['twitter:card', 'twitter:title', 'twitter:description', 'twitter:image'].forEach(function (k) {
-    assert.strictEqual(metaContent(built.preview, 'name', k), metaContent(built.current, 'name', k), k);
+    assert.strictEqual(metaContent(normalizePreviewImages(built.preview), 'name', k), metaContent(built.current, 'name', k), k);
   });
   var canon = function (h) { return (h.match(/<link rel="canonical" href="([^"]*)"/) || [])[1]; };
   assert.strictEqual(canon(built.preview), canon(built.current));
-  assert.deepStrictEqual(jsonld(built.preview), jsonld(built.current));
+  assert.deepStrictEqual(jsonld(normalizePreviewImages(built.preview)), jsonld(built.current));
 });
 
 test('#633: 現行トップにあるIDは試作にも存在し、試作内でIDが重複しない', { skip: skipBuilt }, function () {
