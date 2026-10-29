@@ -16,7 +16,28 @@ var ROOT = path.join(__dirname, '..');
 function read(rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); }
 
 /* 試作固有の例外（フォーム付近の検証用注記）のみ許容する */
-var ALLOWED_PREVIEW_ONLY_TEXT = ['【試作ページ】検証用のため、このフォームからは送信できません。'];
+var ALLOWED_PREVIEW_ONLY_TEXT = [
+  '【試作ページ】検証用のため、このフォームからは送信できません。',
+  /* Issue #639: HEROの主役コピー・PRIVATE・ROPE/WOODスクロール演出で追加した文言（現行からの削除は無し） */
+  '用途によって、空気が変わる。',
+  '一つの部屋から、いくつもの表現へ。',
+  '男性同士の緊縛・ユニフォーム・ポートレートに使える、名古屋・上前津の完全個室スタジオ。',
+  '安心できる、大人の秘密基地。',
+  'Private',
+  '完全貸切。無人入室。',
+  '誰にも気兼ねせず、自分たちのペースで。',
+  '完全貸切', /* 現行にもHEROバッジとして存在するため、PRIVATE側の増分として許容 */
+  '無人入室',
+  '他の利用者と同席しない',
+  '料金が事前に分かる',
+  '利用方法・設備・ルールがWebで確認できる',
+  '問い合わせ窓口がある',
+  'WOOD FRAME', '木組みの吊り床', '高さ 2350mm／間口 2450mm／奥行 2000mm。部屋の骨格になる、木の枠組みです。',
+  'BAMBOO', '竹吊り', '天井に渡した竹と木組みで、吊りの構成を組み立てられます。',
+  'ROPE POINT', '麻縄・スリング・カラビナ', 'リギングプレートまで常設。床縄から空中緊縛まで対応します（空中緊縛は経験者のみ、縛り手・受け手を含む3名以上）。',
+  'SPACE', '誰にも会わない、一室', '完全個室・無人入室。大型ミラー（1460mm × 800mm）と置き畳で、練習も撮影も自分たちのペースで。'
+];
+/* 現行文言のうち、試作で意図的に別の場所へ移しただけのものは両側に残るため例外は不要 */
 
 var built = null;
 function tryBuild() {
@@ -159,9 +180,11 @@ test('#633: ビルド後の試作に googletagmanager / gtag( / analytics.js / r
 
 test('#633: 表示テキスト（文／項目）が現行と一致する（順序・空白・装飾差は正規化、例外は注記のみ）', { skip: skipBuilt }, function () {
   var cur = visibleLeaves(built.current);
-  var pre = visibleLeaves(built.preview).filter(function (t) { return ALLOWED_PREVIEW_ONLY_TEXT.indexOf(t) === -1; });
-  assert.deepStrictEqual(diff(cur, pre), [], '試作で欠落・変更された現行テキスト');
-  assert.deepStrictEqual(diff(pre, cur), [], '試作で追加・変更されたテキスト');
+  var preAll = visibleLeaves(built.preview);
+  var pre = preAll.filter(function (t) { return ALLOWED_PREVIEW_ONLY_TEXT.indexOf(t) === -1; });
+  /* 許容リストに無い文言が試作で増えていないこと（許容語は現行側に同名があっても現行の出現数までは数える） */
+  assert.deepStrictEqual(diff(cur, preAll), [], '試作で欠落・変更された現行テキスト');
+  assert.deepStrictEqual(diff(pre, cur).filter(function (t) { return multiset(preAll)[t] > multiset(cur)[t]; }), [], '試作で追加・変更されたテキスト');
   assert.ok(cur.length > 200, '照合対象が空洞化していないこと');
 });
 
@@ -236,4 +259,63 @@ test('#637: CSSは横長・縦長グループを固定2列・上端揃えにし�
   assert.match(css, /max-width: 520px\) \{[\s\S]*\.pv-masonry--landscape \{ grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(css, /max-width: 359px\) \{\s*\.pv-masonry--portrait \{ grid-template-columns: minmax\(0, 1fr\)/);
   assert.strictEqual(css.indexOf('.pv-masonry .pv-photo img { height: auto; }') === -1, false, '写真は自然な縦横比（height:auto）を維持');
+});
+
+/* Issue #639: HERO主役コピー／PRIVATE見出し／ROPE・WOODのスクロール連動 */
+test('#639: HEROのH1は「用途によって、空気が変わる。」で、SEO文言と予約CTAを保持し、料金・当日予約説明はHEROに置かない', function () {
+  var html = read('mens/preview-633.html');
+  var hero = html.match(/<section class="pv-hero"[\s\S]*?<\/section>/)[0];
+  assert.match(hero, /<h1 id="mens-hero-title" class="pv-hero-title">用途によって、空気が変わる。<\/h1>/);
+  assert.ok(hero.indexOf('一つの部屋から、いくつもの表現へ。') > hero.indexOf('</h1>'));
+  assert.ok(hero.indexOf('男性同士の緊縛・フェティッシュ撮影向けレンタルスペース') !== -1, 'SEO補助コピー');
+  assert.ok(hero.indexOf('data-analytics-location="mens_hero" data-analytics-type="booking_app"') !== -1, '予約CTA');
+  assert.ok(hero.indexOf('pv-hero-price') === -1 && hero.indexOf('hero-note') === -1 && hero.indexOf('当日') === -1);
+  assert.ok(html.indexOf('<p class="pv-hero-price pv-price-lead">') !== -1, '料金は料金セクションへ移動');
+});
+
+test('#639: PRIVATEに「安心できる、大人の秘密基地。」と6つの安心材料がある', function () {
+  var html = read('mens/preview-633.html');
+  var sec = html.match(/<section id="about-page"[\s\S]*?<\/section>/)[0];
+  assert.match(sec, /<h2 class="section-title pv-private-title">安心できる、大人の秘密基地。<\/h2>/);
+  assert.strictEqual((sec.match(/<ul class="pv-assure"[\s\S]*?<\/ul>/)[0].match(/<li>/g) || []).length, 6);
+  assert.ok(sec.indexOf('完全貸切。無人入室。') !== -1);
+});
+
+test('#639: ROPE/WOODは WOOD FRAME→BAMBOO→ROPE POINT→SPACE の順にスクロール連動し、JSなし・reduced motion時は通常表示', function () {
+  var html = read('mens/preview-633.html');
+  var order = ['WOOD FRAME', 'BAMBOO', 'ROPE POINT', 'SPACE'].map(function (k) { return html.indexOf('pv-step-label">' + k + '<'); });
+  assert.ok(order.every(function (i) { return i > 0; }));
+  assert.deepStrictEqual(order.slice().sort(function (a, b) { return a - b; }), order);
+  var css = read('styles/mens-preview-633.css');
+  assert.match(css, /\.pv-scroll\.is-active \.pv-scroll-stage \{[^}]*position: sticky/);
+  assert.doesNotMatch(css, /^\.pv-scroll-stage \{[^}]*sticky/m, 'sticky は .is-active（JS成功時）限定');
+  assert.match(css, /prefers-reduced-motion: reduce\) \{[\s\S]*\.pv-scroll \.pv-step \{ transition: none/);
+  var js = read('scripts/mens-preview-639.js');
+  assert.match(js, /prefers-reduced-motion: reduce/);
+  assert.match(js, /catch \(e\) \{\s*root\.classList\.remove\('is-active'\)/);
+});
+
+test('#639: スクロール演出JSは reduced motion と例外時に .is-active を付けない', function () {
+  var vm = require('vm');
+  function run(opts) {
+    var added = [], style = {};
+    var step = { classList: { add: function () {}, remove: function () {} }, getAttribute: function () { return '1'; } };
+    var rootEl = {
+      classList: { add: function (c) { added.push(c); }, remove: function (c) { added = added.filter(function (x) { return x !== c; }); } },
+      setAttribute: function () {}, style: { setProperty: function (k, v) { style[k] = v; } },
+      querySelectorAll: function () { return [step]; }
+    };
+    var sb = {
+      document: { querySelector: function () { return rootEl; } },
+      matchMedia: function () { return { matches: !!opts.reduced }; },
+      IntersectionObserver: opts.io
+    };
+    sb.window = sb;
+    vm.runInNewContext(read('scripts/mens-preview-639.js'), sb);
+    return added;
+  }
+  var okIo = function () { this.observe = function () {}; };
+  assert.deepStrictEqual(run({ io: okIo }), ['is-active']);
+  assert.deepStrictEqual(run({ io: okIo, reduced: true }), []);
+  assert.deepStrictEqual(run({ io: function () { throw new Error('boom'); } }), []);
 });

@@ -5,7 +5,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<!-- 試作ページ（Issue #633）：比較用。本番トップ mens/index.html は変更しない。GA4は読み込まない。 -->
+<!-- 試作ページ（Issue #633 / #639）：比較用。本番トップ mens/index.html は変更しない。GA4は読み込まない。 -->
 <meta name="robots" content="noindex, nofollow">
 
 <title>男性同士の緊縛・フェティッシュ撮影向けレンタルスペース｜名古屋・上前津</title>
@@ -173,8 +173,10 @@
   <div class="container pv-hero-inner">
     <div class="pv-hero-copy">
       <p class="hero-label">Men's Private Studio</p>
-      <h1 id="mens-hero-title" class="pv-hero-title">男性同士の緊縛・フェティッシュ撮影向けレンタルスペース</h1>
-      <p class="pv-hero-description">男性モデルによる緊縛、吊り撮影、ユニフォームやフェティッシュ衣装の作品撮りに。名古屋・上前津の完全個室・無人入室スタジオです。</p>
+      <h1 id="mens-hero-title" class="pv-hero-title">用途によって、空気が変わる。</h1>
+      <p class="pv-hero-sub">一つの部屋から、いくつもの表現へ。</p>
+      <p class="pv-hero-description">男性同士の緊縛・ユニフォーム・ポートレートに使える、名古屋・上前津の完全個室スタジオ。</p>
+      <p class="pv-hero-seo">男性同士の緊縛・フェティッシュ撮影向けレンタルスペース</p>
 
       <ul class="hero-badges pv-hero-badges" aria-label="ご利用の安心材料">
         <li class="hero-badge">完全貸切</li>
@@ -183,13 +185,10 @@
         <li class="hero-badge">スマホ撮影OK</li>
       </ul>
 
-      <p class="pv-hero-price">1時間から <strong>平日 ¥2,000</strong> / <strong>土日祝 ¥2,500</strong></p>
-
       <div class="pv-hero-actions">
         <a class="btn-primary" href="{{ '/mens/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="mens_hero" data-analytics-type="booking_app" data-analytics-destination="booking_app">日時を選んで予約する</a>
         <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="mens_hero">利用前に相談する</a>
       </div>
-      <p class="hero-note">予約ページで日時を選び、そのまま仮予約を送信できます。空きがあれば当日のご予約も可能です（はじめての方はオンラインクレジットカード決済のみ）。</p>
     </div>
     <picture class="pv-hero-image">
       <img
@@ -209,10 +208,24 @@
 <div class="z z-paper">
 <section id="about-page" class="bg-section">
   <div class="container reveal">
-    <h2 class="section-title">男性同士で利用しやすい、専用のご案内ページです</h2>
-    <p class="section-subtitle">About This Page</p>
+    <h2 class="section-title pv-private-title">安心できる、大人の秘密基地。</h2>
+    <p class="section-subtitle">Private</p>
+    <p class="pv-private-lead">完全貸切。無人入室。<br>誰にも気兼ねせず、自分たちのペースで。</p>
+
+    <ul class="pv-assure" aria-label="安心できる理由">
+      <li>完全貸切</li>
+      <li>無人入室</li>
+      <li>他の利用者と同席しない</li>
+      <li>料金が事前に分かる</li>
+      <li>利用方法・設備・ルールがWebで確認できる</li>
+      <li>問い合わせ窓口がある</li>
+    </ul>
+
+    <h3 class="pv-about-title">男性同士で利用しやすい、専用のご案内ページです</h3>
+    <p class="pv-about-label">About This Page</p>
 
     <div class="mens-intro-text">
+      <p>男性モデルによる緊縛、吊り撮影、ユニフォームやフェティッシュ衣装の作品撮りに。名古屋・上前津の完全個室・無人入室スタジオです。</p>
       <p>このページは、男性同士で緊縛やフェティッシュ撮影を楽しみたい方に向けたご案内です。一般ページと料金・設備・予約方法は同じですが、男性モデルによる作例を中心に掲載しています。</p>
       <p>ゲイ・バイ男性を含む男性ペアや男性グループでのご利用を歓迎しています。性別や性的指向を問わずご利用いただけます。</p>
     </div>
@@ -301,9 +314,33 @@
       <div class="usage-item">床縄・吊り撮影</div>
     </div>
 
-    <div class="pv-photos pv-photos--rope">
-      <figure class="pv-photo is-portrait"><img src="../images/gallery_man02_1200.webp" width="800" height="1200" alt="野球ユニフォーム姿の男性モデルの吊り緊縛撮影" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></figure>
-      <figure class="pv-photo is-landscape"><img src="../images/gallery_man03_1200.webp" width="1200" height="800" alt="木組みの吊り床と撮影機材が分かるスタジオ内観（男性モデル）" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></figure>
+    <div class="pv-scroll" data-pv-scroll>
+      <div class="pv-scroll-stage">
+        <figure class="pv-stage-photo is-landscape" data-photo="frame"><img src="../images/gallery_man03_1200.webp" width="1200" height="800" alt="木組みの吊り床と撮影機材が分かるスタジオ内観（男性モデル）" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></figure>
+        <figure class="pv-stage-photo is-portrait" data-photo="rope"><img src="../images/gallery_man02_1200.webp" width="800" height="1200" alt="野球ユニフォーム姿の男性モデルの吊り緊縛撮影" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></figure>
+      </div>
+      <ol class="pv-scroll-steps">
+        <li class="pv-step" data-pv-step data-photo="frame" data-zoom="1.25" data-pos="0% 50%" data-origin="0% 50%">
+          <p class="pv-step-label">WOOD FRAME</p>
+          <h3 class="pv-step-title">木組みの吊り床</h3>
+          <p class="pv-step-text">高さ 2350mm／間口 2450mm／奥行 2000mm。部屋の骨格になる、木の枠組みです。</p>
+        </li>
+        <li class="pv-step" data-pv-step data-photo="frame" data-zoom="1.7" data-pos="50% 0%" data-origin="50% 0%">
+          <p class="pv-step-label">BAMBOO</p>
+          <h3 class="pv-step-title">竹吊り</h3>
+          <p class="pv-step-text">天井に渡した竹と木組みで、吊りの構成を組み立てられます。</p>
+        </li>
+        <li class="pv-step" data-pv-step data-photo="rope" data-zoom="1.1" data-pos="50% 20%" data-origin="50% 20%">
+          <p class="pv-step-label">ROPE POINT</p>
+          <h3 class="pv-step-title">麻縄・スリング・カラビナ</h3>
+          <p class="pv-step-text">リギングプレートまで常設。床縄から空中緊縛まで対応します（空中緊縛は経験者のみ、縛り手・受け手を含む3名以上）。</p>
+        </li>
+        <li class="pv-step" data-pv-step data-photo="frame" data-zoom="1" data-pos="50% 50%" data-origin="50% 50%">
+          <p class="pv-step-label">SPACE</p>
+          <h3 class="pv-step-title">誰にも会わない、一室</h3>
+          <p class="pv-step-text">完全個室・無人入室。大型ミラー（1460mm × 800mm）と置き畳で、練習も撮影も自分たちのペースで。</p>
+        </li>
+      </ol>
     </div>
   </div>
 </section>
@@ -409,6 +446,8 @@
   <div class="container reveal">
     <h2 class="section-title">料金</h2>
     <p class="section-subtitle">Pricing</p>
+
+    <p class="pv-hero-price pv-price-lead">1時間から <strong>平日 ¥2,000</strong> / <strong>土日祝 ¥2,500</strong></p>
 
     <div class="member-banner">
       <div class="member-banner-icon">◈</div>
@@ -620,6 +659,7 @@
     <h2 class="section-title">空き状況・予約</h2>
     <p class="section-subtitle">Availability &amp; Booking</p>
 
+    <p class="calendar-note">予約ページで日時を選び、そのまま仮予約を送信できます。空きがあれば当日のご予約も可能です（はじめての方はオンラインクレジットカード決済のみ）。</p>
     <p class="calendar-note">予約ページで希望日時の空きをご確認のうえ、そのまま仮予約を送信してください。<br>はじめての方は<strong>オンラインクレジットカード決済のみ</strong>ご利用いただけます。空きがある場合は<strong>当日</strong>のご予約もお申し込みいただけます（会員登録の有無は当日予約の条件ではありません）。通常は24時間以内に返信します。当方からの予約確定連絡をもって予約成立となります（オンラインクレジットカード決済をお選びの場合は、申込後に表示される決済ページの有効期限内にお支払いが完了した時点で予約成立となります）。</p>
     <p class="calendar-note">予約窓口：予約ページ　／　相談窓口：ページ内フォーム</p>
     <p class="calendar-note">※ このページ（SNB mens）の予約ページからのご予約は、SNB MEMBERへの加入有無にかかわらず会員料金が自動で適用されます。これは料金の優遇であり、会員資格の付与ではありません。</p>
@@ -689,6 +729,7 @@
 
 <script src="../scripts/main.js"></script>
 <script src="../scripts/mens-preview-633.js"></script>
+<script src="../scripts/mens-preview-639.js"></script>
 
 </body>
 </html>
