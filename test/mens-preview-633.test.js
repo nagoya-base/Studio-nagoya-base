@@ -305,11 +305,14 @@ test('#639: スクロール演出JSは reduced motion と例外時に .is-active
     var rootEl = {
       classList: { add: function (c) { added.push(c); }, remove: function (c) { added = added.filter(function (x) { return x !== c; }); } },
       setAttribute: function () {}, style: { setProperty: function (k, v) { style[k] = v; } },
-      querySelectorAll: function () { return [step]; }
+      querySelectorAll: function () { return [step]; },
+      querySelector: function () { return { getBoundingClientRect: function () { return { bottom: 0 }; } }; }
     };
     var sb = {
       document: { querySelector: function () { return rootEl; } },
-      matchMedia: function () { return { matches: !!opts.reduced }; },
+      matchMedia: function (q) { return { matches: q.indexOf('reduce') !== -1 ? !!opts.reduced : false }; },
+      addEventListener: function () {},
+      requestAnimationFrame: function (f) { f(); },
       IntersectionObserver: opts.io
     };
     sb.window = sb;
@@ -320,4 +323,13 @@ test('#639: スクロール演出JSは reduced motion と例外時に .is-active
   assert.deepStrictEqual(run({ io: okIo }), ['is-active']);
   assert.deepStrictEqual(run({ io: okIo, reduced: true }), []);
   assert.deepStrictEqual(run({ io: function () { throw new Error('boom'); } }), []);
+});
+
+test('#639: スマホでは固定写真の下端より下にある最上段の説明を表示中にし、写真クリックは表示中の写真だけが受ける', function () {
+  var js = read('scripts/mens-preview-639.js');
+  assert.match(js, /max-width: 800px/);
+  assert.match(js, /getBoundingClientRect\(\)\.top >= line/);
+  var css = read('styles/mens-preview-633.css');
+  assert.match(css, /\.pv-scroll\.is-active \.pv-stage-photo \{[^}]*visibility: hidden; pointer-events: none/);
+  assert.match(css, /\.pv-stage-photo\[data-photo="rope"\] \{ opacity: 1; visibility: visible; pointer-events: auto/);
 });
