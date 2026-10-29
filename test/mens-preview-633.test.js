@@ -199,3 +199,16 @@ test('#633: 現行トップにあるIDは試作にも存在し、試作内でID�
   assert.deepStrictEqual(diff(cur, pre), [], '試作で消えたID（アンカー・参照元の退行）');
   assert.strictEqual(new Set(pre).size, pre.length, 'IDが重複している');
 });
+
+/* Issue #635: 相談窓口の名称は「相談フォーム」。日時選択・直接予約は「予約ページ」のまま */
+['mens/index.html', 'mens/preview-633.html'].forEach(function (rel) {
+  test('#635: ' + rel + ' は相談窓口を「予約フォーム」と呼ばず「相談フォーム」で統一している', function () {
+    var html = read(rel);
+    assert.strictEqual(html.indexOf('予約フォーム'), -1);
+    assert.ok(html.indexOf('相談フォームで問い合わせる →') !== -1, 'CTA');
+    assert.ok(html.indexOf('ご相談・お問い合わせは<a href="#reservation-form">相談フォーム</a>をご利用ください') !== -1, '補足');
+    assert.ok(html.indexOf('お早めに<a href="#reservation-form">相談フォーム</a>にてご連絡ください') !== -1, 'FAQ本文');
+    assert.ok(html.indexOf('お早めに相談フォームにてご連絡ください') !== -1, 'FAQPage JSON-LD');
+    assert.ok(html.indexOf('>予約ページ</a>から行えます') !== -1, '予約ページの名称は維持');
+  });
+});
