@@ -165,7 +165,8 @@ test('SNB / mens 会員ページ: ペアパック・シャワー・既存有料�
     var t = textOf(expandIncludes(read(PAGES[brand].file)));
     assert.ok(t.indexOf('2名ペアパック') !== -1);
     assert.ok(t.indexOf(yen(wk)) !== -1 && t.indexOf(yen(we)) !== -1, brand + ' ペアパック料金');
-    assert.ok(t.indexOf('3時間固定・1〜2名まで') !== -1 && t.indexOf('3名以上のご予約では選べません') !== -1);
+    assert.ok(t.indexOf('対象の条件を満たすご予約に自動で適用されます') !== -1 && t.indexOf('3名以上のご予約は対象外') !== -1, 'Issue #644: ペアパックは自動適用で、3名以上は対象外');
+    assert.ok(t.indexOf('3時間が基本です') !== -1 && t.indexOf('予約フォームでプランを選んでお申し込みください。日程') === -1 && t.indexOf('3時間固定') === -1, 'Issue #644: 選択式・3時間固定の旧案内を残さない');
     assert.ok(t.indexOf('他の割引・優待との併用はできません') !== -1);
     assert.ok(t.indexOf('通常の会員延長料金（1時間ごとに平日' + yen(extWk) + '／土日祝' + yen(extWe) + '）') !== -1, '延長は通常の会員延長料金');
     assert.ok(t.indexOf('別商品') !== -1, '通常の会員料金表とは別商品');
@@ -182,7 +183,7 @@ test('SNB / mens 会員ページ: ペアパック・シャワー・既存有料�
   });
   var mens = textOf(expandIncludes(read(PAGES.mens.file)));
   assert.ok(mens.indexOf('従来どおり、会員加入なしでも会員料金でご利用いただけます') !== -1);
-  assert.ok(mens.indexOf('SNB mensは、会員加入の有無にかかわらず会員料金でご利用いただけます') !== -1);
+  assert.ok(mens.indexOf('会員加入の有無・会費のお支払い期間・会員確認の有無にかかわらず、会員料金でご利用いただけます') !== -1, 'Issue #644: mensの通常部屋料金は未払い期間・会員確認なしでも会員料金');
   /* 共通会員ページにはmens固有の料金優遇を出さない */
   var snbPage = textOf(expandIncludes(read(PAGES.snb.file)));
   assert.ok(snbPage.indexOf('SNB mensの予約ページ') === -1 && snbPage.indexOf('料金の優遇') === -1 && snbPage.indexOf('だけでは、先行予約') === -1);

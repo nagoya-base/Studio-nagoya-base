@@ -295,7 +295,7 @@ test('Studio X 規約・特商法: 会員限定のスタッフ対応料金が正
   var legal = textOf(read('studio-x/legal/index.html'));
   assert.ok(legal.indexOf('事前設営3,000円／片付け3,000円／セット5,000円') !== -1);
   assert.ok(legal.indexOf('2026年10月26日以降に作成するご予約の部屋の利用料金は、会員・非会員の区別なく同額') !== -1);
-  assert.ok(legal.indexOf('部屋の利用料金は2026年10月26日から、有料オプションの会員限定は2026年12月1日から適用') !== -1);
+  assert.ok(legal.indexOf('部屋の利用料金は2026年10月26日から、有料機材レンタルの会員限定は2026年12月1日から適用。スタッフによる事前設営・片付けは従来から会員限定') !== -1);
 });
 
 test('入会フォーム: メールだけをstartMembershipCheckoutへ送り、STRIPE_CHECKOUT_ENABLEDを変更していない', function () {
@@ -339,6 +339,8 @@ test('更新・解約の表現（Issue #532）: 入会日基準の更新日に�
   assert.ok(terms.indexOf('入会日を基準とした毎月の更新日に会費が自動で請求され、決済が成功すると、お支払い済みの期間（次の更新日の前日まで）の会員資格が有効になります') !== -1);
   assert.ok(terms.indexOf('次回の更新前に解約の手続きが完了した場合、次回以降の自動更新を停止します') !== -1);
   assert.ok(terms.indexOf('お支払い済みの期間の末日（次の更新日の前日）までは会員資格が有効') !== -1);
+  var enLegal = read('legal/en.html');
+  assert.ok(enLegal.indexOf('<a href="../membership/status/">membership status page</a>') !== -1 && textOf(enLegal).indexOf('If you cannot cancel online, contact us through the reservation form') !== -1, 'Issue #644 F08: 英語規約も会員資格の確認ページからの解約を先に案内する');
   ['how-to/index.html'].forEach(function (p) {
     var raw = read(p);
     assert.ok(textOf(raw).indexOf('入会日を基準に毎月自動更新され、決済が成功した期間の会員資格が有効になります') !== -1, p);

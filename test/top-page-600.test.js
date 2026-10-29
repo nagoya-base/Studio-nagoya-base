@@ -65,7 +65,7 @@ test('#600: 英語トップも要点のみで、移した説明はhow-to/en.html
     'Suspension use requires at least three people.', 'Suspension from the neck is strictly prohibited.',
     'The studio does not provide rope instruction or technical lessons.', 'Users are responsible for their own safety and consent.',
     'Follow all instructions regarding equipment and studio use.', 'Eating and drinking are prohibited in the tatami area',
-    'parties and drinking gatherings are not permitted', 'renews automatically by credit card', 'at 4 hours the difference equals the monthly fee',
+    'parties and drinking gatherings are not permitted', 'renews automatically by credit card', 'at 3 hours the difference equals the monthly fee (¥500), and at 4 hours it is ¥1,000',
     '¥1,000 per booking (not per person)', 'Apply at least 1 week before your visit', 'a booking of 3 hours or longer is recommended'
   ].forEach(function (w) { assert.ok(sec.indexOf(w) !== -1, 'how-to/en: ' + w); });
   var safety = en.slice(en.indexOf('id="safety"'), en.indexOf('id="access"'));

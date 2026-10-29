@@ -60,7 +60,7 @@ test('#596 初めての方へ: 3ステップ常時表示、当日の流れ4ス�
   var more = /<details class="beginners-more[\s\S]*?<\/details>/.exec(beg)[0];
   ['予約後に入室案内を確認', 'キーボックスから鍵を受け取る', 'スマートロックで入室', '撮影後に簡易清掃・原状復帰', 'href="how-to/"'].forEach(function (w) { assert.ok(more.indexOf(w) !== -1, w); });
   assert.ok(top.indexOf('ON THE DAY') === -1);
-  assert.ok(beg.indexOf('送信時点では予約は確定せず、内容確認後の当方からの確定連絡をもって成立します') !== -1, '予約成立条件はSTEP 02に一本化');
+  assert.ok(beg.indexOf('カードは決済確認後に自動確定、現金・PayPayは内容確認後の当方からの確定連絡をもって成立します') !== -1, '予約成立条件はSTEP 02に一本化');
   assert.ok(howTo.indexOf('確定連絡をもって予約成立となります') !== -1, '詳細は利用ガイドにも保持');
 });
 
