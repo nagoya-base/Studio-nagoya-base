@@ -37,7 +37,8 @@ var ALLOWED_PREVIEW_ONLY_TEXT = [
   'ROPE POINT', '麻縄・スリング・カラビナ', 'リギングプレートまで常設。床縄から空中緊縛まで対応します（空中緊縛は経験者のみ、縛り手・受け手を含む3名以上）。',
   'SPACE', '誰にも会わない、一室', '完全個室・無人入室。大型ミラー（1460mm × 800mm）と置き畳で、練習も撮影も自分たちのペースで。'
 ];
-/* 現行文言のうち、試作で意図的に別の場所へ移しただけのものは両側に残るため例外は不要 */
+/* Issue #639: HEROから外した当日予約の説明は、予約セクションの既存 calendar-note と重複するため試作では削除する */
+var ALLOWED_CURRENT_ONLY_TEXT = ['予約ページで日時を選び、そのまま仮予約を送信できます。空きがあれば当日のご予約も可能です（はじめての方はオンラインクレジットカード決済のみ）。'];
 
 var built = null;
 function tryBuild() {
@@ -179,7 +180,7 @@ test('#633: ビルド後の試作に googletagmanager / gtag( / analytics.js / r
 });
 
 test('#633: 表示テキスト（文／項目）が現行と一致する（順序・空白・装飾差は正規化、例外は注記のみ）', { skip: skipBuilt }, function () {
-  var cur = visibleLeaves(built.current);
+  var cur = visibleLeaves(built.current).filter(function (t) { return ALLOWED_CURRENT_ONLY_TEXT.indexOf(t) === -1; });
   var preAll = visibleLeaves(built.preview);
   var pre = preAll.filter(function (t) { return ALLOWED_PREVIEW_ONLY_TEXT.indexOf(t) === -1; });
   /* 許容リストに無い文言が試作で増えていないこと（許容語は現行側に同名があっても現行の出現数までは数える） */
@@ -270,6 +271,7 @@ test('#639: HEROのH1は「用途によって、空気が変わる。」で、SE
   assert.ok(hero.indexOf('男性同士の緊縛・フェティッシュ撮影向けレンタルスペース') !== -1, 'SEO補助コピー');
   assert.ok(hero.indexOf('data-analytics-location="mens_hero" data-analytics-type="booking_app"') !== -1, '予約CTA');
   assert.ok(hero.indexOf('pv-hero-price') === -1 && hero.indexOf('hero-note') === -1 && hero.indexOf('当日') === -1);
+  assert.strictEqual(html.split('当日のご予約も可能です').length - 1, 0, '当日予約の説明は既存の calendar-note に一本化（新規の重複文を置かない）');
   assert.ok(html.indexOf('<p class="pv-hero-price pv-price-lead">') !== -1, '料金は料金セクションへ移動');
 });
 
