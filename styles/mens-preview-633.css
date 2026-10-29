@@ -184,17 +184,16 @@
 .pv-photo picture { display: block; height: 100%; }
 .pv-photos { display: grid; gap: 16px; align-items: start; }
 .pv-photos--rope { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); align-items: center; }
-.pv-photos--uniform { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 640px; margin: 0 auto; }
+.pv-photos--uniform { grid-template-columns: minmax(0, 1fr); max-width: 360px; }
 .z-wood .pv-photo { box-shadow: 0 14px 36px rgba(60, 36, 12, 0.28); }
 .z-sky .pv-photo { box-shadow: 0 14px 36px rgba(20, 50, 90, 0.2); }
 
 /* ギャラリー：縦横比を保ったまま並べる（重要部分を切らない） */
-.z-black section.pv-portrait { padding-bottom: 8px; }
-.z-black section#gallery { padding-top: 32px; }
-.pv-masonry { column-count: 3; column-gap: 12px; }
-.pv-masonry .pv-photo { break-inside: avoid; margin-bottom: 12px; }
+.pv-masonry { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; align-items: center; }
+.pv-masonry--single { grid-template-columns: minmax(0, 320px); }
 .pv-masonry .pv-photo img { height: auto; }
-.pv-masonry--pair { column-count: 2; max-width: 520px; }
+.pv-masonry--pair { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); max-width: 520px; }
+.z .mens-intro-text { margin-left: 0; }
 .z-black .color-grid-label { color: var(--text-muted); }
 .z-black .gallery-note { color: var(--text-muted); }
 
@@ -221,7 +220,7 @@
   text-align: center;
 }
 .pv-form-lock { border: 0; margin: 0; padding: 0; min-width: 0; }
-.pv-form-lock .reservation-form { opacity: 0.92; }
+.pv-form-lock .reservation-form { opacity: 0.6; }
 .pv-form-zone .reservation-section { background: transparent; }
 .pv-form-zone .reservation-form input, .pv-form-zone .reservation-form select, .pv-form-zone .reservation-form textarea { cursor: not-allowed; }
 
@@ -242,13 +241,10 @@ html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
   .pv-hero-inner { grid-template-columns: minmax(0, 1fr); gap: 32px; }
   .pv-hero-image { order: -1; }
   .pv-photos--rope { grid-template-columns: minmax(0, 1fr); }
-  .pv-masonry { column-count: 2; }
   .z section { padding: 56px 0; }
 }
 @media (max-width: 520px) {
   .pv-hero-actions { flex-direction: column; align-items: stretch; }
   .pv-hero-actions .btn-primary, .pv-hero-actions .btn-secondary { text-align: center; }
   .pv-photos--uniform { gap: 10px; }
-  .pv-masonry { column-count: 1; }
-  .pv-masonry--pair { column-count: 2; }
 }

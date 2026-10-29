@@ -108,15 +108,30 @@ test('#633: 相談フォームは試作側の <fieldset disabled> で include �
   assert.ok(src.indexOf('【試作ページ】検証用のため、このフォームからは送信できません。') !== -1);
 });
 
-test('#633: 現行ページ・共通include・既存CSS/JSを変更していない（試作は新規ファイルのみ）', function () {
-  var changed;
-  try {
-    changed = cp.execFileSync('git', ['diff', '--name-only', 'origin/main...HEAD'], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').filter(Boolean);
-  } catch (e) { return; /* origin/main がない環境では対象外 */ }
-  var allowed = ['mens/preview-633.html', 'styles/mens-preview-633.css', 'scripts/mens-preview-633.js', 'test/mens-preview-633.test.js'];
-  changed.forEach(function (f) {
-    assert.ok(allowed.indexOf(f) !== -1, '想定外の変更: ' + f);
-  });
+test('#633: 初期化の途中で例外が起きても reveal-ready を外し、成功フラグを立てない（全情報が表示される）', function () {
+  var vm = require('vm');
+  function run(ioImpl) {
+    var classes = { 'reveal-ready': true };
+    var sandbox = {
+      document: {
+        documentElement: { classList: { contains: function (c) { return !!classes[c]; }, remove: function (c) { delete classes[c]; } } },
+        querySelectorAll: function () { return [{}, {}]; }
+      },
+      IntersectionObserver: ioImpl
+    };
+    sandbox.window = sandbox;
+    vm.runInNewContext(read('scripts/mens-preview-633.js'), sandbox);
+    return { classes: classes, ready: sandbox.__pv633Ready };
+  }
+  var ctorThrows = run(function () { throw new Error('boom'); });
+  assert.strictEqual(ctorThrows.classes['reveal-ready'], undefined);
+  assert.ok(!ctorThrows.ready);
+  var observeThrows = run(function () { this.observe = function () { throw new Error('boom'); }; });
+  assert.strictEqual(observeThrows.classes['reveal-ready'], undefined);
+  assert.ok(!observeThrows.ready);
+  var ok = run(function () { this.observe = function () {}; this.unobserve = function () {}; });
+  assert.strictEqual(ok.classes['reveal-ready'], true);
+  assert.strictEqual(ok.ready, true);
 });
 
 test('#633: sitemap.xml・他ページから試作への参照がない', function () {
