@@ -198,7 +198,6 @@
 .pv-photo picture { display: block; height: 100%; }
 .pv-photos { display: grid; gap: 16px; align-items: start; }
 .pv-photos--rope { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); align-items: center; }
-.pv-photos--uniform { grid-template-columns: minmax(0, 1fr); max-width: 360px; }
 .z-wood .pv-photo { box-shadow: 0 14px 36px rgba(60, 36, 12, 0.28); }
 .z-sky .pv-photo { box-shadow: 0 14px 36px rgba(20, 50, 90, 0.2); }
 
@@ -233,6 +232,41 @@
 .z .mens-intro-text { margin-left: 0; }
 .z-black .color-grid-label { color: var(--text-muted); }
 .z-black .gallery-note { color: var(--text-muted); }
+
+/* ===== 撮影シーン・仲間との利用（Issue #646） ===== */
+.pv-photo.is-wide { aspect-ratio: 16 / 9; }
+.pv-captioned { margin: 0; }
+.pv-captioned figcaption { margin-top: 8px; font-size: 0.85rem; line-height: 1.6; color: var(--text-muted); }
+.pv-scene { display: grid; gap: 32px; align-items: center; margin-top: 56px; }
+.pv-scene--costume { grid-template-columns: minmax(0, 1fr); align-items: start; }
+.pv-scene--landscape { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+.pv-scene--portrait { grid-template-columns: minmax(0, 260px) minmax(0, 1fr); }
+.pv-scene-title { font-size: 1.25rem; font-weight: 600; line-height: 1.5; margin: 0 0 10px; }
+.pv-scene-copy p { margin: 0 0 8px; line-height: 1.9; }
+.pv-scene-copy .pv-scene-note { font-size: 0.85rem; color: var(--text-muted); }
+.pv-scene-photos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; max-width: 840px; }
+.z-sky .pv-photo { box-shadow: 0 14px 36px rgba(20, 50, 90, 0.2); }
+.pv-group { margin-top: 64px; padding: 28px 32px; background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; }
+.pv-group-title { font-size: 1.3rem; font-weight: 600; line-height: 1.5; margin: 0 0 12px; }
+.pv-group-lead { margin: 0 0 16px; line-height: 1.9; }
+.pv-group-notes { margin: 0 0 20px; padding-left: 1.2em; font-size: 0.9rem; line-height: 1.8; color: var(--text-muted); }
+.pv-group-notes li + li { margin-top: 4px; }
+.pv-group-cta .btn-secondary { display: inline-block; }
+
+/* 照明比較：JSなしは5枚を3列（下段2枚は中央）で表示。JSありは切替ボタン＋1枚表示 */
+.pv-compare-note { margin: 0 0 16px; font-size: 0.9rem; color: var(--text-muted); }
+.pv-compare-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.pv-compare-item { grid-column: span 2; }
+.pv-compare-item:nth-child(4) { grid-column: 2 / span 2; }
+.pv-compare-item:nth-child(5) { grid-column: 4 / span 2; }
+.pv-compare.is-enhanced .pv-compare-list { display: block; max-width: 760px; }
+.pv-compare.is-enhanced .pv-compare-item { display: none; }
+.pv-compare.is-enhanced .pv-compare-item.is-current { display: block; }
+.pv-compare-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.pv-compare-tab { font: inherit; font-size: 0.9rem; min-height: 44px; padding: 8px 18px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-card); color: var(--text); cursor: pointer; }
+.pv-compare-tab[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.pv-compare-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.z-black .pv-captioned figcaption { color: var(--text-muted); }
 
 /* ===== 情報（白・読みやすさ優先） ===== */
 .z-paper .pricing-card, .z-paper .equipment-card, .z-paper details.faq-item, .z-paper .mens-safety-item, .z-paper .mens-flow-list li, .z-paper .voice-card { background: #fff; }
@@ -279,6 +313,12 @@ html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
   .pv-hero-inner { grid-template-columns: minmax(0, 1fr); gap: 32px; }
   .pv-hero-image { order: -1; }
   .pv-photos--rope { grid-template-columns: minmax(0, 1fr); }
+  .pv-scene--landscape, .pv-scene--portrait { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .pv-scene--portrait .pv-captioned { max-width: 260px; }
+  .pv-compare-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pv-compare-item, .pv-compare-item:nth-child(4), .pv-compare-item:nth-child(5) { grid-column: auto; }
+  .pv-compare-item:nth-child(5) { grid-column: 1 / -1; width: 50%; justify-self: center; }
+  .pv-group { padding: 22px 20px; }
   .pv-assure { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pv-scroll { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .pv-scroll.is-active .pv-scroll-stage { top: 116px; z-index: 2; aspect-ratio: 16 / 10; }
@@ -289,11 +329,15 @@ html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
 }
 @media (max-width: 520px) {
   .pv-assure { grid-template-columns: minmax(0, 1fr); }
+  .pv-hero-title { font-size: clamp(1.35rem, 6.2vw, 1.9rem); word-break: normal; overflow-wrap: anywhere; }
   .pv-hero-actions { flex-direction: column; align-items: stretch; }
   .pv-hero-actions .btn-primary, .pv-hero-actions .btn-secondary { text-align: center; }
-  .pv-photos--uniform { gap: 10px; }
   .pv-masonry--landscape { grid-template-columns: minmax(0, 1fr); }
+  .pv-scene-photos { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .pv-scene-photos .pv-captioned:nth-child(3) { grid-column: 1 / -1; width: 50%; justify-self: center; }
 }
 @media (max-width: 359px) {
   .pv-masonry--portrait { grid-template-columns: minmax(0, 1fr); }
+  .pv-scene-photos { grid-template-columns: minmax(0, 1fr); max-width: 260px; }
+  .pv-scene-photos .pv-captioned:nth-child(3) { width: auto; }
 }
