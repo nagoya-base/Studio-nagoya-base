@@ -21,9 +21,16 @@ if [[ "$mode" != "deploy" && "$mode" != "verify" && "$mode" != "schema-guard" ]]
   exit 1
 fi
 
-# Deployment ID と今回のmain SHAの説明文が同じ行にあるかだけを確認する（出力は固定メッセージのみ）。
+# claspの一覧行（- ID @version - description）のID欄を完全一致で照合する。
+deployment_has_unique_id() {
+  [[ "$(awk -v id="$deployment_id" '$1 == "-" && $2 == id { count++ } END { print count+0 }' "$list_stdout")" -eq 1 ]]
+}
+
+# IDが一意で、その行のdescriptionが今回SHAを示す場合だけ成功する。
 deployment_has_current_sha() {
-  grep -F -- "$deployment_id" "$list_stdout" | grep -Fq -- "main ${GITHUB_SHA}"
+  deployment_has_unique_id &&
+    awk -v id="$deployment_id" '$1 == "-" && $2 == id' "$list_stdout" |
+      grep -Eq -- "main ${GITHUB_SHA}([^0-9a-f]|$)"
 }
 
 if [[ "$mode" == "schema-guard" && "$target" != "public" ]]; then
@@ -97,15 +104,15 @@ if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_std
   node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" before >&2
   exit 1
 fi
-if ! grep -Fq -- "$deployment_id" "$list_stdout"; then
-  echo "Configured deployment ID does not belong to the selected existing GAS project." >&2
+if ! deployment_has_unique_id; then
+  echo "Configured deployment ID could not be uniquely verified in the selected existing GAS project." >&2
   exit 1
 fi
 
 if [[ "$mode" == "schema-guard" ]]; then
   schema_path="gas/booking/shared/BookingsSchema.gs"
   # このDeploymentの行からだけ前回SHAを取る。1行・1SHAに特定できなければ失敗（fail closed）。
-  if ! deployment_line="$(grep -F -- "$deployment_id" "$list_stdout")" ||
+  if ! deployment_line="$(awk -v id="$deployment_id" '$1 == "-" && $2 == id' "$list_stdout")" ||
      [[ "$(printf '%s\n' "$deployment_line" | wc -l)" -ne 1 ]]; then
     echo "Could not identify the previous Web App production commit; refusing to continue." >&2
     exit 1
@@ -202,17 +209,28 @@ if ! clasp --auth "$auth_file" --user "$clasp_user" update-deployment "$deployme
 fi
 
 touch "$RUNNER_TEMP/booking-gas-$target-update-applied"
-echo "Running clasp list-deployments (after update)"
-if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_stdout" 2>"$list_stderr"; then
-  node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" after >&2
-  exit 1
-fi
-if ! grep -Fq -- "$deployment_id" "$list_stdout"; then
-  echo "Existing deployment could not be verified after update." >&2
-  exit 1
-fi
-if ! deployment_has_current_sha; then
-  echo "Existing $target deployment does not show the current main commit after update." >&2
-  exit 1
-fi
-echo "Updated existing $target deployment to the current main commit"
+# 更新を再実行せず、descriptionの反映だけを最大5回（待機は合計20秒）確認する。
+verification_attempts=5
+verification_delay_seconds=5
+for ((attempt=1; attempt<=verification_attempts; attempt++)); do
+  echo "Running clasp list-deployments (after update)"
+  if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_stdout" 2>"$list_stderr"; then
+    node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" after >&2
+    exit 1
+  fi
+  if ! deployment_has_unique_id; then
+    echo "Existing deployment could not be verified after update." >&2
+    exit 1
+  fi
+  if deployment_has_current_sha; then
+    echo "Updated existing $target deployment to the current main commit"
+    exit 0
+  fi
+  if [[ "$attempt" -lt "$verification_attempts" ]]; then
+    echo "Waiting for deployment description to reflect the current main commit."
+    sleep "$verification_delay_seconds"
+  fi
+done
+
+echo "Existing $target deployment does not show the current main commit after update." >&2
+exit 1

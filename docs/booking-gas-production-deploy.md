@@ -120,6 +120,12 @@ Spreadsheet ID Secret・WIF/OIDCは使わず、`booking-production`に登録す�
 `clasp update-deployment`だけを使い、新規デプロイ作成コマンドは実行しない。
 clasp部分は`scripts/deploy-booking-gas-target.sh`（`admin`/`public`、第2引数`verify`で更新なしの確認）。
 
+`update-deployment`成功後は更新済みmarkerを残し、descriptionへの今回SHAの反映を最大5回確認する。
+対象IDが一意に存在してSHAがまだ一致しない場合だけ5秒待機する（待機は最大4回、合計20秒）。
+この間にpushやupdate-deploymentは再実行しない。最終回まで不一致なら失敗とする。
+対象IDが消えた・一意に確認できない場合や一覧取得のAPIエラーは即時停止し、APIエラーは既存の固定カテゴリで示す。
+`verify`は従来どおり更新も待機もせず、1回の読み取りでIDの一意性と今回SHAを確認する。
+
 post-checkは、既存DeploymentのID（`full`はAdminとPublic、`admin-only`はAdminのみ）が存在し
 descriptionに今回のmain SHAが出ていることを確認する（`Bookings`ヘッダーの照合は行わない。
 migrationは管理者が`migrateBookingsSchema`で実行し、差分ガードが実行漏れを防ぐ）。
