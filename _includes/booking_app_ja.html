@@ -208,8 +208,23 @@
         <option value="5名" data-event-plan-only="1" disabled hidden>5名</option>
         <option value="6名" data-event-plan-only="1" disabled hidden>6名</option>
 {% endif %}
+{% if include.brand == "mens" %}
+        <!-- Issue #668: SNB mensのみ。従来の「5名以上・要相談」を個別人数（5〜7名）へ置き換える。8名以上は選択不可。SNB一般・Studio Xの人数欄は変えない。 -->
+        <option value="5名" data-large-party="1">5名（SNB MEMBER・事前承認）</option>
+        <option value="6名" data-large-party="1">6名（SNB MEMBER・事前承認）</option>
+        <option value="7名" data-large-party="1">7名（SNB MEMBER・事前承認）</option>
+{% else %}
         <option value="5名以上・要相談">5名以上・要相談</option>
+{% endif %}
       </select>
+{% if include.brand == "mens" %}
+      <div class="ba-banner ba-banner--notice" id="ba-party-help" role="note" hidden>
+        <strong>5〜7名でのご利用（SNB MEMBER限定・全件事前承認）</strong><br>
+        5人目以降、1名につき＋1,000円／予約（予約全体で1回）を通常のお部屋料金に加算します。予約代表者にSNB MEMBER資格が必要です（同行者の入会は不要）。
+        お申し込み後、枠を仮押さえして運営が承認を判断します。承認された場合のみ確定料金をご案内し、承認から24時間以内のオンラインクレジットカード決済で予約が成立します。
+        承認できない場合や24時間以内に未払いの場合は不成立となり、仮押さえを解除します。上限は7名です。2026年12月1日以降のご利用日が対象です。
+      </div>
+{% endif %}
       <p class="ba-field-help" id="ba-people-plan-help" hidden>6時間貸切ベースプランは6名まで選べます（人数による追加料金はありません）。7名以上はプランを解除して、予約・撮影相談フォームからご相談ください。</p>
       <p class="ba-field-error" id="ba-people-error" hidden></p>
     </div>
@@ -616,6 +631,13 @@
     <!-- Issue #423: オプションの申込結果。部屋予約とは別の状態（承認待ち等）を表示する。 -->
     <div class="ba-banner ba-banner--notice" id="ba-complete-options" hidden></div>
     {% endif %}
+
+    <!-- Issue #668: 5〜7名（SNB mens）は承認待ち。お支払いはまだ不要で、承認後に案内メールから24時間以内に決済する。 -->
+    <div class="ba-banner ba-banner--notice" id="ba-complete-party-notice" hidden>
+      <strong>5〜7名のご利用は、運営の承認待ちです（まだ予約は確定していません・お支払いは不要です）。</strong><br>
+      ご希望の枠は仮押さえしています。承認できる場合のみ、確定料金とお支払いページをメールでご案内します。承認から24時間以内にオンラインクレジットカードでお支払いが完了すると予約が成立します。
+      承認できない場合や期限内に未払いの場合は不成立となり、仮押さえを解除します（4名扱いへの変更や自動のご請求はしません）。
+    </div>
 
     <p class="ba-banner ba-banner--notice" id="ba-complete-card-payment-notice" hidden></p>
 

@@ -69,7 +69,7 @@ var FeeCalculator = (function () {
   }
 
   /*
-   * params: { brand, priceTier ('GENERAL'|'MEMBER'), durationMinutes, dateString, generation, plan(任意。Issue #478 / #488) }
+   * params: { brand, priceTier ('GENERAL'|'MEMBER'), durationMinutes, dateString, generation, plan(任意。Issue #478 / #488), people(任意。Issue #668。mensの5〜7名の人数加算用) }
    * dateStringは変更後の利用日（'YYYY-MM-DD'。土日祝判定に使う）。
    * 戻り値:
    *   { supported: true, amount, dayType, tier, roundedMinutes, billableHours }
@@ -100,7 +100,9 @@ var FeeCalculator = (function () {
          再計算する。プラン付きの予約を通常の3時間料金へ化けさせない（プランを満たさなければ見積り不可）。 */
       plan: params.plan,
       /* 日程変更でも元予約の料金世代を維持する（現行表で再計算しない）。空は旧世代V1。 */
-      generation: BookingPricing.normalizeGeneration(params.generation)
+      generation: BookingPricing.normalizeGeneration(params.generation),
+      /* Issue #668: SNB mensの5〜7名は日程変更でも保存済みの予約人数で人数加算を再計算する（加算が消えて過少請求にならない）。 */
+      people: params.people
     });
     if (!priceResult.valid) {
       return {

@@ -89,7 +89,28 @@ var BookingMailTemplates = (function () {
     return typeof BookingPricing !== 'undefined' && BookingPricing.isEventPlan(record.planCode);
   }
 
+  /* 大人数利用（Issue #668）の予約か。Booking.gs未読込の単体利用でも通常予約の本文を壊さない。 */
+  function isLargePartyRecord_(record) {
+    return typeof Booking !== 'undefined' && typeof Booking.isLargePartyRecord === 'function' && Booking.isLargePartyRecord(record);
+  }
+
+  /* Issue #668: 基本部屋料金と人数加算を区別して出す。人数加算は予約全体に1回（利用時間ごとの加算ではない）。 */
+  function largePartyPriceLines_(record) {
+    var total = Number(record.priceAmount);
+    var surcharge = Number(record.partySurcharge);
+    if (!Number.isFinite(total) || !Number.isFinite(surcharge)) return '';
+    return joinNonEmpty_([
+      '基本部屋料金: ' + formatJpyAmount_(total - surcharge) + '（税込）',
+      '人数加算（5人目以降1名につき1,000円×' + (surcharge / 1000) + '名・予約全体で1回）: ' + formatJpyAmount_(surcharge),
+      '利用料金（合計）: ' + formatJpyAmount_(total) + '（税込）'
+    ]);
+  }
+
   function priceLine_(record) {
+    if (isLargePartyRecord_(record)) {
+      var breakdown = largePartyPriceLines_(record);
+      if (breakdown) return breakdown;
+    }
     var formatted = formatJpyAmount_(record.priceAmount);
     var line = formatted ? '利用料金: ' + formatted + '（税込）' : '';
     /* Issue #488 / #492: 貸切ベースプランは、プラン名と責任範囲（有人クロークではない）を
@@ -143,7 +164,67 @@ var BookingMailTemplates = (function () {
    * 決済完了・予約確定として扱われることはない（既存どおり、確定は管理者の確認・
    * confirmBooking経由のみ）。
    */
+  function buildLargePartyPendingMail(record, config) {
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var timezone = config.timezone;
+    var subject = '【' + brandLabel + '】5〜7名のご利用を受け付けました（運営の承認待ち・未確定）';
+    var body = joinNonEmpty_([
+      record.name + ' 様',
+      '',
+      brandLabel + ' の5〜7名でのご利用申込を受け付けました。',
+      '※このメールの時点ではご予約は確定していません。お支払いも不要です。',
+      '※ご希望の枠は仮押さえしています。運営が内容を確認し、承認できる場合のみ確定料金とお支払い方法をご案内します。',
+      '※承認後24時間以内にお支払いが完了しない場合は不成立となり、仮押さえを解除します。承認できない場合も仮押さえを解除します（4名扱いへの変更や自動のご請求はしません）。',
+      '',
+      '予約ID: ' + record.bookingId,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '開始時刻: ' + formatTime_(record.startAt, timezone),
+      '終了時刻: ' + formatTime_(record.endAt, timezone),
+      '利用人数: ' + record.people,
+      priceLine_(record),
+      '',
+      contactLine_(config),
+      guideLine_(record),
+      signatureLines_(record)
+    ]);
+    return { subject: subject, body: body };
+  }
+
+  /* 承認メール（Issue #668）。確定料金・支払期限（承認から24時間）・支払いページを案内する。 */
+  function buildLargePartyApprovedMail(record, config) {
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var timezone = config.timezone;
+    var due = formatDeadline_(record.largePartyPaymentDueAt, timezone);
+    if (!due) throw new Error('お支払い期限が記録されていないため承認メールを作成できません。');
+    var payUrl = Booking.getBrandProfile(record.brand).siteUrl + 'booking/party/?bookingId=' + encodeURIComponent(record.bookingId);
+    var subject = '【' + brandLabel + '】5〜7名のご利用を承認しました（' + due + 'までにお支払いください）';
+    var body = joinNonEmpty_([
+      record.name + ' 様',
+      '',
+      brandLabel + ' の5〜7名でのご利用を承認しました。確定料金は下記のとおりです。',
+      '※お支払いが完了するまでご予約は確定しません。',
+      '※お支払い期限は ' + due + '（承認から24時間以内）です。期限までにお支払いが完了しない場合は不成立となり、枠を解除します。',
+      '',
+      '予約ID: ' + record.bookingId,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '開始時刻: ' + formatTime_(record.startAt, timezone),
+      '終了時刻: ' + formatTime_(record.endAt, timezone),
+      '利用人数: ' + record.people,
+      priceLine_(record),
+      '',
+      '【お支払い方法】オンラインクレジットカード決済',
+      '下記のページで、予約IDとご予約時のメールアドレスを入力して決済へ進んでください。',
+      payUrl,
+      '',
+      contactLine_(config),
+      guideLine_(record),
+      signatureLines_(record)
+    ]);
+    return { subject: subject, body: body };
+  }
+
   function buildPendingMail(record, config) {
+    if (isLargePartyRecord_(record)) return buildLargePartyPendingMail(record, config);
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
     var startTime = formatTime_(record.startAt, timezone);
@@ -307,11 +388,16 @@ var BookingMailTemplates = (function () {
     var startTime = formatTime_(record.startAt, timezone);
     var endTime = formatTime_(record.endAt, timezone);
 
-    var subject = '【' + brandLabel + '】ご予約キャンセルのお知らせ';
+    var rejected = isLargePartyRecord_(record) && Booking.largePartyApprovalStatus(record) === Booking.LARGE_PARTY_APPROVAL.REJECTED;
+    var subject = rejected
+      ? '【' + brandLabel + '】5〜7名のご利用は承認できませんでした（仮押さえを解除しました）'
+      : '【' + brandLabel + '】ご予約キャンセルのお知らせ';
     var body = joinNonEmpty_([
       record.name + ' 様',
       '',
-      '下記のご予約はキャンセルされました。',
+      rejected
+        ? '下記の5〜7名でのご利用は、運営の確認の結果、今回は承認できませんでした。仮押さえを解除しています。お支払いは発生していません（4名扱いへの変更や自動のご請求もありません）。'
+        : '下記のご予約はキャンセルされました。',
       '',
       '予約ID: ' + record.bookingId,
       '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
@@ -443,7 +529,9 @@ var BookingMailTemplates = (function () {
     var body = joinNonEmpty_([
       record.name + ' 様',
       '',
-      '下記のご予約は、お支払い期限までに運営による確認ができなかったため、失効いたしました。',
+      isLargePartyRecord_(record)
+        ? '下記の5〜7名でのご利用は、承認の手続きまたはお支払いが期限（承認から24時間）までに完了しなかったため、不成立となり、仮押さえを解除しました。'
+        : '下記のご予約は、お支払い期限までに運営による確認ができなかったため、失効いたしました。',
       '',
       '予約ID: ' + record.bookingId,
       '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
@@ -675,6 +763,7 @@ var BookingMailTemplates = (function () {
 
   return {
     buildPendingMail: buildPendingMail,
+    buildLargePartyApprovedMail: buildLargePartyApprovedMail,
     buildCardCheckoutMail: buildCardCheckoutMail,
     buildConfirmedMail: buildConfirmedMail,
     buildCancelledMail: buildCancelledMail,

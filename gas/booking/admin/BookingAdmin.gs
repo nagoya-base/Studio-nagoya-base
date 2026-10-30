@@ -53,6 +53,15 @@ function confirmBooking(bookingId) {
   return BookingRepository.confirmBooking(bookingId);
 }
 
+/* Issue #668: SNB mens大人数利用（5〜7名）の運営承認／不承認。Booking Admin側のみで公開する。 */
+function approveLargeParty(bookingId) {
+  return BookingRepository.approveLargeParty(bookingId);
+}
+
+function rejectLargeParty(bookingId) {
+  return BookingRepository.rejectLargeParty(bookingId);
+}
+
 /* 正式関数: cancelBookingAdmin(bookingId)（Issue #272本文どおりのグローバル関数名）。
    Booking Admin側のみで公開する（公開Web AppにはcancelBookingAdminを一切追加しない）。
    スクリプトエディタから直接実行することもできる。 */

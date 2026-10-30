@@ -298,6 +298,8 @@ var BookingReschedule = (function () {
     var quote = FeeCalculator.quoteFee({
       brand: record.brand, priceTier: baseline.priceTier, generation: baseline.priceGeneration,
       plan: baseline.plan,
+      /* Issue #668: 予約人数（料金計算の正本）。mensの5〜7名は変更先の日程でも人数加算つきで再見積りする。 */
+      people: record.people,
       durationMinutes: newDurationMinutes, dateString: newDateString
     });
     if (!quote.supported) {

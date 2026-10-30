@@ -28,6 +28,8 @@ var BookingMailer = (function () {
     PENDING: 'PENDING',
     /* Issue #445: Checkout Session作成後に送る、決済URL・支払期限入りのカード決済案内。 */
     CARD_CHECKOUT: 'CARD_CHECKOUT',
+    /* Issue #668: 大人数利用（5〜7名）の運営承認と確定料金・支払期限の案内。 */
+    LARGE_PARTY_APPROVED: 'LARGE_PARTY_APPROVED',
     CONFIRMED: 'CONFIRMED',
     CANCELLED: 'CANCELLED',
     REMINDER: 'REMINDER',
@@ -568,6 +570,17 @@ var BookingMailer = (function () {
         return { ok: false, outcome: { success: true, skipped: true, reason: 'ALREADY_SENT', bookingId: id, mailType: mailType } };
       }
       return { ok: true };
+    });
+  }
+
+  /* 承認の案内（Issue #668）。承認操作（BookingRepository.approveLargeParty）ごとに1通。同じ列pendingMailSentAtを更新するためforceで送る。 */
+  function sendLargePartyApprovedMailForBooking(bookingId) {
+    return withBookingLock_(MAIL_TYPES.LARGE_PARTY_APPROVED, bookingId, Booking.STATUS.PENDING, ['pendingMailSentAt'], true, function (record) {
+      if (!record.email || !/^[^\s@]+@[^\s@]+$/.test(String(record.email).trim())) {
+        throw new Error('予約に有効なメールアドレスがないため承認メールを送信できません。');
+      }
+      var config = ensureMailConfigComplete_();
+      return BookingMailTemplates.buildLargePartyApprovedMail(record, config);
     });
   }
 
@@ -1573,6 +1586,7 @@ var BookingMailer = (function () {
     MAIL_TYPES: MAIL_TYPES,
     sendPendingMailForBooking: sendPendingMailForBooking,
     sendCardCheckoutMailForBooking: sendCardCheckoutMailForBooking,
+    sendLargePartyApprovedMailForBooking: sendLargePartyApprovedMailForBooking,
     sendConfirmedMailForBooking: sendConfirmedMailForBooking,
     sendCancelledMailForBooking: sendCancelledMailForBooking,
     sendExpiredMailForBooking: sendExpiredMailForBooking,

@@ -661,6 +661,8 @@ test('SNB / mens: 料金表・プラン処理は変わらない（ペアパッ�
 test('Issue #513: 人数選択は5〜6名がプラン限定（data-event-plan-only）で、解除時に通常の上限へ戻す', function () {
   var html = read('_includes/booking_app_ja.html');
   var sel = /<select id="ba-people"[\s\S]*?<\/select>/.exec(html)[0];
+  /* Issue #668: SNB mensだけ5〜7名の個別選択肢を持つ（Liquidのmens分岐）。ここで検査するのは通常予約・Studio Xの人数欄。 */
+  sel = sel.replace(/\{% if include\.brand == "mens" %\}[\s\S]*?\{% else %\}/, '').replace(/\{% endif %\}\s*(?=<\/select>)/, '');
   var planOnly = sel.match(/data-event-plan-only="1"/g) || [];
   assert.strictEqual(planOnly.length, 2, '5〜6名の2択');
   ['5名', '6名'].forEach(function (v) {

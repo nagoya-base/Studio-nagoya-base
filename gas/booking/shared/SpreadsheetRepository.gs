@@ -385,7 +385,21 @@ var SpreadsheetRepository = (function () {
      *   通常料金tier（priceTier）とは別に保持し、日程変更でも更新しない（BookingReschedule・FeeCalculatorは
      *   この値を見て変更先の曜日区分でプラン料金を再計算する）。
      */
-    'planCode'
+    'planCode',
+    /*
+     * Issue #668で追加した列（末尾追記。本番反映時は既存Bookingsシートのヘッダー行の末尾（planCodeの
+     * 右隣）へ、次の順で手動追記が必要）。SNB mens大人数利用（5〜7名）の保存項目。予約人数そのものは people 列
+     * （料金計算の正本）。会員資格の確認結果は既存の membershipStatus 列（'ACTIVE'が確認済み）、仮押さえはstatus=PENDING。
+     * - largeParty: 5〜7名の大人数利用なら TRUE。空は通常予約。
+     * - partySurcharge: 人数加算額（円。予約1件につき1回。5名=1000/6名=2000/7名=3000）。通常予約は空。
+     * - largePartyApprovalStatus: 'PENDING_APPROVAL'（承認待ち）|'APPROVED'|'REJECTED'。空は通常予約。
+     * - largePartyApprovedAt / largePartyPaymentDueAt: 承認日時と、その24時間後の支払期限。
+     */
+    'largeParty',
+    'partySurcharge',
+    'largePartyApprovalStatus',
+    'largePartyApprovedAt',
+    'largePartyPaymentDueAt'
   ];
 
   function getSpreadsheet_() {

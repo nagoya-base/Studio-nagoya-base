@@ -20,6 +20,8 @@ var TARGETS = [
   'mens/legal/index.html',
   'mens/booking/index.html',
   'mens/booking/options/index.html',
+  /* Issue #668: 5〜7名の承認後お支払いページ。 */
+  'mens/booking/party/index.html',
   'mens/booking/payment-complete.html',
   'mens/booking/option-payment-complete.html',
   'mens/membership/complete.html'
@@ -83,7 +85,7 @@ test('mens-detail.css: 状態色（エラー・成功）を青へ置換せず、
   assert.strictEqual(css.indexOf('--ba-error:'), -1);
 });
 
-test('対象8ページだけが専用CSSとbodyクラスを持つ。対象外のHTMLには波及しない', function () {
+test('対象9ページだけが専用CSSとbodyクラスを持つ。対象外のHTMLには波及しない', function () {
   TARGETS.forEach(function (f) {
     var h = read(f);
     var depth = f.split('/').length - 1;

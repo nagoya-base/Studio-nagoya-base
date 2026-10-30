@@ -238,6 +238,14 @@ function getAdminBookings() {
       refundDecisionRequired: paymentSummary.refundDecisionRequired,
       paymentRecoveryRequired: paymentSummary.paymentRecoveryRequired
     };
+    /* Issue #668: 大人数利用（5〜7名）の予約だけ承認状態・人数加算・支払期限を付ける（通常予約はキー自体を付けず従来の応答のまま）。 */
+    if (Booking.isLargePartyRecord(record)) {
+      listItem.largeParty = true;
+      listItem.partySurcharge = Number(record.partySurcharge) || 0;
+      listItem.largePartyApprovalStatus = Booking.largePartyApprovalStatus(record);
+      listItem.largePartyPaymentDueAt = formatAdminDateTime_(record.largePartyPaymentDueAt, timezone);
+      listItem.cardPaymentDueAt = listItem.largePartyPaymentDueAt;
+    }
     /* Issue #488 / #492: 貸切ベースプランの予約だけプラン名を付ける（通常予約はキー自体を付けず従来の応答のまま）。 */
     if (BookingPricing.planLabel(record.planCode)) {
       listItem.planCode = record.planCode;
@@ -391,8 +399,15 @@ function getAdminBookingDetail(bookingId) {
       reminderSentAt: formatAdminDateTime_(record.reminderSentAt, timezone),
       accessGuideSentAt: formatAdminDateTime_(record.accessGuideSentAt, timezone),
       hasMailError: !!record.lastMailErrorAt,
+      /* Issue #668: 大人数利用（5〜7名）の保存項目（予約人数はpeople、基本料金は合計から人数加算を引いた額）。通常予約は空。 */
+      largeParty: Booking.isLargePartyRecord(record) ? 'はい' : '',
+      partySurcharge: Booking.isLargePartyRecord(record) ? (Number(record.partySurcharge) || 0) : '',
+      largePartyApprovalStatus: Booking.largePartyApprovalStatus(record),
+      largePartyApprovedAt: formatAdminDateTime_(record.largePartyApprovedAt, timezone),
+      largePartyPaymentDueAt: formatAdminDateTime_(record.largePartyPaymentDueAt, timezone),
+      membershipStatus: Booking.isLargePartyRecord(record) ? record.membershipStatus : '',
       /* Issue #334: カード予約のみ非空（読み取り専用の支払期限表示用）。 */
-      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone),
+      cardPaymentDueAt: Booking.isLargePartyRecord(record) ? formatAdminDateTime_(record.largePartyPaymentDueAt, timezone) : computeAdminCardPaymentDueAt_(record, timezone),
       /*
        * Issue #334 PR-C: Stripe決済リンク送信欄の表示制御・送信状態表示用。
        * isCardPaymentは「支払方法がオンラインクレジットカード」の判定を、Web UI側で
@@ -633,6 +648,15 @@ function adminRevokeVideoLightEligibility(email, equipmentCode) {
    業務ロジックはコピーしない。 */
 function adminConfirmBooking(bookingId) {
   return confirmBooking(bookingId);
+}
+
+/* Issue #668: 大人数利用（5〜7名）の承認／不承認。BookingRepositoryの正式関数へ委譲する（業務ロジックはコピーしない）。 */
+function adminApproveLargeParty(bookingId) {
+  return approveLargeParty(bookingId);
+}
+
+function adminRejectLargeParty(bookingId) {
+  return rejectLargeParty(bookingId);
 }
 
 /* キャンセル。既存の正式関数cancelBookingAdmin(bookingId)（BookingAdmin.gs）へそのまま

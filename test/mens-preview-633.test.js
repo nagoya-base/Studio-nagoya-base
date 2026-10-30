@@ -526,7 +526,7 @@ test('#646: 仲間との利用の枠はコピー・人数表記・CTA計測属�
   var html = read('mens/preview-633.html');
   var g = html.match(/<div class="pv-group" id="group-use">[\s\S]*?<\/section>/)[0];
   ['好きが通じる仲間と、自分たちだけの時間を。', 'ユニフォームを持ち寄って撮る。縄の練習をする。撮った写真を見ながら話す。', '同じ趣味の仲間と集まる、少人数のフェチ会・同好会にも。完全貸切・無人入室で、自分たちのペースで楽しめます。',
-    '1〜4名。5名以上は事前にご相談ください（運営者の承認が必要です）。', '参加者募集を予定している会は、募集前にご相談ください。'].forEach(function (t) { assert.ok(g.indexOf(t) !== -1, t); });
+    '1〜4名は通常料金のまま。5〜7名（2026年12月1日以降のご利用日）はSNB MEMBER限定・全件事前承認で、5人目以降＋1,000円／人／予約です（上限7名）。', '参加者募集を予定している会は、募集前にご相談ください。'].forEach(function (t) { assert.ok(g.indexOf(t) !== -1, t); });
   assert.match(g, /<a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="mens_group" data-analytics-destination="reservation_form">仲間との利用を相談する →<\/a>/);
   assert.ok(g.indexOf('href="#safety"') !== -1 && g.indexOf("/mens/legal/' | relative_url }}#terms") !== -1, '安全ルール・利用規約へ接続');
   assert.ok(g.indexOf('18歳以上') !== -1 && g.indexOf('高校生') !== -1 && g.indexOf('宴会・飲み会目的ではご利用いただけません') !== -1);
@@ -679,7 +679,7 @@ test('#651/#653: ヒーロー衣装写真は衣装の作例として Scenes に�
 test('#651: 少人数利用は 見出し→楽しみ方→人数→相談CTA→利用条件 の順で、必要な告知を保持する', function () {
   var html = read('mens/preview-633.html');
   var g = html.match(/<div class="pv-group" id="group-use">[\s\S]*?<\/section>/)[0];
-  var order = ['pv-group-title', 'pv-group-lead', '1〜4名。5名以上', 'mens_group', '18歳以上であること', '宴会・飲み会目的ではご利用いただけません', 'href="#safety"'].map(function (k) { return g.indexOf(k); });
+  var order = ['pv-group-title', 'pv-group-lead', '1〜4名は通常料金のまま。5〜7名', 'mens_group', '18歳以上であること', '宴会・飲み会目的ではご利用いただけません', 'href="#safety"'].map(function (k) { return g.indexOf(k); });
   assert.ok(order.every(function (x) { return x > 0; }));
   assert.deepStrictEqual(order.slice().sort(function (a, b) { return a - b; }), order);
 });
