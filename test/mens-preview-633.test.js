@@ -601,6 +601,11 @@ test('#646: 仲間との利用の枠はコピー・人数表記・CTA計測属�
   assert.strictEqual(html.indexOf('id="reservation-form"') === -1, true, '相談フォームのIDは include 側（既存）');
   assert.ok(read('_includes/reservation_form_ja.html').indexOf('id="reservation-form"') !== -1, '#reservation-form が存在する');
 });
+test('#656: 5枚一覧用の最終1枚中央寄せ（width: 50%）は JS切替表示（.is-enhanced）に及ばない', function () {
+  var css = read('styles/mens-preview-633.css');
+  assert.match(css, /\.pv-compare:not\(\.is-enhanced\) \.pv-compare-item:nth-child\(5\) \{[^}]*width: 50%/, '半幅指定は非enhanced（JSなし）限定');
+  assert.doesNotMatch(css, /^\s*\.pv-compare-item:nth-child\(5\) \{[^}]*width:/m, '5番目へ無条件の幅指定を置かない');
+});
 test('#646: 照明5枚は1つの比較グループ（JSなしでも全表示）で、切替JSは例外時に元の表示へ戻し、自動切替しない', function () {
   var html = read('mens/preview-633.html');
   var cmp = html.match(/<div class="pv-compare" data-pv-compare>[\s\S]*?<\/ul>/)[0];
