@@ -525,6 +525,9 @@ test('#653/#660: 作品切替JSは reduced motion・例外時に .is-active を�
   ok.listeners.pointerdown({ target: { closest: function () { return {}; } } });
   ok.setLine(600); ok.listeners.scroll();
   assert.strictEqual(now(ok), 2, 'キャプション自身の押下では解除しない');
+  ok.listeners.pointerdown({ target: { closest: function (q) { return q.indexOf('.pv-photo') !== -1 ? {} : null; } } });
+  ok.setLine(600); ok.listeners.scroll();
+  assert.strictEqual(now(ok), 2, '写真（拡大の対象）の押下では手動選択を保つ');
   ok.listeners.pointerdown({ target: { closest: function () { return null; } } });
   assert.strictEqual(now(ok), 1, 'スクロールバー等（キャプション以外）の押下で位置判定へ戻る');
   ok.caps[1].ev.click();

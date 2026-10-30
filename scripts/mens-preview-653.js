@@ -85,10 +85,10 @@
     /* 利用者のスクロール操作で手動選択を解除し、以後は位置で判定する */
     window.addEventListener('wheel', release, { passive: true });
     window.addEventListener('touchmove', release, { passive: true });
-    /* スクロールバーのドラッグ／トラッククリックは wheel・touchmove を出さないため、キャプション以外の押下でも解除する */
+    /* スクロールバーのドラッグ／トラッククリックは wheel・touchmove を出さないため、キャプション・写真（拡大の対象）以外の押下でも解除する */
     window.addEventListener('pointerdown', function (e) {
       var t = e && e.target;
-      if (t && t.closest && t.closest('[data-pv-work-caption]')) return;
+      if (t && t.closest && t.closest('[data-pv-work-caption], .pv-photo')) return;
       release();
     });
     window.addEventListener('keydown', function (e) {
