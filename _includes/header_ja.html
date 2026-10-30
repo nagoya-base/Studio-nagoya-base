@@ -1,4 +1,6 @@
 <!-- ナビゲーション -->
+{% comment %} include.theme="kuro" の呼出元だけ初期の選択表示を黒にする（未指定は従来どおり生成り）。html の data-theme は呼出元ページ側で揃える。 {% endcomment %}
+{% assign nav_theme = include.theme | default: "kinari" %}
 {% if include.brand == "mens" %}
 {% assign nav_top_url = "/mens/" | relative_url %}
 {% assign nav_logo_name = "男性ポートレート" %}
@@ -35,10 +37,10 @@
       <li><a href="{{ '/en.html' | relative_url }}" class="nav-link-accent">EN</a></li>
     </ul>
     <div class="theme-switcher" role="group" aria-label="カラーテーマ切り替え">
-      <button class="theme-btn active" type="button" data-theme="kinari"
-              aria-label="生成りテーマ" aria-pressed="true">🌿 生成り</button>
-      <button class="theme-btn" type="button" data-theme="kuro"
-              aria-label="黒テーマ" aria-pressed="false">🌑 黒</button>
+      <button class="theme-btn{% if nav_theme != "kuro" %} active{% endif %}" type="button" data-theme="kinari"
+              aria-label="生成りテーマ" aria-pressed="{% if nav_theme == "kuro" %}false{% else %}true{% endif %}">🌿 生成り</button>
+      <button class="theme-btn{% if nav_theme == "kuro" %} active{% endif %}" type="button" data-theme="kuro"
+              aria-label="黒テーマ" aria-pressed="{% if nav_theme == "kuro" %}true{% else %}false{% endif %}">🌑 黒</button>
     </div>
 
     <button class="nav-hamburger" aria-label="メニューを開く" aria-expanded="false">
@@ -72,9 +74,9 @@
   <a href="{{ nav_legal_url }}" class="nav-mobile-link" data-analytics-event="cta_click" data-analytics-type="terms" data-analytics-location="other">利用規約</a>
   <a href="{{ '/en.html' | relative_url }}" class="nav-mobile-link nav-link-accent">EN</a>
   <div class="theme-switcher theme-switcher-mobile" role="group" aria-label="カラーテーマ切り替え">
-    <button class="theme-btn active" type="button" data-theme="kinari"
-            aria-label="生成りテーマ" aria-pressed="true">🌿 生成り</button>
-    <button class="theme-btn" type="button" data-theme="kuro"
-            aria-label="黒テーマ" aria-pressed="false">🌑 黒</button>
+    <button class="theme-btn{% if nav_theme != "kuro" %} active{% endif %}" type="button" data-theme="kinari"
+            aria-label="生成りテーマ" aria-pressed="{% if nav_theme == "kuro" %}false{% else %}true{% endif %}">🌿 生成り</button>
+    <button class="theme-btn{% if nav_theme == "kuro" %} active{% endif %}" type="button" data-theme="kuro"
+            aria-label="黒テーマ" aria-pressed="{% if nav_theme == "kuro" %}true{% else %}false{% endif %}">🌑 黒</button>
   </div>
 </div>

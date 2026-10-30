@@ -151,9 +151,11 @@ test('#633: sitemap.xml・他ページから試作への参照がない', functi
   assert.deepStrictEqual(hits, []);
 });
 
-/* ---- 本番と試作の差分（Issue #658）：意図した差分はここに列挙したものだけ ---- */
+/* ---- 本番と試作の差分（Issue #658／#665）：意図した差分はここに列挙したものだけ。#665 で本番のみ初期テーマが黒 ---- */
 function stripIntendedDiff(src) {
   return src
+    .replace('<html lang="ja" data-theme="kuro">', '<html lang="ja" data-theme="kinari">')
+    .replace('{% include header_ja.html banner="calendar" brand="mens" theme="kuro" %}', '{% include header_ja.html banner="calendar" brand="mens" %}')
     .replace(/<!-- 試作ページ[^\n]*-->\n<meta name="robots" content="noindex, nofollow">\n/, '')
     .replace(/\n<!-- Google Analytics 4 -->[\s\S]*?<\/script>\n[\s\S]*?<\/script>\n/, '\n')
     .replace(/<!-- 相談フォーム[^\n]*-->\n<div class="z z-sky pv-form-zone">[\s\S]*?\{% include reservation_form_ja\.html %\}[\s\S]*?(<\/fieldset>\s*)?<\/div>\n/, '<!-- FORM -->\n')
