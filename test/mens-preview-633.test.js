@@ -688,3 +688,13 @@ test('#651/#658: 用途ナビは本番トップにも載り、試作との共有
   assert.ok(fs.existsSync(path.join(ROOT, 'mens', 'preview-633.html')), '試作は比較用に残す');
   assert.ok(!fs.existsSync(path.join(ROOT, 'mens', 'index-legacy.html')), '旧トップの複製は置かない（タグ mens-top-before-658 で保全）');
 });
+
+test('#658: 「入力不可」カーソルは試作の disabled な .pv-form-lock 配下だけで、本番の有効なフォームには効かない', function () {
+  var css = read('styles/mens-preview-633.css');
+  var rules = css.match(/[^{}]*\{[^{}]*cursor:\s*not-allowed[^{}]*\}/g) || [];
+  assert.ok(rules.length > 0, '試作側の禁止カーソルは維持する');
+  rules.forEach(function (r) {
+    r.split('{')[0].split(',').forEach(function (sel) { assert.match(sel, /\.pv-form-lock\b/, '本番に効く可能性のあるセレクタ: ' + sel.trim()); });
+  });
+  assert.doesNotMatch(read('mens/index.html'), /pv-form-lock/);
+});

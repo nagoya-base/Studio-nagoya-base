@@ -321,7 +321,7 @@
 .pv-form-lock { border: 0; margin: 0; padding: 0; min-width: 0; }
 .pv-form-lock .reservation-form { opacity: 0.85; }
 .pv-form-zone .reservation-section { background: transparent; }
-.pv-form-zone .reservation-form input, .pv-form-zone .reservation-form select, .pv-form-zone .reservation-form textarea { cursor: not-allowed; }
+.pv-form-lock .reservation-form input, .pv-form-lock .reservation-form select, .pv-form-lock .reservation-form textarea { cursor: not-allowed; }
 
 /* ===== 画像拡大：縦横比を保って表示（このページのみ） */
 .image-modal .modal-content { width: min(92vw, 900px); aspect-ratio: auto; max-height: 86vh; }
