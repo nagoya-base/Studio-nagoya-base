@@ -481,8 +481,8 @@ test('#653/#660: 作品切替JSは reduced motion・例外時に .is-active を�
       return { i: i, cls: cls, contains: function () { return false; }, querySelector: function (q) { if (opts.boom) throw new Error('boom'); return q === '.pv-photo' ? { getBoundingClientRect: function () { return { top: lineY - 100, height: 200 }; } } : { click: function () { clicks++; }, focus: function () {} }; }, classList: { add: function (c) { cls[c] = true; }, remove: function (c) { delete cls[c]; } } };
     });
     var caps = works.map(function (w) {
-      var attrs = {}, ev = {};
-      return { attrs: attrs, ev: ev, textContent: '作品' + w.i, closest: function () { return w; }, getBoundingClientRect: function () { return { top: capY[w.i] - 20, height: 40 }; }, setAttribute: function (k, v) { attrs[k] = v; }, removeAttribute: function (k) { delete attrs[k]; }, addEventListener: function (t, f) { ev[t] = f; } };
+      var attrs = {}, ev = {}, ccls = {};
+      return { attrs: attrs, ev: ev, ccls: ccls, classList: { add: function (c) { ccls[c] = true; }, remove: function (c) { delete ccls[c]; } }, textContent: '作品' + w.i, closest: function () { return w; }, getBoundingClientRect: function () { return { top: capY[w.i] - 20, height: 40 }; }, setAttribute: function (k, v) { attrs[k] = v; }, removeAttribute: function (k) { delete attrs[k]; }, addEventListener: function (t, f) { ev[t] = f; } };
     });
     var rootEl = {
       classList: { add: function (c) { added.push(c); }, remove: function (c) { added = added.filter(function (x) { return x !== c; }); } },
@@ -491,6 +491,7 @@ test('#653/#660: 作品切替JSは reduced motion・例外時に .is-active を�
     var sb = {
       document: { querySelector: function () { return rootEl; }, activeElement: null },
       matchMedia: function (q) { return { matches: q.indexOf('reduce') !== -1 ? !!opts.reduced : false }; },
+      getComputedStyle: function () { return { top: lineY + 'px' }; },
       addEventListener: function (t, f) { listeners[t] = f; },
       requestAnimationFrame: function (f) { f(); },
       Array: Array
@@ -507,6 +508,7 @@ test('#653/#660: 作品切替JSは reduced motion・例外時に .is-active を�
   assert.strictEqual(now(ok), 2, '帯の出入りを待たず、中央線より上にある最後のキャプション（3）へ一気に追いつく（高速フリック）');
   ok.setLine(2000); ok.listeners.scroll();
   assert.strictEqual(now(ok), 3, '4枚目の後も固定が続く間は4作品目のまま');
+  assert.ok(ok.caps[0].ccls['is-past'] && ok.caps[2].ccls['is-past'] && !ok.caps[3].ccls['is-past'], '固定位置で重なる前のキャプションは隠し、現在のキャプションだけ見せる');
   ok.setLine(600); ok.listeners.scroll();
   assert.strictEqual(now(ok), 1, '逆方向にも位置から戻る');
   ok.setLine(50); ok.listeners.resize();
@@ -519,6 +521,12 @@ test('#653/#660: 作品切替JSは reduced motion・例外時に .is-active を�
   assert.strictEqual(now(ok), 3, '手動選択は位置判定で上書きしない');
   ok.listeners.wheel();
   assert.strictEqual(now(ok), 1, 'ホイール／タッチ／スクロール系キーで位置判定へ戻る');
+  ok.caps[2].ev.click();
+  ok.listeners.pointerdown({ target: { closest: function () { return {}; } } });
+  ok.setLine(600); ok.listeners.scroll();
+  assert.strictEqual(now(ok), 2, 'キャプション自身の押下では解除しない');
+  ok.listeners.pointerdown({ target: { closest: function () { return null; } } });
+  assert.strictEqual(now(ok), 1, 'スクロールバー等（キャプション以外）の押下で位置判定へ戻る');
   ok.caps[1].ev.click();
   ok.listeners.keydown({ key: 'Tab' });
   ok.setLine(2000); ok.listeners.scroll();
@@ -540,8 +548,9 @@ test('#660: 作品切替は1作品あたり画面高の約70%（svh基準）で�
   var css = read('styles/mens-preview-633.css');
   var active = css.match(/\.pv-works\.is-active \{[^}]*\}/)[0];
   assert.match(active, /--pv-row: calc\(var\(--pv-vh\) \* 0\.7\)/, '1作品＝閲覧可能高の70%');
-  assert.match(active, /grid-template-rows: repeat\(4, minmax\(var\(--pv-row\), auto\)\) calc\(var\(--pv-row\) \/ 2 \+ var\(--pv-photo-h\) \/ 2\)/, '4行＋キャプションのない末尾行（4枚目の後も固定を支える）');
+  assert.match(active, /grid-template-rows: repeat\(4, minmax\(var\(--pv-row\), auto\)\) calc\(var\(--pv-row\) \/ 2 \+ var\(--pv-ph, var\(--pv-photo-h\)\) \/ 2\)/, '4行＋キャプションのない末尾行（4枚目の後も固定を支える）');
   assert.match(css, /\.pv-works\.is-active \.pv-photo \{[^}]*grid-row: 1 \/ span 5/, '写真のstickyは末尾行まで支えられる');
+  assert.match(css, /\.pv-works\.is-active figcaption \{[^}]*position: sticky; top: calc\(var\(--pv-top\) \+ var\(--pv-ph, var\(--pv-photo-h\)\) \/ 2\)/, '現在のキャプションは写真の中央で固定し、固定ヘッダーの下に隠れない');
   assert.match(active, /--pv-vh: 100vh/, 'svh 非対応ブラウザは vh');
   assert.match(css, /@supports \(height: 100svh\) \{ \.pv-works\.is-active \{ --pv-vh: 100svh; \} \}/, 'アドレスバーで変わらない svh にそろえる');
   assert.doesNotMatch(css.replace(/--pv-vh: 100vh;/, ''), /\.pv-works[^{]*\{[^}]*\b100vh/, '写真の高さ・位置に素の100vhを使わない（CSSの基準は --pv-vh）');

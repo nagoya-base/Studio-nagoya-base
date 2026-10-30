@@ -257,19 +257,20 @@
 /* 作品紹介：既定（JSなし・reduced-motion・初期化失敗）は4作品とキャプションを静的に並べる。
    JSが .is-active を付けたときだけ、写真を左の固定枠に重ね、キャプションを右に縦に並べる */
 .pv-works { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: start; max-width: 1040px; }
-.pv-works.is-active { --pv-vh: 100vh; --pv-top: 128px; --pv-bottom: 48px; --pv-photo-h: calc(var(--pv-vh) - var(--pv-top) - var(--pv-bottom)); --pv-row: calc(var(--pv-vh) * 0.7); grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr); grid-template-rows: repeat(4, minmax(var(--pv-row), auto)) calc(var(--pv-row) / 2 + var(--pv-photo-h) / 2); column-gap: 40px; row-gap: 0; max-width: 880px; }
+.pv-works.is-active { --pv-vh: 100vh; --pv-top: 128px; --pv-bottom: 48px; --pv-photo-h: calc(var(--pv-vh) - var(--pv-top) - var(--pv-bottom)); --pv-row: calc(var(--pv-vh) * 0.7); grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr); grid-template-rows: repeat(4, minmax(var(--pv-row), auto)) calc(var(--pv-row) / 2 + var(--pv-ph, var(--pv-photo-h)) / 2); column-gap: 40px; row-gap: 0; max-width: 880px; }
 @supports (height: 100svh) { .pv-works.is-active { --pv-vh: 100svh; } }
 .pv-works.is-active .pv-work, .pv-works.is-active .pv-work > figure { display: contents; }
 .pv-works.is-active .pv-photo { grid-column: 1; grid-row: 1 / span 5; position: sticky; top: var(--pv-top); align-self: start; width: min(100%, calc(var(--pv-photo-h) * 2 / 3)); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.45s ease, visibility 0s linear 0.45s; }
 .pv-works.is-active .pv-work.is-current .pv-photo { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; z-index: 1; }
-.pv-works.is-active figcaption { grid-column: 2; align-self: center; margin: 0; padding: 14px 18px; border-left: 4px solid var(--border); border-radius: 6px; font-size: 1rem; line-height: 1.7; color: var(--text); opacity: 0.45; transition: opacity 0.45s ease; }
+.pv-works.is-active figcaption { grid-column: 2; align-self: start; position: sticky; top: calc(var(--pv-top) + var(--pv-ph, var(--pv-photo-h)) / 2); margin: calc(var(--pv-row) / 2) 0 0; transform: translateY(-50%); padding: 14px 18px; border-left: 4px solid var(--border); border-radius: 6px; font-size: 1rem; line-height: 1.7; color: var(--text); opacity: 0.45; transition: opacity 0.45s ease; }
 .pv-works.is-active figcaption:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pv-works.is-active figcaption { cursor: pointer; }
+.pv-works.is-active figcaption.is-past { opacity: 0; pointer-events: none; }
 .pv-works.is-active .pv-work.is-current figcaption { opacity: 1; border-left-color: var(--accent); background: #fff; }
-.pv-works.is-active .pv-work:nth-child(1) figcaption { grid-row: 1; }
-.pv-works.is-active .pv-work:nth-child(2) figcaption { grid-row: 2; }
-.pv-works.is-active .pv-work:nth-child(3) figcaption { grid-row: 3; }
-.pv-works.is-active .pv-work:nth-child(4) figcaption { grid-row: 4; }
+.pv-works.is-active .pv-work:nth-child(1) figcaption { grid-row: 1 / 6; }
+.pv-works.is-active .pv-work:nth-child(2) figcaption { grid-row: 2 / 6; }
+.pv-works.is-active .pv-work:nth-child(3) figcaption { grid-row: 3 / 6; }
+.pv-works.is-active .pv-work:nth-child(4) figcaption { grid-row: 4 / 6; }
 .z-sky .pv-photo { box-shadow: 0 14px 36px rgba(20, 50, 90, 0.2); }
 .pv-group { margin-top: 64px; padding: 28px 32px; background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; }
 .pv-group-title { font-size: 1.3rem; font-weight: 600; line-height: 1.5; margin: 0 0 12px; }
