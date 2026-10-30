@@ -1,0 +1,71 @@
+---
+---
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>作品撮りサポートプランのお支払い | SNB mens（Studio Nagoya Base）</title>
+
+<meta name="description" content="SNB mens（Studio Nagoya Base）の作品撮りサポートプランを運営が承認した方向けの、お支払いページです。お支払い期限は承認後24時間です。">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/mens/booking/support-payment/">
+
+<link rel="icon" href="../../../images/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="../../../images/apple-touch-icon.png">
+
+<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-6TWDLEFWJT');
+</script>
+
+<link rel="stylesheet" href="../../../styles/common.css">
+<link rel="stylesheet" href="../../../styles/mens.css">
+<link rel="stylesheet" href="../../../styles/booking.css?v={{ site.time | date: '%s' }}">
+<link rel="stylesheet" href="../../../styles/mens-detail.css">
+</head>
+
+<body class="mens-detail" data-page-type="support-payment" data-site-section="mens">
+
+<a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
+
+{% include subpage_nav_ja.html brand="mens" %}
+
+<main id="main-content">
+
+<section id="support-payment" class="bg-section">
+  <div class="container">
+    {% include subpage_backlink_ja.html brand="mens" %}
+    <h1 class="section-title">作品撮りサポートプランのお支払い</h1>
+    <p class="section-subtitle">Photo Support Plan Payment</p>
+
+    <!-- Issue #667: 運営が承認した作品撮りサポートプランのお支払いページ。メールのリンク（予約ID＋決済開始トークン）から開く。
+         承認前・承認後24時間を過ぎた場合は、サーバーがお支払いを拒否する（ここでの表示は案内のみ）。 -->
+    <div class="booking-app" style="max-width:640px;margin:0 auto;" id="support-payment-app" data-support-payment>
+      <p>運営が承認した作品撮りサポートプランのお支払いページです。<strong>お支払い期限は承認後24時間</strong>です。期限内にお支払いが完了すると、予約が確定します。</p>
+      <p class="ba-field-help">お支払いが完了するまで予約は確定していません。期限を過ぎると不成立となり、仮押さえを解除します（通常のSNB mens料金へは自動で切り替わりません）。有料機材は別料金・別注文です。</p>
+      <p class="ba-field-error" id="support-payment-error" role="alert" hidden></p>
+      <p><button type="button" class="btn" id="support-payment-start" disabled>お支払いページ（Stripe）へ進む</button></p>
+      <p class="ba-field-help" id="support-payment-status" role="status" hidden></p>
+      <p class="ba-field-help">メールのリンクから開いてください。お支払い済みの場合は、二重にお支払いせず運営までご連絡ください。</p>
+      <p><a href="{{ '/mens/membership/' | relative_url }}#photo-support">作品撮りサポートプランのご案内</a></p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+{% include subpage_footer_ja.html brand="mens" %}
+
+<script src="../../../scripts/booking-config.js?v={{ site.time | date: '%s' }}"></script>
+<script src="../../../scripts/booking-support-payment.js?v={{ site.time | date: '%s' }}"></script>
+<script src="../../../scripts/analytics.js"></script>
+
+</body>
+</html>

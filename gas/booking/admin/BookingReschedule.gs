@@ -155,6 +155,11 @@ var BookingReschedule = (function () {
     if (startAt.getTime() === record.startAt.getTime() && endAt.getTime() === record.endAt.getTime()) {
       return error_('UNCHANGED', '変更前と同じ日時です。');
     }
+    /* Issue #667: 作品撮りサポートプランはスタッフ対応・機材・申込期限（7日前）・承認済みの金額が日時に紐づくため、日程変更は対象外。
+       通常料金へ黙って切り替えず、取り消して新しく申し込み直す（既存の取消・返金手順）。 */
+    if (BookingPricing.isPhotoSupport(record.planCode)) {
+      return error_('PHOTO_SUPPORT_RESCHEDULE_NOT_SUPPORTED', '作品撮りサポートプランの日程変更はできません。取り消したうえで、利用日の7日前までに改めてお申し込みください。');
+    }
     var benefitRejection = memberBenefitRejection_(record, date);
     if (benefitRejection) return benefitRejection;
     var eventPlanRejection = eventPlanRejection_(record, startTime, duration);

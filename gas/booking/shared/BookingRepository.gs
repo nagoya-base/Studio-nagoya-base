@@ -122,10 +122,17 @@ var BookingRepository = (function () {
       isMember: membership.isMember,
       generation: priceGeneration,
       plan: planResult.plan,
-      startTime: input.startTime
+      startTime: input.startTime,
+      supportServices: input.supportServices,
+      supportEquipment: input.supportEquipment
     });
     if (!priceResult.valid) {
       return { success: false, error: priceResult.error };
+    }
+    var isPhotoSupportBooking = BookingPricing.isPhotoSupport(planResult.plan);
+    /* Issue #667: 有料機材（supportEquipment）は作品撮りサポートでだけ選べる。他のプラン・通常予約へは付けられない（黙って無視せず拒否）。 */
+    if (!isPhotoSupportBooking && input.supportEquipment && Object.keys(input.supportEquipment).length > 0) {
+      return { success: false, error: { code: 'OPTIONS_NOT_AVAILABLE', message: '有料機材は、作品撮りサポートプランでのみお申し込みいただけます。' } };
     }
 
     /*
@@ -141,6 +148,11 @@ var BookingRepository = (function () {
        プランにオプションが紐づく予約を作らない（Calendar/Sheetsへ何も書く前に明示エラーで拒否する）。 */
     if (hasOptionsPayload && BookingPricing.isEventPlan(planResult.plan) && BookingPricing.hasOptionSelection(rawInput.options)) {
       return { success: false, error: BookingPricing.eventPlanOptionsError() };
+    }
+    /* Issue #667: 作品撮りサポートプランは部屋料金を置き換える商品のため、シャワー等の同時オプション申込とは併用しない
+       （有料機材は共通機材カタログの別注文。承認後に申し込む）。 */
+    if (hasOptionsPayload && isPhotoSupportBooking && BookingPricing.hasOptionSelection(rawInput.options)) {
+      return { success: false, error: { code: 'PHOTO_SUPPORT_OPTIONS_NOT_ALLOWED', message: BookingPricing.PHOTO_SUPPORT_LABEL + 'では、予約と同時のオプション申込はできません。' } };
     }
     /* Issue #586: シャワーパックはシャワー1回込みの商品。シャワーの申込（連絡事項の確認を含む）が無い予約は作らない
        （シャワー込みの金額だけ請求して、シャワーの事前確認が始まらない状態を作らない）。 */
@@ -315,6 +327,14 @@ var BookingRepository = (function () {
         planCode: priceResult.price.plan,
         checkoutAccessToken: checkoutAccessToken
       };
+      if (isPhotoSupportBooking) {
+        /* Issue #667: 申込時点で対象時間帯をPENDINGとして仮押さえ（Calendarイベント作成済み）。承認前は決済できない。 */
+        record.supportServices = priceResult.price.supportServices;
+        record.supportRoomAmount = priceResult.price.roomAmount;
+        record.supportStaffAmount = priceResult.price.staffAmount;
+        record.supportEquipment = priceResult.price.equipmentItems.join(',');
+        record.supportEquipmentAmount = priceResult.price.equipmentAmount;
+      }
 
       try {
         SpreadsheetRepository.appendBooking(record);
@@ -385,6 +405,14 @@ var BookingRepository = (function () {
         plan: priceResult.price.plan
       }
     };
+    if (isPhotoSupportBooking) {
+      /* Issue #667: フロントが「承認待ち（決済はまだ）」を示すための段階。決済ページへは進めない。 */
+      response.supportStage = Booking.photoSupportStage(record);
+      response.price.supportServices = priceResult.price.supportServices;
+      response.price.roomAmount = priceResult.price.roomAmount;
+      response.price.staffAmount = priceResult.price.staffAmount;
+      response.price.equipmentAmount = priceResult.price.equipmentAmount;
+    }
     if (optionsResponse) response.options = optionsResponse;
     return response;
   }
@@ -399,7 +427,7 @@ var BookingRepository = (function () {
     if (plan === null) {
       return { ok: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
     }
-    if (automatic && !BookingPricing.isEventPlan(plan) && !BookingPricing.isShowerPack(plan)) {
+    if (automatic && !BookingPricing.isEventPlan(plan) && !BookingPricing.isShowerPack(plan) && !BookingPricing.isPhotoSupport(plan)) {
       if ((input.brand !== 'snb' && input.brand !== 'mens') ||
           !BookingPricing.isPairPackAvailableOnDate(input.date) ||
           !BookingPricing.isPairPackPeople(input.people) || Number(input.durationMinutes) < 180 ||
@@ -411,6 +439,7 @@ var BookingRepository = (function () {
     if (!plan) return { ok: true, plan: '' };
     if (BookingPricing.isEventPlan(plan)) return resolveEventPlanForNewBooking_(input, plan);
     if (BookingPricing.isShowerPack(plan)) return resolveShowerPackForNewBooking_(input, now, memberAuth);
+    if (BookingPricing.isPhotoSupport(plan)) return resolvePhotoSupportForNewBooking_(input, now, memberAuth);
     /* Issue #539: 提供可否は予約作成日（料金世代）ではなく利用日（2026/12/1以降）で判定する。 */
     if ((input.brand !== 'snb' && input.brand !== 'mens') || !BookingPricing.isPairPackAvailableOnDate(input.date)) {
       return { ok: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
@@ -432,6 +461,43 @@ var BookingRepository = (function () {
       return { ok: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE } };
     }
     return { ok: true, plan: plan };
+  }
+
+
+  /*
+   * SNB mens限定の作品撮りサポートプラン（Issue #667）の申込検証。利用者が明示的に選んだときだけ成立する（自動適用しない）。
+   * 確認順: ブランド（mensのみ）・利用日（効力発生日以降） → 1〜4名（5名以上は#668の大人数利用であり併用不可） → スタッフ対応の選択（必須） →
+   * 申込期限（利用日の7日前まで。施設timezoneの暦日で判定） → お支払い方法（オンラインカードのみ。承認後に決済ページへ進む） →
+   * メールOTPの確認済み証明（V2） → 照会のレート制限 → actual membership（利用日。予約代表者本人）。
+   * 資格関連の失敗は、会員の有無を探れないよう常に同一のコード・メッセージで返す（ペアパック・シャワーパックと同じ）。
+   * 通常のmens料金へ黙って倒さない（不成立は拒否として返す）。
+   */
+  function resolvePhotoSupportForNewBooking_(input, now, memberAuth) {
+    if (input.brand !== 'mens' || !BookingPricing.isPhotoSupportAvailableOnDate(input.date)) {
+      return { ok: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
+    }
+    if (!BookingPricing.isPhotoSupportPeople(input.people)) {
+      return { ok: false, error: { code: 'PHOTO_SUPPORT_PEOPLE_EXCEEDED', message: BookingPricing.PHOTO_SUPPORT_LABEL + 'のご利用は1〜4名までです。' } };
+    }
+    if (BookingPricing.normalizeSupportServices(input.supportServices) === null) {
+      return { ok: false, error: { code: 'PHOTO_SUPPORT_SERVICE_REQUIRED', message: BookingPricing.PHOTO_SUPPORT_LABEL + 'では、スタッフ対応（事前設営／片付け／事前設営＋片付け）を1つ選択してください。' } };
+    }
+    var todayString = BookingAvailability.formatDateInTimezone(now, BookingConfig.getAvailabilityConfig().timezone);
+    if (!BookingPricing.isPhotoSupportApplyOpen(input.date, todayString)) {
+      return { ok: false, error: { code: 'PHOTO_SUPPORT_DEADLINE_PASSED', message: BookingPricing.PHOTO_SUPPORT_LABEL + 'のお申し込みは、利用日の' + BookingPricing.PHOTO_SUPPORT_APPLY_DAYS_BEFORE + '日前までです。' } };
+    }
+    if (!Booking.isCardPaymentMethod(input.paymentMethod)) {
+      return { ok: false, error: { code: 'PHOTO_SUPPORT_CARD_ONLY', message: BookingPricing.PHOTO_SUPPORT_LABEL + 'のお支払いは、運営の承認後にオンラインクレジットカードでお願いします。支払方法でカードを選択してください。' } };
+    }
+    if (memberAuth && memberAuth.required && !memberAuth.verified) return { ok: false, error: memberAuth.requiredError };
+    var lookupAllowed = RateLimiter.limitByKey('opt_elig_' + MembershipRules.normalizeEmail(input.email), 10, 5, now.getTime());
+    if (lookupAllowed !== true) {
+      return { ok: false, error: { code: 'RATE_LIMITED', message: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。' } };
+    }
+    if (!MembershipRules.verifyActualMembership(input.email, input.date).ok) {
+      return { ok: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE } };
+    }
+    return { ok: true, plan: BookingPricing.PLAN.MENS_PHOTO_SUPPORT };
   }
 
   /*
@@ -605,6 +671,8 @@ var BookingRepository = (function () {
    * 従来どおりcreateBooking時に受付メールを送る。
    */
   function shouldDeferPendingMailToCheckout_(record) {
+    /* Issue #667: 作品撮りサポートは承認前に決済ページへ進まないため、申込受付メール（承認待ちの案内）を必ずここで送る。 */
+    if (Booking.photoSupportStage(record)) return false;
     if (!Booking.isCardPaymentMethod(record.paymentMethod)) return false;
     try {
       var stripeConfig = BookingConfig.getStripeConfig();
@@ -846,6 +914,97 @@ var BookingRepository = (function () {
     return outcome.response;
   }
 
+
+  /*
+   * 作品撮りサポートプランの承認（Issue #667）。Booking Admin専用（公開Web Appには出さない）。
+   * 申込時に仮押さえ済み（PENDING＋Calendarイベント）の予約について、運営がスタッフ対応の可否・機材・予約枠を確認したうえで呼ぶ。
+   * 承認すると supportApprovedAt を記録し、支払い期限 supportPaymentDueAt を承認から24時間後に設定する。以後は決済ページ（beginCardCheckout）で
+   * お支払いできる。承認前は決済不可。期限内に支払いが完了しなければ expirePendingBookings が不成立（EXPIRED）として枠を解放する。
+   * 二重承認は冪等（支払い期限を延長しない・メールだけ未送信なら再送を試みる）。承認時点でも会員資格を再確認する（fail-closed）。
+   * 不承認は cancelBookingAdmin（仮押さえ解除＋承認できなかった旨のメール）で行う。
+   * 戻り値: { success, bookingId, status, supportStage, supportPaymentDueAt, alreadyApproved?, mailSent?, mailError? }
+   */
+  function approvePhotoSupport(bookingId, now) {
+    now = isDateLike_(now) ? now : new Date();
+    if (!bookingId || typeof bookingId !== 'string') {
+      return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
+    }
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS_)) {
+      return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
+    }
+    var response;
+    try {
+      response = approvePhotoSupportLocked_(bookingId, now);
+    } finally {
+      lock.releaseLock();
+    }
+    if (response.success && response.shouldTryMail) {
+      delete response.shouldTryMail;
+      try {
+        var mailResult = BookingMailer.sendSupportApprovedMailForBooking(bookingId);
+        response.mailSent = !!(mailResult && mailResult.success && !mailResult.skipped);
+        if (mailResult && !mailResult.success && !mailResult.skipped) {
+          response.mailError = mailResult.error || null;
+        }
+      } catch (mailError) {
+        response.mailSent = false;
+        response.mailError = { code: 'MAIL_SEND_FAILED', message: BookingMailer.sanitizeErrorMessage(describeError_(mailError)) };
+      }
+    } else {
+      delete response.shouldTryMail;
+    }
+    return response;
+  }
+
+  function approvePhotoSupportLocked_(bookingId, now) {
+    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+    if (!found) {
+      return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
+    }
+    var record = found.record;
+    var stage = Booking.photoSupportStage(record);
+    if (!stage) {
+      return { success: false, error: { code: 'NOT_PHOTO_SUPPORT', message: '作品撮りサポートプランの予約ではありません。' } };
+    }
+    if (stage === 'AWAITING_PAYMENT') {
+      /* 承認済み（冪等）。支払い期限は延長しない。承認案内メールが未送信なら再送を試みる。 */
+      return {
+        success: true, alreadyApproved: true, bookingId: bookingId, status: record.status, supportStage: stage,
+        supportPaymentDueAt: record.supportPaymentDueAt, shouldTryMail: !record.supportApprovalMailSentAt
+      };
+    }
+    if (stage !== 'AWAITING_APPROVAL') {
+      return { success: false, error: { code: 'INVALID_TRANSITION', message: record.status + ' の予約は承認できません。' } };
+    }
+    var timezone = BookingConfig.getAvailabilityConfig().timezone;
+    var dateString = isDateLike_(record.startAt) ? BookingAvailability.formatDateInTimezone(record.startAt, timezone) : '';
+    if (!MembershipRules.verifyActualMembership(record.email, dateString).ok) {
+      return { success: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE } };
+    }
+    if (!isDateLike_(record.startAt) || now.getTime() >= record.startAt.getTime()) {
+      return { success: false, error: { code: 'START_TIME_PASSED', message: '利用開始時刻を過ぎているため承認できません。' } };
+    }
+    if (Booking.getEffectivePriceAmount(record) === null) {
+      return { success: false, error: { code: 'PRICE_NOT_AVAILABLE', message: '確定金額が計算されていないため承認できません。' } };
+    }
+    var calendarId = BookingConfig.getCalendarId();
+    if (!CalendarRepository.getEventById(calendarId, record.calendarEventId)) {
+      return { success: false, error: { code: 'CALENDAR_EVENT_MISSING', message: '仮押さえのCalendarイベントが見つかりません。Recoveryシートを確認してください。' } };
+    }
+    var dueAt = new Date(now.getTime() + BookingPricing.PHOTO_SUPPORT_PAYMENT_DUE_HOURS * 3600000);
+    try {
+      SpreadsheetRepository.updateBookingFields(bookingId, { supportApprovedAt: now, supportPaymentDueAt: dueAt, updatedAt: now });
+    } catch (sheetsError) {
+      Logger.log('approvePhotoSupport: 台帳の更新に失敗しました bookingId=' + bookingId);
+      return { success: false, error: { code: 'SHEETS_UPDATE_FAILED', message: '承認を台帳へ記録できませんでした。もう一度お試しください。' } };
+    }
+    return {
+      success: true, bookingId: bookingId, status: record.status, supportStage: 'AWAITING_PAYMENT',
+      supportPaymentDueAt: dueAt, shouldTryMail: true
+    };
+  }
+
   /*
    * options.writeGuard（任意。Issue #341 PR-Cレビュー対応・7回目）: Lockを取得した直後、
    * Calendar/Sheetsを読み書きする前に呼ぶ関数。falseを返した場合は何も書き込まずに
@@ -937,6 +1096,23 @@ var BookingRepository = (function () {
     if (!viaStripeWebhook) {
       var memberRejection = pairPackMembershipRejection_(record);
       if (memberRejection) return memberRejection;
+    }
+
+    /* Issue #667: 作品撮りサポートは承認前・未払いのまま確定できない（Web管理画面・Spreadsheetメニュー・Webhookの全経路のサーバー側最終ガード）。
+       確定できるのは「承認済み＋Stripeで支払い完了(PAID)」だけ。 */
+    if (Booking.photoSupportStage(record)) {
+      if (Booking.photoSupportStage(record) !== 'AWAITING_PAYMENT') {
+        return {
+          response: { success: false, error: { code: 'SUPPORT_NOT_APPROVED', message: '作品撮りサポートプランは運営の承認前には確定できません。先に承認してください。' } },
+          shouldTryMail: false
+        };
+      }
+      if (Booking.normalizePaymentStatus(record.paymentStatus) !== Booking.PAYMENT_STATUS.PAID) {
+        return {
+          response: { success: false, error: { code: 'SUPPORT_PAYMENT_REQUIRED', message: '作品撮りサポートプランは、承認後のお支払いが完了するまで確定できません。' } },
+          shouldTryMail: false
+        };
+      }
     }
 
     /*
@@ -1291,6 +1467,12 @@ var BookingRepository = (function () {
          * 現金/PayPay/未定はScript Properties由来のttlConfig.ttlHours（既定24時間）のまま
          * 一切変更しない（Issue #334本文「現金・PayPay・未定の失効挙動（24時間）は変更しない」）。
          */
+        if (Booking.photoSupportStage(record)) {
+          /* Issue #667: 作品撮りサポートは72時間/24時間のTTLではなく、承認前＝利用開始の前（運営の確認待ち）、承認後＝支払い期限（承認から24時間）で失効する。 */
+          if (now.getTime() < Booking.computePhotoSupportExpiryMillis(record, startAtMillis, ttlConfig.minHoursBeforeStart)) {
+            return; /* まだ有効 */
+          }
+        } else {
         var ttlHours = isCard ? Booking.CARD_TTL_HOURS : ttlConfig.ttlHours;
         /*
          * Issue #406: 当日予約のカードもgrace（minHoldHours）を使う。現金等と同じく、受付時刻
@@ -1314,6 +1496,7 @@ var BookingRepository = (function () {
         if (!Booking.isExpired(createdAtMillis, startAtMillis, ttlHours, ttlConfig.minHoursBeforeStart, now.getTime(), minHoldHours)) {
           return; /* まだ有効 */
         }
+        }
       }
 
       var lock = LockService.getScriptLock();
@@ -1328,6 +1511,11 @@ var BookingRepository = (function () {
         var latest = SpreadsheetRepository.findRowByBookingId(record.bookingId);
         if (!latest || latest.record.status !== Booking.STATUS.PENDING) {
           return; /* confirmBooking等で既に処理済み */
+        }
+        /* Issue #667: Lock取得前後に承認された作品撮りサポートは、承認で延びた支払い期限で再判定する（承認直後に枠を解放しない）。 */
+        if (Booking.photoSupportStage(latest.record) && !isCheckoutPendingHold &&
+            now.getTime() < Booking.computePhotoSupportExpiryMillis(latest.record, latest.record.startAt.getTime(), ttlConfig.minHoursBeforeStart)) {
+          return;
         }
 
         /*
@@ -3533,6 +3721,11 @@ var BookingRepository = (function () {
     if (record.status !== Booking.STATUS.PENDING) {
       return { success: false, error: { code: 'BOOKING_NOT_PENDING', message: 'この予約は決済待ちの状態ではありません。' } };
     }
+    /* Issue #667: 作品撮りサポートは運営の承認前は決済不可。承認後の支払い期限（24時間）を過ぎても決済不可（サーバー側の最終ガード）。 */
+    var supportGate = Booking.photoSupportPaymentGate(record, now.getTime());
+    if (supportGate) {
+      return { success: false, error: supportGate };
+    }
     if (record.paymentRecoveryRequiredAt) {
       return { success: false, error: { code: 'PAYMENT_RECOVERY_REQUIRED', message: 'この予約は要復旧のため、自動処理を停止しています。当店へお問い合わせください。' } };
     }
@@ -3566,6 +3759,7 @@ var BookingRepository = (function () {
   return {
     createBooking: createBooking,
     confirmBooking: confirmBooking,
+    approvePhotoSupport: approvePhotoSupport,
     expirePendingBookings: expirePendingBookings,
     reviveExpiredBooking: reviveExpiredBooking,
     cancelBookingAdmin: cancelBookingAdmin,

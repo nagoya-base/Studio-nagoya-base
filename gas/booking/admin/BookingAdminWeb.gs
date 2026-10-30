@@ -243,6 +243,7 @@ function getAdminBookings() {
       listItem.planCode = record.planCode;
       listItem.planLabel = BookingPricing.planLabel(record.planCode);
     }
+    mergeAdminPhotoSupportFields_(listItem, record, timezone);
     /* Issue #447: Studio Xのみ予約オプション（OptionOrders）の状態を一覧にも載せる。部屋予約の
        status/paymentStatusとは別キー。SNB / SNB mensにはキー自体を付けない。 */
     if (record.brand === 'studio_x' && optionOrdersByBooking) {
@@ -550,6 +551,7 @@ function getAdminBookingDetail(bookingId) {
     detailResult.booking.planCode = record.planCode;
     detailResult.booking.planLabel = BookingPricing.planLabel(record.planCode);
   }
+  mergeAdminPhotoSupportFields_(detailResult.booking, record, timezone);
   return detailResult;
 }
 
@@ -604,6 +606,47 @@ function buildAdminOptionSummary_(bookingId, timezone, schedule) {
   }
 }
 
+
+/*
+ * Issue #667: 作品撮りサポートプランの管理画面表示項目。申込受付（承認待ち）／承認済み（支払い待ち）／確定を区別し、
+ * 商品種別・設営／片付け内容・金額内訳・支払い期限を利用者メールと同じ値で出す。通常予約・他プランにはキー自体を付けない。
+ */
+function buildAdminPhotoSupportFields_(record, timezone) {
+  var stage = Booking.photoSupportStage(record);
+  if (!stage) return null;
+  var labels = {
+    AWAITING_APPROVAL: '承認待ち（仮押さえ中・決済不可）',
+    AWAITING_PAYMENT: '支払い待ち（承認済み）',
+    CONFIRMED: '予約確定（お支払い済み）',
+    CANCELLED: 'キャンセル／不承認',
+    EXPIRED: '不成立（期限切れ・枠解放済み）'
+  };
+  return {
+    supportStage: stage,
+    supportStageLabel: labels[stage] || stage,
+    supportServices: record.supportServices || '',
+    supportServicesLabel: BookingPricing.photoSupportServicesLabel(record.supportServices),
+    supportRoomAmount: record.supportRoomAmount === '' ? null : Number(record.supportRoomAmount),
+    supportStaffAmount: record.supportStaffAmount === '' ? null : Number(record.supportStaffAmount),
+    supportApprovedAt: formatAdminDateTime_(record.supportApprovedAt, timezone),
+    supportPaymentDueAt: formatAdminDateTime_(record.supportPaymentDueAt, timezone),
+    supportApprovalMailSent: !!record.supportApprovalMailSentAt,
+    /* 有料機材（共通機材カタログ）。選択内容の文言と機材料金。機材なしは空配列・0。 */
+    supportEquipmentLines: record.supportEquipment ? BookingOptions.describeSupportEquipment(record.supportEquipment) : [],
+    supportEquipmentAmount: record.supportEquipmentAmount === '' || record.supportEquipmentAmount === undefined ? 0 : Number(record.supportEquipmentAmount),
+    canApproveSupport: stage === 'AWAITING_APPROVAL',
+    canResendSupportApproval: stage === 'AWAITING_PAYMENT' && !record.supportApprovalMailSentAt,
+    membershipStatus: record.membershipStatus || ''
+  };
+}
+
+function mergeAdminPhotoSupportFields_(target, record, timezone) {
+  var fields = buildAdminPhotoSupportFields_(record, timezone);
+  if (!fields) return target;
+  Object.keys(fields).forEach(function (key) { target[key] = fields[key]; });
+  return target;
+}
+
 /* スタッフ対応（事前設営／片付け）の承認（Issue #423）。業務ロジックはOptionOrderServiceにあり、
    ここは委譲のみ。承認で初めてオンライン決済に進める状態になる（Checkoutは本人確認付きの
    案内ページから開始され、この関数ではStripeを呼ばない）。二重承認は冪等。 */
@@ -633,6 +676,12 @@ function adminRevokeVideoLightEligibility(email, equipmentCode) {
    業務ロジックはコピーしない。 */
 function adminConfirmBooking(bookingId) {
   return confirmBooking(bookingId);
+}
+
+/* Issue #667: 作品撮りサポートプランの承認。既存の正式関数approvePhotoSupport（BookingAdmin.gs）へそのまま委譲する。
+   承認案内メール（お支払いページ・承認後24時間の期限入り）の送信結果（mailSent/mailError）を含めて返す。 */
+function adminApprovePhotoSupport(bookingId) {
+  return sanitizeForClient_(approvePhotoSupport(bookingId));
 }
 
 /* キャンセル。既存の正式関数cancelBookingAdmin(bookingId)（BookingAdmin.gs）へそのまま

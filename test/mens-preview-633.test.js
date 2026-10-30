@@ -612,7 +612,15 @@ test('#653: 人物撮影の紹介は gallery_man03 の全身・照明機材の�
   ['ユニフォームで、自分らしい一枚を。', '黒背景と照明を使った、ユニフォーム撮影の作例です。', '本格的な照明機材も、設営をサポート。'].forEach(function (t) { assert.ok(pu.indexOf(t) !== -1, t); });
   assert.strictEqual(html.split('gallery_man03_1200.webp').length - 1, 1, '同じ写真の大きな重複掲載をしない');
   assert.ok(pu.indexOf('身体表現・筋肉撮影') !== -1);
-  assert.doesNotMatch(pu, /人物の作例は現在掲載|利用できる用途の説明です|撮影代行|カメラ操作|撮影指導|無料|常駐|予約不要|私服|カップル|レザー/, '素材事情の注記・未確認条件を置かない');
+  /* Issue #667: 「設営をサポート」のコピー近傍に、誤認防止の注記（無料ではない・常駐しない・当日不可・SNB MEMBER限定・7日前まで・承認制）を置く。
+     注記以外の本文には従来どおり未確認条件（無料・常駐等）を置かない。 */
+  var note = pu.match(/<p class="pv-scene-note">([\s\S]*?)<\/p>/);
+  assert.ok(note, '作品撮りサポートの誤認防止注記がある');
+  ['SNB MEMBER限定', '有料', '無料ではなく', '常駐せず', '当日のご依頼はできません', '7日前', '運営の承認'].forEach(function (t) { assert.ok(note[1].indexOf(t) !== -1, t); });
+  assert.ok(pu.indexOf('/mens/membership/\' | relative_url }}#photo-support') !== -1, '詳細（会員案内）への導線');
+  var puWithoutNote = pu.replace(note[0], '');
+  assert.doesNotMatch(puWithoutNote, /人物の作例は現在掲載|利用できる用途の説明です|撮影代行|カメラ操作|撮影指導|無料|常駐|予約不要|私服|カップル|レザー/, '素材事情の注記・未確認条件を置かない');
+  pu = puWithoutNote;
   assert.doesNotMatch(pu, /緊縛・フェチ/, 'ユニフォームだけで緊縛・フェチ撮影と決めつけない');
   assert.match(read('styles/mens-preview-633.css'), /\.pv-scene--portrait \{ grid-template-columns: minmax\(0, 1\.2fr\) minmax\(0, 1fr\); \}/);
 });

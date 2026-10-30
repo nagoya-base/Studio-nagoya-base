@@ -592,6 +592,11 @@ var Booking = (function () {
         /* Issue #478: 独立プラン識別子（'member_pair_3h'）。値の検証・会員資格の確認は
            BookingRepository.createBooking（BookingPricing.normalizePlan＋MembershipRules.verifyActualMembership）。 */
         plan: input.plan === undefined || input.plan === null ? '' : String(input.plan).trim().slice(0, 50),
+        /* Issue #667: 作品撮りサポートプランのスタッフ対応種別（'SETUP'|'CLEANUP'|'BOTH'）。値の検証・必須判定は
+           BookingPricing.normalizeSupportServices（BookingRepository.createBooking）。他のプランでは使わない。 */
+        /* Issue #667: 作品撮りサポートに付ける有料機材 { 機材コード: 数量 }。形式・在庫・料金は BookingOptions.computeSupportEquipment が検証する。 */
+        supportEquipment: input.supportEquipment !== null && typeof input.supportEquipment === 'object' && !Array.isArray(input.supportEquipment) ? input.supportEquipment : undefined,
+        supportServices: input.supportServices === undefined || input.supportServices === null ? '' : String(input.supportServices).trim().slice(0, 20),
         date: input.date,
         startTime: input.startTime,
         durationMinutes: durationMinutes,
@@ -647,6 +652,55 @@ var Booking = (function () {
     var graceExpiry = createdAtMillis + minHoldHours * 3600000;
 
     return Math.min(ttlExpiry, graceExpiry, startAtMillis);
+  }
+
+
+  /*
+   * Issue #667: 作品撮りサポートプラン（mens）の申込段階。予約状態（STATUS）・決済状態（PAYMENT_STATUS）とは別の、運営承認の軸。
+   * 「申込受付＝承認待ち（仮押さえ中）」→「承認済み＝支払い待ち（承認後24時間）」→ 支払い完了で予約確定（CONFIRMED）。
+   * 承認の事実はsupportApprovedAt（空＝未承認）、支払い期限はsupportPaymentDueAt。管理画面・メール・決済ゲートはすべてこの1関数で段階を決める。
+   * 戻り値: '' （作品撮りサポートではない）| 'AWAITING_APPROVAL' | 'AWAITING_PAYMENT' | 'CONFIRMED' | 'CANCELLED' | 'EXPIRED'
+   */
+  var PHOTO_SUPPORT_PLAN_CODE = 'mens_photo_support';
+
+  function photoSupportStage(record) {
+    var r = record || {};
+    if (r.planCode !== PHOTO_SUPPORT_PLAN_CODE) return '';
+    if (r.status === STATUS.CONFIRMED) return 'CONFIRMED';
+    if (r.status === STATUS.CANCELLED) return 'CANCELLED';
+    if (r.status === STATUS.EXPIRED) return 'EXPIRED';
+    return isDateLike_(r.supportApprovedAt) ? 'AWAITING_PAYMENT' : 'AWAITING_APPROVAL';
+  }
+
+  /*
+   * 作品撮りサポートの決済可否（承認前は決済不可・承認後24時間が支払い期限）。beginCardCheckoutの最終ガード。
+   * 戻り値: null（決済に進めてよい／作品撮りサポートではない） | { code, message }
+   */
+  function photoSupportPaymentGate(record, nowMillis) {
+    var stage = photoSupportStage(record);
+    if (!stage) return null;
+    if (stage === 'AWAITING_APPROVAL') {
+      return { code: 'SUPPORT_NOT_APPROVED', message: '作品撮りサポートプランは運営の承認後にお支払いいただけます。承認のご連絡をお待ちください。' };
+    }
+    if (stage !== 'AWAITING_PAYMENT') {
+      return { code: 'BOOKING_NOT_PENDING', message: 'この予約は決済待ちの状態ではありません。' };
+    }
+    var due = isDateLike_(record.supportPaymentDueAt) ? record.supportPaymentDueAt.getTime() : NaN;
+    if (!(nowMillis < due)) {
+      return { code: 'SUPPORT_PAYMENT_EXPIRED', message: 'お支払い期限（承認後24時間）を過ぎたため、お支払いいただけません。' };
+    }
+    return null;
+  }
+
+  /*
+   * 作品撮りサポートのPENDING失効時刻（ミリ秒epoch）。承認後は支払い期限（supportPaymentDueAt。承認から24時間）。
+   * 承認前は24時間・72時間のTTLを使わず（運営の確認を待つ）、利用開始のminHoursBeforeStart前を上限とする。
+   * 期限情報が不正な承認済みレコードは即時失効側（0）へ倒さず、承認前と同じ上限で扱う（誤って枠を即解放しない）。
+   */
+  function computePhotoSupportExpiryMillis(record, startAtMillis, minHoursBeforeStart) {
+    var r = record || {};
+    if (isDateLike_(r.supportApprovedAt) && isDateLike_(r.supportPaymentDueAt)) return r.supportPaymentDueAt.getTime();
+    return startAtMillis - minHoursBeforeStart * 3600000;
   }
 
   function isExpired(createdAtMillis, startAtMillis, ttlHours, minHoursBeforeStart, nowMillis, minHoldHours) {
@@ -860,6 +914,10 @@ var Booking = (function () {
     computeCardPaymentDueMillis: computeCardPaymentDueMillis,
     cardMinHoldHours: cardMinHoldHours,
     isExpired: isExpired,
+    PHOTO_SUPPORT_PLAN_CODE: PHOTO_SUPPORT_PLAN_CODE,
+    photoSupportStage: photoSupportStage,
+    photoSupportPaymentGate: photoSupportPaymentGate,
+    computePhotoSupportExpiryMillis: computePhotoSupportExpiryMillis,
     getEffectivePriceAmount: getEffectivePriceAmount,
     needsPriceUpdateNotice: needsPriceUpdateNotice
   };
