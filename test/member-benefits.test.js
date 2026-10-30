@@ -334,9 +334,10 @@ function rescheduleFixture(opts) {
 }
 
 /* 現在から35日以上先の、指定条件の日付（JST）。 */
-function nextDate(sb, startDaysAhead, wantWeekendHoliday, differentMonthFrom) {
+function nextDate(sb, startDaysAhead, wantWeekendHoliday, differentMonthFrom, baseMillis, excludeDate) {
   for (var i = startDaysAhead; i < startDaysAhead + 80; i++) {
-    var d = futureDate.futureJstDate(i);
+    var d = futureDate.futureJstDate(i, baseMillis);
+    if (excludeDate && d <= excludeDate) continue;
     var c = sb.JapaneseHolidays.classify(d);
     if (!c.ok) continue;
     var wd = new Date(d + 'T00:00:00Z').getUTCDay();
@@ -346,6 +347,13 @@ function nextDate(sb, startDaysAhead, wantWeekendHoliday, differentMonthFrom) {
     return d;
   }
   throw new Error('条件に合う日付が見つかりません');
+}
+
+/* fromDateより後の最初の平日・非祝日。固定オフセット差では土日・連続休日で変更元と同じ日になるため、必ず変更元より後から探す。 */
+function nextDistinctWeekday(sb, fromDate, baseMillis) {
+  var d = nextDate(sb, 35, false, undefined, baseMillis, fromDate);
+  assert.notStrictEqual(d, fromDate, '変更元と変更先の日付が重複している');
+  return d;
 }
 
 function monthOf(d) { return d.slice(0, 7); }
@@ -419,7 +427,8 @@ test('月跨ぎの日程変更: 変更先月のactual membershipを再確認し�
 test('日程変更: 台帳エラー時もfail-closedで拒否。特典の無い予約は会員台帳を照会せず従来どおり', function () {
   var probe = setup().sandbox;
   var d1 = nextDate(probe, 35, false);
-  var d2 = nextDate(probe, 36, false);
+  var d2 = nextDistinctWeekday(probe, d1);
+  assert.notStrictEqual(d1, d2, '変更前後の日付が同じだと業務側でUNCHANGEDとなり会員確認に到達しない');
   var broken = rescheduleFixture({ date: d1, members: 'THROW' });
   assert.strictEqual(broken.sb.adminPreviewBookingReschedule('MENS-PAIR-1', { date: d2, startTime: '10:00', endTime: '13:00' }, broken.version).error.code, DENIED_CODE);
 
@@ -428,6 +437,22 @@ test('日程変更: 台帳エラー時もfail-closedで拒否。特典の無い�
   assert.strictEqual(preview.success, true);
   assert.strictEqual(plainBooking.ctx.lookups.length, 0, '特典の無い予約は会員照会しない');
 });
+
+test('日程変更テストの日付生成: 実行日が土日・連続休日の前後でも変更元と変更先が重複しない', function () {
+  var probe = setup().sandbox;
+  /* 2026-10-29〜11-02（JST）は従来の35→36日オフセットで重複・非重複が分かれた境界。さらに年末年始・GW等の連続休日をまたぐ基準日も検証する。 */
+  ['2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02', '2026-12-20', '2027-03-20', '2027-04-10'].forEach(function (day) {
+    var base = new Date(day + 'T12:00:00+09:00').getTime();
+    var d1 = nextDate(probe, 35, false, undefined, base);
+    var d2 = nextDistinctWeekday(probe, d1, base);
+    assert.notStrictEqual(d1, d2, day + ' 基準で重複');
+    assert.ok(d2 > d1, day + ' 基準で変更先が変更元より後');
+    var wd = new Date(d2 + 'T00:00:00Z').getUTCDay();
+    assert.ok(wd !== 0 && wd !== 6 && sbIsWorkday(probe, d2), day + ' 基準で変更先が平日・非祝日');
+  });
+});
+
+function sbIsWorkday(sb, d) { var c = sb.JapaneseHolidays.classify(d); return c.ok && !c.isHoliday; }
 
 test('管理者手動確定: ペアパック予約は actual membership を再確認する。Stripe決済済みのWebhook確定は覆さない', function () {
   var ctx = setup({ members: { [EMAIL]: ['2026-12'] } });
