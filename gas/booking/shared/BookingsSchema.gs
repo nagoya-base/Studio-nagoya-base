@@ -1,13 +1,15 @@
 /*
  * BookingsSchema.gs — Bookingsシートのヘッダー定義の唯一の正本（Issue #671）。
  *
- * SpreadsheetRepository.gs（GAS実行時）と scripts/migrate-bookings-schema.js
- * （GitHub Actionsから本番Spreadsheetへ不足列を末尾追加するmigration）の双方が
+ * SpreadsheetRepository.gs（GAS実行時）と admin/BookingsSchemaMigration.gs
+ * （管理者がApps Scriptエディタから手動実行する `migrateBookingsSchema`。Issue #673）の双方が
  * このファイルだけを参照する。ヘッダーを別の場所へ複製したり、ソースを正規表現で
- * 解析して推測したりしないこと。migration側はこのファイルをvmで実行して値を得る。
+ * 解析して推測したりしないこと。
  *
- * 列を増やす場合はHEADERS_の末尾へ追記するだけでよい（本番Bookingsシートへは
- * 次回のproduction workflowが不足列を末尾追加する）。途中への挿入・並べ替え・削除は禁止。
+ * 列を増やす場合はHEADERS_の末尾へ追記するだけでよい。本番Bookingsシートへは、反映後に
+ * 管理者が `migrateBookingsSchema` を1回実行して不足列を末尾追加する（手順は
+ * gas/booking/README.md冒頭。実行したことは production workflow の `schema_migrated=true` で明示する）。
+ * 途中への挿入・並べ替え・削除は禁止。
  * 追加列は新旧コード混在時にも壊れない後方互換が必須（gas/booking/README.md参照）。
  */
 'use strict';

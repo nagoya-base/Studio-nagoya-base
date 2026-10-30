@@ -1,10 +1,26 @@
 name: Deploy Booking GAS to production
 
-# 正規の本番反映手順（gas/booking/README.md）。1回の起動・1回のEnvironment承認で
-#   Bookings schema migration → Booking Admin更新 → Booking Web App更新 → post-check
-# を同一job内で直列実行する。いずれかが失敗した時点で後続は実行しない。
+# 正規の本番反映手順（gas/booking/README.md）。
+#   scope=full（既定）: 1回のEnvironment承認で Booking Admin → Booking Web App → post-check を同一job内で直列実行。
+#   scope=admin-only  : Booking Adminだけを更新して停止（Publicは更新しない）。Bookings schema変更時・初回bootstrap用。
+# Bookings schema migrationはこのworkflowでは行わない。管理者がBooking AdminのApps Scriptエディタで
+# `migrateBookingsSchema` を実行する（Sheets API・サービスアカウント鍵・WIF/OIDCは使わない）。
+# schema変更時は admin-only → migrateBookingsSchema実行 → full(schema_migrated=true) の二段階。
+# いずれかが失敗した時点で後続は実行しない。
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: 'full: Admin -> Public -> post-check / admin-only: Booking Adminだけ更新して停止（schema変更時・初回bootstrap用）'
+        type: choice
+        options:
+          - full
+          - admin-only
+        default: full
+      schema_migrated:
+        description: 'Apps ScriptエディタでmigrateBookingsSchema を実行し成功を確認済み（BookingsSchema.gsに差分があるfullでは必須）'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,14 +54,16 @@ jobs:
         run: npm test
 
   deploy:
-    name: Migrate schema and update existing Admin and Public deployments
+    name: Update existing Admin and Public deployments
     needs: test
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: booking-production
     steps:
-      - name: Check out the approved main commit
+      - name: Check out the approved main commit (full history for the schema diff guard)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -53,12 +71,25 @@ jobs:
       - name: Install pinned clasp
         run: npm install --global @google/clasp@3.4.1
       # 各stepには必要なSecretだけを渡す（clasp installのstepにはSecretを渡さない）。
-      - name: Migrate the Bookings sheet schema
-        run: node scripts/migrate-bookings-schema.js migrate
+      - name: Validate scope
         env:
-          BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: ${{ secrets.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON }}
-          BOOKING_SPREADSHEET_ID: ${{ secrets.BOOKING_SPREADSHEET_ID }}
-          BOOKING_SPREADSHEET_ID_SHA256: ${{ secrets.BOOKING_SPREADSHEET_ID_SHA256 }}
+          SCOPE: ${{ inputs.scope }}
+        run: |
+          set -euo pipefail
+          if [[ "$SCOPE" != "full" && "$SCOPE" != "admin-only" ]]; then
+            echo "scope must be full or admin-only." >&2
+            exit 1
+          fi
+      # Environment承認の後・Admin更新の前に実行する（clasp認証はEnvironment secretsにある）。
+      # 基準SHAはBooking Web App（Public）のDeploymentからのみ取得する（Adminは基準にしない）。
+      - name: Schema diff guard (Booking Web App previous production commit)
+        if: inputs.scope == 'full'
+        env:
+          PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
+          PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
+          PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
+          SCHEMA_MIGRATED: ${{ inputs.schema_migrated }}
+        run: bash scripts/deploy-booking-gas-target.sh public schema-guard
       - name: Update the existing Booking Admin deployment
         env:
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
@@ -75,6 +106,7 @@ jobs:
             exit 1
           fi
       - name: Update the existing Booking Web App deployment
+        if: inputs.scope == 'full'
         env:
           PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
           PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
@@ -96,14 +128,12 @@ jobs:
           ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
         run: bash scripts/deploy-booking-gas-target.sh admin verify
       - name: Post-deploy check (Booking Web App deployment)
+        if: inputs.scope == 'full'
         env:
           PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
           PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
           PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
         run: bash scripts/deploy-booking-gas-target.sh public verify
-      - name: Post-deploy check (Bookings schema)
-        env:
-          BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: ${{ secrets.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON }}
-          BOOKING_SPREADSHEET_ID: ${{ secrets.BOOKING_SPREADSHEET_ID }}
-          BOOKING_SPREADSHEET_ID_SHA256: ${{ secrets.BOOKING_SPREADSHEET_ID_SHA256 }}
-        run: node scripts/migrate-bookings-schema.js verify
+      - name: Next step after admin-only
+        if: inputs.scope == 'admin-only'
+        run: echo "Booking Admin was updated; the Booking Web App deployment was left unchanged. Run migrateBookingsSchema in the Booking Admin Apps Script editor, then run this workflow with scope=full and schema_migrated=true."
