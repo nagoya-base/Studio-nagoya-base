@@ -113,6 +113,14 @@
       PLAN_DURATION_INVALID: 'ご選択のプランの利用時間が条件を満たしていません（2名ペアパックは3時間以上、土日祝4時間シャワーパックは4時間、貸切ベースプランは最低6時間から1時間単位）。',
       /* Issue #586: SNB mens限定の土日祝4時間シャワーパック。 */
       SHOWER_PACK_PEOPLE_EXCEEDED: '土日祝4時間シャワーパックのご利用は1〜2名までです。人数を変更するか、パックの選択を外してください。',
+      /* Issue #667: SNB mens限定の作品撮りサポートプラン（承認制・承認後24時間以内に決済）。 */
+      PHOTO_SUPPORT_PEOPLE_EXCEEDED: '作品撮りサポートプランのご利用は1〜4名までです。人数を変更するか、プランの選択を外してください。',
+      PHOTO_SUPPORT_SERVICE_REQUIRED: '作品撮りサポートプランでは、スタッフ対応（事前設営／片付け／事前設営＋片付け）を1つ選択してください。',
+      PHOTO_SUPPORT_DEADLINE_PASSED: '作品撮りサポートプランのお申し込みは、利用日の7日前までです。別の利用日を選ぶか、プランの選択を外してください。',
+      PHOTO_SUPPORT_CARD_ONLY: '作品撮りサポートプランのお支払いは、運営の承認後にオンラインクレジットカードでお願いします。支払方法でカードを選択してください。',
+      PHOTO_SUPPORT_OPTIONS_NOT_ALLOWED: '作品撮りサポートプランでは、予約と同時のオプション申込はできません。',
+      SUPPORT_NOT_APPROVED: '作品撮りサポートプランは運営の承認後にお支払いいただけます。承認のご連絡をお待ちください。',
+      SUPPORT_PAYMENT_EXPIRED: 'お支払い期限（承認後24時間）を過ぎたため、お支払いいただけません。改めてお申し込みください。',
       PLAN_DAY_INVALID: '土日祝4時間シャワーパックは、土日祝のご利用日のみご選択いただけます。ご利用日を変更するか、パックの選択を外してください。',
       SHOWER_PACK_SHOWER_REQUIRED: '土日祝4時間シャワーパックには、シャワー利用の事前確認（日程調整の確認）が含まれます。確認にチェックしてお進みください。',
       PLAN_HOURS_OUT_OF_RANGE: '貸切ベースプランは8:00〜21:00の範囲内でご利用ください。終了が21:00を超える時間は選べません。開始時刻か利用時間を変更してください。',
@@ -166,6 +174,13 @@
       SHOWER_SCHEDULE_CONFIRMATION_REQUIRED: 'Please confirm that you completed scheduling with staff at least one week before your visit.',
       PLAN_DURATION_INVALID: 'The selected plan’s duration is not allowed (pair pack: 3+ hours; weekend/holiday 4-hour shower pack: 4 hours; private base plan: 6+ hours in 1-hour steps).',
       SHOWER_PACK_PEOPLE_EXCEEDED: 'The 4-hour shower pack is for 1 to 2 guests.',
+      PHOTO_SUPPORT_PEOPLE_EXCEEDED: 'The photo support plan is for 1 to 4 guests.',
+      PHOTO_SUPPORT_SERVICE_REQUIRED: 'Please choose at least one staff service (setup / cleanup / both) for the photo support plan.',
+      PHOTO_SUPPORT_DEADLINE_PASSED: 'The photo support plan must be requested at least 7 days before the date of use.',
+      PHOTO_SUPPORT_CARD_ONLY: 'The photo support plan is paid by credit card after approval. Please choose credit card.',
+      PHOTO_SUPPORT_OPTIONS_NOT_ALLOWED: 'Add-on options cannot be requested together with the photo support plan.',
+      SUPPORT_NOT_APPROVED: 'The photo support plan can be paid for only after approval.',
+      SUPPORT_PAYMENT_EXPIRED: 'The payment deadline (24 hours after approval) has passed.',
       PLAN_DAY_INVALID: 'The 4-hour shower pack is available only on weekends and public holidays.',
       SHOWER_PACK_SHOWER_REQUIRED: 'The 4-hour shower pack includes advance confirmation for shower use. Please tick the scheduling confirmation.',
       PLAN_HOURS_OUT_OF_RANGE: 'The private base plan must fall within 08:00–21:00. Please change the start time or duration.',
@@ -275,6 +290,11 @@
       code === 'PLAN_DAY_INVALID' ||
       code === 'SHOWER_PACK_PEOPLE_EXCEEDED' ||
       code === 'SHOWER_PACK_SHOWER_REQUIRED' ||
+      code === 'PHOTO_SUPPORT_PEOPLE_EXCEEDED' ||
+      code === 'PHOTO_SUPPORT_SERVICE_REQUIRED' ||
+      code === 'PHOTO_SUPPORT_DEADLINE_PASSED' ||
+      code === 'PHOTO_SUPPORT_CARD_ONLY' ||
+      code === 'PHOTO_SUPPORT_OPTIONS_NOT_ALLOWED' ||
       code === 'PLAN_HOURS_OUT_OF_RANGE' ||
       code === 'PLAN_NOT_AVAILABLE' ||
       code === 'INVALID_PLAN' ||
@@ -509,6 +529,13 @@
     if (s.plan === SHOWER_PACK_PLAN_CODE) payload.plan = SHOWER_PACK_PLAN_CODE;
     /* Issue #488 / #492: 6時間貸切ベースプラン（常設）。金額・可否は送らない（サーバーが判定する）。 */
     if (s.plan === EVENT_BASE_PLAN_CODE) payload.plan = EVENT_BASE_PLAN_CODE;
+    /* Issue #667: SNB mens限定の作品撮りサポートプラン。スタッフ対応の種別だけを送る（金額・会員資格・承認状態は送らない）。 */
+    if (s.plan === PHOTO_SUPPORT_PLAN_CODE) {
+      payload.plan = PHOTO_SUPPORT_PLAN_CODE;
+      payload.supportServices = s.supportServices || '';
+      /* 有料機材 { 機材コード: 数量 }。数量だけを送る（単価・在庫・セット無料は共通カタログでサーバーが計算する）。 */
+      if (s.supportEquipment && typeof s.supportEquipment === 'object' && Object.keys(s.supportEquipment).length > 0) payload.supportEquipment = s.supportEquipment;
+    }
     if (s.shower === true) payload.options = { shower: true, showerScheduleConfirmed: s.showerScheduleConfirmed === true };
     if (s.autoPairPack === true) payload.autoPairPack = true;
     /* Issue #548: V2のメールOTP確認済み証明（サーバーが発行した不透明な文字列）。保持している場合だけ送る。verified等の真偽値は送らない。
@@ -1097,11 +1124,13 @@
     ja: {
       rateLabel: '適用料金', planLabel: '適用プラン', general: '一般料金',
       member: 'SNB MEMBER 会員料金',
+      photoSupportPlan: 'SNB mens 作品撮りサポートプラン（SNB MEMBER限定）',
       pairPlan: 'SNB MEMBER限定 2名ペアパック', showerPackPlan: 'SNB mens 土日祝4時間シャワーパック（SNB MEMBER限定）', eventPlan: 'Studio X｜6時間貸切ベースプラン', sep: '：'
     },
     en: {
       rateLabel: 'Applied rate', planLabel: 'Applied plan', general: 'Standard rate',
       member: 'SNB MEMBER rate',
+      photoSupportPlan: 'SNB mens Photo Support Plan (SNB MEMBER only)',
       pairPlan: 'SNB MEMBER-only Pair Pack (2 guests)', showerPackPlan: 'SNB mens Weekend/Holiday 4-hour Shower Pack (SNB MEMBER only)', eventPlan: 'Studio X 6-hour Private Base Plan', sep: ': '
     }
   };
@@ -1112,6 +1141,7 @@
     if (price.plan === PAIR_PACK_PLAN_CODE) return { kind: 'plan', label: t.planLabel, value: t.pairPlan, text: t.planLabel + t.sep + t.pairPlan };
     if (price.plan === SHOWER_PACK_PLAN_CODE) return { kind: 'plan', label: t.planLabel, value: t.showerPackPlan, text: t.planLabel + t.sep + t.showerPackPlan };
     if (price.plan === EVENT_BASE_PLAN_CODE) return { kind: 'plan', label: t.planLabel, value: t.eventPlan, text: t.planLabel + t.sep + t.eventPlan };
+    if (price.plan === PHOTO_SUPPORT_PLAN_CODE) return { kind: 'plan', label: t.planLabel, value: t.photoSupportPlan, text: t.planLabel + t.sep + t.photoSupportPlan };
     if (price.plan) return null;
     /* Issue #572: Studio Xには一般／会員の料金区分を設けないため、適用料金の行そのものを出さない（金額計算には影響しない）。 */
     if (price.brand === 'studio_x') return null;
@@ -1194,6 +1224,127 @@
   /* 4時間ちょうどのときだけ選べる（3時間・5時間では選べない）。 */
   function showerPackDurationAllowed(durationMinutes) {
     return Number(durationMinutes) === SHOWER_PACK_DURATION_MINUTES;
+  }
+
+
+  /*
+   * Issue #667: SNB mens限定の作品撮りサポートプラン。表示制御・早期ガードだけで、金額・可否（会員資格・承認・期限）の正本はサーバー
+   * （BookingPricing.gs の PHOTO_SUPPORT_）。値の一致は test/mens-photo-support-667.test.js で検証する。
+   * 承認制: 申込時に対象時間帯を仮押さえし、運営の承認後にだけ決済できる（承認後24時間以内）。
+   */
+  var PHOTO_SUPPORT_PLAN_CODE = 'mens_photo_support';
+  var PHOTO_SUPPORT_START_DATE_ = '2026-12-01';
+  var PHOTO_SUPPORT_MAX_PEOPLE = 4;
+  var PHOTO_SUPPORT_APPLY_DAYS_BEFORE = 7;
+  var PHOTO_SUPPORT_SERVICES = ['SETUP', 'CLEANUP', 'BOTH'];
+
+  /* 利用日が効力発生日（2026/12/1）以降のSNB mensのみ。 */
+  function photoSupportAvailableOnDate(brand, dateValue) {
+    if (brand !== 'mens') return false;
+    return typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue) && dateValue >= PHOTO_SUPPORT_START_DATE_;
+  }
+
+  /* 1〜4名限定。未選択は判定せずtrue（人数の必須チェックは別）。「5名以上・要相談」は不可。 */
+  function photoSupportPeopleAllowed(people) {
+    if (!people) return true;
+    var m = /^([1-9]\d*)名$/.exec(String(people));
+    return !!m && Number(m[1]) >= 1 && Number(m[1]) <= PHOTO_SUPPORT_MAX_PEOPLE;
+  }
+
+  function photoSupportServicesValid(value) {
+    return PHOTO_SUPPORT_SERVICES.indexOf(value) !== -1;
+  }
+
+  /* 施設timezone(JST)の今日を'YYYY-MM-DD'で返す（端末のローカルtimezoneに依存しない）。 */
+  function todayJstString(nowMs) {
+    var d = new Date((typeof nowMs === 'number' ? nowMs : Date.now()) + 9 * 3600000);
+    return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+  }
+
+  /* 申込期限: 利用日の7日前まで（利用日 - 今日 >= 7日）。最終判定はサーバー。 */
+  function photoSupportApplyOpen(dateValue, todayValue) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateValue)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(todayValue))) return false;
+    var a = String(dateValue).split('-').map(Number);
+    var b = String(todayValue).split('-').map(Number);
+    var days = Math.round((Date.UTC(a[0], a[1] - 1, a[2]) - Date.UTC(b[0], b[1] - 1, b[2])) / 86400000);
+    return days >= PHOTO_SUPPORT_APPLY_DAYS_BEFORE;
+  }
+
+  /* 承認制の画面文言（bookingFlowCopyと同じ形）。申込＝承認待ち（仮押さえ）であり、承認前は決済できず、承認後24時間以内に決済する。 */
+  var PHOTO_SUPPORT_FLOW_TEXT_ = {
+    ja: {
+      banner: { title: '【作品撮りサポートプラン：運営の承認後にお支払い】', body: '申込時点で対象時間帯を仮押さえします。運営がスタッフ対応の可否・機材・予約枠を確認し、承認できる場合に確定料金とお支払いのご案内をメールでお送りします。お支払い期限は承認後24時間です。承認前はお支払いできず、承認とお支払いの完了までは予約は確定しません。' },
+      consent: '作品撮りサポートプランは運営の承認制であり、申込だけでは予約が確定しないこと、承認後24時間以内にお支払いが完了しない場合は不成立となり通常のSNB mens料金へは自動で切り替わらないことを理解しました。',
+      confirmHeading: '作品撮りサポートプランの申込内容確認',
+      submitLabel: '承認待ちで申し込む',
+      completeHeading: '作品撮りサポートプランのお申し込みを受け付けました（承認待ち）',
+      statusLabel: '申込の状態',
+      statusValue: '承認待ち（仮押さえ中・未確定）'
+    },
+    en: {
+      banner: { title: '[Photo support plan: pay after approval]', body: 'Your time slot is held when you apply. After we confirm staff, equipment and availability, we email the final fee and payment instructions. Payment is due within 24 hours after approval. You cannot pay before approval, and the booking is not confirmed until you pay.' },
+      consent: 'I understand that the photo support plan requires approval, that applying does not confirm the booking, and that if payment is not completed within 24 hours after approval the plan lapses without switching to the regular SNB mens rate.',
+      confirmHeading: 'Review your photo support plan request',
+      submitLabel: 'Apply (pending approval)',
+      completeHeading: 'Your photo support plan request was received (pending approval)',
+      statusLabel: 'Status',
+      statusValue: 'Pending approval (slot held, not confirmed)'
+    }
+  };
+
+  function photoSupportFlowCopy(locale) {
+    var t = PHOTO_SUPPORT_FLOW_TEXT_[normalizeLocale(locale)];
+    return {
+      kind: 'photo_support',
+      banner: t.banner,
+      consent: t.consent,
+      confirmHeading: t.confirmHeading,
+      submitLabel: t.submitLabel,
+      completeHeading: t.completeHeading,
+      statusLabel: t.statusLabel,
+      statusValue: t.statusValue
+    };
+  }
+
+  /* 選択欄の案内（選べない理由／選択中の注意）。reasonは booking-app.js の syncPhotoSupport_ が決める。空は案内なし。 */
+  var PHOTO_SUPPORT_NOTE_TEXT_ = {
+    ja: {
+      'no-date': '※利用日を選ぶと、作品撮りサポートプランの選択可否をご案内します（2026年12月1日以降の利用日が対象）。',
+      date: '※作品撮りサポートプランは2026年12月1日以降の利用日から選択できます。',
+      member: '※SNB MEMBERの会員確認が済むと選択できます（上の会員確認をご利用ください）。',
+      people: '※1〜4名のご利用のときだけ選択できます（5名以上は対象外）。',
+      deadline: '※作品撮りサポートプランのお申し込みは、利用日の7日前までです。',
+      selected: '※選択中（承認制）。スタッフ対応を1つ選んでください。承認前はお支払いできず、承認後24時間以内にお支払いいただきます。'
+    },
+    en: {
+      'no-date': '* Choose a date to see whether the photo support plan is available (dates from 1 Dec 2026).',
+      date: '* The photo support plan is available for dates from 1 Dec 2026.',
+      member: '* Available after SNB MEMBER verification above.',
+      people: '* Available for 1 to 4 guests only.',
+      deadline: '* Apply at least 7 days before the date of use.',
+      selected: '* Selected (approval required). Choose a staff service. You cannot pay before approval; pay within 24 hours after approval.'
+    }
+  };
+
+  function photoSupportNote(reason, locale) {
+    return PHOTO_SUPPORT_NOTE_TEXT_[normalizeLocale(locale)][reason] || '';
+  }
+
+  /* 申込完了画面の案内（決済ページへは進めない）。 */
+  function photoSupportReceivedNoticeLines(locale) {
+    return normalizeLocale(locale) === 'en'
+      ? [
+        '[Pending approval]',
+        'We are holding the time slot. We will check staff, equipment and availability and email you the result.',
+        'You cannot pay yet. If approved, you will receive the final fee and a payment link; pay within 24 hours after approval.',
+        'If we cannot approve, the hold is released and the plan does not take place.'
+      ]
+      : [
+        '【承認待ちです（お支払いはまだできません）】',
+        '対象の時間帯を仮押さえしています。運営がスタッフ対応の可否・機材・予約枠を確認し、結果をメールでお知らせします。',
+        '承認できる場合は、確定料金とお支払いページをお送りします。お支払い期限は承認後24時間です（期限内に未払いの場合は不成立となり、仮押さえを解除します）。',
+        '承認できない場合は仮押さえを解除し、本プランは不成立です（通常のSNB mens料金へは自動で切り替えません）。'
+      ];
   }
 
   /* Issue #552: ペアパックは3時間未満では成立しない。UIで選べなくするための早期ガードで、
@@ -1406,6 +1557,18 @@
     appliedRateInfo: appliedRateInfo,
     isPairPackPeopleValue: isPairPackPeopleValue,
     pairPackDurationAllowed: pairPackDurationAllowed,
+    PHOTO_SUPPORT_PLAN_CODE: PHOTO_SUPPORT_PLAN_CODE,
+    PHOTO_SUPPORT_START_DATE: PHOTO_SUPPORT_START_DATE_,
+    PHOTO_SUPPORT_MAX_PEOPLE: PHOTO_SUPPORT_MAX_PEOPLE,
+    PHOTO_SUPPORT_APPLY_DAYS_BEFORE: PHOTO_SUPPORT_APPLY_DAYS_BEFORE,
+    photoSupportAvailableOnDate: photoSupportAvailableOnDate,
+    photoSupportPeopleAllowed: photoSupportPeopleAllowed,
+    photoSupportServicesValid: photoSupportServicesValid,
+    photoSupportApplyOpen: photoSupportApplyOpen,
+    todayJstString: todayJstString,
+    photoSupportFlowCopy: photoSupportFlowCopy,
+    photoSupportNote: photoSupportNote,
+    photoSupportReceivedNoticeLines: photoSupportReceivedNoticeLines,
     showerPackAvailableOnDate: showerPackAvailableOnDate,
     showerPackDurationAllowed: showerPackDurationAllowed,
     showerPackPeopleAllowed: showerPackPeopleAllowed,

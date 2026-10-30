@@ -169,6 +169,12 @@
     planPairStatus: document.getElementById('ba-plan-pair-status'),
     planShowerPack: document.getElementById('ba-plan-shower-pack'),
     planShowerPackNote: document.getElementById('ba-plan-shower-pack-note'),
+    planPhoto: document.getElementById('ba-plan-photo-support'),
+    planPhotoNote: document.getElementById('ba-plan-photo-support-note'),
+    photoServicesWrap: document.getElementById('ba-photo-support-services'),
+    photoError: document.getElementById('ba-photo-support-error'),
+    photoEquipmentWrap: document.getElementById('ba-photo-support-equipment'),
+    photoEquipmentList: document.getElementById('ba-photo-support-equipment-list'),
     showerNote: document.getElementById('ba-shower-note'),
     planEvent: document.getElementById('ba-plan-event'),
     planBanner: document.getElementById('ba-plan-banner'),
@@ -533,10 +539,103 @@
   function benefitChoiceOf_(control) {
     return control && control.parentNode ? control.parentNode : null;
   }
+  /* Issue #667: 作品撮りサポートに付ける有料機材。一覧・単価・在庫は共通機材カタログ（optionCatalogのsupportEquipment）をそのまま表示し、
+     フロントに価格を持たない。数量だけを送り、金額・セット無料はサーバーが計算する。 */
+  var photoEquipmentCatalog_ = null;
+  var photoEquipmentRequested_ = false;
+  var photoEquipment_ = {};
+  function photoSupportEquipmentMap_() {
+    var out = {};
+    Object.keys(photoEquipment_).forEach(function (code) { if (photoEquipment_[code] > 0) out[code] = photoEquipment_[code]; });
+    return out;
+  }
+  function photoSupportEquipmentParam_() {
+    var map = photoSupportEquipmentMap_();
+    return Object.keys(map).sort().map(function (code) { return code + ':' + map[code]; }).join(',');
+  }
+  function renderPhotoEquipment_() {
+    var list = els.photoEquipmentList;
+    if (!list || !photoEquipmentCatalog_ || typeof document.createElement !== 'function') return;
+    list.innerHTML = '';
+    photoEquipmentCatalog_.forEach(function (item) {
+      var row = document.createElement('label');
+      row.className = 'ba-choice';
+      var select = document.createElement('select');
+      select.setAttribute('aria-label', item.label);
+      for (var n = 0; n <= Math.min(Number(item.stock) || 0, 10); n++) {
+        var option = document.createElement('option');
+        option.value = String(n);
+        option.textContent = String(n);
+        select.appendChild(option);
+      }
+      select.value = String(photoEquipment_[item.code] || 0);
+      select.addEventListener('change', function () {
+        photoEquipment_[item.code] = Number(select.value) || 0;
+        refreshPriceEstimate_();
+      });
+      var price = item.unitPriceJpy > 0 ? Logic.formatJpyAmount(item.unitPriceJpy) + (item.unitLabel ? '／' + item.unitLabel : '') : '無料';
+      var text = document.createElement('span');
+      text.textContent = ' ' + item.label + '（' + price + (item.freeWhenWith && item.freeWhenWith.label ? '・' + item.freeWhenWith.label : '') + '）';
+      row.appendChild(select);
+      row.appendChild(text);
+      list.appendChild(row);
+    });
+  }
+  function ensurePhotoEquipmentCatalog_() {
+    if (photoEquipmentRequested_ || !API_BASE_URL || typeof fetch !== 'function') return;
+    photoEquipmentRequested_ = true;
+    try {
+      fetch(API_BASE_URL + (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') + 'action=optionCatalog&brand=' + encodeURIComponent(brand))
+        .then(function (response) { return response.json(); })
+        .then(function (body) {
+          var items = body && body.success === true && body.catalog && body.catalog.supportEquipment;
+          if (Array.isArray(items)) { photoEquipmentCatalog_ = items; renderPhotoEquipment_(); }
+          else photoEquipmentRequested_ = false;
+        })
+        .catch(function () { photoEquipmentRequested_ = false; });
+    } catch (e) { photoEquipmentRequested_ = false; }
+  }
+
+  /* Issue #667: 作品撮りサポートの選択可否・案内・スタッフ対応欄・支払方法（承認後のカード決済のみ）を同期する。表示制御のみで、最終判定はサーバー。 */
+  function syncPhotoSupport_(unlocked) {
+    if (!els.planPhoto) return;
+    var visible = photoSupportVisible_();
+    var selectable = visible && unlocked && photoSupportPeopleOk_() && photoSupportApplyOpen_();
+    if (!selectable) els.planPhoto.checked = false;
+    els.planPhoto.disabled = !selectable;
+    var reason = !visible ? (els.date && els.date.value ? 'date' : 'no-date')
+      : !unlocked ? 'member'
+      : !photoSupportPeopleOk_() ? 'people'
+      : !photoSupportApplyOpen_() ? 'deadline'
+      : els.planPhoto.checked ? 'selected' : '';
+    var note = Logic.photoSupportNote(reason, locale);
+    if (els.planPhotoNote) { els.planPhotoNote.textContent = note; els.planPhotoNote.hidden = !note; }
+    if (els.photoServicesWrap) els.photoServicesWrap.hidden = !els.planPhoto.checked;
+    if (els.photoEquipmentWrap) els.photoEquipmentWrap.hidden = !els.planPhoto.checked;
+    if (els.planPhoto.checked) ensurePhotoEquipmentCatalog_();
+    else photoEquipment_ = {};
+    if (!els.planPhoto.checked) {
+      root.querySelectorAll('input[name="supportServices"]').forEach(function (radio) { radio.checked = false; });
+      if (els.photoError) els.photoError.hidden = true;
+    }
+    /* 支払いは承認後のオンラインカード決済のみ。選択中はカード以外を選べなくする（サーバーも拒否する）。 */
+    var cardRadio = cardPaymentRadio_();
+    if (cardRadio) {
+      var photoOn = els.planPhoto.checked && selectable;
+      root.querySelectorAll('input[name="paymentMethod"]').forEach(function (other) {
+        if (other === cardRadio) return;
+        if (photoOn) { other.disabled = true; if (other.checked) other.checked = false; }
+        else if (!Logic.isFirstTimeCardRequired(state.customerType)) other.disabled = false;
+      });
+      if (photoOn) cardRadio.checked = true;
+    }
+  }
+
   /* 案内は常に表示する。日付・時間・人数・会員確認に合わせてパックを自動選択し、シャワーの申込可否を同期する。 */
   function syncBenefitsVisibility_() {
     /* Issue #546: 会員向けUIが有効でない間は、表示してもdisabledにし、選択済みも外す（UXのみ。資格の最終判定はサーバー）。 */
     var unlocked = memberFeaturesEnabled_();
+    syncPhotoSupport_(unlocked);
     var pairVisible = pairPackVisible_();
     var pairDurationOk = pairPackDurationOk_();
     /* Issue #586: シャワーパックを選んでいる間は、ペアパックを自動適用しない（独立した別商品）。 */
@@ -561,18 +660,25 @@
       }
     }
     var packSelected = showerPackSelected_();
+    /* Issue #667: 作品撮りサポート選択中は、部屋料金を置き換える他のプラン（ペアパック・シャワーパック）と単体シャワーを併用しない。 */
+    var photoSelected = photoSupportSelected_();
+    if (photoSelected) {
+      if (els.planShowerPack) { els.planShowerPack.checked = false; els.planShowerPack.disabled = true; }
+      packSelected = false;
+    }
     if (els.planPair) els.planPair.checked = pairVisible && unlocked && pairDurationOk &&
       !!els.people && !!els.people.value && Logic.isPairPackPeopleValue(els.people.value);
-    if (packSelected && els.planPair) els.planPair.checked = false;
+    if ((packSelected || photoSelected) && els.planPair) els.planPair.checked = false;
     if (els.planPair) els.planPair.disabled = !unlocked || !pairDurationOk;
     if (els.planPairNote) els.planPairNote.hidden = !(pairVisible && unlocked && !pairDurationOk);
     var pairChoice = benefitChoiceOf_(els.planPair);
     if (pairChoice) pairChoice.hidden = false;
     var showerVisible = showerVisible_();
     if ((!showerVisible || !unlocked) && els.shower) els.shower.checked = false;
+    if (photoSelected && els.shower) els.shower.checked = false;
     /* Issue #586: シャワーパック選択中はシャワー1回が料金に含まれるため、シャワーを必ず選択状態で固定する（単体のシャワーとの重複申込を防ぐ）。 */
     if (packSelected && els.shower) els.shower.checked = true;
-    if (els.shower) els.shower.disabled = !unlocked || !showerVisible || packSelected;
+    if (els.shower) els.shower.disabled = !unlocked || !showerVisible || packSelected || photoSelected;
     if (els.showerSchedule) {
       if (els.showerSchedule.parentNode) els.showerSchedule.parentNode.hidden = !showerSelected_();
       if (!showerSelected_()) els.showerSchedule.checked = false;
@@ -626,8 +732,34 @@
   function eventPlanSelected_() {
     return !!els.planEvent && els.planEvent.checked;
   }
+  /* Issue #667: SNB mens限定の作品撮りサポートプラン（承認制）。利用者が明示的にチェックし、効力発生日以降・会員確認済み・1〜4名・
+     利用日の7日前までの条件を満たすときだけ選択中とみなす（最終判定はサーバー）。選択中は他の部屋料金置換プラン・同時オプションと併用しない。 */
+  function photoSupportVisible_() {
+    return !!els.planPhoto && Logic.photoSupportAvailableOnDate(brand, els.date ? els.date.value : '');
+  }
+  function photoSupportPeopleOk_() {
+    return Logic.photoSupportPeopleAllowed(els.people ? els.people.value : '');
+  }
+  function photoSupportApplyOpen_() {
+    return Logic.photoSupportApplyOpen(els.date ? els.date.value : '', Logic.todayJstString());
+  }
+  function photoSupportSelectable_() {
+    return photoSupportVisible_() && memberFeaturesEnabled_() && photoSupportPeopleOk_() && photoSupportApplyOpen_();
+  }
+  function photoSupportSelected_() {
+    return !!els.planPhoto && els.planPhoto.checked && photoSupportSelectable_();
+  }
+  function photoSupportServices_() {
+    var checked = root.querySelector('input[name="supportServices"]:checked');
+    return checked && Logic.photoSupportServicesValid(checked.value) ? checked.value : '';
+  }
+  /* 作品撮りサポート選択中は画面の案内文言（バナー・同意文・送信ボタン）を承認制のものに切り替える。 */
+  function flowCopy_(paymentMethod) {
+    return photoSupportSelected_() ? Logic.photoSupportFlowCopy(locale) : Logic.bookingFlowCopy(paymentMethod, locale);
+  }
   function selectedPlan_() {
     if (eventPlanSelected_()) return Logic.EVENT_BASE_PLAN_CODE;
+    if (photoSupportSelected_()) return Logic.PHOTO_SUPPORT_PLAN_CODE;
     if (showerPackSelected_()) return Logic.SHOWER_PACK_PLAN_CODE;
     return pairPackVisible_() && memberFeaturesEnabled_() && pairPackDurationOk_() && els.people && els.people.value && Logic.isPairPackPeopleValue(els.people.value) ? Logic.PAIR_PACK_PLAN_CODE : '';
   }
@@ -1169,7 +1301,7 @@
 
   function currentPriceEstimateKey_() {
     var dateValue = els.date ? els.date.value : '';
-    return priceEstimateKey_(dateValue, currentCalendarDurationMinutes_(), estimateMemberFlag_(), selectedPlan_());
+    return priceEstimateKey_(dateValue, currentCalendarDurationMinutes_(), estimateMemberFlag_(), selectedPlan_() + (photoSupportSelected_() ? ':' + photoSupportServices_() + ':' + photoSupportEquipmentParam_() : ''));
   }
 
   function priceEstimateUrl_(dateValue, durationMinutes, memberFlag, plan) {
@@ -1182,6 +1314,8 @@
       '&isMember=' + (memberFlag ? '1' : '0') +
       /* 2名ペアパックの見積り。見積りAPIは会員台帳を照会しない（資格の確認は予約作成時のサーバー側のみ）。 */
       (plan ? '&plan=' + encodeURIComponent(plan) : '') +
+      (plan === Logic.PHOTO_SUPPORT_PLAN_CODE ? '&supportServices=' + encodeURIComponent(photoSupportServices_()) +
+        (photoSupportEquipmentParam_() ? '&supportEquipment=' + encodeURIComponent(photoSupportEquipmentParam_()) : '') : '') +
       /* Issue #668: mensの5〜7名は人数加算つきで見積る（サーバーはmens以外では人数を見ない）。 */
       (brand === 'mens' && els.people && els.people.value ? '&people=' + encodeURIComponent(els.people.value) : '');
   }
@@ -1298,6 +1432,13 @@
     var durationMinutes = currentCalendarDurationMinutes_();
     var memberFlag = estimateMemberFlag_();
     var plan = selectedPlan_();
+    var supportServices = photoSupportSelected_() ? photoSupportServices_() : '';
+
+    /* Issue #667: 作品撮りサポートはスタッフ対応を選ぶまで金額が決まらない。選ぶまで見積りを出さない（通常料金を代わりに出さない）。 */
+    if (plan === Logic.PHOTO_SUPPORT_PLAN_CODE && !supportServices) {
+      renderPriceEverywhere_({ status: 'unset' });
+      return;
+    }
 
     /* snb/studio_xは会員区分が確定してから料金を表示する（未回答のまま一般料金を出さない）。 */
     if (!dateValue || !Logic.isDurationAtLeastUiMinimum(durationMinutes) || !memberAnswered_()) {
@@ -1305,7 +1446,7 @@
       return;
     }
 
-    var key = priceEstimateKey_(dateValue, durationMinutes, memberFlag, plan);
+    var key = priceEstimateKey_(dateValue, durationMinutes, memberFlag, plan + (supportServices ? ':' + supportServices + ':' + photoSupportEquipmentParam_() : ''));
     var cached = priceEstimateCache[key];
     if (cached) {
       renderPriceEverywhere_(cached);
@@ -1326,14 +1467,16 @@
     /* Issue #548: V2で確認済みなら、会員料金の見積りは証明を検証するPOST（bookingMemberStatus）で取得する（GETのisMemberは使わない）。 */
     var verifiedQuote = memberVerified_();
     var estimateEpoch = testCredentialEpoch_;
-    var memberStatusPayload = { brand: brand, email: memberAuth.email, proof: memberAuth.proof, date: dateValue, durationMinutes: durationMinutes, plan: plan, people: els.people ? els.people.value : '', autoPairPack: !showerPackSelected_() };
+    var memberStatusPayload = { brand: brand, email: memberAuth.email, proof: memberAuth.proof, date: dateValue, durationMinutes: durationMinutes, plan: plan, people: els.people ? els.people.value : '', autoPairPack: !showerPackSelected_() && !photoSupportSelected_() };
+    if (supportServices) memberStatusPayload.supportServices = supportServices;
+    if (supportServices && photoSupportEquipmentParam_()) memberStatusPayload.supportEquipment = photoSupportEquipmentMap_();
     if (credentialBody) memberStatusPayload.testCredential = credentialBody.testCredential;
     var pendingEstimate = verifiedQuote
       ? postApi_('bookingMemberStatus', memberStatusPayload)
       : credentialBody
         /* Issue #559: テスト資格付きの見積りはPOST（本文JSON・text/plain）。資格が無い通常利用者は従来のGET。 */
         ? postApi_('testEstimatePrice', {
-          brand: brand, date: dateValue, durationMinutes: String(durationMinutes), isMember: memberFlag ? '1' : '0', plan: plan || '',
+          brand: brand, date: dateValue, durationMinutes: String(durationMinutes), isMember: memberFlag ? '1' : '0', plan: plan || '', supportServices: supportServices, supportEquipment: photoSupportEquipmentParam_(),
           email: credentialBody.email, testCredential: credentialBody.testCredential
         })
         : fetch(priceEstimateUrl_(dateValue, durationMinutes, memberFlag, plan), { method: 'GET' }).then(function (response) { return response.json(); });
@@ -1669,6 +1812,19 @@
     refreshPriceEstimate_();
   }
   if (els.planShowerPack) els.planShowerPack.addEventListener('change', handleShowerPackToggle_);
+
+  /* Issue #667: 作品撮りサポートの選択・スタッフ対応の変更。案内文言・他プランとの併用不可・支払方法・見積りを同期する。 */
+  function handlePhotoSupportChange_() {
+    syncBenefitsVisibility_();
+    updateBookingFlowCopy_();
+    updateCardPaymentNoticeVisibility();
+    if (els.photoError && photoSupportServices_()) els.photoError.hidden = true;
+    refreshPriceEstimate_();
+  }
+  if (els.planPhoto) els.planPhoto.addEventListener('change', handlePhotoSupportChange_);
+  root.querySelectorAll('input[name="supportServices"]').forEach(function (radio) {
+    radio.addEventListener('change', handlePhotoSupportChange_);
+  });
 
   [els.people, els.shower].forEach(function (control) {
     if (control) control.addEventListener('change', function () {
@@ -2157,11 +2313,11 @@
      送信ボタン文言を、選択中の支払方法（カード／現金・PayPay・未定／未選択）で一括更新する。
      送信処理・Stripe Checkout遷移ロジックには関与しない（表示文言のみ）。 */
   function updateBookingFlowCopy_() {
-    var copy = Logic.bookingFlowCopy(checkedPaymentMethod(), locale);
+    var copy = flowCopy_(checkedPaymentMethod());
     setText_(els.flowBannerTitle, copy.banner.title);
     setText_(els.flowBannerBody, copy.banner.body);
-    var confirmCopy = Logic.bookingFlowCopy(state.paymentMethod || checkedPaymentMethod(), locale);
-    var confirmKind = confirmCopy.kind === 'neutral' ? Logic.bookingFlowCopy('未定', locale) : confirmCopy;
+    var confirmCopy = flowCopy_(state.paymentMethod || checkedPaymentMethod());
+    var confirmKind = confirmCopy.kind === 'neutral' ? (photoSupportSelected_() ? flowCopy_('') : Logic.bookingFlowCopy('未定', locale)) : confirmCopy;
     setText_(els.confirmHeading, confirmKind.confirmHeading);
     setText_(els.confirmFlowTitle, confirmKind.banner.title);
     setText_(els.confirmFlowBody, confirmKind.banner.body);
@@ -2170,6 +2326,7 @@
   }
 
   function submitLabelFor_(paymentMethod) {
+    if (photoSupportSelected_()) return Logic.photoSupportFlowCopy(locale).submitLabel;
     return Logic.isCardPaymentMethodValue(paymentMethod)
       ? Logic.bookingFlowCopy(paymentMethod, locale).submitLabel
       : UI_TEXT.submitLabel;
@@ -2218,6 +2375,23 @@
       if (eventPlanSelected_()) {
         if (fields.people && !Logic.isEventPlanPeopleValue(fields.people)) {
           errors.people = Logic.messageForErrorCode('EVENT_PLAN_PEOPLE_EXCEEDED', locale, brand);
+        }
+      } else if (selectedPlan_() === Logic.PHOTO_SUPPORT_PLAN_CODE) {
+        /* Issue #667: 作品撮りサポートは1〜4名・スタッフ対応の選択必須・承認後のカード決済のみ（サーバー側でも同じ条件で拒否する）。 */
+        if (fields.people && !Logic.photoSupportPeopleAllowed(fields.people)) {
+          errors.people = Logic.messageForErrorCode('PHOTO_SUPPORT_PEOPLE_EXCEEDED', locale, brand);
+        }
+        if (!photoSupportServices_()) {
+          if (els.photoError) {
+            els.photoError.textContent = Logic.messageForErrorCode('PHOTO_SUPPORT_SERVICE_REQUIRED', locale, brand);
+            els.photoError.hidden = false;
+          }
+          showGlobalError(Logic.messageForErrorCode('PHOTO_SUPPORT_SERVICE_REQUIRED', locale, brand), []);
+          return;
+        }
+        if (els.photoError) els.photoError.hidden = true;
+        if (!Logic.isCardPaymentMethodValue(fields.paymentMethod)) {
+          errors.paymentMethod = Logic.messageForErrorCode('PHOTO_SUPPORT_CARD_ONLY', locale, brand);
         }
       } else if (selectedPlan_() === Logic.SHOWER_PACK_PLAN_CODE) {
         /* 土日祝4時間シャワーパックは1〜2名・4時間（サーバー側でも同じ条件で拒否する）。 */
@@ -2557,9 +2731,11 @@
         note: state.note,
         isMember: state.isMember,
         plan: selectedPlan_(),
+        supportServices: photoSupportSelected_() ? photoSupportServices_() : '',
+        supportEquipment: photoSupportSelected_() ? photoSupportEquipmentMap_() : {},
         shower: showerSelected_(),
         showerScheduleConfirmed: !!els.showerSchedule && els.showerSchedule.checked,
-        autoPairPack: (brand === 'snb' || brand === 'mens') && memberFeaturesEnabled_() && !showerPackSelected_(),
+        autoPairPack: (brand === 'snb' || brand === 'mens') && memberFeaturesEnabled_() && !showerPackSelected_() && !photoSupportSelected_(),
         /* Issue #548: V2で確認済みなら、サーバーが発行した証明を送る。有効性・予約メールとの一致・会員資格はサーバーが再判定する。 */
         memberProof: memberVerified_() ? memberAuth.proof : '',
         /* Issue #559: テスト資格はPOST本文のJSONだけで送る。有効性・予約メールとの一致・モードはサーバーが判定する。 */
@@ -2592,6 +2768,19 @@
             return;
           }
           hasSubmittedSuccessfully = true;
+          /* Issue #667: 作品撮りサポートの申込成功だけ、既存の成果イベント(generate_lead)にプランとスタッフ対応種別を付けて送る（新しい成果イベントは作らない。
+             分類値のみ。氏名・メール・日時・自由記述は送らない）。通常予約は従来どおり送らない。 */
+          if (body.supportStage && payload.plan === Logic.PHOTO_SUPPORT_PLAN_CODE &&
+              window.StudioAnalytics && typeof window.StudioAnalytics.trackGenerateLead === 'function') {
+            try {
+              window.StudioAnalytics.trackGenerateLead('mens_photo_support:' + body.bookingId, {
+                lead_type: 'mens_photo_support',
+                form_name: 'mens_booking',
+                plan_code: Logic.PHOTO_SUPPORT_PLAN_CODE,
+                support_service: payload.supportServices || ''
+              });
+            } catch (analyticsError) { /* 計測失敗で予約は止めない */ }
+          }
           els.completeBookingId.textContent = body.bookingId || '';
           renderOptionsResult_(body.options);
           els.completeBackLink.href = backUrl;
@@ -2644,7 +2833,7 @@
           if (els.completePartyNotice) els.completePartyNotice.hidden = true;
           /* Issue #445: カードは「予約申込を受け付けました→お支払い完了で確定」を前面に出し、
              「仮予約」を主見出しにしない。現金・PayPay・未定は従来どおり仮予約受付。内部状態（PENDING）は不変。 */
-          var completeCopy = Logic.bookingFlowCopy(state.paymentMethod, locale);
+          var completeCopy = flowCopy_(state.paymentMethod);
           var completeIsCard = Logic.isCardPaymentMethodValue(state.paymentMethod);
           setText_(els.completeHeading, completeCopy.completeHeading);
           setText_(els.completeStatusLabel, completeCopy.statusLabel);
@@ -2660,7 +2849,15 @@
              確定連絡そのものが24時間以内に届くという前提の文言のため、カード決済では
              出さない（カードは決済ページでの支払い完了で確定する）。代わりにカード注意書きを表示する。現金・PayPay・
              未定は既存文言のまま変更しない。 */
-          if (Logic.isCardPaymentMethodValue(state.paymentMethod) && body.dryRun !== true) {
+          if (body.supportStage === 'AWAITING_APPROVAL' && body.dryRun !== true) {
+            /* Issue #667: 作品撮りサポートは承認待ち。決済ページへは進めない（startCardCheckoutを呼ばない。サーバーも承認前の決済を拒否する）。 */
+            if (els.completeGenericNotice) els.completeGenericNotice.hidden = true;
+            renderMultilineNotice_(els.completeCheckoutNotice, null);
+            renderMultilineNotice_(els.completeCheckoutUncertainNotice, null);
+            if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = true;
+            renderMultilineNotice_(els.completeCardPaymentNotice, Logic.photoSupportReceivedNoticeLines(locale));
+            goToStep('complete');
+          } else if (Logic.isCardPaymentMethodValue(state.paymentMethod) && body.dryRun !== true) {
             if (els.completeGenericNotice) els.completeGenericNotice.hidden = true;
             /*
              * Issue #341 PR-B / PR #354レビュー対応・項目3: startCardCheckoutを追加で

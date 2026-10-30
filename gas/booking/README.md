@@ -8020,3 +8020,15 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - 失効（`expirePendingBookings`）: 承認後は期限（24時間）まで保持し、期限後は不成立（`EXPIRED`・枠解放）。承認待ちはIssue #668に定めのない自動TTLを置かず運営の判断まで保持（利用開始時刻を過ぎた未判断のものだけ失効）。
 - **Bookingsシートのヘッダー行の末尾（`planCode` の右隣）に、次の順で5列を手動で追記する**: `largeParty`, `partySurcharge`, `largePartyApprovalStatus`, `largePartyApprovedAt`, `largePartyPaymentDueAt`。反映順は「ヘッダー追記 → Booking Admin → Booking Web App」。
 - 日程変更（`BookingReschedule` → `FeeCalculator.quoteFee`）は保存済みの `people` で人数加算を再計算する。**予約人数そのものの変更（2日前まで再計算・差額請求／前日・当日の減員は返金なし）を行う専用の操作は未実装**で、現状は管理画面の金額修正（`updateBookingPrice`）での個別対応となる。
+
+## Issue #667: SNB mens限定 作品撮りサポートプラン（承認制・承認後24時間決済）
+
+- 商品仕様の正本は Issue #667、金額・条件の実装正本は `BookingPricing.gs` の `PHOTO_SUPPORT_`（`docs/membership-pricing-2026-12.md` に要約）。プラン識別子は `mens_photo_support`（`Bookings.planCode`・Calendarの`planCode`タグ）。
+- **Bookingsシートへ列追加（本番反映の前提）**: ヘッダー行の末尾（`planCode`の右隣）に `supportServices` `supportRoomAmount` `supportStaffAmount` `supportApprovedAt` `supportPaymentDueAt` `supportApprovalMailSentAt` `supportEquipment` `supportEquipmentAmount` をこの順で手動追記する（計8列）。**反映順は「ヘッダー追記 → Booking Admin → Booking Web App」**（追記前に反映すると承認の記録が読み書きされず、承認前後の判定が崩れる）。
+- 状態の軸: 予約`status`（PENDING→CONFIRMED／CANCELLED／EXPIRED）に加え、承認は `supportApprovedAt`（空＝承認待ち）で表す。`Booking.photoSupportStage(record)` が `AWAITING_APPROVAL`（承認待ち・仮押さえ中・決済不可）／`AWAITING_PAYMENT`（承認済み・支払い待ち）／`CONFIRMED`／`CANCELLED`／`EXPIRED` を返し、管理画面・メール・決済ゲートがこの1関数を共有する。
+- 有料機材: `supportEquipment`（`{機材コード: 数量}`）を申込に添えると、共通機材カタログ（`BookingOptions.computeSupportEquipment`）の単価・在庫・セット無料条件で料金を計算して `priceAmount` に含める（`Bookings.supportEquipment` / `supportEquipmentAmount` に保存。ヘッダー追記は末尾に `supportEquipment` `supportEquipmentAmount` を加えた8列）。Studio Xのセルフレンタル許可・設営方法の選択は使わない。一覧は `optionCatalog?brand=mens` の `supportEquipment`。
+- 申込（`createBooking`）: mens・利用日≥2026-12-01・1〜4名・スタッフ対応必須（`SETUP|CLEANUP|BOTH`）・利用日の7日前まで（施設timezoneの暦日）・支払方法はオンラインカードのみ・利用日の実会員資格（V2はメールOTP確認済み証明も必須）を満たすときだけ成立。同時オプション申込は拒否。PENDINGで仮押さえ（Calendarイベント作成）し、申込受付メール（承認待ち）を送る。金額は `priceAmount`（部屋料金＋スタッフ対応料金）、内訳は `supportRoomAmount` / `supportStaffAmount`。
+- 承認（Booking Admin。`approvePhotoSupport` → `adminApprovePhotoSupport`）: 承認時点でも会員資格を再確認し、`supportApprovedAt` と `supportPaymentDueAt`（承認+24時間）を記録、お支払いページ入りの承認メール（`MAIL_TYPES.SUPPORT_APPROVED`。送信済みは`supportApprovalMailSentAt`）を送る。二重承認は冪等（期限は延長しない。メール未送信のときだけ再送）。不承認は `cancelBookingAdmin`（承認前のキャンセルは「承認できませんでした」メール）。
+- 決済ゲート: `beginCardCheckout` は承認前に `SUPPORT_NOT_APPROVED`、期限後に `SUPPORT_PAYMENT_EXPIRED` を返す（Stripeを呼ばない）。`confirmBooking`（手動・Webhook共通）は承認済み＋`paymentStatus=paid` でなければ `SUPPORT_NOT_APPROVED` / `SUPPORT_PAYMENT_REQUIRED` で拒否する。お支払いページは `/mens/booking/support-payment/?b=<bookingId>#t=<checkoutAccessToken>`（トークンはURLフラグメント。ログ・Refererに出さない）。
+- 失効: `expirePendingBookings` は作品撮りサポートに24時間/72時間TTLを使わず、承認前は「利用開始の`PENDING_TTL_MIN_HOURS_BEFORE_START`前」、承認後は `supportPaymentDueAt` で判定する。失効（EXPIRED）で枠を解放し、不成立メールを送る（通常料金へ自動変換しない）。Stripe Checkout発行済みのときは既存の仮押さえ失効（paymentHoldExpiresAt）判定が優先。
+- 対象外: 日程変更（`PHOTO_SUPPORT_RESCHEDULE_NOT_SUPPORTED`）。取消・返金は既存のStripe取消・返金（支払総額に既存のキャンセル規定）。

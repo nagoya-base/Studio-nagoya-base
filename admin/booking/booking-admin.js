@@ -57,6 +57,15 @@ var DETAIL_FIELDS = [
    */
   /* Issue #488: イベント開催日限定プランの予約のみサーバーが非空で返す（通常予約は下のrenderで行ごと省く）。 */
   ['planLabel', 'ご利用プラン'],
+  /* Issue #667: 作品撮りサポートプランの予約のみサーバーが非空で返す（他の予約は下のrenderで行ごと省く）。 */
+  ['supportStageLabel', '申込の状態'],
+  ['supportServicesLabel', 'スタッフ対応（設営／片付け）'],
+  ['supportRoomAmount', '部屋料金（税込）'],
+  ['supportStaffAmount', 'スタッフ対応料金（税込）'],
+  ['supportEquipmentLines', '有料機材（共通カタログ）'],
+  ['supportEquipmentAmount', '有料機材料金（税込）'],
+  ['supportApprovedAt', '承認日時'],
+  ['supportPaymentDueAt', '支払い期限（承認後24時間）'],
   ['priceAmount', '自動計算金額（税込）'],
   ['priceTier', '料金区分'],
   ['priceDayType', '曜日区分'],
@@ -151,6 +160,8 @@ function formatValue(key, value) {
   if (key === 'status') return statusLabel(value) || '（未設定）';
   if (key === 'priceTier') return priceTierLabel_(value) || '（未設定）';
   if (key === 'priceDayType') return priceDayTypeLabel_(value) || '（未設定）';
+  if (key === 'supportEquipmentLines') return Array.isArray(value) ? value.join('、') : '';
+  if (key === 'supportRoomAmount' || key === 'supportStaffAmount' || key === 'supportEquipmentAmount') return formatYen_(value);
   if (key === 'priceAmount' || key === 'effectivePriceAmount' || key === 'priceOverrideAmount') {
     return formatYen_(value) || '（未計算。過去の予約データ等）';
   }
@@ -408,6 +419,11 @@ function render() {
        （reviveExpiredBooking）が最終判定する。ここでは表示上の出し分けのみ）。 */
     var canRevive = b.status === 'EXPIRED';
     var optionPending = isOptionApprovalPending_(b);
+    /* Issue #667: 作品撮りサポートプランは「承認」で支払い待ちへ進める。承認前・支払い前は通常の「確定」を出さない
+       （サーバー側confirmBookingも承認済み＋入金済みでなければ拒否する）。不承認は「キャンセル」（仮押さえ解除＋不承認メール）。 */
+    var supportAwaitingApproval = b.supportStage === 'AWAITING_APPROVAL';
+    var supportAwaitingPayment = b.supportStage === 'AWAITING_PAYMENT';
+    if (supportAwaitingApproval || supportAwaitingPayment) canConfirm = false;
     /* Issue #668: 大人数利用（5〜7名）の承認待ちは、確定ではなく承認／不承認で扱う（確定はサーバー側でも承認前は拒否される）。 */
     var largePartyAwaiting = b.largeParty === true && b.status === 'PENDING' && b.largePartyApprovalStatus === 'PENDING_APPROVAL';
     var actions = '';
@@ -419,7 +435,12 @@ function render() {
     if (largePartyAwaiting) {
       actions += '<button type="button" class="action confirm" data-action="approve-party" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>承認</button>';
       actions += '<button type="button" class="action cancel" data-action="reject-party" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>不承認</button>';
-    } else if (canConfirm && optionPending) {
+    } else if (supportAwaitingApproval) {
+      actions += '<button type="button" class="action confirm" data-action="approve-support" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>承認（24時間以内に決済案内）</button>';
+    } else if (supportAwaitingPayment && b.canResendSupportApproval) {
+      actions += '<button type="button" class="action confirm" data-action="approve-support" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>承認案内メールを再送</button>';
+    }
+    if (canConfirm && optionPending) {
       actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '" disabled title="予約オプションの承認待ちがあります。詳細でオプションを確認してください">オプション確認後に確定</button>';
     } else if (canConfirm) {
       actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '"' + (busy || awaitingPaymentLink ? ' disabled' : '') + (awaitingPaymentLink ? ' title="決済リンク未送信のため確定できません（詳細から送信してください）"' : '') + '>確定</button>';
@@ -459,6 +480,11 @@ function render() {
     var planLine = b.planLabel
       ? '<div class="card-plan">プラン: ' + escapeHtml(b.planLabel) + '</div>'
       : '';
+    if (b.supportStage) {
+      planLine += '<div class="card-plan">状態: ' + escapeHtml(b.supportStageLabel || b.supportStage) +
+        (b.supportServicesLabel ? ' ／ スタッフ対応: ' + escapeHtml(b.supportServicesLabel) : '') +
+        (b.supportPaymentDueAt ? ' ／ 支払い期限: ' + escapeHtml(b.supportPaymentDueAt) : '') + '</div>';
+    }
     var priceLine = formattedPrice
       ? '<div class="card-price">利用料金: ' + escapeHtml(formattedPrice) + (b.priceOverridden ? '（修正済み）' : '') + '</div>'
       : '';
@@ -585,6 +611,11 @@ function showDetailModal(booking) {
     var label = pair[1];
     /* Issue #488: プラン名はイベント限定プランの予約だけに出す（通常予約に「（未設定）」の行を増やさない）。 */
     if (key === 'planLabel' && !booking.planLabel) return '';
+    if (key.indexOf('support') === 0 && !booking.supportStage) return '';
+    if ((key === 'supportApprovedAt' || key === 'supportPaymentDueAt') && !booking[key]) return '';
+    if (key === 'supportEquipmentLines' && !(booking.supportEquipmentLines && booking.supportEquipmentLines.length)) return '';
+    if (key === 'supportEquipmentAmount' && !(booking.supportEquipmentLines && booking.supportEquipmentLines.length)) return '';
+    if ((key === 'supportRoomAmount' || key === 'supportStaffAmount') && (booking[key] === null || booking[key] === undefined)) return '';
     return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
   }).join('');
   renderPaymentLinkSection_(booking);
@@ -1982,6 +2013,47 @@ function runConfirm(bookingId) {
 }
 
 /*
+ * 作品撮りサポートプランの承認（Issue #667）。runConfirmと同じ配線（window.confirm → google.script.run →
+ * 成否問わずloadBookings()で再取得してからbusy解除）。承認で利用者へ「お支払いページ＋承認後24時間の期限」のメールが届く。
+ * 承認の最終判定（会員資格・状態・仮押さえ）はサーバー側（adminApprovePhotoSupport）。不承認は一覧の「キャンセル」。
+ */
+function runApproveSupport(bookingId) {
+  var booking = state.bookings.find(function (b) { return b.bookingId === bookingId; });
+  var confirmed = window.confirm(
+    (booking
+      ? '予約ID: ' + booking.bookingId + '\n' +
+        '利用日: ' + booking.date + ' ' + booking.startAt + '-' + booking.endAt + '\n' +
+        '利用者名: ' + booking.name + '\n' +
+        'スタッフ対応: ' + (booking.supportServicesLabel || '') + '\n\n'
+      : '') +
+    'スタッフ対応の可否・機材・予約枠を確認済みとして承認します。\n\n' +
+    '利用者へお支払いページ入りの承認メールを送信し、承認から24時間をお支払い期限とします（期限内に未払いなら不成立・枠解放）。\n' +
+    '承認できない場合は、この確認を取り消し、一覧の「キャンセル」で仮押さえを解除してください。\n\n' +
+    '実行しますか？'
+  );
+  if (!confirmed) return;
+
+  setBusy(bookingId, true);
+  setStatusLine('承認処理中…');
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result || !result.success) {
+        alert('承認できませんでした: ' + (result && result.error && result.error.message));
+      } else if (result.mailSent === false) {
+        alert('承認は記録しましたが、承認案内メールを送信できませんでした。' +
+          (result.mailError ? '（' + (result.mailError.code || '') + '）' + (result.mailError.message || '') : '') +
+          '\n原因を解消後、一覧の「承認案内メールを再送」から再試行してください（支払い期限は延長されません）。');
+      }
+      loadBookings(function () { setBusy(bookingId, false); });
+    })
+    .withFailureHandler(function (error) {
+      alert('承認でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      loadBookings(function () { setBusy(bookingId, false); });
+    })
+    .adminApprovePhotoSupport(bookingId);
+}
+
+/*
  * 大人数利用（5〜7名。Issue #668）の承認／不承認。runConfirmと同じ配線（確認ダイアログ → google.script.run → 一覧再取得）。
  * 承認は予約代表者の会員資格を再確認し、確定料金・承認から24時間の支払期限を利用者へメールする。不承認は仮押さえを解除して不成立にする。
  */
@@ -3265,6 +3337,7 @@ document.getElementById('list').addEventListener('click', function (event) {
   if (action === 'detail') openDetail(bookingId);
   if (action === 'confirm') runConfirm(bookingId);
   if (action === 'confirm-mail') runConfirm(bookingId);
+  if (action === 'approve-support') runApproveSupport(bookingId);
   if (action === 'approve-party') runLargePartyDecision(bookingId, true);
   if (action === 'reject-party') runLargePartyDecision(bookingId, false);
   if (action === 'change-people') runChangePeople(bookingId);

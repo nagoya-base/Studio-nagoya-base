@@ -146,6 +146,104 @@ var BookingMailTemplates = (function () {
     ]);
   }
 
+
+  /* Issue #667: 作品撮りサポートプラン（mens）の予約か。BookingPricing未読込の単体利用でも通常予約の本文を壊さない。 */
+  function isPhotoSupportRecord_(record) {
+    return !!record && record.planCode === 'mens_photo_support';
+  }
+
+  /* Issue #667: 金額内訳（部屋料金＋スタッフ対応料金）と対応内容。申込受付・承認・管理画面で同じ表示にする。 */
+  function photoSupportBreakdownLines_(record) {
+    var servicesLabel = typeof BookingPricing !== 'undefined' ? BookingPricing.photoSupportServicesLabel(record.supportServices) : '';
+    var room = formatJpyAmount_(record.supportRoomAmount);
+    var staff = formatJpyAmount_(record.supportStaffAmount);
+    var total = formatJpyAmount_(record.priceAmount);
+    var equipmentItems = typeof BookingOptions !== 'undefined' && record.supportEquipment ? BookingOptions.describeSupportEquipment(record.supportEquipment) : [];
+    var equipmentAmount = formatJpyAmount_(record.supportEquipmentAmount);
+    return [
+      'ご利用プラン: ' + (typeof BookingPricing !== 'undefined' ? BookingPricing.planLabel(record.planCode) : '作品撮りサポートプラン'),
+      servicesLabel ? 'スタッフ対応: ' + servicesLabel : '',
+      room ? '部屋料金: ' + room + '（税込）' : '',
+      staff ? 'スタッフ対応料金: ' + staff + '（税込）' : '',
+      equipmentItems.length > 0 ? '有料機材: ' + equipmentItems.join('、') : '',
+      equipmentItems.length > 0 && equipmentAmount ? '有料機材料金: ' + equipmentAmount + '（税込。共通の機材カタログの料金）' : '',
+      total ? 'お支払い合計: ' + total + '（税込' + (equipmentItems.length > 0 ? '。部屋料金・スタッフ対応料金・有料機材料金の合計' : '。有料機材は別料金で、お申し込みの場合は合計に加算します') + '）' : ''
+    ];
+  }
+
+  /* Issue #667: 申込受付メール。承認待ちであり、承認前はお支払いできないこと・当日依頼や常駐対応でないことを必ず示す。 */
+  function buildPhotoSupportReceivedMail_(record, config) {
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var timezone = config.timezone;
+    var duration = formatDurationMinutes_(record.startAt, record.endAt);
+    var subject = '【' + brandLabel + '】作品撮りサポートプランのお申し込みを受け付けました（承認待ち・未確定）';
+    var body = joinNonEmpty_([
+      record.name + ' 様',
+      '',
+      brandLabel + ' の作品撮りサポートプランのお申し込みを受け付けました。対象の時間帯は仮押さえしています。',
+      '※このメールの時点では予約は確定していません。運営がスタッフ対応の可否・機材・予約枠を確認します（承認待ち）。',
+      '※承認前はお支払いできません。承認できる場合は、確定料金とお支払いのご案内をお送りします。お支払い期限は承認後24時間です。',
+      '※承認できない場合は仮押さえを解除し、本プランは不成立となります（通常のSNB mens料金へは自動で切り替えません）。',
+      '',
+      '予約ID: ' + record.bookingId,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '開始時刻: ' + formatTime_(record.startAt, timezone),
+      '終了時刻: ' + formatTime_(record.endAt, timezone),
+      duration ? '利用時間: ' + duration : '',
+      '利用人数: ' + record.people,
+      photoSupportBreakdownLines_(record).join('\n'),
+      '',
+      '【ご注意】',
+      'スタッフ対応は、照明配置と白／黒背景を使った撮影環境の事前準備・片付けに限ります（撮影代行・緊縛の施術や指導・吊り設備の組み替えは含みません）。',
+      'スタッフが常駐するサービスではなく、当日のご依頼はできません。SNB MEMBER限定のサービスです。',
+      contactLine_(config),
+      guideLine_(record),
+      signatureLines_(record)
+    ]);
+    return { subject: subject, body: body };
+  }
+
+  /* Issue #667: 承認・お支払い案内メール。確定料金・お支払いページ・承認後24時間の期限を示し、お支払い完了までは未確定であることを明記する。 */
+  function buildSupportApprovedMail(record, config, payment) {
+    var url = payment && typeof payment.url === 'string' ? payment.url : '';
+    if (!/^https:\/\/[^\s]+$/.test(url)) {
+      throw new Error('お支払いページのURLが無効なため承認案内メールを作成できません。');
+    }
+    var deadline = formatDeadline_(record.supportPaymentDueAt, config.timezone);
+    if (!deadline) {
+      throw new Error('お支払い期限が無効なため承認案内メールを作成できません。');
+    }
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var timezone = config.timezone;
+    var duration = formatDurationMinutes_(record.startAt, record.endAt);
+    var subject = '【' + brandLabel + '】作品撮りサポートプランを承認しました（お支払いは' + deadline + 'まで）';
+    var body = joinNonEmpty_([
+      record.name + ' 様',
+      '',
+      brandLabel + ' の作品撮りサポートプランのお申し込みを承認しました。',
+      '※お支払いが完了するまで予約は確定していません。下記のお支払い期限（承認後24時間）までにお支払いください。',
+      '※期限までにお支払いが完了しない場合は不成立となり、仮押さえを解除します。通常のSNB mens料金へは自動で切り替わりません。',
+      '',
+      'お支払いページ: ' + url,
+      'お支払い期限: ' + deadline,
+      '',
+      '予約ID: ' + record.bookingId,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '開始時刻: ' + formatTime_(record.startAt, timezone),
+      '終了時刻: ' + formatTime_(record.endAt, timezone),
+      duration ? '利用時間: ' + duration : '',
+      '利用人数: ' + record.people,
+      photoSupportBreakdownLines_(record).join('\n'),
+      '',
+      '確定後のキャンセルは、お支払い総額（部屋料金・スタッフ対応料金・同時にご注文の有料機材料金）に対し、SNBの既存のキャンセル規定を適用します。',
+      'すでにお支払い済みの場合は、二重決済をせず、運営までご連絡ください。',
+      contactLine_(config),
+      guideLine_(record),
+      signatureLines_(record)
+    ]);
+    return { subject: subject, body: body };
+  }
+
   /* record.createdAt/record.startAtがDate値であるかのダックタイピング判定
      （gas/booking/shared/Booking.gsのisDateLike_と同じ方針。互いに依存させないため
      ここに複製する）。 */
@@ -250,6 +348,7 @@ var BookingMailTemplates = (function () {
 
   function buildPendingMail(record, config) {
     if (isLargePartyRecord_(record)) return buildLargePartyPendingMail(record, config);
+    if (isPhotoSupportRecord_(record)) return buildPhotoSupportReceivedMail_(record, config);
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
     var startTime = formatTime_(record.startAt, timezone);
@@ -412,6 +511,27 @@ var BookingMailTemplates = (function () {
     var timezone = config.timezone;
     var startTime = formatTime_(record.startAt, timezone);
     var endTime = formatTime_(record.endAt, timezone);
+    if (isPhotoSupportRecord_(record) && !record.supportApprovedAt) {
+      /* Issue #667: 承認前のキャンセル＝不承認（スタッフ対応・機材・予約枠の都合）。仮押さえを解除し、プランは不成立。 */
+      return {
+        subject: '【' + brandLabel + '】作品撮りサポートプランを承認できませんでした',
+        body: joinNonEmpty_([
+          record.name + ' 様',
+          '',
+          '下記の作品撮りサポートプランのお申し込みは、スタッフ対応・機材・予約枠の都合により承認できませんでした。仮押さえは解除し、本プランは不成立です。お支払いは発生していません。',
+          '※通常のSNB mens料金へは自動で切り替わりません。通常の時間貸しをご希望の場合は、改めて予約ページからお申し込みください。',
+          '',
+          '予約ID: ' + record.bookingId,
+          '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+          '開始時刻: ' + startTime,
+          '終了時刻: ' + endTime,
+          '',
+          rebookLine_(record),
+          contactLine_(config),
+          signatureLines_(record)
+        ])
+      };
+    }
 
     var rejected = isLargePartyRecord_(record) && Booking.largePartyApprovalStatus(record) === Booking.LARGE_PARTY_APPROVAL.REJECTED;
     var subject = rejected
@@ -549,6 +669,29 @@ var BookingMailTemplates = (function () {
     var timezone = config.timezone;
     var startTime = formatTime_(record.startAt, timezone);
     var endTime = formatTime_(record.endAt, timezone);
+    if (isPhotoSupportRecord_(record)) {
+      /* Issue #667: 作品撮りサポートの不成立通知。通常のSNB mens料金へは自動で切り替えない。 */
+      return {
+        subject: '【' + brandLabel + '】作品撮りサポートプランは不成立となりました',
+        body: joinNonEmpty_([
+          record.name + ' 様',
+          '',
+          '下記の作品撮りサポートプランは、承認後24時間以内にお支払いが完了しなかったため（または承認に至らなかったため）、不成立となりました。仮押さえは解除しています。',
+          '※通常のSNB mens料金へは自動で切り替わりません。お支払いは発生していません。',
+          '',
+          '予約ID: ' + record.bookingId,
+          '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+          '開始時刻: ' + startTime,
+          '終了時刻: ' + endTime,
+          '',
+          '改めてご利用をご希望の場合は、予約ページから再度お申し込みください（作品撮りサポートプランは利用日の7日前までのお申し込みです）。',
+          rebookLine_(record),
+          'すでにお支払いが完了している場合は、再度のお申し込みや二重のお支払いをせず、下記までご連絡ください。',
+          contactLine_(config),
+          signatureLines_(record)
+        ])
+      };
+    }
 
     var subject = '【' + brandLabel + '】ご予約が期限切れになりました（要再申込み）';
     var body = joinNonEmpty_([
@@ -791,6 +934,7 @@ var BookingMailTemplates = (function () {
     buildLargePartyApprovedMail: buildLargePartyApprovedMail,
     buildPeopleChangedMail: buildPeopleChangedMail,
     buildCardCheckoutMail: buildCardCheckoutMail,
+    buildSupportApprovedMail: buildSupportApprovedMail,
     buildConfirmedMail: buildConfirmedMail,
     buildCancelledMail: buildCancelledMail,
     buildExpiredMail: buildExpiredMail,

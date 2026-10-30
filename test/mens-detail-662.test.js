@@ -24,6 +24,8 @@ var TARGETS = [
   'mens/booking/party/index.html',
   'mens/booking/payment-complete.html',
   'mens/booking/option-payment-complete.html',
+  /* Issue #667: 作品撮りサポートプラン（承認後のお支払いページ）も同じmens詳細ページの配色。 */
+  'mens/booking/support-payment/index.html',
   'mens/membership/complete.html'
 ];
 var META_PAGES = ['mens/how-to/index.html', 'mens/membership/index.html', 'mens/legal/index.html'];
@@ -85,7 +87,7 @@ test('mens-detail.css: 状態色（エラー・成功）を青へ置換せず、
   assert.strictEqual(css.indexOf('--ba-error:'), -1);
 });
 
-test('対象9ページだけが専用CSSとbodyクラスを持つ。対象外のHTMLには波及しない', function () {
+test('対象ページだけが専用CSSとbodyクラスを持つ。対象外のHTMLには波及しない', function () {
   TARGETS.forEach(function (f) {
     var h = read(f);
     var depth = f.split('/').length - 1;

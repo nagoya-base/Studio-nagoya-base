@@ -387,8 +387,28 @@ var SpreadsheetRepository = (function () {
      */
     'planCode',
     /*
+     * Issue #667で追加した列（末尾追記。本番反映時は既存Bookingsシートのヘッダー行の末尾（planCodeの右隣）へ
+     * 下記6列を同じ並びで手動追記が必要）。作品撮りサポートプラン（planCode='mens_photo_support'）以外では常に空。
+     * - supportServices: スタッフ対応の種別。'SETUP'（事前設営）|'CLEANUP'（片付け）|'BOTH'（事前設営＋片付け）。
+     * - supportRoomAmount / supportStaffAmount: 申込時に確定した金額内訳（部屋料金・スタッフ対応料金。合計がpriceAmount）。
+     * - supportApprovedAt: 運営が承認した日時。空＝承認待ち（この間は決済不可）。
+     * - supportPaymentDueAt: 承認後の支払い期限（承認から24時間）。この時刻までに支払いが完了しなければ不成立（EXPIRED）で枠を解放する。
+     * - supportApprovalMailSentAt: 承認・支払い案内メールの送信日時（空＝未送信。送信失敗時に管理画面から再送できる）。
+     * - supportEquipment / supportEquipmentAmount: 付けた有料機材と機材料金（下記。末尾の2列）。
+     */
+    'supportServices',
+    'supportRoomAmount',
+    'supportStaffAmount',
+    'supportApprovedAt',
+    'supportPaymentDueAt',
+    'supportApprovalMailSentAt',
+    /* - supportEquipment: 作品撮りサポートに付けた有料機材の項目（'EQ:<機材コード>:<数量>[:F<セット無料数>]'のカンマ区切り。空＝機材なし）。
+       - supportEquipmentAmount: 有料機材料金（円。共通機材カタログ由来。priceAmountに含む。空＝0円）。 */
+    'supportEquipment',
+    'supportEquipmentAmount',
+    /*
      * Issue #668で追加した列（末尾追記。本番反映時は既存Bookingsシートのヘッダー行の末尾（planCodeの
-     * 右隣）へ、次の順で手動追記が必要）。SNB mens大人数利用（5〜7名）の保存項目。予約人数そのものは people 列
+     * 右隣）へ、#667の列（supportEquipmentAmountまで）に続けて次の順で手動追記が必要）。SNB mens大人数利用（5〜7名）の保存項目。予約人数そのものは people 列
      * （料金計算の正本）。会員資格の確認結果は既存の membershipStatus 列（'ACTIVE'が確認済み）、仮押さえはstatus=PENDING。
      * - largeParty: 5〜7名の大人数利用なら TRUE。空は通常予約。
      * - partySurcharge: 人数加算額（円。予約1件につき1回。5名=1000/6名=2000/7名=3000）。通常予約は空。

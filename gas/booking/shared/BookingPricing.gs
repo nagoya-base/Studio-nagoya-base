@@ -79,7 +79,7 @@ var BookingPricing = (function () {
    *   （資格の確認は予約作成・日程変更・確定の各サーバー側処理が行い、この純粋関数は料金だけを決める）。
    * - 他の割引・優待との併用は無い（このプランの料金はisMember・価格overrideの影響を受けない）。
    */
-  var PLAN = { MEMBER_PAIR_3H: 'member_pair_3h', MENS_WEEKEND_SHOWER_4H: 'mens_weekend_shower_4h', OSU_COSPLAY_BASE_6H: 'osu_cosplay_base_6h' };
+  var PLAN = { MEMBER_PAIR_3H: 'member_pair_3h', MENS_WEEKEND_SHOWER_4H: 'mens_weekend_shower_4h', OSU_COSPLAY_BASE_6H: 'osu_cosplay_base_6h', MENS_PHOTO_SUPPORT: 'mens_photo_support' };
   var PAIR_PACK_ = {
     brands: ['snb', 'mens'],
     baseHours: 3,
@@ -117,6 +117,30 @@ var BookingPricing = (function () {
    *   適用し、通常予約へ自動適用しない。Studio Xの予約可能日であればいつでも選べる。
    *   識別子osu_cosplay_base_6hは既存予約・台帳との互換性のため維持する。
    */
+  /*
+   * Issue #667: SNB mens限定「作品撮りサポートプラン」。通常のMEMBER料金の値下げではなく、スタッフ対応（事前設営／片付け）を
+   * 実際に利用することを条件に、部屋料金をStudio Xの現行直接予約セルフ料金（STUDIO_X_V2_SELF_RATES_と同額）にする独立プラン
+   * （金額・条件はここが唯一の正本。通常料金表・ペアパック・シャワーパックには手を入れない）。
+   * - 対象: mens・SNB MEMBER（予約代表者本人の実会員資格。確認は予約作成・確定の各サーバー側処理）・1〜4名。緊縛の有無は料金条件にしない。
+   * - 料金: 部屋料金（平日1,200円/h・土日祝1,500円/hの単純時間比例）＋スタッフ対応料金
+   *   （事前設営3,000円／片付け3,000円／事前設営＋片付け5,000円。いずれか必須。スタッフ対応なしでは成立しない）。
+   * - 申込は利用日の7日前まで（applyDaysBefore）。承認前は決済できず、承認後の支払い期限は24時間（paymentDueHours）。
+   * - 提供開始（効力発生）は**利用日**が startDate 以降（ペアパック・シャワーパックと同じ利用日基準。#539）。予約作成日では判定しない。
+   *   30日前告知が済んでいることが前提で、告知日から30日以上あとの日に startDate を置くこと（この1箇所を変えれば全入口が追随する）。
+   * - 有料機材は共通機材カタログの別注文（本プランの金額には含めない）。
+   */
+  var PHOTO_SUPPORT_ = {
+    brands: ['mens'],
+    maxPeople: 4,
+    applyDaysBefore: 7,
+    paymentDueHours: 24,
+    startDate: '2026-12-01',
+    hourlyRate: { WEEKDAY: 1200, WEEKEND_HOLIDAY: 1500 },
+    staffFee: { SETUP: 3000, CLEANUP: 3000, BOTH: 5000 },
+    staffLabel: { SETUP: '事前設営', CLEANUP: '片付け', BOTH: '事前設営＋片付け' },
+    label: 'SNB mens 作品撮りサポートプラン'
+  };
+
   var EVENT_BASE_PLAN_ = {
     brands: ['studio_x'],
     minHours: 6,
@@ -293,7 +317,44 @@ var BookingPricing = (function () {
 
   /* Issue #586: 会員限定の独立プラン（ペアパック・シャワーパック）か。実会員資格の確認・日程変更時の再確認の対象。 */
   function isMemberPlan(plan) {
-    return plan === PLAN.MEMBER_PAIR_3H || plan === PLAN.MENS_WEEKEND_SHOWER_4H;
+    return plan === PLAN.MEMBER_PAIR_3H || plan === PLAN.MENS_WEEKEND_SHOWER_4H || plan === PLAN.MENS_PHOTO_SUPPORT;
+  }
+
+  /* Issue #667: 作品撮りサポートプランか（承認制・承認後24時間決済・スタッフ対応必須・1〜4名の対象）。 */
+  function isPhotoSupport(plan) {
+    return plan === PLAN.MENS_PHOTO_SUPPORT;
+  }
+
+  /* Issue #667: 提供する利用日か（利用日 >= 効力発生日。ペアパック・シャワーパックと同じ利用日基準）。形式不正はfalse（fail-closed）。 */
+  function isPhotoSupportAvailableOnDate(dateString) {
+    return isValidDateString_(dateString) && dateString >= PHOTO_SUPPORT_.startDate;
+  }
+
+  /* Issue #667: 1〜4名限定。5名以上・数値以外はfalse。 */
+  function isPhotoSupportPeople(people) {
+    var m = /^\s*([1-9]\d*)\s*名\s*$/.exec(String(people === undefined || people === null ? '' : people));
+    return !!m && Number(m[1]) >= 1 && Number(m[1]) <= PHOTO_SUPPORT_.maxPeople;
+  }
+
+  /* スタッフ対応の種別（'SETUP'|'CLEANUP'|'BOTH'）の正規化。空・未知の値はnull（スタッフ対応なしでは成立しないため呼び出し側が拒否する）。 */
+  function normalizeSupportServices(value) {
+    return value === 'SETUP' || value === 'CLEANUP' || value === 'BOTH' ? value : null;
+  }
+
+  function photoSupportServicesLabel(services) {
+    return PHOTO_SUPPORT_.staffLabel[services] || '';
+  }
+
+  /*
+   * Issue #667: 申込期限（利用日の7日前まで）。todayString・dateStringはどちらも施設timezone基準の'YYYY-MM-DD'。
+   * 利用日 - 今日 >= 7日 のときだけ申込できる。形式不正はfail-closed（期限超過扱い）。
+   */
+  function isPhotoSupportApplyOpen(dateString, todayString) {
+    if (!isValidDateString_(dateString) || !isValidDateString_(todayString)) return false;
+    var d = dateString.split('-');
+    var t = todayString.split('-');
+    var days = Math.round((Date.UTC(Number(d[0]), Number(d[1]) - 1, Number(d[2])) - Date.UTC(Number(t[0]), Number(t[1]) - 1, Number(t[2]))) / 86400000);
+    return days >= PHOTO_SUPPORT_.applyDaysBefore;
   }
 
   /* Issue #586: シャワーパックか（シャワー料金を部屋料金に含める＝シャワー注文を0円にする対象）。 */
@@ -312,6 +373,7 @@ var BookingPricing = (function () {
     if (value === PLAN.MEMBER_PAIR_3H) return PLAN.MEMBER_PAIR_3H;
     if (value === PLAN.MENS_WEEKEND_SHOWER_4H) return PLAN.MENS_WEEKEND_SHOWER_4H;
     if (value === PLAN.OSU_COSPLAY_BASE_6H) return PLAN.OSU_COSPLAY_BASE_6H;
+    if (value === PLAN.MENS_PHOTO_SUPPORT) return PLAN.MENS_PHOTO_SUPPORT;
     return null;
   }
 
@@ -348,6 +410,7 @@ var BookingPricing = (function () {
   function planLabel(plan) {
     if (plan === PLAN.OSU_COSPLAY_BASE_6H) return EVENT_BASE_PLAN_.label;
     if (plan === PLAN.MENS_WEEKEND_SHOWER_4H) return SHOWER_PACK_.label;
+    if (plan === PLAN.MENS_PHOTO_SUPPORT) return PHOTO_SUPPORT_.label;
     return '';
   }
 
@@ -461,6 +524,27 @@ var BookingPricing = (function () {
         return { valid: false, error: { code: 'PLAN_DURATION_INVALID', message: SHOWER_PACK_.label + 'は4時間でご利用ください。' } };
       }
     }
+    var supportServices = null;
+    var supportEquipment = { empty: true, lines: [], items: [], totalJpy: 0 };
+    if (plan === PLAN.MENS_PHOTO_SUPPORT) {
+      /* Issue #667: 独立プラン。対象ブランド（mensのみ）・利用日（効力発生日以降）・スタッフ対応の種別（いずれか必須）を満たさなければ
+         通常料金へ倒さず拒否する。1〜4名・申込期限（7日前）・会員資格は人数・現在時刻・台帳を扱う呼び出し側（予約作成・見積りPOST）が判定する。 */
+      if (PHOTO_SUPPORT_.brands.indexOf(brand) === -1 || !isPhotoSupportAvailableOnDate(date)) {
+        return { valid: false, error: { code: 'PLAN_NOT_AVAILABLE', message: 'このプランはご利用いただけません。' } };
+      }
+      supportServices = normalizeSupportServices(params.supportServices);
+      if (supportServices === null) {
+        return { valid: false, error: { code: 'PHOTO_SUPPORT_SERVICE_REQUIRED', message: PHOTO_SUPPORT_.label + 'では、スタッフ対応（事前設営／片付け／事前設営＋片付け）を1つ選択してください。' } };
+      }
+      /* 有料機材（任意）。共通機材カタログ（BookingOptions.gs）を正本に、単価・在庫・セット無料条件を再利用する（複製しない）。 */
+      if (params.supportEquipment !== undefined && params.supportEquipment !== null && params.supportEquipment !== '') {
+        if (typeof BookingOptions === 'undefined') {
+          return { valid: false, error: { code: 'INVALID_OPTIONS', message: '有料機材の料金を計算できません。' } };
+        }
+        supportEquipment = BookingOptions.computeSupportEquipment(params.supportEquipment);
+        if (!supportEquipment.ok) return { valid: false, error: supportEquipment.error };
+      }
+    }
     if (plan === PLAN.OSU_COSPLAY_BASE_6H) {
       /* Issue #488 / #492 / #510: 独立プラン。ブランド・利用時間（最低6時間・1時間単位。startTimeがあれば8:00〜21:00の範囲）を満たさなければ通常料金へ倒さず拒否する（対象日の制限は無い）。 */
       if (EVENT_BASE_PLAN_.brands.indexOf(brand) === -1) {
@@ -501,14 +585,20 @@ var BookingPricing = (function () {
     }
     var hours = billableHours_(durationMinutes);
     var amount;
-    if (plan === PLAN.MEMBER_PAIR_3H) amount = computePairPackAmount_(dayType, hours);
+    var roomAmount = null;
+    var staffAmount = null;
+    if (plan === PLAN.MENS_PHOTO_SUPPORT) {
+      roomAmount = hours * PHOTO_SUPPORT_.hourlyRate[dayType];
+      staffAmount = PHOTO_SUPPORT_.staffFee[supportServices];
+      amount = roomAmount + staffAmount + supportEquipment.totalJpy;
+    } else if (plan === PLAN.MEMBER_PAIR_3H) amount = computePairPackAmount_(dayType, hours);
     else if (plan === PLAN.MENS_WEEKEND_SHOWER_4H) amount = SHOWER_PACK_.price;
     else if (plan === PLAN.OSU_COSPLAY_BASE_6H) amount = hours * EVENT_BASE_PLAN_.hourlyRate;
     else amount = computeAmount_(brand, generation, tier, dayType, hours);
     var baseAmount = amount;
     amount += partySurcharge;
 
-    return {
+    var result = {
       valid: true,
       price: {
         amount: amount,
@@ -532,6 +622,17 @@ var BookingPricing = (function () {
         durationMinutes: Number(durationMinutes)
       }
     };
+    if (plan === PLAN.MENS_PHOTO_SUPPORT) {
+      /* Issue #667: 金額内訳（部屋料金＋スタッフ対応料金）。amountは両者の合計で、予約・決済・メール・管理画面はこの内訳を共有する。 */
+      result.price.supportServices = supportServices;
+      result.price.roomAmount = roomAmount;
+      result.price.staffAmount = staffAmount;
+      /* 有料機材料金（共通カタログ）。amountは部屋料金＋スタッフ対応料金＋有料機材料金の合計（1回の承認・1回のお支払い）。 */
+      result.price.equipmentAmount = supportEquipment.totalJpy;
+      result.price.equipmentLines = supportEquipment.lines;
+      result.price.equipmentItems = supportEquipment.items;
+    }
+    return result;
   }
 
   return {
@@ -550,6 +651,19 @@ var BookingPricing = (function () {
     SHOWER_PACK_LABEL: SHOWER_PACK_.label,
     isShowerPack: isShowerPack,
     isMemberPlan: isMemberPlan,
+    PHOTO_SUPPORT_MAX_PEOPLE: PHOTO_SUPPORT_.maxPeople,
+    PHOTO_SUPPORT_APPLY_DAYS_BEFORE: PHOTO_SUPPORT_.applyDaysBefore,
+    PHOTO_SUPPORT_PAYMENT_DUE_HOURS: PHOTO_SUPPORT_.paymentDueHours,
+    PHOTO_SUPPORT_START_DATE: PHOTO_SUPPORT_.startDate,
+    PHOTO_SUPPORT_LABEL: PHOTO_SUPPORT_.label,
+    PHOTO_SUPPORT_HOURLY_RATE: PHOTO_SUPPORT_.hourlyRate,
+    PHOTO_SUPPORT_STAFF_FEE: PHOTO_SUPPORT_.staffFee,
+    isPhotoSupport: isPhotoSupport,
+    isPhotoSupportAvailableOnDate: isPhotoSupportAvailableOnDate,
+    isPhotoSupportPeople: isPhotoSupportPeople,
+    isPhotoSupportApplyOpen: isPhotoSupportApplyOpen,
+    normalizeSupportServices: normalizeSupportServices,
+    photoSupportServicesLabel: photoSupportServicesLabel,
     isShowerPackAvailableOnDate: isShowerPackAvailableOnDate,
     EVENT_BASE_PLAN_MAX_PEOPLE: EVENT_BASE_PLAN_.maxPeople,
     EVENT_BASE_PLAN_MIN_HOURS: EVENT_BASE_PLAN_.minHours,

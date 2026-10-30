@@ -53,7 +53,9 @@ function read(rel) { return fs.readFileSync(path.join(__dirname, '..', rel), 'ut
       /* Issue #546: 会員向け特典・先行予約のUI解除checkboxも会員自己申告checkboxとは別物（資格の正本にしない）。 */
       .replace(/<fieldset class="ba-fieldset" id="ba-member-unlock-field"[\s\S]*?<\/fieldset>/, '')
       /* Issue #488: イベント開催日限定プラン（Studio X）のcheckboxも会員自己申告checkboxとは別物。 */
-      .replace(/<fieldset class="ba-fieldset" id="ba-event-plan-field"[\s\S]*?<\/fieldset>/, '');
+      .replace(/<fieldset class="ba-fieldset" id="ba-event-plan-field"[\s\S]*?<\/fieldset>/, '')
+      /* Issue #667: 作品撮りサポートプラン（mens限定）の選択checkboxも会員自己申告checkboxとは別物（資格の正本はサーバー）。 */
+      .replace(/<fieldset class="ba-fieldset" id="ba-photo-support-field"[\s\S]*?<\/fieldset>/, '');
     assert.ok(html.indexOf('id="ba-is-member"') === -1 && step1.indexOf('type="checkbox"') === -1, 'Step1に会員checkboxは無い');
     var progress = html.slice(html.indexOf('id="ba-progress"'), html.indexOf('</ol>'));
     assert.deepStrictEqual(progress.match(/data-step="[a-z-]+"/g), ['data-step="datetime"', 'data-step="details"', 'data-step="confirm"', 'data-step="complete"']);

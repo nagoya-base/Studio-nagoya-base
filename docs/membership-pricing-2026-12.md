@@ -141,6 +141,19 @@ SNB mensだけの独立プラン `mens_weekend_shower_4h`（`Bookings.planCode` 
 - SNB / SNB mensの常設の撮影機材・備品は利用料金内。有料レンタル機材の案内はStudio X側へ統一する。
 - 過去のSNB / mens有料機材制度の記述を、現行サービスとして復活させない。Studio Xの単価は既存機材カタログを参照する。
 
+## SNB mens限定 作品撮りサポートプラン（Issue #667）
+
+- **位置づけ**: 通常のSNB mens料金の値下げではなく、スタッフ対応（事前設営／片付け）を実際に利用することを条件に、部屋料金をStudio Xの現行直接予約セルフ料金と同額にする**専用商品**。SNB MEMBER限定（予約代表者本人の実会員資格）・1〜4名限定・緊縛の有無は料金条件にしない。
+- **料金（税込）**: 部屋料金 平日1,200円/h・土日祝1,500円/h（単純時間比例）＋ スタッフ対応料金（事前設営3,000円／片付け3,000円／セット5,000円。いずれか必須）。有料機材は別料金。予約フォームで選択すると、共通機材カタログ（`BookingOptions.computeSupportEquipment`）の単価・在庫・セット無料条件で計算し、部屋料金・スタッフ対応料金と合わせて `priceAmount` に含め、1回の承認・1回のお支払いにする（別注文にしない。Studio Xのセルフレンタル許可・設営方法の選択は使わない。スタッフが事前配置する）。確定後のキャンセルはその総額に既存規定を適用。「有料機材はStudio Xのみ」とする現行資料がある場合は本商品の効力発生日（2026-12-01）に合わせて改訂する。
+- **正本**: 金額・条件は `gas/booking/shared/BookingPricing.gs` の `PHOTO_SUPPORT_`。フロント（`scripts/booking-logic.js`）の定数は表示制御用の写しで `test/mens-photo-support-667.test.js` が一致を検査する。
+- **流れ**: 申込（利用日の7日前まで。対象時間帯をPENDINGで**仮押さえ**）→ 運営が確認して**承認**（Booking Adminの「承認」。`supportApprovedAt`・`supportPaymentDueAt=承認+24時間`を記録し、お支払いページ入りの承認メールを送信）→ **承認後24時間以内**にオンラインカード決済 → 支払い完了で予約確定。承認前は決済不可（`beginCardCheckout`と`confirmBooking`がサーバー側で拒否）。不承認は管理画面の「キャンセル」（仮押さえ解除＋不承認メール）。期限内に未払いなら`expirePendingBookings`が不成立（EXPIRED）として枠を解放する。通常のSNB mens料金へは自動変換・自動課金しない。
+- **併用不可**: 通常SNB mens料金・#668の5〜7名・2名ペアパック・土日祝4時間シャワーパック・単体シャワーの同時申込。日程変更は対象外（取消して取り直す）。
+- **キャンセル**: 確定後は支払総額に既存SNBのキャンセル規定をそのまま適用（独自のキャンセル率なし）。7日前の申込締切後でも既存規定上無料の期間があることは運用上許容。
+- **適用基準日と効力発生日**: ペアパック・シャワーパックと同じく**利用日が2026-12-01以降**で判定する（予約作成日では判定しない。既存予約の保存済み料金は再計算しない）。効力発生日は `PHOTO_SUPPORT_.startDate`（BookingPricing.gs）と `PHOTO_SUPPORT_START_DATE_`（booking-logic.js）の2箇所だけで、**告知日から30日以上後**にすること。11/1までに告知できない場合は両定数と公開ページ・規約・特商法の「2026年12月1日」を同時に告知日+30日以降へ改める。
+- **公開面**: `/mens/`（導線・誤認防止の注記）、`/mens/membership/#photo-support`、`/mens/booking/`（明示選択）、`/mens/booking/support-payment/`（承認後のお支払いページ）、規約7章・特商法・FAQ（`mens/how-to` #faq-full）。
+- **GA4**: 既存の予約・成果イベントは維持し、新しい成果イベントは追加しない。CTAは既存の`cta_click`（`data-analytics-*`）を使う。
+- **運用（本番反映）**: Bookingsシートのヘッダー行末尾（`planCode`の右隣）に `supportServices` `supportRoomAmount` `supportStaffAmount` `supportApprovedAt` `supportPaymentDueAt` `supportApprovalMailSentAt` `supportEquipment` `supportEquipmentAmount` をこの順で追記してから、Booking Admin → Booking Web Appの順に反映する（`gas/booking/README.md` のIssue #667節）。
+
 ## 会員限定特典の開始時期と新規加入の案内（Issue #490 / #532 / #592）
 
 > **Issue #532 / #592**: 新規加入は入会日基準の月額Subscription（入会日から1か月有効・入会日基準で毎月自動更新）で統一している。プレスタートで加入済みの会員は存在しないため、「毎月1日更新」などの既存会員向けの例外は公開ページ・規約・FAQ・特商法に置かない。
@@ -156,6 +169,7 @@ SNB mensだけの独立プラン `mens_weekend_shower_4h`（`Bookings.planCode` 
 | 更新日 | 根拠 | 内容 |
 |---|---|---|
 | 2026-10-27 | #573 | Studio Xの会員制度継続・共通資格、基本料金区分廃止、会員特典、シャワー対象外を整理 |
+| 2026-10-30 | #667 | SNB mens限定の作品撮りサポートプラン（承認制・承認後24時間決済）の商品仕様・流れ・適用基準日を追記 |
 | 2026-10-29 | #573 / #644・運営者確認 | 値下げの2つの理由を記録。後続の会員更新・ペアパック自動適用・mensシャワーパック・シャワー人数・機材の対象ブランド・開始日を資料へ統合。実料金・実装・Web表示は変更なし |
 
 ## 内部PDFの版管理
