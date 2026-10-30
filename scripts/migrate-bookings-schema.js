@@ -10,9 +10,11 @@
  * 認証情報は環境変数（GitHub Secret）から受け取る。標準出力・標準エラーには固定メッセージのみ出す。
  *   BOOKING_SHEETS_SERVICE_ACCOUNT_JSON  Sheets API専用サービスアカウントのJSON鍵
  *   BOOKING_SPREADSHEET_ID               本番Spreadsheet ID
+ *   BOOKING_SPREADSHEET_ID_SHA256        本番GASのScript Property SPREADSHEET_IDから独立に求めた指紋（取り違え防止）
  */
 var loadBookingsSchema = require('./lib/bookings-schema').loadBookingsSchema;
 var migration = require('./lib/bookings-migration');
+var assertSpreadsheetFingerprint = require('./lib/spreadsheet-fingerprint').assertSpreadsheetFingerprint;
 var createSheetsClient = require('./lib/sheets-api-client').createSheetsClient;
 
 async function run(mode, env, deps) {
@@ -24,6 +26,7 @@ async function run(mode, env, deps) {
     if (!env.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON || !env.BOOKING_SPREADSHEET_ID) {
       throw new migration.MigrationError('CREDENTIAL_INVALID');
     }
+    assertSpreadsheetFingerprint(env.BOOKING_SPREADSHEET_ID, env.BOOKING_SPREADSHEET_ID_SHA256);
     var schema = deps.schema || loadBookingsSchema();
     var client = deps.client || createSheetsClient({
       serviceAccountJson: env.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON,

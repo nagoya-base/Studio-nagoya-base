@@ -84,13 +84,24 @@ test('no step can be skipped past a failure: no continue-on-error, failure()/alw
 test('Admin failure never reaches Public: Public is a later step of the same fail-fast job', () => {
   assert.ok(stepIndex('deploy-booking-gas-target.sh admin') < stepIndex('deploy-booking-gas-target.sh public'));
   const publicStep = deploySteps[stepIndex('deploy-booking-gas-target.sh public')];
-  assert.match(publicStep, /Booking Admin is already updated to the current main commit, but the Booking Web App was NOT updated\./);
+  assert.match(publicStep, /Booking Admin is updated to the current main commit\./);
   assert.match(publicStep, /exit 1/);
+  assert.doesNotMatch(workflow, /NOT updated|was not updated/);
+});
+
+test('failure messages distinguish "update did not complete" from "applied but verification failed" via the marker file', () => {
+  for (const target of ['admin', 'public']) {
+    const step = deploySteps[stepIndex('deploy-booking-gas-target.sh ' + target)];
+    assert.match(step, new RegExp('-f "\\$RUNNER_TEMP/booking-gas-' + target + '-update-applied"'));
+    assert.match(step, /was applied but its verification failed/);
+    assert.match(step, /did not complete/);
+  }
 });
 
 test('migration credentials are job-scoped GitHub Secrets and kept separate from clasp credentials', () => {
   assert.match(deploy, /BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: \$\{\{ secrets\.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON \}\}/);
   assert.match(deploy, /BOOKING_SPREADSHEET_ID: \$\{\{ secrets\.BOOKING_SPREADSHEET_ID \}\}/);
+  assert.match(deploy, /BOOKING_SPREADSHEET_ID_SHA256: \$\{\{ secrets\.BOOKING_SPREADSHEET_ID_SHA256 \}\}/);
   const script = fs.readFileSync(deployScript, 'utf8');
   assert.doesNotMatch(script, /BOOKING_SHEETS|BOOKING_SPREADSHEET/);
   assert.doesNotMatch(workflow, /echo[^\n]*\$\{\{ *secrets|echo[^\n]*(SPREADSHEET_ID|SERVICE_ACCOUNT)/);
@@ -146,7 +157,9 @@ esac
     const result = spawnSync('bash', [deployScript, ...args], { cwd: dir, env, encoding: 'utf8' });
     const invoked = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n') : [];
     assert.doesNotMatch(result.stdout + result.stderr, /private@example|token-dummy|script-dummy|deployment-dummy/);
-    return { ...result, invoked };
+    const markers = Object.fromEntries(['admin', 'public'].map((t) => [t, fs.existsSync(path.join(dir, `booking-gas-${t}-update-applied`))]));
+    const marker = (target) => markers[target];
+    return { ...result, invoked, marker };
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -156,6 +169,7 @@ test('deploy script updates the existing deployment and confirms the current mai
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(r.invoked, ['list-deployments', 'pull', 'show-file-status', 'push', 'update-deployment', 'list-deployments']);
     assert.equal(r.stdout.trim().split('\n').pop(), `Updated existing ${target} deployment to the current main commit`);
+    assert.equal(r.marker(target), true);
   }
 });
 
@@ -168,13 +182,21 @@ test('deploy script refuses unknown targets/modes, unknown deployments and a sta
   const stale = runDeploy(['public'], { MOCK_LIST: '- public-deployment-dummy @5 - main 000000' });
   assert.notEqual(stale.status, 0);
   assert.match(stale.stderr, /after update/);
+  assert.equal(stale.marker('public'), true, 'update was applied; only verification failed');
 });
 
 test('deploy script stops after a failed push without touching the deployment', () => {
   const r = runDeploy(['admin'], { MOCK_PUSH_FAIL: '1' });
   assert.notEqual(r.status, 0);
   assert.equal(r.invoked.includes('update-deployment'), false);
+  assert.equal(r.marker('admin'), false);
   assert.match(r.stderr, /clasp push --force failed: WRITE_PERMISSION_OR_SCOPE_DENIED\n$/);
+});
+
+test('a failing update-deployment leaves no "applied" marker', () => {
+  const r = runDeploy(['public'], { MOCK_UPDATE_FAIL: '1' });
+  assert.notEqual(r.status, 0);
+  assert.equal(r.marker('public'), false);
 });
 
 test('verify mode is read-only and checks the existing deployment shows the current main SHA', () => {

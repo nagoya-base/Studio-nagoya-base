@@ -21,7 +21,11 @@
 3. **Booking Web App更新**（既存Deploymentのみ。Adminが成功した後だけ）
 4. **post-check**: 両Deployment IDの存在と今回のmain SHA反映、`Bookings`ヘッダーが正本と完全一致することを確認する。
 
-`concurrency`はBooking GAS本番全体で `booking-gas-production` の1グループです。Admin成功後にWeb Appが失敗した場合、workflowは失敗となり、ログに「Booking Admin is already updated … Web App was NOT updated.」と出ます（Adminだけ新mainの状態）。自動rollbackはありません。原因を直して同じworkflowを再実行してください（migrationは冪等、Admin再更新は無害）。
+`concurrency`はBooking GAS本番全体で `booking-gas-production` の1グループです。Admin成功後にWeb Appが失敗した場合、workflowは失敗となり、ログに「Booking Admin is updated … Web App … update did not complete / applied but its verification failed」のどちらかが出ます（Web Appが更新済みか未更新かを断定できない場合があるため、`clasp`の更新が成功したかどうかだけで書き分けます。いずれもWeb Appのデプロイ状態を確認してください）。自動rollbackはありません。原因を直して同じworkflowを再実行してください（migrationは冪等、Admin再更新は無害）。
+
+### migration対象Spreadsheetの取り違え防止（指紋照合）
+
+Actionsは本番GASのScript Property `SPREADSHEET_ID` を読めないため、`BOOKING_SPREADSHEET_ID`（migration対象）が本番GASの実台帳と同一であることを、**別経路で求めた指紋（SHA-256）との照合**で担保します。`BOOKING_SPREADSHEET_ID_SHA256` が未設定・不一致なら、Sheets APIへ接続する前にmigration/verifyが `SPREADSHEET_FINGERPRINT_MISMATCH` で止まり、デプロイされません。初回設定の手順は [`docs/booking-gas-production-deploy.md`](../../docs/booking-gas-production-deploy.md) を参照。
 
 ### schema正本とmigrationのルール
 

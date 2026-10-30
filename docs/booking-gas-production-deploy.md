@@ -74,6 +74,7 @@ Deployment protection rulesで次を設定する。
 | `BOOKING_ADMIN_DEPLOYMENT_ID` | 既存Booking Adminの既存デプロイID |
 | `BOOKING_SHEETS_SERVICE_ACCOUNT_JSON` | Bookings schema migration専用サービスアカウントのJSON鍵（下記） |
 | `BOOKING_SPREADSHEET_ID` | 本番Bookings台帳のSpreadsheet ID |
+| `BOOKING_SPREADSHEET_ID_SHA256` | 本番GASのScript Property `SPREADSHEET_ID` から求めた指紋（下記） |
 
 ## 初回設定: Bookings schema migration用のSheets API認証（Issue #671）
 
@@ -82,7 +83,15 @@ migrationは、clasp認証とは**別の**専用サービスアカウントで�
 1. 専用のGoogle Cloudプロジェクトで「Google Sheets API」を有効にし、サービスアカウントを作成してJSON鍵を発行する。
 2. 本番Bookings台帳のSpreadsheetを、そのサービスアカウントのメールアドレスへ**編集者**として共有する（このSpreadsheetだけ。他のファイルは共有しない）。
 3. JSON鍵全文を`BOOKING_SHEETS_SERVICE_ACCOUNT_JSON`、Spreadsheet IDを`BOOKING_SPREADSHEET_ID`として、`booking-production`のEnvironment secretsへ登録する。
-4. 鍵・Spreadsheet IDをリポジトリ・Issue・PR・チャット・ログへ出さない。漏えい時は鍵を無効化して再発行し、secretを更新する。
+4. **対象取り違え防止の指紋を登録する（必須）**。migration対象が本番GASの実台帳と同一であることを、別経路の2値の照合で担保する。
+   - `BOOKING_SPREADSHEET_ID` は、本番Bookings台帳のSpreadsheetのURL（`/d/<ID>/`）から取得して登録する。
+   - 指紋は、**Booking Web App / Admin のApps Script「プロジェクトの設定 > スクリプト プロパティ」の `SPREADSHEET_ID` の値**から求める。ローカルで
+     `read -rs ID; printf %s "$ID" | node scripts/booking-spreadsheet-fingerprint.js`
+     を実行し、出力された64桁の16進を `BOOKING_SPREADSHEET_ID_SHA256` として登録する（IDは標準入力で渡すため履歴・引数に残らない）。
+   - workflowは毎回、`BOOKING_SPREADSHEET_ID` のSHA-256が `BOOKING_SPREADSHEET_ID_SHA256` と一致しなければ、Sheets APIへ接続する前に停止する。Script Propertyを変更した場合は指紋も更新する。
+5. 鍵・Spreadsheet IDをリポジトリ・Issue・PR・チャット・ログへ出さない。漏えい時は鍵を無効化して再発行し、secretを更新する。
+
+指紋が未設定・不一致の間はmigrationもpost-checkも `SPREADSHEET_FINGERPRINT_MISMATCH` で停止し、何も更新されない。
 
 migrationが読み書きするのは`Bookings`シートの1行目（ヘッダー）だけで、予約行は読まない。
 

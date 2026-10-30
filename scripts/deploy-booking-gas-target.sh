@@ -142,6 +142,9 @@ if ! clasp --auth "$auth_file" --user "$clasp_user" push --force >"$push_log" 2>
   exit 1
 fi
 rm -f "$push_log"
+# update-deployment が成功した事実だけを記録する（workflowが「更新前の失敗」と「更新後の検証失敗」を
+# 区別して案内するため。IDやSecretは含まない空ファイル）。
+rm -f "$RUNNER_TEMP/booking-gas-$target-update-applied"
 echo "Running clasp update-deployment"
 if ! clasp --auth "$auth_file" --user "$clasp_user" update-deployment "$deployment_id" \
   --description "main ${GITHUB_SHA}" >/dev/null 2>&1; then
@@ -149,6 +152,7 @@ if ! clasp --auth "$auth_file" --user "$clasp_user" update-deployment "$deployme
   exit 1
 fi
 
+touch "$RUNNER_TEMP/booking-gas-$target-update-applied"
 echo "Running clasp list-deployments (after update)"
 if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_stdout" 2>"$list_stderr"; then
   node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" after >&2

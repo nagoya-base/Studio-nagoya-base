@@ -22,6 +22,7 @@ var MIGRATION_ERRORS = {
   AUTHENTICATION_FAILED: 'The migration credential was rejected',
   TRANSIENT_API_OR_NETWORK_ERROR: 'The Sheets API was temporarily unavailable',
   SHEETS_API_ERROR: 'The Sheets API request failed',
+  SPREADSHEET_FINGERPRINT_MISMATCH: 'The configured spreadsheet does not match the registered production spreadsheet fingerprint',
   CREDENTIAL_INVALID: 'The migration credential is not configured correctly',
   POST_WRITE_VERIFICATION_FAILED: 'The Bookings header did not match the expected schema after the update'
 };

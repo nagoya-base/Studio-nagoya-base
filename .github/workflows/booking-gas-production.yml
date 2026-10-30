@@ -52,6 +52,7 @@ jobs:
       ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
       BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: ${{ secrets.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON }}
       BOOKING_SPREADSHEET_ID: ${{ secrets.BOOKING_SPREADSHEET_ID }}
+      BOOKING_SPREADSHEET_ID_SHA256: ${{ secrets.BOOKING_SPREADSHEET_ID_SHA256 }}
     steps:
       - name: Check out the approved main commit
         uses: actions/checkout@v4
@@ -64,12 +65,25 @@ jobs:
       - name: Migrate the Bookings sheet schema
         run: node scripts/migrate-bookings-schema.js migrate
       - name: Update the existing Booking Admin deployment
-        run: bash scripts/deploy-booking-gas-target.sh admin
+        run: |
+          set -euo pipefail
+          if ! bash scripts/deploy-booking-gas-target.sh admin; then
+            if [[ -f "$RUNNER_TEMP/booking-gas-admin-update-applied" ]]; then
+              echo "Booking Admin deployment update was applied but its verification failed; the Booking Web App was not started. Check the Admin deployment state." >&2
+            else
+              echo "Booking Admin update did not complete; the Booking Web App was not started. Check the Admin deployment state before re-running." >&2
+            fi
+            exit 1
+          fi
       - name: Update the existing Booking Web App deployment
         run: |
           set -euo pipefail
           if ! bash scripts/deploy-booking-gas-target.sh public; then
-            echo "Booking Admin is already updated to the current main commit, but the Booking Web App was NOT updated." >&2
+            if [[ -f "$RUNNER_TEMP/booking-gas-public-update-applied" ]]; then
+              echo "Booking Admin is updated to the current main commit. The Booking Web App deployment update was applied but its verification failed; check the Web App deployment state." >&2
+            else
+              echo "Booking Admin is updated to the current main commit. The Booking Web App update did not complete; the Web App deployment state must be checked before re-running." >&2
+            fi
             exit 1
           fi
       - name: Post-deploy check

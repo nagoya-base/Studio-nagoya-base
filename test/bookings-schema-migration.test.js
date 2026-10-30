@@ -14,6 +14,8 @@ const {
 } = require('../scripts/lib/bookings-migration');
 const { createSheetsClient, columnLetters } = require('../scripts/lib/sheets-api-client');
 const cli = require('../scripts/migrate-bookings-schema');
+const { spreadsheetFingerprint, assertSpreadsheetFingerprint } = require('../scripts/lib/spreadsheet-fingerprint');
+const { spawnSync } = require('node:child_process');
 const { loadBookingSandbox } = require('./helpers/gas-sandbox');
 
 const schema = loadBookingsSchema();
@@ -237,7 +239,7 @@ test('Sheets client maps HTTP/network/credential failures to fixed codes without
 function sink() { return { text: '', write(t) { this.text += t; } }; }
 
 test('CLI prints only fixed messages on success and failure', async () => {
-  const env = { BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: serviceAccountJson, BOOKING_SPREADSHEET_ID: SPREADSHEET_ID };
+  const env = { BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: serviceAccountJson, BOOKING_SPREADSHEET_ID: SPREADSHEET_ID, BOOKING_SPREADSHEET_ID_SHA256: spreadsheetFingerprint(SPREADSHEET_ID) };
   const book = fakeBook({ Bookings: bookingsSheet(H.slice(0, -2), [[BOOKER]]) });
   let out = sink(); let err = sink();
   assert.equal(await cli.run('migrate', env, { client: book.client, stdout: out, stderr: err }), 0);
@@ -262,4 +264,31 @@ test('CLI prints only fixed messages on success and failure', async () => {
   assert.equal(err.text, 'Bookings schema migration failed: CREDENTIAL_INVALID\n');
   err = sink();
   assert.equal(await cli.run('bogus', env, { stdout: sink(), stderr: err }), 1);
+});
+
+test('spreadsheet fingerprint mismatch or absence fails closed before any API access', async () => {
+  const other = spreadsheetFingerprint('ANOTHER_SPREADSHEET_dummy_9876');
+  for (const bad of [other, '', undefined, 'not-a-hash']) {
+    const env = { BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: serviceAccountJson, BOOKING_SPREADSHEET_ID: SPREADSHEET_ID, BOOKING_SPREADSHEET_ID_SHA256: bad };
+    for (const mode of ['migrate', 'verify']) {
+      const book = fakeBook({ Bookings: bookingsSheet(H.slice(0, -1)) });
+      const err = sink();
+      assert.equal(await cli.run(mode, env, { client: book.client, stdout: sink(), stderr: err }), 1);
+      assert.match(err.text, /failed: SPREADSHEET_FINGERPRINT_MISMATCH\n$/);
+      assert.deepEqual(book.log, [], 'no sheet access happens');
+      assert.equal(err.text.includes(SPREADSHEET_ID) || err.text.includes(other), false);
+    }
+  }
+  assert.doesNotThrow(() => assertSpreadsheetFingerprint(SPREADSHEET_ID + '\n', spreadsheetFingerprint(SPREADSHEET_ID).toUpperCase()));
+});
+
+test('fingerprint tool reads the ID from stdin and prints only the SHA-256', () => {
+  const tool = path.join(__dirname, '..', 'scripts/booking-spreadsheet-fingerprint.js');
+  const ok = spawnSync('node', [tool], { input: SPREADSHEET_ID + '\n', encoding: 'utf8' });
+  assert.equal(ok.status, 0);
+  assert.equal(ok.stdout, spreadsheetFingerprint(SPREADSHEET_ID) + '\n');
+  assert.equal(ok.stdout.includes(SPREADSHEET_ID), false);
+  const empty = spawnSync('node', [tool], { input: '', encoding: 'utf8' });
+  assert.equal(empty.status, 1);
+  assert.equal(empty.stdout, '');
 });
