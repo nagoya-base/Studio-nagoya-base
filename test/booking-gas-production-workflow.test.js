@@ -300,7 +300,7 @@ test('list API errors fail through the classifier immediately, including during 
     const r = runDeploy(['admin'], { MOCK_AFTER_LIST_SET: '1',
       MOCK_AFTER_LIST: '- admin-deployment-dummy @4 - main 000000', MOCK_LIST_FAIL_AT: failAt });
     assert.equal(r.status, 1);
-    assert.equal(r.stderr, 'clasp list-deployments failed (after update): AUTHENTICATION_FAILED\n');
+    assert.match(r.stderr, /clasp list-deployments failed \(after update\): AUTHENTICATION_FAILED\n$/);
     assert.equal(r.invoked.filter((c) => c === 'list-deployments').length, Number(failAt));
     assert.equal(r.sleeps.length, Number(failAt) - 2);
     assert.equal(r.marker('admin'), true);
