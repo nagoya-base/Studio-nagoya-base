@@ -4,6 +4,7 @@ Jekyllビルド＋Chromium（外部通信遮断）で取得。実予約・実決
 - `*-howto-steps-pc`：利用ガイドの手順1〜6（青地は白文字）
 - `*-legal-sp390`：規約
 - `*-booking-pc`、`*-booking-mock-pc`：予約フォームと、モックで表示した空きあり／選択中／満席／先行枠／見積／入力エラー／エラー／送信中（モックは確認用に注入した表示）
-- `*-join-form-states`：会員加入フォームの入力フォーカス・エラー・成功・送信中
+- `*-join-form-states-1280|390`：会員加入フォームを画面内に収め、モックで入力済み・同意チェック・フォーカス・エラー／成功／送信中を表示（送信ボタンは無効化。実加入なし）
 - `*-payment-complete-pc`、`*-member-complete-pc`：完了ページ
 横はみ出し：8ページ×PC/390/320pxで0。唯一 legal の320pxは7pxだが変更前（main）も同じ7px（既存・本PRで悪化なし）。
+- `after-print-legal.pdf`／`after-print-howto.pdf`：印刷メディア（A4・背景なし）のPDF。`after-print-legal-p9.png`・`after-print-howto-p3.png` はその抜粋。本文・リスト・カード・表が黒系文字＋白地で読める。ナビ・フッターが印字されるのは変更前と同じ（本PRで印刷用の指定は追加していない）。
