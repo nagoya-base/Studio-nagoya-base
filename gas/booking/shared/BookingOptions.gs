@@ -473,6 +473,25 @@ var BookingOptions = (function () {
     return { ok: true, empty: false, code: code };
   }
 
+  /*
+   * 作品撮りサポートの希望背景について、利用者自身が行うセルフ作業（Issue #679 レビュー対応）の案内を既存の運用文言（GUIDANCE_TEMPLATES_／
+   * renderSelfGuidance）から生成する。新しい注文・別決済は作らない。services: 'SETUP'（事前設営＝スタッフ。片付けは利用者）|
+   * 'CLEANUP'（片付け＝スタッフ。設置は利用者）|'BOTH'（両方スタッフ。セルフ作業なし＝案内なし）。
+   * 運用文言が確定済みの背景（白黒布・グランジ）は保管場所・使う備品・セット方法／原状復帰・注意事項を、必要な作業分だけ返す。
+   * 運用文言が未整備の背景（和柄2種）は手順を創作せず、運営が別途案内する旨だけを返す（incomplete:true）。
+   * 戻り値: { text, incomplete }。背景なし・BOTH・不明な値は text=''。
+   */
+  function renderSupportBackdropGuidance(code, services) {
+    var def = supportBackdropDef_(String(code || '').trim());
+    if (!def || (services !== 'SETUP' && services !== 'CLEANUP')) return { text: '', incomplete: false };
+    if (!supportBackdropGuidanceReady_(def)) {
+      return { text: '【' + def.label + 'のセルフ作業】設置・片付けの手順と注意事項は、運営が確認のうえ、別途メールでご案内します。', incomplete: true };
+    }
+    var prefix = services === 'CLEANUP' ? ITEM_PREFIX.SELF_SETUP : ITEM_PREFIX.SELF_CLEANUP;
+    var rendered = renderSelfGuidance([prefix + def.themeCode]);
+    return { text: rendered.text, incomplete: rendered.incomplete };
+  }
+
   /* 利用者向けの背景一覧（作品撮りサポートの背景選択用）。対象ブランド／プランの品目だけ。在庫・未確認の値は返さない。 */
   function supportBackdropCatalog_(brand, plan) {
     return supportBackdropDefs_().filter(function (def) {
@@ -1346,6 +1365,7 @@ var BookingOptions = (function () {
     supportEquipmentHasCode: supportEquipmentHasCode,
     normalizeSupportBackdrop: normalizeSupportBackdrop,
     describeSupportBackdrop: describeSupportBackdrop,
+    renderSupportBackdropGuidance: renderSupportBackdropGuidance,
     supportBackdropInfo: supportBackdropInfo,
     isLectureRequiredItem: isLectureRequiredItem,
     lectureRequiredCodesOfItems: lectureRequiredCodesOfItems,

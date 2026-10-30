@@ -1291,7 +1291,8 @@
     var t = PHOTO_BACKDROP_TEXT_;
     var lines = [t.reservation];
     if (services === 'CLEANUP') lines.push(t.cleanupOnly);
-    if (info && info.selfSetupGuidanceReady === false) lines.push(t.guidancePending);
+    /* 案内完了が承認条件になるのは、利用者自身が行うセルフ作業が残るとき（事前設営のみ／片付けのみ）だけ。両方スタッフ対応では出さない。 */
+    if (info && info.selfSetupGuidanceReady === false && (services === 'SETUP' || services === 'CLEANUP')) lines.push(t.guidancePending);
     var stand = standItem && Number(standItem.unitPriceJpy) > 0
       ? t.standNoPrice.replace('背景スタンドは、', '背景スタンド（' + Number(standItem.unitPriceJpy).toLocaleString('ja-JP') + '円）は、')
       : t.standNoPrice;

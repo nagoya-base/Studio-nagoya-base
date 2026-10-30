@@ -684,3 +684,100 @@ test('運用: README に supportBackdrop の末尾列追加と #673 の反映順
     assert.ok(section.indexOf(t) !== -1, t);
   });
 });
+
+// ============================================================================
+// レビュー対応: セルフ作業の確定済み案内・BOTHの承認条件表示・提供範囲の文言
+// ============================================================================
+
+function receivedMailBody(ctx) {
+  var mails = ctx.mailApp._sentEmails.filter(function (m) { return m.subject.indexOf('承認待ち') !== -1; });
+  return mails[mails.length - 1].body;
+}
+
+test('メール案内: 確定済みの背景（白黒布・グランジ）は、サービス種別に応じて必要なセルフ作業の手順だけを既存の運用文言から届ける', function () {
+  ['BACKDROP_CLOTH_WHITE', 'BACKDROP_CLOTH_BLACK', 'BACKDROP_GRUNGE'].forEach(function (code) {
+    var label = LABELS[code];
+    var theme = { BACKDROP_CLOTH_WHITE: '白背景布', BACKDROP_CLOTH_BLACK: '黒背景布', BACKDROP_GRUNGE: 'グランジセット' }[code];
+    /* 片付けのみ: 設置は利用者。保管場所・使う備品・セット方法・注意事項を届け、原状復帰（片付け）の手順は含めない。 */
+    var c1 = setup();
+    assert.strictEqual(book(c1, { supportServices: 'CLEANUP', supportBackdrop: code }).success, true);
+    var cleanup = receivedMailBody(c1);
+    ['【' + theme + 'のセルフセッティング】', '保管場所:', '使用する備品:', 'セット方法: 背景スタンド、または竹の梁にセットして使用してください', '注意事項:'].forEach(function (t) {
+      assert.ok(cleanup.indexOf(t) !== -1, code + ' CLEANUP: ' + t + '\n' + cleanup);
+    });
+    assert.ok(cleanup.indexOf('原状復帰の方法:') === -1, '片付けはスタッフ対応のため原状復帰の手順は届けない');
+    assert.ok(label && cleanup.indexOf('運営にて内容を確認中') === -1);
+    /* 事前設営のみ: 片付けは利用者。原状復帰の手順を届け、セット方法は含めない。 */
+    var c2 = setup();
+    assert.strictEqual(book(c2, { supportServices: 'SETUP', supportBackdrop: code }).success, true);
+    var setupOnly = receivedMailBody(c2);
+    assert.ok(setupOnly.indexOf('原状復帰の方法: 布に汚れ・異物がないことを確認してから畳み') !== -1 || code === 'BACKDROP_GRUNGE' || setupOnly.indexOf('原状復帰の方法:') !== -1, code + ' SETUP\n' + setupOnly);
+    assert.ok(setupOnly.indexOf('セット方法:') === -1, '設置はスタッフ対応のためセット方法は届けない');
+    assert.ok(setupOnly.indexOf('靴で背景布を踏まないでください') !== -1, '注意事項（既存の確定文言）');
+    /* 両方スタッフ対応: セルフ作業が無いので手順を足さない。 */
+    var c3 = setup();
+    assert.strictEqual(book(c3, { supportServices: 'BOTH', supportBackdrop: code }).success, true);
+    var both = receivedMailBody(c3);
+    assert.ok(both.indexOf('セルフセッティング】') === -1 && both.indexOf('原状復帰の方法:') === -1 && both.indexOf('セット方法:') === -1, code + ' BOTH');
+  });
+});
+
+test('メール案内: 承認案内メールにも、必要なセルフ作業の確定済み手順が入る（背景なしの予約は変わらない）', function () {
+  var ctx = setup();
+  var r = book(ctx, { supportServices: 'CLEANUP', supportBackdrop: 'BACKDROP_CLOTH_BLACK' });
+  var ok = ctx.sandbox.BookingRepository.approvePhotoSupport(r.bookingId, new Date('2026-12-06T09:00:00+09:00'), { backdropChecked: true });
+  assert.strictEqual(ok.success, true, JSON.stringify(ok));
+  var approved = ctx.mailApp._sentEmails[ctx.mailApp._sentEmails.length - 1].body;
+  assert.ok(approved.indexOf('【黒背景布のセルフセッティング】') !== -1 && approved.indexOf('セット方法:') !== -1, approved);
+  var plain = setup();
+  assert.strictEqual(book(plain, { supportServices: 'CLEANUP' }).success, true);
+  assert.ok(receivedMailBody(plain).indexOf('セルフセッティング】') === -1);
+});
+
+test('メール案内: 和柄は運用文言が未整備のため手順を創作せず、セルフ作業があるときだけ「運営が別途案内」と伝える。BOTHでは何も足さない', function () {
+  JAPANESE.forEach(function (code) {
+    ['SETUP', 'CLEANUP'].forEach(function (services) {
+      var ctx = setup();
+      assert.strictEqual(book(ctx, { supportServices: services, supportBackdrop: code }).success, true);
+      var body = receivedMailBody(ctx);
+      assert.ok(body.indexOf('【' + LABELS[code] + 'のセルフ作業】設置・片付けの手順と注意事項は、運営が確認のうえ、別途メールでご案内します') !== -1, code + services + '\n' + body);
+      assert.ok(body.indexOf('セット方法:') === -1 && body.indexOf('保管場所:') === -1 && body.indexOf('原状復帰の方法:') === -1, '手順を創作しない');
+    });
+    var both = setup();
+    assert.strictEqual(book(both, { supportServices: 'BOTH', supportBackdrop: code }).success, true);
+    assert.ok(receivedMailBody(both).indexOf('のセルフ作業】') === -1);
+  });
+  var O = loadPricing().BookingOptions;
+  assert.strictEqual(O.renderSupportBackdropGuidance('BACKDROP_TSURU_BLACK', 'CLEANUP').incomplete, true);
+  assert.strictEqual(O.renderSupportBackdropGuidance('BACKDROP_CLOTH_WHITE', 'CLEANUP').incomplete, false);
+  assert.strictEqual(O.renderSupportBackdropGuidance('', 'CLEANUP').text, '');
+  assert.strictEqual(O.renderSupportBackdropGuidance('BACKDROP_CLOTH_WHITE', 'BOTH').text, '');
+});
+
+test('画面: 「案内が済むまで承認されません」は、セルフ作業が残るSETUP／CLEANUPの和柄だけに出す。BOTHは現物・対応可否の確認のみ（サーバーの承認条件と一致）', function () {
+  var pending = { code: 'BACKDROP_TSURU_BLACK', selfSetupGuidanceReady: false };
+  ['SETUP', 'CLEANUP'].forEach(function (services) {
+    assert.ok(Logic.photoBackdropNoticeLines(services, pending, null).join('\n').indexOf('ご案内が済むまで承認されません') !== -1, services);
+  });
+  var both = Logic.photoBackdropNoticeLines('BOTH', pending, null).join('\n');
+  assert.ok(both.indexOf('ご案内が済むまで承認されません') === -1 && both.indexOf('運営がお申し込み後にご案内します') === -1);
+  assert.ok(both.indexOf('現物・利用可否') !== -1, '現物・対応可否の確認は案内する');
+  assert.ok(Logic.photoBackdropNoticeLines('', pending, null).join('\n').indexOf('ご案内が済むまで承認されません') === -1, 'スタッフ対応が未選択のうちは条件を断定しない');
+  /* サーバーの承認条件との一致（BOTHは案内完了なしで承認できる）。 */
+  var ctx = setup();
+  var b = book(ctx, { supportServices: 'BOTH', supportBackdrop: 'BACKDROP_TSURU_BLACK' });
+  assert.strictEqual(ctx.sandbox.BookingRepository.approvePhotoSupport(b.bookingId, new Date('2026-12-06T09:00:00+09:00'), { backdropChecked: true }).success, true);
+});
+
+test('提供範囲: スタッフ対応の説明は「白／黒背景」に限定せず「選択した背景」で揃え、撮影代行・施術等を含めない既存条件は保持する', function () {
+  ['_includes/booking_app_ja.html', '_includes/mens_photo_support_ja.html', '_includes/legal_ja.html', 'gas/booking/shared/BookingMailTemplates.gs'].forEach(function (rel) {
+    var src = read(rel);
+    assert.ok(src.indexOf('白／黒背景を使った') === -1, rel + ' に「白／黒背景を使った」が残っている');
+    assert.ok(src.indexOf('選択した背景') !== -1, rel);
+  });
+  var legal = read('_includes/legal_ja.html');
+  assert.ok(legal.indexOf('グランジ等、SNB mensで提供可否を確認していない') === -1, 'グランジを提供範囲外と読ませない');
+  ['吊り設備の組み替え', '緊縛の施術・指導', '撮影代行', '当日の常駐スタッフ対応は含みません'].forEach(function (t) { assert.ok(legal.indexOf(t) !== -1, t); });
+  var mail = read('gas/booking/shared/BookingMailTemplates.gs');
+  assert.ok(mail.indexOf('撮影代行・緊縛の施術や指導・吊り設備の組み替えは含みません') !== -1);
+});

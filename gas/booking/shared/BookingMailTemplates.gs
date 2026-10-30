@@ -181,6 +181,12 @@ var BookingMailTemplates = (function () {
     return lines;
   }
 
+  /* Issue #679: 希望背景のうち、利用者自身が行うセルフ作業（片付けのみ＝設置、事前設営のみ＝片付け）の確定済み案内。背景なし・両方スタッフ対応は空。 */
+  function photoSupportBackdropGuidance_(record) {
+    if (typeof BookingOptions === 'undefined' || !record.supportBackdrop) return '';
+    return BookingOptions.renderSupportBackdropGuidance(record.supportBackdrop, record.supportServices).text;
+  }
+
   /* Issue #667: 申込受付メール。承認待ちであり、承認前はお支払いできないこと・当日依頼や常駐対応でないことを必ず示す。 */
   function buildPhotoSupportReceivedMail_(record, config) {
     var brandLabel = Booking.getBrandLabel(record.brand);
@@ -202,9 +208,10 @@ var BookingMailTemplates = (function () {
       duration ? '利用時間: ' + duration : '',
       '利用人数: ' + record.people,
       photoSupportBreakdownLines_(record).join('\n'),
+      photoSupportBackdropGuidance_(record) ? '\n' + photoSupportBackdropGuidance_(record) : '',
       '',
       '【ご注意】',
-      'スタッフ対応は、照明配置と白／黒背景を使った撮影環境の事前準備・片付けに限ります（撮影代行・緊縛の施術や指導・吊り設備の組み替えは含みません）。',
+      'スタッフ対応は、照明配置と選択した背景を使った撮影環境の事前準備・片付けに限ります（撮影代行・緊縛の施術や指導・吊り設備の組み替えは含みません）。',
       'スタッフが常駐するサービスではなく、当日のご依頼はできません。SNB MEMBER限定のサービスです。',
       contactLine_(config),
       guideLine_(record),
@@ -244,6 +251,7 @@ var BookingMailTemplates = (function () {
       duration ? '利用時間: ' + duration : '',
       '利用人数: ' + record.people,
       photoSupportBreakdownLines_(record).join('\n'),
+      photoSupportBackdropGuidance_(record) ? '\n' + photoSupportBackdropGuidance_(record) : '',
       '',
       '確定後のキャンセルは、お支払い総額（部屋料金・スタッフ対応料金・同時にご注文の有料機材料金）に対し、SNBの既存のキャンセル規定を適用します。',
       'すでにお支払い済みの場合は、二重決済をせず、運営までご連絡ください。',
