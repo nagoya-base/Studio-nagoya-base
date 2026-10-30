@@ -49,6 +49,10 @@ function loadBookingSandbox(files, globals) {
     var pricingIndex = files.indexOf('BookingPricing.gs');
     files = files.slice(0, pricingIndex + 1).concat(['BookingGenerationMode.gs'], files.slice(pricingIndex + 1));
   }
+  /* Issue #671: Bookingsヘッダーの正本（BookingsSchema.gs）はSpreadsheetRepository.gsより前に必要。 */
+  if (files.indexOf('SpreadsheetRepository.gs') !== -1 && files.indexOf('BookingsSchema.gs') === -1) {
+    files = ['BookingsSchema.gs'].concat(files);
+  }
   files.forEach(function (file) {
     var filePath = resolveBookingFilePath(file);
     vm.runInContext(fs.readFileSync(filePath, 'utf8'), sandbox, { filename: filePath });
