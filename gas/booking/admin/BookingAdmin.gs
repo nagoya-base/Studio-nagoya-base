@@ -53,6 +53,20 @@ function confirmBooking(bookingId) {
   return BookingRepository.confirmBooking(bookingId);
 }
 
+/* Issue #668: SNB mens大人数利用（5〜7名）の運営承認／不承認。Booking Admin側のみで公開する。 */
+function approveLargeParty(bookingId) {
+  return BookingRepository.approveLargeParty(bookingId);
+}
+
+function rejectLargeParty(bookingId) {
+  return BookingRepository.rejectLargeParty(bookingId);
+}
+
+/* Issue #668: SNB mensの予約人数の変更（2日前まで再計算。前日・当日の減員は返金なし）。 */
+function changeBookingPeople(bookingId, newPeople) {
+  return BookingRepository.changeBookingPeople(bookingId, newPeople);
+}
+
 /* Issue #667: 作品撮りサポートプランの承認（承認から24時間が支払い期限）。業務ロジックはBookingRepository.approvePhotoSupport。
    不承認は既存のcancelBookingAdmin（仮押さえ解除＋承認できなかった旨のメール）で行う。 */
 function approvePhotoSupport(bookingId) {

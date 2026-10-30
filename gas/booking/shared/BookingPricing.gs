@@ -151,6 +151,27 @@ var BookingPricing = (function () {
     label: 'Studio X｜6時間貸切ベースプラン'
   };
 
+  /*
+   * Issue #668: SNB mens通常料金の大人数利用（5〜7名）。専用パックではなく、通常のmens時間貸し料金に
+   * 「5人目以降、1名につき＋1,000円／予約」を**予約全体で1回だけ**加算する（利用時間ごとには加算しない）。
+   * - mensのみ。SNB一般・Studio Xの人数・料金・予約UIは変えない（computeBookingPriceはmens以外ではpeopleを無視する）。
+   * - 上限は7名（8名以上は料金計算を含めて受け付けない。上限の拡張は別Issueで再検討する）。
+   * - 5〜7名は予約代表者のSNB MEMBER資格と運営の事前承認が必要（資格・承認の確認は予約作成・承認の各サーバー側処理。
+   *   この純粋関数は料金だけを決める）。承認できない場合に4名扱いへ自動変換・自動課金することはしない。
+   * - 提供開始は利用日が2026/12/1以降（告知日2026/10/30から30日以上。ペアパック・シャワーパックと同じ基準日）。
+   *   効力発生前の利用日では5〜7名を選択・適用できない。既存予約は再計算しない。
+   * - 独立プラン（ペアパック・シャワーパック・今後の作品撮りサポートプラン）とは併用しない。
+   */
+  var LARGE_PARTY_ = {
+    brands: ['mens'],
+    includedPeople: 4,
+    minPeople: 5,
+    maxPeople: 7,
+    surchargePerPerson: 1000,
+    startDate: '2026-12-01',
+    label: 'SNB mens 大人数利用（5〜7名）'
+  };
+
   var MEMBER_RATES_ = {
     WEEKDAY: { base: { 1: 2000, 2: 4000, 3: 5500, 4: 7000 }, extensionPerHour: 1500 },
     WEEKEND_HOLIDAY: { base: { 1: 2500, 2: 5000, 3: 7000, 4: 9000 }, extensionPerHour: 2000 }
@@ -416,6 +437,34 @@ var BookingPricing = (function () {
     return !!m && Number(m[1]) >= 1 && Number(m[1]) <= PAIR_PACK_.maxPeople;
   }
 
+  /* Issue #668: 利用人数（フォームの'1名'|'2名'…）を整数にする。数値以外（'5名以上・要相談'等）・0・全角は null。 */
+  function parseHeadcount(people) {
+    var m = /^\s*([1-9]\d{0,2})\s*名\s*$/.exec(String(people === undefined || people === null ? '' : people));
+    return m ? Number(m[1]) : null;
+  }
+
+  /* Issue #668: mens通常予約で受け付ける人数か（1〜7名）。8名以上・数値以外はfalse。 */
+  function isMensPartySizeAllowed(people) {
+    var n = parseHeadcount(people);
+    return n !== null && n >= 1 && n <= LARGE_PARTY_.maxPeople;
+  }
+
+  /* Issue #668: 大人数利用（5〜7名）か。ブランドは見ない（呼び出し側がmensだけに適用する）。 */
+  function isLargePartyPeople(people) {
+    var n = parseHeadcount(people);
+    return n !== null && n >= LARGE_PARTY_.minPeople && n <= LARGE_PARTY_.maxPeople;
+  }
+
+  /* Issue #668: 大人数利用を提供する利用日か（利用日 >= 2026/12/1）。形式不正はfalse（fail-closed）。 */
+  function isLargePartyAvailableOnDate(dateString) {
+    return isValidDateString_(dateString) && dateString >= LARGE_PARTY_.startDate;
+  }
+
+  /* Issue #668: 人数加算額（予約1件につき1回）。4名以下・数値以外は0。5名=1,000 / 6名=2,000 / 7名=3,000。 */
+  function largePartySurcharge(people) {
+    return isLargePartyPeople(people) ? (parseHeadcount(people) - LARGE_PARTY_.includedPeople) * LARGE_PARTY_.surchargePerPerson : 0;
+  }
+
   function computeAmount_(brand, generation, tier, dayType, hours) {
     var table = rateTableGroupOf_(brand)[generation][tier][dayType];
     if (hours <= 4) return table.base[hours];
@@ -423,7 +472,8 @@ var BookingPricing = (function () {
   }
 
   /*
-   * input: { brand, date ('YYYY-MM-DD'), durationMinutes, isMember, generation, plan, startTime（任意。貸切ベースプランの時間帯検証用） }
+   * input: { brand, date ('YYYY-MM-DD'), durationMinutes, isMember, generation, plan, startTime（任意。貸切ベースプランの時間帯検証用）,
+   *          people（任意。'5名'等。mensのときだけ見て、5〜7名なら人数加算を足す。Issue #668） }
    * generation: 料金世代（'V1'|'V2'。省略・不正値はV1）。新規予約は呼び出し側がgenerationAt(now)で渡し、
    * 既存予約の再見積りは保存済みの世代を渡す。
    * 戻り値: { valid: true, price: {...} } または { valid: false, error: {code, message} }。
@@ -503,6 +553,25 @@ var BookingPricing = (function () {
       var scheduleError = eventPlanScheduleError(durationMinutes, params.startTime);
       if (scheduleError) return { valid: false, error: scheduleError };
     }
+    /* Issue #668: mensの大人数利用。8名以上・独立プランとの併用・提供開始前の利用日は、通常料金へ倒さず拒否する。 */
+    var largeParty = false;
+    var partySurcharge = 0;
+    if (LARGE_PARTY_.brands.indexOf(brand) !== -1 && params.people !== undefined && params.people !== null && params.people !== '') {
+      var headcount = parseHeadcount(params.people);
+      if (headcount !== null && headcount > LARGE_PARTY_.maxPeople) {
+        return { valid: false, error: { code: 'PARTY_SIZE_EXCEEDED', message: 'SNB mensのご利用は' + LARGE_PARTY_.maxPeople + '名までです。' } };
+      }
+      if (isLargePartyPeople(params.people)) {
+        if (!isLargePartyAvailableOnDate(date)) {
+          return { valid: false, error: { code: 'LARGE_PARTY_NOT_AVAILABLE', message: '5〜7名でのご利用は2026年12月1日以降のご利用日からお申し込みいただけます。' } };
+        }
+        if (plan) {
+          return { valid: false, error: { code: 'LARGE_PARTY_PLAN_NOT_COMBINABLE', message: '5〜7名のご利用は、他のプランとは併用できません。' } };
+        }
+        largeParty = true;
+        partySurcharge = largePartySurcharge(params.people);
+      }
+    }
     var tier = isMemberPlan(plan)
       ? TIER.MEMBER
       : (plan ? TIER.GENERAL : resolveTier_(brand, params.isMember === true, generation));
@@ -526,11 +595,17 @@ var BookingPricing = (function () {
     else if (plan === PLAN.MENS_WEEKEND_SHOWER_4H) amount = SHOWER_PACK_.price;
     else if (plan === PLAN.OSU_COSPLAY_BASE_6H) amount = hours * EVENT_BASE_PLAN_.hourlyRate;
     else amount = computeAmount_(brand, generation, tier, dayType, hours);
+    var baseAmount = amount;
+    amount += partySurcharge;
 
     var result = {
       valid: true,
       price: {
         amount: amount,
+        /* Issue #668: 通常部屋料金（人数加算を含まない）と人数加算額。メール・管理画面は基本料金と人数加算を区別して出す。 */
+        baseAmount: baseAmount,
+        partySurcharge: partySurcharge,
+        largeParty: largeParty,
         currency: CURRENCY_,
         brand: brand,
         tier: tier,
@@ -602,6 +677,16 @@ var BookingPricing = (function () {
     eventPlanOptionsError: eventPlanOptionsError,
     planLabel: planLabel,
     isPairPackPeople: isPairPackPeople,
+    LARGE_PARTY_MAX_PEOPLE: LARGE_PARTY_.maxPeople,
+    LARGE_PARTY_MIN_PEOPLE: LARGE_PARTY_.minPeople,
+    LARGE_PARTY_SURCHARGE_PER_PERSON: LARGE_PARTY_.surchargePerPerson,
+    LARGE_PARTY_START_DATE: LARGE_PARTY_.startDate,
+    LARGE_PARTY_LABEL: LARGE_PARTY_.label,
+    parseHeadcount: parseHeadcount,
+    isMensPartySizeAllowed: isMensPartySizeAllowed,
+    isLargePartyPeople: isLargePartyPeople,
+    isLargePartyAvailableOnDate: isLargePartyAvailableOnDate,
+    largePartySurcharge: largePartySurcharge,
     isPairPackAvailableOnDate: isPairPackAvailableOnDate,
     PAIR_PACK_START_DATE: PAIR_PACK_.startDate,
     generationAt: generationAt,

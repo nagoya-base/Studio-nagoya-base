@@ -112,7 +112,11 @@ function createScriptRunStub() {
     'adminReconcileCheckoutExpiry',
     /* Issue #423 */
     'adminApproveOptionOrder',
-    'adminDeclineOptionOrder'
+    'adminDeclineOptionOrder',
+    /* Issue #668 */
+    'adminApproveLargeParty',
+    'adminRejectLargeParty',
+    'adminChangeBookingPeople'
   ];
 
   var stub = {

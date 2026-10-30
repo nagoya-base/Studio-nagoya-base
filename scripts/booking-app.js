@@ -246,6 +246,8 @@
     people: document.getElementById('ba-people'),
     peopleError: document.getElementById('ba-people-error'),
     peoplePlanHelp: document.getElementById('ba-people-plan-help'),
+    partyHelp: document.getElementById('ba-party-help'),
+    completePartyNotice: document.getElementById('ba-complete-party-notice'),
     purpose: document.getElementById('ba-purpose'),
     purposeError: document.getElementById('ba-purpose-error'),
     purposeOtherWrap: document.getElementById('ba-purpose-other-wrap'),
@@ -1313,7 +1315,9 @@
       /* 2名ペアパックの見積り。見積りAPIは会員台帳を照会しない（資格の確認は予約作成時のサーバー側のみ）。 */
       (plan ? '&plan=' + encodeURIComponent(plan) : '') +
       (plan === Logic.PHOTO_SUPPORT_PLAN_CODE ? '&supportServices=' + encodeURIComponent(photoSupportServices_()) +
-        (photoSupportEquipmentParam_() ? '&supportEquipment=' + encodeURIComponent(photoSupportEquipmentParam_()) : '') : '');
+        (photoSupportEquipmentParam_() ? '&supportEquipment=' + encodeURIComponent(photoSupportEquipmentParam_()) : '') : '') +
+      /* Issue #668: mensの5〜7名は人数加算つきで見積る（サーバーはmens以外では人数を見ない）。 */
+      (brand === 'mens' && els.people && els.people.value ? '&people=' + encodeURIComponent(els.people.value) : '');
   }
 
   /* lineEl/noteElの組へ、現在の見積り状態を描画する。取得中・失敗時はlineElを必ず
@@ -1829,7 +1833,20 @@
     });
   });
   /* Issue #578: 人数はStep2で入力する。キー入力・選択のどちらでも、古い通常料金を残さず自動適用後の見積りへ同期する。 */
-  if (els.people) els.people.addEventListener('input', function () { refreshPriceEstimate_(); });
+  /* Issue #668: 5〜7名を選んだら大人数利用の案内を出し、支払方法をカード（承認後に決済）へ固定する（mensのみ）。 */
+  function applyLargePartyState_() {
+    if (brand !== 'mens') return;
+    var large = largePartySelected_();
+    if (els.partyHelp) els.partyHelp.hidden = !large;
+    updatePaymentMethodGating();
+    /* Issue #668 GA4: 既存イベントに party_size_tier を付けて大人数利用（5〜7名）の選択を識別する。人数の実数・個人情報は送らない。新しい成果イベントは作らない。 */
+    var analytics = window.StudioAnalytics;
+    if (analytics && typeof analytics.setEventContext === 'function') {
+      analytics.setEventContext('party_size_tier', large ? 'large_5_7' : '');
+      if (large && typeof analytics.trackFormStart === 'function') analytics.trackFormStart('mens_booking_large_party');
+    }
+  }
+  if (els.people) els.people.addEventListener('input', function () { applyLargePartyState_(); refreshPriceEstimate_(); });
 
   /* 貸切ベースプラン（Issue #510）の選択に合わせ、利用時間の選択肢を6〜13時間（1時間単位）に絞り、初期値を6時間にする。
      6時間固定ではなく、7時間・8時間…と増やせる。外すと元の入力に戻す。終了が21:00を超える開始時刻は一覧から外す（fetchAvailability）。 */
@@ -2263,10 +2280,14 @@
    * 利用経験ありへ戻した場合は解除して従来どおり全て選べる。Step2→Step3遷移時に呼び直す。
    * 最終的な拒否はサーバー側（FIRST_TIME_CARD_PAYMENT_REQUIRED）が担保する。
    */
+  /* Issue #668: SNB mensの5〜7名。承認後のオンラインカード決済のみ（現金・PayPay・未定は選べない）。UXのみで、最終判定はサーバー。 */
+  function largePartySelected_() {
+    return brand === 'mens' && !!els.people && Logic.isLargePartyPeopleValue(els.people.value);
+  }
   function updatePaymentMethodGating() {
     var radio = cardPaymentRadio_();
     if (!radio) return;
-    var firstTime = Logic.isFirstTimeCardRequired(state.customerType);
+    var firstTime = Logic.isFirstTimeCardRequired(state.customerType) || largePartySelected_();
     root.querySelectorAll('input[name="paymentMethod"]').forEach(function (other) {
       if (other === radio) return;
       other.disabled = firstTime;
@@ -2277,7 +2298,7 @@
       if (firstTime && other.checked) other.checked = false;
     });
     if (firstTime) radio.checked = true;
-    if (els.firstTimeCardNotice) els.firstTimeCardNotice.hidden = !firstTime;
+    if (els.firstTimeCardNotice) els.firstTimeCardNotice.hidden = !Logic.isFirstTimeCardRequired(state.customerType);
     updateCardPaymentNoticeVisibility();
   }
 
@@ -2396,6 +2417,17 @@
         }
         if (els.showerSchedule) els.showerSchedule.focus();
         return;
+      }
+
+      /* Issue #668: SNB mensの5〜7名。提供開始の利用日・SNB MEMBER確認（メールOTP）・カード決済を事前に確認する（最終判定はサーバー側）。 */
+      if (largePartySelected_() && !errors.people) {
+        if (!Logic.isLargePartyDateAllowed(state.date)) {
+          errors.people = Logic.messageForErrorCode('LARGE_PARTY_NOT_AVAILABLE', locale, brand);
+        } else if (otpMode_() && !memberVerified_()) {
+          errors.people = Logic.messageForErrorCode('LARGE_PARTY_MEMBER_ONLY', locale, brand) + '（日時の入力欄で、メールアドレスの会員確認を完了してください）';
+        } else if (fields.paymentMethod && !Logic.isCardPaymentMethodValue(fields.paymentMethod)) {
+          errors.paymentMethod = Logic.messageForErrorCode('LARGE_PARTY_CARD_REQUIRED', locale, brand);
+        }
       }
 
       /* 二重チェック（Issue #407）: 初回利用はカード以外を送信させない（サーバー側と同じ条件）。 */
@@ -2776,6 +2808,29 @@
             els.completePrice.textContent = completeAmount ? UI_TEXT.priceLine(completeAmount) : Logic.priceUnavailableLabel(locale);
           }
           if (els.completePayment) els.completePayment.textContent = Logic.paymentMethodLabel(body.paymentMethod, locale);
+          /* Issue #668: 5〜7名は承認待ち。決済へ進まず（サーバーは決済開始トークンを返さない）、承認後に案内メールのリンクから24時間以内に支払う。 */
+          if (body.approvalRequired === true && body.dryRun !== true) {
+            var partyCopy = Logic.largePartyCompleteCopy();
+            setText_(els.completeHeading, partyCopy.heading);
+            setText_(els.completeStatusLabel, partyCopy.statusLabel);
+            if (els.completeStatus) els.completeStatus.textContent = partyCopy.status;
+            if (els.completePrice) {
+              var partyTotal = Logic.formatJpyAmount(body.price && body.price.amount);
+              var partyExtra = Logic.formatJpyAmount(body.price && body.price.partySurcharge);
+              els.completePrice.textContent = partyTotal
+                ? UI_TEXT.priceLine(partyTotal) + partyCopy.priceNote(partyExtra)
+                : Logic.priceUnavailableLabel(locale);
+            }
+            if (els.completeGenericNotice) els.completeGenericNotice.hidden = true;
+            if (els.completePartyNotice) els.completePartyNotice.hidden = false;
+            renderMultilineNotice_(els.completeCardPaymentNotice, null);
+            renderMultilineNotice_(els.completeCheckoutNotice, null);
+            renderMultilineNotice_(els.completeCheckoutUncertainNotice, null);
+            if (els.completeCheckoutWrap) els.completeCheckoutWrap.hidden = true;
+            goToStep('complete');
+            return;
+          }
+          if (els.completePartyNotice) els.completePartyNotice.hidden = true;
           /* Issue #445: カードは「予約申込を受け付けました→お支払い完了で確定」を前面に出し、
              「仮予約」を主見出しにしない。現金・PayPay・未定は従来どおり仮予約受付。内部状態（PENDING）は不変。 */
           var completeCopy = flowCopy_(state.paymentMethod);

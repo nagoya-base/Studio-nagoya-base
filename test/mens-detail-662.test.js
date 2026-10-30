@@ -20,6 +20,8 @@ var TARGETS = [
   'mens/legal/index.html',
   'mens/booking/index.html',
   'mens/booking/options/index.html',
+  /* Issue #668: 5〜7名の承認後お支払いページ。 */
+  'mens/booking/party/index.html',
   'mens/booking/payment-complete.html',
   'mens/booking/option-payment-complete.html',
   /* Issue #667: 作品撮りサポートプラン（承認後のお支払いページ）も同じmens詳細ページの配色。 */

@@ -33,6 +33,8 @@
   var sentOnce = {};
   /* 成果イベント（generate_lead）の二重送信防止用。送信成功1回につき1件だけ記録する。 */
   var submittedTokens = {};
+  /* Issue #668: 既存イベントに付ける共通パラメータ（新しい成果イベントは作らない）。予約フォームが大人数利用（5〜7名）の選択を識別するために使う。 */
+  var eventContext = {};
 
   function isTrackableEnvironment() {
     if (isDebug) return true;
@@ -51,6 +53,9 @@
       page_type: pageType,
       site_section: siteSection
     };
+    for (var ctxKey in eventContext) {
+      if (Object.prototype.hasOwnProperty.call(eventContext, ctxKey)) payload[ctxKey] = eventContext[ctxKey];
+    }
     if (params) {
       for (var key in params) {
         if (Object.prototype.hasOwnProperty.call(params, key)) payload[key] = params[key];
@@ -147,6 +152,12 @@
   initFaqOpenTracking();
 
   window.StudioAnalytics = {
+    /* 以後の既存イベントへ共通パラメータを付ける/外す（値がnull/空なら外す）。PII・自由入力は渡さないこと。 */
+    setEventContext: function (key, value) {
+      if (!key) return;
+      if (value === null || value === undefined || value === '') delete eventContext[key];
+      else eventContext[key] = value;
+    },
     trackFormStart: function (formName) {
       trackOnce(EVENTS.FORM_START, EVENTS.FORM_START, {
         form_name: formName || 'studio_reservation'

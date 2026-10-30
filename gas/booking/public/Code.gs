@@ -58,6 +58,9 @@ function doPost(e) {
   if (params.action === 'requestBookingMemberCode' || params.action === 'verifyBookingMemberCode' || params.action === 'bookingMemberStatus') {
     return jsonOutput_(handleBookingMemberAction_(params.action, e));
   }
+  if (params.action === 'partySummary' || params.action === 'startPartyCheckout') {
+    return jsonOutput_(handlePartyAction_(params.action, e));
+  }
   if (params.action === 'optionSummary' || params.action === 'submitOptions' || params.action === 'startOptionCheckout') {
     return jsonOutput_(handleOptionAction_(params.action, e));
   }
@@ -401,6 +404,7 @@ function handleBookingMemberStatus_(payload) {
       startTime: payload.startTime,
       generation: generation,
       plan: plan,
+      people: payload.people,
       supportServices: payload.supportServices,
       supportEquipment: payload.supportEquipment
     });
@@ -470,6 +474,41 @@ function handleOptionAction_(action, e) {
     return result;
   } catch (unexpectedError) {
     Logger.log('requestId=' + requestId + ' ' + action + '=result error.code=INTERNAL_ERROR');
+    return { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' }, requestId: requestId };
+  }
+}
+
+/*
+ * SNB mens大人数利用（5〜7名。Issue #668）の承認後の支払いページ用。
+ * partySummary / startPartyCheckout（POST）。予約IDだけでは操作できず、登録メールとの一致を確認する
+ * （不一致・対象外は存在有無を区別しない同一のFORBIDDEN。予約ID単位でrate limit）。金額・状態はクライアントから受け取らない。
+ */
+function handlePartyAction_(action, e) {
+  var requestId = Utilities.getUuid();
+  var payload;
+  try {
+    payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (parseError) {
+    return { success: false, error: { code: 'INVALID_JSON', message: 'リクエストの形式が正しくありません。' }, requestId: requestId };
+  }
+  var bookingId = payload && typeof payload.bookingId === 'string' ? payload.bookingId : '';
+  var email = payload && typeof payload.email === 'string' ? payload.email : '';
+  if (!bookingId || bookingId.length > 64 || !email || email.length > 254) {
+    return { success: false, error: { code: 'FORBIDDEN', message: '予約が見つからないか、操作の権限がありません。' }, requestId: requestId };
+  }
+  try {
+    if (!RateLimiter.limitByKey('party_' + bookingId, OPTION_ACTION_RATE_LIMIT_.windowMinutes, OPTION_ACTION_RATE_LIMIT_.maxCount)) {
+      return { success: false, error: { code: 'RATE_LIMITED', message: '操作回数が多すぎます。しばらく時間を置いてから再度お試しください。' }, requestId: requestId };
+    }
+    var result = action === 'partySummary'
+      ? BookingRepository.getLargePartySummary(bookingId, email)
+      : BookingRepository.startLargePartyCheckout(bookingId, email);
+    if (!result || typeof result !== 'object') {
+      result = { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' } };
+    }
+    result.requestId = requestId;
+    return result;
+  } catch (unexpectedError) {
     return { success: false, error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました。しばらくしてから再度お試しください。' }, requestId: requestId };
   }
 }
@@ -621,6 +660,8 @@ function handleEstimatePrice_(params, context) {
     isMember: isEstimateMemberTierLocked_(params.brand, generation) ? false : parseBooleanParam_(params.isMember),
     startTime: params.startTime,
     generation: generation,
+    /* Issue #668: mensの5〜7名は人数加算つきで見積る（mens以外は人数を見ない）。 */
+    people: params.people,
     /* Issue #478: 2名ペアパックの見積り。見積りAPIでは会員台帳を一切照会しない（会員の有無を
        探る口にしない）。資格の確認は予約作成時のサーバー側だけで行う。 */
     plan: params.plan,

@@ -1,0 +1,93 @@
+---
+---
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>5〜7名のご利用 承認後のお支払い | SNB mens（Studio Nagoya Base）</title>
+
+<meta name="description" content="SNB mens（Studio Nagoya Base）の5〜7名でのご利用で、運営の承認を受けた方向けのお支払いページです。承認から24時間以内にお支払いください。">
+<meta name="robots" content="noindex, follow">
+<link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/mens/booking/party/">
+
+<link rel="icon" href="../../../images/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="../../../images/apple-touch-icon.png">
+
+<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-6TWDLEFWJT');
+</script>
+
+<link rel="stylesheet" href="../../../styles/common.css">
+<link rel="stylesheet" href="../../../styles/mens.css">
+<link rel="stylesheet" href="../../../styles/booking.css?v={{ site.time | date: '%s' }}">
+<link rel="stylesheet" href="../../../styles/mens-detail.css">
+</head>
+
+<body class="mens-detail" data-page-type="booking" data-site-section="mens">
+
+<a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
+
+{% include subpage_nav_ja.html brand="mens" %}
+
+<main id="main-content">
+
+<section id="booking-party" class="bg-section">
+  <div class="container">
+    <h1 class="section-title">5〜7名のご利用｜承認後のお支払い</h1>
+    <p class="section-subtitle">Group Booking Payment</p>
+    <p><a href="{{ '/mens/booking/' | relative_url }}">← 予約フォームへ</a></p>
+
+    <div id="booking-party-app">
+      <p>運営の承認メールを受け取った方が、承認から24時間以内にお支払いを完了すると予約が成立します。予約ID（メールに記載）と、ご予約時のメールアドレスを入力してください。</p>
+
+      <form id="bp-lookup-form" novalidate>
+        <div class="ba-field">
+          <label for="bp-booking-id">予約ID</label>
+          <input type="text" id="bp-booking-id" maxlength="64" autocomplete="off">
+        </div>
+        <div class="ba-field">
+          <label for="bp-email">ご予約時のメールアドレス</label>
+          <input type="email" id="bp-email" maxlength="254" autocomplete="email">
+        </div>
+        <p class="ba-field-error" id="bp-lookup-error" hidden></p>
+        <button type="submit" class="ba-btn ba-btn-primary" id="bp-lookup-submit">予約内容を確認する</button>
+      </form>
+
+      <div id="bp-detail" hidden>
+        <table class="ba-summary">
+          <tbody>
+            <tr><th>予約ID</th><td id="bp-d-booking-id"></td></tr>
+            <tr><th>利用日</th><td id="bp-d-date"></td></tr>
+            <tr><th>利用人数</th><td id="bp-d-people"></td></tr>
+            <tr><th>基本部屋料金</th><td id="bp-d-base"></td></tr>
+            <tr><th>人数加算（予約全体で1回）</th><td id="bp-d-surcharge"></td></tr>
+            <tr><th>確定料金（税込）</th><td id="bp-d-amount"></td></tr>
+            <tr><th>状態</th><td id="bp-d-status"></td></tr>
+            <tr id="bp-d-due-row" hidden><th>お支払い期限</th><td id="bp-d-due"></td></tr>
+          </tbody>
+        </table>
+        <p class="ba-banner ba-banner--notice" id="bp-notice" hidden></p>
+        <p class="ba-field-error" id="bp-pay-error" hidden></p>
+        <p id="bp-pay-wrap" hidden><button type="button" class="ba-btn ba-btn-primary" id="bp-pay">オンラインクレジットカードでお支払いへ進む</button></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+{% include subpage_footer_ja.html brand="mens" %}
+
+<script src="../../../scripts/booking-config.js?v={{ site.time | date: '%s' }}"></script>
+<script src="../../../scripts/booking-party.js?v={{ site.time | date: '%s' }}"></script>
+<script src="../../../scripts/analytics.js"></script>
+
+</body>
+</html>

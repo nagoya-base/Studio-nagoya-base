@@ -128,6 +128,12 @@
       INVALID_PLAN: 'プランの指定が正しくありません。ページを開き直してください。',
       /* Issue #488 / #492 / #510: 6時間貸切ベースプラン（常設）。 */
       EVENT_PLAN_PEOPLE_EXCEEDED: '貸切ベースプランのご利用は1〜6名までです。人数を変更するか、プランの選択を外してください。',
+      PARTY_SIZE_EXCEEDED: 'SNB mensのご利用人数は1〜7名です。8名以上のご利用はお受けできません。',
+      LARGE_PARTY_NOT_AVAILABLE: '5〜7名でのご利用は、2026年12月1日以降のご利用日からお申し込みいただけます。',
+      LARGE_PARTY_MEMBER_ONLY: '5〜7名でのご利用は、ご利用日にSNB MEMBER資格のある方（予約代表者）が対象です。会員登録と同じメールアドレスでお申し込みください。',
+      LARGE_PARTY_CARD_REQUIRED: '5〜7名のご利用は、承認後のオンラインクレジットカード決済でのお支払いとなります。',
+      LARGE_PARTY_PLAN_NOT_COMBINABLE: '5〜7名のご利用は、他のプランとは併用できません。',
+      LARGE_PARTY_ADMIN_NOT_SUPPORTED: '5〜7名の大人数利用は、ご本人のお申し込みから承認の手続きで受け付けます。',
       INTERNAL_ERROR: '予約処理中にエラーが発生しました。しばらくしてから再度お試しください。'
     },
     en: {
@@ -181,6 +187,12 @@
       PLAN_NOT_AVAILABLE: 'This plan is not available right now.',
       INVALID_PLAN: 'The plan is not valid. Please reload the page.',
       EVENT_PLAN_PEOPLE_EXCEEDED: 'The 6-hour private base plan is for 1 to 4 guests.',
+      PARTY_SIZE_EXCEEDED: 'SNB mens accepts up to 7 guests.',
+      LARGE_PARTY_NOT_AVAILABLE: 'Bookings for 5 to 7 guests are available for visit dates from December 1, 2026.',
+      LARGE_PARTY_MEMBER_ONLY: 'Bookings for 5 to 7 guests require the representative to hold an SNB MEMBER membership on the visit date. Please use the email address registered for your membership.',
+      LARGE_PARTY_CARD_REQUIRED: 'Bookings for 5 to 7 guests are paid by online credit card after approval.',
+      LARGE_PARTY_PLAN_NOT_COMBINABLE: 'Bookings for 5 to 7 guests cannot be combined with other plans.',
+      LARGE_PARTY_ADMIN_NOT_SUPPORTED: 'Bookings for 5 to 7 guests are accepted from the customer’s own application and approved afterwards.',
       INTERNAL_ERROR: 'An error occurred while processing your request. Please try again in a moment.'
     }
   };
@@ -287,7 +299,13 @@
       code === 'PLAN_NOT_AVAILABLE' ||
       code === 'INVALID_PLAN' ||
       /* Issue #488: 貸切ベースプランの人数も、選択を直せば解消する。 */
-      code === 'EVENT_PLAN_PEOPLE_EXCEEDED'
+      code === 'EVENT_PLAN_PEOPLE_EXCEEDED' ||
+      /* Issue #668: mensの大人数利用（人数・日付・支払方法・会員資格）も、内容を直せば解消する。 */
+      code === 'PARTY_SIZE_EXCEEDED' ||
+      code === 'LARGE_PARTY_NOT_AVAILABLE' ||
+      code === 'LARGE_PARTY_MEMBER_ONLY' ||
+      code === 'LARGE_PARTY_CARD_REQUIRED' ||
+      code === 'LARGE_PARTY_PLAN_NOT_COMBINABLE'
     ) {
       return 'edit-details';
     }
@@ -1381,6 +1399,39 @@
     });
   }
 
+  /* Issue #668: SNB mensの大人数利用（5〜7名）。上限7名・提供開始の利用日（2026-12-01）はサーバー（BookingPricing.gs）と同じ値。UXのみで、最終判定はサーバー。 */
+  var LARGE_PARTY_MIN_PEOPLE = 5;
+  var LARGE_PARTY_MAX_PEOPLE = 7;
+  var LARGE_PARTY_SURCHARGE_PER_PERSON = 1000;
+  var LARGE_PARTY_START_DATE = '2026-12-01';
+
+  function isLargePartyPeopleValue(people) {
+    var m = /^([1-9]\d*)名$/.exec(String(people || ''));
+    return !!m && Number(m[1]) >= LARGE_PARTY_MIN_PEOPLE && Number(m[1]) <= LARGE_PARTY_MAX_PEOPLE;
+  }
+
+  /* 4名までは加算なし。5人目以降1名につき1,000円（予約全体で1回）。表示用の目安で、確定額は常にサーバーが決める。 */
+  function largePartySurcharge(people) {
+    var m = /^([1-9]\d*)名$/.exec(String(people || ''));
+    return m && isLargePartyPeopleValue(people) ? (Number(m[1]) - 4) * LARGE_PARTY_SURCHARGE_PER_PERSON : 0;
+  }
+
+  /* 5〜7名の申込完了画面の文言（運営承認待ち。お支払いは承認後）。 */
+  function largePartyCompleteCopy() {
+    return {
+      heading: '5〜7名のご利用申込を受け付けました',
+      statusLabel: 'ステータス',
+      status: '運営の承認待ち（仮押さえ中・未確定）',
+      priceNote: function (surchargeLabel) {
+        return surchargeLabel ? '（人数加算 ' + surchargeLabel + ' を含む・承認後に確定）' : '';
+      }
+    };
+  }
+
+  function isLargePartyDateAllowed(dateString) {
+    return typeof dateString === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateString) && dateString >= LARGE_PARTY_START_DATE;
+  }
+
   function isEventPlanPeopleValue(people) {
     if (!people) return true;
     var m = /^([1-9]\d*)名$/.exec(String(people));
@@ -1458,6 +1509,12 @@
     validateEmailField: validateEmailField,
     buildPurposeValue: buildPurposeValue,
     peopleLabel: peopleLabel,
+    LARGE_PARTY_MAX_PEOPLE: LARGE_PARTY_MAX_PEOPLE,
+    LARGE_PARTY_START_DATE: LARGE_PARTY_START_DATE,
+    isLargePartyPeopleValue: isLargePartyPeopleValue,
+    largePartySurcharge: largePartySurcharge,
+    isLargePartyDateAllowed: isLargePartyDateAllowed,
+    largePartyCompleteCopy: largePartyCompleteCopy,
     purposeLabel: purposeLabel,
     paymentMethodLabel: paymentMethodLabel,
     buildCreateBookingPayload: buildCreateBookingPayload,

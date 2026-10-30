@@ -201,6 +201,32 @@ var Booking = (function () {
   var PAYMENT_METHOD_CARD = 'オンラインクレジットカード';
   var CARD_TTL_HOURS = 72;
 
+  /*
+   * Issue #668: SNB mens大人数利用（5〜7名）の承認状態と支払期限。
+   * - 申込時は status=PENDING（Calendarの仮押さえ）・largePartyApprovalStatus=PENDING_APPROVAL（運営の事前承認待ち。支払いはまだ案内しない）。
+   * - 承認（APPROVED）で確定料金を案内し、承認から24時間以内の支払いを求める（largePartyPaymentDueAt）。24時間以内に未払いなら不成立（EXPIRED）で枠を解放する。
+   * - 不承認（REJECTED）は仮押さえを解除して不成立（CANCELLED）。4名扱いへの自動変換・自動課金はしない。
+   * 承認待ちの仮押さえにはIssue #668に定めのない自動失効期限を置かず、運営の判断まで保持する（利用開始時刻を過ぎた未判断のものだけ失効。BookingRepository.expirePendingBookings）。
+   */
+  var LARGE_PARTY_APPROVAL = { NONE: '', PENDING_APPROVAL: 'PENDING_APPROVAL', APPROVED: 'APPROVED', REJECTED: 'REJECTED' };
+  var LARGE_PARTY_PAYMENT_WINDOW_HOURS = 24;
+
+  /* Bookings台帳の largeParty 列は TRUE（真偽値）または 'TRUE' 文字列。空・その他は通常予約。 */
+  function isLargePartyRecord(record) {
+    var v = record ? record.largeParty : '';
+    return v === true || v === 'TRUE' || v === 'true';
+  }
+
+  function largePartyApprovalStatus(record) {
+    var v = record ? record.largePartyApprovalStatus : '';
+    return v === LARGE_PARTY_APPROVAL.PENDING_APPROVAL || v === LARGE_PARTY_APPROVAL.APPROVED || v === LARGE_PARTY_APPROVAL.REJECTED ? v : '';
+  }
+
+  /* 承認時刻（ミリ秒）から支払期限（承認の24時間後）を返す。 */
+  function computeLargePartyPaymentDueMillis(approvedAtMillis) {
+    return Number(approvedAtMillis) + LARGE_PARTY_PAYMENT_WINDOW_HOURS * 3600000;
+  }
+
   function isCardPaymentMethod(paymentMethod) {
     return String(paymentMethod || '').trim() === PAYMENT_METHOD_CARD;
   }
@@ -893,6 +919,11 @@ var Booking = (function () {
     ALLOWED_CUSTOMER_TYPES: ALLOWED_CUSTOMER_TYPES,
     PAYMENT_METHOD_CARD: PAYMENT_METHOD_CARD,
     CARD_TTL_HOURS: CARD_TTL_HOURS,
+    LARGE_PARTY_APPROVAL: LARGE_PARTY_APPROVAL,
+    LARGE_PARTY_PAYMENT_WINDOW_HOURS: LARGE_PARTY_PAYMENT_WINDOW_HOURS,
+    isLargePartyRecord: isLargePartyRecord,
+    largePartyApprovalStatus: largePartyApprovalStatus,
+    computeLargePartyPaymentDueMillis: computeLargePartyPaymentDueMillis,
     isCardPaymentMethod: isCardPaymentMethod,
     isValidStripePaymentLinkUrl: isValidStripePaymentLinkUrl,
     /* PR #337レビュー対応（5回目）: resolvePaymentLinkMetadataInconsistencyが

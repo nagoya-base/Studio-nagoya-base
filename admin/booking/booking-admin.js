@@ -70,6 +70,13 @@ var DETAIL_FIELDS = [
   ['priceTier', '料金区分'],
   ['priceDayType', '曜日区分'],
   ['effectivePriceAmount', '案内する金額（税込）'],
+  /* Issue #668: SNB mens大人数利用（5〜7名）のみサーバーが非空で返す（通常予約は行ごと省かれる）。予約人数は「people」。 */
+  ['largeParty', '大人数利用（5〜7名）'],
+  ['partySurcharge', '人数加算額（円）'],
+  ['membershipStatus', '会員資格確認結果'],
+  ['largePartyApprovalStatus', '運営承認状態'],
+  ['largePartyApprovedAt', '承認日時'],
+  ['largePartyPaymentDueAt', '支払期限（承認から24時間）'],
   ['source', '受付経路'],
   ['note', '備考'],
   /* Issue #334: カード予約のみサーバー側で非空（読み取り専用）。 */
@@ -417,13 +424,18 @@ function render() {
     var supportAwaitingApproval = b.supportStage === 'AWAITING_APPROVAL';
     var supportAwaitingPayment = b.supportStage === 'AWAITING_PAYMENT';
     if (supportAwaitingApproval || supportAwaitingPayment) canConfirm = false;
+    /* Issue #668: 大人数利用（5〜7名）の承認待ちは、確定ではなく承認／不承認で扱う（確定はサーバー側でも承認前は拒否される）。 */
+    var largePartyAwaiting = b.largeParty === true && b.status === 'PENDING' && b.largePartyApprovalStatus === 'PENDING_APPROVAL';
     var actions = '';
     if (optionPending) {
       /* Issue #447: 承認待ちオプションがある予約は、通常の「詳細」より先に目立つ導線を出す。 */
       actions += '<button type="button" class="action option-review" data-action="detail" data-id="' + escapeHtml(b.bookingId) + '">オプションを確認</button>';
     }
     actions += '<button type="button" class="action detail" data-action="detail" data-id="' + escapeHtml(b.bookingId) + '">詳細</button>';
-    if (supportAwaitingApproval) {
+    if (largePartyAwaiting) {
+      actions += '<button type="button" class="action confirm" data-action="approve-party" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>承認</button>';
+      actions += '<button type="button" class="action cancel" data-action="reject-party" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>不承認</button>';
+    } else if (supportAwaitingApproval) {
       actions += '<button type="button" class="action confirm" data-action="approve-support" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>承認（24時間以内に決済案内）</button>';
     } else if (supportAwaitingPayment && b.canResendSupportApproval) {
       actions += '<button type="button" class="action confirm" data-action="approve-support" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>承認案内メールを再送</button>';
@@ -432,6 +444,10 @@ function render() {
       actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '" disabled title="予約オプションの承認待ちがあります。詳細でオプションを確認してください">オプション確認後に確定</button>';
     } else if (canConfirm) {
       actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '"' + (busy || awaitingPaymentLink ? ' disabled' : '') + (awaitingPaymentLink ? ' title="決済リンク未送信のため確定できません（詳細から送信してください）"' : '') + '>確定</button>';
+    }
+    if (b.brand === 'mens' && (b.status === 'PENDING' || b.status === 'CONFIRMED')) {
+      /* Issue #668: SNB mensの予約人数の変更（締切・料金再計算・返金なしの判定はサーバー側）。 */
+      actions += '<button type="button" class="action detail" data-action="change-people" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>人数変更</button>';
     }
     if (b.status === 'CONFIRMED' && b.confirmedMailPending) {
       /* Issue #418: 確定済みで確定メール未送信の予約は、同じconfirmBooking経由で再試行できる。 */
@@ -2038,6 +2054,80 @@ function runApproveSupport(bookingId) {
 }
 
 /*
+ * 大人数利用（5〜7名。Issue #668）の承認／不承認。runConfirmと同じ配線（確認ダイアログ → google.script.run → 一覧再取得）。
+ * 承認は予約代表者の会員資格を再確認し、確定料金・承認から24時間の支払期限を利用者へメールする。不承認は仮押さえを解除して不成立にする。
+ */
+function runLargePartyDecision(bookingId, approving) {
+  var booking = state.bookings.find(function (b) { return b.bookingId === bookingId; });
+  var confirmed = window.confirm(
+    (booking
+      ? '予約ID: ' + booking.bookingId + '\n' +
+        '利用日: ' + booking.date + ' ' + booking.startAt + '-' + booking.endAt + '\n' +
+        '利用者名: ' + booking.name + '（' + booking.people + '）\n' +
+        '案内する金額: ' + (booking.effectivePriceAmount === null || booking.effectivePriceAmount === undefined ? '' : booking.effectivePriceAmount + '円（人数加算 ' + (booking.partySurcharge || 0) + '円を含む）') + '\n\n'
+      : '') +
+    (approving
+      ? 'この5〜7名のご利用を承認します。\n\n予約代表者の会員資格を再確認し、確定料金と承認から24時間の支払期限を利用者へメールします。24時間以内に未払いの場合は不成立となり、枠を解除します。\n\n実行しますか？'
+      : 'この5〜7名のご利用を承認しません。\n\n仮押さえを解除して不成立にし、利用者へその旨をメールします（4名扱いへの変更・自動課金はしません）。\n\n実行しますか？')
+  );
+  if (!confirmed) return;
+
+  setBusy(bookingId, true);
+  setStatusLine(approving ? '承認処理中…' : '不承認処理中…');
+  var runner = google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result || !result.success) {
+        alert((approving ? '承認' : '不承認') + 'できませんでした: ' + (result && result.error && result.error.message));
+      } else if (approving && result.mail && result.mail.success === false) {
+        alert('承認しましたが、承認メールを送信できませんでした。利用者へ直接ご連絡ください。' + (result.mail.error ? '（' + (result.mail.error.code || '') + '）' : ''));
+      }
+      loadBookings(function () { setBusy(bookingId, false); });
+    })
+    .withFailureHandler(function (error) {
+      alert((approving ? '承認' : '不承認') + 'でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      loadBookings(function () { setBusy(bookingId, false); });
+    });
+  if (approving) runner.adminApproveLargeParty(bookingId);
+  else runner.adminRejectLargeParty(bookingId);
+}
+
+/*
+ * SNB mensの予約人数の変更（Issue #668）。入力した人数をサーバー（changeBookingPeople）へ渡す。
+ * 利用日の2日前まで料金を再計算、前日・当日の減員は人数のみ更新して返金なし、前日・当日の増員と8名以上は拒否される。
+ */
+function runChangePeople(bookingId) {
+  var booking = state.bookings.find(function (b) { return b.bookingId === bookingId; });
+  var input = window.prompt(
+    (booking ? '予約ID: ' + booking.bookingId + '\n利用日: ' + booking.date + '\n現在の人数: ' + booking.people + '\n\n' : '') +
+    '変更後の人数を入力してください（例: 6名。上限7名）。\n利用日の2日前まで料金を再計算します。前日・当日の減員は、人数加算分を含め値下げ・返金しません。'
+  );
+  if (input === null) return;
+  var people = String(input).trim();
+  if (/^[0-9]+$/.test(people)) people += '名';
+  setBusy(bookingId, true);
+  setStatusLine('人数変更中…');
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result || !result.success) {
+        alert('人数を変更できませんでした: ' + (result && result.error && result.error.message));
+      } else {
+        var c = result.change || {};
+        var note = c.noRefund ? '前日・当日の減員のため、料金の値下げ・返金はありません。' : '案内する金額: ' + c.newAmount + '円';
+        if (c.additionalChargeDue) note += '\n追加請求の差額: ' + c.additionalChargeDue + '円（請求は別途行ってください）';
+        if (c.refundDue) note += '\n返金候補の差額: ' + c.refundDue + '円（返金は別途行ってください）';
+        if (c.needsApproval) note += '\n5〜7名へ変更したため、承認待ちになりました。';
+        alert('人数を変更しました（' + c.oldPeople + ' → ' + c.newPeople + '）。\n' + note);
+      }
+      loadBookings(function () { setBusy(bookingId, false); });
+    })
+    .withFailureHandler(function (error) {
+      alert('人数変更でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      loadBookings(function () { setBusy(bookingId, false); });
+    })
+    .adminChangeBookingPeople(bookingId, people);
+}
+
+/*
  * EXPIRED予約の復活（Issue #334）。runConfirm/runCancelと同じ配線
  * （window.confirmでYES/NO確認 → google.script.run → 成否問わずloadBookings()で
  * 最新一覧を再取得してから該当bookingIdのbusyを解除）。枠の空き・利用開始後かどうかの
@@ -3248,6 +3338,9 @@ document.getElementById('list').addEventListener('click', function (event) {
   if (action === 'confirm') runConfirm(bookingId);
   if (action === 'confirm-mail') runConfirm(bookingId);
   if (action === 'approve-support') runApproveSupport(bookingId);
+  if (action === 'approve-party') runLargePartyDecision(bookingId, true);
+  if (action === 'reject-party') runLargePartyDecision(bookingId, false);
+  if (action === 'change-people') runChangePeople(bookingId);
   if (action === 'cancel') runCancel(bookingId);
   if (action === 'revive') runRevive(bookingId);
   if (action === 'revive-paid') runRevivePaid(bookingId);
