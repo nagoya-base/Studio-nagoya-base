@@ -62,14 +62,13 @@ test('single concurrency group for the whole Booking GAS production, not cancell
 
 test('production steps run in order: schema migration -> Admin -> Public -> post-check', () => {
   const migrate = stepIndex('migrate-bookings-schema.js migrate');
-  const admin = stepIndex('deploy-booking-gas-target.sh admin');
-  const publicStep = stepIndex('deploy-booking-gas-target.sh public');
-  const check = stepIndex('Post-deploy check');
-  assert.ok(migrate > 0 && admin > migrate && publicStep > admin && check > publicStep, [migrate, admin, publicStep, check].join());
-  assert.equal(check, deploySteps.length - 1);
+  const admin = stepIndex('Update the existing Booking Admin deployment');
+  const publicStep = stepIndex('Update the existing Booking Web App deployment');
+  const checks = [stepIndex('deploy-booking-gas-target.sh admin verify'), stepIndex('deploy-booking-gas-target.sh public verify'), stepIndex('migrate-bookings-schema.js verify')];
+  assert.ok(migrate > 0 && admin > migrate && publicStep > admin, [migrate, admin, publicStep].join());
+  assert.ok(checks[0] > publicStep && checks[1] > checks[0] && checks[2] > checks[1], checks.join());
+  assert.equal(checks[2], deploySteps.length - 1);
   assert.ok(stepIndex('npm install --global @google/clasp@3.4.1') < migrate, 'tooling is set up first');
-  const checkStep = deploySteps[check];
-  assert.match(checkStep, /deploy-booking-gas-target\.sh admin verify[\s\S]*deploy-booking-gas-target\.sh public verify[\s\S]*migrate-bookings-schema\.js verify/);
 });
 
 test('no step can be skipped past a failure: no continue-on-error, failure()/always() conditions or pipeline fallbacks', () => {
@@ -82,8 +81,8 @@ test('no step can be skipped past a failure: no continue-on-error, failure()/alw
 });
 
 test('Admin failure never reaches Public: Public is a later step of the same fail-fast job', () => {
-  assert.ok(stepIndex('deploy-booking-gas-target.sh admin') < stepIndex('deploy-booking-gas-target.sh public'));
-  const publicStep = deploySteps[stepIndex('deploy-booking-gas-target.sh public')];
+  assert.ok(stepIndex('Update the existing Booking Admin deployment') < stepIndex('Update the existing Booking Web App deployment'));
+  const publicStep = deploySteps[stepIndex('Update the existing Booking Web App deployment')];
   assert.match(publicStep, /Booking Admin is updated to the current main commit\./);
   assert.match(publicStep, /exit 1/);
   assert.doesNotMatch(workflow, /NOT updated|was not updated/);
@@ -91,7 +90,7 @@ test('Admin failure never reaches Public: Public is a later step of the same fai
 
 test('failure messages distinguish "update did not complete" from "applied but verification failed" via the marker file', () => {
   for (const target of ['admin', 'public']) {
-    const step = deploySteps[stepIndex('deploy-booking-gas-target.sh ' + target)];
+    const step = deploySteps[stepIndex(target === 'admin' ? 'Update the existing Booking Admin deployment' : 'Update the existing Booking Web App deployment')];
     assert.match(step, new RegExp('-f "\\$RUNNER_TEMP/booking-gas-' + target + '-update-applied"'));
     assert.match(step, /was applied but its verification failed/);
     assert.match(step, /did not complete/);
@@ -99,12 +98,27 @@ test('failure messages distinguish "update did not complete" from "applied but v
 });
 
 test('migration credentials are job-scoped GitHub Secrets and kept separate from clasp credentials', () => {
-  assert.match(deploy, /BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: \$\{\{ secrets\.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON \}\}/);
-  assert.match(deploy, /BOOKING_SPREADSHEET_ID: \$\{\{ secrets\.BOOKING_SPREADSHEET_ID \}\}/);
-  assert.match(deploy, /BOOKING_SPREADSHEET_ID_SHA256: \$\{\{ secrets\.BOOKING_SPREADSHEET_ID_SHA256 \}\}/);
+  const withSheets = deploySteps.filter((x) => /BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: \$\{\{ secrets\.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON \}\}/.test(x));
+  assert.equal(withSheets.length, 2, 'only the migrate and schema-verify steps receive the Sheets credential');
+  for (const x of withSheets) {
+    assert.match(x, /BOOKING_SPREADSHEET_ID: \$\{\{ secrets\.BOOKING_SPREADSHEET_ID \}\}/);
+    assert.match(x, /BOOKING_SPREADSHEET_ID_SHA256: \$\{\{ secrets\.BOOKING_SPREADSHEET_ID_SHA256 \}\}/);
+    assert.doesNotMatch(x, /CLASPRC|SCRIPT_ID|DEPLOYMENT_ID/);
+  }
   const script = fs.readFileSync(deployScript, 'utf8');
   assert.doesNotMatch(script, /BOOKING_SHEETS|BOOKING_SPREADSHEET/);
   assert.doesNotMatch(workflow, /echo[^\n]*\$\{\{ *secrets|echo[^\n]*(SPREADSHEET_ID|SERVICE_ACCOUNT)/);
+});
+
+test('secrets are scoped per step, never job-wide, and the clasp install step receives none', () => {
+  assert.doesNotMatch(deploy, /\n    env:/);
+  assert.doesNotMatch(deploySteps[stepIndex('npm install --global')], /secrets\./);
+  for (const x of deploySteps.filter((y) => /ADMIN_|[^_]CLASPRC_JSON/.test(y) && y.includes('secrets.'))) {
+    assert.doesNotMatch(x, /BOOKING_SHEETS|BOOKING_SPREADSHEET|PUBLIC_/);
+  }
+  for (const x of deploySteps.filter((y) => /PUBLIC_/.test(y) && y.includes('secrets.'))) {
+    assert.doesNotMatch(x, /BOOKING_SHEETS|BOOKING_SPREADSHEET|ADMIN_|[^_]CLASPRC_JSON/);
+  }
 });
 
 test('only existing deployments are updated: no create-deployment, no new projects, no Stripe/Webhook changes', () => {
@@ -197,6 +211,29 @@ test('a failing update-deployment leaves no "applied" marker', () => {
   const r = runDeploy(['public'], { MOCK_UPDATE_FAIL: '1' });
   assert.notEqual(r.status, 0);
   assert.equal(r.marker('public'), false);
+});
+
+test('running admin then public in the same RUNNER_TEMP does not carry over the previous pull (remote_dir is reset)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'booking-deploy-seq-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'booking-gas-remote'));
+    fs.writeFileSync(path.join(dir, 'booking-gas-remote', 'appsscript.json'), '{"leftover":"admin"}');
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    // pull returns nothing for public: the manifest check must refuse to push.
+    fs.writeFileSync(path.join(bin, 'clasp'), `#!/bin/bash
+shift 4
+printf '%s\\n' "$1" >> "$MOCK_CALLS"
+case "$1" in list-deployments) echo "- public-deployment-dummy @1 - main x" ;; pull) ;; *) exit 0 ;; esac
+`, { mode: 0o700 });
+    const env = { ...process.env, PATH: bin + path.delimiter + process.env.PATH, GITHUB_WORKSPACE: workspace, RUNNER_TEMP: dir,
+      GITHUB_SHA: 'x', PUBLIC_CLASPRC_JSON: JSON.stringify({ tokens: { 'booking-owner': {} } }),
+      PUBLIC_SCRIPT_ID: 'public-script-dummy', PUBLIC_DEPLOYMENT_ID: 'public-deployment-dummy', MOCK_CALLS: path.join(dir, 'calls') };
+    const r = spawnSync('bash', [deployScript, 'public'], { cwd: dir, env, encoding: 'utf8' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /did not return appsscript\.json; refusing to push/);
+    assert.equal(fs.readFileSync(path.join(dir, 'calls'), 'utf8').includes('push'), false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('verify mode is read-only and checks the existing deployment shows the current main SHA', () => {

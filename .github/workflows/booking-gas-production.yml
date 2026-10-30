@@ -43,16 +43,6 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: booking-production
-    env:
-      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
-      PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
-      PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
-      PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
-      ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
-      ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
-      BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: ${{ secrets.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON }}
-      BOOKING_SPREADSHEET_ID: ${{ secrets.BOOKING_SPREADSHEET_ID }}
-      BOOKING_SPREADSHEET_ID_SHA256: ${{ secrets.BOOKING_SPREADSHEET_ID_SHA256 }}
     steps:
       - name: Check out the approved main commit
         uses: actions/checkout@v4
@@ -62,9 +52,18 @@ jobs:
           node-version: '22'
       - name: Install pinned clasp
         run: npm install --global @google/clasp@3.4.1
+      # 各stepには必要なSecretだけを渡す（clasp installのstepにはSecretを渡さない）。
       - name: Migrate the Bookings sheet schema
         run: node scripts/migrate-bookings-schema.js migrate
+        env:
+          BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: ${{ secrets.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON }}
+          BOOKING_SPREADSHEET_ID: ${{ secrets.BOOKING_SPREADSHEET_ID }}
+          BOOKING_SPREADSHEET_ID_SHA256: ${{ secrets.BOOKING_SPREADSHEET_ID_SHA256 }}
       - name: Update the existing Booking Admin deployment
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
+          ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
         run: |
           set -euo pipefail
           if ! bash scripts/deploy-booking-gas-target.sh admin; then
@@ -76,6 +75,10 @@ jobs:
             exit 1
           fi
       - name: Update the existing Booking Web App deployment
+        env:
+          PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
+          PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
+          PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
         run: |
           set -euo pipefail
           if ! bash scripts/deploy-booking-gas-target.sh public; then
@@ -86,9 +89,21 @@ jobs:
             fi
             exit 1
           fi
-      - name: Post-deploy check
-        run: |
-          set -euo pipefail
-          bash scripts/deploy-booking-gas-target.sh admin verify
-          bash scripts/deploy-booking-gas-target.sh public verify
-          node scripts/migrate-bookings-schema.js verify
+      - name: Post-deploy check (Booking Admin deployment)
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
+          ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
+        run: bash scripts/deploy-booking-gas-target.sh admin verify
+      - name: Post-deploy check (Booking Web App deployment)
+        env:
+          PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
+          PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
+          PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
+        run: bash scripts/deploy-booking-gas-target.sh public verify
+      - name: Post-deploy check (Bookings schema)
+        env:
+          BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: ${{ secrets.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON }}
+          BOOKING_SPREADSHEET_ID: ${{ secrets.BOOKING_SPREADSHEET_ID }}
+          BOOKING_SPREADSHEET_ID_SHA256: ${{ secrets.BOOKING_SPREADSHEET_ID_SHA256 }}
+        run: node scripts/migrate-bookings-schema.js verify

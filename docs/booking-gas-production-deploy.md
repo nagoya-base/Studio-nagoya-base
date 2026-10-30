@@ -93,6 +93,8 @@ migrationは、clasp認証とは**別の**専用サービスアカウントで�
 
 指紋が未設定・不一致の間はmigrationもpost-checkも `SPREADSHEET_FINGERPRINT_MISMATCH` で停止し、何も更新されない。
 
+サービスアカウント鍵は台帳（予約者情報を含む）の編集権限を持つため、担当変更時・漏えい疑い時・定期（目安: 年1回）にローテーションする（新しい鍵を発行 → secret更新 → 旧鍵を無効化）。組織ポリシーでサービスアカウント鍵の発行が禁止されている場合は、Workload Identity連携への置き換えを別Issueで検討する（それまでは本workflowのmigration stepで止まり、デプロイされない）。
+
 migrationが読み書きするのは`Bookings`シートの1行目（ヘッダー）だけで、予約行は読まない。
 
 ## 本番反映の実行方法

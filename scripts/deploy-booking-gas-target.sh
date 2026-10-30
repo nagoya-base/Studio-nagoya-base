@@ -52,6 +52,8 @@ list_stdout="$RUNNER_TEMP/clasp-list-deployments.stdout"
 list_stderr="$RUNNER_TEMP/clasp-list-deployments.stderr"
 push_log="$RUNNER_TEMP/clasp-push.log"
 trap 'rm -f "$list_stdout" "$list_stderr" "$push_log" "$auth_file"' EXIT
+# 同一job内でadmin→publicを続けて実行しても、前のtargetのpull結果を持ち越さない。
+rm -rf "$remote_dir"
 mkdir -p "$remote_dir"
 
 AUTH_FILE="$auth_file" PROJECT_DIR="$remote_dir" SCRIPT_ID="$script_id" \
