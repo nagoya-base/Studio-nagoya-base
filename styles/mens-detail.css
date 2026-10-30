@@ -1,0 +1,133 @@
+/*
+ * styles/mens-detail.css — mens専用の詳細・予約・オプション・完了ページ 白地＋青アクセント（Issue #662）
+ *
+ * 適用範囲: <body class="mens-detail"> を付けた mens 専用ページだけ（data-site-section="mens" では広げない）。
+ *   mens/how-to/ ・ mens/membership/ ・ mens/membership/complete.html ・ mens/legal/
+ *   mens/booking/ ・ mens/booking/options/ ・ mens/booking/payment-complete.html ・ mens/booking/option-payment-complete.html
+ * 他ブランド・SNB一般・Studio X・mensトップには読み込まない。
+ *
+ * 配色の基準は本番トップ styles/mens-preview-633.css の .z-paper。
+ * 値は二重定義とし、一致は test/mens-detail-662.test.js で検査する（トップ側のCSSは変更しない）。
+ * 見た目のみ。JS・処理用ID／name／data属性・送信先・料金・決済・確定判定には触れない。
+ */
+
+body.mens-detail {
+  /* .z-paper と同じパレット（テストで一致を検査） */
+  --bg: #ffffff;
+  --bg-card: #f4f6fa;
+  --bg-section: #f1f4f9;
+  --text: #172033;
+  --text-muted: #46536a;
+  --accent: #1d4f91;
+  --accent-dark: #173f74;
+  --accent-rgb: 29, 79, 145;
+  --border: #d3dbe7;
+  --on-accent: #ffffff;
+
+  /* .z-paper にない値: ナビ・ドロワーは白、予約バナーは濃紺を「添える」程度に使う */
+  --bg-nav: rgba(255, 255, 255, 0.96);
+  --bg-drawer: rgba(255, 255, 255, 0.98);
+  --banner-bg: #172033;
+  --banner-text: #ffffff;
+
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* キーボードフォーカスを白地で確実に見えるようにする */
+body.mens-detail a:focus-visible,
+body.mens-detail button:focus-visible,
+body.mens-detail summary:focus-visible,
+body.mens-detail input:focus-visible,
+body.mens-detail select:focus-visible,
+body.mens-detail textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── ボタン ── */
+body.mens-detail .btn-primary {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+body.mens-detail .btn-primary:hover {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+  color: var(--on-accent);
+}
+
+/* 生成り向けの共通指定（html:not([data-theme="kuro"]) .hero …）が持つ茶色のhover色を、対象ページ内だけ青へ整合させる */
+body.mens-detail .hero .btn-primary:hover {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+  color: var(--on-accent);
+}
+
+/* ── ヒーロー（会員案内）: 文字入りの採用済み写真をそのまま見せる ── */
+body.mens-detail .mens-ogp-hero {
+  background: var(--bg);
+}
+
+body.mens-detail .mens-ogp-hero-image {
+  max-width: 880px;
+}
+
+body.mens-detail .hero-note {
+  color: var(--text-muted);
+}
+
+/* ── 利用ガイド: 共通includeの手順番号（黒文字固定）を青地で読める白文字にする ── */
+body.mens-detail .cc-step-num {
+  color: var(--on-accent) !important;
+}
+
+/* ── 会員案内の加入フォーム（見た目のみ） ── */
+body.mens-detail .membership-join input[type="email"] {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--text-muted);
+}
+
+body.mens-detail .membership-join input[type="email"]:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.25);
+}
+
+body.mens-detail .membership-consent input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+/* 状態の色は意味を維持する（エラー=赤、成功=緑）。ラベル文言も保持。白地で 4.5:1 以上 */
+body.mens-detail .membership-status {
+  color: var(--text-muted);
+}
+
+body.mens-detail .membership-status.is-error {
+  color: #b3261e;
+}
+
+body.mens-detail .membership-status.is-ok {
+  color: #1e6b35;
+}
+
+/* ── 予約・オプション ──
+   booking.css は var(--accent) 等で色が決まるため上のパレットで青へ揃う。
+   エラー（既定の赤 #c0392b）・空き／満席／選択中の意味と、状態ラベル・点線枠は変更しない。 */
+
+/* ── 長いURL・表が横にはみ出さないようにする ── */
+body.mens-detail .container,
+body.mens-detail .legal-table td,
+body.mens-detail .legal-table th {
+  overflow-wrap: break-word;
+}
+
+body.mens-detail .legal-table th {
+  background: var(--bg-card);
+  color: var(--text);
+}
+
+/* 固定ヘッダーとアンカーの重なり */
+body.mens-detail [id] {
+  scroll-margin-top: 84px;
+}
