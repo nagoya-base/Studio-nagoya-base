@@ -15,7 +15,7 @@ function read(rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); }
 
 var NOW = Date.parse('2026-10-27T03:00:00Z');
 var HREFS = { snb: '/Studio-nagoya-base/', mens: '/Studio-nagoya-base/mens/', 'studio-x': '/Studio-nagoya-base/studio-x/' };
-var LABELS = { snb: '← Studio Nagoya Baseトップへ戻る', mens: '← 男性ポートレートページへ戻る', 'studio-x': '← Studio Xトップへ戻る' };
+var LABELS = { snb: '← Studio Nagoya Baseトップへ戻る', mens: '← スタジオ名古屋ベース mensへ戻る', 'studio-x': '← Studio Xトップへ戻る' };
 
 function makeLink() {
   var attrs = {
