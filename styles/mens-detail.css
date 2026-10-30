@@ -64,6 +64,17 @@ body.mens-detail .hero .btn-primary:hover {
   color: var(--on-accent);
 }
 
+body.mens-detail .btn-secondary:hover {
+  background: var(--text-muted);
+  border-color: var(--text-muted);
+  color: var(--on-accent);
+}
+
+/* common.css の青背景＋黒文字（約2.6:1）を、対象ページ内だけ白文字へ */
+body.mens-detail .skip-link {
+  color: var(--on-accent);
+}
+
 /* ── ヒーロー（会員案内）: 文字入りの採用済み写真をそのまま見せる ── */
 body.mens-detail .mens-ogp-hero {
   background: var(--bg);

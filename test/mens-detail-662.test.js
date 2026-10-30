@@ -160,3 +160,24 @@ test('共通includeの変更はクラス付与のみ（SNB一般の見た目は�
     assert.strictEqual(read(f).indexOf('cc-step-num'), -1, f);
   });
 });
+
+test('実配色の組合せ: 青地／text-muted地の文字は白で 4.5:1 以上（黒文字の残留なし）', function () {
+  var css = read('styles/mens-detail.css');
+  var d = vars(block(css, 'body.mens-detail'));
+  assert.match(block(css, 'body.mens-detail .btn-secondary:hover'), /background: var\(--text-muted\);[\s\S]*color: var\(--on-accent\)/);
+  assert.match(block(css, 'body.mens-detail .skip-link'), /color: var\(--on-accent\)/);
+  assert.match(block(css, 'body.mens-detail .cc-step-num'), /color: var\(--on-accent\) !important/);
+  assert.ok(ratio(d['--on-accent'], d['--text-muted']) >= 4.5, '補助ボタンhover');
+  assert.ok(ratio(d['--on-accent'], d['--accent']) >= 4.5, 'skip-link・手順番号');
+  assert.ok(ratio('#000000', d['--accent']) < 4.5, '黒文字が残ると不足（前提の確認）');
+  /* 対象ページのインライン「青地＋黒文字」はすべて cc-step-num を持つ */
+  TARGETS.forEach(function (f) {
+    (read(f).match(/<span[^>]*background:var\(--accent\);color:#000[^>]*>/g) || []).forEach(function (t) {
+      assert.ok(t.indexOf('class="cc-step-num"') !== -1, f + ': ' + t.slice(0, 60));
+    });
+  });
+  var inc = read('_includes/checkin_checkout_common_ja.html');
+  (inc.match(/<span[^>]*background:var\(--accent\);color:#000[^>]*>/g) || []).forEach(function (t) {
+    assert.ok(t.indexOf('class="cc-step-num"') !== -1);
+  });
+});
