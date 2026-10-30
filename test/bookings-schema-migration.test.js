@@ -110,20 +110,35 @@ test('one missing trailing column -> exactly that column is appended', () => {
   assert.deepEqual(book.logs, ['BOOKINGS_SCHEMA_MIGRATION_OK: added=1']);
 });
 
-test('planCode-era header migrates the 13 trailing columns in canonical order (#669 / #670)', () => {
+test('planCode-era header migrates the 14 trailing columns in canonical order (#669 / #670 / #679)', () => {
   const planIndex = H.indexOf('planCode');
   const book = fakeBook({ Bookings: bookingsSheet(H.slice(0, planIndex + 1), dataRows()) });
   const result = run(book);
-  assert.equal(result.added, 13);
+  assert.equal(result.added, 14);
   assert.deepEqual(book.sheets.Bookings.rows[0], H);
   assert.deepEqual(H.slice(planIndex + 1), [
     'supportServices', 'supportRoomAmount', 'supportStaffAmount', 'supportApprovedAt', 'supportPaymentDueAt',
     'supportApprovalMailSentAt', 'supportEquipment', 'supportEquipmentAmount', 'largeParty', 'partySurcharge',
-    'largePartyApprovalStatus', 'largePartyApprovedAt', 'largePartyPaymentDueAt'
+    'largePartyApprovalStatus', 'largePartyApprovedAt', 'largePartyPaymentDueAt', 'supportBackdrop'
   ]);
   assert.equal(book.writes.length, 1);
   assert.equal(book.writes[0].col, planIndex + 2);
-  assert.deepEqual(book.logs, ['BOOKINGS_SCHEMA_MIGRATION_OK: added=13']);
+  assert.deepEqual(book.logs, ['BOOKINGS_SCHEMA_MIGRATION_OK: added=14']);
+});
+
+test('Issue #679: sheets that end at largePartyPaymentDueAt get exactly one trailing column, supportBackdrop, and existing rows are untouched', () => {
+  assert.equal(H[H.length - 1], 'supportBackdrop');
+  const before = H.slice(0, -1);
+  const rows = dataRows();
+  const book = fakeBook({ Bookings: bookingsSheet(before, rows) });
+  const result = run(book);
+  assert.equal(result.added, 1);
+  assert.deepEqual(book.writes, [{ sheet: 'Bookings', kind: 'cells', row: 1, col: H.length, values: ['supportBackdrop'] }]);
+  assert.deepEqual(book.sheets.Bookings.rows.slice(1), rows, '既存の予約行は1セルも書き換えない');
+  assert.deepEqual(book.logs, ['BOOKINGS_SCHEMA_MIGRATION_OK: added=1']);
+  const again = run(book);
+  assert.equal(again.added, 0);
+  assert.equal(book.writes.length, 1, '2回目は何も書かない（冪等）');
 });
 
 test('re-running after a migration is a no-op', () => {

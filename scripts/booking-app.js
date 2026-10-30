@@ -175,6 +175,13 @@
     photoError: document.getElementById('ba-photo-support-error'),
     photoEquipmentWrap: document.getElementById('ba-photo-support-equipment'),
     photoEquipmentList: document.getElementById('ba-photo-support-equipment-list'),
+    photoEquipmentDetails: document.getElementById('ba-photo-support-equipment-details'),
+    photoLightingSlot: document.getElementById('ba-photo-support-lighting'),
+    photoBackdropWrap: document.getElementById('ba-photo-support-backdrop'),
+    photoBackdropList: document.getElementById('ba-photo-support-backdrop-list'),
+    photoBackdropNote: document.getElementById('ba-photo-support-backdrop-note'),
+    confirmPhotoRow: document.getElementById('ba-confirm-photo-row'),
+    confirmPhoto: document.getElementById('ba-confirm-photo'),
     showerNote: document.getElementById('ba-shower-note'),
     planEvent: document.getElementById('ba-plan-event'),
     planBanner: document.getElementById('ba-plan-banner'),
@@ -540,10 +547,16 @@
     return control && control.parentNode ? control.parentNode : null;
   }
   /* Issue #667: 作品撮りサポートに付ける有料機材。一覧・単価・在庫は共通機材カタログ（optionCatalogのsupportEquipment）をそのまま表示し、
-     フロントに価格を持たない。数量だけを送り、金額・セット無料はサーバーが計算する。 */
+     フロントに価格を持たない。数量だけを送り、金額・セット無料はサーバーが計算する。
+     Issue #679: 照明は「3つの質問」（scripts/booking-options.jsをStudio Xと共有）で選び、個別の機材・数量は「機材を個別に選ぶ／調整する」で調整する。
+     背景は機材（supportEquipment）とは別に photoBackdrop_（背景コード1件）として保持し、料金には影響させない。 */
   var photoEquipmentCatalog_ = null;
+  var photoBackdropCatalog_ = null;
   var photoEquipmentRequested_ = false;
   var photoEquipment_ = {};
+  var photoBackdrop_ = '';
+  var photoLightingGuide_ = null;
+  var photoEquipmentNotice_ = '';
   function photoSupportEquipmentMap_() {
     var out = {};
     Object.keys(photoEquipment_).forEach(function (code) { if (photoEquipment_[code] > 0) out[code] = photoEquipment_[code]; });
@@ -552,6 +565,31 @@
   function photoSupportEquipmentParam_() {
     var map = photoSupportEquipmentMap_();
     return Object.keys(map).sort().map(function (code) { return code + ':' + map[code]; }).join(',');
+  }
+  function photoEquipmentItem_(code) {
+    var found = null;
+    (photoEquipmentCatalog_ || []).forEach(function (item) { if (item.code === code) found = item; });
+    return found;
+  }
+  function photoBackdropInfo_(code) {
+    var found = null;
+    (photoBackdropCatalog_ || []).forEach(function (item) { if (item.code === code) found = item; });
+    return found;
+  }
+  /* 申込に載せる背景コード。作品撮りサポートを選んでいる間だけ（選択を外したら空に戻す）。 */
+  function photoSupportBackdrop_() {
+    return photoSupportSelected_() && photoBackdropInfo_(photoBackdrop_) ? photoBackdrop_ : '';
+  }
+  function photoEquipmentLines_() {
+    var map = photoSupportEquipmentMap_();
+    return Object.keys(map).map(function (code) {
+      var item = photoEquipmentItem_(code);
+      return (item ? item.label : code) + (map[code] > 1 ? ' ×' + map[code] : '');
+    });
+  }
+  function onPhotoEquipmentChanged_() {
+    renderPhotoEquipment_();
+    refreshPriceEstimate_();
   }
   function renderPhotoEquipment_() {
     var list = els.photoEquipmentList;
@@ -571,7 +609,18 @@
       select.value = String(photoEquipment_[item.code] || 0);
       select.addEventListener('change', function () {
         photoEquipment_[item.code] = Number(select.value) || 0;
-        refreshPriceEstimate_();
+        photoEquipmentNotice_ = '';
+        /* ポータブルストロボにソフトボックスを付ける場合は、ボーエンズマウントブラケットが物理的に必須（Studio Xの個別選択と同じ規則）。 */
+        var panel = window.BookingOptionsPanel;
+        if (panel && typeof panel.ensureRequiredBracket === 'function') {
+          var map = photoSupportEquipmentMap_();
+          if (panel.ensureRequiredBracket({ equipment: photoEquipmentCatalog_ }, map)) {
+            photoEquipment_ = map;
+            photoEquipmentNotice_ = 'ポータブルストロボにソフトボックスを付けるため、ボーエンズマウントブラケットが必要です。自動で追加（または維持）しました。';
+          }
+        }
+        onPhotoEquipmentChanged_();
+        if (photoLightingGuide_) photoLightingGuide_.render();
       });
       var price = item.unitPriceJpy > 0 ? Logic.formatJpyAmount(item.unitPriceJpy) + (item.unitLabel ? '／' + item.unitLabel : '') : '無料';
       var text = document.createElement('span');
@@ -580,6 +629,100 @@
       row.appendChild(text);
       list.appendChild(row);
     });
+    if (photoEquipmentNotice_) {
+      var notice = document.createElement('p');
+      notice.className = 'ba-field-help';
+      notice.setAttribute('role', 'status');
+      notice.textContent = photoEquipmentNotice_;
+      list.appendChild(notice);
+    }
+  }
+  /* Studio Xと同じ3つの質問（BookingOptionsPanel.mountLightingGuide）。読み込めない場合は個別選択の欄だけで申し込める。 */
+  function renderPhotoLighting_() {
+    if (!els.photoLightingSlot || !photoEquipmentCatalog_) return;
+    var panel = window.BookingOptionsPanel;
+    if (!panel || typeof panel.mountLightingGuide !== 'function') {
+      if (els.photoEquipmentDetails) els.photoEquipmentDetails.open = true;
+      return;
+    }
+    var catalog = { equipment: photoEquipmentCatalog_ };
+    if (photoLightingGuide_) { photoLightingGuide_.setCatalog(catalog); return; }
+    photoLightingGuide_ = panel.mountLightingGuide({
+      slot: els.photoLightingSlot,
+      catalog: catalog,
+      getEquipment: function () { return photoEquipment_; },
+      setEquipment: function (next) { photoEquipment_ = next; photoEquipmentNotice_ = ''; },
+      onChange: onPhotoEquipmentChanged_
+    });
+  }
+  /* 見本画像は同一サイトの images/ 配下のwebpだけ（カタログの値であっても外部URL・任意パスは描かない）。 */
+  function photoBackdropImageSrc_(item) {
+    if (!item || typeof item.image !== 'string' || !/^images\/[A-Za-z0-9_-]+\.webp$/.test(item.image)) return '';
+    var base = (els.photoBackdropWrap && els.photoBackdropWrap.getAttribute('data-asset-base')) || '/';
+    return base.replace(/\/?$/, '/') + item.image;
+  }
+  function updatePhotoBackdropNote_() {
+    var note = els.photoBackdropNote;
+    if (!note) return;
+    note.innerHTML = '';
+    var info = photoBackdropInfo_(photoBackdrop_);
+    var lines = info
+      ? Logic.photoBackdropNoticeLines(photoSupportServices_(), info, photoEquipmentItem_('BACKGROUND_STAND'))
+      : [Logic.PHOTO_BACKDROP_TEXT.lead];
+    lines.forEach(function (line) {
+      var p = document.createElement('p');
+      p.textContent = line;
+      note.appendChild(p);
+    });
+  }
+  function renderPhotoBackdrop_() {
+    var list = els.photoBackdropList;
+    if (!list || typeof document.createElement !== 'function') return;
+    list.innerHTML = '';
+    if (!Array.isArray(photoBackdropCatalog_) || photoBackdropCatalog_.length === 0) return;
+    var choices = [{ code: '', label: Logic.PHOTO_BACKDROP_TEXT.none }].concat(photoBackdropCatalog_);
+    choices.forEach(function (item) {
+      var label = document.createElement('label');
+      label.className = 'ba-choice ba-backdrop-option';
+      var input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'supportBackdrop';
+      input.value = item.code;
+      input.checked = photoBackdrop_ === item.code;
+      input.addEventListener('change', function () {
+        photoBackdrop_ = item.code;
+        updatePhotoBackdropNote_();
+      });
+      label.appendChild(input);
+      var body = document.createElement('span');
+      body.className = 'ba-backdrop-option-body';
+      var src = photoBackdropImageSrc_(item);
+      if (src) {
+        var img = document.createElement('img');
+        img.className = 'ba-backdrop-thumb';
+        img.src = src;
+        img.alt = item.label + 'の見本';
+        img.width = 96;
+        img.height = 64;
+        img.loading = 'lazy';
+        body.appendChild(img);
+      }
+      var text = document.createElement('span');
+      text.className = 'ba-backdrop-option-text';
+      var name = document.createElement('strong');
+      name.textContent = item.label;
+      text.appendChild(name);
+      var detail = [item.note, item.sizeLabel].filter(function (part) { return !!part; }).join('　');
+      if (detail) {
+        var small = document.createElement('small');
+        small.textContent = detail;
+        text.appendChild(small);
+      }
+      body.appendChild(text);
+      label.appendChild(body);
+      list.appendChild(label);
+    });
+    updatePhotoBackdropNote_();
   }
   function ensurePhotoEquipmentCatalog_() {
     if (photoEquipmentRequested_ || !API_BASE_URL || typeof fetch !== 'function') return;
@@ -589,7 +732,15 @@
         .then(function (response) { return response.json(); })
         .then(function (body) {
           var items = body && body.success === true && body.catalog && body.catalog.supportEquipment;
-          if (Array.isArray(items)) { photoEquipmentCatalog_ = items; renderPhotoEquipment_(); }
+          if (Array.isArray(items)) {
+            photoEquipmentCatalog_ = items;
+            var backdrops = body.catalog.supportBackdrops;
+            photoBackdropCatalog_ = Array.isArray(backdrops) ? backdrops : [];
+            renderPhotoLighting_();
+            renderPhotoEquipment_();
+            renderPhotoBackdrop_();
+            syncPhotoSupport_(memberFeaturesEnabled_());
+          }
           else photoEquipmentRequested_ = false;
         })
         .catch(function () { photoEquipmentRequested_ = false; });
@@ -612,8 +763,18 @@
     if (els.planPhotoNote) { els.planPhotoNote.textContent = note; els.planPhotoNote.hidden = !note; }
     if (els.photoServicesWrap) els.photoServicesWrap.hidden = !els.planPhoto.checked;
     if (els.photoEquipmentWrap) els.photoEquipmentWrap.hidden = !els.planPhoto.checked;
+    if (els.photoEquipmentDetails) els.photoEquipmentDetails.hidden = !els.planPhoto.checked || !photoEquipmentCatalog_;
+    if (els.photoBackdropWrap) els.photoBackdropWrap.hidden = !els.planPhoto.checked || !(photoBackdropCatalog_ && photoBackdropCatalog_.length > 0);
     if (els.planPhoto.checked) ensurePhotoEquipmentCatalog_();
-    else photoEquipment_ = {};
+    else if (Object.keys(photoEquipment_).length > 0 || photoBackdrop_ || photoEquipmentNotice_) {
+      /* 作品撮りサポートの選択を外したら、機材・背景・3問の回答もまとめて初期状態へ戻す（次に選び直すとき古い選択を残さない）。 */
+      photoEquipment_ = {};
+      photoBackdrop_ = '';
+      photoEquipmentNotice_ = '';
+      if (photoLightingGuide_) photoLightingGuide_.reset();
+      renderPhotoEquipment_();
+      renderPhotoBackdrop_();
+    }
     if (!els.planPhoto.checked) {
       root.querySelectorAll('input[name="supportServices"]').forEach(function (radio) { radio.checked = false; });
       if (els.photoError) els.photoError.hidden = true;
@@ -1819,6 +1980,7 @@
     updateBookingFlowCopy_();
     updateCardPaymentNoticeVisibility();
     if (els.photoError && photoSupportServices_()) els.photoError.hidden = true;
+    updatePhotoBackdropNote_();
     refreshPriceEstimate_();
   }
   if (els.planPhoto) els.planPhoto.addEventListener('change', handlePhotoSupportChange_);
@@ -2503,6 +2665,20 @@
       confirmOptions.textContent = optionLines.join(' / ');
       confirmOptionsRow.hidden = optionLines.length === 0;
     }
+    /* Issue #679: 作品撮りサポートの撮影環境（スタッフ対応・機材・背景）。申込・保存・メール・管理画面と同じ名称で確認する。 */
+    if (els.confirmPhotoRow && els.confirmPhoto) {
+      var photoOn = photoSupportSelected_();
+      els.confirmPhotoRow.hidden = !photoOn;
+      els.confirmPhoto.textContent = '';
+      if (photoOn) {
+        var backdropInfo = photoBackdropInfo_(photoSupportBackdrop_());
+        Logic.photoSupportConfirmLines({ services: photoSupportServices_(), equipmentLines: photoEquipmentLines_(), backdropLabel: backdropInfo ? backdropInfo.label : '' }).forEach(function (line) {
+          var div = document.createElement('div');
+          div.textContent = line;
+          els.confirmPhoto.appendChild(div);
+        });
+      }
+    }
     els.confirmName.textContent = state.name;
     els.confirmEmail.textContent = state.email;
     /* Issue #567: 確認画面にも会員確認の状態を出す。確認済み（失効していない）ときだけ表示し、未確認では行ごと隠す。 */
@@ -2733,6 +2909,7 @@
         plan: selectedPlan_(),
         supportServices: photoSupportSelected_() ? photoSupportServices_() : '',
         supportEquipment: photoSupportSelected_() ? photoSupportEquipmentMap_() : {},
+        supportBackdrop: photoSupportBackdrop_(),
         shower: showerSelected_(),
         showerScheduleConfirmed: !!els.showerSchedule && els.showerSchedule.checked,
         autoPairPack: (brand === 'snb' || brand === 'mens') && memberFeaturesEnabled_() && !showerPackSelected_() && !photoSupportSelected_(),

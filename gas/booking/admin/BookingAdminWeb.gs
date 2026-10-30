@@ -649,6 +649,12 @@ function buildAdminPhotoSupportFields_(record, timezone) {
     /* 有料機材（共通機材カタログ）。選択内容の文言と機材料金。機材なしは空配列・0。 */
     supportEquipmentLines: record.supportEquipment ? BookingOptions.describeSupportEquipment(record.supportEquipment) : [],
     supportEquipmentAmount: record.supportEquipmentAmount === '' || record.supportEquipmentAmount === undefined ? 0 : Number(record.supportEquipmentAmount),
+    /* Issue #679: 希望背景（専用列supportBackdrop。旧予約は空）。承認前の運営確認に必要な情報を同じ正本から返す。 */
+    supportBackdrop: record.supportBackdrop || '',
+    supportBackdropLabel: BookingOptions.describeSupportBackdrop(record.supportBackdrop),
+    supportBackdropGuidanceReady: record.supportBackdrop ? !!(BookingOptions.supportBackdropInfo(record.supportBackdrop) || {}).selfSetupGuidanceReady : true,
+    supportBackdropSelfWork: !!record.supportBackdrop && record.supportServices !== 'BOTH',
+    supportBackdropStandSelected: BookingOptions.supportEquipmentHasCode(record.supportEquipment, 'BACKGROUND_STAND'),
     canApproveSupport: stage === 'AWAITING_APPROVAL',
     canResendSupportApproval: stage === 'AWAITING_PAYMENT' && !record.supportApprovalMailSentAt,
     membershipStatus: record.membershipStatus || ''
@@ -708,8 +714,12 @@ function adminChangeBookingPeople(bookingId, newPeople) {
 
 /* Issue #667: 作品撮りサポートプランの承認。既存の正式関数approvePhotoSupport（BookingAdmin.gs）へそのまま委譲する。
    承認案内メール（お支払いページ・承認後24時間の期限入り）の送信結果（mailSent/mailError）を含めて返す。 */
-function adminApprovePhotoSupport(bookingId) {
-  return sanitizeForClient_(approvePhotoSupport(bookingId));
+function adminApprovePhotoSupport(bookingId, confirmations) {
+  /* Issue #679: 背景の希望がある申込は、現物・利用可否・競合の確認（backdropChecked）等を承認操作と一緒に受け取る。真偽値だけを通す。 */
+  var checks = confirmations && typeof confirmations === 'object'
+    ? { backdropChecked: confirmations.backdropChecked === true, setupGuidanceDone: confirmations.setupGuidanceDone === true }
+    : {};
+  return sanitizeForClient_(approvePhotoSupport(bookingId, checks));
 }
 
 /* キャンセル。既存の正式関数cancelBookingAdmin(bookingId)（BookingAdmin.gs）へそのまま

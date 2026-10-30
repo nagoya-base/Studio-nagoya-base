@@ -424,7 +424,16 @@ var BookingsSchema = (function () {
     'partySurcharge',
     'largePartyApprovalStatus',
     'largePartyApprovedAt',
-    'largePartyPaymentDueAt'
+    'largePartyPaymentDueAt',
+    /*
+     * Issue #679で追加した列（末尾追記。本番Bookingsシートへは、反映後に管理者が migrateBookingsSchema を1回実行して末尾追加する。
+     * gas/booking/README.md冒頭の手順: scope=admin-only → migrateBookingsSchema → scope=full, schema_migrated=true）。
+     * - supportBackdrop: 作品撮りサポートプランで利用者が希望した背景の識別コード1件
+     *   （BACKDROP_CLOTH_WHITE|BACKDROP_CLOTH_BLACK|BACKDROP_TSURU_BLACK|BACKDROP_ASANOHA_INDIGO|BACKDROP_GRUNGE。品目定義の正本は
+     *   _data/studio_x_equipment.json の supportBackdrops）。空＝背景の希望なし（旧予約・作品撮りサポート以外もすべて空）。
+     *   料金計算用の supportEquipment には混ぜない。背景の選択は金額に影響せず、保存済みの料金・選択・料金世代も変更しない。
+     */
+    'supportBackdrop'
   ];
 
   return {

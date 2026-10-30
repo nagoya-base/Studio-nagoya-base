@@ -27,10 +27,20 @@
     { "code": "COLOR_FILTER_SET", "label": "カラーフィルター（8色セット）", "stock": 1, "unitPriceJpy": 200, "unitLabel": "", "requiresLecture": true }
   ],
   "freeSelf": [
-    { "code": "BACKDROP_CLOTH_WHITE", "label": "背景布 白（幅180cm×長さ250cm）", "stock": 1, "selectable": false, "viaTheme": "WHITE_BACKDROP" },
+    { "code": "BACKDROP_CLOTH_WHITE", "label": "背景布 白（幅180cm×長さ250cm）", "widthCm": 180, "lengthCm": 250, "stock": 1, "selectable": false, "viaTheme": "WHITE_BACKDROP" },
     { "code": "BACKDROP_POLE", "label": "背景用竹竿", "selectable": false },
-    { "code": "BACKDROP_CLOTH_BLACK", "label": "背景布 黒（幅180cm×長さ250cm）", "stock": 1, "selectable": false, "viaTheme": "BLACK_BACKDROP" }
+    { "code": "BACKDROP_CLOTH_BLACK", "label": "背景布 黒（幅180cm×長さ250cm）", "widthCm": 180, "lengthCm": 250, "stock": 1, "selectable": false, "viaTheme": "BLACK_BACKDROP" }
   ],
+  "supportBackdrops": {
+    "_comment": "作品撮りサポート（mens。Issue #679）で希望できる背景の品目定義の唯一の正本。Bookings.supportBackdrop には code を1件だけ保存する（料金計算用の supportEquipment には混ぜない）。背景の単体料金・背景紙料金・追加設営料金は持たない。freeSelfCode を持つ品目の寸法・在庫は freeSelf の定義を参照し、ここで複製しない。themeCode は staffService.themes と運用文言（BookingOptions.gs の GUIDANCE_TEMPLATES_）への対応で、SX のテーマコードは変更しない。【未確認の値は推測しない】和柄2種（鶴・黒／麻の葉・藍）の実在庫・寸法・収納場所・設置／原状復帰／注意事項は現物情報が未確認のため null（在庫0や無制限ではなく「不明」）。themeCode が null の品目は運用文言が未整備であり、Admin の承認前に運営が現物・利用可否・設置上の注意を確認／案内する。申込は各種類1枚を希望するものとして受け付けるだけで、確保済みとは扱わない。image は実際に布／背景の見本として正しい既存画像のみ（紙の写真・仮画像は使わない。白黒布は見本画像なし）。",
+    "items": [
+      { "code": "BACKDROP_CLOTH_WHITE", "label": "白背景布", "note": "幅135cmの白背景紙ロール（常設）とは別の布の背景です。", "freeSelfCode": "BACKDROP_CLOTH_WHITE", "themeCode": "WHITE_BACKDROP", "stock": null, "image": null, "brands": ["mens"], "plans": ["mens_photo_support"] },
+      { "code": "BACKDROP_CLOTH_BLACK", "label": "黒背景布", "note": "幅135cmの黒背景紙ロール（常設）とは別の布の背景です。", "freeSelfCode": "BACKDROP_CLOTH_BLACK", "themeCode": "BLACK_BACKDROP", "stock": null, "image": null, "brands": ["mens"], "plans": ["mens_photo_support"] },
+      { "code": "BACKDROP_TSURU_BLACK", "label": "和柄背景（鶴・黒）", "note": "和柄1。", "freeSelfCode": null, "themeCode": null, "stock": null, "image": "images/pattern-tsuru-black_1200.webp", "brands": ["mens"], "plans": ["mens_photo_support"] },
+      { "code": "BACKDROP_ASANOHA_INDIGO", "label": "和柄背景（麻の葉・藍）", "note": "和柄2。", "freeSelfCode": null, "themeCode": null, "stock": null, "image": "images/pattern-asanoha-indigo_1200.webp", "brands": ["mens"], "plans": ["mens_photo_support"] },
+      { "code": "BACKDROP_GRUNGE", "label": "グランジ背景", "note": "グレーの濃淡・ムラのある背景です。", "freeSelfCode": null, "themeCode": "GRUNGE", "stock": null, "image": "images/backdrop-tiedye-gray_1200.webp", "brands": ["mens"], "plans": ["mens_photo_support"] }
+    ]
+  },
   "staffService": {
     "_comment": "スタッフ設営・片付けの料金とテーマ（5テーマ共通。テーマ別の個別価格は持たない）。予約オプション(GAS)・Webhook・機材ページはすべてここを参照する。",
     "themes": [

@@ -690,6 +690,38 @@
   .booking-app .ba-lighting-apply { width: 100%; }
 }
 
+/* Issue #679: 作品撮りサポートの「背景を選ぶ」欄と、機材の個別調整。320px幅でも横スクロール・名称の崩れを出さない。 */
+.booking-app .ba-lighting-clear { margin: 10px 0 0 8px; min-height: 46px; }
+.booking-app #ba-photo-support-backdrop-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 8px 0; }
+.booking-app .ba-backdrop-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 56px;
+  min-width: 0;
+  padding: 12px 14px;
+  margin: 0;
+  border: 1px solid var(--ba-border);
+  border-radius: var(--ba-radius);
+  background: var(--ba-surface-2);
+  cursor: pointer;
+}
+.booking-app .ba-backdrop-option input { flex: 0 0 auto; width: 20px; height: 20px; margin-top: 2px; accent-color: var(--ba-accent); }
+.booking-app .ba-backdrop-option:has(input:checked) { border-color: var(--ba-accent); box-shadow: 0 0 0 2px var(--ba-accent); }
+.booking-app .ba-backdrop-option:has(input:focus-visible) { outline: 2px solid var(--ba-accent); outline-offset: 2px; }
+.booking-app .ba-backdrop-option-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.booking-app .ba-backdrop-option-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.booking-app .ba-backdrop-option-text small { font-size: 0.8rem; line-height: 1.5; opacity: 0.85; }
+.booking-app .ba-backdrop-thumb { display: block; width: 100%; max-width: 160px; height: auto; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 6px; }
+.booking-app #ba-photo-support-backdrop-note p { margin: 0 0 6px; }
+.booking-app .ba-photo-equipment-details { margin: 12px 0; }
+.booking-app .ba-photo-equipment-details > summary { cursor: pointer; font-weight: 700; min-height: 44px; display: flex; align-items: center; }
+.booking-app .ba-photo-equipment-details[hidden] { display: none; }
+@media (max-width: 560px) {
+  .booking-app #ba-photo-support-backdrop-list { grid-template-columns: minmax(0, 1fr); }
+  .booking-app .ba-lighting-clear { width: 100%; margin-left: 0; }
+}
+
 /* 利用時間「その他」選択時に出す数値入力（Issue #494） */
 #ba-duration-other { margin-top: 8px; }
 #ba-duration-other[hidden] { display: none; }

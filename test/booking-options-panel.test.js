@@ -118,8 +118,13 @@ test('SNB / mens / 英語版の予約ページにはオプション欄もスク�
   ['booking/index.html', 'mens/booking/index.html', 'booking/en.html'].forEach(function (rel) {
     var html = read(rel);
     assert.ok(!/options="true"/.test(html), rel);
+    /* Issue #679: mensだけは作品撮りサポートの照明「3つの質問」を共有するため booking-options.js を読む（オプション欄は有効にしない）。 */
+    if (rel === 'mens/booking/index.html') return;
     assert.ok(html.indexOf('booking-options') === -1, rel);
   });
+  var mens = read('mens/booking/index.html');
+  assert.ok(mens.indexOf('booking-options.js') !== -1 && mens.indexOf('booking-options.js') < mens.indexOf('booking-app.js'), 'mensは3問の共有のためbooking-options.jsをbooking-app.jsより先に読む');
+  assert.ok(mens.indexOf('booking-options-addon') === -1, 'mensに後付け案内のスクリプトは入れない');
   var includeJa = read('_includes/booking_app_ja.html');
   // スロットはoptions=="true"の条件内にだけ存在する
   var slotIndex = includeJa.indexOf('id="ba-options-slot"');
@@ -214,7 +219,10 @@ test('事前相談の追加はサーバー側(GAS)・Stripe・注文に一切触
     assert.ok(read(rel).indexOf('CONSULT') === -1 && read(rel).indexOf('consult') === -1, rel + ' に相談関連の処理を追加していない');
   });
   ['booking/index.html', 'mens/booking/index.html', 'booking/en.html'].forEach(function (rel) {
-    assert.ok(read(rel).indexOf('booking-options') === -1, rel);
+    /* Issue #679: mensは照明3問の共有のためbooking-options.jsのscriptタグ1つだけを許可する（オプション欄・後付け案内スクリプトは入れない）。 */
+    var html = read(rel).replace(/<!--[\s\S]*?-->/g, '');
+    if (rel === 'mens/booking/index.html') html = html.replace(/<script src="\.\.\/\.\.\/scripts\/booking-options\.js[^"]*"><\/script>/, '');
+    assert.ok(html.indexOf('booking-options') === -1, rel);
   });
 });
 

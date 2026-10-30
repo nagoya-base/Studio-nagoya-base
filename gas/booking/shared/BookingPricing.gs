@@ -526,6 +526,16 @@ var BookingPricing = (function () {
     }
     var supportServices = null;
     var supportEquipment = { empty: true, lines: [], items: [], totalJpy: 0 };
+    /* Issue #679: 背景の希望（Bookings.supportBackdrop）。金額には一切影響しない（supportEquipmentとは別）。未知コード・複数値・
+       対象外ブランド／プランでの指定は、通常料金や別の背景へ倒さず拒否する。 */
+    var supportBackdrop = { ok: true, empty: true, code: '' };
+    if (params.supportBackdrop !== undefined && params.supportBackdrop !== null && params.supportBackdrop !== '') {
+      if (typeof BookingOptions === 'undefined') {
+        return { valid: false, error: { code: 'INVALID_SUPPORT_BACKDROP', message: '背景の指定を確認できません。' } };
+      }
+      supportBackdrop = BookingOptions.normalizeSupportBackdrop(params.supportBackdrop, { brand: brand, plan: plan });
+      if (!supportBackdrop.ok) return { valid: false, error: supportBackdrop.error };
+    }
     if (plan === PLAN.MENS_PHOTO_SUPPORT) {
       /* Issue #667: 独立プラン。対象ブランド（mensのみ）・利用日（効力発生日以降）・スタッフ対応の種別（いずれか必須）を満たさなければ
          通常料金へ倒さず拒否する。1〜4名・申込期限（7日前）・会員資格は人数・現在時刻・台帳を扱う呼び出し側（予約作成・見積りPOST）が判定する。 */
@@ -631,6 +641,8 @@ var BookingPricing = (function () {
       result.price.equipmentAmount = supportEquipment.totalJpy;
       result.price.equipmentLines = supportEquipment.lines;
       result.price.equipmentItems = supportEquipment.items;
+      /* 背景の希望（空＝希望なし）。料金・amountには含めない。 */
+      result.price.supportBackdrop = supportBackdrop.code;
     }
     return result;
   }

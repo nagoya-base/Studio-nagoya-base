@@ -69,8 +69,8 @@ function changeBookingPeople(bookingId, newPeople) {
 
 /* Issue #667: 作品撮りサポートプランの承認（承認から24時間が支払い期限）。業務ロジックはBookingRepository.approvePhotoSupport。
    不承認は既存のcancelBookingAdmin（仮押さえ解除＋承認できなかった旨のメール）で行う。 */
-function approvePhotoSupport(bookingId) {
-  return BookingRepository.approvePhotoSupport(bookingId);
+function approvePhotoSupport(bookingId, confirmations) {
+  return BookingRepository.approvePhotoSupport(bookingId, undefined, confirmations);
 }
 
 /* 正式関数: cancelBookingAdmin(bookingId)（Issue #272本文どおりのグローバル関数名）。

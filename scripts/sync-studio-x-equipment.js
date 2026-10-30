@@ -21,7 +21,7 @@ var TARGET = path.join(ROOT, 'gas', 'booking', 'shared', 'EquipmentCatalog.gs');
 
 function render() {
   var data = JSON.parse(fs.readFileSync(SOURCE, 'utf8'));
-  var catalog = { rental: data.rental, freeSelf: data.freeSelf, staffService: data.staffService };
+  var catalog = { rental: data.rental, freeSelf: data.freeSelf, supportBackdrops: data.supportBackdrops, staffService: data.staffService };
   return [
     '/*',
     ' * EquipmentCatalog.gs — Studio Xの有料レンタル機材・無料セルフ機材・スタッフ設営料金の料金/数量/在庫（Issue #423 / #430）。',
