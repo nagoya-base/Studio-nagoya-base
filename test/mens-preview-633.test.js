@@ -241,7 +241,12 @@ test('#658: ビルド後の本番と試作は、表示テキスト・リンク�
 
 test('#658: ビルド後の本番の title・description・OGP・Twitter・canonical・JSON-LD（priceRange・FAQ）が正しい', { skip: skipBuilt }, function () {
   var t = function (h) { return (h.match(/<title>([\s\S]*?)<\/title>/) || [])[1]; };
-  assert.strictEqual(t(built.current), '男性同士の緊縛・フェティッシュ撮影向けレンタルスペース｜名古屋・上前津');
+  /* #677: ブランド名・ページタイトルを「スタジオ名古屋ベース mens」に統一 */
+  var TITLE = 'スタジオ名古屋ベース mens｜名古屋・上前津', BRAND = 'スタジオ名古屋ベース mens';
+  assert.strictEqual(t(built.current), TITLE);
+  assert.strictEqual(metaContent(built.current, 'property', 'og:title'), TITLE);
+  assert.strictEqual(metaContent(built.current, 'name', 'twitter:title'), TITLE);
+  assert.strictEqual(metaContent(built.current, 'property', 'og:site_name'), BRAND);
   assert.strictEqual(metaContent(built.current, 'property', 'og:image'), PRE_OGP);
   assert.strictEqual(metaContent(built.current, 'name', 'twitter:image'), PRE_OGP);
   assert.strictEqual(metaContent(built.current, 'property', 'og:url'), 'https://nagoya-base.github.io/Studio-nagoya-base/mens/');
@@ -249,6 +254,7 @@ test('#658: ビルド後の本番の title・description・OGP・Twitter・canon
   assert.deepStrictEqual(jsonld(built.current), jsonld(built.preview), '構造化データは試作と同一（imageは専用OGP）');
   var ld = jsonld(built.current).map(function (j) { return JSON.parse(j.replace(/^<script[^>]*>|<\/script>$/g, '')); });
   var biz = ld.filter(function (o) { return o['@type'] === 'LocalBusiness'; })[0];
+  assert.strictEqual(biz.name, BRAND);
   assert.strictEqual(biz.priceRange, '¥2,000～¥10,000');
   assert.strictEqual(biz.url, 'https://nagoya-base.github.io/Studio-nagoya-base/mens/');
   assert.ok(ld.some(function (o) { return o['@type'] === 'FAQPage'; }));
