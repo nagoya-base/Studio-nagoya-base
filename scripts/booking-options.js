@@ -142,7 +142,11 @@
     CHECKOUT_UNCERTAIN: '決済ページの作成結果を確認できませんでした。しばらくしてから再度お試しください。二重にお支払いにならないよう、同じ手順で再度ご案内します。',
     FORBIDDEN: '予約IDまたはメールアドレスが一致しません。ご登録の内容をご確認ください。',
     INVALID_EMAIL: 'メールアドレスの形式が正しくありません。',
-    PRICE_NOT_CONFIGURED: '現在このオプションは受け付けていません。メールでご相談ください。'
+    PRICE_NOT_CONFIGURED: '現在このオプションは受け付けていません。メールでご相談ください。',
+    /* Issue #679: mensの作品撮りサポートの背景希望（BookingOptions.normalizeSupportBackdropが返すコード。Studio Xの画面では発生しない）。 */
+    INVALID_SUPPORT_BACKDROP: '背景は1種類だけ選択してください。選び直してください。',
+    UNKNOWN_SUPPORT_BACKDROP: '選択できない背景が指定されています。背景を選び直してください。',
+    SUPPORT_BACKDROP_NOT_AVAILABLE: '背景の指定は、作品撮りサポートプランでのみ選択できます。'
   };
 
   var THEME_ORDER = ['CLASSROOM', 'JAPANESE', 'GRUNGE', 'WHITE_BACKDROP', 'BLACK_BACKDROP'];
@@ -570,6 +574,130 @@
     return { label: label, input: input };
   }
 
+  /* ---- おすすめ照明セット（Issue #463）の画面部品 ----
+   * Studio Xの機材パネルと、mensの作品撮りサポート（Issue #679）で共有する。3つの質問・8通りの説明・必要機材・在庫確認・
+   * セット無料を反映した料金は、このファイルの LIGHTING_STEPS / lightingPresetItems / applyLightingPreset / カタログだけから導出し、
+   * 別の対応表・料金表を持たない。回答しただけでは機材を選択せず、「この構成を選択する」を押したときだけ反映する。
+   * ctx: { catalog:{equipment:[]}, choice:{kind,count,softbox}（呼び出し側が保持する回答。この関数が書き換える）,
+   *        getEquipment():{コード:数量}（現在の選択。コマンダーはこのオブジェクトを直接更新する）, setEquipment(next),
+   *        getNotice(), setNotice(text), rerender(), allowClear（trueなら「照明機材を使わない」ボタンを出す）, clearLabel } */
+  function lightingItemLines(catalog, items) {
+    var byCode = {};
+    (catalog.equipment || []).forEach(function (e) { byCode[e.code] = e; });
+    return Object.keys(items).map(function (code) {
+      return (byCode[code] ? byCode[code].label : code) + ' ×' + items[code];
+    });
+  }
+
+  function buildLightingSection(ctx) {
+    var catalog = ctx.catalog;
+    var lightingChoice = ctx.choice;
+    var section = el('div', { className: 'ba-lighting' });
+    section.appendChild(el('h4', { className: 'ba-lighting-title', text: 'おすすめ照明セット' }));
+    section.appendChild(el('p', { className: 'ba-field-help', text: '3つ選ぶだけで、必要な機材をまとめて選択します。選択後も機材は自由に変更できます。' }));
+
+    LIGHTING_STEPS.forEach(function (step) {
+      var group = el('fieldset', { className: 'ba-lighting-step' }, [el('legend', { text: step.title })]);
+      var name = 'bo-lighting-' + step.key;
+      var options = el('div', { className: 'ba-lighting-options' });
+      step.options.forEach(function (opt) {
+        var input = el('input', { type: 'radio', name: name, value: opt.value });
+        input.checked = lightingChoice[step.key] === opt.value;
+        input.addEventListener('change', function () {
+          lightingChoice[step.key] = opt.value;
+          ctx.setNotice('');
+          ctx.rerender();
+        });
+        options.appendChild(el('label', { className: 'ba-lighting-option' }, [
+          input,
+          el('span', { className: 'ba-lighting-option-body' }, [
+            el('strong', { text: opt.label }),
+            el('span', { className: 'ba-lighting-option-text', text: opt.text })
+          ])
+        ]));
+      });
+      group.appendChild(options);
+      section.appendChild(group);
+    });
+
+    var items = lightingPresetItems(lightingChoice);
+    if (items) {
+      var shortage = lightingPresetShortage(catalog, items);
+      var preview = el('div', { className: 'ba-lighting-preview ba-banner ba-banner--notice' }, [
+        el('p', { className: 'ba-lighting-preview-title', text: lightingResultTitle(lightingChoice) }),
+        el('p', { className: 'ba-lighting-preview-text', text: LIGHTING_RESULT_TEXT[lightingChoiceKey(lightingChoice)] }),
+        el('p', { className: 'ba-option-subheading', text: '選択されたセット' })
+      ]);
+      var list = el('ul', { className: 'ba-lighting-items' });
+      lightingItemLines(catalog, items).forEach(function (line) { list.appendChild(el('li', { text: line })); });
+      preview.appendChild(list);
+      if (shortage.length === 0) {
+        preview.appendChild(el('p', { className: 'ba-field-help', text: 'この構成の機材レンタル：' + formatJpy(equipmentTotalJpy(catalog, items)) + '（税込・セット無料を反映）' }));
+      } else {
+        preview.appendChild(el('p', { className: 'ba-field-help', role: 'alert', text: 'この構成は現在選択できません。下の機材欄から個別に選んでください。' }));
+      }
+      section.appendChild(preview);
+      var apply = el('button', { type: 'button', className: 'ba-btn ba-btn-primary ba-lighting-apply', text: 'この構成を選択する' });
+      if (shortage.length > 0) apply.disabled = true;
+      apply.addEventListener('click', function () {
+        var next = applyLightingPreset(catalog, ctx.getEquipment(), lightingChoice);
+        if (!next) return;
+        ctx.setEquipment(next);
+        ctx.setNotice('おすすめの機材を選択しました。下の機材欄で自由に追加・削除・変更できます。');
+        ctx.rerender();
+      });
+      section.appendChild(apply);
+    } else {
+      section.appendChild(el('p', { className: 'ba-field-help', text: 'STEP 1〜3 を選ぶと、おすすめの機材セットが表示されます。' }));
+    }
+    if (ctx.allowClear) {
+      var clear = el('button', { type: 'button', className: 'ba-btn ba-btn-ghost ba-lighting-clear', text: ctx.clearLabel || '照明機材を使わない（選択を外す）' });
+      clear.addEventListener('click', function () {
+        ctx.setEquipment(clearLightingEquipment(ctx.getEquipment()));
+        ctx.setNotice('照明機材の選択を外しました。持ち込みの機材で撮影する場合はこのままお申し込みください。');
+        ctx.rerender();
+      });
+      section.appendChild(clear);
+    }
+    var lightingNotice = ctx.getNotice();
+    if (lightingNotice) section.appendChild(el('p', { className: 'ba-field-help ba-lighting-notice', role: 'status', text: lightingNotice }));
+
+    /* ストロボのコマンダーは自動選択せず、必要な方だけ任意で追加できる（カメラによっては不要）。 */
+    var commanders = (catalog.equipment || []).filter(function (e) { return COMMANDER_CODES.indexOf(e.code) !== -1; });
+    if (lightingChoice.kind === 'STROBE' && commanders.length > 0) {
+      var commanderBox = el('div', { className: 'ba-lighting-commander' }, [
+        el('p', { className: 'ba-option-subheading', text: 'ワイヤレスコマンダー（任意）' }),
+        el('p', { className: 'ba-field-help', text: 'ワイヤレスコマンダーが必要な方は追加してください。カメラによっては不要な場合があります。' })
+      ]);
+      var commanderChoices = el('div', { className: 'ba-choices' });
+      commanders.forEach(function (item) {
+        var c = choice('bo-commander', item.code, item.label + '　' + formatJpy(item.unitPriceJpy), 'checkbox', false);
+        var equipment = ctx.getEquipment();
+        c.input.checked = Number(equipment[item.code]) > 0;
+        c.input.addEventListener('change', function () {
+          var current = ctx.getEquipment();
+          if (c.input.checked) current[item.code] = 1;
+          else delete current[item.code];
+          ctx.rerender();
+        });
+        commanderChoices.appendChild(c.label);
+      });
+      commanderBox.appendChild(commanderChoices);
+      section.appendChild(commanderBox);
+    }
+    return section;
+  }
+
+  /* 3問の回答だけで有料機材を確定しない運用のための「照明機材を使わない」。照明系（おすすめで入れ替える機材とコマンダー）だけを外し、
+     背景スタンド・カラーフィルター等の他の選択には触れない。元は変更しない。 */
+  function clearLightingEquipment(equipment) {
+    var next = {};
+    Object.keys(equipment || {}).forEach(function (code) {
+      if (LIGHTING_MANAGED_CODES.indexOf(code) === -1 && COMMANDER_CODES.indexOf(code) === -1) next[code] = equipment[code];
+    });
+    return next;
+  }
+
   function mount(config) {
     var slot = config.slot;
     var catalog = config.catalog || null;
@@ -605,98 +733,17 @@
     };
 
     /* ---- おすすめ照明セット（Issue #463）: 3ステップ→確認表示→「この構成を選択する」で機材欄へ反映 ---- */
-    function lightingItemLines(items) {
-      var byCode = {};
-      (catalog.equipment || []).forEach(function (e) { byCode[e.code] = e; });
-      return Object.keys(items).map(function (code) {
-        return (byCode[code] ? byCode[code].label : code) + ' ×' + items[code];
-      });
-    }
-
+    /* DOMの組み立ては buildLightingSection（mensの作品撮りサポートとも共有。Issue #679）。ここはStudio Xの状態との接続だけ。 */
     function renderLightingSection(root) {
-      var section = el('div', { className: 'ba-lighting' });
-      section.appendChild(el('h4', { className: 'ba-lighting-title', text: 'おすすめ照明セット' }));
-      section.appendChild(el('p', { className: 'ba-field-help', text: '3つ選ぶだけで、必要な機材をまとめて選択します。選択後も機材は自由に変更できます。' }));
-
-      LIGHTING_STEPS.forEach(function (step) {
-        var group = el('fieldset', { className: 'ba-lighting-step' }, [el('legend', { text: step.title })]);
-        var name = 'bo-lighting-' + step.key;
-        var options = el('div', { className: 'ba-lighting-options' });
-        step.options.forEach(function (opt) {
-          var input = el('input', { type: 'radio', name: name, value: opt.value });
-          input.checked = lightingChoice[step.key] === opt.value;
-          input.addEventListener('change', function () {
-            lightingChoice[step.key] = opt.value;
-            lightingNotice = '';
-            render();
-          });
-          options.appendChild(el('label', { className: 'ba-lighting-option' }, [
-            input,
-            el('span', { className: 'ba-lighting-option-body' }, [
-              el('strong', { text: opt.label }),
-              el('span', { className: 'ba-lighting-option-text', text: opt.text })
-            ])
-          ]));
-        });
-        group.appendChild(options);
-        section.appendChild(group);
-      });
-
-      var items = lightingPresetItems(lightingChoice);
-      if (items) {
-        var shortage = lightingPresetShortage(catalog, items);
-        var preview = el('div', { className: 'ba-lighting-preview ba-banner ba-banner--notice' }, [
-          el('p', { className: 'ba-lighting-preview-title', text: lightingResultTitle(lightingChoice) }),
-          el('p', { className: 'ba-lighting-preview-text', text: LIGHTING_RESULT_TEXT[lightingChoiceKey(lightingChoice)] }),
-          el('p', { className: 'ba-option-subheading', text: '選択されたセット' })
-        ]);
-        var list = el('ul', { className: 'ba-lighting-items' });
-        lightingItemLines(items).forEach(function (line) { list.appendChild(el('li', { text: line })); });
-        preview.appendChild(list);
-        if (shortage.length === 0) {
-          preview.appendChild(el('p', { className: 'ba-field-help', text: 'この構成の機材レンタル：' + formatJpy(equipmentTotalJpy(catalog, items)) + '（税込・セット無料を反映）' }));
-        } else {
-          preview.appendChild(el('p', { className: 'ba-field-help', role: 'alert', text: 'この構成は現在選択できません。下の機材欄から個別に選んでください。' }));
-        }
-        section.appendChild(preview);
-        var apply = el('button', { type: 'button', className: 'ba-btn ba-btn-primary ba-lighting-apply', text: 'この構成を選択する' });
-        if (shortage.length > 0) apply.disabled = true;
-        apply.addEventListener('click', function () {
-          var next = applyLightingPreset(catalog, state.equipment, lightingChoice);
-          if (!next) return;
-          state.equipment = next;
-          dependencyNotice = '';
-          lightingNotice = 'おすすめの機材を選択しました。下の機材欄で自由に追加・削除・変更できます。';
-          render();
-        });
-        section.appendChild(apply);
-      } else {
-        section.appendChild(el('p', { className: 'ba-field-help', text: 'STEP 1〜3 を選ぶと、おすすめの機材セットが表示されます。' }));
-      }
-      if (lightingNotice) section.appendChild(el('p', { className: 'ba-field-help ba-lighting-notice', role: 'status', text: lightingNotice }));
-
-      /* ストロボのコマンダーは自動選択せず、必要な方だけ任意で追加できる（カメラによっては不要）。 */
-      var commanders = (catalog.equipment || []).filter(function (e) { return COMMANDER_CODES.indexOf(e.code) !== -1; });
-      if (lightingChoice.kind === 'STROBE' && commanders.length > 0) {
-        var commanderBox = el('div', { className: 'ba-lighting-commander' }, [
-          el('p', { className: 'ba-option-subheading', text: 'ワイヤレスコマンダー（任意）' }),
-          el('p', { className: 'ba-field-help', text: 'ワイヤレスコマンダーが必要な方は追加してください。カメラによっては不要な場合があります。' })
-        ]);
-        var commanderChoices = el('div', { className: 'ba-choices' });
-        commanders.forEach(function (item) {
-          var c = choice('bo-commander', item.code, item.label + '　' + formatJpy(item.unitPriceJpy), 'checkbox', false);
-          c.input.checked = Number(state.equipment[item.code]) > 0;
-          c.input.addEventListener('change', function () {
-            if (c.input.checked) state.equipment[item.code] = 1;
-            else delete state.equipment[item.code];
-            render();
-          });
-          commanderChoices.appendChild(c.label);
-        });
-        commanderBox.appendChild(commanderChoices);
-        section.appendChild(commanderBox);
-      }
-      root.appendChild(section);
+      root.appendChild(buildLightingSection({
+        catalog: catalog,
+        choice: lightingChoice,
+        getEquipment: function () { return state.equipment; },
+        setEquipment: function (next) { state.equipment = next; dependencyNotice = ''; },
+        getNotice: function () { return lightingNotice; },
+        setNotice: function (text) { lightingNotice = text; },
+        rerender: render
+      }));
     }
 
     function render() {
@@ -950,6 +997,40 @@
     return controller;
   }
 
+  /*
+   * mensの作品撮りサポート用（Issue #679）。SXと同じ3問の画面を、機材の選択状態を持つ呼び出し側（scripts/booking-app.js）へ接続する。
+   * Studio Xの設営方法・セルフレンタル許可・別決済の画面は持ち込まない（mensは承認後の一括決済）。
+   * config: { slot, catalog:{equipment:[{code,label,unitPriceJpy,unitLabel,stock,freeWhenWith}]}, getEquipment(), setEquipment(next), onChange() }
+   * 回答（choice）は呼び出し側の機材選択とは別に保持し、回答を変えても既存の機材選択は変えない（適用ボタンを押したときだけ照明機材を入れ替える）。
+   */
+  function mountLightingGuide(config) {
+    var slot = config.slot;
+    var catalog = config.catalog || null;
+    var lightingChoice = { kind: '', count: '', softbox: '' };
+    var lightingNotice = '';
+    var guide = {
+      render: function () {
+        slot.textContent = '';
+        if (!catalog || !Array.isArray(catalog.equipment)) { slot.hidden = true; return; }
+        slot.hidden = false;
+        slot.appendChild(buildLightingSection({
+          catalog: catalog,
+          choice: lightingChoice,
+          getEquipment: config.getEquipment,
+          setEquipment: function (next) { config.setEquipment(next); },
+          getNotice: function () { return lightingNotice; },
+          setNotice: function (text) { lightingNotice = text; },
+          rerender: function () { if (typeof config.onChange === 'function') config.onChange(); guide.render(); },
+          allowClear: true
+        }));
+      },
+      setCatalog: function (next) { catalog = next; guide.render(); },
+      reset: function () { lightingChoice = { kind: '', count: '', softbox: '' }; lightingNotice = ''; guide.render(); }
+    };
+    guide.render();
+    return guide;
+  }
+
   var api = {
     mount: mount,
     buildSelection: buildSelection,
@@ -961,6 +1042,10 @@
     lightingPresetItems: lightingPresetItems,
     lightingResultTitle: lightingResultTitle,
     applyLightingPreset: applyLightingPreset,
+    clearLightingEquipment: clearLightingEquipment,
+    buildLightingSection: buildLightingSection,
+    mountLightingGuide: mountLightingGuide,
+    lightingPresetShortage: lightingPresetShortage,
     requiredBracketQuantity: requiredBracketQuantity,
     requiredConfirmations: requiredConfirmations,
     CONFIRM_TEXT: CONFIRM_TEXT,

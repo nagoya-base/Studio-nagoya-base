@@ -64,6 +64,7 @@ var DETAIL_FIELDS = [
   ['supportStaffAmount', 'スタッフ対応料金（税込）'],
   ['supportEquipmentLines', '有料機材（共通カタログ）'],
   ['supportEquipmentAmount', '有料機材料金（税込）'],
+  ['supportBackdropLabel', '希望背景（作品撮りサポート）'],
   ['supportApprovedAt', '承認日時'],
   ['supportPaymentDueAt', '支払い期限（承認後24時間）'],
   ['priceAmount', '自動計算金額（税込）'],
@@ -615,6 +616,8 @@ function showDetailModal(booking) {
     if ((key === 'supportApprovedAt' || key === 'supportPaymentDueAt') && !booking[key]) return '';
     if (key === 'supportEquipmentLines' && !(booking.supportEquipmentLines && booking.supportEquipmentLines.length)) return '';
     if (key === 'supportEquipmentAmount' && !(booking.supportEquipmentLines && booking.supportEquipmentLines.length)) return '';
+    /* Issue #679: 希望背景は旧予約・背景なしの申込では行ごと省く。 */
+    if (key === 'supportBackdropLabel' && !booking.supportBackdropLabel) return '';
     if ((key === 'supportRoomAmount' || key === 'supportStaffAmount') && (booking[key] === null || booking[key] === undefined)) return '';
     return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
   }).join('');
@@ -2019,6 +2022,32 @@ function runConfirm(bookingId) {
  */
 function runApproveSupport(bookingId) {
   var booking = state.bookings.find(function (b) { return b.bookingId === bookingId; });
+  /* Issue #679: 背景の希望がある申込は、承認前に運営が現物・利用可否・他の確定利用との競合を確認する（背景専用の自動在庫予約は無い）。
+     確認できない／未整備の案内が済んでいないときは承認しない（決済案内へ進めない）。確認の最終判定はサーバー側（BookingRepository.approvePhotoSupport）。 */
+  var confirmations = {};
+  if (booking && booking.supportBackdropLabel) {
+    var standNote = booking.supportBackdropStandSelected
+      ? '背景スタンドは申込に含まれています（機材として選択済み）。'
+      : '背景スタンドは申込に含まれていません。スタンド等が必要と分かった場合は、承認前に必要品と金額を本人へ確認し、申込修正／再見積の手順に従ってください（見積外の200円を後から請求しません）。竹の梁等で設置できるかも確認対象です。';
+    var backdropChecked = window.confirm(
+      '【背景の確認】希望背景: ' + booking.supportBackdropLabel + '\n' +
+      'スタッフ対応: ' + (booking.supportServicesLabel || '') + '\n\n' +
+      '背景は申込時点では確保されていません。現物・利用可否・他の確定利用との競合を確認しましたか？\n' +
+      '先に確定している利用を優先し、確保できない場合は承認せず、本人に相談してください（別の背景へは自動で変更しません）。\n\n' +
+      standNote
+    );
+    if (!backdropChecked) return;
+    confirmations.backdropChecked = true;
+    if (booking.supportBackdropSelfWork && booking.supportBackdropGuidanceReady === false) {
+      var guided = window.confirm(
+        '【設置・片付けの案内】' + booking.supportBackdropLabel + ' は、設置・片付けの運用案内が未整備です（現物情報が未確認）。\n' +
+        '利用者自身が設置・片付けする部分について、設置・片付け上の注意を本人へ確認／案内し終えましたか？\n' +
+        '案内が済んでいない場合は承認できません。'
+      );
+      if (!guided) return;
+      confirmations.setupGuidanceDone = true;
+    }
+  }
   var confirmed = window.confirm(
     (booking
       ? '予約ID: ' + booking.bookingId + '\n' +
@@ -2050,7 +2079,7 @@ function runApproveSupport(bookingId) {
       alert('承認でエラーが発生しました: ' + (error && error.message ? error.message : error));
       loadBookings(function () { setBusy(bookingId, false); });
     })
-    .adminApprovePhotoSupport(bookingId);
+    .adminApprovePhotoSupport(bookingId, confirmations);
 }
 
 /*

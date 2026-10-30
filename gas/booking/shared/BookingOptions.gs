@@ -386,6 +386,102 @@ var BookingOptions = (function () {
     return list.filter(function (item) { return !!parseEquipmentItem_(item); }).map(describeItem);
   }
 
+  /* 保存済みの機材項目（'EQ:..'の配列またはカンマ区切り文字列）に、指定の機材コードが含まれるか。 */
+  function supportEquipmentHasCode(stored, code) {
+    var list = Array.isArray(stored) ? stored : String(stored || '').split(',');
+    return list.some(function (item) {
+      var parsed = parseEquipmentItem_(item);
+      return !!parsed && parsed.code === code && parsed.quantity > 0;
+    });
+  }
+
+  /*
+   * ---- 作品撮りサポートの背景希望（Issue #679） ----
+   * 品目定義の唯一の正本は _data/studio_x_equipment.json の supportBackdrops（EquipmentCatalog.gs へ生成）。
+   * Bookings.supportBackdrop には code を1件だけ保存する。supportEquipment（料金計算の機材項目）とは完全に分離し、
+   * 背景の選択は金額に影響しない（背景布単体料金・背景紙料金・追加設営料金は作らない。背景スタンド200円は明示選択時のみ機材として加算）。
+   * 和柄2種などの未確認の値（在庫・寸法・運用文言）はカタログ上 null で、ここでも推測して埋めない。
+   */
+  function supportBackdropDefs_() {
+    var section = StudioXEquipmentCatalog.supportBackdrops;
+    return section && Array.isArray(section.items) ? section.items : [];
+  }
+
+  function supportBackdropDef_(code) {
+    var list = supportBackdropDefs_();
+    for (var i = 0; i < list.length; i++) if (list[i].code === code) return list[i];
+    return null;
+  }
+
+  function freeSelfDef_(code) {
+    var list = StudioXEquipmentCatalog.freeSelf;
+    for (var i = 0; i < list.length; i++) if (list[i].code === code) return list[i];
+    return null;
+  }
+
+  /* 運用文言（保管場所・使う備品・設置・原状復帰・注意事項）が運営確定済みか。確定済みでなければ運営が承認前に案内する。 */
+  function supportBackdropGuidanceReady_(def) {
+    var tpl = def && def.themeCode ? GUIDANCE_TEMPLATES_[def.themeCode] : null;
+    return !!(tpl && tpl.storage && tpl.items && tpl.setupSteps && tpl.restoreSteps && tpl.cautions);
+  }
+
+  /* 公開・管理表示用の品目情報。寸法は既存の freeSelf 定義（幅×長さ）がある品目だけ。未確認の値は null のまま。 */
+  function supportBackdropInfo(code) {
+    var def = supportBackdropDef_(code);
+    if (!def) return null;
+    var cloth = def.freeSelfCode ? freeSelfDef_(def.freeSelfCode) : null;
+    var sizeLabel = cloth && cloth.widthCm > 0 && cloth.lengthCm > 0 ? '幅' + cloth.widthCm + 'cm×長さ' + cloth.lengthCm + 'cm' : null;
+    return {
+      code: def.code,
+      label: def.label,
+      note: def.note || '',
+      sizeLabel: sizeLabel,
+      image: def.image || null,
+      selfSetupGuidanceReady: supportBackdropGuidanceReady_(def)
+    };
+  }
+
+  /* 背景コード→表示名（予約の保存値から）。空欄（旧予約・背景なし）は空文字。未知の保存値は握りつぶさずコードのまま示す。 */
+  function describeSupportBackdrop(code) {
+    var value = String(code || '').trim();
+    if (!value) return '';
+    var info = supportBackdropInfo(value);
+    return info ? info.label : value;
+  }
+
+  /*
+   * 背景希望の検証（サーバー正本）。context: { brand, plan }。
+   * 空（未指定）は ok・背景なし。1件の既知コードで、その品目の対象ブランド／プランに一致する場合だけ ok。
+   * 未知コード・複数値・文字列以外・対象外ブランド／プランでの指定は拒否する（黙って捨てない・別の背景へ置き換えない）。
+   */
+  function normalizeSupportBackdrop(value, context) {
+    if (value === undefined || value === null || value === '') return { ok: true, empty: true, code: '' };
+    if (typeof value !== 'string') {
+      return { ok: false, error: err_('INVALID_SUPPORT_BACKDROP', '背景の指定形式が正しくありません。') };
+    }
+    var code = value.trim();
+    if (!code) return { ok: true, empty: true, code: '' };
+    if (!/^[A-Z0-9_]{1,60}$/.test(code)) {
+      return { ok: false, error: err_('INVALID_SUPPORT_BACKDROP', '背景は1種類だけ選択してください。') };
+    }
+    var def = supportBackdropDef_(code);
+    if (!def) return { ok: false, error: err_('UNKNOWN_SUPPORT_BACKDROP', '選択できない背景が指定されています。選び直してください。') };
+    var ctx = context || {};
+    if ((def.brands || []).indexOf(ctx.brand) === -1 || (def.plans || []).indexOf(ctx.plan) === -1) {
+      return { ok: false, error: err_('SUPPORT_BACKDROP_NOT_AVAILABLE', '背景の指定は、SNB mensの作品撮りサポートプランでのみ選択できます。') };
+    }
+    return { ok: true, empty: false, code: code };
+  }
+
+  /* 利用者向けの背景一覧（作品撮りサポートの背景選択用）。対象ブランド／プランの品目だけ。在庫・未確認の値は返さない。 */
+  function supportBackdropCatalog_(brand, plan) {
+    return supportBackdropDefs_().filter(function (def) {
+      return (def.brands || []).indexOf(brand) !== -1 && (def.plans || []).indexOf(plan) !== -1;
+    }).map(function (def) {
+      return supportBackdropInfo(def.code);
+    });
+  }
+
   /* 利用者向けの機材一覧（作品撮りサポートの機材選択用）。共通カタログの有料レンタル全件＋選択可能な無料備品。 */
   function supportEquipmentCatalog_() {
     return StudioXEquipmentCatalog.rental.map(function (item) {
@@ -412,7 +508,9 @@ var BookingOptions = (function () {
         showerOnly: true,
         shower: { code: SHOWER_ITEM_CODE, label: SHOWER_LABEL_, priceJpy: SHOWER_PRICE_JPY_, memberOnly: true, perBooking: 1 },
         /* Issue #667: 作品撮りサポートプランで選べる有料機材（共通カタログ。単価・在庫・セット無料条件の複製ではなく同じ正本）。 */
-        supportEquipment: brand === 'mens' ? (ensureCatalogInitialized_(), supportEquipmentCatalog_()) : undefined
+        supportEquipment: brand === 'mens' ? (ensureCatalogInitialized_(), supportEquipmentCatalog_()) : undefined,
+        /* Issue #679: 作品撮りサポートで希望できる背景（正本は supportBackdrops）。mens以外には一切出さない。 */
+        supportBackdrops: brand === 'mens' ? supportBackdropCatalog_('mens', 'mens_photo_support') : undefined
       };
     }
     ensureCatalogInitialized_();
@@ -1245,6 +1343,10 @@ var BookingOptions = (function () {
     describeItem: describeItem,
     computeSupportEquipment: computeSupportEquipment,
     describeSupportEquipment: describeSupportEquipment,
+    supportEquipmentHasCode: supportEquipmentHasCode,
+    normalizeSupportBackdrop: normalizeSupportBackdrop,
+    describeSupportBackdrop: describeSupportBackdrop,
+    supportBackdropInfo: supportBackdropInfo,
     isLectureRequiredItem: isLectureRequiredItem,
     lectureRequiredCodesOfItems: lectureRequiredCodesOfItems,
     equipmentLabel: equipmentLabel,

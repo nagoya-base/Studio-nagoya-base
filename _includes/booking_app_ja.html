@@ -443,10 +443,22 @@
         <label class="ba-choice"><input type="radio" name="supportServices" value="CLEANUP"> <span>片付け　3,000円</span></label>
         <label class="ba-choice"><input type="radio" name="supportServices" value="BOTH"> <span>事前設営＋片付け　5,000円</span></label>
       </div>
+      <!-- Issue #679: 照明はStudio Xと同じ「迷わない3つの質問」（scripts/booking-options.jsを共有）。回答しただけでは機材を確定せず、「この構成を選択する」を押したときだけ反映する。 -->
       <div class="ba-choices" id="ba-photo-support-equipment" hidden>
-        <p class="ba-field-help"><strong>有料機材（任意・別料金）</strong>：共通の機材カタログの料金・在庫・セット無料条件で計算し、部屋料金・スタッフ対応料金と合わせて、承認後の1回のお支払いに含めます。スタッフが事前に配置します。料金内の常設備品・無料備品は有料になりません。</p>
-        <div id="ba-photo-support-equipment-list"></div>
+        <p class="ba-field-help"><strong>照明（任意・別料金）</strong>：3つの質問に答えると、必要な照明・スタンド・ソフトボックスをまとめて選べます。共通の機材カタログの料金・在庫・セット無料条件で計算し、部屋料金・スタッフ対応料金と合わせて、承認後の1回のお支払いに含めます。スタッフが事前に配置します。持ち込みの機材で撮影する場合は、何も選ばずにお進みください。</p>
+        <div id="ba-photo-support-lighting"></div>
       </div>
+      <!-- Issue #679: 背景（1種類まで）。料金・機材の選択とは別に保存し、スタッフへ伝えます。品目と見本画像はoptionCatalog（正本は_data/studio_x_equipment.json）から描画します。 -->
+      <div class="ba-choices" id="ba-photo-support-backdrop" data-asset-base="{{ '/' | relative_url }}" hidden>
+        <p class="ba-field-help"><strong>背景を選ぶ（任意・1種類）</strong>：白・黒の背景布は、スタジオに常設している幅135cmの背景紙ロールとは別の布です。背景だけの料金や背景紙の料金はありません。</p>
+        <div id="ba-photo-support-backdrop-list" role="radiogroup" aria-label="背景"></div>
+        <div class="ba-field-help" id="ba-photo-support-backdrop-note" role="status"></div>
+      </div>
+      <details class="ba-photo-equipment-details" id="ba-photo-support-equipment-details" hidden>
+        <summary>機材を個別に選ぶ／調整する</summary>
+        <p class="ba-field-help"><strong>有料機材（任意・別料金）</strong>：上の3つの質問で選んだ内容の追加・削除・数量変更ができます。料金内の常設備品・無料備品は有料になりません。</p>
+        <div id="ba-photo-support-equipment-list"></div>
+      </details>
       <p class="ba-field-error" id="ba-photo-support-error" hidden></p>
       <ul class="ba-field-help" id="ba-photo-support-terms">
         <li>SNB MEMBER限定・1〜4名限定です（5名以上は選べません）。無料サービスではありません。</li>
@@ -590,6 +602,7 @@
         <tr><th>利用料金</th><td id="ba-confirm-price"></td></tr>
         <tr id="ba-confirm-applied-row" hidden><th id="ba-confirm-applied-label">適用料金</th><td id="ba-confirm-applied"></td></tr>
         <tr id="ba-confirm-shower-row" hidden><th id="ba-confirm-shower-label">追加オプション</th><td id="ba-confirm-shower"></td></tr>
+        {% if include.brand == "mens" %}<tr id="ba-confirm-photo-row" hidden><th>撮影環境（作品撮りサポート）</th><td id="ba-confirm-photo"></td></tr>{% endif %}
         <tr><th>お名前</th><td id="ba-confirm-name"></td></tr>
         <tr><th>メールアドレス</th><td id="ba-confirm-email"></td></tr>
         <tr id="ba-confirm-member-row" hidden><th>会員確認</th><td id="ba-confirm-member"></td></tr>

@@ -622,6 +622,9 @@ var Booking = (function () {
            BookingPricing.normalizeSupportServices（BookingRepository.createBooking）。他のプランでは使わない。 */
         /* Issue #667: 作品撮りサポートに付ける有料機材 { 機材コード: 数量 }。形式・在庫・料金は BookingOptions.computeSupportEquipment が検証する。 */
         supportEquipment: input.supportEquipment !== null && typeof input.supportEquipment === 'object' && !Array.isArray(input.supportEquipment) ? input.supportEquipment : undefined,
+        /* Issue #679: 作品撮りサポートで希望する背景のコード1件。値の検証（既知コード・対象ブランド／プラン・複数値の拒否）は
+           BookingOptions.normalizeSupportBackdrop（BookingPricing.computeBookingPrice経由）。文字列以外は握りつぶさず検証側で拒否させる。 */
+        supportBackdrop: input.supportBackdrop === undefined || input.supportBackdrop === null ? '' : (typeof input.supportBackdrop === 'string' ? input.supportBackdrop.trim().slice(0, 80) : input.supportBackdrop),
         supportServices: input.supportServices === undefined || input.supportServices === null ? '' : String(input.supportServices).trim().slice(0, 20),
         date: input.date,
         startTime: input.startTime,

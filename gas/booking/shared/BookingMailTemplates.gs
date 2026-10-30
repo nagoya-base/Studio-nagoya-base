@@ -160,7 +160,7 @@ var BookingMailTemplates = (function () {
     var total = formatJpyAmount_(record.priceAmount);
     var equipmentItems = typeof BookingOptions !== 'undefined' && record.supportEquipment ? BookingOptions.describeSupportEquipment(record.supportEquipment) : [];
     var equipmentAmount = formatJpyAmount_(record.supportEquipmentAmount);
-    return [
+    var lines = [
       'ご利用プラン: ' + (typeof BookingPricing !== 'undefined' ? BookingPricing.planLabel(record.planCode) : '作品撮りサポートプラン'),
       servicesLabel ? 'スタッフ対応: ' + servicesLabel : '',
       room ? '部屋料金: ' + room + '（税込）' : '',
@@ -169,6 +169,16 @@ var BookingMailTemplates = (function () {
       equipmentItems.length > 0 && equipmentAmount ? '有料機材料金: ' + equipmentAmount + '（税込。共通の機材カタログの料金）' : '',
       total ? 'お支払い合計: ' + total + '（税込' + (equipmentItems.length > 0 ? '。部屋料金・スタッフ対応料金・有料機材料金の合計' : '。有料機材は別料金で、お申し込みの場合は合計に加算します') + '）' : ''
     ];
+    /* Issue #679: 希望背景（専用列supportBackdrop。旧予約・背景なしは何も足さない）。背景の選択は料金に影響しない。 */
+    var backdropLabel = typeof BookingOptions !== 'undefined' ? BookingOptions.describeSupportBackdrop(record.supportBackdrop) : '';
+    if (backdropLabel) {
+      lines.push('希望背景: ' + backdropLabel + '（背景は申込時点では確保されません。対応可否を確認後にご案内します。背景だけの料金はありません）');
+      if (record.supportServices === 'CLEANUP') {
+        lines.push('背景の設置: ご自身で行っていただきます（「片付けのみ」のため、事前設営は含まれません。背景を希望しても事前設営料金は加算されません）');
+      }
+      lines.push('背景スタンド（200円）は、機材として明示的に選択した場合のみ加算されます。背景を選んだだけでは追加されません。');
+    }
+    return lines;
   }
 
   /* Issue #667: 申込受付メール。承認待ちであり、承認前はお支払いできないこと・当日依頼や常駐対応でないことを必ず示す。 */

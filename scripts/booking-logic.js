@@ -119,6 +119,10 @@
       PHOTO_SUPPORT_DEADLINE_PASSED: '作品撮りサポートプランのお申し込みは、利用日の7日前までです。別の利用日を選ぶか、プランの選択を外してください。',
       PHOTO_SUPPORT_CARD_ONLY: '作品撮りサポートプランのお支払いは、運営の承認後にオンラインクレジットカードでお願いします。支払方法でカードを選択してください。',
       PHOTO_SUPPORT_OPTIONS_NOT_ALLOWED: '作品撮りサポートプランでは、予約と同時のオプション申込はできません。',
+      /* Issue #679: 背景の希望（作品撮りサポートの背景を選ぶ欄）。 */
+      INVALID_SUPPORT_BACKDROP: '背景は1種類だけ選択してください。選び直してください。',
+      UNKNOWN_SUPPORT_BACKDROP: '選択できない背景が指定されています。背景を選び直してください。',
+      SUPPORT_BACKDROP_NOT_AVAILABLE: '背景の指定は、作品撮りサポートプランでのみ選択できます。',
       SUPPORT_NOT_APPROVED: '作品撮りサポートプランは運営の承認後にお支払いいただけます。承認のご連絡をお待ちください。',
       SUPPORT_PAYMENT_EXPIRED: 'お支払い期限（承認後24時間）を過ぎたため、お支払いいただけません。改めてお申し込みください。',
       PLAN_DAY_INVALID: '土日祝4時間シャワーパックは、土日祝のご利用日のみご選択いただけます。ご利用日を変更するか、パックの選択を外してください。',
@@ -179,6 +183,9 @@
       PHOTO_SUPPORT_DEADLINE_PASSED: 'The photo support plan must be requested at least 7 days before the date of use.',
       PHOTO_SUPPORT_CARD_ONLY: 'The photo support plan is paid by credit card after approval. Please choose credit card.',
       PHOTO_SUPPORT_OPTIONS_NOT_ALLOWED: 'Add-on options cannot be requested together with the photo support plan.',
+      INVALID_SUPPORT_BACKDROP: 'Please choose only one backdrop and try again.',
+      UNKNOWN_SUPPORT_BACKDROP: 'The selected backdrop is not available. Please choose again.',
+      SUPPORT_BACKDROP_NOT_AVAILABLE: 'A backdrop can be requested only with the photo support plan.',
       SUPPORT_NOT_APPROVED: 'The photo support plan can be paid for only after approval.',
       SUPPORT_PAYMENT_EXPIRED: 'The payment deadline (24 hours after approval) has passed.',
       PLAN_DAY_INVALID: 'The 4-hour shower pack is available only on weekends and public holidays.',
@@ -533,6 +540,8 @@
     if (s.plan === PHOTO_SUPPORT_PLAN_CODE) {
       payload.plan = PHOTO_SUPPORT_PLAN_CODE;
       payload.supportServices = s.supportServices || '';
+      /* Issue #679: 希望する背景の識別コード1件（未指定は空文字）。料金には影響せず、supportEquipmentとは別のキーで送る。 */
+      payload.supportBackdrop = typeof s.supportBackdrop === 'string' ? s.supportBackdrop : '';
       /* 有料機材 { 機材コード: 数量 }。数量だけを送る（単価・在庫・セット無料は共通カタログでサーバーが計算する）。 */
       if (s.supportEquipment && typeof s.supportEquipment === 'object' && Object.keys(s.supportEquipment).length > 0) payload.supportEquipment = s.supportEquipment;
     }
@@ -1261,6 +1270,52 @@
     return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
   }
 
+  /*
+   * Issue #679: 作品撮りサポートの背景希望の画面文言。品目名・寸法・見本画像はoptionCatalogの supportBackdrops（正本は
+   * _data/studio_x_equipment.json）から受け取り、ここでは持たない。未確認の情報（和柄の在庫・寸法・運用手順）は文言に含めない。
+   */
+  var PHOTO_BACKDROP_TEXT_ = {
+    none: '背景布を使わない（希望なし）',
+    lead: '背景は1種類まで選べます。選ばない場合は背景の希望なしとして受け付けます（白背景などへ自動で置き換えません）。',
+    reservation: '背景は申込時点では確保されません。運営が現物・利用可否・他のご予約との重なりを確認し、対応可否を確認後にご案内します。先に確定しているご利用を優先し、確保できない場合は承認せず、ご本人に相談します（別の背景へ自動では変更しません）。',
+    cleanupOnly: '「片付けのみ」の場合、背景の設置はご自身で行っていただきます（事前設営は含まれません）。背景を希望しても事前設営の料金は加算されません。',
+    guidancePending: '設置・片付け上の注意は、運営がお申し込み後にご案内します（ご案内が済むまで承認されません）。',
+    standNoPrice: '背景スタンドは、背景を選んだだけでは追加されません。使う場合は機材の一覧で「背景スタンド」を選択してください。',
+    standCheck: '竹の梁などでの設置が可能かどうかも運営が確認します（無料で設置できると約束するものではありません）。',
+    standNeed: 'スタンド等の追加が必要と分かった場合は、承認前に必要な機材と金額をご本人に確認します。'
+  };
+
+  /* 背景を選ぶ欄の説明行。services: 選択中のスタッフ対応種別（'SETUP'|'CLEANUP'|'BOTH'|''）、info: 選択中の背景品目（なければnull）、
+     standItem: 機材カタログの背景スタンド（単価の表示用。なければnull）。 */
+  function photoBackdropNoticeLines(services, info, standItem) {
+    var t = PHOTO_BACKDROP_TEXT_;
+    var lines = [t.reservation];
+    if (services === 'CLEANUP') lines.push(t.cleanupOnly);
+    if (info && info.selfSetupGuidanceReady === false) lines.push(t.guidancePending);
+    var stand = standItem && Number(standItem.unitPriceJpy) > 0
+      ? t.standNoPrice.replace('背景スタンドは、', '背景スタンド（' + Number(standItem.unitPriceJpy).toLocaleString('ja-JP') + '円）は、')
+      : t.standNoPrice;
+    lines.push(stand);
+    lines.push(t.standCheck);
+    lines.push(t.standNeed);
+    return lines;
+  }
+
+  /* 確認画面の「撮影環境」欄。スタッフ対応・機材・背景を、申込・保存・メール・管理画面と同じ名称で並べる。 */
+  function photoSupportConfirmLines(selection) {
+    var s = selection || {};
+    var labels = { SETUP: '事前設営（3,000円）', CLEANUP: '片付け（3,000円）', BOTH: '事前設営＋片付け（5,000円）' };
+    var lines = [];
+    if (labels[s.services]) lines.push('スタッフ対応：' + labels[s.services]);
+    (s.equipmentLines || []).forEach(function (line) { lines.push('機材：' + line); });
+    lines.push('背景：' + (s.backdropLabel ? s.backdropLabel : '希望なし'));
+    if (s.backdropLabel) {
+      lines.push('※背景は申込時点では確保されません。対応可否を確認後にご案内します。');
+      if (s.services === 'CLEANUP') lines.push('※「片付けのみ」のため、背景の設置はご自身で行います（事前設営は含まれません）。');
+    }
+    return lines;
+  }
+
   /* 申込期限: 利用日の7日前まで（利用日 - 今日 >= 7日）。最終判定はサーバー。 */
   function photoSupportApplyOpen(dateValue, todayValue) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateValue)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(todayValue))) return false;
@@ -1564,6 +1619,9 @@
     photoSupportAvailableOnDate: photoSupportAvailableOnDate,
     photoSupportPeopleAllowed: photoSupportPeopleAllowed,
     photoSupportServicesValid: photoSupportServicesValid,
+    PHOTO_BACKDROP_TEXT: PHOTO_BACKDROP_TEXT_,
+    photoBackdropNoticeLines: photoBackdropNoticeLines,
+    photoSupportConfirmLines: photoSupportConfirmLines,
     photoSupportApplyOpen: photoSupportApplyOpen,
     todayJstString: todayJstString,
     photoSupportFlowCopy: photoSupportFlowCopy,

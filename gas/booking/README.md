@@ -8086,6 +8086,18 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - 料金は変更なし（1室1,000円/時・最低6時間・人数加算なし。6名・6時間でも6,000円＝1人あたり1,000円相当）。
 - 予約UIはプラン選択中のみ5〜6名を選択可（7〜10名の選択肢は削除）。通常Studio X / SNB / SNB mensの人数仕様は不変。
 
+## Issue #679: mens作品撮りサポートの背景5種の選択と照明「3つの質問」（専用列 `supportBackdrop`）
+
+- **背景の保存先**: Bookingsシートの**新しい専用列 `supportBackdrop`**（`BookingsSchema.HEADERS` の末尾。途中挿入・列移動なし。既存の予約行も書き換えない）。料金計算用の `supportEquipment`（`EQ:<コード>:<数量>`）には混ぜない。値は背景の識別コード1件（空＝背景の希望なし。旧予約・作品撮りサポート以外もすべて空）。背景の選択は金額に影響しない（背景布単体料金・背景紙料金・追加設営料金は作らない）。
+- **品目定義の正本**: `_data/studio_x_equipment.json` の `supportBackdrops`（`node scripts/sync-studio-x-equipment.js` で `EquipmentCatalog.gs` へ生成）。`BACKDROP_CLOTH_WHITE`（白背景布）／`BACKDROP_CLOTH_BLACK`（黒背景布）／`BACKDROP_TSURU_BLACK`（和柄背景・鶴・黒）／`BACKDROP_ASANOHA_INDIGO`（和柄背景・麻の葉・藍）／`BACKDROP_GRUNGE`（グランジ背景）。白黒布は既存の `freeSelf` 同コード（幅180cm×長さ250cm・在庫1）を参照し、寸法・在庫を複製しない（幅135cmの背景紙ロール＝常設とは別物）。グランジは既存の `GRUNGE`（白黒背景布と同じ運用で確定済み）に対応する。SXのテーマコード（`JAPANESE` 等）は変更しない。
+- **サーバー検証**: `BookingOptions.normalizeSupportBackdrop`（`BookingPricing.computeBookingPrice` 経由）。未知コード・複数値・文字列以外・対象外ブランド／プラン（mens以外、作品撮りサポート以外）での非空指定は、Calendar／シートへ何も書く前に拒否する（`UNKNOWN_SUPPORT_BACKDROP` / `INVALID_SUPPORT_BACKDROP` / `SUPPORT_BACKDROP_NOT_AVAILABLE`）。公開カタログ（`optionCatalog?brand=mens`）の `supportBackdrops` は表示名・補足・寸法（既知のものだけ）・見本画像・運用文言の整備状況のみで、在庫や未確認の値は返さない。
+- **和柄2種の未確認事項（推測しない）**: 実在庫数・寸法・収納場所・設置／原状復帰／注意事項は現物情報が未確認のため、正本では `stock`・`themeCode` を `null`（在庫0や無制限ではなく「不明」）とし、公開画面には寸法を出さない。申込は各種類1枚を希望するものとして受け付けるだけで、確保済みとは表示しない。運用文言が確定したら `BookingOptions.gs` の `GUIDANCE_TEMPLATES_` に確定文言を追加し、正本の `themeCode` を対応させる（オーナーが確認した内容のみ）。
+- **共有在庫と承認**: 背景専用の自動在庫予約・自動競合検出は持たない。承認前に運営が現物・利用可否・他の確定利用との競合を確認し、Booking Adminの「承認」操作で確認結果（`backdropChecked`）を受け取る。受け取れない場合は `BACKDROP_CONFIRMATION_REQUIRED` で承認せず、決済案内（承認メール）も出ない。和柄（運用文言が未整備）は、利用者自身が設置・片付けする部分（「片付けのみ」の設置、「事前設営のみ」の片付け）があるとき、案内完了（`setupGuidanceDone`）まで承認しない（`BACKDROP_GUIDANCE_REQUIRED`）。事前設営＋片付けの両方をスタッフが行う場合は不要。承認済みの再承認は従来どおり冪等。確保できない場合は承認せず本人に相談する（別の背景へ自動変更しない）。
+- **片付けのみ・背景スタンド**: 「片付けのみ」でも希望背景を選べるが、背景の設置は利用者自身が行い、事前設営は含まれない（画面・確認・メール・Adminに明記。背景の希望だけで事前設営料金は加算しない）。背景スタンド（`BACKGROUND_STAND` 200円）は背景を選んだだけでは追加せず、利用者が機材として明示選択した場合だけ共通カタログの単価で加算する。必要と判明した場合は承認前に本人へ確認し、既存の申込修正／再見積手順に従う。
+- **表示の往復**: 申込payload（`supportBackdrop`）→ サーバー検証 → 保存 → 申込受付／承認案内メール（「希望背景」行）→ Admin予約詳細（`supportBackdropLabel` 等）→ 確認画面（撮影環境欄）。旧予約（列なし／空欄）は背景なしとして読め、保存済みの料金・選択・料金世代は変更しない。
+- **照明の3問**: mensの作品撮りサポートの機材欄に、Studio Xと同じ「光の種類／灯数／ソフトボックス」の3問を表示する。`scripts/booking-options.js` の `LIGHTING_STEPS`・`lightingPresetItems`・`applyLightingPreset`（`buildLightingSection` / `mountLightingGuide`）を共有し、対応表・料金表は複製しない。回答しただけでは機材を確定せず、「この構成を選択する」を押したときだけ反映する。個別の機材・数量は「機材を個別に選ぶ／調整する」で残す。SXの設営方法選択・セルフレンタル許可・別決済はmensに持ち込まず、mensは既存のスタッフ事前配置・一括承認／一括決済を維持する。
+- **本番反映（Bookingsスキーマ変更あり。#673の手順）**: ① 本PRを `main` へマージ → ② production workflowを **`scope=admin-only`** で起動して承認 → ③ 管理者がBooking AdminのApps Scriptエディタで **`migrateBookingsSchema`** を1回実行（ログが `BOOKINGS_SCHEMA_MIGRATION_OK: added=1`、または既に最新なら `BOOKINGS_SCHEMA_ALREADY_CURRENT`。末尾に `supportBackdrop` 列が1列だけ追加され、2行目以降の予約値・他シートは変更されない） → ④ ヘッダー完全一致の成功確認 → ⑤ **`scope=full`、`schema_migrated=true`** で起動して承認 → ⑥ Admin／Public／post-checkがすべて成功することを確認する。**この節は手順の記載であり、本PRの作業で本番操作は行わない**（Stripe有効化・既存Deploymentの作り直し・PRブランチからの本番デプロイもしない）。
+
 ## Issue #668: SNB mens 通常料金の5〜7名拡張（大人数利用）
 
 - 料金: 1〜4名は現行どおり。5〜7名は通常のmens部屋料金に「5人目以降1名につき＋1,000円」を**予約1件につき1回**加算（`BookingPricing.computeBookingPrice` の `people` 入力。mens以外は人数を見ない）。上限7名（8名以上・「5名以上・要相談」はmensでは受け付けない）。利用日が2026/12/1以降のみ（告知2026/10/30から30日以上）。独立プランとは併用不可。

@@ -135,7 +135,8 @@ var BookingRepository = (function () {
       plan: planResult.plan,
       startTime: input.startTime,
       supportServices: input.supportServices,
-      supportEquipment: input.supportEquipment
+      supportEquipment: input.supportEquipment,
+      supportBackdrop: input.supportBackdrop
     });
     if (!priceResult.valid) {
       return { success: false, error: priceResult.error };
@@ -350,6 +351,8 @@ var BookingRepository = (function () {
         record.supportStaffAmount = priceResult.price.staffAmount;
         record.supportEquipment = priceResult.price.equipmentItems.join(',');
         record.supportEquipmentAmount = priceResult.price.equipmentAmount;
+        /* Issue #679: 背景の希望は専用列へ（料金計算用のsupportEquipmentには混ぜない）。未指定は空文字。 */
+        record.supportBackdrop = priceResult.price.supportBackdrop || '';
       }
 
       try {
@@ -428,6 +431,8 @@ var BookingRepository = (function () {
       response.price.roomAmount = priceResult.price.roomAmount;
       response.price.staffAmount = priceResult.price.staffAmount;
       response.price.equipmentAmount = priceResult.price.equipmentAmount;
+      /* Issue #679: 保存した背景の希望（識別コード。空＝希望なし）。画面・メールの表示名は同じ正本（supportBackdrops）から引く。 */
+      response.price.supportBackdrop = priceResult.price.supportBackdrop || '';
     }
     if (optionsResponse) response.options = optionsResponse;
     if (isLargeParty) {
@@ -987,7 +992,7 @@ var BookingRepository = (function () {
    * 不承認は cancelBookingAdmin（仮押さえ解除＋承認できなかった旨のメール）で行う。
    * 戻り値: { success, bookingId, status, supportStage, supportPaymentDueAt, alreadyApproved?, mailSent?, mailError? }
    */
-  function approvePhotoSupport(bookingId, now) {
+  function approvePhotoSupport(bookingId, now, confirmations) {
     now = isDateLike_(now) ? now : new Date();
     if (!bookingId || typeof bookingId !== 'string') {
       return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
@@ -998,7 +1003,7 @@ var BookingRepository = (function () {
     }
     var response;
     try {
-      response = approvePhotoSupportLocked_(bookingId, now);
+      response = approvePhotoSupportLocked_(bookingId, now, confirmations);
     } finally {
       lock.releaseLock();
     }
@@ -1020,7 +1025,30 @@ var BookingRepository = (function () {
     return response;
   }
 
-  function approvePhotoSupportLocked_(bookingId, now) {
+  /*
+   * Issue #679: 背景の希望がある申込の承認前確認。背景は申込時点では確保されず、運営が承認前に現物・利用可否・他の確定利用との競合を
+   * 確認する（背景専用の自動在庫予約は持たない）。承認の操作で「確認済み」を明示的に受け取り、受け取れなければ承認しない（決済案内へ進めない）。
+   * - backdropChecked: 現物・利用可否・競合を確認済み（背景の希望がある申込で必須）。
+   * - setupGuidanceDone: 運営の確定済み運用文言がない背景（和柄2種）を、利用者自身が設置・片付けする部分（「片付けのみ」の設置、
+   *   「事前設営のみ」の片付け）があるとき、設置・片付け上の注意を利用者へ確認／案内し終えた。事前設営＋片付けの両方をスタッフが行う場合は不要。
+   * 確認の記録は承認操作そのもの（supportApprovedAt）で、承認済み予約の再承認は確認を求めない（冪等）。
+   */
+  function backdropApprovalCheck_(record, confirmations) {
+    var code = String(record.supportBackdrop || '').trim();
+    if (!code) return null;
+    var info = BookingOptions.supportBackdropInfo(code);
+    var checks = confirmations && typeof confirmations === 'object' ? confirmations : {};
+    if (checks.backdropChecked !== true) {
+      return { code: 'BACKDROP_CONFIRMATION_REQUIRED', message: '背景（' + BookingOptions.describeSupportBackdrop(code) + '）の現物・利用可否・他の確定利用との競合を確認してから承認してください。' };
+    }
+    var userSelfWork = record.supportServices !== 'BOTH';
+    if (userSelfWork && !(info && info.selfSetupGuidanceReady) && checks.setupGuidanceDone !== true) {
+      return { code: 'BACKDROP_GUIDANCE_REQUIRED', message: '背景（' + BookingOptions.describeSupportBackdrop(code) + '）は設置・片付けの運用案内が未整備です。利用者へ設置・片付け上の注意を案内し終えてから承認してください。' };
+    }
+    return null;
+  }
+
+  function approvePhotoSupportLocked_(bookingId, now, confirmations) {
     var found = SpreadsheetRepository.findRowByBookingId(bookingId);
     if (!found) {
       return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません: ' + bookingId } };
@@ -1051,6 +1079,8 @@ var BookingRepository = (function () {
     if (Booking.getEffectivePriceAmount(record) === null) {
       return { success: false, error: { code: 'PRICE_NOT_AVAILABLE', message: '確定金額が計算されていないため承認できません。' } };
     }
+    var backdropError = backdropApprovalCheck_(record, confirmations);
+    if (backdropError) return { success: false, error: backdropError };
     var calendarId = BookingConfig.getCalendarId();
     if (!CalendarRepository.getEventById(calendarId, record.calendarEventId)) {
       return { success: false, error: { code: 'CALENDAR_EVENT_MISSING', message: '仮押さえのCalendarイベントが見つかりません。Recoveryシートを確認してください。' } };
