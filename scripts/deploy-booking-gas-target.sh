@@ -104,15 +104,15 @@ if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_std
   node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" before >&2
   exit 1
 fi
-if ! grep -Fq -- "$deployment_id" "$list_stdout"; then
-  echo "Configured deployment ID does not belong to the selected existing GAS project." >&2
+if ! deployment_has_unique_id; then
+  echo "Configured deployment ID could not be uniquely verified in the selected existing GAS project." >&2
   exit 1
 fi
 
 if [[ "$mode" == "schema-guard" ]]; then
   schema_path="gas/booking/shared/BookingsSchema.gs"
   # このDeploymentの行からだけ前回SHAを取る。1行・1SHAに特定できなければ失敗（fail closed）。
-  if ! deployment_line="$(grep -F -- "$deployment_id" "$list_stdout")" ||
+  if ! deployment_line="$(awk -v id="$deployment_id" '$1 == "-" && $2 == id' "$list_stdout")" ||
      [[ "$(printf '%s\n' "$deployment_line" | wc -l)" -ne 1 ]]; then
     echo "Could not identify the previous Web App production commit; refusing to continue." >&2
     exit 1

@@ -257,6 +257,23 @@ test('deploy script refuses unknown targets/modes, unknown deployments and a sta
   assert.deepEqual(stale.sleeps, ['5', '5', '5', '5']);
 });
 
+test('pre-update ID checks reject substring, description-only and duplicate matches before any write', () => {
+  for (const target of ['admin', 'public']) {
+    const id = `${target}-deployment-dummy`;
+    for (const listing of [
+      `- ${id}-suffix @5 - main abc123def456`,
+      `- another-deployment @5 - ${id} main abc123def456`,
+      `- ${id} @5 - main abc123def456\n- ${id} @4 - main 000000`
+    ]) {
+      const r = runDeploy([target], { MOCK_LIST: listing });
+      assert.equal(r.status, 1);
+      assert.deepEqual(r.invoked, ['list-deployments']);
+      assert.equal(r.marker(target), false);
+      assert.deepEqual(r.sleeps, []);
+    }
+  }
+});
+
 test('description propagation can succeed on the second or final attempt without repeating any update', () => {
   for (const target of ['admin', 'public']) {
     for (const currentAt of [3, 6]) {
@@ -483,6 +500,9 @@ test('schema guard fails closed when the previous Public SHA cannot be identifie
     'no SHA in description': () => '- public-deployment-dummy @5 - manual deploy',
     'short SHA': () => '- public-deployment-dummy @5 - main abc123def456',
     'unknown deployment': ({ previous }) => `- another-deployment @5 - main ${previous}`,
+    'substring ID': ({ previous }) => `- public-deployment-dummy-suffix @5 - main ${previous}`,
+    'ID only in description': ({ previous }) => `- another-deployment @5 - public-deployment-dummy main ${previous}`,
+    'duplicate ID': ({ previous }) => `- public-deployment-dummy @5 - main ${previous}\n- public-deployment-dummy @4 - main ${previous}`,
     'two SHAs': ({ previous, current }) => `- public-deployment-dummy @5 - main ${previous} main ${current}`,
     'SHA not in checked-out history': () => `- public-deployment-dummy @5 - main ${'0'.repeat(40)}`
   };
@@ -491,4 +511,12 @@ test('schema guard fails closed when the previous Public SHA cannot be identifie
     assert.notEqual(r.status, 0, label + ' must fail even with schema_migrated=true');
     assert.doesNotMatch(r.stderr, /[0-9a-f]{40}/, label);
   }
+});
+
+test('schema guard extracts only the exact Public ID row when other rows contain that ID', () => {
+  const r = runGuard({ setup: changed, schemaMigrated: 'false',
+    deploymentLine: ({ previous, current }) => `- public-deployment-dummy @5 - main ${previous}\n- public-deployment-dummy-suffix @9 - main ${current}\n- another-deployment @8 - public-deployment-dummy main ${current}` });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /schema_migrated=true/);
+  assert.doesNotMatch(r.stderr, /Could not identify/);
 });

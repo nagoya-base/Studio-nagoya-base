@@ -42,7 +42,7 @@ for (const phase of ['before', 'after']) {
       try {
         const start = deployScript.indexOf(`echo "Running clasp list-deployments (${phase} update)"`);
         assert.ok(start >= 0);
-        const idCheck = phase === 'before' ? 'if ! grep' : 'if ! deployment_has_unique_id';
+        const idCheck = 'if ! deployment_has_unique_id';
         const checkStart = deployScript.indexOf(idCheck, start);
         const closing = deployScript.slice(checkStart).match(/\n[ \t]*fi/);
         const end = checkStart + closing.index + closing[0].length;
