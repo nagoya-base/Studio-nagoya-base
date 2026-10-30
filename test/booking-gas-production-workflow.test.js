@@ -192,7 +192,9 @@ case "$1" in
      echo 'invalid_grant private@example.test token-dummy' >&2
      echo 'script-dummy deployment-dummy' ; exit 1
    fi
-   if [[ "$count" -gt 1 && "$MOCK_AFTER_LIST_SET" == 1 ]]; then
+   if [[ "$count" -eq 1 && -n "$MOCK_FIRST_LIST" ]]; then
+     printf '%s\\n' "$MOCK_FIRST_LIST"
+   elif [[ "$count" -gt 1 && "$MOCK_AFTER_LIST_SET" == 1 ]]; then
      if [[ "$count" -ge "$MOCK_CURRENT_AT" ]]; then
        printf '%s\\n' "$MOCK_LIST"
      else
@@ -219,7 +221,7 @@ esac
       PUBLIC_SCRIPT_ID: 'public-script-dummy', PUBLIC_DEPLOYMENT_ID: 'public-deployment-dummy',
       ADMIN_SCRIPT_ID: 'admin-script-dummy', ADMIN_DEPLOYMENT_ID: 'admin-deployment-dummy',
       MOCK_CALLS: calls, MOCK_SLEEPS: path.join(dir, 'sleeps'), MOCK_PUSH_FAIL: '0', MOCK_UPDATE_FAIL: '0',
-      MOCK_AFTER_LIST_SET: '0', MOCK_CURRENT_AT: '99', MOCK_LIST_FAIL_AT: '0', ...overrides
+      MOCK_AFTER_LIST_SET: '0', MOCK_CURRENT_AT: '99', MOCK_LIST_FAIL_AT: '0', MOCK_FIRST_LIST: '', ...overrides
     };
     env.MOCK_LIST = env.MOCK_LIST || `- ${args[0]}-deployment-dummy @5 - main ${sha}`;
     const result = spawnSync('bash', [deployScript, ...args], { cwd: dir, env, encoding: 'utf8' });
@@ -366,11 +368,12 @@ test('verify mode is read-only and checks the existing deployment shows the curr
   assert.equal(ok.status, 0, ok.stderr);
   assert.deepEqual(ok.invoked, ['list-deployments']);
   assert.match(ok.stdout, /Verified existing admin deployment is at the current main commit/);
+  assert.deepEqual(ok.sleeps, []);
   const stale = runDeploy(['public', 'verify'], { MOCK_LIST: '- public-deployment-dummy @5 - main 000000' });
   assert.notEqual(stale.status, 0);
-  assert.match(stale.stderr, /does not show the current main commit/);
-  assert.deepEqual(stale.invoked, ['list-deployments']);
-  assert.deepEqual(stale.sleeps, []);
+  assert.match(stale.stderr, /does not show the current main commit during post-check: SHA_MISMATCH after 5 read attempts/);
+  assert.deepEqual(stale.invoked, Array(5).fill('list-deployments'), 'finite read-only retries, never a write');
+  assert.deepEqual(stale.sleeps, ['5', '5', '5', '5']);
   assert.equal(stale.marker('public'), false);
   for (const listing of [
     '- admin-deployment-dummy @5 - main abc123def456\n- admin-deployment-dummy @4 - main 000000',
@@ -379,10 +382,73 @@ test('verify mode is read-only and checks the existing deployment shows the curr
   ]) {
     const r = runDeploy(['admin', 'verify'], { MOCK_LIST: listing });
     assert.equal(r.status, 1);
-    assert.deepEqual(r.invoked, ['list-deployments']);
-    assert.deepEqual(r.sleeps, []);
+    assert.equal(r.invoked.every((c) => c === 'list-deployments'), true);
     assert.equal(r.marker('admin'), false);
   }
+});
+
+test('verify retries read-only when the first read shows an old SHA, and never pushes or updates', () => {
+  for (const currentAt of [2, 5]) {
+    // first read: old SHA; later reads (from currentAt on): current SHA.
+    const r = runDeploy(['admin', 'verify'], {
+      MOCK_AFTER_LIST_SET: '1', MOCK_CURRENT_AT: String(currentAt),
+      MOCK_LIST: '- admin-deployment-dummy @5 - main abc123def456',
+      MOCK_AFTER_LIST: '- admin-deployment-dummy @4 - main 000000',
+      MOCK_FIRST_LIST: '- admin-deployment-dummy @4 - main 000000'
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.invoked, Array(currentAt).fill('list-deployments'));
+    assert.deepEqual(r.sleeps, Array(currentAt - 1).fill('5'));
+    assert.match(r.stdout, /Verified existing admin deployment is at the current main commit/);
+  }
+});
+
+test('verify right after a successful deploy-mode check tolerates an old first read, then succeeds', () => {
+  const r = runDeploy(['admin', 'verify'], {
+    MOCK_FIRST_LIST: '- admin-deployment-dummy @4 - main 000000',
+    MOCK_AFTER_LIST_SET: '1', MOCK_CURRENT_AT: '2',
+    MOCK_LIST: '- admin-deployment-dummy @5 - main abc123def456'
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.invoked.includes('push'), false);
+  assert.equal(r.invoked.includes('update-deployment'), false);
+});
+
+test('verify: only another deployment showing the SHA fails after finite retries; missing/duplicate IDs and list errors stop at once', () => {
+  const other = runDeploy(['admin', 'verify'], {
+    MOCK_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456'
+  });
+  assert.equal(other.status, 1);
+  assert.equal(other.invoked.length, 5, 'only another deployment shows the SHA: finite retries, then fail');
+  assert.equal(other.invoked.every((c) => c === 'list-deployments'), true);
+  const stale = runDeploy(['admin', 'verify'], {
+    MOCK_AFTER_LIST_SET: '1', MOCK_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456',
+    MOCK_AFTER_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456'
+  });
+  assert.equal(stale.status, 1);
+  assert.equal(stale.invoked.length, 5);
+  for (const listing of ['', '- another-deployment @5 - main abc123def456',
+    '- admin-deployment-dummy @4 - main 000000\n- admin-deployment-dummy @5 - main abc123def456']) {
+    const r = runDeploy(['admin', 'verify'], { MOCK_AFTER_LIST_SET: '1', MOCK_LIST: '- admin-deployment-dummy @4 - main 000000', MOCK_AFTER_LIST: listing });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE/);
+    assert.equal(r.invoked.length, 2);
+  }
+  const err = runDeploy(['admin', 'verify'], { MOCK_AFTER_LIST_SET: '1', MOCK_LIST: '- admin-deployment-dummy @4 - main 000000',
+    MOCK_AFTER_LIST: '- admin-deployment-dummy @4 - main 000000', MOCK_LIST_FAIL_AT: '3' });
+  assert.equal(err.status, 1);
+  assert.match(err.stderr, /clasp list-deployments failed \(during verification\): AUTHENTICATION_FAILED\n$/);
+  assert.equal(err.invoked.length, 3);
+  assert.equal(err.invoked.every((c) => c === 'list-deployments'), true);
+});
+
+test('a stale 40-hex SHA prefix or longer hash is never accepted by verify', () => {
+  const sha40 = 'a'.repeat(40);
+  for (const listing of [`- admin-deployment-dummy @5 - main ${sha40.slice(0, 39)}`, `- admin-deployment-dummy @5 - main ${sha40}0`]) {
+    const r = runDeploy(['admin', 'verify'], { GITHUB_SHA: sha40, MOCK_LIST: listing });
+    assert.equal(r.status, 1);
+  }
+  assert.equal(runDeploy(['admin', 'verify'], { GITHUB_SHA: sha40, MOCK_LIST: `- admin-deployment-dummy @5 - main ${sha40}` }).status, 0);
 });
 
 /* ---- schema diff guard (Issue #673): stubbed clasp + a real temporary git history ---- */

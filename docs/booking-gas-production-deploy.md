@@ -124,7 +124,14 @@ clasp部分は`scripts/deploy-booking-gas-target.sh`（`admin`/`public`、第2�
 対象IDが一意に存在してSHAがまだ一致しない場合だけ5秒待機する（待機は最大4回、合計20秒）。
 この間にpushやupdate-deploymentは再実行しない。最終回まで不一致なら失敗とする。
 対象IDが消えた・一意に確認できない場合や一覧取得のAPIエラーは即時停止し、APIエラーは既存の固定カテゴリで示す。
-`verify`は従来どおり更新も待機もせず、1回の読み取りでIDの一意性と今回SHAを確認する。
+`verify`（post-check）も同じ共通の読取り検証を使う。先頭の一覧取得を1回目として、今回SHAが見えない間だけ
+最大5回・5秒間隔（待機は合計20秒）で`list-deployments`を読み直す。`verify`は読取り専用で、再試行中にも
+push・update-deployment・新規version/Deployment作成を行わない。比較基準は実行開始時の`GITHUB_SHA`のままで、
+部分SHA・別Deployment・古いSHAは成功扱いにしない。
+ID不在・非一意、認証／一覧取得エラーは再試行せず即時停止し、最終回まで不一致なら`SHA_MISMATCH`で停止する
+（ログは固定分類と試行回数のみで、一覧そのもの・ID・認証情報は出さない）。
+更新済みmarkerがあるのにpost-checkが失敗した場合は、「更新は成功済み・最終確認は未完了」とログに出る。
+この場合は更新全体を無条件に再実行せず、まずDeploymentの実状態を読取りで確認する（Issue #684）。
 
 post-checkは、既存DeploymentのID（`full`はAdminとPublic、`admin-only`はAdminのみ）が存在し
 descriptionに今回のmain SHAが出ていることを確認する（`Bookings`ヘッダーの照合は行わない。

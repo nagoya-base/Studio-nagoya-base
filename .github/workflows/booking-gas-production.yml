@@ -126,14 +126,32 @@ jobs:
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
           ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
           ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
-        run: bash scripts/deploy-booking-gas-target.sh admin verify
+        run: |
+          set -euo pipefail
+          if ! bash scripts/deploy-booking-gas-target.sh admin verify; then
+            if [[ -f "$RUNNER_TEMP/booking-gas-admin-update-applied" ]]; then
+              echo "Booking Admin update succeeded earlier in this run, but the final post-check did not confirm the current main commit (read-only retries exhausted). Final confirmation is NOT complete. Check the Admin deployment state read-only before deciding on any re-run; do not assume a rollback." >&2
+            else
+              echo "Booking Admin post-check did not confirm the current main commit. Check the Admin deployment state." >&2
+            fi
+            exit 1
+          fi
       - name: Post-deploy check (Booking Web App deployment)
         if: inputs.scope == 'full'
         env:
           PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
           PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
           PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
-        run: bash scripts/deploy-booking-gas-target.sh public verify
+        run: |
+          set -euo pipefail
+          if ! bash scripts/deploy-booking-gas-target.sh public verify; then
+            if [[ -f "$RUNNER_TEMP/booking-gas-public-update-applied" ]]; then
+              echo "Booking Web App update succeeded earlier in this run, but the final post-check did not confirm the current main commit (read-only retries exhausted). Final confirmation is NOT complete. Check the Web App deployment state read-only before deciding on any re-run; do not assume a rollback." >&2
+            else
+              echo "Booking Web App post-check did not confirm the current main commit. Check the Web App deployment state." >&2
+            fi
+            exit 1
+          fi
       - name: Next step after admin-only
         if: inputs.scope == 'admin-only'
         run: echo "Booking Admin was updated; the Booking Web App deployment was left unchanged. Run migrateBookingsSchema in the Booking Admin Apps Script editor, then run this workflow with scope=full and schema_migrated=true."
