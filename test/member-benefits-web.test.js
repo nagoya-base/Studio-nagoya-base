@@ -53,7 +53,7 @@ function faqLd(html) {
 var BASE = 'https://nagoya-base.github.io/Studio-nagoya-base';
 var PAGES = {
   snb: { file: 'membership/index.html', url: BASE + '/membership/', top: 'index.html', image: BASE + '/images/studio-nagoya-base-hero-ogp.jpg' },
-  mens: { file: 'mens/membership/index.html', url: BASE + '/mens/membership/', top: 'mens/index.html', image: BASE + '/images/ogp-mens-v2-1200x630.jpg', topImage: BASE + '/images/mens-preview-ogp-1200x630.jpg' },
+  mens: { file: 'mens/membership/index.html', url: BASE + '/mens/membership/', top: 'mens/index.html', image: BASE + '/images/mens-preview-ogp-1200x630.jpg', topImage: BASE + '/images/mens-preview-ogp-1200x630.jpg' },
   studio_x: { file: 'studio-x/membership/index.html', url: BASE + '/studio-x/membership/', top: 'studio-x/index.html', image: BASE + '/studio-x/images/studio-x-ogp.jpg' }
 };
 
@@ -125,7 +125,10 @@ test('mens membership: mensトップと同じhero構造・OGP画像・ブラン�
   assert.match(html, /<section class="mens-ogp-hero"/);
   /* Issue #658: トップは採用した試作のHERO（pv-hero）へ差し替え済み。会員ページのheroは従来のまま */
   assert.match(top, /<section class="pv-hero"|class="pv-hero/);
-  assert.ok(/<img\s+src="\.\.\/\.\.\/images\/ogp-mens-v2-1200x630\.jpg"/.test(html));
+  /* Issue #662: ヒーローは採用済みの文字入り写真（1600x841）、OGPは別ファイル。同一画像前提にしない */
+  assert.ok(/<img\s+src="\.\.\/\.\.\/images\/mens-preview-hero\.webp"\s+width="1600"\s+height="841"/.test(html));
+  assert.ok(html.indexOf('<link rel="preload" as="image" href="../../images/mens-preview-hero.webp"') !== -1);
+  assert.strictEqual(html.indexOf('ogp-mens-v2'), -1);
   assert.match(html, /styles\/mens\.css/);
   var t = textOf(html);
   assert.ok(t.indexOf("Men's Private Studio") !== -1);
