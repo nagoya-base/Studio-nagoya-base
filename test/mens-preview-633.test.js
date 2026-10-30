@@ -466,7 +466,7 @@ test('#653: 衣装ブロックは指定4作品を順に紹介し、JSなし・re
   assert.doesNotMatch(css, /pv-works[^{]*\{[^}]*transform: scale/, '作品を演出用ズームで切らない');
   assert.match(css, /prefers-reduced-motion: reduce\) \{[\s\S]*\.pv-works \.pv-photo, \.pv-works figcaption \{ transition: none/);
   var js = read('scripts/mens-preview-653.js');
-  assert.doesNotMatch(js, /setInterval|setTimeout|scrollTo|scrollIntoView|click\(/, '自動再生・スクロールの強制移動をしない');
+  assert.doesNotMatch(js, /setInterval|setTimeout|scrollTo|scrollIntoView/, '自動再生・スクロールの強制移動をしない');
   assert.match(js, /prefers-reduced-motion: reduce/);
   assert.match(js, /catch \(e\) \{\s*root\.classList\.remove\('is-active'\)/);
   assert.ok(html.indexOf('mens-preview-653.js') !== -1);
@@ -475,37 +475,60 @@ test('#653: 衣装ブロックは指定4作品を順に紹介し、JSなし・re
 test('#653: 作品切替JSは reduced motion・非対応・例外時に .is-active を付けず、キャプションが帯に入った作品を表示中にする', function () {
   var vm = require('vm');
   function run(opts) {
-    var added = [], io = null, works = [0, 1, 2, 3].map(function (i) {
+    var added = [], ios = [], listeners = {}, clicks = 0;
+    var works = [0, 1, 2, 3].map(function (i) {
       var cls = {};
-      return { i: i, cls: cls, classList: { add: function (c) { cls[c] = true; }, remove: function (c) { delete cls[c]; } } };
+      return { i: i, cls: cls, contains: function () { return false; }, querySelector: function () { return { click: function () { clicks++; }, focus: function () {} }; }, classList: { add: function (c) { cls[c] = true; }, remove: function (c) { delete cls[c]; } } };
     });
-    var caps = works.map(function (w) { return { closest: function () { return w; } }; });
+    var caps = works.map(function (w) {
+      var attrs = {}, ev = {};
+      return { attrs: attrs, ev: ev, textContent: '作品' + w.i, closest: function () { return w; }, setAttribute: function (k, v) { attrs[k] = v; }, removeAttribute: function (k) { delete attrs[k]; }, addEventListener: function (t, f) { ev[t] = f; } };
+    });
     var rootEl = {
       classList: { add: function (c) { added.push(c); }, remove: function (c) { added = added.filter(function (x) { return x !== c; }); } },
       querySelectorAll: function (q) { return q.indexOf('caption') !== -1 ? caps : works; }
     };
     var sb = {
-      document: { querySelector: function () { return rootEl; } },
+      document: { querySelector: function () { return rootEl; }, activeElement: null },
+      innerHeight: opts.h || 720,
       matchMedia: function (q) { return { matches: q.indexOf('reduce') !== -1 ? !!opts.reduced : false }; },
+      addEventListener: function (t, f) { listeners[t] = f; },
+      requestAnimationFrame: function (f) { f(); },
       Array: Array,
-      IntersectionObserver: opts.io === undefined ? function (cb) { io = cb; this.observe = function () {}; } : opts.io
+      IntersectionObserver: opts.io === undefined ? function (cb, o) { ios.push({ cb: cb, o: o }); this.observe = function () {}; this.disconnect = function () {}; } : opts.io
     };
     sb.window = sb;
     if (opts.noIo) delete sb.IntersectionObserver;
     vm.runInNewContext(read('scripts/mens-preview-653.js'), sb);
-    return { added: added, works: works, io: io, caps: caps };
+    return { added: added, works: works, ios: ios, caps: caps, listeners: listeners, sb: sb, clicks: function () { return clicks; } };
   }
-  var ok = run({});
+  var ok = run({ h: 720 });
   assert.deepStrictEqual(ok.added, ['is-active']);
   assert.ok(ok.works[0].cls['is-current'], '初期は1作品目');
-  ok.io([{ isIntersecting: true, target: ok.caps[2] }]);
-  assert.ok(ok.works[2].cls['is-current'] && !ok.works[0].cls['is-current'], 'キャプション2が帯に入ると3作品目だけが表示中');
-  ok.io([{ isIntersecting: false, target: ok.caps[1] }]);
+  assert.strictEqual(ok.ios[0].o.rootMargin, '-324px 0px -324px 0px', '帯は viewport の高さ（720px）の中央10%：%ではなくpxで指定する（横長画面でも成立）');
+  ok.ios[0].cb([{ isIntersecting: true, target: ok.caps[2] }]);
+  assert.ok(ok.works[2].cls['is-current'] && !ok.works[0].cls['is-current'], 'キャプション3が帯に入ると3作品目だけが表示中');
+  ok.ios[0].cb([{ isIntersecting: false, target: ok.caps[1] }]);
   assert.ok(ok.works[2].cls['is-current'], '帯から出ただけでは切り替えない');
+  ok.sb.innerHeight = 900;
+  ok.listeners.resize();
+  assert.strictEqual(ok.ios[ok.ios.length - 1].o.rootMargin, '-405px 0px -405px 0px', 'resizeで帯を更新する');
+  /* キーボード：全キャプションが Tab 対象で、フォーカス・Enter・Space でその作品を選び、Enter・Space で拡大できる */
+  ok.caps.forEach(function (c) { assert.strictEqual(c.attrs.tabindex, '0'); assert.strictEqual(c.attrs.role, 'button'); });
+  ok.caps[3].ev.focus();
+  assert.ok(ok.works[3].cls['is-current'] && !ok.works[2].cls['is-current'], 'フォーカスで4作品目へ');
+  var prevented = 0;
+  ok.caps[1].ev.keydown({ key: 'Enter', preventDefault: function () { prevented++; } });
+  assert.ok(ok.works[1].cls['is-current'] && ok.clicks() === 1 && prevented === 1, 'Enterで選択して拡大');
+  ok.caps[0].ev.keydown({ key: ' ', preventDefault: function () { prevented++; } });
+  assert.strictEqual(ok.clicks(), 2);
+  ok.caps[0].ev.keydown({ key: 'a', preventDefault: function () { prevented++; } });
+  assert.strictEqual(ok.clicks(), 2, '他のキーでは拡大しない');
   assert.deepStrictEqual(run({ reduced: true }).added, []);
   assert.deepStrictEqual(run({ noIo: true }).added, []);
-  assert.deepStrictEqual(run({ io: function () { throw new Error('boom'); } }).added, []);
-  assert.deepStrictEqual(run({ io: function () { this.observe = function () { throw new Error('boom'); }; } }).added, []);
+  var fail = run({ io: function () { throw new Error('boom'); } });
+  assert.deepStrictEqual(fail.added, []);
+  fail.caps.forEach(function (c) { assert.deepStrictEqual(c.attrs, {}, '失敗時は操作属性を残さない'); });
 });
 
 /* Issue #641: ヒーロー・OGP画像の差し替え（生成画像の実寸・参照の整合） */
