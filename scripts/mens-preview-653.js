@@ -49,7 +49,7 @@
       var img = work.querySelector('img');
       cap.setAttribute('tabindex', '0');
       cap.setAttribute('role', 'button');
-      cap.setAttribute('aria-label', cap.textContent + '（拡大して見る）');
+      cap.setAttribute('aria-label', cap.textContent + '（選択。Enter または Space で拡大）');
       cap.addEventListener('focus', function () { activate(work); });
       cap.addEventListener('click', function () { activate(work); });
       cap.addEventListener('keydown', function (e) {
