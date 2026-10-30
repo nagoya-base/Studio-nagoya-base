@@ -1,21 +1,17 @@
 name: Deploy Booking GAS to production
 
+# 正規の本番反映手順（gas/booking/README.md）。1回の起動・1回のEnvironment承認で
+#   Bookings schema migration → Booking Admin更新 → Booking Web App更新 → post-check
+# を同一job内で直列実行する。いずれかが失敗した時点で後続は実行しない。
 on:
   workflow_dispatch:
-    inputs:
-      target:
-        description: Existing GAS project to update
-        required: true
-        type: choice
-        options:
-          - public
-          - admin
 
 permissions:
   contents: read
 
+# Booking GAS本番全体で1つ（Admin/Publicやrun同士の同時実行を防ぐ）。
 concurrency:
-  group: booking-gas-production-${{ inputs.target }}
+  group: booking-gas-production
   cancel-in-progress: false
 
 jobs:
@@ -42,17 +38,11 @@ jobs:
         run: npm test
 
   deploy:
-    name: Update existing ${{ inputs.target }} deployment
+    name: Migrate schema and update existing Admin and Public deployments
     needs: test
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: booking-production
-    env:
-      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
-      PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
-      PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
-      PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
-      ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
-      ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
     steps:
       - name: Check out the approved main commit
         uses: actions/checkout@v4
@@ -62,137 +52,58 @@ jobs:
           node-version: '22'
       - name: Install pinned clasp
         run: npm install --global @google/clasp@3.4.1
-      - name: Update the existing deployment
-        shell: bash
+      # 各stepには必要なSecretだけを渡す（clasp installのstepにはSecretを渡さない）。
+      - name: Migrate the Bookings sheet schema
+        run: node scripts/migrate-bookings-schema.js migrate
+        env:
+          BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: ${{ secrets.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON }}
+          BOOKING_SPREADSHEET_ID: ${{ secrets.BOOKING_SPREADSHEET_ID }}
+          BOOKING_SPREADSHEET_ID_SHA256: ${{ secrets.BOOKING_SPREADSHEET_ID_SHA256 }}
+      - name: Update the existing Booking Admin deployment
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
+          ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
         run: |
           set -euo pipefail
-
-          case "${{ inputs.target }}" in
-            public)
-              selected_clasprc_json="$PUBLIC_CLASPRC_JSON"
-              clasp_user="booking-owner"
-              script_id="$PUBLIC_SCRIPT_ID"
-              deployment_id="$PUBLIC_DEPLOYMENT_ID"
-              ;;
-            admin)
-              selected_clasprc_json="$CLASPRC_JSON"
-              clasp_user="default"
-              script_id="$ADMIN_SCRIPT_ID"
-              deployment_id="$ADMIN_DEPLOYMENT_ID"
-              ;;
-            *)
-              echo "Unsupported target" >&2
-              exit 1
-              ;;
-          esac
-
-          if [[ -z "$selected_clasprc_json" || -z "$script_id" || -z "$deployment_id" ]]; then
-            echo "Required booking-production secrets are not configured." >&2
+          if ! bash scripts/deploy-booking-gas-target.sh admin; then
+            if [[ -f "$RUNNER_TEMP/booking-gas-admin-update-applied" ]]; then
+              echo "Booking Admin deployment update was applied but its verification failed; the Booking Web App was not started. Check the Admin deployment state." >&2
+            else
+              echo "Booking Admin update did not complete; the Booking Web App was not started. Check the Admin deployment state before re-running." >&2
+            fi
             exit 1
           fi
-
-          auth_file="$RUNNER_TEMP/.clasprc.json"
-          remote_dir="$RUNNER_TEMP/booking-gas-remote"
-          deploy_dir="$RUNNER_TEMP/booking-gas-deploy"
-          umask 077
-          list_stdout="$RUNNER_TEMP/clasp-list-deployments.stdout"
-          list_stderr="$RUNNER_TEMP/clasp-list-deployments.stderr"
-          push_log="$RUNNER_TEMP/clasp-push.log"
-          trap 'rm -f "$list_stdout" "$list_stderr" "$push_log" "$auth_file"' EXIT
-          mkdir -p "$remote_dir"
-
-          AUTH_FILE="$auth_file" PROJECT_DIR="$remote_dir" SCRIPT_ID="$script_id" \
-            CLASP_USER="$clasp_user" SELECTED_CLASPRC_JSON="$selected_clasprc_json" node <<'NODE'
-          const fs = require('fs');
-          const path = require('path');
-          const authJson = process.env.SELECTED_CLASPRC_JSON;
-          let auth;
-          try {
-            auth = JSON.parse(authJson);
-            if (!auth || typeof auth !== 'object' || Array.isArray(auth)) throw new Error();
-          } catch (_) {
-            console.error('clasp credential setup failed: CLASP_CREDENTIAL_OR_USER_MISMATCH');
-            process.exit(1);
-          }
-          if (process.env.CLASP_USER === 'booking-owner' &&
-              (!auth.tokens || !auth.tokens['booking-owner'])) {
-            throw new Error('The public clasp credential does not contain the required user.');
-          }
-          fs.writeFileSync(process.env.AUTH_FILE, authJson, { mode: 0o600 });
-          fs.writeFileSync(
-            path.join(process.env.PROJECT_DIR, '.clasp.json'),
-            JSON.stringify({ scriptId: process.env.SCRIPT_ID, rootDir: '.' })
-          );
-          NODE
-
-          cd "$remote_dir"
-          echo "Running clasp list-deployments (before update)"
-          if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_stdout" 2>"$list_stderr"; then
-            node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" before >&2
+      - name: Update the existing Booking Web App deployment
+        env:
+          PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
+          PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
+          PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
+        run: |
+          set -euo pipefail
+          if ! bash scripts/deploy-booking-gas-target.sh public; then
+            if [[ -f "$RUNNER_TEMP/booking-gas-public-update-applied" ]]; then
+              echo "Booking Admin is updated to the current main commit. The Booking Web App deployment update was applied but its verification failed; check the Web App deployment state." >&2
+            else
+              echo "Booking Admin is updated to the current main commit. The Booking Web App update did not complete; the Web App deployment state must be checked before re-running." >&2
+            fi
             exit 1
           fi
-          if ! grep -Fq -- "$deployment_id" "$list_stdout"; then
-            echo "Configured deployment ID does not belong to the selected existing GAS project." >&2
-            exit 1
-          fi
-
-          echo "Running clasp pull"
-          if ! clasp --auth "$auth_file" --user "$clasp_user" pull >/dev/null 2>&1; then
-            echo "clasp pull failed." >&2
-            exit 1
-          fi
-          if [[ ! -f appsscript.json ]]; then
-            echo "Existing GAS project did not return appsscript.json; refusing to push." >&2
-            exit 1
-          fi
-
-          cd "$GITHUB_WORKSPACE"
-          manifest_path="$remote_dir/appsscript.json"
-          if [[ "${{ inputs.target }}" == "public" ]]; then
-            # The public manifest is version-controlled. The admin manifest is
-            # preserved from its existing container-bound project; the builder only
-            # appends missing required oauthScopes (script.external_request).
-            manifest_path="$GITHUB_WORKSPACE/gas/booking/public/appsscript.json"
-          fi
-          node scripts/prepare-booking-gas-project.js \
-            "${{ inputs.target }}" "$deploy_dir" "$manifest_path"
-
-          PROJECT_DIR="$deploy_dir" SCRIPT_ID="$script_id" node <<'NODE'
-          const fs = require('fs');
-          const path = require('path');
-          fs.writeFileSync(
-            path.join(process.env.PROJECT_DIR, '.clasp.json'),
-            JSON.stringify({ scriptId: process.env.SCRIPT_ID, rootDir: '.' })
-          );
-          NODE
-
-          cd "$deploy_dir"
-          echo "Running clasp show-file-status"
-          if ! clasp --auth "$auth_file" --user "$clasp_user" show-file-status >/dev/null 2>&1; then
-            echo "clasp show-file-status failed." >&2
-            exit 1
-          fi
-          echo "Running clasp push --force"
-          # Never print clasp's raw output: Google errors may include identifiers.
-          # The script emits a fixed category (plus sanitized allowlisted fields if unclassified).
-          if ! clasp --auth "$auth_file" --user "$clasp_user" push --force >"$push_log" 2>&1; then
-            node "$GITHUB_WORKSPACE/scripts/classify-clasp-push-error.js" "$push_log" >&2
-            exit 1
-          fi
-          rm -f "$push_log"
-          echo "Running clasp update-deployment"
-          if ! clasp --auth "$auth_file" --user "$clasp_user" update-deployment "$deployment_id" \
-            --description "main ${GITHUB_SHA}" >/dev/null 2>&1; then
-            echo "clasp update-deployment failed." >&2
-            exit 1
-          fi
-
-          echo "Running clasp list-deployments (after update)"
-          if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_stdout" 2>"$list_stderr"; then
-            node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" after >&2
-            exit 1
-          fi
-          if ! grep -Fq -- "$deployment_id" "$list_stdout"; then
-            echo "Existing deployment could not be verified after update." >&2
-            exit 1
-          fi
+      - name: Post-deploy check (Booking Admin deployment)
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
+          ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
+        run: bash scripts/deploy-booking-gas-target.sh admin verify
+      - name: Post-deploy check (Booking Web App deployment)
+        env:
+          PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
+          PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
+          PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
+        run: bash scripts/deploy-booking-gas-target.sh public verify
+      - name: Post-deploy check (Bookings schema)
+        env:
+          BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: ${{ secrets.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON }}
+          BOOKING_SPREADSHEET_ID: ${{ secrets.BOOKING_SPREADSHEET_ID }}
+          BOOKING_SPREADSHEET_ID_SHA256: ${{ secrets.BOOKING_SPREADSHEET_ID_SHA256 }}
+        run: node scripts/migrate-bookings-schema.js verify

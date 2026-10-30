@@ -8,6 +8,8 @@ const { spawnSync } = require('node:child_process');
 const { classify, report } = require('../scripts/classify-clasp-list-error');
 const workspace = path.resolve(__dirname, '..');
 const workflow = fs.readFileSync(path.join(workspace, '.github/workflows/booking-gas-production.yml'), 'utf8');
+// Issue #671: the clasp deploy shell lives in this script (run once per target by the workflow).
+const deployScript = fs.readFileSync(path.join(workspace, 'scripts/deploy-booking-gas-target.sh'), 'utf8');
 const sensitive = 'tiny-secret script-id deployment-id access-token refresh-token owner@example.test';
 
 test('list failures return only fixed categories, even with short unknown credentials', () => {
@@ -38,10 +40,10 @@ for (const phase of ['before', 'after']) {
     test(`workflow ${target} ${phase}: captures both streams, fails closed, never leaks output`, () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clasp-list-test-'));
       try {
-        const start = workflow.indexOf(`          echo "Running clasp list-deployments (${phase} update)"`);
+        const start = deployScript.indexOf(`echo "Running clasp list-deployments (${phase} update)"`);
         assert.ok(start >= 0);
-        const end = workflow.indexOf('\n          fi', workflow.indexOf('if ! grep', start)) + '\n          fi'.length;
-        const block = workflow.slice(start, end);
+        const end = deployScript.indexOf('\nfi', deployScript.indexOf('if ! grep', start)) + '\nfi'.length;
+        const block = deployScript.slice(start, end);
         fs.writeFileSync(path.join(dir, 'clasp'), '#!/bin/bash\nprintf "%s\\n" "$MOCK_STDOUT"\nprintf "%s\\n" "$MOCK_STDERR" >&2\nexit "$MOCK_STATUS"\n', { mode: 0o700 });
         const env = { ...process.env, PATH: dir + ':' + process.env.PATH, GITHUB_WORKSPACE: workspace,
           auth_file: 'test-auth', clasp_user: target === 'admin' ? 'default' : 'booking-owner',
@@ -79,14 +81,14 @@ test('unreadable logs and untrusted phase never appear in CLI diagnostics', () =
 
 test('workflow preserves main-only deployment and removes sensitive temporary files on exit', () => {
   assert.match(workflow, /if: github.ref == 'refs\/heads\/main'/);
-  assert.match(workflow, /trap 'rm -f "\$list_stdout" "\$list_stderr" "\$push_log" "\$auth_file"' EXIT/);
-  assert.ok(workflow.indexOf('umask 077') < workflow.indexOf('const authJson'));
-  assert.equal((workflow.match(/trap /g) || []).length, 1);
-  assert.doesNotMatch(workflow, /deployments_(?:before|after)=/);
+  assert.match(deployScript, /trap 'rm -f "\$list_stdout" "\$list_stderr" "\$push_log" "\$auth_file"' EXIT/);
+  assert.ok(deployScript.indexOf('umask 077') < deployScript.indexOf('const authJson'));
+  assert.equal((deployScript.match(/trap /g) || []).length, 1);
+  assert.doesNotMatch(deployScript, /deployments_(?:before|after)=/);
 });
 
 test('malformed credential JSON cannot expose parser snippets', () => {
-  const setup = workflow.match(/node <<'NODE'\n([\s\S]*?)\n          NODE/)[1];
+  const setup = deployScript.match(/node <<'NODE'\n([\s\S]*?)\nNODE/)[1];
   for (const value of ['{"refresh_token":"tiny-secret",oops}', 'null', '[]']) {
     const result = spawnSync('node', ['-e', setup], {
       encoding: 'utf8', env: { ...process.env, SELECTED_CLASPRC_JSON: value }

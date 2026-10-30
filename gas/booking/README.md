@@ -1,3 +1,48 @@
+## Issue #671: Booking GAS 本番反映の正規手順（承認1回・Bookings schema自動migration）
+
+**本番反映の手順はこの1つだけです。** 旧来の「Bookings列を手動追記 → `target=admin`で実行 → `target=public`で再実行」は廃止しました（`target`入力もありません）。Secret・Environment・認証の設定は [`docs/booking-gas-production-deploy.md`](../../docs/booking-gas-production-deploy.md) を参照。
+
+### 手順
+
+1. 反映したい `main` のSHAを確認する（PRはマージ済みであること。PRブランチからは実行されない）。
+2. GitHubの **Actions > Deploy Booking GAS to production > Run workflow** をBranch=`main`で起動する。
+3. repository testsが通ると `booking-production` の承認待ちになる。**承認は1回だけ**。承認する。
+4. workflowの完了（全step成功）を確認する。
+5. 必要なら副作用のない公開確認（`/exec` URLが変わっていない、Admin画面が開く等）を行う。予約作成・Stripe決済・実メール送信を伴う確認は行わない。
+
+通常の `Bookings` 列追加では、**スプレッドシートの手動編集は不要**です。fail closedでmigrationが止まった場合だけ、原因を確認したうえで人手で対応します。
+
+### workflowの流れ（`environment: booking-production`を参照するjobは1つだけ）
+
+`test` → （承認）→ 同一job内で次を直列実行。どれかが失敗した時点で後続は実行されません。
+
+1. **Bookings schema migration**: GitHub ActionsからSheets APIで `Bookings` シートの1行目（ヘッダー）だけを読み、正本に対して不足する列を**末尾へ追加**する（`scripts/migrate-bookings-schema.js`）。
+2. **Booking Admin更新**（既存Deploymentのみ）
+3. **Booking Web App更新**（既存Deploymentのみ。Adminが成功した後だけ）
+4. **post-check**: 両Deployment IDの存在と今回のmain SHA反映、`Bookings`ヘッダーが正本と完全一致することを確認する。
+
+`concurrency`はBooking GAS本番全体で `booking-gas-production` の1グループです。Admin成功後にWeb Appが失敗した場合、workflowは失敗となり、ログに「Booking Admin is updated … Web App … update did not complete / applied but its verification failed」のどちらかが出ます（Web Appが更新済みか未更新かを断定できない場合があるため、`clasp`の更新が成功したかどうかだけで書き分けます。いずれもWeb Appのデプロイ状態を確認してください）。自動rollbackはありません。原因を直して同じworkflowを再実行してください（migrationは冪等、Admin再更新は無害）。
+
+### migration対象Spreadsheetの取り違え防止（指紋照合）
+
+Actionsは本番GASのScript Property `SPREADSHEET_ID` を読めないため、`BOOKING_SPREADSHEET_ID`（migration対象）が本番GASの実台帳と同一であることを、**別経路で求めた指紋（SHA-256）との照合**で担保します。`BOOKING_SPREADSHEET_ID_SHA256` が未設定・不一致なら、Sheets APIへ接続する前にmigration/verifyが `SPREADSHEET_FINGERPRINT_MISMATCH` で止まり、デプロイされません。初回設定の手順は [`docs/booking-gas-production-deploy.md`](../../docs/booking-gas-production-deploy.md) を参照。
+
+### schema正本とmigrationのルール
+
+- **正本は `gas/booking/shared/BookingsSchema.gs` の1か所**です。`SpreadsheetRepository.gs`（GAS実行時）とmigration（`scripts/lib/bookings-schema.js`がこのファイルをvm実行して読む）が同じ定義を参照します。ヘッダーを別の場所へ複製したり、ソースを正規表現で解析したりしないでください。列追加は `BookingsSchema.gs` の `HEADERS_` **末尾**へ追記するだけで、次回の本番反映で自動追従します（workflowに列一覧は書きません）。
+- 対象は **`Bookings` シートのみ**。`Recovery` / `BookingMemberVerifications` / `OptionOrders` など他のシートのschema変更は自動migrationの対象外で、各Issue/READMEの手順に従います。
+- 既存列の削除・並べ替え・途中挿入・上書きはしません。不足列のみ末尾追加、既存の予約行は読みも書きもしません。全列そろっていればno-opで成功し、何度実行しても結果は同じです。
+- **fail closed**: 既存ヘッダーの順序違い・途中欠落・不明な列・正本より長いヘッダー（シートがコードより先行している）・シートまたはSpreadsheetにアクセスできない・書込み後の再取得が正本と一致しない場合は、何も修復せず止まり、Admin/Publicは更新されません。ログに出るのは固定コード（`HEADER_MISMATCH` 等）だけで、セル値・予約者情報・Spreadsheet IDは出ません。
+
+### 今後のBookings列追加PRの必須条件（新旧コード混在への後方互換）
+
+migration → Admin → Public と直列に更新するため、短時間でも「新schema＋旧Admin＋旧Public」「新schema＋新Admin＋旧Public」が発生し、Web App更新が失敗すれば「新Admin＋旧Public」が継続します。したがって、`Bookings`へ列を追加する機能PRは次を満たすこと。
+
+- 新列は **末尾追加のみ**（途中挿入・並べ替え禁止）。
+- 旧コードが余分な末尾列を無視して動作すること（`rowToRecord_`/`recordToRow_`は`HEADERS_`のindexで読み書きするため、末尾追加なら旧コードは壊れない）。
+- 新コードは、既存行の新列が **空欄でもfailしない** こと。
+- schema追加と機能の利用開始の間で新旧が混在しても、予約作成・読取・管理画面が破損しないこと。
+
 ## Issue #573: Studio Xの内部運用定義（2026-10-29更新）
 
 現行基準は [`docs/membership-pricing-2026-12.md`](../../docs/membership-pricing-2026-12.md)。以下の過去Issueごとの実装記録より、現行基準と後続Issueを優先する。
@@ -3454,6 +3499,7 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `JapaneseHolidays.gs`（Issue #346／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | – | `gas/booking/shared/JapaneseHolidays.gs` |
 | `BookingPricing.gs`（Issue #342／Issue #346で祝日判定を追加／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | – | `gas/booking/shared/BookingPricing.gs` |
 | `RateLimiter.gs` | ✓ | – | – | `gas/booking/public/RateLimiter.gs` |
+| `BookingsSchema.gs` | ✓ | ✓ | – | `gas/booking/shared/BookingsSchema.gs`（Bookingsヘッダーの唯一の正本。Issue #671） |
 | `SpreadsheetRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/SpreadsheetRepository.gs` |
 | `RecoveryRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/RecoveryRepository.gs` |
 | `BookingRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/BookingRepository.gs` |

@@ -29,7 +29,7 @@ test('clasp push failures are classified without returning identifiers or raw er
 
 test('workflow classifier runs outside the repository and prints only the fixed category', () => {
   const workspace = path.resolve(__dirname, '..');
-  const workflow = fs.readFileSync(path.join(workspace, '.github/workflows/booking-gas-production.yml'), 'utf8');
+  const workflow = fs.readFileSync(path.join(workspace, 'scripts/deploy-booking-gas-target.sh'), 'utf8');
   const command = workflow.split('\n').find(line => /^\s*node .*classify-clasp-push-error\.js/.test(line));
   assert.ok(command, 'Workflow must call the push error classifier');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clasp-error-test-'));

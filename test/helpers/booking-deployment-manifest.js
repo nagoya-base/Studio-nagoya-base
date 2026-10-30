@@ -39,6 +39,8 @@ var BOOKING_ADMIN_FILES = [
    * StripeGateway.retrieveCheckoutSessionを呼ぶため、Booking Adminにも必要。
    */
   'StripeGateway.gs',
+  /* Issue #671: Bookingsヘッダーの唯一の正本。SpreadsheetRepository.gsより前。 */
+  'BookingsSchema.gs',
   'SpreadsheetRepository.gs',
   /* Issue #423: OptionOrders / OptionEligibilityシートの台帳。Bookings台帳には列を足さない。 */
   'OptionOrderRepository.gs',
@@ -122,6 +124,8 @@ var BOOKING_WEB_APP_FILES = [
   /* Issue #559: 料金世代判定の一元化（緊急停止 ＞ 12/1前のTEST / LEGACY設定 ＞ サーバー時刻）。BookingRepository.gsより前。 */
   'BookingGenerationMode.gs',
   'RateLimiter.gs',
+  /* Issue #671: Bookingsヘッダーの唯一の正本。SpreadsheetRepository.gsより前。 */
+  'BookingsSchema.gs',
   'SpreadsheetRepository.gs',
   'OptionOrderRepository.gs',
   'RecoveryRepository.gs',

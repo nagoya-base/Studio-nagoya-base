@@ -3,7 +3,9 @@
 GitHub `main`を唯一のソースとして、既存のBooking GASプロジェクトと既存デプロイを
 `clasp`で更新する。新しいGASプロジェクトや新しいデプロイは作成しない。
 
-対象は次の2プロジェクトで、事故範囲を分けるため1回の実行につき片方だけを更新する。
+対象は次の2プロジェクトで、1回のworkflow実行（承認1回）で`Bookingsシートのschema
+migration → Admin → Public → post-check`を同一jobで順に実行する（Issue #671）。
+正規手順は[`gas/booking/README.md`](../gas/booking/README.md)冒頭に記載する。
 
 - `public`: Booking Web App（利用者向け。既存`/exec` URLを維持）
 - `admin`: Booking Admin（既存のコンテナバインドGAS／既存デプロイ）
@@ -70,20 +72,52 @@ Deployment protection rulesで次を設定する。
 | `BOOKING_PUBLIC_DEPLOYMENT_ID` | 現在の本番`/exec`に対応する既存デプロイID |
 | `BOOKING_ADMIN_SCRIPT_ID` | 既存Booking AdminのスクリプトID |
 | `BOOKING_ADMIN_DEPLOYMENT_ID` | 既存Booking Adminの既存デプロイID |
+| `BOOKING_SHEETS_SERVICE_ACCOUNT_JSON` | Bookings schema migration専用サービスアカウントのJSON鍵（下記） |
+| `BOOKING_SPREADSHEET_ID` | 本番Bookings台帳のSpreadsheet ID |
+| `BOOKING_SPREADSHEET_ID_SHA256` | 本番GASのScript Property `SPREADSHEET_ID` から求めた指紋（下記） |
+
+## 初回設定: Bookings schema migration用のSheets API認証（Issue #671）
+
+migrationは、clasp認証とは**別の**専用サービスアカウントで行う。Booking GASの通常実行認証とは混用しない。
+
+1. 専用のGoogle Cloudプロジェクトで「Google Sheets API」を有効にし、サービスアカウントを作成してJSON鍵を発行する。
+2. 本番Bookings台帳のSpreadsheetを、そのサービスアカウントのメールアドレスへ**編集者**として共有する（このSpreadsheetだけ。他のファイルは共有しない）。
+3. JSON鍵全文を`BOOKING_SHEETS_SERVICE_ACCOUNT_JSON`、Spreadsheet IDを`BOOKING_SPREADSHEET_ID`として、`booking-production`のEnvironment secretsへ登録する。
+4. **対象取り違え防止の指紋を登録する（必須）**。migration対象が本番GASの実台帳と同一であることを、別経路の2値の照合で担保する。
+   - `BOOKING_SPREADSHEET_ID` は、本番Bookings台帳のSpreadsheetのURL（`/d/<ID>/`）から取得して登録する。
+   - 指紋は、**Booking Web App / Admin のApps Script「プロジェクトの設定 > スクリプト プロパティ」の `SPREADSHEET_ID` の値**から求める。ローカルで
+     `read -rs ID; printf %s "$ID" | node scripts/booking-spreadsheet-fingerprint.js`
+     を実行し、出力された64桁の16進を `BOOKING_SPREADSHEET_ID_SHA256` として登録する（IDは標準入力で渡すため履歴・引数に残らない）。
+   - workflowは毎回、`BOOKING_SPREADSHEET_ID` のSHA-256が `BOOKING_SPREADSHEET_ID_SHA256` と一致しなければ、Sheets APIへ接続する前に停止する。Script Propertyを変更した場合は指紋も更新する。
+5. 鍵・Spreadsheet IDをリポジトリ・Issue・PR・チャット・ログへ出さない。漏えい時は鍵を無効化して再発行し、secretを更新する。
+
+指紋が未設定・不一致の間はmigrationもpost-checkも `SPREADSHEET_FINGERPRINT_MISMATCH` で停止し、何も更新されない。
+
+サービスアカウント鍵は台帳（予約者情報を含む）の編集権限を持つため、担当変更時・漏えい疑い時・定期（目安: 年1回）にローテーションする（新しい鍵を発行 → secret更新 → 旧鍵を無効化）。組織ポリシーでサービスアカウント鍵の発行が禁止されている場合は、Workload Identity連携への置き換えを別Issueで検討する（それまでは本workflowのmigration stepで止まり、デプロイされない）。
+
+migrationが読み書きするのは`Bookings`シートの1行目（ヘッダー）だけで、予約行は読まない。
 
 ## 本番反映の実行方法
 
-このPRをmainへマージし、上記初回設定を完了した後にのみ実行する。
+上記初回設定を完了した後にのみ実行する。
 
 1. GitHubの **Actions > Deploy Booking GAS to production > Run workflow** を開く。
-2. Branchは`main`を選ぶ。
-3. 先に`public`または`admin`の片方を選んで実行する。
-4. テスト成功後、`booking-production`の承認待ちになる。差分と対象を確認して承認する。
-5. 片方の成功と既存デプロイIDが更新されたことを確認してから、必要ならもう片方を実行する。
+2. Branchは`main`を選ぶ（`target`の選択はない）。
+3. テスト成功後、`booking-production`の承認待ちになる。対象SHAを確認して**1回だけ**承認する。
+4. 承認後、同一job内で次を順に実行する。失敗した時点で後続は実行しない。
+   `Bookings schema migration → Booking Admin更新 → Booking Web App更新 → post-check`
+5. 全step成功を確認する。Admin成功・Web App失敗の場合はworkflowが失敗し、Adminだけ新mainである旨が
+   ログに出る。原因を解消して同じworkflowを再実行する（自動rollbackはない）。
 
 ワークフローは指定したデプロイIDが対象プロジェクトに実在することを先に確認する。
 一致しない場合はGASコードをpushする前に停止する。デプロイ時は既存IDを必須引数にした
 `clasp update-deployment`だけを使い、新規デプロイ作成コマンドは実行しない。
+clasp部分は`scripts/deploy-booking-gas-target.sh`（`admin`/`public`、第2引数`verify`で更新なしの確認）。
+
+post-checkは、両既存DeploymentのIDが存在しdescriptionに今回のmain SHAが出ていること、
+`Bookings`ヘッダーが正本（`gas/booking/shared/BookingsSchema.gs`）と完全一致することを確認する。
+`list-deployments`の出力そのものはログへ出さない。本番予約作成・Stripe決済・実メール送信を伴う
+smoke testは行わない（Web Appのhealth確認は専用URL secretを増やさないため自動化していない）。
 
 ## 初回本番反映後の確認
 
