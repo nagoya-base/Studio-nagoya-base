@@ -8018,7 +8018,7 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - 承認（Booking Admin `approveLargeParty` / `adminApproveLargeParty`）: 会員資格を再確認し、`largePartyPaymentDueAt`＝承認の24時間後を保存、確定料金・支払いページ（`/mens/booking/party/`）を案内するメールを送る。不承認（`rejectLargeParty`）は仮押さえを解除して `CANCELLED`。
 - 決済・確定ゲート: 承認前／期限後は `beginCardCheckout`・`startLargePartyCheckout` が拒否、承認前は `confirmBooking` も拒否。利用者向けの `partySummary` / `startPartyCheckout`（Web App POST）は予約ID＋登録メールで本人確認する。
 - 失効（`expirePendingBookings`）: 承認後は期限（24時間）まで保持し、期限後は不成立（`EXPIRED`・枠解放）。承認待ちはIssue #668に定めのない自動TTLを置かず運営の判断まで保持（利用開始時刻を過ぎた未判断のものだけ失効）。
-- **Bookingsシートのヘッダー行の末尾（`planCode` の右隣）に、次の順で5列を手動で追記する**: `largeParty`, `partySurcharge`, `largePartyApprovalStatus`, `largePartyApprovedAt`, `largePartyPaymentDueAt`。反映順は「ヘッダー追記 → Booking Admin → Booking Web App」。
+- **Bookingsシートのヘッダー行の末尾（#667の列の最後 `supportEquipmentAmount` の右隣）に、次の順で5列を手動で追記する**: `largeParty`, `partySurcharge`, `largePartyApprovalStatus`, `largePartyApprovedAt`, `largePartyPaymentDueAt`。反映順は「ヘッダー追記 → Booking Admin → Booking Web App」。
 - 日程変更（`BookingReschedule` → `FeeCalculator.quoteFee`）は保存済みの `people` で人数加算を再計算する。**予約人数そのものの変更（2日前まで再計算・差額請求／前日・当日の減員は返金なし）を行う専用の操作は未実装**で、現状は管理画面の金額修正（`updateBookingPrice`）での個別対応となる。
 
 ## Issue #667: SNB mens限定 作品撮りサポートプラン（承認制・承認後24時間決済）
