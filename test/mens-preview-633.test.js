@@ -151,9 +151,12 @@ test('#633: sitemap.xml・他ページから試作への参照がない', functi
   assert.deepStrictEqual(hits, []);
 });
 
-/* ---- 本番と試作の差分（Issue #658）：意図した差分はここに列挙したものだけ ---- */
+/* ---- 本番と試作の差分（Issue #658／#665）：意図した差分はここに列挙したものだけ。#665 で本番のみ初期テーマが黒 ---- */
 function stripIntendedDiff(src) {
   return src
+    .replace('<html lang="ja" data-theme="kuro">', '<html lang="ja" data-theme="kinari">')
+    .replace('{% include header_ja.html banner="calendar" brand="mens" theme="kuro" light="shiroao" %}', '{% include header_ja.html banner="calendar" brand="mens" %}')
+    .replace(/<link rel="stylesheet" href="\.\.\/styles\/mens-top-theme-665\.css[^\n]*\n/, '')
     .replace(/<!-- 試作ページ[^\n]*-->\n<meta name="robots" content="noindex, nofollow">\n/, '')
     .replace(/\n<!-- Google Analytics 4 -->[\s\S]*?<\/script>\n[\s\S]*?<\/script>\n/, '\n')
     .replace(/<!-- 相談フォーム[^\n]*-->\n<div class="z z-sky pv-form-zone">[\s\S]*?\{% include reservation_form_ja\.html %\}[\s\S]*?(<\/fieldset>\s*)?<\/div>\n/, '<!-- FORM -->\n')
@@ -225,7 +228,8 @@ test('#633/#658: ビルド後の試作に googletagmanager / gtag( / analytics.j
 
 test('#658: ビルド後の本番と試作は、表示テキスト・リンク・計測属性・画像・IDが同じ（フォーム注記を除く）', { skip: skipBuilt }, function () {
   var NOTE = '【試作ページ】検証用のため、このフォームからは送信できません。';
-  var cur = visibleLeaves(built.current), pre = visibleLeaves(built.preview).filter(function (t) { return t !== NOTE; });
+  /* #665: 本番トップのテーマ切替の表示名だけ「生成り→白青」（明るい側の切替先が異なる意図した差分） */
+  var cur = visibleLeaves(built.current).map(function (t) { return t === '🔷 白青' ? '🌿 生成り' : t; }), pre = visibleLeaves(built.preview).filter(function (t) { return t !== NOTE; });
   assert.deepStrictEqual(cur, pre);
   assert.ok(cur.length > 200, '照合対象が空洞化していないこと');
   assert.deepStrictEqual(anchors(built.current), anchors(built.preview));

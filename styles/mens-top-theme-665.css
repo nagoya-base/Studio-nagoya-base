@@ -1,0 +1,34 @@
+/* styles/mens-top-theme-665.css – mens/index.html（本番トップ）専用。Issue #665。
+   明るい切替先「白青」（html[data-theme="shiroao"]）の配色。#662 の白地＋青（.z-paper）と同じ値を使う。
+   共通 kinari・kuro の変数は変更しない。ゾーン（.z-*）の色は各ゾーンの変数がそのまま優先される。
+   この CSS は本番 mens トップだけが読み込む（詳細用 CSS 全体は読み込まない）。 */
+
+html[data-theme="shiroao"] {
+  --bg:           #ffffff;
+  --bg-card:      #f4f6fa;
+  --bg-section:   #f1f4f9;
+  --text:         #172033;
+  --text-muted:   #46536a;
+  --accent:       #1d4f91;
+  --accent-dark:  #173f74;
+  --accent-rgb:   29, 79, 145;
+  --border:       #d3dbe7;
+  --on-accent:    #ffffff;
+  --bg-nav:       rgba(255, 255, 255, 0.97);
+  --bg-drawer:    rgba(255, 255, 255, 0.99);
+  --banner-bg:    #172033;
+  --banner-text:  #ffffff;
+}
+
+/* 生成り用の茶色・黒文字が残る箇所を白青へ合わせる */
+html[data-theme="shiroao"] .skip-link {
+  color: #fff;
+}
+
+html[data-theme="shiroao"] .logo-mark {
+  border-color: rgba(23, 32, 51, 0.25);
+}
+
+html[data-theme="shiroao"] .hero .btn-primary:hover {
+  color: var(--text);
+}
