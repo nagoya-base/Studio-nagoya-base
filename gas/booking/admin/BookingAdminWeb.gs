@@ -659,6 +659,10 @@ function adminRejectLargeParty(bookingId) {
   return rejectLargeParty(bookingId);
 }
 
+function adminChangeBookingPeople(bookingId, newPeople) {
+  return changeBookingPeople(bookingId, newPeople);
+}
+
 /* キャンセル。既存の正式関数cancelBookingAdmin(bookingId)（BookingAdmin.gs）へそのまま
    委譲する。業務ロジックはコピーしない。実行前の確認ダイアログはHTML側（クライアント）で行う。 */
 function adminCancelBooking(bookingId) {

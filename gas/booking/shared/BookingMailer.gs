@@ -30,6 +30,8 @@ var BookingMailer = (function () {
     CARD_CHECKOUT: 'CARD_CHECKOUT',
     /* Issue #668: 大人数利用（5〜7名）の運営承認と確定料金・支払期限の案内。 */
     LARGE_PARTY_APPROVED: 'LARGE_PARTY_APPROVED',
+    /* Issue #668: 管理者による予約人数の変更の案内。 */
+    PEOPLE_CHANGED: 'PEOPLE_CHANGED',
     CONFIRMED: 'CONFIRMED',
     CANCELLED: 'CANCELLED',
     REMINDER: 'REMINDER',
@@ -582,6 +584,16 @@ var BookingMailer = (function () {
       var config = ensureMailConfigComplete_();
       return BookingMailTemplates.buildLargePartyApprovedMail(record, config);
     });
+  }
+
+  /* 人数変更の案内（Issue #668）。変更操作ごとに1通（状態を問わず送る。送信済み列は更新しない）。 */
+  function sendPeopleChangedMailForBooking(bookingId, change) {
+    return withBookingLock_(MAIL_TYPES.PEOPLE_CHANGED, bookingId, Booking.STATUS.PENDING, [], true, function (record) {
+      if (!record.email || !/^[^\s@]+@[^\s@]+$/.test(String(record.email).trim())) {
+        throw new Error('予約に有効なメールアドレスがないため人数変更メールを送信できません。');
+      }
+      return BookingMailTemplates.buildPeopleChangedMail(record, ensureMailConfigComplete_(), change);
+    }, undefined, function () { return { ok: true }; });
   }
 
   function sendConfirmedMailForBooking(bookingId, options) {
@@ -1587,6 +1599,7 @@ var BookingMailer = (function () {
     sendPendingMailForBooking: sendPendingMailForBooking,
     sendCardCheckoutMailForBooking: sendCardCheckoutMailForBooking,
     sendLargePartyApprovedMailForBooking: sendLargePartyApprovedMailForBooking,
+    sendPeopleChangedMailForBooking: sendPeopleChangedMailForBooking,
     sendConfirmedMailForBooking: sendConfirmedMailForBooking,
     sendCancelledMailForBooking: sendCancelledMailForBooking,
     sendExpiredMailForBooking: sendExpiredMailForBooking,

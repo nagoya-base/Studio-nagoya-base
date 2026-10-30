@@ -1313,7 +1313,7 @@ var BookingRepository = (function () {
        * Issue #668: 大人数利用（5〜7名）は、運営承認後は承認から24時間（largePartyPaymentDueAt）が支払期限。
        * 期限内は、Checkout Sessionの仮押さえ（約30分）が切れても枠を保持する（利用者はメールのリンクから何度でも決済を開始できる）。
        * 期限を過ぎた未払いは、受付起点のカードTTL（72時間）を待たず不成立（EXPIRED・枠解放）にする。
-       * 承認待ち（PENDING_APPROVAL）は既存のカードTTL（受付から72時間または利用開始の前。大人数利用はカード決済のみ）で失効する。
+       * 承認待ち（PENDING_APPROVAL）は運営の判断まで保持する（利用開始時刻を過ぎた未判断のものだけ失効）。
        */
       var largePartyDueMillis = NaN;
       if (Booking.isLargePartyRecord(record) && Booking.largePartyApprovalStatus(record) === Booking.LARGE_PARTY_APPROVAL.APPROVED) {
@@ -1323,6 +1323,12 @@ var BookingRepository = (function () {
         }
       }
       var largePartyPaymentOverdue = !isNaN(largePartyDueMillis) && now.getTime() >= largePartyDueMillis;
+      /* 承認待ちの仮押さえには、Issue #668に定めのない自動失効期限（受付からNN時間）を置かない。運営の判断（承認／不承認）まで保持し、
+         利用開始時刻を過ぎた未判断のものだけ、残らないよう不成立にする（承認前TTLの要否はIssue #668へ確認中）。 */
+      if (Booking.isLargePartyRecord(record) && Booking.largePartyApprovalStatus(record) === Booking.LARGE_PARTY_APPROVAL.PENDING_APPROVAL) {
+        if (now.getTime() < startAtMillis) return;
+        largePartyPaymentOverdue = true;
+      }
 
       /*
        * Issue #334: カード決済のPENDINGのみCARD_TTL_HOURS（72時間・受付起点）を使う。
@@ -3678,6 +3684,149 @@ var BookingRepository = (function () {
     return cancelled;
   }
 
+  /*
+   * SNB mensの予約人数の変更（Issue #668）。Booking Admin専用。予約人数（people列）を料金計算の正本として更新し、
+   * 料金・大人数フラグ・承認状態を一貫して更新する。管理者が行う変更自体が運営の承認にあたる。
+   * - 締切は既存のキャンセル無料期限と同じ**利用日の2日前まで**（JSTの暦日差が2日以上）。
+   *   2日前まで: 増減員とも料金を再計算する。増員は8名以上不可・5〜7名への新規移行は会員資格（利用日）と承認条件を再確認し、差額を返す。
+   *   前日・当日: 増員は不可。減員は人数のみ更新し、人数加算分を含め値下げ・返金しない（料金・大人数フラグは据え置き）。
+   * - 4名以下への変更（2日前まで）は通常の1〜4名料金へ再計算し、大人数の承認条件（フラグ・加算・承認状態）を解除する。
+   * - 決済処理中（checkout_pending / refund_pending）・管理者による金額修正済みの予約は、金額が食い違わないよう自動変更しない。
+   * - 入金済みの場合は差額（追加請求額 additionalChargeDue / 返金候補額 refundDue）を返し、実際の請求・返金は管理者が既存の手順で行う。
+   */
+  function changeBookingPeople(bookingId, newPeople, now) {
+    now = isDateLike_(now) ? now : new Date();
+    if (!bookingId || typeof bookingId !== 'string') {
+      return { success: false, error: { code: 'INVALID_BOOKING_ID', message: 'bookingIdを指定してください。' } };
+    }
+    var people = typeof newPeople === 'string' ? newPeople.trim() : '';
+    if (!BookingPricing.isMensPartySizeAllowed(people)) {
+      return { success: false, error: { code: 'PARTY_SIZE_EXCEEDED', message: 'SNB mensのご利用人数は1〜' + BookingPricing.LARGE_PARTY_MAX_PEOPLE + '名です。' } };
+    }
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS_)) {
+      return { success: false, error: { code: 'LOCK_TIMEOUT', message: '一時的に混み合っています。もう一度お試しください。' } };
+    }
+    var response;
+    try {
+      response = changeBookingPeopleLocked_(bookingId, people, now);
+    } finally {
+      lock.releaseLock();
+    }
+    if (response.success) {
+      try {
+        response.mail = BookingMailer.sendPeopleChangedMailForBooking(bookingId, response.change);
+      } catch (mailError) {
+        Logger.log('BookingRepository: 人数変更メール送信中に予期しない例外: ' + BookingMailer.sanitizeErrorMessage(describeError_(mailError)));
+      }
+    }
+    return response;
+  }
+
+  function changeBookingPeopleLocked_(bookingId, people, now) {
+    var found = SpreadsheetRepository.findRowByBookingId(bookingId);
+    if (!found) return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません。' } };
+    var record = found.record;
+    if (record.brand !== 'mens') {
+      return { success: false, error: { code: 'NOT_MENS', message: '人数の変更はSNB mensの予約のみ対象です。' } };
+    }
+    if (record.status !== Booking.STATUS.PENDING && record.status !== Booking.STATUS.CONFIRMED) {
+      return { success: false, error: { code: 'INVALID_STATUS', message: record.status + ' の予約は人数を変更できません。' } };
+    }
+    var oldPeople = String(record.people);
+    var oldN = BookingPricing.parseHeadcount(oldPeople);
+    var newN = BookingPricing.parseHeadcount(people);
+    if (oldN === newN) return { success: false, error: { code: 'NO_CHANGE', message: '現在と同じ人数です。' } };
+    var paymentStatus = Booking.normalizePaymentStatus(record.paymentStatus);
+    if (paymentStatus === null || paymentStatus === Booking.PAYMENT_STATUS.CHECKOUT_PENDING || paymentStatus === Booking.PAYMENT_STATUS.REFUND_PENDING) {
+      return { success: false, error: { code: 'PAYMENT_IN_PROGRESS', message: '決済処理中のため人数を変更できません。決済の完了または失効を確認してから変更してください。' } };
+    }
+    if (record.priceOverrideAt !== '' && record.priceOverrideAt !== null && record.priceOverrideAt !== undefined) {
+      return { success: false, error: { code: 'PRICE_OVERRIDDEN', message: '管理者が金額を修正済みの予約は、人数を自動では変更できません。' } };
+    }
+
+    var config = BookingConfig.getAvailabilityConfig();
+    var today = BookingAvailability.formatDateInTimezone(now, config.timezone);
+    var daysLeft = daysBetweenDates_(today, record.date);
+    var beforeDeadline = daysLeft !== null && daysLeft >= 2;
+    var wasLarge = Booking.isLargePartyRecord(record);
+    var isIncrease = newN > oldN;
+    var oldAmount = Booking.getEffectivePriceAmount(record);
+    var fields = { people: people, updatedAt: now };
+    var change = { bookingId: bookingId, oldPeople: oldPeople, newPeople: people, oldAmount: oldAmount, newAmount: oldAmount, beforeDeadline: beforeDeadline };
+
+    if (!beforeDeadline) {
+      /* 前日・当日: 増員不可。減員は人数のみ更新し、値下げ・返金しない（人数加算分を含む）。 */
+      if (isIncrease) {
+        return { success: false, error: { code: 'PEOPLE_CHANGE_DEADLINE_PASSED', message: '人数の変更は利用日の2日前までです。前日・当日の増員はお受けできません。' } };
+      }
+      change.noRefund = true;
+      SpreadsheetRepository.updateBookingFields(bookingId, fields);
+      return { success: true, change: change };
+    }
+
+    var durationMinutes = isDateLike_(record.startAt) && isDateLike_(record.endAt) ? Math.round((record.endAt.getTime() - record.startAt.getTime()) / 60000) : NaN;
+    var willBeLarge = BookingPricing.isLargePartyPeople(people);
+    if (willBeLarge && !wasLarge) {
+      /* 4名以下から5〜7名への移行は、新規申込と同じ条件（枠が仮押さえ中の未払い予約・カード決済・会員資格）を再確認する。確定済みの予約は新規にお申し込みいただく。 */
+      if (record.status !== Booking.STATUS.PENDING || paymentStatus === Booking.PAYMENT_STATUS.PAID) {
+        return { success: false, error: { code: 'LARGE_PARTY_UPGRADE_NOT_SUPPORTED', message: '確定済み・お支払い済みの予約を5〜7名へ増やす場合は、新たにお申し込みください。' } };
+      }
+      if (!Booking.isCardPaymentMethod(record.paymentMethod)) {
+        return { success: false, error: { code: 'LARGE_PARTY_CARD_REQUIRED', message: '5〜7名のご利用は、承認後のオンラインクレジットカード決済でのお支払いとなります。' } };
+      }
+      if (actualMembershipStatus_({ email: record.email, date: record.date }) !== 'ACTIVE') {
+        return { success: false, error: { code: 'LARGE_PARTY_MEMBER_ONLY', message: '予約代表者のSNB MEMBER資格（ご利用日）を確認できないため、5〜7名へ変更できません。' } };
+      }
+    }
+    var priced = BookingPricing.computeBookingPrice({
+      brand: record.brand, date: record.date, durationMinutes: durationMinutes,
+      isMember: record.priceIsMember === true || record.priceIsMember === 'TRUE',
+      generation: BookingPricing.normalizeGeneration(record.priceGeneration),
+      plan: record.planCode, people: people, startTime: undefined
+    });
+    if (!priced.valid) return { success: false, error: priced.error };
+
+    fields.priceAmount = priced.price.amount;
+    fields.priceComputedAt = now;
+    if (willBeLarge) {
+      fields.largeParty = true;
+      fields.partySurcharge = priced.price.partySurcharge;
+      if (!wasLarge) {
+        fields.largePartyApprovalStatus = Booking.LARGE_PARTY_APPROVAL.PENDING_APPROVAL;
+        fields.largePartyApprovedAt = '';
+        fields.largePartyPaymentDueAt = '';
+        fields.membershipStatus = 'ACTIVE';
+      }
+    } else if (wasLarge) {
+      /* 4名以下へ: 通常の1〜4名料金へ再計算し、大人数の承認条件を解除する。 */
+      fields.largeParty = '';
+      fields.partySurcharge = '';
+      fields.largePartyApprovalStatus = '';
+      fields.largePartyApprovedAt = '';
+      fields.largePartyPaymentDueAt = '';
+    }
+    SpreadsheetRepository.updateBookingFields(bookingId, fields);
+    change.newAmount = priced.price.amount;
+    change.partySurcharge = priced.price.partySurcharge;
+    change.largeParty = willBeLarge;
+    change.needsApproval = willBeLarge && !wasLarge;
+    if (paymentStatus === Booking.PAYMENT_STATUS.PAID && oldAmount !== null) {
+      var delta = priced.price.amount - oldAmount;
+      if (delta > 0) change.additionalChargeDue = delta;
+      if (delta < 0) change.refundDue = -delta;
+    }
+    return { success: true, change: change };
+  }
+
+  /* 'YYYY-MM-DD' 同士の暦日差（to - from）。解釈できなければnull（呼び出し側は最も保守的に扱う）。 */
+  function daysBetweenDates_(from, to) {
+    var a = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(from));
+    var b = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(to));
+    if (!a || !b) return null;
+    return Math.round((Date.UTC(+b[1], +b[2] - 1, +b[3]) - Date.UTC(+a[1], +a[2] - 1, +a[3])) / 86400000);
+  }
+
   function checkLargePartyAwaitingApproval_(found) {
     if (!found) return { success: false, error: { code: 'NOT_FOUND', message: 'bookingIdが見つかりません。' } };
     var record = found.record;
@@ -3821,6 +3970,7 @@ var BookingRepository = (function () {
     beginCardCheckout: beginCardCheckout,
     approveLargeParty: approveLargeParty,
     rejectLargeParty: rejectLargeParty,
+    changeBookingPeople: changeBookingPeople,
     getLargePartySummary: getLargePartySummary,
     startLargePartyCheckout: startLargePartyCheckout,
     /*

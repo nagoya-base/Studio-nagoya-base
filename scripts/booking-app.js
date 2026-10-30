@@ -1680,8 +1680,15 @@
   /* Issue #668: 5〜7名を選んだら大人数利用の案内を出し、支払方法をカード（承認後に決済）へ固定する（mensのみ）。 */
   function applyLargePartyState_() {
     if (brand !== 'mens') return;
-    if (els.partyHelp) els.partyHelp.hidden = !largePartySelected_();
+    var large = largePartySelected_();
+    if (els.partyHelp) els.partyHelp.hidden = !large;
     updatePaymentMethodGating();
+    /* Issue #668 GA4: 既存イベントに party_size_tier を付けて大人数利用（5〜7名）の選択を識別する。人数の実数・個人情報は送らない。新しい成果イベントは作らない。 */
+    var analytics = window.StudioAnalytics;
+    if (analytics && typeof analytics.setEventContext === 'function') {
+      analytics.setEventContext('party_size_tier', large ? 'large_5_7' : '');
+      if (large && typeof analytics.trackFormStart === 'function') analytics.trackFormStart('mens_booking_large_party');
+    }
   }
   if (els.people) els.people.addEventListener('input', function () { applyLargePartyState_(); refreshPriceEstimate_(); });
 

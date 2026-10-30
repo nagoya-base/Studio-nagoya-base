@@ -206,12 +206,10 @@ var Booking = (function () {
    * - 申込時は status=PENDING（Calendarの仮押さえ）・largePartyApprovalStatus=PENDING_APPROVAL（運営の事前承認待ち。支払いはまだ案内しない）。
    * - 承認（APPROVED）で確定料金を案内し、承認から24時間以内の支払いを求める（largePartyPaymentDueAt）。24時間以内に未払いなら不成立（EXPIRED）で枠を解放する。
    * - 不承認（REJECTED）は仮押さえを解除して不成立（CANCELLED）。4名扱いへの自動変換・自動課金はしない。
-   * 承認待ちの仮押さえは、承認の判断が遅れても利用開始前に必ず解放されるよう、受付からLARGE_PARTY_APPROVAL_TTL_HOURS（既存のカードTTLと同じ72時間）
-   * または利用開始のminHoursBeforeStart前の早いほうで失効する（computeTtlExpiryMillis）。
+   * 承認待ちの仮押さえにはIssue #668に定めのない自動失効期限を置かず、運営の判断まで保持する（利用開始時刻を過ぎた未判断のものだけ失効。BookingRepository.expirePendingBookings）。
    */
   var LARGE_PARTY_APPROVAL = { NONE: '', PENDING_APPROVAL: 'PENDING_APPROVAL', APPROVED: 'APPROVED', REJECTED: 'REJECTED' };
   var LARGE_PARTY_PAYMENT_WINDOW_HOURS = 24;
-  var LARGE_PARTY_APPROVAL_TTL_HOURS = 72;
 
   /* Bookings台帳の largeParty 列は TRUE（真偽値）または 'TRUE' 文字列。空・その他は通常予約。 */
   function isLargePartyRecord(record) {
@@ -869,7 +867,6 @@ var Booking = (function () {
     CARD_TTL_HOURS: CARD_TTL_HOURS,
     LARGE_PARTY_APPROVAL: LARGE_PARTY_APPROVAL,
     LARGE_PARTY_PAYMENT_WINDOW_HOURS: LARGE_PARTY_PAYMENT_WINDOW_HOURS,
-    LARGE_PARTY_APPROVAL_TTL_HOURS: LARGE_PARTY_APPROVAL_TTL_HOURS,
     isLargePartyRecord: isLargePartyRecord,
     largePartyApprovalStatus: largePartyApprovalStatus,
     computeLargePartyPaymentDueMillis: computeLargePartyPaymentDueMillis,

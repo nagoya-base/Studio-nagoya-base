@@ -223,6 +223,31 @@ var BookingMailTemplates = (function () {
     return { subject: subject, body: body };
   }
 
+  /* 人数変更のお知らせ（Issue #668）。基本部屋料金と人数加算を区別し、前日・当日の減員は値下げ・返金しない旨を明記する。 */
+  function buildPeopleChangedMail(record, config, change) {
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var lines = [
+      record.name + ' 様',
+      '',
+      brandLabel + ' のご予約の利用人数を変更しました。',
+      '',
+      '予約ID: ' + record.bookingId,
+      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '利用人数: ' + change.oldPeople + ' → ' + change.newPeople
+    ];
+    if (change.noRefund) {
+      lines.push('※利用日の前日・当日の減員のため、人数加算分を含め料金の値下げ・返金はありません。');
+      lines.push(priceLine_(record));
+    } else {
+      lines.push(priceLine_(record));
+      if (change.needsApproval) lines.push('※5〜7名へ変更したため、運営の承認が必要です。承認後に、お支払い方法をご案内します。');
+      if (change.additionalChargeDue) lines.push('お支払い済みの金額との差額 ' + formatJpyAmount_(change.additionalChargeDue) + ' を追加でご請求します。運営から改めてご案内します。');
+      if (change.refundDue) lines.push('お支払い済みの金額との差額 ' + formatJpyAmount_(change.refundDue) + ' を返金します。運営から改めてご案内します。');
+    }
+    lines.push('', contactLine_(config), guideLine_(record), signatureLines_(record));
+    return { subject: '【' + brandLabel + '】ご利用人数を変更しました', body: joinNonEmpty_(lines) };
+  }
+
   function buildPendingMail(record, config) {
     if (isLargePartyRecord_(record)) return buildLargePartyPendingMail(record, config);
     var brandLabel = Booking.getBrandLabel(record.brand);
@@ -764,6 +789,7 @@ var BookingMailTemplates = (function () {
   return {
     buildPendingMail: buildPendingMail,
     buildLargePartyApprovedMail: buildLargePartyApprovedMail,
+    buildPeopleChangedMail: buildPeopleChangedMail,
     buildCardCheckoutMail: buildCardCheckoutMail,
     buildConfirmedMail: buildConfirmedMail,
     buildCancelledMail: buildCancelledMail,

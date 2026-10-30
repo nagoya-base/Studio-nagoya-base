@@ -424,6 +424,10 @@ function render() {
     } else if (canConfirm) {
       actions += '<button type="button" class="action confirm" data-action="confirm" data-id="' + escapeHtml(b.bookingId) + '"' + (busy || awaitingPaymentLink ? ' disabled' : '') + (awaitingPaymentLink ? ' title="決済リンク未送信のため確定できません（詳細から送信してください）"' : '') + '>確定</button>';
     }
+    if (b.brand === 'mens' && (b.status === 'PENDING' || b.status === 'CONFIRMED')) {
+      /* Issue #668: SNB mensの予約人数の変更（締切・料金再計算・返金なしの判定はサーバー側）。 */
+      actions += '<button type="button" class="action detail" data-action="change-people" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>人数変更</button>';
+    }
     if (b.status === 'CONFIRMED' && b.confirmedMailPending) {
       /* Issue #418: 確定済みで確定メール未送信の予約は、同じconfirmBooking経由で再試行できる。 */
       actions += '<button type="button" class="action confirm" data-action="confirm-mail" data-id="' + escapeHtml(b.bookingId) + '"' + (busy ? ' disabled' : '') + '>確定メール送信</button>';
@@ -2016,6 +2020,42 @@ function runLargePartyDecision(bookingId, approving) {
 }
 
 /*
+ * SNB mensの予約人数の変更（Issue #668）。入力した人数をサーバー（changeBookingPeople）へ渡す。
+ * 利用日の2日前まで料金を再計算、前日・当日の減員は人数のみ更新して返金なし、前日・当日の増員と8名以上は拒否される。
+ */
+function runChangePeople(bookingId) {
+  var booking = state.bookings.find(function (b) { return b.bookingId === bookingId; });
+  var input = window.prompt(
+    (booking ? '予約ID: ' + booking.bookingId + '\n利用日: ' + booking.date + '\n現在の人数: ' + booking.people + '\n\n' : '') +
+    '変更後の人数を入力してください（例: 6名。上限7名）。\n利用日の2日前まで料金を再計算します。前日・当日の減員は、人数加算分を含め値下げ・返金しません。'
+  );
+  if (input === null) return;
+  var people = String(input).trim();
+  if (/^[0-9]+$/.test(people)) people += '名';
+  setBusy(bookingId, true);
+  setStatusLine('人数変更中…');
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result || !result.success) {
+        alert('人数を変更できませんでした: ' + (result && result.error && result.error.message));
+      } else {
+        var c = result.change || {};
+        var note = c.noRefund ? '前日・当日の減員のため、料金の値下げ・返金はありません。' : '案内する金額: ' + c.newAmount + '円';
+        if (c.additionalChargeDue) note += '\n追加請求の差額: ' + c.additionalChargeDue + '円（請求は別途行ってください）';
+        if (c.refundDue) note += '\n返金候補の差額: ' + c.refundDue + '円（返金は別途行ってください）';
+        if (c.needsApproval) note += '\n5〜7名へ変更したため、承認待ちになりました。';
+        alert('人数を変更しました（' + c.oldPeople + ' → ' + c.newPeople + '）。\n' + note);
+      }
+      loadBookings(function () { setBusy(bookingId, false); });
+    })
+    .withFailureHandler(function (error) {
+      alert('人数変更でエラーが発生しました: ' + (error && error.message ? error.message : error));
+      loadBookings(function () { setBusy(bookingId, false); });
+    })
+    .adminChangeBookingPeople(bookingId, people);
+}
+
+/*
  * EXPIRED予約の復活（Issue #334）。runConfirm/runCancelと同じ配線
  * （window.confirmでYES/NO確認 → google.script.run → 成否問わずloadBookings()で
  * 最新一覧を再取得してから該当bookingIdのbusyを解除）。枠の空き・利用開始後かどうかの
@@ -3227,6 +3267,7 @@ document.getElementById('list').addEventListener('click', function (event) {
   if (action === 'confirm-mail') runConfirm(bookingId);
   if (action === 'approve-party') runLargePartyDecision(bookingId, true);
   if (action === 'reject-party') runLargePartyDecision(bookingId, false);
+  if (action === 'change-people') runChangePeople(bookingId);
   if (action === 'cancel') runCancel(bookingId);
   if (action === 'revive') runRevive(bookingId);
   if (action === 'revive-paid') runRevivePaid(bookingId);

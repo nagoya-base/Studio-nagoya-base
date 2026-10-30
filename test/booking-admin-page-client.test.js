@@ -115,7 +115,8 @@ function createScriptRunStub() {
     'adminDeclineOptionOrder',
     /* Issue #668 */
     'adminApproveLargeParty',
-    'adminRejectLargeParty'
+    'adminRejectLargeParty',
+    'adminChangeBookingPeople'
   ];
 
   var stub = {

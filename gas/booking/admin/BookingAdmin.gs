@@ -62,6 +62,11 @@ function rejectLargeParty(bookingId) {
   return BookingRepository.rejectLargeParty(bookingId);
 }
 
+/* Issue #668: SNB mensの予約人数の変更（2日前まで再計算。前日・当日の減員は返金なし）。 */
+function changeBookingPeople(bookingId, newPeople) {
+  return BookingRepository.changeBookingPeople(bookingId, newPeople);
+}
+
 /* 正式関数: cancelBookingAdmin(bookingId)（Issue #272本文どおりのグローバル関数名）。
    Booking Admin側のみで公開する（公開Web AppにはcancelBookingAdminを一切追加しない）。
    スクリプトエディタから直接実行することもできる。 */
