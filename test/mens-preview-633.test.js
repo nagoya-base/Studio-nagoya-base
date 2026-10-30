@@ -472,17 +472,17 @@ test('#653: 衣装ブロックは指定4作品を順に紹介し、JSなし・re
   assert.ok(html.indexOf('mens-preview-653.js') !== -1);
 });
 
-test('#653: 作品切替JSは reduced motion・非対応・例外時に .is-active を付けず、キャプションが帯に入った作品を表示中にする', function () {
+test('#653/#660: 作品切替JSは reduced motion・例外時に .is-active を付けず、現在位置から表示作品を決める（帯の出入りに依存しない）', function () {
   var vm = require('vm');
   function run(opts) {
-    var added = [], ios = [], listeners = {}, clicks = 0;
+    var added = [], listeners = {}, clicks = 0, lineY = 400, capY = [100, 500, 900, 1300];
     var works = [0, 1, 2, 3].map(function (i) {
       var cls = {};
-      return { i: i, cls: cls, contains: function () { return false; }, querySelector: function () { return { click: function () { clicks++; }, focus: function () {} }; }, classList: { add: function (c) { cls[c] = true; }, remove: function (c) { delete cls[c]; } } };
+      return { i: i, cls: cls, contains: function () { return false; }, querySelector: function (q) { if (opts.boom) throw new Error('boom'); return q === '.pv-photo' ? { getBoundingClientRect: function () { return { top: lineY - 100, height: 200 }; } } : { click: function () { clicks++; }, focus: function () {} }; }, classList: { add: function (c) { cls[c] = true; }, remove: function (c) { delete cls[c]; } } };
     });
     var caps = works.map(function (w) {
       var attrs = {}, ev = {};
-      return { attrs: attrs, ev: ev, textContent: '作品' + w.i, closest: function () { return w; }, setAttribute: function (k, v) { attrs[k] = v; }, removeAttribute: function (k) { delete attrs[k]; }, addEventListener: function (t, f) { ev[t] = f; } };
+      return { attrs: attrs, ev: ev, textContent: '作品' + w.i, closest: function () { return w; }, getBoundingClientRect: function () { return { top: capY[w.i] - 20, height: 40 }; }, setAttribute: function (k, v) { attrs[k] = v; }, removeAttribute: function (k) { delete attrs[k]; }, addEventListener: function (t, f) { ev[t] = f; } };
     });
     var rootEl = {
       classList: { add: function (c) { added.push(c); }, remove: function (c) { added = added.filter(function (x) { return x !== c; }); } },
@@ -490,45 +490,63 @@ test('#653: 作品切替JSは reduced motion・非対応・例外時に .is-acti
     };
     var sb = {
       document: { querySelector: function () { return rootEl; }, activeElement: null },
-      innerHeight: opts.h || 720,
       matchMedia: function (q) { return { matches: q.indexOf('reduce') !== -1 ? !!opts.reduced : false }; },
       addEventListener: function (t, f) { listeners[t] = f; },
       requestAnimationFrame: function (f) { f(); },
-      Array: Array,
-      IntersectionObserver: opts.io === undefined ? function (cb, o) { ios.push({ cb: cb, o: o }); this.observe = function () {}; this.disconnect = function () {}; } : opts.io
+      Array: Array
     };
     sb.window = sb;
-    if (opts.noIo) delete sb.IntersectionObserver;
     vm.runInNewContext(read('scripts/mens-preview-653.js'), sb);
-    return { added: added, works: works, ios: ios, caps: caps, listeners: listeners, sb: sb, clicks: function () { return clicks; } };
+    return { added: added, works: works, caps: caps, listeners: listeners, setLine: function (y) { lineY = y; }, clicks: function () { return clicks; } };
   }
-  var ok = run({ h: 720 });
+  function now(r) { return r.works.map(function (w) { return !!w.cls['is-current']; }).indexOf(true); }
+  var ok = run({});
   assert.deepStrictEqual(ok.added, ['is-active']);
-  assert.ok(ok.works[0].cls['is-current'], '初期は1作品目');
-  assert.strictEqual(ok.ios[0].o.rootMargin, '-324px 0px -324px 0px', '帯は viewport の高さ（720px）の中央10%：%ではなくpxで指定する（横長画面でも成立）');
-  ok.ios[0].cb([{ isIntersecting: true, target: ok.caps[2] }]);
-  assert.ok(ok.works[2].cls['is-current'] && !ok.works[0].cls['is-current'], 'キャプション3が帯に入ると3作品目だけが表示中');
-  ok.ios[0].cb([{ isIntersecting: false, target: ok.caps[1] }]);
-  assert.ok(ok.works[2].cls['is-current'], '帯から出ただけでは切り替えない');
-  ok.sb.innerHeight = 900;
-  ok.listeners.resize();
-  assert.strictEqual(ok.ios[ok.ios.length - 1].o.rootMargin, '-405px 0px -405px 0px', 'resizeで帯を更新する');
+  assert.strictEqual(now(ok), 0, '写真の縦中央より上にキャプション1だけ → 1作品目');
+  ok.setLine(1000); ok.listeners.scroll();
+  assert.strictEqual(now(ok), 2, '帯の出入りを待たず、中央線より上にある最後のキャプション（3）へ一気に追いつく（高速フリック）');
+  ok.setLine(2000); ok.listeners.scroll();
+  assert.strictEqual(now(ok), 3, '4枚目の後も固定が続く間は4作品目のまま');
+  ok.setLine(600); ok.listeners.scroll();
+  assert.strictEqual(now(ok), 1, '逆方向にも位置から戻る');
+  ok.setLine(50); ok.listeners.resize();
+  assert.strictEqual(now(ok), 0, 'resize でも再計算する');
   /* キーボード：全キャプションが Tab 対象で、フォーカス・Enter・Space でその作品を選び、Enter・Space で拡大できる */
   ok.caps.forEach(function (c) { assert.strictEqual(c.attrs.tabindex, '0'); assert.strictEqual(c.attrs.role, 'button'); });
   ok.caps[3].ev.focus();
-  assert.ok(ok.works[3].cls['is-current'] && !ok.works[2].cls['is-current'], 'フォーカスで4作品目へ');
+  assert.strictEqual(now(ok), 3, 'フォーカスで4作品目へ');
+  ok.setLine(600); ok.listeners.scroll();
+  assert.strictEqual(now(ok), 3, '手動選択は位置判定で上書きしない');
+  ok.listeners.wheel();
+  assert.strictEqual(now(ok), 1, 'ホイール／タッチ／スクロール系キーで位置判定へ戻る');
+  ok.caps[1].ev.click();
+  ok.listeners.keydown({ key: 'Tab' });
+  ok.setLine(2000); ok.listeners.scroll();
+  assert.strictEqual(now(ok), 1, 'Tab では解除しない');
+  ok.listeners.keydown({ key: 'PageDown' });
+  assert.strictEqual(now(ok), 3);
   var prevented = 0;
   ok.caps[1].ev.keydown({ key: 'Enter', preventDefault: function () { prevented++; } });
-  assert.ok(ok.works[1].cls['is-current'] && ok.clicks() === 1 && prevented === 1, 'Enterで選択して拡大');
+  assert.ok(now(ok) === 1 && ok.clicks() === 1 && prevented === 1, 'Enterで選択して拡大');
   ok.caps[0].ev.keydown({ key: ' ', preventDefault: function () { prevented++; } });
   assert.strictEqual(ok.clicks(), 2);
   ok.caps[0].ev.keydown({ key: 'a', preventDefault: function () { prevented++; } });
   assert.strictEqual(ok.clicks(), 2, '他のキーでは拡大しない');
   assert.deepStrictEqual(run({ reduced: true }).added, []);
-  assert.deepStrictEqual(run({ noIo: true }).added, []);
-  var fail = run({ io: function () { throw new Error('boom'); } });
-  assert.deepStrictEqual(fail.added, []);
-  fail.caps.forEach(function (c) { assert.deepStrictEqual(c.attrs, {}, '失敗時は操作属性を残さない'); });
+  assert.deepStrictEqual(run({ boom: true }).added, [], '初期化の例外時は .is-active を付けない');
+});
+
+test('#660: 作品切替は1作品あたり画面高の約70%（svh基準）で、4作品目の後も写真を固定する末尾行があり、静的一覧には効かない', function () {
+  var css = read('styles/mens-preview-633.css');
+  var active = css.match(/\.pv-works\.is-active \{[^}]*\}/)[0];
+  assert.match(active, /--pv-row: calc\(var\(--pv-vh\) \* 0\.7\)/, '1作品＝閲覧可能高の70%');
+  assert.match(active, /grid-template-rows: repeat\(4, minmax\(var\(--pv-row\), auto\)\) calc\(var\(--pv-row\) \/ 2 \+ var\(--pv-photo-h\) \/ 2\)/, '4行＋キャプションのない末尾行（4枚目の後も固定を支える）');
+  assert.match(css, /\.pv-works\.is-active \.pv-photo \{[^}]*grid-row: 1 \/ span 5/, '写真のstickyは末尾行まで支えられる');
+  assert.match(active, /--pv-vh: 100vh/, 'svh 非対応ブラウザは vh');
+  assert.match(css, /@supports \(height: 100svh\) \{ \.pv-works\.is-active \{ --pv-vh: 100svh; \} \}/, 'アドレスバーで変わらない svh にそろえる');
+  assert.doesNotMatch(css.replace(/--pv-vh: 100vh;/, ''), /\.pv-works[^{]*\{[^}]*\b100vh/, '写真の高さ・位置に素の100vhを使わない（CSSの基準は --pv-vh）');
+  var static_ = css.replace(/\.pv-works\.is-active[^{]*\{[^}]*\}/g, '').replace(/@supports[^{]*\{[^}]*\}\s*\}/g, '');
+  assert.doesNotMatch(static_, /--pv-row|--pv-vh|--pv-photo-h/, '行間隔・基準変数は .is-active 限定。JS無効・reduced-motion の静的一覧に演出用余白を持ち込まない');
 });
 
 /* Issue #641: ヒーロー・OGP画像の差し替え（生成画像の実寸・参照の整合） */

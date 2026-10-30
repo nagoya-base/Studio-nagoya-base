@@ -257,9 +257,10 @@
 /* 作品紹介：既定（JSなし・reduced-motion・初期化失敗）は4作品とキャプションを静的に並べる。
    JSが .is-active を付けたときだけ、写真を左の固定枠に重ね、キャプションを右に縦に並べる */
 .pv-works { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: start; max-width: 1040px; }
-.pv-works.is-active { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr); grid-template-rows: repeat(4, minmax(clamp(120px, 20vh, 180px), auto)); column-gap: 40px; row-gap: 0; max-width: 880px; }
+.pv-works.is-active { --pv-vh: 100vh; --pv-top: 128px; --pv-bottom: 48px; --pv-photo-h: calc(var(--pv-vh) - var(--pv-top) - var(--pv-bottom)); --pv-row: calc(var(--pv-vh) * 0.7); grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr); grid-template-rows: repeat(4, minmax(var(--pv-row), auto)) calc(var(--pv-row) / 2 + var(--pv-photo-h) / 2); column-gap: 40px; row-gap: 0; max-width: 880px; }
+@supports (height: 100svh) { .pv-works.is-active { --pv-vh: 100svh; } }
 .pv-works.is-active .pv-work, .pv-works.is-active .pv-work > figure { display: contents; }
-.pv-works.is-active .pv-photo { grid-column: 1; grid-row: 1 / span 4; position: sticky; top: 128px; align-self: start; width: min(100%, calc((100vh - 176px) * 2 / 3)); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.45s ease, visibility 0s linear 0.45s; }
+.pv-works.is-active .pv-photo { grid-column: 1; grid-row: 1 / span 5; position: sticky; top: var(--pv-top); align-self: start; width: min(100%, calc(var(--pv-photo-h) * 2 / 3)); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.45s ease, visibility 0s linear 0.45s; }
 .pv-works.is-active .pv-work.is-current .pv-photo { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; z-index: 1; }
 .pv-works.is-active figcaption { grid-column: 2; align-self: center; margin: 0; padding: 14px 18px; border-left: 4px solid var(--border); border-radius: 6px; font-size: 1rem; line-height: 1.7; color: var(--text); opacity: 0.45; transition: opacity 0.45s ease; }
 .pv-works.is-active figcaption:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -351,8 +352,7 @@ html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
   .pv-compare:not(.is-enhanced) .pv-compare-item:nth-child(5) { grid-column: 1 / -1; width: 50%; justify-self: center; }
   .pv-group { padding: 22px 20px; }
   .pv-assure { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .pv-works.is-active { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); grid-template-rows: repeat(4, minmax(104px, auto)); column-gap: 14px; }
-  .pv-works.is-active .pv-photo { top: 116px; width: min(100%, calc((100vh - 150px) * 2 / 3)); }
+  .pv-works.is-active { --pv-top: 116px; --pv-bottom: 34px; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); column-gap: 14px; }
   .pv-works.is-active figcaption { padding: 10px 12px; font-size: 0.9rem; }
   .z section { padding: 56px 0; }
 }
