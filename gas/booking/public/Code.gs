@@ -365,6 +365,8 @@ function handleBookingMemberStatus_(payload) {
     var plan = BookingPricing.normalizePlan(payload.plan);
     /* Studio Xは貸切ベースプランだけを扱う（会員限定のペアパックは無い）。SNB / mensは従来どおり貸切ベースプランをここでは扱わない。 */
     var planAllowed = brand === 'studio_x' ? (!plan || BookingPricing.isEventPlan(plan)) : !BookingPricing.isEventPlan(plan);
+    /* Issue #667: 作品撮りサポートプランはmensだけ。 */
+    if (BookingPricing.isPhotoSupport(plan) && brand !== 'mens') planAllowed = false;
     if (plan === null || !planAllowed) {
       return { success: false, error: { code: 'INVALID_PLAN', message: 'プランの指定が正しくありません。' } };
     }
@@ -379,6 +381,15 @@ function handleBookingMemberStatus_(payload) {
     if (BookingPricing.isShowerPack(plan) && payload.people && !BookingPricing.isShowerPackPeople(payload.people)) {
       return { success: false, error: { code: 'SHOWER_PACK_PEOPLE_EXCEEDED', message: BookingPricing.SHOWER_PACK_LABEL + 'のご利用は1〜2名までです。' } };
     }
+    /* Issue #667: 作品撮りサポートは1〜4名限定（人数が未指定の見積りは通す。予約作成で必ず拒否される）。申込期限（利用日の7日前まで）も同じ判定。 */
+    if (BookingPricing.isPhotoSupport(plan)) {
+      if (payload.people && !BookingPricing.isPhotoSupportPeople(payload.people)) {
+        return { success: false, error: { code: 'PHOTO_SUPPORT_PEOPLE_EXCEEDED', message: BookingPricing.PHOTO_SUPPORT_LABEL + 'のご利用は1〜4名までです。' } };
+      }
+      if (!BookingPricing.isPhotoSupportApplyOpen(date, BookingAvailability.formatDateInTimezone(now, config.timezone))) {
+        return { success: false, error: { code: 'PHOTO_SUPPORT_DEADLINE_PASSED', message: BookingPricing.PHOTO_SUPPORT_LABEL + 'のお申し込みは、利用日の' + BookingPricing.PHOTO_SUPPORT_APPLY_DAYS_BEFORE + '日前までです。' } };
+      }
+    }
     if (plan && !BookingPricing.isEventPlan(plan) && status.memberOnDate !== true) {
       return { success: false, error: { code: MembershipRules.MEMBER_BENEFIT_DENIED_CODE, message: MembershipRules.memberBenefitDeniedMessage(brand) } };
     }
@@ -389,9 +400,11 @@ function handleBookingMemberStatus_(payload) {
       isMember: status.memberOnDate === true,
       startTime: payload.startTime,
       generation: generation,
-      plan: plan
+      plan: plan,
+      supportServices: payload.supportServices
     });
     if (priceResult.valid) status.price = priceResult.price;
+    else if (BookingPricing.isPhotoSupport(plan)) return { success: false, error: priceResult.error };
   }
   return status;
 }
@@ -609,7 +622,8 @@ function handleEstimatePrice_(params, context) {
     generation: generation,
     /* Issue #478: 2名ペアパックの見積り。見積りAPIでは会員台帳を一切照会しない（会員の有無を
        探る口にしない）。資格の確認は予約作成時のサーバー側だけで行う。 */
-    plan: params.plan
+    plan: params.plan,
+    supportServices: params.supportServices
   });
   if (!priceResult.valid) {
     return { success: false, error: priceResult.error };

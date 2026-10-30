@@ -28,6 +28,8 @@ var BookingMailer = (function () {
     PENDING: 'PENDING',
     /* Issue #445: Checkout Session作成後に送る、決済URL・支払期限入りのカード決済案内。 */
     CARD_CHECKOUT: 'CARD_CHECKOUT',
+    /* Issue #667: 作品撮りサポートプランの承認・お支払い案内（承認後24時間の期限入り）。 */
+    SUPPORT_APPROVED: 'SUPPORT_APPROVED',
     CONFIRMED: 'CONFIRMED',
     CANCELLED: 'CANCELLED',
     REMINDER: 'REMINDER',
@@ -568,6 +570,33 @@ var BookingMailer = (function () {
         return { ok: false, outcome: { success: true, skipped: true, reason: 'ALREADY_SENT', bookingId: id, mailType: mailType } };
       }
       return { ok: true };
+    });
+  }
+
+  /*
+   * 作品撮りサポートプランの承認・お支払い案内（Issue #667）。承認（supportApprovedAt記録）後にBooking Adminから呼ぶ。
+   * お支払いページURLは予約ID＋決済開始トークン（checkoutAccessToken）で本人にだけ届ける（URLのフラグメントに載せ、サーバーログ・Refererへ出さない）。
+   * 二重送信防止はsupportApprovalMailSentAt（空の間だけ通常送信。管理画面からの明示再送はforce）。承認前・PENDING以外は送らない。
+   * URL・トークンはログ・エラーメッセージへ出さない（extraRedactions）。
+   */
+  function sendSupportApprovedMailForBooking(bookingId, options) {
+    var opts = options || {};
+    var redactions = [];
+    return withBookingLock_(MAIL_TYPES.SUPPORT_APPROVED, bookingId, Booking.STATUS.PENDING, ['supportApprovalMailSentAt'], !!opts.force, function (record) {
+      if (!record.email || !/^[^\s@]+@[^\s@]+$/.test(String(record.email).trim())) {
+        throw new Error('予約に有効なメールアドレスがないため承認案内メールを送信できません。');
+      }
+      var config = ensureMailConfigComplete_();
+      var url = Booking.getBrandProfile(record.brand).bookingUrl + 'support-payment/?b=' + encodeURIComponent(record.bookingId) +
+        '#t=' + encodeURIComponent(String(record.checkoutAccessToken || ''));
+      redactions.push(url);
+      if (record.checkoutAccessToken) redactions.push(String(record.checkoutAccessToken));
+      return BookingMailTemplates.buildSupportApprovedMail(record, config, { url: url });
+    }, function () { return redactions; }, function (mailType, id, requiredStatus, sentAtFields, force, record) {
+      if (Booking.photoSupportStage(record) !== 'AWAITING_PAYMENT') {
+        return { ok: false, outcome: { success: false, skipped: true, bookingId: id, mailType: mailType, error: { code: 'SUPPORT_NOT_APPROVED', message: '承認済み・支払い待ちの作品撮りサポートプランのみ承認案内メールを送信できます。' } } };
+      }
+      return defaultMailEligibilityCheck_(mailType, id, requiredStatus, sentAtFields, force, record);
     });
   }
 
@@ -1573,6 +1602,7 @@ var BookingMailer = (function () {
     MAIL_TYPES: MAIL_TYPES,
     sendPendingMailForBooking: sendPendingMailForBooking,
     sendCardCheckoutMailForBooking: sendCardCheckoutMailForBooking,
+    sendSupportApprovedMailForBooking: sendSupportApprovedMailForBooking,
     sendConfirmedMailForBooking: sendConfirmedMailForBooking,
     sendCancelledMailForBooking: sendCancelledMailForBooking,
     sendExpiredMailForBooking: sendExpiredMailForBooking,
