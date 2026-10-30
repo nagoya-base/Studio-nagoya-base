@@ -42,8 +42,12 @@ for (const phase of ['before', 'after']) {
       try {
         const start = deployScript.indexOf(`echo "Running clasp list-deployments (${phase} update)"`);
         assert.ok(start >= 0);
-        const end = deployScript.indexOf('\nfi', deployScript.indexOf('if ! grep', start)) + '\nfi'.length;
-        const block = deployScript.slice(start, end);
+        const idCheck = phase === 'before' ? 'if ! grep' : 'if ! deployment_has_unique_id';
+        const checkStart = deployScript.indexOf(idCheck, start);
+        const closing = deployScript.slice(checkStart).match(/\n[ \t]*fi/);
+        const end = checkStart + closing.index + closing[0].length;
+        const helpers = deployScript.slice(deployScript.indexOf('deployment_has_unique_id()'), deployScript.indexOf('\nif [[ "$mode" == "schema-guard"'));
+        const block = helpers + '\n' + deployScript.slice(start, end);
         fs.writeFileSync(path.join(dir, 'clasp'), '#!/bin/bash\nprintf "%s\\n" "$MOCK_STDOUT"\nprintf "%s\\n" "$MOCK_STDERR" >&2\nexit "$MOCK_STATUS"\n', { mode: 0o700 });
         const env = { ...process.env, PATH: dir + ':' + process.env.PATH, GITHUB_WORKSPACE: workspace,
           auth_file: 'test-auth', clasp_user: target === 'admin' ? 'default' : 'booking-owner',
@@ -57,7 +61,7 @@ for (const phase of ['before', 'after']) {
           assert.doesNotMatch(result.stdout, /UNREACHABLE|tiny-secret|deployment-id/);
         }
         const success = spawnSync('bash', ['-c', 'set -euo pipefail\n' + block], {
-          cwd: dir, encoding: 'utf8', env: { ...env, MOCK_STATUS: '0', MOCK_STDOUT: 'test-deployment ' + sensitive, MOCK_STDERR: sensitive }
+          cwd: dir, encoding: 'utf8', env: { ...env, MOCK_STATUS: '0', MOCK_STDOUT: '- test-deployment @5 - ' + sensitive, MOCK_STDERR: sensitive }
         });
         assert.equal(success.status, 0);
         assert.equal(success.stderr, '');

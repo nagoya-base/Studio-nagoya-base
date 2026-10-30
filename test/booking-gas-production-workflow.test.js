@@ -184,7 +184,23 @@ set -eu
 user="$4"; shift 4
 printf '%s\\n' "$1" >> "$MOCK_CALLS"
 case "$1" in
- list-deployments) printf '%s\\n' "$MOCK_LIST" ;;
+ list-deployments)
+   echo 'private@example.test token-dummy' >&2
+   echo 'private@example.test token-dummy'
+   count=$(grep -c '^list-deployments$' "$MOCK_CALLS")
+   if [[ "$count" -gt 1 && "$count" == "$MOCK_LIST_FAIL_AT" ]]; then
+     echo 'invalid_grant private@example.test token-dummy' >&2
+     echo 'script-dummy deployment-dummy' ; exit 1
+   fi
+   if [[ "$count" -gt 1 && "$MOCK_AFTER_LIST_SET" == 1 ]]; then
+     if [[ "$count" -ge "$MOCK_CURRENT_AT" ]]; then
+       printf '%s\\n' "$MOCK_LIST"
+     else
+       printf '%s\\n' "$MOCK_AFTER_LIST"
+     fi
+   else
+     printf '%s\\n' "$MOCK_LIST"
+   fi ;;
  pull) printf '{"runtimeVersion":"V8","oauthScopes":[]}' > appsscript.json ;;
  show-file-status) ;;
  push) if [[ "$MOCK_PUSH_FAIL" == 1 ]]; then echo 'The caller does not have permission. private@example.test token-dummy' >&2; exit 1; fi ;;
@@ -192,6 +208,8 @@ case "$1" in
  *) exit 99 ;;
 esac
 `, { mode: 0o700 });
+    // Record waits without delaying the tests. Production uses the real sleep command.
+    fs.writeFileSync(path.join(bin, 'sleep'), '#!/bin/bash\nprintf "%s\\n" "$1" >> "$MOCK_SLEEPS"\n', { mode: 0o700 });
     const sha = 'abc123def456';
     const env = {
       ...process.env, PATH: bin + path.delimiter + process.env.PATH, GITHUB_WORKSPACE: workspace, RUNNER_TEMP: dir,
@@ -200,7 +218,8 @@ esac
       PUBLIC_CLASPRC_JSON: JSON.stringify({ tokens: { 'booking-owner': {} } }),
       PUBLIC_SCRIPT_ID: 'public-script-dummy', PUBLIC_DEPLOYMENT_ID: 'public-deployment-dummy',
       ADMIN_SCRIPT_ID: 'admin-script-dummy', ADMIN_DEPLOYMENT_ID: 'admin-deployment-dummy',
-      MOCK_CALLS: calls, MOCK_PUSH_FAIL: '0', MOCK_UPDATE_FAIL: '0', ...overrides
+      MOCK_CALLS: calls, MOCK_SLEEPS: path.join(dir, 'sleeps'), MOCK_PUSH_FAIL: '0', MOCK_UPDATE_FAIL: '0',
+      MOCK_AFTER_LIST_SET: '0', MOCK_CURRENT_AT: '99', MOCK_LIST_FAIL_AT: '0', ...overrides
     };
     env.MOCK_LIST = env.MOCK_LIST || `- ${args[0]}-deployment-dummy @5 - main ${sha}`;
     const result = spawnSync('bash', [deployScript, ...args], { cwd: dir, env, encoding: 'utf8' });
@@ -208,7 +227,8 @@ esac
     assert.doesNotMatch(result.stdout + result.stderr, /private@example|token-dummy|script-dummy|deployment-dummy/);
     const markers = Object.fromEntries(['admin', 'public'].map((t) => [t, fs.existsSync(path.join(dir, `booking-gas-${t}-update-applied`))]));
     const marker = (target) => markers[target];
-    return { ...result, invoked, marker };
+    const sleeps = fs.existsSync(env.MOCK_SLEEPS) ? fs.readFileSync(env.MOCK_SLEEPS, 'utf8').trim().split('\n') : [];
+    return { ...result, invoked, marker, sleeps };
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -219,6 +239,7 @@ test('deploy script updates the existing deployment and confirms the current mai
     assert.deepEqual(r.invoked, ['list-deployments', 'pull', 'show-file-status', 'push', 'update-deployment', 'list-deployments']);
     assert.equal(r.stdout.trim().split('\n').pop(), `Updated existing ${target} deployment to the current main commit`);
     assert.equal(r.marker(target), true);
+    assert.deepEqual(r.sleeps, []);
   }
 });
 
@@ -232,6 +253,58 @@ test('deploy script refuses unknown targets/modes, unknown deployments and a sta
   assert.notEqual(stale.status, 0);
   assert.match(stale.stderr, /after update/);
   assert.equal(stale.marker('public'), true, 'update was applied; only verification failed');
+  assert.equal(stale.invoked.filter((c) => c === 'list-deployments').length, 6, 'one before + five after');
+  assert.deepEqual(stale.sleeps, ['5', '5', '5', '5']);
+});
+
+test('description propagation can succeed on the second or final attempt without repeating any update', () => {
+  for (const target of ['admin', 'public']) {
+    for (const currentAt of [3, 6]) {
+      const r = runDeploy([target], {
+        MOCK_AFTER_LIST_SET: '1', MOCK_AFTER_LIST: `- ${target}-deployment-dummy @4 - main 000000`,
+        MOCK_CURRENT_AT: String(currentAt)
+      });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(r.invoked.filter((c) => c === 'list-deployments').length, currentAt);
+      for (const command of ['pull', 'push', 'update-deployment']) {
+        assert.equal(r.invoked.filter((c) => c === command).length, 1);
+      }
+      assert.deepEqual(r.sleeps, Array(currentAt - 2).fill('5'));
+      assert.equal(r.marker(target), true);
+    }
+  }
+});
+
+test('missing, ambiguous, substring-only IDs and another deployment showing the SHA fail immediately after update', () => {
+  const current = '- admin-deployment-dummy @5 - main abc123def456';
+  for (const listing of [
+    '', '- another-deployment @5 - main abc123def456',
+    `${current}\n${current}`, `${current}\n- admin-deployment-dummy @4 - main 000000`,
+    '- admin-deployment-dummy-suffix @5 - main abc123def456'
+  ]) {
+    const r = runDeploy(['admin'], { MOCK_AFTER_LIST_SET: '1', MOCK_AFTER_LIST: listing });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /could not be verified after update/);
+    assert.equal(r.invoked.filter((c) => c === 'list-deployments').length, 2);
+    assert.deepEqual(r.sleeps, []);
+    assert.equal(r.marker('admin'), true);
+  }
+  const wrongLine = runDeploy(['admin'], { MOCK_AFTER_LIST_SET: '1',
+    MOCK_AFTER_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456' });
+  assert.equal(wrongLine.status, 1);
+  assert.equal(wrongLine.sleeps.length, 4);
+});
+
+test('list API errors fail through the classifier immediately, including during retries', () => {
+  for (const failAt of ['2', '3']) {
+    const r = runDeploy(['admin'], { MOCK_AFTER_LIST_SET: '1',
+      MOCK_AFTER_LIST: '- admin-deployment-dummy @4 - main 000000', MOCK_LIST_FAIL_AT: failAt });
+    assert.equal(r.status, 1);
+    assert.equal(r.stderr, 'clasp list-deployments failed (after update): AUTHENTICATION_FAILED\n');
+    assert.equal(r.invoked.filter((c) => c === 'list-deployments').length, Number(failAt));
+    assert.equal(r.sleeps.length, Number(failAt) - 2);
+    assert.equal(r.marker('admin'), true);
+  }
 });
 
 test('deploy script stops after a failed push without touching the deployment', () => {
@@ -280,6 +353,19 @@ test('verify mode is read-only and checks the existing deployment shows the curr
   assert.notEqual(stale.status, 0);
   assert.match(stale.stderr, /does not show the current main commit/);
   assert.deepEqual(stale.invoked, ['list-deployments']);
+  assert.deepEqual(stale.sleeps, []);
+  assert.equal(stale.marker('public'), false);
+  for (const listing of [
+    '- admin-deployment-dummy @5 - main abc123def456\n- admin-deployment-dummy @4 - main 000000',
+    '- admin-deployment-dummy-suffix @5 - main abc123def456',
+    '- admin-deployment-dummy @5 - main abc123def4560'
+  ]) {
+    const r = runDeploy(['admin', 'verify'], { MOCK_LIST: listing });
+    assert.equal(r.status, 1);
+    assert.deepEqual(r.invoked, ['list-deployments']);
+    assert.deepEqual(r.sleeps, []);
+    assert.equal(r.marker('admin'), false);
+  }
 });
 
 /* ---- schema diff guard (Issue #673): stubbed clasp + a real temporary git history ---- */
