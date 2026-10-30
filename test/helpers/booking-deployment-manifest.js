@@ -96,7 +96,9 @@ var BOOKING_ADMIN_FILES = [
   'BookingGenerationMode.gs',
   'FeeCalculator.gs',
   'FeeSettlementRepository.gs',
-  'BookingReschedule.gs'
+  'BookingReschedule.gs',
+  /* Issue #673: Bookingsシートの不足末尾列を追加する管理者用migration（エディタから手動実行）。Booking Admin専用で、Public・Webhookには配布しない。 */
+  'BookingsSchemaMigration.gs'
 ];
 
 /* Code.gs/RateLimiter.gs/AdminNotifier.gsはcreateBooking専用のためBooking Adminには

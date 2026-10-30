@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Issue #671: 本番Booking GASの連続デプロイworkflowの制御構造を、YAMLの静的検査で確認する
+ * Issue #671 / #673: 本番Booking GASの連続デプロイworkflowの制御構造を、YAMLの静的検査で確認する
  * （実際に本番へデプロイするE2Eではない）。依存パッケージを増やさないため、このworkflowの
  * 形（トップレベルキー・jobs直下のjob・steps直下の `- name:`）に限定した最小のテキスト解析を使う。
  */
@@ -35,11 +35,14 @@ const deploy = jobs.deploy;
 const deploySteps = steps(deploy);
 const stepIndex = (needle) => deploySteps.findIndex((s) => s.includes(needle));
 
-test('workflow is manual (workflow_dispatch) only, without a target selector', () => {
+test('workflow is manual (workflow_dispatch) only, with scope=full|admin-only and schema_migrated inputs', () => {
   const on = workflow.slice(workflow.indexOf('\non:\n'), workflow.indexOf('\npermissions:'));
   assert.match(on, /workflow_dispatch:/);
-  assert.doesNotMatch(on, /push:|pull_request|schedule:|inputs:|target/);
+  assert.doesNotMatch(on, /push:|pull_request|schedule:|target/);
   assert.doesNotMatch(workflow, /inputs\.target/);
+  assert.match(on, /scope:\n(?:.*\n)*?        type: choice\n        options:\n          - full\n          - admin-only\n        default: full\n/);
+  assert.match(on, /schema_migrated:\n(?:.*\n)*?        type: boolean\n        default: false\n/);
+  assert.equal((on.match(/^      [a-z_]+:$/gm) || []).length, 2, 'only scope and schema_migrated');
 });
 
 test('production job needs test, and both jobs are restricted to main', () => {
@@ -60,15 +63,51 @@ test('single concurrency group for the whole Booking GAS production, not cancell
   assert.doesNotMatch(workflow, /\$\{\{[^}]*\}\}\s*\n\s*cancel-in-progress/);
 });
 
-test('production steps run in order: schema migration -> Admin -> Public -> post-check', () => {
-  const migrate = stepIndex('migrate-bookings-schema.js migrate');
+test('scope=full runs: tests -> (approval) -> schema guard -> Admin -> Public -> post-check, with no schema migration step', () => {
+  const guard = stepIndex('deploy-booking-gas-target.sh public schema-guard');
   const admin = stepIndex('Update the existing Booking Admin deployment');
   const publicStep = stepIndex('Update the existing Booking Web App deployment');
-  const checks = [stepIndex('deploy-booking-gas-target.sh admin verify'), stepIndex('deploy-booking-gas-target.sh public verify'), stepIndex('migrate-bookings-schema.js verify')];
-  assert.ok(migrate > 0 && admin > migrate && publicStep > admin, [migrate, admin, publicStep].join());
-  assert.ok(checks[0] > publicStep && checks[1] > checks[0] && checks[2] > checks[1], checks.join());
-  assert.equal(checks[2], deploySteps.length - 1);
-  assert.ok(stepIndex('npm install --global @google/clasp@3.4.1') < migrate, 'tooling is set up first');
+  const checks = [stepIndex('deploy-booking-gas-target.sh admin verify'), stepIndex('deploy-booking-gas-target.sh public verify')];
+  assert.ok(guard > 0 && admin > guard && publicStep > admin, [guard, admin, publicStep].join());
+  assert.ok(checks[0] > publicStep && checks[1] > checks[0], checks.join());
+  assert.ok(stepIndex('npm install --global @google/clasp@3.4.1') < guard, 'tooling is set up first');
+  assert.match(deploy, /\n    needs: test\n/);
+  assert.match(deploy, /\n    environment: booking-production\n/);
+  assert.doesNotMatch(workflow, /migrate-bookings-schema|migrate_bookings|Migrate the Bookings sheet schema/);
+});
+
+test('schema guard runs in the approved deploy job (environment secrets), before any Admin update, only for scope=full', () => {
+  const guardStep = deploySteps[stepIndex('deploy-booking-gas-target.sh public schema-guard')];
+  assert.match(guardStep, /\n        if: inputs\.scope == 'full'\n/);
+  assert.match(guardStep, /SCHEMA_MIGRATED: \$\{\{ inputs\.schema_migrated \}\}/);
+  assert.match(guardStep, /PUBLIC_CLASPRC_JSON: \$\{\{ secrets\.BOOKING_PUBLIC_CLASPRC_JSON \}\}/);
+  assert.doesNotMatch(guardStep, /ADMIN_|[^_]CLASPRC_JSON/);
+  assert.equal(jobs.test.includes('schema-guard'), false, 'cannot run before approval: clasp credentials are Environment secrets');
+  assert.ok(stepIndex('schema-guard') < stepIndex('Update the existing Booking Admin deployment'));
+});
+
+test('scope=admin-only updates and verifies Booking Admin only; Public steps are full-only', () => {
+  for (const needle of ['Update the existing Booking Web App deployment', 'deploy-booking-gas-target.sh public verify', 'schema-guard']) {
+    assert.match(deploySteps[stepIndex(needle)], /\n        if: inputs\.scope == 'full'\n/, needle);
+  }
+  for (const needle of ['Update the existing Booking Admin deployment', 'deploy-booking-gas-target.sh admin verify']) {
+    assert.doesNotMatch(deploySteps[stepIndex(needle)], /\bif: /, needle + ' runs for both scopes');
+  }
+  const publicRefs = deploySteps.filter((x) => /PUBLIC_|Web App/.test(x.split(/\n\s+run:/)[0]) && !x.startsWith('name: Next step') && !x.startsWith('name: Validate scope'));
+  assert.ok(publicRefs.length >= 3);
+  for (const x of publicRefs) assert.match(x, /\n        if: inputs\.scope == 'full'\n/, x.split('\n')[0]);
+  const next = deploySteps[stepIndex('Next step after admin-only')];
+  assert.match(next, /if: inputs\.scope == 'admin-only'/);
+  assert.match(deploySteps[stepIndex('Validate scope')], /scope must be full or admin-only/);
+});
+
+test('inputs are passed through env (never interpolated into shell) and the checkout has full history for the schema diff', () => {
+  for (const x of deploySteps.filter((y) => y.includes('run:'))) {
+    const runPart = x.slice(x.indexOf('run:'));
+    assert.doesNotMatch(runPart, /\$\{\{/, x.split('\n')[0]);
+  }
+  const checkout = deploySteps[0];
+  assert.match(checkout, /actions\/checkout@v4\n        with:\n          fetch-depth: 0/);
 });
 
 test('no step can be skipped past a failure: no continue-on-error, failure()/always() conditions or pipeline fallbacks', () => {
@@ -97,27 +136,23 @@ test('failure messages distinguish "update did not complete" from "applied but v
   }
 });
 
-test('migration credentials are job-scoped GitHub Secrets and kept separate from clasp credentials', () => {
-  const withSheets = deploySteps.filter((x) => /BOOKING_SHEETS_SERVICE_ACCOUNT_JSON: \$\{\{ secrets\.BOOKING_SHEETS_SERVICE_ACCOUNT_JSON \}\}/.test(x));
-  assert.equal(withSheets.length, 2, 'only the migrate and schema-verify steps receive the Sheets credential');
-  for (const x of withSheets) {
-    assert.match(x, /BOOKING_SPREADSHEET_ID: \$\{\{ secrets\.BOOKING_SPREADSHEET_ID \}\}/);
-    assert.match(x, /BOOKING_SPREADSHEET_ID_SHA256: \$\{\{ secrets\.BOOKING_SPREADSHEET_ID_SHA256 \}\}/);
-    assert.doesNotMatch(x, /CLASPRC|SCRIPT_ID|DEPLOYMENT_ID/);
-  }
+test('no Sheets API / service-account / Spreadsheet secrets or WIF/OIDC remain in the production workflow or deploy script', () => {
   const script = fs.readFileSync(deployScript, 'utf8');
-  assert.doesNotMatch(script, /BOOKING_SHEETS|BOOKING_SPREADSHEET/);
-  assert.doesNotMatch(workflow, /echo[^\n]*\$\{\{ *secrets|echo[^\n]*(SPREADSHEET_ID|SERVICE_ACCOUNT)/);
+  for (const text of [workflow, script]) {
+    assert.doesNotMatch(text, /BOOKING_SHEETS_SERVICE_ACCOUNT_JSON|BOOKING_SPREADSHEET_ID|SERVICE_ACCOUNT|sheets\.googleapis|google-github-actions\/auth|workload_identity|id-token/i);
+  }
+  assert.match(workflow, /permissions:\n  contents: read\n/);
+  assert.doesNotMatch(workflow, /echo[^\n]*\$\{\{ *secrets/);
 });
 
 test('secrets are scoped per step, never job-wide, and the clasp install step receives none', () => {
   assert.doesNotMatch(deploy, /\n    env:/);
   assert.doesNotMatch(deploySteps[stepIndex('npm install --global')], /secrets\./);
   for (const x of deploySteps.filter((y) => /ADMIN_|[^_]CLASPRC_JSON/.test(y) && y.includes('secrets.'))) {
-    assert.doesNotMatch(x, /BOOKING_SHEETS|BOOKING_SPREADSHEET|PUBLIC_/);
+    assert.doesNotMatch(x, /PUBLIC_/);
   }
   for (const x of deploySteps.filter((y) => /PUBLIC_/.test(y) && y.includes('secrets.'))) {
-    assert.doesNotMatch(x, /BOOKING_SHEETS|BOOKING_SPREADSHEET|ADMIN_|[^_]CLASPRC_JSON/);
+    assert.doesNotMatch(x, /ADMIN_|[^_]CLASPRC_JSON/);
   }
 });
 
@@ -245,4 +280,129 @@ test('verify mode is read-only and checks the existing deployment shows the curr
   assert.notEqual(stale.status, 0);
   assert.match(stale.stderr, /does not show the current main commit/);
   assert.deepEqual(stale.invoked, ['list-deployments']);
+});
+
+/* ---- schema diff guard (Issue #673): stubbed clasp + a real temporary git history ---- */
+const SCHEMA_PATH = 'gas/booking/shared/BookingsSchema.gs';
+function git(dir, ...args) {
+  const r = spawnSync('git', ['-C', dir, '-c', 'user.email=t@example.test', '-c', 'user.name=t', ...args], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.trim();
+}
+function commit(dir, files, message) {
+  for (const [file, content] of Object.entries(files)) {
+    const full = path.join(dir, file);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    if (content === null) fs.rmSync(full, { force: true }); else fs.writeFileSync(full, content);
+  }
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '--allow-empty', '-m', message);
+  return git(dir, 'rev-parse', 'HEAD');
+}
+function runGuard({ setup, describe, schemaMigrated, deploymentLine }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'booking-guard-'));
+  try {
+    const repo = path.join(dir, 'repo');
+    fs.mkdirSync(repo);
+    git(repo, 'init', '-q');
+    const shas = setup(repo);
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    const calls = path.join(dir, 'calls');
+    fs.writeFileSync(path.join(bin, 'clasp'), `#!/bin/bash
+shift 4
+printf '%s\\n' "$1" >> "$MOCK_CALLS"
+case "$1" in list-deployments) printf '%s\\n' "$MOCK_LIST" ;; *) exit 99 ;; esac
+`, { mode: 0o700 });
+    const line = deploymentLine ? deploymentLine(shas) : `- public-deployment-dummy @5 - main ${shas.previous}`;
+    const env = {
+      ...process.env, PATH: bin + path.delimiter + process.env.PATH, GITHUB_WORKSPACE: repo, RUNNER_TEMP: dir,
+      GITHUB_SHA: shas.current,
+      CLASPRC_JSON: JSON.stringify({ tokens: { default: {} } }),
+      PUBLIC_CLASPRC_JSON: JSON.stringify({ tokens: { 'booking-owner': {} } }),
+      PUBLIC_SCRIPT_ID: 'public-script-dummy', PUBLIC_DEPLOYMENT_ID: 'public-deployment-dummy',
+      ADMIN_SCRIPT_ID: 'admin-script-dummy', ADMIN_DEPLOYMENT_ID: 'admin-deployment-dummy',
+      MOCK_CALLS: calls, MOCK_LIST: line, SCHEMA_MIGRATED: schemaMigrated === undefined ? 'false' : schemaMigrated
+    };
+    const result = spawnSync('bash', [deployScript, 'public', 'schema-guard'], { cwd: dir, env, encoding: 'utf8' });
+    const invoked = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n') : [];
+    assert.doesNotMatch(result.stdout + result.stderr, /script-dummy|deployment-dummy|token-dummy/);
+    assert.equal(invoked.every((c) => c === 'list-deployments'), true, 'guard is read-only: no pull/push/update-deployment');
+    return { ...result, invoked, shas };
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+const unchanged = (repo) => {
+  const previous = commit(repo, { [SCHEMA_PATH]: 'schema v1\n', 'other.txt': 'a' }, 'prev');
+  const current = commit(repo, { 'other.txt': 'b' }, 'cur');
+  return { previous, current };
+};
+const changed = (repo) => {
+  const previous = commit(repo, { [SCHEMA_PATH]: 'schema v1\n' }, 'prev');
+  const current = commit(repo, { [SCHEMA_PATH]: 'schema v2\n' }, 'cur');
+  return { previous, current };
+};
+
+test('schema guard: no BookingsSchema.gs diff since the previous Public SHA -> passes without schema_migrated', () => {
+  const r = runGuard({ setup: unchanged });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.invoked, ['list-deployments']);
+  assert.match(r.stdout, /schema is unchanged/);
+});
+
+test('schema guard: diff + schema_migrated != true stops before any Admin update; true lets it continue', () => {
+  const stop = runGuard({ setup: changed, schemaMigrated: 'false' });
+  assert.notEqual(stop.status, 0);
+  assert.match(stop.stderr, /migrateBookingsSchema/);
+  assert.match(stop.stderr, /schema_migrated=true/);
+  const unset = runGuard({ setup: changed, schemaMigrated: '' });
+  assert.notEqual(unset.status, 0);
+  const ok = runGuard({ setup: changed, schemaMigrated: 'true' });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /schema_migrated=true confirmed/);
+});
+
+test('schema guard: baseline is the Public deployment SHA even when the Admin deployment already shows the current SHA', () => {
+  // admin-only has advanced Admin to the current SHA; only the Public line (previous full) is read.
+  const r = runGuard({
+    setup: changed,
+    deploymentLine: ({ previous, current }) => `- public-deployment-dummy @5 - main ${previous}\n- admin-deployment-dummy @9 - main ${current}`,
+    schemaMigrated: 'false'
+  });
+  assert.notEqual(r.status, 0, 'Public SHA differs -> migration required although Admin SHA equals the current SHA');
+  const adminOnlyEquals = runGuard({
+    setup: changed,
+    deploymentLine: ({ current }) => `- admin-deployment-dummy @9 - main ${current}`
+  });
+  assert.notEqual(adminOnlyEquals.status, 0, 'no Public line -> fail closed, Admin SHA is never used as the baseline');
+  const script = fs.readFileSync(deployScript, 'utf8');
+  assert.match(script, /\$mode" == "schema-guard" && "\$target" != "public"/);
+  assert.notEqual(spawnSync('bash', [deployScript, 'admin', 'schema-guard'], { env: { ...process.env, RUNNER_TEMP: os.tmpdir() }, encoding: 'utf8' }).status, 0);
+});
+
+test('schema guard: a previous SHA without BookingsSchema.gs (first bootstrap) counts as a schema diff', () => {
+  const bootstrap = (repo) => {
+    const previous = commit(repo, { 'README.md': 'before #671' }, 'prev');
+    const current = commit(repo, { [SCHEMA_PATH]: 'schema v1\n' }, 'cur');
+    return { previous, current };
+  };
+  const stop = runGuard({ setup: bootstrap, schemaMigrated: 'false' });
+  assert.notEqual(stop.status, 0);
+  assert.match(stop.stderr, /schema_migrated=true/);
+  const ok = runGuard({ setup: bootstrap, schemaMigrated: 'true' });
+  assert.equal(ok.status, 0, ok.stderr);
+});
+
+test('schema guard fails closed when the previous Public SHA cannot be identified safely', () => {
+  const cases = {
+    'no SHA in description': () => '- public-deployment-dummy @5 - manual deploy',
+    'short SHA': () => '- public-deployment-dummy @5 - main abc123def456',
+    'unknown deployment': ({ previous }) => `- another-deployment @5 - main ${previous}`,
+    'two SHAs': ({ previous, current }) => `- public-deployment-dummy @5 - main ${previous} main ${current}`,
+    'SHA not in checked-out history': () => `- public-deployment-dummy @5 - main ${'0'.repeat(40)}`
+  };
+  for (const [label, deploymentLine] of Object.entries(cases)) {
+    const r = runGuard({ setup: unchanged, deploymentLine, schemaMigrated: 'true' });
+    assert.notEqual(r.status, 0, label + ' must fail even with schema_migrated=true');
+    assert.doesNotMatch(r.stderr, /[0-9a-f]{40}/, label);
+  }
 });

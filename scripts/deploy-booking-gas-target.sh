@@ -3,14 +3,20 @@
 # workflowのrunブロックから切り出した。内容は従来の単一target用stepと同一）。
 # 第2引数に verify を渡すと更新せず、既存Deploymentの所属と今回のmain SHAの反映だけを確認する
 # （post-check用。clasp list-deployments の出力そのものは表示しない）。
+# 第2引数に schema-guard を渡すと（publicのみ）更新せず、Booking Web App（Public）の既存Deployment
+# descriptionの `main <SHA>`（前回fullで本番反映したSHA）と今回のGITHUB_SHAの間で
+# gas/booking/shared/BookingsSchema.gs に差分があるかを判定する（Issue #673）。差分がある（前回SHAに
+# このファイルが無い初回bootstrapを含む）場合は、SCHEMA_MIGRATED=true（管理者がAdminで
+# migrateBookingsSchemaを実行し成功確認した明示入力）がなければ失敗する。基準SHAはAdminからは取らない
+# （admin-only実行でAdminは今回SHAへ進むため、基準にすると差分を見逃す）。前回SHAを安全に特定できない場合も失敗する。
 # 必要な環境変数: CLASPRC_JSON / PUBLIC_CLASPRC_JSON / PUBLIC_SCRIPT_ID / PUBLIC_DEPLOYMENT_ID /
-#   ADMIN_SCRIPT_ID / ADMIN_DEPLOYMENT_ID / RUNNER_TEMP / GITHUB_WORKSPACE / GITHUB_SHA
+#   ADMIN_SCRIPT_ID / ADMIN_DEPLOYMENT_ID / RUNNER_TEMP / GITHUB_WORKSPACE / GITHUB_SHA / SCHEMA_MIGRATED（guardのみ）
 # 出力にはSecret・ID・clasp生出力を含めない（固定メッセージとclassifierの分類のみ）。
 set -euo pipefail
 
 target="${1:-}"
 mode="${2:-deploy}"
-if [[ "$mode" != "deploy" && "$mode" != "verify" ]]; then
+if [[ "$mode" != "deploy" && "$mode" != "verify" && "$mode" != "schema-guard" ]]; then
   echo "Unsupported mode" >&2
   exit 1
 fi
@@ -19,6 +25,11 @@ fi
 deployment_has_current_sha() {
   grep -F -- "$deployment_id" "$list_stdout" | grep -Fq -- "main ${GITHUB_SHA}"
 }
+
+if [[ "$mode" == "schema-guard" && "$target" != "public" ]]; then
+  echo "schema-guard reads the previous production SHA from the public deployment only." >&2
+  exit 1
+fi
 
 case "$target" in
   public)
@@ -89,6 +100,42 @@ fi
 if ! grep -Fq -- "$deployment_id" "$list_stdout"; then
   echo "Configured deployment ID does not belong to the selected existing GAS project." >&2
   exit 1
+fi
+
+if [[ "$mode" == "schema-guard" ]]; then
+  schema_path="gas/booking/shared/BookingsSchema.gs"
+  # このDeploymentの行からだけ前回SHAを取る。1行・1SHAに特定できなければ失敗（fail closed）。
+  if ! deployment_line="$(grep -F -- "$deployment_id" "$list_stdout")" ||
+     [[ "$(printf '%s\n' "$deployment_line" | wc -l)" -ne 1 ]]; then
+    echo "Could not identify the previous Web App production commit; refusing to continue." >&2
+    exit 1
+  fi
+  if ! previous_shas="$(printf '%s\n' "$deployment_line" | grep -oE 'main [0-9a-f]{40}([^0-9a-f]|$)' | grep -oE '[0-9a-f]{40}')" ||
+     [[ "$(printf '%s\n' "$previous_shas" | wc -l)" -ne 1 ]]; then
+    echo "Could not identify the previous Web App production commit; refusing to continue." >&2
+    exit 1
+  fi
+  if ! git -C "$GITHUB_WORKSPACE" cat-file -e "${previous_shas}^{commit}" 2>/dev/null; then
+    echo "The previous Web App production commit is not in the checked-out history (fetch-depth: 0 required); refusing to continue." >&2
+    exit 1
+  fi
+  # 前回SHAにファイルが無い（追加された）場合も差分ありとして出る。diffそのものの失敗は fail closed。
+  if git -C "$GITHUB_WORKSPACE" diff --quiet "$previous_shas" "$GITHUB_SHA" -- "$schema_path"; then
+    echo "Bookings schema is unchanged since the previous Web App production commit."
+    exit 0
+  else
+    diff_status=$?
+    if [[ "$diff_status" -ne 1 ]]; then
+      echo "Could not compare the Bookings schema with the previous Web App production commit; refusing to continue." >&2
+      exit 1
+    fi
+  fi
+  if [[ "${SCHEMA_MIGRATED:-}" != "true" ]]; then
+    echo "The Bookings schema changed since the previous Web App production commit. Run migrateBookingsSchema in the Booking Admin Apps Script editor, then re-run with scope=full and schema_migrated=true." >&2
+    exit 1
+  fi
+  echo "Bookings schema changed; schema_migrated=true confirmed."
+  exit 0
 fi
 
 if [[ "$mode" == "verify" ]]; then
