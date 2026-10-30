@@ -181,17 +181,16 @@
 .z a.pv-usenav-link:not(.btn-primary):not(.btn-secondary) { display: block; height: 100%; color: var(--text); text-decoration: none; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .z a.pv-usenav-link:not(.btn-primary):not(.btn-secondary):hover { border-color: var(--accent); }
 .z a.pv-usenav-link:not(.btn-primary):not(.btn-secondary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.pv-usenav-photo { position: relative; display: block; aspect-ratio: 16 / 9; overflow: hidden; background: var(--bg-section); }
+.pv-usenav-photo { position: relative; display: block; aspect-ratio: 4 / 3; overflow: hidden; background: var(--bg-section); }
 .pv-usenav-photo img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; }
-.pv-usenav-tag { position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 999px; background: rgba(11, 22, 38, 0.82); color: #eef2f8; font-size: 0.7rem; line-height: 1.5; }
-.pv-usenav-label { display: block; padding: 10px 12px 2px; font-weight: 600; line-height: 1.5; }
-.pv-usenav-desc { display: block; padding: 0 12px 12px; font-size: 0.8rem; line-height: 1.6; color: var(--text-muted); }
+.pv-usenav-photo--head img { object-position: 50% 6%; }
+.pv-usenav-label { display: block; padding: 10px 12px 2px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.pv-usenav-desc { display: block; padding: 0 12px 12px; font-size: 0.8rem; line-height: 1.6; color: var(--text-muted); overflow-wrap: anywhere; }
 
 /* ===== 安心・PRIVATE（白） ===== */
 #features .features-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 640px) { #features .features-grid { grid-template-columns: minmax(0, 1fr); } }
 .pv-private-notice { max-width: 760px; margin: 16px 0 0; font-size: 0.9rem; line-height: 1.8; color: var(--text-muted); }
-.pv-usage-note { margin: -16px 0 8px; font-size: 0.85rem; line-height: 1.7; color: var(--text-muted); }
 .z-paper .notice-banner { max-width: 760px; background: #fff; border-color: var(--accent); border-left-width: 4px; }
 .z-paper .notice-banner-text strong { color: var(--text); }
 .z-paper .feature-card { background: #fff; box-shadow: 0 1px 2px rgba(23, 32, 51, 0.06); }
@@ -218,25 +217,16 @@
 .z-wood .pv-photo { box-shadow: 0 14px 36px rgba(60, 36, 12, 0.28); }
 .z-sky .pv-photo { box-shadow: 0 14px 36px rgba(20, 50, 90, 0.2); }
 
-/* ===== ROPE / WOOD：スクロール連動（既定は通常配置。JSが .is-active を付けたときだけ sticky 化） ===== */
-.pv-scroll { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; align-items: start; }
-.pv-scroll-stage { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
-.pv-stage-photo { margin: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 14px 36px rgba(60, 36, 12, 0.28); background: var(--bg-card); }
-.pv-stage-photo img { display: block; width: 100%; height: auto; cursor: zoom-in; }
-.pv-scroll-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 20px; }
+/* ===== ROPE / WOOD：設備紹介は静止画＋説明を通常のスクロールで読む（Issue #653） ===== */
+.pv-facility { display: grid; gap: 40px; }
+.pv-facility-item { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 32px; align-items: center; }
+.pv-facility-item--portrait { grid-template-columns: minmax(0, 260px) minmax(0, 1fr); }
+.pv-facility-item .pv-photo { box-shadow: 0 14px 36px rgba(60, 36, 12, 0.28); }
+.pv-facility-steps { display: grid; gap: 16px; }
 .pv-step { padding: 20px 22px; background: rgba(255, 255, 255, 0.55); border-left: 4px solid var(--accent); border-radius: 6px; }
 .pv-step-label { font-size: 0.75rem; letter-spacing: 0.18em; color: var(--accent); margin: 0 0 6px; }
 .pv-step-title { font-size: 1.2rem; font-weight: 600; margin: 0 0 8px; }
 .pv-step-text { margin: 0; line-height: 1.85; color: var(--text-muted); }
-
-.pv-scroll.is-active .pv-scroll-stage { position: sticky; top: 128px; display: block; aspect-ratio: 1 / 1; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 14px 36px rgba(60, 36, 12, 0.28); background: #1a120a; }
-.pv-scroll.is-active .pv-stage-photo { position: absolute; inset: 0; border: 0; box-shadow: none; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.9s ease, visibility 0s linear 0.9s; }
-.pv-scroll.is-active[data-photo="frame"] .pv-stage-photo[data-photo="frame"],
-.pv-scroll.is-active[data-photo="rope"] .pv-stage-photo[data-photo="rope"] { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
-.pv-scroll.is-active .pv-stage-photo img { height: 100%; object-fit: cover; object-position: var(--pv-pos, 50% 50%); transform: scale(var(--pv-zoom, 1)); transform-origin: var(--pv-origin, 50% 50%); transition: transform 1.4s ease, object-position 1.4s ease; }
-.pv-scroll.is-active .pv-scroll-steps { gap: 0; }
-.pv-scroll.is-active .pv-step { min-height: 62vh; display: flex; flex-direction: column; justify-content: center; opacity: 0.35; transition: opacity 0.6s ease; background: transparent; }
-.pv-scroll.is-active .pv-step.is-current { opacity: 1; }
 
 /* ギャラリー：縦横比を保ったまま並べる（重要部分を切らない） */
 .pv-masonry { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; align-items: center; }
@@ -245,6 +235,9 @@
 .pv-masonry--landscape, .pv-masonry--portrait { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 .pv-masonry--portrait { max-width: 520px; }
 .pv-masonry + .pv-masonry { margin-top: 12px; }
+/* 背景バリエーション：3枚を同じ幅・同じ写真枠で静的に並べる */
+.pv-backdrops { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; max-width: 780px; }
+.pv-backdrops .pv-photo img { height: 100%; }
 .z .mens-intro-text { margin-left: 0; }
 .z-black .color-grid-label { color: var(--text-muted); }
 .z-black .gallery-note { color: var(--text-muted); }
@@ -256,11 +249,24 @@
 .pv-scene { display: grid; gap: 32px; align-items: center; margin-top: 56px; }
 .pv-scene--costume { grid-template-columns: minmax(0, 1fr); align-items: start; }
 .pv-scene--landscape { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
-.pv-scene--portrait { grid-template-columns: minmax(0, 260px) minmax(0, 1fr); }
+.pv-scene--portrait { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
 .pv-scene-title { font-size: 1.25rem; font-weight: 600; line-height: 1.5; margin: 0 0 10px; }
 .pv-scene-copy p { margin: 0 0 8px; line-height: 1.9; }
 .pv-scene-copy .pv-scene-note { font-size: 0.85rem; color: var(--text-muted); }
-.pv-scene-photos { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: start; max-width: 1040px; }
+.pv-scene-copy .pv-scene-lead { font-weight: 600; }
+/* 作品紹介：既定（JSなし・reduced-motion・初期化失敗）は4作品とキャプションを静的に並べる。
+   JSが .is-active を付けたときだけ、写真を左の固定枠に重ね、キャプションを右に縦に並べる */
+.pv-works { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: start; max-width: 1040px; }
+.pv-works.is-active { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr); grid-template-rows: repeat(4, minmax(clamp(120px, 20vh, 180px), auto)); column-gap: 40px; row-gap: 0; max-width: 880px; }
+.pv-works.is-active .pv-work, .pv-works.is-active .pv-work > figure { display: contents; }
+.pv-works.is-active .pv-photo { grid-column: 1; grid-row: 1 / span 4; position: sticky; top: 128px; align-self: start; width: min(100%, calc((100vh - 176px) * 2 / 3)); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.45s ease, visibility 0s linear 0.45s; }
+.pv-works.is-active .pv-work.is-current .pv-photo { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; z-index: 1; }
+.pv-works.is-active figcaption { grid-column: 2; align-self: center; margin: 0; padding: 14px 18px; border-left: 4px solid var(--border); border-radius: 6px; font-size: 1rem; line-height: 1.7; color: var(--text); opacity: 0.45; transition: opacity 0.45s ease; }
+.pv-works.is-active .pv-work.is-current figcaption { opacity: 1; border-left-color: var(--accent); background: #fff; }
+.pv-works.is-active .pv-work:nth-child(1) figcaption { grid-row: 1; }
+.pv-works.is-active .pv-work:nth-child(2) figcaption { grid-row: 2; }
+.pv-works.is-active .pv-work:nth-child(3) figcaption { grid-row: 3; }
+.pv-works.is-active .pv-work:nth-child(4) figcaption { grid-row: 4; }
 .z-sky .pv-photo { box-shadow: 0 14px 36px rgba(20, 50, 90, 0.2); }
 .pv-group { margin-top: 64px; padding: 28px 32px; background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; }
 .pv-group-title { font-size: 1.3rem; font-weight: 600; line-height: 1.5; margin: 0 0 12px; }
@@ -323,7 +329,7 @@ html.reveal-ready .reveal { opacity: 0; transform: translateY(18px); transition:
 html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) {
   html.reveal-ready .reveal { opacity: 1; transform: none; transition: none; }
-  .pv-scroll .pv-stage-photo, .pv-scroll .pv-stage-photo img, .pv-scroll .pv-step { transition: none; }
+  .pv-works .pv-photo, .pv-works figcaption { transition: none; }
 }
 
 /* ===== レスポンシブ ===== */
@@ -332,22 +338,20 @@ html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
   .pv-hero-image { order: -1; }
   .pv-usenav { padding-bottom: 40px; }
   .pv-usenav-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .pv-usenav-photo { aspect-ratio: 3 / 2; }
   .pv-usenav-label { padding: 8px 10px 2px; font-size: 0.92rem; }
   .pv-usenav-desc { padding: 0 10px 10px; font-size: 0.75rem; }
   .pv-photos--rope { grid-template-columns: minmax(0, 1fr); }
+  .pv-facility-item, .pv-facility-item--portrait { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .pv-facility-item--portrait .pv-photo { max-width: 260px; }
   .pv-scene--landscape, .pv-scene--portrait { grid-template-columns: minmax(0, 1fr); gap: 20px; }
-  .pv-scene--portrait .pv-captioned { max-width: 260px; }
   .pv-compare-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pv-compare-item, .pv-compare-item:nth-child(4), .pv-compare-item:nth-child(5) { grid-column: auto; }
   .pv-compare-item:nth-child(5) { grid-column: 1 / -1; width: 50%; justify-self: center; }
   .pv-group { padding: 22px 20px; }
   .pv-assure { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .pv-scroll { grid-template-columns: minmax(0, 1fr); gap: 20px; }
-  .pv-scroll.is-active .pv-scroll-stage { top: 116px; z-index: 2; aspect-ratio: 16 / 10; }
-  /* 固定写真の下で説明が読めるよう、段階は説明カードの高さだけにして間隔は margin で取る（監視帯が写真より下に来る） */
-  .pv-scroll.is-active .pv-step { min-height: 0; margin-bottom: 32vh; }
-  .pv-scroll.is-active .pv-step:last-child { margin-bottom: 8vh; }
+  .pv-works.is-active { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr); column-gap: 16px; }
+  .pv-works.is-active .pv-photo { top: 116px; width: min(100%, calc((100vh - 150px) * 2 / 3)); }
+  .pv-works.is-active figcaption { padding: 10px 12px; font-size: 0.9rem; }
   .z section { padding: 56px 0; }
 }
 @media (max-width: 520px) {
@@ -356,16 +360,17 @@ html.reveal-ready .reveal.is-in { opacity: 1; transform: none; }
   .pv-hero-actions { flex-direction: column; align-items: stretch; }
   .pv-hero-actions .btn-primary, .pv-hero-actions .btn-secondary { text-align: center; }
   .pv-masonry--landscape { grid-template-columns: minmax(0, 1fr); }
-  .pv-scene-photos { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .pv-works:not(.is-active) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 }
 @media (max-width: 359px) {
   .pv-masonry--portrait { grid-template-columns: minmax(0, 1fr); }
-  .pv-scene-photos { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .pv-works:not(.is-active) { gap: 8px; }
+  .pv-backdrops { gap: 8px; }
 }
 
 /* ===== 固定ヘッダー対策のfallback（Issue #651）：JS無効時のみ。
    通常は scripts/main.js が <html> に scroll-padding-top（ナビ＋予約バナーの実高さ）を入れるため、そのときは何も足さない ===== */
-html:not([style*="scroll-padding-top"]) :is(#usage, #scenes, #portrait-use, #group-use, #legal, #gallery, #safety, #pricing) { scroll-margin-top: 112px; }
+html:not([style*="scroll-padding-top"]) :is(#usage, #scenes, #costume-portrait-use, #classroom-use, #portrait-use, #group-use, #legal, #gallery, #safety, #pricing) { scroll-margin-top: 112px; }
 @media (max-width: 768px) {
-  html:not([style*="scroll-padding-top"]) :is(#usage, #scenes, #portrait-use, #group-use, #legal, #gallery, #safety, #pricing) { scroll-margin-top: 106px; }
+  html:not([style*="scroll-padding-top"]) :is(#usage, #scenes, #costume-portrait-use, #classroom-use, #portrait-use, #group-use, #legal, #gallery, #safety, #pricing) { scroll-margin-top: 106px; }
 }

@@ -41,10 +41,9 @@ var ALLOWED_PREVIEW_ONLY_TEXT = [
   'ユニフォームやコスチュームを持ち寄って、衣装と空間を活かした作品撮りに。畳や木組みの和室も背景にできます。',
   '作例に写る衣装・小道具は、当スタジオの貸出品ではありません。',
   'ユニフォームの床縄作品', 'ヒーロー衣装の作品撮り', 'ユニフォーム姿の2人によるシチュエーション作品',
-  '学校机と黒板のある空間（人物なし）',
+  '学校机と黒板のある空間',
   '学校机と黒板で、撮影にひとつのシーンを。',
   '衣装やポーズを合わせて、自分たちの設定を楽しむ撮影にも。',
-  '柄背景と竹の空間（人物なし）',
   '縛らない日も、自分たちらしく撮る。',
   '男性ポートレートや身体表現、セルフ撮影、ペアでの撮影にも。背景と照明を使って、撮りたい雰囲気をつくれます。',
   '好きが通じる仲間と、自分たちだけの時間を。',
@@ -58,17 +57,18 @@ var ALLOWED_PREVIEW_ONLY_TEXT = [
   '仲間との利用を相談する →',
   /* Issue #651: HERO直下の用途ナビ・PRIVATEへの集約・作例と見出しの整理・法的事項の移動（現行からの変更は ALLOWED_CURRENT_ONLY_TEXT に対応） */
   '用途から探す',
+  /* Issue #653: 用途カード4件（フェチ／コスプレ・ポートレート／教室セット）・人物撮影と設営サポートのコピー・作品紹介・背景一覧 */
   '緊縛・ロープ撮影', '男性同士の練習・床縄・吊りの作例',
-  'ユニフォーム・衣装', '衣装やシチュエーションを楽しむ作品撮り',
-  '男性ポートレート', '緊縛をしない人物撮影・セルフ撮影',
-  '仲間との利用', '少人数の撮影・練習・交流',
-  '空間写真',
+  'フェチ', 'ユニフォームやシチュエーションを楽しむ撮影',
+  'コスプレ・ポートレート', '好きな衣装での作品撮りや、人物・セルフ撮影に',
+  '教室セット', '学校机と黒板で、撮影シーンをつくる',
+  '人物・セルフ撮影の紹介を見る →',
+  'ユニフォームで、自分らしい一枚を。', '黒背景と照明を使った、ユニフォーム撮影の作例です。', '本格的な照明機材も、設営をサポート。',
+  '和柄背景（鶴・黒）', '和柄背景（麻の葉・藍）', 'グランジ背景',
   'ゲイ・バイ男性を含む、男性同士の撮影・練習を歓迎しています。性別・性的指向を問わずご利用いただけます。',
   '無人入室ですが、防犯カメラを設置しています（無人運営・安全確認用途）。',
   '利用条件・法的事項を確認する',
-  '掲載している作例はユニフォームとヒーロー衣装です。スポーツウェアやレザーなども利用できますが、現在は作例を掲載していません。',
   'ヒーロー衣装の作例（白背景）',
-  '利用できる用途の説明です。人物の作例は現在掲載しておらず、写真は背景と空間のサンプルです。',
   '背景・照明の例を見る →',
   '照明・背景とスタジオの空間',
   '照明・背景・設備のサンプルをご覧いただけます。男性モデルの作例は、用途別の紹介にあります。',
@@ -98,7 +98,9 @@ var ALLOWED_CURRENT_ONLY_TEXT = [
   '男性ペアや男性グループでの緊縛練習・撮影を歓迎しています。ゲイ・バイ男性を含め、性別や性的指向を問わずご利用いただけます。',
   '人目を気にせず使える',
   '完全個室・無人入室。他の利用者やスタッフと対面することなく、衣装やロープ表現に集中できます。',
-  '背景バリエーション（追加候補） / Additional Backdrops'
+  '背景バリエーション（追加候補） / Additional Backdrops',
+  /* Issue #653: 設備写真（木組み・竹）は設備紹介の静止画へ移し、ギャラリーの同じ写真の重複グループは置かない */
+  'スタジオ全景・吊り設備 / Studio &amp; Rigging'
 ];
 /* 削除した特徴カード2枚のアイコン（◈）は個数で許容する */
 var ALLOWED_CURRENT_ONLY_COUNT = { '◈': 2 };
@@ -115,30 +117,42 @@ var PREVIEW_ONLY_ANCHORS = [
   '安全ルール | href=#safety',
   '利用規約 | href=/Studio-nagoya-base/mens/legal/#terms',
   '料金のご案内 | href=#pricing',
-  /* Issue #651: 用途ナビ4件・PRIVATEの法的事項リンク・ポートレート説明から背景・照明の例へのリンク（JSなしで使える通常のアンカー） */
+  /* Issue #651/#653: 用途カード4件・PRIVATEの法的事項リンク・衣装→人物撮影、人物撮影→背景・照明のリンク（JSなしで使える通常のアンカー） */
   '緊縛・ロープ撮影 男性同士の練習・床縄・吊りの作例 | href=#usage',
-  'ユニフォーム・衣装 衣装やシチュエーションを楽しむ作品撮り | href=#scenes',
-  '空間写真 男性ポートレート 緊縛をしない人物撮影・セルフ撮影 | href=#portrait-use',
-  '空間写真 仲間との利用 少人数の撮影・練習・交流 | href=#group-use',
+  'フェチ ユニフォームやシチュエーションを楽しむ撮影 | href=#scenes',
+  'コスプレ・ポートレート 好きな衣装での作品撮りや、人物・セルフ撮影に | href=#costume-portrait-use',
+  '教室セット 学校机と黒板で、撮影シーンをつくる | href=#classroom-use',
   '利用条件・法的事項を確認する | href=#legal',
+  '人物・セルフ撮影の紹介を見る → | href=#portrait-use',
   '背景・照明の例を見る → | href=#gallery'
 ];
 var PREVIEW_ONLY_IMAGES = [
   '../images/gallery_man04_1200.webp | 柄背景の前でポーズをとるヒーロー衣装の人物の作品撮り | 800x1200',
   '../images/gallery_man05_1200.webp | 黒背景の前でユニフォーム姿の男性2人が撮影したシチュエーション作品（顔は加工しています） | 800x1200',
-  '../images/interior-classroom_1200.webp | 学校机と黒板のある撮影スペース（人物なし） | 1200x675',
+  '../images/interior-classroom_1200.webp | 学校机と黒板のある撮影スペース | 1200x675',
   '../images/backdrop-color-white_1200.webp | 通常の白色照明を当てた撮影スペースの白背景紙 | 1200x675',
   '../images/backdrop-color-purple_1200.webp | 紫の照明を当てた撮影スペースの背景紙 | 1200x675',
   '../images/backdrop-color-red_1200.webp | 赤の照明を当てた撮影スペースの背景紙 | 1200x675',
   '../images/backdrop-color-blue_1200.webp | 青の照明を当てた撮影スペースの背景紙 | 1200x675',
   '../images/backdrop-color-orange_1200.webp | 暖色の照明を当てた撮影スペースの背景紙 | 1200x675',
-  '../images/backdrop-tiedye-gray_1200.webp | 竹の吊り設備が見える柄背景のスペース（人物なし） | 675x1200'
+  '../images/backdrop-tiedye-gray_1200.webp | グレーの濃淡とムラのあるグランジ背景 | 675x1200'
+];
+/* Issue #653: 実画像の内容に合わせて alt を直す現行トップの3枚（src・寸法は同じ。現行側は照合から外し、試作の新 alt を明示する） */
+var CUR_ALT_REPLACED = [
+  '../images/gallery_man03_1200.webp | 木組みの吊り床と撮影機材が分かるスタジオ内観（男性モデル） | 1200x800',
+  '../images/interior-rigging-frame_1200.jpeg | スタジオ内観（通常照明・木組みフレームと置き畳） | 1200x675',
+  '../images/gallery_lighting01_1200.webp | 木組みの吊り設備を照らすフルカラー照明サンプル 1 | 1200x675'
+];
+var PRE_ALT_REPLACED = [
+  '../images/gallery_man03_1200.webp | 黒背景と左右のソフトボックスの前に立つ野球ユニフォーム姿の男性（顔は加工しています） | 1200x800',
+  '../images/interior-rigging-frame_1200.jpeg | 木組み・畳・大型ミラーが見える、通常照明のスタジオ内観 | 1200x675',
+  '../images/gallery_lighting01_1200.webp | 暖色の照明に照らされた竹と木組みの吊り設備 | 1200x675'
 ];
 /* Issue #651: 用途ナビの装飾サムネイル（リンク文言が説明するため alt は空）。既存WebPの再利用のみ */
 var NAV_THUMBS = [
   '../images/gallery_man02_1200.webp |  | 800x1200',
   '../images/gallery_man05_1200.webp |  | 800x1200',
-  '../images/backdrop-tiedye-gray_1200.webp |  | 675x1200',
+  '../images/gallery_man04_1200.webp |  | 800x1200',
   '../images/interior-classroom_1200.webp |  | 1200x675'
 ];
 
@@ -310,10 +324,10 @@ test('#633: 現行トップの写真（src/alt/寸法）をすべて維持して
   var cur = images(built.current), pre = images(built.preview);
   assert.ok(cur.indexOf(HERO_EXCEPTION_CUR) !== -1, '現行のヒーロー画像が想定どおり');
   assert.ok(pre.indexOf(HERO_EXCEPTION_PRE) !== -1, '試作のヒーロー画像が #641 の指定どおり');
-  cur = cur.filter(function (x) { return x !== HERO_EXCEPTION_CUR; });
+  cur = cur.filter(function (x) { return x !== HERO_EXCEPTION_CUR && CUR_ALT_REPLACED.indexOf(x) === -1; });
   pre = pre.filter(function (x) { return x !== HERO_EXCEPTION_PRE; });
   assert.deepStrictEqual(diff(cur, pre), []);
-  assert.deepStrictEqual(diff(pre, cur).sort(), PREVIEW_ONLY_IMAGES.concat(NAV_THUMBS).sort(), '#646/#651: 追加を許すのは既存WebP 9枚と用途ナビのサムネイル4件だけ');
+  assert.deepStrictEqual(diff(pre, cur).sort(), PREVIEW_ONLY_IMAGES.concat(NAV_THUMBS, PRE_ALT_REPLACED).sort(), '#646/#651/#653: 追加を許すのは既存WebP 9枚・用途カードのサムネイル4件・alt を実画像へ合わせた3枚だけ');
 });
 
 test('#633: title・description・OGP・Twitter・canonical・JSON-LD を維持している', { skip: skipBuilt }, function () {
@@ -358,7 +372,7 @@ test('#633: 現行トップにあるIDは試作にも存在し、試作内でID�
 test('#637: 試作ギャラリーは横長グループ→縦長グループに分かれ、混在しない', function () {
   var html = read('mens/preview-633.html');
   var groups = html.match(/<div class="pv-masonry pv-masonry--(landscape|portrait)">[\s\S]*?<\/div>/g) || [];
-  assert.strictEqual(groups.length, 4, 'landscape/portrait グループ数');
+  assert.strictEqual(groups.length, 2, 'landscape/portrait グループ数（#653: 設備写真と背景は別の静的一覧へ移動）');
   groups.forEach(function (g) {
     var isLandscape = g.indexOf('pv-masonry--landscape') !== -1;
     var dims = g.match(/width="(\d+)" height="(\d+)"/g).map(function (d) { var m = d.match(/(\d+)" height="(\d+)/); return +m[1] > +m[2]; });
@@ -403,55 +417,95 @@ test('#639: PRIVATEに「安心できる、大人の秘密基地。」と6つの
   assert.ok(sec.indexOf('完全貸切。無人入室。') !== -1);
 });
 
-test('#639: ROPE/WOODは WOOD FRAME→BAMBOO→ROPE POINT→SPACE の順にスクロール連動し、JSなし・reduced motion時は通常表示', function () {
+/* Issue #653: 設備は静止画で通常スクロール。写真切替は衣装ブロックの4作品へ移す */
+test('#653: 設備紹介（木組み・竹・空間・ROPE POINT）は対応する静止画と説明で、固定ステージ・切替・ズーム・演出用余白を持たない', function () {
   var html = read('mens/preview-633.html');
-  var order = ['WOOD FRAME', 'BAMBOO', 'ROPE POINT', 'SPACE'].map(function (k) { return html.indexOf('pv-step-label">' + k + '<'); });
+  var sec = html.match(/<section id="usage">[\s\S]*?<\/section>/)[0];
+  var order = ['WOOD FRAME', 'SPACE', 'BAMBOO', 'ROPE POINT'].map(function (k) { return sec.indexOf('pv-step-label">' + k + '<'); });
   assert.ok(order.every(function (i) { return i > 0; }));
   assert.deepStrictEqual(order.slice().sort(function (a, b) { return a - b; }), order);
+  ['高さ 2350mm／間口 2450mm／奥行 2000mm', '大型ミラー（1460mm × 800mm）と置き畳', '天井に渡した竹と木組み', '空中緊縛は経験者のみ、縛り手・受け手を含む3名以上'].forEach(function (t) { assert.ok(sec.indexOf(t) !== -1, t); });
+  var items = sec.match(/<div class="pv-facility-item[^"]*">[\s\S]*?<\/figure>/g);
+  assert.strictEqual(items.length, 3);
+  assert.ok(items[0].indexOf('interior-rigging-frame_1200.webp') !== -1 && items[0].indexOf('interior-rigging-frame_1200.jpeg" width="1200" height="675"') !== -1, 'WOOD FRAME／SPACE: 通常照明の内観（同名JPEG fallback）');
+  assert.ok(items[1].indexOf('gallery_lighting01_1200.webp" width="1200" height="675"') !== -1, 'BAMBOO: 暖色照明の竹');
+  assert.ok(items[2].indexOf('gallery_man02_1200.webp" width="800" height="1200"') !== -1, 'ROPE POINT: 既存の関連作例');
+  assert.strictEqual(sec.indexOf('gallery_man03'), -1, '設備説明中にユニフォーム人物（man03）を表示しない');
+  assert.doesNotMatch(sec, /data-pv-scroll|data-pv-step|data-zoom/);
+  assert.strictEqual(html.indexOf('mens-preview-639.js'), -1, '設備の切替・ズーム用JSを読み込まない');
+  assert.strictEqual(fs.existsSync(path.join(ROOT, 'scripts', 'mens-preview-639.js')), false);
   var css = read('styles/mens-preview-633.css');
-  assert.match(css, /\.pv-scroll\.is-active \.pv-scroll-stage \{[^}]*position: sticky/);
-  assert.doesNotMatch(css, /^\.pv-scroll-stage \{[^}]*sticky/m, 'sticky は .is-active（JS成功時）限定');
-  assert.match(css, /prefers-reduced-motion: reduce\) \{[\s\S]*\.pv-scroll \.pv-step \{ transition: none/);
-  var js = read('scripts/mens-preview-639.js');
-  assert.match(js, /prefers-reduced-motion: reduce/);
-  assert.match(js, /catch \(e\) \{\s*root\.classList\.remove\('is-active'\)/);
+  assert.doesNotMatch(css, /pv-scroll|pv-stage-photo|--pv-zoom|min-height: 62vh/, '設備の固定ステージ・ズーム・演出用余白のCSSを残さない');
+  var gallery = html.match(/<section id="gallery">[\s\S]*?<\/section>/)[0];
+  assert.strictEqual(gallery.indexOf('interior-rigging-frame'), -1, 'スタジオ全景・吊り設備との重複をなくす');
+  assert.strictEqual(gallery.indexOf('gallery_lighting01'), -1);
+  ['interior-rigging-frame_1200.webp', 'gallery_lighting01_1200.webp', 'gallery_man02_1200.webp'].forEach(function (f) {
+    var sz = webpSize(fs.readFileSync(path.join(ROOT, 'images', f)));
+    assert.ok(html.indexOf('images/' + f + '" width="' + sz.w + '" height="' + sz.h + '"') !== -1 || f === 'interior-rigging-frame_1200.webp', f + ' の寸法');
+  });
+  assert.deepStrictEqual(jpegSize(fs.readFileSync(path.join(ROOT, 'images', 'interior-rigging-frame_1200.jpeg'))), { w: 1200, h: 675 });
 });
 
-test('#639: スクロール演出JSは reduced motion と例外時に .is-active を付けない', function () {
+test('#653: 衣装ブロックは指定4作品を順に紹介し、JSなし・reduced motion・初期化失敗では4作品とキャプションを静的に並べる', function () {
+  var html = read('mens/preview-633.html');
+  var blk = html.match(/<div class="pv-scene pv-scene--costume" id="costume-portrait-use">[\s\S]*?<\/ul>/)[0];
+  var works = blk.match(/<li class="pv-work" data-pv-work>[\s\S]*?<\/li>/g);
+  assert.strictEqual(works.length, 4);
+  ['gallery_man01_1200.webp', 'gallery_man04_1200.webp', 'gallery_man05_1200.webp', 'hero_mens_1200.webp'].forEach(function (f, i) {
+    assert.ok(works[i].indexOf('images/' + f) !== -1, '順番' + (i + 1) + ': ' + f);
+    assert.match(works[i], /class="gallery-image cursor-pointer"/, '拡大対象は写真そのもの');
+    assert.match(works[i], /<figcaption data-pv-work-caption>[^<]+<\/figcaption>/, '各作品にキャプション');
+  });
+  assert.strictEqual(html.split('gallery_man01_1200.webp').length - 1, 1, '同じ作品の大判グリッドを二重に置かない');
+  assert.strictEqual(html.split('hero_mens_1200.webp').length - 1, 1);
+  assert.doesNotMatch(blk, /ビフォー|アフター|変化/, '異なる作品を同一撮影の変化として説明しない');
+  var css = read('styles/mens-preview-633.css');
+  assert.doesNotMatch(css.replace(/\.pv-works\.is-active[^{]*\{[^}]*\}/g, ''), /pv-work[^{]*\{[^}]*(visibility: hidden|opacity: 0)/, '非表示は JS 成功時（.is-active）限定');
+  assert.match(css, /\.pv-works\.is-active \.pv-photo \{[^}]*position: sticky[^}]*opacity: 0; visibility: hidden; pointer-events: none/, '非表示レイヤーはクリック・フォーカスを受けない');
+  assert.match(css, /\.pv-works\.is-active \.pv-work\.is-current \.pv-photo \{ opacity: 1; visibility: visible; pointer-events: auto/);
+  assert.doesNotMatch(css, /pv-works[^{]*\{[^}]*transform: scale/, '作品を演出用ズームで切らない');
+  assert.match(css, /prefers-reduced-motion: reduce\) \{[\s\S]*\.pv-works \.pv-photo, \.pv-works figcaption \{ transition: none/);
+  var js = read('scripts/mens-preview-653.js');
+  assert.doesNotMatch(js, /setInterval|setTimeout|scrollTo|scrollIntoView|click\(/, '自動再生・スクロールの強制移動をしない');
+  assert.match(js, /prefers-reduced-motion: reduce/);
+  assert.match(js, /catch \(e\) \{\s*root\.classList\.remove\('is-active'\)/);
+  assert.ok(html.indexOf('mens-preview-653.js') !== -1);
+});
+
+test('#653: 作品切替JSは reduced motion・非対応・例外時に .is-active を付けず、キャプションが帯に入った作品を表示中にする', function () {
   var vm = require('vm');
   function run(opts) {
-    var added = [], style = {};
-    var step = { classList: { add: function () {}, remove: function () {} }, getAttribute: function () { return '1'; } };
+    var added = [], io = null, works = [0, 1, 2, 3].map(function (i) {
+      var cls = {};
+      return { i: i, cls: cls, classList: { add: function (c) { cls[c] = true; }, remove: function (c) { delete cls[c]; } } };
+    });
+    var caps = works.map(function (w) { return { closest: function () { return w; } }; });
     var rootEl = {
       classList: { add: function (c) { added.push(c); }, remove: function (c) { added = added.filter(function (x) { return x !== c; }); } },
-      setAttribute: function () {}, style: { setProperty: function (k, v) { style[k] = v; } },
-      querySelectorAll: function () { return [step]; },
-      querySelector: function () { return { getBoundingClientRect: function () { return { bottom: 0 }; } }; }
+      querySelectorAll: function (q) { return q.indexOf('caption') !== -1 ? caps : works; }
     };
     var sb = {
       document: { querySelector: function () { return rootEl; } },
       matchMedia: function (q) { return { matches: q.indexOf('reduce') !== -1 ? !!opts.reduced : false }; },
-      addEventListener: function () {},
-      requestAnimationFrame: function (f) { f(); },
-      IntersectionObserver: opts.io
+      Array: Array,
+      IntersectionObserver: opts.io === undefined ? function (cb) { io = cb; this.observe = function () {}; } : opts.io
     };
     sb.window = sb;
-    vm.runInNewContext(read('scripts/mens-preview-639.js'), sb);
-    return added;
+    if (opts.noIo) delete sb.IntersectionObserver;
+    vm.runInNewContext(read('scripts/mens-preview-653.js'), sb);
+    return { added: added, works: works, io: io, caps: caps };
   }
-  var okIo = function () { this.observe = function () {}; };
-  assert.deepStrictEqual(run({ io: okIo }), ['is-active']);
-  assert.deepStrictEqual(run({ io: okIo, reduced: true }), []);
-  assert.deepStrictEqual(run({ io: function () { throw new Error('boom'); } }), []);
-});
-
-test('#639: スマホでは固定写真の下端より下にある最上段の説明を表示中にし、写真クリックは表示中の写真だけが受ける', function () {
-  var js = read('scripts/mens-preview-639.js');
-  assert.match(js, /max-width: 800px/);
-  assert.match(js, /getBoundingClientRect\(\)\.top >= line/);
-  var css = read('styles/mens-preview-633.css');
-  assert.match(css, /\.pv-scroll\.is-active \.pv-stage-photo \{[^}]*visibility: hidden; pointer-events: none/);
-  assert.match(css, /\.pv-stage-photo\[data-photo="rope"\] \{ opacity: 1; visibility: visible; pointer-events: auto/);
+  var ok = run({});
+  assert.deepStrictEqual(ok.added, ['is-active']);
+  assert.ok(ok.works[0].cls['is-current'], '初期は1作品目');
+  ok.io([{ isIntersecting: true, target: ok.caps[2] }]);
+  assert.ok(ok.works[2].cls['is-current'] && !ok.works[0].cls['is-current'], 'キャプション2が帯に入ると3作品目だけが表示中');
+  ok.io([{ isIntersecting: false, target: ok.caps[1] }]);
+  assert.ok(ok.works[2].cls['is-current'], '帯から出ただけでは切り替えない');
+  assert.deepStrictEqual(run({ reduced: true }).added, []);
+  assert.deepStrictEqual(run({ noIo: true }).added, []);
+  assert.deepStrictEqual(run({ io: function () { throw new Error('boom'); } }).added, []);
+  assert.deepStrictEqual(run({ io: function () { this.observe = function () { throw new Error('boom'); }; } }).added, []);
 });
 
 /* Issue #641: ヒーロー・OGP画像の差し替え（生成画像の実寸・参照の整合） */
@@ -504,7 +558,7 @@ test('#646: 追加9枚は既存WebPを参照し、width/heightが実寸と一致
     assert.ok(m, n + ' が参照されている');
     var sz = webpSize(fs.readFileSync(path.join(ROOT, 'images', n + '_1200.webp')));
     assert.deepStrictEqual({ w: +m[1], h: +m[2] }, sz, n + ' の寸法');
-    var navUse = ['backdrop-tiedye-gray', 'interior-classroom', 'gallery_man05'].indexOf(n) !== -1 ? 1 : 0; /* #651: 用途ナビでの小さな再利用のみ可 */
+    var navUse = ['gallery_man04', 'interior-classroom', 'gallery_man05'].indexOf(n) !== -1 ? 1 : 0; /* #651/#653: 用途カードでの小さな再利用のみ可 */
     assert.strictEqual(html.split('images/' + n + '_1200.webp').length - 1, 1 + navUse, n + ' は本文では1回だけ配置（用途ナビのサムネイルを除き重複配置しない）');
   });
   assert.doesNotMatch(html, /IMG_\d+\.jpe?g|224A0007|sample_0\d|studio-x-event|studiox_classroom|\.\.\/studio-x\//, '元JPEG・Studio X素材は参照しない');
@@ -560,28 +614,66 @@ test('#646: 試作はnoindex・計測JS/送信JS無し・現行トップ(mens/in
 });
 
 /* Issue #651: 用途導線の前倒し・作例と見出しの整理・法的事項の移動・歓迎説明の集約 */
-test('#651: HERO直下に4用途のナビがあり、通常アンカーで #usage/#scenes/#portrait-use/#group-use へ移動できる', function () {
+test('#651/#653: HERO直下に4用途のカードがあり、通常アンカーで #usage/#scenes/#costume-portrait-use/#classroom-use へ移動できる', function () {
   var html = read('mens/preview-633.html');
   var heroEnd = html.indexOf('<!-- 安心・PRIVATE（白） -->');
   var nav = html.match(/<nav class="pv-usenav" aria-label="用途から探す">[\s\S]*?<\/nav>/);
   assert.ok(nav, '用途ナビが存在する');
   assert.ok(html.indexOf(nav[0]) > html.indexOf('</section>', html.indexOf('class="pv-hero"')) && html.indexOf(nav[0]) < heroEnd, 'HEROの直後、PRIVATEより前');
   var hrefs = (nav[0].match(/<a class="pv-usenav-link" href="(#[^"]+)"/g) || []).map(function (a) { return a.match(/href="([^"]+)"/)[1]; });
-  assert.deepStrictEqual(hrefs, ['#usage', '#scenes', '#portrait-use', '#group-use']);
-  hrefs.forEach(function (h) { assert.strictEqual(html.split('id="' + h.slice(1) + '"').length - 1, 1, h + ' が1つだけ存在する'); });
+  assert.deepStrictEqual(hrefs, ['#usage', '#scenes', '#costume-portrait-use', '#classroom-use']);
+  hrefs.concat(['#portrait-use', '#group-use']).forEach(function (h) { assert.strictEqual(html.split('id="' + h.slice(1) + '"').length - 1, 1, h + ' が1つだけ存在する'); });
+  var labels = (nav[0].match(/<span class="pv-usenav-label">[^<]+/g) || []).map(function (x) { return x.replace(/<[^>]+>/, ''); });
+  assert.deepStrictEqual(labels, ['緊縛・ロープ撮影', 'フェチ', 'コスプレ・ポートレート', '教室セット']);
+  var imgs = (nav[0].match(/<img [^>]*>/g) || []).map(function (t) { return t.match(/src="\.\.\/images\/([^"]+)"/)[1]; });
+  assert.deepStrictEqual(imgs, ['gallery_man02_1200.webp', 'gallery_man05_1200.webp', 'gallery_man04_1200.webp', 'interior-classroom_1200.webp']);
+  assert.ok(nav[0].indexOf('男性同士の練習・床縄・吊りの作例') !== -1 && nav[0].indexOf('ユニフォームやシチュエーションを楽しむ撮影') !== -1 && nav[0].indexOf('好きな衣装での作品撮りや、人物・セルフ撮影に') !== -1 && nav[0].indexOf('学校机と黒板で、撮影シーンをつくる') !== -1, '説明文');
   assert.doesNotMatch(nav[0], /data-analytics|onclick|button/, '用途ナビは計測属性・JS依存を持たない');
-  assert.strictEqual((nav[0].match(/空間写真/g) || []).length, 2, 'ポートレート・仲間は空間写真であることを示す');
+  assert.strictEqual(html.indexOf('空間写真'), -1, '素材分類のバッジ・注記を置かない');
+  assert.strictEqual((nav[0].match(/alt=""/g) || []).length, 4, '装飾サムネイルは空alt（リンク文言が説明する）');
+  assert.match(nav[0], /pv-usenav-photo--head"><img src="\.\.\/images\/gallery_man04_1200\.webp"/, '仮面ライダーは頭部・衣装が分かるトリミング');
+  var css = read('styles/mens-preview-633.css');
+  assert.match(css, /\.pv-usenav-photo--head img \{ object-position: 50% 6%; \}/);
+  assert.match(css, /\.pv-usenav-list \{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/, 'PCは4列');
+  assert.match(css, /max-width: 800px\) \{[\s\S]*\.pv-usenav-list \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/, 'SPは2列×2行');
+  assert.match(css, /\.pv-usenav-label \{[^}]*overflow-wrap: anywhere/, '320pxでも文字がはみ出さない');
   assert.ok(html.indexOf('data-analytics-location="mens_hero"') !== -1 && html.indexOf('data-analytics-location="mens_hero" data-analytics-type="booking_app"') !== -1, 'HEROの予約・相談CTAを維持');
-  /* #portrait-use は「縛らない日も、自分たちらしく撮る。」のブロックに付く */
+  var cp = html.match(/<div class="pv-scene pv-scene--costume" id="costume-portrait-use">[\s\S]*?<div class="pv-scene pv-scene--landscape" id="classroom-use">/)[0];
+  assert.ok(cp.indexOf('href="#portrait-use"') !== -1, '衣装紹介から人物・セルフ撮影の紹介へ');
+  assert.ok(html.indexOf('class="pv-scene pv-scene--landscape" id="classroom-use"') !== -1 && html.indexOf('学校机と黒板のある空間') !== -1);
+  assert.doesNotMatch(nav[0], /href="#group-use"/, '教室カードは #group-use へ飛ばさない');
+});
+test('#653: 人物撮影の紹介は gallery_man03 の全身・照明機材の写真と指定コピーで、撮影代行などを示さない', function () {
+  var html = read('mens/preview-633.html');
   var pu = html.match(/<div class="pv-scene pv-scene--portrait" id="portrait-use">[\s\S]*?<div class="pv-group"/)[0];
   assert.ok(pu.indexOf('縛らない日も、自分たちらしく撮る。') !== -1 && pu.indexOf('href="#gallery"') !== -1, '説明と背景・照明への導線');
-  assert.ok(pu.indexOf('人物の作例は現在掲載しておらず') !== -1, '作例の有無を明示（捏造しない）');
+  assert.ok(pu.indexOf('gallery_man03_1200.webp" width="1200" height="800"') !== -1 && pu.indexOf('is-landscape') !== -1, '全身と左右のソフトボックスが見える横長のまま表示');
+  ['ユニフォームで、自分らしい一枚を。', '黒背景と照明を使った、ユニフォーム撮影の作例です。', '本格的な照明機材も、設営をサポート。'].forEach(function (t) { assert.ok(pu.indexOf(t) !== -1, t); });
+  assert.strictEqual(html.split('gallery_man03_1200.webp').length - 1, 1, '同じ写真の大きな重複掲載をしない');
+  assert.ok(pu.indexOf('身体表現・筋肉撮影') !== -1);
+  assert.doesNotMatch(pu, /人物の作例は現在掲載|利用できる用途の説明です|撮影代行|カメラ操作|撮影指導|無料|常駐|予約不要|私服|カップル|レザー/, '素材事情の注記・未確認条件を置かない');
+  assert.doesNotMatch(pu, /緊縛・フェチ/, 'ユニフォームだけで緊縛・フェチ撮影と決めつけない');
+  assert.match(read('styles/mens-preview-633.css'), /\.pv-scene--portrait \{ grid-template-columns: minmax\(0, 1\.2fr\) minmax\(0, 1fr\); \}/);
+});
+test('#653: 背景バリエーションはグランジ背景と和柄2枚の静的な3枚一覧で、Scenesに単独掲載せず、切替対象にしない', function () {
+  var html = read('mens/preview-633.html');
+  var m = html.match(/<ul class="pv-backdrops">[\s\S]*?<\/ul>/)[0];
+  assert.deepStrictEqual((m.match(/images\/([^"]+)"/g) || []).map(function (x) { return x.slice(7, -1); }), ['pattern-tsuru-black_1200.webp', 'pattern-asanoha-indigo_1200.webp', 'backdrop-tiedye-gray_1200.webp']);
+  assert.ok((m.match(/width="675" height="1200"/g) || []).length === 3 && (m.match(/pv-photo is-portrait/g) || []).length === 3, '3枚とも同じ写真枠');
+  assert.ok(m.indexOf('<figcaption>グランジ背景</figcaption>') !== -1 && m.indexOf('alt="グレーの濃淡とムラのあるグランジ背景"') !== -1);
+  assert.strictEqual((m.match(/class="gallery-image cursor-pointer"/g) || []).length, 3, '写真拡大を維持');
+  assert.ok(html.indexOf('背景バリエーション / Backdrop Variations') < html.indexOf('<ul class="pv-backdrops">'));
+  assert.strictEqual(html.split('backdrop-tiedye-gray_1200.webp').length - 1, 1, 'Scenes／ポートレート紹介に単独掲載しない');
+  assert.doesNotMatch(m, /data-pv-/, '背景一覧は写真切替の対象にしない');
+  var css = read('styles/mens-preview-633.css');
+  assert.match(css, /\.pv-backdrops \{[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
 });
 test('#651: 固定ヘッダー対策は main.js の scrollPaddingTop 同期に任せ、試作CSSで二重の余白を作らない', function () {
   assert.match(read('scripts/main.js'), /scrollPaddingTop/);
   var css = read('styles/mens-preview-633.css');
   var margins = css.match(/scroll-margin-top/g) || [];
   assert.strictEqual(margins.length, 2, 'fallbackのscroll-margin-topはPC・SPの各1行だけ');
+  assert.ok(css.indexOf(':is(#usage, #scenes, #costume-portrait-use, #classroom-use, #portrait-use, #group-use') !== -1, '#653: 新設アンカーにもJS無効時のfallback');
   (css.match(/^.*scroll-margin-top.*$/gm) || []).forEach(function (l) { assert.ok(l.indexOf('html:not([style*="scroll-padding-top"])') !== -1, 'main.jsの同期が効いているときは加算しない: ' + l); });
   assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, '').split('[style*="scroll-padding-top"]').join(''), /scroll-padding/, 'scroll-padding-top を試作CSSで設定しない');
 });
@@ -607,18 +699,21 @@ test('#651: 歓迎説明はPRIVATEの1か所に集約し、特徴欄に重複さ
   assert.strictEqual((feat.match(/<div class="feature-card">/g) || []).length, 4);
   assert.doesNotMatch(feat, /歓迎|完全個室・無人入室/);
 });
-test('#651: ヒーロー衣装写真は衣装の作例として Scenes に置き、ギャラリーに「身体表現・筋肉撮影」の作例として残さない', function () {
+test('#651/#653: ヒーロー衣装写真は衣装の作例として Scenes に置き、素材事情の注記・「人物なし」等の分類表記を本文に残さない', function () {
   var html = read('mens/preview-633.html');
   var scenes = html.match(/<section class="pv-uniform" id="scenes">[\s\S]*?<\/section>/)[0];
   var gallery = html.match(/<section id="gallery">[\s\S]*?<\/section>/)[0];
   assert.ok(scenes.indexOf('hero_mens_1200.webp') !== -1 && scenes.indexOf('ヒーロー衣装の作例（白背景）') !== -1);
   assert.strictEqual(gallery.indexOf('hero_mens_1200.webp'), -1);
   assert.strictEqual(gallery.indexOf('筋肉'), -1, '筋肉撮影の見出しをギャラリーの作例見出しにしない');
-  assert.ok(scenes.indexOf('身体表現・筋肉撮影') !== -1, '用途自体は削除せず、人物作例が無い旨と併記');
-  assert.ok(scenes.indexOf('スポーツウェアやレザーなども利用できますが、現在は作例を掲載していません') !== -1, 'レザー・スポーツウェアは利用可否と作例の有無を区別');
+  assert.ok(scenes.indexOf('身体表現・筋肉撮影') !== -1, '用途自体は削除しない');
+  var body = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  ['人物なし', '空間写真', '人物の作例は現在掲載', '利用できる用途の説明です', '現在は作例を掲載していません'].forEach(function (t) { assert.strictEqual(body.indexOf(t), -1, '注記を残さない: ' + t); });
+  assert.ok(scenes.indexOf('スポーツウェア撮影') !== -1 && scenes.indexOf('フェティッシュ衣装の作品撮り') !== -1, '用途の見出しは維持');
   assert.strictEqual(html.indexOf('追加候補'), -1, '内部向けラベルを表示しない');
   assert.ok(html.indexOf('背景バリエーション / Backdrop Variations') !== -1);
   assert.ok(html.indexOf('alt="白背景で撮影した男性モデルのヒーローコスチューム作例"') !== -1, '既存altを推測で書き換えない');
+  assert.ok(html.indexOf('alt="学校机と黒板のある撮影スペース"') !== -1 && html.indexOf('<figcaption>学校机と黒板のある空間</figcaption>') !== -1);
 });
 test('#651: 少人数利用は 見出し→楽しみ方→人数→相談CTA→利用条件 の順で、必要な告知を保持する', function () {
   var html = read('mens/preview-633.html');
