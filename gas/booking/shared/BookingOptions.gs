@@ -332,6 +332,72 @@ var BookingOptions = (function () {
     return e;
   }
 
+
+  /*
+   * Issue #667: SNB mensの作品撮りサポートプランに付ける有料機材。共通機材カタログ（EquipmentCatalog.gs＝_data/studio_x_equipment.json）の
+   * 単価・在庫・セット無料条件をそのまま使い、mens用に単価・在庫を複製しない。選んだ機材は部屋料金・スタッフ対応料金と同じ
+   * 1回の承認・1回のお支払いに含める（別注文にしない。支払総額に既存のキャンセル規定を適用する）。スタッフが事前配置するため、
+   * Studio Xの設営方法の選択・セルフレンタルの利用許可（施錠管理）は使わない。常設備品・無料備品を有料化しない（無料のセルフ備品は0円のまま）。
+   * equipment: { 機材コード: 数量 }。戻り値: { ok:true, empty, lines:[{code,label,quantity,freeQuantity,unitPriceJpy,amountJpy}], items:['EQ:..'], totalJpy }
+   *            | { ok:false, error }。未知の機材・小数・負数・在庫超過は拒否する（fail-closed）。
+   */
+  function computeSupportEquipment(equipment) {
+    ensureCatalogInitialized_();
+    if (equipment === undefined || equipment === null || equipment === '') return { ok: true, empty: true, lines: [], items: [], totalJpy: 0 };
+    if (!isPlainObject_(equipment) || Object.keys(equipment).length > 30) {
+      return { ok: false, error: err_('INVALID_OPTIONS', '有料機材の指定形式が正しくありません。') };
+    }
+    var chosen = {};
+    var codes = Object.keys(equipment);
+    for (var i = 0; i < codes.length; i++) {
+      var code = codes[i];
+      var def = equipmentRental_(code) || equipmentFreeSelf_(code);
+      if (!def) return { ok: false, error: err_('UNKNOWN_OPTION', '選択できない機材が含まれています。') };
+      var qty = equipment[code];
+      if (typeof qty !== 'number' || !Number.isFinite(qty) || Math.round(qty) !== qty || qty < 0) {
+        return { ok: false, error: err_('INVALID_OPTIONS', def.label + 'の数量が正しくありません。') };
+      }
+      if (qty > def.stock) {
+        return { ok: false, error: err_('STOCK_EXCEEDED', def.label + 'は最大' + def.stock + '点までです。', { items: [code] }) };
+      }
+      if (qty > 0) chosen[code] = qty;
+    }
+    var bundleFree = bundleFreeQuantities_(chosen);
+    var lines = [];
+    var items = [];
+    var total = 0;
+    Object.keys(chosen).forEach(function (code) {
+      var rental = equipmentRental_(code);
+      var def = rental || equipmentFreeSelf_(code);
+      var quantity = chosen[code];
+      var freeQuantity = rental ? (bundleFree[code] || 0) : 0;
+      var unit = rental ? rental.unitPriceJpy : 0;
+      var amount = rental ? unit * (quantity - freeQuantity) : 0;
+      lines.push({ code: code, label: def.label, quantity: quantity, freeQuantity: freeQuantity, unitPriceJpy: unit, amountJpy: amount });
+      items.push(equipmentItemCode_(code, quantity, freeQuantity));
+      total += amount;
+    });
+    return { ok: true, empty: lines.length === 0, lines: lines, items: items, totalJpy: total };
+  }
+
+  /* 予約に保存した機材項目（'EQ:..'の配列またはカンマ区切り文字列）を、メール・管理画面の表示用の文言へ。 */
+  function describeSupportEquipment(stored) {
+    var list = Array.isArray(stored) ? stored : String(stored || '').split(',');
+    return list.filter(function (item) { return !!parseEquipmentItem_(item); }).map(describeItem);
+  }
+
+  /* 利用者向けの機材一覧（作品撮りサポートの機材選択用）。共通カタログの有料レンタル全件＋選択可能な無料備品。 */
+  function supportEquipmentCatalog_() {
+    return StudioXEquipmentCatalog.rental.map(function (item) {
+      return {
+        code: item.code, label: item.label, unitPriceJpy: item.unitPriceJpy, unitLabel: item.unitLabel || '', stock: item.stock,
+        freeWhenWith: item.freeWhenWith ? { codes: item.freeWhenWith.codes.slice(), label: item.freeWhenWith.label } : null
+      };
+    }).concat(StudioXEquipmentCatalog.freeSelf.filter(function (item) { return item.selectable === true; }).map(function (item) {
+      return { code: item.code, label: item.label, unitPriceJpy: 0, unitLabel: '', stock: item.stock, freeWhenWith: null };
+    }));
+  }
+
   /* 利用者向けカタログ（optionCatalog API）。PIIを含まない。 */
   function buildCatalog(brand, config) {
     if (!isBrandEnabled(brand)) {
@@ -344,7 +410,9 @@ var BookingOptions = (function () {
         brand: brand,
         currency: CURRENCY_,
         showerOnly: true,
-        shower: { code: SHOWER_ITEM_CODE, label: SHOWER_LABEL_, priceJpy: SHOWER_PRICE_JPY_, memberOnly: true, perBooking: 1 }
+        shower: { code: SHOWER_ITEM_CODE, label: SHOWER_LABEL_, priceJpy: SHOWER_PRICE_JPY_, memberOnly: true, perBooking: 1 },
+        /* Issue #667: 作品撮りサポートプランで選べる有料機材（共通カタログ。単価・在庫・セット無料条件の複製ではなく同じ正本）。 */
+        supportEquipment: brand === 'mens' ? (ensureCatalogInitialized_(), supportEquipmentCatalog_()) : undefined
       };
     }
     ensureCatalogInitialized_();
@@ -1175,6 +1243,8 @@ var BookingOptions = (function () {
     buildCatalog: buildCatalog,
     normalizeSelection: normalizeSelection,
     describeItem: describeItem,
+    computeSupportEquipment: computeSupportEquipment,
+    describeSupportEquipment: describeSupportEquipment,
     isLectureRequiredItem: isLectureRequiredItem,
     lectureRequiredCodesOfItems: lectureRequiredCodesOfItems,
     equipmentLabel: equipmentLabel,

@@ -173,6 +173,8 @@
     planPhotoNote: document.getElementById('ba-plan-photo-support-note'),
     photoServicesWrap: document.getElementById('ba-photo-support-services'),
     photoError: document.getElementById('ba-photo-support-error'),
+    photoEquipmentWrap: document.getElementById('ba-photo-support-equipment'),
+    photoEquipmentList: document.getElementById('ba-photo-support-equipment-list'),
     showerNote: document.getElementById('ba-shower-note'),
     planEvent: document.getElementById('ba-plan-event'),
     planBanner: document.getElementById('ba-plan-banner'),
@@ -535,6 +537,63 @@
   function benefitChoiceOf_(control) {
     return control && control.parentNode ? control.parentNode : null;
   }
+  /* Issue #667: 作品撮りサポートに付ける有料機材。一覧・単価・在庫は共通機材カタログ（optionCatalogのsupportEquipment）をそのまま表示し、
+     フロントに価格を持たない。数量だけを送り、金額・セット無料はサーバーが計算する。 */
+  var photoEquipmentCatalog_ = null;
+  var photoEquipmentRequested_ = false;
+  var photoEquipment_ = {};
+  function photoSupportEquipmentMap_() {
+    var out = {};
+    Object.keys(photoEquipment_).forEach(function (code) { if (photoEquipment_[code] > 0) out[code] = photoEquipment_[code]; });
+    return out;
+  }
+  function photoSupportEquipmentParam_() {
+    var map = photoSupportEquipmentMap_();
+    return Object.keys(map).sort().map(function (code) { return code + ':' + map[code]; }).join(',');
+  }
+  function renderPhotoEquipment_() {
+    var list = els.photoEquipmentList;
+    if (!list || !photoEquipmentCatalog_ || typeof document.createElement !== 'function') return;
+    list.innerHTML = '';
+    photoEquipmentCatalog_.forEach(function (item) {
+      var row = document.createElement('label');
+      row.className = 'ba-choice';
+      var select = document.createElement('select');
+      select.setAttribute('aria-label', item.label);
+      for (var n = 0; n <= Math.min(Number(item.stock) || 0, 10); n++) {
+        var option = document.createElement('option');
+        option.value = String(n);
+        option.textContent = String(n);
+        select.appendChild(option);
+      }
+      select.value = String(photoEquipment_[item.code] || 0);
+      select.addEventListener('change', function () {
+        photoEquipment_[item.code] = Number(select.value) || 0;
+        refreshPriceEstimate_();
+      });
+      var price = item.unitPriceJpy > 0 ? Logic.formatJpyAmount(item.unitPriceJpy) + (item.unitLabel ? '／' + item.unitLabel : '') : '無料';
+      var text = document.createElement('span');
+      text.textContent = ' ' + item.label + '（' + price + (item.freeWhenWith && item.freeWhenWith.label ? '・' + item.freeWhenWith.label : '') + '）';
+      row.appendChild(select);
+      row.appendChild(text);
+      list.appendChild(row);
+    });
+  }
+  function ensurePhotoEquipmentCatalog_() {
+    if (photoEquipmentRequested_ || !API_BASE_URL || typeof fetch !== 'function') return;
+    photoEquipmentRequested_ = true;
+    try {
+      fetch(API_BASE_URL + (API_BASE_URL.indexOf('?') === -1 ? '?' : '&') + 'action=optionCatalog&brand=' + encodeURIComponent(brand))
+        .then(function (response) { return response.json(); })
+        .then(function (body) {
+          var items = body && body.success === true && body.catalog && body.catalog.supportEquipment;
+          if (Array.isArray(items)) { photoEquipmentCatalog_ = items; renderPhotoEquipment_(); }
+          else photoEquipmentRequested_ = false;
+        })
+        .catch(function () { photoEquipmentRequested_ = false; });
+    } catch (e) { photoEquipmentRequested_ = false; }
+  }
+
   /* Issue #667: 作品撮りサポートの選択可否・案内・スタッフ対応欄・支払方法（承認後のカード決済のみ）を同期する。表示制御のみで、最終判定はサーバー。 */
   function syncPhotoSupport_(unlocked) {
     if (!els.planPhoto) return;
@@ -550,6 +609,9 @@
     var note = Logic.photoSupportNote(reason, locale);
     if (els.planPhotoNote) { els.planPhotoNote.textContent = note; els.planPhotoNote.hidden = !note; }
     if (els.photoServicesWrap) els.photoServicesWrap.hidden = !els.planPhoto.checked;
+    if (els.photoEquipmentWrap) els.photoEquipmentWrap.hidden = !els.planPhoto.checked;
+    if (els.planPhoto.checked) ensurePhotoEquipmentCatalog_();
+    else photoEquipment_ = {};
     if (!els.planPhoto.checked) {
       root.querySelectorAll('input[name="supportServices"]').forEach(function (radio) { radio.checked = false; });
       if (els.photoError) els.photoError.hidden = true;
@@ -1237,7 +1299,7 @@
 
   function currentPriceEstimateKey_() {
     var dateValue = els.date ? els.date.value : '';
-    return priceEstimateKey_(dateValue, currentCalendarDurationMinutes_(), estimateMemberFlag_(), selectedPlan_() + (photoSupportSelected_() ? ':' + photoSupportServices_() : ''));
+    return priceEstimateKey_(dateValue, currentCalendarDurationMinutes_(), estimateMemberFlag_(), selectedPlan_() + (photoSupportSelected_() ? ':' + photoSupportServices_() + ':' + photoSupportEquipmentParam_() : ''));
   }
 
   function priceEstimateUrl_(dateValue, durationMinutes, memberFlag, plan) {
@@ -1250,7 +1312,8 @@
       '&isMember=' + (memberFlag ? '1' : '0') +
       /* 2名ペアパックの見積り。見積りAPIは会員台帳を照会しない（資格の確認は予約作成時のサーバー側のみ）。 */
       (plan ? '&plan=' + encodeURIComponent(plan) : '') +
-      (plan === Logic.PHOTO_SUPPORT_PLAN_CODE ? '&supportServices=' + encodeURIComponent(photoSupportServices_()) : '');
+      (plan === Logic.PHOTO_SUPPORT_PLAN_CODE ? '&supportServices=' + encodeURIComponent(photoSupportServices_()) +
+        (photoSupportEquipmentParam_() ? '&supportEquipment=' + encodeURIComponent(photoSupportEquipmentParam_()) : '') : '');
   }
 
   /* lineEl/noteElの組へ、現在の見積り状態を描画する。取得中・失敗時はlineElを必ず
@@ -1379,7 +1442,7 @@
       return;
     }
 
-    var key = priceEstimateKey_(dateValue, durationMinutes, memberFlag, plan + (supportServices ? ':' + supportServices : ''));
+    var key = priceEstimateKey_(dateValue, durationMinutes, memberFlag, plan + (supportServices ? ':' + supportServices + ':' + photoSupportEquipmentParam_() : ''));
     var cached = priceEstimateCache[key];
     if (cached) {
       renderPriceEverywhere_(cached);
@@ -1402,13 +1465,14 @@
     var estimateEpoch = testCredentialEpoch_;
     var memberStatusPayload = { brand: brand, email: memberAuth.email, proof: memberAuth.proof, date: dateValue, durationMinutes: durationMinutes, plan: plan, people: els.people ? els.people.value : '', autoPairPack: !showerPackSelected_() && !photoSupportSelected_() };
     if (supportServices) memberStatusPayload.supportServices = supportServices;
+    if (supportServices && photoSupportEquipmentParam_()) memberStatusPayload.supportEquipment = photoSupportEquipmentMap_();
     if (credentialBody) memberStatusPayload.testCredential = credentialBody.testCredential;
     var pendingEstimate = verifiedQuote
       ? postApi_('bookingMemberStatus', memberStatusPayload)
       : credentialBody
         /* Issue #559: テスト資格付きの見積りはPOST（本文JSON・text/plain）。資格が無い通常利用者は従来のGET。 */
         ? postApi_('testEstimatePrice', {
-          brand: brand, date: dateValue, durationMinutes: String(durationMinutes), isMember: memberFlag ? '1' : '0', plan: plan || '', supportServices: supportServices,
+          brand: brand, date: dateValue, durationMinutes: String(durationMinutes), isMember: memberFlag ? '1' : '0', plan: plan || '', supportServices: supportServices, supportEquipment: photoSupportEquipmentParam_(),
           email: credentialBody.email, testCredential: credentialBody.testCredential
         })
         : fetch(priceEstimateUrl_(dateValue, durationMinutes, memberFlag, plan), { method: 'GET' }).then(function (response) { return response.json(); });
@@ -2636,6 +2700,7 @@
         isMember: state.isMember,
         plan: selectedPlan_(),
         supportServices: photoSupportSelected_() ? photoSupportServices_() : '',
+        supportEquipment: photoSupportSelected_() ? photoSupportEquipmentMap_() : {},
         shower: showerSelected_(),
         showerScheduleConfirmed: !!els.showerSchedule && els.showerSchedule.checked,
         autoPairPack: (brand === 'snb' || brand === 'mens') && memberFeaturesEnabled_() && !showerPackSelected_() && !photoSupportSelected_(),
@@ -2671,6 +2736,19 @@
             return;
           }
           hasSubmittedSuccessfully = true;
+          /* Issue #667: 作品撮りサポートの申込成功だけ、既存の成果イベント(generate_lead)にプランとスタッフ対応種別を付けて送る（新しい成果イベントは作らない。
+             分類値のみ。氏名・メール・日時・自由記述は送らない）。通常予約は従来どおり送らない。 */
+          if (body.supportStage && payload.plan === Logic.PHOTO_SUPPORT_PLAN_CODE &&
+              window.StudioAnalytics && typeof window.StudioAnalytics.trackGenerateLead === 'function') {
+            try {
+              window.StudioAnalytics.trackGenerateLead('mens_photo_support:' + body.bookingId, {
+                lead_type: 'mens_photo_support',
+                form_name: 'mens_booking',
+                plan_code: Logic.PHOTO_SUPPORT_PLAN_CODE,
+                support_service: payload.supportServices || ''
+              });
+            } catch (analyticsError) { /* 計測失敗で予約は止めない */ }
+          }
           els.completeBookingId.textContent = body.bookingId || '';
           renderOptionsResult_(body.options);
           els.completeBackLink.href = backUrl;

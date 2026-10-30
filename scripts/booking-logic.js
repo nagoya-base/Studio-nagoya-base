@@ -515,6 +515,8 @@
     if (s.plan === PHOTO_SUPPORT_PLAN_CODE) {
       payload.plan = PHOTO_SUPPORT_PLAN_CODE;
       payload.supportServices = s.supportServices || '';
+      /* 有料機材 { 機材コード: 数量 }。数量だけを送る（単価・在庫・セット無料は共通カタログでサーバーが計算する）。 */
+      if (s.supportEquipment && typeof s.supportEquipment === 'object' && Object.keys(s.supportEquipment).length > 0) payload.supportEquipment = s.supportEquipment;
     }
     if (s.shower === true) payload.options = { shower: true, showerScheduleConfirmed: s.showerScheduleConfirmed === true };
     if (s.autoPairPack === true) payload.autoPairPack = true;

@@ -137,12 +137,16 @@ var BookingMailTemplates = (function () {
     var room = formatJpyAmount_(record.supportRoomAmount);
     var staff = formatJpyAmount_(record.supportStaffAmount);
     var total = formatJpyAmount_(record.priceAmount);
+    var equipmentItems = typeof BookingOptions !== 'undefined' && record.supportEquipment ? BookingOptions.describeSupportEquipment(record.supportEquipment) : [];
+    var equipmentAmount = formatJpyAmount_(record.supportEquipmentAmount);
     return [
       'ご利用プラン: ' + (typeof BookingPricing !== 'undefined' ? BookingPricing.planLabel(record.planCode) : '作品撮りサポートプラン'),
       servicesLabel ? 'スタッフ対応: ' + servicesLabel : '',
       room ? '部屋料金: ' + room + '（税込）' : '',
       staff ? 'スタッフ対応料金: ' + staff + '（税込）' : '',
-      total ? 'お支払い合計: ' + total + '（税込。有料機材は別料金・別注文です）' : ''
+      equipmentItems.length > 0 ? '有料機材: ' + equipmentItems.join('、') : '',
+      equipmentItems.length > 0 && equipmentAmount ? '有料機材料金: ' + equipmentAmount + '（税込。共通の機材カタログの料金）' : '',
+      total ? 'お支払い合計: ' + total + '（税込' + (equipmentItems.length > 0 ? '。部屋料金・スタッフ対応料金・有料機材料金の合計' : '。有料機材は別料金で、お申し込みの場合は合計に加算します') + '）' : ''
     ];
   }
 

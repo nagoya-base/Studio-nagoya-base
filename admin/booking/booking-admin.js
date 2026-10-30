@@ -62,6 +62,8 @@ var DETAIL_FIELDS = [
   ['supportServicesLabel', 'スタッフ対応（設営／片付け）'],
   ['supportRoomAmount', '部屋料金（税込）'],
   ['supportStaffAmount', 'スタッフ対応料金（税込）'],
+  ['supportEquipmentLines', '有料機材（共通カタログ）'],
+  ['supportEquipmentAmount', '有料機材料金（税込）'],
   ['supportApprovedAt', '承認日時'],
   ['supportPaymentDueAt', '支払い期限（承認後24時間）'],
   ['priceAmount', '自動計算金額（税込）'],
@@ -151,7 +153,8 @@ function formatValue(key, value) {
   if (key === 'status') return statusLabel(value) || '（未設定）';
   if (key === 'priceTier') return priceTierLabel_(value) || '（未設定）';
   if (key === 'priceDayType') return priceDayTypeLabel_(value) || '（未設定）';
-  if (key === 'supportRoomAmount' || key === 'supportStaffAmount') return formatYen_(value);
+  if (key === 'supportEquipmentLines') return Array.isArray(value) ? value.join('、') : '';
+  if (key === 'supportRoomAmount' || key === 'supportStaffAmount' || key === 'supportEquipmentAmount') return formatYen_(value);
   if (key === 'priceAmount' || key === 'effectivePriceAmount' || key === 'priceOverrideAmount') {
     return formatYen_(value) || '（未計算。過去の予約データ等）';
   }
@@ -594,6 +597,8 @@ function showDetailModal(booking) {
     if (key === 'planLabel' && !booking.planLabel) return '';
     if (key.indexOf('support') === 0 && !booking.supportStage) return '';
     if ((key === 'supportApprovedAt' || key === 'supportPaymentDueAt') && !booking[key]) return '';
+    if (key === 'supportEquipmentLines' && !(booking.supportEquipmentLines && booking.supportEquipmentLines.length)) return '';
+    if (key === 'supportEquipmentAmount' && !(booking.supportEquipmentLines && booking.supportEquipmentLines.length)) return '';
     if ((key === 'supportRoomAmount' || key === 'supportStaffAmount') && (booking[key] === null || booking[key] === undefined)) return '';
     return '<dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(formatValue(key, booking[key])) + '</dd>';
   }).join('');

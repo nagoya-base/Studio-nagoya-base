@@ -631,6 +631,9 @@ function buildAdminPhotoSupportFields_(record, timezone) {
     supportApprovedAt: formatAdminDateTime_(record.supportApprovedAt, timezone),
     supportPaymentDueAt: formatAdminDateTime_(record.supportPaymentDueAt, timezone),
     supportApprovalMailSent: !!record.supportApprovalMailSentAt,
+    /* 有料機材（共通機材カタログ）。選択内容の文言と機材料金。機材なしは空配列・0。 */
+    supportEquipmentLines: record.supportEquipment ? BookingOptions.describeSupportEquipment(record.supportEquipment) : [],
+    supportEquipmentAmount: record.supportEquipmentAmount === '' || record.supportEquipmentAmount === undefined ? 0 : Number(record.supportEquipmentAmount),
     canApproveSupport: stage === 'AWAITING_APPROVAL',
     canResendSupportApproval: stage === 'AWAITING_PAYMENT' && !record.supportApprovalMailSentAt,
     membershipStatus: record.membershipStatus || ''

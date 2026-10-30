@@ -594,6 +594,8 @@ var Booking = (function () {
         plan: input.plan === undefined || input.plan === null ? '' : String(input.plan).trim().slice(0, 50),
         /* Issue #667: 作品撮りサポートプランのスタッフ対応種別（'SETUP'|'CLEANUP'|'BOTH'）。値の検証・必須判定は
            BookingPricing.normalizeSupportServices（BookingRepository.createBooking）。他のプランでは使わない。 */
+        /* Issue #667: 作品撮りサポートに付ける有料機材 { 機材コード: 数量 }。形式・在庫・料金は BookingOptions.computeSupportEquipment が検証する。 */
+        supportEquipment: input.supportEquipment !== null && typeof input.supportEquipment === 'object' && !Array.isArray(input.supportEquipment) ? input.supportEquipment : undefined,
         supportServices: input.supportServices === undefined || input.supportServices === null ? '' : String(input.supportServices).trim().slice(0, 20),
         date: input.date,
         startTime: input.startTime,

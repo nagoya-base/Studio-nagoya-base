@@ -428,13 +428,17 @@
         <label class="ba-choice"><input type="radio" name="supportServices" value="CLEANUP"> <span>片付け　3,000円</span></label>
         <label class="ba-choice"><input type="radio" name="supportServices" value="BOTH"> <span>事前設営＋片付け　5,000円</span></label>
       </div>
+      <div class="ba-choices" id="ba-photo-support-equipment" hidden>
+        <p class="ba-field-help"><strong>有料機材（任意・別料金）</strong>：共通の機材カタログの料金・在庫・セット無料条件で計算し、部屋料金・スタッフ対応料金と合わせて、承認後の1回のお支払いに含めます。スタッフが事前に配置します。料金内の常設備品・無料備品は有料になりません。</p>
+        <div id="ba-photo-support-equipment-list"></div>
+      </div>
       <p class="ba-field-error" id="ba-photo-support-error" hidden></p>
       <ul class="ba-field-help" id="ba-photo-support-terms">
         <li>SNB MEMBER限定・1〜4名限定です（5名以上は選べません）。無料サービスではありません。</li>
         <li>利用日の7日前までにお申し込みください。申込時点で対象時間帯を仮押さえし、運営がスタッフ対応の可否・機材・予約枠を確認します（承認制）。</li>
         <li>承認前はお支払いできません。承認後24時間以内にお支払いください（未払いの場合は不成立となり、仮押さえを解除します）。通常のSNB mens料金へは自動で切り替わりません。</li>
         <li>スタッフが常駐するサービスではなく、当日のご依頼はできません。撮影代行・緊縛の施術や指導・吊り設備の組み替えは含みません。</li>
-        <li>必要な有料機材は別料金です。このプランは、5〜8名の大人数利用・2名ペアパック・土日祝4時間シャワーパックなど、部屋料金自体を置き換える他のプランとは併用できません。</li>
+        <li>必要な有料機材は別料金です。このプランは、5〜7名の大人数利用・2名ペアパック・土日祝4時間シャワーパックなど、部屋料金自体を置き換える他のプランとは併用できません。</li>
         <li>支払いは承認後のオンラインクレジットカード決済のみです。確定後のキャンセルは、お支払い総額に対しSNBの既存のキャンセル規定を適用します。詳しくは<a href="{{ '/mens/membership/' | relative_url }}#photo-support" target="_blank" rel="noopener">会員案内</a>をご覧ください。</li>
       </ul>
     </fieldset>

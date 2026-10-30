@@ -475,6 +475,7 @@ var BookingPricing = (function () {
       }
     }
     var supportServices = null;
+    var supportEquipment = { empty: true, lines: [], items: [], totalJpy: 0 };
     if (plan === PLAN.MENS_PHOTO_SUPPORT) {
       /* Issue #667: 独立プラン。対象ブランド（mensのみ）・利用日（効力発生日以降）・スタッフ対応の種別（いずれか必須）を満たさなければ
          通常料金へ倒さず拒否する。1〜4名・申込期限（7日前）・会員資格は人数・現在時刻・台帳を扱う呼び出し側（予約作成・見積りPOST）が判定する。 */
@@ -484,6 +485,14 @@ var BookingPricing = (function () {
       supportServices = normalizeSupportServices(params.supportServices);
       if (supportServices === null) {
         return { valid: false, error: { code: 'PHOTO_SUPPORT_SERVICE_REQUIRED', message: PHOTO_SUPPORT_.label + 'では、スタッフ対応（事前設営／片付け／事前設営＋片付け）を1つ選択してください。' } };
+      }
+      /* 有料機材（任意）。共通機材カタログ（BookingOptions.gs）を正本に、単価・在庫・セット無料条件を再利用する（複製しない）。 */
+      if (params.supportEquipment !== undefined && params.supportEquipment !== null && params.supportEquipment !== '') {
+        if (typeof BookingOptions === 'undefined') {
+          return { valid: false, error: { code: 'INVALID_OPTIONS', message: '有料機材の料金を計算できません。' } };
+        }
+        supportEquipment = BookingOptions.computeSupportEquipment(params.supportEquipment);
+        if (!supportEquipment.ok) return { valid: false, error: supportEquipment.error };
       }
     }
     if (plan === PLAN.OSU_COSPLAY_BASE_6H) {
@@ -512,7 +521,7 @@ var BookingPricing = (function () {
     if (plan === PLAN.MENS_PHOTO_SUPPORT) {
       roomAmount = hours * PHOTO_SUPPORT_.hourlyRate[dayType];
       staffAmount = PHOTO_SUPPORT_.staffFee[supportServices];
-      amount = roomAmount + staffAmount;
+      amount = roomAmount + staffAmount + supportEquipment.totalJpy;
     } else if (plan === PLAN.MEMBER_PAIR_3H) amount = computePairPackAmount_(dayType, hours);
     else if (plan === PLAN.MENS_WEEKEND_SHOWER_4H) amount = SHOWER_PACK_.price;
     else if (plan === PLAN.OSU_COSPLAY_BASE_6H) amount = hours * EVENT_BASE_PLAN_.hourlyRate;
@@ -543,6 +552,10 @@ var BookingPricing = (function () {
       result.price.supportServices = supportServices;
       result.price.roomAmount = roomAmount;
       result.price.staffAmount = staffAmount;
+      /* 有料機材料金（共通カタログ）。amountは部屋料金＋スタッフ対応料金＋有料機材料金の合計（1回の承認・1回のお支払い）。 */
+      result.price.equipmentAmount = supportEquipment.totalJpy;
+      result.price.equipmentLines = supportEquipment.lines;
+      result.price.equipmentItems = supportEquipment.items;
     }
     return result;
   }

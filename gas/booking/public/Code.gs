@@ -401,7 +401,8 @@ function handleBookingMemberStatus_(payload) {
       startTime: payload.startTime,
       generation: generation,
       plan: plan,
-      supportServices: payload.supportServices
+      supportServices: payload.supportServices,
+      supportEquipment: payload.supportEquipment
     });
     if (priceResult.valid) status.price = priceResult.price;
     else if (BookingPricing.isPhotoSupport(plan)) return { success: false, error: priceResult.error };
@@ -623,7 +624,9 @@ function handleEstimatePrice_(params, context) {
     /* Issue #478: 2名ペアパックの見積り。見積りAPIでは会員台帳を一切照会しない（会員の有無を
        探る口にしない）。資格の確認は予約作成時のサーバー側だけで行う。 */
     plan: params.plan,
-    supportServices: params.supportServices
+    supportServices: params.supportServices,
+    /* Issue #667: 有料機材は 'CODE:数量,CODE:数量' 形式のクエリ。共通カタログで検証・料金計算する。 */
+    supportEquipment: parseSupportEquipmentParam_(params.supportEquipment)
   });
   if (!priceResult.valid) {
     return { success: false, error: priceResult.error };
@@ -639,6 +642,18 @@ function handleEstimatePrice_(params, context) {
   };
   if (params.brand === 'studio_x') estimate.memberAuthRequired = decision.memberAuthRequired === true;
   return withTestCredentialStatus_(estimate, decision);
+}
+
+function parseSupportEquipmentParam_(raw) {
+  if (typeof raw !== 'string' || raw === '') return undefined;
+  var out = {};
+  var parts = raw.split(',');
+  for (var i = 0; i < parts.length && i < 31; i++) {
+    var m = /^([A-Z0-9_]+):(\d{1,3})$/.exec(parts[i]);
+    if (!m) return { __invalid__: -1 };
+    out[m[1]] = Number(m[2]);
+  }
+  return out;
 }
 
 function isEstimateMemberTierLocked_(brand, generation) {

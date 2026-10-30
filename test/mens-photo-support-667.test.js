@@ -702,3 +702,107 @@ test('GAS配布: 追加ファイルは無く、列追加の手順（README）と
   var headers = loadBookingSandbox(['SpreadsheetRepository.gs', 'Config.gs'], {}).SpreadsheetRepository;
   assert.ok(headers);
 });
+
+// ============================================================================
+// 有料機材（共通機材カタログを正本に、同じ承認・同じお支払いへ含める）
+// ============================================================================
+
+var CATALOG_JSON = JSON.parse(read('_data/studio_x_equipment.json'));
+function rentalOf(code) { return CATALOG_JSON.rental.filter(function (r) { return r.code === code; })[0]; }
+
+test('有料機材: 共通カタログの単価で計算し、部屋料金＋スタッフ対応料金＋機材料金の合計になる（mens用に単価を複製しない）', function () {
+  var P = loadBookingSandbox(['JapaneseHolidays.gs', 'EquipmentCatalog.gs', 'BookingPricing.gs', 'BookingOptions.gs', 'MembershipRules.gs', 'Config.gs'], {}).BookingPricing;
+  var paid = CATALOG_JSON.rental.filter(function (r) { return r.unitPriceJpy > 0 && !r.freeWhenWith && r.stock >= 2; })[0];
+  assert.ok(paid, 'セット無料条件の無い、在庫2点以上の有料機材がカタログにある');
+  var base = priceOf(P, { date: WEEKDAY, durationMinutes: 120, supportServices: 'SETUP' });
+  var eq = {}; eq[paid.code] = 2;
+  var withEq = priceOf(P, { date: WEEKDAY, durationMinutes: 120, supportServices: 'SETUP', supportEquipment: eq });
+  assert.strictEqual(withEq.valid, true, JSON.stringify(withEq));
+  assert.strictEqual(withEq.price.equipmentAmount, paid.unitPriceJpy * 2, 'カタログ単価×数量');
+  assert.strictEqual(withEq.price.amount, base.price.amount + paid.unitPriceJpy * 2);
+  assert.strictEqual(withEq.price.roomAmount, base.price.roomAmount);
+  assert.strictEqual(withEq.price.staffAmount, base.price.staffAmount);
+  assert.strictEqual(base.price.equipmentAmount, 0, '機材なしは0円');
+  assert.deepStrictEqual(Array.from(withEq.price.equipmentItems), ['EQ:' + paid.code + ':2']);
+});
+
+test('有料機材: セット無料条件（freeWhenWith）を共通カタログどおり適用し、未知の機材・小数・負数・在庫超過は拒否する', function () {
+  var P = loadBookingSandbox(['JapaneseHolidays.gs', 'EquipmentCatalog.gs', 'BookingPricing.gs', 'BookingOptions.gs', 'MembershipRules.gs', 'Config.gs'], {}).BookingPricing;
+  var bundled = CATALOG_JSON.rental.filter(function (r) { return r.freeWhenWith; })[0];
+  assert.ok(bundled);
+  var companionCode = bundled.freeWhenWith.codes[0];
+  var eq = {}; eq[bundled.code] = 1; eq[companionCode] = 1;
+  var r = priceOf(P, { supportEquipment: eq });
+  assert.strictEqual(r.valid, true, JSON.stringify(r));
+  var line = r.price.equipmentLines.filter(function (l) { return l.code === bundled.code; })[0];
+  assert.strictEqual(line.freeQuantity, 1, 'セット無料');
+  assert.strictEqual(line.amountJpy, 0);
+  var companion = rentalOf(companionCode);
+  assert.strictEqual(r.price.equipmentAmount, companion.unitPriceJpy);
+  assert.strictEqual(priceOf(P, { supportEquipment: { NOPE_CODE: 1 } }).error.code, 'UNKNOWN_OPTION');
+  var any = {}; any[companionCode] = 1.5;
+  assert.strictEqual(priceOf(P, { supportEquipment: any }).error.code, 'INVALID_OPTIONS');
+  any[companionCode] = -1;
+  assert.strictEqual(priceOf(P, { supportEquipment: any }).error.code, 'INVALID_OPTIONS');
+  any[companionCode] = companion.stock + 1;
+  assert.strictEqual(priceOf(P, { supportEquipment: any }).error.code, 'STOCK_EXCEEDED');
+});
+
+test('有料機材: 無料の常設備品・無料備品を有料化しない（無料のセルフ備品は0円のまま）', function () {
+  var P = loadBookingSandbox(['JapaneseHolidays.gs', 'EquipmentCatalog.gs', 'BookingPricing.gs', 'BookingOptions.gs', 'MembershipRules.gs', 'Config.gs'], {}).BookingPricing;
+  var free = CATALOG_JSON.freeSelf.filter(function (f) { return f.selectable === true; })[0];
+  if (!free) return;
+  var eq = {}; eq[free.code] = 1;
+  var r = priceOf(P, { supportEquipment: eq });
+  assert.strictEqual(r.valid, true, JSON.stringify(r));
+  assert.strictEqual(r.price.equipmentAmount, 0);
+  assert.strictEqual(r.price.amount, priceOf(P, {}).price.amount);
+});
+
+test('有料機材: 申込に保存され（明細・金額）、承認メール・申込メールに内訳が出て、お支払い額（priceAmount）に含まれる。通常予約には付けられない', function () {
+  var ctx = setup({ members: MEMBER });
+  var paid = CATALOG_JSON.rental.filter(function (r) { return r.unitPriceJpy > 0 && !r.freeWhenWith; })[0];
+  var eq = {}; eq[paid.code] = 1;
+  var r = book(ctx, { supportEquipment: eq });
+  assert.strictEqual(r.success, true, JSON.stringify(r));
+  assert.strictEqual(r.price.equipmentAmount, paid.unitPriceJpy);
+  var rec = record(ctx, r.bookingId);
+  assert.strictEqual(rec.supportEquipment, 'EQ:' + paid.code + ':1');
+  assert.strictEqual(rec.supportEquipmentAmount, paid.unitPriceJpy);
+  assert.strictEqual(rec.priceAmount, rec.supportRoomAmount + rec.supportStaffAmount + paid.unitPriceJpy, '1回のお支払い額に機材料金を含む');
+  var received = ctx.mailApp._sentEmails.filter(function (m) { return m.subject.indexOf('承認待ち') !== -1; })[0];
+  assert.ok(received.body.indexOf('有料機材: ' + paid.label) !== -1 && received.body.indexOf('有料機材料金: ') !== -1, received.body);
+  ctx.sandbox.BookingRepository.approvePhotoSupport(r.bookingId, new Date('2026-12-06T09:00:00+09:00'));
+  var approved = ctx.mailApp._sentEmails[ctx.mailApp._sentEmails.length - 1];
+  assert.ok(approved.body.indexOf('部屋料金・スタッフ対応料金・有料機材料金の合計') !== -1);
+  var normal = book(ctx, { plan: '', supportServices: undefined, paymentMethod: '現金', startTime: '18:00', durationMinutes: 60, supportEquipment: eq });
+  assert.strictEqual(normal.success, false);
+  assert.strictEqual(normal.error.code, 'OPTIONS_NOT_AVAILABLE');
+  var bad = book(ctx, { supportEquipment: { NOPE_CODE: 1 }, startTime: '15:00' });
+  assert.strictEqual(bad.success, false);
+});
+
+test('有料機材: 見積りAPIは機材パラメータ（CODE:数量,...）を共通カタログで計算し、カタログAPI（mens）が機材一覧を返す。不正な形式は拒否', function () {
+  var ctx = setup({ members: MEMBER });
+  var paid = CATALOG_JSON.rental.filter(function (r) { return r.unitPriceJpy > 0 && !r.freeWhenWith && r.stock >= 2; })[0];
+  var ok = ctx.sandbox.handleEstimatePrice_({ brand: 'mens', date: WEEKDAY, durationMinutes: '120', plan: PLAN, supportServices: 'SETUP', supportEquipment: paid.code + ':2' }, undefined);
+  assert.strictEqual(ok.success, true, JSON.stringify(ok));
+  assert.strictEqual(ok.price.equipmentAmount, paid.unitPriceJpy * 2);
+  assert.strictEqual(ok.price.amount, 2400 + 3000 + paid.unitPriceJpy * 2);
+  var bad = ctx.sandbox.handleEstimatePrice_({ brand: 'mens', date: WEEKDAY, durationMinutes: '120', plan: PLAN, supportServices: 'SETUP', supportEquipment: 'x;y' }, undefined);
+  assert.strictEqual(bad.success, false);
+  var catalog = ctx.sandbox.BookingOptions.buildCatalog('mens', ctx.sandbox.BookingConfig.getOptionsConfig());
+  assert.ok(Array.isArray(catalog.supportEquipment) && catalog.supportEquipment.length === CATALOG_JSON.rental.length + CATALOG_JSON.freeSelf.filter(function (f) { return f.selectable === true; }).length);
+  var item = catalog.supportEquipment.filter(function (e) { return e.code === paid.code; })[0];
+  assert.strictEqual(item.unitPriceJpy, paid.unitPriceJpy, 'カタログと同額（複製しない）');
+  assert.strictEqual(item.stock, paid.stock);
+  assert.strictEqual(ctx.sandbox.BookingOptions.buildCatalog('snb', ctx.sandbox.BookingConfig.getOptionsConfig()).supportEquipment, undefined, 'SNBには出さない');
+});
+
+test('有料機材: フロントは数量だけを送り（金額は送らない）、機材を付けないときはキー自体を付けない。予約フォームに機材欄がある', function () {
+  var base = { brand: 'mens', customerType: 'returning', date: SATURDAY, startTime: '10:00', durationMinutes: 180, name: 'a', email: EMAIL, people: '2名', purpose: 'x', paymentMethod: CARD, plan: PLAN, supportServices: 'SETUP' };
+  assert.deepStrictEqual(Logic.buildCreateBookingPayload(Object.assign({}, base, { supportEquipment: { COB_BICOLOR: 2 } })).supportEquipment, { COB_BICOLOR: 2 });
+  assert.strictEqual('supportEquipment' in Logic.buildCreateBookingPayload(Object.assign({}, base, { supportEquipment: {} })), false);
+  var inc = read('_includes/booking_app_ja.html');
+  assert.ok(inc.indexOf('id="ba-photo-support-equipment"') !== -1 && inc.indexOf('共通の機材カタログ') !== -1);
+});

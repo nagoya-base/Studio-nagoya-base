@@ -123,12 +123,17 @@ var BookingRepository = (function () {
       generation: priceGeneration,
       plan: planResult.plan,
       startTime: input.startTime,
-      supportServices: input.supportServices
+      supportServices: input.supportServices,
+      supportEquipment: input.supportEquipment
     });
     if (!priceResult.valid) {
       return { success: false, error: priceResult.error };
     }
     var isPhotoSupportBooking = BookingPricing.isPhotoSupport(planResult.plan);
+    /* Issue #667: 有料機材（supportEquipment）は作品撮りサポートでだけ選べる。他のプラン・通常予約へは付けられない（黙って無視せず拒否）。 */
+    if (!isPhotoSupportBooking && input.supportEquipment && Object.keys(input.supportEquipment).length > 0) {
+      return { success: false, error: { code: 'OPTIONS_NOT_AVAILABLE', message: '有料機材は、作品撮りサポートプランでのみお申し込みいただけます。' } };
+    }
 
     /*
      * 予約オプション（Issue #423。Studio X限定）の事前検証。payloadにoptionsが無い場合は
@@ -327,6 +332,8 @@ var BookingRepository = (function () {
         record.supportServices = priceResult.price.supportServices;
         record.supportRoomAmount = priceResult.price.roomAmount;
         record.supportStaffAmount = priceResult.price.staffAmount;
+        record.supportEquipment = priceResult.price.equipmentItems.join(',');
+        record.supportEquipmentAmount = priceResult.price.equipmentAmount;
       }
 
       try {
@@ -404,6 +411,7 @@ var BookingRepository = (function () {
       response.price.supportServices = priceResult.price.supportServices;
       response.price.roomAmount = priceResult.price.roomAmount;
       response.price.staffAmount = priceResult.price.staffAmount;
+      response.price.equipmentAmount = priceResult.price.equipmentAmount;
     }
     if (optionsResponse) response.options = optionsResponse;
     return response;

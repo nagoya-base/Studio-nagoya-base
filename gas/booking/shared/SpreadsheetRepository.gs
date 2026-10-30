@@ -394,13 +394,18 @@ var SpreadsheetRepository = (function () {
      * - supportApprovedAt: 運営が承認した日時。空＝承認待ち（この間は決済不可）。
      * - supportPaymentDueAt: 承認後の支払い期限（承認から24時間）。この時刻までに支払いが完了しなければ不成立（EXPIRED）で枠を解放する。
      * - supportApprovalMailSentAt: 承認・支払い案内メールの送信日時（空＝未送信。送信失敗時に管理画面から再送できる）。
+     * - supportEquipment / supportEquipmentAmount: 付けた有料機材と機材料金（下記。末尾の2列）。
      */
     'supportServices',
     'supportRoomAmount',
     'supportStaffAmount',
     'supportApprovedAt',
     'supportPaymentDueAt',
-    'supportApprovalMailSentAt'
+    'supportApprovalMailSentAt',
+    /* - supportEquipment: 作品撮りサポートに付けた有料機材の項目（'EQ:<機材コード>:<数量>[:F<セット無料数>]'のカンマ区切り。空＝機材なし）。
+       - supportEquipmentAmount: 有料機材料金（円。共通機材カタログ由来。priceAmountに含む。空＝0円）。 */
+    'supportEquipment',
+    'supportEquipmentAmount'
   ];
 
   function getSpreadsheet_() {
