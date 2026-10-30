@@ -17,7 +17,7 @@
 <!-- Favicon -->
 <link rel="icon" href="../images/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" sizes="180x180" href="../images/apple-touch-icon.png">
-<link rel="preload" as="image" href="../images/ogp-mens-v2-1200x630.jpg" fetchpriority="high">
+<link rel="preload" as="image" href="../images/mens-preview-hero.webp" fetchpriority="high">
 
 <!-- Google Analytics 4 -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-6TWDLEFWJT"></script>
@@ -33,17 +33,27 @@
 <meta property="og:description" content="名古屋・上前津の完全個室レンタルスペース。男性同士の緊縛練習、吊り撮影、ユニフォームやフェティッシュ衣装の作品撮りに対応しています。">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/mens/">
-<meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/ogp-mens-v2-1200x630.jpg">
+<meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/mens-preview-ogp-1200x630.jpg">
 <meta property="og:locale" content="ja_JP">
 <meta property="og:site_name" content="Studio Nagoya Base">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="男性同士の緊縛・フェティッシュ撮影を、完全個室で。">
 <meta name="twitter:description" content="名古屋・上前津の完全個室レンタルスペース。男性同士の緊縛練習、吊り撮影、ユニフォームやフェティッシュ衣装の作品撮りに対応。">
-<meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/ogp-mens-v2-1200x630.jpg">
+<meta name="twitter:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/mens-preview-ogp-1200x630.jpg">
 
+<script>
+  (function () {
+    var d = document.documentElement;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (!('IntersectionObserver' in window)) return;
+    d.classList.add('reveal-ready');
+    setTimeout(function () { if (!window.__pv633Ready) d.classList.remove('reveal-ready'); }, 3000);
+  })();
+</script>
 <link rel="stylesheet" href="../styles/common.css?v={{ site.time | date: '%s' }}">
 <link rel="stylesheet" href="../styles/mens.css?v={{ site.time | date: '%s' }}">
 <link rel="stylesheet" href="../styles/reservation-form.css?v={{ site.time | date: '%s' }}">
+<link rel="stylesheet" href="../styles/mens-preview-633.css?v={{ site.time | date: '%s' }}">
 
 <!-- 構造化データ -->
 <script type="application/ld+json">
@@ -54,7 +64,7 @@
   "name": "Studio Nagoya Base",
   "description": "名古屋・上前津の完全個室レンタルスペース。男性同士の緊縛練習、吊り撮影、ユニフォーム・スポーツウェア・フェティッシュ衣装の作品撮りに対応。無人入室、最大4名、スマホ撮影可。",
   "url": "https://nagoya-base.github.io/Studio-nagoya-base/mens/",
-  "image": "https://nagoya-base.github.io/Studio-nagoya-base/images/ogp-mens-v2-1200x630.jpg",
+  "image": "https://nagoya-base.github.io/Studio-nagoya-base/images/mens-preview-ogp-1200x630.jpg",
   "address": {
     "@type": "PostalAddress",
     "streetAddress": "中区富士見町5-24 ラウムズ富士見町",
@@ -164,51 +174,79 @@
 
 <main id="main-content">
 
-<!-- ヒーロー（男性向け専用OGP画像） -->
-<section class="mens-ogp-hero" aria-labelledby="mens-hero-title">
-  <div class="container mens-ogp-hero-inner">
-    <picture class="mens-ogp-hero-image">
-      <img
-        src="../images/ogp-mens-v2-1200x630.jpg"
-        width="1200"
-        height="630"
-        alt="男性同士のフェティッシュ撮影に対応するStudio Nagoya Baseの男性向け案内"
-        fetchpriority="high"
-        decoding="async"
-      >
-    </picture>
-    <div class="mens-ogp-hero-copy">
+<!-- HERO（ネイビー） -->
+<div class="z z-navy" id="pv-hero-zone">
+<section class="pv-hero" aria-labelledby="mens-hero-title">
+  <div class="container pv-hero-inner">
+    <div class="pv-hero-copy">
       <p class="hero-label">Men's Private Studio</p>
-      <h1 id="mens-hero-title" class="mens-ogp-hero-title">男性同士の緊縛・フェティッシュ撮影向けレンタルスペース</h1>
-      <p class="mens-ogp-hero-description">男性モデルによる緊縛、吊り撮影、ユニフォームやフェティッシュ衣装の作品撮りに。名古屋・上前津の完全個室・無人入室スタジオです。</p>
+      <h1 id="mens-hero-title" class="pv-hero-title">男性同士の緊縛・フェティッシュ撮影を、完全個室で。</h1>
+      <p class="pv-hero-sub">一つの部屋から、いくつもの表現へ。</p>
+      <p class="pv-hero-description">ユニフォーム撮影、男性ポートレート、緊縛まで。名古屋・上前津の完全個室スタジオです。緊縛をしない撮影にも利用できます。</p>
+      <p class="pv-hero-seo">男性同士の緊縛・フェティッシュ撮影向けレンタルスペース</p>
 
-      <ul class="hero-badges" aria-label="ご利用の安心材料">
+      <ul class="hero-badges pv-hero-badges" aria-label="ご利用の安心材料">
         <li class="hero-badge">完全貸切</li>
         <li class="hero-badge">無人入室</li>
         <li class="hero-badge">最大4名</li>
         <li class="hero-badge">スマホ撮影OK</li>
       </ul>
 
-      <p class="mens-ogp-hero-price">1時間から <strong>平日 ¥2,000</strong> / <strong>土日祝 ¥2,500</strong></p>
-
-      <div class="mens-ogp-hero-actions">
+      <div class="pv-hero-actions">
         <a class="btn-primary" href="{{ '/mens/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="mens_hero" data-analytics-type="booking_app" data-analytics-destination="booking_app">日時を選んで予約する</a>
         <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="mens_hero">利用前に相談する</a>
       </div>
-      <p class="hero-note">予約ページで日時を選び、そのまま仮予約を送信できます。空きがあれば当日のご予約も可能です（はじめての方はオンラインクレジットカード決済のみ）。</p>
     </div>
+    <picture class="pv-hero-image">
+      <img
+        src="../images/mens-preview-hero.webp"
+        width="1600"
+        height="841"
+        alt="薄暗い和室で畳に座り横を見つめる男性。「用途によって、空気が変わる。安心できる、大人の秘密基地。Studio Nagoya Base mens」"
+        fetchpriority="high"
+        decoding="async"
+      >
+    </picture>
   </div>
 </section>
 
-<!-- 男性向けページの説明 -->
-<section id="about-page" class="bg-section">
+<nav class="pv-usenav" aria-label="用途から探す">
   <div class="container">
-    <h2 class="section-title">男性同士で利用しやすい、専用のご案内ページです</h2>
-    <p class="section-subtitle">About This Page</p>
+    <p class="pv-usenav-title">用途から探す</p>
+    <ul class="pv-usenav-list">
+      <li><a class="pv-usenav-link" href="#usage"><span class="pv-usenav-photo"><img src="../images/gallery_man02_1200.webp" width="800" height="1200" alt="" loading="lazy" decoding="async"></span><span class="pv-usenav-label">緊縛・ロープ撮影</span><span class="pv-usenav-desc">男性同士の練習・床縄・吊りの作例</span></a></li>
+      <li><a class="pv-usenav-link" href="#scenes"><span class="pv-usenav-photo"><img src="../images/gallery_man05_1200.webp" width="800" height="1200" alt="" loading="lazy" decoding="async"></span><span class="pv-usenav-label">フェチ</span><span class="pv-usenav-desc">ユニフォームやシチュエーションを楽しむ撮影</span></a></li>
+      <li><a class="pv-usenav-link" href="#costume-portrait-use"><span class="pv-usenav-photo pv-usenav-photo--head"><img src="../images/gallery_man04_1200.webp" width="800" height="1200" alt="" loading="lazy" decoding="async"></span><span class="pv-usenav-label">コスプレ・ポートレート</span><span class="pv-usenav-desc">好きな衣装での作品撮りや、人物・セルフ撮影に</span></a></li>
+      <li><a class="pv-usenav-link" href="#classroom-use"><span class="pv-usenav-photo"><img src="../images/interior-classroom_1200.webp" width="1200" height="675" alt="" loading="lazy" decoding="async"></span><span class="pv-usenav-label">教室セット</span><span class="pv-usenav-desc">学校机と黒板で、撮影シーンをつくる</span></a></li>
+    </ul>
+  </div>
+</nav>
+</div>
+
+<!-- 安心・PRIVATE（白） -->
+<div class="z z-paper">
+<section id="about-page" class="bg-section">
+  <div class="container reveal">
+    <h2 class="section-title pv-private-title">安心できる、大人の秘密基地。</h2>
+    <p class="section-subtitle">Private</p>
+    <p class="pv-private-lead">完全貸切。無人入室。<br>誰にも気兼ねせず、自分たちのペースで。</p>
+
+    <ul class="pv-assure" aria-label="安心できる理由">
+      <li>完全貸切</li>
+      <li>無人入室</li>
+      <li>他の利用者と同席しない</li>
+      <li>料金が事前に分かる</li>
+      <li>利用方法・設備・ルールがWebで確認できる</li>
+      <li>問い合わせ窓口がある</li>
+    </ul>
+
+    <h3 class="pv-about-title">男性同士で利用しやすい、専用のご案内ページです</h3>
+    <p class="pv-about-label">About This Page</p>
 
     <div class="mens-intro-text">
+      <p>男性モデルによる緊縛、吊り撮影、ユニフォームやフェティッシュ衣装の作品撮りに。名古屋・上前津の完全個室・無人入室スタジオです。</p>
       <p>このページは、男性同士で緊縛やフェティッシュ撮影を楽しみたい方に向けたご案内です。一般ページと料金・設備・予約方法は同じですが、男性モデルによる作例を中心に掲載しています。</p>
-      <p>ゲイ・バイ男性を含む男性ペアや男性グループでのご利用を歓迎しています。性別や性的指向を問わずご利用いただけます。</p>
+      <p>ゲイ・バイ男性を含む、男性同士の撮影・練習を歓迎しています。性別・性的指向を問わずご利用いただけます。</p>
     </div>
 
     <div class="notice-banner">
@@ -218,75 +256,18 @@
         緊縛師、モデル、カメラマンの手配や、緊縛指導・緊縛体験サービスは含まれません。
       </div>
     </div>
-  </div>
-</section>
 
-<!-- 空き状況・予約 -->
-<section id="calendar" class="bg-section">
-  <div class="container">
-    <h2 class="section-title">空き状況・予約</h2>
-    <p class="section-subtitle">Availability &amp; Booking</p>
-
-    <p class="calendar-note">予約ページで希望日時の空きをご確認のうえ、そのまま仮予約を送信してください。<br>はじめての方は<strong>オンラインクレジットカード決済のみ</strong>ご利用いただけます。空きがある場合は<strong>当日</strong>のご予約もお申し込みいただけます（会員登録の有無は当日予約の条件ではありません）。通常は24時間以内に返信します。当方からの予約確定連絡をもって予約成立となります（オンラインクレジットカード決済をお選びの場合は、申込後に表示される決済ページの有効期限内にお支払いが完了した時点で予約成立となります）。</p>
-    <p class="calendar-note">予約窓口：予約ページ　／　相談窓口：ページ内フォーム</p>
-    <p class="calendar-note">※ このページ（SNB mens）の予約ページからのご予約は、SNB MEMBERへの加入有無にかかわらず会員料金が自動で適用されます。これは料金の優遇であり、会員資格の付与ではありません。</p>
-
-    <div class="btn-group">
-      <a class="btn-primary" href="{{ '/mens/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="mens_calendar" data-analytics-type="booking_app" data-analytics-destination="booking_app">予約ページへ進む</a>
-      <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="mens_calendar">利用前に相談する</a>
-    </div>
-  </div>
-</section>
-
-{% include reservation_form_ja.html %}
-
-<!-- 利用前相談 -->
-<section id="cta">
-  <div class="container">
-    <div class="cta-card cta-advance consultation-card">
-      <p class="cta-tag">利用前相談</p>
-      <h2 class="cta-card-heading">日程・設備について相談</h2>
-      <p class="cta-card-desc">吊り設備、利用人数、撮影内容など、予約前に確認したい点がある場合はこちらからお問い合わせください。</p>
-      <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="mens_consultation_section">相談フォームで問い合わせる →</a>
-    </div>
-    <p class="cta-hint">空き状況の確認・直接予約は<a href="{{ '/mens/booking/' | relative_url }}">予約ページ</a>から行えます。ご相談・お問い合わせは<a href="#reservation-form">相談フォーム</a>をご利用ください。このページの予約ページからのご予約には、SNB MEMBERへの加入有無にかかわらず<strong>会員料金</strong>が適用されます（料金の優遇です。例：平日 3時間 ¥5,500 / 4時間 ¥7,000）</p>
-  </div>
-</section>
-
-<!-- 利用シーン -->
-<section id="usage" class="bg-section">
-  <div class="container">
-    <h2 class="section-title">こんな利用に使えます</h2>
-    <p class="section-subtitle">Usage</p>
-
-    <div class="usage-grid">
-      <div class="usage-item">男性同士の緊縛練習</div>
-      <div class="usage-item">床縄・吊り撮影</div>
-      <div class="usage-item">ユニフォーム・制服撮影</div>
-      <div class="usage-item">スポーツウェア撮影</div>
-      <div class="usage-item">フェティッシュ衣装の作品撮り</div>
-      <div class="usage-item">身体表現・筋肉撮影</div>
-    </div>
+    <p class="pv-private-notice">無人入室ですが、防犯カメラを設置しています（無人運営・安全確認用途）。<a href="#legal">利用条件・法的事項を確認する</a></p>
   </div>
 </section>
 
 <!-- 特徴 -->
 <section id="features">
-  <div class="container">
+  <div class="container reveal">
     <h2 class="section-title">特徴</h2>
     <p class="section-subtitle">Features</p>
 
     <div class="features-grid">
-      <div class="feature-card">
-        <div class="feature-icon">◈</div>
-        <h3>男性同士で使える</h3>
-        <p>男性ペアや男性グループでの緊縛練習・撮影を歓迎しています。ゲイ・バイ男性を含め、性別や性的指向を問わずご利用いただけます。</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">◈</div>
-        <h3>人目を気にせず使える</h3>
-        <p>完全個室・無人入室。他の利用者やスタッフと対面することなく、衣装やロープ表現に集中できます。</p>
-      </div>
       <div class="feature-card">
         <div class="feature-icon">◈</div>
         <h3>本格的な吊り設備</h3>
@@ -311,39 +292,167 @@
   </div>
 </section>
 
-<!-- ギャラリー -->
-<section id="gallery" class="bg-section">
-  <div class="container">
-    <h2 class="section-title">男性モデルによる撮影作例</h2>
-    <p class="section-subtitle">Gallery</p>
-    <p class="mens-intro-text mens-intro-text--tight">男性モデルによる緊縛、吊り撮影、ユニフォーム、コスチューム撮影の作例です。</p>
+</div>
 
-    <div class="gallery-grid">
-      <div class="gallery-item"><img src="../images/gallery_man01_1200.webp" width="800" height="1200" alt="野球ユニフォーム姿の男性モデルの床縄作品" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/gallery_man02_1200.webp" width="800" height="1200" alt="野球ユニフォーム姿の男性モデルの吊り緊縛撮影" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/gallery_man03_1200.webp" width="1200" height="800" alt="木組みの吊り床と撮影機材が分かるスタジオ内観（男性モデル）" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/hero_mens_1200.webp" width="800" height="1200" alt="白背景で撮影した男性モデルのヒーローコスチューム作例" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+<!-- ROPE / WOOD（木の暖色） -->
+<div class="z z-wood">
+<section id="usage">
+  <div class="container reveal">
+    <h2 class="section-title">こんな利用に使えます</h2>
+    <p class="section-subtitle">Usage</p>
+
+    <div class="usage-grid pv-usage">
+      <div class="usage-item">男性同士の緊縛練習</div>
+      <div class="usage-item">床縄・吊り撮影</div>
+    </div>
+
+    <div class="pv-facility">
+      <div class="pv-facility-item">
+        <figure class="pv-photo is-wide"><picture><source srcset="../images/interior-rigging-frame_1200.webp" type="image/webp"><img src="../images/interior-rigging-frame_1200.jpeg" width="1200" height="675" alt="木組み・畳・大型ミラーが見える、通常照明のスタジオ内観" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></picture></figure>
+        <div class="pv-facility-steps">
+          <div class="pv-step">
+            <p class="pv-step-label">WOOD FRAME</p>
+            <h3 class="pv-step-title">木組みの吊り床</h3>
+            <p class="pv-step-text">高さ 2350mm／間口 2450mm／奥行 2000mm。部屋の骨格になる、木の枠組みです。</p>
+          </div>
+          <div class="pv-step">
+            <p class="pv-step-label">SPACE</p>
+            <h3 class="pv-step-title">誰にも会わない、一室</h3>
+            <p class="pv-step-text">完全個室・無人入室。大型ミラー（1460mm × 800mm）と置き畳で、練習も撮影も自分たちのペースで。</p>
+          </div>
+        </div>
+      </div>
+      <div class="pv-facility-item">
+        <figure class="pv-photo is-wide"><img src="../images/gallery_lighting01_1200.webp" width="1200" height="675" alt="暖色の照明に照らされた竹と木組みの吊り設備" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></figure>
+        <div class="pv-facility-steps">
+          <div class="pv-step">
+            <p class="pv-step-label">BAMBOO</p>
+            <h3 class="pv-step-title">竹吊り</h3>
+            <p class="pv-step-text">天井に渡した竹と木組みで、吊りの構成を組み立てられます。</p>
+          </div>
+        </div>
+      </div>
+      <div class="pv-facility-item pv-facility-item--portrait">
+        <figure class="pv-photo is-portrait"><img src="../images/gallery_man02_1200.webp" width="800" height="1200" alt="野球ユニフォーム姿の男性モデルの吊り緊縛撮影" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></figure>
+        <div class="pv-facility-steps">
+          <div class="pv-step">
+            <p class="pv-step-label">ROPE POINT</p>
+            <h3 class="pv-step-title">麻縄・スリング・カラビナ</h3>
+            <p class="pv-step-text">リギングプレートまで常設。床縄から空中緊縛まで対応します（空中緊縛は経験者のみ、縛り手・受け手を含む3名以上）。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- UNIFORM／撮影シーン（青・白） -->
+<div class="z z-sky">
+<section class="pv-uniform" id="scenes">
+  <div class="container reveal">
+    <h2 class="section-title">衣装と空間で、撮影シーンをつくる</h2>
+    <p class="section-subtitle">Scenes</p>
+
+    <div class="usage-grid pv-usage">
+      <div class="usage-item">ユニフォーム・制服撮影</div>
+      <div class="usage-item">スポーツウェア撮影</div>
+      <div class="usage-item">フェティッシュ衣装の作品撮り</div>
+    </div>
+
+    <div class="pv-scene pv-scene--costume" id="costume-portrait-use">
+      <div class="pv-scene-copy">
+        <h3 class="pv-scene-title">好きな装いで、自分たちの一枚を。</h3>
+        <p>ユニフォームやコスチュームを持ち寄って、衣装と空間を活かした作品撮りに。畳や木組みの和室も背景にできます。</p>
+        <p class="pv-scene-note">作例に写る衣装・小道具は、当スタジオの貸出品ではありません。</p>
+        <p><a href="#portrait-use">人物・セルフ撮影の紹介を見る →</a></p>
+      </div>
+      <ul class="pv-works" data-pv-works>
+        <li class="pv-work" data-pv-work><figure class="pv-captioned"><div class="pv-photo is-portrait"><img src="../images/gallery_man01_1200.webp" width="800" height="1200" alt="野球ユニフォーム姿の男性モデルの床縄作品" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption data-pv-work-caption>ユニフォームの床縄作品</figcaption></figure></li>
+        <li class="pv-work" data-pv-work><figure class="pv-captioned"><div class="pv-photo is-portrait"><img src="../images/gallery_man04_1200.webp" width="800" height="1200" alt="柄背景の前でポーズをとるヒーロー衣装の人物の作品撮り" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption data-pv-work-caption>ヒーロー衣装の作品撮り</figcaption></figure></li>
+        <li class="pv-work" data-pv-work><figure class="pv-captioned"><div class="pv-photo is-portrait"><img src="../images/gallery_man05_1200.webp" width="800" height="1200" alt="黒背景の前でユニフォーム姿の男性2人が撮影したシチュエーション作品（顔は加工しています）" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption data-pv-work-caption>ユニフォーム姿の2人によるシチュエーション作品</figcaption></figure></li>
+        <li class="pv-work" data-pv-work><figure class="pv-captioned"><div class="pv-photo is-portrait"><img src="../images/hero_mens_1200.webp" width="800" height="1200" alt="白背景で撮影した男性モデルのヒーローコスチューム作例" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption data-pv-work-caption>ヒーロー衣装の作例（白背景）</figcaption></figure></li>
+      </ul>
+    </div>
+
+    <div class="pv-scene pv-scene--landscape" id="classroom-use">
+      <figure class="pv-captioned"><div class="pv-photo is-wide"><img src="../images/interior-classroom_1200.webp" width="1200" height="675" alt="学校机と黒板のある撮影スペース" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption>学校机と黒板のある空間</figcaption></figure>
+      <div class="pv-scene-copy">
+        <h3 class="pv-scene-title">学校机と黒板で、撮影にひとつのシーンを。</h3>
+        <p>衣装やポーズを合わせて、自分たちの設定を楽しむ撮影にも。</p>
+      </div>
+    </div>
+
+    <div class="pv-scene pv-scene--portrait" id="portrait-use">
+      <figure class="pv-captioned"><div class="pv-photo is-landscape"><img src="../images/gallery_man03_1200.webp" width="1200" height="800" alt="黒背景と左右のソフトボックスの前に立つ野球ユニフォーム姿の男性（顔は加工しています）" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption>黒背景と照明を使った、ユニフォーム撮影の作例です。</figcaption></figure>
+      <div class="pv-scene-copy">
+        <h3 class="pv-scene-title">縛らない日も、自分たちらしく撮る。</h3>
+        <p class="pv-scene-lead">ユニフォームで、自分らしい一枚を。</p>
+        <p>男性ポートレートや身体表現、セルフ撮影、ペアでの撮影にも。背景と照明を使って、撮りたい雰囲気をつくれます。</p>
+        <div class="usage-grid pv-usage">
+          <div class="usage-item">身体表現・筋肉撮影</div>
+        </div>
+        <p class="pv-scene-lead">本格的な照明機材も、設営をサポート。</p>
+        <p><a href="#gallery">背景・照明の例を見る →</a></p>
+      </div>
+    </div>
+
+    <div class="pv-group" id="group-use">
+      <h3 class="pv-group-title">好きが通じる仲間と、自分たちだけの時間を。</h3>
+      <p class="pv-group-lead">ユニフォームを持ち寄って撮る。縄の練習をする。撮った写真を見ながら話す。<br>同じ趣味の仲間と集まる、少人数のフェチ会・同好会にも。完全貸切・無人入室で、自分たちのペースで楽しめます。</p>
+      <ul class="pv-group-notes">
+        <li>1〜4名。5名以上は事前にご相談ください（運営者の承認が必要です）。</li>
+        <li>参加者募集を予定している会は、募集前にご相談ください。</li>
+      </ul>
+      <div class="pv-group-cta">
+        <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="mens_group" data-analytics-destination="reservation_form">仲間との利用を相談する →</a>
+      </div>
+      <ul class="pv-group-notes pv-group-notes--rules">
+        <li>参加者全員が18歳以上であること（高校生は利用不可）を予約者が確認し、同伴者も含めて利用規約に従ってご利用ください。</li>
+        <li>場所と設備の貸出です。会の主催や参加者・モデルの手配、指導は含まれません。宴会・飲み会目的ではご利用いただけません。</li>
+        <li>吊りを伴う利用の条件は、<a href="#safety">安全ルール</a>と<a href="{{ '/mens/legal/' | relative_url }}#terms">利用規約</a>をご確認ください。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- PORTRAIT / LIGHT / GALLERY（黒） -->
+<div class="z z-black">
+<section id="gallery">
+  <div class="container reveal">
+    <h2 class="section-title">照明・背景とスタジオの空間</h2>
+    <p class="section-subtitle">Gallery</p>
+    <p class="mens-intro-text mens-intro-text--tight">照明・背景・設備のサンプルをご覧いただけます。男性モデルの作例は、用途別の紹介にあります。</p>
+
+    <p class="color-grid-label">同じ場所で、照明の色を変えると / Lighting Comparison</p>
+    <p class="pv-compare-note">同じ撮影場所で、照明の色を変えた5パターンです。構図が完全に一致する比較ではありません。</p>
+    <div class="pv-compare" data-pv-compare>
+      <ul class="pv-compare-list">
+        <li class="pv-compare-item"><figure class="pv-captioned"><div class="pv-photo is-wide"><img src="../images/backdrop-color-white_1200.webp" width="1200" height="675" alt="通常の白色照明を当てた撮影スペースの白背景紙" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption data-pv-compare-label="通常色（白）">通常色（白）の照明</figcaption></figure></li>
+        <li class="pv-compare-item"><figure class="pv-captioned"><div class="pv-photo is-wide"><img src="../images/backdrop-color-purple_1200.webp" width="1200" height="675" alt="紫の照明を当てた撮影スペースの背景紙" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption data-pv-compare-label="紫">紫の照明</figcaption></figure></li>
+        <li class="pv-compare-item"><figure class="pv-captioned"><div class="pv-photo is-wide"><img src="../images/backdrop-color-red_1200.webp" width="1200" height="675" alt="赤の照明を当てた撮影スペースの背景紙" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption data-pv-compare-label="赤">赤の照明</figcaption></figure></li>
+        <li class="pv-compare-item"><figure class="pv-captioned"><div class="pv-photo is-wide"><img src="../images/backdrop-color-blue_1200.webp" width="1200" height="675" alt="青の照明を当てた撮影スペースの背景紙" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption data-pv-compare-label="青">青の照明</figcaption></figure></li>
+        <li class="pv-compare-item"><figure class="pv-captioned"><div class="pv-photo is-wide"><img src="../images/backdrop-color-orange_1200.webp" width="1200" height="675" alt="暖色の照明を当てた撮影スペースの背景紙" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption data-pv-compare-label="暖色">暖色の照明</figcaption></figure></li>
+      </ul>
     </div>
 
     <p class="color-grid-label">フルカラー照明・吊り設備 / Color Lighting &amp; Suspension Rig</p>
-    <div class="color-grid">
-      <div class="gallery-item"><img src="../images/gallery_lighting02_1200.webp" width="1200" height="675" alt="木組みの吊り設備を照らすフルカラー照明サンプル 2" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/gallery_lighting05_1200.webp" width="1200" height="675" alt="木組みの吊り設備を照らすフルカラー照明サンプル 5" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/gallery_white06_1200.webp" width="675" height="1200" alt="白ホリ・カラーバリエーション 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/gallery_white01_1200.webp" width="675" height="1200" alt="白ホリ・カラーバリエーション 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
+    <div class="pv-masonry pv-masonry--landscape">
+      <figure class="pv-photo "><img src="../images/gallery_lighting02_1200.webp" width="1200" height="675" alt="木組みの吊り設備を照らすフルカラー照明サンプル 2" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></figure>
+      <figure class="pv-photo "><img src="../images/gallery_lighting05_1200.webp" width="1200" height="675" alt="木組みの吊り設備を照らすフルカラー照明サンプル 5" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></figure>
+    </div>
+    <div class="pv-masonry pv-masonry--portrait">
+      <figure class="pv-photo "><img src="../images/gallery_white06_1200.webp" width="675" height="1200" alt="白ホリ・カラーバリエーション 6 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></figure>
+      <figure class="pv-photo "><img src="../images/gallery_white01_1200.webp" width="675" height="1200" alt="白ホリ・カラーバリエーション 1 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></figure>
     </div>
 
-    <p class="color-grid-label">スタジオ全景・吊り設備 / Studio &amp; Rigging</p>
-    <div class="gallery-grid">
-      <div class="gallery-item"><picture><source srcset="../images/interior-rigging-frame_1200.webp" type="image/webp"><img src="../images/interior-rigging-frame_1200.jpeg" width="1200" height="675" alt="スタジオ内観（通常照明・木組みフレームと置き畳）" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></picture></div>
-      <div class="gallery-item"><img src="../images/gallery_lighting01_1200.webp" width="1200" height="675" alt="木組みの吊り設備を照らすフルカラー照明サンプル 1" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-    </div>
-
-    <p class="color-grid-label">背景バリエーション（追加候補） / Additional Backdrops</p>
-    <div class="gallery-grid">
-      <div class="gallery-item"><img src="../images/pattern-tsuru-black_1200.webp" width="675" height="1200" alt="和柄背景（鶴・黒）置き畳 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-      <div class="gallery-item"><img src="../images/pattern-asanoha-indigo_1200.webp" width="675" height="1200" alt="和柄背景（麻の葉・藍）置き畳 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div>
-    </div>
+    <p class="color-grid-label">背景バリエーション / Backdrop Variations</p>
+    <ul class="pv-backdrops">
+      <li><figure class="pv-captioned"><div class="pv-photo is-portrait"><img src="../images/pattern-tsuru-black_1200.webp" width="675" height="1200" alt="和柄背景（鶴・黒）置き畳 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption>和柄背景（鶴・黒）</figcaption></figure></li>
+      <li><figure class="pv-captioned"><div class="pv-photo is-portrait"><img src="../images/pattern-asanoha-indigo_1200.webp" width="675" height="1200" alt="和柄背景（麻の葉・藍）置き畳 - Studio Nagoya Base" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption>和柄背景（麻の葉・藍）</figcaption></figure></li>
+      <li><figure class="pv-captioned"><div class="pv-photo is-portrait"><img src="../images/backdrop-tiedye-gray_1200.webp" width="675" height="1200" alt="グレーの濃淡とムラのあるグランジ背景" class="gallery-image cursor-pointer" role="button" tabindex="0" loading="lazy" decoding="async"></div><figcaption>グランジ背景</figcaption></figure></li>
+    </ul>
 
     <p class="gallery-note gallery-note-spaced">
       最新の作例・空き情報は X でご確認いただけます →
@@ -354,10 +463,13 @@
     </div>
   </div>
 </section>
+</div>
 
+<!-- 料金・利用案内・FAQ等（白） -->
+<div class="z z-paper">
 <!-- 設備・備品 -->
 <section id="equipment">
-  <div class="container">
+  <div class="container reveal">
     <h2 class="section-title">代表設備</h2>
     <p class="section-subtitle">Equipment</p>
 
@@ -384,9 +496,11 @@
 
 <!-- 料金 -->
 <section id="pricing" class="bg-section">
-  <div class="container">
+  <div class="container reveal">
     <h2 class="section-title">料金</h2>
     <p class="section-subtitle">Pricing</p>
+
+    <p class="pv-hero-price pv-price-lead">1時間から <strong>平日 ¥2,000</strong> / <strong>土日祝 ¥2,500</strong></p>
 
     <div class="member-banner">
       <div class="member-banner-icon">◈</div>
@@ -464,7 +578,7 @@
 
 <!-- 安全ルール -->
 <section id="safety">
-  <div class="container">
+  <div class="container reveal">
     <h2 class="section-title">緊縛・吊り設備を安全に利用するために</h2>
     <p class="section-subtitle">Safety Guidelines</p>
 
@@ -484,9 +598,29 @@
   </div>
 </section>
 
+<!-- 法的事項 -->
+<section id="legal">
+  <div class="container reveal">
+    <h2 class="section-title">法的事項</h2>
+    <p class="section-subtitle">Legal</p>
+
+    <ul class="phase2-trust-strip" aria-label="法的事項の要点">
+      <li>18歳以上（高校生不可）</li>
+      <li>キャンセル：前日50% ／ 当日100%</li>
+      <li>飲酒後の緊縛・吊り・撮影・パフォーマンスは禁止</li>
+      <li>性的行為および性的行為を伴う撮影は禁止</li>
+      <li>防犯カメラ設置（無人運営・安全確認用途）</li>
+    </ul>
+    <p class="pricing-note">利用規約・キャンセルポリシー・プライバシーポリシー・特定商取引法に基づく表記の全文は、法的事項ページでご確認いただけます。</p>
+    <div class="section-cta-sm">
+      <a class="btn-primary" href="{{ '/mens/legal/' | relative_url }}">利用規約・法的事項の全文を見る →</a>
+    </div>
+  </div>
+</section>
+
 <!-- 利用の流れ -->
 <section id="how-to-use" class="bg-section">
-  <div class="container">
+  <div class="container reveal">
     <h2 class="section-title">利用の流れ</h2>
     <p class="section-subtitle">How to Use</p>
 
@@ -513,7 +647,7 @@
 
 <!-- アクセス -->
 <section id="access" class="bg-section">
-  <div class="container">
+  <div class="container reveal">
     <h2 class="section-title">アクセス</h2>
     <p class="section-subtitle">Access</p>
 
@@ -529,7 +663,7 @@
 
 <!-- 営業時間 -->
 <section id="hours">
-  <div class="container">
+  <div class="container reveal">
     <h2 class="section-title">営業時間</h2>
     <p class="section-subtitle">Hours</p>
 
@@ -539,7 +673,7 @@
 
 <!-- FAQ -->
 <section id="faq" class="bg-section">
-  <div class="container">
+  <div class="container reveal">
     <h2 class="section-title">よくある質問</h2>
     <p class="section-subtitle">FAQ</p>
 
@@ -588,10 +722,50 @@
     <p class="pricing-note"><a href="{{ '/mens/how-to/' | relative_url }}#faq-full">FAQをすべて見る →</a></p>
   </div>
 </section>
+</div>
+
+<!-- 予約・相談（青） -->
+<div class="z z-navy">
+<!-- 空き状況・予約 -->
+<section id="calendar" class="bg-section">
+  <div class="container reveal">
+    <h2 class="section-title">空き状況・予約</h2>
+    <p class="section-subtitle">Availability &amp; Booking</p>
+
+    <p class="calendar-note">予約ページで希望日時の空きをご確認のうえ、そのまま仮予約を送信してください。<br>はじめての方は<strong>オンラインクレジットカード決済のみ</strong>ご利用いただけます。空きがある場合は<strong>当日</strong>のご予約もお申し込みいただけます（会員登録の有無は当日予約の条件ではありません）。通常は24時間以内に返信します。当方からの予約確定連絡をもって予約成立となります（オンラインクレジットカード決済をお選びの場合は、申込後に表示される決済ページの有効期限内にお支払いが完了した時点で予約成立となります）。</p>
+    <p class="calendar-note">予約窓口：予約ページ　／　相談窓口：ページ内フォーム</p>
+    <p class="calendar-note">※ このページの予約ページからのご予約には会員料金が適用されます。適用条件と会員資格との違いは<a href="#pricing">料金のご案内</a>をご確認ください。</p>
+
+    <div class="btn-group">
+      <a class="btn-primary" href="{{ '/mens/booking/' | relative_url }}" data-analytics-event="cta_click" data-analytics-location="mens_calendar" data-analytics-type="booking_app" data-analytics-destination="booking_app">予約ページへ進む</a>
+      <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="mens_calendar">利用前に相談する</a>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- 相談フォーム -->
+<div class="z z-sky pv-form-zone">
+{% include reservation_form_ja.html %}
+</div>
+
+<div class="z z-navy">
+<!-- 利用前相談 -->
+<section id="cta">
+  <div class="container reveal">
+    <div class="cta-card cta-advance consultation-card">
+      <p class="cta-tag">利用前相談</p>
+      <h2 class="cta-card-heading">日程・設備について相談</h2>
+      <p class="cta-card-desc">吊り設備、利用人数、撮影内容など、予約前に確認したい点がある場合はこちらからお問い合わせください。</p>
+      <a class="btn-secondary" href="#reservation-form" data-analytics-event="cta_click" data-analytics-type="consult" data-analytics-location="mens_consultation_section">相談フォームで問い合わせる →</a>
+    </div>
+    <p class="cta-hint">空き状況の確認・直接予約は<a href="{{ '/mens/booking/' | relative_url }}">予約ページ</a>から行えます。ご相談・お問い合わせは<a href="#reservation-form">相談フォーム</a>をご利用ください。このページの予約ページからのご予約には<strong>会員料金</strong>が適用されます（例：平日 3時間 ¥5,500 / 4時間 ¥7,000）</p>
+  </div>
+</section>
 
 <!-- 最終CTA -->
 <section id="final-cta">
-  <div class="container" style="text-align:center;padding-top:48px;padding-bottom:48px;">
+  <div class="container reveal" style="text-align:center;padding-top:48px;padding-bottom:48px;">
     <h2 class="section-title">男性同士の緊縛・フェティッシュ撮影に</h2>
     <p class="section-subtitle">Book Your Session</p>
     <p style="max-width:600px;margin:0 auto 32px;line-height:1.9;color:var(--text-main);">
@@ -604,35 +778,13 @@
     <p class="cta-hint" style="margin-top:20px;">X（旧Twitter）でも最新の作例・空き情報を発信しています → <a href="https://twitter.com/nagoyabase2023" target="_blank" rel="noopener noreferrer">@nagoyabase2023</a></p>
   </div>
 </section>
-
-<!-- 法的事項 -->
-<section id="legal" class="bg-section">
-  <div class="container">
-    <h2 class="section-title">法的事項</h2>
-    <p class="section-subtitle">Legal</p>
-
-    <ul class="phase2-trust-strip" aria-label="法的事項の要点">
-      <li>18歳以上（高校生不可）</li>
-      <li>キャンセル：前日50% ／ 当日100%</li>
-      <li>飲酒後の緊縛・吊り・撮影・パフォーマンスは禁止</li>
-      <li>性的行為および性的行為を伴う撮影は禁止</li>
-      <li>防犯カメラ設置（無人運営・安全確認用途）</li>
-    </ul>
-    <p class="pricing-note">利用規約・キャンセルポリシー・プライバシーポリシー・特定商取引法に基づく表記の全文は、法的事項ページでご確認いただけます。</p>
-    <div class="section-cta-sm">
-      <a class="btn-primary" href="{{ '/mens/legal/' | relative_url }}">利用規約・法的事項の全文を見る →</a>
-    </div>
-  </div>
-</section>
+</div>
 
 </main>
 
 {% include footer_ja.html show_top=true brand="mens" %}
 
-
-
 <a class="floating-booking-btn" id="floatingBookingBtn" href="{{ '/mens/booking/' | relative_url }}" aria-label="予約ページへ移動" data-analytics-event="cta_click" data-analytics-location="floating_button" data-analytics-type="booking_app" data-analytics-destination="booking_app">🕐</a>
-
 
 <div id="imageModal" class="image-modal">
   <div class="modal-overlay"></div>
@@ -642,10 +794,12 @@
   </div>
 </div>
 
-
 <script src="../scripts/main.js"></script>
 <script src="../scripts/analytics.js"></script>
 <script src="../scripts/reservation-form.js"></script>
+<script src="../scripts/mens-preview-633.js"></script>
+<script src="../scripts/mens-preview-646.js"></script>
+<script src="../scripts/mens-preview-653.js"></script>
 
 </body>
 </html>

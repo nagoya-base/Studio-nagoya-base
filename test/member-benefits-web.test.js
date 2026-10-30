@@ -53,7 +53,7 @@ function faqLd(html) {
 var BASE = 'https://nagoya-base.github.io/Studio-nagoya-base';
 var PAGES = {
   snb: { file: 'membership/index.html', url: BASE + '/membership/', top: 'index.html', image: BASE + '/images/studio-nagoya-base-hero-ogp.jpg' },
-  mens: { file: 'mens/membership/index.html', url: BASE + '/mens/membership/', top: 'mens/index.html', image: BASE + '/images/ogp-mens-v2-1200x630.jpg' },
+  mens: { file: 'mens/membership/index.html', url: BASE + '/mens/membership/', top: 'mens/index.html', image: BASE + '/images/ogp-mens-v2-1200x630.jpg', topImage: BASE + '/images/mens-preview-ogp-1200x630.jpg' },
   studio_x: { file: 'studio-x/membership/index.html', url: BASE + '/studio-x/membership/', top: 'studio-x/index.html', image: BASE + '/studio-x/images/studio-x-ogp.jpg' }
 };
 
@@ -81,7 +81,8 @@ test('3つの会員ページが存在し、og/twitter/canonicalがページ固�
     assert.strictEqual(meta(html, 'og:image'), p.image, brand + ' og:image はブランドトップと同じ画像資産');
     assert.strictEqual(meta(html, 'twitter:image'), p.image);
     /* トップと同じ画像資産（トップのog:imageと一致） */
-    assert.strictEqual(meta(read(p.top), 'og:image'), p.image, brand + ' トップとOGP画像が一致');
+    /* Issue #658: mensトップは採用した試作の専用OGPへ差し替え済み。会員ページのOGPは本Issueの対象外で従来のまま */
+    assert.strictEqual(meta(read(p.top), 'og:image'), p.topImage || p.image, brand + ' トップのOGP画像');
     /* ページ固有: トップと同じタイトル・URLの流用ではない */
     assert.notStrictEqual(meta(html, 'og:title'), meta(read(p.top), 'og:title'));
     assert.notStrictEqual(meta(html, 'og:url'), meta(read(p.top), 'og:url'));
@@ -122,7 +123,8 @@ test('mens membership: mensトップと同じhero構造・OGP画像・ブラン�
   var html = read(PAGES.mens.file);
   var top = read('mens/index.html');
   assert.match(html, /<section class="mens-ogp-hero"/);
-  assert.match(top, /<section class="mens-ogp-hero"/);
+  /* Issue #658: トップは採用した試作のHERO（pv-hero）へ差し替え済み。会員ページのheroは従来のまま */
+  assert.match(top, /<section class="pv-hero"|class="pv-hero/);
   assert.ok(/<img\s+src="\.\.\/\.\.\/images\/ogp-mens-v2-1200x630\.jpg"/.test(html));
   assert.match(html, /styles\/mens\.css/);
   var t = textOf(html);

@@ -1,9 +1,10 @@
 'use strict';
 /*
- * Issue #633: mens/preview-633.html（/mens/ 再構成案の比較用試作）の検証。
- * 現行 mens/index.html と試作をローカルJekyllビルドし、表示テキスト・リンク・計測属性・画像・メタ情報・
- * 構造化データを機械的に照合する。試作固有の例外は ALLOWED_PREVIEW_ONLY_TEXT だけに明示する。
- * Jekyll が使えない環境では照合系テストをスキップする（静的な検査は常に実行）。
+ * Issue #633 / #658: mens/preview-633.html（比較用の試作・noindex・送信／計測停止）と、
+ * 試作の構成を採用した本番 mens/index.html の検証。
+ * Issue #658 で本番トップを試作構成へ差し替えたため、旧トップ（mens-top-before-658）との比較は常設しない。
+ * 料金は業務正本・他テスト（top-pricing-629 など）、導線・計測は本ファイルの期待値と照合する。
+ * Jekyll が使えない環境ではビルド後の検査をスキップする（静的な検査は常に実行）。
  */
 var test = require('node:test');
 var assert = require('node:assert');
@@ -15,146 +16,7 @@ var cp = require('child_process');
 var ROOT = path.join(__dirname, '..');
 function read(rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); }
 
-/* 試作固有の例外（フォーム付近の検証用注記）のみ許容する */
-var ALLOWED_PREVIEW_ONLY_TEXT = [
-  '【試作ページ】検証用のため、このフォームからは送信できません。',
-  /* Issue #639: HEROの主役コピー・PRIVATE・ROPE/WOODスクロール演出で追加した文言（現行からの削除は無し） */
-  '一つの部屋から、いくつもの表現へ。',
-  '安心できる、大人の秘密基地。',
-  'Private',
-  '完全貸切。無人入室。',
-  '誰にも気兼ねせず、自分たちのペースで。',
-  '完全貸切', /* 現行にもHEROバッジとして存在するため、PRIVATE側の増分として許容 */
-  '無人入室',
-  '他の利用者と同席しない',
-  '料金が事前に分かる',
-  '利用方法・設備・ルールがWebで確認できる',
-  '問い合わせ窓口がある',
-  'WOOD FRAME', '木組みの吊り床', '高さ 2350mm／間口 2450mm／奥行 2000mm。部屋の骨格になる、木の枠組みです。',
-  'BAMBOO', '竹吊り', '天井に渡した竹と木組みで、吊りの構成を組み立てられます。',
-  'ROPE POINT', '麻縄・スリング・カラビナ', 'リギングプレートまで常設。床縄から空中緊縛まで対応します（空中緊縛は経験者のみ、縛り手・受け手を含む3名以上）。',
-  /* Issue #646: H1・HERO説明・撮影シーン・仲間との利用・ギャラリー見出し・会員説明の集約（現行からの変更は ALLOWED_CURRENT_ONLY_TEXT に対応） */
-  '男性同士の緊縛・フェティッシュ撮影を、完全個室で。',
-  'ユニフォーム撮影、男性ポートレート、緊縛まで。名古屋・上前津の完全個室スタジオです。緊縛をしない撮影にも利用できます。',
-  '衣装と空間で、撮影シーンをつくる', 'Scenes',
-  '好きな装いで、自分たちの一枚を。',
-  'ユニフォームやコスチュームを持ち寄って、衣装と空間を活かした作品撮りに。畳や木組みの和室も背景にできます。',
-  '作例に写る衣装・小道具は、当スタジオの貸出品ではありません。',
-  'ユニフォームの床縄作品', 'ヒーロー衣装の作品撮り', 'ユニフォーム姿の2人によるシチュエーション作品',
-  '学校机と黒板のある空間',
-  '学校机と黒板で、撮影にひとつのシーンを。',
-  '衣装やポーズを合わせて、自分たちの設定を楽しむ撮影にも。',
-  '縛らない日も、自分たちらしく撮る。',
-  '男性ポートレートや身体表現、セルフ撮影、ペアでの撮影にも。背景と照明を使って、撮りたい雰囲気をつくれます。',
-  '好きが通じる仲間と、自分たちだけの時間を。',
-  'ユニフォームを持ち寄って撮る。縄の練習をする。撮った写真を見ながら話す。',
-  '同じ趣味の仲間と集まる、少人数のフェチ会・同好会にも。完全貸切・無人入室で、自分たちのペースで楽しめます。',
-  '1〜4名。5名以上は事前にご相談ください（運営者の承認が必要です）。',
-  '参加者募集を予定している会は、募集前にご相談ください。',
-  '参加者全員が18歳以上であること（高校生は利用不可）を予約者が確認し、同伴者も含めて利用規約に従ってご利用ください。',
-  '場所と設備の貸出です。会の主催や参加者・モデルの手配、指導は含まれません。宴会・飲み会目的ではご利用いただけません。',
-  '吊りを伴う利用の条件は、',
-  '仲間との利用を相談する →',
-  /* Issue #651: HERO直下の用途ナビ・PRIVATEへの集約・作例と見出しの整理・法的事項の移動（現行からの変更は ALLOWED_CURRENT_ONLY_TEXT に対応） */
-  '用途から探す',
-  /* Issue #653: 用途カード4件（フェチ／コスプレ・ポートレート／教室セット）・人物撮影と設営サポートのコピー・作品紹介・背景一覧 */
-  '緊縛・ロープ撮影', '男性同士の練習・床縄・吊りの作例',
-  'フェチ', 'ユニフォームやシチュエーションを楽しむ撮影',
-  'コスプレ・ポートレート', '好きな衣装での作品撮りや、人物・セルフ撮影に',
-  '教室セット', '学校机と黒板で、撮影シーンをつくる',
-  '人物・セルフ撮影の紹介を見る →',
-  'ユニフォームで、自分らしい一枚を。', '黒背景と照明を使った、ユニフォーム撮影の作例です。', '本格的な照明機材も、設営をサポート。',
-  '和柄背景（鶴・黒）', '和柄背景（麻の葉・藍）', 'グランジ背景',
-  'ゲイ・バイ男性を含む、男性同士の撮影・練習を歓迎しています。性別・性的指向を問わずご利用いただけます。',
-  '無人入室ですが、防犯カメラを設置しています（無人運営・安全確認用途）。',
-  '利用条件・法的事項を確認する',
-  'ヒーロー衣装の作例（白背景）',
-  '背景・照明の例を見る →',
-  '照明・背景とスタジオの空間',
-  '照明・背景・設備のサンプルをご覧いただけます。男性モデルの作例は、用途別の紹介にあります。',
-  '背景バリエーション / Backdrop Variations',
-  '同じ場所で、照明の色を変えると / Lighting Comparison',
-  '同じ撮影場所で、照明の色を変えた5パターンです。構図が完全に一致する比較ではありません。',
-  '通常色（白）の照明', '紫の照明', '赤の照明', '青の照明', '暖色の照明',
-  '※ このページの予約ページからのご予約には会員料金が適用されます。適用条件と会員資格との違いは', '料金のご案内',
-  'をご利用ください。このページの予約ページからのご予約には', 'が適用されます（例：平日 3時間 ¥5,500 / 4時間 ¥7,000）',
-  'SPACE', '誰にも会わない、一室', '完全個室・無人入室。大型ミラー（1460mm × 800mm）と置き畳で、練習も撮影も自分たちのペースで。'
-];
-/* Issue #639: HEROから外した当日予約の説明は、予約セクションの既存 calendar-note と重複するため試作では削除する */
-/* 短い汎用断片は全体許容にせず、増えてよい出現数だけを明示する（#646の仲間枠・料金リンク） */
-var ALLOWED_PREVIEW_EXTRA_COUNT = { '安全ルール': 1, 'と': 1, '利用規約': 1, 'をご確認ください。': 2 };
-var ALLOWED_CURRENT_ONLY_TEXT = [
-  '予約ページで日時を選び、そのまま仮予約を送信できます。空きがあれば当日のご予約も可能です（はじめての方はオンラインクレジットカード決済のみ）。',
-  /* Issue #646: 会員料金の適用と会員資格の違いは料金セクションへ集約し、他は短い要約とリンクにする（重要条件は料金セクションの member-banner に残る） */
-  '※ このページ（SNB mens）の予約ページからのご予約は、SNB MEMBERへの加入有無にかかわらず会員料金が自動で適用されます。これは料金の優遇であり、会員資格の付与ではありません。',
-  'をご利用ください。このページの予約ページからのご予約には、SNB MEMBERへの加入有無にかかわらず',
-  'が適用されます（料金の優遇です。例：平日 3時間 ¥5,500 / 4時間 ¥7,000）',
-  /* Issue #646: ギャラリー見出しを内容（男性モデルの作例＋設備サンプル）に合わせて変更 */
-  '男性モデルによる撮影作例',
-  '男性モデルによる緊縛、吊り撮影、ユニフォーム、コスチューム撮影の作例です。',
-  /* Issue #651: 歓迎説明はPRIVATEの1文へ、「人目を気にせず」は完全貸切・無人入室のPRIVATE表示へ集約。背景ラベルの内部向け表記を利用者向けに整理 */
-  'ゲイ・バイ男性を含む男性ペアや男性グループでのご利用を歓迎しています。性別や性的指向を問わずご利用いただけます。',
-  '男性同士で使える',
-  '男性ペアや男性グループでの緊縛練習・撮影を歓迎しています。ゲイ・バイ男性を含め、性別や性的指向を問わずご利用いただけます。',
-  '人目を気にせず使える',
-  '完全個室・無人入室。他の利用者やスタッフと対面することなく、衣装やロープ表現に集中できます。',
-  '背景バリエーション（追加候補） / Additional Backdrops',
-  /* Issue #653: 設備写真（木組み・竹）は設備紹介の静止画へ移し、ギャラリーの同じ写真の重複グループは置かない */
-  'スタジオ全景・吊り設備 / Studio &amp; Rigging'
-];
-/* 削除した特徴カード2枚のアイコン（◈）は個数で許容する */
-var ALLOWED_CURRENT_ONLY_COUNT = { '◈': 2 };
-
-/* Issue #641: 利用者指定により、試作のヒーロー画像・OGP画像だけを差し替える（#633の画像維持ルールの明示的な例外）。他の画像・文言は照合を続ける */
-var CUR_OGP = 'https://nagoya-base.github.io/Studio-nagoya-base/images/ogp-mens-v2-1200x630.jpg';
 var PRE_OGP = 'https://nagoya-base.github.io/Studio-nagoya-base/images/mens-preview-ogp-1200x630.jpg';
-var HERO_EXCEPTION_PRE = '../images/mens-preview-hero.webp | 薄暗い和室で畳に座り横を見つめる男性。「用途によって、空気が変わる。安心できる、大人の秘密基地。Studio Nagoya Base mens」 | 1600x841';
-var HERO_EXCEPTION_CUR = '../images/ogp-mens-v2-1200x630.jpg | 男性同士のフェティッシュ撮影に対応するStudio Nagoya Baseの男性向け案内 | 1200x630';
-
-/* Issue #646: 本Issueで追加するリンク・画像だけを明示的な例外にする（それ以外の照合は現行と完全一致を維持） */
-var PREVIEW_ONLY_ANCHORS = [
-  '仲間との利用を相談する → | data-analytics-destination=reservation_form data-analytics-event=cta_click data-analytics-location=mens_group data-analytics-type=consult href=#reservation-form',
-  '安全ルール | href=#safety',
-  '利用規約 | href=/Studio-nagoya-base/mens/legal/#terms',
-  '料金のご案内 | href=#pricing',
-  /* Issue #651/#653: 用途カード4件・PRIVATEの法的事項リンク・衣装→人物撮影、人物撮影→背景・照明のリンク（JSなしで使える通常のアンカー） */
-  '緊縛・ロープ撮影 男性同士の練習・床縄・吊りの作例 | href=#usage',
-  'フェチ ユニフォームやシチュエーションを楽しむ撮影 | href=#scenes',
-  'コスプレ・ポートレート 好きな衣装での作品撮りや、人物・セルフ撮影に | href=#costume-portrait-use',
-  '教室セット 学校机と黒板で、撮影シーンをつくる | href=#classroom-use',
-  '利用条件・法的事項を確認する | href=#legal',
-  '人物・セルフ撮影の紹介を見る → | href=#portrait-use',
-  '背景・照明の例を見る → | href=#gallery'
-];
-var PREVIEW_ONLY_IMAGES = [
-  '../images/gallery_man04_1200.webp | 柄背景の前でポーズをとるヒーロー衣装の人物の作品撮り | 800x1200',
-  '../images/gallery_man05_1200.webp | 黒背景の前でユニフォーム姿の男性2人が撮影したシチュエーション作品（顔は加工しています） | 800x1200',
-  '../images/interior-classroom_1200.webp | 学校机と黒板のある撮影スペース | 1200x675',
-  '../images/backdrop-color-white_1200.webp | 通常の白色照明を当てた撮影スペースの白背景紙 | 1200x675',
-  '../images/backdrop-color-purple_1200.webp | 紫の照明を当てた撮影スペースの背景紙 | 1200x675',
-  '../images/backdrop-color-red_1200.webp | 赤の照明を当てた撮影スペースの背景紙 | 1200x675',
-  '../images/backdrop-color-blue_1200.webp | 青の照明を当てた撮影スペースの背景紙 | 1200x675',
-  '../images/backdrop-color-orange_1200.webp | 暖色の照明を当てた撮影スペースの背景紙 | 1200x675',
-  '../images/backdrop-tiedye-gray_1200.webp | グレーの濃淡とムラのあるグランジ背景 | 675x1200'
-];
-/* Issue #653: 実画像の内容に合わせて alt を直す現行トップの3枚（src・寸法は同じ。現行側は照合から外し、試作の新 alt を明示する） */
-var CUR_ALT_REPLACED = [
-  '../images/gallery_man03_1200.webp | 木組みの吊り床と撮影機材が分かるスタジオ内観（男性モデル） | 1200x800',
-  '../images/interior-rigging-frame_1200.jpeg | スタジオ内観（通常照明・木組みフレームと置き畳） | 1200x675',
-  '../images/gallery_lighting01_1200.webp | 木組みの吊り設備を照らすフルカラー照明サンプル 1 | 1200x675'
-];
-var PRE_ALT_REPLACED = [
-  '../images/gallery_man03_1200.webp | 黒背景と左右のソフトボックスの前に立つ野球ユニフォーム姿の男性（顔は加工しています） | 1200x800',
-  '../images/interior-rigging-frame_1200.jpeg | 木組み・畳・大型ミラーが見える、通常照明のスタジオ内観 | 1200x675',
-  '../images/gallery_lighting01_1200.webp | 暖色の照明に照らされた竹と木組みの吊り設備 | 1200x675'
-];
-/* Issue #651: 用途ナビの装飾サムネイル（リンク文言が説明するため alt は空）。既存WebPの再利用のみ */
-var NAV_THUMBS = [
-  '../images/gallery_man02_1200.webp |  | 800x1200',
-  '../images/gallery_man05_1200.webp |  | 800x1200',
-  '../images/gallery_man04_1200.webp |  | 800x1200',
-  '../images/interior-classroom_1200.webp |  | 1200x675'
-];
 
 var built = null;
 function tryBuild() {
@@ -274,6 +136,7 @@ test('#633: 初期化の途中で例外が起きても reveal-ready を外し、
 
 test('#633: sitemap.xml・他ページから試作への参照がない', function () {
   assert.ok(read('sitemap.xml').indexOf('preview-633') === -1);
+  assert.ok(read('robots.txt').indexOf('preview-633') === -1);
   var hits = [];
   (function walk(dir) {
     fs.readdirSync(dir, { withFileTypes: true }).forEach(function (e) {
@@ -282,77 +145,109 @@ test('#633: sitemap.xml・他ページから試作への参照がない', functi
       if (e.isDirectory()) return walk(p);
       if (!/\.(html|xml|yml|json)$/.test(e.name)) return;
       if (p.endsWith(path.join('mens', 'preview-633.html'))) return;
-      if (fs.readFileSync(p, 'utf8').indexOf('preview-633') !== -1) hits.push(path.relative(ROOT, p));
+      if (fs.readFileSync(p, 'utf8').indexOf('preview-633.html') !== -1) hits.push(path.relative(ROOT, p));
     });
   })(ROOT);
   assert.deepStrictEqual(hits, []);
 });
 
-/* ---- ビルド後の照合 ---- */
-test('#633: ビルド後の試作に googletagmanager / gtag( / analytics.js / reservation-form.js が含まれない', { skip: skipBuilt }, function () {
+/* ---- 本番と試作の差分（Issue #658）：意図した差分はここに列挙したものだけ ---- */
+function stripIntendedDiff(src) {
+  return src
+    .replace(/<!-- 試作ページ[^\n]*-->\n<meta name="robots" content="noindex, nofollow">\n/, '')
+    .replace(/\n<!-- Google Analytics 4 -->[\s\S]*?<\/script>\n[\s\S]*?<\/script>\n/, '\n')
+    .replace(/<!-- 相談フォーム[^\n]*-->\n<div class="z z-sky pv-form-zone">[\s\S]*?\{% include reservation_form_ja\.html %\}[\s\S]*?(<\/fieldset>\s*)?<\/div>\n/, '<!-- FORM -->\n')
+    .replace(/<script src="\.\.\/scripts\/(analytics|reservation-form)\.js"><\/script>\n/g, '')
+    .replace(/\n{2,}/g, '\n');
+}
+
+test('#658: 本番トップは試作の構成を採用し、差分は noindex・GA4・フォーム有効化・送信／計測JSだけ', function () {
+  var prod = read('mens/index.html'), pre = read('mens/preview-633.html');
+  assert.strictEqual(stripIntendedDiff(prod), stripIntendedDiff(pre));
+});
+
+test('#658: 本番トップは index 可・canonical /mens/・GA4・計測JS・送信JSを持ち、試作の停止設定を持たない', function () {
+  var src = read('mens/index.html');
+  assert.doesNotMatch(src, /noindex|nofollow/);
+  assert.doesNotMatch(src, /<fieldset[^>]*disabled/);
+  assert.doesNotMatch(src, /pv-form-lock|pv-form-note|【試作ページ】/);
+  assert.match(src, /<link rel="canonical" href="https:\/\/nagoya-base\.github\.io\/Studio-nagoya-base\/mens\/">/);
+  assert.match(src, /<meta property="og:url" content="https:\/\/nagoya-base\.github\.io\/Studio-nagoya-base\/mens\/">/);
+  assert.match(src, /googletagmanager\.com\/gtag\/js\?id=G-6TWDLEFWJT/);
+  assert.match(src, /gtag\('config', 'G-6TWDLEFWJT'\)/);
+  assert.match(src, /<script src="\.\.\/scripts\/analytics\.js"><\/script>/);
+  assert.match(src, /<script src="\.\.\/scripts\/reservation-form\.js"><\/script>/);
+  assert.match(src, /\{% include reservation_form_ja\.html %\}/);
+  assert.match(src, /styles\/mens-preview-633\.css/);
+  ['mens-preview-633.js', 'mens-preview-646.js', 'mens-preview-653.js'].forEach(function (j) { assert.ok(src.indexOf('scripts/' + j) !== -1, j); });
+});
+
+/* 本番の予約・相談導線と計測属性の期待値（旧トップ mens-top-before-658 から引き継ぐ、仕様としての正本） */
+var EXPECTED_PROD_ANCHORS = [
+  '日時を選んで予約する | data-analytics-destination=booking_app data-analytics-event=cta_click data-analytics-location=mens_final_cta data-analytics-type=booking_app href=/Studio-nagoya-base/mens/booking/',
+  '利用前に相談する | data-analytics-destination=reservation_form data-analytics-event=cta_click data-analytics-location=mens_final_cta data-analytics-type=consult href=#reservation-form',
+  '予約ページへ進む | data-analytics-destination=booking_app data-analytics-event=cta_click data-analytics-location=mens_calendar data-analytics-type=booking_app href=/Studio-nagoya-base/mens/booking/',
+  '利用前に相談する | data-analytics-event=cta_click data-analytics-location=mens_calendar data-analytics-type=consult href=#reservation-form',
+  '相談フォームで問い合わせる → | data-analytics-event=cta_click data-analytics-location=mens_consultation_section data-analytics-type=consult href=#reservation-form',
+  '仲間との利用を相談する → | data-analytics-destination=reservation_form data-analytics-event=cta_click data-analytics-location=mens_group data-analytics-type=consult href=#reservation-form'
+];
+test('#658: 本番の予約・相談CTAは期待どおりの到達先・計測属性を持つ（予約は予約ページ、相談はフォーム）', function () {
+  var list = anchors(read('mens/index.html').replace(/\{\{\s*'\/mens\/booking\/'\s*\|\s*relative_url\s*\}\}/g, '/Studio-nagoya-base/mens/booking/'));
+  EXPECTED_PROD_ANCHORS.forEach(function (a) { assert.ok(list.indexOf(a) !== -1, '見つからない: ' + a); });
+  list.forEach(function (a) {
+    if (/data-analytics-type=consult/.test(a)) assert.match(a, /href=#reservation-form/, '相談CTAはフォームへ: ' + a);
+    if (/data-analytics-type=booking_app/.test(a)) assert.match(a, /href=\/Studio-nagoya-base\/mens\/booking\//, '予約CTAは予約ページへ: ' + a);
+  });
+  assert.ok(read('mens/index.html').indexOf('id="floatingBookingBtn"') !== -1);
+});
+
+test('#658: 本番の料金・会員料金の注記は現行条件のまま（新料金・SX同額料金・有料設営の価格を載せない）', function () {
+  var src = read('mens/index.html');
+  assert.match(src, /平日 ¥2,000<\/strong> \/ <strong>土日祝 ¥2,500/);
+  assert.match(src, /例：平日 3時間 ¥5,500 \/ 4時間 ¥7,000/);
+  assert.match(src, /月額500円）への加入有無にかかわらず、自動で会員料金が適用されます/, '料金欄に適用条件が残る');
+  assert.match(src, /<b>料金の優遇<\/b>であり、SNB MEMBERの<b>会員資格が付与されるものではありません<\/b>/);
+  assert.doesNotMatch(src, /SX同額|1,200円|¥1,200/, '#657の用途別SX同額料金を先行掲載しない');
+  assert.doesNotMatch(src, /設営(代行|料|サービス)|機材レンタル|有料(設営|片付)/, '#657の有料設営・機材レンタルを先行掲載しない');
+  assert.ok(src.indexOf('本格的な照明機材も、設営をサポート。') !== -1, '運営者指定のコピーを維持');
+});
+
+/* ---- ビルド後の検査 ---- */
+test('#633/#658: ビルド後の試作に googletagmanager / gtag( / analytics.js / reservation-form.js が含まれず、本番には含まれる', { skip: skipBuilt }, function () {
   assert.doesNotMatch(built.preview, /googletagmanager|gtag\(|analytics\.js|reservation-form\.js/);
   assert.match(built.preview, /<fieldset class="pv-form-lock" disabled>/);
   assert.match(built.preview, /<meta name="robots" content="noindex, nofollow">/);
+  assert.match(built.current, /googletagmanager\.com\/gtag\/js\?id=G-6TWDLEFWJT/);
+  assert.match(built.current, /analytics\.js/);
+  assert.match(built.current, /reservation-form\.js/);
+  assert.doesNotMatch(built.current, /noindex|<fieldset[^>]*disabled/);
 });
 
-test('#633: 表示テキスト（文／項目）が現行と一致する（順序・空白・装飾差は正規化、例外は注記のみ）', { skip: skipBuilt }, function () {
-  var curLeft = JSON.parse(JSON.stringify(ALLOWED_CURRENT_ONLY_COUNT));
-  var cur = visibleLeaves(built.current).filter(function (t) { return ALLOWED_CURRENT_ONLY_TEXT.indexOf(t) === -1; }).filter(function (t) {
-    if (curLeft[t] > 0) { curLeft[t]--; return false; }
-    return true;
-  });
-  assert.deepStrictEqual(Object.keys(curLeft).filter(function (k) { return curLeft[k] !== 0; }), [], '個数指定の現行限定テキストは指定数ぴったり消えていること');
-  var preAll = visibleLeaves(built.preview);
-  var pre = preAll.filter(function (t) { return ALLOWED_PREVIEW_ONLY_TEXT.indexOf(t) === -1 && !(t in ALLOWED_PREVIEW_EXTRA_COUNT); });
-  Object.keys(ALLOWED_PREVIEW_EXTRA_COUNT).forEach(function (k) {
-    assert.ok((multiset(preAll)[k] || 0) - (multiset(cur)[k] || 0) <= ALLOWED_PREVIEW_EXTRA_COUNT[k], '増やしてよい出現数を超えた断片: ' + k);
-  });
-  /* 許容リストに無い文言が試作で増えていないこと（許容語は現行側に同名があっても現行の出現数までは数える） */
-  assert.deepStrictEqual(diff(cur, preAll), [], '試作で欠落・変更された現行テキスト');
-  assert.deepStrictEqual(diff(pre, cur).filter(function (t) { return multiset(preAll)[t] > multiset(cur)[t]; }), [], '試作で追加・変更されたテキスト');
+test('#658: ビルド後の本番と試作は、表示テキスト・リンク・計測属性・画像・IDが同じ（フォーム注記を除く）', { skip: skipBuilt }, function () {
+  var NOTE = '【試作ページ】検証用のため、このフォームからは送信できません。';
+  var cur = visibleLeaves(built.current), pre = visibleLeaves(built.preview).filter(function (t) { return t !== NOTE; });
+  assert.deepStrictEqual(cur, pre);
   assert.ok(cur.length > 200, '照合対象が空洞化していないこと');
+  assert.deepStrictEqual(anchors(built.current), anchors(built.preview));
+  assert.deepStrictEqual(images(built.current), images(built.preview));
+  var ids = function (h) { return (bodyOf(h).match(/\bid="([^"]+)"/g) || []).map(function (x) { return x.slice(4, -1); }).filter(function (i) { return i !== 'pv-form-note'; }); };
+  assert.deepStrictEqual(ids(built.current), ids(built.preview));
+  assert.strictEqual(new Set(ids(built.current)).size, ids(built.current).length, 'IDが重複している');
 });
 
-test('#633: リンク先・CTA文言・data-analytics-* の対応が現行と一致する', { skip: skipBuilt }, function () {
-  var cur = anchors(built.current), pre = anchors(built.preview);
-  assert.deepStrictEqual(diff(cur, pre), []);
-  assert.deepStrictEqual(diff(pre, cur).sort(), PREVIEW_ONLY_ANCHORS.slice().sort(), '#646/#651: 追加を許すのは明示したリンクだけ');
-  assert.ok(cur.length > 40);
-});
-
-test('#633: 現行トップの写真（src/alt/寸法）をすべて維持している', { skip: skipBuilt }, function () {
-  var cur = images(built.current), pre = images(built.preview);
-  assert.ok(cur.indexOf(HERO_EXCEPTION_CUR) !== -1, '現行のヒーロー画像が想定どおり');
-  assert.ok(pre.indexOf(HERO_EXCEPTION_PRE) !== -1, '試作のヒーロー画像が #641 の指定どおり');
-  cur = cur.filter(function (x) { return x !== HERO_EXCEPTION_CUR && CUR_ALT_REPLACED.indexOf(x) === -1; });
-  pre = pre.filter(function (x) { return x !== HERO_EXCEPTION_PRE; });
-  assert.deepStrictEqual(diff(cur, pre), []);
-  assert.deepStrictEqual(diff(pre, cur).sort(), PREVIEW_ONLY_IMAGES.concat(NAV_THUMBS, PRE_ALT_REPLACED).sort(), '#646/#651/#653: 追加を許すのは既存WebP 9枚・用途カードのサムネイル4件・alt を実画像へ合わせた3枚だけ');
-});
-
-test('#633: title・description・OGP・Twitter・canonical・JSON-LD を維持している', { skip: skipBuilt }, function () {
+test('#658: ビルド後の本番の title・description・OGP・Twitter・canonical・JSON-LD（priceRange・FAQ）が正しい', { skip: skipBuilt }, function () {
   var t = function (h) { return (h.match(/<title>([\s\S]*?)<\/title>/) || [])[1]; };
-  assert.strictEqual(t(built.preview), t(built.current));
-  ['description'].forEach(function (k) { assert.strictEqual(metaContent(built.preview, 'name', k), metaContent(built.current, 'name', k)); });
-  assert.strictEqual(metaContent(built.current, 'property', 'og:image'), CUR_OGP);
-  assert.strictEqual(metaContent(built.preview, 'property', 'og:image'), PRE_OGP, '#641: 試作のog:imageは専用OGP');
-  assert.strictEqual(metaContent(built.preview, 'name', 'twitter:image'), PRE_OGP, '#641: 試作のtwitter:imageは専用OGP');
-  ['og:title', 'og:description', 'og:type', 'og:url', 'og:locale', 'og:site_name'].forEach(function (k) {
-    assert.strictEqual(metaContent(built.preview, 'property', k), metaContent(built.current, 'property', k), k);
-  });
-  ['twitter:card', 'twitter:title', 'twitter:description'].forEach(function (k) {
-    assert.strictEqual(metaContent(built.preview, 'name', k), metaContent(built.current, 'name', k), k);
-  });
-  var canon = function (h) { return (h.match(/<link rel="canonical" href="([^"]*)"/) || [])[1]; };
-  assert.strictEqual(canon(built.preview), canon(built.current));
-  assert.deepStrictEqual(jsonld(built.preview), jsonld(built.current).map(function (j) { return j.split(CUR_OGP).join(PRE_OGP); }), '#641: JSON-LDはimageのみ専用OGPへ');
-});
-
-test('#633: 現行トップにあるIDは試作にも存在し、試作内でIDが重複しない', { skip: skipBuilt }, function () {
-  var ids = function (h) { return (bodyOf(h).match(/\bid="([^"]+)"/g) || []).map(function (x) { return x.slice(4, -1); }); };
-  var cur = ids(built.current), pre = ids(built.preview);
-  assert.deepStrictEqual(diff(cur, pre), [], '試作で消えたID（アンカー・参照元の退行）');
-  assert.strictEqual(new Set(pre).size, pre.length, 'IDが重複している');
+  assert.strictEqual(t(built.current), '男性同士の緊縛・フェティッシュ撮影向けレンタルスペース｜名古屋・上前津');
+  assert.strictEqual(metaContent(built.current, 'property', 'og:image'), PRE_OGP);
+  assert.strictEqual(metaContent(built.current, 'name', 'twitter:image'), PRE_OGP);
+  assert.strictEqual(metaContent(built.current, 'property', 'og:url'), 'https://nagoya-base.github.io/Studio-nagoya-base/mens/');
+  ['description', 'twitter:card'].forEach(function (k) { assert.ok(metaContent(built.current, 'name', k), k); });
+  assert.deepStrictEqual(jsonld(built.current), jsonld(built.preview), '構造化データは試作と同一（imageは専用OGP）');
+  var ld = jsonld(built.current).map(function (j) { return JSON.parse(j.replace(/^<script[^>]*>|<\/script>$/g, '')); });
+  var biz = ld.filter(function (o) { return o['@type'] === 'LocalBusiness'; })[0];
+  assert.strictEqual(biz.priceRange, '¥2,000～¥10,000');
+  assert.strictEqual(biz.url, 'https://nagoya-base.github.io/Studio-nagoya-base/mens/');
+  assert.ok(ld.some(function (o) { return o['@type'] === 'FAQPage'; }));
 });
 
 /* Issue #635: 相談窓口の名称は「相談フォーム」。日時選択・直接予約は「予約ページ」のまま */
@@ -589,9 +484,13 @@ test('#641: OGP画像は1200x630、ヒーロー画像は元画像と同じ縦横
   assert.ok(html.indexOf('<link rel="preload" as="image" href="../images/mens-preview-hero.webp"') !== -1);
   assert.strictEqual(html.indexOf('ogp-mens-v2'), -1, '試作は旧OGPを参照しない');
 });
-test('#641: 現行トップと元画像は変更しない（現行は従来のOGPを参照）', function () {
+test('#641/#658: 元画像は変更せず、本番トップは試作の専用OGP・HERO画像を参照する（旧OGPとの一致検査は#658で意図して外した）', function () {
   assert.ok(fs.existsSync(path.join(ROOT, 'images', 'F035A90C-B055-4850-97DF-7EF808B832D9.png')));
-  assert.ok(read('mens/index.html').indexOf('images/ogp-mens-v2-1200x630.jpg') !== -1);
+  assert.ok(fs.existsSync(path.join(ROOT, 'images', 'ogp-mens-v2-1200x630.jpg')), '旧OGP画像はmens会員ページ等が参照するため残す');
+  var prod = read('mens/index.html');
+  assert.ok(prod.indexOf('images/mens-preview-ogp-1200x630.jpg') !== -1);
+  assert.ok(prod.indexOf('src="../images/mens-preview-hero.webp"') !== -1);
+  assert.strictEqual(prod.indexOf('ogp-mens-v2'), -1);
 });
 
 /* Issue #646: 用途訴求の改善 */
@@ -663,12 +562,12 @@ test('#646: 照明5枚は1つの比較グループ（JSなしでも全表示）�
   assert.deepStrictEqual(run(false), { 'is-enhanced': true });
   assert.deepStrictEqual(run(true), {});
 });
-test('#646: 試作はnoindex・計測JS/送信JS無し・現行トップ(mens/index.html)に新コピーを入れない', function () {
+test('#646/#658: 試作はnoindex・計測JS/送信JS無しのまま。新コピーは本番トップにも載る（#646の「現行トップへ入れない」は#658で意図して外した）', function () {
   var src = read('mens/preview-633.html');
   assert.match(src, /<meta name="robots" content="noindex, nofollow">/);
   assert.doesNotMatch(src, /googletagmanager|gtag\(|analytics\.js|reservation-form\.js/);
   var cur = read('mens/index.html');
-  ['mens_group', '好きが通じる仲間と', 'interior-classroom', 'gallery_man04'].forEach(function (k) { assert.strictEqual(cur.indexOf(k), -1, k); });
+  ['mens_group', '好きが通じる仲間と', 'interior-classroom', 'gallery_man04'].forEach(function (k) { assert.ok(cur.indexOf(k) !== -1, k); });
 });
 
 /* Issue #651: 用途導線の前倒し・作例と見出しの整理・法的事項の移動・歓迎説明の集約 */
@@ -780,7 +679,22 @@ test('#651: 少人数利用は 見出し→楽しみ方→人数→相談CTA→�
   assert.ok(order.every(function (x) { return x > 0; }));
   assert.deepStrictEqual(order.slice().sort(function (a, b) { return a - b; }), order);
 });
-test('#651: 現行トップ・共通資産を変更せず、用途ナビの文言を現行トップへ入れない', function () {
+test('#651/#658: 用途ナビは本番トップにも載り、試作との共有資産（mens-preview-*）は改名・移動していない', function () {
   var cur = read('mens/index.html');
-  ['pv-usenav', 'portrait-use', '用途から探す', '空間写真'].forEach(function (k) { assert.strictEqual(cur.indexOf(k), -1, k); });
+  ['pv-usenav', 'portrait-use', '用途から探す'].forEach(function (k) { assert.ok(cur.indexOf(k) !== -1, k); });
+  ['styles/mens-preview-633.css', 'scripts/mens-preview-633.js', 'scripts/mens-preview-646.js', 'scripts/mens-preview-653.js', 'images/mens-preview-hero.webp', 'images/mens-preview-ogp-1200x630.jpg'].forEach(function (p) {
+    assert.ok(fs.existsSync(path.join(ROOT, p)), p);
+  });
+  assert.ok(fs.existsSync(path.join(ROOT, 'mens', 'preview-633.html')), '試作は比較用に残す');
+  assert.ok(!fs.existsSync(path.join(ROOT, 'mens', 'index-legacy.html')), '旧トップの複製は置かない（タグ mens-top-before-658 で保全）');
+});
+
+test('#658: 「入力不可」カーソルは試作の disabled な .pv-form-lock 配下だけで、本番の有効なフォームには効かない', function () {
+  var css = read('styles/mens-preview-633.css');
+  var rules = css.match(/[^{}]*\{[^{}]*cursor:\s*not-allowed[^{}]*\}/g) || [];
+  assert.ok(rules.length > 0, '試作側の禁止カーソルは維持する');
+  rules.forEach(function (r) {
+    r.split('{')[0].split(',').forEach(function (sel) { assert.match(sel, /\.pv-form-lock\b/, '本番に効く可能性のあるセレクタ: ' + sel.trim()); });
+  });
+  assert.doesNotMatch(read('mens/index.html'), /pv-form-lock/);
 });
