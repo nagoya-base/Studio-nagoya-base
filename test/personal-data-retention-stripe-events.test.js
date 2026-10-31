@@ -385,6 +385,162 @@ test('StripeEvents: ロック取得後に未処理へ戻った行は、再判定
 });
 
 // ============================================================================
+// 消去の順序・会員IDがbookingId列に入る既存の経路
+// ============================================================================
+
+var RECOVERY_HEADERS = ['bookingId', 'failureType', 'occurredAt', 'calendarEventId', 'status', 'errorMessage', 'recoveryState', 'resolvedAt'];
+
+/* 実際のStripeEventRepository（Webhookの受信 → Processorの確定と同じ関数）で、Processorが作る行を作る。 */
+function realEvent(ctx, options) {
+  evSeq += 1;
+  var repo = ctx.sandbox.StripeEventRepository;
+  var eventId = 'evt_real_' + evSeq;
+  var at = options.at || ago(RETENTION + 39 * DAY);
+  var claim = plain(repo.claim(eventId, options.type || 'checkout.session.completed', at));
+  repo.storeRawBody(claim.rowNumber, options.rawBody === undefined ? bodyOf({}) : options.rawBody, at);
+  repo.finalize(claim.rowNumber, {
+    processingState: options.state || 'REJECTED', bookingId: options.bookingId || '', paymentAttemptId: '',
+    outcomeCode: options.code || 'MEMBERSHIP_JOIN_INITIAL_PERIOD_UNCONFIRMED',
+    outcomeMessage: '会員行は作成しましたが、初回invoiceの支払いを確認できません。eventId=' + eventId
+  }, at);
+  ctx.tables.StripeEvents = ctx.sheets.StripeEvents;
+  return eventId;
+}
+
+function failNthWrite(sheet, nth) {
+  var original = sheet.getRange;
+  var writes = 0;
+  sheet.getRange = function () {
+    var range = original.apply(sheet, arguments);
+    var setValue = range.setValue;
+    range.setValue = function (v) {
+      writes++;
+      if (writes === nth) throw new Error('書き込み失敗');
+      return setValue.call(range, v);
+    };
+    return range;
+  };
+  return function restore() { sheet.getRange = original; };
+}
+
+test('StripeEvents: outcomeMessageを先に、会員への結び付けに使うrawBodyを最後に消す', function () {
+  var ctx = setup();
+  var member = addMember(ctx);
+  addEvent(ctx, { rawBody: bodyOf({ customer: member.stripeCustomerId }) });
+  enable(ctx);
+  run(ctx);
+  assert.deepStrictEqual(ctx.tables.StripeEvents._setValuesCalls.map(function (c) { return c.col; }), [col('outcomeMessage') + 1, col('rawBody') + 1]);
+});
+
+test('StripeEvents: 会員に結び付く行で、outcomeMessageの消去の後にrawBodyの消去が失敗しても、次回に同じ条件で再開して完了する', function () {
+  var ctx = setup();
+  var member = addMember(ctx);
+  var id = addEvent(ctx, { rawBody: bodyOf({ customer: member.stripeCustomerId }) });
+  enable(ctx);
+  var restore = failNthWrite(ctx.tables.StripeEvents, 2);
+  assert.throws(function () { ctx.sandbox.purgeExpiredPersonalData(NOW); }, /PARTIAL_FAILURE/);
+  assert.strictEqual(eventRow(ctx, id)[col('outcomeMessage')], '');
+  assert.notStrictEqual(eventRow(ctx, id)[col('rawBody')], '');
+  restore();
+  var retry = run(ctx);
+  assert.strictEqual(retry.status, 'OK');
+  assert.strictEqual(retry.children.StripeEvents.erasedRows, 1);
+  assert.ok(erased(ctx, id));
+  assert.deepStrictEqual(retry.children.StripeEvents.review || {}, {});
+});
+
+test('StripeEvents: 最初の書き込みが失敗しても何も消えておらず、次回に完了する。保留中の会員なら再開しても消さない', function () {
+  var ctx = setup();
+  var member = addMember(ctx);
+  var id = addEvent(ctx, { rawBody: bodyOf({ customer: member.stripeCustomerId }) });
+  enable(ctx);
+  var restore = failNthWrite(ctx.tables.StripeEvents, 1);
+  assert.throws(function () { ctx.sandbox.purgeExpiredPersonalData(NOW); }, /PARTIAL_FAILURE/);
+  assert.ok(!erased(ctx, id));
+  restore();
+  ctx.sandbox.addPersonalDataRetentionMemberHold(member.memberId, 'DISPUTE', '運営A', '2027-06-30T00:00:00+09:00', NOW);
+  var held = run(ctx);
+  assert.deepStrictEqual(held.children.StripeEvents.held, { HOLD_ACTIVE: 1 });
+  assert.ok(!erased(ctx, id));
+});
+
+test('StripeEvents: Processorが会員IDをbookingId列へ記録したREJECTED行は、会員の終了から180日で消す', function () {
+  var ctx = setup();
+  var ended = addMember(ctx, { memberId: 'MBR-ended' });
+  var id = realEvent(ctx, { bookingId: ended.memberId });
+  assert.strictEqual(eventRow(ctx, id)[col('bookingId')], 'MBR-ended');
+  enable(ctx);
+  var result = run(ctx);
+  assert.strictEqual(result.children.StripeEvents.erasedRows, 1);
+  assert.deepStrictEqual(result.children.StripeEvents.review || {}, {});
+  assert.ok(erased(ctx, id));
+  assert.strictEqual(eventRow(ctx, id)[col('bookingId')], 'MBR-ended');
+  assert.strictEqual(eventRow(ctx, id)[col('outcomeCode')], 'MEMBERSHIP_JOIN_INITIAL_PERIOD_UNCONFIRMED');
+});
+
+test('StripeEvents: 会員IDの行は、会員が有効・退会から180日未満・会員単位の保留・会員IDのRecoveryが未解決のとき消さない', function () {
+  var ctx = setup();
+  var active = addMember(ctx, { memberId: 'MBR-active', status: 'active', canceledAt: '' });
+  var recent = addMember(ctx, { memberId: 'MBR-recent', canceledAt: ago(10 * DAY), currentPeriodEnd: ago(10 * DAY) });
+  var held = addMember(ctx, { memberId: 'MBR-held' });
+  var recovery = addMember(ctx, { memberId: 'MBR-recovery' });
+  var ids = [active, recent, held, recovery].map(function (m) { return realEvent(ctx, { bookingId: m.memberId }); });
+  ctx.sandbox.addPersonalDataRetentionMemberHold(held.memberId, 'DISPUTE', '運営A', '2027-06-30T00:00:00+09:00', NOW);
+  append(ctx, 'Recovery', RECOVERY_HEADERS, { bookingId: recovery.memberId, failureType: 'MEMBERSHIP_JOIN_INITIAL_PERIOD_UNCONFIRMED', occurredAt: ago(DAY), recoveryState: 'OPEN' });
+  enable(ctx);
+  var result = run(ctx);
+  assert.strictEqual(result.children.StripeEvents.erasedRows, 0);
+  assert.deepStrictEqual(result.children.StripeEvents.held, { MEMBER_NOT_ENDED: 1, HOLD_ACTIVE: 1, RELATED_RECOVERY_OPEN: 1 });
+  assert.strictEqual(result.children.StripeEvents.notDue, 1);
+  ids.forEach(function (id) { assert.ok(!erased(ctx, id), id); });
+});
+
+test('StripeEvents: 会員IDの解決済みRecoveryがあり、他に未解決がなければ消す。会員が見つからないMBR-は要確認。予約ID側の扱いは変わらない', function () {
+  var ctx = setup();
+  var member = addMember(ctx, { memberId: 'MBR-resolved' });
+  var ok = realEvent(ctx, { bookingId: member.memberId });
+  var missing = realEvent(ctx, { bookingId: 'MBR-none' });
+  var bookingLike = realEvent(ctx, { bookingId: 'snb-20250101-0000zzzz' });
+  append(ctx, 'Recovery', RECOVERY_HEADERS, { bookingId: member.memberId, failureType: 'X', occurredAt: ago(RETENTION + 40 * DAY), recoveryState: 'RESOLVED', resolvedAt: ago(RETENTION + 39 * DAY) });
+  enable(ctx);
+  var result = run(ctx);
+  assert.strictEqual(result.children.StripeEvents.erasedRows, 1);
+  assert.deepStrictEqual(result.children.StripeEvents.review, { MEMBER_NOT_FOUND: 1, PARENT_NOT_FOUND: 1 });
+  assert.ok(erased(ctx, ok));
+  assert.ok(!erased(ctx, missing));
+  assert.ok(!erased(ctx, bookingLike));
+});
+
+test('Recovery: 会員IDで記録された行は、会員の終了と解決日時の遅い方から180日で消し、未解決の関連記録・会員単位の保留があれば消さない', function () {
+  var ctx = setup();
+  var ended = addMember(ctx, { memberId: 'MBR-r1' });
+  var withOpen = addMember(ctx, { memberId: 'MBR-r2' });
+  var active = addMember(ctx, { memberId: 'MBR-r3', status: 'active', canceledAt: '' });
+  var heldMember = addMember(ctx, { memberId: 'MBR-r4' });
+  var recovery = function (id, overrides) {
+    append(ctx, 'Recovery', RECOVERY_HEADERS, Object.assign({
+      bookingId: id, failureType: 'F_' + Math.random(), occurredAt: ago(RETENTION + 40 * DAY), calendarEventId: '', status: '',
+      errorMessage: '入会処理の失敗メッセージ', recoveryState: 'RESOLVED', resolvedAt: ago(RETENTION + 39 * DAY)
+    }, overrides || {}));
+  };
+  recovery(ended.memberId);
+  recovery(withOpen.memberId);
+  recovery(withOpen.memberId, { recoveryState: 'OPEN', resolvedAt: '' });
+  recovery(active.memberId);
+  recovery(heldMember.memberId);
+  ctx.sandbox.addPersonalDataRetentionMemberHold(heldMember.memberId, 'REFUND', '運営A', '2027-06-30T00:00:00+09:00', NOW);
+  enable(ctx);
+  var result = run(ctx);
+  var counts = result.children.Recovery;
+  assert.strictEqual(counts.erasedRows, 1);
+  assert.deepStrictEqual(counts.held, { RELATED_RECOVERY_OPEN: 1, RECOVERY_OPEN: 1, MEMBER_NOT_ENDED: 1, HOLD_ACTIVE: 1 });
+  var rows = ctx.tables.Recovery._rows;
+  var messageIndex = RECOVERY_HEADERS.indexOf('errorMessage');
+  assert.strictEqual(rows[1][messageIndex], '');
+  rows.slice(2).forEach(function (row) { assert.notStrictEqual(row[messageIndex], ''); });
+});
+
+// ============================================================================
 // 共通
 // ============================================================================
 

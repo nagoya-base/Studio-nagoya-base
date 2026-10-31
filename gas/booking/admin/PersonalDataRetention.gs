@@ -69,6 +69,13 @@ var PersonalDataRetention = (function () {
   var TRIGGER_HOUR_ = 4;
   var TRIGGER_TIMEZONE_ = 'Asia/Tokyo';
 
+  /*
+   * 会員IDの接頭辞（MembershipService: 'MBR-' + UUID）。入会処理の失敗・却下の経路は、StripeEventsとRecoveryの
+   * bookingId列へ会員IDを記録する（StripeWebhookProcessor.rejectAndFinalize_）。予約ID（ブランド＋日付＋UUID）とは
+   * 接頭辞で区別でき、'MBR-'で始まる値は会員IDとして扱う（予約の紐付けの不整合を会員に読み替えない）。
+   */
+  var MEMBER_ID_PREFIX_ = 'MBR-';
+
   var BATCH_SIZE_ = 20;
   var MAX_ROWS_DEFAULT_ = 200;
   var TIME_BUDGET_MS_DEFAULT_ = 4 * 60 * 1000;
@@ -184,6 +191,8 @@ var PersonalDataRetention = (function () {
       columns: ['bookingId', 'failureType', 'occurredAt', 'calendarEventId', 'errorMessage', 'recoveryState', 'resolvedAt'],
       eraseColumns: ['errorMessage'],
       projectColumn: '',
+      /* 入会処理の失敗は、bookingId列へ会員IDを記録する（MBR-で始まる値は親をMembersとして扱う）。 */
+      memberIdLinked: true,
       /* 行ごとの一意なIDがないため、(予約ID, 障害種別, 発生日時, CalendarイベントID)の組を識別子にする。重複は要確認。 */
       keyOf: function (record) {
         if (isBlank_(record.failureType) && isBlank_(record.occurredAt)) return '';
@@ -357,8 +366,10 @@ var PersonalDataRetention = (function () {
        */
       name: 'StripeEvents',
       columns: ['eventId', 'processingState', 'bookingId', 'updatedAt', 'rawBody', 'outcomeMessage'],
-      eraseColumns: ['rawBody', 'outcomeMessage'],
+      /* 会員への結び付けに使うrawBodyは最後に消す（途中で失敗しても、次回に同じ期限・保留条件で再開できるように）。 */
+      eraseColumns: ['outcomeMessage', 'rawBody'],
       projectColumn: '',
+      memberIdLinked: true,
       keyOf: function (record) { return trimText_(record.eventId); },
       own: function (record) {
         var state = trimText_(record.processingState);
@@ -375,7 +386,7 @@ var PersonalDataRetention = (function () {
         if (ctx.duplicateKeys && ctx.duplicateKeys[key]) return { verdict: VERDICT.REVIEW, reason: 'DUPLICATE_KEY' };
         var plan = planChildWrites_(definition, record);
         if (plan.writes.length === 0) return { verdict: VERDICT.ALREADY_CLEAR, reason: 'ALREADY_CLEAR' };
-        if (!isBlank_(record.bookingId)) return classifyUnderBooking_(definition, record, trimText_(record.bookingId), plan, ctx);
+        if (!isBlank_(record.bookingId)) return classifyLinked_(definition, record, trimText_(record.bookingId), plan, ctx);
         return classifyMemberLinkedEvent_(definition, record, plan, ctx);
       }
     }
@@ -709,6 +720,9 @@ var PersonalDataRetention = (function () {
     if (ctx.nowMs < dueMs) return { verdict: VERDICT.NOT_DUE, reason: 'NOT_DUE' };
     if (hold && hold.invalid) return { verdict: VERDICT.HELD, reason: 'HOLD_RECORD_INVALID' };
     if (hold && hold.active) return { verdict: VERDICT.HELD, reason: 'HOLD_ACTIVE' };
+    /* 入会処理の失敗は、RecoveryのbookingId列へ会員IDを記録する。その会員IDで未解決の記録があれば消さない。 */
+    var relatedReason = ctx.relatedByBookingId ? ctx.relatedByBookingId[memberId] : '';
+    if (relatedReason) return { verdict: VERDICT.HELD, reason: relatedReason };
     return null;
   }
 
@@ -768,16 +782,15 @@ var PersonalDataRetention = (function () {
 
   /* 予約IDの列が空のStripeイベント。本文から会員を特定し、会員の終了（Membersと同じ条件）と自身の終端の遅い方から180日。 */
   function classifyMemberLinkedEvent_(definition, record, plan, ctx) {
-    var own = definition.own(record);
-    if (own.kind === 'REVIEW') return { verdict: VERDICT.REVIEW, reason: own.reason };
-    if (own.kind === 'OPEN') return { verdict: VERDICT.HELD, reason: own.reason };
     var link = linkMemberOfEvent_(record.rawBody, ctx);
-    if (!link.ok) return { verdict: VERDICT.REVIEW, reason: link.reason };
-    var terminal = memberTerminal_(link.member.record, ctx);
-    if (!terminal.ok) return terminal.outcome;
-    var held = applyMemberHold_(Math.max(terminal.endMs, own.ms), trimText_(link.member.record.memberId), ctx);
-    if (held) return held;
-    return { verdict: VERDICT.ELIGIBLE, reason: 'ELIGIBLE', writes: plan.writes };
+    if (!link.ok) {
+      /* 結び付けられなくても、自身の状態（未処理・不明）の判定を先に返す。 */
+      var ownFirst = definition.own(record);
+      if (ownFirst.kind === 'OPEN') return { verdict: VERDICT.HELD, reason: ownFirst.reason };
+      if (ownFirst.kind === 'REVIEW') return { verdict: VERDICT.REVIEW, reason: ownFirst.reason };
+      return { verdict: VERDICT.REVIEW, reason: link.reason };
+    }
+    return classifyUnderMember_(definition, record, trimText_(link.member.record.memberId), plan, ctx);
   }
 
   function classifyEntry_(definition, record, ctx) {
@@ -795,7 +808,33 @@ var PersonalDataRetention = (function () {
 
     var bookingId = trimText_(record.bookingId);
     if (!bookingId) return { verdict: VERDICT.REVIEW, reason: 'NO_BOOKING_LINK' };
-    return classifyUnderBooking_(definition, record, bookingId, plan, ctx);
+    return classifyLinked_(definition, record, bookingId, plan, ctx);
+  }
+
+  /* bookingId列の値で親を決める。MBR-で始まり、会員IDを記録する台帳(memberIdLinked)なら会員、それ以外は予約。 */
+  function classifyLinked_(definition, record, id, plan, ctx) {
+    if (definition.memberIdLinked && id.indexOf(MEMBER_ID_PREFIX_) === 0) {
+      return classifyUnderMember_(definition, record, id, plan, ctx);
+    }
+    return classifyUnderBooking_(definition, record, id, plan, ctx);
+  }
+
+  /*
+   * 会員IDで親Membersに結び付く記録の判定。会員の終了（Membersと同じ条件）と自身の終端日時の遅い方から180日。
+   * 会員単位の保留、およびその会員IDで記録された未解決の記録（RecoveryのbookingId列に会員IDが入る）があれば消さない。
+   */
+  function classifyUnderMember_(definition, record, memberId, plan, ctx) {
+    var member = ctx.membersById ? ctx.membersById[memberId] : null;
+    if (!member) return { verdict: VERDICT.REVIEW, reason: 'MEMBER_NOT_FOUND' };
+    if (member.duplicate) return { verdict: VERDICT.REVIEW, reason: 'MEMBER_AMBIGUOUS' };
+    var own = definition.own(record);
+    if (own.kind === 'REVIEW') return { verdict: VERDICT.REVIEW, reason: own.reason };
+    if (own.kind === 'OPEN') return { verdict: VERDICT.HELD, reason: own.reason };
+    var terminal = memberTerminal_(member.record, ctx);
+    if (!terminal.ok) return terminal.outcome;
+    var held = applyMemberHold_(Math.max(terminal.endMs, own.ms), memberId, ctx);
+    if (held) return held;
+    return { verdict: VERDICT.ELIGIBLE, reason: 'ELIGIBLE', writes: plan.writes };
   }
 
   /* 予約IDで親Bookings行に結び付く記録の判定（親の起算点・自身の終端・保留・関連未解決・依存）。 */

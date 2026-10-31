@@ -139,10 +139,13 @@ admin-only → migration → full と段階的に更新するため、短時間�
 `StripeEvents` の **`rawBody`（イベント本文。顧客のメール・氏名等を含み得る）と `outcomeMessage`** だけを消す。`eventId` / `eventType` / 状態 / `bookingId` / `paymentAttemptId` / `stripePaymentIntentId` / `outcomeCode` / 日時は、冪等性と照合のために残す（照合可能な情報であり、匿名データではない）。
 
 - **終端**: `processingState` が `COMPLETED` / `IGNORED` / `REJECTED`。**終端日時は `updatedAt`**。終端の行の `updatedAt` を書くのは `finalize` / `finalizeForProcessing` だけで、終端の行は再受信されても `claim()` が `ALREADY_TERMINAL` を返して書き換えない（回帰テストで確認）ため、終端日時として使える。`RECEIVED`（未処理）は古くても消さない（`EVENT_UNPROCESSED`）。
-- **結び付け**: `bookingId` の列があれば親Bookingsに結び付け、PR-2と同じ条件（親の起算日時と自身の終端日時の遅い方、保留、関連未解決、依存）を適用する。**列が空のイベント**は、本文の `data.object` の `metadata.memberId` / `customer` / `subscription`（`object` が `customer` / `subscription` ならその `id`）から**会員を1人に特定**し、`Members` と同じ終了条件・会員単位の保留を適用する。
+- **`bookingId` 列に会員IDが入る行**: 入会処理の失敗・却下（`StripeWebhookProcessor.rejectAndFinalize_`）は、`StripeEvents` と `Recovery` の `bookingId` 列へ**会員ID（`MBR-` で始まる。`MembershipService` の生成形式）**を記録する。`MBR-` で始まる値は、予約ではなく**会員として明示的に扱い**、親を `Members` にする。予約IDの不整合を会員に読み替えることはしない（`MBR-` で始まらない値は従来どおり予約として照合し、見つからなければ `PARENT_NOT_FOUND`）。会員が見つからなければ `MEMBER_NOT_FOUND`（要確認）。会員の終了（Membersと同じ条件）、会員単位の保留、**その会員IDで記録された未解決のRecovery**（`RELATED_RECOVERY_OPEN`）を判定に反映する。`Recovery` の会員ID行も同じ扱い（PR-2のRecoveryの対象）。
+- **結び付け**: `bookingId` の列が予約IDならば親Bookingsに結び付け、PR-2と同じ条件（親の起算日時と自身の終端日時の遅い方、保留、関連未解決、依存）を適用する。**列が空のイベント**は、本文の `data.object` の `metadata.memberId` / `customer` / `subscription`（`object` が `customer` / `subscription` ならその `id`）から**会員を1人に特定**し、`Members` と同じ終了条件・会員単位の保留を適用する。
 - **要確認（消さない）**: 結び付く予約・会員が見つからない（`NO_LINK`。本文が空の行を含む）、複数の会員に結び付く（`LINK_AMBIGUOUS`）、本文を解析できない（`RAW_BODY_UNPARSEABLE`）、会員の行が複数（`MEMBER_AMBIGUOUS`）、状態不明、`updatedAt` の欠落・不正（`receivedAt` 等で代用しない）、`eventId` の空欄・重複。**結び付かない`IGNORED`イベント（会員にも予約にも関係しない種別など）の本文は残り続ける**ため、dry-runの `review` 件数で確認し、扱いを判断する。
+- **消去の順序**: `outcomeMessage` を先に、会員への結び付けに使う **`rawBody` を最後**に消す。途中で失敗しても、次回は本文から同じ会員に結び付け、同じ期限・保留条件で再開できる。
 - **再処理への影響**: `rawBody` を読むのは未処理(`RECEIVED`)イベントの処理だけ（`listPendingWithBody`）で、終端の行の本文は再処理に使われない。消去後に同じイベントが再受信されても `ALREADY_TERMINAL` で、本文も `updatedAt` も変わらない。
 - 方針バージョンを `2026-10-31.4` に更新した。**PR-3の時点（`.3`）で有効化していた場合も、dry-runと有効化をやり直す必要がある。**
+- 会員（`Members` / `MemberCheckouts`）の消去でも、その会員IDで記録された未解決のRecovery（`bookingId` 列に会員IDが入る）があれば消さない。
 
 ### 消去の方式と限界
 - 対象列を**1セルずつ**空にする。行全体・連続範囲は書き戻さない。行は削除せず、予約ID・日時・金額・状態・決済ID等は残す（照合可能な情報であり、匿名データではない）。
