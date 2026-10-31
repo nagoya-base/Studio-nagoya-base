@@ -35,33 +35,38 @@ test('list failures return only fixed categories, even with short unknown creden
   }
 });
 
-for (const phase of ['before', 'after']) {
+const contexts = { before: 'before update', after: 'after update', verify: 'during verification' };
+for (const phase of ['before', 'after', 'verify']) {
   for (const target of ['admin', 'public']) {
     test(`workflow ${target} ${phase}: captures both streams, fails closed, never leaks output`, () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clasp-list-test-'));
       try {
-        const start = deployScript.indexOf(`echo "Running clasp list-deployments (${phase} update)"`);
-        assert.ok(start >= 0);
-        const idCheck = 'if ! deployment_has_unique_id';
-        const checkStart = deployScript.indexOf(idCheck, start);
-        const closing = deployScript.slice(checkStart).match(/\n[ \t]*fi/);
-        const end = checkStart + closing.index + closing[0].length;
         const helpers = deployScript.slice(deployScript.indexOf('deployment_has_unique_id()'), deployScript.indexOf('\nif [[ "$mode" == "schema-guard"'));
-        const block = helpers + '\n' + deployScript.slice(start, end);
+        let block;
+        if (phase === 'before') {
+          const start = deployScript.indexOf('echo "Running clasp list-deployments (before update)"');
+          assert.ok(start >= 0);
+          const checkStart = deployScript.indexOf('if ! deployment_has_unique_id', start);
+          const closing = deployScript.slice(checkStart).match(/\n[ \t]*fi/);
+          block = helpers + '\n' + deployScript.slice(start, checkStart + closing.index + closing[0].length);
+        } else {
+          // after update / verify share one read-only verification function.
+          block = helpers + '\nverify_current_sha_with_retry ' + phase + ' false';
+        }
         fs.writeFileSync(path.join(dir, 'clasp'), '#!/bin/bash\nprintf "%s\\n" "$MOCK_STDOUT"\nprintf "%s\\n" "$MOCK_STDERR" >&2\nexit "$MOCK_STATUS"\n', { mode: 0o700 });
         const env = { ...process.env, PATH: dir + ':' + process.env.PATH, GITHUB_WORKSPACE: workspace,
           auth_file: 'test-auth', clasp_user: target === 'admin' ? 'default' : 'booking-owner',
-          deployment_id: 'test-deployment', list_stdout: path.join(dir, 'stdout'), list_stderr: path.join(dir, 'stderr') };
+          deployment_id: 'test-deployment', target, GITHUB_SHA: 'abc123', list_stdout: path.join(dir, 'stdout'), list_stderr: path.join(dir, 'stderr') };
         for (const stream of ['STDOUT', 'STDERR']) {
           const result = spawnSync('bash', ['-c', 'set -euo pipefail\n' + block + '\necho UNREACHABLE'], {
             cwd: dir, encoding: 'utf8', env: { ...env, MOCK_STATUS: '1', MOCK_STDOUT: sensitive, MOCK_STDERR: sensitive, ['MOCK_' + stream]: 'invalid_grant ' + sensitive }
           });
           assert.equal(result.status, 1);
-          assert.equal(result.stderr, `clasp list-deployments failed (${phase} update): AUTHENTICATION_FAILED\n`);
+          assert.equal(result.stderr, `clasp list-deployments failed (${contexts[phase]}): AUTHENTICATION_FAILED\n`);
           assert.doesNotMatch(result.stdout, /UNREACHABLE|tiny-secret|deployment-id/);
         }
         const success = spawnSync('bash', ['-c', 'set -euo pipefail\n' + block], {
-          cwd: dir, encoding: 'utf8', env: { ...env, MOCK_STATUS: '0', MOCK_STDOUT: '- test-deployment @5 - ' + sensitive, MOCK_STDERR: sensitive }
+          cwd: dir, encoding: 'utf8', env: { ...env, MOCK_STATUS: '0', MOCK_STDOUT: '- test-deployment @5 - main abc123 ' + sensitive, MOCK_STDERR: sensitive }
         });
         assert.equal(success.status, 0);
         assert.equal(success.stderr, '');

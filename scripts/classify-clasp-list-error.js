@@ -26,7 +26,7 @@ function classify(output) {
 }
 
 function report(output, phase) {
-  const context = phase === 'after' ? 'after update' : 'before update';
+  const context = phase === 'after' ? 'after update' : phase === 'verify' ? 'during verification' : 'before update';
   return 'clasp list-deployments failed (' + context + '): ' + classify(output);
 }
 

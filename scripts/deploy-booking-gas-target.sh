@@ -33,6 +33,40 @@ deployment_has_current_sha() {
       grep -Eq -- "main ${GITHUB_SHA}([^0-9a-f]|$)"
 }
 
+# 読取り専用の共通検証（deploy後とverifyで同一）。更新・pushは一切行わず、list-deploymentsだけを
+# 最大5回（待機は合計20秒）繰り返す。比較基準は実行開始時のGITHUB_SHAのまま変えない。
+# 一時的に旧SHAが見えるだけの場合（一覧の反映遅延・読取りの不整合）に限って再取得する。
+# 認証／一覧取得エラーとID不在・非一意は再試行せず即時停止する（fail closed）。
+# $1: after（update直後）| verify（post-check）  $2: true なら1回目に取得済みの一覧を使う
+verification_attempts=5
+verification_delay_seconds=5
+verify_current_sha_with_retry() {
+  local phase="$1" reuse_first_list="$2" attempt label="after update"
+  [[ "$phase" == "verify" ]] && label="during post-check"
+  for ((attempt=1; attempt<=verification_attempts; attempt++)); do
+    if [[ "$attempt" -gt 1 || "$reuse_first_list" != "true" ]]; then
+      echo "Running clasp list-deployments ($label, attempt $attempt/$verification_attempts)"
+      if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_stdout" 2>"$list_stderr"; then
+        node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" "$phase" >&2
+        return 1
+      fi
+      if ! deployment_has_unique_id; then
+        echo "Existing deployment could not be verified $label: DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE (attempt $attempt/$verification_attempts)." >&2
+        return 1
+      fi
+    fi
+    if deployment_has_current_sha; then
+      return 0
+    fi
+    if [[ "$attempt" -lt "$verification_attempts" ]]; then
+      echo "Waiting for deployment description to reflect the current main commit (attempt $attempt/$verification_attempts: SHA_MISMATCH)."
+      sleep "$verification_delay_seconds"
+    fi
+  done
+  echo "Existing $target deployment does not show the current main commit $label: SHA_MISMATCH after $verification_attempts read attempts." >&2
+  return 1
+}
+
 if [[ "$mode" == "schema-guard" && "$target" != "public" ]]; then
   echo "schema-guard reads the previous production SHA from the public deployment only." >&2
   exit 1
@@ -146,8 +180,8 @@ if [[ "$mode" == "schema-guard" ]]; then
 fi
 
 if [[ "$mode" == "verify" ]]; then
-  if ! deployment_has_current_sha; then
-    echo "Existing $target deployment does not show the current main commit." >&2
+  # 読取り専用。先頭で取得済みの一覧を1回目として使い、SHA不一致の間だけ読み直す。
+  if ! verify_current_sha_with_retry verify true; then
     exit 1
   fi
   echo "Verified existing $target deployment is at the current main commit"
@@ -209,28 +243,8 @@ if ! clasp --auth "$auth_file" --user "$clasp_user" update-deployment "$deployme
 fi
 
 touch "$RUNNER_TEMP/booking-gas-$target-update-applied"
-# 更新を再実行せず、descriptionの反映だけを最大5回（待機は合計20秒）確認する。
-verification_attempts=5
-verification_delay_seconds=5
-for ((attempt=1; attempt<=verification_attempts; attempt++)); do
-  echo "Running clasp list-deployments (after update)"
-  if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_stdout" 2>"$list_stderr"; then
-    node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" after >&2
-    exit 1
-  fi
-  if ! deployment_has_unique_id; then
-    echo "Existing deployment could not be verified after update." >&2
-    exit 1
-  fi
-  if deployment_has_current_sha; then
-    echo "Updated existing $target deployment to the current main commit"
-    exit 0
-  fi
-  if [[ "$attempt" -lt "$verification_attempts" ]]; then
-    echo "Waiting for deployment description to reflect the current main commit."
-    sleep "$verification_delay_seconds"
-  fi
-done
-
-echo "Existing $target deployment does not show the current main commit after update." >&2
-exit 1
+# 更新を再実行せず、descriptionの反映だけを共通の読取り検証で確認する。
+if ! verify_current_sha_with_retry after false; then
+  exit 1
+fi
+echo "Updated existing $target deployment to the current main commit"
