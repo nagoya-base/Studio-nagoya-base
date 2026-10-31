@@ -96,6 +96,9 @@ function addOption(ctx, bookingId, overrides) {
   return values.optionOrderId;
 }
 
+/* 作成時に確定する無料注文（BookingOptionsの生成条件と同じ）。 */
+var FREE_ORDER = { category: 'FREE', amountJpy: 0, approvalStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_REQUIRED', approvedAt: '', paidAt: '', declinedAt: '' };
+
 var tokSeq = 0;
 function addToken(ctx, overrides) {
   tokSeq += 1;
@@ -179,8 +182,8 @@ test('OptionOrders: 終端日時はapprovedAt・declinedAt・paidAtの最も遅�
   var bookingId = addBooking(ctx, { endAt: ago(RETENTION + 200 * DAY) });
   var recentPaid = addOption(ctx, bookingId, { paidAt: ago(10 * DAY) });
   var declined = addOption(ctx, bookingId, { status: 'DECLINED', approvedAt: '', paidAt: '', declinedAt: ago(RETENTION + 20 * DAY) });
-  var freeOld = addOption(ctx, bookingId, { approvedAt: '', paidAt: '', createdAt: ago(RETENTION + 20 * DAY) });
-  var freeRecent = addOption(ctx, bookingId, { approvedAt: '', paidAt: '', createdAt: ago(5 * DAY) });
+  var freeOld = addOption(ctx, bookingId, Object.assign({}, FREE_ORDER, { createdAt: ago(RETENTION + 20 * DAY) }));
+  var freeRecent = addOption(ctx, bookingId, Object.assign({}, FREE_ORDER, { createdAt: ago(5 * DAY) }));
   enable(ctx);
   var result = run(ctx);
   assert.strictEqual(result.children.OptionOrders.erasedRows, 2);
@@ -189,6 +192,32 @@ test('OptionOrders: 終端日時はapprovedAt・declinedAt・paidAtの最も遅�
   assert.strictEqual(value(ctx, 'OptionOrders', OPTION_HEADERS, 'optionOrderId', freeOld, 'customerEmail'), '');
   assert.strictEqual(value(ctx, 'OptionOrders', OPTION_HEADERS, 'optionOrderId', recentPaid, 'customerEmail'), EMAIL);
   assert.strictEqual(value(ctx, 'OptionOrders', OPTION_HEADERS, 'optionOrderId', freeRecent, 'customerEmail'), EMAIL);
+});
+
+test('OptionOrders: 有料または条件に合わない注文は、終端日時が欠落していてもcreatedAtで代用せず、書き込み0件で要確認', function () {
+  var ctx = setup();
+  var bookingId = addBooking(ctx);
+  var cases = [
+    { amountJpy: 5000, paymentStatus: 'paid' },
+    { amountJpy: 5000, paymentStatus: 'NOT_REQUIRED', category: 'FREE', approvalStatus: 'NOT_REQUIRED' },
+    { category: 'EQUIPMENT', amountJpy: 0, approvalStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_REQUIRED' },
+    { category: 'FREE', amountJpy: 0, approvalStatus: 'APPROVED', paymentStatus: 'NOT_REQUIRED' },
+    { category: 'FREE', amountJpy: 0, approvalStatus: 'NOT_REQUIRED', paymentStatus: 'paid' },
+    { category: 'FREE', amountJpy: '', approvalStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_REQUIRED' },
+    { category: 'FREE', amountJpy: 'abc', approvalStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_REQUIRED' }
+  ];
+  var ids = cases.map(function (c) {
+    return addOption(ctx, bookingId, Object.assign({ approvedAt: '', paidAt: '', declinedAt: '', createdAt: ago(RETENTION + 90 * DAY) }, c));
+  });
+  var free = addOption(ctx, bookingId, Object.assign({}, FREE_ORDER, { createdAt: ago(RETENTION + 90 * DAY) }));
+  enable(ctx);
+  var result = run(ctx);
+  assert.strictEqual(result.children.OptionOrders.erasedRows, 1);
+  assert.deepStrictEqual(result.children.OptionOrders.review, { OWN_DATE_MISSING: cases.length });
+  ids.forEach(function (id) { assert.strictEqual(value(ctx, 'OptionOrders', OPTION_HEADERS, 'optionOrderId', id, 'customerEmail'), EMAIL, id); });
+  assert.strictEqual(value(ctx, 'OptionOrders', OPTION_HEADERS, 'optionOrderId', free, 'customerEmail'), '');
+  /* 書き込みは無料注文の4列のみ（有料行へは0件）。 */
+  assert.strictEqual(ctx.tables.OptionOrders._setValuesCalls.length, 4);
 });
 
 test('OptionOrders: 未完了・復旧要・CANCELLED・状態不明・日時不正・DECLINEDで日時なしは消さない', function () {
@@ -492,6 +521,151 @@ test('MemberCheckouts: 会員が重複していれば要確認で消さない', 
   var result = run(ctx);
   assert.deepStrictEqual(result.children.MemberCheckouts.review, { MEMBER_AMBIGUOUS: 1 });
   assert.strictEqual(ctx.tables.MemberCheckouts._rows[1][1], EMAIL);
+});
+
+// ============================================================================
+// 会員単位の保留（memberId）
+// ============================================================================
+
+var FUTURE_REVIEW = '2027-06-30T00:00:00+09:00';
+
+function holdsSheet(ctx) { return ctx.sheets.RetentionHolds; }
+
+test('会員単位の保留: 有効な保留はMembersとMemberCheckoutsのメール消去を止め、他の会員は消す', function () {
+  var ctx = setup();
+  var held = addMember(ctx);
+  var other = addMember(ctx);
+  addCheckout(ctx, held.memberId, { state: 'COMPLETED' });
+  addCheckout(ctx, held.memberId, { state: 'EXPIRED' });
+  addCheckout(ctx, other.memberId, { state: 'COMPLETED' });
+  ctx.sandbox.addPersonalDataRetentionMemberHold(held.memberId, 'DISPUTE', '運営A', FUTURE_REVIEW, NOW);
+  enable(ctx);
+  var result = run(ctx);
+  assert.deepStrictEqual(result.children.Members.held, { HOLD_ACTIVE: 1 });
+  assert.deepStrictEqual(result.children.MemberCheckouts.held, { HOLD_ACTIVE: 2 });
+  assert.strictEqual(result.children.Members.erasedRows, 1);
+  assert.strictEqual(result.children.MemberCheckouts.erasedRows, 1);
+  assert.strictEqual(value(ctx, 'Members', MEMBER_HEADERS, 'memberId', held.memberId, 'email'), EMAIL);
+  assert.strictEqual(value(ctx, 'Members', MEMBER_HEADERS, 'memberId', other.memberId, 'email'), '');
+  var rows = ctx.tables.MemberCheckouts._rows;
+  assert.strictEqual(rows[1][1], EMAIL);
+  assert.strictEqual(rows[2][1], EMAIL);
+  assert.strictEqual(rows[3][1], '');
+});
+
+test('会員単位の保留: 本日解決しても、解決日時から180日までは消さない（遅い方）', function () {
+  var ctx = setup();
+  var member = addMember(ctx);
+  addCheckout(ctx, member.memberId, { state: 'COMPLETED' });
+  ctx.sandbox.addPersonalDataRetentionMemberHold(member.memberId, 'DISPUTE', '運営A', FUTURE_REVIEW, NOW);
+  assert.strictEqual(plain(ctx.sandbox.resolvePersonalDataRetentionMemberHold(member.memberId, NOW)).resolved, 1);
+  enable(ctx);
+  var before = run(ctx, new Date(NOW.getTime() + 179 * DAY));
+  assert.strictEqual(before.children.Members.erasedRows + before.children.MemberCheckouts.erasedRows, 0);
+  assert.strictEqual(before.children.Members.notDue, 1);
+  assert.strictEqual(before.children.MemberCheckouts.notDue, 1);
+  var after = run(ctx, new Date(NOW.getTime() + 180 * DAY));
+  assert.strictEqual(after.children.Members.erasedRows, 1);
+  assert.strictEqual(after.children.MemberCheckouts.erasedRows, 1);
+});
+
+test('会員単位の保留: 解決日時が不正なら有効な保留として扱い、消さない', function () {
+  var ctx = setup();
+  var member = addMember(ctx);
+  ctx.sandbox.addPersonalDataRetentionMemberHold(member.memberId, 'OTHER', '運営A', FUTURE_REVIEW, NOW);
+  holdsSheet(ctx)._rows[1][5] = '2026-02-30T00:00:00Z';
+  enable(ctx);
+  var result = run(ctx);
+  assert.deepStrictEqual(result.children.Members.held, { HOLD_RECORD_INVALID: 1 });
+  assert.strictEqual(value(ctx, 'Members', MEMBER_HEADERS, 'memberId', member.memberId, 'email'), EMAIL);
+});
+
+test('会員単位の保留: 対象判定後〜ロック取得後に保留が追加されたら、再判定で除外して消さない', function () {
+  var mutate = null;
+  var lockService = {
+    getScriptLock: function () {
+      return { tryLock: function () { if (mutate) { mutate(); mutate = null; } return true; }, releaseLock: function () {} };
+    }
+  };
+  var ctx = setup({ lockService: lockService });
+  var raced = addMember(ctx);
+  var other = addMember(ctx);
+  enable(ctx);
+  mutate = function () {
+    var sheet = ctx.book.insertSheet('RetentionHolds');
+    sheet.appendRow(ctx.sandbox.PersonalDataRetention.HOLDS_HEADERS);
+    sheet.appendRow(['', 'DISPUTE', '運営A', NOW, new Date('2027-06-30T00:00:00+09:00'), '', raced.memberId]);
+  };
+  var result = run(ctx);
+  assert.strictEqual(result.children.Members.erasedRows, 1);
+  assert.strictEqual(result.children.Members.recheckSkipped, 1);
+  assert.strictEqual(value(ctx, 'Members', MEMBER_HEADERS, 'memberId', raced.memberId, 'email'), EMAIL);
+  assert.strictEqual(value(ctx, 'Members', MEMBER_HEADERS, 'memberId', other.memberId, 'email'), '');
+});
+
+test('会員単位の保留: 予約の保留は同じメールの会員へ暗黙に波及しない（会員は明示的に指定する）', function () {
+  var ctx = setup();
+  var member = addMember(ctx, { email: 'shared@example.com' });
+  var bookingId = addBooking(ctx, { email: 'shared@example.com', endAt: ago(RETENTION + 50 * DAY) });
+  ctx.sandbox.addPersonalDataRetentionHold(bookingId, 'DISPUTE', '運営A', FUTURE_REVIEW, NOW);
+  enable(ctx);
+  var result = run(ctx);
+  assert.deepStrictEqual(result.held, { HOLD_ACTIVE: 1 });
+  assert.strictEqual(result.children.Members.erasedRows, 1);
+  assert.strictEqual(value(ctx, 'Members', MEMBER_HEADERS, 'memberId', member.memberId, 'email'), '');
+});
+
+test('会員単位の保留: 追加は入力と会員の存在を検証し、既存の6列のシートには見出しだけを追記する', function () {
+  var ctx = setup();
+  var member = addMember(ctx);
+  var add = function (a, b, c, d) { return function () { ctx.sandbox.addPersonalDataRetentionMemberHold(a, b, c, d, NOW); }; };
+  assert.throws(add('', 'DISPUTE', '運営', FUTURE_REVIEW), /INVALID_MEMBER_ID/);
+  assert.throws(add(member.memberId, 'free text', '運営', FUTURE_REVIEW), /INVALID_REASON/);
+  assert.throws(add(member.memberId, 'DISPUTE', ' ', FUTURE_REVIEW), /OWNER_REQUIRED/);
+  assert.throws(add(member.memberId, 'DISPUTE', '運営', '2026-01-01T00:00:00Z'), /REVIEW_BY_INVALID/);
+  assert.throws(add('mem-none', 'DISPUTE', '運営', FUTURE_REVIEW), /MEMBER_NOT_FOUND/);
+  assert.strictEqual(holdsSheet(ctx), undefined);
+
+  /* 既存の6列のシート（予約の保留のみ）。既存の行は変えず、7列目の見出しだけを追記する。 */
+  var legacy = ctx.book.insertSheet('RetentionHolds');
+  legacy.appendRow(['bookingId', 'reasonCode', 'owner', 'createdAt', 'reviewBy', 'resolvedAt']);
+  legacy.appendRow(['snb-x', 'REFUND', '運営', NOW, new Date(FUTURE_REVIEW), '']);
+  var before = JSON.stringify(legacy._rows[1]);
+  assert.deepStrictEqual(plain(ctx.sandbox.addPersonalDataRetentionMemberHold(member.memberId, 'DISPUTE', '運営', FUTURE_REVIEW, NOW)), { added: true, alreadyHeld: false });
+  assert.strictEqual(legacy._rows[0][6], 'memberId');
+  assert.strictEqual(JSON.stringify(legacy._rows[1]), before);
+  assert.strictEqual(legacy._rows[2][6], member.memberId);
+  assert.deepStrictEqual(plain(ctx.sandbox.addPersonalDataRetentionMemberHold(member.memberId, 'DISPUTE', '運営', FUTURE_REVIEW, NOW)), { added: false, alreadyHeld: true });
+  assert.strictEqual(legacy._rows.length, 3);
+});
+
+test('会員単位の保留: 新規のシートは7列の見出しで作成され、7列目が想定外なら実行を停止する', function () {
+  var ctx = setup();
+  var member = addMember(ctx);
+  ctx.sandbox.addPersonalDataRetentionMemberHold(member.memberId, 'INQUIRY', '運営', FUTURE_REVIEW, NOW);
+  assert.deepStrictEqual(plain(holdsSheet(ctx)._rows[0]), ['bookingId', 'reasonCode', 'owner', 'createdAt', 'reviewBy', 'resolvedAt', 'memberId']);
+  holdsSheet(ctx)._rows[0][6] = 'other';
+  var props = ctx.sandbox.PropertiesService.getScriptProperties();
+  props.setProperty('PERSONAL_DATA_RETENTION_ENABLED', 'true');
+  props.setProperty('PERSONAL_DATA_RETENTION_POLICY_VERSION', VERSION);
+  props.setProperty('PERSONAL_DATA_RETENTION_DRY_RUN_VERSION', VERSION);
+  var result = plain(ctx.sandbox.PersonalDataRetention.run(NOW));
+  assert.strictEqual(result.status, 'SHEET_INVALID');
+  assert.strictEqual(result.code, 'HOLDS_SHEET_INVALID');
+  assert.strictEqual(value(ctx, 'Members', MEMBER_HEADERS, 'memberId', member.memberId, 'email'), EMAIL);
+});
+
+test('会員単位の保留: 見直し期限の超過を件数で知らせ、自動解除しない。予約IDの保留の操作は従来どおり', function () {
+  var ctx = setup();
+  var member = addMember(ctx);
+  var bookingId = addBooking(ctx);
+  ctx.sandbox.addPersonalDataRetentionMemberHold(member.memberId, 'REFUND', '運営', '2026-12-20T00:00:00+09:00', NOW);
+  ctx.sandbox.addPersonalDataRetentionHold(bookingId, 'REFUND', '運営', '2026-12-20T00:00:00+09:00', NOW);
+  var result = plain(ctx.sandbox.dryRunPersonalDataRetention(new Date(NOW.getTime() + 60 * DAY)));
+  assert.strictEqual(result.holdReviewOverdue, 2);
+  assert.deepStrictEqual(result.children.Members.held, { HOLD_ACTIVE: 1 });
+  assert.strictEqual(plain(ctx.sandbox.resolvePersonalDataRetentionHold(bookingId, NOW)).resolved, 1);
+  assert.strictEqual(plain(ctx.sandbox.resolvePersonalDataRetentionMemberHold('mem-none', NOW)).resolved, 0);
 });
 
 // ============================================================================

@@ -123,12 +123,12 @@ admin-only → migration → full と段階的に更新するため、短時間�
 ### オプション注文・会員系（PR-3）の消去対象と起算点
 | シート | 消す列 | 親 | 起算点（遅い方から180日） |
 | --- | --- | --- | --- |
-| `OptionOrders` | `customerEmail` / `declineReason` / `checkoutRequestJson` / `paymentRecoveryReason` | Bookings（`bookingId`） | 親の起算日時と、`approvedAt`・`declinedAt`・`paidAt` の最も遅い日時。作成時に確定する無料注文（3つとも空）の`CONFIRMED`は`createdAt` |
+| `OptionOrders` | `customerEmail` / `declineReason` / `checkoutRequestJson` / `paymentRecoveryReason` | Bookings（`bookingId`） | 親の起算日時と、`approvedAt`・`declinedAt`・`paidAt` の最も遅い日時。作成時に確定する**無料注文**（`category=FREE`・`amountJpy=0`・`approvalStatus=NOT_REQUIRED`・`paymentStatus=NOT_REQUIRED`）の`CONFIRMED`で3つとも空の場合に限り`createdAt` |
 | `MemberStatusTokens` | `email` → `tokenHash`（ハッシュは最後） | なし | `expiresAt`（有効期限） |
 | `MemberCheckouts` | `email` | Members（`memberId`） | `EXPIRED`と、`pendingUntil` を過ぎても会員行がない`PENDING`（放棄）は`pendingUntil`。`COMPLETED`と、`pendingUntil` 後に会員行がある`PENDING`は会員の終了日時（`pendingUntil`との遅い方） |
 | `Members` | `email` | なし | 退会（`status=canceled`）の `canceledAt`・`currentPeriodEnd`・`MemberPeriods.periodEnd`（会員ID／Subscription IDで結合）・`MemberMonths`（JSTの月末）の最も遅い日時 |
 
-- **`OptionOrders`**: `PENDING_APPROVAL` / `AWAITING_PAYMENT` / `PAYMENT_PENDING` と `paymentRecoveryRequiredAt` が非空のものは消さない。`CANCELLED` は現行コードが書かず取消日時の列もないため、**終端日時を決められず要確認**（`updatedAt` で代用しない）。親が未終了・保留中・依存未解決のものは消さない（PR-2の子シートと同じ）。
+- **`OptionOrders`**: `PENDING_APPROVAL` / `AWAITING_PAYMENT` / `PAYMENT_PENDING` と `paymentRecoveryRequiredAt` が非空のものは消さない。`CANCELLED` は現行コードが書かず取消日時の列もないため、**終端日時を決められず要確認**（`updatedAt` で代用しない）。**有料または無料注文の条件に合わない注文で終端日時が欠落している場合も、`createdAt` で代用せず要確認**（書き込み0件）。親が未終了・保留中・依存未解決のものは消さない（PR-2の子シートと同じ）。
 - **`MemberStatusTokens`**: 行の識別子の`tokenHash`を最後に消すので、途中で失敗しても次回に同じ行を完了できる。消去済みの行は件数に数えるだけで要確認にならない。
 - **`Members`**: Stripe ID・状態・期間・請求書IDは残す（メールだけを消す）。有効（`active`）・支払い遅延・未完了の会員は消さない。**同じメール（大小文字を区別しない）の、未終了のBookings（`PENDING`、終了時刻が未来または不正な`CONFIRMED`）がある会員も消さない**（`ACTIVE_BOOKING_EXISTS`）。関連する日時が空欄でない不正値なら要確認。`status=canceled` は終端で、`MemberRepository.applyState_` が再処理でもメールを補完しない（回帰テストあり）。
 - 会員系の参照シート（`MemberPeriods` / `MemberMonths`）や対象シートの必須列が欠ければ、**何も消さず全体を停止**する（`MEMBER_SHEET_INVALID` / `CHILD_SHEET_INVALID`）。存在しなければ記録なし。
@@ -163,8 +163,10 @@ admin-only → migration → full と段階的に更新するため、短時間�
 `getPersonalDataRetentionStatus()` が返す: ゲート状態（`OK` / `DISABLED` / `CONFIG_INVALID`）、設定済み・dry-run済みの方針バージョン、`triggerCount`、直近の実行結果（件数・区分のみ）、最終成功日時、`attention`（`CONFIG_INVALID` / `NO_TRIGGER` / `MULTIPLE_TRIGGERS` / `NEVER_RUN` / `STALE_RUN`（有効中に36時間以上実行記録なし）/ `LAST_RUN_NOT_SUCCESSFUL` / `HOLD_REVIEW_OVERDUE` / `REVIEW_ROWS_EXIST`）。実行結果のステータス: `OK` / `TRUNCATED` / `STOPPED` / `LOCK_TIMEOUT` / `SHEET_INVALID` / `PARTIAL_FAILURE` / `DISABLED` / `CONFIG_INVALID`。成功日時を更新するのは `OK` と `TRUNCATED` だけ。
 
 ### 保留（異議申立て・照会・返金・未払い等）
+予約単位（`bookingId`）と会員単位（`memberId`）がある。**予約の保留は同じメールの会員へ暗黙に波及しない**（無関係な過去予約で会員情報を一律に残さないため）。保留が必要な会員（入会決済の係争など）は`memberId`で明示する。
 - `addPersonalDataRetentionHold(bookingId, reasonCode, owner, reviewBy)`: `RetentionHolds` シート（なければここで作成）に追加する。`reasonCode` は `DISPUTE` / `INQUIRY` / `REFUND` / `UNPAID` / `OTHER` のみ（自由記述は持たない）。担当（40文字まで）と見直し期限（未来のタイムゾーン付き日時）は必須。
 - `resolvePersonalDataRetentionHold(bookingId)`: 有効な保留を解決する。解決日時から180日を経過するまで、その予約は消去対象にならない。
+- `addPersonalDataRetentionMemberHold(memberId, reasonCode, owner, reviewBy)` / `resolvePersonalDataRetentionMemberHold(memberId)`（PR-3）: 会員単位の保留。`Members` と、その`memberId`の`MemberCheckouts`のメール消去が、期限にかかわらず止まる。解決後は、解決日時から180日（会員の終了日時から180日との遅い方）まで消えない。保留シートの7列目`memberId`に記録し、**既存の6列のシートには、追加時に7列目の見出しだけを追記する**（既存の行は変えない）。会員が存在しなければ追加できない。`MemberStatusTokens`（会員と結び付かない短期トークン）には保留を適用しない。
 - 有効な保留は見直し期限を過ぎても**自動解除しない**。見直し期限の超過は件数（`holdReviewOverdue`）で知らせるだけ。
 
 ### 未確認事項（このPRでは確認できない）

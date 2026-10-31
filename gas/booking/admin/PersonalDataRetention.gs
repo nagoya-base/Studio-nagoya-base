@@ -87,7 +87,15 @@ var PersonalDataRetention = (function () {
   ];
 
   var HOLDS_SHEET_ = 'RetentionHolds';
-  var HOLDS_HEADERS_ = ['bookingId', 'reasonCode', 'owner', 'createdAt', 'reviewBy', 'resolvedAt'];
+  /*
+   * 保留シート。先頭6列は予約単位の保留（bookingId）。7列目memberIdは会員単位の保留（PR-3で追加）。
+   * 既存の6列のシートはaddMemberHoldが7列目の見出しだけを追記する（既存の行は変えない）。
+   * 会員単位の保留は、保留が必要な会員（入会決済）を明示的にmemberIdで指定する。予約の保留から
+   * 同じメールの会員へは暗黙に波及させない（無関係な過去予約で会員情報を一律に残さないため）。
+   */
+  var HOLDS_BASE_HEADERS_ = ['bookingId', 'reasonCode', 'owner', 'createdAt', 'reviewBy', 'resolvedAt'];
+  var HOLDS_HEADERS_ = HOLDS_BASE_HEADERS_.concat(['memberId']);
+  var HOLDS_MEMBER_COLUMN_ = HOLDS_BASE_HEADERS_.length;
   var HOLD_REASONS_ = ['DISPUTE', 'INQUIRY', 'REFUND', 'UNPAID', 'OTHER'];
 
   /*
@@ -190,13 +198,16 @@ var PersonalDataRetention = (function () {
       /* オプション注文（Issue #423）。親Bookingsに結び付く。顧客メール・不承認理由・Checkout要求・復旧理由を消す。 */
       name: 'OptionOrders',
       columns: ['optionOrderId', 'bookingId', 'status', 'paymentRecoveryRequiredAt', 'approvedAt', 'declinedAt', 'paidAt', 'createdAt',
+        'category', 'amountJpy', 'approvalStatus', 'paymentStatus',
         'customerEmail', 'declineReason', 'checkoutRequestJson', 'paymentRecoveryReason'],
       eraseColumns: ['customerEmail', 'declineReason', 'checkoutRequestJson', 'paymentRecoveryReason'],
       projectColumn: '',
       keyOf: function (record) { return trimText_(record.optionOrderId); },
       /*
        * 終端はCONFIRMED / DECLINED。終端日時はapprovedAt・declinedAt・paidAtの最も遅い日時（updatedAtでは推測しない）。
-       * 作成時に確定する無料の注文はこの3つがすべて空のため、その場合に限り作成日時を確定日時とする。
+       * 作成時に確定する無料の注文（カテゴリFREE・金額0・承認不要・決済不要。BookingOptionsの生成条件と同じ）は
+       * この3つがすべて空のため、その場合に限り作成日時を確定日時とする。有料または条件に合わない注文で
+       * 3つが欠落している場合は、終端日時を決められず要確認にする。
        * CANCELLEDは現行コードが書かず、取消日時の列もないため、終端日時を決められず要確認にする。
        */
       own: function (record) {
@@ -216,7 +227,7 @@ var PersonalDataRetention = (function () {
           else ms = isNaN(ms) ? value : Math.max(ms, value);
         });
         if (invalid) return { kind: 'REVIEW', reason: 'OWN_DATE_INVALID' };
-        if (isNaN(ms) && state === 'CONFIRMED') ms = parseStrictMillis_(record.createdAt);
+        if (isNaN(ms) && state === 'CONFIRMED' && isFreeOrderConfirmedAtCreation_(record)) ms = parseStrictMillis_(record.createdAt);
         return isNaN(ms) ? { kind: 'REVIEW', reason: 'OWN_DATE_MISSING' } : { kind: 'TERMINAL', ms: ms };
       }
     },
@@ -294,7 +305,8 @@ var PersonalDataRetention = (function () {
           if (isNaN(pendingMs)) return { verdict: VERDICT.REVIEW, reason: isBlank_(record.pendingUntil) ? 'BASIS_MISSING' : 'BASIS_INVALID' };
           basisMs = pendingMs;
         }
-        if (ctx.nowMs < basisMs + RETENTION_MS_) return { verdict: VERDICT.NOT_DUE, reason: 'NOT_DUE' };
+        var checkoutHeld = applyMemberHold_(basisMs, memberId, ctx);
+        if (checkoutHeld) return checkoutHeld;
         return { verdict: VERDICT.ELIGIBLE, reason: 'ELIGIBLE', writes: plan.writes };
       }
     },
@@ -319,7 +331,8 @@ var PersonalDataRetention = (function () {
         if (plan.writes.length === 0) return { verdict: VERDICT.ALREADY_CLEAR, reason: 'ALREADY_CLEAR' };
         var terminal = memberTerminal_(record, ctx);
         if (!terminal.ok) return terminal.outcome;
-        if (ctx.nowMs < terminal.endMs + RETENTION_MS_) return { verdict: VERDICT.NOT_DUE, reason: 'NOT_DUE' };
+        var memberHeld = applyMemberHold_(terminal.endMs, key, ctx);
+        if (memberHeld) return memberHeld;
         var email = MembershipRules.normalizeEmail(String(record.email));
         if (email && ctx.activeBookingEmails && ctx.activeBookingEmails[email]) {
           return { verdict: VERDICT.HELD, reason: 'ACTIVE_BOOKING_EXISTS' };
@@ -328,6 +341,17 @@ var PersonalDataRetention = (function () {
       }
     }
   ];
+
+  /*
+   * 作成時に確定する無料のオプション注文か。BookingOptions.planOrders（無料枠）が作る注文と同じ条件:
+   * category=FREE・amountJpy=0・approvalStatus=NOT_REQUIRED・paymentStatus=NOT_REQUIRED。
+   */
+  function isFreeOrderConfirmedAtCreation_(record) {
+    return trimText_(record.category) === 'FREE' &&
+      !isBlank_(record.amountJpy) && Number(record.amountJpy) === 0 &&
+      trimText_(record.approvalStatus) === 'NOT_REQUIRED' &&
+      trimText_(record.paymentStatus) === 'NOT_REQUIRED';
+  }
 
   /* feeDetailsJsonに残してよいキーと値の形。これ以外（manualNote等の自由記述・未知のキー）は投影で落とす。 */
   var FEE_DETAILS_BRAND_ = /^[a-z_]{1,20}$/;
@@ -473,30 +497,36 @@ var PersonalDataRetention = (function () {
   /*
    * 保留シートの行を予約IDごとにまとめる。resolvedAtが空の保留は有効（active）。resolvedAtが
    * あっても解釈できない場合は有効扱い（invalid）にして消さない。
-   * 戻り値: { byBookingId: { id: { active, invalid, latestResolvedMs, overdue } }, overdueCount }
+   * 戻り値: { byBookingId, byMemberId: { id: { active, invalid, latestResolvedMs } }, overdueCount }
    */
   function summarizeHolds_(holdRows, nowMs) {
     var byBookingId = {};
+    var byMemberId = {};
     var overdueCount = 0;
     holdRows.forEach(function (row) {
-      var id = String(row[0] === undefined || row[0] === null ? '' : row[0]).trim();
-      if (!id) return;
-      var entry = byBookingId[id] || (byBookingId[id] = { active: false, invalid: false, latestResolvedMs: NaN });
+      var bookingKey = trimText_(row[0]);
+      var memberKey = row.length > HOLDS_MEMBER_COLUMN_ ? trimText_(row[HOLDS_MEMBER_COLUMN_]) : '';
+      if (!bookingKey && !memberKey) return;
+      var entries = [];
+      if (bookingKey) entries.push(byBookingId[bookingKey] || (byBookingId[bookingKey] = { active: false, invalid: false, latestResolvedMs: NaN }));
+      if (memberKey) entries.push(byMemberId[memberKey] || (byMemberId[memberKey] = { active: false, invalid: false, latestResolvedMs: NaN }));
       if (isBlank_(row[5])) {
-        entry.active = true;
+        entries.forEach(function (entry) { entry.active = true; });
         var reviewMs = parseStrictMillis_(row[4]);
         if (isNaN(reviewMs) || reviewMs < nowMs) overdueCount++;
         return;
       }
       var resolvedMs = parseStrictMillis_(row[5]);
-      if (isNaN(resolvedMs)) {
-        entry.active = true;
-        entry.invalid = true;
-        return;
-      }
-      if (isNaN(entry.latestResolvedMs) || resolvedMs > entry.latestResolvedMs) entry.latestResolvedMs = resolvedMs;
+      entries.forEach(function (entry) {
+        if (isNaN(resolvedMs)) {
+          entry.active = true;
+          entry.invalid = true;
+        } else if (isNaN(entry.latestResolvedMs) || resolvedMs > entry.latestResolvedMs) {
+          entry.latestResolvedMs = resolvedMs;
+        }
+      });
     });
-    return { byBookingId: byBookingId, overdueCount: overdueCount };
+    return { byBookingId: byBookingId, byMemberId: byMemberId, overdueCount: overdueCount };
   }
 
   /* 起算日時を持つ列。CONFIRMED=最新のendAt / CANCELLED=cancelledAt / EXPIRED=expiredAt。PENDING・未知は''。 */
@@ -629,6 +659,20 @@ var PersonalDataRetention = (function () {
     return { ok: true, endMs: endMs };
   }
 
+  /*
+   * 会員単位の保留（memberId）を反映した判定。baseMsは会員の終了日時等の起算点。
+   * 戻り値: null（続行可）| outcome（NOT_DUE / HELD）。解決済みの保留は、解決日時から180日まで消さない（遅い方）。
+   */
+  function applyMemberHold_(baseMs, memberId, ctx) {
+    var hold = ctx.memberHoldsById ? ctx.memberHoldsById[memberId] : null;
+    var dueMs = baseMs + RETENTION_MS_;
+    if (hold && !isNaN(hold.latestResolvedMs)) dueMs = Math.max(dueMs, hold.latestResolvedMs + RETENTION_MS_);
+    if (ctx.nowMs < dueMs) return { verdict: VERDICT.NOT_DUE, reason: 'NOT_DUE' };
+    if (hold && hold.invalid) return { verdict: VERDICT.HELD, reason: 'HOLD_RECORD_INVALID' };
+    if (hold && hold.active) return { verdict: VERDICT.HELD, reason: 'HOLD_ACTIVE' };
+    return null;
+  }
+
   /* 子シートの消去計画。戻り値: { ok, reason?, writes: [{ column, value }] }。解析できないJSONは要確認。 */
   function planChildWrites_(definition, record) {
     var writes = [];
@@ -722,14 +766,25 @@ var PersonalDataRetention = (function () {
     return SpreadsheetApp.openById(BookingConfig.getSpreadsheetId());
   }
 
+  /* 保留シートのヘッダーを検証する。先頭6列は必須。7列目はmemberIdまたは未設定のみ許容。戻り値: 7列目があるか。 */
+  function checkHoldsHeader_(headerRow) {
+    var header = headerRow || [];
+    for (var h = 0; h < HOLDS_BASE_HEADERS_.length; h++) {
+      if (header[h] !== HOLDS_BASE_HEADERS_[h]) throw new Error('HOLDS_HEADER_MISMATCH');
+    }
+    var extra = header.slice(HOLDS_MEMBER_COLUMN_).map(function (cell) { return cell === undefined || cell === null ? '' : String(cell); });
+    while (extra.length > 0 && extra[extra.length - 1] === '') extra.pop();
+    if (extra.length === 0) return false;
+    if (extra.length > 1 || extra[0] !== HOLDS_HEADERS_[HOLDS_MEMBER_COLUMN_]) throw new Error('HOLDS_HEADER_MISMATCH');
+    return true;
+  }
+
   /* 保留シートの本体行を返す。シートが無ければ保留なし。ヘッダーが想定と異なれば保留を判定できないため例外。 */
   function readHoldRows_(spreadsheet) {
     var sheet = spreadsheet.getSheetByName(HOLDS_SHEET_);
     if (!sheet || sheet.getLastRow() < 1) return [];
     var values = sheet.getDataRange().getValues();
-    for (var h = 0; h < HOLDS_HEADERS_.length; h++) {
-      if (values[0][h] !== HOLDS_HEADERS_[h]) throw new Error('HOLDS_HEADER_MISMATCH');
-    }
+    checkHoldsHeader_(values[0]);
     return values.slice(1);
   }
 
@@ -908,7 +963,7 @@ var PersonalDataRetention = (function () {
       parentsById: loaded.parentsById, duplicateKeys: child.duplicateKeys,
       membersById: loaded.memberData.membersById, periodsByMemberId: loaded.memberData.periodsByMemberId,
       periodsBySubscriptionId: loaded.memberData.periodsBySubscriptionId, monthsByMemberId: loaded.memberData.monthsByMemberId,
-      activeBookingEmails: loaded.activeBookingEmails
+      activeBookingEmails: loaded.activeBookingEmails, memberHoldsById: loaded.holds.byMemberId
     };
   }
 
@@ -1252,9 +1307,7 @@ var PersonalDataRetention = (function () {
       if (!sheet) sheet = spreadsheet.insertSheet(HOLDS_SHEET_);
       if (sheet.getLastRow() < 1) sheet.appendRow(HOLDS_HEADERS_);
       var values = sheet.getDataRange().getValues();
-      for (var h = 0; h < HOLDS_HEADERS_.length; h++) {
-        if (values[0][h] !== HOLDS_HEADERS_[h]) throw new Error('HOLDS_HEADER_MISMATCH');
-      }
+      checkHoldsHeader_(values[0]);
       for (var i = 1; i < values.length; i++) {
         if (String(values[i][0]).trim() === id && values[i][1] === reasonCode && isBlank_(values[i][5])) {
           return { added: false, alreadyHeld: true };
@@ -1280,9 +1333,7 @@ var PersonalDataRetention = (function () {
       var sheet = openSpreadsheet_().getSheetByName(HOLDS_SHEET_);
       if (!sheet || sheet.getLastRow() < 1) return { resolved: 0 };
       var values = sheet.getDataRange().getValues();
-      for (var h = 0; h < HOLDS_HEADERS_.length; h++) {
-        if (values[0][h] !== HOLDS_HEADERS_[h]) throw new Error('HOLDS_HEADER_MISMATCH');
-      }
+      checkHoldsHeader_(values[0]);
       var resolvedColumn = HOLDS_HEADERS_.indexOf('resolvedAt') + 1;
       for (var i = 1; i < values.length; i++) {
         if (String(values[i][0]).trim() === id && isBlank_(values[i][5])) {
@@ -1294,6 +1345,73 @@ var PersonalDataRetention = (function () {
       try { lock.releaseLock(); } catch (releaseError) { /* ロック未取得時は何もしない */ }
     }
     Logger.log('PersonalDataRetention: holds resolved count=' + resolved);
+    return { resolved: resolved };
+  }
+
+  /*
+   * 会員単位の保留を追加する（Adminのスクリプトロック下）。入会決済の係争など、保留が必要な会員を
+   * memberIdで明示的に指定する。Members・MemberCheckoutsのメール消去が、期限にかかわらず止まる。
+   * 既存の6列の保留シートには、7列目の見出し（memberId）だけを追記する。
+   */
+  function addMemberHold(memberId, reasonCode, owner, reviewBy, now) {
+    var at = toNow_(now);
+    var id = trimText_(memberId);
+    if (!id) throw new Error('HOLD_INVALID_MEMBER_ID');
+    if (HOLD_REASONS_.indexOf(reasonCode) === -1) throw new Error('HOLD_INVALID_REASON');
+    var ownerText = sanitizeOwner_(owner);
+    if (!ownerText) throw new Error('HOLD_OWNER_REQUIRED');
+    var reviewMs = parseStrictMillis_(reviewBy);
+    if (isNaN(reviewMs) || reviewMs <= at.getTime()) throw new Error('HOLD_REVIEW_BY_INVALID');
+    if (!MemberRepository.findMember({ memberId: id })) throw new Error('HOLD_MEMBER_NOT_FOUND');
+
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS_)) throw new Error('LOCK_UNAVAILABLE');
+    try {
+      var spreadsheet = openSpreadsheet_();
+      var sheet = spreadsheet.getSheetByName(HOLDS_SHEET_);
+      if (!sheet) sheet = spreadsheet.insertSheet(HOLDS_SHEET_);
+      if (sheet.getLastRow() < 1) sheet.appendRow(HOLDS_HEADERS_);
+      var values = sheet.getDataRange().getValues();
+      if (!checkHoldsHeader_(values[0])) {
+        sheet.getRange(1, HOLDS_MEMBER_COLUMN_ + 1, 1, 1).setValue(HOLDS_HEADERS_[HOLDS_MEMBER_COLUMN_]);
+      }
+      for (var i = 1; i < values.length; i++) {
+        if (trimText_(values[i][HOLDS_MEMBER_COLUMN_]) === id && values[i][1] === reasonCode && isBlank_(values[i][5])) {
+          return { added: false, alreadyHeld: true };
+        }
+      }
+      sheet.appendRow(['', reasonCode, ownerText, at, new Date(reviewMs), '', id]);
+    } finally {
+      try { lock.releaseLock(); } catch (releaseError) { /* ロック未取得時は何もしない */ }
+    }
+    Logger.log('PersonalDataRetention: member hold added reason=' + reasonCode);
+    return { added: true, alreadyHeld: false };
+  }
+
+  /* 会員単位の保留を解決する。解決日時から180日を経過するまで、その会員の消去対象にならない。 */
+  function resolveMemberHold(memberId, now) {
+    var at = toNow_(now);
+    var id = trimText_(memberId);
+    if (!id) throw new Error('HOLD_INVALID_MEMBER_ID');
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS_)) throw new Error('LOCK_UNAVAILABLE');
+    var resolved = 0;
+    try {
+      var sheet = openSpreadsheet_().getSheetByName(HOLDS_SHEET_);
+      if (!sheet || sheet.getLastRow() < 1) return { resolved: 0 };
+      var values = sheet.getDataRange().getValues();
+      if (!checkHoldsHeader_(values[0])) return { resolved: 0 };
+      var resolvedColumn = HOLDS_HEADERS_.indexOf('resolvedAt') + 1;
+      for (var i = 1; i < values.length; i++) {
+        if (trimText_(values[i][HOLDS_MEMBER_COLUMN_]) === id && isBlank_(values[i][5])) {
+          sheet.getRange(i + 1, resolvedColumn, 1, 1).setValue(at);
+          resolved++;
+        }
+      }
+    } finally {
+      try { lock.releaseLock(); } catch (releaseError) { /* ロック未取得時は何もしない */ }
+    }
+    Logger.log('PersonalDataRetention: member holds resolved count=' + resolved);
     return { resolved: resolved };
   }
 
@@ -1347,6 +1465,8 @@ var PersonalDataRetention = (function () {
     getStatus: getStatus,
     addHold: addHold,
     resolveHold: resolveHold,
+    addMemberHold: addMemberHold,
+    resolveMemberHold: resolveMemberHold,
     createDailyTrigger: createDailyTrigger,
     removeDailyTriggers: removeDailyTriggers
   };
@@ -1384,6 +1504,14 @@ function addPersonalDataRetentionHold(bookingId, reasonCode, owner, reviewBy, no
 
 function resolvePersonalDataRetentionHold(bookingId, now) {
   return PersonalDataRetention.resolveHold(bookingId, now);
+}
+
+function addPersonalDataRetentionMemberHold(memberId, reasonCode, owner, reviewBy, now) {
+  return PersonalDataRetention.addMemberHold(memberId, reasonCode, owner, reviewBy, now);
+}
+
+function resolvePersonalDataRetentionMemberHold(memberId, now) {
+  return PersonalDataRetention.resolveMemberHold(memberId, now);
 }
 
 /* GASエディタから、運用担当の単一アカウントで初回に1回だけ実行する補助関数。 */
