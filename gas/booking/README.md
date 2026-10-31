@@ -71,12 +71,12 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - 新コードは、既存行の新列が **空欄でもfailしない** こと。
 - schema追加と機能の利用開始の間で新旧が混在しても、予約作成・読取・管理画面が破損しないこと。
 
-## Issue #680: Bookings台帳の個人情報を180日経過後に自動消去（PR-1。初期無効）
+## Issue #680: Bookings台帳と子シートの個人情報を180日経過後に自動消去（PR-1・PR-2。初期無効）
 
 `gas/booking/admin/PersonalDataRetention.gs`（**Booking Admin専用**）。公開Web App・Webhookには配布せず、削除実行APIも置かない。管理画面（`BookingAdminWeb.gs`）にも配線しない（エディタと時間主導トリガーからのみ）。**本番の有効化・トリガー作成・実データの消去は、このPRでは行わない。**
 
-### 範囲（PR-1）
-- 対象シートは **`Bookings` のみ**。`OptionOrders` / `BookingChanges` / `FeeSettlements` / `Recovery` / `StripeEvents` / `Members` 系は後続PR（終端日時の専用列が要るものは列追加と移行手順を伴う）。
+### 範囲（PR-1・PR-2）
+- 対象シートは **`Bookings`**（PR-1）と、予約IDで結び付く **`FeeSettlements` / `BookingChanges` / `Recovery`**（PR-2）。`OptionOrders` / `StripeEvents` / `Members` 系は後続PR（終端日時の専用列が要るものは列追加と移行手順を伴う）。
 - 540日保持する限定取引記録の**消去は実装しない**（この段階では保持するだけ）。消すのは下表の個人情報の列に限る。
 
 ### 消去する列と起算点
@@ -102,11 +102,29 @@ admin-only → migration → full と段階的に更新するため、短時間�
   - これらのシートは存在しなければ記録なし。ヘッダーを読めない・必須列がない場合は判定できないため、**何も消さずシート全体を停止**する（`RELATED_SHEET_INVALID`）。
 - 同じ予約IDの行が複数ある場合は全て要確認（消さない）。ヘッダーが正本と食い違う（途中の列の欠落・順序違い・正本より長い）、対象列が欠ける場合は**シート全体を停止**する。
 
+### 子シート（PR-2）の消去対象と起算点
+行は削除せず、下表のセルだけを1セルずつ書き換える。ID・状態・金額・日時・CalendarイベントID等は残す（照合可能な情報であり、匿名データではない）。
+
+| シート | 消す／投影する列 | 自身の終端（消してよい状態） | 自身の終端日時 |
+| --- | --- | --- | --- |
+| `FeeSettlements` | `note` | `applyStatus` が `APPLIED` / `ABANDONED` | `appliedAt` |
+| `BookingChanges` | `reason` / `feeNote` / `mailError` / `refundPendingReason`、`feeDetailsJson`（限定投影） | `mailState` が `SENT` / `ROLLED_BACK` / `CHANGE_FAILED` | `changedAt`・`mailAt`・`refundApprovedAt` の最も遅い日時 |
+| `Recovery` | `errorMessage` | `recoveryState` が `RESOLVED` | `resolvedAt` |
+
+- **起算点は「親Bookingsの起算日時」と「自身の終端日時」の遅い方** + 180×24時間（保留の解決日時があればさらに遅い方）。`updatedAt` 等で代用しない。
+- `feeDetailsJson` は全文を消さず、**料金区分・ブランド・曜日区分・丸め後の分数・手動フラグ・確定フラグだけを残す限定投影**にする（`manualNote` / `pendingReason` / 未知のキーは落とす。値の形が合わないキーも落とす）。解析できないJSONは触らず要確認。投影済みの値に再適用しても変わらない（冪等）。
+- 消さない（`held`）: 自身が未完了（`PENDING_APPLY` / `FAILED_NEEDS_RECOVERY`、`PREPARED` / `RECOVERY_REQUIRED`、`RESOLVED` 以外の `Recovery`）、親が `PENDING`、親に有効な保留・未解決の決済／返金／精算、**同じ予約に未解決の関連記録が1件でもある**場合（例: `Recovery` にOPENが1件あれば、同じ予約の解決済みの行も消さない）。
+- 要確認（`review`、消さない）: 予約IDが空（`NO_BOOKING_LINK`）、親Bookings行が見つからない（`PARENT_NOT_FOUND`。予約が保存されなかった障害の `Recovery` 行など）、親が複数行（`PARENT_AMBIGUOUS`）、親の状態・起算日時が不正、自身の状態・終端日時が不正または欠落（`Recovery` の `RESOLVED` で `resolvedAt` が空など。過去分を今日の日付で埋めない）、識別子の重複（`Recovery` は (予約ID, 障害種別, 発生日時, CalendarイベントID) の組）。
+- 子シートのヘッダーに必須列が欠けている場合は、**Bookingsを含め何も消さずに全体を停止**する（`CHILD_SHEET_INVALID`）。シートが存在しなければ記録なし。
+- 方針バージョンを `2026-10-31.2` に更新した。**PR-1の時点（`2026-10-31.1`）で有効化していた場合も、dry-runと有効化をやり直す必要がある**（それまでは `CONFIG_INVALID` で何も消さない）。
+- 1回の実行の上限（最大200行・4分）は **Bookings・子シートの合計**。Bookings、`FeeSettlements`、`BookingChanges`、`Recovery` の順に処理し、残りは翌日以降に持ち越す。dry-runと実行結果には、シートごとの件数が `children` に入る（個人情報・ID・行番号は含まない）。
+- 親Bookingsの個人情報の消去と、子シートの消去はそれぞれ独立している（どちらが先でも、判定に使う列は消えない）。
+
 ### 消去の方式と限界
 - 対象列を**1セルずつ**空にする。行全体・連続範囲は書き戻さない。行は削除せず、予約ID・日時・金額・状態・決済ID等は残す（照合可能な情報であり、匿名データではない）。
 - バッチ（20行）ごとにAdminのスクリプトロックを取り、**ロック取得後に有効化フラグ・方針バージョンを読み直し**（無効なら書かずに `STOPPED`）、**予約IDで行と関連記録を読み直して判定をやり直してから**書く。1回の実行は最大200行・4分で打ち切り（`TRUNCATED`）、残りは翌日以降に処理される。部分失敗しても次回は未消去の列から再判定する（冪等）。
 - **版の履歴は消えない。** セルを空にしても、編集権限のある人は版の履歴から旧値を見られる。履歴対策は「編集権限を必要最小限にする」運用で、**消去の完了を意味しない**。結果は「現行セルの消去」だけを表す。カレンダー・Gmail・Stripe・`OptionOrders` 等の他シートは対象外で残る。
-- **残存リスク（有効化前に確認）**: 公開Web AppはAdminとロックを共有できず、再読込は別プロジェクトとの原子的な排他にならない。`Bookings` には連続範囲を書き戻す既存関数（`updateBookingCancellationStateAtomic` は `note` を含む範囲、`updateBookingPaymentStateAtomic` は `stripeCheckoutRequestSnapshot` 等を含む範囲、`updateBookingRescheduleFeeAtomic` / `updateBookingRefundStateAtomic`）があり、消去と交差すると古い値が戻り得る。180日以上前に終了・取消・失効した行をこれらが更新する経路は通常ない想定だが、保証はできない。有効化の判断前にこの経路を再確認すること。
+- **残存リスク（有効化前に確認）**: 公開Web AppはAdminとロックを共有できず（`Recovery` は公開Web Appも行を追記する。追記は既存の行を変えないが、解決済みの行の `errorMessage` を同時に更新する経路はない想定で、保証はできない）、再読込は別プロジェクトとの原子的な排他にならない。`Bookings` には連続範囲を書き戻す既存関数（`updateBookingCancellationStateAtomic` は `note` を含む範囲、`updateBookingPaymentStateAtomic` は `stripeCheckoutRequestSnapshot` 等を含む範囲、`updateBookingRescheduleFeeAtomic` / `updateBookingRefundStateAtomic`）があり、消去と交差すると古い値が戻り得る。180日以上前に終了・取消・失効した行をこれらが更新する経路は通常ない想定だが、保証はできない。有効化の判断前にこの経路を再確認すること。
 
 ### 有効化の条件と操作（運営者が実施）
 1. `getPersonalDataRetentionStatus()` で設定を確認する。
@@ -138,7 +156,8 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - 実Spreadsheetのヘッダー・`endAt` 等の実際の型と欠損、実際の編集権限・版の履歴の残存範囲。
 - Booking Adminの実マニフェスト（`appsscript.json`。リポジトリにはない）のOAuthスコープとタイムゾーン。既存の `BookingTriggers.gs` が `ScriptApp` を使うため追加スコープは想定しないが、実環境で確認する。
 - Stripeアカウント固有の異議申立て条件・外部証拠の参照可否（運営者がDashboard／Supportで確認）。
-- 後続PRで扱うシート（`OptionOrders` 等）の個人情報は、このPRでは**消えない**。
+- 後続PRで扱うシート（`OptionOrders` / `StripeEvents` / `Members` 系）の個人情報は、PR-2でも**消えない**。
+- `Recovery` / `BookingChanges` の自由記述に、今回の対象列以外へ個人情報が転記されていないかは未確認（実データを見ていない）。
 
 ## Issue #573: Studio Xの内部運用定義（2026-10-29更新）
 

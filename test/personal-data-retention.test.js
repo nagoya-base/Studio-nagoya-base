@@ -21,6 +21,7 @@ var DAY = 24 * 60 * 60 * 1000;
 var RETENTION = 180 * DAY;
 var NOW = new Date('2026-12-10T12:00:00+09:00');
 var SPREADSHEET_ID = 'ss1';
+var VERSION = '2026-10-31.2';
 
 var PII = {
   name: 'テスト太郎', email: 'pii-test@example.com', phone: '090-0000-0000', purpose: '撮影の相談メモ', note: '備考の自由記述'
@@ -319,7 +320,7 @@ test('初期状態（未設定）では消さず、DISABLEDを記録するが成
 });
 
 test('フラグがfalse・不正値・方針バージョン不一致・dry-run未確認・dry-run版不一致では消さない', function () {
-  var V = '2026-10-31.1';
+  var V = VERSION;
   var cases = [
     [{ PERSONAL_DATA_RETENTION_ENABLED: 'false', PERSONAL_DATA_RETENTION_POLICY_VERSION: V, PERSONAL_DATA_RETENTION_DRY_RUN_VERSION: V }, 'DISABLED'],
     [{ PERSONAL_DATA_RETENTION_ENABLED: 'yes', PERSONAL_DATA_RETENTION_POLICY_VERSION: V, PERSONAL_DATA_RETENTION_DRY_RUN_VERSION: V }, 'CONFIG_INVALID'],
@@ -384,7 +385,7 @@ test('dry-runは何も書かず、保留シートも作らず、個人情報・�
   assert.strictEqual(ctx.sheet._setValuesCalls.length, 0);
   assert.strictEqual(ctx.sheets.RetentionHolds, undefined);
   assert.strictEqual(ctx.store.PERSONAL_DATA_RETENTION_ENABLED, undefined);
-  assert.strictEqual(ctx.store.PERSONAL_DATA_RETENTION_DRY_RUN_VERSION, '2026-10-31.1');
+  assert.strictEqual(ctx.store.PERSONAL_DATA_RETENTION_DRY_RUN_VERSION, VERSION);
 
   var output = JSON.stringify(result) + ctx.logger._logs.join('\n');
   [PII.name, PII.email, PII.phone, PII.purpose, PII.note, eligibleId].forEach(function (secret) {
@@ -517,8 +518,8 @@ test('Bookingsシートが無い場合は何も作らず停止する', function 
 function enable_ignoring_dry_run(ctx) {
   var props = ctx.sandbox.PropertiesService.getScriptProperties();
   props.setProperty('PERSONAL_DATA_RETENTION_ENABLED', 'true');
-  props.setProperty('PERSONAL_DATA_RETENTION_POLICY_VERSION', '2026-10-31.1');
-  props.setProperty('PERSONAL_DATA_RETENTION_DRY_RUN_VERSION', '2026-10-31.1');
+  props.setProperty('PERSONAL_DATA_RETENTION_POLICY_VERSION', VERSION);
+  props.setProperty('PERSONAL_DATA_RETENTION_DRY_RUN_VERSION', VERSION);
 }
 
 // ============================================================================
@@ -707,7 +708,7 @@ function addSheet(ctx, name, headers, rows) {
 
 var RECOVERY_HEADERS = ['bookingId', 'failureType', 'occurredAt', 'calendarEventId', 'status', 'errorMessage', 'recoveryState', 'resolvedAt'];
 var SETTLEMENT_HEADERS = ['settlementId', 'bookingId', 'changeId', 'settlementState', 'paidDelta', 'refundedDelta', 'note', 'requestedAt', 'applyStatus', 'appliedAt', 'resultPaidAmount', 'resultRefundedAmount'];
-var CHANGE_HEADERS = ['changeId', 'bookingId', 'changedAt', 'oldDate', 'oldStartAt', 'oldEndAt', 'newDate', 'newStartAt', 'newEndAt', 'reason', 'feeNote', 'mailState'];
+var CHANGE_HEADERS = ['changeId', 'bookingId', 'changedAt', 'oldDate', 'oldStartAt', 'oldEndAt', 'newDate', 'newStartAt', 'newEndAt', 'reason', 'feeNote', 'mailState', 'mailAt', 'mailError', 'oldFeeAmount', 'newFeeAmount', 'feeDifference', 'cancellationPolicyCategory', 'refundStatus', 'refundCandidateAmount', 'refundApprovedAmount', 'refundApprovedAt', 'refundPendingReason', 'settlementStateAtChange', 'feeDetailsJson'];
 var OPTION_HEADERS = ['optionOrderId', 'bookingId', 'brand', 'category', 'source', 'itemsJson', 'amountJpy', 'currency', 'approvalStatus', 'paymentStatus', 'status', 'customerEmail', 'createdAt', 'updatedAt', 'approvedAt', 'declinedAt', 'declineReason', 'paymentAttemptId', 'checkoutRequestJson', 'stripeCheckoutSessionId', 'stripePaymentIntentId', 'stripeAmount', 'stripeCurrency', 'paidAt', 'lastStripeEventId', 'decisionMailSentAt', 'confirmedMailSentAt', 'paymentRecoveryRequiredAt', 'paymentRecoveryReason'];
 
 function recoveryRow(bookingId, state) {
@@ -819,7 +820,7 @@ test('関連シートの必須列が欠けていれば判定できないため�
     assert.strictEqual(result.code, 'RELATED_SHEET_INVALID', name);
     assert.strictEqual(cell(ctx, id, 'name'), PII.name);
     assert.strictEqual(plain(ctx.sandbox.dryRunPersonalDataRetention(NOW)).status, 'SHEET_INVALID', name);
-    assert.strictEqual(ctx.store.PERSONAL_DATA_RETENTION_DRY_RUN_VERSION, '2026-10-31.1');
+    assert.strictEqual(ctx.store.PERSONAL_DATA_RETENTION_DRY_RUN_VERSION, VERSION);
   });
 });
 
