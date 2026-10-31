@@ -71,12 +71,12 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - 新コードは、既存行の新列が **空欄でもfailしない** こと。
 - schema追加と機能の利用開始の間で新旧が混在しても、予約作成・読取・管理画面が破損しないこと。
 
-## Issue #680: Bookings台帳・子シート・会員系シートの個人情報を180日経過後に自動消去（PR-1〜PR-3。初期無効）
+## Issue #680: Bookings台帳・子シート・会員系シート・Stripe受信台帳の個人情報を180日経過後に自動消去（PR-1〜PR-4。初期無効）
 
 `gas/booking/admin/PersonalDataRetention.gs`（**Booking Admin専用**）。公開Web App・Webhookには配布せず、削除実行APIも置かない。管理画面（`BookingAdminWeb.gs`）にも配線しない（エディタと時間主導トリガーからのみ）。**本番の有効化・トリガー作成・実データの消去は、このPRでは行わない。**
 
-### 範囲（PR-1〜PR-3）
-- 対象シートは **`Bookings`**（PR-1）、予約IDで結び付く **`FeeSettlements` / `BookingChanges` / `Recovery`**（PR-2）、**`OptionOrders`** と会員系の **`Members` / `MemberCheckouts` / `MemberStatusTokens`**（PR-3）。`StripeEvents` は後続PR（イベント本文の紐付けと終端日時の設計が要る）。これらのPRは**既存の業務シートへの列追加を伴わない**（既存の列だけで終端日時を決められるものに限った）。例外として、保留シート`RetentionHolds`（このツールが作る管理用シート）に、会員単位の保留を追加するときだけ、任意の7列目`memberId`の見出しが追記される（既存の行は変えない）。
+### 範囲（PR-1〜PR-4）
+- 対象シートは **`Bookings`**（PR-1）、予約IDで結び付く **`FeeSettlements` / `BookingChanges` / `Recovery`**（PR-2）、**`OptionOrders`** と会員系の **`Members` / `MemberCheckouts` / `MemberStatusTokens`**（PR-3）、Stripe Webhookの受信台帳 **`StripeEvents`**（PR-4）。これらのPRは**既存の業務シートへの列追加を伴わない**（既存の列だけで終端日時を決められるものに限った）。例外として、保留シート`RetentionHolds`（このツールが作る管理用シート）に、会員単位の保留を追加するときだけ、任意の7列目`memberId`の見出しが追記される（既存の行は変えない）。
 - 540日保持する限定取引記録の**消去は実装しない**（この段階では保持するだけ）。消すのは下表の個人情報の列に限る。
 
 ### 消去する列と起算点
@@ -135,6 +135,18 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - `MemberPeriods` / `MemberMonths` / `MemberRefunds`（会員ID・Stripe ID・期間・金額の支払事実）、`OptionEligibility`（有効な利用許可は維持、取消時にメールは既に空欄化される）、`BookingMemberVerifications`（#557の短期削除）は変更しない。
 - 方針バージョンを `2026-10-31.3` に更新した。**PR-2の時点（`.2`）で有効化していた場合も、dry-runと有効化をやり直す必要がある。**
 
+### Stripe受信台帳（PR-4）の消去対象と起算点
+`StripeEvents` の **`rawBody`（イベント本文。顧客のメール・氏名等を含み得る）と `outcomeMessage`** だけを消す。`eventId` / `eventType` / 状態 / `bookingId` / `paymentAttemptId` / `stripePaymentIntentId` / `outcomeCode` / 日時は、冪等性と照合のために残す（照合可能な情報であり、匿名データではない）。
+
+- **終端**: `processingState` が `COMPLETED` / `IGNORED` / `REJECTED`。**終端日時は `updatedAt`**。終端の行の `updatedAt` を書くのは `finalize` / `finalizeForProcessing` だけで、終端の行は再受信されても `claim()` が `ALREADY_TERMINAL` を返して書き換えない（回帰テストで確認）ため、終端日時として使える。`RECEIVED`（未処理）は古くても消さない（`EVENT_UNPROCESSED`）。
+- **`bookingId` 列に会員IDが入る行**: 入会処理の失敗・却下（`StripeWebhookProcessor.rejectAndFinalize_`）は、`StripeEvents` と `Recovery` の `bookingId` 列へ**会員ID（`MBR-` で始まる。`MembershipService` の生成形式）**を記録する。`MBR-` で始まる値は、予約ではなく**会員として明示的に扱い**、親を `Members` にする。予約IDの不整合を会員に読み替えることはしない（`MBR-` で始まらない値は従来どおり予約として照合し、見つからなければ `PARENT_NOT_FOUND`）。会員が見つからなければ `MEMBER_NOT_FOUND`（要確認）。会員の終了（Membersと同じ条件）、会員単位の保留、**その会員IDで記録された未解決のRecovery**（`RELATED_RECOVERY_OPEN`）を判定に反映する。`Recovery` の会員ID行も同じ扱い（PR-2のRecoveryの対象）。
+- **結び付け**: `bookingId` の列が予約IDならば親Bookingsに結び付け、PR-2と同じ条件（親の起算日時と自身の終端日時の遅い方、保留、関連未解決、依存）を適用する。**列が空のイベント**は、本文の `data.object` の `metadata.memberId` / `customer` / `subscription`（`object` が `customer` / `subscription` ならその `id`）から**会員を1人に特定**し、`Members` と同じ終了条件・会員単位の保留を適用する。
+- **要確認（消さない）**: 結び付く予約・会員が見つからない（`NO_LINK`。本文が空の行を含む）、複数の会員に結び付く（`LINK_AMBIGUOUS`）、本文を解析できない（`RAW_BODY_UNPARSEABLE`）、会員の行が複数（`MEMBER_AMBIGUOUS`）、状態不明、`updatedAt` の欠落・不正（`receivedAt` 等で代用しない）、`eventId` の空欄・重複。**結び付かない`IGNORED`イベント（会員にも予約にも関係しない種別など）の本文は残り続ける**ため、dry-runの `review` 件数で確認し、扱いを判断する。
+- **消去の順序**: `outcomeMessage` を先に、会員への結び付けに使う **`rawBody` を最後**に消す。途中で失敗しても、次回は本文から同じ会員に結び付け、同じ期限・保留条件で再開できる。
+- **再処理への影響**: `rawBody` を読むのは未処理(`RECEIVED`)イベントの処理だけ（`listPendingWithBody`）で、終端の行の本文は再処理に使われない。消去後に同じイベントが再受信されても `ALREADY_TERMINAL` で、本文も `updatedAt` も変わらない。
+- 方針バージョンを `2026-10-31.4` に更新した。**PR-3の時点（`.3`）で有効化していた場合も、dry-runと有効化をやり直す必要がある。**
+- 会員（`Members` / `MemberCheckouts`）の消去でも、その会員IDで記録された未解決のRecovery（`bookingId` 列に会員IDが入る）があれば消さない。
+
 ### 消去の方式と限界
 - 対象列を**1セルずつ**空にする。行全体・連続範囲は書き戻さない。行は削除せず、予約ID・日時・金額・状態・決済ID等は残す（照合可能な情報であり、匿名データではない）。
 - バッチ（20行）ごとにAdminのスクリプトロックを取り、**ロック取得後に有効化フラグ・方針バージョンを読み直し**（無効なら書かずに `STOPPED`）、**予約IDで行と関連記録を読み直して判定をやり直してから**書く。1回の実行は最大200行・4分で打ち切り（`TRUNCATED`）、残りは翌日以降に処理される。部分失敗しても次回は未消去の列から再判定する（冪等）。
@@ -173,7 +185,6 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - 実Spreadsheetのヘッダー・`endAt` 等の実際の型と欠損、実際の編集権限・版の履歴の残存範囲。
 - Booking Adminの実マニフェスト（`appsscript.json`。リポジトリにはない）のOAuthスコープとタイムゾーン。既存の `BookingTriggers.gs` が `ScriptApp` を使うため追加スコープは想定しないが、実環境で確認する。
 - Stripeアカウント固有の異議申立て条件・外部証拠の参照可否（運営者がDashboard／Supportで確認）。
-- `StripeEvents`（Webhook本文）の個人情報は、PR-3でも**消えない**（後続PR）。
 - 会員系シートの実データの形（`Members` の `canceledAt` 欠落、`MemberPeriods` の`periodEnd`、`MemberCheckouts` の `PENDING` 残留の件数）は未確認。dry-runの `review` / `held` 件数で確認する。
 - `OptionOrders` は、Web AppとAdminの両方が1行を丸ごと書き換える（`OptionOrderRepository.updateOrder`）。終端の注文を180日後に更新する経路は通常ないが、再読込だけでは別プロジェクトとの原子的な排他にならない。
 - `Recovery` / `BookingChanges` の自由記述に、今回の対象列以外へ個人情報が転記されていないかは未確認（実データを見ていない）。

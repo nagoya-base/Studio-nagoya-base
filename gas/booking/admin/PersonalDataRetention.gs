@@ -1,7 +1,8 @@
 /*
  * PersonalDataRetention.gs — Bookings台帳と、予約IDで結び付く子シート（FeeSettlements / BookingChanges /
- * Recovery / OptionOrders）、会員系シート（Members / MemberCheckouts / MemberStatusTokens）の個人情報を、
- * 通常保存期間（180日）の経過後に毎日自動で消去する運用基盤（Issue #680 PR-1〜PR-3）。
+ * Recovery / OptionOrders）、会員系シート（Members / MemberCheckouts / MemberStatusTokens）、Stripe
+ * Webhookの受信台帳（StripeEvents）の個人情報を、通常保存期間（180日）の経過後に毎日自動で消去する
+ * 運用基盤（Issue #680 PR-1〜PR-4）。
  *
  * 【デプロイ先】Booking Admin（`SPREADSHEET_ID`のSpreadsheetへコンテナバインド）専用。公開Web App・
  * Webhookプロジェクトへは配布しない（削除実行APIを公開側へ置かない）。エディタ・時間主導トリガーから
@@ -35,6 +36,10 @@
  * 【会員系・オプション注文（PR-3）】OptionOrders（親はBookings）、MemberStatusTokens（有効期限）、MemberCheckouts（親はMembers）、
  * Members（退会かつ資格の最終終了から180日。同じメールの未終了の予約があれば消さない）も同じ方式で、メール等だけを消す。
  *
+ * 【Stripe受信台帳（PR-4）】StripeEventsのrawBody・outcomeMessageを、終端(COMPLETED/IGNORED/REJECTED)のupdatedAtと、
+ * 結び付く予約（bookingId列）または会員（本文のmetadata.memberId/customer/subscription）の終了の遅い方から
+ * 180日後に消す。結び付かないものは要確認。
+ *
  * 【別シートの未解決記録】Recovery / FeeSettlements / BookingChanges / OptionOrdersに、予約IDで結び付く未解決の
  * 記録がある予約は消さない（読み取りのみ。Bookings側のフラグ保存自体が失敗した複合障害でも保護するため）。
  * これらのシートを読めない場合は判定できないため、何も消さず停止する。
@@ -49,7 +54,7 @@
 'use strict';
 
 var PersonalDataRetention = (function () {
-  var POLICY_VERSION = '2026-10-31.3';
+  var POLICY_VERSION = '2026-10-31.4';
   var RETENTION_DAYS = 180;
   var DAY_MS_ = 24 * 60 * 60 * 1000;
   var RETENTION_MS_ = RETENTION_DAYS * DAY_MS_;
@@ -63,6 +68,13 @@ var PersonalDataRetention = (function () {
   var HANDLER_FUNCTION_ = 'purgeExpiredPersonalData';
   var TRIGGER_HOUR_ = 4;
   var TRIGGER_TIMEZONE_ = 'Asia/Tokyo';
+
+  /*
+   * 会員IDの接頭辞（MembershipService: 'MBR-' + UUID）。入会処理の失敗・却下の経路は、StripeEventsとRecoveryの
+   * bookingId列へ会員IDを記録する（StripeWebhookProcessor.rejectAndFinalize_）。予約ID（ブランド＋日付＋UUID）とは
+   * 接頭辞で区別でき、'MBR-'で始まる値は会員IDとして扱う（予約の紐付けの不整合を会員に読み替えない）。
+   */
+  var MEMBER_ID_PREFIX_ = 'MBR-';
 
   var BATCH_SIZE_ = 20;
   var MAX_ROWS_DEFAULT_ = 200;
@@ -179,6 +191,8 @@ var PersonalDataRetention = (function () {
       columns: ['bookingId', 'failureType', 'occurredAt', 'calendarEventId', 'errorMessage', 'recoveryState', 'resolvedAt'],
       eraseColumns: ['errorMessage'],
       projectColumn: '',
+      /* 入会処理の失敗は、bookingId列へ会員IDを記録する（MBR-で始まる値は親をMembersとして扱う）。 */
+      memberIdLinked: true,
       /* 行ごとの一意なIDがないため、(予約ID, 障害種別, 発生日時, CalendarイベントID)の組を識別子にする。重複は要確認。 */
       keyOf: function (record) {
         if (isBlank_(record.failureType) && isBlank_(record.occurredAt)) return '';
@@ -318,7 +332,7 @@ var PersonalDataRetention = (function () {
        * canceledは終端でMembers.applyState_がメールを補完しない（再補完で復活しない）。
        */
       name: 'Members',
-      columns: ['memberId', 'email', 'status', 'currentPeriodEnd', 'canceledAt', 'stripeSubscriptionId'],
+      columns: ['memberId', 'email', 'status', 'currentPeriodEnd', 'canceledAt', 'stripeSubscriptionId', 'stripeCustomerId'],
       eraseColumns: ['email'],
       projectColumn: '',
       standalone: true,
@@ -338,6 +352,42 @@ var PersonalDataRetention = (function () {
           return { verdict: VERDICT.HELD, reason: 'ACTIVE_BOOKING_EXISTS' };
         }
         return { verdict: VERDICT.ELIGIBLE, reason: 'ELIGIBLE', writes: plan.writes };
+      }
+    },
+    {
+      /*
+       * Stripe Webhookの受信台帳。イベント本文(rawBody)と結果メッセージだけを消す（eventId・種別・状態・予約ID・
+       * 決済試行ID・PaymentIntent ID・結果コード・日時は、冪等性と照合のために残す）。
+       * 終端はCOMPLETED / IGNORED / REJECTEDで、終端日時はupdatedAt。終端の行のupdatedAtを書くのは
+       * finalize／finalizeForProcessingだけで、終端の行は再受信されてもclaim()がALREADY_TERMINALを返して
+       * 書き換えない（StripeEventRepository参照。回帰テストあり）ため、終端日時として使える。
+       * 予約IDの列があれば親Bookingsに、なければ本文から特定した会員に結び付ける。結び付かないものは要確認。
+       * rawBodyを読むのは未処理(RECEIVED)イベントの処理だけで、終端の行の本文は再処理に使われない。
+       */
+      name: 'StripeEvents',
+      columns: ['eventId', 'processingState', 'bookingId', 'updatedAt', 'rawBody', 'outcomeMessage'],
+      /* 会員への結び付けに使うrawBodyは最後に消す（途中で失敗しても、次回に同じ期限・保留条件で再開できるように）。 */
+      eraseColumns: ['outcomeMessage', 'rawBody'],
+      projectColumn: '',
+      memberIdLinked: true,
+      keyOf: function (record) { return trimText_(record.eventId); },
+      own: function (record) {
+        var state = trimText_(record.processingState);
+        if (state === 'RECEIVED') return { kind: 'OPEN', reason: 'EVENT_UNPROCESSED' };
+        if (['COMPLETED', 'IGNORED', 'REJECTED'].indexOf(state) === -1) return { kind: 'REVIEW', reason: 'EVENT_STATE_UNKNOWN' };
+        var ms = parseStrictMillis_(record.updatedAt);
+        return isNaN(ms)
+          ? { kind: 'REVIEW', reason: isBlank_(record.updatedAt) ? 'OWN_DATE_MISSING' : 'OWN_DATE_INVALID' }
+          : { kind: 'TERMINAL', ms: ms };
+      },
+      classify: function (definition, record, ctx) {
+        var key = definition.keyOf(record);
+        if (!key) return { verdict: VERDICT.REVIEW, reason: 'INVALID_KEY' };
+        if (ctx.duplicateKeys && ctx.duplicateKeys[key]) return { verdict: VERDICT.REVIEW, reason: 'DUPLICATE_KEY' };
+        var plan = planChildWrites_(definition, record);
+        if (plan.writes.length === 0) return { verdict: VERDICT.ALREADY_CLEAR, reason: 'ALREADY_CLEAR' };
+        if (!isBlank_(record.bookingId)) return classifyLinked_(definition, record, trimText_(record.bookingId), plan, ctx);
+        return classifyMemberLinkedEvent_(definition, record, plan, ctx);
       }
     }
   ];
@@ -670,6 +720,9 @@ var PersonalDataRetention = (function () {
     if (ctx.nowMs < dueMs) return { verdict: VERDICT.NOT_DUE, reason: 'NOT_DUE' };
     if (hold && hold.invalid) return { verdict: VERDICT.HELD, reason: 'HOLD_RECORD_INVALID' };
     if (hold && hold.active) return { verdict: VERDICT.HELD, reason: 'HOLD_ACTIVE' };
+    /* 入会処理の失敗は、RecoveryのbookingId列へ会員IDを記録する。その会員IDで未解決の記録があれば消さない。 */
+    var relatedReason = ctx.relatedByBookingId ? ctx.relatedByBookingId[memberId] : '';
+    if (relatedReason) return { verdict: VERDICT.HELD, reason: relatedReason };
     return null;
   }
 
@@ -695,6 +748,51 @@ var PersonalDataRetention = (function () {
    *   parentsById: { 予約ID: { record, duplicate } }（親Bookings行）
    * 戻り値: classifyBookingRecordと同じ形（ELIGIBLEのときはwrites付き）。
    */
+  /*
+   * Stripeイベント本文(rawBody)から、結び付く会員を1人に特定する。予約IDの列が空のイベント（会員のSubscription／
+   * Invoice等）に使う。見るのはdata.object.metadata.memberId・customer・subscription（およびobjectが
+   * customer／subscriptionのときのid）だけ。0人・複数人・本文が解析できない場合は要確認。
+   * 戻り値: { ok:true, member:{record,duplicate} } | { ok:false, reason }。
+   */
+  function linkMemberOfEvent_(rawBody, ctx) {
+    if (isBlank_(rawBody)) return { ok: false, reason: 'NO_LINK' };
+    var parsed;
+    try {
+      parsed = JSON.parse(String(rawBody));
+    } catch (error) {
+      return { ok: false, reason: 'RAW_BODY_UNPARSEABLE' };
+    }
+    var object = parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data.object : null;
+    if (!object || typeof object !== 'object') return { ok: false, reason: 'NO_LINK' };
+    var text = function (value) { return typeof value === 'string' ? value.trim() : ''; };
+    var memberId = object.metadata && typeof object.metadata === 'object' ? text(object.metadata.memberId) : '';
+    var customerId = text(object.customer) || (object.object === 'customer' ? text(object.id) : '');
+    var subscriptionId = text(object.subscription) || (object.object === 'subscription' ? text(object.id) : '');
+    var found = {};
+    if (memberId && ctx.membersById && ctx.membersById[memberId]) found[memberId] = true;
+    ((customerId && ctx.membersByCustomerId && ctx.membersByCustomerId[customerId]) || []).forEach(function (id) { found[id] = true; });
+    ((subscriptionId && ctx.membersBySubscriptionId && ctx.membersBySubscriptionId[subscriptionId]) || []).forEach(function (id) { found[id] = true; });
+    var ids = Object.keys(found);
+    if (ids.length === 0) return { ok: false, reason: 'NO_LINK' };
+    if (ids.length > 1) return { ok: false, reason: 'LINK_AMBIGUOUS' };
+    var member = ctx.membersById[ids[0]];
+    if (member.duplicate) return { ok: false, reason: 'MEMBER_AMBIGUOUS' };
+    return { ok: true, member: member };
+  }
+
+  /* 予約IDの列が空のStripeイベント。本文から会員を特定し、会員の終了（Membersと同じ条件）と自身の終端の遅い方から180日。 */
+  function classifyMemberLinkedEvent_(definition, record, plan, ctx) {
+    var link = linkMemberOfEvent_(record.rawBody, ctx);
+    if (!link.ok) {
+      /* 結び付けられなくても、自身の状態（未処理・不明）の判定を先に返す。 */
+      var ownFirst = definition.own(record);
+      if (ownFirst.kind === 'OPEN') return { verdict: VERDICT.HELD, reason: ownFirst.reason };
+      if (ownFirst.kind === 'REVIEW') return { verdict: VERDICT.REVIEW, reason: ownFirst.reason };
+      return { verdict: VERDICT.REVIEW, reason: link.reason };
+    }
+    return classifyUnderMember_(definition, record, trimText_(link.member.record.memberId), plan, ctx);
+  }
+
   function classifyEntry_(definition, record, ctx) {
     return definition.classify ? definition.classify(definition, record, ctx) : classifyChildRecord(definition, record, ctx);
   }
@@ -710,6 +808,37 @@ var PersonalDataRetention = (function () {
 
     var bookingId = trimText_(record.bookingId);
     if (!bookingId) return { verdict: VERDICT.REVIEW, reason: 'NO_BOOKING_LINK' };
+    return classifyLinked_(definition, record, bookingId, plan, ctx);
+  }
+
+  /* bookingId列の値で親を決める。MBR-で始まり、会員IDを記録する台帳(memberIdLinked)なら会員、それ以外は予約。 */
+  function classifyLinked_(definition, record, id, plan, ctx) {
+    if (definition.memberIdLinked && id.indexOf(MEMBER_ID_PREFIX_) === 0) {
+      return classifyUnderMember_(definition, record, id, plan, ctx);
+    }
+    return classifyUnderBooking_(definition, record, id, plan, ctx);
+  }
+
+  /*
+   * 会員IDで親Membersに結び付く記録の判定。会員の終了（Membersと同じ条件）と自身の終端日時の遅い方から180日。
+   * 会員単位の保留、およびその会員IDで記録された未解決の記録（RecoveryのbookingId列に会員IDが入る）があれば消さない。
+   */
+  function classifyUnderMember_(definition, record, memberId, plan, ctx) {
+    var member = ctx.membersById ? ctx.membersById[memberId] : null;
+    if (!member) return { verdict: VERDICT.REVIEW, reason: 'MEMBER_NOT_FOUND' };
+    if (member.duplicate) return { verdict: VERDICT.REVIEW, reason: 'MEMBER_AMBIGUOUS' };
+    var own = definition.own(record);
+    if (own.kind === 'REVIEW') return { verdict: VERDICT.REVIEW, reason: own.reason };
+    if (own.kind === 'OPEN') return { verdict: VERDICT.HELD, reason: own.reason };
+    var terminal = memberTerminal_(member.record, ctx);
+    if (!terminal.ok) return terminal.outcome;
+    var held = applyMemberHold_(Math.max(terminal.endMs, own.ms), memberId, ctx);
+    if (held) return held;
+    return { verdict: VERDICT.ELIGIBLE, reason: 'ELIGIBLE', writes: plan.writes };
+  }
+
+  /* 予約IDで親Bookings行に結び付く記録の判定（親の起算点・自身の終端・保留・関連未解決・依存）。 */
+  function classifyUnderBooking_(definition, record, bookingId, plan, ctx) {
     var parent = ctx.parentsById ? ctx.parentsById[bookingId] : null;
     if (!parent) return { verdict: VERDICT.REVIEW, reason: 'PARENT_NOT_FOUND' };
     if (parent.duplicate) return { verdict: VERDICT.REVIEW, reason: 'PARENT_AMBIGUOUS' };
@@ -842,7 +971,10 @@ var PersonalDataRetention = (function () {
    * Membersは会員IDで引けるようにする。シートが無ければ空。必須列の欠落・不正は例外（全体停止）。
    */
   function readMemberLookups_(spreadsheet, children) {
-    var data = { periodsByMemberId: {}, periodsBySubscriptionId: {}, monthsByMemberId: {}, membersById: {} };
+    var data = {
+      periodsByMemberId: {}, periodsBySubscriptionId: {}, monthsByMemberId: {}, membersById: {},
+      membersByCustomerId: {}, membersBySubscriptionId: {}
+    };
     var readRows = function (name, columns) {
       var sheet = spreadsheet.getSheetByName(name);
       if (!sheet || sheet.getLastRow() < 1) return [];
@@ -873,6 +1005,15 @@ var PersonalDataRetention = (function () {
         if (!memberId) return;
         if (data.membersById[memberId]) data.membersById[memberId].duplicate = true;
         else data.membersById[memberId] = { record: entry.record, duplicate: false };
+        var customerId = trimText_(entry.record.stripeCustomerId);
+        var subscriptionId = trimText_(entry.record.stripeSubscriptionId);
+        var addIndex = function (index, key) {
+          if (!key) return;
+          index[key] = index[key] || [];
+          if (index[key].indexOf(memberId) === -1) index[key].push(memberId);
+        };
+        addIndex(data.membersByCustomerId, customerId);
+        addIndex(data.membersBySubscriptionId, subscriptionId);
       });
     });
     return data;
@@ -961,7 +1102,8 @@ var PersonalDataRetention = (function () {
     return {
       nowMs: nowMs, holdsByBookingId: loaded.holds.byBookingId, relatedByBookingId: loaded.related,
       parentsById: loaded.parentsById, duplicateKeys: child.duplicateKeys,
-      membersById: loaded.memberData.membersById, periodsByMemberId: loaded.memberData.periodsByMemberId,
+      membersById: loaded.memberData.membersById, membersByCustomerId: loaded.memberData.membersByCustomerId,
+      membersBySubscriptionId: loaded.memberData.membersBySubscriptionId, periodsByMemberId: loaded.memberData.periodsByMemberId,
       periodsBySubscriptionId: loaded.memberData.periodsBySubscriptionId, monthsByMemberId: loaded.memberData.monthsByMemberId,
       activeBookingEmails: loaded.activeBookingEmails, memberHoldsById: loaded.holds.byMemberId
     };
