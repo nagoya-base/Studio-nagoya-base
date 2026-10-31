@@ -1,6 +1,7 @@
 /*
  * PersonalDataRetention.gs — Bookings台帳と、予約IDで結び付く子シート（FeeSettlements / BookingChanges /
- * Recovery）の個人情報を、通常保存期間（180日）の経過後に毎日自動で消去する運用基盤（Issue #680 PR-1・PR-2）。
+ * Recovery / OptionOrders）、会員系シート（Members / MemberCheckouts / MemberStatusTokens）の個人情報を、
+ * 通常保存期間（180日）の経過後に毎日自動で消去する運用基盤（Issue #680 PR-1〜PR-3）。
  *
  * 【デプロイ先】Booking Admin（`SPREADSHEET_ID`のSpreadsheetへコンテナバインド）専用。公開Web App・
  * Webhookプロジェクトへは配布しない（削除実行APIを公開側へ置かない）。エディタ・時間主導トリガーから
@@ -31,6 +32,9 @@
  * feeDetailsJsonの限定投影）/ Recovery.errorMessageも、親Bookingsの起算日時と自身の終端日時の遅い方から
  * 180日後に同じ方式で消す。自身が未完了・親が未終了／保留中／依存未解決・紐付けなし・曖昧なものは消さない。
  *
+ * 【会員系・オプション注文（PR-3）】OptionOrders（親はBookings）、MemberStatusTokens（有効期限）、MemberCheckouts（親はMembers）、
+ * Members（退会かつ資格の最終終了から180日。同じメールの未終了の予約があれば消さない）も同じ方式で、メール等だけを消す。
+ *
  * 【別シートの未解決記録】Recovery / FeeSettlements / BookingChanges / OptionOrdersに、予約IDで結び付く未解決の
  * 記録がある予約は消さない（読み取りのみ。Bookings側のフラグ保存自体が失敗した複合障害でも保護するため）。
  * これらのシートを読めない場合は判定できないため、何も消さず停止する。
@@ -45,7 +49,7 @@
 'use strict';
 
 var PersonalDataRetention = (function () {
-  var POLICY_VERSION = '2026-10-31.2';
+  var POLICY_VERSION = '2026-10-31.3';
   var RETENTION_DAYS = 180;
   var DAY_MS_ = 24 * 60 * 60 * 1000;
   var RETENTION_MS_ = RETENTION_DAYS * DAY_MS_;
@@ -83,7 +87,15 @@ var PersonalDataRetention = (function () {
   ];
 
   var HOLDS_SHEET_ = 'RetentionHolds';
-  var HOLDS_HEADERS_ = ['bookingId', 'reasonCode', 'owner', 'createdAt', 'reviewBy', 'resolvedAt'];
+  /*
+   * 保留シート。先頭6列は予約単位の保留（bookingId）。7列目memberIdは会員単位の保留（PR-3で追加）。
+   * 既存の6列のシートはaddMemberHoldが7列目の見出しだけを追記する（既存の行は変えない）。
+   * 会員単位の保留は、保留が必要な会員（入会決済）を明示的にmemberIdで指定する。予約の保留から
+   * 同じメールの会員へは暗黙に波及させない（無関係な過去予約で会員情報を一律に残さないため）。
+   */
+  var HOLDS_BASE_HEADERS_ = ['bookingId', 'reasonCode', 'owner', 'createdAt', 'reviewBy', 'resolvedAt'];
+  var HOLDS_HEADERS_ = HOLDS_BASE_HEADERS_.concat(['memberId']);
+  var HOLDS_MEMBER_COLUMN_ = HOLDS_BASE_HEADERS_.length;
   var HOLD_REASONS_ = ['DISPUTE', 'INQUIRY', 'REFUND', 'UNPAID', 'OTHER'];
 
   /*
@@ -181,8 +193,165 @@ var PersonalDataRetention = (function () {
           ? { kind: 'REVIEW', reason: isBlank_(record.resolvedAt) ? 'OWN_DATE_MISSING' : 'OWN_DATE_INVALID' }
           : { kind: 'TERMINAL', ms: ms };
       }
+    },
+    {
+      /* オプション注文（Issue #423）。親Bookingsに結び付く。顧客メール・不承認理由・Checkout要求・復旧理由を消す。 */
+      name: 'OptionOrders',
+      columns: ['optionOrderId', 'bookingId', 'status', 'paymentRecoveryRequiredAt', 'approvedAt', 'declinedAt', 'paidAt', 'createdAt',
+        'category', 'amountJpy', 'approvalStatus', 'paymentStatus',
+        'customerEmail', 'declineReason', 'checkoutRequestJson', 'paymentRecoveryReason'],
+      eraseColumns: ['customerEmail', 'declineReason', 'checkoutRequestJson', 'paymentRecoveryReason'],
+      projectColumn: '',
+      keyOf: function (record) { return trimText_(record.optionOrderId); },
+      /*
+       * 終端はCONFIRMED / DECLINED。終端日時はapprovedAt・declinedAt・paidAtの最も遅い日時（updatedAtでは推測しない）。
+       * 作成時に確定する無料の注文（カテゴリFREE・金額0・承認不要・決済不要。BookingOptionsの生成条件と同じ）は
+       * この3つがすべて空のため、その場合に限り作成日時を確定日時とする。有料または条件に合わない注文で
+       * 3つが欠落している場合は、終端日時を決められず要確認にする。
+       * CANCELLEDは現行コードが書かず、取消日時の列もないため、終端日時を決められず要確認にする。
+       */
+      own: function (record) {
+        if (!isBlank_(record.paymentRecoveryRequiredAt)) return { kind: 'OPEN', reason: 'OPTION_RECOVERY_OPEN' };
+        var state = trimText_(record.status);
+        if (['PENDING_APPROVAL', 'AWAITING_PAYMENT', 'PAYMENT_PENDING'].indexOf(state) !== -1) {
+          return { kind: 'OPEN', reason: 'OPTION_ORDER_UNRESOLVED' };
+        }
+        if (state === 'CANCELLED') return { kind: 'REVIEW', reason: 'OWN_DATE_MISSING' };
+        if (state !== 'CONFIRMED' && state !== 'DECLINED') return { kind: 'REVIEW', reason: 'ORDER_STATUS_UNKNOWN' };
+        var ms = NaN;
+        var invalid = false;
+        ['approvedAt', 'declinedAt', 'paidAt'].forEach(function (column) {
+          if (isBlank_(record[column])) return;
+          var value = parseStrictMillis_(record[column]);
+          if (isNaN(value)) invalid = true;
+          else ms = isNaN(ms) ? value : Math.max(ms, value);
+        });
+        if (invalid) return { kind: 'REVIEW', reason: 'OWN_DATE_INVALID' };
+        if (isNaN(ms) && state === 'CONFIRMED' && isFreeOrderConfirmedAtCreation_(record)) ms = parseStrictMillis_(record.createdAt);
+        return isNaN(ms) ? { kind: 'REVIEW', reason: 'OWN_DATE_MISSING' } : { kind: 'TERMINAL', ms: ms };
+      }
+    },
+    {
+      /*
+       * 会員状態ページ用のワンタイムトークン台帳。親はなく、有効期限の経過後180日で、メールとハッシュを消す。
+       * 行の識別子であるtokenHashは最後に消す（途中で失敗しても、次回の実行で同じ行を引き直せるように）。
+       */
+      name: 'MemberStatusTokens',
+      columns: ['tokenHash', 'email', 'expiresAt'],
+      eraseColumns: ['email', 'tokenHash'],
+      projectColumn: '',
+      standalone: true,
+      keyOf: function (record) { return trimText_(record.tokenHash); },
+      classify: function (definition, record, ctx) {
+        var plan = planChildWrites_(definition, record);
+        if (plan.writes.length === 0) return { verdict: VERDICT.ALREADY_CLEAR, reason: 'ALREADY_CLEAR' };
+        var key = definition.keyOf(record);
+        if (!key) return { verdict: VERDICT.REVIEW, reason: 'INVALID_KEY' };
+        if (ctx.duplicateKeys && ctx.duplicateKeys[key]) return { verdict: VERDICT.REVIEW, reason: 'DUPLICATE_KEY' };
+        var expiresMs = parseStrictMillis_(record.expiresAt);
+        if (isNaN(expiresMs)) return { verdict: VERDICT.REVIEW, reason: isBlank_(record.expiresAt) ? 'BASIS_MISSING' : 'BASIS_INVALID' };
+        if (ctx.nowMs < expiresMs + RETENTION_MS_) return { verdict: VERDICT.NOT_DUE, reason: 'NOT_DUE' };
+        return { verdict: VERDICT.ELIGIBLE, reason: 'ELIGIBLE', writes: plan.writes };
+      }
+    },
+    {
+      /*
+       * 入会Checkoutの保留台帳。親はMembers（memberIdで結び付く）。メールだけを消す。
+       * EXPIRED、およびpendingUntilを過ぎても会員行が作られていないPENDING（放棄された入会）はpendingUntilから180日。
+       * COMPLETED、およびpendingUntilを過ぎて会員行があるPENDINGは、会員側の終了（Membersと同じ条件）から180日。
+       */
+      name: 'MemberCheckouts',
+      columns: ['memberId', 'email', 'checkoutSessionId', 'pendingUntil', 'state'],
+      eraseColumns: ['email'],
+      projectColumn: '',
+      standalone: true,
+      keyOf: function (record) {
+        if (isBlank_(record.memberId)) return '';
+        return trimText_(record.memberId) + '\u0001' + trimText_(record.checkoutSessionId);
+      },
+      classify: function (definition, record, ctx) {
+        var key = definition.keyOf(record);
+        if (!key) return { verdict: VERDICT.REVIEW, reason: 'INVALID_KEY' };
+        if (ctx.duplicateKeys && ctx.duplicateKeys[key]) return { verdict: VERDICT.REVIEW, reason: 'DUPLICATE_KEY' };
+        var plan = planChildWrites_(definition, record);
+        if (plan.writes.length === 0) return { verdict: VERDICT.ALREADY_CLEAR, reason: 'ALREADY_CLEAR' };
+
+        var state = trimText_(record.state);
+        var pendingMs = parseStrictMillis_(record.pendingUntil);
+        var memberId = trimText_(record.memberId);
+        var member = ctx.membersById ? ctx.membersById[memberId] : null;
+        var needsMember;
+        if (state === 'COMPLETED') {
+          needsMember = true;
+        } else if (state === 'EXPIRED') {
+          needsMember = false;
+        } else if (state === 'PENDING') {
+          if (isNaN(pendingMs)) return { verdict: VERDICT.REVIEW, reason: 'BASIS_INVALID' };
+          if (pendingMs > ctx.nowMs) return { verdict: VERDICT.HELD, reason: 'CHECKOUT_PENDING' };
+          needsMember = !!member;
+        } else {
+          return { verdict: VERDICT.REVIEW, reason: 'CHECKOUT_STATE_UNKNOWN' };
+        }
+
+        var basisMs;
+        if (needsMember) {
+          if (!member) return { verdict: VERDICT.REVIEW, reason: 'MEMBER_NOT_FOUND' };
+          if (member.duplicate) return { verdict: VERDICT.REVIEW, reason: 'MEMBER_AMBIGUOUS' };
+          var terminal = memberTerminal_(member.record, ctx);
+          if (!terminal.ok) return terminal.outcome;
+          basisMs = terminal.endMs;
+          if (!isNaN(pendingMs)) basisMs = Math.max(basisMs, pendingMs);
+        } else {
+          if (isNaN(pendingMs)) return { verdict: VERDICT.REVIEW, reason: isBlank_(record.pendingUntil) ? 'BASIS_MISSING' : 'BASIS_INVALID' };
+          basisMs = pendingMs;
+        }
+        var checkoutHeld = applyMemberHold_(basisMs, memberId, ctx);
+        if (checkoutHeld) return checkoutHeld;
+        return { verdict: VERDICT.ELIGIBLE, reason: 'ELIGIBLE', writes: plan.writes };
+      }
+    },
+    {
+      /*
+       * 会員台帳（Stripe subscriptionの写し）。メールだけを消す（Stripe ID・状態・期間は残す）。
+       * 退会（status=canceled）かつ、退会日時・現在の期間終了・支払済みPeriod・旧MemberMonthsの最も遅い日時から180日。
+       * 有効・支払い遅延・未完了の会員、同じメールの将来予約／未終了の予約がある会員は消さない。
+       * canceledは終端でMembers.applyState_がメールを補完しない（再補完で復活しない）。
+       */
+      name: 'Members',
+      columns: ['memberId', 'email', 'status', 'currentPeriodEnd', 'canceledAt', 'stripeSubscriptionId'],
+      eraseColumns: ['email'],
+      projectColumn: '',
+      standalone: true,
+      keyOf: function (record) { return trimText_(record.memberId); },
+      classify: function (definition, record, ctx) {
+        var key = definition.keyOf(record);
+        if (!key) return { verdict: VERDICT.REVIEW, reason: 'INVALID_KEY' };
+        if (ctx.duplicateKeys && ctx.duplicateKeys[key]) return { verdict: VERDICT.REVIEW, reason: 'DUPLICATE_KEY' };
+        var plan = planChildWrites_(definition, record);
+        if (plan.writes.length === 0) return { verdict: VERDICT.ALREADY_CLEAR, reason: 'ALREADY_CLEAR' };
+        var terminal = memberTerminal_(record, ctx);
+        if (!terminal.ok) return terminal.outcome;
+        var memberHeld = applyMemberHold_(terminal.endMs, key, ctx);
+        if (memberHeld) return memberHeld;
+        var email = MembershipRules.normalizeEmail(String(record.email));
+        if (email && ctx.activeBookingEmails && ctx.activeBookingEmails[email]) {
+          return { verdict: VERDICT.HELD, reason: 'ACTIVE_BOOKING_EXISTS' };
+        }
+        return { verdict: VERDICT.ELIGIBLE, reason: 'ELIGIBLE', writes: plan.writes };
+      }
     }
   ];
+
+  /*
+   * 作成時に確定する無料のオプション注文か。BookingOptions.planOrders（無料枠）が作る注文と同じ条件:
+   * category=FREE・amountJpy=0・approvalStatus=NOT_REQUIRED・paymentStatus=NOT_REQUIRED。
+   */
+  function isFreeOrderConfirmedAtCreation_(record) {
+    return trimText_(record.category) === 'FREE' &&
+      !isBlank_(record.amountJpy) && Number(record.amountJpy) === 0 &&
+      trimText_(record.approvalStatus) === 'NOT_REQUIRED' &&
+      trimText_(record.paymentStatus) === 'NOT_REQUIRED';
+  }
 
   /* feeDetailsJsonに残してよいキーと値の形。これ以外（manualNote等の自由記述・未知のキー）は投影で落とす。 */
   var FEE_DETAILS_BRAND_ = /^[a-z_]{1,20}$/;
@@ -328,30 +497,36 @@ var PersonalDataRetention = (function () {
   /*
    * 保留シートの行を予約IDごとにまとめる。resolvedAtが空の保留は有効（active）。resolvedAtが
    * あっても解釈できない場合は有効扱い（invalid）にして消さない。
-   * 戻り値: { byBookingId: { id: { active, invalid, latestResolvedMs, overdue } }, overdueCount }
+   * 戻り値: { byBookingId, byMemberId: { id: { active, invalid, latestResolvedMs } }, overdueCount }
    */
   function summarizeHolds_(holdRows, nowMs) {
     var byBookingId = {};
+    var byMemberId = {};
     var overdueCount = 0;
     holdRows.forEach(function (row) {
-      var id = String(row[0] === undefined || row[0] === null ? '' : row[0]).trim();
-      if (!id) return;
-      var entry = byBookingId[id] || (byBookingId[id] = { active: false, invalid: false, latestResolvedMs: NaN });
+      var bookingKey = trimText_(row[0]);
+      var memberKey = row.length > HOLDS_MEMBER_COLUMN_ ? trimText_(row[HOLDS_MEMBER_COLUMN_]) : '';
+      if (!bookingKey && !memberKey) return;
+      var entries = [];
+      if (bookingKey) entries.push(byBookingId[bookingKey] || (byBookingId[bookingKey] = { active: false, invalid: false, latestResolvedMs: NaN }));
+      if (memberKey) entries.push(byMemberId[memberKey] || (byMemberId[memberKey] = { active: false, invalid: false, latestResolvedMs: NaN }));
       if (isBlank_(row[5])) {
-        entry.active = true;
+        entries.forEach(function (entry) { entry.active = true; });
         var reviewMs = parseStrictMillis_(row[4]);
         if (isNaN(reviewMs) || reviewMs < nowMs) overdueCount++;
         return;
       }
       var resolvedMs = parseStrictMillis_(row[5]);
-      if (isNaN(resolvedMs)) {
-        entry.active = true;
-        entry.invalid = true;
-        return;
-      }
-      if (isNaN(entry.latestResolvedMs) || resolvedMs > entry.latestResolvedMs) entry.latestResolvedMs = resolvedMs;
+      entries.forEach(function (entry) {
+        if (isNaN(resolvedMs)) {
+          entry.active = true;
+          entry.invalid = true;
+        } else if (isNaN(entry.latestResolvedMs) || resolvedMs > entry.latestResolvedMs) {
+          entry.latestResolvedMs = resolvedMs;
+        }
+      });
     });
-    return { byBookingId: byBookingId, overdueCount: overdueCount };
+    return { byBookingId: byBookingId, byMemberId: byMemberId, overdueCount: overdueCount };
   }
 
   /* 起算日時を持つ列。CONFIRMED=最新のendAt / CANCELLED=cancelledAt / EXPIRED=expiredAt。PENDING・未知は''。 */
@@ -435,6 +610,69 @@ var PersonalDataRetention = (function () {
     return null;
   }
 
+  /* 会員の利用資格の終了日時の列挙に使う。Date、またはタイムゾーン明示のISO文字列だけを受け付ける。 */
+  function memberMonthEndMs_(value) {
+    var month = Number(value);
+    if (!isFinite(month) || month !== Math.floor(month)) return NaN;
+    var year = Math.floor(month / 100);
+    var monthOfYear = month % 100;
+    if (year < 2000 || year > 2999 || monthOfYear < 1 || monthOfYear > 12) return NaN;
+    /* 利用月（JST）の末日の終わり = 翌月1日0時（JST）。 */
+    return Date.UTC(year, monthOfYear, 1, 0, 0, 0) - 9 * 60 * 60 * 1000;
+  }
+
+  /*
+   * 会員行が消去できる終端にあるかを判定する。戻り値: { ok:true, endMs } | { ok:false, outcome }。
+   * 退会（canceled）のみ終端。endMsは退会日時・現在の期間終了・支払済みPeriod・旧MemberMonthsの最も遅い日時。
+   * いずれかの日時が空欄でない不正値なら要確認（推測しない）。
+   */
+  function memberTerminal_(member, ctx) {
+    var status = trimText_(member.status);
+    if (status === 'active' || status === 'past_due' || status === 'incomplete') {
+      return { ok: false, outcome: { verdict: VERDICT.HELD, reason: 'MEMBER_NOT_ENDED' } };
+    }
+    if (status !== 'canceled') return { ok: false, outcome: { verdict: VERDICT.REVIEW, reason: 'MEMBER_STATUS_UNKNOWN' } };
+    var endMs = parseStrictMillis_(member.canceledAt);
+    if (isNaN(endMs)) return { ok: false, outcome: { verdict: VERDICT.REVIEW, reason: 'MEMBER_CANCELED_AT_INVALID' } };
+    if (!isBlank_(member.currentPeriodEnd)) {
+      var periodEnd = parseStrictMillis_(member.currentPeriodEnd);
+      if (isNaN(periodEnd)) return { ok: false, outcome: { verdict: VERDICT.REVIEW, reason: 'MEMBER_PERIOD_INVALID' } };
+      endMs = Math.max(endMs, periodEnd);
+    }
+    var memberId = trimText_(member.memberId);
+    var subscriptionId = trimText_(member.stripeSubscriptionId);
+    var periods = (ctx.periodsByMemberId && ctx.periodsByMemberId[memberId]) || [];
+    if (subscriptionId && ctx.periodsBySubscriptionId && ctx.periodsBySubscriptionId[subscriptionId]) {
+      periods = periods.concat(ctx.periodsBySubscriptionId[subscriptionId]);
+    }
+    for (var i = 0; i < periods.length; i++) {
+      var end = parseStrictMillis_(periods[i]);
+      if (isNaN(end)) return { ok: false, outcome: { verdict: VERDICT.REVIEW, reason: 'MEMBER_PERIOD_INVALID' } };
+      endMs = Math.max(endMs, end);
+    }
+    var months = (ctx.monthsByMemberId && ctx.monthsByMemberId[memberId]) || [];
+    for (var m = 0; m < months.length; m++) {
+      var monthEnd = memberMonthEndMs_(months[m]);
+      if (isNaN(monthEnd)) return { ok: false, outcome: { verdict: VERDICT.REVIEW, reason: 'MEMBER_MONTH_INVALID' } };
+      endMs = Math.max(endMs, monthEnd);
+    }
+    return { ok: true, endMs: endMs };
+  }
+
+  /*
+   * 会員単位の保留（memberId）を反映した判定。baseMsは会員の終了日時等の起算点。
+   * 戻り値: null（続行可）| outcome（NOT_DUE / HELD）。解決済みの保留は、解決日時から180日まで消さない（遅い方）。
+   */
+  function applyMemberHold_(baseMs, memberId, ctx) {
+    var hold = ctx.memberHoldsById ? ctx.memberHoldsById[memberId] : null;
+    var dueMs = baseMs + RETENTION_MS_;
+    if (hold && !isNaN(hold.latestResolvedMs)) dueMs = Math.max(dueMs, hold.latestResolvedMs + RETENTION_MS_);
+    if (ctx.nowMs < dueMs) return { verdict: VERDICT.NOT_DUE, reason: 'NOT_DUE' };
+    if (hold && hold.invalid) return { verdict: VERDICT.HELD, reason: 'HOLD_RECORD_INVALID' };
+    if (hold && hold.active) return { verdict: VERDICT.HELD, reason: 'HOLD_ACTIVE' };
+    return null;
+  }
+
   /* 子シートの消去計画。戻り値: { ok, reason?, writes: [{ column, value }] }。解析できないJSONは要確認。 */
   function planChildWrites_(definition, record) {
     var writes = [];
@@ -457,6 +695,10 @@ var PersonalDataRetention = (function () {
    *   parentsById: { 予約ID: { record, duplicate } }（親Bookings行）
    * 戻り値: classifyBookingRecordと同じ形（ELIGIBLEのときはwrites付き）。
    */
+  function classifyEntry_(definition, record, ctx) {
+    return definition.classify ? definition.classify(definition, record, ctx) : classifyChildRecord(definition, record, ctx);
+  }
+
   function classifyChildRecord(definition, record, ctx) {
     var key = definition.keyOf(record);
     if (!key) return { verdict: VERDICT.REVIEW, reason: 'INVALID_KEY' };
@@ -524,14 +766,25 @@ var PersonalDataRetention = (function () {
     return SpreadsheetApp.openById(BookingConfig.getSpreadsheetId());
   }
 
+  /* 保留シートのヘッダーを検証する。先頭6列は必須。7列目はmemberIdまたは未設定のみ許容。戻り値: 7列目があるか。 */
+  function checkHoldsHeader_(headerRow) {
+    var header = headerRow || [];
+    for (var h = 0; h < HOLDS_BASE_HEADERS_.length; h++) {
+      if (header[h] !== HOLDS_BASE_HEADERS_[h]) throw new Error('HOLDS_HEADER_MISMATCH');
+    }
+    var extra = header.slice(HOLDS_MEMBER_COLUMN_).map(function (cell) { return cell === undefined || cell === null ? '' : String(cell); });
+    while (extra.length > 0 && extra[extra.length - 1] === '') extra.pop();
+    if (extra.length === 0) return false;
+    if (extra.length > 1 || extra[0] !== HOLDS_HEADERS_[HOLDS_MEMBER_COLUMN_]) throw new Error('HOLDS_HEADER_MISMATCH');
+    return true;
+  }
+
   /* 保留シートの本体行を返す。シートが無ければ保留なし。ヘッダーが想定と異なれば保留を判定できないため例外。 */
   function readHoldRows_(spreadsheet) {
     var sheet = spreadsheet.getSheetByName(HOLDS_SHEET_);
     if (!sheet || sheet.getLastRow() < 1) return [];
     var values = sheet.getDataRange().getValues();
-    for (var h = 0; h < HOLDS_HEADERS_.length; h++) {
-      if (values[0][h] !== HOLDS_HEADERS_[h]) throw new Error('HOLDS_HEADER_MISMATCH');
-    }
+    checkHoldsHeader_(values[0]);
     return values.slice(1);
   }
 
@@ -585,6 +838,65 @@ var PersonalDataRetention = (function () {
   }
 
   /*
+   * 会員系の判定に使う参照データ。MemberPeriods（支払済み期間）・MemberMonths（旧・利用月）を会員IDごとに集め、
+   * Membersは会員IDで引けるようにする。シートが無ければ空。必須列の欠落・不正は例外（全体停止）。
+   */
+  function readMemberLookups_(spreadsheet, children) {
+    var data = { periodsByMemberId: {}, periodsBySubscriptionId: {}, monthsByMemberId: {}, membersById: {} };
+    var readRows = function (name, columns) {
+      var sheet = spreadsheet.getSheetByName(name);
+      if (!sheet || sheet.getLastRow() < 1) return [];
+      var values = sheet.getDataRange().getValues();
+      var header = (values[0] || []).map(function (cell) { return String(cell === undefined || cell === null ? '' : cell); });
+      var positions = columns.map(function (column) { return header.indexOf(column); });
+      if (positions.some(function (position) { return position === -1; })) throw new Error('MEMBER_SHEET_INVALID');
+      return values.slice(1).map(function (row) {
+        var record = {};
+        columns.forEach(function (column, index) { record[column] = row[positions[index]]; });
+        return record;
+      });
+    };
+    readRows('MemberPeriods', ['memberId', 'subscriptionId', 'periodEnd']).forEach(function (record) {
+      var memberId = trimText_(record.memberId);
+      var subscriptionId = trimText_(record.subscriptionId);
+      if (memberId) (data.periodsByMemberId[memberId] = data.periodsByMemberId[memberId] || []).push(record.periodEnd);
+      if (subscriptionId) (data.periodsBySubscriptionId[subscriptionId] = data.periodsBySubscriptionId[subscriptionId] || []).push(record.periodEnd);
+    });
+    readRows('MemberMonths', ['memberId', 'month']).forEach(function (record) {
+      var memberId = trimText_(record.memberId);
+      if (memberId) (data.monthsByMemberId[memberId] = data.monthsByMemberId[memberId] || []).push(record.month);
+    });
+    children.forEach(function (child) {
+      if (child.definition.name !== 'Members') return;
+      child.rows.forEach(function (entry) {
+        var memberId = trimText_(entry.record.memberId);
+        if (!memberId) return;
+        if (data.membersById[memberId]) data.membersById[memberId].duplicate = true;
+        else data.membersById[memberId] = { record: entry.record, duplicate: false };
+      });
+    });
+    return data;
+  }
+
+  /* 同じメールの未終了の予約（PENDING、または終了時刻が未来／不正なCONFIRMED）があるメールの集合。会員のメール消去を止める。 */
+  function activeBookingEmails_(rows, columnCount, nowMs) {
+    var emails = {};
+    rows.forEach(function (row) {
+      var record = rowToRecord_(row, columnCount);
+      var email = MembershipRules.normalizeEmail(String(record.email === undefined || record.email === null ? '' : record.email));
+      if (!email) return;
+      var status = trimText_(record.status);
+      if (status === Booking.STATUS.PENDING) {
+        emails[email] = true;
+      } else if (status === Booking.STATUS.CONFIRMED) {
+        var endMs = parseStrictMillis_(record.endAt);
+        if (isNaN(endMs) || endMs > nowMs) emails[email] = true;
+      }
+    });
+    return emails;
+  }
+
+  /*
    * 判定に必要なシートを読み込む（dry-run・実行・バッチ内の再判定で共通）。書き込みはしない。
    * Bookings・保留・関連記録・子シートのどれか一つでも読めなければ { ok:false, code } で、何も消さない。
    */
@@ -612,6 +924,12 @@ var PersonalDataRetention = (function () {
     } catch (error) {
       return { ok: false, code: 'CHILD_SHEET_INVALID' };
     }
+    var memberData;
+    try {
+      memberData = readMemberLookups_(spreadsheet, children);
+    } catch (error) {
+      return { ok: false, code: 'MEMBER_SHEET_INVALID' };
+    }
     var rows = values.slice(1);
     var duplicateIds = findDuplicateIds_(rows);
     var bookingRows = [];
@@ -627,7 +945,8 @@ var PersonalDataRetention = (function () {
     return {
       ok: true, sheet: sheet, columnCount: header.columnCount, bookingRows: bookingRows, rowById: rowById,
       duplicateIds: duplicateIds, parentsById: parentsById, holds: summarizeHolds_(holdRows, nowMs),
-      related: related, children: children
+      related: related, children: children, memberData: memberData,
+      activeBookingEmails: activeBookingEmails_(rows, header.columnCount, nowMs)
     };
   }
 
@@ -641,7 +960,10 @@ var PersonalDataRetention = (function () {
   function childContext_(loaded, child, nowMs) {
     return {
       nowMs: nowMs, holdsByBookingId: loaded.holds.byBookingId, relatedByBookingId: loaded.related,
-      parentsById: loaded.parentsById, duplicateKeys: child.duplicateKeys
+      parentsById: loaded.parentsById, duplicateKeys: child.duplicateKeys,
+      membersById: loaded.memberData.membersById, periodsByMemberId: loaded.memberData.periodsByMemberId,
+      periodsBySubscriptionId: loaded.memberData.periodsBySubscriptionId, monthsByMemberId: loaded.memberData.monthsByMemberId,
+      activeBookingEmails: loaded.activeBookingEmails, memberHoldsById: loaded.holds.byMemberId
     };
   }
 
@@ -665,7 +987,7 @@ var PersonalDataRetention = (function () {
       candidates.children[child.definition.name] = [];
       child.rows.forEach(function (entry) {
         childCounts.scanned++;
-        var outcome = classifyChildRecord(child.definition, entry.record, childCtx);
+        var outcome = classifyEntry_(child.definition, entry.record, childCtx);
         addToCounts_(childCounts, outcome);
         if (outcome.verdict === VERDICT.ELIGIBLE) candidates.children[child.definition.name].push(entry.key);
       });
@@ -787,7 +1109,7 @@ var PersonalDataRetention = (function () {
     for (var k = 0; k < keys.length; k++) {
       var row = child.rowByKey[keys[k]];
       if (!row) { childCounts.recheckSkipped++; continue; }
-      var childOutcome = classifyChildRecord(work.definition, row.record, childCtx);
+      var childOutcome = classifyEntry_(work.definition, row.record, childCtx);
       if (childOutcome.verdict !== VERDICT.ELIGIBLE) { childCounts.recheckSkipped++; continue; }
       try {
         childOutcome.writes.forEach(function (write) {
@@ -985,9 +1307,7 @@ var PersonalDataRetention = (function () {
       if (!sheet) sheet = spreadsheet.insertSheet(HOLDS_SHEET_);
       if (sheet.getLastRow() < 1) sheet.appendRow(HOLDS_HEADERS_);
       var values = sheet.getDataRange().getValues();
-      for (var h = 0; h < HOLDS_HEADERS_.length; h++) {
-        if (values[0][h] !== HOLDS_HEADERS_[h]) throw new Error('HOLDS_HEADER_MISMATCH');
-      }
+      checkHoldsHeader_(values[0]);
       for (var i = 1; i < values.length; i++) {
         if (String(values[i][0]).trim() === id && values[i][1] === reasonCode && isBlank_(values[i][5])) {
           return { added: false, alreadyHeld: true };
@@ -1013,9 +1333,7 @@ var PersonalDataRetention = (function () {
       var sheet = openSpreadsheet_().getSheetByName(HOLDS_SHEET_);
       if (!sheet || sheet.getLastRow() < 1) return { resolved: 0 };
       var values = sheet.getDataRange().getValues();
-      for (var h = 0; h < HOLDS_HEADERS_.length; h++) {
-        if (values[0][h] !== HOLDS_HEADERS_[h]) throw new Error('HOLDS_HEADER_MISMATCH');
-      }
+      checkHoldsHeader_(values[0]);
       var resolvedColumn = HOLDS_HEADERS_.indexOf('resolvedAt') + 1;
       for (var i = 1; i < values.length; i++) {
         if (String(values[i][0]).trim() === id && isBlank_(values[i][5])) {
@@ -1027,6 +1345,73 @@ var PersonalDataRetention = (function () {
       try { lock.releaseLock(); } catch (releaseError) { /* ロック未取得時は何もしない */ }
     }
     Logger.log('PersonalDataRetention: holds resolved count=' + resolved);
+    return { resolved: resolved };
+  }
+
+  /*
+   * 会員単位の保留を追加する（Adminのスクリプトロック下）。入会決済の係争など、保留が必要な会員を
+   * memberIdで明示的に指定する。Members・MemberCheckoutsのメール消去が、期限にかかわらず止まる。
+   * 既存の6列の保留シートには、7列目の見出し（memberId）だけを追記する。
+   */
+  function addMemberHold(memberId, reasonCode, owner, reviewBy, now) {
+    var at = toNow_(now);
+    var id = trimText_(memberId);
+    if (!id) throw new Error('HOLD_INVALID_MEMBER_ID');
+    if (HOLD_REASONS_.indexOf(reasonCode) === -1) throw new Error('HOLD_INVALID_REASON');
+    var ownerText = sanitizeOwner_(owner);
+    if (!ownerText) throw new Error('HOLD_OWNER_REQUIRED');
+    var reviewMs = parseStrictMillis_(reviewBy);
+    if (isNaN(reviewMs) || reviewMs <= at.getTime()) throw new Error('HOLD_REVIEW_BY_INVALID');
+    if (!MemberRepository.findMember({ memberId: id })) throw new Error('HOLD_MEMBER_NOT_FOUND');
+
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS_)) throw new Error('LOCK_UNAVAILABLE');
+    try {
+      var spreadsheet = openSpreadsheet_();
+      var sheet = spreadsheet.getSheetByName(HOLDS_SHEET_);
+      if (!sheet) sheet = spreadsheet.insertSheet(HOLDS_SHEET_);
+      if (sheet.getLastRow() < 1) sheet.appendRow(HOLDS_HEADERS_);
+      var values = sheet.getDataRange().getValues();
+      if (!checkHoldsHeader_(values[0])) {
+        sheet.getRange(1, HOLDS_MEMBER_COLUMN_ + 1, 1, 1).setValue(HOLDS_HEADERS_[HOLDS_MEMBER_COLUMN_]);
+      }
+      for (var i = 1; i < values.length; i++) {
+        if (trimText_(values[i][HOLDS_MEMBER_COLUMN_]) === id && values[i][1] === reasonCode && isBlank_(values[i][5])) {
+          return { added: false, alreadyHeld: true };
+        }
+      }
+      sheet.appendRow(['', reasonCode, ownerText, at, new Date(reviewMs), '', id]);
+    } finally {
+      try { lock.releaseLock(); } catch (releaseError) { /* ロック未取得時は何もしない */ }
+    }
+    Logger.log('PersonalDataRetention: member hold added reason=' + reasonCode);
+    return { added: true, alreadyHeld: false };
+  }
+
+  /* 会員単位の保留を解決する。解決日時から180日を経過するまで、その会員の消去対象にならない。 */
+  function resolveMemberHold(memberId, now) {
+    var at = toNow_(now);
+    var id = trimText_(memberId);
+    if (!id) throw new Error('HOLD_INVALID_MEMBER_ID');
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS_)) throw new Error('LOCK_UNAVAILABLE');
+    var resolved = 0;
+    try {
+      var sheet = openSpreadsheet_().getSheetByName(HOLDS_SHEET_);
+      if (!sheet || sheet.getLastRow() < 1) return { resolved: 0 };
+      var values = sheet.getDataRange().getValues();
+      if (!checkHoldsHeader_(values[0])) return { resolved: 0 };
+      var resolvedColumn = HOLDS_HEADERS_.indexOf('resolvedAt') + 1;
+      for (var i = 1; i < values.length; i++) {
+        if (trimText_(values[i][HOLDS_MEMBER_COLUMN_]) === id && isBlank_(values[i][5])) {
+          sheet.getRange(i + 1, resolvedColumn, 1, 1).setValue(at);
+          resolved++;
+        }
+      }
+    } finally {
+      try { lock.releaseLock(); } catch (releaseError) { /* ロック未取得時は何もしない */ }
+    }
+    Logger.log('PersonalDataRetention: member holds resolved count=' + resolved);
     return { resolved: resolved };
   }
 
@@ -1080,6 +1465,8 @@ var PersonalDataRetention = (function () {
     getStatus: getStatus,
     addHold: addHold,
     resolveHold: resolveHold,
+    addMemberHold: addMemberHold,
+    resolveMemberHold: resolveMemberHold,
     createDailyTrigger: createDailyTrigger,
     removeDailyTriggers: removeDailyTriggers
   };
@@ -1117,6 +1504,14 @@ function addPersonalDataRetentionHold(bookingId, reasonCode, owner, reviewBy, no
 
 function resolvePersonalDataRetentionHold(bookingId, now) {
   return PersonalDataRetention.resolveHold(bookingId, now);
+}
+
+function addPersonalDataRetentionMemberHold(memberId, reasonCode, owner, reviewBy, now) {
+  return PersonalDataRetention.addMemberHold(memberId, reasonCode, owner, reviewBy, now);
+}
+
+function resolvePersonalDataRetentionMemberHold(memberId, now) {
+  return PersonalDataRetention.resolveMemberHold(memberId, now);
 }
 
 /* GASエディタから、運用担当の単一アカウントで初回に1回だけ実行する補助関数。 */

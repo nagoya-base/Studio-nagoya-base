@@ -21,7 +21,7 @@ var DAY = 24 * 60 * 60 * 1000;
 var RETENTION = 180 * DAY;
 var NOW = new Date('2026-12-10T12:00:00+09:00');
 var SPREADSHEET_ID = 'ss1';
-var VERSION = '2026-10-31.2';
+var VERSION = '2026-10-31.3';
 
 var PII = {
   name: 'テスト太郎', email: 'pii-test@example.com', phone: '090-0000-0000', purpose: '撮影の相談メモ', note: '備考の自由記述'
