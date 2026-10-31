@@ -1,6 +1,6 @@
 /*
- * PersonalDataRetention.gs — Bookings台帳の個人情報を、通常保存期間（180日）の経過後に毎日自動で
- * 消去する運用基盤（Issue #680 PR-1。対象は`Bookings`シートのみ）。
+ * PersonalDataRetention.gs — Bookings台帳と、予約IDで結び付く子シート（FeeSettlements / BookingChanges /
+ * Recovery）の個人情報を、通常保存期間（180日）の経過後に毎日自動で消去する運用基盤（Issue #680 PR-1・PR-2）。
  *
  * 【デプロイ先】Booking Admin（`SPREADSHEET_ID`のSpreadsheetへコンテナバインド）専用。公開Web App・
  * Webhookプロジェクトへは配布しない（削除実行APIを公開側へ置かない）。エディタ・時間主導トリガーから
@@ -27,6 +27,10 @@
  * （予約確定・失効・取消・Webhook処理トリガー等）だけで、公開Web Appとはロックを共有できない。再読込は
  * 別プロジェクトとの原子的な排他にはならない（README「Issue #680」節の残存リスク参照）。
  *
+ * 【子シート（PR-2）】FeeSettlements.note / BookingChanges（reason・feeNote・mailError・refundPendingReason と
+ * feeDetailsJsonの限定投影）/ Recovery.errorMessageも、親Bookingsの起算日時と自身の終端日時の遅い方から
+ * 180日後に同じ方式で消す。自身が未完了・親が未終了／保留中／依存未解決・紐付けなし・曖昧なものは消さない。
+ *
  * 【別シートの未解決記録】Recovery / FeeSettlements / BookingChanges / OptionOrdersに、予約IDで結び付く未解決の
  * 記録がある予約は消さない（読み取りのみ。Bookings側のフラグ保存自体が失敗した複合障害でも保護するため）。
  * これらのシートを読めない場合は判定できないため、何も消さず停止する。
@@ -41,7 +45,7 @@
 'use strict';
 
 var PersonalDataRetention = (function () {
-  var POLICY_VERSION = '2026-10-31.1';
+  var POLICY_VERSION = '2026-10-31.2';
   var RETENTION_DAYS = 180;
   var DAY_MS_ = 24 * 60 * 60 * 1000;
   var RETENTION_MS_ = RETENTION_DAYS * DAY_MS_;
@@ -83,7 +87,7 @@ var PersonalDataRetention = (function () {
   var HOLD_REASONS_ = ['DISPUTE', 'INQUIRY', 'REFUND', 'UNPAID', 'OTHER'];
 
   /*
-   * 予約IDで結び付く別シートの未解決記録（保留判定の読み取り専用。これらのシート自体は本PRでは消去しない）。
+   * 予約IDで結び付く別シートの未解決記録（保留判定のための読み取り専用。個人情報の消去は子シート定義が別に行う）。
    * Bookings側のフラグだけでは、フラグの保存自体が失敗した複合障害（RecoveryRepository.hasOpenBaselineRecovery
    * と同じ前提）を見落とすため、別シートの記録も参照する。列は名前で引く（追加列は許容、必須列の欠落は停止）。
    * シートが存在しなければ記録なし。ヘッダーを読めない・必須列がない場合は判定できないため消去しない。
@@ -109,6 +113,80 @@ var PersonalDataRetention = (function () {
       }
     }
   ];
+
+  /*
+   * 子シート（Issue #680 PR-2）。予約IDでBookings行に結び付く記録のうち、自由記述（個人情報が入り得る列）を
+   * 持つもの。列は名前で引く（追加列は許容、必須列の欠落はシート全体の停止）。行は削除せず、消すのは
+   * eraseColumnsのセルと、projectColumn（feeDetailsJson）の自由記述キーだけ。ID・状態・金額・日時は残す。
+   * 起算点は「親Bookingsの起算日時」と「自身の終端日時」の遅い方（updatedAt等で代用しない）。
+   * 自身が未完了（own.kind=OPEN）、親が未終了・保留中・依存が未解決のものは消さない。
+   */
+  var CHILD_SHEETS_ = [
+    {
+      name: 'FeeSettlements',
+      columns: ['settlementId', 'bookingId', 'note', 'applyStatus', 'appliedAt'],
+      eraseColumns: ['note'],
+      projectColumn: '',
+      keyOf: function (record) { return trimText_(record.settlementId); },
+      /* APPLIED / ABANDONEDは終端（どちらもappliedAtを記録する）。未完了の精算は消さない。 */
+      own: function (record) {
+        var state = trimText_(record.applyStatus);
+        if (state === 'PENDING_APPLY' || state === 'FAILED_NEEDS_RECOVERY') return { kind: 'OPEN', reason: 'SETTLEMENT_UNRESOLVED' };
+        if (state !== 'APPLIED' && state !== 'ABANDONED') return { kind: 'REVIEW', reason: 'APPLY_STATUS_UNKNOWN' };
+        var ms = parseStrictMillis_(record.appliedAt);
+        return isNaN(ms) ? { kind: 'REVIEW', reason: 'OWN_DATE_INVALID' } : { kind: 'TERMINAL', ms: ms };
+      }
+    },
+    {
+      name: 'BookingChanges',
+      columns: ['changeId', 'bookingId', 'changedAt', 'mailState', 'mailAt', 'refundApprovedAt',
+        'reason', 'feeNote', 'mailError', 'refundPendingReason', 'feeDetailsJson'],
+      eraseColumns: ['reason', 'feeNote', 'mailError', 'refundPendingReason'],
+      /* feeDetailsJsonは全文を消さず、構造化された金額区分等だけを残す限定投影にする（projectFeeDetails_）。 */
+      projectColumn: 'feeDetailsJson',
+      keyOf: function (record) { return trimText_(record.changeId); },
+      /* SENT / ROLLED_BACK / CHANGE_FAILEDは終端。PREPARED（確定前・結果不明）とRECOVERY_REQUIREDは未完了。 */
+      own: function (record) {
+        var state = trimText_(record.mailState);
+        if (state === 'PREPARED' || state === 'RECOVERY_REQUIRED') return { kind: 'OPEN', reason: 'RESCHEDULE_UNRESOLVED' };
+        if (['SENT', 'ROLLED_BACK', 'CHANGE_FAILED'].indexOf(state) === -1) return { kind: 'REVIEW', reason: 'MAIL_STATE_UNKNOWN' };
+        var ms = parseStrictMillis_(record.changedAt);
+        if (isNaN(ms)) return { kind: 'REVIEW', reason: 'OWN_DATE_INVALID' };
+        var invalid = false;
+        ['mailAt', 'refundApprovedAt'].forEach(function (column) {
+          if (isBlank_(record[column])) return;
+          var value = parseStrictMillis_(record[column]);
+          if (isNaN(value)) invalid = true;
+          else ms = Math.max(ms, value);
+        });
+        return invalid ? { kind: 'REVIEW', reason: 'OWN_DATE_INVALID' } : { kind: 'TERMINAL', ms: ms };
+      }
+    },
+    {
+      name: 'Recovery',
+      columns: ['bookingId', 'failureType', 'occurredAt', 'calendarEventId', 'errorMessage', 'recoveryState', 'resolvedAt'],
+      eraseColumns: ['errorMessage'],
+      projectColumn: '',
+      /* 行ごとの一意なIDがないため、(予約ID, 障害種別, 発生日時, CalendarイベントID)の組を識別子にする。重複は要確認。 */
+      keyOf: function (record) {
+        if (isBlank_(record.failureType) && isBlank_(record.occurredAt)) return '';
+        var occurred = isDateLike_(record.occurredAt) ? String(record.occurredAt.getTime()) : trimText_(record.occurredAt);
+        return [trimText_(record.bookingId), trimText_(record.failureType), occurred, trimText_(record.calendarEventId)].join('\u0001');
+      },
+      /* RESOLVEDで解決日時が有効なものだけ終端。それ以外（OPEN・空欄・未知）は未解決として扱う。 */
+      own: function (record) {
+        if (trimText_(record.recoveryState) !== 'RESOLVED') return { kind: 'OPEN', reason: 'RECOVERY_OPEN' };
+        var ms = parseStrictMillis_(record.resolvedAt);
+        return isNaN(ms)
+          ? { kind: 'REVIEW', reason: isBlank_(record.resolvedAt) ? 'OWN_DATE_MISSING' : 'OWN_DATE_INVALID' }
+          : { kind: 'TERMINAL', ms: ms };
+      }
+    }
+  ];
+
+  /* feeDetailsJsonに残してよいキーと値の形。これ以外（manualNote等の自由記述・未知のキー）は投影で落とす。 */
+  var FEE_DETAILS_BRAND_ = /^[a-z_]{1,20}$/;
+  var FEE_DETAILS_DAY_TYPE_ = /^[A-Z_]{1,30}$/;
 
   var OPEN_FEE_SETTLEMENT_STATES_ = ['PENDING_CHARGE', 'PENDING_REFUND', 'PENDING_DECISION'];
   var KNOWN_FEE_SETTLEMENT_STATES_ = ['', 'SETTLED'].concat(OPEN_FEE_SETTLEMENT_STATES_);
@@ -169,16 +247,53 @@ var PersonalDataRetention = (function () {
     return isNaN(parsed) ? NaN : parsed;
   }
 
+  function trimText_(value) {
+    return isBlank_(value) ? '' : String(value).trim();
+  }
+
+  /*
+   * BookingChanges.feeDetailsJsonの限定投影。JSONを解析し、構造化された区分値（料金区分・ブランド・曜日区分・
+   * 丸め後の分数・手動フラグ・確定フラグ）だけを固定順で残す。manualNote・pendingReason等の自由記述と
+   * 未知のキーは落とす。解析できないものはnull（呼び出し側で要確認）。投影済みの値に再適用しても変わらない。
+   */
+  function projectFeeDetails_(text) {
+    var parsed;
+    try {
+      parsed = JSON.parse(String(text));
+    } catch (error) {
+      return null;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    var kept = {};
+    if (parsed.priceTier === 'GENERAL' || parsed.priceTier === 'MEMBER') kept.priceTier = parsed.priceTier;
+    if (typeof parsed.brand === 'string' && FEE_DETAILS_BRAND_.test(parsed.brand)) kept.brand = parsed.brand;
+    if (typeof parsed.dayType === 'string' && FEE_DETAILS_DAY_TYPE_.test(parsed.dayType)) kept.dayType = parsed.dayType;
+    if (typeof parsed.roundedMinutes === 'number' && isFinite(parsed.roundedMinutes)) kept.roundedMinutes = parsed.roundedMinutes;
+    if (typeof parsed.manual === 'boolean') kept.manual = parsed.manual;
+    if (typeof parsed.feeConfirmed === 'boolean') kept.feeConfirmed = parsed.feeConfirmed;
+    return JSON.stringify(kept);
+  }
+
   function increment_(map, key) {
     map[key] = (map[key] || 0) + 1;
   }
 
-  function newCounts_() {
+  function newChildCounts_() {
     return {
+      scanned: 0, eligible: 0, notDue: 0, alreadyClear: 0, held: {}, review: {},
+      erasedRows: 0, cellsCleared: 0, recheckSkipped: 0
+    };
+  }
+
+  function newCounts_() {
+    var counts = {
       scanned: 0, eligible: 0, notDue: 0, alreadyClear: 0, pending: 0,
       held: {}, review: {}, holdReviewOverdue: 0,
-      erasedRows: 0, cellsCleared: 0, recheckSkipped: 0, failed: 0, truncated: false
+      erasedRows: 0, cellsCleared: 0, recheckSkipped: 0, failed: 0, truncated: false,
+      children: {}
     };
+    CHILD_SHEETS_.forEach(function (definition) { counts.children[definition.name] = newChildCounts_(); });
+    return counts;
   }
 
   function indexOfColumns_(headers, names) {
@@ -239,6 +354,13 @@ var PersonalDataRetention = (function () {
     return { byBookingId: byBookingId, overdueCount: overdueCount };
   }
 
+  /* 起算日時を持つ列。CONFIRMED=最新のendAt / CANCELLED=cancelledAt / EXPIRED=expiredAt。PENDING・未知は''。 */
+  function basisColumnFor_(status) {
+    return status === Booking.STATUS.CONFIRMED ? 'endAt'
+      : status === Booking.STATUS.CANCELLED ? 'cancelledAt'
+        : status === Booking.STATUS.EXPIRED ? 'expiredAt' : '';
+  }
+
   /*
    * 1行の判定。純粋関数（シート・時刻に触れない）。
    * ctx: { nowMs, holdsByBookingId, duplicateIds, relatedByBookingId }
@@ -251,9 +373,7 @@ var PersonalDataRetention = (function () {
 
     var status = String(record.status === undefined || record.status === null ? '' : record.status).trim();
     if (status === Booking.STATUS.PENDING) return { verdict: VERDICT.PENDING, reason: 'PENDING_STATUS' };
-    var basisColumn = status === Booking.STATUS.CONFIRMED ? 'endAt'
-      : status === Booking.STATUS.CANCELLED ? 'cancelledAt'
-        : status === Booking.STATUS.EXPIRED ? 'expiredAt' : '';
+    var basisColumn = basisColumnFor_(status);
     if (!basisColumn) return { verdict: VERDICT.REVIEW, reason: 'UNKNOWN_STATUS' };
 
     var clearColumns = BOOKINGS_ERASE_COLUMNS_.filter(function (column) { return !isBlank_(record[column]); });
@@ -313,6 +433,68 @@ var PersonalDataRetention = (function () {
       return { verdict: VERDICT.HELD, reason: 'REFUND_UNRESOLVED' };
     }
     return null;
+  }
+
+  /* 子シートの消去計画。戻り値: { ok, reason?, writes: [{ column, value }] }。解析できないJSONは要確認。 */
+  function planChildWrites_(definition, record) {
+    var writes = [];
+    definition.eraseColumns.forEach(function (column) {
+      if (!isBlank_(record[column])) writes.push({ column: column, value: '' });
+    });
+    if (definition.projectColumn && !isBlank_(record[definition.projectColumn])) {
+      var projected = projectFeeDetails_(record[definition.projectColumn]);
+      if (projected === null) return { ok: false, reason: 'FEE_DETAILS_UNPARSEABLE', writes: [] };
+      if (projected !== String(record[definition.projectColumn])) {
+        writes.push({ column: definition.projectColumn, value: projected });
+      }
+    }
+    return { ok: true, writes: writes };
+  }
+
+  /*
+   * 子シート1行の判定。純粋関数。
+   * ctx: { nowMs, holdsByBookingId, relatedByBookingId, parentsById, duplicateKeys }
+   *   parentsById: { 予約ID: { record, duplicate } }（親Bookings行）
+   * 戻り値: classifyBookingRecordと同じ形（ELIGIBLEのときはwrites付き）。
+   */
+  function classifyChildRecord(definition, record, ctx) {
+    var key = definition.keyOf(record);
+    if (!key) return { verdict: VERDICT.REVIEW, reason: 'INVALID_KEY' };
+    if (ctx.duplicateKeys && ctx.duplicateKeys[key]) return { verdict: VERDICT.REVIEW, reason: 'DUPLICATE_KEY' };
+
+    var plan = planChildWrites_(definition, record);
+    if (!plan.ok) return { verdict: VERDICT.REVIEW, reason: plan.reason };
+    if (plan.writes.length === 0) return { verdict: VERDICT.ALREADY_CLEAR, reason: 'ALREADY_CLEAR' };
+
+    var bookingId = trimText_(record.bookingId);
+    if (!bookingId) return { verdict: VERDICT.REVIEW, reason: 'NO_BOOKING_LINK' };
+    var parent = ctx.parentsById ? ctx.parentsById[bookingId] : null;
+    if (!parent) return { verdict: VERDICT.REVIEW, reason: 'PARENT_NOT_FOUND' };
+    if (parent.duplicate) return { verdict: VERDICT.REVIEW, reason: 'PARENT_AMBIGUOUS' };
+
+    var status = trimText_(parent.record.status);
+    if (status === Booking.STATUS.PENDING) return { verdict: VERDICT.HELD, reason: 'PARENT_NOT_ENDED' };
+    var basisColumn = basisColumnFor_(status);
+    if (!basisColumn) return { verdict: VERDICT.REVIEW, reason: 'PARENT_STATUS_UNKNOWN' };
+    var parentBasisMs = parseStrictMillis_(parent.record[basisColumn]);
+    if (isNaN(parentBasisMs)) return { verdict: VERDICT.REVIEW, reason: 'PARENT_BASIS_INVALID' };
+
+    var own = definition.own(record);
+    if (own.kind === 'REVIEW') return { verdict: VERDICT.REVIEW, reason: own.reason };
+    if (own.kind === 'OPEN') return { verdict: VERDICT.HELD, reason: own.reason };
+
+    var dueMs = Math.max(parentBasisMs, own.ms) + RETENTION_MS_;
+    var hold = ctx.holdsByBookingId ? ctx.holdsByBookingId[bookingId] : null;
+    if (hold && !isNaN(hold.latestResolvedMs)) dueMs = Math.max(dueMs, hold.latestResolvedMs + RETENTION_MS_);
+    if (ctx.nowMs < dueMs) return { verdict: VERDICT.NOT_DUE, reason: 'NOT_DUE' };
+
+    if (hold && hold.invalid) return { verdict: VERDICT.HELD, reason: 'HOLD_RECORD_INVALID' };
+    if (hold && hold.active) return { verdict: VERDICT.HELD, reason: 'HOLD_ACTIVE' };
+    var relatedReason = ctx.relatedByBookingId ? ctx.relatedByBookingId[bookingId] : '';
+    if (relatedReason) return { verdict: VERDICT.HELD, reason: relatedReason };
+    var dependency = checkDependencies_(parent.record);
+    if (dependency) return dependency;
+    return { verdict: VERDICT.ELIGIBLE, reason: 'ELIGIBLE', writes: plan.writes };
   }
 
   function addToCounts_(counts, outcome) {
@@ -377,8 +559,36 @@ var PersonalDataRetention = (function () {
     return byBookingId;
   }
 
-  /* 読み取りだけで全行を判定する（dry-runと実行の共通部）。書き込みはしない。 */
-  function evaluate_(nowMs, spreadsheet) {
+  /* 子シートを名前でヘッダーを引いて読む。シートが無ければ行なし。必須列の欠落は例外。 */
+  function readChildSheet_(spreadsheet, definition) {
+    var sheet = spreadsheet.getSheetByName(definition.name);
+    var loaded = { definition: definition, sheet: sheet, positions: {}, rows: [], duplicateKeys: {}, rowByKey: {} };
+    if (!sheet || sheet.getLastRow() < 1) return loaded;
+    var values = sheet.getDataRange().getValues();
+    var header = (values[0] || []).map(function (cell) { return String(cell === undefined || cell === null ? '' : cell); });
+    definition.columns.forEach(function (name) {
+      var position = header.indexOf(name);
+      if (position === -1) throw new Error('CHILD_SHEET_INVALID');
+      loaded.positions[name] = position;
+    });
+    for (var i = 1; i < values.length; i++) {
+      var record = {};
+      definition.columns.forEach(function (name) { record[name] = values[i][loaded.positions[name]]; });
+      var key = definition.keyOf(record);
+      if (key) {
+        if (loaded.rowByKey[key]) loaded.duplicateKeys[key] = true;
+        else loaded.rowByKey[key] = { rowNumber: i + 1, record: record };
+      }
+      loaded.rows.push({ rowNumber: i + 1, record: record, key: key });
+    }
+    return loaded;
+  }
+
+  /*
+   * 判定に必要なシートを読み込む（dry-run・実行・バッチ内の再判定で共通）。書き込みはしない。
+   * Bookings・保留・関連記録・子シートのどれか一つでも読めなければ { ok:false, code } で、何も消さない。
+   */
+  function loadContext_(spreadsheet, nowMs) {
     var sheet = spreadsheet.getSheetByName(BookingsSchema.SHEET_NAME);
     if (!sheet || sheet.getLastRow() < 1) return { ok: false, code: 'BOOKINGS_SHEET_MISSING' };
     var values = sheet.getDataRange().getValues();
@@ -396,19 +606,69 @@ var PersonalDataRetention = (function () {
     } catch (error) {
       return { ok: false, code: 'RELATED_SHEET_INVALID' };
     }
-    var holds = summarizeHolds_(holdRows, nowMs);
+    var children;
+    try {
+      children = CHILD_SHEETS_.map(function (definition) { return readChildSheet_(spreadsheet, definition); });
+    } catch (error) {
+      return { ok: false, code: 'CHILD_SHEET_INVALID' };
+    }
     var rows = values.slice(1);
     var duplicateIds = findDuplicateIds_(rows);
+    var bookingRows = [];
+    var rowById = {};
+    var parentsById = {};
+    rows.forEach(function (row, index) {
+      var id = isBlank_(row[0]) ? '' : String(row[0]).trim();
+      bookingRows.push({ rowNumber: index + 2, row: row });
+      if (!id) return;
+      if (!rowById[id]) rowById[id] = { rowNumber: index + 2, row: row };
+      if (!parentsById[id]) parentsById[id] = { record: rowToRecord_(row, header.columnCount), duplicate: !!duplicateIds[id] };
+    });
+    return {
+      ok: true, sheet: sheet, columnCount: header.columnCount, bookingRows: bookingRows, rowById: rowById,
+      duplicateIds: duplicateIds, parentsById: parentsById, holds: summarizeHolds_(holdRows, nowMs),
+      related: related, children: children
+    };
+  }
+
+  function bookingsContext_(loaded, nowMs) {
+    return {
+      nowMs: nowMs, holdsByBookingId: loaded.holds.byBookingId, duplicateIds: loaded.duplicateIds,
+      relatedByBookingId: loaded.related
+    };
+  }
+
+  function childContext_(loaded, child, nowMs) {
+    return {
+      nowMs: nowMs, holdsByBookingId: loaded.holds.byBookingId, relatedByBookingId: loaded.related,
+      parentsById: loaded.parentsById, duplicateKeys: child.duplicateKeys
+    };
+  }
+
+  /* 読み取りだけで全行を判定する（dry-runと実行の共通部）。書き込みはしない。 */
+  function evaluate_(nowMs, spreadsheet) {
+    var loaded = loadContext_(spreadsheet, nowMs);
+    if (!loaded.ok) return loaded;
     var counts = newCounts_();
-    counts.holdReviewOverdue = holds.overdueCount;
-    var candidates = [];
-    rows.forEach(function (row) {
+    counts.holdReviewOverdue = loaded.holds.overdueCount;
+    var context = bookingsContext_(loaded, nowMs);
+    var candidates = { bookings: [], children: {} };
+    loaded.bookingRows.forEach(function (entry) {
       counts.scanned++;
-      var outcome = classifyBookingRecord(rowToRecord_(row, header.columnCount), {
-        nowMs: nowMs, holdsByBookingId: holds.byBookingId, duplicateIds: duplicateIds, relatedByBookingId: related
-      });
+      var outcome = classifyBookingRecord(rowToRecord_(entry.row, loaded.columnCount), context);
       addToCounts_(counts, outcome);
-      if (outcome.verdict === VERDICT.ELIGIBLE) candidates.push(String(row[0]).trim());
+      if (outcome.verdict === VERDICT.ELIGIBLE) candidates.bookings.push(String(entry.row[0]).trim());
+    });
+    loaded.children.forEach(function (child) {
+      var childCounts = counts.children[child.definition.name];
+      var childCtx = childContext_(loaded, child, nowMs);
+      candidates.children[child.definition.name] = [];
+      child.rows.forEach(function (entry) {
+        childCounts.scanned++;
+        var outcome = classifyChildRecord(child.definition, entry.record, childCtx);
+        addToCounts_(childCounts, outcome);
+        if (outcome.verdict === VERDICT.ELIGIBLE) candidates.children[child.definition.name].push(entry.key);
+      });
     });
     return { ok: true, counts: counts, candidates: candidates };
   }
@@ -483,7 +743,7 @@ var PersonalDataRetention = (function () {
     return summary;
   }
 
-  /* 1セルずつ空にする。行全体・連続範囲は書き戻さない。戻り値: 空にしたセル数。 */
+  /* Bookingsの1セルずつ空にする。行全体・連続範囲は書き戻さない。戻り値: 空にしたセル数。 */
   function clearCells_(sheet, rowNumber, columns) {
     var cleared = 0;
     columns.forEach(function (column) {
@@ -495,46 +755,46 @@ var PersonalDataRetention = (function () {
   }
 
   /*
-   * 1バッチ分（ロック保持下）。対象行を予約IDで読み直し、全体を再判定して、まだ対象のものだけ消す。
+   * 1バッチ分（ロック保持下）。work: { kind:'bookings' } または { kind:'child', definition }。
+   * 全シートを読み直して全体を再判定し、まだ対象のものだけ1セルずつ消す。
    * 戻り値: { stop?: code }。stopがあれば以降のバッチへ進まない。
    */
-  function processBatch_(spreadsheet, ids, nowMs, counts) {
-    var sheet = spreadsheet.getSheetByName(BookingsSchema.SHEET_NAME);
-    if (!sheet) return { stop: 'BOOKINGS_SHEET_MISSING' };
-    var values = sheet.getDataRange().getValues();
-    var header = checkBookingsHeader_(values[0]);
-    if (!header.ok) return { stop: header.code };
-    var holdRows;
-    try {
-      holdRows = readHoldRows_(spreadsheet);
-    } catch (error) {
-      return { stop: 'HOLDS_SHEET_INVALID' };
-    }
-    var related;
-    try {
-      related = readRelatedUnresolved_(spreadsheet);
-    } catch (error) {
-      return { stop: 'RELATED_SHEET_INVALID' };
-    }
-    var holds = summarizeHolds_(holdRows, nowMs);
-    var rows = values.slice(1);
-    var duplicateIds = findDuplicateIds_(rows);
-    var rowNumberById = {};
-    rows.forEach(function (row, index) {
-      var id = isBlank_(row[0]) ? '' : String(row[0]).trim();
-      if (id && !rowNumberById[id]) rowNumberById[id] = { rowNumber: index + 2, row: row };
-    });
+  function processBatch_(spreadsheet, work, keys, nowMs, counts) {
+    var loaded = loadContext_(spreadsheet, nowMs);
+    if (!loaded.ok) return { stop: loaded.code };
 
-    for (var i = 0; i < ids.length; i++) {
-      var found = rowNumberById[ids[i]];
-      if (!found) { counts.recheckSkipped++; continue; }
-      var outcome = classifyBookingRecord(rowToRecord_(found.row, header.columnCount), {
-        nowMs: nowMs, holdsByBookingId: holds.byBookingId, duplicateIds: duplicateIds, relatedByBookingId: related
-      });
-      if (outcome.verdict !== VERDICT.ELIGIBLE) { counts.recheckSkipped++; continue; }
+    if (work.kind === 'bookings') {
+      var context = bookingsContext_(loaded, nowMs);
+      for (var i = 0; i < keys.length; i++) {
+        var found = loaded.rowById[keys[i]];
+        if (!found) { counts.recheckSkipped++; continue; }
+        var outcome = classifyBookingRecord(rowToRecord_(found.row, loaded.columnCount), context);
+        if (outcome.verdict !== VERDICT.ELIGIBLE) { counts.recheckSkipped++; continue; }
+        try {
+          counts.cellsCleared += clearCells_(loaded.sheet, found.rowNumber, outcome.clearColumns);
+          counts.erasedRows++;
+        } catch (error) {
+          counts.failed++;
+          return { stop: 'WRITE_FAILED' };
+        }
+      }
+      return {};
+    }
+
+    var child = loaded.children.filter(function (entry) { return entry.definition === work.definition; })[0];
+    var childCounts = counts.children[work.definition.name];
+    var childCtx = childContext_(loaded, child, nowMs);
+    for (var k = 0; k < keys.length; k++) {
+      var row = child.rowByKey[keys[k]];
+      if (!row) { childCounts.recheckSkipped++; continue; }
+      var childOutcome = classifyChildRecord(work.definition, row.record, childCtx);
+      if (childOutcome.verdict !== VERDICT.ELIGIBLE) { childCounts.recheckSkipped++; continue; }
       try {
-        counts.cellsCleared += clearCells_(sheet, found.rowNumber, outcome.clearColumns);
-        counts.erasedRows++;
+        childOutcome.writes.forEach(function (write) {
+          child.sheet.getRange(row.rowNumber, child.positions[write.column] + 1, 1, 1).setValue(write.value);
+          childCounts.cellsCleared++;
+        });
+        childCounts.erasedRows++;
       } catch (error) {
         counts.failed++;
         return { stop: 'WRITE_FAILED' };
@@ -573,34 +833,49 @@ var PersonalDataRetention = (function () {
     }
 
     var counts = evaluation.counts;
-    var targets = evaluation.candidates;
-    if (targets.length > maxRows) {
-      targets = targets.slice(0, maxRows);
-      counts.truncated = true;
-    }
+    /* 全シート合計でmaxRows件までを今回の対象にする。Bookings、子シートの順。 */
+    var workItems = [];
+    var remaining = maxRows;
+    var addWork = function (work, keys) {
+      if (keys.length === 0) return;
+      if (keys.length > remaining) counts.truncated = true;
+      var take = keys.slice(0, Math.max(remaining, 0));
+      remaining -= take.length;
+      if (take.length > 0) workItems.push({ work: work, keys: take });
+    };
+    addWork({ kind: 'bookings' }, evaluation.candidates.bookings);
+    CHILD_SHEETS_.forEach(function (definition) {
+      addWork({ kind: 'child', definition: definition }, evaluation.candidates.children[definition.name]);
+    });
 
     var status = 'OK';
-    for (var start = 0; start < targets.length; start += BATCH_SIZE_) {
-      if (clock() - startedAt >= budgetMs) { counts.truncated = true; break; }
-      /* 停止フラグ・方針バージョンは各バッチの書き込み前にも確認する（新たな消去の開始を止める）。 */
-      if (gateStatus_(readConfig_()) !== 'OK') { status = 'STOPPED'; break; }
-      var lock = LockService.getScriptLock();
-      if (!lock.tryLock(LOCK_TIMEOUT_MS_)) { status = 'LOCK_TIMEOUT'; break; }
-      var batchResult;
-      try {
-        /* ロック待ちの間に停止・方針変更された場合に備え、取得後にも確認してから書く。 */
-        if (gateStatus_(readConfig_()) !== 'OK') {
-          status = 'STOPPED';
+    var stopped = false;
+    for (var w = 0; w < workItems.length && !stopped; w++) {
+      var item = workItems[w];
+      for (var start = 0; start < item.keys.length; start += BATCH_SIZE_) {
+        if (clock() - startedAt >= budgetMs) { counts.truncated = true; stopped = true; break; }
+        /* 停止フラグ・方針バージョンは各バッチの書き込み前にも確認する（新たな消去の開始を止める）。 */
+        if (gateStatus_(readConfig_()) !== 'OK') { status = 'STOPPED'; stopped = true; break; }
+        var lock = LockService.getScriptLock();
+        if (!lock.tryLock(LOCK_TIMEOUT_MS_)) { status = 'LOCK_TIMEOUT'; stopped = true; break; }
+        var batchResult;
+        try {
+          /* ロック待ちの間に停止・方針変更された場合に備え、取得後にも確認してから書く。 */
+          if (gateStatus_(readConfig_()) !== 'OK') {
+            status = 'STOPPED';
+            stopped = true;
+            break;
+          }
+          batchResult = processBatch_(spreadsheet, item.work, item.keys.slice(start, start + BATCH_SIZE_), nowMs, counts);
+        } finally {
+          try { lock.releaseLock(); } catch (releaseError) { /* ロック未取得時は何もしない */ }
+        }
+        if (batchResult.stop) {
+          status = batchResult.stop === 'WRITE_FAILED' ? 'PARTIAL_FAILURE' : 'SHEET_INVALID';
+          counts.stopCode = batchResult.stop;
+          stopped = true;
           break;
         }
-        batchResult = processBatch_(spreadsheet, targets.slice(start, start + BATCH_SIZE_), nowMs, counts);
-      } finally {
-        try { lock.releaseLock(); } catch (releaseError) { /* ロック未取得時は何もしない */ }
-      }
-      if (batchResult.stop) {
-        status = batchResult.stop === 'WRITE_FAILED' ? 'PARTIAL_FAILURE' : 'SHEET_INVALID';
-        counts.stopCode = batchResult.stop;
-        break;
       }
     }
     if (status === 'OK' && counts.truncated) status = 'TRUNCATED';
@@ -663,7 +938,10 @@ var PersonalDataRetention = (function () {
       }
     }
     if (lastRun && lastRun.holdReviewOverdue > 0) attention.push('HOLD_REVIEW_OVERDUE');
-    if (lastRun && lastRun.review && Object.keys(lastRun.review).length > 0) attention.push('REVIEW_ROWS_EXIST');
+    var hasReview = function (counts) { return !!counts && !!counts.review && Object.keys(counts.review).length > 0; };
+    if (lastRun && (hasReview(lastRun) || Object.keys(lastRun.children || {}).some(function (name) { return hasReview(lastRun.children[name]); }))) {
+      attention.push('REVIEW_ROWS_EXIST');
+    }
 
     return {
       codePolicyVersion: POLICY_VERSION,
