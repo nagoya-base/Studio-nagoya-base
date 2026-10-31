@@ -71,12 +71,12 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - 新コードは、既存行の新列が **空欄でもfailしない** こと。
 - schema追加と機能の利用開始の間で新旧が混在しても、予約作成・読取・管理画面が破損しないこと。
 
-## Issue #680: Bookings台帳と子シートの個人情報を180日経過後に自動消去（PR-1・PR-2。初期無効）
+## Issue #680: Bookings台帳・子シート・会員系シートの個人情報を180日経過後に自動消去（PR-1〜PR-3。初期無効）
 
 `gas/booking/admin/PersonalDataRetention.gs`（**Booking Admin専用**）。公開Web App・Webhookには配布せず、削除実行APIも置かない。管理画面（`BookingAdminWeb.gs`）にも配線しない（エディタと時間主導トリガーからのみ）。**本番の有効化・トリガー作成・実データの消去は、このPRでは行わない。**
 
-### 範囲（PR-1・PR-2）
-- 対象シートは **`Bookings`**（PR-1）と、予約IDで結び付く **`FeeSettlements` / `BookingChanges` / `Recovery`**（PR-2）。`OptionOrders` / `StripeEvents` / `Members` 系は後続PR（終端日時の専用列が要るものは列追加と移行手順を伴う）。
+### 範囲（PR-1〜PR-3）
+- 対象シートは **`Bookings`**（PR-1）、予約IDで結び付く **`FeeSettlements` / `BookingChanges` / `Recovery`**（PR-2）、**`OptionOrders`** と会員系の **`Members` / `MemberCheckouts` / `MemberStatusTokens`**（PR-3）。`StripeEvents` は後続PR（イベント本文の紐付けと終端日時の設計が要る）。これらのPRは**本番シートの列追加を伴わない**（既存の列だけで終端日時を決められるものに限った）。
 - 540日保持する限定取引記録の**消去は実装しない**（この段階では保持するだけ）。消すのは下表の個人情報の列に限る。
 
 ### 消去する列と起算点
@@ -120,6 +120,21 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - 1回の実行の上限（最大200行・4分）は **Bookings・子シートの合計**。Bookings、`FeeSettlements`、`BookingChanges`、`Recovery` の順に処理し、残りは翌日以降に持ち越す。dry-runと実行結果には、シートごとの件数が `children` に入る（個人情報・ID・行番号は含まない）。
 - 親Bookingsの個人情報の消去と、子シートの消去はそれぞれ独立している（どちらが先でも、判定に使う列は消えない）。
 
+### オプション注文・会員系（PR-3）の消去対象と起算点
+| シート | 消す列 | 親 | 起算点（遅い方から180日） |
+| --- | --- | --- | --- |
+| `OptionOrders` | `customerEmail` / `declineReason` / `checkoutRequestJson` / `paymentRecoveryReason` | Bookings（`bookingId`） | 親の起算日時と、`approvedAt`・`declinedAt`・`paidAt` の最も遅い日時。作成時に確定する無料注文（3つとも空）の`CONFIRMED`は`createdAt` |
+| `MemberStatusTokens` | `email` → `tokenHash`（ハッシュは最後） | なし | `expiresAt`（有効期限） |
+| `MemberCheckouts` | `email` | Members（`memberId`） | `EXPIRED`と、`pendingUntil` を過ぎても会員行がない`PENDING`（放棄）は`pendingUntil`。`COMPLETED`と、`pendingUntil` 後に会員行がある`PENDING`は会員の終了日時（`pendingUntil`との遅い方） |
+| `Members` | `email` | なし | 退会（`status=canceled`）の `canceledAt`・`currentPeriodEnd`・`MemberPeriods.periodEnd`（会員ID／Subscription IDで結合）・`MemberMonths`（JSTの月末）の最も遅い日時 |
+
+- **`OptionOrders`**: `PENDING_APPROVAL` / `AWAITING_PAYMENT` / `PAYMENT_PENDING` と `paymentRecoveryRequiredAt` が非空のものは消さない。`CANCELLED` は現行コードが書かず取消日時の列もないため、**終端日時を決められず要確認**（`updatedAt` で代用しない）。親が未終了・保留中・依存未解決のものは消さない（PR-2の子シートと同じ）。
+- **`MemberStatusTokens`**: 行の識別子の`tokenHash`を最後に消すので、途中で失敗しても次回に同じ行を完了できる。消去済みの行は件数に数えるだけで要確認にならない。
+- **`Members`**: Stripe ID・状態・期間・請求書IDは残す（メールだけを消す）。有効（`active`）・支払い遅延・未完了の会員は消さない。**同じメール（大小文字を区別しない）の、未終了のBookings（`PENDING`、終了時刻が未来または不正な`CONFIRMED`）がある会員も消さない**（`ACTIVE_BOOKING_EXISTS`）。関連する日時が空欄でない不正値なら要確認。`status=canceled` は終端で、`MemberRepository.applyState_` が再処理でもメールを補完しない（回帰テストあり）。
+- 会員系の参照シート（`MemberPeriods` / `MemberMonths`）や対象シートの必須列が欠ければ、**何も消さず全体を停止**する（`MEMBER_SHEET_INVALID` / `CHILD_SHEET_INVALID`）。存在しなければ記録なし。
+- `MemberPeriods` / `MemberMonths` / `MemberRefunds`（会員ID・Stripe ID・期間・金額の支払事実）、`OptionEligibility`（有効な利用許可は維持、取消時にメールは既に空欄化される）、`BookingMemberVerifications`（#557の短期削除）は変更しない。
+- 方針バージョンを `2026-10-31.3` に更新した。**PR-2の時点（`.2`）で有効化していた場合も、dry-runと有効化をやり直す必要がある。**
+
 ### 消去の方式と限界
 - 対象列を**1セルずつ**空にする。行全体・連続範囲は書き戻さない。行は削除せず、予約ID・日時・金額・状態・決済ID等は残す（照合可能な情報であり、匿名データではない）。
 - バッチ（20行）ごとにAdminのスクリプトロックを取り、**ロック取得後に有効化フラグ・方針バージョンを読み直し**（無効なら書かずに `STOPPED`）、**予約IDで行と関連記録を読み直して判定をやり直してから**書く。1回の実行は最大200行・4分で打ち切り（`TRUNCATED`）、残りは翌日以降に処理される。部分失敗しても次回は未消去の列から再判定する（冪等）。
@@ -156,7 +171,9 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - 実Spreadsheetのヘッダー・`endAt` 等の実際の型と欠損、実際の編集権限・版の履歴の残存範囲。
 - Booking Adminの実マニフェスト（`appsscript.json`。リポジトリにはない）のOAuthスコープとタイムゾーン。既存の `BookingTriggers.gs` が `ScriptApp` を使うため追加スコープは想定しないが、実環境で確認する。
 - Stripeアカウント固有の異議申立て条件・外部証拠の参照可否（運営者がDashboard／Supportで確認）。
-- 後続PRで扱うシート（`OptionOrders` / `StripeEvents` / `Members` 系）の個人情報は、PR-2でも**消えない**。
+- `StripeEvents`（Webhook本文）の個人情報は、PR-3でも**消えない**（後続PR）。
+- 会員系シートの実データの形（`Members` の `canceledAt` 欠落、`MemberPeriods` の`periodEnd`、`MemberCheckouts` の `PENDING` 残留の件数）は未確認。dry-runの `review` / `held` 件数で確認する。
+- `OptionOrders` は、Web AppとAdminの両方が1行を丸ごと書き換える（`OptionOrderRepository.updateOrder`）。終端の注文を180日後に更新する経路は通常ないが、再読込だけでは別プロジェクトとの原子的な排他にならない。
 - `Recovery` / `BookingChanges` の自由記述に、今回の対象列以外へ個人情報が転記されていないかは未確認（実データを見ていない）。
 
 ## Issue #573: Studio Xの内部運用定義（2026-10-29更新）
