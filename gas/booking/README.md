@@ -76,7 +76,7 @@ admin-only → migration → full と段階的に更新するため、短時間�
 `gas/booking/admin/PersonalDataRetention.gs`（**Booking Admin専用**）。公開Web App・Webhookには配布せず、削除実行APIも置かない。管理画面（`BookingAdminWeb.gs`）にも配線しない（エディタと時間主導トリガーからのみ）。**本番の有効化・トリガー作成・実データの消去は、このPRでは行わない。**
 
 ### 範囲（PR-1〜PR-3）
-- 対象シートは **`Bookings`**（PR-1）、予約IDで結び付く **`FeeSettlements` / `BookingChanges` / `Recovery`**（PR-2）、**`OptionOrders`** と会員系の **`Members` / `MemberCheckouts` / `MemberStatusTokens`**（PR-3）。`StripeEvents` は後続PR（イベント本文の紐付けと終端日時の設計が要る）。これらのPRは**本番シートの列追加を伴わない**（既存の列だけで終端日時を決められるものに限った）。
+- 対象シートは **`Bookings`**（PR-1）、予約IDで結び付く **`FeeSettlements` / `BookingChanges` / `Recovery`**（PR-2）、**`OptionOrders`** と会員系の **`Members` / `MemberCheckouts` / `MemberStatusTokens`**（PR-3）。`StripeEvents` は後続PR（イベント本文の紐付けと終端日時の設計が要る）。これらのPRは**既存の業務シートへの列追加を伴わない**（既存の列だけで終端日時を決められるものに限った）。例外として、保留シート`RetentionHolds`（このツールが作る管理用シート）に、会員単位の保留を追加するときだけ、任意の7列目`memberId`の見出しが追記される（既存の行は変えない）。
 - 540日保持する限定取引記録の**消去は実装しない**（この段階では保持するだけ）。消すのは下表の個人情報の列に限る。
 
 ### 消去する列と起算点
