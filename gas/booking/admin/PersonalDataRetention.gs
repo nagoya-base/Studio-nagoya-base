@@ -22,10 +22,14 @@
  * 【版の履歴は消えない】セルを空にしても、スプレッドシートの版の履歴には旧値が残る。履歴対策は編集権限を
  * 必要最小限にする運用で、消去の完了を意味しない。結果は「現行セルの消去」のみを表す（README参照）。
  *
- * 【排他と限界】消去はバッチ（BATCH_SIZE_行）ごとにAdminのスクリプトロックを取り、バッチ内で対象行を
- * 予約IDで読み直して同じ判定をやり直してから書く。ロックを共有するのは同じAdminプロジェクト内の処理
+ * 【排他と限界】消去はバッチ（BATCH_SIZE_行）ごとにAdminのスクリプトロックを取り、ロック取得後に有効化フラグを
+ * 読み直し、バッチ内で対象行を予約IDで読み直して同じ判定をやり直してから書く。ロックを共有するのは同じAdminプロジェクト内の処理
  * （予約確定・失効・取消・Webhook処理トリガー等）だけで、公開Web Appとはロックを共有できない。再読込は
  * 別プロジェクトとの原子的な排他にはならない（README「Issue #680」節の残存リスク参照）。
+ *
+ * 【別シートの未解決記録】Recovery / FeeSettlements / BookingChanges / OptionOrdersに、予約IDで結び付く未解決の
+ * 記録がある予約は消さない（読み取りのみ。Bookings側のフラグ保存自体が失敗した複合障害でも保護するため）。
+ * これらのシートを読めない場合は判定できないため、何も消さず停止する。
  *
  * 【保留】`RetentionHolds`シート（無ければdry-run・自動実行では作らない）に、予約ID・理由区分・担当・
  * 見直し期限を持つ保留を置ける。有効な保留（resolvedAtが空）がある予約は期限にかかわらず消さない。保留の
@@ -78,6 +82,34 @@ var PersonalDataRetention = (function () {
   var HOLDS_HEADERS_ = ['bookingId', 'reasonCode', 'owner', 'createdAt', 'reviewBy', 'resolvedAt'];
   var HOLD_REASONS_ = ['DISPUTE', 'INQUIRY', 'REFUND', 'UNPAID', 'OTHER'];
 
+  /*
+   * 予約IDで結び付く別シートの未解決記録（保留判定の読み取り専用。これらのシート自体は本PRでは消去しない）。
+   * Bookings側のフラグだけでは、フラグの保存自体が失敗した複合障害（RecoveryRepository.hasOpenBaselineRecovery
+   * と同じ前提）を見落とすため、別シートの記録も参照する。列は名前で引く（追加列は許容、必須列の欠落は停止）。
+   * シートが存在しなければ記録なし。ヘッダーを読めない・必須列がない場合は判定できないため消去しない。
+   */
+  var RELATED_SHEETS_ = [
+    {
+      sheet: 'Recovery', reason: 'RELATED_RECOVERY_OPEN', columns: ['bookingId', 'recoveryState'],
+      unresolved: function (row) { return String(row.recoveryState).trim() !== 'RESOLVED'; }
+    },
+    {
+      sheet: 'FeeSettlements', reason: 'RELATED_SETTLEMENT_UNRESOLVED', columns: ['bookingId', 'applyStatus'],
+      unresolved: function (row) { return ['APPLIED', 'ABANDONED'].indexOf(String(row.applyStatus).trim()) === -1; }
+    },
+    {
+      sheet: 'BookingChanges', reason: 'RELATED_RESCHEDULE_UNRESOLVED', columns: ['bookingId', 'mailState'],
+      unresolved: function (row) { return ['PREPARED', 'RECOVERY_REQUIRED'].indexOf(String(row.mailState).trim()) !== -1; }
+    },
+    {
+      sheet: 'OptionOrders', reason: 'RELATED_OPTION_ORDER_UNRESOLVED', columns: ['bookingId', 'status', 'paymentRecoveryRequiredAt'],
+      unresolved: function (row) {
+        return ['CONFIRMED', 'DECLINED', 'CANCELLED'].indexOf(String(row.status).trim()) === -1 ||
+          !isBlank_(row.paymentRecoveryRequiredAt);
+      }
+    }
+  ];
+
   var OPEN_FEE_SETTLEMENT_STATES_ = ['PENDING_CHARGE', 'PENDING_REFUND', 'PENDING_DECISION'];
   var KNOWN_FEE_SETTLEMENT_STATES_ = ['', 'SETTLED'].concat(OPEN_FEE_SETTLEMENT_STATES_);
   var OPEN_CHECKOUT_CANCEL_STATES_ = ['EXPIRE_REQUESTED', 'UNKNOWN', 'PAYMENT_RECEIVED'];
@@ -92,7 +124,7 @@ var PersonalDataRetention = (function () {
     REVIEW: 'REVIEW'
   };
 
-  var ISO_WITH_OFFSET_ = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+  var ISO_WITH_OFFSET_ = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
   function isDateLike_(value) {
     return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
@@ -102,17 +134,39 @@ var PersonalDataRetention = (function () {
     return value === undefined || value === null || String(value).trim() === '';
   }
 
+  function isLeapYear_(year) {
+    return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  }
+
+  function daysInMonth_(year, month) {
+    if (month === 2) return isLeapYear_(year) ? 29 : 28;
+    return [4, 6, 9, 11].indexOf(month) !== -1 ? 30 : 31;
+  }
+
   /*
    * 起算点・保留に使う日時は、有効なDate、またはタイムゾーンを明示したISO 8601文字列だけを受け付ける。
-   * 空欄・不正・タイムゾーン不明の文字列・数値は暗黙変換せずNaN（＝要確認）にする。
+   * 文字列は書式に加えて暦日・時刻・オフセットの範囲も検証する（Date.parseは2月30日等を補正して
+   * 受け付けるため、書式の一致だけでは不十分）。空欄・不正・タイムゾーン不明の文字列・数値は
+   * 暗黙変換せずNaN（＝要確認）にする。
    */
   function parseStrictMillis_(value) {
     if (isDateLike_(value)) return value.getTime();
-    if (typeof value === 'string' && ISO_WITH_OFFSET_.test(value.trim())) {
-      var parsed = Date.parse(value.trim());
-      return isNaN(parsed) ? NaN : parsed;
-    }
-    return NaN;
+    if (typeof value !== 'string') return NaN;
+    var text = value.trim();
+    var match = ISO_WITH_OFFSET_.exec(text);
+    if (!match) return NaN;
+    var year = Number(match[1]);
+    var month = Number(match[2]);
+    var day = Number(match[3]);
+    var hour = Number(match[4]);
+    var minute = Number(match[5]);
+    var second = match[6] === undefined ? 0 : Number(match[6]);
+    if (month < 1 || month > 12) return NaN;
+    if (day < 1 || day > daysInMonth_(year, month)) return NaN;
+    if (hour > 23 || minute > 59 || second > 59) return NaN;
+    if (match[7] !== undefined && (Number(match[7]) > 23 || Number(match[8]) > 59)) return NaN;
+    var parsed = Date.parse(text);
+    return isNaN(parsed) ? NaN : parsed;
   }
 
   function increment_(map, key) {
@@ -187,7 +241,7 @@ var PersonalDataRetention = (function () {
 
   /*
    * 1行の判定。純粋関数（シート・時刻に触れない）。
-   * ctx: { nowMs, holdsByBookingId, duplicateIds }
+   * ctx: { nowMs, holdsByBookingId, duplicateIds, relatedByBookingId }
    * 戻り値: { verdict, reason?, clearColumns? }。reasonは件数集計用の区分コード。
    */
   function classifyBookingRecord(record, ctx) {
@@ -217,6 +271,8 @@ var PersonalDataRetention = (function () {
 
     if (hold && hold.invalid) return { verdict: VERDICT.HELD, reason: 'HOLD_RECORD_INVALID' };
     if (hold && hold.active) return { verdict: VERDICT.HELD, reason: 'HOLD_ACTIVE' };
+    var relatedReason = ctx.relatedByBookingId ? ctx.relatedByBookingId[bookingId] : '';
+    if (relatedReason) return { verdict: VERDICT.HELD, reason: relatedReason };
 
     var dependency = checkDependencies_(record);
     if (dependency) return dependency;
@@ -297,6 +353,30 @@ var PersonalDataRetention = (function () {
     return values.slice(1);
   }
 
+  /*
+   * 別シートの未解決記録を予約IDごとに集約する。戻り値: { 予約ID: 区分コード }。
+   * 読み取れない場合（ヘッダー不一致・必須列の欠落・読み取り失敗）は例外にして、呼び出し側で停止させる。
+   */
+  function readRelatedUnresolved_(spreadsheet) {
+    var byBookingId = {};
+    RELATED_SHEETS_.forEach(function (definition) {
+      var sheet = spreadsheet.getSheetByName(definition.sheet);
+      if (!sheet || sheet.getLastRow() < 1) return;
+      var values = sheet.getDataRange().getValues();
+      var header = (values[0] || []).map(function (cell) { return String(cell === undefined || cell === null ? '' : cell); });
+      var positions = definition.columns.map(function (name) { return header.indexOf(name); });
+      if (positions.some(function (position) { return position === -1; })) throw new Error('RELATED_SHEET_INVALID');
+      for (var i = 1; i < values.length; i++) {
+        var row = {};
+        definition.columns.forEach(function (name, index) { row[name] = values[i][positions[index]]; });
+        var id = isBlank_(row.bookingId) ? '' : String(row.bookingId).trim();
+        if (!id || byBookingId[id]) continue;
+        if (definition.unresolved(row)) byBookingId[id] = definition.reason;
+      }
+    });
+    return byBookingId;
+  }
+
   /* 読み取りだけで全行を判定する（dry-runと実行の共通部）。書き込みはしない。 */
   function evaluate_(nowMs, spreadsheet) {
     var sheet = spreadsheet.getSheetByName(BookingsSchema.SHEET_NAME);
@@ -310,6 +390,12 @@ var PersonalDataRetention = (function () {
     } catch (error) {
       return { ok: false, code: 'HOLDS_SHEET_INVALID' };
     }
+    var related;
+    try {
+      related = readRelatedUnresolved_(spreadsheet);
+    } catch (error) {
+      return { ok: false, code: 'RELATED_SHEET_INVALID' };
+    }
     var holds = summarizeHolds_(holdRows, nowMs);
     var rows = values.slice(1);
     var duplicateIds = findDuplicateIds_(rows);
@@ -319,7 +405,7 @@ var PersonalDataRetention = (function () {
     rows.forEach(function (row) {
       counts.scanned++;
       var outcome = classifyBookingRecord(rowToRecord_(row, header.columnCount), {
-        nowMs: nowMs, holdsByBookingId: holds.byBookingId, duplicateIds: duplicateIds
+        nowMs: nowMs, holdsByBookingId: holds.byBookingId, duplicateIds: duplicateIds, relatedByBookingId: related
       });
       addToCounts_(counts, outcome);
       if (outcome.verdict === VERDICT.ELIGIBLE) candidates.push(String(row[0]).trim());
@@ -424,6 +510,12 @@ var PersonalDataRetention = (function () {
     } catch (error) {
       return { stop: 'HOLDS_SHEET_INVALID' };
     }
+    var related;
+    try {
+      related = readRelatedUnresolved_(spreadsheet);
+    } catch (error) {
+      return { stop: 'RELATED_SHEET_INVALID' };
+    }
     var holds = summarizeHolds_(holdRows, nowMs);
     var rows = values.slice(1);
     var duplicateIds = findDuplicateIds_(rows);
@@ -437,7 +529,7 @@ var PersonalDataRetention = (function () {
       var found = rowNumberById[ids[i]];
       if (!found) { counts.recheckSkipped++; continue; }
       var outcome = classifyBookingRecord(rowToRecord_(found.row, header.columnCount), {
-        nowMs: nowMs, holdsByBookingId: holds.byBookingId, duplicateIds: duplicateIds
+        nowMs: nowMs, holdsByBookingId: holds.byBookingId, duplicateIds: duplicateIds, relatedByBookingId: related
       });
       if (outcome.verdict !== VERDICT.ELIGIBLE) { counts.recheckSkipped++; continue; }
       try {
@@ -496,12 +588,18 @@ var PersonalDataRetention = (function () {
       if (!lock.tryLock(LOCK_TIMEOUT_MS_)) { status = 'LOCK_TIMEOUT'; break; }
       var batchResult;
       try {
+        /* ロック待ちの間に停止・方針変更された場合に備え、取得後にも確認してから書く。 */
+        if (gateStatus_(readConfig_()) !== 'OK') {
+          status = 'STOPPED';
+          break;
+        }
         batchResult = processBatch_(spreadsheet, targets.slice(start, start + BATCH_SIZE_), nowMs, counts);
       } finally {
         try { lock.releaseLock(); } catch (releaseError) { /* ロック未取得時は何もしない */ }
       }
       if (batchResult.stop) {
         status = batchResult.stop === 'WRITE_FAILED' ? 'PARTIAL_FAILURE' : 'SHEET_INVALID';
+        counts.stopCode = batchResult.stop;
         break;
       }
     }

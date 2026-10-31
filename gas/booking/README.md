@@ -90,15 +90,21 @@ admin-only → migration → full と段階的に更新するため、短時間�
 | `PENDING` | – | 対象外 |
 | 上記以外 | – | 要確認（消さない） |
 
-- 起算日時は有効なDate、またはタイムゾーン明示のISO 8601だけを受け付ける。空欄・不正は**要確認**（`updatedAt` / `createdAt` で代用しない）。
+- 起算日時は有効なDate、またはタイムゾーン明示のISO 8601だけを受け付ける。文字列は書式に加え、暦日（月ごとの日数・閏年）・時刻・オフセットの範囲も検証する（`2025-02-30` 等は補正せず不正）。空欄・不正は**要確認**（`updatedAt` / `createdAt` で代用しない）。
 - 期限は `起算日時 + 180×24時間`、`現在時刻 >= 期限` で対象（JSTの日付丸めはしない）。
 - 保留が解決済みなら、解決日時から180日までは消さない（通常の期限との遅い方）。
 - 期限を過ぎていても消さない（`held`）: 決済が未解決（`checkout_pending` / `refund_pending`、決済試行が未解決、復旧要フラグ、決済リンク送信の不整合）、精算が未了（`PENDING_*`）、返金が未完了、Checkout取消が未確認、有効な保留。未知の決済状態・精算状態は要確認。
+- **別シートの未解決記録も予約IDで参照する**（読み取りのみ。これらのシートはこのPRでは消去しない）。Bookings側のフラグの保存自体が失敗した複合障害でも保護するため。初回判定とバッチごとの再判定の両方で読む。
+  - `Recovery`: `recoveryState` が `RESOLVED` 以外（`OPEN`・空欄・未知）の記録がある予約（`RELATED_RECOVERY_OPEN`）。**予約と結び付くOPENの記録が残る限り消えない**ため、不要になった記録は運用で `RESOLVED` にする。`bookingId` が空の記録は予約と結び付けられず、判定に使わない。
+  - `FeeSettlements`: `applyStatus` が `APPLIED` / `ABANDONED` 以外（`RELATED_SETTLEMENT_UNRESOLVED`）。
+  - `BookingChanges`: `mailState` が `PREPARED` / `RECOVERY_REQUIRED`（`RELATED_RESCHEDULE_UNRESOLVED`）。
+  - `OptionOrders`: `status` が `CONFIRMED` / `DECLINED` / `CANCELLED` 以外、または `paymentRecoveryRequiredAt` が非空（`RELATED_OPTION_ORDER_UNRESOLVED`）。
+  - これらのシートは存在しなければ記録なし。ヘッダーを読めない・必須列がない場合は判定できないため、**何も消さずシート全体を停止**する（`RELATED_SHEET_INVALID`）。
 - 同じ予約IDの行が複数ある場合は全て要確認（消さない）。ヘッダーが正本と食い違う（途中の列の欠落・順序違い・正本より長い）、対象列が欠ける場合は**シート全体を停止**する。
 
 ### 消去の方式と限界
 - 対象列を**1セルずつ**空にする。行全体・連続範囲は書き戻さない。行は削除せず、予約ID・日時・金額・状態・決済ID等は残す（照合可能な情報であり、匿名データではない）。
-- バッチ（20行）ごとにAdminのスクリプトロックを取り、**予約IDで行を読み直して判定をやり直してから**書く。書き込み前に有効化フラグも再確認する。1回の実行は最大200行・4分で打ち切り（`TRUNCATED`）、残りは翌日以降に処理される。部分失敗しても次回は未消去の列から再判定する（冪等）。
+- バッチ（20行）ごとにAdminのスクリプトロックを取り、**ロック取得後に有効化フラグ・方針バージョンを読み直し**（無効なら書かずに `STOPPED`）、**予約IDで行と関連記録を読み直して判定をやり直してから**書く。1回の実行は最大200行・4分で打ち切り（`TRUNCATED`）、残りは翌日以降に処理される。部分失敗しても次回は未消去の列から再判定する（冪等）。
 - **版の履歴は消えない。** セルを空にしても、編集権限のある人は版の履歴から旧値を見られる。履歴対策は「編集権限を必要最小限にする」運用で、**消去の完了を意味しない**。結果は「現行セルの消去」だけを表す。カレンダー・Gmail・Stripe・`OptionOrders` 等の他シートは対象外で残る。
 - **残存リスク（有効化前に確認）**: 公開Web AppはAdminとロックを共有できず、再読込は別プロジェクトとの原子的な排他にならない。`Bookings` には連続範囲を書き戻す既存関数（`updateBookingCancellationStateAtomic` は `note` を含む範囲、`updateBookingPaymentStateAtomic` は `stripeCheckoutRequestSnapshot` 等を含む範囲、`updateBookingRescheduleFeeAtomic` / `updateBookingRefundStateAtomic`）があり、消去と交差すると古い値が戻り得る。180日以上前に終了・取消・失効した行をこれらが更新する経路は通常ない想定だが、保証はできない。有効化の判断前にこの経路を再確認すること。
 

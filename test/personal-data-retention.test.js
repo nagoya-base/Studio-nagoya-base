@@ -150,6 +150,41 @@ test('タイムゾーン明示のISO文字列は受け付ける', function () {
   assert.strictEqual(classify(ctx, { endAt: '2025-01-01T01:00:00Z' }).verdict, 'ELIGIBLE');
 });
 
+test('存在しない暦日・範囲外の時刻・オフセットは補正せず要確認にする', function () {
+  var ctx = setup();
+  var invalid = [
+    '2025-02-30T00:00:00Z', '2025-02-29T00:00:00Z', '2023-02-29T10:00:00+09:00', '2025-04-31T00:00:00Z',
+    '2025-06-31T00:00:00Z', '2025-09-31T00:00:00Z', '2025-11-31T00:00:00Z', '2025-00-10T00:00:00Z',
+    '2025-13-10T00:00:00Z', '2025-01-00T00:00:00Z', '2025-01-32T00:00:00Z', '2025-01-10T24:00:00Z',
+    '2025-01-10T23:60:00Z', '2025-01-10T23:59:60Z', '2025-01-10T10:00:00+24:00', '2025-01-10T10:00:00+09:60',
+    '1900-02-29T00:00:00Z'
+  ];
+  invalid.forEach(function (text) {
+    var outcome = classify(ctx, { endAt: text });
+    assert.strictEqual(outcome.reason, 'BASIS_INVALID', text);
+  });
+});
+
+test('正常な閏日・月末・オフセット付き日時は受け付ける', function () {
+  var ctx = setup();
+  ['2024-02-29T10:00:00+09:00', '2000-02-29T00:00:00Z', '2025-04-30T23:59:59Z', '2025-01-31T00:00:00-05:00',
+    '2025-12-31T23:59:59.999+14:00', '2025-01-10T10:00:00Z', '2025-01-10T10:00Z'].forEach(function (text) {
+    assert.strictEqual(classify(ctx, { endAt: text }).verdict, 'ELIGIBLE', text);
+  });
+});
+
+test('保留の解決日時が存在しない暦日なら有効な保留として扱い、消さない', function () {
+  var ctx = setup();
+  var id = addRow(ctx);
+  ctx.book.insertSheet('RetentionHolds');
+  var holds = ctx.sheets.RetentionHolds;
+  holds.appendRow(ctx.sandbox.PersonalDataRetention.HOLDS_HEADERS);
+  holds.appendRow([id, 'DISPUTE', '運営', ago(DAY), '2027-01-31T00:00:00+09:00', '2026-02-30T00:00:00Z']);
+  var result = plain(ctx.sandbox.dryRunPersonalDataRetention(NOW));
+  assert.deepStrictEqual(result.held, { HOLD_RECORD_INVALID: 1 });
+  assert.strictEqual(result.eligible, 0);
+});
+
 test('個人情報の列がすべて空なら対象外（ALREADY_CLEAR）', function () {
   var ctx = setup();
   var clear = { name: '', email: '', phone: '', purpose: '', note: '' };
@@ -515,7 +550,7 @@ test('時間予算を超えたらバッチの途中で打ち切る（20行単位
   assert.strictEqual(result.erasedRows, 20);
 });
 
-test('実行中に停止フラグが立てられたら、次のバッチを開始しない（STOPPED）', function () {
+function stopDuringLockTest(stopAtLockCall, expectedErased) {
   var props;
   var lockCalls = 0;
   var lockService = {
@@ -523,7 +558,7 @@ test('実行中に停止フラグが立てられたら、次のバッチを開�
       return {
         tryLock: function () {
           lockCalls++;
-          if (lockCalls === 1) props.setProperty('PERSONAL_DATA_RETENTION_ENABLED', 'false');
+          if (lockCalls === stopAtLockCall) props.setProperty('PERSONAL_DATA_RETENTION_ENABLED', 'false');
           return true;
         },
         releaseLock: function () {}
@@ -536,8 +571,33 @@ test('実行中に停止フラグが立てられたら、次のバッチを開�
   enable(ctx);
   var result = plain(ctx.sandbox.purgeExpiredPersonalData(NOW));
   assert.strictEqual(result.status, 'STOPPED');
-  assert.strictEqual(result.erasedRows, 20);
+  assert.strictEqual(result.erasedRows, expectedErased);
   assert.strictEqual(ctx.store.PERSONAL_DATA_RETENTION_LAST_SUCCESS_AT, undefined);
+  assert.strictEqual(plain(ctx.sandbox.getPersonalDataRetentionStatus(NOW)).gate, 'DISABLED');
+}
+
+test('ロック待ち中に停止された場合、ロック取得後に再確認して1行も書かない（STOPPED）', function () {
+  stopDuringLockTest(1, 0);
+});
+
+test('実行中に停止フラグが立てられたら、次のバッチを開始しない（STOPPED）', function () {
+  stopDuringLockTest(2, 20);
+});
+
+test('ロック取得後に方針バージョンが変えられた場合も書かずに止まる', function () {
+  var props;
+  var lockService = {
+    getScriptLock: function () {
+      return { tryLock: function () { props.setProperty('PERSONAL_DATA_RETENTION_POLICY_VERSION', 'other'); return true; }, releaseLock: function () {} };
+    }
+  };
+  var ctx = setup({ lockService: lockService });
+  props = ctx.sandbox.PropertiesService.getScriptProperties();
+  var id = addRow(ctx);
+  enable(ctx);
+  var result = plain(ctx.sandbox.purgeExpiredPersonalData(NOW));
+  assert.strictEqual(result.status, 'STOPPED');
+  assert.strictEqual(cell(ctx, id, 'name'), PII.name);
 });
 
 test('ロックを取れなければ消さずLOCK_TIMEOUTを記録する', function () {
@@ -632,6 +692,153 @@ test('書き込み失敗でPARTIAL_FAILURE（ハンドラは例外）、成功�
   var retry = plain(ctx.sandbox.purgeExpiredPersonalData(NOW));
   assert.strictEqual(retry.status, 'OK');
   ['name', 'email', 'phone', 'purpose', 'note'].forEach(function (column) { assert.strictEqual(cell(ctx, id, column), ''); });
+});
+
+// ============================================================================
+// 別シートの未解決記録（Recovery / FeeSettlements / BookingChanges / OptionOrders）
+// ============================================================================
+
+function addSheet(ctx, name, headers, rows) {
+  var sheet = ctx.book.insertSheet(name);
+  sheet.appendRow(headers);
+  (rows || []).forEach(function (row) { sheet.appendRow(row); });
+  return sheet;
+}
+
+var RECOVERY_HEADERS = ['bookingId', 'failureType', 'occurredAt', 'calendarEventId', 'status', 'errorMessage', 'recoveryState', 'resolvedAt'];
+var SETTLEMENT_HEADERS = ['settlementId', 'bookingId', 'changeId', 'settlementState', 'paidDelta', 'refundedDelta', 'note', 'requestedAt', 'applyStatus', 'appliedAt', 'resultPaidAmount', 'resultRefundedAmount'];
+var CHANGE_HEADERS = ['changeId', 'bookingId', 'changedAt', 'oldDate', 'oldStartAt', 'oldEndAt', 'newDate', 'newStartAt', 'newEndAt', 'reason', 'feeNote', 'mailState'];
+var OPTION_HEADERS = ['optionOrderId', 'bookingId', 'brand', 'category', 'source', 'itemsJson', 'amountJpy', 'currency', 'approvalStatus', 'paymentStatus', 'status', 'customerEmail', 'createdAt', 'updatedAt', 'approvedAt', 'declinedAt', 'declineReason', 'paymentAttemptId', 'checkoutRequestJson', 'stripeCheckoutSessionId', 'stripePaymentIntentId', 'stripeAmount', 'stripeCurrency', 'paidAt', 'lastStripeEventId', 'decisionMailSentAt', 'confirmedMailSentAt', 'paymentRecoveryRequiredAt', 'paymentRecoveryReason'];
+
+function recoveryRow(bookingId, state) {
+  return [bookingId, 'BASELINE_WRITE_UNCERTAIN', ago(DAY), '', 'CONFIRMED', 'メッセージ', state, ''];
+}
+function settlementRow(bookingId, applyStatus) {
+  return ['S-1', bookingId, '', 'SETTLED', 0, 0, '', ago(DAY), applyStatus, '', '', ''];
+}
+function changeRow(bookingId, mailState) {
+  return ['C-1', bookingId, ago(DAY), '', '', '', '', '', '', '', '', mailState];
+}
+function optionRow(bookingId, status, recoveryAt) {
+  var row = OPTION_HEADERS.map(function () { return ''; });
+  row[1] = bookingId; row[10] = status; row[11] = 'opt@example.com';
+  row[OPTION_HEADERS.indexOf('paymentRecoveryRequiredAt')] = recoveryAt || '';
+  return row;
+}
+
+test('Bookings側のフラグが空でも、RecoveryにOPENの記録がある予約は消さない（回帰）', function () {
+  var ctx = setup();
+  var open = addRow(ctx);
+  var resolved = addRow(ctx);
+  var unrelated = addRow(ctx);
+  addSheet(ctx, 'Recovery', RECOVERY_HEADERS, [recoveryRow(open, 'OPEN'), recoveryRow(resolved, 'RESOLVED'), recoveryRow('other-id', 'OPEN')]);
+  enable(ctx);
+  var result = plain(ctx.sandbox.purgeExpiredPersonalData(NOW));
+  assert.strictEqual(result.erasedRows, 2);
+  assert.deepStrictEqual(result.held, { RELATED_RECOVERY_OPEN: 1 });
+  assert.strictEqual(cell(ctx, open, 'name'), PII.name);
+  assert.strictEqual(cell(ctx, resolved, 'name'), '');
+  assert.strictEqual(cell(ctx, unrelated, 'name'), '');
+});
+
+test('Recoveryの状態が空欄・未知の記録も未解決として扱う（RESOLVEDだけが解決済み）', function () {
+  var ctx = setup();
+  var blank = addRow(ctx);
+  var unknown = addRow(ctx);
+  addSheet(ctx, 'Recovery', RECOVERY_HEADERS, [recoveryRow(blank, ''), recoveryRow(unknown, 'WHATEVER')]);
+  enable(ctx);
+  var result = plain(ctx.sandbox.purgeExpiredPersonalData(NOW));
+  assert.strictEqual(result.erasedRows, 0);
+  assert.deepStrictEqual(result.held, { RELATED_RECOVERY_OPEN: 2 });
+});
+
+test('FeeSettlements・BookingChanges・OptionOrdersに未解決の記録がある予約は消さない', function () {
+  var ctx = setup();
+  var pendingApply = addRow(ctx);
+  var failedSettlement = addRow(ctx);
+  var applied = addRow(ctx);
+  var abandoned = addRow(ctx);
+  var prepared = addRow(ctx);
+  var recoveryRequired = addRow(ctx);
+  var rolledBack = addRow(ctx);
+  var optionPending = addRow(ctx);
+  var optionRecovery = addRow(ctx);
+  var optionConfirmed = addRow(ctx);
+  var optionUnknown = addRow(ctx);
+  addSheet(ctx, 'FeeSettlements', SETTLEMENT_HEADERS, [
+    settlementRow(pendingApply, 'PENDING_APPLY'), settlementRow(failedSettlement, 'FAILED_NEEDS_RECOVERY'),
+    settlementRow(applied, 'APPLIED'), settlementRow(abandoned, 'ABANDONED')
+  ]);
+  addSheet(ctx, 'BookingChanges', CHANGE_HEADERS, [
+    changeRow(prepared, 'PREPARED'), changeRow(recoveryRequired, 'RECOVERY_REQUIRED'), changeRow(rolledBack, 'ROLLED_BACK')
+  ]);
+  addSheet(ctx, 'OptionOrders', OPTION_HEADERS, [
+    optionRow(optionPending, 'AWAITING_PAYMENT'), optionRow(optionRecovery, 'CONFIRMED', ago(DAY)),
+    optionRow(optionConfirmed, 'CONFIRMED'), optionRow(optionUnknown, '')
+  ]);
+  enable(ctx);
+  var result = plain(ctx.sandbox.purgeExpiredPersonalData(NOW));
+  assert.deepStrictEqual(result.held, {
+    RELATED_SETTLEMENT_UNRESOLVED: 2, RELATED_RESCHEDULE_UNRESOLVED: 2, RELATED_OPTION_ORDER_UNRESOLVED: 3
+  });
+  assert.strictEqual(result.erasedRows, 4);
+  [applied, abandoned, rolledBack, optionConfirmed].forEach(function (id) { assert.strictEqual(cell(ctx, id, 'name'), ''); });
+  [pendingApply, failedSettlement, prepared, recoveryRequired, optionPending, optionRecovery, optionUnknown].forEach(function (id) {
+    assert.strictEqual(cell(ctx, id, 'name'), PII.name);
+  });
+});
+
+test('対象判定後〜ロック取得後にRecoveryがOPENになった予約は、再判定で除外して消さない', function () {
+  var mutate = null;
+  var lockService = {
+    getScriptLock: function () {
+      return { tryLock: function () { if (mutate) { mutate(); mutate = null; } return true; }, releaseLock: function () {} };
+    }
+  };
+  var ctx = setup({ lockService: lockService });
+  var raced = addRow(ctx);
+  var other = addRow(ctx);
+  var recovery = addSheet(ctx, 'Recovery', RECOVERY_HEADERS, []);
+  mutate = function () { recovery.appendRow(recoveryRow(raced, 'OPEN')); };
+  enable(ctx);
+  var result = plain(ctx.sandbox.purgeExpiredPersonalData(NOW));
+  assert.strictEqual(result.erasedRows, 1);
+  assert.strictEqual(result.recheckSkipped, 1);
+  assert.strictEqual(cell(ctx, raced, 'name'), PII.name);
+  assert.strictEqual(cell(ctx, other, 'name'), '');
+});
+
+test('関連シートの必須列が欠けていれば判定できないため、何も消さずSHEET_INVALIDで止まる', function () {
+  ['Recovery', 'FeeSettlements', 'BookingChanges', 'OptionOrders'].forEach(function (name) {
+    var ctx = setup();
+    var id = addRow(ctx);
+    addSheet(ctx, name, ['bookingId', 'unexpected'], []);
+    enable_ignoring_dry_run(ctx);
+    var result = plain(ctx.sandbox.PersonalDataRetention.run(NOW));
+    assert.strictEqual(result.status, 'SHEET_INVALID', name);
+    assert.strictEqual(result.code, 'RELATED_SHEET_INVALID', name);
+    assert.strictEqual(cell(ctx, id, 'name'), PII.name);
+    assert.strictEqual(plain(ctx.sandbox.dryRunPersonalDataRetention(NOW)).status, 'SHEET_INVALID', name);
+    assert.strictEqual(ctx.store.PERSONAL_DATA_RETENTION_DRY_RUN_VERSION, '2026-10-31.1');
+  });
+});
+
+test('ロック取得後の再読込で関連シートが読めなくなったら、書かずに止まる', function () {
+  var mutate = null;
+  var lockService = {
+    getScriptLock: function () {
+      return { tryLock: function () { if (mutate) { mutate(); mutate = null; } return true; }, releaseLock: function () {} };
+    }
+  };
+  var ctx = setup({ lockService: lockService });
+  var id = addRow(ctx);
+  var recovery = addSheet(ctx, 'Recovery', RECOVERY_HEADERS, []);
+  mutate = function () { recovery._rows[0][6] = 'renamed'; };
+  enable(ctx);
+  var result = plain(ctx.sandbox.PersonalDataRetention.run(NOW));
+  assert.strictEqual(result.status, 'SHEET_INVALID');
+  assert.strictEqual(result.stopCode, 'RELATED_SHEET_INVALID');
+  assert.strictEqual(cell(ctx, id, 'name'), PII.name);
 });
 
 // ============================================================================
