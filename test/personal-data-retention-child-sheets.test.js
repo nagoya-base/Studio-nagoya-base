@@ -611,8 +611,8 @@ test('子シートの必須列が欠けていれば、Bookingsも含めて何も
   settlements.appendRow(headers.map(function (h) { return h === 'bookingId' ? bookingId : h === 'note' ? NOTE : 'x'; }));
   var props = ctx.sandbox.PropertiesService.getScriptProperties();
   props.setProperty('PERSONAL_DATA_RETENTION_ENABLED', 'true');
-  props.setProperty('PERSONAL_DATA_RETENTION_POLICY_VERSION', '2026-10-31.3');
-  props.setProperty('PERSONAL_DATA_RETENTION_DRY_RUN_VERSION', '2026-10-31.3');
+  props.setProperty('PERSONAL_DATA_RETENTION_POLICY_VERSION', '2026-10-31.4');
+  props.setProperty('PERSONAL_DATA_RETENTION_DRY_RUN_VERSION', '2026-10-31.4');
   var result = plain(ctx.sandbox.PersonalDataRetention.run(NOW));
   assert.strictEqual(result.status, 'SHEET_INVALID');
   assert.strictEqual(result.code, 'CHILD_SHEET_INVALID');
@@ -641,7 +641,7 @@ test('状態確認: 子シートの要確認件数もREVIEW_ROWS_EXISTで知ら�
   run(ctx);
   var status = plain(ctx.sandbox.getPersonalDataRetentionStatus(NOW));
   assert.ok(status.attention.indexOf('REVIEW_ROWS_EXIST') !== -1);
-  assert.strictEqual(status.codePolicyVersion, '2026-10-31.3');
+  assert.strictEqual(status.codePolicyVersion, '2026-10-31.4');
 });
 
 test('方針バージョンが変わると、PR-1時点のdry-run確認では有効化・実行できない', function () {
