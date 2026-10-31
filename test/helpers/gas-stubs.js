@@ -404,16 +404,23 @@ function createScriptAppStub() {
   var triggers = [];
   return {
     getProjectTriggers: function () { return triggers.slice(); },
+    deleteTrigger: function (trigger) {
+      var index = triggers.indexOf(trigger);
+      if (index !== -1) triggers.splice(index, 1);
+    },
     newTrigger: function (functionName) {
+      var spec = {};
       var builder = {
         timeBased: function () { return builder; },
-        everyMinutes: function () { return builder; },
-        everyDays: function () { return builder; },
-        atHour: function () { return builder; },
+        everyMinutes: function (minutes) { spec.everyMinutes = minutes; return builder; },
+        everyDays: function (days) { spec.everyDays = days; return builder; },
+        atHour: function (hour) { spec.atHour = hour; return builder; },
+        inTimezone: function (timezone) { spec.timezone = timezone; return builder; },
         nearMinute: function () { return builder; },
         create: function () {
           var trigger = {
-            getHandlerFunction: function () { return functionName; }
+            getHandlerFunction: function () { return functionName; },
+            _spec: spec
           };
           triggers.push(trigger);
           return trigger;

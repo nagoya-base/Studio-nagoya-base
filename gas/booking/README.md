@@ -71,6 +71,69 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - 新コードは、既存行の新列が **空欄でもfailしない** こと。
 - schema追加と機能の利用開始の間で新旧が混在しても、予約作成・読取・管理画面が破損しないこと。
 
+## Issue #680: Bookings台帳の個人情報を180日経過後に自動消去（PR-1。初期無効）
+
+`gas/booking/admin/PersonalDataRetention.gs`（**Booking Admin専用**）。公開Web App・Webhookには配布せず、削除実行APIも置かない。管理画面（`BookingAdminWeb.gs`）にも配線しない（エディタと時間主導トリガーからのみ）。**本番の有効化・トリガー作成・実データの消去は、このPRでは行わない。**
+
+### 範囲（PR-1）
+- 対象シートは **`Bookings` のみ**。`OptionOrders` / `BookingChanges` / `FeeSettlements` / `Recovery` / `StripeEvents` / `Members` 系は後続PR（終端日時の専用列が要るものは列追加と移行手順を伴う）。
+- 540日保持する限定取引記録の**消去は実装しない**（この段階では保持するだけ）。消すのは下表の個人情報の列に限る。
+
+### 消去する列と起算点
+`name` / `email` / `phone` / `purpose` / `note` / `paymentLinkSentTo` / `lastMailErrorMessage` / `paymentLinkLastErrorMessage` / `feeSettlementNote` / `feeRecoveryReason` / `paymentLastErrorMessage` / `paymentRecoveryReason` / `refundReason` / `stripeCheckoutRequestSnapshot`。列名は `BookingsSchema` の正本と照合する（列番号の固定・部分一致はしない）。`checkoutAccessToken` は扱わない。
+
+| status | 起算日時 | 備考 |
+| --- | --- | --- |
+| `CONFIRMED` | 最新の `endAt` | 「利用完了」状態は追加しない |
+| `CANCELLED` | `cancelledAt` | |
+| `EXPIRED` | `expiredAt` | |
+| `PENDING` | – | 対象外 |
+| 上記以外 | – | 要確認（消さない） |
+
+- 起算日時は有効なDate、またはタイムゾーン明示のISO 8601だけを受け付ける。空欄・不正は**要確認**（`updatedAt` / `createdAt` で代用しない）。
+- 期限は `起算日時 + 180×24時間`、`現在時刻 >= 期限` で対象（JSTの日付丸めはしない）。
+- 保留が解決済みなら、解決日時から180日までは消さない（通常の期限との遅い方）。
+- 期限を過ぎていても消さない（`held`）: 決済が未解決（`checkout_pending` / `refund_pending`、決済試行が未解決、復旧要フラグ、決済リンク送信の不整合）、精算が未了（`PENDING_*`）、返金が未完了、Checkout取消が未確認、有効な保留。未知の決済状態・精算状態は要確認。
+- 同じ予約IDの行が複数ある場合は全て要確認（消さない）。ヘッダーが正本と食い違う（途中の列の欠落・順序違い・正本より長い）、対象列が欠ける場合は**シート全体を停止**する。
+
+### 消去の方式と限界
+- 対象列を**1セルずつ**空にする。行全体・連続範囲は書き戻さない。行は削除せず、予約ID・日時・金額・状態・決済ID等は残す（照合可能な情報であり、匿名データではない）。
+- バッチ（20行）ごとにAdminのスクリプトロックを取り、**予約IDで行を読み直して判定をやり直してから**書く。書き込み前に有効化フラグも再確認する。1回の実行は最大200行・4分で打ち切り（`TRUNCATED`）、残りは翌日以降に処理される。部分失敗しても次回は未消去の列から再判定する（冪等）。
+- **版の履歴は消えない。** セルを空にしても、編集権限のある人は版の履歴から旧値を見られる。履歴対策は「編集権限を必要最小限にする」運用で、**消去の完了を意味しない**。結果は「現行セルの消去」だけを表す。カレンダー・Gmail・Stripe・`OptionOrders` 等の他シートは対象外で残る。
+- **残存リスク（有効化前に確認）**: 公開Web AppはAdminとロックを共有できず、再読込は別プロジェクトとの原子的な排他にならない。`Bookings` には連続範囲を書き戻す既存関数（`updateBookingCancellationStateAtomic` は `note` を含む範囲、`updateBookingPaymentStateAtomic` は `stripeCheckoutRequestSnapshot` 等を含む範囲、`updateBookingRescheduleFeeAtomic` / `updateBookingRefundStateAtomic`）があり、消去と交差すると古い値が戻り得る。180日以上前に終了・取消・失効した行をこれらが更新する経路は通常ない想定だが、保証はできない。有効化の判断前にこの経路を再確認すること。
+
+### 有効化の条件と操作（運営者が実施）
+1. `getPersonalDataRetentionStatus()` で設定を確認する。
+2. `dryRunPersonalDataRetention()` を実行する。**何も書かない**（セル消去・保留シート作成・マーカー更新なし）。対象件数・除外理由別の件数・要確認件数・保留の見直し期限超過件数を返す。個人情報・予約ID・行番号は出さない。ヘッダーを読めたときだけ、確認済みの方針バージョンを `PERSONAL_DATA_RETENTION_DRY_RUN_VERSION` に記録する。
+3. 件数と除外理由を確認する。初回は既存データが多い可能性があるため、件数を見て負荷を判断する（1回の実行は最大200行）。
+4. `enablePersonalDataRetention()` を実行する。同じ方針バージョンでdry-run済みでなければ失敗する。`PERSONAL_DATA_RETENTION_ENABLED=true` と `PERSONAL_DATA_RETENTION_POLICY_VERSION` を設定する（トリガーは作らない・変えない）。
+5. 日次トリガーの設置は次節。
+
+停止は `disablePersonalDataRetention()`（`PERSONAL_DATA_RETENTION_ENABLED=false`）。**日次トリガーは残し、整理処理だけが止まる**（他の予約・会員処理は止めない）。再開は `enablePersonalDataRetention()`。対象列・起算点・除外条件を変える変更は `POLICY_VERSION` を更新する。更新すると有効化とdry-run確認がやり直しになる。
+
+実行時（`purgeExpiredPersonalData`）: 有効化フラグが未設定・`false` なら `DISABLED`、不正値・方針バージョン不一致・dry-run未確認なら `CONFIG_INVALID` として**何も消さず**、成功日時も更新しない。
+
+### 日次トリガー（運用担当の単一アカウントで初回に1本だけ）
+1. **Booking Admin** のGASエディタを開き、トリガー画面で `purgeExpiredPersonalData` のトリガーが**ないこと**を確認する。
+2. `createPersonalDataRetentionTrigger()` を1回実行する（毎日4時台・Asia/Tokyo。既に同名ハンドラのトリガーがあれば作らない）。別アカウントでの重複設置はしない。
+3. `getPersonalDataRetentionStatus()` の `triggerCount` が1であることを確認する。
+- 廃止・障害対応: `removePersonalDataRetentionTriggers()` または画面からトリガーを削除する。通常の停止は上の `disable`。
+- 失敗時は `purgeExpiredPersonalData` が例外で終了し、実行履歴に残る（通知は「失敗した場合」を推奨）。
+
+### 状態確認（個人情報なし）
+`getPersonalDataRetentionStatus()` が返す: ゲート状態（`OK` / `DISABLED` / `CONFIG_INVALID`）、設定済み・dry-run済みの方針バージョン、`triggerCount`、直近の実行結果（件数・区分のみ）、最終成功日時、`attention`（`CONFIG_INVALID` / `NO_TRIGGER` / `MULTIPLE_TRIGGERS` / `NEVER_RUN` / `STALE_RUN`（有効中に36時間以上実行記録なし）/ `LAST_RUN_NOT_SUCCESSFUL` / `HOLD_REVIEW_OVERDUE` / `REVIEW_ROWS_EXIST`）。実行結果のステータス: `OK` / `TRUNCATED` / `STOPPED` / `LOCK_TIMEOUT` / `SHEET_INVALID` / `PARTIAL_FAILURE` / `DISABLED` / `CONFIG_INVALID`。成功日時を更新するのは `OK` と `TRUNCATED` だけ。
+
+### 保留（異議申立て・照会・返金・未払い等）
+- `addPersonalDataRetentionHold(bookingId, reasonCode, owner, reviewBy)`: `RetentionHolds` シート（なければここで作成）に追加する。`reasonCode` は `DISPUTE` / `INQUIRY` / `REFUND` / `UNPAID` / `OTHER` のみ（自由記述は持たない）。担当（40文字まで）と見直し期限（未来のタイムゾーン付き日時）は必須。
+- `resolvePersonalDataRetentionHold(bookingId)`: 有効な保留を解決する。解決日時から180日を経過するまで、その予約は消去対象にならない。
+- 有効な保留は見直し期限を過ぎても**自動解除しない**。見直し期限の超過は件数（`holdReviewOverdue`）で知らせるだけ。
+
+### 未確認事項（このPRでは確認できない）
+- 実Spreadsheetのヘッダー・`endAt` 等の実際の型と欠損、実際の編集権限・版の履歴の残存範囲。
+- Booking Adminの実マニフェスト（`appsscript.json`。リポジトリにはない）のOAuthスコープとタイムゾーン。既存の `BookingTriggers.gs` が `ScriptApp` を使うため追加スコープは想定しないが、実環境で確認する。
+- Stripeアカウント固有の異議申立て条件・外部証拠の参照可否（運営者がDashboard／Supportで確認）。
+- 後続PRで扱うシート（`OptionOrders` 等）の個人情報は、このPRでは**消えない**。
+
 ## Issue #573: Studio Xの内部運用定義（2026-10-29更新）
 
 現行基準は [`docs/membership-pricing-2026-12.md`](../../docs/membership-pricing-2026-12.md)。以下の過去Issueごとの実装記録より、現行基準と後続Issueを優先する。
@@ -3529,6 +3592,7 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `RateLimiter.gs` | ✓ | – | – | `gas/booking/public/RateLimiter.gs` |
 | `BookingsSchema.gs` | ✓ | ✓ | – | `gas/booking/shared/BookingsSchema.gs`（Bookingsヘッダーの唯一の正本。Issue #671） |
 | `BookingsSchemaMigration.gs`（Issue #673。管理者がエディタから手動実行する `migrateBookingsSchema`。Booking Admin専用） | – | ✓ | – | `gas/booking/admin/BookingsSchemaMigration.gs` |
+| `PersonalDataRetention.gs`（Issue #680。Bookings台帳の個人情報を180日経過後に消去。初期無効・dry-run必須。Booking Admin専用） | – | ✓ | – | `gas/booking/admin/PersonalDataRetention.gs` |
 | `SpreadsheetRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/SpreadsheetRepository.gs` |
 | `RecoveryRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/RecoveryRepository.gs` |
 | `BookingRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/BookingRepository.gs` |

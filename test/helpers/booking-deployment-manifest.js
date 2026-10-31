@@ -98,7 +98,9 @@ var BOOKING_ADMIN_FILES = [
   'FeeSettlementRepository.gs',
   'BookingReschedule.gs',
   /* Issue #673: Bookingsシートの不足末尾列を追加する管理者用migration（エディタから手動実行）。Booking Admin専用で、Public・Webhookには配布しない。 */
-  'BookingsSchemaMigration.gs'
+  'BookingsSchemaMigration.gs',
+  /* Issue #680: Bookings台帳の個人情報を180日経過後に消去する運用基盤（初期無効・dry-run必須）。Booking Admin専用で、Public・Webhookには配布しない。 */
+  'PersonalDataRetention.gs'
 ];
 
 /* Code.gs/RateLimiter.gs/AdminNotifier.gsはcreateBooking専用のためBooking Adminには
