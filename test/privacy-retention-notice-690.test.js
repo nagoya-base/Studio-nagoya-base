@@ -1,7 +1,8 @@
 'use strict';
-// Issue #690 第1段階: プライバシーポリシー改定予告（180日自動消去）のみ。
-// ポリシー本文の差替えは効力発生日の第2段階で行う（その際、本テストの「本文は現行のまま」を更新する）。
-// 公開（マージ）が遅れた場合は、NOTICE_DATE / EFFECTIVE とお知らせの日付を公開日に合わせる（バックデートしない）。
+// Issue #690 第2段階: プライバシーポリシー本文の差替え（180日自動消去）。
+// 第1段階（改定予告のみ。2026年11月1日に告知）の後、効力発生日（2026年11月15日）に本文を差し替える。
+// 公開（マージ）は、全版の予告が実際に公開・表示確認された日から14日以上後、かつ効力発生日以降に行う（バックデートしない）。
+// 公開が遅れた場合は、告知日・効力発生日・お知らせの日付・本テストの定数を実際の日付に合わせる（docs/privacy-retention-notice-690.md）。
 var test = require('node:test');
 var assert = require('node:assert');
 var fs = require('fs');
@@ -12,70 +13,84 @@ function read(p) { return fs.readFileSync(path.join(ROOT, p), 'utf8'); }
 
 var NOTICE_DATE = '2026.11.01';
 var EFFECTIVE = '2026-11-15';
+var EFFECTIVE_JA = '2026年11月15日';
 
-function findNotice() {
+function newsItems() {
   var news = read('_data/news_ja.yml');
   var re = /- date: "([^"]+)"\n  type: "([^"]+)"\n  body: "([^"]*)"/g;
-  var m;
-  while ((m = re.exec(news))) {
-    if (m[3].indexOf('プライバシーポリシー') !== -1 && m[3].indexOf('改定予告') !== -1 && m[3].indexOf('180日') !== -1) return { date: m[1], type: m[2], body: m[3] };
-  }
-  return null;
+  var out = [], m;
+  while ((m = re.exec(news))) out.push({ date: m[1], type: m[2], body: m[3] });
+  return out;
+}
+function findNotice() {
+  return newsItems().filter(function (n) { return n.body.indexOf('プライバシーポリシー') !== -1 && n.body.indexOf('改定予告') !== -1 && n.body.indexOf('180日') !== -1; })[0] || null;
+}
+function findPublished() {
+  return newsItems().filter(function (n) { return n.body.indexOf('プライバシーポリシー') !== -1 && n.body.indexOf('改定しました') !== -1 && n.body.indexOf('180日') !== -1; })[0] || null;
 }
 
-test('#690: 改定予告がお知らせの先頭にあり、告知日・効力発生日・対象外を含む', function () {
+var PAGES = {
+  ja: { file: '_includes/legal_ja.html', words: ['180', '起算', 'Stripe'], ledger: '日次処理で消去します', excluded: '有効な会員情報、将来の予約', notAnon: '匿名化された情報ではありません' },
+  studioX: { file: 'studio-x/legal/index.html', words: ['180', '起算', 'Stripe'], ledger: '日次処理で消去します', excluded: '有効な会員情報、将来の予約', notAnon: '匿名化された情報ではありません' },
+  en: { file: 'legal/en.html', words: ['180 days', 'start date', 'Stripe'], ledger: 'erased by a daily process', excluded: 'active membership information, future bookings', notAnon: 'not anonymized data' }
+};
+
+test('#690: 改定予告（第1段階）は履歴として残り、告知日の14日後が効力発生日', function () {
   var n = findNotice();
   assert.ok(n, '改定予告');
   assert.strictEqual(n.date, NOTICE_DATE);
-  assert.strictEqual(n.type, '重要');
-  var news = read('_data/news_ja.yml');
-  assert.strictEqual(news.indexOf('- date: "' + NOTICE_DATE + '"'), news.indexOf('- date'), '先頭');
-  ['2026年11月15日', '2026年11月1日', '起算日時', '日次処理', '有効な会員情報', '将来の予約', '紐付けを確認できない記録', '限定記録は別に保持', '版の履歴', 'Stripe', '準備が整い次第', '本文は変更していません'].forEach(function (w) {
-    assert.ok(n.body.indexOf(w) !== -1, w);
-  });
-});
-
-test('#690: 効力発生日は告知日から14日以上後（現行ポリシー11項）', function () {
-  var n = findNotice();
+  assert.ok(n.body.indexOf(EFFECTIVE_JA) !== -1);
   var announced = new Date(n.date.replace(/\./g, '-') + 'T00:00:00Z');
   var effective = new Date(EFFECTIVE + 'T00:00:00Z');
-  assert.ok((effective - announced) / 86400000 >= 14);
-  assert.ok(read('_includes/legal_ja.html').indexOf('効力発生日の14日前までに本サイト上でお知らせします') !== -1, '現行の14日前告知');
+  assert.ok((effective - announced) / 86400000 >= 14, '現行ポリシー11項（効力発生日の14日前まで）');
+  assert.ok(read('_includes/legal_ja.html').indexOf('効力発生日の14日前までに本サイト上でお知らせします') !== -1);
 });
 
-test('#690: 誤認させる表現を使わない（全件180日・匿名化・540日・稼働済み）', function () {
-  var n = findNotice();
-  ['すべての情報', '匿名', '540', '稼働', '開始しました', '消去しました'].forEach(function (w) {
-    assert.ok(n.body.indexOf(w) === -1, w);
+test('#690: 改定のお知らせ（効力発生日）が先頭にあり、予告の告知日・施行日と矛盾しない', function () {
+  var p = findPublished();
+  assert.ok(p, '改定のお知らせ');
+  assert.strictEqual(p.date, EFFECTIVE.replace(/-/g, '.'));
+  assert.strictEqual(p.type, '重要');
+  ['2026年11月1日', EFFECTIVE_JA, '180日', '起算日時', '日次処理', '有効な会員情報', '将来の予約', '版の履歴', 'Stripe'].forEach(function (w) {
+    assert.ok(p.body.indexOf(w) !== -1, w);
+  });
+  var news = read('_data/news_ja.yml');
+  assert.strictEqual(news.indexOf('- date: "' + p.date + '"'), news.indexOf('- date'), '先頭');
+});
+
+Object.keys(PAGES).forEach(function (key) {
+  var page = PAGES[key];
+  test('#690: ポリシー本文（' + key + '）に、台帳の消去・除外・匿名化でないことが書かれ、予告欄と入口リンクは撤去されている', function () {
+    var t = read(page.file);
+    assert.ok(t.indexOf(page.ledger) !== -1, page.ledger);
+    assert.ok(t.indexOf(page.excluded) !== -1, page.excluded);
+    assert.ok(t.indexOf(page.notAnon) !== -1, page.notAnon);
+    assert.ok(t.indexOf('id="privacy-notice"') === -1, '予告欄の撤去');
+    page.words.forEach(function (w) { assert.ok(t.indexOf(w) !== -1, w); });
   });
 });
 
-function withoutNotice(html) { return html.replace(/<p class="legal-notice"[\s\S]*?<\/p>/, ''); }
-
-test('#690: ポリシー本文は現行のまま（予告ボックスを除き未変更）', function () {
-  var legal = read('_includes/legal_ja.html');
-  assert.ok(legal.indexOf('最終改定日：2026年7月28日') !== -1);
-  assert.ok(withoutNotice(legal).indexOf('180日') === -1);
-  assert.ok(withoutNotice(read('legal/en.html')).indexOf('180 days') === -1);
-  assert.ok(withoutNotice(read('studio-x/legal/index.html')).indexOf('180日') === -1);
+test('#690: 本文は誤認させる表現を使わない（全件180日・匿名化済み・540日・稼働済み）', function () {
+  ['_includes/legal_ja.html', 'studio-x/legal/index.html', 'legal/en.html'].forEach(function (f) {
+    var t = read(f).replace(/<!--[\s\S]*?-->/g, '');
+    var m = /プライバシーポリシー[\s\S]*?(?=特定商取引|Commercial Disclosure|id="commerce")/.exec(t);
+    var policy = m ? m[0] : t;
+    ['すべての情報が180日', '匿名化済み', '匿名化しました', '540', '稼働', '開始しました', 'anonymized.', 'always erased'].forEach(function (w) {
+      assert.ok(policy.indexOf(w) === -1, f + ': ' + w);
+    });
+  });
 });
 
-test('#690: 対象の各版（SNB・mens・Studio X・英語）に予告が届く', function () {
-  // ポリシーページ（予告本文）
-  [['_includes/legal_ja.html', '2026年11月15日', '2026年11月1日'],
-   ['studio-x/legal/index.html', '2026年11月15日', '2026年11月1日'],
-   ['legal/en.html', 'November 15, 2026', 'November 1, 2026']].forEach(function (c) {
-    var t = read(c[0]);
-    assert.ok(/id="privacy-notice"/.test(t), c[0] + ' 予告');
-    assert.ok(t.indexOf(c[1]) !== -1 && t.indexOf(c[2]) !== -1, c[0] + ' 日付');
-  });
-  assert.ok(read('legal/en.html').indexOf('180 days') !== -1 && read('legal/en.html').indexOf('Stripe') !== -1, '英語で理解できる予告');
-  // 入口（予告へのリンク）
-  assert.ok(read('en.html').indexOf('legal/en.html#privacy-notice') !== -1, '英語トップ');
-  assert.ok(read('mens/index.html').indexOf('/mens/legal/\' | relative_url }}#privacy-notice') !== -1, 'mensトップ');
-  assert.ok(read('studio-x/index.html').indexOf('legal/#privacy-notice') !== -1, 'Studio Xトップ');
-  // mens法務ページは共通includeで予告が出る
-  assert.ok(read('mens/legal/index.html').indexOf('{% include legal_ja.html %}') !== -1);
+test('#690: 入口の予告リンク（英語トップ・mensトップ・Studio Xトップ）は撤去されている', function () {
+  assert.ok(read('en.html').indexOf('privacy-notice') === -1);
+  assert.ok(read('mens/index.html').indexOf('privacy-notice') === -1);
+  assert.ok(read('studio-x/index.html').indexOf('privacy-notice') === -1);
+});
+
+test('#690: 最終改定日が効力発生日になっている（SNB・mens）。Studio Xの履歴にも改定が記録されている', function () {
+  assert.ok(read('_includes/legal_ja.html').indexOf('最終改定日：' + EFFECTIVE_JA) !== -1);
+  var sx = read('studio-x/legal/index.html');
+  assert.ok(sx.indexOf('プライバシーポリシー（管理と保管の項目）は' + EFFECTIVE_JA + 'に改定しました') !== -1);
 });
 
 test('#690: 自動消去は有効化されていない（トリガー・有効化の自動実行がコードに無い）', function () {

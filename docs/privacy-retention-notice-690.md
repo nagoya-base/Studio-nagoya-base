@@ -36,14 +36,29 @@
 
 `how-to/`・予約フォーム等はポリシーへのリンクのみで本文を持たない。英語のお知らせデータはないため、英語利用者には `legal/en.html` と `en.html` で直接予告する（上記）。`archive/` はアーカイブのため対象外。
 
-## 第2段階の差替え案（レビュー用・未公開）
-最終文面は、実装（`gas/booking/README.md` Issue #680節）と一致することを確認して確定する。
+## 第2段階（効力発生日に本文を差し替える。Draft PR で用意し、条件を満たすまでマージしない）
+第1段階（2026年11月1日告知）の後、効力発生日（候補: 2026年11月15日）に、次を**同時に**公開する。
 
-### 日本語（SNB / SNB mens / Studio X 共通の趣旨）
-> 予約・会員等の台帳（スプレッドシート）に記録した氏名・メールアドレス・電話番号・連絡事項等の個人情報は、利用終了・取消確定・退会後の資格終了等、情報ごとに定める起算日時から180日が経過した後、対象条件を満たしたものを日次処理で消去します（セルの内容を空にします。予約の識別番号、日時、金額、状態、決済の識別情報など、取引の照合に必要な情報は残ります）。次の情報は対象から除外します：有効な会員情報、将来の予約、未精算・返金・紛争等の対応中の情報、起算日時や予約・会員との紐付けを確認できない記録。取引の照合・会計等に必要な限定記録は、別に保持します。台帳の版の履歴、メール、カレンダー、Stripe等の外部サービスに残る情報は、この処理の消去対象に含まれません。
+| 変更 | ファイル |
+| --- | --- |
+| 台帳の消去・除外・匿名化でないこと・開始前の情報の扱いを本文に追加 | `_includes/legal_ja.html`（SNB・SNB mens 共通。6項「管理と保管」）、`legal/en.html`（4項）、`studio-x/legal/index.html`（4項） |
+| 最終改定日を効力発生日に更新（SNB・mens）。Studio Xの履歴にも改定を記録 | `_includes/legal_ja.html`、`studio-x/legal/index.html` |
+| 予告欄（`#privacy-notice`）と、英語トップ・mensトップ・Studio Xトップの入口リンクを撤去 | 上記3ページ、`en.html`、`mens/index.html`、`studio-x/index.html` |
+| お知らせ「改定のお知らせ」を追加（予告は履歴として残す） | `_data/news_ja.yml` |
+| #658 の一時的な差分（mens トップの予告リンク）を外す | `test/mens-preview-633.test.js` |
 
-### 英語（`legal/en.html` 4項）
-> Personal information recorded in our booking and membership ledgers (such as name, email address, phone number and messages) is erased by a daily process once 180 days have passed from a start date defined for each type of information (for example, the end of use, confirmed cancellation, or the end of eligibility after membership withdrawal), provided the record meets the eligibility conditions. Active membership information, future bookings, information related to unsettled payments, refunds or disputes, and records whose start date or link cannot be verified are excluded. A limited set of transaction records needed for reconciliation and accounting is retained separately. Version history of the ledgers, email, calendar, and information remaining in external services such as Stripe is not covered by this process.
+本文は、実装（`gas/booking/README.md` Issue #680節）と一致させている。書いていないこと: 「すべての情報が180日で消える」「匿名化済み」（台帳には照合可能なIDが残る。本文に「匿名化された情報ではありません」と明記）、540日・稼働済みの表現（540日後の限定記録消去は現コードでは未実装）。「この運用の開始前に保存期間を過ぎていた情報も、開始後の処理により順次消去する」と書くことで、効力発生日と自動消去の実際の開始日が離れていても、本文が事実と合う。
+
+### マージ（公開）してよい条件 — すべて満たすまで Draft のまま
+1. 第1段階の予告が、**全版（SNB・SNB mens・英語・Studio X・お知らせ）で実際に公開され、表示を確認できている**。確認できた日を「告知日」として記録する。
+2. **効力発生日 ≥ 告知日 + 14日**（現行ポリシー11項）。1つでも公開確認が遅れた版があれば、その確認日から数え直す。
+3. マージの日が効力発生日以降である（効力発生日より前に本文を公開しない）。
+
+### 日付がずれたとき（バックデートしない）
+告知日・効力発生日が候補と違う場合は、次の**すべて**を実際の日付に合わせてから公開する: `_data/news_ja.yml`（予告・改定のお知らせの日付と本文中の日付）、`_includes/legal_ja.html` の最終改定日、`studio-x/legal/index.html` の履歴の日付、`test/privacy-retention-notice-690.test.js` の定数（`NOTICE_DATE` / `EFFECTIVE` / `EFFECTIVE_JA`）、`docs/` の日付。**予告（第1段階）の日付は、実際に公開した日のまま変えない。**
+
+### 公開後
+本番開始（有効化）は別の条件（#690）。本文の公開は自動消去の開始を意味しない。自動消去を開始した後は、必要なら「開始前に保存期間を過ぎていた情報も…順次消去する」の一文を見直す。
 
 ### 書かないこと
 - 「すべての情報が180日で消える」「匿名化済み」（台帳には照合可能なIDが残る。README明記）。
