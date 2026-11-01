@@ -2326,7 +2326,7 @@ p.pricing-note + p.pricing-note {
 .membership-prestart-start-date { display: inline-block; margin-left: 4px; padding: 2px 10px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 1.02rem; white-space: nowrap; }
 .membership-prestart-start-price, .membership-prestart-start-note { margin: 4px 0 0; font-size: 0.85rem; color: var(--text-muted); }
 
-/* プライバシーポリシー改定予告（#690。第2段階で本文を差し替えた後に削除） */
+/* 法的事項ページの告知欄（.legal-notice）。#690 のプライバシーポリシー改定予告で導入し、規約表記の整備の告知欄（terms-update-notice）も使うため残す */
 .legal-notice {
   margin: 12px 0 20px;
   padding: 12px 16px;
