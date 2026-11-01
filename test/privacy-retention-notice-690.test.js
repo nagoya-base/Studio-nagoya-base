@@ -50,12 +50,32 @@ test('#690: 誤認させる表現を使わない（全件180日・匿名化・54
   });
 });
 
-test('#690: ポリシー本文は現行のまま（第1段階では未変更）', function () {
+function withoutNotice(html) { return html.replace(/<p class="legal-notice"[\s\S]*?<\/p>/, ''); }
+
+test('#690: ポリシー本文は現行のまま（予告ボックスを除き未変更）', function () {
   var legal = read('_includes/legal_ja.html');
   assert.ok(legal.indexOf('最終改定日：2026年7月28日') !== -1);
-  assert.ok(legal.indexOf('180日') === -1);
-  assert.ok(read('legal/en.html').indexOf('180 days') === -1);
-  assert.ok(read('studio-x/legal/index.html').indexOf('180日') === -1);
+  assert.ok(withoutNotice(legal).indexOf('180日') === -1);
+  assert.ok(withoutNotice(read('legal/en.html')).indexOf('180 days') === -1);
+  assert.ok(withoutNotice(read('studio-x/legal/index.html')).indexOf('180日') === -1);
+});
+
+test('#690: 対象の各版（SNB・mens・Studio X・英語）に予告が届く', function () {
+  // ポリシーページ（予告本文）
+  [['_includes/legal_ja.html', '2026年11月15日', '2026年11月1日'],
+   ['studio-x/legal/index.html', '2026年11月15日', '2026年11月1日'],
+   ['legal/en.html', 'November 15, 2026', 'November 1, 2026']].forEach(function (c) {
+    var t = read(c[0]);
+    assert.ok(/id="privacy-notice"/.test(t), c[0] + ' 予告');
+    assert.ok(t.indexOf(c[1]) !== -1 && t.indexOf(c[2]) !== -1, c[0] + ' 日付');
+  });
+  assert.ok(read('legal/en.html').indexOf('180 days') !== -1 && read('legal/en.html').indexOf('Stripe') !== -1, '英語で理解できる予告');
+  // 入口（予告へのリンク）
+  assert.ok(read('en.html').indexOf('legal/en.html#privacy-notice') !== -1, '英語トップ');
+  assert.ok(read('mens/index.html').indexOf('/mens/legal/\' | relative_url }}#privacy-notice') !== -1, 'mensトップ');
+  assert.ok(read('studio-x/index.html').indexOf('legal/#privacy-notice') !== -1, 'Studio Xトップ');
+  // mens法務ページは共通includeで予告が出る
+  assert.ok(read('mens/legal/index.html').indexOf('{% include legal_ja.html %}') !== -1);
 });
 
 test('#690: 自動消去は有効化されていない（トリガー・有効化の自動実行がコードに無い）', function () {

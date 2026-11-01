@@ -161,6 +161,7 @@ function stripIntendedDiff(src) {
     .replace(/\n<!-- Google Analytics 4 -->[\s\S]*?<\/script>\n[\s\S]*?<\/script>\n/, '\n')
     .replace(/<!-- 相談フォーム[^\n]*-->\n<div class="z z-sky pv-form-zone">[\s\S]*?\{% include reservation_form_ja\.html %\}[\s\S]*?(<\/fieldset>\s*)?<\/div>\n/, '<!-- FORM -->\n')
     .replace(/<script src="\.\.\/scripts\/(analytics|reservation-form)\.js"><\/script>\n/g, '')
+    .replace(/ *<p class="pricing-note"><strong>【改定予告】<\/strong>2026年11月15日にプライバシーポリシー[^\n]*\n/, '') /* #690: 改定予告リンク（第2段階で削除） */
     .replace(/\n{2,}/g, '\n');
 }
 

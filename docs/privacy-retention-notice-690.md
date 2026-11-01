@@ -13,6 +13,19 @@
 - 現行ポリシー11項の「効力発生日の14日前まで」を満たすこと（テストで検査）。
 - 効力発生日は規約の適用日であり、**自動消去の開始日ではない**。開始は #690 の条件（技術確認・Stripe条件確認・告知期間経過・開始直前のdry-run）完了後。
 
+## 各版への告知（第1段階で届ける面）
+お知らせ（`news_ja`）は `index.html`・`news/index.html` にしか描画されないため、各版に次を追加した（ポリシー本文は現行のまま）。
+| 版 | 予告本文 | 入口のリンク |
+| --- | --- | --- |
+| SNB／SNB mens（日本語） | `_includes/legal_ja.html` の `#privacy-notice`（`legal/`・`mens/legal/` 共通） | `mens/index.html` の法的事項欄から `/mens/legal/#privacy-notice` |
+| 英語 | `legal/en.html` の `#privacy-notice`（英語で内容を記載。日本語のお知らせへのリンク付き） | `en.html` の Legal 欄から `legal/en.html#privacy-notice` |
+| Studio X | `studio-x/legal/index.html` の `#privacy-notice` | `studio-x/index.html` フッターから `legal/#privacy-notice` |
+
+## 14日の数え方（手順）
+1. 全版（上記＋お知らせ）が**実際に公開（デプロイ完了・表示確認）された日**を告知日とする。マージ時刻ではない。
+2. 効力発生日 ≥ 全版の公開確認日 + 14日。1つでも公開が遅れた版があれば、その公開確認日から数え直し、全版の日付を揃えて直す（バックデートしない）。
+3. 第2段階のPRで本文を差し替えるとき、`.legal-notice`（予告ボックス）と入口リンクを削除する。テストはその時に更新する。
+
 ## 適用される版の棚卸し（本文の差替え対象 = 第2段階）
 | 版 | ファイル | 該当項 |
 | --- | --- | --- |
@@ -21,7 +34,7 @@
 | 英語 | `legal/en.html`（`#privacy` 4項「Management and Retention」） | 4項 |
 | Studio X | `studio-x/legal/index.html`（`#privacy` 4項「管理と保管」） | 4項 |
 
-`how-to/`・予約フォーム等はポリシーへのリンクのみで本文を持たない。英語のお知らせデータはない（`_data/news_ja.yml` のみ）ため、英語版は第2段階で本文に反映する。`archive/` はアーカイブのため対象外。
+`how-to/`・予約フォーム等はポリシーへのリンクのみで本文を持たない。英語のお知らせデータはないため、英語利用者には `legal/en.html` と `en.html` で直接予告する（上記）。`archive/` はアーカイブのため対象外。
 
 ## 第2段階の差替え案（レビュー用・未公開）
 最終文面は、実装（`gas/booking/README.md` Issue #680節）と一致することを確認して確定する。
