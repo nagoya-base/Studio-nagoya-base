@@ -29,15 +29,14 @@
  * - PENDING作成時刻とCheckout Session作成時刻の間に処理遅延（Lock待ち・リトライ・
  *   ネットワーク往復）があると、Stripeへ送るexpires_atが実際のSession作成時刻から
  *   30分未満になり、Stripe API側のバリデーションエラーになるおそれがある。
- * - そのため、内部の仮押さえ期限（PENDING保持・空き枠ロック解除の基準。
- *   `CHECKOUT_HOLD_MINUTES`＝30分。旧`computeCheckoutHoldExpiryMillis`は未使用のため整理済み）と、Stripeへ実際に送るexpires_at
- *   （`computeStripeSessionExpiresAtSeconds`。安全マージンを載せた値）を別の関数として
- *   分離して提供する。
- * - さらに、内部の仮押さえ期限を先に確定させてそれに`expires_at`を後から合わせるのではなく、
- *   PR-B側はCheckout Session作成に**成功した後**、Stripeのレスポンスに含まれる実際の
- *   `expires_at`を内部の仮押さえ期限として保存し直すこと（Issue #341本文
- *   「Session expires_atをこの仮押さえ期限と一致させる」を、常に一致する構造で実現する。
- *   別々に計算した2つの期限を後から突き合わせて一致を祈る設計にしない）。
+ * - そのため`CHECKOUT_HOLD_MINUTES`（30分）は、Stripeへ送るexpires_atを計算する
+ *   `computeStripeSessionExpiresAtSeconds`の基準値として使い、安全マージンを載せた
+ *   30分＋5分を送信期限とする（30分固定で枠を解放する実装ではない）。
+ * - 実際に保存する仮押さえ期限（PENDING保持・空き枠ロック解除の基準）は、Checkout Session
+ *   作成に**成功した後**、Stripeのレスポンスに含まれる実際の`expires_at`を保存し直した値
+ *   （BookingRepositoryが保存）。Issue #341本文「Session expires_atをこの仮押さえ期限と
+ *   一致させる」を、常に一致する構造で実現する。別々に計算した2つの期限を後から突き合わせて
+ *   一致を祈る設計にしない。（旧`computeCheckoutHoldExpiryMillis`は未使用のためIssue #700で削除。）
  */
 'use strict';
 

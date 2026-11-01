@@ -4285,16 +4285,17 @@ Issue #341本文は仮押さえ時間の目安を30分としている。Stripe C
 `expires_at`が実際のSession作成時刻から30分未満になり、Stripe API側のバリデーション
 エラーになるおそれがある。そのため`CardPayment.gs`では:
 
-- 内部の仮押さえ期限（PENDING保持・空き枠ロック解除の基準）は`CHECKOUT_HOLD_MINUTES=30`固定
-  （旧`computeCheckoutHoldExpiryMillis`は未使用のためIssue #700で整理）と、
-- Stripeへ実際に送る`expires_at`を計算する`computeStripeSessionExpiresAtSeconds`
-  （`CHECKOUT_HOLD_MINUTES`に`STRIPE_SESSION_EXPIRY_BUFFER_MINUTES=5`分の安全マージンを
-  上乗せ）
+- `CHECKOUT_HOLD_MINUTES=30`は、Stripeへ送る`expires_at`を計算する
+  `computeStripeSessionExpiresAtSeconds`の**基準値**（`CHECKOUT_HOLD_MINUTES`に
+  `STRIPE_SESSION_EXPIRY_BUFFER_MINUTES=5`分の安全マージンを上乗せ＝30分＋5分）であり、
+  30分固定で枠を解放する実装ではない。
+- 実際に保存する仮押さえ期限（`paymentHoldExpiresAt`。PENDING保持・空き枠ロック解除の基準）は、
+  Checkout Session作成に**成功した後**にStripeのレスポンスに含まれる実際の`expires_at`
+  （`BookingRepository`が`expiresAtSeconds`から保存）。Issue #341本文「Session expires_atを
+  この仮押さえ期限と一致させる」は、2つの期限を別々に計算して突き合わせるのではなく、
+  常に一致する構造で実現している。
 
-を別関数として分離した。さらに、PR-B側はCheckout Session作成に**成功した後**、
-Stripeのレスポンスに含まれる実際の`expires_at`を内部の仮押さえ期限として**保存し直す**
-実装にすること（Issue #341本文「Session expires_atをこの仮押さえ期限と一致させる」を、
-2つの期限を別々に計算して後から突き合わせるのではなく、常に一致する構造で実現する）。
+（旧`computeCheckoutHoldExpiryMillis`は未使用のためIssue #700で削除した。）
 
 #### 仮押さえの解放とStripe側の失効確認（PR-Aレビュー対応・項目4）
 
@@ -5878,8 +5879,8 @@ booking-card-checkout.test.js`・`test/booking-confirm-expire.test.js`・
   `processingClaimedAt`だけを更新し、世代番号（`processingClaimCount`）は変更しない。
 - `finalizeForProcessing(rowNumber, generation, fields, now)`: 書き込み直前に世代番号を
   再確認してから書き込む（fencing token）。`StripeWebhookProcessor.gs`の本番処理経路は
-  従来の`finalize()`（Issue #700で整理済み）ではなくこちらを使う（旧`finalize()`はfencingを行わない汎用版だった
-  として残し、テストのフィクスチャ構築にのみ使う）。
+  従来の`finalize()`は使わない。旧`finalize()`（fencingを行わない汎用版）はIssue #700で
+  削除し、テストの終端行フィクスチャも世代照合付きのこのAPIへ統一した。
 
 `StripeWebhookProcessor.processSingleEvent_`に、Checkout Session再取得後・PaymentIntent
 再取得後・confirmBooking直前の計3箇所で`renewProcessingLease`の呼び出しを追加し、
