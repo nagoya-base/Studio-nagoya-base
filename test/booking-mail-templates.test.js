@@ -59,10 +59,8 @@ test('buildPendingMail: 予約ID/氏名/利用日/開始/終了/利用時間/人
   var mail = templates.buildPendingMail(sampleRecord(), CONFIG);
   assert.match(mail.body, /SX-20261001-AAAAAAAA/);
   assert.match(mail.body, /山田太郎/);
-  assert.match(mail.body, /2026-10-01/);
-  assert.match(mail.body, /10:00/);
-  assert.match(mail.body, /12:00/);
-  assert.match(mail.body, /120分/);
+  assert.match(mail.body, /利用日時: 2026年10月1日（木）10:00〜12:00/);
+  assert.match(mail.body, /利用時間: 2時間\n/);
   assert.match(mail.body, /2名/);
   assert.match(mail.body, /現金/);
   assert.match(mail.body, /contact@example\.com/);
@@ -195,9 +193,7 @@ test('buildConfirmedMail: 必須内容を含み、来場詳細は前日案内で
   var templates = loadTemplates();
   var mail = templates.buildConfirmedMail(sampleRecord(), CONFIG);
   assert.match(mail.body, /SX-20261001-AAAAAAAA/);
-  assert.match(mail.body, /2026-10-01/);
-  assert.match(mail.body, /10:00/);
-  assert.match(mail.body, /12:00/);
+  assert.match(mail.body, /利用日時: 2026年10月1日（木）10:00〜12:00/);
   assert.match(mail.body, /前日/);
   assert.strictEqual(mail.body.indexOf('料金'), -1, '現行Bookingsに確定料金列がないため料金を出さない');
 });
@@ -222,7 +218,7 @@ test('buildCancelledMail: キャンセル済みであること・予約ID・元�
   assert.match(mail.subject, /キャンセル/);
   assert.match(mail.body, /キャンセル/);
   assert.match(mail.body, /SX-20261001-AAAAAAAA/);
-  assert.match(mail.body, /2026-10-01/);
+  assert.match(mail.body, /利用日時: 2026年10月1日（木）10:00〜12:00/);
   assert.match(mail.body, /Studio X/);
 });
 
@@ -245,9 +241,7 @@ test('buildExpiredMail: 予約ID/利用日/開始/終了/ブランドを含み�
   var templates = loadTemplates();
   var mail = templates.buildExpiredMail(sampleRecord({ paymentMethod: 'オンラインクレジットカード' }), CONFIG);
   assert.match(mail.body, /SX-20261001-AAAAAAAA/);
-  assert.match(mail.body, /2026-10-01/);
-  assert.match(mail.body, /10:00/);
-  assert.match(mail.body, /12:00/);
+  assert.match(mail.body, /利用日時: 2026年10月1日（木）10:00〜12:00/);
   assert.match(mail.body, /Studio X/);
   assert.match(mail.body, /再度お申し込み/, '再申込みの案内を含むべき');
   assert.match(mail.body, /二重のお支払い/, '支払い済みの場合は運営へ連絡し、再申込み・二重決済をしない旨を含むべき');
@@ -279,9 +273,7 @@ test('buildPaymentLinkMail: 予約者名/予約ID/利用日・開始・終了時
   var mail = templates.buildPaymentLinkMail(record, CONFIG, SAMPLE_PAYMENT_LINK_URL);
   assert.match(mail.body, /山田太郎/);
   assert.match(mail.body, /SX-20261001-AAAAAAAA/);
-  assert.match(mail.body, /利用日: 2026-10-01（木）/);
-  assert.match(mail.body, /10:00/);
-  assert.match(mail.body, /12:00/);
+  assert.match(mail.body, /利用日時: 2026年10月1日（木）10:00〜12:00/);
   assert.match(mail.body, new RegExp(SAMPLE_PAYMENT_LINK_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(mail.body, /contact@example\.com/);
 });
@@ -296,7 +288,7 @@ test('buildPaymentLinkMail: 実際の支払期限日時（Booking.computeCardPay
   var config = Object.assign({}, CONFIG, { ttlConfig: { minHoursBeforeStart: 2 } });
   var mail = templates.buildPaymentLinkMail(record, config, SAMPLE_PAYMENT_LINK_URL);
   /* createdAt+72h = 2026-10-01 10:00（buildPendingMailの同条件テストと同じ計算結果）。 */
-  assert.match(mail.body, /お支払い期限: 2026-10-01（木） 10:00/);
+  assert.match(mail.body, /お支払い期限: 2026年10月1日（木） 10:00/);
 });
 
 test('buildPaymentLinkMail: 期限内の支払い・確定連絡待ちの旨、および支払い済みで失効した場合は二重決済・再申し込みをせず運営へ連絡する旨を含む', function () {
@@ -341,7 +333,7 @@ test('buildPriceUpdateMail: 予約ID/氏名/利用日時/ブランド/修正後�
   assert.match(mail.subject, /訂正/);
   assert.match(mail.body, /SX-20261001-AAAAAAAA/);
   assert.match(mail.body, /山田太郎/);
-  assert.match(mail.body, /2026-10-01/);
+  assert.match(mail.body, /利用日時: 2026年10月1日（木）10:00〜12:00/);
   assert.match(mail.body, /Studio X/);
   assert.match(mail.body, /訂正後の利用料金: 3,500円（税込）/);
   assert.match(mail.body, /contact@example\.com/);
@@ -464,8 +456,8 @@ test('brandラベル: snb/mens/studio_xで同じロジックを使い、表示�
 });
 
 /*
- * 利用日の曜日表示（Issue #311）。BookingAvailability.formatDateWithWeekday（Availability.gs）
- * を共通で使い、'YYYY-MM-DD（曜）'形式で表示することを、利用者向け4テンプレート
+ * 利用日時の日本語表示（Issue #311 / #705）。BookingAvailability.formatDateJa（Availability.gs）
+ * を共通で使い、'2026年10月1日（木）10:00〜12:00'形式で表示することを、利用者向け4テンプレート
  * （仮予約受付・予約確定・キャンセル・前日リマインド）すべてで確認する。
  * sampleRecord()の既定date '2026-10-01' は木曜日。
  */
@@ -479,7 +471,7 @@ test('利用日の曜日表示: buildPendingMail/buildConfirmedMail/buildCancell
   var reminder = templates.buildReminderMail(record, CONFIG, DUMMY_ACCESS_GUIDE);
 
   [pending, confirmed, cancelled, reminder].forEach(function (mail) {
-    assert.match(mail.body, /利用日: 2026-10-01（木）/);
+    assert.match(mail.body, /利用日時: 2026年10月1日（木）10:00〜12:00/);
   });
 });
 
@@ -488,7 +480,7 @@ test('利用日の曜日表示: 別の曜日（2026-10-05は月曜日）でも�
   var record = sampleRecord({ date: '2026-10-05' });
 
   var mail = templates.buildConfirmedMail(record, CONFIG);
-  assert.match(mail.body, /利用日: 2026-10-05（月）/);
+  assert.match(mail.body, /利用日時: 2026年10月5日（月）10:00〜12:00/);
 });
 
 /*
@@ -590,4 +582,96 @@ test('Issue #422: brandが空の既存予約データはSNB扱いでメールを
   var mail = t.buildPendingMail(sampleRecord({ brand: '' }), CONFIG);
   assert.ok(mail.body.indexOf('--\nStudio Nagoya Base') !== -1);
   assert.match(mail.body, /SX-20261001-AAAAAAAA/);
+});
+
+/*
+ * 利用日時の日本語表記の統一（Issue #705）。JavaScriptのDate文字列
+ * （Tue Dec 01 2026 00:00:00 GMT+0900 (日本標準時)）を利用者向けメールへ出さない。
+ */
+var ALL_MAIL_BUILDERS = [
+  ['buildPendingMail', function (t, r) { return t.buildPendingMail(r, CONFIG); }],
+  ['buildConfirmedMail', function (t, r) { return t.buildConfirmedMail(r, CONFIG); }],
+  ['buildCancelledMail', function (t, r) { return t.buildCancelledMail(r, CONFIG); }],
+  ['buildExpiredMail', function (t, r) { return t.buildExpiredMail(r, CONFIG); }],
+  ['buildReminderMail', function (t, r) { return t.buildReminderMail(r, CONFIG, DUMMY_ACCESS_GUIDE); }],
+  ['buildPaymentLinkMail', function (t, r) { return t.buildPaymentLinkMail(r, CONFIG, SAMPLE_PAYMENT_LINK_URL); }],
+  ['buildPriceUpdateMail', function (t, r) { return t.buildPriceUpdateMail(Object.assign({ priceAmount: 4000 }, r), CONFIG); }],
+  ['buildCardCheckoutMail', function (t, r) {
+    return t.buildCardCheckoutMail(r, CONFIG, { url: 'https://checkout.example.com/x', expiresAt: new Date('2026-10-01T09:00:00+09:00') });
+  }],
+  ['buildRefundedMail', function (t, r) { return t.buildRefundedMail(Object.assign({ refundAmount: 4000 }, r), CONFIG); }]
+];
+
+test('#705: record.dateがDate値でも、Date文字列（GMT+0900等）を本文に出さず日本語形式で表示する', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({
+    brand: 'mens',
+    date: new Date('2026-12-01T00:00:00+09:00'),
+    startAt: new Date('2026-12-01T08:00:00+09:00'),
+    endAt: new Date('2026-12-01T11:00:00+09:00'),
+    paymentMethod: 'オンラインクレジットカード'
+  });
+  ALL_MAIL_BUILDERS.forEach(function (entry) {
+    var mail = entry[1](templates, record);
+    assert.doesNotMatch(mail.body, /GMT|日本標準時|Tue Dec|Dec 01 2026/, entry[0] + ': Date文字列が本文に出ている');
+    assert.match(mail.body, /利用日: 2026年12月1日（火）|利用日時: 2026年12月1日（火）8:00〜11:00/, entry[0]);
+  });
+});
+
+test('#705: 全テンプレートで「開始時刻:」「終了時刻:」の個別行ではなく1行の「利用日時:」を使う', function () {
+  var templates = loadTemplates();
+  ALL_MAIL_BUILDERS.forEach(function (entry) {
+    var mail = entry[1](templates, sampleRecord());
+    assert.doesNotMatch(mail.body, /開始時刻:|終了時刻:/, entry[0]);
+    assert.doesNotMatch(mail.body, /利用日: \d{4}-\d{2}-\d{2}/, entry[0] + ': ISO形式の利用日が残っている');
+  });
+});
+
+test('#705: SNB mensの却下（仮押さえ解除）メールがIssueの表示例どおりになる', function () {
+  var templates = loadTemplates();
+  var record = sampleRecord({
+    bookingId: 'MENS-20261201-D9C202AF',
+    brand: 'mens',
+    name: 'テスト',
+    date: new Date('2026-12-01T00:00:00+09:00'),
+    startAt: new Date('2026-12-01T08:00:00+09:00'),
+    endAt: new Date('2026-12-01T11:00:00+09:00'),
+    people: '5名',
+    largePartyApprovalStatus: 'REJECTED',
+    largePartyPeople: 5
+  });
+  var mail = templates.buildCancelledMail(record, CONFIG);
+  assert.match(mail.body, /利用日時: 2026年12月1日（火）8:00〜11:00\n利用時間: 3時間\nブランド: SNB mens\n/);
+  assert.match(mail.body, /予約ID: MENS-20261201-D9C202AF/);
+});
+
+test('#705: BookingAvailability.formatDateJa / formatTimeRangeJa / formatDurationJa', function () {
+  var A = loadBookingSandbox(['Availability.gs'], {}).BookingAvailability;
+  assert.strictEqual(A.formatDateJa('2026-12-01', 'Asia/Tokyo'), '2026年12月1日（火）');
+  assert.strictEqual(A.formatDateJa(new Date('2026-11-30T15:00:00Z'), 'Asia/Tokyo'), '2026年12月1日（火）');
+  assert.strictEqual(A.formatDateJa('2026-01-04', 'Asia/Tokyo'), '2026年1月4日（日）');
+  assert.strictEqual(A.formatDateJa(new Date('invalid'), 'Asia/Tokyo'), '');
+  assert.strictEqual(A.formatDateJa('Tue Dec 01 2026 00:00:00 GMT+0900 (日本標準時)', 'Asia/Tokyo'), '2026年12月1日（火）');
+  assert.strictEqual(A.formatDateJa('not a date', 'Asia/Tokyo'), '');
+  assert.strictEqual(A.formatDateJa('', 'Asia/Tokyo'), '');
+  assert.strictEqual(A.formatDateJa(undefined, 'Asia/Tokyo'), '');
+  assert.strictEqual(A.formatTimeRangeJa(new Date('2026-12-01T08:00:00+09:00'), new Date('2026-12-01T11:30:00+09:00'), 'Asia/Tokyo'), '8:00〜11:30');
+  assert.strictEqual(A.formatTimeRangeJa(new Date('2026-12-01T10:00:00+09:00'), new Date('2026-12-01T22:00:00+09:00'), 'Asia/Tokyo'), '10:00〜22:00');
+  assert.strictEqual(A.formatDurationJa(new Date('2026-12-01T08:00:00+09:00'), new Date('2026-12-01T11:00:00+09:00')), '3時間');
+  assert.strictEqual(A.formatDurationJa(new Date('2026-12-01T08:00:00+09:00'), new Date('2026-12-01T10:30:00+09:00')), '2時間30分');
+  assert.strictEqual(A.formatDurationJa(new Date('2026-12-01T08:00:00+09:00'), new Date('2026-12-01T08:45:00+09:00')), '45分');
+  assert.strictEqual(A.formatDurationJa(null, null), '');
+});
+
+test('#705: record.dateがDate.toString()相当の文字列・解釈不能な文字列でも、Date文字列を本文に出さない', function () {
+  var templates = loadTemplates();
+  ['Tue Dec 01 2026 00:00:00 GMT+0900 (日本標準時)', 'Tue Dec 99 2026 GMT+0900 (日本標準時)', 'invalid GMT+0900'].forEach(function (rawDate) {
+    var record = sampleRecord({ date: rawDate });
+    ALL_MAIL_BUILDERS.forEach(function (entry) {
+      var mail = entry[1](templates, record);
+      assert.doesNotMatch(mail.body, /GMT|日本標準時|Tue Dec/, entry[0] + ' / ' + rawDate);
+    });
+  });
+  var ok = templates.buildCancelledMail(sampleRecord({ date: 'Tue Dec 01 2026 00:00:00 GMT+0900 (日本標準時)', startAt: new Date('2026-12-01T08:00:00+09:00'), endAt: new Date('2026-12-01T11:00:00+09:00') }), CONFIG);
+  assert.match(ok.body, /利用日時: 2026年12月1日（火）8:00〜11:00/);
 });

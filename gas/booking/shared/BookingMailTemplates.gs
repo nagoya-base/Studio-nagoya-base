@@ -18,8 +18,9 @@
  *   プレースホルダを出すのみで、値を偽装・省略の判断はBookingMailer.gs側（fail-safe:
  *   前日案内を成功扱いにしない）に委ねる。
  *
- * 利用日の曜日表示（Issue #311）: record.dateはタイムゾーン正規化済みの'YYYY-MM-DD'文字列
- * のため、BookingAvailability.formatDateWithWeekday（Availability.gs）で曜日を付ける。
+ * 利用日時の表示（Issue #311 / #705）: 利用者向けの日時は日本語形式（2026年12月1日（火）8:00〜11:00）へ
+ * 統一する。record.dateは'YYYY-MM-DD'文字列またはDate値のため、BookingAvailability.formatDateJa
+ * （Availability.gs）がconfig.timezone基準で正規化して曜日を付ける。
  * new Date(record.date).getDay()のようなGAS実行環境のローカルtimezoneに依存する変換は
  * 使わない（AdminNotifier.gsと同じ共通関数を使い、曜日変換ロジックを二重実装しない）。
  */
@@ -32,12 +33,19 @@ var BookingMailTemplates = (function () {
     return BookingAvailability.formatTimeInTimezone(date, timezone) || '';
   }
 
-  function formatDurationMinutes_(startAt, endAt) {
-    if (!startAt || !endAt || typeof startAt.getTime !== 'function' || typeof endAt.getTime !== 'function') {
-      return '';
-    }
-    var minutes = Math.round((endAt.getTime() - startAt.getTime()) / 60000);
-    return minutes > 0 ? minutes + '分' : '';
+  /* 利用日時の共通表示（Issue #705）。利用者向けメールは、すべてこの1行
+     「利用日時: 2026年12月1日（火）8:00〜11:00」へ統一する。JavaScriptのDate文字列
+     （Tue Dec 01 2026 ... GMT+0900）は本文へ出さない。整形ロジックはAvailability.gsの
+     共通関数（formatDateJa / formatTimeRangeJa / formatDurationJa）に集約している。 */
+  function dateTimeLine_(record, timezone) {
+    var date = BookingAvailability.formatDateJa(record.date, timezone);
+    var range = BookingAvailability.formatTimeRangeJa(record.startAt, record.endAt, timezone);
+    return '利用日時: ' + date + (range ? range : '');
+  }
+
+  function durationLine_(record) {
+    var duration = BookingAvailability.formatDurationJa(record.startAt, record.endAt);
+    return duration ? '利用時間: ' + duration : '';
   }
 
   function contactLine_(config) {
@@ -191,7 +199,6 @@ var BookingMailTemplates = (function () {
   function buildPhotoSupportReceivedMail_(record, config) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
-    var duration = formatDurationMinutes_(record.startAt, record.endAt);
     var subject = '【' + brandLabel + '】作品撮りサポートプランのお申し込みを受け付けました（承認待ち・未確定）';
     var body = joinNonEmpty_([
       record.name + ' 様',
@@ -202,10 +209,8 @@ var BookingMailTemplates = (function () {
       '※承認できない場合は仮押さえを解除し、本プランは不成立となります（通常のSNB mens料金へは自動で切り替えません）。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + formatTime_(record.startAt, timezone),
-      '終了時刻: ' + formatTime_(record.endAt, timezone),
-      duration ? '利用時間: ' + duration : '',
+      dateTimeLine_(record, config.timezone),
+      durationLine_(record),
       '利用人数: ' + record.people,
       photoSupportBreakdownLines_(record).join('\n'),
       photoSupportBackdropGuidance_(record) ? '\n' + photoSupportBackdropGuidance_(record) : '',
@@ -232,7 +237,6 @@ var BookingMailTemplates = (function () {
     }
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
-    var duration = formatDurationMinutes_(record.startAt, record.endAt);
     var subject = '【' + brandLabel + '】作品撮りサポートプランを承認しました（お支払いは' + deadline + 'まで）';
     var body = joinNonEmpty_([
       record.name + ' 様',
@@ -245,10 +249,8 @@ var BookingMailTemplates = (function () {
       'お支払い期限: ' + deadline,
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + formatTime_(record.startAt, timezone),
-      '終了時刻: ' + formatTime_(record.endAt, timezone),
-      duration ? '利用時間: ' + duration : '',
+      dateTimeLine_(record, config.timezone),
+      durationLine_(record),
       '利用人数: ' + record.people,
       photoSupportBreakdownLines_(record).join('\n'),
       photoSupportBackdropGuidance_(record) ? '\n' + photoSupportBackdropGuidance_(record) : '',
@@ -293,9 +295,7 @@ var BookingMailTemplates = (function () {
       '※承認後24時間以内にお支払いが完了しない場合は不成立となり、仮押さえを解除します。承認できない場合も仮押さえを解除します（4名扱いへの変更や自動のご請求はしません）。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + formatTime_(record.startAt, timezone),
-      '終了時刻: ' + formatTime_(record.endAt, timezone),
+      dateTimeLine_(record, config.timezone),
       '利用人数: ' + record.people,
       priceLine_(record),
       '',
@@ -322,9 +322,7 @@ var BookingMailTemplates = (function () {
       '※お支払い期限は ' + due + '（承認から24時間以内）です。期限までにお支払いが完了しない場合は不成立となり、枠を解除します。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + formatTime_(record.startAt, timezone),
-      '終了時刻: ' + formatTime_(record.endAt, timezone),
+      dateTimeLine_(record, config.timezone),
       '利用人数: ' + record.people,
       priceLine_(record),
       '',
@@ -348,7 +346,7 @@ var BookingMailTemplates = (function () {
       brandLabel + ' のご予約の利用人数を変更しました。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '利用日: ' + BookingAvailability.formatDateJa(record.date, config.timezone),
       '利用人数: ' + change.oldPeople + ' → ' + change.newPeople
     ];
     if (typeof change.onsitePaymentAmount === 'number') lines.push('当日のお支払い額は' + formatJpyAmount_(change.onsitePaymentAmount) + 'です。');
@@ -370,9 +368,6 @@ var BookingMailTemplates = (function () {
     if (isPhotoSupportRecord_(record)) return buildPhotoSupportReceivedMail_(record, config);
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
-    var startTime = formatTime_(record.startAt, timezone);
-    var endTime = formatTime_(record.endAt, timezone);
-    var duration = formatDurationMinutes_(record.startAt, record.endAt);
     var isCard = Booking.isCardPaymentMethod(record.paymentMethod);
 
     /* Issue #445: オンラインクレジットカードは「申込→そのままオンライン決済→決済完了で自動確定」。
@@ -399,10 +394,8 @@ var BookingMailTemplates = (function () {
       intro[2] || '',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + startTime,
-      '終了時刻: ' + endTime,
-      duration ? '利用時間: ' + duration : '',
+      dateTimeLine_(record, config.timezone),
+      durationLine_(record),
       'ブランド: ' + brandLabel,
       '利用人数: ' + record.people,
       priceLine_(record),
@@ -443,9 +436,6 @@ var BookingMailTemplates = (function () {
       throw new Error('お支払い期限が無効なため支払い案内メールを作成できません。');
     }
     var brandLabel = Booking.getBrandLabel(record.brand);
-    var startTime = formatTime_(record.startAt, config.timezone);
-    var endTime = formatTime_(record.endAt, config.timezone);
-    var duration = formatDurationMinutes_(record.startAt, record.endAt);
 
     var subject = '【' + brandLabel + '】予約申込を受け付けました（決済ページのご案内）';
     var body = joinNonEmpty_([
@@ -462,10 +452,8 @@ var BookingMailTemplates = (function () {
       'すでにお支払い済みの場合は、再申し込みや二重決済をせず、運営までご連絡ください。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + startTime,
-      '終了時刻: ' + endTime,
-      duration ? '利用時間: ' + duration : '',
+      dateTimeLine_(record, config.timezone),
+      durationLine_(record),
       'ブランド: ' + brandLabel,
       '利用人数: ' + record.people,
       priceLine_(record),
@@ -490,9 +478,6 @@ var BookingMailTemplates = (function () {
   function buildConfirmedMail(record, config) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
-    var startTime = formatTime_(record.startAt, timezone);
-    var endTime = formatTime_(record.endAt, timezone);
-    var duration = formatDurationMinutes_(record.startAt, record.endAt);
 
     var subject = '【' + brandLabel + '】ご予約が確定しました';
     var body = joinNonEmpty_([
@@ -501,10 +486,8 @@ var BookingMailTemplates = (function () {
       'ご予約が確定しましたのでお知らせいたします。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + startTime,
-      '終了時刻: ' + endTime,
-      duration ? '利用時間: ' + duration : '',
+      dateTimeLine_(record, config.timezone),
+      durationLine_(record),
       'ブランド: ' + brandLabel,
       '利用人数: ' + record.people,
       record.paymentMethod ? '支払方法: ' + record.paymentMethod : '',
@@ -528,8 +511,6 @@ var BookingMailTemplates = (function () {
   function buildCancelledMail(record, config) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
-    var startTime = formatTime_(record.startAt, timezone);
-    var endTime = formatTime_(record.endAt, timezone);
     if (isPhotoSupportRecord_(record) && !record.supportApprovedAt) {
       /* Issue #667: 承認前のキャンセル＝不承認（スタッフ対応・機材・予約枠の都合）。仮押さえを解除し、プランは不成立。 */
       return {
@@ -541,9 +522,7 @@ var BookingMailTemplates = (function () {
           '※通常のSNB mens料金へは自動で切り替わりません。通常の時間貸しをご希望の場合は、改めて予約ページからお申し込みください。',
           '',
           '予約ID: ' + record.bookingId,
-          '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-          '開始時刻: ' + startTime,
-          '終了時刻: ' + endTime,
+          dateTimeLine_(record, config.timezone),
           '',
           rebookLine_(record),
           contactLine_(config),
@@ -564,9 +543,8 @@ var BookingMailTemplates = (function () {
         : '下記のご予約はキャンセルされました。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + startTime,
-      '終了時刻: ' + endTime,
+      dateTimeLine_(record, config.timezone),
+      durationLine_(record),
       'ブランド: ' + brandLabel,
       '',
       refundNoticeLines_(record),
@@ -663,7 +641,7 @@ var BookingMailTemplates = (function () {
       '下記のご予約のお支払いについて、クレジットカードへの返金手続きが完了しました。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
+      '利用日: ' + BookingAvailability.formatDateJa(record.date, config.timezone),
       'ブランド: ' + brandLabel,
       '返金額: ' + amount,
       '',
@@ -686,8 +664,6 @@ var BookingMailTemplates = (function () {
   function buildExpiredMail(record, config) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
-    var startTime = formatTime_(record.startAt, timezone);
-    var endTime = formatTime_(record.endAt, timezone);
     if (isPhotoSupportRecord_(record)) {
       /* Issue #667: 作品撮りサポートの不成立通知。通常のSNB mens料金へは自動で切り替えない。 */
       return {
@@ -699,9 +675,7 @@ var BookingMailTemplates = (function () {
           '※通常のSNB mens料金へは自動で切り替わりません。お支払いは発生していません。',
           '',
           '予約ID: ' + record.bookingId,
-          '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-          '開始時刻: ' + startTime,
-          '終了時刻: ' + endTime,
+          dateTimeLine_(record, config.timezone),
           '',
           '改めてご利用をご希望の場合は、予約ページから再度お申し込みください（作品撮りサポートプランは利用日の7日前までのお申し込みです）。',
           rebookLine_(record),
@@ -721,9 +695,7 @@ var BookingMailTemplates = (function () {
         : '下記のご予約は、お支払い期限までに運営による確認ができなかったため、失効いたしました。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + startTime,
-      '終了時刻: ' + endTime,
+      dateTimeLine_(record, config.timezone),
       'ブランド: ' + brandLabel,
       '',
       '改めてご利用をご希望の場合は、お手数ですが予約ページから再度お申し込みください。',
@@ -760,8 +732,6 @@ var BookingMailTemplates = (function () {
   function buildPaymentLinkMail(record, config, paymentLinkUrl) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
-    var startTime = formatTime_(record.startAt, timezone);
-    var endTime = formatTime_(record.endAt, timezone);
     var ttlConfig = (config && config.ttlConfig) || {};
 
     var dueDisplay = '';
@@ -775,7 +745,7 @@ var BookingMailTemplates = (function () {
       var dueDate = new Date(dueMillis);
       var dueDateString = BookingAvailability.formatDateInTimezone(dueDate, timezone);
       var dueTimeString = formatTime_(dueDate, timezone);
-      dueDisplay = dueDateString ? BookingAvailability.formatDateWithWeekday(dueDateString) + ' ' + dueTimeString : '';
+      dueDisplay = dueDateString ? BookingAvailability.formatDateJa(dueDateString, timezone) + ' ' + dueTimeString : '';
     }
 
     var subject = '【' + brandLabel + '】お支払いのご案内（決済リンク）';
@@ -790,9 +760,7 @@ var BookingMailTemplates = (function () {
           'ご予約はお支払い期限を過ぎて一度失効しておりますが、下記のStripe決済リンクをご案内いたします。',
           '',
           '予約ID: ' + record.bookingId,
-          '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-          '開始時刻: ' + startTime,
-          '終了時刻: ' + endTime,
+          dateTimeLine_(record, config.timezone),
           'ブランド: ' + brandLabel,
           '',
           '決済リンク: ' + paymentLinkUrl,
@@ -811,9 +779,7 @@ var BookingMailTemplates = (function () {
       'ご予約のお支払い方法として、下記のStripe決済リンクをご案内いたします。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + startTime,
-      '終了時刻: ' + endTime,
+      dateTimeLine_(record, config.timezone),
       'ブランド: ' + brandLabel,
       '',
       '決済リンク: ' + paymentLinkUrl,
@@ -849,8 +815,6 @@ var BookingMailTemplates = (function () {
   function buildReminderMail(record, config, accessGuide, options) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
-    var startTime = formatTime_(record.startAt, timezone);
-    var endTime = formatTime_(record.endAt, timezone);
     var guide = accessGuide || {};
     var now = options && options.now;
     var sendDate = BookingAvailability.formatDateInTimezone(now || new Date(), timezone);
@@ -872,9 +836,7 @@ var BookingMailTemplates = (function () {
       dayWord + 'のご予約について、来場方法をご案内します。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + startTime,
-      '終了時刻: ' + endTime,
+      dateTimeLine_(record, config.timezone),
       'ブランド: ' + brandLabel,
       '',
       '--- 来場方法 ---',
@@ -919,8 +881,6 @@ var BookingMailTemplates = (function () {
   function buildPriceUpdateMail(record, config) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
-    var startTime = formatTime_(record.startAt, timezone);
-    var endTime = formatTime_(record.endAt, timezone);
     var formattedAmount = formatJpyAmount_(Booking.getEffectivePriceAmount(record));
     if (!formattedAmount) {
       throw new Error('利用料金が確定していないため、訂正案内メールを送信できません。');
@@ -934,9 +894,7 @@ var BookingMailTemplates = (function () {
       '※このメールの時点でもご予約はまだ確定しておりません。内容をご確認ください。',
       '',
       '予約ID: ' + record.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
-      '開始時刻: ' + startTime,
-      '終了時刻: ' + endTime,
+      dateTimeLine_(record, config.timezone),
       'ブランド: ' + brandLabel,
       '訂正後の利用料金: ' + formattedAmount + '（税込）',
       '',
