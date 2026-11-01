@@ -5,7 +5,7 @@
 ## 結論（検証した範囲と、残っているもの）
 - **危険は実在する。** 「行を読む → 消去が走る → 読んだ値を書き戻す」の交差で、消去済みの個人情報が戻る関数が5つある（§1）。
 - **検証した経路では、消去済みの個人情報は戻らない。** 戻るには「ロックの外で読んだ個人情報を、後で書く」書き手が要るが、既知の書き込み箇所をすべて洗い出して分類した（§3）。公開Web App・Webhookの入口は終端の行へ書かず（§2）、Adminの返金は実入口を呼び、Stripe呼び出しの各段階の間に消去を挟んでも戻らない（§4）。
-- **#690 §2 の完了は、運営者のレビューで判定する。** 先に開始条件に残していた経路（日程変更・Stripe受信処理・決済リンク送信・オプション承認／否認・会員系Stripeイベント・料金復旧）は、すべて実入口の交差テストを追加した（§6）。ただし §7 の「検証の範囲外」は残る。**交差テストで確認できなかった経路が見つかった場合は、検証を足すか、保証できない対象を明示的に除外または復活防止を実装し、必要に応じて方針バージョンの更新とdry-run再確認を行うまで、自動消去を開始しない。** これは運営者の承認だけでは省略できない必須の開始条件で、PRのマージ（検証結果の取り込み）とは別に扱う。「到達不能で足りる」とは扱わない。
+- **#690 §2 の完了は、運営者のレビューで判定する。** 先に開始条件に残していた経路（日程変更・Stripe受信処理・決済リンク送信・オプション承認／否認・会員系Stripeイベント・料金復旧）は実入口の交差テスト（§6）、管理画面・メニュー・トリガーの全操作は書き込み関数への対応付けと機械的な交差テスト（§9）で確認した。§7 の「検証の範囲外」は残る。**交差テストで確認できなかった経路が見つかった場合は、検証を足すか、保証できない対象を明示的に除外または復活防止を実装し、必要に応じて方針バージョンの更新とdry-run再確認を行うまで、自動消去を開始しない。** これは運営者の承認だけでは省略できない必須の開始条件で、PRのマージ（検証結果の取り込み）とは別に扱う。「到達不能で足りる」とは扱わない。
 - 消去のコードは変更していない。方針バージョン（`2026-10-31.4`）・dry-run確認への影響はない。後続で消去側を変える場合は、方針バージョンの更新とdry-run再確認が必要になる。
 
 ## 1. 危険のある関数（プリミティブ単体の再現）
@@ -75,15 +75,49 @@ Issue #668の人数変更追補: `BookingReschedule.failPeopleChange`の追加1�
 `customer.subscription.updated`と`invoice.paid`は、外部呼び出しを挟まず1回のロック内で完結するため、確認したのは「消去が済んだ後に届く」ケースと状態ガードのみ（段階の間はない）。
 
 ## 7. 検証の範囲外（開始条件に残す）
-交差テストは、§3の書き込み箇所の一覧にある経路と、§6の入口を対象にした。次は**範囲外**で、コード確認と一覧の固定にとどまる。
-- §3の一覧にない新しい書き込み箇所（追加されると構造テストが落ちる）。
-- 管理画面（`BookingAdminWeb`）の個別操作のうち、§6の入口以外（予約の確定・取消・復活、メールの再送、オプション付与など）。これらは同じスクリプトロックの中で、行を読み直して書く関数を呼ぶ（§1・§3）。
+交差テストは、§3の書き込み箇所の一覧にある経路と、§6の入口、§9の管理画面・メニュー・トリガーの全操作を対象にした。§9の全シート走査で、`appendRow`による行の追加や他シートへの再生成も、識別値の出現として検出する。次は**範囲外**。
+- §3・§9の一覧にない新しい書き込み箇所・操作（追加されると構造テストが落ち、分類を求められる）。
+- 識別値の走査はSpreadsheet上のセルだけ。カレンダー・メール本文・Stripeなど他のサービスに残る情報は、この処理の消去対象外（告知文のとおり）。
+- 合成の識別値で検出できるのは、**消去前のその値がそのまま**別の場所へ現れた場合。値を加工して（部分文字列、整形、ハッシュ等）書く再生成は、識別値の走査では検出できない。コード上、加工して個人情報の列へ書く箇所は見つかっていない（§3）。
 - 実Spreadsheetの実際の件数・状態。
 
 交差テストで確認できなかった経路が見つかった場合の選択肢（運営者のレビューで決める。**いずれも完了しないまま開始する選択肢はない**）:
 1. その入口の交差テストを追加する（実装変更なし）。
 2. 保証できない経路は、その行を**消去から明示的に除外**する（消去側の判定に条件を足す）。この場合は別PR、**方針バージョンの更新とdry-run再確認**が必要。
 3. 書き込み側に「前回の消去より前の個人情報を書かない」ガード（範囲の分割、または時間のずれを使うガード）を入れる。複数の書き込み関数と方針バージョンの変更を伴うため、必要性が確認できた場合に限る。
+
+## 9. 管理画面・メニュー・トリガーの操作と書き込み関数の対応（`test/personal-data-retention-writeback-race-admin-ops-690.test.js`）
+Booking Adminの公開関数（管理画面`admin*`、メニュー、時間主導トリガー）と、メニューの「メール再送」の種別を、**表にして実際に呼んだ**。各操作を、消去対象の古い予約（確定済みのカード決済、確定済みのPayPay、大人数のmens、作品撮りサポート、取消・返金済み、期限切れ）に対して、(1) 操作の前に消去が済んでいる場合と、(2) 外部呼び出し（Stripe・メール・カレンダー）の各時点で消去を挟む場合の両方で実行し、次を監査する。
+
+- **全シート・全セルの走査**: 消去前の合成の識別値（メール・氏名・電話・自由記述・理由文など）を含むセルを、消去の直後と実行後で比べ、**消去の直後には無かった場所（別のセル、別のシート、`appendRow`で追加された新しい行）に識別値が現れていないこと**を確かめる。書き込みの経路（`appendRow` / `setValue` / `setValues`）によらず最終状態を見るため、行の追加や他シートへの再生成も検出する。操作自身の新しい入力には、消去前の値と別の値を使う（例: 付与の宛先メール）。
+- 消去前の個人情報の列が、消去前の値に戻っていないこと。全シートへの書き込みが、常にスクリプトロック保持中であること。書き手がロックを保持している間は、消去が値を変えないこと（消去の対象が残っていればロックを取れず`LOCK_TIMEOUT`、書き込み済みで既に対象でない行なら消す仕事がなく`OK`で終わる）。
+- **監査の失敗は例外にせず、テスト側に記録して実行後に検査する**。業務コードの`try/catch`が監査の例外を吸収しても、失敗は残る。
+- **期待する結果の固定**（`test/fixtures/retention-race-admin-ops-expected.json`）: 操作×状態ごとの結果コード（全実行の和集合）と書き込みの有無を固定する。**予期しない例外（`TypeError`・未対応の外部呼び出し等）は`THREW:`として記録され、期待に無いためテストが落ちる**。意図した挙動の変更は`UPDATE_RACE_EXPECTED=1`で再生成し、差分を確認してコミットする。
+- 監査自体の検証: 消去前に読んだメールを、外部呼び出しの後に新しい行へ書く書き手、消去済みのセルへ消去前の値を書き戻す書き手を、この監査が実際に検出する。操作自身の新しい入力は復活と扱わない。
+
+公開関数が増えると構造テストが落ちる。
+
+### 9.1 古い行のセルへ書き込みに届く操作（監査済み。消去前の個人情報は戻らない）
+人数変更（`adminChangeBookingPeople` / `changeBookingPeople`）は、main の変更（#699）で、古い予約には`INVALID_RECORD`（変更可能な将来の利用日時を確認できない）または`PEOPLE_CHANGE_PLAN_NOT_SUPPORTED`で止まるようになり、このリストから外れた。
+| 操作 | 書き込み先（Bookings） | 個人情報の列の扱い |
+| --- | --- | --- |
+| `adminCancelBooking` / `cancelBookingAdmin` | `status`〜`updatedAt`の連続範囲（`note`を含む）、`cancelMailSentAt`、`lastMailError*` | 範囲は`updateBookingCancellationStateAtomic`が**関数内で読み直す**（§1）。`lastMailErrorMessage`は設定不足等の新しい診断文 |
+| `adminCancelBookingWithRefund` / `cancelBookingWithRefund` | 上に加え、決済付随情報17列・返金試行8列・`paymentLastError*`・`paymentRecovery*` | §4の実入口テスト。`refundReason`・`paymentLastErrorMessage`・`paymentRecoveryReason`は今回の入力か新しい診断文。決済付随情報の範囲（`stripeCheckoutRequestSnapshot`を含む）は関数内で読み直す |
+| `adminResendReminderMail`、メニュー再送の`CONFIRMED`・`CANCELLED`・`REMINDER`・`EXPIRED` | `confirmedMailSentAt`/`cancelMailSentAt`/`expiredMailSentAt`、`lastMailError*` | 個人情報の列は`lastMailErrorMessage`（新しい診断文）のみ。消去後はメール空欄のため`EMAIL_MISSING`で拒否される |
+| `adminBackfillOriginalPrice` | 基準料金5列、料金・精算の連続範囲（`feeSettlementNote`・`feeRecoveryReason`を含む）、Recoveryへの追記 | 基準料金5列は個人情報を含まない。料金・精算の範囲は`updateBookingRescheduleFeeAtomic`が**関数内で読み直す**（§1） |
+
+### 9.2 状態・種別の条件で、書き込みの手前で止まる操作（古い行に対して観測した拒否コード）
+承認・却下・付与: `adminApproveOptionOrder`/`adminDeclineOptionOrder`（`INVALID_TRANSITION`）、`adminApproveLargeParty`/`adminRejectLargeParty`・`approveLargeParty`/`rejectLargeParty`（`NOT_LARGE_PARTY`／`BOOKING_NOT_PENDING`）、`adminApprovePhotoSupport`・`approvePhotoSupport`（`NOT_PHOTO_SUPPORT`／`INVALID_TRANSITION`）。確定・復活: `adminConfirmBooking`・`confirmBooking`（確定済みへは`OK`で何も書かない／取消・期限切れは`INVALID_TRANSITION`）、`adminReviveExpiredBooking`・`reviveExpiredBooking`（`INVALID_TRANSITION`／`REVIVE_AFTER_START_NOT_ALLOWED`）、`adminReviveExpiredCardBooking`（`NOT_CARD_PAYMENT`／`PAYMENT_LINK_NOT_SENT`）。決済リンク・料金: `adminSendCardPaymentLink`・`sendCardPaymentLinkMail`（`INVALID_STATUS`／`EMAIL_MISSING`）、`adminResolvePaymentLinkMetadataInconsistency`・`resolveCardPaymentLinkMetadataInconsistency`（`NOT_INCONSISTENT`）、`adminUpdateBookingPrice`・`updateBookingPrice`（`INVALID_STATUS_FOR_PRICE_OVERRIDE`）、`adminSendPriceUpdateMail`・`sendPriceUpdateMail`（`NO_PRICE_OVERRIDE`）、メニュー再送の`PENDING`（`INVALID_STATUS`）・`PRICE_UPDATE`（`NO_PRICE_OVERRIDE`）。人数変更: `adminPreviewBookingPeople`・`adminChangeBookingPeople`・`changeBookingPeople`（`NOT_MENS`／`INVALID_RECORD`／`PEOPLE_CHANGE_PLAN_NOT_SUPPORTED`）、`adminResolvePeopleChange`（`PEOPLE_RECOVERY_NOT_REQUIRED`。未解決の人数変更の復旧が残る予約は、`BookingChanges`の`mailState`で消去が保留する）。返金・復旧: `adminReconcileRefund`・`reconcileBookingRefund`（`NO_REFUND_ATTEMPT`）、`adminReconcileCheckoutExpiry`・`reconcileBookingCheckoutExpiry`（`NO_CHECKOUT_EXPIRY_TO_CHECK`）、`adminResolvePaymentRecovery`・`resolveBookingPaymentRecovery`（`NOT_IN_RECOVERY`）。日程変更: `adminPreviewBookingReschedule`/`adminRescheduleBooking`（`STALE_BOOKING`／`INVALID_STATUS`。未来へ移す正しい版は§6で検証）、`adminResendRescheduleMail`（`CHANGE_NOT_FOUND`）、`adminRecordRescheduleFeeSettlement`（`INVALID_STATE`）、`adminResolveFeeRecovery`（`NOT_IN_RECOVERY`。復旧が必要な場合は§6）、`adminResolveBaselinePriceRecovery`（`NOT_IN_RECOVERY`／`INVALID_STATUS`）。会員: `adminRecoverInitialMembershipPeriod`・`recoverInitialMembershipPeriod`（書くのは個人情報を含まない`MemberPeriods`のみ）。
+
+### 9.3 読み取り・新規作成・古い行を対象にしない操作
+- 読み取り・診断: `getAdminBookings`、`getAdminBookingDetail`、`getAdminPaymentRecoveries`、`adminGetBookingChanges`、`diagnoseReminderEligibility`、`previewReminderMail`、`sendReminderTestMail`（`NOT_NEXT_DAY`）。
+- 新規予約: `adminCreateBooking`（新しい行を追加する。古い行を読まない）。
+- 時間主導トリガー: `expirePendingBookings`（PENDINGのみ）、`sendNextDayReminders`・`sendNextDayReminderCatchUp`（翌日の確定予約のみ）、`processPendingStripeWebhookEvents`（§6）。古い行には書かなかった。
+- 公開関数のうち表に入れないもの（メニュー登録・トリガー設定・見出し行の列追加・消去本体の設定／保留）は、構造テストの`EXCLUDED`に理由つきで記録している。
+
+### 9.4 この対応付けから分かったこと
+- 上の6種類の古い予約と合成の引数で観測した範囲では、古い行のセルへ書き込む操作は §9.1 の4系統だけで、**個人情報の列を含む連続範囲を書くのは、関数内で行を読み直すAtomic系**と、**その操作自身が作る新しい文言**（診断文・今回の入力）に限られる。ロック外で読んだ個人情報を後で書く操作は見つからなかった。
+- 機能面の観察（保持期間とは別）: 管理者は180日以上前の予約にも、取消・メール再送ができる（人数変更は将来の利用日時が必要）。消去後の予約では、メールが空欄のため通知メールは送れない。
 
 ## 8. 保証できない／確認していないもの（明示）
 - **Spreadsheetの手動編集**（所有者による貼り付け・並べ替え等）は対象外。共有権限が所有者1名であることは#690で確認済み。

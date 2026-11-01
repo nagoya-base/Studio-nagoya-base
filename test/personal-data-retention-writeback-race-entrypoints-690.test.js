@@ -17,175 +17,28 @@ var stubs = require('./helpers/gas-stubs');
 var manifest = require('./helpers/booking-deployment-manifest');
 var membershipLookupResponse = require('./helpers/stripe-membership-mock').membershipLookupResponse;
 
-var DAY = 24 * 60 * 60 * 1000;
-var RETENTION = 180 * DAY;
-var VERSION = '2026-10-31.4';
-var SPREADSHEET_ID = 'ss1';
-var EMAIL = 'pii-entry@example.com';
-var BOOKING_ID = 'SX-20250101-BBBBBBBB';
-var SESSION_ID = 'cs_synthetic_entry';
-var PI_ID = 'pi_synthetic_entry';
-var ATTEMPT_ID = 'PAY-' + BOOKING_ID + '-ABCDEF012345';
-
-function plain(value) { return JSON.parse(JSON.stringify(value)); }
-
-var PII_COLUMNS = ['name', 'email', 'phone', 'purpose', 'note', 'feeSettlementNote', 'feeRecoveryReason', 'refundReason', 'stripeCheckoutRequestSnapshot', 'paymentLastErrorMessage', 'paymentRecoveryReason', 'paymentLinkSentTo', 'lastMailErrorMessage', 'paymentLinkLastErrorMessage'];
-var SEEDED = {
-  name: 'テスト太郎', email: EMAIL, phone: '090-0000-0000', purpose: '相談メモ', note: '旧い備考', feeSettlementNote: '旧い精算メモ', feeRecoveryReason: '旧い復旧理由',
-  refundReason: '旧い返金理由', stripeCheckoutRequestSnapshot: '{"customer_email":"pii-entry@example.com"}', paymentLastErrorMessage: '旧い決済エラー',
-  paymentRecoveryReason: '旧い決済の復旧理由', paymentLinkSentTo: EMAIL, lastMailErrorMessage: '旧いメールエラー', paymentLinkLastErrorMessage: '旧い決済リンクエラー'
-};
-var OPTION_HEADERS = ['optionOrderId', 'bookingId', 'brand', 'category', 'source', 'itemsJson', 'amountJpy', 'currency', 'approvalStatus', 'paymentStatus', 'status', 'customerEmail', 'createdAt', 'updatedAt', 'approvedAt', 'declinedAt', 'declineReason', 'paymentAttemptId', 'checkoutRequestJson', 'stripeCheckoutSessionId', 'stripePaymentIntentId', 'stripeAmount', 'stripeCurrency', 'paidAt', 'lastStripeEventId', 'decisionMailSentAt', 'confirmedMailSentAt', 'paymentRecoveryRequiredAt', 'paymentRecoveryReason'];
-var OPTION_PII = ['customerEmail', 'declineReason', 'checkoutRequestJson', 'paymentRecoveryReason'];
-
-/* 実時間で動く処理（日程変更は new Date() を使う）に合わせ、消去も実時間で行う。 */
-function realNow() { return new Date(); }
-function agoReal(ms) { return new Date(Date.now() - ms); }
-
-/* Booking Admin（消去と書き手が同じプロジェクト＝同じスクリプトロック）。外部呼び出しの直前に hook を呼ぶ。 */
-function flowSetup(options) {
-  var opts = options || {};
-  var spreadsheetsById = {};
-  spreadsheetsById[SPREADSHEET_ID] = {};
-  var held = { value: false };
-  var lockService = {
-    getScriptLock: function () {
-      return {
-        tryLock: function () { if (held.value) return false; held.value = true; return true; },
-        releaseLock: function () { held.value = false; }
-      };
-    }
-  };
-  var ctx = { calls: 0, onExternal: null, held: held, events: [] };
-  function external(kind) {
-    var index = ctx.calls++;
-    if (typeof ctx.onExternal === 'function') ctx.onExternal(index, kind);
-  }
-  var mail = stubs.createMailAppStub();
-  var sendEmail = mail.sendEmail;
-  mail.sendEmail = function () { external('mail'); return sendEmail.apply(mail, arguments); };
-  var calendar = stubs.createCalendarAppStub({ cal1: { events: ctx.events } });
-  var getCalendarById = calendar.getCalendarById;
-  calendar.getCalendarById = function (id) {
-    var cal = getCalendarById.call(calendar, id);
-    ['getEvents', 'createEvent', 'getEventById'].forEach(function (name) {
-      if (typeof cal[name] !== 'function' || cal['__wrapped_' + name]) return;
-      var original = cal[name];
-      cal[name] = function () { external('calendar'); return original.apply(cal, arguments); };
-      cal['__wrapped_' + name] = true;
-    });
-    return cal;
-  };
-  var responder = opts.responder || function () { throw new Error('未対応のStripe呼び出し'); };
-  var admin = loadBookingSandbox(manifest.BOOKING_ADMIN_FILES, {
-    PropertiesService: stubs.createPropertiesServiceStub({
-      CALENDAR_ID: 'cal1', SPREADSHEET_ID: SPREADSHEET_ID, STRIPE_SECRET_KEY: 'sk_test_synthetic', ADMIN_NOTIFICATION_EMAIL: 'admin@example.com',
-      BOOKING_ADMIN_URL: 'https://script.google.com/macros/s/admin/exec', BOOKING_MAIL_DISPLAY_NAME: 'Studio', BOOKING_MAIL_REPLY_TO: 'noreply@example.com', BOOKING_CONTACT_EMAIL: 'contact@example.com',
-      PERSONAL_DATA_RETENTION_ENABLED: 'true', PERSONAL_DATA_RETENTION_POLICY_VERSION: VERSION, PERSONAL_DATA_RETENTION_DRY_RUN_VERSION: VERSION
-    }),
-    CalendarApp: calendar, Utilities: stubs.createUtilitiesStub(), LockService: lockService,
-    SpreadsheetApp: stubs.createSpreadsheetAppStub(spreadsheetsById), MailApp: mail, ScriptApp: stubs.createScriptAppStub(),
-    UrlFetchApp: stubs.createUrlFetchAppStub(function (url, options) { external('stripe'); return responder(url, options); }),
-    Logger: stubs.createLoggerStub()
-  });
-  var book = admin.SpreadsheetApp.openById(SPREADSHEET_ID);
-  var bookings = book.insertSheet('Bookings');
-  var headers = admin.BookingsSchema.HEADERS.slice();
-  bookings.appendRow(headers);
-  ctx.admin = admin; ctx.book = book; ctx.bookings = bookings; ctx.headers = headers; ctx.sheets = spreadsheetsById[SPREADSHEET_ID]; ctx.mail = mail;
-  /* 書き込み時のロック保持を記録する（Bookings・OptionOrders） */
-  ctx.unlockedWrites = 0;
-  ctx.watch = function (sheet) {
-    var original = sheet.getRange.bind(sheet);
-    sheet.getRange = function (r, c, nr, nc) {
-      var range = original(r, c, nr, nc);
-      var setValues = range.setValues, setValue = range.setValue;
-      range.setValues = function () { if (!held.value) ctx.unlockedWrites++; return setValues.apply(range, arguments); };
-      range.setValue = function () { if (!held.value) ctx.unlockedWrites++; return setValue.apply(range, arguments); };
-      return range;
-    };
-  };
-  ctx.watch(bookings);
-  return ctx;
-}
-
-function bookingRow(ctx, bookingId) {
-  for (var i = 1; i < ctx.bookings._rows.length; i++) if (ctx.bookings._rows[i][0] === bookingId) return ctx.bookings._rows[i];
-  throw new Error('行なし: ' + bookingId);
-}
-function piiOf(ctx, bookingId) {
-  var row = bookingRow(ctx, bookingId), out = {};
-  PII_COLUMNS.forEach(function (c) { out[c] = row[ctx.headers.indexOf(c)]; });
-  return out;
-}
-
-/* 消去対象の古い予約（終端・180日超）を作る。overrides で状態・日時を指定。個人情報は全列に seed する。 */
-function addOldBooking(ctx, overrides) {
-  var end = agoReal(RETENTION + 30 * DAY);
-  var start = new Date(end.getTime() - 2 * 60 * 60 * 1000);
-  var row = Object.assign({
-    bookingId: BOOKING_ID, createdAt: new Date(start.getTime() - 20 * DAY), date: '2025-04-10', startAt: start, endAt: end, brand: 'studio_x', people: '2名',
-    paymentMethod: 'オンラインクレジットカード', status: 'CONFIRMED', calendarEventId: 'event-1', source: 'test', customerType: 'returning',
-    confirmedAt: new Date(start.getTime() - 19 * DAY), confirmedMailSentAt: new Date(start.getTime() - 19 * DAY), paymentStatus: 'paid', priceAmount: 8000,
-    paymentAttemptId: ATTEMPT_ID, paymentAttemptResolvedAt: new Date(start.getTime() - 19 * DAY), stripeCheckoutSessionId: SESSION_ID, stripePaymentIntentId: PI_ID,
-    stripeAmount: 8000, stripeCurrency: 'JPY', paymentConfirmedAt: new Date(start.getTime() - 19 * DAY), lastStripeEventId: 'evt_synthetic_old', checkoutAccessToken: 'token-synthetic-0001'
-  }, SEEDED, overrides || {});
-  ctx.bookings.appendRow(ctx.headers.map(function (h) { return row[h] === undefined ? '' : row[h]; }));
-  var event = stubs.createEventStub({ id: row.calendarEventId, title: row.status, start: row.startAt, end: row.endAt });
-  event.setTag('bookingId', row.bookingId);
-  event.setTag('status', row.status);
-  ctx.events.push(event);
-  return row;
-}
-
-/*
- * run(ctx) を、外部呼び出しの回数ぶん（＋事前に消去済みのケース）繰り返す。毎回新しい環境で:
- *   k=-1: 実入口の前に消去を済ませる ／ k=0..n-1: k番目の外部呼び出しの瞬間に消去を1回挟む
- * 各回で、消去が消した個人情報が戻っていないこと・書き込みがロック保持中であることを監査する。
- * 返り値: { stages, cleared（消去が個人情報を消した回数）, held（保留で何も消さなかった回数） }
- */
-function interleaveAll(build, run, extraAudit, auditTarget) {
-  var target = auditTarget || { read: function (ctx) { return piiOf(ctx, BOOKING_ID); }, columns: PII_COLUMNS, seeded: SEEDED };
-  var probe = build();
-  run(probe);
-  var stages = probe.calls;
-  var summary = { stages: stages, cleared: 0, heldRuns: 0, runs: 0, serialized: 0, openGaps: 0 };
-  for (var k = -1; k < stages; k++) {
-    var ctx = build();
-    var clearedColumns = null;
-    ctx.onExternal = function (index) {
-      if (index !== ctx.__k || clearedColumns !== null) return;
-      /* 書き手がロックを保持している外部呼び出しでは、消去はロックを取れず何も消さない（直列化）。保持していなければ消去が走る。 */
-      var lockedByWriter = ctx.held.value === true;
-      var before = target.read(ctx);
-      var purged = plain(ctx.admin.purgeExpiredPersonalData(realNow()));
-      var after = target.read(ctx);
-      if (lockedByWriter) {
-        assert.strictEqual(purged.status, 'LOCK_TIMEOUT', 'ロック保持中は消去が待たされる（別の書き手と並行しない）');
-        assert.deepStrictEqual(after, before, 'ロック保持中は何も消さない');
-        summary.serialized++;
-      }
-      clearedColumns = target.columns.filter(function (c) { return before[c] !== '' && after[c] === ''; });
-      if (!lockedByWriter) summary.openGaps++;
-    };
-    ctx.__k = k;
-    if (k === -1) {
-      ctx.admin.purgeExpiredPersonalData(realNow());
-      clearedColumns = target.columns.filter(function (c) { return target.read(ctx)[c] === ''; });
-    }
-    run(ctx);
-    var final = target.read(ctx);
-    (clearedColumns || []).forEach(function (column) {
-      assert.notStrictEqual(final[column], target.seeded[column], '段階 ' + k + ': ' + column + ' が消去前の値に戻った');
-    });
-    assert.strictEqual(ctx.unlockedWrites, 0, '段階 ' + k + ': ロック外の書き込み');
-    if (typeof extraAudit === 'function') extraAudit(ctx, k);
-    summary.runs++;
-    if (clearedColumns && clearedColumns.length > 0) summary.cleared++;
-    else if (k >= 0) summary.heldRuns++;
-  }
-  return summary;
-}
+var H = require('./helpers/retention-race-harness');
+var DAY = H.DAY;
+var RETENTION = H.RETENTION;
+var VERSION = H.VERSION;
+var SPREADSHEET_ID = H.SPREADSHEET_ID;
+var EMAIL = H.EMAIL;
+var BOOKING_ID = H.BOOKING_ID;
+var SESSION_ID = H.SESSION_ID;
+var PI_ID = H.PI_ID;
+var ATTEMPT_ID = H.ATTEMPT_ID;
+var plain = H.plain;
+var PII_COLUMNS = H.PII_COLUMNS;
+var SEEDED = H.SEEDED;
+var OPTION_HEADERS = H.OPTION_HEADERS;
+var OPTION_PII = H.OPTION_PII;
+var realNow = H.realNow;
+var agoReal = H.agoReal;
+var flowSetup = H.flowSetup;
+var bookingRow = H.bookingRow;
+var piiOf = H.piiOf;
+var addOldBooking = H.addOldBooking;
+var interleaveAll = H.interleaveAll;
 
 // ============================================================================
 // 1. Stripe受信処理（StripeWebhookProcessor.processPendingStripeWebhookEvents）
@@ -218,7 +71,7 @@ function stripeResponder(state) {
       var body = JSON.stringify({ id: 'evt_synthetic_' + scenario.status, type: 'checkout.session.completed', data: { object: { id: SESSION_ID } } });
       var claim = ctx.admin.StripeEventRepository.claim('evt_synthetic_' + scenario.status, 'checkout.session.completed', now);
       ctx.admin.StripeEventRepository.storeRawBody(claim.rowNumber, body, now);
-      ctx.watch(ctx.sheets.StripeEvents);
+      ctx.resetWriteAudit();
       ctx.admin.StripeWebhookProcessor.processPendingStripeWebhookEvents(now);
     });
     assert.ok(summary.stages >= 1, '外部呼び出し（Stripe）が実際に起きる: ' + summary.stages);
@@ -444,7 +297,7 @@ function receiveMemberEvent(ctx, event) {
   var now = realNow();
   var claim = ctx.admin.StripeEventRepository.claim(event.id, event.type, now);
   if (claim.outcome === 'CLAIMED') ctx.admin.StripeEventRepository.storeRawBody(claim.rowNumber, JSON.stringify(event), now);
-  ctx.watch(ctx.sheets.StripeEvents);
+  ctx.resetWriteAudit();
   var run = ctx.admin.StripeWebhookProcessor.processPendingStripeWebhookEvents(now);
   return run.results.filter(function (r) { return r.eventId === event.id; })[0] || { finalized: false, code: 'NOT_PROCESSED' };
 }
