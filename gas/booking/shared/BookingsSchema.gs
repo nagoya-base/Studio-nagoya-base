@@ -247,7 +247,7 @@ var BookingsSchema = (function () {
      * - stripeCheckoutSessionId / stripePaymentIntentId: Stripe側の識別子（PR-Bで
      *   Checkout Session発行時に記録）。
      * - paymentHoldExpiresAt: 決済中の仮押さえ期限（CardPayment.
-     *   computeCheckoutHoldExpiryMillis。既定30分。既存のカードTTL
+     *   CHECKOUT_HOLD_MINUTES（既定30分。Stripeが返すexpires_atを保存）。既存のカードTTL
      *   Booking.CARD_TTL_HOURS=72hとは別クロック。詳細はCardPayment.gs参照）。
      * - stripeAmount / stripeCurrency: **Checkout Session発行時点（PR-B）に確定した
      *   請求金額・通貨のスナップショット**（Issue #341 PR-Aレビュー対応・項目3）。

@@ -34,13 +34,6 @@ test('CardPayment: CHECKOUT_HOLD_MINUTES/STRIPE_SESSION_EXPIRY_BUFFER_MINUTESが
   assert.strictEqual(CardPayment.STRIPE_SESSION_EXPIRY_BUFFER_MINUTES, 5, 'Stripeのexpires_at最小30分制約に対する安全マージン');
 });
 
-test('computeCheckoutHoldExpiryMillis: 作成時刻からCHECKOUT_HOLD_MINUTES(30分)後を返す', function () {
-  var CardPayment = loadCardPayment();
-  var createdAt = new Date('2026-10-01T10:00:00+09:00').getTime();
-  var expiry = CardPayment.computeCheckoutHoldExpiryMillis(createdAt);
-  assert.strictEqual(expiry, createdAt + 30 * 60000);
-});
-
 /*
  * computeStripeSessionExpiresAtSeconds: Stripe Checkout Session（mode=payment）の
  * expires_atは「Session作成時刻から30分後〜24時間後」の範囲でしか指定できない

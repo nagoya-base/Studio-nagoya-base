@@ -138,7 +138,7 @@ admin-only → migration → full と段階的に更新するため、短時間�
 ### Stripe受信台帳（PR-4）の消去対象と起算点
 `StripeEvents` の **`rawBody`（イベント本文。顧客のメール・氏名等を含み得る）と `outcomeMessage`** だけを消す。`eventId` / `eventType` / 状態 / `bookingId` / `paymentAttemptId` / `stripePaymentIntentId` / `outcomeCode` / 日時は、冪等性と照合のために残す（照合可能な情報であり、匿名データではない）。
 
-- **終端**: `processingState` が `COMPLETED` / `IGNORED` / `REJECTED`。**終端日時は `updatedAt`**。終端の行の `updatedAt` を書くのは `finalize` / `finalizeForProcessing` だけで、終端の行は再受信されても `claim()` が `ALREADY_TERMINAL` を返して書き換えない（回帰テストで確認）ため、終端日時として使える。`RECEIVED`（未処理）は古くても消さない（`EVENT_UNPROCESSED`）。
+- **終端**: `processingState` が `COMPLETED` / `IGNORED` / `REJECTED`。**終端日時は `updatedAt`**。終端の行の `updatedAt` を書くのは `finalizeForProcessing` だけで、終端の行は再受信されても `claim()` が `ALREADY_TERMINAL` を返して書き換えない（回帰テストで確認）ため、終端日時として使える。`RECEIVED`（未処理）は古くても消さない（`EVENT_UNPROCESSED`）。
 - **`bookingId` 列に会員IDが入る行**: 入会処理の失敗・却下（`StripeWebhookProcessor.rejectAndFinalize_`）は、`StripeEvents` と `Recovery` の `bookingId` 列へ**会員ID（`MBR-` で始まる。`MembershipService` の生成形式）**を記録する。`MBR-` で始まる値は、予約ではなく**会員として明示的に扱い**、親を `Members` にする。予約IDの不整合を会員に読み替えることはしない（`MBR-` で始まらない値は従来どおり予約として照合し、見つからなければ `PARENT_NOT_FOUND`）。会員が見つからなければ `MEMBER_NOT_FOUND`（要確認）。会員の終了（Membersと同じ条件）、会員単位の保留、**その会員IDで記録された未解決のRecovery**（`RELATED_RECOVERY_OPEN`）を判定に反映する。`Recovery` の会員ID行も同じ扱い（PR-2のRecoveryの対象）。
 - **結び付け**: `bookingId` の列が予約IDならば親Bookingsに結び付け、PR-2と同じ条件（親の起算日時と自身の終端日時の遅い方、保留、関連未解決、依存）を適用する。**列が空のイベント**は、本文の `data.object` の `metadata.memberId` / `customer` / `subscription`（`object` が `customer` / `subscription` ならその `id`）から**会員を1人に特定**し、`Members` と同じ終了条件・会員単位の保留を適用する。
 - **要確認（消さない）**: 結び付く予約・会員が見つからない（`NO_LINK`。本文が空の行を含む）、複数の会員に結び付く（`LINK_AMBIGUOUS`）、本文を解析できない（`RAW_BODY_UNPARSEABLE`）、会員の行が複数（`MEMBER_AMBIGUOUS`）、状態不明、`updatedAt` の欠落・不正（`receivedAt` 等で代用しない）、`eventId` の空欄・重複。**結び付かない`IGNORED`イベント（会員にも予約にも関係しない種別など）の本文は残り続ける**ため、dry-runの `review` 件数で確認し、扱いを判断する。
@@ -4285,16 +4285,17 @@ Issue #341本文は仮押さえ時間の目安を30分としている。Stripe C
 `expires_at`が実際のSession作成時刻から30分未満になり、Stripe API側のバリデーション
 エラーになるおそれがある。そのため`CardPayment.gs`では:
 
-- 内部の仮押さえ期限（PENDING保持・空き枠ロック解除の基準）を計算する
-  `computeCheckoutHoldExpiryMillis`（`CHECKOUT_HOLD_MINUTES=30`固定）と、
-- Stripeへ実際に送る`expires_at`を計算する`computeStripeSessionExpiresAtSeconds`
-  （`CHECKOUT_HOLD_MINUTES`に`STRIPE_SESSION_EXPIRY_BUFFER_MINUTES=5`分の安全マージンを
-  上乗せ）
+- `CHECKOUT_HOLD_MINUTES=30`は、Stripeへ送る`expires_at`を計算する
+  `computeStripeSessionExpiresAtSeconds`の**基準値**（`CHECKOUT_HOLD_MINUTES`に
+  `STRIPE_SESSION_EXPIRY_BUFFER_MINUTES=5`分の安全マージンを上乗せ＝30分＋5分）であり、
+  30分固定で枠を解放する実装ではない。
+- 実際に保存する仮押さえ期限（`paymentHoldExpiresAt`。PENDING保持・空き枠ロック解除の基準）は、
+  Checkout Session作成に**成功した後**にStripeのレスポンスに含まれる実際の`expires_at`
+  （`BookingRepository`が`expiresAtSeconds`から保存）。Issue #341本文「Session expires_atを
+  この仮押さえ期限と一致させる」は、2つの期限を別々に計算して突き合わせるのではなく、
+  常に一致する構造で実現している。
 
-を別関数として分離した。さらに、PR-B側はCheckout Session作成に**成功した後**、
-Stripeのレスポンスに含まれる実際の`expires_at`を内部の仮押さえ期限として**保存し直す**
-実装にすること（Issue #341本文「Session expires_atをこの仮押さえ期限と一致させる」を、
-2つの期限を別々に計算して後から突き合わせるのではなく、常に一致する構造で実現する）。
+（旧`computeCheckoutHoldExpiryMillis`は未使用のためIssue #700で削除した。）
 
 #### 仮押さえの解放とStripe側の失効確認（PR-Aレビュー対応・項目4）
 
@@ -5878,8 +5879,8 @@ booking-card-checkout.test.js`・`test/booking-confirm-expire.test.js`・
   `processingClaimedAt`だけを更新し、世代番号（`processingClaimCount`）は変更しない。
 - `finalizeForProcessing(rowNumber, generation, fields, now)`: 書き込み直前に世代番号を
   再確認してから書き込む（fencing token）。`StripeWebhookProcessor.gs`の本番処理経路は
-  従来の`finalize()`ではなくこちらを使う（`finalize()`自体はfencingを行わない汎用版
-  として残し、テストのフィクスチャ構築にのみ使う）。
+  従来の`finalize()`は使わない。旧`finalize()`（fencingを行わない汎用版）はIssue #700で
+  削除し、テストの終端行フィクスチャも世代照合付きのこのAPIへ統一した。
 
 `StripeWebhookProcessor.processSingleEvent_`に、Checkout Session再取得後・PaymentIntent
 再取得後・confirmBooking直前の計3箇所で`renewProcessingLease`の呼び出しを追加し、
@@ -8010,7 +8011,7 @@ SNB MEMBER（月額500円）の実会員資格を、Stripeの決済事実から�
 ### 入会決済の返金（Issue #517）
 
 - **正本**: `charge.refunded`を契機に、イベント本文ではなく`GET /charges/{id}`で返金額（`amount_refunded`）を再取得して判定する。`GET /checkout/sessions?payment_intent=`で入会Checkout（`metadata.orderType=membership`・500円）の決済か確認し、部屋予約・オプション・月次更新の返金は対象外（`NOT_MEMBERSHIP_JOIN_PAYMENT`で無視。既存の予約返金ロジックは変更なし）。
-- **全額返金**: `MemberRefunds`シート（`sourceType`/`sourceId`/`memberId`/`amount`/`refundedAmount`/`refundedAt`/`eventId`/`recordedAt`。追記専用）へ`(checkout_session, 入会Session ID)`を1行追記する。`MemberMonths`の行は削除・改変せず、`MemberRepository`の資格判定（`isMemberForMonth`・`findLiveMemberByEmail`・`statusFactsForEmail`）が「全額返金された支払いを根拠とする月」を差し引く。90日先行予約・ペアパック・シャワー・Studio Xオプション・`/membership/status/`はすべてこの判定を通るため同じ結果になる。プレスタートの追加月（10月入会の11月分）も同じSession IDを根拠にしているため、初回500円の全額返金で一緒に無効になる。
+- **全額返金**: `MemberRefunds`シート（`sourceType`/`sourceId`/`memberId`/`amount`/`refundedAmount`/`refundedAt`/`eventId`/`recordedAt`。追記専用）へ`(checkout_session, 入会Session ID)`を1行追記する。`MemberMonths`の行は削除・改変せず、`MemberRepository`の資格判定（`isMemberOnDate`・`findLiveMemberByEmail`・`statusFactsForEmail`）が「全額返金された支払いを根拠とする月」を差し引く。90日先行予約・ペアパック・シャワー・Studio Xオプション・`/membership/status/`はすべてこの判定を通るため同じ結果になる。プレスタートの追加月（10月入会の11月分）も同じSession IDを根拠にしているため、初回500円の全額返金で一緒に無効になる。
 - **冪等・順序**: `(sourceType, sourceId)`で1行（別イベントIDの再送でも二重にならない）。返金イベントが入会イベントより先に処理されても、後から追記される同じSession IDの月が無効扱いになり、入会処理は`MEMBERSHIP_JOIN_REFUNDED`としてsubscriptionを作らない。
 - **一部返金**: 日割り返金をしない会費方針のため資格は変えない（`MEMBERSHIP_PARTIAL_REFUND_NO_CHANGE`）。後から累計が全額になった時点で無効になる。
 - **subscriptionが既にある会員**: 初回決済だけが返金された場合、次回以降の月次更新は通常どおり資格を作る（継続課金ルールのまま）。自動更新を止めるかは運営判断のため、`MEMBERSHIP_REFUNDED_SUBSCRIPTION_ACTIVE`としてRecoveryへ記録して知らせる。
@@ -8053,7 +8054,7 @@ SNB MEMBER（月額500円）の実会員資格を、Stripeの決済事実から�
 - 解約は会員資格確認ページ（`/membership/status/`）の専用UIで受付（Issue #506）。UIを使えない場合は予約フォーム等でも受付（締切日は設けていない。次回の更新前に解約処理が完了した場合は次回以降の自動更新を停止。締切日を設ける場合は別Issueで事業ルールとして決めてから反映する）。運営側はStripeでsubscriptionを`cancel_at_period_end`にする（カスタマーポータルを用意した場合は導線と文言を差し替える）。
 - Studio Xのスタッフ対応（事前設営3,000円／片付け3,000円／セット5,000円。正本は `_data/studio_x_equipment.json`）は会員限定。表示だけでなく申込経路でも判定する（新しい会員判定方式は作らず、#471の会員台帳を正本として使う）:
   - `BookingOptions.planOrders` は `input.staffServiceMember === true` のときだけスタッフ対応を通す（未指定・false・不明は `STAFF_SERVICE_MEMBERS_ONLY` で拒否。fail-closed）。
-  - `OptionOrderService` が `MemberRepository.isMemberForMonth(予約メール, 利用日の属する月)` で判定し、①同時申込の事前検証（予約を作る前）、②同時申込・後付けの注文作成、③追加決済（Checkout）開始の2段階（状態確認・試行予約）で確認する。台帳を読めない場合も非会員扱い。
+  - `OptionOrderService` が `MemberRepository.isMemberOnDate(予約メール, 利用日)` で判定し、①同時申込の事前検証（予約を作る前）、②同時申込・後付けの注文作成、③追加決済（Checkout）開始の2段階（状態確認・試行予約）で確認する。台帳を読めない場合も非会員扱い。
   - 判定は予約の経路・`source`・備考に依存しない（スペースマーケット経由だけ非会員可という例外は無い）。部屋の利用・セルフ設営（無料）・機材レンタルは従来どおり。
   - 会員の存在を探られないよう、会員確認を伴う事前検証は既存の資格照会と同じレート制限（メール単位）に載せている。
 - 料金表・ブランド分離の確定内容は `docs/membership-pricing-2026-12.md`。
@@ -8070,7 +8071,7 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 
 ### 会員資格（actual membership）
 
-- 正本は `MemberRepository.isMemberForMonth`（利用日の属する月の支払い事実）。`MembershipRules.verifyActualMembership(email, 利用日)` に一本化。`priceIsMember`・mens経路・価格overrideは実会員資格ではない。
+- 正本は `MemberRepository.isMemberOnDate`（利用日の支払済み期間・旧月払い事実）。`MembershipRules.verifyActualMembership(email, 利用日)` に一本化。`priceIsMember`・mens経路・価格overrideは実会員資格ではない。
 - fail-closedで再確認する箇所（非会員・利用月不一致・台帳エラーは同一の外部向けエラー `MEMBER_BENEFIT_NOT_AVAILABLE` で拒否。スタッフ対応は#472の既存コード `STAFF_SERVICE_MEMBERS_ONLY` を維持）:
 
 | 箇所 | 実装 |
@@ -8132,7 +8133,7 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 | 区分 | 予約可能期間 | 判定 |
 | --- | --- | --- |
 | 一般 | 30日先まで | 既定 |
-| actual SNB MEMBER | 90日先まで | **予約作成時点（JST当日）の当月**のactual membership（`MembershipRules.verifyAdvanceBookingMembership` → `MemberRepository.isMemberForMonth`）。利用日の月ではない |
+| actual SNB MEMBER | 90日先まで | **予約作成時点（JST当日）の当月**のactual membership（`MembershipRules.verifyAdvanceBookingMembership` → `MemberRepository.isMemberOnDate`）。利用日の月ではない |
 | 管理者 | 上限なし | Booking Adminの認証済みGoogleアカウント × `BOOKING_ADMIN_EMAILS`（`isBookingAdminVerified_`）。公開フォームの予約メールでは判定しない |
 
 - Availability（`getAvailability` / `getMonthlyAvailability`）は予約メールを受け取らず、31〜90日先に「会員先行枠」(`memberAdvance`) の印を付けて**全員に同じ応答**を返す（会員有無を推測させない）。91日以降は `OUT_OF_RANGE` / `DATE_OUT_OF_RANGE`。応答の `generalMaxDate` / `memberMaxDate` をフロントは表示に使い、日数はフロントで再実装しない。
@@ -8143,7 +8144,7 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 
 ### 永久会員（Script Properties `PERMANENT_MEMBER_EMAILS`）
 
-`koishi.s@gmail.com` は `Config.gs` の既定allowlistに持ち、Stripe月額会費の支払い有無・対象年月に関係なく、`MemberRepository.isMemberForMonth` が常に会員と判定する（共通の正本。90日先行予約・SNB/mens会員資格・ペアパック・シャワー・Studio X有料オプション・今後のactual member特典すべてに効く）。Stripe subscription / invoice / 会員台帳（Members・MemberMonths）は作らない・書かない。`PERMANENT_MEMBER_EMAILS`（カンマ区切り）で追加でき、未設定でも既定は有効で通常の会員判定は変わらない。公開API・フロントJSへは返さない。
+`koishi.s@gmail.com` は `Config.gs` の既定allowlistに持ち、Stripe月額会費の支払い有無・対象年月に関係なく、`MemberRepository.isMemberOnDate` が常に会員と判定する（共通の正本。90日先行予約・SNB/mens会員資格・ペアパック・シャワー・Studio X有料オプション・今後のactual member特典すべてに効く）。Stripe subscription / invoice / 会員台帳（Members・MemberMonths）は作らない・書かない。`PERMANENT_MEMBER_EMAILS`（カンマ区切り）で追加でき、未設定でも既定は有効で通常の会員判定は変わらない。公開API・フロントJSへは返さない。
 
 ### 管理者（Script Properties `BOOKING_ADMIN_EMAILS`）
 

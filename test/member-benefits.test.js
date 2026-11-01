@@ -7,7 +7,7 @@
  * - 2026/12/1適用と、11/30までに作成済みの予約・OptionOrderのgrandfather
  * - 会員判定月の境界・月跨ぎの日程変更・fail-closed・列挙対策・Webhook/見積りAPIでは覆さない
  *
- * priceIsMember / mens価格優遇 は実会員資格ではない。会員台帳（MemberRepository.isMemberForMonth）のスタブで
+ * priceIsMember / mens価格優遇 は実会員資格ではない。会員台帳（MemberRepository.isMemberOnDate）のスタブで
  * 資格の有無を制御し、価格優遇と混同しないことを検証する。
  */
 'use strict';
@@ -103,14 +103,11 @@ function setup(opts) {
   };
   var sandbox = loadBookingSandbox(FILES, globals);
   var ctx = { sandbox: sandbox, stripe: stripe, mailApp: mailApp, sheets: spreadsheetsById[SPREADSHEET_ID], members: o.members || {}, lookups: [], proofs: {} };
-  sandbox.MemberRepository.isMemberForMonth = function (email, month) {
+  sandbox.MemberRepository.isMemberOnDate = function (email, date) {
+    var month = String(date).substring(0, 7);
     ctx.lookups.push({ email: email, month: month });
     if (ctx.members === 'THROW') throw new Error('Sheets error');
     return (ctx.members[String(email).toLowerCase()] || []).indexOf(month) !== -1;
-  };
-  /* Issue #532: 資格判定は日付（isMemberOnDate）。月単位のスタブへ委譲して、既存の利用月ごとの試験を保つ。 */
-  sandbox.MemberRepository.isMemberOnDate = function (email, date) {
-    return sandbox.MemberRepository.isMemberForMonth(email, String(date).substring(0, 7));
   };
   return ctx;
 }

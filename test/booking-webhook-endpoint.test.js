@@ -159,7 +159,7 @@ test('doPost: 既にBooking Admin側が処理完了済みのイベントの再�
   var claimResult = ctx.sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', new Date());
   ctx.sandbox.StripeEventRepository.storeRawBody(claimResult.rowNumber, body, new Date());
   /* Booking Admin側のprocessPendingStripeWebhookEventsが既に処理を完了させた状況を再現。 */
-  ctx.sandbox.StripeEventRepository.finalize(claimResult.rowNumber, {
+  ctx.sandbox.StripeEventRepository.finalizeForProcessing(claimResult.rowNumber, claimResult.record.processingClaimCount, {
     processingState: 'COMPLETED', bookingId: 'SX-20261001-AAAAAAAA', outcomeCode: 'CONFIRMED', outcomeMessage: 'ok'
   }, new Date());
 
