@@ -377,3 +377,11 @@
 .content-section .faq-list summary::after { content: '+'; position: absolute; right: 8px; top: 17px; color: var(--accent); font-family: var(--font-display); font-size: 1.25rem; font-weight: 400; }
 .content-section .faq-list details[open] summary::after { content: '−'; }
 .content-section .faq-list details p { max-width: 850px; margin: -4px 0 0; padding: 0 48px 22px 0; }
+
+/* プライバシーポリシー改定予告（#690。第2段階で本文を差し替えた後に削除） */
+.legal-notice {
+  margin: 12px 0 20px;
+  padding: 12px 16px;
+  border-left: 4px solid currentColor;
+  line-height: 1.8;
+}

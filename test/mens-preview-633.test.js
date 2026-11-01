@@ -161,6 +161,7 @@ function stripIntendedDiff(src) {
     .replace(/\n<!-- Google Analytics 4 -->[\s\S]*?<\/script>\n[\s\S]*?<\/script>\n/, '\n')
     .replace(/<!-- 相談フォーム[^\n]*-->\n<div class="z z-sky pv-form-zone">[\s\S]*?\{% include reservation_form_ja\.html %\}[\s\S]*?(<\/fieldset>\s*)?<\/div>\n/, '<!-- FORM -->\n')
     .replace(/<script src="\.\.\/scripts\/(analytics|reservation-form)\.js"><\/script>\n/g, '')
+    .replace(/ *<p class="pricing-note"><strong>【改定予告】<\/strong>2026年11月15日にプライバシーポリシー[^\n]*\n/, '') /* #690: 改定予告リンク（第2段階で削除） */
     .replace(/\n{2,}/g, '\n');
 }
 
@@ -227,16 +228,19 @@ test('#633/#658: ビルド後の試作に googletagmanager / gtag( / analytics.j
 });
 
 test('#658: ビルド後の本番と試作は、表示テキスト・リンク・計測属性・画像・IDが同じ（フォーム注記を除く）', { skip: skipBuilt }, function () {
+  /* #690: プライバシーポリシー改定予告の段落は本番のみの意図した差分（第2段階で削除） */
+  var current = built.current.replace(/<p class="pricing-note"><strong>【改定予告】<\/strong>2026年11月15日にプライバシーポリシー[\s\S]*?<\/p>/, '');
+  assert.notStrictEqual(current, built.current, '予告の段落が本番に存在する');
   var NOTE = '【試作ページ】検証用のため、このフォームからは送信できません。';
   /* #665: 本番トップのテーマ切替の表示名だけ「生成り→白青」（明るい側の切替先が異なる意図した差分） */
-  var cur = visibleLeaves(built.current).map(function (t) { return t === '🔷 白青' ? '🌿 生成り' : t; }), pre = visibleLeaves(built.preview).filter(function (t) { return t !== NOTE; });
+  var cur = visibleLeaves(current).map(function (t) { return t === '🔷 白青' ? '🌿 生成り' : t; }), pre = visibleLeaves(built.preview).filter(function (t) { return t !== NOTE; });
   assert.deepStrictEqual(cur, pre);
   assert.ok(cur.length > 200, '照合対象が空洞化していないこと');
-  assert.deepStrictEqual(anchors(built.current), anchors(built.preview));
-  assert.deepStrictEqual(images(built.current), images(built.preview));
+  assert.deepStrictEqual(anchors(current), anchors(built.preview));
+  assert.deepStrictEqual(images(current), images(built.preview));
   var ids = function (h) { return (bodyOf(h).match(/\bid="([^"]+)"/g) || []).map(function (x) { return x.slice(4, -1); }).filter(function (i) { return i !== 'pv-form-note'; }); };
-  assert.deepStrictEqual(ids(built.current), ids(built.preview));
-  assert.strictEqual(new Set(ids(built.current)).size, ids(built.current).length, 'IDが重複している');
+  assert.deepStrictEqual(ids(current), ids(built.preview));
+  assert.strictEqual(new Set(ids(current)).size, ids(current).length, 'IDが重複している');
 });
 
 test('#658: ビルド後の本番の title・description・OGP・Twitter・canonical・JSON-LD（priceRange・FAQ）が正しい', { skip: skipBuilt }, function () {
