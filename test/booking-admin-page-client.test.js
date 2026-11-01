@@ -116,7 +116,11 @@ function createScriptRunStub() {
     /* Issue #668 */
     'adminApproveLargeParty',
     'adminRejectLargeParty',
-    'adminChangeBookingPeople'
+    'adminChangeBookingPeople',
+    'adminPreviewBookingPeople',
+    'adminResolvePeopleChange',
+    'adminGetBookingChanges',
+    'adminResendRescheduleMail'
   ];
 
   var stub = {
@@ -203,6 +207,40 @@ function booking(overrides) {
 }
 
 var TODAY = '2026-09-22';
+
+test('人数変更: 再計算結果を確認してから同じ見積りで確定する', function () {
+  var sandbox = loadClientSandbox(), run = sandbox.google.script.run;
+  sandbox.state.bookings = [booking({ bookingId: 'mens-change', brand: 'mens', people: '5名' })];
+  sandbox.window.prompt = function () { return '7'; };
+  var message;
+  sandbox.window.confirm = function (text) { message = text; return true; };
+  sandbox.runChangePeople('mens-change');
+  var index = run.calls.length - 1;
+  assert.strictEqual(run.calls[index].name, 'adminPreviewBookingPeople');
+  assert.deepStrictEqual(Array.from(run.calls[index].args), ['mens-change', '7名']);
+  assert.strictEqual(run.calls.some(function (c) { return c.name === 'adminChangeBookingPeople'; }), false);
+  run.resolveCall(index, { success: true, quoteToken: 'verified-quote', change: {
+    oldPeople: '5名', newPeople: '7名', oldAmount: 10000, newAmount: 12000, additionalChargeDue: 2000
+  } });
+  assert.ok(message.includes('10000円 → 12000円'));
+  assert.ok(message.includes('未精算の追加請求額: 2000円'));
+  assert.ok(message.includes('自動実行しません'));
+  var commit = run.calls[run.calls.length - 1];
+  assert.strictEqual(commit.name, 'adminChangeBookingPeople');
+  assert.deepStrictEqual(Array.from(commit.args), ['mens-change', '7名', 'verified-quote']);
+});
+
+test('人数変更: 見積り確認の中止・見積り失敗では変更しない', function () {
+  [true, false].forEach(function (previewSuccess) {
+    var sandbox = loadClientSandbox({ confirmResult: false }), run = sandbox.google.script.run;
+    sandbox.window.prompt = function () { return '4'; };
+    sandbox.runChangePeople('mens-change');
+    run.resolveCall(run.calls.length - 1, previewSuccess ? { success: true, quoteToken: 'q', change: {
+      oldPeople: '5名', newPeople: '4名', oldAmount: 10000, newAmount: 9000, refundDue: 1000
+    } } : { success: false, error: { message: '復旧待ちです' } });
+    assert.strictEqual(run.calls.some(function (c) { return c.name === 'adminChangeBookingPeople'; }), false);
+  });
+});
 var YESTERDAY = '2026-09-21';
 var TOMORROW = '2026-09-23';
 

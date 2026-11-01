@@ -200,6 +200,12 @@ function rec(ctx, bookingId) {
   return ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
 }
 
+function changePeople(ctx, bookingId, people, now) {
+  var q = ctx.sandbox.BookingRepository.previewBookingPeople(bookingId, people, now);
+  if (!q.success) return q;
+  return ctx.sandbox.BookingRepository.changeBookingPeople(bookingId, people, now, q.quoteToken);
+}
+
 function rows(ctx) {
   return ctx.sheets.Bookings ? ctx.sheets.Bookings._rows.length - 1 : 0;
 }
@@ -539,14 +545,14 @@ test('人数変更: 2日前まで増員は人数・加算・料金を再計算�
   var R = ctx.sandbox.BookingRepository;
   var r = book(ctx, { people: '5名' });
   R.approveLargeParty(r.bookingId, NOW);
-  var up = R.changeBookingPeople(r.bookingId, '7名', NOW);
+  var up = changePeople(ctx, r.bookingId, '7名', NOW);
   assert.strictEqual(up.success, true, JSON.stringify(up));
   var row = rec(ctx, r.bookingId);
   assert.strictEqual(row.people, '7名');
   assert.strictEqual(row.partySurcharge, 3000);
   assert.strictEqual(row.priceAmount, 12000);
   assert.strictEqual(row.largePartyApprovalStatus, 'APPROVED', '承認済みの増員で承認は維持（管理者の変更が承認）');
-  var down = R.changeBookingPeople(r.bookingId, '6名', NOW);
+  var down = changePeople(ctx, r.bookingId, '6名', NOW);
   assert.strictEqual(down.success, true);
   assert.strictEqual(rec(ctx, r.bookingId).priceAmount, 11000);
   var mail = mailsTo(ctx, EMAIL).filter(function (m) { return /利用人数を変更/.test(m.subject); }).pop();
@@ -557,7 +563,7 @@ test('人数変更: 4名以下へ変更すると通常料金へ再計算し、�
   var ctx = setup({ members: MEMBER });
   var R = ctx.sandbox.BookingRepository;
   var r = book(ctx, { people: '6名' });
-  var res = R.changeBookingPeople(r.bookingId, '4名', NOW);
+  var res = changePeople(ctx, r.bookingId, '4名', NOW);
   assert.strictEqual(res.success, true, JSON.stringify(res));
   var row = rec(ctx, r.bookingId);
   assert.strictEqual(row.priceAmount, 9000);
@@ -568,14 +574,14 @@ test('人数変更: 8名以上・同数・mens以外・金額修正済み・決�
   var ctx = setup({ members: MEMBER });
   var R = ctx.sandbox.BookingRepository;
   var r = book(ctx, { people: '5名' });
-  assert.strictEqual(R.changeBookingPeople(r.bookingId, '8名', NOW).error.code, 'PARTY_SIZE_EXCEEDED');
-  assert.strictEqual(R.changeBookingPeople(r.bookingId, '5名', NOW).error.code, 'NO_CHANGE');
+  assert.strictEqual(changePeople(ctx, r.bookingId, '8名', NOW).error.code, 'PARTY_SIZE_EXCEEDED');
+  assert.strictEqual(changePeople(ctx, r.bookingId, '5名', NOW).error.code, 'NO_CHANGE');
   ctx.sandbox.SpreadsheetRepository.updateBookingFields(r.bookingId, { paymentStatus: 'checkout_pending' });
-  assert.strictEqual(R.changeBookingPeople(r.bookingId, '6名', NOW).error.code, 'PAYMENT_IN_PROGRESS');
+  assert.strictEqual(changePeople(ctx, r.bookingId, '6名', NOW).error.code, 'PAYMENT_IN_PROGRESS');
   ctx.sandbox.SpreadsheetRepository.updateBookingFields(r.bookingId, { paymentStatus: 'not_started', priceOverrideAt: NOW, priceOverrideAmount: 1 });
-  assert.strictEqual(R.changeBookingPeople(r.bookingId, '6名', NOW).error.code, 'PRICE_OVERRIDDEN');
+  assert.strictEqual(changePeople(ctx, r.bookingId, '6名', NOW).error.code, 'PRICE_OVERRIDDEN');
   var snb = book(ctx, { brand: 'snb', people: '2名', paymentMethod: '現金', memberProof: null, date: '2026-12-20' });
-  assert.strictEqual(R.changeBookingPeople(snb.bookingId, '3名', NOW).error.code, 'NOT_MENS');
+  assert.strictEqual(changePeople(ctx, snb.bookingId, '3名', NOW).error.code, 'NOT_MENS');
 });
 
 test('人数変更: 前日・当日は増員不可。減員は人数のみ更新し、人数加算分を含め値下げ・返金しない', function () {
@@ -583,8 +589,8 @@ test('人数変更: 前日・当日は増員不可。減員は人数のみ更新
   var R = ctx.sandbox.BookingRepository;
   var r = book(ctx, { people: '6名', date: '2026-12-12' }, new Date('2026-12-05T12:00:00+09:00'));
   var dayBefore = new Date('2026-12-11T12:00:00+09:00');
-  assert.strictEqual(R.changeBookingPeople(r.bookingId, '7名', dayBefore).error.code, 'PEOPLE_CHANGE_DEADLINE_PASSED');
-  var cut = R.changeBookingPeople(r.bookingId, '5名', dayBefore);
+  assert.strictEqual(changePeople(ctx, r.bookingId, '7名', dayBefore).error.code, 'PEOPLE_CHANGE_DEADLINE_PASSED');
+  var cut = changePeople(ctx, r.bookingId, '5名', dayBefore);
   assert.strictEqual(cut.success, true, JSON.stringify(cut));
   assert.strictEqual(cut.change.noRefund, true);
   var row = rec(ctx, r.bookingId);
@@ -592,33 +598,34 @@ test('人数変更: 前日・当日は増員不可。減員は人数のみ更新
   assert.strictEqual(row.priceAmount, 11000, '値下げしない');
   assert.strictEqual(row.partySurcharge, 2000);
   var twoDays = book(ctx, { people: '5名', date: '2026-12-19', startTime: '10:00' }, new Date('2026-12-05T12:00:00+09:00'));
-  assert.strictEqual(R.changeBookingPeople(twoDays.bookingId, '6名', new Date('2026-12-17T23:00:00+09:00')).success, true, '2日前の暦日までは再計算');
-  assert.strictEqual(R.changeBookingPeople(twoDays.bookingId, '7名', new Date('2026-12-18T00:30:00+09:00')).error.code, 'PEOPLE_CHANGE_DEADLINE_PASSED', '前日は不可');
+  assert.strictEqual(changePeople(ctx, twoDays.bookingId, '6名', new Date('2026-12-17T23:00:00+09:00')).success, true, '2日前の暦日までは再計算');
+  assert.strictEqual(changePeople(ctx, twoDays.bookingId, '7名', new Date('2026-12-18T00:30:00+09:00')).error.code, 'PEOPLE_CHANGE_DEADLINE_PASSED', '前日は不可');
 });
 
-test('人数変更: 入金済みは差額（追加請求・返金候補）を返し、4名以下から5〜7名へはPENDINGのみ・会員資格を再確認して承認待ちにする', function () {
+test('人数変更: 入出金の確認後に差額を算出し、未確定の少人数予約の大人数化は会員確認後に承認待ちにする', function () {
   var ctx = setup({ members: MEMBER });
   var R = ctx.sandbox.BookingRepository;
   var r = book(ctx, { people: '5名' });
-  ctx.sandbox.SpreadsheetRepository.updateBookingFields(r.bookingId, { paymentStatus: 'paid' });
-  var up = R.changeBookingPeople(r.bookingId, '7名', NOW);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(r.bookingId, { paymentStatus: 'paid', status: 'CONFIRMED', feePaidAmount: 10000, feeRefundedAmount: 0 });
+  var up = changePeople(ctx, r.bookingId, '7名', NOW);
   assert.strictEqual(up.change.additionalChargeDue, 2000);
-  var down = R.changeBookingPeople(r.bookingId, '5名', NOW);
+  assert.strictEqual(ctx.sandbox.BookingReschedule.recordFeeSettlement(r.bookingId, up.changeId, 'people-paid-1', 'SETTLED', 2000, 0, '差額入金確認').success, true);
+  var down = changePeople(ctx, r.bookingId, '5名', NOW);
   assert.strictEqual(down.change.refundDue, 2000);
 
   var small = book(ctx, { people: '3名', paymentMethod: CARD, date: '2026-12-26', startTime: '10:00', memberProof: null });
   assert.strictEqual(small.success, true, JSON.stringify(small));
   ctx.members = {};
-  assert.strictEqual(R.changeBookingPeople(small.bookingId, '5名', NOW).error.code, 'LARGE_PARTY_MEMBER_ONLY');
+  assert.strictEqual(changePeople(ctx, small.bookingId, '5名', NOW).error.code, 'LARGE_PARTY_MEMBER_ONLY');
   ctx.members = { [EMAIL]: ['2026-12'] };
-  var ok = R.changeBookingPeople(small.bookingId, '5名', NOW);
+  var ok = changePeople(ctx, small.bookingId, '5名', NOW);
   assert.strictEqual(ok.success, true, JSON.stringify(ok));
   assert.strictEqual(ok.change.needsApproval, true);
   var row = rec(ctx, small.bookingId);
   assert.strictEqual(row.largePartyApprovalStatus, 'PENDING_APPROVAL');
   assert.strictEqual(row.largeParty, true);
   var cash = book(ctx, { people: '3名', paymentMethod: '現金', date: '2026-12-27', startTime: '10:00', memberProof: null });
-  assert.strictEqual(R.changeBookingPeople(cash.bookingId, '5名', NOW).error.code, 'LARGE_PARTY_CARD_REQUIRED');
+  assert.strictEqual(changePeople(ctx, cash.bookingId, '5名', NOW).error.code, 'LARGE_PARTY_CARD_REQUIRED');
 });
 
 test('GA4: 既存イベントにparty_size_tierを付けて大人数選択を識別する（新しい成果イベントは作らない）', function () {
@@ -627,4 +634,164 @@ test('GA4: 既存イベントにparty_size_tierを付けて大人数選択を識
   assert.ok(!/EVENTS\s*=\s*\{[^}]*large_party/i.test(an), '新規イベント名を足さない');
   var app = read('scripts/booking-app.js');
   assert.ok(/setEventContext\('party_size_tier', large \? 'large_5_7' : ''\)/.test(app));
+});
+
+function paidBooking(ctx, people) {
+  var r = book(ctx, { people: people || '5名' });
+  if (Number((people || '5名').replace('名', '')) >= 5) ctx.sandbox.BookingRepository.approveLargeParty(r.bookingId, NOW);
+  var amount = rec(ctx, r.bookingId).priceAmount;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(r.bookingId, { paymentStatus: 'paid', feePaidAmount: amount, feeRefundedAmount: 0, feeSettlementState: 'SETTLED' });
+  var confirmed = ctx.sandbox.BookingRepository.confirmBooking(r.bookingId, NOW);
+  assert.strictEqual(confirmed.success, true, JSON.stringify(confirmed));
+  return r;
+}
+
+test('人数変更見積りは無変更。確認トークンなし・別人数・入金額変更後の古い見積りは一切反映しない', function () {
+  var ctx = setup({ members: MEMBER }), R = ctx.sandbox.BookingRepository;
+  var r = paidBooking(ctx, '5名'), before = JSON.stringify(rec(ctx, r.bookingId));
+  var q = R.previewBookingPeople(r.bookingId, '7名', NOW);
+  assert.strictEqual(q.success, true, JSON.stringify(q));
+  assert.strictEqual(JSON.stringify(rec(ctx, r.bookingId)), before);
+  assert.ok(!ctx.sheets.BookingChanges, '見積りだけで履歴シートを作成しない');
+  assert.strictEqual(R.changeBookingPeople(r.bookingId, '7名', NOW).error.code, 'PEOPLE_QUOTE_REQUIRED');
+  assert.strictEqual(R.changeBookingPeople(r.bookingId, '6名', NOW, q.quoteToken).error.code, 'PEOPLE_QUOTE_STALE');
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(r.bookingId, { feePaidAmount: 11000 });
+  assert.strictEqual(R.changeBookingPeople(r.bookingId, '7名', NOW, q.quoteToken).error.code, 'PEOPLE_QUOTE_STALE');
+  assert.strictEqual(rec(ctx, r.bookingId).people, '5名');
+});
+
+test('確定済み4名→7名→4名: 同じ枠を維持し、会員確認・管理者承認・加算解除・未精算を一貫させる', function () {
+  var ctx = setup({ members: MEMBER }), r = paidBooking(ctx, '4名'), R = ctx.sandbox.BookingRepository;
+  var oldEvent = rec(ctx, r.bookingId).calendarEventId;
+  var up = changePeople(ctx, r.bookingId, '7名', NOW);
+  assert.strictEqual(up.success, true, JSON.stringify(up));
+  var row = rec(ctx, r.bookingId);
+  assert.strictEqual(row.status, 'CONFIRMED');
+  assert.strictEqual(row.calendarEventId, oldEvent);
+  assert.strictEqual(row.largePartyApprovalStatus, 'APPROVED');
+  assert.strictEqual(row.priceAmount, 12000);
+  assert.strictEqual(row.feeSettlementState, 'PENDING_CHARGE');
+  assert.strictEqual(up.change.additionalChargeDue, 3000);
+  var down = changePeople(ctx, r.bookingId, '4名', NOW);
+  assert.strictEqual(down.success, true);
+  assert.strictEqual(down.change.refundDue, 0, '未入金の加算を返金対象にしない');
+  row = rec(ctx, r.bookingId);
+  assert.strictEqual(row.feeSettlementState, 'SETTLED');
+  assert.strictEqual(row.largeParty, '');
+  assert.strictEqual(row.partySurcharge, '');
+  assert.strictEqual(ctx.stripeCalls.length, 0, '人数変更だけで資金移動しない');
+  assert.strictEqual(ctx.sandbox.BookingReschedule.getChanges(r.bookingId).length, 2);
+  assert.strictEqual(R.previewBookingPeople(r.bookingId, '7名', NOW).success, true);
+});
+
+test('入金済みは金額の記録が必要。既存大人数でも会員失効・不明な日時・専用プランは拒否', function () {
+  var ctx = setup({ members: MEMBER }), r = paidBooking(ctx, '5名'), R = ctx.sandbox.BookingRepository;
+  ctx.members = {};
+  assert.strictEqual(R.previewBookingPeople(r.bookingId, '7名', NOW).error.code, 'LARGE_PARTY_MEMBER_ONLY');
+  ctx.members = MEMBER;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(r.bookingId, { feePaidAmount: '' });
+  assert.strictEqual(R.previewBookingPeople(r.bookingId, '7名', NOW).error.code, 'FEE_BASELINE_REQUIRED');
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(r.bookingId, { feePaidAmount: 10000, date: 'not-a-date' });
+  assert.strictEqual(R.previewBookingPeople(r.bookingId, '7名', NOW).error.code, 'INVALID_RECORD');
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(r.bookingId, { date: SATURDAY, planCode: 'member_pair_3h' });
+  assert.strictEqual(R.previewBookingPeople(r.bookingId, '7名', NOW).error.code, 'PEOPLE_CHANGE_PLAN_NOT_SUPPORTED');
+});
+
+test('追加請求の一部入金→残額入金→減員返金を履歴へ関連付け、再送は二重計上しない', function () {
+  var ctx = setup({ members: MEMBER }), r = paidBooking(ctx, '5名'), S = ctx.sandbox.BookingReschedule;
+  var up = changePeople(ctx, r.bookingId, '7名', NOW);
+  function settle(id, state, paid, refund, changeId) { return S.recordFeeSettlement(r.bookingId, changeId || up.changeId, id, state, paid, refund, '入出金を確認済み'); }
+  assert.strictEqual(settle('overpay', 'SETTLED', 2001, 0).error.code, 'PEOPLE_SETTLEMENT_EXCEEDS_BALANCE');
+  assert.strictEqual(settle('wrong-state', 'SETTLED', 1000, 0).error.code, 'PEOPLE_SETTLEMENT_STATE_MISMATCH');
+  assert.strictEqual(settle('part-1', 'PENDING_CHARGE', 1000, 0).success, true);
+  assert.strictEqual(settle('part-1', 'PENDING_CHARGE', 1000, 0).replay, true);
+  assert.strictEqual(rec(ctx, r.bookingId).feePaidAmount, 11000);
+  assert.strictEqual(settle('part-2', 'SETTLED', 1000, 0).success, true);
+  var down = changePeople(ctx, r.bookingId, '4名', NOW);
+  assert.strictEqual(down.change.refundDue, 3000);
+  assert.strictEqual(rec(ctx, r.bookingId).feeSettlementState, 'PENDING_REFUND');
+  assert.strictEqual(settle('over-refund', 'SETTLED', 0, 3001, down.changeId).error.code, 'PEOPLE_SETTLEMENT_EXCEEDS_BALANCE');
+  assert.strictEqual(settle('refund-1', 'SETTLED', 0, 3000, down.changeId).success, true);
+  assert.strictEqual(settle('refund-1', 'SETTLED', 0, 3000, down.changeId).replay, true);
+  assert.strictEqual(rec(ctx, r.bookingId).feeRefundedAmount, 3000);
+  assert.strictEqual(rec(ctx, r.bookingId).feeSettlementState, 'SETTLED');
+  assert.strictEqual(ctx.sandbox.FeeSettlementRepository.findBySettlementId('refund-1').record.changeId, down.changeId);
+});
+
+test('人数・料金の部分反映失敗は、停止フラグの保存にも失敗しても履歴で次の変更・精算を止め、管理者確認後に復旧できる', function () {
+  var ctx = setup({ members: MEMBER }), r = paidBooking(ctx, '5名'), R = ctx.sandbox.BookingRepository, S = ctx.sandbox.BookingReschedule;
+  var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (fields.people) { original(id, { people: fields.people }); throw new Error('after people write'); }
+    if (fields.feeRecoveryRequiredAt) throw new Error('flag write failed');
+    return original(id, fields);
+  };
+  var out = changePeople(ctx, r.bookingId, '7名', NOW);
+  assert.strictEqual(out.error.code, 'PEOPLE_CHANGE_RECOVERY_REQUIRED');
+  assert.strictEqual(rec(ctx, r.bookingId).people, '7名');
+  assert.strictEqual(rec(ctx, r.bookingId).priceAmount, 10000, '途中失敗を再現');
+  assert.strictEqual(S.hasUnresolvedPeopleChange(r.bookingId), true);
+  assert.strictEqual(R.previewBookingPeople(r.bookingId, '6名', NOW).error.code, 'FEE_RECOVERY_REQUIRED');
+  assert.strictEqual(S.recordFeeSettlement(r.bookingId, out.changeId, 'unsafe', 'SETTLED', 0, 0, '').error.code, 'FEE_RECOVERY_REQUIRED');
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = original;
+  assert.strictEqual(S.resolvePeopleChange(out.changeId, 'FINISH', false).error.code, 'PEOPLE_RECOVERY_CONFIRMATION_REQUIRED');
+  var fixed = S.resolvePeopleChange(out.changeId, 'FINISH', true);
+  assert.strictEqual(fixed.success, true, JSON.stringify(fixed));
+  assert.strictEqual(rec(ctx, r.bookingId).priceAmount, 12000);
+  assert.strictEqual(rec(ctx, r.bookingId).feeSettlementState, 'PENDING_CHARGE');
+  assert.strictEqual(S.hasUnresolvedPeopleChange(r.bookingId), false);
+  assert.strictEqual(S.resolvePeopleChange(out.changeId, 'FINISH', true).error.code, 'PEOPLE_RECOVERY_NOT_REQUIRED');
+});
+
+test('部分失敗の取り消しは変更前へ戻す。復旧中に入出金が変わった場合は上書きしない', function () {
+  var ctx = setup({ members: MEMBER }), r = paidBooking(ctx, '5名'), S = ctx.sandbox.BookingReschedule;
+  var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (fields.people) { original(id, { people: fields.people }); throw new Error('partial'); }
+    return original(id, fields);
+  };
+  var out = changePeople(ctx, r.bookingId, '7名', NOW);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = original;
+  original(r.bookingId, { feePaidAmount: 11000 });
+  assert.strictEqual(S.resolvePeopleChange(out.changeId, 'ROLLBACK', true).error.code, 'PEOPLE_RECOVERY_STATE_CHANGED');
+  original(r.bookingId, { feePaidAmount: 10000 });
+  assert.strictEqual(S.resolvePeopleChange(out.changeId, 'ROLLBACK', true).success, true);
+  assert.strictEqual(rec(ctx, r.bookingId).people, '5名');
+  assert.strictEqual(rec(ctx, r.bookingId).priceAmount, 10000);
+  assert.strictEqual(S.hasUnresolvedPeopleChange(r.bookingId), false);
+});
+
+test('変更の二重送信は履歴も通知も増やさず、送信失敗だけ明示再送できる', function () {
+  var ctx = setup({ members: MEMBER }), r = paidBooking(ctx, '5名'), R = ctx.sandbox.BookingRepository, S = ctx.sandbox.BookingReschedule;
+  var send = ctx.sandbox.MailApp.sendEmail;
+  ctx.sandbox.MailApp.sendEmail = function () { throw new Error('mail failure'); };
+  var q = R.previewBookingPeople(r.bookingId, '7名', NOW);
+  var first = R.changeBookingPeople(r.bookingId, '7名', NOW, q.quoteToken);
+  assert.strictEqual(first.success, true);
+  assert.strictEqual(first.mail.success, false);
+  assert.strictEqual(S.getChanges(r.bookingId)[0].mailState, 'FAILED');
+  assert.strictEqual(R.changeBookingPeople(r.bookingId, '7名', NOW, q.quoteToken).error.code, 'NO_CHANGE');
+  assert.strictEqual(S.getChanges(r.bookingId).length, 1);
+  ctx.sandbox.MailApp.sendEmail = send;
+  var before = mailsTo(ctx, EMAIL).length;
+  assert.strictEqual(S.sendMail(first.changeId, true).success, true);
+  assert.strictEqual(S.sendMail(first.changeId, true).error.code, 'MAIL_STATE_INVALID');
+  assert.strictEqual(mailsTo(ctx, EMAIL).length, before + 1);
+});
+
+test('次の人数変更を取り消しても直前の未精算額の上限を維持する', function () {
+  var ctx = setup({ members: MEMBER }), r = paidBooking(ctx, '5名'), S = ctx.sandbox.BookingReschedule;
+  var first = changePeople(ctx, r.bookingId, '7名', NOW);
+  var original = ctx.sandbox.SpreadsheetRepository.updateBookingFields;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = function (id, fields) {
+    if (fields.people) { original(id, { people: fields.people }); throw new Error('partial'); }
+    return original(id, fields);
+  };
+  var next = changePeople(ctx, r.bookingId, '6名', NOW);
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields = original;
+  assert.strictEqual(S.resolvePeopleChange(next.changeId, 'ROLLBACK', true).success, true);
+  var summary = S.peopleSettlementSummary(rec(ctx, r.bookingId));
+  assert.strictEqual(summary.changeId, first.changeId);
+  assert.strictEqual(summary.outstandingAmount, 2000);
+  assert.strictEqual(S.recordFeeSettlement(r.bookingId, first.changeId, 'over-after-rollback', 'SETTLED', 2001, 0, '').error.code, 'PEOPLE_SETTLEMENT_EXCEEDS_BALANCE');
 });

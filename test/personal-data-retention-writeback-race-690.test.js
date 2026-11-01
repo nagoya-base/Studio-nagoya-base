@@ -340,7 +340,7 @@ test('構造: 読んだ行を書き戻す関数の呼び出し元（ファイル
      確認してから、この一覧と docs/personal-data-retention-writeback-race-690.md を更新すること。 */
   assert.deepStrictEqual(callSites(/SpreadsheetRepository\.updateBookingCancellationStateAtomic\(/g), { 'shared/BookingRepository.gs': 1 });
   assert.deepStrictEqual(callSites(/SpreadsheetRepository\.updateBookingPaymentStateAtomic\(/g), { 'admin/BookingRefund.gs': 2, 'shared/BookingRepository.gs': 3 });
-  assert.deepStrictEqual(callSites(/SpreadsheetRepository\.updateBookingRescheduleFeeAtomic\(/g), { 'admin/BookingReschedule.gs': 4 });
+  assert.deepStrictEqual(callSites(/SpreadsheetRepository\.updateBookingRescheduleFeeAtomic\(/g), { 'admin/BookingReschedule.gs': 5 });
   assert.deepStrictEqual(callSites(/SpreadsheetRepository\.updateBookingRefundStateAtomic\(/g), { 'admin/BookingRefund.gs': 4 });
   assert.deepStrictEqual(callSites(/OptionOrderRepository\.updateOrder\(/g), { 'shared/OptionOrderService.gs': 11 });
   assert.deepStrictEqual(callSites(/MemberRepository\.upsertMember\(/g), { 'admin/StripeWebhookProcessor.gs': 5 });
@@ -585,10 +585,10 @@ function piiArgumentWriters(callPattern, columns) {
 test('構造: 消去対象の列を引数で渡す書き込み箇所（Bookings・OptionOrders）が、検証済みの一覧と一致する', function () {
   var BOOKING_PII = ['note', 'stripeCheckoutRequestSnapshot', 'paymentLastErrorMessage', 'paymentRecoveryReason', 'feeSettlementNote', 'feeRecoveryReason', 'refundReason', 'paymentLinkSentTo', 'lastMailErrorMessage', 'paymentLinkLastErrorMessage', 'name', 'email', 'phone', 'purpose'];
   assert.deepStrictEqual(piiArgumentWriters('SpreadsheetRepository\\.updateBookingFields\\(', BOOKING_PII), {
-    'admin/BookingRefund.gs': 1, 'admin/BookingReschedule.gs': 6, 'admin/StripeWebhookProcessor.gs': 1, 'shared/BookingMailer.gs': 4, 'shared/BookingRepository.gs': 1
+    'admin/BookingRefund.gs': 1, 'admin/BookingReschedule.gs': 7, 'admin/StripeWebhookProcessor.gs': 1, 'shared/BookingMailer.gs': 4, 'shared/BookingRepository.gs': 1
   });
   assert.deepStrictEqual(piiArgumentWriters('SpreadsheetRepository\\.update(?:BookingCancellationStateAtomic|BookingPaymentStateAtomic|BookingRescheduleFeeAtomic|BookingRefundStateAtomic)\\(', BOOKING_PII), {
-    'admin/BookingRefund.gs': 4, 'admin/BookingReschedule.gs': 1, 'shared/BookingRepository.gs': 1
+    'admin/BookingRefund.gs': 4, 'admin/BookingReschedule.gs': 2, 'shared/BookingRepository.gs': 1
   });
   assert.deepStrictEqual(piiArgumentWriters('OptionOrderRepository\\.updateOrder\\(', ['customerEmail', 'declineReason', 'checkoutRequestJson', 'paymentRecoveryReason']), { 'shared/OptionOrderService.gs': 6 });
 });
