@@ -153,15 +153,43 @@ function addOldBooking(ctx, overrides) {
  * 各回で、消去が消した個人情報が戻っていないこと・書き込みがロック保持中であることを監査する。
  * 返り値: { stages, cleared（消去が個人情報を消した回数）, held（保留で何も消さなかった回数） }
  */
+/*
+ * 全シート・全セルの走査（行の追加を含む）。消去前の合成の識別値（トークン）を含むセルの位置を返す。
+ * appendRow・setValue・setValues のどの経路で書かれても、最終状態を見るので漏れない。
+ */
+function tokenCells(ctx, tokens) {
+  var found = {};
+  Object.keys(ctx.sheets).forEach(function (name) {
+    var rows = ctx.sheets[name]._rows || [];
+    for (var r = 1; r < rows.length; r++) {
+      for (var c = 0; c < rows[r].length; c++) {
+        var v = rows[r][c];
+        if (typeof v !== 'string' || v === '') continue;
+        for (var t = 0; t < tokens.length; t++) {
+          if (v.indexOf(tokens[t]) !== -1) { found[name + '!' + r + '!' + c] = tokens[t]; break; }
+        }
+      }
+    }
+  });
+  return found;
+}
+
+/* 予約・オプション注文の合成の識別値。操作自身の新しい入力には、これと別の値を使うこと（区別できなくなる）。 */
+var DEFAULT_TOKENS = [EMAIL, 'テスト太郎', '090-0000-0000', '相談メモ', '旧い備考', '旧い精算メモ', '旧い復旧理由', '旧い返金理由', '旧い決済エラー', '旧い決済の復旧理由', '旧いメールエラー', '旧い決済リンクエラー', '旧い不承認理由', '{"amountJpy":1000}'];
+
 function interleaveAll(build, run, extraAudit, auditTarget) {
-  var target = auditTarget || { read: function (ctx) { return piiOf(ctx, BOOKING_ID); }, columns: PII_COLUMNS, seeded: SEEDED };
+  var target = auditTarget || { read: function (ctx) { return piiOf(ctx, BOOKING_ID); }, columns: PII_COLUMNS, seeded: SEEDED, tokens: DEFAULT_TOKENS };
+  var tokens = target.tokens || DEFAULT_TOKENS;
   var probe = build();
   run(probe);
   var stages = probe.calls;
-  var summary = { stages: stages, cleared: 0, heldRuns: 0, runs: 0, serialized: 0, openGaps: 0 };
+  var summary = { stages: stages, cleared: 0, heldRuns: 0, runs: 0, serialized: 0, idleWhileLocked: 0, openGaps: 0, tokenAudits: 0 };
   for (var k = -1; k < stages; k++) {
     var ctx = build();
     var clearedColumns = null;
+    var baseline = null; /* 消去の直後に、まだ識別値を含んでいたセル（保留中など、消えなかった正当なもの） */
+    /* 監査の失敗は、業務コード側のcatchに吸収されないよう、ここに記録して実行後に検査する（例外にしない）。 */
+    ctx.auditFailures = [];
     ctx.onExternal = function (index) {
       if (index !== ctx.__k || clearedColumns !== null) return;
       /* 書き手がロックを保持している外部呼び出しでは、消去はロックを取れず何も消さない（直列化）。保持していなければ消去が走る。 */
@@ -172,24 +200,37 @@ function interleaveAll(build, run, extraAudit, auditTarget) {
       try { purged = plain(ctx.admin.purgeExpiredPersonalData(realNow())); } finally { ctx.inPurge = false; }
       var after = target.read(ctx);
       if (lockedByWriter) {
-        assert.strictEqual(purged.status, 'LOCK_TIMEOUT', 'ロック保持中は消去が待たされる（別の書き手と並行しない）');
-        assert.deepStrictEqual(after, before, 'ロック保持中は何も消さない');
-        summary.serialized++;
+        /* 書き手がロックを保持している間、消去は値を変えてはならない。消去の対象が残っていればロックを取れず LOCK_TIMEOUT になり、
+           書き込み済みで既に対象でない行（日程変更後など）は消す仕事がなく、ロックを取らずに OK で終わる。どちらも値は変わらない。 */
+        if (JSON.stringify(after) !== JSON.stringify(before)) ctx.auditFailures.push('段階 ' + index + ': 書き手がロックを保持中に、消去が値を変えた（' + purged.status + '）');
+        if (purged.status !== 'LOCK_TIMEOUT' && purged.status !== 'OK') ctx.auditFailures.push('段階 ' + index + ': ロック保持中の消去が想定外の状態になった: ' + purged.status);
+        if (purged.status === 'LOCK_TIMEOUT') summary.serialized++;
+        else summary.idleWhileLocked++;
       }
       clearedColumns = target.columns.filter(function (c) { return before[c] !== '' && after[c] === ''; });
       if (!lockedByWriter) summary.openGaps++;
+      baseline = tokenCells(ctx, tokens);
     };
     ctx.__k = k;
     if (k === -1) {
       ctx.inPurge = true;
       try { ctx.admin.purgeExpiredPersonalData(realNow()); } finally { ctx.inPurge = false; }
       clearedColumns = target.columns.filter(function (c) { return target.read(ctx)[c] === ''; });
+      baseline = tokenCells(ctx, tokens);
     }
     run(ctx);
+    assert.deepStrictEqual(ctx.auditFailures, [], '段階 ' + k + ': 監査の失敗');
     var final = target.read(ctx);
     (clearedColumns || []).forEach(function (column) {
       assert.notStrictEqual(final[column], target.seeded[column], '段階 ' + k + ': ' + column + ' が消去前の値に戻った');
     });
+    /* 全シート・全セル（行の追加を含む）に、消去の直後には無かった場所へ識別値が現れていないこと。 */
+    if (baseline !== null) {
+      var after2 = tokenCells(ctx, tokens);
+      var leaked = Object.keys(after2).filter(function (key) { return !Object.prototype.hasOwnProperty.call(baseline, key); });
+      assert.deepStrictEqual(leaked.map(function (key) { return key + ' ← ' + after2[key]; }), [], '段階 ' + k + ': 消去済みの識別値が、消去後に別のセル／新しい行へ現れた');
+      summary.tokenAudits++;
+    }
     assert.strictEqual(ctx.unlockedWrites, 0, '段階 ' + k + ': ロック外の書き込み');
     if (typeof extraAudit === 'function') extraAudit(ctx, k);
     summary.runs++;
@@ -198,7 +239,6 @@ function interleaveAll(build, run, extraAudit, auditTarget) {
   }
   return summary;
 }
-
 
 module.exports = {
   DAY: DAY,
@@ -221,5 +261,7 @@ module.exports = {
   bookingRow: bookingRow,
   piiOf: piiOf,
   addOldBooking: addOldBooking,
-  interleaveAll: interleaveAll
+  interleaveAll: interleaveAll,
+  tokenCells: tokenCells,
+  DEFAULT_TOKENS: DEFAULT_TOKENS
 };
