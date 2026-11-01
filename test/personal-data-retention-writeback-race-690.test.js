@@ -376,3 +376,219 @@ test('到達不能: Webhookプロジェクトは、終端（COMPLETED）の受�
   assert.strictEqual(fin.reason, 'ALREADY_TERMINAL');
   assert.strictEqual(writeCount(ctx), before, '台帳へ一切書かない');
 });
+
+// ============================================================================
+// 5. 返金の多段処理（Stripe呼び出しを挟みロックを解放→再取得する）: 各段階の間に消去を挟み、復活の有無を監査する
+// ============================================================================
+
+var REFUND_PI = 'pi_synthetic_0001';
+var PII_COLUMNS = ['name', 'email', 'phone', 'purpose', 'note', 'feeSettlementNote', 'feeRecoveryReason', 'refundReason', 'stripeCheckoutRequestSnapshot', 'paymentLastErrorMessage', 'paymentRecoveryReason'];
+
+/* 返金専用: 消去と返金が同じBooking Adminプロジェクト（＝同じスクリプトロック）で動く。ロックの保持状況も記録する。 */
+function refundSetup(gapHook) {
+  var spreadsheetsById = {};
+  spreadsheetsById[SPREADSHEET_ID] = {};
+  var held = { value: false };
+  var lockService = {
+    getScriptLock: function () {
+      return {
+        tryLock: function () { if (held.value) return false; held.value = true; return true; },
+        releaseLock: function () { held.value = false; }
+      };
+    }
+  };
+  var events = [];
+  var refunds = [];
+  var calls = { n: 0 };
+  function refundBody(r) { return { id: r.id, status: 'succeeded', amount: r.amount, currency: 'jpy', payment_intent: REFUND_PI, metadata: r.metadata }; }
+  var responder = function (url, options) {
+    var index = calls.n++;
+    if (typeof gapHook === 'function') gapHook(index, url);
+    var method = (options && options.method) || 'get';
+    if (url.indexOf('/payment_intents/') !== -1) return { responseCode: 200, body: { id: REFUND_PI, status: 'succeeded', amount_received: 8000, currency: 'jpy' } };
+    if (url.indexOf('/refunds?payment_intent=') !== -1) return { responseCode: 200, body: { data: refunds.map(refundBody), has_more: false } };
+    if (method === 'post' && /\/refunds$/.test(url)) {
+      var form = {};
+      String(options.payload || '').split('&').forEach(function (kv) { var p = kv.split('='); form[decodeURIComponent(p[0])] = decodeURIComponent((p[1] || '').replace(/\+/g, ' ')); });
+      var r = { id: 're_synthetic_' + (refunds.length + 1), amount: Number(form.amount), metadata: { bookingId: form['metadata[bookingId]'], refundAttemptId: form['metadata[refundAttemptId]'] } };
+      refunds.push(r);
+      return { responseCode: 200, body: refundBody(r) };
+    }
+    var m = /\/refunds\/([^/?]+)$/.exec(url);
+    if (m) return { responseCode: 200, body: refundBody(refunds.filter(function (x) { return x.id === decodeURIComponent(m[1]); })[0]) };
+    throw new Error('未対応のURL: ' + method + ' ' + url);
+  };
+  var admin = loadBookingSandbox(manifest.BOOKING_ADMIN_FILES, {
+    PropertiesService: stubs.createPropertiesServiceStub({
+      CALENDAR_ID: 'cal1', SPREADSHEET_ID: SPREADSHEET_ID, STRIPE_SECRET_KEY: 'sk_test_synthetic', ADMIN_NOTIFICATION_EMAIL: 'admin@example.com',
+      BOOKING_ADMIN_URL: 'https://script.google.com/macros/s/admin/exec', BOOKING_MAIL_DISPLAY_NAME: 'Studio', BOOKING_MAIL_REPLY_TO: 'noreply@example.com', BOOKING_CONTACT_EMAIL: 'contact@example.com',
+      PERSONAL_DATA_RETENTION_ENABLED: 'true', PERSONAL_DATA_RETENTION_POLICY_VERSION: VERSION, PERSONAL_DATA_RETENTION_DRY_RUN_VERSION: VERSION
+    }),
+    CalendarApp: stubs.createCalendarAppStub({ cal1: { events: events } }),
+    Utilities: stubs.createUtilitiesStub(), LockService: lockService,
+    SpreadsheetApp: stubs.createSpreadsheetAppStub(spreadsheetsById), MailApp: stubs.createMailAppStub(), ScriptApp: stubs.createScriptAppStub(),
+    UrlFetchApp: stubs.createUrlFetchAppStub(responder), Logger: stubs.createLoggerStub()
+  });
+  var book = admin.SpreadsheetApp.openById(SPREADSHEET_ID);
+  var bookings = book.insertSheet('Bookings');
+  var headers = admin.BookingsSchema.HEADERS.slice();
+  bookings.appendRow(headers);
+  return { admin: admin, bookings: bookings, headers: headers, held: held, events: events, calls: calls, refunds: refunds, sheets: spreadsheetsById[SPREADSHEET_ID] };
+}
+
+function addPaidOldBooking(rc) {
+  var end = ago(RETENTION + 30 * DAY);
+  var start = new Date(end.getTime() - 2 * 60 * 60 * 1000);
+  var row = {
+    bookingId: 'SX-20250101-AAAAAAAA', createdAt: new Date(start.getTime() - 20 * DAY), date: '2025-04-10', startAt: start, endAt: end, brand: 'studio_x',
+    people: '2名', paymentMethod: 'オンラインクレジットカード', status: 'CONFIRMED', calendarEventId: 'event-1', source: 'test', customerType: 'returning',
+    confirmedAt: new Date(start.getTime() - 19 * DAY), confirmedMailSentAt: new Date(start.getTime() - 19 * DAY), paymentStatus: 'paid', priceAmount: 8000,
+    paymentAttemptId: 'PAY-SX-20250101-AAAAAAAA-ABCDEF012345', paymentAttemptResolvedAt: new Date(start.getTime() - 19 * DAY),
+    stripeCheckoutSessionId: 'cs_synthetic_0001', stripePaymentIntentId: REFUND_PI, stripeAmount: 8000, stripeCurrency: 'JPY',
+    paymentConfirmedAt: new Date(start.getTime() - 19 * DAY), lastStripeEventId: 'evt_synthetic_0001',
+    name: 'テスト太郎', email: EMAIL, phone: '090-0000-0000', purpose: '相談メモ', note: '旧い備考',
+    feeSettlementNote: '旧い精算メモ', feeRecoveryReason: '旧い復旧理由', refundReason: '旧い返金理由',
+    stripeCheckoutRequestSnapshot: '{"customer_email":"pii-race@example.com"}', paymentLastErrorMessage: '旧い決済エラー', paymentRecoveryReason: '旧い決済の復旧理由'
+  };
+  rc.bookings.appendRow(rc.headers.map(function (h) { return row[h] === undefined ? '' : row[h]; }));
+  var event = stubs.createEventStub({ id: 'event-1', title: 'CONFIRMED', start: start, end: end });
+  event.setTag('bookingId', row.bookingId);
+  rc.events.push(event);
+  return row;
+}
+
+function cellsOf(rc, bookingId) {
+  var out = {};
+  for (var i = 1; i < rc.bookings._rows.length; i++) {
+    if (rc.bookings._rows[i][0] === bookingId) PII_COLUMNS.forEach(function (c) { out[c] = rc.bookings._rows[i][rc.headers.indexOf(c)]; });
+  }
+  return out;
+}
+
+var SEEDED = { name: 'テスト太郎', email: EMAIL, phone: '090-0000-0000', purpose: '相談メモ', note: '旧い備考', feeSettlementNote: '旧い精算メモ', feeRecoveryReason: '旧い復旧理由', refundReason: '旧い返金理由', stripeCheckoutRequestSnapshot: '{"customer_email":"pii-race@example.com"}', paymentLastErrorMessage: '旧い決済エラー', paymentRecoveryReason: '旧い決済の復旧理由' };
+
+['FULL', 'PARTIAL', 'NONE'].forEach(function (decision) {
+  test('返金の多段処理（' + decision + '）: Stripe呼び出しの各段階の間に消去を挟んでも、消去済みの個人情報は戻らず、書き込みは常にロック保持中', function () {
+    /* 1回目: 段階数を数える（消去なし）。2回目以降: 各段階 k で消去を1回挟む。 */
+    var stageCount = 0;
+    var dry = refundSetup();
+    addPaidOldBooking(dry);
+    var request = { decision: decision, amountJpy: 3000, reason: '新しい返金理由' };
+    var dryResult = dry.admin.BookingRefund.cancelWithRefund('SX-20250101-AAAAAAAA', request, NOW);
+    assert.strictEqual(dryResult.success, true, '返金の入口が実際に成功する（空振りでない）');
+    stageCount = dry.calls.n;
+    var sawCleared = 0, sawHeld = 0;
+
+    for (var k = -1; k < Math.max(stageCount, 1); k++) {
+      var cleared = null;
+      var unlockedWrites = 0;
+      var rc = refundSetup(function (index) {
+        if (index === k && cleared === null) {
+          var before = cellsOf(rc, 'SX-20250101-AAAAAAAA');
+          assert.strictEqual(rc.held.value, false, 'Stripe呼び出し中はロックを保持していない（段階の間）');
+          rc.admin.purgeExpiredPersonalData(NOW);
+          var after = cellsOf(rc, 'SX-20250101-AAAAAAAA');
+          cleared = PII_COLUMNS.filter(function (c) { return before[c] !== '' && after[c] === ''; });
+        }
+      });
+      addPaidOldBooking(rc);
+      if (k === -1) {
+        /* 操作の前に消去が済んでいる（古い行を読み直して操作する）ケース */
+        rc.admin.purgeExpiredPersonalData(NOW);
+        cleared = PII_COLUMNS.filter(function (c) { return cellsOf(rc, 'SX-20250101-AAAAAAAA')[c] === ''; });
+      }
+      var originalGetRange = rc.bookings.getRange.bind(rc.bookings);
+      rc.bookings.getRange = function (r, c, nr, nc) {
+        var range = originalGetRange(r, c, nr, nc);
+        var setValues = range.setValues;
+        range.setValues = function () { if (!rc.held.value) unlockedWrites++; return setValues.apply(range, arguments); };
+        var setValue = range.setValue;
+        range.setValue = function () { if (!rc.held.value) unlockedWrites++; return setValue.apply(range, arguments); };
+        return range;
+      };
+      var result = rc.admin.BookingRefund.cancelWithRefund('SX-20250101-AAAAAAAA', request, NOW);
+      assert.strictEqual(result.success, true, decision + ' 段階' + k + ': 返金・取消が完了する');
+      assert.strictEqual(rc.bookings._rows[1][rc.headers.indexOf('status')], 'CANCELLED');
+      if (cleared && cleared.length > 0) sawCleared++;
+      if (cleared && cleared.length === 0 && k >= 0) sawHeld++;
+      var final = cellsOf(rc, 'SX-20250101-AAAAAAAA');
+      (cleared || []).forEach(function (column) {
+        assert.notStrictEqual(final[column], SEEDED[column], decision + ' 段階' + k + ': ' + column + ' が消去前の値に戻った');
+      });
+      assert.strictEqual(unlockedWrites, 0, decision + ' 段階' + k + ': ロック外の書き込み');
+    }
+    if (decision === 'NONE') {
+      assert.strictEqual(stageCount, 0, '返金なしはStripeを呼ばない（段階の間が無い。操作前に消去が済んでいるケースだけを検証する）');
+    } else {
+      assert.strictEqual(stageCount, 3, 'Stripe呼び出しは3回（確認2回＋返金1回）。変わったらこのテストの前提を見直す');
+    }
+    assert.ok(sawCleared >= (decision === 'NONE' ? 1 : 3), '消去が実際に個人情報を消した段階がある（空振りでない）: ' + sawCleared);
+    assert.ok(sawHeld >= (decision === 'NONE' ? 0 : 1), '返金が進行中の段階では保留として何も消さない: ' + sawHeld);
+  });
+});
+
+// ============================================================================
+// 6. 自己修復の限界（上限・保留）
+// ============================================================================
+
+test('自己修復: 既に空の行は1回200行の上限を消費しない（復活した行は、大量の消去済みの行の後ろにあっても次回の実行で消える）', function () {
+  var ctx = setup();
+  for (var i = 0; i < 250; i++) addBooking(ctx);
+  assert.strictEqual(enableRun(ctx).status, 'TRUNCATED', '初回の積み残し（最大200行）');
+  assert.strictEqual(enableRun(ctx, new Date(NOW.getTime() + DAY)).status, 'OK', '2回目で積み残しが完了');
+  var last = ctx.bookings._rows.length - 1;
+  ctx.bookings._rows[last][ctx.headers.indexOf('note')] = '復活した備考';
+  var third = enableRun(ctx, new Date(NOW.getTime() + 2 * DAY));
+  assert.strictEqual(third.status, 'OK');
+  assert.strictEqual(ctx.bookings._rows[last][ctx.headers.indexOf('note')], '', '次回の実行で消える');
+});
+
+test('自己修復の限界: 書き手の更新で保留条件（決済未解決等）が立った行は、保留中は消えない（保留中の情報は利用中のもの）', function () {
+  var ctx = setup();
+  var id = addBooking(ctx);
+  ctx.web.SpreadsheetRepository.updateBookingFields(id, { paymentStatus: 'refund_pending' });
+  var result = enableRun(ctx);
+  assert.strictEqual(result.status, 'OK');
+  assert.strictEqual(bookingCell(ctx, id, 'email'), EMAIL, '保留中は消さない');
+  ctx.web.SpreadsheetRepository.updateBookingFields(id, { paymentStatus: 'refunded' });
+  assert.strictEqual(enableRun(ctx, new Date(NOW.getTime() + DAY)).status, 'OK');
+  assert.strictEqual(bookingCell(ctx, id, 'email'), '', '保留が解けた翌日の実行で消える');
+});
+
+// ============================================================================
+// 7. 構造の固定（続き）: 消去対象の列を引数で渡す書き込み箇所の一覧
+// ============================================================================
+
+/* 呼び出し元が「持ち越して後で書く」値は、引数で渡す値だけ（書き戻す範囲の他の列は、関数の中で行を読み直す）。
+   消去対象の列を引数に含む呼び出しを数え、検証済みの一覧と照合する。増えたら、渡す値が「新しく作った値」「同じロック内で読み直した値」
+   のどちらかであること（ロック外で読んだ個人情報を後で書かないこと）を確認してから、一覧と文書を更新する。 */
+function piiArgumentWriters(callPattern, columns) {
+  var root = path.join(__dirname, '..', 'gas', 'booking');
+  var found = {};
+  ['shared', 'public', 'admin', 'webhook'].forEach(function (dir) {
+    fs.readdirSync(path.join(root, dir)).forEach(function (file) {
+      if (!/\.gs$/.test(file) || file === 'SpreadsheetRepository.gs' || file === 'OptionOrderRepository.gs') return;
+      var text = fs.readFileSync(path.join(root, dir, file), 'utf8');
+      var re = new RegExp(callPattern, 'g');
+      var m;
+      while ((m = re.exec(text))) {
+        var i = m.index + m[0].length, depth = 1;
+        while (i < text.length && depth > 0) { depth += (text[i] === '(') - (text[i] === ')'); i++; }
+        var call = text.slice(m.index, i);
+        if (columns.some(function (c) { return new RegExp('\\b' + c + '\\s*:').test(call); })) found[dir + '/' + file] = (found[dir + '/' + file] || 0) + 1;
+      }
+    });
+  });
+  return found;
+}
+
+test('構造: 消去対象の列を引数で渡す書き込み箇所（Bookings・OptionOrders）が、検証済みの一覧と一致する', function () {
+  var BOOKING_PII = ['note', 'stripeCheckoutRequestSnapshot', 'paymentLastErrorMessage', 'paymentRecoveryReason', 'feeSettlementNote', 'feeRecoveryReason', 'refundReason', 'paymentLinkSentTo', 'lastMailErrorMessage', 'paymentLinkLastErrorMessage', 'name', 'email', 'phone', 'purpose'];
+  assert.deepStrictEqual(piiArgumentWriters('SpreadsheetRepository\\.updateBookingFields\\(', BOOKING_PII), {
+    'admin/BookingRefund.gs': 1, 'admin/BookingReschedule.gs': 6, 'admin/StripeWebhookProcessor.gs': 1, 'shared/BookingMailer.gs': 4, 'shared/BookingRepository.gs': 1
+  });
+  assert.deepStrictEqual(piiArgumentWriters('SpreadsheetRepository\\.update(?:BookingCancellationStateAtomic|BookingPaymentStateAtomic|BookingRescheduleFeeAtomic|BookingRefundStateAtomic)\\(', BOOKING_PII), {
+    'admin/BookingRefund.gs': 4, 'admin/BookingReschedule.gs': 1, 'shared/BookingRepository.gs': 1
+  });
+  assert.deepStrictEqual(piiArgumentWriters('OptionOrderRepository\\.updateOrder\\(', ['customerEmail', 'declineReason', 'checkoutRequestJson', 'paymentRecoveryReason']), { 'shared/OptionOrderService.gs': 6 });
+});
