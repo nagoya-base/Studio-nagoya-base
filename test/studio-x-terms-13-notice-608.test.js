@@ -40,9 +40,10 @@ test('#608: 適用予定日は告知日から14日以上後', function () {
   assert.ok(n.body.indexOf('2026年11月12日') !== -1);
 });
 
-test('#608: お知らせは先頭に追加され、既存のお知らせは維持されている', function () {
+test('#608: 予告は後続のお知らせより前に並ばず維持され、既存のお知らせも維持されている', function () {
   var news = read('_data/news_ja.yml');
-  assert.ok(news.indexOf('- date: "2026.10.28"\n  type: "重要"') === news.indexOf('- date'), '先頭');
+  assert.ok(news.indexOf('- date: "2026.10.28"\n  type: "重要"') !== -1, '予告の維持');
+  assert.ok(news.indexOf('- date: "2026.10.28"\n  type: "重要"') < news.indexOf('- date: "2026.10.25"'), '10.25より新しい側');
   assert.ok(news.indexOf('平日6時間パスの提供を終了しました') !== -1);
   assert.ok(news.indexOf('SNB MEMBER') !== -1);
 });
