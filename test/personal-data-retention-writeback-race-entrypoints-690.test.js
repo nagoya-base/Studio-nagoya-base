@@ -15,6 +15,7 @@ var assert = require('node:assert');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
 var manifest = require('./helpers/booking-deployment-manifest');
+var membershipLookupResponse = require('./helpers/stripe-membership-mock').membershipLookupResponse;
 
 var DAY = 24 * 60 * 60 * 1000;
 var RETENTION = 180 * DAY;
@@ -143,7 +144,8 @@ function addOldBooking(ctx, overrides) {
  * 各回で、消去が消した個人情報が戻っていないこと・書き込みがロック保持中であることを監査する。
  * 返り値: { stages, cleared（消去が個人情報を消した回数）, held（保留で何も消さなかった回数） }
  */
-function interleaveAll(build, run, extraAudit) {
+function interleaveAll(build, run, extraAudit, auditTarget) {
+  var target = auditTarget || { read: function (ctx) { return piiOf(ctx, BOOKING_ID); }, columns: PII_COLUMNS, seeded: SEEDED };
   var probe = build();
   run(probe);
   var stages = probe.calls;
@@ -155,26 +157,26 @@ function interleaveAll(build, run, extraAudit) {
       if (index !== ctx.__k || clearedColumns !== null) return;
       /* 書き手がロックを保持している外部呼び出しでは、消去はロックを取れず何も消さない（直列化）。保持していなければ消去が走る。 */
       var lockedByWriter = ctx.held.value === true;
-      var before = piiOf(ctx, BOOKING_ID);
+      var before = target.read(ctx);
       var purged = plain(ctx.admin.purgeExpiredPersonalData(realNow()));
-      var after = piiOf(ctx, BOOKING_ID);
+      var after = target.read(ctx);
       if (lockedByWriter) {
         assert.strictEqual(purged.status, 'LOCK_TIMEOUT', 'ロック保持中は消去が待たされる（別の書き手と並行しない）');
         assert.deepStrictEqual(after, before, 'ロック保持中は何も消さない');
         summary.serialized++;
       }
-      clearedColumns = PII_COLUMNS.filter(function (c) { return before[c] !== '' && after[c] === ''; });
+      clearedColumns = target.columns.filter(function (c) { return before[c] !== '' && after[c] === ''; });
       if (!lockedByWriter) summary.openGaps++;
     };
     ctx.__k = k;
     if (k === -1) {
       ctx.admin.purgeExpiredPersonalData(realNow());
-      clearedColumns = PII_COLUMNS.filter(function (c) { return piiOf(ctx, BOOKING_ID)[c] === ''; });
+      clearedColumns = target.columns.filter(function (c) { return target.read(ctx)[c] === ''; });
     }
     run(ctx);
-    var final = piiOf(ctx, BOOKING_ID);
+    var final = target.read(ctx);
     (clearedColumns || []).forEach(function (column) {
-      assert.notStrictEqual(final[column], SEEDED[column], '段階 ' + k + ': ' + column + ' が消去前の値に戻った');
+      assert.notStrictEqual(final[column], target.seeded[column], '段階 ' + k + ': ' + column + ' が消去前の値に戻った');
     });
     assert.strictEqual(ctx.unlockedWrites, 0, '段階 ' + k + ': ロック外の書き込み');
     if (typeof extraAudit === 'function') extraAudit(ctx, k);
@@ -349,4 +351,183 @@ test('実入口（料金復旧）: 料金の復旧が必要な古い予約（fee
   assert.strictEqual(result.status, 'OK');
   assert.deepStrictEqual(piiOf(ctx, BOOKING_ID), before, '要復旧の間は個人情報を消さない（利用中の情報）');
   assert.ok(Object.keys(result.held).length >= 1, '保留として数えられる: ' + JSON.stringify(result.held));
+});
+
+// ============================================================================
+// 5. 会員系のStripeイベント（customer.subscription.* / invoice.* / charge.refunded / 入会checkout.session.completed）
+// ============================================================================
+
+var MEMBER_ID = 'MBR-synthetic-0001';
+var CUSTOMER_ID = 'cus_synthetic_0001';
+var SUBSCRIPTION_ID = 'sub_synthetic_0001';
+var MEMBER_SESSION_ID = 'cs_synthetic_member';
+var MEMBER_FIRST_INVOICE = 'in_synthetic_first';
+var MEMBER_EMAIL = 'pii-member-entry@example.com';
+var MEMBER_HEADERS = ['memberId', 'email', 'stripeCustomerId', 'stripeSubscriptionId', 'status', 'currentPeriodStart', 'currentPeriodEnd', 'canceledAt', 'cancelAtPeriodEnd', 'latestInvoiceId', 'latestEventId', 'latestEventCreated', 'createdAt', 'updatedAt'];
+var CHECKOUT_HEADERS = ['memberId', 'email', 'checkoutSessionId', 'pendingUntil', 'state', 'createdAt', 'updatedAt'];
+var PERIOD_HEADERS = ['memberId', 'subscriptionId', 'periodStart', 'periodEnd', 'sourceType', 'sourceId', 'amount', 'paidAt', 'eventId', 'recordedAt'];
+var MEMBER_PII = ['memberEmail', 'checkoutEmail'];
+var MEMBER_SEEDED = { memberEmail: MEMBER_EMAIL, checkoutEmail: MEMBER_EMAIL };
+
+function epoch(date) { return Math.floor(date.getTime() / 1000); }
+
+function memberInvoice(id, periodStart) {
+  var periodEnd = new Date(periodStart.getTime() + 30 * DAY);
+  return {
+    id: id, object: 'invoice', billing_reason: 'subscription_cycle', status: 'paid', amount_paid: 500, currency: 'jpy', customer: CUSTOMER_ID,
+    parent: { subscription_details: { subscription: SUBSCRIPTION_ID, metadata: { orderType: 'membership', memberId: MEMBER_ID } } },
+    lines: { data: [{ amount: 500, period: { start: epoch(periodStart), end: epoch(periodEnd) } }] },
+    status_transitions: { paid_at: epoch(periodStart) + 5 }
+  };
+}
+
+function memberResponder() {
+  var periodStart = agoReal(30 * DAY);
+  return function (url, options) {
+    var method = String((options && options.method) || 'get').toLowerCase();
+    if (url.indexOf('/checkout/sessions/' + MEMBER_SESSION_ID) !== -1) {
+      return { responseCode: 200, body: {
+        id: MEMBER_SESSION_ID, mode: 'subscription', status: 'complete', payment_status: 'paid', amount_total: 500, currency: 'jpy', customer: CUSTOMER_ID,
+        customer_email: MEMBER_EMAIL, subscription: SUBSCRIPTION_ID, invoice: MEMBER_FIRST_INVOICE, payment_intent: null,
+        metadata: { orderType: 'membership', memberId: MEMBER_ID }
+      } };
+    }
+    if (url.indexOf('/v1/subscriptions/' + SUBSCRIPTION_ID) !== -1 && method !== 'delete') {
+      return { responseCode: 200, body: { id: SUBSCRIPTION_ID, status: 'active', customer: CUSTOMER_ID, cancel_at_period_end: false,
+        metadata: { orderType: 'membership', memberId: MEMBER_ID }, items: { data: [{ current_period_start: epoch(periodStart), current_period_end: epoch(new Date(periodStart.getTime() + 30 * DAY)) }] } } };
+    }
+    if (url.indexOf('/invoice_payments?') !== -1) return { responseCode: 200, body: { object: 'list', has_more: false, data: [{ invoice: 'in_synthetic_refund' }] } };
+    if (url.indexOf('/invoices/') !== -1) {
+      var invoiceId = decodeURIComponent(url.split('/invoices/')[1]);
+      return { responseCode: 200, body: memberInvoice(invoiceId, invoiceId === MEMBER_FIRST_INVOICE ? agoReal(60 * DAY) : periodStart) };
+    }
+    if (url.indexOf('/charges/') !== -1) return { responseCode: 200, body: { id: 'ch_synthetic', payment_intent: 'pi_synthetic', amount: 500, amount_refunded: 500, currency: 'jpy' } };
+    var lookup = membershipLookupResponse(url, options, {});
+    if (lookup) return lookup;
+    throw new Error('未対応のURL: ' + url);
+  };
+}
+
+/* 解約から180日以上が経った会員（解約・期間終了・支払期間の最も遅い日時から180日超）と、完了済みの入会Checkout。 */
+function buildOldMemberCtx() {
+  var ctx = flowSetup({ responder: memberResponder() });
+  var canceledAt = agoReal(RETENTION + 90 * DAY), periodEnd = agoReal(RETENTION + 85 * DAY);
+  var members = table(ctx, 'Members', MEMBER_HEADERS);
+  members.appendRow(MEMBER_HEADERS.map(function (h) {
+    return ({ memberId: MEMBER_ID, email: MEMBER_EMAIL, stripeCustomerId: CUSTOMER_ID, stripeSubscriptionId: SUBSCRIPTION_ID, status: 'canceled', currentPeriodStart: agoReal(RETENTION + 120 * DAY),
+      currentPeriodEnd: periodEnd, canceledAt: canceledAt, latestInvoiceId: 'in_synthetic_old', latestEventCreated: epoch(agoReal(RETENTION + 90 * DAY)), createdAt: agoReal(RETENTION + 200 * DAY), updatedAt: canceledAt })[h] || '';
+  }));
+  table(ctx, 'MemberCheckouts', CHECKOUT_HEADERS).appendRow(CHECKOUT_HEADERS.map(function (h) {
+    return ({ memberId: MEMBER_ID, email: MEMBER_EMAIL, checkoutSessionId: MEMBER_SESSION_ID, pendingUntil: agoReal(RETENTION + 199 * DAY), state: 'COMPLETED', createdAt: agoReal(RETENTION + 200 * DAY), updatedAt: agoReal(RETENTION + 199 * DAY) })[h] || '';
+  }));
+  table(ctx, 'MemberPeriods', PERIOD_HEADERS).appendRow(PERIOD_HEADERS.map(function (h) {
+    return ({ memberId: MEMBER_ID, subscriptionId: SUBSCRIPTION_ID, periodStart: agoReal(RETENTION + 120 * DAY), periodEnd: periodEnd, sourceType: 'invoice', sourceId: 'in_synthetic_old', amount: 500, paidAt: agoReal(RETENTION + 120 * DAY), eventId: 'evt_synthetic_old', recordedAt: agoReal(RETENTION + 120 * DAY) })[h] || '';
+  }));
+  ctx.watch(members);
+  ctx.watch(ctx.sheets.MemberCheckouts);
+  return ctx;
+}
+
+function table(ctx, name, headers) {
+  if (!ctx.sheets[name]) { ctx.sheets[name] = ctx.book.insertSheet(name); ctx.sheets[name].appendRow(headers); }
+  return ctx.sheets[name];
+}
+
+var memberAudit = {
+  columns: MEMBER_PII, seeded: MEMBER_SEEDED,
+  read: function (ctx) {
+    return { memberEmail: ctx.sheets.Members._rows[1][MEMBER_HEADERS.indexOf('email')], checkoutEmail: ctx.sheets.MemberCheckouts._rows[1][CHECKOUT_HEADERS.indexOf('email')] };
+  }
+};
+
+function receiveMemberEvent(ctx, event) {
+  var now = realNow();
+  var claim = ctx.admin.StripeEventRepository.claim(event.id, event.type, now);
+  if (claim.outcome === 'CLAIMED') ctx.admin.StripeEventRepository.storeRawBody(claim.rowNumber, JSON.stringify(event), now);
+  ctx.watch(ctx.sheets.StripeEvents);
+  var run = ctx.admin.StripeWebhookProcessor.processPendingStripeWebhookEvents(now);
+  return run.results.filter(function (r) { return r.eventId === event.id; })[0] || { finalized: false, code: 'NOT_PROCESSED' };
+}
+
+var nowSec = function () { return Math.floor(Date.now() / 1000); };
+[
+  { label: '入会checkout.session.completed（重複／遅延）', code: 'MEMBERSHIP_JOIN_INITIAL_PERIOD_UNCONFIRMED', stages: 3, event: function () { return { id: 'evt_m_join', type: 'checkout.session.completed', created: nowSec(), data: { object: { id: MEMBER_SESSION_ID } } }; } },
+  { label: 'customer.subscription.updated（再有効化を装う遅延イベント）', code: 'MEMBERSHIP_STATE_STALE', stages: 0, event: function () { return { id: 'evt_m_sub', type: 'customer.subscription.updated', created: nowSec(), data: { object: {
+    id: SUBSCRIPTION_ID, status: 'active', customer: CUSTOMER_ID, cancel_at_period_end: false, metadata: { orderType: 'membership', memberId: MEMBER_ID },
+    items: { data: [{ current_period_start: epoch(agoReal(30 * DAY)), current_period_end: epoch(new Date(Date.now() + 0)) }] } } } }; } },
+  { label: 'invoice.paid（遅延）', code: 'MEMBERSHIP_PERIOD_PAID', stages: 0, event: function () { return { id: 'evt_m_inv', type: 'invoice.paid', created: nowSec(), data: { object: memberInvoice('in_synthetic_late', agoReal(30 * DAY)) } }; } },
+  { label: 'charge.refunded（遅延）', code: 'MEMBERSHIP_REFUND_APPLIED', stages: 3, event: function () { return { id: 'evt_m_ref', type: 'charge.refunded', created: nowSec(), data: { object: { id: 'ch_synthetic', object: 'charge' } } }; } }
+].forEach(function (scenario) {
+  test('実入口（会員系Stripeイベント）: 解約から180日超の会員へ ' + scenario.label + ' — 消去を挟んでも会員メールは戻らず、書き込みはロック保持中', function () {
+    var codes = [];
+    var summary = interleaveAll(buildOldMemberCtx, function (ctx) {
+      var result = receiveMemberEvent(ctx, scenario.event());
+      codes.push(result.code);
+    }, null, memberAudit);
+    assert.ok(codes.every(function (c) { return c !== 'NOT_PROCESSED'; }), 'イベントが処理される（空振りでない）: ' + codes.join(','));
+    assert.ok(codes.every(function (c) { return c === scenario.code; }), '期待する処理結果: ' + scenario.code + ' / 実際: ' + codes.join(','));
+    assert.strictEqual(summary.stages, scenario.stages, 'Stripe呼び出しの回数（段階の間）。変わったらこのテストの前提を見直す');
+    assert.ok(summary.cleared >= 1, '消去が実際に会員メールを消した回がある（空振りでない）: ' + JSON.stringify(summary));
+    if (scenario.stages > 0) assert.ok(summary.openGaps >= 1, 'ロックが外れた外部呼び出しで消去を挟んだ回がある: ' + JSON.stringify(summary));
+  });
+});
+
+
+// ============================================================================
+// 6. 料金復旧の確定（adminResolveFeeRecovery）
+// ============================================================================
+
+test('実入口（料金復旧の確定）: adminResolveFeeRecovery の書き込みの直前に消去を試みても、保留中の行は何も消されず、確定後に消去対象へ戻る（復活しない）', function () {
+  var ctx = buildOldRescheduleCtx({ feeRecoveryRequiredAt: agoReal(RETENTION + 40 * DAY), feeRecoveryReason: '精算の復旧が必要', feeSettlementNote: '旧い精算メモ', note: '旧い備考' });
+  var heldBefore = piiOf(ctx, BOOKING_ID);
+  assert.strictEqual(plain(ctx.admin.purgeExpiredPersonalData(realNow())).status, 'OK');
+  assert.deepStrictEqual(piiOf(ctx, BOOKING_ID), heldBefore, '復旧が必要な間は消去が保留する');
+
+  /* 復旧の確定中（書き込みの直前）に消去を試みる。この時点の行は復旧フラグで保留中のため、消去は何も消さない（消す対象がないのでロックも取らない）。
+     保留を外す書き込み自体が、消去対象へ戻る前の最後の変更になる。 */
+  var attempts = [];
+  var original = ctx.bookings.getRange.bind(ctx.bookings);
+  var fired = false;
+  ctx.bookings.getRange = function (r, c, nr, nc) {
+    var range = original(r, c, nr, nc);
+    var setValues = range.setValues;
+    range.setValues = function () {
+      if (!fired) { fired = true; attempts.push(plain(ctx.admin.purgeExpiredPersonalData(realNow())).status); }
+      return setValues.apply(range, arguments);
+    };
+    return range;
+  };
+  var amount = ctx.__amount;
+  var result = plain(ctx.admin.adminResolveFeeRecovery(BOOKING_ID, { priceOverrideAmount: amount, scheduleChangeCount: 0, feeSettlementState: '' }));
+  assert.strictEqual(result.success, true, JSON.stringify(result).slice(0, 300));
+  assert.deepStrictEqual(attempts, ['OK'], '書き込みの直前の消去は、保留中の行を消さずに終わる');
+  ctx.bookings.getRange = original;
+  var afterResolve = piiOf(ctx, BOOKING_ID);
+  assert.strictEqual(afterResolve.feeSettlementNote, '旧い精算メモ', '復旧の確定は精算メモを書き換えない（読み直した値のまま）');
+  assert.strictEqual(afterResolve.note, '旧い備考', '書き込みの直前の消去は保留中の行を消していない');
+  assert.strictEqual(ctx.unlockedWrites, 0, 'ロック外の書き込みなし');
+  /* 復旧が確定したので、翌日の実行で対象に戻り消える */
+  assert.strictEqual(plain(ctx.admin.purgeExpiredPersonalData(new Date(Date.now() + DAY))).status, 'OK');
+  ['name', 'email', 'note', 'feeSettlementNote'].forEach(function (c) { assert.strictEqual(piiOf(ctx, BOOKING_ID)[c], '', c + ' が翌日に消える'); });
+});
+
+// ============================================================================
+// 7. 決済リンクの送信が成功する経路（開始前の予約のみ。消去対象の行には届かない）
+// ============================================================================
+
+test('実入口（決済リンク送信が成功する経路）: 開始前の PENDING 予約への送信は成功し、書き込みはロック保持中。送信後も PENDING なので消去の対象外', function () {
+  var ctx = flowSetup();
+  var start = new Date(Date.now() + 10 * DAY);
+  addOldBooking(ctx, {
+    status: 'PENDING', paymentStatus: 'not_started', paymentAttemptId: '', paymentAttemptResolvedAt: '', stripeCheckoutSessionId: '', stripePaymentIntentId: '', stripeAmount: '', stripeCurrency: '',
+    paymentConfirmedAt: '', lastStripeEventId: '', confirmedAt: '', confirmedMailSentAt: '', createdAt: new Date(Date.now() - DAY), date: jstDate(start), startAt: start, endAt: new Date(start.getTime() + 2 * 60 * 60 * 1000),
+    paymentLinkSentTo: '', lastMailErrorMessage: '', paymentLinkLastErrorMessage: ''
+  });
+  var result = plain(ctx.admin.BookingMailer.sendPaymentLinkMailForBooking(BOOKING_ID, 'https://buy.stripe.com/test_synthetic_link'));
+  assert.strictEqual(result.success, true, JSON.stringify(result).slice(0, 300));
+  assert.strictEqual(ctx.unlockedWrites, 0, 'ロック外の書き込みなし');
+  assert.strictEqual(piiOf(ctx, BOOKING_ID).paymentLinkSentTo, EMAIL, '送信先（読み直した現在のメール）が記録される');
+  var purge = plain(ctx.admin.purgeExpiredPersonalData(new Date(Date.now() + 400 * DAY)));
+  assert.strictEqual(purge.status, 'OK');
+  assert.strictEqual(piiOf(ctx, BOOKING_ID).email, EMAIL, 'PENDING の間は消去の対象外（利用開始前）');
 });
