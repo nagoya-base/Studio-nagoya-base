@@ -161,15 +161,24 @@ var BookingAvailability = (function () {
   /*
    * 利用者向けメールの日本語日時表示（Issue #705）。
    * formatDateJa: 'YYYY-MM-DD'文字列またはDate値（timezone基準で暦日へ正規化）から
-   *   '2026年12月1日（火）'を返す。解釈できない値はJavaScriptのDate文字列を利用者へ
-   *   出さないよう、文字列ならそのまま、それ以外は空文字にする。
+   *   '2026年12月1日（火）'を返す。Date.toString()相当の文字列もDateとして解釈して整形する。
+   *   解釈できない値は、JavaScriptのDate文字列などを利用者へ出さないよう空文字にする。
    * formatTimeRangeJa: '8:00〜11:00'（先頭ゼロなしのH:mm）。どちらかが解釈できなければ空文字。
    * formatDurationJa: '3時間' / '2時間30分' / '45分'。
    * 曜日はGAS実行環境のローカルtimezoneに依存させず、Date.UTC方式で算出する。
    */
   function formatDateJa(value, timezone) {
-    var dateString = typeof value === 'string' ? value : formatDateInTimezone(value, timezone);
-    if (!isValidDateString(dateString)) return typeof value === 'string' ? value : '';
+    var dateString;
+    if (typeof value === 'string' && isValidDateString(value)) {
+      dateString = value;
+    } else if (typeof value === 'string') {
+      /* 'YYYY-MM-DD'以外の文字列（Date.toString()相当など）は、Dateとして解釈できる場合のみ
+         timezone基準の暦日へ直す。解釈できなければ空文字にし、元の文字列は利用者へ出さない。 */
+      dateString = value.trim() ? formatDateInTimezone(new Date(value), timezone) : null;
+    } else {
+      dateString = formatDateInTimezone(value, timezone);
+    }
+    if (!isValidDateString(dateString)) return '';
     var parts = dateString.split('-');
     var year = parseInt(parts[0], 10);
     var month = parseInt(parts[1], 10);

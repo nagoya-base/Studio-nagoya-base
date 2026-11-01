@@ -651,10 +651,27 @@ test('#705: BookingAvailability.formatDateJa / formatTimeRangeJa / formatDuratio
   assert.strictEqual(A.formatDateJa(new Date('2026-11-30T15:00:00Z'), 'Asia/Tokyo'), '2026年12月1日（火）');
   assert.strictEqual(A.formatDateJa('2026-01-04', 'Asia/Tokyo'), '2026年1月4日（日）');
   assert.strictEqual(A.formatDateJa(new Date('invalid'), 'Asia/Tokyo'), '');
+  assert.strictEqual(A.formatDateJa('Tue Dec 01 2026 00:00:00 GMT+0900 (日本標準時)', 'Asia/Tokyo'), '2026年12月1日（火）');
+  assert.strictEqual(A.formatDateJa('not a date', 'Asia/Tokyo'), '');
+  assert.strictEqual(A.formatDateJa('', 'Asia/Tokyo'), '');
+  assert.strictEqual(A.formatDateJa(undefined, 'Asia/Tokyo'), '');
   assert.strictEqual(A.formatTimeRangeJa(new Date('2026-12-01T08:00:00+09:00'), new Date('2026-12-01T11:30:00+09:00'), 'Asia/Tokyo'), '8:00〜11:30');
   assert.strictEqual(A.formatTimeRangeJa(new Date('2026-12-01T10:00:00+09:00'), new Date('2026-12-01T22:00:00+09:00'), 'Asia/Tokyo'), '10:00〜22:00');
   assert.strictEqual(A.formatDurationJa(new Date('2026-12-01T08:00:00+09:00'), new Date('2026-12-01T11:00:00+09:00')), '3時間');
   assert.strictEqual(A.formatDurationJa(new Date('2026-12-01T08:00:00+09:00'), new Date('2026-12-01T10:30:00+09:00')), '2時間30分');
   assert.strictEqual(A.formatDurationJa(new Date('2026-12-01T08:00:00+09:00'), new Date('2026-12-01T08:45:00+09:00')), '45分');
   assert.strictEqual(A.formatDurationJa(null, null), '');
+});
+
+test('#705: record.dateがDate.toString()相当の文字列・解釈不能な文字列でも、Date文字列を本文に出さない', function () {
+  var templates = loadTemplates();
+  ['Tue Dec 01 2026 00:00:00 GMT+0900 (日本標準時)', 'Tue Dec 99 2026 GMT+0900 (日本標準時)', 'invalid GMT+0900'].forEach(function (rawDate) {
+    var record = sampleRecord({ date: rawDate });
+    ALL_MAIL_BUILDERS.forEach(function (entry) {
+      var mail = entry[1](templates, record);
+      assert.doesNotMatch(mail.body, /GMT|日本標準時|Tue Dec/, entry[0] + ' / ' + rawDate);
+    });
+  });
+  var ok = templates.buildCancelledMail(sampleRecord({ date: 'Tue Dec 01 2026 00:00:00 GMT+0900 (日本標準時)', startAt: new Date('2026-12-01T08:00:00+09:00'), endAt: new Date('2026-12-01T11:00:00+09:00') }), CONFIG);
+  assert.match(ok.body, /利用日時: 2026年12月1日（火）8:00〜11:00/);
 });
