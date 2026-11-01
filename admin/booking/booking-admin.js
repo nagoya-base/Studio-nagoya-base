@@ -2197,7 +2197,7 @@ function renderPeopleChangeHistory_(booking) {
         (recovery ? '<p>人数・料金の反映結果が未確認です。台帳と決済結果を確認してから復旧してください。</p>' +
           '<button type="button" data-people-decision="FINISH" data-change-id="' + escapeHtml(item.changeId) + '">変更後の内容で反映を完了</button> ' +
           '<button type="button" data-people-decision="ROLLBACK" data-change-id="' + escapeHtml(item.changeId) + '">変更前へ戻す</button>' : '') +
-        (item.mailState === 'FAILED' ? '<button type="button" data-people-resend="' + escapeHtml(item.changeId) + '">通知を再送</button>' : '') + '</div>';
+        (item.mailState === 'FAILED' || item.mailState === 'PENDING' ? '<button type="button" data-people-resend="' + escapeHtml(item.changeId) + '">通知を送信</button>' : '') + '</div>';
     }).join('') : '人数変更の履歴はありません。';
     area.querySelectorAll('button[data-people-decision]').forEach(function (button) {
       button.addEventListener('click', function () {
@@ -2210,7 +2210,7 @@ function renderPeopleChangeHistory_(booking) {
     });
     area.querySelectorAll('button[data-people-resend]').forEach(function (button) {
       button.addEventListener('click', function () {
-        if (!window.confirm('送信失敗が確認された通知を再送しますか？')) return;
+        if (!window.confirm('未送信または送信失敗の通知を送信しますか？')) return;
         button.disabled = true;
         google.script.run.withFailureHandler(function () { button.disabled = false; alert('送信結果を確認できません。'); })
           .withSuccessHandler(function (outcome) { alert(outcome && outcome.success ? '送信しました。' : (outcome && outcome.error && outcome.error.message)); refreshOpenDetail_(booking.bookingId); })

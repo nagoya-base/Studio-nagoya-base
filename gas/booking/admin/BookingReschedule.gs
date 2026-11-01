@@ -1030,6 +1030,10 @@ var BookingReschedule = (function () {
           Booking.getEffectivePriceAmount(found.record) !== row[15])) {
         return error_('BOOKING_CHANGED_AGAIN', '人数・料金が再変更されています。古い通知は送信しません。');
       }
+      var peopleSummary = isPeopleChange ? peopleSettlementSummary(found.record) : null;
+      if (isPeopleChange && (!peopleSummary || peopleSummary.changeId !== changeId)) {
+        return error_('BOOKING_CHANGED_AGAIN', '最新の人数変更ではありません。古い通知は送信しません。');
+      }
       var config = BookingConfig.getMailConfig();
       if (!config.displayName || !config.replyTo || !config.contactEmail ||
           !BookingAvailability.formatDateInTimezone(new Date(), config.timezone) || !found.record.email) {
@@ -1059,7 +1063,14 @@ var BookingReschedule = (function () {
         name: config.displayName, replyTo: config.replyTo
       };
       if (isPeopleChange) {
-        var peopleMail = BookingMailTemplates.buildPeopleChangedMail(found.record, config, peopleDetails.change);
+        var currentChange = Object.assign({}, peopleDetails.change);
+        currentChange.needsApproval = found.record.status === Booking.STATUS.PENDING &&
+          found.record.largePartyApprovalStatus === Booking.LARGE_PARTY_APPROVAL.PENDING_APPROVAL;
+        if (!currentChange.noRefund && found.record.status === Booking.STATUS.CONFIRMED) {
+          currentChange.additionalChargeDue = Math.max(0, peopleSummary.outstandingAmount);
+          currentChange.refundDue = Math.max(0, -peopleSummary.outstandingAmount);
+        }
+        var peopleMail = BookingMailTemplates.buildPeopleChangedMail(found.record, config, currentChange);
         mail.subject = peopleMail.subject; mail.body = peopleMail.body;
       }
       change.sheet.getRange(change.rowNumber, 12).setValue('SENDING');

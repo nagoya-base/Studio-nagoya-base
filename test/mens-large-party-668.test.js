@@ -795,3 +795,20 @@ test('次の人数変更を取り消しても直前の未精算額の上限を�
   assert.strictEqual(summary.outstandingAmount, 2000);
   assert.strictEqual(S.recordFeeSettlement(r.bookingId, first.changeId, 'over-after-rollback', 'SETTLED', 2001, 0, '').error.code, 'PEOPLE_SETTLEMENT_EXCEEDS_BALANCE');
 });
+
+test('通知失敗後に精算済みなら再送で再請求を案内せず、同人数に戻っても古い変更通知は送らない', function () {
+  var ctx = setup({ members: MEMBER }), r = paidBooking(ctx, '5名'), S = ctx.sandbox.BookingReschedule;
+  var send = ctx.sandbox.MailApp.sendEmail;
+  ctx.sandbox.MailApp.sendEmail = function () { throw new Error('mail failure'); };
+  var up = changePeople(ctx, r.bookingId, '7名', NOW);
+  ctx.sandbox.MailApp.sendEmail = send;
+  assert.strictEqual(S.recordFeeSettlement(r.bookingId, up.changeId, 'before-mail', 'SETTLED', 2000, 0, '').success, true);
+  assert.strictEqual(S.sendMail(up.changeId, true).success, true);
+  assert.ok(!mailsTo(ctx, EMAIL).slice(-1)[0].body.includes('追加でご請求します'));
+  ctx.sandbox.MailApp.sendEmail = function () { throw new Error('mail failure'); };
+  var down = changePeople(ctx, r.bookingId, '4名', NOW);
+  changePeople(ctx, r.bookingId, '6名', NOW);
+  changePeople(ctx, r.bookingId, '4名', NOW);
+  ctx.sandbox.MailApp.sendEmail = send;
+  assert.strictEqual(S.sendMail(down.changeId, true).error.code, 'BOOKING_CHANGED_AGAIN');
+});

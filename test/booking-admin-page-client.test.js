@@ -118,6 +118,7 @@ function createScriptRunStub() {
     'adminRejectLargeParty',
     'adminChangeBookingPeople',
     'adminPreviewBookingPeople',
+    'adminRecordRescheduleFeeSettlement',
     'adminResolvePeopleChange',
     'adminGetBookingChanges',
     'adminResendRescheduleMail'
@@ -239,6 +240,39 @@ test('人数変更: 見積り確認の中止・見積り失敗では変更しな
       oldPeople: '5名', newPeople: '4名', oldAmount: 10000, newAmount: 9000, refundDue: 1000
     } } : { success: false, error: { message: '復旧待ちです' } });
     assert.strictEqual(run.calls.some(function (c) { return c.name === 'adminChangeBookingPeople'; }), false);
+  });
+});
+
+test('人数変更の精算画面: 部分入金・返金から状態を計算し、人数変更履歴へ記録する', function () {
+  [2000, -2000].forEach(function (balance) {
+    var sandbox = loadClientSandbox(), fields = {}, section = createElementStub();
+    section.querySelector = function (key) {
+      if (!fields[key]) fields[key] = createElementStub();
+      return fields[key];
+    };
+    section.querySelector('#settlement-paid-delta').value = '0';
+    section.querySelector('#settlement-refunded-delta').value = '0';
+    sandbox.document.getElementById = function (key) {
+      return key === 'modal-body' ? { insertAdjacentElement: function () {} } : null;
+    };
+    sandbox.document.createElement = function () { return section; };
+    sandbox.renderFeeSettlementSection_(booking({ bookingId: 'people-fee', status: 'CONFIRMED',
+      feeBaselineReady: true, peopleChangeSettlement: { changeId: 'people-history', outstandingAmount: balance } }));
+    var stateField = fields['#settlement-state'];
+    assert.strictEqual(stateField.disabled, true);
+    assert.strictEqual(stateField.value, balance > 0 ? 'PENDING_CHARGE' : 'PENDING_REFUND');
+    var input = fields[balance > 0 ? '#settlement-paid-delta' : '#settlement-refunded-delta'];
+    assert.strictEqual(input.max, 2000);
+    input.value = '1000'; input.fire('input');
+    fields['#settlement-save'].fire('click');
+    var run = sandbox.google.script.run, call = run.calls[run.calls.length - 1];
+    assert.strictEqual(call.name, 'adminRecordRescheduleFeeSettlement');
+    assert.strictEqual(call.args[1], 'people-history');
+    assert.strictEqual(call.args[3], balance > 0 ? 'PENDING_CHARGE' : 'PENDING_REFUND');
+    assert.strictEqual(call.args[4], balance > 0 ? 1000 : 0);
+    assert.strictEqual(call.args[5], balance > 0 ? 0 : 1000);
+    input.value = '2000'; input.fire('input');
+    assert.strictEqual(stateField.value, 'SETTLED');
   });
 });
 var YESTERDAY = '2026-09-21';
