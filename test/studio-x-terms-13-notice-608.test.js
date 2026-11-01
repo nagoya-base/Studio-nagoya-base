@@ -17,7 +17,7 @@ function findNotice() {
   var re = /- date: "([^"]+)"\n  type: "([^"]+)"\n  body: "([^"]*)"/g;
   var m;
   while ((m = re.exec(news))) {
-    if (m[3].indexOf('第13条') !== -1 && m[3].indexOf('改定') !== -1) return { date: m[1], type: m[2], body: m[3] };
+    if (m[3].startsWith('【改定予告】Studio X利用規約 第13条')) return { date: m[1], type: m[2], body: m[3] };
   }
   return null;
 }
