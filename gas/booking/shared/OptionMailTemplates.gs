@@ -40,7 +40,7 @@ var OptionMailTemplates = (function () {
   function bookingLines_(booking, config) {
     return [
       '予約ID: ' + booking.bookingId,
-      '利用日: ' + BookingAvailability.formatDateWithWeekday(booking.date)
+      '利用日: ' + BookingAvailability.formatDateJa(booking.date, config && config.timezone)
     ];
   }
 

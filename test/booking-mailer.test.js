@@ -111,8 +111,7 @@ test('sendPendingMailForBooking: PENDING予約に1通送り、pendingMailSentAt�
      依存せず本文でも10:00/12:00のまま表示されること（config.timezoneが渡っていないと
      Intl.DateTimeFormatが環境既定timezoneへフォールバックし、ここが例えば01:00等の
      UTC時刻表示に化けてしまう）。 */
-  assert.match(mailApp._sentEmails[0].body, /開始時刻: 10:00/);
-  assert.match(mailApp._sentEmails[0].body, /終了時刻: 12:00/);
+  assert.match(mailApp._sentEmails[0].body, /利用日時: .*10:00〜12:00/);
 
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId);
   assert.ok(stubs.isDateLike(found.record.pendingMailSentAt));
@@ -152,7 +151,7 @@ test('sendPendingMailForBooking: TIMEZONEをUTC等へ変更しても、その設
   var result = ctx.sandbox.BookingMailer.sendPendingMailForBooking(bookingId);
   assert.strictEqual(result.success, true);
   /* startAt=2026-10-01T10:00:00+09:00はUTCでは01:00になる */
-  assert.match(mailApp._sentEmails[0].body, /開始時刻: 01:00/);
+  assert.match(mailApp._sentEmails[0].body, /利用日時: .*1:00〜3:00/);
 });
 
 test('sendPendingMailForBooking: TIMEZONEが不正な文字列の場合はfail-closedにMAIL_NOT_READYとしてメールを送らず、lastMailError*へ記録する', function () {
@@ -1606,7 +1605,7 @@ test('sendPaymentLinkMailForBooking: buildPaymentLinkMailへBookingConfig.getTtl
   assert.strictEqual(result.success, true, JSON.stringify(result));
   /* createdAt+72h = 2026-10-01 10:00（buildPendingMailの同条件テスト・
      booking-mail-templates.test.jsのbuildPaymentLinkMailテストと同じ計算結果）。 */
-  assert.match(mailApp._sentEmails[0].body, /お支払い期限: 2026-10-01（木） 10:00/);
+  assert.match(mailApp._sentEmails[0].body, /お支払い期限: 2026年10月1日（木） 10:00/);
 });
 
 /* ---------- REMINDER ---------- */

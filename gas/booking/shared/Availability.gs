@@ -159,6 +159,47 @@ var BookingAvailability = (function () {
   }
 
   /*
+   * 利用者向けメールの日本語日時表示（Issue #705）。
+   * formatDateJa: 'YYYY-MM-DD'文字列またはDate値（timezone基準で暦日へ正規化）から
+   *   '2026年12月1日（火）'を返す。解釈できない値はJavaScriptのDate文字列を利用者へ
+   *   出さないよう、文字列ならそのまま、それ以外は空文字にする。
+   * formatTimeRangeJa: '8:00〜11:00'（先頭ゼロなしのH:mm）。どちらかが解釈できなければ空文字。
+   * formatDurationJa: '3時間' / '2時間30分' / '45分'。
+   * 曜日はGAS実行環境のローカルtimezoneに依存させず、Date.UTC方式で算出する。
+   */
+  function formatDateJa(value, timezone) {
+    var dateString = typeof value === 'string' ? value : formatDateInTimezone(value, timezone);
+    if (!isValidDateString(dateString)) return typeof value === 'string' ? value : '';
+    var parts = dateString.split('-');
+    var year = parseInt(parts[0], 10);
+    var month = parseInt(parts[1], 10);
+    var day = parseInt(parts[2], 10);
+    var weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    return year + '年' + month + '月' + day + '日（' + WEEKDAY_LABELS_JA_[weekday] + '）';
+  }
+
+  function stripLeadingZeroHour_(hhmm) {
+    return hhmm.replace(/^0(\d:)/, '$1');
+  }
+
+  function formatTimeRangeJa(startAt, endAt, timezone) {
+    var start = formatTimeInTimezone(startAt, timezone);
+    var end = formatTimeInTimezone(endAt, timezone);
+    if (!start || !end) return '';
+    return stripLeadingZeroHour_(start) + '〜' + stripLeadingZeroHour_(end);
+  }
+
+  function formatDurationJa(startAt, endAt) {
+    if (!isDateLike_(startAt) || !isDateLike_(endAt)) return '';
+    var minutes = Math.round((endAt.getTime() - startAt.getTime()) / 60000);
+    if (!(minutes > 0)) return '';
+    var hours = Math.floor(minutes / 60);
+    var rest = minutes % 60;
+    if (hours === 0) return rest + '分';
+    return hours + '時間' + (rest ? rest + '分' : '');
+  }
+
+  /*
    * 指定timezoneが、instantMillis時点でUTCから何msずれているか（例: Asia/Tokyoは常に
    * +32400000＝+9時間）を、Intl.DateTimeFormatでの実測により求める（Issue #334 PR-B
    * レビュー対応。zonedDateTimeToUtcMillis専用の内部ヘルパー）。timezoneが不正な場合は
@@ -612,6 +653,9 @@ var BookingAvailability = (function () {
     parseTimeToMinutes: parseTimeToMinutes_,
     formatDateInTimezone: formatDateInTimezone,
     formatTimeInTimezone: formatTimeInTimezone,
+    formatDateJa: formatDateJa,
+    formatTimeRangeJa: formatTimeRangeJa,
+    formatDurationJa: formatDurationJa,
     getCurrentMinutesInTimezone: getCurrentMinutesInTimezone,
     zonedDateTimeToUtcMillis: zonedDateTimeToUtcMillis,
     validateInput: validateInput,
