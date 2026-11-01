@@ -2159,6 +2159,7 @@ function runChangePeople(bookingId) {
     if (!preview || !preview.success) { failed(preview && preview.error); return; }
     var c = preview.change;
     var message = '人数: ' + c.oldPeople + ' → ' + c.newPeople + '\n料金: ' + c.oldAmount + '円 → ' + c.newAmount + '円';
+    if (typeof c.onsitePaymentAmount === 'number') message += '\n当日のお支払い額: ' + c.onsitePaymentAmount + '円';
     if (c.noRefund) message += '\n前日・当日の減員のため値下げ・返金はありません。';
     if (c.additionalChargeDue) message += '\n未精算の追加請求額: ' + c.additionalChargeDue + '円';
     if (c.refundDue) message += '\n未精算の返金額: ' + c.refundDue + '円';

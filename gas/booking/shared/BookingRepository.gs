@@ -3969,7 +3969,7 @@ var BookingRepository = (function () {
       change.newAmount = priced.price.amount;
       change.partySurcharge = priced.price.partySurcharge;
       change.largeParty = large;
-      if (r.status === Booking.STATUS.CONFIRMED || paymentStatus === Booking.PAYMENT_STATUS.PAID) {
+      if (BookingReschedule.requiresPeopleSettlement(r)) {
         var paid = r.feePaidAmount === '' || r.feePaidAmount == null ? 0 : Number(r.feePaidAmount);
         var refunded = r.feeRefundedAmount === '' || r.feeRefundedAmount == null ? 0 : Number(r.feeRefundedAmount);
         if (!Number.isSafeInteger(paid) || !Number.isSafeInteger(refunded) || paid < 0 || refunded < 0 || refunded > paid) return fail('FEE_RECOVERY_REQUIRED', '入出金累計額を確認してください。');
@@ -3983,6 +3983,8 @@ var BookingRepository = (function () {
         fields.feeSettlementNote = '人数変更: ' + r.people + ' → ' + people + '。実際の入出金は別途確認して記録。';
       }
     }
+    if (r.status === Booking.STATUS.CONFIRMED && !Booking.isCardPaymentMethod(r.paymentMethod) &&
+        !BookingReschedule.requiresPeopleSettlement(r)) change.onsitePaymentAmount = change.newAmount;
     var snapshot = ['people','status','date','startAt','endAt','updatedAt','priceAmount','priceOverrideAmount','priceOverrideAt',
       'priceGeneration','paymentStatus','paymentAttemptId','checkoutSessionId','paymentRecoveryRequiredAt',
       'feePaidAmount','feeRefundedAmount','feeSettlementState','largeParty','partySurcharge',

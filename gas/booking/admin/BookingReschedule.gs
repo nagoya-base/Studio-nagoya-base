@@ -1066,10 +1066,16 @@ var BookingReschedule = (function () {
         var currentChange = Object.assign({}, peopleDetails.change);
         currentChange.needsApproval = found.record.status === Booking.STATUS.PENDING &&
           found.record.largePartyApprovalStatus === Booking.LARGE_PARTY_APPROVAL.PENDING_APPROVAL;
-        if (!currentChange.noRefund && found.record.status === Booking.STATUS.CONFIRMED) {
+        if (!currentChange.noRefund && found.record.status === Booking.STATUS.CONFIRMED && peopleSummary.requiresSettlement) {
           currentChange.additionalChargeDue = Math.max(0, peopleSummary.outstandingAmount);
           currentChange.refundDue = Math.max(0, -peopleSummary.outstandingAmount);
         }
+        if (!peopleSummary.requiresSettlement) {
+          currentChange.additionalChargeDue = 0; currentChange.refundDue = 0;
+        }
+        delete currentChange.onsitePaymentAmount;
+        if (found.record.status === Booking.STATUS.CONFIRMED && !peopleSummary.requiresSettlement &&
+            !Booking.isCardPaymentMethod(found.record.paymentMethod)) currentChange.onsitePaymentAmount = row[15];
         var peopleMail = BookingMailTemplates.buildPeopleChangedMail(found.record, config, currentChange);
         mail.subject = peopleMail.subject; mail.body = peopleMail.body;
       }
@@ -1211,6 +1217,14 @@ var BookingReschedule = (function () {
     return { success: true, changeId: changeId, mail: shouldMail ? sendMail(changeId, false) : null };
   }
 
+  function requiresPeopleSettlement(record) {
+    var status = Booking.normalizePaymentStatus(record.paymentStatus);
+    // 現金・PayPayの未入金予約は通常の当日精算。確定済みだけでは追加請求にしない。
+    // 実入出金の記録がある予約は決済方法によらず残額を管理する。
+    return status === Booking.PAYMENT_STATUS.PAID || status === Booking.PAYMENT_STATUS.REFUNDED ||
+      Number(record.feePaidAmount || 0) !== 0 || Number(record.feeRefundedAmount || 0) !== 0;
+  }
+
   function peopleSettlementSummary(record) {
     var rows = peopleHistoryRows_().slice(1).filter(function (row) {
       return row[1] === record.bookingId && row[11] !== 'CHANGE_FAILED';
@@ -1218,13 +1232,14 @@ var BookingReschedule = (function () {
     if (!rows.length) return null;
     var row = rows[rows.length - 1], detail = parseFeeDetails_(row);
     if (detail.changeType !== 'PEOPLE' || row[11] === 'CHANGE_FAILED' || detail.feeConfirmed !== true) return null;
-    return { changeId: row[0], amount: Booking.getEffectivePriceAmount(record),
-      outstandingAmount: Booking.getEffectivePriceAmount(record) - (Number(record.feePaidAmount || 0) - Number(record.feeRefundedAmount || 0)) };
+    var requiresSettlement = requiresPeopleSettlement(record);
+    return { changeId: row[0], requiresSettlement: requiresSettlement, amount: Booking.getEffectivePriceAmount(record),
+      outstandingAmount: requiresSettlement ? Booking.getEffectivePriceAmount(record) - (Number(record.feePaidAmount || 0) - Number(record.feeRefundedAmount || 0)) : 0 };
   }
 
   function validatePeopleSettlement_(record, state, paid, refunded) {
     var summary = peopleSettlementSummary(record);
-    if (!summary) return null;
+    if (!summary || !summary.requiresSettlement) return null;
     if (record.status !== Booking.STATUS.CONFIRMED) return error_('INVALID_STATUS', '人数変更の差額精算は確定済み予約で記録してください。');
     if (paid > 0 && Booking.isLargePartyRecord(record) && !MembershipRules.verifyActualMembership(record.email,
         BookingAvailability.formatDateInTimezone(record.startAt, BookingConfig.getAvailabilityConfig().timezone)).ok) {
@@ -1660,7 +1675,7 @@ var BookingReschedule = (function () {
     preparePeopleChange: preparePeopleChange, completePeopleChange: completePeopleChange,
     failPeopleChange: failPeopleChange, peopleFieldsMatch: peopleFieldsMatch,
     hasUnresolvedPeopleChange: hasUnresolvedPeopleChange, resolvePeopleChange: resolvePeopleChange,
-    peopleSettlementSummary: peopleSettlementSummary, isFeeRecoveryBlocked: isBlockedForFeeRecovery_,
+    peopleSettlementSummary: peopleSettlementSummary, requiresPeopleSettlement: requiresPeopleSettlement, isFeeRecoveryBlocked: isBlockedForFeeRecovery_,
     preview: preview, commit: commit, sendMail: sendMail, getChanges: getChanges,
     backfillOriginalPrice: backfillOriginalPrice, recordFeeSettlement: recordFeeSettlement,
     resolveFeeRecovery: resolveFeeRecovery, resolveBaselinePriceRecovery: resolveBaselinePriceRecovery,

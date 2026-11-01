@@ -65,6 +65,17 @@ test('料金: 1〜4名は現行どおり（人数加算0円）。人数未指定
   assert.strictEqual(price(P, { date: SATURDAY, people: '4名' }).price.amount, 9000);
 });
 
+test('mensの保存済み料金世代V1/V2はpriceIsMemberの旧値によらず同じ料金で再計算する', function () {
+  var P = loadPricing();
+  ['V1', 'V2'].forEach(function (generation) {
+    [false, true].forEach(function (isMember) {
+      var result = price(P, { generation: generation, isMember: isMember, people: '4名' });
+      assert.strictEqual(result.price.tier, 'MEMBER');
+      assert.strictEqual(result.price.amount, price(P, { generation: generation, isMember: true, people: '4名' }).price.amount);
+    });
+  });
+});
+
 test('料金: 5名+1,000円・6名+2,000円・7名+3,000円（4時間・平日／土日祝）', function () {
   var P = loadPricing();
   [['5名', 8000, 10000, 1000], ['6名', 9000, 11000, 2000], ['7名', 10000, 12000, 3000]].forEach(function (c) {
@@ -645,6 +656,58 @@ function paidBooking(ctx, people) {
   assert.strictEqual(confirmed.success, true, JSON.stringify(confirmed));
   return r;
 }
+
+test('未入金の現金・PayPay確定予約は人数増減後も当日精算とし、全額の追加請求を作らない', function () {
+  ['現金', 'PayPay'].forEach(function (method) {
+    [{ people: '2名', priceDelta: 0 }, { people: '4名', priceDelta: 0 },
+      { people: '2名', priceDelta: 1000 }, { people: '4名', priceDelta: -1000 }].forEach(function (scenario) {
+      var ctx = setup(), R = ctx.sandbox.BookingRepository, S = ctx.sandbox.BookingReschedule;
+      var r = book(ctx, { people: '3名', paymentMethod: method, memberProof: null });
+      assert.strictEqual(R.confirmBooking(r.bookingId, NOW).success, true);
+      var amount = rec(ctx, r.bookingId).priceAmount;
+      if (scenario.priceDelta) ctx.sandbox.SpreadsheetRepository.updateBookingFields(r.bookingId, { priceAmount: amount + scenario.priceDelta });
+      var changed = changePeople(ctx, r.bookingId, scenario.people, NOW);
+      assert.strictEqual(changed.success, true, JSON.stringify(changed));
+      assert.strictEqual(changed.change.newAmount, amount);
+      assert.strictEqual(changed.change.additionalChargeDue, 0);
+      assert.strictEqual(changed.change.refundDue, 0);
+      assert.strictEqual(changed.change.onsitePaymentAmount, amount);
+      assert.ok(!rec(ctx, r.bookingId).feeSettlementState);
+      assert.strictEqual(S.peopleSettlementSummary(rec(ctx, r.bookingId)).requiresSettlement, false);
+      var mail = mailsTo(ctx, EMAIL).slice(-1)[0];
+      assert.ok(mail.body.includes('当日のお支払い額は'));
+      assert.ok(!mail.body.includes('追加でご請求します'));
+      assert.ok(!mail.body.includes('を返金します'));
+    });
+  });
+});
+
+test('現地精算でも実入金の記録があれば過不足を管理し、当日未払いとは案内しない', function () {
+  var ctx = setup(), R = ctx.sandbox.BookingRepository, S = ctx.sandbox.BookingReschedule;
+  var r = book(ctx, { people: '3名', paymentMethod: '現金', memberProof: null });
+  assert.strictEqual(R.confirmBooking(r.bookingId, NOW).success, true);
+  var amount = rec(ctx, r.bookingId).priceAmount;
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(r.bookingId, { feePaidAmount: amount + 1000 });
+  var changed = changePeople(ctx, r.bookingId, '2名', NOW);
+  assert.strictEqual(changed.change.refundDue, 1000);
+  assert.strictEqual(rec(ctx, r.bookingId).feeSettlementState, 'PENDING_REFUND');
+  assert.strictEqual(S.peopleSettlementSummary(rec(ctx, r.bookingId)).requiresSettlement, true);
+  assert.ok(!mailsTo(ctx, EMAIL).slice(-1)[0].body.includes('当日のお支払い額は'));
+});
+
+test('前日の大人数→4名以下は承認・加算を保持し、管理上も大人数として料金据え置きで扱う', function () {
+  var ctx = setup({ members: MEMBER }), r = paidBooking(ctx, '6名'), B = ctx.sandbox.Booking;
+  var result = changePeople(ctx, r.bookingId, '4名', new Date('2026-12-11T12:00:00+09:00'));
+  assert.strictEqual(result.success, true);
+  var row = rec(ctx, r.bookingId);
+  assert.strictEqual(row.people, '4名');
+  assert.strictEqual(B.isLargePartyRecord(row), true);
+  assert.strictEqual(row.priceAmount, 11000);
+  assert.strictEqual(row.partySurcharge, 2000);
+  assert.strictEqual(row.largePartyApprovalStatus, 'APPROVED');
+  assert.strictEqual(row.feeSettlementState, 'SETTLED');
+  assert.ok(mailsTo(ctx, EMAIL).slice(-1)[0].body.includes('値下げ・返金はありません'));
+});
 
 test('人数変更見積りは無変更。確認トークンなし・別人数・入金額変更後の古い見積りは一切反映しない', function () {
   var ctx = setup({ members: MEMBER }), R = ctx.sandbox.BookingRepository;

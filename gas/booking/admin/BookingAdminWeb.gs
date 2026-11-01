@@ -505,7 +505,7 @@ function getAdminBookingDetail(bookingId) {
        * 入り口も同じ判定（isInFeeRecovery_ OR hasUnresolvedSettlement）を使っている。
        */
       feeSettlementNeedsAttention: FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null) || BookingReschedule.hasUnresolvedPeopleChange(bookingId),
-      peopleChangeSettlement: record.brand === 'mens' ? BookingReschedule.peopleSettlementSummary(record) : null,
+      peopleChangeSettlement: record.brand === 'mens' && BookingReschedule.requiresPeopleSettlement(record) ? BookingReschedule.peopleSettlementSummary(record) : null,
       /*
        * PR #345再レビュー対応（8回目）: 基準料金5列（priceAmount等）の書込み結果が
        * 不明のまま残っている予約かどうか。feeRecoveryRequiredAtの保存自体が失敗する
