@@ -151,7 +151,7 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - 対象列を**1セルずつ**空にする。行全体・連続範囲は書き戻さない。行は削除せず、予約ID・日時・金額・状態・決済ID等は残す（照合可能な情報であり、匿名データではない）。
 - バッチ（20行）ごとにAdminのスクリプトロックを取り、**ロック取得後に有効化フラグ・方針バージョンを読み直し**（無効なら書かずに `STOPPED`）、**予約IDで行と関連記録を読み直して判定をやり直してから**書く。1回の実行は最大200行・4分で打ち切り（`TRUNCATED`）、残りは翌日以降に処理される。部分失敗しても次回は未消去の列から再判定する（冪等）。
 - **版の履歴は消えない。** セルを空にしても、編集権限のある人は版の履歴から旧値を見られる。履歴対策は「編集権限を必要最小限にする」運用で、**消去の完了を意味しない**。結果は「現行セルの消去」だけを表す。カレンダー・Gmail・Stripe・`OptionOrders` 等の他シートは対象外で残る。
-- **残存リスク（有効化前に確認）**: 公開Web AppはAdminとロックを共有できず（`Recovery` は公開Web Appも行を追記する。追記は既存の行を変えないが、解決済みの行の `errorMessage` を同時に更新する経路はない想定で、保証はできない）、再読込は別プロジェクトとの原子的な排他にならない。`Bookings` には連続範囲を書き戻す既存関数（`updateBookingCancellationStateAtomic` は `note` を含む範囲、`updateBookingPaymentStateAtomic` は `stripeCheckoutRequestSnapshot` 等を含む範囲、`updateBookingRescheduleFeeAtomic` / `updateBookingRefundStateAtomic`）があり、消去と交差すると古い値が戻り得る。180日以上前に終了・取消・失効した行をこれらが更新する経路は通常ない想定だが、保証はできない。有効化の判断前にこの経路を再確認すること。
+- **残存リスク（有効化前に確認）**: 公開Web AppはAdminとロックを共有できず（`Recovery` は公開Web Appも行を追記する。追記は既存の行を変えないが、解決済みの行の `errorMessage` を同時に更新する経路はない想定で、保証はできない）、再読込は別プロジェクトとの原子的な排他にならない。`Bookings` には連続範囲を書き戻す既存関数（`updateBookingCancellationStateAtomic` は `note` を含む範囲、`updateBookingPaymentStateAtomic` は `stripeCheckoutRequestSnapshot` 等を含む範囲、`updateBookingRescheduleFeeAtomic` / `updateBookingRefundStateAtomic`）があり、消去と交差すると古い値が戻り得る。この交差は**検証済み**（合成データ。`docs/personal-data-retention-writeback-race-690.md`・`test/personal-data-retention-writeback-race-690.test.js`）: 別プロジェクト（Web App・Webhook）の入口は、状態ガードにより消去対象の行へ書かず、Adminの書き手は消去と同じスクリプトロックで直列化される。万一戻っても翌日の日次実行が再び消す。呼び出し元の一覧が変わるとテストが落ちる。Spreadsheetの手動編集と、返金の段階間でロック外に持ち越す値は確認の対象外（同文書の「保証できない／確認していないもの」）。
 
 ### 有効化の条件と操作（運営者が実施）
 1. `getPersonalDataRetentionStatus()` で設定を確認する。
@@ -186,7 +186,7 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - Booking Adminの実マニフェスト（`appsscript.json`。リポジトリにはない）のOAuthスコープとタイムゾーン。既存の `BookingTriggers.gs` が `ScriptApp` を使うため追加スコープは想定しないが、実環境で確認する。
 - Stripeアカウント固有の異議申立て条件・外部証拠の参照可否（運営者がDashboard／Supportで確認）。
 - 会員系シートの実データの形（`Members` の `canceledAt` 欠落、`MemberPeriods` の`periodEnd`、`MemberCheckouts` の `PENDING` 残留の件数）は未確認。dry-runの `review` / `held` 件数で確認する。
-- `OptionOrders` は、Web AppとAdminの両方が1行を丸ごと書き換える（`OptionOrderRepository.updateOrder`）。終端の注文を180日後に更新する経路は通常ないが、再読込だけでは別プロジェクトとの原子的な排他にならない。
+- `OptionOrders` は、Web AppとAdminの両方が1行を丸ごと書き換える（`OptionOrderRepository.updateOrder`）。終端の注文は、Web Appの入口（`startOptionCheckout`）が状態ガードで書かない（検証済み。上記文書）。再読込だけでは別プロジェクトとの原子的な排他にならないため、この保証は状態ガードとテストによる。
 - `Recovery` / `BookingChanges` の自由記述に、今回の対象列以外へ個人情報が転記されていないかは未確認（実データを見ていない）。
 
 ## Issue #573: Studio Xの内部運用定義（2026-10-29更新）
