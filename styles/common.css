@@ -1184,6 +1184,40 @@ details.faq-item summary:hover {
   border-bottom: none;
 }
 
+/* スマートフォン幅（#707）: 項目名(th)の width:40% / nowrap で本文(td)が細くなるため、
+   項目名を上、本文を下に縦積みして画面幅いっぱいに表示する。PC表示は変更しない。 */
+@media (max-width: 640px) {
+  .legal-table,
+  .legal-table tbody,
+  .legal-table tr,
+  .legal-table th,
+  .legal-table td {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .legal-table th {
+    padding: 12px 4px 2px;
+    border-bottom: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .legal-table td {
+    padding: 2px 4px 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .legal-table tr:last-child th {
+    border-bottom: none;
+  }
+
+  .legal-table tr:last-child td {
+    border-bottom: none;
+  }
+}
+
 /* =====================
    フッター
 ===================== */
