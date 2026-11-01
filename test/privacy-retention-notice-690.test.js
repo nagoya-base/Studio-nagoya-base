@@ -11,7 +11,11 @@ var path = require('path');
 var ROOT = path.join(__dirname, '..');
 function read(p) { return fs.readFileSync(path.join(ROOT, p), 'utf8'); }
 
-var NOTICE_DATE = '2026.11.01';
+/* 原予告（第1段階。2026年11月1日に公開済み）。履歴として残し、書き換えない。延期しても、ここは変えない。 */
+var ORIGINAL_NOTICE_DATE = '2026.11.01';
+var ORIGINAL_PLANNED = '2026-11-15';
+var ORIGINAL_PLANNED_JA = '2026年11月15日';
+/* 確定した効力発生日（本PRの公開日）。当初の予定日と違う場合は、訂正／延期の告知（下記の検査）を別に追加する。 */
 var EFFECTIVE = '2026-11-15';
 var EFFECTIVE_JA = '2026年11月15日';
 
@@ -30,20 +34,41 @@ function findPublished() {
 }
 
 var PAGES = {
-  ja: { file: '_includes/legal_ja.html', words: ['180', '起算', 'Stripe'], ledger: '日次処理で消去します', excluded: '有効な会員情報、将来の予約', notAnon: '匿名化された情報ではありません' },
-  studioX: { file: 'studio-x/legal/index.html', words: ['180', '起算', 'Stripe'], ledger: '日次処理で消去します', excluded: '有効な会員情報、将来の予約', notAnon: '匿名化された情報ではありません' },
-  en: { file: 'legal/en.html', words: ['180 days', 'start date', 'Stripe'], ledger: 'erased by a daily process', excluded: 'active membership information, future bookings', notAnon: 'not anonymized data' }
+  ja: { file: '_includes/legal_ja.html', words: ['180', '起算', 'Stripe', '自動消去の開始日ではありません', '準備が整い開始条件を満たした後に開始します'], ledger: '日次処理で消去します', excluded: '有効な会員情報、将来の予約', notAnon: '匿名化された情報ではありません' },
+  studioX: { file: 'studio-x/legal/index.html', words: ['180', '起算', 'Stripe', '自動消去の開始日ではありません', '準備が整い開始条件を満たした後に開始します'], ledger: '日次処理で消去します', excluded: '有効な会員情報、将来の予約', notAnon: '匿名化された情報ではありません' },
+  en: { file: 'legal/en.html', words: ['180 days', 'start date', 'Stripe', 'is not the start date of the automatic erasure', 'after preparations are complete and the conditions for starting it are met'], ledger: 'erased by a daily process', excluded: 'active membership information, future bookings', notAnon: 'not anonymized data' }
 };
 
-test('#690: 改定予告（第1段階）は履歴として残り、告知日の14日後が効力発生日', function () {
+test('#690: 原予告（第1段階）は、告知日と当初の予定日のまま履歴として残る（延期しても書き換えない）', function () {
   var n = findNotice();
   assert.ok(n, '改定予告');
-  assert.strictEqual(n.date, NOTICE_DATE);
-  assert.ok(n.body.indexOf(EFFECTIVE_JA) !== -1);
-  var announced = new Date(n.date.replace(/\./g, '-') + 'T00:00:00Z');
+  assert.strictEqual(n.date, ORIGINAL_NOTICE_DATE);
+  assert.ok(n.body.indexOf(ORIGINAL_PLANNED_JA) !== -1, '原予告は当初の予定日を記載したまま');
+  assert.ok(n.body.indexOf('告知日：2026年11月1日') !== -1);
+});
+
+test('#690: 効力発生日は、原予告の告知日から14日以上後で、当初の予定日より前にならない（現行ポリシー11項）', function () {
+  var announced = new Date(ORIGINAL_NOTICE_DATE.replace(/\./g, '-') + 'T00:00:00Z');
   var effective = new Date(EFFECTIVE + 'T00:00:00Z');
-  assert.ok((effective - announced) / 86400000 >= 14, '現行ポリシー11項（効力発生日の14日前まで）');
+  var planned = new Date(ORIGINAL_PLANNED + 'T00:00:00Z');
+  assert.ok((effective - announced) / 86400000 >= 14, '告知日の14日後以降');
+  assert.ok(effective >= planned, '当初告知した日より早めない');
   assert.ok(read('_includes/legal_ja.html').indexOf('効力発生日の14日前までに本サイト上でお知らせします') !== -1);
+});
+
+test('#690: 効力発生日が当初の予定日と違う（延期）場合は、原予告を変えず、訂正／延期の告知が別に追加されている', function () {
+  if (EFFECTIVE === ORIGINAL_PLANNED) {
+    var none = newsItems().filter(function (n) { return n.body.indexOf('プライバシーポリシー') !== -1 && /【(訂正|延期)/.test(n.body); });
+    assert.strictEqual(none.length, 0, '延期していないのに訂正告知がある');
+    return;
+  }
+  var correction = newsItems().filter(function (n) { return n.body.indexOf('プライバシーポリシー') !== -1 && /【(訂正|延期)/.test(n.body); })[0];
+  assert.ok(correction, '訂正／延期の告知（【訂正】または【延期】で始まる）');
+  assert.ok(correction.body.indexOf(ORIGINAL_PLANNED_JA) !== -1, '当初の予定日を記載');
+  assert.ok(correction.body.indexOf(EFFECTIVE_JA) !== -1, '新しい効力発生日を記載');
+  assert.ok(correction.body.indexOf('2026年11月1日') !== -1, '原予告の告知日を記載');
+  var corrected = new Date(correction.date.replace(/\./g, '-') + 'T00:00:00Z');
+  assert.ok((new Date(EFFECTIVE + 'T00:00:00Z') - corrected) / 86400000 >= 14, '訂正告知の14日後以降');
 });
 
 test('#690: 改定のお知らせ（効力発生日）が先頭にあり、予告の告知日・施行日と矛盾しない', function () {
@@ -51,7 +76,7 @@ test('#690: 改定のお知らせ（効力発生日）が先頭にあり、予�
   assert.ok(p, '改定のお知らせ');
   assert.strictEqual(p.date, EFFECTIVE.replace(/-/g, '.'));
   assert.strictEqual(p.type, '重要');
-  ['2026年11月1日', EFFECTIVE_JA, '180日', '起算日時', '日次処理', '有効な会員情報', '将来の予約', '版の履歴', 'Stripe'].forEach(function (w) {
+  ['2026年11月1日', EFFECTIVE_JA, '180日', '起算日時', '日次処理', '有効な会員情報', '将来の予約', '版の履歴', 'Stripe', '自動消去の開始日ではありません'].forEach(function (w) {
     assert.ok(p.body.indexOf(w) !== -1, w);
   });
   var news = read('_data/news_ja.yml');
