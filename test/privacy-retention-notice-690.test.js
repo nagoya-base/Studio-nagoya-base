@@ -1,8 +1,7 @@
 'use strict';
 // Issue #690 第2段階: プライバシーポリシー本文の差替え（180日自動消去）。
-// 第1段階（改定予告のみ。2026年11月1日に告知）の後、効力発生日（2026年11月15日）に本文を差し替える。
-// 公開（マージ）は、全版の予告が実際に公開・表示確認された日から14日以上後、かつ効力発生日以降に行う（バックデートしない）。
-// 公開が遅れた場合は、告知日・効力発生日・お知らせの日付・本テストの定数を実際の日付に合わせる（docs/privacy-retention-notice-690.md）。
+// 改定版は施行前に掲載できる。掲載日と施行日を分け、施行前は従前の取扱いを維持する。
+// 原予告は履歴として固定する。延期は訂正告知を別に追加する。
 var test = require('node:test');
 var assert = require('node:assert');
 var fs = require('fs');
@@ -15,7 +14,9 @@ function read(p) { return fs.readFileSync(path.join(ROOT, p), 'utf8'); }
 var ORIGINAL_NOTICE_DATE = '2026.11.01';
 var ORIGINAL_PLANNED = '2026-11-15';
 var ORIGINAL_PLANNED_JA = '2026年11月15日';
-/* 確定した効力発生日（本PRの公開日）。当初の予定日と違う場合は、訂正／延期の告知（下記の検査）を別に追加する。 */
+var PUBLISHED = '2026-11-01';
+var PUBLISHED_JA = '2026年11月1日';
+/* 効力発生日（掲載日とは別）。当初の予定日と違う場合は、訂正／延期の告知（下記の検査）を別に追加する。 */
 var EFFECTIVE = '2026-11-15';
 var EFFECTIVE_JA = '2026年11月15日';
 
@@ -30,7 +31,7 @@ function findNotice() {
   return newsItems().filter(function (n) { return n.body.indexOf('プライバシーポリシー') !== -1 && n.body.indexOf('改定予告') !== -1 && n.body.indexOf('180日') !== -1; })[0] || null;
 }
 function findPublished() {
-  return newsItems().filter(function (n) { return n.body.indexOf('プライバシーポリシー') !== -1 && n.body.indexOf('改定しました') !== -1 && n.body.indexOf('180日') !== -1; })[0] || null;
+  return newsItems().filter(function (n) { return n.body.indexOf('プライバシーポリシー') !== -1 && n.body.indexOf('【改定版掲載】') !== -1 && n.body.indexOf('180日') !== -1; })[0] || null;
 }
 
 var PAGES = {
@@ -71,10 +72,12 @@ test('#690: 効力発生日が当初の予定日と違う（延期）場合は�
   assert.ok((new Date(EFFECTIVE + 'T00:00:00Z') - corrected) / 86400000 >= 14, '訂正告知の14日後以降');
 });
 
-test('#690: 改定のお知らせ（効力発生日）が先頭にあり、予告の告知日・施行日と矛盾しない', function () {
+test('#690: 改定版掲載のお知らせは掲載日で記録し、施行前の取扱いを明記する', function () {
   var p = findPublished();
   assert.ok(p, '改定のお知らせ');
-  assert.strictEqual(p.date, EFFECTIVE.replace(/-/g, '.'));
+  assert.strictEqual(p.date, PUBLISHED.replace(/-/g, '.'));
+  assert.ok(new Date(PUBLISHED) < new Date(EFFECTIVE), '改定版を施行前に掲載する');
+  ['掲載しました', '施行日は' + EFFECTIVE_JA, '11月14日までは従前の規定を適用'].forEach(function (w) { assert.ok(p.body.includes(w), w); });
   assert.strictEqual(p.type, '重要');
   ['2026年11月1日', EFFECTIVE_JA, '180日', '起算日時', '日次処理', '有効な会員情報', '将来の予約', '版の履歴', 'Stripe', '自動消去の開始日ではありません'].forEach(function (w) {
     assert.ok(p.body.indexOf(w) !== -1, w);
@@ -112,14 +115,38 @@ test('#690: 入口の予告リンク（英語トップ・mensトップ・Studio 
   assert.ok(read('studio-x/index.html').indexOf('privacy-notice') === -1);
 });
 
-test('#690: 最終改定日が効力発生日になっている（SNB・mens）。Studio Xの履歴にも改定が記録されている', function () {
-  assert.ok(read('_includes/legal_ja.html').indexOf('最終改定日：' + EFFECTIVE_JA) !== -1);
+test('#690: 掲載日と施行日は別に記録される（SNB・mens・Studio X）', function () {
+  assert.ok(read('_includes/legal_ja.html').includes('最終改定・掲載日：' + PUBLISHED_JA + '（施行日：' + EFFECTIVE_JA + '）'));
   var sx = read('studio-x/legal/index.html');
-  assert.ok(sx.indexOf('プライバシーポリシー（管理と保管の項目）は' + EFFECTIVE_JA + 'に改定しました') !== -1);
+  assert.ok(sx.includes('改定版は' + PUBLISHED_JA + 'に掲載しました。施行日は' + EFFECTIVE_JA + 'です'));
 });
 
-test('#690: 自動消去は有効化されていない（トリガー・有効化の自動実行がコードに無い）', function () {
+test('#690: 本文掲載がGASの有効化・トリガー作成を自動実行しない', function () {
   var gs = read('gas/booking/admin/PersonalDataRetention.gs');
   assert.ok(/PERSONAL_DATA_RETENTION_ENABLED/.test(gs));
   assert.ok(!/^\s*(enablePersonalDataRetention|createPersonalDataRetentionTrigger)\(\);/m.test(gs), '自動呼び出しなし');
+});
+
+test('#690: 全版で施行日を明示し、施行前は従前の取扱いを適用する', function () {
+  ['_includes/legal_ja.html', 'studio-x/legal/index.html'].forEach(function (f) {
+    var t = read(f);
+    assert.ok(t.includes('id="privacy-effective-notice"'));
+    assert.ok(t.includes('この改定版は' + PUBLISHED_JA + 'に掲載しました'));
+    assert.ok(t.includes('施行日は' + EFFECTIVE_JA + 'です'));
+    assert.ok(t.includes('11月14日までの取扱いには従前の規定を適用します'));
+  });
+  var en = read('legal/en.html');
+  assert.ok(en.includes('id="privacy-effective-notice"'));
+  assert.ok(en.includes('Published November 1, 2026; effective November 15, 2026'));
+  assert.ok(en.includes('previous provisions continue to apply through November 14'));
+  assert.ok(read('mens/legal/index.html').includes('{% include legal_ja.html %}'));
+});
+
+test('#690: 別改定の告知と共通CSSを保持する', function () {
+  ['_includes/legal_ja.html', 'studio-x/legal/index.html', 'legal/en.html'].forEach(function (f) {
+    assert.ok(read(f).includes('terms-update-notice'), f);
+  });
+  ['styles/common.css', 'studio-x/pages.css'].forEach(function (f) {
+    assert.ok(read(f).includes('.legal-notice'), f);
+  });
 });
