@@ -45,11 +45,11 @@ test('claim: 新規イベントはRECEIVEDとして記録され、CLAIMEDを返�
   assert.strictEqual(found.record.processingState, 'RECEIVED');
 });
 
-test('claim + finalize: COMPLETED済みのイベントの再送はALREADY_TERMINALを返し再処理しない', function () {
+test('claim + finalizeForProcessing: COMPLETED済みのイベントの再送はALREADY_TERMINALを返し再処理しない', function () {
   var sandbox = setup();
   var now = new Date('2026-10-01T10:00:00+09:00');
   var first = sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', now);
-  sandbox.StripeEventRepository.finalize(first.rowNumber, {
+  sandbox.StripeEventRepository.finalizeForProcessing(first.rowNumber, first.record.processingClaimCount, {
     processingState: 'COMPLETED', bookingId: 'SX-20261001-AAAAAAAA', outcomeCode: 'CONFIRMED', outcomeMessage: 'ok'
   }, now);
 
@@ -67,13 +67,13 @@ test('claim: IGNORED/REJECTEDも同様に再送でALREADY_TERMINALを返す', fu
   var sandbox = setup();
   var now = new Date('2026-10-01T10:00:00+09:00');
   var ignoredClaim = sandbox.StripeEventRepository.claim('evt_ignored', 'ping', now);
-  sandbox.StripeEventRepository.finalize(ignoredClaim.rowNumber, { processingState: 'IGNORED', outcomeCode: 'UNHANDLED_EVENT_TYPE', outcomeMessage: '' }, now);
+  sandbox.StripeEventRepository.finalizeForProcessing(ignoredClaim.rowNumber, ignoredClaim.record.processingClaimCount, { processingState: 'IGNORED', outcomeCode: 'UNHANDLED_EVENT_TYPE', outcomeMessage: '' }, now);
   var ignoredRetry = sandbox.StripeEventRepository.claim('evt_ignored', 'ping', now);
   assert.strictEqual(ignoredRetry.outcome, 'ALREADY_TERMINAL');
   assert.strictEqual(ignoredRetry.record.processingState, 'IGNORED');
 
   var rejectedClaim = sandbox.StripeEventRepository.claim('evt_rejected', 'checkout.session.completed', now);
-  sandbox.StripeEventRepository.finalize(rejectedClaim.rowNumber, { processingState: 'REJECTED', bookingId: 'X', outcomeCode: 'BOOKING_NOT_FOUND', outcomeMessage: '' }, now);
+  sandbox.StripeEventRepository.finalizeForProcessing(rejectedClaim.rowNumber, rejectedClaim.record.processingClaimCount, { processingState: 'REJECTED', bookingId: 'X', outcomeCode: 'BOOKING_NOT_FOUND', outcomeMessage: '' }, now);
   var rejectedRetry = sandbox.StripeEventRepository.claim('evt_rejected', 'checkout.session.completed', now);
   assert.strictEqual(rejectedRetry.outcome, 'ALREADY_TERMINAL');
   assert.strictEqual(rejectedRetry.record.processingState, 'REJECTED');
@@ -129,11 +129,11 @@ test('claim: Lock取得に失敗した場合はLOCK_TIMEOUTを返す', function 
   assert.strictEqual(result.outcome, 'LOCK_TIMEOUT');
 });
 
-test('finalize: processingStateにCLAIMED等の非終端値を渡すと例外を投げる', function () {
+test('finalizeForProcessing: processingStateにCLAIMED等の非終端値を渡すと例外を投げる', function () {
   var sandbox = setup();
   var claimResult = sandbox.StripeEventRepository.claim('evt_1', 'checkout.session.completed', new Date());
   assert.throws(function () {
-    sandbox.StripeEventRepository.finalize(claimResult.rowNumber, { processingState: 'RECEIVED' }, new Date());
+    sandbox.StripeEventRepository.finalizeForProcessing(claimResult.rowNumber, claimResult.record.processingClaimCount, { processingState: 'RECEIVED' }, new Date());
   });
 });
 
@@ -170,7 +170,7 @@ test('listPendingWithBody: processingState=RECEIVEDかつrawBody保存済みの�
   /* 3) 既に終端状態まで到達した行。候補に含めてはならない。 */
   var claim3 = sandbox.StripeEventRepository.claim('evt_done', 'checkout.session.completed', now);
   sandbox.StripeEventRepository.storeRawBody(claim3.rowNumber, JSON.stringify({ id: 'evt_done' }), now);
-  sandbox.StripeEventRepository.finalize(claim3.rowNumber, { processingState: 'COMPLETED', outcomeCode: 'CONFIRMED', outcomeMessage: '' }, now);
+  sandbox.StripeEventRepository.finalizeForProcessing(claim3.rowNumber, claim3.record.processingClaimCount, { processingState: 'COMPLETED', outcomeCode: 'CONFIRMED', outcomeMessage: '' }, now);
 
   var pending = sandbox.StripeEventRepository.listPendingWithBody();
   assert.strictEqual(pending.length, 1);

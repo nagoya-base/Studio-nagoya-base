@@ -359,7 +359,7 @@ var PersonalDataRetention = (function () {
        * Stripe Webhookの受信台帳。イベント本文(rawBody)と結果メッセージだけを消す（eventId・種別・状態・予約ID・
        * 決済試行ID・PaymentIntent ID・結果コード・日時は、冪等性と照合のために残す）。
        * 終端はCOMPLETED / IGNORED / REJECTEDで、終端日時はupdatedAt。終端の行のupdatedAtを書くのは
-       * finalize／finalizeForProcessingだけで、終端の行は再受信されてもclaim()がALREADY_TERMINALを返して
+       * finalizeForProcessingだけで、終端の行は再受信されてもclaim()がALREADY_TERMINALを返して
        * 書き換えない（StripeEventRepository参照。回帰テストあり）ため、終端日時として使える。
        * 予約IDの列があれば親Bookingsに、なければ本文から特定した会員に結び付ける。結び付かないものは要確認。
        * rawBodyを読むのは未処理(RECEIVED)イベントの処理だけで、終端の行の本文は再処理に使われない。

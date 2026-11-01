@@ -351,6 +351,7 @@ var BookingMailTemplates = (function () {
       '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date),
       '利用人数: ' + change.oldPeople + ' → ' + change.newPeople
     ];
+    if (typeof change.onsitePaymentAmount === 'number') lines.push('当日のお支払い額は' + formatJpyAmount_(change.onsitePaymentAmount) + 'です。');
     if (change.noRefund) {
       lines.push('※利用日の前日・当日の減員のため、人数加算分を含め料金の値下げ・返金はありません。');
       lines.push(priceLine_(record));

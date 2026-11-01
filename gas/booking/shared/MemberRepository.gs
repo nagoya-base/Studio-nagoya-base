@@ -392,36 +392,6 @@ var MemberRepository = (function () {
   }
 
   /*
-   * 指定メールアドレスが、指定の利用月（'YYYY-MM'）にSNB MEMBERの資格を持つか。
-   * 【旧方式（Issue #532で資格判定の正本はisMemberOnDateへ移行。互換・テスト用に残す）】支払い事実（MemberMonths）だけで判定する。メール・月が不正、シートが読めない等、
-   * 判定できない場合はすべてfalse（fail-closed。一般料金側）。例外は握りつぶさず呼び出し側で捕捉する想定だが、
-   * ここでも不正入力ではfalseを返す。
-   */
-  function isMemberForMonth(email, monthKey) {
-    var normalized = MembershipRules.normalizeEmail(email);
-    if (!normalized || !/^\d{4}-\d{2}$/.test(monthKey || '')) return false;
-
-    /* 永久会員（Issue #480）: 対象年月・Stripe支払い有無に関係なく常に会員。台帳は読まない・書かない。 */
-    if (MembershipRules.isPermanentMember(normalized)) return true;
-
-    var memberIds = {};
-    readMembers_().members.forEach(function (m) {
-      if (m.record.email === normalized && m.record.memberId) memberIds[m.record.memberId] = true;
-    });
-    if (Object.keys(memberIds).length === 0) return false;
-
-    var monthsSheet = ensureSheet_(MONTHS_SHEET_, MONTH_HEADERS_);
-    var values = monthsSheet.getDataRange().getValues();
-    var refunded = readRefundedSources_();
-    for (var i = 1; i < values.length; i++) {
-      if (!memberIds[values[i][0]] || Number(values[i][1]) !== monthToCell_(monthKey)) continue;
-      if (isRefundedMonthRow_(refunded, values[i])) continue;
-      return true;
-    }
-    return false;
-  }
-
-  /*
    * 二重加入の防止用（Issue #471レビュー対応・Issue #532で日付判定へ変更）。同じメールアドレスに、有効な会員が既にいるか。
    * 「有効」＝subscriptionが有効（status=active。解約予約中も期間末までは有効）、または指定の日（'YYYY-MM-DD'。
    * JSTの今日）が支払済みPeriod・旧MemberMonthsの支払済み暦月に入る会員。旧呼び出し互換のため 'YYYY-MM' も受け付ける
@@ -826,7 +796,6 @@ var MemberRepository = (function () {
     PERIOD_HEADERS: PERIOD_HEADERS_,
     recordPeriod: recordPeriod,
     hasPeriodForSource: hasPeriodForSource,
-    isMemberOnDate: isMemberOnDate,
-    isMemberForMonth: isMemberForMonth
+    isMemberOnDate: isMemberOnDate
   };
 })();

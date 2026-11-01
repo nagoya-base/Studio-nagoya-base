@@ -852,7 +852,7 @@ test('予約（V2）: 先行予約（31〜90日先）は予約作成日が支払
 test('予約: 見積りAPIは会員台帳を参照しない（送信前の会員照会APIを作らない）', function () {
   var ctx = setup({ clockAt: ADVANCE_NOW.toISOString() });
   joinedDec(ctx);
-  ['isMemberOnDate', 'isMemberForMonth', 'statusFactsForEmail', 'findLiveMemberByEmail'].forEach(function (name) {
+  ['isMemberOnDate', 'statusFactsForEmail', 'findLiveMemberByEmail'].forEach(function (name) {
     ctx.sandbox.MemberRepository[name] = function () { throw new Error('見積りで台帳を参照してはならない'); };
   });
   var run = function (extra) {

@@ -63,8 +63,8 @@ function rejectLargeParty(bookingId) {
 }
 
 /* Issue #668: SNB mensの予約人数の変更（2日前まで再計算。前日・当日の減員は返金なし）。 */
-function changeBookingPeople(bookingId, newPeople) {
-  return BookingRepository.changeBookingPeople(bookingId, newPeople);
+function changeBookingPeople(bookingId, newPeople, expectedQuoteToken) {
+  return BookingRepository.changeBookingPeople(bookingId, newPeople, undefined, expectedQuoteToken);
 }
 
 /* Issue #667: 作品撮りサポートプランの承認（承認から24時間が支払い期限）。業務ロジックはBookingRepository.approvePhotoSupport。
