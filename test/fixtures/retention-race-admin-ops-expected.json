@@ -1,0 +1,2356 @@
+{
+ "adminApproveLargeParty × cancelled-refunded": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "adminApproveLargeParty × card-confirmed": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "adminApproveLargeParty × expired-card": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "adminApproveLargeParty × mens-large-party": {
+  "codes": [
+   "BOOKING_NOT_PENDING"
+  ],
+  "writes": false
+ },
+ "adminApproveLargeParty × mens-photo-support": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "adminApproveLargeParty × paypay-confirmed": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "adminApproveOptionOrder × cancelled-refunded": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminApproveOptionOrder × card-confirmed": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminApproveOptionOrder × expired-card": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminApproveOptionOrder × mens-large-party": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminApproveOptionOrder × mens-photo-support": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminApproveOptionOrder × paypay-confirmed": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminApprovePhotoSupport × cancelled-refunded": {
+  "codes": [
+   "NOT_PHOTO_SUPPORT"
+  ],
+  "writes": false
+ },
+ "adminApprovePhotoSupport × card-confirmed": {
+  "codes": [
+   "NOT_PHOTO_SUPPORT"
+  ],
+  "writes": false
+ },
+ "adminApprovePhotoSupport × expired-card": {
+  "codes": [
+   "NOT_PHOTO_SUPPORT"
+  ],
+  "writes": false
+ },
+ "adminApprovePhotoSupport × mens-large-party": {
+  "codes": [
+   "NOT_PHOTO_SUPPORT"
+  ],
+  "writes": false
+ },
+ "adminApprovePhotoSupport × mens-photo-support": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminApprovePhotoSupport × paypay-confirmed": {
+  "codes": [
+   "NOT_PHOTO_SUPPORT"
+  ],
+  "writes": false
+ },
+ "adminBackfillOriginalPrice × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminBackfillOriginalPrice × card-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "adminBackfillOriginalPrice × expired-card": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminBackfillOriginalPrice × mens-large-party": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "adminBackfillOriginalPrice × mens-photo-support": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "adminBackfillOriginalPrice × paypay-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "adminCancelBooking × cancelled-refunded": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "adminCancelBooking × card-confirmed": {
+  "codes": [
+   "REFUND_DECISION_REQUIRED"
+  ],
+  "writes": false
+ },
+ "adminCancelBooking × expired-card": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminCancelBooking × mens-large-party": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "adminCancelBooking × mens-photo-support": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "adminCancelBooking × paypay-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "adminCancelBookingWithRefund × cancelled-refunded": {
+  "codes": [
+   "REFUND_ALREADY_REQUESTED"
+  ],
+  "writes": false
+ },
+ "adminCancelBookingWithRefund × card-confirmed": {
+  "codes": [
+   "REFUND_RESPONSE_MISMATCH"
+  ],
+  "writes": true
+ },
+ "adminCancelBookingWithRefund × expired-card": {
+  "codes": [
+   "NOT_STRIPE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminCancelBookingWithRefund × mens-large-party": {
+  "codes": [
+   "NOT_STRIPE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminCancelBookingWithRefund × mens-photo-support": {
+  "codes": [
+   "NOT_STRIPE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminCancelBookingWithRefund × paypay-confirmed": {
+  "codes": [
+   "NOT_STRIPE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminChangeBookingPeople × cancelled-refunded": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "adminChangeBookingPeople × card-confirmed": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "adminChangeBookingPeople × expired-card": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "adminChangeBookingPeople × mens-large-party": {
+  "codes": [
+   "INVALID_RECORD"
+  ],
+  "writes": false
+ },
+ "adminChangeBookingPeople × mens-photo-support": {
+  "codes": [
+   "PEOPLE_CHANGE_PLAN_NOT_SUPPORTED"
+  ],
+  "writes": false
+ },
+ "adminChangeBookingPeople × paypay-confirmed": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "adminConfirmBooking × cancelled-refunded": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminConfirmBooking × card-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminConfirmBooking × expired-card": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminConfirmBooking × mens-large-party": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminConfirmBooking × mens-photo-support": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminConfirmBooking × paypay-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminCreateBooking × cancelled-refunded": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminCreateBooking × card-confirmed": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminCreateBooking × expired-card": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminCreateBooking × mens-large-party": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminCreateBooking × mens-photo-support": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminCreateBooking × paypay-confirmed": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminDeclineOptionOrder × cancelled-refunded": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminDeclineOptionOrder × card-confirmed": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminDeclineOptionOrder × expired-card": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminDeclineOptionOrder × mens-large-party": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminDeclineOptionOrder × mens-photo-support": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminDeclineOptionOrder × paypay-confirmed": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminGetBookingChanges × cancelled-refunded": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "adminGetBookingChanges × card-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "adminGetBookingChanges × expired-card": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "adminGetBookingChanges × mens-large-party": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "adminGetBookingChanges × mens-photo-support": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "adminGetBookingChanges × paypay-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "adminGrantVideoLightEligibility × cancelled-refunded": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminGrantVideoLightEligibility × card-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminGrantVideoLightEligibility × expired-card": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminGrantVideoLightEligibility × mens-large-party": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminGrantVideoLightEligibility × mens-photo-support": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminGrantVideoLightEligibility × paypay-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingPeople × cancelled-refunded": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingPeople × card-confirmed": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingPeople × expired-card": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingPeople × mens-large-party": {
+  "codes": [
+   "INVALID_RECORD"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingPeople × mens-photo-support": {
+  "codes": [
+   "PEOPLE_CHANGE_PLAN_NOT_SUPPORTED"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingPeople × paypay-confirmed": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingReschedule × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingReschedule × card-confirmed": {
+  "codes": [
+   "STALE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingReschedule × expired-card": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingReschedule × mens-large-party": {
+  "codes": [
+   "STALE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingReschedule × mens-photo-support": {
+  "codes": [
+   "STALE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminPreviewBookingReschedule × paypay-confirmed": {
+  "codes": [
+   "STALE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminReconcileCheckoutExpiry × cancelled-refunded": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "adminReconcileCheckoutExpiry × card-confirmed": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "adminReconcileCheckoutExpiry × expired-card": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "adminReconcileCheckoutExpiry × mens-large-party": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "adminReconcileCheckoutExpiry × mens-photo-support": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "adminReconcileCheckoutExpiry × paypay-confirmed": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "adminReconcileRefund × cancelled-refunded": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "adminReconcileRefund × card-confirmed": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "adminReconcileRefund × expired-card": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "adminReconcileRefund × mens-large-party": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "adminReconcileRefund × mens-photo-support": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "adminReconcileRefund × paypay-confirmed": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "adminRecordRescheduleFeeSettlement × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATE"
+  ],
+  "writes": false
+ },
+ "adminRecordRescheduleFeeSettlement × card-confirmed": {
+  "codes": [
+   "INVALID_STATE"
+  ],
+  "writes": false
+ },
+ "adminRecordRescheduleFeeSettlement × expired-card": {
+  "codes": [
+   "INVALID_STATE"
+  ],
+  "writes": false
+ },
+ "adminRecordRescheduleFeeSettlement × mens-large-party": {
+  "codes": [
+   "INVALID_STATE"
+  ],
+  "writes": false
+ },
+ "adminRecordRescheduleFeeSettlement × mens-photo-support": {
+  "codes": [
+   "INVALID_STATE"
+  ],
+  "writes": false
+ },
+ "adminRecordRescheduleFeeSettlement × paypay-confirmed": {
+  "codes": [
+   "INVALID_STATE"
+  ],
+  "writes": false
+ },
+ "adminRecoverInitialMembershipPeriod × cancelled-refunded": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminRecoverInitialMembershipPeriod × card-confirmed": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminRecoverInitialMembershipPeriod × expired-card": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminRecoverInitialMembershipPeriod × mens-large-party": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminRecoverInitialMembershipPeriod × mens-photo-support": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminRecoverInitialMembershipPeriod × paypay-confirmed": {
+  "codes": [
+   "FORBIDDEN"
+  ],
+  "writes": false
+ },
+ "adminRejectLargeParty × cancelled-refunded": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "adminRejectLargeParty × card-confirmed": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "adminRejectLargeParty × expired-card": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "adminRejectLargeParty × mens-large-party": {
+  "codes": [
+   "BOOKING_NOT_PENDING"
+  ],
+  "writes": false
+ },
+ "adminRejectLargeParty × mens-photo-support": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "adminRejectLargeParty × paypay-confirmed": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "adminRescheduleBooking × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminRescheduleBooking × card-confirmed": {
+  "codes": [
+   "STALE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminRescheduleBooking × expired-card": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminRescheduleBooking × mens-large-party": {
+  "codes": [
+   "STALE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminRescheduleBooking × mens-photo-support": {
+  "codes": [
+   "STALE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminRescheduleBooking × paypay-confirmed": {
+  "codes": [
+   "STALE_BOOKING"
+  ],
+  "writes": false
+ },
+ "adminResendReminderMail × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminResendReminderMail × card-confirmed": {
+  "codes": [
+   "EMAIL_MISSING",
+   "MAIL_NOT_READY"
+  ],
+  "writes": true
+ },
+ "adminResendReminderMail × expired-card": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminResendReminderMail × mens-large-party": {
+  "codes": [
+   "EMAIL_MISSING",
+   "MAIL_NOT_READY"
+  ],
+  "writes": true
+ },
+ "adminResendReminderMail × mens-photo-support": {
+  "codes": [
+   "EMAIL_MISSING",
+   "MAIL_NOT_READY"
+  ],
+  "writes": true
+ },
+ "adminResendReminderMail × paypay-confirmed": {
+  "codes": [
+   "EMAIL_MISSING",
+   "MAIL_NOT_READY"
+  ],
+  "writes": true
+ },
+ "adminResendRescheduleMail × cancelled-refunded": {
+  "codes": [
+   "CHANGE_NOT_FOUND"
+  ],
+  "writes": false
+ },
+ "adminResendRescheduleMail × card-confirmed": {
+  "codes": [
+   "CHANGE_NOT_FOUND"
+  ],
+  "writes": false
+ },
+ "adminResendRescheduleMail × expired-card": {
+  "codes": [
+   "CHANGE_NOT_FOUND"
+  ],
+  "writes": false
+ },
+ "adminResendRescheduleMail × mens-large-party": {
+  "codes": [
+   "CHANGE_NOT_FOUND"
+  ],
+  "writes": false
+ },
+ "adminResendRescheduleMail × mens-photo-support": {
+  "codes": [
+   "CHANGE_NOT_FOUND"
+  ],
+  "writes": false
+ },
+ "adminResendRescheduleMail × paypay-confirmed": {
+  "codes": [
+   "CHANGE_NOT_FOUND"
+  ],
+  "writes": false
+ },
+ "adminResolveBaselinePriceRecovery × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminResolveBaselinePriceRecovery × card-confirmed": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolveBaselinePriceRecovery × expired-card": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminResolveBaselinePriceRecovery × mens-large-party": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolveBaselinePriceRecovery × mens-photo-support": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolveBaselinePriceRecovery × paypay-confirmed": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolveFeeRecovery × cancelled-refunded": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolveFeeRecovery × card-confirmed": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolveFeeRecovery × expired-card": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolveFeeRecovery × mens-large-party": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolveFeeRecovery × mens-photo-support": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolveFeeRecovery × paypay-confirmed": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentLinkMetadataInconsistency × cancelled-refunded": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentLinkMetadataInconsistency × card-confirmed": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentLinkMetadataInconsistency × expired-card": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentLinkMetadataInconsistency × mens-large-party": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentLinkMetadataInconsistency × mens-photo-support": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentLinkMetadataInconsistency × paypay-confirmed": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentRecovery × cancelled-refunded": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentRecovery × card-confirmed": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentRecovery × expired-card": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentRecovery × mens-large-party": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentRecovery × mens-photo-support": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolvePaymentRecovery × paypay-confirmed": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "adminResolvePeopleChange × cancelled-refunded": {
+  "codes": [
+   "PEOPLE_RECOVERY_NOT_REQUIRED"
+  ],
+  "writes": false
+ },
+ "adminResolvePeopleChange × card-confirmed": {
+  "codes": [
+   "PEOPLE_RECOVERY_NOT_REQUIRED"
+  ],
+  "writes": false
+ },
+ "adminResolvePeopleChange × expired-card": {
+  "codes": [
+   "PEOPLE_RECOVERY_NOT_REQUIRED"
+  ],
+  "writes": false
+ },
+ "adminResolvePeopleChange × mens-large-party": {
+  "codes": [
+   "PEOPLE_RECOVERY_NOT_REQUIRED"
+  ],
+  "writes": false
+ },
+ "adminResolvePeopleChange × mens-photo-support": {
+  "codes": [
+   "PEOPLE_RECOVERY_NOT_REQUIRED"
+  ],
+  "writes": false
+ },
+ "adminResolvePeopleChange × paypay-confirmed": {
+  "codes": [
+   "PEOPLE_RECOVERY_NOT_REQUIRED"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredBooking × cancelled-refunded": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredBooking × card-confirmed": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredBooking × expired-card": {
+  "codes": [
+   "REVIVE_AFTER_START_NOT_ALLOWED"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredBooking × mens-large-party": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredBooking × mens-photo-support": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredBooking × paypay-confirmed": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredCardBooking × cancelled-refunded": {
+  "codes": [
+   "NOT_CARD_PAYMENT"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredCardBooking × card-confirmed": {
+  "codes": [
+   "NOT_CARD_PAYMENT"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredCardBooking × expired-card": {
+  "codes": [
+   "PAYMENT_LINK_NOT_SENT"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredCardBooking × mens-large-party": {
+  "codes": [
+   "NOT_CARD_PAYMENT"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredCardBooking × mens-photo-support": {
+  "codes": [
+   "NOT_CARD_PAYMENT"
+  ],
+  "writes": false
+ },
+ "adminReviveExpiredCardBooking × paypay-confirmed": {
+  "codes": [
+   "NOT_CARD_PAYMENT"
+  ],
+  "writes": false
+ },
+ "adminRevokeVideoLightEligibility × cancelled-refunded": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminRevokeVideoLightEligibility × card-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminRevokeVideoLightEligibility × expired-card": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminRevokeVideoLightEligibility × mens-large-party": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminRevokeVideoLightEligibility × mens-photo-support": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminRevokeVideoLightEligibility × paypay-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "adminSendCardPaymentLink × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminSendCardPaymentLink × card-confirmed": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminSendCardPaymentLink × expired-card": {
+  "codes": [
+   "EMAIL_MISSING",
+   "START_PASSED"
+  ],
+  "writes": false
+ },
+ "adminSendCardPaymentLink × mens-large-party": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminSendCardPaymentLink × mens-photo-support": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminSendCardPaymentLink × paypay-confirmed": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "adminSendPriceUpdateMail × cancelled-refunded": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "adminSendPriceUpdateMail × card-confirmed": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "adminSendPriceUpdateMail × expired-card": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "adminSendPriceUpdateMail × mens-large-party": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "adminSendPriceUpdateMail × mens-photo-support": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "adminSendPriceUpdateMail × paypay-confirmed": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "adminUpdateBookingPrice × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "adminUpdateBookingPrice × card-confirmed": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "adminUpdateBookingPrice × expired-card": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "adminUpdateBookingPrice × mens-large-party": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "adminUpdateBookingPrice × mens-photo-support": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "adminUpdateBookingPrice × paypay-confirmed": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "approveLargeParty × cancelled-refunded": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "approveLargeParty × card-confirmed": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "approveLargeParty × expired-card": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "approveLargeParty × mens-large-party": {
+  "codes": [
+   "BOOKING_NOT_PENDING"
+  ],
+  "writes": false
+ },
+ "approveLargeParty × mens-photo-support": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "approveLargeParty × paypay-confirmed": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "approvePhotoSupport × cancelled-refunded": {
+  "codes": [
+   "NOT_PHOTO_SUPPORT"
+  ],
+  "writes": false
+ },
+ "approvePhotoSupport × card-confirmed": {
+  "codes": [
+   "NOT_PHOTO_SUPPORT"
+  ],
+  "writes": false
+ },
+ "approvePhotoSupport × expired-card": {
+  "codes": [
+   "NOT_PHOTO_SUPPORT"
+  ],
+  "writes": false
+ },
+ "approvePhotoSupport × mens-large-party": {
+  "codes": [
+   "NOT_PHOTO_SUPPORT"
+  ],
+  "writes": false
+ },
+ "approvePhotoSupport × mens-photo-support": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "approvePhotoSupport × paypay-confirmed": {
+  "codes": [
+   "NOT_PHOTO_SUPPORT"
+  ],
+  "writes": false
+ },
+ "cancelBookingAdmin × cancelled-refunded": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "cancelBookingAdmin × card-confirmed": {
+  "codes": [
+   "REFUND_DECISION_REQUIRED"
+  ],
+  "writes": false
+ },
+ "cancelBookingAdmin × expired-card": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "cancelBookingAdmin × mens-large-party": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "cancelBookingAdmin × mens-photo-support": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "cancelBookingAdmin × paypay-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "cancelBookingWithRefund × cancelled-refunded": {
+  "codes": [
+   "REFUND_ALREADY_REQUESTED"
+  ],
+  "writes": false
+ },
+ "cancelBookingWithRefund × card-confirmed": {
+  "codes": [
+   "REFUND_RESPONSE_MISMATCH"
+  ],
+  "writes": true
+ },
+ "cancelBookingWithRefund × expired-card": {
+  "codes": [
+   "NOT_STRIPE_BOOKING"
+  ],
+  "writes": false
+ },
+ "cancelBookingWithRefund × mens-large-party": {
+  "codes": [
+   "NOT_STRIPE_BOOKING"
+  ],
+  "writes": false
+ },
+ "cancelBookingWithRefund × mens-photo-support": {
+  "codes": [
+   "NOT_STRIPE_BOOKING"
+  ],
+  "writes": false
+ },
+ "cancelBookingWithRefund × paypay-confirmed": {
+  "codes": [
+   "NOT_STRIPE_BOOKING"
+  ],
+  "writes": false
+ },
+ "changeBookingPeople × cancelled-refunded": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "changeBookingPeople × card-confirmed": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "changeBookingPeople × expired-card": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "changeBookingPeople × mens-large-party": {
+  "codes": [
+   "INVALID_RECORD"
+  ],
+  "writes": false
+ },
+ "changeBookingPeople × mens-photo-support": {
+  "codes": [
+   "PEOPLE_CHANGE_PLAN_NOT_SUPPORTED"
+  ],
+  "writes": false
+ },
+ "changeBookingPeople × paypay-confirmed": {
+  "codes": [
+   "NOT_MENS"
+  ],
+  "writes": false
+ },
+ "confirmBooking × cancelled-refunded": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "confirmBooking × card-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "confirmBooking × expired-card": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "confirmBooking × mens-large-party": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "confirmBooking × mens-photo-support": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "confirmBooking × paypay-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "diagnoseReminderEligibility × cancelled-refunded": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "diagnoseReminderEligibility × card-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "diagnoseReminderEligibility × expired-card": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "diagnoseReminderEligibility × mens-large-party": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "diagnoseReminderEligibility × mens-photo-support": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "diagnoseReminderEligibility × paypay-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "expirePendingBookings × cancelled-refunded": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "expirePendingBookings × card-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "expirePendingBookings × expired-card": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "expirePendingBookings × mens-large-party": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "expirePendingBookings × mens-photo-support": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "expirePendingBookings × paypay-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "getAdminBookingDetail × cancelled-refunded": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "getAdminBookingDetail × card-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "getAdminBookingDetail × expired-card": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "getAdminBookingDetail × mens-large-party": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "getAdminBookingDetail × mens-photo-support": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "getAdminBookingDetail × paypay-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "getAdminBookings × cancelled-refunded": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "getAdminBookings × card-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "getAdminBookings × expired-card": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "getAdminBookings × mens-large-party": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "getAdminBookings × mens-photo-support": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "getAdminBookings × paypay-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "getAdminPaymentRecoveries × cancelled-refunded": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "getAdminPaymentRecoveries × card-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "getAdminPaymentRecoveries × expired-card": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "getAdminPaymentRecoveries × mens-large-party": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "getAdminPaymentRecoveries × mens-photo-support": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "getAdminPaymentRecoveries × paypay-confirmed": {
+  "codes": [
+   "OK"
+  ],
+  "writes": false
+ },
+ "menu:resend:CANCELLED × cancelled-refunded": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "menu:resend:CANCELLED × card-confirmed": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:CANCELLED × expired-card": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:CANCELLED × mens-large-party": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:CANCELLED × mens-photo-support": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:CANCELLED × paypay-confirmed": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:CONFIRMED × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:CONFIRMED × card-confirmed": {
+  "codes": [
+   "MAIL_NOT_READY",
+   "OK"
+  ],
+  "writes": true
+ },
+ "menu:resend:CONFIRMED × expired-card": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:CONFIRMED × mens-large-party": {
+  "codes": [
+   "MAIL_NOT_READY",
+   "OK"
+  ],
+  "writes": true
+ },
+ "menu:resend:CONFIRMED × mens-photo-support": {
+  "codes": [
+   "MAIL_NOT_READY",
+   "OK"
+  ],
+  "writes": true
+ },
+ "menu:resend:CONFIRMED × paypay-confirmed": {
+  "codes": [
+   "MAIL_NOT_READY",
+   "OK"
+  ],
+  "writes": true
+ },
+ "menu:resend:EXPIRED × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:EXPIRED × card-confirmed": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:EXPIRED × expired-card": {
+  "codes": [
+   "OK"
+  ],
+  "writes": true
+ },
+ "menu:resend:EXPIRED × mens-large-party": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:EXPIRED × mens-photo-support": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:EXPIRED × paypay-confirmed": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:PENDING × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:PENDING × card-confirmed": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:PENDING × expired-card": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:PENDING × mens-large-party": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:PENDING × mens-photo-support": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:PENDING × paypay-confirmed": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:PRICE_UPDATE × cancelled-refunded": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "menu:resend:PRICE_UPDATE × card-confirmed": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "menu:resend:PRICE_UPDATE × expired-card": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "menu:resend:PRICE_UPDATE × mens-large-party": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "menu:resend:PRICE_UPDATE × mens-photo-support": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "menu:resend:PRICE_UPDATE × paypay-confirmed": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "menu:resend:REMINDER × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:REMINDER × card-confirmed": {
+  "codes": [
+   "EMAIL_MISSING",
+   "MAIL_NOT_READY"
+  ],
+  "writes": true
+ },
+ "menu:resend:REMINDER × expired-card": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "menu:resend:REMINDER × mens-large-party": {
+  "codes": [
+   "EMAIL_MISSING",
+   "MAIL_NOT_READY"
+  ],
+  "writes": true
+ },
+ "menu:resend:REMINDER × mens-photo-support": {
+  "codes": [
+   "EMAIL_MISSING",
+   "MAIL_NOT_READY"
+  ],
+  "writes": true
+ },
+ "menu:resend:REMINDER × paypay-confirmed": {
+  "codes": [
+   "EMAIL_MISSING",
+   "MAIL_NOT_READY"
+  ],
+  "writes": true
+ },
+ "previewReminderMail × cancelled-refunded": {
+  "codes": [
+   "INVALID_BASE_DATE"
+  ],
+  "writes": false
+ },
+ "previewReminderMail × card-confirmed": {
+  "codes": [
+   "INVALID_BASE_DATE"
+  ],
+  "writes": false
+ },
+ "previewReminderMail × expired-card": {
+  "codes": [
+   "INVALID_BASE_DATE"
+  ],
+  "writes": false
+ },
+ "previewReminderMail × mens-large-party": {
+  "codes": [
+   "INVALID_BASE_DATE"
+  ],
+  "writes": false
+ },
+ "previewReminderMail × mens-photo-support": {
+  "codes": [
+   "INVALID_BASE_DATE"
+  ],
+  "writes": false
+ },
+ "previewReminderMail × paypay-confirmed": {
+  "codes": [
+   "INVALID_BASE_DATE"
+  ],
+  "writes": false
+ },
+ "processPendingStripeWebhookEvents × cancelled-refunded": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "processPendingStripeWebhookEvents × card-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "processPendingStripeWebhookEvents × expired-card": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "processPendingStripeWebhookEvents × mens-large-party": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "processPendingStripeWebhookEvents × mens-photo-support": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "processPendingStripeWebhookEvents × paypay-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "reconcileBookingCheckoutExpiry × cancelled-refunded": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "reconcileBookingCheckoutExpiry × card-confirmed": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "reconcileBookingCheckoutExpiry × expired-card": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "reconcileBookingCheckoutExpiry × mens-large-party": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "reconcileBookingCheckoutExpiry × mens-photo-support": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "reconcileBookingCheckoutExpiry × paypay-confirmed": {
+  "codes": [
+   "NO_CHECKOUT_EXPIRY_TO_CHECK"
+  ],
+  "writes": false
+ },
+ "reconcileBookingRefund × cancelled-refunded": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "reconcileBookingRefund × card-confirmed": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "reconcileBookingRefund × expired-card": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "reconcileBookingRefund × mens-large-party": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "reconcileBookingRefund × mens-photo-support": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "reconcileBookingRefund × paypay-confirmed": {
+  "codes": [
+   "NO_REFUND_ATTEMPT"
+  ],
+  "writes": false
+ },
+ "recoverInitialMembershipPeriod × cancelled-refunded": {
+  "codes": [
+   "FAILED"
+  ],
+  "writes": false
+ },
+ "recoverInitialMembershipPeriod × card-confirmed": {
+  "codes": [
+   "FAILED"
+  ],
+  "writes": false
+ },
+ "recoverInitialMembershipPeriod × expired-card": {
+  "codes": [
+   "FAILED"
+  ],
+  "writes": false
+ },
+ "recoverInitialMembershipPeriod × mens-large-party": {
+  "codes": [
+   "FAILED"
+  ],
+  "writes": false
+ },
+ "recoverInitialMembershipPeriod × mens-photo-support": {
+  "codes": [
+   "FAILED"
+  ],
+  "writes": false
+ },
+ "recoverInitialMembershipPeriod × paypay-confirmed": {
+  "codes": [
+   "FAILED"
+  ],
+  "writes": false
+ },
+ "rejectLargeParty × cancelled-refunded": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "rejectLargeParty × card-confirmed": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "rejectLargeParty × expired-card": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "rejectLargeParty × mens-large-party": {
+  "codes": [
+   "BOOKING_NOT_PENDING"
+  ],
+  "writes": false
+ },
+ "rejectLargeParty × mens-photo-support": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "rejectLargeParty × paypay-confirmed": {
+  "codes": [
+   "NOT_LARGE_PARTY"
+  ],
+  "writes": false
+ },
+ "resolveBookingPaymentRecovery × cancelled-refunded": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "resolveBookingPaymentRecovery × card-confirmed": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "resolveBookingPaymentRecovery × expired-card": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "resolveBookingPaymentRecovery × mens-large-party": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "resolveBookingPaymentRecovery × mens-photo-support": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "resolveBookingPaymentRecovery × paypay-confirmed": {
+  "codes": [
+   "NOT_IN_RECOVERY"
+  ],
+  "writes": false
+ },
+ "resolveCardPaymentLinkMetadataInconsistency × cancelled-refunded": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "resolveCardPaymentLinkMetadataInconsistency × card-confirmed": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "resolveCardPaymentLinkMetadataInconsistency × expired-card": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "resolveCardPaymentLinkMetadataInconsistency × mens-large-party": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "resolveCardPaymentLinkMetadataInconsistency × mens-photo-support": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "resolveCardPaymentLinkMetadataInconsistency × paypay-confirmed": {
+  "codes": [
+   "NOT_INCONSISTENT"
+  ],
+  "writes": false
+ },
+ "reviveExpiredBooking × cancelled-refunded": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "reviveExpiredBooking × card-confirmed": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "reviveExpiredBooking × expired-card": {
+  "codes": [
+   "REVIVE_AFTER_START_NOT_ALLOWED"
+  ],
+  "writes": false
+ },
+ "reviveExpiredBooking × mens-large-party": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "reviveExpiredBooking × mens-photo-support": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "reviveExpiredBooking × paypay-confirmed": {
+  "codes": [
+   "INVALID_TRANSITION"
+  ],
+  "writes": false
+ },
+ "sendCardPaymentLinkMail × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "sendCardPaymentLinkMail × card-confirmed": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "sendCardPaymentLinkMail × expired-card": {
+  "codes": [
+   "EMAIL_MISSING",
+   "START_PASSED"
+  ],
+  "writes": false
+ },
+ "sendCardPaymentLinkMail × mens-large-party": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "sendCardPaymentLinkMail × mens-photo-support": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "sendCardPaymentLinkMail × paypay-confirmed": {
+  "codes": [
+   "INVALID_STATUS"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminderCatchUp × cancelled-refunded": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminderCatchUp × card-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminderCatchUp × expired-card": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminderCatchUp × mens-large-party": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminderCatchUp × mens-photo-support": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminderCatchUp × paypay-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminders × cancelled-refunded": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminders × card-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminders × expired-card": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminders × mens-large-party": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminders × mens-photo-support": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendNextDayReminders × paypay-confirmed": {
+  "codes": [
+   "RETURNED_OBJECT"
+  ],
+  "writes": false
+ },
+ "sendPriceUpdateMail × cancelled-refunded": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "sendPriceUpdateMail × card-confirmed": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "sendPriceUpdateMail × expired-card": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "sendPriceUpdateMail × mens-large-party": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "sendPriceUpdateMail × mens-photo-support": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "sendPriceUpdateMail × paypay-confirmed": {
+  "codes": [
+   "NO_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "sendReminderTestMail × cancelled-refunded": {
+  "codes": [
+   "NOT_NEXT_DAY"
+  ],
+  "writes": false
+ },
+ "sendReminderTestMail × card-confirmed": {
+  "codes": [
+   "NOT_NEXT_DAY"
+  ],
+  "writes": false
+ },
+ "sendReminderTestMail × expired-card": {
+  "codes": [
+   "NOT_NEXT_DAY"
+  ],
+  "writes": false
+ },
+ "sendReminderTestMail × mens-large-party": {
+  "codes": [
+   "NOT_NEXT_DAY"
+  ],
+  "writes": false
+ },
+ "sendReminderTestMail × mens-photo-support": {
+  "codes": [
+   "NOT_NEXT_DAY"
+  ],
+  "writes": false
+ },
+ "sendReminderTestMail × paypay-confirmed": {
+  "codes": [
+   "NOT_NEXT_DAY"
+  ],
+  "writes": false
+ },
+ "updateBookingPrice × cancelled-refunded": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "updateBookingPrice × card-confirmed": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "updateBookingPrice × expired-card": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "updateBookingPrice × mens-large-party": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "updateBookingPrice × mens-photo-support": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ },
+ "updateBookingPrice × paypay-confirmed": {
+  "codes": [
+   "INVALID_STATUS_FOR_PRICE_OVERRIDE"
+  ],
+  "writes": false
+ }
+}

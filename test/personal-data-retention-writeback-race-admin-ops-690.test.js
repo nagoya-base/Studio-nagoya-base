@@ -21,6 +21,8 @@ var stubs = require('./helpers/gas-stubs');
 var DAY = H.DAY, RETENTION = H.RETENTION, BOOKING_ID = H.BOOKING_ID, EMAIL = H.EMAIL;
 var agoReal = H.agoReal, realNow = H.realNow, plain = H.plain;
 var OPTION_ID = 'OPT-ADMIN-1';
+/* 操作自身の新しい入力のメール。消去前の合成の識別値（EMAIL）と別にして、旧データの復活と区別できるようにする。 */
+var NEW_INPUT_EMAIL = 'new-input-target@example.com';
 
 function jstDate(date) {
   var parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
@@ -95,12 +97,14 @@ var OPERATIONS = {
   // --- 管理画面（BookingAdminWeb.gs） ---
   adminApproveOptionOrder: function (a) { return a.admin.adminApproveOptionOrder(OPTION_ID); },
   adminDeclineOptionOrder: function (a) { return a.admin.adminDeclineOptionOrder(OPTION_ID, '新しい不承認理由'); },
-  adminGrantVideoLightEligibility: function (a) { return a.admin.adminGrantVideoLightEligibility(EMAIL, a.admin.BookingOptions.lectureRequiredEquipmentCodes()[0], '付与メモ'); },
-  adminRevokeVideoLightEligibility: function (a) { return a.admin.adminRevokeVideoLightEligibility(EMAIL, a.admin.BookingOptions.lectureRequiredEquipmentCodes()[0]); },
+  adminGrantVideoLightEligibility: function (a) { return a.admin.adminGrantVideoLightEligibility(NEW_INPUT_EMAIL, a.admin.BookingOptions.lectureRequiredEquipmentCodes()[0], '付与メモ'); },
+  adminRevokeVideoLightEligibility: function (a) { return a.admin.adminRevokeVideoLightEligibility(NEW_INPUT_EMAIL, a.admin.BookingOptions.lectureRequiredEquipmentCodes()[0]); },
   adminConfirmBooking: function (a) { return a.admin.adminConfirmBooking(BOOKING_ID); },
   adminApproveLargeParty: function (a) { return a.admin.adminApproveLargeParty(BOOKING_ID); },
   adminRejectLargeParty: function (a) { return a.admin.adminRejectLargeParty(BOOKING_ID); },
-  adminChangeBookingPeople: function (a) { return a.admin.adminChangeBookingPeople(BOOKING_ID, '3名'); },
+  adminPreviewBookingPeople: function (a) { return a.admin.adminPreviewBookingPeople(BOOKING_ID, '3名'); },
+  adminChangeBookingPeople: function (a) { return a.admin.adminChangeBookingPeople(BOOKING_ID, '3名', ''); },
+  adminResolvePeopleChange: function (a) { return a.admin.adminResolvePeopleChange('chg-none', 'FINISH', true); },
   adminApprovePhotoSupport: function (a) { return a.admin.adminApprovePhotoSupport(BOOKING_ID, {}); },
   adminCancelBooking: function (a) { return a.admin.adminCancelBooking(BOOKING_ID); },
   adminReviveExpiredBooking: function (a) { return a.admin.adminReviveExpiredBooking(BOOKING_ID); },
@@ -132,7 +136,7 @@ var OPERATIONS = {
   confirmBooking: function (a) { return a.admin.confirmBooking(BOOKING_ID); },
   approveLargeParty: function (a) { return a.admin.approveLargeParty(BOOKING_ID); },
   rejectLargeParty: function (a) { return a.admin.rejectLargeParty(BOOKING_ID); },
-  changeBookingPeople: function (a) { return a.admin.changeBookingPeople(BOOKING_ID, '3名'); },
+  changeBookingPeople: function (a) { return a.admin.changeBookingPeople(BOOKING_ID, '3名', ''); },
   approvePhotoSupport: function (a) { return a.admin.approvePhotoSupport(BOOKING_ID, {}); },
   cancelBookingAdmin: function (a) { return a.admin.cancelBookingAdmin(BOOKING_ID); },
   cancelBookingWithRefund: function (a) { return a.admin.cancelBookingWithRefund(BOOKING_ID, { decision: 'FULL', reason: '返金理由' }); },
@@ -177,28 +181,67 @@ function bookingColumns(ctx, col, cols) {
   return 'Bookings[' + names.join(',') + ']';
 }
 
+/* 操作の結果を、期待と照合できるコードにする。例外は握りつぶさず、THREW:<種別> として記録し、期待に無ければテストが落ちる。 */
+function codeOf(result, threw) {
+  if (threw) return 'THREW:' + threw;
+  if (result === undefined || result === null) return 'RETURNED_NOTHING';
+  if (result.error && result.error.code) return result.error.code;
+  if (result.success === true) return 'OK';
+  if (result.success === false) return 'FAILED';
+  return 'RETURNED_OBJECT';
+}
+
+/* 操作×状態ごとの期待するコード（全ての実行＝事前に消去／各外部呼び出しで消去、の和集合）と、書き込みの有無。
+   操作の挙動が変わったら（拒否されていた操作が通る、別の理由で拒否される、例外になる）、ここで落ちる。
+   意図した変更なら UPDATE_RACE_EXPECTED=1 で再生成し、差分を確認してコミットする。 */
+var EXPECTED_FILE = path.join(__dirname, 'fixtures', 'retention-race-admin-ops-expected.json');
+var UPDATING = !!process.env.UPDATE_RACE_EXPECTED;
+var EXPECTED = (function () {
+  try { return JSON.parse(fs.readFileSync(EXPECTED_FILE, 'utf8')); } catch (e) { return {}; }
+})();
+
 Object.keys(OPERATIONS).forEach(function (operation) {
-  test('管理画面の操作 ' + operation + ': 消去対象の古い予約（4種類）に対して、消去を挟んでも個人情報は戻らず、書き込みは常にロック保持中', function () {
+  test('管理画面の操作 ' + operation + ': 消去対象の古い予約（6種類）に対して、消去を挟んでも個人情報は戻らず、書き込みは常にロック保持中。結果は期待どおり', function () {
     Object.keys(KINDS).forEach(function (kind) {
-      var result = null;
-      var threw = null;
+      var codes = {};
       var writes = {};
       var summary = H.interleaveAll(function () { return buildKind(kind); }, function (ctx) {
         ctx.resetWriteAudit();
-        try { result = plain(OPERATIONS[operation](ctx)); } catch (e) { threw = String(e && e.message || e).slice(0, 80); }
+        var result = null, threw = null;
+        try { result = plain(OPERATIONS[operation](ctx)); } catch (e) { threw = (e && e.name || 'Error') + ': ' + String(e && e.message || e).slice(0, 60); }
+        codes[codeOf(result, threw)] = true;
         ctx.writeLog.forEach(function (w) {
           if (w.sheet === 'Bookings' && w.row === 1) return;
-          var name = w.sheet === 'Bookings' ? bookingColumns(ctx, w.col, w.cols) : w.sheet + ':' + w.col + '+' + w.cols;
-          writes[name] = true;
+          writes[w.sheet === 'Bookings' ? bookingColumns(ctx, w.col, w.cols) : w.sheet + ':' + w.col + '+' + w.cols] = true;
         });
       });
-      MATRIX[operation + ' × ' + kind] = { stages: summary.stages, writes: Object.keys(writes).sort(), code: result && (result.error && result.error.code || (result.success === false ? 'FAILED' : result.success === true ? 'OK' : '')) || (threw ? 'THREW:' + threw : '') };
-      assert.ok(summary.runs >= 1);
+      var key = operation + ' × ' + kind;
+      var observed = { codes: Object.keys(codes).sort(), writes: Object.keys(writes).length > 0 };
+      MATRIX[key] = { stages: summary.stages, writes: Object.keys(writes).sort(), codes: observed.codes };
+      assert.ok(summary.runs >= 1 && summary.tokenAudits >= 1, '全シート走査の監査が実際に行われた: ' + JSON.stringify(summary));
+      if (UPDATING) { EXPECTED[key] = observed; return; }
+      assert.deepStrictEqual(observed, EXPECTED[key], key + ': 期待する結果（コード・書き込みの有無）と違う。意図した変更なら UPDATE_RACE_EXPECTED=1 で再生成して差分を確認すること');
     });
   });
 });
 
-test('出力（任意）: RACE_MATRIX=1 のとき、操作×状態ごとの結果を出力する', function () {
+test('期待の固定: 期待ファイルに、操作×状態の全ての組が揃っていて、余分な組が無い', function () {
+  if (UPDATING) {
+    fs.mkdirSync(path.dirname(EXPECTED_FILE), { recursive: true });
+    var sorted = {};
+    Object.keys(EXPECTED).sort().forEach(function (k) { sorted[k] = EXPECTED[k]; });
+    fs.writeFileSync(EXPECTED_FILE, JSON.stringify(sorted, null, 1) + '\n');
+    return;
+  }
+  var want = [];
+  Object.keys(OPERATIONS).forEach(function (op) { Object.keys(KINDS).forEach(function (kind) { want.push(op + ' × ' + kind); }); });
+  assert.deepStrictEqual(Object.keys(EXPECTED).sort(), want.sort());
+  Object.keys(EXPECTED).forEach(function (k) {
+    EXPECTED[k].codes.forEach(function (c) { assert.ok(c.indexOf('THREW:') !== 0, k + ': 予期しない例外を期待として固定しない: ' + c); });
+  });
+});
+
+test('出力（任意）: RACE_MATRIX=<パス> のとき、操作×状態ごとの結果を出力する', function () {
   if (process.env.RACE_MATRIX) fs.writeFileSync(process.env.RACE_MATRIX, JSON.stringify(MATRIX, null, 1));
 });
 
@@ -261,8 +304,8 @@ test('構造: メニューの「メール再送」の種別（RESEND_MAIL_HANDLE
 /* 古い（終端・180日超）行へ実際に書き込みに届く操作。それ以外は、状態・種別の条件で書き込みの手前で止まる（または読み取りのみ・新規作成のみ）。
    ここが変わった（既存の条件が外れて、別の操作が古い行へ書くようになった）場合は、その操作の書き込み先を確認して更新する。 */
 var REACHES_WRITES_ON_OLD_ROWS = [
-  'adminBackfillOriginalPrice', 'adminCancelBooking', 'adminCancelBookingWithRefund', 'adminChangeBookingPeople', 'adminResendReminderMail',
-  'cancelBookingAdmin', 'cancelBookingWithRefund', 'changeBookingPeople'
+  'adminBackfillOriginalPrice', 'adminCancelBooking', 'adminCancelBookingWithRefund', 'adminResendReminderMail',
+  'cancelBookingAdmin', 'cancelBookingWithRefund'
 ];
 
 test('構造: 古い行の書き込みに届く操作の一覧が、検証済みの一覧と一致する（個人情報の列を含む書き込みは、行を読み直す関数かこの操作自身の新しい値）', function () {
@@ -270,4 +313,51 @@ test('構造: 古い行の書き込みに届く操作の一覧が、検証済み
   Object.keys(MATRIX).forEach(function (key) { if (MATRIX[key].writes.length > 0) reaching[key.split(' × ')[0]] = true; });
   var mailResend = Object.keys(reaching).filter(function (n) { return n.indexOf('menu:resend:') === 0; });
   assert.deepStrictEqual(Object.keys(reaching).filter(function (n) { return n.indexOf('menu:resend:') !== 0; }).sort(), REACHES_WRITES_ON_OLD_ROWS.slice().sort(), '書き込みに届く操作。メール再送: ' + mailResend.join(','));
+});
+
+// ============================================================================
+// 監査自体の検証: 復活（別シートや新しい行への書き戻し）を、この監査は実際に検出できる
+// ============================================================================
+
+test('監査の検証: 消去前に読んだメールを、ロック再取得後に新しい行（appendRow）へ書く書き手を、全シート走査が検出する', function () {
+  assert.throws(function () {
+    H.interleaveAll(function () { return buildKind('card-confirmed'); }, function (ctx) {
+      /* 外部呼び出しの前に読み（ロック外）、外部呼び出しの間に消去が走り、その後で読んだ値を別シートの新しい行へ書く、悪い書き手 */
+      var staleEmail = H.bookingRow(ctx, BOOKING_ID)[ctx.headers.indexOf('email')];
+      ctx.admin.UrlFetchApp.fetch('https://api.stripe.com/v1/payment_intents/pi_x', { method: 'get' });
+      if (!ctx.sheets.Recovery) { ctx.sheets.Recovery = ctx.book.insertSheet('Recovery'); ctx.sheets.Recovery.appendRow(['note']); }
+      ctx.sheets.Recovery.appendRow(['宛先: ' + staleEmail]);
+    });
+  }, /消去済みの識別値が、消去後に別のセル／新しい行へ現れた|消去前の値に戻った/);
+});
+
+test('監査の検証: 消去前の値を、消去済みの同じセルへ書き戻す書き手を検出する', function () {
+  assert.throws(function () {
+    H.interleaveAll(function () { return buildKind('card-confirmed'); }, function (ctx) {
+      var row = H.bookingRow(ctx, BOOKING_ID);
+      var stale = row[ctx.headers.indexOf('note')];
+      ctx.admin.UrlFetchApp.fetch('https://api.stripe.com/v1/payment_intents/pi_x', { method: 'get' });
+      row[ctx.headers.indexOf('note')] = stale;
+    });
+  }, /消去前の値に戻った|消去済みの識別値/);
+});
+
+test('監査の検証: 操作自身の新しい入力（消去前とは別の値）を新しい行へ書いても、復活とは扱わない', function () {
+  var summary = H.interleaveAll(function () { return buildKind('card-confirmed'); }, function (ctx) {
+    ctx.admin.UrlFetchApp.fetch('https://api.stripe.com/v1/payment_intents/pi_x', { method: 'get' });
+    if (!ctx.sheets.Recovery) { ctx.sheets.Recovery = ctx.book.insertSheet('Recovery'); ctx.sheets.Recovery.appendRow(['note']); }
+    ctx.sheets.Recovery.appendRow(['宛先: ' + NEW_INPUT_EMAIL]);
+  });
+  assert.ok(summary.tokenAudits >= 1);
+});
+
+test('監査の検証: 監査の失敗は業務コード側のtry/catchに吸収されず、実行後に検査される（例外にしない）', function () {
+  /* 外部呼び出しを try/catch で包む業務コードがあっても、監査の失敗は ctx.auditFailures に残る。ここでは、ロック保持中に消去が値を変えると失敗が記録されることを直接確かめる。 */
+  var ctx = buildKind('card-confirmed');
+  assert.deepStrictEqual(ctx.auditFailures === undefined ? [] : ctx.auditFailures, []);
+  var result = null;
+  try { result = H.interleaveAll(function () { return buildKind('card-confirmed'); }, function (c) {
+    try { c.admin.UrlFetchApp.fetch('https://api.stripe.com/v1/payment_intents/pi_x', { method: 'get' }); } catch (e) { /* 業務コードの吸収を模す */ }
+  }); } catch (e) { result = e; }
+  assert.ok(result && typeof result.stages === 'number', '正常な書き手は監査を通る');
 });
