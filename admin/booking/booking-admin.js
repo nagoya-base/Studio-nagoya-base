@@ -633,6 +633,7 @@ function showDetailModal(booking) {
      重ならないため、実際には同時に両方は表示されない。要復旧の間は基準料金・日程変更・
      精算記録のいずれも表示しない（renderFeeRecoverySection_参照）。 */
   renderFeeSettlementSection_(booking);
+  renderPeopleChangeHistory_(booking);
   renderRescheduleSection_(booking);
   renderFeeBaselineSection_(booking);
   renderFeeRecoverySection_(booking);
@@ -890,8 +891,8 @@ function renderFeeBaselineSection_(booking) {
  * 冪等性キーを追加）: 実際のStripe/PayPay/現金の入出金を管理者が確認した後にのみ記録する。
  * 基準料金が確認済みのCONFIRMED予約であれば常に表示する（未精算の状態に限定せず、
  * 既存予約の支払済み額の遡及登録にも使えるようにする）。特定のBookingChanges行に
- * 紐付けず、予約単位の現在の精算状態のみを更新する（recordFeeSettlementのchangeIdは
- * nullで呼ぶ）。
+ * 人数変更後は変更履歴に紐付け、未精算額から精算状態を算出する。
+ * それ以外は予約単位で記録する（changeIdはnull）。
  *
  * settlementId（冪等性キー）はこのセクションを開いたときに1つ生成し、送信が成功する
  * まで使い回す（通信エラー等でのリトライは同じIDになるため、サーバー側で二重加算されない）。
@@ -910,6 +911,9 @@ function renderFeeSettlementSection_(booking) {
   var stateLine = pendingStates[booking.feeSettlementState] || '';
   section.innerHTML =
     '<h3>精算の記録</h3>' +
+    (booking.peopleChangeSettlement ? '<p>人数変更後の未精算額: ' +
+      (booking.peopleChangeSettlement.outstandingAmount >= 0 ? '追加入金 ' : '返金 ') +
+      Math.abs(booking.peopleChangeSettlement.outstandingAmount) + '円</p>' : '') +
     '<p>' + escapeHtml(stateLine) + '現在の支払済み額: ' + (booking.feePaidAmount || 0) + '円／返金済み額: ' +
       (booking.feeRefundedAmount || 0) + '円。実際の入出金を確認したうえで記録してください（自動決済は行いません）。</p>' +
     '<label>精算状態 <select id="settlement-state">' +
@@ -925,6 +929,21 @@ function renderFeeSettlementSection_(booking) {
     '<div id="settlement-result" role="status" aria-live="polite"></div>';
   modalBody.insertAdjacentElement('afterend', section);
   var settlementId = generateIdempotencyKey_();
+  if (booking.peopleChangeSettlement) {
+    var balance = booking.peopleChangeSettlement.outstandingAmount;
+    var paidField = section.querySelector('#settlement-paid-delta');
+    var refundField = section.querySelector('#settlement-refunded-delta');
+    var stateField = section.querySelector('#settlement-state');
+    paidField.max = Math.max(0, balance); refundField.max = Math.max(0, -balance);
+    stateField.disabled = true;
+    function syncPeopleSettlementState() {
+      var remaining = balance - Number(paidField.value) + Number(refundField.value);
+      stateField.value = remaining > 0 ? 'PENDING_CHARGE' : remaining < 0 ? 'PENDING_REFUND' : 'SETTLED';
+    }
+    paidField.addEventListener('input', syncPeopleSettlementState);
+    refundField.addEventListener('input', syncPeopleSettlementState);
+    syncPeopleSettlementState();
+  }
   section.querySelector('#settlement-save').addEventListener('click', function () {
     var button = section.querySelector('#settlement-save');
     var state = section.querySelector('#settlement-state').value;
@@ -960,7 +979,7 @@ function renderFeeSettlementSection_(booking) {
           (error && error.message ? error.message : error);
         refreshOpenDetail_(booking.bookingId);
       })
-      .adminRecordRescheduleFeeSettlement(booking.bookingId, null, settlementId, state, paidDelta, refundedDelta, note);
+      .adminRecordRescheduleFeeSettlement(booking.bookingId, booking.peopleChangeSettlement ? booking.peopleChangeSettlement.changeId : null, settlementId, state, paidDelta, refundedDelta, note);
   });
 }
 
@@ -1003,6 +1022,7 @@ function renderRescheduleSection_(booking) {
   google.script.run
     .withSuccessHandler(function (history) {
       if (!section.isConnected || !Array.isArray(history)) return;
+      history = history.filter(function (item) { return item.changeType !== 'PEOPLE'; });
       var area = section.querySelector('#reschedule-history');
       if (!history.length) return;
       area.innerHTML = '<h4>変更履歴</h4>' + history.map(function (item) {
@@ -2126,34 +2146,79 @@ function runLargePartyDecision(bookingId, approving) {
  */
 function runChangePeople(bookingId) {
   var booking = state.bookings.find(function (b) { return b.bookingId === bookingId; });
-  var input = window.prompt(
-    (booking ? '予約ID: ' + booking.bookingId + '\n利用日: ' + booking.date + '\n現在の人数: ' + booking.people + '\n\n' : '') +
-    '変更後の人数を入力してください（例: 6名。上限7名）。\n利用日の2日前まで料金を再計算します。前日・当日の減員は、人数加算分を含め値下げ・返金しません。'
-  );
+  var input = window.prompt((booking ? '現在の人数: ' + booking.people + '\n' : '') +
+    '変更後の人数を入力してください（1〜7名）。次の画面で料金と差額を確認します。\n前日・当日の減員は値下げ・返金なしです。');
   if (input === null) return;
   var people = String(input).trim();
   if (/^[0-9]+$/.test(people)) people += '名';
   setBusy(bookingId, true);
-  setStatusLine('人数変更中…');
-  google.script.run
-    .withSuccessHandler(function (result) {
-      if (!result || !result.success) {
-        alert('人数を変更できませんでした: ' + (result && result.error && result.error.message));
-      } else {
-        var c = result.change || {};
-        var note = c.noRefund ? '前日・当日の減員のため、料金の値下げ・返金はありません。' : '案内する金額: ' + c.newAmount + '円';
-        if (c.additionalChargeDue) note += '\n追加請求の差額: ' + c.additionalChargeDue + '円（請求は別途行ってください）';
-        if (c.refundDue) note += '\n返金候補の差額: ' + c.refundDue + '円（返金は別途行ってください）';
-        if (c.needsApproval) note += '\n5〜7名へ変更したため、承認待ちになりました。';
-        alert('人数を変更しました（' + c.oldPeople + ' → ' + c.newPeople + '）。\n' + note);
-      }
-      loadBookings(function () { setBusy(bookingId, false); });
-    })
-    .withFailureHandler(function (error) {
-      alert('人数変更でエラーが発生しました: ' + (error && error.message ? error.message : error));
-      loadBookings(function () { setBusy(bookingId, false); });
-    })
-    .adminChangeBookingPeople(bookingId, people);
+  setStatusLine('変更後の料金を確認中…');
+  function finish() { loadBookings(function () { setBusy(bookingId, false); openDetail(bookingId); }); }
+  function failed(error) { alert('人数変更を完了できません: ' + (error && error.message ? error.message : error)); finish(); }
+  google.script.run.withFailureHandler(failed).withSuccessHandler(function (preview) {
+    if (!preview || !preview.success) { failed(preview && preview.error); return; }
+    var c = preview.change;
+    var message = '人数: ' + c.oldPeople + ' → ' + c.newPeople + '\n料金: ' + c.oldAmount + '円 → ' + c.newAmount + '円';
+    if (typeof c.onsitePaymentAmount === 'number') message += '\n当日のお支払い額: ' + c.onsitePaymentAmount + '円';
+    if (c.noRefund) message += '\n前日・当日の減員のため値下げ・返金はありません。';
+    if (c.additionalChargeDue) message += '\n未精算の追加請求額: ' + c.additionalChargeDue + '円';
+    if (c.refundDue) message += '\n未精算の返金額: ' + c.refundDue + '円';
+    if (c.needsApproval) message += '\n5〜7名の運営承認待ちになります。';
+    message += '\n\n実際の入金・返金は自動実行しません。確認後、詳細の「精算の記録」へ登録してください。\nこの内容で人数を変更しますか？';
+    if (!window.confirm(message)) { setBusy(bookingId, false); setStatusLine('人数変更を中止しました。'); return; }
+    google.script.run.withFailureHandler(failed).withSuccessHandler(function (result) {
+      if (!result || !result.success) { failed(result && result.error); return; }
+      var note = '人数・料金を変更し、変更履歴に記録しました。';
+      if (result.change.additionalChargeDue || result.change.refundDue) note += '\n差額は未精算です。実際の入出金を確認後、「精算の記録」で登録してください。';
+      if (!result.mail || !result.mail.success) note += '\n通知メールは未送信または要確認です。人数変更履歴を確認してください。';
+      alert(note); finish();
+    }).adminChangeBookingPeople(bookingId, people, preview.quoteToken);
+  }).adminPreviewBookingPeople(bookingId, people);
+}
+
+function renderPeopleChangeHistory_(booking) {
+  var modalBody = document.getElementById('modal-body');
+  if (!modalBody || typeof modalBody.insertAdjacentElement !== 'function') return;
+  var existing = document.getElementById('people-change-history');
+  if (existing) existing.remove();
+  if (booking.brand !== 'mens') return;
+  var section = document.createElement('section'); section.id = 'people-change-history'; section.className = 'reschedule-section';
+  section.innerHTML = '<h3>人数変更の履歴・通知</h3><div class="people-history-body" role="status" aria-live="polite">確認中…</div>';
+  modalBody.insertAdjacentElement('afterend', section);
+  google.script.run.withFailureHandler(function () {
+    section.querySelector('.people-history-body').textContent = '履歴を取得できません。再読み込みしてください。';
+  }).withSuccessHandler(function (history) {
+    if (!section.isConnected || !Array.isArray(history)) return;
+    var entries = history.filter(function (item) { return item.changeType === 'PEOPLE'; });
+    var area = section.querySelector('.people-history-body');
+    area.innerHTML = entries.length ? entries.map(function (item) {
+      var recovery = item.mailState === 'PREPARED' || item.mailState === 'RECOVERY_REQUIRED';
+      return '<div class="reschedule-history-item">' + escapeHtml(item.oldPeople) + ' → ' + escapeHtml(item.newPeople) +
+        ' ／ ' + escapeHtml(item.oldFeeAmount) + '円 → ' + escapeHtml(item.newFeeAmount) + '円 ／ 通知: ' + escapeHtml(item.mailState) +
+        (recovery ? '<p>人数・料金の反映結果が未確認です。台帳と決済結果を確認してから復旧してください。</p>' +
+          '<button type="button" data-people-decision="FINISH" data-change-id="' + escapeHtml(item.changeId) + '">変更後の内容で反映を完了</button> ' +
+          '<button type="button" data-people-decision="ROLLBACK" data-change-id="' + escapeHtml(item.changeId) + '">変更前へ戻す</button>' : '') +
+        (item.mailState === 'FAILED' || item.mailState === 'PENDING' ? '<button type="button" data-people-resend="' + escapeHtml(item.changeId) + '">通知を送信</button>' : '') + '</div>';
+    }).join('') : '人数変更の履歴はありません。';
+    area.querySelectorAll('button[data-people-decision]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (!window.confirm('台帳と決済結果を確認済みですか？\n「' + button.textContent + '」を実行します。')) return;
+        button.disabled = true;
+        google.script.run.withFailureHandler(function () { button.disabled = false; alert('復旧結果を確認できません。再読み込みしてください。'); })
+          .withSuccessHandler(function (outcome) { alert(outcome && outcome.success ? '復旧しました。' : (outcome && outcome.error && outcome.error.message)); refreshOpenDetail_(booking.bookingId); })
+          .adminResolvePeopleChange(button.dataset.changeId, button.dataset.peopleDecision, true);
+      });
+    });
+    area.querySelectorAll('button[data-people-resend]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (!window.confirm('未送信または送信失敗の通知を送信しますか？')) return;
+        button.disabled = true;
+        google.script.run.withFailureHandler(function () { button.disabled = false; alert('送信結果を確認できません。'); })
+          .withSuccessHandler(function (outcome) { alert(outcome && outcome.success ? '送信しました。' : (outcome && outcome.error && outcome.error.message)); refreshOpenDetail_(booking.bookingId); })
+          .adminResendRescheduleMail(button.dataset.peopleResend);
+      });
+    });
+  }).adminGetBookingChanges(booking.bookingId);
 }
 
 /*

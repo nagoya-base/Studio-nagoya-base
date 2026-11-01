@@ -116,7 +116,12 @@ function createScriptRunStub() {
     /* Issue #668 */
     'adminApproveLargeParty',
     'adminRejectLargeParty',
-    'adminChangeBookingPeople'
+    'adminChangeBookingPeople',
+    'adminPreviewBookingPeople',
+    'adminRecordRescheduleFeeSettlement',
+    'adminResolvePeopleChange',
+    'adminGetBookingChanges',
+    'adminResendRescheduleMail'
   ];
 
   var stub = {
@@ -203,6 +208,73 @@ function booking(overrides) {
 }
 
 var TODAY = '2026-09-22';
+
+test('人数変更: 再計算結果を確認してから同じ見積りで確定する', function () {
+  var sandbox = loadClientSandbox(), run = sandbox.google.script.run;
+  sandbox.state.bookings = [booking({ bookingId: 'mens-change', brand: 'mens', people: '5名' })];
+  sandbox.window.prompt = function () { return '7'; };
+  var message;
+  sandbox.window.confirm = function (text) { message = text; return true; };
+  sandbox.runChangePeople('mens-change');
+  var index = run.calls.length - 1;
+  assert.strictEqual(run.calls[index].name, 'adminPreviewBookingPeople');
+  assert.deepStrictEqual(Array.from(run.calls[index].args), ['mens-change', '7名']);
+  assert.strictEqual(run.calls.some(function (c) { return c.name === 'adminChangeBookingPeople'; }), false);
+  run.resolveCall(index, { success: true, quoteToken: 'verified-quote', change: {
+    oldPeople: '5名', newPeople: '7名', oldAmount: 10000, newAmount: 12000, additionalChargeDue: 2000
+  } });
+  assert.ok(message.includes('10000円 → 12000円'));
+  assert.ok(message.includes('未精算の追加請求額: 2000円'));
+  assert.ok(message.includes('自動実行しません'));
+  var commit = run.calls[run.calls.length - 1];
+  assert.strictEqual(commit.name, 'adminChangeBookingPeople');
+  assert.deepStrictEqual(Array.from(commit.args), ['mens-change', '7名', 'verified-quote']);
+});
+
+test('人数変更: 見積り確認の中止・見積り失敗では変更しない', function () {
+  [true, false].forEach(function (previewSuccess) {
+    var sandbox = loadClientSandbox({ confirmResult: false }), run = sandbox.google.script.run;
+    sandbox.window.prompt = function () { return '4'; };
+    sandbox.runChangePeople('mens-change');
+    run.resolveCall(run.calls.length - 1, previewSuccess ? { success: true, quoteToken: 'q', change: {
+      oldPeople: '5名', newPeople: '4名', oldAmount: 10000, newAmount: 9000, refundDue: 1000
+    } } : { success: false, error: { message: '復旧待ちです' } });
+    assert.strictEqual(run.calls.some(function (c) { return c.name === 'adminChangeBookingPeople'; }), false);
+  });
+});
+
+test('人数変更の精算画面: 部分入金・返金から状態を計算し、人数変更履歴へ記録する', function () {
+  [2000, -2000].forEach(function (balance) {
+    var sandbox = loadClientSandbox(), fields = {}, section = createElementStub();
+    section.querySelector = function (key) {
+      if (!fields[key]) fields[key] = createElementStub();
+      return fields[key];
+    };
+    section.querySelector('#settlement-paid-delta').value = '0';
+    section.querySelector('#settlement-refunded-delta').value = '0';
+    sandbox.document.getElementById = function (key) {
+      return key === 'modal-body' ? { insertAdjacentElement: function () {} } : null;
+    };
+    sandbox.document.createElement = function () { return section; };
+    sandbox.renderFeeSettlementSection_(booking({ bookingId: 'people-fee', status: 'CONFIRMED',
+      feeBaselineReady: true, peopleChangeSettlement: { changeId: 'people-history', outstandingAmount: balance } }));
+    var stateField = fields['#settlement-state'];
+    assert.strictEqual(stateField.disabled, true);
+    assert.strictEqual(stateField.value, balance > 0 ? 'PENDING_CHARGE' : 'PENDING_REFUND');
+    var input = fields[balance > 0 ? '#settlement-paid-delta' : '#settlement-refunded-delta'];
+    assert.strictEqual(input.max, 2000);
+    input.value = '1000'; input.fire('input');
+    fields['#settlement-save'].fire('click');
+    var run = sandbox.google.script.run, call = run.calls[run.calls.length - 1];
+    assert.strictEqual(call.name, 'adminRecordRescheduleFeeSettlement');
+    assert.strictEqual(call.args[1], 'people-history');
+    assert.strictEqual(call.args[3], balance > 0 ? 'PENDING_CHARGE' : 'PENDING_REFUND');
+    assert.strictEqual(call.args[4], balance > 0 ? 1000 : 0);
+    assert.strictEqual(call.args[5], balance > 0 ? 0 : 1000);
+    input.value = '2000'; input.fire('input');
+    assert.strictEqual(stateField.value, 'SETTLED');
+  });
+});
 var YESTERDAY = '2026-09-21';
 var TOMORROW = '2026-09-23';
 

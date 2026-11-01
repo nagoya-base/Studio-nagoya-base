@@ -240,7 +240,7 @@ var BookingReschedule = (function () {
    */
   function isBlockedForFeeRecovery_(bookingId, record) {
     try {
-      return isInFeeRecovery_(record) ||
+      return hasUnresolvedPeopleChange(bookingId) || isInFeeRecovery_(record) ||
         FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null) ||
         isBaselineRecoveryBlocking_(bookingId);
     } catch (e) {
@@ -1015,14 +1015,24 @@ var BookingReschedule = (function () {
       var change = findChange_(changeId);
       if (!change) return error_('CHANGE_NOT_FOUND', '変更履歴が見つかりません。');
       var row = change.row;
+      var peopleDetails = parseFeeDetails_(row);
+      var isPeopleChange = peopleDetails.changeType === 'PEOPLE';
       if (row[11] !== 'PENDING' && !(force && row[11] === 'FAILED')) {
         return error_('MAIL_STATE_INVALID', 'この通知は再送できません。送信履歴を確認してください。');
       }
       var found = SpreadsheetRepository.findRowByBookingId(row[1]);
-      if (!found || found.record.status !== Booking.STATUS.CONFIRMED ||
+      if (!found || (found.record.status !== Booking.STATUS.CONFIRMED && !(isPeopleChange && found.record.status === Booking.STATUS.PENDING)) ||
           !isDate_(found.record.startAt) || found.record.startAt.getTime() !== row[7].getTime() ||
           !isDate_(found.record.endAt) || found.record.endAt.getTime() !== row[8].getTime()) {
         return error_('BOOKING_CHANGED_AGAIN', '予約日時が再変更されています。古い通知は送信しません。');
+      }
+      if (isPeopleChange && (peopleDetails.feeConfirmed !== true || String(found.record.people) !== peopleDetails.change.newPeople ||
+          Booking.getEffectivePriceAmount(found.record) !== row[15])) {
+        return error_('BOOKING_CHANGED_AGAIN', '人数・料金が再変更されています。古い通知は送信しません。');
+      }
+      var peopleSummary = isPeopleChange ? peopleSettlementSummary(found.record) : null;
+      if (isPeopleChange && (!peopleSummary || peopleSummary.changeId !== changeId)) {
+        return error_('BOOKING_CHANGED_AGAIN', '最新の人数変更ではありません。古い通知は送信しません。');
       }
       var config = BookingConfig.getMailConfig();
       if (!config.displayName || !config.replyTo || !config.contactEmail ||
@@ -1052,6 +1062,23 @@ var BookingReschedule = (function () {
         body: bodyLines.join('\n'),
         name: config.displayName, replyTo: config.replyTo
       };
+      if (isPeopleChange) {
+        var currentChange = Object.assign({}, peopleDetails.change);
+        currentChange.needsApproval = found.record.status === Booking.STATUS.PENDING &&
+          found.record.largePartyApprovalStatus === Booking.LARGE_PARTY_APPROVAL.PENDING_APPROVAL;
+        if (!currentChange.noRefund && found.record.status === Booking.STATUS.CONFIRMED && peopleSummary.requiresSettlement) {
+          currentChange.additionalChargeDue = Math.max(0, peopleSummary.outstandingAmount);
+          currentChange.refundDue = Math.max(0, -peopleSummary.outstandingAmount);
+        }
+        if (!peopleSummary.requiresSettlement) {
+          currentChange.additionalChargeDue = 0; currentChange.refundDue = 0;
+        }
+        delete currentChange.onsitePaymentAmount;
+        if (found.record.status === Booking.STATUS.CONFIRMED && !peopleSummary.requiresSettlement &&
+            !Booking.isCardPaymentMethod(found.record.paymentMethod)) currentChange.onsitePaymentAmount = row[15];
+        var peopleMail = BookingMailTemplates.buildPeopleChangedMail(found.record, config, currentChange);
+        mail.subject = peopleMail.subject; mail.body = peopleMail.body;
+      }
       change.sheet.getRange(change.rowNumber, 12).setValue('SENDING');
       try {
         MailApp.sendEmail(mail);
@@ -1079,11 +1106,160 @@ var BookingReschedule = (function () {
     }
   }
 
+  /* Issue #668: 人数変更も既存BookingChanges/FeeSettlementsへ記録する。
+     PREPAREDを先に永続化し、途中失敗では履歴そのものを停止条件にする。
+     日程変更回数は増やさず、人数・料金・承認状態の旧値と新値だけを保持する。 */
+  function encodePeopleFields_(fields) {
+    var out = {};
+    Object.keys(fields).forEach(function (key) {
+      var value = fields[key];
+      out[key] = isDate_(value) ? { dateMillis: value.getTime() } : value == null ? '' : value;
+    });
+    return out;
+  }
+
+  function decodePeopleFields_(fields) {
+    var out = {};
+    Object.keys(fields).forEach(function (key) {
+      var v = fields[key]; out[key] = v && typeof v === 'object' && typeof v.dateMillis === 'number' ? new Date(v.dateMillis) : v;
+    });
+    return out;
+  }
+
+  function peopleFieldsMatch(record, fields) {
+    return Object.keys(fields).every(function (key) {
+      var a = record[key], b = fields[key];
+      if (isDate_(b)) return isDate_(a) && a.getTime() === b.getTime();
+      return String(a == null ? '' : a) === String(b == null ? '' : b);
+    });
+  }
+
+  function preparePeopleChange(record, change, fields) {
+    var sheet = history_(), changeId = Utilities.getUuid(), previous = {};
+    Object.keys(fields).forEach(function (key) { previous[key] = record[key] == null ? '' : record[key]; });
+    var detail = { changeType: 'PEOPLE', feeConfirmed: false, change: change,
+      oldFields: encodePeopleFields_(previous), newFields: encodePeopleFields_(fields),
+      paymentStatus: record.paymentStatus || '', feePaidAmount: record.feePaidAmount == null ? '' : record.feePaidAmount,
+      feeRefundedAmount: record.feeRefundedAmount == null ? '' : record.feeRefundedAmount, status: record.status };
+    var date = BookingAvailability.formatDateInTimezone(record.startAt, BookingConfig.getAvailabilityConfig().timezone);
+    sheet.appendRow([changeId, record.bookingId, new Date(), date, record.startAt, record.endAt,
+      date, record.startAt, record.endAt, '人数変更: ' + change.oldPeople + ' → ' + change.newPeople,
+      change.noRefund ? '前日・当日の減員。値下げ・返金なし。' : '差額は実際の入出金を確認して精算の記録へ登録してください。',
+      'PREPARED', '', '', change.oldAmount, change.newAmount, change.newAmount - change.oldAmount,
+      change.beforeDeadline ? 'TWO_DAYS_PLUS' : 'DAY_BEFORE_OR_SAME_DAY',
+      change.additionalChargeDue > 0 ? 'ADDITIONAL_CHARGE_REQUIRED' : change.refundDue > 0 ? 'CANDIDATE' : 'NONE',
+      change.refundDue || 0, '', '', '', fields.feeSettlementState || record.feeSettlementState || '', JSON.stringify(detail)]);
+    var saved = findChange_(changeId);
+    if (!saved || saved.row[11] !== 'PREPARED') throw new Error('PEOPLE_CHANGE_INTENT_NOT_SAVED');
+    return changeId;
+  }
+
+  function completePeopleChange(changeId, state) {
+    var change = findChange_(changeId);
+    if (!change) throw new Error('PEOPLE_CHANGE_NOT_FOUND');
+    var detail = parseFeeDetails_(change.row);
+    detail.feeConfirmed = state === 'PENDING';
+    change.sheet.getRange(change.rowNumber, 25).setValue(JSON.stringify(detail));
+    change.sheet.getRange(change.rowNumber, 12).setValue(state);
+    if (findChange_(changeId).row[11] !== state) throw new Error('PEOPLE_HISTORY_NOT_VERIFIED');
+  }
+
+  function failPeopleChange(changeId, bookingId) {
+    try { completePeopleChange(changeId, 'RECOVERY_REQUIRED'); } catch (e) { /* PREPAREDのままでも停止する */ }
+    try { SpreadsheetRepository.updateBookingFields(bookingId, {
+      feeRecoveryRequiredAt: new Date(), feeRecoveryReason: '人数変更の更新結果が未確認です。人数変更履歴から反映または取り消しを確認してください。'
+    }); } catch (e) { /* 履歴のPREPARED/RECOVERY_REQUIREDで停止する */ }
+  }
+
+  function peopleHistoryRows_() {
+    var sheet = SpreadsheetApp.openById(BookingConfig.getSpreadsheetId()).getSheetByName(HISTORY_SHEET_);
+    if (!sheet || !sheet.getLastRow()) return [];
+    var values = sheet.getDataRange().getValues();
+    if (HISTORY_HEADERS_.some(function (key, i) { return values[0][i] !== key; })) throw new Error('BookingChangesヘッダー不一致');
+    return values;
+  }
+
+  function hasUnresolvedPeopleChange(bookingId) {
+    var values = peopleHistoryRows_();
+    return values.slice(1).some(function (row) {
+      return row[1] === bookingId && (row[11] === 'PREPARED' || row[11] === 'RECOVERY_REQUIRED') && parseFeeDetails_(row).changeType === 'PEOPLE';
+    });
+  }
+
+  function resolvePeopleChange(changeId, decision, confirmed) {
+    if (confirmed !== true || (decision !== 'FINISH' && decision !== 'ROLLBACK')) return error_('PEOPLE_RECOVERY_CONFIRMATION_REQUIRED', '台帳と決済結果を確認し、反映を完了するか元に戻すか選んでください。');
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(10000)) return error_('LOCK_TIMEOUT', '処理中です。');
+    var shouldMail = false;
+    try {
+      var c = findChange_(changeId), d = c ? parseFeeDetails_(c.row) : {};
+      if (!c || d.changeType !== 'PEOPLE' || (c.row[11] !== 'PREPARED' && c.row[11] !== 'RECOVERY_REQUIRED')) return error_('PEOPLE_RECOVERY_NOT_REQUIRED', '復旧対象の人数変更ではありません。');
+      var found = SpreadsheetRepository.findRowByBookingId(c.row[1]);
+      if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
+      var r = found.record;
+      if (r.status !== d.status || !isDate_(r.startAt) || !isDate_(r.endAt) || r.startAt.getTime() !== c.row[4].getTime() || r.endAt.getTime() !== c.row[5].getTime() ||
+          String(r.paymentStatus || '') !== d.paymentStatus || String(r.feePaidAmount == null ? '' : r.feePaidAmount) !== String(d.feePaidAmount) ||
+          String(r.feeRefundedAmount == null ? '' : r.feeRefundedAmount) !== String(d.feeRefundedAmount)) return error_('PEOPLE_RECOVERY_STATE_CHANGED', '予約・入出金が変わっています。履歴と現在の台帳を個別に確認してください。');
+      if (FeeSettlementRepository.hasUnresolvedSettlement(r.bookingId, null) || isBaselineRecoveryBlocking_(r.bookingId)) return error_('FEE_RECOVERY_REQUIRED', '先に未確定の精算・基準料金の復旧が必要です。');
+      if (decision === 'FINISH' && d.newFields.largeParty === true && !MembershipRules.verifyActualMembership(r.email, BookingAvailability.formatDateInTimezone(r.startAt, BookingConfig.getAvailabilityConfig().timezone)).ok) return error_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE);
+      var fields = decodePeopleFields_(decision === 'FINISH' ? d.newFields : d.oldFields);
+      try {
+        SpreadsheetRepository.updateBookingFields(r.bookingId, fields);
+        if (!peopleFieldsMatch(SpreadsheetRepository.findRowByBookingId(r.bookingId).record, fields)) throw new Error('PEOPLE_RECOVERY_NOT_VERIFIED');
+        // 先にBookingsを確認し、最後に履歴の停止状態を解除する。途中失敗は再び復旧対象。
+        if (!r.feeRecoveryReason || String(r.feeRecoveryReason).indexOf('人数変更') === 0) {
+          SpreadsheetRepository.updateBookingRescheduleFeeAtomic(r.bookingId, { feeRecoveryRequiredAt: '', feeRecoveryReason: '' });
+        }
+        completePeopleChange(changeId, decision === 'FINISH' ? 'PENDING' : 'CHANGE_FAILED');
+        shouldMail = decision === 'FINISH';
+      } catch (e) { failPeopleChange(changeId, r.bookingId); return error_('PEOPLE_CHANGE_RECOVERY_REQUIRED', '復旧結果を確認できません。再確認してください。'); }
+    } finally { lock.releaseLock(); }
+    return { success: true, changeId: changeId, mail: shouldMail ? sendMail(changeId, false) : null };
+  }
+
+  function requiresPeopleSettlement(record) {
+    var status = Booking.normalizePaymentStatus(record.paymentStatus);
+    // 現金・PayPayの未入金予約は通常の当日精算。確定済みだけでは追加請求にしない。
+    // 実入出金の記録がある予約は決済方法によらず残額を管理する。
+    return status === Booking.PAYMENT_STATUS.PAID || status === Booking.PAYMENT_STATUS.REFUNDED ||
+      Number(record.feePaidAmount || 0) !== 0 || Number(record.feeRefundedAmount || 0) !== 0;
+  }
+
+  function peopleSettlementSummary(record) {
+    var rows = peopleHistoryRows_().slice(1).filter(function (row) {
+      return row[1] === record.bookingId && row[11] !== 'CHANGE_FAILED';
+    });
+    if (!rows.length) return null;
+    var row = rows[rows.length - 1], detail = parseFeeDetails_(row);
+    if (detail.changeType !== 'PEOPLE' || row[11] === 'CHANGE_FAILED' || detail.feeConfirmed !== true) return null;
+    var requiresSettlement = requiresPeopleSettlement(record);
+    return { changeId: row[0], requiresSettlement: requiresSettlement, amount: Booking.getEffectivePriceAmount(record),
+      outstandingAmount: requiresSettlement ? Booking.getEffectivePriceAmount(record) - (Number(record.feePaidAmount || 0) - Number(record.feeRefundedAmount || 0)) : 0 };
+  }
+
+  function validatePeopleSettlement_(record, state, paid, refunded) {
+    var summary = peopleSettlementSummary(record);
+    if (!summary || !summary.requiresSettlement) return null;
+    if (record.status !== Booking.STATUS.CONFIRMED) return error_('INVALID_STATUS', '人数変更の差額精算は確定済み予約で記録してください。');
+    if (paid > 0 && Booking.isLargePartyRecord(record) && !MembershipRules.verifyActualMembership(record.email,
+        BookingAvailability.formatDateInTimezone(record.startAt, BookingConfig.getAvailabilityConfig().timezone)).ok) {
+      return error_(MembershipRules.MEMBER_BENEFIT_DENIED_CODE, MembershipRules.MEMBER_BENEFIT_DENIED_MESSAGE);
+    }
+    var balance = summary.outstandingAmount;
+    if ((paid > 0 && refunded > 0) || paid > Math.max(0, balance) || refunded > Math.max(0, -balance)) return error_('PEOPLE_SETTLEMENT_EXCEEDS_BALANCE', '今回の入出金が人数変更後の未精算額を超えています。');
+    var after = balance - paid + refunded;
+    var expected = after > 0 ? 'PENDING_CHARGE' : after < 0 ? 'PENDING_REFUND' : 'SETTLED';
+    return state === expected ? null : error_('PEOPLE_SETTLEMENT_STATE_MISMATCH', '入出金後の残額に合う精算状態を選んでください。');
+  }
+
   function getChanges(bookingId) {
     var sheet = history_();
     var values = sheet.getDataRange().getValues();
     return values.slice(1).filter(function (row) { return row[1] === bookingId; }).map(function (row) {
+      var details = parseFeeDetails_(row);
       return {
+        changeType: details.changeType || 'SCHEDULE',
+        oldPeople: details.change ? details.change.oldPeople : '', newPeople: details.change ? details.change.newPeople : '',
         changeId: row[0], changedAt: isDate_(row[2]) ? row[2].toISOString() : '',
         oldDate: isDate_(row[4]) ? BookingAvailability.formatDateInTimezone(row[4], BookingConfig.getAvailabilityConfig().timezone) : '',
         newDate: isDate_(row[7]) ? BookingAvailability.formatDateInTimezone(row[7], BookingConfig.getAvailabilityConfig().timezone) : '',
@@ -1126,6 +1302,7 @@ var BookingReschedule = (function () {
     try {
       var found = SpreadsheetRepository.findRowByBookingId(bookingId);
       if (!found) return error_('NOT_FOUND', '予約が見つかりません。');
+      if (hasUnresolvedPeopleChange(bookingId)) return error_('FEE_RECOVERY_REQUIRED', '人数変更の復旧を先に行ってください。');
       /* Issue #478: 2名ペアパックの現地精算（入金の確定）も、利用日の属する月のactual membershipを再確認する。
          返金のみ（入金0円）は特典の利用ではないため止めない。 */
       if (paidDelta > 0 && BookingPricing.isMemberPlan(found.record.planCode)) {
@@ -1190,6 +1367,8 @@ var BookingReschedule = (function () {
           if (!abandonedArithmetic.ok) {
             return error_(abandonedArithmetic.code, abandonedArithmetic.message);
           }
+          var abandonedPeople = validatePeopleSettlement_(found.record, settlementState, paidDelta, refundedDelta);
+          if (abandonedPeople) return abandonedPeople;
           // ABANDONEDのまま直接適用を試みると、Bookingsへの書き込みに成功した直後に
           // markApplied自体が失敗する複合障害で、この行がABANDONEDのまま（＝「未反映」に
           // 見えたまま）残ってしまい、次の再送が再びここに入って二重加算しかねない
@@ -1222,6 +1401,8 @@ var BookingReschedule = (function () {
       if (!newSettlementArithmetic.ok) {
         return error_(newSettlementArithmetic.code, newSettlementArithmetic.message);
       }
+      var peopleSettlementError = validatePeopleSettlement_(found.record, settlementState, paidDelta, refundedDelta);
+      if (peopleSettlementError) return peopleSettlementError;
       var rowNumber = FeeSettlementRepository.appendPending({
         settlementId: settlementId, bookingId: bookingId, changeId: changeId || '',
         settlementState: settlementState, paidDelta: paidDelta, refundedDelta: refundedDelta, note: note || ''
@@ -1491,6 +1672,10 @@ var BookingReschedule = (function () {
   }
 
   return {
+    preparePeopleChange: preparePeopleChange, completePeopleChange: completePeopleChange,
+    failPeopleChange: failPeopleChange, peopleFieldsMatch: peopleFieldsMatch,
+    hasUnresolvedPeopleChange: hasUnresolvedPeopleChange, resolvePeopleChange: resolvePeopleChange,
+    peopleSettlementSummary: peopleSettlementSummary, requiresPeopleSettlement: requiresPeopleSettlement, isFeeRecoveryBlocked: isBlockedForFeeRecovery_,
     preview: preview, commit: commit, sendMail: sendMail, getChanges: getChanges,
     backfillOriginalPrice: backfillOriginalPrice, recordFeeSettlement: recordFeeSettlement,
     resolveFeeRecovery: resolveFeeRecovery, resolveBaselinePriceRecovery: resolveBaselinePriceRecovery,

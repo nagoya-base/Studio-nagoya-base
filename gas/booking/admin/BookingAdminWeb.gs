@@ -504,7 +504,8 @@ function getAdminBookingDetail(bookingId) {
        * こちらを見て復旧導線（renderFeeRecoverySection_）を出す。resolveFeeRecoveryへの
        * 入り口も同じ判定（isInFeeRecovery_ OR hasUnresolvedSettlement）を使っている。
        */
-      feeSettlementNeedsAttention: FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null),
+      feeSettlementNeedsAttention: FeeSettlementRepository.hasUnresolvedSettlement(bookingId, null) || BookingReschedule.hasUnresolvedPeopleChange(bookingId),
+      peopleChangeSettlement: record.brand === 'mens' && BookingReschedule.requiresPeopleSettlement(record) ? BookingReschedule.peopleSettlementSummary(record) : null,
       /*
        * PR #345再レビュー対応（8回目）: 基準料金5列（priceAmount等）の書込み結果が
        * 不明のまま残っている予約かどうか。feeRecoveryRequiredAtの保存自体が失敗する
@@ -708,8 +709,16 @@ function adminRejectLargeParty(bookingId) {
   return rejectLargeParty(bookingId);
 }
 
-function adminChangeBookingPeople(bookingId, newPeople) {
-  return changeBookingPeople(bookingId, newPeople);
+function adminPreviewBookingPeople(bookingId, newPeople) {
+  return BookingRepository.previewBookingPeople(bookingId, newPeople);
+}
+
+function adminChangeBookingPeople(bookingId, newPeople, expectedQuoteToken) {
+  return changeBookingPeople(bookingId, newPeople, expectedQuoteToken);
+}
+
+function adminResolvePeopleChange(changeId, decision, confirmed) {
+  return BookingReschedule.resolvePeopleChange(changeId, decision, confirmed);
 }
 
 /* Issue #667: 作品撮りサポートプランの承認。既存の正式関数approvePhotoSupport（BookingAdmin.gs）へそのまま委譲する。
