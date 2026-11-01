@@ -97,7 +97,7 @@ test('Studio X: 利用目的は確定9項目のみ（緊縛・講習会なし、
 });
 
 ['booking/index.html', 'mens/booking/index.html'].forEach(function (rel) {
-  test(rel + ': 既存のメール案内・OTP UI・利用目的が維持される', { skip: skipReason }, function () {
+  test(rel + ': メール案内・OTP UIを維持し、mensのみフェチ会を選べる', { skip: skipReason }, function () {
     var src = html(rel);
     var help = emailHelp(src);
     ['2026年12月1日以降', 'SNB MEMBER', '確認コード（6桁）'].forEach(function (w) {
@@ -105,7 +105,9 @@ test('Studio X: 利用目的は確定9項目のみ（緊縛・講習会なし、
     });
     assert.ok(src.indexOf('id="ba-member-verify-field"') >= 0);
     assert.ok(src.indexOf('id="ba-member-code"') >= 0);
-    assert.deepStrictEqual(purposeValues(src), [''].concat(SNB_PURPOSES));
+    var purposes = SNB_PURPOSES.slice();
+    if (rel === 'mens/booking/index.html') purposes.splice(purposes.length - 1, 0, 'フェチ会');
+    assert.deepStrictEqual(purposeValues(src), [''].concat(purposes));
   });
 });
 
