@@ -140,19 +140,16 @@ function setup(options) {
     ContentService: stubs.createContentServiceStub()
   };
   var sandbox = loadBookingSandbox(FILES, globals);
-  /* スタッフ対応は会員限定（Issue #472）。会員資格の正本は会員台帳（#471）の MemberRepository.isMemberForMonth。
+  /* スタッフ対応は会員限定（Issue #472）。会員資格の正本は会員台帳（#471）の MemberRepository.isMemberOnDate（日付判定）。
      既定ではメールの会員資格を満たすものとして通し、非会員・台帳障害は ctx.members で試験する
      （members: true=全員有効 / false=全員非会員 / { 'メール': ['YYYY-MM', ...] }=利用月ごと）。 */
   var memberState = { rule: opts.members === undefined ? true : opts.members, calls: [] };
-  if (opts.members !== 'LEDGER') sandbox.MemberRepository.isMemberForMonth = function (email, month) {
+  if (opts.members !== 'LEDGER') sandbox.MemberRepository.isMemberOnDate = function (email, date) {
+    var month = String(date).substring(0, 7);
     memberState.calls.push({ email: email, month: month });
     if (memberState.rule === 'THROW') throw new Error('Sheets error');
     if (memberState.rule === true || memberState.rule === false) return memberState.rule;
     return (memberState.rule[String(email).toLowerCase()] || []).indexOf(month) !== -1;
-  };
-  /* Issue #532: 資格判定は日付（isMemberOnDate）。月単位のスタブへ委譲して、既存の利用月ごとの試験を保つ。 */
-  if (opts.members !== 'LEDGER') sandbox.MemberRepository.isMemberOnDate = function (email, date) {
-    return sandbox.MemberRepository.isMemberForMonth(email, String(date).substring(0, 7));
   };
   /* 有料レンタル機材は全件Admin許可制（Issue #430）。既定ではストロボだけ許可済みにして、
      「許可済みなら即決済待ち」の経路を試験する。許可の保留・付与を試験するテストは COB 等を使う。 */

@@ -82,11 +82,9 @@ function setup(opts) {
   };
   var sandbox = loadBookingSandbox(FILES.concat(o.admin ? ['BookingAdminWeb.gs'] : []), globals);
   var ctx = { sandbox: sandbox, mailApp: mailApp, calendars: calendarsById, sheets: spreadsheetsById.ss1, members: JSON.parse(JSON.stringify(o.members || MEMBER)), proofs: {} };
-  sandbox.MemberRepository.isMemberForMonth = function (email, month) {
-    return (ctx.members[String(email).toLowerCase()] || []).indexOf(month) !== -1;
-  };
   sandbox.MemberRepository.isMemberOnDate = function (email, date) {
-    return sandbox.MemberRepository.isMemberForMonth(email, String(date).substring(0, 7));
+    var month = String(date).substring(0, 7);
+    return (ctx.members[String(email).toLowerCase()] || []).indexOf(month) !== -1;
   };
   return ctx;
 }

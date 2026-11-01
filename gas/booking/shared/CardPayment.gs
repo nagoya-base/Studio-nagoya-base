@@ -29,8 +29,8 @@
  * - PENDING作成時刻とCheckout Session作成時刻の間に処理遅延（Lock待ち・リトライ・
  *   ネットワーク往復）があると、Stripeへ送るexpires_atが実際のSession作成時刻から
  *   30分未満になり、Stripe API側のバリデーションエラーになるおそれがある。
- * - そのため、内部の仮押さえ期限（`computeCheckoutHoldExpiryMillis`。PENDING保持・
- *   空き枠ロック解除の基準）と、Stripeへ実際に送るexpires_at
+ * - そのため、内部の仮押さえ期限（PENDING保持・空き枠ロック解除の基準。
+ *   `CHECKOUT_HOLD_MINUTES`＝30分。旧`computeCheckoutHoldExpiryMillis`は未使用のため整理済み）と、Stripeへ実際に送るexpires_at
  *   （`computeStripeSessionExpiresAtSeconds`。安全マージンを載せた値）を別の関数として
  *   分離して提供する。
  * - さらに、内部の仮押さえ期限を先に確定させてそれに`expires_at`を後から合わせるのではなく、
@@ -78,11 +78,6 @@ var CardPayment = (function () {
    * 実害（二重予約・入金記録の消失）を防ぐ。
    */
   var WEBHOOK_RACE_GRACE_MINUTES = 10;
-
-  /* PENDING（決済待ち）作成時刻から内部の仮押さえ期限（ミリ秒epoch）を計算する。 */
-  function computeCheckoutHoldExpiryMillis(createdAtMillis) {
-    return createdAtMillis + CHECKOUT_HOLD_MINUTES * 60000;
-  }
 
   /*
    * PR-BがCheckout Session作成直前に呼ぶことを想定した、Stripeへ送るexpires_at
@@ -216,7 +211,6 @@ var CardPayment = (function () {
     CHECKOUT_HOLD_MINUTES: CHECKOUT_HOLD_MINUTES,
     STRIPE_SESSION_EXPIRY_BUFFER_MINUTES: STRIPE_SESSION_EXPIRY_BUFFER_MINUTES,
     WEBHOOK_RACE_GRACE_MINUTES: WEBHOOK_RACE_GRACE_MINUTES,
-    computeCheckoutHoldExpiryMillis: computeCheckoutHoldExpiryMillis,
     computeStripeSessionExpiresAtSeconds: computeStripeSessionExpiresAtSeconds,
     computeCheckoutSessionCreatedMillis: computeCheckoutSessionCreatedMillis,
     computeExpireSweepEligibleMillis: computeExpireSweepEligibleMillis,

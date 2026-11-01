@@ -57,18 +57,13 @@ function setup(opts) {
   var ctx = { sandbox: sandbox, sheets: spreadsheetsById[SPREADSHEET_ID], members: o.members || {}, lookups: [] };
   if (o.stubLedger !== false) {
     /* 台帳のスタブ: { 'メール': ['YYYY-MM', ...] }。'THROW'で台帳エラー。永久会員の共通判定は本物を通す。 */
-    var realIsMember = sandbox.MemberRepository.isMemberForMonth;
-    sandbox.MemberRepository.isMemberForMonth = function (email, month) {
+    sandbox.MemberRepository.isMemberOnDate = function (email, date) {
+      var month = String(date).substring(0, 7);
       ctx.lookups.push({ email: email, month: month });
       if (sandbox.MembershipRules.isPermanentMember(email) && /^\d{4}-\d{2}$/.test(month || '')) return true;
       if (ctx.members === 'THROW') throw new Error('Sheets error');
       return (ctx.members[String(email).toLowerCase()] || []).indexOf(month) !== -1;
     };
-    /* Issue #532: 資格判定は日付（isMemberOnDate）。月単位のスタブへ委譲して、既存の利用月ごとの試験を保つ。 */
-    sandbox.MemberRepository.isMemberOnDate = function (email, date) {
-      return sandbox.MemberRepository.isMemberForMonth(email, String(date).substring(0, 7));
-    };
-    ctx.realIsMember = realIsMember;
   }
   return ctx;
 }
@@ -288,18 +283,18 @@ test('createBooking: 公開フォームに管理者メールを入力しても�
 test('永久会員: 台帳が空・対象年月が何でも、常にactual memberとして判定される（本物のMemberRepository）', function () {
   var ctx = setup({ stubLedger: false });
   var R = ctx.sandbox.MemberRepository;
-  ['2020-01', '2026-10', '2027-01', '2099-12'].forEach(function (m) {
-    assert.strictEqual(R.isMemberForMonth(PERMANENT_EMAIL, m), true, m);
+  ['2020-01-15', '2026-10-01', '2027-01-31', '2099-12-31'].forEach(function (d) {
+    assert.strictEqual(R.isMemberOnDate(PERMANENT_EMAIL, d), true, d);
   });
-  assert.strictEqual(R.isMemberForMonth(' Koishi.S@Gmail.com ', '2027-01'), true, '大文字小文字・前後空白は既存メール正規化に従う');
-  assert.strictEqual(R.isMemberForMonth('other@example.com', '2026-10'), false);
-  assert.strictEqual(R.isMemberForMonth(PERMANENT_EMAIL, 'bad'), false, '不正な年月はfalseのまま');
-  assert.strictEqual(R.isMemberForMonth('', '2026-10'), false);
+  assert.strictEqual(R.isMemberOnDate(' Koishi.S@Gmail.com ', '2027-01-15'), true, '大文字小文字・前後空白は既存メール正規化に従う');
+  assert.strictEqual(R.isMemberOnDate('other@example.com', '2026-10-15'), false);
+  assert.strictEqual(R.isMemberOnDate(PERMANENT_EMAIL, 'bad'), false, '不正な日付はfalseのまま');
+  assert.strictEqual(R.isMemberOnDate('', '2026-10-15'), false);
 });
 
 test('永久会員: Stripe台帳（Members/MemberMonths）へシートも行も作らない', function () {
   var ctx = setup({ stubLedger: false });
-  ctx.sandbox.MemberRepository.isMemberForMonth(PERMANENT_EMAIL, '2026-10');
+  ctx.sandbox.MemberRepository.isMemberOnDate(PERMANENT_EMAIL, '2026-10-15');
   assert.deepStrictEqual(Object.keys(ctx.sheets), [], '永久会員の判定は台帳へ書き込まない・台帳を作らない');
 });
 

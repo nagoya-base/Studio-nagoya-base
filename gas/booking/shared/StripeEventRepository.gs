@@ -427,41 +427,9 @@ var StripeEventRepository = (function () {
   }
 
   /*
-   * claim()が返したrowNumberに対して最終結果を記録する。processingState〜updatedAtの
-   * 6列（HEADERS_上で連続）を1回のsetValuesで更新する（FeeSettlementRepository.markApplied
-   * と同じ「複数列の部分更新を必ず1回のRange.setValuesにまとめる」方針。処理結果と
-   * 識別子だけが更新され、statusだけ新しいが識別子は古いという半端な状態を防ぐ）。
-   *
-   * fields: { processingState（必須。STATE定数のいずれか）, bookingId?, paymentAttemptId?,
-   *   stripePaymentIntentId?, outcomeCode?, outcomeMessage? }
-   *
-   * 【レビュー対応・5回目】本番のBooking Admin処理経路（StripeWebhookProcessor.gs）は
-   * この関数を直接使わず、世代（processingClaimCount）の一致を書き込み直前に再確認する
-   * `finalizeForProcessing`を使うこと（下記参照）。この`finalize`はfencingを行わない
-   * ため、既に別の実行が処理を引き継いでいても無条件に上書きしてしまう。テストの
-   * フィクスチャ構築（終端状態の行を直接作る等）や、世代管理が不要な用途にのみ使う。
-   */
-  function finalize(rowNumber, fields, now) {
-    if (TERMINAL_STATES_.indexOf(fields.processingState) === -1) {
-      throw new Error('finalizeにはCOMPLETED/IGNORED/REJECTEDのいずれかを指定してください: ' + fields.processingState);
-    }
-    var effectiveNow = isDateLike_(now) ? now : new Date();
-    var sheet = ensureSheet_();
-    var startIndex = HEADERS_.indexOf('processingState');
-    var values = [
-      fields.processingState,
-      fields.bookingId || '',
-      fields.paymentAttemptId || '',
-      fields.stripePaymentIntentId || '',
-      fields.outcomeCode || '',
-      fields.outcomeMessage || '',
-      effectiveNow
-    ];
-    sheet.getRange(rowNumber, startIndex + 1, 1, values.length).setValues([values]);
-  }
-
-  /*
-   * finalize()のBooking Admin処理専用版（レビュー対応・5回目で新設）。書き込み前に
+   * claim済みの行に最終結果（processingState〜updatedAtの6列）を記録する唯一の書き込み関数
+   * （旧finalizeは整理済み）。6列は1回のsetValuesで更新し、半端な状態を防ぐ。
+   * Booking Admin処理専用（レビュー対応・5回目で新設）。書き込み前に
    * 現在の行のprocessingClaimCountを読み直し、呼び出し元のgeneration（claimForProcessing()
    * が返したrecord.processingClaimCount）と一致する場合にのみ書き込む（fencing token
    * パターン）。読み直し・世代確認・書き込みは同じLockService.getScriptLock()の
@@ -531,7 +499,6 @@ var StripeEventRepository = (function () {
     releaseProcessingClaim: releaseProcessingClaim,
     storeRawBody: storeRawBody,
     listPendingWithBody: listPendingWithBody,
-    finalize: finalize,
     finalizeForProcessing: finalizeForProcessing
   };
 })();

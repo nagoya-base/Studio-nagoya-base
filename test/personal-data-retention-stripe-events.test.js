@@ -398,7 +398,7 @@ function realEvent(ctx, options) {
   var at = options.at || ago(RETENTION + 39 * DAY);
   var claim = plain(repo.claim(eventId, options.type || 'checkout.session.completed', at));
   repo.storeRawBody(claim.rowNumber, options.rawBody === undefined ? bodyOf({}) : options.rawBody, at);
-  repo.finalize(claim.rowNumber, {
+  repo.finalizeForProcessing(claim.rowNumber, claim.record.processingClaimCount, {
     processingState: options.state || 'REJECTED', bookingId: options.bookingId || '', paymentAttemptId: '',
     outcomeCode: options.code || 'MEMBERSHIP_JOIN_INITIAL_PERIOD_UNCONFIRMED',
     outcomeMessage: '会員行は作成しましたが、初回invoiceの支払いを確認できません。eventId=' + eventId
