@@ -18,6 +18,8 @@ on:
       - 'scripts/switchbot-*.js'
       - '.github/workflows/switchbot-verify-devices.yml'
       - '.github/workflows/switchbot-verify-key.yml'
+      - '.github/workflows/switchbot-verify-gas-deploy.yml'
+      - 'scripts/deploy-switchbot-verify-gas.sh'
       - 'survey/**'
       - 'scripts/survey-*.js'
       - 'scripts/prepare-survey-gas-project.js'
