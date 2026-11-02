@@ -18,7 +18,9 @@ var CONFIRM = {
   'remove-old': 'REMOVE-OLD-WEBHOOK',
   'setup-current': 'SETUP-CURRENT-WEBHOOK',
   // Issue #729: 初回接続・他用途Webhookなしを管理者が明示確認した場合だけの例外フロー（現行remove-oldとは別）
-  'replace-single-webhook-remove': 'I-CONFIRM-SINGLE-WEBHOOK-IS-MINE'
+  'replace-single-webhook-remove': 'I-CONFIRM-SINGLE-WEBHOOK-IS-MINE',
+  // Issue #731: deleteWebhook送信後に照会不能となった場合の復旧。読み取り照合のみで DELETE_SENT→REMOVED だけを確定する
+  'recover-delete-sent': 'RECOVER-DELETE-SENT-IF-ZERO'
 };
 var REQUIRED = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'SWITCHBOT_DEVICE_ID',
   'VERIFY_RELAY_URL', 'VERIFY_RELAY_ADMIN_TOKEN', 'VERIFY_WEBHOOK_TOKEN'];
@@ -28,7 +30,7 @@ var QUERY_REQUIRED = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'VERIFY_RELAY_URL',
 // Webhook置換(Issue #727)。Keypad ID は不要。進行記録はリレーに保持するため管理トークンが必要。
 var REPLACE_REQUIRED = QUERY_REQUIRED.concat(['VERIFY_RELAY_ADMIN_TOKEN']);
 var REMOVE_OLD_REQUIRED = REPLACE_REQUIRED.concat(['VERIFY_OLD_WEBHOOK_URL', 'VERIFY_OLD_WEBHOOK_EVIDENCE']);
-var MUTATING_REPLACE = ['remove-old', 'setup-current', 'replace-single-webhook-remove'];
+var MUTATING_REPLACE = ['remove-old', 'setup-current', 'replace-single-webhook-remove', 'recover-delete-sent'];
 var EVIDENCE_MAX_AGE_SEC = 24 * 60 * 60; // 人手確認の証跡・削除成功の証跡の有効期間
 
 function hmac(secret, message) {
@@ -64,7 +66,7 @@ function validateInputs(env) {
   // webhook-query は照会専用。Keypad ID・リレー管理トークンは不要（最小限の秘密だけを要求）
   var req = REQUIRED;
   if (action === 'webhook-query') req = QUERY_REQUIRED;
-  if (action === 'setup-current' || action === 'replace-single-webhook-remove') req = REPLACE_REQUIRED;
+  if (action === 'setup-current' || action === 'replace-single-webhook-remove' || action === 'recover-delete-sent') req = REPLACE_REQUIRED;
   if (action === 'remove-old') req = REMOVE_OLD_REQUIRED;
   req.forEach(function (k) { if (!env[k]) errs.push('SECRET_MISSING_' + k); });
   // 変更API(置換)は初回のrunだけ。「Re-run jobs」(run_attempt>1)では送信しない（未設定も不許可）
@@ -508,6 +510,46 @@ async function replaceSingleWebhookRemove(env, deps, c, log) {
   return 0;
 }
 
+/**
+ * Issue #731: deleteWebhook送信後に queryWebhook が不明(statusCode=190等)となった状態の復旧。
+ * 変更API(deleteWebhook/setupWebhook/updateWebhook/createKey/deleteKey)は一切呼ばない。呼ぶのは queryWebhook(queryUrl) と
+ * リレーの migGet / migMarkRemoved のみ。phase が厳密に DELETE_SENT で、かつ照会が厳密に0件の場合だけ REMOVED へ確定する。
+ *   DELETED_CONFIRMED … 0件 → REMOVED へ遷移（1回のみ）
+ *   STILL_PRESENT     … 1件以上 → 状態変更なし（人手判断。URL実値は出さない）
+ *   UNKNOWN           … 190/通信断/応答不正 → 状態変更なし（推測しない）
+ */
+async function recoverDeleteSent(env, deps, c, log) {
+  log('recover-delete-sent: 読み取り照合のみ（変更APIは呼ばない。DELETE_SENT→REMOVED以外の遷移はしない）');
+  var m = await relayCall(c, { op: 'migGet' });
+  if (!m.ok) { log('ABORT: 進行記録を確認できない ' + m.error + '（状態は変更しない）'); return 1; }
+  var rec = m.mig && typeof m.mig === 'object' && !Array.isArray(m.mig) ? m.mig : null;
+  var phase = rec && typeof rec.phase === 'string' ? rec.phase : null;
+  if (phase !== 'DELETE_SENT') {
+    var known = ['REMOVED', 'SETUP_SENT', 'DONE'].indexOf(phase) !== -1;
+    log('ABORT: phase が DELETE_SENT ではない phase=' + (m.mig === null ? 'NONE' : known ? phase : 'INVALID') + '（状態は変更しない）');
+    return 1;
+  }
+  // DELETE_SENT レコードの構造検証（fp=12桁hex・atSec=有限な数値）。不正なら照会も遷移もしない。値は出さない
+  if (typeof rec.fp !== 'string' || !/^[0-9a-f]{12}$/.test(rec.fp) ||
+      typeof rec.atSec !== 'number' || !isFinite(rec.atSec)) {
+    log('ABORT: 進行記録の形式が不正（DELETE_SENT の fp/atSec）。照会せず状態は変更しない');
+    return 1;
+  }
+  var q = await queryUrls(c);
+  if (!q.ok) {
+    log('UNKNOWN: 現在のWebhook状態を読み取れない 理由=' + q.reason + '。削除済み/未登録とは推測しない。状態は変更しない');
+    return 1;
+  }
+  if (q.urls.length !== 0) {
+    log('STILL_PRESENT: Webhookが残存 件数=' + q.urls.length + '。状態は変更しない・自動再削除しない（人手判断へ）');
+    return 1;
+  }
+  var mv = await relayCall(c, { op: 'migMarkRemoved' });
+  if (!mv.ok) { log('UNKNOWN: 0件は確認済みだが REMOVED を保存できない ' + mv.error + '。状態は変更しない'); return 1; }
+  log('DELETED_CONFIRMED: 照会 件数=0。進行記録を DELETE_SENT→REMOVED に確定。次は別runで setup-current（本操作では登録しない）');
+  return 0;
+}
+
 async function setupCurrent(env, deps, c, log) {
   log('setup-current: 現在URLの登録のみ（setupWebhookは最大1回。deleteWebhookは呼ばない）');
   var m = await relayCall(c, { op: 'migGet' });
@@ -565,6 +607,7 @@ async function main(env, deps) {
       case 'webhook-query': return await webhookQuery(env, c, log);
       case 'remove-old': return await removeOld(env, deps, c, log);
       case 'replace-single-webhook-remove': return await replaceSingleWebhookRemove(env, deps, c, log);
+      case 'recover-delete-sent': return await recoverDeleteSent(env, deps, c, log);
       case 'setup-current': return await setupCurrent(env, deps, c, log);
       case 'create-key': return await createKey(env, deps, c, log);
       case 'delete-key': return await deleteKey(env, deps, c, log);

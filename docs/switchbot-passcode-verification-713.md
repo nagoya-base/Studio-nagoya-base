@@ -116,6 +116,26 @@ GAS 経路（`verifySelectKeypad(last4)`）で Script Properties に保存して
 - 登録は既存の `setup-current`（`REMOVED`記録が前提。0件確認後に`setupWebhook`1回→厳密1件`MATCH`確認）。`MISMATCH`/`UNKNOWN`/通信断では再送・自動ロールバックしない。
 - 出力は固定状態・件数・HTTP/APIコードのみ（既存/新URL・トークン・生レスポンスは出さない）。現行 `remove-old` / `setup-current` の挙動は変更していない。
 
+### 復旧: deleteWebhook送信後に照会不能となった場合（`recover-delete-sent`。Issue #731）
+`replace-single-webhook-remove` が `deleteWebhook` 送信後に停止し、進行記録が `DELETE_SENT` のまま `queryWebhook` が `statusCode=190` 等で不明になった場合の専用復旧。**変更API（`deleteWebhook` / `setupWebhook` / `updateWebhook` / `createKey` / `deleteKey`）は一切呼ばない**。元runのRe-runや `deleteWebhook` の再送では復旧しない。
+
+- action `recover-delete-sent`、確認文字列 `RECOVER-DELETE-SENT-IF-ZERO`。`workflow_dispatch` 初回runのみ（Re-runは何もせず停止）。必要なSecretsは `setup-current` と同じ。
+- 流れ: リレーの `WEBHOOK_MIG` を `migGet` で読み、phase が**厳密に `DELETE_SENT`** であることを確認（`NONE` / `REMOVED` / `SETUP_SENT` / `DONE` / 不正形式は停止）→ `queryWebhook(queryUrl)` のみで現状を照合。
+- 判定:
+
+  | 照会結果 | 分類 | 動作 |
+  | --- | --- | --- |
+  | HTTP 200 かつ `statusCode=100` で `urls` が文字列配列、**厳密に0件** | `DELETED_CONFIRMED` | `migMarkRemoved`（`DELETE_SENT→REMOVED` のみ）。次は**別run**で `setup-current` |
+  | 1件以上 | `STILL_PRESENT` | 状態変更なし。自動再削除しない（件数のみ表示。人手判断へ） |
+  | `statusCode=190` / HTTP失敗 / 通信断 / 応答不正 | `UNKNOWN` | 状態変更なし。何も推測しない |
+
+- 出力は固定分類・件数・理由コードのみ（URL・fp・トークン・生レスポンス・`message`・例外詳細は出さない）。新たな秘密は保存しない。リレー側に新opは追加せず、既存の `migGet` / `migMarkRemoved`（`DELETE_SENT→REMOVED` 以外を拒否）のみ使う。
+
+#### `statusCode=190` の扱い
+- `queryWebhook` が190を返した事実から「削除済み」「未登録」「残存」のいずれも**推測しない**。HTTP 200 とAPIの `statusCode` は別で、190は照会そのものが成立しなかったことしか示さない。
+- 本リポジトリの実装・実測で確認できているのは、`webhook-setup` / `deleteWebhook` / `queryWebhook` の失敗応答として190が返り得ること、および #731 の2回連続の190事象のみ。190が返る条件の網羅的な公式仕様はここでは断定しない（SwitchBot公式APIドキュメントのstatusCode表を各自確認し、結果を秘密抜きでIssueに記録する）。
+- 190が続く間は `UNKNOWN` のまま `recover-delete-sent` が状態を変えないため、時間を置いて読み取り専用の `webhook-query` / `recover-delete-sent` を別runで再実行する。それでも解消しない場合は、SwitchBotアプリ側の表示等、API以外の手段で人手確認する（確認できるまで `setup-current` は実行しない）。
+
 JST = UTC+9。ログの有効期間は JST（HH:mm:ss）で表示される。UNKNOWN・削除未確認が残る場合は、アプリの keyList で今回の検証名（`SNB-API-TEST-<unix秒>`）のキーだけを特定して削除し、「API検証は未達」と分けて Issue に記録する。秘密が漏れた場合は Token/Secret を再発行し、該当テストキーを削除する。
 
 ### （参考・旧方針）独立GASでの手順
