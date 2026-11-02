@@ -1,0 +1,23 @@
+name: SwitchBot devices check (manual)
+
+# Issue #715: 接続確認のみ。GET /v1.1/devices だけを実行する。
+# push / pull_request / schedule は設定しない（手動実行専用）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  list-devices:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: GET /v1.1/devices（Keypad 件数と末尾4桁のみ表示）
+        env:
+          SWITCHBOT_TOKEN: ${{ secrets.SWITCHBOT_TOKEN }}
+          SWITCHBOT_SECRET: ${{ secrets.SWITCHBOT_SECRET }}
+        run: node scripts/switchbot-verify-devices.js

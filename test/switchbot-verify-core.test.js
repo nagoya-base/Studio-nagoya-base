@@ -188,3 +188,36 @@ test('末尾4桁でキーパッドを1件に特定する（0件/複数件/不正
   assert.strictEqual(C.findKeypadByLast4(list, '22').error, 'INVALID_LAST4');
   assert.strictEqual(C.findKeypadByLast4(null, '2222').error, 'NOT_FOUND');
 });
+
+test('接続確認スクリプト: 完全deviceId・Token・Secretをログに出さず末尾4桁のみ表示する', async function () {
+  var S = require('../scripts/switchbot-verify-devices.js');
+  var logs = [];
+  var fakeFetch = async function (url, opts) {
+    assert.strictEqual(opts.method, 'GET');
+    assert.ok(/\/v1\.1\/devices$/.test(url));
+    return {
+      status: 200,
+      json: async function () {
+        return { statusCode: 100, body: { deviceList: [
+          { deviceId: 'FULLDEVICEID9999', deviceType: 'Keypad Touch', deviceName: 'door' },
+          { deviceId: 'OTHERBOT0000', deviceType: 'Bot', deviceName: 'bot' }
+        ] } };
+      }
+    };
+  };
+  var code = await S.main({ SWITCHBOT_TOKEN: 'tok-secret-1', SWITCHBOT_SECRET: 'sec-secret-2' }, fakeFetch, function (m) { logs.push(m); });
+  var out = logs.join('\n');
+  assert.strictEqual(code, 0);
+  assert.ok(out.indexOf('9999') !== -1);
+  assert.ok(out.indexOf('FULLDEVICEID9999') === -1);
+  assert.ok(out.indexOf('tok-secret-1') === -1 && out.indexOf('sec-secret-2') === -1);
+});
+
+test('接続確認スクリプト: 認証失敗・Keypad0件・Secrets未設定は非0終了', async function () {
+  var S = require('../scripts/switchbot-verify-devices.js');
+  var noop = function () {};
+  var env = { SWITCHBOT_TOKEN: 't', SWITCHBOT_SECRET: 's' };
+  assert.strictEqual(await S.main({}, null, noop), 1);
+  assert.strictEqual(await S.main(env, async function () { return { status: 401, json: async function () { return { statusCode: 401 }; } }; }, noop), 1);
+  assert.strictEqual(await S.main(env, async function () { return { status: 200, json: async function () { return { statusCode: 100, body: { deviceList: [] } }; } }; }, noop), 1);
+});
