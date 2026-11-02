@@ -6,16 +6,17 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'webhook-setup / create-key / delete-key / webhook-remove'
+        description: 'webhook-query / webhook-setup / create-key / delete-key / webhook-remove'
         required: true
         type: choice
         options:
+          - webhook-query
           - webhook-setup
           - create-key
           - delete-key
           - webhook-remove
       confirm:
-        description: '確認文字列（SETUP-WEBHOOK / CREATE-ONE-TEST-KEY / DELETE-TEST-KEY / REMOVE-WEBHOOK）'
+        description: '確認文字列（QUERY-WEBHOOK / SETUP-WEBHOOK / CREATE-ONE-TEST-KEY / DELETE-TEST-KEY / REMOVE-WEBHOOK）'
         required: true
         type: string
       start_offset_min:

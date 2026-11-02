@@ -55,7 +55,11 @@ function world(opts) {
         if (w.deleted && opts.omitKeyListAfterDelete) delete dv.keyList;
         return reply(200, { statusCode: 100, body: { deviceList: [dv] } });
       }
-      if (path === '/v1.1/webhook/queryWebhook') return reply(200, { statusCode: 100, body: { urls: w.webhooks.slice() } });
+      if (path === '/v1.1/webhook/queryWebhook') {
+        if (opts.queryThrow) throw new Error('network https://secret.example/?t=leak');
+        if (opts.queryReply) return reply(opts.queryReply.http, opts.queryReply.body);
+        return reply(200, { statusCode: 100, body: { urls: w.webhooks.slice() } });
+      }
       if (path === '/v1.1/webhook/setupWebhook') { w.webhooks.push(body.url); return reply(200, { statusCode: 100 }); }
       if (path === '/v1.1/webhook/deleteWebhook') {
         w.webhooks = w.webhooks.filter(function (u) { return u !== body.url; });
@@ -339,4 +343,79 @@ test('再開時にWebhook成功でもキーが残っていれば再削除せず�
   assert.strictEqual(await K.main(env('delete-key'), n.deps), 1);
   assert.strictEqual(count(n, 'deleteKey'), 1);
   assert.notStrictEqual(n.store.get('TEST_STATE'), null);
+});
+
+var MUTATING = ['setupWebhook', 'updateWebhook', 'deleteWebhook', 'createKey', 'deleteKey'];
+function assertReadOnlyQuery(w) {
+  assert.deepStrictEqual(w.calls, ['post /v1.1/webhook/queryWebhook']);
+  MUTATING.forEach(function (m) { assert.strictEqual(count(w, m), 0); });
+}
+
+test('webhook-query: 入力検証は照会に必要な秘密のみ要求し、確認文字列を必須とする', function () {
+  var e = env('webhook-query', { SWITCHBOT_DEVICE_ID: '', VERIFY_RELAY_ADMIN_TOKEN: '' });
+  assert.deepStrictEqual(K.validateInputs(e), []);
+  assert.ok(K.validateInputs(env('webhook-query', { CONFIRM: 'SETUP-WEBHOOK' })).indexOf('CONFIRM_MISMATCH') !== -1);
+  assert.ok(K.validateInputs(env('webhook-query', { VERIFY_WEBHOOK_TOKEN: '' })).indexOf('SECRET_MISSING_VERIFY_WEBHOOK_TOKEN') !== -1);
+});
+
+test('webhook-query: 未登録は NONE(0)、一致は MATCH(0)、変更APIを呼ばない', async function () {
+  var none = world();
+  assert.strictEqual(await K.main(env('webhook-query'), none.deps), 0);
+  assert.ok(none.logs.join('\n').indexOf('NONE 件数=0') !== -1);
+  assertReadOnlyQuery(none);
+  assertNoLeak(none);
+
+  var url = RELAY + '?t=' + encodeURIComponent(TOK.webhook);
+  var match = world({ webhooks: [url] });
+  assert.strictEqual(await K.main(env('webhook-query'), match.deps), 0);
+  assert.ok(match.logs.join('\n').indexOf('MATCH 件数=1') !== -1);
+  assertReadOnlyQuery(match);
+  assert.deepStrictEqual(match.webhooks, [url]); // 再登録・削除しない
+  assertNoLeak(match);
+});
+
+test('webhook-query: 不一致は MISMATCH(1)で上書き・削除せず、URLを出さない', async function () {
+  var w = world({ webhooks: ['https://other.example/hook?t=other-secret'] });
+  assert.strictEqual(await K.main(env('webhook-query'), w.deps), 1);
+  assert.ok(w.logs.join('\n').indexOf('MISMATCH 件数=1') !== -1);
+  assertReadOnlyQuery(w);
+  assert.deepStrictEqual(w.webhooks, ['https://other.example/hook?t=other-secret']);
+  assert.ok(w.logs.join('\n').indexOf('other.example') === -1);
+  assert.ok(w.logs.join('\n').indexOf('other-secret') === -1);
+  assertNoLeak(w);
+});
+
+test('webhook-query: 応答不正・API失敗・通信失敗は UNKNOWN(1)で「登録なし」と見なさない', async function () {
+  var cases = [
+    { http: 200, body: { statusCode: 100, body: {} } },                      // urls 欠落
+    { http: 200, body: { statusCode: 100 } },                                // body 欠落
+    { http: 200, body: { statusCode: 100, body: { urls: 'x' } } },           // 配列でない
+    { http: 200, body: { statusCode: 100, body: { urls: [1] } } },           // 文字列でない要素
+    { http: 200, body: { statusCode: 190, message: 'free text https://x.example/?t=leak' } }, // API失敗
+    { http: 500, body: null }                                                // HTTP失敗
+  ];
+  for (var i = 0; i < cases.length; i++) {
+    var w = world({ queryReply: cases[i] });
+    assert.strictEqual(await K.main(env('webhook-query'), w.deps), 1, 'case ' + i);
+    assert.ok(w.logs.join('\n').indexOf('UNKNOWN') !== -1, 'case ' + i);
+    assert.ok(w.logs.join('\n').indexOf('NONE') === -1, 'case ' + i);
+    assert.ok(w.logs.join('\n').indexOf('leak') === -1, 'case ' + i);
+    assertReadOnlyQuery(w);
+    assertNoLeak(w);
+  }
+  var t = world({ queryThrow: true });
+  assert.strictEqual(await K.main(env('webhook-query'), t.deps), 1);
+  assert.ok(t.logs.join('\n').indexOf('UNKNOWN') !== -1);
+  assert.ok(t.logs.join('\n').indexOf('leak') === -1);
+  assertNoLeak(t);
+});
+
+test('evaluateWebhookQuery: 判定は純粋関数で状態・件数・コードのみ返す', function () {
+  var u = 'https://r.example/exec?t=a';
+  assert.strictEqual(K.evaluateWebhookQuery(200, { statusCode: 100, body: { urls: [] } }, u).state, 'NONE');
+  assert.strictEqual(K.evaluateWebhookQuery(200, { statusCode: 100, body: { urls: [u] } }, u).state, 'MATCH');
+  assert.strictEqual(K.evaluateWebhookQuery(200, { statusCode: 100, body: { urls: ['z', u] } }, u).state, 'MATCH');
+  assert.strictEqual(K.evaluateWebhookQuery(200, { statusCode: 100, body: { urls: ['z'] } }, u).state, 'MISMATCH');
+  var r = K.evaluateWebhookQuery(200, { statusCode: 100, body: { urls: ['z'] } }, u);
+  assert.deepStrictEqual(Object.keys(r).sort(), ['count', 'http', 'reason', 'state', 'statusCode']);
 });

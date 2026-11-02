@@ -13,10 +13,13 @@ var CONFIRM = {
   'webhook-setup': 'SETUP-WEBHOOK',
   'create-key': 'CREATE-ONE-TEST-KEY',
   'delete-key': 'DELETE-TEST-KEY',
-  'webhook-remove': 'REMOVE-WEBHOOK'
+  'webhook-remove': 'REMOVE-WEBHOOK',
+  'webhook-query': 'QUERY-WEBHOOK'
 };
 var REQUIRED = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'SWITCHBOT_DEVICE_ID',
   'VERIFY_RELAY_URL', 'VERIFY_RELAY_ADMIN_TOKEN', 'VERIFY_WEBHOOK_TOKEN'];
+
+var QUERY_REQUIRED = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'VERIFY_RELAY_URL', 'VERIFY_WEBHOOK_TOKEN'];
 
 function hmac(secret, message) {
   return crypto.createHmac('sha256', secret).update(message).digest('base64');
@@ -48,7 +51,9 @@ function validateInputs(env) {
   var action = env.ACTION;
   if (!CONFIRM[action]) return ['ACTION_INVALID'];
   if (env.CONFIRM !== CONFIRM[action]) errs.push('CONFIRM_MISMATCH');
-  REQUIRED.forEach(function (k) { if (!env[k]) errs.push('SECRET_MISSING_' + k); });
+  // webhook-query は照会専用。Keypad ID・リレー管理トークンは不要（最小限の秘密だけを要求）
+  var req = action === 'webhook-query' ? QUERY_REQUIRED : REQUIRED;
+  req.forEach(function (k) { if (!env[k]) errs.push('SECRET_MISSING_' + k); });
   if (action === 'create-key') {
     var so = Number(env.START_OFFSET_MIN);
     var du = Number(env.DURATION_MIN);
@@ -250,6 +255,47 @@ async function webhookSetup(env, c, log) {
   return cls.state === Core.STATE.FAILED ? 1 : 0;
 }
 
+/**
+ * queryWebhook(queryUrl) 応答を判定する純粋関数（照会専用。秘密なしでテスト可能）。
+ * 成功（HTTP200 + statusCode100）かつ body.urls が文字列の配列のときだけ判定する。
+ * 欠落・非配列・非文字列要素・API失敗は「登録なし」と見なさず UNKNOWN。
+ * 戻り値は公開可能な情報のみ（状態・件数・HTTP/APIコード）。URL・message は含めない。
+ */
+function evaluateWebhookQuery(http, parsed, expectedUrl) {
+  var sc = parsed && typeof parsed.statusCode === 'number' ? parsed.statusCode : null;
+  var base = { count: null, http: http, statusCode: sc };
+  if (http !== 200 || sc !== 100) return Object.assign(base, { state: 'UNKNOWN', reason: 'API_FAILED' });
+  var urls = parsed.body && parsed.body.urls;
+  if (!Array.isArray(urls) || urls.some(function (u) { return typeof u !== 'string'; })) {
+    return Object.assign(base, { state: 'UNKNOWN', reason: 'BAD_FORMAT' });
+  }
+  base.count = urls.length;
+  if (urls.length === 0) return Object.assign(base, { state: 'NONE', reason: null });
+  var state = urls.indexOf(expectedUrl) !== -1 ? 'MATCH' : 'MISMATCH';
+  return Object.assign(base, { state: state, reason: null });
+}
+
+/**
+ * 既存 Webhook 設定の照会専用入口。queryWebhook のみ呼び、setup/update/delete は呼ばない。
+ * 比較は実行環境内で行い、公開するのは 未登録(NONE)/一致(MATCH)/不一致(MISMATCH)/不明(UNKNOWN)・件数・HTTP/API状態のみ。
+ * MATCH でも再登録・削除しない。MISMATCH でも上書き・削除しない。MATCH は到達性・キー反映成功を意味しない。
+ */
+async function webhookQuery(env, c, log) {
+  var q;
+  try {
+    q = await c.sb('post', '/v1.1/webhook/queryWebhook', { action: 'queryUrl' });
+  } catch (e) {
+    log('webhook-query: UNKNOWN（通信失敗）。「登録なし」とは見なさない');
+    return 1;
+  }
+  var r = evaluateWebhookQuery(q.http, q.parsed, webhookUrl(env));
+  log('webhook-query: ' + r.state + ' 件数=' + (r.count === null ? '不明' : r.count) +
+    ' http=' + r.http + ' statusCode=' + (r.statusCode === null ? '不明' : r.statusCode) +
+    (r.reason ? ' 理由=' + r.reason : ''));
+  log('照会のみ。Webhook設定は変更していない。一致でも到達性・キー反映成功は意味しない');
+  return r.state === 'NONE' || r.state === 'MATCH' ? 0 : 1;
+}
+
 async function webhookRemove(env, c, log) {
   var q = await c.sb('post', '/v1.1/webhook/queryWebhook', { action: 'queryUrl' });
   if (Core.classifyApiResponse(q.http, q.parsed).state === Core.STATE.FAILED) { log('FAILED: queryWebhook'); return 1; }
@@ -270,6 +316,7 @@ async function main(env, deps) {
     switch (env.ACTION) {
       case 'webhook-setup': return await webhookSetup(env, c, log);
       case 'webhook-remove': return await webhookRemove(env, c, log);
+      case 'webhook-query': return await webhookQuery(env, c, log);
       case 'create-key': return await createKey(env, deps, c, log);
       case 'delete-key': return await deleteKey(env, deps, c, log);
     }
@@ -291,4 +338,4 @@ if (require.main === module) {
   }).then(function (code) { process.exit(code); });
 }
 
-module.exports = { main: main, validateInputs: validateInputs, CONFIRM: CONFIRM };
+module.exports = { main: main, validateInputs: validateInputs, evaluateWebhookQuery: evaluateWebhookQuery, CONFIRM: CONFIRM };
