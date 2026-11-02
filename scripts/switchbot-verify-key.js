@@ -105,6 +105,39 @@ async function awaitEvent(c, deps, commandId, eventName) {
   }
 }
 
+/** 削除後の確認: 完全な応答で、対象デバイスの keyList(配列)に今回の検証名が無い場合だけ GONE。 */
+async function checkKeyGone(c, env, name) {
+  var r = await c.sb('get', '/v1.1/devices');
+  if (Core.classifyApiResponse(r.http, r.parsed).state === Core.STATE.FAILED) return { result: 'INVALID', error: 'DEVICES_FAILED' };
+  var ins = Core.inspectKeyList(r.parsed.body && r.parsed.body.deviceList, env.SWITCHBOT_DEVICE_ID, name);
+  if (!ins.valid) return { result: 'INVALID', error: ins.error };
+  return { result: ins.count === 0 ? 'GONE' : 'PRESENT', error: null };
+}
+
+/** 削除コマンド送信済みの状態から再開: 保存済み commandId の Webhook 結果と keyList 消失だけを確認する（再削除しない）。 */
+async function resumeDelete(env, deps, c, log, st) {
+  log('前回の deleteKey 送信済み。Webhook結果とkeyList消失の確認を再開（再削除しない）');
+  var state = await awaitEvent(c, deps, st.deleteCommandId, 'deleteKey');
+  log('deleteKey Webhook結果: ' + state);
+  if (state === Core.STATE.FAILED) {
+    await c.relay({ op: 'setDelete', commandId: '' });
+    log('FAILED: 前回の deleteKey は失敗。進行状態をリセット（状態は保持。再度 delete-key 可）');
+    return 1;
+  }
+  if (state !== Core.STATE.APPLIED) { log('UNKNOWN: Webhook未確認。保持データは残す'); return 1; }
+  return finishDelete(env, c, log, st);
+}
+
+async function finishDelete(env, c, log, st) {
+  var g = await checkKeyGone(c, env, st.name);
+  if (g.result === 'PRESENT') { log('UNKNOWN: Webhook成功だが keyList にキーが残っている。再削除せず保持データを残す'); return 1; }
+  if (g.result !== 'GONE') { log('UNKNOWN: keyList で消失を確認できない（' + g.error + '）。保持データは残す'); return 1; }
+  await c.relay({ op: 'clear' });
+  log('deleteKey: ' + Core.STATE.APPLIED + ' / keyList(完全な応答)から消失を確認 / 保持データを破棄');
+  log('実機で削除後に同じコードで解錠不可も確認すること');
+  return 0;
+}
+
 async function createKey(env, deps, c, log) {
   var dev = await loadDevices(c, env);
   if (dev.error) { log('ABORT: ' + dev.error); return 1; }
@@ -176,6 +209,7 @@ async function deleteKey(env, deps, c, log) {
     log('ABORT: 保存された発行先Keypadと現在の対象が一致しない。削除しない（アプリで今回のキーだけを特定して対応）');
     return 1;
   }
+  if (st.deleteCommandId) return resumeDelete(env, deps, c, log, st);
   // 保存済み ID があっても、現在の対象 keyList で今回の検証名が一意かつ ID 一致であることを確認
   var rr = Core.resolvePasscodeIdByName(dev.list, env.SWITCHBOT_DEVICE_ID, st.name);
   if (rr.id === null) { log('UNKNOWN: 今回のキーを keyList で一意に特定できない ' + rr.error + '（削除しない。アプリで今回のキーだけを特定）'); return 1; }
@@ -197,18 +231,11 @@ async function deleteKey(env, deps, c, log) {
   if (!ids.commandId) { log('UNKNOWN: commandId なし'); return 1; }
   log('deleteKey: ' + Core.STATE.ACCEPTED_PENDING + '（Webhook待機）');
 
+  await c.relay({ op: 'setDelete', commandId: ids.commandId }); // 別runで再開できるよう送信後すぐ永続化
   var state = await awaitEvent(c, deps, ids.commandId, 'deleteKey');
   log('deleteKey Webhook結果: ' + state);
   if (state !== Core.STATE.APPLIED) { log('未確認のため保持データは残す。keyList/アプリで確認'); return 1; }
-
-  var after = await c.sb('get', '/v1.1/devices');
-  var gone = Core.resolvePasscodeIdByName(after.parsed && after.parsed.body && after.parsed.body.deviceList,
-    env.SWITCHBOT_DEVICE_ID, st.name);
-  if (gone.error !== 'KEY_NOT_FOUND') { log('UNKNOWN: keyList で対象キー消失を確認できない（' + gone.error + '）。保持データは残す'); return 1; }
-  await c.relay({ op: 'clear' });
-  log('deleteKey: ' + Core.STATE.APPLIED + ' / keyList から消失を確認 / 保持データを破棄');
-  log('実機で削除後に同じコードで解錠不可も確認すること');
-  return 0;
+  return finishDelete(env, c, log, st);
 }
 
 async function webhookSetup(env, c, log) {

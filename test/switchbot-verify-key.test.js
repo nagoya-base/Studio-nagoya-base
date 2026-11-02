@@ -50,8 +50,10 @@ function world(opts) {
       var path = url.replace(Core.API_BASE, '');
       w.calls.push(o.method + ' ' + path + (body && body.command ? ' ' + body.command : ''));
       if (path === '/v1.1/devices') {
-        return reply(200, { statusCode: 100, body: { deviceList: [
-          { deviceId: DEV, deviceType: 'Keypad Touch', keyList: w.keys.slice() }] } });
+        if (w.deleted && opts.failGetAfterDelete && !w.failedOnce) { w.failedOnce = true; throw new Error('network'); }
+        var dv = { deviceId: DEV, deviceType: 'Keypad Touch', keyList: w.keys.slice() };
+        if (w.deleted && opts.omitKeyListAfterDelete) delete dv.keyList;
+        return reply(200, { statusCode: 100, body: { deviceList: [dv] } });
       }
       if (path === '/v1.1/webhook/queryWebhook') return reply(200, { statusCode: 100, body: { urls: w.webhooks.slice() } });
       if (path === '/v1.1/webhook/setupWebhook') { w.webhooks.push(body.url); return reply(200, { statusCode: 100 }); }
@@ -74,6 +76,7 @@ function world(opts) {
             opts.webhook === 'wrongEvent' ? 'deleteKey' : 'createKey', opts.webhook === 'failed' ? 'failed' : 'success');
         }
       } else if (body.command === 'deleteKey') {
+        w.deleted = true;
         if (!opts.keepKey) w.keys = w.keys.filter(function (k) { return String(k.id) !== String(body.parameter.id); });
         if (opts.delWebhook !== 'none') relayWebhook(cid, 'deleteKey', 'success');
       }
@@ -287,4 +290,53 @@ test('削除: 発行元deviceId不一致・保存ID不一致・検証名不一�
   patch(d, function (st) { delete st.deviceId; }); // 旧形式の状態
   assert.strictEqual(await K.main(env('delete-key'), d.deps), 1);
   assert.strictEqual(count(d, 'deleteKey'), 0);
+});
+
+test('削除後のkeyList欠落/不完全応答ではキー消失とみなさず状態を保持する', async function () {
+  var w = world({ omitKeyListAfterDelete: true, keepKey: true });
+  await K.main(env('create-key'), w.deps);
+  assert.strictEqual(await K.main(env('delete-key'), w.deps), 1);
+  assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+  assert.strictEqual(w.keys.length, 1);
+  assert.ok(w.logs.join('\n').indexOf('KEYLIST_INVALID') !== -1);
+  assert.strictEqual(C_inspect([{ deviceId: DEV }]).valid, false);
+  assert.strictEqual(C_inspect([{ deviceId: DEV, keyList: null }]).valid, false);
+  assert.strictEqual(C_inspect([{ deviceId: DEV, keyList: [] }, { deviceId: DEV, keyList: [] }]).valid, false);
+  assert.strictEqual(C_inspect([{ deviceId: DEV, keyList: [] }]).count, 0);
+});
+
+function C_inspect(list) { return Core.inspectKeyList(list, DEV, 'n'); }
+
+test('削除後の一覧取得が一時失敗しても、別runで保存済みcommandIdから確認を再開できる（再削除しない）', async function () {
+  var w = world({ failGetAfterDelete: true });
+  await K.main(env('create-key'), w.deps);
+  assert.strictEqual(await K.main(env('delete-key'), w.deps), 1);
+  assert.strictEqual(w.keys.length, 0); // 実際には削除済み
+  assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+  assert.ok(JSON.parse(w.store.get('TEST_STATE')).deleteCommandId);
+  // 状態が残っている間は新規createを許さない
+  assert.strictEqual(await K.main(env('create-key'), w.deps), 1);
+  assert.strictEqual(count(w, 'createKey'), 1);
+  // 復旧後の再実行: 再削除せず Webhook結果 + keyList消失を確認してclear
+  assert.strictEqual(await K.main(env('delete-key'), w.deps), 0);
+  assert.strictEqual(count(w, 'deleteKey'), 1);
+  assert.strictEqual(w.store.get('TEST_STATE'), null);
+});
+
+test('再開時にWebhook成功でもキーが残っていれば再削除せず保持する／キーが無いだけでは成功にしない', async function () {
+  var w = world({ keepKey: true });
+  await K.main(env('create-key'), w.deps);
+  assert.strictEqual(await K.main(env('delete-key'), w.deps), 1);
+  assert.strictEqual(await K.main(env('delete-key'), w.deps), 1);
+  assert.strictEqual(count(w, 'deleteKey'), 1);
+  assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+
+  // Webhook結果が無い再開は、キーが無くても成功にしない
+  var n = world({ delWebhook: 'none' });
+  await K.main(env('create-key'), n.deps);
+  assert.strictEqual(await K.main(env('delete-key'), n.deps), 1);
+  assert.strictEqual(n.keys.length, 0);
+  assert.strictEqual(await K.main(env('delete-key'), n.deps), 1);
+  assert.strictEqual(count(n, 'deleteKey'), 1);
+  assert.notStrictEqual(n.store.get('TEST_STATE'), null);
 });

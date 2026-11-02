@@ -35,7 +35,7 @@ SwitchBot Open API は公式に personal uses 向け。**予約連携・メー�
 | 1 | `webhook-setup`（`SETUP-WEBHOOK`） | 既存Webhook設定がある場合は上書きせず中断。無ければ今回分を登録 |
 | 2 | `create-key`（`CREATE-ONE-TEST-KEY`） | 開始 3〜30 分後・有効 10〜15 分で1件。claim で重複防止、今回の commandId+createKey の Webhook success で APPLIED、keyList から passcode ID を解決。結果不明は再送せず UNKNOWN 停止 |
 | 3 | 実機 | 開始前=不可 / 有効中=解錠 / 終了後=不可 |
-| 4 | `delete-key`（`DELETE-TEST-KEY`） | 今回のキーのみ削除。deleteKey の Webhook success と keyList からの消失を確認後に保持データを破棄。別 run からも再開可 |
+| 4 | `delete-key`（`DELETE-TEST-KEY`） | 今回のキーのみ削除。deleteKey の Webhook success と keyList からの消失（対象デバイスが1件で keyList が配列の完全な応答に限る）を確認後に保持データを破棄。送信した deleteKey の commandId を保存するため、通信断などで中断しても次の `delete-key` が再削除せず確認だけを再開する（Webhook結果の保持は24時間） |
 | 5 | 実機 | 削除後も同じコードで解錠不可 |
 | 6 | `webhook-remove`（`REMOVE-WEBHOOK`） | 今回登録した Webhook だけ撤去（既存設定は触らない）。GAS の `verifyCleanupLocal()` も実行 |
 

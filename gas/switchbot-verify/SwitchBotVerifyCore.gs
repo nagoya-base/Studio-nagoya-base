@@ -154,6 +154,19 @@ var SwitchBotVerifyCore = (function () {
     return { state: STATE.APPLIED, id: keys[0].id, error: null };
   }
 
+  /**
+   * 一覧応答が「キー有無を判断できる完全な応答」か検査し、今回の検証名の件数を返す。
+   * 対象デバイスが 1 件に定まらない・keyList が配列でない場合は valid:false（消失とは扱わない）。
+   */
+  function inspectKeyList(deviceList, deviceId, name) {
+    if (!Array.isArray(deviceList)) return { valid: false, error: 'DEVICE_LIST_INVALID' };
+    var devs = deviceList.filter(function (d) { return d && d.deviceId === deviceId; });
+    if (devs.length !== 1) return { valid: false, error: devs.length === 0 ? 'DEVICE_NOT_FOUND' : 'DEVICE_AMBIGUOUS' };
+    if (!Array.isArray(devs[0].keyList)) return { valid: false, error: 'KEYLIST_INVALID' };
+    var count = devs[0].keyList.filter(function (k) { return k && k.name === name; }).length;
+    return { valid: true, count: count, error: null };
+  }
+
   /** 応答 body から commandId / passcode ID の候補を取り出す（存在しない場合は null）。 */
   function extractIdsFromResponse(parsed) {
     var body = (parsed && parsed.body) || {};
@@ -276,10 +289,16 @@ var SwitchBotVerifyCore = (function () {
         st.passcodeId = String(body.passcodeId);
         store.set('TEST_STATE', JSON.stringify(st));
         return { ok: true };
+      case 'setDelete':
+        if (!st || typeof body.commandId !== 'string') return { ok: false, error: 'NO_STATE' };
+        st.deleteCommandId = body.commandId; // 空文字で進行状態をリセット
+        store.set('TEST_STATE', JSON.stringify(st));
+        return { ok: true };
       case 'getState':
         if (!st) return { ok: true, state: null };
         var out = { deviceId: st.deviceId, name: st.name, startTime: st.startTime, endTime: st.endTime,
-          createCommandId: st.createCommandId, passcodeId: st.passcodeId };
+          createCommandId: st.createCommandId, passcodeId: st.passcodeId,
+          deleteCommandId: st.deleteCommandId || '' };
         if (body.reveal === true) out.password = st.password;
         return { ok: true, state: out };
       case 'getEvent':
@@ -311,6 +330,7 @@ var SwitchBotVerifyCore = (function () {
     classifyApiResponse: classifyApiResponse,
     extractIdsFromResponse: extractIdsFromResponse,
     resolvePasscodeIdByName: resolvePasscodeIdByName,
+    inspectKeyList: inspectKeyList,
     parseKeypadWebhook: parseKeypadWebhook,
     resolveCommandState: resolveCommandState,
     redact: redact,
