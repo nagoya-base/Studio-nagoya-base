@@ -17,6 +17,7 @@ on:
       - 'gas/switchbot-verify/**'
       - 'scripts/switchbot-*.js'
       - '.github/workflows/switchbot-verify-devices.yml'
+      - '.github/workflows/switchbot-verify-key.yml'
       - 'survey/**'
       - 'scripts/survey-*.js'
       - 'scripts/prepare-survey-gas-project.js'
