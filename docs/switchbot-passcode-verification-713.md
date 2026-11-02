@@ -21,6 +21,26 @@ SwitchBot Open API は公式に personal uses 向け。**予約連携・メー�
 3. ログで Keypad / Keypad Touch が1件以上、deviceId が末尾4桁のみであることを確認し、アプリの対象デバイスと照合。
 `createKey` / `deleteKey` / Webhook登録 / 実機解錠は行わない。以下の GAS 手順は本番実行基盤を別途設計するまでの参考。
 
+## テストキー1件の発行→削除（Issue #718・手動 Actions）
+`.github/workflows/switchbot-verify-key.yml`（`workflow_dispatch` のみ）+ `scripts/switchbot-verify-key.js`。商用利用ゲートは維持（技術検証のみ。予約連携・メール掲載・本番常用は別判断）。
+
+### 構成
+- **リレー**: 独立 GAS Web アプリ（`gas/switchbot-verify/`）。SwitchBot Webhook（クエリ `t`=`WEBHOOK_SHARED_TOKEN`）の受信と、Actions からの管理 op（本文 `t`=`RELAY_ADMIN_TOKEN`）を処理。テストコード・passcode ID・Webhook 結果はリレーの Script Properties にのみ保持し、Actions のログ・成果物・キャッシュには出さない。Webhook 結果は24時間で自動削除、`clear` で即時破棄。
+- **Environment `switchbot-verify`**（必須レビュアー設定を推奨）の Secrets: `SWITCHBOT_TOKEN` / `SWITCHBOT_SECRET` / `SWITCHBOT_DEVICE_ID`（#715で特定した完全ID）/ `VERIFY_RELAY_URL`（GAS `/exec`）/ `VERIFY_RELAY_ADMIN_TOKEN`（= GAS の `RELAY_ADMIN_TOKEN`）/ `VERIFY_WEBHOOK_TOKEN`（= GAS の `WEBHOOK_SHARED_TOKEN`）。二つのトークンは別の推測困難な値にする。
+- コードは実行 run が生成する。現地入力者へは GAS の Script Properties `TEST_STATE`（`password`）を見て、ログ以外の別経路で渡す。
+
+### 実施順（営業時間外・現地確認者と代替入室手段を確保）
+| # | action（確認文字列） | 内容 |
+|---|------|------|
+| 1 | `webhook-setup`（`SETUP-WEBHOOK`） | 既存Webhook設定がある場合は上書きせず中断。無ければ今回分を登録 |
+| 2 | `create-key`（`CREATE-ONE-TEST-KEY`） | 開始 3〜30 分後・有効 10〜15 分で1件。claim で重複防止、今回の commandId+createKey の Webhook success で APPLIED、keyList から passcode ID を解決。結果不明は再送せず UNKNOWN 停止 |
+| 3 | 実機 | 開始前=不可 / 有効中=解錠 / 終了後=不可 |
+| 4 | `delete-key`（`DELETE-TEST-KEY`） | 今回のキーのみ削除。deleteKey の Webhook success と keyList からの消失を確認後に保持データを破棄。別 run からも再開可 |
+| 5 | 実機 | 削除後も同じコードで解錠不可 |
+| 6 | `webhook-remove`（`REMOVE-WEBHOOK`） | 今回登録した Webhook だけ撤去（既存設定は触らない）。GAS の `verifyCleanupLocal()` も実行 |
+
+JST = UTC+9。ログの有効期間は JST（HH:mm:ss）で表示される。UNKNOWN・削除未確認が残る場合は、アプリの keyList で今回の検証名（`SNB-API-TEST-<unix秒>`）のキーだけを特定して削除し、「API検証は未達」と分けて Issue に記録する。秘密が漏れた場合は Token/Secret を再発行し、該当テストキーを削除する。
+
 ### （参考・旧方針）独立GASでの手順
 範囲は「独立GAS作成 → Token/Secret設定 → 接続確認 → 対象Keypad特定」まで。`createKey` / Webhook本登録 / 実機解錠 / `deleteKey` は行わない。自動トリガーは作らない。
 1. 上記「準備」1〜3（`SWITCHBOT_DEVICE_ID` はまだ未設定でよい）。Web アプリのデプロイは不要。

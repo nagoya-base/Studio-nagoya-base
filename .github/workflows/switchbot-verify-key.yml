@@ -1,0 +1,63 @@
+name: SwitchBot test key (manual)
+
+# Issue #718: 期間限定キー1件の発行→削除の検証。手動実行専用（push / pull_request / schedule / workflow_run なし）。
+# Secrets は Environment "switchbot-verify"（必須レビュアー設定を推奨）に登録する。
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'webhook-setup / create-key / delete-key / webhook-remove'
+        required: true
+        type: choice
+        options:
+          - webhook-setup
+          - create-key
+          - delete-key
+          - webhook-remove
+      confirm:
+        description: '確認文字列（SETUP-WEBHOOK / CREATE-ONE-TEST-KEY / DELETE-TEST-KEY / REMOVE-WEBHOOK）'
+        required: true
+        type: string
+      start_offset_min:
+        description: 'create-key: 開始までの分(3-30)'
+        required: false
+        default: '5'
+        type: string
+      duration_min:
+        description: 'create-key: 有効分(10-15)'
+        required: false
+        default: '15'
+        type: string
+
+permissions:
+  contents: read
+
+# 同時実行・再実行による重複作成を防ぐ（キューイング、キャンセルしない）
+concurrency:
+  group: switchbot-verify-key
+  cancel-in-progress: false
+
+jobs:
+  run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: switchbot-verify
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run (${{ inputs.action }})
+        env:
+          ACTION: ${{ inputs.action }}
+          CONFIRM: ${{ inputs.confirm }}
+          START_OFFSET_MIN: ${{ inputs.start_offset_min }}
+          DURATION_MIN: ${{ inputs.duration_min }}
+          SWITCHBOT_TOKEN: ${{ secrets.SWITCHBOT_TOKEN }}
+          SWITCHBOT_SECRET: ${{ secrets.SWITCHBOT_SECRET }}
+          SWITCHBOT_DEVICE_ID: ${{ secrets.SWITCHBOT_DEVICE_ID }}
+          VERIFY_RELAY_URL: ${{ secrets.VERIFY_RELAY_URL }}
+          VERIFY_RELAY_ADMIN_TOKEN: ${{ secrets.VERIFY_RELAY_ADMIN_TOKEN }}
+          VERIFY_WEBHOOK_TOKEN: ${{ secrets.VERIFY_WEBHOOK_TOKEN }}
+        run: node scripts/switchbot-verify-key.js

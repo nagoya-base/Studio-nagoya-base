@@ -8,6 +8,7 @@
  *   SWITCHBOT_TOKEN, SWITCHBOT_SECRET   … Open API v1.1 認証情報
  *   SWITCHBOT_DEVICE_ID                 … 対象キーパッド（verifyListDevices で特定後に設定）
  *   WEBHOOK_SHARED_TOKEN                … Webhook URL 用の共有トークン（推測困難な値）
+ *   RELAY_ADMIN_TOKEN                   … GitHub Actions 用の管理トークン（WEBHOOK_SHARED_TOKEN とは別の値）
  * 実行状態（自動管理）:
  *   PENDING_<commandId> / EVENT_<commandId> / STATE_LAST_*
  */
@@ -96,18 +97,25 @@ function verifySetupWebhook(execUrl) {
   return cls;
 }
 
-/** Webhook 受信。結果を commandId 単位で保存する（ペイロード全体は保存・出力しない）。 */
+/**
+ * 受信/状態保持 Web アプリ（Issue #718）。SwitchBot Webhook（クエリ t）と、
+ * GitHub Actions からの管理 op（本文 t）の両方を処理する。ロジックは Core.relayHandle。
+ * 応答に秘密・ペイロード全体は含めない。
+ */
 function doPost(e) {
-  var ok = SwitchBotVerifyCore.isWebhookAuthorized(
-    e && e.parameter && e.parameter.t, SBV_PROP.getProperty('WEBHOOK_SHARED_TOKEN'));
-  if (!ok) return ContentService.createTextOutput('forbidden');
-  var payload = null;
-  try { payload = JSON.parse(e.postData.contents); } catch (err) { payload = null; }
-  var ev = SwitchBotVerifyCore.parseKeypadWebhook(payload);
-  if (ev && ev.commandId) {
-    SBV_PROP.setProperty('EVENT_' + ev.commandId, JSON.stringify(ev));
-  }
-  return ContentService.createTextOutput('ok');
+  var body = null;
+  try { body = JSON.parse(e.postData.contents); } catch (err) { body = null; }
+  var store = {
+    get: function (k) { return SBV_PROP.getProperty(k); },
+    set: function (k, v) { SBV_PROP.setProperty(k, v); },
+    del: function (k) { SBV_PROP.deleteProperty(k); },
+    keys: function () { return SBV_PROP.getKeys(); }
+  };
+  var res = SwitchBotVerifyCore.relayHandle(store, e && e.parameter && e.parameter.t, body, {
+    webhook: SBV_PROP.getProperty('WEBHOOK_SHARED_TOKEN'),
+    admin: SBV_PROP.getProperty('RELAY_ADMIN_TOKEN')
+  }, Math.floor(Date.now() / 1000));
+  return ContentService.createTextOutput(JSON.stringify(res)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function sbvAwaitState_(commandId, timeoutSec) {
@@ -255,7 +263,7 @@ function verifyAbnormalCases() {
 
 /** 検証後のローカル秘密情報の掃除（テストコード・状態）。Token/Secret は残す。 */
 function verifyCleanupLocal() {
-  var keep = { SWITCHBOT_TOKEN: 1, SWITCHBOT_SECRET: 1, SWITCHBOT_DEVICE_ID: 1, WEBHOOK_SHARED_TOKEN: 1 };
+  var keep = { SWITCHBOT_TOKEN: 1, SWITCHBOT_SECRET: 1, SWITCHBOT_DEVICE_ID: 1, WEBHOOK_SHARED_TOKEN: 1, RELAY_ADMIN_TOKEN: 1 };
   var all = SBV_PROP.getKeys();
   all.forEach(function (k) { if (!keep[k]) SBV_PROP.deleteProperty(k); });
   Logger.log('cleanup done: removed ' + all.filter(function (k) { return !keep[k]; }).length + ' keys');

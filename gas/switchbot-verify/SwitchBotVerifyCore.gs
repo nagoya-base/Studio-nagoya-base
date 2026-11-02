@@ -225,6 +225,76 @@ var SwitchBotVerifyCore = (function () {
     return diff === 0;
   }
 
+  /**
+   * 独立 Webhook 受信/状態保持（Issue #718）。GAS doPost から呼ぶ純粋ロジック。
+   * store: { get(k), set(k,v), del(k), keys() }。
+   * - Webhook: body に op が無い。クエリ t が webhookToken と一致した場合のみ EVENT_<commandId> を保存。
+   * - 管理 op: body.t が adminToken と一致した場合のみ。claim / setPasscodeId / getState / getEvent / clear。
+   * 検証キーは常に 1 件（TEST_STATE）。claim は既存状態があると拒否する（重複発行防止）。
+   * パスコード平文は reveal:true 指定時のみ返す（Actions は指定しない）。
+   */
+  function relayHandle(store, queryT, body, tokens, nowSec) {
+    var EVENT_TTL_SEC = 86400;
+    body = body || {};
+    if (!body.op) {
+      if (!isWebhookAuthorized(queryT, tokens.webhook)) return { ok: false, error: 'FORBIDDEN' };
+      var ev = parseKeypadWebhook(body);
+      if (ev && ev.commandId) {
+        store.keys().forEach(function (k) {
+          if (k.indexOf('EVENT_') !== 0) return;
+          var old = JSON.parse(store.get(k) || '{}');
+          if (old.receivedAtSec && nowSec - old.receivedAtSec > EVENT_TTL_SEC) store.del(k);
+        });
+        ev.receivedAtSec = nowSec;
+        store.set('EVENT_' + ev.commandId, JSON.stringify(ev));
+      }
+      return { ok: true };
+    }
+    if (!isWebhookAuthorized(body.t, tokens.admin)) return { ok: false, error: 'FORBIDDEN' };
+    var raw = store.get('TEST_STATE');
+    var st = raw ? JSON.parse(raw) : null;
+    switch (body.op) {
+      case 'claim':
+        if (st) return { ok: false, error: 'ALREADY_CLAIMED' };
+        var errs = validateCreateKeyParams(
+          { name: body.name, password: body.password, startTime: body.startTime, endTime: body.endTime }, nowSec);
+        if (errs.length) return { ok: false, error: 'INVALID_PARAMS' };
+        store.set('TEST_STATE', JSON.stringify({
+          name: body.name, password: body.password, startTime: String(body.startTime),
+          endTime: String(body.endTime), createCommandId: '', passcodeId: '', claimedAtSec: nowSec
+        }));
+        return { ok: true };
+      case 'setCommand':
+        if (!st || !body.commandId) return { ok: false, error: 'NO_STATE' };
+        st.createCommandId = String(body.commandId);
+        store.set('TEST_STATE', JSON.stringify(st));
+        return { ok: true };
+      case 'setPasscodeId':
+        if (!st || body.passcodeId === undefined || body.passcodeId === null || String(body.passcodeId) === '') {
+          return { ok: false, error: 'NO_STATE' };
+        }
+        st.passcodeId = String(body.passcodeId);
+        store.set('TEST_STATE', JSON.stringify(st));
+        return { ok: true };
+      case 'getState':
+        if (!st) return { ok: true, state: null };
+        var out = { name: st.name, startTime: st.startTime, endTime: st.endTime,
+          createCommandId: st.createCommandId, passcodeId: st.passcodeId };
+        if (body.reveal === true) out.password = st.password;
+        return { ok: true, state: out };
+      case 'getEvent':
+        var evRaw = body.commandId ? store.get('EVENT_' + body.commandId) : null;
+        return { ok: true, event: evRaw ? JSON.parse(evRaw) : null };
+      case 'clear':
+        store.keys().forEach(function (k) {
+          if (k === 'TEST_STATE' || k.indexOf('EVENT_') === 0) store.del(k);
+        });
+        return { ok: true };
+      default:
+        return { ok: false, error: 'UNKNOWN_OP' };
+    }
+  }
+
   return {
     STATE: STATE,
     API_BASE: API_BASE,
@@ -244,7 +314,8 @@ var SwitchBotVerifyCore = (function () {
     parseKeypadWebhook: parseKeypadWebhook,
     resolveCommandState: resolveCommandState,
     redact: redact,
-    isWebhookAuthorized: isWebhookAuthorized
+    isWebhookAuthorized: isWebhookAuthorized,
+    relayHandle: relayHandle
   };
 })();
 
