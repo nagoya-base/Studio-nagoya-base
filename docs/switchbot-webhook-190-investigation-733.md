@@ -13,12 +13,14 @@
 
 | 項目 | 公式 | 現行実装 | 判定 |
 |---|---|---|---|
-| 署名 | `base64(HMAC-SHA256(secret, token + t + nonce))` を大文字化。ヘッダ `Authorization` / `sign` / `t` / `nonce` | `SwitchBotVerifyCore.gs` `buildAuthHeaders`、`switchbot-verify-key.js` `hmac`（sha256→base64→`toUpperCase`）。t は13桁ms、nonce は `crypto.randomUUID()` | 一致 |
+| 署名 | `base64(HMAC-SHA256(secret, token + t + nonce))` を大文字化。ヘッダ `Authorization` / `sign` / `t` / `nonce` | `SwitchBotVerifyCore.gs` `buildAuthHeaders`、`switchbot-verify-key.js` `hmac`（sha256→base64→`toUpperCase`）。t は13桁ms、nonce は `crypto.randomUUID()` | 概ね一致（大文字化のみ公式内で不統一。下記） |
 | Content-Type | `application/json; charset=utf8` | 同左 | 一致 |
 | queryWebhook | `POST /v1.1/webhook/queryWebhook`、body `{"action":"queryUrl"}` | 同左（`{ action: 'queryUrl' }` のみ） | 一致 |
 | deleteWebhook | `POST /v1.1/webhook/deleteWebhook`、body `{"action":"deleteWebhook","url":...}` | 同左 | 一致 |
 | 成功時 | `statusCode:100`、queryUrl は `body.urls` 配列 | `evaluateWebhookQuery` が 200+100+文字列配列のみ判定 | 一致 |
 | statusCode=190 | 公式表では「System error / Device internal error due to device states not synchronized with server」。**Webhook API 固有の 190 の意味は公式に記載なし** | 190 は `UNKNOWN`（API_FAILED）として扱い、未登録・削除成功とは見なさない | 妥当 |
+
+**公式内の不統一（大文字化）**: README の手順文・Go/PHP サンプルは「大文字化」を指示するが、JavaScript / Python / C# サンプルは base64 をそのまま（大文字化なし）送っている。Base64 は大文字小文字を区別するため、両者は同値ではない。現行実装は手順文に従い大文字化している。ただし同一方式で `GET /v1.1/devices` と削除前の `queryWebhook` が成功しており、サーバ側が大文字化版を受理していることは実績として確認済み。よって認証不備の原因とは考えにくいが、「公式サンプルと完全一致」とは言えず、公式側の記載の揺れとして記録する。
 
 補足: 公式 README の署名手順文は「token + t」とだけ書かれ nonce が抜けているが、同 README の全サンプルコードは `token + t + nonce` で署名しており、実装はサンプルに一致する。かつ `GET /v1.1/devices` と削除前の `queryWebhook` が同一署名で成功しているため、署名不備は原因として成立しない。
 
@@ -26,7 +28,7 @@
 
 - `queryWebhook` は `{action:'queryUrl'}` のみ送信。method / path / API version / 末尾スラッシュにずれなし（`switchbot-verify-key.js` の全呼び出し箇所を確認）。
 - 190 を「未登録」「削除成功」と誤解する経路なし。`NONE`（0件）になるのは HTTP200 + statusCode100 + `urls=[]` のときだけ。
-- 結論: **ユーザー側実装の誤りを示す差異は見つからなかった。修正案なし。**
+- 結論: **ユーザー側実装の誤りを示す差異は見つからなかった。修正案なし。**（大文字化の揺れは公式側の記載差で、実績上は受理されている）
 
 ## 3. 既知事例（公式 GitHub Issues。URL・秘密値は記載しない）
 
@@ -50,7 +52,8 @@
 - 読み取り専用の `webhook-query`（`queryUrl`）のみ。時間を置いて（例: 数時間〜翌日）1回ずつ実行し、HTTP / statusCode / 件数の固定分類だけを記録する。
 - 100 に戻った場合のみ `recover-delete-sent` を1回実行する。190 の間は連打しない。
 - SwitchBot アプリ側（Webhook設定画面等）に確認できる画面があるかは公式資料に記載がなく、本調査では未確認。
-- `queryDetails` や V1 エンドポイントでの確認は、公式に明記がなく未検証の挙動のため、本 Issue では実行しない（必要なら別 Issue で方針を決める）。
+- `queryDetails` は公式 README に記載のある読み取り系操作（リクエスト/レスポンス例あり）で、診断候補になり得る。ただし本リポジトリでは未実装・未検証のため、本 Issue では実行しない（必要なら別 Issue で実装方針を決める）。
+- V1 エンドポイントでの確認は、公式に記載がなく #393 の非公式報告に基づくのみで未検証のため、実行しない。
 
 ## 6. SwitchBot 問い合わせ用の再現手順（秘密なし）
 
