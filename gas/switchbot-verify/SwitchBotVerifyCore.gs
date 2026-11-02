@@ -256,6 +256,24 @@ var SwitchBotVerifyCore = (function () {
     return diff === 0;
   }
 
+  function migRead(store) {
+    var raw = store.get('WEBHOOK_MIG');
+    return raw ? JSON.parse(raw) : null;
+  }
+
+  function migWrite(store, mig) {
+    store.set('WEBHOOK_MIG', JSON.stringify(mig));
+  }
+
+  function migMove(store, from, to, nowSec) {
+    var mig = migRead(store);
+    if (!mig || mig.phase !== from) return { ok: false, error: 'MIG_PHASE_MISMATCH' };
+    mig.phase = to;
+    mig.atSec = nowSec;
+    migWrite(store, mig);
+    return { ok: true };
+  }
+
   /**
    * 独立 Webhook 受信/状態保持（Issue #718）。GAS doPost から呼ぶ純粋ロジック。
    * store: { get(k), set(k,v), del(k), keys() }。
@@ -327,6 +345,22 @@ var SwitchBotVerifyCore = (function () {
           if (k === 'TEST_STATE' || k.indexOf('EVENT_') === 0) store.del(k);
         });
         return { ok: true };
+      // Webhook置換(Issue #727)の進行記録。秘密(URL・トークン)は保持しない。
+      // 一方向の遷移のみ(なし→DELETE_SENT→REMOVED→SETUP_SENT→DONE)。巻き戻し・消去のopは設けない
+      // (復旧は管理者が照会と人手確認の上で Script Properties の WEBHOOK_MIG を手動で扱う)。
+      case 'migGet':
+        return { ok: true, mig: migRead(store) };
+      case 'migBeginDelete':
+        if (migRead(store)) return { ok: false, error: 'MIG_EXISTS' };
+        if (typeof body.fp !== 'string' || !/^[0-9a-f]{12}$/.test(body.fp)) return { ok: false, error: 'INVALID_PARAMS' };
+        migWrite(store, { phase: 'DELETE_SENT', fp: body.fp, atSec: nowSec });
+        return { ok: true };
+      case 'migMarkRemoved':
+        return migMove(store, 'DELETE_SENT', 'REMOVED', nowSec);
+      case 'migBeginSetup':
+        return migMove(store, 'REMOVED', 'SETUP_SENT', nowSec);
+      case 'migMarkDone':
+        return migMove(store, 'SETUP_SENT', 'DONE', nowSec);
       default:
         return { ok: false, error: 'UNKNOWN_OP' };
     }

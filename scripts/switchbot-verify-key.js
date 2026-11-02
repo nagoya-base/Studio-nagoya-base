@@ -14,12 +14,20 @@ var CONFIRM = {
   'create-key': 'CREATE-ONE-TEST-KEY',
   'delete-key': 'DELETE-TEST-KEY',
   'webhook-remove': 'REMOVE-WEBHOOK',
-  'webhook-query': 'QUERY-WEBHOOK'
+  'webhook-query': 'QUERY-WEBHOOK',
+  'remove-old': 'REMOVE-OLD-WEBHOOK',
+  'setup-current': 'SETUP-CURRENT-WEBHOOK'
 };
 var REQUIRED = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'SWITCHBOT_DEVICE_ID',
   'VERIFY_RELAY_URL', 'VERIFY_RELAY_ADMIN_TOKEN', 'VERIFY_WEBHOOK_TOKEN'];
 
 var QUERY_REQUIRED = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'VERIFY_RELAY_URL', 'VERIFY_WEBHOOK_TOKEN'];
+
+// Webhook置換(Issue #727)。Keypad ID は不要。進行記録はリレーに保持するため管理トークンが必要。
+var REPLACE_REQUIRED = QUERY_REQUIRED.concat(['VERIFY_RELAY_ADMIN_TOKEN']);
+var REMOVE_OLD_REQUIRED = REPLACE_REQUIRED.concat(['VERIFY_OLD_WEBHOOK_URL', 'VERIFY_OLD_WEBHOOK_EVIDENCE']);
+var MUTATING_REPLACE = ['remove-old', 'setup-current'];
+var EVIDENCE_MAX_AGE_SEC = 24 * 60 * 60; // 人手確認の証跡・削除成功の証跡の有効期間
 
 function hmac(secret, message) {
   return crypto.createHmac('sha256', secret).update(message).digest('base64');
@@ -52,8 +60,13 @@ function validateInputs(env) {
   if (!CONFIRM[action]) return ['ACTION_INVALID'];
   if (env.CONFIRM !== CONFIRM[action]) errs.push('CONFIRM_MISMATCH');
   // webhook-query は照会専用。Keypad ID・リレー管理トークンは不要（最小限の秘密だけを要求）
-  var req = action === 'webhook-query' ? QUERY_REQUIRED : REQUIRED;
+  var req = REQUIRED;
+  if (action === 'webhook-query') req = QUERY_REQUIRED;
+  if (action === 'setup-current') req = REPLACE_REQUIRED;
+  if (action === 'remove-old') req = REMOVE_OLD_REQUIRED;
   req.forEach(function (k) { if (!env[k]) errs.push('SECRET_MISSING_' + k); });
+  // 変更API(置換)は初回のrunだけ。「Re-run jobs」(run_attempt>1)では送信しない（未設定も不許可）
+  if (MUTATING_REPLACE.indexOf(action) !== -1 && env.GITHUB_RUN_ATTEMPT !== '1') errs.push('RERUN_FORBIDDEN');
   if (action === 'create-key') {
     var so = Number(env.START_OFFSET_MIN);
     var du = Number(env.DURATION_MIN);
@@ -69,6 +82,7 @@ function makeClient(env, deps) {
       crypto.randomUUID(), deps.nowMs(), hmac);
     var opt = { method: method, headers: headers };
     if (body) opt.body = JSON.stringify(body);
+    opt.signal = AbortSignal.timeout(30000); // 無期限待ちにしない。自動リトライはしない
     var res = await deps.fetch(Core.API_BASE + path, opt);
     var parsed = await res.json().catch(function () { return null; });
     return { http: res.status, parsed: parsed };
@@ -78,7 +92,8 @@ function makeClient(env, deps) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign({ t: env.VERIFY_RELAY_ADMIN_TOKEN }, payload)),
-      redirect: 'follow'
+      redirect: 'follow',
+      signal: AbortSignal.timeout(30000)
     });
     var parsed = await res.json().catch(function () { return null; });
     return parsed || { ok: false, error: 'RELAY_BAD_RESPONSE' };
@@ -342,6 +357,150 @@ async function webhookRemove(env, c, log) {
   return cls.state === Core.STATE.FAILED ? 1 : 0;
 }
 
+// ---------------------------------------------------------------------------
+// Webhook置換（Issue #727）: remove-old（旧Webhookの削除だけ）と setup-current（現在URLの登録だけ）。
+// 出力は固定文字列・件数・固定の理由コードのみ。URL・トークン・生レスポンス・message・例外詳細は出さない。
+// 変更APIは各操作で最大1回。送信後は結果にかかわらず再送・自動継続・ロールバックをしない。
+// ---------------------------------------------------------------------------
+
+function sha12(text) {
+  return crypto.createHash('sha256').update(String(text)).digest('hex').slice(0, 12);
+}
+
+/**
+ * 人手確認の証跡（秘密を含まない照合記録）を検証する純粋関数。
+ * 形式: "<旧URLのSHA-256先頭12桁>@<確認時刻 ISO8601 UTC 例 2026-11-02T12:00:00Z>"
+ * 旧URL(秘密領域)の値と結び付き、24時間以内・未来でないものだけ有効。
+ */
+function checkOldEvidence(oldUrl, evidence, nowSec) {
+  var m = /^([0-9a-f]{12})@(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)$/.exec(String(evidence || ''));
+  if (!m) return { ok: false, error: 'EVIDENCE_FORMAT' };
+  if (m[1] !== sha12(oldUrl)) return { ok: false, error: 'EVIDENCE_TARGET_MISMATCH' };
+  var at = Date.parse(m[2]);
+  if (!Number.isFinite(at)) return { ok: false, error: 'EVIDENCE_FORMAT' };
+  var age = nowSec - Math.floor(at / 1000);
+  if (age < 0) return { ok: false, error: 'EVIDENCE_FUTURE' };
+  if (age > EVIDENCE_MAX_AGE_SEC) return { ok: false, error: 'EVIDENCE_STALE' };
+  return { ok: true };
+}
+
+/** queryWebhook の結果を { ok, urls, reason } に正規化。通信失敗・応答不正は UNKNOWN（登録なしと見なさない）。 */
+async function queryUrls(c) {
+  var q;
+  try {
+    q = await c.sb('post', '/v1.1/webhook/queryWebhook', { action: 'queryUrl' });
+  } catch (e) {
+    return { ok: false, reason: 'COMM_FAILED' };
+  }
+  var r = evaluateWebhookQuery(q.http, q.parsed, '');
+  if (r.state === 'UNKNOWN') return { ok: false, reason: r.reason };
+  return { ok: true, urls: q.parsed.body.urls.slice() };
+}
+
+async function relayCall(c, payload) {
+  try {
+    var r = await c.relay(payload);
+    return r && r.ok === true ? r : { ok: false, error: (r && r.error) || 'RELAY_FAILED' };
+  } catch (e) {
+    return { ok: false, error: 'RELAY_COMM_FAILED' };
+  }
+}
+
+/** 既存が厳密に1件で、それが人手確認済みの旧URLと完全一致することを再照会で確認する。 */
+async function confirmOldTarget(env, c) {
+  var q = await queryUrls(c);
+  if (!q.ok) return { ok: false, error: 'QUERY_' + q.reason };
+  if (q.urls.length !== 1) return { ok: false, error: q.urls.length === 0 ? 'COUNT_ZERO' : 'COUNT_MULTIPLE' };
+  if (q.urls[0] === webhookUrl(env)) return { ok: false, error: 'TARGET_IS_CURRENT_URL' };
+  if (q.urls[0] !== env.VERIFY_OLD_WEBHOOK_URL) return { ok: false, error: 'TARGET_NOT_CONFIRMED' };
+  return { ok: true };
+}
+
+async function removeOld(env, deps, c, log) {
+  log('remove-old: 旧Webhookの削除のみ（deleteWebhookは最大1回。setupWebhookは呼ばない）');
+  var ev = checkOldEvidence(env.VERIFY_OLD_WEBHOOK_URL, env.VERIFY_OLD_WEBHOOK_EVIDENCE, deps.nowSec());
+  if (!ev.ok) { log('ABORT: 人手確認の証跡が不正 ' + ev.error + '（変更APIは呼ばない）'); return 1; }
+
+  var m = await relayCall(c, { op: 'migGet' });
+  if (!m.ok) { log('ABORT: 進行記録を確認できない ' + m.error + '（変更APIは呼ばない）'); return 1; }
+  if (m.mig) { log('ABORT: 置換の進行記録あり phase=' + m.mig.phase + '。元runの再送はしない（照会と人手確認のみ）'); return 1; }
+
+  var t1 = await confirmOldTarget(env, c);
+  if (!t1.ok) { log('ABORT: 対象を確認できない ' + t1.error + '（変更APIは呼ばない）'); return 1; }
+  var t2 = await confirmOldTarget(env, c); // 削除直前の再照会（同じ1件であること）
+  if (!t2.ok) { log('ABORT: 削除直前の再照会で対象が変わった/確認できない ' + t2.error + '（変更APIは呼ばない）'); return 1; }
+
+  // 送信前に「送信済み」を永続化する（成功した場合のみ送信へ進む）。以後、別runや再実行では削除を送らない
+  var b = await relayCall(c, { op: 'migBeginDelete', fp: sha12(env.VERIFY_OLD_WEBHOOK_URL) });
+  if (!b.ok) { log('ABORT: 送信済み記録を保存できない ' + b.error + '（変更APIは呼ばない）'); return 1; }
+
+  var r;
+  try {
+    r = await c.sb('post', '/v1.1/webhook/deleteWebhook', { action: 'deleteWebhook', url: env.VERIFY_OLD_WEBHOOK_URL });
+  } catch (e) {
+    log('UNKNOWN: deleteWebhook の送信結果が不明。再送せず停止（照会と人手確認のみ）');
+    return 1;
+  }
+  if (Core.classifyApiResponse(r.http, r.parsed).state === Core.STATE.FAILED) {
+    log('FAILED: deleteWebhook がAPIで失敗 http=' + r.http + '。再送・自動継続せず停止（照会と人手確認のみ）');
+    return 1;
+  }
+  log('deleteWebhook: 受理応答 http=' + r.http + '（受理だけでは削除成功としない。再照会で確認）');
+
+  var after = await queryUrls(c);
+  if (!after.ok) { log('UNKNOWN: 削除後の再照会が不明 ' + after.reason + '。再送せず停止'); return 1; }
+  if (after.urls.length !== 0) { log('UNKNOWN: 削除後も登録が残存/出現 件数=' + after.urls.length + '。再送せず停止'); return 1; }
+  var done = await relayCall(c, { op: 'migMarkRemoved' });
+  if (!done.ok) { log('UNKNOWN: 削除は0件確認済みだが成功記録を保存できない ' + done.error + '。停止（setup-currentは進めない）'); return 1; }
+  log('remove-old: 旧Webhookの削除を確認（再照会 件数=0）。次は別操作 setup-current（本操作では登録しない）');
+  return 0;
+}
+
+async function setupCurrent(env, deps, c, log) {
+  log('setup-current: 現在URLの登録のみ（setupWebhookは最大1回。deleteWebhookは呼ばない）');
+  var m = await relayCall(c, { op: 'migGet' });
+  if (!m.ok) { log('ABORT: 進行記録を確認できない ' + m.error + '（変更APIは呼ばない）'); return 1; }
+  if (!m.mig || m.mig.phase !== 'REMOVED') {
+    log('ABORT: 削除成功の証跡がない/進行済み phase=' + (m.mig ? m.mig.phase : 'NONE') + '（変更APIは呼ばない）');
+    return 1;
+  }
+  if (typeof m.mig.atSec !== 'number' || deps.nowSec() - m.mig.atSec > EVIDENCE_MAX_AGE_SEC || deps.nowSec() < m.mig.atSec) {
+    log('ABORT: 削除成功の証跡が古い/不正（変更APIは呼ばない）');
+    return 1;
+  }
+  var q = await queryUrls(c);
+  if (!q.ok) { log('ABORT: 登録直前の再照会が不明 ' + q.reason + '（変更APIは呼ばない）'); return 1; }
+  if (q.urls.length !== 0) { log('ABORT: 登録直前に別設定が存在 件数=' + q.urls.length + '（変更APIは呼ばない）'); return 1; }
+
+  var b = await relayCall(c, { op: 'migBeginSetup' });
+  if (!b.ok) { log('ABORT: 送信済み記録を保存できない ' + b.error + '（変更APIは呼ばない）'); return 1; }
+
+  var expected = webhookUrl(env);
+  var r;
+  try {
+    r = await c.sb('post', '/v1.1/webhook/setupWebhook', { action: 'setupWebhook', url: expected, deviceList: 'ALL' });
+  } catch (e) {
+    log('UNKNOWN: setupWebhook の送信結果が不明。再送せず停止（照会と人手確認のみ）');
+    return 1;
+  }
+  if (Core.classifyApiResponse(r.http, r.parsed).state === Core.STATE.FAILED) {
+    log('FAILED: setupWebhook がAPIで失敗 http=' + r.http + '。再送・自動継続せず停止（照会と人手確認のみ）');
+    return 1;
+  }
+  log('setupWebhook: 受理応答 http=' + r.http + '（受理だけでは成功としない。再照会で確認）');
+
+  var after = await queryUrls(c);
+  if (!after.ok) { log('UNKNOWN: 登録後の再照会が不明 ' + after.reason + '。再送せず停止'); return 1; }
+  if (after.urls.length !== 1 || after.urls[0] !== expected) {
+    log('UNKNOWN: 登録後の照会が MATCH でない 件数=' + after.urls.length + '。再送・削除・ロールバックせず停止');
+    return 1;
+  }
+  var done = await relayCall(c, { op: 'migMarkDone' });
+  if (!done.ok) { log('UNKNOWN: MATCH確認済みだが完了記録を保存できない ' + done.error); return 1; }
+  log('setup-current: 再照会 件数=1 MATCH（設定一致のみの確認。Webhook到達性・createKey/deleteKeyの反映成功は未確認）');
+  return 0;
+}
+
 async function main(env, deps) {
   var log = deps.log;
   var errs = validateInputs(env);
@@ -352,6 +511,8 @@ async function main(env, deps) {
       case 'webhook-setup': return await webhookSetup(env, c, log);
       case 'webhook-remove': return await webhookRemove(env, c, log);
       case 'webhook-query': return await webhookQuery(env, c, log);
+      case 'remove-old': return await removeOld(env, deps, c, log);
+      case 'setup-current': return await setupCurrent(env, deps, c, log);
       case 'create-key': return await createKey(env, deps, c, log);
       case 'delete-key': return await deleteKey(env, deps, c, log);
     }
@@ -373,4 +534,4 @@ if (require.main === module) {
   }).then(function (code) { process.exit(code); });
 }
 
-module.exports = { main: main, validateInputs: validateInputs, evaluateWebhookQuery: evaluateWebhookQuery, diagnoseWebhookUrl: diagnoseWebhookUrl, CONFIRM: CONFIRM };
+module.exports = { main: main, validateInputs: validateInputs, evaluateWebhookQuery: evaluateWebhookQuery, diagnoseWebhookUrl: diagnoseWebhookUrl, checkOldEvidence: checkOldEvidence, CONFIRM: CONFIRM };
