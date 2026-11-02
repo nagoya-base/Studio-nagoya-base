@@ -1,0 +1,99 @@
+name: Deploy SwitchBot verify GAS
+
+# Issue #723: 独立SwitchBot検証GAS（gas/switchbot-verify/）だけを、既存Webアプリ Deployment のまま更新する。
+# - mainへのpush（対象パスの変更時のみ）と workflow_dispatch（mainのみ）が起動条件。pull_request は設定しない
+#   （PR時は booking-pr-tests.yml が秘密なしでテストする）。
+# - 実機操作（createKey / deleteKey / 解錠 / Webhook登録）は一切呼ばない。コードを反映するだけ。
+# - 予約GAS・他ブランドのworkflow／Secrets／Environmentは使わない。
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'gas/switchbot-verify/**'
+      - 'scripts/deploy-switchbot-verify-gas.sh'
+      - 'scripts/switchbot-verify-gas-deploy-lib.js'
+      - '.github/workflows/switchbot-verify-gas-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      rollback_version:
+        description: '空欄=mainを反映。版番号（例: 12）を入れると、同じDeploymentをその既存版へ戻す（docs/switchbot-verify-gas-deploy-723.md）'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+# 同じ対象へのデプロイを直列化する。実行中のrunは強制キャンセルしない（状態不明を避ける）。
+concurrency:
+  group: switchbot-verify-gas-deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test main (no secrets)
+    if: github.ref == 'refs/heads/main' && inputs.rollback_version == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run SwitchBot verify tests
+        run: node --test test/switchbot-*.test.js
+
+  deploy:
+    name: Update existing Web App deployment
+    needs: test
+    if: github.ref == 'refs/heads/main' && inputs.rollback_version == ''
+    runs-on: ubuntu-latest
+    environment: switchbot-verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned clasp
+        run: npm install --global @google/clasp@3.4.1
+      - name: Skip if a newer main commit changed the target
+        id: fresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin main
+          if git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- gas/switchbot-verify; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "A newer main commit changed gas/switchbot-verify; skipping so an older run cannot publish stale code." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Push source and update the existing deployment
+        if: steps.fresh.outputs.current == 'true'
+        shell: bash
+        env:
+          SBV_CLASPRC_JSON: ${{ secrets.SWITCHBOT_VERIFY_CLASPRC_JSON }}
+          SBV_SCRIPT_ID: ${{ secrets.SWITCHBOT_VERIFY_SCRIPT_ID }}
+          SBV_DEPLOYMENT_ID: ${{ secrets.SWITCHBOT_VERIFY_DEPLOYMENT_ID }}
+        run: bash scripts/deploy-switchbot-verify-gas.sh deploy
+
+  rollback:
+    name: Roll the same deployment back to an existing version
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.rollback_version != ''
+    runs-on: ubuntu-latest
+    environment: switchbot-verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned clasp
+        run: npm install --global @google/clasp@3.4.1
+      - name: Roll back the existing deployment
+        shell: bash
+        env:
+          SBV_CLASPRC_JSON: ${{ secrets.SWITCHBOT_VERIFY_CLASPRC_JSON }}
+          SBV_SCRIPT_ID: ${{ secrets.SWITCHBOT_VERIFY_SCRIPT_ID }}
+          SBV_DEPLOYMENT_ID: ${{ secrets.SWITCHBOT_VERIFY_DEPLOYMENT_ID }}
+          ROLLBACK_VERSION: ${{ inputs.rollback_version }}
+        run: bash scripts/deploy-switchbot-verify-gas.sh rollback

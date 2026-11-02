@@ -8,7 +8,7 @@ SwitchBot Open API は公式に personal uses 向け。**予約連携・メー�
 
 ## 準備
 1. SwitchBot アプリ → プロフィール → 設定 → 開発者向けオプションから Token / Secret を取得。
-2. 新規の**独立** GAS プロジェクトを作り、`gas/switchbot-verify/` の `.gs` と `appsscript.json` を貼る（clasp 自動デプロイはしない）。
+2. 新規の**独立** GAS プロジェクトを作り、`gas/switchbot-verify/` の `.gs` と `appsscript.json` を貼る（初回のみ手動。以後の自動反映は [switchbot-verify-gas-deploy-723.md](switchbot-verify-gas-deploy-723.md) を参照）。
 3. Script Properties に設定（ソース・Issue・ログに書かない）:
    - `SWITCHBOT_TOKEN` / `SWITCHBOT_SECRET`
    - `WEBHOOK_SHARED_TOKEN`（推測困難なランダム値）
