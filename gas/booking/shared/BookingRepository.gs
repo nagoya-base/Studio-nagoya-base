@@ -875,7 +875,9 @@ var BookingRepository = (function () {
 
   function notifyAdminBestEffort_(record) {
     try {
-      AdminNotifier.notifyNewPendingBooking(record);
+      /* Issue #709: Stripe決済完了Webhookで自動確定される通常カード予約は手動確定を案内しない
+         （承認制・Checkout無効・現地払いはshouldDeferPendingMailToCheckout_がfalseで従来どおり）。 */
+      AdminNotifier.notifyNewPendingBooking(record, { autoConfirmByCheckout: shouldDeferPendingMailToCheckout_(record) });
     } catch (notifyError) {
       Logger.log('AdminNotifier.notifyNewPendingBooking failed: ' + describeError_(notifyError));
       try {
