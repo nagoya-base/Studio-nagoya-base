@@ -2,6 +2,7 @@
 
 var test = require('node:test');
 var assert = require('node:assert/strict');
+var vm = require('vm');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
 
@@ -1605,4 +1606,98 @@ test('commit rejects a call without a feeQuoteToken (missing, empty, or non-stri
   assert.equal(record.startAt.getTime(), originalStart, 'Bookingsは変更されない');
   assert.equal(f.event.getStartTime().getTime(), originalStart, 'Calendarは変更されない');
   assert.ok(!f.sheets.BookingChanges || f.sheets.BookingChanges.getLastRow() <= 1, '履歴行は作られない');
+});
+
+/* ---- Issue #711: 利用開始後の当日延長（開始時刻を変えず終了だけ延長）は「現在時刻以前」で拒否しない ---- */
+
+/* サンドボックス内のDateを固定時刻（JST）に差し替える。引数なしのnew Date()／Date.now()だけが固定される。 */
+function freezeNow_(f, hhmm) {
+  var RealDate = vm.runInContext('Date', f.sandbox);
+  var nowMs = RealDate.parse(f.date + 'T' + hhmm + ':00+09:00');
+  function FakeDate() {
+    var args = Array.prototype.slice.call(arguments);
+    if (!(this instanceof FakeDate)) return new RealDate(nowMs).toString();
+    return args.length === 0 ? new RealDate(nowMs) : new (Function.prototype.bind.apply(RealDate, [null].concat(args)))();
+  }
+  FakeDate.prototype = RealDate.prototype;
+  FakeDate.now = function () { return nowMs; };
+  FakeDate.parse = RealDate.parse;
+  FakeDate.UTC = RealDate.UTC;
+  f.sandbox.__FakeDate = FakeDate;
+  vm.runInContext('Date = __FakeDate;', f.sandbox);
+}
+
+test('Issue #711: 利用開始前の延長（10:00-12:00 → 10:00-14:00、現在09:00）は従来どおり成功する', function () {
+  var f = setup();
+  freezeNow_(f, '09:00');
+  var input = { date: f.date, startTime: '10:00', endTime: '14:00' };
+  assert.equal(f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version_(f)).success, true);
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '延長', '別途精算');
+  assert.equal(result.success, true);
+});
+
+test('Issue #711: 利用開始後（現在10:30）に開始時刻を維持して終了だけ延長する（10:00-12:00 → 10:00-14:00）と、previewもcommitも成功し、Calendarの終了だけが動く', function () {
+  var f = setup();
+  freezeNow_(f, '10:30');
+  var originalStart = f.event.getStartTime().getTime();
+  var input = { date: f.date, startTime: '10:00', endTime: '14:00' };
+  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version_(f));
+  assert.equal(preview.success, true, JSON.stringify(preview.error));
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), 'パスコード不具合のため延長', '別途精算');
+  assert.equal(result.success, true, JSON.stringify(result.error));
+  assert.equal(f.event.getStartTime().getTime(), originalStart, '開始時刻は変わらない');
+  assert.equal(f.event.getEndTime().getTime(), f.sandbox.CalendarRepository.parseDateTime(f.date, '14:00', 'Asia/Tokyo').getTime());
+});
+
+test('Issue #711: 利用開始後に開始時刻を過去へ変更する（10:00-12:00 → 09:00-12:00、現在10:30）はPAST_STARTで拒否し、何も変更しない', function () {
+  var f = setup();
+  freezeNow_(f, '10:30');
+  var input = { date: f.date, startTime: '09:00', endTime: '12:00' };
+  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version_(f));
+  assert.equal(preview.success, false);
+  assert.equal(preview.error.code, 'PAST_START');
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '', undefined, 'x');
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'PAST_START');
+  assert.equal(f.event.getStartTime().getTime(), f.sandbox.CalendarRepository.parseDateTime(f.date, '10:00', 'Asia/Tokyo').getTime());
+});
+
+test('Issue #711: 利用開始後の短縮（開始維持・終了を前倒し。10:00-12:00 → 10:00-11:00、現在10:30）は延長ではないためPAST_STARTで拒否する', function () {
+  var f = setup();
+  freezeNow_(f, '10:30');
+  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:00', endTime: '11:00' }, version_(f));
+  assert.equal(preview.success, false);
+  assert.equal(preview.error.code, 'PAST_START');
+});
+
+test('Issue #711: 終了時刻を現在時刻以前へ変更する（予約終了後の現在13:00に、10:00-12:00 → 10:00-12:30）はPAST_ENDで拒否する', function () {
+  var f = setup();
+  freezeNow_(f, '13:00');
+  var input = { date: f.date, startTime: '10:00', endTime: '12:30' };
+  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', input, version_(f));
+  assert.equal(preview.success, false);
+  assert.equal(preview.error.code, 'PAST_END');
+  var result = f.sandbox.adminRescheduleBooking('SNB-TEST-1', input, version_(f), '', '', undefined, 'x');
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, 'PAST_END');
+});
+
+test('Issue #711: 延長先（バッファ込み）に別予約がある場合は、利用開始後でもSLOT_CONFLICTで拒否する', function () {
+  var f = setup();
+  freezeNow_(f, '10:30');
+  var otherStart = f.sandbox.CalendarRepository.parseDateTime(f.date, '14:10', 'Asia/Tokyo');
+  var otherEnd = f.sandbox.CalendarRepository.parseDateTime(f.date, '16:00', 'Asia/Tokyo');
+  f.globals.CalendarApp.getCalendarById('cal1').createEvent('other booking', otherStart, otherEnd);
+  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:00', endTime: '14:00' }, version_(f));
+  assert.equal(preview.success, false);
+  assert.equal(preview.error.code, 'SLOT_CONFLICT');
+});
+
+test('Issue #711: 日付変更を伴う過去日時への変更（前日の10:00-14:00、現在10:30）は、延長扱いにならず拒否する', function () {
+  var f = setup();
+  freezeNow_(f, '10:30');
+  var yesterday = new Date(Date.parse(f.date + 'T00:00:00+09:00') - 86400000);
+  var parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(yesterday);
+  var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: parts, startTime: '10:00', endTime: '14:00' }, version_(f));
+  assert.equal(preview.success, false);
 });

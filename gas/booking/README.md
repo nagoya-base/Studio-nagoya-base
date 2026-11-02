@@ -507,6 +507,7 @@ Issue #492の本文を正本として、#486（Studio X新料金）と#488（貸
 - **廃止**: `EventPlanDates`シート、`EventPlanRepository.gs`（配布対象からも除外）、`action=eventPlan`（`handleEventPlan_`）、`EVENT_PLAN_DATE_NOT_ELIGIBLE`、`computeBookingPrice`の`eventDates`入力、日程変更時の対象日チェック、フロントの対象日取得・判定。
 - 利用者が予約フォーム（`/studio-x/booking/`）で明示的にプランを選んだときだけ適用（通常予約へ自動適用しない）。Studio Xの予約可能な日ならいつでも選べる。
 - 残した検証: Studio Xのみ（`PLAN_NOT_AVAILABLE`）、最低6時間・1時間単位（`PLAN_DURATION_INVALID`）、8:00開始以降・21:00終了まで（`PLAN_HOURS_OUT_OF_RANGE`）、最大4名（`EVENT_PLAN_PEOPLE_EXCEEDED`）。通常予約と同じCalendarの枠で確保するため、二重販売は`SLOT_CONFLICT`で防止される。
+- 日程変更の「現在時刻以前」判定（Issue #711）: 開始時刻を変えず終了だけを元より未来へ延ばす当日延長は、既存の開始時刻が過去でも拒否しない（延長後の終了が現在時刻以前なら`PAST_END`）。開始時刻・日付の変更や短縮は従来どおり`PAST_START`。重複・営業時間・料金・会員資格の判定は変更なし。
 - 日程変更: `BookingReschedule.eventPlanRejection_`は6時間未満・1時間単位でない・8:00〜21:00の範囲外への変更を拒否する。日付の条件は無く、変更先の利用時間で1時間1,000円を再計算し、プランを保持して変更できる。通常予約への変換は未対応のため、通常料金に切り替える場合は予約を取り消して取り直す。
 - 識別: Booking Admin（一覧・詳細の`planLabel`）、確認画面、予約メール、管理者通知、Calendarタグ、Bookings台帳の`planCode`。
 - 公式サイト: `/studio-x/#osu-base-plan`と`/studio-x/booking/`のプラン説明・FAQ・JSON-LDを常設仕様へ更新（イベント日限定の表現は削除。有人クロークではない・荷物貴重品は自己管理・再入室可は維持）。
