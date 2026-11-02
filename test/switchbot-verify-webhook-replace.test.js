@@ -318,3 +318,120 @@ test('リレーの進行記録: 一方向の遷移のみ。巻き戻し・飛び
   assert.strictEqual(Core.relayHandle(s, null, { op: 'migGet', t: 'wrong' }, TOK, NOW).ok, false);
   assert.ok(s.get('WEBHOOK_MIG').indexOf('token') === -1 && s.get('WEBHOOK_MIG').indexOf('http') === -1);
 });
+
+// ---- Issue #729: replace-single-webhook-remove ----
+var SINGLE = 'replace-single-webhook-remove';
+function envS(extra) { return env(SINGLE, Object.assign({ VERIFY_OLD_WEBHOOK_URL: '', VERIFY_OLD_WEBHOOK_EVIDENCE: '' }, extra || {})); }
+
+test('#729 入力検証: 確認文字列完全一致・秘密・Re-runを検証し、旧URL/証跡Secretは不要', function () {
+  assert.strictEqual(K.CONFIRM[SINGLE], 'I-CONFIRM-SINGLE-WEBHOOK-IS-MINE');
+  assert.deepStrictEqual(K.validateInputs(envS()), []);
+  ['REMOVE-OLD-WEBHOOK', 'i-confirm-single-webhook-is-mine', ''].forEach(function (c) {
+    assert.ok(K.validateInputs(envS({ CONFIRM: c })).indexOf('CONFIRM_MISMATCH') !== -1, c);
+  });
+  assert.ok(K.validateInputs(env('remove-old', { CONFIRM: 'I-CONFIRM-SINGLE-WEBHOOK-IS-MINE' })).indexOf('CONFIRM_MISMATCH') !== -1);
+  ['VERIFY_RELAY_ADMIN_TOKEN', 'VERIFY_WEBHOOK_TOKEN', 'SWITCHBOT_TOKEN'].forEach(function (k) {
+    var o = {}; o[k] = '';
+    assert.ok(K.validateInputs(envS(o)).indexOf('SECRET_MISSING_' + k) !== -1, k);
+  });
+  ['2', '', undefined].forEach(function (a) {
+    assert.ok(K.validateInputs(envS({ GITHUB_RUN_ATTEMPT: a })).indexOf('RERUN_FORBIDDEN') !== -1);
+  });
+});
+
+test('#729 正常系: 1件確認→再照会→削除1回→0件確認→setup-currentで1件MATCH。setupは削除操作内で呼ばない', async function () {
+  var w = world({ webhooks: [OLD] });
+  assert.strictEqual(await K.main(envS(), w.deps), 0);
+  assert.deepStrictEqual(w.calls.map(function (c) { return c.replace('/v1.1/webhook/', ''); }),
+    ['queryWebhook', 'queryWebhook', 'deleteWebhook', 'queryWebhook']);
+  assert.strictEqual(n(w, 'setupWebhook'), 0);
+  assert.deepStrictEqual(w.webhooks, []);
+  assert.strictEqual(mig(w).phase, 'REMOVED');
+
+  var w2 = world({}, w); w2.calls.length = 0;
+  assert.strictEqual(await K.main(env('setup-current'), w2.deps), 0);
+  assert.strictEqual(n(w2, 'setupWebhook'), 1);
+  assert.strictEqual(n(w2, 'deleteWebhook'), 0);
+  assert.deepStrictEqual(w2.webhooks, [CURRENT]);
+  assert.strictEqual(mig(w2).phase, 'DONE');
+  noKeyApis(w); noKeyApis(w2); noLeak(w); noLeak(w2);
+  // 完了後の再実行は変更APIを送らない
+  var w3 = world({}, w2); w3.calls.length = 0;
+  assert.strictEqual(await K.main(envS(), w3.deps), 1);
+  assert.strictEqual(n(w3, 'deleteWebhook') + n(w3, 'setupWebhook'), 0);
+});
+
+test('#729 0件/複数件/現在URL/応答不正/通信断/API失敗では削除せず進行記録も作らない', async function () {
+  var cases = [
+    { webhooks: [] }, { webhooks: [OLD, OTHER] }, { webhooks: [CURRENT] },
+    { webhooks: [OLD], queryOverride: function () { return { http: 500, body: { statusCode: 190, message: 'RAW-MESSAGE-LEAK' } }; } },
+    { webhooks: [OLD], queryOverride: function () { return { http: 200, body: { statusCode: 100, body: {} } }; } },
+    { webhooks: [OLD], queryOverride: function () { return { http: 200, body: { statusCode: 100, body: { urls: 'x' } } }; } },
+    { webhooks: [OLD], queryOverride: function () { return 'throw'; } }
+  ];
+  for (var i = 0; i < cases.length; i++) {
+    var w = world(cases[i]);
+    assert.strictEqual(await K.main(envS(), w.deps), 1, 'case ' + i);
+    assert.strictEqual(n(w, 'deleteWebhook') + n(w, 'setupWebhook'), 0, 'case ' + i);
+    assert.strictEqual(mig(w), null, 'case ' + i);
+    noKeyApis(w); noLeak(w);
+  }
+});
+
+test('#729 削除直前の再照会で件数/対象が変わったら削除しない', async function () {
+  var a = world({ webhooks: [OLD], queryOverride: function (q, ww) { if (q === 2) ww.webhooks = [OLD, OTHER]; } });
+  assert.strictEqual(await K.main(envS(), a.deps), 1);
+  var b = world({ webhooks: [OLD], queryOverride: function (q, ww) { if (q === 2) ww.webhooks = [OTHER]; } });
+  assert.strictEqual(await K.main(envS(), b.deps), 1);
+  var c = world({ webhooks: [OLD], queryOverride: function (q) { return q === 2 ? { http: 500, body: { statusCode: 190 } } : undefined; } });
+  assert.strictEqual(await K.main(envS(), c.deps), 1);
+  [a, b, c].forEach(function (w) { assert.strictEqual(n(w, 'deleteWebhook'), 0); assert.strictEqual(mig(w), null); noLeak(w); });
+});
+
+test('#729 進行記録あり/取得・保存失敗では変更APIを呼ばない', async function () {
+  var w = world({ webhooks: [OLD] });
+  w.store.set('WEBHOOK_MIG', JSON.stringify({ phase: 'DONE', fp: sha12(OLD), atSec: NOW - 10 }));
+  assert.strictEqual(await K.main(envS(), w.deps), 1);
+  assert.strictEqual(n(w, 'deleteWebhook'), 0);
+  var cases = [{ relayDown: true }, { relayFailOps: ['migGet'] }, { relayFailOps: ['migBeginDelete'] }];
+  for (var i = 0; i < cases.length; i++) {
+    cases[i].webhooks = [OLD];
+    var x = world(cases[i]);
+    assert.strictEqual(await K.main(envS(), x.deps), 1, 'case ' + i);
+    assert.strictEqual(n(x, 'deleteWebhook'), 0, 'case ' + i);
+    noLeak(x);
+  }
+});
+
+test('#729 受理後の残存/別URL出現/API失敗/通信断/再照会不明/記録失敗は成功にせず再送しない', async function () {
+  var cases = [
+    { deleteMode: 'noop' }, { deleteMode: 'other' }, { deleteMode: 'fail' }, { deleteMode: 'throw' },
+    { queryOverride: function (q) { return q === 3 ? { http: 200, body: { statusCode: 100 } } : undefined; } },
+    { queryOverride: function (q) { return q === 3 ? 'throw' : undefined; } },
+    { relayFailOps: ['migMarkRemoved'] }
+  ];
+  for (var i = 0; i < cases.length; i++) {
+    cases[i].webhooks = [OLD];
+    var w = world(cases[i]);
+    assert.strictEqual(await K.main(envS(), w.deps), 1, 'case ' + i);
+    assert.strictEqual(n(w, 'deleteWebhook'), 1, 'case ' + i);
+    assert.strictEqual(n(w, 'setupWebhook'), 0, 'case ' + i);
+    assert.notStrictEqual(mig(w) && mig(w).phase, 'REMOVED', 'case ' + i);
+    var again = world({ webhooks: w.webhooks }, w); again.calls.length = 0; again.opts = {};
+    assert.strictEqual(await K.main(envS(), again.deps), 1, 'case ' + i);
+    assert.strictEqual(await K.main(env('setup-current'), again.deps), 1, 'case ' + i);
+    assert.strictEqual(n(again, 'deleteWebhook') + n(again, 'setupWebhook'), 0, 'case ' + i);
+    noKeyApis(w); noLeak(w); noLeak(again);
+  }
+});
+
+test('#729 秘密未設定・Re-runでは照会APIも呼ばず、削除なしのsetup-currentも登録しない', async function () {
+  var w = world({ webhooks: [OLD] });
+  assert.strictEqual(await K.main(envS({ GITHUB_RUN_ATTEMPT: '2' }), w.deps), 1);
+  assert.strictEqual(await K.main(envS({ VERIFY_RELAY_ADMIN_TOKEN: '' }), w.deps), 1);
+  assert.strictEqual(await K.main(envS({ CONFIRM: 'REMOVE-OLD-WEBHOOK' }), w.deps), 1);
+  assert.strictEqual(w.calls.length + w.relayOps.length, 0);
+  assert.strictEqual(await K.main(env('setup-current'), w.deps), 1); // REMOVED記録なし
+  assert.strictEqual(n(w, 'setupWebhook'), 0);
+  noLeak(w);
+});

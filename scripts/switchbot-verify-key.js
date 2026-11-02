@@ -16,7 +16,9 @@ var CONFIRM = {
   'webhook-remove': 'REMOVE-WEBHOOK',
   'webhook-query': 'QUERY-WEBHOOK',
   'remove-old': 'REMOVE-OLD-WEBHOOK',
-  'setup-current': 'SETUP-CURRENT-WEBHOOK'
+  'setup-current': 'SETUP-CURRENT-WEBHOOK',
+  // Issue #729: 初回接続・他用途Webhookなしを管理者が明示確認した場合だけの例外フロー（現行remove-oldとは別）
+  'replace-single-webhook-remove': 'I-CONFIRM-SINGLE-WEBHOOK-IS-MINE'
 };
 var REQUIRED = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'SWITCHBOT_DEVICE_ID',
   'VERIFY_RELAY_URL', 'VERIFY_RELAY_ADMIN_TOKEN', 'VERIFY_WEBHOOK_TOKEN'];
@@ -26,7 +28,7 @@ var QUERY_REQUIRED = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'VERIFY_RELAY_URL',
 // Webhook置換(Issue #727)。Keypad ID は不要。進行記録はリレーに保持するため管理トークンが必要。
 var REPLACE_REQUIRED = QUERY_REQUIRED.concat(['VERIFY_RELAY_ADMIN_TOKEN']);
 var REMOVE_OLD_REQUIRED = REPLACE_REQUIRED.concat(['VERIFY_OLD_WEBHOOK_URL', 'VERIFY_OLD_WEBHOOK_EVIDENCE']);
-var MUTATING_REPLACE = ['remove-old', 'setup-current'];
+var MUTATING_REPLACE = ['remove-old', 'setup-current', 'replace-single-webhook-remove'];
 var EVIDENCE_MAX_AGE_SEC = 24 * 60 * 60; // 人手確認の証跡・削除成功の証跡の有効期間
 
 function hmac(secret, message) {
@@ -62,7 +64,7 @@ function validateInputs(env) {
   // webhook-query は照会専用。Keypad ID・リレー管理トークンは不要（最小限の秘密だけを要求）
   var req = REQUIRED;
   if (action === 'webhook-query') req = QUERY_REQUIRED;
-  if (action === 'setup-current') req = REPLACE_REQUIRED;
+  if (action === 'setup-current' || action === 'replace-single-webhook-remove') req = REPLACE_REQUIRED;
   if (action === 'remove-old') req = REMOVE_OLD_REQUIRED;
   req.forEach(function (k) { if (!env[k]) errs.push('SECRET_MISSING_' + k); });
   // 変更API(置換)は初回のrunだけ。「Re-run jobs」(run_attempt>1)では送信しない（未設定も不許可）
@@ -456,6 +458,56 @@ async function removeOld(env, deps, c, log) {
   return 0;
 }
 
+/**
+ * 例外フロー（Issue #729）: 管理者が「初回接続・他用途Webhookなし・既存1件は自分のもの」と確認済みの場合だけ、
+ * 実行環境内で得た既存1件を削除する（旧URLのSecret/証跡は不要）。現行 remove-old は変更しない。
+ * 削除のみ。setupWebhookは呼ばない。登録は別操作 setup-current（REMOVED記録が必須）。
+ */
+async function replaceSingleWebhookRemove(env, deps, c, log) {
+  log('replace-single-webhook-remove: 管理者確認済みの既存1件の削除のみ（deleteWebhookは最大1回。setupWebhookは呼ばない）');
+  var m = await relayCall(c, { op: 'migGet' });
+  if (!m.ok) { log('ABORT: 進行記録を確認できない ' + m.error + '（変更APIは呼ばない）'); return 1; }
+  if (m.mig) { log('ABORT: 置換の進行記録あり phase=' + m.mig.phase + '。元runの再送はしない（照会と人手確認のみ）'); return 1; }
+
+  var expected = webhookUrl(env);
+  async function single() {
+    var q = await queryUrls(c);
+    if (!q.ok) return { ok: false, error: 'QUERY_' + q.reason };
+    if (q.urls.length !== 1) return { ok: false, error: q.urls.length === 0 ? 'COUNT_ZERO' : 'COUNT_MULTIPLE' };
+    if (q.urls[0] === expected) return { ok: false, error: 'TARGET_IS_CURRENT_URL' };
+    return { ok: true, url: q.urls[0] };
+  }
+  var t1 = await single();
+  if (!t1.ok) { log('ABORT: 対象を確認できない ' + t1.error + '（変更APIは呼ばない）'); return 1; }
+  var t2 = await single(); // 削除直前の再照会（厳密に1件かつ同一であること）
+  if (!t2.ok) { log('ABORT: 削除直前の再照会で対象が変わった/確認できない ' + t2.error + '（変更APIは呼ばない）'); return 1; }
+  if (t2.url !== t1.url) { log('ABORT: 削除直前の再照会で対象が変わった（変更APIは呼ばない）'); return 1; }
+
+  var b = await relayCall(c, { op: 'migBeginDelete', fp: sha12(t2.url) });
+  if (!b.ok) { log('ABORT: 送信済み記録を保存できない ' + b.error + '（変更APIは呼ばない）'); return 1; }
+
+  var r;
+  try {
+    r = await c.sb('post', '/v1.1/webhook/deleteWebhook', { action: 'deleteWebhook', url: t2.url });
+  } catch (e) {
+    log('UNKNOWN: deleteWebhook の送信結果が不明。再送せず停止（照会と人手確認のみ）');
+    return 1;
+  }
+  if (Core.classifyApiResponse(r.http, r.parsed).state === Core.STATE.FAILED) {
+    log('FAILED: deleteWebhook がAPIで失敗 http=' + r.http + '。再送・自動継続せず停止（照会と人手確認のみ）');
+    return 1;
+  }
+  log('deleteWebhook: 受理応答 http=' + r.http + '（受理だけでは削除成功としない。再照会で確認）');
+
+  var after = await queryUrls(c);
+  if (!after.ok) { log('UNKNOWN: 削除後の再照会が不明 ' + after.reason + '。再送せず停止'); return 1; }
+  if (after.urls.length !== 0) { log('UNKNOWN: 削除後も登録が残存/出現 件数=' + after.urls.length + '。再送せず停止'); return 1; }
+  var done = await relayCall(c, { op: 'migMarkRemoved' });
+  if (!done.ok) { log('UNKNOWN: 削除は0件確認済みだが成功記録を保存できない ' + done.error + '。停止（setup-currentは進めない）'); return 1; }
+  log('replace-single-webhook-remove: 既存1件の削除を確認（再照会 件数=0）。次は別操作 setup-current（本操作では登録しない）');
+  return 0;
+}
+
 async function setupCurrent(env, deps, c, log) {
   log('setup-current: 現在URLの登録のみ（setupWebhookは最大1回。deleteWebhookは呼ばない）');
   var m = await relayCall(c, { op: 'migGet' });
@@ -512,6 +564,7 @@ async function main(env, deps) {
       case 'webhook-remove': return await webhookRemove(env, c, log);
       case 'webhook-query': return await webhookQuery(env, c, log);
       case 'remove-old': return await removeOld(env, deps, c, log);
+      case 'replace-single-webhook-remove': return await replaceSingleWebhookRemove(env, deps, c, log);
       case 'setup-current': return await setupCurrent(env, deps, c, log);
       case 'create-key': return await createKey(env, deps, c, log);
       case 'delete-key': return await deleteKey(env, deps, c, log);
