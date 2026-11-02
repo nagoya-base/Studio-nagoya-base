@@ -132,6 +132,17 @@ test('phase不一致・記録なし・不正形式 → 状態変更なし（照�
     { phase: 'DONE', fp: FP, atSec: NOW },
     { phase: 'delete_sent', fp: FP, atSec: NOW },
     { phase: 123 },
+    { phase: 'DELETE_SENT' },
+    { phase: 'DELETE_SENT', atSec: NOW },
+    { phase: 'DELETE_SENT', fp: FP },
+    { phase: 'DELETE_SENT', fp: 'ABCDEF012345', atSec: NOW },
+    { phase: 'DELETE_SENT', fp: 'abcdef01234', atSec: NOW },
+    { phase: 'DELETE_SENT', fp: 'abcdef0123456', atSec: NOW },
+    { phase: 'DELETE_SENT', fp: 123456789012, atSec: NOW },
+    { phase: 'DELETE_SENT', fp: FP, atSec: String(NOW) },
+    { phase: 'DELETE_SENT', fp: FP, atSec: null },
+    { phase: 'DELETE_SENT', fp: FP, atSec: {} },
+    [],
     {},
     '{broken'
   ];

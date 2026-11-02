@@ -522,10 +522,17 @@ async function recoverDeleteSent(env, deps, c, log) {
   log('recover-delete-sent: 読み取り照合のみ（変更APIは呼ばない。DELETE_SENT→REMOVED以外の遷移はしない）');
   var m = await relayCall(c, { op: 'migGet' });
   if (!m.ok) { log('ABORT: 進行記録を確認できない ' + m.error + '（状態は変更しない）'); return 1; }
-  var phase = m.mig && typeof m.mig === 'object' && typeof m.mig.phase === 'string' ? m.mig.phase : null;
+  var rec = m.mig && typeof m.mig === 'object' && !Array.isArray(m.mig) ? m.mig : null;
+  var phase = rec && typeof rec.phase === 'string' ? rec.phase : null;
   if (phase !== 'DELETE_SENT') {
     var known = ['REMOVED', 'SETUP_SENT', 'DONE'].indexOf(phase) !== -1;
     log('ABORT: phase が DELETE_SENT ではない phase=' + (m.mig === null ? 'NONE' : known ? phase : 'INVALID') + '（状態は変更しない）');
+    return 1;
+  }
+  // DELETE_SENT レコードの構造検証（fp=12桁hex・atSec=有限な数値）。不正なら照会も遷移もしない。値は出さない
+  if (typeof rec.fp !== 'string' || !/^[0-9a-f]{12}$/.test(rec.fp) ||
+      typeof rec.atSec !== 'number' || !isFinite(rec.atSec)) {
+    log('ABORT: 進行記録の形式が不正（DELETE_SENT の fp/atSec）。照会せず状態は変更しない');
     return 1;
   }
   var q = await queryUrls(c);
