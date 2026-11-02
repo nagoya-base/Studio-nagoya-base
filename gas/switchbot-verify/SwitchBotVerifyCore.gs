@@ -258,9 +258,9 @@ var SwitchBotVerifyCore = (function () {
         if (st) return { ok: false, error: 'ALREADY_CLAIMED' };
         var errs = validateCreateKeyParams(
           { name: body.name, password: body.password, startTime: body.startTime, endTime: body.endTime }, nowSec);
-        if (errs.length) return { ok: false, error: 'INVALID_PARAMS' };
+        if (errs.length || typeof body.deviceId !== 'string' || !body.deviceId) return { ok: false, error: 'INVALID_PARAMS' };
         store.set('TEST_STATE', JSON.stringify({
-          name: body.name, password: body.password, startTime: String(body.startTime),
+          deviceId: body.deviceId, name: body.name, password: body.password, startTime: String(body.startTime),
           endTime: String(body.endTime), createCommandId: '', passcodeId: '', claimedAtSec: nowSec
         }));
         return { ok: true };
@@ -278,7 +278,7 @@ var SwitchBotVerifyCore = (function () {
         return { ok: true };
       case 'getState':
         if (!st) return { ok: true, state: null };
-        var out = { name: st.name, startTime: st.startTime, endTime: st.endTime,
+        var out = { deviceId: st.deviceId, name: st.name, startTime: st.startTime, endTime: st.endTime,
           createCommandId: st.createCommandId, passcodeId: st.passcodeId };
         if (body.reveal === true) out.password = st.password;
         return { ok: true, state: out };

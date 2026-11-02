@@ -63,6 +63,7 @@ function world(opts) {
       if (opts.netError) throw new Error('network');
       w.n += 1;
       var cid = 'cmd-' + w.n;
+      var respond = function () { return opts.respond502 && body.command === 'createKey' ? reply(502, null) : reply(200, { statusCode: 100, body: { commandId: cid } }); };
       if (body.command === 'createKey') {
         if (!opts.noKeyInList) {
           w.keys.push({ id: 701, name: body.parameter.name });
@@ -76,7 +77,7 @@ function world(opts) {
         if (!opts.keepKey) w.keys = w.keys.filter(function (k) { return String(k.id) !== String(body.parameter.id); });
         if (opts.delWebhook !== 'none') relayWebhook(cid, 'deleteKey', 'success');
       }
-      return reply(200, { statusCode: 100, body: { commandId: cid } });
+      return respond();
     }
   };
   return w;
@@ -109,7 +110,7 @@ test('入力検証: 確認文字列・Secrets未設定・有効期間範囲を�
 test('リレー: 認証・claim重複拒否・パスコード非返却・clear', function () {
   var s = memStore();
   var now = 1800000000;
-  var p = { name: 'SNB-API-TEST-1', password: '12345678', startTime: now + 300, endTime: now + 1200 };
+  var p = { deviceId: DEV, name: 'SNB-API-TEST-1', password: '12345678', startTime: now + 300, endTime: now + 1200 };
   assert.strictEqual(Core.relayHandle(s, null, { op: 'claim', t: 'bad' }, TOK, now).error, 'FORBIDDEN');
   assert.strictEqual(Core.relayHandle(s, 'bad', { eventType: 'changeReport' }, TOK, now).error, 'FORBIDDEN');
   assert.strictEqual(Core.relayHandle(s, null, Object.assign({ op: 'claim', t: TOK.admin }, p), TOK, now).ok, true);
@@ -240,4 +241,50 @@ test('Webhook登録: 既存設定があれば上書きしない。撤去は今�
   assert.strictEqual(await K.main(env('webhook-remove'), w.deps), 0);
   assert.strictEqual(w.webhooks.length, 0);
   assertNoLeak(w);
+});
+
+test('受理有無不明のcreateKey応答(502/JSONなし)では状態を消さず、再実行しても追加発行しない', async function () {
+  var w = world({ respond502: true });
+  assert.strictEqual(await K.main(env('create-key'), w.deps), 1);
+  assert.strictEqual(w.keys.length, 1); // 実際には作成されている
+  assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+  assert.strictEqual(await K.main(env('create-key'), w.deps), 1);
+  assert.strictEqual(count(w, 'createKey'), 1);
+  assert.strictEqual(w.keys.length, 1);
+  // 状態が残っているので delete-key で後片付けできる（keyListから今回の検証名を特定）
+  assert.strictEqual(await K.main(env('delete-key'), w.deps), 0); // 保持した状態から後片付けできる
+  assert.strictEqual(w.keys.length, 0);
+});
+
+test('削除: 発行元deviceId不一致・保存ID不一致・検証名不一致ではdeleteKeyを送らない', async function () {
+  async function setup() {
+    var w = world();
+    await K.main(env('create-key'), w.deps);
+    return w;
+  }
+  function patch(w, f) {
+    var st = JSON.parse(w.store.get('TEST_STATE'));
+    f(st);
+    w.store.set('TEST_STATE', JSON.stringify(st));
+  }
+  var a = await setup();
+  patch(a, function (st) { st.deviceId = 'OTHERDEVICE0000'; });
+  assert.strictEqual(await K.main(env('delete-key'), a.deps), 1);
+  assert.strictEqual(count(a, 'deleteKey'), 0);
+
+  var b = await setup();
+  patch(b, function (st) { st.passcodeId = '999'; });
+  assert.strictEqual(await K.main(env('delete-key'), b.deps), 1);
+  assert.strictEqual(count(b, 'deleteKey'), 0);
+
+  var c = await setup();
+  patch(c, function (st) { st.name = 'SNB-API-TEST-other'; });
+  assert.strictEqual(await K.main(env('delete-key'), c.deps), 1);
+  assert.strictEqual(count(c, 'deleteKey'), 0);
+  assert.strictEqual(c.keys.length, 1);
+
+  var d = await setup();
+  patch(d, function (st) { delete st.deviceId; }); // 旧形式の状態
+  assert.strictEqual(await K.main(env('delete-key'), d.deps), 1);
+  assert.strictEqual(count(d, 'deleteKey'), 0);
 });

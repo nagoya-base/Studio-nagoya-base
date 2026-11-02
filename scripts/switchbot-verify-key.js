@@ -26,6 +26,17 @@ function jst(sec) {
   return new Date(sec * 1000).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false });
 }
 
+/**
+ * createKey が「明確に拒否された（未作成）」と言えるか。
+ * 4xx、または statusCode 151/152/160/161（デバイス不明・コマンド不正等）のみ。
+ * 5xx・応答なし・JSON解析不能・その他は受理有無が不明なので拒否扱いにしない。
+ */
+function isDefiniteRejection(r) {
+  var sc = r && r.parsed && typeof r.parsed.statusCode === 'number' ? r.parsed.statusCode : null;
+  if (r.http >= 400 && r.http < 500) return true;
+  return r.http === 200 && [151, 152, 160, 161].indexOf(sc) !== -1;
+}
+
 function webhookUrl(env) {
   return env.VERIFY_RELAY_URL + (env.VERIFY_RELAY_URL.indexOf('?') === -1 ? '?' : '&') +
     't=' + encodeURIComponent(env.VERIFY_WEBHOOK_TOKEN);
@@ -111,7 +122,7 @@ async function createKey(env, deps, c, log) {
   var errs = Core.validateCreateKeyParams(params, nowSec);
   if (errs.length) { log('ABORT: INVALID_PARAMS ' + errs.join(',')); return 1; }
 
-  var claim = await c.relay(Object.assign({ op: 'claim' }, params));
+  var claim = await c.relay(Object.assign({ op: 'claim', deviceId: env.SWITCHBOT_DEVICE_ID }, params));
   if (!claim.ok) { log('ABORT: claim 失敗 ' + claim.error + '（未削除の検証キーがある場合は delete-key を先に実行）'); return 1; }
 
   var r;
@@ -123,6 +134,10 @@ async function createKey(env, deps, c, log) {
   }
   var cls = Core.classifyApiResponse(r.http, r.parsed);
   if (cls.state === Core.STATE.FAILED) {
+    if (!isDefiniteRejection(r)) {
+      log('UNKNOWN: createKey の受理有無が不明 http=' + r.http + '。再送せず停止、状態は保持（keyList/アプリで今回の検証名を確認し delete-key で後片付け）');
+      return 1;
+    }
     await c.relay({ op: 'clear' });
     log('FAILED: createKey がAPIで拒否 http=' + r.http + ' statusCode=' + cls.statusCode);
     return 1;
@@ -156,12 +171,19 @@ async function deleteKey(env, deps, c, log) {
   var st = g.ok ? g.state : null;
   if (!st) { log('ABORT: 削除対象の検証状態なし'); return 1; }
 
-  var id = st.passcodeId;
-  if (!id) {
-    var rr = Core.resolvePasscodeIdByName(dev.list, env.SWITCHBOT_DEVICE_ID, st.name);
-    if (rr.id === null) { log('UNKNOWN: passcode ID 解決不可 ' + rr.error + '（アプリで今回のキーだけを特定して削除）'); return 1; }
-    id = rr.id;
+  // 発行元 deviceId と現在の対象が一致しなければ操作前に中断（Secret差し替え対策）
+  if (!st.deviceId || st.deviceId !== env.SWITCHBOT_DEVICE_ID) {
+    log('ABORT: 保存された発行先Keypadと現在の対象が一致しない。削除しない（アプリで今回のキーだけを特定して対応）');
+    return 1;
   }
+  // 保存済み ID があっても、現在の対象 keyList で今回の検証名が一意かつ ID 一致であることを確認
+  var rr = Core.resolvePasscodeIdByName(dev.list, env.SWITCHBOT_DEVICE_ID, st.name);
+  if (rr.id === null) { log('UNKNOWN: 今回のキーを keyList で一意に特定できない ' + rr.error + '（削除しない。アプリで今回のキーだけを特定）'); return 1; }
+  if (st.passcodeId && String(rr.id) !== String(st.passcodeId)) {
+    log('ABORT: 保存したpasscode IDと keyList の今回のキーが不一致。削除しない');
+    return 1;
+  }
+  var id = rr.id;
   var r;
   try {
     r = await c.sb('post', '/v1.1/devices/' + env.SWITCHBOT_DEVICE_ID + '/commands', Core.buildDeleteKeyBody(id));
