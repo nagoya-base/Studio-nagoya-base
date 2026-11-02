@@ -14,6 +14,7 @@ on:
       - 'scripts/deploy-booking-gas-target.sh'
       - 'admin/booking/**'
       - 'gas/survey/**'
+      - 'gas/switchbot-verify/**'
       - 'survey/**'
       - 'scripts/survey-*.js'
       - 'scripts/prepare-survey-gas-project.js'
