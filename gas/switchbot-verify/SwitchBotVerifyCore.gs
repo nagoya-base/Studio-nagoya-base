@@ -118,6 +118,24 @@ var SwitchBotVerifyCore = (function () {
     return { device: hits[0], error: null };
   }
 
+  /**
+   * 保存済みの完全 deviceId で対象 Keypad を一意確認する（Issue #720・登録後の読み取り専用確認）。
+   * deviceList 全体で完全 ID 一致がちょうど 1 件、Keypad 種別、末尾4桁一致のすべてを満たす場合のみ ok。
+   * 末尾4桁だけの一致では成功にしない。エラーに ID 値は含めない。
+   */
+  function verifyKeypadByFullId(deviceList, fullId, last4) {
+    if (!Array.isArray(deviceList)) return { ok: false, error: 'DEVICE_LIST_INVALID', count: 0 };
+    if (typeof fullId !== 'string' || !fullId) return { ok: false, error: 'DEVICE_ID_UNSET', count: 0 };
+    var key = String(last4 === undefined || last4 === null ? '' : last4).trim();
+    if (key.length !== 4) return { ok: false, error: 'INVALID_LAST4', count: 0 };
+    var hits = deviceList.filter(function (d) { return d && d.deviceId === fullId; });
+    if (hits.length === 0) return { ok: false, error: 'NOT_FOUND', count: 0 };
+    if (hits.length > 1) return { ok: false, error: 'AMBIGUOUS', count: hits.length };
+    if (KEYPAD_DEVICE_TYPES.indexOf(hits[0].deviceType) === -1) return { ok: false, error: 'NOT_KEYPAD', count: 1 };
+    if (fullId.slice(-4).toLowerCase() !== key.toLowerCase()) return { ok: false, error: 'LAST4_MISMATCH', count: 1 };
+    return { ok: true, error: null, count: 1, deviceType: hits[0].deviceType };
+  }
+
   function maskId(id) {
     var s = String(id || '');
     if (s.length <= 4) return '****';
@@ -326,6 +344,7 @@ var SwitchBotVerifyCore = (function () {
     generateTestPassword: generateTestPassword,
     pickKeypads: pickKeypads,
     findKeypadByLast4: findKeypadByLast4,
+    verifyKeypadByFullId: verifyKeypadByFullId,
     maskId: maskId,
     classifyApiResponse: classifyApiResponse,
     extractIdsFromResponse: extractIdsFromResponse,
