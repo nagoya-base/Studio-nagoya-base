@@ -106,6 +106,16 @@ GAS 経路（`verifySelectKeypad(last4)`）で Script Properties に保存して
 - **証跡の記録**: 公開してよいのは、各段階の固定状態・件数・実施時刻・run URL・秘密を含まない確認記録のみ。`MATCH`は設定一致のみの証明で、Webhook到達性やcreateKey/deleteKeyの反映成功は別途確認する。実装・CIの成功と、実際の置換・最終照会の確認は区別して記録する。
 - **GAS更新**: リレーに進行記録のop（`migGet`等）を追加している。実行前に #723 の自動デプロイでリレーを更新済みにすること（未反映だと`remove-old`は進行記録を確認できず、変更APIを呼ばず停止する）。
 
+### 例外: 初回接続・既存1件の簡略置換（`replace-single-webhook-remove` → `setup-current`。Issue #729）
+旧完全URLを復元できないが、管理者が次を**明示確認できる場合に限る**例外運用。確認できなければ使わず、現行の厳格な `remove-old` を使う（旧完全URLを把握できる場合も `remove-old` を優先）。
+
+> このSwitchBotアカウントでWebhookを他用途に使ったことはなく、現在の既存1件は今回の検証作業で作成されたものとして扱ってよい。
+
+- 専用action `replace-single-webhook-remove`、確認文字列 `I-CONFIRM-SINGLE-WEBHOOK-IS-MINE`（入力するだけで上記確認の宣言になる）。`VERIFY_OLD_WEBHOOK_URL` / `VERIFY_OLD_WEBHOOK_EVIDENCE` は不要。`workflow_dispatch` 初回runのみ（Re-runは変更APIを送らない）。
+- 流れ: 進行記録なしを確認 → `queryWebhook`で**厳密に1件**（0件/複数件/UNKNOWN/現在URLと一致は停止）→ 削除直前に再照会（同じ1件）→ 進行記録`DELETE_SENT`を保存 → 実行環境内で得た**その1件のみ**を`deleteWebhook`（**最大1回**・自動リトライなし）→ `queryWebhook`で**0件**確認して成功。`setupWebhook`は呼ばない。
+- 登録は既存の `setup-current`（`REMOVED`記録が前提。0件確認後に`setupWebhook`1回→厳密1件`MATCH`確認）。`MISMATCH`/`UNKNOWN`/通信断では再送・自動ロールバックしない。
+- 出力は固定状態・件数・HTTP/APIコードのみ（既存/新URL・トークン・生レスポンスは出さない）。現行 `remove-old` / `setup-current` の挙動は変更していない。
+
 JST = UTC+9。ログの有効期間は JST（HH:mm:ss）で表示される。UNKNOWN・削除未確認が残る場合は、アプリの keyList で今回の検証名（`SNB-API-TEST-<unix秒>`）のキーだけを特定して削除し、「API検証は未達」と分けて Issue に記録する。秘密が漏れた場合は Token/Secret を再発行し、該当テストキーを削除する。
 
 ### （参考・旧方針）独立GASでの手順
