@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'webhook-query / webhook-setup / create-key / delete-key / webhook-remove'
+        description: 'webhook-query / webhook-setup / create-key / delete-key / webhook-remove / remove-old / setup-current'
         required: true
         type: choice
         options:
@@ -15,8 +15,10 @@ on:
           - create-key
           - delete-key
           - webhook-remove
+          - remove-old
+          - setup-current
       confirm:
-        description: '確認文字列（QUERY-WEBHOOK / SETUP-WEBHOOK / CREATE-ONE-TEST-KEY / DELETE-TEST-KEY / REMOVE-WEBHOOK）'
+        description: '確認文字列（QUERY-WEBHOOK / SETUP-WEBHOOK / CREATE-ONE-TEST-KEY / DELETE-TEST-KEY / REMOVE-WEBHOOK / REMOVE-OLD-WEBHOOK / SETUP-CURRENT-WEBHOOK）'
         required: true
         type: string
       start_offset_min:
@@ -61,4 +63,7 @@ jobs:
           VERIFY_RELAY_URL: ${{ secrets.VERIFY_RELAY_URL }}
           VERIFY_RELAY_ADMIN_TOKEN: ${{ secrets.VERIFY_RELAY_ADMIN_TOKEN }}
           VERIFY_WEBHOOK_TOKEN: ${{ secrets.VERIFY_WEBHOOK_TOKEN }}
+          VERIFY_OLD_WEBHOOK_URL: ${{ secrets.VERIFY_OLD_WEBHOOK_URL }}
+          VERIFY_OLD_WEBHOOK_EVIDENCE: ${{ secrets.VERIFY_OLD_WEBHOOK_EVIDENCE }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: node scripts/switchbot-verify-key.js

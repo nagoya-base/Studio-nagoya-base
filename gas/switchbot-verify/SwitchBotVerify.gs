@@ -263,7 +263,7 @@ function verifyAbnormalCases() {
 
 /** 検証後のローカル秘密情報の掃除（テストコード・状態）。Token/Secret は残す。 */
 function verifyCleanupLocal() {
-  var keep = { SWITCHBOT_TOKEN: 1, SWITCHBOT_SECRET: 1, SWITCHBOT_DEVICE_ID: 1, WEBHOOK_SHARED_TOKEN: 1, RELAY_ADMIN_TOKEN: 1 };
+  var keep = { SWITCHBOT_TOKEN: 1, SWITCHBOT_SECRET: 1, SWITCHBOT_DEVICE_ID: 1, WEBHOOK_SHARED_TOKEN: 1, RELAY_ADMIN_TOKEN: 1, WEBHOOK_MIG: 1 };
   var all = SBV_PROP.getKeys();
   all.forEach(function (k) { if (!keep[k]) SBV_PROP.deleteProperty(k); });
   Logger.log('cleanup done: removed ' + all.filter(function (k) { return !keep[k]; }).length + ' keys');

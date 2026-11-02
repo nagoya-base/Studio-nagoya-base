@@ -79,6 +79,33 @@ GAS 経路（`verifySelectKeypad(last4)`）で Script Properties に保存して
 - **照会専用**。診断結果から setup / update / delete 等の変更APIへは進まない。**MISMATCH の原因が特定できるまで既存Webhookを削除・上書きしない**。原因特定後の設定変更は本診断の対象外で、別途人が判断する。
 - 診断が一致を示しても、Webhook の到達性・受信先の稼働・キー反映成功の証明にはならない。
 
+### 旧Webhookの置換（`remove-old` → `setup-current`。Issue #727）
+`webhook-query` が `MISMATCH 件数=1`（`BASE_URL_MISMATCH` 等）で、その1件が**今回の検証用Webhookだと人手で確認できた場合に限り**、旧Webhookを削除して現在のURLへ置き換える。ベースURL不一致・件数1・確認文字列の入力だけでは対象確認済みにならず、用途・管理主体を確認できなければ削除しない。`webhook-remove`（現在の期待URLの撤去）は旧URLの削除には使わない。
+
+#### 人手による対象確認（実行前に必須。URLは公開しない）
+1. 管理者が非公開環境で、管理下の検証用GASデプロイ情報（`/exec` URL）・過去の設定記録と照合し、旧Webhook URL（共有トークン付き完全URL）を特定する。Issue・PR・チャットにURLを書かない。
+2. 旧URLを Environment secret `VERIFY_OLD_WEBHOOK_URL` に登録する。実行時、`queryWebhook` の既存1件と**完全一致**した場合だけ対象とみなす（推測しない）。
+3. 結び付けの証跡（秘密を含まない）を作り、Environment secret `VERIFY_OLD_WEBHOOK_EVIDENCE` に登録する。形式は `<旧URLのSHA-256先頭12桁>@<確認時刻 UTC>`。
+   ```bash
+   printf %s "$OLD_URL" | sha256sum | cut -c1-12   # 例: 0123456789ab → 0123456789ab@2026-11-02T12:00:00Z
+   ```
+   実行時、旧URLの値と一致し、確認から24時間以内（未来でない）の証跡だけを有効とする。欠落・不一致・古い・形式不正は変更APIを呼ばず停止する。
+4. 実施後、両Secretを削除する（旧URLは共有トークンを含むため残さない）。
+
+#### 実行（いずれも `workflow_dispatch`・初回runのみ。URL・トークンはdispatch入力にしない）
+| 順 | action（確認文字列） | 内容 |
+|----|------|------|
+| 1 | `remove-old`（`REMOVE-OLD-WEBHOOK`） | 証跡検証 → 進行記録なしを確認 → `queryWebhook`（厳密に1件・旧URLと完全一致）→ 削除直前に再照会 → 進行記録`DELETE_SENT`を保存 → `deleteWebhook`を**1回だけ** → `queryWebhook`で**0件**を確認して成功。`setupWebhook`は呼ばない |
+| 2 | `setup-current`（`SETUP-CURRENT-WEBHOOK`） | 進行記録`REMOVED`（24時間以内）を確認 → 登録直前の`queryWebhook`で**0件** → 進行記録`SETUP_SENT`を保存 → `VERIFY_RELAY_URL`+エンコード済み`VERIFY_WEBHOOK_TOKEN`のURLで`setupWebhook`を**1回だけ** → `queryWebhook`で**厳密に1件かつ完全一致（`MATCH`）**を確認して完了。`deleteWebhook`は呼ばない |
+
+- **段階の引き継ぎ**: 進行記録はリレー（GAS）の Script Properties `WEBHOOK_MIG`（`phase`/旧URLのSHA-256先頭12桁/時刻のみ。URL・トークンは保持しない）。遷移は `なし→DELETE_SENT→REMOVED→SETUP_SENT→DONE` の一方向で、巻き戻し・消去の操作は用意しない。`webhook-query`（`MATCH`）の再確認が最終確認。
+- **再実行・同時実行**: 変更APIは送信**前**に進行記録を保存する。別runや「Re-run jobs」（`run_attempt>1`）、完了後の再実行は変更APIを送らず停止する。同一workflowの`concurrency`で競合runは直列化される。
+- **停止の扱い**: 0件/複数件/対象不一致/証跡不備/秘密未設定/HTTP・API失敗/通信断/タイムアウト/応答不正/UNKNOWNはすべて停止（終了コード1）。送信後は再送・自動継続・ロールバック（旧URLへの戻し・再削除）をしない。通信ライブラリの自動リトライは使わず、送信済みか不明な状態もUNKNOWNとして停止する。
+- **復旧**: `webhook-query`による照会と人手確認のみ。`WEBHOOK_MIG` が `DELETE_SENT`/`SETUP_SENT` のまま残った場合、元runの再送では復旧しない。管理者が照会結果を確認し、新たな判断のうえで `WEBHOOK_MIG` を手動で扱う（変更操作の再開には新たな状態照合と明示判断が必要）。
+- **出力**: 固定の状態・件数・HTTP/APIコードのみ。旧/新URL・ベースURL・クエリ・共有トークン・生レスポンス・`message`・認証情報はログ/Step Summary/成果物に出さない（GitHubのマスクに依存しない）。
+- **証跡の記録**: 公開してよいのは、各段階の固定状態・件数・実施時刻・run URL・秘密を含まない確認記録のみ。`MATCH`は設定一致のみの証明で、Webhook到達性やcreateKey/deleteKeyの反映成功は別途確認する。実装・CIの成功と、実際の置換・最終照会の確認は区別して記録する。
+- **GAS更新**: リレーに進行記録のop（`migGet`等）を追加している。実行前に #723 の自動デプロイでリレーを更新済みにすること（未反映だと`remove-old`は進行記録を確認できず、変更APIを呼ばず停止する）。
+
 JST = UTC+9。ログの有効期間は JST（HH:mm:ss）で表示される。UNKNOWN・削除未確認が残る場合は、アプリの keyList で今回の検証名（`SNB-API-TEST-<unix秒>`）のキーだけを特定して削除し、「API検証は未達」と分けて Issue に記録する。秘密が漏れた場合は Token/Secret を再発行し、該当テストキーを削除する。
 
 ### （参考・旧方針）独立GASでの手順
