@@ -174,3 +174,17 @@ test('keyList からの ID 解決: 0件・複数件・対象デバイス無し�
   r = C.resolvePasscodeIdByName(dev([{ id: 1, name: 'n' }]), 'DEV1', '');
   assert.strictEqual(r.error, 'NAME_REQUIRED');
 });
+
+test('末尾4桁でキーパッドを1件に特定する（0件/複数件/不正は null）', function () {
+  var list = [
+    { deviceId: 'AAAA1111', deviceType: 'Keypad' },
+    { deviceId: 'BBBB2222', deviceType: 'Keypad Touch' },
+    { deviceId: 'CCCC1111', deviceType: 'Keypad' },
+    { deviceId: 'DDDD3333', deviceType: 'Bot' }
+  ];
+  assert.strictEqual(C.findKeypadByLast4(list, '2222').device.deviceId, 'BBBB2222');
+  assert.strictEqual(C.findKeypadByLast4(list, '1111').error, 'AMBIGUOUS');
+  assert.strictEqual(C.findKeypadByLast4(list, '3333').error, 'NOT_FOUND'); // Keypad 以外は対象外
+  assert.strictEqual(C.findKeypadByLast4(list, '22').error, 'INVALID_LAST4');
+  assert.strictEqual(C.findKeypadByLast4(null, '2222').error, 'NOT_FOUND');
+});
