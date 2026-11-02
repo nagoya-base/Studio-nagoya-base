@@ -103,6 +103,21 @@ var SwitchBotVerifyCore = (function () {
     });
   }
 
+  /**
+   * 末尾4桁でキーパッドを1件に特定する（Issue #715）。
+   * 0件・複数件・形式不正は device:null（誤登録防止）。
+   */
+  function findKeypadByLast4(deviceList, last4) {
+    var key = String(last4 === undefined || last4 === null ? '' : last4).trim();
+    if (key.length !== 4) return { device: null, error: 'INVALID_LAST4' };
+    var hits = pickKeypads(deviceList).filter(function (d) {
+      return typeof d.deviceId === 'string' && d.deviceId.slice(-4).toLowerCase() === key.toLowerCase();
+    });
+    if (hits.length === 0) return { device: null, error: 'NOT_FOUND' };
+    if (hits.length > 1) return { device: null, error: 'AMBIGUOUS' };
+    return { device: hits[0], error: null };
+  }
+
   function maskId(id) {
     var s = String(id || '');
     if (s.length <= 4) return '****';
@@ -221,6 +236,7 @@ var SwitchBotVerifyCore = (function () {
     buildTestName: buildTestName,
     generateTestPassword: generateTestPassword,
     pickKeypads: pickKeypads,
+    findKeypadByLast4: findKeypadByLast4,
     maskId: maskId,
     classifyApiResponse: classifyApiResponse,
     extractIdsFromResponse: extractIdsFromResponse,

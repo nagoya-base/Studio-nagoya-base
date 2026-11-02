@@ -53,6 +53,37 @@ function verifyListDevices() {
   return { count: keypads.length };
 }
 
+/** 0) 事前チェック: 必要な Script Properties の有無のみ表示（値は出さない）。Issue #715 */
+function verifyCheckSetup() {
+  var names = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'WEBHOOK_SHARED_TOKEN', 'SWITCHBOT_DEVICE_ID'];
+  var status = {};
+  names.forEach(function (n) { status[n] = SBV_PROP.getProperty(n) ? 'SET' : 'MISSING'; });
+  Logger.log('setup ' + JSON.stringify(status) + '（SWITCHBOT_DEVICE_ID は特定前なら MISSING で正常）');
+  return status;
+}
+
+/**
+ * 5) 対象Keypadの特定: アプリで確認した末尾4桁を渡すと、完全な deviceId を
+ * SWITCHBOT_DEVICE_ID に保存する。完全IDはソース・ログに出ない。Issue #715
+ * 例: verifySelectKeypad('AB12')
+ */
+function verifySelectKeypad(last4) {
+  var r = sbvRequest_('get', '/v1.1/devices');
+  var cls = SwitchBotVerifyCore.classifyApiResponse(r.http, r.parsed);
+  if (cls.state === SwitchBotVerifyCore.STATE.FAILED) {
+    sbvLog_('selectKeypad devices FAILED', cls);
+    return cls;
+  }
+  var res = SwitchBotVerifyCore.findKeypadByLast4(r.parsed.body && r.parsed.body.deviceList, last4);
+  if (!res.device) {
+    sbvLog_('selectKeypad aborted', { error: res.error });
+    return { saved: false, error: res.error };
+  }
+  SBV_PROP.setProperty('SWITCHBOT_DEVICE_ID', res.device.deviceId);
+  sbvLog_('selectKeypad saved', { deviceId: res.device.deviceId, deviceType: res.device.deviceType, deviceName: res.device.deviceName });
+  return { saved: true };
+}
+
 /** Webhook 受信先の登録。事前に WEBHOOK_SHARED_TOKEN と Web アプリ URL(/exec) を用意する。 */
 function verifySetupWebhook(execUrl) {
   var shared = SBV_PROP.getProperty('WEBHOOK_SHARED_TOKEN');

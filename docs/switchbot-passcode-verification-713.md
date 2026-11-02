@@ -14,6 +14,15 @@ SwitchBot Open API は公式に personal uses 向け。**予約連携・メー�
    - `WEBHOOK_SHARED_TOKEN`（推測困難なランダム値）
 4. Web アプリとしてデプロイし `/exec` URL を得る。
 
+## 接続確認の手順（Issue #715）
+範囲は「独立GAS作成 → Token/Secret設定 → 接続確認 → 対象Keypad特定」まで。`createKey` / Webhook本登録 / 実機解錠 / `deleteKey` は行わない。自動トリガーは作らない。
+1. 上記「準備」1〜3（`SWITCHBOT_DEVICE_ID` はまだ未設定でよい）。Web アプリのデプロイは不要。
+2. `verifyCheckSetup()` … Token / Secret / 共有トークンが `SET` か確認（値は出ない）。初回は権限承認。
+3. `verifyListDevices()` … 認証成功とKeypad件数1以上、ログのIDが末尾4桁のみであること。
+4. SwitchBotアプリの対象デバイス末尾4桁と照合し、`verifySelectKeypad('<末尾4桁>')` を実行。完全な deviceId が `SWITCHBOT_DEVICE_ID` に保存される（0件/複数件一致は保存せず中断）。
+5. `verifyCheckSetup()` で `SWITCHBOT_DEVICE_ID` が `SET` になったことを確認。
+完全な deviceId・Token・Secret は Issue / PR / チャット / ログに貼らない。結果は「成功/失敗」と末尾4桁のみ Issue #715 に記録する。
+
 ## 手順（エディタから手動実行）
 | # | 関数 | 確認すること |
 |---|------|--------------|
