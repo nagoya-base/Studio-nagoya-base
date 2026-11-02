@@ -276,6 +276,35 @@ function evaluateWebhookQuery(http, parsed, expectedUrl) {
 }
 
 /**
+ * 既存 Webhook URL 1 件の追加診断（照会専用の純粋関数。秘密なしでテスト可能）。
+ * 比較は実行環境内のみ。戻り値は固定の分類名だけで、URL・クエリ・トークン・例外詳細を含めない。
+ *   BASE_URL_MATCH + TOKEN_MATCH / BASE_URL_MATCH + TOKEN_MISMATCH / BASE_URL_MATCH + TOKEN_MISSING
+ *   BASE_URL_MISMATCH / UNKNOWN（安全に判定できない。推測しない）
+ * 正規化方針: URL API で解析し scheme・host(ポート含む。大小文字・既定ポートはURL APIが正規化)・path を厳密比較する。
+ *   path は末尾スラッシュ等を含め完全一致のみ（正規化で同一視しない）。クエリ・フラグメントはベースURL比較に含めない。
+ * ユーザー情報付きURL、期待URL側に t があるなど曖昧な入力は UNKNOWN。空の t は欠落ではなく値不一致として扱う。
+ * これは部分診断であり、完全一致(MATCH/MISMATCH)の判定・終了コードには影響させない。
+ */
+function diagnoseWebhookUrl(existingUrl, relayUrl, token) {
+  var ex;
+  var rl;
+  try {
+    ex = new URL(existingUrl);
+    rl = new URL(relayUrl);
+  } catch (e) {
+    return 'UNKNOWN';
+  }
+  if (typeof token !== 'string' || token === '') return 'UNKNOWN';
+  if (ex.username || ex.password || rl.username || rl.password) return 'UNKNOWN';
+  if (rl.searchParams.has('t')) return 'UNKNOWN';
+  if (ex.protocol !== rl.protocol || ex.host !== rl.host || ex.pathname !== rl.pathname) return 'BASE_URL_MISMATCH';
+  var ts = ex.searchParams.getAll('t');
+  if (ts.length === 0) return 'BASE_URL_MATCH + TOKEN_MISSING';
+  if (ts.length > 1) return 'UNKNOWN';
+  return ts[0] === token ? 'BASE_URL_MATCH + TOKEN_MATCH' : 'BASE_URL_MATCH + TOKEN_MISMATCH';
+}
+
+/**
  * 既存 Webhook 設定の照会専用入口。queryWebhook のみ呼び、setup/update/delete は呼ばない。
  * 比較は実行環境内で行い、公開するのは 未登録(NONE)/一致(MATCH)/不一致(MISMATCH)/不明(UNKNOWN)・件数・HTTP/API状態のみ。
  * MATCH でも再登録・削除しない。MISMATCH でも上書き・削除しない。MATCH は到達性・キー反映成功を意味しない。
@@ -292,7 +321,13 @@ async function webhookQuery(env, c, log) {
   log('webhook-query: ' + r.state + ' 件数=' + (r.count === null ? '不明' : r.count) +
     ' http=' + r.http + ' statusCode=' + (r.statusCode === null ? '不明' : r.statusCode) +
     (r.reason ? ' 理由=' + r.reason : ''));
-  log('照会のみ。Webhook設定は変更していない。一致でも到達性・キー反映成功は意味しない');
+  // 追加診断: 既存Webhookが厳密に1件で、判定が成立している場合だけ。それ以外は推測せず UNKNOWN
+  var diag = 'UNKNOWN';
+  if (r.count === 1 && (r.state === 'MATCH' || r.state === 'MISMATCH')) {
+    diag = diagnoseWebhookUrl(q.parsed.body.urls[0], env.VERIFY_RELAY_URL, env.VERIFY_WEBHOOK_TOKEN);
+  }
+  log('webhook-query 追加診断: ' + diag + (r.count === 1 ? '' : '（診断対象は既存1件のみ）'));
+  log('照会のみ。Webhook設定は変更していない。一致でも到達性・キー反映成功は意味しない。診断結果から設定変更しない');
   return r.state === 'NONE' || r.state === 'MATCH' ? 0 : 1;
 }
 
@@ -338,4 +373,4 @@ if (require.main === module) {
   }).then(function (code) { process.exit(code); });
 }
 
-module.exports = { main: main, validateInputs: validateInputs, evaluateWebhookQuery: evaluateWebhookQuery, CONFIRM: CONFIRM };
+module.exports = { main: main, validateInputs: validateInputs, evaluateWebhookQuery: evaluateWebhookQuery, diagnoseWebhookUrl: diagnoseWebhookUrl, CONFIRM: CONFIRM };

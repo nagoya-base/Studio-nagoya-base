@@ -419,3 +419,128 @@ test('evaluateWebhookQuery: 判定は純粋関数で状態・件数・コード�
   var r = K.evaluateWebhookQuery(200, { statusCode: 100, body: { urls: ['z'] } }, u);
   assert.deepStrictEqual(Object.keys(r).sort(), ['count', 'http', 'reason', 'state', 'statusCode']);
 });
+
+// ---- 追加診断（Issue #725）: ダミー値のみ。実Secrets・実APIは使わない ----
+var LEAK_MARKERS = ['relay.example', 'other.example', 'wrong-token-qq', 'wh-token-xyz', 'secret-path', 'exec', 'dup1', 'dup2'];
+function diagLog(w) {
+  return w.logs.filter(function (l) { return l.indexOf('追加診断') !== -1; }).join('\n');
+}
+async function runQuery(webhooks, extraWorld) {
+  var w = world(Object.assign({ webhooks: webhooks }, extraWorld || {}));
+  var code = await K.main(env('webhook-query'), w.deps);
+  assertReadOnlyQuery(w);
+  assertNoLeak(w);
+  assert.deepStrictEqual(w.webhooks, webhooks || []);
+  return { w: w, code: code, out: w.logs.join('\n') };
+}
+
+test('追加診断: ベースURL一致で t の 一致/不一致/欠落/空値 を区別し、終了コードは完全一致判定のまま', async function () {
+  var t = encodeURIComponent(TOK.webhook);
+  var cases = [
+    [RELAY + '?t=' + t, 'BASE_URL_MATCH + TOKEN_MATCH', 0],
+    [RELAY + '?t=wrong-token-qq', 'BASE_URL_MATCH + TOKEN_MISMATCH', 1],
+    [RELAY, 'BASE_URL_MATCH + TOKEN_MISSING', 1],
+    [RELAY + '?x=1', 'BASE_URL_MATCH + TOKEN_MISSING', 1],
+    [RELAY + '?t=', 'BASE_URL_MATCH + TOKEN_MISMATCH', 1],   // 空の t は欠落と混同しない
+    [RELAY + '?t', 'BASE_URL_MATCH + TOKEN_MISMATCH', 1],
+    [RELAY.toUpperCase().replace('HTTPS', 'https').replace('/EXEC', '/exec') + '?t=' + t, 'BASE_URL_MATCH + TOKEN_MATCH', 1] // host 大小文字は診断では一致、完全一致判定(文字列一致)は従来どおり MISMATCH
+  ];
+  for (var i = 0; i < cases.length; i++) {
+    var r = await runQuery([cases[i][0]]);
+    assert.ok(diagLog(r.w).indexOf(cases[i][1]) !== -1, 'case ' + i + ': ' + diagLog(r.w));
+    if (cases[i][1].indexOf('TOKEN_MISSING') !== -1) assert.ok(diagLog(r.w).indexOf('TOKEN_MATCH') === -1);
+    assert.strictEqual(r.code, cases[i][2], 'case ' + i);
+    LEAK_MARKERS.forEach(function (m) { assert.ok(r.out.indexOf(m) === -1, 'leak ' + m + ' case ' + i); });
+  }
+});
+
+test('追加診断: scheme / host / port / path の不一致は BASE_URL_MISMATCH（誤って一致扱いしない）', async function () {
+  var t = '?t=' + encodeURIComponent(TOK.webhook);
+  var urls = [
+    'http://relay.example/exec' + t,            // scheme
+    'https://other.example/exec' + t,           // host
+    'https://relay.example:8443/exec' + t,      // port
+    'https://relay.example/secret-path' + t,    // path
+    'https://relay.example/exec/' + t,          // 末尾スラッシュも同一視しない
+    'https://relay.example/exec/extra' + t,
+    'https://sub.relay.example/exec' + t
+  ];
+  for (var i = 0; i < urls.length; i++) {
+    var r = await runQuery([urls[i]]);
+    assert.ok(diagLog(r.w).indexOf('BASE_URL_MISMATCH') !== -1, 'case ' + i);
+    assert.ok(diagLog(r.w).indexOf('TOKEN') === -1, 'case ' + i);
+    assert.strictEqual(r.code, 1, 'case ' + i);
+    ['other.example', 'secret-path'].forEach(function (m) { assert.ok(r.out.indexOf(m) === -1); });
+  }
+});
+
+test('追加診断: 重複t・複数件・0件・解析不能URL・曖昧入力は推測せず UNKNOWN（診断で成功へ格上げしない）', async function () {
+  var t = encodeURIComponent(TOK.webhook);
+  // 重複 t（片方が一致でも推測しない）
+  var dup = await runQuery([RELAY + '?t=' + t + '&t=dup1']);
+  assert.ok(diagLog(dup.w).indexOf('UNKNOWN') !== -1);
+  assert.ok(diagLog(dup.w).indexOf('TOKEN_MATCH') === -1);
+  assert.strictEqual(dup.code, 1);
+  // 複数件（うち1件が完全一致でも追加診断はしない。完全一致判定は従来どおり MATCH）
+  var multi = await runQuery(['https://other.example/hook', RELAY + '?t=' + t]);
+  assert.ok(diagLog(multi.w).indexOf('UNKNOWN') !== -1);
+  assert.ok(diagLog(multi.w).indexOf('BASE_URL') === -1);
+  assert.strictEqual(multi.code, 0);
+  var multi2 = await runQuery(['https://other.example/a', 'https://other.example/b']);
+  assert.ok(diagLog(multi2.w).indexOf('UNKNOWN') !== -1);
+  assert.strictEqual(multi2.code, 1);
+  // 0件: NONE は維持、追加診断は成功扱いしない
+  var none = await runQuery([]);
+  assert.ok(none.out.indexOf('NONE 件数=0') !== -1);
+  assert.ok(diagLog(none.w).indexOf('UNKNOWN') !== -1);
+  assert.ok(diagLog(none.w).indexOf('MATCH') === -1);
+  // 解析不能URL
+  var bad = await runQuery(['not a url?t=wrong-token-qq']);
+  assert.ok(diagLog(bad.w).indexOf('UNKNOWN') !== -1);
+  assert.strictEqual(bad.code, 1);
+  assert.ok(bad.out.indexOf('wrong-token-qq') === -1);
+  // ユーザー情報付きは曖昧として UNKNOWN
+  var ui = await runQuery(['https://user:pw@relay.example/exec?t=' + t]);
+  assert.ok(diagLog(ui.w).indexOf('UNKNOWN') !== -1);
+  // 期待側 VERIFY_RELAY_URL に t が含まれる／トークン空は UNKNOWN（純粋関数）
+  assert.strictEqual(K.diagnoseWebhookUrl(RELAY + '?t=a', RELAY + '?t=a', 'a'), 'UNKNOWN');
+  assert.strictEqual(K.diagnoseWebhookUrl(RELAY + '?t=a', RELAY, ''), 'UNKNOWN');
+  assert.strictEqual(K.diagnoseWebhookUrl(RELAY + '?t=a', '::bad::', 'a'), 'UNKNOWN');
+});
+
+test('追加診断: 応答不正・API失敗・通信失敗・秘密未設定では診断せず UNKNOWN/安全停止', async function () {
+  var cases = [
+    { http: 200, body: { statusCode: 100, body: {} } },
+    { http: 200, body: { statusCode: 100 } },
+    { http: 200, body: { statusCode: 100, body: { urls: 'x' } } },
+    { http: 200, body: { statusCode: 100, body: { urls: [1] } } },
+    { http: 200, body: { statusCode: 190, message: 'free text https://relay.example/exec?t=leak' } },
+    { http: 500, body: null }
+  ];
+  for (var i = 0; i < cases.length; i++) {
+    var w = world({ queryReply: cases[i] });
+    assert.strictEqual(await K.main(env('webhook-query'), w.deps), 1, 'case ' + i);
+    assert.ok(diagLog(w).indexOf('BASE_URL') === -1 && diagLog(w).indexOf('TOKEN') === -1, 'case ' + i);
+    assert.ok(w.logs.join('\n').indexOf('leak') === -1);
+    assertReadOnlyQuery(w);
+    assertNoLeak(w);
+  }
+  var t = world({ queryThrow: true });
+  assert.strictEqual(await K.main(env('webhook-query'), t.deps), 1);
+  assert.ok(diagLog(t).indexOf('TOKEN') === -1);
+  assert.ok(t.logs.join('\n').indexOf('leak') === -1);
+  // 秘密未設定は API を一切呼ばず安全停止
+  var m = world();
+  assert.strictEqual(await K.main(env('webhook-query', { VERIFY_WEBHOOK_TOKEN: '' }), m.deps), 1);
+  assert.strictEqual(m.calls.length, 0);
+  var m2 = world();
+  assert.strictEqual(await K.main(env('webhook-query', { VERIFY_RELAY_URL: '' }), m2.deps), 1);
+  assert.strictEqual(m2.calls.length, 0);
+});
+
+test('追加診断: TOKEN_MATCH だけで完全一致扱いにしない（別クエリ付きは MISMATCH のまま終了コード1）', async function () {
+  var r = await runQuery([RELAY + '?t=' + encodeURIComponent(TOK.webhook) + '&extra=1']);
+  assert.ok(r.out.indexOf('MISMATCH 件数=1') !== -1);
+  assert.ok(diagLog(r.w).indexOf('BASE_URL_MATCH + TOKEN_MATCH') !== -1);
+  assert.strictEqual(r.code, 1);
+});

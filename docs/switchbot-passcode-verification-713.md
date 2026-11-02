@@ -64,6 +64,21 @@ GAS 経路（`verifySelectKeypad(last4)`）で Script Properties に保存して
 | `MISMATCH` | 別URLのみ登録あり | 1 | 上書き・削除しない。既存設定の扱いを人が判断 |
 | `UNKNOWN` | 応答不正・API失敗・通信失敗 | 1 | 断定せず停止。原因を別途切り分け |
 
+#### 追加診断（Issue #725。`MISMATCH` の原因切り分け）
+`queryWebhook` の結果が厳密に **1件** で、判定が `MATCH`/`MISMATCH` の場合だけ、実行環境内で URL を解析して固定分類名のみを `webhook-query 追加診断:` として出力する。URL・ベースURLの実値・クエリ・トークン・生レスポンス・message・解析エラー詳細は出さない（GitHub のマスクに依存せず固定文字列のみ）。
+
+| 追加診断 | 意味 |
+|----------|------|
+| `BASE_URL_MATCH + TOKEN_MATCH` | scheme/host/path が一致し、`t` が1つで共有トークンと一致 |
+| `BASE_URL_MATCH + TOKEN_MISMATCH` | ベースURLは一致、`t` はあるが値が違う（**空の `t` もここ**。欠落とは区別） |
+| `BASE_URL_MATCH + TOKEN_MISSING` | ベースURLは一致、`t` パラメータがない |
+| `BASE_URL_MISMATCH` | scheme / host(ポート含む) / path のいずれかが違う（末尾スラッシュ差も別物として扱う。クエリは比較に含めない） |
+| `UNKNOWN` | 0件・複数件・応答不正・API/通信失敗・URL解析不能・`t` 重複・ユーザー情報付きURL等、安全に判定できない（推測しない） |
+
+- 部分診断であり、完全一致の `MATCH`/`MISMATCH` と終了コードは変わらない。`TOKEN_MATCH` だけで成功扱いにしない（例: 余分なクエリがあれば `MISMATCH` のまま終了コード1）。0件の `NONE` は従来どおりで、追加診断成功とは扱わない。
+- **照会専用**。診断結果から setup / update / delete 等の変更APIへは進まない。**MISMATCH の原因が特定できるまで既存Webhookを削除・上書きしない**。原因特定後の設定変更は本診断の対象外で、別途人が判断する。
+- 診断が一致を示しても、Webhook の到達性・受信先の稼働・キー反映成功の証明にはならない。
+
 JST = UTC+9。ログの有効期間は JST（HH:mm:ss）で表示される。UNKNOWN・削除未確認が残る場合は、アプリの keyList で今回の検証名（`SNB-API-TEST-<unix秒>`）のキーだけを特定して削除し、「API検証は未達」と分けて Issue に記録する。秘密が漏れた場合は Token/Secret を再発行し、該当テストキーを削除する。
 
 ### （参考・旧方針）独立GASでの手順
