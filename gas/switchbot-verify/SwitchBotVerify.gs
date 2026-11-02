@@ -128,8 +128,14 @@ function verifyCreateTimeLimitKey(startOffsetMin, durationMin) {
     TEST_CREATE_COMMAND_ID: ids.commandId || ''
   });
   var state = ids.commandId ? sbvAwaitState_(ids.commandId, SwitchBotVerifyCore.WEBHOOK_WAIT_SEC) : SwitchBotVerifyCore.STATE.UNKNOWN;
+  var idResolve = null;
+  if (state === SwitchBotVerifyCore.STATE.APPLIED && !SBV_PROP.getProperty('TEST_PASSCODE_ID')) {
+    idResolve = sbvResolvePasscodeId_(); // keyList から TEST_NAME 一致で取得（APPLIED 後のみ）
+  }
   sbvLog_('createKey result', {
     state: state,
+    idResolveState: idResolve ? idResolve.state : 'SKIPPED',
+    idResolveError: idResolve ? idResolve.error : null,
     startJst: Utilities.formatDate(new Date(start * 1000), 'Asia/Tokyo', 'HH:mm:ss'),
     endJst: Utilities.formatDate(new Date(end * 1000), 'Asia/Tokyo', 'HH:mm:ss'),
     passcodeIdKnown: !!SBV_PROP.getProperty('TEST_PASSCODE_ID')
@@ -138,10 +144,46 @@ function verifyCreateTimeLimitKey(startOffsetMin, durationMin) {
   return { state: state };
 }
 
-/** 4) 削除。passcode ID は応答から取れた場合 TEST_PASSCODE_ID、取れなければ引数で渡す（実機アプリで確認）。 */
+/**
+ * createKey 成功後、デバイス一覧の keyList から TEST_NAME 一致のキー ID を解決して TEST_PASSCODE_ID に保存する。
+ * 0件・複数件・取得失敗は UNKNOWN（ID は保存しない）。ID・パスコードはログに出さない。
+ */
+function sbvResolvePasscodeId_() {
+  var deviceId = SBV_PROP.getProperty('SWITCHBOT_DEVICE_ID');
+  var name = SBV_PROP.getProperty('TEST_NAME');
+  var r = sbvRequest_('get', '/v1.1/devices');
+  var cls = SwitchBotVerifyCore.classifyApiResponse(r.http, r.parsed);
+  if (cls.state === SwitchBotVerifyCore.STATE.FAILED) {
+    return { state: SwitchBotVerifyCore.STATE.UNKNOWN, id: null, error: 'DEVICE_LIST_FAILED' };
+  }
+  var res = SwitchBotVerifyCore.resolvePasscodeIdByName(
+    r.parsed.body && r.parsed.body.deviceList, deviceId, name);
+  if (res.id !== null) SBV_PROP.setProperty('TEST_PASSCODE_ID', String(res.id));
+  return res;
+}
+
+/** 手動での再解決（createKey 後に ID 解決だけ再試行したい場合）。 */
+function verifyResolvePasscodeId() {
+  var res = sbvResolvePasscodeId_();
+  sbvLog_('resolvePasscodeId', { state: res.state, error: res.error, resolved: res.id !== null });
+  return { state: res.state, error: res.error };
+}
+
+/**
+ * 4) 削除。通常は createKey 後に keyList から解決済みの TEST_PASSCODE_ID を使う。
+ * passcodeIdOverride は API で ID を取得できなかった場合の調査用フォールバック。
+ */
 function verifyDeleteKey(passcodeIdOverride) {
   var deviceId = SBV_PROP.getProperty('SWITCHBOT_DEVICE_ID');
   var id = passcodeIdOverride || SBV_PROP.getProperty('TEST_PASSCODE_ID');
+  if (!id) {
+    var resolved = sbvResolvePasscodeId_();
+    if (resolved.id === null) {
+      sbvLog_('deleteKey aborted', { state: resolved.state, error: resolved.error });
+      return { state: SwitchBotVerifyCore.STATE.UNKNOWN, error: resolved.error };
+    }
+    id = resolved.id;
+  }
   var r = sbvRequest_('post', '/v1.1/devices/' + deviceId + '/commands',
     SwitchBotVerifyCore.buildDeleteKeyBody(id));
   var cls = SwitchBotVerifyCore.classifyApiResponse(r.http, r.parsed);

@@ -149,3 +149,28 @@ test('Webhook 認証: 共有トークンの一致のみ許可', function () {
   assert.strictEqual(C.isWebhookAuthorized('abc', ''), false);
   assert.strictEqual(C.isWebhookAuthorized('abcd', 'abc'), false);
 });
+
+test('keyList からの ID 解決: name 一意一致で id を返す', function () {
+  var list = [
+    { deviceId: 'OTHER', keyList: [{ id: 1, name: 'SNB-API-TEST-1' }] },
+    { deviceId: 'DEV1', keyList: [{ id: 10, name: 'regular' }, { id: 11, name: 'SNB-API-TEST-1', type: 'timeLimit' }] }
+  ];
+  var r = C.resolvePasscodeIdByName(list, 'DEV1', 'SNB-API-TEST-1');
+  assert.deepStrictEqual(r, { state: C.STATE.APPLIED, id: 11, error: null });
+});
+
+test('keyList からの ID 解決: 0件・複数件・対象デバイス無し・ID欠落は UNKNOWN で id を返さない', function () {
+  var dev = function (keys) { return [{ deviceId: 'DEV1', keyList: keys }]; };
+  var r = C.resolvePasscodeIdByName(dev([{ id: 10, name: 'x' }]), 'DEV1', 'SNB-API-TEST-1');
+  assert.deepStrictEqual([r.state, r.id, r.error], [C.STATE.UNKNOWN, null, 'KEY_NOT_FOUND']);
+  r = C.resolvePasscodeIdByName(dev([{ id: 1, name: 'n' }, { id: 2, name: 'n' }]), 'DEV1', 'n');
+  assert.deepStrictEqual([r.state, r.id, r.error], [C.STATE.UNKNOWN, null, 'KEY_NAME_AMBIGUOUS']);
+  r = C.resolvePasscodeIdByName(dev([]), 'NOPE', 'n');
+  assert.deepStrictEqual([r.state, r.id, r.error], [C.STATE.UNKNOWN, null, 'DEVICE_NOT_FOUND']);
+  r = C.resolvePasscodeIdByName([{ deviceId: 'DEV1' }], 'DEV1', 'n');
+  assert.strictEqual(r.error, 'KEY_NOT_FOUND');
+  r = C.resolvePasscodeIdByName(dev([{ name: 'n' }]), 'DEV1', 'n');
+  assert.strictEqual(r.error, 'KEY_ID_MISSING');
+  r = C.resolvePasscodeIdByName(dev([{ id: 1, name: 'n' }]), 'DEV1', '');
+  assert.strictEqual(r.error, 'NAME_REQUIRED');
+});

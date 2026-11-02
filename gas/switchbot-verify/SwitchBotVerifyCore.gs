@@ -119,6 +119,26 @@ var SwitchBotVerifyCore = (function () {
     return { state: STATE.FAILED, statusCode: sc, httpCode: httpCode };
   }
 
+  /**
+   * デバイス一覧の keyList から name 一致のパスコード ID を解決する（createKey 成功後に使用）。
+   * 対象デバイスが無い / 一致 0 件 / 複数件 は ID を返さず UNKNOWN（成功扱いにしない）。
+   */
+  function resolvePasscodeIdByName(deviceList, deviceId, name) {
+    var list = Array.isArray(deviceList) ? deviceList : [];
+    var dev = list.filter(function (d) { return d && d.deviceId === deviceId; })[0];
+    if (!dev) return { state: STATE.UNKNOWN, id: null, error: 'DEVICE_NOT_FOUND' };
+    if (!name) return { state: STATE.UNKNOWN, id: null, error: 'NAME_REQUIRED' };
+    var keys = (Array.isArray(dev.keyList) ? dev.keyList : []).filter(function (k) {
+      return k && k.name === name;
+    });
+    if (keys.length === 0) return { state: STATE.UNKNOWN, id: null, error: 'KEY_NOT_FOUND' };
+    if (keys.length > 1) return { state: STATE.UNKNOWN, id: null, error: 'KEY_NAME_AMBIGUOUS' };
+    if (keys[0].id === undefined || keys[0].id === null || String(keys[0].id) === '') {
+      return { state: STATE.UNKNOWN, id: null, error: 'KEY_ID_MISSING' };
+    }
+    return { state: STATE.APPLIED, id: keys[0].id, error: null };
+  }
+
   /** 応答 body から commandId / passcode ID の候補を取り出す（存在しない場合は null）。 */
   function extractIdsFromResponse(parsed) {
     var body = (parsed && parsed.body) || {};
@@ -204,6 +224,7 @@ var SwitchBotVerifyCore = (function () {
     maskId: maskId,
     classifyApiResponse: classifyApiResponse,
     extractIdsFromResponse: extractIdsFromResponse,
+    resolvePasscodeIdByName: resolvePasscodeIdByName,
     parseKeypadWebhook: parseKeypadWebhook,
     resolveCommandState: resolveCommandState,
     redact: redact,
