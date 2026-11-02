@@ -100,8 +100,9 @@ const S=process.env.FAKE_STATE, a=process.argv.slice(2).filter((x,i,arr)=>!(x===
 const cmd=a[0]; const st=()=>JSON.parse(fs.readFileSync(S+'/state.json','utf8')); const save=(s)=>fs.writeFileSync(S+'/state.json',JSON.stringify(s));
 const fail=process.env.FAKE_FAIL||''; if(fail===cmd){console.error('boom '+process.env.FAKE_LEAK);process.exit(1);}
 const s=st();
-if(cmd==='pull'){for(const [n,c] of Object.entries(s.files))fs.writeFileSync(n,c);}
-else if(cmd==='push'){s.files={};for(const n of fs.readdirSync('.'))if(n.endsWith('.gs')||n==='appsscript.json')s.files[n]=fs.readFileSync(n,'utf8'); if(fail==='push-nosave'){}else save(s);}
+const cfg=JSON.parse(fs.readFileSync('.clasp.json','utf8')); const ext=(cfg.scriptExtensions&&cfg.scriptExtensions[0])||'js';
+if(cmd==='pull'){for(const [n,c] of Object.entries(s.files))fs.writeFileSync(n.endsWith('.gs')?n.slice(0,-3)+'.'+ext:n,c);}
+else if(cmd==='push'){s.files={};for(const n of fs.readdirSync('.'))if(n.endsWith('.gs')||n==='appsscript.json')s.files[n.endsWith('.gs')?n:n]=fs.readFileSync(n,'utf8'); if(fail==='push-nosave'){}else save(s);}
 else if(cmd==='list-deployments'){console.log(JSON.stringify(s.deployments));}
 else if(cmd==='list-versions'){console.log(JSON.stringify(s.versions));}
 else if(cmd==='update-deployment'){
@@ -215,4 +216,12 @@ test('rollback: same deployment goes back to an existing version; invalid versio
   assert.notEqual(t.run('rollback', { ROLLBACK_VERSION: '99' }).status, 0);
   assert.notEqual(t.run('rollback', { ROLLBACK_VERSION: 'abc' }).status, 0);
   assert.notEqual(t.run('rollback', { ROLLBACK_VERSION: '2' }).status, 0, 'already at that version');
+});
+
+test('write-config pins scriptExtensions to gs (clasp 3.x pulls .js by default)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbv-cfg-'));
+  const r = spawnSync('node', [path.join(root, 'scripts/switchbot-verify-gas-deploy-lib.js'), 'write-config', path.join(dir, 'a.json'), dir, 'x'],
+    { env: { ...process.env, SBV_CLASPRC_JSON: '{}', SBV_SCRIPT_ID: 'S' } });
+  assert.equal(r.status, 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, '.clasp.json'), 'utf8')).scriptExtensions, ['gs']);
 });

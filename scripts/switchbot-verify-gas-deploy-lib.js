@@ -136,11 +136,11 @@ function main(argv, env) {
     case 'check-manifest': { const s = checkManifest(a[0], a[1]); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
     case 'compare-sources': { const s = compareSources(a[0], a[1]); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
     case 'check-credential': { const s = checkCredential(env.SBV_CLASPRC_JSON || ''); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
-    case 'write-config': { // 認証ファイル（0600）と .clasp.json を生成
+    case 'write-config': { // 認証ファイル（0600）と .clasp.json を生成。clasp 3.xの既定は .js 優先のため .gs を明示
       const [authFile, projectDir, scriptIdEnv] = a;
       void scriptIdEnv;
       fs.writeFileSync(authFile, env.SBV_CLASPRC_JSON || '', { mode: 0o600 });
-      fs.writeFileSync(path.join(projectDir, '.clasp.json'), JSON.stringify({ scriptId: env.SBV_SCRIPT_ID || '', rootDir: '.' }), { mode: 0o600 });
+      fs.writeFileSync(path.join(projectDir, '.clasp.json'), JSON.stringify({ scriptId: env.SBV_SCRIPT_ID || '', rootDir: '.', scriptExtensions: ['gs'] }), { mode: 0o600 });
       return 0;
     }
     default:
