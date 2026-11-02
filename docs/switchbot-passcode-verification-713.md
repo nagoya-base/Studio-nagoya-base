@@ -43,12 +43,26 @@ GAS 経路（`verifySelectKeypad(last4)`）で Script Properties に保存して
 ### 実施順（営業時間外・現地確認者と代替入室手段を確保）
 | # | action（確認文字列） | 内容 |
 |---|------|------|
+| 0 | `webhook-query`（`QUERY-WEBHOOK`） | **照会専用**。`queryWebhook(queryUrl)` だけを呼び、既存Webhook設定の状態を確認（下記）。登録・更新・削除はしない |
 | 1 | `webhook-setup`（`SETUP-WEBHOOK`） | 既存Webhook設定がある場合は上書きせず中断。無ければ今回分を登録 |
 | 2 | `create-key`（`CREATE-ONE-TEST-KEY`） | 開始 3〜30 分後・有効 10〜15 分で1件。claim で重複防止、今回の commandId+createKey の Webhook success で APPLIED、keyList から passcode ID を解決。結果不明は再送せず UNKNOWN 停止 |
 | 3 | 実機 | 開始前=不可 / 有効中=解錠 / 終了後=不可 |
 | 4 | `delete-key`（`DELETE-TEST-KEY`） | 今回のキーのみ削除。deleteKey の Webhook success と keyList からの消失（対象デバイスが1件で keyList が配列の完全な応答に限る）を確認後に保持データを破棄。送信した deleteKey の commandId を保存するため、通信断などで中断しても次の `delete-key` が再削除せず確認だけを再開する（Webhook結果の保持は24時間） |
 | 5 | 実機 | 削除後も同じコードで解錠不可 |
 | 6 | `webhook-remove`（`REMOVE-WEBHOOK`） | 今回登録した Webhook だけ撤去（既存設定は触らない）。GAS の `verifyCleanupLocal()` も実行 |
+
+### 既存Webhook設定の照会（`webhook-query`）
+`webhook-setup` が `statusCode 190` で FAILED になった等、登録の可否を判断する前に使う。HTTP 200 と API の `statusCode` は別で、190 だけから「既存登録あり」「認証正常」と断定しない。`webhook-setup` は未登録なら登録へ進むため、原因調査では実行しない。
+- 呼ぶのは `POST /v1.1/webhook/queryWebhook`（`{"action":"queryUrl"}`）のみ。setup / update / delete・createKey / deleteKey は呼ばない。
+- HTTP 200 かつ `statusCode 100` で `body.urls` が文字列の配列のときだけ判定する。欠落・非配列・API失敗・通信失敗は **UNKNOWN**（「登録なし」と見なさない）。
+- 予定URL（`VERIFY_RELAY_URL` + 共有トークン）との完全一致比較は実行環境内で行い、ログに出すのは状態・件数・HTTP/API状態のみ（URL・トークン・生レスポンス・message・例外詳細は出さない）。必要な秘密は `SWITCHBOT_TOKEN` / `SWITCHBOT_SECRET` / `VERIFY_RELAY_URL` / `VERIFY_WEBHOOK_TOKEN` のみ。
+
+| 状態 | 意味 | 終了コード | 次の判断 |
+|------|------|-----------|----------|
+| `NONE` | 未登録（件数0） | 0 | `webhook-setup` で登録可 |
+| `MATCH` | 予定URLと完全一致 | 0 | 再登録不要。到達性・キー反映成功の証拠にはならない |
+| `MISMATCH` | 別URLのみ登録あり | 1 | 上書き・削除しない。既存設定の扱いを人が判断 |
+| `UNKNOWN` | 応答不正・API失敗・通信失敗 | 1 | 断定せず停止。原因を別途切り分け |
 
 JST = UTC+9。ログの有効期間は JST（HH:mm:ss）で表示される。UNKNOWN・削除未確認が残る場合は、アプリの keyList で今回の検証名（`SNB-API-TEST-<unix秒>`）のキーだけを特定して削除し、「API検証は未達」と分けて Issue に記録する。秘密が漏れた場合は Token/Secret を再発行し、該当テストキーを削除する。
 
