@@ -151,7 +151,17 @@ var BookingReschedule = (function () {
     if (!isDate_(startAt) || !isDate_(endAt) || endAt.getTime() - startAt.getTime() !== duration * 60000) {
       return error_('INVALID_DATE', '日時を解釈できません。');
     }
-    if (startAt.getTime() <= now.getTime()) return error_('PAST_START', '現在時刻以前へは変更できません。');
+    /* Issue #711: 利用開始後の当日延長（開始時刻を変えず、終了だけを元より未来へ延ばす）は、
+       既存予約の開始時刻が現在時刻より前であることだけを理由に拒否しない。開始時刻や日付の
+       変更を伴う場合は従来どおり「現在時刻以前へは変更できない」を適用する。
+       延長の場合も、延長後の終了時刻が現在時刻より後であることは必須とする。 */
+    var isSameDayExtension = startAt.getTime() === record.startAt.getTime() &&
+      endAt.getTime() > record.endAt.getTime();
+    if (isSameDayExtension) {
+      if (endAt.getTime() <= now.getTime()) return error_('PAST_END', '終了時刻を現在時刻以前へは変更できません。');
+    } else if (startAt.getTime() <= now.getTime()) {
+      return error_('PAST_START', '現在時刻以前へは変更できません。');
+    }
     if (startAt.getTime() === record.startAt.getTime() && endAt.getTime() === record.endAt.getTime()) {
       return error_('UNCHANGED', '変更前と同じ日時です。');
     }
