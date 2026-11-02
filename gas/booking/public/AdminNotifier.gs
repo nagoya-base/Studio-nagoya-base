@@ -43,14 +43,23 @@ var AdminNotifier = (function () {
     return Number.isFinite(value) ? '利用料金: ' + value.toLocaleString('ja-JP') + '円（税込）' : '';
   }
 
-  function notifyNewPendingBooking(record) {
+  /*
+   * options.autoConfirmByCheckout（Issue #709）: 呼び出し元（BookingRepository）が
+   * 「Stripe Checkoutの決済完了Webhookで自動CONFIRMEDになる通常カード予約」と判定した場合のみtrue。
+   * この場合は手動確定を案内せず、決済待ちで自動確定される旨を明示する。
+   * 現地払い・承認制予約（作品撮り/大人数）・Checkout無効のカード予約はfalse/未指定で従来文面。
+   */
+  function notifyNewPendingBooking(record, options) {
     var adminEmail = BookingConfig.getAdminNotificationEmail();
     if (!adminEmail) return;
 
     var adminUrl = BookingConfig.getBookingAdminUrl();
-    var confirmInstruction = adminUrl
-      ? '内容を確認し、問題なければBooking Adminから確定してください。'
-      : '内容を確認し、問題なければSpreadsheetの管理メニューから確定してください。';
+    var autoConfirm = !!(options && options.autoConfirmByCheckout);
+    var confirmInstruction = autoConfirm
+      ? 'オンラインカード決済待ちです。支払い完了後に自動で確定されるため、管理者による確定操作は不要です。'
+      : adminUrl
+        ? '内容を確認し、問題なければBooking Adminから確定してください。'
+        : '内容を確認し、問題なければSpreadsheetの管理メニューから確定してください。';
 
     var subject = '[' + Booking.getBrandLabel(record.brand) + '] 仮予約を受け付けました: ' + record.bookingId;
     var lines = [

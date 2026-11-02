@@ -873,3 +873,14 @@ test('通知失敗後に精算済みなら再送で再請求を案内せず、�
   ctx.sandbox.MailApp.sendEmail = send;
   assert.strictEqual(S.sendMail(down.changeId, true).error.code, 'BOOKING_CHANGED_AGAIN');
 });
+
+test('Issue #709: カード決済でも大人数（承認制）予約の管理者通知は承認通知を失わず、自動確定とは案内しない', function () {
+  var ctx = setup({ members: MEMBER });
+  var r = book(ctx, {});
+  assert.strictEqual(r.success, true, JSON.stringify(r));
+  var mails = mailsTo(ctx, 'admin@example.com');
+  assert.strictEqual(mails.length, 1);
+  assert.match(mails[0].body, /仮予約（PENDING）が届きました/);
+  assert.match(mails[0].body, /問題なければ(Booking Admin|Spreadsheetの管理メニュー)から確定してください/);
+  assert.doesNotMatch(mails[0].body, /自動で確定/);
+});

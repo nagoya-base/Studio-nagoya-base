@@ -1421,3 +1421,43 @@ test('Issue #445: 完全設定（ブランド別の戻り先を解決できる�
     assert.strictEqual(customerMails_(mailApp).length, 0, brand);
   });
 });
+
+/* Issue #709: 管理者PENDING通知の手動確定案内を、実際の次アクションに合わせる。 */
+function adminMails_(mailApp) {
+  return mailApp._sentEmails.filter(function (m) { return m.to === 'admin@example.com'; });
+}
+var ADMIN_709_PROPERTIES = { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com', BOOKING_ADMIN_URL: 'https://example.com/admin' };
+
+test('Issue #709: 通常オンラインカード予約（Checkout有効）の管理者通知は「Booking Adminから確定」を案内せず、自動確定・操作不要を明示し、個人情報を含まない', function () {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({ mailApp: mailApp, properties: Object.assign({}, MAIL_PROPERTIES_445, CHECKOUT_ENABLED_PROPERTIES_445, ADMIN_709_PROPERTIES) });
+  var result = ctx.sandbox.BookingRepository.createBooking(validPayload({
+    paymentMethod: 'オンラインクレジットカード', date: futureDateJst_(10), startTime: '10:00', email: 'taro@example.com'
+  }));
+  assert.strictEqual(result.success, true);
+  var mails = adminMails_(mailApp);
+  assert.strictEqual(mails.length, 1);
+  assert.doesNotMatch(mails[0].body, /Booking Adminから確定してください/);
+  assert.match(mails[0].body, /支払い完了後に自動で確定/);
+  assert.match(mails[0].body, /確定操作は不要/);
+  assert.ok(mails[0].body.indexOf('taro@example.com') === -1);
+});
+
+test('Issue #709: 現地払い（現金・PayPay）とCheckout無効のカード予約は従来どおり「Booking Adminから確定してください」を案内する', function () {
+  [
+    { method: '現金', props: Object.assign({}, CHECKOUT_ENABLED_PROPERTIES_445, ADMIN_709_PROPERTIES) },
+    { method: 'PayPay', props: Object.assign({}, CHECKOUT_ENABLED_PROPERTIES_445, ADMIN_709_PROPERTIES) },
+    { method: 'オンラインクレジットカード', props: Object.assign({}, ADMIN_709_PROPERTIES) }
+  ].forEach(function (c) {
+    var mailApp = stubs.createMailAppStub();
+    var ctx = setup({ mailApp: mailApp, properties: Object.assign({}, MAIL_PROPERTIES_445, c.props) });
+    var result = ctx.sandbox.BookingRepository.createBooking(validPayload({
+      paymentMethod: c.method, date: futureDateJst_(10), startTime: '10:00', email: 'taro@example.com'
+    }));
+    assert.strictEqual(result.success, true, c.method);
+    var mails = adminMails_(mailApp);
+    assert.strictEqual(mails.length, 1, c.method);
+    assert.match(mails[0].body, /Booking Adminから確定してください/, c.method);
+    assert.doesNotMatch(mails[0].body, /自動で確定/, c.method);
+  });
+});
