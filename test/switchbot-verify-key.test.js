@@ -845,3 +845,186 @@ test('#744 変更APIは各経路で最大1回、ログに秘密・passcode ID・
     assert.ok(logs(w).indexOf('"statusCode"') === -1 && logs(w).indexOf('message') === -1);
   }
 });
+
+// ---- Issue #746: 旧 TEST_STATE のみを安全に clear する復旧（clear-stale-state） ----
+function seedStale(w) {
+  Core.relayHandle(w.store, null, { op: 'claim', t: TOK.admin, deviceId: DEV, name: 'SNB-API-TEST-1', password: '77777777',
+    startTime: w.clock + 300, endTime: w.clock + 1200 }, TOK, w.clock);
+  Core.relayHandle(w.store, null, { op: 'setPasscodeId', t: TOK.admin, passcodeId: 701 }, TOK, w.clock);
+}
+/** fetch を包んで relay の op 呼び出しを数え、応答を差し替える。hook(url, body) が値を返せばそれを応答にする。 */
+function spy(w, hook) {
+  var inner = w.deps.fetch;
+  w.relayOps = [];
+  w.deps.fetch = async function (url, o) {
+    var body = o && o.body ? JSON.parse(o.body) : null;
+    if (url === RELAY && body) w.relayOps.push(body.op);
+    var h = hook && hook(url, body);
+    if (h) {
+      if (h.throw) throw new Error('network');
+      return { status: h.http || 200, json: async function () { return h.body; } };
+    }
+    return inner(url, o);
+  };
+  return w;
+}
+function clears(w) { return w.relayOps.filter(function (o) { return o === 'clear'; }).length; }
+function devicesReply(dev) {
+  return function (url) {
+    if (url.indexOf('/v1.1/devices') !== -1 && url.indexOf('/commands') === -1) {
+      return { body: { statusCode: 100, body: { deviceList: dev } } };
+    }
+  };
+}
+function runClear(w, extra) { return K.main(env('clear-stale-state', Object.assign({ GITHUB_RUN_ATTEMPT: '1' }, extra || {})), w.deps); }
+
+test('clear-stale-state: 入力検証（確認文字列・Re-run禁止）', function () {
+  assert.strictEqual(K.CONFIRM['clear-stale-state'], 'CLEAR-STALE-TEST-STATE-IF-NO-TEST-KEY');
+  assert.deepStrictEqual(K.validateInputs(env('clear-stale-state', { GITHUB_RUN_ATTEMPT: '1' })), []);
+  assert.ok(K.validateInputs(env('clear-stale-state', { CONFIRM: 'yes', GITHUB_RUN_ATTEMPT: '1' })).indexOf('CONFIRM_MISMATCH') !== -1);
+  assert.ok(K.validateInputs(env('clear-stale-state', { GITHUB_RUN_ATTEMPT: '2' })).indexOf('RERUN_FORBIDDEN') !== -1);
+});
+
+test('clear-stale-state: Keypad完全一致+keyList正常+検証キー0件+IN_USE → clear1回 → CLEAN確認で成功。通常キーは触らない', async function () {
+  var w = spy(world({ keys: [{ id: 5, name: 'regular user' }] })); seedStale(w);
+  assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+  var rc = await runClear(w, { GITHUB_RUN_ATTEMPT: '1' }); if (rc !== 0) dump(w);
+  assert.strictEqual(rc, 0);
+  assert.strictEqual(clears(w), 1);
+  assert.strictEqual(w.store.get('TEST_STATE'), null);
+  assert.deepStrictEqual(w.relayOps, ['getState', 'clear', 'getState']);
+  assert.strictEqual(w.keys.length, 1);
+  var out = logs(w);
+  ['KEYPAD: PASS', 'TEST_KEYS: NONE', 'RELAY_BEFORE: IN_USE', 'CLEAR: SENT', 'RELAY_AFTER: CLEAN', 'STALE_STATE_CLEARED_CONFIRMED', '末尾4桁=9999']
+    .forEach(function (s) { assert.ok(out.indexOf(s) !== -1, s); });
+  assertNoMutation(w);
+  assertNoLeak(w);
+  // clear後に preflight が RELAY_STATE: CLEAN になる
+  var p = world(); assert.strictEqual(await K.main(env('preflight'), p.deps), 0);
+});
+
+test('clear-stale-state: 検証キーが1件以上なら clear しない', async function () {
+  var w = spy(world({ keys: [{ id: 5, name: 'SNB-API-TEST-123' }, { id: 6, name: 'regular user' }] })); seedStale(w);
+  assert.strictEqual(await runClear(w), 1);
+  assert.strictEqual(clears(w), 0);
+  assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+  assert.ok(logs(w).indexOf('TEST_KEYS: FOUND') !== -1);
+  assertNoMutation(w); assertNoLeak(w);
+});
+
+test('clear-stale-state: keyList 欠落/null/非配列は0件と解釈せず clear しない', async function () {
+  var variants = [
+    { deviceId: DEV, deviceType: 'Keypad Touch' },
+    { deviceId: DEV, deviceType: 'Keypad Touch', keyList: null },
+    { deviceId: DEV, deviceType: 'Keypad Touch', keyList: 'none' },
+    { deviceId: DEV, deviceType: 'Keypad Touch', keyList: {} }
+  ];
+  for (var i = 0; i < variants.length; i++) {
+    var w = spy(world(), devicesReply([variants[i]])); seedStale(w);
+    assert.strictEqual(await runClear(w), 1, 'case ' + i);
+    assert.strictEqual(clears(w), 0, 'case ' + i);
+    assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+    assert.ok(logs(w).indexOf('TEST_KEYS: NONE') === -1);
+    assertNoMutation(w); assertNoLeak(w);
+  }
+});
+
+test('clear-stale-state: devices API失敗（通信失敗/statusCode異常）は clear しない', async function () {
+  var a = spy(world({ netErrorDevices: true })); seedStale(a);
+  assert.strictEqual(await runClear(a), 1);
+  var b = spy(world(), function (url) { if (url.indexOf('/v1.1/devices') !== -1) return { http: 401, body: { statusCode: 401 } }; }); seedStale(b);
+  assert.strictEqual(await runClear(b), 1);
+  [a, b].forEach(function (w) {
+    assert.strictEqual(clears(w), 0);
+    assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+    assertNoMutation(w); assertNoLeak(w);
+  });
+});
+
+test('clear-stale-state: Keypad不一致/複数/Keypad以外は clear しない', async function () {
+  var cases = [
+    [{ deviceId: 'OTHERDEVICE0000', deviceType: 'Keypad Touch', keyList: [] }],
+    [{ deviceId: DEV, deviceType: 'Keypad Touch', keyList: [] }, { deviceId: DEV, deviceType: 'Keypad Touch', keyList: [] }],
+    [{ deviceId: DEV, deviceType: 'Hub 2', keyList: [] }],
+    []
+  ];
+  for (var i = 0; i < cases.length; i++) {
+    var w = spy(world(), devicesReply(cases[i])); seedStale(w);
+    assert.strictEqual(await runClear(w), 1, 'case ' + i);
+    assert.strictEqual(clears(w), 0, 'case ' + i);
+    assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+    assertNoMutation(w); assertNoLeak(w);
+  }
+});
+
+test('clear-stale-state: リレー状態取得失敗は clear しない', async function () {
+  var hooks = [
+    function (u, b) { if (u === RELAY && b && b.op === 'getState') return { throw: true }; },
+    function (u, b) { if (u === RELAY && b && b.op === 'getState') return { body: { ok: false, error: 'FORBIDDEN' } }; },
+    function (u, b) { if (u === RELAY && b && b.op === 'getState') return { body: { ok: true } }; } // state欠落は不正応答
+  ];
+  for (var i = 0; i < hooks.length; i++) {
+    var w = spy(world(), hooks[i]); seedStale(w);
+    assert.strictEqual(await runClear(w), 1, 'case ' + i);
+    assert.strictEqual(clears(w), 0, 'case ' + i);
+    assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+    assertNoMutation(w); assertNoLeak(w);
+  }
+});
+
+test('clear-stale-state: 既にCLEANなら clear せず ALREADY_CLEAN', async function () {
+  var w = spy(world());
+  assert.strictEqual(await runClear(w), 0);
+  assert.strictEqual(clears(w), 0);
+  assert.ok(logs(w).indexOf('ALREADY_CLEAN') !== -1);
+  assert.ok(logs(w).indexOf('STALE_STATE_CLEARED_CONFIRMED') === -1);
+  assertNoMutation(w); assertNoLeak(w);
+});
+
+test('clear-stale-state: clear後もIN_USE/確認不能/clear応答不正は成功扱いしない', async function () {
+  var hooks = [
+    function (u, b) { if (u === RELAY && b && b.op === 'clear') return { body: { ok: true } }; }, // 応答のみ成功で実際は消えない
+    function (u, b) { if (u === RELAY && b && b.op === 'clear') return { body: { ok: false, error: 'LOCK' } }; },
+    function (u, b) { if (u === RELAY && b && b.op === 'clear') return { throw: true }; }
+  ];
+  for (var i = 0; i < hooks.length; i++) {
+    var w = spy(world(), hooks[i]); seedStale(w);
+    assert.strictEqual(await runClear(w), 1, 'case ' + i);
+    assert.ok(logs(w).indexOf('STALE_STATE_CLEARED_CONFIRMED') === -1, 'case ' + i);
+    assert.ok(logs(w).indexOf('UNKNOWN') !== -1);
+    assertNoMutation(w); assertNoLeak(w);
+  }
+  // clear後のgetStateが失敗
+  var n = 0;
+  var f = spy(world(), function (u, b) { if (u === RELAY && b && b.op === 'getState' && ++n === 2) return { throw: true }; }); seedStale(f);
+  assert.strictEqual(await runClear(f), 1);
+  assert.ok(logs(f).indexOf('RELAY_AFTER: UNKNOWN') !== -1);
+  assert.ok(logs(f).indexOf('STALE_STATE_CLEARED_CONFIRMED') === -1);
+  assertNoMutation(f); assertNoLeak(f);
+  // clear応答は ok だが実際は残存 → RELAY_AFTER: IN_USE
+  var h = spy(world(), hooks[0]); seedStale(h);
+  assert.strictEqual(await runClear(h), 1);
+  assert.ok(logs(h).indexOf('RELAY_AFTER: IN_USE') !== -1);
+});
+
+test('clear-stale-state: ログに TEST_STATE 内容・passcode ID・パスコード・完全ID・秘密を出さない', async function () {
+  var w = spy(world()); seedStale(w);
+  await runClear(w);
+  var out = logs(w);
+  ['SNB-API-TEST-1', '77777777', '701', 'passcodeId', 'createCommandId', DEV, RELAY, 'sb-token-111', 'admin-token-abc', '"state"'].forEach(function (s) {
+    assert.ok(out.indexOf(s) === -1, 'ログに出ている: ' + s);
+  });
+});
+
+test('clear-stale-state: 保存済み state の deviceId が確認済みKeypadと異なれば clear しない', async function () {
+  var w = spy(world()); seedStale(w);
+  var st = JSON.parse(w.store.get('TEST_STATE'));
+  st.deviceId = 'OLDERDEVICE0000';
+  w.store.set('TEST_STATE', JSON.stringify(st));
+  assert.strictEqual(await runClear(w), 1);
+  assert.strictEqual(clears(w), 0);
+  assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+  assert.ok(logs(w).indexOf('STALE_STATE_CLEARED_CONFIRMED') === -1);
+  assert.ok(logs(w).indexOf('OLDERDEVICE0000') === -1);
+  assertNoMutation(w); assertNoLeak(w);
+});

@@ -44,6 +44,7 @@ GAS 経路（`verifySelectKeypad(last4)`）で Script Properties に保存して
 | # | action（確認文字列） | 内容 |
 |---|------|------|
 | 0a | `preflight`（`PREFLIGHT-CHECK`） | **読み取り専用の発行前確認**（下記）。全項目 PASS を確認してから `create-key` へ進む |
+| 0b | `clear-stale-state`（`CLEAR-STALE-TEST-STATE-IF-NO-TEST-KEY`） | **旧リレー `TEST_STATE` だけを消す復旧**（下記）。SwitchBot本体は読み取りのみ |
 | 0 | `webhook-query`（`QUERY-WEBHOOK`） | **照会専用**。`queryWebhook(queryUrl)` だけを呼び、既存Webhook設定の状態を確認（下記）。登録・更新・削除はしない |
 | 1 | `webhook-setup`（`SETUP-WEBHOOK`） | 既存Webhook設定がある場合は上書きせず中断。無ければ今回分を登録 |
 | 2 | `create-key`（`CREATE-ONE-TEST-KEY`） | 開始 3〜30 分後・有効 10〜15 分で1件。claim で重複防止、今回の commandId+createKey の Webhook success で APPLIED、keyList から passcode ID を解決。結果不明は再送せず UNKNOWN 停止 |
@@ -88,6 +89,13 @@ GAS 経路（`verifySelectKeypad(last4)`）で Script Properties に保存して
 - 出力は固定の状態名のみ（URL・トークン・完全ID・生レスポンスは出さない）。全項目PASSなら `PREFLIGHT_PASS`（終了0）、それ以外は `PREFLIGHT_FAIL`（終了1）。
 - `PREFLIGHT_PASS` は**発行前の前提が整った**ことだけを示す。SwitchBot側から受信基盤へ実際に Webhook が届くか、キー発行・解錠の成否は未確認で、`create-key` の Webhook で初めて確認する。
 - `create-key` も実行時に同じ Webhook 受信基盤の確認（`WEBHOOK_SET`・`WEBHOOK_ENDPOINT`・`RELAY_ADMIN`）を行い、未達なら claim も `createKey` も送らず中断する。
+
+### 旧TEST_STATEの復旧（`clear-stale-state`。Issue #746）
+`preflight` が `RELAY_STATE: IN_USE` だが SwitchBot 側に検証キーが無い（`LEFTOVER_TEST_KEYS: NONE`）場合に限る一回限りの復旧。変更するのはリレーの `TEST_STATE`（`clear` op）だけで、`createKey` / `deleteKey` / Webhook の登録・更新・削除は呼ばない。初回runのみ（`Re-run` は `RERUN_FORBIDDEN`）。
+
+clear 前に全て満たすこと（1つでも欠ければ clear せず終了1）: `GET /v1.1/devices` 成功 / Keypad 完全一致1件 / `keyList` が配列 / `SNB-API-TEST-` キー0件（keyList 欠落・null・非配列は0件と見なさない。通常キーは触らない）/ リレー `getState` 成功かつ `TEST_STATE` あり。`TEST_STATE` が既に無ければ `ALREADY_CLEAN`（変更せず終了0）。
+
+clear 後に `getState` を再読取し `state === null` を確認して初めて `STALE_STATE_CLEARED_CONFIRMED`。clear応答だけでは成功扱いせず、残存・通信失敗・不正応答は `UNKNOWN`（終了1）。ログは `KEYPAD` / `TEST_KEYS` / `RELAY_BEFORE` / `CLEAR` / `RELAY_AFTER` の固定分類のみ。成功後は `preflight` を再実行して `RELAY_STATE: CLEAN` を確認する。
 
 ### 既存Webhook設定の照会（`webhook-query`）
 `webhook-setup` が `statusCode 190` で FAILED になった等、登録の可否を判断する前に使う。HTTP 200 と API の `statusCode` は別で、190 だけから「既存登録あり」「認証正常」と断定しない。`webhook-setup` は未登録なら登録へ進むため、原因調査では実行しない。
