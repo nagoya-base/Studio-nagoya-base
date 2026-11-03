@@ -67,3 +67,10 @@
 ## 禁止事項の維持
 
 `deleteWebhook` 再送、`setupWebhook` / `updateWebhook` の実行、`replace-single-webhook-remove` / `remove-old` / `setup-current` / `webhook-setup` / `webhook-remove` の実行は、原因確定まで行わない。
+
+## 追記（Issue #739）: queryDetails 診断Action
+
+- 公式 README（2026-11-03 再確認）: `POST /v1.1/webhook/queryWebhook`、body `{"action":"queryDetails","urls":["<Webhook URL>"]}`。応答は `statusCode:100` かつ `body` が配列（url / createTime / lastUpdateTime / deviceList / enable）。パラメータ表は `url`、例は `urls` と記載が揺れるため、例に合わせ `urls` 配列で送る。
+- queryDetails は照会対象 URL の指定が必須。このため `SWITCHBOT_DEVICE_ID` は不要だが、`VERIFY_RELAY_URL` + `VERIFY_WEBHOOK_TOKEN`（target=current）または `VERIFY_OLD_WEBHOOK_URL`（target=old）が必要。URL は出力しない。
+- 手動Action: `.github/workflows/switchbot-verify-webhook-details.yml` / `scripts/switchbot-verify-webhook-details.js`。1回のみ送信・再送なし・変更API なし。
+- 読み分け: statusCode=100 → queryUrl だけが 190 の可能性 / 190 → Webhook 読み取り系全体の不整合の疑い / その他 → 追加調査（フォールバック・変更操作へは進まない）。
