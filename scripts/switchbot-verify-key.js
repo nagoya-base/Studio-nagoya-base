@@ -221,7 +221,7 @@ async function preflight(env, deps, c, log) {
  * clear 前に全て満たすこと（1つでも欠ければ clear せず失敗終了）:
  *  1. devices 取得成功 2. 保存済み Keypad が完全一致1件 3. keyList が配列
  *  4. SNB-API-TEST-* が0件（keyList 欠落/null/非配列は0件とみなさない。通常キーは触らない）
- *  5. リレー getState 成功かつ TEST_STATE が存在(IN_USE)。既に null なら ALREADY_CLEAN で変更せず終了。
+ *  5. リレー getState 成功かつ TEST_STATE が存在(IN_USE)で、その deviceId が確認済みKeypadと一致。既に null なら ALREADY_CLEAN で変更せず終了。
  * clear 後に getState を再読取し state===null を確認して初めて STALE_STATE_CLEARED_CONFIRMED。
  * 出力は固定分類のみ（TEST_STATE内容・passcode ID・完全ID・生レスポンス・URL・トークンは出さない）。
  */
@@ -265,6 +265,10 @@ async function clearStaleState(env, deps, c, log) {
     return report(0, 'ALREADY_CLEAN: TEST_STATE は既に無い。変更せず終了');
   }
   r.RELAY_BEFORE = 'IN_USE';
+  // 保存済み state が今回確認した Keypad のものと一致しなければ clear しない（別デバイスの検証キーを見失わない）
+  if (!before.state || before.state.deviceId !== id) {
+    return report(1, 'ABORT: 保存済み TEST_STATE の対象が確認済みKeypadと一致しないため clear しない');
+  }
 
   var cl;
   try { cl = await c.relay({ op: 'clear' }); } catch (e) { cl = null; }

@@ -1015,3 +1015,16 @@ test('clear-stale-state: ログに TEST_STATE 内容・passcode ID・パスコ�
     assert.ok(out.indexOf(s) === -1, 'ログに出ている: ' + s);
   });
 });
+
+test('clear-stale-state: 保存済み state の deviceId が確認済みKeypadと異なれば clear しない', async function () {
+  var w = spy(world()); seedStale(w);
+  var st = JSON.parse(w.store.get('TEST_STATE'));
+  st.deviceId = 'OLDERDEVICE0000';
+  w.store.set('TEST_STATE', JSON.stringify(st));
+  assert.strictEqual(await runClear(w), 1);
+  assert.strictEqual(clears(w), 0);
+  assert.notStrictEqual(w.store.get('TEST_STATE'), null);
+  assert.ok(logs(w).indexOf('STALE_STATE_CLEARED_CONFIRMED') === -1);
+  assert.ok(logs(w).indexOf('OLDERDEVICE0000') === -1);
+  assertNoMutation(w); assertNoLeak(w);
+});
