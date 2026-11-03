@@ -3,6 +3,7 @@
  * 独立 GAS リレー（gas/switchbot-verify）に Webhook 結果とテスト状態（コード・passcode ID）を保持する。
  * Token / Secret / 署名 / テストコード / 完全 deviceId / passcode ID / リレー URL・トークンはログに出さない。
  * API 受理だけでは成功にせず、今回の commandId + eventName の Webhook success で初めて APPLIED とする。
+ * commandId が同期応答に無い場合（Issue #744）は再送せず、読み取り専用 keyList の出現/消失で KEYLIST_CONFIRMED とする（Webhook成功とは別の証跡）。
  */
 'use strict';
 
@@ -212,6 +213,49 @@ async function preflight(env, deps, c, log) {
   return ok ? 0 : 1;
 }
 
+/**
+ * Issue #744: 同期応答に commandId が無い（statusCode=100 + body={}）場合の中間状態マーカー。
+ * リレーの createCommandId / deleteCommandId に保存し、別run・Re-run でも再送せず keyList 確認だけを再開する。
+ * 実在の commandId とは区別され、Webhook の相関キーには使わない。
+ */
+var NO_COMMAND_ID = 'NO_COMMAND_ID';
+var KEYLIST_WAIT_SEC = 60;
+var KEYLIST_POLL_MS = 5000;
+
+/**
+ * 読み取り専用の keyList 確認を上限付きで繰り返す（変更APIは呼ばない）。
+ *  want='PRESENT': 今回の検証名が厳密に1件出現 → FOUND（passcode ID も返す）。0件は待機継続、複数件は即 MULTIPLE。
+ *  want='GONE'   : 今回の検証名が0件 → GONE。残存(1件)は待機継続、複数件は即 MULTIPLE。
+ * keyList不正・通信失敗は待たずに INVALID / ERROR（消失・出現とは扱わない）。上限超過は TIMEOUT。
+ * 戻り値は固定の分類名のみ（passcode ID は FOUND 時の id だけ。ログへは出さないこと）。
+ */
+async function pollKeyList(c, deps, env, name, want) {
+  var started = deps.nowSec();
+  while (true) {
+    var r;
+    try {
+      r = await c.sb('get', '/v1.1/devices');
+    } catch (e) {
+      return { result: 'ERROR', id: null, error: 'NETWORK' };
+    }
+    if (Core.classifyApiResponse(r.http, r.parsed).state === Core.STATE.FAILED) {
+      return { result: 'INVALID', id: null, error: 'DEVICES_FAILED' };
+    }
+    var list = r.parsed.body && r.parsed.body.deviceList;
+    var ins = Core.inspectKeyList(list, env.SWITCHBOT_DEVICE_ID, name);
+    if (!ins.valid) return { result: 'INVALID', id: null, error: ins.error };
+    if (ins.count > 1) return { result: 'MULTIPLE', id: null, error: 'KEY_NAME_AMBIGUOUS' };
+    if (want === 'PRESENT' && ins.count === 1) {
+      var res = Core.resolvePasscodeIdByName(list, env.SWITCHBOT_DEVICE_ID, name);
+      if (res.id === null) return { result: 'INVALID', id: null, error: res.error };
+      return { result: 'FOUND', id: res.id, error: null };
+    }
+    if (want === 'GONE' && ins.count === 0) return { result: 'GONE', id: null, error: null };
+    if (deps.nowSec() - started > KEYLIST_WAIT_SEC) return { result: 'TIMEOUT', id: null, error: null };
+    await deps.sleep(KEYLIST_POLL_MS);
+  }
+}
+
 /** 今回の commandId + eventName に対応する Webhook だけを待つ（上限付き）。 */
 async function awaitEvent(c, deps, commandId, eventName) {
   var started = deps.nowSec();
@@ -234,6 +278,24 @@ async function checkKeyGone(c, env, name) {
 }
 
 /** 削除コマンド送信済みの状態から再開: 保存済み commandId の Webhook 結果と keyList 消失だけを確認する（再削除しない）。 */
+async function resumeDeleteKeyListOnly(env, deps, c, log, st) {
+  log('前回の deleteKey は commandId なしで送信済み。keyList消失の確認だけを再開（再削除しない）');
+  return finishDeleteKeyListOnly(env, deps, c, log, st);
+}
+
+/** commandId なしの deleteKey: 読み取り専用 keyList で今回の検証名の消失だけを確認する。Webhook成功とは別の証跡。 */
+async function finishDeleteKeyListOnly(env, deps, c, log, st) {
+  var g = await pollKeyList(c, deps, env, st.name, 'GONE');
+  if (g.result !== 'GONE') {
+    log('UNKNOWN: commandIdなし。keyListで消失を確認できない（' + (g.error || g.result) + '）。再送せず保持データを残す');
+    return 1;
+  }
+  await c.relay({ op: 'clear' });
+  log('deleteKey: KEYLIST_CONFIRMED / 証跡 keyList=今回の検証名が消失 webhook=commandIdなしのため相関確認なし（Webhook成功とは別）/ 保持データを破棄');
+  log('実機で削除後に同じコードで解錠不可も確認すること');
+  return 0;
+}
+
 async function resumeDelete(env, deps, c, log, st) {
   log('前回の deleteKey 送信済み。Webhook結果とkeyList消失の確認を再開（再削除しない）');
   var state = await awaitEvent(c, deps, st.deleteCommandId, 'deleteKey');
@@ -282,6 +344,13 @@ async function createKey(env, deps, c, log) {
   var errs = Core.validateCreateKeyParams(params, nowSec);
   if (errs.length) { log('ABORT: INVALID_PARAMS ' + errs.join(',')); return 1; }
 
+  // 発行前: 対象Keypadの keyList が完全な応答で、今回の一意な検証名が存在しないこと（読み取り専用）
+  var pre = Core.inspectKeyList(dev.list, env.SWITCHBOT_DEVICE_ID, params.name);
+  if (!pre.valid || pre.count !== 0) {
+    log('ABORT: 発行前のkeyList確認が未達 ' + (pre.valid ? 'KEY_NAME_ALREADY_EXISTS' : pre.error) + '（claim・createKeyは送らない）');
+    return 1;
+  }
+
   var claim = await c.relay(Object.assign({ op: 'claim', deviceId: env.SWITCHBOT_DEVICE_ID }, params));
   if (!claim.ok) { log('ABORT: claim 失敗 ' + claim.error + '（未削除の検証キーがある場合は delete-key を先に実行）'); return 1; }
 
@@ -303,7 +372,21 @@ async function createKey(env, deps, c, log) {
     return 1;
   }
   var ids = Core.extractIdsFromResponse(r.parsed);
-  if (!ids.commandId) { log('UNKNOWN: commandId なし。再送せず停止（delete-key で後片付け）'); return 1; }
+  if (!ids.commandId) {
+    // 公式例と異なり同期応答に commandId が無い実測ケース（Issue #744）。再送せず keyList の読み取り専用確認だけを行う
+    log('createKey: ACCEPTED_NO_COMMAND_ID（HTTP/API受理だが commandId なし。再送しない・未作成とも断定しない。keyList確認へ）');
+    await c.relay({ op: 'setCommand', commandId: NO_COMMAND_ID });
+    var f = await pollKeyList(c, deps, env, params.name, 'PRESENT');
+    if (f.result !== 'FOUND') {
+      log('UNKNOWN: commandIdなし。keyListで今回の検証名の出現を一意に確認できない（' + (f.error || f.result) + '）。再送せず停止、状態は保持（keyList/アプリで確認し delete-key で後片付け）');
+      return 1;
+    }
+    await c.relay({ op: 'setPasscodeId', passcodeId: f.id });
+    log('createKey: KEYLIST_CONFIRMED / 証跡 keyList=今回の検証名が一意に出現 webhook=commandIdなしのため相関確認なし（Webhook成功とは別）/ passcode ID 保持済み');
+    log('有効期間(JST) ' + jst(start) + ' - ' + jst(end) + '（開始 ' + env.START_OFFSET_MIN + ' 分後・' + env.DURATION_MIN + ' 分間）');
+    log('テストコードはリレー(GAS)の Script Properties TEST_STATE で確認（ここには出さない）');
+    return 0;
+  }
   await c.relay({ op: 'setCommand', commandId: ids.commandId });
   log('createKey: ' + Core.STATE.ACCEPTED_PENDING + '（Webhook待機）');
 
@@ -336,6 +419,7 @@ async function deleteKey(env, deps, c, log) {
     log('ABORT: 保存された発行先Keypadと現在の対象が一致しない。削除しない（アプリで今回のキーだけを特定して対応）');
     return 1;
   }
+  if (st.deleteCommandId === NO_COMMAND_ID) return resumeDeleteKeyListOnly(env, deps, c, log, st);
   if (st.deleteCommandId) return resumeDelete(env, deps, c, log, st);
   // 保存済み ID があっても、現在の対象 keyList で今回の検証名が一意かつ ID 一致であることを確認
   var rr = Core.resolvePasscodeIdByName(dev.list, env.SWITCHBOT_DEVICE_ID, st.name);
@@ -355,7 +439,12 @@ async function deleteKey(env, deps, c, log) {
   var cls = Core.classifyApiResponse(r.http, r.parsed);
   if (cls.state === Core.STATE.FAILED) { log('FAILED: deleteKey がAPIで拒否 http=' + r.http); return 1; }
   var ids = Core.extractIdsFromResponse(r.parsed);
-  if (!ids.commandId) { log('UNKNOWN: commandId なし'); return 1; }
+  if (!ids.commandId) {
+    // 実測: statusCode=100 + body={}（Issue #744）。再送せず中間状態を永続化し、keyList消失だけを確認する
+    log('deleteKey: ACCEPTED_NO_COMMAND_ID（HTTP/API受理だが commandId なし。再送しない・未削除とも断定しない。keyList確認へ）');
+    await c.relay({ op: 'setDelete', commandId: NO_COMMAND_ID });
+    return finishDeleteKeyListOnly(env, deps, c, log, st);
+  }
   log('deleteKey: ' + Core.STATE.ACCEPTED_PENDING + '（Webhook待機）');
 
   await c.relay({ op: 'setDelete', commandId: ids.commandId }); // 別runで再開できるよう送信後すぐ永続化
@@ -734,4 +823,4 @@ if (require.main === module) {
   }).then(function (code) { process.exit(code); });
 }
 
-module.exports = { main: main, validateInputs: validateInputs, evaluateWebhookQuery: evaluateWebhookQuery, diagnoseWebhookUrl: diagnoseWebhookUrl, checkOldEvidence: checkOldEvidence, CONFIRM: CONFIRM };
+module.exports = { main: main, NO_COMMAND_ID: NO_COMMAND_ID, validateInputs: validateInputs, evaluateWebhookQuery: evaluateWebhookQuery, diagnoseWebhookUrl: diagnoseWebhookUrl, checkOldEvidence: checkOldEvidence, CONFIRM: CONFIRM };
