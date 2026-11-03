@@ -658,3 +658,52 @@ test('フラグOFF: adminReconcile で DELETE_SENT の読み取り照合を再�
   assert.strictEqual(off.adminReconcile(id, 'ops').state, S.DELETED_CONFIRMED);
   assert.strictEqual(w.mutations().filter(function (c) { return c.indexOf('delete:') === 0; }).length, 1);
 });
+
+test('adminDelete: ロック取得後に再読込し、重複呼出しで deleteKey を再送しない', function () {
+  var w = world();
+  var deps = w.engineDeps();
+  var e;
+  var recId;
+  var nested = false;
+  deps.lock = function (keys, fn) {
+    if (!nested) { nested = true; e.adminDelete(recId, 'ops2'); } // 先行する管理削除が先にロックを得た状況
+    return fn();
+  };
+  e = C.createEngine(deps, baseConfig());
+  w.createMode = 'noCommandId';
+  var sdeps = w.engineDeps(); // 発行は通常ロックで
+  C.createEngine(sdeps, baseConfig()).sync(booking());
+  recId = w.records()[0].id;
+  w.deleteMode = 'noApply';
+  e.adminDelete(recId, 'ops1');
+  assert.strictEqual(w.mutations().filter(function (c) { return c.indexOf('delete:') === 0; }).length, 1);
+});
+
+test('受渡し: 管理者が存在確認した UNKNOWN でも、取消済み/置換済みの予約には渡さない', function () {
+  var w = world();
+  w.createMode = 'dropResponse';
+  var e = w.engine();
+  e.sync(booking());
+  e.sync(booking({ revision: 2, status: 'CANCELLED' }));
+  var id = w.records()[0].id;
+  assert.strictEqual(e.adminResolveUnknown(id, 'CONFIRM_PRESENT', 'ops').ok, true);
+  assert.strictEqual(e.deliver(id).reason, 'NOT_CURRENT');
+  assert.deepStrictEqual(w.delivered, []);
+});
+
+test('期間のみ変更(同改訂): attempt を名前空間全体で採番し、旧 record を上書き・重複索引しない', function () {
+  var w = world();
+  var e = w.engine();
+  issued(w, e);
+  e.sync(booking({ endTime: '14:00' })); // 改訂は同じ(1)で期間だけ変更
+  var recs = w.records();
+  assert.strictEqual(recs.length, 2);
+  assert.notStrictEqual(recs[0].id, recs[1].id);
+  assert.strictEqual(recs[0].state, S.DELETED_CONFIRMED);
+  assert.strictEqual(recs[1].state, S.ISSUED_CONFIRMED);
+  var idx = JSON.parse(w.store['BK_BK1']);
+  assert.strictEqual(idx.ops.length, 2);
+  w.deleteMode = 'noApply';
+  e.sync(booking({ endTime: '14:00', status: 'CANCELLED' }));
+  assert.strictEqual(w.mutations().filter(function (c) { return c.indexOf('delete:') === 0; }).length, 2, '旧1回+現行1回のみ');
+});

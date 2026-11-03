@@ -256,8 +256,12 @@ var SwitchBotAccessCore = (function () {
     }
 
     // ---- 発行 ----
-    function startIssue(booking, elig, attempt) {
-      var id = booking.bookingId + ':' + booking.revision + ':' + maskId(elig.deviceId) + ':' + OP.ISSUE + '#' + attempt;
+    function startIssue(booking, elig) {
+      // 同じ操作ID名前空間(予約:改訂:Keypad)の既存 record すべてを避けて attempt を採番（上書き・重複索引を防ぐ）
+      var attempt = 1;
+      var ns = booking.bookingId + ':' + booking.revision + ':' + maskId(elig.deviceId) + ':' + OP.ISSUE + '#';
+      while (deps.store.get(recKey(ns + attempt))) attempt++;
+      var id = ns + attempt;
       var rec = {
         id: id, bookingId: booking.bookingId, revision: booking.revision, deviceId: elig.deviceId, op: OP.ISSUE,
         attempt: attempt, name: keyName(booking.bookingId, booking.revision, elig.deviceId, OP.ISSUE, attempt),
@@ -270,7 +274,7 @@ var SwitchBotAccessCore = (function () {
       deps.secrets.set('SECRET_' + id, code);
       save(recKey(id), rec);
       var idx = bookingIndex(booking.bookingId);
-      idx.ops.push(id);
+      if (idx.ops.indexOf(id) === -1) idx.ops.push(id);
       save(bkKey(booking.bookingId), idx);
       return executeIssue(rec);
     }
@@ -504,7 +508,7 @@ var SwitchBotAccessCore = (function () {
         }
         var same = recs.filter(function (r) { return r.op === OP.ISSUE && r.revision === booking.revision && sameWindow(r, elig); });
         if (same.some(function (r) { return r.state !== STATE.ABANDONED; })) { out.skipped = out.skipped || 'ALREADY_PLANNED'; return; }
-        startIssue(booking, elig, same.length + 1);
+        startIssue(booking, elig);
         out.actions.push('ISSUE');
       });
       return out;
@@ -524,6 +528,9 @@ var SwitchBotAccessCore = (function () {
     function deliverLocked(recId) {
       var rec = load(recKey(recId));
       if (!rec || rec.state !== STATE.ISSUED_CONFIRMED) return { delivered: false, reason: 'NOT_CONFIRMED' };
+      // 取消済み/改訂で置換された予約には、管理者が存在確認した場合でも受け渡さない
+      var head = bookingIndex(rec.bookingId).head;
+      if (!head || head.cancelled || head.revision !== rec.revision) return { delivered: false, reason: 'NOT_CURRENT' };
       if (rec.deliveredAtSec) return { delivered: false, reason: 'ALREADY_DELIVERED' };
       var code = deps.secrets.get('SECRET_' + rec.id);
       if (!code) return { delivered: false, reason: 'SECRET_MISSING' };
@@ -616,13 +623,16 @@ var SwitchBotAccessCore = (function () {
 
     /** 管理者による個別削除（フラグ OFF・ロールバック後も使える）。ISSUED_CONFIRMED/EXPIRED のみ。 */
     function adminDelete(recId, actor) {
-      var rec = load(recKey(recId));
-      if (!rec || !actor) return { ok: false, error: 'NOT_FOUND_OR_NO_ACTOR' };
-      if (rec.state !== STATE.ISSUED_CONFIRMED && rec.state !== STATE.EXPIRED && rec.state !== STATE.DELETE_PENDING) {
-        return { ok: false, error: 'NOT_DELETABLE' };
-      }
+      var head = load(recKey(recId));
+      if (!head || !actor) return { ok: false, error: 'NOT_FOUND_OR_NO_ACTOR' };
       var out;
-      deps.lock(['BOOKING_' + rec.bookingId, 'DEV_' + rec.deviceId], function () { out = startDelete(rec); });
+      deps.lock(['BOOKING_' + head.bookingId, 'DEV_' + head.deviceId], function () {
+        var rec = load(recKey(recId)); // ロック取得後に再読込して検証（重複 deleteKey を防ぐ）
+        if (rec && (rec.state === STATE.ISSUED_CONFIRMED || rec.state === STATE.EXPIRED || rec.state === STATE.DELETE_PENDING)) {
+          out = startDelete(rec);
+        }
+      });
+      if (!out) return { ok: false, error: 'NOT_DELETABLE' };
       return { ok: true, state: out.state };
     }
 
