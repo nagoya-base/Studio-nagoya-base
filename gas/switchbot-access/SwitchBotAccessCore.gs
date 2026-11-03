@@ -507,7 +507,9 @@ var SwitchBotAccessCore = (function () {
           return;
         }
         var same = recs.filter(function (r) { return r.op === OP.ISSUE && r.revision === booking.revision && sameWindow(r, elig); });
-        if (same.some(function (r) { return r.state !== STATE.ABANDONED; })) { out.skipped = out.skipped || 'ALREADY_PLANNED'; return; }
+        // 削除済み/放棄済みの過去 record は再発行を妨げない（期間 A→B→A の復元）。未完了・FAILED・期限切れは妨げる。
+        var REISSUABLE = [STATE.ABANDONED, STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT];
+        if (same.some(function (r) { return REISSUABLE.indexOf(r.state) === -1; })) { out.skipped = out.skipped || 'ALREADY_PLANNED'; return; }
         startIssue(booking, elig);
         out.actions.push('ISSUE');
       });
@@ -597,13 +599,27 @@ var SwitchBotAccessCore = (function () {
      * 変更 API は呼ばない。
      */
     function adminResolveUnknown(recId, decision, actor) {
+      var head = load(recKey(recId));
+      if (!head) return { ok: false, error: 'NOT_RESOLVABLE' };
+      if (!actor) return { ok: false, error: 'ACTOR_REQUIRED' };
+      var result;
+      // 他の遷移（削除など）と直列化。ロック取得後に再読込して検証し、最新状態を上書きしない
+      deps.lock(['BOOKING_' + head.bookingId, 'DEV_' + head.deviceId], function () {
+        result = resolveUnknownLocked(recId, decision, actor);
+      });
+      return result;
+    }
+
+    function resolveUnknownLocked(recId, decision, actor) {
       var rec = load(recKey(recId));
       if (!rec || rec.state !== STATE.UNKNOWN || rec.op !== OP.ISSUE) return { ok: false, error: 'NOT_RESOLVABLE' };
-      if (!actor) return { ok: false, error: 'ACTOR_REQUIRED' };
       var kl = readKeyList();
       if (!kl.ok) return { ok: false, error: kl.error };
       var insp = inspectKeyList(kl.devices, rec.deviceId, rec.name);
       if (!insp.valid) return { ok: false, error: insp.error };
+      // keyList 取得中に状態が進んでいないか再確認（二重の安全策。最新状態を上書きしない）
+      rec = load(recKey(recId));
+      if (!rec || rec.state !== STATE.UNKNOWN) return { ok: false, error: 'NOT_RESOLVABLE' };
       if (decision === 'CONFIRM_PRESENT') {
         var j = judgeIssued(insp, rec);
         if (!j.ok) return { ok: false, error: j.error };

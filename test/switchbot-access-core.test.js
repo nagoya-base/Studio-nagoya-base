@@ -707,3 +707,51 @@ test('期間のみ変更(同改訂): attempt を名前空間全体で採番し�
   e.sync(booking({ endTime: '14:00', status: 'CANCELLED' }));
   assert.strictEqual(w.mutations().filter(function (c) { return c.indexOf('delete:') === 0; }).length, 2, '旧1回+現行1回のみ');
 });
+
+test('期間 A→B→A(同改訂): 復元した期間で新 attempt を再発行する', function () {
+  var w = world();
+  var e = w.engine();
+  issued(w, e);
+  e.sync(booking({ endTime: '14:00' }));
+  var r = e.sync(booking());
+  var recs = w.records();
+  assert.strictEqual(recs.length, 3);
+  assert.notStrictEqual(r.skipped, 'ALREADY_PLANNED');
+  assert.deepStrictEqual(recs.map(function (x) { return x.state; }), [S.DELETED_CONFIRMED, S.DELETED_CONFIRMED, S.ISSUED_CONFIRMED]);
+  assert.strictEqual(w.keys[DEV_A].length, 1);
+  assert.strictEqual(new Set(recs.map(function (x) { return x.id; })).size, 3);
+});
+
+test('FAILED/期限切れの同期間 record は再発行を妨げる（拒否の無限再試行をしない）', function () {
+  var w = world();
+  w.createMode = 'reject';
+  var e = w.engine();
+  e.sync(booking()); e.sync(booking());
+  assert.strictEqual(w.records().length, 1);
+  assert.strictEqual(w.mutations().length, 1);
+});
+
+test('adminResolveUnknown: ロック下で再読込し、並行する削除結果を ISSUED で上書きしない', function () {
+  var w = world();
+  w.createMode = 'dropResponse';
+  var deps = w.engineDeps();
+  var e;
+  var id;
+  var inner = false;
+  var origList = deps.api.listDevices;
+  deps.api.listDevices = function () {
+    var res = origList();
+    if (!inner) {
+      inner = true; // 先行処理: 別の管理者が確認→削除まで完了させる状況
+      e.adminResolveUnknown(id, 'CONFIRM_PRESENT', 'ops2');
+      e.adminDelete(id, 'ops2');
+    }
+    return res;
+  };
+  e = C.createEngine(deps, baseConfig());
+  e.sync(booking());
+  id = w.records()[0].id;
+  inner = false;
+  e.adminResolveUnknown(id, 'CONFIRM_PRESENT', 'ops1');
+  assert.notStrictEqual(w.records()[0].state, S.ISSUED_CONFIRMED);
+});
