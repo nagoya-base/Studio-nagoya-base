@@ -1,0 +1,33 @@
+name: SwitchBot keyList check (manual)
+
+# Issue #735: 対象 Keypad の keyList 取得可否・総件数の読み取り専用確認。
+# GET /v1.1/devices のみ。POST / PUT / DELETE・createKey / deleteKey・Webhook は実行しない。手動実行専用。
+on:
+  workflow_dispatch:
+    inputs:
+      last4:
+        description: '対象 Keypad の末尾4桁（例: 01FD / 37DD。登録済み SWITCHBOT_DEVICE_ID と一致する値）'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: switchbot-verify
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: keyList の取得可否と件数を確認（読み取り専用・内容は出力しない）
+        env:
+          KEYPAD_LAST4: ${{ inputs.last4 }}
+          SWITCHBOT_TOKEN: ${{ secrets.SWITCHBOT_TOKEN }}
+          SWITCHBOT_SECRET: ${{ secrets.SWITCHBOT_SECRET }}
+          SWITCHBOT_DEVICE_ID: ${{ secrets.SWITCHBOT_DEVICE_ID }}
+        run: node scripts/switchbot-verify-keylist.js

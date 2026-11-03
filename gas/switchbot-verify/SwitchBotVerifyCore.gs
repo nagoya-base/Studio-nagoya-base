@@ -185,6 +185,18 @@ var SwitchBotVerifyCore = (function () {
     return { valid: true, count: count, error: null };
   }
 
+  /**
+   * 対象 Keypad の keyList 総件数のみを返す（Issue #735・名前フィルタなし・内容は返さない）。
+   * keyList が欠落 / null / 非配列の場合は valid:false とし、0 件とは断定しない。
+   */
+  function countKeyList(deviceList, deviceId) {
+    if (!Array.isArray(deviceList)) return { valid: false, error: 'DEVICE_LIST_INVALID' };
+    var devs = deviceList.filter(function (d) { return d && d.deviceId === deviceId; });
+    if (devs.length !== 1) return { valid: false, error: devs.length === 0 ? 'DEVICE_NOT_FOUND' : 'DEVICE_AMBIGUOUS' };
+    if (!Array.isArray(devs[0].keyList)) return { valid: false, error: 'KEY_LIST_INVALID' };
+    return { valid: true, count: devs[0].keyList.length, error: null };
+  }
+
   /** 応答 body から commandId / passcode ID の候補を取り出す（存在しない場合は null）。 */
   function extractIdsFromResponse(parsed) {
     var body = (parsed && parsed.body) || {};
@@ -384,6 +396,7 @@ var SwitchBotVerifyCore = (function () {
     extractIdsFromResponse: extractIdsFromResponse,
     resolvePasscodeIdByName: resolvePasscodeIdByName,
     inspectKeyList: inspectKeyList,
+    countKeyList: countKeyList,
     parseKeypadWebhook: parseKeypadWebhook,
     resolveCommandState: resolveCommandState,
     redact: redact,
