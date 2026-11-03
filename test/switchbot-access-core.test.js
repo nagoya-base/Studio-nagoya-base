@@ -755,3 +755,67 @@ test('adminResolveUnknown: ロック下で再読込し、並行する削除結�
   e.adminResolveUnknown(id, 'CONFIRM_PRESENT', 'ops1');
   assert.notStrictEqual(w.records()[0].state, S.ISSUED_CONFIRMED);
 });
+
+test('保持期限後の ID 再利用でも、新しい操作の通知が前回マーカーに抑止されない', function () {
+  var w = world();
+  w.createMode = 'dropResponse';
+  var e = w.engine(baseConfig({ retentionSec: 100 }));
+  e.sync(booking());
+  var id = w.records()[0].id;
+  assert.strictEqual(e.adminResolveUnknown(id, 'CONFIRM_PRESENT', 'ops').ok, true);
+  e.adminDelete(id, 'ops');
+  w.now += 101;
+  e.sweep();
+  assert.strictEqual(w.records().length, 0);
+  assert.strictEqual(Object.keys(w.store).filter(function (k) { return k.indexOf('ALERT_') === 0; }).length, 0);
+  var before = w.notes.length;
+  e.sync(booking());
+  assert.ok(w.notes.length > before, '新しい UNKNOWN が通知される');
+});
+
+test('受渡し: 同改訂で期間が短縮された場合、管理者確認済みの旧キーは渡さない', function () {
+  var w = world();
+  w.createMode = 'dropResponse';
+  var e = w.engine();
+  e.sync(booking());
+  e.sync(booking({ endTime: '11:00' }));
+  var id = w.records()[0].id;
+  assert.strictEqual(e.adminResolveUnknown(id, 'CONFIRM_PRESENT', 'ops').ok, true);
+  assert.strictEqual(e.deliver(id).reason, 'NOT_CURRENT');
+  assert.deepStrictEqual(w.delivered, []);
+});
+
+test('フラグOFF: 結果保存前に中断した SENDING も adminReconcile→adminResolveUnknown で復旧でき、再送しない', function () {
+  var w = world();
+  w.createMode = 'noCommandId';
+  w.failSetOnKey = { prefix: 'OP_', state: S.ACCEPTED_NO_COMMAND_ID };
+  assert.throws(function () { w.engine().sync(booking()); });
+  w.failSetOnKey = null;
+  var off = w.engine(baseConfig({ enabled: false }));
+  var id = w.records()[0].id;
+  assert.strictEqual(w.records()[0].state, S.SENDING);
+  assert.strictEqual(off.adminReconcile(id, 'ops').state, S.UNKNOWN);
+  assert.strictEqual(off.adminResolveUnknown(id, 'CONFIRM_PRESENT', 'ops').state, S.ISSUED_CONFIRMED);
+  assert.strictEqual(off.adminDelete(id, 'ops').state, S.DELETED_CONFIRMED);
+  assert.strictEqual(w.mutations().filter(function (c) { return c === 'create'; }).length, 1);
+});
+
+test('sweep: ロック下で再読込し、並行した削除の進行状態を EXPIRED で巻き戻さない', function () {
+  var w = world();
+  w.createMode = 'noCommandId';
+  var deps = w.engineDeps();
+  var e;
+  var recId;
+  var nested = false;
+  deps.lock = function (keys, fn) {
+    if (!nested && recId) { nested = true; w.deleteMode = 'noApply'; e.adminDelete(recId, 'ops'); }
+    return fn();
+  };
+  e = C.createEngine(deps, baseConfig());
+  e.sync(booking());
+  recId = w.records()[0].id;
+  w.now = w.records()[0].endSec + 10;
+  e.sweep();
+  assert.notStrictEqual(w.records()[0].state, S.EXPIRED);
+  assert.strictEqual(w.mutations().filter(function (c) { return c.indexOf('delete:') === 0; }).length, 1);
+});

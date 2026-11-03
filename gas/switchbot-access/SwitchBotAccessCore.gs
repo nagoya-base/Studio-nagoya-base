@@ -455,7 +455,11 @@ var SwitchBotAccessCore = (function () {
         var cancelledNow = booking.status === 'CANCELLED';
         // 取消済みの後に届いた遅延確定イベント（同改訂以下）で発行しない
         if (idx.head && idx.head.cancelled && !cancelledNow && booking.revision <= idx.head.revision) { out.skipped = 'AFTER_CANCEL'; return; }
-        idx.head = { revision: booking.revision, cancelled: cancelledNow };
+        idx.head = {
+          revision: booking.revision, cancelled: cancelledNow, desired: !!(elig.eligible && !cancelledNow),
+          startSec: elig.eligible ? elig.startSec : null, endSec: elig.eligible ? elig.endSec : null,
+          deviceId: elig.eligible ? elig.deviceId : null
+        };
         save(bkKey(booking.bookingId), idx);
 
         var desired = elig.eligible && !cancelledNow;
@@ -532,7 +536,10 @@ var SwitchBotAccessCore = (function () {
       if (!rec || rec.state !== STATE.ISSUED_CONFIRMED) return { delivered: false, reason: 'NOT_CONFIRMED' };
       // 取消済み/改訂で置換された予約には、管理者が存在確認した場合でも受け渡さない
       var head = bookingIndex(rec.bookingId).head;
-      if (!head || head.cancelled || head.revision !== rec.revision) return { delivered: false, reason: 'NOT_CURRENT' };
+      if (!head || head.cancelled || !head.desired || head.revision !== rec.revision ||
+          head.startSec !== rec.startSec || head.endSec !== rec.endSec || head.deviceId !== rec.deviceId) {
+        return { delivered: false, reason: 'NOT_CURRENT' };
+      }
       if (rec.deliveredAtSec) return { delivered: false, reason: 'ALREADY_DELIVERED' };
       var code = deps.secrets.get('SECRET_' + rec.id);
       if (!code) return { delivered: false, reason: 'SECRET_MISSING' };
@@ -555,29 +562,41 @@ var SwitchBotAccessCore = (function () {
       var now = deps.nowSec();
       var retention = typeof config.retentionSec === 'number' ? config.retentionSec : 30 * 86400;
       deps.store.keys().filter(function (k) { return k.indexOf('OP_') === 0; }).forEach(function (k) {
-        var rec = load(k);
-        if (!rec) return;
-        retryAlert(rec);
-        if (rec.state === STATE.ISSUED_CONFIRMED && rec.endSec <= now) {
-          transition(rec, STATE.EXPIRED, 'TIME');
-        }
-        if (rec.state === STATE.EXPIRED) {
-          var kl = readKeyList();
-          var insp = kl.ok ? inspectKeyList(kl.devices, rec.deviceId, rec.name) : { valid: false };
-          if (insp.valid && insp.count === 0) {
-            rec.evidence.push(EVIDENCE.KEYLIST_ABSENT);
-            transition(rec, STATE.ARCHIVED_EXPIRED, null);
-            deps.secrets.del('SECRET_' + rec.id);
-          } else if (insp.valid) {
-            alert(rec, 'EXPIRED_KEY_REMAINS'); // 容量管理: 管理者が adminDelete で削除
-          } else {
-            alert(rec, 'EXPIRED_CHECK_FAILED');
-          }
-        } else if (TERMINAL.indexOf(rec.state) !== -1 && rec.updatedAt && now - rec.updatedAt > retention) {
-          deps.store.del(k);
-          deps.secrets.del('SECRET_' + rec.id);
-        }
+        var head = load(k);
+        if (!head) return;
+        // 予約・Keypad のロック下で再読込してから評価する（進行中の削除等を巻き戻さない）
+        deps.lock(['BOOKING_' + head.bookingId, 'DEV_' + head.deviceId], function () {
+          var rec = load(k);
+          if (rec) sweepOne(k, rec, now, retention);
+        });
       });
+    }
+
+    function sweepOne(k, rec, now, retention) {
+      retryAlert(rec);
+      if (rec.state === STATE.ISSUED_CONFIRMED && rec.endSec <= now) {
+        transition(rec, STATE.EXPIRED, 'TIME');
+      }
+      if (rec.state === STATE.EXPIRED) {
+        var kl = readKeyList();
+        var insp = kl.ok ? inspectKeyList(kl.devices, rec.deviceId, rec.name) : { valid: false };
+        if (insp.valid && insp.count === 0) {
+          rec.evidence.push(EVIDENCE.KEYLIST_ABSENT);
+          transition(rec, STATE.ARCHIVED_EXPIRED, null);
+          deps.secrets.del('SECRET_' + rec.id);
+        } else if (insp.valid) {
+          alert(rec, 'EXPIRED_KEY_REMAINS'); // 容量管理: 管理者が adminDelete で削除
+        } else {
+          alert(rec, 'EXPIRED_CHECK_FAILED');
+        }
+      } else if (TERMINAL.indexOf(rec.state) !== -1 && rec.updatedAt && now - rec.updatedAt > retention) {
+        deps.store.del(k);
+        deps.secrets.del('SECRET_' + rec.id);
+        // 通知の重複抑止マーカーも破棄（ID 再利用時に新しい操作の通知を抑止しない）
+        deps.store.keys().forEach(function (ak) {
+          if (ak.indexOf('ALERT_' + rec.id + '_') === 0) deps.store.del(ak);
+        });
+      }
     }
 
     // ---- 管理者復旧（フラグ OFF でも使える） ----
@@ -664,6 +683,10 @@ var SwitchBotAccessCore = (function () {
         rec = load(recKey(recId));
         if (rec.state === STATE.DELETE_SENT) out = reconcileDelete(rec);
         else if (rec.state === STATE.SENT_WAIT_WEBHOOK || rec.state === STATE.ACCEPTED_NO_COMMAND_ID) out = reconcileIssue(rec);
+        else if (rec.state === STATE.SENDING || rec.state === STATE.DELETE_SENDING) {
+          // 結果保存前に中断した送信。sync と同じ保守的復旧: UNKNOWN にして再送しない
+          out = stopUnknown(rec, 'CRASH_RECOVERY', 'RESUMED_FROM_SENDING');
+        }
         else if (rec.state === STATE.UNKNOWN) { retryAlert(rec); out = rec; }
       });
       if (!out) return { ok: false, error: 'NOT_RECONCILABLE' };
