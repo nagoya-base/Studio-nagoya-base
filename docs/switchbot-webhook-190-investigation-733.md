@@ -74,3 +74,11 @@
 - queryDetails は照会対象 URL の指定が必須。このため `SWITCHBOT_DEVICE_ID` は不要だが、`VERIFY_RELAY_URL` + `VERIFY_WEBHOOK_TOKEN`（target=current）または `VERIFY_OLD_WEBHOOK_URL`（target=old）が必要。URL は出力しない。
 - 手動Action: `.github/workflows/switchbot-verify-webhook-details.yml` / `scripts/switchbot-verify-webhook-details.js`。1回のみ送信・再送なし・変更API なし。
 - 読み分け: statusCode=100 → queryUrl だけが 190 の可能性 / 190 → Webhook 読み取り系全体の不整合の疑い / その他 → 追加調査（フォールバック・変更操作へは進まない）。
+
+## 追記（Issue #741）: 現行Webhook 1回再登録の例外検証
+
+- 依頼者の明示判断に基づく**単発の例外検証**。#733 の一般安全方針（190 継続中は変更APIを再送しない）を恒常的に緩和するものではない。
+- 手動Action: `.github/workflows/switchbot-verify-webhook-setup-once.yml` / `scripts/switchbot-verify-webhook-setup-once.js`。確認文字列 `I-CONFIRM-SETUP-CURRENT-ONCE` 必須、`GITHUB_RUN_ATTEMPT=1` のみ送信可（Re-run jobs では送信しない）。
+- 変更APIは `POST /v1.1/webhook/setupWebhook`（`{"action":"setupWebhook","url":<現行URL>,"deviceList":"ALL"}`）を1回のみ。対象URLは Secrets `VERIFY_RELAY_URL` + `VERIFY_WEBHOOK_TOKEN` から実行時に構成し、ログに出さない。delete / update / createKey / deleteKey は呼ばない。
+- 判定: `RECOVERED_CONFIRMED`（setup=100 かつ queryUrl=100・urls 1件・完全一致のときだけ）/ `SETUP_ACCEPTED_BUT_QUERY_UNKNOWN` / `SETUP_FAILED_190` / `EXISTING_STATE_DETECTED` / `UNKNOWN`。190・UNKNOWN は成功扱いせず即停止し、再送・自動削除・自動更新へ進まない。
+- 実装前の公式仕様再確認（endpoint / method / body）は実行前に人手で行うこと。この環境では外部仕様の再確認はしていない。実装は既存 `setup-current`（`switchbot-verify-key.js`）と同じ body に揃えた。
