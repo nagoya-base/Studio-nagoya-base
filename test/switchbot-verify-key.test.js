@@ -78,7 +78,11 @@ function world(opts) {
       if (opts.netError) throw new Error('network');
       w.n += 1;
       var cid = 'cmd-' + w.n;
-      var respond = function () { return opts.respond502 && body.command === 'createKey' ? reply(502, null) : reply(200, { statusCode: 100, body: { commandId: cid } }); };
+      var respond = function () {
+        if (opts.respond502 && body.command === 'createKey') return reply(502, null);
+        if (opts.noCommandId) return reply(200, { statusCode: 100, body: {}, message: 'success' }); // 実測(Issue #744): commandId なし
+        return reply(200, { statusCode: 100, body: { commandId: cid } });
+      };
       if (body.command === 'createKey') {
         if (!opts.noKeyInList) {
           w.keys.push({ id: 701, name: body.parameter.name });
@@ -646,4 +650,198 @@ test('再実行・同時実行: preflight 後の create-key は1回だけ。2回
   assert.strictEqual(count(w, 'createKey'), 1);
   assert.strictEqual(await K.main(env('preflight'), w.deps), 1); // 使用中の状態は preflight でも検知
   assertNoLeak(w);
+});
+
+
+// ---------------------------------------------------------------------------
+// Issue #744: 同期応答に commandId が無い（statusCode=100 + body={}）ケース。変更APIは各最大1回。
+// ---------------------------------------------------------------------------
+
+function logs(w) { return w.logs.join('\n'); }
+
+test('#744 実測回帰(37DD): create=statusCode100+body{}でkeyList 0→1を確認、解錠後delete=1→0で後片付け（各1回）', async function () {
+  var w = world({ noCommandId: true });
+  assert.strictEqual(w.keys.length, 0);
+  var rc = await K.main(env('create-key'), w.deps); if (rc !== 0) dump(w);
+  assert.strictEqual(rc, 0);
+  assert.strictEqual(count(w, 'createKey'), 1);
+  assert.strictEqual(w.keys.length, 1);
+  var out = logs(w);
+  assert.ok(out.indexOf('ACCEPTED_NO_COMMAND_ID') !== -1);
+  assert.ok(out.indexOf('createKey: KEYLIST_CONFIRMED') !== -1);
+  assert.ok(out.indexOf('相関確認なし') !== -1);
+  assert.ok(out.indexOf('createKey: APPLIED') === -1, 'Webhook成功と偽装しない');
+  var st = JSON.parse(w.store.get('TEST_STATE'));
+  assert.strictEqual(st.passcodeId, '701');
+  assert.strictEqual(st.createCommandId, K.NO_COMMAND_ID);
+
+  var rd = await K.main(env('delete-key'), w.deps); if (rd !== 0) dump(w);
+  assert.strictEqual(rd, 0);
+  assert.strictEqual(count(w, 'deleteKey'), 1);
+  assert.strictEqual(w.keys.length, 0);
+  assert.strictEqual(w.store.get('TEST_STATE'), null);
+  assert.ok(logs(w).indexOf('deleteKey: KEYLIST_CONFIRMED') !== -1);
+  assert.ok(logs(w).indexOf('deleteKey: APPLIED') === -1);
+  assertNoLeak(w);
+});
+
+test('#744 create: 反映が遅れて現れても待機後に確認できる（再送しない）', async function () {
+  var w = world({ noCommandId: true });
+  var polls = 0;
+  var orig = w.deps.fetch;
+  w.deps.fetch = async function (url, o) {
+    // createKey 後の最初の2回の一覧取得では未反映（keyListには出さない）
+    if (w.keys.length === 1 && url.indexOf('/v1.1/devices') !== -1 && url.indexOf('/commands') === -1 && polls < 2 && w.calls.some(function (x) { return x.indexOf('createKey') !== -1; })) {
+      polls += 1;
+      w.calls.push('get /v1.1/devices');
+      return { status: 200, json: async function () { return { statusCode: 100, body: { deviceList: [{ deviceId: DEV, deviceType: 'Keypad Touch', keyList: [] }] } }; } };
+    }
+    return orig(url, o);
+  };
+  assert.strictEqual(await K.main(env('create-key'), w.deps), 0);
+  assert.strictEqual(polls, 2);
+  assert.strictEqual(count(w, 'createKey'), 1);
+});
+
+test('#744 create: keyList 0件(待機後timeout)・複数件・不正・通信失敗はUNKNOWN、再送なし、状態は保持', async function () {
+  var none = world({ noCommandId: true, noKeyInList: true });
+  assert.strictEqual(await K.main(env('create-key'), none.deps), 1);
+  assert.strictEqual(count(none, 'createKey'), 1);
+  assert.notStrictEqual(none.store.get('TEST_STATE'), null);
+  assert.ok(logs(none).indexOf('UNKNOWN') !== -1);
+  assert.ok(logs(none).indexOf('KEYLIST_CONFIRMED') === -1);
+
+  var dup = world({ noCommandId: true, dupKey: true });
+  assert.strictEqual(await K.main(env('create-key'), dup.deps), 1);
+  assert.strictEqual(count(dup, 'createKey'), 1);
+  assert.strictEqual(JSON.parse(dup.store.get('TEST_STATE')).passcodeId, '');
+  assert.ok(logs(dup).indexOf('KEY_NAME_AMBIGUOUS') !== -1);
+
+  // keyList が配列でない（欠落）応答
+  var bad = world({ noCommandId: true });
+  var orig = bad.deps.fetch;
+  bad.deps.fetch = async function (url, o) {
+    if (bad.calls.some(function (x) { return x.indexOf('createKey') !== -1; }) && url.indexOf('/commands') === -1 && url.indexOf('/v1.1/devices') !== -1) {
+      return { status: 200, json: async function () { return { statusCode: 100, body: { deviceList: [{ deviceId: DEV, deviceType: 'Keypad Touch' }] } }; } };
+    }
+    return orig(url, o);
+  };
+  assert.strictEqual(await K.main(env('create-key'), bad.deps), 1);
+  assert.strictEqual(count(bad, 'createKey'), 1);
+  assert.ok(logs(bad).indexOf('KEYLIST_INVALID') !== -1);
+
+  // 通信失敗
+  var net = world({ noCommandId: true });
+  var o2 = net.deps.fetch;
+  net.deps.fetch = async function (url, o) {
+    if (net.calls.some(function (x) { return x.indexOf('createKey') !== -1; }) && url.indexOf('/commands') === -1 && url.indexOf('/v1.1/devices') !== -1) throw new Error('network');
+    return o2(url, o);
+  };
+  assert.strictEqual(await K.main(env('create-key'), net.deps), 1);
+  assert.strictEqual(count(net, 'createKey'), 1);
+  assert.notStrictEqual(net.store.get('TEST_STATE'), null);
+  assertNoLeak(none); assertNoLeak(dup); assertNoLeak(bad); assertNoLeak(net);
+});
+
+test('#744 create: 発行前に同名キーがある/keyList不正ならclaimもcreateKeyも送らない', async function () {
+  var w = world({ noCommandId: true });
+  // 今回の検証名と同名のキーが既に存在
+  w.keys.push({ id: 5, name: Core.buildTestName(w.clock) });
+  assert.strictEqual(await K.main(env('create-key'), w.deps), 1);
+  assert.strictEqual(count(w, 'createKey'), 0);
+  assert.strictEqual(w.store.get('TEST_STATE'), null);
+
+  var bad = world({ noCommandId: true, omitKeyListAfterDelete: true });
+  bad.deleted = true; // keyList を欠落させる
+  assert.strictEqual(await K.main(env('create-key'), bad.deps), 1);
+  assert.strictEqual(count(bad, 'createKey'), 0);
+  assert.strictEqual(bad.store.get('TEST_STATE'), null);
+});
+
+test('#744 create: 二重実行(Re-run/同時)でも、状態が残る限りcreateKeyは再送されない', async function () {
+  var w = world({ noCommandId: true, noKeyInList: true });
+  assert.strictEqual(await K.main(env('create-key'), w.deps), 1);
+  assert.strictEqual(await K.main(env('create-key'), w.deps), 1);
+  assert.strictEqual(count(w, 'createKey'), 1);
+});
+
+test('#744 delete: statusCode100+body{}でkeyList 1→0を確認しclear。commandIdなしを中間状態として永続化', async function () {
+  var w = world({ noCommandId: true });
+  await K.main(env('create-key'), w.deps);
+  assert.strictEqual(await K.main(env('delete-key'), w.deps), 0);
+  assert.strictEqual(count(w, 'deleteKey'), 1);
+  assert.strictEqual(w.store.get('TEST_STATE'), null);
+});
+
+test('#744 delete: commandIdなしでkeyListに残存/不正/通信失敗ならUNKNOWN。再送せず、別runは確認だけ再開', async function () {
+  var kept = world({ noCommandId: true, keepKey: true });
+  await K.main(env('create-key'), kept.deps);
+  assert.strictEqual(await K.main(env('delete-key'), kept.deps), 1);
+  assert.strictEqual(count(kept, 'deleteKey'), 1);
+  assert.strictEqual(kept.keys.length, 1);
+  assert.strictEqual(JSON.parse(kept.store.get('TEST_STATE')).deleteCommandId, K.NO_COMMAND_ID);
+  // 再実行しても deleteKey は再送されない
+  assert.strictEqual(await K.main(env('delete-key'), kept.deps), 1);
+  assert.strictEqual(count(kept, 'deleteKey'), 1);
+  assert.notStrictEqual(kept.store.get('TEST_STATE'), null);
+  assert.ok(logs(kept).indexOf('deleteKey: KEYLIST_CONFIRMED') === -1);
+
+  var inv = world({ noCommandId: true, keepKey: true, omitKeyListAfterDelete: true });
+  await K.main(env('create-key'), inv.deps);
+  assert.strictEqual(await K.main(env('delete-key'), inv.deps), 1);
+  assert.strictEqual(count(inv, 'deleteKey'), 1);
+  assert.ok(logs(inv).indexOf('KEYLIST_INVALID') !== -1);
+  assert.notStrictEqual(inv.store.get('TEST_STATE'), null);
+
+  // 通信失敗で確認できなかった後、復旧した別runが再削除せずに消失を確認してclear
+  var flaky = world({ noCommandId: true, failGetAfterDelete: true });
+  await K.main(env('create-key'), flaky.deps);
+  assert.strictEqual(await K.main(env('delete-key'), flaky.deps), 1);
+  assert.strictEqual(flaky.keys.length, 0);
+  assert.strictEqual(JSON.parse(flaky.store.get('TEST_STATE')).deleteCommandId, K.NO_COMMAND_ID);
+  assert.strictEqual(await K.main(env('delete-key'), flaky.deps), 0);
+  assert.strictEqual(count(flaky, 'deleteKey'), 1);
+  assert.strictEqual(flaky.store.get('TEST_STATE'), null);
+  assertNoLeak(kept); assertNoLeak(inv); assertNoLeak(flaky);
+});
+
+test('#744 delete: 対象名が0/複数一致なら別キーを削除せず、deleteKeyを送らない', async function () {
+  var w = world({ noCommandId: true });
+  await K.main(env('create-key'), w.deps);
+  w.keys.push({ id: 702, name: JSON.parse(w.store.get('TEST_STATE')).name }); // 同名が複数
+  assert.strictEqual(await K.main(env('delete-key'), w.deps), 1);
+  assert.strictEqual(count(w, 'deleteKey'), 0);
+  assert.strictEqual(w.keys.length, 2);
+  var z = world({ noCommandId: true });
+  await K.main(env('create-key'), z.deps);
+  z.keys.length = 0; // 0件
+  assert.strictEqual(await K.main(env('delete-key'), z.deps), 1);
+  assert.strictEqual(count(z, 'deleteKey'), 0);
+});
+
+test('#744 従来のcommandId経路は維持: Webhook相関でAPPLIED。commandIdありではkeyList単独確認に切り替えない', async function () {
+  var w = world();
+  assert.strictEqual(await K.main(env('create-key'), w.deps), 0);
+  assert.ok(logs(w).indexOf('createKey: APPLIED') !== -1);
+  assert.ok(logs(w).indexOf('ACCEPTED_NO_COMMAND_ID') === -1);
+  assert.strictEqual(JSON.parse(w.store.get('TEST_STATE')).createCommandId, 'cmd-1');
+  assert.strictEqual(await K.main(env('delete-key'), w.deps), 0);
+  assert.ok(logs(w).indexOf('deleteKey: APPLIED') !== -1);
+  // commandIdありでWebhook未着ならUNKNOWNのまま（keyListだけでは成功にしない）
+  var n = world({ webhook: 'none' });
+  assert.strictEqual(await K.main(env('create-key'), n.deps), 1);
+  assert.ok(logs(n).indexOf('KEYLIST_CONFIRMED') === -1);
+});
+
+test('#744 変更APIは各経路で最大1回、ログに秘密・passcode ID・生レスポンスを出さない', async function () {
+  for (var o of [{ noCommandId: true }, { noCommandId: true, keepKey: true }, { noCommandId: true, noKeyInList: true }]) {
+    var w = world(o);
+    await K.main(env('create-key'), w.deps);
+    await K.main(env('delete-key'), w.deps);
+    await K.main(env('delete-key'), w.deps);
+    assert.ok(count(w, 'createKey') <= 1);
+    assert.ok(count(w, 'deleteKey') <= 1);
+    assertNoLeak(w);
+    assert.ok(logs(w).indexOf('"statusCode"') === -1 && logs(w).indexOf('message') === -1);
+  }
 });

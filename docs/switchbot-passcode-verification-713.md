@@ -52,6 +52,28 @@ GAS 経路（`verifySelectKeypad(last4)`）で Script Properties に保存して
 | 5 | 実機 | 削除後も同じコードで解錠不可 |
 | 6 | `webhook-remove`（`REMOVE-WEBHOOK`） | 今回登録した Webhook だけ撤去（既存設定は触らない）。GAS の `verifyCleanupLocal()` も実行 |
 
+### commandId が同期応答に無い場合（Issue #744）
+公式READMEのKeypad例では `createKey` 成功応答に `body.commandId` があるが、実機では `statusCode=100` + `body={}` で `commandId` が返らないのに処理は反映されることを確認した（公式Issue #466 にも `deleteKey` の `statusCode:100, body:{}` の報告あり）。`commandId` 欠落だけで「未作成」「未削除」と断定せず、変更APIは再送しない。
+
+| 操作 | commandId あり | commandId なし（`ACCEPTED_NO_COMMAND_ID`） |
+|------|----------------|------------------------------------------|
+| `create-key` | 従来どおり commandId+createKey の Webhook success で `APPLIED` | 読み取り専用の keyList を上限付き（60秒・5秒間隔）で確認し、今回の検証名が**厳密に1件**出現した場合のみ `KEYLIST_CONFIRMED`（passcode ID を保持）。0件（timeout）・複数件・keyList不正・通信失敗は `UNKNOWN` で停止し、状態を保持 |
+| `delete-key` | 従来どおり Webhook success + keyList消失で `APPLIED` | 同様に keyList で今回の検証名が**0件**になった場合のみ `KEYLIST_CONFIRMED` として保持データを破棄。残存・複数件・不正・通信失敗は `UNKNOWN`（再送なし） |
+
+- `create-key` は発行前に、対象Keypadの keyList が完全な応答で今回の検証名が存在しないことを確認する（未達なら claim も `createKey` も送らない）。
+- commandId なしの場合、リレーの `createCommandId` / `deleteCommandId` に固定値 `NO_COMMAND_ID` を保存する。実在の commandId とは区別され、別runの `delete-key` は再削除せず keyList 消失の確認だけを再開する。
+- `KEYLIST_CONFIRMED` は **Webhook成功とは別の証跡**（commandId 相関ができないため `APPLIED` とは表記しない）。ログに `webhook=commandIdなしのため相関確認なし` と明記する。
+- 実機解錠・削除後の解錠不可は従来どおり現地確認する。
+
+#### 回帰ケース（実測。Keypad 末尾4桁=37DD）
+| 手順 | 実測 |
+|------|------|
+| 発行前 | keyList 1件 |
+| `create-key` 1回 | Actionログは `commandId なし`。その後 keyList 2件、生成された期間限定キーで実機解錠成功 |
+| `delete-key` 1回 | Actionログは `commandId なし`。その後 keyList 1件に復帰 |
+
+`test/switchbot-verify-key.test.js` に、このケース（`statusCode=100`・`body={}`・keyList 0→1→0）と、0件/複数件/不正/通信失敗の `UNKNOWN`・再送なし・ログ非漏えいを模擬で追加している（実API・実Secretsは使わない）。
+
 ### 発行前の事前確認（`preflight`。Issue #718）
 `create-key` の前に必ず実行する読み取り専用の入口。`GET /v1.1/devices`・`queryWebhook(queryUrl)`・リレーの `getState`・受信URLへの無害な試験POSTのみを行い、`createKey` / `deleteKey` / `setupWebhook` / `updateWebhook` / `deleteWebhook` は呼ばない（`Re-run` でも変更が起きないため許可）。必要なSecretsは `create-key` と同じ。
 
