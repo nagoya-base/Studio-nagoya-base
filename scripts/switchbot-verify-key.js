@@ -20,7 +20,9 @@ var CONFIRM = {
   // Issue #729: 初回接続・他用途Webhookなしを管理者が明示確認した場合だけの例外フロー（現行remove-oldとは別）
   'replace-single-webhook-remove': 'I-CONFIRM-SINGLE-WEBHOOK-IS-MINE',
   // Issue #731: deleteWebhook送信後に照会不能となった場合の復旧。読み取り照合のみで DELETE_SENT→REMOVED だけを確定する
-  'recover-delete-sent': 'RECOVER-DELETE-SENT-IF-ZERO'
+  'recover-delete-sent': 'RECOVER-DELETE-SENT-IF-ZERO',
+  // Issue #718: createKey 前の読み取り専用の事前確認（Keypad完全ID・Webhook設定一致・受信基盤・残存キー）
+  'preflight': 'PREFLIGHT-CHECK'
 };
 var REQUIRED = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'SWITCHBOT_DEVICE_ID',
   'VERIFY_RELAY_URL', 'VERIFY_RELAY_ADMIN_TOKEN', 'VERIFY_WEBHOOK_TOKEN'];
@@ -102,7 +104,7 @@ function makeClient(env, deps) {
     var parsed = await res.json().catch(function () { return null; });
     return parsed || { ok: false, error: 'RELAY_BAD_RESPONSE' };
   }
-  return { sb: sb, relay: relay };
+  return { sb: sb, relay: relay, deps: deps };
 }
 
 /** 対象 Keypad が一覧に 1 件だけ存在することを確認し deviceList を返す。 */
@@ -115,6 +117,99 @@ async function loadDevices(c, env) {
   var hits = Core.pickKeypads(list).filter(function (d) { return d.deviceId === env.SWITCHBOT_DEVICE_ID; });
   if (hits.length !== 1) return { error: hits.length === 0 ? 'TARGET_NOT_FOUND' : 'TARGET_AMBIGUOUS' };
   return { list: list, last4: Core.maskId(hits[0].deviceId).slice(-4) };
+}
+
+var TEST_NAME_PREFIX = 'SNB-API-TEST-';
+
+/**
+ * 発行前ゲート（読み取り専用）。Webhook受信基盤が利用可能であることを確認する。
+ *  - WEBHOOK_SET: queryWebhook が厳密に1件・今回の期待URLと完全一致（MATCH）。0件/不一致/複数件/不明は NG。
+ *  - WEBHOOK_ENDPOINT: 受信URLへ無害な試験POST（commandIdなし＝何も保存されない）を送り ok:true が返る（URL・トークンが有効）。
+ *  - RELAY_ADMIN: 管理トークンでリレーの getState が成功する。
+ * 戻り値の checks は固定の状態名のみ。URL・トークン・生レスポンス・例外詳細は含めない。
+ * MATCH でも SwitchBot→受信基盤の到達は証明されない（実際の到達は createKey の Webhook で初めて確認）。
+ */
+async function checkWebhookInfra(env, c) {
+  var checks = {};
+  var q;
+  try {
+    q = await c.sb('post', '/v1.1/webhook/queryWebhook', { action: 'queryUrl' });
+    var r = evaluateWebhookQuery(q.http, q.parsed, webhookUrl(env));
+    checks.WEBHOOK_SET = r.state === 'MATCH' && r.count === 1 ? 'PASS' : 'FAIL(' + r.state + (r.state === 'MATCH' ? '_COUNT=' + r.count : '') + ')';
+  } catch (e) {
+    checks.WEBHOOK_SET = 'FAIL(UNKNOWN)';
+  }
+  try {
+    var res = await c.deps.fetch(webhookUrl(env), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventType: 'preflight' }),
+      redirect: 'follow',
+      signal: AbortSignal.timeout(30000)
+    });
+    var pj = await res.json().catch(function () { return null; });
+    checks.WEBHOOK_ENDPOINT = pj && pj.ok === true ? 'PASS' : 'FAIL';
+  } catch (e) {
+    checks.WEBHOOK_ENDPOINT = 'FAIL';
+  }
+  try {
+    var st = await c.relay({ op: 'getState' });
+    checks.RELAY_ADMIN = st && st.ok === true ? 'PASS' : 'FAIL';
+    checks.RELAY_STATE = st && st.ok === true ? (st.state === null ? 'CLEAN' : 'IN_USE') : 'UNKNOWN';
+  } catch (e) {
+    checks.RELAY_ADMIN = 'FAIL';
+    checks.RELAY_STATE = 'UNKNOWN';
+  }
+  return checks;
+}
+
+function infraOk(checks) {
+  return checks.WEBHOOK_SET === 'PASS' && checks.WEBHOOK_ENDPOINT === 'PASS' && checks.RELAY_ADMIN === 'PASS';
+}
+
+/**
+ * Issue #718 手順1〜2: 読み取り専用の事前確認。createKey / deleteKey / setup / update / delete の各APIは呼ばない。
+ * 全項目 PASS のときだけ終了コード0。PASS は「発行してよい前提が整った」ことのみを意味し、
+ * キー発行・Webhook到達・実機解錠の成功とは扱わない。
+ */
+async function preflight(env, deps, c, log) {
+  log('preflight: 読み取り専用（変更API・createKey/deleteKeyは呼ばない）');
+  var checks = {};
+  var last4 = null;
+  var dl;
+  try {
+    dl = await c.sb('get', '/v1.1/devices');
+  } catch (e) {
+    dl = null;
+  }
+  var list = dl && Core.classifyApiResponse(dl.http, dl.parsed).state !== Core.STATE.FAILED
+    ? (dl.parsed.body && dl.parsed.body.deviceList) : null;
+  if (!Array.isArray(list)) {
+    checks.KEYPAD = 'FAIL(DEVICES_FAILED)';
+    checks.LEFTOVER_TEST_KEYS = 'UNKNOWN';
+  } else {
+    var id = String(env.SWITCHBOT_DEVICE_ID);
+    var v = Core.verifyKeypadByFullId(list, id, id.slice(-4));
+    checks.KEYPAD = v.ok ? 'PASS' : 'FAIL(' + v.error + ')';
+    if (v.ok) last4 = id.slice(-4);
+    var kl = Core.countKeyList(list, id);
+    if (!kl.valid) {
+      checks.LEFTOVER_TEST_KEYS = 'UNKNOWN';
+    } else {
+      var dev = list.filter(function (d) { return d && d.deviceId === id; })[0];
+      var left = dev.keyList.filter(function (k) { return k && typeof k.name === 'string' && k.name.indexOf(TEST_NAME_PREFIX) === 0; }).length;
+      checks.LEFTOVER_TEST_KEYS = left === 0 ? 'NONE' : 'FOUND(' + left + ')';
+    }
+  }
+  Object.assign(checks, await checkWebhookInfra(env, c));
+
+  log('対象Keypad 末尾4桁=' + (last4 || '不明'));
+  Object.keys(checks).forEach(function (k) { log('  ' + k + ': ' + checks[k]); });
+  var ok = checks.KEYPAD === 'PASS' && infraOk(checks) &&
+    checks.RELAY_STATE === 'CLEAN' && checks.LEFTOVER_TEST_KEYS === 'NONE';
+  log(ok ? 'PREFLIGHT_PASS: 発行前の前提が整った（キー発行・Webhook到達・解錠の成功ではない）'
+    : 'PREFLIGHT_FAIL: 前提が整っていない。create-key は実行しない（残存キー/使用中の検証状態は delete-key・アプリで先に整理）');
+  return ok ? 0 : 1;
 }
 
 /** 今回の commandId + eventName に対応する Webhook だけを待つ（上限付き）。 */
@@ -166,6 +261,14 @@ async function createKey(env, deps, c, log) {
   var dev = await loadDevices(c, env);
   if (dev.error) { log('ABORT: ' + dev.error); return 1; }
   log('対象Keypad 末尾4桁=' + dev.last4);
+
+  // 発行前ゲート: Webhook受信基盤が利用可能でなければ、claim も createKey も送らず中断する
+  var gate = await checkWebhookInfra(env, c);
+  if (!infraOk(gate)) {
+    log('ABORT: Webhook受信基盤の事前確認が未達 ' + Object.keys(gate).map(function (k) { return k + '=' + gate[k]; }).join(' ') +
+      '（claim・createKeyは送らない。preflight で確認）');
+    return 1;
+  }
 
   var nowSec = deps.nowSec();
   var start = nowSec + Number(env.START_OFFSET_MIN) * 60;
@@ -609,6 +712,7 @@ async function main(env, deps) {
       case 'replace-single-webhook-remove': return await replaceSingleWebhookRemove(env, deps, c, log);
       case 'recover-delete-sent': return await recoverDeleteSent(env, deps, c, log);
       case 'setup-current': return await setupCurrent(env, deps, c, log);
+      case 'preflight': return await preflight(env, deps, c, log);
       case 'create-key': return await createKey(env, deps, c, log);
       case 'delete-key': return await deleteKey(env, deps, c, log);
     }

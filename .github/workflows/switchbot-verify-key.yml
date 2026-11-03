@@ -6,10 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'webhook-query / webhook-setup / create-key / delete-key / webhook-remove / remove-old / setup-current / replace-single-webhook-remove / recover-delete-sent'
+        description: 'webhook-query / webhook-setup / create-key / delete-key / webhook-remove / remove-old / setup-current / replace-single-webhook-remove / recover-delete-sent / preflight'
         required: true
         type: choice
         options:
+          - preflight
           - webhook-query
           - webhook-setup
           - create-key
@@ -20,7 +21,7 @@ on:
           - replace-single-webhook-remove
           - recover-delete-sent
       confirm:
-        description: '確認文字列（QUERY-WEBHOOK / SETUP-WEBHOOK / CREATE-ONE-TEST-KEY / DELETE-TEST-KEY / REMOVE-WEBHOOK / REMOVE-OLD-WEBHOOK / SETUP-CURRENT-WEBHOOK / I-CONFIRM-SINGLE-WEBHOOK-IS-MINE / RECOVER-DELETE-SENT-IF-ZERO）'
+        description: '確認文字列（QUERY-WEBHOOK / SETUP-WEBHOOK / CREATE-ONE-TEST-KEY / DELETE-TEST-KEY / REMOVE-WEBHOOK / REMOVE-OLD-WEBHOOK / SETUP-CURRENT-WEBHOOK / I-CONFIRM-SINGLE-WEBHOOK-IS-MINE / RECOVER-DELETE-SENT-IF-ZERO / PREFLIGHT-CHECK）'
         required: true
         type: string
       start_offset_min:

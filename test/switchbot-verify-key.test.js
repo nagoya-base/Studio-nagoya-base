@@ -30,7 +30,7 @@ function memStore() {
 /** フェイク世界: リレー(GAS)＋SwitchBot API＋時計。opts.webhook = success|failed|none|wrongEvent|otherCommand */
 function world(opts) {
   opts = opts || {};
-  var w = { store: memStore(), clock: 1800000000, calls: [], logs: [], keys: opts.keys || [], webhooks: opts.webhooks || [], n: 0 };
+  var w = { store: memStore(), clock: 1800000000, calls: [], logs: [], keys: opts.keys || [], webhooks: opts.webhooks || [RELAY + '?t=' + TOK.webhook], n: 0 };
   function relayWebhook(commandId, eventName, result) {
     Core.relayHandle(w.store, TOK.webhook, {
       eventType: 'changeReport',
@@ -46,10 +46,19 @@ function world(opts) {
     fetch: async function (url, o) {
       var body = o.body ? JSON.parse(o.body) : null;
       var reply = function (http, obj) { return { status: http, json: async function () { return obj; } }; };
-      if (url === RELAY) return reply(200, Core.relayHandle(w.store, null, body, TOK, w.clock));
+      if (url === RELAY) {
+        if (opts.relayDown) throw new Error('network');
+        return reply(200, Core.relayHandle(w.store, null, body, TOK, w.clock));
+      }
+      if (url.indexOf(RELAY + '?t=') === 0) { // Webhook受信URL（SwitchBot→リレーと同じ経路の試験POST）
+        w.probes = (w.probes || 0) + 1;
+        if (opts.endpointDown) throw new Error('network');
+        return reply(200, Core.relayHandle(w.store, decodeURIComponent(url.slice((RELAY + '?t=').length)), body, TOK, w.clock));
+      }
       var path = url.replace(Core.API_BASE, '');
       w.calls.push(o.method + ' ' + path + (body && body.command ? ' ' + body.command : ''));
       if (path === '/v1.1/devices') {
+        if (opts.netErrorDevices) throw new Error('network');
         if (w.deleted && opts.failGetAfterDelete && !w.failedOnce) { w.failedOnce = true; throw new Error('network'); }
         var dv = { deviceId: DEV, deviceType: 'Keypad Touch', keyList: w.keys.slice() };
         if (w.deleted && opts.omitKeyListAfterDelete) delete dv.keyList;
@@ -359,7 +368,7 @@ test('webhook-query: 入力検証は照会に必要な秘密のみ要求し、�
 });
 
 test('webhook-query: 未登録は NONE(0)、一致は MATCH(0)、変更APIを呼ばない', async function () {
-  var none = world();
+  var none = world({ webhooks: [] });
   assert.strictEqual(await K.main(env('webhook-query'), none.deps), 0);
   assert.ok(none.logs.join('\n').indexOf('NONE 件数=0') !== -1);
   assertReadOnlyQuery(none);
@@ -543,4 +552,98 @@ test('追加診断: TOKEN_MATCH だけで完全一致扱いにしない（別ク
   assert.ok(r.out.indexOf('MISMATCH 件数=1') !== -1);
   assert.ok(diagLog(r.w).indexOf('BASE_URL_MATCH + TOKEN_MATCH') !== -1);
   assert.strictEqual(r.code, 1);
+});
+
+// ---- Issue #718: preflight（読み取り専用の事前確認）と create-key の発行前ゲート ----
+var MUTATING = ['createKey', 'deleteKey', 'setupWebhook', 'updateWebhook', 'deleteWebhook'];
+function assertNoMutation(w) {
+  MUTATING.forEach(function (m) { assert.strictEqual(count(w, m), 0, '変更系が呼ばれた: ' + m); });
+  assert.strictEqual(count(w, 'POST /v1.1/devices/'), 0);
+}
+
+test('preflight: 全項目PASSで終了0。変更APIを呼ばず、秘密・完全IDを出さない', async function () {
+  var w = world();
+  var rc = await K.main(env('preflight'), w.deps); if (rc !== 0) dump(w);
+  assert.strictEqual(rc, 0);
+  var out = w.logs.join('\n');
+  assert.ok(out.indexOf('PREFLIGHT_PASS') !== -1);
+  assert.ok(out.indexOf('末尾4桁=9999') !== -1);
+  assertNoMutation(w);
+  assert.strictEqual(w.store.get('TEST_STATE'), null);
+  assertNoLeak(w);
+});
+
+test('preflight: Webhook 未登録/不一致/複数件/照会失敗は失敗（MATCHかつ厳密1件のみ許可）', async function () {
+  var url = RELAY + '?t=' + TOK.webhook;
+  var cases = [
+    { webhooks: [] },
+    { webhooks: ['https://other.example/hook?t=zzz'] },
+    { webhooks: [url, 'https://other.example/hook'] },
+    { queryReply: { http: 200, body: { statusCode: 190 } } },
+    { queryReply: { http: 200, body: { statusCode: 100, body: {} } } },
+    { queryThrow: true }
+  ];
+  for (var i = 0; i < cases.length; i++) {
+    var w = world(cases[i]);
+    assert.strictEqual(await K.main(env('preflight'), w.deps), 1, 'case ' + i);
+    assert.ok(w.logs.join('\n').indexOf('PREFLIGHT_FAIL') !== -1);
+    assertNoMutation(w);
+    assertNoLeak(w);
+  }
+});
+
+test('preflight: 受信URL不達・リレー不達・検証状態使用中・残存テストキーは失敗', async function () {
+  var a = world({ endpointDown: true });
+  assert.strictEqual(await K.main(env('preflight'), a.deps), 1);
+  assert.ok(a.logs.join('\n').indexOf('WEBHOOK_ENDPOINT: FAIL') !== -1);
+  var b = world({ relayDown: true });
+  assert.strictEqual(await K.main(env('preflight'), b.deps), 1);
+  assert.ok(b.logs.join('\n').indexOf('RELAY_ADMIN: FAIL') !== -1);
+  var c = world();
+  Core.relayHandle(c.store, null, { op: 'claim', t: TOK.admin, deviceId: DEV, name: 'SNB-API-TEST-1', password: '12345678',
+    startTime: c.clock + 300, endTime: c.clock + 1200 }, TOK, c.clock);
+  assert.strictEqual(await K.main(env('preflight'), c.deps), 1);
+  assert.ok(c.logs.join('\n').indexOf('RELAY_STATE: IN_USE') !== -1);
+  var d = world({ keys: [{ id: 5, name: 'SNB-API-TEST-123' }, { id: 6, name: 'regular user' }] });
+  assert.strictEqual(await K.main(env('preflight'), d.deps), 1);
+  assert.ok(d.logs.join('\n').indexOf('LEFTOVER_TEST_KEYS: FOUND(1)') !== -1);
+  [a, b, c, d].forEach(function (w) { assertNoMutation(w); assertNoLeak(w); });
+});
+
+test('preflight: Keypad 不一致/0件/API失敗は失敗', async function () {
+  var w = world();
+  assert.strictEqual(await K.main(env('preflight', { SWITCHBOT_DEVICE_ID: 'OTHERDEVICE0000' }), w.deps), 1);
+  assert.ok(w.logs.join('\n').indexOf('KEYPAD: FAIL(NOT_FOUND)') !== -1);
+  assertNoMutation(w);
+  var n = world({ netErrorDevices: true });
+  assert.strictEqual(await K.main(env('preflight'), n.deps), 1);
+  assert.ok(n.logs.join('\n').indexOf('KEYPAD: FAIL(DEVICES_FAILED)') !== -1);
+});
+
+test('preflight: Secrets 未設定・確認文字列不一致は非0。Re-run でも読み取り専用なので許可', function () {
+  assert.ok(K.validateInputs(env('preflight', { VERIFY_RELAY_URL: '' })).indexOf('SECRET_MISSING_VERIFY_RELAY_URL') !== -1);
+  assert.ok(K.validateInputs(env('preflight', { CONFIRM: 'x' })).indexOf('CONFIRM_MISMATCH') !== -1);
+  assert.deepStrictEqual(K.validateInputs(env('preflight', { GITHUB_RUN_ATTEMPT: '2' })), []);
+});
+
+test('create-key 発行前ゲート: Webhook 未設定/不一致/受信不達ならclaimもcreateKeyも送らない', async function () {
+  var cases = [{ webhooks: [] }, { webhooks: ['https://other.example/hook'] }, { endpointDown: true }];
+  for (var i = 0; i < cases.length; i++) {
+    var w = world(cases[i]);
+    assert.strictEqual(await K.main(env('create-key'), w.deps), 1, 'case ' + i);
+    assert.strictEqual(count(w, 'createKey'), 0);
+    assert.strictEqual(w.store.get('TEST_STATE'), null); // claim もされない
+    assert.ok(w.logs.join('\n').indexOf('事前確認が未達') !== -1);
+    assertNoLeak(w);
+  }
+});
+
+test('再実行・同時実行: preflight 後の create-key は1回だけ。2回目は claim 拒否でcreateKey 0回', async function () {
+  var w = world();
+  assert.strictEqual(await K.main(env('preflight'), w.deps), 0);
+  assert.strictEqual(await K.main(env('create-key'), w.deps), 0);
+  assert.strictEqual(await K.main(env('create-key'), w.deps), 1);
+  assert.strictEqual(count(w, 'createKey'), 1);
+  assert.strictEqual(await K.main(env('preflight'), w.deps), 1); // 使用中の状態は preflight でも検知
+  assertNoLeak(w);
 });

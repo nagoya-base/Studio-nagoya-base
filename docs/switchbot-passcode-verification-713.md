@@ -43,6 +43,7 @@ GAS 経路（`verifySelectKeypad(last4)`）で Script Properties に保存して
 ### 実施順（営業時間外・現地確認者と代替入室手段を確保）
 | # | action（確認文字列） | 内容 |
 |---|------|------|
+| 0a | `preflight`（`PREFLIGHT-CHECK`） | **読み取り専用の発行前確認**（下記）。全項目 PASS を確認してから `create-key` へ進む |
 | 0 | `webhook-query`（`QUERY-WEBHOOK`） | **照会専用**。`queryWebhook(queryUrl)` だけを呼び、既存Webhook設定の状態を確認（下記）。登録・更新・削除はしない |
 | 1 | `webhook-setup`（`SETUP-WEBHOOK`） | 既存Webhook設定がある場合は上書きせず中断。無ければ今回分を登録 |
 | 2 | `create-key`（`CREATE-ONE-TEST-KEY`） | 開始 3〜30 分後・有効 10〜15 分で1件。claim で重複防止、今回の commandId+createKey の Webhook success で APPLIED、keyList から passcode ID を解決。結果不明は再送せず UNKNOWN 停止 |
@@ -50,6 +51,21 @@ GAS 経路（`verifySelectKeypad(last4)`）で Script Properties に保存して
 | 4 | `delete-key`（`DELETE-TEST-KEY`） | 今回のキーのみ削除。deleteKey の Webhook success と keyList からの消失（対象デバイスが1件で keyList が配列の完全な応答に限る）を確認後に保持データを破棄。送信した deleteKey の commandId を保存するため、通信断などで中断しても次の `delete-key` が再削除せず確認だけを再開する（Webhook結果の保持は24時間） |
 | 5 | 実機 | 削除後も同じコードで解錠不可 |
 | 6 | `webhook-remove`（`REMOVE-WEBHOOK`） | 今回登録した Webhook だけ撤去（既存設定は触らない）。GAS の `verifyCleanupLocal()` も実行 |
+
+### 発行前の事前確認（`preflight`。Issue #718）
+`create-key` の前に必ず実行する読み取り専用の入口。`GET /v1.1/devices`・`queryWebhook(queryUrl)`・リレーの `getState`・受信URLへの無害な試験POSTのみを行い、`createKey` / `deleteKey` / `setupWebhook` / `updateWebhook` / `deleteWebhook` は呼ばない（`Re-run` でも変更が起きないため許可）。必要なSecretsは `create-key` と同じ。
+
+| 項目 | PASS の条件 |
+|------|-------------|
+| `KEYPAD` | 保存済み完全IDが deviceList 上で**完全一致1件**・Keypad種別・末尾4桁一致（末尾4桁のみ表示） |
+| `WEBHOOK_SET` | `queryWebhook` が**厳密に1件・期待URLと完全一致**（0件・不一致・複数件・照会失敗は FAIL） |
+| `WEBHOOK_ENDPOINT` | 受信URL（共有トークン付き）への試験POSTでリレーが `ok:true`（URL・トークンが有効で到達可。commandIdなしなので何も保存されない） |
+| `RELAY_ADMIN` / `RELAY_STATE` | 管理トークンで `getState` 成功 / 検証状態が `CLEAN`（`IN_USE` は FAIL。前回分は `delete-key` で先に整理） |
+| `LEFTOVER_TEST_KEYS` | 対象Keypadの keyList に検証名（`SNB-API-TEST-`）のキーが `NONE`（`FOUND`/`UNKNOWN` は FAIL） |
+
+- 出力は固定の状態名のみ（URL・トークン・完全ID・生レスポンスは出さない）。全項目PASSなら `PREFLIGHT_PASS`（終了0）、それ以外は `PREFLIGHT_FAIL`（終了1）。
+- `PREFLIGHT_PASS` は**発行前の前提が整った**ことだけを示す。SwitchBot側から受信基盤へ実際に Webhook が届くか、キー発行・解錠の成否は未確認で、`create-key` の Webhook で初めて確認する。
+- `create-key` も実行時に同じ Webhook 受信基盤の確認（`WEBHOOK_SET`・`WEBHOOK_ENDPOINT`・`RELAY_ADMIN`）を行い、未達なら claim も `createKey` も送らず中断する。
 
 ### 既存Webhook設定の照会（`webhook-query`）
 `webhook-setup` が `statusCode 190` で FAILED になった等、登録の可否を判断する前に使う。HTTP 200 と API の `statusCode` は別で、190 だけから「既存登録あり」「認証正常」と断定しない。`webhook-setup` は未登録なら登録へ進むため、原因調査では実行しない。
