@@ -224,6 +224,11 @@ var SwitchBotAccessCore = (function () {
       }
     }
 
+    /** 未解決(UNKNOWN)の通知が未達なら再試行する（重複は alert 側で抑止）。 */
+    function retryAlert(rec) {
+      if (rec.state === STATE.UNKNOWN && rec.alertCode) alert(rec, rec.alertCode);
+    }
+
     function readKeyList() {
       var out;
       try { out = deps.api.listDevices(); } catch (e) { return { ok: false, error: 'LIST_COMM_ERROR' }; }
@@ -233,6 +238,7 @@ var SwitchBotAccessCore = (function () {
 
     function stopUnknown(rec, code, reason) {
       rec.reason = reason;
+      rec.alertCode = code; // 通知失敗時に後続の実行で再通知できるよう保持する
       transition(rec, STATE.UNKNOWN, null);
       alert(rec, code);
       return rec;
@@ -448,22 +454,30 @@ var SwitchBotAccessCore = (function () {
         idx.head = { revision: booking.revision, cancelled: cancelledNow };
         save(bkKey(booking.bookingId), idx);
 
+        var desired = elig.eligible && !cancelledNow;
+
         // 進行中 record を前へ進める（読み取り中心。変更 API の再送はしない）
         loadAll(idx).forEach(function (r) {
           if (TERMINAL.indexOf(r.state) !== -1) return;
+          retryAlert(r);
           if (r.state === STATE.SENDING || r.state === STATE.DELETE_SENDING) {
             stopUnknown(r, 'CRASH_RECOVERY', 'RESUMED_FROM_SENDING');
             out.actions.push('UNKNOWN:' + r.id);
           } else if (r.state === STATE.PLANNED) {
-            executeIssue(r); out.actions.push('RESUME_ISSUE:' + r.id); // 未送信が確実
+            if (desired && r.revision === booking.revision && sameWindow(r, elig)) {
+              executeIssue(r); out.actions.push('RESUME_ISSUE:' + r.id); // 未送信が確実かつ現在も有効
+            } else {
+              // 現在の予約では不要になった未送信の計画は、createKey を呼ばずに破棄する
+              transition(r, STATE.ABANDONED, 'UNSENT_OBSOLETE');
+              deps.secrets.del('SECRET_' + r.id);
+              out.actions.push('RETIRE_PLANNED:' + r.id);
+            }
           } else if (r.state === STATE.SENT_WAIT_WEBHOOK || r.state === STATE.ACCEPTED_NO_COMMAND_ID) {
             reconcileIssue(r); out.actions.push('RECONCILE_ISSUE:' + r.id);
           } else if (r.state === STATE.DELETE_SENT) {
             reconcileDelete(r); out.actions.push('RECONCILE_DELETE:' + r.id);
           }
         });
-
-        var desired = elig.eligible && !cancelledNow;
 
         // 旧改訂・取消・非対象・期間/対象変更のキーは削除対象
         loadAll(idx).forEach(function (r) {
@@ -499,6 +513,15 @@ var SwitchBotAccessCore = (function () {
     // ---- 受渡し ----
     /** ISSUED_CONFIRMED の record にのみ、正規受渡し先へコードを渡す。 */
     function deliver(recId) {
+      var head = load(recKey(recId));
+      if (!head) return { delivered: false, reason: 'NOT_CONFIRMED' };
+      var result;
+      // 予約・Keypad のロック下で再読込→検証→受渡し→保存まで行う（取消/削除/二重受渡しと競合させない）
+      deps.lock(['BOOKING_' + head.bookingId, 'DEV_' + head.deviceId], function () { result = deliverLocked(recId); });
+      return result;
+    }
+
+    function deliverLocked(recId) {
       var rec = load(recKey(recId));
       if (!rec || rec.state !== STATE.ISSUED_CONFIRMED) return { delivered: false, reason: 'NOT_CONFIRMED' };
       if (rec.deliveredAtSec) return { delivered: false, reason: 'ALREADY_DELIVERED' };
@@ -510,8 +533,10 @@ var SwitchBotAccessCore = (function () {
         alert(rec, 'DELIVER_FAILED');
         return { delivered: false, reason: 'DELIVER_FAILED' };
       }
-      rec.deliveredAtSec = deps.nowSec();
-      save(recKey(rec.id), rec);
+      // 受渡し中に状態が進んでいても上書きしないよう、最新を再読込して受渡し時刻だけ追記する
+      var fresh = load(recKey(rec.id)) || rec;
+      fresh.deliveredAtSec = deps.nowSec();
+      save(recKey(fresh.id), fresh);
       return { delivered: true };
     }
 
@@ -523,6 +548,7 @@ var SwitchBotAccessCore = (function () {
       deps.store.keys().filter(function (k) { return k.indexOf('OP_') === 0; }).forEach(function (k) {
         var rec = load(k);
         if (!rec) return;
+        retryAlert(rec);
         if (rec.state === STATE.ISSUED_CONFIRMED && rec.endSec <= now) {
           transition(rec, STATE.EXPIRED, 'TIME');
         }
@@ -592,9 +618,29 @@ var SwitchBotAccessCore = (function () {
     function adminDelete(recId, actor) {
       var rec = load(recKey(recId));
       if (!rec || !actor) return { ok: false, error: 'NOT_FOUND_OR_NO_ACTOR' };
-      if (rec.state !== STATE.ISSUED_CONFIRMED && rec.state !== STATE.EXPIRED) return { ok: false, error: 'NOT_DELETABLE' };
+      if (rec.state !== STATE.ISSUED_CONFIRMED && rec.state !== STATE.EXPIRED && rec.state !== STATE.DELETE_PENDING) {
+        return { ok: false, error: 'NOT_DELETABLE' };
+      }
       var out;
       deps.lock(['BOOKING_' + rec.bookingId, 'DEV_' + rec.deviceId], function () { out = startDelete(rec); });
+      return { ok: true, state: out.state };
+    }
+
+    /**
+     * 管理者による読み取り専用の照合再開（フラグ OFF でも使える）。変更 API は呼ばない。
+     * DELETE_SENT / 発行確認待ちを、keyList（と保存済み Webhook）で前へ進める。上限超過は UNKNOWN+通知。
+     */
+    function adminReconcile(recId, actor) {
+      var rec = load(recKey(recId));
+      if (!rec || !actor) return { ok: false, error: 'NOT_FOUND_OR_NO_ACTOR' };
+      var out;
+      deps.lock(['BOOKING_' + rec.bookingId, 'DEV_' + rec.deviceId], function () {
+        rec = load(recKey(recId));
+        if (rec.state === STATE.DELETE_SENT) out = reconcileDelete(rec);
+        else if (rec.state === STATE.SENT_WAIT_WEBHOOK || rec.state === STATE.ACCEPTED_NO_COMMAND_ID) out = reconcileIssue(rec);
+        else if (rec.state === STATE.UNKNOWN) { retryAlert(rec); out = rec; }
+      });
+      if (!out) return { ok: false, error: 'NOT_RECONCILABLE' };
       return { ok: true, state: out.state };
     }
 
@@ -608,7 +654,7 @@ var SwitchBotAccessCore = (function () {
 
     return {
       sync: sync, ingestWebhook: ingestWebhook, deliver: deliver, sweep: sweep,
-      adminInspect: adminInspect, adminResolveUnknown: adminResolveUnknown, adminDelete: adminDelete,
+      adminInspect: adminInspect, adminReconcile: adminReconcile, adminResolveUnknown: adminResolveUnknown, adminDelete: adminDelete,
       inventory: inventory
     };
   }

@@ -587,3 +587,74 @@ test('別予約のキーは影響を受けない', function () {
   assert.strictEqual(w.keys[DEV_A].length, 1);
   assert.strictEqual(w.records().filter(function (r) { return r.bookingId === 'BK2'; })[0].state, S.ISSUED_CONFIRMED);
 });
+
+// ---------- レビュー指摘 (Codex) の回帰 ----------
+
+test('PLANNED再開: 取消/非対象になっていたら createKey せず計画を破棄する', function () {
+  var w = world();
+  w.failSetOnKey = { prefix: 'OP_', state: S.SENDING };
+  assert.throws(function () { w.engine().sync(booking()); }, /STORE_FAIL/);
+  w.failSetOnKey = null;
+  w.engine().sync(booking({ revision: 2, status: 'CANCELLED' }));
+  assert.deepStrictEqual(w.mutations(), []);
+  assert.strictEqual(w.records()[0].state, S.ABANDONED);
+  assert.strictEqual(Object.keys(w.secrets).length, 0);
+});
+
+test('PLANNED再開: 改訂/期間が変わっていたら旧計画は破棄し新計画で1件だけ発行', function () {
+  var w = world();
+  w.createMode = 'noCommandId';
+  w.failSetOnKey = { prefix: 'OP_', state: S.SENDING };
+  assert.throws(function () { w.engine().sync(booking()); });
+  w.failSetOnKey = null;
+  w.engine().sync(booking({ revision: 2, endTime: '14:00' }));
+  assert.strictEqual(w.mutations().length, 1);
+  assert.strictEqual(w.records()[0].state, S.ABANDONED);
+  assert.strictEqual(w.records()[1].state, S.ISSUED_CONFIRMED);
+  assert.strictEqual(w.records()[1].endSec, C.jstToEpochSec('2030-01-11', '14:00') + 900);
+});
+
+test('受渡し: ロック下で行い、受渡し中の取消で削除済み状態を上書きしない', function () {
+  var w = world();
+  w.createMode = 'noCommandId';
+  var deps = w.engineDeps();
+  var held = [];
+  deps.lock = function (keys, fn) { held.push(keys.join(',')); return fn(); };
+  var e;
+  deps.deliverCode = function () { e.sync(booking({ revision: 2, status: 'CANCELLED' })); };
+  e = C.createEngine(deps, baseConfig());
+  e.sync(booking());
+  var id = w.records()[0].id;
+  e.deliver(id);
+  assert.ok(held.some(function (h) { return h.indexOf('BOOKING_BK1') === 0; }));
+  assert.notStrictEqual(w.records()[0].state, S.ISSUED_CONFIRMED, '削除済みを ISSUED に戻さない');
+});
+
+test('通知失敗: UNKNOWN の通知は後続の sync/sweep で再試行される', function () {
+  var w = world();
+  w.createMode = 'dropResponse';
+  w.notifyFail = true;
+  var e = w.engine();
+  e.sync(booking());
+  assert.strictEqual(w.notes.length, 0);
+  w.notifyFail = false;
+  e.sync(booking());
+  assert.strictEqual(w.notes.length, 1);
+  e.sync(booking()); e.sweep();
+  assert.strictEqual(w.notes.length, 1, '成功後は重複しない');
+});
+
+test('フラグOFF: adminReconcile で DELETE_SENT の読み取り照合を再開でき、deleteKey は再送しない', function () {
+  var w = world();
+  var on = w.engine(baseConfig({ maxReads: 5 }));
+  issued(w, on);
+  w.deleteMode = 'noApply';
+  on.sync(booking({ revision: 2, status: 'CANCELLED' }));
+  assert.strictEqual(w.records()[0].state, S.DELETE_SENT);
+  var off = w.engine(baseConfig({ enabled: false, maxReads: 5 }));
+  var id = w.records()[0].id;
+  assert.strictEqual(off.adminReconcile(id, '').error, 'NOT_FOUND_OR_NO_ACTOR');
+  w.keys[DEV_A] = []; // 遅れて端末側で削除が反映
+  assert.strictEqual(off.adminReconcile(id, 'ops').state, S.DELETED_CONFIRMED);
+  assert.strictEqual(w.mutations().filter(function (c) { return c.indexOf('delete:') === 0; }).length, 1);
+});
