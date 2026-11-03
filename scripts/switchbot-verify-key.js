@@ -23,7 +23,9 @@ var CONFIRM = {
   // Issue #731: deleteWebhook送信後に照会不能となった場合の復旧。読み取り照合のみで DELETE_SENT→REMOVED だけを確定する
   'recover-delete-sent': 'RECOVER-DELETE-SENT-IF-ZERO',
   // Issue #718: createKey 前の読み取り専用の事前確認（Keypad完全ID・Webhook設定一致・受信基盤・残存キー）
-  'preflight': 'PREFLIGHT-CHECK'
+  'preflight': 'PREFLIGHT-CHECK',
+  // Issue #746: SwitchBot側に検証キー(SNB-API-TEST-*)が0件と厳密確認できた場合だけ、旧リレー TEST_STATE を clear する復旧
+  'clear-stale-state': 'CLEAR-STALE-TEST-STATE-IF-NO-TEST-KEY'
 };
 var REQUIRED = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'SWITCHBOT_DEVICE_ID',
   'VERIFY_RELAY_URL', 'VERIFY_RELAY_ADMIN_TOKEN', 'VERIFY_WEBHOOK_TOKEN'];
@@ -33,7 +35,7 @@ var QUERY_REQUIRED = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'VERIFY_RELAY_URL',
 // Webhook置換(Issue #727)。Keypad ID は不要。進行記録はリレーに保持するため管理トークンが必要。
 var REPLACE_REQUIRED = QUERY_REQUIRED.concat(['VERIFY_RELAY_ADMIN_TOKEN']);
 var REMOVE_OLD_REQUIRED = REPLACE_REQUIRED.concat(['VERIFY_OLD_WEBHOOK_URL', 'VERIFY_OLD_WEBHOOK_EVIDENCE']);
-var MUTATING_REPLACE = ['remove-old', 'setup-current', 'replace-single-webhook-remove', 'recover-delete-sent'];
+var MUTATING_REPLACE = ['remove-old', 'setup-current', 'replace-single-webhook-remove', 'recover-delete-sent', 'clear-stale-state'];
 var EVIDENCE_MAX_AGE_SEC = 24 * 60 * 60; // 人手確認の証跡・削除成功の証跡の有効期間
 
 function hmac(secret, message) {
@@ -211,6 +213,70 @@ async function preflight(env, deps, c, log) {
   log(ok ? 'PREFLIGHT_PASS: 発行前の前提が整った（キー発行・Webhook到達・解錠の成功ではない）'
     : 'PREFLIGHT_FAIL: 前提が整っていない。create-key は実行しない（残存キー/使用中の検証状態は delete-key・アプリで先に整理）');
   return ok ? 0 : 1;
+}
+
+/**
+ * Issue #746: 旧コードが残したリレー側 TEST_STATE だけを安全に clear する復旧。
+ * SwitchBot本体は読み取り(GET /v1.1/devices)のみ。createKey / deleteKey / Webhook変更は一切呼ばない。
+ * clear 前に全て満たすこと（1つでも欠ければ clear せず失敗終了）:
+ *  1. devices 取得成功 2. 保存済み Keypad が完全一致1件 3. keyList が配列
+ *  4. SNB-API-TEST-* が0件（keyList 欠落/null/非配列は0件とみなさない。通常キーは触らない）
+ *  5. リレー getState 成功かつ TEST_STATE が存在(IN_USE)。既に null なら ALREADY_CLEAN で変更せず終了。
+ * clear 後に getState を再読取し state===null を確認して初めて STALE_STATE_CLEARED_CONFIRMED。
+ * 出力は固定分類のみ（TEST_STATE内容・passcode ID・完全ID・生レスポンス・URL・トークンは出さない）。
+ */
+async function clearStaleState(env, deps, c, log) {
+  log('clear-stale-state: SwitchBot本体は読み取りのみ（createKey/deleteKey/Webhook変更は呼ばない）。変更対象はリレーの TEST_STATE のみ');
+  var r = { KEYPAD: 'FAIL', TEST_KEYS: 'UNKNOWN', RELAY_BEFORE: 'UNKNOWN', CLEAR: 'NOT_SENT', RELAY_AFTER: 'UNKNOWN' };
+  var last4 = null;
+  function report(code, verdict) {
+    log('対象Keypad 末尾4桁=' + (last4 || '不明'));
+    Object.keys(r).forEach(function (k) { log('  ' + k + ': ' + r[k]); });
+    log(verdict);
+    return code;
+  }
+
+  var dl;
+  try { dl = await c.sb('get', '/v1.1/devices'); } catch (e) { dl = null; }
+  var list = dl && Core.classifyApiResponse(dl.http, dl.parsed).state !== Core.STATE.FAILED
+    ? (dl.parsed.body && dl.parsed.body.deviceList) : null;
+  if (!Array.isArray(list)) return report(1, 'ABORT: devices取得失敗のため clear しない');
+
+  var id = String(env.SWITCHBOT_DEVICE_ID);
+  var v = Core.verifyKeypadByFullId(list, id, id.slice(-4));
+  if (!v.ok) { r.KEYPAD = 'FAIL(' + v.error + ')'; return report(1, 'ABORT: Keypad完全一致1件を確認できないため clear しない'); }
+  r.KEYPAD = 'PASS';
+  last4 = id.slice(-4);
+
+  var kl = Core.countKeyList(list, id);
+  if (!kl.valid) return report(1, 'ABORT: keyList を正常取得できないため clear しない（0件とは解釈しない）');
+  var dev = list.filter(function (d) { return d && d.deviceId === id; })[0];
+  var found = dev.keyList.filter(function (k) {
+    return k && typeof k.name === 'string' && k.name.indexOf(TEST_NAME_PREFIX) === 0;
+  }).length;
+  if (found > 0) { r.TEST_KEYS = 'FOUND'; return report(1, 'ABORT: 検証キーが残存しているため clear しない（delete-key で先に整理）'); }
+  r.TEST_KEYS = 'NONE';
+
+  var before;
+  try { before = await c.relay({ op: 'getState' }); } catch (e) { before = null; }
+  if (!before || before.ok !== true || !('state' in before)) return report(1, 'ABORT: リレー状態を取得できないため clear しない');
+  if (before.state === null) {
+    r.RELAY_BEFORE = 'CLEAN'; r.RELAY_AFTER = 'CLEAN';
+    return report(0, 'ALREADY_CLEAN: TEST_STATE は既に無い。変更せず終了');
+  }
+  r.RELAY_BEFORE = 'IN_USE';
+
+  var cl;
+  try { cl = await c.relay({ op: 'clear' }); } catch (e) { cl = null; }
+  r.CLEAR = 'SENT';
+  if (!cl || cl.ok !== true) { return report(1, 'UNKNOWN: clear応答が不正。成功扱いしない（SwitchBot操作へ進まない）'); }
+
+  var after;
+  try { after = await c.relay({ op: 'getState' }); } catch (e) { after = null; }
+  if (!after || after.ok !== true || !('state' in after)) return report(1, 'UNKNOWN: clear後の状態を確認できない。成功扱いしない（SwitchBot操作へ進まない）');
+  if (after.state !== null) { r.RELAY_AFTER = 'IN_USE'; return report(1, 'UNKNOWN: clear後も TEST_STATE が残存。成功扱いしない（SwitchBot操作へ進まない）'); }
+  r.RELAY_AFTER = 'CLEAN';
+  return report(0, 'STALE_STATE_CLEARED_CONFIRMED: 次は preflight を再実行（RELAY_STATE: CLEAN を確認）');
 }
 
 /**
@@ -802,6 +868,7 @@ async function main(env, deps) {
       case 'recover-delete-sent': return await recoverDeleteSent(env, deps, c, log);
       case 'setup-current': return await setupCurrent(env, deps, c, log);
       case 'preflight': return await preflight(env, deps, c, log);
+      case 'clear-stale-state': return await clearStaleState(env, deps, c, log);
       case 'create-key': return await createKey(env, deps, c, log);
       case 'delete-key': return await deleteKey(env, deps, c, log);
     }
