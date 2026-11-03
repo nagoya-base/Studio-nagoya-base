@@ -15,6 +15,7 @@ on:
       - 'admin/booking/**'
       - 'gas/survey/**'
       - 'gas/switchbot-verify/**'
+      - 'gas/switchbot-access/**'
       - 'scripts/switchbot-*.js'
       - '.github/workflows/switchbot-verify-devices.yml'
       - '.github/workflows/switchbot-verify-key.yml'

@@ -1,0 +1,626 @@
+/**
+ * 予約確定 → SwitchBot Keypad 期間限定キー自動発行／変更・取消時の安全な削除（Issue #748）— 純粋ロジック。
+ *
+ * 既存予約GAS（gas/booking）・検証GAS（gas/switchbot-verify）からは参照しない独立モジュール。
+ * GAS 依存（UrlFetchApp / PropertiesService / LockService / Utilities）を持たず、すべて deps で注入する
+ * ため Node でモックテストできる。機能フラグ（config.enabled）は既定 OFF。OFF 時は変更 API を一切呼ばない。
+ *
+ * 状態（record.state）:
+ *   PLANNED               … 計画のみ永続化済み。送信前
+ *   SENDING               … 変更 API 送信直前に永続化。この状態で再開したら送信済みか不明 → UNKNOWN（再送しない）
+ *   SENT_WAIT_WEBHOOK     … commandId あり。Webhook 照合待ち
+ *   ACCEPTED_NO_COMMAND_ID… commandId なしで API 受理。変更 API は再送せず keyList 読み取り確認へ
+ *   ISSUED_CONFIRMED      … 発行確認済み（evidence に根拠を別々に保存）
+ *   DELETE_PENDING / DELETE_SENDING / DELETE_SENT … 削除の同様の段階
+ *   DELETED_CONFIRMED / ALREADY_ABSENT … 削除確定／送信前から不在を確認
+ *   EXPIRED               … 期限切れ（削除とは区別）。残存確認後に ARCHIVED_EXPIRED
+ *   FAILED                … API 拒否 / Webhook failed（反映していない根拠がある）
+ *   UNKNOWN               … 反映有無が断定できない。変更 API の自動再送は禁止。管理者判断の別手順のみ
+ *   ABANDONED             … 管理者が keyList で不在を確認して放棄（新しい attempt を許す）
+ */
+var SwitchBotAccessCore = (function () {
+  'use strict';
+
+  var STATE = {
+    PLANNED: 'PLANNED',
+    SENDING: 'SENDING',
+    SENT_WAIT_WEBHOOK: 'SENT_WAIT_WEBHOOK',
+    ACCEPTED_NO_COMMAND_ID: 'ACCEPTED_NO_COMMAND_ID',
+    ISSUED_CONFIRMED: 'ISSUED_CONFIRMED',
+    DELETE_PENDING: 'DELETE_PENDING',
+    DELETE_SENDING: 'DELETE_SENDING',
+    DELETE_SENT: 'DELETE_SENT',
+    DELETED_CONFIRMED: 'DELETED_CONFIRMED',
+    ALREADY_ABSENT: 'ALREADY_ABSENT',
+    EXPIRED: 'EXPIRED',
+    ARCHIVED_EXPIRED: 'ARCHIVED_EXPIRED',
+    FAILED: 'FAILED',
+    UNKNOWN: 'UNKNOWN',
+    ABANDONED: 'ABANDONED'
+  };
+
+  /** 追加の判断なしに「この record はもう何も送らない」状態。 */
+  var TERMINAL = [STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT, STATE.ARCHIVED_EXPIRED, STATE.FAILED, STATE.ABANDONED];
+
+  var EVIDENCE = {
+    WEBHOOK_SUCCESS: 'WEBHOOK_SUCCESS',
+    KEYLIST_CONFIRMED: 'KEYLIST_CONFIRMED',
+    KEYLIST_ABSENT: 'KEYLIST_ABSENT',
+    ADMIN_KEYLIST: 'ADMIN_KEYLIST'
+  };
+
+  var OP = { ISSUE: 'ISSUE', REVOKE: 'REVOKE' };
+  var JST_OFFSET_SEC = 9 * 3600;
+
+  // ---------- 純関数 ----------
+
+  function maskId(id) {
+    var s = String(id || '');
+    return s.length <= 4 ? '****' : '****' + s.slice(-4);
+  }
+
+  /** JST の日付 'YYYY-MM-DD' と時刻 'HH:mm' を UNIX 秒へ。形式不正は null。 */
+  function jstToEpochSec(dateStr, timeStr) {
+    var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
+    var t = /^(\d{2}):(\d{2})$/.exec(String(timeStr || ''));
+    if (!d || !t) return null;
+    var mo = Number(d[2]), da = Number(d[3]), h = Number(t[1]), mi = Number(t[2]);
+    if (mo < 1 || mo > 12 || da < 1 || da > 31 || h > 24 || mi > 59 || (h === 24 && mi !== 0)) return null;
+    var ms = Date.UTC(Number(d[1]), mo - 1, da, h, mi, 0);
+    var chk = new Date(Date.UTC(Number(d[1]), mo - 1, da, 0, 0, 0));
+    if (chk.getUTCMonth() !== mo - 1 || chk.getUTCDate() !== da) return null;
+    return Math.floor(ms / 1000) - JST_OFFSET_SEC;
+  }
+
+  /** Keypad 対応表から完全一致 1 件を解決。未設定/複数/不一致は deviceId:null（フォールバック禁止）。 */
+  function resolveKeypad(config, booking) {
+    var list = Array.isArray(config && config.keypads) ? config.keypads : [];
+    var hits = list.filter(function (k) {
+      return k && k.brand === booking.brand && k.facility === booking.facility &&
+        (k.room === undefined || k.room === null ? !booking.room : k.room === booking.room);
+    });
+    if (hits.length === 0) return { deviceId: null, error: 'KEYPAD_NOT_CONFIGURED' };
+    if (hits.length > 1) return { deviceId: null, error: 'KEYPAD_AMBIGUOUS' };
+    var id = hits[0].deviceId;
+    if (typeof id !== 'string' || !id) return { deviceId: null, error: 'KEYPAD_NOT_CONFIGURED' };
+    return { deviceId: id, error: null };
+  }
+
+  /**
+   * 発行対象判定。推測で既定値を足さない: 設定が欠けていれば必ず停止側に倒す。
+   * 戻り値 { eligible, reason, startSec, endSec, deviceId }
+   */
+  function evaluateEligibility(booking, config, nowSec) {
+    function no(reason) { return { eligible: false, reason: reason }; }
+    config = config || {};
+    booking = booking || {};
+    if (config.enabled !== true) return no('FLAG_OFF');
+    if (config.commercialUseApproved !== true) return no('COMMERCIAL_USE_NOT_APPROVED');
+    if (!booking.bookingId || typeof booking.revision !== 'number') return no('BOOKING_INVALID');
+    if (booking.status !== 'CONFIRMED') return no('NOT_CONFIRMED');
+    if (!Array.isArray(config.eligiblePaymentStatuses) || config.eligiblePaymentStatuses.indexOf(booking.paymentStatus) === -1) {
+      return no('PAYMENT_NOT_ELIGIBLE');
+    }
+    if (!Array.isArray(config.eligibleBrands) || config.eligibleBrands.indexOf(booking.brand) === -1) return no('BRAND_NOT_TARGET');
+    if (typeof config.graceBeforeSec !== 'number' || typeof config.graceAfterSec !== 'number' ||
+        config.graceBeforeSec < 0 || config.graceAfterSec < 0) {
+      return no('GRACE_NOT_CONFIGURED');
+    }
+    var s = jstToEpochSec(booking.date, booking.startTime);
+    var e = jstToEpochSec(booking.endDate || booking.date, booking.endTime);
+    if (s === null || e === null || s >= e) return no('TIME_INVALID');
+    var startSec = s - config.graceBeforeSec;
+    var endSec = e + config.graceAfterSec;
+    if (endSec <= nowSec) return no('ALREADY_ENDED');
+    var kp = resolveKeypad(config, booking);
+    if (!kp.deviceId) return no(kp.error);
+    return { eligible: true, reason: null, startSec: startSec, endSec: endSec, deviceId: kp.deviceId };
+  }
+
+  function validatePasscode(p) {
+    return typeof p === 'string' && /^[0-9]{6,12}$/.test(p);
+  }
+
+  /** keyList 検査。完全な応答（対象 device 1 件・keyList 配列）以外は valid:false（0 件と断定しない）。 */
+  function inspectKeyList(devices, deviceId, name) {
+    if (!Array.isArray(devices)) return { valid: false, error: 'DEVICE_LIST_INVALID' };
+    var devs = devices.filter(function (d) { return d && d.deviceId === deviceId; });
+    if (devs.length !== 1) return { valid: false, error: devs.length === 0 ? 'DEVICE_NOT_FOUND' : 'DEVICE_AMBIGUOUS' };
+    if (!Array.isArray(devs[0].keyList)) return { valid: false, error: 'KEYLIST_INVALID' };
+    var hits = devs[0].keyList.filter(function (k) { return k && k.name === name; });
+    var ids = hits.map(function (k) { return k.id; });
+    return { valid: true, count: hits.length, entries: hits, ids: ids, error: null };
+  }
+
+  /** 作成後: 厳密に 1 件・ID あり・属性矛盾なしのときのみ確認済み。 */
+  function judgeIssued(insp, expected) {
+    if (!insp.valid) return { ok: false, error: insp.error };
+    if (insp.count === 0) return { ok: false, error: 'KEY_NOT_FOUND' };
+    if (insp.count > 1) return { ok: false, error: 'KEY_NAME_AMBIGUOUS' };
+    var k = insp.entries[0];
+    if (k.id === undefined || k.id === null || String(k.id) === '') return { ok: false, error: 'KEY_ID_MISSING' };
+    if (k.type !== undefined && k.type !== 'timeLimit') return { ok: false, error: 'KEY_ATTR_MISMATCH' };
+    if (k.startTime !== undefined && String(k.startTime) !== String(expected.startSec)) return { ok: false, error: 'KEY_ATTR_MISMATCH' };
+    if (k.endTime !== undefined && String(k.endTime) !== String(expected.endSec)) return { ok: false, error: 'KEY_ATTR_MISMATCH' };
+    return { ok: true, id: String(k.id) };
+  }
+
+  /** Webhook の解釈（Keypad changeReport の createKey/deleteKey のみ）。 */
+  function parseKeypadWebhook(payload) {
+    if (!payload || payload.eventType !== 'changeReport' || !payload.context) return null;
+    var c = payload.context;
+    if (c.deviceType !== 'WoKeypad' && c.deviceType !== 'WoKeypadTouch') return null;
+    var name = String(c.eventName || '').trim();
+    if (name !== 'createKey' && name !== 'deleteKey') return null;
+    if (!c.commandId) return null;
+    return { eventName: name, commandId: String(c.commandId), result: c.result === 'success' ? 'success' : (c.result === 'failed' ? 'failed' : 'other') };
+  }
+
+  function classifyApi(res) {
+    if (!res || typeof res !== 'object') return { accepted: false, commandId: null };
+    var p = res.parsed;
+    var accepted = res.httpCode === 200 && p && p.statusCode === 100;
+    var body = (p && p.body) || {};
+    return { accepted: !!accepted, commandId: accepted && body.commandId ? String(body.commandId) : null };
+  }
+
+  // ---------- エンジン ----------
+
+  /**
+   * deps:
+   *   store       { get(k), set(k,v), del(k), keys() }  状態（秘密を含まない）
+   *   secrets     { get(k), set(k,v), del(k) }          秘密（passcode）専用。権限を分離
+   *   lock        function(keys[], fn) → fn()           予約単位 + Keypad 単位の直列化
+   *   api         { listDevices(), createKey({deviceId,name,password,startTime,endTime}), deleteKey(deviceId,id) }
+   *                 create/delete は { httpCode, parsed } を返す。通信断は throw。
+   *   notifyAdmin function(event)                        { code, ref, state } のみ（個人情報・秘密なし）。失敗時は throw 可
+   *   deliverCode function(bookingRef, code, window)     正規受渡し先へ。確認済み後にのみ呼ぶ。失敗時 throw
+   *   sha256Hex   function(str) → hex
+   *   randomInt   function(n) → 0..n-1
+   *   nowSec      function() → UNIX 秒
+   */
+  function createEngine(deps, config) {
+    config = config || {};
+    var maxReads = typeof config.maxReads === 'number' ? config.maxReads : 3;
+    var webhookWaitSec = typeof config.webhookWaitSec === 'number' ? config.webhookWaitSec : 90;
+
+    // ---- 永続層ヘルパ ----
+    function load(k) { var r = deps.store.get(k); return r ? JSON.parse(r) : null; }
+    function save(k, v) { deps.store.set(k, JSON.stringify(v)); }
+    function recKey(id) { return 'OP_' + id; }
+    function bkKey(bookingId) { return 'BK_' + bookingId; }
+
+    function bookingIndex(bookingId) {
+      return load(bkKey(bookingId)) || { bookingId: bookingId, head: null, ops: [] };
+    }
+
+    /** 予約 PII を含まない衝突しにくい操作名。 */
+    function keyName(bookingId, revision, deviceId, op, attempt) {
+      var h = deps.sha256Hex([bookingId, revision, deviceId, op, attempt].join('|'));
+      return 'SNB-' + h.slice(0, 16);
+    }
+
+    function audit(rec, from, to, basis) {
+      rec.history = rec.history || [];
+      rec.history.push({ at: deps.nowSec(), from: from, to: to, basis: basis || null });
+    }
+
+    function transition(rec, to, basis) {
+      audit(rec, rec.state, to, basis);
+      rec.state = to;
+      rec.updatedAt = deps.nowSec();
+      save(recKey(rec.id), rec);
+    }
+
+    function alert(rec, code) {
+      var dk = 'ALERT_' + rec.id + '_' + code;
+      if (deps.store.get(dk)) return false; // 重複抑止（通知成功時のみ記録）
+      try {
+        deps.notifyAdmin({ code: code, ref: rec.bookingId, rev: rec.revision, device: maskId(rec.deviceId), state: rec.state });
+        deps.store.set(dk, String(deps.nowSec()));
+        return true;
+      } catch (e) {
+        return false; // 失敗時は記録しない → 次回再通知
+      }
+    }
+
+    function readKeyList() {
+      var out;
+      try { out = deps.api.listDevices(); } catch (e) { return { ok: false, error: 'LIST_COMM_ERROR' }; }
+      if (!out || out.ok !== true) return { ok: false, error: 'LIST_API_ERROR' };
+      return { ok: true, devices: out.devices };
+    }
+
+    function stopUnknown(rec, code, reason) {
+      rec.reason = reason;
+      transition(rec, STATE.UNKNOWN, null);
+      alert(rec, code);
+      return rec;
+    }
+
+    // ---- Webhook 取込 ----
+    function ingestWebhook(payload) {
+      var ev = parseKeypadWebhook(payload);
+      if (!ev) return { stored: false };
+      var k = 'EVT_' + ev.commandId;
+      if (load(k)) return { stored: false, duplicate: true }; // 重複は初回を維持（巻き戻さない）
+      ev.receivedAtSec = deps.nowSec();
+      save(k, ev);
+      return { stored: true };
+    }
+
+    // ---- 発行 ----
+    function startIssue(booking, elig, attempt) {
+      var id = booking.bookingId + ':' + booking.revision + ':' + maskId(elig.deviceId) + ':' + OP.ISSUE + '#' + attempt;
+      var rec = {
+        id: id, bookingId: booking.bookingId, revision: booking.revision, deviceId: elig.deviceId, op: OP.ISSUE,
+        attempt: attempt, name: keyName(booking.bookingId, booking.revision, elig.deviceId, OP.ISSUE, attempt),
+        startSec: elig.startSec, endSec: elig.endSec, state: STATE.PLANNED, passcodeId: '', commandId: '',
+        evidence: [], reads: 0, history: [], createdAt: deps.nowSec(), updatedAt: deps.nowSec()
+      };
+      var code = '';
+      for (var i = 0; i < 8; i++) code += String(deps.randomInt(10));
+      // 秘密と計画を送信前に永続化（失敗したら送信しない）
+      deps.secrets.set('SECRET_' + id, code);
+      save(recKey(id), rec);
+      var idx = bookingIndex(booking.bookingId);
+      idx.ops.push(id);
+      save(bkKey(booking.bookingId), idx);
+      return executeIssue(rec);
+    }
+
+    function executeIssue(rec) {
+      var kl = readKeyList();
+      if (!kl.ok) return stopUnknown(rec, 'PRECHECK_FAILED', kl.error);
+      var pre = inspectKeyList(kl.devices, rec.deviceId, rec.name);
+      if (!pre.valid) return stopUnknown(rec, 'PRECHECK_FAILED', pre.error);
+      if (pre.count !== 0) return stopUnknown(rec, 'NAME_ALREADY_EXISTS', 'NAME_ALREADY_EXISTS');
+      var password = deps.secrets.get('SECRET_' + rec.id);
+      if (!validatePasscode(password)) return stopUnknown(rec, 'SECRET_MISSING', 'SECRET_MISSING');
+      // 送信前に SENDING を永続化。保存に失敗したら例外のまま送信しない。
+      transition(rec, STATE.SENDING, null);
+      var res;
+      try {
+        res = deps.api.createKey({ deviceId: rec.deviceId, name: rec.name, password: password, startTime: rec.startSec, endTime: rec.endSec });
+      } catch (e) {
+        return stopUnknown(rec, 'SEND_COMM_ERROR', 'COMM_ERROR');
+      }
+      var c = classifyApi(res);
+      if (!c.accepted) {
+        // 4xx（429 除く）で明確に拒否された場合のみ FAILED。それ以外は受理有無が曖昧なので UNKNOWN。
+        if (res && typeof res.httpCode === 'number' && res.httpCode >= 400 && res.httpCode < 500 && res.httpCode !== 429) {
+          rec.reason = 'API_REJECTED';
+          transition(rec, STATE.FAILED, null);
+          alert(rec, 'ISSUE_REJECTED');
+          deps.secrets.del('SECRET_' + rec.id);
+          return rec;
+        }
+        return stopUnknown(rec, 'SEND_RESPONSE_UNKNOWN', 'RESPONSE_UNKNOWN');
+      }
+      rec.sentAtSec = deps.nowSec();
+      if (c.commandId) {
+        rec.commandId = c.commandId;
+        transition(rec, STATE.SENT_WAIT_WEBHOOK, null);
+      } else {
+        transition(rec, STATE.ACCEPTED_NO_COMMAND_ID, null);
+      }
+      return reconcileIssue(rec);
+    }
+
+    /** 読み取りのみ。変更 API は一切呼ばない。 */
+    function reconcileIssue(rec) {
+      if (rec.state !== STATE.SENT_WAIT_WEBHOOK && rec.state !== STATE.ACCEPTED_NO_COMMAND_ID) return rec;
+      var webhookOk = false;
+      if (rec.state === STATE.SENT_WAIT_WEBHOOK) {
+        var ev = load('EVT_' + rec.commandId);
+        if (ev && ev.eventName === 'createKey') {
+          if (ev.result === 'failed') {
+            rec.reason = 'WEBHOOK_FAILED';
+            transition(rec, STATE.FAILED, null);
+            alert(rec, 'ISSUE_FAILED');
+            deps.secrets.del('SECRET_' + rec.id);
+            return rec;
+          }
+          if (ev.result === 'success') webhookOk = true;
+        }
+        if (!webhookOk) {
+          if (deps.nowSec() - rec.sentAtSec > webhookWaitSec) return stopUnknown(rec, 'WEBHOOK_TIMEOUT', 'WEBHOOK_TIMEOUT');
+          return rec; // まだ待機（再実行で再確認）
+        }
+      }
+      if (rec.reads >= maxReads) return stopUnknown(rec, 'READ_LIMIT', 'READ_LIMIT');
+      rec.reads += 1;
+      var kl = readKeyList();
+      if (!kl.ok) {
+        if (rec.reads >= maxReads) return stopUnknown(rec, 'READ_LIMIT', kl.error);
+        save(recKey(rec.id), rec);
+        return rec;
+      }
+      var j = judgeIssued(inspectKeyList(kl.devices, rec.deviceId, rec.name), rec);
+      if (!j.ok) {
+        // Webhook 成功なのに keyList 不一致 = 矛盾。成功へ寄せず停止。重複/ID欠落/属性矛盾も停止。
+        if (webhookOk || j.error === 'KEY_NAME_AMBIGUOUS' || j.error === 'KEY_ID_MISSING' ||
+            j.error === 'KEY_ATTR_MISMATCH' || j.error === 'DEVICE_LIST_INVALID' || j.error === 'KEYLIST_INVALID') {
+          return stopUnknown(rec, 'CONFIRM_MISMATCH', j.error);
+        }
+        // commandId なしの 0 件: 反映待ちの可能性。上限まで読み取りのみ再試行
+        if (rec.reads >= maxReads) return stopUnknown(rec, 'READ_LIMIT', j.error);
+        save(recKey(rec.id), rec);
+        return rec;
+      }
+      rec.passcodeId = j.id;
+      if (webhookOk) rec.evidence.push(EVIDENCE.WEBHOOK_SUCCESS);
+      rec.evidence.push(EVIDENCE.KEYLIST_CONFIRMED);
+      transition(rec, STATE.ISSUED_CONFIRMED, null);
+      return rec;
+    }
+
+    // ---- 削除 ----
+    function startDelete(rec) {
+      if (rec.state !== STATE.ISSUED_CONFIRMED && rec.state !== STATE.EXPIRED && rec.state !== STATE.DELETE_PENDING) return rec;
+      if (rec.state !== STATE.DELETE_PENDING) transition(rec, STATE.DELETE_PENDING, null);
+      return executeDelete(rec);
+    }
+
+    function executeDelete(rec) {
+      var kl = readKeyList();
+      if (!kl.ok) return stopUnknown(rec, 'DELETE_PRECHECK_FAILED', kl.error);
+      var insp = inspectKeyList(kl.devices, rec.deviceId, rec.name);
+      if (!insp.valid) return stopUnknown(rec, 'DELETE_PRECHECK_FAILED', insp.error);
+      if (insp.count === 0) {
+        rec.evidence.push(EVIDENCE.KEYLIST_ABSENT);
+        transition(rec, STATE.ALREADY_ABSENT, null);
+        deps.secrets.del('SECRET_' + rec.id);
+        return rec;
+      }
+      if (insp.count > 1) return stopUnknown(rec, 'DELETE_AMBIGUOUS', 'KEY_NAME_AMBIGUOUS');
+      var id = insp.ids[0];
+      if (id === undefined || id === null || String(id) === '' || String(id) !== String(rec.passcodeId)) {
+        return stopUnknown(rec, 'DELETE_ID_MISMATCH', 'ID_MISMATCH');
+      }
+      transition(rec, STATE.DELETE_SENDING, null);
+      var res;
+      try { res = deps.api.deleteKey(rec.deviceId, String(id)); }
+      catch (e) { return stopUnknown(rec, 'DELETE_COMM_ERROR', 'COMM_ERROR'); }
+      var c = classifyApi(res);
+      if (!c.accepted) return stopUnknown(rec, 'DELETE_RESPONSE_UNKNOWN', 'RESPONSE_UNKNOWN');
+      rec.deleteCommandId = c.commandId || '';
+      rec.deleteSentAtSec = deps.nowSec();
+      rec.reads = 0;
+      transition(rec, STATE.DELETE_SENT, null);
+      return reconcileDelete(rec);
+    }
+
+    function reconcileDelete(rec) {
+      if (rec.state !== STATE.DELETE_SENT) return rec;
+      if (rec.reads >= maxReads) return stopUnknown(rec, 'READ_LIMIT', 'READ_LIMIT');
+      rec.reads += 1;
+      var kl = readKeyList();
+      if (!kl.ok) {
+        if (rec.reads >= maxReads) return stopUnknown(rec, 'READ_LIMIT', kl.error);
+        save(recKey(rec.id), rec);
+        return rec;
+      }
+      var insp = inspectKeyList(kl.devices, rec.deviceId, rec.name);
+      if (!insp.valid) return stopUnknown(rec, 'DELETE_CONFIRM_FAILED', insp.error);
+      if (insp.count > 0) {
+        if (rec.reads >= maxReads) return stopUnknown(rec, 'KEY_REMAINS', 'KEY_REMAINS');
+        save(recKey(rec.id), rec);
+        return rec;
+      }
+      if (rec.deleteCommandId) {
+        var ev = load('EVT_' + rec.deleteCommandId);
+        if (ev && ev.eventName === 'deleteKey' && ev.result === 'success') rec.evidence.push(EVIDENCE.WEBHOOK_SUCCESS);
+      }
+      rec.evidence.push(EVIDENCE.KEYLIST_ABSENT);
+      transition(rec, STATE.DELETED_CONFIRMED, null);
+      deps.secrets.del('SECRET_' + rec.id);
+      return rec;
+    }
+
+    function sameWindow(r, elig) {
+      return r.startSec === elig.startSec && r.endSec === elig.endSec && r.deviceId === elig.deviceId;
+    }
+
+    function loadAll(idx) {
+      return idx.ops.map(function (id) { return load(recKey(id)); }).filter(Boolean);
+    }
+
+    // ---- 同期（予約イベント／ジョブ再実行のエントリ） ----
+    /**
+     * 予約の最新スナップショットを渡して呼ぶ。何度呼んでも冪等。
+     * - 古い改訂は無視（巻き戻し禁止）
+     * - 取消・非対象・改訂変更時は旧キーを削除対象にする
+     * - 旧キーの削除が確定するまで新キーは発行しない
+     */
+    function sync(booking) {
+      var elig = evaluateEligibility(booking, config, deps.nowSec());
+      var out = { actions: [], skipped: null };
+      if (config.enabled !== true) { out.skipped = 'FLAG_OFF'; return out; } // OFF: 何も呼ばない・書かない
+      var locks = ['BOOKING_' + booking.bookingId];
+      if (elig.deviceId) locks.push('DEV_' + elig.deviceId);
+      deps.lock(locks, function () {
+        var idx = bookingIndex(booking.bookingId);
+        if (idx.head && booking.revision < idx.head.revision) { out.skipped = 'STALE_REVISION'; return; }
+        var cancelledNow = booking.status === 'CANCELLED';
+        // 取消済みの後に届いた遅延確定イベント（同改訂以下）で発行しない
+        if (idx.head && idx.head.cancelled && !cancelledNow && booking.revision <= idx.head.revision) { out.skipped = 'AFTER_CANCEL'; return; }
+        idx.head = { revision: booking.revision, cancelled: cancelledNow };
+        save(bkKey(booking.bookingId), idx);
+
+        // 進行中 record を前へ進める（読み取り中心。変更 API の再送はしない）
+        loadAll(idx).forEach(function (r) {
+          if (TERMINAL.indexOf(r.state) !== -1) return;
+          if (r.state === STATE.SENDING || r.state === STATE.DELETE_SENDING) {
+            stopUnknown(r, 'CRASH_RECOVERY', 'RESUMED_FROM_SENDING');
+            out.actions.push('UNKNOWN:' + r.id);
+          } else if (r.state === STATE.PLANNED) {
+            executeIssue(r); out.actions.push('RESUME_ISSUE:' + r.id); // 未送信が確実
+          } else if (r.state === STATE.SENT_WAIT_WEBHOOK || r.state === STATE.ACCEPTED_NO_COMMAND_ID) {
+            reconcileIssue(r); out.actions.push('RECONCILE_ISSUE:' + r.id);
+          } else if (r.state === STATE.DELETE_SENT) {
+            reconcileDelete(r); out.actions.push('RECONCILE_DELETE:' + r.id);
+          }
+        });
+
+        var desired = elig.eligible && !cancelledNow;
+
+        // 旧改訂・取消・非対象・期間/対象変更のキーは削除対象
+        loadAll(idx).forEach(function (r) {
+          if (r.op !== OP.ISSUE) return;
+          var stale = !desired || r.revision !== booking.revision || !sameWindow(r, elig);
+          if (!stale) return;
+          if (r.state === STATE.ISSUED_CONFIRMED || r.state === STATE.EXPIRED || r.state === STATE.DELETE_PENDING) {
+            startDelete(r); out.actions.push('DELETE:' + r.id);
+          }
+        });
+
+        if (!desired) { out.skipped = elig.reason || 'CANCELLED'; return; }
+
+        var recs = loadAll(idx);
+        // 旧キーが未確定削除（UNKNOWN 含む）なら新規発行しない
+        var blocking = recs.filter(function (r) {
+          return r.op === OP.ISSUE && TERMINAL.indexOf(r.state) === -1 &&
+            !(r.revision === booking.revision && sameWindow(r, elig));
+        });
+        if (blocking.length) {
+          out.skipped = 'OLD_KEY_UNRESOLVED';
+          blocking.forEach(function (r) { alert(r, 'OLD_KEY_UNRESOLVED'); });
+          return;
+        }
+        var same = recs.filter(function (r) { return r.op === OP.ISSUE && r.revision === booking.revision && sameWindow(r, elig); });
+        if (same.some(function (r) { return r.state !== STATE.ABANDONED; })) { out.skipped = out.skipped || 'ALREADY_PLANNED'; return; }
+        startIssue(booking, elig, same.length + 1);
+        out.actions.push('ISSUE');
+      });
+      return out;
+    }
+
+    // ---- 受渡し ----
+    /** ISSUED_CONFIRMED の record にのみ、正規受渡し先へコードを渡す。 */
+    function deliver(recId) {
+      var rec = load(recKey(recId));
+      if (!rec || rec.state !== STATE.ISSUED_CONFIRMED) return { delivered: false, reason: 'NOT_CONFIRMED' };
+      if (rec.deliveredAtSec) return { delivered: false, reason: 'ALREADY_DELIVERED' };
+      var code = deps.secrets.get('SECRET_' + rec.id);
+      if (!code) return { delivered: false, reason: 'SECRET_MISSING' };
+      try {
+        deps.deliverCode(rec.bookingId, code, { startSec: rec.startSec, endSec: rec.endSec });
+      } catch (e) {
+        alert(rec, 'DELIVER_FAILED');
+        return { delivered: false, reason: 'DELIVER_FAILED' };
+      }
+      rec.deliveredAtSec = deps.nowSec();
+      save(recKey(rec.id), rec);
+      return { delivered: true };
+    }
+
+    // ---- 期限切れ・保持期限 ----
+    /** 期限切れ（削除とは区別）。未解決状態の状態データ・秘密は破棄しない。 */
+    function sweep() {
+      var now = deps.nowSec();
+      var retention = typeof config.retentionSec === 'number' ? config.retentionSec : 30 * 86400;
+      deps.store.keys().filter(function (k) { return k.indexOf('OP_') === 0; }).forEach(function (k) {
+        var rec = load(k);
+        if (!rec) return;
+        if (rec.state === STATE.ISSUED_CONFIRMED && rec.endSec <= now) {
+          transition(rec, STATE.EXPIRED, 'TIME');
+        }
+        if (rec.state === STATE.EXPIRED) {
+          var kl = readKeyList();
+          var insp = kl.ok ? inspectKeyList(kl.devices, rec.deviceId, rec.name) : { valid: false };
+          if (insp.valid && insp.count === 0) {
+            rec.evidence.push(EVIDENCE.KEYLIST_ABSENT);
+            transition(rec, STATE.ARCHIVED_EXPIRED, null);
+            deps.secrets.del('SECRET_' + rec.id);
+          } else if (insp.valid) {
+            alert(rec, 'EXPIRED_KEY_REMAINS'); // 容量管理: 管理者が adminDelete で削除
+          } else {
+            alert(rec, 'EXPIRED_CHECK_FAILED');
+          }
+        } else if (TERMINAL.indexOf(rec.state) !== -1 && rec.updatedAt && now - rec.updatedAt > retention) {
+          deps.store.del(k);
+          deps.secrets.del('SECRET_' + rec.id);
+        }
+      });
+    }
+
+    // ---- 管理者復旧（フラグ OFF でも使える） ----
+    /** 読み取り専用の現状確認。 */
+    function adminInspect(recId) {
+      var rec = load(recKey(recId));
+      if (!rec) return { ok: false, error: 'NOT_FOUND' };
+      var kl = readKeyList();
+      if (!kl.ok) return { ok: false, error: kl.error };
+      var insp = inspectKeyList(kl.devices, rec.deviceId, rec.name);
+      if (!insp.valid) return { ok: false, error: insp.error };
+      return { ok: true, count: insp.count, state: rec.state };
+    }
+
+    /**
+     * UNKNOWN（発行）の管理者解決。管理者の判断は「どの結論を試すか」だけで、結論は常に keyList で検証する。
+     *   CONFIRM_PRESENT … 厳密 1 件・属性整合のときのみ ISSUED_CONFIRMED（ADMIN_KEYLIST 根拠）
+     *   ABANDON_ABSENT  … 0 件のときのみ ABANDONED（以後の新 attempt を許可）
+     * 変更 API は呼ばない。
+     */
+    function adminResolveUnknown(recId, decision, actor) {
+      var rec = load(recKey(recId));
+      if (!rec || rec.state !== STATE.UNKNOWN || rec.op !== OP.ISSUE) return { ok: false, error: 'NOT_RESOLVABLE' };
+      if (!actor) return { ok: false, error: 'ACTOR_REQUIRED' };
+      var kl = readKeyList();
+      if (!kl.ok) return { ok: false, error: kl.error };
+      var insp = inspectKeyList(kl.devices, rec.deviceId, rec.name);
+      if (!insp.valid) return { ok: false, error: insp.error };
+      if (decision === 'CONFIRM_PRESENT') {
+        var j = judgeIssued(insp, rec);
+        if (!j.ok) return { ok: false, error: j.error };
+        rec.passcodeId = j.id;
+        rec.evidence.push(EVIDENCE.ADMIN_KEYLIST);
+        transition(rec, STATE.ISSUED_CONFIRMED, 'ADMIN:' + actor);
+        return { ok: true, state: rec.state };
+      }
+      if (decision === 'ABANDON_ABSENT') {
+        if (insp.count !== 0) return { ok: false, error: 'KEY_STILL_PRESENT' };
+        transition(rec, STATE.ABANDONED, 'ADMIN:' + actor);
+        deps.secrets.del('SECRET_' + rec.id);
+        return { ok: true, state: rec.state };
+      }
+      return { ok: false, error: 'UNKNOWN_DECISION' };
+    }
+
+    /** 管理者による個別削除（フラグ OFF・ロールバック後も使える）。ISSUED_CONFIRMED/EXPIRED のみ。 */
+    function adminDelete(recId, actor) {
+      var rec = load(recKey(recId));
+      if (!rec || !actor) return { ok: false, error: 'NOT_FOUND_OR_NO_ACTOR' };
+      if (rec.state !== STATE.ISSUED_CONFIRMED && rec.state !== STATE.EXPIRED) return { ok: false, error: 'NOT_DELETABLE' };
+      var out;
+      deps.lock(['BOOKING_' + rec.bookingId, 'DEV_' + rec.deviceId], function () { out = startDelete(rec); });
+      return { ok: true, state: out.state };
+    }
+
+    /** 棚卸し（ロールバック用）。個人情報・秘密を含まない。 */
+    function inventory() {
+      return deps.store.keys().filter(function (k) { return k.indexOf('OP_') === 0; }).map(function (k) {
+        var r = load(k);
+        return { id: r.id, state: r.state, endSec: r.endSec, device: maskId(r.deviceId), unresolved: TERMINAL.indexOf(r.state) === -1 };
+      });
+    }
+
+    return {
+      sync: sync, ingestWebhook: ingestWebhook, deliver: deliver, sweep: sweep,
+      adminInspect: adminInspect, adminResolveUnknown: adminResolveUnknown, adminDelete: adminDelete,
+      inventory: inventory
+    };
+  }
+
+  return {
+    STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, TERMINAL: TERMINAL,
+    maskId: maskId, jstToEpochSec: jstToEpochSec, resolveKeypad: resolveKeypad,
+    evaluateEligibility: evaluateEligibility, inspectKeyList: inspectKeyList, judgeIssued: judgeIssued,
+    parseKeypadWebhook: parseKeypadWebhook, classifyApi: classifyApi, createEngine: createEngine
+  };
+})();
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = SwitchBotAccessCore;
+}
