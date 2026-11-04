@@ -220,6 +220,48 @@ function accessAdminReconcile(recId) { return sba_runtime_().admin('reconcile', 
 function accessAdminResolveUnknown(recId, decision) { return sba_runtime_().admin('resolveUnknown', { recId: recId, decision: decision }); }
 function accessAdminDelete(recId) { return sba_runtime_().admin('delete', { recId: recId }); }
 
+// ── 資格情報の初期登録（Issue #770。実行者本人の User Properties へ、エディタの入力ダイアログ経由）──
+// Web アプリ（doPost/doGet）・トリガー・Webhook からは到達しない。エディタでの手動実行専用。
+// 入力値は戻り値・Logger・例外に出さない（固定コードと SET/MISSING のみ）。Script Properties・トリガー・Webhook登録・端末APIには触れない。
+// 手順と根拠: docs/switchbot-access-credentials-770.md
+var SBA_PROMPT_LABELS_ = {
+  SWITCHBOT_TOKEN: 'SwitchBot API Token を入力（画面の他者への映り込みに注意）',
+  SWITCHBOT_SECRET: 'SwitchBot API Secret を入力',
+  WEBHOOK_SHARED_TOKEN: 'Webhook共有トークン（24文字以上の乱数。A-Z a-z 0-9 _ - のみ）を入力',
+  __CONFIRM_REPLACE__: '既存の資格情報を差し替えます。続けるには REPLACE と入力'
+};
+
+function sba_credentialSetup_(mode, dryRun) {
+  var res;
+  try {
+    res = SwitchBotAccessInfra.setupCredentials({
+      userProps: sba_storeOf_(sba_userProps_(), null),
+      adminActors: sba_adminActors_(),
+      identity: function () {
+        return { email: Session.getActiveUser().getEmail(), effectiveEmail: Session.getEffectiveUser().getEmail() };
+      },
+      prompt: function (name) {
+        // Browser.inputBox は取消時に文字列 'cancel' を返す（資格情報としては常に不正な短さ）。
+        var v = Browser.inputBox(SBA_PROMPT_LABELS_[name] || name, Browser.Buttons.OK_CANCEL);
+        return v === 'cancel' ? null : v;
+      }
+    }, { mode: mode, dryRun: dryRun });
+  } catch (e) {
+    res = { ok: false, code: 'UNEXPECTED_ERROR', status: {}, changed: [] };
+  }
+  Logger.log(JSON.stringify({ ok: res.ok, code: res.code, status: res.status, changed: res.changed }));
+  return res;
+}
+
+/** 初回登録。未設定の資格情報だけ入力する（設定済みは変更しない。部分設定の補完にも使う）。 */
+function accessSetupCredentials() { return sba_credentialSetup_('init', false); }
+
+/** ダイアログ・認可・入力検証だけを確認する。何も保存しない（本番値を入れる前の動作確認用）。 */
+function accessSetupCredentialsDryRun() { return sba_credentialSetup_('init', true); }
+
+/** 差し替え（ローテーション）。確認語 REPLACE が必須。空入力は据え置き。 */
+function accessReplaceCredentials() { return sba_credentialSetup_('replace', false); }
+
 /** 事前チェック: 必要な設定の有無のみ表示（値・完全IDは出さない）。 */
 function accessCheckSetup() {
   var s = sba_scriptProps_(), u = sba_userProps_();

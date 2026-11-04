@@ -146,6 +146,131 @@ var SwitchBotAccessInfra = (function () {
     return { ok: true, actor: label };
   }
 
+  // ---------- 資格情報の初期登録（Issue #770）----------
+
+  var CREDENTIAL_NAMES = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'WEBHOOK_SHARED_TOKEN'];
+  var CREDENTIAL_CONFIRM_REPLACE = 'REPLACE';
+
+  /** 値そのものは返さない。不備の種別だけ返す。Webhook共有トークンはURLクエリで送るため URL安全文字のみ。 */
+  function validateCredentialInput(name, value) {
+    if (typeof value !== 'string' || value === '') return { ok: false, error: 'EMPTY' };
+    if (/[\s\u0000-\u001f\u007f]/.test(value)) return { ok: false, error: 'WHITESPACE_OR_CONTROL' };
+    if (name === 'WEBHOOK_SHARED_TOKEN') {
+      if (!/^[A-Za-z0-9_-]+$/.test(value)) return { ok: false, error: 'CHARSET' };
+      if (value.length < 24 || value.length > 128) return { ok: false, error: 'LENGTH' };
+      var distinct = {};
+      value.split('').forEach(function (c) { distinct[c] = true; });
+      if (Object.keys(distinct).length < 8) return { ok: false, error: 'LOW_ENTROPY' };
+      return { ok: true };
+    }
+    if (CREDENTIAL_NAMES.indexOf(name) === -1) return { ok: false, error: 'UNKNOWN_NAME' };
+    if (value.length < 16 || value.length > 512) return { ok: false, error: 'LENGTH' };
+    return { ok: true };
+  }
+
+  /**
+   * 実行者本人の User Properties へ資格情報3件だけを登録する。返すのは固定コードと SET/MISSING のみ
+   * （入力値・既存値・例外メッセージは返さず、ログにも出さない）。触れるキーは CREDENTIAL_NAMES の3つだけ。
+   *
+   * deps: userProps{get,set,del}, identity() → {email, effectiveEmail}, adminActors, prompt(name) → 文字列|null(取消)
+   * opts: mode 'init'（未設定のものだけ入力。設定済みは変更しない）／'replace'（確認語 REPLACE が必須。空入力=据え置き）、dryRun
+   * 入力は全件検証してから書き込み、書込み・照合に失敗したら今回の変更を元に戻す。
+   */
+  function setupCredentials(deps, opts) {
+    opts = opts || {};
+    var mode = opts.mode === 'replace' ? 'replace' : 'init';
+    var props = deps.userProps;
+    function statusOf() {
+      var st = {};
+      CREDENTIAL_NAMES.forEach(function (n) {
+        var v = null;
+        try { v = props.get(n); } catch (e) { v = null; }
+        st[n] = v ? 'SET' : 'MISSING';
+      });
+      return st;
+    }
+    function result(ok, code, extra) {
+      var r = { ok: ok, code: code, status: statusOf(), changed: [] };
+      if (extra) Object.keys(extra).forEach(function (k) { r[k] = extra[k]; });
+      return r;
+    }
+
+    // 1) 認可（fail closed）: 許可リストの管理者本人で、かつ実行者=有効ユーザーが一致するときだけ
+    var idn = null;
+    try { idn = deps.identity ? deps.identity() : null; } catch (e) { idn = null; }
+    var who = authorizeAdmin(idn, deps.adminActors);
+    if (!who.ok) return result(false, who.error);
+    var eff = idn && typeof idn.effectiveEmail === 'string' ? idn.effectiveEmail.trim().toLowerCase() : '';
+    if (eff && eff !== idn.email.trim().toLowerCase()) return result(false, 'ACCOUNT_MISMATCH');
+
+    // 2) 現状に応じた対象の決定
+    var before = statusOf();
+    var targets;
+    if (mode === 'init') {
+      targets = CREDENTIAL_NAMES.filter(function (n) { return before[n] === 'MISSING'; });
+      if (!targets.length) return result(false, 'ALREADY_SET');
+    } else {
+      if (CREDENTIAL_NAMES.every(function (n) { return before[n] === 'MISSING'; })) return result(false, 'NOT_INITIALIZED');
+      targets = CREDENTIAL_NAMES.slice();
+    }
+
+    // 3) 上書きは明示確認（確認語の完全一致）が必須。確認前は何も入力させず、何も変更しない
+    function ask(name) {
+      var v;
+      try { v = deps.prompt(name); } catch (e) { return { fail: 'PROMPT_UNAVAILABLE' }; }
+      return v === null || v === undefined ? { fail: 'CANCELLED' } : { value: String(v) };
+    }
+    if (mode === 'replace') {
+      var c = ask('__CONFIRM_REPLACE__');
+      if (c.fail) return result(false, c.fail);
+      if (c.value.trim() !== CREDENTIAL_CONFIRM_REPLACE) return result(false, 'REPLACE_NOT_CONFIRMED');
+    }
+
+    // 4) 全件入力→全件検証（1件でも不備なら何も書かない）
+    var inputs = {}, invalid = [];
+    for (var i = 0; i < targets.length; i++) {
+      var a = ask(targets[i]);
+      if (a.fail) return result(false, a.fail);
+      if (mode === 'replace' && a.value === '' && before[targets[i]] === 'SET') continue; // 据え置き
+      var v = validateCredentialInput(targets[i], a.value);
+      if (!v.ok) invalid.push(targets[i]); else inputs[targets[i]] = a.value;
+    }
+    if (invalid.length) return result(false, 'INPUT_INVALID', { invalid: invalid });
+    var names = Object.keys(inputs);
+    if (!names.length) return result(false, 'NOTHING_TO_CHANGE');
+    // 3種は互いに別の値であること（新旧・据え置き分を含めて比較。値は外へ出さない）
+    var seen = {}, dup = false;
+    CREDENTIAL_NAMES.forEach(function (n) {
+      var val = inputs[n] !== undefined ? inputs[n] : (before[n] === 'SET' ? props.get(n) : null);
+      if (!val) return;
+      if (seen[val]) dup = true;
+      seen[val] = true;
+    });
+    if (dup) return result(false, 'INPUT_DUPLICATE');
+    if (opts.dryRun) return result(true, 'DRY_RUN_OK', { wouldChange: names });
+
+    // 5) 書込み→照合。失敗したら今回の分を元に戻す
+    var prev = {}, written = [];
+    function rollback() {
+      written.forEach(function (n) {
+        try { if (prev[n]) props.set(n, prev[n]); else props.del(n); } catch (e) { /* 復旧不能でも値は出さない */ }
+      });
+    }
+    try {
+      names.forEach(function (n) {
+        prev[n] = props.get(n);
+        written.push(n);
+        props.set(n, inputs[n]);
+      });
+    } catch (e) {
+      rollback();
+      return result(false, 'WRITE_FAILED');
+    }
+    var verified = names.every(function (n) { return props.get(n) === inputs[n]; });
+    if (!verified) { rollback(); return result(false, 'VERIFY_FAILED'); }
+    return result(true, 'OK', { changed: names });
+  }
+
   // ---------- Webhook 相関 ----------
 
   /** 受信ペイロードを採用に必要な最小項目へ正規化（未知項目・生応答を保存しない）。 */
@@ -904,6 +1029,7 @@ var SwitchBotAccessInfra = (function () {
     ENVIRONMENT: ENVIRONMENT, PROPERTIES_LIMITS: PROPERTIES_LIMITS, DEFAULTS: DEFAULTS, CATALOG: CATALOG, FREEZE_REASONS: FREEZE_REASONS,
     validateConfig: validateConfig, ensureStoreEnvironment: ensureStoreEnvironment,
     constantTimeEquals: constantTimeEquals, authenticateWebhook: authenticateWebhook, authorizeAdmin: authorizeAdmin,
+    CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials,
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,
