@@ -3763,6 +3763,7 @@ Booking Web App側からは呼び出せない）。
 | `CLOSE_TIME` | - | 省略時 `23:00` |
 | `MIN_BOOKING_MINUTES` | - | 省略時 `60`（Issue #410で120から変更。本番のScript Propertiesに`120`が明示設定されている場合は、削除または`60`へ更新が必要） |
 | `BUFFER_MINUTES` | - | 省略時 `15`（予約間マージン） |
+| `BOOKING_RULES_2026_11_EFFECTIVE_AT` | - | Issue #758。新予約ルールの**施行日時**（オフセット付きISO 8601。例 `2026-11-19T00:00:00+09:00`）。**未設定・不正値は従来ルール**。操作時のサーバー時刻がこの日時以降なら、①全ブランド共通の予約間バッファーを`BUFFER_MINUTES`に関わらず**30分**に固定（新規予約・日時変更・EXPIRED復活）、②利用当日の延長（開始維持・終了のみ延長）の確定は変更前終了時刻の**60分前まで**（ちょうど可・59分59秒前は`EXTENSION_DEADLINE_PASSED`で常に拒否。例外・強制回避なし。preview・commit両方で判定）。`BUFFER_MINUTES`の既定値15は変更しない。施行前に確定した予約は自動移動・取消しない。告知の公開から満14日以上空けて設定し、告知が遅れたらこの値を後ろへ変更する。`BookingConfig.getBookingRulesStatus()`で`UNSET/INVALID/PENDING/EFFECTIVE`を確認できる（施行予定日を過ぎてもUNSET/INVALIDなら設定不備） |
 | `SLOT_STEP_MINUTES` | - | 省略時 `15`（getAvailabilityの候補生成刻み） |
 | `PENDING_TTL_HOURS` | - | 省略時 `24`。PENDINGを受付から何時間保持するか |
 | `PENDING_TTL_MIN_HOURS_BEFORE_START` | - | 省略時 `2`。利用開始の何時間前を超えて保持しないか |

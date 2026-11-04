@@ -1701,3 +1701,113 @@ test('Issue #711: 日付変更を伴う過去日時への変更（前日の10:00
   var preview = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: parts, startTime: '10:00', endTime: '14:00' }, version_(f));
   assert.equal(preview.success, false);
 });
+
+/* ---- Issue #758: 当日延長の確定締切（変更前の終了時刻の60分前）と施行日時ゲート ---- */
+
+function freezeAt_(f, hhmmss) {
+  if (!f.sandbox.__RealDate) f.sandbox.__RealDate = vm.runInContext('Date', f.sandbox);
+  var nowMs = f.sandbox.__RealDate.parse(f.date + 'T' + hhmmss + '+09:00');
+  var Real = f.sandbox.__RealDate;
+  function FakeDate() {
+    var args = Array.prototype.slice.call(arguments);
+    if (!(this instanceof FakeDate)) return new Real(nowMs).toString();
+    return args.length === 0 ? new Real(nowMs) : new (Function.prototype.bind.apply(Real, [null].concat(args)))();
+  }
+  FakeDate.prototype = Real.prototype;
+  FakeDate.now = function () { return nowMs; };
+  FakeDate.parse = Real.parse;
+  FakeDate.UTC = Real.UTC;
+  f.sandbox.__FakeDate = FakeDate;
+  vm.runInContext('Date = __FakeDate;', f.sandbox);
+}
+
+function enableRules_(f, iso) {
+  f.globals.PropertiesService.getScriptProperties().setProperty('BOOKING_RULES_2026_11_EFFECTIVE_AT', iso);
+}
+
+var EXTEND_INPUT_ = function (f) { return { date: f.date, startTime: '10:00', endTime: '14:00' }; };
+
+test('Issue #758: 施行後、終了60分前ちょうど（11:00:00）の延長はpreview・commitとも可', function () {
+  var f = setup();
+  enableRules_(f, '2000-01-01T00:00:00+09:00');
+  freezeAt_(f, '11:00:00');
+  assert.equal(f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', EXTEND_INPUT_(f), version_(f)).success, true);
+  var r = f.sandbox.adminRescheduleBooking('SNB-TEST-1', EXTEND_INPUT_(f), version_(f), '延長', '別途精算');
+  assert.equal(r.success, true, JSON.stringify(r.error));
+});
+
+test('Issue #758: 施行後、59分59秒前（11:00:01）はEXTENSION_DEADLINE_PASSEDで常に拒否し、台帳・Calendarを更新しない', function () {
+  var f = setup();
+  enableRules_(f, '2000-01-01T00:00:00+09:00');
+  freezeAt_(f, '11:00:01');
+  var before = version_(f);
+  var p = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', EXTEND_INPUT_(f), before);
+  assert.equal(p.success, false);
+  assert.equal(p.error.code, 'EXTENSION_DEADLINE_PASSED');
+  /* 管理画面の直接呼び出し（トークン・強制相当の引数を足しても）でも回避できない */
+  var r = f.sandbox.rawAdminRescheduleBooking('SNB-TEST-1', EXTEND_INPUT_(f), before, '強制', '無視', { force: true, ignoreDeadline: true }, 'x');
+  assert.equal(r.success, false);
+  assert.equal(r.error.code, 'EXTENSION_DEADLINE_PASSED');
+  assert.equal(version_(f), before, 'Calendarは更新されない');
+  assert.equal(f.sandbox.SpreadsheetRepository.findRowByBookingId('SNB-TEST-1').record.endAt.getTime(), f.event.getEndTime().getTime(), '台帳も更新されない');
+});
+
+test('Issue #758: previewが成功しても、時間経過で締切を過ぎたcommitは拒否する', function () {
+  var f = setup();
+  enableRules_(f, '2000-01-01T00:00:00+09:00');
+  freezeAt_(f, '10:59:59');
+  var v = version_(f);
+  var p = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', EXTEND_INPUT_(f), v);
+  assert.equal(p.success, true);
+  freezeAt_(f, '11:00:01');
+  var r = f.sandbox.rawAdminRescheduleBooking('SNB-TEST-1', EXTEND_INPUT_(f), v, '延長', '', undefined, p.feeQuoteToken);
+  assert.equal(r.success, false);
+  assert.equal(r.error.code, 'EXTENSION_DEADLINE_PASSED');
+  assert.equal(version_(f), v);
+});
+
+test('Issue #758: 施行日時の前は従来どおり締切なし（11:30でも延長可）。未設定・不正値も従来ルール', function () {
+  ['', 'invalid', '2099-01-01T00:00:00+09:00'].forEach(function (value) {
+    var f = setup();
+    if (value) enableRules_(f, value);
+    freezeAt_(f, '11:30:00');
+    var r = f.sandbox.adminRescheduleBooking('SNB-TEST-1', EXTEND_INPUT_(f), version_(f), '延長', '別途精算');
+    assert.equal(r.success, true, 'value=' + value + ' ' + JSON.stringify(r.error));
+  });
+});
+
+test('Issue #758: preview→commitが施行日時を跨ぐとcommit時点で再判定される', function () {
+  var f = setup();
+  var effectiveAt = f.date + 'T11:15:00+09:00';
+  enableRules_(f, effectiveAt);
+  freezeAt_(f, '11:14:59');
+  var v = version_(f);
+  var p = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', EXTEND_INPUT_(f), v);
+  assert.equal(p.success, true, '施行前は締切なし');
+  freezeAt_(f, '11:15:00');
+  var r = f.sandbox.rawAdminRescheduleBooking('SNB-TEST-1', EXTEND_INPUT_(f), v, '延長', '', undefined, p.feeQuoteToken);
+  assert.equal(r.success, false);
+  assert.equal(r.error.code, 'EXTENSION_DEADLINE_PASSED');
+});
+
+test('Issue #758: 締切は当日延長に限定。施行後でも短縮・開始変更を伴う変更は従来コードで判定される', function () {
+  var f = setup();
+  enableRules_(f, '2000-01-01T00:00:00+09:00');
+  freezeAt_(f, '11:30:00');
+  var r = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:00', endTime: '11:45' }, version_(f));
+  assert.notEqual(r.error && r.error.code, 'EXTENSION_DEADLINE_PASSED');
+});
+
+test('Issue #758: 施行後の予約間隔は30分（延長後の終了から次予約まで30分ちょうど可、29分は不可）', function () {
+  var f = setup();
+  enableRules_(f, '2000-01-01T00:00:00+09:00');
+  freezeAt_(f, '10:30:00');
+  var next = f.globals.CalendarApp.getCalendarById('cal1').createEvent('next',
+    f.sandbox.CalendarRepository.parseDateTime(f.date, '14:30', 'Asia/Tokyo'),
+    f.sandbox.CalendarRepository.parseDateTime(f.date, '16:00', 'Asia/Tokyo'));
+  next.setTag('bookingId', 'SNB-NEXT'); next.setTag('status', 'CONFIRMED');
+  assert.equal(f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:00', endTime: '14:00' }, version_(f)).success, true, '14:00終了→14:30開始=30分ちょうど');
+  var r = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:00', endTime: '14:15' }, version_(f));
+  assert.equal(r.success, false);
+  assert.equal(r.error.code, 'SLOT_CONFLICT');
+});

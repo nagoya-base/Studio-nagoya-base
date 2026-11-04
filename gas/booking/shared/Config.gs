@@ -126,15 +126,76 @@ var BookingConfig = (function () {
 
   /* getAvailability（Issue #266）が使う空き判定の固定条件一式。
      brandはここに含めない（空き判定ロジックをbrandで分岐させないため）。 */
-  function getAvailabilityConfig() {
+  function getAvailabilityConfig(now) {
     return {
       timezone: readProperty_('TIMEZONE'),
       openTime: readProperty_('OPEN_TIME'),
       closeTime: readProperty_('CLOSE_TIME'),
       minBookingMinutes: readIntegerProperty_('MIN_BOOKING_MINUTES'),
-      bufferMinutes: readIntegerProperty_('BUFFER_MINUTES'),
+      bufferMinutes: effectiveBufferMinutes_(now),
       slotStepMinutes: readIntegerProperty_('SLOT_STEP_MINUTES')
     };
+  }
+
+  /*
+   * Issue #758: 予約ルール（全ブランド共通の予約間バッファー30分・当日延長の確定締切＝終了60分前）の施行日時ゲート。
+   * Script Property BOOKING_RULES_2026_11_EFFECTIVE_AT（例: 2026-11-19T00:00:00+09:00。オフセット必須のISO 8601）を
+   * 1つだけ持ち、予約間隔と延長締切を同じ時刻で切り替える。
+   * - 判定に使う時刻は「操作時のサーバー時刻（now）」。施行前に確定した予約は自動で移動・取消しない。
+   * - 未設定・空値・不正値は従来ルール（施行前扱い）。施行前に新ルールが効く事故を防ぐ側へ倒す。
+   *   ただし state が UNSET / INVALID のまま放置されないよう getBookingRulesStatus で検知できる。
+   * - BUFFER_MINUTES の既定値（15）は変更しない。施行後は BUFFER_MINUTES の値に関わらず30分に固定する。
+   */
+  var BOOKING_RULES_EFFECTIVE_AT_PROPERTY = 'BOOKING_RULES_2026_11_EFFECTIVE_AT';
+  var BOOKING_RULES_BUFFER_MINUTES = 30;
+  var BOOKING_RULES_EXTENSION_DEADLINE_MINUTES = 60;
+  var EFFECTIVE_AT_PATTERN_ = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(Z|[+-](\d{2}):(\d{2}))$/;
+
+  /* Date.parseは存在しない暦日（11/31・2/30等）を翌月へ補正して受理するため、各フィールドの実在性を明示的に検証する。 */
+  function isValidEffectiveAtFields_(m) {
+    var y = parseInt(m[1], 10), mo = parseInt(m[2], 10), d = parseInt(m[3], 10);
+    var h = parseInt(m[4], 10), mi = parseInt(m[5], 10), sec = parseInt(m[6], 10);
+    if (mo < 1 || mo > 12 || h > 23 || mi > 59 || sec > 59) return false;
+    var probe = new Date(Date.UTC(y, mo - 1, d));
+    if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d) return false;
+    if (m[8] !== undefined && (parseInt(m[8], 10) > 23 || parseInt(m[9], 10) > 59)) return false;
+    return true;
+  }
+
+  function readEffectiveAtMillis_() {
+    var raw;
+    try {
+      raw = PropertiesService.getScriptProperties().getProperty(BOOKING_RULES_EFFECTIVE_AT_PROPERTY);
+    } catch (error) {
+      return { state: 'INVALID', millis: NaN };
+    }
+    if (raw === null || raw === undefined || raw === '') return { state: 'UNSET', millis: NaN };
+    var match = typeof raw === 'string' ? EFFECTIVE_AT_PATTERN_.exec(raw) : null;
+    if (!match || !isValidEffectiveAtFields_(match)) return { state: 'INVALID', millis: NaN };
+    var millis = Date.parse(raw);
+    return isNaN(millis) ? { state: 'INVALID', millis: NaN } : { state: 'SET', millis: millis };
+  }
+
+  function toMillis_(now) {
+    if (now && typeof now.getTime === 'function' && !isNaN(now.getTime())) return now.getTime();
+    return new Date().getTime();
+  }
+
+  /* 施行済みか。now は操作時のサーバー時刻（省略時は現在時刻）。ちょうど施行日時は施行済み。 */
+  function isBookingRulesEffective(now) {
+    var effective = readEffectiveAtMillis_();
+    return effective.state === 'SET' && toMillis_(now) >= effective.millis;
+  }
+
+  /* 監視用: UNSET / INVALID は従来ルールのまま動く。施行予定日を過ぎても UNSET / INVALID なら設定不備として扱う。 */
+  function getBookingRulesStatus(now) {
+    var effective = readEffectiveAtMillis_();
+    if (effective.state !== 'SET') return { state: effective.state, effective: false };
+    return { state: toMillis_(now) >= effective.millis ? 'EFFECTIVE' : 'PENDING', effective: toMillis_(now) >= effective.millis, effectiveAtMillis: effective.millis };
+  }
+
+  function effectiveBufferMinutes_(now) {
+    return isBookingRulesEffective(now) ? BOOKING_RULES_BUFFER_MINUTES : readIntegerProperty_('BUFFER_MINUTES');
   }
 
   /*
@@ -324,6 +385,11 @@ var BookingConfig = (function () {
     getBookingAdminEmails: getBookingAdminEmails,
     getCalendarId: getCalendarId,
     getAvailabilityConfig: getAvailabilityConfig,
+    isBookingRulesEffective: isBookingRulesEffective,
+    getBookingRulesStatus: getBookingRulesStatus,
+    BOOKING_RULES_EFFECTIVE_AT_PROPERTY: BOOKING_RULES_EFFECTIVE_AT_PROPERTY,
+    BOOKING_RULES_BUFFER_MINUTES: BOOKING_RULES_BUFFER_MINUTES,
+    BOOKING_RULES_EXTENSION_DEADLINE_MINUTES: BOOKING_RULES_EXTENSION_DEADLINE_MINUTES,
     getSpreadsheetId: getSpreadsheetId,
     getAdminNotificationEmail: getAdminNotificationEmail,
     getBookingAdminUrl: getBookingAdminUrl,

@@ -128,7 +128,7 @@ var BookingReschedule = (function () {
     if (expectedVersion !== undefined && expectedVersion !== version) {
       return error_('STALE_BOOKING', '別の画面で予約が変更されています。詳細を再読み込みしてください。');
     }
-    var config = BookingConfig.getAvailabilityConfig();
+    var config = BookingConfig.getAvailabilityConfig(now);
     input = input || {};
     var date = input.date;
     var startTime = input.startTime;
@@ -159,6 +159,12 @@ var BookingReschedule = (function () {
       endAt.getTime() > record.endAt.getTime();
     if (isSameDayExtension) {
       if (endAt.getTime() <= now.getTime()) return error_('PAST_END', '終了時刻を現在時刻以前へは変更できません。');
+      /* Issue #758: 施行日時以降（判定はサーバー現在時刻）、当日延長の確定は変更前の確定済み終了時刻の60分前まで（ちょうど可・59分59秒前は拒否）。
+         例外・強制回避の経路は設けない。previewとcommitの両方がこのparse_を通るため、commitで再判定される。 */
+      if (BookingConfig.isBookingRulesEffective(now) &&
+          now.getTime() > record.endAt.getTime() - BookingConfig.BOOKING_RULES_EXTENSION_DEADLINE_MINUTES * 60000) {
+        return error_('EXTENSION_DEADLINE_PASSED', '終了時刻の60分前を過ぎているため、延長できません。');
+      }
     } else if (startAt.getTime() <= now.getTime()) {
       return error_('PAST_START', '現在時刻以前へは変更できません。');
     }

@@ -58,7 +58,7 @@ var BookingRepository = (function () {
     now = isDateLike_(now) ? now : new Date();
     var isAdminWindow = windowTier === BookingWindow.TIER.ADMIN;
 
-    var availabilityConfig = BookingConfig.getAvailabilityConfig();
+    var availabilityConfig = BookingConfig.getAvailabilityConfig(now);
     var validation = Booking.validateCreateBookingInput(rawInput, availabilityConfig, now, isAdminWindow ? BookingWindow.TIER.ADMIN : undefined);
     if (!validation.valid) {
       return { success: false, error: validation.error };
@@ -1873,7 +1873,7 @@ var BookingRepository = (function () {
      * durationMinutesはSheets台帳のstartAt/endAt（実データ）から復元する
      * （record.dateの型ゆれに依存しない。BookingAdminWeb.gsのformatAdminDate_と同じ注意点）。
      */
-    var availabilityConfig = BookingConfig.getAvailabilityConfig();
+    var availabilityConfig = BookingConfig.getAvailabilityConfig(now);
     var calendarId = BookingConfig.getCalendarId();
     var dateString = BookingAvailability.formatDateInTimezone(record.startAt, availabilityConfig.timezone);
     var startTimeString = BookingAvailability.formatTimeInTimezone(record.startAt, availabilityConfig.timezone);
