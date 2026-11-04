@@ -96,13 +96,16 @@ $env:SBA_API_DEPLOYMENT_ID = "<API実行可能DeploymentのID>"; node scripts/sw
 
 ## 4. 戻り値・ログ（固定コードのみ）
 
-関数の戻り値と実行ログは `{ok, code, status{名前:SET|MISSING}, changed[名前]}` のみ。入力値・既存値・例外メッセージは含まない（例外は捕捉して固定コードに変換）。
+関数の戻り値と実行ログは `{ok, code, status{名前:SET|MISSING|UNKNOWN}, changed[名前]}` のみ。入力値・既存値・例外メッセージは含まない（例外は捕捉して固定コードに変換）。
 
 | code | 意味 | 変更 |
 | --- | --- | --- |
 | `OK` | 登録/差し替え成功 | あり |
 | `STATUS_OK` | 状態確認（`--dry-run`）成功。値は聞かず保存もしない | なし |
 | `NOT_AUTHORIZED` / `IDENTITY_UNAVAILABLE` / `ACCOUNT_MISMATCH` | 許可リスト外 / 実行者または有効ユーザーのいずれかを確認できない / 両者が不一致 | なし（値も聞かない） |
+| `READ_FAILED` | User Properties の読取が失敗（1件でも）。状態は `UNKNOWN` と表示し、**`MISSING` 扱いにしない**。CLIは秘密入力前に停止 | なし |
+| `STATE_CHANGED` | 状態確認後〜書込み直前に設定状況が変わった（競合・他経路の更新）。既存値は上書きしない | なし |
+| `LOCK_BUSY` / `LOCK_UNAVAILABLE` | 同時実行中 / ロックを取得できない | なし |
 | `ALREADY_SET` | 3件とも設定済み（初回登録は上書きしない） | なし |
 | `NOT_INITIALIZED` | 差し替え対象がない（先に初回登録） | なし |
 | `REPLACE_NOT_CONFIRMED` | 確認語 `REPLACE` が一致しない | なし |
@@ -144,4 +147,4 @@ $env:SBA_API_DEPLOYMENT_ID = "<API実行可能DeploymentのID>"; node scripts/sw
 | ローカルの残存 | `.clasprc.json`（既存のclasp認証。秘密の入力値ではない）、`--generate-webhook-token-to` で出力した場合のそのファイル（用後に削除） |
 
 ## 8. テスト
-`test/switchbot-access-credentials-770.test.js`（実GAS・実API・実秘密なし。ダミー値のみ）: 正常登録／--dry-run=状態確認のみ（値を聞かない）／欠損・部分設定の補完／上書き拒否／差し替え確認語／入力検証・重複／誤アカウント（許可リスト外・未取得・不一致）／途中失敗のロールバック／読戻し照合失敗／取消／戻り値・ログ・CLI出力・HTTP URLへの非漏えい／CLIの引数拒否（値を引数で渡す・非TTY）・API失敗の固定コード化・`--generate-webhook-token-to`（新規0600・既存拒否）／3キー以外・Script Properties・トリガー・外部通信・メールに触れないこと／manifest無変更。
+`test/switchbot-access-credentials-770.test.js`（実GAS・実API・実秘密なし。ダミー値のみ）: 正常登録／--dry-run=状態確認のみ（値を聞かない）／欠損・部分設定の補完／上書き拒否／差し替え確認語／入力検証・重複／誤アカウント（許可リスト外・未取得・不一致）／途中失敗のロールバック／読取失敗（1〜3件目）の fail closed・保存直前の状態変化（`STATE_CHANGED`）・既存値の誤上書き防止・ロック競合／読戻し照合失敗／取消／戻り値・ログ・CLI出力・HTTP URLへの非漏えい／CLIの引数拒否（値を引数で渡す・非TTY）・API失敗の固定コード化・`--generate-webhook-token-to`（新規0600・既存拒否）／3キー以外・Script Properties・トリガー・外部通信・メールに触れないこと／manifest無変更。

@@ -89,7 +89,7 @@ async function callRun(fetchFn, accessToken, deploymentId, fn, parameters) {
   var r = body.response.result;
   if (!r || typeof r.ok !== 'boolean' || typeof r.code !== 'string' || !/^[A-Z_]{2,40}$/.test(r.code)) throw fail('SCRIPT_ERROR');
   var status = {};
-  NAMES.forEach(function (n) { status[n] = r.status && r.status[n] === 'SET' ? 'SET' : 'MISSING'; });
+  NAMES.forEach(function (n) { status[n] = r.status && (r.status[n] === 'SET' || r.status[n] === 'UNKNOWN') ? r.status[n] : 'MISSING'; });
   return { ok: r.ok, code: r.code, status: status, changed: Array.isArray(r.changed) ? r.changed.filter(function (n) { return NAMES.indexOf(n) !== -1; }) : [], invalid: Array.isArray(r.invalid) ? r.invalid.filter(function (n) { return NAMES.indexOf(n) !== -1; }) : [] };
 }
 

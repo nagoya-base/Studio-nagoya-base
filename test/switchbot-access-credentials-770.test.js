@@ -29,9 +29,13 @@ var ADMIN = 'owner@example.test';
 /** 呼ばれたプロパティ操作を全記録するフェイクストア。 */
 function world(opts) {
   opts = opts || {};
-  var w = { data: Object.assign({}, opts.initial || {}), ops: [], prompts: [], answers: (opts.answers || []).slice(), failSetOn: opts.failSetOn || null, corruptOn: opts.corruptOn || null };
+  var w = { data: Object.assign({}, opts.initial || {}), ops: [], prompts: [], answers: (opts.answers || []).slice(), failSetOn: opts.failSetOn || null, corruptOn: opts.corruptOn || null, getCalls: 0, lock: { held: false, tries: 0, releases: 0 } };
   w.store = {
-    get: function (k) { w.ops.push(['get', k]); return w.data[k] === undefined ? null : w.data[k]; },
+    get: function (k) {
+      w.ops.push(['get', k]); w.getCalls++;
+      if (opts.onGet) opts.onGet(w, k, w.getCalls);
+      return w.data[k] === undefined ? null : w.data[k];
+    },
     set: function (k, v) {
       w.ops.push(['set', k]);
       if (w.failSetOn === k) throw new Error('boom ' + v);
@@ -42,6 +46,7 @@ function world(opts) {
   };
   w.deps = {
     userProps: w.store,
+    lock: opts.noLock ? undefined : { tryLock: function () { w.lock.tries++; if (opts.lockBusy) return false; w.lock.held = true; return true; }, releaseLock: function () { w.lock.held = false; w.lock.releases++; } },
     adminActors: opts.actors === undefined ? { 'Owner@Example.test': 'ADMIN-1' } : opts.actors,
     identity: opts.identity || function () { return { email: ADMIN, effectiveEmail: ADMIN }; },
     prompt: function (n) {
@@ -262,7 +267,7 @@ function loadShell(over) {
     UrlFetchApp: { fetch: function () { env.fetches++; throw new Error('must not fetch'); } },
     MailApp: { sendEmail: function () { env.mails++; } },
     ScriptApp: { newTrigger: function () { env.triggers++; throw new Error('must not touch triggers'); }, getProjectTriggers: function () { env.triggers++; return []; }, deleteTrigger: function () { env.triggers++; } },
-    LockService: { getScriptLock: function () { throw new Error('unused'); } },
+    LockService: { getScriptLock: function () { return { tryLock: function () { env.lockTries = (env.lockTries || 0) + 1; return !env.lockBusy; }, releaseLock: function () { env.lockReleases = (env.lockReleases || 0) + 1; } }; } },
     Utilities: {}, ContentService: {}, SpreadsheetApp: {}
   });
   prepare.fileNames().filter(function (n) { return /\.gs$/.test(n); }).forEach(function (n) {
@@ -298,6 +303,8 @@ test('GAS入口: accessCredentialStatusApi は入力なし・無保存で認可�
   var br = plain(bad.ctx.accessCredentialStatusApi());
   assert.strictEqual(br.code, 'NOT_AUTHORIZED');
   assert.deepStrictEqual(br.status, { SWITCHBOT_TOKEN: 'MISSING', SWITCHBOT_SECRET: 'MISSING', WEBHOOK_SHARED_TOKEN: 'MISSING' }); // 未認可には状態も見せない
+  var brs = plain(bad.ctx.accessSetupCredentialsApi({ mode: 'init', values: D }));
+  assert.deepStrictEqual(brs.status, br.status);
   assert.strictEqual(plain(bad.ctx.accessSetupCredentialsApi(undefined)).ok, false);
 });
 
@@ -524,4 +531,119 @@ test('CLI: Windows対応。ホームは os.homedir() 相当(USERPROFILE系)を�
   assert.ok(doc.indexOf('$env:SBA_API_DEPLOYMENT_ID') !== -1);
   var libSrc = fs.readFileSync(path.join(__dirname, '../scripts/switchbot-access-credentials-lib.js'), 'utf8');
   assert.ok(!/env\.HOME/.test(libSrc));
+});
+
+// ================================================================ 読取失敗・競合（fail closed）
+
+test('読取失敗: 状態確認でUser Propertiesの読取が例外（1件目・2件目・3件目）なら MISSING 扱いにせず READ_FAILED。入力は聞かず何も書かない', function () {
+  NAMES.forEach(function (failName) {
+    var initial = { SWITCHBOT_TOKEN: D.SWITCHBOT_TOKEN, SWITCHBOT_SECRET: D.SWITCHBOT_SECRET, WEBHOOK_SHARED_TOKEN: D.WEBHOOK_SHARED_TOKEN };
+    var onGet = function (w, k) { if (k === failName) throw new Error('transient ' + D.SWITCHBOT_TOKEN); };
+    var w = world({ initial: initial, answers: answers(D2), onGet: onGet });
+    var r = run(w);
+    assert.strictEqual(r.ok, false, failName);
+    assert.strictEqual(r.code, 'READ_FAILED', failName);
+    assert.deepStrictEqual(w.prompts, [], failName);
+    assert.ok(!w.ops.some(function (op) { return op[0] === 'set' || op[0] === 'del'; }), failName);
+    NAMES.forEach(function (n) { assert.strictEqual(w.data[n], initial[n]); });
+    NAMES.forEach(function (n) { assert.strictEqual(r.status[n], 'UNKNOWN'); }); // MISSING に潰さない
+    noSecretIn(r, Object.assign({}, D, D2));
+    // 状態確認API・replaceでも同様
+    var st = Infra.credentialStatus(world({ initial: initial, onGet: onGet }).deps);
+    assert.strictEqual(st.code, 'READ_FAILED');
+    assert.strictEqual(st.ok, false);
+    var rep = world({ initial: initial, answers: ['REPLACE'].concat(answers(D2)), onGet: onGet });
+    assert.strictEqual(run(rep, { mode: 'replace' }).code, 'READ_FAILED');
+    assert.deepStrictEqual(rep.prompts, []);
+    assert.strictEqual(rep.lock.held, false);
+  });
+});
+
+test('読取失敗: 重複判定の読取が例外でも READ_FAILED（書込み前）。ロックは必ず解放', function () {
+  var w = world({ initial: { SWITCHBOT_TOKEN: D.SWITCHBOT_TOKEN }, answers: [D.SWITCHBOT_SECRET, D.WEBHOOK_SHARED_TOKEN],
+    onGet: function (w2, k, n) { if (n > 3) throw new Error('late read failure'); } });
+  var r = run(w);
+  assert.strictEqual(r.code, 'READ_FAILED');
+  assert.strictEqual(w.data.SWITCHBOT_SECRET, undefined);
+  assert.strictEqual(w.lock.held, false);
+  assert.strictEqual(w.lock.releases, 1);
+});
+
+test('競合: 状態確認後〜保存直前に設定済みへ変化したら STATE_CHANGED で停止し、既存値を上書きしない', function () {
+  var other = 'Other-existing-' + 'q9w8e7r6'.repeat(3);
+  // 3件の状態確認(get x3)が終わった後、書込み直前の再読取の直前に別経路が SWITCHBOT_TOKEN を設定する
+  var w = world({ answers: answers(D), onGet: function (w2, k, n) { if (n === 4 && k === 'SWITCHBOT_TOKEN' ) w2.data.SWITCHBOT_TOKEN = other; } });
+  // 4回目のget前に変化させるため、重複判定の読取(設定済み分のみ)を経由しない構成: 事前に全MISSINGなので4回目は再検証の1件目
+  var r = run(w);
+  assert.strictEqual(r.code, 'STATE_CHANGED');
+  assert.strictEqual(w.data.SWITCHBOT_TOKEN, other);
+  assert.strictEqual(w.data.SWITCHBOT_SECRET, undefined);
+  assert.strictEqual(w.data.WEBHOOK_SHARED_TOKEN, undefined);
+  assert.ok(!w.ops.some(function (op) { return op[0] === 'set' || op[0] === 'del'; }));
+  noSecretIn(r, D); noSecretIn(r, { o: other });
+  assert.strictEqual(w.lock.held, false);
+});
+
+test('競合: replaceで確認後に項目が消えた/増えた場合も STATE_CHANGED（変更しない）', function () {
+  var w = world({ initial: Object.assign({}, D), answers: ['REPLACE'].concat(answers(D2)),
+    onGet: function (w2, k, n) { if (n === 4) delete w2.data.SWITCHBOT_SECRET; } });
+  var r = run(w, { mode: 'replace' });
+  assert.strictEqual(r.code, 'STATE_CHANGED');
+  assert.strictEqual(w.data.SWITCHBOT_TOKEN, D.SWITCHBOT_TOKEN);
+  assert.ok(!w.ops.some(function (op) { return op[0] === 'set'; }));
+});
+
+test('既存値の誤上書き防止: 設定済みの項目には初回登録で一切書かない（全パターン）', function () {
+  var combos = [['SWITCHBOT_TOKEN'], ['SWITCHBOT_SECRET'], ['WEBHOOK_SHARED_TOKEN'], ['SWITCHBOT_TOKEN', 'WEBHOOK_SHARED_TOKEN']];
+  combos.forEach(function (set) {
+    var initial = {};
+    set.forEach(function (n) { initial[n] = D[n]; });
+    var missing = NAMES.filter(function (n) { return set.indexOf(n) === -1; });
+    var w = world({ initial: initial, answers: missing.map(function (n) { return D2[n]; }) });
+    var r = run(w);
+    assert.strictEqual(r.code, 'OK');
+    set.forEach(function (n) {
+      assert.strictEqual(w.data[n], D[n]);
+      assert.ok(!w.ops.some(function (op) { return (op[0] === 'set' || op[0] === 'del') && op[1] === n; }));
+    });
+  });
+});
+
+test('ロック: 取得できなければ LOCK_BUSY、ロック未提供は LOCK_UNAVAILABLE（入力も書込みもしない）。成功/失敗のどちらでも解放', function () {
+  var busy = world({ answers: answers(D), lockBusy: true });
+  assert.strictEqual(run(busy).code, 'LOCK_BUSY');
+  assert.deepStrictEqual(busy.prompts, []);
+  assert.deepStrictEqual(busy.data, {});
+  var none = world({ answers: answers(D), noLock: true });
+  assert.strictEqual(run(none).code, 'LOCK_UNAVAILABLE');
+  assert.deepStrictEqual(none.data, {});
+  var ok = world({ answers: answers(D) });
+  assert.strictEqual(run(ok).code, 'OK');
+  assert.strictEqual(ok.lock.releases, 1);
+  assert.strictEqual(ok.lock.held, false);
+  var fail = world({ answers: answers(D), failSetOn: 'SWITCHBOT_SECRET' });
+  assert.strictEqual(run(fail).code, 'WRITE_FAILED');
+  assert.strictEqual(fail.lock.held, false);
+  var env = loadShell({});
+  env.lockBusy = true;
+  assert.strictEqual(plain(env.ctx.accessSetupCredentialsApi({ mode: 'init', values: D })).code, 'LOCK_BUSY');
+  assert.deepStrictEqual(env.user, {});
+});
+
+test('CLI: probeが READ_FAILED なら秘密入力前に停止し、状態は UNKNOWN と表示（MISSING にしない）', async function () {
+  var c = cli({ answers: answers(D), shell: { user: Object.assign({}, D) } });
+  var realProps = c.env.ctx.PropertiesService.getUserProperties;
+  c.env.ctx.PropertiesService.getUserProperties = function () {
+    var p = realProps();
+    return { getProperty: function (k) { if (k === 'SWITCHBOT_SECRET') throw new Error('transient'); return p.getProperty(k); }, setProperty: p.setProperty, deleteProperty: p.deleteProperty, getKeys: p.getKeys };
+  };
+  assert.strictEqual(await c.run(), 1);
+  assert.ok(c.out.indexOf('result: READ_FAILED') !== -1);
+  assert.ok(c.out.indexOf('SWITCHBOT_SECRET: UNKNOWN') !== -1);
+  assert.deepStrictEqual(c.asked, []);
+  assert.strictEqual(bodies(c).length, 1);
+  NAMES.forEach(function (n) { assert.strictEqual(c.env.user[n], D[n]); });
+  var dry = cli({ argv: ['--dry-run'], shell: { user: Object.assign({}, D) } });
+  dry.env.ctx.PropertiesService.getUserProperties = c.env.ctx.PropertiesService.getUserProperties;
+  assert.strictEqual(await dry.run(), 1);
 });

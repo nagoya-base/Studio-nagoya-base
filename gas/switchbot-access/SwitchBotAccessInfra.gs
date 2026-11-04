@@ -180,116 +180,158 @@ var SwitchBotAccessInfra = (function () {
     return { ok: true, actor: who.actor };
   }
 
-  /** 認可と SET/MISSING のみを返す状態確認（入力を要求せず、何も保存しない）。 */
-  function credentialStatus(deps) {
+  /**
+   * 3件の SET/MISSING を読む。読取例外を MISSING に潰さない（既存値を「未設定」と誤認して上書きする経路を作らない）:
+   * 1件でも読めなければ ok=false・全項目 UNKNOWN。
+   */
+  function readCredentialStatus(props) {
     var st = {};
+    for (var i = 0; i < CREDENTIAL_NAMES.length; i++) {
+      var v;
+      try { v = props.get(CREDENTIAL_NAMES[i]); } catch (e) { v = undefined; }
+      if (v === undefined) {
+        CREDENTIAL_NAMES.forEach(function (n) { st[n] = 'UNKNOWN'; });
+        return { ok: false, status: st };
+      }
+      st[CREDENTIAL_NAMES[i]] = v ? 'SET' : 'MISSING';
+    }
+    return { ok: true, status: st };
+  }
+
+  /** 認可と SET/MISSING のみを返す状態確認（入力を要求せず、何も保存しない）。未認可・読取失敗は状態を見せない。 */
+  function credentialStatus(deps) {
     var gate = authorizeExecutor(deps);
-    CREDENTIAL_NAMES.forEach(function (n) {
-      var v = null;
-      if (gate.ok) { try { v = deps.userProps.get(n); } catch (e) { v = null; } }
-      st[n] = v ? 'SET' : 'MISSING';
-    });
-    return { ok: gate.ok, code: gate.ok ? 'STATUS_OK' : gate.error, status: st, changed: [] };
+    var unknown = {};
+    CREDENTIAL_NAMES.forEach(function (n) { unknown[n] = 'MISSING'; });
+    if (!gate.ok) return { ok: false, code: gate.error, status: unknown, changed: [] };
+    var r = readCredentialStatus(deps.userProps);
+    if (!r.ok) return { ok: false, code: 'READ_FAILED', status: r.status, changed: [] };
+    return { ok: true, code: 'STATUS_OK', status: r.status, changed: [] };
   }
 
   /**
-   * 実行者本人の User Properties へ資格情報3件だけを登録する。返すのは固定コードと SET/MISSING のみ
+   * 実行者本人の User Properties へ資格情報3件だけを登録する。返すのは固定コードと SET/MISSING/UNKNOWN のみ
    * （入力値・既存値・例外メッセージは返さず、ログにも出さない）。触れるキーは CREDENTIAL_NAMES の3つだけ。
    *
-   * deps: userProps{get,set,del}, identity() → {email, effectiveEmail}, adminActors, prompt(name) → 文字列|null(取消)
+   * deps: userProps{get,set,del}, identity() → {email, effectiveEmail}, adminActors, prompt(name) → 文字列|null(取消),
+   *       lock{tryLock(ms), releaseLock()}（必須。状態確認〜書込みの競合を直列化）
    * opts: mode 'init'（未設定のものだけ入力。設定済みは変更しない）／'replace'（確認語 REPLACE が必須。空入力=据え置き）、dryRun
    * 入力は全件検証してから書き込み、書込み・照合に失敗したら今回の変更を元に戻す。
+   * 読取エラーは READ_FAILED で停止（MISSING 扱いにしない）。書込み直前に対象キーを再読取し、状態が変わっていれば STATE_CHANGED で停止。
    */
   function setupCredentials(deps, opts) {
     opts = opts || {};
     var mode = opts.mode === 'replace' ? 'replace' : 'init';
     var props = deps.userProps;
-    function statusOf() {
-      var st = {};
-      CREDENTIAL_NAMES.forEach(function (n) {
-        var v = null;
-        try { v = props.get(n); } catch (e) { v = null; }
-        st[n] = v ? 'SET' : 'MISSING';
-      });
-      return st;
-    }
     function result(ok, code, extra) {
-      var r = { ok: ok, code: code, status: statusOf(), changed: [] };
+      var r = { ok: ok, code: code, status: readCredentialStatus(props).status, changed: [] };
       if (extra) Object.keys(extra).forEach(function (k) { r[k] = extra[k]; });
       return r;
     }
 
     // 1) 認可（fail closed）: 許可リストの管理者本人で、かつ実行者=有効ユーザーが双方とも取得でき一致するときだけ
     var gate = authorizeExecutor(deps);
-    if (!gate.ok) return result(false, gate.error);
-
-    // 2) 現状に応じた対象の決定
-    var before = statusOf();
-    var targets;
-    if (mode === 'init') {
-      targets = CREDENTIAL_NAMES.filter(function (n) { return before[n] === 'MISSING'; });
-      if (!targets.length) return result(false, 'ALREADY_SET');
-    } else {
-      if (CREDENTIAL_NAMES.every(function (n) { return before[n] === 'MISSING'; })) return result(false, 'NOT_INITIALIZED');
-      targets = CREDENTIAL_NAMES.slice();
+    if (!gate.ok) { // 未認可には状態も見せない
+      var masked = {};
+      CREDENTIAL_NAMES.forEach(function (n) { masked[n] = 'MISSING'; });
+      return { ok: false, code: gate.error, status: masked, changed: [] };
     }
 
-    // 3) 上書きは明示確認（確認語の完全一致）が必須。確認前は何も入力させず、何も変更しない
-    function ask(name) {
-      var v;
-      try { v = deps.prompt(name); } catch (e) { return { fail: 'PROMPT_UNAVAILABLE' }; }
-      return v === null || v === undefined ? { fail: 'CANCELLED' } : { value: String(v) };
-    }
-    if (mode === 'replace') {
-      var c = ask('__CONFIRM_REPLACE__');
-      if (c.fail) return result(false, c.fail);
-      if (c.value.trim() !== CREDENTIAL_CONFIRM_REPLACE) return result(false, 'REPLACE_NOT_CONFIRMED');
-    }
-
-    // 4) 全件入力→全件検証（1件でも不備なら何も書かない）
-    var inputs = {}, invalid = [];
-    for (var i = 0; i < targets.length; i++) {
-      var a = ask(targets[i]);
-      if (a.fail) return result(false, a.fail);
-      if (mode === 'replace' && a.value === '' && before[targets[i]] === 'SET') continue; // 据え置き
-      var v = validateCredentialInput(targets[i], a.value);
-      if (!v.ok) invalid.push(targets[i]); else inputs[targets[i]] = a.value;
-    }
-    if (invalid.length) return result(false, 'INPUT_INVALID', { invalid: invalid });
-    var names = Object.keys(inputs);
-    if (!names.length) return result(false, 'NOTHING_TO_CHANGE');
-    // 3種は互いに別の値であること（新旧・据え置き分を含めて比較。値は外へ出さない）
-    var seen = {}, dup = false;
-    CREDENTIAL_NAMES.forEach(function (n) {
-      var val = inputs[n] !== undefined ? inputs[n] : (before[n] === 'SET' ? props.get(n) : null);
-      if (!val) return;
-      if (seen[val]) dup = true;
-      seen[val] = true;
-    });
-    if (dup) return result(false, 'INPUT_DUPLICATE');
-    if (opts.dryRun) return result(true, 'DRY_RUN_OK', { wouldChange: names });
-
-    // 5) 書込み→照合。失敗したら今回の分を元に戻す
-    var prev = {}, written = [];
-    function rollback() {
-      written.forEach(function (n) {
-        try { if (prev[n]) props.set(n, prev[n]); else props.del(n); } catch (e) { /* 復旧不能でも値は出さない */ }
-      });
+    // 2) 状態確認〜書込みを直列化する（同時実行による上書き競合を防ぐ）。dryRun は書かないのでロック不要。
+    var locked = false;
+    if (!opts.dryRun) {
+      if (!deps.lock) return result(false, 'LOCK_UNAVAILABLE');
+      try { locked = deps.lock.tryLock(10000) === true; } catch (e) { locked = false; }
+      if (!locked) return result(false, 'LOCK_BUSY');
     }
     try {
-      names.forEach(function (n) {
-        prev[n] = props.get(n);
-        written.push(n);
-        props.set(n, inputs[n]);
-      });
-    } catch (e) {
-      rollback();
-      return result(false, 'WRITE_FAILED');
+      return runSetup();
+    } finally {
+      if (locked) { try { deps.lock.releaseLock(); } catch (e) { /* 値は出さない */ } }
     }
-    var verified = false;
-    try { verified = names.every(function (n) { return props.get(n) === inputs[n]; }); } catch (e) { verified = false; }
-    if (!verified) { rollback(); return result(false, 'VERIFY_FAILED'); }
-    return result(true, 'OK', { changed: names });
+
+    function runSetup() {
+      // 3) 現状確認。読取エラーは MISSING にせず停止（入力は聞かない）
+      var cur = readCredentialStatus(props);
+      if (!cur.ok) return result(false, 'READ_FAILED');
+      var before = cur.status;
+      var targets;
+      if (mode === 'init') {
+        targets = CREDENTIAL_NAMES.filter(function (n) { return before[n] === 'MISSING'; });
+        if (!targets.length) return result(false, 'ALREADY_SET');
+      } else {
+        if (CREDENTIAL_NAMES.every(function (n) { return before[n] === 'MISSING'; })) return result(false, 'NOT_INITIALIZED');
+        targets = CREDENTIAL_NAMES.slice();
+      }
+
+      // 4) 上書きは明示確認（確認語の完全一致）が必須。確認前は何も入力させず、何も変更しない
+      var ask = function (name) {
+        var v;
+        try { v = deps.prompt(name); } catch (e) { return { fail: 'PROMPT_UNAVAILABLE' }; }
+        return v === null || v === undefined ? { fail: 'CANCELLED' } : { value: String(v) };
+      };
+      if (mode === 'replace') {
+        var c = ask('__CONFIRM_REPLACE__');
+        if (c.fail) return result(false, c.fail);
+        if (c.value.trim() !== CREDENTIAL_CONFIRM_REPLACE) return result(false, 'REPLACE_NOT_CONFIRMED');
+      }
+
+      // 5) 全件入力→全件検証（1件でも不備なら何も書かない）
+      var inputs = {}, invalid = [];
+      for (var i = 0; i < targets.length; i++) {
+        var a = ask(targets[i]);
+        if (a.fail) return result(false, a.fail);
+        if (mode === 'replace' && a.value === '' && before[targets[i]] === 'SET') continue; // 据え置き
+        var v = validateCredentialInput(targets[i], a.value);
+        if (!v.ok) invalid.push(targets[i]); else inputs[targets[i]] = a.value;
+      }
+      if (invalid.length) return result(false, 'INPUT_INVALID', { invalid: invalid });
+      var names = Object.keys(inputs);
+      if (!names.length) return result(false, 'NOTHING_TO_CHANGE');
+
+      // 6) 3種は互いに別の値であること（新旧・据え置き分を含めて比較。値は外へ出さない）。読取エラーは READ_FAILED
+      var seen = {}, dup = false;
+      try {
+        CREDENTIAL_NAMES.forEach(function (n) {
+          var val = inputs[n] !== undefined ? inputs[n] : (before[n] === 'SET' ? props.get(n) : null);
+          if (!val) return;
+          if (seen[val]) dup = true;
+          seen[val] = true;
+        });
+      } catch (e) { return result(false, 'READ_FAILED'); }
+      if (dup) return result(false, 'INPUT_DUPLICATE');
+      if (opts.dryRun) return result(true, 'DRY_RUN_OK', { wouldChange: names });
+
+      // 7) 書込み直前の再検証: 状態確認後に設定状況が変わっていたら（競合・他経路の更新）書かずに停止
+      var prev = {};
+      for (var k = 0; k < names.length; k++) {
+        var cv;
+        try { cv = props.get(names[k]); } catch (e) { return result(false, 'READ_FAILED'); }
+        if ((cv ? 'SET' : 'MISSING') !== before[names[k]]) return result(false, 'STATE_CHANGED');
+        prev[names[k]] = cv;
+      }
+
+      // 8) 書込み→照合。失敗（例外・不一致）したら今回の分を元に戻す
+      var written = [];
+      var rollback = function () {
+        written.forEach(function (n) {
+          try { if (prev[n]) props.set(n, prev[n]); else props.del(n); } catch (e) { /* 復旧不能でも値は出さない */ }
+        });
+      };
+      try {
+        names.forEach(function (n) {
+          written.push(n);
+          props.set(n, inputs[n]);
+        });
+      } catch (e) {
+        rollback();
+        return result(false, 'WRITE_FAILED');
+      }
+      var verified = false;
+      try { verified = names.every(function (n) { return props.get(n) === inputs[n]; }); } catch (e) { verified = false; }
+      if (!verified) { rollback(); return result(false, 'VERIFY_FAILED'); }
+      return result(true, 'OK', { changed: names });
+    }
   }
 
   // ---------- Webhook 相関 ----------

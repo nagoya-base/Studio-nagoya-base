@@ -236,7 +236,8 @@ function accessSetupCredentialsApi(req) {
       identity: function () {
         return { email: Session.getActiveUser().getEmail(), effectiveEmail: Session.getEffectiveUser().getEmail() };
       },
-      prompt: function (name) { return typeof values[name] === 'string' ? values[name] : null; }
+      prompt: function (name) { return typeof values[name] === 'string' ? values[name] : null; },
+      lock: LockService.getScriptLock()
     }, { mode: req && req.mode === 'replace' ? 'replace' : 'init', dryRun: !!(req && req.dryRun === true) });
   } catch (e) {
     res = { ok: false, code: 'UNEXPECTED_ERROR', status: {}, changed: [] };
