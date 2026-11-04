@@ -870,3 +870,48 @@ test('受信箱でも食い違う結果を保持し、コアの矛盾検知で U
   rt.syncCycle();
   assert.strictEqual(onlyOp(w).state, S.UNKNOWN);
 });
+
+test('ゲート停止後に容量が解消したら、次の照合で1件だけ発行する（revision・発行窓を処理済みにしない）', function () {
+  var w = H.createWorld();
+  var rt = w.runtime();
+  w.preload(H.DEV, 80);
+  w.records = [H.record()];
+  rt.syncCycle(); w.advance(300);
+  var r = rt.syncCycle();                       // 初回: 容量到達でゲート停止
+  assert.deepStrictEqual(Array.from(r.gateStops), ['CAPACITY_REACHED']);
+  assert.strictEqual(w.callCount('createKey'), 0);
+  assert.strictEqual(ops(w).length, 0);
+  var trk = JSON.parse(w.props['TRK_SNB-1']);
+  assert.notStrictEqual(trk.revision, 1, 'revisionを処理済みにしない');
+  assert.strictEqual(!!trk.windowHandled, false, '発行窓を処理済みにしない');
+  // 障害継続中: 発行なし。再評価は gateRetrySec 間隔、通知は重複しない
+  var listsBefore = w.callCount('listDevices');
+  w.advance(300); rt.syncCycle();               // 保留期間内 → ゲート再評価(API)しない
+  assert.strictEqual(w.callCount('listDevices'), listsBefore);
+  w.advance(300); rt.syncCycle();               // 保留明け → 再評価するが停止のまま
+  assert.ok(w.callCount('listDevices') > listsBefore);
+  assert.strictEqual(w.callCount('createKey'), 0);
+  assert.strictEqual(w.mails.filter(function (m) { return /CAPACITY_REACHED/.test(m.subject); }).length, 1);
+  // 容量解消 → 保留明けの次の照合で1件だけ発行（同revision）
+  w.keys[H.DEV] = [];
+  w.advance(700); rt.syncCycle();
+  w.advance(300); rt.syncCycle();
+  assert.strictEqual(w.callCount('createKey'), 1);
+  assert.strictEqual(ops(w).length, 1);
+  assert.strictEqual(ops(w)[0].revision, 1);
+  w.advance(300); rt.syncCycle(); w.advance(300); rt.syncCycle();
+  assert.strictEqual(w.callCount('createKey'), 1, '以降も二重発行しない');
+});
+
+test('容量不明(keyList取得不能)で停止した場合も、復旧後に発行対象から脱落しない', function () {
+  var w = H.createWorld();
+  var rt = w.runtime();
+  var origList = w.api.listDevices;
+  w.api.listDevices = function () { w.calls.push({ name: 'listDevices' }); return { ok: false, error: 'LIST_API_ERROR' }; };
+  w.records = [H.record()];
+  rt.syncCycle(); w.advance(300); rt.syncCycle();
+  assert.strictEqual(w.callCount('createKey'), 0);
+  w.api.listDevices = origList;
+  w.advance(700); rt.syncCycle(); w.advance(300); rt.syncCycle();
+  assert.strictEqual(w.callCount('createKey'), 1);
+});

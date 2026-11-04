@@ -28,6 +28,7 @@ var SwitchBotAccessInfra = (function () {
   /** 既定値。いずれも「実測値」ではなく設計値（basis=UNMEASURED_DEFAULT）。限定検証（#756）で計測して置換する。 */
   var DEFAULTS = {
     syncIntervalSec: 300,
+    gateRetrySec: 600,
     quietSec: 60,
     runBudgetSec: 240,
     lockWaitMs: 20000,
@@ -770,6 +771,8 @@ var SwitchBotAccessInfra = (function () {
             continue;
           }
           if (nowS - tr.obsAt < ic.quietSec) { summary.waiting++; continue; }
+          // 発行ゲートで止まった予約は、再評価の間隔を空ける（OP が無い間のみ。進行中 OP の照合は止めない）
+          if (tr.gateHoldUntil && nowS < tr.gateHoldUntil && !openByBooking[sn.bookingId]) { summary.waiting++; continue; }
           var out;
           try { out = engine.sync(input.booking); }
           catch (e) {
@@ -777,7 +780,15 @@ var SwitchBotAccessInfra = (function () {
             return { ok: false, error: 'SYNC_ERROR' }; // 保存失敗などはサイクルを止める（予約側へは何も伝播しない）
           }
           summary.synced++;
-          if (out.gateStop) { summary.gateStops.push(out.gateStop); infraAlert(out.gateStop, null, null, null); }
+          if (out.gateStop) {
+            // 発行を試行できなかった（OP未作成/未送信）。revision・発行窓は「未処理」のまま保持し、
+            // 次回以降ゲートを再評価する（復旧後に発行対象から脱落させない）。通知は重複抑止、再評価は gateRetrySec 間隔
+            summary.gateStops.push(out.gateStop);
+            infraAlert(out.gateStop, null, null, null);
+            writeTrack(sn.bookingId, { revision: tr ? tr.revision : null, digest: tr ? tr.digest : undefined, windowHandled: tr ? !!tr.windowHandled : false,
+              obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr.obsAt, seenAt: nowS, gateHoldUntil: nowS + ic.gateRetrySec });
+            continue;
+          }
           var windowOpen = sn.status === 'CONFIRMED' && deps.snapshot.issueWindow(sn, nowMs).open;
           // 保存に失敗した TRK は次回再同期になるだけ（コアは冪等）
           writeTrack(sn.bookingId, { revision: sn.revision, digest: sn.digest, windowHandled: windowOpen, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
