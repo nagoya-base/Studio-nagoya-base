@@ -1,7 +1,7 @@
 # 予約連携: SwitchBot 期間限定キー自動発行・削除（Issue #748）
 
 実装: `gas/switchbot-access/SwitchBotAccessCore.gs`（純粋ロジック）/ テスト: `test/switchbot-access-core.test.js`。
-**本書は予約とSwitchBot鍵の連携設計の現行正本（Issue #750、2026-11-04時点の運営決定を反映）。** コアは状態機械・照合・安全停止とモックテストまで実装済み（#749/#751/#763）。**予約GASへの結線(#753 PR-A)はコード実装済み（フラグOFF。本番migration・デプロイ未実施）。独立GAS(#754)・配送(#752)・実機検証(#756)・本番有効化は未実施**（末尾「未実施」）。機能フラグ `enabled` は既定OFF。OFF時は変更APIを呼ばず、状態も書かない。コード・Script Properties・実API・デプロイは本書の更新では変更しない。
+**本書は予約とSwitchBot鍵の連携設計の現行正本（Issue #750、2026-11-04時点の運営決定を反映）。** コアは状態機械・照合・安全停止とモックテストまで実装済み（#749/#751/#763）。**予約GASへの結線(#753 PR-A)はコード実装済み（フラグOFF。本番migration・デプロイ未実施）。独立GAS基盤(#754)はコード/構成を実装済み（`docs/switchbot-access-infra-754.md`。デプロイ・環境準備は未実施）。配送(#752)・実機検証(#756)・本番有効化は未実施**（末尾「未実施」）。機能フラグ `enabled` は既定OFF。OFF時は変更APIを呼ばず、状態も書かない。コード・Script Properties・実API・デプロイは本書の更新では変更しない。
 
 ## 商用利用ゲート
 `config.commercialUseApproved === true` でなければ、`enabled` でも対象外（`COMMERCIAL_USE_NOT_APPROVED`）。
@@ -150,8 +150,9 @@ SNBかつScript Property `ACCESS_KEY_NOTICE_ENABLED='true'` のときだけ「�
 ## 未実施（受け入れ条件との対応）
 - [x] 予約結線(#753 PR-A、フラグOFF): revision列・増分・スナップショット・前日リマインド一行をコードとモックテストで実装（本番migration・デプロイは未実施）
 - [ ] revision列の本番migration（admin-only → `migrateBookingsSchema` → full）と実施証跡
-- [ ] 独立GAS(#754)・配送(#752)・本番フラグON（いずれも未着手/別PR）
-- [ ] 独立GASへのデプロイ・常設Webhook受信（フラグOFFでの結線PRを別途レビュー）
+- [x] 独立GAS基盤(#754 PR-B、フラグOFF): 認証/相関・単一排他・容量ゲート・保持/回収・固定分類通知・監視・管理者復旧をコードとモックテストで実装（`docs/switchbot-access-infra-754.md`）
+- [ ] 配送(#752)・本番フラグON（別PR/別判断）
+- [ ] 独立GASの環境準備・デプロイ・読取診断・常設Webhook登録（実施判断/日時/版/結果を別証跡に記録。PRマージはデプロイ許可ではない）
 - [ ] `commercialUseApproved` の意味の整合（運営者の採用決裁へ）と本番有効化判断の記録
 - [ ] 非利用時間・現地確認者・代替入室手段を確保した01FDの限定実機検証（開始前不可/期間内可/期限後不可/削除後不可/変更/取消/59秒境界）
 - [ ] 入室中延長の方式（同一番号再登録・併存の可否）の確定

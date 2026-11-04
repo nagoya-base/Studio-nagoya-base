@@ -481,8 +481,9 @@ var SwitchBotAccessCore = (function () {
           if (now - rec.deleteSentAtSec > webhookWaitSec) return stopUnknown(rec, 'WEBHOOK_TIMEOUT', 'WEBHOOK_TIMEOUT');
           return rec; // 未着は期限まで保留（読取も消費しない）
         }
-        // 期限後に届いたイベントは、照合ジョブの実行タイミングによらず採用しない
-        if (typeof ev.receivedAtSec !== 'number' || ev.receivedAtSec - rec.deleteSentAtSec > webhookWaitSec) {
+        // 期限後に届いたイベント、および削除送信より前に受信した古いイベント（commandId 再利用・残存イベントの誤流用）は採用しない
+        if (typeof ev.receivedAtSec !== 'number' || ev.receivedAtSec < rec.deleteSentAtSec ||
+            ev.receivedAtSec - rec.deleteSentAtSec > webhookWaitSec) {
           return stopUnknown(rec, 'WEBHOOK_TIMEOUT', 'WEBHOOK_LATE');
         }
         if (ev.conflict) return stopUnknown(rec, 'DELETE_WEBHOOK_CONFLICT', 'WEBHOOK_CONFLICT');
@@ -522,6 +523,15 @@ var SwitchBotAccessCore = (function () {
       return idx.ops.map(function (id) { return load(recKey(id)); }).filter(Boolean);
     }
 
+    /** 注入された発行ゲート。未注入なら通す。ゲート自体の失敗は安全停止側。 */
+    function checkIssueGate(booking, elig) {
+      if (typeof deps.issueGate !== 'function') return { ok: true };
+      var gate;
+      try { gate = deps.issueGate({ deviceId: elig.deviceId, bookingId: booking.bookingId, revision: booking.revision }); }
+      catch (e) { return { ok: false, code: 'ISSUE_GATE_ERROR' }; }
+      return gate && gate.ok === true ? { ok: true } : { ok: false, code: (gate && gate.code) || 'ISSUE_GATE_BLOCKED' };
+    }
+
     // ---- 同期（予約イベント／ジョブ再実行のエントリ） ----
     /**
      * 予約の最新スナップショットを渡して呼ぶ。何度呼んでも冪等。
@@ -546,6 +556,7 @@ var SwitchBotAccessCore = (function () {
           startSec: elig.eligible ? elig.startSec : null, endSec: elig.eligible ? elig.endSec : null,
           deviceId: elig.eligible ? elig.deviceId : null
         };
+        idx.touchedAt = deps.nowSec(); // 索引の保持期限（#754）。未解決 OP がある間は回収側が保護する
         save(bkKey(booking.bookingId), idx);
 
         var desired = elig.eligible && !cancelledNow;
@@ -559,6 +570,9 @@ var SwitchBotAccessCore = (function () {
             out.actions.push('UNKNOWN:' + r.id);
           } else if (r.state === STATE.PLANNED) {
             if (desired && r.revision === booking.revision && sameWindow(r, elig)) {
+              // 再開も新規発行と同じゲートを通す（容量・保存状況は計画時から変わり得る）。止まる間は未送信のまま保持
+              var g = checkIssueGate(booking, elig);
+              if (!g.ok) { out.skipped = g.code; out.gateStop = g.code; out.actions.push('GATE_HOLD:' + r.id); return; }
               executeIssue(r); out.actions.push('RESUME_ISSUE:' + r.id); // 未送信が確実かつ現在も有効
             } else {
               // 現在の予約では不要になった未送信の計画は、createKey を呼ばずに破棄する
@@ -600,6 +614,9 @@ var SwitchBotAccessCore = (function () {
         // 削除済み/放棄済みの過去 record は再発行を妨げない（期間 A→B→A の復元）。未完了・FAILED・期限切れは妨げる。
         var REISSUABLE = [STATE.ABANDONED, STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT];
         if (same.some(function (r) { return REISSUABLE.indexOf(r.state) === -1; })) { out.skipped = out.skipped || 'ALREADY_PLANNED'; return; }
+        // 新規発行直前の注入ゲート（#754: Keypad 容量・保存容量）。削除・照合は止めない。
+        var gate = checkIssueGate(booking, elig);
+        if (!gate.ok) { out.skipped = gate.code; out.gateStop = gate.code; return; }
         startIssue(booking, elig);
         out.actions.push('ISSUE');
       });
