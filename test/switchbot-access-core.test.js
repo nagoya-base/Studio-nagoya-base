@@ -1178,3 +1178,166 @@ test('#751 name欠落/不正のkeyList要素は不在と断定しない（削除
   assert.ok(w4.notes.some(function (n) { return n.code === 'EXPIRED_CHECK_FAILED'; }));
   assert.strictEqual(Object.keys(w4.secrets).length, 1);
 });
+
+// ---------- Issue #763: 発行側 createKey の遅着Webhook ----------
+
+function createHook(rec, ctx) {
+  return { eventType: 'changeReport', context: Object.assign({
+    deviceType: 'WoKeypad', deviceMac: DEV_A, eventName: 'createKey', commandId: rec.commandId, result: 'success'
+  }, ctx || {}) };
+}
+function creates(w) { return w.mutations().filter(function (c) { return c === 'create'; }).length; }
+function setRec(w, fn) {
+  var key = Object.keys(w.store).filter(function (k) { return k.indexOf('OP_') === 0; })[0];
+  var r = JSON.parse(w.store[key]); fn(r); w.store[key] = JSON.stringify(r);
+}
+function setEvt(w, fn) {
+  var key = Object.keys(w.store).filter(function (k) { return k.indexOf('EVT_') === 0; })[0];
+  var r = JSON.parse(w.store[key]); fn(r); w.store[key] = JSON.stringify(r);
+}
+
+test('#763 発行: 期限後に到着したsuccessは keyList が一致していても採用せず UNKNOWN＋通知、再送・復活しない', function () {
+  var w = world(); var e = w.engine();
+  e.sync(booking());
+  var rec = w.records()[0];
+  assert.strictEqual(rec.state, S.SENT_WAIT_WEBHOOK);
+  w.now += 600;                                  // 上限90秒を大きく超えて到着
+  e.ingestWebhook(createHook(rec));
+  e.sync(booking());
+  rec = w.records()[0];
+  assert.strictEqual(rec.state, S.UNKNOWN);
+  assert.strictEqual(rec.reason, 'WEBHOOK_LATE');
+  assert.ok(w.notes.some(function (n) { return n.code === 'WEBHOOK_TIMEOUT'; }));
+  assert.strictEqual(w.keys[DEV_A].length, 1, 'keyList は一致している');
+  e.sync(booking()); e.sweep();
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN, '自動復活しない');
+  assert.strictEqual(creates(w), 1);
+  assert.strictEqual(w.records().length, 1, '自動再発行しない');
+  assert.deepStrictEqual(w.delivered, []);
+});
+
+test('#763 発行: 期限内に受信したsuccessは、照合が600秒後に遅れても keyList 一致で確定できる', function () {
+  var w = world(); var e = w.engine();
+  e.sync(booking());
+  var rec = w.records()[0];
+  w.now += 30;
+  e.ingestWebhook(createHook(rec));
+  w.now += 600;
+  e.sync(booking());
+  rec = w.records()[0];
+  assert.strictEqual(rec.state, S.ISSUED_CONFIRMED);
+  assert.deepStrictEqual(rec.evidence, ['WEBHOOK_SUCCESS', 'KEYLIST_CONFIRMED']);
+  assert.strictEqual(creates(w), 1);
+});
+
+test('#763 発行: Webhook未着は期限前に保留、期限超過で UNKNOWN。期限後に届いても復活・再送しない', function () {
+  var w = world(); var e = w.engine();
+  e.sync(booking());
+  w.now += 60; e.sync(booking());
+  assert.strictEqual(w.records()[0].state, S.SENT_WAIT_WEBHOOK);
+  w.now += 100; e.sync(booking());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  e.ingestWebhook(createHook(w.records()[0]));
+  e.sync(booking());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(creates(w), 1);
+});
+
+test('#763 発行: 受信時刻欠落・非数値・保存の送信時刻欠落は成功根拠にしない', function () {
+  [['欠落', function (ev) { delete ev.receivedAtSec; }], ['非数値', function (ev) { ev.receivedAtSec = 'x'; }],
+   ['NaN文字列', function (ev) { ev.receivedAtSec = 'NaN'; }]].forEach(function (c) {
+    var w = world(); var e = w.engine();
+    e.sync(booking());
+    e.ingestWebhook(createHook(w.records()[0]));
+    setEvt(w, c[1]);
+    e.sync(booking());
+    assert.strictEqual(w.records()[0].state, S.UNKNOWN, c[0]);
+    assert.strictEqual(creates(w), 1, c[0]);
+  });
+  var w2 = world(); var e2 = w2.engine();
+  e2.sync(booking());
+  e2.ingestWebhook(createHook(w2.records()[0]));
+  setRec(w2, function (r) { delete r.sentAtSec; });
+  e2.sync(booking());
+  assert.strictEqual(w2.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(creates(w2), 1);
+});
+
+test('#763 発行: 結果が食い違う重複success→failedは成功にせず UNKNOWN、failed先着は FAILED のまま', function () {
+  var w = world(); var e = w.engine();
+  e.sync(booking());
+  var rec = w.records()[0];
+  e.ingestWebhook(createHook(rec));
+  e.ingestWebhook(createHook(rec, { result: 'failed' }));
+  e.sync(booking());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w.records()[0].reason, 'WEBHOOK_CONFLICT');
+  assert.ok(w.notes.some(function (n) { return n.code === 'ISSUE_WEBHOOK_CONFLICT'; }));
+
+  var w2 = world(); var e2 = w2.engine();
+  e2.sync(booking());
+  e2.ingestWebhook(createHook(w2.records()[0], { result: 'failed' }));
+  e2.sync(booking());
+  assert.strictEqual(w2.records()[0].state, S.FAILED);
+  assert.strictEqual(Object.keys(w2.secrets).length, 0);
+});
+
+test('#763 発行: 他端末・別操作・別commandId・別種別のWebhookは成功扱いせず期限で UNKNOWN', function () {
+  var w = world(); var e = w.engine();
+  e.sync(booking());
+  var rec = w.records()[0];
+  e.ingestWebhook(createHook(rec, { deviceMac: DEV_B }));
+  e.ingestWebhook(createHook(rec, { eventName: 'deleteKey' }));
+  e.ingestWebhook(createHook(rec, { commandId: 'OTHER' }));
+  e.ingestWebhook(createHook(rec, { deviceType: 'WoLock' }));
+  e.sync(booking());
+  assert.strictEqual(w.records()[0].state, S.SENT_WAIT_WEBHOOK);
+  w.now += 91; e.sync(booking());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(creates(w), 1);
+});
+
+test('#763 発行: 期限内successでも keyList が不一致（0件/属性矛盾）なら確定しない', function () {
+  var w = world(); var e = w.engine();
+  e.sync(booking());
+  e.ingestWebhook(createHook(w.records()[0]));
+  w.keys[DEV_A] = [];
+  e.sync(booking());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+
+  var w2 = world(); var e2 = w2.engine();
+  e2.sync(booking());
+  e2.ingestWebhook(createHook(w2.records()[0]));
+  w2.keys[DEV_A][0].endTime = '1';
+  e2.sync(booking());
+  assert.strictEqual(w2.records()[0].state, S.UNKNOWN);
+});
+
+test('#763 発行: commandIdなしは Webhook を必須とせず、遅着Webhook規則の影響を受けない（回帰）', function () {
+  var w = world(); w.createMode = 'noCommandId';
+  var e = w.engine();
+  e.sync(booking());
+  assert.strictEqual(w.records()[0].state, S.ISSUED_CONFIRMED);
+  assert.deepStrictEqual(w.records()[0].evidence, ['KEYLIST_CONFIRMED']);
+
+  var w2 = world(); w2.createMode = 'silentNoApply';
+  var e2 = w2.engine();
+  e2.sync(booking()); e2.sync(booking()); e2.sync(booking()); e2.sync(booking());
+  assert.strictEqual(w2.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(creates(w2), 1);
+});
+
+test('#763 発行: 遅着で UNKNOWN の間は旧改訂/取消の処理が通常キーを消さず、新キーも自動発行されない', function () {
+  var w = world(); var e = w.engine();
+  w.keys[DEV_A].push({ id: 'NORMAL', name: 'regular', type: 'permanent' });
+  e.sync(booking());
+  w.now += 600;
+  e.ingestWebhook(createHook(w.records()[0]));
+  e.sync(booking());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  e.sync(booking({ revision: 2, endTime: '14:00' }));
+  assert.strictEqual(creates(w), 1, '旧キー未確定の間は新キーを発行しない');
+  assert.ok(w.keys[DEV_A].some(function (k) { return k.id === 'NORMAL'; }));
+  assert.strictEqual(delCalls(w), 0);
+  assert.deepStrictEqual(w.delivered, []);
+});
