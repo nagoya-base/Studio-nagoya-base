@@ -149,7 +149,18 @@ var BookingConfig = (function () {
   var BOOKING_RULES_EFFECTIVE_AT_PROPERTY = 'BOOKING_RULES_2026_11_EFFECTIVE_AT';
   var BOOKING_RULES_BUFFER_MINUTES = 30;
   var BOOKING_RULES_EXTENSION_DEADLINE_MINUTES = 60;
-  var EFFECTIVE_AT_PATTERN_ = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})$/;
+  var EFFECTIVE_AT_PATTERN_ = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(Z|[+-](\d{2}):(\d{2}))$/;
+
+  /* Date.parseは存在しない暦日（11/31・2/30等）を翌月へ補正して受理するため、各フィールドの実在性を明示的に検証する。 */
+  function isValidEffectiveAtFields_(m) {
+    var y = parseInt(m[1], 10), mo = parseInt(m[2], 10), d = parseInt(m[3], 10);
+    var h = parseInt(m[4], 10), mi = parseInt(m[5], 10), sec = parseInt(m[6], 10);
+    if (mo < 1 || mo > 12 || h > 23 || mi > 59 || sec > 59) return false;
+    var probe = new Date(Date.UTC(y, mo - 1, d));
+    if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d) return false;
+    if (m[8] !== undefined && (parseInt(m[8], 10) > 23 || parseInt(m[9], 10) > 59)) return false;
+    return true;
+  }
 
   function readEffectiveAtMillis_() {
     var raw;
@@ -159,7 +170,8 @@ var BookingConfig = (function () {
       return { state: 'INVALID', millis: NaN };
     }
     if (raw === null || raw === undefined || raw === '') return { state: 'UNSET', millis: NaN };
-    if (typeof raw !== 'string' || !EFFECTIVE_AT_PATTERN_.test(raw)) return { state: 'INVALID', millis: NaN };
+    var match = typeof raw === 'string' ? EFFECTIVE_AT_PATTERN_.exec(raw) : null;
+    if (!match || !isValidEffectiveAtFields_(match)) return { state: 'INVALID', millis: NaN };
     var millis = Date.parse(raw);
     return isNaN(millis) ? { state: 'INVALID', millis: NaN } : { state: 'SET', millis: millis };
   }

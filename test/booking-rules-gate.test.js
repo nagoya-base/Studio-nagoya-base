@@ -72,3 +72,18 @@ test('空き判定: 施行後は30分ちょうどが可、29分59秒（分単位
   assert.strictEqual(sb.BookingAvailability.isStartTimeBookable(749, 60, busy, after), false, '29分後は不可');
   assert.strictEqual(sb.BookingAvailability.isStartTimeBookable(735, 60, busy, before), true, '施行前は15分後で可');
 });
+
+test('存在しない暦日（11/31・2/30・非閏年2/29）や範囲外の時刻はINVALIDで従来ルール維持、閏日・Z・オフセット付きは受理する', function () {
+  var later = new Date(Date.parse('2030-12-05T00:00:00+09:00'));
+  ['2026-11-31T00:00:00+09:00', '2026-02-30T00:00:00+09:00', '2027-02-29T00:00:00+09:00', '2026-00-10T00:00:00+09:00',
+    '2026-11-19T24:00:00+09:00', '2026-11-19T00:60:00+09:00', '2026-11-19T00:00:60+09:00', '2026-11-19T00:00:00+24:00'].forEach(function (v) {
+    var props = {}; props[KEY] = v;
+    var c = load(props);
+    assert.strictEqual(c.getBookingRulesStatus(later).state, 'INVALID', v);
+    assert.strictEqual(c.getAvailabilityConfig(later).bufferMinutes, 15, v);
+  });
+  ['2028-02-29T00:00:00+09:00', '2026-11-19T00:00:00Z', '2026-11-19T00:00:00+09:00', '2026-11-19T00:00:00-05:30'].forEach(function (v) {
+    var props = {}; props[KEY] = v;
+    assert.strictEqual(load(props).getBookingRulesStatus(new Date(Date.parse(v) + 1000)).state, 'EFFECTIVE', v);
+  });
+});
