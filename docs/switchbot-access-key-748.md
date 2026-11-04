@@ -1,7 +1,7 @@
 # 予約連携: SwitchBot 期間限定キー自動発行・削除（Issue #748）
 
 実装: `gas/switchbot-access/SwitchBotAccessCore.gs`（純粋ロジック）/ テスト: `test/switchbot-access-core.test.js`。
-**本書は予約とSwitchBot鍵の連携設計の現行正本（Issue #750、2026-11-04時点の運営決定を反映）。** コアは状態機械・照合・安全停止とモックテストまで実装済み（#749/#751/#763）。**予約GASへの結線(#753)・独立GAS(#754)・配送(#752)・実機検証(#756)・本番有効化は未実施**（末尾「未実施」）。機能フラグ `enabled` は既定OFF。OFF時は変更APIを呼ばず、状態も書かない。コード・Script Properties・実API・デプロイは本書の更新では変更しない。
+**本書は予約とSwitchBot鍵の連携設計の現行正本（Issue #750、2026-11-04時点の運営決定を反映）。** コアは状態機械・照合・安全停止とモックテストまで実装済み（#749/#751/#763）。**予約GASへの結線(#753 PR-A)はコード実装済み（フラグOFF。本番migration・デプロイ未実施）。独立GAS(#754)・配送(#752)・実機検証(#756)・本番有効化は未実施**（末尾「未実施」）。機能フラグ `enabled` は既定OFF。OFF時は変更APIを呼ばず、状態も書かない。コード・Script Properties・実API・デプロイは本書の更新では変更しない。
 
 ## 商用利用ゲート
 `config.commercialUseApproved === true` でなければ、`enabled` でも対象外（`COMMERCIAL_USE_NOT_APPROVED`）。
@@ -60,6 +60,46 @@
 
 **回帰テスト（#753/#754/#752）**: 前日発行→翌週への日程変更／取消／SNB対象外への変更、当日・翌日フィルタ外でも旧キー照合・削除確認が継続、deleteKey再送なし、UNKNOWN時の管理者通知、revision不変の12:00発行と18:00配送、未完了状態の長期監視、前日11:59:59/12:00:00と月・年跨ぎ、台帳初回取り込み、送信済・未送信メールの競合。
 
+## 予約システム接続（PR-A、Issue #753）— 実装済み範囲（フラグOFF）
+実装: `gas/booking/shared/AccessKeySnapshot.gs`（純粋ロジック）／`SpreadsheetRepository.gs`（revision増分）／`BookingsSchema.gs`（`revision`列）／`BookingMailTemplates.gs`＋`Config.gs`（前日リマインド一行）。テスト: `test/switchbot-booking-link-753.test.js`。**鍵API・独立GAS・配送・デプロイ・本番migration・有効化は本PRの対象外**（予約GASは鍵モジュールを参照せず、鍵APIの呼び出し点を持たない。テストで固定）。
+
+### 引渡し方式
+予約GASは何も「送らない」。台帳（Bookings）を正本とし、独立GAS(#754)が5分ごとに読む。予約側が保証するのは次の3点。
+1. **`revision`**（Bookings末尾の整数列）が、鍵に関係する項目の実変更ごとに単調増加する。
+2. **`AccessKeySnapshot.build(record, {facility, room})`** が最新スナップショットを返す: `bookingId / revision / brand / facility / room / status / paymentStatus(支払根拠) / date / startTime / endDate / endTime / blockers / digest`。個人情報・暗証番号は含まない。
+3. **`toCoreInput(snapshot, nowMs)`** が、コア `createEngine().sync()` へ渡す入力と方針（`SYNC` / `FREEZE`）を返す。
+
+### revisionを増やす更新経路（対象入口）
+書込みは `SpreadsheetRepository` の5関数（`updateBookingFields` / `updateBookingScheduleAtomic` / `updateBookingRescheduleFeeAtomic` / `updateBookingCancellationStateAtomic` / `updateBookingPaymentStateAtomic`）が出口。ここで一括して判定するため、確定（承認・Stripe入金）・復活（EXPIRED→CONFIRMED）・取消・失効・日時変更（`BookingReschedule.commit`）・延長/短縮・料金精算・要復旧フラグ・返金待ちの全経路を網羅する（個別経路への増分コードの散在なし）。
+- 増やす条件: **変更前後のどちらかが `CONFIRMED`** かつ `KEY_RELEVANT_FIELDS`（status / brand / paymentMethod / paymentStatus / paymentConfirmedAt / confirmedAt / startAt / endAt / feeSettlementState / feeRecoveryRequiredAt / paymentRecoveryRequiredAt）の値が実際に変わる。人数・メール送信済み・料金明細・PENDING中の更新・同値の再書込み/再配信では増えない。元の日時へ戻す変更も**新しいrevision**（A→B→AでAのrevisionを再利用しない）。
+- **書込み後に+1する**（先に増やすと「新revision＋旧内容」を鍵側が読み、その後の内容変更が同revisionのまま古い鍵を残す）。最悪でも「旧revision＋新内容」で、`digest`（鍵関係項目の指紋）がrevisionと食い違うため検知できる。
+- 呼び出し元の既存Lock内で実行（新しいLockは取らない）。`BookingReschedule.commit` は既にScriptLock内。
+- **失敗しても予約処理を巻き戻さない**: 列が未migration／セル不正値／書込み失敗では例外を出さず、固定コードのみログ（`ACCESS_KEY_REVISION_BUMP_FAILED: REVISION_COLUMN_MISSING|REVISION_INVALID|REVISION_WRITE_FAILED`）。個人情報・予約IDは出さない。
+
+### schema差分と移行（#673）
+- 差分: `BookingsSchema.HEADERS` の**末尾に `revision` を1列追加**のみ（途中挿入・並べ替えなし）。既存行の空欄は0とみなす（全行書換えなし）。
+- 手順: マージ → production workflowを `scope=admin-only` → 管理者が `migrateBookingsSchema` を1回実行（追加は1セル: ヘッダー `revision`）→ `scope=full, schema_migrated=true`。**本番migrationは本PRでは実施しない。**
+- 新旧混在: 旧コードは末尾の余分な列を無視。新コード＋未migrationシートは上記のとおりログのみで動作（予約作成・変更・取消・決済・返金・管理画面は従来どおり）。
+- ロールバック: コードを戻しても `revision` 列は残るだけで無害（列は削除しない）。再度戻す場合、列の値は据え置き。
+- 旧行の初回取り込み: 独立GAS(#754)が未取込の予約を `tracked.revision=null` として扱い、`triggers()` が `REVISION_CHANGED` を返して初回照合する。既存の確定済み予約は revision=0 のまま取り込まれ、以降の変更で1,2,…と増える。migration後に**revisionが増えていない既存予約がある**場合も、コアは `revision` の大小でしか古さを判断しないため同revisionの内容変更は検知できない → `digest` 比較で検知し停止・通知する（#754の受入条件）。
+
+### 前日12:00の発行開始・当日予約・独立トリガー
+- `issueWindow(snapshot, nowMs)`: 発行開始＝利用日の前日12:00 JST（利用日0:00の12時間前。月・年・うるう日跨ぎはエポック演算）。11:59:59は未開、12:00:00から開。
+- `toCoreInput`: 確定予約が未開のときは `status` を `HOLD_BEFORE_ISSUE_WINDOW` に置換して `sync` へ渡す。コアは非CONFIRMEDを「発行しない・旧キーは削除対象・取消扱いにしない」と扱うため、(a)前日12:00前に日程が動いた予約の旧キーは回収され、(b)同revisionのまま12:00以降の最初の照合で初めて発行される。
+- **当日予約**（前日12:00を過ぎてから確定・承認・復活）は、確定後の最初の照合で `open` となり即時発行（開始後・終了+15分前でも発行。終了+15分以降は `ALREADY_ENDED`）。
+- `triggers(snapshot, tracked, nowMs)`: `REVISION_CHANGED` / `ISSUE_WINDOW_REACHED` / `OPEN_KEY_RECORD` を**独立に**判定（revision不変でも時刻到達で処理）。
+
+### 凍結（FREEZE）と取消の扱い
+確定予約に次のblockerがある間は**鍵操作を一切しない**（発行も削除もしない＝既存キーは旧revisionのまま残る）。管理者通知は `{予約ID, revision, 理由コード}` のみ: `PAYMENT_UNVERIFIED`（Stripeは `paymentStatus=paid` かつ `paymentConfirmedAt`、現金/PayPayは管理者確定の `confirmedAt` が無い）／`EXTENSION_CHARGE_PENDING`（`feeSettlementState` が `PENDING_CHARGE|PENDING_DECISION`。短縮の `PENDING_REFUND` は止めない）／`RECOVERY_REQUIRED`（`feeRecoveryRequiredAt|paymentRecoveryRequiredAt`）／`TIME_INVALID`・`TIME_NOT_MINUTE_ALIGNED`（秒を丸めない）／`BRAND_UNKNOWN`（空brandをSNB扱いにしない）。revision/ID不正は取消でも凍結。**取消・SNB対象外化（他ブランドへ変更）は凍結せず旧キー削除へ進む。** 現金/PayPayの承認根拠（承認者の監査項目）は#750で未確定のため、`confirmedAt` を暫定の台帳根拠とし、根拠がなければ安全停止側。**失効予約の復活は `confirmedAt` を書き `expiredAt` を残すため、`expiredAt` が残る現金/PayPayは復活後の独立した承認証跡が台帳に定義されるまで `UNVERIFIED`（復活だけでは発行しない。代替入室へ）。** 他ブランドへ変更された予約は運用上のblockerで凍結せず旧キー削除へ進む（brand空は凍結）。
+
+### 前日リマインドの一行
+SNBかつScript Property `ACCESS_KEY_NOTICE_ENABLED='true'` のときだけ「入室用の暗証番号は、別のメールでお送りします。」を1行追加（既定OFF・OFFの本文は完全に不変）。別暗証番号メール(#752)が送れる状態になるまでtrueにしない。
+
+### #754への引継ぎ（本PRの前提）
+- 5分照合は `build → toCoreInput → (SYNC) engine.sync` を和集合（当日・翌日＋鍵操作記録が残る予約）に対して実行する。`FREEZE` は通知のみ。
+- **静穏時間**: 同一予約の `Range` 書込みは複数回に分かれる（例: 日時変更の直後に料金精算）。`revision` の最新変化から約60秒（または同一内容の2回連続読取）安定してから `SYNC` する。精算中の中間状態で発行しない。
+- revisionと `digest` の食い違い、`REVISION_*` ログの発生、列欠落は管理者通知して停止（新規発行・変更をしない）。
+
 ## コアの設計判断（Issue「実装前に固定する設計」への回答）
 | 論点 | 判断 |
 |---|---|
@@ -108,7 +148,9 @@
 `ISSUED_CONFIRMED/EXPIRED → DELETE_PENDING →(両不在)→ ALREADY_ABSENT`／`→(残存の整合)→ DELETE_SENDING → DELETE_SENT →(条件充足)→ DELETED_CONFIRMED`。それ以外（ID/名前の片方残存・曖昧・Webhook failed/矛盾/期限超過・読取上限・保存失敗後の再開）は `UNKNOWN`（deleteKey自動再送なし）。
 
 ## 未実施（受け入れ条件との対応）
-- [ ] 予約結線(#753)・revision列とschema移行・独立GAS(#754)・配送(#752)・本番フラグON（いずれも未着手/別PR）
+- [x] 予約結線(#753 PR-A、フラグOFF): revision列・増分・スナップショット・前日リマインド一行をコードとモックテストで実装（本番migration・デプロイは未実施）
+- [ ] revision列の本番migration（admin-only → `migrateBookingsSchema` → full）と実施証跡
+- [ ] 独立GAS(#754)・配送(#752)・本番フラグON（いずれも未着手/別PR）
 - [ ] 独立GASへのデプロイ・常設Webhook受信（フラグOFFでの結線PRを別途レビュー）
 - [ ] `commercialUseApproved` の意味の整合（運営者の採用決裁へ）と本番有効化判断の記録
 - [ ] 非利用時間・現地確認者・代替入室手段を確保した01FDの限定実機検証（開始前不可/期間内可/期限後不可/削除後不可/変更/取消/59秒境界）

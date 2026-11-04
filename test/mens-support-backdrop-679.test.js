@@ -196,9 +196,10 @@ test('正本: 見本画像は実在する既存画像（鶴・麻の葉・グラ
 
 test('スキーマ: supportBackdrop は Bookings の末尾列。途中挿入なし・supportEquipment とは別の列', function () {
   var h = loadBookingSandbox(['BookingsSchema.gs'], {}).BookingsSchema.HEADERS;
-  assert.strictEqual(h[h.length - 1], 'supportBackdrop');
+  assert.strictEqual(h[h.length - 2], 'supportBackdrop', '#753で末尾にrevisionが追加された。supportBackdropはその直前');
+  assert.strictEqual(h[h.length - 1], 'revision');
   assert.strictEqual(h.filter(function (x) { return x === 'supportBackdrop'; }).length, 1);
-  assert.strictEqual(h[h.length - 2], 'largePartyPaymentDueAt', '直前の列は#668の末尾列のまま（既存列は移動しない）');
+  assert.strictEqual(h[h.length - 3], 'largePartyPaymentDueAt', '直前の列は#668の末尾列のまま（既存列は移動しない）');
   assert.ok(h.indexOf('supportEquipment') < h.indexOf('supportBackdrop') && h.indexOf('supportEquipment') !== h.indexOf('supportBackdrop'));
 });
 
@@ -378,7 +379,7 @@ test('往復: 旧予約（列が無い／空）は背景なしとして読め、
   assert.strictEqual(before.supportBackdrop, '');
   /* 列が無い旧シートの行（短い行）を読んでも落ちず、空欄として扱う。 */
   var H = ctx.sandbox.BookingsSchema.HEADERS;
-  var shortRow = H.map(function (h) { return before[h] === undefined ? '' : before[h]; }).slice(0, H.length - 1);
+  var shortRow = H.map(function (h) { return before[h] === undefined ? '' : before[h]; }).slice(0, H.indexOf('supportBackdrop'));
   var rec = {};
   H.forEach(function (h, i) { rec[h] = shortRow[i]; });
   assert.strictEqual(rec.supportBackdrop, undefined);

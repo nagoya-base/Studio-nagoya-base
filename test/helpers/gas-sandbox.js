@@ -53,6 +53,10 @@ function loadBookingSandbox(files, globals) {
   if (files.indexOf('SpreadsheetRepository.gs') !== -1 && files.indexOf('BookingsSchema.gs') === -1) {
     files = ['BookingsSchema.gs'].concat(files);
   }
+  /* Issue #753: 鍵連携revisionの判定（AccessKeySnapshot.gs）はSpreadsheetRepository.gsの書き込み出口から呼ばれる。 */
+  if (files.indexOf('SpreadsheetRepository.gs') !== -1 && files.indexOf('AccessKeySnapshot.gs') === -1) {
+    files = ['AccessKeySnapshot.gs'].concat(files);
+  }
   files.forEach(function (file) {
     var filePath = resolveBookingFilePath(file);
     vm.runInContext(fs.readFileSync(filePath, 'utf8'), sandbox, { filename: filePath });

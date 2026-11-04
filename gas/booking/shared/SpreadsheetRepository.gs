@@ -128,7 +128,51 @@ var SpreadsheetRepository = (function () {
     return result;
   }
 
-  /*
+    /*
+   * Issue #753: 鍵連携用 revision の増分。書き込み関数の共通出口。
+   * - 書き込み**後**に+1する（先に増やすと「新revision＋旧内容」を読んだ鍵側が旧内容で発行し、その後の
+   *   内容変更が同じrevisionのまま古い鍵を残す。後に増やせば、最悪でも「旧revision＋新内容」で
+   *   内容ダイジェスト(AccessKeySnapshot.digest)の不一致として検知でき、次のrevisionで再照合される）。
+   * - AccessKeySnapshot.KEY_RELEVANT_FIELDSの値が実際に変わる場合だけ増やす（同値の再書込み・人数/メール送信済み/
+   *   料金明細のみの更新では増やさない）。呼び出し元の既存Lock内で呼ばれる前提（新しいLockは取らない）。
+   * - 列が未migrationのシート、revisionセルが不正値、書込み失敗では**予約処理を失敗させない**。固定コードだけを
+   *   ログに残して戻る（鍵側はダイジェスト不一致/revision欠落として安全停止・管理者通知する）。
+   */
+  function bumpRevisionIfKeyRelevant_(sheet, found, fields) {
+    var changed;
+    try {
+      changed = AccessKeySnapshot.isKeyRelevantChange(found.record, Object.assign({}, found.record, fields));
+    } catch (e) {
+      changed = true; /* 判定できないときは増やす側（余分な再照合は安全、増やさないのは危険） */
+    }
+    if (!changed) return { bumped: false, reason: 'NOT_KEY_RELEVANT' };
+    var code = 'REVISION_WRITE_FAILED';
+    try {
+      var column = HEADERS_.indexOf('revision') + 1;
+      var header = sheet.getRange(1, column, 1, 1).getValues()[0][0];
+      if (header !== 'revision') {
+        code = 'REVISION_COLUMN_MISSING';
+      } else {
+        var cell = sheet.getRange(found.rowNumber, column, 1, 1);
+        var current = AccessKeySnapshot.parseRevision(cell.getValues()[0][0]);
+        if (current === null) {
+          code = 'REVISION_INVALID';
+        } else {
+          cell.setValue(current + 1);
+          return { bumped: true, revision: current + 1 };
+        }
+      }
+    } catch (e) {
+      /* 列がグリッド外（未migration）等。code=REVISION_WRITE_FAILEDのまま。 */
+    }
+    if (typeof console !== 'undefined' && console.error) {
+      console.error('ACCESS_KEY_REVISION_BUMP_FAILED: ' + code);
+    }
+    return { bumped: false, reason: code };
+  }
+
+
+/*
    * fields: { [HEADERS_のいずれか]: value } の部分更新。statusセルの直接編集を
    * 正式運用にしないため、statusを含む更新は必ずこの関数（＝confirmBooking /
    * expirePendingBookings）経由でのみ行う。
@@ -140,13 +184,18 @@ var SpreadsheetRepository = (function () {
       throw new Error('bookingIdが見つかりません: ' + bookingId);
     }
     var sheet = ensureBookingsSheet_();
-    Object.keys(fields).forEach(function (key) {
-      var columnIndex = HEADERS_.indexOf(key);
-      if (columnIndex === -1) {
-        throw new Error('未知のbookingフィールドです: ' + key);
-      }
-      sheet.getRange(found.rowNumber, columnIndex + 1, 1, 1).setValues([[fields[key]]]);
-    });
+    try {
+      Object.keys(fields).forEach(function (key) {
+        var columnIndex = HEADERS_.indexOf(key);
+        if (columnIndex === -1) {
+          throw new Error('未知のbookingフィールドです: ' + key);
+        }
+        sheet.getRange(found.rowNumber, columnIndex + 1, 1, 1).setValues([[fields[key]]]);
+      });
+    } finally {
+      /* 途中で失敗しても一部が書き込まれている可能性があるため、増やす側に倒す（Issue #753）。 */
+      bumpRevisionIfKeyRelevant_(sheet, found, fields);
+    }
     return found.rowNumber;
   }
 
@@ -159,8 +208,12 @@ var SpreadsheetRepository = (function () {
       throw new Error('予約日時が不正です。');
     }
     var sheet = ensureBookingsSheet_();
-    sheet.getRange(found.rowNumber, HEADERS_.indexOf('date') + 1, 1, 3)
-      .setValues([[date, startAt, endAt]]);
+    try {
+      sheet.getRange(found.rowNumber, HEADERS_.indexOf('date') + 1, 1, 3)
+        .setValues([[date, startAt, endAt]]);
+    } finally {
+      bumpRevisionIfKeyRelevant_(sheet, found, { date: date, startAt: startAt, endAt: endAt });
+    }
     return found.rowNumber;
   }
 
@@ -206,7 +259,11 @@ var SpreadsheetRepository = (function () {
     }
 
     var sheet = ensureBookingsSheet_();
-    sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    try {
+      sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    } finally {
+      bumpRevisionIfKeyRelevant_(sheet, found, fields);
+    }
     return found.rowNumber;
   }
 
@@ -244,7 +301,11 @@ var SpreadsheetRepository = (function () {
     }
 
     var sheet = ensureBookingsSheet_();
-    sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    try {
+      sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    } finally {
+      bumpRevisionIfKeyRelevant_(sheet, found, fields);
+    }
     return found.rowNumber;
   }
 
@@ -300,7 +361,11 @@ var SpreadsheetRepository = (function () {
     }
 
     var sheet = ensureBookingsSheet_();
-    sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    try {
+      sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    } finally {
+      bumpRevisionIfKeyRelevant_(sheet, found, fields);
+    }
     return found.rowNumber;
   }
 
@@ -363,7 +428,11 @@ var SpreadsheetRepository = (function () {
     }
 
     var sheet = ensureBookingsSheet_();
-    sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    try {
+      sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    } finally {
+      bumpRevisionIfKeyRelevant_(sheet, found, fields);
+    }
     return found.rowNumber;
   }
 
@@ -400,7 +469,11 @@ var SpreadsheetRepository = (function () {
     }
 
     var sheet = ensureBookingsSheet_();
-    sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    try {
+      sheet.getRange(found.rowNumber, startIndex + 1, 1, endIndex - startIndex + 1).setValues([values]);
+    } finally {
+      bumpRevisionIfKeyRelevant_(sheet, found, fields);
+    }
     return found.rowNumber;
   }
 

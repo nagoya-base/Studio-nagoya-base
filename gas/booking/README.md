@@ -71,6 +71,14 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - 新コードは、既存行の新列が **空欄でもfailしない** こと。
 - schema追加と機能の利用開始の間で新旧が混在しても、予約作成・読取・管理画面が破損しないこと。
 
+## Issue #753: 鍵連携 PR-A（`revision`列とスナップショット。フラグOFF）
+
+SwitchBot鍵連携の接続層。**鍵API・独立GAS・配送・本番migrationは含まない**（設計と範囲は [`docs/switchbot-access-key-748.md`](../../docs/switchbot-access-key-748.md) の「予約システム接続（PR-A）」）。
+- `Bookings` 末尾に整数列 `revision` を追加（schema変更あり。上の「Bookings schema変更時」の手順: admin-only → `migrateBookingsSchema` → full）。空欄は0。
+- `SpreadsheetRepository` の書込み出口が、確定(CONFIRMED)に関わる鍵関係項目（status・日時・支払根拠・精算/要復旧フラグ等）が**実際に変わる書込みの後**に `revision` を+1する。人数・メール送信済み・同値再書込みでは増えない。列未migration・不正値・書込み失敗でも予約処理は失敗せず、固定コード `ACCESS_KEY_REVISION_BUMP_FAILED: <code>` をログに残すのみ。
+- `AccessKeySnapshot.gs`（Admin・Web App配布、純粋ロジック）: JST日付/時刻への正規化、支払根拠、blockers、`issueWindow`（前日12:00）、`toCoreInput`、`triggers`。
+- 前日リマインドの一行は Script Property `ACCESS_KEY_NOTICE_ENABLED='true'`（SNBのみ）で有効。既定OFFで本文は不変。
+
 ## Issue #680: Bookings台帳・子シート・会員系シート・Stripe受信台帳の個人情報を180日経過後に自動消去（PR-1〜PR-4。初期無効）
 
 `gas/booking/admin/PersonalDataRetention.gs`（**Booking Admin専用**）。公開Web App・Webhookには配布せず、削除実行APIも置かない。管理画面（`BookingAdminWeb.gs`）にも配線しない（エディタと時間主導トリガーからのみ）。**本番の有効化・トリガー作成・実データの消去は、このPRでは行わない。**
@@ -3647,6 +3655,7 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `BookingPricing.gs`（Issue #342／Issue #346で祝日判定を追加／Issue #344追記でBooking Adminにも追加） | ✓ | ✓ | – | `gas/booking/shared/BookingPricing.gs` |
 | `RateLimiter.gs` | ✓ | – | – | `gas/booking/public/RateLimiter.gs` |
 | `BookingsSchema.gs` | ✓ | ✓ | – | `gas/booking/shared/BookingsSchema.gs`（Bookingsヘッダーの唯一の正本。Issue #671） |
+| `AccessKeySnapshot.gs`（Issue #753。SwitchBot鍵連携用のrevision増分判定とJST正規化スナップショット。純粋ロジック） | ✓ | ✓ | – | `gas/booking/shared/AccessKeySnapshot.gs` |
 | `BookingsSchemaMigration.gs`（Issue #673。管理者がエディタから手動実行する `migrateBookingsSchema`。Booking Admin専用） | – | ✓ | – | `gas/booking/admin/BookingsSchemaMigration.gs` |
 | `PersonalDataRetention.gs`（Issue #680。Bookings台帳の個人情報を180日経過後に消去。初期無効・dry-run必須。Booking Admin専用） | – | ✓ | – | `gas/booking/admin/PersonalDataRetention.gs` |
 | `SpreadsheetRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/SpreadsheetRepository.gs` |
