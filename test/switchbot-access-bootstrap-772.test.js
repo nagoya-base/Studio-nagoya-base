@@ -41,6 +41,7 @@ function world(o) {
   var w = { sp: Object.assign({ ACCESS_CONFIG: '{}', ACCESS_ENABLED: 'false', ACCESS_ENVIRONMENT: 'production' }, 'script' in o ? o.script : temp(D)),
     up: Object.assign({}, o.user || {}), spLog: [], upLog: [], locks: 0, releases: 0 };
   w.deps = {
+    accessFlag: o.flag || function () { var v = w.sp.ACCESS_ENABLED; return v === undefined ? null : v; },
     scriptProps: store(w.sp, w.spLog, o.spHooks), userProps: store(w.up, w.upLog, o.upHooks),
     adminActors: { 'Owner@Example.test': 'ADMIN-1' },
     identity: o.identity || function () { return { email: ADMIN, effectiveEmail: ADMIN }; },
@@ -252,4 +253,47 @@ test('GASエントリ: 一時キー名はソース/ドキュメントに値を�
   var doc = fs.readFileSync(path.join(__dirname, '../docs/switchbot-access-bootstrap-772.md'), 'utf8');
   NAMES.forEach(function (n) { assert.ok(doc.indexOf(D[n]) === -1); });
   TEMP.forEach(function (t) { assert.ok(doc.indexOf(t) !== -1, t); });
+});
+
+test('ACCESS_ENABLED がON/不明なら何も書かず停止（一時キーは自動削除せず残す）。OFF（未設定/false）は進む', function () {
+  [['true', 'ACCESS_NOT_OFF'], ['TRUE', 'ACCESS_STATE_UNKNOWN'], ['1', 'ACCESS_STATE_UNKNOWN']].forEach(function (c) {
+    var w = world({ script: Object.assign({ ACCESS_ENABLED: c[0] }, temp(D)) });
+    var r = Infra.migrateBootstrapCredentials(w.deps);
+    assert.strictEqual(r.ok, false); assert.strictEqual(r.code, c[1]);
+    assert.deepStrictEqual(Object.keys(w.up), []); assert.strictEqual(tempLeft(w).length, 3);
+    assert.ok(!w.upLog.some(function (o) { return o[0] === 'set'; }));
+    assert.strictEqual(w.sp.ACCESS_ENABLED, c[0]);
+    noSecret(r);
+    // 復旧: 手動消去は一時キーだけを消せる
+    assert.strictEqual(Infra.scrubBootstrapCredentials(w.deps).code, 'SCRUBBED');
+    assert.deepStrictEqual(tempLeft(w), []); assert.strictEqual(w.sp.ACCESS_ENABLED, c[0]);
+  });
+  var thrown = world({ flag: function () { throw new Error('x'); } });
+  assert.strictEqual(Infra.migrateBootstrapCredentials(thrown.deps).code, 'ACCESS_STATE_UNKNOWN');
+  var none = world(); delete none.deps.accessFlag;
+  assert.strictEqual(Infra.migrateBootstrapCredentials(none.deps).code, 'ACCESS_STATE_UNKNOWN');
+  assert.deepStrictEqual(Object.keys(none.up), []);
+  assert.strictEqual(Infra.migrateBootstrapCredentials(world({ script: Object.assign({ ACCESS_ENABLED: 'false' }, temp(D)) }).deps).code, 'OK');
+});
+
+test('ロック下の書込み直前にONへ切り替わったら書かない（競合）', function () {
+  var w = world(), calls = 0;
+  w.deps.accessFlag = function () { calls++; return calls >= 2 ? 'true' : null; };
+  var r = Infra.migrateBootstrapCredentials(w.deps);
+  assert.strictEqual(r.code, 'ACCESS_NOT_OFF'); assert.deepStrictEqual(Object.keys(w.up), []);
+  assert.strictEqual(tempLeft(w).length, 3);
+});
+
+test('診断 accessBootstrapStatus: ONなら ok=false で明示。GASエントリでもON時は移行せずaccessEnabledにONを出す', function () {
+  var r = Infra.bootstrapStatus(world({ script: { ACCESS_ENABLED: 'true' } }).deps);
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.code, 'ACCESS_NOT_OFF');
+  var env = loadShell({ script: { ACCESS_ENABLED: 'true' } });
+  var m = plain(env.ctx.accessMigrateCredentialsOnce());
+  assert.strictEqual(m.code, 'ACCESS_NOT_OFF'); assert.strictEqual(m.accessEnabled, 'ON');
+  assert.deepStrictEqual(Object.keys(env.user), []);
+  assert.strictEqual(TEMP.filter(function (t) { return env.script[t] !== undefined; }).length, 3);
+  var b = plain(env.ctx.accessBootstrapStatus());
+  assert.strictEqual(b.ok, false); assert.strictEqual(b.accessEnabled, 'ON');
+  var off = loadShell();
+  assert.strictEqual(plain(off.ctx.accessBootstrapStatus()).accessEnabled, 'OFF');
 });

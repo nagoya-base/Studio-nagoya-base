@@ -36,7 +36,7 @@ User Properties: SWITCHBOT_TOKEN / SWITCHBOT_SECRET / WEBHOOK_SHARED_TOKEN（実
 1. GASプロジェクトの共有設定（エディタ右上「共有」）で、**編集者・閲覧者が運営者本人のみ**（他のユーザー・グループ・「リンクを知っている全員」が無い）。
 2. Webアプリの実行ユーザー（Deployment の「次のユーザーとして実行」）が**運営者本人**で、エディタを開いているアカウントも同じ本人。
 3. `ACCESS_ENABLED` が未設定（OFF）。GitHub自動デプロイもOFF。
-4. エディタで `accessBootstrapStatus` を実行し、実行ログが `"ok":true`、`SWITCHBOT_*` / `WEBHOOK_SHARED_TOKEN` が **`MISSING`**、`BOOTSTRAP_*` が **`ABSENT`**、`"accessEnabled":"OFF"` であること。
+4. エディタで `accessBootstrapStatus` を実行し（**秘密を入力する前**。`ACCESS_ENABLED` が ON/不明だと `ok:false` になる）、実行ログが `"ok":true`、`SWITCHBOT_*` / `WEBHOOK_SHARED_TOKEN` が **`MISSING`**、`BOOTSTRAP_*` が **`ABSENT`**、`"accessEnabled":"OFF"` であること。
 5. `accessCheckSetup` で `config` が `VALID`（既存の `ACCESS_CONFIG` 等が SET）。
 
 ## 4. 手順（Windows・1操作ずつ）
@@ -77,6 +77,7 @@ User Properties: SWITCHBOT_TOKEN / SWITCHBOT_SECRET / WEBHOOK_SHARED_TOKEN（実
 | `NOT_AUTHORIZED` / `IDENTITY_UNAVAILABLE` / `ACCOUNT_MISMATCH` | 許可管理者本人・実効ユーザー一致を確認できない | **何も変更せず停止**（一時キーも消さない）。運営者本人のアカウントで開き直す。入力済みなら `accessScrubBootstrapCredentials` で消去 |
 | `USER_PROPS_NOT_EMPTY` | 移行先が1件でもSET。**上書きしない** | 一時キーは削除される。置換が必要なら #770 の replace 経路（別判断） |
 | `BOOTSTRAP_INCOMPLETE` / `INPUT_INVALID` / `INPUT_DUPLICATE` | 一時キーの欠落・形式不備・3種の重複 | 何も登録されない。一時キーは削除される。不備の名前は `invalid` に出る。A〜Cをやり直す |
+| `ACCESS_NOT_OFF` / `ACCESS_STATE_UNKNOWN` | `ACCESS_ENABLED` が ON、または読取不能・想定外の値。**何も書かずに停止**（実行直前とロック下の書込み直前の2回確認。`accessBootstrapStatus` も同じ条件で `ok:false`） | 一時キーは自動では消さない。`ACCESS_ENABLED` を意図せず ON にしていないか確認し、**OFF に戻すまで移行しない**。入力済みの秘密は `accessScrubBootstrapCredentials` か設定画面の手動削除で消す |
 | `BOOTSTRAP_MISSING` | 一時キーが無い | 何も変更しない。手順 A〜B から |
 | `READ_FAILED` / `STATE_CHANGED` / `LOCK_BUSY` / `LOCK_UNAVAILABLE` | 読取不能・競合・ロック | 何も書かない。少し待って `accessBootstrapStatus` で状態確認後に再実行 |
 | `WRITE_FAILED` / `VERIFY_FAILED` | 書込み/照合失敗。書いた分は元に戻した | 一時キーは削除される。やり直し |

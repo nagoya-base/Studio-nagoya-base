@@ -350,6 +350,19 @@ var SwitchBotAccessInfra = (function () {
     return m;
   }
 
+  /**
+   * 機能フラグ ACCESS_ENABLED の状態: 'OFF'（未設定/'false'）| 'ON'('true') | 'UNKNOWN'（読取不能・想定外の値・読取手段なし）。
+   * 移行は OFF のときだけ行う（ON/UNKNOWN は fail closed）。deps.accessFlag() は生の値（文字列|null）を返す。
+   */
+  function accessFlagState(deps) {
+    var raw;
+    try { raw = typeof deps.accessFlag === 'function' ? deps.accessFlag() : undefined; } catch (e) { return 'UNKNOWN'; }
+    if (raw === undefined) return 'UNKNOWN';
+    if (raw === null || raw === '' || raw === 'false') return 'OFF';
+    return raw === 'true' ? 'ON' : 'UNKNOWN';
+  }
+  function flagCode(state) { return state === 'ON' ? 'ACCESS_NOT_OFF' : 'ACCESS_STATE_UNKNOWN'; }
+
   /** 一時キー3件の SET/ABSENT。読取例外は UNKNOWN（ABSENT に潰さない）。 */
   function readBootstrapStatus(sp) {
     var st = {}, ok = true;
@@ -369,7 +382,7 @@ var SwitchBotAccessInfra = (function () {
   }
 
   /**
-   * 読取専用の診断。値は読まずに SET/ABSENT だけ返す（一時キー残存の検出に使う。何も変更しない）。
+   * 読取専用の診断。値は外部に返さず SET/ABSENT だけ返す（一時キー残存の検出に使う。何も変更しない）。
    * deps: scriptProps{get,set,del}, userProps{get,set,del}, identity(), adminActors
    */
   function bootstrapStatus(deps) {
@@ -378,6 +391,8 @@ var SwitchBotAccessInfra = (function () {
     var u = readCredentialStatus(deps.userProps);
     var b = readBootstrapStatus(deps.scriptProps);
     if (!u.ok || !b.ok) return { ok: false, code: 'READ_FAILED', status: u.status, bootstrap: b.status, changed: [] };
+    var fs0 = accessFlagState(deps); // 秘密を入力する前の事前ゲート: OFF でなければ ok=false
+    if (fs0 !== 'OFF') return { ok: false, code: flagCode(fs0), status: u.status, bootstrap: b.status, changed: [] };
     var left = BOOTSTRAP_NAMES.some(function (n) { return b.status[n] === 'SET'; });
     return { ok: true, code: left ? 'BOOTSTRAP_KEYS_REMAIN' : 'STATUS_OK', status: u.status, bootstrap: b.status, changed: [] };
   }
@@ -416,6 +431,9 @@ var SwitchBotAccessInfra = (function () {
       CREDENTIAL_NAMES.forEach(function (n) { masked[n] = 'MISSING'; });
       return { ok: false, code: gate.error, status: masked, bootstrap: bootstrapMasked(), changed: [] };
     }
+    // 機能が ON（または不明）のときは何も書かない。一時キーは自動では消さず、運営者が accessScrubBootstrapCredentials か設定画面で削除する
+    var f0 = accessFlagState(deps);
+    if (f0 !== 'OFF') return result(false, flagCode(f0));
     if (!deps.lock) { scrubBootstrap(sp); return result(false, 'LOCK_UNAVAILABLE'); }
     var locked = false;
     try { locked = deps.lock.tryLock(10000) === true; } catch (e) { locked = false; }
@@ -466,6 +484,10 @@ var SwitchBotAccessInfra = (function () {
       var again = readCredentialStatus(up);
       if (!again.ok) return fail('READ_FAILED');
       if (CREDENTIAL_NAMES.some(function (n) { return again.status[n] !== 'MISSING'; })) return fail('STATE_CHANGED');
+
+      // 4b) ロック下・実書込み直前にフラグを再確認（ON への切替競合を防ぐ）。ON/不明なら書かない（一時キーは残す）
+      var f1 = accessFlagState(deps);
+      if (f1 !== 'OFF') return result(false, flagCode(f1));
 
       // 5) 書込み→照合。失敗したら今回書いた分を戻す（移行前は全件 MISSING なので削除で復元できる）
       var written = [];
@@ -1249,7 +1271,7 @@ var SwitchBotAccessInfra = (function () {
     validateConfig: validateConfig, ensureStoreEnvironment: ensureStoreEnvironment,
     constantTimeEquals: constantTimeEquals, authenticateWebhook: authenticateWebhook, authorizeAdmin: authorizeAdmin,
     CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials, credentialStatus: credentialStatus,
-    BOOTSTRAP_KEYS: BOOTSTRAP_KEYS, migrateBootstrapCredentials: migrateBootstrapCredentials, bootstrapStatus: bootstrapStatus, scrubBootstrapCredentials: scrubBootstrapCredentials,
+    BOOTSTRAP_KEYS: BOOTSTRAP_KEYS, accessFlagState: accessFlagState, migrateBootstrapCredentials: migrateBootstrapCredentials, bootstrapStatus: bootstrapStatus, scrubBootstrapCredentials: scrubBootstrapCredentials,
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,

@@ -276,6 +276,7 @@ function sba_bootstrapDeps_() {
   return {
     scriptProps: sba_storeOf_(sba_scriptProps_(), null),
     userProps: sba_storeOf_(sba_userProps_(), null),
+    accessFlag: function () { return sba_scriptProps_().getProperty('ACCESS_ENABLED'); }, // ACCESS_ENABLED が OFF でなければ移行しない
     adminActors: sba_adminActors_(),
     identity: function () {
       return { email: Session.getActiveUser().getEmail(), effectiveEmail: Session.getEffectiveUser().getEmail() };
@@ -294,7 +295,7 @@ function sba_bootstrapRun_(fn) {
   } catch (e) {
     out = { ok: false, code: 'UNEXPECTED_ERROR', status: {}, bootstrap: {}, changed: [] };
   }
-  out.accessEnabled = sba_scriptProps_().getProperty('ACCESS_ENABLED') === 'true' ? 'ON' : 'OFF';
+  try { out.accessEnabled = SwitchBotAccessInfra.accessFlagState(sba_bootstrapDeps_()); } catch (e) { out.accessEnabled = 'UNKNOWN'; }
   Logger.log(JSON.stringify(out));
   return out;
 }
