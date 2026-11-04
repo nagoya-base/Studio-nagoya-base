@@ -1461,3 +1461,45 @@ test('Issue #709: 現地払い（現金・PayPay）とCheckout無効のカード
     assert.doesNotMatch(mails[0].body, /自動で確定/, c.method);
   });
 });
+
+/* ---- Issue #758 追加決定: 新規予約の開始候補を施行後は00分/30分に限定（サーバー検証。直接APIでも15分/45分へ迂回不可） ---- */
+
+test('Issue #758: 開始刻み施行後の新規予約は00分/30分のみ受理し、15分/45分はSTART_TIME_NOT_ALIGNEDで拒否（台帳・Calendarを更新しない）', function () {
+  var ctx = setup({ properties: { BOOKING_SLOT_STEP_2026_11_EFFECTIVE_AT: '2026-11-19T00:00:00+09:00' } });
+  var now = new Date('2026-11-19T00:00:00+09:00');
+  var date = '2026-11-25';
+  ['10:15', '10:45'].forEach(function (t) {
+    var r = ctx.sandbox.BookingRepository.createBooking(validPayload({ date: date, startTime: t }), now);
+    assert.strictEqual(r.success, false, t);
+    assert.strictEqual(r.error.code, 'START_TIME_NOT_ALIGNED', t);
+  });
+  assert.strictEqual(ctx.calendarsById.cal1.events.length, 0, 'Calendarは更新されない');
+  ['10:00', '10:30'].forEach(function (t, i) {
+    var r = ctx.sandbox.BookingRepository.createBooking(validPayload({ date: '2026-11-2' + (6 + i), startTime: t, email: 'a' + i + '@example.com' }), now);
+    assert.strictEqual(r.success, true, t + ' ' + JSON.stringify(r.error));
+  });
+});
+
+test('Issue #758: 開始刻みの施行前（1秒前）は従来どおり15分/45分開始も受理する。未設定でも同様', function () {
+  var withFuture = setup({ properties: { BOOKING_SLOT_STEP_2026_11_EFFECTIVE_AT: '2026-11-19T00:00:00+09:00' } });
+  var r1 = withFuture.sandbox.BookingRepository.createBooking(validPayload({ date: '2026-11-25', startTime: '10:15' }), new Date('2026-11-18T23:59:59+09:00'));
+  assert.strictEqual(r1.success, true, JSON.stringify(r1.error));
+  var unset = setup();
+  var r2 = unset.sandbox.BookingRepository.createBooking(validPayload({ date: '2026-12-05', startTime: '10:45' }), new Date('2026-12-01T00:00:00+09:00'));
+  assert.strictEqual(r2.success, true, JSON.stringify(r2.error));
+});
+
+test('Issue #758: OPEN_TIME=08:15 でも、開始刻みの施行後の新規予約は00分/30分のみ受理（08:30可、08:15/08:45は不可）', function () {
+  var ctx = setup({ properties: { OPEN_TIME: '08:15', BOOKING_SLOT_STEP_2026_11_EFFECTIVE_AT: '2026-11-19T00:00:00+09:00' } });
+  var now = new Date('2026-11-19T00:00:00+09:00');
+  ['08:15', '08:45', '10:15'].forEach(function (t) {
+    var r = ctx.sandbox.BookingRepository.createBooking(validPayload({ date: '2026-11-25', startTime: t }), now);
+    assert.strictEqual(r.success, false, t);
+    assert.strictEqual(r.error.code, 'START_TIME_NOT_ALIGNED', t);
+  });
+  var ok = ctx.sandbox.BookingRepository.createBooking(validPayload({ date: '2026-11-25', startTime: '08:30' }), now);
+  assert.strictEqual(ok.success, true, JSON.stringify(ok.error));
+  /* 施行前は従来どおりOPEN_TIME起点（08:15/08:45が有効） */
+  var pre = ctx.sandbox.BookingRepository.createBooking(validPayload({ date: '2026-11-26', startTime: '08:45', email: 'b@example.com' }), new Date('2026-11-18T23:59:59+09:00'));
+  assert.strictEqual(pre.success, true, JSON.stringify(pre.error));
+});

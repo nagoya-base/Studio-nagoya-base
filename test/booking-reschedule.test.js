@@ -73,8 +73,8 @@ function setup(options) {
     return rawAdminRescheduleBooking(bookingId, input, expectedVersion, reason, feeNote, feeConfirmation, expectedFeeQuoteToken);
   };
   var date = findDateOfDayType_(sandbox, 35, false); // 平日固定（既存テストの決定性を保つ）
-  var start = sandbox.CalendarRepository.parseDateTime(date, '10:00', 'Asia/Tokyo');
-  var end = sandbox.CalendarRepository.parseDateTime(date, '12:00', 'Asia/Tokyo');
+  var start = sandbox.CalendarRepository.parseDateTime(date, options.startHHmm || '10:00', 'Asia/Tokyo');
+  var end = sandbox.CalendarRepository.parseDateTime(date, options.endHHmm || '12:00', 'Asia/Tokyo');
   var event = globals.CalendarApp.getCalendarById('cal1').createEvent('booking', start, end);
   event.setTag('bookingId', 'SNB-TEST-1');
   event.setTag('status', 'CONFIRMED');
@@ -1810,4 +1810,63 @@ test('Issue #758: 施行後の予約間隔は30分（延長後の終了から次
   var r = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:00', endTime: '14:15' }, version_(f));
   assert.equal(r.success, false);
   assert.equal(r.error.code, 'SLOT_CONFLICT');
+});
+
+/* ---- Issue #758 追加決定: 開始候補の30分刻み（BOOKING_SLOT_STEP_2026_11_EFFECTIVE_AT）。既存15分/45分開始の予約は維持 ---- */
+
+function enableSlotStep_(f, iso) {
+  f.globals.PropertiesService.getScriptProperties().setProperty('BOOKING_SLOT_STEP_2026_11_EFFECTIVE_AT', iso);
+}
+
+test('Issue #758: 開始刻み施行後、既存の15分開始予約（10:15-12:15）で開始を維持する当日延長は刻み違反として拒否しない', function () {
+  var f = setup({ startHHmm: '10:15', endHHmm: '12:15' });
+  enableSlotStep_(f, '2000-01-01T00:00:00+09:00');
+  freezeAt_(f, '10:30:00');
+  var r = f.sandbox.adminRescheduleBooking('SNB-TEST-1', { date: f.date, startTime: '10:15', endTime: '14:15' }, version_(f), '延長', '別途精算');
+  assert.equal(r.success, true, JSON.stringify(r.error));
+  assert.equal(f.event.getEndTime().getTime(), f.sandbox.CalendarRepository.parseDateTime(f.date, '14:15', 'Asia/Tokyo').getTime());
+});
+
+test('Issue #758: 開始刻み施行後、開始時刻を変える変更は00分/30分のみ（10:15→10:45は不可、10:30は可）。旧予約を丸めない', function () {
+  var f = setup({ startHHmm: '10:15', endHHmm: '12:15' });
+  enableSlotStep_(f, '2000-01-01T00:00:00+09:00');
+  freezeAt_(f, '09:00:00');
+  var before = version_(f);
+  var bad = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:45', endTime: '12:45' }, before);
+  assert.equal(bad.success, false);
+  assert.equal(bad.error.code, 'OUTSIDE_HOURS');
+  assert.equal(version_(f), before, '台帳/Calendarは更新されない');
+  var ok = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:30', endTime: '12:30' }, before);
+  assert.equal(ok.success, true, JSON.stringify(ok.error));
+});
+
+test('Issue #758: 開始刻み施行前（未設定・不正・将来日時）は従来どおり15分刻みで、開始の変更も15分/45分を受け付ける', function () {
+  ['', 'invalid', '2099-01-01T00:00:00+09:00'].forEach(function (value) {
+    var f = setup();
+    if (value) enableSlotStep_(f, value);
+    freezeAt_(f, '09:00:00');
+    var r = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:15', endTime: '12:15' }, version_(f));
+    assert.equal(r.success, true, 'value=' + value + ' ' + JSON.stringify(r.error));
+  });
+});
+
+test('Issue #758: 開始刻みのゲートは予約間隔・延長締切のゲートと独立（刻みだけ未施行でも30分バッファーは施行できる）', function () {
+  var f = setup();
+  enableRules_(f, '2000-01-01T00:00:00+09:00');
+  freezeAt_(f, '09:00:00');
+  var r = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:15', endTime: '12:15' }, version_(f));
+  assert.equal(r.success, true, '開始刻みは未施行のため15分開始も可');
+});
+
+test('Issue #758: OPEN_TIME=08:15 でも、開始刻みの施行後の管理者の開始時刻変更は00分/30分のみ（10:30可、10:45不可）。旧15分開始の開始維持延長は可', function () {
+  var f = setup({ startHHmm: '10:15', endHHmm: '12:15' });
+  f.globals.PropertiesService.getScriptProperties().setProperty('OPEN_TIME', '08:15');
+  enableSlotStep_(f, '2000-01-01T00:00:00+09:00');
+  freezeAt_(f, '09:00:00');
+  var v = version_(f);
+  assert.equal(f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:30', endTime: '12:30' }, v).success, true);
+  var bad = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:45', endTime: '12:45' }, v);
+  assert.equal(bad.success, false);
+  assert.equal(bad.error.code, 'OUTSIDE_HOURS');
+  assert.equal(f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:15', endTime: '14:15' }, v).success, true, '開始維持の延長は経過措置で可');
 });
