@@ -82,6 +82,14 @@ summary "- 更新前の公開バージョン: \`@$previous_version\`"
 
 read_versions || fail "Could not read versions before update; nothing was changed."
 
+# 対象照合（deploy／rollback共通・読取りのみ）: pull した既存プロジェクトが鍵管理用・独立GASであること。
+# Booking/検証/Surveyの取り違えで、他プロジェクトのDeploymentを更新しないための防止。
+echo "Running clasp pull (target check)"
+clasp_run "$remote_dir" "$out/pull.out" pull || fail "clasp pull failed; nothing was changed."
+status="$(node "$lib" check-remote "$remote_dir" || true)"
+[[ "$status" == "OK" ]] || fail "Target project mismatch: $status. Nothing was changed."
+[[ -f "$remote_dir/appsscript.json" ]] || fail "Target project returned no manifest; nothing was changed."
+
 if [[ "$mode" == "rollback" ]]; then
   target="${ROLLBACK_VERSION:-}"
   [[ "$target" =~ ^[1-9][0-9]{0,5}$ ]] || fail "ROLLBACK_VERSION must be a positive integer; nothing was changed."
@@ -105,12 +113,6 @@ else
   [[ "$status" == "OK" ]] || fail "Bundle check failed: $status. Nothing was changed."
   summary "- ✅ 配布物の完全性検査: 成功"
 
-  # 対象照合: pull した既存プロジェクトが鍵管理用・独立GASであること（Booking/検証/Surveyの取り違え防止）。
-  echo "Running clasp pull (target check)"
-  clasp_run "$remote_dir" "$out/pull.out" pull || fail "clasp pull failed; nothing was changed."
-  status="$(node "$lib" check-remote "$remote_dir" || true)"
-  [[ "$status" == "OK" ]] || fail "Target project mismatch: $status. Nothing was changed."
-  [[ -f "$remote_dir/appsscript.json" ]] || fail "Target project returned no manifest; nothing was changed."
   status="$(node "$lib" check-manifest "$remote_dir/appsscript.json" "$bundle_dir/appsscript.json" || true)"
   [[ "$status" == "OK" ]] || fail "Manifest check failed: $status. Nothing was changed."
 

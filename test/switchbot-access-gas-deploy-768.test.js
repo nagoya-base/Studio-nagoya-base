@@ -386,6 +386,19 @@ test('rollback: same deployment goes back to an existing version; invalid/unknow
   assert.ok(!t2.calls().includes('update-deployment'));
 });
 
+test('rollback: verifies the target project first; Booking/verify/other projects are never updated', () => {
+  const verifyOnly = { 'SwitchBotVerify.gs': '// verify', 'appsscript.json': oldFiles()['appsscript.json'] };
+  for (const files of [verifyOnly, { ...oldFiles(), 'BookingFoo.gs': '' }, { ...oldFiles(), 'SwitchBotVerify.gs': '' }]) {
+    const t = setup({ files });
+    const r = t.run('rollback', { ROLLBACK_VERSION: '1' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /TARGET_MISMATCH/);
+    assert.ok(!t.calls().includes('update-deployment'));
+    assert.equal(deployedVersion(t), 2);
+    noLeak(r);
+  }
+});
+
 test('rollback: a failed update that did not apply is reported as failure', () => {
   const t = setup();
   const r = t.run('rollback', { ROLLBACK_VERSION: '1', FAKE_FAIL: 'update-silent' });
