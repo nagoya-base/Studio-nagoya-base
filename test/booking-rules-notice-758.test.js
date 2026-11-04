@@ -32,3 +32,11 @@ test('#758: お知らせに告知日2026.11.04の項目があり、規約表記�
     assert.ok(/30-minute|30分/.test(t) && /60 minutes|60分/.test(t));
   });
 });
+
+test('#758: 英語規約(legal/en.html)に予約ルール改定の告知（告知日・施行日時JST・復活含む30分・当日延長・従前条件・自動変更なし）がある', function () {
+  var t = read('legal/en.html');
+  assert.ok(t.indexOf('id="booking-rules-notice"') !== -1);
+  ['November 4, 2026', '00:00 (midnight) JST on November 19, 2026', '30-minute gap', 'restoration of expired bookings', 'exactly 30 minutes is allowed',
+    '60 minutes remain before the end', 'start time and only lengthens the end time', 'current conditions apply until the effective date',
+    'not moved or cancelled automatically', 'unchanged', 'separate from the terms wording update effective November 16'].forEach(function (w) { assert.ok(t.indexOf(w) !== -1, w); });
+});
