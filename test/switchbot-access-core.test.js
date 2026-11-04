@@ -1341,3 +1341,49 @@ test('#763 発行: 遅着で UNKNOWN の間は旧改訂/取消の処理が通常
   assert.strictEqual(delCalls(w), 0);
   assert.deepStrictEqual(w.delivered, []);
 });
+
+test('#763 発行: Webhook未着＋sentAtSec欠落/非数値は、期限前後を問わず UNKNOWN＋通知（無期限滞留しない）、再送・再発行・配送なし', function () {
+  [['欠落', function (r) { delete r.sentAtSec; }], ['文字列', function (r) { r.sentAtSec = 'abc'; }],
+   ['null', function (r) { r.sentAtSec = null; }], ['数値文字列', function (r) { r.sentAtSec = String(r.sentAtSec); }]].forEach(function (c) {
+    var w = world(); var e = w.engine();
+    e.sync(booking());
+    setRec(w, c[1]);
+    e.sync(booking());                               // 期限前でも停止
+    assert.strictEqual(w.records()[0].state, S.UNKNOWN, c[0]);
+    assert.strictEqual(w.records()[0].reason, 'SENT_TIME_MISSING', c[0]);
+    assert.ok(w.notes.some(function (n) { return n.code === 'ISSUE_CONFIRM_FAILED'; }), c[0]);
+    w.now += 1000; e.sync(booking()); e.sweep();      // 期限超過後も UNKNOWN のまま
+    assert.strictEqual(w.records()[0].state, S.UNKNOWN, c[0]);
+    assert.strictEqual(creates(w), 1, c[0]);
+    assert.strictEqual(w.records().length, 1, c[0]);
+    assert.deepStrictEqual(w.delivered, [], c[0]);
+  });
+  // Webhook 到着後（success）でも同様に止まる
+  var w2 = world(); var e2 = w2.engine();
+  e2.sync(booking());
+  e2.ingestWebhook(createHook(w2.records()[0]));
+  setRec(w2, function (r) { delete r.sentAtSec; });
+  e2.sync(booking());
+  assert.strictEqual(w2.records()[0].state, S.UNKNOWN);
+});
+
+test('#763 発行: 送信時刻より前に受信したsuccessは keyList 一致でも UNKNOWN、送信時刻ちょうどは採用', function () {
+  var w = world(); var e = w.engine();
+  e.sync(booking());
+  e.ingestWebhook(createHook(w.records()[0]));
+  setEvt(w, function (ev) { ev.receivedAtSec = w.records()[0].sentAtSec - 1; });
+  e.sync(booking());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w.records()[0].reason, 'WEBHOOK_LATE');
+  assert.strictEqual(w.keys[DEV_A].length, 1, 'keyList は一致している');
+  e.sync(booking());
+  assert.strictEqual(creates(w), 1);
+  assert.strictEqual(w.records().length, 1);
+  assert.deepStrictEqual(w.delivered, []);
+
+  var w2 = world(); var e2 = w2.engine();
+  e2.sync(booking());
+  e2.ingestWebhook(createHook(w2.records()[0]));      // 受信=送信と同時刻
+  e2.sync(booking());
+  assert.strictEqual(w2.records()[0].state, S.ISSUED_CONFIRMED);
+});
