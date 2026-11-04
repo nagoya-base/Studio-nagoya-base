@@ -368,6 +368,10 @@ var SwitchBotAccessCore = (function () {
       if (rec.state !== STATE.SENT_WAIT_WEBHOOK && rec.state !== STATE.ACCEPTED_NO_COMMAND_ID) return rec;
       var webhookOk = false;
       if (rec.state === STATE.SENT_WAIT_WEBHOOK) {
+        // 送信時刻が欠落/非数値/非有限の旧・不正レコードは、Webhook の有無に関わらず推測補完せず停止（無期限滞留させない）
+        if (typeof rec.sentAtSec !== 'number' || !isFinite(rec.sentAtSec)) {
+          return stopUnknown(rec, 'ISSUE_CONFIRM_FAILED', 'SENT_TIME_MISSING');
+        }
         var ev = eventFor(rec, 'createKey', rec.commandId);
         if (ev) {
           if (ev.result === 'failed') {
@@ -377,7 +381,19 @@ var SwitchBotAccessCore = (function () {
             deps.secrets.del('SECRET_' + rec.id);
             return rec;
           }
-          if (ev.result === 'success') webhookOk = true;
+          if (ev.result === 'success') {
+            // 結果が食い違う重複は成功根拠にしない（Issue #763）
+            if (ev.conflict) return stopUnknown(rec, 'ISSUE_WEBHOOK_CONFLICT', 'WEBHOOK_CONFLICT');
+            // 到着時刻・送信時刻が欠落/不正、または期限後に到着した成功は採用しない。
+            // 期限内に到着したイベントは、照合ジョブが遅れて実行されても到着時刻を根拠に採用する。
+            // 送信時刻より前に受信したイベントも不正（同一 commandId の古いイベントの誤流用を防ぐ）
+            if (typeof ev.receivedAtSec !== 'number' || !isFinite(ev.receivedAtSec) ||
+                ev.receivedAtSec < rec.sentAtSec ||
+                ev.receivedAtSec - rec.sentAtSec > webhookWaitSec) {
+              return stopUnknown(rec, 'WEBHOOK_TIMEOUT', 'WEBHOOK_LATE');
+            }
+            webhookOk = true;
+          }
         }
         if (!webhookOk) {
           if (deps.nowSec() - rec.sentAtSec > webhookWaitSec) return stopUnknown(rec, 'WEBHOOK_TIMEOUT', 'WEBHOOK_TIMEOUT');
