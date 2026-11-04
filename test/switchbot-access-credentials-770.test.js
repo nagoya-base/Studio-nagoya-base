@@ -220,6 +220,17 @@ test('照合失敗: 書込み後の読戻しが一致しなければ元に戻す
   assert.deepStrictEqual(w.data, {});
 });
 
+test('照合の読戻しが例外でも元に戻す（VERIFY_FAILED、値は返さない）', function () {
+  var w = world({ answers: answers(D) });
+  var armed = false, origSet = w.store.set, origGet = w.store.get;
+  w.store.set = function (k, v) { origSet(k, v); armed = true; };
+  w.store.get = function (k) { if (armed && k === 'SWITCHBOT_TOKEN' && w.data[k] === D[k]) { armed = false; throw new Error('read failed ' + D[k]); } return origGet(k); };
+  var r = run(w);
+  assert.strictEqual(r.code, 'VERIFY_FAILED');
+  assert.deepStrictEqual(w.data, {});
+  noSecretIn(r, D);
+});
+
 test('入力途中の取消・ダイアログ不可: 何も書かない', function () {
   var w = world({ answers: [D.SWITCHBOT_TOKEN] }); // 2件目で取消(null)
   assert.strictEqual(run(w).code, 'CANCELLED');

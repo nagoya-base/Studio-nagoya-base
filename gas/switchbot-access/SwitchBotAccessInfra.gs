@@ -266,7 +266,8 @@ var SwitchBotAccessInfra = (function () {
       rollback();
       return result(false, 'WRITE_FAILED');
     }
-    var verified = names.every(function (n) { return props.get(n) === inputs[n]; });
+    var verified = false;
+    try { verified = names.every(function (n) { return props.get(n) === inputs[n]; }); } catch (e) { verified = false; }
     if (!verified) { rollback(); return result(false, 'VERIFY_FAILED'); }
     return result(true, 'OK', { changed: names });
   }
