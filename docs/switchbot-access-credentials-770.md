@@ -120,6 +120,8 @@ $env:SBA_API_DEPLOYMENT_ID = "<API実行可能DeploymentのID>"; node scripts/sw
 
 ## 5. 部分設定・入力不備の復旧
 
+- **`WRITE_FAILED` / `VERIFY_FAILED` / `UNEXPECTED_ERROR` の直後は、必ず状態を再確認する**: ロールバック自体が失敗した場合、コードだけでは元の状態を保証できない。直後にCLIの `--dry-run`（または GASエディタの `accessCheckSetup`）で3件の `SET`/`MISSING`/`UNKNOWN` を確認し、**不明（`UNKNOWN`・想定と異なる状態）なら操作を停止**して、原因の確認とSwitchBot側のToken/Secret再発行の要否判断（必要なら無効化してから初回登録をやり直す）を行う。
+
 - `INPUT_INVALID` / `INPUT_DUPLICATE` / `CANCELLED`: 何も書かれていない。もう一度CLIを実行する。
 - 一部だけ `SET`（過去の手動設定・`UNEXPECTED_ERROR` 等）: CLIを（`--replace` なしで）実行すると**未設定の項目だけ**入力を求め、設定済みは変更しない。
 - 全項目が `SET` で誤りがある場合は §6 の差し替えを使う。
