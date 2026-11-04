@@ -86,7 +86,7 @@ mainへマージ（対象パス変更時に自動）、またはActions > "Deplo
 
 ### 6. ロールバック
 1. Actions > "Deploy SwitchBot access GAS" > Run workflow（`main`）で`rollback_version`に**既存の版番号**、`rollback_compat_confirmed`をチェック。チェックは、戻し先の版のコードが現在の本番状態（状態ストア・User/Script Properties・台帳schema・既存キー）と互換であることを運営が確認した証。互換でない旧版へは戻さない。
-2. 更新前に、deployと同じ読取りのみの対象照合（`clasp pull`で鍵管理GASであることを確認。Booking／検証／Surveyのプロジェクトなら停止）を行う。通れば同じ`DEPLOYMENT_ID`を既存版へ`update-deployment -V`で戻すだけ（Deploymentの削除・再作成なし）。状態ストア・Properties・既存キー・Webhook登録は削除／上書きしない。ロールバックを契機にcreateKey/deleteKeyを再送しない。
+2. 更新前に、deployと同じ読取りのみの対象照合（`clasp pull`で鍵管理GASであることを確認。Booking／検証／Surveyのプロジェクトなら停止、manifestのwebapp設定の不一致・manifest欠落も停止）を行う。通れば同じ`DEPLOYMENT_ID`を既存版へ`update-deployment -V`で戻すだけ（Deploymentの削除・再作成なし）。状態ストア・Properties・既存キー・Webhook登録は削除／上書きしない。ロールバックを契機にcreateKey/deleteKeyを再送しない。
 3. Step Summaryに「更新前の版→戻し先の版」と戻し先の説明（非秘密）、互換性確認の有無、SHAが残る。`clasp push`済みの編集用ソース（HEAD）と公開版は別管理。必要ならmainを`git revert`し、レビュー・CI後に整合させる（revertのマージで再デプロイが走るため、変数を一時的に削除して無効化してから行うこと）。
 4. `UNKNOWN_STATE`の時は再実行せず、`list-versions`と「デプロイを管理」で現状を確認してから本手順へ。
 

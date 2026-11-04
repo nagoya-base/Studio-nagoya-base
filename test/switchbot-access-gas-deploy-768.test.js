@@ -399,6 +399,21 @@ test('rollback: verifies the target project first; Booking/verify/other projects
   }
 });
 
+test('rollback: a remote manifest with different web app settings is refused before any update', () => {
+  const files = oldFiles();
+  const m = JSON.parse(files['appsscript.json']); m.webapp.access = 'MYSELF';
+  files['appsscript.json'] = JSON.stringify(m);
+  const t = setup({ files });
+  const r = t.run('rollback', { ROLLBACK_VERSION: '1' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /MANIFEST_WEBAPP_MISMATCH/);
+  assert.ok(!t.calls().includes('update-deployment'));
+  const t2 = setup({ files: { 'SwitchBotAccessApp.gs': '', 'SwitchBotAccessCore.gs': '' } });
+  const r2 = t2.run('rollback', { ROLLBACK_VERSION: '1' });
+  assert.notEqual(r2.status, 0, 'missing manifest fails closed');
+  assert.ok(!t2.calls().includes('update-deployment'));
+});
+
 test('rollback: a failed update that did not apply is reported as failure', () => {
   const t = setup();
   const r = t.run('rollback', { ROLLBACK_VERSION: '1', FAKE_FAIL: 'update-silent' });

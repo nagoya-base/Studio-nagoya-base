@@ -89,6 +89,10 @@ clasp_run "$remote_dir" "$out/pull.out" pull || fail "clasp pull failed; nothing
 status="$(node "$lib" check-remote "$remote_dir" || true)"
 [[ "$status" == "OK" ]] || fail "Target project mismatch: $status. Nothing was changed."
 [[ -f "$remote_dir/appsscript.json" ]] || fail "Target project returned no manifest; nothing was changed."
+# manifestのwebapp設定（実行ユーザー・アクセス権）が鍵管理GASの設定と一致すること。rollbackでは新scope検査は行わない。
+node "$prepare" "$bundle_dir" >/dev/null || fail "Bundle assembly failed; nothing was changed."
+status="$(node "$lib" check-manifest "$remote_dir/appsscript.json" "$bundle_dir/appsscript.json" webapp-only || true)"
+[[ "$status" == "OK" ]] || fail "Manifest check failed: $status. Nothing was changed."
 
 if [[ "$mode" == "rollback" ]]; then
   target="${ROLLBACK_VERSION:-}"

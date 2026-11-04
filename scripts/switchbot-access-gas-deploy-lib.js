@@ -79,7 +79,7 @@ function checkRemoteTarget(remoteDir) {
  * - webapp（実行ユーザー・アクセス権）がリモートとリポジトリで一致すること
  * - リポジトリのoauthScopesがリモートに全て含まれること（新scopeは再承認が要るため手動で先に行う）
  */
-function checkManifest(remoteManifestFile, repoManifestFile) {
+function checkManifest(remoteManifestFile, repoManifestFile, webappOnly) {
   let remote; let repo;
   try { remote = readJson(remoteManifestFile); repo = readJson(repoManifestFile); } catch (_) {
     return 'MANIFEST_UNREADABLE';
@@ -87,6 +87,7 @@ function checkManifest(remoteManifestFile, repoManifestFile) {
   const rw = remote.webapp || {};
   const pw = repo.webapp || {};
   if (rw.access !== pw.access || rw.executeAs !== pw.executeAs) return 'MANIFEST_WEBAPP_MISMATCH';
+  if (webappOnly) return 'OK';
   const remoteScopes = new Set(remote.oauthScopes || []);
   if ((repo.oauthScopes || []).some((s) => !remoteScopes.has(s))) return 'MANIFEST_NEW_OAUTH_SCOPE_REQUIRES_MANUAL_APPROVAL';
   return 'OK';
@@ -197,7 +198,7 @@ function main(argv, env) {
     case 'target-paths': process.stdout.write(TARGET_PATHS.join('\n') + '\n'); return 0;
     case 'describe-version': { process.stdout.write(describeVersion(fs.readFileSync(a[0], 'utf8'), a[1]) + '\n'); return 0; }
     case 'check-remote': { const s = checkRemoteTarget(a[0]); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
-    case 'check-manifest': { const s = checkManifest(a[0], a[1]); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
+    case 'check-manifest': { const s = checkManifest(a[0], a[1], a[2] === 'webapp-only'); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
     case 'compare-sources': { const s = compareSources(a[0], a[1]); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
     case 'check-credential': { const s = checkCredential(env.SBA_CLASPRC_JSON || ''); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
     case 'write-config': { // 認証ファイル（0600）と .clasp.json を生成。clasp 3.xの既定は .js 優先のため .gs を明示
