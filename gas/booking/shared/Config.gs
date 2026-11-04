@@ -273,6 +273,16 @@ var BookingConfig = (function () {
     };
   }
 
+  /*
+   * Issue #753: 前日リマインドへ「入室用の暗証番号は、別のメールでお送りします。」を足すかどうか。
+   * Script Property ACCESS_KEY_NOTICE_ENABLED が文字列 'true' のときだけtrue（未設定・他の値はfalse＝文面不変）。
+   * 鍵機能（コアの enabled）とは別の読み取り専用設定で、これをtrueにしても鍵APIは呼ばれない。
+   * 別暗証番号メールが実際に送れる状態（#752/#754の有効化後）になるまでtrueにしないこと。
+   */
+  function isAccessKeyNoticeEnabled() {
+    return PropertiesService.getScriptProperties().getProperty('ACCESS_KEY_NOTICE_ENABLED') === 'true';
+  }
+
   /* Issue #490: 入会Success URL（…/membership/complete.html）から会員資格確認ページ（…/membership/status/）のURLを導出する。 */
   function deriveMembershipStatusUrl_(successUrl) {
     var m = /^(https:\/\/[^?#]*\/)complete\.html(?:[?#].*)?$/.exec(successUrl);
@@ -430,6 +440,7 @@ var BookingConfig = (function () {
     getRateLimitConfig: getRateLimitConfig,
     getMailConfig: getMailConfig,
     getAccessGuideConfig: getAccessGuideConfig,
+    isAccessKeyNoticeEnabled: isAccessKeyNoticeEnabled,
     getStripeConfig: getStripeConfig,
     getStripeWebhookConfig: getStripeWebhookConfig,
     getOptionsConfig: getOptionsConfig

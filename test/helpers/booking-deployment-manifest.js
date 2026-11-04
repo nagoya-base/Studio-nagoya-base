@@ -41,6 +41,8 @@ var BOOKING_ADMIN_FILES = [
   'StripeGateway.gs',
   /* Issue #671: Bookingsヘッダーの唯一の正本。SpreadsheetRepository.gsより前。 */
   'BookingsSchema.gs',
+  /* Issue #753: 鍵連携revisionの判定とスナップショット（純粋ロジック）。Booking.gsに依存し、SpreadsheetRepository.gsより前。 */
+  'AccessKeySnapshot.gs',
   'SpreadsheetRepository.gs',
   /* Issue #423: OptionOrders / OptionEligibilityシートの台帳。Bookings台帳には列を足さない。 */
   'OptionOrderRepository.gs',
@@ -130,6 +132,8 @@ var BOOKING_WEB_APP_FILES = [
   'RateLimiter.gs',
   /* Issue #671: Bookingsヘッダーの唯一の正本。SpreadsheetRepository.gsより前。 */
   'BookingsSchema.gs',
+  /* Issue #753: 鍵連携revisionの判定とスナップショット（純粋ロジック）。Booking.gsに依存し、SpreadsheetRepository.gsより前。 */
+  'AccessKeySnapshot.gs',
   'SpreadsheetRepository.gs',
   'OptionOrderRepository.gs',
   'RecoveryRepository.gs',

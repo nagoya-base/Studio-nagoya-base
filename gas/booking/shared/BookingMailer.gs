@@ -751,7 +751,10 @@ var BookingMailer = (function () {
         var config = ensureMailConfigComplete_();
         var guide = BookingConfig.getAccessGuideConfig();
         ensureAccessGuideComplete_(guide);
-        return BookingMailTemplates.buildReminderMail(record, config, guide, { now: isDateLike_(opts.now) ? opts.now : null });
+        return BookingMailTemplates.buildReminderMail(record, config, guide, {
+          now: isDateLike_(opts.now) ? opts.now : null,
+          separateCodeNotice: BookingConfig.isAccessKeyNoticeEnabled()
+        });
       },
       function () {
         var guide = BookingConfig.getAccessGuideConfig();

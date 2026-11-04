@@ -134,7 +134,9 @@ test('updateBookingCancellationStateAtomic: status/cancelledAt/updatedAtの3列�
   assert.strictEqual(found.record.customerType, 'returning');
 
   var sheet = sandbox.SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Bookings');
-  var lastCall = sheet._setValuesCalls[sheet._setValuesCalls.length - 1];
+  var revisionCol = sandbox.SpreadsheetRepository.HEADERS.indexOf('revision') + 1;
+  var atomicCalls = sheet._setValuesCalls.filter(function (c) { return c.col !== revisionCol; });
+  var lastCall = atomicCalls[atomicCalls.length - 1];
   assert.strictEqual(lastCall.col, 13, 'statusは13列目から始まる（HEADERS_の並び順どおり）');
   assert.strictEqual(lastCall.numCols, 8, 'status(13)〜updatedAt(20)の8列だけを1回で書く');
   assert.strictEqual(lastCall.numRows, 1);

@@ -829,6 +829,11 @@ var BookingMailTemplates = (function () {
       ? (guide.url || Booking.getBrandProfile(record.brand).guideUrl)
       : Booking.getBrandProfile(record.brand).guideUrl;
 
+    /* Issue #753: SNBかつ options.separateCodeNotice===true（Script Property経由）のときだけ一行を足す。
+       鍵の暗証番号そのものはこのメールに載せない（独立GASの別メール。#752）。ブランドが空/不明の旧データは対象外。 */
+    var separateCodeLine = options && options.separateCodeNotice === true && record.brand === 'snb'
+      ? '入室用の暗証番号は、別のメールでお送りします。' : '';
+
     var subject = '【' + brandLabel + '】' + dayWord + 'のご利用案内';
     var body = joinNonEmpty_([
       record.name + ' 様',
@@ -846,6 +851,7 @@ var BookingMailTemplates = (function () {
       guide.entrance ? '入口からのご案内: ' + guide.entrance : '',
       guide.keyboxLocation ? 'キーボックス位置: ' + guide.keyboxLocation : '',
       guide.entryMethod ? '入室方法: ' + guide.entryMethod : '',
+      separateCodeLine,
       secretLine_('キーボックス番号', guide.keyboxNumber),
       secretLine_('解錠コード', guide.unlockCode),
       reminderGuideUrl ? '利用案内ページ: ' + reminderGuideUrl : '',

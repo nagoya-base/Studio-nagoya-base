@@ -433,7 +433,15 @@ var BookingsSchema = (function () {
      *   _data/studio_x_equipment.json の supportBackdrops）。空＝背景の希望なし（旧予約・作品撮りサポート以外もすべて空）。
      *   料金計算用の supportEquipment には混ぜない。背景の選択は金額に影響せず、保存済みの料金・選択・料金世代も変更しない。
      */
-    'supportBackdrop'
+    'supportBackdrop',
+    /*
+     * Issue #753（SwitchBot鍵連携 PR-A）で追加。予約の「鍵に関係する最新状態」の単調増加番号。
+     * 末尾追加のみ（#673: admin-only → migrateBookingsSchema → full）。空欄の既存行は0とみなす。
+     * SpreadsheetRepositoryが、AccessKeySnapshot.KEY_RELEVANT_FIELDSの値が実際に変わる書き込みの
+     * 直後（書き込み後）に+1する。参照・再配信・人数のみの変更では増えない。
+     * 旧コードは末尾の余分な列を無視するため、新旧混在でも壊れない。
+     */
+    'revision'
   ];
 
   return {
