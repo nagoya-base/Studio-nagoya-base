@@ -168,6 +168,30 @@ var SwitchBotAccessInfra = (function () {
     return { ok: true };
   }
 
+  /** 資格情報操作の認可。active/effective の双方が非空で一致しなければ停止（不明は許可しない）。 */
+  function authorizeExecutor(deps) {
+    var idn = null;
+    try { idn = deps.identity ? deps.identity() : null; } catch (e) { idn = null; }
+    var who = authorizeAdmin(idn, deps.adminActors);
+    if (!who.ok) return who;
+    var eff = idn && typeof idn.effectiveEmail === 'string' ? idn.effectiveEmail.trim().toLowerCase() : '';
+    if (!eff) return { ok: false, error: 'IDENTITY_UNAVAILABLE' };
+    if (eff !== idn.email.trim().toLowerCase()) return { ok: false, error: 'ACCOUNT_MISMATCH' };
+    return { ok: true, actor: who.actor };
+  }
+
+  /** 認可と SET/MISSING のみを返す状態確認（入力を要求せず、何も保存しない）。 */
+  function credentialStatus(deps) {
+    var st = {};
+    var gate = authorizeExecutor(deps);
+    CREDENTIAL_NAMES.forEach(function (n) {
+      var v = null;
+      if (gate.ok) { try { v = deps.userProps.get(n); } catch (e) { v = null; } }
+      st[n] = v ? 'SET' : 'MISSING';
+    });
+    return { ok: gate.ok, code: gate.ok ? 'STATUS_OK' : gate.error, status: st, changed: [] };
+  }
+
   /**
    * 実行者本人の User Properties へ資格情報3件だけを登録する。返すのは固定コードと SET/MISSING のみ
    * （入力値・既存値・例外メッセージは返さず、ログにも出さない）。触れるキーは CREDENTIAL_NAMES の3つだけ。
@@ -195,13 +219,9 @@ var SwitchBotAccessInfra = (function () {
       return r;
     }
 
-    // 1) 認可（fail closed）: 許可リストの管理者本人で、かつ実行者=有効ユーザーが一致するときだけ
-    var idn = null;
-    try { idn = deps.identity ? deps.identity() : null; } catch (e) { idn = null; }
-    var who = authorizeAdmin(idn, deps.adminActors);
-    if (!who.ok) return result(false, who.error);
-    var eff = idn && typeof idn.effectiveEmail === 'string' ? idn.effectiveEmail.trim().toLowerCase() : '';
-    if (eff && eff !== idn.email.trim().toLowerCase()) return result(false, 'ACCOUNT_MISMATCH');
+    // 1) 認可（fail closed）: 許可リストの管理者本人で、かつ実行者=有効ユーザーが双方とも取得でき一致するときだけ
+    var gate = authorizeExecutor(deps);
+    if (!gate.ok) return result(false, gate.error);
 
     // 2) 現状に応じた対象の決定
     var before = statusOf();
@@ -1030,7 +1050,7 @@ var SwitchBotAccessInfra = (function () {
     ENVIRONMENT: ENVIRONMENT, PROPERTIES_LIMITS: PROPERTIES_LIMITS, DEFAULTS: DEFAULTS, CATALOG: CATALOG, FREEZE_REASONS: FREEZE_REASONS,
     validateConfig: validateConfig, ensureStoreEnvironment: ensureStoreEnvironment,
     constantTimeEquals: constantTimeEquals, authenticateWebhook: authenticateWebhook, authorizeAdmin: authorizeAdmin,
-    CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials,
+    CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials, credentialStatus: credentialStatus,
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,

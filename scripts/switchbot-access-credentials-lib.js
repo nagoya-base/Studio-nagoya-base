@@ -2,7 +2,8 @@
 
 /*
  * 独立GAS（鍵管理基盤）の資格情報3件を、実行者本人の User Properties へ登録するローカル側ロジック（Issue #770）。
- * Apps Script Execution API（scripts.run）で GAS の accessSetupCredentialsApi を呼ぶ。
+ * Apps Script Execution API（scripts.run。運営者が明示的に作った API実行可能Deployment のIDを指定）で
+ * GAS の accessCredentialStatusApi / accessSetupCredentialsApi を呼ぶ。
  *
  * 秘密の扱い（コードで固定）:
  *  - コマンドライン引数・環境変数では受け取らない（フラグのみ許可。未知の引数は即拒否）。TTYの非表示入力のみ。
@@ -13,6 +14,7 @@
  */
 var fs = require('fs');
 var nodeCrypto = require('crypto');
+var nodePath = require('path');
 
 var NAMES = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'WEBHOOK_SHARED_TOKEN'];
 var CONFIRM_KEY = '__CONFIRM_REPLACE__';
@@ -68,15 +70,14 @@ async function getAccessToken(creds, fetchFn) {
   return body.access_token;
 }
 
-/** scripts.run 呼び出し。失敗はHTTP状態等から固定コードへ変換し、サーバーの本文・メッセージは返さない。 */
-async function callSetup(fetchFn, accessToken, scriptId, request) {
+/** scripts.run 呼び出し（API実行可能Deploymentのデプロイ版を実行）。失敗は固定コードへ変換し、サーバーの本文・メッセージは返さない。 */
+async function callRun(fetchFn, accessToken, deploymentId, fn, parameters) {
   var res;
   try {
-    res = await fetchFn(RUN_URL + encodeURIComponent(scriptId) + ':run', {
+    res = await fetchFn(RUN_URL + encodeURIComponent(deploymentId) + ':run', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
-      // devMode=true: 最新の保存済みコード(HEAD)をオーナーとして実行する。API実行可能Deploymentは作らない。
-      body: JSON.stringify({ function: 'accessSetupCredentialsApi', parameters: [request], devMode: true })
+      body: JSON.stringify({ function: fn, parameters: parameters, devMode: false })
     });
   } catch (e) { throw fail('NETWORK_ERROR'); }
   if (res.status === 401 || res.status === 403) throw fail('API_AUTH_FAILED');
@@ -92,6 +93,9 @@ async function callSetup(fetchFn, accessToken, scriptId, request) {
   return { ok: r.ok, code: r.code, status: status, changed: Array.isArray(r.changed) ? r.changed.filter(function (n) { return NAMES.indexOf(n) !== -1; }) : [], invalid: Array.isArray(r.invalid) ? r.invalid.filter(function (n) { return NAMES.indexOf(n) !== -1; }) : [] };
 }
 
+function callStatus(fetchFn, accessToken, deploymentId) { return callRun(fetchFn, accessToken, deploymentId, 'accessCredentialStatusApi', []); }
+function callSetup(fetchFn, accessToken, deploymentId, request) { return callRun(fetchFn, accessToken, deploymentId, 'accessSetupCredentialsApi', [request]); }
+
 function printResult(out, r) {
   out('result: ' + r.code);
   NAMES.forEach(function (n) { out(n + ': ' + r.status[n]); });
@@ -100,7 +104,7 @@ function printResult(out, r) {
 }
 
 /**
- * deps: argv, env, readFile(path), writeNewFile(path, content)（存在すれば例外・0600）, fetch, ask{ secret(label), visible(label) } (null=取消),
+ * deps: argv, env, homedir, readFile(path), writeNewFile(path, content)（存在すれば例外・0600）, fetch, ask{ secret(label), visible(label) } (null=取消),
  *       isTTY, out(line), err(line), randomToken()
  * 戻り値: 終了コード（0 = 成功）。
  */
@@ -109,17 +113,20 @@ async function main(deps) {
   try {
     if (!deps.isTTY) throw fail('NO_TTY'); // パイプ・リダイレクトからの秘密入力は受け付けない
     var opts = parseArgs(deps.argv);
-    var scriptId = deps.env.SBA_SCRIPT_ID;
-    if (typeof scriptId !== 'string' || !/^[A-Za-z0-9_-]{20,}$/.test(scriptId)) throw fail('SCRIPT_ID_MISSING');
-    var rcPath = deps.env.CLASPRC_PATH || ((deps.env.HOME || '') + '/.clasprc.json');
+    var deploymentId = deps.env.SBA_API_DEPLOYMENT_ID;
+    if (typeof deploymentId !== 'string' || !/^[A-Za-z0-9_-]{20,}$/.test(deploymentId)) throw fail('DEPLOYMENT_ID_MISSING');
+    var rcPath = deps.env.CLASPRC_PATH || nodePath.join(deps.homedir || '', '.clasprc.json'); // Windowsでも os.homedir() を使う
     var rcText;
     try { rcText = deps.readFile(rcPath); } catch (e) { throw fail('CLASPRC_INVALID'); }
     var creds = readClasprc(rcText, 'default');
     var accessToken = await getAccessToken(creds, deps.fetch);
 
-    // 状態確認（値なし・無保存）: 認可・実行者の整合・SET/MISSING を先に得る
-    var probe = await callSetup(deps.fetch, accessToken, scriptId, { mode: opts.mode, dryRun: true, values: {} });
-    if (probe.code !== 'CANCELLED') { printResult(out, probe); return 1; }
+    // 状態確認（入力なし・無保存）: 実GASへの到達・認可・実行者の整合・SET/MISSING を、秘密を聞く前に確認する
+    var probe = await callStatus(deps.fetch, accessToken, deploymentId);
+    if (!probe.ok) { printResult(out, probe); return 1; }
+    if (opts.dryRun) { printResult(out, probe); return 0; } // --dry-run は状態確認のみ（値は一切聞かない）
+    if (opts.mode === 'init' && NAMES.every(function (n) { return probe.status[n] === 'SET'; })) { printResult(out, { code: 'ALREADY_SET', status: probe.status }); return 1; }
+    if (opts.mode === 'replace' && NAMES.every(function (n) { return probe.status[n] === 'MISSING'; })) { printResult(out, { code: 'NOT_INITIALIZED', status: probe.status }); return 1; }
 
     var targets = opts.mode === 'init'
       ? NAMES.filter(function (n) { return probe.status[n] === 'MISSING'; })
@@ -144,7 +151,7 @@ async function main(deps) {
       if (v === null) throw fail('CANCELLED');
       values[n] = v;
     }
-    var result = await callSetup(deps.fetch, accessToken, scriptId, { mode: opts.mode, dryRun: opts.dryRun, values: values });
+    var result = await callSetup(deps.fetch, accessToken, deploymentId, { mode: opts.mode, dryRun: false, values: values });
     printResult(out, result);
     return result.ok ? 0 : 1;
   } catch (e) {
@@ -192,6 +199,6 @@ function newFileWriter(path, content) {
 function randomToken() { return nodeCrypto.randomBytes(32).toString('base64url'); }
 
 module.exports = {
-  NAMES: NAMES, parseArgs: parseArgs, readClasprc: readClasprc, getAccessToken: getAccessToken, callSetup: callSetup,
+  NAMES: NAMES, parseArgs: parseArgs, readClasprc: readClasprc, getAccessToken: getAccessToken, callStatus: callStatus, callSetup: callSetup,
   main: main, createTtyPrompter: createTtyPrompter, newFileWriter: newFileWriter, randomToken: randomToken
 };
