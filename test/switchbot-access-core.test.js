@@ -1116,3 +1116,20 @@ test('#751 別予約・通常キーは削除で影響を受けない', function 
   assert.strictEqual(w.keys[DEV_A].length, 2);
   assert.ok(w.keys[DEV_A].some(function (k) { return k.id === 'NORMAL'; }));
 });
+
+test('#751 commandIdあり: 期限後に到着したsuccess Webhookは採用しない（期限内到着なら後の照合でも採用）', function () {
+  var w = world(); var e = issuedWithDelCmd(w);
+  w.now += 600;                       // 期限(90秒)を大きく超えてから到着
+  e.ingestWebhook(hook(w.records()[0]));
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w.records()[0].reason, 'WEBHOOK_LATE');
+  assert.strictEqual(delCalls(w), 1);
+
+  var w2 = world(); var e2 = issuedWithDelCmd(w2);
+  w2.now += 30;                       // 期限内に到着
+  e2.ingestWebhook(hook(w2.records()[0]));
+  w2.now += 600;                      // 照合ジョブが遅れて実行
+  e2.sync(CANCEL());
+  assert.strictEqual(w2.records()[0].state, S.DELETED_CONFIRMED);
+});

@@ -463,6 +463,10 @@ var SwitchBotAccessCore = (function () {
           if (now - rec.deleteSentAtSec > webhookWaitSec) return stopUnknown(rec, 'WEBHOOK_TIMEOUT', 'WEBHOOK_TIMEOUT');
           return rec; // 未着は期限まで保留（読取も消費しない）
         }
+        // 期限後に届いたイベントは、照合ジョブの実行タイミングによらず採用しない
+        if (typeof ev.receivedAtSec !== 'number' || ev.receivedAtSec - rec.deleteSentAtSec > webhookWaitSec) {
+          return stopUnknown(rec, 'WEBHOOK_TIMEOUT', 'WEBHOOK_LATE');
+        }
         if (ev.conflict) return stopUnknown(rec, 'DELETE_WEBHOOK_CONFLICT', 'WEBHOOK_CONFLICT');
         if (ev.result !== 'success') return stopUnknown(rec, 'DELETE_WEBHOOK_FAILED', ev.result === 'failed' ? 'WEBHOOK_FAILED' : 'WEBHOOK_NOT_SUCCESS');
         webhookOk = true;
