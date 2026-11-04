@@ -811,3 +811,62 @@ test('status/inventory: 件数・容量・監視情報のみ（秘密・完全ID
   var dump = JSON.stringify(st) + JSON.stringify(inv);
   assert.ok(!dump.includes(H.DEV) && !dump.includes(w.createdPasswords[0]) && !/@/.test(dump));
 });
+
+// ================================================================ レビュー指摘（Codex P2）の回帰
+
+test('未送信(PLANNED)の再開も発行ゲートを通る（容量が変わっていれば送信しない）', function () {
+  var w = H.createWorld();
+  var rt = w.runtime();
+  w.records = [H.record()];
+  rt.syncCycle(); w.advance(300);
+  w.storeFail = function (k, v) { return k.indexOf('OP_') === 0 && /"state":"SENDING"/.test(v); };
+  assert.strictEqual(rt.syncCycle().error, 'SYNC_ERROR');
+  assert.strictEqual(onlyOp(w).state, S.PLANNED);
+  w.storeFail = null;
+  w.preload(H.DEV, 80); // 計画後に容量が閾値へ到達
+  w.advance(300);
+  var r = rt.syncCycle();
+  assert.strictEqual(w.callCount('createKey'), 0, '再開でも送信しない');
+  assert.deepStrictEqual(Array.from(r.gateStops), ['CAPACITY_REACHED']);
+  assert.strictEqual(onlyOp(w).state, S.PLANNED, '未送信のまま保持');
+  // 容量が戻れば再開して1回だけ発行
+  w.keys[H.DEV] = [];
+  w.advance(300); rt.syncCycle();
+  assert.strictEqual(w.callCount('createKey'), 1);
+});
+
+test('管理者の照合は、退避済みの期限内Webhookを先に取り込む（OFFでもUNKNOWNへ誤って落とさない）', function () {
+  var w = H.createWorld();
+  var rt = w.runtime();
+  w.records = [H.record()];
+  rt.syncCycle(); w.advance(300); rt.syncCycle();
+  var op = onlyOp(w);
+  w.advance(10);
+  w.lockBusy = true;
+  rt.handleWebhook(H.webhook({ commandId: op.commandId }), H.TOKEN, H.TOKEN);
+  w.lockBusy = false;
+  w.advance(290);
+  var off = w.runtime({ enabled: false });
+  var r = off.admin('reconcile', { recId: op.id });
+  assert.deepStrictEqual({ ok: r.ok, state: r.state }, { ok: true, state: S.ISSUED_CONFIRMED });
+  assert.strictEqual(w.store.keys().filter(function (k) { return k.indexOf('INBOX_') === 0; }).length, 0);
+});
+
+test('受信箱でも食い違う結果を保持し、コアの矛盾検知で UNKNOWN になる（ロック有無で結果が変わらない）', function () {
+  var w = H.createWorld();
+  var rt = w.runtime();
+  w.records = [H.record()];
+  rt.syncCycle(); w.advance(300); rt.syncCycle();
+  var op = onlyOp(w);
+  w.advance(5);
+  w.lockBusy = true;
+  rt.handleWebhook(H.webhook({ commandId: op.commandId, result: 'success' }), H.TOKEN, H.TOKEN);
+  w.advance(1);
+  rt.handleWebhook(H.webhook({ commandId: op.commandId, result: 'failed' }), H.TOKEN, H.TOKEN);
+  rt.handleWebhook(H.webhook({ commandId: op.commandId, result: 'failed' }), H.TOKEN, H.TOKEN); // 同一結果の重複は1件
+  assert.strictEqual(w.store.keys().filter(function (k) { return k.indexOf('INBOX_') === 0; }).length, 2);
+  w.lockBusy = false;
+  w.advance(294);
+  rt.syncCycle();
+  assert.strictEqual(onlyOp(w).state, S.UNKNOWN);
+});

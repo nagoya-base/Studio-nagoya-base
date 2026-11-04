@@ -689,7 +689,7 @@ var SwitchBotAccessInfra = (function () {
       // ロック取得不能: 同じ認証・対象検証を満たした最小項目のみ受信箱へ（単一キー書込み。上限あり）
       var n = deps.store.keys().filter(function (k) { return k.indexOf('INBOX_') === 0; }).length;
       if (n >= ic.inboxMax) { infraAlert('WEBHOOK_INBOX_FULL', null, null, null); return { accepted: false, reason: 'INBOX_FULL' }; }
-      var ik = 'INBOX_' + min.context.deviceMac + '_' + min.context.eventName + '_' + min.context.commandId;
+      var ik = 'INBOX_' + min.context.deviceMac + '_' + min.context.eventName + '_' + min.context.commandId + '_' + min.context.result; // 結果ごとに保持（食い違いをコアの矛盾検知へ渡す）
       if (deps.store.get(ik)) return { accepted: true, queued: true, duplicate: true };
       try { deps.store.set(ik, JSON.stringify({ at: deps.nowSec(), payload: min })); } catch (e) { return { accepted: false, reason: 'STORE_FAILED' }; }
       return { accepted: true, queued: true };
@@ -699,9 +699,15 @@ var SwitchBotAccessInfra = (function () {
     function drainInbox() {
       var now = deps.nowSec();
       var ops = openOps();
+      var entries = [];
       deps.store.keys().filter(function (k) { return k.indexOf('INBOX_') === 0; }).forEach(function (k) {
         var e = safeParse(deps.store.get(k));
         if (!e || typeof e.at !== 'number' || now - e.at > ic.inboxTtlSec) { deps.store.del(k); return; }
+        entries.push({ k: k, e: e });
+      });
+      entries.sort(function (x, y) { return x.e.at - y.e.at; }); // 到着順に渡す（先着維持・後続の食い違いは矛盾印）
+      entries.forEach(function (it) {
+        var k = it.k, e = it.e;
         var c = correlateWebhook(e.payload, keypadIds, ops);
         if (!c.accept) return;
         var r = engine.ingestWebhook(c.minimized);
@@ -845,6 +851,7 @@ var SwitchBotAccessInfra = (function () {
       var out = runLocked('ADMIN', ic.lockWaitMs, function () {
         // 変更系は監査の事前記録に失敗したら実行しない
         var mutating = action === 'reconcile' || action === 'resolveUnknown' || action === 'delete';
+        if (action !== 'status' && action !== 'inventory') drainInbox(); // 期限内に退避された根拠を、管理者の照合前に反映する
         if (mutating && !auditAdmin(who.actor, action, recId, 'ATTEMPT')) return { ok: false, error: 'AUDIT_UNAVAILABLE' };
         var r;
         if (action === 'status') r = statusLocked();

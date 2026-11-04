@@ -523,6 +523,15 @@ var SwitchBotAccessCore = (function () {
       return idx.ops.map(function (id) { return load(recKey(id)); }).filter(Boolean);
     }
 
+    /** 注入された発行ゲート。未注入なら通す。ゲート自体の失敗は安全停止側。 */
+    function checkIssueGate(booking, elig) {
+      if (typeof deps.issueGate !== 'function') return { ok: true };
+      var gate;
+      try { gate = deps.issueGate({ deviceId: elig.deviceId, bookingId: booking.bookingId, revision: booking.revision }); }
+      catch (e) { return { ok: false, code: 'ISSUE_GATE_ERROR' }; }
+      return gate && gate.ok === true ? { ok: true } : { ok: false, code: (gate && gate.code) || 'ISSUE_GATE_BLOCKED' };
+    }
+
     // ---- 同期（予約イベント／ジョブ再実行のエントリ） ----
     /**
      * 予約の最新スナップショットを渡して呼ぶ。何度呼んでも冪等。
@@ -561,6 +570,9 @@ var SwitchBotAccessCore = (function () {
             out.actions.push('UNKNOWN:' + r.id);
           } else if (r.state === STATE.PLANNED) {
             if (desired && r.revision === booking.revision && sameWindow(r, elig)) {
+              // 再開も新規発行と同じゲートを通す（容量・保存状況は計画時から変わり得る）。止まる間は未送信のまま保持
+              var g = checkIssueGate(booking, elig);
+              if (!g.ok) { out.skipped = g.code; out.gateStop = g.code; out.actions.push('GATE_HOLD:' + r.id); return; }
               executeIssue(r); out.actions.push('RESUME_ISSUE:' + r.id); // 未送信が確実かつ現在も有効
             } else {
               // 現在の予約では不要になった未送信の計画は、createKey を呼ばずに破棄する
@@ -603,16 +615,8 @@ var SwitchBotAccessCore = (function () {
         var REISSUABLE = [STATE.ABANDONED, STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT];
         if (same.some(function (r) { return REISSUABLE.indexOf(r.state) === -1; })) { out.skipped = out.skipped || 'ALREADY_PLANNED'; return; }
         // 新規発行直前の注入ゲート（#754: Keypad 容量・保存容量）。削除・照合は止めない。
-        if (typeof deps.issueGate === 'function') {
-          var gate;
-          try { gate = deps.issueGate({ deviceId: elig.deviceId, bookingId: booking.bookingId, revision: booking.revision }); }
-          catch (e) { gate = { ok: false, code: 'ISSUE_GATE_ERROR' }; } // ゲート自体の失敗は安全停止側
-          if (!gate || gate.ok !== true) {
-            out.skipped = (gate && gate.code) || 'ISSUE_GATE_BLOCKED';
-            out.gateStop = out.skipped;
-            return;
-          }
-        }
+        var gate = checkIssueGate(booking, elig);
+        if (!gate.ok) { out.skipped = gate.code; out.gateStop = gate.code; return; }
         startIssue(booking, elig);
         out.actions.push('ISSUE');
       });
