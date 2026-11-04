@@ -481,8 +481,9 @@ var SwitchBotAccessCore = (function () {
           if (now - rec.deleteSentAtSec > webhookWaitSec) return stopUnknown(rec, 'WEBHOOK_TIMEOUT', 'WEBHOOK_TIMEOUT');
           return rec; // 未着は期限まで保留（読取も消費しない）
         }
-        // 期限後に届いたイベントは、照合ジョブの実行タイミングによらず採用しない
-        if (typeof ev.receivedAtSec !== 'number' || ev.receivedAtSec - rec.deleteSentAtSec > webhookWaitSec) {
+        // 期限後に届いたイベント、および削除送信より前に受信した古いイベント（commandId 再利用・残存イベントの誤流用）は採用しない
+        if (typeof ev.receivedAtSec !== 'number' || ev.receivedAtSec < rec.deleteSentAtSec ||
+            ev.receivedAtSec - rec.deleteSentAtSec > webhookWaitSec) {
           return stopUnknown(rec, 'WEBHOOK_TIMEOUT', 'WEBHOOK_LATE');
         }
         if (ev.conflict) return stopUnknown(rec, 'DELETE_WEBHOOK_CONFLICT', 'WEBHOOK_CONFLICT');
@@ -546,6 +547,7 @@ var SwitchBotAccessCore = (function () {
           startSec: elig.eligible ? elig.startSec : null, endSec: elig.eligible ? elig.endSec : null,
           deviceId: elig.eligible ? elig.deviceId : null
         };
+        idx.touchedAt = deps.nowSec(); // 索引の保持期限（#754）。未解決 OP がある間は回収側が保護する
         save(bkKey(booking.bookingId), idx);
 
         var desired = elig.eligible && !cancelledNow;
@@ -600,6 +602,17 @@ var SwitchBotAccessCore = (function () {
         // 削除済み/放棄済みの過去 record は再発行を妨げない（期間 A→B→A の復元）。未完了・FAILED・期限切れは妨げる。
         var REISSUABLE = [STATE.ABANDONED, STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT];
         if (same.some(function (r) { return REISSUABLE.indexOf(r.state) === -1; })) { out.skipped = out.skipped || 'ALREADY_PLANNED'; return; }
+        // 新規発行直前の注入ゲート（#754: Keypad 容量・保存容量）。削除・照合は止めない。
+        if (typeof deps.issueGate === 'function') {
+          var gate;
+          try { gate = deps.issueGate({ deviceId: elig.deviceId, bookingId: booking.bookingId, revision: booking.revision }); }
+          catch (e) { gate = { ok: false, code: 'ISSUE_GATE_ERROR' }; } // ゲート自体の失敗は安全停止側
+          if (!gate || gate.ok !== true) {
+            out.skipped = (gate && gate.code) || 'ISSUE_GATE_BLOCKED';
+            out.gateStop = out.skipped;
+            return;
+          }
+        }
         startIssue(booking, elig);
         out.actions.push('ISSUE');
       });
