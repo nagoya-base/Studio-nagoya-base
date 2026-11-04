@@ -133,7 +133,7 @@ var BookingConfig = (function () {
       closeTime: readProperty_('CLOSE_TIME'),
       minBookingMinutes: readIntegerProperty_('MIN_BOOKING_MINUTES'),
       bufferMinutes: effectiveBufferMinutes_(now),
-      slotStepMinutes: readIntegerProperty_('SLOT_STEP_MINUTES')
+      slotStepMinutes: effectiveSlotStepMinutes_(now)
     };
   }
 
@@ -162,10 +162,10 @@ var BookingConfig = (function () {
     return true;
   }
 
-  function readEffectiveAtMillis_() {
+  function readEffectiveAtMillis_(propertyName) {
     var raw;
     try {
-      raw = PropertiesService.getScriptProperties().getProperty(BOOKING_RULES_EFFECTIVE_AT_PROPERTY);
+      raw = PropertiesService.getScriptProperties().getProperty(propertyName || BOOKING_RULES_EFFECTIVE_AT_PROPERTY);
     } catch (error) {
       return { state: 'INVALID', millis: NaN };
     }
@@ -192,6 +192,33 @@ var BookingConfig = (function () {
     var effective = readEffectiveAtMillis_();
     if (effective.state !== 'SET') return { state: effective.state, effective: false };
     return { state: toMillis_(now) >= effective.millis ? 'EFFECTIVE' : 'PENDING', effective: toMillis_(now) >= effective.millis, effectiveAtMillis: effective.millis };
+  }
+
+  /*
+   * Issue #758 追加決定: 予約開始時刻の候補を毎時00分・30分にする（SLOT_STEP_MINUTES相当を30に固定）。
+   * 予約間バッファー30分とは**別の施行日時**（Script Property BOOKING_SLOT_STEP_2026_11_EFFECTIVE_AT）で切り替える。
+   * 開始候補の告知が間に合わない場合に、バッファー30分・延長締切の施行日を動かさずに、こちらだけ延期できるようにするため。
+   * 書式・未設定/不正値の扱い（従来の刻みを維持）・判定時刻（操作時のサーバー時刻）はBOOKING_RULES_2026_11_EFFECTIVE_ATと同じ。
+   * SLOT_STEP_MINUTESのコード既定値（15）は変更しない。施行後はSLOT_STEP_MINUTESの値に関わらず30分刻みに固定する。
+   * 利用時間（1時間単位）・料金・延長単位は変えない。
+   */
+  var SLOT_STEP_EFFECTIVE_AT_PROPERTY = 'BOOKING_SLOT_STEP_2026_11_EFFECTIVE_AT';
+  var SLOT_STEP_RULES_MINUTES = 30;
+
+  function isSlotStepRulesEffective(now) {
+    var effective = readEffectiveAtMillis_(SLOT_STEP_EFFECTIVE_AT_PROPERTY);
+    return effective.state === 'SET' && toMillis_(now) >= effective.millis;
+  }
+
+  function getSlotStepRulesStatus(now) {
+    var effective = readEffectiveAtMillis_(SLOT_STEP_EFFECTIVE_AT_PROPERTY);
+    if (effective.state !== 'SET') return { state: effective.state, effective: false };
+    var on = toMillis_(now) >= effective.millis;
+    return { state: on ? 'EFFECTIVE' : 'PENDING', effective: on, effectiveAtMillis: effective.millis };
+  }
+
+  function effectiveSlotStepMinutes_(now) {
+    return isSlotStepRulesEffective(now) ? SLOT_STEP_RULES_MINUTES : readIntegerProperty_('SLOT_STEP_MINUTES');
   }
 
   function effectiveBufferMinutes_(now) {
@@ -387,6 +414,10 @@ var BookingConfig = (function () {
     getAvailabilityConfig: getAvailabilityConfig,
     isBookingRulesEffective: isBookingRulesEffective,
     getBookingRulesStatus: getBookingRulesStatus,
+    isSlotStepRulesEffective: isSlotStepRulesEffective,
+    getSlotStepRulesStatus: getSlotStepRulesStatus,
+    BOOKING_SLOT_STEP_EFFECTIVE_AT_PROPERTY: SLOT_STEP_EFFECTIVE_AT_PROPERTY,
+    BOOKING_SLOT_STEP_RULES_MINUTES: SLOT_STEP_RULES_MINUTES,
     BOOKING_RULES_EFFECTIVE_AT_PROPERTY: BOOKING_RULES_EFFECTIVE_AT_PROPERTY,
     BOOKING_RULES_BUFFER_MINUTES: BOOKING_RULES_BUFFER_MINUTES,
     BOOKING_RULES_EXTENSION_DEADLINE_MINUTES: BOOKING_RULES_EXTENSION_DEADLINE_MINUTES,

@@ -142,14 +142,21 @@ var BookingReschedule = (function () {
     var validation = BookingAvailability.validateInput(date, duration, config);
     if (validation) return { success: false, error: validation };
     if (startMinutes < BookingAvailability.parseTimeToMinutes(config.openTime) ||
-        endMinutes > BookingAvailability.parseTimeToMinutes(config.closeTime) ||
-        (startMinutes - BookingAvailability.parseTimeToMinutes(config.openTime)) % config.slotStepMinutes !== 0) {
+        endMinutes > BookingAvailability.parseTimeToMinutes(config.closeTime)) {
       return error_('OUTSIDE_HOURS', '営業時間外、または開始時刻が予約刻みに合っていません。');
     }
     var startAt = CalendarRepository.parseDateTime(date, startTime, config.timezone);
     var endAt = CalendarRepository.parseDateTime(date, endTime, config.timezone);
     if (!isDate_(startAt) || !isDate_(endAt) || endAt.getTime() - startAt.getTime() !== duration * 60000) {
       return error_('INVALID_DATE', '日時を解釈できません。');
+    }
+    /* 開始時刻の刻み。Issue #758追加決定: 開始候補の30分刻み（BOOKING_SLOT_STEP_2026_11_EFFECTIVE_AT以降）の施行後も、
+       既存の15分/45分開始の確定予約で「開始時刻を維持する」変更（当日延長・短縮）は刻み違反として拒否しない（経過措置）。
+       開始時刻を変える変更は、施行前後とも現行の刻み（施行後は00分/30分）のみ。施行前は従来どおり常に刻みを検証する。 */
+    var keepsLegacyStart = BookingConfig.isSlotStepRulesEffective(now) && startAt.getTime() === record.startAt.getTime();
+    if (!keepsLegacyStart &&
+        (startMinutes - BookingAvailability.parseTimeToMinutes(config.openTime)) % config.slotStepMinutes !== 0) {
+      return error_('OUTSIDE_HOURS', '営業時間外、または開始時刻が予約刻みに合っていません。');
     }
     /* Issue #711: 利用開始後の当日延長（開始時刻を変えず、終了だけを元より未来へ延ばす）は、
        既存予約の開始時刻が現在時刻より前であることだけを理由に拒否しない。開始時刻や日付の
