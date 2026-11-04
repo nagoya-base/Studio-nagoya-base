@@ -1,5 +1,5 @@
 /*
- * Issue #770: 独立GASの資格情報3件（User Properties）初期登録のテスト。
+ * Issue #770: 独立GASの資格情報3件（User Properties）初期登録のテスト（GAS側ロジック・Execution API入口・ローカルCLI）。
  * 実GAS・実API・実秘密には接続しない。値はすべてテスト内のダミー。
  */
 'use strict';
@@ -240,16 +240,15 @@ test('入力途中の取消・ダイアログ不可: 何も書かない', functi
   assert.deepStrictEqual(w2.data, {});
 });
 
-// ================================================================ GASシェル（配布物をvmで実行）
+// ================================================================ GAS入口（accessSetupCredentialsApi）
 
 function loadShell(over) {
   over = over || {};
   var out = fs.mkdtempSync(path.join(os.tmpdir(), 'sba770-'));
   prepare.prepareProject(out);
-  var env = { script: Object.assign({ ACCESS_ADMIN_ACTORS: JSON.stringify({ 'owner@example.test': 'ADMIN-1' }), ACCESS_ENABLED: undefined }, over.script || {}),
-    user: Object.assign({}, over.user || {}), logs: [], fetches: 0, mails: 0, triggers: 0, boxes: [], scriptWrites: 0,
-    answers: (over.answers || []).slice(), active: over.active || ADMIN, effective: over.effective || ADMIN, interactive: over.interactive !== false };
-  Object.keys(env.script).forEach(function (k) { if (env.script[k] === undefined) delete env.script[k]; });
+  var env = { script: Object.assign({ ACCESS_ADMIN_ACTORS: JSON.stringify({ 'owner@example.test': 'ADMIN-1' }) }, over.script || {}),
+    user: Object.assign({}, over.user || {}), logs: [], fetches: 0, mails: 0, triggers: 0, scriptWrites: 0,
+    active: over.active || ADMIN, effective: over.effective || ADMIN };
   function props(m, isScript) {
     return { getProperty: function (k) { return m[k] === undefined ? null : m[k]; },
       setProperty: function (k, v) { if (isScript) env.scriptWrites++; m[k] = String(v); },
@@ -259,11 +258,6 @@ function loadShell(over) {
     console: console, Date: Date, Math: Math, JSON: JSON,
     PropertiesService: { getScriptProperties: function () { return props(env.script, true); }, getUserProperties: function () { return props(env.user, false); } },
     Session: { getActiveUser: function () { return { getEmail: function () { return env.active; } }; }, getEffectiveUser: function () { return { getEmail: function () { return env.effective; } }; } },
-    Browser: { Buttons: { OK_CANCEL: 'OK_CANCEL' }, inputBox: function (label) {
-      env.boxes.push(label);
-      if (!env.interactive) throw new Error('Browser.inputBox is not available in this context');
-      return env.answers.length ? env.answers.shift() : 'cancel';
-    } },
     Logger: { log: function (m) { env.logs.push(String(m)); } },
     UrlFetchApp: { fetch: function () { env.fetches++; throw new Error('must not fetch'); } },
     MailApp: { sendEmail: function () { env.mails++; } },
@@ -277,63 +271,222 @@ function loadShell(over) {
   env.ctx = ctx;
   return env;
 }
+function plain(x) { return JSON.parse(JSON.stringify(x)); }
 
-test('シェル: 初回登録→accessCheckSetupで3件SET。Script Properties・トリガー・外部通信・メールに触れず、ログに秘密なし', function () {
-  var env = loadShell({ answers: answers(D) });
-  var r = env.ctx.accessSetupCredentials();
+test('GAS入口: 登録→accessCheckSetupで3件SET。Script Properties・トリガー・外部通信・メールに触れず、ログ/戻り値に秘密なし', function () {
+  var env = loadShell();
+  var r = plain(env.ctx.accessSetupCredentialsApi({ mode: 'init', dryRun: false, values: D }));
   assert.strictEqual(r.code, 'OK');
   NAMES.forEach(function (n) { assert.strictEqual(env.user[n], D[n]); });
   assert.strictEqual(env.scriptWrites, 0);
   assert.deepStrictEqual([env.fetches, env.mails, env.triggers], [0, 0, 0]);
-  var st = env.ctx.accessCheckSetup();
+  var st = plain(env.ctx.accessCheckSetup());
   NAMES.forEach(function (n) { assert.strictEqual(st[n], 'SET'); });
   assert.strictEqual(st.ACCESS_ENABLED, 'OFF');
   noSecretIn(env.logs.join('\n'), D);
-  noSecretIn(JSON.stringify(r), D);
-  env.boxes.forEach(function (b) { noSecretIn(b, D); });
-  assert.ok(!('SECRET_' in env.user));
+  noSecretIn(r, D);
   assert.deepStrictEqual(Object.keys(env.user).sort(), NAMES.slice().sort());
 });
 
-test('シェル: ダイアログの取消(文字列cancel)は取消扱い。誤アカウントは入力画面を出さない', function () {
-  var env = loadShell({ answers: [] });
-  assert.strictEqual(env.ctx.accessSetupCredentials().code, 'CANCELLED');
-  assert.deepStrictEqual(env.user, {});
-  var wrong = loadShell({ active: 'other@example.test', effective: 'other@example.test', answers: answers(D) });
-  assert.strictEqual(wrong.ctx.accessSetupCredentials().code, 'NOT_AUTHORIZED');
-  assert.deepStrictEqual(wrong.boxes, []);
-  assert.deepStrictEqual(wrong.user, {});
+test('GAS入口: 値なしの呼び出しは無保存で状態と認可結果だけ返す（CLIの状態確認）', function () {
+  var env = loadShell({ user: { SWITCHBOT_TOKEN: D.SWITCHBOT_TOKEN } });
+  var r = plain(env.ctx.accessSetupCredentialsApi({ mode: 'init', dryRun: true, values: {} }));
+  assert.strictEqual(r.code, 'CANCELLED');
+  assert.deepStrictEqual(r.status, { SWITCHBOT_TOKEN: 'SET', SWITCHBOT_SECRET: 'MISSING', WEBHOOK_SHARED_TOKEN: 'MISSING' });
+  assert.deepStrictEqual(Object.keys(env.user), ['SWITCHBOT_TOKEN']);
+  var bad = loadShell({ active: 'other@example.test', effective: 'other@example.test' });
+  assert.strictEqual(plain(bad.ctx.accessSetupCredentialsApi({ mode: 'init', dryRun: true, values: {} })).code, 'NOT_AUTHORIZED');
+  assert.strictEqual(plain(bad.ctx.accessSetupCredentialsApi(undefined)).ok, false);
 });
 
-test('シェル: ダイアログ不可（トリガー等の非対話実行）は PROMPT_UNAVAILABLE で何も書かず、未知の例外も固定コード', function () {
-  var env = loadShell({ interactive: false, answers: answers(D) });
-  assert.strictEqual(env.ctx.accessSetupCredentials().code, 'PROMPT_UNAVAILABLE');
-  assert.deepStrictEqual(env.user, {});
-  var broken = loadShell({ answers: answers(D) });
+test('GAS入口: 誤アカウントは書かない／想定外例外は固定コードで値を出さない／replaceは確認語必須', function () {
+  var wrong = loadShell({ active: 'other@example.test', effective: 'other@example.test' });
+  assert.strictEqual(plain(wrong.ctx.accessSetupCredentialsApi({ mode: 'init', values: D })).code, 'NOT_AUTHORIZED');
+  assert.deepStrictEqual(wrong.user, {});
+  var broken = loadShell();
   broken.ctx.Session.getEffectiveUser = function () { throw new Error('x ' + D.SWITCHBOT_TOKEN); };
-  var r = broken.ctx.accessSetupCredentials();
+  var r = plain(broken.ctx.accessSetupCredentialsApi({ mode: 'init', values: D }));
   assert.strictEqual(r.ok, false);
   noSecretIn(r, D);
   noSecretIn(broken.logs.join('\n'), D);
+  assert.deepStrictEqual(broken.user, {});
+  var rep = loadShell({ user: Object.assign({}, D) });
+  assert.strictEqual(plain(rep.ctx.accessSetupCredentialsApi({ mode: 'replace', values: Object.assign({ __CONFIRM_REPLACE__: 'no' }, D2) })).code, 'REPLACE_NOT_CONFIRMED');
+  assert.strictEqual(rep.user.SWITCHBOT_TOKEN, D.SWITCHBOT_TOKEN);
+  assert.strictEqual(plain(rep.ctx.accessSetupCredentialsApi({ mode: 'replace', values: Object.assign({ __CONFIRM_REPLACE__: 'REPLACE' }, D2) })).code, 'OK');
+  assert.strictEqual(rep.user.SWITCHBOT_TOKEN, D2.SWITCHBOT_TOKEN);
 });
 
-test('シェル: dryRun/replace の入口、Webアプリ(doPost/doGet)からは到達しない', function () {
-  var env = loadShell({ answers: answers(D) });
-  assert.strictEqual(env.ctx.accessSetupCredentialsDryRun().code, 'DRY_RUN_OK');
-  assert.deepStrictEqual(env.user, {});
-  var rep = loadShell({ user: Object.assign({}, D), answers: ['REPLACE'].concat(answers(D2)) });
-  assert.strictEqual(rep.ctx.accessReplaceCredentials().code, 'OK');
-  NAMES.forEach(function (n) { assert.strictEqual(rep.user[n], D2[n]); });
+test('GAS入口: Webアプリ(doPost/doGet)・ダイアログ(Browser)からは到達しない／manifest無変更', function () {
   var src = fs.readFileSync(path.join(__dirname, '../gas/switchbot-access/SwitchBotAccessApp.gs'), 'utf8');
   var doPost = src.slice(src.indexOf('function doPost'), src.indexOf('function doGet'));
-  assert.ok(!/Credential|inputBox|setProperty/.test(doPost));
-});
-
-test('配布物: manifestに新しいOAuthスコープを追加しない（自動デプロイは新scopeで停止するため）', function () {
+  assert.ok(!/Credential|setProperty/.test(doPost));
+  assert.ok(!/Browser\./.test(src));
   var m = JSON.parse(fs.readFileSync(path.join(__dirname, '../gas/switchbot-access/appsscript.json'), 'utf8'));
   assert.deepStrictEqual(m.oauthScopes.slice().sort(), [
     'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/script.scriptapp',
     'https://www.googleapis.com/auth/script.send_mail', 'https://www.googleapis.com/auth/spreadsheets.readonly',
     'https://www.googleapis.com/auth/userinfo.email'].sort());
   assert.strictEqual(m.webapp.executeAs, 'USER_DEPLOYING');
+});
+
+// ================================================================ ローカルCLI（scripts/switchbot-access-credentials-lib.js）
+
+var lib = require('../scripts/switchbot-access-credentials-lib');
+var SCRIPT_ID = 'S'.repeat(30);
+var RC = JSON.stringify({ tokens: { default: { client_id: 'cid.test', client_secret: 'csec-test', refresh_token: 'rt-test' } } });
+
+/** GAS入口を本物のvmで動かし、scripts.run のHTTP応答として返すフェイクfetch。 */
+function cli(over) {
+  over = over || {};
+  var env = loadShell(over.shell);
+  var c = { calls: [], out: [], err: [], files: {}, asked: [], env: env };
+  var answers = (over.answers || []).slice();
+  c.fetch = async function (url, init) {
+    c.calls.push({ url: url, init: init });
+    if (/oauth2\.googleapis\.com/.test(url)) return over.tokenFail ? { ok: false, status: 400, json: async function () { return {}; } } : { ok: true, status: 200, json: async function () { return { access_token: 'at-test' }; } };
+    if (over.httpStatus) return { ok: false, status: over.httpStatus, json: async function () { return { error: { message: 'detail ' + D.SWITCHBOT_TOKEN } }; } };
+    var body = JSON.parse(init.body);
+    assert.strictEqual(body.function, 'accessSetupCredentialsApi');
+    assert.strictEqual(body.devMode, true);
+    if (over.scriptError) return { ok: true, status: 200, json: async function () { return { error: { details: [{ errorMessage: 'x ' + D.SWITCHBOT_TOKEN }] } }; } };
+    var result = env.ctx.accessSetupCredentialsApi(body.parameters[0]);
+    return { ok: true, status: 200, json: async function () { return { done: true, response: { result: plain(result) } }; } };
+  };
+  c.deps = {
+    argv: over.argv || [], env: Object.assign({ SBA_SCRIPT_ID: SCRIPT_ID, CLASPRC_PATH: '/rc' }, over.env || {}), isTTY: over.isTTY !== false,
+    readFile: function () { if (over.rc === null) throw new Error('ENOENT'); return over.rc || RC; },
+    writeNewFile: function (p, content) { if (c.files[p] !== undefined || over.fileExists) throw new Error('EEXIST'); c.files[p] = content; },
+    fetch: c.fetch, randomToken: function () { return D.WEBHOOK_SHARED_TOKEN; },
+    ask: { secret: async function (l) { c.asked.push(l); return answers.length ? answers.shift() : null; }, visible: async function (l) { c.asked.push(l); return answers.length ? answers.shift() : null; } },
+    out: function (l) { c.out.push(l); }, err: function (l) { c.err.push(l); }
+  };
+  c.run = function () { return lib.main(c.deps); };
+  c.text = function () { return c.out.concat(c.err).concat(c.asked).join('\n'); };
+  return c;
+}
+function bodies(c) { return c.calls.filter(function (x) { return /script\.googleapis/.test(x.url); }).map(function (x) { return x.init.body; }); }
+
+test('CLI: 正常登録。値はscripts.runのHTTPS本文にのみ載り、標準出力/エラー/質問文言には出ない', async function () {
+  var c = cli({ answers: answers(D) });
+  var code = await c.run();
+  assert.strictEqual(code, 0);
+  NAMES.forEach(function (n) { assert.strictEqual(c.env.user[n], D[n]); });
+  assert.ok(c.out.indexOf('result: OK') !== -1);
+  NAMES.forEach(function (n) { assert.ok(c.out.indexOf(n + ': SET') !== -1); });
+  noSecretIn(c.text(), D);
+  assert.strictEqual(bodies(c).length, 2); // 状態確認(値なし) + 登録
+  noSecretIn(bodies(c)[0], D);
+  assert.ok(bodies(c)[1].indexOf(D.SWITCHBOT_SECRET) !== -1);
+  c.calls.forEach(function (x) { assert.ok(x.url.indexOf(D.SWITCHBOT_TOKEN) === -1); });
+  assert.strictEqual(c.env.scriptWrites, 0);
+  noSecretIn(c.env.logs.join('\n'), D);
+});
+
+test('CLI: dry-runは無保存。部分設定では未設定の項目だけ聞く', async function () {
+  var c = cli({ argv: ['--dry-run'], answers: answers(D) });
+  assert.strictEqual(await c.run(), 0);
+  assert.ok(c.out.indexOf('result: DRY_RUN_OK') !== -1);
+  assert.deepStrictEqual(c.env.user, {});
+  var p = cli({ shell: { user: { SWITCHBOT_TOKEN: D.SWITCHBOT_TOKEN } }, answers: [D.SWITCHBOT_SECRET, D.WEBHOOK_SHARED_TOKEN] });
+  assert.strictEqual(await p.run(), 0);
+  assert.strictEqual(p.asked.length, 2);
+  assert.strictEqual(p.env.user.SWITCHBOT_TOKEN, D.SWITCHBOT_TOKEN);
+});
+
+test('CLI: 上書き拒否（3件設定済みの初回登録は何も聞かず終了）、replaceは確認語必須', async function () {
+  var c = cli({ shell: { user: Object.assign({}, D) }, answers: answers(D2) });
+  assert.strictEqual(await c.run(), 1);
+  assert.ok(c.out.indexOf('result: ALREADY_SET') !== -1);
+  assert.deepStrictEqual(c.asked, []);
+  NAMES.forEach(function (n) { assert.strictEqual(c.env.user[n], D[n]); });
+  var r = cli({ argv: ['--replace'], shell: { user: Object.assign({}, D) }, answers: ['yes'].concat(answers(D2)) });
+  assert.strictEqual(await r.run(), 1);
+  assert.ok(r.out.indexOf('result: REPLACE_NOT_CONFIRMED') !== -1);
+  NAMES.forEach(function (n) { assert.strictEqual(r.env.user[n], D[n]); });
+  var ok = cli({ argv: ['--replace'], shell: { user: Object.assign({}, D) }, answers: ['REPLACE', D2.SWITCHBOT_TOKEN, '', D2.WEBHOOK_SHARED_TOKEN] });
+  assert.strictEqual(await ok.run(), 0);
+  assert.strictEqual(ok.env.user.SWITCHBOT_TOKEN, D2.SWITCHBOT_TOKEN);
+  assert.strictEqual(ok.env.user.SWITCHBOT_SECRET, D.SWITCHBOT_SECRET);
+});
+
+test('CLI: 誤アカウント（許可リスト外）は値を聞く前に停止、認証失敗・API未リンク・スクリプトエラーも固定コード', async function () {
+  var wrong = cli({ shell: { active: 'other@example.test', effective: 'other@example.test' }, answers: answers(D) });
+  assert.strictEqual(await wrong.run(), 1);
+  assert.ok(wrong.out.indexOf('result: NOT_AUTHORIZED') !== -1);
+  assert.deepStrictEqual(wrong.asked, []);
+  var cases = [[{ tokenFail: true }, 'API_AUTH_FAILED'], [{ httpStatus: 403 }, 'API_AUTH_FAILED'], [{ httpStatus: 404 }, 'API_NOT_FOUND'],
+    [{ httpStatus: 500 }, 'API_ERROR'], [{ scriptError: true }, 'SCRIPT_ERROR'], [{ rc: '{}' }, 'CLASPRC_INVALID'], [{ rc: null }, 'CLASPRC_INVALID'],
+    [{ env: { SBA_SCRIPT_ID: 'short' } }, 'SCRIPT_ID_MISSING']];
+  for (var k = 0; k < cases.length; k++) {
+    var c = cli(Object.assign({ answers: answers(D) }, cases[k][0]));
+    assert.strictEqual(await c.run(), 1);
+    assert.deepStrictEqual(c.err, ['error: ' + cases[k][1]]);
+    assert.deepStrictEqual(c.asked, []);
+    noSecretIn(c.text(), D);
+  }
+});
+
+test('CLI: 引数で値を渡す・未知の引数・非TTY入力は拒否し、引数を出力しない', async function () {
+  var secretArg = 'tok-' + D.SWITCHBOT_TOKEN;
+  var a = cli({ argv: [secretArg], answers: answers(D) });
+  assert.strictEqual(await a.run(), 1);
+  assert.deepStrictEqual(a.err, ['error: BAD_ARGS']);
+  noSecretIn(a.text(), { x: secretArg });
+  assert.strictEqual(a.calls.length, 0);
+  var b = cli({ argv: ['--token=' + D.SWITCHBOT_TOKEN] });
+  assert.strictEqual(await b.run(), 1);
+  assert.deepStrictEqual(b.err, ['error: BAD_ARGS']);
+  var n = cli({ isTTY: false, answers: answers(D) });
+  assert.strictEqual(await n.run(), 1);
+  assert.deepStrictEqual(n.err, ['error: NO_TTY']);
+  assert.strictEqual(n.calls.length, 0);
+  assert.throws(function () { lib.parseArgs(['--generate-webhook-token-to']); });
+});
+
+test('CLI: 入力途中の取消・途中失敗では何も保存しない', async function () {
+  var c = cli({ answers: [D.SWITCHBOT_TOKEN] }); // 2件目で取消
+  assert.strictEqual(await c.run(), 1);
+  assert.deepStrictEqual(c.err, ['error: CANCELLED']);
+  assert.deepStrictEqual(c.env.user, {});
+  var f = cli({ answers: answers(D) });
+  // GAS側書込み失敗（2件目で例外）→ ロールバック → 固定コード
+  var realProps = f.env.ctx.PropertiesService.getUserProperties;
+  f.env.ctx.PropertiesService.getUserProperties = function () {
+    var p = realProps();
+    return { getProperty: p.getProperty, deleteProperty: p.deleteProperty, getKeys: p.getKeys, setProperty: function (k, v) { if (k === 'SWITCHBOT_SECRET') throw new Error('boom ' + v); p.setProperty(k, v); } };
+  };
+  assert.strictEqual(await f.run(), 1);
+  assert.ok(f.out.indexOf('result: WRITE_FAILED') !== -1);
+  assert.deepStrictEqual(f.env.user, {});
+  noSecretIn(f.text(), D);
+});
+
+test('CLI: --generate-webhook-token-to は新規ファイル(0600想定)へ出力し、画面には出さない。既存ファイルは拒否', async function () {
+  var c = cli({ argv: ['--generate-webhook-token-to', '/tmp/wh.txt'], answers: [D.SWITCHBOT_TOKEN, D.SWITCHBOT_SECRET] });
+  assert.strictEqual(await c.run(), 0);
+  assert.strictEqual(c.files['/tmp/wh.txt'], D.WEBHOOK_SHARED_TOKEN + '\n');
+  assert.strictEqual(c.env.user.WEBHOOK_SHARED_TOKEN, D.WEBHOOK_SHARED_TOKEN);
+  assert.strictEqual(c.asked.length, 2);
+  noSecretIn(c.text(), D);
+  var e = cli({ argv: ['--generate-webhook-token-to', '/tmp/wh.txt'], fileExists: true, answers: answers(D) });
+  assert.strictEqual(await e.run(), 1);
+  assert.deepStrictEqual(e.err, ['error: TOKEN_FILE_EXISTS_OR_UNWRITABLE']);
+  assert.deepStrictEqual(e.env.user, {});
+  // 実ファイル書込みは新規のみ・0600
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sba770f-'));
+  var fp = path.join(dir, 'wh.txt');
+  lib.newFileWriter(fp, 'x\n');
+  assert.strictEqual(fs.statSync(fp).mode & 0o777, 0o600);
+  assert.throws(function () { lib.newFileWriter(fp, 'y\n'); });
+  assert.ok(/^[A-Za-z0-9_-]{43}$/.test(lib.randomToken()));
+  assert.strictEqual(Infra.validateCredentialInput('WEBHOOK_SHARED_TOKEN', lib.randomToken()).ok, true);
+});
+
+test('CLI: clasprc の読取り（tokens.default / 旧形式）。不足は拒否', function () {
+  assert.deepStrictEqual(lib.readClasprc(RC, 'default'), { clientId: 'cid.test', clientSecret: 'csec-test', refreshToken: 'rt-test' });
+  var legacy = JSON.stringify({ token: { refresh_token: 'r' }, oauth2ClientSettings: { clientId: 'c', clientSecret: 's' } });
+  assert.strictEqual(lib.readClasprc(legacy).refreshToken, 'r');
+  assert.throws(function () { lib.readClasprc(JSON.stringify({ tokens: { default: { refresh_token: 'r' } } })); });
+  assert.throws(function () { lib.readClasprc('not json'); });
 });
