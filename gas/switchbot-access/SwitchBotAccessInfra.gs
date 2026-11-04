@@ -146,6 +146,194 @@ var SwitchBotAccessInfra = (function () {
     return { ok: true, actor: label };
   }
 
+  // ---------- 資格情報の初期登録（Issue #770）----------
+
+  var CREDENTIAL_NAMES = ['SWITCHBOT_TOKEN', 'SWITCHBOT_SECRET', 'WEBHOOK_SHARED_TOKEN'];
+  var CREDENTIAL_CONFIRM_REPLACE = 'REPLACE';
+
+  /** 値そのものは返さない。不備の種別だけ返す。Webhook共有トークンはURLクエリで送るため URL安全文字のみ。 */
+  function validateCredentialInput(name, value) {
+    if (typeof value !== 'string' || value === '') return { ok: false, error: 'EMPTY' };
+    if (/[\s\u0000-\u001f\u007f]/.test(value)) return { ok: false, error: 'WHITESPACE_OR_CONTROL' };
+    if (name === 'WEBHOOK_SHARED_TOKEN') {
+      if (!/^[A-Za-z0-9_-]+$/.test(value)) return { ok: false, error: 'CHARSET' };
+      if (value.length < 24 || value.length > 128) return { ok: false, error: 'LENGTH' };
+      var distinct = {};
+      value.split('').forEach(function (c) { distinct[c] = true; });
+      if (Object.keys(distinct).length < 8) return { ok: false, error: 'LOW_ENTROPY' };
+      return { ok: true };
+    }
+    if (CREDENTIAL_NAMES.indexOf(name) === -1) return { ok: false, error: 'UNKNOWN_NAME' };
+    if (value.length < 16 || value.length > 512) return { ok: false, error: 'LENGTH' };
+    return { ok: true };
+  }
+
+  /** 資格情報操作の認可。active/effective の双方が非空で一致しなければ停止（不明は許可しない）。 */
+  function authorizeExecutor(deps) {
+    var idn = null;
+    try { idn = deps.identity ? deps.identity() : null; } catch (e) { idn = null; }
+    var who = authorizeAdmin(idn, deps.adminActors);
+    if (!who.ok) return who;
+    var eff = idn && typeof idn.effectiveEmail === 'string' ? idn.effectiveEmail.trim().toLowerCase() : '';
+    if (!eff) return { ok: false, error: 'IDENTITY_UNAVAILABLE' };
+    if (eff !== idn.email.trim().toLowerCase()) return { ok: false, error: 'ACCOUNT_MISMATCH' };
+    return { ok: true, actor: who.actor };
+  }
+
+  /**
+   * 3件の SET/MISSING を読む。読取例外を MISSING に潰さない（既存値を「未設定」と誤認して上書きする経路を作らない）:
+   * 1件でも読めなければ ok=false・全項目 UNKNOWN。
+   */
+  function readCredentialStatus(props) {
+    var st = {};
+    for (var i = 0; i < CREDENTIAL_NAMES.length; i++) {
+      var v;
+      try { v = props.get(CREDENTIAL_NAMES[i]); } catch (e) { v = undefined; }
+      if (v === undefined) {
+        CREDENTIAL_NAMES.forEach(function (n) { st[n] = 'UNKNOWN'; });
+        return { ok: false, status: st };
+      }
+      st[CREDENTIAL_NAMES[i]] = v ? 'SET' : 'MISSING';
+    }
+    return { ok: true, status: st };
+  }
+
+  /** 認可と SET/MISSING のみを返す状態確認（入力を要求せず、何も保存しない）。未認可・読取失敗は状態を見せない。 */
+  function credentialStatus(deps) {
+    var gate = authorizeExecutor(deps);
+    var unknown = {};
+    CREDENTIAL_NAMES.forEach(function (n) { unknown[n] = 'MISSING'; });
+    if (!gate.ok) return { ok: false, code: gate.error, status: unknown, changed: [] };
+    var r = readCredentialStatus(deps.userProps);
+    if (!r.ok) return { ok: false, code: 'READ_FAILED', status: r.status, changed: [] };
+    return { ok: true, code: 'STATUS_OK', status: r.status, changed: [] };
+  }
+
+  /**
+   * 実行者本人の User Properties へ資格情報3件だけを登録する。返すのは固定コードと SET/MISSING/UNKNOWN のみ
+   * （入力値・既存値・例外メッセージは返さず、ログにも出さない）。触れるキーは CREDENTIAL_NAMES の3つだけ。
+   *
+   * deps: userProps{get,set,del}, identity() → {email, effectiveEmail}, adminActors, prompt(name) → 文字列|null(取消),
+   *       lock{tryLock(ms), releaseLock()}（必須。状態確認〜書込みの競合を直列化）
+   * opts: mode 'init'（未設定のものだけ入力。設定済みは変更しない）／'replace'（確認語 REPLACE が必須。空入力=据え置き）、dryRun
+   * 入力は全件検証してから書き込み、書込み・照合に失敗したら今回の変更を元に戻す。
+   * 読取エラーは READ_FAILED で停止（MISSING 扱いにしない）。書込み直前に対象キーを再読取し、状態が変わっていれば STATE_CHANGED で停止。
+   */
+  function setupCredentials(deps, opts) {
+    opts = opts || {};
+    var mode = opts.mode === 'replace' ? 'replace' : 'init';
+    var props = deps.userProps;
+    function result(ok, code, extra) {
+      var r = { ok: ok, code: code, status: readCredentialStatus(props).status, changed: [] };
+      if (extra) Object.keys(extra).forEach(function (k) { r[k] = extra[k]; });
+      return r;
+    }
+
+    // 1) 認可（fail closed）: 許可リストの管理者本人で、かつ実行者=有効ユーザーが双方とも取得でき一致するときだけ
+    var gate = authorizeExecutor(deps);
+    if (!gate.ok) { // 未認可には状態も見せない
+      var masked = {};
+      CREDENTIAL_NAMES.forEach(function (n) { masked[n] = 'MISSING'; });
+      return { ok: false, code: gate.error, status: masked, changed: [] };
+    }
+
+    // 2) 状態確認〜書込みを直列化する（同時実行による上書き競合を防ぐ）。dryRun は書かないのでロック不要。
+    var locked = false;
+    if (!opts.dryRun) {
+      if (!deps.lock) return result(false, 'LOCK_UNAVAILABLE');
+      try { locked = deps.lock.tryLock(10000) === true; } catch (e) { locked = false; }
+      if (!locked) return result(false, 'LOCK_BUSY');
+    }
+    try {
+      return runSetup();
+    } finally {
+      if (locked) { try { deps.lock.releaseLock(); } catch (e) { /* 値は出さない */ } }
+    }
+
+    function runSetup() {
+      // 3) 現状確認。読取エラーは MISSING にせず停止（入力は聞かない）
+      var cur = readCredentialStatus(props);
+      if (!cur.ok) return result(false, 'READ_FAILED');
+      var before = cur.status;
+      var targets;
+      if (mode === 'init') {
+        targets = CREDENTIAL_NAMES.filter(function (n) { return before[n] === 'MISSING'; });
+        if (!targets.length) return result(false, 'ALREADY_SET');
+      } else {
+        if (CREDENTIAL_NAMES.every(function (n) { return before[n] === 'MISSING'; })) return result(false, 'NOT_INITIALIZED');
+        targets = CREDENTIAL_NAMES.slice();
+      }
+
+      // 4) 上書きは明示確認（確認語の完全一致）が必須。確認前は何も入力させず、何も変更しない
+      var ask = function (name) {
+        var v;
+        try { v = deps.prompt(name); } catch (e) { return { fail: 'PROMPT_UNAVAILABLE' }; }
+        return v === null || v === undefined ? { fail: 'CANCELLED' } : { value: String(v) };
+      };
+      if (mode === 'replace') {
+        var c = ask('__CONFIRM_REPLACE__');
+        if (c.fail) return result(false, c.fail);
+        if (c.value.trim() !== CREDENTIAL_CONFIRM_REPLACE) return result(false, 'REPLACE_NOT_CONFIRMED');
+      }
+
+      // 5) 全件入力→全件検証（1件でも不備なら何も書かない）
+      var inputs = {}, invalid = [];
+      for (var i = 0; i < targets.length; i++) {
+        var a = ask(targets[i]);
+        if (a.fail) return result(false, a.fail);
+        if (mode === 'replace' && a.value === '' && before[targets[i]] === 'SET') continue; // 据え置き
+        var v = validateCredentialInput(targets[i], a.value);
+        if (!v.ok) invalid.push(targets[i]); else inputs[targets[i]] = a.value;
+      }
+      if (invalid.length) return result(false, 'INPUT_INVALID', { invalid: invalid });
+      var names = Object.keys(inputs);
+      if (!names.length) return result(false, 'NOTHING_TO_CHANGE');
+
+      // 6) 3種は互いに別の値であること（新旧・据え置き分を含めて比較。値は外へ出さない）。読取エラーは READ_FAILED
+      var seen = {}, dup = false;
+      try {
+        CREDENTIAL_NAMES.forEach(function (n) {
+          var val = inputs[n] !== undefined ? inputs[n] : (before[n] === 'SET' ? props.get(n) : null);
+          if (!val) return;
+          if (seen[val]) dup = true;
+          seen[val] = true;
+        });
+      } catch (e) { return result(false, 'READ_FAILED'); }
+      if (dup) return result(false, 'INPUT_DUPLICATE');
+      if (opts.dryRun) return result(true, 'DRY_RUN_OK', { wouldChange: names });
+
+      // 7) 書込み直前の再検証: 状態確認後に設定状況が変わっていたら（競合・他経路の更新）書かずに停止
+      var prev = {};
+      for (var k = 0; k < names.length; k++) {
+        var cv;
+        try { cv = props.get(names[k]); } catch (e) { return result(false, 'READ_FAILED'); }
+        if ((cv ? 'SET' : 'MISSING') !== before[names[k]]) return result(false, 'STATE_CHANGED');
+        prev[names[k]] = cv;
+      }
+
+      // 8) 書込み→照合。失敗（例外・不一致）したら今回の分を元に戻す
+      var written = [];
+      var rollback = function () {
+        written.forEach(function (n) {
+          try { if (prev[n]) props.set(n, prev[n]); else props.del(n); } catch (e) { /* 復旧不能でも値は出さない */ }
+        });
+      };
+      try {
+        names.forEach(function (n) {
+          written.push(n);
+          props.set(n, inputs[n]);
+        });
+      } catch (e) {
+        rollback();
+        return result(false, 'WRITE_FAILED');
+      }
+      var verified = false;
+      try { verified = names.every(function (n) { return props.get(n) === inputs[n]; }); } catch (e) { verified = false; }
+      if (!verified) { rollback(); return result(false, 'VERIFY_FAILED'); }
+      return result(true, 'OK', { changed: names });
+    }
+  }
+
   // ---------- Webhook 相関 ----------
 
   /** 受信ペイロードを採用に必要な最小項目へ正規化（未知項目・生応答を保存しない）。 */
@@ -904,6 +1092,7 @@ var SwitchBotAccessInfra = (function () {
     ENVIRONMENT: ENVIRONMENT, PROPERTIES_LIMITS: PROPERTIES_LIMITS, DEFAULTS: DEFAULTS, CATALOG: CATALOG, FREEZE_REASONS: FREEZE_REASONS,
     validateConfig: validateConfig, ensureStoreEnvironment: ensureStoreEnvironment,
     constantTimeEquals: constantTimeEquals, authenticateWebhook: authenticateWebhook, authorizeAdmin: authorizeAdmin,
+    CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials, credentialStatus: credentialStatus,
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,

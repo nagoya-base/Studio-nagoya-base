@@ -220,6 +220,52 @@ function accessAdminReconcile(recId) { return sba_runtime_().admin('reconcile', 
 function accessAdminResolveUnknown(recId, decision) { return sba_runtime_().admin('resolveUnknown', { recId: recId, decision: decision }); }
 function accessAdminDelete(recId) { return sba_runtime_().admin('delete', { recId: recId }); }
 
+// ── 資格情報の初期登録（Issue #770。実行者本人の User Properties へ、ローカルから Execution API 経由）──
+// 呼び出し元は scripts.run（API実行可能Deployment。アクセスは「自分のみ」。運営者が明示的に作成する別Deployment）のみ。Web アプリ（doPost/doGet）・トリガー・
+// Webhook からは到達しない。値は呼び出し元がHTTPS本文で渡し、戻り値・Logger・例外には出さない（固定コードと SET/MISSING のみ）。
+// Script Properties・トリガー・Webhook登録・端末APIには触れない。ローカル側: scripts/switchbot-access-setup-credentials.js
+// 手順と根拠: docs/switchbot-access-credentials-770.md
+// req = { mode: 'init'|'replace', dryRun: boolean, values: { SWITCHBOT_TOKEN, SWITCHBOT_SECRET, WEBHOOK_SHARED_TOKEN, __CONFIRM_REPLACE__ } }
+function accessSetupCredentialsApi(req) {
+  var res;
+  try {
+    var values = req && req.values && typeof req.values === 'object' ? req.values : {};
+    res = SwitchBotAccessInfra.setupCredentials({
+      userProps: sba_storeOf_(sba_userProps_(), null),
+      adminActors: sba_adminActors_(),
+      identity: function () {
+        return { email: Session.getActiveUser().getEmail(), effectiveEmail: Session.getEffectiveUser().getEmail() };
+      },
+      prompt: function (name) { return typeof values[name] === 'string' ? values[name] : null; },
+      lock: LockService.getScriptLock()
+    }, { mode: req && req.mode === 'replace' ? 'replace' : 'init', dryRun: !!(req && req.dryRun === true) });
+  } catch (e) {
+    res = { ok: false, code: 'UNEXPECTED_ERROR', status: {}, changed: [] };
+  }
+  var out = { ok: res.ok === true, code: String(res.code), status: res.status || {}, changed: res.changed || [] };
+  if (res.invalid) out.invalid = res.invalid;
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+
+/** 認可と SET/MISSING のみを返す状態確認（入力を要求せず、何も保存しない）。CLI の --dry-run と登録前の確認に使う。 */
+function accessCredentialStatusApi() {
+  var out;
+  try {
+    out = SwitchBotAccessInfra.credentialStatus({
+      userProps: sba_storeOf_(sba_userProps_(), null),
+      adminActors: sba_adminActors_(),
+      identity: function () {
+        return { email: Session.getActiveUser().getEmail(), effectiveEmail: Session.getEffectiveUser().getEmail() };
+      }
+    });
+  } catch (e) {
+    out = { ok: false, code: 'UNEXPECTED_ERROR', status: {}, changed: [] };
+  }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+
 /** 事前チェック: 必要な設定の有無のみ表示（値・完全IDは出さない）。 */
 function accessCheckSetup() {
   var s = sba_scriptProps_(), u = sba_userProps_();
