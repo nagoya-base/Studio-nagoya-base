@@ -83,7 +83,8 @@ test('#690: 改定版掲載のお知らせは掲載日で記録し、施行前�
     assert.ok(p.body.indexOf(w) !== -1, w);
   });
   var news = read('_data/news_ja.yml');
-  assert.strictEqual(news.indexOf('- date: "' + p.date + '"'), news.indexOf('- date'), '先頭');
+  /* 新しいお知らせ（例: 2026.11.04の予約ルール改定）が先頭に追加されても良いよう、掲載日の最初の項目であることを確認する。 */
+  assert.strictEqual(news.indexOf('- date: "' + p.date + '"'), news.indexOf('- date: "' + PUBLISHED.replace(/-/g, '.') + '"'), '掲載日の先頭');
 });
 
 Object.keys(PAGES).forEach(function (key) {
