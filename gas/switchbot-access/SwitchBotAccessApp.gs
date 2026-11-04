@@ -41,7 +41,7 @@ function sba_storeOf_(props, prefixes) {
 /** 状態ストア: 設定・認証系プロパティ（ACCESS_*, LEDGER_*）を除く。 */
 function sba_stateStore_() {
   var base = sba_storeOf_(sba_scriptProps_(), null);
-  var reserved = /^(ACCESS_|LEDGER_)/;
+  var reserved = /^(ACCESS_|LEDGER_|BOOTSTRAP_)/;
   return {
     get: base.get, set: base.set, del: base.del,
     keys: function () { return base.keys().filter(function (k) { return !reserved.test(k); }); }
@@ -220,7 +220,7 @@ function accessAdminReconcile(recId) { return sba_runtime_().admin('reconcile', 
 function accessAdminResolveUnknown(recId, decision) { return sba_runtime_().admin('resolveUnknown', { recId: recId, decision: decision }); }
 function accessAdminDelete(recId) { return sba_runtime_().admin('delete', { recId: recId }); }
 
-// ── 資格情報の初期登録（Issue #770。実行者本人の User Properties へ、ローカルから Execution API 経由）──
+// ── 資格情報の初期登録（Issue #770。【#772以降の標準手順ではない。通常は下の accessMigrateCredentialsOnce を使う】実行者本人の User Properties へ、ローカルから Execution API 経由）──
 // 呼び出し元は scripts.run（API実行可能Deployment。アクセスは「自分のみ」。運営者が明示的に作成する別Deployment）のみ。Web アプリ（doPost/doGet）・トリガー・
 // Webhook からは到達しない。値は呼び出し元がHTTPS本文で渡し、戻り値・Logger・例外には出さない（固定コードと SET/MISSING のみ）。
 // Script Properties・トリガー・Webhook登録・端末APIには触れない。ローカル側: scripts/switchbot-access-setup-credentials.js
@@ -264,6 +264,54 @@ function accessCredentialStatusApi() {
   }
   Logger.log(JSON.stringify(out));
   return out;
+}
+
+// ── 資格情報のワンショット移行（Issue #772。標準の初期登録手順）──
+// 追加のGCP/OAuth/API executable Deployment/CLI は不要。設定画面で Script Properties に一時キー3件
+// （BOOTSTRAP_SWITCHBOT_TOKEN / BOOTSTRAP_SWITCHBOT_SECRET / BOOTSTRAP_WEBHOOK_SHARED_TOKEN）を登録 → エディタから
+// accessMigrateCredentialsOnce を手動で1回実行 → User Properties へ移し、一時キーを削除する。
+// 値は戻り値・Logger・例外に出さない（固定コードと SET/MISSING/ABSENT のみ）。Web アプリ・トリガーからは呼ばれない。
+// 実行前の確認（編集者が本人のみ・ACCESS_ENABLED=OFF）と限界: docs/switchbot-access-bootstrap-772.md
+function sba_bootstrapDeps_() {
+  return {
+    scriptProps: sba_storeOf_(sba_scriptProps_(), null),
+    userProps: sba_storeOf_(sba_userProps_(), null),
+    adminActors: sba_adminActors_(),
+    identity: function () {
+      return { email: Session.getActiveUser().getEmail(), effectiveEmail: Session.getEffectiveUser().getEmail() };
+    },
+    lock: LockService.getScriptLock()
+  };
+}
+
+function sba_bootstrapRun_(fn) {
+  var out;
+  try {
+    var res = fn(sba_bootstrapDeps_());
+    out = { ok: res.ok === true, code: String(res.code), status: res.status || {}, bootstrap: res.bootstrap || {}, changed: res.changed || [] };
+    if (res.invalid) out.invalid = res.invalid;
+    if (res.cleanup) out.cleanup = res.cleanup;
+  } catch (e) {
+    out = { ok: false, code: 'UNEXPECTED_ERROR', status: {}, bootstrap: {}, changed: [] };
+  }
+  out.accessEnabled = sba_scriptProps_().getProperty('ACCESS_ENABLED') === 'true' ? 'ON' : 'OFF';
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+
+/** 手動で1回だけ実行。User Properties が1件でも SET なら上書きしない。失敗時も一時キーは可能な限り削除する。 */
+function accessMigrateCredentialsOnce() {
+  return sba_bootstrapRun_(function (d) { return SwitchBotAccessInfra.migrateBootstrapCredentials(d); });
+}
+
+/** 読取専用の診断: 一時キー（Script Properties）と正式キー（User Properties）の SET/ABSENT のみ。何も変更しない。 */
+function accessBootstrapStatus() {
+  return sba_bootstrapRun_(function (d) { return SwitchBotAccessInfra.bootstrapStatus(d); });
+}
+
+/** 一時キー3件だけを消す（失敗後の復旧・入力やり直し用）。他のプロパティには触れない。 */
+function accessScrubBootstrapCredentials() {
+  return sba_bootstrapRun_(function (d) { return SwitchBotAccessInfra.scrubBootstrapCredentials(d); });
 }
 
 /** 事前チェック: 必要な設定の有無のみ表示（値・完全IDは出さない）。 */

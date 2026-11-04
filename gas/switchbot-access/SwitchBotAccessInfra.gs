@@ -334,6 +334,162 @@ var SwitchBotAccessInfra = (function () {
     }
   }
 
+  // ---------- 資格情報のワンショット移行（Issue #772。エディタ手動実行・追加GCP/OAuth/API Deployment不要）----------
+
+  /** Script Properties 側の一時キー（移行元）→ User Properties 側の正式キー（移行先）。 */
+  var BOOTSTRAP_KEYS = {
+    BOOTSTRAP_SWITCHBOT_TOKEN: 'SWITCHBOT_TOKEN',
+    BOOTSTRAP_SWITCHBOT_SECRET: 'SWITCHBOT_SECRET',
+    BOOTSTRAP_WEBHOOK_SHARED_TOKEN: 'WEBHOOK_SHARED_TOKEN'
+  };
+  var BOOTSTRAP_NAMES = Object.keys(BOOTSTRAP_KEYS);
+
+  function bootstrapMasked(map) {
+    var m = {};
+    BOOTSTRAP_NAMES.forEach(function (n) { m[n] = map || 'ABSENT'; });
+    return m;
+  }
+
+  /** 一時キー3件の SET/ABSENT。読取例外は UNKNOWN（ABSENT に潰さない）。 */
+  function readBootstrapStatus(sp) {
+    var st = {}, ok = true;
+    BOOTSTRAP_NAMES.forEach(function (n) {
+      var v;
+      try { v = sp.get(n); } catch (e) { v = undefined; }
+      if (v === undefined) { st[n] = 'UNKNOWN'; ok = false; } else st[n] = v ? 'SET' : 'ABSENT';
+    });
+    return { ok: ok, status: st };
+  }
+
+  /** 一時キー3件だけを削除する（他のキーには触れない）。削除後に再読取して ABSENT を確認し、残存/不明なら false。 */
+  function scrubBootstrap(sp) {
+    BOOTSTRAP_NAMES.forEach(function (n) { try { sp.del(n); } catch (e) { /* 値は出さない。下の再確認で検出 */ } });
+    var r = readBootstrapStatus(sp);
+    return r.ok && BOOTSTRAP_NAMES.every(function (n) { return r.status[n] === 'ABSENT'; });
+  }
+
+  /**
+   * 読取専用の診断。値は読まずに SET/ABSENT だけ返す（一時キー残存の検出に使う。何も変更しない）。
+   * deps: scriptProps{get,set,del}, userProps{get,set,del}, identity(), adminActors
+   */
+  function bootstrapStatus(deps) {
+    var gate = authorizeExecutor(deps);
+    if (!gate.ok) return { ok: false, code: gate.error, status: {}, bootstrap: bootstrapMasked(), changed: [] };
+    var u = readCredentialStatus(deps.userProps);
+    var b = readBootstrapStatus(deps.scriptProps);
+    if (!u.ok || !b.ok) return { ok: false, code: 'READ_FAILED', status: u.status, bootstrap: b.status, changed: [] };
+    var left = BOOTSTRAP_NAMES.some(function (n) { return b.status[n] === 'SET'; });
+    return { ok: true, code: left ? 'BOOTSTRAP_KEYS_REMAIN' : 'STATUS_OK', status: u.status, bootstrap: b.status, changed: [] };
+  }
+
+  /** 一時キー3件の手動消去（失敗後の復旧・やり直し用）。認可必須。触れるのは BOOTSTRAP_* の3キーのみ。 */
+  function scrubBootstrapCredentials(deps) {
+    var gate = authorizeExecutor(deps);
+    if (!gate.ok) return { ok: false, code: gate.error, status: {}, bootstrap: bootstrapMasked(), changed: [] };
+    var clean = scrubBootstrap(deps.scriptProps);
+    var u = readCredentialStatus(deps.userProps);
+    return { ok: clean, code: clean ? 'SCRUBBED' : 'CLEANUP_FAILED', status: u.status, bootstrap: readBootstrapStatus(deps.scriptProps).status, changed: [] };
+  }
+
+  /**
+   * Script Properties の一時キー3件を、実行者本人の User Properties の正式3キーへ1回だけ移し、一時キーを消す。
+   * 返すのは固定コードと SET/MISSING/ABSENT のみ（値・例外メッセージは返さず、ログにも出さない）。
+   *
+   * 触れるキー: Script Properties は BOOTSTRAP_* の3つのみ（他の ACCESS_* 等は読みも書きもしない）、
+   *            User Properties は CREDENTIAL_NAMES の3つのみ。ACCESS_ENABLED・Deployment・トリガー・Webhook・SwitchBot API には触れない。
+   * 上書き禁止: User Properties に1件でも SET（または読取不明）があれば何も書かない（置換は #770 の replace 経路）。
+   * 認可後の失敗では、可能な限り一時キーを削除する（秘密を Script Properties に残さない）。
+   *   移行先の部分書込みは元に戻す。戻せなかった場合は ROLLBACK_FAILED で停止し、状態点検（accessBootstrapStatus）を促す。
+   *
+   * deps: scriptProps, userProps（{get,set,del}）, identity() → {email, effectiveEmail}, adminActors, lock{tryLock, releaseLock}
+   */
+  function migrateBootstrapCredentials(deps) {
+    var sp = deps.scriptProps, up = deps.userProps;
+    function result(ok, code, extra) {
+      var r = { ok: ok, code: code, status: readCredentialStatus(up).status, bootstrap: readBootstrapStatus(sp).status, changed: [] };
+      if (extra) Object.keys(extra).forEach(function (k) { r[k] = extra[k]; });
+      return r;
+    }
+    var gate = authorizeExecutor(deps);
+    if (!gate.ok) { // 未認可には状態も見せず、何も消さない
+      var masked = {};
+      CREDENTIAL_NAMES.forEach(function (n) { masked[n] = 'MISSING'; });
+      return { ok: false, code: gate.error, status: masked, bootstrap: bootstrapMasked(), changed: [] };
+    }
+    if (!deps.lock) { scrubBootstrap(sp); return result(false, 'LOCK_UNAVAILABLE'); }
+    var locked = false;
+    try { locked = deps.lock.tryLock(10000) === true; } catch (e) { locked = false; }
+    if (!locked) return result(false, 'LOCK_BUSY'); // 他の実行が一時キーを使用中かもしれないので消さない
+    try {
+      return run();
+    } finally {
+      try { deps.lock.releaseLock(); } catch (e) { /* 値は出さない */ }
+    }
+
+    /** 失敗終了: 一時キーを消してから固定コードを返す。消せなければ CLEANUP_FAILED を付す。 */
+    function fail(code, extra) {
+      var clean = scrubBootstrap(sp);
+      var r = result(false, code, extra);
+      if (!clean) r.cleanup = 'CLEANUP_FAILED';
+      return r;
+    }
+
+    function run() {
+      // 1) 移行先の現状。読取不能・1件でも SET なら上書きしない
+      var cur = readCredentialStatus(up);
+      if (!cur.ok) return fail('READ_FAILED');
+      if (CREDENTIAL_NAMES.some(function (n) { return cur.status[n] !== 'MISSING'; })) return fail('USER_PROPS_NOT_EMPTY');
+
+      // 2) 一時キー: 3件すべて存在（読取不能・欠落があれば不備）。全く無ければ何も消すものがない
+      var b = readBootstrapStatus(sp);
+      if (!b.ok) return fail('READ_FAILED');
+      var present = BOOTSTRAP_NAMES.filter(function (n) { return b.status[n] === 'SET'; });
+      if (!present.length) return result(false, 'BOOTSTRAP_MISSING');
+      if (present.length !== BOOTSTRAP_NAMES.length) return fail('BOOTSTRAP_INCOMPLETE');
+
+      // 3) 形式検証・重複検証（値は外へ出さない。不備は移行先の名前だけ返す）
+      var vals = {}, invalid = [];
+      try {
+        BOOTSTRAP_NAMES.forEach(function (n) {
+          var dest = BOOTSTRAP_KEYS[n];
+          var v = sp.get(n);
+          vals[dest] = v;
+          if (!validateCredentialInput(dest, v).ok) invalid.push(dest);
+        });
+      } catch (e) { return fail('READ_FAILED'); }
+      if (invalid.length) return fail('INPUT_INVALID', { invalid: invalid });
+      var seen = {}, dup = false;
+      CREDENTIAL_NAMES.forEach(function (n) { if (seen[vals[n]]) dup = true; seen[vals[n]] = true; });
+      if (dup) return fail('INPUT_DUPLICATE');
+
+      // 4) 書込み直前の再確認（競合・他経路の更新があれば書かない）
+      var again = readCredentialStatus(up);
+      if (!again.ok) return fail('READ_FAILED');
+      if (CREDENTIAL_NAMES.some(function (n) { return again.status[n] !== 'MISSING'; })) return fail('STATE_CHANGED');
+
+      // 5) 書込み→照合。失敗したら今回書いた分を戻す（移行前は全件 MISSING なので削除で復元できる）
+      var written = [];
+      function rollback() {
+        var ok = true;
+        written.forEach(function (n) { try { up.del(n); } catch (e) { ok = false; } });
+        var chk = readCredentialStatus(up);
+        return ok && chk.ok && CREDENTIAL_NAMES.every(function (n) { return chk.status[n] === 'MISSING'; });
+      }
+      try {
+        CREDENTIAL_NAMES.forEach(function (n) { written.push(n); up.set(n, vals[n]); });
+      } catch (e) {
+        return fail(rollback() ? 'WRITE_FAILED' : 'ROLLBACK_FAILED');
+      }
+      var verified = false;
+      try { verified = CREDENTIAL_NAMES.every(function (n) { return up.get(n) === vals[n]; }); } catch (e) { verified = false; }
+      if (!verified) return fail(rollback() ? 'VERIFY_FAILED' : 'ROLLBACK_FAILED');
+
+      // 6) 成功: 一時キーを消し、ABSENT を再確認。消えなければ即座に手動削除を促す
+      if (!scrubBootstrap(sp)) return result(false, 'MIGRATED_CLEANUP_FAILED', { changed: CREDENTIAL_NAMES.slice() });
+      return result(true, 'OK', { changed: CREDENTIAL_NAMES.slice() });
+    }
+  }
+
   // ---------- Webhook 相関 ----------
 
   /** 受信ペイロードを採用に必要な最小項目へ正規化（未知項目・生応答を保存しない）。 */
@@ -1093,6 +1249,7 @@ var SwitchBotAccessInfra = (function () {
     validateConfig: validateConfig, ensureStoreEnvironment: ensureStoreEnvironment,
     constantTimeEquals: constantTimeEquals, authenticateWebhook: authenticateWebhook, authorizeAdmin: authorizeAdmin,
     CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials, credentialStatus: credentialStatus,
+    BOOTSTRAP_KEYS: BOOTSTRAP_KEYS, migrateBootstrapCredentials: migrateBootstrapCredentials, bootstrapStatus: bootstrapStatus, scrubBootstrapCredentials: scrubBootstrapCredentials,
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,
