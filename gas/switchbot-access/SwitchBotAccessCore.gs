@@ -140,7 +140,7 @@ var SwitchBotAccessCore = (function () {
   /**
    * 削除用の不在検査（Issue #751）。対象 Keypad の keyList「全体」から、保存済み passcodeId と保存名の
    * 両方を独立に数える。別名で同 ID が残る／同名で別 ID が残る場合を見逃さない。
-   * 対象外端末・keyList 欠落・id を持たない／オブジェクトでない要素（不完全応答）は valid:false。
+   * 対象外端末・keyList 欠落・id または name（非空文字列）を持たない／オブジェクトでない要素（不完全応答）は valid:false。
    * 0 件と補完しない。passcodeId 未保存も valid:false（ID の不在を検証できない）。
    */
   function inspectAbsence(devices, deviceId, name, passcodeId) {
@@ -152,7 +152,9 @@ var SwitchBotAccessCore = (function () {
     if (!Array.isArray(list)) return { valid: false, error: 'KEYLIST_INVALID' };
     for (var i = 0; i < list.length; i++) {
       var k = list[i];
-      if (!k || typeof k !== 'object' || k.id === undefined || k.id === null || String(k.id) === '') {
+      // id と name の両方が揃った要素のみ有効。どちらか欠落/不正な要素は、保存名/保存IDを隠している可能性があるため不在と断定しない
+      if (!k || typeof k !== 'object' || k.id === undefined || k.id === null || String(k.id) === '' ||
+          typeof k.name !== 'string' || k.name === '') {
         return { valid: false, error: 'KEYLIST_ENTRY_INVALID' };
       }
     }

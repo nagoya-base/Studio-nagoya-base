@@ -28,7 +28,7 @@
 - API受理(`httpCode=200 && statusCode=100`) ≠ 反映。
 - commandIdあり: 認証済みWebhook(`createKey`/`deleteKey`・Keypad種別・commandId一致)の success **かつ** keyList厳密1件。evidence に `WEBHOOK_SUCCESS` と `KEYLIST_CONFIRMED` を別々に保存。Webhook成功でもkeyListに無ければ矛盾として `UNKNOWN`。failed→`FAILED`。重複Webhookは初回維持（巻き戻さない）。90秒未着は `UNKNOWN`。
 - commandIdなし: `ACCEPTED_NO_COMMAND_ID` で変更APIを再送せず、読み取り専用keyListを最大 `maxReads` 回（再実行間隔=ジョブ周期）。0件のまま上限→`UNKNOWN`。複数件/ID欠落/属性矛盾/形式不正は即 `UNKNOWN`。
-- 削除（Issue #751で補完）: 不在判定は対象Keypadの**keyList全体**から「保存済みpasscodeID」と「保存名」の**両方**の不在を独立に確認する（`inspectAbsence`）。別名で同IDが残る／同名で別IDが残る場合は不在とせず `UNKNOWN`。対象外端末・keyList欠落・id欠落/非オブジェクト要素・passcodeID未保存は「不在」と補完せず `UNKNOWN`。
+- 削除（Issue #751で補完）: 不在判定は対象Keypadの**keyList全体**から「保存済みpasscodeID」と「保存名」の**両方**の不在を独立に確認する（`inspectAbsence`）。別名で同IDが残る／同名で別IDが残る場合は不在とせず `UNKNOWN`。対象外端末・keyList欠落・id または name（非空文字列）が欠落した要素・非オブジェクト要素・passcodeID未保存は「不在」と補完せず `UNKNOWN`。
   - 送信前: 両不在なら `ALREADY_ABSENT`（deleteKey未送信）。保存ID・保存名が同一の1要素に一致し他に残存がない場合のみ1回送信。
   - **commandIdあり**: 同一端末(`deviceMac`)・`deleteKey`・同一`commandId`・`success` のWebhook **かつ** ID・名前の両不在が必要。証拠は `WEBHOOK_SUCCESS` と `KEYLIST_ABSENT` を別々に保存。Webhook未着は `webhookWaitSec`(既定90秒)まで保留（読取回数も消費しない）、超過は `UNKNOWN`。期限後に到着したイベント（`receivedAtSec - deleteSentAtSec > webhookWaitSec`）は照合タイミングによらず採用せず `UNKNOWN`。failed／その他結果／結果が食い違う重複は `UNKNOWN`＋通知。success＋残存は矛盾として `UNKNOWN`。別端末・別操作・別commandId・別種別のイベントは採用しない。
   - **commandIdなし**（2026-11-03の実機試験でcommandIdが返らなかった。公式仕様の確定ではない）: Webhookを必須にせず、変更APIは再送しない。keyList読取のみで確認し、上限は **回数 `maxReads`(既定3)** と **経過時間 `readWaitSec`(既定600秒)**。両上限は record（`reads`・`deleteSentAtSec`）に永続化され再起動で初期化しない。確認不能・上限超過は `UNKNOWN`＋通知。証拠は `KEYLIST_ABSENT` のみ（commandIdなしの結果をWebhook照合済みとして流用しない）。

@@ -1133,3 +1133,48 @@ test('#751 commandIdあり: 期限後に到着したsuccess Webhookは採用し�
   e2.sync(CANCEL());
   assert.strictEqual(w2.records()[0].state, S.DELETED_CONFIRMED);
 });
+
+test('#751 name欠落/不正のkeyList要素は不在と断定しない（削除前・送信後commandIdあり/なし・sweep）、秘密は破棄せず再発行しない', function () {
+  function a(entry) { return C.inspectAbsence([{ deviceId: DEV_A, keyList: [entry] }], DEV_A, 'N', '5'); }
+  assert.strictEqual(a({ id: 'OTHER' }).error, 'KEYLIST_ENTRY_INVALID');
+  assert.strictEqual(a({ id: 'OTHER', name: '' }).error, 'KEYLIST_ENTRY_INVALID');
+  assert.strictEqual(a({ id: 'OTHER', name: 123 }).error, 'KEYLIST_ENTRY_INVALID');
+  assert.strictEqual(a({ id: 'OTHER', name: null }).error, 'KEYLIST_ENTRY_INVALID');
+  assert.strictEqual(a({ id: 'OTHER', name: 'x' }).absent, true);
+
+  // 削除前
+  var w = world(); var e = w.engine(); issued(w, e);
+  w.keys[DEV_A] = [{ id: 'OTHER' }];
+  e.sync(CANCEL()); e.sync(booking({ revision: 3 }));
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w), 0);
+  assert.strictEqual(w.records().length, 1, '新キーを再発行しない');
+  assert.strictEqual(Object.keys(w.secrets).length, 1, '秘密を破棄しない');
+
+  // 送信後 commandIdなし
+  var w2 = world(); var e2 = w2.engine(); issued(w2, e2);
+  var d2 = w2.engineDeps(); var o2 = d2.api.deleteKey;
+  d2.api.deleteKey = function (dev, id) { var r = o2(dev, id); w2.keys[dev].push({ id: 'OTHER' }); return r; };
+  C.createEngine(d2, baseConfig()).sync(CANCEL());
+  assert.strictEqual(w2.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w2), 1);
+  assert.strictEqual(Object.keys(w2.secrets).length, 1);
+
+  // 送信後 commandIdあり（success Webhook あり）
+  var w3 = world(); var e3 = issuedWithDelCmd(w3, false);
+  w3.keys[DEV_A] = [{ id: 'OTHER' }];
+  e3.ingestWebhook(hook(w3.records()[0]));
+  e3.sync(CANCEL());
+  assert.strictEqual(w3.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w3.records().length, 1);
+  assert.strictEqual(Object.keys(w3.secrets).length, 1);
+
+  // sweep 期限切れ
+  var w4 = world(); var e4 = w4.engine(); issued(w4, e4);
+  w4.keys[DEV_A] = [{ id: 'OTHER' }];
+  w4.now = w4.records()[0].endSec + 10;
+  e4.sweep();
+  assert.strictEqual(w4.records()[0].state, S.EXPIRED);
+  assert.ok(w4.notes.some(function (n) { return n.code === 'EXPIRED_CHECK_FAILED'; }));
+  assert.strictEqual(Object.keys(w4.secrets).length, 1);
+});
