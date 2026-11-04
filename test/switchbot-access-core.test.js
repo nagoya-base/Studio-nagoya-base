@@ -207,7 +207,7 @@ test('commandIdあり: Webhook成功+keyList一致の両根拠を別々に保存
   e.sync(booking());
   var rec = w.records()[0];
   assert.strictEqual(rec.state, S.SENT_WAIT_WEBHOOK);
-  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoKeypad', eventName: 'createKey ', commandId: rec.commandId, result: 'success' } });
+  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoKeypad', deviceMac: DEV_A, eventName: 'createKey ', commandId: rec.commandId, result: 'success' } });
   e.sync(booking());
   rec = w.records()[0];
   assert.strictEqual(rec.state, S.ISSUED_CONFIRMED);
@@ -220,12 +220,12 @@ test('commandIdあり: Webhook failed は FAILED、無関係/重複/他commandId
   var e = w.engine();
   e.sync(booking());
   var rec = w.records()[0];
-  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoKeypad', eventName: 'createKey', commandId: 'OTHER', result: 'success' } });
-  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoLock', eventName: 'createKey', commandId: rec.commandId, result: 'success' } });
+  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoKeypad', deviceMac: DEV_A, eventName: 'createKey', commandId: 'OTHER', result: 'success' } });
+  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoLock', deviceMac: DEV_A, eventName: 'createKey', commandId: rec.commandId, result: 'success' } });
   e.sync(booking());
   assert.strictEqual(w.records()[0].state, S.SENT_WAIT_WEBHOOK);
-  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoKeypad', eventName: 'createKey', commandId: rec.commandId, result: 'failed' } });
-  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoKeypad', eventName: 'createKey', commandId: rec.commandId, result: 'success' } });
+  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoKeypad', deviceMac: DEV_A, eventName: 'createKey', commandId: rec.commandId, result: 'failed' } });
+  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoKeypad', deviceMac: DEV_A, eventName: 'createKey', commandId: rec.commandId, result: 'success' } });
   e.sync(booking());
   assert.strictEqual(w.records()[0].state, S.FAILED);
 });
@@ -249,7 +249,7 @@ test('Webhook成功だがkeyListに無い場合は矛盾として UNKNOWN（成�
   e.sync(booking());
   var rec = w.records()[0];
   w.keys[DEV_A] = [];
-  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoKeypad', eventName: 'createKey', commandId: rec.commandId, result: 'success' } });
+  e.ingestWebhook({ eventType: 'changeReport', context: { deviceType: 'WoKeypad', deviceMac: DEV_A, eventName: 'createKey', commandId: rec.commandId, result: 'success' } });
   e.sync(booking());
   assert.strictEqual(w.records()[0].state, S.UNKNOWN);
 });
@@ -818,4 +818,363 @@ test('sweep: ロック下で再読込し、並行した削除の進行状態を 
   e.sweep();
   assert.notStrictEqual(w.records()[0].state, S.EXPIRED);
   assert.strictEqual(w.mutations().filter(function (c) { return c.indexOf('delete:') === 0; }).length, 1);
+});
+
+// ---------- Issue #751: 削除確認のID・名前・Webhook照合 ----------
+
+function hook(rec, over, ctx) {
+  return Object.assign({ eventType: 'changeReport', context: Object.assign({
+    deviceType: 'WoKeypad', deviceMac: DEV_A, eventName: 'deleteKey', commandId: rec.deleteCommandId, result: 'success'
+  }, ctx || {}) }, over || {});
+}
+function delCalls(w) { return w.mutations().filter(function (c) { return c.indexOf('delete:') === 0; }).length; }
+var CANCEL = function () { return booking({ revision: 2, status: 'CANCELLED' }); };
+
+/** deleteKey が commandId を返すよう、フェイクを差し替える（削除は端末に反映する）。 */
+function withDeleteCommandId(w, applied) {
+  var deps = w.engineDeps();
+  var orig = deps.api.deleteKey;
+  deps.api.deleteKey = function (dev, id) {
+    var r = applied === false ? (w.calls.push('delete:' + id), { httpCode: 200, parsed: { statusCode: 100, body: {} } }) : orig(dev, id);
+    r.parsed.body = { commandId: 'DEL-CMD' };
+    return r;
+  };
+  return deps;
+}
+function issuedWithDelCmd(w, applied) {
+  var deps = withDeleteCommandId(w, applied);
+  var e = C.createEngine(deps, baseConfig());
+  issued(w, e);
+  e.sync(CANCEL());
+  return e;
+}
+
+test('#751 inspectAbsence: 別名同ID・同名別ID・対象外端末・欠落・不正要素を不在と断定しない', function () {
+  function a(devs, pid) { return C.inspectAbsence(devs, DEV_A, 'N', pid === undefined ? '5' : pid); }
+  assert.strictEqual(a([{ deviceId: DEV_A, keyList: [] }]).absent, true);
+  assert.strictEqual(a([{ deviceId: DEV_A, keyList: [{ id: '5', name: 'OTHER' }] }]).absent, false, '別名の同ID');
+  assert.strictEqual(a([{ deviceId: DEV_A, keyList: [{ id: '9', name: 'N' }] }]).absent, false, '同名の別ID');
+  assert.strictEqual(a([{ deviceId: DEV_B, keyList: [] }]).error, 'DEVICE_NOT_FOUND');
+  assert.strictEqual(a([{ deviceId: DEV_A }]).error, 'KEYLIST_INVALID');
+  assert.strictEqual(a([{ deviceId: DEV_A, keyList: [null] }]).error, 'KEYLIST_ENTRY_INVALID');
+  assert.strictEqual(a([{ deviceId: DEV_A, keyList: [{ name: 'X' }] }]).error, 'KEYLIST_ENTRY_INVALID');
+  assert.strictEqual(a(null).error, 'DEVICE_LIST_INVALID');
+  assert.strictEqual(a([{ deviceId: DEV_A, keyList: [] }], '').error, 'PASSCODE_ID_MISSING');
+  assert.strictEqual(a([{ deviceId: DEV_A, keyList: [{ id: 5, name: 'N' }] }]).bothCount, 1, '数値IDも文字列比較');
+});
+
+test('#751 削除前: 別名で同IDだけ残存/同名別IDだけ残存は ALREADY_ABSENT にせず UNKNOWN（deleteKey未送信）', function () {
+  var w = world(); var e = w.engine(); issued(w, e);
+  w.keys[DEV_A][0].name = 'RENAMED';
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w), 0);
+
+  var w2 = world(); var e2 = w2.engine(); issued(w2, e2);
+  w2.keys[DEV_A][0].id = 'OTHER-ID';
+  e2.sync(CANCEL());
+  assert.strictEqual(w2.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w2), 0);
+});
+
+test('#751 削除前: 同名別IDと別名同IDが別要素で残る場合も送信しない', function () {
+  var w = world(); var e = w.engine(); var rec = issued(w, e);
+  w.keys[DEV_A].push({ id: 'X9', name: rec.name });
+  w.keys[DEV_A][0].name = 'ALIAS';
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w), 0);
+});
+
+test('#751 削除前: ID・名前とも不在なら ALREADY_ABSENT、別予約/通常キーは無関係', function () {
+  var w = world(); var e = w.engine(); issued(w, e);
+  w.keys[DEV_A] = [{ id: 'NORMAL', name: 'regular', type: 'permanent' }];
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.ALREADY_ABSENT);
+  assert.strictEqual(delCalls(w), 0);
+  assert.strictEqual(w.keys[DEV_A].length, 1);
+});
+
+test('#751 削除前: keyList要素の欠落/対象外端末のみの応答は不在と補完しない', function () {
+  var w = world(); var e = w.engine(); issued(w, e);
+  w.keys[DEV_A].push({ name: 'no-id' });
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w), 0);
+});
+
+test('#751 commandIdなし削除後: 別名で同IDが残る/同名別IDが残る場合は成功にしない', function () {
+  var w = world(); var e = w.engine(); var rec = issued(w, e);
+  // deleteKey 後に ID だけ別名で残る端末挙動を模す
+  var deps = w.engineDeps(); var orig = deps.api.deleteKey;
+  deps.api.deleteKey = function (dev, id) { var r = orig(dev, id); w.keys[dev].push({ id: id, name: 'ALIAS' }); return r; };
+  var e2 = C.createEngine(deps, baseConfig());
+  e2.sync(CANCEL());
+  e2.sync(CANCEL()); e2.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.notStrictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
+  assert.strictEqual(delCalls(w), 1, '再送なし');
+
+  var w2 = world(); var e3 = w2.engine(); issued(w2, e3);
+  var d2 = w2.engineDeps(); var o2 = d2.api.deleteKey;
+  d2.api.deleteKey = function (dev, id) { var r = o2(dev, id); w2.keys[dev].push({ id: 'NEW', name: w2.records()[0].name }); return r; };
+  var e4 = C.createEngine(d2, baseConfig());
+  e4.sync(CANCEL()); e4.sync(CANCEL()); e4.sync(CANCEL());
+  assert.strictEqual(w2.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w2), 1);
+});
+
+test('#751 commandIdなし削除: 両不在の読取確認のみで確定、証拠はKEYLIST_ABSENTのみ（Webhook証拠を捏造しない）', function () {
+  var w = world(); var e = w.engine(); issued(w, e);
+  e.sync(CANCEL());
+  var rec = w.records()[0];
+  assert.strictEqual(rec.state, S.DELETED_CONFIRMED);
+  assert.deepStrictEqual(rec.evidence.slice(-1), ['KEYLIST_ABSENT']);
+  assert.strictEqual(rec.evidence.indexOf('WEBHOOK_SUCCESS'), -1);
+  assert.strictEqual(rec.deleteCommandId, '');
+});
+
+test('#751 commandIdなし削除: 読取回数上限・経過時間上限を永続化し、再起動でリセットされず再送もない', function () {
+  var w = world(); var e = w.engine(baseConfig({ maxReads: 3 })); issued(w, e);
+  w.deleteMode = 'noApply';
+  e.sync(CANCEL());                       // read 1
+  assert.strictEqual(w.records()[0].reads, 1);
+  assert.strictEqual(w.records()[0].state, S.DELETE_SENT);
+  var e2 = w.engine(baseConfig({ maxReads: 3 })); // 再起動相当
+  e2.sync(CANCEL());                      // read 2
+  assert.strictEqual(w.records()[0].reads, 2);
+  w.engine(baseConfig({ maxReads: 3 })).sync(CANCEL()); // read 3 → 上限
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w), 1);
+
+  var w2 = world(); var e3 = w2.engine(baseConfig({ readWaitSec: 100, maxReads: 50 })); issued(w2, e3);
+  w2.deleteMode = 'noApply';
+  e3.sync(CANCEL());
+  w2.now += 101;
+  w2.keys[DEV_A] = []; // 期限後に消えても、期限超過は成功扱いにしない
+  e3.sync(CANCEL());
+  assert.strictEqual(w2.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w2.records()[0].reason, 'READ_WINDOW_EXCEEDED');
+  assert.strictEqual(delCalls(w2), 1);
+});
+
+test('#751 commandIdなし削除: 読取の通信/API失敗は消費しつつ上限まで保留、成功扱いしない', function () {
+  var w = world(); var e = w.engine(baseConfig({ maxReads: 2 })); issued(w, e);
+  w.deleteMode = 'noApply';
+  e.sync(CANCEL());
+  w.listMode = 'throw';
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w), 1);
+});
+
+test('#751 commandIdあり: 同一端末・deleteKey・同一commandId・success のWebhook＋両不在で確定、証拠は別々', function () {
+  var w = world(); var e = issuedWithDelCmd(w);
+  var rec = w.records()[0];
+  assert.strictEqual(rec.state, S.DELETE_SENT, 'Webhook未着は保留');
+  assert.strictEqual(rec.deleteCommandId, 'DEL-CMD');
+  e.ingestWebhook(hook(rec));
+  e.sync(CANCEL());
+  rec = w.records()[0];
+  assert.strictEqual(rec.state, S.DELETED_CONFIRMED);
+  assert.deepStrictEqual(rec.evidence.slice(-2), ['WEBHOOK_SUCCESS', 'KEYLIST_ABSENT']);
+  assert.strictEqual(delCalls(w), 1);
+});
+
+test('#751 commandIdあり: Webhookとkeylistの到着順が逆（先にWebhook到着→先に不在）でも同じ結果', function () {
+  var w = world(); var deps = withDeleteCommandId(w);
+  var e = C.createEngine(deps, baseConfig());
+  w.createMode = 'noCommandId'; e.sync(booking());
+  var rec0 = w.records()[0];
+  // 削除送信前にWebhookが先着（commandIdは予測可能な固定値の想定）
+  e.ingestWebhook(hook({ deleteCommandId: 'DEL-CMD' }));
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
+  assert.strictEqual(rec0.id, w.records()[0].id);
+});
+
+test('#751 commandIdあり: Webhook不在/未着は期限前は保留、期限超過で UNKNOWN（keyListが両不在でも成功にしない）', function () {
+  var w = world(); var e = issuedWithDelCmd(w);
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.DELETE_SENT);
+  assert.strictEqual(w.records()[0].reads, 0, '未着の保留は読取を消費しない');
+  w.now += 91;
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w.records()[0].reason, 'WEBHOOK_TIMEOUT');
+  assert.strictEqual(w.keys[DEV_A].length, 0);
+  assert.strictEqual(delCalls(w), 1);
+});
+
+test('#751 commandIdあり: failed＋両不在でも成功にせず UNKNOWN＋通知', function () {
+  var w = world(); var e = issuedWithDelCmd(w);
+  e.ingestWebhook(hook(w.records()[0], null, { result: 'failed' }));
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.ok(w.notes.some(function (n) { return n.code === 'DELETE_WEBHOOK_FAILED'; }));
+  assert.strictEqual(delCalls(w), 1);
+});
+
+test('#751 commandIdあり: success＋keyList残存は矛盾として UNKNOWN', function () {
+  var w = world(); var e = issuedWithDelCmd(w, false);
+  e.ingestWebhook(hook(w.records()[0]));
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w.records()[0].reason, 'WEBHOOK_SUCCESS_BUT_REMAINS');
+  assert.strictEqual(delCalls(w), 1);
+});
+
+test('#751 commandIdあり: success＋別名同ID残存/同名別ID残存も矛盾で UNKNOWN', function () {
+  var w = world(); var e = issuedWithDelCmd(w, false);
+  w.keys[DEV_A][0].name = 'ALIAS';
+  e.ingestWebhook(hook(w.records()[0]));
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+});
+
+test('#751 commandIdあり: device/操作/commandId不一致・種別違いのWebhookは採用しない（期限でUNKNOWN）', function () {
+  var w = world(); var e = issuedWithDelCmd(w);
+  var rec = w.records()[0];
+  e.ingestWebhook(hook(rec, null, { deviceMac: DEV_B }));                 // 別端末
+  e.ingestWebhook(hook(rec, null, { eventName: 'createKey' }));           // 別操作
+  e.ingestWebhook(hook(rec, null, { commandId: 'OTHER' }));               // 別commandId
+  e.ingestWebhook(hook(rec, null, { deviceType: 'WoLock' }));             // 別種別
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.DELETE_SENT);
+  w.now += 91;
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+});
+
+test('#751 Webhook: 対象端末(deviceMac)欠落の旧形式は保存せず補完しない／正規化は大文字・区切り除去のみ', function () {
+  var w = world(); var e = w.engine();
+  var ctx = { deviceType: 'WoKeypad', eventName: 'deleteKey', commandId: 'C1', result: 'success' };
+  assert.deepStrictEqual(e.ingestWebhook({ eventType: 'changeReport', context: ctx }), { stored: false, reason: 'DEVICE_MISSING' });
+  assert.strictEqual(Object.keys(w.store).length, 0);
+  assert.strictEqual(C.parseKeypadWebhook({ eventType: 'changeReport', context: Object.assign({ deviceMac: 'aa:aa-aa AAAAAA37dd' }, ctx) }).deviceMac, 'AAAAAAAAAAAA37DD');
+  assert.strictEqual(C.parseKeypadWebhook({ eventType: 'changeReport', context: Object.assign({}, ctx, { commandId: '' }) }), null);
+});
+
+test('#751 Webhook: 重複/遅延は初回維持、結果が食い違う重複は矛盾として確定に使わない', function () {
+  var w = world(); var e = issuedWithDelCmd(w);
+  var rec = w.records()[0];
+  e.ingestWebhook(hook(rec));
+  assert.strictEqual(e.ingestWebhook(hook(rec)).duplicate, true);
+  e.ingestWebhook(hook(rec, null, { result: 'failed' }));
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w.records()[0].reason, 'WEBHOOK_CONFLICT');
+});
+
+test('#751 旧形式: deleteSentAtSec欠落の DELETE_SENT は推測補完せず UNKNOWN', function () {
+  var w = world(); var e = w.engine(); issued(w, e);
+  w.deleteMode = 'noApply';
+  e.sync(CANCEL());
+  var key = Object.keys(w.store).filter(function (k) { return k.indexOf('OP_') === 0; })[0];
+  var r = JSON.parse(w.store[key]); delete r.deleteSentAtSec; w.store[key] = JSON.stringify(r);
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w), 1);
+});
+
+test('#751 保存失敗・同時/重複実行・OFF復旧: deleteKeyは再送されない', function () {
+  // 結果保存失敗 → DELETE_SENDING → 再起動で UNKNOWN
+  var w = world(); var e = w.engine(); issued(w, e);
+  w.failSetOnKey = { prefix: 'OP_', state: S.DELETE_SENT };
+  assert.throws(function () { e.sync(CANCEL()); }, /STORE_FAIL/);
+  w.failSetOnKey = null;
+  w.engine().sync(CANCEL()); w.engine().sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w), 1);
+
+  // 別インスタンス交互/OFF時のadminReconcileで遅れて両不在を確認 → 確定、再送なし
+  var w2 = world(); var on = w2.engine(baseConfig({ maxReads: 5 })); issued(w2, on);
+  w2.deleteMode = 'noApply';
+  on.sync(CANCEL());
+  w2.engine(baseConfig({ maxReads: 5 })).sync(CANCEL());
+  var off = w2.engine(baseConfig({ enabled: false, maxReads: 5 }));
+  w2.keys[DEV_A] = [];
+  assert.strictEqual(off.adminReconcile(w2.records()[0].id, 'ops').state, S.DELETED_CONFIRMED);
+  assert.strictEqual(delCalls(w2), 1);
+});
+
+test('#751 期限切れ確認: 別名で同IDが残る間は ARCHIVED_EXPIRED にしない（残存通知）', function () {
+  var w = world(); var e = w.engine(); issued(w, e);
+  w.keys[DEV_A][0].name = 'ALIAS';
+  w.now = w.records()[0].endSec + 10;
+  e.sweep();
+  assert.strictEqual(w.records()[0].state, S.EXPIRED);
+  assert.ok(w.notes.some(function (n) { return n.code === 'EXPIRED_KEY_REMAINS'; }));
+});
+
+test('#751 別予約・通常キーは削除で影響を受けない', function () {
+  var w = world(); var e = w.engine();
+  w.keys[DEV_A].push({ id: 'NORMAL', name: 'regular', type: 'permanent' });
+  w.createMode = 'noCommandId';
+  e.sync(booking()); e.sync(booking({ bookingId: 'BK2', startTime: '15:00', endTime: '17:00' }));
+  e.sync(CANCEL());
+  assert.strictEqual(w.keys[DEV_A].length, 2);
+  assert.ok(w.keys[DEV_A].some(function (k) { return k.id === 'NORMAL'; }));
+});
+
+test('#751 commandIdあり: 期限後に到着したsuccess Webhookは採用しない（期限内到着なら後の照合でも採用）', function () {
+  var w = world(); var e = issuedWithDelCmd(w);
+  w.now += 600;                       // 期限(90秒)を大きく超えてから到着
+  e.ingestWebhook(hook(w.records()[0]));
+  e.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w.records()[0].reason, 'WEBHOOK_LATE');
+  assert.strictEqual(delCalls(w), 1);
+
+  var w2 = world(); var e2 = issuedWithDelCmd(w2);
+  w2.now += 30;                       // 期限内に到着
+  e2.ingestWebhook(hook(w2.records()[0]));
+  w2.now += 600;                      // 照合ジョブが遅れて実行
+  e2.sync(CANCEL());
+  assert.strictEqual(w2.records()[0].state, S.DELETED_CONFIRMED);
+});
+
+test('#751 name欠落/不正のkeyList要素は不在と断定しない（削除前・送信後commandIdあり/なし・sweep）、秘密は破棄せず再発行しない', function () {
+  function a(entry) { return C.inspectAbsence([{ deviceId: DEV_A, keyList: [entry] }], DEV_A, 'N', '5'); }
+  assert.strictEqual(a({ id: 'OTHER' }).error, 'KEYLIST_ENTRY_INVALID');
+  assert.strictEqual(a({ id: 'OTHER', name: '' }).error, 'KEYLIST_ENTRY_INVALID');
+  assert.strictEqual(a({ id: 'OTHER', name: 123 }).error, 'KEYLIST_ENTRY_INVALID');
+  assert.strictEqual(a({ id: 'OTHER', name: null }).error, 'KEYLIST_ENTRY_INVALID');
+  assert.strictEqual(a({ id: 'OTHER', name: 'x' }).absent, true);
+
+  // 削除前
+  var w = world(); var e = w.engine(); issued(w, e);
+  w.keys[DEV_A] = [{ id: 'OTHER' }];
+  e.sync(CANCEL()); e.sync(booking({ revision: 3 }));
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w), 0);
+  assert.strictEqual(w.records().length, 1, '新キーを再発行しない');
+  assert.strictEqual(Object.keys(w.secrets).length, 1, '秘密を破棄しない');
+
+  // 送信後 commandIdなし
+  var w2 = world(); var e2 = w2.engine(); issued(w2, e2);
+  var d2 = w2.engineDeps(); var o2 = d2.api.deleteKey;
+  d2.api.deleteKey = function (dev, id) { var r = o2(dev, id); w2.keys[dev].push({ id: 'OTHER' }); return r; };
+  C.createEngine(d2, baseConfig()).sync(CANCEL());
+  assert.strictEqual(w2.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCalls(w2), 1);
+  assert.strictEqual(Object.keys(w2.secrets).length, 1);
+
+  // 送信後 commandIdあり（success Webhook あり）
+  var w3 = world(); var e3 = issuedWithDelCmd(w3, false);
+  w3.keys[DEV_A] = [{ id: 'OTHER' }];
+  e3.ingestWebhook(hook(w3.records()[0]));
+  e3.sync(CANCEL());
+  assert.strictEqual(w3.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w3.records().length, 1);
+  assert.strictEqual(Object.keys(w3.secrets).length, 1);
+
+  // sweep 期限切れ
+  var w4 = world(); var e4 = w4.engine(); issued(w4, e4);
+  w4.keys[DEV_A] = [{ id: 'OTHER' }];
+  w4.now = w4.records()[0].endSec + 10;
+  e4.sweep();
+  assert.strictEqual(w4.records()[0].state, S.EXPIRED);
+  assert.ok(w4.notes.some(function (n) { return n.code === 'EXPIRED_CHECK_FAILED'; }));
+  assert.strictEqual(Object.keys(w4.secrets).length, 1);
 });

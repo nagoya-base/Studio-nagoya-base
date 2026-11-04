@@ -132,6 +132,40 @@ var SwitchBotAccessCore = (function () {
     return { valid: true, count: hits.length, entries: hits, ids: ids, error: null };
   }
 
+  /** Webhook/端末識別子の正規化（大文字・区切り除去）。空は ''（推測で補完しない）。 */
+  function normDev(s) {
+    return typeof s === 'string' ? s.replace(/[:\-\s]/g, '').toUpperCase() : '';
+  }
+
+  /**
+   * 削除用の不在検査（Issue #751）。対象 Keypad の keyList「全体」から、保存済み passcodeId と保存名の
+   * 両方を独立に数える。別名で同 ID が残る／同名で別 ID が残る場合を見逃さない。
+   * 対象外端末・keyList 欠落・id または name（非空文字列）を持たない／オブジェクトでない要素（不完全応答）は valid:false。
+   * 0 件と補完しない。passcodeId 未保存も valid:false（ID の不在を検証できない）。
+   */
+  function inspectAbsence(devices, deviceId, name, passcodeId) {
+    if (passcodeId === undefined || passcodeId === null || String(passcodeId) === '') return { valid: false, error: 'PASSCODE_ID_MISSING' };
+    if (!Array.isArray(devices)) return { valid: false, error: 'DEVICE_LIST_INVALID' };
+    var devs = devices.filter(function (d) { return d && d.deviceId === deviceId; });
+    if (devs.length !== 1) return { valid: false, error: devs.length === 0 ? 'DEVICE_NOT_FOUND' : 'DEVICE_AMBIGUOUS' };
+    var list = devs[0].keyList;
+    if (!Array.isArray(list)) return { valid: false, error: 'KEYLIST_INVALID' };
+    for (var i = 0; i < list.length; i++) {
+      var k = list[i];
+      // id と name の両方が揃った要素のみ有効。どちらか欠落/不正な要素は、保存名/保存IDを隠している可能性があるため不在と断定しない
+      if (!k || typeof k !== 'object' || k.id === undefined || k.id === null || String(k.id) === '' ||
+          typeof k.name !== 'string' || k.name === '') {
+        return { valid: false, error: 'KEYLIST_ENTRY_INVALID' };
+      }
+    }
+    var pid = String(passcodeId);
+    var byName = list.filter(function (k) { return k.name === name; });
+    var byId = list.filter(function (k) { return String(k.id) === pid; });
+    var both = byName.filter(function (k) { return String(k.id) === pid; });
+    return { valid: true, nameCount: byName.length, idCount: byId.length, bothCount: both.length,
+      absent: byName.length === 0 && byId.length === 0, error: null };
+  }
+
   /** 作成後: 厳密に 1 件・ID あり・属性矛盾なしのときのみ確認済み。 */
   function judgeIssued(insp, expected) {
     if (!insp.valid) return { ok: false, error: insp.error };
@@ -153,7 +187,9 @@ var SwitchBotAccessCore = (function () {
     var name = String(c.eventName || '').trim();
     if (name !== 'createKey' && name !== 'deleteKey') return null;
     if (!c.commandId) return null;
-    return { eventName: name, commandId: String(c.commandId), result: c.result === 'success' ? 'success' : (c.result === 'failed' ? 'failed' : 'other') };
+    // 対象 Keypad（deviceMac）を永続イベントへ通す。欠落は '' のまま（取込側で採用しない）
+    return { eventName: name, commandId: String(c.commandId), deviceMac: normDev(c.deviceMac),
+      result: c.result === 'success' ? 'success' : (c.result === 'failed' ? 'failed' : 'other') };
   }
 
   function classifyApi(res) {
@@ -183,12 +219,16 @@ var SwitchBotAccessCore = (function () {
     config = config || {};
     var maxReads = typeof config.maxReads === 'number' ? config.maxReads : 3;
     var webhookWaitSec = typeof config.webhookWaitSec === 'number' ? config.webhookWaitSec : 90;
+    var readWaitSec = typeof config.readWaitSec === 'number' ? config.readWaitSec : 600; // commandId なし削除の読取確認の最大経過時間
 
     // ---- 永続層ヘルパ ----
     function load(k) { var r = deps.store.get(k); return r ? JSON.parse(r) : null; }
     function save(k, v) { deps.store.set(k, JSON.stringify(v)); }
     function recKey(id) { return 'OP_' + id; }
     function bkKey(bookingId) { return 'BK_' + bookingId; }
+    /** Webhook は 端末×操作×commandId で別々に保存（別端末/別操作の同 commandId と衝突させない）。 */
+    function evtKey(mac, eventName, commandId) { return 'EVT_' + mac + '_' + eventName + '_' + commandId; }
+    function eventFor(rec, eventName, commandId) { return load(evtKey(normDev(rec.deviceId), eventName, commandId)); }
 
     function bookingIndex(bookingId) {
       return load(bkKey(bookingId)) || { bookingId: bookingId, head: null, ops: [] };
@@ -248,8 +288,14 @@ var SwitchBotAccessCore = (function () {
     function ingestWebhook(payload) {
       var ev = parseKeypadWebhook(payload);
       if (!ev) return { stored: false };
-      var k = 'EVT_' + ev.commandId;
-      if (load(k)) return { stored: false, duplicate: true }; // 重複は初回を維持（巻き戻さない）
+      if (!ev.deviceMac) return { stored: false, reason: 'DEVICE_MISSING' }; // 対象不明のイベントは採用しない
+      var k = evtKey(ev.deviceMac, ev.eventName, ev.commandId);
+      var prev = load(k);
+      if (prev) {
+        // 重複は初回を維持（巻き戻さない）。結果が食い違う重複は矛盾として印を付ける（削除確定に使わない）
+        if (prev.result !== ev.result && !prev.conflict) { prev.conflict = true; save(k, prev); }
+        return { stored: false, duplicate: true };
+      }
       ev.receivedAtSec = deps.nowSec();
       save(k, ev);
       return { stored: true };
@@ -322,8 +368,8 @@ var SwitchBotAccessCore = (function () {
       if (rec.state !== STATE.SENT_WAIT_WEBHOOK && rec.state !== STATE.ACCEPTED_NO_COMMAND_ID) return rec;
       var webhookOk = false;
       if (rec.state === STATE.SENT_WAIT_WEBHOOK) {
-        var ev = load('EVT_' + rec.commandId);
-        if (ev && ev.eventName === 'createKey') {
+        var ev = eventFor(rec, 'createKey', rec.commandId);
+        if (ev) {
           if (ev.result === 'failed') {
             rec.reason = 'WEBHOOK_FAILED';
             transition(rec, STATE.FAILED, null);
@@ -375,22 +421,23 @@ var SwitchBotAccessCore = (function () {
     function executeDelete(rec) {
       var kl = readKeyList();
       if (!kl.ok) return stopUnknown(rec, 'DELETE_PRECHECK_FAILED', kl.error);
-      var insp = inspectKeyList(kl.devices, rec.deviceId, rec.name);
+      var insp = inspectAbsence(kl.devices, rec.deviceId, rec.name, rec.passcodeId);
       if (!insp.valid) return stopUnknown(rec, 'DELETE_PRECHECK_FAILED', insp.error);
-      if (insp.count === 0) {
+      // 保存 ID と保存名の両方が全 keyList から不在のときのみ「送信前から不在」
+      if (insp.absent) {
         rec.evidence.push(EVIDENCE.KEYLIST_ABSENT);
         transition(rec, STATE.ALREADY_ABSENT, null);
         deps.secrets.del('SECRET_' + rec.id);
         return rec;
       }
-      if (insp.count > 1) return stopUnknown(rec, 'DELETE_AMBIGUOUS', 'KEY_NAME_AMBIGUOUS');
-      var id = insp.ids[0];
-      if (id === undefined || id === null || String(id) === '' || String(id) !== String(rec.passcodeId)) {
-        return stopUnknown(rec, 'DELETE_ID_MISMATCH', 'ID_MISMATCH');
+      // 送信してよいのは「保存 ID・保存名が同一の 1 要素に一致し、他に ID/名前の残存がない」場合のみ
+      if (insp.nameCount > 1 || insp.idCount > 1) return stopUnknown(rec, 'DELETE_AMBIGUOUS', 'KEY_NAME_AMBIGUOUS');
+      if (insp.bothCount !== 1 || insp.nameCount !== 1 || insp.idCount !== 1) {
+        return stopUnknown(rec, 'DELETE_ID_MISMATCH', 'ID_MISMATCH'); // 別名の同 ID／別 ID の同名
       }
       transition(rec, STATE.DELETE_SENDING, null);
       var res;
-      try { res = deps.api.deleteKey(rec.deviceId, String(id)); }
+      try { res = deps.api.deleteKey(rec.deviceId, String(rec.passcodeId)); }
       catch (e) { return stopUnknown(rec, 'DELETE_COMM_ERROR', 'COMM_ERROR'); }
       var c = classifyApi(res);
       if (!c.accepted) return stopUnknown(rec, 'DELETE_RESPONSE_UNKNOWN', 'RESPONSE_UNKNOWN');
@@ -401,27 +448,50 @@ var SwitchBotAccessCore = (function () {
       return reconcileDelete(rec);
     }
 
+    /**
+     * 削除確定の照合（読み取りのみ。変更 API は呼ばない）。
+     * commandId あり: 同一端末・deleteKey・同一 commandId・success の Webhook ＋ ID/名前の両不在。
+     * commandId なし: Webhook を必須にせず、永続化した回数・時間上限内の keyList 読取のみ。
+     * 読取回数(reads)と送信時刻(deleteSentAtSec)は record に永続化され、再起動でリセットされない。
+     */
     function reconcileDelete(rec) {
       if (rec.state !== STATE.DELETE_SENT) return rec;
+      if (typeof rec.deleteSentAtSec !== 'number') return stopUnknown(rec, 'DELETE_CONFIRM_FAILED', 'SENT_TIME_MISSING'); // 旧形式は補完しない
+      var now = deps.nowSec();
+      var webhookOk = false;
+      if (rec.deleteCommandId) {
+        var ev = eventFor(rec, 'deleteKey', rec.deleteCommandId);
+        if (!ev) {
+          if (now - rec.deleteSentAtSec > webhookWaitSec) return stopUnknown(rec, 'WEBHOOK_TIMEOUT', 'WEBHOOK_TIMEOUT');
+          return rec; // 未着は期限まで保留（読取も消費しない）
+        }
+        // 期限後に届いたイベントは、照合ジョブの実行タイミングによらず採用しない
+        if (typeof ev.receivedAtSec !== 'number' || ev.receivedAtSec - rec.deleteSentAtSec > webhookWaitSec) {
+          return stopUnknown(rec, 'WEBHOOK_TIMEOUT', 'WEBHOOK_LATE');
+        }
+        if (ev.conflict) return stopUnknown(rec, 'DELETE_WEBHOOK_CONFLICT', 'WEBHOOK_CONFLICT');
+        if (ev.result !== 'success') return stopUnknown(rec, 'DELETE_WEBHOOK_FAILED', ev.result === 'failed' ? 'WEBHOOK_FAILED' : 'WEBHOOK_NOT_SUCCESS');
+        webhookOk = true;
+      } else if (now - rec.deleteSentAtSec > readWaitSec) {
+        return stopUnknown(rec, 'READ_LIMIT', 'READ_WINDOW_EXCEEDED');
+      }
       if (rec.reads >= maxReads) return stopUnknown(rec, 'READ_LIMIT', 'READ_LIMIT');
       rec.reads += 1;
+      save(recKey(rec.id), rec); // 読取回数を読取前に永続化（再起動でリセットしない）
       var kl = readKeyList();
       if (!kl.ok) {
         if (rec.reads >= maxReads) return stopUnknown(rec, 'READ_LIMIT', kl.error);
-        save(recKey(rec.id), rec);
         return rec;
       }
-      var insp = inspectKeyList(kl.devices, rec.deviceId, rec.name);
+      var insp = inspectAbsence(kl.devices, rec.deviceId, rec.name, rec.passcodeId);
       if (!insp.valid) return stopUnknown(rec, 'DELETE_CONFIRM_FAILED', insp.error);
-      if (insp.count > 0) {
+      if (!insp.absent) {
+        // Webhook 成功なのに残存 = 矛盾。成功へ寄せず停止
+        if (webhookOk) return stopUnknown(rec, 'CONFIRM_MISMATCH', 'WEBHOOK_SUCCESS_BUT_REMAINS');
         if (rec.reads >= maxReads) return stopUnknown(rec, 'KEY_REMAINS', 'KEY_REMAINS');
-        save(recKey(rec.id), rec);
-        return rec;
+        return rec; // commandId なし: 反映待ちの可能性。上限まで読取のみ
       }
-      if (rec.deleteCommandId) {
-        var ev = load('EVT_' + rec.deleteCommandId);
-        if (ev && ev.eventName === 'deleteKey' && ev.result === 'success') rec.evidence.push(EVIDENCE.WEBHOOK_SUCCESS);
-      }
+      if (webhookOk) rec.evidence.push(EVIDENCE.WEBHOOK_SUCCESS);
       rec.evidence.push(EVIDENCE.KEYLIST_ABSENT);
       transition(rec, STATE.DELETED_CONFIRMED, null);
       deps.secrets.del('SECRET_' + rec.id);
@@ -579,8 +649,8 @@ var SwitchBotAccessCore = (function () {
       }
       if (rec.state === STATE.EXPIRED) {
         var kl = readKeyList();
-        var insp = kl.ok ? inspectKeyList(kl.devices, rec.deviceId, rec.name) : { valid: false };
-        if (insp.valid && insp.count === 0) {
+        var insp = kl.ok ? inspectAbsence(kl.devices, rec.deviceId, rec.name, rec.passcodeId) : { valid: false };
+        if (insp.valid && insp.absent) {
           rec.evidence.push(EVIDENCE.KEYLIST_ABSENT);
           transition(rec, STATE.ARCHIVED_EXPIRED, null);
           deps.secrets.del('SECRET_' + rec.id);
@@ -711,7 +781,7 @@ var SwitchBotAccessCore = (function () {
   return {
     STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, TERMINAL: TERMINAL,
     maskId: maskId, jstToEpochSec: jstToEpochSec, resolveKeypad: resolveKeypad,
-    evaluateEligibility: evaluateEligibility, inspectKeyList: inspectKeyList, judgeIssued: judgeIssued,
+    evaluateEligibility: evaluateEligibility, inspectKeyList: inspectKeyList, inspectAbsence: inspectAbsence, normDev: normDev, judgeIssued: judgeIssued,
     parseKeypadWebhook: parseKeypadWebhook, classifyApi: classifyApi, createEngine: createEngine
   };
 })();
