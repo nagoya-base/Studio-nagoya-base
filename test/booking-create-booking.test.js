@@ -1488,3 +1488,18 @@ test('Issue #758: 開始刻みの施行前（1秒前）は従来どおり15分/4
   var r2 = unset.sandbox.BookingRepository.createBooking(validPayload({ date: '2026-12-05', startTime: '10:45' }), new Date('2026-12-01T00:00:00+09:00'));
   assert.strictEqual(r2.success, true, JSON.stringify(r2.error));
 });
+
+test('Issue #758: OPEN_TIME=08:15 でも、開始刻みの施行後の新規予約は00分/30分のみ受理（08:30可、08:15/08:45は不可）', function () {
+  var ctx = setup({ properties: { OPEN_TIME: '08:15', BOOKING_SLOT_STEP_2026_11_EFFECTIVE_AT: '2026-11-19T00:00:00+09:00' } });
+  var now = new Date('2026-11-19T00:00:00+09:00');
+  ['08:15', '08:45', '10:15'].forEach(function (t) {
+    var r = ctx.sandbox.BookingRepository.createBooking(validPayload({ date: '2026-11-25', startTime: t }), now);
+    assert.strictEqual(r.success, false, t);
+    assert.strictEqual(r.error.code, 'START_TIME_NOT_ALIGNED', t);
+  });
+  var ok = ctx.sandbox.BookingRepository.createBooking(validPayload({ date: '2026-11-25', startTime: '08:30' }), now);
+  assert.strictEqual(ok.success, true, JSON.stringify(ok.error));
+  /* 施行前は従来どおりOPEN_TIME起点（08:15/08:45が有効） */
+  var pre = ctx.sandbox.BookingRepository.createBooking(validPayload({ date: '2026-11-26', startTime: '08:45', email: 'b@example.com' }), new Date('2026-11-18T23:59:59+09:00'));
+  assert.strictEqual(pre.success, true, JSON.stringify(pre.error));
+});

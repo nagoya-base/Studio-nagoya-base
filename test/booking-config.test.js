@@ -25,7 +25,8 @@ test('Script Propertiesが空でも固定仕様のデフォルト値が使われ
     closeTime: '23:00',
     minBookingMinutes: 60,
     bufferMinutes: 15,
-    slotStepMinutes: 15
+    slotStepMinutes: 15,
+    slotStepAbsolute: false
   });
 });
 

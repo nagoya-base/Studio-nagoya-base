@@ -155,7 +155,7 @@ var BookingReschedule = (function () {
        開始時刻を変える変更は、施行前後とも現行の刻み（施行後は00分/30分）のみ。施行前は従来どおり常に刻みを検証する。 */
     var keepsLegacyStart = BookingConfig.isSlotStepRulesEffective(now) && startAt.getTime() === record.startAt.getTime();
     if (!keepsLegacyStart &&
-        (startMinutes - BookingAvailability.parseTimeToMinutes(config.openTime)) % config.slotStepMinutes !== 0) {
+        !BookingAvailability.isStartAligned(startMinutes, BookingAvailability.parseTimeToMinutes(config.openTime), config)) {
       return error_('OUTSIDE_HOURS', '営業時間外、または開始時刻が予約刻みに合っていません。');
     }
     /* Issue #711: 利用開始後の当日延長（開始時刻を変えず、終了だけを元より未来へ延ばす）は、

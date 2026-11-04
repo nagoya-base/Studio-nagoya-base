@@ -133,7 +133,9 @@ var BookingConfig = (function () {
       closeTime: readProperty_('CLOSE_TIME'),
       minBookingMinutes: readIntegerProperty_('MIN_BOOKING_MINUTES'),
       bufferMinutes: effectiveBufferMinutes_(now),
-      slotStepMinutes: effectiveSlotStepMinutes_(now)
+      slotStepMinutes: effectiveSlotStepMinutes_(now),
+      /* Issue #758: 開始刻みの施行後は、OPEN_TIMEの分に依存せず「時刻の分が00または30」で判定する（候補生成・新規予約・管理者変更で共通）。 */
+      slotStepAbsolute: isSlotStepRulesEffective(now)
     };
   }
 

@@ -522,7 +522,7 @@ var Booking = (function () {
      * baseErrorのチェックによりslotStepMinutesは正の整数であることが保証済みのため、
      * 剰余演算がNaN・0除算になることはない。
      */
-    if ((startMinutes - openMinutes) % availabilityConfig.slotStepMinutes !== 0) {
+    if (!BookingAvailability.isStartAligned(startMinutes, openMinutes, availabilityConfig)) {
       return {
         valid: false,
         error: err_('START_TIME_NOT_ALIGNED', '開始時刻は' + availabilityConfig.slotStepMinutes + '分刻みで指定してください。')

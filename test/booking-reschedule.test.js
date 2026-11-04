@@ -1857,3 +1857,16 @@ test('Issue #758: 開始刻みのゲートは予約間隔・延長締切のゲ�
   var r = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:15', endTime: '12:15' }, version_(f));
   assert.equal(r.success, true, '開始刻みは未施行のため15分開始も可');
 });
+
+test('Issue #758: OPEN_TIME=08:15 でも、開始刻みの施行後の管理者の開始時刻変更は00分/30分のみ（10:30可、10:45不可）。旧15分開始の開始維持延長は可', function () {
+  var f = setup({ startHHmm: '10:15', endHHmm: '12:15' });
+  f.globals.PropertiesService.getScriptProperties().setProperty('OPEN_TIME', '08:15');
+  enableSlotStep_(f, '2000-01-01T00:00:00+09:00');
+  freezeAt_(f, '09:00:00');
+  var v = version_(f);
+  assert.equal(f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:30', endTime: '12:30' }, v).success, true);
+  var bad = f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:45', endTime: '12:45' }, v);
+  assert.equal(bad.success, false);
+  assert.equal(bad.error.code, 'OUTSIDE_HOURS');
+  assert.equal(f.sandbox.adminPreviewBookingReschedule('SNB-TEST-1', { date: f.date, startTime: '10:15', endTime: '14:15' }, v).success, true, '開始維持の延長は経過措置で可');
+});

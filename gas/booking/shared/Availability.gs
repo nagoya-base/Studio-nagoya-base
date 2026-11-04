@@ -316,6 +316,22 @@ var BookingAvailability = (function () {
   }
 
   /*
+   * Issue #758: 開始候補の刻み。従来は営業開始（OPEN_TIME）起点の刻み。開始刻みの施行後（config.slotStepAbsolute）は
+   * OPEN_TIME の分に依存せず、時刻の分がstepの倍数（30分刻みなら00分・30分）になる開始だけを候補・受理対象とする。
+   * 例: OPEN_TIME=08:15 でも施行後の最初の候補は08:30。
+   */
+  function firstStartMinutes(openMinutes, config) {
+    if (config.slotStepAbsolute !== true) return openMinutes;
+    var step = config.slotStepMinutes;
+    return openMinutes + ((step - (openMinutes % step)) % step);
+  }
+
+  function isStartAligned(startMinutes, openMinutes, config) {
+    if (config.slotStepAbsolute === true) return startMinutes % config.slotStepMinutes === 0;
+    return (startMinutes - openMinutes) % config.slotStepMinutes === 0;
+  }
+
+  /*
    * busyIntervals: [{ startMinutes, endMinutes, isAllDay }]（当日00:00からの経過分）
    * 戻り値: 'HH:mm' 形式の予約可能開始時刻の配列
    *
@@ -338,7 +354,7 @@ var BookingAvailability = (function () {
     var floor = typeof minimumStartMinutes === 'number' ? minimumStartMinutes : -Infinity;
 
     var bookable = [];
-    for (var start = openMinutes; start + durationMinutes <= closeMinutes; start += step) {
+    for (var start = firstStartMinutes(openMinutes, config); start + durationMinutes <= closeMinutes; start += step) {
       if (start <= floor) continue;
       if (isRangeFree_(start, start + durationMinutes, blockedRanges)) bookable.push(minutesToTime_(start));
     }
@@ -670,6 +686,8 @@ var BookingAvailability = (function () {
     validateInput: validateInput,
     computeBookableStartTimes: computeBookableStartTimes,
     isStartTimeBookable: isStartTimeBookable,
+    firstStartMinutes: firstStartMinutes,
+    isStartAligned: isStartAligned,
     getAvailability: getAvailability,
     DAY_STATUS: DAY_STATUS,
     TIME_BANDS: TIME_BANDS,

@@ -131,3 +131,16 @@ test('候補生成: 施行後は00分/30分の開始のみ。10:30開始・2時�
   var legacy = sb.BookingAvailability.computeBookableStartTimes(60, [], before);
   assert.ok(legacy.indexOf('08:15') !== -1 && legacy.indexOf('08:45') !== -1, '施行前は15分刻み');
 });
+
+test('候補生成: OPEN_TIMEが08:15/08:45でも、施行後は分が00/30の開始のみ（最初の候補は08:30/09:00）。施行前はOPEN_TIME起点の従来刻み', function () {
+  [['08:15', '08:30'], ['08:45', '09:00'], ['08:30', '08:30'], ['08:00', '08:00']].forEach(function (pair) {
+    var props = { OPEN_TIME: pair[0] }; props[SLOT_KEY] = EFFECTIVE;
+    var sb = loadBookingSandbox(['BookingWindow.gs', 'Availability.gs', 'Config.gs'], { PropertiesService: stubs.createPropertiesServiceStub(props) });
+    var after = sb.BookingConfig.getAvailabilityConfig(new Date(EFFECTIVE_MS));
+    var times = sb.BookingAvailability.computeBookableStartTimes(60, [], after);
+    assert.strictEqual(times[0], pair[1], 'OPEN_TIME=' + pair[0]);
+    assert.ok(times.every(function (t) { return /:(00|30)$/.test(t); }), times.join(','));
+    var before = sb.BookingConfig.getAvailabilityConfig(new Date(EFFECTIVE_MS - 1000));
+    assert.strictEqual(sb.BookingAvailability.computeBookableStartTimes(60, [], before)[0], pair[0], '施行前は営業開始が最初の候補');
+  });
+});
