@@ -28,7 +28,12 @@
 - API受理(`httpCode=200 && statusCode=100`) ≠ 反映。
 - commandIdあり: 認証済みWebhook(`createKey`/`deleteKey`・Keypad種別・commandId一致)の success **かつ** keyList厳密1件。evidence に `WEBHOOK_SUCCESS` と `KEYLIST_CONFIRMED` を別々に保存。Webhook成功でもkeyListに無ければ矛盾として `UNKNOWN`。failed→`FAILED`。重複Webhookは初回維持（巻き戻さない）。90秒未着は `UNKNOWN`。
 - commandIdなし: `ACCEPTED_NO_COMMAND_ID` で変更APIを再送せず、読み取り専用keyListを最大 `maxReads` 回（再実行間隔=ジョブ周期）。0件のまま上限→`UNKNOWN`。複数件/ID欠落/属性矛盾/形式不正は即 `UNKNOWN`。
-- 削除: 保存済みIDとkeyListで一意解決したIDの一致を確認して1回だけ送信。不在なら `ALREADY_ABSENT`（削除成功を捏造しない）。送信後はkeyListから対象名の消失で `DELETED_CONFIRMED`、残存/照会不能は `UNKNOWN`。
+- 削除（Issue #751で補完）: 不在判定は対象Keypadの**keyList全体**から「保存済みpasscodeID」と「保存名」の**両方**の不在を独立に確認する（`inspectAbsence`）。別名で同IDが残る／同名で別IDが残る場合は不在とせず `UNKNOWN`。対象外端末・keyList欠落・id欠落/非オブジェクト要素・passcodeID未保存は「不在」と補完せず `UNKNOWN`。
+  - 送信前: 両不在なら `ALREADY_ABSENT`（deleteKey未送信）。保存ID・保存名が同一の1要素に一致し他に残存がない場合のみ1回送信。
+  - **commandIdあり**: 同一端末(`deviceMac`)・`deleteKey`・同一`commandId`・`success` のWebhook **かつ** ID・名前の両不在が必要。証拠は `WEBHOOK_SUCCESS` と `KEYLIST_ABSENT` を別々に保存。Webhook未着は `webhookWaitSec`(既定90秒)まで保留（読取回数も消費しない）、超過は `UNKNOWN`。failed／その他結果／結果が食い違う重複は `UNKNOWN`＋通知。success＋残存は矛盾として `UNKNOWN`。別端末・別操作・別commandId・別種別のイベントは採用しない。
+  - **commandIdなし**（2026-11-03の実機試験でcommandIdが返らなかった。公式仕様の確定ではない）: Webhookを必須にせず、変更APIは再送しない。keyList読取のみで確認し、上限は **回数 `maxReads`(既定3)** と **経過時間 `readWaitSec`(既定600秒)**。両上限は record（`reads`・`deleteSentAtSec`）に永続化され再起動で初期化しない。確認不能・上限超過は `UNKNOWN`＋通知。証拠は `KEYLIST_ABSENT` のみ（commandIdなしの結果をWebhook照合済みとして流用しない）。
+  - Webhookの永続イベントは `端末×操作×commandId` ごとに保存。対象端末(`deviceMac`)が欠落した旧形式イベントは保存・採用しない（推測補完しない）。`deleteSentAtSec` 欠落の旧形式 `DELETE_SENT` も `UNKNOWN`。
+  - 期限切れ確認（`sweep`）も同じ両不在条件。
 
 ## 秘密・通知・監査
 - passcode は `secrets` 注入先（状態ストアと別領域）のみ。状態・通知・棚卸し・履歴に出さない。確定削除/拒否/放棄で破棄。
@@ -44,7 +49,11 @@
 5. 直前の正常版へコード復旧。**状態データは削除しない。ロールバックを契機に createKey/deleteKey を再送しない。**
 6. 状態整合を再確認。
 
+## 状態遷移（削除、#751）
+`ISSUED_CONFIRMED/EXPIRED → DELETE_PENDING →(両不在)→ ALREADY_ABSENT`／`→(残存の整合)→ DELETE_SENDING → DELETE_SENT →(条件充足)→ DELETED_CONFIRMED`。それ以外（ID/名前の片方残存・曖昧・Webhook failed/矛盾/期限超過・読取上限・保存失敗後の再開）は `UNKNOWN`（deleteKey自動再送なし）。
+
 ## 未実施（受け入れ条件との対応）
+- [ ] #751範囲外: 予約結線(#753)・入室中延長方式(#750)・実機確認(#756)・再案内(#752)・本番フラグON
 - [ ] 予約GAS結線・独立GASへのデプロイ・常設Webhook受信（フラグOFFでの結線PRを別途レビュー）
 - [ ] 商用利用条件確認と本番有効化判断の記録
 - [ ] 非利用時間・現地確認者・代替入室手段を確保した限定実機検証（開始前不可/期間内可/期限後不可/削除後不可/変更/取消）
