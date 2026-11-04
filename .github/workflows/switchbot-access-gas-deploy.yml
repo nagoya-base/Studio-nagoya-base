@@ -1,0 +1,153 @@
+name: Deploy SwitchBot access GAS
+
+# Issue #768: 鍵管理用・独立GAS（gas/switchbot-access/、#754）を、既存Webアプリ Deployment のまま更新する。
+# - mainへのpush（対象パスの変更時のみ）と workflow_dispatch（mainのみ）が起動条件。pull_request は設定しない
+#   （PR時は booking-pr-tests.yml が秘密なしでテストする）。docs・README単独の変更では起動しない。
+# - コードを反映するだけ。ACCESS_ENABLED・Script/User Properties・時間主導トリガー・Webhook・SwitchBot実API
+#   （createKey / deleteKey / 解錠）には一切触れない。鍵の自動発行はOFFのまま。
+# - 予約GAS・検証GAS（switchbot-verify）のworkflow／Secrets／Environment／concurrencyは使わない。
+# - 段階ゲート: リポジトリ変数 SWITCHBOT_ACCESS_AUTODEPLOY が未設定の間は、マージしてもEnvironmentへ一切アクセスしない。
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'gas/switchbot-access/**'
+      - 'gas/booking/shared/AccessKeySnapshot.gs'
+      - 'scripts/prepare-switchbot-access-gas-project.js'
+      - 'scripts/deploy-switchbot-access-gas.sh'
+      - 'scripts/switchbot-access-gas-deploy-lib.js'
+      - '.github/workflows/switchbot-access-gas-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      rollback_version:
+        description: '空欄=mainを反映。版番号（例: 12）を入れると、同じDeploymentをその既存版へ戻す（docs/switchbot-access-gas-deploy-768.md）'
+        required: false
+        type: string
+        default: ''
+      rollback_compat_confirmed:
+        description: 'ロールバック時のみ必須: 戻し先の版が現在の本番状態（状態ストア・Properties・台帳schema）と互換であることを運営が確認済み'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# 鍵管理専用グループ。同じ対象へのデプロイを直列化し、実行中のrunは強制キャンセルしない（状態不明を避ける）。
+concurrency:
+  group: switchbot-access-gas-deploy
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Stage gate (no secrets, no environment)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check explicit enablement
+        id: gate
+        shell: bash
+        env:
+          # 運営が人手で宣言する値。ACCESS_ENABLED等はコードから安全に読めないため、運用ゲートとして扱う。
+          GATE_AUTODEPLOY: ${{ vars.SWITCHBOT_ACCESS_AUTODEPLOY }}
+          GATE_EXECUTOR: ${{ vars.SWITCHBOT_ACCESS_EXECUTOR_CONFIRMED }}
+        run: |
+          set -euo pipefail
+          rc=0
+          status="$(node scripts/switchbot-access-gas-deploy-lib.js gate "$GATE_AUTODEPLOY" "$GATE_EXECUTOR")" || rc=$?
+          if [[ "$status" == "ENABLED" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "- 段階ゲート: 有効（宣言されたフラグ状態: \`$GATE_AUTODEPLOY\`）。デプロイ方式は既存Deployment更新のみ" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$status" == "DISABLED" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "- 段階ゲート: 無効（SWITCHBOT_ACCESS_AUTODEPLOY 未設定）。Environment・Secretsへアクセスせず、デプロイしません" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "- 段階ゲート: 安全停止（$status）。変数の値を確認してください。デプロイしません" >> "$GITHUB_STEP_SUMMARY"
+            echo "Stage gate stopped safely: $status" >&2
+            exit 1
+          fi
+
+  test:
+    name: Test main (no secrets)
+    if: github.ref == 'refs/heads/main' && inputs.rollback_version == ''
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run SwitchBot tests
+        run: node --test test/switchbot-*.test.js
+      - name: Assemble and inspect the bundle (no deploy)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/prepare-switchbot-access-gas-project.js "$RUNNER_TEMP/bundle"
+          node scripts/switchbot-access-gas-deploy-lib.js check-bundle "$RUNNER_TEMP/bundle"
+
+  deploy:
+    name: Update existing Web App deployment
+    needs: [gate, test]
+    if: github.ref == 'refs/heads/main' && needs.gate.outputs.enabled == 'true' && inputs.rollback_version == ''
+    runs-on: ubuntu-latest
+    environment: switchbot-access-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned clasp
+        run: npm install --global @google/clasp@3.4.1
+      - name: Skip if a newer main commit changed the target
+        id: fresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin main
+          mapfile -t target_paths < <(node scripts/switchbot-access-gas-deploy-lib.js target-paths)
+          if git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- "${target_paths[@]}"; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "- ⏭ 新しいmainコミットが対象（共有スナップショット・配布スクリプト含む）を変更済みのためスキップ。古いrunは公開しません" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Push source and update the existing deployment
+        if: steps.fresh.outputs.current == 'true'
+        shell: bash
+        env:
+          SBA_CLASPRC_JSON: ${{ secrets.SWITCHBOT_ACCESS_CLASPRC_JSON }}
+          SBA_SCRIPT_ID: ${{ secrets.SWITCHBOT_ACCESS_SCRIPT_ID }}
+          SBA_DEPLOYMENT_ID: ${{ secrets.SWITCHBOT_ACCESS_DEPLOYMENT_ID }}
+        run: bash scripts/deploy-switchbot-access-gas.sh deploy
+
+  rollback:
+    name: Roll the same deployment back to an existing version
+    needs: gate
+    if: github.ref == 'refs/heads/main' && needs.gate.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && inputs.rollback_version != ''
+    runs-on: ubuntu-latest
+    environment: switchbot-access-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned clasp
+        run: npm install --global @google/clasp@3.4.1
+      - name: Roll back the existing deployment
+        shell: bash
+        env:
+          SBA_CLASPRC_JSON: ${{ secrets.SWITCHBOT_ACCESS_CLASPRC_JSON }}
+          SBA_SCRIPT_ID: ${{ secrets.SWITCHBOT_ACCESS_SCRIPT_ID }}
+          SBA_DEPLOYMENT_ID: ${{ secrets.SWITCHBOT_ACCESS_DEPLOYMENT_ID }}
+          ROLLBACK_VERSION: ${{ inputs.rollback_version }}
+          ROLLBACK_COMPAT_CONFIRMED: ${{ inputs.rollback_compat_confirmed }}
+        run: bash scripts/deploy-switchbot-access-gas.sh rollback
