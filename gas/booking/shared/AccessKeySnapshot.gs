@@ -114,6 +114,9 @@ var AccessKeySnapshot = (function () {
     }
     /* 現金/PayPay等: 管理者の確定操作（confirmBooking）が残す confirmedAt を承認の台帳根拠とする。
        承認者の監査詳細は #750 で未確定のため、根拠が無ければ UNVERIFIED（安全停止）。 */
+    /* 失効予約の復活(reviveExpiredBooking)も confirmedAt を書き、expiredAt を履歴として残す。復活成功だけでは
+       発行しない(#750)ため、expiredAt が残る現金/PayPay は復活後の独立した承認証跡が台帳に無い限り UNVERIFIED。 */
+    if (record.expiredAt) return PAYMENT_BASIS.UNVERIFIED;
     return record.confirmedAt ? PAYMENT_BASIS.ADMIN_APPROVED : PAYMENT_BASIS.UNVERIFIED;
   }
 
@@ -202,7 +205,9 @@ var AccessKeySnapshot = (function () {
     var blockers = Array.isArray(sn.blockers) ? sn.blockers : ['BOOKING_INVALID'];
     var identityBad = blockers.some(function (b) { return IDENTITY_BLOCKERS_.indexOf(b) !== -1; });
     var freezeReasons = blockers.filter(function (b) { return FREEZE_BLOCKERS_.indexOf(b) !== -1; });
-    if (identityBad || (sn.status === 'CONFIRMED' && freezeReasons.length)) {
+    /* 他ブランド(brandが非空でsnb以外)へ変わった予約は運用上のblockerで凍結せず、コアで旧SNBキー削除へ進める。 */
+    var freezable = sn.brand === 'snb' || sn.brand === '';
+    if (identityBad || (sn.status === 'CONFIRMED' && freezable && freezeReasons.length)) {
       return { action: 'FREEZE', reasons: freezeReasons, booking: null };
     }
     var status = sn.status;

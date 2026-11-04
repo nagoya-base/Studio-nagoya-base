@@ -90,7 +90,7 @@
 - `triggers(snapshot, tracked, nowMs)`: `REVISION_CHANGED` / `ISSUE_WINDOW_REACHED` / `OPEN_KEY_RECORD` を**独立に**判定（revision不変でも時刻到達で処理）。
 
 ### 凍結（FREEZE）と取消の扱い
-確定予約に次のblockerがある間は**鍵操作を一切しない**（発行も削除もしない＝既存キーは旧revisionのまま残る）。管理者通知は `{予約ID, revision, 理由コード}` のみ: `PAYMENT_UNVERIFIED`（Stripeは `paymentStatus=paid` かつ `paymentConfirmedAt`、現金/PayPayは管理者確定の `confirmedAt` が無い）／`EXTENSION_CHARGE_PENDING`（`feeSettlementState` が `PENDING_CHARGE|PENDING_DECISION`。短縮の `PENDING_REFUND` は止めない）／`RECOVERY_REQUIRED`（`feeRecoveryRequiredAt|paymentRecoveryRequiredAt`）／`TIME_INVALID`・`TIME_NOT_MINUTE_ALIGNED`（秒を丸めない）／`BRAND_UNKNOWN`（空brandをSNB扱いにしない）。revision/ID不正は取消でも凍結。**取消・SNB対象外化（他ブランドへ変更）は凍結せず旧キー削除へ進む。** 現金/PayPayの承認根拠（承認者の監査項目）は#750で未確定のため、`confirmedAt` を暫定の台帳根拠とし、根拠がなければ安全停止側。
+確定予約に次のblockerがある間は**鍵操作を一切しない**（発行も削除もしない＝既存キーは旧revisionのまま残る）。管理者通知は `{予約ID, revision, 理由コード}` のみ: `PAYMENT_UNVERIFIED`（Stripeは `paymentStatus=paid` かつ `paymentConfirmedAt`、現金/PayPayは管理者確定の `confirmedAt` が無い）／`EXTENSION_CHARGE_PENDING`（`feeSettlementState` が `PENDING_CHARGE|PENDING_DECISION`。短縮の `PENDING_REFUND` は止めない）／`RECOVERY_REQUIRED`（`feeRecoveryRequiredAt|paymentRecoveryRequiredAt`）／`TIME_INVALID`・`TIME_NOT_MINUTE_ALIGNED`（秒を丸めない）／`BRAND_UNKNOWN`（空brandをSNB扱いにしない）。revision/ID不正は取消でも凍結。**取消・SNB対象外化（他ブランドへ変更）は凍結せず旧キー削除へ進む。** 現金/PayPayの承認根拠（承認者の監査項目）は#750で未確定のため、`confirmedAt` を暫定の台帳根拠とし、根拠がなければ安全停止側。**失効予約の復活は `confirmedAt` を書き `expiredAt` を残すため、`expiredAt` が残る現金/PayPayは復活後の独立した承認証跡が台帳に定義されるまで `UNVERIFIED`（復活だけでは発行しない。代替入室へ）。** 他ブランドへ変更された予約は運用上のblockerで凍結せず旧キー削除へ進む（brand空は凍結）。
 
 ### 前日リマインドの一行
 SNBかつScript Property `ACCESS_KEY_NOTICE_ENABLED='true'` のときだけ「入室用の暗証番号は、別のメールでお送りします。」を1行追加（既定OFF・OFFの本文は完全に不変）。別暗証番号メール(#752)が送れる状態になるまでtrueにしない。

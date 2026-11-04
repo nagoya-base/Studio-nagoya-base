@@ -108,6 +108,14 @@ test('支払根拠: Stripeは実入金(paid+確認時刻)のみ。現金/PayPay�
   assert.ok(b({ paymentMethod: '現金', paymentStatus: 'not_started', paymentConfirmedAt: '', confirmedAt: '' }).indexOf('PAYMENT_UNVERIFIED') !== -1, '現金: 承認根拠なし');
 });
 
+test('復活(expiredAtが残る)した現金/PayPayは復活だけでは承認扱いにしない。Stripeは実入金なら従来どおり', function () {
+  var S_ = load().AccessKeySnapshot;
+  var revived = { paymentMethod: '現金', paymentStatus: 'not_started', paymentConfirmedAt: '', expiredAt: jst('2030-01-06', '10:00') };
+  assert.ok(Array.from(S_.build(record(revived)).blockers).indexOf('PAYMENT_UNVERIFIED') !== -1);
+  assert.strictEqual(S_.build(record(revived)).paymentStatus, 'UNVERIFIED');
+  assert.deepStrictEqual(Array.from(S_.build(record({ expiredAt: jst('2030-01-06', '10:00') })).blockers), [], 'Stripe: 実入金確認があれば復活後も対象');
+});
+
 test('延長の未決済/要復旧/ブランド/revision異常はblockerになる', function () {
   var S_ = load().AccessKeySnapshot;
   function b(over) { return Array.from(S_.build(record(over)).blockers); }
@@ -480,6 +488,21 @@ test('①取消: 旧キー削除。取消は凍結要因(支払不明等)があ�
   var late2 = drive(sandbox, w, e, record({ revision: 2 }));
   assert.strictEqual(w.mutations().length, n, '同revisionの確定再配信でも復活しない');
   assert.ok(late2.result.skipped);
+});
+
+test('①SNB対象外化: 延長待ち/要復旧が残っていても旧キー削除へ進む(凍結しない)。brand空は凍結', function () {
+  var sandbox = load();
+  var w = world('2030-01-11T08:00:00+09:00');
+  var e = w.engine();
+  drive(sandbox, w, e, record({ revision: 1 }));
+  var r = drive(sandbox, w, e, record({ revision: 2, brand: 'mens', feeSettlementState: 'PENDING_CHARGE', feeRecoveryRequiredAt: new Date() }));
+  assert.ok(!r.frozen);
+  assert.strictEqual(w.keys[DEV].length, 0);
+  var w2 = world('2030-01-11T08:00:00+09:00');
+  drive(sandbox, w2, w2.engine(), record({ revision: 1 }));
+  var f = drive(sandbox, w2, w2.engine(), record({ revision: 2, brand: '' }));
+  assert.deepStrictEqual(f.frozen, ['BRAND_UNKNOWN']);
+  assert.strictEqual(w2.keys[DEV].length, 1);
 });
 
 test('①SNB対象外化(他ブランドへ変更): 旧キーを削除し、新規発行しない', function () {
