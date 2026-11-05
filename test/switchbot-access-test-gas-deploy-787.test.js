@@ -204,6 +204,9 @@ test('lib.checkManifest: existing web app settings must match; removal of remote
   assert.equal(lib.checkManifest(w('acc', { ...repo, webapp: { access: 'MYSELF', executeAs: 'USER_DEPLOYING' } }), repoF), 'MANIFEST_WEBAPP_MISMATCH');
   const extraDep = { enabledAdvancedServices: [{ userSymbol: 'Drive', serviceId: 'drive', version: 'v3' }] };
   assert.equal(lib.checkManifest(w('dep', { ...repo, dependencies: extraDep }), repoF), 'MANIFEST_REMOTE_DEPENDENCY_WOULD_BE_REMOVED');
+  const lb = { libraries: [{ userSymbol: 'L', libraryId: 'x', version: '1' }] };
+  assert.equal(lib.checkManifest(w('lib', { ...repo, dependencies: { ...repo.dependencies, ...lb } }), repoF), 'MANIFEST_REMOTE_DEPENDENCY_WOULD_BE_REMOVED');
+  assert.equal(lib.checkManifest(w('lib0', { ...repo, dependencies: { ...repo.dependencies, libraries: [] } }), repoF), 'OK');
   assert.equal(lib.checkManifest(w('exe', { ...repo }), w('bad', { ...repo, webapp: { access: 'ANYONE_ANONYMOUS', executeAs: 'USER_ACCESSING' } })), 'MANIFEST_WEBAPP_MISMATCH');
   assert.equal(lib.checkManifest(w('blank2', {}), w('bad2', { ...repo, webapp: { access: 'ANYONE_ANONYMOUS', executeAs: 'USER_ACCESSING' } })), 'MANIFEST_EXECUTOR_UNEXPECTED');
   assert.equal(lib.checkManifest(path.join(dir, 'nope'), repoF), 'MANIFEST_UNREADABLE');

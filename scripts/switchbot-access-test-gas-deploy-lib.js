@@ -115,6 +115,10 @@ function checkManifest(remoteFile, repoFile, rollback) {
   const rep = (repo.dependencies && repo.dependencies.enabledAdvancedServices) || [];
   const key = (x) => [x.userSymbol, x.serviceId, x.version].join('|');
   if (!Array.isArray(rem) || !Array.isArray(rep)) return 'MANIFEST_DEPENDENCIES_UNREADABLE';
+  // enabledAdvancedServices 以外の依存（libraries等）がリモートにあれば、manifest置換で黙って消えるため停止。
+  const empty = (v) => (Array.isArray(v) ? v.length === 0 : v && typeof v === 'object' ? Object.keys(v).length === 0 : !v);
+  const remoteDeps = remote.dependencies || {};
+  if (Object.keys(remoteDeps).some((k) => k !== 'enabledAdvancedServices' && !empty(remoteDeps[k]))) return 'MANIFEST_REMOTE_DEPENDENCY_WOULD_BE_REMOVED';
   if (rem.some((x) => !rep.map(key).includes(key(x)))) return 'MANIFEST_REMOTE_DEPENDENCY_WOULD_BE_REMOVED';
   return 'OK';
 }
