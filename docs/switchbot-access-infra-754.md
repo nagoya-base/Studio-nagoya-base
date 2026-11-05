@@ -122,7 +122,7 @@
 
 ## 11. デプロイ・撤去手順（実施は別判断・別証跡）
 
-**組み立て**: `node scripts/prepare-switchbot-access-gas-project.js .gas-deploy/switchbot-access`（コミットしない）。GitHub Actionsによる自動デプロイ・ロールバックは `docs/switchbot-access-gas-deploy-768.md`（#768。段階ゲートで既定は無効）。
+**組み立て**: `node scripts/prepare-switchbot-access-gas-project.js .gas-deploy/switchbot-access`（コミットしない）。GitHub Actionsによるデプロイ・ロールバックは `docs/switchbot-access-gas-deploy-768.md`（#768/#778。手動起動＋毎回の確認入力のみ。自動デプロイなし）。
 **必要権限**: 新規GASプロジェクトのオーナー（=デプロイ実行者）、台帳スプレッドシートの**閲覧権限**（読取専用スコープ）、通知用メール送信（MailApp）、Webアプリ公開（実行者権限・匿名到達）。OAuthスコープは `appsscript.json` を参照（書込み権限なし）。
 **準備**（デプロイ前）: ①検証/本番を別プロジェクトで作成 ②User Propertiesに資格情報3種（登録手順: `docs/switchbot-access-credentials-770.md`） ③Script Propertiesに設定一式（`accessCheckSetup` で SET/MISSING のみ確認） ④`ACCESS_ENABLED` は**設定しない（OFF）** ⑤管理者許可リスト登録。
 **デプロイ後の読取診断**: `accessCheckSetup`（値を出さない）→ **`accessReadOnlyDiagnostics`（#774。副作用なしの真正の読取専用。下記 §11.1）**（`accessAdminStatus` は状態を書き込むため、初期確認には使わない）→ 1回だけ手動で `accessSyncJob`（OFFのため `FLAG_OFF`）→ トリガー設置（`accessInstallTriggers`）。Webhook URLの登録は検証用（37DD）から別手順で行い、**既存Webhookを自動で上書き・削除しない**。

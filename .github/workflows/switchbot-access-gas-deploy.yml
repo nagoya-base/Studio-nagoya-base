@@ -1,32 +1,58 @@
 name: Deploy SwitchBot access GAS
 
-# Issue #768: 鍵管理用・独立GAS（gas/switchbot-access/、#754）を、既存Webアプリ Deployment のまま更新する。
-# - mainへのpush（対象パスの変更時のみ）と workflow_dispatch（mainのみ）が起動条件。pull_request は設定しない
-#   （PR時は booking-pr-tests.yml が秘密なしでテストする）。docs・README単独の変更では起動しない。
+# Issue #768 / #778: 鍵管理用・独立GAS（gas/switchbot-access/、#754）を、既存Webアプリ Deployment のまま更新する。
+# - 本番更新は workflow_dispatch（手動起動）のみ。push・pull_request・schedule では一切起動しない。
+#   mainへのマージだけではデプロイされない。PR時は booking-pr-tests.yml が秘密なしでテストする。
+# - 起動のたびに、jobの先頭（gate）で全入力を検証する（UIの表示に頼らない。GitHub API経由のdispatchも同じ検証）。
+#   入力の確認は「GitHub実行者本人の自己申告」であり、Environmentの Required reviewers による独立承認とは別物。
+#   access_state=ON_CHANGE_APPROVED（本番ON中の更新）は、独立承認用Environment（secrets無し）の承認も必須にする。
 # - コードを反映するだけ。ACCESS_ENABLED・Script/User Properties・時間主導トリガー・Webhook・SwitchBot実API
 #   （createKey / deleteKey / 解錠）には一切触れない。鍵の自動発行はOFFのまま。
 # - 予約GAS・検証GAS（switchbot-verify）のworkflow／Secrets／Environment／concurrencyは使わない。
-# - 段階ゲート: リポジトリ変数 SWITCHBOT_ACCESS_AUTODEPLOY が未設定の間は、マージしてもEnvironmentへ一切アクセスしない。
+# - 旧リポジトリ変数 SWITCHBOT_ACCESS_AUTODEPLOY / SWITCHBOT_ACCESS_EXECUTOR_CONFIRMED は参照しない（残っていても無効）。
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'gas/switchbot-access/**'
-      - 'gas/booking/shared/AccessKeySnapshot.gs'
-      - 'scripts/prepare-switchbot-access-gas-project.js'
-      - 'scripts/deploy-switchbot-access-gas.sh'
-      - 'scripts/switchbot-access-gas-deploy-lib.js'
-      - '.github/workflows/switchbot-access-gas-deploy.yml'
   workflow_dispatch:
     inputs:
+      deployment_action:
+        description: '操作: deploy=mainのコードを反映 / rollback=既存の版へ戻す。NOT_SELECTEDのままは拒否'
+        required: true
+        type: choice
+        default: 'NOT_SELECTED'
+        options:
+          - 'NOT_SELECTED'
+          - 'deploy'
+          - 'rollback'
+      safety_confirmed:
+        description: '確認: 今回は既存独立GASのコード更新のみ。実機の鍵発行・削除や設定（Properties等）更新はしない'
+        required: true
+        type: boolean
+        default: false
+      access_state:
+        description: '運営者の宣言（実測ではない）: 本番のACCESS_ENABLED。OFF_CONFIRMED=OFF / ON_CHANGE_APPROVED=ON中の更新を独立承認済み'
+        required: true
+        type: choice
+        default: 'NOT_SELECTED'
+        options:
+          - 'NOT_SELECTED'
+          - 'OFF_CONFIRMED'
+          - 'ON_CHANGE_APPROVED'
+      executor_confirmed:
+        description: '確認: Actionsのclasp実行者・Webアプリ実行者・User Properties設定者が同一アカウントであることを今回確認済み'
+        required: true
+        type: boolean
+        default: false
+      change_approval_reference:
+        description: 'ON_CHANGE_APPROVEDのみ必須: 承認済みIssue/記録番号（例: #999）。秘密・個人情報は書かない'
+        required: false
+        type: string
+        default: ''
       rollback_version:
-        description: '空欄=mainを反映。版番号（例: 12）を入れると、同じDeploymentをその既存版へ戻す（docs/switchbot-access-gas-deploy-768.md）'
+        description: 'rollbackのみ必須: 戻し先の既存版番号（例: 12）。deployでは空欄にする'
         required: false
         type: string
         default: ''
       rollback_compat_confirmed:
-        description: 'ロールバック時のみ必須: 戻し先の版が現在の本番状態（状態ストア・Properties・台帳schema）と互換であることを運営が確認済み'
+        description: 'rollbackのみ必須: 戻し先の版が現在の本番状態（状態ストア・Properties・台帳schema）と互換であることを確認済み'
         required: false
         type: boolean
         default: false
@@ -41,44 +67,57 @@ concurrency:
 
 jobs:
   gate:
-    name: Stage gate (no secrets, no environment)
-    if: github.ref == 'refs/heads/main'
+    name: Input gate (no secrets, no environment)
     runs-on: ubuntu-latest
     outputs:
-      enabled: ${{ steps.gate.outputs.enabled }}
+      valid: ${{ steps.gate.outputs.valid }}
+      mode: ${{ steps.gate.outputs.mode }}
+      access_state: ${{ steps.gate.outputs.access_state }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check explicit enablement
+      - name: Validate every dispatch input (fail closed)
         id: gate
         shell: bash
         env:
-          # 運営が人手で宣言する値。ACCESS_ENABLED等はコードから安全に読めないため、運用ゲートとして扱う。
-          GATE_AUTODEPLOY: ${{ vars.SWITCHBOT_ACCESS_AUTODEPLOY }}
-          GATE_EXECUTOR: ${{ vars.SWITCHBOT_ACCESS_EXECUTOR_CONFIRMED }}
+          # 入力は env 経由でのみ渡す（run へ直接展開しない）。値は運営者の自己申告。
+          DG_EVENT: ${{ github.event_name }}
+          DG_REF: ${{ github.ref }}
+          DG_ACTION: ${{ inputs.deployment_action }}
+          DG_SAFETY: ${{ inputs.safety_confirmed }}
+          DG_ACCESS_STATE: ${{ inputs.access_state }}
+          DG_EXECUTOR: ${{ inputs.executor_confirmed }}
+          DG_APPROVAL_REF: ${{ inputs.change_approval_reference }}
+          DG_ROLLBACK_VERSION: ${{ inputs.rollback_version }}
+          DG_ROLLBACK_COMPAT: ${{ inputs.rollback_compat_confirmed }}
         run: |
           set -euo pipefail
-          rc=0
-          status="$(node scripts/switchbot-access-gas-deploy-lib.js gate "$GATE_AUTODEPLOY" "$GATE_EXECUTOR")" || rc=$?
-          if [[ "$status" == "ENABLED" ]]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "- 段階ゲート: 有効（宣言されたフラグ状態: \`$GATE_AUTODEPLOY\`）。デプロイ方式は既存Deployment更新のみ" >> "$GITHUB_STEP_SUMMARY"
-          elif [[ "$status" == "DISABLED" ]]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "- 段階ゲート: 無効（SWITCHBOT_ACCESS_AUTODEPLOY 未設定）。Environment・Secretsへアクセスせず、デプロイしません" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "- 段階ゲート: 安全停止（$status）。変数の値を確認してください。デプロイしません" >> "$GITHUB_STEP_SUMMARY"
-            echo "Stage gate stopped safely: $status" >&2
+          stop() {
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "- ❌ 入力ゲート: 安全停止（$1）。入力を見直して Run workflow をやり直してください。デプロイしません" >> "$GITHUB_STEP_SUMMARY"
+            echo "Input gate stopped safely: $1" >&2
             exit 1
-          fi
+          }
+          rc=0
+          status="$(node scripts/switchbot-access-gas-deploy-lib.js dispatch-gate)" || rc=$?
+          [[ "$rc" -eq 0 && "$status" == "OK" ]] || stop "${status:-GATE_ERROR}"
+          # 古いSHA対策: 実行時点のmain先頭と一致しなければ停止（古いコミットを本番へ反映しない）。
+          git fetch --no-tags --depth=1 origin main
+          [[ "$(git rev-parse FETCH_HEAD)" == "$GITHUB_SHA" ]] || stop "STALE_SHA_NOT_MAIN_HEAD"
+          echo "valid=true" >> "$GITHUB_OUTPUT"
+          echo "mode=$DG_ACTION" >> "$GITHUB_OUTPUT"
+          echo "access_state=$DG_ACCESS_STATE" >> "$GITHUB_OUTPUT"
+          {
+            echo "- ✅ 入力ゲート: 通過（操作: \`$DG_ACTION\` / 宣言されたアクセス状態: \`$DG_ACCESS_STATE\`）"
+            echo "- 注: 入力確認は実行者の自己申告で、GASのACCESS_ENABLEDの実測ではなく、独立承認でもありません"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   test:
     name: Test main (no secrets)
-    if: github.ref == 'refs/heads/main' && inputs.rollback_version == ''
     needs: gate
+    if: needs.gate.outputs.valid == 'true' && needs.gate.outputs.mode == 'deploy' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,10 +133,32 @@ jobs:
           node scripts/prepare-switchbot-access-gas-project.js "$RUNNER_TEMP/bundle"
           node scripts/switchbot-access-gas-deploy-lib.js check-bundle "$RUNNER_TEMP/bundle"
 
+  # 本番ON中の更新（ON_CHANGE_APPROVED）だけが通る独立承認ゲート。secretsは持たない。
+  # Environment `switchbot-access-on-approval` に Required reviewers（実行者本人以外）を設定して初めて独立承認になる。
+  approve_on:
+    name: Independent approval for production-ON change (no secrets)
+    needs: gate
+    if: needs.gate.outputs.valid == 'true' && needs.gate.outputs.access_state == 'ON_CHANGE_APPROVED' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: switchbot-access-on-approval
+    steps:
+      - name: Record the approval gate
+        shell: bash
+        env:
+          APPROVAL_REF: ${{ inputs.change_approval_reference }}
+        run: |
+          echo "- ✅ 独立承認ゲート（Environment承認）: 通過。承認参照: \`$APPROVAL_REF\`" >> "$GITHUB_STEP_SUMMARY"
+
   deploy:
     name: Update existing Web App deployment
-    needs: [gate, test]
-    if: github.ref == 'refs/heads/main' && needs.gate.outputs.enabled == 'true' && inputs.rollback_version == ''
+    needs: [gate, test, approve_on]
+    # approve_on はOFF宣言時にスキップされる。ON宣言時だけ成功を必須にする。
+    if: >-
+      ${{ !cancelled() && github.ref == 'refs/heads/main'
+      && needs.gate.result == 'success' && needs.gate.outputs.valid == 'true'
+      && needs.gate.outputs.mode == 'deploy' && needs.test.result == 'success'
+      && (needs.gate.outputs.access_state == 'OFF_CONFIRMED'
+      || (needs.gate.outputs.access_state == 'ON_CHANGE_APPROVED' && needs.approve_on.result == 'success')) }}
     runs-on: ubuntu-latest
     environment: switchbot-access-production
     steps:
@@ -131,8 +192,13 @@ jobs:
 
   rollback:
     name: Roll the same deployment back to an existing version
-    needs: gate
-    if: github.ref == 'refs/heads/main' && needs.gate.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && inputs.rollback_version != ''
+    needs: [gate, approve_on]
+    if: >-
+      ${{ !cancelled() && github.ref == 'refs/heads/main'
+      && needs.gate.result == 'success' && needs.gate.outputs.valid == 'true'
+      && needs.gate.outputs.mode == 'rollback'
+      && (needs.gate.outputs.access_state == 'OFF_CONFIRMED'
+      || (needs.gate.outputs.access_state == 'ON_CHANGE_APPROVED' && needs.approve_on.result == 'success')) }}
     runs-on: ubuntu-latest
     environment: switchbot-access-production
     steps:
