@@ -155,6 +155,8 @@ test('ストア異常: 別環境の刻印・環境刻印なしのデータ・読
     [{ META_ENV: 'verify' }, 'STORE_ENV_MISMATCH'],
     [{ HB_SYNC: '{}' }, 'STORE_INCONSISTENT'],
     [{ META_ENV: 'production', OP_X: 'not-json' }, 'STORE_RECORD_INVALID'],
+    [{ META_ENV: 'production', OP_X: JSON.stringify({ id: 'x', state: 'NOT_A_REAL_STATE' }) }, 'STORE_RECORD_INVALID'],
+    [{ META_ENV: 'production', OP_X: JSON.stringify({ id: 'x' }) }, 'STORE_RECORD_INVALID'],
     [{ META_ENV: 'production', EVT_BIG: 'x'.repeat(8 * 1024 + 900) }, 'STORAGE_VALUE_NEAR_LIMIT']
   ];
   cases.forEach(function (c) {

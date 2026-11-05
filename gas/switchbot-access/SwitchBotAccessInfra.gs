@@ -1324,7 +1324,8 @@ var SwitchBotAccessInfra = (function () {
       });
       s.byPrefix = byPrefix;
       var opKeys = keys.filter(function (k) { return k.indexOf('OP_') === 0; });
-      var ops = scanOps(store);
+      var knownStates = Object.keys(Core.STATE).map(function (k) { return Core.STATE[k]; });
+      var ops = scanOps(store).filter(function (r) { return typeof r.id === 'string' && knownStates.indexOf(r.state) !== -1; }); // 状態が未知/欠落の記録は不正として数える
       s.ops = { total: ops.length, unresolved: ops.filter(isUnresolved).length, unreadable: opKeys.length - ops.length };
       var meta = store.get('META_ENV');
       s.metaEnv = meta === null || meta === undefined || meta === '' ? 'ABSENT' : (meta === ENVIRONMENT.PRODUCTION ? 'MATCH' : 'MISMATCH');
