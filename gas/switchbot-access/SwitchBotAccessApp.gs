@@ -433,3 +433,37 @@ function accessReadOnlyDiagnostics() {
   Logger.log(JSON.stringify(out));
   return out;
 }
+
+// ── verify環境専用の読取専用診断（Issue #789）──
+// SwitchBot Access Test GAS 用。ACCESS_ENVIRONMENT=verify・ACCESS_ENABLED=false（明示）・ACCESS_ADMIN_ACTORS 本人のときだけ進む。
+// 台帳は Sheets API の GET のみ（Bookings・必須14列・JST）。資格情報・状態ストアは読まず、書込み・通信（SwitchBot/メール）・トリガー・ロックなし。
+// 本番の accessReadOnlyDiagnostics は変更しない（production 専用のまま）。ログと戻り値は固定コード・件数のみ。
+function sba_ledgerInspectTest_() {
+  var id = sba_scriptProps_().getProperty('LEDGER_SPREADSHEET_ID');
+  if (!id) return { code: 'LEDGER_ID_MISSING' };
+  try {
+    return AccessLedgerReader.inspectTestSheet(sba_openLedgerSheet_(id));
+  } catch (e) {
+    return { code: AccessLedgerReader.classifyError(e) };
+  }
+}
+
+function accessTestReadOnlyDiagnostics() {
+  var out;
+  try {
+    var s = sba_scriptProps_();
+    out = SwitchBotAccessInfra.testReadOnlyDiagnostics({
+      identity: function () {
+        return { email: Session.getActiveUser().getEmail(), effectiveEmail: Session.getEffectiveUser().getEmail() };
+      },
+      adminActors: sba_adminActors_(),
+      accessFlag: function () { return s.getProperty('ACCESS_ENABLED'); },
+      scriptProps: { get: function (k) { return s.getProperty(k); } },
+      ledgerInspect: sba_ledgerInspectTest_
+    });
+  } catch (e) {
+    out = { ok: false, code: 'UNEXPECTED_ERROR' };
+  }
+  Logger.log(JSON.stringify(out));
+  return out;
+}

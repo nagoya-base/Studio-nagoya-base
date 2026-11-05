@@ -283,6 +283,7 @@ var AccessLedgerReader = (function () {
       return out;
     }
     return {
+      getTimeZone: function () { return typeof tz === 'string' ? tz : ''; },
       getLastColumn: function () { return header().length; },
       getLastRow: lastRow,
       getColumns: getColumns,
@@ -350,7 +351,23 @@ var AccessLedgerReader = (function () {
     }
   }
 
-  return { SHEET_NAME: SHEET_NAME, REQUIRED_COLUMNS: REQUIRED_COLUMNS.slice(), checkHeaders: checkHeaders, select: select, readFromSheet: readFromSheet, readRecipient: readRecipient, inspectSheet: inspectSheet, classifyError: classifyError,
+  /**
+   * verify環境専用の検査（Issue #789）。inspectSheet（本番診断と共通・挙動不変）の結果に、シートのタイムゾーンがJSTかの確認を足す。
+   * スプレッドシートのタイムゾーン文字列は戻り値に出さず、JST / NOT_JST / UNKNOWN の固定語のみ返す。読取のみ。
+   */
+  function inspectTestSheet(sheet) {
+    var res = inspectSheet(sheet);
+    res.timezone = 'NOT_CHECKED';
+    if (res.code !== 'LEDGER_ACCESS_OK' && res.code !== 'LEDGER_TIMEZONE_UNSUPPORTED') return res;
+    var tz = '';
+    try { tz = typeof sheet.getTimeZone === 'function' ? sheet.getTimeZone() : ''; } catch (e) { tz = ''; }
+    if (tz === 'Asia/Tokyo') { res.timezone = 'JST'; return res; }
+    res.timezone = tz ? 'NOT_JST' : 'UNKNOWN';
+    res.code = 'LEDGER_TIMEZONE_UNSUPPORTED';
+    return res;
+  }
+
+  return { SHEET_NAME: SHEET_NAME, REQUIRED_COLUMNS: REQUIRED_COLUMNS.slice(), checkHeaders: checkHeaders, select: select, readFromSheet: readFromSheet, readRecipient: readRecipient, inspectSheet: inspectSheet, inspectTestSheet: inspectTestSheet, classifyError: classifyError,
     classifyHttp: classifyHttp, openApiSheet: openApiSheet, serialToDate: serialToDate, colLetter: colLetter,
     KNOWN_ERROR_CODES: KNOWN_ERROR_CODES.slice(), DATE_COLUMNS: DATE_COLUMNS.slice(), MAX_ROWS: MAX_ROWS, PAGE_ROWS: PAGE_ROWS };
 })();

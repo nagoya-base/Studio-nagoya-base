@@ -1578,13 +1578,113 @@ var SwitchBotAccessInfra = (function () {
     return fin();
   }
 
+  // ---------- verify環境専用の読取専用診断（Issue #789）----------
+
+  var TEST_ALLOWED_LAST4 = ['37DD'];
+  var TEST_FORBIDDEN_LAST4 = ['01FD'];
+  var TEST_NOTES = ['NO_WRITES', 'NO_EXTERNAL_COMMUNICATION', 'NO_SWITCHBOT_API', 'CREDENTIALS_NOT_READ'];
+
+  function testDiagBlank() {
+    return {
+      ok: false, code: 'DIAGNOSTICS_NOT_RUN', failures: [], stopped: false,
+      identity: 'NOT_CHECKED', accessEnabled: 'NOT_CHECKED', environment: 'NOT_CHECKED',
+      config: { state: 'NOT_CHECKED', envMatch: 'NOT_CHECKED', last4: 'NOT_CHECKED', errors: [] },
+      settings: { ACCESS_CONFIG: 'NOT_CHECKED', ACCESS_ENVIRONMENT: 'NOT_CHECKED', LEDGER_SPREADSHEET_ID: 'NOT_CHECKED', ACCESS_ADMIN_ACTORS: 'NOT_CHECKED' },
+      ledger: { state: 'NOT_CHECKED', headers: 'NOT_CHECKED', columnFormat: 'NOT_CHECKED', timezone: 'NOT_CHECKED', rows: 0, sampled: 0 },
+      notes: TEST_NOTES.slice()
+    };
+  }
+
+  /**
+   * verify環境（SwitchBot Access Test）専用の読取専用診断。本番診断 readOnlyDiagnostics とは別関数で、本番の基準は変えない。
+   * fail-closed: 操作主体=ACCESS_ADMIN_ACTORS 本人 / ACCESS_ENABLED が明示 'false' / ACCESS_ENVIRONMENT と ACCESS_CONFIG.environment がともに verify /
+   * allowedLast4 が ['37DD'] のみで keypads 末尾4桁もすべて 37DD（01FD は拒否）。満たさなければ台帳へ触れない。
+   * 台帳はGETのみ（ledgerInspect）。資格情報・状態ストアは読まない。書込み・通信（SwitchBot/メール）・トリガー・ロックなし。
+   * 返すのは固定コード・SET/MISSING/UNKNOWN・件数のみ（完全deviceId・スプレッドシートID・メール・予約内容・例外本文は含めない）。
+   * deps: identity(), adminActors, accessFlag(), scriptProps{get}, ledgerInspect()
+   */
+  function testReadOnlyDiagnostics(deps) {
+    var out = testDiagBlank();
+    function fin() {
+      out.ok = out.failures.length === 0;
+      out.code = out.ok ? 'TEST_DIAGNOSTICS_OK' : out.failures[0];
+      return diagSanitize(out, 0);
+    }
+    function fail(code) { if (out.failures.indexOf(code) === -1) out.failures.push(code); }
+    function stop(code) { fail(code); out.stopped = true; return fin(); }
+    try {
+      var gate = authorizeExecutor(deps);
+      if (!gate.ok) { out.identity = gate.error; return stop(gate.error); }
+      out.identity = 'AUTHORIZED';
+
+      var flag = accessFlagState(deps);
+      var flagRaw;
+      try { flagRaw = deps.accessFlag(); } catch (e) { flagRaw = undefined; }
+      if (flag === 'OFF' && flagRaw !== 'false') { out.accessEnabled = 'NOT_EXPLICIT'; return stop('ACCESS_FLAG_NOT_EXPLICIT_OFF'); }
+      out.accessEnabled = flag;
+      if (flag !== 'OFF') return stop(flagCode(flag));
+
+      var sp = deps.scriptProps;
+      var cfgRaw = diagRead(sp, 'ACCESS_CONFIG'), envRaw = diagRead(sp, 'ACCESS_ENVIRONMENT');
+      var idRaw = diagRead(sp, 'LEDGER_SPREADSHEET_ID'), actorsRaw = diagRead(sp, 'ACCESS_ADMIN_ACTORS');
+      out.settings = { ACCESS_CONFIG: cfgRaw.state, ACCESS_ENVIRONMENT: envRaw.state, LEDGER_SPREADSHEET_ID: idRaw.state, ACCESS_ADMIN_ACTORS: actorsRaw.state };
+      if (!Object.keys(out.settings).every(function (k) { return out.settings[k] === 'SET'; })) fail('SETTINGS_INCOMPLETE');
+
+      out.environment = envRaw.state === 'SET' ? (envRaw.raw === ENVIRONMENT.VERIFY ? 'VERIFY' : 'NOT_VERIFY') : envRaw.state;
+      if (out.environment !== 'VERIFY') {
+        fail(envRaw.state === 'SET' ? 'ENV_NOT_VERIFY' : 'SETTINGS_INCOMPLETE');
+        out.stopped = true;
+        return fin();
+      }
+
+      var cfg = null;
+      if (cfgRaw.state !== 'SET') out.config.state = cfgRaw.state;
+      else {
+        var parsed = safeParse(cfgRaw.raw);
+        if (parsed === null && cfgRaw.raw !== 'null') out.config.state = 'PARSE_ERROR';
+        else if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) out.config.state = 'NOT_OBJECT';
+        else {
+          cfg = parsed;
+          out.config.envMatch = cfg.environment === ENVIRONMENT.VERIFY ? 'MATCH' : 'MISMATCH';
+          var v = validateConfig(cfg);
+          out.config.errors = v.errors.slice(0, 16);
+          out.config.state = v.ok && out.config.envMatch === 'MATCH' ? 'VALID' : 'INVALID';
+          var allowed = Array.isArray(cfg.allowedLast4) ? cfg.allowedLast4.map(function (x) { return String(x).toUpperCase(); }) : [];
+          var padLast4 = (Array.isArray(cfg.keypads) ? cfg.keypads : []).map(function (k) { return k && typeof k.deviceId === 'string' ? last4(k.deviceId) : ''; });
+          var all = allowed.concat(padLast4);
+          if (all.some(function (x) { return TEST_FORBIDDEN_LAST4.indexOf(x) !== -1; })) out.config.last4 = 'FORBIDDEN';
+          else if (allowed.length && padLast4.length && all.every(function (x) { return TEST_ALLOWED_LAST4.indexOf(x) !== -1; })) out.config.last4 = 'MATCH';
+          else out.config.last4 = 'MISMATCH';
+        }
+      }
+      if (out.config.state !== 'VALID') fail(out.config.state === 'INVALID' ? 'CONFIG_INVALID' : 'CONFIG_' + out.config.state);
+      if (out.config.last4 === 'FORBIDDEN') fail('LAST4_FORBIDDEN');
+      else if (out.config.last4 === 'MISMATCH') fail('LAST4_MISMATCH');
+
+      // 前提（環境・設定・末尾4桁）が崩れていれば、台帳へは触れない
+      if (out.failures.length) { out.stopped = true; return fin(); }
+
+      var lr = null;
+      try { lr = deps.ledgerInspect ? deps.ledgerInspect() : null; } catch (e) { lr = null; }
+      if (!lr || typeof lr !== 'object') lr = { code: 'LEDGER_READ_FAILED' };
+      out.ledger.state = typeof lr.code === 'string' ? lr.code : 'LEDGER_READ_FAILED';
+      ['headers', 'columnFormat', 'timezone'].forEach(function (k) { if (typeof lr[k] === 'string') out.ledger[k] = lr[k]; });
+      ['rows', 'sampled'].forEach(function (k) { if (typeof lr[k] === 'number') out.ledger[k] = lr[k]; });
+      if (out.ledger.state !== 'LEDGER_ACCESS_OK') fail(DIAG_VALUE_RE.test(out.ledger.state) ? out.ledger.state : 'LEDGER_READ_FAILED');
+      else if (out.ledger.timezone !== 'JST') fail('LEDGER_TIMEZONE_UNSUPPORTED');
+    } catch (e) {
+      fail('UNEXPECTED_ERROR');
+    }
+    return fin();
+  }
+
   return {
     ENVIRONMENT: ENVIRONMENT, PROPERTIES_LIMITS: PROPERTIES_LIMITS, DEFAULTS: DEFAULTS, CATALOG: CATALOG, FREEZE_REASONS: FREEZE_REASONS,
     validateConfig: validateConfig, ensureStoreEnvironment: ensureStoreEnvironment,
     constantTimeEquals: constantTimeEquals, authenticateWebhook: authenticateWebhook, authorizeAdmin: authorizeAdmin,
     CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials, credentialStatus: credentialStatus,
     BOOTSTRAP_KEYS: BOOTSTRAP_KEYS, accessFlagState: accessFlagState, migrateBootstrapCredentials: migrateBootstrapCredentials, bootstrapStatus: bootstrapStatus, scrubBootstrapCredentials: scrubBootstrapCredentials,
-    readOnlyDiagnostics: readOnlyDiagnostics,
+    readOnlyDiagnostics: readOnlyDiagnostics, testReadOnlyDiagnostics: testReadOnlyDiagnostics,
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,

@@ -68,3 +68,17 @@
 - **ソースのロールバック**: 該当コミットをrevertするPRをmainへマージ → 自動で検証GASへ反映（または `workflow_dispatch`）。
 - **固定Deploymentのロールバック**（段階2のみ）: `workflow_dispatch` で `deployment_action=rollback`、`rollback_version` に既存の版番号。同じDeploymentを既存版へ戻す（削除・再作成なし）。
 - 受入の証跡: Step Summary（対象SHA・更新前後の版）に初回・更新・停止・復旧を残す。秘密は残さない。
+
+## verify専用の読取診断 `accessTestReadOnlyDiagnostics`（Issue #789）
+
+検証GAS（SwitchBot Access Test）では、本番用の `accessReadOnlyDiagnostics` ではなく **`accessTestReadOnlyDiagnostics`** を手動で1回だけ実行する。本番診断の挙動・基準は変えていない（別関数）。
+
+**fail-closed 条件（すべて満たす場合のみ台帳へ進む）**: 操作主体が `ACCESS_ADMIN_ACTORS` 本人（active/effective 一致）／`ACCESS_ENABLED` が**明示 `false`**（未設定・空・`true`・想定外値は拒否）／`ACCESS_ENVIRONMENT` と `ACCESS_CONFIG.environment` がともに `verify`／`allowedLast4` と `keypads` 末尾4桁が `37DD` のみ（`01FD` 混入は `LAST4_FORBIDDEN`）。
+
+**確認内容**: `LEDGER_SPREADSHEET_ID` の専用台帳に Sheets API の **GET のみ**で到達し、`Bookings` シートの存在・必須14列・シートのタイムゾーンが JST であること（空データ行は許容）。権限/404/スキーマ/時刻は既存の固定コード（`LEDGER_ACCESS_DENIED` / `LEDGER_NOT_FOUND` / `LEDGER_SCHEMA_INVALID` / `LEDGER_TIMEZONE_UNSUPPORTED` 等）で報告する。
+
+**しないこと**: SwitchBot実機API・Webhook・メール・トリガー作成・鍵発行・状態ストア変更・Properties書込み・ロック取得。User Properties（SwitchBot秘密情報）と状態ストアは読まない（未設定でも失敗しない）。
+
+**出力**: `TEST_DIAGNOSTICS_OK` または固定エラーコード、`SET/MISSING/UNKNOWN`、`VERIFY/NOT_VERIFY`、`JST/NOT_JST/UNKNOWN`、行数・検査行数のみ。完全deviceId・スプレッドシートID・アカウント/メール・予約内容・トークン・例外原文は出さない。ログは戻り値と同一の固定JSON1行。
+
+**手順**: GASエディタの関数選択で `accessTestReadOnlyDiagnostics` を選び1回だけ実行 → 実行ログのJSONで `ok=true`・`environment=VERIFY`・`accessEnabled=OFF`・`ledger.headers=COMPLETE`・`ledger.timezone=JST` を確認する。診断のために `production` へ変更しない。この診断だけでは実機テスト・秘密情報登録・トリガー作成・production ON は許可されない。

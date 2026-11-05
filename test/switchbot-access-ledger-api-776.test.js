@@ -50,7 +50,7 @@ test('静的: Sheets API の呼出は GET のみ。書込み系エンドポイ�
   assert.ok((src.match(/method:\s*'get'/g) || []).length === 1, 'fetch の呼出元は1か所（全経路で共有）');
   // 診断と本番照合は同じ入口 sba_openLedgerSheet_ を通る
   var app = stripComments(fs.readFileSync(path.join(GAS_DIR, 'SwitchBotAccessApp.gs'), 'utf8'));
-  assert.strictEqual((app.match(/sba_openLedgerSheet_\(/g) || []).length, 4, '定義1 + 本番read + 診断 + 宛先解決(#752)');
+  assert.strictEqual((app.match(/sba_openLedgerSheet_\(/g) || []).length, 5, '定義1 + 本番read + 診断 + 宛先解決(#752) + verify専用診断(#789)');
   assert.strictEqual((app.match(/openApiSheet\(/g) || []).length, 1);
 });
 
