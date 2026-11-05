@@ -34,6 +34,21 @@ const TARGET_PATHS = [
   '.github/workflows/switchbot-access-gas-deploy.yml'
 ];
 
+// Issue #780: 運営者が承認済みのAdvanced Google Services依存（Sheets API v4）。これ以外のサービス・ライブラリは
+// 配布しない（新権限・意図しない依存を黙って混入させない）。コードはREST GETを使い、Advancedサービスを実行コードから呼ばない。
+const APPROVED_ADVANCED_SERVICES = [{ userSymbol: 'Sheets', serviceId: 'sheets', version: 'v4' }];
+
+const svcKey = (x) => (x && typeof x === 'object' ? [x.userSymbol, x.serviceId, x.version].join('|') : '?');
+const approvedKeys = () => new Set(APPROVED_ADVANCED_SERVICES.map(svcKey));
+
+/** dependencies を { services:Set, extra:boolean } に正規化する。enabledAdvancedServices 以外の依存（libraries等）は extra。 */
+function readDependencies(manifest) {
+  const d = (manifest && manifest.dependencies) || {};
+  const services = Array.isArray(d.enabledAdvancedServices) ? d.enabledAdvancedServices : [];
+  const extra = Object.keys(d).some((k) => k !== 'enabledAdvancedServices' && !(Array.isArray(d[k]) ? d[k].length === 0 : d[k] && typeof d[k] === 'object' ? Object.keys(d[k]).length === 0 : !d[k]));
+  return { services: services.map(svcKey), extra, malformed: d.enabledAdvancedServices !== undefined && !Array.isArray(d.enabledAdvancedServices) };
+}
+
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
@@ -87,6 +102,14 @@ function checkManifest(remoteManifestFile, repoManifestFile, webappOnly) {
   const pw = repo.webapp || {};
   if (rw.access !== pw.access || rw.executeAs !== pw.executeAs) return 'MANIFEST_WEBAPP_MISMATCH';
   if (webappOnly) return 'OK';
+  // 依存（Advanced Google Services）: 配布側は承認済みのみ。リモートにある依存が配布側に無い場合は
+  // push --force で黙って除去され LEDGER_API_DISABLED に戻るため、配布せず停止する（#780）。
+  const rd = readDependencies(remote);
+  const pd = readDependencies(repo);
+  if (rd.malformed || pd.malformed) return 'MANIFEST_DEPENDENCIES_UNREADABLE';
+  const approved = approvedKeys();
+  if (pd.extra || pd.services.some((k) => !approved.has(k))) return 'MANIFEST_UNAPPROVED_DEPENDENCY';
+  if (rd.extra || rd.services.some((k) => !pd.services.includes(k))) return 'MANIFEST_REMOTE_DEPENDENCY_WOULD_BE_REMOVED';
   const remoteScopes = new Set(remote.oauthScopes || []);
   if ((repo.oauthScopes || []).some((s) => !remoteScopes.has(s))) return 'MANIFEST_NEW_OAUTH_SCOPE_REQUIRES_MANUAL_APPROVAL';
   return 'OK';
@@ -106,6 +129,9 @@ function checkBundle(dir) {
   try {
     const m = readJson(path.join(dir, 'appsscript.json'));
     if (!m.webapp || m.webapp.executeAs !== 'USER_DEPLOYING') return 'BUNDLE_MANIFEST_INVALID';
+    const dep = readDependencies(m);
+    if (dep.malformed || dep.extra || dep.services.some((k) => !approvedKeys().has(k))) return 'BUNDLE_MANIFEST_INVALID';
+    if (!approvedKeys().has(dep.services[0]) || dep.services.length !== APPROVED_ADVANCED_SERVICES.length) return 'BUNDLE_SHEETS_SERVICE_MISSING';
   } catch (_) { return 'BUNDLE_MANIFEST_INVALID'; }
   return 'OK';
 }
@@ -256,4 +282,4 @@ if (require.main === module) {
   process.exit(code);
 }
 
-module.exports = { BUNDLE_FILES, TARGET_PATHS, ACCESS_STATES, checkBundle, checkDispatch, describeVersion, pickDeployment, parseVersions, checkRemoteTarget, checkManifest, compareSources, checkCredential };
+module.exports = { APPROVED_ADVANCED_SERVICES, BUNDLE_FILES, TARGET_PATHS, ACCESS_STATES, checkBundle, checkDispatch, describeVersion, pickDeployment, parseVersions, checkRemoteTarget, checkManifest, compareSources, checkCredential };
