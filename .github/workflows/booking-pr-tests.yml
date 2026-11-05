@@ -24,6 +24,8 @@ on:
       - 'scripts/deploy-switchbot-verify-gas.sh'
       - '.github/workflows/switchbot-access-gas-deploy.yml'
       - 'scripts/deploy-switchbot-access-gas.sh'
+      - '.github/workflows/switchbot-access-test-gas-deploy.yml'
+      - 'scripts/deploy-switchbot-access-test-gas.sh'
       - 'survey/**'
       - 'scripts/survey-*.js'
       - 'scripts/prepare-survey-gas-project.js'

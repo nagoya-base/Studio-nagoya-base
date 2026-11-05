@@ -1,0 +1,182 @@
+name: Deploy SwitchBot Access Test GAS
+
+# Issue #787: 検証専用の独立GAS「SwitchBot Access Test」へだけ、gas/switchbot-access/ の同一コードを反映する。
+# - 本番（switchbot-access-gas-deploy.yml / #768・#778）・Booking・旧switchbot-verify(#723) とは
+#   workflow／Environment／Secrets／concurrency を共有しない。本番側のファイルは変更しない。
+# - 起動: mainへの「対象パス変更時のpush」と workflow_dispatch（mainのみ）。pull_request では動かさない
+#   （PRは booking-pr-tests.yml が秘密・外部通信なしでテストする）。
+# - 先にテスト（秘密なし）。成功したときだけデプロイ。デプロイjobは更新前に Script ID・環境・対象GASを読取り検査する。
+# - 既定は「ソース反映のみ」。固定Deployment用Secretが未設定ならWebアプリ公開・Deployment更新はしない（別ゲート）。
+# - kill switch: Environment変数 SWITCHBOT_ACCESS_TEST_DEPLOY_ENABLED が true 以外なら何もしない（停止）。
+# - ACCESS_ENABLED・Properties・トリガー・Webhook・SwitchBot実API・メール・台帳・clasp run には一切触れない。
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'gas/switchbot-access/**'
+      - 'gas/booking/shared/AccessKeySnapshot.gs'
+      - 'scripts/prepare-switchbot-access-gas-project.js'
+      - 'scripts/deploy-switchbot-access-test-gas.sh'
+      - 'scripts/switchbot-access-test-gas-deploy-lib.js'
+      - '.github/workflows/switchbot-access-test-gas-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      deployment_action:
+        description: '操作: deploy=mainのコードを反映（停止後の復旧もこれ） / rollback=固定Deploymentを既存の版へ戻す'
+        required: true
+        type: choice
+        default: 'NOT_SELECTED'
+        options:
+          - 'NOT_SELECTED'
+          - 'deploy'
+          - 'rollback'
+      executor_confirmed:
+        description: '確認: clasp実行者・Webアプリ実行者・User Properties設定者が同一アカウントであることを今回確認済み'
+        required: true
+        type: boolean
+        default: false
+      rollback_version:
+        description: 'rollbackのみ必須: 戻し先の既存版番号（例: 3）。deployでは空欄'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+# 検証GAS専用グループ。同一Scriptへの並行更新を禁止し、実行中のrunは強制キャンセルしない（状態不明を避ける）。
+concurrency:
+  group: switchbot-access-test-gas-deploy
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Input gate (no secrets, no environment)
+    runs-on: ubuntu-latest
+    outputs:
+      valid: ${{ steps.gate.outputs.valid }}
+      mode: ${{ steps.gate.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate trigger and inputs (fail closed)
+        id: gate
+        shell: bash
+        env:
+          DG_EVENT: ${{ github.event_name }}
+          DG_REF: ${{ github.ref }}
+          DG_ACTION: ${{ inputs.deployment_action }}
+          DG_ROLLBACK_VERSION: ${{ inputs.rollback_version }}
+        run: |
+          set -euo pipefail
+          stop() {
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "- ❌ 入力ゲート: 安全停止（$1）。デプロイしません" >> "$GITHUB_STEP_SUMMARY"
+            echo "Input gate stopped safely: $1" >&2
+            exit 1
+          }
+          rc=0
+          status="$(node scripts/switchbot-access-test-gas-deploy-lib.js dispatch-gate)" || rc=$?
+          [[ "$rc" -eq 0 && "$status" == "OK" ]] || stop "${status:-GATE_ERROR}"
+          # 古いSHA対策: workflow_dispatch は実行時点のmain先頭と一致しなければ停止。
+          # push は後続の鮮度確認（対象パス差分）で古いrunだけをスキップする。
+          if [[ "$DG_EVENT" == "workflow_dispatch" ]]; then
+            git fetch --no-tags --depth=1 origin main
+            [[ "$(git rev-parse FETCH_HEAD)" == "$GITHUB_SHA" ]] || stop "STALE_SHA_NOT_MAIN_HEAD"
+          fi
+          mode="deploy"
+          [[ "$DG_EVENT" == "push" || "$DG_ACTION" == "deploy" ]] || mode="rollback"
+          echo "valid=true" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "- ✅ 入力ゲート: 通過（操作: \`$mode\`）" >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: Test main (no secrets)
+    needs: gate
+    if: needs.gate.outputs.valid == 'true' && needs.gate.outputs.mode == 'deploy' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run SwitchBot tests
+        run: node --test test/switchbot-*.test.js
+      - name: Assemble and inspect the bundle (no deploy)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/prepare-switchbot-access-gas-project.js "$RUNNER_TEMP/bundle"
+          node scripts/switchbot-access-test-gas-deploy-lib.js check-bundle "$RUNNER_TEMP/bundle"
+
+  deploy:
+    name: Push source to the test GAS only
+    needs: [gate, test]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.gate.outputs.valid == 'true' && needs.gate.outputs.mode == 'deploy' && needs.test.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: switchbot-access-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned clasp
+        run: npm install --global @google/clasp@3.4.1
+      - name: Skip if a newer main commit changed the target
+        id: fresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin main
+          mapfile -t target_paths < <(node scripts/switchbot-access-test-gas-deploy-lib.js target-paths)
+          if git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- "${target_paths[@]}"; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "- ⏭ 新しいmainコミットが対象を変更済みのためスキップ。古いrunは反映しません" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Verify the target, push source (and update the approved fixed deployment if configured)
+        if: steps.fresh.outputs.current == 'true'
+        shell: bash
+        env:
+          SBAT_CLASPRC_JSON: ${{ secrets.SWITCHBOT_ACCESS_TEST_CLASPRC_JSON }}
+          SBAT_SCRIPT_ID: ${{ secrets.SWITCHBOT_ACCESS_TEST_SCRIPT_ID }}
+          SBAT_DEPLOYMENT_ID: ${{ secrets.SWITCHBOT_ACCESS_TEST_DEPLOYMENT_ID }}
+          SBAT_FORBIDDEN_IDS: ${{ secrets.SWITCHBOT_ACCESS_TEST_FORBIDDEN_IDS }}
+          DG_EVENT: ${{ github.event_name }}
+          DG_REF: ${{ github.ref }}
+          DG_ENABLED: ${{ vars.SWITCHBOT_ACCESS_TEST_DEPLOY_ENABLED }}
+          DG_EXECUTOR_VAR: ${{ vars.SWITCHBOT_ACCESS_TEST_EXECUTOR_CONFIRMED }}
+          DG_EXECUTOR_INPUT: ${{ inputs.executor_confirmed }}
+        run: bash scripts/deploy-switchbot-access-test-gas.sh deploy
+
+  rollback:
+    name: Roll the test deployment back to an existing version
+    needs: gate
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.gate.outputs.valid == 'true' && needs.gate.outputs.mode == 'rollback' }}
+    runs-on: ubuntu-latest
+    environment: switchbot-access-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned clasp
+        run: npm install --global @google/clasp@3.4.1
+      - name: Roll back the test deployment
+        shell: bash
+        env:
+          SBAT_CLASPRC_JSON: ${{ secrets.SWITCHBOT_ACCESS_TEST_CLASPRC_JSON }}
+          SBAT_SCRIPT_ID: ${{ secrets.SWITCHBOT_ACCESS_TEST_SCRIPT_ID }}
+          SBAT_DEPLOYMENT_ID: ${{ secrets.SWITCHBOT_ACCESS_TEST_DEPLOYMENT_ID }}
+          SBAT_FORBIDDEN_IDS: ${{ secrets.SWITCHBOT_ACCESS_TEST_FORBIDDEN_IDS }}
+          DG_EVENT: ${{ github.event_name }}
+          DG_REF: ${{ github.ref }}
+          DG_ENABLED: ${{ vars.SWITCHBOT_ACCESS_TEST_DEPLOY_ENABLED }}
+          DG_EXECUTOR_VAR: ${{ vars.SWITCHBOT_ACCESS_TEST_EXECUTOR_CONFIRMED }}
+          DG_EXECUTOR_INPUT: ${{ inputs.executor_confirmed }}
+          ROLLBACK_VERSION: ${{ inputs.rollback_version }}
+        run: bash scripts/deploy-switchbot-access-test-gas.sh rollback
