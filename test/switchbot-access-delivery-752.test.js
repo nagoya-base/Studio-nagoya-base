@@ -633,3 +633,31 @@ test('通知の取りこぼし防止(レビュー指摘): 変更コード未達�
   assert.strictEqual(w.userMails.length, 1);
   assert.ok(op1.id !== op2.id);
 });
+
+test('通知の取りこぼし防止(再レビュー指摘): 再試行上限到達で変更コード未達の通知だけ失敗しても、復旧後に通知だけ追いつく', function () {
+  var w = mailWorld(); var rt = w.runtime();
+  issue(w, rt); open18(w);
+  rt.deliverCycle();
+  w.records = [H.record({ endAt: H.jst('2030-01-11', '14:00'), revision: 2 })];
+  w.deleteMode = 'noCommandId';
+  for (var i = 0; i < 6 && !ops(w).some(function (o) { return o.revision === 2 && o.state === S.ISSUED_CONFIRMED; }); i++) {
+    w.advance(300); rt.syncCycle();
+    var pend = ops(w).filter(function (o) { return o.revision === 2 && o.state === S.SENT_WAIT_WEBHOOK; })[0];
+    if (pend) { w.advance(10); rt.handleWebhook(H.webhook({ commandId: pend.commandId }), H.TOKEN, H.TOKEN); w.advance(290); rt.syncCycle(); }
+  }
+  w.mailMode = 'notSent'; // 3回とも未送信確定
+  w.mailFailIf = function (subject) { return /CHANGE_CODE_UNDELIVERED/.test(subject); };
+  for (var j = 0; j < 5; j++) { rt.deliverCycle(); w.advance(700); }
+  var subjects = function () { return w.mails.map(function (m) { return m.subject; }).join('\n'); };
+  assert.ok(/DELIVERY_RETRY_EXHAUSTED/.test(subjects()));
+  assert.ok(!/CHANGE_CODE_UNDELIVERED/.test(subjects()));
+  w.mailFailIf = null; w.mailMode = 'ok';
+  var attempts = w.userMailAttempts, before = w.mails.length;
+  rt.deliverCycle();
+  assert.ok(/CHANGE_CODE_UNDELIVERED/.test(subjects()), '復旧後に追いつく');
+  assert.strictEqual(w.mails.length, before + 1, '他の管理者通知は重複しない');
+  rt.deliverCycle(); rt.deliverCycle();
+  assert.strictEqual(w.mails.length, before + 1);
+  assert.strictEqual(w.userMailAttempts, attempts, '利用者メールは再送しない');
+  assert.strictEqual(w.userMails.length, 1);
+});

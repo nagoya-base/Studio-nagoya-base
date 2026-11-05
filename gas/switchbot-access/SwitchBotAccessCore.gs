@@ -687,6 +687,21 @@ var SwitchBotAccessCore = (function () {
         .forEach(function (c) { deps.store.del('ALERT_' + rec.id + '_' + c); });
     }
 
+    /** 配送の状態ごとに、管理者へ届いているべき通知コード（判定と再通知の両方で使う。取りこぼしの経路を1か所に集約）。 */
+    function requiredAlerts(d) {
+      var out = [];
+      if (d.state === DLV.UNKNOWN) out.push('DELIVERY_UNKNOWN');
+      else if (d.state === DLV.NOT_SENT && d.attempts >= maxDeliveryAttempts) {
+        if (typeof d.reason === 'string' && ALERT_CODE_RE.test(d.reason)) out.push(d.reason);
+        out.push('DELIVERY_RETRY_EXHAUSTED');
+      } else return out;
+      if (d.kind === 'CHANGE') out.push('CHANGE_CODE_UNDELIVERED');
+      return out;
+    }
+    function alertsPending(recId, d) {
+      return requiredAlerts(d).some(function (c) { return !deps.store.get('ALERT_' + recId + '_' + c); });
+    }
+
     /** この record に今、配送の処理が必要か（読取のみ。台帳等の外部読取は呼ばない）。 */
     function deliveryDue(recId) {
       var rec = load(recKey(recId));
@@ -696,14 +711,9 @@ var SwitchBotAccessCore = (function () {
       if (d.state === DLV.SENDING) return true; // 中断の後始末（UNKNOWN 化）
       if (d.state === DLV.NOT_SENT) {
         if (d.attempts < maxDeliveryAttempts) return deps.nowSec() >= d.nextTryAt;
-        // 上限到達後はメールを再試行しない。管理者通知が未達なら通知だけ再試行する（通知済みなら対象外）
-        return !deps.store.get('ALERT_' + recId + '_DELIVERY_RETRY_EXHAUSTED') ||
-          (typeof d.reason === 'string' && ALERT_CODE_RE.test(d.reason) && !deps.store.get('ALERT_' + recId + '_' + d.reason));
+        return alertsPending(recId, d); // 上限到達後はメールを再試行しない。管理者通知が未達なら通知だけ再試行する
       }
-      if (d.state === DLV.UNKNOWN) { // 通知の再試行のみ（通知済みなら対象外）
-        return !deps.store.get('ALERT_' + recId + '_DELIVERY_UNKNOWN') ||
-          (d.kind === 'CHANGE' && !deps.store.get('ALERT_' + recId + '_CHANGE_CODE_UNDELIVERED'));
-      }
+      if (d.state === DLV.UNKNOWN) return alertsPending(recId, d); // 通知の再試行のみ（通知済みなら対象外）
       return false;
     }
 
@@ -737,15 +747,11 @@ var SwitchBotAccessCore = (function () {
         if (d.state === DLV.SUPPRESSED) return { delivered: false, reason: 'SUPPRESSED' };
         // 送信直前の SENDING が残っている = 外部送信の成否が記録できていない。再送せず UNKNOWN（管理者判断）
         if (d.state === DLV.SENDING) return markDeliveryUnknown(rec, d, 'RESUMED_FROM_SENDING');
-        if (d.state === DLV.UNKNOWN) {
-          alert(rec, 'DELIVERY_UNKNOWN');
-          if (d.kind === 'CHANGE') alert(rec, 'CHANGE_CODE_UNDELIVERED'); // 変更/延長後の新コード未達の引継ぎも、未通知なら再試行する
-          return { delivered: false, reason: 'DELIVERY_UNKNOWN' }; }
+        if (d.state === DLV.UNKNOWN) { requiredAlerts(d).forEach(function (c) { alert(rec, c); }); return { delivered: false, reason: 'DELIVERY_UNKNOWN' }; }
         if (d.attempts >= maxDeliveryAttempts) {
-          if (typeof d.reason === 'string' && ALERT_CODE_RE.test(d.reason)) alert(rec, d.reason);
-          if (d.kind === 'CHANGE') alert(rec, 'CHANGE_CODE_UNDELIVERED');
-          alert(rec, 'DELIVERY_RETRY_EXHAUSTED');
-          return { delivered: false, reason: 'RETRY_EXHAUSTED' }; }
+          requiredAlerts(d).forEach(function (c) { alert(rec, c); });
+          return { delivered: false, reason: 'RETRY_EXHAUSTED' };
+        }
         if (deps.nowSec() < d.nextTryAt) return { delivered: false, reason: 'BACKOFF' };
       }
       // 送信直前の安全ゲート（最新の台帳を読み直す。未注入・例外は fail closed）
