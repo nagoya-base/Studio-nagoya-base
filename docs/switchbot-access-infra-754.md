@@ -125,8 +125,46 @@
 **組み立て**: `node scripts/prepare-switchbot-access-gas-project.js .gas-deploy/switchbot-access`（コミットしない）。GitHub Actionsによる自動デプロイ・ロールバックは `docs/switchbot-access-gas-deploy-768.md`（#768。段階ゲートで既定は無効）。
 **必要権限**: 新規GASプロジェクトのオーナー（=デプロイ実行者）、台帳スプレッドシートの**閲覧権限**（読取専用スコープ）、通知用メール送信（MailApp）、Webアプリ公開（実行者権限・匿名到達）。OAuthスコープは `appsscript.json` を参照（書込み権限なし）。
 **準備**（デプロイ前）: ①検証/本番を別プロジェクトで作成 ②User Propertiesに資格情報3種（登録手順: `docs/switchbot-access-credentials-770.md`） ③Script Propertiesに設定一式（`accessCheckSetup` で SET/MISSING のみ確認） ④`ACCESS_ENABLED` は**設定しない（OFF）** ⑤管理者許可リスト登録。
-**デプロイ後の読取診断**: `accessCheckSetup`（値を出さない）→ `accessAdminStatus` → 1回だけ手動で `accessSyncJob`（OFFのため `FLAG_OFF`）→ トリガー設置（`accessInstallTriggers`）。Webhook URLの登録は検証用（37DD）から別手順で行い、**既存Webhookを自動で上書き・削除しない**。
+**デプロイ後の読取診断**: `accessCheckSetup`（値を出さない）→ **`accessReadOnlyDiagnostics`（#774。副作用なしの真正の読取専用。下記 §11.1）**（`accessAdminStatus` は状態を書き込むため、初期確認には使わない）→ 1回だけ手動で `accessSyncJob`（OFFのため `FLAG_OFF`）→ トリガー設置（`accessInstallTriggers`）。Webhook URLの登録は検証用（37DD）から別手順で行い、**既存Webhookを自動で上書き・削除しない**。
 **撤去**: `ACCESS_ENABLED` を外す → `accessRemoveTriggers` → 未解決の棚卸し/個別削除 → Webhook登録の解除（別手順）→ プロジェクト削除は状態の棚卸し完了後。
+
+### 11.1 読取専用診断 `accessReadOnlyDiagnostics`（Issue #774）
+
+**目的**: 本番の独立GAS（SwitchBot Access Production）の初期設定が正常かを、**鍵発行OFF・トリガーなし・SwitchBot API通信なし・秘密/個人情報の表示なし**で確認する。コードを反映しただけでは何も起きない。運営者がエディタから手動で1回実行する（マージ・本節は、デプロイ・機能ON・実機通信・Webhook登録・トリガー作成の承認ではない）。
+
+**`accessAdminStatus` との違い**: `accessAdminStatus` は内部で排他ロックを取り、環境刻印（`META_ENV`）・ハートビート等を**書き込む**ため純粋な読取りではなく、戻り値もログに出ない（「実行完了」のみ）。本診断は書込み・ロック取得をせず、結果の固定JSONを必ずログに出す。初期確認には `accessReadOnlyDiagnostics` を使い、`accessAdminStatus` は管理者復旧用として使い分ける。
+
+**手順（Windows・ブラウザ。1操作ずつ）**
+1. ブラウザで、デプロイ実行者本人のGoogleアカウントにログインした状態で、スタンドアロンGAS「SwitchBot Access Production」を開く。
+2. 左メニュー「プロジェクトの設定」で、反映済みのファイル（`SwitchBotAccessApp.gs` 等）に今回の版が入っていることを確認する（反映は別途レビュー後に運営者が手動で行う）。
+3. 左メニュー「エディタ」を開き、上部の関数選択プルダウンで **`accessReadOnlyDiagnostics`** を選ぶ。
+4. 「実行」を1回だけ押す。初回のみ権限の承認画面が出ることがある（台帳の読取り権限。**書込み権限は求められない**）。内容を確認し、本人アカウントで許可する。資格情報の再入力は求められない。
+5. 画面下部の「実行ログ」に1行のJSONが出る。**出ない場合・「実行完了」だけの場合は異常**として止め、手順を繰り返さず運営担当へ連絡する。
+
+**成功の見方**: ログの先頭付近が `"ok":true,"code":"DIAGNOSTICS_OK","failures":[]` で、次の状態になっている。
+- `identity`=`AUTHORIZED`、`accessEnabled`=`OFF`、`environment`=`PRODUCTION`
+- `config.state`=`VALID`、`config.envMatch`=`MATCH`
+- `settings` の4件と `credentials` の3件がすべて `SET`
+- `ledger.state`=`LEDGER_ACCESS_OK`（`headers`=`COMPLETE`、`columnFormat`=`OK` か `NO_DATA`）
+- `store.state`=`EMPTY_UNINITIALIZED`（まだ一度も動かしていない正常な空）または `INITIALIZED`、`store.gate`=`OK`
+- `notes` に `CREDENTIAL_VALIDITY_NOT_VERIFIED`: **資格情報が実APIで有効か・実機に通じるかは確認していない**（確認対象外。#756の限定実機で扱う）。
+
+**失敗時の止め方**: `ok`が`false`なら、`code`（最初の失敗）と`failures`（全件）を控えて**そこで止める**。トリガー作成・`ACCESS_ENABLED` のON・Webhook登録へ進まない。設定を直す前に値を調べてログ・チャットに貼らない（診断結果自体は秘密を含まないので共有してよい）。
+| コード | 意味と対処 |
+|---|---|
+| `IDENTITY_UNAVAILABLE` / `NOT_AUTHORIZED` / `ACCOUNT_MISMATCH` | 実行者が `ACCESS_ADMIN_ACTORS` の許可された本人ではない（または取得できない）。他の情報は一切表示しない。本人のアカウントで開き直す |
+| `ACCESS_NOT_OFF` / `ACCESS_STATE_UNKNOWN` | `ACCESS_ENABLED` が明示OFF（未設定または`false`）ではない。以降の診断は実施しない。ONなら運営判断で停止、想定外の値は設定を確認 |
+| `SETTINGS_INCOMPLETE` / `CREDENTIALS_INCOMPLETE` | 設定4件または資格情報3件のどれかが `MISSING`/`UNKNOWN`。`UNKNOWN`は読取失敗（未設定とは別）。`accessCheckSetup`で再確認 |
+| `ENV_NOT_PRODUCTION` / `CONFIG_INVALID` / `CONFIG_PARSE_ERROR` / `CONFIG_NOT_OBJECT` | 環境が本番でない、設定JSONが不正、設定の環境名と `ACCESS_ENVIRONMENT` の不一致。`config.errors` の固定コードで原因を絞る |
+| `LEDGER_AUTH_REQUIRED` | GASの権限承認が未完了。手順4の承認画面で許可して再実行 |
+| `LEDGER_ACCESS_DENIED` | 台帳スプレッドシートの閲覧権限がない。台帳の所有者に閲覧権限を依頼 |
+| `LEDGER_ID_MISSING` / `LEDGER_READ_FAILED` | 台帳IDの未設定、またはその他の読取失敗（本文は表示しない） |
+| `LEDGER_SCHEMA_INVALID` | `Bookings` シートが無い、必須列の不足/重複、または末尾最大200行の `startAt`/`endAt` が日時として読めない。台帳の改変を確認（予約者名・メール等の列は読まない。予約ID・日時は検査のためメモリ内で読むが表示しない） |
+| `STORE_ENV_MISMATCH` / `STORE_INCONSISTENT` / `STORE_RECORD_INVALID` | 状態ストアの環境刻印が本番と違う／刻印なしでデータだけある／操作記録が壊れている。触らず運営担当へ |
+| `STORAGE_NEAR_LIMIT` / `STORAGE_VALUE_NEAR_LIMIT` / `STORE_READ_FAILED` | 保存容量が上限に近い／状態の読取失敗 |
+| `UNEXPECTED_ERROR` | 想定外の例外（本文は出さない）。再実行せず連絡 |
+
+**守っていること**: 出力は固定キー・固定コード・`SET`/`MISSING`/`UNKNOWN`・集計値のみ（ホワイトリストで検証し、自由文・ID・URL・メールは`INVALID_VALUE`に置換）。台帳は、ヘッダーと末尾最大200行の `bookingId`・`startAt`・`endAt` の3列だけを検査のためにメモリ内で読み（空行の除外と日時形式の判定）、値は表示・記録せず、行数・検査行数と固定コードだけを返す（氏名・メール・電話等の列は読まない）。**検査は末尾最大200行のサンプル診断であり、全レコードの整合性を保証しない**。状態ストアは接頭辞別の件数（許可リスト外は`OTHER`）と未解決の操作件数だけで、個別キー名・内容・履歴は出さない（`ACCESS_*`/`LEDGER_*`/`BOOTSTRAP_*` は件数に含めない）。`setProperty`/`deleteProperty`、`LockService`、`MailApp`、`UrlFetchApp`、`ScriptApp`（トリガー）、Sheets書込み、SwitchBot API、鍵の発行/削除、ジョブ実行、Deployment変更、機能ONは行わない（テストで0件を確認）。
 
 ### 証跡の分離（本PRの範囲外・別記録）
 | 区分 | 記録する内容 | 本PR |

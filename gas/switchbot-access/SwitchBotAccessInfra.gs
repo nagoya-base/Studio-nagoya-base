@@ -1266,12 +1266,158 @@ var SwitchBotAccessInfra = (function () {
     };
   }
 
+  // ---------- 本番初期設定の読取専用診断（Issue #774）----------
+
+  var DIAG_PREFIXES = ['OP', 'BK', 'EVT', 'HB', 'IALERT', 'ALERT', 'INBOX', 'TRK', 'ADMINLOG', 'APICOUNT', 'META'];
+  var DIAG_VALUE_RE = /^[A-Z][A-Z0-9_]{1,47}$/;
+  var DIAG_NOTES = ['NO_WRITES', 'NO_EXTERNAL_COMMUNICATION', 'CREDENTIAL_VALIDITY_NOT_VERIFIED'];
+
+  /** 出力ホワイトリスト: 固定コード形式の文字列・有限数・真偽値・それらの配列/入れ子のみ通す。それ以外（自由文・ID・URL等）は潰す。 */
+  function diagSanitize(v, depth) {
+    if (depth > 4) return 'INVALID_VALUE';
+    if (typeof v === 'boolean') return v;
+    if (typeof v === 'number') return isFinite(v) ? v : 'INVALID_VALUE';
+    if (typeof v === 'string') return DIAG_VALUE_RE.test(v) ? v : 'INVALID_VALUE';
+    if (Array.isArray(v)) return v.slice(0, 32).map(function (x) { return diagSanitize(x, depth + 1); });
+    if (v && typeof v === 'object') {
+      var o = {};
+      Object.keys(v).forEach(function (k) { if (DIAG_VALUE_RE.test(k) || /^[A-Za-z][A-Za-z0-9]{0,31}$/.test(k)) o[k] = diagSanitize(v[k], depth + 1); });
+      return o;
+    }
+    return 'INVALID_VALUE';
+  }
+
+  /** プロパティ1件を SET/MISSING/UNKNOWN で読む（値は返さない）。読取例外・undefined は UNKNOWN（MISSING に潰さない）。 */
+  function diagRead(props, name) {
+    var v;
+    try { v = props.get(name); } catch (e) { return { state: 'UNKNOWN', raw: null }; }
+    if (v === undefined) return { state: 'UNKNOWN', raw: null };
+    return v === null || v === '' ? { state: 'MISSING', raw: null } : { state: 'SET', raw: String(v) };
+  }
+
+  function diagBlank() {
+    return {
+      ok: false, code: 'DIAGNOSTICS_NOT_RUN', failures: [], stopped: false,
+      identity: 'NOT_CHECKED', accessEnabled: 'NOT_CHECKED', environment: 'NOT_CHECKED',
+      config: { state: 'NOT_CHECKED', envMatch: 'NOT_CHECKED', errors: [] },
+      settings: { ACCESS_CONFIG: 'NOT_CHECKED', ACCESS_ENVIRONMENT: 'NOT_CHECKED', LEDGER_SPREADSHEET_ID: 'NOT_CHECKED', ACCESS_ADMIN_ACTORS: 'NOT_CHECKED' },
+      credentials: { SWITCHBOT_TOKEN: 'NOT_CHECKED', SWITCHBOT_SECRET: 'NOT_CHECKED', WEBHOOK_SHARED_TOKEN: 'NOT_CHECKED' },
+      ledger: { state: 'NOT_CHECKED', headers: 'NOT_CHECKED', columnFormat: 'NOT_CHECKED', rows: 0, sampled: 0 },
+      store: { state: 'NOT_CHECKED', metaEnv: 'NOT_CHECKED', gate: 'NOT_CHECKED', keys: 0, bytes: 0, ratio: 0, valueRatio: 0, byPrefix: {}, ops: { total: 0, unresolved: 0, unreadable: 0 } },
+      notes: DIAG_NOTES.slice()
+    };
+  }
+
+  function diagStore(store, cfg, out) {
+    var s = out.store;
+    try {
+      var keys = store.keys();
+      var m = measureStore(store);
+      var gate = storageGate(m, cfg, cfg && cfg.storageLimits);
+      s.keys = m.keys; s.bytes = m.bytes;
+      s.ratio = Math.round(gate.ratio * 10000) / 10000; s.valueRatio = Math.round(gate.valueRatio * 10000) / 10000;
+      s.gate = gate.ok ? 'OK' : gate.code;
+      var byPrefix = {};
+      Object.keys(m.byPrefix).forEach(function (p) {
+        var name = DIAG_PREFIXES.indexOf(p) !== -1 ? p : 'OTHER';
+        byPrefix[name] = (byPrefix[name] || 0) + m.byPrefix[p].count;
+      });
+      s.byPrefix = byPrefix;
+      var opKeys = keys.filter(function (k) { return k.indexOf('OP_') === 0; });
+      var knownStates = Object.keys(Core.STATE).map(function (k) { return Core.STATE[k]; });
+      var ops = scanOps(store).filter(function (r) { return typeof r.id === 'string' && knownStates.indexOf(r.state) !== -1; }); // 状態が未知/欠落の記録は不正として数える
+      s.ops = { total: ops.length, unresolved: ops.filter(isUnresolved).length, unreadable: opKeys.length - ops.length };
+      var meta = store.get('META_ENV');
+      s.metaEnv = meta === null || meta === undefined || meta === '' ? 'ABSENT' : (meta === ENVIRONMENT.PRODUCTION ? 'MATCH' : 'MISMATCH');
+      if (s.metaEnv === 'MISMATCH') s.state = 'STORE_ENV_MISMATCH';
+      else if (s.ops.unreadable > 0) s.state = 'STORE_RECORD_INVALID';
+      else if (!gate.ok) s.state = gate.code;
+      else if (m.keys === 0) s.state = 'EMPTY_UNINITIALIZED';
+      else if (s.metaEnv === 'ABSENT') s.state = 'STORE_INCONSISTENT';
+      else s.state = 'INITIALIZED';
+    } catch (e) {
+      s.state = 'STORE_READ_FAILED';
+    }
+    return s.state === 'EMPTY_UNINITIALIZED' || s.state === 'INITIALIZED';
+  }
+
+  /**
+   * 独立GAS本番初期設定の読取専用診断。書込み・ロック・通信・トリガー・メール・Sheets書込みを一切行わない
+   * （deps に set/del/lock/api/sendMail を渡さない）。返すのは固定コード・SET/MISSING/UNKNOWN・集計値のみ
+   * （値・ID・メール・予約情報・例外本文は含めない）。資格情報の実API有効性・実機疎通は確認しない。
+   * deps: identity(), adminActors, accessFlag(), scriptProps{get}, userProps{get}, stateStore{get,keys}, ledgerInspect()
+   */
+  function readOnlyDiagnostics(deps) {
+    var out = diagBlank();
+    function fin() {
+      out.ok = out.failures.length === 0;
+      out.code = out.ok ? 'DIAGNOSTICS_OK' : out.failures[0];
+      return diagSanitize(out, 0);
+    }
+    function fail(code) { if (out.failures.indexOf(code) === -1) out.failures.push(code); }
+    try {
+      var gate = authorizeExecutor(deps);
+      if (!gate.ok) { out.identity = gate.error; fail(gate.error); out.stopped = true; return fin(); }
+      out.identity = 'AUTHORIZED';
+
+      var flag = accessFlagState(deps);
+      out.accessEnabled = flag;
+      if (flag !== 'OFF') { fail(flagCode(flag)); out.stopped = true; return fin(); }
+
+      var sp = deps.scriptProps, up = deps.userProps;
+      var cfgRaw = diagRead(sp, 'ACCESS_CONFIG'), envRaw = diagRead(sp, 'ACCESS_ENVIRONMENT');
+      var idRaw = diagRead(sp, 'LEDGER_SPREADSHEET_ID'), actorsRaw = diagRead(sp, 'ACCESS_ADMIN_ACTORS');
+      out.settings = { ACCESS_CONFIG: cfgRaw.state, ACCESS_ENVIRONMENT: envRaw.state, LEDGER_SPREADSHEET_ID: idRaw.state, ACCESS_ADMIN_ACTORS: actorsRaw.state };
+      CREDENTIAL_NAMES.forEach(function (n) { out.credentials[n] = diagRead(up, n).state; });
+      var settingsOk = Object.keys(out.settings).every(function (k) { return out.settings[k] === 'SET'; });
+      var credsOk = CREDENTIAL_NAMES.every(function (n) { return out.credentials[n] === 'SET'; });
+      if (!settingsOk) fail('SETTINGS_INCOMPLETE');
+      if (!credsOk) fail('CREDENTIALS_INCOMPLETE');
+
+      out.environment = envRaw.state === 'SET' ? (envRaw.raw === ENVIRONMENT.PRODUCTION ? 'PRODUCTION' : 'NOT_PRODUCTION') : envRaw.state;
+      if (out.environment !== 'PRODUCTION' && envRaw.state === 'SET') fail('ENV_NOT_PRODUCTION');
+
+      var cfg = {};
+      if (cfgRaw.state !== 'SET') out.config.state = cfgRaw.state;
+      else {
+        var parsed = safeParse(cfgRaw.raw);
+        if (parsed === null && cfgRaw.raw !== 'null') out.config.state = 'PARSE_ERROR';
+        else if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) out.config.state = 'NOT_OBJECT';
+        else {
+          cfg = parsed;
+          out.config.envMatch = envRaw.state === 'SET' && cfg.environment === envRaw.raw ? 'MATCH' : 'MISMATCH';
+          var v = validateConfig(out.config.envMatch === 'MATCH' ? cfg : Object.assign({}, cfg, { environment: '__MISMATCH__' }));
+          out.config.state = v.ok && out.config.envMatch === 'MATCH' ? 'VALID' : 'INVALID';
+          out.config.errors = v.errors.slice(0, 16);
+        }
+      }
+      if (out.config.state !== 'VALID') fail(out.config.state === 'INVALID' ? 'CONFIG_INVALID' : 'CONFIG_' + out.config.state);
+
+      if (idRaw.state !== 'SET') { out.ledger.state = idRaw.state === 'MISSING' ? 'LEDGER_ID_MISSING' : 'LEDGER_READ_FAILED'; fail(out.ledger.state); }
+      else {
+        var lr = null;
+        try { lr = deps.ledgerInspect ? deps.ledgerInspect() : null; } catch (e) { lr = null; }
+        if (!lr || typeof lr !== 'object') lr = { code: 'LEDGER_READ_FAILED' };
+        out.ledger.state = typeof lr.code === 'string' ? lr.code : 'LEDGER_READ_FAILED';
+        ['headers', 'columnFormat'].forEach(function (k) { if (typeof lr[k] === 'string') out.ledger[k] = lr[k]; });
+        ['rows', 'sampled'].forEach(function (k) { if (typeof lr[k] === 'number') out.ledger[k] = lr[k]; });
+        if (out.ledger.state !== 'LEDGER_ACCESS_OK') fail(DIAG_VALUE_RE.test(out.ledger.state) ? out.ledger.state : 'LEDGER_READ_FAILED');
+      }
+
+      if (!diagStore(deps.stateStore, cfg, out)) fail(DIAG_VALUE_RE.test(out.store.state) ? out.store.state : 'STORE_READ_FAILED');
+    } catch (e) {
+      fail('UNEXPECTED_ERROR');
+    }
+    return fin();
+  }
+
   return {
     ENVIRONMENT: ENVIRONMENT, PROPERTIES_LIMITS: PROPERTIES_LIMITS, DEFAULTS: DEFAULTS, CATALOG: CATALOG, FREEZE_REASONS: FREEZE_REASONS,
     validateConfig: validateConfig, ensureStoreEnvironment: ensureStoreEnvironment,
     constantTimeEquals: constantTimeEquals, authenticateWebhook: authenticateWebhook, authorizeAdmin: authorizeAdmin,
     CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials, credentialStatus: credentialStatus,
     BOOTSTRAP_KEYS: BOOTSTRAP_KEYS, accessFlagState: accessFlagState, migrateBootstrapCredentials: migrateBootstrapCredentials, bootstrapStatus: bootstrapStatus, scrubBootstrapCredentials: scrubBootstrapCredentials,
+    readOnlyDiagnostics: readOnlyDiagnostics,
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,

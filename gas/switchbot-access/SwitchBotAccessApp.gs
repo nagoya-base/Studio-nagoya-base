@@ -327,3 +327,45 @@ function accessCheckSetup() {
   Logger.log(JSON.stringify(status));
   return status;
 }
+
+// ── 本番初期設定の読取専用診断（Issue #774）──
+// エディタの関数選択から引数なしで1回実行。ACCESS_ADMIN_ACTORS の本人（active/effective 一致）のみ。ACCESS_ENABLED が
+// 明示OFFのときだけ進む。書込み（Properties/Sheets/ロック）・通信（UrlFetch/Mail）・トリガー操作は一切しない。
+// ログと戻り値は固定コード・SET/MISSING・集計値のみ（値・ID・メール・予約情報・例外本文を出さない）。
+// accessAdminStatus（runLockedで状態を書く）とは別物。手順: docs/switchbot-access-infra-754.md「読取専用診断（#774）」
+function sba_readOnlyStore_() {
+  var base = sba_stateStore_();
+  return { get: base.get, keys: base.keys }; // 書込み手段（set/del）を渡さない
+}
+
+function sba_ledgerInspect_() {
+  var id = sba_scriptProps_().getProperty('LEDGER_SPREADSHEET_ID');
+  if (!id) return { code: 'LEDGER_ID_MISSING' };
+  try {
+    return AccessLedgerReader.inspectSheet(SpreadsheetApp.openById(id).getSheetByName(AccessLedgerReader.SHEET_NAME));
+  } catch (e) {
+    return { code: AccessLedgerReader.classifyError(e) };
+  }
+}
+
+function accessReadOnlyDiagnostics() {
+  var out;
+  try {
+    var s = sba_scriptProps_(), u = sba_userProps_();
+    out = SwitchBotAccessInfra.readOnlyDiagnostics({
+      identity: function () {
+        return { email: Session.getActiveUser().getEmail(), effectiveEmail: Session.getEffectiveUser().getEmail() };
+      },
+      adminActors: sba_adminActors_(),
+      accessFlag: function () { return s.getProperty('ACCESS_ENABLED'); },
+      scriptProps: { get: function (k) { return s.getProperty(k); } },
+      userProps: { get: function (k) { return u.getProperty(k); } },
+      stateStore: sba_readOnlyStore_(),
+      ledgerInspect: sba_ledgerInspect_
+    });
+  } catch (e) {
+    out = { ok: false, code: 'UNEXPECTED_ERROR' };
+  }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
