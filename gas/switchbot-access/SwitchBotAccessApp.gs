@@ -2,7 +2,7 @@
  * 独立GAS（鍵管理基盤）エントリ — Issue #754 PR-B。
  *
  * 予約GAS・検証GAS（switchbot-verify）とは別プロジェクト。ロジックは SwitchBotAccessInfra / SwitchBotAccessCore に
- * あり、ここは GAS のサービス（PropertiesService / LockService / UrlFetchApp / MailApp / SpreadsheetApp / Session /
+ * あり、ここは GAS のサービス（PropertiesService / LockService / UrlFetchApp / MailApp / Sheets API(UrlFetchApp) / Session /
  * ScriptApp）を注入する薄いシェルのみ。コード・設定をマージしても、デプロイ・トリガー作成・Webhook登録・
  * 機能ON は行われない（それぞれ別の実施判断・別証跡）。
  *
@@ -114,17 +114,40 @@ function sba_api_() {
   };
 }
 
+/**
+ * 台帳シートを開く唯一の入口（Issue #776）。本番照合（sba_ledger_）と読取専用診断（sba_ledgerInspect_）が共有する。
+ * SpreadsheetApp.openById は承認スコープが spreadsheets（書込み可）のみで、宣言している spreadsheets.readonly では
+ * 呼べない。そのため Sheets API v4 の GET（values.get / values:batchGet）を ScriptApp.getOAuthToken() で呼ぶ。
+ * 例外は呼出側で AccessLedgerReader.classifyError により固定コードへ分類する（本文は保持しない）。
+ */
+function sba_openLedgerSheet_(id) {
+  return AccessLedgerReader.openApiSheet({
+    spreadsheetId: id,
+    fetch: function (url, options) { return UrlFetchApp.fetch(url, options); },
+    getToken: function () { return ScriptApp.getOAuthToken(); },
+    tzOffsetMs: function (tz, ms) {
+      try {
+        var m = /^([+-])(\d{2})(\d{2})$/.exec(Utilities.formatDate(new Date(ms), tz, 'Z'));
+        if (!m) return null;
+        return (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) * 60000;
+      } catch (e) {
+        return null;
+      }
+    }
+  });
+}
+
 function sba_ledger_() {
   return {
     read: function (ctx) {
       var id = sba_scriptProps_().getProperty('LEDGER_SPREADSHEET_ID');
       if (!id) return { ok: false, error: 'LEDGER_READ_FAILED' };
       try {
-        var sheet = SpreadsheetApp.openById(id).getSheetByName(AccessLedgerReader.SHEET_NAME);
+        var sheet = sba_openLedgerSheet_(id);
         if (!sheet) return { ok: false, error: 'LEDGER_SCHEMA_INVALID' };
         return AccessLedgerReader.readFromSheet(sheet, ctx.nowMs, ctx.trackedIds);
       } catch (e) {
-        return { ok: false, error: 'LEDGER_READ_FAILED' };
+        return { ok: false, error: AccessLedgerReader.classifyError(e) };
       }
     }
   };
@@ -342,7 +365,7 @@ function sba_ledgerInspect_() {
   var id = sba_scriptProps_().getProperty('LEDGER_SPREADSHEET_ID');
   if (!id) return { code: 'LEDGER_ID_MISSING' };
   try {
-    return AccessLedgerReader.inspectSheet(SpreadsheetApp.openById(id).getSheetByName(AccessLedgerReader.SHEET_NAME));
+    return AccessLedgerReader.inspectSheet(sba_openLedgerSheet_(id));
   } catch (e) {
     return { code: AccessLedgerReader.classifyError(e) };
   }

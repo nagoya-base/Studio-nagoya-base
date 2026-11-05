@@ -684,6 +684,24 @@ test('台帳の読取失敗・列欠落は通知して照合を見送る（API�
   assert.ok(w.mails.some(function (m) { return /LEDGER_SCHEMA_INVALID/.test(m.subject); }));
 });
 
+test('台帳の読取失敗は原因別の固定コードで通知する。未知のコード・自由文は LEDGER_READ_FAILED に潰す（#776）', function () {
+  ['LEDGER_SCOPE_INCOMPATIBLE', 'LEDGER_AUTH_REQUIRED', 'LEDGER_ACCESS_DENIED', 'LEDGER_API_DISABLED', 'LEDGER_NOT_FOUND', 'LEDGER_RATE_LIMITED', 'LEDGER_TOO_LARGE', 'LEDGER_TIMEZONE_UNSUPPORTED'].forEach(function (code) {
+    var w = H.createWorld();
+    var rt = w.runtime();
+    w.ledgerFail = code;
+    var r = rt.syncCycle();
+    assert.strictEqual(r.error, 'LEDGER_READ_FAILED');
+    assert.strictEqual(w.calls.length, 0, 'API呼び出しなし');
+    assert.ok(w.mails.some(function (m) { return m.subject.indexOf(code) !== -1; }), code);
+  });
+  var w2 = H.createWorld();
+  var rt2 = w2.runtime();
+  w2.ledgerFail = 'LEDGER_UNKNOWN_FREE_TEXT SECRET-xyz';
+  rt2.syncCycle();
+  assert.ok(w2.mails.every(function (m) { return m.subject.indexOf('SECRET-xyz') === -1 && m.body.indexOf('SECRET-xyz') === -1; }));
+  assert.ok(w2.mails.some(function (m) { return /LEDGER_READ_FAILED/.test(m.subject); }));
+});
+
 test('実行時間予算: 超過分は次周期へ回し、未解決の予約を先に処理する', function () {
   var w = H.createWorld({ cfg: { infra: { runBudgetSec: 1 } } });
   var rt = w.runtime();

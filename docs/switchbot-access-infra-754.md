@@ -158,13 +158,43 @@
 | `ENV_NOT_PRODUCTION` / `CONFIG_INVALID` / `CONFIG_PARSE_ERROR` / `CONFIG_NOT_OBJECT` | 環境が本番でない、設定JSONが不正、設定の環境名と `ACCESS_ENVIRONMENT` の不一致。`config.errors` の固定コードで原因を絞る |
 | `LEDGER_AUTH_REQUIRED` | GASの権限承認が未完了。手順4の承認画面で許可して再実行 |
 | `LEDGER_ACCESS_DENIED` | 台帳スプレッドシートの閲覧権限がない。台帳の所有者に閲覧権限を依頼 |
+| `LEDGER_SCOPE_INCOMPATIBLE` | 呼んだサービスが宣言済みOAuthスコープで承認されない（#776）。**スコープを自分で広げない**。運営担当へ連絡（§11.2） |
+| `LEDGER_API_DISABLED` | Google Sheets API が、このGASの紐づくGoogle Cloudプロジェクトで有効でない（#776）。§11.2 の手動確認手順へ |
+| `LEDGER_NOT_FOUND` | 台帳IDが存在しない（#776）。Script Propertiesの `LEDGER_SPREADSHEET_ID` を運営担当が確認（値は共有しない） |
+| `LEDGER_RATE_LIMITED` / `LEDGER_TOO_LARGE` / `LEDGER_TIMEZONE_UNSUPPORTED` | クォータ制限（時間をおいて1回だけ再実行）／台帳が20000行を超えた（切り捨てず停止）／台帳のタイムゾーンを解釈できない（日時を誤読しないため停止）（#776） |
 | `LEDGER_ID_MISSING` / `LEDGER_READ_FAILED` | 台帳IDの未設定、またはその他の読取失敗（本文は表示しない） |
 | `LEDGER_SCHEMA_INVALID` | `Bookings` シートが無い、必須列の不足/重複、または末尾最大200行の `startAt`/`endAt` が日時として読めない。台帳の改変を確認（予約者名・メール等の列は読まない。予約ID・日時は検査のためメモリ内で読むが表示しない） |
 | `STORE_ENV_MISMATCH` / `STORE_INCONSISTENT` / `STORE_RECORD_INVALID` | 状態ストアの環境刻印が本番と違う／刻印なしでデータだけある／操作記録が壊れている。触らず運営担当へ |
 | `STORAGE_NEAR_LIMIT` / `STORAGE_VALUE_NEAR_LIMIT` / `STORE_READ_FAILED` | 保存容量が上限に近い／状態の読取失敗 |
 | `UNEXPECTED_ERROR` | 想定外の例外（本文は出さない）。再実行せず連絡 |
 
-**守っていること**: 出力は固定キー・固定コード・`SET`/`MISSING`/`UNKNOWN`・集計値のみ（ホワイトリストで検証し、自由文・ID・URL・メールは`INVALID_VALUE`に置換）。台帳は、ヘッダーと末尾最大200行の `bookingId`・`startAt`・`endAt` の3列だけを検査のためにメモリ内で読み（空行の除外と日時形式の判定）、値は表示・記録せず、行数・検査行数と固定コードだけを返す（氏名・メール・電話等の列は読まない）。**検査は末尾最大200行のサンプル診断であり、全レコードの整合性を保証しない**。状態ストアは接頭辞別の件数（許可リスト外は`OTHER`）と未解決の操作件数だけで、個別キー名・内容・履歴は出さない（`ACCESS_*`/`LEDGER_*`/`BOOTSTRAP_*` は件数に含めない）。`setProperty`/`deleteProperty`、`LockService`、`MailApp`、`UrlFetchApp`、`ScriptApp`（トリガー）、Sheets書込み、SwitchBot API、鍵の発行/削除、ジョブ実行、Deployment変更、機能ONは行わない（テストで0件を確認）。
+**守っていること**: 出力は固定キー・固定コード・`SET`/`MISSING`/`UNKNOWN`・集計値のみ（ホワイトリストで検証し、自由文・ID・URL・メールは`INVALID_VALUE`に置換）。台帳は、ヘッダーと末尾最大200行の `bookingId`・`startAt`・`endAt` の3列だけを検査のためにメモリ内で読み（空行の除外と日時形式の判定）、値は表示・記録せず、行数・検査行数と固定コードだけを返す（氏名・メール・電話等の列は読まない）。**検査は末尾最大200行のサンプル診断であり、全レコードの整合性を保証しない**。状態ストアは接頭辞別の件数（許可リスト外は`OTHER`）と未解決の操作件数だけで、個別キー名・内容・履歴は出さない（`ACCESS_*`/`LEDGER_*`/`BOOTSTRAP_*` は件数に含めない）。`setProperty`/`deleteProperty`、`LockService`、`MailApp`、`ScriptApp`（トリガー）、Sheets書込み、SwitchBot API、鍵の発行/削除、ジョブ実行、Deployment変更、機能ONは行わない（テストで0件を確認）。
+
+### 11.2 台帳読取の方式と権限（Issue #776）
+
+**原因（コードと公式仕様から特定。実機での確定は未了）**: `appsscript.json` は `spreadsheets.readonly` のみ宣言しているが、従来の `SpreadsheetApp.openById` の承認スコープは公式仕様上 `https://www.googleapis.com/auth/spreadsheets`（書込み可）のみで、読取専用スコープでは呼べない。例外は固定コードへ潰していたため、診断は `LEDGER_READ_FAILED` としか出なかった。台帳IDの一致は確認済みなので、スコープ不一致が最有力。ただし**実機で例外を確認したわけではない**。
+
+**対応**: スコープを広げず、台帳の読取を **Sheets API v4 の REST（`values.get` / `values:batchGet`、GETのみ）**へ変更した。`UrlFetchApp`（既存の `script.external_request`）と `ScriptApp.getOAuthToken()`（`spreadsheets.readonly` を含む承認トークン）を使い、`appsscript.json` の `oauthScopes` は**変更していない**（#768 の新スコープ手動承認ゲートの対象外）。診断（`accessReadOnlyDiagnostics`）と本番照合（`syncCycle`）は同じ入口 `sba_openLedgerSheet_` を通るため、「診断だけ成功・本番だけ失敗」は構造上起きない。
+
+| 項目 | 設計 |
+|---|---|
+| 読取範囲 | ヘッダー行（`1:1`）、`bookingId` 列（最終行の決定）、必須14列のみ（個人情報列は取得しない）。列はヘッダー名で解決（列の追加・入替に耐える） |
+| ページング・上限 | 2000行単位のバッチ読取。**20000行**を超える台帳は切り捨てず `LEDGER_TOO_LARGE` で止める |
+| 値の型 | 書式なし値＋日時はシリアル値で要求（ロケール依存の表示文字列に頼らない）。日時列の数値は、スプレッドシートのタイムゾーンの壁時計として `Date` に変換（`Asia/Tokyo`/UTC は固定、他は `Utilities.formatDate` で解決、解釈不能は `LEDGER_TIMEZONE_UNSUPPORTED` で停止）。ISO文字列で保存された日時はそのまま渡し、既存の `AccessKeySnapshot` の契約（`Date`/ISO文字列）を保つ |
+| 失敗の分類 | `LEDGER_SCOPE_INCOMPATIBLE` / `LEDGER_AUTH_REQUIRED` / `LEDGER_ACCESS_DENIED` / `LEDGER_API_DISABLED` / `LEDGER_NOT_FOUND` / `LEDGER_RATE_LIMITED` / `LEDGER_TOO_LARGE` / `LEDGER_TIMEZONE_UNSUPPORTED` / `LEDGER_SCHEMA_INVALID` / `LEDGER_READ_FAILED`。HTTP本文・例外本文・ID・スタックは保持も出力もしない。本番の通知も同じ固定コードを使う |
+| 書込み | GET以外を呼ばない（静的テストで `post/put/patch/delete`・`:append`・`:batchUpdate` 等の不在を検査）。実台帳は更新しない |
+| 回帰防止 | 静的テスト: `spreadsheets` スコープが無い限り `SpreadsheetApp`/`openById` 等を `.gs` から呼べない（呼ぶとCIが落ちる） |
+
+**残る不確実性（運営者の手動確認が必要。コードでは確定できない）**
+1. **Google Sheets API の有効化**: REST 呼出は、GASが紐づくGoogle Cloudプロジェクトで Sheets API が有効であることを求める。標準の既定プロジェクトでは無効の場合があり、その場合は診断が `LEDGER_API_DISABLED` になる。有効化にはプロジェクトの設定（GCP側での API 有効化、または標準GCPプロジェクトへの切替）が必要で、これは**運営者の判断・操作**（本PRのマージでは実施されない）。有効化できない場合は代替案（Advanced Sheets Service など。`appsscript.json` の変更と、必要スコープ・書込みリスクの明記、運営者承認が必要）を別途レビューする。
+2. **`ScriptApp.getOAuthToken()` が `spreadsheets.readonly` を含むこと**: 公式仕様上は宣言スコープが含まれるが、実機で未確認。含まれない場合は `LEDGER_SCOPE_INCOMPATIBLE`/`LEDGER_ACCESS_DENIED` になる。
+3. 診断の結果は、実台帳を使った実機確認までは「テスト上のフェイク」での検証に留まる。
+
+**手動確認手順（Windows・ブラウザ。本PR反映後。反映は #768 のゲートに従い運営者が判断）**
+1. §11.1 の手順で `accessReadOnlyDiagnostics` を1回実行する（`ACCESS_ENABLED` はOFFのまま。トリガー作成・自動デプロイON・機能ONは行わない）。
+2. ログの `ledger.state` を確認する。`LEDGER_ACCESS_OK` なら読取成功（`headers`=`COMPLETE`、`rows` は台帳の件数と概ね一致）。
+3. `LEDGER_API_DISABLED` なら上記不確実性1の対応を運営者が判断する。`LEDGER_SCOPE_INCOMPATIBLE`/`LEDGER_ACCESS_DENIED`/`LEDGER_AUTH_REQUIRED` は結果コードを控えて止める（権限を広げて回避しない）。
+4. 結果が `LEDGER_ACCESS_OK` になるまで、#754 / #756 / #757 のゲートは維持する（診断失敗の保持）。
 
 ### 証跡の分離（本PRの範囲外・別記録）
 | 区分 | 記録する内容 | 本PR |
