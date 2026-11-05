@@ -103,6 +103,7 @@ var SwitchBotAccessInfra = (function () {
     if (!targets || typeof targets.facility !== 'string' || !targets.facility) errors.push('LEDGER_TARGET_MISSING');
     var to = cfg.adminMailTo;
     if (!Array.isArray(to) || !to.length || to.some(function (a) { return typeof a !== 'string' || a.indexOf('@') < 1; })) errors.push('ADMIN_MAIL_MISSING');
+    if (cfg.delivery !== undefined && !deliverySettings(cfg)) errors.push('DELIVERY_CONFIG_INVALID');
     return { ok: errors.length === 0, errors: errors.filter(function (e, i) { return errors.indexOf(e) === i; }) };
   }
 
@@ -111,6 +112,78 @@ var SwitchBotAccessInfra = (function () {
     var cur = store.get('META_ENV');
     if (cur === null || cur === undefined || cur === '') { store.set('META_ENV', environment); return { ok: true, created: true }; }
     return cur === environment ? { ok: true, created: false } : { ok: false, error: 'ENV_MISMATCH' };
+  }
+
+  // ---------- 配送（暗証番号案内メール。Issue #752）----------
+
+  /**
+   * 配送設定 cfg.delivery の検証。メールアドレス・暗証番号・場所の詳細は設定の公開面に置かない
+   * （replyTo は運営が非公開の Script Properties に設定する任意項目）。不正なら null（配送しない）。
+   *   senderName … 差出人表示名 / facilityLabel … 件名・本文に出す施設名 / inquiryNote … 未着・入室できない場合の問合せ案内文
+   *   startHoursBeforeDay … 配送開始（利用日0:00の何時間前か。既定6 = 前日18:00 JST）
+   */
+  function deliverySettings(cfg) {
+    var d = cfg && cfg.delivery;
+    if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
+    function text(v, max) { return typeof v === 'string' && v.trim() !== '' && v.length <= max && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(v); }
+    if (!text(d.senderName, 64) || !text(d.facilityLabel, 64) || !text(d.inquiryNote, 400)) return null;
+    var replyTo = null;
+    if (d.replyTo !== undefined && d.replyTo !== null && d.replyTo !== '') {
+      if (typeof d.replyTo !== 'string' || !EMAIL_RE.test(d.replyTo)) return null;
+      replyTo = d.replyTo;
+    }
+    var hours = d.startHoursBeforeDay === undefined ? 6 : d.startHoursBeforeDay;
+    if (typeof hours !== 'number' || !isFinite(hours) || hours < 0 || hours > 48) return null;
+    return { senderName: d.senderName.trim(), facilityLabel: d.facilityLabel.trim(), inquiryNote: d.inquiryNote.trim(), replyTo: replyTo, startHoursBeforeDay: hours };
+  }
+
+  var EMAIL_RE = /^[^\s@<>",;:\\]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/;
+
+  /** 「送信していない」と確定した失敗（上限付きで再試行してよい）。それ以外の例外は結果不明として扱われる。 */
+  function notSentError(code) { var e = new Error(code); e.notSent = true; e.alertCode = code; return e; }
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function fmtJst(sec) {
+    var d = new Date((sec + 9 * 3600) * 1000);
+    return d.getUTCFullYear() + '年' + (d.getUTCMonth() + 1) + '月' + d.getUTCDate() + '日 ' + d.getUTCHours() + ':' + pad2(d.getUTCMinutes());
+  }
+
+  /**
+   * 暗証番号案内メールの固定文面（予約確認メールとは別送）。差し込むのは暗証番号・施設名・有効時間・予約番号のみ。
+   * 場所・キーボックス番号・バックアップキー・手動コードは載せない。p: { code, startSec, endSec, kind, previousInvalidated, bookingRef, settings }
+   * 暗証番号の形式が不正ならメールを作らない（notSent）。
+   */
+  function renderCodeMail(p) {
+    var st = p.settings;
+    if (!st || !Core.validatePasscode(p.code) || typeof p.startSec !== 'number' || typeof p.endSec !== 'number' || p.startSec >= p.endSec) {
+      throw notSentError('DELIVER_FAILED');
+    }
+    var change = p.kind === 'CHANGE';
+    var ref = typeof p.bookingRef === 'string' && REF_RE.test(p.bookingRef) ? p.bookingRef : null;
+    var subject = '【' + st.facilityLabel + '】' + (change ? '暗証番号のご案内（変更のお知らせ）' : '入室用の暗証番号のご案内');
+    var lines = [];
+    lines.push(st.senderName + ' です。');
+    lines.push(change ? 'ご予約内容の変更に伴い、入室用の暗証番号をあらためてお送りします。' : 'ご予約の入室用の暗証番号をお送りします。');
+    lines.push('（この暗証番号は、予約確認メールとは別にお送りしています）');
+    if (change) {
+      lines.push(p.previousInvalidated === true
+        ? '以前にお送りした暗証番号は使用できません。本メールの暗証番号をご利用ください。'
+        : '以前にお送りした暗証番号ではなく、本メールの暗証番号をご利用ください。');
+    }
+    lines.push('');
+    lines.push('■ 暗証番号: ' + p.code);
+    lines.push('■ ご利用可能な時間: ' + fmtJst(p.startSec) + ' 〜 ' + fmtJst(p.endSec));
+    lines.push('■ 対象: ' + st.facilityLabel + (ref ? '（予約番号 ' + ref + '）' : ''));
+    lines.push('');
+    lines.push('【ご注意】');
+    lines.push('・この暗証番号は、このご予約専用です。他の方に共有・転送しないでください。');
+    lines.push('・上記のご利用可能な時間以外は使用できません。');
+    lines.push('・ご利用後は、このメールを削除してください。');
+    lines.push('・他の方に知られた可能性がある場合は、すぐにご連絡ください（番号を無効にして、新しい番号をご案内します）。');
+    lines.push('');
+    lines.push('【届かない・入室できない場合】');
+    lines.push(st.inquiryNote);
+    return { subject: subject, body: lines.join('\n') };
   }
 
   // ---------- 認証 ----------
@@ -678,7 +751,7 @@ var SwitchBotAccessInfra = (function () {
   function garbageCollect(store, secrets, nowSec, cfg) {
     var ic = infraCfg(cfg);
     var ret = ic.retention;
-    var removed = { BK: 0, EVT: 0, ALERT: 0, SECRET: 0, INBOX: 0, TRK: 0, IALERT: 0, ADMINLOG: 0, BK_OPREF: 0 };
+    var removed = { BK: 0, EVT: 0, ALERT: 0, SECRET: 0, INBOX: 0, TRK: 0, IALERT: 0, ADMINLOG: 0, BK_OPREF: 0, DLV: 0 };
     var ops = scanOps(store);
     var opIds = {}, unresolvedIds = {}, protectedEvt = {}, unresolvedBookings = {};
     ops.forEach(function (r) {
@@ -720,6 +793,11 @@ var SwitchBotAccessInfra = (function () {
         var owner = null;
         Object.keys(opIds).forEach(function (id) { if (k.indexOf(ALERT_PREFIX + id + '_') === 0) owner = id; });
         if (!owner) { store.del(k); removed.ALERT++; } // 参照元OPなし（孤立）
+        return;
+      }
+      // --- 配送記録（参照元OPが無いものは回収。OPが残る間は結果不明の根拠として保持） ---
+      if (k.indexOf('DLV_') === 0) {
+        if (!opIds[k.slice(4)]) { store.del(k); removed.DLV++; }
         return;
       }
       // --- 受信箱（ロック失敗時の退避） ---
@@ -836,7 +914,13 @@ var SwitchBotAccessInfra = (function () {
       EXPIRED_CHECK_FAILED: c('RESIDUAL_KEY', 'medium', RESIDUAL_ACTION),
       CRASH_RECOVERY: c('UNKNOWN_STATE', 'high', UNKNOWN_ACTION),
       OLD_KEY_UNRESOLVED: c('UNKNOWN_STATE', 'high', '旧キーの削除が未確定のため新キーを発行していない。旧キーの解決後に再開する。必要なら代替入室を案内する。'),
-      DELIVER_FAILED: c('DELIVERY', 'medium', '暗証番号の配送に失敗した。再送は自動で行わない。管理者が配送状況を確認し、必要なら代替入室を案内する。'),
+      DELIVER_FAILED: c('DELIVERY', 'medium', '暗証番号メールを送信できなかった（送信していないと確定した失敗のみ、所定回数まで自動で再試行する）。予約・決済は取り消さない。利用者へ「利用可能」とは案内しない。管理者が状況を確認し、必要なら代替入室を案内する。'),
+      DELIVERY_UNKNOWN: c('DELIVERY', 'high', '暗証番号メールの送信結果が不明（送信済みの可能性がある）。自動再送はしない。管理者が送信記録を確認し、accessAdminResolveDelivery で「配送済み確認」か「再送許可」を決める。確認できるまで利用者へ「利用可能」と案内しない。必要なら本人・予約を確認のうえ、代替入室（手動解錠・手動パスコード発行・キーボックス内の物理キー）を個別に案内する。保管場所や番号は定型メールに書かない。'),
+      DELIVERY_RETRY_EXHAUSTED: c('DELIVERY', 'high', '暗証番号メールの自動再試行が上限に達した。管理者が原因（宛先・送信枠など）を確認し、再送許可か代替入室（本人・予約を確認のうえ個別案内）を決める。'),
+      CHANGE_CODE_UNDELIVERED: c('DELIVERY', 'high', '予約変更・延長後の新しい暗証番号が利用者へ届いたと確認できない。延長の承認と新コードの利用可能は別なので、「利用可能」と案内しない。入室中・期限直前の場合は優先して代替入室を案内する（本人・予約を確認のうえ個別に）。'),
+      DELIVERY_RECIPIENT_UNRESOLVED: c('DELIVERY', 'high', '予約の受渡し先を一意に特定できず、メールを送っていない。誤送信を避けるため送らない。管理者が予約を確認し、必要なら個別に案内する。'),
+      DELIVERY_NOT_CONFIGURED: c('DELIVERY', 'medium', '配送の設定（差出人・問合せ案内・送信手段）が不足しているため送信していない。運営の承認済み設定を確認する。'),
+      DELIVERY_GATE_BLOCKED: c('DELIVERY', 'medium', '送信直前の安全確認が通らなかったため、メールを送っていない。'),
       // 基盤（#754）
       CAPACITY_REACHED: c('CAPACITY', 'high', 'Keypadの登録件数が停止閾値に達したため、新規コードの自動発行を止めた。予約・決済は取り消さない。管理者が不要な登録を個別に棚卸しし、代替入室で対応する。'),
       CAPACITY_UNKNOWN: c('CAPACITY', 'high', 'Keypadの登録件数を確認できないため、安全のため新規発行を止めた。'),
@@ -909,7 +993,9 @@ var SwitchBotAccessInfra = (function () {
    *   sha256Hex, randomInt, nowSec, nowMs
    *   identity function() → {email}       管理者操作の実行者（Session由来）
    *   adminActors {email: label}
-   *   deliverCode function(bookingRef, code, window) | null
+   *   deliverCode function(bookingRef, code, window, meta) | null   （テスト用の差替え。未指定なら下の sendUserMail / resolveRecipient で組み立てる）
+   *   sendUserMail function({to, subject, body, name, replyTo})      利用者宛。「送信していない」と確定した失敗のみ error.notSent=true
+   *   resolveRecipient function(bookingRef) → {ok:true, to}|{ok:false} 送信時にだけ台帳から宛先を1件読む（保存・ログしない）
    */
   function createRuntime(deps, cfg) {
     cfg = cfg || {};
@@ -933,6 +1019,24 @@ var SwitchBotAccessInfra = (function () {
       };
     }
 
+    // ---- 配送（#752）: 内蔵の暗証番号案内メール（deps.deliverCode 未指定のとき）----
+    function builtinDeliver(bookingRef, code, win, meta) {
+      var ds = deliverySettings(cfg);
+      if (!ds || typeof deps.sendUserMail !== 'function' || typeof deps.resolveRecipient !== 'function') throw notSentError('DELIVERY_NOT_CONFIGURED');
+      var rcp = null;
+      try { rcp = deps.resolveRecipient(bookingRef); } catch (e) { rcp = null; }
+      if (!rcp || rcp.ok !== true || typeof rcp.to !== 'string' || !EMAIL_RE.test(rcp.to)) throw notSentError('DELIVERY_RECIPIENT_UNRESOLVED'); // 識別できなければ送らない
+      var m = renderCodeMail({ code: code, startSec: win.startSec, endSec: win.endSec, kind: meta && meta.kind, previousInvalidated: meta && meta.previousInvalidated, bookingRef: bookingRef, settings: ds });
+      deps.sendUserMail({ to: rcp.to, subject: m.subject, body: m.body, name: ds.senderName, replyTo: ds.replyTo });
+    }
+    var deliverFn = typeof deps.deliverCode === 'function' ? deps.deliverCode : builtinDeliver;
+    function deliveryReady() {
+      if (typeof deps.deliverCode === 'function') return true;
+      return !!deliverySettings(cfg) && typeof deps.sendUserMail === 'function' && typeof deps.resolveRecipient === 'function';
+    }
+
+    var cycleFresh = null; // 配送サイクル内で1回だけ読んだ最新台帳（送信直前の再確認に使う。サイクル外では都度読む）
+
     var notifier = {
       core: function (event) { var m = renderNotification(Object.assign({ env: cfg.environment }, event)); deps.sendMail(m.subject, m.body); }
     };
@@ -940,7 +1044,7 @@ var SwitchBotAccessInfra = (function () {
     var api = guardedApi();
     var engine = Core.createEngine({
       store: deps.store, secrets: deps.secrets, lock: lockDomain.coreLock, api: api,
-      notifyAdmin: notifier.core, deliverCode: deps.deliverCode || function () { throw new Error('DELIVERY_NOT_CONFIGURED'); },
+      notifyAdmin: notifier.core, deliverCode: deliverFn, deliveryGate: deliveryGate,
       sha256Hex: deps.sha256Hex, randomInt: deps.randomInt, nowSec: deps.nowSec,
       issueGate: issueGate
     }, coreConfig);
@@ -1003,6 +1107,41 @@ var SwitchBotAccessInfra = (function () {
       var st = storageGate(measureStore(deps.store), cfg, cfg.storageLimits);
       if (!st.ok) return { ok: false, code: st.code };
       if (budget.exhausted()) return { ok: false, code: 'API_BUDGET_EXHAUSTED' };
+      return { ok: true };
+    }
+
+
+    // ---- 送信直前の配送ゲート（#752）: 最新の台帳で予約を再確認する。保留(hold)は何も送らず次回再評価、不成立(hold:false)は配送を打ち切る ----
+    function ledgerErrCode(led) {
+      return led && typeof led.error === 'string' && /^LEDGER_[A-Z_]+$/.test(led.error) && Object.prototype.hasOwnProperty.call(CATALOG, led.error) ? led.error : 'LEDGER_READ_FAILED';
+    }
+
+    function deliveryGate(rec) {
+      function hold(code) { return { ok: false, hold: true, code: code }; }
+      function stop(code) { return { ok: false, hold: false, code: code }; }
+      if (cfg.enabled !== true) return hold('FLAG_OFF');
+      var led = cycleFresh;
+      if (!led) { try { led = deps.ledger.read({ nowMs: deps.nowMs(), trackedIds: [rec.bookingId] }); } catch (e) { led = null; } }
+      if (!led || led.ok !== true) return hold('LEDGER_READ_FAILED'); // 読めなければ送らない
+      var hits = (led.records || []).filter(function (r) { return String(r.bookingId) === String(rec.bookingId); });
+      if (hits.length === 0) return hold('BOOKING_NOT_FOUND');
+      if (hits.length > 1) return hold('BOOKING_AMBIGUOUS');
+      var nowMs = deps.nowMs(), nowSec = deps.nowSec();
+      var sn = deps.snapshot.build(hits[0], { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
+      var input = deps.snapshot.toCoreInput(sn, nowMs);
+      if (input.action === 'FREEZE') return hold('BOOKING_FROZEN'); // 支払/承認不明・追加料金未了・要復旧は送らない（解消後に再評価）
+      if (sn.revision !== rec.revision) return stop('STALE_REVISION');
+      if (sn.status === 'CANCELLED') return stop('CANCELLED');
+      if (sn.status !== 'CONFIRMED') return stop('NOT_CONFIRMED');
+      if (nowSec >= rec.endSec) return stop('EXPIRED');
+      var elig = Core.evaluateEligibility(input.booking, coreConfig, nowSec);
+      if (!elig.eligible) return stop(/^[A-Z][A-Z0-9_]{2,47}$/.test(String(elig.reason)) ? elig.reason : 'NOT_ELIGIBLE');
+      if (elig.startSec !== rec.startSec || elig.endSec !== rec.endSec || elig.deviceId !== rec.deviceId) return stop('TARGET_CHANGED');
+      var ds = deliverySettings(cfg);
+      var hours = ds ? ds.startHoursBeforeDay : 6;
+      var dayStart = Core.jstToEpochSec(sn.date, '00:00');
+      if (dayStart === null) return hold('TIME_INVALID');
+      if (nowSec < dayStart - hours * 3600) return hold('NOT_YET'); // 利用前日18:00 JST より前は送らない
       return { ok: true };
     }
 
@@ -1174,18 +1313,34 @@ var SwitchBotAccessInfra = (function () {
 
     function safeRef(id) { return typeof id === 'string' && REF_RE.test(id) ? id : undefined; }
 
-    // ---- 配送（OFF時は停止。#752 の配送が未接続なら何もしない）----
+    // ---- 配送（OFF時は停止。cfg.deliveryConfigured が運営承認までtrueにならない限り何もしない）----
     function deliverCycle() {
       return runLocked('DELIVER', ic.lockWaitMs, function () {
         if (cfg.enabled !== true) return { ok: true, skipped: 'FLAG_OFF' };
-        if (cfg.deliveryConfigured !== true || typeof deps.deliverCode !== 'function') return { ok: true, skipped: 'DELIVERY_NOT_CONFIGURED' };
-        var delivered = 0, failed = 0;
-        scanOps(deps.store).forEach(function (r) {
-          if (r.state !== Core.STATE.ISSUED_CONFIRMED || r.deliveredAtSec) return;
-          var d = engine.deliver(r.id);
-          if (d.delivered) delivered++; else if (d.reason === 'DELIVER_FAILED') failed++;
-        });
-        return { ok: true, delivered: delivered, failed: failed };
+        if (cfg.deliveryConfigured !== true || !deliveryReady()) return { ok: true, skipped: 'DELIVERY_NOT_CONFIGURED' };
+        var startedMs = deps.nowMs();
+        var out = { ok: true, delivered: 0, failed: 0, unknown: 0, held: 0, suppressed: 0 };
+        var due = scanOps(deps.store).filter(function (r) { return r.state === Core.STATE.ISSUED_CONFIRMED && engine.deliveryDue(r.id); });
+        if (!due.length) return out; // 台帳も読まない
+        // 送信直前の再確認のため、サイクル内で最新の台帳を1回読む。読めなければ何も送らない（fail closed）
+        var led = null;
+        try { led = deps.ledger.read({ nowMs: deps.nowMs(), trackedIds: due.map(function (r) { return r.bookingId; }) }); } catch (e) { led = null; }
+        if (!led || led.ok !== true) { infraAlert(ledgerErrCode(led), null, null, null); return { ok: false, error: 'LEDGER_READ_FAILED' }; }
+        cycleFresh = led;
+        try {
+          for (var i = 0; i < due.length; i++) {
+            if (deps.nowMs() - startedMs > ic.runBudgetSec * 1000) { out.held += due.length - i; break; } // 実行時間の上限。残りは次回
+            var d;
+            try { d = engine.deliver(due[i].id); }
+            catch (e2) { infraAlert('SYNC_ERROR', safeRef(due[i].bookingId), due[i].revision, null); out.failed++; continue; } // 保存失敗等: 送信前なら何も送っていない
+            if (d.delivered) out.delivered++;
+            else if (d.reason === 'DELIVERY_UNKNOWN') out.unknown++;
+            else if (d.reason === 'DELIVER_FAILED' || d.reason === 'RETRY_EXHAUSTED') out.failed++;
+            else if (typeof d.reason === 'string' && d.reason.indexOf('SUPPRESSED') === 0) out.suppressed++;
+            else out.held++;
+          }
+        } finally { cycleFresh = null; }
+        return out;
       });
     }
 
@@ -1217,7 +1372,7 @@ var SwitchBotAccessInfra = (function () {
     }
 
     // ---- 管理者操作（フラグOFFでも使用可）----
-    var ADMIN_ACTIONS = ['status', 'inventory', 'inspect', 'reconcile', 'resolveUnknown', 'delete'];
+    var ADMIN_ACTIONS = ['status', 'inventory', 'inspect', 'reconcile', 'resolveUnknown', 'delete', 'resolveDelivery'];
 
     function auditAdmin(actor, action, ref, outcome) {
       var k = 'ADMINLOG_' + deps.nowSec() + '_' + deps.randomInt(1000000);
@@ -1234,9 +1389,10 @@ var SwitchBotAccessInfra = (function () {
       var needsRec = action !== 'status' && action !== 'inventory';
       if (needsRec && (typeof recId !== 'string' || !REC_ID_RE.test(recId))) return { ok: false, error: 'RECORD_ID_INVALID' };
       if (action === 'resolveUnknown' && ['CONFIRM_PRESENT', 'ABANDON_ABSENT'].indexOf(args.decision) === -1) return { ok: false, error: 'DECISION_INVALID' };
+      if (action === 'resolveDelivery' && Core.DELIVERY_DECISIONS.indexOf(args.decision) === -1) return { ok: false, error: 'DECISION_INVALID' };
       var out = runLocked('ADMIN', ic.lockWaitMs, function () {
         // 変更系は監査の事前記録に失敗したら実行しない
-        var mutating = action === 'reconcile' || action === 'resolveUnknown' || action === 'delete';
+        var mutating = action === 'reconcile' || action === 'resolveUnknown' || action === 'delete' || action === 'resolveDelivery';
         if (action !== 'status' && action !== 'inventory') drainInbox(); // 期限内に退避された根拠を、管理者の照合前に反映する
         if (mutating && !auditAdmin(who.actor, action, recId, 'ATTEMPT')) return { ok: false, error: 'AUDIT_UNAVAILABLE' };
         var r;
@@ -1245,6 +1401,7 @@ var SwitchBotAccessInfra = (function () {
         else if (action === 'inspect') r = engine.adminInspect(recId);
         else if (action === 'reconcile') r = engine.adminReconcile(recId, who.actor);
         else if (action === 'resolveUnknown') r = engine.adminResolveUnknown(recId, args.decision, who.actor);
+        else if (action === 'resolveDelivery') r = engine.adminResolveDelivery(recId, args.decision, who.actor);
         else r = engine.adminDelete(recId, who.actor);
         if (mutating) auditAdmin(who.actor, action, recId, r && r.ok ? 'OK' : (r && r.error) || 'FAILED');
         return r;
@@ -1259,9 +1416,11 @@ var SwitchBotAccessInfra = (function () {
       var m = measureStore(deps.store);
       var st = storageGate(m, cfg, cfg.storageLimits);
       var outbox = { pending: 0 };
+      var deliveries = {};
+      deps.store.keys().forEach(function (k) { if (k.indexOf('DLV_') === 0) { var dx = safeParse(deps.store.get(k)); var ds0 = dx && typeof dx.state === 'string' ? dx.state : 'INVALID'; deliveries[ds0] = (deliveries[ds0] || 0) + 1; } });
       deps.store.keys().forEach(function (k) { if (k.indexOf('IALERT_') === 0) { var x = safeParse(deps.store.get(k)); if (x && x.sentAt === null) outbox.pending++; } });
       return {
-        ok: true, environment: cfg.environment, enabled: cfg.enabled === true, byState: byState, unresolved: unresolved,
+        ok: true, environment: cfg.environment, enabled: cfg.enabled === true, byState: byState, unresolved: unresolved, deliveries: deliveries,
         storage: { keys: m.keys, bytes: m.bytes, ratio: st.ratio, gate: st.ok ? 'OK' : st.code, byPrefix: m.byPrefix },
         heartbeats: { SYNC: safeParse(deps.store.get('HB_SYNC')), SWEEP: safeParse(deps.store.get('HB_SWEEP')), DELIVER: safeParse(deps.store.get('HB_DELIVER')) },
         apiCallsToday: budget.used(), notifyOutbox: outbox, notifyFailingSince: Number(deps.store.get('NOTIFYFAIL')) || null,
@@ -1277,7 +1436,7 @@ var SwitchBotAccessInfra = (function () {
 
   // ---------- 本番初期設定の読取専用診断（Issue #774）----------
 
-  var DIAG_PREFIXES = ['OP', 'BK', 'EVT', 'HB', 'IALERT', 'ALERT', 'INBOX', 'TRK', 'ADMINLOG', 'APICOUNT', 'META'];
+  var DIAG_PREFIXES = ['OP', 'BK', 'EVT', 'DLV', 'HB', 'IALERT', 'ALERT', 'INBOX', 'TRK', 'ADMINLOG', 'APICOUNT', 'META'];
   var DIAG_VALUE_RE = /^[A-Z][A-Z0-9_]{1,47}$/;
   var DIAG_NOTES = ['NO_WRITES', 'NO_EXTERNAL_COMMUNICATION', 'CREDENTIAL_VALIDITY_NOT_VERIFIED'];
 
@@ -1431,7 +1590,8 @@ var SwitchBotAccessInfra = (function () {
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,
     garbageCollect: garbageCollect, planJobs: planJobs, createApiBudget: createApiBudget,
-    classify: classify, renderNotification: renderNotification, createRuntime: createRuntime
+    classify: classify, renderNotification: renderNotification, createRuntime: createRuntime,
+    deliverySettings: deliverySettings, renderCodeMail: renderCodeMail, notSentError: notSentError
   };
 })();
 

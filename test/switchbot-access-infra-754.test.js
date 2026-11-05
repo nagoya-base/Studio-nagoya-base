@@ -750,10 +750,15 @@ test('配送: 未接続では何もしない。接続時も1回のみ。OFFに�
   assert.strictEqual(rt.deliverCycle().skipped, 'DELIVERY_NOT_CONFIGURED');
   assert.strictEqual(w.delivered.length, 0);
   var on = w.runtime({ deliveryConfigured: true });
+  var early = on.deliverCycle();
+  assert.strictEqual(early.delivered, 0, '前日18:00 JST前は送らない（#752）');
+  assert.strictEqual(w.delivered.length, 0);
+  w.advance(5 * 3600); // 2030-01-10 18:10 JST
   assert.strictEqual(on.deliverCycle().delivered, 1);
   assert.strictEqual(on.deliverCycle().delivered, 0, '二重配送なし');
   assert.strictEqual(w.delivered.length, 1);
   var w2 = H.createWorld(); var rt2 = w2.runtime(); issueOne(w2, rt2);
+  w2.advance(5 * 3600);
   var off = w2.runtime({ deliveryConfigured: true, enabled: false });
   assert.strictEqual(off.deliverCycle().skipped, 'FLAG_OFF');
   assert.strictEqual(w2.delivered.length, 0);
