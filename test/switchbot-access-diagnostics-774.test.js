@@ -14,6 +14,7 @@ var vm = require('vm');
 var Infra = require('../gas/switchbot-access/SwitchBotAccessInfra.gs');
 var Ledger = require('../gas/switchbot-access/AccessLedgerReader.gs');
 var prepare = require('../scripts/prepare-switchbot-access-gas-project');
+var SheetsFake = require('./helpers/sheets-rest-fake');
 
 var ADMIN = 'owner@example.test';
 var SHEET_ID = 'sheet-id-DUMMY-1234567890';
@@ -57,44 +58,27 @@ function loadShell(o) {
       getKeys: function () { if (o.failKeys) throw new Error('LEAK-ME-IN-ERROR'); return Object.keys(m); }
     };
   }
-  function sheet() {
-    return {
-      getLastColumn: function () { return env.headers.length; },
-      getLastRow: function () { return env.rows.length + 1; },
-      getRange: function (r, c, nr, nc) {
-        return {
-          getValues: function () {
-            var res = [];
-            for (var i = 0; i < nr; i++) {
-              var line = [];
-              for (var j = 0; j < nc; j++) {
-                if (r + i === 1) line.push(env.headers[c - 1 + j]);
-                else { var rec = env.rows[r + i - 2]; line.push(rec ? rec[env.headers[c - 1 + j]] : ''); }
-              }
-              res.push(line);
-            }
-            return res;
-          },
-          setValues: function () { env.sheetWrites++; }, setValue: function () { env.sheetWrites++; }, clear: function () { env.sheetWrites++; }
-        };
-      },
-      appendRow: function () { env.sheetWrites++; }, deleteRow: function () { env.sheetWrites++; }
-    };
-  }
+  // 台帳は SpreadsheetApp ではなく Sheets API(REST) の GET で読む（#776）。SpreadsheetApp は使われたら権限エラーになる
+  env.sheets = SheetsFake.create({ headers: env.headers, rows: env.rows, noSheet: o.noSheet, http: o.http || null, fetchThrow: o.fetchThrow, dateAs: o.dateAs });
+  env.sheetFetches = 0; env.tokens = 0;
   var ctx = vm.createContext({
     console: console, Date: Date, Math: Math, JSON: JSON,
     PropertiesService: { getScriptProperties: function () { return props(env.script); }, getUserProperties: function () { return props(env.user); } },
     Session: { getActiveUser: function () { return { getEmail: function () { return env.email; } }; }, getEffectiveUser: function () { return { getEmail: function () { return env.effective; } }; } },
     Logger: { log: function (m) { env.logs.push(String(m)); } },
-    UrlFetchApp: { fetch: function () { env.fetches++; throw new Error('no fetch'); } },
+    UrlFetchApp: {
+      fetch: function (url, options) {
+        if (/^https:\/\/sheets\.googleapis\.com\/v4\/spreadsheets\//.test(url)) { env.sheetFetches++; return env.sheets.fetch(url, options); }
+        env.fetches++; throw new Error('no fetch'); // SwitchBot等、Sheets API以外への通信は禁止
+      }
+    },
     MailApp: { sendEmail: function () { env.mails++; } },
-    ScriptApp: { newTrigger: function () { env.triggers++; throw new Error('no'); }, getProjectTriggers: function () { env.triggers++; return []; }, deleteTrigger: function () { env.triggers++; } },
+    ScriptApp: { getOAuthToken: function () { env.tokens++; return 'dummy-oauth-token'; }, newTrigger: function () { env.triggers++; throw new Error('no'); }, getProjectTriggers: function () { env.triggers++; return []; }, deleteTrigger: function () { env.triggers++; } },
     LockService: { getScriptLock: function () { env.locks++; return { tryLock: function () { env.locks++; return true; }, releaseLock: function () {} }; } },
     SpreadsheetApp: {
       openById: function () {
         env.opened++;
-        if (o.openError) throw new Error(o.openError);
-        return { getSheetByName: function (n) { if (o.noSheet) return null; return n === 'Bookings' ? sheet() : null; } };
+        throw new Error('You do not have permission to call SpreadsheetApp.openById. Required permissions: https://www.googleapis.com/auth/spreadsheets');
       }
     },
     Utilities: {}, ContentService: {}
@@ -114,7 +98,9 @@ function run(env) {
   var all = env.logs.join('\n') + JSON.stringify(r);
   Object.keys(SECRETS).forEach(function (k) { assert.ok(all.indexOf(SECRETS[k]) === -1, 'leak ' + k); });
   LEAK_WORDS.concat([SHEET_ID, ADMIN, 'ADMIN-1', 'DEVICE00000001FD', 'ops@example.test']).forEach(function (w) { assert.ok(all.indexOf(w) === -1, 'leak ' + w); });
-  assert.deepStrictEqual([env.writes, env.fetches, env.mails, env.triggers, env.locks, env.sheetWrites], [0, 0, 0, 0, 0, 0], '副作用なし');
+  assert.deepStrictEqual([env.writes, env.fetches, env.mails, env.triggers, env.locks, env.sheets.state.writes], [0, 0, 0, 0, 0, 0], '副作用なし（書込み・SwitchBot通信・メール・トリガー・ロック・Sheets書込み）');
+  assert.strictEqual(env.opened, 0, 'SpreadsheetApp は使わない（spreadsheets.readonly では呼べない）');
+  env.sheets.state.calls.forEach(function (c) { assert.strictEqual(c.method, 'get'); assert.ok(c.auth, 'OAuthトークン付き'); assert.ok(/^https:\/\/sheets\.googleapis\.com\/v4\/spreadsheets\/[^/?]+(\/values.*|\?fields=.*)?$/.test(c.url), c.url); });
   assert.strictEqual(JSON.stringify([env.script, env.user]), snapshot, 'プロパティ不変');
   return r;
 }
@@ -170,11 +156,11 @@ test('OFF以外（ON/想定外値/読取不能）は警告して追加診断を�
     var env = loadShell({ script: { ACCESS_ENABLED: c[0] } });
     var r = run(env);
     assert.strictEqual(r.ok, false); assert.strictEqual(r.code, c[1]); assert.strictEqual(r.accessEnabled, c[2]); assert.strictEqual(r.stopped, true);
-    assert.strictEqual(r.settings.ACCESS_CONFIG, 'NOT_CHECKED'); assert.strictEqual(r.ledger.state, 'NOT_CHECKED'); assert.strictEqual(env.opened, 0);
+    assert.strictEqual(r.settings.ACCESS_CONFIG, 'NOT_CHECKED'); assert.strictEqual(r.ledger.state, 'NOT_CHECKED'); assert.strictEqual(env.sheets.state.calls.length, 0);
   });
   var env = loadShell({ failRead: function (k) { return k === 'ACCESS_ENABLED'; } });
   var r = run(env);
-  assert.strictEqual(r.code, 'ACCESS_STATE_UNKNOWN'); assert.strictEqual(env.opened, 0);
+  assert.strictEqual(r.code, 'ACCESS_STATE_UNKNOWN'); assert.strictEqual(env.sheets.state.calls.length, 0);
 });
 
 test('権限: 本人以外・空・active/effective不一致・許可リスト異常は fail closed（機微データを返さない、何も読まない）', function () {
@@ -190,7 +176,7 @@ test('権限: 本人以外・空・active/effective不一致・許可リスト�
     var r = run(env);
     assert.strictEqual(r.ok, false, 'case ' + i); assert.ok(/^(IDENTITY_UNAVAILABLE|NOT_AUTHORIZED|ACCOUNT_MISMATCH)$/.test(r.code), r.code);
     assert.strictEqual(r.stopped, true); assert.strictEqual(r.accessEnabled, 'NOT_CHECKED'); assert.strictEqual(r.settings.ACCESS_CONFIG, 'NOT_CHECKED');
-    assert.strictEqual(r.credentials.SWITCHBOT_TOKEN, 'NOT_CHECKED'); assert.strictEqual(env.opened, 0);
+    assert.strictEqual(r.credentials.SWITCHBOT_TOKEN, 'NOT_CHECKED'); assert.strictEqual(env.sheets.state.calls.length, 0);
   });
 });
 
@@ -217,10 +203,22 @@ test('設定の欠落/不整合: 未設定と読取失敗を区別。本番以�
 });
 
 test('台帳: 参照不可（権限承認必要/文書権限なし/その他）を区別し、エラー本文・機微値は出さない', function () {
+  [[{ code: 401, body: { error: { message: 'LEAK-ME-IN-ERROR' } } }, 'LEDGER_AUTH_REQUIRED'],
+    [{ code: 403, body: { error: { status: 'PERMISSION_DENIED', message: 'LEAK-ME-IN-ERROR' } } }, 'LEDGER_ACCESS_DENIED'],
+    [{ code: 403, body: { error: { status: 'PERMISSION_DENIED', message: 'Request had insufficient authentication scopes. LEAK-ME-IN-ERROR', details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] } } }, 'LEDGER_SCOPE_INCOMPATIBLE'],
+    [{ code: 403, body: { error: { message: 'Google Sheets API has not been used in project 1 before or it is disabled. LEAK-ME-IN-ERROR', details: [{ reason: 'SERVICE_DISABLED' }] } } }, 'LEDGER_API_DISABLED'],
+    [{ code: 404, body: 'LEAK-ME-IN-ERROR' }, 'LEDGER_NOT_FOUND'],
+    [{ code: 429, body: 'LEAK-ME-IN-ERROR' }, 'LEDGER_RATE_LIMITED'],
+    [{ code: 500, body: 'LEAK-ME-IN-ERROR ' + SECRETS.SWITCHBOT_TOKEN }, 'LEDGER_READ_FAILED'],
+    [{ code: 200, body: 'not json LEAK-ME-IN-ERROR' }, 'LEDGER_READ_FAILED']].forEach(function (c) {
+    var r = run(loadShell({ http: c[0] }));
+    assert.strictEqual(r.ok, false); assert.strictEqual(r.ledger.state, c[1]); assert.strictEqual(r.code, c[1]);
+  });
+  // fetch自体の例外（承認未了など）。本文は分類にだけ使い出さない
   [['Authorization is required to perform that action. LEAK-ME-IN-ERROR', 'LEDGER_AUTH_REQUIRED'],
-    ['You do not have permission to access the requested document. LEAK-ME-IN-ERROR', 'LEDGER_ACCESS_DENIED'],
+    ['Specified permissions are not sufficient to call UrlFetchApp.fetch. Required permissions: https://www.googleapis.com/auth/script.external_request LEAK-ME-IN-ERROR', 'LEDGER_SCOPE_INCOMPATIBLE'],
     ['Something odd LEAK-ME-IN-ERROR ' + SECRETS.SWITCHBOT_TOKEN, 'LEDGER_READ_FAILED']].forEach(function (c) {
-    var r = run(loadShell({ openError: c[0] }));
+    var r = run(loadShell({ fetchThrow: c[0] }));
     assert.strictEqual(r.ok, false); assert.strictEqual(r.ledger.state, c[1]); assert.strictEqual(r.code, c[1]);
   });
   var nos = run(loadShell({ noSheet: true }));

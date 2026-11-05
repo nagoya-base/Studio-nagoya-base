@@ -848,6 +848,14 @@ var SwitchBotAccessInfra = (function () {
       JOB_STALE: c('SYSTEM', 'high', '照合ジョブが所定時間実行されていない。トリガーと実行履歴を確認する。'),
       LEDGER_READ_FAILED: c('SYSTEM', 'high', '予約台帳を読めなかったため、照合を見送った。'),
       LEDGER_SCHEMA_INVALID: c('SYSTEM', 'high', '予約台帳の列構成が想定と異なるため、照合を止めた（revision列の移行状況を確認する）。'),
+      LEDGER_SCOPE_INCOMPATIBLE: c('SYSTEM', 'high', '予約台帳の読取りが、宣言済みのOAuthスコープと合わないため照合を見送った。スコープは運営者の承認なしに広げない。'),
+      LEDGER_AUTH_REQUIRED: c('SYSTEM', 'high', '予約台帳の読取りに必要なGAS権限の承認が未完了のため、照合を見送った。'),
+      LEDGER_ACCESS_DENIED: c('SYSTEM', 'high', '予約台帳の閲覧権限がないため、照合を見送った。'),
+      LEDGER_API_DISABLED: c('SYSTEM', 'high', 'Google Sheets APIが有効でないため、照合を見送った（GASが使うGoogle Cloudプロジェクトで有効化の要否を確認する）。'),
+      LEDGER_NOT_FOUND: c('SYSTEM', 'high', '予約台帳が見つからないため、照合を見送った（台帳IDの設定を確認する）。'),
+      LEDGER_RATE_LIMITED: c('SYSTEM', 'medium', '予約台帳の読取りがクォータ制限に達したため、照合を見送った。次回の実行で再試行する。'),
+      LEDGER_TOO_LARGE: c('SYSTEM', 'high', '予約台帳の行数が読取上限を超えたため、照合を止めた（切り捨てて照合しない）。'),
+      LEDGER_TIMEZONE_UNSUPPORTED: c('SYSTEM', 'high', '予約台帳のタイムゾーンを解釈できないため、日時を誤読しないよう照合を止めた。'),
       WEBHOOK_INBOX_FULL: c('SYSTEM', 'medium', 'Webhookの退避枠が満杯になり、受信を取りこぼした可能性がある。該当操作は期限後にUNKNOWNとなる。'),
       API_BUDGET_EXHAUSTED: c('SYSTEM', 'high', '1日のAPI呼び出し予算に達したため、処理を見送った。'),
       ENV_MISMATCH: c('SYSTEM', 'high', '状態ストアの環境名が設定と一致しない。検証/本番の取り違えの可能性があるため停止した。'),
@@ -1103,7 +1111,8 @@ var SwitchBotAccessInfra = (function () {
         var nowMs = deps.nowMs();
         var led = deps.ledger.read({ nowMs: nowMs, trackedIds: Object.keys(openByBooking) });
         if (!led || led.ok !== true) {
-          infraAlert(led && led.error === 'LEDGER_SCHEMA_INVALID' ? 'LEDGER_SCHEMA_INVALID' : 'LEDGER_READ_FAILED', null, null, null);
+          var ledCode = led && typeof led.error === 'string' && /^LEDGER_[A-Z_]+$/.test(led.error) && Object.prototype.hasOwnProperty.call(CATALOG, led.error) ? led.error : 'LEDGER_READ_FAILED';
+          infraAlert(ledCode, null, null, null);
           return { ok: false, error: 'LEDGER_READ_FAILED' };
         }
         var records = led.records.slice().sort(function (a, b) {

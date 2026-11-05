@@ -13,6 +13,7 @@ var vm = require('vm');
 var crypto = require('node:crypto');
 var prepare = require('../scripts/prepare-switchbot-access-gas-project');
 var H = require('./helpers/switchbot-access-world');
+var SheetsFake = require('./helpers/sheets-rest-fake');
 
 var ROOT = path.resolve(__dirname, '..');
 var PW_RE = /\b[0-9]{8}\b/;
@@ -39,17 +40,10 @@ function loadShell(opts) {
     return { getProperty: function (k) { return m[k] === undefined ? null : m[k]; }, setProperty: function (k, v) { m[k] = String(v); },
       deleteProperty: function (k) { delete m[k]; }, getKeys: function () { return Object.keys(m); } };
   }
-  var sheet = {
-    getLastColumn: function () { return headers.length; },
-    getLastRow: function () { return env.rows.length + 1; },
-    getRange: function (r, c, nr, nc) {
-      return { getValues: function () {
-        if (r === 1) return [headers];
-        env.readCols.push(headers[c - 1]);
-        return env.rows.map(function (row) { return [row[headers[c - 1]] === undefined ? '' : row[headers[c - 1]]]; });
-      } };
-    }
-  };
+  // 台帳は Sheets API(REST) の GET で読む（#776）。テスト中に env.rows を差し替えても反映されるよう、行は getter で参照する
+  var sheetState = { headers: headers };
+  Object.defineProperty(sheetState, 'rows', { get: function () { return env.rows; } });
+  env.sheets = SheetsFake.create(sheetState);
   var ctx = vm.createContext({
     console: console, Date: Date, Math: Math, JSON: JSON,
     PropertiesService: { getScriptProperties: function () { return props(env.script); }, getUserProperties: function () { return props(env.user); } },
@@ -63,9 +57,11 @@ function loadShell(opts) {
     },
     ContentService: { MimeType: { JSON: 'JSON' }, createTextOutput: function (t) { return { text: t, setMimeType: function () { return this; } }; } },
     MailApp: { sendEmail: function (to, subject, body) { env.mails.push({ to: to, subject: subject, body: body }); } },
-    SpreadsheetApp: { openById: function () { return { getSheetByName: function (n) { return n === 'Bookings' ? sheet : null; } }; } },
+    // spreadsheets.readonly では SpreadsheetApp.openById は呼べない。使われたら権限エラーにして、使用を検知する
+    SpreadsheetApp: { openById: function () { env.spreadsheetAppCalls = (env.spreadsheetAppCalls || 0) + 1; throw new Error('You do not have permission to call SpreadsheetApp.openById. Required permissions: https://www.googleapis.com/auth/spreadsheets'); } },
     Session: { getActiveUser: function () { return { getEmail: function () { return env.email; } }; } },
     ScriptApp: {
+      getOAuthToken: function () { return 'dummy-oauth-token'; },
       getProjectTriggers: function () { return env.triggers.slice(); },
       deleteTrigger: function (t) { env.triggers = env.triggers.filter(function (x) { return x !== t; }); env.deleted.push(t.fn); },
       newTrigger: function (fn) { var t = { fn: fn, getHandlerFunction: function () { return fn; } }; return { timeBased: function () { return { everyMinutes: function (m) { t.every = m + 'm'; return this; }, everyHours: function (h) { t.every = h + 'h'; return this; }, create: function () { env.triggers.push(t); return t; } }; } }; }
@@ -73,6 +69,7 @@ function loadShell(opts) {
     Logger: { log: function (m) { env.logs.push(String(m)); } },
     UrlFetchApp: {
       fetch: function (url, options) {
+        if (/^https:\/\/sheets\.googleapis\.com\//.test(url)) return env.sheets.fetch(url, options);
         env.fetches.push({ url: url, options: options });
         function res(code, body) { return { getResponseCode: function () { return code; }, getContentText: function () { return JSON.stringify(body); } }; }
         if (options.method === 'get') {
@@ -149,7 +146,8 @@ test('ソース静的検査: 外部通信先はSwitchBot APIのみ、資格情�
   ['SwitchBotAccessApp.gs', 'SwitchBotAccessInfra.gs', 'AccessLedgerReader.gs'].forEach(function (f) {
     var src = fs.readFileSync(path.join(ROOT, 'gas/switchbot-access', f), 'utf8');
     var urls = (src.match(/https?:\/\/[^\s'")]+/g) || []).filter(function (u) { return !/googleapis\.com\/auth|example/.test(u); });
-    urls.forEach(function (u) { assert.ok(/^https:\/\/api\.switch-bot\.com$/.test(u), f + ': ' + u); });
+    // 外部通信先は SwitchBot API と、台帳の読取専用 Sheets API(v4) のみ
+    urls.forEach(function (u) { assert.ok(/^https:\/\/api\.switch-bot\.com$/.test(u) || /^https:\/\/sheets\.googleapis\.com\/v4\/spreadsheets\/$/.test(u), f + ': ' + u); });
     assert.ok(!/[A-Fa-f0-9]{32,}/.test(src), f + ' に長い16進列（秘密の疑い）');
   });
 });
@@ -163,10 +161,12 @@ test('台帳リーダー: 読む列は鍵連携に必要な最小限で、すべ
   R.REQUIRED_COLUMNS.forEach(function (c) { assert.ok(headers.indexOf(c) !== -1, c + ' が BookingsSchema に無い'); });
   ['name', 'email', 'phone', 'purpose', 'people'].forEach(function (c) { assert.ok(R.REQUIRED_COLUMNS.indexOf(c) === -1, c + ' は読まない'); });
   env.rows = [ledgerRow()];
-  var r = R.readFromSheet(env.ctx.SpreadsheetApp.openById('x').getSheetByName('Bookings'), Date.parse('2030-01-10T13:00:00+09:00'), []);
+  var r = R.readFromSheet(env.ctx.sba_openLedgerSheet_('x'), Date.parse('2030-01-10T13:00:00+09:00'), []);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.records.length, 1);
-  assert.ok(env.readCols.every(function (c) { return R.REQUIRED_COLUMNS.indexOf(c) !== -1; }), '読んだ列: ' + env.readCols.join(','));
+  var readCols = env.sheets.state.readCols; assert.ok(readCols.length > 0);
+  assert.ok(readCols.every(function (c) { return R.REQUIRED_COLUMNS.indexOf(c) !== -1; }), '読んだ列: ' + readCols.join(','));
+  assert.ok(!env.spreadsheetAppCalls, 'SpreadsheetApp は使わない');
   assert.ok(!JSON.stringify(r).match(/PII-|pii@|090-/));
 });
 
@@ -258,7 +258,7 @@ test('結線: トリガー関数が台帳(最小列)を読み、署名付きAPI�
   assert.ok(scriptDump.indexOf(pw) === -1 && scriptDump.indexOf('tok-test') === -1 && scriptDump.indexOf('sec-test') === -1 && scriptDump.indexOf(TOKEN) === -1);
   assert.ok(Object.keys(env.script).some(function (k) { return k.indexOf('OP_') === 0; }), '状態はScript Properties');
   // 台帳は必要列のみ読む
-  assert.ok(env.readCols.length > 0 && env.readCols.indexOf('name') === -1 && env.readCols.indexOf('email') === -1);
+  var rc = env.sheets.state.readCols || []; assert.ok(rc.length > 0 && rc.indexOf('name') === -1 && rc.indexOf('email') === -1);
   assert.ok(env.logs.join('').indexOf(pw) === -1);
   // Webhook（認証済み・進行中のcommandId）→ 次の照合で確認
   var opKey = Object.keys(env.script).filter(function (k) { return k.indexOf('OP_') === 0; })[0];
