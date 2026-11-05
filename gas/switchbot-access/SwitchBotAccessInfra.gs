@@ -1507,20 +1507,26 @@ var SwitchBotAccessInfra = (function () {
     if (devs.length !== 1) return { valid: false, code: devs.length === 0 ? 'DEVICE_NOT_FOUND' : 'DEVICE_AMBIGUOUS' };
     var list = devs[0].keyList;
     if (!Array.isArray(list)) return { valid: false, code: 'KEYLIST_INVALID' };
-    var seen = {}, ids = [];
+    var seen = {}, ids = [], canon = {};
     for (var i = 0; i < list.length; i++) {
       var k = list[i];
       if (!k || typeof k !== 'object' || k.id === undefined || k.id === null || String(k.id) === '' || typeof k.name !== 'string' || k.name === '') return { valid: false, code: 'KEYLIST_ENTRY_INVALID' };
       var id = String(k.id);
       if (seen[id]) return { valid: false, code: 'KEYLIST_DUPLICATE_ID' };
       seen[id] = true; ids.push(id);
+      // 指紋は ID だけでなく名前・種別・有効期間も含む正規化表現（既存キーの属性変更も検知する）
+      canon[id] = JSON.stringify([id, k.name, k.type === undefined ? null : String(k.type),
+        k.startTime === undefined ? null : String(k.startTime), k.endTime === undefined ? null : String(k.endTime)]);
     }
-    return { valid: true, list: list, count: list.length, ids: ids, fp: sha(ids.slice().sort().join('\n')) };
+    return { valid: true, list: list, count: list.length, ids: ids, canon: canon, fp: tksFp(ids, canon, sha) };
+  }
+
+  function tksFp(ids, canon, sha) {
+    return sha(ids.map(function (x) { return canon[x]; }).sort().join('\n'));
   }
 
   function tksExcluding(snap, id, sha) {
-    var ids = snap.ids.filter(function (x) { return x !== id; });
-    return sha(ids.slice().sort().join('\n'));
+    return tksFp(snap.ids.filter(function (x) { return x !== id; }), snap.canon, sha);
   }
 
   /**
@@ -1568,6 +1574,9 @@ var SwitchBotAccessInfra = (function () {
       try { cred = !!(deps.userProps.get('SWITCHBOT_TOKEN') && deps.userProps.get('SWITCHBOT_SECRET')); } catch (e) { cred = false; }
       if (!cred) return stop('AUTH_CREDENTIALS_MISSING');
       if (st.calls >= TKS_MAX_CALLS) return stop('CALL_BUDGET_EXHAUSTED');
+      // 試験の対象端末は LIST 時に固定（完全IDのハッシュのみ保存）。以降の段階で設定の端末が変わっていれば停止
+      var devFp = deps.sha256Hex('TKS_DEVICE|' + g.deviceId);
+      if (stage !== 'LIST' && st.deviceFp !== devFp) return stop('TARGET_DEVICE_CHANGED');
 
       var sha = deps.sha256Hex;
       var keyId = null;
@@ -1590,7 +1599,7 @@ var SwitchBotAccessInfra = (function () {
 
       // 通信前に: 承認の消費 + 呼出し回数 + 送信済みマーカーを永続（永続に失敗したら通信しない）
       var pre = JSON.parse(JSON.stringify(st));
-      pre.state = def.pre; pre.calls = st.calls + 1;
+      pre.state = def.pre; pre.calls = st.calls + 1; pre.deviceFp = devFp;
       if (stage === 'ISSUE') pre.name = name;
       try { sp.del(TKS_PROP.APPROVAL); } catch (e) { return stop('APPROVAL_CONSUME_FAILED'); }
       if (!tksWrite(sp, pre)) return stop('STATE_WRITE_FAILED');

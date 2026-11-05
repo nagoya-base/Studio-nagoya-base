@@ -147,6 +147,30 @@ test('二重押下: 同じ段階の再実行・順序飛ばし・事前の承認
   assert.strictEqual(w.keys.length, 3);
 });
 
+test('既存キーの属性（名前・種別・有効期間）がIDそのままで変わっても EXISTING_KEYS_CHANGED（#792レビュー）', function () {
+  [['name', 'renamed'], ['type', 'permanent'], ['startTime', '123']].forEach(function (c) {
+    var w = makeWorld({ mutateList: function (b, n) { if (n === 3) b.devices[0].keyList[0][c[0]] = c[1]; } });
+    step(w, 'LIST'); step(w, 'ISSUE');
+    var r = step(w, 'VERIFY_ISSUED'); assert.strictEqual(r.code, 'EXISTING_KEYS_CHANGED', c[0]);
+    assert.ok(!w.calls.some(function (x) { return x.indexOf('delete') === 0; }));
+  });
+  var w2 = makeWorld({ mutateList: function (b, n) { if (n === 5) b.devices[0].keyList[1].name = 'renamed'; } });
+  ['LIST', 'ISSUE', 'VERIFY_ISSUED', 'DELETE'].forEach(function (x) { step(w2, x); });
+  assert.strictEqual(step(w2, 'VERIFY_DELETED').code, 'EXISTING_KEYS_CHANGED');
+});
+
+test('対象端末の固定: 設定の端末が途中で別の37DD端末に変わったら、以降の段階は通信しない（#792レビュー）', function () {
+  var w = makeWorld(); ['LIST', 'ISSUE', 'VERIFY_ISSUED'].forEach(function (x) { step(w, x); });
+  w.script.ACCESS_CONFIG = cfgJson({ keypads: [{ deviceId: 'DIFFERENT000037DD' }] });
+  var before = w.calls.length;
+  var r = step(w, 'DELETE'); assert.strictEqual(r.code, 'TARGET_DEVICE_CHANGED');
+  assert.strictEqual(w.calls.length, before, '削除を送らない');
+  assert.strictEqual(w.script.ACCESS_TEST_KEY_APPROVAL, 'DELETE', '承認も消費しない');
+  ['ISSUE', 'VERIFY_ISSUED', 'VERIFY_DELETED'].forEach(function (x) { assert.strictEqual(step(w, x).ok, false); });
+  w = makeWorld(); step(w, 'LIST'); var st = state(w); delete st.deviceFp; w.script.ACCESS_TEST_KEY_STATE = JSON.stringify(st);
+  assert.strictEqual(step(w, 'ISSUE').code, 'TARGET_DEVICE_CHANGED');
+});
+
 test('ロック競合（同時実行）: LOCK_UNAVAILABLE で通信しない', function () {
   var w = makeWorld({ lockBusy: true });
   var r = step(w, 'LIST'); assert.strictEqual(r.code, 'LOCK_UNAVAILABLE'); assert.strictEqual(w.calls.length, 0);
