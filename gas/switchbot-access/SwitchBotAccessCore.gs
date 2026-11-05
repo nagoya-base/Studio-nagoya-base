@@ -50,6 +50,19 @@ var SwitchBotAccessCore = (function () {
   };
 
   var OP = { ISSUE: 'ISSUE', REVOKE: 'REVOKE' };
+
+  /**
+   * 配送（暗証番号案内メール）の状態（Issue #752）。発行 record（OP_）とは別の DLV_<OP id> に永続化する。
+   *   SENDING   … 外部送信の直前に永続化。この状態で再開したら送信済みか不明 → UNKNOWN（再送しない）
+   *   DELIVERED … 外部送信の成功を記録済み
+   *   NOT_SENT  … 「送信していない」と確定した失敗（宛先未解決・送信前の検証失敗等）。上限付きで再試行できる
+   *   UNKNOWN   … 送信有無が断定できない。無条件の自動再送は禁止。管理者が確認し配送済み確認／再送許可を決める
+   *   SUPPRESSED… 取消・旧改訂・期限切れ・対象変更・管理者の手動対応で、この配送はもう行わない
+   * 配送IDは「発行操作(OP id)＋配送連番」。予約ID単独でも初回配送済みでも固定せず、改訂・再発行ごとに別になる。
+   */
+  var DLV = { SENDING: 'SENDING', DELIVERED: 'DELIVERED', NOT_SENT: 'NOT_SENT', UNKNOWN: 'UNKNOWN', SUPPRESSED: 'SUPPRESSED' };
+  var DELIVERY_DECISIONS = ['CONFIRM_DELIVERED', 'ALLOW_RESEND', 'REGUIDE', 'GIVE_UP'];
+  var ALERT_CODE_RE = /^[A-Z][A-Z0-9_]{2,47}$/;
   var JST_OFFSET_SEC = 9 * 3600;
 
   // ---------- 純関数 ----------
@@ -210,7 +223,10 @@ var SwitchBotAccessCore = (function () {
    *   api         { listDevices(), createKey({deviceId,name,password,startTime,endTime}), deleteKey(deviceId,id) }
    *                 create/delete は { httpCode, parsed } を返す。通信断は throw。
    *   notifyAdmin function(event)                        { code, ref, state } のみ（個人情報・秘密なし）。失敗時は throw 可
-   *   deliverCode function(bookingRef, code, window)     正規受渡し先へ。確認済み後にのみ呼ぶ。失敗時 throw
+   *   deliverCode function(bookingRef, code, window, meta) 正規受渡し先へ。確認済み後・deliveryGate 通過後にのみ呼ぶ。
+   *                                                       失敗時 throw。「送信していない」と確定した失敗のみ error.notSent=true（それ以外は結果不明扱い）
+   *   deliveryGate function(rec) → {ok} | {ok:false, hold:boolean, code}  送信直前に最新の予約を再確認する。未注入は配送しない
+   *                                                       hold:true=保留（次回再評価）／hold:false=確定的な不成立（配送を打ち切る）
    *   sha256Hex   function(str) → hex
    *   randomInt   function(n) → 0..n-1
    *   nowSec      function() → UNIX 秒
@@ -220,12 +236,16 @@ var SwitchBotAccessCore = (function () {
     var maxReads = typeof config.maxReads === 'number' ? config.maxReads : 3;
     var webhookWaitSec = typeof config.webhookWaitSec === 'number' ? config.webhookWaitSec : 90;
     var readWaitSec = typeof config.readWaitSec === 'number' ? config.readWaitSec : 600; // commandId なし削除の読取確認の最大経過時間
+    var maxDeliveryAttempts = typeof config.maxDeliveryAttempts === 'number' ? config.maxDeliveryAttempts : 3; // 「送信していない」と確定した失敗の再試行上限
+    var deliveryRetrySec = typeof config.deliveryRetrySec === 'number' ? config.deliveryRetrySec : 600;
+    var maxReguides = typeof config.maxReguides === 'number' ? config.maxReguides : 2; // 配送済みの再案内（管理者判断）の上限
 
     // ---- 永続層ヘルパ ----
     function load(k) { var r = deps.store.get(k); return r ? JSON.parse(r) : null; }
     function save(k, v) { deps.store.set(k, JSON.stringify(v)); }
     function recKey(id) { return 'OP_' + id; }
     function bkKey(bookingId) { return 'BK_' + bookingId; }
+    function dlvKey(recId) { return 'DLV_' + recId; }
     /** Webhook は 端末×操作×commandId で別々に保存（別端末/別操作の同 commandId と衝突させない）。 */
     function evtKey(mac, eventName, commandId) { return 'EVT_' + mac + '_' + eventName + '_' + commandId; }
     function eventFor(rec, eventName, commandId) { return load(evtKey(normDev(rec.deviceId), eventName, commandId)); }
@@ -623,7 +643,57 @@ var SwitchBotAccessCore = (function () {
       return out;
     }
 
-    // ---- 受渡し ----
+    // ---- 受渡し（暗証番号案内メール。Issue #752）----
+    function deliveryIdOf(rec, seq) { return 'DLV-' + deps.sha256Hex([rec.id, 'D', seq].join('|')).slice(0, 16); }
+
+    /** 配送の永続記録を作る（秘密・宛先・本文は持たない）。 */
+    function newDelivery(rec, seq, kind) {
+      return { id: dlvKey(rec.id), opId: rec.id, bookingId: rec.bookingId, revision: rec.revision, seq: seq, deliveryId: deliveryIdOf(rec, seq),
+        kind: kind, state: DLV.NOT_SENT, attempts: 0, nextTryAt: 0, reguides: 0, history: [], createdAt: deps.nowSec(), updatedAt: deps.nowSec() };
+    }
+
+    function dlvTransition(d, to, basis) {
+      d.history = d.history || [];
+      d.history.push({ at: deps.nowSec(), from: d.state, to: to, basis: basis || null });
+      d.state = to;
+      d.updatedAt = deps.nowSec();
+      save(d.id, d);
+    }
+
+    /** 最新予約・Keypad・期間が、この ISSUED_CONFIRMED record と一致しているか（取消・改訂・期間/対象変更は不一致）。 */
+    function isCurrent(rec) {
+      var head = bookingIndex(rec.bookingId).head;
+      return !!head && !head.cancelled && head.desired === true && head.revision === rec.revision &&
+        head.startSec === rec.startSec && head.endSec === rec.endSec && head.deviceId === rec.deviceId;
+    }
+
+    /** 利用者が過去に受け取った（かもしれない）コードがあるか／それらが失効確認済みか。初回案内と変更案内の文面分岐に使う。 */
+    function deliveryKind(rec) {
+      var others = loadAll(bookingIndex(rec.bookingId)).filter(function (r) { return r.op === OP.ISSUE && r.id !== rec.id; });
+      var priorMailed = others.some(function (r) {
+        var d = load(dlvKey(r.id));
+        return !!d && (d.state === DLV.DELIVERED || d.state === DLV.UNKNOWN || d.state === DLV.SENDING);
+      });
+      var invalidated = others.every(function (r) { return TERMINAL.indexOf(r.state) !== -1; });
+      return { kind: priorMailed ? 'CHANGE' : 'INITIAL', previousInvalidated: priorMailed ? invalidated : null };
+    }
+
+    function clearDeliveryAlerts(rec) {
+      ['DELIVER_FAILED', 'DELIVERY_UNKNOWN', 'DELIVERY_RETRY_EXHAUSTED', 'CHANGE_CODE_UNDELIVERED', 'DELIVERY_RECIPIENT_UNRESOLVED', 'DELIVERY_NOT_CONFIGURED']
+        .forEach(function (c) { deps.store.del('ALERT_' + rec.id + '_' + c); });
+    }
+
+    /** この record に今、配送の処理が必要か（読取のみ。台帳等の外部読取は呼ばない）。 */
+    function deliveryDue(recId) {
+      var rec = load(recKey(recId));
+      if (!rec || rec.state !== STATE.ISSUED_CONFIRMED) return false;
+      var d = load(dlvKey(recId));
+      if (!d) return !rec.deliveredAtSec; // 旧形式（配送記録なし）で配送済み印があるものは対象外
+      if (d.state === DLV.SENDING) return true; // 中断の後始末（UNKNOWN 化）
+      if (d.state === DLV.NOT_SENT) return d.attempts < maxDeliveryAttempts && deps.nowSec() >= d.nextTryAt;
+      return d.state === DLV.UNKNOWN; // 通知の再試行のみ
+    }
+
     /** ISSUED_CONFIRMED の record にのみ、正規受渡し先へコードを渡す。 */
     function deliver(recId) {
       var head = load(recKey(recId));
@@ -634,29 +704,132 @@ var SwitchBotAccessCore = (function () {
       return result;
     }
 
+    function markDeliveryUnknown(rec, d, reason) {
+      d.reason = reason;
+      try { dlvTransition(d, DLV.UNKNOWN, reason); } catch (e) { /* 保存不能でも下の通知と再送禁止（SENDING のまま）で安全側 */ }
+      alert(rec, 'DELIVERY_UNKNOWN');
+      if (d.kind === 'CHANGE') alert(rec, 'CHANGE_CODE_UNDELIVERED');
+      return { delivered: false, reason: 'DELIVERY_UNKNOWN' };
+    }
+
     function deliverLocked(recId) {
       var rec = load(recKey(recId));
       if (!rec || rec.state !== STATE.ISSUED_CONFIRMED) return { delivered: false, reason: 'NOT_CONFIRMED' };
       // 取消済み/改訂で置換された予約には、管理者が存在確認した場合でも受け渡さない
-      var head = bookingIndex(rec.bookingId).head;
-      if (!head || head.cancelled || !head.desired || head.revision !== rec.revision ||
-          head.startSec !== rec.startSec || head.endSec !== rec.endSec || head.deviceId !== rec.deviceId) {
-        return { delivered: false, reason: 'NOT_CURRENT' };
+      if (!isCurrent(rec)) return { delivered: false, reason: 'NOT_CURRENT' };
+      var d = load(dlvKey(rec.id));
+      if (!d && rec.deliveredAtSec) return { delivered: false, reason: 'ALREADY_DELIVERED' }; // 旧形式
+      if (d) {
+        if (d.state === DLV.DELIVERED) return { delivered: false, reason: 'ALREADY_DELIVERED' };
+        if (d.state === DLV.SUPPRESSED) return { delivered: false, reason: 'SUPPRESSED' };
+        // 送信直前の SENDING が残っている = 外部送信の成否が記録できていない。再送せず UNKNOWN（管理者判断）
+        if (d.state === DLV.SENDING) return markDeliveryUnknown(rec, d, 'RESUMED_FROM_SENDING');
+        if (d.state === DLV.UNKNOWN) { alert(rec, 'DELIVERY_UNKNOWN'); return { delivered: false, reason: 'DELIVERY_UNKNOWN' }; }
+        if (d.attempts >= maxDeliveryAttempts) { alert(rec, 'DELIVERY_RETRY_EXHAUSTED'); return { delivered: false, reason: 'RETRY_EXHAUSTED' }; }
+        if (deps.nowSec() < d.nextTryAt) return { delivered: false, reason: 'BACKOFF' };
       }
-      if (rec.deliveredAtSec) return { delivered: false, reason: 'ALREADY_DELIVERED' };
+      // 送信直前の安全ゲート（最新の台帳を読み直す。未注入・例外は fail closed）
+      if (typeof deps.deliveryGate !== 'function') return { delivered: false, reason: 'GATE_MISSING' };
+      var gate;
+      try { gate = deps.deliveryGate(rec); } catch (e) { gate = { ok: false, hold: true, code: 'DELIVERY_GATE_ERROR' }; }
+      if (!gate || gate.ok !== true) {
+        var gcode = (gate && typeof gate.code === 'string' && ALERT_CODE_RE.test(gate.code)) ? gate.code : 'DELIVERY_GATE_BLOCKED';
+        if (!gate || gate.hold !== false) return { delivered: false, reason: gcode }; // 保留（時刻前・読取失敗・OFF など）: 何も送らず次回再評価
+        // 取消・旧改訂・期限切れ・対象変更など確定的な不成立: この配送を打ち切る（以後も旧コードを送らない）
+        var sd = d || newDelivery(rec, 1, deliveryKind(rec).kind);
+        sd.reason = gcode;
+        try { dlvTransition(sd, DLV.SUPPRESSED, gcode); } catch (e2) { /* 保存不能でも送っていない */ }
+        return { delivered: false, reason: 'SUPPRESSED:' + gcode };
+      }
       var code = deps.secrets.get('SECRET_' + rec.id);
-      if (!code) return { delivered: false, reason: 'SECRET_MISSING' };
+      if (!code || !validatePasscode(code)) return { delivered: false, reason: 'SECRET_MISSING' };
+      var ctx = deliveryKind(rec);
+      d = d || newDelivery(rec, 1, ctx.kind);
+      d.kind = ctx.kind;
+      d.attempts = (d.attempts || 0) + 1;
+      // 外部送信の前に SENDING を永続化する。保存に失敗したら送信しない。
+      try { dlvTransition(d, DLV.SENDING, null); } catch (e3) { return { delivered: false, reason: 'PERSIST_FAILED' }; }
+      var sendErr = null;
       try {
-        deps.deliverCode(rec.bookingId, code, { startSec: rec.startSec, endSec: rec.endSec });
-      } catch (e) {
-        alert(rec, 'DELIVER_FAILED');
-        return { delivered: false, reason: 'DELIVER_FAILED' };
+        deps.deliverCode(rec.bookingId, code, { startSec: rec.startSec, endSec: rec.endSec },
+          { deliveryId: d.deliveryId, seq: d.seq, kind: ctx.kind, previousInvalidated: ctx.previousInvalidated });
+      } catch (e4) { sendErr = e4 || new Error('DELIVER_ERROR'); }
+      if (sendErr) {
+        if (sendErr.notSent === true) {
+          // 送信していないと確定した失敗のみ。上限付きで再試行（同じ配送ID・SENDING→NOT_SENT）
+          d.nextTryAt = deps.nowSec() + deliveryRetrySec;
+          d.reason = typeof sendErr.alertCode === 'string' && ALERT_CODE_RE.test(sendErr.alertCode) ? sendErr.alertCode : 'DELIVER_FAILED';
+          try { dlvTransition(d, DLV.NOT_SENT, d.reason); } catch (e5) { return markDeliveryUnknown(rec, d, 'PERSIST_FAILED_AFTER_ERROR'); }
+          alert(rec, d.reason);
+          if (ctx.kind === 'CHANGE') alert(rec, 'CHANGE_CODE_UNDELIVERED');
+          if (d.attempts >= maxDeliveryAttempts) alert(rec, 'DELIVERY_RETRY_EXHAUSTED');
+          return { delivered: false, reason: 'DELIVER_FAILED' };
+        }
+        // 例外の種類が「未送信確定」でないものは、相手に届いたか不明。再送しない
+        return markDeliveryUnknown(rec, d, 'SEND_RESULT_UNKNOWN');
       }
+      // 送信成功。結果保存に失敗しても再送しない（SENDING のまま残り、次回 UNKNOWN になる）
+      try { dlvTransition(d, DLV.DELIVERED, null); } catch (e6) { return { delivered: true, persisted: false }; }
       // 受渡し中に状態が進んでいても上書きしないよう、最新を再読込して受渡し時刻だけ追記する
-      var fresh = load(recKey(rec.id)) || rec;
-      fresh.deliveredAtSec = deps.nowSec();
-      save(recKey(fresh.id), fresh);
+      try {
+        var fresh = load(recKey(rec.id)) || rec;
+        fresh.deliveredAtSec = deps.nowSec();
+        save(recKey(fresh.id), fresh);
+      } catch (e7) { /* 配送記録（DLV）が正本 */ }
       return { delivered: true };
+    }
+
+    /**
+     * 配送の結果不明・未着に対する管理者判断（フラグ OFF でも使える）。メールは送らない（送信は次回の配送ジョブが全ゲートを通して行う）。
+     *   CONFIRM_DELIVERED … 送信記録・受信確認を管理者が確認した → DELIVERED（再送しない）
+     *   ALLOW_RESEND      … UNKNOWN/NOT_SENT(上限到達) を管理者が「届いていない」と判断 → 配送連番+1 で再送を許可
+     *   REGUIDE           … DELIVERED だが利用者から未着の申出（本人・予約確認後）→ 上限付きで再案内を許可
+     *   GIVE_UP           … 手動の代替入室で対応する → SUPPRESSED（以後このコードをメールしない）
+     */
+    function adminResolveDelivery(recId, decision, actor) {
+      var head = load(recKey(recId));
+      if (!head) return { ok: false, error: 'NOT_RESOLVABLE' };
+      if (!actor) return { ok: false, error: 'ACTOR_REQUIRED' };
+      if (DELIVERY_DECISIONS.indexOf(decision) === -1) return { ok: false, error: 'UNKNOWN_DECISION' };
+      var result;
+      deps.lock(['BOOKING_' + head.bookingId, 'DEV_' + head.deviceId], function () { result = resolveDeliveryLocked(recId, decision, actor); });
+      return result;
+    }
+
+    function resolveDeliveryLocked(recId, decision, actor) {
+      var rec = load(recKey(recId));
+      var d = load(dlvKey(recId));
+      if (!rec || !d || rec.state !== STATE.ISSUED_CONFIRMED) return { ok: false, error: 'NOT_RESOLVABLE' };
+      var basis = 'ADMIN:' + actor;
+      var openStates = [DLV.UNKNOWN, DLV.SENDING, DLV.NOT_SENT];
+      if (decision === 'CONFIRM_DELIVERED') {
+        if (openStates.indexOf(d.state) === -1) return { ok: false, error: 'NOT_RESOLVABLE' };
+        dlvTransition(d, DLV.DELIVERED, basis);
+        rec.deliveredAtSec = deps.nowSec();
+        save(recKey(rec.id), rec);
+        return { ok: true, state: d.state };
+      }
+      if (decision === 'GIVE_UP') {
+        if (d.state === DLV.SUPPRESSED) return { ok: false, error: 'NOT_RESOLVABLE' };
+        dlvTransition(d, DLV.SUPPRESSED, basis);
+        return { ok: true, state: d.state };
+      }
+      // 再送系は、最新予約・発行確認済みキーと一致するときだけ許可（旧コードの再送を管理者操作でも作らない）
+      if (!isCurrent(rec)) return { ok: false, error: 'NOT_CURRENT' };
+      if (decision === 'ALLOW_RESEND') {
+        if (openStates.indexOf(d.state) === -1) return { ok: false, error: 'NOT_RESOLVABLE' };
+      } else { // REGUIDE
+        if (d.state !== DLV.DELIVERED) return { ok: false, error: 'NOT_RESOLVABLE' };
+        if ((d.reguides || 0) >= maxReguides) return { ok: false, error: 'REGUIDE_LIMIT' };
+        d.reguides = (d.reguides || 0) + 1;
+      }
+      d.seq = (d.seq || 1) + 1;
+      d.deliveryId = deliveryIdOf(rec, d.seq);
+      d.attempts = 0;
+      d.nextTryAt = 0;
+      clearDeliveryAlerts(rec);
+      dlvTransition(d, DLV.NOT_SENT, basis);
+      return { ok: true, state: d.state, seq: d.seq };
     }
 
     // ---- 期限切れ・保持期限 ----
@@ -694,6 +867,7 @@ var SwitchBotAccessCore = (function () {
         }
       } else if (TERMINAL.indexOf(rec.state) !== -1 && rec.updatedAt && now - rec.updatedAt > retention) {
         deps.store.del(k);
+        deps.store.del(dlvKey(rec.id));
         deps.secrets.del('SECRET_' + rec.id);
         // 通知の重複抑止マーカーも破棄（ID 再利用時に新しい操作の通知を抑止しない）
         deps.store.keys().forEach(function (ak) {
@@ -800,20 +974,21 @@ var SwitchBotAccessCore = (function () {
     function inventory() {
       return deps.store.keys().filter(function (k) { return k.indexOf('OP_') === 0; }).map(function (k) {
         var r = load(k);
-        return { id: r.id, state: r.state, endSec: r.endSec, device: maskId(r.deviceId), unresolved: TERMINAL.indexOf(r.state) === -1 };
+        var dl = load(dlvKey(r.id));
+        return { id: r.id, state: r.state, endSec: r.endSec, device: maskId(r.deviceId), unresolved: TERMINAL.indexOf(r.state) === -1, delivery: dl ? dl.state : null };
       });
     }
 
     return {
-      sync: sync, ingestWebhook: ingestWebhook, deliver: deliver, sweep: sweep,
+      sync: sync, ingestWebhook: ingestWebhook, deliver: deliver, deliveryDue: deliveryDue, sweep: sweep, adminResolveDelivery: adminResolveDelivery,
       adminInspect: adminInspect, adminReconcile: adminReconcile, adminResolveUnknown: adminResolveUnknown, adminDelete: adminDelete,
       inventory: inventory
     };
   }
 
   return {
-    STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, TERMINAL: TERMINAL,
-    maskId: maskId, jstToEpochSec: jstToEpochSec, resolveKeypad: resolveKeypad,
+    STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, TERMINAL: TERMINAL, DLV: DLV, DELIVERY_DECISIONS: DELIVERY_DECISIONS,
+    maskId: maskId, jstToEpochSec: jstToEpochSec, resolveKeypad: resolveKeypad, validatePasscode: validatePasscode,
     evaluateEligibility: evaluateEligibility, inspectKeyList: inspectKeyList, inspectAbsence: inspectAbsence, normDev: normDev, judgeIssued: judgeIssued,
     parseKeypadWebhook: parseKeypadWebhook, classifyApi: classifyApi, createEngine: createEngine
   };

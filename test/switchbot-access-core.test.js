@@ -95,6 +95,7 @@ function world(opts) {
       },
       notifyAdmin: function (e) { if (w.notifyFail) throw new Error('SLACK'); w.notes.push(e); },
       deliverCode: function (ref, code, win) { w.delivered.push({ ref: ref, code: code, win: win }); },
+      deliveryGate: function () { return { ok: true }; }, // 送信直前ゲート（#752）。コア単体では常に通し、ゲート自体は infra / delivery テストで検証する
       sha256Hex: function (s) { return crypto.createHash('sha256').update(s).digest('hex'); },
       randomInt: function (n) { return crypto.randomInt(n); },
       nowSec: function () { return w.now; }

@@ -71,7 +71,9 @@ function createWorld(opts) {
     mailFail: false, lockBusy: false, locked: false, storeFail: null,
     records: [], ledgerFail: null, ledgerCalls: 0, lastTracked: [],
     identity: { email: 'owner@example.test' }, delivered: [], deliverFail: false,
-    createdPasswords: []
+    createdPasswords: [],
+    // 暗証番号案内メール（#752）: opts.mail のとき deliverCode ではなく sendUserMail / resolveRecipient を注入する
+    userMails: [], recipients: { 'SNB-1': 'guest@example.test' }, mailMode: 'ok', userMailAttempts: 0, mailHook: null
   };
   w.keys[DEV] = [];
   w.keys[DEV_VERIFY] = [];
@@ -136,7 +138,7 @@ function createWorld(opts) {
     }
   };
   w.deps = function () {
-    return {
+    var base = {
       store: w.store, secrets: w.secrets, lockService: w.lockService, api: w.api, ledger: w.ledger, snapshot: LOADED.snapshot,
       sendMail: function (subject, body) { if (w.mailFail) throw new Error('MAIL_FAIL'); w.mails.push({ subject: subject, body: body }); },
       sha256Hex: function (s) { return crypto.createHash('sha256').update(s).digest('hex'); },
@@ -146,6 +148,24 @@ function createWorld(opts) {
       adminActors: { 'owner@example.test': 'ADMIN-1' },
       deliverCode: function (ref, code) { if (w.deliverFail) throw new Error('DELIVER_FAIL'); w.delivered.push({ ref: ref }); }
     };
+    if (opts.mail) { delete base.deliverCode; Object.assign(base, w.mailDeps()); }
+    return base;
+  };
+  w.mailDeps = function () {
+    return {
+      sendUserMail: function (m) {
+        w.userMailAttempts++;
+        if (w.mailHook) w.mailHook(m);
+        if (w.mailMode === 'notSent') { var e = new Error('QUOTA'); e.notSent = true; e.alertCode = 'DELIVER_FAILED'; throw e; }
+        if (w.mailMode === 'throwUnknown') throw new Error('NETWORK_CUT'); // 相手に届いたか不明な例外
+        w.userMails.push({ to: m.to, subject: m.subject, body: m.body, name: m.name, replyTo: m.replyTo });
+        if (w.mailMode === 'sendThenThrow') throw new Error('RESPONSE_LOST'); // 送信は成功したが応答を失った
+      },
+      resolveRecipient: function (ref) {
+        var to = w.recipients[ref];
+        return to ? { ok: true, to: to } : { ok: false };
+      }
+    };
   };
   w.runtime = function (cfgOver) {
     w.cfg = Object.assign({}, w.cfg, cfgOver || {});
@@ -154,7 +174,11 @@ function createWorld(opts) {
   return w;
 }
 
+/** 配送設定（#752）。差出人・施設名・問合せ案内は設計書の文面。実在のメールアドレス・場所・番号は含めない。 */
+var DELIVERY_CFG = { senderName: 'Studio Nagoya Base', facilityLabel: 'Studio Nagoya Base', inquiryNote: 'このメールが届かない、または入室できない場合は、ご予約時のメールの案内先までご連絡ください。' };
+
 module.exports = {
+  DELIVERY_CFG: DELIVERY_CFG,
   Infra: Infra, Core: C, DEV: DEV, DEV_VERIFY: DEV_VERIFY, TOKEN: TOKEN, PASS_RE: PASS_RE, LOADED: LOADED,
   createWorld: createWorld, baseCfg: baseCfg, record: record, webhook: webhook, jst: jst
 };

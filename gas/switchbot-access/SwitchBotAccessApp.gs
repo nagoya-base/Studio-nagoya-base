@@ -153,6 +153,41 @@ function sba_ledger_() {
   };
 }
 
+/**
+ * 配送（Issue #752）: 暗証番号案内メールの宛先を、送信直前に台帳から1件だけ読む。
+ * 特定できない（0件・複数件・列欠落・不正形式）ときは { ok:false }。メールアドレスは保存・ログしない。
+ */
+function sba_resolveRecipient_(bookingRef) {
+  var id = sba_scriptProps_().getProperty('LEDGER_SPREADSHEET_ID');
+  if (!id) return { ok: false };
+  try {
+    var sheet = sba_openLedgerSheet_(id);
+    if (!sheet) return { ok: false };
+    var r = AccessLedgerReader.readRecipient(sheet, bookingRef);
+    return r && r.ok === true ? { ok: true, to: r.to } : { ok: false };
+  } catch (e) {
+    return { ok: false };
+  }
+}
+
+/**
+ * 配送（Issue #752）: 利用者宛の暗証番号案内メール。管理者通知の sendMail とは別物（混同しない）。
+ * 日次送信枠が尽きているときは「送信していない」と確定できるので notSent として投げる。
+ * それ以外の MailApp の例外は、相手に届いたか不明なため notSent を付けない（コアが UNKNOWN にし、自動再送しない）。
+ */
+function sba_sendUserMail_(m) {
+  var quota = MailApp.getRemainingDailyQuota();
+  if (!(quota >= 1)) {
+    var e = new Error('DELIVER_FAILED');
+    e.notSent = true;
+    e.alertCode = 'DELIVER_FAILED';
+    throw e;
+  }
+  var opt = { to: m.to, subject: m.subject, body: m.body, name: m.name };
+  if (m.replyTo) opt.replyTo = m.replyTo; else opt.noReply = true;
+  MailApp.sendEmail(opt);
+}
+
 function sba_adminActors_() {
   var raw = sba_scriptProps_().getProperty('ACCESS_ADMIN_ACTORS');
   try { return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
@@ -173,7 +208,10 @@ function sba_runtime_() {
     nowMs: function () { return Date.now(); },
     identity: function () { return { email: Session.getActiveUser().getEmail() }; },
     adminActors: sba_adminActors_(),
-    deliverCode: null // #752 の配送を接続するまで未設定（OFF/未接続では配送しない）
+    // 配送（#752）の手段。cfg.deliveryConfigured が運営承認までtrueにならない限り、この2つは呼ばれない
+    // （accessDeliverJob のトリガーも作られない）。コード・設定をマージしても、実利用者へのメール送信は起きない。
+    sendUserMail: sba_sendUserMail_,
+    resolveRecipient: sba_resolveRecipient_
   }, cfg);
 }
 
@@ -242,6 +280,9 @@ function accessAdminInspect(recId) { return sba_runtime_().admin('inspect', { re
 function accessAdminReconcile(recId) { return sba_runtime_().admin('reconcile', { recId: recId }); }
 function accessAdminResolveUnknown(recId, decision) { return sba_runtime_().admin('resolveUnknown', { recId: recId, decision: decision }); }
 function accessAdminDelete(recId) { return sba_runtime_().admin('delete', { recId: recId }); }
+// 配送の結果不明・未着の管理者判断（#752。メールは送らない。再送は次回の配送ジョブが全ゲートを通して行う）。
+// decision: CONFIRM_DELIVERED / ALLOW_RESEND / REGUIDE / GIVE_UP
+function accessAdminResolveDelivery(recId, decision) { return sba_runtime_().admin('resolveDelivery', { recId: recId, decision: decision }); }
 
 // ── 資格情報の初期登録（Issue #770。【#772以降の標準手順ではない。通常は下の accessMigrateCredentialsOnce を使う】実行者本人の User Properties へ、ローカルから Execution API 経由）──
 // 呼び出し元は scripts.run（API実行可能Deployment。アクセスは「自分のみ」。運営者が明示的に作成する別Deployment）のみ。Web アプリ（doPost/doGet）・トリガー・

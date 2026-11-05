@@ -109,7 +109,7 @@ SNBかつScript Property `ACCESS_KEY_NOTICE_ENABLED='true'` のときだけ「�
 | 取消 | 旧キー削除を追跡。削除失敗でも予約取消・返金は巻き戻さない（本モジュールは例外を予約側へ伝播させない前提のアダプタで呼ぶ）。残存は管理者通知 |
 | 期限切れ | `EXPIRED`（削除と区別）→ keyList残存確認 → 0件で `ARCHIVED_EXPIRED`、残存は通知＋`adminDelete`。終端状態のみ `retentionSec`（既定30日）後に破棄。未解決は破棄しない |
 | Keypad | `config.keypads` の brand/facility/room→完全deviceId対応表のみ。0件/複数件は送信前停止、フォールバックなし |
-| 受渡し | `deliverCode` 注入点。`ISSUED_CONFIRMED` 後のみ・1回のみ。暗証番号は予約確認メール/前日リマインドに載せず、独立GASの専用メールで送る（上記「発行・配送」、#752） |
+| 受渡し | `deliverCode` 注入点。`ISSUED_CONFIRMED` かつ送信直前ゲート通過後のみ。**無条件の自動再送はしない**（一度限りの保証ではない。結果不明は `UNKNOWN`→管理者判断。#752 / `docs/switchbot-access-delivery-752.md`）。暗証番号は予約確認メール/前日リマインドに載せず、独立GASの専用メールで送る（上記「発行・配送」、#752） |
 | 実行基盤 | 予約GASから直接呼ばず、独立GAS（`switchbot-verify` と同型）へ引き渡す案を推奨。永続キュー=独立GASのScript Properties（状態）＋別Properties/Secret Manager相当（秘密）。常設受信=独立Webアプリ（Webhook, 共有トークン）。実行上限=`maxReads`(既定3)・`webhookWaitSec`(既定90) |
 
 ## 状態機械と二重発行防止
@@ -151,7 +151,8 @@ SNBかつScript Property `ACCESS_KEY_NOTICE_ENABLED='true'` のときだけ「�
 - [x] 予約結線(#753 PR-A、フラグOFF): revision列・増分・スナップショット・前日リマインド一行をコードとモックテストで実装（本番migration・デプロイは未実施）
 - [ ] revision列の本番migration（admin-only → `migrateBookingsSchema` → full）と実施証跡
 - [x] 独立GAS基盤(#754 PR-B、フラグOFF): 認証/相関・単一排他・容量ゲート・保持/回収・固定分類通知・監視・管理者復旧をコードとモックテストで実装（`docs/switchbot-access-infra-754.md`）
-- [ ] 配送(#752)・本番フラグON（別PR/別判断）
+- [x] 配送(#752 PR-C、フラグOFF・非接続): 別メールの暗証番号案内・送信直前ゲート・結果不明(UNKNOWN)・管理者判断・再案内をコードとモックテストで実装（`docs/switchbot-access-delivery-752.md`。デプロイ・`deliveryConfigured` 有効化・実送信は未実施）
+- [ ] 本番フラグON（別判断）
 - [ ] 独立GASの環境準備・デプロイ・読取診断・常設Webhook登録（実施判断/日時/版/結果を別証跡に記録。PRマージはデプロイ許可ではない）
 - [ ] `commercialUseApproved` の意味の整合（運営者の採用決裁へ）と本番有効化判断の記録
 - [ ] 非利用時間・現地確認者・代替入室手段を確保した01FDの限定実機検証（開始前不可/期間内可/期限後不可/削除後不可/変更/取消/59秒境界）

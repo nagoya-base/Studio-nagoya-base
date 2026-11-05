@@ -103,6 +103,40 @@ var AccessLedgerReader = (function () {
     }
   }
 
+  /** 受渡し先として使える単一のメールアドレスの形（複数宛先・表示名・制御文字を拒否）。配送側の検証と同じ形。 */
+  var RECIPIENT_EMAIL_RE = /^[^\s@<>",;:\\]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/;
+
+  /**
+   * 配送（Issue #752）専用: 暗証番号案内メールを送る直前に、指定した予約1件の宛先メールだけを読む。
+   * 通常の照合（readFromSheet）はメール列を読まない。ここでも読むのは bookingId 列と、一致した1行の email セルだけ。
+   * 0件・複数件・列欠落・不正な形式は、推測や補完をせず ok:false（呼出側は送信せず管理者へ引き継ぐ）。
+   * 戻り値・例外にメールアドレスを残さない（返すのは ok:true のときの to だけ。呼出側が保存・ログしない）。
+   */
+  function readRecipient(sheet, bookingId) {
+    try {
+      var want = String(bookingId === undefined || bookingId === null ? '' : bookingId);
+      if (!want) return { ok: false, error: 'RECIPIENT_NOT_FOUND' };
+      var lastCol = sheet.getLastColumn();
+      var lastRow = sheet.getLastRow();
+      if (lastCol < 1) return { ok: false, error: 'RECIPIENT_COLUMN_MISSING' };
+      var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+      if (header.indexOf('bookingId') === -1 || header.indexOf('email') === -1) return { ok: false, error: 'RECIPIENT_COLUMN_MISSING' };
+      if (header.indexOf('bookingId') !== header.lastIndexOf('bookingId') || header.indexOf('email') !== header.lastIndexOf('email')) return { ok: false, error: 'RECIPIENT_COLUMN_INVALID' };
+      if (lastRow < 2) return { ok: false, error: 'RECIPIENT_NOT_FOUND' };
+      var ids = sheet.getRange(2, header.indexOf('bookingId') + 1, lastRow - 1, 1).getValues();
+      var rows = [];
+      for (var i = 0; i < ids.length; i++) if (String(ids[i][0] === undefined || ids[i][0] === null ? '' : ids[i][0]) === want) rows.push(i + 2);
+      if (rows.length === 0) return { ok: false, error: 'RECIPIENT_NOT_FOUND' };
+      if (rows.length > 1) return { ok: false, error: 'RECIPIENT_AMBIGUOUS' };
+      var raw = sheet.getRange(rows[0], header.indexOf('email') + 1, 1, 1).getValues()[0][0];
+      var to = typeof raw === 'string' ? raw.trim() : '';
+      if (!RECIPIENT_EMAIL_RE.test(to)) return { ok: false, error: 'RECIPIENT_INVALID' };
+      return { ok: true, to: to };
+    } catch (e) {
+      return { ok: false, error: classifyError(e) };
+    }
+  }
+
   var INSPECT_SAMPLE_ROWS = 200;
 
   /**
@@ -316,7 +350,7 @@ var AccessLedgerReader = (function () {
     }
   }
 
-  return { SHEET_NAME: SHEET_NAME, REQUIRED_COLUMNS: REQUIRED_COLUMNS.slice(), checkHeaders: checkHeaders, select: select, readFromSheet: readFromSheet, inspectSheet: inspectSheet, classifyError: classifyError,
+  return { SHEET_NAME: SHEET_NAME, REQUIRED_COLUMNS: REQUIRED_COLUMNS.slice(), checkHeaders: checkHeaders, select: select, readFromSheet: readFromSheet, readRecipient: readRecipient, inspectSheet: inspectSheet, classifyError: classifyError,
     classifyHttp: classifyHttp, openApiSheet: openApiSheet, serialToDate: serialToDate, colLetter: colLetter,
     KNOWN_ERROR_CODES: KNOWN_ERROR_CODES.slice(), DATE_COLUMNS: DATE_COLUMNS.slice(), MAX_ROWS: MAX_ROWS, PAGE_ROWS: PAGE_ROWS };
 })();
