@@ -1,6 +1,6 @@
-# 鍵管理用・独立GAS 自動デプロイ手順（Issue #768）
+# 鍵管理用・独立GAS デプロイ手順（Issue #768 / #778：毎回の手動承認式）
 
-`gas/switchbot-access/`（#754）の鍵管理用・独立GASを、GitHub Actions + `clasp` で**既存のWebアプリDeploymentのまま**更新する。`/exec` URL・実行者・アクセス設定は変わらない。
+`gas/switchbot-access/`（#754）の鍵管理用・独立GASを、GitHub Actions + `clasp` で**既存のWebアプリDeploymentのまま**更新する。**#778以降は自動デプロイしない**。運営者がActionsから `workflow_dispatch` を起動し、毎回の確認入力を通過したときだけ更新する。`/exec` URL・実行者・アクセス設定は変わらない。
 #723（`docs/switchbot-verify-gas-deploy-723.md`）を参考にした**別実装**で、検証GAS・Booking GASとはEnvironment／Secrets／workflow／concurrencyを共有しない。
 
 - 実装: `.github/workflows/switchbot-access-gas-deploy.yml` / `scripts/deploy-switchbot-access-gas.sh` / `scripts/switchbot-access-gas-deploy-lib.js` / テスト `test/switchbot-access-gas-deploy-768.test.js`
@@ -8,7 +8,7 @@
 
 ## 絶対に行わないこと（コード・テストで固定）
 
-`ACCESS_ENABLED` の変更（**OFFのまま**）／Script・User Propertiesの書換え／時間主導トリガーの作成・変更・削除／Webhookの登録・更新・削除／SwitchBotの `createKey`・`deleteKey`・解錠その他の実API／Deploymentの新規作成・削除／`clasp run`。
+自動デプロイ（push・マージ契機）／リポジトリ変数での有効化／`ACCESS_ENABLED` の変更（**OFFのまま**）／Script・User Propertiesの書換え／時間主導トリガーの作成・変更・削除／Webhookの登録・更新・削除／SwitchBotの `createKey`・`deleteKey`・解錠その他の実API／Deploymentの新規作成・削除／`clasp run`。
 コード反映の成功は、資格情報・Webhook・台帳読取・鍵APIの稼働確認を**意味しない**（それらは運営者の別作業・別証跡）。
 
 ## 動作の概要
@@ -16,11 +16,11 @@
 | 契機 | 動作 |
 | --- | --- |
 | PR | `booking-pr-tests.yml` が秘密なしでテストするだけ。デプロイjob・Environmentは使わない |
-| mainへのpush | 対象パス（`gas/switchbot-access/**`、`gas/booking/shared/AccessKeySnapshot.gs`、`scripts/prepare-switchbot-access-gas-project.js`、本デプロイのscript/lib、本workflow）の変更時のみ。**docs・README・testsのみの変更では起動しない** |
-| `workflow_dispatch`（`rollback_version`空欄） | mainのコードを同じ手順で再反映 |
-| `workflow_dispatch`（`rollback_version`指定） | 同じDeploymentを既存の版へ戻す（後述） |
+| mainへのpush・マージ | **何も起動しない**（#778でpushトリガーを廃止）。マージ＝デプロイ許可ではない |
+| `workflow_dispatch`（`main`、`deployment_action=deploy`） | gateの入力検証を通れば、mainのコードを同じ手順で再反映 |
+| `workflow_dispatch`（`main`、`deployment_action=rollback`） | gateの入力検証を通れば、同じDeploymentを既存の版へ戻す（後述） |
 
-ジョブ: `gate`（秘密・Environmentなし）→ `test`（秘密なし）→ `deploy`（Environment `switchbot-access-production`）。`rollback` は `gate` 後に単独で動く。
+ジョブ: `gate`（入力検証・秘密もEnvironmentもなし）→ `test`（秘密なし。deployのみ）→ `approve_on`（ON宣言時のみ。独立承認用Environment・秘密なし）→ `deploy`（Environment `switchbot-access-production`）。`rollback` は `gate`（と、ON宣言時は `approve_on`）の後に単独で動く。
 `test` は `node --test test/switchbot-*.test.js` と配布物の組立・検査。**失敗したらデプロイしない**。資格情報はdeploy／rollbackの実行ステップにのみ渡す。
 
 deployの流れ（「更新」ステップまで公開中Deploymentの参照先は変わらない）:
@@ -42,21 +42,37 @@ deployの流れ（「更新」ステップまで公開中Deploymentの参照先�
 `SwitchBotAccessCore.gs` / `AccessKeySnapshot.gs` / `AccessLedgerReader.gs` / `SwitchBotAccessInfra.gs` / `SwitchBotAccessApp.gs` / `appsscript.json`。
 Booking GAS本体、秘密設定（`.clasprc.json`・`.env`等）、テスト、実行ログ、他GASのファイルは含まれない。`.gs`は空でなく、manifestは`executeAs=USER_DEPLOYING`。
 
-## 段階ゲート（マージしても環境未準備なら本番に触れない）
+## 手動起動ゲート（#778。リポジトリ変数は使わない）
 
-環境準備、初回GAS作成、初回Deployment作成、自動デプロイ有効化は**別段階**で、最初の3つは運営の明示的承認による手動作業。
-`gate`ジョブは次の**リポジトリ変数**（Settings > Secrets and variables > Actions > Variables。秘密ではない）だけを読み、Environment・Secretsへは触れない。
+`gate` ジョブがjobの先頭で全入力を検証する（UIのチェック表示や選択肢に頼らない。GitHub API経由の `workflow_dispatch` も同じ検証を通る）。1つでも不正なら**安全停止**（デプロイ・Environment・Secretsへ進まない）。
 
-| 変数 | 値 | 意味 |
-| --- | --- | --- |
-| `SWITCHBOT_ACCESS_AUTODEPLOY` | 未設定 | **無効**（既定）。push・dispatchともデプロイ／ロールバックを試みない |
-| 〃 | `FLAG_OFF` | 運営宣言: 対象GASの`ACCESS_ENABLED`はOFF。自動デプロイ有効 |
-| 〃 | `FLAG_ON_APPROVED` | 運営宣言: 本番で`ACCESS_ENABLED=true`だが、稼働中のコード更新を**事前承認済み** |
-| 〃 | 上記以外 | 安全停止（gateが失敗、デプロイしない） |
-| `SWITCHBOT_ACCESS_EXECUTOR_CONFIRMED` | `true` | 上記の有効化に必須。下記3者の同一性を運営が確認済み |
+| 入力 | 必須 | 受理する値 | 備考 |
+| --- | --- | --- | --- |
+| `deployment_action` | ✔ | `deploy` / `rollback` | 既定 `NOT_SELECTED` は拒否 |
+| `safety_confirmed` | ✔ | `true` | 今回は**既存独立GASのコード更新のみ**。実機の鍵発行・削除や設定更新はしない、という確認 |
+| `access_state` | ✔ | `OFF_CONFIRMED` / `ON_CHANGE_APPROVED` | 既定 `NOT_SELECTED` は拒否。**運営者の宣言**であり、GASプロパティの実測ではない |
+| `executor_confirmed` | ✔ | `true` | Actionsのclasp実行者・Webアプリ実行者・User Properties設定者が同一アカウントと**今回**確認済み |
+| `change_approval_reference` | `ON_CHANGE_APPROVED` のみ | 承認済みIssue/記録番号（例 `#999`）。英数字と `# . _ : / -` のみ・64文字まで | 秘密・個人情報・URLを書かない。空・不正形式は停止 |
+| `rollback_version` | `rollback` のみ | 正の整数（既存の版） | `deploy` で指定すると**矛盾として停止** |
+| `rollback_compat_confirmed` | `rollback` のみ | `true` | 戻し先が現在の本番状態と互換と確認済み。`deploy` で `true` にすると矛盾として停止 |
 
-**実行アカウントの同一性**: Webアプリと時間主導トリガーはデプロイ実行者として動き、SwitchBot資格情報・Webhook共有トークンは**実行者のUser Properties**にある。次の3者が同一アカウントであることを有効化前に運営が確認する: ①Actionsのclasp認証主体（`SWITCHBOT_ACCESS_CLASPRC_JSON`の発行アカウント） ②既存Webアプリの「次のユーザーとして実行」（デプロイ者） ③Propertiesを手動設定した者。違えば有効化しない（変数を設定しない）。コードからは他者のUser Propertiesも実行者も確定できないため、この確認は運用ゲートとし、コードは`manifest`の`executeAs`差異と対象ファイルの取り違えを機械的に止める。
-**`ACCESS_ENABLED`の読取り**: Script Propertiesの読取りには実行権限・秘密上の制約があり、自動デプロイからは読まない（書き換えも一切しない）。そのため上記変数の宣言と、Environmentの**Required reviewers**（推奨）で、ON状態でのコード更新を人が止められるようにする。`ACCESS_ENABLED`をONにする運用に切り替える時は、先に変数を`FLAG_ON_APPROVED`へ更新するか削除（無効化）する。
+加えて `main` 以外のブランチ（Run workflowのBranch選択）、`workflow_dispatch` 以外の契機、**実行時点のmain先頭と異なるSHA（古いコミット）**はすべて停止。Environment（`switchbot-access-production`）の取り違え・Secrets欠落は、deploy／rollbackの更新前に既存の検査で停止する。
+
+### 自己申告と独立承認は別物
+入力チェックは**GitHub実行者本人の自己申告**で、Environmentの Required reviewers のような**独立承認ではない**。1人運営では Required reviewers を使えないため、次のとおり運用を分ける。
+
+| 状態 | 通過条件 |
+| --- | --- |
+| `OFF_CONFIRMED`（`ACCESS_ENABLED`がOFF＝本番の鍵操作停止） | 実行者の自己確認 ＋ 既存の自動テスト ＋ 既存の安全ゲート（#768の防護） |
+| `ON_CHANGE_APPROVED`（本番ON中の更新） | 上記に加え、`change_approval_reference`（独立承認またはレビュー済みGo/No-Go証跡）が必須、**かつ** `approve_on` ジョブのEnvironment承認を通ること |
+
+`approve_on` は Environment **`switchbot-access-on-approval`**（Secretsは登録しない）を使う。ON中の更新を行う前に、このEnvironmentへ**実行者本人以外**の Required reviewers を設定しておくこと。**未設定のEnvironmentは待たずに通過する**ため、reviewers未設定のままONで更新してはならない（workflowからはreviewersの有無を検証できないため、運用ゲート）。独立承認者を用意できない間は `ON_CHANGE_APPROVED` を使わない。単なるチェックだけでON時の更新を許可する設計にはしていない。
+
+**実行アカウントの同一性**: Webアプリと時間主導トリガーはデプロイ実行者として動き、SwitchBot資格情報・Webhook共有トークンは**実行者のUser Properties**にある。次の3者が同一アカウントであることを、`executor_confirmed` を`true`にする**たびに**確認する: ①Actionsのclasp認証主体（`SWITCHBOT_ACCESS_CLASPRC_JSON`の発行アカウント） ②既存Webアプリの「次のユーザーとして実行」（デプロイ者） ③Propertiesを手動設定した者。違えば起動しない。コードからは他者のUser Propertiesも実行者も確定できないため運用ゲートとし、コードは`manifest`の`executeAs`差異と対象ファイルの取り違えを機械的に止める。
+**`ACCESS_ENABLED`の読取り**: Script Propertiesの読取りには実行権限・秘密上の制約があり、デプロイからは読まない（書き換えも一切しない）。`access_state` は宣言値として扱い、実測値ではない。
+
+### 旧リポジトリ変数の扱い
+`SWITCHBOT_ACCESS_AUTODEPLOY` と `SWITCHBOT_ACCESS_EXECUTOR_CONFIRMED` は**#778以降どこからも参照されない（不要）**。残っていても、pushでもdispatchでも本番deployには影響しない。混乱を避けるため、運営者がマージ後の任意のタイミングで削除してよい（削除しなくても安全。作成する必要は今後ない）。
 
 ## 配備手順（初回〜撤去）
 
@@ -77,22 +93,39 @@ Booking GAS本体、秘密設定（`.clasprc.json`・`.env`等）、テスト、
 
 検証環境へも自動デプロイする場合は、別Environment・別Secrets・別workflowを用意する（本workflowは本番専用。検証機末尾37DDを本番へ混入させない。環境ごとの`allowedLast4`はGAS側設定で別管理）。SwitchBotのToken/Secret/Webhook共有トークンはGASのProperties（User Properties）にのみ置き、GitHubへは登録しない。
 
-### 4. 自動デプロイの有効化（先輩・運営の判断後）
-上記「段階ゲート」の2変数を設定する。設定した時点から、対象パスのmain pushでデプロイが走る。初回は`workflow_dispatch`（`main`、`rollback_version`空欄）での手動実行を推奨。
+### 4. 手動デプロイの前提（先輩・運営の判断後）
+変数の設定は不要。上記「手動起動ゲート」の入力を満たして `Run workflow` するだけで、**起動のたびに**更新される。初回・再実行とも同じ。ON中の更新を行う場合のみ、先に `switchbot-access-on-approval` Environment（独立のRequired reviewers）を用意する。
 
-### 5. 再デプロイ
-mainへマージ（対象パス変更時に自動）、またはActions > "Deploy SwitchBot access GAS" > Run workflow（`main`、`rollback_version`空欄）。
-反映確認: Step Summaryの`@旧 → @新`と「デプロイ管理」で同じデプロイ・同じURLであること。**読取り診断（`accessCheckSetup`※設定値は表示されない／`accessAdminStatus`／1回の手動`accessSyncJob`で`FLAG_OFF`／台帳schema・read-only接続）は運営者が別作業・別証跡で行う**。成功前に#754をCloseしない。診断のために`accessInstallTriggers`・createKey/deleteKey等を実行しない。
+### 5. 再デプロイ（スマホのGitHubアプリ／ブラウザ）
+1. GitHub > Actions > **"Deploy SwitchBot access GAS"** > **Run workflow**
+2. **Branch は `main`**（それ以外は停止）
+3. 入力例（OFF時のコード更新）:
+
+   | 入力 | 値 |
+   | --- | --- |
+   | `deployment_action` | `deploy` |
+   | `safety_confirmed` | ON（チェック） |
+   | `access_state` | `OFF_CONFIRMED` |
+   | `executor_confirmed` | ON（チェック） |
+   | `change_approval_reference` | 空欄 |
+   | `rollback_version` | 空欄 |
+   | `rollback_compat_confirmed` | OFFのまま |
+
+   ON中の更新: `access_state=ON_CHANGE_APPROVED`、`change_approval_reference=#<承認済みIssue番号>`（独立承認者がEnvironmentで承認する）。
+4. 失敗時の停止: `gate` が赤なら入力を直して再度 Run workflow（Step Summaryに停止理由の語が出る）。`test` や更新手順が赤ならデプロイされない／`UNKNOWN_STATE` は後述の手順。**自動再試行はしない**。
+5. **Success判定**: `gate`・`test`・`deploy` がすべて緑、**かつ**deployジョブで "Push source and update the existing deployment" ステップが実際に実行されている（"Skip if a newer main commit…" で `current=false` のスキップは**成功ではない**）。Step Summaryに `@旧 → @新`（同一Deployment・同一URL）が出ていること。
+6. デプロイ後、**読取り診断 `accessReadOnlyDiagnostics` を運営者が別作業・別証跡で手動実行**する（`accessCheckSetup`※設定値は表示されない／`accessAdminStatus`／1回の手動`accessSyncJob`で`FLAG_OFF`／台帳schema・read-only接続）。診断のために`accessInstallTriggers`・createKey/deleteKey等を実行しない。成功前に#754をCloseしない。
+7. ログ・Issue・PRには**鍵・各種ID・個人情報を貼らない**（Step Summaryは版番号・SHA・方式のみ）。
 
 ### 6. ロールバック
-1. Actions > "Deploy SwitchBot access GAS" > Run workflow（`main`）で`rollback_version`に**既存の版番号**、`rollback_compat_confirmed`をチェック。チェックは、戻し先の版のコードが現在の本番状態（状態ストア・User/Script Properties・台帳schema・既存キー）と互換であることを運営が確認した証。互換でない旧版へは戻さない。
+1. Run workflow（`main`）で `deployment_action=rollback`、`rollback_version` に**既存の版番号**、`rollback_compat_confirmed` をチェック、ほかの必須入力（`safety_confirmed`／`access_state`／`executor_confirmed`）も上記のとおり入力。互換確認は、戻し先の版のコードが現在の本番状態（状態ストア・User/Script Properties・台帳schema・既存キー）と互換であることを運営が確認した証。互換でない旧版へは戻さない。
 2. 更新前に、deployと同じ読取りのみの対象照合（`clasp pull`で鍵管理GASであることを確認。Booking／検証／Surveyのプロジェクトなら停止、manifestのwebapp設定の不一致・manifest欠落も停止）を行う。通れば同じ`DEPLOYMENT_ID`を既存版へ`update-deployment -V`で戻すだけ（Deploymentの削除・再作成なし）。状態ストア・Properties・既存キー・Webhook登録は削除／上書きしない。ロールバックを契機にcreateKey/deleteKeyを再送しない。
-3. Step Summaryに「更新前の版→戻し先の版」と戻し先の説明（非秘密）、互換性確認の有無、SHAが残る。`clasp push`済みの編集用ソース（HEAD）と公開版は別管理。必要ならmainを`git revert`し、レビュー・CI後に整合させる（revertのマージで再デプロイが走るため、変数を一時的に削除して無効化してから行うこと）。
+3. Step Summaryに「更新前の版→戻し先の版」と戻し先の説明（非秘密）、互換性確認の有無、SHAが残る。`clasp push`済みの編集用ソース（HEAD）と公開版は別管理。必要ならmainを`git revert`し、レビュー・CI後に整合させる（mainへのrevertのマージは**デプロイを起動しない**。反映は手動で `deploy` を起動する）。
 4. `UNKNOWN_STATE`の時は再実行せず、`list-versions`と「デプロイを管理」で現状を確認してから本手順へ。
 
 ### 7. 撤去・運用者交代
-撤去: 変数`SWITCHBOT_ACCESS_AUTODEPLOY`を削除（またはworkflowを無効化）→ `docs/switchbot-access-infra-754.md` §11の撤去手順（`ACCESS_ENABLED`を外す→`accessRemoveTriggers`→棚卸し→Webhook解除は別手順）。
-運用者交代: 旧実行者の接続済みアプリでclasp権限を取り消す → 新実行者が`clasp login`・Properties再設定・Webアプリ再デプロイ（別証跡）→ **新しいDeployment IDと実行者**で`SWITCHBOT_ACCESS_CLASPRC_JSON`・`SWITCHBOT_ACCESS_DEPLOYMENT_ID`を更新 → 3者同一性を再確認 → 変数を再設定。実行者が変わると`/exec` URLとWebhook登録先が変わり得るため、Webhook再登録は別手順。
+撤去: workflowを無効化（Actions > Disable workflow）→ `docs/switchbot-access-infra-754.md` §11の撤去手順（`ACCESS_ENABLED`を外す→`accessRemoveTriggers`→棚卸し→Webhook解除は別手順）。
+運用者交代: 旧実行者の接続済みアプリでclasp権限を取り消す → 新実行者が`clasp login`・Properties再設定・Webアプリ再デプロイ（別証跡）→ **新しいDeployment IDと実行者**で`SWITCHBOT_ACCESS_CLASPRC_JSON`・`SWITCHBOT_ACCESS_DEPLOYMENT_ID`を更新 → 3者同一性を再確認 → 次回の手動起動で`executor_confirmed`を確認のうえ入力。実行者が変わると`/exec` URLとWebhook登録先が変わり得るため、Webhook再登録は別手順。
 
 ## 秘密の扱い
 認証ファイルは`$RUNNER_TEMP`に0600で生成し、成功・失敗・中断いずれでもtrapで削除。claspの出力は全てファイルへ退避して表示せず、`set -x`・artifact・cacheは使わない。Step Summaryに出すのは版番号・commit SHA・方式・検証範囲・（ロールバック時の）非秘密の版説明のみ。ID・トークン・パスコード・状態レコードのダンプは出さない。
@@ -102,10 +135,10 @@ mainへマージ（対象パス変更時に自動）、またはActions > "Deplo
 |---|---|---|
 | Issue・PR・CI | PR番号・head・CI結果 | ✔ |
 | 環境準備（GAS・Properties・Secrets・Environment） | 実施判断・日時・結果 | ✘ 未実施 |
-| 初回実デプロイ | 実施判断・日時・版・run URL | ✘ 未実施 |
+| 実デプロイ（#776マージ済みコードの本番反映を含む。#778のレビュー完了と運営者の明示的な手動実行後） | 実施判断・日時・版・run URL | ✘ 未実施 |
 | 初回読取診断（`FLAG_OFF`・台帳schema/read-only） | 日時・版・結果（秘密なし） | ✘ 未実施 |
-| 自動化の有効化（変数設定） | 判断・日時 | ✘ 未実施 |
+| 手動デプロイの実行（Run workflow） | 実行者・日時・入力値（`access_state`／承認参照）・run URL。#778のIssue/PR作成とマージはデプロイ許可ではない | ✘ 未実施 |
 | 鍵の自動発行ON | #756/#757の判断後のみ | ✘ **禁止** |
 
 ## テスト
-`test/switchbot-access-gas-deploy-768.test.js`: workflowの静的検査（トリガー・パス・Environment分離・ゲート・concurrency・固定clasp・禁止操作の不在）、配布物の完全性、偽claspによる成功／認証失敗／ID不一致／他プロジェクト取り違え／push失敗／更新未反映／`UNKNOWN_STATE`／二重実行／ロールバック（未知版・同一版・互換性未確認）／秘密の非漏えい。実GAS・実APIへは接続しない。
+`test/switchbot-access-gas-deploy-768.test.js`: workflowの静的検査（`workflow_dispatch`のみ・push/PR経路なし・旧変数に非依存・必須入力と安全な既定値・gateのenv経由検証・Environment分離・ON時の独立承認job・concurrency・固定clasp・禁止操作の不在）、入力ゲートの網羅検査（未入力・未選択・未確認・OFF宣言・ON承認参照なし・rollback入力の矛盾・branch違い・push/PR契機）、配布物の完全性、偽claspによる成功／認証失敗／ID不一致／他プロジェクト取り違え／push失敗／更新未反映／`UNKNOWN_STATE`／二重実行／ロールバック（未知版・同一版・互換性未確認）／秘密の非漏えい。実GAS・実APIへは接続しない。

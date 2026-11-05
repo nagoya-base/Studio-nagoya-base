@@ -8,7 +8,7 @@
 | `SWITCHBOT_SECRET` | SwitchBot API Secret（運営者が所持） |
 | `WEBHOOK_SHARED_TOKEN` | Webhook共有トークン（24文字以上の乱数。ローカルで新規生成） |
 
-既存の Script Properties（`ACCESS_*` / `LEDGER_*` / 状態）、トリガー、Webhook登録、SwitchBot端末APIには**触れない**。`ACCESS_ENABLED` は未設定（OFF）のまま、`SWITCHBOT_ACCESS_AUTODEPLOY` も未設定のまま。
+既存の Script Properties（`ACCESS_*` / `LEDGER_*` / 状態）、トリガー、Webhook登録、SwitchBot端末APIには**触れない**。`ACCESS_ENABLED` は未設定（OFF）のまま、自動デプロイは行わない（#778以降は手動起動のみ。`SWITCHBOT_ACCESS_AUTODEPLOY` は参照されない）。
 **このPRのマージは登録の実行を意味しない**。登録・デプロイ・フラグ変更は運営者が別途、別証跡で行う。
 
 ## 1. 採用した経路と根拠（実現性の検証結果）
@@ -55,7 +55,7 @@
 
 ### 標準Cloudプロジェクトへの切替え・clasp再ログイン後の `SWITCHBOT_ACCESS_CLASPRC_JSON`
 手順3の再ログインで `.clasprc.json` の内容（OAuthクライアント・リフレッシュトークン）が変わる。以前GitHub Environment `switchbot-access-production` に登録した `SWITCHBOT_ACCESS_CLASPRC_JSON` は**古い認証になる可能性がある**（別クライアントで発行されたトークンは、失効・無効化されることがある）。次を行ってから自動デプロイを有効化する（本Issueでは更新・有効化しない）:
-1. 自動デプロイ（`SWITCHBOT_ACCESS_AUTODEPLOY`）は**未設定のまま**にしておく。
+1. デプロイは**手動起動のみ**（#778。変数による有効化は廃止）。確認が済むまで Run workflow を起動しない。
 2. 再ログイン後の `.clasprc.json` で `SWITCHBOT_ACCESS_CLASPRC_JSON` を更新（運営者が値をEnvironment Secretに登録。値はPR・ログに出さない）。
 3. 有効化前に、最初の `workflow_dispatch` 実行（#768 §4）で認証が通ることを再検証する。失敗したら有効化しない。
 

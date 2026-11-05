@@ -24,7 +24,7 @@ const REQUIRED_REMOTE_FILES = ['SwitchBotAccessApp.gs', 'SwitchBotAccessCore.gs'
 // 他プロジェクト（予約GAS・検証GAS・アンケートGAS）への誤接続を検出するための拒否プレフィックス。
 // 共有の AccessKeySnapshot.gs は 'Booking' で始まらないため許容される。
 const FORBIDDEN_REMOTE_PREFIXES = ['Booking', 'Survey', 'SwitchBotVerify'];
-// push契機とデプロイ前の新鮮度確認が参照する対象パス（workflowのon.push.pathsと同一であることをテストが保証）。
+// デプロイ前の新鮮度確認（古いrunのスキップ）が参照する対象パス。
 const TARGET_PATHS = [
   'gas/switchbot-access',
   'gas/booking/shared/AccessKeySnapshot.gs',
@@ -33,7 +33,6 @@ const TARGET_PATHS = [
   'scripts/switchbot-access-gas-deploy-lib.js',
   '.github/workflows/switchbot-access-gas-deploy.yml'
 ];
-const GATE_VALUES = ['FLAG_OFF', 'FLAG_ON_APPROVED'];
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -112,15 +111,42 @@ function checkBundle(dir) {
 }
 
 /**
- * 段階ゲート（リポジトリ変数）。未設定=自動デプロイ無効（本番に触れない）。
- * 値は運営の人手の宣言（フラグ状態はコードから安全に読めない）。実行主体の確認も別宣言を要求する。
+ * 手動起動ゲート（#778）。workflow_dispatch の入力を、UI表示に頼らずjobの先頭で検証する（fail closed）。
+ * access_state は運営者の「宣言」でありGASプロパティの実測ではない。入力確認は実行者本人の自己申告で、
+ * Environment の Required reviewers による独立承認とは別物（ON時は別途 approve_on ジョブで独立承認を要求）。
+ * 戻り値は固定の短い語のみ（入力値そのものは返さない）。
  */
-function checkGate(autodeploy, executorConfirmed) {
-  const v = String(autodeploy || '').trim();
-  if (v === '') return 'DISABLED';
-  if (!GATE_VALUES.includes(v)) return 'INVALID_GATE_VALUE';
-  if (String(executorConfirmed || '').trim() !== 'true') return 'EXECUTOR_NOT_CONFIRMED';
-  return 'ENABLED';
+const ACCESS_STATES = ['OFF_CONFIRMED', 'ON_CHANGE_APPROVED'];
+const ACTIONS = ['deploy', 'rollback'];
+const APPROVAL_REF_PATTERN = /^[A-Za-z0-9#][A-Za-z0-9#._:\/-]{0,63}$/;
+
+function checkDispatch(i) {
+  const s = (v) => (typeof v === 'string' ? v : '');
+  if (s(i.event) !== 'workflow_dispatch') return 'NOT_MANUAL_DISPATCH';
+  if (s(i.ref) !== 'refs/heads/main') return 'BRANCH_NOT_MAIN';
+  const action = s(i.action);
+  if (action === '' || action === 'NOT_SELECTED') return 'ACTION_NOT_SELECTED';
+  if (!ACTIONS.includes(action)) return 'INVALID_ACTION';
+  if (s(i.safety) !== 'true') return 'SAFETY_NOT_CONFIRMED';
+  const state = s(i.accessState);
+  if (state === '' || state === 'NOT_SELECTED') return 'ACCESS_STATE_NOT_SELECTED';
+  if (!ACCESS_STATES.includes(state)) return 'INVALID_ACCESS_STATE';
+  if (s(i.executor) !== 'true') return 'EXECUTOR_NOT_CONFIRMED';
+  if (state === 'ON_CHANGE_APPROVED') {
+    const ref = s(i.approvalRef);
+    if (ref.trim() === '') return 'APPROVAL_REFERENCE_REQUIRED';
+    if (!APPROVAL_REF_PATTERN.test(ref)) return 'APPROVAL_REFERENCE_INVALID';
+  }
+  const version = s(i.rollbackVersion);
+  const compat = s(i.rollbackCompat);
+  if (action === 'deploy') {
+    if (version !== '' || compat === 'true') return 'ROLLBACK_INPUT_WITH_DEPLOY';
+    if (compat !== '' && compat !== 'false') return 'INVALID_ROLLBACK_COMPAT';
+  } else {
+    if (!/^[1-9][0-9]{0,5}$/.test(version)) return 'ROLLBACK_VERSION_REQUIRED';
+    if (compat !== 'true') return 'ROLLBACK_COMPAT_NOT_CONFIRMED';
+  }
+  return 'OK';
 }
 
 /** 版の説明を非秘密の安全な文字だけに整形する（証跡用）。 */
@@ -194,7 +220,15 @@ function main(argv, env) {
       return r.numbers.includes(Number(a[1])) ? 0 : 1;
     }
     case 'check-bundle': { const s = checkBundle(a[0]); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
-    case 'gate': { const s = checkGate(a[0], a[1]); process.stdout.write(s + '\n'); return s === 'ENABLED' || s === 'DISABLED' ? 0 : 1; }
+    case 'dispatch-gate': { // 入力は環境変数 DG_* から読む（コマンド行・シェル展開に値を載せない）
+      const s = checkDispatch({
+        event: env.DG_EVENT, ref: env.DG_REF, action: env.DG_ACTION, safety: env.DG_SAFETY,
+        accessState: env.DG_ACCESS_STATE, executor: env.DG_EXECUTOR, approvalRef: env.DG_APPROVAL_REF,
+        rollbackVersion: env.DG_ROLLBACK_VERSION, rollbackCompat: env.DG_ROLLBACK_COMPAT
+      });
+      process.stdout.write(s + '\n');
+      return s === 'OK' ? 0 : 1;
+    }
     case 'target-paths': process.stdout.write(TARGET_PATHS.join('\n') + '\n'); return 0;
     case 'describe-version': { process.stdout.write(describeVersion(fs.readFileSync(a[0], 'utf8'), a[1]) + '\n'); return 0; }
     case 'check-remote': { const s = checkRemoteTarget(a[0]); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
@@ -222,4 +256,4 @@ if (require.main === module) {
   process.exit(code);
 }
 
-module.exports = { BUNDLE_FILES, TARGET_PATHS, GATE_VALUES, checkBundle, checkGate, describeVersion, pickDeployment, parseVersions, checkRemoteTarget, checkManifest, compareSources, checkCredential };
+module.exports = { BUNDLE_FILES, TARGET_PATHS, ACCESS_STATES, checkBundle, checkDispatch, describeVersion, pickDeployment, parseVersions, checkRemoteTarget, checkManifest, compareSources, checkCredential };

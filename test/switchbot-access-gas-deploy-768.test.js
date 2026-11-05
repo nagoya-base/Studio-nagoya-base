@@ -20,43 +20,76 @@ const scriptText = fs.readFileSync(script, 'utf8').split('\n').filter((l) => !/^
 const libText = fs.readFileSync(path.join(root, 'scripts/switchbot-access-gas-deploy-lib.js'), 'utf8');
 
 // ---- workflow 静的検査 ----
-test('workflow: main push (target paths) + workflow_dispatch only; no PR/fork/schedule trigger', () => {
+test('workflow (#778): workflow_dispatch is the ONLY trigger; push/PR/schedule/fork triggers are absent', () => {
   const on = wf.slice(wf.indexOf('\non:\n'), wf.indexOf('\npermissions:'));
-  assert.match(on, /push:\n\s+branches:\n\s+- main\n\s+paths:/);
-  assert.match(on, /workflow_dispatch:/);
-  assert.doesNotMatch(on, /pull_request|schedule:|pull_request_target/);
+  assert.match(on, /\non:\n  workflow_dispatch:/);
+  assert.doesNotMatch(on, /\n  (push|pull_request|pull_request_target|schedule|workflow_run|repository_dispatch|release):/);
+  assert.doesNotMatch(on, /paths:|branches:/);
+  // 旧リポジトリ変数に一切依存しない（残っていてもpushで本番に到達しない）
+  const code = wf.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  assert.doesNotMatch(code, /SWITCHBOT_ACCESS_AUTODEPLOY|SWITCHBOT_ACCESS_EXECUTOR_CONFIRMED|\bvars\./);
+  assert.doesNotMatch(code, /github\.event_name == 'push'/);
 });
 
-test('workflow: push paths equal the lib TARGET_PATHS and cover the shared snapshot, prepare script and itself', () => {
-  const on = wf.slice(wf.indexOf('\n    paths:\n'), wf.indexOf('\n  workflow_dispatch:'));
-  const paths = [...on.matchAll(/^\s+- '([^']+)'$/gm)].map((m) => m[1]);
-  const normalized = paths.map((p) => p.replace(/\/\*\*$/, ''));
-  assert.deepEqual(normalized.sort(), lib.TARGET_PATHS.slice().sort());
-  for (const must of ['gas/switchbot-access/**', 'gas/booking/shared/AccessKeySnapshot.gs',
-    'scripts/prepare-switchbot-access-gas-project.js', '.github/workflows/switchbot-access-gas-deploy.yml']) {
-    assert.ok(paths.includes(must), must);
+test('workflow (#778): required inputs, safe defaults (NOT_SELECTED / false) and no OFF default', () => {
+  const inputs = wf.slice(wf.indexOf('    inputs:\n'), wf.indexOf('\npermissions:'));
+  for (const name of ['deployment_action', 'safety_confirmed', 'access_state', 'executor_confirmed',
+    'change_approval_reference', 'rollback_version', 'rollback_compat_confirmed']) {
+    assert.match(inputs, new RegExp('\\n      ' + name + ':\\n'), name);
   }
-  assert.ok(!paths.some((p) => /docs|README|\.md$|test\//.test(p)), 'docs/README/tests alone must not deploy');
+  assert.match(inputs, /deployment_action:[\s\S]*?required: true\n\s+type: choice\n\s+default: 'NOT_SELECTED'\n\s+options:\n\s+- 'NOT_SELECTED'\n\s+- 'deploy'\n\s+- 'rollback'/);
+  assert.match(inputs, /access_state:[\s\S]*?required: true\n\s+type: choice\n\s+default: 'NOT_SELECTED'\n\s+options:\n\s+- 'NOT_SELECTED'\n\s+- 'OFF_CONFIRMED'\n\s+- 'ON_CHANGE_APPROVED'/);
+  assert.match(inputs, /safety_confirmed:[\s\S]*?required: true\n\s+type: boolean\n\s+default: false/);
+  assert.match(inputs, /executor_confirmed:[\s\S]*?required: true\n\s+type: boolean\n\s+default: false/);
+  assert.match(inputs, /rollback_compat_confirmed:[\s\S]*?type: boolean\n\s+default: false/);
+  assert.doesNotMatch(inputs, /default: 'OFF_CONFIRMED'|default: 'ON_CHANGE_APPROVED'|default: true/);
 });
 
-test('workflow: only the deploy/rollback jobs use the dedicated environment; test and gate have no environment/secrets', () => {
+test('workflow (#778): the gate validates all inputs via env (no direct ${{ }} in run), fails closed and checks the main head', () => {
+  const gate = wf.slice(wf.indexOf('\n  gate:'), wf.indexOf('\n  test:'));
+  assert.doesNotMatch(gate, /environment:|secrets\./);
+  assert.match(gate, /node scripts\/switchbot-access-gas-deploy-lib\.js dispatch-gate/);
+  for (const v of ['DG_EVENT', 'DG_REF', 'DG_ACTION', 'DG_SAFETY', 'DG_ACCESS_STATE', 'DG_EXECUTOR', 'DG_APPROVAL_REF', 'DG_ROLLBACK_VERSION', 'DG_ROLLBACK_COMPAT']) {
+    assert.match(gate, new RegExp(v + ': \\$\\{\\{ (inputs|github)\\.'), v);
+  }
+  const run = gate.slice(gate.indexOf('run: |'));
+  assert.doesNotMatch(run, /\$\{\{/, 'inputs must never be expanded inside the script body');
+  assert.match(run, /STALE_SHA_NOT_MAIN_HEAD/);
+  assert.match(run, /git rev-parse FETCH_HEAD\)" == "\$GITHUB_SHA"/);
+  assert.match(run, /exit 1/);
+});
+
+test('workflow (#778): test/approve_on have no secrets; only deploy/rollback use the production environment', () => {
   assert.equal((wf.match(/^\s+environment: switchbot-access-production$/gm) || []).length, 2);
-  assert.doesNotMatch(wf, /environment: (?!switchbot-access-production)/);
+  assert.equal((wf.match(/^\s+environment: switchbot-access-on-approval$/gm) || []).length, 1);
+  assert.doesNotMatch(wf, /environment: (?!switchbot-access-production$|switchbot-access-on-approval$)/m);
   const wfCode = wf.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
   assert.doesNotMatch(wfCode, /switchbot-verify|SWITCHBOT_VERIFY|booking-production|BOOKING_|SBV_/);
-  for (const [from, to] of [['\n  gate:', '\n  test:'], ['\n  test:', '\n  deploy:']]) {
+  for (const [from, to] of [['\n  gate:', '\n  test:'], ['\n  test:', '\n  approve_on:'], ['\n  approve_on:', '\n  deploy:']]) {
     const job = wf.slice(wf.indexOf(from), wf.indexOf(to));
-    assert.doesNotMatch(job, /environment:|secrets\./);
+    assert.doesNotMatch(job, /secrets\./);
   }
-  assert.match(wf, /\n    needs: \[gate, test\]\n/);
+  assert.doesNotMatch(wf.slice(wf.indexOf('\n  gate:'), wf.indexOf('\n  approve_on:')), /environment:/);
+  assert.match(wf, /\n    needs: \[gate, test, approve_on\]\n/);
+  assert.match(wf, /\n    needs: \[gate, approve_on\]\n/);
 });
 
-test('workflow: every job is main-only; deploy/rollback also require the explicit stage gate', () => {
-  const ifs = wf.match(/^\s+if: github\.ref == 'refs\/heads\/main'.*$/gm) || [];
-  assert.equal(ifs.length, 4, 'gate, test, deploy, rollback');
-  assert.equal((wf.match(/needs\.gate\.outputs\.enabled == 'true'/g) || []).length, 2);
-  assert.match(wf, /vars\.SWITCHBOT_ACCESS_AUTODEPLOY/);
-  assert.match(wf, /vars\.SWITCHBOT_ACCESS_EXECUTOR_CONFIRMED/);
+test('workflow (#778): deploy/rollback never run unless the gate succeeded; ON requires the independent approval job', () => {
+  for (const job of ['deploy', 'rollback']) {
+    const text = wf.slice(wf.indexOf('\n  ' + job + ':'));
+    const cond = text.slice(text.indexOf('if: >-'), text.indexOf('runs-on:'));
+    assert.match(cond, /!cancelled\(\)/);
+    assert.match(cond, /github\.ref == 'refs\/heads\/main'/);
+    assert.match(cond, /needs\.gate\.result == 'success'/);
+    assert.match(cond, /needs\.gate\.outputs\.valid == 'true'/);
+    assert.match(cond, new RegExp("needs\\.gate\\.outputs\\.mode == '" + job + "'"));
+    assert.match(cond, /OFF_CONFIRMED'\s+\|\| \(needs\.gate\.outputs\.access_state == 'ON_CHANGE_APPROVED' && needs\.approve_on\.result == 'success'\)/);
+  }
+  const deployCond = wf.slice(wf.indexOf('\n  deploy:'));
+  assert.match(deployCond.slice(0, deployCond.indexOf('runs-on:')), /needs\.test\.result == 'success'/);
+  const approve = wf.slice(wf.indexOf('\n  approve_on:'), wf.indexOf('\n  deploy:'));
+  assert.match(approve, /access_state == 'ON_CHANGE_APPROVED'/);
+  assert.match(approve, /needs\.gate\.outputs\.valid == 'true'/);
 });
 
 test('workflow: dedicated serialized concurrency group, never cancels', () => {
@@ -124,14 +157,54 @@ test('bundle: the manifest requests no write scope and keeps executeAs=USER_DEPL
 });
 
 // ---- lib ----
-test('lib.checkGate: unset disables; invalid or unconfirmed executor stops safely; only explicit values enable', () => {
-  assert.equal(lib.checkGate('', ''), 'DISABLED');
-  assert.equal(lib.checkGate(undefined, 'true'), 'DISABLED');
-  assert.equal(lib.checkGate('yes', 'true'), 'INVALID_GATE_VALUE');
-  assert.equal(lib.checkGate('FLAG_OFF', ''), 'EXECUTOR_NOT_CONFIRMED');
-  assert.equal(lib.checkGate('FLAG_OFF', 'false'), 'EXECUTOR_NOT_CONFIRMED');
-  assert.equal(lib.checkGate('FLAG_OFF', 'true'), 'ENABLED');
-  assert.equal(lib.checkGate('FLAG_ON_APPROVED', 'true'), 'ENABLED');
+const okIn = () => ({ event: 'workflow_dispatch', ref: 'refs/heads/main', action: 'deploy', safety: 'true', accessState: 'OFF_CONFIRMED',
+  executor: 'true', approvalRef: '', rollbackVersion: '', rollbackCompat: 'false' });
+const gateOf = (o) => lib.checkDispatch({ ...okIn(), ...o });
+
+test('lib.checkDispatch (#778): OFF deploy, ON deploy with approval reference and rollback with compat pass', () => {
+  assert.equal(gateOf({}), 'OK');
+  assert.equal(gateOf({ accessState: 'ON_CHANGE_APPROVED', approvalRef: '#999' }), 'OK');
+  assert.equal(gateOf({ accessState: 'ON_CHANGE_APPROVED', approvalRef: 'REC-2026-11/05' }), 'OK');
+  assert.equal(gateOf({ action: 'rollback', rollbackVersion: '12', rollbackCompat: 'true' }), 'OK');
+  assert.equal(gateOf({ rollbackCompat: '' }), 'OK');
+});
+
+test('lib.checkDispatch (#778): push/PR/schedule, other branches, empty and unselected inputs are all refused', () => {
+  for (const event of ['push', 'pull_request', 'schedule', 'workflow_run', '', undefined]) assert.equal(gateOf({ event }), 'NOT_MANUAL_DISPATCH');
+  for (const ref of ['refs/heads/feature', 'refs/pull/1/merge', 'refs/tags/v1', 'main', '', undefined]) assert.equal(gateOf({ ref }), 'BRANCH_NOT_MAIN');
+  assert.equal(lib.checkDispatch({}), 'NOT_MANUAL_DISPATCH', 'no input at all');
+  for (const action of ['', 'NOT_SELECTED', undefined]) assert.equal(gateOf({ action }), 'ACTION_NOT_SELECTED');
+  for (const action of ['Deploy', 'run', 'deploy ', 'true']) assert.equal(gateOf({ action }), 'INVALID_ACTION');
+  for (const safety of ['', 'false', 'True', '1', 'yes', undefined, true]) assert.equal(gateOf({ safety }), 'SAFETY_NOT_CONFIRMED');
+  for (const accessState of ['', 'NOT_SELECTED', undefined]) assert.equal(gateOf({ accessState }), 'ACCESS_STATE_NOT_SELECTED');
+  for (const accessState of ['OFF', 'FLAG_OFF', 'FLAG_ON_APPROVED', 'off_confirmed', 'ON']) assert.equal(gateOf({ accessState }), 'INVALID_ACCESS_STATE');
+  for (const executor of ['', 'false', 'True', undefined]) assert.equal(gateOf({ executor }), 'EXECUTOR_NOT_CONFIRMED');
+});
+
+test('lib.checkDispatch (#778): ON needs a non-empty, non-secret-shaped approval reference', () => {
+  const on = { accessState: 'ON_CHANGE_APPROVED' };
+  for (const approvalRef of ['', '   ', undefined]) assert.equal(gateOf({ ...on, approvalRef }), 'APPROVAL_REFERENCE_REQUIRED');
+  for (const approvalRef of ['has space', 'a;b', '$(x)', 'x\ny', 'https://x.example/?token=1', '-lead', 'a'.repeat(65)]) {
+    assert.equal(gateOf({ ...on, approvalRef }), 'APPROVAL_REFERENCE_INVALID', approvalRef);
+  }
+});
+
+test('lib.checkDispatch (#778): contradictory deploy/rollback inputs fail closed', () => {
+  assert.equal(gateOf({ rollbackVersion: '3' }), 'ROLLBACK_INPUT_WITH_DEPLOY');
+  assert.equal(gateOf({ rollbackCompat: 'true' }), 'ROLLBACK_INPUT_WITH_DEPLOY');
+  assert.equal(gateOf({ rollbackCompat: 'maybe' }), 'INVALID_ROLLBACK_COMPAT');
+  const rb = { action: 'rollback', rollbackVersion: '3', rollbackCompat: 'true' };
+  for (const rollbackVersion of ['', '0', '-1', 'abc', '1.5', '01', '1234567', '3; rm', undefined]) assert.equal(gateOf({ ...rb, rollbackVersion }), 'ROLLBACK_VERSION_REQUIRED');
+  for (const rollbackCompat of ['', 'false', 'True', undefined]) assert.equal(gateOf({ ...rb, rollbackCompat }), 'ROLLBACK_COMPAT_NOT_CONFIRMED');
+  // rollbackでもON時は承認参照が要る
+  assert.equal(gateOf({ ...rb, accessState: 'ON_CHANGE_APPROVED' }), 'APPROVAL_REFERENCE_REQUIRED');
+  assert.equal(gateOf({ ...rb, accessState: 'ON_CHANGE_APPROVED', approvalRef: '#1' }), 'OK');
+});
+
+test('lib: the legacy repository-variable gate is gone', () => {
+  assert.equal(lib.checkGate, undefined);
+  assert.equal(lib.GATE_VALUES, undefined);
+  assert.doesNotMatch(libText, /FLAG_OFF|FLAG_ON_APPROVED|AUTODEPLOY/);
 });
 
 test('lib.checkRemoteTarget: needs the access GAS, rejects Booking/Survey/verify projects, accepts the shared snapshot', () => {
@@ -422,14 +495,22 @@ test('rollback: a failed update that did not apply is reported as failure', () =
   noLeak(r);
 });
 
-test('write-config pins scriptExtensions to gs (clasp 3.x pulls .js by default) and gate command works end to end', () => {
+test('write-config pins scriptExtensions to gs (clasp 3.x pulls .js by default) and the dispatch-gate command works end to end', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sba-cfg-'));
   const libFile = path.join(root, 'scripts/switchbot-access-gas-deploy-lib.js');
   const r = spawnSync('node', [libFile, 'write-config', path.join(dir, 'a.json'), dir, 'x'],
     { env: { ...process.env, SBA_CLASPRC_JSON: '{}', SBA_SCRIPT_ID: 'S' } });
   assert.equal(r.status, 0);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, '.clasp.json'), 'utf8')).scriptExtensions, ['gs']);
-  assert.equal(spawnSync('node', [libFile, 'gate', '', '']).stdout.toString().trim(), 'DISABLED');
-  assert.equal(spawnSync('node', [libFile, 'gate', 'FLAG_OFF', '']).status, 1);
-  assert.equal(spawnSync('node', [libFile, 'gate', 'FLAG_OFF', 'true']).stdout.toString().trim(), 'ENABLED');
+  const cli = (env) => spawnSync('node', [libFile, 'dispatch-gate'], { env: { PATH: process.env.PATH, ...env } });
+  const good = { DG_EVENT: 'workflow_dispatch', DG_REF: 'refs/heads/main', DG_ACTION: 'deploy', DG_SAFETY: 'true',
+    DG_ACCESS_STATE: 'OFF_CONFIRMED', DG_EXECUTOR: 'true', DG_APPROVAL_REF: '', DG_ROLLBACK_VERSION: '', DG_ROLLBACK_COMPAT: 'false' };
+  assert.equal(cli(good).stdout.toString().trim(), 'OK');
+  assert.equal(cli(good).status, 0);
+  const none = cli({});
+  assert.equal(none.status, 1);
+  assert.equal(none.stdout.toString().trim(), 'NOT_MANUAL_DISPATCH');
+  assert.equal(cli({ ...good, DG_EVENT: 'push' }).status, 1);
+  assert.equal(cli({ ...good, DG_ACCESS_STATE: 'NOT_SELECTED' }).stdout.toString().trim(), 'ACCESS_STATE_NOT_SELECTED');
+  assert.equal(cli({ ...good, DG_ACCESS_STATE: 'ON_CHANGE_APPROVED' }).stdout.toString().trim(), 'APPROVAL_REFERENCE_REQUIRED');
 });
