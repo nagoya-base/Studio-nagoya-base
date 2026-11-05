@@ -603,3 +603,33 @@ test('変更案内の判定: REGUIDE が未送信確定で失敗して NOT_SENT 
   assert.ok(/変更のお知らせ/.test(last.subject));
   assert.ok(/以前にお送りした暗証番号は使用できません/.test(last.body));
 });
+
+test('通知の取りこぼし防止(レビュー指摘): 変更コード未達の通知だけ失敗しても、復旧後に通知だけ追いつく(利用者メールは再送しない)', function () {
+  var w = mailWorld(); var rt = w.runtime();
+  var op1 = issue(w, rt); open18(w);
+  rt.deliverCycle();
+  assert.strictEqual(w.userMails.length, 1);
+  w.records = [H.record({ endAt: H.jst('2030-01-11', '14:00'), revision: 2 })];
+  w.deleteMode = 'noCommandId';
+  for (var i = 0; i < 6 && !ops(w).some(function (o) { return o.revision === 2 && o.state === S.ISSUED_CONFIRMED; }); i++) {
+    w.advance(300); rt.syncCycle();
+    var pend = ops(w).filter(function (o) { return o.revision === 2 && o.state === S.SENT_WAIT_WEBHOOK; })[0];
+    if (pend) { w.advance(10); rt.handleWebhook(H.webhook({ commandId: pend.commandId }), H.TOKEN, H.TOKEN); w.advance(290); rt.syncCycle(); }
+  }
+  w.mailMode = 'throwUnknown';
+  w.mailFailIf = function (subject) { return /CHANGE_CODE_UNDELIVERED/.test(subject); }; // 後者の通知だけ一時失敗
+  rt.deliverCycle();
+  var op2 = ops(w).filter(function (o) { return o.revision === 2 && o.state === S.ISSUED_CONFIRMED; })[0];
+  assert.strictEqual(dlvOf(w, op2).state, D.UNKNOWN);
+  assert.ok(w.mails.some(function (m) { return /DELIVERY_UNKNOWN/.test(m.subject); }));
+  assert.ok(!w.mails.some(function (m) { return /CHANGE_CODE_UNDELIVERED/.test(m.subject); }));
+  w.mailFailIf = null; w.mailMode = 'ok';
+  rt.deliverCycle();
+  assert.ok(w.mails.some(function (m) { return /CHANGE_CODE_UNDELIVERED/.test(m.subject); }), '復旧後に追いつく');
+  var n = w.mails.length, attempts = w.userMailAttempts;
+  rt.deliverCycle(); rt.deliverCycle();
+  assert.strictEqual(w.mails.length, n, '通知済みなら重複しない');
+  assert.strictEqual(w.userMailAttempts, attempts, '利用者メールは再送しない');
+  assert.strictEqual(w.userMails.length, 1);
+  assert.ok(op1.id !== op2.id);
+});

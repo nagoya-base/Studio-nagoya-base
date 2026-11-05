@@ -140,7 +140,7 @@ function createWorld(opts) {
   w.deps = function () {
     var base = {
       store: w.store, secrets: w.secrets, lockService: w.lockService, api: w.api, ledger: w.ledger, snapshot: LOADED.snapshot,
-      sendMail: function (subject, body) { if (w.mailFail) throw new Error('MAIL_FAIL'); w.mails.push({ subject: subject, body: body }); },
+      sendMail: function (subject, body) { if (w.mailFail || (w.mailFailIf && w.mailFailIf(subject))) throw new Error('MAIL_FAIL'); w.mails.push({ subject: subject, body: body }); },
       sha256Hex: function (s) { return crypto.createHash('sha256').update(s).digest('hex'); },
       randomInt: function (n) { return crypto.randomInt(n); },
       nowSec: w.sec, nowMs: function () { return w.nowMs; },

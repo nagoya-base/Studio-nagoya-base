@@ -700,7 +700,11 @@ var SwitchBotAccessCore = (function () {
         return !deps.store.get('ALERT_' + recId + '_DELIVERY_RETRY_EXHAUSTED') ||
           (typeof d.reason === 'string' && ALERT_CODE_RE.test(d.reason) && !deps.store.get('ALERT_' + recId + '_' + d.reason));
       }
-      return d.state === DLV.UNKNOWN; // 通知の再試行のみ
+      if (d.state === DLV.UNKNOWN) { // 通知の再試行のみ（通知済みなら対象外）
+        return !deps.store.get('ALERT_' + recId + '_DELIVERY_UNKNOWN') ||
+          (d.kind === 'CHANGE' && !deps.store.get('ALERT_' + recId + '_CHANGE_CODE_UNDELIVERED'));
+      }
+      return false;
     }
 
     /** ISSUED_CONFIRMED の record にのみ、正規受渡し先へコードを渡す。 */
@@ -733,7 +737,10 @@ var SwitchBotAccessCore = (function () {
         if (d.state === DLV.SUPPRESSED) return { delivered: false, reason: 'SUPPRESSED' };
         // 送信直前の SENDING が残っている = 外部送信の成否が記録できていない。再送せず UNKNOWN（管理者判断）
         if (d.state === DLV.SENDING) return markDeliveryUnknown(rec, d, 'RESUMED_FROM_SENDING');
-        if (d.state === DLV.UNKNOWN) { alert(rec, 'DELIVERY_UNKNOWN'); return { delivered: false, reason: 'DELIVERY_UNKNOWN' }; }
+        if (d.state === DLV.UNKNOWN) {
+          alert(rec, 'DELIVERY_UNKNOWN');
+          if (d.kind === 'CHANGE') alert(rec, 'CHANGE_CODE_UNDELIVERED'); // 変更/延長後の新コード未達の引継ぎも、未通知なら再試行する
+          return { delivered: false, reason: 'DELIVERY_UNKNOWN' }; }
         if (d.attempts >= maxDeliveryAttempts) {
           if (typeof d.reason === 'string' && ALERT_CODE_RE.test(d.reason)) alert(rec, d.reason);
           if (d.kind === 'CHANGE') alert(rec, 'CHANGE_CODE_UNDELIVERED');
