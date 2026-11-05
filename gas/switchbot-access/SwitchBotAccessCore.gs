@@ -671,8 +671,12 @@ var SwitchBotAccessCore = (function () {
     function deliveryKind(rec) {
       var others = loadAll(bookingIndex(rec.bookingId)).filter(function (r) { return r.op === OP.ISSUE && r.id !== rec.id; });
       var priorMailed = others.some(function (r) {
+        if (r.deliveredAtSec) return true;
         var d = load(dlvKey(r.id));
-        return !!d && (d.state === DLV.DELIVERED || d.state === DLV.UNKNOWN || d.state === DLV.SENDING);
+        if (!d) return false;
+        // 現在状態だけでなく履歴も見る（REGUIDE で NOT_SENT に戻った後も、過去に届いた/届いたかもしれない事実は残る）
+        var everMailed = (d.history || []).some(function (h) { return h.to === DLV.DELIVERED || h.to === DLV.UNKNOWN; });
+        return everMailed || d.state === DLV.DELIVERED || d.state === DLV.UNKNOWN || d.state === DLV.SENDING;
       });
       var invalidated = others.every(function (r) { return TERMINAL.indexOf(r.state) !== -1; });
       return { kind: priorMailed ? 'CHANGE' : 'INITIAL', previousInvalidated: priorMailed ? invalidated : null };
@@ -690,7 +694,12 @@ var SwitchBotAccessCore = (function () {
       var d = load(dlvKey(recId));
       if (!d) return !rec.deliveredAtSec; // 旧形式（配送記録なし）で配送済み印があるものは対象外
       if (d.state === DLV.SENDING) return true; // 中断の後始末（UNKNOWN 化）
-      if (d.state === DLV.NOT_SENT) return d.attempts < maxDeliveryAttempts && deps.nowSec() >= d.nextTryAt;
+      if (d.state === DLV.NOT_SENT) {
+        if (d.attempts < maxDeliveryAttempts) return deps.nowSec() >= d.nextTryAt;
+        // 上限到達後はメールを再試行しない。管理者通知が未達なら通知だけ再試行する（通知済みなら対象外）
+        return !deps.store.get('ALERT_' + recId + '_DELIVERY_RETRY_EXHAUSTED') ||
+          (typeof d.reason === 'string' && ALERT_CODE_RE.test(d.reason) && !deps.store.get('ALERT_' + recId + '_' + d.reason));
+      }
       return d.state === DLV.UNKNOWN; // 通知の再試行のみ
     }
 
@@ -725,7 +734,11 @@ var SwitchBotAccessCore = (function () {
         // 送信直前の SENDING が残っている = 外部送信の成否が記録できていない。再送せず UNKNOWN（管理者判断）
         if (d.state === DLV.SENDING) return markDeliveryUnknown(rec, d, 'RESUMED_FROM_SENDING');
         if (d.state === DLV.UNKNOWN) { alert(rec, 'DELIVERY_UNKNOWN'); return { delivered: false, reason: 'DELIVERY_UNKNOWN' }; }
-        if (d.attempts >= maxDeliveryAttempts) { alert(rec, 'DELIVERY_RETRY_EXHAUSTED'); return { delivered: false, reason: 'RETRY_EXHAUSTED' }; }
+        if (d.attempts >= maxDeliveryAttempts) {
+          if (typeof d.reason === 'string' && ALERT_CODE_RE.test(d.reason)) alert(rec, d.reason);
+          if (d.kind === 'CHANGE') alert(rec, 'CHANGE_CODE_UNDELIVERED');
+          alert(rec, 'DELIVERY_RETRY_EXHAUSTED');
+          return { delivered: false, reason: 'RETRY_EXHAUSTED' }; }
         if (deps.nowSec() < d.nextTryAt) return { delivered: false, reason: 'BACKOFF' };
       }
       // 送信直前の安全ゲート（最新の台帳を読み直す。未注入・例外は fail closed）

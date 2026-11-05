@@ -554,3 +554,52 @@ test('ガーベジ回収: 配送記録は参照元OPがある間は保持し、O
   assert.strictEqual(res.removed.DLV, 1);
   assert.strictEqual(w.store.get('DLV_ORPHAN:1:****01FD:ISSUE#1'), null);
 });
+
+// ---------------------------------------------------------------- Codex レビュー指摘（P2）の回帰
+
+test('通知の取りこぼし防止: 再試行上限到達時に管理者メールが失敗しても、復旧後に通知だけ再試行する(利用者メールは再送しない)', function () {
+  var w = mailWorld(); var rt = w.runtime();
+  var op = issue(w, rt); open18(w);
+  w.recipients = {};
+  w.mailFail = true; // 管理者メール障害
+  for (var i = 0; i < 6; i++) { rt.deliverCycle(); w.advance(700); }
+  assert.strictEqual(w.mails.length, 0);
+  assert.strictEqual(dlvOf(w, op).attempts, 3);
+  w.mailFail = false;
+  w.recipients = { 'SNB-1': 'guest@example.test' };
+  rt.deliverCycle(); rt.deliverCycle();
+  var subjects = w.mails.map(function (m) { return m.subject; }).join('\n');
+  assert.ok(/DELIVERY_RETRY_EXHAUSTED/.test(subjects), '上限到達の通知が復旧後に届く');
+  assert.ok(/DELIVERY_RECIPIENT_UNRESOLVED/.test(subjects));
+  assert.strictEqual(w.userMails.length, 0, '利用者メールは自動再送しない');
+  var n = w.mails.length;
+  rt.deliverCycle(); rt.deliverCycle();
+  assert.strictEqual(w.mails.length, n, '通知済みなら重複しない');
+});
+
+test('変更案内の判定: REGUIDE が未送信確定で失敗して NOT_SENT に戻っても、過去に届いた事実から新コードを変更案内として送り、未達なら CHANGE_CODE_UNDELIVERED', function () {
+  var w = mailWorld(); var rt = w.runtime();
+  var op1 = issue(w, rt); open18(w);
+  rt.deliverCycle();
+  assert.strictEqual(w.userMails.length, 1);
+  rt.admin('resolveDelivery', { recId: op1.id, decision: 'REGUIDE' });
+  w.mailMode = 'notSent'; rt.deliverCycle(); w.mailMode = 'ok';
+  assert.strictEqual(dlvOf(w, op1).state, D.NOT_SENT);
+  w.records = [H.record({ endAt: H.jst('2030-01-11', '14:00'), revision: 2 })];
+  w.deleteMode = 'noCommandId';
+  for (var i = 0; i < 6 && !ops(w).some(function (o) { return o.revision === 2 && o.state === S.ISSUED_CONFIRMED; }); i++) {
+    w.advance(300); rt.syncCycle();
+    var pend = ops(w).filter(function (o) { return o.revision === 2 && o.state === S.SENT_WAIT_WEBHOOK; })[0];
+    if (pend) { w.advance(10); rt.handleWebhook(H.webhook({ commandId: pend.commandId }), H.TOKEN, H.TOKEN); w.advance(290); rt.syncCycle(); }
+  }
+  w.mailMode = 'notSent';
+  rt.deliverCycle();
+  var op2 = ops(w).filter(function (o) { return o.revision === 2 && o.state === S.ISSUED_CONFIRMED; })[0];
+  assert.strictEqual(dlvOf(w, op2).kind, 'CHANGE');
+  assert.ok(w.mails.some(function (m) { return /CHANGE_CODE_UNDELIVERED/.test(m.subject); }));
+  w.mailMode = 'ok'; w.advance(700);
+  rt.deliverCycle();
+  var last = w.userMails[w.userMails.length - 1];
+  assert.ok(/変更のお知らせ/.test(last.subject));
+  assert.ok(/以前にお送りした暗証番号は使用できません/.test(last.body));
+});
