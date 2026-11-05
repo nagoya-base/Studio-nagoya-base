@@ -159,12 +159,12 @@
 | `LEDGER_AUTH_REQUIRED` | GASの権限承認が未完了。手順4の承認画面で許可して再実行 |
 | `LEDGER_ACCESS_DENIED` | 台帳スプレッドシートの閲覧権限がない。台帳の所有者に閲覧権限を依頼 |
 | `LEDGER_ID_MISSING` / `LEDGER_READ_FAILED` | 台帳IDの未設定、またはその他の読取失敗（本文は表示しない） |
-| `LEDGER_SCHEMA_INVALID` | `Bookings` シートが無い、必須列の不足/重複、または末尾最大200行の `startAt`/`endAt` が日時として読めない。台帳の改変を確認（予約者名・メール・予約ID等は読まず、表示もしない） |
+| `LEDGER_SCHEMA_INVALID` | `Bookings` シートが無い、必須列の不足/重複、または末尾最大200行の `startAt`/`endAt` が日時として読めない。台帳の改変を確認（予約者名・メール等の列は読まない。予約ID・日時は検査のためメモリ内で読むが表示しない） |
 | `STORE_ENV_MISMATCH` / `STORE_INCONSISTENT` / `STORE_RECORD_INVALID` | 状態ストアの環境刻印が本番と違う／刻印なしでデータだけある／操作記録が壊れている。触らず運営担当へ |
 | `STORAGE_NEAR_LIMIT` / `STORAGE_VALUE_NEAR_LIMIT` / `STORE_READ_FAILED` | 保存容量が上限に近い／状態の読取失敗 |
 | `UNEXPECTED_ERROR` | 想定外の例外（本文は出さない）。再実行せず連絡 |
 
-**守っていること**: 出力は固定キー・固定コード・`SET`/`MISSING`/`UNKNOWN`・集計値のみ（ホワイトリストで検証し、自由文・ID・URL・メールは`INVALID_VALUE`に置換）。台帳は予約行を読み出さず、ヘッダーと末尾最大200行の日時列の型だけを検査して件数と固定コードを返す。状態ストアは接頭辞別の件数（許可リスト外は`OTHER`）と未解決の操作件数だけで、個別キー名・内容・履歴は出さない（`ACCESS_*`/`LEDGER_*`/`BOOTSTRAP_*` は件数に含めない）。`setProperty`/`deleteProperty`、`LockService`、`MailApp`、`UrlFetchApp`、`ScriptApp`（トリガー）、Sheets書込み、SwitchBot API、鍵の発行/削除、ジョブ実行、Deployment変更、機能ONは行わない（テストで0件を確認）。
+**守っていること**: 出力は固定キー・固定コード・`SET`/`MISSING`/`UNKNOWN`・集計値のみ（ホワイトリストで検証し、自由文・ID・URL・メールは`INVALID_VALUE`に置換）。台帳は、ヘッダーと末尾最大200行の `bookingId`・`startAt`・`endAt` の3列だけを検査のためにメモリ内で読み（空行の除外と日時形式の判定）、値は表示・記録せず、行数・検査行数と固定コードだけを返す（氏名・メール・電話等の列は読まない）。**検査は末尾最大200行のサンプル診断であり、全レコードの整合性を保証しない**。状態ストアは接頭辞別の件数（許可リスト外は`OTHER`）と未解決の操作件数だけで、個別キー名・内容・履歴は出さない（`ACCESS_*`/`LEDGER_*`/`BOOTSTRAP_*` は件数に含めない）。`setProperty`/`deleteProperty`、`LockService`、`MailApp`、`UrlFetchApp`、`ScriptApp`（トリガー）、Sheets書込み、SwitchBot API、鍵の発行/削除、ジョブ実行、Deployment変更、機能ONは行わない（テストで0件を確認）。
 
 ### 証跡の分離（本PRの範囲外・別記録）
 | 区分 | 記録する内容 | 本PR |
