@@ -26,7 +26,7 @@
 | --- | --- | --- | --- |
 | 1 | `LIST` | list 1回 | 端末が完全IDで1件一致・keyList完全・試験キー形式の残骸なし |
 | 2 | `ISSUE` | createKey 1回 | 受理（commandIdなしでも可。証跡区分 `API_ACCEPTED_NO_COMMAND_ID` を分ける）。容量ゲート通過 |
-| 3 | `VERIFY_ISSUED` | list 1回 | 試験名が厳密1件・件数=基準+1・既存キー不変（根拠は keyList） |
+| 3 | `VERIFY_ISSUED` | list 1回 | 試験名が厳密1件・件数=基準+1・既存キー不変・返却された種別/有効期間が要求(timeLimit・手順2で永続した開始/終了)と矛盾しない（根拠は keyList） |
 | 4 | `DELETE` | deleteKey 1回 | 受理 |
 | 5 | `VERIFY_DELETED` | list 1回 | 試験キーのID・名前が不在・既存キー不変 → `COMPLETE` |
 

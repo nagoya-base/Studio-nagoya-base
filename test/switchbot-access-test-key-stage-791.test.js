@@ -159,6 +159,20 @@ test('既存キーの属性（名前・種別・有効期間）がIDそのまま
   assert.strictEqual(step(w2, 'VERIFY_DELETED').code, 'EXISTING_KEYS_CHANGED');
 });
 
+test('発行した試験キーの種別・有効期間が要求と矛盾したら VERIFY_ISSUED で停止し、削除に進まない（#792レビュー）', function () {
+  var cases = [{ type: 'permanent' }, { endTime: '9999999999' }, { startTime: '1' }];
+  cases.forEach(function (c) {
+    var w = makeWorld({ mutateList: function (b, n) { if (n === 3) { var k = b.devices[0].keyList; Object.assign(k[k.length - 1], c); } } });
+    step(w, 'LIST'); step(w, 'ISSUE');
+    var r = step(w, 'VERIFY_ISSUED'); assert.strictEqual(r.code, 'KEY_ATTR_MISMATCH', JSON.stringify(c)); assert.strictEqual(r.manualRecovery, true);
+    assert.strictEqual(step(w, 'DELETE').ok, false);
+    assert.ok(!w.calls.some(function (x) { return x.indexOf('delete') === 0; }));
+    assert.strictEqual(w.user.TESTKEY_ID, undefined, '確認前のキーIDは保存しない');
+  });
+  var w2 = makeWorld(); step(w2, 'LIST'); step(w2, 'ISSUE');
+  var st = state(w2); assert.strictEqual(st.endSec - st.startSec, 3660, '要求した有効期間を永続'); 
+});
+
 test('対象端末の固定: 設定の端末が途中で別の37DD端末に変わったら、以降の段階は通信しない（#792レビュー）', function () {
   var w = makeWorld(); ['LIST', 'ISSUE', 'VERIFY_ISSUED'].forEach(function (x) { step(w, x); });
   w.script.ACCESS_CONFIG = cfgJson({ keypads: [{ deviceId: 'DIFFERENT000037DD' }] });

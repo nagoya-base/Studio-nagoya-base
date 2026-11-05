@@ -1600,7 +1600,7 @@ var SwitchBotAccessInfra = (function () {
       // 通信前に: 承認の消費 + 呼出し回数 + 送信済みマーカーを永続（永続に失敗したら通信しない）
       var pre = JSON.parse(JSON.stringify(st));
       pre.state = def.pre; pre.calls = st.calls + 1; pre.deviceFp = devFp;
-      if (stage === 'ISSUE') pre.name = name;
+      if (stage === 'ISSUE') { pre.name = name; pre.startSec = startSec; pre.endSec = endSec; }
       try { sp.del(TKS_PROP.APPROVAL); } catch (e) { return stop('APPROVAL_CONSUME_FAILED'); }
       if (!tksWrite(sp, pre)) return stop('STATE_WRITE_FAILED');
       out.callsUsed = pre.calls; out.apiCalls = 1; out.state = pre.state;
@@ -1631,6 +1631,10 @@ var SwitchBotAccessInfra = (function () {
           var hits = snap.list.filter(function (k) { return k.name === st.name; });
           if (hits.length === 0) return halt('KEY_NOT_FOUND');
           if (hits.length > 1) return halt('KEY_NAME_AMBIGUOUS');
+          // 要求した種別・有効期間と矛盾する返却は確認済みにしない（既存の judgeIssued と同じ契約。1時間で自然失効する保険を担保）
+          if (typeof st.startSec !== 'number' || typeof st.endSec !== 'number') return halt('KEY_ATTR_EXPECTATION_MISSING');
+          var judged = Core.judgeIssued({ valid: true, count: 1, entries: hits }, { startSec: st.startSec, endSec: st.endSec });
+          if (!judged.ok) return halt(CODE_RE.test(String(judged.error)) ? judged.error : 'KEY_ATTR_MISMATCH');
           var tid = String(hits[0].id);
           if (snap.count !== st.baselineCount + 1) return halt('KEYLIST_COUNT_MISMATCH');
           if (tksExcluding(snap, tid, sha) !== st.baselineFp) return halt('EXISTING_KEYS_CHANGED');
