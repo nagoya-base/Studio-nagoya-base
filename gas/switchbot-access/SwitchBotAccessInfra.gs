@@ -1433,6 +1433,247 @@ var SwitchBotAccessInfra = (function () {
     };
   }
 
+  // ---------- verify環境専用・37DD 段階承認型 API 単体試験（Issue #791）----------
+  //
+  // 第1段階（#756）: 37DD のテストキー1件の発行→確認→削除→不在確認だけを、人間の段階承認つきで行う。
+  // コード・設定のマージ/デプロイ/ARMED では何も起きない。各段階は「ARMED=true」かつ「その段階名の承認」が揃ったときだけ
+  // 通信し、承認は通信の前に消費する（二重押下・再実行で同じ通信をしない）。本番ジョブ（accessSyncJob 等）は流用しない。
+  // 通信は SwitchBot API 合計 TKS_MAX_CALLS 回まで（呼出し前に永続カウント。自動再送・自動復旧なし）。
+  var TKS_MAX_CALLS = 5;
+  var TKS_STAGES = {
+    LIST:            { approval: 'LIST',            from: ['INIT'],            pre: 'LIST_SENT' },
+    ISSUE:           { approval: 'ISSUE',           from: ['LISTED'],          pre: 'ISSUE_SENT' },
+    VERIFY_ISSUED:   { approval: 'VERIFY_ISSUED',   from: ['ISSUE_ACCEPTED'],  pre: 'VERIFY_ISSUED_SENT' },
+    DELETE:          { approval: 'DELETE',          from: ['ISSUED_VERIFIED'], pre: 'DELETE_SENT' },
+    VERIFY_DELETED:  { approval: 'VERIFY_DELETED',  from: ['DELETE_ACCEPTED'], pre: 'VERIFY_DELETED_SENT' }
+  };
+  var TKS_PROP = { ARMED: 'ACCESS_TEST_KEY_ARMED', APPROVAL: 'ACCESS_TEST_KEY_APPROVAL', STATE: 'ACCESS_TEST_KEY_STATE' };
+  var TKS_KEY_ID_PROP = 'TESTKEY_ID'; // 試験キーの識別子は実行者本人の User Properties にのみ置く（ログ・出力・Script Propertiesに出さない）
+  var TKS_CAPACITY_STOP = 80; // 試験は既存キーを増やさない前提。80件以上は容量問題として発行しない
+  var TKS_NAME_RE = /^TST[A-Z0-9]{8}$/;
+
+  function tksBlank() {
+    return { ok: false, code: 'TEST_KEY_NOT_RUN', stage: 'NOT_CHECKED', failures: [], stopped: false, apiCalls: 0, callsUsed: 0, callsMax: TKS_MAX_CALLS,
+      state: 'NOT_CHECKED', manualRecovery: false, evidence: 'NONE', keyCount: 0, notes: ['VERIFY_ONLY', 'TARGET_37DD_ONLY', 'ONE_TEST_KEY_ONLY', 'NO_AUTO_RETRY'] };
+  }
+
+  function tksReadState(sp) {
+    var raw;
+    try { raw = sp.get(TKS_PROP.STATE); } catch (e) { return { ok: false }; }
+    if (raw === undefined) return { ok: false };
+    if (raw === null || raw === '') return { ok: true, st: { v: 1, state: 'INIT', calls: 0, name: '', baselineCount: -1, baselineFp: '', hasCommandId: false, reason: '' } };
+    var p = safeParse(raw);
+    if (!p || typeof p !== 'object' || p.v !== 1 || typeof p.state !== 'string' || typeof p.calls !== 'number' || p.calls < 0 || p.calls > TKS_MAX_CALLS) return { ok: false };
+    return { ok: true, st: p };
+  }
+
+  /** 状態遷移は1回の set。失敗時は呼出し側が通信しない（先に永続できなければ通信しない）。 */
+  function tksWrite(sp, st) {
+    try { sp.set(TKS_PROP.STATE, JSON.stringify(st)); return true; } catch (e) { return false; }
+  }
+
+  /** 環境・設定・末尾4桁・フラグ・トリガー・ARMED のゲート。通信より前に全部通す。失敗時は最初の理由だけ返す。 */
+  function tksGates(deps) {
+    var gate = authorizeExecutor(deps);
+    if (!gate.ok) return { ok: false, code: gate.error };
+    var flag = accessFlagState(deps), flagRaw;
+    try { flagRaw = deps.accessFlag(); } catch (e) { flagRaw = undefined; }
+    if (flag !== 'OFF') return { ok: false, code: flagCode(flag) };
+    if (flagRaw !== 'false') return { ok: false, code: 'ACCESS_FLAG_NOT_EXPLICIT_OFF' };
+    var sp = deps.scriptProps;
+    var envRaw = diagRead(sp, 'ACCESS_ENVIRONMENT'), cfgRaw = diagRead(sp, 'ACCESS_CONFIG');
+    if (envRaw.state !== 'SET' || cfgRaw.state !== 'SET') return { ok: false, code: 'SETTINGS_INCOMPLETE' };
+    if (envRaw.raw !== ENVIRONMENT.VERIFY) return { ok: false, code: 'ENV_NOT_VERIFY' };
+    var cfg = safeParse(cfgRaw.raw);
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return { ok: false, code: 'CONFIG_INVALID' };
+    if (cfg.environment !== ENVIRONMENT.VERIFY) return { ok: false, code: 'ENV_MISMATCH' };
+    if (!validateConfig(cfg).ok) return { ok: false, code: 'CONFIG_INVALID' };
+    var allowed = (Array.isArray(cfg.allowedLast4) ? cfg.allowedLast4 : []).map(function (x) { return String(x).toUpperCase(); });
+    var pads = Array.isArray(cfg.keypads) ? cfg.keypads : [];
+    var padLast4 = pads.map(function (k) { return last4(k && k.deviceId); });
+    if (allowed.concat(padLast4).some(function (x) { return TEST_FORBIDDEN_LAST4.indexOf(x) !== -1; })) return { ok: false, code: 'LAST4_FORBIDDEN' };
+    if (allowed.length !== 1 || allowed[0] !== TEST_ALLOWED_LAST4[0] || pads.length !== 1 || padLast4[0] !== TEST_ALLOWED_LAST4[0]) return { ok: false, code: 'LAST4_MISMATCH' };
+    var n;
+    try { n = deps.triggerCount(); } catch (e) { n = undefined; }
+    if (typeof n !== 'number') return { ok: false, code: 'TRIGGER_STATE_UNKNOWN' };
+    if (n !== 0) return { ok: false, code: 'TRIGGERS_PRESENT' };
+    return { ok: true, deviceId: pads[0].deviceId, actor: gate.actor };
+  }
+
+  /** keyList 全体の完全性検査。id・name を持たない/重複 id のある要素があれば不在・件数を断定しない。 */
+  function tksSnapshot(devices, deviceId, sha) {
+    if (!Array.isArray(devices)) return { valid: false, code: 'DEVICE_LIST_INVALID' };
+    var devs = devices.filter(function (d) { return d && d.deviceId === deviceId; });
+    if (devs.length !== 1) return { valid: false, code: devs.length === 0 ? 'DEVICE_NOT_FOUND' : 'DEVICE_AMBIGUOUS' };
+    var list = devs[0].keyList;
+    if (!Array.isArray(list)) return { valid: false, code: 'KEYLIST_INVALID' };
+    var seen = {}, ids = [];
+    for (var i = 0; i < list.length; i++) {
+      var k = list[i];
+      if (!k || typeof k !== 'object' || k.id === undefined || k.id === null || String(k.id) === '' || typeof k.name !== 'string' || k.name === '') return { valid: false, code: 'KEYLIST_ENTRY_INVALID' };
+      var id = String(k.id);
+      if (seen[id]) return { valid: false, code: 'KEYLIST_DUPLICATE_ID' };
+      seen[id] = true; ids.push(id);
+    }
+    return { valid: true, list: list, count: list.length, ids: ids, fp: sha(ids.slice().sort().join('\n')) };
+  }
+
+  function tksExcluding(snap, id, sha) {
+    var ids = snap.ids.filter(function (x) { return x !== id; });
+    return sha(ids.slice().sort().join('\n'));
+  }
+
+  /**
+   * 1段階だけ実行する。stage ∈ LIST / ISSUE / VERIFY_ISSUED / DELETE / VERIFY_DELETED。
+   * deps: identity, adminActors, accessFlag, scriptProps{get,set,del}, userProps{get,set,del}, lock{tryLock,releaseLock},
+   *       triggerCount(), api{listDevices,createKey,deleteKey}, sha256Hex, randomInt, nowSec
+   * 返すのは固定コード・件数・真偽値のみ（完全deviceId・パスコード・トークン・passcode ID・キー名・例外本文・commandId を含めない）。
+   */
+  function testKeyStage(deps, stage) {
+    var out = tksBlank();
+    var def = TKS_STAGES[stage];
+    out.stage = def ? stage : 'INVALID_STAGE';
+    function fin() {
+      out.ok = out.failures.length === 0;
+      out.code = out.ok ? 'TEST_KEY_' + stage + '_OK' : out.failures[0];
+      return diagSanitize(out, 0);
+    }
+    function stop(code) { if (out.failures.indexOf(code) === -1) out.failures.push(code); out.stopped = true; return fin(); }
+    if (!def) return stop('INVALID_STAGE');
+    var sp = deps.scriptProps, locked = false;
+    try {
+      var g = tksGates(deps);
+      if (!g.ok) return stop(g.code);
+      var armed = diagRead(sp, TKS_PROP.ARMED);
+      if (armed.state === 'UNKNOWN') return stop('ARMED_STATE_UNKNOWN');
+      if (armed.raw !== 'true') return stop('NOT_ARMED');
+
+      if (!deps.lock || !deps.lock.tryLock(1000)) return stop('LOCK_UNAVAILABLE');
+      locked = true;
+
+      var rs = tksReadState(sp);
+      if (!rs.ok) return stop('STATE_UNREADABLE');
+      var st = rs.st;
+      out.state = DIAG_VALUE_RE.test(st.state) ? st.state : 'INVALID_VALUE';
+      out.callsUsed = st.calls;
+      if (st.state === 'STOPPED' || /_SENT$/.test(st.state)) { out.manualRecovery = true; return stop(st.state === 'STOPPED' ? 'STOPPED_MANUAL_RECOVERY' : 'INTERRUPTED_MANUAL_RECOVERY'); }
+      if (st.state === 'COMPLETE') return stop('ALREADY_COMPLETE');
+      if (def.from.indexOf(st.state) === -1) return stop(st.state === def.pre || st.state === stage ? 'STAGE_ALREADY_DONE' : 'STAGE_ORDER_VIOLATION');
+
+      // 段階ごとの明示承認（その段階名と完全一致）。通信前に消費する
+      var ap = diagRead(sp, TKS_PROP.APPROVAL);
+      if (ap.state === 'UNKNOWN') return stop('APPROVAL_STATE_UNKNOWN');
+      if (ap.raw !== def.approval) return stop('STAGE_NOT_APPROVED');
+      var cred;
+      try { cred = !!(deps.userProps.get('SWITCHBOT_TOKEN') && deps.userProps.get('SWITCHBOT_SECRET')); } catch (e) { cred = false; }
+      if (!cred) return stop('AUTH_CREDENTIALS_MISSING');
+      if (st.calls >= TKS_MAX_CALLS) return stop('CALL_BUDGET_EXHAUSTED');
+
+      var sha = deps.sha256Hex;
+      var keyId = null;
+      if (stage === 'DELETE' || stage === 'VERIFY_DELETED' || stage === 'VERIFY_ISSUED') {
+        if (!TKS_NAME_RE.test(String(st.name || ''))) return stop('TEST_KEY_NAME_MISSING');
+      }
+      if (stage === 'DELETE' || stage === 'VERIFY_DELETED') {
+        try { keyId = deps.userProps.get(TKS_KEY_ID_PROP); } catch (e) { keyId = undefined; }
+        if (!keyId) return stop('TEST_KEY_ID_MISSING');
+      }
+      var password = null, name = null, startSec = 0, endSec = 0;
+      if (stage === 'ISSUE') {
+        var cap = keypadCapacityGate([{ deviceId: g.deviceId, keyList: new Array(Math.max(0, st.baselineCount)) }], g.deviceId, { stopAt: TKS_CAPACITY_STOP, officialLimit: null });
+        if (st.baselineCount < 0 || !st.baselineFp) return stop('BASELINE_MISSING');
+        if (!cap.ok) return stop(cap.code);
+        name = 'TST'; for (var i = 0; i < 8; i++) name += 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'.charAt(deps.randomInt(32));
+        password = ''; for (var j = 0; j < 8; j++) password += String(deps.randomInt(10));
+        startSec = deps.nowSec() - 60; endSec = deps.nowSec() + 3600;
+      }
+
+      // 通信前に: 承認の消費 + 呼出し回数 + 送信済みマーカーを永続（永続に失敗したら通信しない）
+      var pre = JSON.parse(JSON.stringify(st));
+      pre.state = def.pre; pre.calls = st.calls + 1;
+      if (stage === 'ISSUE') pre.name = name;
+      try { sp.del(TKS_PROP.APPROVAL); } catch (e) { return stop('APPROVAL_CONSUME_FAILED'); }
+      if (!tksWrite(sp, pre)) return stop('STATE_WRITE_FAILED');
+      out.callsUsed = pre.calls; out.apiCalls = 1; out.state = pre.state;
+      function halt(code, cleanup) {
+        var s = JSON.parse(JSON.stringify(pre)); s.state = 'STOPPED'; s.reason = code;
+        tksWrite(sp, s); out.state = 'STOPPED'; out.manualRecovery = true;
+        return stop(code);
+      }
+      function done(next, mut) {
+        var s = JSON.parse(JSON.stringify(pre)); s.state = next; if (mut) mut(s);
+        if (!tksWrite(sp, s)) { out.manualRecovery = true; return stop('STATE_WRITE_FAILED'); }
+        out.state = next; return fin();
+      }
+
+      if (stage === 'LIST' || stage === 'VERIFY_ISSUED' || stage === 'VERIFY_DELETED') {
+        var lr;
+        try { lr = deps.api.listDevices(); } catch (e) { lr = null; }
+        if (!lr || lr.ok !== true) return halt(lr && lr.error === 'LIST_API_ERROR' ? 'LIST_API_ERROR' : 'LIST_COMM_ERROR');
+        var snap = tksSnapshot(lr.devices, g.deviceId, sha);
+        if (!snap.valid) return halt(snap.code);
+        out.keyCount = snap.count; out.evidence = 'KEYLIST';
+        if (stage === 'LIST') {
+          // 既存キーの読取専用確認。端末末尾4桁も再確認（完全IDで1件一致済み）
+          if (snap.list.some(function (k) { return TKS_NAME_RE.test(String(k.name)); })) return halt('STALE_TEST_KEY_PRESENT');
+          return done('LISTED', function (s) { s.baselineCount = snap.count; s.baselineFp = snap.fp; });
+        }
+        if (stage === 'VERIFY_ISSUED') {
+          var hits = snap.list.filter(function (k) { return k.name === st.name; });
+          if (hits.length === 0) return halt('KEY_NOT_FOUND');
+          if (hits.length > 1) return halt('KEY_NAME_AMBIGUOUS');
+          var tid = String(hits[0].id);
+          if (snap.count !== st.baselineCount + 1) return halt('KEYLIST_COUNT_MISMATCH');
+          if (tksExcluding(snap, tid, sha) !== st.baselineFp) return halt('EXISTING_KEYS_CHANGED');
+          try { deps.userProps.set(TKS_KEY_ID_PROP, tid); } catch (e) { return halt('TEST_KEY_ID_STORE_FAILED'); }
+          return done('ISSUED_VERIFIED', null);
+        }
+        // VERIFY_DELETED
+        var byName = snap.list.filter(function (k) { return k.name === st.name; }).length;
+        var byId = snap.list.filter(function (k) { return String(k.id) === String(keyId); }).length;
+        if (byName || byId) return halt('TEST_KEY_STILL_PRESENT');
+        if (snap.count !== st.baselineCount || snap.fp !== st.baselineFp) return halt('EXISTING_KEYS_CHANGED');
+        try { deps.userProps.del(TKS_KEY_ID_PROP); } catch (e) { /* 残っても無害（削除済み）。状態は完了にする */ }
+        return done('COMPLETE', null);
+      }
+
+      var res, thrown = false;
+      try {
+        res = stage === 'ISSUE'
+          ? deps.api.createKey({ deviceId: g.deviceId, name: name, password: password, startTime: startSec, endTime: endSec })
+          : deps.api.deleteKey(g.deviceId, String(keyId));
+      } catch (e) { thrown = true; }
+      password = null;
+      if (thrown) return halt(stage === 'ISSUE' ? 'ISSUE_RESULT_UNKNOWN' : 'DELETE_RESULT_UNKNOWN');
+      var c = Core.classifyApi(res);
+      if (!c.accepted) return halt(stage === 'ISSUE' ? 'ISSUE_RESULT_UNKNOWN' : 'DELETE_RESULT_UNKNOWN');
+      out.evidence = c.commandId ? 'API_ACCEPTED_WITH_COMMAND_ID' : 'API_ACCEPTED_NO_COMMAND_ID';
+      return done(stage === 'ISSUE' ? 'ISSUE_ACCEPTED' : 'DELETE_ACCEPTED', function (s) { s.hasCommandId = !!c.commandId; });
+    } catch (e) {
+      out.manualRecovery = true;
+      return stop('UNEXPECTED_ERROR');
+    } finally {
+      if (locked) { try { deps.lock.releaseLock(); } catch (e) { /* noop */ } }
+    }
+  }
+
+  /** 通信しない状態確認。段階・回数・要手動復旧のみ（キー名・IDは出さない）。 */
+  function testKeyStatus(deps) {
+    var out = tksBlank(); out.stage = 'STATUS';
+    var g = tksGates(deps);
+    out.gates = g.ok ? 'PASS' : g.code;
+    var rs = tksReadState(deps.scriptProps);
+    if (rs.ok) { out.state = rs.st.state; out.callsUsed = rs.st.calls; out.manualRecovery = rs.st.state === 'STOPPED' || /_SENT$/.test(rs.st.state); }
+    else out.state = 'STATE_UNREADABLE';
+    var a = diagRead(deps.scriptProps, TKS_PROP.ARMED);
+    out.armed = a.raw === 'true' ? 'ON' : (a.state === 'UNKNOWN' ? 'UNKNOWN' : 'OFF');
+    var ap = diagRead(deps.scriptProps, TKS_PROP.APPROVAL);
+    out.approvedStage = ap.state === 'SET' && DIAG_VALUE_RE.test(ap.raw) ? ap.raw : (ap.state === 'SET' ? 'INVALID_VALUE' : 'NONE');
+    out.ok = g.ok && rs.ok;
+    out.code = out.ok ? 'TEST_KEY_STATUS_OK' : (g.ok ? 'STATE_UNREADABLE' : g.code);
+    return diagSanitize(out, 0);
+  }
+
   // ---------- 本番初期設定の読取専用診断（Issue #774）----------
 
   var DIAG_PREFIXES = ['OP', 'BK', 'EVT', 'DLV', 'HB', 'IALERT', 'ALERT', 'INBOX', 'TRK', 'ADMINLOG', 'APICOUNT', 'META'];
@@ -1684,7 +1925,7 @@ var SwitchBotAccessInfra = (function () {
     constantTimeEquals: constantTimeEquals, authenticateWebhook: authenticateWebhook, authorizeAdmin: authorizeAdmin,
     CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials, credentialStatus: credentialStatus,
     BOOTSTRAP_KEYS: BOOTSTRAP_KEYS, accessFlagState: accessFlagState, migrateBootstrapCredentials: migrateBootstrapCredentials, bootstrapStatus: bootstrapStatus, scrubBootstrapCredentials: scrubBootstrapCredentials,
-    readOnlyDiagnostics: readOnlyDiagnostics, testReadOnlyDiagnostics: testReadOnlyDiagnostics,
+    readOnlyDiagnostics: readOnlyDiagnostics, testReadOnlyDiagnostics: testReadOnlyDiagnostics, testKeyStage: testKeyStage, testKeyStatus: testKeyStatus, TKS_MAX_CALLS: TKS_MAX_CALLS,
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,

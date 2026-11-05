@@ -392,6 +392,65 @@ function accessCheckSetup() {
   return status;
 }
 
+// ── verify環境専用・37DD 段階承認型 API 単体試験（Issue #791）──
+// エディタの関数選択から引数なしで1回ずつ実行する手動入口。マージ・デプロイ・ARMED のみでは通信しない。
+// 通信には ACCESS_TEST_KEY_ARMED=true と、その段階名の ACCESS_TEST_KEY_APPROVAL（LIST / ISSUE / VERIFY_ISSUED / DELETE /
+// VERIFY_DELETED。通信前に消費）の両方が必要。順序: Step1 → Step2 → Step3 → Step4 → Step5。SwitchBot API は合計5回まで・自動再送なし。
+// 本番ジョブ（accessSyncJob 等）・トリガー・Webhook・台帳・メールは使わない。ログと戻り値は固定コード・件数のみ。
+// 中断・不明時は次の変更操作を停止し、公式アプリで手動確認・復旧する（手順: docs/switchbot-access-test-key-stage-791.md）。
+function sba_testKeyDeps_() {
+  var s = sba_scriptProps_(), u = sba_userProps_();
+  return {
+    identity: function () {
+      return { email: Session.getActiveUser().getEmail(), effectiveEmail: Session.getEffectiveUser().getEmail() };
+    },
+    adminActors: sba_adminActors_(),
+    accessFlag: function () { return s.getProperty('ACCESS_ENABLED'); },
+    scriptProps: {
+      get: function (k) { return s.getProperty(k); },
+      set: function (k, v) { s.setProperty(k, v); },
+      del: function (k) { s.deleteProperty(k); }
+    },
+    userProps: {
+      get: function (k) { return u.getProperty(k); },
+      set: function (k, v) { u.setProperty(k, v); },
+      del: function (k) { u.deleteProperty(k); }
+    },
+    lock: LockService.getScriptLock(),
+    triggerCount: function () { return ScriptApp.getProjectTriggers().length; },
+    api: sba_api_(),
+    sha256Hex: function (v) {
+      return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, v, Utilities.Charset.UTF_8)
+        .map(function (b) { return ('0' + (b < 0 ? b + 256 : b).toString(16)).slice(-2); }).join('');
+    },
+    randomInt: function (n) { return Math.floor(Math.random() * n); },
+    nowSec: function () { return Math.floor(Date.now() / 1000); }
+  };
+}
+
+function sba_testKeyRun_(stage) {
+  var out;
+  try {
+    out = SwitchBotAccessInfra.testKeyStage(sba_testKeyDeps_(), stage);
+  } catch (e) {
+    out = { ok: false, code: 'UNEXPECTED_ERROR' };
+  }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+
+function accessTestKeyStatus() {
+  var out;
+  try { out = SwitchBotAccessInfra.testKeyStatus(sba_testKeyDeps_()); } catch (e) { out = { ok: false, code: 'UNEXPECTED_ERROR' }; }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+function accessTestKeyStep1List() { return sba_testKeyRun_('LIST'); }
+function accessTestKeyStep2Issue() { return sba_testKeyRun_('ISSUE'); }
+function accessTestKeyStep3VerifyIssued() { return sba_testKeyRun_('VERIFY_ISSUED'); }
+function accessTestKeyStep4Delete() { return sba_testKeyRun_('DELETE'); }
+function accessTestKeyStep5VerifyDeleted() { return sba_testKeyRun_('VERIFY_DELETED'); }
+
 // ── 本番初期設定の読取専用診断（Issue #774）──
 // エディタの関数選択から引数なしで1回実行。ACCESS_ADMIN_ACTORS の本人（active/effective 一致）のみ。ACCESS_ENABLED が
 // 明示OFFのときだけ進む。書込み（Properties/Sheets/ロック）・通信（UrlFetch/Mail）・トリガー操作は一切しない。
@@ -467,3 +526,4 @@ function accessTestReadOnlyDiagnostics() {
   Logger.log(JSON.stringify(out));
   return out;
 }
+
