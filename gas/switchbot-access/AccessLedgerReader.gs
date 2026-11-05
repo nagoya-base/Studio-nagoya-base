@@ -91,7 +91,64 @@ var AccessLedgerReader = (function () {
     }
   }
 
-  return { SHEET_NAME: SHEET_NAME, REQUIRED_COLUMNS: REQUIRED_COLUMNS.slice(), checkHeaders: checkHeaders, select: select, readFromSheet: readFromSheet };
+  var INSPECT_SAMPLE_ROWS = 200;
+
+  /**
+   * 例外を固定コードに分類する（本文は返さない）。GASの権限承認が必要な場合と、文書への権限が無い場合を区別する。
+   * 分類に使うだけで、メッセージは保持・出力しない。
+   */
+  function classifyError(e) {
+    var m = '';
+    try { m = String(e && e.message !== undefined ? e.message : e); } catch (x) { m = ''; }
+    if (/authorization is required|authorisation is required|承認が必要|認可が必要/i.test(m)) return 'LEDGER_AUTH_REQUIRED';
+    if (/do not have permission|permission denied|access denied|アクセス権|権限がありません/i.test(m)) return 'LEDGER_ACCESS_DENIED';
+    return 'LEDGER_READ_FAILED';
+  }
+
+  /**
+   * 診断用の読取専用検査（Issue #774）。予約の値は読まない／返さない:
+   * ヘッダー行と、末尾最大200行の startAt/endAt 列を型検査に使い、集計値（行数・検査行数）と固定コードだけ返す。
+   * 書込みは行わない。例外は本文を漏らさず固定コードにする。
+   */
+  function inspectSheet(sheet) {
+    var res = { code: 'LEDGER_READ_FAILED', headers: 'NOT_CHECKED', columnFormat: 'NOT_CHECKED', rows: 0, sampled: 0 };
+    try {
+      if (!sheet) { res.code = 'LEDGER_SCHEMA_INVALID'; res.headers = 'SHEET_MISSING'; return res; }
+      var lastCol = sheet.getLastColumn();
+      var lastRow = sheet.getLastRow();
+      if (lastCol < 1) { res.code = 'LEDGER_SCHEMA_INVALID'; res.headers = 'EMPTY'; return res; }
+      var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+      var chk = checkHeaders(header);
+      if (!chk.ok) { res.code = 'LEDGER_SCHEMA_INVALID'; res.headers = 'MISSING'; return res; }
+      var dup = REQUIRED_COLUMNS.some(function (c) { return header.indexOf(c) !== header.lastIndexOf(c); });
+      if (dup) { res.code = 'LEDGER_SCHEMA_INVALID'; res.headers = 'DUPLICATE'; return res; }
+      res.headers = 'COMPLETE';
+      res.rows = Math.max(0, lastRow - 1);
+      if (res.rows === 0) { res.code = 'LEDGER_ACCESS_OK'; res.columnFormat = 'NO_DATA'; return res; }
+      var n = Math.min(res.rows, INSPECT_SAMPLE_ROWS);
+      var first = lastRow - n + 1;
+      var idCol = header.indexOf('bookingId') + 1;
+      var ids = sheet.getRange(first, idCol, n, 1).getValues();
+      var bad = false;
+      ['startAt', 'endAt'].forEach(function (c) {
+        var vals = sheet.getRange(first, header.indexOf(c) + 1, n, 1).getValues();
+        for (var i = 0; i < n; i++) {
+          var id = ids[i][0];
+          if (id === undefined || id === null || String(id) === '') continue; // 空行は対象外
+          if (toMs(vals[i][0]) === null) bad = true;
+        }
+      });
+      res.sampled = n;
+      res.columnFormat = bad ? 'INVALID' : 'OK';
+      res.code = bad ? 'LEDGER_SCHEMA_INVALID' : 'LEDGER_ACCESS_OK';
+      return res;
+    } catch (e) {
+      res.code = classifyError(e);
+      return res;
+    }
+  }
+
+  return { SHEET_NAME: SHEET_NAME, REQUIRED_COLUMNS: REQUIRED_COLUMNS.slice(), checkHeaders: checkHeaders, select: select, readFromSheet: readFromSheet, inspectSheet: inspectSheet, classifyError: classifyError };
 })();
 
 if (typeof module !== 'undefined' && module.exports) {
