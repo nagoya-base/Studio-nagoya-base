@@ -29,7 +29,7 @@ deployの流れ（「更新」ステップまで公開中Deploymentの参照先�
 2. Secrets・認証JSON形式の検査 → `list-deployments`で`DEPLOYMENT_ID`が**1件だけ**存在し固定版（@HEADでない）であることを確認、更新前の公開版を記録
 3. 配布物を組み立て、**完全性・純度を検査**（下記）
 4. `clasp pull`で対象が鍵管理GAS（`SwitchBotAccessApp.gs`/`SwitchBotAccessCore.gs`を含み、`Booking*`/`Survey*`/`SwitchBotVerify*`を含まない）であることを確認
-5. manifest検査: `webapp.access/executeAs`がリモートと一致、新しい`oauthScopes`が無いこと（新scopeは手動承認が先）
+5. manifest検査: `webapp.access/executeAs`がリモートと一致、新しい`oauthScopes`が無いこと（新scopeは手動承認が先）、Advanced Google Services依存が承認済み（Sheets API v4のみ）で、リモートにあって配布側に無い依存が無いこと（#780。違えば配布せず停止）
 6. `clasp push --force` → pullし直して内容照合（ソース反映の確認）
 7. `clasp update-deployment <DEPLOYMENT_ID> --description "main <SHA>"`（新版作成＋既存Deployment更新。**1回だけ・再実行しない**）
 8. `list-deployments`を最大5回読み直し、版番号が増え説明が`main <SHA>`になったことを確認
@@ -142,3 +142,12 @@ Booking GAS本体、秘密設定（`.clasprc.json`・`.env`等）、テスト、
 
 ## テスト
 `test/switchbot-access-gas-deploy-768.test.js`: workflowの静的検査（`workflow_dispatch`のみ・push/PR経路なし・旧変数に非依存・必須入力と安全な既定値・gateのenv経由検証・Environment分離・ON時の独立承認job・concurrency・固定clasp・禁止操作の不在）、入力ゲートの網羅検査（未入力・未選択・未確認・OFF宣言・ON承認参照なし・rollback入力の矛盾・branch違い・push/PR契機）、配布物の完全性、偽claspによる成功／認証失敗／ID不一致／他プロジェクト取り違え／push失敗／更新未反映／`UNKNOWN_STATE`／二重実行／ロールバック（未知版・同一版・互換性未確認）／秘密の非漏えい。実GAS・実APIへは接続しない。
+
+## Sheets API v4 サービス依存とmanifest同期（Issue #780）
+
+- **実績**: 独立本番GASは、デフォルトGCPプロジェクトのまま、GASエディタの「サービス」へ Google Sheets API v4 を手動追加した後、`accessReadOnlyDiagnostics()` が `LEDGER_ACCESS_OK` で成功した（標準GCPへの切替なし）。これが成功の唯一の原因だと断定はしない。
+- **なぜソース管理するか**: エディタでサービスを追加するとリモート `appsscript.json` の `dependencies.enabledAdvancedServices` が変わる。配布は `clasp push --force` でmanifestも同期するため、リポジトリ側に無いと次回デプロイで除去され、再び `LEDGER_API_DISABLED` に戻るおそれがある。そこで `gas/switchbot-access/appsscript.json` に `{userSymbol:"Sheets", serviceId:"sheets", version:"v4"}` を宣言した。コードは従来どおりREST GET（`spreadsheets.readonly`）を使い、Advancedサービス（`Sheets.`）は実行コードから呼ばない。
+- **デプロイ検査**: 承認済みSheets v4は同期できる。未承認のサービス／ライブラリの追加、リモートにあって配布側に無い依存（除去されるもの）は `MANIFEST_UNAPPROVED_DEPENDENCY` / `MANIFEST_REMOTE_DEPENDENCY_WOULD_BE_REMOVED` で配布前に停止する。pushの後はリモートmanifestとの照合（`compare-sources`）も行う。
+- **検証待ち**: 実際のリモートmanifest値の読取り比較は本PRでは未実施（ID等を出さない読取り専用調査は運営者側）。差分が想定と違えば、本PRのmanifestを調整してから配布する。
+- **運用上の注意**: 今後GASエディタ側で設定を変えたら、同じ変更をGitHubへ反映する。差異に気づかないままデプロイしない（検査が止める）。
+- **反映手順**: PRマージでは本番に反映されない。レビュー後に運営者が手動デプロイし、`accessReadOnlyDiagnostics()` を再実行して `LEDGER_ACCESS_OK`（行数は変動しうる）を確認する。これはSwitchBot実機・Webhook・鍵発行の確認ではなく、#756の前提整理とは別。

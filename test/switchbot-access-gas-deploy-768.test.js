@@ -240,6 +240,45 @@ test('lib.pickDeployment / checkManifest / checkCredential / describeVersion', (
   assert.equal(lib.describeVersion(JSON.stringify([]), 2), '-');
 });
 
+test('Issue #780: Sheets API v4 依存の宣言・同期・予期しない依存/除去の安全停止', () => {
+  const repoManifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'gas', 'switchbot-access', 'appsscript.json'), 'utf8'));
+  // 配布manifestに承認済みSheets v4のみ。scope/webapp維持、新規API権限なし。
+  assert.deepEqual(repoManifest.dependencies, { enabledAdvancedServices: [{ userSymbol: 'Sheets', serviceId: 'sheets', version: 'v4' }] });
+  assert.ok(repoManifest.oauthScopes.includes('https://www.googleapis.com/auth/spreadsheets.readonly'));
+  assert.ok(!repoManifest.oauthScopes.includes('https://www.googleapis.com/auth/spreadsheets'));
+  assert.deepEqual(repoManifest.webapp, { access: 'ANYONE_ANONYMOUS', executeAs: 'USER_DEPLOYING' });
+  // 実行コードはAdvancedサービス(Sheets.)を呼ばない（REST GETのみ）
+  const src = fs.readFileSync(path.join(__dirname, '..', 'gas', 'switchbot-access', 'AccessLedgerReader.gs'), 'utf8');
+  assert.ok(!/\bSheets\.Spreadsheets/.test(src));
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sba-d-'));
+  const w = (n, o) => { const f = path.join(dir, n); fs.writeFileSync(f, JSON.stringify(o)); return f; };
+  const sheets = { userSymbol: 'Sheets', serviceId: 'sheets', version: 'v4' };
+  const base = { webapp: { access: 'ANYONE_ANONYMOUS', executeAs: 'USER_DEPLOYING' }, oauthScopes: ['a'] };
+  const withDeps = (d) => ({ ...base, dependencies: d });
+  const okDeps = { enabledAdvancedServices: [sheets] };
+  // リモートに既にある／無い場合とも承認済みSheetsは同期できる
+  assert.equal(lib.checkManifest(w('a1', withDeps(okDeps)), w('b1', withDeps(okDeps))), 'OK');
+  assert.equal(lib.checkManifest(w('a2', withDeps({})), w('b2', withDeps(okDeps))), 'OK');
+  // 配布側の未承認サービス・ライブラリは停止
+  const drive = { userSymbol: 'Drive', serviceId: 'drive', version: 'v3' };
+  assert.equal(lib.checkManifest(w('a3', withDeps(okDeps)), w('b3', withDeps({ enabledAdvancedServices: [sheets, drive] }))), 'MANIFEST_UNAPPROVED_DEPENDENCY');
+  assert.equal(lib.checkManifest(w('a4', withDeps(okDeps)), w('b4', withDeps({ ...okDeps, libraries: [{ userSymbol: 'L', libraryId: 'x', version: '1' }] }))), 'MANIFEST_UNAPPROVED_DEPENDENCY');
+  assert.equal(lib.checkManifest(w('a5', withDeps(okDeps)), w('b5', withDeps({ enabledAdvancedServices: [{ ...sheets, version: 'v3' }] }))), 'MANIFEST_UNAPPROVED_DEPENDENCY');
+  // リモートの依存が配布側に無い＝push --force で除去される → 停止
+  assert.equal(lib.checkManifest(w('a6', withDeps(okDeps)), w('b6', withDeps({}))), 'MANIFEST_REMOTE_DEPENDENCY_WOULD_BE_REMOVED');
+  assert.equal(lib.checkManifest(w('a7', withDeps({ enabledAdvancedServices: [sheets, drive] })), w('b7', withDeps(okDeps))), 'MANIFEST_REMOTE_DEPENDENCY_WOULD_BE_REMOVED');
+  assert.equal(lib.checkManifest(w('a8', withDeps({ enabledAdvancedServices: 'x' })), w('b8', withDeps(okDeps))), 'MANIFEST_DEPENDENCIES_UNREADABLE');
+  // webapp変更は従来どおり停止、rollback(webapp-only)は依存を見ない
+  assert.equal(lib.checkManifest(w('a9', withDeps({})), w('b9', withDeps(okDeps)), 'webapp-only'), 'OK');
+  // 配布物にSheetsが無ければ配布しない
+  const bundle = fs.mkdtempSync(path.join(os.tmpdir(), 'sba-b-'));
+  require('../scripts/prepare-switchbot-access-gas-project.js').prepareProject(bundle);
+  assert.equal(lib.checkBundle(bundle), 'OK');
+  fs.writeFileSync(path.join(bundle, 'appsscript.json'), JSON.stringify({ ...repoManifest, dependencies: {} }));
+  assert.equal(lib.checkBundle(bundle), 'BUNDLE_SHEETS_SERVICE_MISSING');
+});
+
 // ---- script with a fake clasp ----
 const SECRET = 'SECRETSCRIPTID1234567890';
 const DEPLOY = 'AKfycbxDEPLOYMENTSECRET99999';
