@@ -175,13 +175,12 @@ var SwitchBotAccessInfra = (function () {
     lines.push('■ ご利用可能な時間: ' + fmtJst(p.startSec) + ' 〜 ' + fmtJst(p.endSec));
     lines.push('■ 対象: ' + st.facilityLabel + (ref ? '（予約番号 ' + ref + '）' : ''));
     lines.push('');
-    lines.push('【ご注意】');
-    lines.push('・この暗証番号は、このご予約専用です。他の方に共有・転送しないでください。');
-    lines.push('・上記のご利用可能な時間以外は使用できません。');
-    lines.push('・ご利用後は、このメールを削除してください。');
-    lines.push('・他の方に知られた可能性がある場合は、すぐにご連絡ください（番号を無効にして、新しい番号をご案内します）。');
+    lines.push('【ご利用にあたって】');
+    lines.push('・暗証番号は、ご案内した時間内のみご利用いただけます。');
+    lines.push('・暗証番号は、ご利用される方以外には共有しないでください。');
+    lines.push('・入室できない場合や暗証番号についてお困りの際は、お問い合わせください。');
     lines.push('');
-    lines.push('【届かない・入室できない場合】');
+    lines.push('【お問い合わせ】');
     lines.push(st.inquiryNote);
     return { subject: subject, body: lines.join('\n') };
   }

@@ -438,6 +438,17 @@ test('文面: 初回案内と変更案内の固定文面。不正なコードや
   });
   var e2 = null; try { Infra.renderCodeMail({ code: '12345678', startSec: end, endSec: start, kind: 'INITIAL', settings: st }); } catch (x) { e2 = x; }
   assert.ok(e2 && e2.notSent === true);
+  // #785: 利用者向け注意書き（初回・変更・再発行・失効未確認の変更で同一）
+  [a, c, c2].forEach(function (m) {
+    assert.ok(m.body.indexOf('【ご利用にあたって】\n・暗証番号は、ご案内した時間内のみご利用いただけます。\n・暗証番号は、ご利用される方以外には共有しないでください。\n・入室できない場合や暗証番号についてお困りの際は、お問い合わせください。') !== -1);
+    assert.ok(m.body.indexOf('【お問い合わせ】\n' + H.DELIVERY_CFG.inquiryNote) !== -1, '問合せ案内を1回だけ表示');
+    assert.strictEqual(m.body.split(H.DELIVERY_CFG.inquiryNote).length - 1, 1);
+    ['【ご注意】', 'このメールを削除', '知られた可能性', '番号を無効にして', '新しい番号をご案内', '転送', '届かない・入室できない場合】', '時間以外は使用できません'].forEach(function (gone) {
+      assert.strictEqual(m.body.indexOf(gone), -1, '削除対象の文言が残っていない: ' + gone);
+    });
+    assert.ok(!/キーボックス|物理キー|バックアップ|手動/.test(m.body));
+    assert.ok(m.body.indexOf('暗証番号: 12345678') !== -1 && /2030年1月11日 9:44 〜 2030年1月11日 12:15/.test(m.body));
+  });
   var injected = Infra.renderCodeMail({ code: '12345678', startSec: start, endSec: end, kind: 'INITIAL', bookingRef: 'SNB-1\nBcc: x@evil.test', settings: st });
   assert.ok(injected.body.indexOf('Bcc') === -1, '予約番号に改行等があれば載せない');
 });
