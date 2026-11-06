@@ -451,6 +451,31 @@ function accessTestKeyStep3VerifyIssued() { return sba_testKeyRun_('VERIFY_ISSUE
 function accessTestKeyStep4Delete() { return sba_testKeyRun_('DELETE'); }
 function accessTestKeyStep5VerifyDeleted() { return sba_testKeyRun_('VERIFY_DELETED'); }
 
+// ── 37DD keyList.id 型のみの読取専用診断（Issue #795）──
+// 手動実行専用・引数なし。通信には ACCESS_ID_TYPE_DIAG_APPROVAL=ID_TYPE_READ_ONCE（通信前に消費）が必要で、GET /v1.1/devices は
+// 永続予算1回のみ。ACCESS_TEST_KEY_STATE=STOPPED を維持し、変更系 API・トリガー・User Properties 書込は使わない。
+// 結果は固定コードのみ。マージ・デプロイ・本関数の存在は実機診断のGOを意味しない（#756 の個別GOが必要）。
+function sba_idTypeDiagDeps_() {
+  var d = sba_testKeyDeps_();
+  d.api = { listDevices: sba_api_().listDevices }; // 読取のみ渡す（createKey/deleteKey は到達不能）
+  d.userProps = { get: d.userProps.get, set: function () { throw new Error('READ_ONLY'); }, del: function () { throw new Error('READ_ONLY'); } };
+  return d;
+}
+
+function accessIdTypeDiagStatus() {
+  var out;
+  try { out = SwitchBotAccessInfra.idTypeDiagStatus(sba_idTypeDiagDeps_()); } catch (e) { out = { ok: false, code: 'UNEXPECTED_ERROR' }; }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+
+function accessIdTypeDiagRun() {
+  var out;
+  try { out = SwitchBotAccessInfra.idTypeDiag(sba_idTypeDiagDeps_()); } catch (e) { out = { ok: false, code: 'UNEXPECTED_ERROR' }; }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+
 // ── 本番初期設定の読取専用診断（Issue #774）──
 // エディタの関数選択から引数なしで1回実行。ACCESS_ADMIN_ACTORS の本人（active/effective 一致）のみ。ACCESS_ENABLED が
 // 明示OFFのときだけ進む。書込み（Properties/Sheets/ロック）・通信（UrlFetch/Mail）・トリガー操作は一切しない。

@@ -1687,6 +1687,132 @@ var SwitchBotAccessInfra = (function () {
     return diagSanitize(out, 0);
   }
 
+  // ---------- 37DD keyList.id 型のみの読取専用診断（Issue #795）----------
+  // 目的: 現存する通常キーの keyList.id が JSON 上で数値か文字列かを、固定コードだけで把握する。
+  // 通信は GET /v1.1/devices を永続予算1回のみ。変更系 API・User Properties 書込・既存 ACCESS_TEST_KEY_STATE の変更はしない。
+  // 観測できるのは「現存する通常キー」の型であり、11/6 に削除済みの試験キーの過去の型を証明するものではない。
+  var IDT_PROP = { APPROVAL: 'ACCESS_ID_TYPE_DIAG_APPROVAL', STATE: 'ACCESS_ID_TYPE_DIAG_STATE' };
+  var IDT_APPROVAL_VALUE = 'ID_TYPE_READ_ONCE';
+  var IDT_RESULTS = ['ID_TYPE_NUMBER', 'ID_TYPE_STRING', 'ID_TYPE_MIXED', 'ID_TYPE_UNKNOWN', 'KEYLIST_INVALID', 'TARGET_NOT_UNIQUE'];
+
+  function idtBlank(stage) {
+    return { ok: false, code: 'ID_TYPE_DIAG_NOT_RUN', stage: stage, failures: [], stopped: false, apiCalls: 0, idType: 'NOT_CHECKED',
+      notes: ['READ_ONLY', 'TARGET_37DD_ONLY', 'ONE_GET_ONLY', 'NO_AUTO_RETRY', 'NORMAL_KEYS_ONLY_NOT_DELETED_TEST_KEY'] };
+  }
+
+  /** 既存の変更試験が STOPPED のまま・ARMED/APPROVAL 未設定であることを読むだけで確認する（書込なし）。 */
+  function idtPrereq(sp) {
+    var armed = diagRead(sp, TKS_PROP.ARMED);
+    if (armed.state === 'UNKNOWN') return 'ARMED_STATE_UNKNOWN';
+    if (armed.state === 'SET') return 'TEST_KEY_ARMED_PRESENT';
+    var tap = diagRead(sp, TKS_PROP.APPROVAL);
+    if (tap.state === 'UNKNOWN') return 'APPROVAL_STATE_UNKNOWN';
+    if (tap.state === 'SET') return 'TEST_KEY_APPROVAL_PRESENT';
+    var rs = tksReadState(sp);
+    if (!rs.ok) return 'TEST_KEY_STATE_UNREADABLE';
+    if (rs.st.state !== 'STOPPED') return 'TEST_KEY_STATE_NOT_STOPPED';
+    return null;
+  }
+
+  /** keyList.id の型だけを集約する。値は保持・返却しない。 */
+  function idtClassify(devices, deviceId) {
+    if (!Array.isArray(devices)) return 'KEYLIST_INVALID';
+    var n = 0, list = null;
+    for (var i = 0; i < devices.length; i++) {
+      var d = devices[i];
+      if (d && typeof d === 'object' && d.deviceId === deviceId) { n++; list = d.keyList; }
+    }
+    if (n !== 1) return 'TARGET_NOT_UNIQUE';
+    if (!Array.isArray(list)) return 'KEYLIST_INVALID';
+    var num = false, str = false, other = false;
+    for (var j = 0; j < list.length; j++) {
+      var k = list[j];
+      if (!k || typeof k !== 'object') return 'KEYLIST_INVALID';
+      var t = typeof k.id;
+      if (t === 'number' && isFinite(k.id)) num = true;
+      else if (t === 'string' && k.id !== '') str = true;
+      else other = true;
+    }
+    if (other || (!num && !str)) return 'ID_TYPE_UNKNOWN';
+    return num && str ? 'ID_TYPE_MIXED' : (num ? 'ID_TYPE_NUMBER' : 'ID_TYPE_STRING');
+  }
+
+  function idTypeDiag(deps) {
+    var out = idtBlank('RUN');
+    function fin() {
+      out.ok = out.failures.length === 0 && ['ID_TYPE_NUMBER', 'ID_TYPE_STRING', 'ID_TYPE_MIXED'].indexOf(out.idType) !== -1;
+      out.code = out.failures.length ? out.failures[0] : out.idType;
+      return diagSanitize(out, 0);
+    }
+    function stop(code) { if (out.failures.indexOf(code) === -1) out.failures.push(code); out.stopped = true; return fin(); }
+    var sp = deps.scriptProps, locked = false;
+    try {
+      var g = tksGates(deps);
+      if (!g.ok) return stop(g.code);
+      var pr = idtPrereq(sp);
+      if (pr) return stop(pr);
+      if (!deps.lock || !deps.lock.tryLock(1000)) return stop('LOCK_UNAVAILABLE');
+      locked = true;
+
+      // 診断の予算は永続の1回のみ。状態が何かあれば（送信済み・完了・停止・読取不能）再実行しない
+      var cur = diagRead(sp, IDT_PROP.STATE);
+      if (cur.state === 'UNKNOWN') return stop('DIAG_STATE_UNKNOWN');
+      if (cur.state === 'SET') return stop('DIAG_ALREADY_USED');
+      var ap = diagRead(sp, IDT_PROP.APPROVAL);
+      if (ap.state === 'UNKNOWN') return stop('APPROVAL_STATE_UNKNOWN');
+      if (ap.raw !== IDT_APPROVAL_VALUE) return stop('DIAG_NOT_APPROVED');
+      var cred;
+      try { cred = !!(deps.userProps.get('SWITCHBOT_TOKEN') && deps.userProps.get('SWITCHBOT_SECRET')); } catch (e) { cred = false; }
+      if (!cred) return stop('AUTH_CREDENTIALS_MISSING');
+
+      // 通信前に: 承認の消費 + 送信済みマーカーを永続（どちらか失敗したら通信しない）
+      try { sp.del(IDT_PROP.APPROVAL); } catch (e) { return stop('APPROVAL_CONSUME_FAILED'); }
+      try { sp.set(IDT_PROP.STATE, JSON.stringify({ v: 1, state: 'SENT', calls: 1 })); } catch (e) { return stop('STATE_WRITE_FAILED'); }
+      out.apiCalls = 1;
+      function finish(state, result) {
+        try { sp.set(IDT_PROP.STATE, JSON.stringify({ v: 1, state: state, calls: 1, result: result })); } catch (e) { out.failures.push('STATE_WRITE_FAILED'); }
+      }
+
+      var lr;
+      try { lr = deps.api.listDevices(); } catch (e) { lr = null; }
+      if (!lr || lr.ok !== true) {
+        var ec = lr && lr.error === 'LIST_API_ERROR' ? 'LIST_API_ERROR' : 'LIST_COMM_ERROR';
+        finish('STOPPED', ec);
+        return stop(ec);
+      }
+      var res = idtClassify(lr.devices, g.deviceId);
+      lr = null;
+      if (IDT_RESULTS.indexOf(res) === -1) res = 'ID_TYPE_UNKNOWN';
+      if (res === 'KEYLIST_INVALID' || res === 'TARGET_NOT_UNIQUE') { finish('STOPPED', res); return stop(res); }
+      out.idType = res;
+      finish('DONE', res);
+      return fin();
+    } catch (e) {
+      return stop('UNEXPECTED_ERROR');
+    } finally {
+      if (locked) { try { deps.lock.releaseLock(); } catch (e) { /* noop */ } }
+    }
+  }
+
+  /** 通信しない状態確認。値・件数は出さない。 */
+  function idTypeDiagStatus(deps) {
+    var out = idtBlank('STATUS');
+    out.notes = out.notes.concat(['STATUS_OK_IS_NOT_GO_NOR_EXECUTABLE']); // ok=true はゲート通過のみ。GOでも実行可能でもない
+    var g = tksGates(deps);
+    out.gates = g.ok ? 'PASS' : g.code;
+    var pr = g.ok ? idtPrereq(deps.scriptProps) : null;
+    out.prerequisites = !g.ok ? 'NOT_CHECKED' : (pr || 'PASS');
+    var cur = diagRead(deps.scriptProps, IDT_PROP.STATE);
+    if (cur.state === 'MISSING') out.diagState = 'NOT_USED';
+    else if (cur.state === 'UNKNOWN') out.diagState = 'UNKNOWN';
+    else { var p = safeParse(cur.raw); out.diagState = p && typeof p.state === 'string' && DIAG_VALUE_RE.test(p.state) ? p.state : 'INVALID_VALUE'; if (p && IDT_RESULTS.indexOf(p.result) !== -1) out.lastResult = p.result; else if (p && typeof p.result === 'string' && /^LIST_(API|COMM)_ERROR$/.test(p.result)) out.lastResult = p.result; }
+    var ap = diagRead(deps.scriptProps, IDT_PROP.APPROVAL);
+    out.approved = ap.state === 'SET' && ap.raw === IDT_APPROVAL_VALUE ? 'ON' : (ap.state === 'UNKNOWN' ? 'UNKNOWN' : (ap.state === 'SET' ? 'INVALID_VALUE' : 'OFF'));
+    out.ok = g.ok && !pr;
+    out.code = out.ok ? 'ID_TYPE_DIAG_STATUS_OK' : (g.ok ? pr : g.code);
+    return diagSanitize(out, 0);
+  }
+
   // ---------- 本番初期設定の読取専用診断（Issue #774）----------
 
   var DIAG_PREFIXES = ['OP', 'BK', 'EVT', 'DLV', 'HB', 'IALERT', 'ALERT', 'INBOX', 'TRK', 'ADMINLOG', 'APICOUNT', 'META'];
@@ -1938,7 +2064,7 @@ var SwitchBotAccessInfra = (function () {
     constantTimeEquals: constantTimeEquals, authenticateWebhook: authenticateWebhook, authorizeAdmin: authorizeAdmin,
     CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials, credentialStatus: credentialStatus,
     BOOTSTRAP_KEYS: BOOTSTRAP_KEYS, accessFlagState: accessFlagState, migrateBootstrapCredentials: migrateBootstrapCredentials, bootstrapStatus: bootstrapStatus, scrubBootstrapCredentials: scrubBootstrapCredentials,
-    readOnlyDiagnostics: readOnlyDiagnostics, testReadOnlyDiagnostics: testReadOnlyDiagnostics, testKeyStage: testKeyStage, testKeyStatus: testKeyStatus, TKS_MAX_CALLS: TKS_MAX_CALLS,
+    readOnlyDiagnostics: readOnlyDiagnostics, testReadOnlyDiagnostics: testReadOnlyDiagnostics, testKeyStage: testKeyStage, testKeyStatus: testKeyStatus, idTypeDiag: idTypeDiag, idTypeDiagStatus: idTypeDiagStatus, TKS_MAX_CALLS: TKS_MAX_CALLS,
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,
