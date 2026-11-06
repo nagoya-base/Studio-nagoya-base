@@ -3,6 +3,8 @@
  * 実API・実機・実Spreadsheet・実メールには一切接続しない（フェイク world のみ）。秘密・実IDなし。
  *
  * 位置づけ: モック成功であり、37DD/01FDの実機成功やデプロイ・本番有効化の証跡ではない。
+ *  - 台帳は w.records の直接差し替え（フェイク）。Booking Web App/Admin → 台帳 → 独立GAS の実接続は検証していない。
+ *  - 反映遅延・ジョブ周期・配送時間はフェイク値／設計値で、実機のSLAではない。期限後の deleteKey が実機で効くことも未証明。
  * 本ファイルは既存挙動を変えず、設計値（周期・読取回数）が連鎖全体で成立するかを数値で固定する。
  *
  *  M1 E2E連鎖（確定→発行→配送→延長→取消／期限→削除）を1本通す
@@ -232,8 +234,8 @@ function extensionTimeline(latencySec) {
   var op1 = issueViaCycles(w, rt, sim);
   at(w, '2030-01-10T18:00:00+09:00'); sim.run(DELIVER_SEC + 10);   // 初回配送
   assert.strictEqual(w.userMails.length, 1);
-  // 入室中（利用開始後）に旧終了の60分前（11:00）より前の10:50に延長をcommit
-  at(w, '2030-01-11T10:50:00+09:00');
+  // 入室中（利用開始10:00後）、延長締切＝旧終了12:00の60分前(11:00:00)ちょうどに延長をcommit（最も遅く承認される場合）
+  at(w, '2030-01-11T11:00:00+09:00');
   installDeleteLatency(w, latencySec);
   var commitMs = w.nowMs;
   w.records = [H.record({ endAt: H.jst('2030-01-11', '13:00'), revision: 2 })];
@@ -245,11 +247,11 @@ function extensionTimeline(latencySec) {
     if (tl.newReadySec === null && opsOf(ww, S.ISSUED_CONFIRMED).some(function (o) { return o.revision === 2; })) tl.newReadySec = sec;
     if (tl.mailedSec === null && ww.userMails.length >= 2) tl.mailedSec = sec;
   });
-  tl.op1 = op1; tl.w = w;
+  tl.op1 = op1; tl.w = w; tl.commitMs = commitMs;
   return tl;
 }
 
-test('M3: 入室中延長のタイムライン（遅延0/300/600秒）。旧コード失効から新コード到着までを数値化し、60分締切に収まる', function () {
+test('M3: 入室中延長のタイムライン（遅延0/300/600秒）。締切ちょうど(旧終了60分前)にcommitしても新コードが旧終了前に届く', function () {
   var report = {};
   [0, 300, 600].forEach(function (lat) {
     var tl = extensionTimeline(lat);
@@ -259,8 +261,10 @@ test('M3: 入室中延長のタイムライン（遅延0/300/600秒）。旧コ�
     var gap = tl.mailedSec - tl.oldGoneSec;
     if (process.env.M3_PRINT) console.log('M3 lat=' + lat + ' ' + JSON.stringify(report[lat]) + ' gap=' + gap);
     assert.ok(gap >= 0, '新コード案内は旧失効より前に出ない（併存させない設計）');
-    // 延長承認の締切(旧終了の60分前)に承認された場合でも、新コード到着が旧終了(=承認+60分)より前に収まる
-    assert.ok(tl.mailedSec < 3600, '遅延' + lat + 's: commitから新コード到着まで' + tl.mailedSec + '秒 (<3600秒) ' + JSON.stringify(report[lat]));
+    // 締切ちょうど(旧終了の60分前)に承認されても、新コード到着が旧終了時刻(12:00)より前に収まる＝入室不能時間が旧終了後に及ばない
+    var oldEndMs = H.jst('2030-01-11', '12:00').getTime();
+    assert.ok(tl.commitMs + tl.mailedSec * 1000 < oldEndMs,
+      '遅延' + lat + 's: 新コード到着 ' + new Date(tl.commitMs + tl.mailedSec * 1000).toISOString() + ' が旧終了 ' + new Date(oldEndMs).toISOString() + ' より前 ' + JSON.stringify(report[lat]));
     assert.strictEqual(tl.w.callCount('deleteKey'), 1);
     assert.strictEqual(tl.w.callCount('createKey'), 2);
   });
