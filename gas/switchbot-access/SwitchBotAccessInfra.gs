@@ -1797,6 +1797,7 @@ var SwitchBotAccessInfra = (function () {
   /** 通信しない状態確認。値・件数は出さない。 */
   function idTypeDiagStatus(deps) {
     var out = idtBlank('STATUS');
+    out.notes = out.notes.concat(['STATUS_OK_IS_NOT_GO_NOR_EXECUTABLE']); // ok=true はゲート通過のみ。GOでも実行可能でもない
     var g = tksGates(deps);
     out.gates = g.ok ? 'PASS' : g.code;
     var pr = g.ok ? idtPrereq(deps.scriptProps) : null;

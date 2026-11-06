@@ -17,9 +17,16 @@
 | 対象 | `ACCESS_ENVIRONMENT=verify`、`allowedLast4=['37DD']` かつ keypads 1件。端末は**完全ID一致**で1件のみ。0件・重複は `TARGET_NOT_UNIQUE` |
 | 必須条件 | `ACCESS_ENABLED` 明示 `false` / 実行者が `ACCESS_ADMIN_ACTORS` 本人（active=effective） / トリガー0件 / `ACCESS_TEST_KEY_STATE` が `STOPPED` / `ACCESS_TEST_KEY_ARMED` 未設定 / `ACCESS_TEST_KEY_APPROVAL` 未設定。読取不能は不明として停止 |
 | 承認 | `ACCESS_ID_TYPE_DIAG_APPROVAL=ID_TYPE_READ_ONCE` のときだけ。**通信前に消費**。診断状態 `ACCESS_ID_TYPE_DIAG_STATE=SENT` も通信前に永続し、失敗なら通信しない |
-| 1回予算 | `ACCESS_ID_TYPE_DIAG_STATE` が存在すれば再実行しない（`DIAG_ALREADY_USED`）。GET失敗・不明でも自動再試行なし。再実行はオーナー判断で当該プロパティを削除してからで、#756 に記録 |
+| 1回予算 | `ACCESS_ID_TYPE_DIAG_STATE` が存在すれば再実行しない（`DIAG_ALREADY_USED`）。GET失敗・不明・`ID_TYPE_UNKNOWN` でも自動再試行なし。**この状態プロパティを削除・編集して予算を戻す操作は運用上禁止**（下記「予算の保証範囲」） |
 | 既存状態の不変 | `ACCESS_TEST_KEY_STATE`（STOPPED・callsUsed=5/5）は読むだけで書換・削除・リセットしない。User Properties も書込禁止（書込関数は例外） |
 | 出力 | 固定列挙コードと真偽・状態のみ。値・桁数・前後数桁・名前・件数・パスコード・passcodeId・deviceId・Token/Secret・生レスポンス・ハッシュを出さない。通常キーを保持・返却しない（型フラグへ集約） |
+
+## 予算の保証範囲
+
+- 「永続予算1回」は、`ACCESS_ID_TYPE_DIAG_STATE` が Script Properties に残っている間、同じコードからの再実行・二重押下・タイムアウト後の自動再試行で2回目のGETをしない、という**誤操作防止**の保証である。
+- スクリプトエディタの権限を持つ人が当該プロパティを直接編集・削除すれば物理的には再実行できてしまう。これは技術的な改ざん防止ではなく、**運用で禁止**する。手順書・Issue・コメントのいずれにも、削除による予算リセットを通常手順として案内しない。
+- 追加の診断（2回目以降）が必要になった場合は、#756 での**新たな個別GO**と**別途の安全レビュー**を前提とする。無断の予算リセットは行わない。
+- `ACCESS_TEST_KEY_STATE`（STOPPED・5/5）には本診断を含め一切触れない。
 
 ## 結果コード
 
@@ -30,13 +37,15 @@
 | `KEYLIST_INVALID` | 端末は1件一致したが keyList が配列でない・要素が不正 |
 | `TARGET_NOT_UNIQUE` | 完全一致する端末が0件または複数 |
 | `LIST_API_ERROR` / `LIST_COMM_ERROR` | GET失敗（再試行しない・予算は消費済み） |
+
+`ID_TYPE_UNKNOWN`・`KEYLIST_INVALID`・`TARGET_NOT_UNIQUE`・GET失敗はいずれも `ok=false`・通信済み・再試行禁止（`accessIdTypeDiagRun` を再度押さない）。
 | `DIAG_NOT_APPROVED` / `DIAG_ALREADY_USED` / ゲート系コード | 通信前に停止（通信ゼロ） |
 
 ## 当日の操作（オーナーが #756 に個別GOを記録した後のみ）
 
-1. `accessIdTypeDiagStatus` を実行 → `gates=PASS`、`prerequisites=PASS`、`diagState=NOT_USED`、`approved=OFF` を確認（通信ゼロ）。
+1. `accessIdTypeDiagStatus` を実行（通信ゼロ）。**`ok=true` はゲート通過を示すだけで、GOでも実行可能の判定でもない**（`diagState=SENT/DONE` や承認OFFでも `ok=true` になりうる）。`diagState=NOT_USED` かつ `prerequisites=PASS` を確認し、実行可否は #756 の個別GOで判断する。
 2. Script Properties に `ACCESS_ID_TYPE_DIAG_APPROVAL=ID_TYPE_READ_ONCE` を設定。
-3. `accessIdTypeDiagRun` を**1回**実行し、結果コードのみを #756 に記録（秘密・ID・名前は書かない）。
+3. `accessIdTypeDiagRun` を**1回**実行し、結果コードのみを #756 に記録（秘密・ID・名前は書かない）。失敗・不明でも再実行しない。
 4. `accessIdTypeDiagStatus` で `diagState` と `approved=OFF` を確認。
 
 ## 本Issueの範囲外

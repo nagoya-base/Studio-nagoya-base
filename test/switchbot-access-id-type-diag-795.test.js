@@ -281,3 +281,38 @@ test('回帰: 既存の #791 入口と本番ジョブは不変、スコープも
   assert.ok(/function accessSyncJob\(\) \{ return sba_runtime_\(\)\.syncCycle\(\); \}/.test(app));
   assert.strictEqual(typeof Infra.testKeyStage, 'function');
 });
+
+test('再実行防止: DONE/STOPPED/SENT(中断)/ID_TYPE_UNKNOWN の各状態で承認を再設定してもGETは増えない。既存STATEは不変', function () {
+  [{ keys: [], first: 'ID_TYPE_UNKNOWN', ok: false }, { keys: NUM_KEYS, first: 'ID_TYPE_NUMBER', ok: true }].forEach(function (c) {
+    var w = makeWorld({ keys: c.keys }); var r = run(w);
+    assert.strictEqual(r.code, c.first); assert.strictEqual(r.ok, c.ok); assert.strictEqual(r.apiCalls, 1);
+    for (var i = 0; i < 3; i++) {
+      w.script.ACCESS_ID_TYPE_DIAG_APPROVAL = 'ID_TYPE_READ_ONCE';
+      var again = run(w); assert.strictEqual(again.code, 'DIAG_ALREADY_USED'); assert.strictEqual(again.apiCalls, 0);
+    }
+    assert.strictEqual(w.calls.length, 1); noMutation(w);
+  });
+  // 送信済みマーカーのみ残った中断状態（結果未記録）でも再実行しない
+  var w2 = makeWorld({ script: { ACCESS_ID_TYPE_DIAG_STATE: JSON.stringify({ v: 1, state: 'SENT', calls: 1 }) } });
+  assert.strictEqual(run(w2).code, 'DIAG_ALREADY_USED'); assert.strictEqual(w2.calls.length, 0);
+  // 壊れた状態値も「使用済み」として扱い、通信しない
+  var w3 = makeWorld({ script: { ACCESS_ID_TYPE_DIAG_STATE: '{broken' } });
+  assert.strictEqual(run(w3).code, 'DIAG_ALREADY_USED'); assert.strictEqual(w3.calls.length, 0);
+});
+
+test('状態確認: ok=true はGO/実行可能の意味ではない旨を明示し、SENT/DONE・承認OFFでもokになりうる（実行可否と混同しない）', function () {
+  var w = makeWorld(); var r = status(w);
+  assert.ok(r.notes.indexOf('STATUS_OK_IS_NOT_GO_NOR_EXECUTABLE') !== -1);
+  run(w); r = status(w);
+  assert.strictEqual(r.ok, true); assert.strictEqual(r.diagState, 'DONE'); assert.strictEqual(r.approved, 'OFF');
+  assert.ok(r.notes.indexOf('STATUS_OK_IS_NOT_GO_NOR_EXECUTABLE') !== -1);
+  var w2 = makeWorld({ script: { ACCESS_ID_TYPE_DIAG_STATE: JSON.stringify({ v: 1, state: 'SENT', calls: 1 }) } });
+  r = status(w2); assert.strictEqual(r.ok, true); assert.strictEqual(r.diagState, 'SENT'); assert.strictEqual(w2.calls.length, 0);
+});
+
+test('手順書: 状態プロパティ削除による予算リセットを通常手順として案内せず、追加診断は新たな個別GO+安全レビューを前提とする', function () {
+  var d = fs.readFileSync(path.join(__dirname, '..', 'docs', 'switchbot-access-id-type-diag-795.md'), 'utf8');
+  assert.ok(!/プロパティを削除してから|削除してから/.test(d));
+  assert.ok(/運用上禁止|運用で禁止/.test(d)); assert.ok(/新たな個別GO/.test(d)); assert.ok(/別途の安全レビュー/.test(d));
+  assert.ok(/ok=true.*GOでも実行可能の判定でもない/.test(d));
+});
