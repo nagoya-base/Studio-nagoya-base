@@ -37,9 +37,9 @@
 | `KEYLIST_INVALID` | 端末は1件一致したが keyList が配列でない・要素が不正 |
 | `TARGET_NOT_UNIQUE` | 完全一致する端末が0件または複数 |
 | `LIST_API_ERROR` / `LIST_COMM_ERROR` | GET失敗（再試行しない・予算は消費済み） |
+| `DIAG_NOT_APPROVED` / `DIAG_ALREADY_USED` / ゲート系コード | 通信前に停止（通信ゼロ） |
 
 `ID_TYPE_UNKNOWN`・`KEYLIST_INVALID`・`TARGET_NOT_UNIQUE`・GET失敗はいずれも `ok=false`・通信済み・再試行禁止（`accessIdTypeDiagRun` を再度押さない）。
-| `DIAG_NOT_APPROVED` / `DIAG_ALREADY_USED` / ゲート系コード | 通信前に停止（通信ゼロ） |
 
 ## 当日の操作（オーナーが #756 に個別GOを記録した後のみ）
 
