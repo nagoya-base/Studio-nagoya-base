@@ -92,7 +92,7 @@ Spreadsheet ID Secret・WIF/OIDCは使わず、`booking-production`に登録す�
 1. GitHubの **Actions > Deploy Booking GAS to production > Run workflow** を開く。
 2. Branchは`main`、`scope=full`（既定）を選ぶ。`schema_migrated`は指定しない。
 3. テスト成功後、`booking-production`の承認待ちになる。対象SHAを確認して**1回だけ**承認する。
-4. 承認後、同一job内で`schema差分ガード → Booking Admin → Booking Web App → post-check`を順に実行する。
+4. 承認後、同一job内で`preflight（Admin→Public、読取りのみ） → schema差分ガード → Booking Admin → Booking Web App → post-check`を順に実行する。
    失敗した時点で後続は実行しない。Admin成功・Web App失敗の場合はworkflowが失敗し、Adminだけ新mainである旨が
    ログに出る。原因を解消して同じworkflowを再実行する（自動rollbackはない）。
 
@@ -182,3 +182,16 @@ list-deployments → pull → push --force → update-deployment → 更新後�
 「決済リンクを送信」ボタンの表示を確認する。メール送信はこの表示確認には不要。
 表示されない場合はIssue #398を完了扱いにせず、デプロイ世代と予約データを再確認する。
 本番再実行・実原因・反映・表示確認は、マージ前の自動テストでは検証できないため別途記録する。
+
+## 開始時のpreflight（Issue #804）
+
+承認直後・最初の書込み（Admin更新）の前に、更新対象すべての認証と配布物を**読取りだけ**で確認する
+（`scripts/deploy-booking-gas-target.sh <admin|public> preflight`）。
+
+- `scope=full`: Admin（`default`）とPublic（`booking-owner`）の**両方**。Publicが失敗した場合、Adminは1回も更新されない。
+- `scope=admin-only`: Adminだけ。Public用Secretsは要求しない。
+- 確認内容: 必須Secrets → clasp資格情報JSON/user → 選択GASへの`list-deployments` → 既存Deploymentの完全一致・一意性 → `pull`とmanifest → 配布物の組立て。`push`/`update-deployment`は呼ばない。
+- 失敗は `Booking preflight failed: role=<admin|public> stage=<SECRETS|CREDENTIAL|LIST|DEPLOYMENT|PULL|BUILD> code=<固定コード>. No deployment was updated.` の形式。Secret・ID・メール・clasp生出力は出さない。
+- 認証失効（`CREDENTIAL` / `LIST`）の場合は、Secretsを貼らず`booking-production`のEnvironment secretsを再登録して再実行する。
+- preflightは更新権限や将来のAPI成功、GAS実行権限を保証しない。更新step自体の認証エラーは従来どおり固定コードで停止する。
+- GAS実行時の権限同意、SwitchBot Token/Secretの有効性はpreflightの対象外（別ゲート）。
