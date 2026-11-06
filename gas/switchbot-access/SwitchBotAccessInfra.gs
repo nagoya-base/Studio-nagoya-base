@@ -1687,6 +1687,332 @@ var SwitchBotAccessInfra = (function () {
     return diagSanitize(out, 0);
   }
 
+  // ---------- 37DD 数値型ID維持 createKey→deleteKey 最小試験（Issue #797 / 親 #756・原因調査 #793）----------
+  //
+  // #791 の試験（11/6）は deleteKey の parameter.id を String() 化して送り、削除が反映されなかった。11/3 の成功経路は keyList.id を
+  // 無加工で送っていた。本試験は「取得した keyList.id の型を保持して送る」ことだけを変えた最小の再試験である。
+  // #791 の状態（ACCESS_TEST_KEY_STATE=STOPPED・5/5）・ARMED・APPROVAL は読むだけで書換・リセットしない。予算・状態・承認は独立管理。
+  // 通信は SwitchBot API 合計 NID_MAX_CALLS(=6) 回まで（LIST→ISSUE→VERIFY_ISSUED→PRE_DELETE_LIST→DELETE→VERIFY_DELETED。各1回）。
+  // 追加の反映確認GETはこの実装に含めない（必要なら上限と時点を明記して別PR・別GO）。変更系（createKey/deleteKey）は各1回・再送なし。
+  // コード・設定のマージ/デプロイ/ARMED では何も起きない。#756 に通信回数・コマンド・停止条件が記録されたあとのオーナー別GOでのみ実行する。
+  var NID_MAX_CALLS = 6;
+  var NID_PLAN = 'NUMID_PLAN_V1_6CALLS'; // ARMED の値。手順書（docs/…-797.md）の6回計画と合致していることの目印
+  var NID_PROP = { ARMED: 'ACCESS_NUMID_TEST_ARMED', APPROVAL: 'ACCESS_NUMID_TEST_APPROVAL', STATE: 'ACCESS_NUMID_TEST_STATE' };
+  var NID_TARGET_PROP = 'NUMID_TARGET'; // 削除対象の「型付きID」。実行者本人の User Properties にのみ置く（出力・Script Properties に出さない）
+  var NID_STAGES = {
+    LIST:            { from: ['INIT'],            pre: 'LIST_SENT' },
+    ISSUE:           { from: ['LISTED'],          pre: 'ISSUE_SENT' },
+    VERIFY_ISSUED:   { from: ['ISSUE_ACCEPTED'],  pre: 'VERIFY_ISSUED_SENT' },
+    PRE_DELETE_LIST: { from: ['ISSUED_VERIFIED'], pre: 'PRE_DELETE_LIST_SENT' },
+    DELETE:          { from: ['DELETE_READY'],    pre: 'DELETE_SENT' },
+    VERIFY_DELETED:  { from: ['DELETE_ACCEPTED'], pre: 'VERIFY_DELETED_SENT' }
+  };
+  var NID_PREDELETE_MAX_AGE_SEC = 600; // 削除直前の再照合から削除送信までの上限。超えたら通信せず停止（古い照合で削除しない）
+  var NID_OBSERVE_MIN_SEC = 300;       // 削除受理から削除後GETまでの最短間隔（#791 の VERIFY_DELETED は約5分後）
+  var NID_CHANGES = ['ID_TYPE_PRESERVED', 'PRE_DELETE_RELIST_ADDED', 'OBSERVATION_MIN_300S']; // #791 からの変更点（交絡要因として常に併記）
+
+  function nidBlank() {
+    return { ok: false, code: 'NUMID_TEST_NOT_RUN', stage: 'NOT_CHECKED', failures: [], stopped: false, apiCalls: 0, callsUsed: 0, callsMax: NID_MAX_CALLS,
+      state: 'NOT_CHECKED', manualRecovery: false, evidence: 'NONE', keyCount: 0, validityProfile: 'SAME_AS_791', changes: NID_CHANGES.slice(),
+      notes: ['VERIFY_ONLY', 'TARGET_37DD_ONLY', 'ONE_TEST_KEY_ONLY', 'NO_AUTO_RETRY', 'NO_NORMAL_KEY_DELETE_PATH', 'ACCEPTED_IS_NOT_DELETED'] };
+  }
+
+  function nidReadState(sp) {
+    var raw;
+    try { raw = sp.get(NID_PROP.STATE); } catch (e) { return { ok: false }; }
+    if (raw === undefined) return { ok: false };
+    if (raw === null || raw === '') return { ok: true, st: { v: 1, state: 'INIT', calls: 0, name: '', baselineCount: -1, baselineFp: '', baselineIds: [] } };
+    var p = safeParse(raw);
+    if (!p || typeof p !== 'object' || p.v !== 1 || typeof p.state !== 'string' || typeof p.calls !== 'number' || p.calls < 0 || p.calls > NID_MAX_CALLS) return { ok: false };
+    return { ok: true, st: p };
+  }
+
+  function nidWrite(sp, st) {
+    try { sp.set(NID_PROP.STATE, JSON.stringify(st)); return true; } catch (e) { return false; }
+  }
+
+  /** keyList.id の型分類。数値は正の安全な整数のみ（JSON.parse で精度を失う値は送らない）。値は返さない。 */
+  function nidIdType(id) {
+    if (typeof id === 'number') {
+      if (!isFinite(id) || id <= 0 || Math.floor(id) !== id) return 'ID_TYPE_UNKNOWN';
+      return id <= 9007199254740991 ? 'ID_TYPE_NUMBER' : 'ID_NOT_SAFE_INTEGER';
+    }
+    if (typeof id === 'string' && id !== '') return 'ID_TYPE_STRING';
+    return 'ID_TYPE_UNKNOWN';
+  }
+
+  function nidIdHash(sha, id) { return sha('NUMID_BASE|' + String(id)).slice(0, 12); }
+
+  /** #791 の試験が止まったまま・旧 ARMED/APPROVAL が未設定であることを読むだけで確認する（書込なし）。 */
+  function nidPrereq(sp) {
+    var oa = diagRead(sp, TKS_PROP.ARMED);
+    if (oa.state === 'UNKNOWN') return 'ARMED_STATE_UNKNOWN';
+    if (oa.state === 'SET') return 'TEST_KEY_ARMED_PRESENT';
+    var op = diagRead(sp, TKS_PROP.APPROVAL);
+    if (op.state === 'UNKNOWN') return 'APPROVAL_STATE_UNKNOWN';
+    if (op.state === 'SET') return 'TEST_KEY_APPROVAL_PRESENT';
+    var rs = tksReadState(sp);
+    if (!rs.ok) return 'TEST_KEY_STATE_UNREADABLE';
+    if (rs.st.state !== 'STOPPED') return 'TEST_KEY_STATE_NOT_STOPPED';
+    return null;
+  }
+
+  /**
+   * 1段階だけ実行する。stage ∈ LIST / ISSUE / VERIFY_ISSUED / PRE_DELETE_LIST / DELETE / VERIFY_DELETED。
+   * deps: testKeyStage と同じ（api は listDevices/createKey/deleteKey）。返すのは固定コード・件数・真偽値・秒数のみ
+   * （完全deviceId・パスコード・トークン・passcode ID・キー名・例外本文・commandId を含めない）。
+   */
+  function numIdStage(deps, stage) {
+    var out = nidBlank();
+    var def = NID_STAGES[stage];
+    out.stage = def ? stage : 'INVALID_STAGE';
+    function fin() {
+      out.ok = out.failures.length === 0;
+      out.code = out.ok ? 'NUMID_' + stage + '_OK' : out.failures[0];
+      return diagSanitize(out, 0);
+    }
+    function stop(code) { if (out.failures.indexOf(code) === -1) out.failures.push(code); out.stopped = true; return fin(); }
+    if (!def) return stop('INVALID_STAGE');
+    var sp = deps.scriptProps, locked = false;
+    try {
+      var g = tksGates(deps);
+      if (!g.ok) return stop(g.code);
+      var pr = nidPrereq(sp);
+      if (pr) return stop(pr);
+      var armed = diagRead(sp, NID_PROP.ARMED);
+      if (armed.state === 'UNKNOWN') return stop('ARMED_STATE_UNKNOWN');
+      if (armed.state === 'MISSING') return stop('NOT_ARMED');
+      if (armed.raw !== NID_PLAN) return stop('ARMED_PLAN_MISMATCH');
+
+      if (!deps.lock || !deps.lock.tryLock(1000)) return stop('LOCK_UNAVAILABLE');
+      locked = true;
+
+      var rs = nidReadState(sp);
+      if (!rs.ok) return stop('STATE_UNREADABLE');
+      var st = rs.st;
+      out.state = DIAG_VALUE_RE.test(st.state) ? st.state : 'INVALID_VALUE';
+      out.callsUsed = st.calls;
+      if (st.state === 'STOPPED' || /_SENT$/.test(st.state)) { out.manualRecovery = true; return stop(st.state === 'STOPPED' ? 'STOPPED_MANUAL_RECOVERY' : 'INTERRUPTED_MANUAL_RECOVERY'); }
+      if (st.state === 'COMPLETE') return stop('ALREADY_COMPLETE');
+      if (def.from.indexOf(st.state) === -1) return stop(st.state === def.pre || st.state === stage ? 'STAGE_ALREADY_DONE' : 'STAGE_ORDER_VIOLATION');
+
+      var sha = deps.sha256Hex;
+      var nowSec = deps.nowSec();
+
+      /** 通信前の曖昧・不整合で止める。呼出し回数は増やさず、状態だけ STOPPED にして対象IDも消す（以後は公式アプリで手動撤去）。 */
+      function persistStop(code) {
+        var s = JSON.parse(JSON.stringify(st)); s.state = 'STOPPED'; s.reason = code;
+        nidWrite(sp, s);
+        try { deps.userProps.del(NID_TARGET_PROP); } catch (e) { /* noop */ }
+        out.state = 'STOPPED'; out.manualRecovery = true;
+        return stop(code);
+      }
+
+      // 承認の確認（通信前に消費する前の検査。ここで止まれば承認も呼出し回数も消費しない）
+      var ap = diagRead(sp, NID_PROP.APPROVAL);
+      if (ap.state === 'UNKNOWN') return stop('APPROVAL_STATE_UNKNOWN');
+      if (ap.raw !== stage) return stop('STAGE_NOT_APPROVED');
+      var cred;
+      try { cred = !!(deps.userProps.get('SWITCHBOT_TOKEN') && deps.userProps.get('SWITCHBOT_SECRET')); } catch (e) { cred = false; }
+      if (!cred) return stop('AUTH_CREDENTIALS_MISSING');
+      if (st.calls >= NID_MAX_CALLS) return stop('CALL_BUDGET_EXHAUSTED');
+      var devFp = sha('NUMID_DEVICE|' + g.deviceId);
+      if (stage !== 'LIST' && st.deviceFp !== devFp) return stop('TARGET_DEVICE_CHANGED');
+      if (stage !== 'LIST' && stage !== 'ISSUE' && !TKS_NAME_RE.test(String(st.name || ''))) return stop('TEST_KEY_NAME_MISSING');
+
+      var password = null, name = null, startSec = 0, endSec = 0, targetId = null, targetType = null;
+      if (stage === 'ISSUE') {
+        var cap = keypadCapacityGate([{ deviceId: g.deviceId, keyList: new Array(Math.max(0, st.baselineCount)) }], g.deviceId, { stopAt: TKS_CAPACITY_STOP, officialLimit: null });
+        if (st.baselineCount < 0 || !st.baselineFp) return stop('BASELINE_MISSING');
+        if (!cap.ok) return stop(cap.code);
+        name = 'TST'; for (var i = 0; i < 8; i++) name += 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'.charAt(deps.randomInt(32));
+        password = ''; for (var j = 0; j < 8; j++) password += String(deps.randomInt(10));
+        startSec = nowSec - 60; endSec = nowSec + 3600; // #791 と同条件（開始済み・有効1時間・timeLimit）。変更しない
+      }
+      if (stage === 'DELETE') {
+        // 削除対象は「直前再照合で型付きのまま保存した ID」だけ。通常キーのIDは基準ハッシュと突合して拒否。古い照合では削除しない
+        var rawT;
+        try { rawT = deps.userProps.get(NID_TARGET_PROP); } catch (e) { rawT = undefined; }
+        var tp = safeParse(rawT);
+        if (!tp || typeof tp !== 'object' || tp.n !== st.name) return persistStop('TEST_KEY_ID_MISSING');
+        targetId = tp.id; targetType = nidIdType(targetId);
+        if (targetType !== st.targetIdType || (targetType !== 'ID_TYPE_NUMBER' && targetType !== 'ID_TYPE_STRING')) return persistStop('TARGET_ID_INVALID');
+        if (Array.isArray(st.baselineIds) && st.baselineIds.indexOf(nidIdHash(sha, targetId)) !== -1) return persistStop('TARGET_IS_BASELINE_KEY');
+        if (typeof st.preDeleteSec !== 'number' || nowSec - st.preDeleteSec < 0 || nowSec - st.preDeleteSec > NID_PREDELETE_MAX_AGE_SEC) return persistStop('PRE_DELETE_STALE');
+        if (typeof st.endSec === 'number' && nowSec >= st.endSec) return persistStop('TEST_KEY_ALREADY_EXPIRED');
+      }
+      if (stage === 'VERIFY_DELETED') {
+        if (typeof st.deleteSec !== 'number' || nowSec - st.deleteSec < NID_OBSERVE_MIN_SEC) return stop('OBSERVATION_WINDOW_NOT_ELAPSED'); // 承認・回数は消費しない
+        var rawV;
+        try { rawV = deps.userProps.get(NID_TARGET_PROP); } catch (e) { rawV = undefined; }
+        var vp = safeParse(rawV);
+        if (!vp || typeof vp !== 'object' || vp.n !== st.name || nidIdType(vp.id) !== st.targetIdType) return persistStop('TEST_KEY_ID_MISSING');
+        targetId = vp.id;
+      }
+
+      // 通信前に: 承認の消費 + 呼出し回数 + 送信済みマーカーを永続（永続に失敗したら通信しない）
+      var pre = JSON.parse(JSON.stringify(st));
+      pre.state = def.pre; pre.calls = st.calls + 1; pre.deviceFp = devFp;
+      if (stage === 'ISSUE') { pre.name = name; pre.startSec = startSec; pre.endSec = endSec; pre.issueSec = nowSec; }
+      try { sp.del(NID_PROP.APPROVAL); } catch (e) { return stop('APPROVAL_CONSUME_FAILED'); }
+      if (!nidWrite(sp, pre)) return stop('STATE_WRITE_FAILED');
+      out.callsUsed = pre.calls; out.apiCalls = 1; out.state = pre.state;
+      function halt(code) {
+        var s = JSON.parse(JSON.stringify(pre)); s.state = 'STOPPED'; s.reason = code;
+        nidWrite(sp, s);
+        try { deps.userProps.del(NID_TARGET_PROP); } catch (e) { /* noop */ }
+        out.state = 'STOPPED'; out.manualRecovery = true;
+        return stop(code);
+      }
+      function done(next, mut) {
+        var s = JSON.parse(JSON.stringify(pre)); s.state = next; if (mut) mut(s);
+        if (!nidWrite(sp, s)) { out.manualRecovery = true; return stop('STATE_WRITE_FAILED'); }
+        out.state = next; return fin();
+      }
+
+      if (stage !== 'ISSUE' && stage !== 'DELETE') {
+        var lr;
+        try { lr = deps.api.listDevices(); } catch (e) { lr = null; }
+        if (!lr || lr.ok !== true) return halt(lr && lr.error === 'LIST_API_ERROR' ? 'LIST_API_ERROR' : 'LIST_COMM_ERROR');
+        var snap = tksSnapshot(lr.devices, g.deviceId, sha);
+        if (!snap.valid) return halt(snap.code);
+        out.keyCount = snap.count; out.evidence = 'KEYLIST';
+        if (stage === 'LIST') {
+          if (snap.list.some(function (k) { return TKS_NAME_RE.test(String(k.name)); })) return halt('STALE_TEST_KEY_PRESENT');
+          var baseType = idtClassify(lr.devices, g.deviceId);
+          out.idType = IDT_RESULTS.indexOf(baseType) !== -1 && /^ID_TYPE_/.test(baseType) ? baseType : 'ID_TYPE_UNKNOWN';
+          return done('LISTED', function (s) {
+            s.baselineCount = snap.count; s.baselineFp = snap.fp; s.baselineIdType = out.idType;
+            s.baselineIds = snap.ids.map(function (x) { return nidIdHash(sha, x); });
+          });
+        }
+        if (stage === 'VERIFY_ISSUED' || stage === 'PRE_DELETE_LIST') {
+          // 試験キーの一意性・通常キー不変を毎回照合する。削除の直前（PRE_DELETE_LIST）でも同じ契約で再照合する
+          var hits = snap.list.filter(function (k) { return k.name === st.name; });
+          if (hits.length === 0) return halt('KEY_NOT_FOUND');
+          if (hits.length > 1) return halt('KEY_NAME_AMBIGUOUS');
+          if (typeof st.startSec !== 'number' || typeof st.endSec !== 'number') return halt('KEY_ATTR_EXPECTATION_MISSING');
+          var judged = Core.judgeIssued({ valid: true, count: 1, entries: hits }, { startSec: st.startSec, endSec: st.endSec });
+          if (!judged.ok) return halt(CODE_RE.test(String(judged.error)) ? judged.error : 'KEY_ATTR_MISMATCH');
+          if (snap.count !== st.baselineCount + 1) return halt('KEYLIST_COUNT_MISMATCH');
+          var rawId = hits[0].id, rawType = nidIdType(rawId);
+          if (rawType !== 'ID_TYPE_NUMBER' && rawType !== 'ID_TYPE_STRING') return halt(rawType === 'ID_NOT_SAFE_INTEGER' ? 'ID_NOT_SAFE_INTEGER' : 'TARGET_ID_INVALID');
+          if (tksExcluding(snap, String(rawId), sha) !== st.baselineFp) return halt('EXISTING_KEYS_CHANGED');
+          if (Array.isArray(st.baselineIds) && st.baselineIds.indexOf(nidIdHash(sha, rawId)) !== -1) return halt('TARGET_IS_BASELINE_KEY');
+          out.idType = rawType;
+          if (stage === 'VERIFY_ISSUED') return done('ISSUED_VERIFIED', function (s) { s.issuedIdType = rawType; });
+          if (rawType !== st.issuedIdType) return halt('ID_TYPE_CHANGED');
+          // 取得した生IDの型を保ったまま保存する（JSON.stringify で number は number のまま、string は string のまま往復する）
+          try { deps.userProps.set(NID_TARGET_PROP, JSON.stringify({ n: st.name, id: rawId })); } catch (e) { return halt('TEST_KEY_ID_STORE_FAILED'); }
+          return done('DELETE_READY', function (s) { s.targetIdType = rawType; s.preDeleteSec = nowSec; });
+        }
+        // VERIFY_DELETED
+        var byName = snap.list.filter(function (k) { return k.name === st.name; }).length;
+        var byId = snap.list.filter(function (k) { return String(k.id) === String(targetId); }).length;
+        out.idType = st.targetIdType;
+        if (byName || byId) return halt('TEST_KEY_STILL_PRESENT');
+        if (snap.count !== st.baselineCount || snap.fp !== st.baselineFp) return halt('EXISTING_KEYS_CHANGED');
+        try { deps.userProps.del(NID_TARGET_PROP); } catch (e) { /* 残っても無害（削除済み）。状態は完了にする */ }
+        out.appCheck = 'PENDING_OWNER'; // API上の不在だけでは成功としない。公式アプリの表示確認（オーナー）が残る
+        return done('API_ABSENT_APP_PENDING', null);
+      }
+
+      var res, thrown = false;
+      try {
+        res = stage === 'ISSUE'
+          ? deps.api.createKey({ deviceId: g.deviceId, name: name, password: password, startTime: startSec, endTime: endSec })
+          : deps.api.deleteKey(g.deviceId, targetId); // 型を変換しない（String() なし）。数値は数値のまま JSON.stringify される
+      } catch (e) { thrown = true; }
+      password = null;
+      if (thrown) return halt(stage === 'ISSUE' ? 'ISSUE_RESULT_UNKNOWN' : 'DELETE_RESULT_UNKNOWN');
+      var c = Core.classifyApi(res);
+      if (!c.accepted) return halt(stage === 'ISSUE' ? 'ISSUE_RESULT_UNKNOWN' : 'DELETE_RESULT_UNKNOWN');
+      out.evidence = c.commandId ? 'API_ACCEPTED_WITH_COMMAND_ID' : 'API_ACCEPTED_NO_COMMAND_ID';
+      if (stage === 'DELETE') {
+        out.idType = targetType; out.wireIdType = targetType; // 送信した parameter.id の JSON 型（値は出さない）
+        out.issueToDeleteSec = typeof pre.issueSec === 'number' ? Math.max(0, nowSec - pre.issueSec) : -1;
+        return done('DELETE_ACCEPTED', function (s) { s.hasCommandId = !!c.commandId; s.deleteSec = nowSec; s.deleteWireType = targetType; });
+      }
+      return done('ISSUE_ACCEPTED', function (s) { s.hasCommandId = !!c.commandId; });
+    } catch (e) {
+      out.manualRecovery = true;
+      return stop('UNEXPECTED_ERROR');
+    } finally {
+      if (locked) { try { deps.lock.releaseLock(); } catch (e) { /* noop */ } }
+    }
+  }
+
+  /**
+   * 通信しない最終段階: 削除後GETで不在だったあと、公式アプリで試験キーが消えていることをオーナーが目視した結果を記録する。
+   * 承認値 APP_ABSENT → COMPLETE。APP_PRESENT → STOPPED（API不在と公式アプリ表示の矛盾。手動撤去）。通信・資格情報・呼出し回数なし。
+   */
+  function numIdAppCheck(deps) {
+    var out = nidBlank(); out.stage = 'APP_CHECK';
+    function fin() {
+      out.ok = out.failures.length === 0;
+      out.code = out.ok ? 'NUMID_APP_CHECK_OK' : out.failures[0];
+      return diagSanitize(out, 0);
+    }
+    function stop(code) { if (out.failures.indexOf(code) === -1) out.failures.push(code); out.stopped = true; return fin(); }
+    var sp = deps.scriptProps, locked = false;
+    try {
+      var g = tksGates(deps);
+      if (!g.ok) return stop(g.code);
+      var pr = nidPrereq(sp);
+      if (pr) return stop(pr);
+      var armed = diagRead(sp, NID_PROP.ARMED);
+      if (armed.state === 'UNKNOWN') return stop('ARMED_STATE_UNKNOWN');
+      if (armed.state === 'MISSING') return stop('NOT_ARMED');
+      if (armed.raw !== NID_PLAN) return stop('ARMED_PLAN_MISMATCH');
+      if (!deps.lock || !deps.lock.tryLock(1000)) return stop('LOCK_UNAVAILABLE');
+      locked = true;
+      var rs = nidReadState(sp);
+      if (!rs.ok) return stop('STATE_UNREADABLE');
+      var st = rs.st;
+      out.state = DIAG_VALUE_RE.test(st.state) ? st.state : 'INVALID_VALUE'; out.callsUsed = st.calls;
+      if (st.state !== 'API_ABSENT_APP_PENDING') return stop('STAGE_ORDER_VIOLATION');
+      var ap = diagRead(sp, NID_PROP.APPROVAL);
+      if (ap.state === 'UNKNOWN') return stop('APPROVAL_STATE_UNKNOWN');
+      if (ap.raw !== 'APP_ABSENT' && ap.raw !== 'APP_PRESENT') return stop('STAGE_NOT_APPROVED');
+      var present = ap.raw === 'APP_PRESENT';
+      try { sp.del(NID_PROP.APPROVAL); } catch (e) { return stop('APPROVAL_CONSUME_FAILED'); }
+      var s = JSON.parse(JSON.stringify(st)); s.state = present ? 'STOPPED' : 'COMPLETE'; s.reason = present ? 'APP_STILL_PRESENT' : 'APP_ABSENT_CONFIRMED';
+      if (!nidWrite(sp, s)) { out.manualRecovery = true; return stop('STATE_WRITE_FAILED'); }
+      out.state = s.state;
+      if (present) { out.manualRecovery = true; return stop('APP_STILL_PRESENT'); }
+      out.appCheck = 'ABSENT_CONFIRMED';
+      return fin();
+    } catch (e) {
+      out.manualRecovery = true;
+      return stop('UNEXPECTED_ERROR');
+    } finally {
+      if (locked) { try { deps.lock.releaseLock(); } catch (e) { /* noop */ } }
+    }
+  }
+
+  /** 通信しない状態確認。ok=true はゲート通過のみ（GOでも実行可能の判定でもない）。値・ID・名前は出さない。 */
+  function numIdStatus(deps) {
+    var out = nidBlank(); out.stage = 'STATUS'; out.planId = NID_PLAN;
+    out.notes = out.notes.concat(['STATUS_OK_IS_NOT_GO_NOR_EXECUTABLE']);
+    var g = tksGates(deps);
+    out.gates = g.ok ? 'PASS' : g.code;
+    var pr = g.ok ? nidPrereq(deps.scriptProps) : null;
+    out.prerequisites = !g.ok ? 'NOT_CHECKED' : (pr || 'PASS');
+    var rs = nidReadState(deps.scriptProps);
+    if (rs.ok) { out.state = DIAG_VALUE_RE.test(rs.st.state) ? rs.st.state : 'INVALID_VALUE'; out.callsUsed = rs.st.calls; out.manualRecovery = rs.st.state === 'STOPPED' || /_SENT$/.test(rs.st.state); }
+    else out.state = 'STATE_UNREADABLE';
+    var a = diagRead(deps.scriptProps, NID_PROP.ARMED);
+    out.armed = a.state === 'UNKNOWN' ? 'UNKNOWN' : (a.state === 'MISSING' ? 'OFF' : (a.raw === NID_PLAN ? 'ON' : 'PLAN_MISMATCH'));
+    var ap = diagRead(deps.scriptProps, NID_PROP.APPROVAL);
+    var okVal = Object.keys(NID_STAGES).concat(['APP_ABSENT', 'APP_PRESENT']);
+    out.approvedStage = ap.state === 'UNKNOWN' ? 'UNKNOWN' : (ap.state === 'MISSING' ? 'NONE' : (okVal.indexOf(ap.raw) !== -1 ? ap.raw : 'INVALID_VALUE'));
+    var legacy = tksReadState(deps.scriptProps);
+    out.legacyState = legacy.ok && DIAG_VALUE_RE.test(legacy.st.state) ? legacy.st.state : 'STATE_UNREADABLE'; // #791 の状態は読むだけ
+    out.ok = g.ok && !pr && rs.ok;
+    out.code = out.ok ? 'NUMID_STATUS_OK' : (!g.ok ? g.code : (pr || 'STATE_UNREADABLE'));
+    return diagSanitize(out, 0);
+  }
+
   // ---------- 37DD keyList.id 型のみの読取専用診断（Issue #795）----------
   // 目的: 現存する通常キーの keyList.id が JSON 上で数値か文字列かを、固定コードだけで把握する。
   // 通信は GET /v1.1/devices を永続予算1回のみ。変更系 API・User Properties 書込・既存 ACCESS_TEST_KEY_STATE の変更はしない。
@@ -2065,6 +2391,7 @@ var SwitchBotAccessInfra = (function () {
     CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials, credentialStatus: credentialStatus,
     BOOTSTRAP_KEYS: BOOTSTRAP_KEYS, accessFlagState: accessFlagState, migrateBootstrapCredentials: migrateBootstrapCredentials, bootstrapStatus: bootstrapStatus, scrubBootstrapCredentials: scrubBootstrapCredentials,
     readOnlyDiagnostics: readOnlyDiagnostics, testReadOnlyDiagnostics: testReadOnlyDiagnostics, testKeyStage: testKeyStage, testKeyStatus: testKeyStatus, idTypeDiag: idTypeDiag, idTypeDiagStatus: idTypeDiagStatus, TKS_MAX_CALLS: TKS_MAX_CALLS,
+    numIdStage: numIdStage, numIdAppCheck: numIdAppCheck, numIdStatus: numIdStatus, NID_MAX_CALLS: NID_MAX_CALLS, NID_PLAN: NID_PLAN,
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,

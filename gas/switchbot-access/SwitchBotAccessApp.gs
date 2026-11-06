@@ -476,6 +476,40 @@ function accessIdTypeDiagRun() {
   return out;
 }
 
+// ── verify環境専用・37DD 数値型ID維持 createKey→deleteKey 最小試験（Issue #797）──
+// エディタの関数選択から引数なしで1回ずつ実行する手動入口。マージ・デプロイ・ARMED のみでは通信しない。
+// 通信には ACCESS_NUMID_TEST_ARMED=NUMID_PLAN_V1_6CALLS（手順書の6回計画との合致の目印）と、その段階名の
+// ACCESS_NUMID_TEST_APPROVAL（LIST / ISSUE / VERIFY_ISSUED / PRE_DELETE_LIST / DELETE / VERIFY_DELETED。通信前に消費）の両方が必要。
+// 順序: Step1 → … → Step6 のあと、公式アプリの目視結果を accessNumIdAppCheck（通信なし）で記録。SwitchBot API は合計6回まで・自動再送なし。
+// 既存の #791 状態（ACCESS_TEST_KEY_STATE=STOPPED）・ARMED・APPROVAL は読むだけで書換えない。独立の状態 ACCESS_NUMID_TEST_STATE で予算を管理する。
+// deleteKey の parameter.id は PRE_DELETE_LIST で取得した keyList.id の型のまま送る（String() 変換なし）。ログと戻り値は固定コード・件数・秒数のみ。
+// 中断・不明時は次の変更操作を停止し、公式アプリで手動確認・撤去する（手順: docs/switchbot-access-numeric-id-retest-797.md）。
+function sba_numIdRun_(stage) {
+  var out;
+  try { out = SwitchBotAccessInfra.numIdStage(sba_testKeyDeps_(), stage); } catch (e) { out = { ok: false, code: 'UNEXPECTED_ERROR' }; }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+
+function accessNumIdStatus() {
+  var out;
+  try { out = SwitchBotAccessInfra.numIdStatus(sba_testKeyDeps_()); } catch (e) { out = { ok: false, code: 'UNEXPECTED_ERROR' }; }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+function accessNumIdStep1List() { return sba_numIdRun_('LIST'); }
+function accessNumIdStep2Issue() { return sba_numIdRun_('ISSUE'); }
+function accessNumIdStep3VerifyIssued() { return sba_numIdRun_('VERIFY_ISSUED'); }
+function accessNumIdStep4PreDeleteList() { return sba_numIdRun_('PRE_DELETE_LIST'); }
+function accessNumIdStep5Delete() { return sba_numIdRun_('DELETE'); }
+function accessNumIdStep6VerifyDeleted() { return sba_numIdRun_('VERIFY_DELETED'); }
+function accessNumIdAppCheck() {
+  var out;
+  try { out = SwitchBotAccessInfra.numIdAppCheck(sba_testKeyDeps_()); } catch (e) { out = { ok: false, code: 'UNEXPECTED_ERROR' }; }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+
 // ── 本番初期設定の読取専用診断（Issue #774）──
 // エディタの関数選択から引数なしで1回実行。ACCESS_ADMIN_ACTORS の本人（active/effective 一致）のみ。ACCESS_ENABLED が
 // 明示OFFのときだけ進む。書込み（Properties/Sheets/ロック）・通信（UrlFetch/Mail）・トリガー操作は一切しない。
