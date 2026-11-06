@@ -8,7 +8,7 @@
 2. 削除直前に必ず `keyList` を再取得し、下表の項目を再照合する。**不一致・不明では API を送らず停止**（`UNKNOWN`、運営者通知、手動撤去）。
 3. API受理は削除成功ではない。**後続の `keyList` で対象ID・対象名の両方が不在**のときだけ `DELETED_CONFIRMED`。残存・タイムアウト・不明は `UNKNOWN`。
 4. 変更系 API（createKey / deleteKey）の自動再送はしない。
-5. ログ・通知・record にはIDの値を出さず、固定の型コード（`ID_TYPE_NUMBER` / `ID_TYPE_STRING` / `ID_NOT_SAFE_INTEGER` / `ID_TYPE_UNKNOWN`）だけを残す。
+5. 通知・通常ログ・Issue/PRには実IDの値を出さず、固定の型コード（`ID_TYPE_NUMBER` / `ID_TYPE_STRING` / `ID_NOT_SAFE_INTEGER` / `ID_TYPE_UNKNOWN`）だけを残す。内部の `OP_` レコードには、削除直前の照合のために対象キーのID値を保持する（既存フロー上必要。アクセスと保持期間は既存の制限に従う）。
 
 ## 事実と未確定の区別
 
@@ -72,6 +72,6 @@
 | 通常キー衝突 | 通常キーが同IDを持つ／名前が運用キー形式でない → 送信せず、通常キーは保持 |
 | 属性矛盾・鮮度 | 種別矛盾、取得から送信までの超過で送信しない |
 | 通信失敗・残存 | 取得失敗は送信しない。deleteKey 通信断・残存は `UNKNOWN`、自動再送なし |
-| 秘匿 | 通知・履歴・理由にIDの値を出さず型コードのみ |
+| 秘匿 | 通知・履歴・理由にIDの値を出さず型コードのみ（内部 `OP_` レコードの `passcodeId` は照合のため保持） |
 | 互換 | 型未記録の旧 record でも、今回取得した生の型で送信 |
 | 01FDブロック | 既存：`switchbot-access-numeric-id-retest-797.test.js`（`LAST4_FORBIDDEN`）、`switchbot-access-infra-754.test.js`（`KEYPAD_NOT_ALLOWED_IN_ENV`） |
