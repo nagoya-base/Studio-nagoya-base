@@ -657,3 +657,38 @@ test('PR CI covers workflow-only changes to GAS-related workflows (Issue #804)',
     assert.ok(ci.includes(`.github/workflows/${p}`), p);
   }
 });
+
+test('preflight LIST failures print one fixed line with a non-empty code, no secrets, and no writes (Issue #804 review)', () => {
+  const sensitive = 'private@example.test token-dummy script-dummy deployment-dummy';
+  const cases = [
+    ['invalid_grant', 'AUTHENTICATION_FAILED'], ['HTTP 403 forbidden', 'ACCESS_DENIED'],
+    ['HTTP 503', 'TRANSIENT_API_OR_NETWORK_ERROR'], ['something unfamiliar', 'UNCLASSIFIED'], ['', 'UNCLASSIFIED']
+  ];
+  for (const target of ['admin', 'public']) {
+    for (const [raw, code] of cases) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'booking-preflight-list-'));
+      try {
+        const bin = path.join(dir, 'bin');
+        fs.mkdirSync(bin);
+        fs.writeFileSync(path.join(bin, 'clasp'), `#!/bin/bash
+shift 4
+printf '%s\\n' "$1" >> "$MOCK_CALLS"
+echo "$MOCK_RAW $MOCK_SENSITIVE" >&2
+echo "$MOCK_SENSITIVE"
+exit 1
+`, { mode: 0o700 });
+        const env = { ...process.env, PATH: bin + path.delimiter + process.env.PATH, GITHUB_WORKSPACE: workspace, RUNNER_TEMP: dir, GITHUB_SHA: 'x',
+          CLASPRC_JSON: JSON.stringify({ tokens: { default: {} } }), PUBLIC_CLASPRC_JSON: JSON.stringify({ tokens: { 'booking-owner': {} } }),
+          PUBLIC_SCRIPT_ID: 'public-script-dummy', PUBLIC_DEPLOYMENT_ID: 'public-deployment-dummy',
+          ADMIN_SCRIPT_ID: 'admin-script-dummy', ADMIN_DEPLOYMENT_ID: 'admin-deployment-dummy',
+          MOCK_CALLS: path.join(dir, 'calls'), MOCK_RAW: raw, MOCK_SENSITIVE: sensitive };
+        const r = spawnSync('bash', [deployScript, target, 'preflight'], { cwd: dir, env, encoding: 'utf8' });
+        assert.equal(r.status, 1);
+        assert.equal(r.stderr, `Booking preflight failed: role=${target} stage=LIST code=${code}. No deployment was updated.\n`);
+        assert.doesNotMatch(r.stdout + r.stderr, /private@example|token-dummy|script-dummy|deployment-dummy/);
+        assert.equal(fs.readFileSync(path.join(dir, 'calls'), 'utf8').trim(), 'list-deployments');
+        assert.equal(fs.existsSync(path.join(dir, '.clasprc.json')), false);
+      } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }
+  }
+});

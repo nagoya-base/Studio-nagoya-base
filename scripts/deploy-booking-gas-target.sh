@@ -154,7 +154,8 @@ cd "$remote_dir"
 echo "Running clasp list-deployments (before update)"
 if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_stdout" 2>"$list_stderr"; then
   if [[ "${mode:-}" == "preflight" ]]; then
-    echo "Booking preflight failed: role=${target} stage=LIST. No deployment was updated." >&2
+    node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" preflight "$target" >&2
+    exit 1
   fi
   node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" before >&2
   exit 1

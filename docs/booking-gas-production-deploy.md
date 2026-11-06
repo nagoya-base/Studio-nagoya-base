@@ -195,3 +195,6 @@ list-deployments → pull → push --force → update-deployment → 更新後�
 - 認証失効（`CREDENTIAL` / `LIST`）の場合は、Secretsを貼らず`booking-production`のEnvironment secretsを再登録して再実行する。
 - preflightは更新権限や将来のAPI成功、GAS実行権限を保証しない。更新step自体の認証エラーは従来どおり固定コードで停止する。
 - GAS実行時の権限同意、SwitchBot Token/Secretの有効性はpreflightの対象外（別ゲート）。
+
+補足: preflightの「配布物の組立て」は、Publicについてリモートmanifestの存在を確認したうえでGit管理のPublic manifestで組み立てる（後続のdeployと同じ）。
+リモート設定との差分、`show-file-status`、push権限、将来のAPI成功は事前に保証しない。preflight成功は本番デプロイ成功の保証ではない。

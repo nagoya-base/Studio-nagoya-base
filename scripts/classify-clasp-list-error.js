@@ -35,7 +35,14 @@ if (require.main === module) {
     try { return fs.readFileSync(file, 'utf8').slice(0, 1024 * 1024); }
     catch (_) { return ''; }
   });
-  process.stderr.write(report(outputs.join('\n'), process.argv[4]) + '\n');
+  if (process.argv[4] === 'preflight') {
+    // Issue #804: preflight uses one fixed line. The role is restricted to the two known targets.
+    const role = process.argv[5] === 'public' ? 'public' : 'admin';
+    process.stderr.write('Booking preflight failed: role=' + role + ' stage=LIST code=' +
+      classify(outputs.join('\n')) + '. No deployment was updated.\n');
+  } else {
+    process.stderr.write(report(outputs.join('\n'), process.argv[4]) + '\n');
+  }
 }
 
 module.exports = { classify, report };
