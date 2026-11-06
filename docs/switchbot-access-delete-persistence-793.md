@@ -17,7 +17,7 @@
 | 対象 | 同じ末尾37DDのKeypad（同一機かどうかの設定・ファーム差は未照合） |
 | 呼び出し | `POST /v1.1/devices/{deviceId}/commands`、`command=deleteKey`、`parameter.id`（#713: `SwitchBotVerifyCore.gs:77-81`、#791: `SwitchBotAccessApp.gs:109-112`） |
 | 応答 | 発行・削除とも `commandId` なし（受理のみ） |
-| 事前の読取 | いずれも削除前に keyList で対象キーの存在を確認している |
+| 事前の読取 | いずれも削除より前に keyList で対象キーを確認している（ただし #791 は削除の約2分前で、直前ではない。下記相違点） |
 
 ### 相違点
 
