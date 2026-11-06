@@ -72,12 +72,6 @@ verify_current_sha_with_retry() {
   return 1
 }
 
-# preflight専用の固定形式エラー。他modeでは従来の固定メッセージを使う。
-preflight_fail() {
-  echo "Booking preflight failed: role=${target} stage=$1 code=$2. No deployment was updated." >&2
-  exit 1
-}
-
 if [[ "$mode" == "schema-guard" && "$target" != "public" ]]; then
   echo "schema-guard reads the previous production SHA from the public deployment only." >&2
   exit 1
@@ -102,6 +96,14 @@ case "$target" in
     ;;
 esac
 
+# preflight専用の固定形式エラー。他modeでは従来の固定メッセージを使う。
+preflight_dir="$RUNNER_TEMP/booking-gas-preflight"
+preflight_fail() {
+  rm -rf "$preflight_dir"
+  echo "Booking preflight failed: role=${target} stage=$1 code=$2. No deployment was updated." >&2
+  exit 1
+}
+
 if [[ -z "$selected_clasprc_json" || -z "$script_id" || -z "$deployment_id" ]]; then
   [[ "$mode" == "preflight" ]] && preflight_fail SECRETS SECRET_MISSING
   echo "Required booking-production secrets are not configured." >&2
@@ -115,8 +117,7 @@ umask 077
 list_stdout="$RUNNER_TEMP/clasp-list-deployments.stdout"
 list_stderr="$RUNNER_TEMP/clasp-list-deployments.stderr"
 push_log="$RUNNER_TEMP/clasp-push.log"
-preflight_dir="$RUNNER_TEMP/booking-gas-preflight"
-trap 'rm -f "$list_stdout" "$list_stderr" "$push_log" "$auth_file"; rm -rf "$preflight_dir"' EXIT
+trap 'rm -f "$list_stdout" "$list_stderr" "$push_log" "$auth_file"' EXIT
 # 同一job内でadmin→publicを続けて実行しても、前のtargetのpull結果を持ち越さない。
 rm -rf "$remote_dir"
 mkdir -p "$remote_dir"
@@ -152,14 +153,14 @@ fi
 cd "$remote_dir"
 echo "Running clasp list-deployments (before update)"
 if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_stdout" 2>"$list_stderr"; then
-  if [[ "$mode" == "preflight" ]]; then
+  if [[ "${mode:-}" == "preflight" ]]; then
     echo "Booking preflight failed: role=${target} stage=LIST. No deployment was updated." >&2
   fi
   node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" before >&2
   exit 1
 fi
 if ! deployment_has_unique_id; then
-  [[ "$mode" == "preflight" ]] && preflight_fail DEPLOYMENT DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE
+  [[ "${mode:-}" == "preflight" ]] && preflight_fail DEPLOYMENT DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE
   echo "Configured deployment ID could not be uniquely verified in the selected existing GAS project." >&2
   exit 1
 fi
@@ -179,6 +180,7 @@ if [[ "$mode" == "preflight" ]]; then
   if ! node scripts/prepare-booking-gas-project.js "$target" "$preflight_dir" "$preflight_manifest" >/dev/null 2>&1; then
     preflight_fail BUILD MANIFEST_OR_DISTRIBUTION_INVALID
   fi
+  rm -rf "$preflight_dir"
   echo "Booking preflight passed: role=${target} (read-only; authentication, deployment and distribution verified)"
   exit 0
 fi
