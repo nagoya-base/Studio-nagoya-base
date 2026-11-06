@@ -179,7 +179,26 @@ var SwitchBotAccessCore = (function () {
       absent: byName.length === 0 && byId.length === 0, error: null };
   }
 
-  /** 作成後: 厳密に 1 件・ID あり・属性矛盾なしのときのみ確認済み。 */
+  var SERVICE_KEY_NAME_RE = /^SNB-[0-9a-f]{16}$/; // keyName() が作る運用キー名。これ以外（通常キー）は削除対象にしない
+
+  /**
+   * keyList.id の型分類（Issue #799）。値は返さず固定コードだけを返す。
+   * 数値は正の安全な整数のみ（JSON.parse で精度を失う値は削除に使わない）。文字列は非空のみ。
+   */
+  var ID_TYPE = { NUMBER: 'ID_TYPE_NUMBER', STRING: 'ID_TYPE_STRING', UNSAFE: 'ID_NOT_SAFE_INTEGER', UNKNOWN: 'ID_TYPE_UNKNOWN' };
+  function classifyId(id) {
+    if (typeof id === 'number') {
+      if (!isFinite(id) || id <= 0 || Math.floor(id) !== id) return ID_TYPE.UNKNOWN;
+      return id <= 9007199254740991 ? ID_TYPE.NUMBER : ID_TYPE.UNSAFE;
+    }
+    if (typeof id === 'string' && id !== '') return ID_TYPE.STRING;
+    return ID_TYPE.UNKNOWN;
+  }
+
+  /**
+   * 作成後: 厳密に 1 件・ID あり・属性矛盾なしのときのみ確認済み。
+   * id は keyList の生の値（数値は数値のまま・文字列は文字列のまま）を返す。String() 化しない（Issue #799）。
+   */
   function judgeIssued(insp, expected) {
     if (!insp.valid) return { ok: false, error: insp.error };
     if (insp.count === 0) return { ok: false, error: 'KEY_NOT_FOUND' };
@@ -189,7 +208,10 @@ var SwitchBotAccessCore = (function () {
     if (k.type !== undefined && k.type !== 'timeLimit') return { ok: false, error: 'KEY_ATTR_MISMATCH' };
     if (k.startTime !== undefined && String(k.startTime) !== String(expected.startSec)) return { ok: false, error: 'KEY_ATTR_MISMATCH' };
     if (k.endTime !== undefined && String(k.endTime) !== String(expected.endSec)) return { ok: false, error: 'KEY_ATTR_MISMATCH' };
-    return { ok: true, id: String(k.id) };
+    var idType = classifyId(k.id);
+    if (idType === ID_TYPE.UNSAFE) return { ok: false, error: 'ID_NOT_SAFE_INTEGER' };
+    if (idType !== ID_TYPE.NUMBER && idType !== ID_TYPE.STRING) return { ok: false, error: 'KEY_ID_INVALID' };
+    return { ok: true, id: k.id, idType: idType };
   }
 
   /** Webhook の解釈（Keypad changeReport の createKey/deleteKey のみ）。 */
@@ -236,6 +258,7 @@ var SwitchBotAccessCore = (function () {
     var maxReads = typeof config.maxReads === 'number' ? config.maxReads : 3;
     var webhookWaitSec = typeof config.webhookWaitSec === 'number' ? config.webhookWaitSec : 90;
     var readWaitSec = typeof config.readWaitSec === 'number' ? config.readWaitSec : 600; // commandId なし削除の読取確認の最大経過時間
+    var deleteFreshSec = typeof config.deleteFreshSec === 'number' ? config.deleteFreshSec : 60; // 削除直前の keyList 取得から送信までの上限
     var maxDeliveryAttempts = typeof config.maxDeliveryAttempts === 'number' ? config.maxDeliveryAttempts : 3; // 「送信していない」と確定した失敗の再試行上限
     var deliveryRetrySec = typeof config.deliveryRetrySec === 'number' ? config.deliveryRetrySec : 600;
     var maxReguides = typeof config.maxReguides === 'number' ? config.maxReguides : 2; // 配送済みの再案内（管理者判断）の上限
@@ -432,7 +455,7 @@ var SwitchBotAccessCore = (function () {
       if (!j.ok) {
         // Webhook 成功なのに keyList 不一致 = 矛盾。成功へ寄せず停止。重複/ID欠落/属性矛盾も停止。
         if (webhookOk || j.error === 'KEY_NAME_AMBIGUOUS' || j.error === 'KEY_ID_MISSING' ||
-            j.error === 'KEY_ATTR_MISMATCH' || j.error === 'DEVICE_LIST_INVALID' || j.error === 'KEYLIST_INVALID') {
+            j.error === 'KEY_ATTR_MISMATCH' || j.error === 'KEY_ID_INVALID' || j.error === 'ID_NOT_SAFE_INTEGER' || j.error === 'DEVICE_LIST_INVALID' || j.error === 'KEYLIST_INVALID') {
           return stopUnknown(rec, 'CONFIRM_MISMATCH', j.error);
         }
         // commandId なしの 0 件: 反映待ちの可能性。上限まで読み取りのみ再試行
@@ -440,7 +463,8 @@ var SwitchBotAccessCore = (function () {
         save(recKey(rec.id), rec);
         return rec;
       }
-      rec.passcodeId = j.id;
+      rec.passcodeId = j.id; // 生の型を保持（JSON.stringify で number は number のまま往復する）
+      rec.passcodeIdType = j.idType;
       if (webhookOk) rec.evidence.push(EVIDENCE.WEBHOOK_SUCCESS);
       rec.evidence.push(EVIDENCE.KEYLIST_CONFIRMED);
       transition(rec, STATE.ISSUED_CONFIRMED, null);
@@ -454,7 +478,31 @@ var SwitchBotAccessCore = (function () {
       return executeDelete(rec);
     }
 
+    /**
+     * 削除直前の再照合（Issue #799）。直前に取得した keyList だけを根拠に、削除対象の同一性・安全性を検査する。
+     * 通すのは「保存名が運用キー形式で、保存 ID と同一の 1 要素に一致し、種別・有効期間が発行時の記録と矛盾せず、
+     * ID の型が数値(安全な整数)/文字列のいずれかで、記録済みの型から変化していない」場合のみ。通常キーは名前形式と属性で拒否。
+     */
+    function freshTarget(devices, rec) {
+      if (!SERVICE_KEY_NAME_RE.test(String(rec.name))) return { ok: false, error: 'NOT_SERVICE_KEY' };
+      var devs = devices.filter(function (d) { return d && d.deviceId === rec.deviceId; });
+      var hits = devs[0].keyList.filter(function (k) { return k.name === rec.name; });
+      if (hits.length !== 1) return { ok: false, error: 'KEY_NAME_AMBIGUOUS' };
+      var k = hits[0];
+      if (String(k.id) !== String(rec.passcodeId)) return { ok: false, error: 'ID_MISMATCH' };
+      if (k.type !== undefined && k.type !== 'timeLimit') return { ok: false, error: 'KEY_ATTR_MISMATCH' };
+      if (k.startTime !== undefined && String(k.startTime) !== String(rec.startSec)) return { ok: false, error: 'KEY_ATTR_MISMATCH' };
+      if (k.endTime !== undefined && String(k.endTime) !== String(rec.endSec)) return { ok: false, error: 'KEY_ATTR_MISMATCH' };
+      var t = classifyId(k.id);
+      if (t === ID_TYPE.UNSAFE) return { ok: false, error: 'ID_NOT_SAFE_INTEGER' };
+      if (t !== ID_TYPE.NUMBER && t !== ID_TYPE.STRING) return { ok: false, error: 'TARGET_ID_INVALID' };
+      // 発行確認時に記録した型から変化していれば停止（旧形式で型未記録の record は今回取得した型を採用）
+      if (rec.passcodeIdType !== undefined && rec.passcodeIdType !== t) return { ok: false, error: 'ID_TYPE_CHANGED' };
+      return { ok: true, id: k.id, idType: t };
+    }
+
     function executeDelete(rec) {
+      var readAtSec = deps.nowSec();
       var kl = readKeyList();
       if (!kl.ok) return stopUnknown(rec, 'DELETE_PRECHECK_FAILED', kl.error);
       var insp = inspectAbsence(kl.devices, rec.deviceId, rec.name, rec.passcodeId);
@@ -471,9 +519,15 @@ var SwitchBotAccessCore = (function () {
       if (insp.bothCount !== 1 || insp.nameCount !== 1 || insp.idCount !== 1) {
         return stopUnknown(rec, 'DELETE_ID_MISMATCH', 'ID_MISMATCH'); // 別名の同 ID／別 ID の同名
       }
+      // ---- 削除直前の再照合（Issue #799）。ここで通らなければ API を送らず停止 ----
+      var fresh = freshTarget(kl.devices, rec);
+      if (!fresh.ok) return stopUnknown(rec, 'DELETE_PRECHECK_FAILED', fresh.error);
+      if (deps.nowSec() - readAtSec > deleteFreshSec) return stopUnknown(rec, 'DELETE_PRECHECK_FAILED', 'PRE_DELETE_STALE');
+      rec.deleteIdType = fresh.idType; // 型コードのみ記録（ID の値は記録しない）
       transition(rec, STATE.DELETE_SENDING, null);
       var res;
-      try { res = deps.api.deleteKey(rec.deviceId, String(rec.passcodeId)); }
+      // 今回の keyList から取得した生の id を、型を変えずにそのまま parameter.id へ渡す（String() 変換なし）
+      try { res = deps.api.deleteKey(rec.deviceId, fresh.id); }
       catch (e) { return stopUnknown(rec, 'DELETE_COMM_ERROR', 'COMM_ERROR'); }
       var c = classifyApi(res);
       if (!c.accepted) return stopUnknown(rec, 'DELETE_RESPONSE_UNKNOWN', 'RESPONSE_UNKNOWN');
@@ -946,6 +1000,7 @@ var SwitchBotAccessCore = (function () {
         var j = judgeIssued(insp, rec);
         if (!j.ok) return { ok: false, error: j.error };
         rec.passcodeId = j.id;
+        rec.passcodeIdType = j.idType;
         rec.evidence.push(EVIDENCE.ADMIN_KEYLIST);
         transition(rec, STATE.ISSUED_CONFIRMED, 'ADMIN:' + actor);
         return { ok: true, state: rec.state };
@@ -1015,7 +1070,7 @@ var SwitchBotAccessCore = (function () {
   return {
     STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, TERMINAL: TERMINAL, DLV: DLV, DELIVERY_DECISIONS: DELIVERY_DECISIONS,
     maskId: maskId, jstToEpochSec: jstToEpochSec, resolveKeypad: resolveKeypad, validatePasscode: validatePasscode,
-    evaluateEligibility: evaluateEligibility, inspectKeyList: inspectKeyList, inspectAbsence: inspectAbsence, normDev: normDev, judgeIssued: judgeIssued,
+    evaluateEligibility: evaluateEligibility, inspectKeyList: inspectKeyList, inspectAbsence: inspectAbsence, normDev: normDev, judgeIssued: judgeIssued, classifyId: classifyId,
     parseKeypadWebhook: parseKeypadWebhook, classifyApi: classifyApi, createEngine: createEngine
   };
 })();

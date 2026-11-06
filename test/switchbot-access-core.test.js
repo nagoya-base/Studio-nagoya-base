@@ -40,7 +40,9 @@ function world(opts) {
     createMode: 'commandId', // commandId | noCommandId | dropResponse | reject | silentNoApply | duplicateApply
     deleteMode: 'ok',        // ok | dropResponse | noApply
     listMode: 'ok',          // ok | fail | throw | nonArray | noKeyList
-    notifyFail: false, failSetOnKey: null, setCount: 0
+    notifyFail: false, failSetOnKey: null, setCount: 0,
+    idMode: 'string',        // string | number（#799: SwitchBot 実機の keyList.id は NUMBER）
+    onList: null             // listDevices 呼出し時のフック（鮮度・直前変化の模擬）
   };
   w.engineDeps = function () {
     return {
@@ -65,6 +67,7 @@ function world(opts) {
       api: {
         listDevices: function () {
           w.calls.push('list');
+          if (w.onList) w.onList();
           if (w.listMode === 'throw') throw new Error('NET');
           if (w.listMode === 'fail') return { ok: false };
           if (w.listMode === 'nonArray') return { ok: true, devices: null };
@@ -77,7 +80,7 @@ function world(opts) {
         createKey: function (p) {
           w.calls.push('create');
           var apply = function () {
-            w.keys[p.deviceId].push({ id: String(++w.seq), name: p.name, type: 'timeLimit', startTime: String(p.startTime), endTime: String(p.endTime) });
+            w.keys[p.deviceId].push({ id: w.idMode === 'number' ? ++w.seq : String(++w.seq), name: p.name, type: 'timeLimit', startTime: String(p.startTime), endTime: String(p.endTime) });
           };
           if (w.createMode === 'reject') return { httpCode: 400, parsed: { statusCode: 190 } };
           if (w.createMode === 'dropResponse') { apply(); throw new Error('NET'); }
@@ -156,7 +159,12 @@ test('keyList判定: 0件/複数件/ID欠落/属性矛盾/形式不正は確認�
   assert.strictEqual(j([{ deviceId: DEV_A }]).error, 'KEYLIST_INVALID');
   assert.strictEqual(j(null).error, 'DEVICE_LIST_INVALID');
   assert.strictEqual(j([{ deviceId: DEV_B, keyList: [] }]).error, 'DEVICE_NOT_FOUND');
-  assert.deepStrictEqual(j([{ deviceId: DEV_A, keyList: [{ id: 7, name: 'N', startTime: '10', endTime: '20' }] }]), { ok: true, id: '7' });
+  assert.deepStrictEqual(j([{ deviceId: DEV_A, keyList: [{ id: 7, name: 'N', startTime: '10', endTime: '20' }] }]), { ok: true, id: 7, idType: 'ID_TYPE_NUMBER' }, '生の型を保持する（String() 化しない #799）');
+  assert.deepStrictEqual(j([{ deviceId: DEV_A, keyList: [{ id: '7', name: 'N', startTime: '10', endTime: '20' }] }]), { ok: true, id: '7', idType: 'ID_TYPE_STRING' });
+  assert.strictEqual(j([{ deviceId: DEV_A, keyList: [{ id: 9007199254740993, name: 'N' }] }]).error, 'ID_NOT_SAFE_INTEGER');
+  assert.strictEqual(j([{ deviceId: DEV_A, keyList: [{ id: 1.5, name: 'N' }] }]).error, 'KEY_ID_INVALID');
+  assert.strictEqual(j([{ deviceId: DEV_A, keyList: [{ id: -3, name: 'N' }] }]).error, 'KEY_ID_INVALID');
+  assert.strictEqual(j([{ deviceId: DEV_A, keyList: [{ id: {}, name: 'N' }] }]).error, 'KEY_ID_INVALID');
 });
 
 // ---------- 発行 ----------
@@ -1387,4 +1395,186 @@ test('#763 発行: 送信時刻より前に受信したsuccessは keyList 一致
   e2.ingestWebhook(createHook(w2.records()[0]));      // 受信=送信と同時刻
   e2.sync(booking());
   assert.strictEqual(w2.records()[0].state, S.ISSUED_CONFIRMED);
+});
+
+
+// ---------- #799 deleteKey: ID型保持＋削除直前再照合 ----------
+
+function deleteCalls(w) { return w.calls.filter(function (c) { return c.indexOf('delete:') === 0; }); }
+/** 送信された parameter.id の JSON 型（値は見ない）。フェイクは呼出し記録を文字列化するので、別途型を捕捉する。 */
+function trackWireTypes(w) {
+  var types = [];
+  var base = w.engineDeps;
+  w.engineDeps = function () {
+    var d = base();
+    var orig = d.api.deleteKey;
+    d.api.deleteKey = function (dev, id) { types.push(typeof id); return orig(dev, id); };
+    return d;
+  };
+  return types;
+}
+
+test('#799 NUMBER: 発行確認で数値IDを保持し、削除は数値のまま送信され、後続keyListで不在確認して確定', function () {
+  var w = world(); w.idMode = 'number';
+  var wire = trackWireTypes(w);
+  var e = w.engine();
+  var rec = issued(w, e);
+  assert.strictEqual(typeof rec.passcodeId, 'number', '保存IDは数値のまま');
+  assert.strictEqual(rec.passcodeIdType, 'ID_TYPE_NUMBER');
+  e.sync(CANCEL());
+  assert.deepStrictEqual(wire, ['number'], 'parameter.id は数値');
+  var r = w.records()[0];
+  assert.strictEqual(r.state, S.DELETED_CONFIRMED);
+  assert.strictEqual(r.deleteIdType, 'ID_TYPE_NUMBER');
+  assert.strictEqual(w.keys[DEV_A].length, 0);
+});
+
+test('#799 STRING: 文字列IDは文字列のまま送信される', function () {
+  var w = world(); w.idMode = 'string';
+  var wire = trackWireTypes(w);
+  var e = w.engine();
+  var rec = issued(w, e);
+  assert.strictEqual(rec.passcodeIdType, 'ID_TYPE_STRING');
+  e.sync(CANCEL());
+  assert.deepStrictEqual(wire, ['string']);
+  assert.strictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
+});
+
+test('#799 旧経路差: 数値IDを String() で送ると端末は受理しても削除されない（旧実装の再現）→ 残存は成功にせず UNKNOWN', function () {
+  var w = world(); w.idMode = 'number';
+  var e = w.engine(); issued(w, e);
+  // 旧実装相当: 数値IDを文字列化して送る端末フェイク（型が違うと削除されない）
+  var deps = w.engineDeps(); var orig = deps.api.deleteKey;
+  deps.api.deleteKey = function (dev, id) { return orig(dev, String(id)); };
+  var e2 = C.createEngine(deps, baseConfig());
+  e2.sync(CANCEL());
+  assert.strictEqual(w.keys[DEV_A].length, 1, '試験キー残存');
+  e2.sync(CANCEL()); e2.sync(CANCEL()); e2.sync(CANCEL());
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN, 'API受理は削除成功にしない');
+  assert.strictEqual(deleteCalls(w).length, 1, '変更系は再送しない');
+  assert.ok(w.notes.some(function (n) { return n.code === 'KEY_REMAINS'; }), '運営者通知');
+});
+
+test('#799 型の往復: User Properties 相当(JSON文字列)の保存・再読込で数値IDが文字列化しない', function () {
+  var w = world(); w.idMode = 'number';
+  var e = w.engine(); issued(w, e);
+  var raw = w.store[Object.keys(w.store).filter(function (k) { return k.indexOf('OP_') === 0; })[0]];
+  assert.strictEqual(typeof JSON.parse(raw).passcodeId, 'number');
+});
+
+test('#799 削除直前にID型が変化(NUMBER→STRING)したら送信せず UNKNOWN', function () {
+  var w = world(); w.idMode = 'number';
+  var e = w.engine(); issued(w, e);
+  w.keys[DEV_A][0].id = String(w.keys[DEV_A][0].id);
+  e.sync(CANCEL());
+  assert.strictEqual(deleteCalls(w).length, 0);
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w.records()[0].reason, 'ID_TYPE_CHANGED');
+});
+
+test('#799 削除直前にID値が変化したら送信せず UNKNOWN（古いIDを使わない）', function () {
+  var w = world(); w.idMode = 'number';
+  var e = w.engine(); issued(w, e);
+  w.keys[DEV_A][0].id = w.keys[DEV_A][0].id + 1;
+  e.sync(CANCEL());
+  assert.strictEqual(deleteCalls(w).length, 0);
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+});
+
+test('#799 安全でない整数・不正なID型は送信しない', function () {
+  [[9007199254740993, 'ID_NOT_SAFE_INTEGER'], [1.5, 'TARGET_ID_INVALID'], [-4, 'TARGET_ID_INVALID'], [0, 'TARGET_ID_INVALID']].forEach(function (c) {
+    var w = world(); w.idMode = 'number';
+    var e = w.engine(); var rec = issued(w, e);
+    w.keys[DEV_A][0].id = c[0];
+    var recObj = JSON.parse(w.store['OP_' + rec.id]);
+    recObj.passcodeId = c[0]; delete recObj.passcodeIdType; w.store['OP_' + rec.id] = JSON.stringify(recObj);
+    e.sync(CANCEL());
+    assert.strictEqual(deleteCalls(w).length, 0, String(c[1]));
+    assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+    assert.strictEqual(w.records()[0].reason, c[1]);
+  });
+});
+
+test('#799 同名複数: 送信しない（KEY_NAME_AMBIGUOUS）', function () {
+  var w = world(); w.idMode = 'number';
+  var e = w.engine(); var rec = issued(w, e);
+  w.keys[DEV_A].push({ id: 999999, name: rec.name, type: 'timeLimit' });
+  e.sync(CANCEL());
+  assert.strictEqual(deleteCalls(w).length, 0);
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+});
+
+test('#799 通常キー衝突: 通常キーが保存IDを持つ／運用キー名形式でない名前は送信しない。通常キーは削除されない', function () {
+  // (a) 通常キーが同じIDを持つ（名前は別）
+  var w = world(); w.idMode = 'number';
+  var e = w.engine(); var rec = issued(w, e);
+  w.keys[DEV_A].push({ id: w.keys[DEV_A][0].id, name: 'NORMAL', type: 'permanent' });
+  e.sync(CANCEL());
+  assert.strictEqual(deleteCalls(w).length, 0);
+  assert.ok(w.keys[DEV_A].some(function (k) { return k.name === 'NORMAL'; }), '通常キー保持');
+  // (b) 記録の名前が運用キー形式でない（通常キー名を指している）
+  var w2 = world(); w2.idMode = 'number';
+  var e2 = w2.engine(); var rec2 = issued(w2, e2);
+  var o = JSON.parse(w2.store['OP_' + rec2.id]); o.name = 'Alice-Normal'; w2.store['OP_' + rec2.id] = JSON.stringify(o);
+  w2.keys[DEV_A][0].name = 'Alice-Normal';
+  e2.sync(CANCEL());
+  assert.strictEqual(deleteCalls(w2).length, 0);
+  assert.strictEqual(w2.records()[0].reason, 'NOT_SERVICE_KEY');
+  assert.strictEqual(w2.keys[DEV_A].length, 1, '通常キーは不変');
+});
+
+test('#799 属性矛盾(種別・有効期間)は送信しない', function () {
+  var w = world(); w.idMode = 'number';
+  var e = w.engine(); issued(w, e);
+  w.keys[DEV_A][0].type = 'permanent';
+  e.sync(CANCEL());
+  assert.strictEqual(deleteCalls(w).length, 0);
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+});
+
+test('#799 鮮度: 直前keyListの取得から送信までが上限を超えたら送信しない', function () {
+  var w = world(); w.idMode = 'number';
+  var e = w.engine(baseConfig({ deleteFreshSec: 30 })); issued(w, e);
+  w.onList = function () { w.now += 120; }; // 取得に時間がかかった（古い照合）
+  e.sync(CANCEL());
+  assert.strictEqual(deleteCalls(w).length, 0);
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w.records()[0].reason, 'PRE_DELETE_STALE');
+});
+
+test('#799 通信失敗: 削除直前のkeyList取得失敗は送信しない／deleteKey通信断は再送せず UNKNOWN', function () {
+  var w = world(); w.idMode = 'number';
+  var e = w.engine(); issued(w, e);
+  w.listMode = 'throw';
+  e.sync(CANCEL());
+  assert.strictEqual(deleteCalls(w).length, 0);
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  var w2 = world(); w2.idMode = 'number';
+  var e2 = w2.engine(); issued(w2, e2);
+  w2.deleteMode = 'dropResponse';
+  e2.sync(CANCEL()); e2.sync(CANCEL());
+  assert.strictEqual(w2.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(deleteCalls(w2).length, 1, '自動再送なし');
+});
+
+test('#799 秘匿: 通知・record履歴・理由にIDの値を出さない（型コードのみ）', function () {
+  var w = world(); w.idMode = 'number';
+  var e = w.engine(); issued(w, e);
+  var idStr = String(w.keys[DEV_A][0].id);
+  w.deleteMode = 'noApply';
+  e.sync(CANCEL()); e.sync(CANCEL()); e.sync(CANCEL()); e.sync(CANCEL());
+  var out = JSON.stringify(w.notes) + JSON.stringify(w.records()[0].history) + w.records()[0].reason + w.records()[0].alertCode + w.records()[0].deleteIdType;
+  assert.ok(out.indexOf(idStr) === -1, 'ID値なし');
+  assert.strictEqual(w.records()[0].deleteIdType, 'ID_TYPE_NUMBER');
+});
+
+test('#799 旧形式record(passcodeIdType未記録・文字列ID)も、今回取得した生の型で送信できる（互換）', function () {
+  var w = world(); w.idMode = 'number';
+  var e = w.engine(); var rec = issued(w, e);
+  var o = JSON.parse(w.store['OP_' + rec.id]); o.passcodeId = String(o.passcodeId); delete o.passcodeIdType; w.store['OP_' + rec.id] = JSON.stringify(o);
+  var wire = trackWireTypes(w);
+  var e2 = w.engine();
+  e2.sync(CANCEL());
+  assert.deepStrictEqual(wire, ['number'], '旧String保存でも再取得した生の型(NUMBER)を送る');
+  assert.strictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
 });
