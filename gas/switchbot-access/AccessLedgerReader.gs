@@ -61,6 +61,8 @@ var AccessLedgerReader = (function () {
       REQUIRED_COLUMNS.forEach(function (c) { rec[c] = (columns[c] || [])[i]; });
       var inTracked = !!tracked[id];
       var ms = toMs(rec.startAt);
+      // 空brandは「SNBと認定」ではない。鍵の発行対象にもならない。黙って落とさず、スナップショット側で
+      // BRAND_UNKNOWN として凍結・管理者確認へ回すために照合候補へ含める（mens/studio_x など他ブランドは候補に含めない）。
       var isSnb = String(rec.brand || '') === 'snb' || String(rec.brand || '') === '';
       var inWindow = false;
       if (isSnb) {

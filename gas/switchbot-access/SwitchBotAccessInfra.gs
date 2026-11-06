@@ -86,6 +86,9 @@ var SwitchBotAccessInfra = (function () {
    * 検証/本番の取り違えを送信前に止める。環境名・許可する末尾4桁・対応表が矛盾すれば不正。
    * 本番に自宅検証機(例 37DD)、検証に本番機(例 01FD)を載せられない（allowedLast4 は環境ごとの別設定）。
    */
+  /** 予約GAS（Booking.ALLOWED_BOOKING_BRANDS）が受け付けるブランド。空文字・未知の値は含めない。 */
+  var KNOWN_BRANDS = ['snb', 'mens', 'studio_x'];
+
   function validateConfig(cfg) {
     var errors = [];
     cfg = cfg || {};
@@ -104,6 +107,12 @@ var SwitchBotAccessInfra = (function () {
     var to = cfg.adminMailTo;
     if (!Array.isArray(to) || !to.length || to.some(function (a) { return typeof a !== 'string' || a.indexOf('@') < 1; })) errors.push('ADMIN_MAIL_MISSING');
     if (cfg.delivery !== undefined && !deliverySettings(cfg)) errors.push('DELIVERY_CONFIG_INVALID');
+    // eligibleBrands は「鍵発行の対象ブランド」。未設定は発行対象なし（コアが BRAND_NOT_TARGET で止める）なので許容するが、
+    // 設定されている場合は既知の予約ブランドだけを許す。空文字・未知・非文字列・非配列は設定不備として拒否する（#754）。
+    if (cfg.eligibleBrands !== undefined) {
+      var eb = cfg.eligibleBrands;
+      if (!Array.isArray(eb) || eb.some(function (b) { return KNOWN_BRANDS.indexOf(b) === -1; })) errors.push('ELIGIBLE_BRANDS_INVALID');
+    }
     return { ok: errors.length === 0, errors: errors.filter(function (e, i) { return errors.indexOf(e) === i; }) };
   }
 
