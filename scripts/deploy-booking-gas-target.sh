@@ -232,11 +232,20 @@ if [[ "$mode" == "schema-guard" ]]; then
     exit 1
   fi
   # 前回本番SHAは、既存Public本番Deploymentの一意な行の説明文が正確に `main <40桁SHA>` の場合だけ採用する。
-  # 追記・前置き・複数SHA・旧形式（SHAなし）は安全側で停止する。Admin行や編集用HEADは公開版の代用にしない。
+  # Admin行や編集用HEADは公開版の代用にしない。
+  # 説明文が追記つき・前置きつき・複数SHA・旧形式（SHAなし）・空のときは「前回SHA不明（PREVIOUS_SHA_UNKNOWN）」。
+  # 不明を「変更なし」と仮定しない。運営が admin-only → migrateBookingsSchema（手動）を済ませて
+  # schema_migrated=true を明示した場合に限り、「変更あり」と同じ扱いで通す（初回ベースライン。案P1）。
+  # この初回のfullで説明文が `main <SHA>` に更新され、以後は通常のガードに戻る。
   previous_description="$(deployment_description)"
   if [[ ! "$previous_description" =~ ^main\ ([0-9a-f]{40})$ ]]; then
-    echo "Could not identify the previous Web App production commit; refusing to continue." >&2
-    exit 1
+    if [[ "${SCHEMA_MIGRATED:-}" != "true" ]]; then
+      echo "PREVIOUS_SHA_UNKNOWN: the previous Web App production commit cannot be identified from the deployment description, so whether the Bookings schema changed is unknown. Run migrateBookingsSchema in the Booking Admin Apps Script editor, then re-run with scope=full and schema_migrated=true." >&2
+      exit 1
+    fi
+    echo "Previous Web App production commit is unknown; the Bookings schema is treated as changed; schema_migrated=true confirmed."
+    [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "- ✅ Bookings schema: 前回の本番版が特定できないため『変更あり』として扱いました（schema_migrated=true の確認済み。今回のfullで以後は通常の判定に戻ります）" >> "$GITHUB_STEP_SUMMARY"
+    exit 0
   fi
   previous_shas="${BASH_REMATCH[1]}"
   if ! git -C "$GITHUB_WORKSPACE" cat-file -e "${previous_shas}^{commit}" 2>/dev/null; then

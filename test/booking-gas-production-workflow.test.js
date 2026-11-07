@@ -561,15 +561,12 @@ test('schema guard: a previous SHA without BookingsSchema.gs (first bootstrap) c
   assert.equal(ok.status, 0, ok.stderr);
 });
 
-test('schema guard fails closed when the previous Public SHA cannot be identified safely', () => {
+test('schema guard fails closed when the Public deployment row itself cannot be identified safely (even with schema_migrated=true)', () => {
   const cases = {
-    'no SHA in description': () => '- public-deployment-dummy @5 - manual deploy',
-    'short SHA': () => '- public-deployment-dummy @5 - main abc123def456abc123def456abc123def456abcd',
     'unknown deployment': ({ previous }) => `- another-deployment @5 - main ${previous}`,
     'substring ID': ({ previous }) => `- public-deployment-dummy-suffix @5 - main ${previous}`,
     'ID only in description': ({ previous }) => `- another-deployment @5 - public-deployment-dummy main ${previous}`,
     'duplicate ID': ({ previous }) => `- public-deployment-dummy @5 - main ${previous}\n- public-deployment-dummy @4 - main ${previous}`,
-    'two SHAs': ({ previous, current }) => `- public-deployment-dummy @5 - main ${previous} main ${current}`,
     'SHA not in checked-out history': () => `- public-deployment-dummy @5 - main ${'0'.repeat(40)}`
   };
   for (const [label, deploymentLine] of Object.entries(cases)) {
@@ -786,25 +783,58 @@ test('D1a: after an update, a non-exact description stops as unconfirmed with no
   }
 });
 
-test('D1a: schema guard takes the previous production SHA only from the unique Public row whose description is exactly `main <40-hex SHA>`', () => {
+test('D1a/P1: an unknown previous SHA (non-exact description) is never assumed unchanged: it stops unless the operator confirmed the migration, then it is treated as changed', () => {
   const cases = {
     'text appended after the SHA': ({ previous }) => `- public-deployment-dummy @5 - main ${previous} extra`,
     'text before the SHA': ({ previous }) => `- public-deployment-dummy @5 - rollback of main ${previous}`,
     'previous and current SHA mixed': ({ previous, current }) => `- public-deployment-dummy @5 - previous main ${previous}; current main ${current}`,
     'old format without a SHA (baseline unknown)': () => '- public-deployment-dummy @5 - manual deploy',
+    'short SHA': () => '- public-deployment-dummy @5 - main abc123def456',
     'empty description': () => '- public-deployment-dummy @5 -',
     'uppercase SHA': ({ previous }) => `- public-deployment-dummy @5 - main ${previous.toUpperCase()}`
   };
   for (const [label, deploymentLine] of Object.entries(cases)) {
-    for (const schemaMigrated of ['false', 'true']) {
-      const r = runGuard({ setup: unchanged, deploymentLine, schemaMigrated });
-      assert.equal(r.status, 1, `${label} (schema_migrated=${schemaMigrated}) must stop; an unknown baseline is never assumed unchanged`);
-      assert.match(r.stderr, /Could not identify the previous Web App production commit/);
-      assert.doesNotMatch(r.stderr, /[0-9a-f]{40}/);
+    // the schema did not actually change in these fixtures: the unknown baseline must still not be treated as "unchanged"
+    for (const schemaMigrated of ['false', '']) {
+      const stop = runGuard({ setup: unchanged, deploymentLine, schemaMigrated });
+      assert.equal(stop.status, 1, `${label} (schema_migrated=${schemaMigrated || 'unset'}) must stop`);
+      assert.match(stop.stderr, /^PREVIOUS_SHA_UNKNOWN: /);
+      assert.match(stop.stderr, /migrateBookingsSchema/);
+      assert.match(stop.stderr, /schema_migrated=true/);
+      assert.doesNotMatch(stop.stderr, /[0-9a-f]{40}/, label);
+      assert.deepEqual(stop.invoked, ['list-deployments'], 'read-only: only the deployment list is read');
     }
+    const ok = runGuard({ setup: unchanged, deploymentLine, schemaMigrated: 'true' });
+    assert.equal(ok.status, 0, `${label} with schema_migrated=true is treated as changed (first baseline): ${ok.stderr}`);
+    assert.match(ok.stdout, /Previous Web App production commit is unknown; the Bookings schema is treated as changed; schema_migrated=true confirmed/);
+    assert.doesNotMatch(ok.stdout, /schema is unchanged/);
+    assert.deepEqual(ok.invoked, ['list-deployments']);
   }
+  // the exact form still works through the normal diff path
   const exact = runGuard({ setup: unchanged });
   assert.equal(exact.status, 0, exact.stderr);
+  assert.match(exact.stdout, /schema is unchanged/);
+  const changedStop = runGuard({ setup: changed, schemaMigrated: 'false' });
+  assert.equal(changedStop.status, 1);
+  assert.doesNotMatch(changedStop.stderr, /PREVIOUS_SHA_UNKNOWN/, 'a known baseline with a real change uses the normal message');
+});
+
+test('D1a/P1: the unknown-baseline pass writes an operator-facing summary line and needs no SHA input', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-p1-'));
+  const summaryFile = path.join(dir, 'summary.md');
+  fs.writeFileSync(summaryFile, '');
+  const prev = process.env.GITHUB_STEP_SUMMARY;
+  process.env.GITHUB_STEP_SUMMARY = summaryFile;
+  try {
+    const r = runGuard({ setup: unchanged, deploymentLine: () => '- public-deployment-dummy @5 - manual deploy', schemaMigrated: 'true' });
+    assert.equal(r.status, 0, r.stderr);
+  } finally {
+    if (prev === undefined) delete process.env.GITHUB_STEP_SUMMARY; else process.env.GITHUB_STEP_SUMMARY = prev;
+  }
+  const summary = fs.readFileSync(summaryFile, 'utf8');
+  assert.match(summary, /Bookings schema: 前回の本番版が特定できないため『変更あり』として扱いました/);
+  assert.doesNotMatch(summary, /[0-9a-f]{40}|deployment-dummy|script-dummy/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('D1a: the schema decision uses the published Public row (not the editable HEAD or the Admin SHA) and never assumes migration', () => {

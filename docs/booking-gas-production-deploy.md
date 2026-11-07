@@ -60,6 +60,16 @@ manifestは既存プロジェクトから取得して維持する。ただしBoo
 - `Booking Admin: 未確認（stage=… code=…）` … 更新は適用済みの可能性がありますが、最終確認ができていません。**再実行する前に**、更新先（Apps Scriptの「デプロイを管理」）の状態を確認してください。自動で再実行・巻き戻しはしません。
 - 普通の更新では `scope` は `full`、`schema_migrated` はチェックなしのままで実行できます。`schema_migrated` はSHAのための入力ではなく、予約シートの列を変える変更（`BookingsSchema.gs` の実変更）があるときだけ、「Apps Scriptで`migrateBookingsSchema`を実行して成功を確認した」ことを運営者が伝えるためのものです。自動でONにはなりません。
 
+### 初めての更新だけ、`schema_migrated` が必要になることがあります
+
+更新先（Booking Web App）の説明文から「前回の本番版」が読み取れない場合（古い形式など）は、予約シートの列が変わったかどうかを判定できないため、**安全のため止まります**（`PREVIOUS_SHA_UNKNOWN`）。その場合は、次の順に進めてください。
+
+1. `scope=admin-only` で実行して承認する。
+2. Booking AdminのApps Scriptエディタで `migrateBookingsSchema` を実行し、成功を確認する（不足している列を足すだけで、何度実行しても安全です）。
+3. `scope=full`、`schema_migrated` にチェックを入れて実行して承認する。
+
+この `full` のあとは、更新先の説明文が読み取れる形になり、次回からは通常どおり（チェックなし）で実行できます。
+
 ### エラーが出たとき
 
 止まった画面（Actionsの実行ログ）に `Booking preflight failed: role=… stage=… code=…` と表示されます。
@@ -276,5 +286,5 @@ Booking Webhook（`Update Booking Webhook GAS`）とSurvey（`Deploy Survey GAS 
 
 - 今回のSHAは `GITHUB_SHA`（40桁小文字16進）から自動取得します。入力・Secret・Environment変数は追加していません。40桁でなければ、clasp呼出しの前に停止します。
 - 更新後の確認と post-check は、**ID欄の完全一致・一意**の行の説明文全体が正確に `main <今回の40桁SHA>` のときだけ「反映確認OK」です。部分一致、前置き・追記、旧SHAの混在、別行のSHAは成功にしません。読取りだけの再試行（最大5回・5秒間隔）と `UNKNOWN_STATE` 方針は従来どおりです。
-- schemaガードは、既存のPublic本番Deploymentの**一意な行の説明文が正確に `main <40桁SHA>`** のときだけ前回本番SHAとして採用し、Git履歴で `BookingsSchema.gs` の差分を判定します。説明文が不正・旧形式（SHAなし）・複数SHA・追記つきのときは、`schema_migrated=true` でも**安全側で停止**します（前回SHA不明を「変更なし」と仮定しません）。AdminのSHAやPublicの編集用HEADは公開版の代用にしません。
-- 説明文が旧形式の実環境で初回ベースラインを確定する方法は、別途 Issue #804 で運営判断中です（このPRでは自動で通しません）。
+- schemaガードは、既存のPublic本番Deploymentの**一意な行の説明文が正確に `main <40桁SHA>`** のときだけ前回本番SHAとして採用し、Git履歴で `BookingsSchema.gs` の差分を判定します。AdminのSHAやPublicの編集用HEADは公開版の代用にしません。Deploymentの行そのものを特定できない場合（ID不明・重複・部分一致）や、前回SHAがGit履歴にない場合は、`schema_migrated=true` でも停止します。
+- 説明文が追記つき・前置きつき・複数SHA・旧形式（SHAなし）・空のときは「前回SHA不明（`PREVIOUS_SHA_UNKNOWN`）」です。**不明を「変更なし」とは仮定しません**。`schema_migrated=true` がなければ停止し、運営が `admin-only` → `migrateBookingsSchema`（手動・不足列の追加のみ）→ `full(schema_migrated=true)` を行った場合に限り、「変更あり」と同じ扱いで通します（初回ベースライン・Issue #804 案P1）。この `full` で説明文が `main <SHA>` に更新され、以後は通常の判定に戻ります。新しい入力・Secretはありません。
