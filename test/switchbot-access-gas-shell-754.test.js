@@ -64,7 +64,7 @@ function loadShell(opts) {
       getOAuthToken: function () { return 'dummy-oauth-token'; },
       getProjectTriggers: function () { return env.triggers.slice(); },
       deleteTrigger: function (t) { env.triggers = env.triggers.filter(function (x) { return x !== t; }); env.deleted.push(t.fn); },
-      newTrigger: function (fn) { var t = { fn: fn, getHandlerFunction: function () { return fn; } }; return { timeBased: function () { return { everyMinutes: function (m) { t.every = m + 'm'; return this; }, everyHours: function (h) { t.every = h + 'h'; return this; }, create: function () { env.triggers.push(t); return t; } }; } }; }
+      newTrigger: function (fn) { var t = { fn: fn, getHandlerFunction: function () { return fn; } }; return { timeBased: function () { return { atHour: function (h) { t.atHour = h; return this; }, nearMinute: function (m) { t.nearMinute = m; return this; }, everyDays: function (d) { t.every = d + 'd'; return this; }, inTimezone: function (z) { t.tz = z; return this; }, everyMinutes: function (m) { t.every = m + 'm'; return this; }, everyHours: function (h) { t.every = h + 'h'; return this; }, create: function () { env.triggers.push(t); return t; } }; } }; }
     },
     Logger: { log: function (m) { env.logs.push(String(m)); } },
     UrlFetchApp: {
@@ -300,8 +300,11 @@ test('トリガー設置・撤去は許可された管理者のみ。既存の�
   env.script.OP_KEEP = '{}';
   env.ctx.accessInstallTriggers();
   env.ctx.accessInstallTriggers();
-  assert.deepStrictEqual(env.triggers.map(function (t) { return t.fn; }).sort(), ['accessSweepJob', 'accessSyncJob', 'accessWatchdogJob']);
+  assert.deepStrictEqual(env.triggers.map(function (t) { return t.fn; }).sort(), ['accessDailyCleanupJob', 'accessSweepJob', 'accessSyncJob', 'accessWatchdogJob']);
   assert.strictEqual(env.triggers.find(function (t) { return t.fn === 'accessSyncJob'; }).every, '5m');
+  // #829: 日次クリーンアップは 00:15 JST 近辺・1日1回。再設置しても重複しない（上の deepStrictEqual で1本ずつを確認済み）
+  var daily = env.triggers.find(function (t) { return t.fn === 'accessDailyCleanupJob'; });
+  assert.deepStrictEqual([daily.atHour, daily.nearMinute, daily.every, daily.tz], [0, 15, '1d', 'Asia/Tokyo']);
   env.ctx.accessRemoveTriggers();
   assert.strictEqual(env.triggers.length, 0);
   assert.strictEqual(env.script.OP_KEEP, '{}');

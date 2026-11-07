@@ -1381,16 +1381,28 @@ var SwitchBotAccessInfra = (function () {
     }
 
     // ---- 期限切れ確認・回収・容量/保存の監視 ----
+    function sweepBody(sweepOpts) {
+      drainInbox();
+      flushOutbox();
+      var sw = engine.sweep(sweepOpts); // 期限切れ予約用キーの自動削除（Issue #829。ACCESS_ENABLED=ON のときだけ変更APIを呼ぶ）
+      var removed = garbageCollect(deps.store, deps.secrets, deps.nowSec(), cfg);
+      var st = storageGate(measureStore(deps.store), cfg, cfg.storageLimits);
+      if (!st.ok) infraAlert(st.code, null, null, null);
+      return { ok: true, removed: removed, autoDeleted: sw && sw.autoDeleted || 0, deferred: sw && sw.deferred || 0, storage: { ratio: st.ratio, ok: st.ok } };
+    }
+
     function sweepCycle() {
-      return runLocked('SWEEP', ic.lockWaitMs, function () {
-        drainInbox();
-        flushOutbox();
-        engine.sweep();
-        var removed = garbageCollect(deps.store, deps.secrets, deps.nowSec(), cfg);
-        var st = storageGate(measureStore(deps.store), cfg, cfg.storageLimits);
-        if (!st.ok) infraAlert(st.code, null, null, null);
-        return { ok: true, removed: removed, storage: { ratio: st.ratio, ok: st.ok } };
-      });
+      return runLocked('SWEEP', ic.lockWaitMs, function () { return sweepBody(); });
+    }
+
+    /**
+     * 日次クリーンアップ（Issue #829。00:15 JST 近辺。GAS の時間主導は厳密でないため、実行時刻に依存せず
+     * 常に「endSec <= 現在」だけを根拠にする）。1 時間周期の sweep の取り残しを補完する。
+     * 1 回あたりの削除上限は日次のほうが大きい。上限超過・API 障害分は次の周期（1 時間後の sweep）で収束する。
+     */
+    function dailyCleanupCycle() {
+      var cap = typeof cfg.dailyCleanupMaxDeletes === 'number' ? cfg.dailyCleanupMaxDeletes : 20;
+      return runLocked('CLEANUP', ic.lockWaitMs, function () { return sweepBody({ maxDeletes: cap }); });
     }
 
     // ---- 監視（ロック不要・読取のみ）----
@@ -1458,14 +1470,14 @@ var SwitchBotAccessInfra = (function () {
       return {
         ok: true, environment: cfg.environment, enabled: cfg.enabled === true, byState: byState, unresolved: unresolved, deliveries: deliveries,
         storage: { keys: m.keys, bytes: m.bytes, ratio: st.ratio, gate: st.ok ? 'OK' : st.code, byPrefix: m.byPrefix },
-        heartbeats: { SYNC: safeParse(deps.store.get('HB_SYNC')), SWEEP: safeParse(deps.store.get('HB_SWEEP')), DELIVER: safeParse(deps.store.get('HB_DELIVER')) },
+        heartbeats: { SYNC: safeParse(deps.store.get('HB_SYNC')), SWEEP: safeParse(deps.store.get('HB_SWEEP')), CLEANUP: safeParse(deps.store.get('HB_CLEANUP')), DELIVER: safeParse(deps.store.get('HB_DELIVER')) },
         apiCallsToday: budget.used(), notifyOutbox: outbox, notifyFailingSince: Number(deps.store.get('NOTIFYFAIL')) || null,
         plan: plan
       };
     }
 
     return {
-      handleWebhook: handleWebhook, syncCycle: syncCycle, deliverCycle: deliverCycle, sweepCycle: sweepCycle,
+      handleWebhook: handleWebhook, syncCycle: syncCycle, deliverCycle: deliverCycle, sweepCycle: sweepCycle, dailyCleanupCycle: dailyCleanupCycle,
       watchdog: watchdog, admin: admin, engine: engine, plan: plan, infraAlert: infraAlert
     };
   }

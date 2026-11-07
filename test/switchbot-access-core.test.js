@@ -544,9 +544,9 @@ test('削除の応答欠落: deleteKey は再送せず UNKNOWN、実際に消え
   assert.strictEqual(w.mutations().filter(function (c) { return c.indexOf('delete:') === 0; }).length, 1);
 });
 
-test('期限切れ: EXPIRED は削除と区別し、残存なしで ARCHIVED_EXPIRED、残存時は通知', function () {
+test('期限切れ: EXPIRED は削除と区別し、残存なしで ARCHIVED_EXPIRED、残存時は通知（自動削除OFF時は管理者削除）', function () {
   var w = world();
-  var e = w.engine();
+  var e = w.engine(baseConfig({ autoDeleteExpired: false }));
   issued(w, e);
   w.now = w.records()[0].endSec + 10;
   e.sweep();
@@ -556,7 +556,7 @@ test('期限切れ: EXPIRED は削除と区別し、残存なしで ARCHIVED_EXP
   assert.strictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
 
   var w2 = world();
-  var e2 = w2.engine();
+  var e2 = w2.engine(baseConfig({ autoDeleteExpired: false }));
   issued(w2, e2);
   w2.keys[DEV_A] = [];
   w2.now = w2.records()[0].endSec + 10;
@@ -1134,8 +1134,11 @@ test('#751 期限切れ確認: 別名で同IDが残る間は ARCHIVED_EXPIRED �
   w.keys[DEV_A][0].name = 'ALIAS';
   w.now = w.records()[0].endSec + 10;
   e.sweep();
-  assert.strictEqual(w.records()[0].state, S.EXPIRED);
-  assert.ok(w.notes.some(function (n) { return n.code === 'EXPIRED_KEY_REMAINS'; }));
+  // #829: 自動削除は削除前の再照合で名前不一致を検出して停止（deleteKey は送らず UNKNOWN＋管理者通知）
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(w.calls.filter(function (c) { return c.indexOf('delete:') === 0; }).length, 0);
+  assert.ok(w.notes.length >= 1);
+  assert.strictEqual(w.keys[DEV_A].length, 1);
 });
 
 test('#751 別予約・通常キーは削除で影響を受けない', function () {
@@ -1599,4 +1602,106 @@ test('#799 旧形式record(passcodeIdType未記録・文字列ID)も、今回取
   e2.sync(CANCEL());
   assert.deepStrictEqual(wire, ['number'], '旧String保存でも再取得した生の型(NUMBER)を送る');
   assert.strictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
+});
+
+// ---------- #829 期限切れ予約用キーの自動削除 ----------
+function delCount(w) { return w.calls.filter(function (c) { return c.indexOf('delete:') === 0; }).length; }
+
+test('#829 期限切れの予約用キーだけ自動削除し、通常キーは残す（管理者通知なし）', function () {
+  var w = world(); var e = w.engine();
+  issued(w, e);
+  w.keys[DEV_A].push({ id: 'NORMAL1', name: 'family', type: 'permanent' }); // 通常キー・手動コード相当
+  w.now = w.records()[0].endSec + 10;
+  var r = e.sweep();
+  assert.strictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
+  assert.strictEqual(r.autoDeleted, 1);
+  assert.deepStrictEqual(w.keys[DEV_A].map(function (k) { return k.id; }), ['NORMAL1']);
+  assert.strictEqual(w.notes.length, 0);
+  assert.ok(w.records()[0].history.some(function (h) { return h.basis === 'AUTO_EXPIRED'; })); // 削除証跡
+});
+
+test('#829 未来予約（前日発行）・利用中（深夜跨ぎ）は期限前なので削除しない', function () {
+  var w = world(); var e = w.engine();
+  issued(w, e, booking({ date: '2030-01-11', startTime: '22:00', endTime: '23:59' }));
+  var rec = w.records()[0];
+  w.now = rec.startSec + 60; // 発行日の夜・利用中
+  e.sweep();
+  assert.strictEqual(w.records()[0].state, S.ISSUED_CONFIRMED);
+  w.now = rec.endSec - 1; // 終了直前
+  e.sweep();
+  assert.strictEqual(delCount(w), 0);
+  assert.strictEqual(w.keys[DEV_A].length, 1);
+  w.now = rec.endSec; // endSec <= now で初めて対象
+  e.sweep();
+  assert.strictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
+});
+
+test('#829 二重実行しても二重削除しない（冪等）', function () {
+  var w = world(); var e = w.engine();
+  issued(w, e);
+  w.now = w.records()[0].endSec + 10;
+  e.sweep(); e.sweep(); e.sweep();
+  assert.strictEqual(delCount(w), 1);
+  assert.strictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
+});
+
+test('#829 フラグOFF中は変更APIを呼ばず通知のみ、ON復帰後に回収する', function () {
+  var w = world(); var on = w.engine();
+  issued(w, on);
+  w.now = w.records()[0].endSec + 10;
+  var off = w.engine(baseConfig({ enabled: false }));
+  off.sweep();
+  assert.strictEqual(delCount(w), 0);
+  assert.strictEqual(w.records()[0].state, S.EXPIRED);
+  assert.ok(w.notes.some(function (n) { return n.code === 'EXPIRED_KEY_REMAINS'; }));
+  on.sweep();
+  assert.strictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
+});
+
+test('#829 API障害: 一覧取得失敗なら削除せず次回再評価、deleteKey通信断は再送せず UNKNOWN＋通知', function () {
+  var w = world(); var e = w.engine();
+  issued(w, e);
+  w.now = w.records()[0].endSec + 10;
+  w.listMode = 'fail';
+  e.sweep();
+  assert.strictEqual(delCount(w), 0);
+  assert.strictEqual(w.records()[0].state, S.EXPIRED);
+  w.listMode = 'ok';
+  w.deleteMode = 'dropResponse';
+  e.sweep();
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+  assert.strictEqual(delCount(w), 1);
+  e.sweep(); e.sweep();
+  assert.strictEqual(delCount(w), 1); // UNKNOWN は再送しない
+  assert.ok(w.notes.some(function (n) { return n.code === 'DELETE_COMM_ERROR'; }));
+});
+
+test('#829 属性不一致（別期間のキー）・保存記録なしのキーは削除しない', function () {
+  var w = world(); var e = w.engine();
+  issued(w, e);
+  w.keys[DEV_A][0].endTime = String(Number(w.keys[DEV_A][0].endTime) + 3600);
+  w.now = w.records()[0].endSec + 10;
+  e.sweep();
+  assert.strictEqual(delCount(w), 0);
+  assert.strictEqual(w.records()[0].state, S.UNKNOWN);
+
+  var w2 = world(); var e2 = w2.engine();
+  w2.keys[DEV_A].push({ id: 'ADMIN1', name: 'SNB-0123456789abcdef', type: 'timeLimit', startTime: '1', endTime: '2' }); // 記録なし
+  w2.now += 99999;
+  e2.sweep();
+  assert.strictEqual(delCount(w2), 0);
+});
+
+test('#829 1回の削除件数に上限があり、超過分は次回の周期で回収する', function () {
+  var w = world();
+  var e = w.engine(baseConfig({ expiredDeleteMaxPerSweep: 1 }));
+  issued(w, e, booking({ bookingId: 'BK1' }));
+  issued(w, e, booking({ bookingId: 'BK2', room: 'B' }));
+  w.now = Math.max.apply(null, w.records().map(function (r) { return r.endSec; })) + 10;
+  var r1 = e.sweep();
+  assert.strictEqual(r1.autoDeleted, 1);
+  assert.strictEqual(r1.deferred, 1);
+  assert.strictEqual(w.notes.length, 0);
+  e.sweep();
+  assert.ok(w.records().every(function (r) { return r.state === S.DELETED_CONFIRMED; }));
 });
