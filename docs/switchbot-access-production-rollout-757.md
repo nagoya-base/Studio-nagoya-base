@@ -56,4 +56,4 @@ Script Properties の `ACCESS_CONFIG`（JSON）に次を設定（既存キーは
 
 ## 拡大について
 
-全予約への拡大は、限定運用の実績を見た運営者の**別の設定変更**（`limitedRollout` を意図して外す）。意図なく外さない。
+全予約への拡大は、限定運用の実績を見た運営者の**別の設定変更**。`limitedRollout` と `pilotBookingIds` の**両方**を外す（`pilotBookingIds` が残ると、`limitedRollout` を外しても許可リスト外の予約は `NOT_PILOT_TARGET` で発行されない）。意図なく外さない。
