@@ -9,6 +9,11 @@
 # このファイルが無い初回bootstrapを含む）場合は、SCHEMA_MIGRATED=true（管理者がAdminで
 # migrateBookingsSchemaを実行し成功確認した明示入力）がなければ失敗する。基準SHAはAdminからは取らない
 # （admin-only実行でAdminは今回SHAへ進むため、基準にすると差分を見逃す）。前回SHAを安全に特定できない場合も失敗する。
+# 第2引数に preflight を渡すと（Issue #804）更新せず、そのtargetの更新に必要な条件だけを読取りで確認する:
+# 必須Secrets・clasp資格情報JSON/user・選択GASへのlist-deployments/pull・既存Deploymentの完全一致/一意性・
+# manifestと配布物の組立て（push/update-deploymentは呼ばない）。workflowが最初の書込み前に全対象で実行する。
+# 失敗は `Booking preflight failed: role=<admin|public> stage=<段階> code=<固定コード>. No deployment was updated.`
+# の固定形式（Secret・ID・メール・clasp生出力は出さない）。preflightは更新権限・将来のAPI成功を保証しない。
 # 必要な環境変数: CLASPRC_JSON / PUBLIC_CLASPRC_JSON / PUBLIC_SCRIPT_ID / PUBLIC_DEPLOYMENT_ID /
 #   ADMIN_SCRIPT_ID / ADMIN_DEPLOYMENT_ID / RUNNER_TEMP / GITHUB_WORKSPACE / GITHUB_SHA / SCHEMA_MIGRATED（guardのみ）
 # 出力にはSecret・ID・clasp生出力を含めない（固定メッセージとclassifierの分類のみ）。
@@ -16,7 +21,7 @@ set -euo pipefail
 
 target="${1:-}"
 mode="${2:-deploy}"
-if [[ "$mode" != "deploy" && "$mode" != "verify" && "$mode" != "schema-guard" ]]; then
+if [[ "$mode" != "deploy" && "$mode" != "verify" && "$mode" != "schema-guard" && "$mode" != "preflight" ]]; then
   echo "Unsupported mode" >&2
   exit 1
 fi
@@ -91,7 +96,16 @@ case "$target" in
     ;;
 esac
 
+# preflight専用の固定形式エラー。他modeでは従来の固定メッセージを使う。
+preflight_dir="$RUNNER_TEMP/booking-gas-preflight"
+preflight_fail() {
+  rm -rf "$preflight_dir"
+  echo "Booking preflight failed: role=${target} stage=$1 code=$2. No deployment was updated." >&2
+  exit 1
+}
+
 if [[ -z "$selected_clasprc_json" || -z "$script_id" || -z "$deployment_id" ]]; then
+  [[ "$mode" == "preflight" ]] && preflight_fail SECRETS SECRET_MISSING
   echo "Required booking-production secrets are not configured." >&2
   exit 1
 fi
@@ -108,7 +122,7 @@ trap 'rm -f "$list_stdout" "$list_stderr" "$push_log" "$auth_file"' EXIT
 rm -rf "$remote_dir"
 mkdir -p "$remote_dir"
 
-AUTH_FILE="$auth_file" PROJECT_DIR="$remote_dir" SCRIPT_ID="$script_id" \
+if ! AUTH_FILE="$auth_file" PROJECT_DIR="$remote_dir" SCRIPT_ID="$script_id" \
   CLASP_USER="$clasp_user" SELECTED_CLASPRC_JSON="$selected_clasprc_json" node <<'NODE'
 const fs = require('fs');
 const path = require('path');
@@ -131,16 +145,45 @@ fs.writeFileSync(
   JSON.stringify({ scriptId: process.env.SCRIPT_ID, rootDir: '.' })
 );
 NODE
+then
+  [[ "$mode" == "preflight" ]] && preflight_fail CREDENTIAL CLASP_CREDENTIAL_OR_USER_MISMATCH
+  exit 1
+fi
 
 cd "$remote_dir"
 echo "Running clasp list-deployments (before update)"
 if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_stdout" 2>"$list_stderr"; then
+  if [[ "${mode:-}" == "preflight" ]]; then
+    node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" preflight "$target" >&2
+    exit 1
+  fi
   node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" before >&2
   exit 1
 fi
 if ! deployment_has_unique_id; then
+  [[ "${mode:-}" == "preflight" ]] && preflight_fail DEPLOYMENT DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE
   echo "Configured deployment ID could not be uniquely verified in the selected existing GAS project." >&2
   exit 1
+fi
+
+if [[ "$mode" == "preflight" ]]; then
+  # 読取りのみ: pull→manifest確認→配布物の組立て。push/show-file-status/update-deploymentは呼ばない。
+  if ! clasp --auth "$auth_file" --user "$clasp_user" pull >/dev/null 2>&1; then
+    preflight_fail PULL CLASP_PULL_FAILED
+  fi
+  if [[ ! -f appsscript.json ]]; then
+    preflight_fail PULL MANIFEST_MISSING
+  fi
+  preflight_manifest="$remote_dir/appsscript.json"
+  [[ "$target" == "public" ]] && preflight_manifest="$GITHUB_WORKSPACE/gas/booking/public/appsscript.json"
+  cd "$GITHUB_WORKSPACE"
+  rm -rf "$preflight_dir"
+  if ! node scripts/prepare-booking-gas-project.js "$target" "$preflight_dir" "$preflight_manifest" >/dev/null 2>&1; then
+    preflight_fail BUILD MANIFEST_OR_DISTRIBUTION_INVALID
+  fi
+  rm -rf "$preflight_dir"
+  echo "Booking preflight passed: role=${target} (read-only; authentication, deployment and distribution verified)"
+  exit 0
 fi
 
 if [[ "$mode" == "schema-guard" ]]; then

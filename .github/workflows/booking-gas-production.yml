@@ -80,6 +80,22 @@ jobs:
             echo "scope must be full or admin-only." >&2
             exit 1
           fi
+      # Environment承認の直後・最初の書込み（Admin更新）の前に、更新対象すべての認証と配布物を読取りだけで確認する。
+      # full: Admin(default) と Public(booking-owner) の両方 / admin-only: Adminだけ（Public Secretは要求しない）。
+      # 失敗時は更新0回で停止し、役割・段階を固定コードで示す（Issue #804）。
+      - name: Preflight (Booking Admin credentials and deployment, read-only)
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
+          ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
+        run: bash scripts/deploy-booking-gas-target.sh admin preflight
+      - name: Preflight (Booking Web App credentials and deployment, read-only)
+        if: inputs.scope == 'full'
+        env:
+          PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
+          PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
+          PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
+        run: bash scripts/deploy-booking-gas-target.sh public preflight
       # Environment承認の後・Admin更新の前に実行する（clasp認証はEnvironment secretsにある）。
       # 基準SHAはBooking Web App（Public）のDeploymentからのみ取得する（Adminは基準にしない）。
       - name: Schema diff guard (Booking Web App previous production commit)

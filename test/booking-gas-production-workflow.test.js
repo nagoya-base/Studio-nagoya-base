@@ -586,3 +586,109 @@ test('schema guard extracts only the exact Public ID row when other rows contain
   assert.match(r.stderr, /schema_migrated=true/);
   assert.doesNotMatch(r.stderr, /Could not identify/);
 });
+
+/* ---- Issue #804: 全対象の認証・配布物preflight（最初の書込み前・読取りのみ） ---- */
+test('preflight steps run after approval and before the first write; admin-only skips Public', () => {
+  const adminPre = stepIndex('deploy-booking-gas-target.sh admin preflight');
+  const publicPre = stepIndex('deploy-booking-gas-target.sh public preflight');
+  const adminUpdate = stepIndex('Update the existing Booking Admin deployment');
+  assert.ok(adminPre > 0 && publicPre > adminPre && publicPre < adminUpdate, [adminPre, publicPre, adminUpdate].join());
+  assert.ok(stepIndex('schema-guard') > publicPre, 'schema guard follows the preflight');
+  assert.doesNotMatch(deploySteps[adminPre], /\bif: /);
+  assert.match(deploySteps[publicPre], /\n        if: inputs\.scope == 'full'\n/);
+  assert.doesNotMatch(deploySteps[adminPre], /PUBLIC_/);
+  assert.doesNotMatch(deploySteps[publicPre], /ADMIN_|[^_]CLASPRC_JSON/);
+});
+
+test('preflight is read-only and succeeds for each target without push/update', () => {
+  for (const target of ['admin', 'public']) {
+    const r = runDeploy([target, 'preflight']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.invoked, ['list-deployments', 'pull']);
+    assert.match(r.stdout, new RegExp(`Booking preflight passed: role=${target}`));
+    assert.equal(r.marker(target), false);
+  }
+});
+
+test('preflight stops with fixed role/stage codes and zero writes for each failure', () => {
+  const cases = [
+    ['public', { PUBLIC_DEPLOYMENT_ID: '' }, /role=public stage=SECRETS code=SECRET_MISSING/, []],
+    ['admin', { ADMIN_SCRIPT_ID: '' }, /role=admin stage=SECRETS code=SECRET_MISSING/, []],
+    ['admin', { CLASPRC_JSON: '{broken' }, /role=admin stage=CREDENTIAL code=CLASP_CREDENTIAL_OR_USER_MISMATCH/, []],
+    ['public', { PUBLIC_CLASPRC_JSON: JSON.stringify({ tokens: { default: {} } }) }, /role=public stage=CREDENTIAL/, []],
+    ['admin', { MOCK_LIST: '- another-deployment @1 - main x' }, /role=admin stage=DEPLOYMENT code=DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE/, ['list-deployments']],
+    ['public', { MOCK_LIST: '- public-deployment-dummy @1 - a\n- public-deployment-dummy @2 - b' }, /role=public stage=DEPLOYMENT/, ['list-deployments']]
+  ];
+  for (const [target, overrides, pattern, calls] of cases) {
+    const r = runDeploy([target, 'preflight'], overrides);
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, pattern);
+    assert.match(r.stderr, /No deployment was updated\./);
+    assert.deepEqual(r.invoked.filter((c) => !['list-deployments', 'pull'].includes(c)), []);
+    assert.deepEqual(r.invoked, calls);
+  }
+});
+
+test('preflight rejects a pull without a manifest', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'booking-preflight-'));
+  try {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'clasp'), `#!/bin/bash
+shift 4
+printf '%s\\n' "$1" >> "$MOCK_CALLS"
+case "$1" in list-deployments) echo "- admin-deployment-dummy @1 - main x" ;; *) ;; esac
+`, { mode: 0o700 });
+    const env = { ...process.env, PATH: bin + path.delimiter + process.env.PATH, GITHUB_WORKSPACE: workspace, RUNNER_TEMP: dir,
+      GITHUB_SHA: 'x', CLASPRC_JSON: JSON.stringify({ tokens: { default: {} } }),
+      ADMIN_SCRIPT_ID: 'admin-script-dummy', ADMIN_DEPLOYMENT_ID: 'admin-deployment-dummy', MOCK_CALLS: path.join(dir, 'calls') };
+    const r = spawnSync('bash', [deployScript, 'admin', 'preflight'], { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /role=admin stage=PULL code=MANIFEST_MISSING/);
+    assert.equal(fs.existsSync(path.join(dir, 'booking-gas-preflight')), false, 'temp build dir removed');
+    assert.equal(fs.existsSync(path.join(dir, '.clasprc.json')), false, 'auth file removed');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('PR CI covers workflow-only changes to GAS-related workflows (Issue #804)', () => {
+  const ci = fs.readFileSync(path.join(workflowDir, 'booking-pr-tests.yml'), 'utf8');
+  for (const p of ['booking-gas-production.yml', 'booking-gas-webhook-production.yml', 'survey-gas-production.yml',
+    'confirm-booking-production-account.yml', 'switchbot-verify-*.yml', 'switchbot-access-gas-deploy.yml', 'switchbot-access-test-gas-deploy.yml']) {
+    assert.ok(ci.includes(`.github/workflows/${p}`), p);
+  }
+});
+
+test('preflight LIST failures print one fixed line with a non-empty code, no secrets, and no writes (Issue #804 review)', () => {
+  const sensitive = 'private@example.test token-dummy script-dummy deployment-dummy';
+  const cases = [
+    ['invalid_grant', 'AUTHENTICATION_FAILED'], ['HTTP 403 forbidden', 'ACCESS_DENIED'],
+    ['HTTP 503', 'TRANSIENT_API_OR_NETWORK_ERROR'], ['something unfamiliar', 'UNCLASSIFIED'], ['', 'UNCLASSIFIED']
+  ];
+  for (const target of ['admin', 'public']) {
+    for (const [raw, code] of cases) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'booking-preflight-list-'));
+      try {
+        const bin = path.join(dir, 'bin');
+        fs.mkdirSync(bin);
+        fs.writeFileSync(path.join(bin, 'clasp'), `#!/bin/bash
+shift 4
+printf '%s\\n' "$1" >> "$MOCK_CALLS"
+echo "$MOCK_RAW $MOCK_SENSITIVE" >&2
+echo "$MOCK_SENSITIVE"
+exit 1
+`, { mode: 0o700 });
+        const env = { ...process.env, PATH: bin + path.delimiter + process.env.PATH, GITHUB_WORKSPACE: workspace, RUNNER_TEMP: dir, GITHUB_SHA: 'x',
+          CLASPRC_JSON: JSON.stringify({ tokens: { default: {} } }), PUBLIC_CLASPRC_JSON: JSON.stringify({ tokens: { 'booking-owner': {} } }),
+          PUBLIC_SCRIPT_ID: 'public-script-dummy', PUBLIC_DEPLOYMENT_ID: 'public-deployment-dummy',
+          ADMIN_SCRIPT_ID: 'admin-script-dummy', ADMIN_DEPLOYMENT_ID: 'admin-deployment-dummy',
+          MOCK_CALLS: path.join(dir, 'calls'), MOCK_RAW: raw, MOCK_SENSITIVE: sensitive };
+        const r = spawnSync('bash', [deployScript, target, 'preflight'], { cwd: dir, env, encoding: 'utf8' });
+        assert.equal(r.status, 1);
+        assert.equal(r.stderr, `Booking preflight failed: role=${target} stage=LIST code=${code}. No deployment was updated.\n`);
+        assert.doesNotMatch(r.stdout + r.stderr, /private@example|token-dummy|script-dummy|deployment-dummy/);
+        assert.equal(fs.readFileSync(path.join(dir, 'calls'), 'utf8').trim(), 'list-deployments');
+        assert.equal(fs.existsSync(path.join(dir, '.clasprc.json')), false);
+      } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }
+  }
+});
