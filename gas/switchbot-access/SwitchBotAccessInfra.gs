@@ -113,6 +113,15 @@ var SwitchBotAccessInfra = (function () {
       var eb = cfg.eligibleBrands;
       if (!Array.isArray(eb) || eb.some(function (b) { return KNOWN_BRANDS.indexOf(b) === -1; })) errors.push('ELIGIBLE_BRANDS_INVALID');
     }
+    // pilotBookingIds は限定稼働用の予約ID許可リスト（#757）。設定する場合は空でない文字列の配列のみ（空配列は全件停止として許容）。
+    if (cfg.pilotBookingIds !== undefined) {
+      var pb = cfg.pilotBookingIds;
+      if (!Array.isArray(pb) || pb.some(function (x) { return typeof x !== 'string' || !x; })) errors.push('PILOT_BOOKING_IDS_INVALID');
+    }
+    // 限定稼働モード（#757）: limitedRollout=true のときは対象予約ID1件の明示設定が必須（欠落・複数は PILOT_REQUIRED で起動拒否）。
+    // 通常モード（limitedRollout 未設定）は pilotBookingIds 未設定でも従来どおり有効。limitedRollout は true／未設定のみ許容。
+    if (cfg.limitedRollout !== undefined && cfg.limitedRollout !== true && cfg.limitedRollout !== false) errors.push('LIMITED_ROLLOUT_INVALID');
+    if (cfg.limitedRollout === true && (!Array.isArray(cfg.pilotBookingIds) || cfg.pilotBookingIds.length !== 1)) errors.push('PILOT_REQUIRED');
     return { ok: errors.length === 0, errors: errors.filter(function (e, i) { return errors.indexOf(e) === i; }) };
   }
 
@@ -1271,6 +1280,14 @@ var SwitchBotAccessInfra = (function () {
           var sn = deps.snapshot.build(records[i], { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
           var input = deps.snapshot.toCoreInput(sn, nowMs);
           var tr = readTrack(sn.bookingId);
+          // 限定稼働（#757）: 許可リスト外で、鍵の未解決OPも無い予約は、凍結通知・追跡記録のどちらも行わず黙って対象外とする。
+          // 追跡（revision／発行窓の処理済み）を書かないので、後でリストに加えれば次の周期で再評価される。
+          // 既に鍵のOPがある予約は通常の経路へ進み、非対象として旧キーが回収される。
+          var pilotExcluded = Array.isArray(cfg.pilotBookingIds) && cfg.pilotBookingIds.indexOf(String(sn.bookingId)) === -1;
+          if (pilotExcluded && !openByBooking[sn.bookingId]) {
+            summary.skipped++;
+            continue;
+          }
           if (input.action === 'FREEZE') {
             var reasons = input.reasons.length ? input.reasons : ['IDENTITY_INVALID'];
             reasons.forEach(function (r) { if (FREEZE_REASONS.indexOf(r) !== -1) infraAlert('BOOKING_FROZEN', safeRef(sn.bookingId), sn.revision, r); });
@@ -1313,7 +1330,10 @@ var SwitchBotAccessInfra = (function () {
           }
           var windowOpen = sn.status === 'CONFIRMED' && deps.snapshot.issueWindow(sn, nowMs).open;
           // 保存に失敗した TRK は次回再同期になるだけ（コアは冪等）
-          writeTrack(sn.bookingId, { revision: sn.revision, digest: sn.digest, windowHandled: windowOpen, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
+          // 許可リスト外の旧キー回収中は「処理済み」を記録しない（revision=null・発行窓は未処理）。回収後にリストへ戻した予約が、
+          // 追加の改訂なしで再評価・再発行されるようにするため。回収中は未解決OPが再同期の理由になるので、処理は進む。
+          if (pilotExcluded) writeTrack(sn.bookingId, { revision: null, windowHandled: false, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
+          else writeTrack(sn.bookingId, { revision: sn.revision, digest: sn.digest, windowHandled: windowOpen, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
         }
         return summary;
       });

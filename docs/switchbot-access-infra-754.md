@@ -211,3 +211,21 @@
 - Keypad機種別上限・停止閾値の運営承認（80件は未承認の推奨案）、既存19件の棚卸し。
 - ジョブ周期・読取上限・API予算の実測（#718の根拠＋#756）。入室中延長の方式。
 - 管理者の2名体制・バックアップキー運用の運営確定。
+
+## 限定稼働の予約ID許可リスト `pilotBookingIds`（#757）
+
+`ACCESS_CONFIG.pilotBookingIds`（文字列配列）を設定すると、**列挙した予約IDだけ**が発行対象になる（それ以外は `NOT_PILOT_TARGET` で何もしない。通知・凍結もしない）。
+
+- 未設定＝従来どおり制限なし。**空配列＝全予約停止**。文字列以外や配列以外は `PILOT_BOOKING_IDS_INVALID`（設定検証）／`PILOT_CONFIG_INVALID`（判定）で止まる。
+- 目的: 本番ON時に、既存利用者へ自動発行が及ばない限定1件の確認を可能にする。ブランド・端末（`allowedLast4`/`keypads`）の絞り込みは予約単位ではないため、これを補う。
+- 外した後の扱い: 発行済みの予約がリストから外れると「非対象」として旧キーは通常の削除手順で回収される。リストの変更は設定変更として別証跡に記録する。
+- 予約IDは秘密ではないが、実予約の個人情報と結び付けて公開Issueに書かない。
+- この追加は設定・デプロイ・ONの許可ではない（`ACCESS_ENABLED=OFF`・`deliveryConfigured=false`・トリガー0件のまま）。
+
+### 限定稼働モード `limitedRollout`（#757 レビュー反映）
+
+`pilotBookingIds` を落とすと全適格予約へ発行されてしまう取り違えを防ぐため、**限定ONでは `ACCESS_CONFIG.limitedRollout=true` を併せて設定する**。
+
+- `limitedRollout=true` のとき、`pilotBookingIds` は**ちょうど1件**の明示設定が必須。欠落・空・複数は `validateConfig` が `PILOT_REQUIRED` で拒否し、全ジョブが `CONFIG_INVALID` で何も送らない（コアも `PILOT_CONFIG_INVALID` で全件停止する二重の防御）。
+- **ON前のプリフライト**: `accessReadOnlyDiagnostics` が `validateConfig` を通すため、設定不備は `CONFIG_INVALID`（`errors` に `PILOT_REQUIRED`）として出る。限定ON前の確認手順に含める（診断が `ok=true` でなければONしない）。
+- 通常モード（`limitedRollout` 未設定）の `pilotBookingIds` 未設定は従来どおり制限なし。全予約へ広げる段階では `limitedRollout` を外すことを、別の明示的な設定変更・別証跡として行う。
