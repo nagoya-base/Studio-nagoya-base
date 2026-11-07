@@ -98,6 +98,9 @@ function fakeClasp(binDir, stateDir) {
 const fs=require('fs'),path=require('path');
 const S=process.env.FAKE_STATE, a=process.argv.slice(2).filter((x,i,arr)=>!(x==='--auth'||arr[i-1]==='--auth'||x==='--user'||arr[i-1]==='--user'));
 const cmd=a[0]; const st=()=>JSON.parse(fs.readFileSync(S+'/state.json','utf8')); const save=(s)=>fs.writeFileSync(S+'/state.json',JSON.stringify(s));
+fs.appendFileSync(S+'/calls.log', cmd+'\\n');
+const sumf=process.env.GITHUB_STEP_SUMMARY; const preflightDone=!!sumf&&fs.existsSync(sumf)&&fs.readFileSync(sumf,'utf8').includes('preflight');
+if((cmd==='push'||cmd==='update-deployment')&&!preflightDone)fs.appendFileSync(S+'/calls.log','WRITE_BEFORE_PREFLIGHT\\n');
 const fail=process.env.FAKE_FAIL||''; if(fail===cmd){console.error('boom '+process.env.FAKE_LEAK);process.exit(1);}
 const s=st();
 const cfg=JSON.parse(fs.readFileSync('.clasp.json','utf8')); const ext=(cfg.scriptExtensions&&cfg.scriptExtensions[0])||'js';
@@ -109,7 +112,7 @@ else if(cmd==='update-deployment'){
   const id=a[1]; const vi=a.indexOf('-V'); const di=a.indexOf('--description');
   if(fail==='update-silent'){process.exit(1);}
   let v; if(vi>=0)v=Number(a[vi+1]); else{v=Math.max(...s.versions.map(x=>x.versionNumber))+1;s.versions.push({versionNumber:v,description:a[di+1]});}
-  const d=s.deployments.find(x=>x.deploymentId===id); d.versionNumber=v; d.description=a[di+1];
+  const d=s.deployments.find(x=>x.deploymentId===id); d.versionNumber=v; d.description=a[di+1]+(process.env.FAKE_DESC_SUFFIX||'');
   save(s); if(fail==='update-apply-then-error'){process.exit(1);}
 }`;
   fs.writeFileSync(path.join(binDir, 'clasp'), js, { mode: 0o755 });
@@ -137,7 +140,8 @@ function setup(overrides = {}) {
     }
   });
   const read = () => JSON.parse(fs.readFileSync(path.join(state, 'state.json'), 'utf8'));
-  return { run, read, tmp, summary };
+  const calls = () => (fs.existsSync(path.join(state, 'calls.log')) ? fs.readFileSync(path.join(state, 'calls.log'), 'utf8').split('\n').filter(Boolean) : []);
+  return { run, read, tmp, summary, calls };
 }
 const noLeak = (r) => {
   // `::add-mask::` はrunnerが消費する命令で、ログには表示されない。それ以外に値が出ていないことを確認する。
@@ -224,4 +228,201 @@ test('write-config pins scriptExtensions to gs (clasp 3.x pulls .js by default)'
     { env: { ...process.env, SBV_CLASPRC_JSON: '{}', SBV_SCRIPT_ID: 'S' } });
   assert.equal(r.status, 0);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, '.clasp.json'), 'utf8')).scriptExtensions, ['gs']);
+});
+
+// ---- Issue #804 PR-C3: 更新前の読取り確認（preflight）の境界・rollbackの対象照合・入力の早期検査・説明文の完全一致 ----
+const SHA40 = 'a'.repeat(40);
+const written = (t) => t.calls().some((c) => c === 'push' || c === 'update-deployment');
+
+test('preflight boundary: no push/update-deployment runs before the preflight line (deploy and rollback)', () => {
+  for (const [mode, env] of [['deploy', {}], ['rollback', { ROLLBACK_VERSION: '1' }]]) {
+    const t = setup();
+    const r = t.run(mode, env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Preflight passed \(read-only checks complete; the first write follows\)/);
+    assert.match(fs.readFileSync(t.summary, 'utf8'), /更新前の読取り確認（preflight）: 成功/);
+    assert.ok(!t.calls().includes('WRITE_BEFORE_PREFLIGHT'), 'a write happened before the preflight boundary');
+    assert.ok(written(t));
+    noLeak(r);
+  }
+});
+
+test('rollback now verifies the target project first: another project (Booking/Survey files) is refused with zero writes', () => {
+  const t = setup({ files: { 'BookingApp.gs': '// not the verify GAS' } });
+  const r = t.run('rollback', { ROLLBACK_VERSION: '1' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /Target project mismatch: TARGET_MISMATCH_OTHER_PROJECT/);
+  assert.doesNotMatch(r.stdout, /Preflight passed/);
+  assert.ok(!written(t));
+  assert.ok(t.calls().includes('pull'), 'the target was checked read-only before any write');
+});
+
+test('rollback checks only the web app settings of the manifest; deploy still refuses a missing new OAuth scope', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'gas/switchbot-verify/appsscript.json'), 'utf8'));
+  const noScope = JSON.stringify({ ...manifest, oauthScopes: [] });
+  const dep = setup({ files: { 'appsscript.json': noScope } });
+  const d = dep.run('deploy');
+  assert.notEqual(d.status, 0);
+  assert.match(d.stderr, /MANIFEST_NEW_OAUTH_SCOPE_REQUIRES_MANUAL_APPROVAL/);
+  assert.ok(!written(dep));
+  const rb = setup({ files: { 'appsscript.json': noScope } });
+  const r = rb.run('rollback', { ROLLBACK_VERSION: '1' });
+  assert.equal(r.status, 0, r.stderr);
+  const bad = setup({ files: { 'appsscript.json': JSON.stringify({ ...manifest, webapp: { access: 'MYSELF', executeAs: 'USER_DEPLOYING' } }) } });
+  const b = bad.run('rollback', { ROLLBACK_VERSION: '1' });
+  assert.notEqual(b.status, 0);
+  assert.match(b.stderr, /MANIFEST_WEBAPP_MISMATCH/);
+  assert.ok(!written(bad));
+});
+
+test('every read-only failure before the boundary stops with zero writes and no preflight line', () => {
+  const cases = [
+    ['list-deployments fails', 'deploy', { FAKE_FAIL: 'list-deployments' }],
+    ['list-versions fails', 'deploy', { FAKE_FAIL: 'list-versions' }],
+    ['pull (target check) fails', 'deploy', { FAKE_FAIL: 'pull' }],
+    ['rollback: pull fails', 'rollback', { ROLLBACK_VERSION: '1', FAKE_FAIL: 'pull' }],
+    ['rollback: list fails', 'rollback', { ROLLBACK_VERSION: '1', FAKE_FAIL: 'list-deployments' }],
+    ['rollback: unknown version', 'rollback', { ROLLBACK_VERSION: '99' }],
+    ['rollback: already at that version', 'rollback', { ROLLBACK_VERSION: '2' }],
+    ['unlisted deployment id', 'deploy', { SBV_DEPLOYMENT_ID: 'AKfycbxNOTLISTED000000' }],
+    ['duplicate/HEAD deployment id', 'deploy', { SBV_DEPLOYMENT_ID: 'HEADID' }],
+    ['credential has no default user', 'deploy', { SBV_CLASPRC_JSON: JSON.stringify({ tokens: { other: {} } }) }]
+  ];
+  for (const [name, mode, env] of cases) {
+    const t = setup();
+    const r = t.run(mode, env);
+    assert.notEqual(r.status, 0, name);
+    assert.doesNotMatch(r.stdout, /Preflight passed/, name);
+    assert.ok(!written(t), name);
+    assert.ok(!t.calls().includes('WRITE_BEFORE_PREFLIGHT'), name);
+    noLeak(r);
+  }
+});
+
+test('invalid rollback/SHA inputs stop before any clasp call or credential file (fail fast)', () => {
+  for (const [mode, env] of [['rollback', { ROLLBACK_VERSION: 'abc' }], ['rollback', { ROLLBACK_VERSION: '0' }], ['rollback', { ROLLBACK_VERSION: '' }],
+    ['deploy', { GITHUB_SHA: 'not-a-sha' }], ['deploy', { GITHUB_SHA: 'A'.repeat(40) }], ['deploy', { GITHUB_SHA: 'a'.repeat(39) }]]) {
+    const t = setup();
+    const before = JSON.stringify(t.read());
+    const r = t.run(mode, env);
+    assert.notEqual(r.status, 0, JSON.stringify(env));
+    assert.deepEqual(t.calls(), [], 'clasp was not called');
+    assert.equal(JSON.stringify(t.read()), before);
+    assert.deepEqual(fs.readdirSync(t.tmp), [], 'no credential/work file was created');
+  }
+});
+
+test('post-update description must match exactly: extra text is UNKNOWN_STATE, never success, and nothing is re-run', () => {
+  for (const suffix of [' extra', '; previous main ' + 'c'.repeat(40)]) {
+    const t = setup();
+    const r = t.run('deploy', { FAKE_DESC_SUFFIX: suffix });
+    assert.notEqual(r.status, 0, suffix);
+    assert.match(r.stderr, /UNKNOWN_STATE/);
+    assert.equal(t.calls().filter((c) => c === 'update-deployment').length, 1, 'no automatic re-update');
+    assert.equal(t.calls().filter((c) => c === 'push').length, 1, 'no automatic re-push');
+    noLeak(r);
+  }
+  assert.equal(setup().run('deploy').status, 0, 'the exact description still succeeds');
+});
+
+test('lib.descriptionMatches: exact only (surrounding whitespace tolerated), never a substring', () => {
+  const d = 'main ' + SHA40;
+  assert.equal(lib.descriptionMatches(d, d), true);
+  assert.equal(lib.descriptionMatches('  ' + d + ' \n', d), true);
+  for (const bad of [d + ' extra', 'previous ' + d, 'rollback of ' + d, 'main ' + 'b'.repeat(40) + ' ' + d, d + '0', '', 'main']) {
+    assert.equal(lib.descriptionMatches(bad, d), false, bad);
+  }
+});
+
+test('the verify deploy stays separate: no Access/Booking secrets, no deletion of the old entry, workflow unchanged in triggers and approvals', () => {
+  assert.doesNotMatch(wf + scriptText, /SWITCHBOT_ACCESS|SBA_|SBAT_|BOOKING_|CLASPRC_JSON: \$\{\{ secrets\.CLASPRC/);
+  assert.match(wf, /environment: switchbot-verify/);
+  assert.match(wf, /concurrency:\n  group: switchbot-verify-gas-deploy\n  cancel-in-progress: false/);
+  assert.match(wf, /on:\n  push:/);
+  assert.ok(fs.existsSync(path.join(root, '.github/workflows/switchbot-verify-gas-deploy.yml')), 'the old entry is kept (removal is a separate decision)');
+});
+
+// ---- Issue #804 PR-C3 (review): 古いrunの鮮度検査は、更新の挙動を左右するパス全体を比べる ----
+function pushPaths() {
+  const on = wf.slice(wf.indexOf('\non:\n'), wf.indexOf('\npermissions:'));
+  const block = on.slice(on.indexOf('paths:'), on.indexOf('workflow_dispatch:'));
+  return [...block.matchAll(/^\s+- '([^']+)'$/gm)].map((m) => m[1].replace(/\/\*\*$/, ''));
+}
+
+test('freshness target paths equal the workflow push.paths (no path can trigger a run yet be missed, or be checked without triggering)', () => {
+  assert.deepEqual([...lib.TARGET_PATHS].sort(), pushPaths().sort());
+  for (const p of ['gas/switchbot-verify', 'scripts/deploy-switchbot-verify-gas.sh', 'scripts/switchbot-verify-gas-deploy-lib.js', '.github/workflows/switchbot-verify-gas-deploy.yml']) {
+    assert.ok(lib.TARGET_PATHS.includes(p), p);
+  }
+  const out = spawnSync('node', [path.join(root, 'scripts/switchbot-verify-gas-deploy-lib.js'), 'target-paths'], { encoding: 'utf8' });
+  assert.deepEqual(out.stdout.trim().split('\n'), lib.TARGET_PATHS);
+  // the workflow no longer hard-codes a gas-source-only comparison
+  assert.doesNotMatch(wf, /git diff --quiet "\$GITHUB_SHA" FETCH_HEAD -- gas\/switchbot-verify;/);
+  assert.match(wf, /mapfile -t target_paths < <\(node scripts\/switchbot-verify-gas-deploy-lib\.js target-paths\)/);
+});
+
+function freshnessStep() {
+  const start = wf.indexOf('- name: Skip if a newer main commit changed the target');
+  const runAt = wf.indexOf('run: |\n', start) + 'run: |\n'.length;
+  const end = wf.indexOf('\n      - name:', runAt);
+  return wf.slice(runAt, end).split('\n').map((l) => l.replace(/^          /, '')).join('\n');
+}
+
+function staleDecision(changedFiles) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbv-fresh-'));
+  const git = (cwd, ...args) => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test' } });
+    assert.equal(r.status, 0, args.join(' ') + r.stderr);
+    return r.stdout.trim();
+  };
+  try {
+    const origin = path.join(dir, 'origin.git');
+    fs.mkdirSync(origin);
+    git(origin, 'init', '--bare', '-b', 'main');
+    const seed = path.join(dir, 'seed');
+    git(dir, 'clone', origin, seed);
+    git(seed, 'checkout', '-b', 'main');
+    const files = {
+      'gas/switchbot-verify/SwitchBotVerify.gs': '// source\n',
+      'scripts/deploy-switchbot-verify-gas.sh': '#!/bin/bash\n',
+      'scripts/switchbot-verify-gas-deploy-lib.js': fs.readFileSync(path.join(root, 'scripts/switchbot-verify-gas-deploy-lib.js'), 'utf8'),
+      '.github/workflows/switchbot-verify-gas-deploy.yml': '# workflow\n',
+      'scripts/classify-clasp-list-error.js': '// classifier\n',
+      'docs/readme.md': 'docs\n'
+    };
+    for (const [f, c] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(seed, f)), { recursive: true });
+      fs.writeFileSync(path.join(seed, f), c);
+    }
+    git(seed, 'add', '-A'); git(seed, 'commit', '-m', 'A'); git(seed, 'push', 'origin', 'main');
+    const shaA = git(seed, 'rev-parse', 'HEAD');
+    // the older run: a checkout of A, while origin/main moves on to B
+    const run = path.join(dir, 'run');
+    git(dir, 'clone', origin, run);
+    for (const f of changedFiles) fs.appendFileSync(path.join(seed, f), '\n// newer change\n');
+    if (changedFiles.length) { git(seed, 'add', '-A'); git(seed, 'commit', '-m', 'B'); git(seed, 'push', 'origin', 'main'); }
+    git(run, 'checkout', shaA);
+    const outFile = path.join(dir, 'gh-output'); const sumFile = path.join(dir, 'gh-summary');
+    fs.writeFileSync(outFile, ''); fs.writeFileSync(sumFile, '');
+    const r = spawnSync('bash', ['-c', freshnessStep()], { cwd: run, encoding: 'utf8', env: { ...process.env, GITHUB_SHA: shaA, GITHUB_OUTPUT: outFile, GITHUB_STEP_SUMMARY: sumFile } });
+    assert.equal(r.status, 0, r.stderr);
+    return { current: /current=(true|false)/.exec(fs.readFileSync(outFile, 'utf8'))[1], summary: fs.readFileSync(sumFile, 'utf8') };
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+test('an older run is skipped when a newer main commit changed the GAS source, the deploy script, the lib or the workflow; not for unrelated files', () => {
+  const stale = [
+    ['(a) GAS source only', ['gas/switchbot-verify/SwitchBotVerify.gs']],
+    ['(b) deploy script only', ['scripts/deploy-switchbot-verify-gas.sh']],
+    ['(c) verification lib only', ['scripts/switchbot-verify-gas-deploy-lib.js']],
+    ['(e) workflow only', ['.github/workflows/switchbot-verify-gas-deploy.yml']]
+  ];
+  for (const [name, files] of stale) {
+    const d = staleDecision(files);
+    assert.equal(d.current, 'false', name);
+    assert.match(d.summary, /skipping/, name);
+  }
+  assert.equal(staleDecision(['docs/readme.md']).current, 'true', '(d) unrelated docs only');
+  assert.equal(staleDecision(['scripts/classify-clasp-list-error.js']).current, 'true', 'a path that does not trigger a run is not part of the check');
+  assert.equal(staleDecision([]).current, 'true', 'no newer commit');
 });

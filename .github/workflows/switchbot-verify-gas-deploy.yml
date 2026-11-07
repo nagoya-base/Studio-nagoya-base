@@ -62,11 +62,13 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin main
-          if git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- gas/switchbot-verify; then
+          # 対象 = GASソースに加え、更新の挙動を左右する配布スクリプト・検証lib・このworkflow（push.pathsと同一集合）。
+          mapfile -t target_paths < <(node scripts/switchbot-verify-gas-deploy-lib.js target-paths)
+          if git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- "${target_paths[@]}"; then
             echo "current=true" >> "$GITHUB_OUTPUT"
           else
             echo "current=false" >> "$GITHUB_OUTPUT"
-            echo "A newer main commit changed gas/switchbot-verify; skipping so an older run cannot publish stale code." >> "$GITHUB_STEP_SUMMARY"
+            echo "A newer main commit changed the deploy target (GAS source, deploy script, verification lib or workflow); skipping so an older run cannot publish with stale code or procedure." >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Push source and update the existing deployment
         if: steps.fresh.outputs.current == 'true'

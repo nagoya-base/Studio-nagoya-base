@@ -21,6 +21,17 @@ clasp_user="default"
 retry_attempts=5
 retry_delay_seconds="${SBV_RETRY_DELAY_SECONDS:-5}"
 
+summary() { [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] && echo "$1" >> "$GITHUB_STEP_SUMMARY" || true; }
+fail() { echo "$1" >&2; summary "- ❌ $1"; exit 1; }
+
+# ---- 入力検査（Google・認証ファイルに触れる前。失敗しても何も変更しない） ----
+if [[ "$mode" == "rollback" ]]; then
+  target="${ROLLBACK_VERSION:-}"
+  [[ "$target" =~ ^[1-9][0-9]{0,5}$ ]] || fail "ROLLBACK_VERSION must be a positive integer; nothing was changed."
+else
+  [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || fail "GITHUB_SHA is not a commit SHA; nothing was changed."
+fi
+
 if [[ -z "${SBV_CLASPRC_JSON:-}" || -z "${SBV_SCRIPT_ID:-}" || -z "${SBV_DEPLOYMENT_ID:-}" ]]; then
   echo "Required switchbot-verify secrets are not configured." >&2
   exit 1
@@ -42,9 +53,6 @@ cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
 rm -rf "$work"
 mkdir -p "$remote_dir" "$deploy_dir" "$verify_dir" "$out"
-
-summary() { [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] && echo "$1" >> "$GITHUB_STEP_SUMMARY" || true; }
-fail() { echo "$1" >&2; summary "- ❌ $1"; exit 1; }
 
 cred_status="$(node "$lib" check-credential || true)"
 [[ "$cred_status" == "OK" ]] || fail "clasp credential check failed: $cred_status"
@@ -79,11 +87,37 @@ summary "- 更新前の公開バージョン: \`@$previous_version\`"
 
 read_versions || fail "Could not read versions before update; nothing was changed."
 
+# 対象照合（deploy／rollback共通・読取りのみ）: pull した既存プロジェクトが独立SwitchBot検証GASであること。
+# Booking/Survey等の取り違えで、他プロジェクトのDeploymentを更新・巻き戻ししないための防止。
+echo "Running clasp pull (target check)"
+clasp_run "$remote_dir" "$out/pull.out" pull || fail "clasp pull failed; nothing was changed."
+status="$(node "$lib" check-remote "$remote_dir" || true)"
+[[ "$status" == "OK" ]] || fail "Target project mismatch: $status. Nothing was changed."
+[[ -f "$remote_dir/appsscript.json" ]] || fail "Target project returned no manifest; nothing was changed."
+
+# ---- 更新前の読取り確認（モード別）。ここまでは公開Deploymentにも編集用ソースにも一切書き込まない ----
 if [[ "$mode" == "rollback" ]]; then
-  target="${ROLLBACK_VERSION:-}"
-  [[ "$target" =~ ^[1-9][0-9]{0,5}$ ]] || fail "ROLLBACK_VERSION must be a positive integer; nothing was changed."
+  # rollbackではWebアプリの実行主体・アクセス権だけを照合する（新scope検査は行わない）。
+  status="$(node "$lib" check-manifest "$remote_dir/appsscript.json" "$src_dir/appsscript.json" webapp-only || true)"
+  [[ "$status" == "OK" ]] || fail "Manifest check failed: $status. Nothing was changed."
   [[ "$target" != "$previous_version" ]] || fail "Deployment is already at @$target; nothing was changed."
   node "$lib" has-version "$out/versions.json" "$target" || fail "Version @$target does not exist in the target project; nothing was changed."
+else
+  status="$(node "$lib" check-manifest "$remote_dir/appsscript.json" "$src_dir/appsscript.json" || true)"
+  [[ "$status" == "OK" ]] || fail "Manifest check failed: $status. Nothing was changed."
+  # デプロイ対象は .gs と appsscript.json のみ（他ファイルを混ぜない）。
+  shopt -s nullglob
+  files=("$src_dir"/*.gs "$src_dir/appsscript.json")
+  shopt -u nullglob
+  [[ -f "$src_dir/SwitchBotVerify.gs" && -f "$src_dir/appsscript.json" ]] || fail "Source files are incomplete; nothing was changed."
+fi
+
+# 境界: 認証・対象GAS・Deployment（完全一致・一意）・版・manifest・配布物の読取り確認が完了。以降が最初の書込み。
+# 読取り確認は更新権限・将来のAPI成功・GAS実行時権限を保証しない（更新後の読取り照合で別途確認する）。
+echo "Preflight passed (read-only checks complete; the first write follows)"
+summary "- ✅ 更新前の読取り確認（preflight）: 成功（ここまでは何も書き込んでいません）"
+
+if [[ "$mode" == "rollback" ]]; then
   echo "Rolling the SAME deployment back to version @$target"
   if ! clasp_run "$remote_dir" "$out/update.out" update-deployment "$SBV_DEPLOYMENT_ID" -V "$target" \
       --description "rollback to v${target} (run ${GITHUB_RUN_ID:-manual})"; then
@@ -92,20 +126,6 @@ if [[ "$mode" == "rollback" ]]; then
   expected_version="$target"
   expected_desc="-"
 else
-  # 対象照合: pull した既存プロジェクトが独立SwitchBot検証GASであること。
-  echo "Running clasp pull (target check)"
-  clasp_run "$remote_dir" "$out/pull.out" pull || fail "clasp pull failed; nothing was changed."
-  status="$(node "$lib" check-remote "$remote_dir" || true)"
-  [[ "$status" == "OK" ]] || fail "Target project mismatch: $status. Nothing was changed."
-  [[ -f "$remote_dir/appsscript.json" ]] || fail "Target project returned no manifest; nothing was changed."
-  status="$(node "$lib" check-manifest "$remote_dir/appsscript.json" "$src_dir/appsscript.json" || true)"
-  [[ "$status" == "OK" ]] || fail "Manifest check failed: $status. Nothing was changed."
-
-  # デプロイ対象は .gs と appsscript.json のみ（他ファイルを混ぜない）。
-  shopt -s nullglob
-  files=("$src_dir"/*.gs "$src_dir/appsscript.json")
-  shopt -u nullglob
-  [[ -f "$src_dir/SwitchBotVerify.gs" && -f "$src_dir/appsscript.json" ]] || fail "Source files are incomplete; nothing was changed."
   cp "${files[@]}" "$deploy_dir/"
 
   echo "Running clasp push --force"

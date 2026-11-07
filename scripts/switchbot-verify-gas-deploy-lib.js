@@ -10,6 +10,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const REQUIRED_REMOTE_FILE = 'SwitchBotVerify.gs';
+
+/**
+ * 古いrunの鮮度検査（workflowの `Skip if a newer main commit changed the target`）が比較する対象パス。
+ * 更新の挙動を左右するもの（GASソース・配布スクリプト・検証lib・workflow自体）を含める。
+ * 注意: workflowの `on.push.paths` と**同じ集合**に保つこと。push.pathsに無いパスを鮮度検査にだけ含めると、
+ * そのパスだけを変えた新コミットは新しいrunを起こさないのに古いrunだけがスキップされ、更新が失われる（テストで固定）。
+ */
+const TARGET_PATHS = [
+  'gas/switchbot-verify',
+  'scripts/deploy-switchbot-verify-gas.sh',
+  'scripts/switchbot-verify-gas-deploy-lib.js',
+  '.github/workflows/switchbot-verify-gas-deploy.yml'
+];
 // 他プロジェクト（予約GAS等）への誤接続を検出するための拒否プレフィックス。
 const FORBIDDEN_REMOTE_PREFIXES = ['Booking', 'Survey'];
 
@@ -34,6 +47,14 @@ function pickDeployment(listJson, deploymentId) {
 }
 
 /** clasp list-versions --json の出力から、版番号の集合と最大値を返す。 */
+/**
+ * 更新後の説明文照合（Issue #804 PR-C3）。更新時に指定した説明（例: `main <40桁SHA>`）と**完全一致**する場合だけ
+ * 成功にする（前後の空白のみ許容）。前置き・追記・別記載のSHAを含む部分一致は成功にしない。
+ */
+function descriptionMatches(actual, expected) {
+  return String(actual).trim() === String(expected).trim();
+}
+
 function parseVersions(listJson) {
   let rows;
   try { rows = JSON.parse(listJson); } catch (_) { return { error: 'VERSIONS_PARSE_FAILED' }; }
@@ -57,7 +78,7 @@ function checkRemoteTarget(remoteDir) {
  * - webapp（実行ユーザー・アクセス権）がリモートとリポジトリで一致すること
  * - リポジトリのoauthScopesがリモートに全て含まれること（新scopeは再承認が要るため手動で先に行う）
  */
-function checkManifest(remoteManifestFile, repoManifestFile) {
+function checkManifest(remoteManifestFile, repoManifestFile, webappOnly) {
   let remote; let repo;
   try { remote = readJson(remoteManifestFile); repo = readJson(repoManifestFile); } catch (_) {
     return 'MANIFEST_UNREADABLE';
@@ -65,6 +86,7 @@ function checkManifest(remoteManifestFile, repoManifestFile) {
   const rw = remote.webapp || {};
   const pw = repo.webapp || {};
   if (rw.access !== pw.access || rw.executeAs !== pw.executeAs) return 'MANIFEST_WEBAPP_MISMATCH';
+  if (webappOnly) return 'OK'; // rollback: 新scope検査は行わない（Webアプリの実行主体・アクセス権だけを照合）
   const remoteScopes = new Set(remote.oauthScopes || []);
   if ((repo.oauthScopes || []).some((s) => !remoteScopes.has(s))) return 'MANIFEST_NEW_OAUTH_SCOPE_REQUIRES_MANUAL_APPROVAL';
   return 'OK';
@@ -118,9 +140,10 @@ function main(argv, env) {
       const r = pickDeployment(fs.readFileSync(a[0], 'utf8'), env.SBV_DEPLOYMENT_ID || '');
       if (r.error) { process.stderr.write(r.error + '\n'); return 2; }
       if (a[1] !== 'any' && r.versionNumber !== Number(a[1])) return 1;
-      if (a[2] && a[2] !== '-' && !r.description.includes(a[2])) return 1;
+      if (a[2] && a[2] !== '-' && !descriptionMatches(r.description, a[2])) return 1;
       return 0;
     }
+    case 'target-paths': process.stdout.write(TARGET_PATHS.join('\n') + '\n'); return 0;
     case 'max-version': { // <versions.json>
       const r = parseVersions(fs.readFileSync(a[0], 'utf8'));
       if (r.error) { process.stderr.write(r.error + '\n'); return 1; }
@@ -133,7 +156,7 @@ function main(argv, env) {
       return r.numbers.includes(Number(a[1])) ? 0 : 1;
     }
     case 'check-remote': { const s = checkRemoteTarget(a[0]); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
-    case 'check-manifest': { const s = checkManifest(a[0], a[1]); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
+    case 'check-manifest': { const s = checkManifest(a[0], a[1], a[2] === 'webapp-only'); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
     case 'compare-sources': { const s = compareSources(a[0], a[1]); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
     case 'check-credential': { const s = checkCredential(env.SBV_CLASPRC_JSON || ''); process.stdout.write(s + '\n'); return s === 'OK' ? 0 : 1; }
     case 'write-config': { // 認証ファイル（0600）と .clasp.json を生成。clasp 3.xの既定は .js 優先のため .gs を明示
@@ -157,4 +180,4 @@ if (require.main === module) {
   process.exit(code);
 }
 
-module.exports = { pickDeployment, parseVersions, checkRemoteTarget, checkManifest, compareSources, checkCredential };
+module.exports = { TARGET_PATHS, pickDeployment, descriptionMatches, parseVersions, checkRemoteTarget, checkManifest, compareSources, checkCredential };
