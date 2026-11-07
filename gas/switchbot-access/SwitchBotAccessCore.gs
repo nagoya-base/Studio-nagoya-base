@@ -926,14 +926,19 @@ var SwitchBotAccessCore = (function () {
      * 期限切れ（削除とは区別）。未解決状態の状態データ・秘密は破棄しない。
      * 期限切れで Keypad に残存した運用キーは、既存の安全な削除フロー（startDelete）で自動回収する（Issue #829）。
      * opts.maxDeletes: この実行で deleteKey を始める最大件数（既定 config.expiredDeleteMaxPerSweep=5）。超過分は次回の周期へ。
-     * 戻り値は件数のみ（個人情報・秘密を含まない）。
+     * 戻り値は件数のみ（個人情報・秘密を含まない）。件数は結果で分ける（「削除成功」と誤読させない）:
+     *   attempted … 自動削除フローを開始した件数（= confirmed + pending + stopped）
+     *   confirmed … 削除確定（DELETED_CONFIRMED）または送信前から不在を確認（ALREADY_ABSENT）
+     *   pending   … deleteKey 送信済みで反映確認待ち（DELETE_SENT。次の同期周期で読み取りのみ照合）
+     *   stopped   … 削除前再照合の不一致・通信失敗等で UNKNOWN 停止（API未送信を含む。管理者へ通知済み・再送しない）
+     *   deferred  … 1回の上限超過で次周期へ繰越
      */
     function sweep(opts) {
       var now = deps.nowSec();
       var retention = typeof config.retentionSec === 'number' ? config.retentionSec : 30 * 86400;
       var cap = opts && typeof opts.maxDeletes === 'number' ? opts.maxDeletes
         : (typeof config.expiredDeleteMaxPerSweep === 'number' ? config.expiredDeleteMaxPerSweep : 5);
-      var ctx = { left: Math.max(0, cap), autoDeleted: 0, deferred: 0 };
+      var ctx = { left: Math.max(0, cap), attempted: 0, confirmed: 0, pending: 0, stopped: 0, deferred: 0 };
       deps.store.keys().filter(function (k) { return k.indexOf('OP_') === 0; }).forEach(function (k) {
         var head = load(k);
         if (!head) return;
@@ -943,7 +948,7 @@ var SwitchBotAccessCore = (function () {
           if (rec) sweepOne(k, rec, now, retention, ctx);
         });
       });
-      return { autoDeleted: ctx.autoDeleted, deferred: ctx.deferred };
+      return { attempted: ctx.attempted, confirmed: ctx.confirmed, pending: ctx.pending, stopped: ctx.stopped, deferred: ctx.deferred };
     }
 
     /**
@@ -975,14 +980,18 @@ var SwitchBotAccessCore = (function () {
       if (typeof rec.endSec !== 'number' || !(rec.endSec <= now)) return false; // 発行日ではなく有効期限終了済みのみ
       if (!SERVICE_KEY_NAME_RE.test(String(rec.name))) return false;
       if (rec.passcodeId === undefined || rec.passcodeId === null || rec.passcodeId === '') return false;
-      // 最新の予約索引と矛盾する記録は自動削除しない（同一改訂で終了時刻が食い違う等）。管理者判断へ
+      // 予約索引（最新の予約・revision）との整合。意図:
+      //  - 索引が無い（予約側が消えた／索引の保持期限切れ）: 記録自体が endSec と保存ID・名前を持つため、期限切れ回収は妨げない。
+      //  - 同一 revision なのに有効な終了時刻が記録と食い違う: 記録と最新予約が矛盾するため自動削除せず、
+      //    EXPIRED_KEY_REMAINS で管理者判断（adminDelete）へ回す。
+      //  - revision が進んだ・取消済み: 旧キーは sync が削除対象にするが、sync が止まっていても期限後は回収してよい。
       var h = bookingIndex(rec.bookingId).head;
       if (h && h.revision === rec.revision && h.desired === true && h.endSec !== rec.endSec) return false;
       return true;
     }
 
     function sweepOne(k, rec, now, retention, ctx) {
-      ctx = ctx || { left: 0, autoDeleted: 0, deferred: 0 };
+      ctx = ctx || { left: 0, attempted: 0, confirmed: 0, pending: 0, stopped: 0, deferred: 0 };
       retryAlert(rec);
       if (rec.state === STATE.ISSUED_CONFIRMED && rec.endSec <= now) {
         transition(rec, STATE.EXPIRED, 'TIME');
@@ -1000,8 +1009,11 @@ var SwitchBotAccessCore = (function () {
           if (canAutoDeleteExpired(rec, now)) {
             if (ctx.left > 0) {
               ctx.left -= 1;
+              ctx.attempted += 1;
               startDelete(rec, 'AUTO_EXPIRED'); // 失敗・曖昧は UNKNOWN で停止し通知。再送しない
-              ctx.autoDeleted += 1;
+              if (rec.state === STATE.DELETED_CONFIRMED || rec.state === STATE.ALREADY_ABSENT) ctx.confirmed += 1;
+              else if (rec.state === STATE.DELETE_SENT) ctx.pending += 1;
+              else ctx.stopped += 1;
             } else {
               ctx.deferred += 1; // 上限超過: 次回の周期で回収（通知しない）
             }

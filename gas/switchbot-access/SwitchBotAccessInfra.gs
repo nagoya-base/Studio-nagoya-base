@@ -1392,7 +1392,7 @@ var SwitchBotAccessInfra = (function () {
       var removed = garbageCollect(deps.store, deps.secrets, deps.nowSec(), cfg);
       var st = storageGate(measureStore(deps.store), cfg, cfg.storageLimits);
       if (!st.ok) infraAlert(st.code, null, null, null);
-      return { ok: true, removed: removed, autoDeleted: sw && sw.autoDeleted || 0, deferred: sw && sw.deferred || 0, storage: { ratio: st.ratio, ok: st.ok } };
+      return { ok: true, removed: removed, cleanup: { attempted: sw && sw.attempted || 0, confirmed: sw && sw.confirmed || 0, pending: sw && sw.pending || 0, stopped: sw && sw.stopped || 0, deferred: sw && sw.deferred || 0 }, storage: { ratio: st.ratio, ok: st.ok } };
     }
 
     function sweepCycle() {

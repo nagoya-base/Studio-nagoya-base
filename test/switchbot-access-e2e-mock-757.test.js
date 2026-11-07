@@ -206,7 +206,8 @@ test('#829 日次クリーンアップ: 1時間sweepの取り残しも期限切�
   assert.strictEqual(w.callCount('deleteKey'), 0, '期限前は削除しない');
   at(w, '2030-01-12T00:15:00+09:00');    // 翌日 00:15 JST 近辺
   var r1 = rt.dailyCleanupCycle();
-  assert.strictEqual(r1.autoDeleted, 1);
+  assert.strictEqual(r1.cleanup.attempted, 1);
+  assert.strictEqual(r1.cleanup.confirmed, 1);
   assert.strictEqual(ops(w).filter(function (o) { return o.id === op.id; })[0].state, S.DELETED_CONFIRMED);
   rt.dailyCleanupCycle();
   assert.strictEqual(w.callCount('deleteKey'), 1, '二重実行でも二重削除しない');

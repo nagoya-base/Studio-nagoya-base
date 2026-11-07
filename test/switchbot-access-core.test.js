@@ -1614,7 +1614,7 @@ test('#829 期限切れの予約用キーだけ自動削除し、通常キーは
   w.now = w.records()[0].endSec + 10;
   var r = e.sweep();
   assert.strictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
-  assert.strictEqual(r.autoDeleted, 1);
+  assert.deepStrictEqual([r.attempted, r.confirmed, r.pending, r.stopped], [1, 1, 0, 0]);
   assert.deepStrictEqual(w.keys[DEV_A].map(function (k) { return k.id; }), ['NORMAL1']);
   assert.strictEqual(w.notes.length, 0);
   assert.ok(w.records()[0].history.some(function (h) { return h.basis === 'AUTO_EXPIRED'; })); // 削除証跡
@@ -1699,9 +1699,54 @@ test('#829 1回の削除件数に上限があり、超過分は次回の周期�
   issued(w, e, booking({ bookingId: 'BK2', room: 'B' }));
   w.now = Math.max.apply(null, w.records().map(function (r) { return r.endSec; })) + 10;
   var r1 = e.sweep();
-  assert.strictEqual(r1.autoDeleted, 1);
-  assert.strictEqual(r1.deferred, 1);
+  assert.deepStrictEqual([r1.attempted, r1.confirmed, r1.deferred], [1, 1, 1]);
   assert.strictEqual(w.notes.length, 0);
   e.sweep();
   assert.ok(w.records().every(function (r) { return r.state === S.DELETED_CONFIRMED; }));
+});
+
+test('#829 集計は結果で分ける: 通信断・再照合不一致は stopped（confirmed に数えない）、反映待ちは pending', function () {
+  var w = world(); var e = w.engine();
+  issued(w, e);
+  w.now = w.records()[0].endSec + 10;
+  w.deleteMode = 'dropResponse';
+  var r = e.sweep();
+  assert.deepStrictEqual([r.attempted, r.confirmed, r.pending, r.stopped], [1, 0, 0, 1]);
+
+  var w2 = world(); var e2 = w2.engine();
+  issued(w2, e2);
+  w2.keys[DEV_A][0].name = 'ALIAS'; // 削除前再照合で不一致 → API未送信で停止
+  w2.now = w2.records()[0].endSec + 10;
+  var r2 = e2.sweep();
+  assert.deepStrictEqual([r2.attempted, r2.confirmed, r2.stopped], [1, 0, 1]);
+  assert.strictEqual(delCount(w2), 0);
+
+  var w3 = world(); var e3 = w3.engine();
+  issued(w3, e3);
+  w3.deleteMode = 'noApply'; // 受理されたが keyList に残る（反映待ち）
+  w3.now = w3.records()[0].endSec + 10;
+  var r3 = e3.sweep();
+  assert.deepStrictEqual([r3.attempted, r3.confirmed, r3.pending], [1, 0, 1]);
+  assert.strictEqual(w3.records()[0].state, S.DELETE_SENT);
+});
+
+test('#829 予約索引: 索引欠損でも期限切れは回収、同一revisionで終了時刻が食い違う記録は自動削除せず管理者通知で停止', function () {
+  var w = world(); var e = w.engine();
+  issued(w, e);
+  Object.keys(w.store).filter(function (k) { return k.indexOf('OP_') !== 0 && k.indexOf('ALERT_') !== 0 && k.indexOf('DLV_') !== 0; })
+    .forEach(function (k) { try { if (JSON.parse(w.store[k]).head) delete w.store[k]; } catch (x) { /* 無視 */ } }); // 予約索引を欠損させる
+  w.now = w.records()[0].endSec + 10;
+  e.sweep();
+  assert.strictEqual(w.records()[0].state, S.DELETED_CONFIRMED);
+
+  var w2 = world(); var e2 = w2.engine();
+  issued(w2, e2);
+  Object.keys(w2.store).forEach(function (k) {
+    try { var v = JSON.parse(w2.store[k]); if (v && v.head && v.head.desired) { v.head.endSec += 3600; w2.store[k] = JSON.stringify(v); } } catch (x) { /* 無視 */ }
+  });
+  w2.now = w2.records()[0].endSec + 10;
+  e2.sweep();
+  assert.strictEqual(delCount(w2), 0);
+  assert.strictEqual(w2.records()[0].state, S.EXPIRED);
+  assert.ok(w2.notes.some(function (n) { return n.code === 'EXPIRED_KEY_REMAINS'; }));
 });
