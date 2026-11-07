@@ -79,3 +79,13 @@ test('承認の停止は Required reviewers 設定時のみ（全対象）と、
   const verifyDoc = fs.readFileSync(path.join(root, 'docs/switchbot-verify-gas-deploy-723.md'), 'utf8');
   assert.ok(verifyDoc.includes('## ロールバック手順'), '正本に該当節がある');
 });
+
+test('UNKNOWN_STATE の確認基準が deploy と rollback で分かれている（rollback は戻し先の版で照合）', () => {
+  assert.ok(/通常の更新（deploy）/.test(doc));
+  assert.ok(/ロールバック（Access／verifyの `rollback`）/.test(doc));
+  assert.ok(/戻し先の版番号 `N` になっている/.test(doc));
+  assert.ok(/rollback to vN \(run …\)/.test(doc));
+  for (const f of ['scripts/deploy-switchbot-access-gas.sh', 'scripts/deploy-switchbot-verify-gas.sh']) {
+    assert.ok(fs.readFileSync(path.join(root, f), 'utf8').includes('rollback to v${target}'), f);
+  }
+});
