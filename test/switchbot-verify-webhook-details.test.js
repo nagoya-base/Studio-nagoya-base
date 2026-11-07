@@ -127,14 +127,8 @@ test('照会 URL の組み立ては既存 webhook-query と同じ（?/& 判定�
   assert.strictEqual(Diag.resolveTarget({ VERIFY_RELAY_URL: 'https://r.example/x?a=1', VERIFY_WEBHOOK_TOKEN: 'a b' }), 'https://r.example/x?a=1&t=a%20b');
 });
 
-test('ワークフロー/スクリプト: 手動専用・変更系 API を含まない・既存診断は未変更', function () {
+test('スクリプト: 変更系 API を含まない（入口は switchbot-verify-readonly.yml に統合済み）', function () {
   var root = path.join(__dirname, '..');
-  var wf = fs.readFileSync(path.join(root, '.github/workflows/switchbot-verify-webhook-details.yml'), 'utf8');
-  assert.ok(/workflow_dispatch:/.test(wf));
-  assert.ok(!/^\s*(push|pull_request|schedule|workflow_run):/m.test(wf));
-  assert.ok(/environment: switchbot-verify/.test(wf));
-  assert.ok(/node scripts\/switchbot-verify-webhook-details\.js/.test(wf));
-  assert.ok(!/SWITCHBOT_DEVICE_ID|VERIFY_RELAY_ADMIN_TOKEN/.test(wf.replace(/^\s*#.*$/gm, '')));
   var src = fs.readFileSync(path.join(root, 'scripts/switchbot-verify-webhook-details.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//, '');
   assert.ok(!/setupWebhook|deleteWebhook|updateWebhook|createKey|deleteKey|'(PUT|DELETE)'/.test(src));
   assert.ok(!/retry|setTimeout/i.test(src));

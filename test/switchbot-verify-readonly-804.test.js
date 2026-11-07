@@ -290,10 +290,18 @@ test('入口スクリプト: 変更系の API 名・再送・他の変更入口�
   });
 });
 
-test('旧入口は削除・変更していない（廃止は証跡確認後の別PR）', function () {
-  ['switchbot-verify-devices', 'switchbot-verify-device-id', 'switchbot-verify-keylist',
-    'switchbot-verify-webhook-raw', 'switchbot-verify-webhook-details', 'switchbot-verify-key',
-    'switchbot-verify-webhook-setup-once'].forEach(function (n) {
+test('旧診断入口と一回限り入口は廃止済み。残す入口は変更しない（#804 PR-F）', function () {
+  ['switchbot-verify-device-id', 'switchbot-verify-keylist', 'switchbot-verify-webhook-raw',
+    'switchbot-verify-webhook-details', 'switchbot-verify-webhook-setup-once'].forEach(function (n) {
+    assert.ok(!fs.existsSync(path.join(root, '.github/workflows', n + '.yml')), n + '.yml は廃止');
+  });
+  assert.ok(!fs.existsSync(path.join(root, 'scripts/switchbot-verify-webhook-setup-once.js')), '一回限りscriptも廃止');
+  // 統合入口が呼ぶ診断scriptは残す
+  Object.keys(Entry.OPERATIONS).forEach(function (name) {
+    assert.ok(fs.existsSync(path.join(root, 'scripts', Entry.OPERATIONS[name].module.replace('./', ''))), name);
+  });
+  // 変更・復旧用と別境界の入口は残す
+  ['switchbot-verify-devices', 'switchbot-verify-key', 'switchbot-verify-readonly', 'switchbot-verify-gas-deploy'].forEach(function (n) {
     assert.ok(fs.existsSync(path.join(root, '.github/workflows', n + '.yml')), n + '.yml');
   });
   var devices = fs.readFileSync(path.join(root, '.github/workflows/switchbot-verify-devices.yml'), 'utf8');

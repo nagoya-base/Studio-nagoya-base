@@ -101,12 +101,7 @@ test('Core.countKeyList: 総件数のみ返し、内容は返さない', functio
   assert.strictEqual(Core.countKeyList(null, FULL).error, 'DEVICE_LIST_INVALID');
 });
 
-test('ワークフロー: workflow_dispatch のみ・変更系/Webhook を呼ばない', function () {
-  var wf = fs.readFileSync(path.join(__dirname, '..', '.github/workflows/switchbot-verify-keylist.yml'), 'utf8');
-  assert.ok(/workflow_dispatch:/.test(wf));
-  assert.ok(!/^\s*(push|pull_request|schedule):/m.test(wf));
-  assert.ok(/environment: switchbot-verify/.test(wf));
-  assert.ok(/node scripts\/switchbot-verify-keylist\.js/.test(wf));
+test('スクリプト: 変更系/Webhook を呼ばない（入口は switchbot-verify-readonly.yml に統合済み）', function () {
   var src = fs.readFileSync(path.join(__dirname, '..', 'scripts/switchbot-verify-keylist.js'), 'utf8');
   assert.ok(!/createKey|deleteKey|webhook|'(POST|PUT|DELETE)'/i.test(src.replace(/\/\*[\s\S]*?\*\//, '')));
 });
