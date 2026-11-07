@@ -10,6 +10,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const REQUIRED_REMOTE_FILE = 'SwitchBotVerify.gs';
+
+/**
+ * 古いrunの鮮度検査（workflowの `Skip if a newer main commit changed the target`）が比較する対象パス。
+ * 更新の挙動を左右するもの（GASソース・配布スクリプト・検証lib・workflow自体）を含める。
+ * 注意: workflowの `on.push.paths` と**同じ集合**に保つこと。push.pathsに無いパスを鮮度検査にだけ含めると、
+ * そのパスだけを変えた新コミットは新しいrunを起こさないのに古いrunだけがスキップされ、更新が失われる（テストで固定）。
+ */
+const TARGET_PATHS = [
+  'gas/switchbot-verify',
+  'scripts/deploy-switchbot-verify-gas.sh',
+  'scripts/switchbot-verify-gas-deploy-lib.js',
+  '.github/workflows/switchbot-verify-gas-deploy.yml'
+];
 // 他プロジェクト（予約GAS等）への誤接続を検出するための拒否プレフィックス。
 const FORBIDDEN_REMOTE_PREFIXES = ['Booking', 'Survey'];
 
@@ -130,6 +143,7 @@ function main(argv, env) {
       if (a[2] && a[2] !== '-' && !descriptionMatches(r.description, a[2])) return 1;
       return 0;
     }
+    case 'target-paths': process.stdout.write(TARGET_PATHS.join('\n') + '\n'); return 0;
     case 'max-version': { // <versions.json>
       const r = parseVersions(fs.readFileSync(a[0], 'utf8'));
       if (r.error) { process.stderr.write(r.error + '\n'); return 1; }
@@ -166,4 +180,4 @@ if (require.main === module) {
   process.exit(code);
 }
 
-module.exports = { pickDeployment, descriptionMatches, parseVersions, checkRemoteTarget, checkManifest, compareSources, checkCredential };
+module.exports = { TARGET_PATHS, pickDeployment, descriptionMatches, parseVersions, checkRemoteTarget, checkManifest, compareSources, checkCredential };

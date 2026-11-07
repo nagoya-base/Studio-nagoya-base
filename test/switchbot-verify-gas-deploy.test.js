@@ -341,3 +341,88 @@ test('the verify deploy stays separate: no Access/Booking secrets, no deletion o
   assert.match(wf, /on:\n  push:/);
   assert.ok(fs.existsSync(path.join(root, '.github/workflows/switchbot-verify-gas-deploy.yml')), 'the old entry is kept (removal is a separate decision)');
 });
+
+// ---- Issue #804 PR-C3 (review): 古いrunの鮮度検査は、更新の挙動を左右するパス全体を比べる ----
+function pushPaths() {
+  const on = wf.slice(wf.indexOf('\non:\n'), wf.indexOf('\npermissions:'));
+  const block = on.slice(on.indexOf('paths:'), on.indexOf('workflow_dispatch:'));
+  return [...block.matchAll(/^\s+- '([^']+)'$/gm)].map((m) => m[1].replace(/\/\*\*$/, ''));
+}
+
+test('freshness target paths equal the workflow push.paths (no path can trigger a run yet be missed, or be checked without triggering)', () => {
+  assert.deepEqual([...lib.TARGET_PATHS].sort(), pushPaths().sort());
+  for (const p of ['gas/switchbot-verify', 'scripts/deploy-switchbot-verify-gas.sh', 'scripts/switchbot-verify-gas-deploy-lib.js', '.github/workflows/switchbot-verify-gas-deploy.yml']) {
+    assert.ok(lib.TARGET_PATHS.includes(p), p);
+  }
+  const out = spawnSync('node', [path.join(root, 'scripts/switchbot-verify-gas-deploy-lib.js'), 'target-paths'], { encoding: 'utf8' });
+  assert.deepEqual(out.stdout.trim().split('\n'), lib.TARGET_PATHS);
+  // the workflow no longer hard-codes a gas-source-only comparison
+  assert.doesNotMatch(wf, /git diff --quiet "\$GITHUB_SHA" FETCH_HEAD -- gas\/switchbot-verify;/);
+  assert.match(wf, /mapfile -t target_paths < <\(node scripts\/switchbot-verify-gas-deploy-lib\.js target-paths\)/);
+});
+
+function freshnessStep() {
+  const start = wf.indexOf('- name: Skip if a newer main commit changed the target');
+  const runAt = wf.indexOf('run: |\n', start) + 'run: |\n'.length;
+  const end = wf.indexOf('\n      - name:', runAt);
+  return wf.slice(runAt, end).split('\n').map((l) => l.replace(/^          /, '')).join('\n');
+}
+
+function staleDecision(changedFiles) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbv-fresh-'));
+  const git = (cwd, ...args) => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test' } });
+    assert.equal(r.status, 0, args.join(' ') + r.stderr);
+    return r.stdout.trim();
+  };
+  try {
+    const origin = path.join(dir, 'origin.git');
+    fs.mkdirSync(origin);
+    git(origin, 'init', '--bare', '-b', 'main');
+    const seed = path.join(dir, 'seed');
+    git(dir, 'clone', origin, seed);
+    git(seed, 'checkout', '-b', 'main');
+    const files = {
+      'gas/switchbot-verify/SwitchBotVerify.gs': '// source\n',
+      'scripts/deploy-switchbot-verify-gas.sh': '#!/bin/bash\n',
+      'scripts/switchbot-verify-gas-deploy-lib.js': fs.readFileSync(path.join(root, 'scripts/switchbot-verify-gas-deploy-lib.js'), 'utf8'),
+      '.github/workflows/switchbot-verify-gas-deploy.yml': '# workflow\n',
+      'scripts/classify-clasp-list-error.js': '// classifier\n',
+      'docs/readme.md': 'docs\n'
+    };
+    for (const [f, c] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(seed, f)), { recursive: true });
+      fs.writeFileSync(path.join(seed, f), c);
+    }
+    git(seed, 'add', '-A'); git(seed, 'commit', '-m', 'A'); git(seed, 'push', 'origin', 'main');
+    const shaA = git(seed, 'rev-parse', 'HEAD');
+    // the older run: a checkout of A, while origin/main moves on to B
+    const run = path.join(dir, 'run');
+    git(dir, 'clone', origin, run);
+    for (const f of changedFiles) fs.appendFileSync(path.join(seed, f), '\n// newer change\n');
+    if (changedFiles.length) { git(seed, 'add', '-A'); git(seed, 'commit', '-m', 'B'); git(seed, 'push', 'origin', 'main'); }
+    git(run, 'checkout', shaA);
+    const outFile = path.join(dir, 'gh-output'); const sumFile = path.join(dir, 'gh-summary');
+    fs.writeFileSync(outFile, ''); fs.writeFileSync(sumFile, '');
+    const r = spawnSync('bash', ['-c', freshnessStep()], { cwd: run, encoding: 'utf8', env: { ...process.env, GITHUB_SHA: shaA, GITHUB_OUTPUT: outFile, GITHUB_STEP_SUMMARY: sumFile } });
+    assert.equal(r.status, 0, r.stderr);
+    return { current: /current=(true|false)/.exec(fs.readFileSync(outFile, 'utf8'))[1], summary: fs.readFileSync(sumFile, 'utf8') };
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+test('an older run is skipped when a newer main commit changed the GAS source, the deploy script, the lib or the workflow; not for unrelated files', () => {
+  const stale = [
+    ['(a) GAS source only', ['gas/switchbot-verify/SwitchBotVerify.gs']],
+    ['(b) deploy script only', ['scripts/deploy-switchbot-verify-gas.sh']],
+    ['(c) verification lib only', ['scripts/switchbot-verify-gas-deploy-lib.js']],
+    ['(e) workflow only', ['.github/workflows/switchbot-verify-gas-deploy.yml']]
+  ];
+  for (const [name, files] of stale) {
+    const d = staleDecision(files);
+    assert.equal(d.current, 'false', name);
+    assert.match(d.summary, /skipping/, name);
+  }
+  assert.equal(staleDecision(['docs/readme.md']).current, 'true', '(d) unrelated docs only');
+  assert.equal(staleDecision(['scripts/classify-clasp-list-error.js']).current, 'true', 'a path that does not trigger a run is not part of the check');
+  assert.equal(staleDecision([]).current, 'true', 'no newer commit');
+});
