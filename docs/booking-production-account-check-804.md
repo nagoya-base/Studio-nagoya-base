@@ -36,7 +36,7 @@
 
 ## 技術者向け詳細
 - 実装: `scripts/confirm-booking-production-account.js`（`confirmAccount(env, fetch)`。テストは `test/confirm-booking-production-account.test.js`、ネットワークはモック）。
-- 対象は `CLASPRC_JSON` の `tokens.default`（Booking Admin用）だけ。Public用(`booking-owner`)・Webhook用は対象外。
+- 対象は `CLASPRC_JSON` の `tokens.default`（Booking Admin用）だけ。refresh tokenとuserは `tokens.default` に限定し、他userへはfallbackしない。client ID/secretは、現行clasp形式（`tokens.default`内）に加え、旧実装が参照した `oauth2ClientSettings` とルートの項目も受け入れる（既存のSecretを貼り直さずに使える）。Public用(`booking-owner`)・Webhook用は対象外。
 - `refresh_token` でアクセストークンを取得し、`oauth2/v3/userinfo` のメールを `BOOKING_EXPECTED_GOOGLE_ACCOUNT` と大文字小文字を無視して比較する。
   任意のアカウントでログインできただけでは成功にしない。平文メールの固定ハッシュ比較は行わない。
 - メール取得に必要なscopeが無い場合は `SCOPE_INSUFFICIENT` で停止し、**新しいOAuth scopeは追加しない**。

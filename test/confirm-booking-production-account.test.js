@@ -113,3 +113,38 @@ test('workflow stays manual, approved via booking-production, least-privilege, a
   // The expected account is read from a private Environment secret, never hard-coded.
   assert.match(workflow, /BOOKING_EXPECTED_GOOGLE_ACCOUNT: \$\{\{ secrets\.BOOKING_EXPECTED_GOOGLE_ACCOUNT \}\}/);
 });
+
+test('existing clasp credential shapes keep working: client id/secret in tokens.default, oauth2ClientSettings or the root (Issue #804 review)', async () => {
+  const rt = { refresh_token: 'refresh-dummy' };
+  const both = { client_id: 'client-id-dummy', client_secret: 'client-secret-dummy' };
+  const shapes = {
+    'inside token': { tokens: { default: { ...rt, ...both } } },
+    'oauth2ClientSettings': { tokens: { default: rt }, oauth2ClientSettings: { clientId: 'client-id-dummy', clientSecret: 'client-secret-dummy' } },
+    'root fields': { tokens: { default: rt }, ...both },
+    'mixed (id in token, secret in settings)': { tokens: { default: { ...rt, client_id: 'client-id-dummy' } }, oauth2ClientSettings: { clientSecret: 'client-secret-dummy' } }
+  };
+  for (const [name, auth] of Object.entries(shapes)) {
+    const f = mockFetch();
+    assert.equal(await confirmAccount({ ...baseEnv(), CLASPRC_JSON: JSON.stringify(auth) }, f), 'ACCOUNT_MATCH', name);
+    assert.equal(f.calls.length, 2, name);
+    // a wrong account is still never a success, whichever shape was used
+    const wrong = mockFetch({ userinfo: json(200, { email: 'other-dummy@example.test', email_verified: true }) });
+    assert.equal(await confirmAccount({ ...baseEnv(), CLASPRC_JSON: JSON.stringify(auth) }, wrong), 'ACCOUNT_MISMATCH', name);
+  }
+});
+
+test('missing client id/secret or refresh token still fails closed; other users tokens are never used as a fallback', async () => {
+  const bad = [
+    { tokens: { default: { refresh_token: 'refresh-dummy' } } },
+    { tokens: { default: { refresh_token: 'refresh-dummy', client_id: 'client-id-dummy' } }, oauth2ClientSettings: {} },
+    { tokens: { default: { refresh_token: 'refresh-dummy' } }, oauth2ClientSettings: { clientId: 1, clientSecret: null } },
+    { tokens: { default: {}, 'booking-owner': { refresh_token: 'refresh-dummy', client_id: 'client-id-dummy', client_secret: 'client-secret-dummy' } } },
+    { token: { refresh_token: 'refresh-dummy', client_id: 'client-id-dummy', client_secret: 'client-secret-dummy' } },
+    { refresh_token: 'refresh-dummy', client_id: 'client-id-dummy', client_secret: 'client-secret-dummy' }
+  ];
+  for (const auth of bad) {
+    const f = mockFetch();
+    assert.equal(await confirmAccount({ ...baseEnv(), CLASPRC_JSON: JSON.stringify(auth) }, f), 'CREDENTIAL_INVALID');
+    assert.deepEqual(f.calls, []);
+  }
+});

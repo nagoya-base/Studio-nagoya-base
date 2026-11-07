@@ -38,7 +38,13 @@ async function confirmAccount(env, fetchImpl) {
     // clasp 3.x は tokens.<user>。Adminは `default` userのみを対象にし、他userへは広げない。
     const token = auth.tokens && auth.tokens.default;
     if (!token || typeof token !== 'object') return 'CREDENTIAL_INVALID';
-    const { refresh_token: refreshToken, client_id: clientId, client_secret: clientSecret } = token;
+    const refreshToken = token.refresh_token;
+    // client id/secret: 現行clasp形式（tokens.default内）と旧実装が参照した保存形式の両方を受け入れる。
+    // refresh tokenとuserは常に tokens.default に限定し、他userのtokensへはfallbackしない。
+    const settings = auth.oauth2ClientSettings && typeof auth.oauth2ClientSettings === 'object' ? auth.oauth2ClientSettings : {};
+    const firstString = (...values) => values.find((v) => typeof v === 'string' && v) || '';
+    const clientId = firstString(token.client_id, settings.clientId, auth.client_id);
+    const clientSecret = firstString(token.client_secret, settings.clientSecret, auth.client_secret);
     if (!refreshToken || !clientId || !clientSecret) return 'CREDENTIAL_INVALID';
 
     const refresh = await fetchImpl('https://oauth2.googleapis.com/token', {
