@@ -115,6 +115,13 @@ var SwitchBotAccessCore = (function () {
       return no('PAYMENT_NOT_ELIGIBLE');
     }
     if (!Array.isArray(config.eligibleBrands) || config.eligibleBrands.indexOf(booking.brand) === -1) return no('BRAND_NOT_TARGET');
+    // 限定稼働（#757）: pilotBookingIds が設定されている間は、列挙された予約IDだけを発行対象にする。
+    // 未設定（undefined）は従来どおり制限なし。配列以外・文字列以外の要素を含む設定は不備として止める（推測しない）。
+    if (config.pilotBookingIds !== undefined) {
+      var pilot = config.pilotBookingIds;
+      if (!Array.isArray(pilot) || pilot.some(function (x) { return typeof x !== 'string' || !x; })) return no('PILOT_CONFIG_INVALID');
+      if (pilot.indexOf(String(booking.bookingId)) === -1) return no('NOT_PILOT_TARGET');
+    }
     if (typeof config.graceBeforeSec !== 'number' || typeof config.graceAfterSec !== 'number' ||
         config.graceBeforeSec < 0 || config.graceAfterSec < 0) {
       return no('GRACE_NOT_CONFIGURED');

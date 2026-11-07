@@ -294,3 +294,38 @@ test('B4: select のコメントに「空brandは凍結/管理者確認のため
   assert.ok(/空brandは「SNBと認定」ではない/.test(src));
   assert.ok(/BRAND_UNKNOWN/.test(src));
 });
+
+// ================================================================ P: 限定稼働の予約ID許可リスト（#757）
+
+test('P1: validateConfig は pilotBookingIds を空でない文字列の配列のみ許容（未設定・空配列は可）', function () {
+  [undefined, [], ['SNB-1'], ['SNB-1', 'SNB-2']].forEach(function (v) {
+    assert.strictEqual(Infra.validateConfig(validCfg(v === undefined ? {} : { pilotBookingIds: v })).ok, true, JSON.stringify(v));
+  });
+  [[''], [1], [null], 'SNB-1', {}, null, [['SNB-1']]].forEach(function (v) {
+    var r = Infra.validateConfig(validCfg({ pilotBookingIds: v }));
+    assert.strictEqual(r.ok, false, JSON.stringify(v));
+    assert.ok(r.errors.indexOf('PILOT_BOOKING_IDS_INVALID') !== -1);
+  });
+});
+
+test('P2: 許可リスト外の予約は createKey=0・deleteKey=0・通知なし。リスト内の予約だけ発行される', function () {
+  var w = H.createWorld({ mail: false, cfg: { pilotBookingIds: ['SNB-PILOT'] } });
+  w.createMode = 'noCommandId';
+  var rt = w.runtime();
+  w.records = [H.record({ bookingId: 'SNB-REAL' }), H.record({ bookingId: 'SNB-PILOT' })];
+  cycle(w, rt, 3);
+  assert.strictEqual(w.callCount('createKey'), 1, '許可リストの1件だけ');
+  assert.strictEqual(w.callCount('deleteKey'), 0);
+  var issued = ops(w);
+  assert.strictEqual(issued.length, 1);
+  assert.ok(JSON.stringify(issued[0]).indexOf('SNB-REAL') === -1, 'リスト外の予約はOPを持たない');
+  assert.ok(!has(w, /BOOKING_FROZEN/), 'リスト外は凍結通知にしない');
+});
+
+test('P3: 空配列は全予約を停止（createKey=0）', function () {
+  var w = H.createWorld({ mail: false, cfg: { pilotBookingIds: [] } });
+  var rt = w.runtime();
+  w.records = [H.record()];
+  cycle(w, rt, 3);
+  assert.strictEqual(w.callCount('createKey'), 0);
+});

@@ -113,6 +113,11 @@ var SwitchBotAccessInfra = (function () {
       var eb = cfg.eligibleBrands;
       if (!Array.isArray(eb) || eb.some(function (b) { return KNOWN_BRANDS.indexOf(b) === -1; })) errors.push('ELIGIBLE_BRANDS_INVALID');
     }
+    // pilotBookingIds は限定稼働用の予約ID許可リスト（#757）。設定する場合は空でない文字列の配列のみ（空配列は全件停止として許容）。
+    if (cfg.pilotBookingIds !== undefined) {
+      var pb = cfg.pilotBookingIds;
+      if (!Array.isArray(pb) || pb.some(function (x) { return typeof x !== 'string' || !x; })) errors.push('PILOT_BOOKING_IDS_INVALID');
+    }
     return { ok: errors.length === 0, errors: errors.filter(function (e, i) { return errors.indexOf(e) === i; }) };
   }
 
