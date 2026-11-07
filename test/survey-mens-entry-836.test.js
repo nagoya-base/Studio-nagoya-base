@@ -69,6 +69,8 @@ test('非干渉: /feedback/（#835）・利用後メール連携（#834）の資
 test('画面遷移・完了表示は入口カードではなくアンケート本体の先頭へスクロールする（レビュー指摘）', function () {
   var js = read('scripts/survey-app.js');
   assert.ok(js.indexOf('window.scrollTo(0, 0)') === -1, 'ページ最上部へ戻さない');
-  assert.match(js, /function scrollToSurveyTop\(\)/);
-  assert.strictEqual((js.match(/scrollToSurveyTop\(\);/g) || []).length, 2, 'renderEnd と renderStep');
+  assert.match(js, /function focusAndScroll\(el\)/);
+  assert.strictEqual((js.match(/focusAndScroll\((box|title)\);/g) || []).length, 2, 'renderEnd と renderStep');
+  /* 初回表示は入口カードを飛ばさない */
+  assert.match(js, /if \(!hasRendered\) \{\s*el\.focus\(\{ preventScroll: true \}\);/);
 });
