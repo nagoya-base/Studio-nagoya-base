@@ -27,7 +27,7 @@ SwitchBot Open API は公式に personal uses 向け。**予約連携・メー�
 1. 登録（`scripts/switchbot-register-device-id.js`）:
    - `read -rs SWITCHBOT_TOKEN; read -rs SWITCHBOT_SECRET` で入力し（引数・ソース・ファイルに書かない）、`KEYPAD_LAST4=<アプリ等で確認した末尾4桁>` を設定したうえで、`export SWITCHBOT_TOKEN SWITCHBOT_SECRET KEYPAD_LAST4` で子プロセスへ渡す。
    - `node scripts/switchbot-register-device-id.js` … `GET /v1.1/devices` を呼び、Keypad / Keypad Touch の末尾4桁一致が**ちょうど1件**のときだけ `gh secret set SWITCHBOT_DEVICE_ID --env switchbot-verify` の標準入力へ渡す。0件・複数件・API失敗・応答不正・登録失敗では書き込まず終了コード1（gh の出力も破棄し、完全IDは一切表示しない）。
-2. 登録後確認: Actions → "SwitchBot device ID check (manual)"（`switchbot-verify-device-id.yml`）に末尾4桁を入力して実行。Environment `switchbot-verify` の `SWITCHBOT_DEVICE_ID` を読み、deviceList 上の**完全ID一致1件**・Keypad種別・末尾4桁一致を確認する（`GET /v1.1/devices` のみ）。Secret未設定・不一致・0件/複数件・応答不正は失敗。
+2. 登録後確認: Actions → "SwitchBot read-only diagnostics (manual)"（`switchbot-verify-readonly.yml`）で operation=`device-id` を選び、末尾4桁を入力して実行（旧 `switchbot-verify-device-id.yml` は #804 PR-F で廃止）。Environment `switchbot-verify` の `SWITCHBOT_DEVICE_ID` を読み、deviceList 上の**完全ID一致1件**・Keypad種別・末尾4桁一致を確認する（`GET /v1.1/devices` のみ）。Secret未設定・不一致・0件/複数件・応答不正は失敗。
 3. Issue には実施日時・保存先の種類と名前・登録成否・照合件数・末尾4桁・確認 run URL のみ記録する。
 
 GAS 経路（`verifySelectKeypad(last4)`）で Script Properties に保存しても GitHub Environment Secret の登録にはならず、登録値を使う読み取り専用 workflow も未整備のため、本Issueの完了条件には使わない。

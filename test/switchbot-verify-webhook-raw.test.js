@@ -115,14 +115,8 @@ test('送信は POST queryWebhook(queryUrl) の 1 回のみ・再送なし', asy
   assert.deepStrictEqual(JSON.parse(f.calls[0].body), { action: 'queryUrl' });
 });
 
-test('ワークフロー/スクリプト: 手動専用・変更系 API を含まない・既存 webhook-query は未変更', function () {
+test('スクリプト: 変更系 API を含まない（入口は switchbot-verify-readonly.yml に統合済み）', function () {
   var root = path.join(__dirname, '..');
-  var wf = fs.readFileSync(path.join(root, '.github/workflows/switchbot-verify-webhook-raw.yml'), 'utf8');
-  assert.ok(/workflow_dispatch:/.test(wf));
-  assert.ok(!/^\s*(push|pull_request|schedule):/m.test(wf));
-  assert.ok(/environment: switchbot-verify/.test(wf));
-  assert.ok(/node scripts\/switchbot-verify-webhook-raw\.js/.test(wf));
-  assert.ok(!/SWITCHBOT_DEVICE_ID/.test(wf.replace(/^#.*$/gm, '')));
   var src = fs.readFileSync(path.join(root, 'scripts/switchbot-verify-webhook-raw.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//, '');
   assert.ok(!/setupWebhook|deleteWebhook|updateWebhook|createKey|deleteKey|'(PUT|DELETE)'/.test(src));
   assert.strictEqual((src.match(/webhook\/queryWebhook/g) || []).length, 1);
