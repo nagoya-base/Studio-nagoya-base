@@ -23,6 +23,18 @@ clasp_user="default"
 retry_attempts=5
 retry_delay_seconds="${SBA_RETRY_DELAY_SECONDS:-5}"
 
+summary() { [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] && echo "$1" >> "$GITHUB_STEP_SUMMARY" || true; }
+fail() { echo "$1" >&2; summary "- ❌ $1"; exit 1; }
+
+# ---- 入力検査（Google・認証ファイルに触れる前。失敗しても何も変更しない） ----
+if [[ "$mode" == "rollback" ]]; then
+  target="${ROLLBACK_VERSION:-}"
+  [[ "$target" =~ ^[1-9][0-9]{0,5}$ ]] || fail "ROLLBACK_VERSION must be a positive integer; nothing was changed."
+  [[ "${ROLLBACK_COMPAT_CONFIRMED:-}" == "true" ]] || fail "Rollback requires confirming the target version is compatible with the current production state; nothing was changed."
+else
+  [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || fail "GITHUB_SHA is not a commit SHA; nothing was changed."
+fi
+
 if [[ -z "${SBA_CLASPRC_JSON:-}" || -z "${SBA_SCRIPT_ID:-}" || -z "${SBA_DEPLOYMENT_ID:-}" ]]; then
   echo "Required switchbot-access secrets are not configured." >&2
   exit 1
@@ -45,9 +57,6 @@ cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
 rm -rf "$work"
 mkdir -p "$remote_dir" "$deploy_dir" "$verify_dir" "$out"
-
-summary() { [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] && echo "$1" >> "$GITHUB_STEP_SUMMARY" || true; }
-fail() { echo "$1" >&2; summary "- ❌ $1"; exit 1; }
 
 cred_status="$(node "$lib" check-credential || true)"
 [[ "$cred_status" == "OK" ]] || fail "clasp credential check failed: $cred_status"
@@ -94,13 +103,27 @@ node "$prepare" "$bundle_dir" >/dev/null || fail "Bundle assembly failed; nothin
 status="$(node "$lib" check-manifest "$remote_dir/appsscript.json" "$bundle_dir/appsscript.json" webapp-only || true)"
 [[ "$status" == "OK" ]] || fail "Manifest check failed: $status. Nothing was changed."
 
+# ---- 更新前の読取り確認（モード別）。ここまでは公開Deploymentにも編集用ソースにも一切書き込まない ----
 if [[ "$mode" == "rollback" ]]; then
-  target="${ROLLBACK_VERSION:-}"
-  [[ "$target" =~ ^[1-9][0-9]{0,5}$ ]] || fail "ROLLBACK_VERSION must be a positive integer; nothing was changed."
-  [[ "${ROLLBACK_COMPAT_CONFIRMED:-}" == "true" ]] || fail "Rollback requires confirming the target version is compatible with the current production state; nothing was changed."
   [[ "$target" != "$previous_version" ]] || fail "Deployment is already at @$target; nothing was changed."
   node "$lib" has-version "$out/versions.json" "$target" || fail "Version @$target does not exist in the target project; nothing was changed."
   target_desc="$(node "$lib" describe-version "$out/versions.json" "$target")"
+else
+  # 配布物を組み立て（組み立てのみ）、完全性・純度・manifest（依存・scope含む）を検査する。失敗なら何も書き込まない。
+  node "$prepare" "$bundle_dir" >/dev/null || fail "Bundle assembly failed; nothing was changed."
+  status="$(node "$lib" check-bundle "$bundle_dir" || true)"
+  [[ "$status" == "OK" ]] || fail "Bundle check failed: $status. Nothing was changed."
+  summary "- ✅ 配布物の完全性検査: 成功"
+  status="$(node "$lib" check-manifest "$remote_dir/appsscript.json" "$bundle_dir/appsscript.json" || true)"
+  [[ "$status" == "OK" ]] || fail "Manifest check failed: $status. Nothing was changed."
+fi
+
+# 境界: 認証・対象GAS・Deployment（完全一致・一意）・版・manifest・配布物の読取り確認が完了。以降が最初の書込み。
+# 読取り確認は更新権限・将来のAPI成功・GAS実行時権限を保証しない（更新後の読取り照合で別途確認する）。
+echo "Preflight passed (read-only checks complete; the first write follows)"
+summary "- ✅ 更新前の読取り確認（preflight）: 成功（ここまでは何も書き込んでいません）"
+
+if [[ "$mode" == "rollback" ]]; then
   summary "- ロールバック先: \`@$target\`（説明: \`$target_desc\`）／互換性確認: 運営確認済みの入力あり"
   echo "Rolling the SAME deployment back to version @$target"
   if ! clasp_run "$remote_dir" "$out/update.out" update-deployment "$SBA_DEPLOYMENT_ID" -V "$target" \
@@ -110,16 +133,6 @@ if [[ "$mode" == "rollback" ]]; then
   expected_version="$target"
   expected_desc="-"
 else
-  [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || fail "GITHUB_SHA is not a commit SHA; nothing was changed."
-  # 配布物を組み立て（組み立てのみ）、完全性・純度を検査する。失敗なら公開Deploymentに触れない。
-  node "$prepare" "$bundle_dir" >/dev/null || fail "Bundle assembly failed; nothing was changed."
-  status="$(node "$lib" check-bundle "$bundle_dir" || true)"
-  [[ "$status" == "OK" ]] || fail "Bundle check failed: $status. Nothing was changed."
-  summary "- ✅ 配布物の完全性検査: 成功"
-
-  status="$(node "$lib" check-manifest "$remote_dir/appsscript.json" "$bundle_dir/appsscript.json" || true)"
-  [[ "$status" == "OK" ]] || fail "Manifest check failed: $status. Nothing was changed."
-
   # デプロイ対象は配布物（.gs と appsscript.json のみ）。
   cp "$bundle_dir"/*.gs "$bundle_dir/appsscript.json" "$deploy_dir/"
 

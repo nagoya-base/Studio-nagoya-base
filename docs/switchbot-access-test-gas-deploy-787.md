@@ -82,3 +82,11 @@
 **出力**: `TEST_DIAGNOSTICS_OK` または固定エラーコード、`SET/MISSING/UNKNOWN`、`VERIFY/NOT_VERIFY`、`JST/NOT_JST/UNKNOWN`、行数・検査行数のみ。完全deviceId・スプレッドシートID・アカウント/メール・予約内容・トークン・例外原文は出さない。ログは戻り値と同一の固定JSON1行。
 
 **手順**: GASエディタの関数選択で `accessTestReadOnlyDiagnostics` を選び1回だけ実行 → 実行ログのJSONで `ok=true`・`environment=VERIFY`・`accessEnabled=OFF`・`ledger.headers=COMPLETE`・`ledger.timezone=JST` を確認する。診断のために `production` へ変更しない。この診断だけでは実機テスト・秘密情報登録・トリガー作成・production ON は許可されない。
+
+## 更新前の確認と更新後の確認（運営向け・Issue #804 PR-C2）
+
+- 停止スイッチ（`SWITCHBOT_ACCESS_TEST_DEPLOY_ENABLED`）が `true` 以外のときは、接続情報にも更新先にも触れず、何も更新せずに終わります（入力に誤りがあっても同じです）。
+- 動いているときは、書き込みの前に接続情報・更新先・配布物を読み取りだけで確認します。実行ログの `Preflight passed` の行が「ここまでは何も書き込んでいない」境界です。
+- 固定Deploymentの設定値が**未登録**のときは、従来どおり「ソースの反映だけ」を行い、公開版の更新はしません（このときの画面には、公開版を更新・確認していないことを明記しています）。ロールバックはこの状態では拒否されます。
+- 固定Deploymentがあるときは、更新後に公開バージョンと説明文（`main <今回のSHA>`）が**完全一致**するかを読み取りで確認します。確認できないときは `UNKNOWN_STATE` で止まり、自動の再実行・巻き戻しはしません。
+- 本番Accessの承認は、この検証用の自動反映には使いません（別の仕組みです）。

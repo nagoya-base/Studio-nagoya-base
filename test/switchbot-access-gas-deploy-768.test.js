@@ -291,6 +291,8 @@ const fs=require('fs');
 const S=process.env.FAKE_STATE, a=process.argv.slice(2).filter((x,i,arr)=>!(x==='--auth'||arr[i-1]==='--auth'||x==='--user'||arr[i-1]==='--user'));
 const cmd=a[0]; const st=()=>JSON.parse(fs.readFileSync(S+'/state.json','utf8')); const save=(s)=>fs.writeFileSync(S+'/state.json',JSON.stringify(s));
 fs.appendFileSync(S+'/calls.log', cmd+'\\n');
+const sumf=process.env.GITHUB_STEP_SUMMARY; const preflightDone=!!sumf&&fs.existsSync(sumf)&&fs.readFileSync(sumf,'utf8').includes('preflight');
+if((cmd==='push'||cmd==='update-deployment')&&!preflightDone)fs.appendFileSync(S+'/calls.log','WRITE_BEFORE_PREFLIGHT\\n');
 const fail=process.env.FAKE_FAIL||''; if(fail===cmd){console.error('boom '+process.env.FAKE_LEAK);process.exit(1);}
 const s=st();
 const cfg=JSON.parse(fs.readFileSync('.clasp.json','utf8')); const ext=(cfg.scriptExtensions&&cfg.scriptExtensions[0])||'js';
@@ -303,7 +305,7 @@ else if(cmd==='update-deployment'){
   if(fail==='update-silent'){process.exit(1);}
   if(fail==='update-moves-elsewhere'){const d0=s.deployments.find(x=>x.deploymentId===id); d0.versionNumber=1; save(s); process.exit(1);}
   let v; if(vi>=0)v=Number(a[vi+1]); else{v=Math.max(...s.versions.map(x=>x.versionNumber))+1;s.versions.push({versionNumber:v,description:a[di+1]});}
-  const d=s.deployments.find(x=>x.deploymentId===id); d.versionNumber=v; d.description=a[di+1];
+  const d=s.deployments.find(x=>x.deploymentId===id); d.versionNumber=v; d.description=a[di+1]+(process.env.FAKE_DESC_SUFFIX||'');
   save(s); if(fail==='update-apply-then-error'){process.exit(1);}
 }`;
   fs.writeFileSync(path.join(binDir, 'clasp'), js, { mode: 0o755 });
@@ -337,7 +339,9 @@ function setup(overrides = {}) {
     }
   });
   const read = () => JSON.parse(fs.readFileSync(path.join(state, 'state.json'), 'utf8'));
-  const calls = () => fs.readFileSync(path.join(state, 'calls.log'), 'utf8').split('\n').filter(Boolean);
+  // clasp が一度も呼ばれない（入力検査でGoogleに触れる前に停止した）場合は記録ファイルが無い＝0回。
+  const calls = () => (fs.existsSync(path.join(state, 'calls.log'))
+    ? fs.readFileSync(path.join(state, 'calls.log'), 'utf8').split('\n').filter(Boolean) : []);
   return { run, read, calls, tmp, summary, state };
 }
 const noLeak = (r) => {
@@ -552,4 +556,79 @@ test('write-config pins scriptExtensions to gs (clasp 3.x pulls .js by default) 
   assert.equal(cli({ ...good, DG_EVENT: 'push' }).status, 1);
   assert.equal(cli({ ...good, DG_ACCESS_STATE: 'NOT_SELECTED' }).stdout.toString().trim(), 'ACCESS_STATE_NOT_SELECTED');
   assert.equal(cli({ ...good, DG_ACCESS_STATE: 'ON_CHANGE_APPROVED' }).stdout.toString().trim(), 'APPROVAL_REFERENCE_REQUIRED');
+});
+
+// ---- Issue #804 PR-C2: 更新前の読取り確認（preflight）の境界・入力の早期検査・説明文の完全一致 ----
+test('preflight boundary: no push/update-deployment runs before the preflight line (deploy and rollback)', () => {
+  for (const [mode, env] of [['deploy', {}], ['rollback', { ROLLBACK_VERSION: '1' }]]) {
+    const t = setup();
+    const r = t.run(mode, env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Preflight passed \(read-only checks complete; the first write follows\)/);
+    assert.match(fs.readFileSync(t.summary, 'utf8'), /更新前の読取り確認（preflight）: 成功/);
+    assert.ok(!t.calls().includes('WRITE_BEFORE_PREFLIGHT'), 'a write happened before the preflight boundary');
+    assert.ok(t.calls().includes(mode === 'deploy' ? 'push' : 'update-deployment'));
+  }
+});
+
+test('every read-only failure before the boundary stops with zero writes and no preflight line', () => {
+  const cases = [
+    ['list-deployments fails', 'deploy', { FAKE_FAIL: 'list-deployments' }],
+    ['list-versions fails', 'deploy', { FAKE_FAIL: 'list-versions' }],
+    ['pull (target check) fails', 'deploy', { FAKE_FAIL: 'pull' }],
+    ['rollback: list-deployments fails', 'rollback', { FAKE_FAIL: 'list-deployments', ROLLBACK_VERSION: '1' }],
+    ['rollback: unknown version', 'rollback', { ROLLBACK_VERSION: '99' }],
+    ['rollback: already at that version', 'rollback', { ROLLBACK_VERSION: '2' }],
+    ['unconfigured deployment ID', 'deploy', { SBA_DEPLOYMENT_ID: 'AKfycbxNOTLISTED000000' }],
+    ['credential has no default user', 'deploy', { SBA_CLASPRC_JSON: JSON.stringify({ tokens: { other: {} } }) }]
+  ];
+  for (const [name, mode, env] of cases) {
+    const t = setup();
+    const r = t.run(mode, env);
+    assert.notEqual(r.status, 0, name);
+    assert.doesNotMatch(r.stdout, /Preflight passed/, name);
+    assert.ok(!t.calls().includes('push') && !t.calls().includes('update-deployment'), name);
+    assert.ok(!t.calls().includes('WRITE_BEFORE_PREFLIGHT'), name);
+    noLeak(r);
+  }
+});
+
+test('invalid rollback/SHA inputs stop before any clasp call or credential file (fail fast, nothing touched)', () => {
+  const cases = [
+    ['rollback', { ROLLBACK_VERSION: 'abc' }], ['rollback', { ROLLBACK_VERSION: '0' }], ['rollback', { ROLLBACK_VERSION: '' }],
+    ['rollback', { ROLLBACK_VERSION: '2', ROLLBACK_COMPAT_CONFIRMED: 'false' }],
+    ['deploy', { GITHUB_SHA: 'not-a-sha' }], ['deploy', { GITHUB_SHA: 'A'.repeat(40) }]
+  ];
+  for (const [mode, env] of cases) {
+    const t = setup();
+    const before = JSON.stringify(t.read());
+    const r = t.run(mode, env);
+    assert.notEqual(r.status, 0, JSON.stringify(env));
+    assert.deepEqual(t.calls(), [], 'clasp was not called');
+    assert.equal(JSON.stringify(t.read()), before);
+    assert.deepEqual(fs.readdirSync(t.tmp), [], 'no credential/work file was created');
+  }
+});
+
+test('post-update description must match exactly: extra text after the SHA is UNKNOWN_STATE, never success, and nothing is re-run', () => {
+  for (const suffix of [' extra', '; previous main ' + 'c'.repeat(40)]) {
+    const t = setup();
+    const r = t.run('deploy', { FAKE_DESC_SUFFIX: suffix });
+    assert.notEqual(r.status, 0, suffix);
+    assert.match(r.stderr, /UNKNOWN_STATE/);
+    assert.equal(t.calls().filter((c) => c === 'update-deployment').length, 1, 'no automatic re-update');
+    assert.equal(t.calls().filter((c) => c === 'push').length, 1, 'no automatic re-push');
+    noLeak(r);
+  }
+  assert.equal(setup().run('deploy').status, 0, 'the exact description still succeeds');
+});
+
+test('lib.descriptionMatches: exact only (surrounding whitespace tolerated), never a substring', () => {
+  const m = lib.descriptionMatches;
+  const d = 'main ' + SHA;
+  assert.equal(m(d, d), true);
+  assert.equal(m('  ' + d + ' \n', d), true);
+  for (const bad of [d + ' extra', 'previous ' + d, 'rollback of ' + d, 'main ' + 'b'.repeat(40) + ' ' + d, d + '0', '', 'main']) {
+    assert.equal(m(bad, d), false, bad);
+  }
 });
