@@ -113,3 +113,19 @@ Step Summaryに出すのは版番号とcommit SHAのみ。Script/Deployment ID�
 - [ ] 同じDeployment・URLのまま直前の版へ戻せた
 - [ ] ログ・Step Summaryに秘密値・認証ファイルが残っていない
 - [ ] 予約・決済・本番GAS・他ブランド・既存Webhook設定へ影響がない
+
+## 更新前の確認と更新後の確認（運営向け・Issue #804 PR-C3）
+
+旧SwitchBot検証GAS（`Deploy SwitchBot verify GAS`）の更新・巻き戻しは、**書き込みを始める前に**、接続情報・更新先・配布物を読み取りだけで確認します。
+問題があれば何も更新せずに止まります。実行ログの `Preflight passed` の行が、「ここまでは何も書き込んでいない」境界です。
+
+- **巻き戻しでも更新先の確認をします**。以前は、巻き戻しのときは更新先がこの検証GASかどうかを確認していませんでした。今は、更新と同じく、別のGAS（Booking など）の登録を取り違えていないかを書き込みの前に確認します。
+- 入力の誤り（戻し先の版番号など）は、Googleに接続する前に止まります。
+- 更新後は、公開バージョンと説明文（`main <今回のSHA>`）が**完全に一致**するか読み取りで確認します。一致しない・確認できないときは `UNKNOWN_STATE` で止まり、**自動で再実行や巻き戻しはしません**。更新先の状態を読み取りで確認し、上の手順（ロールバック）に従って判断してください。
+- 確認が通っても、更新の成功やGAS実行時の権限、SwitchBot の実機操作の動作までは保証しません。実機の鍵発行・削除、Webhook、Script Propertiesは操作しません。
+- この入口は**削除していません**。本PRは事前確認の追加だけで、廃止の判断は別です（次の「依存の確認」参照）。
+
+### 依存の確認（廃止を判断する前の事実）
+- この検証GASの更新用 Secret（`SWITCHBOT_VERIFY_CLASPRC_JSON` / `SWITCHBOT_VERIFY_SCRIPT_ID` / `SWITCHBOT_VERIFY_DEPLOYMENT_ID`）を参照しているのは、このworkflowだけです（他の `switchbot-verify-*` workflow は参照していません）。
+- 検証GASそのもの（`gas/switchbot-verify/`）は、手順書 `switchbot-passcode-verification-713.md` が前提とする独立GASで、Access Test（#787）とは別のGAS・別の認証です。
+- 検証GASが他の運用（復旧手順など）から呼ばれているかは、リポジトリのコードからは判断できません。廃止する場合は、最終利用日と運営上の依存を確認してから、別PRで行ってください。
