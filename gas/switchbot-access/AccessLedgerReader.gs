@@ -44,10 +44,14 @@ var AccessLedgerReader = (function () {
 
   /**
    * 列ごとの値（columns[name] = 配列、行順）から、通常の照合対象を選ぶ。
-   * 対象 = ① 利用日(JST)が当日・翌日のSNB予約 ∪ ② trackedIds（鍵操作記録が残る予約。利用日を問わない）。
-   * 時刻が読めない行はSNBの可能性を捨てず候補に含め、AccessKeySnapshot が TIME_INVALID で止める。
+   * 対象 = ① 利用日(JST)が当日・翌日の既知対象ブランド（snb/mens/studio_x）の予約 ∪ ② trackedIds（鍵操作記録が残る予約。利用日を問わない）。
+   * 候補は照合の入口にすぎず、発行可否は設定 eligibleBrands とコアの端末対応が決める（#824）。
+   * 時刻が読めない行は対象の可能性を捨てず候補に含め、AccessKeySnapshot が TIME_INVALID で止める。
+   * brands: 候補にするブランド。省略時は AccessKeySnapshot.TARGET_BRANDS（正本）。読み込めない場合は安全側でSNBのみ。
    */
-  function select(columns, nowMs, trackedIds) {
+  function select(columns, nowMs, trackedIds, brands) {
+    var targetBrands = Array.isArray(brands) ? brands
+      : ((typeof AccessKeySnapshot !== 'undefined' && AccessKeySnapshot && AccessKeySnapshot.TARGET_BRANDS) || ['snb']);
     var ids = columns.bookingId || [];
     var tracked = {};
     (trackedIds || []).forEach(function (id) { tracked[String(id)] = true; });
@@ -62,10 +66,11 @@ var AccessLedgerReader = (function () {
       var inTracked = !!tracked[id];
       var ms = toMs(rec.startAt);
       // 空brandは「SNBと認定」ではない。鍵の発行対象にもならない。黙って落とさず、スナップショット側で
-      // BRAND_UNKNOWN として凍結・管理者確認へ回すために照合候補へ含める（mens/studio_x など他ブランドは候補に含めない）。
-      var isSnb = String(rec.brand || '') === 'snb' || String(rec.brand || '') === '';
+      // BRAND_UNKNOWN として凍結・管理者確認へ回すために照合候補へ含める（未知のブランドは候補に含めない）。
+      var brand = String(rec.brand || '');
+      var isTarget = brand === '' || targetBrands.indexOf(brand) !== -1;
       var inWindow = false;
-      if (isSnb) {
+      if (isTarget) {
         if (ms === null) inWindow = true;
         else { var d = jstDay(ms); inWindow = d === today || d === tomorrow; }
       }
@@ -78,7 +83,7 @@ var AccessLedgerReader = (function () {
    * シート本体から読む（GAS専用）。ヘッダー行で列を解決し、必須列だけを列単位で読む。
    * sheet: Sheets API アダプター（SpreadsheetApp のシート互換）。失敗は { ok:false } で返し、例外を呼出側へ漏らさない。
    */
-  function readFromSheet(sheet, nowMs, trackedIds) {
+  function readFromSheet(sheet, nowMs, trackedIds, brands) {
     try {
       var lastCol = sheet.getLastColumn();
       var lastRow = sheet.getLastRow();
@@ -99,7 +104,7 @@ var AccessLedgerReader = (function () {
           columns[c] = sheet.getRange(2, col, lastRow - 1, 1).getValues().map(function (r) { return r[0]; });
         });
       }
-      return { ok: true, records: select(columns, nowMs, trackedIds) };
+      return { ok: true, records: select(columns, nowMs, trackedIds, brands) };
     } catch (e) {
       return { ok: false, error: classifyError(e) }; // 固定コードのみ（例外本文・スタックは保持しない）
     }

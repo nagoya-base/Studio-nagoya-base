@@ -1145,7 +1145,7 @@ var SwitchBotAccessInfra = (function () {
       if (hits.length > 1) return hold('BOOKING_AMBIGUOUS');
       var nowMs = deps.nowMs(), nowSec = deps.nowSec();
       var sn = deps.snapshot.build(hits[0], { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
-      var input = deps.snapshot.toCoreInput(sn, nowMs);
+      var input = deps.snapshot.toCoreInput(sn, nowMs, { eligibleBrands: Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : [] });
       if (input.action === 'FREEZE') return hold('BOOKING_FROZEN'); // 支払/承認不明・追加料金未了・要復旧は送らない（解消後に再評価）
       if (sn.revision !== rec.revision) return stop('STALE_REVISION');
       if (sn.status === 'CANCELLED') return stop('CANCELLED');
@@ -1278,7 +1278,7 @@ var SwitchBotAccessInfra = (function () {
         for (var i = 0; i < records.length; i++) {
           if (deps.nowMs() - startedMs > ic.runBudgetSec * 1000) { summary.deferred = records.length - i; break; }
           var sn = deps.snapshot.build(records[i], { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
-          var input = deps.snapshot.toCoreInput(sn, nowMs);
+          var input = deps.snapshot.toCoreInput(sn, nowMs, { eligibleBrands: Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : [] });
           var tr = readTrack(sn.bookingId);
           // 限定稼働（#757）: 許可リスト外で、鍵の未解決OPも無い予約は、凍結通知・追跡記録のどちらも行わず黙って対象外とする。
           // 追跡（revision／発行窓の処理済み）を書かないので、後でリストに加えれば次の周期で再評価される。

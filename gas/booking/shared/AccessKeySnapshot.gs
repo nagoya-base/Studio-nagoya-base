@@ -172,6 +172,10 @@ var AccessKeySnapshot = (function () {
   }
 
   /* 確定予約でこのいずれかが残るときは鍵操作を凍結する（発行も削除もせず管理者通知）。既存キーは旧revisionのまま残す。 */
+  /* 自動鍵発行の「既知の対象ブランド」（運営者決定 2026-11-07 / #824）。台帳の照合候補（AccessLedgerReader.select）と
+     FREEZE 判定の正本。実際の発行可否は設定 eligibleBrands とコアの端末対応（brand+facility+room 完全一致）が決める。 */
+  var TARGET_BRANDS = ['snb', 'mens', 'studio_x'];
+
   var FREEZE_BLOCKERS_ = [
     'REVISION_INVALID', 'BOOKING_INVALID', 'BRAND_UNKNOWN', 'TIME_INVALID', 'TIME_NOT_MINUTE_ALIGNED',
     'PAYMENT_UNVERIFIED', 'EXTENSION_CHARGE_PENDING', 'RECOVERY_REQUIRED'
@@ -200,13 +204,17 @@ var AccessKeySnapshot = (function () {
    *   コアは非CONFIRMEDを「発行しない・旧キーは削除対象・取消扱いにはしない」と扱うため、前日12:00前に日程が
    *   動いた予約の旧キーは回収され、12:00以降の最初の照合（同revisionでも）で初めて発行される。
    */
-  function toCoreInput(snapshot, nowMs) {
+  function toCoreInput(snapshot, nowMs, options) {
     var sn = snapshot || {};
     var blockers = Array.isArray(sn.blockers) ? sn.blockers : ['BOOKING_INVALID'];
     var identityBad = blockers.some(function (b) { return IDENTITY_BLOCKERS_.indexOf(b) !== -1; });
     var freezeReasons = blockers.filter(function (b) { return FREEZE_BLOCKERS_.indexOf(b) !== -1; });
-    /* 他ブランド(brandが非空でsnb以外)へ変わった予約は運用上のblockerで凍結せず、コアで旧SNBキー削除へ進める。 */
-    var freezable = sn.brand === 'snb' || sn.brand === '';
+    /* 凍結（FREEZE）の対象は、既知の対象ブランド（snb/mens/studio_x）のうち、発行対象として設定されているもの＋空brand。
+       options.eligibleBrands は設定 eligibleBrands（配列）。未指定は既知の対象ブランド全部。
+       発行対象外のブランド（未設定の mens/studio_x、未知の値）へ変わった予約は運用上のblockerで凍結せず、
+       コアで旧キー削除へ進める（取消・ブランド変更時の既存キー回収を妨げない）。 */
+    var eligible = options && Array.isArray(options.eligibleBrands) ? options.eligibleBrands : TARGET_BRANDS;
+    var freezable = sn.brand === '' || (TARGET_BRANDS.indexOf(sn.brand) !== -1 && eligible.indexOf(sn.brand) !== -1);
     if (identityBad || (sn.status === 'CONFIRMED' && freezable && freezeReasons.length)) {
       return { action: 'FREEZE', reasons: freezeReasons, booking: null };
     }
@@ -245,6 +253,7 @@ var AccessKeySnapshot = (function () {
     toCoreInput: toCoreInput,
     triggers: triggers,
     PAYMENT_BASIS: PAYMENT_BASIS,
+    TARGET_BRANDS: TARGET_BRANDS.slice(),
     KEY_RELEVANT_FIELDS: KEY_RELEVANT_FIELDS.slice(),
     toJst: toJst,
     fingerprint: fingerprint,
