@@ -52,6 +52,12 @@ node -e '
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 const good = `- target-deployment-dummy @4 - main ${SHA}`;
+test('exact description tolerates only trailing whitespace/CR, and @HEAD style versions', () => {
+  for (const line of [`${good}   `, `${good}\r`, `- target-deployment-dummy @HEAD - main ${SHA}`]) {
+    const r = run('survey-public', [line]);
+    assert.equal(r.status, 0, JSON.stringify(line) + r.stderr);
+  }
+});
 const lines = (...l) => l.join('\n');
 
 for (const role of ['booking-webhook', 'survey-public', 'survey-admin']) {
@@ -73,6 +79,11 @@ test('only exact-ID + same-row current SHA succeeds; every near miss fails close
     ['ID appears only in a description', lines(`- other-deployment @4 - target-deployment-dummy main ${SHA}`), 'DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE'],
     ['duplicate ID rows', lines(good, `- target-deployment-dummy @3 - main ${OLD}`), 'DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE'],
     ['empty list', '', 'DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE'],
+    ['previous main = current SHA while the current main is an old SHA', lines(`- target-deployment-dummy @4 - previous main ${SHA}; current main ${OLD}`), 'SHA_MISMATCH'],
+    ['current SHA followed by extra text', lines(`- target-deployment-dummy @4 - main ${SHA} extra`), 'SHA_MISMATCH'],
+    ['text before the main SHA', lines(`- target-deployment-dummy @4 - rollback of main ${SHA}`), 'SHA_MISMATCH'],
+    ['SHA only after a different main SHA', lines(`- target-deployment-dummy @4 - main ${OLD} main ${SHA}`), 'SHA_MISMATCH'],
+    ['no description', lines('- target-deployment-dummy @4 -'), 'SHA_MISMATCH'],
     ['SHA extended by more hex digits', lines(`- target-deployment-dummy @4 - main ${SHA}0`), 'SHA_MISMATCH']
   ];
   for (const [name, list, code] of cases) {

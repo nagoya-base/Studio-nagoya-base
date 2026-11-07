@@ -2,7 +2,7 @@
 # Issue #804 PR-C1: Webhook / Survey の update-deployment 成功後に、更新を再実行せず読取りだけで
 # 「対象Deploymentが今回のSHAへ更新されたこと」を確認する。
 #   - 一覧行（- ID @version - description）のID欄が完全一致し、かつ一意であること
-#   - その同じ行のdescriptionに `main <GITHUB_SHA>` が出ていること（別行のSHA・説明文中のID・部分一致は不可）
+#   - その同じ行のdescriptionが正確に `main <GITHUB_SHA>` と一致すること（別行のSHA・説明文中のID・前置き/追記/別記載のSHAを含む部分一致は不可）
 #   - 一時的な反映遅延だけを最大5回・5秒間隔の `list-deployments` 読取りで待つ。認証/一覧エラー・ID不在/非一意は即時停止（fail closed）
 # push / update-deployment の再実行・自動rollbackは行わない。照合できない場合は「更新済みの可能性・最終確認は未完了」と表示して停止する。
 # 第1引数 ROLE: booking-webhook | survey-public | survey-admin（許可リスト）
@@ -50,8 +50,16 @@ for ((attempt=1; attempt<=attempts; attempt++)); do
   if [[ "$(awk -v id="$DEPLOYMENT_ID" '$1 == "-" && $2 == id { count++ } END { print count+0 }' "$list_stdout")" -ne 1 ]]; then
     stop DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE
   fi
-  if awk -v id="$DEPLOYMENT_ID" '$1 == "-" && $2 == id' "$list_stdout" |
-     grep -Eq -- "main ${GITHUB_SHA}([^0-9a-f]|$)"; then
+  # 対象行を「- ID @version - description」に分解し、descriptionが正確に `main <今回の40桁SHA>` と一致する場合だけ成功にする
+  # （前置き・追記・別記載のSHAを含む部分一致は不可）。末尾の空白とCRだけは無視する。
+  description="$(awk -v id="$DEPLOYMENT_ID" '
+    $1 == "-" && $2 == id && $3 ~ /^@/ && $4 == "-" {
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]+[^[:space:]]+[[:space:]]+@[^[:space:]]+[[:space:]]+-[[:space:]]*/, "", line)
+      sub(/[[:space:]\r]+$/, "", line)
+      print line
+    }' "$list_stdout")"
+  if [[ "$description" == "main ${GITHUB_SHA}" ]]; then
     echo "Verified role=${role}: the existing deployment shows the current main commit"
     exit 0
   fi
