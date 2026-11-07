@@ -259,3 +259,7 @@ Booking Webhook（`Update Booking Webhook GAS`）とSurvey（`Deploy Survey GAS 
   対応は上の「開始前の確認（運営向け）」の表と同じです（設定値の登録→接続情報の登録し直し→更新先IDの確認→再実行）。値をログに出して確認しないでください。
 - 技術メモ: `scripts/preflight-gas-project.sh <role>`（許可リストの固定 roleのみ）。`list-deployments`と`pull`だけを呼び、更新先IDは一覧のID欄の完全一致・一意で照合します。
   確認は更新権限や将来のAPI成功を保証せず、本番更新の成功保証ではありません。更新stepの既存の防護（pull/manifest/push/update後の確認）は変更していません。
+- 更新後の確認（Webhook / Survey）: `update-deployment` のあと、`scripts/verify-gas-deployment-sha.sh <role>` が読取りだけで、
+  一覧の**ID欄が完全一致・一意**で、**同じ行に今回の`main <SHA>`が反映されている**ことを確認します（最大5回・5秒間隔。push・updateは再実行しません）。
+  確認できない場合は `GAS post-update verification failed: role=… stage=VERIFY code=…` と表示され、
+  「更新は適用済みの可能性があり、最終確認は未完了」です。再実行や巻き戻しを決める前に、更新先の状態を読取りで確認してください。

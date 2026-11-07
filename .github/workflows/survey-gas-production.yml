@@ -79,10 +79,12 @@ jobs:
 
           case "${{ inputs.target }}" in
             public)
+              verify_role="survey-public"
               script_id="$PUBLIC_SCRIPT_ID"
               deployment_id="$PUBLIC_DEPLOYMENT_ID"
               ;;
             admin)
+              verify_role="survey-admin"
               script_id="$ADMIN_SCRIPT_ID"
               deployment_id="$ADMIN_DEPLOYMENT_ID"
               ;;
@@ -173,12 +175,8 @@ jobs:
             exit 1
           fi
 
-          echo "Running clasp list-deployments (after update)"
-          if ! deployments_after="$(clasp --auth "$auth_file" list-deployments 2>/dev/null)"; then
-            echo "clasp list-deployments failed (after update)." >&2
-            exit 1
-          fi
-          if ! grep -Fq -- "$deployment_id" <<<"$deployments_after"; then
-            echo "Existing survey deployment could not be verified after update." >&2
-            exit 1
-          fi
+          # 更新を再実行せず、読取りだけで「対象Deploymentの行に今回のSHAが反映されたこと」を厳格に確認する。
+          echo "Running read-only post-update verification"
+          cd "$remote_dir"
+          AUTH_FILE="$auth_file" DEPLOYMENT_ID="$deployment_id" \
+            bash "$GITHUB_WORKSPACE/scripts/verify-gas-deployment-sha.sh" "$verify_role"
