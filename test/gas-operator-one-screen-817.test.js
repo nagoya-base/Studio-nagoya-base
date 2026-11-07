@@ -69,3 +69,13 @@ test('冒頭（## 1 より前）が全対象の手動起動・承認必須と断
   assert.ok(/SwitchBot verify[^\n]*main[^\n]*自動起動/.test(head));
   assert.ok(/Required reviewers[^\n]*未設定[^\n]*承認待ちなし/.test(head));
 });
+
+test('承認の停止は Required reviewers 設定時のみ（全対象）と、verify rollback 前の自動デプロイ停止が明記されている', () => {
+  assert.ok(/Required reviewers を設定したEnvironmentだけ/.test(doc));
+  assert.ok(/Accessの `OFF_CONFIRMED` も、reviewers未設定なら承認の停止はない/.test(doc));
+  assert.ok(/SwitchBot verify は先に、後続の自動デプロイを止める/.test(doc));
+  assert.ok(/Disable workflow/.test(doc));
+  assert.ok(/docs\/switchbot-verify-gas-deploy-723\.md` の「ロールバック手順」/.test(doc));
+  const verifyDoc = fs.readFileSync(path.join(root, 'docs/switchbot-verify-gas-deploy-723.md'), 'utf8');
+  assert.ok(verifyDoc.includes('## ロールバック手順'), '正本に該当節がある');
+});

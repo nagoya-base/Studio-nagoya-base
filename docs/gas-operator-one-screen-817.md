@@ -2,7 +2,7 @@
 
 通常更新・失敗時・承認の流れを、この1枚で追えるようにまとめたものです。詳細は各手順書へ（末尾の一覧）。
 **秘密値（Secrets・clasp認証JSON・ID・メール・トークン）はこの文書にも、Issue・PR・チャットにも書かない。**
-Issueの起票は更新の許可ではありません。**原則は、運営者がActionsで明示的に起動し、Environmentの承認を経て初めて更新が動きます**（Booking／Webhook／Survey／Access。マージだけでは更新されません）。
+Issueの起票は更新の許可ではありません。**原則は、運営者がActionsで明示的に起動し、Required reviewers を設定したEnvironmentでは承認を経て更新が動きます**（Booking／Webhook／Survey／Access。マージだけでは更新されません）。
 **例外：SwitchBot verify は、対象ファイルを `main` へ push（マージ）すると自動起動します。Environment `switchbot-verify` に Required reviewers が未設定なら、承認待ちなしで更新されます**（詳細は §1・§2）。
 検証のためだけの本番更新はしません（次の正規更新で確認します）。
 
@@ -12,7 +12,7 @@ Issueの起票は更新の許可ではありません。**原則は、運営者�
 
 1. **Actions → 対象workflow → Run workflow**（verifyは自動起動もあり、再反映は手動）。Branchは必ず `main`。
 2. `test`（秘密なし）が緑になるのを待つ。赤なら何も更新されない。
-3. **Environmentの承認待ち**になる。更新内容を確認して承認。
+3. **Environmentの承認待ち**になる（**Required reviewers を設定したEnvironmentだけ**。未設定のEnvironmentは待たずに通過する。Accessの `OFF_CONFIRMED` も、reviewers未設定なら承認の停止はない）。待ちになったら更新内容を確認して承認。**更新前に、対象Environmentの Required reviewers が設定済みか必ず確認する**（Bookingは必須、Accessは推奨、verifyは任意＝手順書どおり）。
 4. **更新前の確認（preflight）**＝読取りのみ。ここで止まれば**何も更新されていない**。
 5. 更新 → **更新後の確認**（`main <SHA>` の自動照合。40桁を目で比べる必要はない）。
 6. 実行画面（Step Summary）で結果を確認し、実行URL・結果だけを #804 / #817 に記録。
@@ -71,7 +71,7 @@ Bookingで `PREVIOUS_SHA_UNKNOWN` ／ schema関連で止まった場合は §5�
    - 更新前のpreflight停止（§4-1）とは**区別する**。§4-1は何も更新されていないので「直して最初から再実行」でよい。ここ（更新の途中・後）は、現状を確認するまで再実行しない。
    - **Booking `scope=full` で途中まで更新された可能性があるとき（例：Adminは更新済み・Publicだけ未反映）**は、AdminとPublicを**別々に**、更新前後の版・説明文の `main <対象SHA>`・schema整合（`BookingsSchema.gs` の差分と `migrateBookingsSchema` の実施状況）を読取りで確認する。**途中更新・状態不明のまま `full` を一括で再実行しない。** 管理者判断と正規手順書（`docs/booking-gas-production-deploy.md`）の復旧方針が確定してから進める。
    - 「旧版のまま」（`NOT applied` を含む）で、**その対象が実際に未更新と読取りで確認できた**場合に限り、原因を直して再実行を検討する（Bookingは上記の対象別確認を先に行う）。
-3. 戻す場合は同じデプロイIDを既存の版へ戻す（作り直さない。URLは変わらない）。入口は Access / 検証の `rollback`（`rollback_version`）。Accessは互換確認（`rollback_compat_confirmed`）が別途必要。
+3. 戻す場合は同じデプロイIDを既存の版へ戻す（作り直さない。URLは変わらない）。**SwitchBot verify は先に、後続の自動デプロイを止める**（Actions > Disable workflow）**ことと、実行中のrunがないことを確認する**。止めないと、回復中に別のmain pushが自動デプロイを起動し、戻した版が上書きされる。手順の正本は `docs/switchbot-verify-gas-deploy-723.md` の「ロールバック手順」。戻し終えたらworkflowを再有効化する判断も運営者が行う。入口は Access / 検証の `rollback`（`rollback_version`）。Accessは互換確認（`rollback_compat_confirmed`）が別途必要。
 4. 更新後は**読取り専用**の確認だけを行う（確認のために鍵発行・削除・Webhook変更は実行しない）。
 
 ## 5. Bookingだけの注意：予約シートの列が変わるとき
