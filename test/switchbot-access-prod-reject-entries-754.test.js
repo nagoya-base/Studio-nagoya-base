@@ -62,7 +62,7 @@ function loadShell(opts) {
       },
       setProperty: function (k, v) { env.propWrites++; m[k] = String(v); },
       setProperties: function () { env.propWrites++; },
-      deleteProperty: function (k) { env.propDeletes++; delete m[k]; },
+      deleteProperty: function (k) { env.propDeletes++; (env.deletedKeys = env.deletedKeys || []).push(k); delete m[k]; },
       deleteAllProperties: function () { env.propDeletes++; },
       getKeys: function () { return Object.keys(m); },
       getProperties: function () { return Object.assign({}, m); }
@@ -127,12 +127,21 @@ function runEntry(env, name) {
   return JSON.parse(JSON.stringify(r));
 }
 
+var BND_SECRET_KEYS = ['ACCESS_BND_TEST_PASSCODE', 'ACCESS_BND_PASSCODE_ATTEST'];
 function assertNoSideEffects(env, label) {
   assert.strictEqual(env.fetches, 0, label + ': UrlFetch（SwitchBot/Sheets）0回');
   assert.strictEqual(env.mails, 0, label + ': MailApp 0回');
   assert.strictEqual(env.sheetsApp, 0, label + ': SpreadsheetApp 0回');
   assert.strictEqual(env.propWrites, 0, label + ': Properties書込み0回');
-  assert.strictEqual(env.propDeletes, 0, label + ': Properties削除0回');
+  // 例外: 境界試験の ISSUE 入口だけは、使い捨て暗証番号と申告（2プロパティ）が設定されていれば、拒否時にそれらを破棄する（秘密を残さない）。
+  // 通信・書込み・状態作成・ロック・トリガーは 0 のままで、削除してよいのはこの2キーだけ。
+  var deleted = env.deletedKeys || [];
+  if (/accessBndStep2Issue/.test(label)) {
+    assert.ok(deleted.every(function (k) { return BND_SECRET_KEYS.indexOf(k) !== -1; }), label + ': 削除は暗証番号と申告の2キーだけ');
+    assert.strictEqual(env.propDeletes, deleted.length, label + ': Properties削除はその2キーのみ');
+  } else {
+    assert.strictEqual(env.propDeletes, 0, label + ': Properties削除0回');
+  }
   assert.strictEqual(env.triggerOps, 0, label + ': トリガー操作0回');
   assert.strictEqual(env.locks, 0, label + ': ロック取得0回（状態更新へ進まない）');
 }
@@ -181,7 +190,9 @@ test('本番設定で武装・承認プロパティが揃っていても、全�
     assert.strictEqual(r.ok, false, name);
     assert.strictEqual(r.code, 'ENV_NOT_VERIFY', name);
     assertNoSideEffects(env, name);
-    assert.strictEqual(JSON.stringify(env.script), before, name + ': Script Properties 不変（承認の消費・状態作成なし）');
+    var expected = before;
+    if (name === 'accessBndStep2Issue') { var b = JSON.parse(before); BND_SECRET_KEYS.forEach(function (k) { delete b[k]; }); expected = JSON.stringify(b); }
+    assert.strictEqual(JSON.stringify(env.script), expected, name + ': Script Properties 不変（承認の消費・状態作成なし。ISSUE 入口のみ暗証番号・申告を破棄）');
     assertNoLeak(env, r, name);
   });
 });

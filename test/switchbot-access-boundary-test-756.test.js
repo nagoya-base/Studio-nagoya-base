@@ -167,11 +167,12 @@ test('正常系: 通信は GET3+POST1=4回、各1回。createKey は未来開始
   w.now = e + 300;
   var r4 = stg(w, 'FINAL_LIST'); assert.strictEqual(r4.ok, true); assert.strictEqual(r4.expiredKeyListed, true); assert.strictEqual(r4.appCheck, 'PENDING_OWNER');
   assert.strictEqual(st(w).state, 'FINAL_LISTED_APP_PENDING');
-  assert.notStrictEqual(st(w).state, 'COMPLETE', 'APIの観測だけでは完了にしない');
+  assert.notStrictEqual(st(w).state, 'RECOVERED', 'APIの観測だけでは回収完了にしない'); assert.strictEqual(r4.verdict, 'BOUNDARY_PASS'); assert.strictEqual(r4.recovery, 'PENDING_APP_REMOVAL');
   // 公式アプリで手動削除（モック上でキーを除去）→ 不在の目視
   w.keys = w.keys.filter(function (k) { return k.name === 'normal-key-1'; });
   var r5 = app(w, 'APP_ABSENT');
-  assert.strictEqual(r5.ok, true); assert.strictEqual(r5.state, 'COMPLETE'); assert.strictEqual(r5.outcome, 'COMPLETE');
+  assert.strictEqual(r5.ok, true); assert.strictEqual(r5.state, 'RECOVERED'); assert.strictEqual(r5.recovery, 'RECOVERED');
+  assert.strictEqual(r5.verdict, 'BOUNDARY_PASS'); assert.strictEqual(r5.outcome, 'RECOVERED_AND_BOUNDARY_PASS'); assert.strictEqual(r5.decisionUse, 'USABLE_FOR_01FD_JUDGEMENT'); assert.strictEqual(r5.a2Basis, 'FIRST_ATTEMPT');
   assert.deepStrictEqual(w.calls, ['list', 'create', 'list', 'list']);
   assert.strictEqual(w.deleteCalls, 0, 'deleteKey は一度も呼ばれない');
   assert.strictEqual(st(w).calls, 4);
@@ -401,18 +402,18 @@ test('INCONCLUSIVE（誤入力のロック・通信不良など前提が崩れ�
 
 // ───────────────── 回収（完了条件）・予算・停止 ─────────────────
 
-test('回収: 公式アプリで残存（APP_PRESENT）なら STOPPED のまま。途中停止からの回収は STOPPED_RECOVERED（試験は未完了）で COMPLETE にしない', function () {
+test('回収: 公式アプリで残存（APP_PRESENT）なら STOPPED のまま。途中停止からの回収は STOPPED_RECOVERED（合否は NOT_ESTABLISHED）', function () {
   var w = makeWorld(); toVerified(w); var s = startOf(w), e = endOf(w);
   w.now = s - 180; obs(w, 'A1_DENIED'); w.now = s + 180; obs(w, 'A2_UNLOCKED'); w.now = e - 180; obs(w, 'A3_UNLOCKED'); w.now = e + 180; obs(w, 'A4_DENIED'); w.now = e + 300; stg(w, 'FINAL_LIST');
   var p = app(w, 'APP_PRESENT'); assert.strictEqual(p.ok, false); assert.strictEqual(p.code, 'APP_STILL_PRESENT'); assert.strictEqual(p.manualRecovery, true); assert.strictEqual(st(w).state, 'STOPPED');
 
   var w2 = makeWorld(); toVerified(w2); s = startOf(w2); w2.now = s - 170; obs(w2, 'A1_UNLOCKED'); // 重大異常で停止
   var rec = app(w2, 'APP_ABSENT');
-  assert.strictEqual(rec.ok, true); assert.strictEqual(rec.state, 'STOPPED_RECOVERED'); assert.strictEqual(rec.outcome, 'ABORTED_AND_RECOVERED_NOT_COMPLETE');
-  assert.notStrictEqual(st(w2).state, 'COMPLETE');
+  assert.strictEqual(rec.ok, true); assert.strictEqual(rec.state, 'STOPPED_RECOVERED'); assert.strictEqual(rec.outcome, 'ABORTED_AND_RECOVERED'); assert.strictEqual(rec.verdict, 'BOUNDARY_NOT_ESTABLISHED'); assert.strictEqual(rec.decisionUse, 'NOT_USABLE_FOR_01FD_JUDGEMENT');
+  assert.strictEqual(st(w2).state, 'STOPPED_RECOVERED');
 
   var w3 = makeWorld(); toVerified(w3);
-  assert.strictEqual(app(w3, 'APP_ABSENT').code, 'STAGE_ORDER_VIOLATION', 'FINAL_LIST 前に完了にできない');
+  assert.strictEqual(app(w3, 'APP_ABSENT').code, 'STAGE_ORDER_VIOLATION', 'FINAL_LIST 前に回収完了にできない');
   var w4 = makeWorld(); stg(w4, 'LIST'); w4.now += 90; w4.script.ACCESS_BND_TEST_PASSCODE = PASSCODE;
   assert.strictEqual(app(w4, 'APP_ABSENT').code, 'PASSCODE_RESIDUAL');
 });
@@ -486,4 +487,119 @@ test('状態確認: 通信ゼロ・ok=true はゲート通過のみ。開始/終
   toVerified(w); var s1 = status(w);
   assert.ok(typeof s1.secToStart === 'number' && typeof s1.secToEnd === 'number' && s1.secToEnd - s1.secToStart === D);
   w.script.ACCESS_BND_A2_RETRY_GO = 'ALLOWED_ONCE'; assert.strictEqual(status(w).a2RetryGo, 'ALLOWED_ONCE');
+});
+
+
+// ───────────────── 回収完了と試験合否の分離（必須1） ─────────────────
+
+/** 観測 A1〜A4 を指定どおりに申告して FINAL_LIST → APP_ABSENT まで進め、各段階の出力を返す。 */
+function runToRecovery(seq, o, setup) {
+  var w = makeWorld(o); toVerified(w); if (setup) setup(w);
+  var s = startOf(w), e = endOf(w);
+  var times = { A1: s - 180, A2: s + 180, A2R: s + 300, A3: e - 180, A4: e + 180 };
+  seq.forEach(function (v) { w.now = times[v.split('_')[0]]; var r = obs(w, v); assert.strictEqual(r.ok, true, v + ' ' + r.code); });
+  w.now = e + 300;
+  var f = stg(w, 'FINAL_LIST'); assert.strictEqual(f.ok, true, f.code);
+  w.keys = w.keys.filter(function (k) { return k.name === 'normal-key-1'; });
+  var a = app(w, 'APP_ABSENT'); assert.strictEqual(a.ok, true, a.code);
+  return { w: w, final: f, app: a };
+}
+
+test('合否: SKIPPED を含む場合は回収が完了しても境界試験は PARTIAL（合格にしない・01FD判断に使えない）', function () {
+  [['A1_SKIPPED', 'A2_UNLOCKED', 'A3_UNLOCKED', 'A4_DENIED'], ['A1_DENIED', 'A2_UNLOCKED', 'A3_UNLOCKED', 'A4_SKIPPED'],
+   ['A1_SKIPPED', 'A2_SKIPPED', 'A3_SKIPPED', 'A4_SKIPPED']].forEach(function (seq) {
+    var r = runToRecovery(seq);
+    assert.strictEqual(r.app.recovery, 'RECOVERED', '回収は成功として別に記録する');
+    assert.strictEqual(r.app.state, 'RECOVERED');
+    assert.strictEqual(r.app.verdict, 'BOUNDARY_PARTIAL', seq.join());
+    assert.strictEqual(r.app.decisionUse, 'NOT_USABLE_FOR_01FD_JUDGEMENT');
+    assert.strictEqual(r.app.outcome, 'RECOVERED_BUT_NOT_PASS');
+    assert.strictEqual(r.final.verdict, 'BOUNDARY_PARTIAL', 'FINAL_LIST の暫定判定も同じ');
+    assert.strictEqual(st(r.w).verdict, 'BOUNDARY_PARTIAL');
+  });
+});
+
+test('合否: INCONCLUSIVE（前提が崩れた拒否）を含む場合は INCONCLUSIVE。SKIPPED との併存でも合格にならない', function () {
+  var r = runToRecovery(['A1_INCONCLUSIVE', 'A2_UNLOCKED', 'A3_UNLOCKED', 'A4_DENIED']);
+  assert.strictEqual(r.app.verdict, 'BOUNDARY_INCONCLUSIVE'); assert.strictEqual(r.app.decisionUse, 'NOT_USABLE_FOR_01FD_JUDGEMENT'); assert.strictEqual(r.app.recovery, 'RECOVERED');
+  var r2 = runToRecovery(['A1_SKIPPED', 'A2_UNLOCKED', 'A3_UNLOCKED', 'A4_INCONCLUSIVE']);
+  assert.notStrictEqual(r2.app.verdict, 'BOUNDARY_PASS');
+});
+
+test('合否: A1=DENIED・A2=UNLOCKED・A3=UNLOCKED・A4=DENIED と前提の証拠がそろったときだけ PASS。許可再試行での A2 解錠は根拠を記録', function () {
+  var pass = runToRecovery(['A1_DENIED', 'A2_UNLOCKED', 'A3_UNLOCKED', 'A4_DENIED']);
+  assert.strictEqual(pass.app.verdict, 'BOUNDARY_PASS'); assert.strictEqual(pass.app.decisionUse, 'USABLE_FOR_01FD_JUDGEMENT');
+  var retry = runToRecovery(['A1_DENIED', 'A2_DENIED', 'A2R_UNLOCKED', 'A3_UNLOCKED', 'A4_DENIED'], null, function (w) { w.script.ACCESS_BND_A2_RETRY_GO = 'ALLOWED_ONCE'; });
+  assert.strictEqual(retry.app.verdict, 'BOUNDARY_PASS'); assert.strictEqual(retry.app.a2Basis, 'RETRY_GRANTED', '再試行で解錠したことを根拠として区別');
+  assert.strictEqual(pass.app.a2Basis, 'FIRST_ATTEMPT');
+});
+
+test('合否: 前提の証拠（返却された開始・終了の一致）がなければ PASS にしない（PARTIAL_PREMISE_UNVERIFIED）', function () {
+  var o = { mutateList: function (b, w) { if (w.calls.length === 3) b.devices[0].keyList.forEach(function (k) { if (/^TST/.test(k.name)) { delete k.startTime; delete k.endTime; } }); } };
+  var r = runToRecovery(['A1_DENIED', 'A2_UNLOCKED', 'A3_UNLOCKED', 'A4_DENIED'], o);
+  assert.strictEqual(st(r.w).attrEcho, 'NOT_RETURNED_UNVERIFIED');
+  assert.strictEqual(r.app.verdict, 'BOUNDARY_PARTIAL_PREMISE_UNVERIFIED'); assert.strictEqual(r.app.decisionUse, 'NOT_USABLE_FOR_01FD_JUDGEMENT');
+});
+
+test('合否: 回収済みの途中停止・重大異常・アプリ残存は PASS にならない。状態確認も合否を出す', function () {
+  var w = makeWorld(); toVerified(w); w.now = startOf(w) - 170; obs(w, 'A1_UNLOCKED');
+  var rec = app(w, 'APP_ABSENT'); assert.strictEqual(rec.recovery, 'RECOVERED'); assert.strictEqual(rec.verdict, 'BOUNDARY_NOT_ESTABLISHED');
+  var s = status(w); assert.strictEqual(s.verdict, 'BOUNDARY_NOT_ESTABLISHED');
+  var r = runToRecovery(['A1_DENIED', 'A2_UNLOCKED', 'A3_UNLOCKED', 'A4_DENIED']);
+  assert.strictEqual(status(r.w).verdict, 'BOUNDARY_PASS');
+  var w2 = makeWorld(); toVerified(w2); var s2 = startOf(w2), e2 = endOf(w2);
+  w2.now = s2 - 180; obs(w2, 'A1_DENIED'); w2.now = s2 + 180; obs(w2, 'A2_UNLOCKED'); w2.now = e2 - 180; obs(w2, 'A3_UNLOCKED'); w2.now = e2 + 180; obs(w2, 'A4_DENIED'); w2.now = e2 + 300; stg(w2, 'FINAL_LIST');
+  var p = app(w2, 'APP_PRESENT'); assert.strictEqual(p.recovery, 'NOT_RECOVERED'); assert.strictEqual(p.ok, false);
+});
+
+// ───────────────── ISSUE の早期ゲート拒否でも暗証番号を残さない（必須2） ─────────────────
+
+test('早期ゲート拒否: 番号と申告を設定したあとの ISSUE が、どのゲートで拒否されても通信ゼロで両方を削除する（読み直し確認）', function () {
+  function setSecrets(w) { w.script.ACCESS_BND_TEST_PASSCODE = PASSCODE; w.script.ACCESS_BND_PASSCODE_ATTEST = ATTEST; w.script.ACCESS_BND_TEST_APPROVAL = 'ISSUE'; }
+  var cases = {
+    PRODUCTION_ENV: { w: function () { return makeWorld({ script: { ACCESS_ENVIRONMENT: 'production' } }); }, code: 'ENV_NOT_VERIFY' },
+    ACCESS_ENABLED_ON: { w: function () { return makeWorld({ script: { ACCESS_ENABLED: 'true' } }); } },
+    TRIGGERS: { w: function () { var w = makeWorld(); w.triggers = 1; return w; }, code: 'TRIGGERS_PRESENT' },
+    NOT_ADMIN: { w: function () { var w = makeWorld(); w.email = 'other@example.test'; return w; } },
+    DEVICE_01FD: { w: function () { return makeWorld({ script: { ACCESS_CONFIG: JSON.stringify({ environment: 'verify', allowedLast4: ['01FD'], keypads: [{ deviceId: OTHER }], ledgerTarget: { facility: 'snb' }, adminMailTo: ['ops@example.test'] }) } }); } },
+    LEGACY_791_NOT_STOPPED: { w: function () { return makeWorld({ script: { ACCESS_TEST_KEY_STATE: JSON.stringify({ v: 1, state: 'LISTED', calls: 1 }) } }); }, code: 'TEST_KEY_STATE_NOT_STOPPED' },
+    LEGACY_797_NOT_COMPLETE: { w: function () { return makeWorld({ script: { ACCESS_NUMID_TEST_STATE: JSON.stringify({ v: 1, state: 'STOPPED', calls: 5 }) } }); }, code: 'NUMID_STATE_NOT_COMPLETE' },
+    NUMID_ARMED_PRESENT: { w: function () { return makeWorld({ script: { ACCESS_NUMID_TEST_ARMED: 'NUMID_PLAN_V1_6CALLS' } }); }, code: 'NUMID_ARMED_PRESENT' },
+    NOT_ARMED: { w: function () { var w = makeWorld(); delete w.script.ACCESS_BND_TEST_ARMED; return w; }, code: 'NOT_ARMED' },
+    ARMED_MISMATCH: { w: function () { return makeWorld({ script: { ACCESS_BND_TEST_ARMED: 'true' } }); }, code: 'ARMED_PLAN_MISMATCH' },
+    STATE_UNREADABLE: { w: function () { return makeWorld({ script: { ACCESS_BND_TEST_STATE: 'not-json' } }); }, code: 'STATE_UNREADABLE' },
+    LOCK_BUSY: { w: function () { return makeWorld({ lockBusy: true }); }, code: 'LOCK_UNAVAILABLE' }
+  };
+  Object.keys(cases).forEach(function (k) {
+    var w = cases[k].w(); setSecrets(w);
+    var r = plain(Infra.bndStage(w.deps, 'ISSUE'));
+    assert.strictEqual(r.ok, false, k); if (cases[k].code) assert.strictEqual(r.code, cases[k].code, k);
+    assert.strictEqual(w.calls.length, 0, k + ': 通信ゼロ'); assert.strictEqual(w.createArgs.length, 0, k);
+    noSecretsLeft(w); assert.strictEqual(r.passcodeState, 'SCRUBBED_ON_STOP', k);
+    assert.deepStrictEqual(w.propDeletes.sort(), ['ACCESS_BND_PASSCODE_ATTEST', 'ACCESS_BND_TEST_PASSCODE'], k + ': 削除は番号と申告の2つだけ');
+    leakCheck(w, r);
+  });
+});
+
+test('早期ゲート拒否: 例外（プロパティ読取の失敗）でも番号は破棄を試みる。削除できなければ残留を明示して手動復旧へ引き継ぐ', function () {
+  var w = makeWorld({ failScriptRead: function (k) { return k === 'ACCESS_BND_TEST_ARMED'; } });
+  w.script.ACCESS_BND_TEST_PASSCODE = PASSCODE; w.script.ACCESS_BND_PASSCODE_ATTEST = ATTEST; w.script.ACCESS_BND_TEST_APPROVAL = 'ISSUE';
+  var r = plain(Infra.bndStage(w.deps, 'ISSUE'));
+  assert.strictEqual(r.ok, false); assert.strictEqual(w.calls.length, 0); assert.strictEqual(w.createArgs.length, 0);
+  noSecretsLeft(w); leakCheck(w, r);
+  // 削除そのものが失敗する場合
+  var w2 = makeWorld({ failPasscodeDel: true, script: { ACCESS_ENVIRONMENT: 'production' } });
+  w2.script.ACCESS_BND_TEST_PASSCODE = PASSCODE; w2.script.ACCESS_BND_PASSCODE_ATTEST = ATTEST;
+  var r2 = plain(Infra.bndStage(w2.deps, 'ISSUE'));
+  assert.strictEqual(r2.ok, false); assert.strictEqual(r2.code, 'ENV_NOT_VERIFY', '元の拒否理由を保つ');
+  assert.strictEqual(r2.passcodeState, 'SCRUB_FAILED'); assert.strictEqual(r2.manualRecovery, true, '残留を明示し手動対応へ');
+  assert.strictEqual(w2.calls.length, 0); leakCheck(w2, r2);
+});
+
+test('早期ゲート拒否: 番号を設定していなければ何も削除しない。ISSUE 以外の段階は、ゲート拒否で番号に触れない', function () {
+  var w = makeWorld({ script: { ACCESS_ENVIRONMENT: 'production' } }); w.script.ACCESS_BND_TEST_APPROVAL = 'ISSUE';
+  var r = plain(Infra.bndStage(w.deps, 'ISSUE')); assert.strictEqual(r.code, 'ENV_NOT_VERIFY'); assert.deepStrictEqual(w.propDeletes, [], '未設定なら削除操作自体を行わない');
+  var w2 = makeWorld({ script: { ACCESS_ENVIRONMENT: 'production' } }); w2.script.ACCESS_BND_TEST_PASSCODE = PASSCODE; w2.script.ACCESS_BND_PASSCODE_ATTEST = ATTEST;
+  var r2 = plain(Infra.bndStage(w2.deps, 'LIST')); assert.strictEqual(r2.code, 'ENV_NOT_VERIFY');
+  assert.strictEqual(w2.script.ACCESS_BND_TEST_PASSCODE, PASSCODE, 'LIST は番号に触れない（ゲートが先）');
 });

@@ -35,7 +35,7 @@
 | 3 | `VERIFY_ISSUED` | GET 1回 | 発行から120秒以上かつ S−240秒より前。件数=基準+1、通常キー不変 |
 | — | `A1`〜`A4` 申告 | 通信0 | 現地の物理操作の結果を申告（下記） |
 | 4 | `FINAL_LIST` | GET 1回 | E+300秒以降。期限切れキーの残存／不在を観測（残っても自動削除しない） |
-| — | `APP_ABSENT` / `APP_PRESENT` | 通信0 | 公式アプリで試験キーを手動削除し、不在を目視 → `COMPLETE` |
+| — | `APP_ABSENT` / `APP_PRESENT` | 通信0 | 公式アプリで試験キーを手動削除し、不在を目視 → `RECOVERED`（回収の完了。合否は `verdict` で別に判定） |
 
 - 上限は4回で固定（`BND_MAX_CALLS=4`）。追加GET・createKey再送・予算リセットは含まない。
 - 通信前に「承認の消費＋呼出し回数＋送信済みマーカー」を永続。永続に失敗したら通信しない。timeout／UNKNOWN／不受理は再送も追加確認もせず `STOPPED`（以後の変更操作は自動で止まる）。
@@ -48,6 +48,7 @@
 未設定 ──(オーナー設定: PASSCODE=8桁 / ATTEST=NOT_IN_USE_CONFIRMED)──▶ 設定済み
 設定済み ──ISSUE が通信前に読取・両方を削除し読み直しで消滅確認──▶ 破棄済み(CONSUMED) ──▶ createKey 送信
 設定済み ──ISSUE の拒否・失敗・例外のどの経路──▶ 両方を削除（SCRUBBED_ON_STOP）
+           （環境・実行者・端末・#791/#797・ARMED・ロック・状態読取など、**最初のゲートでの早期拒否を含む**。通信は常にゼロ。削除するのはこの2プロパティだけで、未設定なら削除操作自体を行わない）
 削除に失敗 ──▶ 通信せず STOPPED(PASSCODE_DELETE_FAILED)・手動復旧（残留を成功扱いしない）
 ISSUE 以外の段階で残留を検出 ──▶ 削除して停止(PASSCODE_RESIDUAL)
 ```
@@ -84,11 +85,25 @@ ISSUE 以外の段階で残留を検出 ──▶ 削除して停止(PASSCODE_RE
 
 試験キーはAPIで削除しない。**公式アプリで専用試験キー（名前が `TST` で始まる1件）のみ手動削除し、アプリ上の不在を目視**してから `APP_ABSENT` を記録する。
 
-- 期限切れは「無害」ではない。残存を放置せず、`COMPLETE` は回収後にだけ付く。
-- `FINAL_LISTED_APP_PENDING` で `APP_ABSENT` → `COMPLETE`。API観測（`FINAL_LIST`）と公式アプリの結果は**別々に記録**する。
-- 途中停止（STOPPED／中断）からの回収は `APP_ABSENT` で `STOPPED_RECOVERED`（`ABORTED_AND_RECOVERED_NOT_COMPLETE`）。試験は未完了のまま。
+- 期限切れは「無害」ではない。残存を放置せず、`RECOVERED` は回収後にだけ付く。
+- `FINAL_LISTED_APP_PENDING` で `APP_ABSENT` → `RECOVERED`（**回収の完了**であって試験合格ではない）。API観測（`FINAL_LIST`）と公式アプリの結果は**別々に記録**する。
+- 途中停止（STOPPED／中断）からの回収は `APP_ABSENT` で `STOPPED_RECOVERED`（`ABORTED_AND_RECOVERED`）。合否は `BOUNDARY_NOT_ESTABLISHED`。
 - `APP_PRESENT`（削除できない）は `STOPPED` のまま、管理者による別個の回収判断。**回収が済むまで 01FD へ進まない。**
 - 発行前の停止（試験キーを作っていない）には回収記録は不要。
+
+## 回収と試験合否は別々に記録する（`recovery` と `verdict`）
+
+手動回収が済んだこと（`recovery=RECOVERED`）は成功として記録するが、**境界試験の合否ではない**。合否は観測の申告から独立に判定する。
+
+| `verdict` | 条件 | 01FDの判断への使用 |
+| --- | --- | --- |
+| `BOUNDARY_PASS` | A1=`DENIED`・A2=`UNLOCKED`（許可再試行での解錠は `a2Basis=RETRY_GRANTED` として根拠を区別）・A3=`UNLOCKED`・A4=`DENIED`、かつ前提の証拠（`VERIFY_ISSUED` の `attrEcho=RETURNED_AND_MATCHED`）がそろう | 使用可（`USABLE_FOR_01FD_JUDGEMENT`）。ただし粗い境界・単一端末・申告ベースの限界を併記 |
+| `BOUNDARY_PARTIAL` | `SKIPPED` を含む（未実施の観測がある） | 使用不可 |
+| `BOUNDARY_INCONCLUSIVE` | `INCONCLUSIVE`（前提が崩れた拒否）を含む | 使用不可 |
+| `BOUNDARY_PARTIAL_PREMISE_UNVERIFIED` | 観測は期待どおりだが、返却された開始・終了が確認できない | 使用不可 |
+| `BOUNDARY_NOT_ESTABLISHED` | 観測が欠ける、または重大異常・ロック兆候・途中停止 | 使用不可 |
+
+`FINAL_LIST` の出力にも暫定の `verdict` を出し、`accessBndAppCheck` が最終の `recovery`／`verdict`／`outcome`（`RECOVERED_AND_BOUNDARY_PASS`／`RECOVERED_BUT_NOT_PASS`／`ABORTED_AND_RECOVERED`）を出す。状態遷移上の `COMPLETE` は使わない（`RECOVERED` は回収の完了）。
 
 ## 当日の操作（オーナー現地立会い・代替解錠手段あり。**③のGOが #756 に記録されたあとのみ**）
 
@@ -123,7 +138,8 @@ ISSUE 以外の段階で残留を検出 ──▶ 削除して停止(PASSCODE_RE
 | `A2_DENIED_NO_RETRY_GO` / `A2_DENIED_AFTER_RETRY` / `A3_DENIED_IN_WINDOW` | 期間内で解錠不能。成功扱いしない。反映遅延／時刻解釈／端末状態は未区別として記録 |
 | `KEYPAD_LOCK_OR_ALARM_SIGN` | ロック・警報の兆候。STOPPED |
 | `LEGACY_STATE_CHANGED` / `NUMID_STATE_NOT_COMPLETE` | #791/#797 の状態が不変でない。通信せず停止 |
-| `APP_STILL_PRESENT` | 公式アプリに残存。STOPPED・管理者対応 |
+| `APP_STILL_PRESENT` | 公式アプリに残存。STOPPED・管理者対応（`recovery=NOT_RECOVERED`） |
+| `BND_APP_CHECK_OK` | 回収の記録が成功したことだけを示す。合否は `verdict` を見る |
 | `NOT_ARMED` / `ARMED_PLAN_MISMATCH` / `STAGE_NOT_APPROVED` / ゲート系 | 通信前に停止（通信ゼロ） |
 
 ## 記録テンプレート（秘密なし）
@@ -134,6 +150,7 @@ LIST/ISSUE/VERIFY/FINAL：結果コード・時刻・keyCount・attrEcho
 A1(S-180) 時刻 拒否/解錠/INCONCLUSIVE/SKIPPED ｜ A2(S+180) 時刻 … ｜ A3(E-180) 時刻 … ｜ A4(E+180) 時刻 …
 FINAL_LIST：期限切れキー 残存/不在   公式アプリ：手動削除→不在目視 はい/いいえ（APIとは別記録）
 後片付け：ARMED／A2_RETRY_GO／暗証番号／申告 削除、OFF、トリガー0、通常キー保全
+recovery：RECOVERED/NOT_RECOVERED　verdict：BOUNDARY_PASS/PARTIAL/INCONCLUSIVE/PARTIAL_PREMISE_UNVERIFIED/NOT_ESTABLISHED（a2Basis 併記）
 実測／未実施：開始前不可・期間内可・期限後不可（粗い境界±180秒・申告ベース）／精密境界・削除後不可・01FDは未実施
 記録しないもの：暗証番号・Token/Secret・完全ID・passcode ID・キー名・生レスポンス
 ```

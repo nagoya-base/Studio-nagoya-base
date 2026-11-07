@@ -1497,6 +1497,33 @@ var SwitchBotAccessInfra = (function () {
   };
   var BND_OBS_STATES = ['ISSUED_VERIFIED', 'A1_RECORDED', 'A2_RETRY_PENDING', 'A2_RECORDED', 'A3_RECORDED'];
 
+  /**
+   * 境界試験の合否（回収完了とは独立）。全必須観測が A1=DENIED・A2=UNLOCKED（許可再試行での解錠を含む）・A3=UNLOCKED・A4=DENIED で、
+   * かつ前提の証拠（発行したキーの開始・終了が返却値と一致）がそろったときだけ BOUNDARY_PASS。
+   * SKIPPED を含めば PARTIAL、INCONCLUSIVE を含めば INCONCLUSIVE、観測が欠ける・重大異常で停止なら NOT_ESTABLISHED。
+   * PASS 以外は 01FD の判断に使えない。粗い境界（±180秒）・単一端末・単一キー・申告ベースの結果であり、一般化しない。
+   */
+  function bndVerdict(s) {
+    var o = (s && s.obs) || {};
+    if (!s || s.state === 'STOPPED' || s.state === 'STOPPED_RECOVERED') return 'BOUNDARY_NOT_ESTABLISHED';
+    var vals = ['A1', 'A2', 'A3', 'A4'].map(function (k) { return o[k]; });
+    if (vals.some(function (v) { return v === undefined; })) return 'BOUNDARY_NOT_ESTABLISHED';
+    if (vals.indexOf('INCONCLUSIVE') !== -1) return 'BOUNDARY_INCONCLUSIVE';
+    if (vals.indexOf('SKIPPED') !== -1) return 'BOUNDARY_PARTIAL';
+    var a2ok = o.A2 === 'UNLOCKED' || (o.A2 === 'DENIED' && o.A2R === 'UNLOCKED');
+    if (o.A1 === 'DENIED' && a2ok && o.A3 === 'UNLOCKED' && o.A4 === 'DENIED') {
+      return s.attrEcho === 'RETURNED_AND_MATCHED' ? 'BOUNDARY_PASS' : 'BOUNDARY_PARTIAL_PREMISE_UNVERIFIED';
+    }
+    return 'BOUNDARY_NOT_ESTABLISHED';
+  }
+
+  function bndJudgement(out, s) {
+    out.verdict = bndVerdict(s);
+    out.decisionUse = out.verdict === 'BOUNDARY_PASS' ? 'USABLE_FOR_01FD_JUDGEMENT' : 'NOT_USABLE_FOR_01FD_JUDGEMENT';
+    var o = (s && s.obs) || {};
+    out.a2Basis = o.A2 === 'UNLOCKED' ? 'FIRST_ATTEMPT' : (o.A2R === 'UNLOCKED' ? 'RETRY_GRANTED' : 'NOT_UNLOCKED');
+  }
+
   function bndBlank() {
     return { ok: false, code: 'BND_TEST_NOT_RUN', stage: 'NOT_CHECKED', failures: [], stopped: false, apiCalls: 0, callsUsed: 0, callsMax: BND_MAX_CALLS,
       state: 'NOT_CHECKED', manualRecovery: false, evidence: 'NONE', keyCount: 0, passcodeState: 'NOT_TOUCHED',
@@ -1538,7 +1565,10 @@ var SwitchBotAccessInfra = (function () {
 
   /** 暗証番号と申告プロパティの両方を削除し、消えたことを読み直して確認する。成功のときだけ true。 */
   function bndScrubPasscode(sp) {
-    [BND_PROP.PASSCODE, BND_PROP.ATTEST].forEach(function (k) { try { sp.del(k); } catch (e) { /* 読み直しで判定 */ } });
+    [BND_PROP.PASSCODE, BND_PROP.ATTEST].forEach(function (k) {
+      if (diagRead(sp, k).state === 'MISSING') return; // 未設定なら削除操作自体を行わない
+      try { sp.del(k); } catch (e) { /* 読み直しで判定 */ }
+    });
     return diagRead(sp, BND_PROP.PASSCODE).state === 'MISSING' && diagRead(sp, BND_PROP.ATTEST).state === 'MISSING';
   }
 
@@ -1588,6 +1618,9 @@ var SwitchBotAccessInfra = (function () {
       out.stopped = true; return fin();
     }
     if (!def) return stop('INVALID_STAGE');
+    // ISSUE の直前にオーナーが番号を設定する。以降の拒否・例外は、どのゲートでの拒否でも番号と申告を破棄する（通信は常にゼロ）。
+    // 削除するのは暗証番号と申告の2プロパティだけで、ゲートの判定・通信前拒否の順序は変えない。
+    if (stage === 'ISSUE') scrubDue = true;
     try {
       var g = tksGates(deps);
       if (!g.ok) return stop(g.code);
@@ -1598,8 +1631,7 @@ var SwitchBotAccessInfra = (function () {
       if (armed.state === 'MISSING') return stop('NOT_ARMED');
       if (armed.raw !== BND_PLAN) return stop('ARMED_PLAN_MISMATCH');
 
-      if (stage === 'ISSUE') scrubDue = true;
-      else {
+      if (stage !== 'ISSUE') {
         var pc0 = diagRead(sp, BND_PROP.PASSCODE), at0 = diagRead(sp, BND_PROP.ATTEST);
         if (pc0.state === 'UNKNOWN' || at0.state === 'UNKNOWN') return stop('PASSCODE_STATE_UNKNOWN');
         if (pc0.state === 'SET' || at0.state === 'SET') {
@@ -1619,7 +1651,7 @@ var SwitchBotAccessInfra = (function () {
       out.state = DIAG_VALUE_RE.test(st.state) ? st.state : 'INVALID_VALUE';
       out.callsUsed = st.calls;
       if (st.state === 'STOPPED' || /_SENT$/.test(st.state)) { out.manualRecovery = true; return stop(st.state === 'STOPPED' ? 'STOPPED_MANUAL_RECOVERY' : 'INTERRUPTED_MANUAL_RECOVERY'); }
-      if (st.state === 'COMPLETE') return stop('ALREADY_COMPLETE');
+      if (st.state === 'RECOVERED' || st.state === 'STOPPED_RECOVERED') return stop('ALREADY_COMPLETE');
       if (def.from.indexOf(st.state) === -1) return stop(st.state === def.pre || st.state === stage ? 'STAGE_ALREADY_DONE' : 'STAGE_ORDER_VIOLATION');
 
       var sha = deps.sha256Hex;
@@ -1729,8 +1761,9 @@ var SwitchBotAccessInfra = (function () {
         if (!expiredListed && snap.count !== st.baselineCount) return halt('KEYLIST_COUNT_MISMATCH');
         if (restFp !== st.baselineFp) return halt('EXISTING_KEYS_CHANGED');
         out.expiredKeyListed = expiredListed;
-        out.appCheck = 'PENDING_OWNER'; // API の結果と公式アプリの目視は別々に記録する。試験キーの手動削除と不在の目視が完了条件
-        return done('FINAL_LISTED_APP_PENDING', function (s) { s.expiredKeyListed = expiredListed; });
+        out.appCheck = 'PENDING_OWNER'; // API の結果と公式アプリの目視は別々に記録する。試験キーの手動削除と不在の目視が回収の完了条件
+        bndJudgement(out, pre); out.recovery = 'PENDING_APP_REMOVAL'; // 合否は回収と独立。回収済みでも合格にはならない
+        return done('FINAL_LISTED_APP_PENDING', function (s) { s.expiredKeyListed = expiredListed; s.verdict = out.verdict; });
       }
 
       // ISSUE: T0 は送信直前の時計で確認する（永続との差が大きければ送信せず停止）
@@ -1839,7 +1872,7 @@ var SwitchBotAccessInfra = (function () {
 
   /**
    * 通信しない最終段階: 公式アプリで試験キーを手動削除し、不在を目視した結果を記録する（回収の完了条件）。
-   * APP_ABSENT: FINAL_LISTED_APP_PENDING → COMPLETE。途中停止（STOPPED/中断）からの回収なら STOPPED_RECOVERED（試験は未完了のまま回収のみ）。
+   * APP_ABSENT: FINAL_LISTED_APP_PENDING → RECOVERED（回収の完了。試験の合否は verdict で別に示す）。途中停止（STOPPED/中断）からの回収なら STOPPED_RECOVERED。
    * APP_PRESENT: 残存＝STOPPED のまま管理者対応。試験キーを放置したまま 01FD へ進まない。
    */
   function bndAppCheck(deps) {
@@ -1883,12 +1916,14 @@ var SwitchBotAccessInfra = (function () {
       var s = JSON.parse(JSON.stringify(st));
       if (present) { s.state = 'STOPPED'; s.reason = 'APP_STILL_PRESENT'; }
       else if (aborted) { s.state = 'STOPPED_RECOVERED'; s.reason = 'APP_ABSENT_AFTER_ABORT'; }
-      else { s.state = 'COMPLETE'; s.reason = 'APP_ABSENT_CONFIRMED'; }
+      else { s.state = 'RECOVERED'; s.reason = 'APP_ABSENT_CONFIRMED'; } // 「回収完了」であって「試験合格」ではない
+      bndJudgement(out, s); s.verdict = out.verdict;
       if (!bndWrite(sp, s)) { out.manualRecovery = true; return stop('STATE_WRITE_FAILED'); }
       out.state = s.state; out.obs = s.obs || {};
-      if (present) { out.manualRecovery = true; return stop('APP_STILL_PRESENT'); }
+      if (present) { out.manualRecovery = true; out.recovery = 'NOT_RECOVERED'; return stop('APP_STILL_PRESENT'); }
       out.appCheck = 'ABSENT_CONFIRMED';
-      out.outcome = aborted ? 'ABORTED_AND_RECOVERED_NOT_COMPLETE' : 'COMPLETE';
+      out.recovery = 'RECOVERED';
+      out.outcome = aborted ? 'ABORTED_AND_RECOVERED' : (out.verdict === 'BOUNDARY_PASS' ? 'RECOVERED_AND_BOUNDARY_PASS' : 'RECOVERED_BUT_NOT_PASS');
       return fin();
     } catch (e) {
       out.manualRecovery = true;
@@ -1912,6 +1947,7 @@ var SwitchBotAccessInfra = (function () {
       out.state = DIAG_VALUE_RE.test(rs.st.state) ? rs.st.state : 'INVALID_VALUE'; out.callsUsed = rs.st.calls;
       out.manualRecovery = rs.st.state === 'STOPPED' || /_SENT$/.test(rs.st.state);
       if (rs.st.obs && typeof rs.st.obs === 'object') out.obs = rs.st.obs;
+      if (typeof rs.st.verdict === 'string' && DIAG_VALUE_RE.test(rs.st.verdict)) out.verdict = rs.st.verdict;
       if (typeof rs.st.startSec === 'number' && typeof rs.st.endSec === 'number') { out.secToStart = rs.st.startSec - nowSec; out.secToEnd = rs.st.endSec - nowSec; }
     } else out.state = 'STATE_UNREADABLE';
     var a = diagRead(deps.scriptProps, BND_PROP.ARMED);
