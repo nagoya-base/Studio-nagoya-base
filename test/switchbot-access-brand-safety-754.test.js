@@ -395,3 +395,22 @@ test('P8: 対照 — 同じ世界でも許可リストなしなら支払未確�
   cycle(w, rt, 3);
   assert.ok(has(w, /BOOKING_FROZEN/), '通知経路は動作している');
 });
+
+test('P9: 発行済み→リスト外（旧キー回収）→リストへ戻す、で追加の改訂なしに再発行される', function () {
+  var w = H.createWorld({ mail: false, cfg: { pilotBookingIds: ['SNB-1'] } });
+  w.createMode = 'noCommandId';
+  w.deleteMode = 'noCommandId';
+  var rt = w.runtime();
+  w.records = [H.record({ bookingId: 'SNB-1' })];
+  cycle(w, rt, 4);
+  assert.strictEqual(w.callCount('createKey'), 1, '前提: 発行');
+  w.cfg.pilotBookingIds = ['SNB-OTHER'];
+  rt = w.runtime();
+  cycle(w, rt, 6);
+  assert.strictEqual(w.callCount('deleteKey'), 1, '除外で旧キーを回収');
+  assert.strictEqual(w.callCount('createKey'), 1, '除外中は再発行しない');
+  w.cfg.pilotBookingIds = ['SNB-1'];
+  rt = w.runtime();
+  cycle(w, rt, 6);
+  assert.strictEqual(w.callCount('createKey'), 2, '戻したら改訂なしで再発行');
+});
