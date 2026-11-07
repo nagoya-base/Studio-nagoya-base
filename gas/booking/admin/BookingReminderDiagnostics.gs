@@ -248,10 +248,16 @@ function previewReminderMail_impl_(bookingId, options) {
   var mailConfig = BookingConfig.getMailConfig();
   var accessGuide = BookingConfig.getAccessGuideConfig();
   var maskedGuide = maskDiagnosticsAccessGuide_(accessGuide, !!opts.reveal);
+  /* Issue #832: 本番送信と同じ方式判定（OLD/PILOT/ALL）。予約ID・設定実値・秘密値は返さない。 */
+  var codeDelivery = BookingMailer.resolveReminderCodeDelivery(record);
 
   var mail;
   try {
-    mail = BookingMailTemplates.buildReminderMail(record, mailConfig, maskedGuide, { now: parseDiagnosticsBaseDate_(opts.baseDateString) });
+    mail = BookingMailTemplates.buildReminderMail(record, mailConfig, maskedGuide, {
+      now: parseDiagnosticsBaseDate_(opts.baseDateString),
+      separateCodeNotice: BookingConfig.isAccessKeyNoticeEnabled(),
+      perBookingCode: codeDelivery.perBookingCode
+    });
   } catch (buildError) {
     Logger.log('previewReminderMail: 生成失敗 bookingId=' + bookingId);
     return {
@@ -277,7 +283,10 @@ function previewReminderMail_impl_(bookingId, options) {
     testRecipientEmail: BookingConfig.getAdminNotificationEmail(),
     revealed: !!opts.reveal,
     eligible: evaluation.eligible,
-    reasonCode: evaluation.reasonCode
+    reasonCode: evaluation.reasonCode,
+    codeMode: codeDelivery.mode,
+    mailMethod: codeDelivery.perBookingCode ? 'PER_BOOKING_CODE' : 'LEGACY',
+    codeModeWarning: codeDelivery.warning
   };
 }
 
@@ -337,9 +346,14 @@ function sendReminderTestMail_impl_(bookingId, baseDateString) {
 
   var mailConfig = BookingConfig.getMailConfig();
   var accessGuide = BookingConfig.getAccessGuideConfig();
+  var codeDelivery = BookingMailer.resolveReminderCodeDelivery(record);
   var mail;
   try {
-    mail = BookingMailTemplates.buildReminderMail(record, mailConfig, accessGuide, { now: parseDiagnosticsBaseDate_(baseDateString) });
+    mail = BookingMailTemplates.buildReminderMail(record, mailConfig, accessGuide, {
+      now: parseDiagnosticsBaseDate_(baseDateString),
+      separateCodeNotice: BookingConfig.isAccessKeyNoticeEnabled(),
+      perBookingCode: codeDelivery.perBookingCode
+    });
   } catch (buildError) {
     Logger.log('sendReminderTestMail: 本文生成失敗 bookingId=' + bookingId);
     return {

@@ -812,6 +812,8 @@ var BookingMailTemplates = (function () {
    * 送信経路（前日18時台・19時以降の即時送信・21時catch-up・当日即時送信）ごとの
    * 複製はせず、すべてこの1箇所で決める。
    */
+  var PER_BOOKING_CODE_NOTICE_LINE = 'パスコードは別途お送りするメールでお知らせします';
+
   function buildReminderMail(record, config, accessGuide, options) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
@@ -831,8 +833,15 @@ var BookingMailTemplates = (function () {
 
     /* Issue #753: SNBかつ options.separateCodeNotice===true（Script Property経由）のときだけ一行を足す。
        鍵の暗証番号そのものはこのメールに載せない（独立GASの別メール。#752）。ブランドが空/不明の旧データは対象外。 */
-    var separateCodeLine = options && options.separateCodeNotice === true && record.brand === 'snb'
-      ? '入室用の暗証番号は、別のメールでお送りします。' : '';
+    /* Issue #832: options.perBookingCode===true（BookingConfig.resolveAccessCodeDelivery由来の新方式対象予約）
+       のときは、旧固定「解錠コード」行（ラベル・値とも）を出さず、運営指定の一文だけを句読点まで
+       そのまま出す。旧文言は新方式では使わない。送付済みとは断定しない。ACCESS_KEY_NOTICE_ENABLED
+       （separateCodeNotice）は新方式の判定に影響しない。オートロック用キーボックス位置・番号は従来どおり残す。 */
+    var perBookingCode = !!(options && options.perBookingCode === true);
+    var separateCodeLine = perBookingCode
+      ? PER_BOOKING_CODE_NOTICE_LINE
+      : (options && options.separateCodeNotice === true && record.brand === 'snb'
+        ? '入室用の暗証番号は、別のメールでお送りします。' : '');
 
     var subject = '【' + brandLabel + '】' + dayWord + 'のご利用案内';
     var body = joinNonEmpty_([
@@ -853,7 +862,7 @@ var BookingMailTemplates = (function () {
       guide.entryMethod ? '入室方法: ' + guide.entryMethod : '',
       separateCodeLine,
       secretLine_('キーボックス番号', guide.keyboxNumber),
-      secretLine_('解錠コード', guide.unlockCode),
+      perBookingCode ? '' : secretLine_('解錠コード', guide.unlockCode),
       reminderGuideUrl ? '利用案内ページ: ' + reminderGuideUrl : '',
       guide.pdfUrl ? '案内PDF: ' + guide.pdfUrl : '',
       '',

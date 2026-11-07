@@ -283,6 +283,55 @@ var BookingConfig = (function () {
     return PropertiesService.getScriptProperties().getProperty('ACCESS_KEY_NOTICE_ENABLED') === 'true';
   }
 
+  /*
+   * Issue #832: 予約別パスコード（独立SwitchBot Access GASが別メールで送る方式）を前日リマインドの
+   * 「新方式」として扱う予約かどうかの唯一の判定点。前日の定期便・補完便・確定直後便・手動再送・
+   * 診断プレビュー/テスト送信・必須情報チェックはすべてこの結果を使う（判定を複製しない）。
+   *
+   * Script Properties（Booking Admin。実値はコード/Issue/CI/ログに出さない）:
+   *   ACCESS_PER_BOOKING_CODE_MODE: OFF（既定）/ PILOT / ALL
+   *   ACCESS_PER_BOOKING_CODE_PILOT_IDS: PILOT時のみ。カンマ区切り、予約ID完全一致
+   * 未設定の場合はOFF（警告なし）。不正なモード・PILOTで一覧が空・一覧に不正書式が1つでもある場合は
+   * OFFへフォールバックし警告コードを返す（構文エラーをALLと解釈しない。通常予約の案内は変えない）。
+   * 警告コードには予約ID・設定実値を含めない。
+   *
+   * 安全不変条件: Bookingの新方式対象集合は、Access GASの発行・配送対象集合の部分集合でなければならない
+   * （運用手順はdocs/booking-per-booking-code-832.md）。AccessがONでも配送成功は証明されないため、
+   * この判定は「送信済み」を意味しない。対象ブランドはsnb / mens / studio_xの3つ。
+   * 既存のACCESS_KEY_NOTICE_ENABLEDはこの判定に影響しない（旧方式の旧文言のみ従来どおり制御）。
+   */
+  var PER_BOOKING_CODE_BRANDS_ = ['snb', 'mens', 'studio_x'];
+  var PER_BOOKING_CODE_ID_PATTERN_ = /^[A-Za-z0-9_-]{1,64}$/;
+
+  function resolveAccessCodeDelivery(record) {
+    var props = PropertiesService.getScriptProperties();
+    var rawMode = props.getProperty('ACCESS_PER_BOOKING_CODE_MODE');
+    var mode = rawMode === null || rawMode === undefined ? '' : String(rawMode).trim().toUpperCase();
+    var off = function (warning) {
+      return { perBookingCode: false, mode: 'OFF', warning: warning || null };
+    };
+    if (mode === '' || mode === 'OFF') return off(null);
+    if (mode !== 'PILOT' && mode !== 'ALL') return off('INVALID_MODE');
+
+    var brand = record && record.brand;
+    var brandTarget = PER_BOOKING_CODE_BRANDS_.indexOf(brand) !== -1;
+
+    if (mode === 'ALL') {
+      return { perBookingCode: brandTarget, mode: 'ALL', warning: null };
+    }
+
+    var rawIds = props.getProperty('ACCESS_PER_BOOKING_CODE_PILOT_IDS');
+    var ids = String(rawIds === null || rawIds === undefined ? '' : rawIds)
+      .split(',').map(function (s) { return s.trim(); });
+    if (ids.length === 1 && ids[0] === '') return off('EMPTY_PILOT_IDS');
+    for (var i = 0; i < ids.length; i++) {
+      if (!PER_BOOKING_CODE_ID_PATTERN_.test(ids[i])) return off('INVALID_PILOT_IDS');
+    }
+    var matched = brandTarget && !!record && typeof record.bookingId === 'string' &&
+      ids.indexOf(record.bookingId) !== -1;
+    return { perBookingCode: matched, mode: 'PILOT', warning: null };
+  }
+
   /* Issue #490: 入会Success URL（…/membership/complete.html）から会員資格確認ページ（…/membership/status/）のURLを導出する。 */
   function deriveMembershipStatusUrl_(successUrl) {
     var m = /^(https:\/\/[^?#]*\/)complete\.html(?:[?#].*)?$/.exec(successUrl);
@@ -441,6 +490,7 @@ var BookingConfig = (function () {
     getMailConfig: getMailConfig,
     getAccessGuideConfig: getAccessGuideConfig,
     isAccessKeyNoticeEnabled: isAccessKeyNoticeEnabled,
+    resolveAccessCodeDelivery: resolveAccessCodeDelivery,
     getStripeConfig: getStripeConfig,
     getStripeWebhookConfig: getStripeWebhookConfig,
     getOptionsConfig: getOptionsConfig
