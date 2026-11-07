@@ -603,3 +603,75 @@ test('早期ゲート拒否: 番号を設定していなければ何も削除し
   var r2 = plain(Infra.bndStage(w2.deps, 'LIST')); assert.strictEqual(r2.code, 'ENV_NOT_VERIFY');
   assert.strictEqual(w2.script.ACCESS_BND_TEST_PASSCODE, PASSCODE, 'LIST は番号に触れない（ゲートが先）');
 });
+
+// ───────────────── Codex 指摘（復旧時の武装解除・A2再試行の抜け道・重大観測の永続失敗） ─────────────────
+
+test('復旧記録: 途中停止後に ARMED を先に削除しても、通信なしの回収記録（APP_ABSENT）はできる。通常の完了記録（FINAL_LIST 後）は武装が必要', function () {
+  var w = makeWorld(); toVerified(w); w.now = startOf(w) - 170; obs(w, 'A1_UNLOCKED'); // 重大異常で STOPPED
+  delete w.script.ACCESS_BND_TEST_ARMED; // 停止手順どおり先に武装解除
+  var n = w.calls.length;
+  var rec = app(w, 'APP_ABSENT');
+  assert.strictEqual(rec.ok, true, rec.code); assert.strictEqual(rec.state, 'STOPPED_RECOVERED'); assert.strictEqual(rec.recovery, 'RECOVERED'); assert.strictEqual(w.calls.length, n, '通信なし');
+  var w2 = makeWorld(); toVerified(w2); w2.now = startOf(w2) - 170; obs(w2, 'A1_UNLOCKED'); delete w2.script.ACCESS_BND_TEST_ARMED;
+  var p = app(w2, 'APP_PRESENT'); assert.strictEqual(p.ok, false); assert.strictEqual(p.code, 'APP_STILL_PRESENT'); assert.strictEqual(p.recovery, 'NOT_RECOVERED');
+  // 正常経路（FINAL_LISTED_APP_PENDING）では武装解除済みなら記録しない
+  var w3 = makeWorld(); toVerified(w3); var s3 = startOf(w3), e3 = endOf(w3);
+  w3.now = s3 - 180; obs(w3, 'A1_DENIED'); w3.now = s3 + 180; obs(w3, 'A2_UNLOCKED'); w3.now = e3 - 180; obs(w3, 'A3_UNLOCKED'); w3.now = e3 + 180; obs(w3, 'A4_DENIED'); w3.now = e3 + 300; stg(w3, 'FINAL_LIST');
+  delete w3.script.ACCESS_BND_TEST_ARMED;
+  assert.strictEqual(app(w3, 'APP_ABSENT').code, 'NOT_ARMED');
+  // ARMED の値違いは回収記録でも拒否
+  var w4 = makeWorld(); toVerified(w4); w4.now = startOf(w4) - 170; obs(w4, 'A1_UNLOCKED'); w4.script.ACCESS_BND_TEST_ARMED = 'true';
+  assert.strictEqual(app(w4, 'APP_ABSENT').code, 'ARMED_PLAN_MISMATCH');
+});
+
+test('A2 再試行の抜け道: 許可された再試行を実施しなかった場合は A2R_SKIPPED で記録でき、回収まで進める（合否は NOT_ESTABLISHED・01FD判断に使えない）', function () {
+  var w = makeWorld(); toVerified(w); var s = startOf(w), e = endOf(w);
+  w.now = s - 180; obs(w, 'A1_DENIED'); w.now = s + 180; w.script.ACCESS_BND_A2_RETRY_GO = 'ALLOWED_ONCE'; assert.strictEqual(obs(w, 'A2_DENIED').state, 'A2_RETRY_PENDING');
+  w.now = e + 10; // 再試行の窓を逃した
+  assert.strictEqual(obs(w, 'A2R_UNLOCKED').code, 'OBSERVATION_TIME_MISMATCH');
+  assert.strictEqual(obs(w, 'A3_SKIPPED').code, 'STAGE_ORDER_VIOLATION');
+  var sk = obs(w, 'A2R_SKIPPED'); assert.strictEqual(sk.ok, true, sk.code); assert.strictEqual(sk.state, 'A2_RECORDED');
+  assert.strictEqual(obs(w, 'A3_SKIPPED').ok, true); w.now = e + 180; assert.strictEqual(obs(w, 'A4_DENIED').ok, true);
+  w.now = e + 300; assert.strictEqual(stg(w, 'FINAL_LIST').ok, true);
+  w.keys = w.keys.filter(function (k) { return k.name === 'normal-key-1'; });
+  var a = app(w, 'APP_ABSENT');
+  assert.strictEqual(a.ok, true); assert.strictEqual(a.recovery, 'RECOVERED'); assert.notStrictEqual(a.verdict, 'BOUNDARY_PASS'); assert.strictEqual(a.decisionUse, 'NOT_USABLE_FOR_01FD_JUDGEMENT');
+  assert.strictEqual(a.a2Basis, 'NOT_UNLOCKED');
+});
+
+test('重大観測の永続失敗: 状態を書けなければ承認を消費せず CRITICAL_NOT_PERSISTED と手動対応を明示する。書けるようになれば同じ申告で STOPPED を永続できる', function () {
+  var failing = true;
+  var w = makeWorld({ failStateWrite: function (s) { return failing && s.state === 'STOPPED'; } });
+  toVerified(w); w.now = startOf(w) - 170;
+  var r = obs(w, 'KEYPAD_LOCK_SIGN');
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.code, 'CRITICAL_NOT_PERSISTED'); assert.strictEqual(r.manualRecovery, true); assert.strictEqual(r.persistence, 'NOT_PERSISTED');
+  assert.notStrictEqual(r.state, 'STOPPED', '永続できていない状態を STOPPED と報告しない');
+  assert.strictEqual(st(w).state, 'ISSUED_VERIFIED', '状態は変わっていない');
+  assert.strictEqual(w.script.ACCESS_BND_TEST_APPROVAL, 'KEYPAD_LOCK_SIGN', '承認（申告）は消費されず残る');
+  // 失敗中に別の申告で先へ進めても、その申告は永続できる別物であり、重大申告は失われていない（再申告で STOPPED にできる）
+  failing = false;
+  var again = obs(w, 'KEYPAD_LOCK_SIGN'); assert.strictEqual(again.code, 'KEYPAD_LOCK_OR_ALARM_SIGN'); assert.strictEqual(st(w).state, 'STOPPED'); assert.strictEqual(st(w).obs.LOCK, 'SIGN');
+  assert.strictEqual(w.script.ACCESS_BND_TEST_APPROVAL, undefined, '永続後に承認を消費');
+});
+
+test('観測の永続失敗: 通常の申告も、状態を書けなければ承認を消費せず状態も進めない（再申告できる）。A2_DENIED の再試行許可も同様', function () {
+  var failing = true;
+  var w = makeWorld({ failStateWrite: function (s) { return failing && s.state === 'A1_RECORDED'; } });
+  toVerified(w); w.now = startOf(w) - 180;
+  var r = obs(w, 'A1_DENIED'); assert.strictEqual(r.ok, false); assert.strictEqual(r.code, 'STATE_WRITE_FAILED'); assert.strictEqual(r.manualRecovery, true);
+  assert.strictEqual(st(w).state, 'ISSUED_VERIFIED'); assert.strictEqual(w.script.ACCESS_BND_TEST_APPROVAL, 'A1_DENIED');
+  failing = false; assert.strictEqual(obs(w, 'A1_DENIED').ok, true); assert.strictEqual(st(w).state, 'A1_RECORDED');
+
+  var f2 = false;
+  var w2 = makeWorld({ failStateWrite: function (s) { return f2 && s.state === 'A2_RETRY_PENDING'; } });
+  toVerified(w2); var s2 = startOf(w2); w2.now = s2 - 180; obs(w2, 'A1_DENIED'); w2.now = s2 + 180; w2.script.ACCESS_BND_A2_RETRY_GO = 'ALLOWED_ONCE'; f2 = true;
+  var r2 = obs(w2, 'A2_DENIED'); assert.strictEqual(r2.ok, false); assert.strictEqual(r2.code, 'CRITICAL_NOT_PERSISTED'); assert.strictEqual(r2.manualRecovery, true);
+  assert.strictEqual(st(w2).state, 'A1_RECORDED'); assert.strictEqual(w2.script.ACCESS_BND_TEST_APPROVAL, 'A2_DENIED', '承認は残る');
+});
+
+test('回収記録の永続失敗: 状態を書けなければ承認を消費せず STATE_WRITE_FAILED（完了にしない）', function () {
+  var w = makeWorld({ failStateWrite: function (s) { return s.state === 'STOPPED_RECOVERED'; } });
+  toVerified(w); w.now = startOf(w) - 170; obs(w, 'A1_UNLOCKED');
+  var r = app(w, 'APP_ABSENT'); assert.strictEqual(r.ok, false); assert.strictEqual(r.code, 'STATE_WRITE_FAILED'); assert.strictEqual(st(w).state, 'STOPPED');
+  assert.strictEqual(w.script.ACCESS_BND_TEST_APPROVAL, 'APP_ABSENT');
+});

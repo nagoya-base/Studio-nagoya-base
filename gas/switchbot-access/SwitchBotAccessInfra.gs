@@ -1485,6 +1485,7 @@ var SwitchBotAccessInfra = (function () {
     A2_SKIPPED:      { step: 'A2',  res: 'SKIPPED',      from: 'A1_RECORDED',      to: 'A2_RECORDED', when: null },
     A2_DENIED:       { step: 'A2',  res: 'DENIED',       from: 'A1_RECORDED',      retry: true, when: 'IN_WINDOW' },
     A2R_UNLOCKED:    { step: 'A2R', res: 'UNLOCKED',     from: 'A2_RETRY_PENDING', to: 'A2_RECORDED', when: 'IN_WINDOW' },
+    A2R_SKIPPED:     { step: 'A2R', res: 'SKIPPED',      from: 'A2_RETRY_PENDING', to: 'A2_RECORDED', when: null }, // 許可された再試行を実施しなかった（期限切れ等）。合否は NOT_ESTABLISHED
     A2R_DENIED:      { step: 'A2R', res: 'DENIED',       from: 'A2_RETRY_PENDING', critical: 'A2_DENIED_AFTER_RETRY' },
     A3_UNLOCKED:     { step: 'A3',  res: 'UNLOCKED',     from: 'A2_RECORDED',      to: 'A3_RECORDED', when: 'IN_WINDOW' },
     A3_SKIPPED:      { step: 'A3',  res: 'SKIPPED',      from: 'A2_RECORDED',      to: 'A3_RECORDED', when: null },
@@ -1835,31 +1836,38 @@ var SwitchBotAccessInfra = (function () {
         if (!okTime) return stop('OBSERVATION_TIME_MISMATCH');
       }
       if (o.retry && !(nowSec >= st.startSec && nowSec < st.endSec)) return stop('OBSERVATION_TIME_MISMATCH');
-      try { sp.del(BND_PROP.APPROVAL); } catch (e) { return stop('APPROVAL_CONSUME_FAILED'); }
       var s = JSON.parse(JSON.stringify(st)); s.obs = s.obs || {};
       var key = o.any ? 'LOCK' : o.step;
       s.obs[key] = o.any ? 'SIGN' : o.res;
       s.obsRel = s.obsRel || {}; s.obsRel[key] = nowSec - st.startSec; // 申告時刻の開始からの相対秒（基準時計との照合用）
       out.obs = s.obs;
-      if (o.critical) {
-        s.state = 'STOPPED'; s.reason = o.critical;
-        bndWrite(sp, s); out.state = 'STOPPED'; out.manualRecovery = true; return stop(o.critical);
+      // 永続 → 承認の消費の順。永続できなければ承認を消費せず（申告を失わない）、永続失敗を明示して手動対応へ引き継ぐ。
+      function commit(next, reason, critical) {
+        s.state = next; if (reason) s.reason = reason;
+        if (!bndWrite(sp, s)) {
+          out.manualRecovery = true; out.persistence = 'NOT_PERSISTED';
+          return stop(critical ? 'CRITICAL_NOT_PERSISTED' : 'STATE_WRITE_FAILED'); // 状態は変わっていない。重大観測なら公式アプリで手動回収
+        }
+        out.state = next; out.persistence = 'PERSISTED';
+        try { sp.del(BND_PROP.APPROVAL); } catch (e) { out.manualRecovery = true; out.notes = out.notes.concat(['APPROVAL_NOT_CONSUMED']); if (!critical) return stop('APPROVAL_CONSUME_FAILED'); }
+        return null;
       }
+      function critStop(code) {
+        var f = commit('STOPPED', code, true); if (f) return f;
+        out.manualRecovery = true; return stop(code);
+      }
+      if (o.critical) return critStop(o.critical);
       if (o.retry) { // A2 の最初の拒否: GO欄で許可された場合だけ1回再試行できる
         var rt = diagRead(sp, BND_PROP.A2_RETRY);
         if (rt.state === 'SET' && rt.raw === BND_A2_RETRY_VALUE) {
           try { sp.del(BND_PROP.A2_RETRY); } catch (e) { /* 読み直しで判定 */ }
-          if (diagRead(sp, BND_PROP.A2_RETRY).state !== 'MISSING') { s.state = 'STOPPED'; s.reason = 'A2_RETRY_GO_NOT_CONSUMED'; bndWrite(sp, s); out.state = 'STOPPED'; out.manualRecovery = true; return stop('A2_RETRY_GO_NOT_CONSUMED'); }
-          s.state = 'A2_RETRY_PENDING';
-          if (!bndWrite(sp, s)) { out.manualRecovery = true; return stop('STATE_WRITE_FAILED'); }
-          out.state = s.state; out.notes = out.notes.concat(['A2_RETRY_ONCE_GRANTED']); return fin();
+          if (diagRead(sp, BND_PROP.A2_RETRY).state !== 'MISSING') return critStop('A2_RETRY_GO_NOT_CONSUMED');
+          var fr = commit('A2_RETRY_PENDING', null, true); if (fr) return fr;
+          out.notes = out.notes.concat(['A2_RETRY_ONCE_GRANTED']); return fin();
         }
-        s.state = 'STOPPED'; s.reason = 'A2_DENIED_NO_RETRY_GO';
-        bndWrite(sp, s); out.state = 'STOPPED'; out.manualRecovery = true; return stop('A2_DENIED_NO_RETRY_GO');
+        return critStop('A2_DENIED_NO_RETRY_GO');
       }
-      s.state = o.to;
-      if (!bndWrite(sp, s)) { out.manualRecovery = true; return stop('STATE_WRITE_FAILED'); }
-      out.state = s.state;
+      var fo = commit(o.to, null, false); if (fo) return fo;
       if (o.res === 'INCONCLUSIVE') out.notes = out.notes.concat(['INCONCLUSIVE_NOT_PROOF']);
       return fin();
     } catch (e) {
@@ -1891,8 +1899,8 @@ var SwitchBotAccessInfra = (function () {
       if (pr) return stop(pr);
       var armed = diagRead(sp, BND_PROP.ARMED);
       if (armed.state === 'UNKNOWN') return stop('ARMED_STATE_UNKNOWN');
-      if (armed.state === 'MISSING') return stop('NOT_ARMED');
-      if (armed.raw !== BND_PLAN) return stop('ARMED_PLAN_MISMATCH');
+      if (armed.state === 'SET' && armed.raw !== BND_PLAN) return stop('ARMED_PLAN_MISMATCH');
+      // ARMED が未設定でも、途中停止の「回収の記録」だけは通信なしで許可する（停止手順で先に武装解除するため）。通常の完了記録は武装が必要。
       var pc = diagRead(sp, BND_PROP.PASSCODE), at = diagRead(sp, BND_PROP.ATTEST);
       if (pc.state === 'UNKNOWN' || at.state === 'UNKNOWN') return stop('PASSCODE_STATE_UNKNOWN');
       if (pc.state === 'SET' || at.state === 'SET') {
@@ -1907,18 +1915,19 @@ var SwitchBotAccessInfra = (function () {
       out.state = DIAG_VALUE_RE.test(st.state) ? st.state : 'INVALID_VALUE'; out.callsUsed = st.calls;
       var aborted = st.state === 'STOPPED' || /_SENT$/.test(st.state);
       if (!aborted && st.state !== 'FINAL_LISTED_APP_PENDING') return stop('STAGE_ORDER_VIOLATION');
+      if (armed.state === 'MISSING' && !aborted) return stop('NOT_ARMED');
       if (aborted && typeof st.name === 'string' && !TKS_NAME_RE.test(st.name)) return stop('STAGE_ORDER_VIOLATION'); // 試験キーを作っていない（発行前の停止）ならアプリ回収の記録は不要
       var ap = diagRead(sp, BND_PROP.APPROVAL);
       if (ap.state === 'UNKNOWN') return stop('APPROVAL_STATE_UNKNOWN');
       if (ap.raw !== 'APP_ABSENT' && ap.raw !== 'APP_PRESENT') return stop('STAGE_NOT_APPROVED');
       var present = ap.raw === 'APP_PRESENT';
-      try { sp.del(BND_PROP.APPROVAL); } catch (e) { return stop('APPROVAL_CONSUME_FAILED'); }
       var s = JSON.parse(JSON.stringify(st));
       if (present) { s.state = 'STOPPED'; s.reason = 'APP_STILL_PRESENT'; }
       else if (aborted) { s.state = 'STOPPED_RECOVERED'; s.reason = 'APP_ABSENT_AFTER_ABORT'; }
       else { s.state = 'RECOVERED'; s.reason = 'APP_ABSENT_CONFIRMED'; } // 「回収完了」であって「試験合格」ではない
       bndJudgement(out, s); s.verdict = out.verdict;
-      if (!bndWrite(sp, s)) { out.manualRecovery = true; return stop('STATE_WRITE_FAILED'); }
+      if (!bndWrite(sp, s)) { out.manualRecovery = true; return stop('STATE_WRITE_FAILED'); } // 永続できなければ承認を消費しない
+      try { sp.del(BND_PROP.APPROVAL); } catch (e) { out.manualRecovery = true; out.notes = out.notes.concat(['APPROVAL_NOT_CONSUMED']); }
       out.state = s.state; out.obs = s.obs || {};
       if (present) { out.manualRecovery = true; out.recovery = 'NOT_RECOVERED'; return stop('APP_STILL_PRESENT'); }
       out.appCheck = 'ABSENT_CONFIRMED';
