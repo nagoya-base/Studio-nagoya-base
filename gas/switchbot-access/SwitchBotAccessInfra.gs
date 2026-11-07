@@ -1269,12 +1269,14 @@ var SwitchBotAccessInfra = (function () {
         if (!led || led.ok !== true) {
           var ledCode = led && typeof led.error === 'string' && /^LEDGER_[A-Z_]+$/.test(led.error) && Object.prototype.hasOwnProperty.call(CATALOG, led.error) ? led.error : 'LEDGER_READ_FAILED';
           infraAlert(ledCode, null, null, null);
+          engine.reconcilePending({}); // 台帳が読めなくても、送信済み削除の確認（読み取りのみ）は期限内に進める（#829）
           return { ok: false, error: 'LEDGER_READ_FAILED' };
         }
         var records = led.records.slice().sort(function (a, b) {
           return (openByBooking[String(b.bookingId)] ? 1 : 0) - (openByBooking[String(a.bookingId)] ? 1 : 0);
         });
         var summary = { ok: true, synced: 0, frozen: 0, waiting: 0, skipped: 0, deferred: 0, gateStops: [] };
+        var syncedBookings = {};
         for (var i = 0; i < records.length; i++) {
           if (deps.nowMs() - startedMs > ic.runBudgetSec * 1000) { summary.deferred = records.length - i; break; }
           var sn = deps.snapshot.build(records[i], { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
@@ -1327,6 +1329,7 @@ var SwitchBotAccessInfra = (function () {
             return { ok: false, error: 'SYNC_ERROR' }; // 保存失敗などはサイクルを止める（予約側へは何も伝播しない）
           }
           summary.synced++;
+          syncedBookings[String(sn.bookingId)] = true;
           if (out.gateStop) {
             // 発行を試行できなかった（OP未作成/未送信）。revision・発行窓は「未処理」のまま保持し、
             // 次回以降ゲートを再評価する（復旧後に発行対象から脱落させない）。通知は重複抑止、再評価は gateRetrySec 間隔
@@ -1343,6 +1346,7 @@ var SwitchBotAccessInfra = (function () {
           if (pilotExcluded) writeTrack(sn.bookingId, { revision: null, windowHandled: false, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
           else writeTrack(sn.bookingId, { revision: sn.revision, digest: sn.digest, windowHandled: windowOpen, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
         }
+        engine.reconcilePending(syncedBookings); // 今回 sync で照合済みの予約は除く（読取回数を二重に消費しない）
         return summary;
       });
     }
@@ -1381,16 +1385,28 @@ var SwitchBotAccessInfra = (function () {
     }
 
     // ---- 期限切れ確認・回収・容量/保存の監視 ----
+    function sweepBody(sweepOpts) {
+      drainInbox();
+      flushOutbox();
+      var sw = engine.sweep(sweepOpts); // 期限切れ予約用キーの自動削除（Issue #829。ACCESS_ENABLED=ON のときだけ変更APIを呼ぶ）
+      var removed = garbageCollect(deps.store, deps.secrets, deps.nowSec(), cfg);
+      var st = storageGate(measureStore(deps.store), cfg, cfg.storageLimits);
+      if (!st.ok) infraAlert(st.code, null, null, null);
+      return { ok: true, removed: removed, cleanup: { attempted: sw && sw.attempted || 0, confirmed: sw && sw.confirmed || 0, pending: sw && sw.pending || 0, stopped: sw && sw.stopped || 0, deferred: sw && sw.deferred || 0 }, storage: { ratio: st.ratio, ok: st.ok } };
+    }
+
     function sweepCycle() {
-      return runLocked('SWEEP', ic.lockWaitMs, function () {
-        drainInbox();
-        flushOutbox();
-        engine.sweep();
-        var removed = garbageCollect(deps.store, deps.secrets, deps.nowSec(), cfg);
-        var st = storageGate(measureStore(deps.store), cfg, cfg.storageLimits);
-        if (!st.ok) infraAlert(st.code, null, null, null);
-        return { ok: true, removed: removed, storage: { ratio: st.ratio, ok: st.ok } };
-      });
+      return runLocked('SWEEP', ic.lockWaitMs, function () { return sweepBody(); });
+    }
+
+    /**
+     * 日次クリーンアップ（Issue #829。00:15 JST 近辺。GAS の時間主導は厳密でないため、実行時刻に依存せず
+     * 常に「endSec <= 現在」だけを根拠にする）。1 時間周期の sweep の取り残しを補完する。
+     * 1 回あたりの削除上限は日次のほうが大きい。上限超過・API 障害分は次の周期（1 時間後の sweep）で収束する。
+     */
+    function dailyCleanupCycle() {
+      var cap = typeof cfg.dailyCleanupMaxDeletes === 'number' ? cfg.dailyCleanupMaxDeletes : 20;
+      return runLocked('CLEANUP', ic.lockWaitMs, function () { return sweepBody({ maxDeletes: cap }); });
     }
 
     // ---- 監視（ロック不要・読取のみ）----
@@ -1458,14 +1474,14 @@ var SwitchBotAccessInfra = (function () {
       return {
         ok: true, environment: cfg.environment, enabled: cfg.enabled === true, byState: byState, unresolved: unresolved, deliveries: deliveries,
         storage: { keys: m.keys, bytes: m.bytes, ratio: st.ratio, gate: st.ok ? 'OK' : st.code, byPrefix: m.byPrefix },
-        heartbeats: { SYNC: safeParse(deps.store.get('HB_SYNC')), SWEEP: safeParse(deps.store.get('HB_SWEEP')), DELIVER: safeParse(deps.store.get('HB_DELIVER')) },
+        heartbeats: { SYNC: safeParse(deps.store.get('HB_SYNC')), SWEEP: safeParse(deps.store.get('HB_SWEEP')), CLEANUP: safeParse(deps.store.get('HB_CLEANUP')), DELIVER: safeParse(deps.store.get('HB_DELIVER')) },
         apiCallsToday: budget.used(), notifyOutbox: outbox, notifyFailingSince: Number(deps.store.get('NOTIFYFAIL')) || null,
         plan: plan
       };
     }
 
     return {
-      handleWebhook: handleWebhook, syncCycle: syncCycle, deliverCycle: deliverCycle, sweepCycle: sweepCycle,
+      handleWebhook: handleWebhook, syncCycle: syncCycle, deliverCycle: deliverCycle, sweepCycle: sweepCycle, dailyCleanupCycle: dailyCleanupCycle,
       watchdog: watchdog, admin: admin, engine: engine, plan: plan, infraAlert: infraAlert
     };
   }

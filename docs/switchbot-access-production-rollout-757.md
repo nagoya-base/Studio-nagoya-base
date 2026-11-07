@@ -40,7 +40,7 @@ Script Properties の `ACCESS_CONFIG`（JSON）に次を設定（既存キーは
 
 事前: 現地に管理者と通常キー・代替入室（手動解錠／管理者パスコード／物理キー）を確保。他の利用者に影響しない時間帯を選ぶ。
 
-1. `accessInstallTriggers`（`accessSyncJob` 5分 / `accessSweepJob` 1時間 / `accessWatchdogJob` 15分、配送設定時は `accessDeliverJob` 5分）。OFFの間はジョブは `FLAG_OFF` で何もしない。
+1. `accessInstallTriggers`（`accessSyncJob` 5分 / `accessSweepJob` 1時間 / `accessWatchdogJob` 15分 / `accessDailyCleanupJob` 毎日00:15 JST近辺、配送設定時は `accessDeliverJob` 5分）。OFFの間はジョブは `FLAG_OFF` で何もしない。
 2. 配送を使う場合は `ACCESS_CONFIG` の配送設定を有効（`deliveryConfigured=true`）にし、`accessInstallTriggers` をもう一度実行して `accessDeliverJob` を作る。
 3. `ACCESS_ENABLED='true'`（Script Properties）。発行はテスト予約1件のみ（前日12:00 JST以降の発行窓。配送は前日18:00 JST以降）。
 4. 確認: キー発行・存在確認 → 管理者受信箱に**別メール**（暗証番号以外に場所・番号が出ない）と返信先 → 01FDで解錠 → 試験終了後に試験キーの回収（`accessAdminInventory` → 必要なら `accessAdminDelete`）、通常キーが残っていること。
@@ -76,3 +76,15 @@ Script Properties の `ACCESS_CONFIG`（JSON）に次を設定（既存キーは
 ## 拡大について
 
 全予約への拡大は、限定運用の実績を見た運営者の**別の設定変更**。`limitedRollout` と `pilotBookingIds` の**両方**を外す（`pilotBookingIds` が残ると、`limitedRollout` を外しても許可リスト外の予約は `NOT_PILOT_TARGET` で発行されない）。意図なく外さない。
+
+
+## 期限切れ予約用キーの自動削除（#829）
+
+- 対象: このシステムが発行し保存記録（`OP_`）と端末の keyList を照合できる運用キー（`SNB-`+16桁hex名）のみ。SNB/Mens/Studio X 共通。管理者・手動登録・通常キー・他システム由来・未特定は記録を持たないため対象外。
+- 条件: `endSec <= 現在` を絶対条件にする（発行日ではなく有効期限終了後）。前日発行の未来予約・深夜に跨る利用中キーは削除しない。
+- 経路: `accessSweepJob`（1時間）と `accessDailyCleanupJob`（毎日00:15 JST近辺。着火時刻の厳密さに依存せず、取り残しを補完）が同じ安全な削除フロー（削除直前の keyList 再照合 → deleteKey → Webhook/keyList で不在確認）を使う。
+- 安全停止: 曖昧・未確認・UNKNOWN は再送せず管理者へ固定コード通知（手動復旧は従来どおり `accessAdminDelete` 等）。API障害は次の周期で再評価（冪等）。
+- `ACCESS_ENABLED` が OFF の間は変更APIを呼ばず `EXPIRED_KEY_REMAINS` 通知のみ。ON復帰後に同じゲートを通して回収する。
+- 1回の削除上限: sweep は `expiredDeleteMaxPerSweep`（既定5）、日次は `dailyCleanupMaxDeletes`（既定20）。超過分は次の周期。`autoDeleteExpired: false` で自動削除だけ停止可能。
+- 証跡: 記録の history に基底 `AUTO_EXPIRED`、`accessAdminStatus` の `heartbeatAt.CLEANUP`。
+- 本番GASへの反映は自動デプロイしない。運営が OFF → デプロイ → `accessInstallTriggers` → ON の手順で別途実施する。

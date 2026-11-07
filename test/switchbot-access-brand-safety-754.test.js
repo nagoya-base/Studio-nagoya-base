@@ -206,19 +206,28 @@ test('B3-c: 【現行挙動の明示】発行済みの予約が空brand×CONFIRM
   assert.strictEqual(x.w.keys[H.DEV].filter(function (k) { return !/^USER-/.test(k.name); }).length, 1, '機器上の旧キーは自然失効まで残る');
 });
 
-test('B3-d: 凍結中の旧キーは、期限後に EXPIRED_KEY_REMAINS で管理者へ通知され、管理者の個別削除（OFFでも）で回収できる', function () {
+test('B3-d: 凍結中の旧キーは、期限後に自動削除ON時は回収され(#829)、OFF時は EXPIRED_KEY_REMAINS で通知され管理者の個別削除（OFFでも）で回収できる', function () {
+  // 自動削除（ACCESS_ENABLED=ON）: 期限後の sweep が運用キーだけを回収する
+  var y = issuedWorld();
+  y.w.records = [H.record({ brand: '', revision: 2 })];
+  cycle(y.w, y.rt, 4);
+  y.w.advance(24 * 3600);
+  y.rt.sweepCycle();
+  assert.strictEqual(y.w.callCount('deleteKey'), 1, '期限後は sweep が自動削除する');
+  assert.deepStrictEqual(states(y.w), [S.DELETED_CONFIRMED]);
+  assert.strictEqual(y.w.keys[H.DEV].filter(function (k) { return !/^USER-/.test(k.name); }).length, 0, '運用キーのみ回収');
+
+  // OFF（ロールバック状態）: sweep は削除を送らず通知のみ。管理者の個別削除で回収できる
   var x = issuedWorld();
   x.w.records = [H.record({ brand: '', revision: 2 })];
   cycle(x.w, x.rt, 4);
   x.w.advance(24 * 3600);
-  x.rt.sweepCycle();
-  x.rt.sweepCycle();
+  var off = x.w.runtime({ enabled: false });
+  off.sweepCycle();
+  off.sweepCycle();
   assert.deepStrictEqual(states(x.w), [S.EXPIRED]);
   assert.ok(has(x.w, /EXPIRED_KEY_REMAINS/), '残存を管理者へ通知');
-  assert.strictEqual(x.w.callCount('deleteKey'), 0, 'sweep は削除を送らない');
-
-  // 管理者の個別削除はフラグOFF（ロールバック状態）でも使え、通常キーは変更しない
-  var off = x.w.runtime({ enabled: false });
+  assert.strictEqual(x.w.callCount('deleteKey'), 0, 'OFF 中の sweep は削除を送らない');
   var rec = ops(x.w)[0];
   var r = off.admin('delete', { recId: rec.id });
   assert.strictEqual(r.ok, true, '管理者削除は空brandの凍結に妨げられない');

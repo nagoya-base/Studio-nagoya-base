@@ -164,21 +164,70 @@ test('M1-b: 利用終了＋猶予後、台帳に予約が残る間は sync が�
   assert.strictEqual(normalKeys(w).length, 2);
 });
 
-test('M1-c: sweep単独（台帳照合が動かない状況）では期限切れを EXPIRED にし、機器側失効ならアーカイブ、残存なら通知のみ（自動削除しない）', function () {
+test('M1-c: sweep単独（台帳照合が動かない状況）では期限切れを回収する(#829)。OFF時は EXPIRED＋通知のみ、機器側失効ならアーカイブ', function () {
+  // ON: 期限後の sweep が運用キーだけを自動削除し、通常キーは残す（管理者通知なし）
   var w = mailWorld(); var rt = w.runtime(); var sim = createSim(w, rt);
   var op = issueViaCycles(w, rt, sim);
   at(w, '2030-01-11T12:20:00+09:00');
   rt.sweepCycle();                       // syncCycle は回さない
   var cur = ops(w).filter(function (o) { return o.id === op.id; })[0];
-  assert.strictEqual(cur.state, S.EXPIRED);
-  assert.ok(w.mails.some(function (m) { return /EXPIRED_KEY_REMAINS/.test(m.subject); }), '残存を管理者へ通知');
-  assert.strictEqual(w.callCount('deleteKey'), 0, 'sweepは削除を送らない（管理者判断）');
+  assert.strictEqual(cur.state, S.DELETED_CONFIRMED);
+  assert.strictEqual(w.callCount('deleteKey'), 1);
+  assert.ok(!w.mails.some(function (m) { return /EXPIRED_KEY_REMAINS/.test(m.subject); }), '自動回収できたので管理者へ通知しない');
+  assert.strictEqual(serviceKeys(w).length, 0);
+  assert.strictEqual(normalKeys(w).length, 2);
+  rt.sweepCycle(); rt.sweepCycle();
+  assert.strictEqual(w.callCount('deleteKey'), 1, '二重削除しない');
+
+  // OFF: 変更 API を呼ばず、残存を通知のみ
+  var w2 = mailWorld(); var rt2 = w2.runtime(); var sim2 = createSim(w2, rt2);
+  var op2 = issueViaCycles(w2, rt2, sim2);
+  at(w2, '2030-01-11T12:20:00+09:00');
+  var off = w2.runtime({ enabled: false });
+  off.sweepCycle();
+  assert.strictEqual(ops(w2).filter(function (o) { return o.id === op2.id; })[0].state, S.EXPIRED);
+  assert.ok(w2.mails.some(function (m) { return /EXPIRED_KEY_REMAINS/.test(m.subject); }), '残存を管理者へ通知');
+  assert.strictEqual(w2.callCount('deleteKey'), 0, 'OFF 中は削除を送らない');
   // 機器側が期限で失効させた想定: keyListから消える → 次のsweepでアーカイブ
-  w.keys[H.DEV] = w.keys[H.DEV].filter(function (k) { return /^USER-/.test(k.name); });
-  w.advance(SWEEP_SEC);
-  rt.sweepCycle();
-  assert.strictEqual(ops(w).filter(function (o) { return o.id === op.id; })[0].state, S.ARCHIVED_EXPIRED);
-  assert.strictEqual(w.callCount('deleteKey'), 0);
+  w2.keys[H.DEV] = w2.keys[H.DEV].filter(function (k) { return /^USER-/.test(k.name); });
+  w2.advance(SWEEP_SEC);
+  off.sweepCycle();
+  assert.strictEqual(ops(w2).filter(function (o) { return o.id === op2.id; })[0].state, S.ARCHIVED_EXPIRED);
+  assert.strictEqual(w2.callCount('deleteKey'), 0);
+  assert.strictEqual(normalKeys(w2).length, 2);
+});
+
+test('#829 日次クリーンアップ: 1時間sweepの取り残しも期限切れだけ回収し、実行記録(HB)を残す。未来予約は消さない', function () {
+  var w = mailWorld(); var rt = w.runtime(); var sim = createSim(w, rt);
+  var op = issueViaCycles(w, rt, sim);
+  at(w, '2030-01-11T11:50:00+09:00');    // 利用中（期限前）
+  var r0 = rt.dailyCleanupCycle();
+  assert.strictEqual(r0.ok, true);
+  assert.strictEqual(w.callCount('deleteKey'), 0, '期限前は削除しない');
+  at(w, '2030-01-12T00:15:00+09:00');    // 翌日 00:15 JST 近辺
+  var r1 = rt.dailyCleanupCycle();
+  assert.strictEqual(r1.cleanup.attempted, 1);
+  assert.strictEqual(r1.cleanup.confirmed, 1);
+  assert.strictEqual(ops(w).filter(function (o) { return o.id === op.id; })[0].state, S.DELETED_CONFIRMED);
+  rt.dailyCleanupCycle();
+  assert.strictEqual(w.callCount('deleteKey'), 1, '二重実行でも二重削除しない');
+  assert.strictEqual(normalKeys(w).length, 2);
+  var st = rt.admin('status', {});
+  assert.ok(st.heartbeats.CLEANUP && st.heartbeats.CLEANUP.ok === true, '日次実行の証跡を管理者が確認できる');
+});
+
+test('#829 台帳が読めなくても、日次/時間sweepが送った削除の反映確認は5分周期で進み、読取期限内に確定する', function () {
+  var w = mailWorld(); var rt = w.runtime(); var sim = createSim(w, rt);
+  var op = issueViaCycles(w, rt, sim);
+  installDeleteLatency(w, 300);          // 反映に5分かかる（commandIdなし）
+  w.ledgerFail = 'LEDGER_READ_FAILED';   // 台帳照合が失敗し続ける状況
+  at(w, '2030-01-12T00:15:00+09:00');
+  rt.dailyCleanupCycle();                // 期限切れキーの削除を送信（直後はまだ keyList に残る）
+  assert.strictEqual(ops(w).filter(function (o) { return o.id === op.id; })[0].state, S.DELETE_SENT);
+  sim.run(1800);                         // 1時間sweepを待たず、同期ジョブ(5分)が台帳に依存せず照合する
+  var cur = ops(w).filter(function (o) { return o.id === op.id; })[0];
+  assert.strictEqual(cur.state, S.DELETED_CONFIRMED);
+  assert.strictEqual(w.callCount('deleteKey'), 1, '再送しない');
   assert.strictEqual(normalKeys(w).length, 2);
 });
 

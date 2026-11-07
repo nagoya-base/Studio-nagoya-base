@@ -237,8 +237,10 @@ function accessSyncJob() { return sba_runtime_().syncCycle(); }
 function accessDeliverJob() { return sba_runtime_().deliverCycle(); }
 function accessSweepJob() { return sba_runtime_().sweepCycle(); }
 function accessWatchdogJob() { return sba_runtime_().watchdog(); }
+// 期限切れ予約用キーの日次回収（00:15 JST 近辺。厳密な着火時刻には依存しない。Issue #829）
+function accessDailyCleanupJob() { return sba_runtime_().dailyCleanupCycle(); }
 
-var SBA_JOBS_ = ['accessSyncJob', 'accessDeliverJob', 'accessSweepJob', 'accessWatchdogJob'];
+var SBA_JOBS_ = ['accessSyncJob', 'accessDeliverJob', 'accessSweepJob', 'accessWatchdogJob', 'accessDailyCleanupJob'];
 
 function sba_requireAdmin_() {
   var who = SwitchBotAccessInfra.authorizeAdmin({ email: Session.getActiveUser().getEmail() }, sba_adminActors_());
@@ -255,6 +257,7 @@ function accessInstallTriggers() {
   ScriptApp.newTrigger('accessSyncJob').timeBased().everyMinutes(Math.max(1, Math.round(plan.syncIntervalSec / 60))).create();
   ScriptApp.newTrigger('accessSweepJob').timeBased().everyHours(1).create();
   ScriptApp.newTrigger('accessWatchdogJob').timeBased().everyMinutes(15).create();
+  ScriptApp.newTrigger('accessDailyCleanupJob').timeBased().atHour(0).nearMinute(15).everyDays(1).inTimezone('Asia/Tokyo').create();
   if (cfg.deliveryConfigured === true) ScriptApp.newTrigger('accessDeliverJob').timeBased().everyMinutes(5).create();
   Logger.log('triggers installed by ' + actor);
   return { ok: true };
@@ -291,7 +294,7 @@ function sba_logStatus_(r) {
     } else {
       out = { ok: true, environment: typeof r.environment === 'string' && /^[a-z0-9_-]{1,20}$/.test(r.environment) ? r.environment : null, enabled: r.enabled === true, unresolved: num(r.unresolved) };
       var hb = {};
-      ['SYNC', 'SWEEP', 'DELIVER'].forEach(function (j) {
+      ['SYNC', 'SWEEP', 'CLEANUP', 'DELIVER'].forEach(function (j) {
         var at = r.heartbeats && r.heartbeats[j] && num(r.heartbeats[j].at);
         hb[j] = at ? new Date(at * 1000).toISOString() : null;
       });
