@@ -52,6 +52,14 @@ manifestは既存プロジェクトから取得して維持する。ただしBoo
    `full` ではAdminとWeb Appの両方、`admin-only` ではAdminだけを確認します。
 5. 確認が通ったら、更新を始めます。通らなければ何も更新せずに止まります。
 
+### 結果の見方（SHAの確認は不要です）
+
+更新が終わると、実行画面（Step Summary）に次のように表示されます。**40桁のコードを自分で見比べる必要はありません**（システムが自動で照合します）。
+
+- `Booking Admin: 反映確認OK` / `Booking Web App: 反映確認OK` … 更新先が今回の内容になったことを確認できました。
+- `Booking Admin: 未確認（stage=… code=…）` … 更新は適用済みの可能性がありますが、最終確認ができていません。**再実行する前に**、更新先（Apps Scriptの「デプロイを管理」）の状態を確認してください。自動で再実行・巻き戻しはしません。
+- 普通の更新では `scope` は `full`、`schema_migrated` はチェックなしのままで実行できます。`schema_migrated` はSHAのための入力ではなく、予約シートの列を変える変更（`BookingsSchema.gs` の実変更）があるときだけ、「Apps Scriptで`migrateBookingsSchema`を実行して成功を確認した」ことを運営者が伝えるためのものです。自動でONにはなりません。
+
 ### エラーが出たとき
 
 止まった画面（Actionsの実行ログ）に `Booking preflight failed: role=… stage=… code=…` と表示されます。
@@ -263,3 +271,10 @@ Booking Webhook（`Update Booking Webhook GAS`）とSurvey（`Deploy Survey GAS 
   一覧の**ID欄が完全一致・一意**で、**同じ行のdescriptionが正確に`main <今回のSHA>`である**ことを確認します（前置き・追記・別記載のSHAを含む部分一致は成功にしません）（最大5回・5秒間隔。push・updateは再実行しません）。
   確認できない場合は `GAS post-update verification failed: role=… stage=VERIFY code=…` と表示され、
   「更新は適用済みの可能性があり、最終確認は未完了」です。再実行や巻き戻しを決める前に、更新先の状態を読取りで確認してください。
+
+## 技術者向け詳細: SHA照合（Issue #804 PR-D1a）
+
+- 今回のSHAは `GITHUB_SHA`（40桁小文字16進）から自動取得します。入力・Secret・Environment変数は追加していません。40桁でなければ、clasp呼出しの前に停止します。
+- 更新後の確認と post-check は、**ID欄の完全一致・一意**の行の説明文全体が正確に `main <今回の40桁SHA>` のときだけ「反映確認OK」です。部分一致、前置き・追記、旧SHAの混在、別行のSHAは成功にしません。読取りだけの再試行（最大5回・5秒間隔）と `UNKNOWN_STATE` 方針は従来どおりです。
+- schemaガードは、既存のPublic本番Deploymentの**一意な行の説明文が正確に `main <40桁SHA>`** のときだけ前回本番SHAとして採用し、Git履歴で `BookingsSchema.gs` の差分を判定します。説明文が不正・旧形式（SHAなし）・複数SHA・追記つきのときは、`schema_migrated=true` でも**安全側で停止**します（前回SHA不明を「変更なし」と仮定しません）。AdminのSHAやPublicの編集用HEADは公開版の代用にしません。
+- 説明文が旧形式の実環境で初回ベースラインを確定する方法は、別途 Issue #804 で運営判断中です（このPRでは自動で通しません）。

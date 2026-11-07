@@ -25,17 +25,49 @@ if [[ "$mode" != "deploy" && "$mode" != "verify" && "$mode" != "schema-guard" &&
   echo "Unsupported mode" >&2
   exit 1
 fi
+# 今回のSHAはGitHub Actions標準の GITHUB_SHA から自動取得する（運営者が入力・転記・比較しない）。40桁の小文字16進のみ。
+if [[ ! "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "GITHUB_SHA is not a 40-digit commit SHA; nothing was changed." >&2
+  exit 1
+fi
 
 # claspの一覧行（- ID @version - description）のID欄を完全一致で照合する。
 deployment_has_unique_id() {
   [[ "$(awk -v id="$deployment_id" '$1 == "-" && $2 == id { count++ } END { print count+0 }' "$list_stdout")" -eq 1 ]]
 }
 
-# IDが一意で、その行のdescriptionが今回SHAを示す場合だけ成功する。
+# 対象Deployment行を「- ID @version - description」に分解し、description全体を返す（ID欄の完全一致の行だけ）。
+# 末尾の空白とCRだけは無視する。前置き・追記・別記載を含む部分一致の判定には使わない。
+deployment_description() {
+  awk -v id="$deployment_id" '
+    $1 == "-" && $2 == id && $3 ~ /^@/ && $4 == "-" {
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]+[^[:space:]]+[[:space:]]+@[^[:space:]]+[[:space:]]+-[[:space:]]*/, "", line)
+      sub(/[[:space:]\r]+$/, "", line)
+      print line
+    }' "$list_stdout"
+}
+
+# IDが一意で、その同じ行のdescription全体が正確に `main <今回の40桁SHA>` の場合だけ成功する
+# （部分一致・別行のSHA・前置き／追記／旧SHA混在は不可）。
 deployment_has_current_sha() {
-  deployment_has_unique_id &&
-    awk -v id="$deployment_id" '$1 == "-" && $2 == id' "$list_stdout" |
-      grep -Eq -- "main ${GITHUB_SHA}([^0-9a-f]|$)"
+  deployment_has_unique_id && [[ "$(deployment_description)" == "main ${GITHUB_SHA}" ]]
+}
+
+# 運営向けの簡潔な結果表示（40桁SHAの手作業照合を求めない。SHA・ID・認証情報・clasp生出力は出さない）。
+verify_fail_code="UNKNOWN"
+report_result() { # <OK|UNCONFIRMED> <POST_UPDATE|POST_CHECK> [code]
+  local label="Booking Web App" line
+  [[ "$target" == "admin" ]] && label="Booking Admin"
+  if [[ "$1" == "OK" ]]; then
+    line="$label: 反映確認OK"
+    echo "$line"
+    [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "- ✅ $line" >> "$GITHUB_STEP_SUMMARY"
+  else
+    line="$label: 未確認（stage=$2 code=${3:-UNKNOWN}）。更新は適用済みの可能性があります。再実行の前にDeploymentの状態を読取りで確認してください"
+    echo "$line"
+    [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "- ❌ $line" >> "$GITHUB_STEP_SUMMARY"
+  fi
 }
 
 # 読取り専用の共通検証（deploy後とverifyで同一）。更新・pushは一切行わず、list-deploymentsだけを
@@ -52,10 +84,12 @@ verify_current_sha_with_retry() {
     if [[ "$attempt" -gt 1 || "$reuse_first_list" != "true" ]]; then
       echo "Running clasp list-deployments ($label, attempt $attempt/$verification_attempts)"
       if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_stdout" 2>"$list_stderr"; then
+        verify_fail_code="LIST_FAILED"
         node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" "$phase" >&2
         return 1
       fi
       if ! deployment_has_unique_id; then
+        verify_fail_code="DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE"
         echo "Existing deployment could not be verified $label: DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE (attempt $attempt/$verification_attempts)." >&2
         return 1
       fi
@@ -68,6 +102,7 @@ verify_current_sha_with_retry() {
       sleep "$verification_delay_seconds"
     fi
   done
+  verify_fail_code="SHA_MISMATCH"
   echo "Existing $target deployment does not show the current main commit $label: SHA_MISMATCH after $verification_attempts read attempts." >&2
   return 1
 }
@@ -157,10 +192,12 @@ if ! clasp --auth "$auth_file" --user "$clasp_user" list-deployments >"$list_std
     node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" preflight "$target" >&2
     exit 1
   fi
+  [[ "${mode:-}" != "verify" ]] || report_result UNCONFIRMED POST_CHECK LIST_FAILED
   node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" before >&2
   exit 1
 fi
 if ! deployment_has_unique_id; then
+  [[ "${mode:-}" != "verify" ]] || report_result UNCONFIRMED POST_CHECK DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE
   [[ "${mode:-}" == "preflight" ]] && preflight_fail DEPLOYMENT DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE
   echo "Configured deployment ID could not be uniquely verified in the selected existing GAS project." >&2
   exit 1
@@ -194,11 +231,14 @@ if [[ "$mode" == "schema-guard" ]]; then
     echo "Could not identify the previous Web App production commit; refusing to continue." >&2
     exit 1
   fi
-  if ! previous_shas="$(printf '%s\n' "$deployment_line" | grep -oE 'main [0-9a-f]{40}([^0-9a-f]|$)' | grep -oE '[0-9a-f]{40}')" ||
-     [[ "$(printf '%s\n' "$previous_shas" | wc -l)" -ne 1 ]]; then
+  # 前回本番SHAは、既存Public本番Deploymentの一意な行の説明文が正確に `main <40桁SHA>` の場合だけ採用する。
+  # 追記・前置き・複数SHA・旧形式（SHAなし）は安全側で停止する。Admin行や編集用HEADは公開版の代用にしない。
+  previous_description="$(deployment_description)"
+  if [[ ! "$previous_description" =~ ^main\ ([0-9a-f]{40})$ ]]; then
     echo "Could not identify the previous Web App production commit; refusing to continue." >&2
     exit 1
   fi
+  previous_shas="${BASH_REMATCH[1]}"
   if ! git -C "$GITHUB_WORKSPACE" cat-file -e "${previous_shas}^{commit}" 2>/dev/null; then
     echo "The previous Web App production commit is not in the checked-out history (fetch-depth: 0 required); refusing to continue." >&2
     exit 1
@@ -206,6 +246,7 @@ if [[ "$mode" == "schema-guard" ]]; then
   # 前回SHAにファイルが無い（追加された）場合も差分ありとして出る。diffそのものの失敗は fail closed。
   if git -C "$GITHUB_WORKSPACE" diff --quiet "$previous_shas" "$GITHUB_SHA" -- "$schema_path"; then
     echo "Bookings schema is unchanged since the previous Web App production commit."
+    [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "- ✅ Bookings schema: 変更なし（移行確認は不要）" >> "$GITHUB_STEP_SUMMARY"
     exit 0
   else
     diff_status=$?
@@ -219,14 +260,17 @@ if [[ "$mode" == "schema-guard" ]]; then
     exit 1
   fi
   echo "Bookings schema changed; schema_migrated=true confirmed."
+  [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "- ✅ Bookings schema: 変更あり（schema_migrated=true の確認済み）" >> "$GITHUB_STEP_SUMMARY"
   exit 0
 fi
 
 if [[ "$mode" == "verify" ]]; then
   # 読取り専用。先頭で取得済みの一覧を1回目として使い、SHA不一致の間だけ読み直す。
   if ! verify_current_sha_with_retry verify true; then
+    report_result UNCONFIRMED POST_CHECK "$verify_fail_code"
     exit 1
   fi
+  report_result OK POST_CHECK
   echo "Verified existing $target deployment is at the current main commit"
   exit 0
 fi
@@ -288,6 +332,8 @@ fi
 touch "$RUNNER_TEMP/booking-gas-$target-update-applied"
 # 更新を再実行せず、descriptionの反映だけを共通の読取り検証で確認する。
 if ! verify_current_sha_with_retry after false; then
+  report_result UNCONFIRMED POST_UPDATE "$verify_fail_code"
   exit 1
 fi
+report_result OK POST_UPDATE
 echo "Updated existing $target deployment to the current main commit"
