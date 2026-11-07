@@ -1612,8 +1612,10 @@ var BookingRepository = (function () {
          * 通常の余裕を持って受け付けた）予約はminHoldHours=0のまま#268時点と完全に同じ
          * TTL計算になる（既存の翌日以降予約のTTLへの影響なし）。
          */
-        var createdDateString = Booking.formatDateInTimezone(new Date(createdAtMillis), ttlConfig.timezone);
-        var isSameDayBooking = !!createdDateString && record.date === createdDateString;
+        /* Issue #825: Sheetsのモバイル/日付書式セルはgetValues()でrecord.dateをDate値で返すことがあり
+           (#349と同じ既知の注意点)、文字列との`===`比較だと当日予約でも常にfalse→graceが外れて
+           数分で失効した。Date/文字列どちらも正規化して比較するisSameDayBookingRecordを使う。 */
+        var isSameDayBooking = Booking.isSameDayBookingRecord(record, ttlConfig.timezone);
         var minHoldHours = isSameDayBooking ? ttlConfig.minHoldHours : 0;
 
         if (!largePartyPaymentOverdue &&

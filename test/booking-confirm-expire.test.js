@@ -414,6 +414,27 @@ test('expirePendingBookings: 当日受付・利用開始まで2時間未満の�
   assert.strictEqual(found.record.status, 'EXPIRED');
 });
 
+test('expirePendingBookings: シートがdate列をDate値で返しても（Sheetsの既知挙動）当日猶予が効き、当日16:30開始を16:00受付した現金予約が数分で失効しない（Issue #825）', function () {
+  var ctx = setup();
+  var receivedAt = new Date('2026-11-07T16:00:51+09:00');
+  var created = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ customerType: 'returning', date: '2026-11-07', startTime: '16:30', durationMinutes: 60 }),
+    receivedAt
+  );
+  assert.strictEqual(created.success, true);
+
+  /* Sheets getValues()はdate列を「JSTの利用日0:00のDate」で返すことがある状況を再現する。 */
+  ctx.sandbox.SpreadsheetRepository.updateBookingFields(created.bookingId, { date: new Date('2026-11-07T00:00:00+09:00') });
+
+  var at1604 = new Date('2026-11-07T16:04:23+09:00');
+  assert.strictEqual(ctx.sandbox.expirePendingBookings(at1604).expiredCount, 0, '受付3分後に失効してはいけない');
+  assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(created.bookingId).record.status, 'PENDING');
+
+  /* 利用開始(16:30)を過ぎれば従来どおり失効する（graceは利用開始が上限）。 */
+  var after = new Date('2026-11-07T16:31:00+09:00');
+  assert.strictEqual(ctx.sandbox.expirePendingBookings(after).expiredCount, 1);
+});
+
 test('expirePendingBookings: 受付日と利用日(date)が一致しない予約（＝当日受付ではない）はPENDING_TTL_MIN_HOLD_HOURSの対象外のまま、#268時点と同じ計算式でTTLが決まる（既存の翌日以降TTLへの影響なし）', function () {
   var ctx = setup();
   /* 営業時間（08:00〜23:00）の制約上、実際の「翌日以降」予約は受付から開始まで
