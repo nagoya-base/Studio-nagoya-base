@@ -971,6 +971,53 @@ test('renderReminderPreviewResult_: revealed:trueの場合はマスク注意書�
   assert.strictEqual(html.indexOf('マスクしています'), -1);
 });
 
+function previewResult832_(extra) {
+  return Object.assign({
+    success: true, subject: 's', body: 'b', recipientEmail: 'taro@example.com',
+    testRecipientEmail: 'admin@example.com', revealed: false
+  }, extra || {});
+}
+
+test('renderReminderPreviewResult_(#832): 新方式は方式・設定を表示し、マスク注意書きは解錠コードに言及しない', function () {
+  var sandbox = loadClientSandbox();
+  ['OFF', 'PILOT', 'ALL'].forEach(function (mode) {
+    var html = sandbox.renderReminderPreviewResult_(previewResult832_({ mailMethod: 'PER_BOOKING_CODE', codeMode: mode, codeModeWarning: null }));
+    assert.match(html, /新方式/);
+    assert.match(html, new RegExp('設定: ' + mode));
+    assert.match(html, /キーボックス番号はマスクしています/);
+    assert.strictEqual(html.indexOf('解錠コード・キーボックス番号はマスクしています'), -1);
+    assert.strictEqual(html.indexOf('警告'), -1);
+  });
+  var revealed = sandbox.renderReminderPreviewResult_(previewResult832_({ mailMethod: 'PER_BOOKING_CODE', codeMode: 'ALL', revealed: true }));
+  assert.match(revealed, /新方式/);
+  assert.strictEqual(revealed.indexOf('マスクしています'), -1);
+});
+
+test('renderReminderPreviewResult_(#832): 旧方式は従来の注意書き、方式未指定も旧方式', function () {
+  var sandbox = loadClientSandbox();
+  var legacy = sandbox.renderReminderPreviewResult_(previewResult832_({ mailMethod: 'LEGACY', codeMode: 'PILOT' }));
+  assert.match(legacy, /旧方式/);
+  assert.match(legacy, /設定: PILOT/);
+  assert.match(legacy, /解錠コード・キーボックス番号はマスクしています/);
+  var none = sandbox.renderReminderPreviewResult_(previewResult832_());
+  assert.match(none, /旧方式/);
+  assert.doesNotMatch(none, /設定:/);
+});
+
+test('renderReminderPreviewResult_(#832): 設定不正の警告は固定文言のみで、未知の値・HTMLを出さない', function () {
+  var sandbox = loadClientSandbox();
+  ['INVALID_MODE', 'EMPTY_PILOT_IDS', 'INVALID_PILOT_IDS'].forEach(function (code) {
+    var html = sandbox.renderReminderPreviewResult_(previewResult832_({ mailMethod: 'LEGACY', codeMode: 'OFF', codeModeWarning: code }));
+    assert.match(html, /設定警告/);
+    assert.match(html, /旧方式/);
+    assert.strictEqual(html.indexOf(code), -1, '警告コード名そのものは出さない');
+  });
+  var evil = sandbox.renderReminderPreviewResult_(previewResult832_({ mailMethod: '<script>', codeMode: 'SECRET-123', codeModeWarning: 'B-1;SECRET' }));
+  assert.strictEqual(evil.indexOf('<script>'), -1);
+  assert.strictEqual(evil.indexOf('SECRET'), -1);
+  assert.strictEqual(evil.indexOf('設定警告'), -1);
+});
+
 test('renderReminderSendResult_: 成功時は送信先を表示する', function () {
   var sandbox = loadClientSandbox();
   var html = sandbox.renderReminderSendResult_({ success: true, sentTo: 'admin@example.com' });

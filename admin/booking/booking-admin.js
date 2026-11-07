@@ -3077,6 +3077,30 @@ function renderReminderDiagnosisResult_(result) {
  * （eligible/reasonCode）は別物のため、対象外の予約でもプレビュー自体は表示しつつ、
  * 見出しで両者をはっきり区別する（Issue #330 PRレビュー対応）。
  */
+/* Issue #832: 送信方式の表示ラベル。未知の値・秘密・予約ID・設定値は表示せず、固定文言のみ。 */
+var REMINDER_MAIL_METHOD_LABELS_ = {
+  PER_BOOKING_CODE: '新方式（予約別パスコードを別メールで案内。旧固定の解錠コード行なし）',
+  LEGACY: '旧方式（従来どおり解錠コード行あり）'
+};
+var REMINDER_CODE_MODE_LABELS_ = { OFF: 'OFF', PILOT: 'PILOT', ALL: 'ALL' };
+var REMINDER_CODE_WARNING_LABELS_ = {
+  INVALID_MODE: '設定警告: ACCESS_PER_BOOKING_CODE_MODEが不正なためOFF（旧方式）として扱っています。',
+  EMPTY_PILOT_IDS: '設定警告: PILOT指定ですが対象予約の一覧が空のためOFF（旧方式）として扱っています。',
+  INVALID_PILOT_IDS: '設定警告: PILOTの対象予約の一覧に不正な書式があるためOFF（旧方式）として扱っています。'
+};
+
+function renderReminderMailMethodLines_(result) {
+  var method = result.mailMethod === 'PER_BOOKING_CODE' ? 'PER_BOOKING_CODE' : 'LEGACY';
+  var modeLabel = Object.prototype.hasOwnProperty.call(REMINDER_CODE_MODE_LABELS_, result.codeMode)
+    ? REMINDER_CODE_MODE_LABELS_[result.codeMode] : '';
+  var html = '<dt>送信方式</dt><dd>' + escapeHtml(REMINDER_MAIL_METHOD_LABELS_[method]) +
+    (modeLabel ? '（設定: ' + escapeHtml(modeLabel) + '）' : '') + '</dd>';
+  if (result.codeModeWarning && Object.prototype.hasOwnProperty.call(REMINDER_CODE_WARNING_LABELS_, result.codeModeWarning)) {
+    html += '<dt>警告</dt><dd class="reminder-diag-error">' + escapeHtml(REMINDER_CODE_WARNING_LABELS_[result.codeModeWarning]) + '</dd>';
+  }
+  return html;
+}
+
 function renderReminderPreviewResult_(result) {
   if (!result || !result.success) {
     return '<p class="reminder-diag-error">プレビューできませんでした: ' + escapeHtml((result && result.error && result.error.message) || '') + '</p>';
@@ -3088,12 +3112,15 @@ function renderReminderPreviewResult_(result) {
     '<p class="reminder-diag-success">プレビューを生成しました（対象日: ' + escapeHtml(result.targetDate || '') + '）</p>' +
     '<dl class="reminder-diag-dl">' +
     eligibilityLine +
+    renderReminderMailMethodLines_(result) +
     '<dt>予約者宛</dt><dd>' + escapeHtml(result.recipientEmail || '（未登録）') + '</dd>' +
     '<dt>テスト送信先</dt><dd>' + escapeHtml(result.testRecipientEmail || '（未設定）') + '</dd>' +
     '<dt>件名</dt><dd>' + escapeHtml(result.subject || '') + '</dd>' +
     '</dl>' +
     '<pre class="reminder-diag-body">' + escapeHtml(result.body || '') + '</pre>' +
-    (result.revealed ? '' : '<p class="reminder-diag-note">解錠コード・キーボックス番号はマスクしています。「解錠コードを表示する」を選んでから再度プレビューしてください。</p>')
+    (result.revealed ? '' : (result.mailMethod === 'PER_BOOKING_CODE'
+      ? '<p class="reminder-diag-note">キーボックス番号はマスクしています。この予約は新方式のため、旧固定の解錠コードは本文にありません。「解錠コードを表示する」を選んでから再度プレビューすると、キーボックス番号を確認できます。</p>'
+      : '<p class="reminder-diag-note">解錠コード・キーボックス番号はマスクしています。「解錠コードを表示する」を選んでから再度プレビューしてください。</p>'))
   );
 }
 
