@@ -1496,7 +1496,7 @@ var SwitchBotAccessInfra = (function () {
     A4_UNLOCKED:     { step: 'A4',  res: 'UNLOCKED',     from: 'A3_RECORDED',      critical: 'A4_UNLOCKED_AFTER_END' },
     KEYPAD_LOCK_SIGN: { any: true, critical: 'KEYPAD_LOCK_OR_ALARM_SIGN' }
   };
-  var BND_OBS_STATES = ['ISSUED_VERIFIED', 'A1_RECORDED', 'A2_RETRY_PENDING', 'A2_RECORDED', 'A3_RECORDED'];
+  var BND_OBS_STATES = ['ISSUED_VERIFIED', 'A1_RECORDED', 'A2_RETRY_PENDING', 'A2_RECORDED', 'A3_RECORDED', 'A4_RECORDED', 'FINAL_LISTED_APP_PENDING']; // 末尾2つは回収前の遅れた重大申告（KEYPAD_LOCK_SIGN）だけ受け付ける
 
   /**
    * 境界試験の合否（回収完了とは独立）。全必須観測が A1=DENIED・A2=UNLOCKED（許可再試行での解錠を含む）・A3=UNLOCKED・A4=DENIED で、
@@ -1506,7 +1506,7 @@ var SwitchBotAccessInfra = (function () {
    */
   function bndVerdict(s) {
     var o = (s && s.obs) || {};
-    if (!s || s.state === 'STOPPED' || s.state === 'STOPPED_RECOVERED') return 'BOUNDARY_NOT_ESTABLISHED';
+    if (!s || s.state === 'STOPPED' || s.state === 'STOPPED_RECOVERED' || o.LOCK === 'SIGN') return 'BOUNDARY_NOT_ESTABLISHED';
     var vals = ['A1', 'A2', 'A3', 'A4'].map(function (k) { return o[k]; });
     if (vals.some(function (v) { return v === undefined; })) return 'BOUNDARY_NOT_ESTABLISHED';
     if (vals.indexOf('INCONCLUSIVE') !== -1) return 'BOUNDARY_INCONCLUSIVE';

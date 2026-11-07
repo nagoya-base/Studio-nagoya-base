@@ -675,3 +675,17 @@ test('回収記録の永続失敗: 状態を書けなければ承認を消費せ
   var r = app(w, 'APP_ABSENT'); assert.strictEqual(r.ok, false); assert.strictEqual(r.code, 'STATE_WRITE_FAILED'); assert.strictEqual(st(w).state, 'STOPPED');
   assert.strictEqual(w.script.ACCESS_BND_TEST_APPROVAL, 'APP_ABSENT');
 });
+
+test('遅れた重大申告: A4 記録後・FINAL_LIST 後（回収前）でもロック・警報の兆候を記録でき、STOPPED になり合否は PASS にならない。他の申告は順序違反のまま', function () {
+  [false, true].forEach(function (afterFinal) {
+    var w = makeWorld(); toVerified(w); var s = startOf(w), e = endOf(w);
+    w.now = s - 180; obs(w, 'A1_DENIED'); w.now = s + 180; obs(w, 'A2_UNLOCKED'); w.now = e - 180; obs(w, 'A3_UNLOCKED'); w.now = e + 180; obs(w, 'A4_DENIED');
+    if (afterFinal) { w.now = e + 300; assert.strictEqual(stg(w, 'FINAL_LIST').verdict, 'BOUNDARY_PASS', '兆候の前は暫定PASS'); }
+    assert.strictEqual(obs(w, 'A1_DENIED').code, 'STAGE_ORDER_VIOLATION', '通常の申告は順序違反');
+    var r = obs(w, 'KEYPAD_LOCK_SIGN');
+    assert.strictEqual(r.ok, false); assert.strictEqual(r.code, 'KEYPAD_LOCK_OR_ALARM_SIGN'); assert.strictEqual(st(w).state, 'STOPPED'); assert.strictEqual(st(w).obs.LOCK, 'SIGN');
+    w.keys = w.keys.filter(function (k) { return k.name === 'normal-key-1'; });
+    var a = app(w, 'APP_ABSENT');
+    assert.strictEqual(a.recovery, 'RECOVERED'); assert.strictEqual(a.verdict, 'BOUNDARY_NOT_ESTABLISHED'); assert.strictEqual(a.decisionUse, 'NOT_USABLE_FOR_01FD_JUDGEMENT');
+  });
+});

@@ -75,7 +75,7 @@ ISSUE 以外の段階で残留を検出 ──▶ 削除して停止(PASSCODE_RE
 | `A3_DENIED` | 期間末尾で拒否 | **STOPPED**（失効が早い疑い） |
 | `A4_DENIED` / `A4_INCONCLUSIVE` / `A4_SKIPPED` | 期限後（E+180秒目安）に1回試行 | 記録して次へ |
 | `A4_UNLOCKED` | 期限後も解錠できた | **重大・即 STOPPED** |
-| `KEYPAD_LOCK_SIGN` | ロック・警報・異音等の兆候 | 即 STOPPED |
+| `KEYPAD_LOCK_SIGN` | ロック・警報・異音等の兆候。**A4記録後・FINAL_LIST後（回収前）でも記録できる** | 即 STOPPED。合否は `BOUNDARY_NOT_ESTABLISHED`（暫定のPASSも無効） |
 
 - **永続の順序**：観測の申告は「状態の永続 → 承認の消費」の順。状態を書けなければ承認を消費せず状態も進めない（再申告できる）。重大な申告（解錠異常・ロック兆候・A2拒否）を永続できなければ `CRITICAL_NOT_PERSISTED`＋`manualRecovery`（`STOPPED` と偽って報告しない）。公式アプリで試験キーを手動回収し、状態を修復してから再申告する。
 - **A2を機械的に2回試行しない。** 最初の拒否の時点で、通信外で安全な原因確認（キーパッドの表示・電池・距離・基準時計との差・誤入力でないこと）を行う。2回目の可否はGO欄で明記し、許可（`ALLOWED_ONCE`）がなければ試行しない。
