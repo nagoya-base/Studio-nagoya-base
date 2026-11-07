@@ -53,6 +53,15 @@ jobs:
           node-version: '22'
       - name: Install pinned clasp
         run: npm install --global @google/clasp@3.4.1
+      # 承認後・書込み前に、Webhook用の認証・独立GAS・既存Deployment・配布物を読取りだけで確認する（Issue #804）。
+      - name: Preflight (Booking Webhook credentials and deployment, read-only)
+        env:
+          CLASPRC_JSON_VALUE: ${{ secrets.BOOKING_WEBHOOK_CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.BOOKING_WEBHOOK_SCRIPT_ID }}
+          DEPLOYMENT_ID: ${{ secrets.BOOKING_WEBHOOK_DEPLOYMENT_ID }}
+          PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
+          ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
+        run: bash scripts/preflight-gas-project.sh booking-webhook
       - name: Update the existing deployment
         shell: bash
         run: |

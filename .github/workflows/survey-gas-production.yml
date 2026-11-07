@@ -53,6 +53,25 @@ jobs:
           node-version: '22'
       - name: Install pinned clasp
         run: npm install --global @google/clasp@3.4.1
+      # 承認後・書込み前に、選択した対象(public|admin)だけの認証・既存Deployment・配布物を読取りだけで確認する（Issue #804）。
+      # 他方の対象のSecretは要求しない。
+      - name: Preflight (selected survey project, read-only)
+        env:
+          SURVEY_TARGET: ${{ inputs.target }}
+          CLASPRC_JSON_VALUE: ${{ secrets.CLASPRC_JSON }}
+          PUBLIC_SCRIPT_ID_SECRET: ${{ secrets.SURVEY_PUBLIC_SCRIPT_ID }}
+          PUBLIC_DEPLOYMENT_ID_SECRET: ${{ secrets.SURVEY_PUBLIC_DEPLOYMENT_ID }}
+          ADMIN_SCRIPT_ID_SECRET: ${{ secrets.SURVEY_ADMIN_SCRIPT_ID }}
+          ADMIN_DEPLOYMENT_ID_SECRET: ${{ secrets.SURVEY_ADMIN_DEPLOYMENT_ID }}
+        run: |
+          set -euo pipefail
+          case "$SURVEY_TARGET" in
+            public) role=survey-public; SCRIPT_ID="$PUBLIC_SCRIPT_ID_SECRET"; DEPLOYMENT_ID="$PUBLIC_DEPLOYMENT_ID_SECRET" ;;
+            admin) role=survey-admin; SCRIPT_ID="$ADMIN_SCRIPT_ID_SECRET"; DEPLOYMENT_ID="$ADMIN_DEPLOYMENT_ID_SECRET" ;;
+            *) echo "Unsupported target" >&2; exit 1 ;;
+          esac
+          export SCRIPT_ID DEPLOYMENT_ID
+          bash scripts/preflight-gas-project.sh "$role"
       - name: Update the existing deployment
         shell: bash
         run: |

@@ -29,6 +29,7 @@ on:
       - 'test/**'
       - 'cloud-run/**'
       - 'scripts/confirm-booking-production-account.js'
+      - 'scripts/preflight-gas-project.sh'
       - '.github/workflows/**'
 
 permissions:
