@@ -146,9 +146,27 @@ var BookingMailer = (function () {
     url: 'ACCESS_GUIDE_URL'
   };
 
-  function ensureAccessGuideComplete_(guide) {
+  /*
+   * Issue #832: perBookingCode===true（新方式対象予約）のときだけ旧固定unlockCodeを必須から外す。
+   * オートロック用keyboxNumberと住所・建物・部屋・入口・案内URL等は新旧とも必須のまま。
+   */
+  /*
+   * Issue #832: 前日リマインドの方式判定（本番送信・必須情報チェック・診断プレビュー/テスト送信が
+   * 共通で使う唯一の入口）。警告時はOFF（旧方式）へフォールバックし、警告コードだけをログに残す
+   * （予約ID・設定実値は出さない）。
+   */
+  function resolveReminderCodeDelivery(record) {
+    var delivery = BookingConfig.resolveAccessCodeDelivery(record);
+    if (delivery.warning && typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('ACCESS_PER_BOOKING_CODE警告: ' + delivery.warning + '（OFFとして扱います）');
+    }
+    return delivery;
+  }
+
+  function ensureAccessGuideComplete_(guide, perBookingCode) {
     var missing = [];
     Object.keys(REQUIRED_ACCESS_GUIDE_FIELDS_).forEach(function (key) {
+      if (perBookingCode === true && key === 'unlockCode') return;
       if (!guide[key]) missing.push(REQUIRED_ACCESS_GUIDE_FIELDS_[key]);
     });
     if (missing.length) {
@@ -301,8 +319,9 @@ var BookingMailer = (function () {
     }
 
     var guide = BookingConfig.getAccessGuideConfig();
+    var codeDelivery = resolveReminderCodeDelivery(record);
     try {
-      ensureAccessGuideComplete_(guide);
+      ensureAccessGuideComplete_(guide, codeDelivery.perBookingCode);
     } catch (guideError) {
       return {
         eligible: false,
@@ -750,10 +769,12 @@ var BookingMailer = (function () {
       function (record) {
         var config = ensureMailConfigComplete_();
         var guide = BookingConfig.getAccessGuideConfig();
-        ensureAccessGuideComplete_(guide);
+        var codeDelivery = resolveReminderCodeDelivery(record);
+        ensureAccessGuideComplete_(guide, codeDelivery.perBookingCode);
         return BookingMailTemplates.buildReminderMail(record, config, guide, {
           now: isDateLike_(opts.now) ? opts.now : null,
-          separateCodeNotice: BookingConfig.isAccessKeyNoticeEnabled()
+          separateCodeNotice: BookingConfig.isAccessKeyNoticeEnabled(),
+          perBookingCode: codeDelivery.perBookingCode
         });
       },
       function () {
@@ -1637,6 +1658,7 @@ var BookingMailer = (function () {
     sendCancelledMailForBooking: sendCancelledMailForBooking,
     sendExpiredMailForBooking: sendExpiredMailForBooking,
     sendReminderMailForBooking: sendReminderMailForBooking,
+    resolveReminderCodeDelivery: resolveReminderCodeDelivery,
     sendImmediateAccessGuideForBooking: sendImmediateAccessGuideForBooking,
     sendPaymentLinkMailForBooking: sendPaymentLinkMailForBooking,
     resolvePaymentLinkMetadataInconsistency: resolvePaymentLinkMetadataInconsistency,

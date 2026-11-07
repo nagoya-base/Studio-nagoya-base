@@ -78,6 +78,7 @@ SwitchBot鍵連携の接続層。**鍵API・独立GAS・配送・本番migration
 - `SpreadsheetRepository` の書込み出口が、確定(CONFIRMED)に関わる鍵関係項目（status・日時・支払根拠・精算/要復旧フラグ等）が**実際に変わる書込みの後**に `revision` を+1する。人数・メール送信済み・同値再書込みでは増えない。列未migration・不正値・書込み失敗でも予約処理は失敗せず、固定コード `ACCESS_KEY_REVISION_BUMP_FAILED: <code>` をログに残すのみ。
 - `AccessKeySnapshot.gs`（Admin・Web App配布、純粋ロジック）: JST日付/時刻への正規化、支払根拠、blockers、`issueWindow`（前日12:00）、`toCoreInput`、`triggers`。
 - 前日リマインドの一行は Script Property `ACCESS_KEY_NOTICE_ENABLED='true'`（SNBのみ）で有効。既定OFFで本文は不変。
+- Issue #832: 予約別パスコード別送の新方式は `ACCESS_PER_BOOKING_CODE_MODE`（OFF/PILOT/ALL）と `ACCESS_PER_BOOKING_CODE_PILOT_IDS` で対象予約だけ切り替える（既定OFF）。新方式では旧「解錠コード」行を出さず、`ACCESS_KEY_NOTICE_ENABLED`とは独立。手順・安全不変条件は `docs/booking-per-booking-code-832.md`。
 
 ## Issue #680: Bookings台帳・子シート・会員系シート・Stripe受信台帳の個人情報を180日経過後に自動消去（PR-1〜PR-4。初期無効）
 
