@@ -650,12 +650,27 @@ case "$1" in list-deployments) echo "- admin-deployment-dummy @1 - main x" ;; *)
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('PR CI covers workflow-only changes to GAS-related workflows (Issue #804)', () => {
+test('PR CI watches every workflow file via .github/workflows/** and has no stale push trigger (Issue #804 PR-B)', () => {
   const ci = fs.readFileSync(path.join(workflowDir, 'booking-pr-tests.yml'), 'utf8');
-  for (const p of ['booking-gas-production.yml', 'booking-gas-webhook-production.yml', 'survey-gas-production.yml',
-    'confirm-booking-production-account.yml', 'switchbot-verify-*.yml', 'switchbot-access-gas-deploy.yml', 'switchbot-access-test-gas-deploy.yml']) {
-    assert.ok(ci.includes(`.github/workflows/${p}`), p);
+  const on = ci.slice(ci.indexOf('\non:\n'), ci.indexOf('\npermissions:'));
+  assert.match(on, /\n  pull_request:\n    paths:\n/);
+  assert.doesNotMatch(on, /push:|branches:|7ck27i/, 'the stale single-purpose branch trigger is removed');
+  assert.doesNotMatch(on, /\n  (schedule|workflow_dispatch|pull_request_target):/);
+  const paths = [...on.matchAll(/^      - '([^']+)'$/gm)].map((m) => m[1]);
+  assert.ok(paths.includes('.github/workflows/**'));
+  // consolidated: no individual workflow entries remain next to the glob (they would be redundant)
+  assert.deepEqual(paths.filter((p) => p.startsWith('.github/workflows/') && p !== '.github/workflows/**'), []);
+  // non-workflow triggers that protected GAS deploy paths stay covered
+  for (const p of ['scripts/deploy-booking-gas-target.sh', 'scripts/confirm-booking-production-account.js', 'scripts/deploy-switchbot-access-gas.sh',
+    'scripts/deploy-switchbot-access-test-gas.sh', 'scripts/deploy-switchbot-verify-gas.sh', 'gas/survey/**', 'test/**']) {
+    assert.ok(paths.includes(p), p);
   }
+});
+
+test('PR CI stays secret-free: no Environment, no secrets, read-only permissions', () => {
+  const ci = fs.readFileSync(path.join(workflowDir, 'booking-pr-tests.yml'), 'utf8');
+  assert.doesNotMatch(ci, /secrets\.|environment:|id-token|contents: write/);
+  assert.match(ci, /permissions:\n  contents: read\n/);
 });
 
 test('preflight LIST failures print one fixed line with a non-empty code, no secrets, and no writes (Issue #804 review)', () => {
