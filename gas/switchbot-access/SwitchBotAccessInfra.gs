@@ -1288,6 +1288,14 @@ var SwitchBotAccessInfra = (function () {
             summary.skipped++;
             continue;
           }
+          // 発行対象外ブランド（#824）: 設定 eligibleBrands に無いブランドの予約が、追跡記録も未解決OPも無いまま候補に入った場合は、
+          // 凍結通知・追跡記録のどちらも行わず黙って見送る。ここで「処理済み(revision/発行窓)」を書くと、後で eligibleBrands を
+          // 拡大しても再評価されず発行されないため。追跡済み・OPありの予約（SNB→他ブランド変更の旧キー回収など）は通常の経路へ進む。
+          var brandExcluded = sn.brand !== '' && !(Array.isArray(cfg.eligibleBrands) && cfg.eligibleBrands.indexOf(sn.brand) !== -1);
+          if (brandExcluded && !tr && !openByBooking[sn.bookingId]) {
+            summary.skipped++;
+            continue;
+          }
           if (input.action === 'FREEZE') {
             var reasons = input.reasons.length ? input.reasons : ['IDENTITY_INVALID'];
             reasons.forEach(function (r) { if (FREEZE_REASONS.indexOf(r) !== -1) infraAlert('BOOKING_FROZEN', safeRef(sn.bookingId), sn.revision, r); });

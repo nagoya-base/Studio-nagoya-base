@@ -486,3 +486,15 @@ test('#824: 対象外・端末未対応は安全停止（eligibleBrandsがSNBの
   cycle(unknown.w, unknown.rt, 3);
   assert.strictEqual(unknown.w.callCount('createKey'), 0, '未知ブランドは発行しない');
 });
+
+test('#824: eligibleBrands拡大前に候補へ入った Mens は「処理済み」にならず、拡大後の再起動で追加改訂なしに発行される', function () {
+  var x = threeBrandWorld({ eligibleBrands: ['snb'] }, { brand: 'mens' });
+  cycle(x.w, x.rt, 3);
+  assert.strictEqual(x.w.callCount('createKey'), 0, '拡大前は発行しない');
+  assert.strictEqual(ops(x.w).length, 0, '状態(OP)を作らない');
+  assert.deepStrictEqual(x.w.store.keys().filter(function (k) { return k.indexOf('TRK') === 0; }), [], '追跡(処理済み)を書かない');
+  x.w.cfg.eligibleBrands = THREE; /* 運営者が非公開で設定を拡大 */
+  var rt2 = x.w.runtime();
+  cycle(x.w, rt2, 3);
+  assert.strictEqual(x.w.callCount('createKey'), 1, '拡大後に同じ予約(同revision)を発行');
+});
