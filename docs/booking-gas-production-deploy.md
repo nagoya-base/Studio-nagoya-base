@@ -263,3 +263,16 @@ Booking Webhook（`Update Booking Webhook GAS`）とSurvey（`Deploy Survey GAS 
   一覧の**ID欄が完全一致・一意**で、**同じ行のdescriptionが正確に`main <今回のSHA>`である**ことを確認します（前置き・追記・別記載のSHAを含む部分一致は成功にしません）（最大5回・5秒間隔。push・updateは再実行しません）。
   確認できない場合は `GAS post-update verification failed: role=… stage=VERIFY code=…` と表示され、
   「更新は適用済みの可能性があり、最終確認は未完了」です。再実行や巻き戻しを決める前に、更新先の状態を読取りで確認してください。
+
+## Webhook / Survey のSecrets受け渡し最小化（Issue #804 PR-D2）
+
+運営者の操作は変わりません（Environment承認・入力・Secrets名・再実行方法はそのままです）。変わったのは、Secretsを**渡す範囲**だけです。
+
+- 以前: `deploy` job全体の環境変数にSecretsが載り、リポジトリ取得・Node準備・claspの導入stepにも渡っていました。
+- 現在: Secretsは「更新前の確認（preflight）」と「更新」の2 stepだけに渡します。それ以外のstepには渡しません。
+- Survey: 選んだ `public` または `admin` の更新先IDだけを渡します。選ばれなかった側は空になり、Secret値は環境変数に載りません。
+  選んだ側が未登録の場合も、もう一方へ代用せず `SECRET_MISSING` で更新前に停止します。
+- 技術メモ: 選択は `${{ inputs.target == 'public' && secrets.… || '' }}` の形です。`inputs.target` はshell本文へ直接展開せず、環境変数 `SURVEY_TARGET` 経由で参照します。
+  `test/gas-workflow-secrets-scope.test.js` が「job全体のenvにSecretsが無い」「Secretsを使うstepはpreflightと更新の2つだけ」「Surveyの選択式が対象と一致」「clasp偽物で選択側のIDだけが使われる」を確認します。
+- 対象外: Secretsの値・保管先・Environment・承認回数・更新手順・更新後の確認は変更していません。Booking本番・Access・旧verifyなどは、すでにstep単位の受け渡しです。
+- 実Googleでの動作は未検証です（CI・模擬試験は本番成功の証明ではありません）。

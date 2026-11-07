@@ -38,12 +38,9 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     environment: survey-production
-    env:
-      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
-      PUBLIC_SCRIPT_ID: ${{ secrets.SURVEY_PUBLIC_SCRIPT_ID }}
-      PUBLIC_DEPLOYMENT_ID: ${{ secrets.SURVEY_PUBLIC_DEPLOYMENT_ID }}
-      ADMIN_SCRIPT_ID: ${{ secrets.SURVEY_ADMIN_SCRIPT_ID }}
-      ADMIN_DEPLOYMENT_ID: ${{ secrets.SURVEY_ADMIN_DEPLOYMENT_ID }}
+    # Secretsはjob全体へ渡さない（checkout / setup-node / clasp導入に不要）。必要なstepだけに、
+    # 選択した対象(public|admin)の分だけ渡す。選ばれなかった側は `cond && secret || ''` により空文字になり、
+    # Secret値を環境変数へ載せない（選択側が未登録なら空のまま = SECRET_MISSINGで停止し、他方へfallbackしない）（Issue #804 PR-D2）。
     steps:
       - name: Check out the approved main commit
         uses: actions/checkout@v4
@@ -59,10 +56,10 @@ jobs:
         env:
           SURVEY_TARGET: ${{ inputs.target }}
           CLASPRC_JSON_VALUE: ${{ secrets.CLASPRC_JSON }}
-          PUBLIC_SCRIPT_ID_SECRET: ${{ secrets.SURVEY_PUBLIC_SCRIPT_ID }}
-          PUBLIC_DEPLOYMENT_ID_SECRET: ${{ secrets.SURVEY_PUBLIC_DEPLOYMENT_ID }}
-          ADMIN_SCRIPT_ID_SECRET: ${{ secrets.SURVEY_ADMIN_SCRIPT_ID }}
-          ADMIN_DEPLOYMENT_ID_SECRET: ${{ secrets.SURVEY_ADMIN_DEPLOYMENT_ID }}
+          PUBLIC_SCRIPT_ID_SECRET: ${{ inputs.target == 'public' && secrets.SURVEY_PUBLIC_SCRIPT_ID || '' }}
+          PUBLIC_DEPLOYMENT_ID_SECRET: ${{ inputs.target == 'public' && secrets.SURVEY_PUBLIC_DEPLOYMENT_ID || '' }}
+          ADMIN_SCRIPT_ID_SECRET: ${{ inputs.target == 'admin' && secrets.SURVEY_ADMIN_SCRIPT_ID || '' }}
+          ADMIN_DEPLOYMENT_ID_SECRET: ${{ inputs.target == 'admin' && secrets.SURVEY_ADMIN_DEPLOYMENT_ID || '' }}
         run: |
           set -euo pipefail
           case "$SURVEY_TARGET" in
@@ -74,10 +71,17 @@ jobs:
           bash scripts/preflight-gas-project.sh "$role"
       - name: Update the existing deployment
         shell: bash
+        env:
+          SURVEY_TARGET: ${{ inputs.target }}
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          PUBLIC_SCRIPT_ID: ${{ inputs.target == 'public' && secrets.SURVEY_PUBLIC_SCRIPT_ID || '' }}
+          PUBLIC_DEPLOYMENT_ID: ${{ inputs.target == 'public' && secrets.SURVEY_PUBLIC_DEPLOYMENT_ID || '' }}
+          ADMIN_SCRIPT_ID: ${{ inputs.target == 'admin' && secrets.SURVEY_ADMIN_SCRIPT_ID || '' }}
+          ADMIN_DEPLOYMENT_ID: ${{ inputs.target == 'admin' && secrets.SURVEY_ADMIN_DEPLOYMENT_ID || '' }}
         run: |
           set -euo pipefail
 
-          case "${{ inputs.target }}" in
+          case "$SURVEY_TARGET" in
             public)
               verify_role="survey-public"
               script_id="$PUBLIC_SCRIPT_ID"
@@ -140,7 +144,7 @@ jobs:
 
           cd "$GITHUB_WORKSPACE"
           node scripts/prepare-survey-gas-project.js \
-            "${{ inputs.target }}" "$deploy_dir"
+            "$SURVEY_TARGET" "$deploy_dir"
 
           PROJECT_DIR="$deploy_dir" SCRIPT_ID="$script_id" node <<'NODE'
           const fs = require('fs');

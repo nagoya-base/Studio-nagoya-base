@@ -38,12 +38,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     environment: booking-production
-    env:
-      WEBHOOK_CLASPRC_JSON: ${{ secrets.BOOKING_WEBHOOK_CLASPRC_JSON }}
-      WEBHOOK_SCRIPT_ID: ${{ secrets.BOOKING_WEBHOOK_SCRIPT_ID }}
-      WEBHOOK_DEPLOYMENT_ID: ${{ secrets.BOOKING_WEBHOOK_DEPLOYMENT_ID }}
-      PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
-      ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
+    # Secretsはjob全体へ渡さない（checkout / setup-node / clasp導入に不要）。必要なstepだけに渡す（Issue #804 PR-D2）。
     steps:
       - name: Check out the approved main commit
         uses: actions/checkout@v4
@@ -64,6 +59,13 @@ jobs:
         run: bash scripts/preflight-gas-project.sh booking-webhook
       - name: Update the existing deployment
         shell: bash
+        env:
+          WEBHOOK_CLASPRC_JSON: ${{ secrets.BOOKING_WEBHOOK_CLASPRC_JSON }}
+          WEBHOOK_SCRIPT_ID: ${{ secrets.BOOKING_WEBHOOK_SCRIPT_ID }}
+          WEBHOOK_DEPLOYMENT_ID: ${{ secrets.BOOKING_WEBHOOK_DEPLOYMENT_ID }}
+          # 独立GAS確認（Booking本体と別Script IDであること）にだけ使うID。認証情報ではない。
+          PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
+          ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
         run: |
           set -euo pipefail
 
