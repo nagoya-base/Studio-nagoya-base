@@ -1844,6 +1844,7 @@ var SwitchBotAccessInfra = (function () {
       // 永続 → 承認の消費の順。永続できなければ承認を消費せず（申告を失わない）、永続失敗を明示して手動対応へ引き継ぐ。
       function commit(next, reason, critical) {
         s.state = next; if (reason) s.reason = reason;
+        if (typeof s.verdict === 'string') s.verdict = bndVerdict(s); // 保存済みの暫定合否は、重大申告で停止したら無効化する
         if (!bndWrite(sp, s)) {
           out.manualRecovery = true; out.persistence = 'NOT_PERSISTED';
           return stop(critical ? 'CRITICAL_NOT_PERSISTED' : 'STATE_WRITE_FAILED'); // 状態は変わっていない。重大観測なら公式アプリで手動回収
@@ -1956,7 +1957,7 @@ var SwitchBotAccessInfra = (function () {
       out.state = DIAG_VALUE_RE.test(rs.st.state) ? rs.st.state : 'INVALID_VALUE'; out.callsUsed = rs.st.calls;
       out.manualRecovery = rs.st.state === 'STOPPED' || /_SENT$/.test(rs.st.state);
       if (rs.st.obs && typeof rs.st.obs === 'object') out.obs = rs.st.obs;
-      if (typeof rs.st.verdict === 'string' && DIAG_VALUE_RE.test(rs.st.verdict)) out.verdict = rs.st.verdict;
+      if (typeof rs.st.verdict === 'string') out.verdict = bndVerdict(rs.st); // 保存値は使わず、現在の状態と観測から導出する
       if (typeof rs.st.startSec === 'number' && typeof rs.st.endSec === 'number') { out.secToStart = rs.st.startSec - nowSec; out.secToEnd = rs.st.endSec - nowSec; }
     } else out.state = 'STATE_UNREADABLE';
     var a = diagRead(deps.scriptProps, BND_PROP.ARMED);

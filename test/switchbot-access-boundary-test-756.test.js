@@ -684,6 +684,7 @@ test('遅れた重大申告: A4 記録後・FINAL_LIST 後（回収前）でも�
     assert.strictEqual(obs(w, 'A1_DENIED').code, 'STAGE_ORDER_VIOLATION', '通常の申告は順序違反');
     var r = obs(w, 'KEYPAD_LOCK_SIGN');
     assert.strictEqual(r.ok, false); assert.strictEqual(r.code, 'KEYPAD_LOCK_OR_ALARM_SIGN'); assert.strictEqual(st(w).state, 'STOPPED'); assert.strictEqual(st(w).obs.LOCK, 'SIGN');
+    if (afterFinal) { assert.strictEqual(st(w).verdict, 'BOUNDARY_NOT_ESTABLISHED', '保存済みの暫定PASSも無効化'); assert.strictEqual(status(w).verdict, 'BOUNDARY_NOT_ESTABLISHED', '回収前の状態確認でも PASS を出さない'); }
     w.keys = w.keys.filter(function (k) { return k.name === 'normal-key-1'; });
     var a = app(w, 'APP_ABSENT');
     assert.strictEqual(a.recovery, 'RECOVERED'); assert.strictEqual(a.verdict, 'BOUNDARY_NOT_ESTABLISHED'); assert.strictEqual(a.decisionUse, 'NOT_USABLE_FOR_01FD_JUDGEMENT');
