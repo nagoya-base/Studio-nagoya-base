@@ -155,6 +155,17 @@ test('限定稼働(#757): pilotBookingIds は列挙された予約だけを対�
   assert.strictEqual(C.evaluateEligibility(booking(), baseConfig({ pilotBookingIds: [id], enabled: false }), NOW).reason, 'FLAG_OFF');
 });
 
+test('限定稼働モード(#757): limitedRollout=true は対象予約ID1件の明示設定が必須（欠落・複数・不正は全件停止）', function () {
+  var id = booking().bookingId;
+  function r(over) { return C.evaluateEligibility(booking(), baseConfig(over), NOW); }
+  assert.strictEqual(r({ limitedRollout: true, pilotBookingIds: [id] }).eligible, true);
+  assert.strictEqual(r({ limitedRollout: true }).reason, 'PILOT_CONFIG_INVALID', '設定を落としても全件発行しない');
+  assert.strictEqual(r({ limitedRollout: true, pilotBookingIds: [] }).reason, 'PILOT_CONFIG_INVALID');
+  assert.strictEqual(r({ limitedRollout: true, pilotBookingIds: [id, 'OTHER'] }).reason, 'PILOT_CONFIG_INVALID');
+  assert.strictEqual(r({ limitedRollout: true, pilotBookingIds: ['OTHER'] }).reason, 'NOT_PILOT_TARGET');
+  assert.strictEqual(r({}).eligible, true, '通常モードは未設定互換');
+});
+
 test('Keypad選択: 複数候補は停止しフォールバックしない', function () {
   var cfg = baseConfig({ keypads: [{ brand: 'studio', facility: 'main', room: 'A', deviceId: DEV_A }, { brand: 'studio', facility: 'main', room: 'A', deviceId: DEV_B }] });
   assert.strictEqual(C.evaluateEligibility(booking(), cfg, NOW).reason, 'KEYPAD_AMBIGUOUS');

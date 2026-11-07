@@ -344,3 +344,54 @@ test('P4: リスト外の支払未確認予約は凍結通知を出さない。�
   cycle(w, rt, 3);
   assert.strictEqual(w.callCount('createKey'), 1, '追加の改訂なしで発行される');
 });
+
+test('P5: validateConfig（プリフライト）— limitedRollout=true は対象予約ID1件が必須。通常モードは未設定でも有効', function () {
+  assert.strictEqual(Infra.validateConfig(validCfg()).ok, true, '通常モード');
+  assert.strictEqual(Infra.validateConfig(validCfg({ limitedRollout: true, pilotBookingIds: ['SNB-1'] })).ok, true);
+  [undefined, [], ['A', 'B'], 'SNB-1', null].forEach(function (v) {
+    var r = Infra.validateConfig(validCfg(v === undefined ? { limitedRollout: true } : { limitedRollout: true, pilotBookingIds: v }));
+    assert.strictEqual(r.ok, false, JSON.stringify(v));
+    assert.ok(r.errors.indexOf('PILOT_REQUIRED') !== -1, JSON.stringify(v));
+  });
+  assert.ok(Infra.validateConfig(validCfg({ limitedRollout: 'yes' })).errors.indexOf('LIMITED_ROLLOUT_INVALID') !== -1);
+});
+
+test('P6: 限定稼働モードで対象IDを落とすと、全ジョブが何も送らない（createKey=0・CONFIG_INVALID）', function () {
+  var w = H.createWorld({ mail: false, cfg: { limitedRollout: true } });
+  w.createMode = 'noCommandId';
+  var rt = w.runtime();
+  w.records = [H.record()];
+  cycle(w, rt, 3);
+  assert.strictEqual(w.callCount('createKey'), 0, '設定欠落でも全件発行しない');
+  assert.ok(has(w, /CONFIG_INVALID/));
+});
+
+// 通知・配送を有効にした世界での回帰（#757 レビュー）
+function mailPilotWorld(cfg) {
+  var w = H.createWorld({ mail: true, cfg: Object.assign({ deliveryConfigured: true, delivery: H.DELIVERY_CFG }, cfg) });
+  w.createMode = 'noCommandId';
+  w.recipients['SNB-PILOT'] = 'ops-test@example.test';
+  return w;
+}
+
+test('P7: 通知・配送ON — 対象外の支払未確認予約は管理者凍結通知を出さず、対象内の予約は発行と案内メールが続く', function () {
+  var w = mailPilotWorld({ limitedRollout: true, pilotBookingIds: ['SNB-PILOT'] });
+  var rt = w.runtime();
+  w.records = [H.record({ bookingId: 'SNB-UNPAID', paymentStatus: 'checkout_pending' }), H.record({ bookingId: 'SNB-PILOT' })];
+  cycle(w, rt, 3);
+  assert.ok(!has(w, /BOOKING_FROZEN/), '対象外は凍結通知なし（通知経路は有効）');
+  assert.strictEqual(w.callCount('createKey'), 1, '対象内は発行');
+  w.nowMs = Date.parse('2030-01-10T18:00:00+09:00');
+  var d = rt.deliverCycle();
+  assert.strictEqual(d.delivered, 1, '対象内には案内メール');
+  assert.strictEqual(w.userMails.length, 1);
+  assert.strictEqual(w.userMails[0].to, 'ops-test@example.test');
+});
+
+test('P8: 対照 — 同じ世界でも許可リストなしなら支払未確認予約は凍結通知を出す（P7が通知経路の有効性を検出できる根拠）', function () {
+  var w = mailPilotWorld({});
+  var rt = w.runtime();
+  w.records = [H.record({ bookingId: 'SNB-UNPAID', paymentStatus: 'checkout_pending' })];
+  cycle(w, rt, 3);
+  assert.ok(has(w, /BOOKING_FROZEN/), '通知経路は動作している');
+});

@@ -118,6 +118,10 @@ var SwitchBotAccessInfra = (function () {
       var pb = cfg.pilotBookingIds;
       if (!Array.isArray(pb) || pb.some(function (x) { return typeof x !== 'string' || !x; })) errors.push('PILOT_BOOKING_IDS_INVALID');
     }
+    // 限定稼働モード（#757）: limitedRollout=true のときは対象予約ID1件の明示設定が必須（欠落・複数は PILOT_REQUIRED で起動拒否）。
+    // 通常モード（limitedRollout 未設定）は pilotBookingIds 未設定でも従来どおり有効。limitedRollout は true／未設定のみ許容。
+    if (cfg.limitedRollout !== undefined && cfg.limitedRollout !== true && cfg.limitedRollout !== false) errors.push('LIMITED_ROLLOUT_INVALID');
+    if (cfg.limitedRollout === true && (!Array.isArray(cfg.pilotBookingIds) || cfg.pilotBookingIds.length !== 1)) errors.push('PILOT_REQUIRED');
     return { ok: errors.length === 0, errors: errors.filter(function (e, i) { return errors.indexOf(e) === i; }) };
   }
 

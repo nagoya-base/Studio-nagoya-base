@@ -221,3 +221,11 @@
 - 外した後の扱い: 発行済みの予約がリストから外れると「非対象」として旧キーは通常の削除手順で回収される。リストの変更は設定変更として別証跡に記録する。
 - 予約IDは秘密ではないが、実予約の個人情報と結び付けて公開Issueに書かない。
 - この追加は設定・デプロイ・ONの許可ではない（`ACCESS_ENABLED=OFF`・`deliveryConfigured=false`・トリガー0件のまま）。
+
+### 限定稼働モード `limitedRollout`（#757 レビュー反映）
+
+`pilotBookingIds` を落とすと全適格予約へ発行されてしまう取り違えを防ぐため、**限定ONでは `ACCESS_CONFIG.limitedRollout=true` を併せて設定する**。
+
+- `limitedRollout=true` のとき、`pilotBookingIds` は**ちょうど1件**の明示設定が必須。欠落・空・複数は `validateConfig` が `PILOT_REQUIRED` で拒否し、全ジョブが `CONFIG_INVALID` で何も送らない（コアも `PILOT_CONFIG_INVALID` で全件停止する二重の防御）。
+- **ON前のプリフライト**: `accessReadOnlyDiagnostics` が `validateConfig` を通すため、設定不備は `CONFIG_INVALID`（`errors` に `PILOT_REQUIRED`）として出る。限定ON前の確認手順に含める（診断が `ok=true` でなければONしない）。
+- 通常モード（`limitedRollout` 未設定）の `pilotBookingIds` 未設定は従来どおり制限なし。全予約へ広げる段階では `limitedRollout` を外すことを、別の明示的な設定変更・別証跡として行う。
