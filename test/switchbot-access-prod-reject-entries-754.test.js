@@ -32,6 +32,8 @@ var ENTRIES = [
   'accessIdTypeDiagStatus', 'accessIdTypeDiagRun',
   'accessNumIdStatus', 'accessNumIdStep1List', 'accessNumIdStep2Issue', 'accessNumIdStep3VerifyIssued',
   'accessNumIdStep4PreDeleteList', 'accessNumIdStep5Delete', 'accessNumIdStep6VerifyDeleted', 'accessNumIdAppCheck',
+  'accessBndStatus', 'accessBndStep1List', 'accessBndStep2Issue', 'accessBndStep3VerifyIssued', 'accessBndObserve',
+  'accessBndStep4FinalList', 'accessBndAppCheck',
   'accessTestReadOnlyDiagnostics'
 ];
 
@@ -113,7 +115,8 @@ function armedScript() {
   return {
     ACCESS_TEST_KEY_ARMED: 'true', ACCESS_TEST_KEY_APPROVAL: 'LIST',
     ACCESS_ID_TYPE_DIAG_APPROVAL: 'ID_TYPE_READ_ONCE',
-    ACCESS_NUMID_TEST_ARMED: 'NUMID_6_CALL_PLAN', ACCESS_NUMID_TEST_APPROVAL: 'LIST'
+    ACCESS_NUMID_TEST_ARMED: 'NUMID_6_CALL_PLAN', ACCESS_NUMID_TEST_APPROVAL: 'LIST',
+    ACCESS_BND_TEST_ARMED: 'BND_PLAN_V1_4CALLS', ACCESS_BND_TEST_APPROVAL: 'LIST', ACCESS_BND_TEST_PASSCODE: '13572468', ACCESS_BND_PASSCODE_ATTEST: 'NOT_IN_USE_CONFIRMED'
   };
 }
 
@@ -147,7 +150,7 @@ function assertNoLeak(env, result, label) {
 test('入口の網羅: App.gs の検証用入口（accessTest*/accessNumId*/accessIdTypeDiag*）は、このテストの一覧と過不足なく一致する', function () {
   var src = fs.readFileSync(path.join(ROOT, 'gas/switchbot-access/SwitchBotAccessApp.gs'), 'utf8');
   var found = [];
-  var re = /^function (access(?:Test|NumId|IdTypeDiag)[A-Za-z0-9_]*)\s*\(/gm, m;
+  var re = /^function (access(?:Test|NumId|IdTypeDiag|Bnd)[A-Za-z0-9_]*)\s*\(/gm, m;
   while ((m = re.exec(src))) found.push(m[1]);
   assert.deepStrictEqual(found.slice().sort(), ENTRIES.slice().sort(),
     '検証用入口を増減したら、本番拒否テストの ENTRIES も更新する（未テストの入口を本番バンドルに載せない）');

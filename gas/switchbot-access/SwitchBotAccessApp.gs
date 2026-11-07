@@ -392,6 +392,53 @@ function accessCheckSetup() {
   return status;
 }
 
+// ── verify環境専用・37DD 期限境界（開始前／期間内／期限後）解錠試験（親 #748・計画 #756）──
+// エディタの関数選択から引数なしで1回ずつ実行する手動入口。マージ・デプロイ・ARMED のみでは通信しない（実機GOは #756 で別途）。
+// 通信には ACCESS_BND_TEST_ARMED=BND_PLAN_V1_4CALLS と、その段階名の ACCESS_BND_TEST_APPROVAL（通信前に消費）の両方が必要。
+// 通信は SwitchBot API 合計4回（LIST / ISSUE / VERIFY_ISSUED / FINAL_LIST。各1回・自動再送なし）。deleteKey は渡さない（到達不能）。
+// 使い捨て暗証番号は ACCESS_BND_TEST_PASSCODE（8桁）と申告 ACCESS_BND_PASSCODE_ATTEST=NOT_IN_USE_CONFIRMED を ISSUE の直前に設定する。
+// ISSUE が通信より前に読み取って両方を削除する。拒否・失敗・例外の全経路でも削除を試み、残ればSTOPPEDで管理者対応。出力・ログに値を出さない。
+// 解錠の観測はAPIではなく現地の物理操作。結果は accessBndObserve（通信なし）で申告する。試験キーは公式アプリで手動削除し accessBndAppCheck で記録する。
+// #791(STOPPED)・#797(COMPLETE) の状態は読むだけで書換えない。手順: docs/switchbot-access-boundary-test-756.md
+function sba_bndDeps_() {
+  var d = sba_testKeyDeps_();
+  var api = sba_api_();
+  d.api = { listDevices: api.listDevices, createKey: api.createKey }; // deleteKey は渡さない
+  d.userProps = { get: d.userProps.get, set: function () { throw new Error('READ_ONLY'); }, del: function () { throw new Error('READ_ONLY'); } };
+  return d;
+}
+
+function sba_bndRun_(stage) {
+  var out;
+  try { out = SwitchBotAccessInfra.bndStage(sba_bndDeps_(), stage); } catch (e) { out = { ok: false, code: 'UNEXPECTED_ERROR' }; }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+
+function accessBndStatus() {
+  var out;
+  try { out = SwitchBotAccessInfra.bndStatus(sba_bndDeps_()); } catch (e) { out = { ok: false, code: 'UNEXPECTED_ERROR' }; }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+function accessBndStep1List() { return sba_bndRun_('LIST'); }
+function accessBndStep2Issue() { return sba_bndRun_('ISSUE'); }
+function accessBndStep3VerifyIssued() { return sba_bndRun_('VERIFY_ISSUED'); }
+function accessBndObserve() {
+  var out;
+  try { out = SwitchBotAccessInfra.bndObserve(sba_bndDeps_()); } catch (e) { out = { ok: false, code: 'UNEXPECTED_ERROR' }; }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+function accessBndStep4FinalList() { return sba_bndRun_('FINAL_LIST'); }
+function accessBndAppCheck() {
+  var out;
+  try { out = SwitchBotAccessInfra.bndAppCheck(sba_bndDeps_()); } catch (e) { out = { ok: false, code: 'UNEXPECTED_ERROR' }; }
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+// ── 37DD 期限境界試験ここまで ──
+
 // ── verify環境専用・37DD 段階承認型 API 単体試験（Issue #791）──
 // エディタの関数選択から引数なしで1回ずつ実行する手動入口。マージ・デプロイ・ARMED のみでは通信しない。
 // 通信には ACCESS_TEST_KEY_ARMED=true と、その段階名の ACCESS_TEST_KEY_APPROVAL（LIST / ISSUE / VERIFY_ISSUED / DELETE /
@@ -585,4 +632,3 @@ function accessTestReadOnlyDiagnostics() {
   Logger.log(JSON.stringify(out));
   return out;
 }
-
