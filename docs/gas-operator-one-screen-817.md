@@ -2,7 +2,8 @@
 
 通常更新・失敗時・承認の流れを、この1枚で追えるようにまとめたものです。詳細は各手順書へ（末尾の一覧）。
 **秘密値（Secrets・clasp認証JSON・ID・メール・トークン）はこの文書にも、Issue・PR・チャットにも書かない。**
-Issueの起票・マージは更新の許可ではありません。**更新は運営者がActionsで毎回明示的に起動し、承認して初めて動きます。**
+Issueの起票は更新の許可ではありません。**原則は、運営者がActionsで明示的に起動し、Environmentの承認を経て初めて更新が動きます**（Booking／Webhook／Survey／Access。マージだけでは更新されません）。
+**例外：SwitchBot verify は、対象ファイルを `main` へ push（マージ）すると自動起動します。Environment `switchbot-verify` に Required reviewers が未設定なら、承認待ちなしで更新されます**（詳細は §1・§2）。
 検証のためだけの本番更新はしません（次の正規更新で確認します）。
 
 ## 1. 共通の流れ（SwitchBot verify を除く全対象）

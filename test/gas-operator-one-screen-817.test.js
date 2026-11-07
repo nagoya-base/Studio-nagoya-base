@@ -60,3 +60,12 @@ test('verify の承認停止は Required reviewers 設定時だけと明記さ�
   assert.ok(/Required reviewers を設定している場合だけ/.test(doc));
   assert.ok(/未設定なら承認待ちなしでそのまま更新/.test(doc));
 });
+
+test('冒頭（## 1 より前）が全対象の手動起動・承認必須と断定せず、verify の例外を示している', () => {
+  const head = doc.split('\n## 1.')[0];
+  assert.ok(!/毎回明示的に起動し、承認して初めて動きます/.test(head), '冒頭の全対象断定を残さない');
+  assert.ok(!/マージは更新の許可ではありません/.test(head), 'マージ一般を非起動と断定しない');
+  assert.ok(/原則は[^\n]*明示的に起動/.test(head));
+  assert.ok(/SwitchBot verify[^\n]*main[^\n]*自動起動/.test(head));
+  assert.ok(/Required reviewers[^\n]*未設定[^\n]*承認待ちなし/.test(head));
+});
