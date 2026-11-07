@@ -70,7 +70,8 @@ test('workflow: gate/test have no secrets or environment; PR never reaches deplo
   assert.doesNotMatch(wfCode, /github\.event_name == 'pull_request'|pull_request/);
   // PRではモック・静的テストのみ（booking-pr-tests.yml が対象パスを監視）
   const pr = read('.github/workflows/booking-pr-tests.yml');
-  for (const p of ['.github/workflows/switchbot-access-test-gas-deploy.yml', 'scripts/deploy-switchbot-access-test-gas.sh']) assert.ok(pr.includes("'" + p + "'"), p);
+  // workflow本体は `.github/workflows/**`（Issue #804 PR-B）で監視される。scriptは個別に列挙される。
+  for (const p of ['.github/workflows/**', 'scripts/deploy-switchbot-access-test-gas.sh']) assert.ok(pr.includes("'" + p + "'"), p);
   assert.doesNotMatch(pr, /secrets\.|environment:/);
 });
 

@@ -1,9 +1,10 @@
 name: PR booking tests
 
+# PR CI（秘密・Environment・外部APIなし）。Issue #804 PR-B:
+#  - workflow単独の変更でも漏れなく走るよう、個別列挙をやめて `.github/workflows/**` を監視する。
+#  - 古い単発branch（claude/nagoya-booking-price-calc-7ck27i）へのpush triggerを廃止した
+#    （そのbranchはリモートに存在せず、push由来の実行は2026-09-25の2件のみ。PRのpull_requestで同じ検査が走る）。
 on:
-  push:
-    branches:
-      - claude/nagoya-booking-price-calc-7ck27i
   pull_request:
     paths:
       - 'gas/booking/**'
@@ -18,13 +19,8 @@ on:
       - 'gas/switchbot-access/**'
       - 'scripts/switchbot-*.js'
       - 'scripts/prepare-switchbot-access-gas-project.js'
-      - '.github/workflows/switchbot-verify-devices.yml'
-      - '.github/workflows/switchbot-verify-key.yml'
-      - '.github/workflows/switchbot-verify-gas-deploy.yml'
       - 'scripts/deploy-switchbot-verify-gas.sh'
-      - '.github/workflows/switchbot-access-gas-deploy.yml'
       - 'scripts/deploy-switchbot-access-gas.sh'
-      - '.github/workflows/switchbot-access-test-gas-deploy.yml'
       - 'scripts/deploy-switchbot-access-test-gas.sh'
       - 'survey/**'
       - 'scripts/survey-*.js'
@@ -32,13 +28,8 @@ on:
       - '_includes/booking_app_*.html'
       - 'test/**'
       - 'cloud-run/**'
-      - '.github/workflows/booking-pr-tests.yml'
-      - '.github/workflows/booking-gas-production.yml'
-      - '.github/workflows/booking-gas-webhook-production.yml'
-      - '.github/workflows/survey-gas-production.yml'
-      - '.github/workflows/confirm-booking-production-account.yml'
       - 'scripts/confirm-booking-production-account.js'
-      - '.github/workflows/switchbot-verify-*.yml'
+      - '.github/workflows/**'
 
 permissions:
   contents: read
