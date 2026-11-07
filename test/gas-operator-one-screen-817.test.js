@@ -55,3 +55,8 @@ test('verify の push 自動起動の例外と、Booking 部分適用時の一�
   assert.ok(/版番号だけ上がってSHAが違う[^\n]*未解決のまま/.test(doc));
   assert.ok(!/旧版のまま[^\n]*原因を直して最初から再実行/.test(doc), '無条件の最初から再実行は残さない');
 });
+
+test('verify の承認停止は Required reviewers 設定時だけと明記されている', () => {
+  assert.ok(/Required reviewers を設定している場合だけ/.test(doc));
+  assert.ok(/未設定なら承認待ちなしでそのまま更新/.test(doc));
+});

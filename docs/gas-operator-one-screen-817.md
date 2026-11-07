@@ -7,7 +7,7 @@ Issueの起票・マージは更新の許可ではありません。**更新は�
 
 ## 1. 共通の流れ（SwitchBot verify を除く全対象）
 
-> **例外：SwitchBot verify は、対象ファイルを `main` へマージ（push）するだけで自動起動します。** マージ＝更新が始まり得ます。Environment `switchbot-verify` の承認と、失敗時の確認（§4）は他と同じく別に必要です。「毎回手動起動」が前提なのは、それ以外の対象（Booking／Webhook／Survey／Access）です。
+> **例外：SwitchBot verify は、対象ファイルを `main` へマージ（push）するだけで自動起動します。** マージ＝更新が始まり得ます。**承認の一時停止があるのは、Environment `switchbot-verify` に Required reviewers を設定している場合だけです**（手順書 #723 では任意）。未設定なら承認待ちなしでそのまま更新されるため、マージ前に設定の有無を確認してください（止めたいときはworkflowを無効化）。失敗時の確認（§4）は他と同じく必要です。「毎回手動起動」が前提なのは、それ以外の対象（Booking／Webhook／Survey／Access）です。
 
 1. **Actions → 対象workflow → Run workflow**（verifyは自動起動もあり、再反映は手動）。Branchは必ず `main`。
 2. `test`（秘密なし）が緑になるのを待つ。赤なら何も更新されない。
@@ -24,7 +24,7 @@ Issueの起票・マージは更新の許可ではありません。**更新は�
 | Booking Webhook | Update Booking Webhook GAS | `booking-production` | なし | そのまま実行 |
 | Survey | Deploy Survey GAS to production | `survey-production` | `target`（`public` / `admin`） | 更新する側を選び、**2回に分けて**実行 |
 | SwitchBot 鍵管理（Access） | Deploy SwitchBot access GAS | `switchbot-access-production`（ON宣言時は先に `switchbot-access-on-approval`） | 必須入力が複数 | 手順書 #768 の入力例どおり。**毎回の確認入力が必要** |
-| SwitchBot 検証 | Deploy SwitchBot verify GAS | `switchbot-verify` | `rollback_version`（空欄で反映） | 対象パスをmainへマージすると**自動起動**。再反映は手動 |
+| SwitchBot 検証 | Deploy SwitchBot verify GAS | `switchbot-verify` | `rollback_version`（空欄で反映） | 対象パスをmainへマージすると**自動起動**（承認の停止は Required reviewers 設定時のみ）。再反映は手動 |
 
 - 同じ対象は直列実行（同時に2本は走らない）。実行中のrunを強制キャンセルしない。
 - Access は **マージしても更新されない**（手動起動のみ）。`access_state` は運営者の宣言で、実測ではない。
