@@ -1,0 +1,97 @@
+name: SwitchBot read-only diagnostics (manual)
+
+# Issue #804 PR-E2: 読み取り専用の診断入口を1つに統合（旧入口は削除せず併存。廃止は証跡確認後に別PR）。
+#   device-id       … 登録済み SWITCHBOT_DEVICE_ID の完全ID一致確認（GET /v1.1/devices）
+#   keylist         … keyList の取得可否・件数（GET /v1.1/devices）
+#   webhook-url     … queryWebhook(queryUrl) の応答構造
+#   webhook-details … queryWebhook(queryDetails) の応答構造（target=current/old）
+# 変更系（鍵の発行/削除・Webhook 登録/削除・復旧）は switchbot-verify-key.yml に残し、ここからは呼べない
+#（スクリプト側で GET devices / queryWebhook(queryUrl|queryDetails) 以外の送信を拒否）。
+# 手動実行専用（push / pull_request / schedule / workflow_run なし）。
+# 接続確認だけの switchbot-verify-devices.yml は repository secrets を使う別の保管境界のため統合していない。
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: '診断の種類（device-id / keylist / webhook-url / webhook-details）'
+        required: true
+        type: choice
+        options:
+          - device-id
+          - keylist
+          - webhook-url
+          - webhook-details
+      last4:
+        description: 'device-id / keylist のみ必須: 対象 Keypad の末尾4桁（例: 01FD / 37DD）'
+        required: false
+        default: ''
+        type: string
+      target:
+        description: 'webhook-details のみ: 照会対象 URL（current=今回のリレーURL / old=VERIFY_OLD_WEBHOOK_URL）'
+        required: false
+        default: current
+        type: choice
+        options:
+          - current
+          - old
+
+permissions:
+  contents: read
+
+# 診断同士の重複実行だけを直列化（変更系の switchbot-verify-key の待ち行列とは共有しない）
+concurrency:
+  group: switchbot-verify-readonly
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: switchbot-verify
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Secret は選んだ診断のstepにだけ渡す（他の診断の Secret は環境変数に載せない）
+      - name: device-id（登録値の完全ID一致・末尾4桁のみ表示）
+        if: inputs.operation == 'device-id'
+        env:
+          OPERATION: device-id
+          KEYPAD_LAST4: ${{ inputs.last4 }}
+          SWITCHBOT_TOKEN: ${{ secrets.SWITCHBOT_TOKEN }}
+          SWITCHBOT_SECRET: ${{ secrets.SWITCHBOT_SECRET }}
+          SWITCHBOT_DEVICE_ID: ${{ secrets.SWITCHBOT_DEVICE_ID }}
+        run: node scripts/switchbot-verify-readonly.js
+
+      - name: keylist（取得可否と件数のみ・内容は出力しない）
+        if: inputs.operation == 'keylist'
+        env:
+          OPERATION: keylist
+          KEYPAD_LAST4: ${{ inputs.last4 }}
+          SWITCHBOT_TOKEN: ${{ secrets.SWITCHBOT_TOKEN }}
+          SWITCHBOT_SECRET: ${{ secrets.SWITCHBOT_SECRET }}
+          SWITCHBOT_DEVICE_ID: ${{ secrets.SWITCHBOT_DEVICE_ID }}
+        run: node scripts/switchbot-verify-readonly.js
+
+      - name: webhook-url（queryUrl の応答構造・URL値は出力しない）
+        if: inputs.operation == 'webhook-url'
+        env:
+          OPERATION: webhook-url
+          SWITCHBOT_TOKEN: ${{ secrets.SWITCHBOT_TOKEN }}
+          SWITCHBOT_SECRET: ${{ secrets.SWITCHBOT_SECRET }}
+        run: node scripts/switchbot-verify-readonly.js
+
+      - name: webhook-details（queryDetails の応答構造・URL値は出力しない）
+        if: inputs.operation == 'webhook-details'
+        env:
+          OPERATION: webhook-details
+          TARGET: ${{ inputs.target }}
+          SWITCHBOT_TOKEN: ${{ secrets.SWITCHBOT_TOKEN }}
+          SWITCHBOT_SECRET: ${{ secrets.SWITCHBOT_SECRET }}
+          VERIFY_RELAY_URL: ${{ secrets.VERIFY_RELAY_URL }}
+          VERIFY_WEBHOOK_TOKEN: ${{ secrets.VERIFY_WEBHOOK_TOKEN }}
+          VERIFY_OLD_WEBHOOK_URL: ${{ secrets.VERIFY_OLD_WEBHOOK_URL }}
+        run: node scripts/switchbot-verify-readonly.js

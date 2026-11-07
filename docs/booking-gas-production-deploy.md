@@ -288,3 +288,16 @@ Booking Webhook（`Update Booking Webhook GAS`）とSurvey（`Deploy Survey GAS 
 - 更新後の確認と post-check は、**ID欄の完全一致・一意**の行の説明文全体が正確に `main <今回の40桁SHA>` のときだけ「反映確認OK」です。部分一致、前置き・追記、旧SHAの混在、別行のSHAは成功にしません。読取りだけの再試行（最大5回・5秒間隔）と `UNKNOWN_STATE` 方針は従来どおりです。
 - schemaガードは、既存のPublic本番Deploymentの**一意な行の説明文が正確に `main <40桁SHA>`** のときだけ前回本番SHAとして採用し、Git履歴で `BookingsSchema.gs` の差分を判定します。AdminのSHAやPublicの編集用HEADは公開版の代用にしません。Deploymentの行そのものを特定できない場合（ID不明・重複・部分一致）や、前回SHAがGit履歴にない場合は、`schema_migrated=true` でも停止します。
 - 説明文が追記つき・前置きつき・複数SHA・旧形式（SHAなし）・空のときは「前回SHA不明（`PREVIOUS_SHA_UNKNOWN`）」です。**不明を「変更なし」とは仮定しません**。`schema_migrated=true` がなければ停止し、運営が `admin-only` → `migrateBookingsSchema`（手動・不足列の追加のみ）→ `full(schema_migrated=true)` を行った場合に限り、「変更あり」と同じ扱いで通します（初回ベースライン・Issue #804 案P1）。この `full` で説明文が `main <SHA>` に更新され、以後は通常の判定に戻ります。新しい入力・Secretはありません。
+
+## Webhook / Survey のSecrets受け渡し最小化（Issue #804 PR-D2）
+
+運営者の操作は変わりません（Environment承認・入力・Secrets名・再実行方法はそのままです）。変わったのは、Secretsを**渡す範囲**だけです。
+
+- 以前: `deploy` job全体の環境変数にSecretsが載り、リポジトリ取得・Node準備・claspの導入stepにも渡っていました。
+- 現在: Secretsは「更新前の確認（preflight）」と「更新」の2 stepだけに渡します。それ以外のstepには渡しません。
+- Survey: 選んだ `public` または `admin` の更新先IDだけを渡します。選ばれなかった側は空になり、Secret値は環境変数に載りません。
+  選んだ側が未登録の場合も、もう一方へ代用せず `SECRET_MISSING` で更新前に停止します。
+- 技術メモ: 選択は `${{ inputs.target == 'public' && secrets.… || '' }}` の形です。`inputs.target` はshell本文へ直接展開せず、環境変数 `SURVEY_TARGET` 経由で参照します。
+  `test/gas-workflow-secrets-scope.test.js` が「job全体のenvにSecretsが無い」「Secretsを使うstepはpreflightと更新の2つだけ」「Surveyの選択式が対象と一致」「clasp偽物で選択側のIDだけが使われる」を確認します。
+- 対象外: Secretsの値・保管先・Environment・承認回数・更新手順・更新後の確認は変更していません。Booking本番・Access・旧verifyなどは、すでにstep単位の受け渡しです。
+- 実Googleでの動作は未検証です（CI・模擬試験は本番成功の証明ではありません）。
