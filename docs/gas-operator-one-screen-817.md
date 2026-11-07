@@ -32,7 +32,7 @@ Issueの起票・マージは更新の許可ではありません。**更新は�
 
 | 対象 | 承認者が見るもの | 必要な登録（名前のみ・値は書かない） |
 | --- | --- | --- |
-| Booking | 更新範囲（`full` / `admin-only`）と対象main | `CLASPRC_JSON`、`BOOKING_PUBLIC_*`、`BOOKING_ADMIN_*`（SCRIPT_ID / DEPLOYMENT_ID） |
+| Booking | 更新範囲（`full` / `admin-only`）と対象main | Admin用: `CLASPRC_JSON`、`BOOKING_ADMIN_SCRIPT_ID` / `_DEPLOYMENT_ID`。Public用（`full`で必須）: **別の** `BOOKING_PUBLIC_CLASPRC_JSON`、`BOOKING_PUBLIC_SCRIPT_ID` / `_DEPLOYMENT_ID` |
 | Webhook | 対象main | `BOOKING_WEBHOOK_CLASPRC_JSON` / `_SCRIPT_ID` / `_DEPLOYMENT_ID`（Booking本体と別GAS） |
 | Survey | 選んだ `target` | `CLASPRC_JSON`、選んだ側の `SURVEY_<PUBLIC\|ADMIN>_SCRIPT_ID` / `_DEPLOYMENT_ID`（もう片方は不要・代用しない） |
 | Access | 入力の宣言内容。ON中の更新は**別の承認者**が `change_approval_reference` を確認 | `SWITCHBOT_ACCESS_CLASPRC_JSON` / `_SCRIPT_ID` / `_DEPLOYMENT_ID` |
@@ -40,7 +40,7 @@ Issueの起票・マージは更新の許可ではありません。**更新は�
 
 - 登録場所は **Settings → Environments → 各Environment**。Googleログイン・権限同意は**パソコンで事前に**行う（実行中の同意画面はない）。
 - 担当交代・Google側の接続切れ・権限範囲の変更があれば再ログインして再登録。旧担当のclasp権限は取り消す。
-- SwitchBotのToken/SecretはGASのScript Propertiesだけに置き、GitHubには登録しない。
+- SwitchBotのToken/SecretはGitHubには登録せず、GAS側のPropertiesだけに置く。置き場所は対象で違う: **Access＝デプロイ実行者のUser Properties**（Script Propertiesは代用されず、無いと `AUTH_CREDENTIALS_MISSING`。実行者交代時は新実行者で再設定）／**検証GAS＝Script Properties**。
 
 ## 4. 失敗したとき（まず「何も更新されていないか」を見る）
 
@@ -63,8 +63,8 @@ Bookingで `PREVIOUS_SHA_UNKNOWN` ／ schema関連で止まった場合は §5�
 
 → **更新は適用済みかもしれない。再実行・巻き戻しを決める前に、まず現状を読取りで確認する。自動の再実行・巻き戻しはしない。**
 
-1. Apps Script「デプロイを管理」で、対象デプロイの**説明文が `main <今回のSHA>`** か、公開版番号が上がっているかを見る。
-2. 反映済み → 結果を記録して完了。旧版のまま → 原因を直して最初から再実行（`NOT applied` で失敗した場合も同じ）。判断できない → 担当者へ。
+1. Apps Script「デプロイを管理」で、対象デプロイの**公開版番号が更新前より上がっている**ことと、**説明文が正確に `main <今回のSHA>`** であることを、**両方**確認する。
+2. 両方そろった → 反映済み。結果を記録して完了。旧版のまま（`NOT applied` を含む）→ 原因を直して最初から再実行。**版番号だけ上がってSHAが違う・どちらも判断できない場合は未解決のまま**、再実行も完了扱いもせず担当者へ。
 3. 戻す場合は同じデプロイIDを既存の版へ戻す（作り直さない。URLは変わらない）。入口は Access / 検証の `rollback`（`rollback_version`）。Accessは互換確認（`rollback_compat_confirmed`）が別途必要。
 4. 更新後は**読取り専用**の確認だけを行う（確認のために鍵発行・削除・Webhook変更は実行しない）。
 
