@@ -28,6 +28,55 @@ manifestは既存プロジェクトから取得して維持する。ただしBoo
 明示的に失敗させる。新scopeの追加後は、Apps Scriptエディタで一度関数を実行して再認可する。Script Properties、
 トリガー、Calendar、Spreadsheet、予約実データを読み書きする処理は含まない。
 
+## 開始前の確認（運営向け）
+
+本番の更新は、GitHubの画面から始めます。**更新が始まる前に**、必要な接続情報と更新対象の設定がそろっているかを
+自動でまとめて確認し、問題があれば**何も更新せずに止まります**。途中まで更新して止まることを減らすための仕組みです。
+
+### 最初にしておく設定（一度だけ。担当交代・接続切れのときは再設定）
+
+1. 更新に使うGoogleアカウントの接続情報を、GitHubに登録します。
+   Googleへのログインと権限の許可は、この登録の前に**パソコンで行います**（下の「初回設定: Google認証」）。
+   更新の実行中にブラウザでGoogleログインや権限の同意をする画面は出ません。
+2. 更新する対象（Booking Web App／Booking Admin）の設定値を、GitHubの **Settings > Environments > `booking-production`** に登録します
+   （下の「初回設定: 既存IDの確認」「初回設定: GitHub EnvironmentとSecrets」）。値そのものをチャット・Issue・PRに貼らないでください。
+
+### 使い始めるとき
+
+1. GitHubの **Actions > Deploy Booking GAS to production > Run workflow** を開きます。
+2. 更新の範囲を選びます。
+   - `full`（全体更新・既定）: Booking AdminとBooking Web Appの両方を更新します。
+   - `admin-only`（管理用だけ更新）: Booking Adminだけを更新して止まります。予約データの列を変えるときに使います（下の「Bookings schema変更時」）。
+3. テストが通ると `booking-production` の承認待ちになります。更新内容を確認して、**承認します**。
+4. 承認後、最初に**更新に必要な接続情報と設定を、更新する対象すべてについて確認**します（読み取りだけで、何も書き換えません）。
+   `full` ではAdminとWeb Appの両方、`admin-only` ではAdminだけを確認します。
+5. 確認が通ったら、更新を始めます。通らなければ何も更新せずに止まります。
+
+### エラーが出たとき
+
+止まった画面（Actionsの実行ログ）に `Booking preflight failed: role=… stage=… code=…` と表示されます。
+`role` は対象（`admin`＝管理用、`public`＝Web App）、`stage` は止まった段階です。次の順に対応してください。
+
+1. **何も更新されていないこと**を確認します（このメッセージが出たときは、更新前に止まっています）。
+2. 表示された `stage` に合わせて、確認する場所を見ます。
+
+   | stage | 意味 | 確認する場所・対応 |
+   | --- | --- | --- |
+   | `SECRETS` | 必要な設定値が未登録 | Settings > Environments > `booking-production` の登録名がそろっているか確認し、足りないものを登録 |
+   | `CREDENTIAL` | 接続情報の形式・ユーザーが違う | 接続情報を登録し直す（下の「初回設定: Google認証」。Adminは`default`、Webは`booking-owner`） |
+   | `LIST` | Googleに接続できない（接続切れ・権限なし・一時的な障害） | `code` が `AUTHENTICATION_FAILED` なら接続情報の期限切れなので登録し直す。`TRANSIENT_API_OR_NETWORK_ERROR` はしばらくしてから再実行 |
+   | `DEPLOYMENT` | 登録した更新先が見つからない／重複 | デプロイIDの登録値を、Apps Scriptの「デプロイを管理」で確認 |
+   | `PULL` / `BUILD` | 更新先の設定を取得・準備できない | 担当者に連絡（ログの `code` を伝える） |
+
+3. 設定を直したら、**同じ手順で最初から再実行**します。接続情報の値はログや画面に出ません。貼り付けもしないでください。
+4. 直らないときは、`role` `stage` `code` の3つだけを担当者に伝えます。
+
+### この確認でわからないこと（注意）
+
+- 「初回に一度ログインすれば以降ずっと不要」とは限りません。Google側で接続が切れたとき、担当が替わったとき、権限の範囲が変わったときは、再ログイン・再登録が必要です。
+- この確認が通っても、**更新の成功は保証されません**（更新に必要な権限や、その後の通信の成功までは事前に確かめられません）。更新中に止まった場合は、下の手順書とログの案内に従ってください。
+- Googleスクリプト実行時の権限の同意や、SwitchBotの接続情報の有効性は、この確認の対象外です。
+
 ## 初回設定: Google認証
 
 以下は、両方の既存GASプロジェクトを編集できるGoogleアカウントで一度だけ行う。
@@ -183,7 +232,7 @@ list-deployments → pull → push --force → update-deployment → 更新後�
 表示されない場合はIssue #398を完了扱いにせず、デプロイ世代と予約データを再確認する。
 本番再実行・実原因・反映・表示確認は、マージ前の自動テストでは検証できないため別途記録する。
 
-## 開始時のpreflight（Issue #804）
+## 技術者向け詳細: 開始時のpreflight（Issue #804）
 
 承認直後・最初の書込み（Admin更新）の前に、更新対象すべての認証と配布物を**読取りだけ**で確認する
 （`scripts/deploy-booking-gas-target.sh <admin|public> preflight`）。
