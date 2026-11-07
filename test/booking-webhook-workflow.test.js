@@ -49,7 +49,7 @@ set -eu
 shift 4
 printf '%s\\n' "$1" >> "$MOCK_CALLS"
 case "$1" in
- list-deployments) echo "$MOCK_LIST_ID" ;;
+ list-deployments) echo "- $MOCK_LIST_ID @3 - main $GITHUB_SHA" ;;
  pull) printf '{"runtimeVersion":"V8"}' > appsscript.json ;;
  show-file-status) test -f BookingWebhookEndpoint.gs ;;
  push) if [[ "$MOCK_PUSH_FAIL" == 1 ]]; then echo 'The caller does not have permission. private@example.test token-dummy' >&2; exit 1; fi ;;
