@@ -215,6 +215,21 @@ test('#829 日次クリーンアップ: 1時間sweepの取り残しも期限切�
   assert.ok(st.heartbeats.CLEANUP && st.heartbeats.CLEANUP.ok === true, '日次実行の証跡を管理者が確認できる');
 });
 
+test('#829 台帳が読めなくても、日次/時間sweepが送った削除の反映確認は5分周期で進み、読取期限内に確定する', function () {
+  var w = mailWorld(); var rt = w.runtime(); var sim = createSim(w, rt);
+  var op = issueViaCycles(w, rt, sim);
+  installDeleteLatency(w, 300);          // 反映に5分かかる（commandIdなし）
+  w.ledgerFail = 'LEDGER_READ_FAILED';   // 台帳照合が失敗し続ける状況
+  at(w, '2030-01-12T00:15:00+09:00');
+  rt.dailyCleanupCycle();                // 期限切れキーの削除を送信（直後はまだ keyList に残る）
+  assert.strictEqual(ops(w).filter(function (o) { return o.id === op.id; })[0].state, S.DELETE_SENT);
+  sim.run(1800);                         // 1時間sweepを待たず、同期ジョブ(5分)が台帳に依存せず照合する
+  var cur = ops(w).filter(function (o) { return o.id === op.id; })[0];
+  assert.strictEqual(cur.state, S.DELETED_CONFIRMED);
+  assert.strictEqual(w.callCount('deleteKey'), 1, '再送しない');
+  assert.strictEqual(normalKeys(w).length, 2);
+});
+
 // ================================================================ M2: 削除反映遅延の境界
 
 function cancelWithLatency(latencySec) {

@@ -947,6 +947,24 @@ var SwitchBotAccessCore = (function () {
     }
 
     /**
+     * 削除送信済み(DELETE_SENT)の照合だけを進める（読み取りのみ。変更 API は呼ばない）。台帳（予約）の読取可否に依存しない（Issue #829）。
+     * 同期ジョブの周期ごとに呼び、commandId なし削除の読取確認期限（readWaitSec）内に確定させる。
+     */
+    function reconcilePending(skipBookings) {
+      var n = 0;
+      skipBookings = skipBookings || {};
+      deps.store.keys().filter(function (k) { return k.indexOf('OP_') === 0; }).forEach(function (k) {
+        var head = load(k);
+        if (!head || head.state !== STATE.DELETE_SENT || skipBookings[String(head.bookingId)]) return;
+        deps.lock(['BOOKING_' + head.bookingId, 'DEV_' + head.deviceId], function () {
+          var rec = load(k);
+          if (rec && rec.state === STATE.DELETE_SENT) { reconcileDelete(rec); n += 1; }
+        });
+      });
+      return { reconciled: n };
+    }
+
+    /**
      * 期限切れキーを自動削除してよいか（Issue #829）。すべて満たすときだけ true。
      * 通常キー・管理者コード・手動コード・他システム由来は、そもそもこの記録（OP_）を持たないため対象外。
      * 削除直前の同一性・属性・鮮度の再照合は executeDelete 側（freshTarget）がもう一度行う。
@@ -1109,7 +1127,7 @@ var SwitchBotAccessCore = (function () {
     }
 
     return {
-      sync: sync, ingestWebhook: ingestWebhook, deliver: deliver, deliveryDue: deliveryDue, sweep: sweep, adminResolveDelivery: adminResolveDelivery,
+      sync: sync, ingestWebhook: ingestWebhook, deliver: deliver, deliveryDue: deliveryDue, sweep: sweep, reconcilePending: reconcilePending, adminResolveDelivery: adminResolveDelivery,
       adminInspect: adminInspect, adminReconcile: adminReconcile, adminResolveUnknown: adminResolveUnknown, adminDelete: adminDelete,
       inventory: inventory
     };

@@ -1269,12 +1269,14 @@ var SwitchBotAccessInfra = (function () {
         if (!led || led.ok !== true) {
           var ledCode = led && typeof led.error === 'string' && /^LEDGER_[A-Z_]+$/.test(led.error) && Object.prototype.hasOwnProperty.call(CATALOG, led.error) ? led.error : 'LEDGER_READ_FAILED';
           infraAlert(ledCode, null, null, null);
+          engine.reconcilePending({}); // 台帳が読めなくても、送信済み削除の確認（読み取りのみ）は期限内に進める（#829）
           return { ok: false, error: 'LEDGER_READ_FAILED' };
         }
         var records = led.records.slice().sort(function (a, b) {
           return (openByBooking[String(b.bookingId)] ? 1 : 0) - (openByBooking[String(a.bookingId)] ? 1 : 0);
         });
         var summary = { ok: true, synced: 0, frozen: 0, waiting: 0, skipped: 0, deferred: 0, gateStops: [] };
+        var syncedBookings = {};
         for (var i = 0; i < records.length; i++) {
           if (deps.nowMs() - startedMs > ic.runBudgetSec * 1000) { summary.deferred = records.length - i; break; }
           var sn = deps.snapshot.build(records[i], { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
@@ -1327,6 +1329,7 @@ var SwitchBotAccessInfra = (function () {
             return { ok: false, error: 'SYNC_ERROR' }; // 保存失敗などはサイクルを止める（予約側へは何も伝播しない）
           }
           summary.synced++;
+          syncedBookings[String(sn.bookingId)] = true;
           if (out.gateStop) {
             // 発行を試行できなかった（OP未作成/未送信）。revision・発行窓は「未処理」のまま保持し、
             // 次回以降ゲートを再評価する（復旧後に発行対象から脱落させない）。通知は重複抑止、再評価は gateRetrySec 間隔
@@ -1343,6 +1346,7 @@ var SwitchBotAccessInfra = (function () {
           if (pilotExcluded) writeTrack(sn.bookingId, { revision: null, windowHandled: false, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
           else writeTrack(sn.bookingId, { revision: sn.revision, digest: sn.digest, windowHandled: windowOpen, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
         }
+        engine.reconcilePending(syncedBookings); // 今回 sync で照合済みの予約は除く（読取回数を二重に消費しない）
         return summary;
       });
     }
