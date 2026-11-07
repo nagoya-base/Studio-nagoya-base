@@ -1547,6 +1547,19 @@ var SwitchBotAccessInfra = (function () {
     try { sp.set(BND_PROP.STATE, JSON.stringify(st)); return true; } catch (e) { return false; }
   }
 
+  /**
+   * STOPPED を永続する。書込み結果を必ず返し、失敗時は「保存済み」と報告させない（呼出し側が STOP_NOT_PERSISTED を明示する）。
+   * 失敗しても自動再送・追加通信・無断復旧はしない。*_SENT が残る場合はそれが再送抑止になる。
+   */
+  function bndStopWrite(sp, base, code, out) {
+    var s = JSON.parse(JSON.stringify(base)); s.state = 'STOPPED'; s.reason = code;
+    out.manualRecovery = true;
+    if (bndWrite(sp, s)) { out.state = 'STOPPED'; out.persistence = 'PERSISTED'; return true; }
+    out.persistence = 'NOT_PERSISTED';
+    if (out.failures.indexOf('STOP_NOT_PERSISTED') === -1) out.failures.push('STOP_NOT_PERSISTED'); // 先頭に出す固定コード。元の理由も続けて残す
+    return false;
+  }
+
   /** 開始・終了時刻の計算とガード（純粋関数）。範囲外は通信前に拒否する。値は epoch 秒。 */
   function bndWindowPlan(nowSec, offsetSec, durationSec) {
     if (typeof nowSec !== 'number' || !isFinite(nowSec) || nowSec <= 0) return { ok: false, code: 'TIME_WINDOW_GUARD' };
@@ -1658,10 +1671,8 @@ var SwitchBotAccessInfra = (function () {
       var sha = deps.sha256Hex;
       var nowSec = deps.nowSec();
 
-      function persistStop(code) { // 通信前の不整合: 呼出し回数は増やさず STOPPED にする（以後は公式アプリで手動撤去）
-        var s = JSON.parse(JSON.stringify(st)); s.state = 'STOPPED'; s.reason = code;
-        bndWrite(sp, s);
-        out.state = 'STOPPED'; out.manualRecovery = true;
+      function persistStop(code) { // 通信前の不整合: 呼出し回数は増やさず STOPPED にする（以後は公式アプリで手動撤去）。保存できなければそう報告する
+        bndStopWrite(sp, st, code, out);
         return stop(code);
       }
 
@@ -1720,15 +1731,13 @@ var SwitchBotAccessInfra = (function () {
       try { sp.del(BND_PROP.APPROVAL); } catch (e) { password = null; return stop('APPROVAL_CONSUME_FAILED'); }
       if (!bndWrite(sp, pre)) { password = null; return stop('STATE_WRITE_FAILED'); }
       out.callsUsed = pre.calls; out.apiCalls = 1; out.state = pre.state;
-      function halt(code) {
-        var s = JSON.parse(JSON.stringify(pre)); s.state = 'STOPPED'; s.reason = code;
-        bndWrite(sp, s);
-        out.state = 'STOPPED'; out.manualRecovery = true;
+      function halt(code) { // 通信後の失敗: 永続できなければ *_SENT のまま（再送抑止）で、保存済みと偽らない
+        bndStopWrite(sp, pre, code, out);
         return stop(code);
       }
       function done(next, mut) {
         var s = JSON.parse(JSON.stringify(pre)); s.state = next; if (mut) mut(s);
-        if (!bndWrite(sp, s)) { out.manualRecovery = true; return stop('STATE_WRITE_FAILED'); }
+        if (!bndWrite(sp, s)) { out.manualRecovery = true; out.persistence = 'NOT_PERSISTED'; return stop('STATE_WRITE_FAILED'); }
         out.state = next; return fin();
       }
 
@@ -1826,8 +1835,8 @@ var SwitchBotAccessInfra = (function () {
       if (!o.any && o.from !== st.state) return stop('STAGE_ORDER_VIOLATION');
       var sha = deps.sha256Hex, nowSec = deps.nowSec();
       if (st.legacyFp !== bndLegacyFp(sp, sha)) { /* 先に記録を残して停止 */
-        var sl = JSON.parse(JSON.stringify(st)); sl.state = 'STOPPED'; sl.reason = 'LEGACY_STATE_CHANGED'; bndWrite(sp, sl);
-        out.state = 'STOPPED'; out.manualRecovery = true; return stop('LEGACY_STATE_CHANGED');
+        bndStopWrite(sp, st, 'LEGACY_STATE_CHANGED', out);
+        return stop('LEGACY_STATE_CHANGED');
       }
       if (!o.critical && !o.retry && o.when) { // 時刻の整合（申告は試行のあと。外れるなら SKIPPED を申告する）
         var okTime = o.when === 'BEFORE_START' ? nowSec < st.startSec

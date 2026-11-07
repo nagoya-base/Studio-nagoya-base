@@ -690,3 +690,49 @@ test('遅れた重大申告: A4 記録後・FINAL_LIST 後（回収前）でも�
     assert.strictEqual(a.recovery, 'RECOVERED'); assert.strictEqual(a.verdict, 'BOUNDARY_NOT_ESTABLISHED'); assert.strictEqual(a.decisionUse, 'NOT_USABLE_FOR_01FD_JUDGEMENT');
   });
 });
+
+// ───────────────── STOPPED の保存失敗を「保存済み」と偽らない（通信段階） ─────────────────
+
+function stoppedWriteFails() { return { failStateWrite: function (s) { return s.state === 'STOPPED'; } }; }
+
+function assertNotPersistedStop(r, reason) {
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.code, 'STOP_NOT_PERSISTED', '固定コードを先頭に出す');
+  assert.ok(r.failures.indexOf(reason) !== -1, '元の理由も残す: ' + reason);
+  assert.strictEqual(r.persistence, 'NOT_PERSISTED'); assert.strictEqual(r.manualRecovery, true);
+  assert.notStrictEqual(r.state, 'STOPPED', 'STOPPED が保存されたと報告しない');
+}
+
+test('STOPPED の保存失敗: 通信前の停止（BASELINE_STALE／LEGACY_STATE_CHANGED）は STOP_NOT_PERSISTED＋手動対応を明示し、追加通信もしない', function () {
+  var w = makeWorld(stoppedWriteFails()); stg(w, 'LIST'); w.now += 901;
+  var r = issue(w);
+  assertNotPersistedStop(r, 'BASELINE_STALE'); assert.strictEqual(r.state, 'LISTED'); assert.strictEqual(st(w).state, 'LISTED', '永続状態は変わっていない');
+  assert.strictEqual(w.calls.length, 1); assert.strictEqual(w.createArgs.length, 0); noSecretsLeft(w); leakCheck(w, r);
+  // 永続状態は LISTED のまま: 古い基準は次回も拒否される（自動で進まない・自動再送もない）
+  w.script.ACCESS_BND_TEST_PASSCODE = PASSCODE; w.script.ACCESS_BND_PASSCODE_ATTEST = ATTEST; w.script.ACCESS_BND_TEST_APPROVAL = 'ISSUE';
+  assert.strictEqual(plain(Infra.bndStage(w.deps, 'ISSUE')).failures.indexOf('BASELINE_STALE') !== -1, true); assert.strictEqual(w.createArgs.length, 0);
+
+  var w2 = makeWorld(stoppedWriteFails()); stg(w2, 'LIST'); w2.now += 90;
+  w2.script.ACCESS_NUMID_TEST_STATE = JSON.stringify({ v: 1, state: 'COMPLETE', calls: 6, name: 'TSTNUMID01', baselineCount: 1, baselineFp: 'tampered', reason: 'APP_ABSENT_CONFIRMED' });
+  var r2 = issue(w2); assertNotPersistedStop(r2, 'LEGACY_STATE_CHANGED'); assert.strictEqual(w2.createArgs.length, 0); noSecretsLeft(w2);
+});
+
+test('STOPPED の保存失敗: 通信後の失敗（LIST_COMM_ERROR／VERIFY_ISSUED の通信失敗）は *_SENT のまま残り（再送抑止）、保存済みと偽らず、追加通信もしない', function () {
+  var w = makeWorld(Object.assign({ listThrow: function (n) { return n === 1; } }, stoppedWriteFails()));
+  var r = stg(w, 'LIST'); assertNotPersistedStop(r, 'LIST_COMM_ERROR');
+  assert.strictEqual(st(w).state, 'LIST_SENT', '送信済みマーカーは残る'); assert.strictEqual(r.state, 'LIST_SENT');
+  var n = w.calls.length;
+  var again = stg(w, 'LIST'); assert.strictEqual(again.code, 'INTERRUPTED_MANUAL_RECOVERY', '再送されない'); assert.strictEqual(w.calls.length, n);
+
+  var w2 = makeWorld(Object.assign({ listThrow: function (n2) { return n2 === 3; } }, stoppedWriteFails()));
+  stg(w2, 'LIST'); w2.now += 90; issue(w2); w2.now += 150;
+  var r2 = stg(w2, 'VERIFY_ISSUED'); assertNotPersistedStop(r2, 'LIST_COMM_ERROR');
+  assert.strictEqual(st(w2).state, 'VERIFY_ISSUED_SENT'); var n2 = w2.calls.length;
+  assert.strictEqual(stg(w2, 'VERIFY_ISSUED').code, 'INTERRUPTED_MANUAL_RECOVERY'); assert.strictEqual(w2.calls.length, n2); assert.strictEqual(w2.deleteCalls, 0);
+  leakCheck(w2, r2);
+});
+
+test('STOPPED の保存失敗: 保存できる通常の停止は persistence=PERSISTED を出し、従来どおり STOPPED と報告する', function () {
+  var w = makeWorld({ listThrow: function (n) { return n === 1; } });
+  var r = stg(w, 'LIST'); assert.strictEqual(r.code, 'LIST_COMM_ERROR'); assert.strictEqual(r.state, 'STOPPED'); assert.strictEqual(r.persistence, 'PERSISTED'); assert.strictEqual(st(w).state, 'STOPPED');
+});

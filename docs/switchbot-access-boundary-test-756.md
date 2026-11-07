@@ -41,6 +41,7 @@
 - 通信前に「承認の消費＋呼出し回数＋送信済みマーカー」を永続。永続に失敗したら通信しない。timeout／UNKNOWN／不受理は再送も追加確認もせず `STOPPED`（以後の変更操作は自動で止まる）。
 - #791（`STOPPED`・5/5）と #797（`COMPLETE`・6/6）の状態は**読むだけ**。両ARMED／APPROVALが未設定であることと、状態の指紋が試験中に変わっていないことを毎段階確認する（変化は `LEGACY_STATE_CHANGED` で停止）。
 - `FINAL_LIST` が取得できなくても追加GETや無承認の削除はしない。
+- **STOPPED の保存に失敗した場合**：停止（`persistStop`／`halt`）の書込み結果を必ず検査し、失敗時は `STOP_NOT_PERSISTED`（先頭の固定コード）＋元の理由＋`persistence=NOT_PERSISTED`＋`manualRecovery=true` を返す。`STOPPED` が保存されたとは報告しない。通信後の停止なら永続状態は `*_SENT` のまま残り、それが再送抑止になる（以後の段階は `INTERRUPTED_MANUAL_RECOVERY`）。通信前の停止なら永続状態は変わらない。いずれも自動再送・追加通信・無断復旧はしない。公式アプリで試験キーの有無を確認し、残っていれば手動削除、状態の修復はオーナーが `accessBndStatus` で確認してから行う。
 
 ## 使い捨て暗証番号の取扱い（秘密破棄の状態遷移）
 
@@ -139,6 +140,7 @@ ISSUE 以外の段階で残留を検出 ──▶ 削除して停止(PASSCODE_RE
 | `A1_UNLOCKED_BEFORE_START` / `A4_UNLOCKED_AFTER_END` | 重大。STOPPED・手動回収・01FD保留 |
 | `A2_DENIED_NO_RETRY_GO` / `A2_DENIED_AFTER_RETRY` / `A3_DENIED_IN_WINDOW` | 期間内で解錠不能。成功扱いしない。反映遅延／時刻解釈／端末状態は未区別として記録 |
 | `KEYPAD_LOCK_OR_ALARM_SIGN` | ロック・警報の兆候。STOPPED |
+| `STOP_NOT_PERSISTED` | 停止の状態を保存できなかった。`STOPPED` と偽らず手動対応（`*_SENT` が残れば再送は抑止される） |
 | `LEGACY_STATE_CHANGED` / `NUMID_STATE_NOT_COMPLETE` | #791/#797 の状態が不変でない。通信せず停止 |
 | `APP_STILL_PRESENT` | 公式アプリに残存。STOPPED・管理者対応（`recovery=NOT_RECOVERED`） |
 | `BND_APP_CHECK_OK` | 回収の記録が成功したことだけを示す。合否は `verdict` を見る |
