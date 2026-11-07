@@ -363,9 +363,10 @@ function world(nowIso) {
 }
 
 /** 台帳レコード → スナップショット → 処理方針 → コア sync。FREEZEならsyncを呼ばず管理者通知相当を返す。 */
-function drive(sandbox, w, engine, rec) {
+function drive(sandbox, w, engine, rec, eligibleBrands) {
   var sn = sandbox.AccessKeySnapshot.build(rec, { facility: 'main' });
-  var plan = sandbox.AccessKeySnapshot.toCoreInput(sn, w.now * 1000);
+  /* eligibleBrands 省略時は本番の現行設定（SNBのみ）と同じ。Infra は設定 eligibleBrands をそのまま渡す。 */
+  var plan = sandbox.AccessKeySnapshot.toCoreInput(sn, w.now * 1000, { eligibleBrands: eligibleBrands || ['snb'] });
   if (plan.action === 'FREEZE') return { frozen: Array.from(plan.reasons) };
   return { result: engine.sync(plan.booking), plan: plan };
 }
@@ -513,6 +514,54 @@ test('①SNB対象外化(他ブランドへ変更): 旧キーを削除し、新�
   drive(sandbox, w, e, record({ revision: 2, brand: 'studio_x' }));
   assert.strictEqual(w.keys[DEV].length, 0);
   assert.strictEqual(w.mutations().filter(function (m) { return m.indexOf('create') === 0; }).length, 1);
+});
+
+test('#824: 3ブランド化後(eligibleBrands=snb/mens/studio_x)は mens/studio_x も支払未承認などで凍結する(SNBと同等)', function () {
+  var all = ['snb', 'mens', 'studio_x'];
+  ['snb', 'mens', 'studio_x'].forEach(function (brand) {
+    var sandbox = load();
+    var w = world('2030-01-11T08:00:00+09:00');
+    var f = drive(sandbox, w, w.engine(), record({ revision: 1, brand: brand, paymentMethod: '現金', paymentStatus: 'not_started', paymentConfirmedAt: '', confirmedAt: '' }), all);
+    assert.deepStrictEqual(f.frozen, ['PAYMENT_UNVERIFIED'], brand);
+    assert.deepStrictEqual(w.mutations(), [], '凍結中は鍵操作なし: ' + brand);
+    var g = drive(sandbox, w, w.engine(), record({ revision: 1, brand: brand, feeSettlementState: 'PENDING_CHARGE' }), all);
+    assert.deepStrictEqual(g.frozen, ['EXTENSION_CHARGE_PENDING'], brand);
+  });
+});
+
+test('#824: 3ブランド化後も、取消・未知ブランドへの変更は凍結せず既存キーを回収する', function () {
+  var all = ['snb', 'mens', 'studio_x'];
+  var sandbox = load();
+  var w = world('2030-01-11T08:00:00+09:00');
+  var e = w.engine();
+  drive(sandbox, w, e, record({ revision: 1, brand: 'snb' }), all);
+  assert.strictEqual(w.keys[DEV].length, 1);
+  var blocked = { feeRecoveryRequiredAt: new Date() };
+  var c = drive(sandbox, w, e, record(Object.assign({ revision: 2, brand: 'mens', status: 'CANCELLED' }, blocked)), all);
+  assert.ok(!c.frozen, '取消は凍結しない');
+  assert.strictEqual(w.keys[DEV].length, 0, '取消で旧キー回収');
+  var w2 = world('2030-01-11T08:00:00+09:00');
+  drive(sandbox, w2, w2.engine(), record({ revision: 1, brand: 'snb' }), all);
+  var u = drive(sandbox, w2, w2.engine(), record(Object.assign({ revision: 2, brand: 'unknown_brand' }, blocked)), all);
+  assert.ok(!u.frozen, '未知ブランドへの変更は凍結しない');
+  assert.strictEqual(w2.keys[DEV].length, 0);
+});
+
+test('#824: 3ブランド候補でも mens/studio_x の端末対応が無ければ発行しない(同一端末を勝手に流用しない)', function () {
+  var sandbox = load();
+  ['mens', 'studio_x'].forEach(function (brand) {
+    var w = world('2030-01-11T08:00:00+09:00');
+    var cfg = coreConfig({ eligibleBrands: ['snb', 'mens', 'studio_x'] }); /* keypads は snb のみ */
+    drive(sandbox, w, w.engine(cfg), record({ revision: 1, brand: brand }), ['snb', 'mens', 'studio_x']);
+    assert.deepStrictEqual(w.mutations(), [], brand + ': 端末未設定は発行停止');
+  });
+  var w2 = world('2030-01-11T08:00:00+09:00');
+  var cfg2 = coreConfig({ eligibleBrands: ['snb', 'mens', 'studio_x'], keypads: [{ brand: 'snb', facility: 'main', deviceId: DEV }, { brand: 'mens', facility: 'main', deviceId: DEV }] });
+  drive(sandbox, w2, w2.engine(cfg2), record({ revision: 1, brand: 'mens' }), ['snb', 'mens', 'studio_x']);
+  assert.deepStrictEqual(w2.mutations(), ['create:' + DEV], '正しく対応付けたMensは発行');
+  var w3 = world('2030-01-11T08:00:00+09:00');
+  drive(sandbox, w3, w3.engine(cfg2), record({ revision: 1, brand: 'studio_x' }), ['snb', 'mens', 'studio_x']);
+  assert.deepStrictEqual(w3.mutations(), [], 'Studio X は対応表に無いので発行しない');
 });
 
 test('④旧改訂の再配信・順不同・復活の重複: 古いrevisionは無視し、同じ対象に2件目を作らない', function () {

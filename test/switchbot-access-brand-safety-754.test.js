@@ -268,11 +268,12 @@ test('B3-f: 空brandの凍結中に、元のbrand（snb）へ戻されたら通�
 
 function loadReader() {
   var ctx = vm.createContext({ console: console, Date: Date, Math: Math, JSON: JSON });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../gas/booking/shared/AccessKeySnapshot.gs'), 'utf8'), ctx, { filename: 'AccessKeySnapshot.gs' });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../gas/switchbot-access/AccessLedgerReader.gs'), 'utf8'), ctx, { filename: 'AccessLedgerReader.gs' });
   return ctx.AccessLedgerReader;
 }
 
-test('B4: select は 空brand を照合候補に含む（凍結・管理者確認のため）。mens／studio_x／未知ブランドは候補に含めない', function () {
+test('B4: select は 既知の対象ブランド（snb/mens/studio_x）と空brand を照合候補に含む。未知ブランドは含めない（#824）', function () {
   var R = loadReader();
   var now = Date.parse('2030-01-10T13:00:00+09:00');
   var start = new Date('2030-01-11T10:00:00+09:00');
@@ -284,9 +285,32 @@ test('B4: select は 空brand を照合候補に含む（凍結・管理者確�
   }
   assert.strictEqual(pick('snb'), 1);
   assert.strictEqual(pick(''), 1, '空brandは候補（SNB認定ではない。下流で BRAND_UNKNOWN 凍結）');
-  assert.strictEqual(pick('mens'), 0);
-  assert.strictEqual(pick('studio_x'), 0);
+  assert.strictEqual(pick('mens'), 1, '#824: Mens も当日・翌日の候補');
+  assert.strictEqual(pick('studio_x'), 1, '#824: Studio X も当日・翌日の候補');
   assert.strictEqual(pick('unknown'), 0);
+  assert.strictEqual(pick('studio-x'), 0, '表記ゆれの未知ブランドは候補にしない');
+});
+
+test('#824: 候補の正本 AccessKeySnapshot.TARGET_BRANDS は設定検証の既知ブランドと一致する', function () {
+  var ctx = vm.createContext({ console: console, Date: Date, Math: Math, JSON: JSON });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../gas/booking/shared/AccessKeySnapshot.gs'), 'utf8'), ctx, { filename: 'AccessKeySnapshot.gs' });
+  var target = Array.from(vm.runInContext('AccessKeySnapshot.TARGET_BRANDS', ctx));
+  assert.deepStrictEqual(target, ['snb', 'mens', 'studio_x']);
+  target.forEach(function (b) {
+    assert.ok(Infra.validateConfig(validCfg({ eligibleBrands: [b] })).ok, b);
+  });
+  assert.ok(Infra.validateConfig(validCfg({ eligibleBrands: ['studio-x'] })).errors.indexOf('ELIGIBLE_BRANDS_INVALID') !== -1);
+});
+
+test('#824: select は当日・翌日以外の mens/studio_x を候補にせず、trackedIds 経路は維持する', function () {
+  var R = loadReader();
+  var now = Date.parse('2030-01-10T13:00:00+09:00');
+  var far = new Date('2030-01-20T10:00:00+09:00');
+  var cols = { bookingId: ['M1', 'X1'], startAt: [far, far], endAt: [far, far], brand: ['mens', 'studio_x'] };
+  ['status', 'paymentMethod', 'paymentStatus', 'paymentConfirmedAt', 'confirmedAt', 'expiredAt', 'feeSettlementState', 'feeRecoveryRequiredAt', 'paymentRecoveryRequiredAt', 'revision']
+    .forEach(function (c) { cols[c] = ['', '']; });
+  assert.strictEqual(R.select(cols, now, []).length, 0);
+  assert.deepStrictEqual(Array.from(R.select(cols, now, ['M1']).map(function (r) { return r.bookingId; })), ['M1']);
 });
 
 test('B4: select のコメントに「空brandは凍結/管理者確認のための候補で、SNB認定ではない」ことが明記されている', function () {
@@ -413,4 +437,64 @@ test('P9: 発行済み→リスト外（旧キー回収）→リストへ戻す�
   rt = w.runtime();
   cycle(w, rt, 6);
   assert.strictEqual(w.callCount('createKey'), 2, '戻したら改訂なしで再発行');
+});
+
+// ================================================================ #824: Mens／Studio X の自動鍵発行（3ブランド）
+
+var THREE = ['snb', 'mens', 'studio_x'];
+function threeBrandWorld(cfg, rec) {
+  var DEVICE = H.DEV;
+  var w = H.createWorld({ mail: false, cfg: Object.assign({
+    eligibleBrands: THREE,
+    keypads: [{ brand: 'snb', facility: 'main', deviceId: DEVICE }, { brand: 'mens', facility: 'main', deviceId: DEVICE }, { brand: 'studio_x', facility: 'main', deviceId: DEVICE }]
+  }, cfg || {}) });
+  w.createMode = 'noCommandId';
+  w.deleteMode = 'noCommandId';
+  var rt = w.runtime();
+  w.records = [H.record(rec || {})];
+  return { w: w, rt: rt };
+}
+
+test('#824: 正常な Mens／Studio X の確定予約は、3ブランド設定で鍵同期に届き発行される', function () {
+  ['mens', 'studio_x'].forEach(function (brand) {
+    var x = threeBrandWorld({}, { brand: brand });
+    cycle(x.w, x.rt, 3);
+    assert.strictEqual(x.w.callCount('createKey'), 1, brand);
+    assert.deepStrictEqual(states(x.w), [S.ISSUED_CONFIRMED], brand);
+  });
+});
+
+test('#824: 支払・承認が未確認の Mens／Studio X は SNB と同じく凍結し、発行しない', function () {
+  ['snb', 'mens', 'studio_x'].forEach(function (brand) {
+    var x = threeBrandWorld({}, { brand: brand, paymentMethod: '現金', paymentStatus: 'not_started', paymentConfirmedAt: '', confirmedAt: '' });
+    cycle(x.w, x.rt, 3);
+    assert.strictEqual(x.w.callCount('createKey'), 0, brand);
+    assert.strictEqual(x.w.callCount('deleteKey'), 0, brand);
+    assert.ok(has(x.w, /FROZEN/), brand + ': 管理者へ凍結通知');
+  });
+});
+
+test('#824: 対象外・端末未対応は安全停止（eligibleBrandsがSNBのみ／mens用keypad無し／未知ブランド）', function () {
+  var snbOnly = threeBrandWorld({ eligibleBrands: ['snb'] }, { brand: 'mens' });
+  cycle(snbOnly.w, snbOnly.rt, 3);
+  assert.strictEqual(snbOnly.w.callCount('createKey'), 0, '設定が拡大前なら Mens は発行しない（凍結もしない）');
+  assert.ok(!has(snbOnly.w, /FROZEN/));
+  var noPad = threeBrandWorld({ keypads: [{ brand: 'snb', facility: 'main', deviceId: H.DEV }] }, { brand: 'studio_x' });
+  cycle(noPad.w, noPad.rt, 3);
+  assert.strictEqual(noPad.w.callCount('createKey'), 0, 'studio_x の端末対応が無ければ発行しない（SNBの端末を流用しない）');
+  var unknown = threeBrandWorld({}, { brand: 'studio-x' });
+  cycle(unknown.w, unknown.rt, 3);
+  assert.strictEqual(unknown.w.callCount('createKey'), 0, '未知ブランドは発行しない');
+});
+
+test('#824: eligibleBrands拡大前に候補へ入った Mens は「処理済み」にならず、拡大後の再起動で追加改訂なしに発行される', function () {
+  var x = threeBrandWorld({ eligibleBrands: ['snb'] }, { brand: 'mens' });
+  cycle(x.w, x.rt, 3);
+  assert.strictEqual(x.w.callCount('createKey'), 0, '拡大前は発行しない');
+  assert.strictEqual(ops(x.w).length, 0, '状態(OP)を作らない');
+  assert.deepStrictEqual(x.w.store.keys().filter(function (k) { return k.indexOf('TRK') === 0; }), [], '追跡(処理済み)を書かない');
+  x.w.cfg.eligibleBrands = THREE; /* 運営者が非公開で設定を拡大 */
+  var rt2 = x.w.runtime();
+  cycle(x.w, rt2, 3);
+  assert.strictEqual(x.w.callCount('createKey'), 1, '拡大後に同じ予約(同revision)を発行');
 });

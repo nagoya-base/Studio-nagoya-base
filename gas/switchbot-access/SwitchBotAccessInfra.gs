@@ -1145,7 +1145,7 @@ var SwitchBotAccessInfra = (function () {
       if (hits.length > 1) return hold('BOOKING_AMBIGUOUS');
       var nowMs = deps.nowMs(), nowSec = deps.nowSec();
       var sn = deps.snapshot.build(hits[0], { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
-      var input = deps.snapshot.toCoreInput(sn, nowMs);
+      var input = deps.snapshot.toCoreInput(sn, nowMs, { eligibleBrands: Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : [] });
       if (input.action === 'FREEZE') return hold('BOOKING_FROZEN'); // 支払/承認不明・追加料金未了・要復旧は送らない（解消後に再評価）
       if (sn.revision !== rec.revision) return stop('STALE_REVISION');
       if (sn.status === 'CANCELLED') return stop('CANCELLED');
@@ -1278,13 +1278,21 @@ var SwitchBotAccessInfra = (function () {
         for (var i = 0; i < records.length; i++) {
           if (deps.nowMs() - startedMs > ic.runBudgetSec * 1000) { summary.deferred = records.length - i; break; }
           var sn = deps.snapshot.build(records[i], { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
-          var input = deps.snapshot.toCoreInput(sn, nowMs);
+          var input = deps.snapshot.toCoreInput(sn, nowMs, { eligibleBrands: Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : [] });
           var tr = readTrack(sn.bookingId);
           // 限定稼働（#757）: 許可リスト外で、鍵の未解決OPも無い予約は、凍結通知・追跡記録のどちらも行わず黙って対象外とする。
           // 追跡（revision／発行窓の処理済み）を書かないので、後でリストに加えれば次の周期で再評価される。
           // 既に鍵のOPがある予約は通常の経路へ進み、非対象として旧キーが回収される。
           var pilotExcluded = Array.isArray(cfg.pilotBookingIds) && cfg.pilotBookingIds.indexOf(String(sn.bookingId)) === -1;
           if (pilotExcluded && !openByBooking[sn.bookingId]) {
+            summary.skipped++;
+            continue;
+          }
+          // 発行対象外ブランド（#824）: 設定 eligibleBrands に無いブランドの予約が、追跡記録も未解決OPも無いまま候補に入った場合は、
+          // 凍結通知・追跡記録のどちらも行わず黙って見送る。ここで「処理済み(revision/発行窓)」を書くと、後で eligibleBrands を
+          // 拡大しても再評価されず発行されないため。追跡済み・OPありの予約（SNB→他ブランド変更の旧キー回収など）は通常の経路へ進む。
+          var brandExcluded = sn.brand !== '' && !(Array.isArray(cfg.eligibleBrands) && cfg.eligibleBrands.indexOf(sn.brand) !== -1);
+          if (brandExcluded && !tr && !openByBooking[sn.bookingId]) {
             summary.skipped++;
             continue;
           }

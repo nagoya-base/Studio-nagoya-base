@@ -54,6 +54,25 @@ Script Properties の `ACCESS_CONFIG`（JSON）に次を設定（既存キーは
 - 残存キー: `accessAdminInventory` → 必要なら `accessAdminDelete`（OFFでも利用可）→ 代替入室。状態データは消さない。
 - コードの戻し: workflow の `deployment_action=rollback`（[#768手順](switchbot-access-gas-deploy-768.md)）。
 
+## 3ブランド化（SNB／Mens／Studio X）｜非公開の設定手順（Issue #824 → #757へ引き継ぎ）
+
+運営者決定（2026-11-07）: 自動鍵発行の対象は **SNB・Mens・Studio X の3ブランド**。#824のコード修正（台帳候補・FREEZE判定）の**反映後**にだけ、次を行う。**コードはScript Propertiesを書き換えない**（設定は運営者が非公開で変更）。
+
+コードの挙動（#824）:
+- 台帳の照合候補は、利用日(JST)が当日・翌日の `snb` / `mens` / `studio_x`（正本は `AccessKeySnapshot.TARGET_BRANDS`）。空brandは従来どおり `BRAND_UNKNOWN` で安全側停止、未知のブランドは候補にしない。追跡済み（trackedIds）の予約は利用日を問わず読む。
+- 候補になることと、発行されることは別。発行可否は `eligibleBrands`（設定）と、`resolveKeypad` の `brand + facility + room` **完全一致**が決める。
+- 支払未確認・延長追加料金未了・要復旧などの凍結（`FREEZE`）は、`eligibleBrands` に含まれる既知ブランドに適用される（拡大前の現行設定 `["snb"]` では、Mens/Studio Xは凍結も発行もせず従来どおり対象外）。取消・対象外ブランドへの変更では凍結せず、既存キーの回収へ進む。
+
+運営者の設定手順（**反映後・ON中の変更は `ON_CHANGE_APPROVED` の承認条件に従う。`OFF_CONFIRMED` をON中に使わない**）:
+1. 各ブランドの**実際の物理入口**を確認する。**01FDが3ブランド共通の入口かは未確認**。確認できるまで同一端末を流用しない。
+2. `ACCESS_CONFIG.keypads` に、ブランドごとに `brand` / `facility` / `room` と、その入口の完全deviceIdを**完全一致**で設定する（完全IDは非公開）。未設定・曖昧なブランドは `eligibleBrands` に入れない（発行停止のまま）。
+3. `allowedLast4` が、設定した全端末の末尾4桁を含むことを確認する（含まれない端末は `KEYPAD_NOT_ALLOWED_IN_ENV`）。利用者・他端末・通常キーには触れない。
+4. `eligibleBrands` を、端末対応を確認できたブランドだけ（最終形 `["snb","mens","studio_x"]`）に更新する。`ledgerTarget` の `facility`/`room` が各ブランドの対応表と一致していること。
+5. **限定モードは維持**: `limitedRollout=true`、`pilotBookingIds` は管理者管理の予約ID**1件**。一般予約への拡大は別の運営判断。試験対象を変えるときもIDや個人情報をIssueに書かない。
+6. `accessReadOnlyDiagnostics` で設定 `VALID` と発行OFF/ON状態を確認し、固定コードのみ #757 に記録する。
+
+注意: PRのマージだけでは本番GASは更新されない。反映は工程1の workflow に従い、**現行ONのまま `eligibleBrands` だけを先行拡大しない**。
+
 ## 拡大について
 
 全予約への拡大は、限定運用の実績を見た運営者の**別の設定変更**。`limitedRollout` と `pilotBookingIds` の**両方**を外す（`pilotBookingIds` が残ると、`limitedRollout` を外しても許可リスト外の予約は `NOT_PILOT_TARGET` で発行されない）。意図なく外さない。
