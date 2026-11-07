@@ -10,6 +10,8 @@
 # 失敗は `GAS preflight failed: role=<ROLE> stage=<段階> code=<固定コード>. No deployment was updated.`
 # の固定形式のみ（Secret・ID・メール・clasp生出力は出さない）。preflightは更新権限や将来のAPI成功を保証しない。
 set -euo pipefail
+# shellcheck source=gas-deployment-list-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/gas-deployment-list-lib.sh"
 
 role="${1:-}"
 case "$role" in
@@ -73,19 +75,10 @@ fi
 
 cd "$remote_dir"
 if ! clasp_cmd list-deployments >"$list_stdout" 2>"$list_stderr"; then
-  if ! code="$(node -e '
-    const fs = require("fs");
-    const { classify } = require(process.argv[1]);
-    const read = (f) => { try { return fs.readFileSync(f, "utf8").slice(0, 1024 * 1024); } catch (_) { return ""; } };
-    process.stdout.write(classify(read(process.argv[2]) + "\n" + read(process.argv[3])));
-  ' "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" 2>/dev/null)"; then
-    code="UNCLASSIFIED"
-  fi
-  [[ "$code" =~ ^[A-Z_]+$ ]] || code="UNCLASSIFIED"
-  fail LIST "$code"
+  fail LIST "$(gas_list_error_code "$list_stdout" "$list_stderr")"
 fi
 # claspの一覧行（- ID @version - description）のID欄を完全一致で照合する（部分一致・説明文中のIDは不可）。
-if [[ "$(awk -v id="$deployment_id" '$1 == "-" && $2 == id { count++ } END { print count+0 }' "$list_stdout")" -ne 1 ]]; then
+if [[ "$(gas_deployment_id_count "$deployment_id" "$list_stdout")" -ne 1 ]]; then
   fail DEPLOYMENT DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE
 fi
 

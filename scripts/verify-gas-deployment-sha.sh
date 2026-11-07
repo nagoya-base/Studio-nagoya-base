@@ -9,6 +9,8 @@
 # 必要な環境変数: AUTH_FILE / DEPLOYMENT_ID / GITHUB_SHA / RUNNER_TEMP / GITHUB_WORKSPACE（作業ディレクトリは対象GASの.clasp.jsonがある場所）
 # 出力はSecret・ID・メール・clasp生出力を含まない固定形式のみ。
 set -euo pipefail
+# shellcheck source=gas-deployment-list-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/gas-deployment-list-lib.sh"
 
 role="${1:-}"
 case "$role" in
@@ -36,29 +38,14 @@ clasp_list() {
 
 for ((attempt=1; attempt<=attempts; attempt++)); do
   if ! clasp_list >"$list_stdout" 2>"$list_stderr"; then
-    if ! code="$(node -e '
-      const fs = require("fs");
-      const { classify } = require(process.argv[1]);
-      const read = (f) => { try { return fs.readFileSync(f, "utf8").slice(0, 1024 * 1024); } catch (_) { return ""; } };
-      process.stdout.write(classify(read(process.argv[2]) + "\n" + read(process.argv[3])));
-    ' "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$list_stdout" "$list_stderr" 2>/dev/null)"; then
-      code="UNCLASSIFIED"
-    fi
-    [[ "$code" =~ ^[A-Z_]+$ ]] || code="UNCLASSIFIED"
-    stop "$code"
+    stop "$(gas_list_error_code "$list_stdout" "$list_stderr")"
   fi
-  if [[ "$(awk -v id="$DEPLOYMENT_ID" '$1 == "-" && $2 == id { count++ } END { print count+0 }' "$list_stdout")" -ne 1 ]]; then
+  if [[ "$(gas_deployment_id_count "$DEPLOYMENT_ID" "$list_stdout")" -ne 1 ]]; then
     stop DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE
   fi
   # 対象行を「- ID @version - description」に分解し、descriptionが正確に `main <今回の40桁SHA>` と一致する場合だけ成功にする
   # （前置き・追記・別記載のSHAを含む部分一致は不可）。末尾の空白とCRだけは無視する。
-  description="$(awk -v id="$DEPLOYMENT_ID" '
-    $1 == "-" && $2 == id && $3 ~ /^@/ && $4 == "-" {
-      line = $0
-      sub(/^[[:space:]]*-[[:space:]]+[^[:space:]]+[[:space:]]+@[^[:space:]]+[[:space:]]+-[[:space:]]*/, "", line)
-      sub(/[[:space:]\r]+$/, "", line)
-      print line
-    }' "$list_stdout")"
+  description="$(gas_deployment_description "$DEPLOYMENT_ID" "$list_stdout")"
   if [[ "$description" == "main ${GITHUB_SHA}" ]]; then
     echo "Verified role=${role}: the existing deployment shows the current main commit"
     exit 0

@@ -301,3 +301,11 @@ Booking Webhook（`Update Booking Webhook GAS`）とSurvey（`Deploy Survey GAS 
   `test/gas-workflow-secrets-scope.test.js` が「job全体のenvにSecretsが無い」「Secretsを使うstepはpreflightと更新の2つだけ」「Surveyの選択式が対象と一致」「clasp偽物で選択側のIDだけが使われる」を確認します。
 - 対象外: Secretsの値・保管先・Environment・承認回数・更新手順・更新後の確認は変更していません。Booking本番・Access・旧verifyなどは、すでにstep単位の受け渡しです。
 - 実Googleでの動作は未検証です（CI・模擬試験は本番成功の証明ではありません）。
+
+## 共通部品（Issue #804 PR-E1・技術メモ）
+
+Webhook／Survey の更新前確認（`scripts/preflight-gas-project.sh`）と更新後確認（`scripts/verify-gas-deployment-sha.sh`）で重複していた
+「clasp の一覧を読む処理」（失敗の固定コード分類・ID欄の完全一致の件数・同じ行の説明文の取得）を
+`scripts/gas-deployment-list-lib.sh` にまとめました。読取りだけの部品で、push／update-deployment は呼びません。
+運営者の操作・Secrets・Environment・承認・出力形式は変わりません。Booking 本番（`deploy-booking-gas-target.sh`）は
+既存テストが関数を直接取り出して検査しているため、今回は共通部品へ移していません。
