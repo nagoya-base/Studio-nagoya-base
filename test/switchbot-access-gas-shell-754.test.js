@@ -317,6 +317,23 @@ test('管理者関数: 実行者はSessionから確定。未許可は拒否。ac
   assert.strictEqual(env.ctx.accessAdminResolveUnknown.length, 2);
 });
 
+test('accessAdminStatus（#822）: 許可項目だけをログに出し、戻り値は維持。未許可は固定コードのみ', function () {
+  var env = configured();
+  var r = env.ctx.accessAdminStatus();
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.plan && r.storage, '戻り値は従来どおり');
+  var line = env.logs.filter(function (l) { return l.indexOf('accessAdminStatus ') === 0; })[0];
+  assert.ok(line, 'ログ出力がある');
+  var j = JSON.parse(line.slice('accessAdminStatus '.length));
+  assert.deepStrictEqual(Object.keys(j).sort(), ['deliveries', 'enabled', 'environment', 'heartbeatAt', 'notifyOutboxPending', 'ok', 'triggers', 'unresolved']);
+  assert.strictEqual(j.environment, 'production');
+  assert.ok(!/tok-test|sec-test|owner@example|ADMIN-1|storage|plan|apiCalls/.test(line));
+  env.email = 'stranger@example.test';
+  env.logs.length = 0;
+  assert.strictEqual(env.ctx.accessAdminStatus().error, 'NOT_AUTHORIZED');
+  assert.strictEqual(env.logs.join('\n'), 'accessAdminStatus {"ok":false,"error":"NOT_AUTHORIZED"}');
+});
+
 test('事前チェック: 値は出さず SET/MISSING のみ', function () {
   var env = configured();
   var out = env.ctx.accessCheckSetup();
