@@ -1442,6 +1442,552 @@ var SwitchBotAccessInfra = (function () {
     };
   }
 
+  // ---------- 37DD 期限境界（開始前／期間内／期限後）解錠試験（親 #748・計画 #756）----------
+  //
+  // 目的: 未来開始・短期間の試験キー1件で「開始前不可／期間内可／期限後不可」を粗い境界（±180秒）で実測する。
+  // #791/#797 は一度も解錠しておらず、startTime/endTime の単位・時刻解釈は実機で未検証。本試験でも成功を保証しない。
+  // 設計上の約束:
+  //  - SwitchBot API は合計 BND_MAX_CALLS(=4) 回: LIST(GET)・ISSUE(createKey POST)・VERIFY_ISSUED(GET)・FINAL_LIST(GET)。各1回・再送なし。
+  //  - deleteKey の経路を持たない。試験キーの回収は公式アプリでの手動削除（APP_ABSENT の記録が完了条件）。
+  //  - #791(ACCESS_TEST_KEY_STATE=STOPPED)・#797(ACCESS_NUMID_TEST_STATE=COMPLETE) は読むだけ。指紋で不変を毎段階確認する。
+  //  - 使い捨て暗証番号はオーナーが Script Properties に一時設定。ISSUE が通信より前に読み取り・削除し、以後どの経路にも残さない。
+  //  - 解錠は現地の物理操作でありAPIでは観測できない。結果はオーナーが通信なしの bndObserve で申告し、時刻の整合だけ機械検査する。
+  // コード・設定のマージ/デプロイ/ARMED では何も起きない。#756 の実機GO（日時・担当・通信上限・試行回数）後にのみ実行する。
+  var BND_MAX_CALLS = 4;
+  var BND_PLAN = 'BND_PLAN_V1_4CALLS';
+  var BND_PROP = {
+    ARMED: 'ACCESS_BND_TEST_ARMED', APPROVAL: 'ACCESS_BND_TEST_APPROVAL', STATE: 'ACCESS_BND_TEST_STATE',
+    PASSCODE: 'ACCESS_BND_TEST_PASSCODE', ATTEST: 'ACCESS_BND_PASSCODE_ATTEST', A2_RETRY: 'ACCESS_BND_A2_RETRY_GO'
+  };
+  var BND_ATTEST_VALUE = 'NOT_IN_USE_CONFIRMED';  // 「既存の通常コードと重複しない」ことのオーナー申告。照合手段がないため申告がなければ発行しない
+  var BND_A2_RETRY_VALUE = 'ALLOWED_ONCE';       // GO欄で許可された場合だけ A2 の再試行を1回認める
+  var BND_START_OFFSET_SEC = 600, BND_DURATION_SEC = 900;
+  var BND_START_OFFSET_RANGE = [300, 900], BND_DURATION_RANGE = [600, 1800];
+  var BND_LIST_TO_ISSUE_MIN_SEC = 60;   // LIST→ISSUE の最短間隔
+  var BND_BASELINE_MAX_AGE_SEC = 900;   // LIST の基準が古すぎるときは発行しない
+  var BND_ISSUE_TO_VERIFY_MIN_SEC = 120;
+  var BND_A1_HEADROOM_SEC = 240;        // VERIFY_ISSUED は S-240 秒より前でなければ実行しない（A1=S-180 の余裕を機械的に確保）
+  var BND_SEND_DRIFT_MAX_SEC = 5;       // 状態永続から送信までの時計のずれ上限。T0 は実際の送信直前に固定する
+  var BND_FINAL_AFTER_END_SEC = 300;    // FINAL_LIST は E+300 秒以降
+  var BND_STAGES = {
+    LIST:          { from: ['INIT'],               pre: 'LIST_SENT' },
+    ISSUE:         { from: ['LISTED'],             pre: 'ISSUE_SENT' },
+    VERIFY_ISSUED: { from: ['ISSUE_ACCEPTED'],     pre: 'VERIFY_ISSUED_SENT' },
+    FINAL_LIST:    { from: ['A4_RECORDED'],        pre: 'FINAL_LIST_SENT' }
+  };
+  // 通信なしの観測申告。critical は即 STOPPED（重大な異常）。when は申告時刻の整合検査（申告は試行の後なので「少なくとも」の検査）。
+  var BND_OBS = {
+    A1_DENIED:       { step: 'A1',  res: 'DENIED',       from: 'ISSUED_VERIFIED',  to: 'A1_RECORDED', when: 'BEFORE_START' },
+    A1_INCONCLUSIVE: { step: 'A1',  res: 'INCONCLUSIVE', from: 'ISSUED_VERIFIED',  to: 'A1_RECORDED', when: 'BEFORE_START' },
+    A1_SKIPPED:      { step: 'A1',  res: 'SKIPPED',      from: 'ISSUED_VERIFIED',  to: 'A1_RECORDED', when: null },
+    A1_UNLOCKED:     { step: 'A1',  res: 'UNLOCKED',     from: 'ISSUED_VERIFIED',  critical: 'A1_UNLOCKED_BEFORE_START' },
+    A2_UNLOCKED:     { step: 'A2',  res: 'UNLOCKED',     from: 'A1_RECORDED',      to: 'A2_RECORDED', when: 'IN_WINDOW' },
+    A2_SKIPPED:      { step: 'A2',  res: 'SKIPPED',      from: 'A1_RECORDED',      to: 'A2_RECORDED', when: null },
+    A2_DENIED:       { step: 'A2',  res: 'DENIED',       from: 'A1_RECORDED',      retry: true, when: 'IN_WINDOW' },
+    A2R_UNLOCKED:    { step: 'A2R', res: 'UNLOCKED',     from: 'A2_RETRY_PENDING', to: 'A2_RECORDED', when: 'IN_WINDOW' },
+    A2R_SKIPPED:     { step: 'A2R', res: 'SKIPPED',      from: 'A2_RETRY_PENDING', to: 'A2_RECORDED', when: null }, // 許可された再試行を実施しなかった（期限切れ等）。合否は NOT_ESTABLISHED
+    A2R_DENIED:      { step: 'A2R', res: 'DENIED',       from: 'A2_RETRY_PENDING', critical: 'A2_DENIED_AFTER_RETRY' },
+    A3_UNLOCKED:     { step: 'A3',  res: 'UNLOCKED',     from: 'A2_RECORDED',      to: 'A3_RECORDED', when: 'IN_WINDOW' },
+    A3_SKIPPED:      { step: 'A3',  res: 'SKIPPED',      from: 'A2_RECORDED',      to: 'A3_RECORDED', when: null },
+    A3_DENIED:       { step: 'A3',  res: 'DENIED',       from: 'A2_RECORDED',      critical: 'A3_DENIED_IN_WINDOW' },
+    A4_DENIED:       { step: 'A4',  res: 'DENIED',       from: 'A3_RECORDED',      to: 'A4_RECORDED', when: 'AFTER_END' },
+    A4_INCONCLUSIVE: { step: 'A4',  res: 'INCONCLUSIVE', from: 'A3_RECORDED',      to: 'A4_RECORDED', when: 'AFTER_END' },
+    A4_SKIPPED:      { step: 'A4',  res: 'SKIPPED',      from: 'A3_RECORDED',      to: 'A4_RECORDED', when: null },
+    A4_UNLOCKED:     { step: 'A4',  res: 'UNLOCKED',     from: 'A3_RECORDED',      critical: 'A4_UNLOCKED_AFTER_END' },
+    KEYPAD_LOCK_SIGN: { any: true, critical: 'KEYPAD_LOCK_OR_ALARM_SIGN' }
+  };
+  var BND_OBS_STATES = ['ISSUED_VERIFIED', 'A1_RECORDED', 'A2_RETRY_PENDING', 'A2_RECORDED', 'A3_RECORDED', 'A4_RECORDED', 'FINAL_LISTED_APP_PENDING']; // 末尾2つは回収前の遅れた重大申告（KEYPAD_LOCK_SIGN）だけ受け付ける
+
+  /**
+   * 境界試験の合否（回収完了とは独立）。全必須観測が A1=DENIED・A2=UNLOCKED（許可再試行での解錠を含む）・A3=UNLOCKED・A4=DENIED で、
+   * かつ前提の証拠（発行したキーの開始・終了が返却値と一致）がそろったときだけ BOUNDARY_PASS。
+   * SKIPPED を含めば PARTIAL、INCONCLUSIVE を含めば INCONCLUSIVE、観測が欠ける・重大異常で停止なら NOT_ESTABLISHED。
+   * PASS 以外は 01FD の判断に使えない。粗い境界（±180秒）・単一端末・単一キー・申告ベースの結果であり、一般化しない。
+   */
+  function bndVerdict(s) {
+    var o = (s && s.obs) || {};
+    if (!s || s.state === 'STOPPED' || s.state === 'STOPPED_RECOVERED' || o.LOCK === 'SIGN') return 'BOUNDARY_NOT_ESTABLISHED';
+    var vals = ['A1', 'A2', 'A3', 'A4'].map(function (k) { return o[k]; });
+    if (vals.some(function (v) { return v === undefined; })) return 'BOUNDARY_NOT_ESTABLISHED';
+    if (vals.indexOf('INCONCLUSIVE') !== -1) return 'BOUNDARY_INCONCLUSIVE';
+    if (vals.indexOf('SKIPPED') !== -1) return 'BOUNDARY_PARTIAL';
+    var a2ok = o.A2 === 'UNLOCKED' || (o.A2 === 'DENIED' && o.A2R === 'UNLOCKED');
+    if (o.A1 === 'DENIED' && a2ok && o.A3 === 'UNLOCKED' && o.A4 === 'DENIED') {
+      return s.attrEcho === 'RETURNED_AND_MATCHED' ? 'BOUNDARY_PASS' : 'BOUNDARY_PARTIAL_PREMISE_UNVERIFIED';
+    }
+    return 'BOUNDARY_NOT_ESTABLISHED';
+  }
+
+  function bndJudgement(out, s) {
+    out.verdict = bndVerdict(s);
+    out.decisionUse = out.verdict === 'BOUNDARY_PASS' ? 'USABLE_FOR_01FD_JUDGEMENT' : 'NOT_USABLE_FOR_01FD_JUDGEMENT';
+    var o = (s && s.obs) || {};
+    out.a2Basis = o.A2 === 'UNLOCKED' ? 'FIRST_ATTEMPT' : (o.A2R === 'UNLOCKED' ? 'RETRY_GRANTED' : 'NOT_UNLOCKED');
+  }
+
+  function bndBlank() {
+    return { ok: false, code: 'BND_TEST_NOT_RUN', stage: 'NOT_CHECKED', failures: [], stopped: false, apiCalls: 0, callsUsed: 0, callsMax: BND_MAX_CALLS,
+      state: 'NOT_CHECKED', manualRecovery: false, evidence: 'NONE', keyCount: 0, passcodeState: 'NOT_TOUCHED',
+      timeProfile: 'OFFSET_600_DURATION_900', timeUnit: 'EPOCH_SECONDS_NOT_VERIFIED_ON_DEVICE',
+      notes: ['VERIFY_ONLY', 'TARGET_37DD_ONLY', 'ONE_TEST_KEY_ONLY', 'NO_AUTO_RETRY', 'NO_DELETE_KEY_PATH', 'COARSE_BOUNDARY_ONLY',
+        'ACCEPTED_IS_NOT_UNLOCK_PROOF', 'DENIAL_ALONE_IS_NOT_TIME_CONTROL_PROOF', 'OWNER_DECLARED_OBSERVATIONS'] };
+  }
+
+  function bndReadState(sp) {
+    var raw;
+    try { raw = sp.get(BND_PROP.STATE); } catch (e) { return { ok: false }; }
+    if (raw === undefined) return { ok: false };
+    if (raw === null || raw === '') return { ok: true, st: { v: 1, state: 'INIT', calls: 0, name: '', baselineCount: -1, baselineFp: '', obs: {} } };
+    var p = safeParse(raw);
+    if (!p || typeof p !== 'object' || p.v !== 1 || typeof p.state !== 'string' || typeof p.calls !== 'number' || p.calls < 0 || p.calls > BND_MAX_CALLS) return { ok: false };
+    return { ok: true, st: p };
+  }
+
+  function bndWrite(sp, st) {
+    try { sp.set(BND_PROP.STATE, JSON.stringify(st)); return true; } catch (e) { return false; }
+  }
+
+  /**
+   * STOPPED を永続する。書込み結果を必ず返し、失敗時は「保存済み」と報告させない（呼出し側が STOP_NOT_PERSISTED を明示する）。
+   * 失敗しても自動再送・追加通信・無断復旧はしない。*_SENT が残る場合はそれが再送抑止になる。
+   */
+  function bndStopWrite(sp, base, code, out) {
+    var s = JSON.parse(JSON.stringify(base)); s.state = 'STOPPED'; s.reason = code;
+    out.manualRecovery = true;
+    if (bndWrite(sp, s)) { out.state = 'STOPPED'; out.persistence = 'PERSISTED'; return true; }
+    out.persistence = 'NOT_PERSISTED';
+    if (out.failures.indexOf('STOP_NOT_PERSISTED') === -1) out.failures.push('STOP_NOT_PERSISTED'); // 先頭に出す固定コード。元の理由も続けて残す
+    return false;
+  }
+
+  /** 開始・終了時刻の計算とガード（純粋関数）。範囲外は通信前に拒否する。値は epoch 秒。 */
+  function bndWindowPlan(nowSec, offsetSec, durationSec) {
+    if (typeof nowSec !== 'number' || !isFinite(nowSec) || nowSec <= 0) return { ok: false, code: 'TIME_WINDOW_GUARD' };
+    if (typeof offsetSec !== 'number' || !isFinite(offsetSec) || offsetSec < BND_START_OFFSET_RANGE[0] || offsetSec > BND_START_OFFSET_RANGE[1]) return { ok: false, code: 'TIME_WINDOW_GUARD' };
+    if (typeof durationSec !== 'number' || !isFinite(durationSec) || durationSec < BND_DURATION_RANGE[0] || durationSec > BND_DURATION_RANGE[1]) return { ok: false, code: 'TIME_WINDOW_GUARD' };
+    var s = Math.floor(nowSec) + offsetSec;
+    return { ok: true, startSec: s, endSec: s + durationSec };
+  }
+
+  /** 8桁の数字。全桁同一・連番は拒否（推測されやすい番号を使い捨てでも使わない）。値は返さない。 */
+  function bndPasscodeOk(v) {
+    if (typeof v !== 'string' || !/^[0-9]{8}$/.test(v)) return false;
+    if (/^(.)\1{7}$/.test(v)) return false;
+    if ('01234567890'.indexOf(v) !== -1 || '09876543210'.indexOf(v) !== -1) return false;
+    return true;
+  }
+
+  /** 暗証番号と申告プロパティの両方を削除し、消えたことを読み直して確認する。成功のときだけ true。 */
+  function bndScrubPasscode(sp) {
+    [BND_PROP.PASSCODE, BND_PROP.ATTEST].forEach(function (k) {
+      if (diagRead(sp, k).state === 'MISSING') return; // 未設定なら削除操作自体を行わない
+      try { sp.del(k); } catch (e) { /* 読み直しで判定 */ }
+    });
+    return diagRead(sp, BND_PROP.PASSCODE).state === 'MISSING' && diagRead(sp, BND_PROP.ATTEST).state === 'MISSING';
+  }
+
+  function bndLegacyFp(sp, sha) {
+    var a, b;
+    try { a = sp.get(TKS_PROP.STATE); b = sp.get(NID_PROP.STATE); } catch (e) { return null; }
+    return sha('BND_LEGACY|' + String(a) + '|' + String(b));
+  }
+
+  /** #791(STOPPED)・#797(COMPLETE) が不変で、それぞれの ARMED/APPROVAL が未設定であることを読むだけで確認する。 */
+  function bndPrereq(sp) {
+    var pr = nidPrereq(sp);
+    if (pr) return pr;
+    var na = diagRead(sp, NID_PROP.ARMED);
+    if (na.state === 'UNKNOWN') return 'NUMID_ARMED_STATE_UNKNOWN';
+    if (na.state === 'SET') return 'NUMID_ARMED_PRESENT';
+    var np = diagRead(sp, NID_PROP.APPROVAL);
+    if (np.state === 'UNKNOWN') return 'NUMID_APPROVAL_STATE_UNKNOWN';
+    if (np.state === 'SET') return 'NUMID_APPROVAL_PRESENT';
+    var ns = nidReadState(sp);
+    if (!ns.ok) return 'NUMID_STATE_UNREADABLE';
+    if (ns.st.state !== 'COMPLETE') return 'NUMID_STATE_NOT_COMPLETE';
+    return null;
+  }
+
+  /**
+   * 通信する1段階。stage ∈ LIST / ISSUE / VERIFY_ISSUED / FINAL_LIST。deleteKey は呼ばない（コードパスなし）。
+   * 返すのは固定コード・件数・真偽値・秒数のみ（完全deviceId・暗証番号・トークン・passcode ID・キー名・例外本文・commandId を含めない）。
+   */
+  function bndStage(deps, stage) {
+    var out = bndBlank();
+    var def = BND_STAGES[stage];
+    out.stage = def ? stage : 'INVALID_STAGE';
+    var sp = deps.scriptProps, locked = false, scrubDue = false;
+    function fin() {
+      out.ok = out.failures.length === 0;
+      out.code = out.ok ? 'BND_' + stage + '_OK' : out.failures[0];
+      return diagSanitize(out, 0);
+    }
+    function stop(code) {
+      if (scrubDue) { // 暗証番号を読みうる段階の拒否・失敗・例外では、必ず破棄を試みる（残れば手動復旧）
+        var ok = bndScrubPasscode(sp);
+        scrubDue = !ok; out.passcodeState = ok ? 'SCRUBBED_ON_STOP' : 'SCRUB_FAILED';
+        if (!ok) out.manualRecovery = true;
+      }
+      if (out.failures.indexOf(code) === -1) out.failures.push(code);
+      out.stopped = true; return fin();
+    }
+    if (!def) return stop('INVALID_STAGE');
+    // ISSUE の直前にオーナーが番号を設定する。以降の拒否・例外は、どのゲートでの拒否でも番号と申告を破棄する（通信は常にゼロ）。
+    // 削除するのは暗証番号と申告の2プロパティだけで、ゲートの判定・通信前拒否の順序は変えない。
+    if (stage === 'ISSUE') scrubDue = true;
+    try {
+      var g = tksGates(deps);
+      if (!g.ok) return stop(g.code);
+      var pr = bndPrereq(sp);
+      if (pr) return stop(pr);
+      var armed = diagRead(sp, BND_PROP.ARMED);
+      if (armed.state === 'UNKNOWN') return stop('ARMED_STATE_UNKNOWN');
+      if (armed.state === 'MISSING') return stop('NOT_ARMED');
+      if (armed.raw !== BND_PLAN) return stop('ARMED_PLAN_MISMATCH');
+
+      if (stage !== 'ISSUE') {
+        var pc0 = diagRead(sp, BND_PROP.PASSCODE), at0 = diagRead(sp, BND_PROP.ATTEST);
+        if (pc0.state === 'UNKNOWN' || at0.state === 'UNKNOWN') return stop('PASSCODE_STATE_UNKNOWN');
+        if (pc0.state === 'SET' || at0.state === 'SET') {
+          var cleaned = bndScrubPasscode(sp);
+          out.passcodeState = cleaned ? 'RESIDUAL_SCRUBBED' : 'SCRUB_FAILED';
+          out.manualRecovery = true;
+          return stop('PASSCODE_RESIDUAL');
+        }
+      }
+
+      if (!deps.lock || !deps.lock.tryLock(1000)) return stop('LOCK_UNAVAILABLE');
+      locked = true;
+
+      var rs = bndReadState(sp);
+      if (!rs.ok) return stop('STATE_UNREADABLE');
+      var st = rs.st;
+      out.state = DIAG_VALUE_RE.test(st.state) ? st.state : 'INVALID_VALUE';
+      out.callsUsed = st.calls;
+      if (st.state === 'STOPPED' || /_SENT$/.test(st.state)) { out.manualRecovery = true; return stop(st.state === 'STOPPED' ? 'STOPPED_MANUAL_RECOVERY' : 'INTERRUPTED_MANUAL_RECOVERY'); }
+      if (st.state === 'RECOVERED' || st.state === 'STOPPED_RECOVERED') return stop('ALREADY_COMPLETE');
+      if (def.from.indexOf(st.state) === -1) return stop(st.state === def.pre || st.state === stage ? 'STAGE_ALREADY_DONE' : 'STAGE_ORDER_VIOLATION');
+
+      var sha = deps.sha256Hex;
+      var nowSec = deps.nowSec();
+
+      function persistStop(code) { // 通信前の不整合: 呼出し回数は増やさず STOPPED にする（以後は公式アプリで手動撤去）。保存できなければそう報告する
+        bndStopWrite(sp, st, code, out);
+        return stop(code);
+      }
+
+      var ap = diagRead(sp, BND_PROP.APPROVAL);
+      if (ap.state === 'UNKNOWN') return stop('APPROVAL_STATE_UNKNOWN');
+      if (ap.raw !== stage) return stop('STAGE_NOT_APPROVED');
+      var cred;
+      try { cred = !!(deps.userProps.get('SWITCHBOT_TOKEN') && deps.userProps.get('SWITCHBOT_SECRET')); } catch (e) { cred = false; }
+      if (!cred) return stop('AUTH_CREDENTIALS_MISSING');
+      if (st.calls >= BND_MAX_CALLS) return stop('CALL_BUDGET_EXHAUSTED');
+      var devFp = sha('BND_DEVICE|' + g.deviceId);
+      var legacyFp = bndLegacyFp(sp, sha);
+      if (!legacyFp) return stop('LEGACY_STATE_UNREADABLE');
+      if (stage !== 'LIST') {
+        if (st.deviceFp !== devFp) return stop('TARGET_DEVICE_CHANGED');
+        if (st.legacyFp !== legacyFp) return persistStop('LEGACY_STATE_CHANGED');
+      }
+      if (stage !== 'LIST' && stage !== 'ISSUE' && !TKS_NAME_RE.test(String(st.name || ''))) return stop('TEST_KEY_NAME_MISSING');
+
+      var password = null, name = null, startSec = 0, endSec = 0;
+      if (stage === 'ISSUE') {
+        if (st.baselineCount < 0 || !st.baselineFp) return stop('BASELINE_MISSING');
+        var cap = keypadCapacityGate([{ deviceId: g.deviceId, keyList: new Array(Math.max(0, st.baselineCount)) }], g.deviceId, { stopAt: TKS_CAPACITY_STOP, officialLimit: null });
+        if (!cap.ok) return stop(cap.code);
+        if (typeof st.listSec !== 'number' || nowSec - st.listSec < BND_LIST_TO_ISSUE_MIN_SEC) return stop('INTERVAL_NOT_ELAPSED');
+        if (nowSec - st.listSec > BND_BASELINE_MAX_AGE_SEC) return persistStop('BASELINE_STALE');
+        var pc = diagRead(sp, BND_PROP.PASSCODE), at = diagRead(sp, BND_PROP.ATTEST);
+        if (pc.state === 'UNKNOWN' || at.state === 'UNKNOWN') return stop('PASSCODE_STATE_UNKNOWN');
+        if (pc.state !== 'SET') return stop('PASSCODE_NOT_SET');
+        if (at.state !== 'SET' || at.raw !== BND_ATTEST_VALUE) return stop('PASSCODE_UNIQUENESS_UNATTESTED'); // 通常コードとの重複を確認できなければ発行しない
+        if (!bndPasscodeOk(pc.raw)) return stop('PASSCODE_INVALID');
+        var win = bndWindowPlan(nowSec, BND_START_OFFSET_SEC, BND_DURATION_SEC);
+        if (!win.ok) return stop(win.code);
+        password = pc.raw; startSec = win.startSec; endSec = win.endSec;
+        name = 'TST'; for (var i = 0; i < 8; i++) name += 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'.charAt(deps.randomInt(32));
+      }
+      if (stage === 'VERIFY_ISSUED') {
+        if (typeof st.issueSec !== 'number' || nowSec - st.issueSec < BND_ISSUE_TO_VERIFY_MIN_SEC) return stop('OBSERVATION_WINDOW_NOT_ELAPSED'); // 承認・回数は消費しない
+        if (typeof st.startSec !== 'number' || nowSec > st.startSec - BND_A1_HEADROOM_SEC) return persistStop('A1_HEADROOM_INSUFFICIENT'); // 通信せず停止。回収は公式アプリ
+      }
+      if (stage === 'FINAL_LIST') {
+        if (typeof st.endSec !== 'number' || nowSec < st.endSec + BND_FINAL_AFTER_END_SEC) return stop('OBSERVATION_WINDOW_NOT_ELAPSED');
+      }
+
+      // 通信前に: 暗証番号の破棄 + 承認の消費 + 呼出し回数 + 送信済みマーカーを永続（どれか失敗したら通信しない）
+      if (stage === 'ISSUE') {
+        var gone = bndScrubPasscode(sp);
+        scrubDue = !gone;
+        if (!gone) { password = null; out.passcodeState = 'SCRUB_FAILED'; return persistStop('PASSCODE_DELETE_FAILED'); }
+        out.passcodeState = 'CONSUMED';
+      }
+      var pre = JSON.parse(JSON.stringify(st));
+      pre.state = def.pre; pre.calls = st.calls + 1; pre.deviceFp = devFp; pre.legacyFp = legacyFp;
+      if (stage === 'LIST') { pre.listSec = nowSec; }
+      if (stage === 'ISSUE') { pre.name = name; pre.startSec = startSec; pre.endSec = endSec; pre.issueSec = nowSec; pre.obs = {}; }
+      try { sp.del(BND_PROP.APPROVAL); } catch (e) { password = null; return stop('APPROVAL_CONSUME_FAILED'); }
+      if (!bndWrite(sp, pre)) { password = null; return stop('STATE_WRITE_FAILED'); }
+      out.callsUsed = pre.calls; out.apiCalls = 1; out.state = pre.state;
+      function halt(code) { // 通信後の失敗: 永続できなければ *_SENT のまま（再送抑止）で、保存済みと偽らない
+        bndStopWrite(sp, pre, code, out);
+        return stop(code);
+      }
+      function done(next, mut) {
+        var s = JSON.parse(JSON.stringify(pre)); s.state = next; if (mut) mut(s);
+        if (!bndWrite(sp, s)) { out.manualRecovery = true; out.persistence = 'NOT_PERSISTED'; return stop('STATE_WRITE_FAILED'); }
+        out.state = next; return fin();
+      }
+
+      if (stage !== 'ISSUE') {
+        var lr;
+        try { lr = deps.api.listDevices(); } catch (e) { lr = null; }
+        if (!lr || lr.ok !== true) return halt(lr && lr.error === 'LIST_API_ERROR' ? 'LIST_API_ERROR' : 'LIST_COMM_ERROR');
+        var snap = tksSnapshot(lr.devices, g.deviceId, sha);
+        if (!snap.valid) return halt(snap.code);
+        out.keyCount = snap.count; out.evidence = 'KEYLIST';
+        if (stage === 'LIST') {
+          if (snap.list.some(function (k) { return TKS_NAME_RE.test(String(k.name)); })) return halt('STALE_TEST_KEY_PRESENT');
+          return done('LISTED', function (s) { s.baselineCount = snap.count; s.baselineFp = snap.fp; });
+        }
+        var hits = snap.list.filter(function (k) { return k.name === st.name; });
+        if (hits.length > 1) return halt('KEY_NAME_AMBIGUOUS');
+        if (stage === 'VERIFY_ISSUED') {
+          if (hits.length === 0) return halt('KEY_NOT_FOUND');
+          if (typeof st.startSec !== 'number' || typeof st.endSec !== 'number') return halt('KEY_ATTR_EXPECTATION_MISSING');
+          var judged = Core.judgeIssued({ valid: true, count: 1, entries: hits }, { startSec: st.startSec, endSec: st.endSec });
+          if (!judged.ok) return halt(CODE_RE.test(String(judged.error)) ? judged.error : 'KEY_ATTR_MISMATCH');
+          if (snap.count !== st.baselineCount + 1) return halt('KEYLIST_COUNT_MISMATCH');
+          if (tksExcluding(snap, String(hits[0].id), sha) !== st.baselineFp) return halt('EXISTING_KEYS_CHANGED');
+          if (nidIdType(hits[0].id) === 'ID_TYPE_UNKNOWN') return halt('TARGET_ID_INVALID');
+          out.attrEcho = hits[0].startTime !== undefined && hits[0].endTime !== undefined ? 'RETURNED_AND_MATCHED' : 'NOT_RETURNED_UNVERIFIED';
+          return done('ISSUED_VERIFIED', function (s) { s.attrEcho = out.attrEcho; });
+        }
+        // FINAL_LIST: 期限切れ後の実態を観測するだけ。残っていても自動削除しない（回収は公式アプリ）。
+        var expiredListed = hits.length === 1;
+        var restFp = expiredListed ? tksExcluding(snap, String(hits[0].id), sha) : snap.fp;
+        if (!expiredListed && snap.count !== st.baselineCount) return halt('KEYLIST_COUNT_MISMATCH');
+        if (restFp !== st.baselineFp) return halt('EXISTING_KEYS_CHANGED');
+        out.expiredKeyListed = expiredListed;
+        out.appCheck = 'PENDING_OWNER'; // API の結果と公式アプリの目視は別々に記録する。試験キーの手動削除と不在の目視が回収の完了条件
+        bndJudgement(out, pre); out.recovery = 'PENDING_APP_REMOVAL'; // 合否は回収と独立。回収済みでも合格にはならない
+        return done('FINAL_LISTED_APP_PENDING', function (s) { s.expiredKeyListed = expiredListed; s.verdict = out.verdict; });
+      }
+
+      // ISSUE: T0 は送信直前の時計で確認する（永続との差が大きければ送信せず停止）
+      var sendSec = deps.nowSec();
+      if (sendSec - pre.issueSec > BND_SEND_DRIFT_MAX_SEC || sendSec < pre.issueSec) { password = null; out.apiCalls = 0; return halt('ISSUE_CLOCK_DRIFT'); }
+      var res, thrown = false;
+      try {
+        res = deps.api.createKey({ deviceId: g.deviceId, name: name, password: password, startTime: startSec, endTime: endSec });
+      } catch (e) { thrown = true; }
+      password = null;
+      if (thrown) return halt('ISSUE_RESULT_UNKNOWN');
+      var c = Core.classifyApi(res);
+      if (!c.accepted) return halt('ISSUE_RESULT_UNKNOWN');
+      out.evidence = c.commandId ? 'API_ACCEPTED_WITH_COMMAND_ID' : 'API_ACCEPTED_NO_COMMAND_ID';
+      return done('ISSUE_ACCEPTED', function (s) { s.hasCommandId = !!c.commandId; });
+    } catch (e) {
+      out.manualRecovery = true;
+      return stop('UNEXPECTED_ERROR');
+    } finally {
+      if (locked) { try { deps.lock.releaseLock(); } catch (e) { /* noop */ } }
+    }
+  }
+
+  /**
+   * 通信しない観測申告。承認値 = BND_OBS のキー。解錠は現地の物理操作でAPIでは観測できないため、結果はオーナーの申告。
+   * 時刻の整合（A1は開始前、A2/A3は期間内、A4は期限後に申告）だけ機械検査し、外れる申告は状態を変えず拒否する（SKIPPED を使う）。
+   * 重大（開始前/期限後に解錠できた・期間内に解錠できない・ロック/警報の兆候）は即 STOPPED。通信・資格情報・呼出し回数なし。
+   */
+  function bndObserve(deps) {
+    var out = bndBlank(); out.stage = 'OBSERVE';
+    function fin() {
+      out.ok = out.failures.length === 0;
+      out.code = out.ok ? 'BND_OBSERVE_OK' : out.failures[0];
+      return diagSanitize(out, 0);
+    }
+    function stop(code) { if (out.failures.indexOf(code) === -1) out.failures.push(code); out.stopped = true; return fin(); }
+    var sp = deps.scriptProps, locked = false;
+    try {
+      var g = tksGates(deps);
+      if (!g.ok) return stop(g.code);
+      var pr = bndPrereq(sp);
+      if (pr) return stop(pr);
+      var armed = diagRead(sp, BND_PROP.ARMED);
+      if (armed.state === 'UNKNOWN') return stop('ARMED_STATE_UNKNOWN');
+      if (armed.state === 'MISSING') return stop('NOT_ARMED');
+      if (armed.raw !== BND_PLAN) return stop('ARMED_PLAN_MISMATCH');
+      if (!deps.lock || !deps.lock.tryLock(1000)) return stop('LOCK_UNAVAILABLE');
+      locked = true;
+      var rs = bndReadState(sp);
+      if (!rs.ok) return stop('STATE_UNREADABLE');
+      var st = rs.st;
+      out.state = DIAG_VALUE_RE.test(st.state) ? st.state : 'INVALID_VALUE'; out.callsUsed = st.calls;
+      if (st.state === 'STOPPED' || /_SENT$/.test(st.state)) { out.manualRecovery = true; return stop(st.state === 'STOPPED' ? 'STOPPED_MANUAL_RECOVERY' : 'INTERRUPTED_MANUAL_RECOVERY'); }
+      if (BND_OBS_STATES.indexOf(st.state) === -1) return stop('STAGE_ORDER_VIOLATION');
+      var ap = diagRead(sp, BND_PROP.APPROVAL);
+      if (ap.state === 'UNKNOWN') return stop('APPROVAL_STATE_UNKNOWN');
+      var o = ap.state === 'SET' && Object.prototype.hasOwnProperty.call(BND_OBS, ap.raw) ? BND_OBS[ap.raw] : null;
+      if (!o) return stop('STAGE_NOT_APPROVED');
+      if (!o.any && o.from !== st.state) return stop('STAGE_ORDER_VIOLATION');
+      var sha = deps.sha256Hex, nowSec = deps.nowSec();
+      if (st.legacyFp !== bndLegacyFp(sp, sha)) { /* 先に記録を残して停止 */
+        bndStopWrite(sp, st, 'LEGACY_STATE_CHANGED', out);
+        return stop('LEGACY_STATE_CHANGED');
+      }
+      if (!o.critical && !o.retry && o.when) { // 時刻の整合（申告は試行のあと。外れるなら SKIPPED を申告する）
+        var okTime = o.when === 'BEFORE_START' ? nowSec < st.startSec
+          : o.when === 'IN_WINDOW' ? (nowSec >= st.startSec && nowSec < st.endSec)
+          : nowSec >= st.endSec;
+        if (!okTime) return stop('OBSERVATION_TIME_MISMATCH');
+      }
+      if (o.retry && !(nowSec >= st.startSec && nowSec < st.endSec)) return stop('OBSERVATION_TIME_MISMATCH');
+      var s = JSON.parse(JSON.stringify(st)); s.obs = s.obs || {};
+      var key = o.any ? 'LOCK' : o.step;
+      s.obs[key] = o.any ? 'SIGN' : o.res;
+      s.obsRel = s.obsRel || {}; s.obsRel[key] = nowSec - st.startSec; // 申告時刻の開始からの相対秒（基準時計との照合用）
+      out.obs = s.obs;
+      // 永続 → 承認の消費の順。永続できなければ承認を消費せず（申告を失わない）、永続失敗を明示して手動対応へ引き継ぐ。
+      function commit(next, reason, critical) {
+        s.state = next; if (reason) s.reason = reason;
+        if (typeof s.verdict === 'string') s.verdict = bndVerdict(s); // 保存済みの暫定合否は、重大申告で停止したら無効化する
+        if (!bndWrite(sp, s)) {
+          out.manualRecovery = true; out.persistence = 'NOT_PERSISTED';
+          return stop(critical ? 'CRITICAL_NOT_PERSISTED' : 'STATE_WRITE_FAILED'); // 状態は変わっていない。重大観測なら公式アプリで手動回収
+        }
+        out.state = next; out.persistence = 'PERSISTED';
+        try { sp.del(BND_PROP.APPROVAL); } catch (e) { out.manualRecovery = true; out.notes = out.notes.concat(['APPROVAL_NOT_CONSUMED']); if (!critical) return stop('APPROVAL_CONSUME_FAILED'); }
+        return null;
+      }
+      function critStop(code) {
+        var f = commit('STOPPED', code, true); if (f) return f;
+        out.manualRecovery = true; return stop(code);
+      }
+      if (o.critical) return critStop(o.critical);
+      if (o.retry) { // A2 の最初の拒否: GO欄で許可された場合だけ1回再試行できる
+        var rt = diagRead(sp, BND_PROP.A2_RETRY);
+        if (rt.state === 'SET' && rt.raw === BND_A2_RETRY_VALUE) {
+          try { sp.del(BND_PROP.A2_RETRY); } catch (e) { /* 読み直しで判定 */ }
+          if (diagRead(sp, BND_PROP.A2_RETRY).state !== 'MISSING') return critStop('A2_RETRY_GO_NOT_CONSUMED');
+          var fr = commit('A2_RETRY_PENDING', null, true); if (fr) return fr;
+          out.notes = out.notes.concat(['A2_RETRY_ONCE_GRANTED']); return fin();
+        }
+        return critStop('A2_DENIED_NO_RETRY_GO');
+      }
+      var fo = commit(o.to, null, false); if (fo) return fo;
+      if (o.res === 'INCONCLUSIVE') out.notes = out.notes.concat(['INCONCLUSIVE_NOT_PROOF']);
+      return fin();
+    } catch (e) {
+      out.manualRecovery = true;
+      return stop('UNEXPECTED_ERROR');
+    } finally {
+      if (locked) { try { deps.lock.releaseLock(); } catch (e) { /* noop */ } }
+    }
+  }
+
+  /**
+   * 通信しない最終段階: 公式アプリで試験キーを手動削除し、不在を目視した結果を記録する（回収の完了条件）。
+   * APP_ABSENT: FINAL_LISTED_APP_PENDING → RECOVERED（回収の完了。試験の合否は verdict で別に示す）。途中停止（STOPPED/中断）からの回収なら STOPPED_RECOVERED。
+   * APP_PRESENT: 残存＝STOPPED のまま管理者対応。試験キーを放置したまま 01FD へ進まない。
+   */
+  function bndAppCheck(deps) {
+    var out = bndBlank(); out.stage = 'APP_CHECK';
+    function fin() {
+      out.ok = out.failures.length === 0;
+      out.code = out.ok ? 'BND_APP_CHECK_OK' : out.failures[0];
+      return diagSanitize(out, 0);
+    }
+    function stop(code) { if (out.failures.indexOf(code) === -1) out.failures.push(code); out.stopped = true; return fin(); }
+    var sp = deps.scriptProps, locked = false;
+    try {
+      var g = tksGates(deps);
+      if (!g.ok) return stop(g.code);
+      var pr = bndPrereq(sp);
+      if (pr) return stop(pr);
+      var armed = diagRead(sp, BND_PROP.ARMED);
+      if (armed.state === 'UNKNOWN') return stop('ARMED_STATE_UNKNOWN');
+      if (armed.state === 'SET' && armed.raw !== BND_PLAN) return stop('ARMED_PLAN_MISMATCH');
+      // ARMED が未設定でも、途中停止の「回収の記録」だけは通信なしで許可する（停止手順で先に武装解除するため）。通常の完了記録は武装が必要。
+      var pc = diagRead(sp, BND_PROP.PASSCODE), at = diagRead(sp, BND_PROP.ATTEST);
+      if (pc.state === 'UNKNOWN' || at.state === 'UNKNOWN') return stop('PASSCODE_STATE_UNKNOWN');
+      if (pc.state === 'SET' || at.state === 'SET') {
+        out.passcodeState = bndScrubPasscode(sp) ? 'RESIDUAL_SCRUBBED' : 'SCRUB_FAILED'; out.manualRecovery = true;
+        return stop('PASSCODE_RESIDUAL');
+      }
+      if (!deps.lock || !deps.lock.tryLock(1000)) return stop('LOCK_UNAVAILABLE');
+      locked = true;
+      var rs = bndReadState(sp);
+      if (!rs.ok) return stop('STATE_UNREADABLE');
+      var st = rs.st;
+      out.state = DIAG_VALUE_RE.test(st.state) ? st.state : 'INVALID_VALUE'; out.callsUsed = st.calls;
+      var aborted = st.state === 'STOPPED' || /_SENT$/.test(st.state);
+      if (!aborted && st.state !== 'FINAL_LISTED_APP_PENDING') return stop('STAGE_ORDER_VIOLATION');
+      if (armed.state === 'MISSING' && !aborted) return stop('NOT_ARMED');
+      if (aborted && typeof st.name === 'string' && !TKS_NAME_RE.test(st.name)) return stop('STAGE_ORDER_VIOLATION'); // 試験キーを作っていない（発行前の停止）ならアプリ回収の記録は不要
+      var ap = diagRead(sp, BND_PROP.APPROVAL);
+      if (ap.state === 'UNKNOWN') return stop('APPROVAL_STATE_UNKNOWN');
+      if (ap.raw !== 'APP_ABSENT' && ap.raw !== 'APP_PRESENT') return stop('STAGE_NOT_APPROVED');
+      var present = ap.raw === 'APP_PRESENT';
+      var s = JSON.parse(JSON.stringify(st));
+      if (present) { s.state = 'STOPPED'; s.reason = 'APP_STILL_PRESENT'; }
+      else if (aborted) { s.state = 'STOPPED_RECOVERED'; s.reason = 'APP_ABSENT_AFTER_ABORT'; }
+      else { s.state = 'RECOVERED'; s.reason = 'APP_ABSENT_CONFIRMED'; } // 「回収完了」であって「試験合格」ではない
+      bndJudgement(out, s); s.verdict = out.verdict;
+      if (!bndWrite(sp, s)) { out.manualRecovery = true; return stop('STATE_WRITE_FAILED'); } // 永続できなければ承認を消費しない
+      try { sp.del(BND_PROP.APPROVAL); } catch (e) { out.manualRecovery = true; out.notes = out.notes.concat(['APPROVAL_NOT_CONSUMED']); }
+      out.state = s.state; out.obs = s.obs || {};
+      if (present) { out.manualRecovery = true; out.recovery = 'NOT_RECOVERED'; return stop('APP_STILL_PRESENT'); }
+      out.appCheck = 'ABSENT_CONFIRMED';
+      out.recovery = 'RECOVERED';
+      out.outcome = aborted ? 'ABORTED_AND_RECOVERED' : (out.verdict === 'BOUNDARY_PASS' ? 'RECOVERED_AND_BOUNDARY_PASS' : 'RECOVERED_BUT_NOT_PASS');
+      return fin();
+    } catch (e) {
+      out.manualRecovery = true;
+      return stop('UNEXPECTED_ERROR');
+    } finally {
+      if (locked) { try { deps.lock.releaseLock(); } catch (e) { /* noop */ } }
+    }
+  }
+
+  /** 通信しない状態確認。ok=true はゲート通過のみ（GOでも実行可能の判定でもない）。値・ID・名前・暗証番号は出さない。 */
+  function bndStatus(deps) {
+    var out = bndBlank(); out.stage = 'STATUS'; out.planId = BND_PLAN;
+    out.notes = out.notes.concat(['STATUS_OK_IS_NOT_GO_NOR_EXECUTABLE']);
+    var g = tksGates(deps);
+    out.gates = g.ok ? 'PASS' : g.code;
+    var pr = g.ok ? bndPrereq(deps.scriptProps) : null;
+    out.prerequisites = !g.ok ? 'NOT_CHECKED' : (pr || 'PASS');
+    var rs = bndReadState(deps.scriptProps);
+    var nowSec = deps.nowSec();
+    if (rs.ok) {
+      out.state = DIAG_VALUE_RE.test(rs.st.state) ? rs.st.state : 'INVALID_VALUE'; out.callsUsed = rs.st.calls;
+      out.manualRecovery = rs.st.state === 'STOPPED' || /_SENT$/.test(rs.st.state);
+      if (rs.st.obs && typeof rs.st.obs === 'object') out.obs = rs.st.obs;
+      if (typeof rs.st.verdict === 'string') out.verdict = bndVerdict(rs.st); // 保存値は使わず、現在の状態と観測から導出する
+      if (typeof rs.st.startSec === 'number' && typeof rs.st.endSec === 'number') { out.secToStart = rs.st.startSec - nowSec; out.secToEnd = rs.st.endSec - nowSec; }
+    } else out.state = 'STATE_UNREADABLE';
+    var a = diagRead(deps.scriptProps, BND_PROP.ARMED);
+    out.armed = a.state === 'UNKNOWN' ? 'UNKNOWN' : (a.state === 'MISSING' ? 'OFF' : (a.raw === BND_PLAN ? 'ON' : 'PLAN_MISMATCH'));
+    var ap = diagRead(deps.scriptProps, BND_PROP.APPROVAL);
+    var okVal = Object.keys(BND_STAGES).concat(Object.keys(BND_OBS), ['APP_ABSENT', 'APP_PRESENT']);
+    out.approvedStage = ap.state === 'UNKNOWN' ? 'UNKNOWN' : (ap.state === 'MISSING' ? 'NONE' : (okVal.indexOf(ap.raw) !== -1 ? ap.raw : 'INVALID_VALUE'));
+    var pc = diagRead(deps.scriptProps, BND_PROP.PASSCODE), at = diagRead(deps.scriptProps, BND_PROP.ATTEST), rt = diagRead(deps.scriptProps, BND_PROP.A2_RETRY);
+    out.passcode = pc.state === 'UNKNOWN' ? 'UNKNOWN' : (pc.state === 'SET' ? 'PRESENT' : 'ABSENT'); // 値は読まない・出さない
+    out.passcodeAttest = at.state === 'UNKNOWN' ? 'UNKNOWN' : (at.state === 'SET' ? 'PRESENT' : 'ABSENT');
+    out.a2RetryGo = rt.state === 'UNKNOWN' ? 'UNKNOWN' : (rt.state === 'SET' ? (rt.raw === BND_A2_RETRY_VALUE ? 'ALLOWED_ONCE' : 'INVALID_VALUE') : 'NONE');
+    var ns = nidReadState(deps.scriptProps), ls = tksReadState(deps.scriptProps);
+    out.legacyState = ls.ok && DIAG_VALUE_RE.test(ls.st.state) ? ls.st.state : 'STATE_UNREADABLE';   // #791（読むだけ）
+    out.numIdState = ns.ok && DIAG_VALUE_RE.test(ns.st.state) ? ns.st.state : 'STATE_UNREADABLE';     // #797（読むだけ）
+    out.ok = g.ok && !pr && rs.ok;
+    out.code = out.ok ? 'BND_STATUS_OK' : (!g.ok ? g.code : (pr || 'STATE_UNREADABLE'));
+    return diagSanitize(out, 0);
+  }
+
+  // ---------- 37DD 期限境界試験ここまで ----------
+
   // ---------- verify環境専用・37DD 段階承認型 API 単体試験（Issue #791）----------
   //
   // 第1段階（#756）: 37DD のテストキー1件の発行→確認→削除→不在確認だけを、人間の段階承認つきで行う。
@@ -2401,6 +2947,7 @@ var SwitchBotAccessInfra = (function () {
     BOOTSTRAP_KEYS: BOOTSTRAP_KEYS, accessFlagState: accessFlagState, migrateBootstrapCredentials: migrateBootstrapCredentials, bootstrapStatus: bootstrapStatus, scrubBootstrapCredentials: scrubBootstrapCredentials,
     readOnlyDiagnostics: readOnlyDiagnostics, testReadOnlyDiagnostics: testReadOnlyDiagnostics, testKeyStage: testKeyStage, testKeyStatus: testKeyStatus, idTypeDiag: idTypeDiag, idTypeDiagStatus: idTypeDiagStatus, TKS_MAX_CALLS: TKS_MAX_CALLS,
     numIdStage: numIdStage, numIdAppCheck: numIdAppCheck, numIdStatus: numIdStatus, NID_MAX_CALLS: NID_MAX_CALLS, NID_PLAN: NID_PLAN,
+    bndStage: bndStage, bndObserve: bndObserve, bndAppCheck: bndAppCheck, bndStatus: bndStatus, bndWindowPlan: bndWindowPlan, BND_MAX_CALLS: BND_MAX_CALLS, BND_PLAN: BND_PLAN,
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,

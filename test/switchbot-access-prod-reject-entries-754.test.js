@@ -32,6 +32,8 @@ var ENTRIES = [
   'accessIdTypeDiagStatus', 'accessIdTypeDiagRun',
   'accessNumIdStatus', 'accessNumIdStep1List', 'accessNumIdStep2Issue', 'accessNumIdStep3VerifyIssued',
   'accessNumIdStep4PreDeleteList', 'accessNumIdStep5Delete', 'accessNumIdStep6VerifyDeleted', 'accessNumIdAppCheck',
+  'accessBndStatus', 'accessBndStep1List', 'accessBndStep2Issue', 'accessBndStep3VerifyIssued', 'accessBndObserve',
+  'accessBndStep4FinalList', 'accessBndAppCheck',
   'accessTestReadOnlyDiagnostics'
 ];
 
@@ -60,7 +62,7 @@ function loadShell(opts) {
       },
       setProperty: function (k, v) { env.propWrites++; m[k] = String(v); },
       setProperties: function () { env.propWrites++; },
-      deleteProperty: function (k) { env.propDeletes++; delete m[k]; },
+      deleteProperty: function (k) { env.propDeletes++; (env.deletedKeys = env.deletedKeys || []).push(k); delete m[k]; },
       deleteAllProperties: function () { env.propDeletes++; },
       getKeys: function () { return Object.keys(m); },
       getProperties: function () { return Object.assign({}, m); }
@@ -113,7 +115,8 @@ function armedScript() {
   return {
     ACCESS_TEST_KEY_ARMED: 'true', ACCESS_TEST_KEY_APPROVAL: 'LIST',
     ACCESS_ID_TYPE_DIAG_APPROVAL: 'ID_TYPE_READ_ONCE',
-    ACCESS_NUMID_TEST_ARMED: 'NUMID_6_CALL_PLAN', ACCESS_NUMID_TEST_APPROVAL: 'LIST'
+    ACCESS_NUMID_TEST_ARMED: 'NUMID_6_CALL_PLAN', ACCESS_NUMID_TEST_APPROVAL: 'LIST',
+    ACCESS_BND_TEST_ARMED: 'BND_PLAN_V1_4CALLS', ACCESS_BND_TEST_APPROVAL: 'LIST', ACCESS_BND_TEST_PASSCODE: '13572468', ACCESS_BND_PASSCODE_ATTEST: 'NOT_IN_USE_CONFIRMED'
   };
 }
 
@@ -124,12 +127,21 @@ function runEntry(env, name) {
   return JSON.parse(JSON.stringify(r));
 }
 
+var BND_SECRET_KEYS = ['ACCESS_BND_TEST_PASSCODE', 'ACCESS_BND_PASSCODE_ATTEST'];
 function assertNoSideEffects(env, label) {
   assert.strictEqual(env.fetches, 0, label + ': UrlFetch（SwitchBot/Sheets）0回');
   assert.strictEqual(env.mails, 0, label + ': MailApp 0回');
   assert.strictEqual(env.sheetsApp, 0, label + ': SpreadsheetApp 0回');
   assert.strictEqual(env.propWrites, 0, label + ': Properties書込み0回');
-  assert.strictEqual(env.propDeletes, 0, label + ': Properties削除0回');
+  // 例外: 境界試験の ISSUE 入口だけは、使い捨て暗証番号と申告（2プロパティ）が設定されていれば、拒否時にそれらを破棄する（秘密を残さない）。
+  // 通信・書込み・状態作成・ロック・トリガーは 0 のままで、削除してよいのはこの2キーだけ。
+  var deleted = env.deletedKeys || [];
+  if (/accessBndStep2Issue/.test(label)) {
+    assert.ok(deleted.every(function (k) { return BND_SECRET_KEYS.indexOf(k) !== -1; }), label + ': 削除は暗証番号と申告の2キーだけ');
+    assert.strictEqual(env.propDeletes, deleted.length, label + ': Properties削除はその2キーのみ');
+  } else {
+    assert.strictEqual(env.propDeletes, 0, label + ': Properties削除0回');
+  }
   assert.strictEqual(env.triggerOps, 0, label + ': トリガー操作0回');
   assert.strictEqual(env.locks, 0, label + ': ロック取得0回（状態更新へ進まない）');
 }
@@ -147,7 +159,7 @@ function assertNoLeak(env, result, label) {
 test('入口の網羅: App.gs の検証用入口（accessTest*/accessNumId*/accessIdTypeDiag*）は、このテストの一覧と過不足なく一致する', function () {
   var src = fs.readFileSync(path.join(ROOT, 'gas/switchbot-access/SwitchBotAccessApp.gs'), 'utf8');
   var found = [];
-  var re = /^function (access(?:Test|NumId|IdTypeDiag)[A-Za-z0-9_]*)\s*\(/gm, m;
+  var re = /^function (access(?:Test|NumId|IdTypeDiag|Bnd)[A-Za-z0-9_]*)\s*\(/gm, m;
   while ((m = re.exec(src))) found.push(m[1]);
   assert.deepStrictEqual(found.slice().sort(), ENTRIES.slice().sort(),
     '検証用入口を増減したら、本番拒否テストの ENTRIES も更新する（未テストの入口を本番バンドルに載せない）');
@@ -178,7 +190,9 @@ test('本番設定で武装・承認プロパティが揃っていても、全�
     assert.strictEqual(r.ok, false, name);
     assert.strictEqual(r.code, 'ENV_NOT_VERIFY', name);
     assertNoSideEffects(env, name);
-    assert.strictEqual(JSON.stringify(env.script), before, name + ': Script Properties 不変（承認の消費・状態作成なし）');
+    var expected = before;
+    if (name === 'accessBndStep2Issue') { var b = JSON.parse(before); BND_SECRET_KEYS.forEach(function (k) { delete b[k]; }); expected = JSON.stringify(b); }
+    assert.strictEqual(JSON.stringify(env.script), expected, name + ': Script Properties 不変（承認の消費・状態作成なし。ISSUE 入口のみ暗証番号・申告を破棄）');
     assertNoLeak(env, r, name);
   });
 });
