@@ -65,3 +65,10 @@ test('CSS: 入口リンクは48px以上のタップ領域・フォーカス表�
 test('非干渉: /feedback/（#835）・利用後メール連携（#834）の資材に本変更が混入していない', function () {
   assert.ok(!fs.existsSync(path.join(__dirname, '..', 'feedback')) || read('feedback/index.html').indexOf('sv-entry') === -1);
 });
+
+test('画面遷移・完了表示は入口カードではなくアンケート本体の先頭へスクロールする（レビュー指摘）', function () {
+  var js = read('scripts/survey-app.js');
+  assert.ok(js.indexOf('window.scrollTo(0, 0)') === -1, 'ページ最上部へ戻さない');
+  assert.match(js, /function scrollToSurveyTop\(\)/);
+  assert.strictEqual((js.match(/scrollToSurveyTop\(\);/g) || []).length, 2, 'renderEnd と renderStep');
+});
