@@ -85,7 +85,7 @@ async function main(env, fetchImpl, setSecret, log) {
   }
   log('登録成功: ' + SECRET_NAME + ' → Environment ' + environment + ' (' + repo + ')');
   log('照合件数=1 末尾4桁=' + Core.maskId(fullId).slice(-4) + ' type=' + found.device.deviceType);
-  log('次: Actions "SwitchBot device ID check (manual)" で登録値の完全ID一致を確認する');
+  log('次: Actions "SwitchBot read-only diagnostics (manual)" の operation=device-id で登録値の完全ID一致を確認する');
   return 0;
 }
 

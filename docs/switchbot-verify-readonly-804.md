@@ -48,5 +48,10 @@
 - 起動は `workflow_dispatch` のみ、`permissions: contents: read`。
 
 ## 未検証・注意
-- 実Actions・実SwitchBot APIでの動作は未検証です（モックテストのみ。この入口のrun実績は0件）。旧入口の廃止後は唯一の診断入口になるため、**マージ前（または直後）に一度、`device-id` または `keylist` を実行して成功を確認してください**。
+- 実Actions・実SwitchBot APIでの動作確認（2026-11-07、main `b99f4c5`、読み取りのみ・全4操作success。詳細は #817）：
+  `device-id` [run 42336779489](https://github.com/nagoya-base/Studio-nagoya-base/actions/runs/42336779489) ／
+  `keylist` [run 42337088217](https://github.com/nagoya-base/Studio-nagoya-base/actions/runs/42337088217) ／
+  `webhook-url` [run 42337412214](https://github.com/nagoya-base/Studio-nagoya-base/actions/runs/42337412214) ／
+  `webhook-details` [run 42337742979](https://github.com/nagoya-base/Studio-nagoya-base/actions/runs/42337742979)。
+- 上記は入口が動くことの確認だけです。Webhookの実配信・到達、鍵の有効性・解錠、期限境界試験（#756）の成功は証明しません。
 - 診断は SwitchBot Token/Secret の有効性を読み取りで確認するだけで、鍵・Webhook の実運用可否を保証しません。
