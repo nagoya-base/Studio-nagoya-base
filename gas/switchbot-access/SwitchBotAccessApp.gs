@@ -274,7 +274,37 @@ function accessRemoveTriggers() {
 }
 
 // ── 管理者復旧（フラグOFFでも使える。認可はサーバー側で確定。actor 引数は受け付けない）──
-function accessAdminStatus() { return sba_runtime_().admin('status', {}); }
+// GASエディタ実行では戻り値が実行ログに出ないため、許可フィールドだけの短いJSONをログに出す（#822）。戻り値・API契約は従来どおり。
+function accessAdminStatus() {
+  var r;
+  try { r = sba_runtime_().admin('status', {}); } catch (e) { sba_logStatus_({ ok: false, error: 'EXCEPTION' }); throw e; }
+  sba_logStatus_(r);
+  return r;
+}
+function sba_logStatus_(r) {
+  var out;
+  try {
+    var code = function (v, d) { return typeof v === 'string' && /^[A-Z][A-Z0-9_]{0,39}$/.test(v) ? v : d; };
+    var num = function (v) { return typeof v === 'number' && isFinite(v) ? v : null; };
+    if (!r || r.ok !== true) {
+      out = { ok: false, error: code(r && r.error, 'ERROR') };
+    } else {
+      out = { ok: true, environment: typeof r.environment === 'string' && /^[a-z0-9_-]{1,20}$/.test(r.environment) ? r.environment : null, enabled: r.enabled === true, unresolved: num(r.unresolved) };
+      var hb = {};
+      ['SYNC', 'SWEEP', 'DELIVER'].forEach(function (j) {
+        var at = r.heartbeats && r.heartbeats[j] && num(r.heartbeats[j].at);
+        hb[j] = at ? new Date(at * 1000).toISOString() : null;
+      });
+      out.heartbeatAt = hb;
+      out.notifyOutboxPending = num(r.notifyOutbox && r.notifyOutbox.pending);
+      var dl = {};
+      Object.keys(r.deliveries || {}).forEach(function (k) { var c = code(k, null); var n = num(r.deliveries[k]); if (c && n !== null) dl[c] = n; });
+      out.deliveries = dl;
+      try { out.triggers = ScriptApp.getProjectTriggers().filter(function (t) { return SBA_JOBS_.indexOf(t.getHandlerFunction()) !== -1; }).length; } catch (e2) { /* 取得できる場合のみ */ }
+    }
+  } catch (e) { out = { ok: false, error: 'LOG_FAILED' }; }
+  Logger.log('accessAdminStatus ' + JSON.stringify(out));
+}
 function accessAdminInventory() { return sba_runtime_().admin('inventory', {}); }
 function accessAdminInspect(recId) { return sba_runtime_().admin('inspect', { recId: recId }); }
 function accessAdminReconcile(recId) { return sba_runtime_().admin('reconcile', { recId: recId }); }
