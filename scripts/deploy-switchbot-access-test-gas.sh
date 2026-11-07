@@ -51,6 +51,14 @@ if [[ "$mode" == "rollback" && "$with_deployment" != "true" ]]; then
   fail "Rollback needs the approved fixed deployment secret; nothing was changed."
 fi
 
+# ---- 入力検査（Google・認証ファイルに触れる前。失敗しても何も変更しない） ----
+if [[ "$mode" == "rollback" ]]; then
+  target="${ROLLBACK_VERSION:-}"
+  [[ "$target" =~ ^[1-9][0-9]{0,5}$ ]] || fail "ROLLBACK_VERSION must be a positive integer; nothing was changed."
+else
+  [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || fail "GITHUB_SHA is not a commit SHA; nothing was changed."
+fi
+
 umask 077
 work="$RUNNER_TEMP/switchbot-access-test-gas"
 auth_file="$work/.clasprc.json"
@@ -74,8 +82,11 @@ clasp_run() { # <dir> <outfile> <args...>
   local dir="$1" outfile="$2"; shift 2
   (cd "$dir" && clasp --auth "$auth_file" --user "$clasp_user" "$@" >"$outfile" 2>"$outfile.err")
 }
-read_deployments() {
-  clasp_run "$remote_dir" "$out/list.json" list-deployments --json || { echo "clasp list-deployments failed." >&2; return 1; }
+classify_list_error() { # <phase>
+  node "$GITHUB_WORKSPACE/scripts/classify-clasp-list-error.js" "$out/list.json" "$out/list.json.err" "$1" >&2 || true
+}
+read_deployments() { # <phase: before|after>
+  clasp_run "$remote_dir" "$out/list.json" list-deployments --json || { classify_list_error "${1:-before}"; return 1; }
 }
 read_versions() {
   clasp_run "$remote_dir" "$out/versions.json" list-versions --json || { echo "clasp list-versions failed." >&2; return 1; }
@@ -97,7 +108,7 @@ fi
 
 previous_version="-"
 if [[ "$with_deployment" == "true" ]]; then
-  read_deployments || fail "Could not read deployments before update; nothing was changed."
+  read_deployments before || fail "Could not read deployments before update; nothing was changed."
   if ! previous_version="$(node "$lib" pick-deployment "$out/list.json" 2>"$out/pick.err")"; then
     fail "Configured deployment could not be uniquely verified in the target project: $(head -c 80 "$out/pick.err" | tr -cd 'A-Z_'). Nothing was changed."
   fi
@@ -105,11 +116,23 @@ if [[ "$with_deployment" == "true" ]]; then
   read_versions || fail "Could not read versions before update; nothing was changed."
 fi
 
+# ---- 更新前の読取り確認（モード別）。ここまでは公開Deploymentにも編集用ソースにも一切書き込まない ----
 if [[ "$mode" == "rollback" ]]; then
-  target="${ROLLBACK_VERSION:-}"
-  [[ "$target" =~ ^[1-9][0-9]{0,5}$ ]] || fail "ROLLBACK_VERSION must be a positive integer; nothing was changed."
   [[ "$target" != "$previous_version" ]] || fail "Deployment is already at @$target; nothing was changed."
   node "$lib" has-version "$out/versions.json" "$target" || fail "Version @$target does not exist in the target project; nothing was changed."
+else
+  status="$(node "$lib" check-bundle "$bundle_dir" || true)"
+  [[ "$status" == "OK" ]] || fail "Bundle check failed: $status. Nothing was changed."
+  summary "- ✅ 配布物の完全性検査: 成功（対象GASの状態: \`$remote_state\`）"
+fi
+
+# 境界: 認証・対象GAS・（固定Deploymentがある場合のみ）Deployment（完全一致・一意）・版・manifest・配布物の読取り確認が完了。
+# 以降が最初の書込み。固定Deployment未登録のdeployは「ソース反映のみ」（Deployment更新は行わない）。
+# 読取り確認は更新権限・将来のAPI成功・GAS実行時権限を保証しない。
+echo "Preflight passed (read-only checks complete; the first write follows)"
+summary "- ✅ 更新前の読取り確認（preflight）: 成功（ここまでは何も書き込んでいません）"
+
+if [[ "$mode" == "rollback" ]]; then
   summary "- ロールバック先: \`@$target\`（説明: \`$(node "$lib" describe-version "$out/versions.json" "$target")\`）"
   echo "Rolling the SAME deployment back to version @$target"
   clasp_run "$remote_dir" "$out/update.out" update-deployment "$SBAT_DEPLOYMENT_ID" -V "$target" \
@@ -117,10 +140,6 @@ if [[ "$mode" == "rollback" ]]; then
     || echo "clasp update-deployment (rollback) reported failure; reconciling by read-only checks." >&2
   expected_version="$target"; expected_desc="-"
 else
-  [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || fail "GITHUB_SHA is not a commit SHA; nothing was changed."
-  status="$(node "$lib" check-bundle "$bundle_dir" || true)"
-  [[ "$status" == "OK" ]] || fail "Bundle check failed: $status. Nothing was changed."
-  summary "- ✅ 配布物の完全性検査: 成功（対象GASの状態: \`$remote_state\`）"
   cp "$bundle_dir"/*.gs "$bundle_dir/appsscript.json" "$deploy_dir/"
 
   echo "Running clasp push --force"
@@ -135,7 +154,7 @@ else
   if [[ "$with_deployment" != "true" ]]; then
     summary "- 方式: ソース反映のみ（固定Deployment用Secret未設定のため、Webアプリ公開・Deployment更新は行わない）"
     summary "- 対象main SHA: \`${GITHUB_SHA}\`"
-    summary "- 検証範囲: ソース照合のみ。ACCESS_ENABLED／Script・User Properties／トリガー／Webhook／実API／メールは未操作（反映成功＝GAS診断成功＝実機試験GOではない）"
+    summary "- 検証範囲: ソース照合のみ。公開版（Deployment）の更新は行っておらず検証もしていません。ACCESS_ENABLED／Script・User Properties／トリガー／Webhook／実API／メールは未操作（反映成功＝GAS診断成功＝実機試験GOではない）"
     echo "Source pushed and verified (no deployment update)."
     exit 0
   fi
@@ -149,7 +168,7 @@ fi
 # ---- 更新後の照合（読取りのみ。上限付き。更新・pushは繰り返さない） ----
 verified=false
 for ((i=1; i<=retry_attempts; i++)); do
-  if read_deployments; then
+  if read_deployments after; then
     rc=0; node "$lib" deployment-matches "$out/list.json" "$expected_version" "$expected_desc" || rc=$?
     if [[ $rc -eq 0 ]]; then
       current="$(node "$lib" pick-deployment "$out/list.json")"
@@ -161,7 +180,7 @@ for ((i=1; i<=retry_attempts; i++)); do
 done
 
 if [[ "$verified" != "true" ]]; then
-  if read_deployments && now="$(node "$lib" pick-deployment "$out/list.json" 2>/dev/null)"; then
+  if read_deployments after && now="$(node "$lib" pick-deployment "$out/list.json" 2>/dev/null)"; then
     [[ "$now" != "$previous_version" ]] || fail "Deployment update was NOT applied (still @$previous_version). The published version is unchanged."
     fail "UNKNOWN_STATE: deployment is at @$now (previous @$previous_version) but did not match the expected state. Follow the rollback runbook; do not re-run blindly."
   fi

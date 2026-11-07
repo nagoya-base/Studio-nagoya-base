@@ -149,7 +149,7 @@ function main(argv, env) {
       const r = prod.pickDeployment(fs.readFileSync(a[0], 'utf8'), env.SBAT_DEPLOYMENT_ID || '');
       if (r.error) { process.stderr.write(r.error + '\n'); return 2; }
       if (a[1] !== 'any' && r.versionNumber !== Number(a[1])) return 1;
-      if (a[2] && a[2] !== '-' && !r.description.includes(a[2])) return 1;
+      if (a[2] && a[2] !== '-' && !prod.descriptionMatches(r.description, a[2])) return 1;
       return 0;
     }
     case 'max-version': {

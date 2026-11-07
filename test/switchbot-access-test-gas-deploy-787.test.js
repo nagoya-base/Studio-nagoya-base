@@ -228,6 +228,8 @@ const S=process.env.FAKE_STATE, a=process.argv.slice(2).filter((x,i,arr)=>!(x===
 const cmd=a[0]; const st=()=>JSON.parse(fs.readFileSync(S+'/state.json','utf8')); const save=(s)=>fs.writeFileSync(S+'/state.json',JSON.stringify(s));
 const cfg=JSON.parse(fs.readFileSync('.clasp.json','utf8'));
 fs.appendFileSync(S+'/calls.log', cmd+' '+cfg.scriptId+'\\n');
+const sumf=process.env.GITHUB_STEP_SUMMARY; const preflightDone=!!sumf&&fs.existsSync(sumf)&&fs.readFileSync(sumf,'utf8').includes('preflight');
+if((cmd==='push'||cmd==='update-deployment')&&!preflightDone)fs.appendFileSync(S+'/calls.log','WRITE_BEFORE_PREFLIGHT\\n');
 const fail=process.env.FAKE_FAIL||''; if(fail===cmd){console.error('boom '+process.env.FAKE_LEAK);process.exit(1);}
 const s=st(); const ext=(cfg.scriptExtensions&&cfg.scriptExtensions[0])||'js';
 if(cmd==='pull'){for(const [n,c] of Object.entries(s.files))fs.writeFileSync(n.endsWith('.gs')?n.slice(0,-3)+'.'+ext:n,c);}
@@ -239,7 +241,7 @@ else if(cmd==='update-deployment'){
   if(fail==='update-silent'){process.exit(1);}
   if(fail==='update-moves-elsewhere'){const d0=s.deployments.find(x=>x.deploymentId===id); d0.versionNumber=1; save(s); process.exit(1);}
   let v; if(vi>=0)v=Number(a[vi+1]); else{v=Math.max(...s.versions.map(x=>x.versionNumber))+1;s.versions.push({versionNumber:v,description:a[di+1]});}
-  const d=s.deployments.find(x=>x.deploymentId===id); d.versionNumber=v; d.description=a[di+1];
+  const d=s.deployments.find(x=>x.deploymentId===id); d.versionNumber=v; d.description=a[di+1]+(process.env.FAKE_DESC_SUFFIX||'');
   save(s); if(fail==='update-apply-then-error'){process.exit(1);}
 }`;
   fs.writeFileSync(path.join(binDir, 'clasp'), js, { mode: 0o755 });
@@ -529,4 +531,94 @@ test('docs: the runbook exists and states the gates (kill switch, separate deplo
   const doc = read('docs/switchbot-access-test-gas-deploy-787.md');
   for (const re of [/switchbot-access-test/, /SWITCHBOT_ACCESS_TEST_DEPLOY_ENABLED/, /SWITCHBOT_ACCESS_TEST_FORBIDDEN_IDS/, /accessReadOnlyDiagnostics/, /#756/, /ソース反映のみ/, /ロールバック/, /1ステップ/]) assert.match(doc, re);
   assert.doesNotMatch(doc, /\b(?=[A-Za-z0-9_]*\d)(?=[A-Za-z0-9_]*[A-Z])[A-Za-z0-9_]{32,}\b/, 'no secret-like long tokens');
+});
+
+// ---- Issue #804 PR-C2: 更新前の読取り確認（preflight）の境界・kill switch・source-only・説明文の完全一致 ----
+test('preflight boundary: no write precedes the preflight line (source-only, fixed deployment, rollback)', () => {
+  for (const [mode, env] of [['deploy', {}], ['deploy', { SBAT_DEPLOYMENT_ID: DEPLOY }], ['rollback', { SBAT_DEPLOYMENT_ID: DEPLOY, ROLLBACK_VERSION: '1' }]]) {
+    const t = setup();
+    const r = t.run(mode, env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Preflight passed \(read-only checks complete; the first write follows\)/);
+    assert.match(t.sum(), /更新前の読取り確認（preflight）: 成功/);
+    assert.ok(!t.calls().includes('WRITE_BEFORE_PREFLIGHT'), 'a write happened before the preflight boundary');
+  }
+});
+
+test('kill switch OFF: no credential access, no clasp call, no preflight, zero writes (even with invalid inputs)', () => {
+  for (const [mode, env] of [['deploy', {}], ['rollback', { ROLLBACK_VERSION: 'abc', SBAT_DEPLOYMENT_ID: DEPLOY }], ['deploy', { GITHUB_SHA: 'bad' }]]) {
+    const t = setup();
+    const r = t.run(mode, { DG_ENABLED: 'false', ...env });
+    assert.equal(r.status, 0);
+    assert.deepEqual(t.calls(), []);
+    assert.doesNotMatch(r.stdout, /Preflight passed/);
+    assert.deepEqual(fs.readdirSync(t.tmp), []);
+  }
+});
+
+test('source-only exception is kept: no fixed deployment means checks, then source push only, and the summary never claims a published update', () => {
+  const t = setup();
+  const r = t.run('deploy');
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(t.cmds().every((c) => ['pull', 'push'].includes(c)), t.cmds().join());
+  assert.match(t.sum(), /Webアプリ公開・Deployment更新は行わない/);
+  assert.match(t.sum(), /公開版（Deployment）の更新は行っておらず検証もしていません/);
+  assert.doesNotMatch(t.sum(), /公開バージョン更新/);
+  const rb = setup().run('rollback');
+  assert.notEqual(rb.status, 0, 'rollback is refused in source-only state');
+});
+
+test('every read-only failure before the boundary stops with zero writes and no preflight line', () => {
+  const dep = { SBAT_DEPLOYMENT_ID: DEPLOY };
+  const cases = [
+    ['pull fails', 'deploy', { FAKE_FAIL: 'pull' }],
+    ['list-deployments fails', 'deploy', { ...dep, FAKE_FAIL: 'list-deployments' }],
+    ['list-versions fails', 'deploy', { ...dep, FAKE_FAIL: 'list-versions' }],
+    ['rollback: unknown version', 'rollback', { ...dep, ROLLBACK_VERSION: '99' }],
+    ['rollback: already at that version', 'rollback', { ...dep, ROLLBACK_VERSION: '2' }],
+    ['rollback: list fails', 'rollback', { ...dep, ROLLBACK_VERSION: '1', FAKE_FAIL: 'list-deployments' }],
+    ['unlisted deployment id', 'deploy', { SBAT_DEPLOYMENT_ID: 'AKfycbxNOTLISTED000000' }]
+  ];
+  for (const [name, mode, env] of cases) {
+    const t = setup();
+    const r = t.run(mode, env);
+    assert.notEqual(r.status, 0, name);
+    assert.doesNotMatch(r.stdout, /Preflight passed/, name);
+    assert.ok(!t.cmds().includes('push') && !t.cmds().includes('update-deployment'), name);
+    assert.ok(!t.calls().includes('WRITE_BEFORE_PREFLIGHT'), name);
+    noLeak(r, t);
+  }
+});
+
+test('invalid rollback/SHA inputs stop before any clasp call or credential file', () => {
+  for (const [mode, env] of [['rollback', { SBAT_DEPLOYMENT_ID: DEPLOY, ROLLBACK_VERSION: 'abc' }], ['rollback', { SBAT_DEPLOYMENT_ID: DEPLOY, ROLLBACK_VERSION: '0' }], ['deploy', { GITHUB_SHA: 'not-a-sha' }]]) {
+    const t = setup();
+    const before = JSON.stringify(t.read());
+    const r = t.run(mode, env);
+    assert.notEqual(r.status, 0, JSON.stringify(env));
+    assert.deepEqual(t.calls(), []);
+    assert.equal(JSON.stringify(t.read()), before);
+    assert.deepEqual(fs.readdirSync(t.tmp), []);
+  }
+});
+
+test('list errors are reported by the fixed classifier only (no raw output) and nothing is written', () => {
+  const t = setup();
+  const r = t.run('deploy', { SBAT_DEPLOYMENT_ID: DEPLOY, FAKE_FAIL: 'list-deployments', FAKE_LEAK: SCRIPT });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /clasp list-deployments failed \(before update\): [A-Z_]+/);
+  assert.ok(!t.cmds().includes('push'));
+  noLeak(r, t);
+});
+
+test('post-update description must match exactly: extra text is UNKNOWN_STATE, never success, and nothing is re-run', () => {
+  for (const suffix of [' extra', '; previous main ' + 'c'.repeat(40)]) {
+    const t = setup();
+    const r = t.run('deploy', { SBAT_DEPLOYMENT_ID: DEPLOY, FAKE_DESC_SUFFIX: suffix });
+    assert.notEqual(r.status, 0, suffix);
+    assert.match(r.stderr, /UNKNOWN_STATE/);
+    assert.equal(t.cmds().filter((c) => c === 'update-deployment').length, 1);
+    assert.equal(t.cmds().filter((c) => c === 'push').length, 1);
+    noLeak(r, t);
+  }
 });

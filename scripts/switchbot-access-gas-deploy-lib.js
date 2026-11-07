@@ -70,6 +70,15 @@ function pickDeployment(listJson, deploymentId) {
 }
 
 /** clasp list-versions --json の出力から、版番号の集合と最大値を返す。 */
+/**
+ * 更新後の説明文照合（Issue #804 PR-C2）。更新時に自分たちが指定した説明（例: `main <40桁SHA>`）と
+ * **完全一致**する場合だけ成功にする。前置き・追記・別記載のSHAを含む部分一致は成功にしない
+ * （許容は前後の空白のみ）。
+ */
+function descriptionMatches(actual, expected) {
+  return String(actual).trim() === String(expected).trim();
+}
+
 function parseVersions(listJson) {
   let rows;
   try { rows = JSON.parse(listJson); } catch (_) { return { error: 'VERSIONS_PARSE_FAILED' }; }
@@ -231,7 +240,7 @@ function main(argv, env) {
       const r = pickDeployment(fs.readFileSync(a[0], 'utf8'), env.SBA_DEPLOYMENT_ID || '');
       if (r.error) { process.stderr.write(r.error + '\n'); return 2; }
       if (a[1] !== 'any' && r.versionNumber !== Number(a[1])) return 1;
-      if (a[2] && a[2] !== '-' && !r.description.includes(a[2])) return 1;
+      if (a[2] && a[2] !== '-' && !descriptionMatches(r.description, a[2])) return 1;
       return 0;
     }
     case 'max-version': { // <versions.json>
@@ -282,4 +291,4 @@ if (require.main === module) {
   process.exit(code);
 }
 
-module.exports = { APPROVED_ADVANCED_SERVICES, BUNDLE_FILES, TARGET_PATHS, ACCESS_STATES, checkBundle, checkDispatch, describeVersion, pickDeployment, parseVersions, checkRemoteTarget, checkManifest, compareSources, checkCredential };
+module.exports = { APPROVED_ADVANCED_SERVICES, BUNDLE_FILES, TARGET_PATHS, ACCESS_STATES, checkBundle, checkDispatch, describeVersion, pickDeployment, descriptionMatches, parseVersions, checkRemoteTarget, checkManifest, compareSources, checkCredential };
