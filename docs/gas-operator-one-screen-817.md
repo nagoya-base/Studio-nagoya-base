@@ -12,7 +12,7 @@ Issueの起票は更新の許可ではありません。**原則は、運営者�
 
 1. **Actions → 対象workflow → Run workflow**（verifyは自動起動もあり、再反映は手動）。Branchは必ず `main`。
 2. `test`（秘密なし）が緑になるのを待つ。赤なら何も更新されない。
-3. **Environmentの承認待ち**になる（**Required reviewers を設定したEnvironmentだけ**。未設定のEnvironmentは待たずに通過する。Accessの `OFF_CONFIRMED` も、reviewers未設定なら承認の停止はない）。待ちになったら更新内容を確認して承認。**更新前に、対象Environmentの Required reviewers が設定済みか必ず確認する**（Bookingは必須、Accessは推奨、verifyは任意＝手順書どおり）。
+3. **Environmentの承認待ち**になる（**Required reviewers を設定したEnvironmentだけ**。未設定のEnvironmentは待たずに通過する。Accessの `OFF_CONFIRMED` も、reviewers未設定なら承認の停止はない）。待ちになったら更新内容を確認して承認。**更新前に、対象Environmentの Required reviewers が設定済みか必ず確認する**（Booking／Webhookは現状設定済みの前提だが、アプリから進められない課題があり、扱いは[#828の評価](booking-production-approval-gate-828.md)で運営者GO後に決める。Accessは推奨、verifyは任意＝手順書どおり）。
 4. **更新前の確認（preflight）**＝読取りのみ。ここで止まれば**何も更新されていない**。
 5. 更新 → **更新後の確認**（`main <SHA>` の自動照合。40桁を目で比べる必要はない）。
 6. 実行画面（Step Summary）で結果を確認し、実行URL・結果だけを #804 / #817 に記録。

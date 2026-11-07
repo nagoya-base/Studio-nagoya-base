@@ -130,6 +130,7 @@ claspの権限を取り消し、再認証してsecretを更新する。
 Deployment protection rulesで次を設定する。
 
 - Required reviewersに本番承認者を1名以上指定する
+  （アプリから最後まで進められない課題の評価・代替案・変更手順・復旧は[Issue #828の文書](booking-production-approval-gate-828.md)。設定変更は運営者の明示的GO後。`booking-production`はWebhookとアカウント確認workflowも共有する）
 - 可能ならPrevent self-reviewを有効にする
 - Deployment branches and tagsはSelected branches and tagsとし、`main`だけを許可する
 
