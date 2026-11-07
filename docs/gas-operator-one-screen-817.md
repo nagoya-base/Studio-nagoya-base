@@ -12,10 +12,10 @@ Issueの起票は更新の許可ではありません。**原則は、運営者�
 
 1. **Actions → 対象workflow → Run workflow**（verifyは自動起動もあり、再反映は手動）。Branchは必ず `main`。
 2. `test`（秘密なし）が緑になるのを待つ。赤なら何も更新されない。
-3. **Environmentの承認待ち**になる（**Required reviewers を設定したEnvironmentだけ**。未設定のEnvironmentは待たずに通過する。Accessの `OFF_CONFIRMED` も、reviewers未設定なら承認の停止はない）。待ちになったら更新内容を確認して承認。**更新前に、対象Environmentの Required reviewers が設定済みか必ず確認する**（Booking／Webhookは現状設定済みの前提だが、アプリから進められない課題があり、扱いは[#828の評価](booking-production-approval-gate-828.md)で運営者GO後に決める。Accessは推奨、verifyは任意＝手順書どおり）。
+3. **Environmentの承認待ち**になる（**Required reviewers を設定したEnvironmentだけ**。未設定のEnvironmentは待たずに通過する。Accessの `OFF_CONFIRMED` も、reviewers未設定なら承認の停止はない）。待ちになったら更新内容を確認して承認。**更新前に、対象Environmentの Required reviewers が設定済みか必ず確認する**（Booking／Webhookは、運営者が#828で設定を手動変更したと報告済みで、**現在値は読取り確認まで未確認**。確認方法と扱いは[#828の評価](booking-production-approval-gate-828.md)を参照。Accessは推奨、verifyは任意＝手順書どおり）。
 4. **更新前の確認（preflight）**＝読取りのみ。ここで止まれば**何も更新されていない**。
 5. 更新 → **更新後の確認**（`main <SHA>` の自動照合。40桁を目で比べる必要はない）。
-6. 実行画面（Step Summary）で結果を確認し、実行URL・結果だけを #804 / #817 に記録。
+6. 実行画面（Step Summary）で結果を確認し、実行URL・結果だけを #804 に記録（#817 は #804 へ統合済み。過去runの履歴として参照）。
 
 ## 2. 対象別：どこから・どの承認・何を入れる
 

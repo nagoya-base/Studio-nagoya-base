@@ -1,12 +1,18 @@
 # Booking本番 Environment承認（booking-production）の扱い（Issue #828）
 
-**この文書は設計・評価・手順の記録です。`booking-production` の設定変更は、運営者の明示的GOを得るまで行いません。**
+**この文書は設計・評価・手順の記録です。アプリ・エージェントは `booking-production` の設定を変更しません。今後の設定変更は、運営者の明示的GOを得て運営者が行います。**
 Issueの作成も、この文書・PRのマージも、設定変更の許可ではありません。
+
+## 0. 現在の状態（事実と未確認の区別）
+
+- **運営者の報告（事実として記録）**：2026-11-07、運営者が #828 で「手動で直した」と報告している（Issueコメント）。`booking-production` のRequired reviewers／承認待ち設定を手動で変更した旨と解釈している。
+- **未確認**：変更内容、Required reviewersの**現在値**、Webhook（同一Environment共有）への影響は、独立に確認していない。GitHub Settingsを**読取り**で確かめるまで未確認として扱う。この文書は設定が「変更済み」とも「未変更」とも断定しない。
+- 以下の方式比較（特に推奨案②）は**将来の再設計案**であり、現在の設定ではない。運営者の手動変更を巻き戻す指示ではない。
 Secrets値・clasp認証JSON・完全なScript/Deployment ID・Webhook URL・生ログは、この文書にも Issue・PR にも書きません。
 
 ## 1. 課題
 
-2026-11-07 の Booking 正規更新（#817 で記録）では、テスト成功後に `Review pending deployments` が出て、
+2026-11-07 の Booking 正規更新（#817 に記録。#817 は #804 へ統合済みで、過去runの監査履歴として参照する）では、テスト成功後に `Review pending deployments` が出て、
 GitHub画面での手動承認待ちになった。アプリ／連携エージェントはActionsを起動できても、この承認で止まり、完了まで進められない。
 手順自体の不具合ではなく、**Environment保護ルール（Required reviewers）と操作経路の不整合**である。
 
@@ -26,7 +32,7 @@ Secretsは `booking-production` のEnvironment secretsにあり、**Environment�
 
 ### GitHub側の設定（リポジトリからは読めない＝未確認）
 
-次はリポジトリのファイルでは確認できず、**運営者がSettings → Environments → `booking-production` で確認して記録する**。
+次はリポジトリのファイルでは確認できず、**Settings → Environments → `booking-production` を読取りで確認して記録する**（運営者の手動変更後の現在値を含む）。
 
 - Required reviewers（人数・個人かTeamか）
 - Prevent self-review の有無
@@ -53,7 +59,7 @@ Secretsは `booking-production` のEnvironment secretsにあり、**Environment�
 | ② ゲートを残しアプリが正規に承認 | Required reviewersを維持し、アプリが運営者本人の権限で承認APIを呼ぶ（運営者が内容確認後に明示指示） | 承認者・時刻がGitHubの履歴に残る。Webhook含め保護を弱めない | GitHub Appのbot自身はreviewerにできない（reviewerはユーザー／Team）。アプリが**運営者のユーザー権限**で動く構成が必要。Prevent self-reviewが有効だと、dispatch者と同一人物は承認できない（この場合は別の承認者が要る）。**承認API利用可否は未検証** |
 | ③ Environment分離 | Admin/Public用とWebhook用でEnvironmentを分け、一方だけ承認を外す／残す | 影響を限定できる。Webhookだけ人の承認を維持できる | Secretsの再登録（移設）が必要で、運営者作業が増える。workflow・テスト・手順書の改修を伴う |
 
-### 推奨（運営者の判断材料。決定ではない）
+### 推奨（将来の再設計案・運営者の判断材料。現在の設定でも決定でもない）
 
 1. **第一候補は②**。承認者・時刻が履歴に残り、Webhookを含め保護を弱めない。成立条件は「アプリが運営者のユーザー権限で承認APIを呼べること」と「Prevent self-reviewとの整合」。
 2. ②が成立しない場合（権限・self-review制約など）は、**③でAdmin/Publicのみ承認を外す**ことを検討する。Webhookは承認を残す。
@@ -80,11 +86,11 @@ GitHub側の権限制約・承認APIの利用可否は**実環境で未検証**�
 
 ## 6. 実施手順（運営者GO取得後。実施主体＝運営者）
 
-1. **事前**：§2 の未確認項目を確認し、§8 に「変更前」を記録（設定状態のみ。Secrets値は不要）。
-2. **GO**：運営者が採用案（②／③／①）と対象Environmentを明示して承認する。
+1. **事前**：§2 の未確認項目を読取りで確認し、§8 に「変更前」（運営者の手動変更がある場合はその後の現在値）を記録（設定状態のみ。Secrets値は不要）。
+2. **GO**（以降の追加変更を行う場合）：運営者が採用案（②／③／①）と対象Environmentを明示して承認する。
 3. **変更**：運営者が Settings → Environments で実施（②なら権限整備、③ならEnvironment新設とSecrets移設、①ならRequired reviewers解除）。アプリ・エージェントはSettingsを変更しない。
 4. **変更後**：§8 に「変更後」を記録。必要なら workflow／テスト／手順書を別PRで改修する。
-5. **検証**：確認のためだけに本番更新を走らせない。**次回の正規Booking更新**で、承認待ちの有無・テスト・preflight・post-checkの結果を #817 へ**実行URLと結果のみ**追記する。
+5. **検証**：確認のためだけに本番更新を走らせない。**次回の正規Booking更新**で、承認待ちの有無・テスト・preflight・post-checkの結果を #804 へ**実行URLと結果のみ**追記する。
 
 ## 7. 復旧（変更前へ戻す）
 
@@ -97,17 +103,17 @@ GitHub側の権限制約・承認APIの利用可否は**実環境で未検証**�
 
 | 項目 | 変更前 | 変更後 | 記録日・実施者 |
 | --- | --- | --- | --- |
-| Required reviewers | 未記入 | 未記入 | |
+| Required reviewers | 未記入（運営者が手動変更を報告済み・現在値は未確認） | 未記入 | |
 | Prevent self-review | 未記入 | 未記入 | |
 | Wait timer | 未記入 | 未記入 | |
 | Deployment branches and tags | 未記入 | 未記入 | |
 | Actions実行権限（dispatch可能な範囲） | 未記入 | 未記入 | |
 | 承認APIの利用可否（②の場合） | 未検証 | 未記入 | |
-| 次回正規更新の実行URL／承認待ち有無／結果 | — | 未記入（#817へ追記） | |
+| 次回正規更新の実行URL／承認待ち有無／結果 | — | 未記入（#804へ追記） | |
 
 ## 9. 受入条件との対応
 
-- アプリから進められる：**方式未決定のため未検証**（運営者GOと §8 の確認後、次回正規更新で検証）。
+- アプリから進められる：**未検証**（現在の設定を §8 で読取り確認のうえ、次回の正規更新で承認待ちの有無を実証する）。#828 は実証までopen維持。
 - Webhookへの副作用：§3 に明文化（共有Environment＝解除で同時に外れる）。許容可否は運営者が判断。
 - main／dispatch限定・テスト／preflight／post-check／concurrency／Secretsスコープ：弱めていない（本PRはworkflowを変更しない。静的テストで固定）。
 - 手順書・テスト・記録の一致：本文書、`docs/gas-operator-one-screen-817.md`、`docs/booking-gas-production-deploy.md` を整合。

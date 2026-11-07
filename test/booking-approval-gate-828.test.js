@@ -61,3 +61,15 @@ test('手順書が「Bookingは必須」と断定せず、#828 を参照して�
   assert.match(guide, /booking-production-approval-gate-828\.md/);
   assert.match(read('docs/booking-gas-production-deploy.md'), /booking-production-approval-gate-828\.md/);
 });
+
+test('現在の設定を断定せず、運営者の手動変更報告を事実と未確認に区別し、記録先は#804', () => {
+  assert.match(doc, /運営者の報告（事実として記録）/);
+  assert.match(doc, /Required reviewersの\*\*現在値\*\*[^\n]*未確認|現在値[^\n]*未確認/);
+  assert.match(doc, /将来の再設計案/);
+  assert.match(doc, /巻き戻す指示ではない/);
+  assert.doesNotMatch(doc, /#817\s*へ/);
+  assert.match(doc, /#804\s*へ/);
+  const guide = read('docs/gas-operator-one-screen-817.md');
+  assert.doesNotMatch(guide, /#804 \/ #817 に記録/);
+  assert.doesNotMatch(guide, /現状設定済みの前提/);
+});
