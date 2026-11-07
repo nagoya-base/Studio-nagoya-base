@@ -1276,6 +1276,13 @@ var SwitchBotAccessInfra = (function () {
           var sn = deps.snapshot.build(records[i], { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
           var input = deps.snapshot.toCoreInput(sn, nowMs);
           var tr = readTrack(sn.bookingId);
+          // 限定稼働（#757）: 許可リスト外で、鍵の未解決OPも無い予約は、凍結通知・追跡記録のどちらも行わず黙って対象外とする。
+          // 追跡（revision／発行窓の処理済み）を書かないので、後でリストに加えれば次の周期で再評価される。
+          // 既に鍵のOPがある予約は通常の経路へ進み、非対象として旧キーが回収される。
+          if (Array.isArray(cfg.pilotBookingIds) && cfg.pilotBookingIds.indexOf(String(sn.bookingId)) === -1 && !openByBooking[sn.bookingId]) {
+            summary.skipped++;
+            continue;
+          }
           if (input.action === 'FREEZE') {
             var reasons = input.reasons.length ? input.reasons : ['IDENTITY_INVALID'];
             reasons.forEach(function (r) { if (FREEZE_REASONS.indexOf(r) !== -1) infraAlert('BOOKING_FROZEN', safeRef(sn.bookingId), sn.revision, r); });

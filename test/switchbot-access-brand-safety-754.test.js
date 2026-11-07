@@ -329,3 +329,18 @@ test('P3: 空配列は全予約を停止（createKey=0）', function () {
   cycle(w, rt, 3);
   assert.strictEqual(w.callCount('createKey'), 0);
 });
+
+test('P4: リスト外の支払未確認予約は凍結通知を出さない。リストに加えた後は追加の改訂なしで発行される', function () {
+  var w = H.createWorld({ mail: false, cfg: { pilotBookingIds: [] } });
+  w.createMode = 'noCommandId';
+  var rt = w.runtime();
+  w.records = [H.record({ bookingId: 'SNB-1' }), H.record({ bookingId: 'SNB-UNPAID', paymentStatus: 'checkout_pending' })];
+  cycle(w, rt, 3);
+  assert.strictEqual(w.callCount('createKey'), 0);
+  assert.ok(!has(w, /BOOKING_FROZEN/), 'リスト外は凍結通知なし');
+  w.cfg.pilotBookingIds = ['SNB-1'];
+  w.rt = null;
+  rt = w.runtime();
+  cycle(w, rt, 3);
+  assert.strictEqual(w.callCount('createKey'), 1, '追加の改訂なしで発行される');
+});
