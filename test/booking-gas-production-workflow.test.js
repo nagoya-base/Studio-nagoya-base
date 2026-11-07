@@ -212,7 +212,7 @@ esac
 `, { mode: 0o700 });
     // Record waits without delaying the tests. Production uses the real sleep command.
     fs.writeFileSync(path.join(bin, 'sleep'), '#!/bin/bash\nprintf "%s\\n" "$1" >> "$MOCK_SLEEPS"\n', { mode: 0o700 });
-    const sha = 'abc123def456';
+    const sha = 'abc123def456abc123def456abc123def456abcd';
     const env = {
       ...process.env, PATH: bin + path.delimiter + process.env.PATH, GITHUB_WORKSPACE: workspace, RUNNER_TEMP: dir,
       GITHUB_SHA: sha,
@@ -248,7 +248,7 @@ test('deploy script updates the existing deployment and confirms the current mai
 test('deploy script refuses unknown targets/modes, unknown deployments and a stale SHA after update', () => {
   assert.notEqual(runDeploy(['webhook']).status, 0);
   assert.notEqual(runDeploy(['admin', 'bogus']).status, 0);
-  const unknown = runDeploy(['admin'], { MOCK_LIST: '- another-deployment @1 - main abc123def456' });
+  const unknown = runDeploy(['admin'], { MOCK_LIST: '- another-deployment @1 - main abc123def456abc123def456abc123def456abcd' });
   assert.notEqual(unknown.status, 0);
   assert.deepEqual(unknown.invoked, ['list-deployments']);
   const stale = runDeploy(['public'], { MOCK_LIST: '- public-deployment-dummy @5 - main 000000' });
@@ -263,9 +263,9 @@ test('pre-update ID checks reject substring, description-only and duplicate matc
   for (const target of ['admin', 'public']) {
     const id = `${target}-deployment-dummy`;
     for (const listing of [
-      `- ${id}-suffix @5 - main abc123def456`,
-      `- another-deployment @5 - ${id} main abc123def456`,
-      `- ${id} @5 - main abc123def456\n- ${id} @4 - main 000000`
+      `- ${id}-suffix @5 - main abc123def456abc123def456abc123def456abcd`,
+      `- another-deployment @5 - ${id} main abc123def456abc123def456abc123def456abcd`,
+      `- ${id} @5 - main abc123def456abc123def456abc123def456abcd\n- ${id} @4 - main 000000`
     ]) {
       const r = runDeploy([target], { MOCK_LIST: listing });
       assert.equal(r.status, 1);
@@ -295,11 +295,11 @@ test('description propagation can succeed on the second or final attempt without
 });
 
 test('missing, ambiguous, substring-only IDs and another deployment showing the SHA fail immediately after update', () => {
-  const current = '- admin-deployment-dummy @5 - main abc123def456';
+  const current = '- admin-deployment-dummy @5 - main abc123def456abc123def456abc123def456abcd';
   for (const listing of [
-    '', '- another-deployment @5 - main abc123def456',
+    '', '- another-deployment @5 - main abc123def456abc123def456abc123def456abcd',
     `${current}\n${current}`, `${current}\n- admin-deployment-dummy @4 - main 000000`,
-    '- admin-deployment-dummy-suffix @5 - main abc123def456'
+    '- admin-deployment-dummy-suffix @5 - main abc123def456abc123def456abc123def456abcd'
   ]) {
     const r = runDeploy(['admin'], { MOCK_AFTER_LIST_SET: '1', MOCK_AFTER_LIST: listing });
     assert.equal(r.status, 1, r.stderr);
@@ -309,7 +309,7 @@ test('missing, ambiguous, substring-only IDs and another deployment showing the 
     assert.equal(r.marker('admin'), true);
   }
   const wrongLine = runDeploy(['admin'], { MOCK_AFTER_LIST_SET: '1',
-    MOCK_AFTER_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456' });
+    MOCK_AFTER_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456abc123def456abc123def456abcd' });
   assert.equal(wrongLine.status, 1);
   assert.equal(wrongLine.sleeps.length, 4);
 });
@@ -354,7 +354,7 @@ printf '%s\\n' "$1" >> "$MOCK_CALLS"
 case "$1" in list-deployments) echo "- public-deployment-dummy @1 - main x" ;; pull) ;; *) exit 0 ;; esac
 `, { mode: 0o700 });
     const env = { ...process.env, PATH: bin + path.delimiter + process.env.PATH, GITHUB_WORKSPACE: workspace, RUNNER_TEMP: dir,
-      GITHUB_SHA: 'x', PUBLIC_CLASPRC_JSON: JSON.stringify({ tokens: { 'booking-owner': {} } }),
+      GITHUB_SHA: 'a'.repeat(40), PUBLIC_CLASPRC_JSON: JSON.stringify({ tokens: { 'booking-owner': {} } }),
       PUBLIC_SCRIPT_ID: 'public-script-dummy', PUBLIC_DEPLOYMENT_ID: 'public-deployment-dummy', MOCK_CALLS: path.join(dir, 'calls') };
     const r = spawnSync('bash', [deployScript, 'public'], { cwd: dir, env, encoding: 'utf8' });
     assert.notEqual(r.status, 0);
@@ -376,9 +376,9 @@ test('verify mode is read-only and checks the existing deployment shows the curr
   assert.deepEqual(stale.sleeps, ['5', '5', '5', '5']);
   assert.equal(stale.marker('public'), false);
   for (const listing of [
-    '- admin-deployment-dummy @5 - main abc123def456\n- admin-deployment-dummy @4 - main 000000',
-    '- admin-deployment-dummy-suffix @5 - main abc123def456',
-    '- admin-deployment-dummy @5 - main abc123def4560'
+    '- admin-deployment-dummy @5 - main abc123def456abc123def456abc123def456abcd\n- admin-deployment-dummy @4 - main 000000',
+    '- admin-deployment-dummy-suffix @5 - main abc123def456abc123def456abc123def456abcd',
+    '- admin-deployment-dummy @5 - main abc123def456abc123def456abc123def456abcd0'
   ]) {
     const r = runDeploy(['admin', 'verify'], { MOCK_LIST: listing });
     assert.equal(r.status, 1);
@@ -392,7 +392,7 @@ test('verify retries read-only when the first read shows an old SHA, and never p
     // first read: old SHA; later reads (from currentAt on): current SHA.
     const r = runDeploy(['admin', 'verify'], {
       MOCK_AFTER_LIST_SET: '1', MOCK_CURRENT_AT: String(currentAt),
-      MOCK_LIST: '- admin-deployment-dummy @5 - main abc123def456',
+      MOCK_LIST: '- admin-deployment-dummy @5 - main abc123def456abc123def456abc123def456abcd',
       MOCK_AFTER_LIST: '- admin-deployment-dummy @4 - main 000000',
       MOCK_FIRST_LIST: '- admin-deployment-dummy @4 - main 000000'
     });
@@ -407,7 +407,7 @@ test('verify right after a successful deploy-mode check tolerates an old first r
   const r = runDeploy(['admin', 'verify'], {
     MOCK_FIRST_LIST: '- admin-deployment-dummy @4 - main 000000',
     MOCK_AFTER_LIST_SET: '1', MOCK_CURRENT_AT: '2',
-    MOCK_LIST: '- admin-deployment-dummy @5 - main abc123def456'
+    MOCK_LIST: '- admin-deployment-dummy @5 - main abc123def456abc123def456abc123def456abcd'
   });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.invoked.includes('push'), false);
@@ -416,19 +416,19 @@ test('verify right after a successful deploy-mode check tolerates an old first r
 
 test('verify: only another deployment showing the SHA fails after finite retries; missing/duplicate IDs and list errors stop at once', () => {
   const other = runDeploy(['admin', 'verify'], {
-    MOCK_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456'
+    MOCK_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456abc123def456abc123def456abcd'
   });
   assert.equal(other.status, 1);
   assert.equal(other.invoked.length, 5, 'only another deployment shows the SHA: finite retries, then fail');
   assert.equal(other.invoked.every((c) => c === 'list-deployments'), true);
   const stale = runDeploy(['admin', 'verify'], {
-    MOCK_AFTER_LIST_SET: '1', MOCK_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456',
-    MOCK_AFTER_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456'
+    MOCK_AFTER_LIST_SET: '1', MOCK_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456abc123def456abc123def456abcd',
+    MOCK_AFTER_LIST: '- admin-deployment-dummy @4 - main 000000\n- another-deployment @5 - main abc123def456abc123def456abc123def456abcd'
   });
   assert.equal(stale.status, 1);
   assert.equal(stale.invoked.length, 5);
-  for (const listing of ['', '- another-deployment @5 - main abc123def456',
-    '- admin-deployment-dummy @4 - main 000000\n- admin-deployment-dummy @5 - main abc123def456']) {
+  for (const listing of ['', '- another-deployment @5 - main abc123def456abc123def456abc123def456abcd',
+    '- admin-deployment-dummy @4 - main 000000\n- admin-deployment-dummy @5 - main abc123def456abc123def456abc123def456abcd']) {
     const r = runDeploy(['admin', 'verify'], { MOCK_AFTER_LIST_SET: '1', MOCK_LIST: '- admin-deployment-dummy @4 - main 000000', MOCK_AFTER_LIST: listing });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE/);
@@ -561,15 +561,12 @@ test('schema guard: a previous SHA without BookingsSchema.gs (first bootstrap) c
   assert.equal(ok.status, 0, ok.stderr);
 });
 
-test('schema guard fails closed when the previous Public SHA cannot be identified safely', () => {
+test('schema guard fails closed when the Public deployment row itself cannot be identified safely (even with schema_migrated=true)', () => {
   const cases = {
-    'no SHA in description': () => '- public-deployment-dummy @5 - manual deploy',
-    'short SHA': () => '- public-deployment-dummy @5 - main abc123def456',
     'unknown deployment': ({ previous }) => `- another-deployment @5 - main ${previous}`,
     'substring ID': ({ previous }) => `- public-deployment-dummy-suffix @5 - main ${previous}`,
     'ID only in description': ({ previous }) => `- another-deployment @5 - public-deployment-dummy main ${previous}`,
     'duplicate ID': ({ previous }) => `- public-deployment-dummy @5 - main ${previous}\n- public-deployment-dummy @4 - main ${previous}`,
-    'two SHAs': ({ previous, current }) => `- public-deployment-dummy @5 - main ${previous} main ${current}`,
     'SHA not in checked-out history': () => `- public-deployment-dummy @5 - main ${'0'.repeat(40)}`
   };
   for (const [label, deploymentLine] of Object.entries(cases)) {
@@ -640,7 +637,7 @@ printf '%s\\n' "$1" >> "$MOCK_CALLS"
 case "$1" in list-deployments) echo "- admin-deployment-dummy @1 - main x" ;; *) ;; esac
 `, { mode: 0o700 });
     const env = { ...process.env, PATH: bin + path.delimiter + process.env.PATH, GITHUB_WORKSPACE: workspace, RUNNER_TEMP: dir,
-      GITHUB_SHA: 'x', CLASPRC_JSON: JSON.stringify({ tokens: { default: {} } }),
+      GITHUB_SHA: 'a'.repeat(40), CLASPRC_JSON: JSON.stringify({ tokens: { default: {} } }),
       ADMIN_SCRIPT_ID: 'admin-script-dummy', ADMIN_DEPLOYMENT_ID: 'admin-deployment-dummy', MOCK_CALLS: path.join(dir, 'calls') };
     const r = spawnSync('bash', [deployScript, 'admin', 'preflight'], { cwd: dir, env, encoding: 'utf8' });
     assert.equal(r.status, 1);
@@ -692,7 +689,7 @@ echo "$MOCK_RAW $MOCK_SENSITIVE" >&2
 echo "$MOCK_SENSITIVE"
 exit 1
 `, { mode: 0o700 });
-        const env = { ...process.env, PATH: bin + path.delimiter + process.env.PATH, GITHUB_WORKSPACE: workspace, RUNNER_TEMP: dir, GITHUB_SHA: 'x',
+        const env = { ...process.env, PATH: bin + path.delimiter + process.env.PATH, GITHUB_WORKSPACE: workspace, RUNNER_TEMP: dir, GITHUB_SHA: 'a'.repeat(40),
           CLASPRC_JSON: JSON.stringify({ tokens: { default: {} } }), PUBLIC_CLASPRC_JSON: JSON.stringify({ tokens: { 'booking-owner': {} } }),
           PUBLIC_SCRIPT_ID: 'public-script-dummy', PUBLIC_DEPLOYMENT_ID: 'public-deployment-dummy',
           ADMIN_SCRIPT_ID: 'admin-script-dummy', ADMIN_DEPLOYMENT_ID: 'admin-deployment-dummy',
@@ -706,4 +703,152 @@ exit 1
       } finally { fs.rmSync(dir, { recursive: true, force: true }); }
     }
   }
+});
+
+/* ---- Issue #804 PR-D1a: SHA照合は内部で自動・厳密に維持し、運営者にSHAの入力/転記/目視比較を求めない ---- */
+const D1_SHA = 'abc123def456abc123def456abc123def456abcd';
+const D1_OLD = 'b'.repeat(40);
+
+test('D1a: no SHA input, secret or variable exists; a normal run needs only scope and schema_migrated', () => {
+  const on = workflow.slice(workflow.indexOf('\non:\n'), workflow.indexOf('\npermissions:'));
+  assert.doesNotMatch(on, /sha|commit|revision/i, 'no SHA-like workflow_dispatch input');
+  assert.equal((on.match(/^      [a-z_]+:$/gm) || []).length, 2, 'only scope and schema_migrated');
+  assert.doesNotMatch(workflow, /secrets\.[A-Z_]*SHA|vars\.[A-Z_]*SHA|env\.[A-Z_]*SHA\b/);
+  assert.match(on, /scope:\n(?:.*\n)*?        default: full\n/);
+  assert.match(on, /schema_migrated:\n(?:.*\n)*?        default: false\n/);
+});
+
+test('D1a: GITHUB_SHA must be a 40-digit commit SHA (auto-provided); anything else stops before any clasp call', () => {
+  for (const sha of ['abc123', 'A'.repeat(40), 'a'.repeat(39), 'a'.repeat(41), '']) {
+    for (const args of [['admin'], ['admin', 'verify'], ['public', 'preflight']]) {
+      const r = runDeploy(args, { GITHUB_SHA: sha });
+      assert.equal(r.status, 1, JSON.stringify([sha, args]));
+      assert.deepEqual(r.invoked, []);
+      assert.match(r.stderr, /GITHUB_SHA is not a 40-digit commit SHA/);
+    }
+  }
+});
+
+test('D1a: post-check confirms OK only for the exact ID row with the exact description `main <SHA>`; shows a short result, no SHA/ID', () => {
+  for (const target of ['admin', 'public']) {
+    const label = target === 'admin' ? 'Booking Admin' : 'Booking Web App';
+    const summaryFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'booking-summary-')), 'summary.md');
+    const r = runDeploy([target, 'verify'], { MOCK_LIST: `- ${target}-deployment-dummy @5 - main ${D1_SHA}`, GITHUB_SHA: D1_SHA, GITHUB_STEP_SUMMARY: summaryFile });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes(`${label}: 反映確認OK`));
+    assert.equal(r.stdout.trim().split('\n').pop(), `Verified existing ${target} deployment is at the current main commit`);
+    const summary = fs.readFileSync(summaryFile, 'utf8');
+    assert.ok(summary.includes(`${label}: 反映確認OK`));
+    assert.doesNotMatch(r.stdout + summary, /[0-9a-f]{40}|deployment-dummy|script-dummy/, 'no SHA to compare by hand, no IDs');
+  }
+});
+
+test('D1a: post-check never confirms near misses (appended text, old/previous SHAs, another row, partial/duplicate IDs, no description)', () => {
+  const id = 'admin-deployment-dummy';
+  const cases = [
+    ['text appended', `- ${id} @5 - main ${D1_SHA} extra`, 'SHA_MISMATCH'],
+    ['previous SHA mentioned, current is old', `- ${id} @5 - previous main ${D1_SHA}; current main ${D1_OLD}`, 'SHA_MISMATCH'],
+    ['text before the SHA', `- ${id} @5 - rollback of main ${D1_SHA}`, 'SHA_MISMATCH'],
+    ['old SHA followed by the current SHA', `- ${id} @5 - main ${D1_OLD} main ${D1_SHA}`, 'SHA_MISMATCH'],
+    ['SHA only on another deployment row', `- ${id} @5 - main ${D1_OLD}\n- another-deployment @6 - main ${D1_SHA}`, 'SHA_MISMATCH'],
+    ['SHA extended by a hex digit', `- ${id} @5 - main ${D1_SHA}0`, 'SHA_MISMATCH'],
+    ['no description', `- ${id} @5 -`, 'SHA_MISMATCH'],
+    ['old SHA only', `- ${id} @5 - main ${D1_OLD}`, 'SHA_MISMATCH'],
+    ['ID is only a prefix of another ID', `- ${id}-suffix @5 - main ${D1_SHA}`, 'DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE'],
+    ['ID appears only in a description', `- other @5 - ${id} main ${D1_SHA}`, 'DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE'],
+    ['duplicate ID rows', `- ${id} @5 - main ${D1_SHA}\n- ${id} @4 - main ${D1_OLD}`, 'DEPLOYMENT_ID_MISSING_OR_NOT_UNIQUE']
+  ];
+  for (const [name, list, code] of cases) {
+    const r = runDeploy(['admin', 'verify'], { MOCK_LIST: list, GITHUB_SHA: D1_SHA });
+    assert.equal(r.status, 1, name);
+    assert.ok(r.stdout.includes(`Booking Admin: 未確認（stage=POST_CHECK code=${code}）`), name + '\n' + r.stdout);
+    assert.ok(r.invoked.every((c) => c === 'list-deployments'), name + ': read-only');
+    assert.doesNotMatch(r.stdout + r.stderr, /deployment-dummy|script-dummy|token-dummy/);
+  }
+});
+
+test('D1a: after an update, a non-exact description stops as unconfirmed with no automatic re-push/re-update; the exact one is confirmed', () => {
+  for (const target of ['admin', 'public']) {
+    const label = target === 'admin' ? 'Booking Admin' : 'Booking Web App';
+    const r = runDeploy([target], { GITHUB_SHA: D1_SHA, MOCK_LIST: `- ${target}-deployment-dummy @5 - main ${D1_OLD}`,
+      MOCK_AFTER_LIST_SET: '1', MOCK_CURRENT_AT: '99', MOCK_AFTER_LIST: `- ${target}-deployment-dummy @6 - main ${D1_SHA} extra` });
+    assert.equal(r.status, 1, target);
+    assert.ok(r.stdout.includes(`${label}: 未確認（stage=POST_UPDATE code=SHA_MISMATCH）`));
+    for (const command of ['pull', 'push', 'update-deployment']) assert.equal(r.invoked.filter((c) => c === command).length, 1, command + ' ran once');
+    assert.equal(r.marker(target), true, 'the update was applied; only confirmation failed');
+    const ok = runDeploy([target], { GITHUB_SHA: D1_SHA, MOCK_LIST: `- ${target}-deployment-dummy @5 - main ${D1_SHA}`,
+      MOCK_AFTER_LIST_SET: '1', MOCK_CURRENT_AT: '2', MOCK_AFTER_LIST: `- ${target}-deployment-dummy @6 - main ${D1_SHA}` });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.ok(ok.stdout.includes(`${label}: 反映確認OK`));
+  }
+});
+
+test('D1a/P1: an unknown previous SHA (non-exact description) is never assumed unchanged: it stops unless the operator confirmed the migration, then it is treated as changed', () => {
+  const cases = {
+    'text appended after the SHA': ({ previous }) => `- public-deployment-dummy @5 - main ${previous} extra`,
+    'text before the SHA': ({ previous }) => `- public-deployment-dummy @5 - rollback of main ${previous}`,
+    'previous and current SHA mixed': ({ previous, current }) => `- public-deployment-dummy @5 - previous main ${previous}; current main ${current}`,
+    'old format without a SHA (baseline unknown)': () => '- public-deployment-dummy @5 - manual deploy',
+    'short SHA': () => '- public-deployment-dummy @5 - main abc123def456',
+    'empty description': () => '- public-deployment-dummy @5 -',
+    'uppercase SHA': ({ previous }) => `- public-deployment-dummy @5 - main ${previous.toUpperCase()}`
+  };
+  for (const [label, deploymentLine] of Object.entries(cases)) {
+    // the schema did not actually change in these fixtures: the unknown baseline must still not be treated as "unchanged"
+    for (const schemaMigrated of ['false', '']) {
+      const stop = runGuard({ setup: unchanged, deploymentLine, schemaMigrated });
+      assert.equal(stop.status, 1, `${label} (schema_migrated=${schemaMigrated || 'unset'}) must stop`);
+      assert.match(stop.stderr, /^PREVIOUS_SHA_UNKNOWN: /);
+      assert.match(stop.stderr, /migrateBookingsSchema/);
+      assert.match(stop.stderr, /schema_migrated=true/);
+      assert.doesNotMatch(stop.stderr, /[0-9a-f]{40}/, label);
+      assert.deepEqual(stop.invoked, ['list-deployments'], 'read-only: only the deployment list is read');
+    }
+    const ok = runGuard({ setup: unchanged, deploymentLine, schemaMigrated: 'true' });
+    assert.equal(ok.status, 0, `${label} with schema_migrated=true is treated as changed (first baseline): ${ok.stderr}`);
+    assert.match(ok.stdout, /Previous Web App production commit is unknown; the Bookings schema is treated as changed; schema_migrated=true confirmed/);
+    assert.doesNotMatch(ok.stdout, /schema is unchanged/);
+    assert.deepEqual(ok.invoked, ['list-deployments']);
+  }
+  // the exact form still works through the normal diff path
+  const exact = runGuard({ setup: unchanged });
+  assert.equal(exact.status, 0, exact.stderr);
+  assert.match(exact.stdout, /schema is unchanged/);
+  const changedStop = runGuard({ setup: changed, schemaMigrated: 'false' });
+  assert.equal(changedStop.status, 1);
+  assert.doesNotMatch(changedStop.stderr, /PREVIOUS_SHA_UNKNOWN/, 'a known baseline with a real change uses the normal message');
+});
+
+test('D1a/P1: the unknown-baseline pass writes an operator-facing summary line and needs no SHA input', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-p1-'));
+  const summaryFile = path.join(dir, 'summary.md');
+  fs.writeFileSync(summaryFile, '');
+  const prev = process.env.GITHUB_STEP_SUMMARY;
+  process.env.GITHUB_STEP_SUMMARY = summaryFile;
+  try {
+    const r = runGuard({ setup: unchanged, deploymentLine: () => '- public-deployment-dummy @5 - manual deploy', schemaMigrated: 'true' });
+    assert.equal(r.status, 0, r.stderr);
+  } finally {
+    if (prev === undefined) delete process.env.GITHUB_STEP_SUMMARY; else process.env.GITHUB_STEP_SUMMARY = prev;
+  }
+  const summary = fs.readFileSync(summaryFile, 'utf8');
+  assert.match(summary, /Bookings schema: 前回の本番版が特定できないため『変更あり』として扱いました/);
+  assert.doesNotMatch(summary, /[0-9a-f]{40}|deployment-dummy|script-dummy/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('D1a: the schema decision uses the published Public row (not the editable HEAD or the Admin SHA) and never assumes migration', () => {
+  // The guard calls list-deployments only (runGuard fails on any other clasp command): the pulled/editable HEAD is never consulted.
+  const r = runGuard({ setup: changed, schemaMigrated: 'false' });
+  assert.equal(r.status, 1);
+  assert.deepEqual(r.invoked, ['list-deployments']);
+  assert.match(r.stderr, /migrateBookingsSchema/);
+  assert.match(r.stderr, /schema_migrated=true/);
+  const summaryFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'guard-summary-')), 'summary.md');
+  const unchangedRun = runGuard({ setup: unchanged, schemaMigrated: 'false' });
+  assert.equal(unchangedRun.status, 0, 'a normal run (schema_migrated left OFF) needs no extra input when the schema did not change');
+  void summaryFile;
+  // an Admin row that already shows the current SHA never stands in for the published Public version
+  const adminOnly = runGuard({ setup: changed, deploymentLine: ({ current }) => `- admin-deployment-dummy @9 - main ${current}` });
+  assert.equal(adminOnly.status, 1);
 });

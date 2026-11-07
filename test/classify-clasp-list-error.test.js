@@ -56,7 +56,7 @@ for (const phase of ['before', 'after', 'verify']) {
         fs.writeFileSync(path.join(dir, 'clasp'), '#!/bin/bash\nprintf "%s\\n" "$MOCK_STDOUT"\nprintf "%s\\n" "$MOCK_STDERR" >&2\nexit "$MOCK_STATUS"\n', { mode: 0o700 });
         const env = { ...process.env, PATH: dir + ':' + process.env.PATH, GITHUB_WORKSPACE: workspace,
           auth_file: 'test-auth', clasp_user: target === 'admin' ? 'default' : 'booking-owner',
-          deployment_id: 'test-deployment', target, GITHUB_SHA: 'abc123', list_stdout: path.join(dir, 'stdout'), list_stderr: path.join(dir, 'stderr') };
+          deployment_id: 'test-deployment', target, GITHUB_SHA: 'a'.repeat(40), list_stdout: path.join(dir, 'stdout'), list_stderr: path.join(dir, 'stderr') };
         for (const stream of ['STDOUT', 'STDERR']) {
           const result = spawnSync('bash', ['-c', 'set -euo pipefail\n' + block + '\necho UNREACHABLE'], {
             cwd: dir, encoding: 'utf8', env: { ...env, MOCK_STATUS: '1', MOCK_STDOUT: sensitive, MOCK_STDERR: sensitive, ['MOCK_' + stream]: 'invalid_grant ' + sensitive }
@@ -66,7 +66,7 @@ for (const phase of ['before', 'after', 'verify']) {
           assert.doesNotMatch(result.stdout, /UNREACHABLE|tiny-secret|deployment-id/);
         }
         const success = spawnSync('bash', ['-c', 'set -euo pipefail\n' + block], {
-          cwd: dir, encoding: 'utf8', env: { ...env, MOCK_STATUS: '0', MOCK_STDOUT: '- test-deployment @5 - main abc123 ' + sensitive, MOCK_STDERR: sensitive }
+          cwd: dir, encoding: 'utf8', env: { ...env, MOCK_STATUS: '0', MOCK_STDOUT: '- test-deployment @5 - main ' + 'a'.repeat(40), MOCK_STDERR: sensitive }
         });
         assert.equal(success.status, 0);
         assert.equal(success.stderr, '');
