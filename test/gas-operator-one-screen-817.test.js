@@ -45,3 +45,13 @@ test('ガイドが参照する文書が存在し、秘密値らしき文字列�
   }
   assert.ok(!/refresh_token|-----BEGIN|AKfy|https:\/\/script\.google\.com\/macros\/s\//.test(doc));
 });
+
+test('verify の push 自動起動の例外と、Booking 部分適用時の一括 full 再実行禁止が明記されている', () => {
+  assert.ok(/on:\s*\n\s*push:\s*\n\s*branches:\s*\n\s*- main/.test(
+    fs.readFileSync(path.join(wfDir, 'switchbot-verify-gas-deploy.yml'), 'utf8')), 'verify は push 自動起動');
+  assert.ok(/SwitchBot verify は[^\n]*main[^\n]*自動起動/.test(doc), '§1 に自動起動の例外');
+  assert.ok(/途中更新・状態不明のまま `full` を一括で再実行しない/.test(doc));
+  assert.ok(/Adminは更新済み・Publicだけ未反映/.test(doc));
+  assert.ok(/版番号だけ上がってSHAが違う[^\n]*未解決のまま/.test(doc));
+  assert.ok(!/旧版のまま[^\n]*原因を直して最初から再実行/.test(doc), '無条件の最初から再実行は残さない');
+});
