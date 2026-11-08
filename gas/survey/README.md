@@ -45,12 +45,50 @@ Google Apps Script（GAS）の **公開Web App** と **管理者Web App** の2�
 - 既存Spreadsheetの移行: `responses` / `events` の**末尾**に `is_test` 列を追加しました。旧ヘッダ（`is_test` 無し）のシートは、新規回答の保存時（または `setupSurveySpreadsheet()`）にヘッダ行へ列名が追記されるだけで、既存行は変更されません。既存行の空欄は本番（0相当）として扱います。末尾以外のヘッダ不一致は従来どおり `SCHEMA_MISMATCH` で保存を止めます。
 - 旧 `duplicate:true` 応答は廃止しました（同一IDの再送は `DUPLICATE_RESPONSE`）。公開GASとGitHub Pagesの両方をデプロイしてください。
 
-## 管理者への通知メール（Issue #391）
+## 自由記述ありの回答の通知メール（Issue #391 → #845）
 
-本番回答（`is_test` が 1 でない）が `responses` へ保存された**後に**、`MailApp.sendEmail()` で `SURVEY_NOTIFICATION_EMAIL` へ通知します。
-件名は `【Studio Nagoya Base】新しいフィードバック回答がありました`、本文は回答日時・`usage_segment`・管理画面URL（設定時）のみで、回答全文や `respondent_hash` は載せません。
-`?test=1`・重複・未成年・検証エラー・保存エラーでは送りません。メール送信の失敗や宛先未設定は回答保存に影響せず、ユーザーには成功を返します（失敗はLoggerへ短く記録）。
-公開GASのマニフェストに `script.send_mail` スコープを追加したため、**デプロイ後にエディタから一度認可の再承認が必要**です。
+**SNB（`/survey/`）と SNB mens（`/mens/survey/`）は同じアンケートです。** 両ページとも
+`survey/survey-schema.json`・`scripts/survey-config.js`（同じ `BASE_URL`）・`scripts/survey-app.js` を読み込み、
+同じ公開Web App → 同じ `responses` シートへ保存されます。入口の違いは `?src=` 由来の `survey_path` 列だけで、
+通知の判定には使いません（ブランド・入口で条件が分岐しない）。
+
+| 項目 | 内容 |
+| --- | --- |
+| 送る条件 | 本番回答（`is_test` が 1 でない）が `responses` へ保存された**後**、対象の自由記述欄に trim後非空の本文が1件以上ある場合のみ。回答1件につき1通 |
+| 送らない | 選択式のみ・空白のみ／`?test=1`／重複（`DUPLICATE_RESPONSE`）／18歳未満／検証エラー／schema版不一致／rate limit／保存エラー（`BUSY` 等） |
+| 対象の自由記述欄 | `SurveyCore.freeTextFields(schema)` がschemaから導出：`type:"text"` の独立コメント欄（`free_feedback`・`support_message`）と、選択肢の `otherTexts` 追記欄（`country`・`region_other`・`aichi_area_other`・`*_other` 各「その他の内容」・`gender_identity_other`・`sexual_orientation_other`）。schemaへ欄を足せば自動で対象になる。表示条件外で破棄された値は対象外 |
+| 件名 | `【Studio Nagoya Base】アンケートに自由記述の回答がありました` |
+| 本文 | 回答日時、入力のあった欄ごとに `■ 設問名`（追記欄は `設問名 ／ 欄名`）＋本文（schema順に1通へまとめる）、管理画面URL（`SURVEY_ADMIN_URL` 設定時） |
+| 載せない | 選択式回答、`respondent_hash`、`survey_path`、`is_test`、Spreadsheet ID・トークン類 |
+| 宛先 | Script Properties `SURVEY_NOTIFICATION_EMAIL`（非公開設定。Gitへ書かない） |
+| 失敗時 | 宛先未設定・送信失敗でも回答保存の成功はそのまま返す。Loggerには `survey notify skipped: ...` / `survey notify failed: <例外名>` だけを残す（宛先・本文・hashは記録しない） |
+
+予約GAS（`gas/booking/`）・管理者Web App・他アンケート（`/feedback/` 等）の通知には影響しません。
+公開GASのマニフェストは `spreadsheets` と `script.send_mail` のみです（#391 から変更なし）。
+
+### GAS URL の役割（`survey-config.js` と運営者提示URL）
+
+- `scripts/survey-config.js` の `BASE_URL`（`…/AKfycby0xcPl…/exec`）が、**両入口のブラウザが実際に回答をPOSTする先**です。
+  リポジトリ上で回答の送信先を決めるのはこの1か所だけです。
+- Issue #845 で運営者が提示したURL（`…/AKfycbzWFxzl…/exec`）はこれと一致しません。Deployment ID が違うだけで、
+  同じ公開GASプロジェクトの別デプロイ（旧版・テスト用）や、管理者Web App等の別プロジェクトである可能性があり、
+  **不一致だけでは不具合と判断しません**。クラウド作業環境からは `script.google.com` へ接続できず、実体は未確認です。
+- 本番へ反映されるのは `survey-gas-production.yml` が更新する `SURVEY_PUBLIC_DEPLOYMENT_ID` のデプロイです。
+  下記の手順で、`BASE_URL` のIDがそのDeployment IDと一致することを確認してください。
+
+### 反映・権限・配信経路の確認手順（デプロイ後に運営者が実施）
+
+1. PRをmainへマージし、**Actions → Deploy Survey GAS to production → `public`** を実行（schema変更なしのため admin は不要）。
+2. 公開GASエディタの「デプロイ → デプロイを管理」で、ウェブアプリのDeployment IDが `scripts/survey-config.js` の
+   `BASE_URL` 中のIDと一致し、説明が `main <今回のSHA>` になっていることを確認。運営者提示URLのIDがどのプロジェクト／デプロイかも同画面で確認する。
+3. 両URLをシークレットウィンドウで開き、`{"success":true,"service":"studio-nagoya-base-survey"}` が返る方が公開アンケートWeb App。
+4. 「プロジェクトの設定 → スクリプト プロパティ」に `SURVEY_NOTIFICATION_EMAIL` があることを確認。
+5. メール送信の認可: エディタで任意の関数（例: `doGet`）を一度実行し、`script.send_mail` の承認ダイアログが出たら許可する。
+6. 配信経路の実機確認（本番集計を汚さないよう、確認後に該当行を削除するか、管理者側で除外する）:
+   - `/survey/` と `/mens/survey/` からそれぞれ、自由記述なしで回答 → メールが**来ない**こと。
+   - 自由記述ありで回答 → 設問名と本文入りのメールが**1通**来ること。
+   - `?test=1` の回答では通知されないため、通知の実機確認は本番モードで行う必要がある点に注意。
+7. 実行ログ（「実行数」）に `survey notify failed` / `survey notify skipped` が出ていないことを確認。
 
 ## 初期設定
 
@@ -68,7 +106,7 @@ Google Apps Script（GAS）の **公開Web App** と **管理者Web App** の2�
    | --- | --- | --- |
    | 公開・管理者 共通 | `SURVEY_SPREADSHEET_ID` | 回答Spreadsheetの ID |
    | 公開 | `SURVEY_RATE_LIMIT_PER_MINUTE` | 任意。1分あたりの受付上限（既定 120） |
-   | 公開 | `SURVEY_NOTIFICATION_EMAIL` | 任意。本番回答の保存成功時に通知メールを送る宛先（1件）。未設定なら通知しない（Issue #391） |
+   | 公開 | `SURVEY_NOTIFICATION_EMAIL` | 任意。自由記述ありの本番回答の保存成功時に通知メールを送る宛先（1件）。未設定なら通知しない（Issue #391 / #845） |
    | 公開 | `SURVEY_ADMIN_URL` | 任意。通知メール本文に載せる管理画面URL。未設定なら省略 |
    | 管理者 | `SURVEY_ADMIN_EMAILS` | 閲覧を許可するGoogleアカウント（カンマ区切り）。未設定だと全員拒否 |
 
