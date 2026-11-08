@@ -216,8 +216,8 @@ function scanReferences(images, files) {
             hit = [candidates[0]];
             fallback = true;
           }
+          /* images/ 外の実在ファイル（例: studio-x/index.html の touch-icon.svg）は画像切れとしない。 */
           if (!hit.length && !targets.some(function (p) { return tracked[p] && !isInImageDirs(p); })) {
-            /* images/ 外の実在ファイル（例: studio-x/index.html の touch-icon.svg）は画像切れとしない。 */
             unresolved.push({ file: f, line: idx + 1, token: token, reason: 'no-such-path' });
           }
         }
