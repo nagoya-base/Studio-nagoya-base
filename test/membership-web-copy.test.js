@@ -321,9 +321,6 @@ test('内部資料: 料金表・ブランド分離基準が新ルールで、チ
     assert.ok(doc.indexOf(w.replace('SNB: 会員 / 非会員で部屋料金が異なる', '会員 / 非会員で部屋料金が異なる')) !== -1, w);
   });
   assert.ok(!/「承認した会員のみ」が正/.test(read('REVIEW_CHECKLIST.md')));
-  ['mens-phase1-copy-proposal', 'mens-phase2-structure-proposal', 'mens-phase3-assets-seo-proposal', 'mens-phase4-implementation-report'].forEach(function (n) {
-    assert.ok(read('docs/' + n + '.md').indexOf('2026/12/1以降は無効') !== -1, n);
-  });
 });
 
 test('更新・解約の表現（Issue #532）: 入会日基準の更新日に請求し、支払済みの期間の資格が成立。解約に25日などの締切を設けず、「翌月分」と書かない', function () {

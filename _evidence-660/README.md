@@ -1,5 +1,7 @@
 # #660 作品切替のスクロール距離（証跡）
 
+> **注記（#837）**: 計測スクリプト（`measure-scroll.js`・`check-header.js`・`check-behavior.js`・`check-photo-press.js`）はリポジトリ整理で削除済み。参照する場合は `git checkout 4e5828703be62c8e39b1ea20770d2d781dc5a751 -- _evidence-660/<スクリプト名>` で復元できる。
+
 ## 設計
 - 1作品＝閲覧可能高（`--pv-vh`＝`100svh`、非対応は`100vh`）の70%。行は4行＋キャプションのない**末尾行**（`--pv-row/2 + 写真高/2`）で、写真は5行ぶんを`position: sticky`で支える（4枚目の後も固定が続く）
 - キャプションは写真の縦中央でsticky固定。表示作品は「固定位置まで上がってきた最後のキャプション」（先の固定済みキャプションは`.is-past`で隠す）。`scroll`／`resize`／`orientationchange`／`load`→`requestAnimationFrame`で現在位置から再計算（IntersectionObserver不使用）
