@@ -287,7 +287,7 @@
     var isLast = !Core.nextStep(schema, answers, currentStep.id);
     var card = h('section', { 'class': 'sv-card' }, [renderProgress()]);
 
-    var title = h('h1', { 'class': 'sv-title', tabindex: '-1', id: 'sv-title', text: currentStep.id === 'age' ? schema.meta.title : currentStep.title });
+    var title = h('h1', { 'class': 'sv-title', tabindex: '-1', id: 'sv-title', text: currentStep.id === 'age' ? (root.getAttribute('data-title') || schema.meta.title) : currentStep.title });
     card.appendChild(title);
     if (currentStep.id === 'age') paragraphs(schema.meta.intro, 'sv-intro').forEach(function (p) { card.appendChild(p); });
     if (currentStep.description) card.appendChild(h('p', { 'class': 'sv-hint', text: currentStep.description }));
