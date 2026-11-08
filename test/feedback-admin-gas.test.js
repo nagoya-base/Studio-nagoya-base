@@ -193,6 +193,11 @@ test('管理画面HTML: textContent 描画・google.script.run だけで通信�
   assert.ok(!/fetch\(|XMLHttpRequest|googletagmanager|gtag\(/.test(html));
   assert.match(html, /\.updateFeedbackStatus\(\{ responseId: card\.responseId, brand: card\.brand, status: select\.value, memo: memo\.value \}\)/);
   assert.match(html, /\.getFeedbackDashboard\(filter\(\)\)/);
+  /* 古いフィルタ要求の応答で新しい表示を上書きしない */
+  assert.match(html, /var requestId = \+\+latestRequest;/);
+  assert.equal((html.match(/if \(requestId !== latestRequest\) return;/g) || []).length, 2);
+  /* 保存成功後はダッシュボードを読み直し、概要の件数・絞り込み・並び順をそろえる */
+  assert.match(html, /status\.textContent = '保存しました。';[\s\S]{0,400}load\(\);/);
   ['保存中…', '保存しました。', '再試行', 'テスト回答だけを表示', '直近30日', '直近90日', '全期間', '概要', '問題分析', 'ご意見・対応', '全設問の回答を見る', '通知失敗'].forEach(function (w) {
     assert.ok(html.indexOf(w) !== -1, w);
   });

@@ -89,6 +89,7 @@
   </nav>
 
   <p id="error" role="alert"></p>
+  <p id="notice" class="state ok" role="status" aria-live="polite"></p>
   <p id="test-note" class="badge warn" hidden>テスト回答だけを表示中（本番集計ではありません）</p>
 
   <section id="panel-summary" role="tabpanel" aria-labelledby="tab-summary"><p class="muted">読み込み中…</p></section>
@@ -125,6 +126,8 @@
     INVALID_STATUS: '対応状況が不正です。'
   };
   var state = { tab: 'summary', data: null, statusOptions: [], memoMax: 200, brandsLoaded: false };
+  /* 最新の読み込み要求の番号。古い要求の応答は表示しない（フィルタを素早く切り替えたときの上書き防止）。 */
+  var latestRequest = 0;
 
   function $(id) { return document.getElementById(id); }
 
@@ -265,6 +268,9 @@
           badge.className = 'badge ' + (STATUS_CLASS[card.status] || '');
           status.className = 'state ok';
           status.textContent = '保存しました。';
+          /* 概要の未対応件数・対応状況の内訳・絞り込み一覧・並び順を保存後の状態にそろえる。 */
+          $('notice').textContent = '保存しました（' + card.brandName + ' ' + card.receivedAt + '：' + card.status + '）。表示を更新しています…';
+          load();
         })
         .withFailureHandler(function () {
           save.disabled = false;
@@ -309,10 +315,18 @@
   }
 
   function load() {
+    var requestId = ++latestRequest;
     $('error').textContent = '';
     google.script.run
-      .withSuccessHandler(render)
-      .withFailureHandler(function () { $('error').textContent = '読み込みに失敗しました。再読み込みしてください。'; })
+      .withSuccessHandler(function (data) {
+        if (requestId !== latestRequest) return;
+        render(data);
+        $('notice').textContent = $('notice').textContent.replace('表示を更新しています…', '表示を更新しました。');
+      })
+      .withFailureHandler(function () {
+        if (requestId !== latestRequest) return;
+        $('error').textContent = '読み込みに失敗しました。再読み込みしてください。';
+      })
       .getFeedbackDashboard(filter());
   }
 
