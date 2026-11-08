@@ -74,21 +74,47 @@ Google Apps Script（GAS）の **公開Web App** と **管理者Web App** の2�
   同じ公開GASプロジェクトの別デプロイ（旧版・テスト用）や、管理者Web App等の別プロジェクトである可能性があり、
   **不一致だけでは不具合と判断しません**。クラウド作業環境からは `script.google.com` へ接続できず、実体は未確認です。
 - 本番へ反映されるのは `survey-gas-production.yml` が更新する `SURVEY_PUBLIC_DEPLOYMENT_ID` のデプロイです。
-  下記の手順で、`BASE_URL` のIDがそのDeployment IDと一致することを確認してください。
+  `BASE_URL` とこのIDが一致しないまま `public` を更新しても、実利用者が接続するGASには反映されません。
+  そのため workflow は `public` 更新時、**`BASE_URL` に `SURVEY_PUBLIC_DEPLOYMENT_ID` が含まれない場合は clasp を呼ぶ前に停止**します（IDはログに出しません）。
 
-### 反映・権限・配信経路の確認手順（デプロイ後に運営者が実施）
+### デプロイ前の必須確認（`BASE_URL` と `SURVEY_PUBLIC_DEPLOYMENT_ID` の一致）
 
-1. PRをmainへマージし、**Actions → Deploy Survey GAS to production → `public`** を実行（schema変更なしのため admin は不要）。
-2. 公開GASエディタの「デプロイ → デプロイを管理」で、ウェブアプリのDeployment IDが `scripts/survey-config.js` の
-   `BASE_URL` 中のIDと一致し、説明が `main <今回のSHA>` になっていることを確認。運営者提示URLのIDがどのプロジェクト／デプロイかも同画面で確認する。
-3. 両URLをシークレットウィンドウで開き、`{"success":true,"service":"studio-nagoya-base-survey"}` が返る方が公開アンケートWeb App。
-4. 「プロジェクトの設定 → スクリプト プロパティ」に `SURVEY_NOTIFICATION_EMAIL` があることを確認。
-5. メール送信の認可: エディタで任意の関数（例: `doGet`）を一度実行し、`script.send_mail` の承認ダイアログが出たら許可する。
-6. 配信経路の実機確認（本番集計を汚さないよう、確認後に該当行を削除するか、管理者側で除外する）:
-   - `/survey/` と `/mens/survey/` からそれぞれ、自由記述なしで回答 → メールが**来ない**こと。
-   - 自由記述ありで回答 → 設問名と本文入りのメールが**1通**来ること。
-   - `?test=1` の回答では通知されないため、通知の実機確認は本番モードで行う必要がある点に注意。
-7. 実行ログ（「実行数」）に `survey notify failed` / `survey notify skipped` が出ていないことを確認。
+**`public` を更新する前に必ず実施**します。ここが確認できない間は、マージ後も `public` の更新を保留してください。
+
+1. `SURVEY_PUBLIC_SCRIPT_ID` に登録したGASプロジェクトをエディタで開き、「デプロイ → デプロイを管理」でウェブアプリのDeployment IDを確認する。
+2. そのIDが `scripts/survey-config.js` の `BASE_URL`（`https://script.google.com/macros/s/<Deployment ID>/exec`）と一致することを確認する。
+3. GitHub Secret `SURVEY_PUBLIC_DEPLOYMENT_ID` に登録したIDも同じであることを確認する（Secretの値は後から表示できないため、
+   不明な場合は1.で確認したIDで登録し直す）。
+4. 運営者提示URL（`AKfycbzWFxzl…`）が同画面に無い場合は、別プロジェクト（管理者Web App等）か削除済みデプロイ。
+   一致しない場合に `BASE_URL` と Secret のどちらを正とするかは、運営者が実際の回答保存先を確認して決める（このPRでは変更しない）。
+5. 不一致のまま workflow を実行しても、上記ガードで停止し本番は変更されません。
+
+### 反映・権限・配信経路の確認手順（デプロイ後）
+
+本番の回答シートへ確認用の回答を送ると、`responses` だけでなく `events`・重複抑止（`respondent_hash`）・集計にも残るため、
+**本番での送信による確認は行いません。** 確認は次の3段に分けます。
+
+1. **ロジック（自動テスト）**：`node --test test/survey-*.test.js`。両入口・自由記述なし/あり/複数・テスト/重複/対象外/検証失敗/保存失敗・
+   送信失敗・宛先未設定・メール本文の機微情報を、本番データを使わずに検証済み（`test/survey-free-text-notify-845.test.js`）。
+2. **本番の反映・権限・配信（回答を保存しない）**：
+   1. 上の「デプロイ前の必須確認」を済ませてから **Actions → Deploy Survey GAS to production → `public`** を実行し、成功を確認
+      （workflow自身が更新後に対象DeploymentへmainのSHAが反映されたことを読取りで検証する）。
+   2. 公開GASエディタの「デプロイを管理」で、対象Deploymentの説明が `main <今回のSHA>` であることを確認。
+   3. 「プロジェクトの設定 → スクリプト プロパティ」に `SURVEY_NOTIFICATION_EMAIL` があることを確認。
+   4. エディタで関数 `surveyNotificationSelfTest` を選んで実行する。初回は `script.send_mail` の認可ダイアログが出るので許可する。
+      この関数は Spreadsheet・CacheService に触れず、本番と同じ形式の `[配信確認]` メールを1通送るだけ（Web Appからは呼べない）。
+   5. **合格条件**：実行ログが `survey notification self-test: sent` で、宛先に `[配信確認] 【Studio Nagoya Base】アンケートに自由記述の回答がありました` が1通届くこと。
+      `skipped: notification address not configured` は宛先未設定（3.をやり直す）、`failed: <例外名>` は認可または送信失敗（4.の認可をやり直す）で、いずれも不合格。
+3. **エンドツーエンド（回答送信を伴う確認が必要な場合）**：本番ではなく、**検証用に別途作ったGASプロジェクト＋検証用Spreadsheet**で行う。
+   `node scripts/prepare-survey-gas-project.js public <dir>` の配布物を検証用プロジェクトへ配置し、検証用の `SURVEY_SPREADSHEET_ID`・`SURVEY_NOTIFICATION_EMAIL` を設定して
+   テスト用デプロイを作り、そのURLへ自由記述なし（0通）／あり（1通）を送る。検証環境は確認後に削除する。
+   `?test=1` は通知しない仕様のため、本番Web Appでの `?test=1` 送信では通知は確認できない（保存とテスト除外の確認には使える）。
+
+**運用中の監視（合格条件）**：公開GASの「実行数」で、
+- `survey notify failed: <例外名>` が**0件**であること（1件でも出たら認可・送信上限を確認）。
+- `SURVEY_NOTIFICATION_EMAIL` を設定している間は `survey notify skipped: notification address not configured` も**0件**であること
+  （出ていれば宛先が未設定・空。意図して通知を止めている期間だけ許容）。
+- 自由記述なしの回答では何もログに出ない（通知対象外は正常にスキップされ、ログを残さない）。
 
 ## 初期設定
 

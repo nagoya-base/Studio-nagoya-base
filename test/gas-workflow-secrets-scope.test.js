@@ -17,6 +17,8 @@ const workspace = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(workspace, p), 'utf8');
 const webhook = read('.github/workflows/booking-gas-webhook-production.yml');
 const survey = read('.github/workflows/survey-gas-production.yml');
+// ブラウザが送信するDeployment ID（scripts/survey-config.js の BASE_URL。公開情報）。public更新はこのIDの場合だけ進む（Issue #845）。
+const BASE_URL_DEPLOYMENT_ID = /\/macros\/s\/([^/]+)\/exec/.exec(read('scripts/survey-config.js'))[1];
 
 // deploy job を step 単位に分解する（`      - name:` 区切り）。
 function deploySteps(wf) {
@@ -120,18 +122,19 @@ case "$1" in
 esac
 `, { mode: 0o700 });
     const selected = target === 'public'
-      ? { PUBLIC_SCRIPT_ID: 'pub-script-dummy', PUBLIC_DEPLOYMENT_ID: 'pub-deploy-dummy', ADMIN_SCRIPT_ID: '', ADMIN_DEPLOYMENT_ID: '' }
+      ? { PUBLIC_SCRIPT_ID: 'pub-script-dummy', PUBLIC_DEPLOYMENT_ID: BASE_URL_DEPLOYMENT_ID, ADMIN_SCRIPT_ID: '', ADMIN_DEPLOYMENT_ID: '' }
       : { ADMIN_SCRIPT_ID: 'adm-script-dummy', ADMIN_DEPLOYMENT_ID: 'adm-deploy-dummy', PUBLIC_SCRIPT_ID: '', PUBLIC_DEPLOYMENT_ID: '' };
     const env = {
       ...process.env, PATH: bin + path.delimiter + process.env.PATH,
       GITHUB_WORKSPACE: workspace, RUNNER_TEMP: dir, GITHUB_SHA: 'dummy-commit',
       SURVEY_TARGET: target, CLASPRC_JSON: JSON.stringify({ tokens: { default: {} } }),
       ...selected, MOCK_CALLS: calls,
-      MOCK_LIST_ID: target === 'public' ? 'pub-deploy-dummy' : 'adm-deploy-dummy', ...overrides
+      MOCK_LIST_ID: target === 'public' ? BASE_URL_DEPLOYMENT_ID : 'adm-deploy-dummy', ...overrides
     };
     const result = spawnSync('bash', ['-c', updateScript()], { cwd: dir, env, encoding: 'utf8' });
     const log = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '';
     assert.doesNotMatch(result.stdout + result.stderr, /pub-script-dummy|adm-script-dummy|pub-deploy-dummy|adm-deploy-dummy/);
+    assert.ok((result.stdout + result.stderr).indexOf(BASE_URL_DEPLOYMENT_ID) === -1, 'deployment ID is not logged');
     return { ...result, log };
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
@@ -142,7 +145,8 @@ for (const target of ['public', 'admin']) {
     assert.equal(r.status, 0, r.stderr);
     const prefix = target === 'public' ? 'pub' : 'adm';
     const other = target === 'public' ? 'adm' : 'pub';
-    assert.match(r.log, new RegExp(`update ${prefix}-deploy-dummy`));
+    const deployId = target === 'public' ? BASE_URL_DEPLOYMENT_ID : 'adm-deploy-dummy';
+    assert.ok(r.log.indexOf(`update ${deployId}`) !== -1, r.log);
     assert.match(r.log, new RegExp(`${prefix}-script-dummy`));
     assert.doesNotMatch(r.log, new RegExp(other + '-'));
   });
@@ -162,4 +166,16 @@ test('survey update step rejects an unsupported target before any clasp call', (
   const r = runSurveyUpdate('public', { SURVEY_TARGET: 'other' });
   assert.notEqual(r.status, 0);
   assert.equal(r.log, '');
+});
+
+test('survey update step (public) stops before any clasp call when BASE_URL does not point at the configured deployment (Issue #845)', () => {
+  const r = runSurveyUpdate('public', { PUBLIC_DEPLOYMENT_ID: 'pub-deploy-dummy', MOCK_LIST_ID: 'pub-deploy-dummy' });
+  assert.notEqual(r.status, 0);
+  assert.equal(r.log, '', 'no clasp command at all');
+  assert.match(r.stderr, /BASE_URL does not point at the configured public deployment/);
+});
+
+test('survey update step (admin) is not gated by the public BASE_URL', () => {
+  const r = runSurveyUpdate('admin');
+  assert.equal(r.status, 0, r.stderr);
 });

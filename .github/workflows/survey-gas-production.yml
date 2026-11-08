@@ -103,6 +103,16 @@ jobs:
             exit 1
           fi
 
+          # Issue #845: publicは、ブラウザ（SNB /survey/・SNB mens /mens/survey/ 共通）が実際に送信する
+          # scripts/survey-config.js の BASE_URL が、更新対象の Deployment ID を指している場合だけ更新する。
+          # 不一致のまま更新しても実利用者の回答経路へは反映されないため、clasp呼び出し前に停止する（IDはログへ出さない）。
+          if [[ "$SURVEY_TARGET" == "public" ]]; then
+            if ! grep -Fq -- "/macros/s/${deployment_id}/exec" "$GITHUB_WORKSPACE/scripts/survey-config.js"; then
+              echo "scripts/survey-config.js BASE_URL does not point at the configured public deployment; refusing to update a deployment the survey pages do not use." >&2
+              exit 1
+            fi
+          fi
+
           auth_file="$RUNNER_TEMP/.clasprc.json"
           remote_dir="$RUNNER_TEMP/survey-gas-remote"
           deploy_dir="$RUNNER_TEMP/survey-gas-deploy"

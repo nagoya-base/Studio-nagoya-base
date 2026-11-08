@@ -139,6 +139,32 @@ function surveyNotifyAdmin_(record, now) {
   }
 }
 
+/*
+ * 通知経路の確認用（Issue #845）。GASエディタから手動実行する。Web App（doGet/doPost）からは呼べない。
+ * Spreadsheet・CacheService・rate limitには一切触れず、架空の自由記述1件で本番と同じ件名・本文形式のメールを
+ * SURVEY_NOTIFICATION_EMAIL へ1通送る。初回実行で script.send_mail の認可ダイアログが出る。
+ * 戻り値（ログにも出す）: 'sent' / 'skipped: notification address not configured' / 'failed: <例外名>'。宛先・本文は記録しない。
+ */
+function surveyNotificationSelfTest() {
+  var result;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var to = String(props.getProperty('SURVEY_NOTIFICATION_EMAIL') || '').trim();
+    if (!to) {
+      result = 'skipped: notification address not configured';
+    } else {
+      var adminUrl = String(props.getProperty('SURVEY_ADMIN_URL') || '').trim();
+      var items = [{ label: '【配信確認】通知経路の確認用サンプル', text: 'これは surveyNotificationSelfTest による確認メールです。回答は保存されていません。' }];
+      MailApp.sendEmail(to, '[配信確認] ' + SURVEY_NOTIFICATION_SUBJECT, surveyBuildNotificationBody_(items, new Date(), adminUrl));
+      result = 'sent';
+    }
+  } catch (mailError) {
+    result = 'failed: ' + String((mailError && mailError.name) || 'Error').slice(0, 40);
+  }
+  Logger.log('survey notification self-test: ' + result);
+  return result;
+}
+
 /* ステップ到達イベント。step_idはschemaのステップIDのみ受け付け、個人情報は受け取らない。 */
 function handleSurveyEvent_(payload, now) {
   if (!SurveyCore.isValidRespondentHash(payload.respondent_hash)) return surveyError_('INVALID_RESPONDENT');

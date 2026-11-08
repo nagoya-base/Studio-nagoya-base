@@ -180,3 +180,27 @@ test('#845 公開GASのみ変更し、予約GAS・管理者GASに通知処理を
   var pub = JSON.parse(fs.readFileSync(path.join(ROOT, 'gas/survey/public/appsscript.json'), 'utf8'));
   assert.deepStrictEqual(pub.oauthScopes, ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/script.send_mail']);
 });
+
+test('#845 配信確認: surveyNotificationSelfTest は保存せずに確認メールを1通だけ送る', function () {
+  var project = loadSurveyProject('public', { properties: NOTIFY });
+  assert.strictEqual(project.run('surveyNotificationSelfTest()'), 'sent');
+  assert.strictEqual(project.mails.length, 1);
+  assert.strictEqual(project.mails[0].to, 'admin@example.com');
+  assert.strictEqual(project.mails[0].subject, '[配信確認] ' + SUBJECT);
+  assert.match(project.mails[0].body, /回答は保存されていません/);
+  assert.ok(!project.sheets.responses || project.sheets.responses._rows.length <= 1, 'responsesへ書き込まない');
+  assert.ok(!project.sheets.events || project.sheets.events._rows.length <= 1, 'eventsへ書き込まない');
+  var unset = loadSurveyProject('public');
+  assert.strictEqual(unset.run('surveyNotificationSelfTest()'), 'skipped: notification address not configured');
+  assert.strictEqual(unset.mails.length, 0);
+  var failing = loadSurveyProject('public', { properties: NOTIFY, mailFails: true, mailErrorMessage: 'Invalid email: admin@example.com' });
+  assert.strictEqual(failing.run('surveyNotificationSelfTest()'), 'failed: Error');
+  failing.logs.forEach(function (l) { assert.strictEqual(String(l).indexOf('admin@example.com'), -1); });
+});
+
+test('#845 配信確認: 確認用関数はWeb Appの入口から到達できない', function () {
+  var src = fs.readFileSync(path.join(ROOT, 'gas/survey/public/SurveyWebApp.gs'), 'utf8');
+  var handler = src.slice(src.indexOf('function handleSurveyRequest_'), src.indexOf('function handleSurveySubmit_'));
+  assert.strictEqual(handler.indexOf('SelfTest'), -1);
+  assert.strictEqual(src.slice(src.indexOf('function doPost'), src.indexOf('function surveyJsonOutput_')).indexOf('SelfTest'), -1);
+});
