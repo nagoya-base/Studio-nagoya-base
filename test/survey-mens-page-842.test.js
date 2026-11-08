@@ -17,8 +17,11 @@ test('独立ページ: /mens/survey/ が別HTMLとして存在し、メンズ向
   assert.match(html, /<link rel="canonical" href="https:\/\/nagoya-base\.github\.io\/Studio-nagoya-base\/mens\/survey\/">/);
   assert.match(html, /<meta name="robots" content="noindex, nofollow">/);
   assert.match(html, /id="survey-app" data-title="SNB mens アンケート"/);
-  /* 共通ページの看板（ヒーロー画像・全般向け見出し）を表示しない */
-  assert.ok(html.indexOf('sv-hero') === -1 && html.indexOf('サービス改善フィードバック') === -1);
+  /* 共通ページの看板（共通ヒーロー画像・全般向け見出し）は使わず、mens専用のヒーロー／OGPを使う */
+  assert.ok(html.indexOf('hero_survey_1200') === -1 && html.indexOf('ogp-survey-1200x630') === -1 && html.indexOf('サービス改善フィードバック') === -1);
+  assert.ok(html.indexOf('src="../../images/hero_mens_survey_1200.webp" width="1200" height="630"') !== -1);
+  assert.ok(html.indexOf('<meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/ogp-mens-survey-1200x630.jpg">') !== -1);
+  assert.ok(html.indexOf('<meta name="twitter:card" content="summary_large_image">') !== -1);
 });
 
 test('独立ページ: 回答前に「未利用者も回答可」「利用後の満足度アンケートではない」を明示する', function () {
