@@ -32,22 +32,6 @@
   <img class="sv-hero" src="../images/hero_survey_1200.webp" width="1200" height="630" alt="Studio Nagoya Base サービス改善アンケート。所要時間は5〜6分程度、匿名で回答できます。" decoding="async">
   <p class="sv-brand">Studio Nagoya Base　サービス改善フィードバック</p>
 
-  <!-- 回答対象の案内（Issue #836）。予約・会員申込・利用後レビューの導線ではない。どちらの入口も下の同じアンケート（回答保存キー・分岐は共通）へ進む。 -->
-  <nav class="sv-entry" aria-label="アンケートの入口">
-    <section class="sv-entry-card sv-entry-mens" aria-labelledby="sv-entry-mens-title">
-      <h2 class="sv-entry-title" id="sv-entry-mens-title">SNB mens向けアンケート</h2>
-      <p class="sv-entry-lead">SNB mensについて、あなたのご意見をお聞かせください。</p>
-      <p class="sv-entry-text">スタジオの利用経験は問いません。<strong>利用したことがない方も</strong>、興味のあるサービスや今後利用してみたいプランについて回答できます。</p>
-      <p class="sv-entry-text">このアンケートは、今後のサービス改善・ニーズ調査を目的としたもので、<strong>利用後の満足度調査ではありません</strong>。</p>
-      <a class="sv-entry-link" href="#survey-app">SNB mens向けアンケートに回答する</a>
-    </section>
-    <section class="sv-entry-card" aria-labelledby="sv-entry-snb-title">
-      <h2 class="sv-entry-title" id="sv-entry-snb-title">Studio Nagoya Base 全般のアンケート</h2>
-      <p class="sv-entry-text">スタジオを利用したことがない方も回答できます。利用後の満足度アンケートではなく、今後のサービス改善・ニーズを把握するための調査です。</p>
-      <a class="sv-entry-link sv-entry-link-secondary" href="#survey-app">アンケートに回答する</a>
-    </section>
-  </nav>
-
   <div id="survey-app" data-schema-url="survey-schema.json?v={{ site.time | date: '%s' }}" aria-live="polite">
     <noscript><p class="sv-error">このアンケートの回答にはJavaScriptを有効にしてください。</p></noscript>
     <p class="sv-hint">読み込み中…</p>

@@ -146,12 +146,23 @@
       h('h1', { text: heading })
     ].concat(paragraphs(message), [
       h('p', { 'class': 'sv-back' }, [
-        h('a', { href: 'https://nagoya-base.github.io/Studio-nagoya-base/', text: 'Studio Nagoya Base に戻る' })
+        h('a', { href: backLink.href, text: backLink.label })
       ])
     ]));
     root.appendChild(box);
     focusAndScroll(box);
   }
+
+  /* 完了・回答済み・対象外画面の戻り先。ページ側が data-back-url / data-back-label で指定できる（例: /mens/survey/ は /mens/ へ）。
+     戻り先はサイト内パス（「/」始まりで「//」でない）だけ受け付け、それ以外・未指定は従来の既定値にする。 */
+  var DEFAULT_BACK = { href: 'https://nagoya-base.github.io/Studio-nagoya-base/', label: 'Studio Nagoya Base に戻る' };
+  function resolveBackLink() {
+    var url = root.getAttribute('data-back-url') || '';
+    var label = root.getAttribute('data-back-label') || '';
+    if (!/^\/(?!\/)[^\s]*$/.test(url) || !label) return DEFAULT_BACK;
+    return { href: url, label: label };
+  }
+  var backLink = resolveBackLink();
 
   function errorMessageFor(code, question, other) {
     if (code === 'TOO_MANY') return '選べるのは最大' + question.maxSelect + '個までです。';
@@ -267,8 +278,8 @@
     ]);
   }
 
-  /* ページ上部に入口カード（Issue #836）がある。初回表示はページ先頭のまま（focusもスクロールさせない）にして入口を見せ、
-     以降の画面遷移ではアンケート本体の先頭へ移動する（入口へ戻さない）。 */
+  /* アンケート本体の上には、各ページの冒頭案内（/survey/ のロゴ・見出し、/mens/survey/ の案内ブロック）がある。
+     初回表示はページ先頭のまま（focusもスクロールさせない）にして冒頭案内を見せ、以降の画面遷移ではアンケート本体の先頭へ移動する。 */
   var hasRendered = false;
   function focusAndScroll(el) {
     if (!hasRendered) {
@@ -287,7 +298,7 @@
     var isLast = !Core.nextStep(schema, answers, currentStep.id);
     var card = h('section', { 'class': 'sv-card' }, [renderProgress()]);
 
-    var title = h('h1', { 'class': 'sv-title', tabindex: '-1', id: 'sv-title', text: currentStep.id === 'age' ? schema.meta.title : currentStep.title });
+    var title = h('h1', { 'class': 'sv-title', tabindex: '-1', id: 'sv-title', text: currentStep.id === 'age' ? (root.getAttribute('data-title') || schema.meta.title) : currentStep.title });
     card.appendChild(title);
     if (currentStep.id === 'age') paragraphs(schema.meta.intro, 'sv-intro').forEach(function (p) { card.appendChild(p); });
     if (currentStep.description) card.appendChild(h('p', { 'class': 'sv-hint', text: currentStep.description }));
