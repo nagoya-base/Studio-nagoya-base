@@ -1,0 +1,83 @@
+/* 3ブランド利用後アンケート（/feedback/<brand>/。Issue #835）専用。スマホ1ページ・1列表示が前提。 */
+:root {
+  --fb-bg: #f7f6f3; --fb-card: #ffffff; --fb-fg: #1f2328; --fb-muted: #5f6670; --fb-line: #d9d8d2;
+  --fb-accent: #2f6f5e; --fb-accent-fg: #ffffff; --fb-soft: #eef5f2; --fb-error: #b42318; --fb-test: #8a5a00; --fb-test-bg: #fff4d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fb-bg: #14161a; --fb-card: #1d2025; --fb-fg: #e8e8e5; --fb-muted: #a0a6ad; --fb-line: #394048;
+    --fb-accent: #5fb39c; --fb-accent-fg: #0e1412; --fb-soft: #1f2a27; --fb-error: #ff8a80; --fb-test: #ffd27a; --fb-test-bg: #3a2f14;
+  }
+}
+/* mens は濃紺系、Studio X は黒＋白の配色（ダーク固定） */
+body[data-brand="mens"] { --fb-accent: #2c4a7a; --fb-soft: #eaf0f8; }
+@media (prefers-color-scheme: dark) { body[data-brand="mens"] { --fb-accent: #8fb0e6; --fb-accent-fg: #0b1220; --fb-soft: #1b2433; } }
+body[data-brand="studio-x"] {
+  --fb-bg: #060610; --fb-card: #11111c; --fb-fg: #f2f2f5; --fb-muted: #a3a3b2; --fb-line: #2c2c3c;
+  --fb-accent: #f2f2f5; --fb-accent-fg: #060610; --fb-soft: #1b1b2a; --fb-error: #ff8a80; --fb-test: #ffd27a; --fb-test-bg: #3a2f14;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--fb-bg); color: var(--fb-fg);
+  font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+.fb-page { max-width: 640px; margin: 0 auto; padding: 16px; }
+.fb-header { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; }
+.fb-logo { width: 48px; height: 48px; flex: 0 0 48px; border-radius: 10px; object-fit: contain; }
+.fb-brand-name { margin: 0; font-weight: 700; font-size: 18px; line-height: 1.3; }
+.fb-brand-sub { margin: 0; color: var(--fb-muted); font-size: 13px; }
+.fb-back { margin: 0 0 8px; font-size: 13px; }
+.fb-back a, .fb-quit { color: var(--fb-muted); text-decoration: underline; }
+.fb-card { background: var(--fb-card); border: 1px solid var(--fb-line); border-radius: 12px; padding: 16px; }
+.fb-title { font-size: 20px; line-height: 1.4; margin: 4px 0 12px; }
+.fb-title:focus { outline: none; }
+.fb-intro { margin: 0 0 8px; font-size: 15px; }
+.fb-hint { margin: 4px 0 8px; color: var(--fb-muted); font-size: 13px; }
+.fb-test-banner { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: var(--fb-test-bg); color: var(--fb-test); font-weight: 700; font-size: 14px; }
+.fb-question { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
+.fb-question legend, .fb-label { display: block; padding: 0; margin-bottom: 8px; font-weight: 600; }
+.fb-badge { margin-left: 8px; padding: 1px 6px; border: 1px solid var(--fb-line); border-radius: 4px; color: var(--fb-muted); font-size: 11px; font-weight: 400; vertical-align: 2px; }
+.fb-badge.is-required { color: var(--fb-error); border-color: var(--fb-error); }
+.fb-options { display: grid; gap: 8px; }
+.fb-option {
+  display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 10px 12px;
+  border: 1px solid var(--fb-line); border-radius: 8px; cursor: pointer; background: var(--fb-card);
+}
+.fb-option:has(input:checked) { border-color: var(--fb-accent); background: var(--fb-soft); }
+.fb-option input, .fb-scale-item input { width: 22px; height: 22px; flex: 0 0 22px; margin: 0; accent-color: var(--fb-accent); }
+.fb-option span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.fb-scale { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.fb-scale-item {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 64px;
+  border: 1px solid var(--fb-line); border-radius: 8px; cursor: pointer; background: var(--fb-card); font-weight: 700;
+}
+.fb-scale-item:has(input:checked) { border-color: var(--fb-accent); background: var(--fb-soft); }
+.fb-scale-ends { display: flex; justify-content: space-between; margin: 4px 0 0; color: var(--fb-muted); font-size: 12px; }
+.fb-matrix-item { margin: 0 0 16px; }
+.fb-matrix-label { margin: 0 0 6px; font-size: 15px; }
+.fb-matrix-item .fb-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fb-matrix-item .fb-option { min-height: 44px; font-size: 14px; gap: 8px; padding: 8px 10px; }
+.fb-reveal { margin-top: 12px; padding: 12px; border-radius: 8px; background: var(--fb-soft); }
+.fb-reveal .fb-question { margin-bottom: 0; }
+.fb-reveal[hidden] { display: none; }
+.fb-question textarea {
+  display: block; width: 100%; min-height: 120px; padding: 10px 12px; resize: vertical;
+  font: inherit; font-size: 16px; /* 16px未満だとiOSが自動ズームする */
+  color: var(--fb-fg); background: var(--fb-card); border: 1px solid var(--fb-line); border-radius: 8px;
+}
+.fb-counter { margin: 4px 0 0; text-align: right; color: var(--fb-muted); font-size: 12px; }
+.fb-counter.is-over, .fb-field-error, .fb-error { color: var(--fb-error); }
+.fb-field-error { margin: 4px 0 0; font-size: 13px; }
+.fb-field-error:empty { display: none; }
+.fb-status { min-height: 1.7em; margin: 0 0 8px; font-size: 14px; }
+.fb-actions { margin: 12px 0 0; }
+.fb-btn {
+  display: flex; align-items: center; justify-content: center; width: 100%; min-height: 52px; padding: 12px 16px;
+  border: 0; border-radius: 10px; background: var(--fb-accent); color: var(--fb-accent-fg);
+  font: inherit; font-weight: 700; text-decoration: none; cursor: pointer;
+}
+.fb-btn[disabled] { opacity: .6; cursor: progress; }
+.fb-btn-secondary { background: transparent; color: var(--fb-fg); border: 1px solid var(--fb-line); }
+.fb-quit { display: block; text-align: center; font-size: 14px; padding: 8px; }
+.fb-end p { overflow-wrap: anywhere; }
