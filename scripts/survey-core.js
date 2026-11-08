@@ -402,6 +402,36 @@ var SurveyCore = (function () {
     return record;
   }
 
+  /*
+   * 自由記述欄の一覧（Issue #845）。schemaから導出するため、SNB・SNB mensどちらの入口でも同一。
+   * - type:"text" の独立コメント欄（例: free_feedback / support_message）
+   * - 選択肢に付随する otherTexts の追記欄（「その他の内容」「具体的に」等）
+   * 戻り値: [{ field, label }]（schema順。labelは通知メールに載せる設問名）
+   */
+  function freeTextFields(schema) {
+    var fields = [];
+    eachQuestion(schema, function (question) {
+      if (question.type === 'text') fields.push({ field: question.id, label: question.label });
+      (question.otherTexts || []).forEach(function (other) {
+        fields.push({ field: other.field, label: question.label + ' ／ ' + other.label });
+      });
+    });
+    return fields;
+  }
+
+  /* 検証済みrecordから、trim後に非空の自由記述だけを [{ field, label, text }] で返す（Issue #845）。 */
+  function collectFreeTexts(schema, record) {
+    var source = record || {};
+    var items = [];
+    freeTextFields(schema).forEach(function (entry) {
+      var value = source[entry.field];
+      if (typeof value !== 'string') return;
+      var text = value.trim();
+      if (text) items.push({ field: entry.field, label: entry.label, text: text });
+    });
+    return items;
+  }
+
   function generateUuid(cryptoObject) {
     var c = cryptoObject;
     if (c && typeof c.randomUUID === 'function') return c.randomUUID();
@@ -475,6 +505,8 @@ var SurveyCore = (function () {
     rowToRecord: rowToRecord,
     generateUuid: generateUuid,
     toggleMulti: toggleMulti,
+    freeTextFields: freeTextFields,
+    collectFreeTexts: collectFreeTexts,
     cleanText: cleanText
   };
 })();

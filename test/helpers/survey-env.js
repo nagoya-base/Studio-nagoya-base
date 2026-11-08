@@ -93,7 +93,7 @@ function loadSurveyProject(target, options) {
     },
     MailApp: {
       sendEmail: function (to, subject, body) {
-        if (opts.mailFails) throw new Error('mail failed');
+        if (opts.mailFails) throw new Error(opts.mailErrorMessage || 'mail failed');
         mails.push({ to: to, subject: subject, body: body });
       }
     },

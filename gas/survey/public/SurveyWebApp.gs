@@ -14,7 +14,8 @@
  * 重複回答防止（Issue #381）: 通常回答は同じrespondent_hashの本番回答が既にあれば DUPLICATE_RESPONSE で拒否する。
  * payloadの is_test=1（画面の ?test=1）は重複判定を行わず is_test=1 で保存する（本番集計からは除外）。
  * is_test は認証ではなく、検証・年齢制限・rate limitは通常と同じ。
- * 管理者機能（集計・自由記述の閲覧）はこのプロジェクトに一切含めない。
+ * 管理者機能（集計・自由記述の閲覧画面）はこのプロジェクトに一切含めない
+ * （自由記述ありの回答は保存成功後に運営者へメール通知する。Issue #845）。
  */
 'use strict';
 
@@ -91,31 +92,77 @@ function handleSurveySubmit_(payload, now) {
 }
 
 /*
- * 本番回答の保存成功後に管理者へ通知メールを送る（Issue #391）。
- * - is_test=1 は通知しない。保存失敗・重複・検証エラーはここへ到達しない。
- * - 通知先は Script Properties の SURVEY_NOTIFICATION_EMAIL（未設定なら何もしない）。
- * - 管理画面URLは任意の SURVEY_ADMIN_URL（未設定なら省略）。
- * - 送信失敗は回答保存の成否に影響させない（ログには短いメッセージだけ残す）。
- * 回答内容全文・respondent_hashはメールへ載せない。
+ * 本番回答の保存成功後、自由記述がある回答だけ管理者へ通知メールを送る（Issue #391 → #845）。
+ * - SNB（/survey/）と SNB mens（/mens/survey/）は同じschema・同じ公開Web Appへ送信するため、
+ *   入口・ブランドで分岐せず同一ルールを適用する（survey_path は判定に使わない）。
+ * - 対象の自由記述欄は SurveyCore.freeTextFields（schemaの type:"text" と otherTexts）から導出する。
+ *   trim後に非空の欄が1件以上ある場合のみ、回答1件につき1通。設問名と本文を1通にまとめる。
+ * - is_test=1 は通知しない。保存失敗・重複・検証エラー・対象外（18歳未満等）はここへ到達しない。
+ * - 通知先は Script Properties の SURVEY_NOTIFICATION_EMAIL。未設定・送信失敗でも回答保存の成功は維持し、
+ *   ログには本文・宛先・respondent_hash を含めない短いメッセージだけ残す。
+ * - 選択式回答・respondent_hash・survey_path・トークン類はメールへ載せない。
  */
+var SURVEY_NOTIFICATION_SUBJECT = '【Studio Nagoya Base】アンケートに自由記述の回答がありました';
+
+function surveyBuildNotificationBody_(items, now, adminUrl) {
+  var lines = [
+    'Studio Nagoya Base / SNB mens 共通アンケートに、自由記述の回答がありました。',
+    '',
+    '回答日時: ' + (now || new Date()).toISOString(),
+    ''
+  ];
+  items.forEach(function (item) {
+    lines.push('■ ' + item.label);
+    lines.push(item.text);
+    lines.push('');
+  });
+  if (adminUrl) lines.push('管理画面: ' + adminUrl);
+  return lines.join('\n').replace(/\n+$/, '') + '\n';
+}
+
 function surveyNotifyAdmin_(record, now) {
   try {
     if (SurveyCore.isTestFlag(record.is_test)) return;
+    var items = SurveyCore.collectFreeTexts(SURVEY_SCHEMA, record);
+    if (!items.length) return;
     var props = PropertiesService.getScriptProperties();
     var to = String(props.getProperty('SURVEY_NOTIFICATION_EMAIL') || '').trim();
-    if (!to) return;
+    if (!to) {
+      Logger.log('survey notify skipped: notification address not configured');
+      return;
+    }
     var adminUrl = String(props.getProperty('SURVEY_ADMIN_URL') || '').trim();
-    var lines = [
-      'Studio Nagoya Base のフィードバックに新しい回答がありました。',
-      '',
-      '回答日時: ' + (now || new Date()).toISOString(),
-      'usage_segment: ' + (record.usage_segment || '(なし)')
-    ];
-    if (adminUrl) lines.push('管理画面: ' + adminUrl);
-    MailApp.sendEmail(to, '【Studio Nagoya Base】新しいフィードバック回答がありました', lines.join('\n'));
+    MailApp.sendEmail(to, SURVEY_NOTIFICATION_SUBJECT, surveyBuildNotificationBody_(items, now, adminUrl));
   } catch (mailError) {
-    Logger.log('survey notify failed: ' + String(mailError && mailError.message).slice(0, 80));
+    /* MailAppの例外messageは宛先を含み得るため、例外の種類名だけを記録する。 */
+    Logger.log('survey notify failed: ' + String((mailError && mailError.name) || 'Error').slice(0, 40));
   }
+}
+
+/*
+ * 通知経路の確認用（Issue #845）。GASエディタから手動実行する。Web App（doGet/doPost）からは呼べない。
+ * Spreadsheet・CacheService・rate limitには一切触れず、架空の自由記述1件で本番と同じ件名・本文形式のメールを
+ * SURVEY_NOTIFICATION_EMAIL へ1通送る。初回実行で script.send_mail の認可ダイアログが出る。
+ * 戻り値（ログにも出す）: 'sent' / 'skipped: notification address not configured' / 'failed: <例外名>'。宛先・本文は記録しない。
+ */
+function surveyNotificationSelfTest() {
+  var result;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var to = String(props.getProperty('SURVEY_NOTIFICATION_EMAIL') || '').trim();
+    if (!to) {
+      result = 'skipped: notification address not configured';
+    } else {
+      var adminUrl = String(props.getProperty('SURVEY_ADMIN_URL') || '').trim();
+      var items = [{ label: '【配信確認】通知経路の確認用サンプル', text: 'これは surveyNotificationSelfTest による確認メールです。回答は保存されていません。' }];
+      MailApp.sendEmail(to, '[配信確認] ' + SURVEY_NOTIFICATION_SUBJECT, surveyBuildNotificationBody_(items, new Date(), adminUrl));
+      result = 'sent';
+    }
+  } catch (mailError) {
+    result = 'failed: ' + String((mailError && mailError.name) || 'Error').slice(0, 40);
+  }
+  Logger.log('survey notification self-test: ' + result);
+  return result;
 }
 
 /* ステップ到達イベント。step_idはschemaのステップIDのみ受け付け、個人情報は受け取らない。 */
