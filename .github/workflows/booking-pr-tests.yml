@@ -26,6 +26,8 @@ on:
       - 'scripts/survey-*.js'
       - 'scripts/prepare-survey-gas-project.js'
       - 'gas/feedback/**'
+      - 'gas/feedback-admin/**'
+      - 'scripts/prepare-feedback-admin-gas-project.js'
       - 'feedback/**'
       - 'scripts/feedback-*.js'
       - 'scripts/prepare-feedback-gas-project.js'

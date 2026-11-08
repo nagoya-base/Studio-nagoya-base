@@ -5,7 +5,7 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 
 > **第1段階では本番回答を受け付けません。** 本番用トークン（予約ごとのリンク）は第3段階 #834 で Booking と接続します。
 > それまで `?test=1` のテスト回答だけが保存されます。アンケートメールの配信も第3段階まで行いません。
-> 管理画面は第2段階 #849 です。
+> 管理画面（第2段階 #849）は `gas/feedback-admin/README.md` を参照してください。
 
 全3段階：①本Issue #835 → ②管理画面 #849 → ③予約連動・自動送信 #834
 
@@ -19,7 +19,7 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 | 公開Web App（回答受付・通知・テスト通知） | `gas/feedback/FeedbackWebApp.gs` |
 | トークン検証インターフェース（第1段階は常に拒否） | `gas/feedback/FeedbackTokens.gs` |
 | Spreadsheet入出力・初期設定 | `gas/feedback/FeedbackRepository.gs` |
-| 保持期間による月次削除 | `gas/feedback/FeedbackMaintenance.gs` |
+| 保持期間による月次削除 | `gas/feedback-admin/FeedbackMaintenance.gs`（管理者プロジェクトで実行。#849） |
 | 配布物の組み立て | `scripts/prepare-feedback-gas-project.js` |
 
 既存の `/survey/`・`/mens/survey/`（`survey-schema.json`・`survey-core.js`・`survey-app.js`・`gas/survey/`・その Spreadsheet）とは
@@ -61,7 +61,7 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 
 - **予約ID・氏名・メール・トークン（生値・ダイジェストとも）は保存しません。**
 - `status`：Q5で「特になし」以外を1つ以上選択、または自由記述あり → `未対応`。それ以外 → `対応不要`。
-  第2段階 #849 で管理画面から更新できるようにする予定です。それまでは Spreadsheet 上で直接 `status`（未対応／対応済み／対応不要）と `memo` を編集してください。
+  `status`（未対応／対応中／対応済み／対応不要）と `memo` は、管理画面（#849。`gas/feedback-admin/`）のカードから更新します。Spreadsheetの直接編集は非常時だけにしてください。
 - `is_test`：サーバーが確定します（payload の `test` が厳密に `1` のときだけ `1`）。テスト行は本番集計の対象外です。
 - `notify_failed`：通知がONで送信に失敗した本番回答に `1`。再送はしません（Spreadsheetで確認）。
 - 自由記述の先頭が `= + - @` の場合は `'` を付けて保存します（数式として解釈させない）。
@@ -101,9 +101,8 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 3. **新しいGASプロジェクト**を作り、`.gas-deploy/feedback/` の全ファイル（`appsscript.json` を含む）を配置する。
 4. 「プロジェクトの設定 → スクリプト プロパティ」に `FEEDBACK_SPREADSHEET_ID` を登録する（通知はまだOFFのまま）。
 5. エディタで `setupFeedbackSpreadsheet` を実行する（`responses` / `settings` を作成。冪等。データ入りのSpreadsheetなら拒否して止まる）。
-6. エディタで `installFeedbackRetentionTrigger` を1回実行する（毎月1日4時台に保持期間切れの行を削除）。
-7. 「デプロイ → 新しいデプロイ → ウェブアプリ」：次のユーザーとして実行 **自分**、アクセスできるユーザー **全員（匿名ユーザーを含む）**。
-8. 発行された `/exec` URL を `scripts/feedback-config.js` の `BASE_URL` に設定するPRを出す（既存 `survey-config.js` のURLとは別）。
+6. 「デプロイ → 新しいデプロイ → ウェブアプリ」：次のユーザーとして実行 **自分**、アクセスできるユーザー **全員（匿名ユーザーを含む）**。
+7. 発行された `/exec` URL を `scripts/feedback-config.js` の `BASE_URL` に設定するPRを出す（既存 `survey-config.js` のURLとは別）。
 
 ## 手動試験
 
@@ -124,16 +123,17 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 - **通知だけ止める**：`FEEDBACK_NOTIFY` を削除するか `off` にする。
 - **受付を止める**：GASの「デプロイを管理」でウェブアプリのデプロイをアーカイブする（または `FEEDBACK_SPREADSHEET_ID` を削除すると保存が止まる）。
 - **画面を止める**：`scripts/feedback-config.js` の `BASE_URL` を `''` に戻す（送信時「準備中」と表示し保存しない）。
-- **月次削除を止める**：GASの「トリガー」から `purgeExpiredFeedbackResponses` を削除する。
+- **月次削除を止める**：**管理者プロジェクト**のGASの「トリガー」から `purgeExpiredFeedbackResponses` を削除する。
 
 ## 保持期間
 
 - 本番回答：受信から **180日**、テスト回答：**30日** を過ぎた行を、月1回 `purgeExpiredFeedbackResponses` が削除します。
+- 月次削除は**管理者プロジェクト（`gas/feedback-admin/`）で実行**します。行の削除で行番号がずれるため、行番号を特定して書き込む対応更新と同じプロジェクトのロックで直列化するためです（別プロジェクト同士のスクリプトロックは互いに排他になりません）。公開Web Appは末尾への追記だけで既存行を動かしません。トリガーの作り方は `gas/feedback-admin/README.md` を参照してください。
 - 受信日時が読めない行は削除しません（手で確認してください）。
 - 自由記述に個人情報が書かれていた場合は、Spreadsheet上で直接削除・編集してください（変更履歴はGoogleの版の履歴に残ります）。
 
 ## 第1段階で未接続のこと
 
 - Booking 予約とトークンの実結合・送信済み／期限／重複チェックの本番E2E・利用終了2時間後のメール送信 → **#834**
-- 管理画面（概要・問題分析・コメント一覧・status/memo の画面内更新）→ **#849**
+- 管理画面（概要・問題分析・コメント一覧・status/memo の画面内更新）→ **#849**（`gas/feedback-admin/` で実装済み）
 - 公開GASのデプロイ・`BASE_URL` 設定・本番通知ON → オーナー承認後に上記手順で実施（本PRでは行わない）

@@ -37,17 +37,16 @@ function installMockTokens(project, state) {
   return calls;
 }
 
-test('配布物: コア＋GAS 5ファイル。既存 survey の配布物・Booking と共有しない', function () {
-  assert.deepStrictEqual(prepare.fileNames(), ['FeedbackCore.gs', 'FeedbackTokens.gs', 'FeedbackRepository.gs', 'FeedbackWebApp.gs', 'FeedbackMaintenance.gs', 'appsscript.json']);
+test('配布物: コア＋GAS 4ファイル。既存 survey の配布物・Booking と共有しない', function () {
+  assert.deepStrictEqual(prepare.fileNames(), ['FeedbackCore.gs', 'FeedbackTokens.gs', 'FeedbackRepository.gs', 'FeedbackWebApp.gs', 'appsscript.json']);
   prepare.FILES.forEach(function (entry) { assert.ok(!/survey|booking/.test(entry[1]), entry[1]); });
   var manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'gas/feedback/appsscript.json'), 'utf8'));
   assert.strictEqual(manifest.webapp.access, 'ANYONE_ANONYMOUS');
   assert.strictEqual(manifest.webapp.executeAs, 'USER_DEPLOYING');
   assert.deepStrictEqual(manifest.oauthScopes, [
     'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/script.send_mail',
-    'https://www.googleapis.com/auth/script.scriptapp'
-  ]);
+    'https://www.googleapis.com/auth/script.send_mail'
+  ], '月次削除は管理者プロジェクトへ移したので、公開側はトリガー作成権限を持たない（#849）');
   var gs = prepare.FILES.filter(function (e) { return /\.gs$/.test(e[0]); }).map(function (e) { return fs.readFileSync(path.join(__dirname, '..', e[1]), 'utf8'); }).join('\n');
   assert.ok(!/SURVEY_SPREADSHEET_ID|BOOKING_|SPREADSHEET_ID'\)/.test(gs.replace(/FEEDBACK_SPREADSHEET_ID/g, '')), '他システムの設定キーを参照しない');
 });
@@ -312,8 +311,10 @@ test('doGet/doPost: doGet は死活確認だけ、doPost は submit 既定・JSO
   assert.strictEqual(JSON.parse(project.run('doPost(__e)').text).error.code, 'UNKNOWN_ACTION');
 });
 
-test('保持期間: 本番180日・テスト30日を過ぎた行だけを削除。月次トリガーは冪等に1つ', function () {
+test('保持期間: 本番180日・テスト30日を過ぎた行だけを削除。月次トリガーは冪等に1つ（管理者プロジェクトで実行。#849）', function () {
   var project = ready();
+  assert.strictEqual(project.run('typeof purgeExpiredFeedbackResponses'), 'undefined', '公開Web Appは行を削除しない（末尾追記のみ）');
+  var admin = loadFeedbackProject({ target: 'admin', spreadsheets: project.spreadsheets });
   var sheet = project.sheet('responses');
   var now = new Date('2026-11-08T00:00:00.000Z');
   function daysAgo(d) { return new Date(now.getTime() - d * 86400000).toISOString(); }
@@ -327,11 +328,12 @@ test('保持期間: 本番180日・テスト30日を過ぎた行だけを削除�
   [row('p-keep', 0, daysAgo(179)), row('p-old', 0, daysAgo(181)), row('t-keep', 1, daysAgo(29)), row('t-old', 1, daysAgo(31)), row('bad-date', 0, 'not a date')]
     .forEach(function (r) { sheet._rows.push(r); });
   project.sandbox.__now = now;
-  assert.strictEqual(project.run('purgeExpiredFeedbackResponses(__now)').deleted, 2);
+  admin.sandbox.__now = now;
+  assert.strictEqual(admin.run('purgeExpiredFeedbackResponses(__now)').deleted, 2);
   assert.deepStrictEqual(project.rows().map(function (r) { return r.response_id; }), ['p-keep', 't-keep', 'bad-date']);
 
-  project.run('installFeedbackRetentionTrigger()');
-  project.run('installFeedbackRetentionTrigger()');
-  assert.strictEqual(project.triggers.length, 1);
-  assert.deepStrictEqual(project.triggers[0].spec, { handler: 'purgeExpiredFeedbackResponses', monthDay: 1, hour: 4 });
+  admin.run('installFeedbackRetentionTrigger()');
+  admin.run('installFeedbackRetentionTrigger()');
+  assert.strictEqual(admin.triggers.length, 1);
+  assert.deepStrictEqual(admin.triggers[0].spec, { handler: 'purgeExpiredFeedbackResponses', monthDay: 1, hour: 4 });
 });

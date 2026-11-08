@@ -5,8 +5,7 @@
   "runtimeVersion": "V8",
   "oauthScopes": [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/script.send_mail",
-    "https://www.googleapis.com/auth/script.scriptapp"
+    "https://www.googleapis.com/auth/script.send_mail"
   ],
   "webapp": {
     "access": "ANYONE_ANONYMOUS",

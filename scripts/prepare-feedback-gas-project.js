@@ -21,7 +21,6 @@ var FILES = [
   ['FeedbackTokens.gs', 'gas/feedback/FeedbackTokens.gs'],
   ['FeedbackRepository.gs', 'gas/feedback/FeedbackRepository.gs'],
   ['FeedbackWebApp.gs', 'gas/feedback/FeedbackWebApp.gs'],
-  ['FeedbackMaintenance.gs', 'gas/feedback/FeedbackMaintenance.gs'],
   ['appsscript.json', 'gas/feedback/appsscript.json']
 ];
 
