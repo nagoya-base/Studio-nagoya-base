@@ -104,11 +104,25 @@ function handleSurveySubmit_(payload, now) {
  */
 var SURVEY_NOTIFICATION_SUBJECT = '【Studio Nagoya Base】アンケートに自由記述の回答がありました';
 
+/*
+ * 通知メールの日時表示（Issue #847）。例: 2026-11-08T02:25:40.105Z → "2026/11/08 11:25:40 JST"。
+ * UTCに9時間を足して getUTC* で読むため、GASスクリプトや実行環境のタイムゾーン設定に依存しない
+ * （日本は夏時間なし）。表示専用で、保存するtimestamp（ISO/UTC）には使わない。
+ */
+var SURVEY_JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+function surveyFormatJst_(date) {
+  var jst = new Date(date.getTime() + SURVEY_JST_OFFSET_MS);
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  return jst.getUTCFullYear() + '/' + pad(jst.getUTCMonth() + 1) + '/' + pad(jst.getUTCDate()) + ' ' +
+    pad(jst.getUTCHours()) + ':' + pad(jst.getUTCMinutes()) + ':' + pad(jst.getUTCSeconds()) + ' JST';
+}
+
 function surveyBuildNotificationBody_(items, now, adminUrl) {
   var lines = [
     'Studio Nagoya Base / SNB mens 共通アンケートに、自由記述の回答がありました。',
     '',
-    '回答日時: ' + (now || new Date()).toISOString(),
+    '回答日時: ' + surveyFormatJst_(now || new Date()),
     ''
   ];
   items.forEach(function (item) {
