@@ -73,3 +73,22 @@ test('非干渉: /feedback/（#835）・利用後メール（#834）の資材に
   var fb = path.join(__dirname, '..', 'feedback', 'index.html');
   if (fs.existsSync(fb)) assert.ok(read('feedback/index.html').indexOf('mens/survey') === -1);
 });
+
+test('戻り先: 完了・回答済み・対象外の全画面（renderEnd）が data-back-* を使い、専用ページは/mens/・共通ページは従来の戻り先', function () {
+  var js = read('scripts/survey-app.js');
+  /* 3種の終了画面はすべて renderEnd 経由で、戻り先は backLink 1か所から決まる */
+  ['complete', 'answered', 'underage'].forEach(function (k) { assert.ok(js.indexOf("renderEnd('" + k + "')") !== -1, k); });
+  assert.match(js, /h\('a', \{ href: backLink\.href, text: backLink\.label \}\)/);
+  assert.ok(js.split("href: 'https://nagoya-base.github.io/Studio-nagoya-base/'").length === 2, '既定の戻り先は1か所だけ');
+  /* サイト内パスだけ受け付ける（//・http(s):・javascript: は既定へ） */
+  assert.match(js, /\/\^\\\/\(\?!\\\/\)\[\^\\s\]\*\$\/\.test\(url\)/);
+  assert.ok(!/innerHTML/.test(js));
+  var mens = read('mens/survey/index.html');
+  assert.match(mens, /data-back-url="\{\{ '\/mens\/' \| relative_url \}\}" data-back-label="SNB mens に戻る"/);
+  var common = read('survey/index.html');
+  assert.ok(common.indexOf('data-back-') === -1, '共通ページは従来の戻り先（既定値）のまま');
+});
+
+test('コメント: 撤去済みの入口カード（#836）への言及を残さない', function () {
+  assert.ok(read('scripts/survey-app.js').indexOf('入口カード') === -1);
+});

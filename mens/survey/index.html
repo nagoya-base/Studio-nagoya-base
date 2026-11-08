@@ -36,7 +36,7 @@
     <p><strong>利用後の満足度アンケートではありません。</strong>今後のサービス改善・ニーズ調査です。</p>
   </section>
 
-  <div id="survey-app" data-title="SNB mens アンケート" data-schema-url="../../survey/survey-schema.json?v={{ site.time | date: '%s' }}" aria-live="polite">
+  <div id="survey-app" data-title="SNB mens アンケート" data-back-url="{{ '/mens/' | relative_url }}" data-back-label="SNB mens に戻る" data-schema-url="../../survey/survey-schema.json?v={{ site.time | date: '%s' }}" aria-live="polite">
     <noscript><p class="sv-error">このアンケートの回答にはJavaScriptを有効にしてください。</p></noscript>
     <p class="sv-hint">読み込み中…</p>
   </div>
