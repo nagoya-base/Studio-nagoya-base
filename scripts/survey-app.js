@@ -150,8 +150,7 @@
       ])
     ]));
     root.appendChild(box);
-    box.focus();
-    window.scrollTo(0, 0);
+    focusAndScroll(box);
   }
 
   function errorMessageFor(code, question, other) {
@@ -268,6 +267,19 @@
     ]);
   }
 
+  /* ページ上部に入口カード（Issue #836）がある。初回表示はページ先頭のまま（focusもスクロールさせない）にして入口を見せ、
+     以降の画面遷移ではアンケート本体の先頭へ移動する（入口へ戻さない）。 */
+  var hasRendered = false;
+  function focusAndScroll(el) {
+    if (!hasRendered) {
+      el.focus({ preventScroll: true });
+    } else {
+      el.focus();
+      window.scrollTo(0, Math.max(0, root.getBoundingClientRect().top + window.scrollY));
+    }
+    hasRendered = true;
+  }
+
   function renderStep(focusKey) {
     var scrollY = window.scrollY;
     clear();
@@ -317,8 +329,7 @@
     } else if (attempted && errors.length) {
       document.getElementById('sv-summary').focus();
     } else {
-      title.focus();
-      window.scrollTo(0, 0);
+      focusAndScroll(title);
     }
   }
 
