@@ -99,8 +99,10 @@ function updateFeedbackStatus(update) {
 
     var rowNumber = index + 2;
     var memoCell = /^[=+\-@\t\r]/.test(value.memo) ? "'" + value.memo : value.memo;
-    read.sheet.getRange(rowNumber, columns.indexOf('status') + 1, 1, 1).setValues([[value.status]]);
-    read.sheet.getRange(rowNumber, columns.indexOf('memo') + 1, 1, 1).setValues([[memoCell]]);
+    /* status と memo は隣り合う2列。1回の setValues で書き、片方だけ更新された状態を作らない。 */
+    var statusColumn = columns.indexOf('status') + 1;
+    if (columns.indexOf('memo') + 1 !== statusColumn + 1) return feedbackAdminError_('INTERNAL_ERROR');
+    read.sheet.getRange(rowNumber, statusColumn, 1, 2).setValues([[value.status, memoCell]]);
 
     var updatedRow = read.rows[index].slice();
     updatedRow[columns.indexOf('status')] = value.status;

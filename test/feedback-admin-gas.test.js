@@ -153,6 +153,31 @@ test('受入4: 別ブランド・存在しない行・重複ID・不正なステ
   assert.strictEqual(JSON.stringify(sheet._rows), dupSnapshot);
 });
 
+test('status と memo は1回の書き込みで更新する（途中で失敗しても片方だけ更新された状態にならない）', function () {
+  var w = world();
+  w.submit('snb', { comment: 'x' });
+  w.submit('mens', { comment: 'y' });
+  var sheet = w.pub.sheet('responses');
+  var id = w.pub.rows()[1].response_id;
+  sheet._writes.length = 0;
+  assert.strictEqual(w.update({ responseId: id, brand: 'mens', status: '対応済み', memo: 'ok' }).success, true);
+  assert.deepStrictEqual(sheet._writes, [{ row: 3, col: Core.COLUMNS.indexOf('status') + 1, numRows: 1, numCols: 2 }], 'status・memo の2セルだけを1回で書く');
+  assert.strictEqual(Core.COLUMNS.indexOf('memo'), Core.COLUMNS.indexOf('status') + 1);
+
+  /* 旧方式で問題になった「1回目（status）は成功し2回目（memo）で失敗」の状況：1回目の書き込みで失敗させても、どちらの列も変わらない */
+  var before = JSON.stringify(sheet._rows);
+  sheet._writes.length = 0;
+  sheet._failAfterWrites = 0;
+  var failed = w.update({ responseId: id, brand: 'mens', status: '対応中', memo: '途中で失敗' });
+  assert.strictEqual(failed.error.code, 'INTERNAL_ERROR');
+  assert.strictEqual(JSON.stringify(sheet._rows), before, 'status だけ更新されることはない');
+  /* 1回目が成功した後に失敗する設定でも、更新は1回で終わるので成功し、両方そろって反映される */
+  sheet._failAfterWrites = 1;
+  assert.strictEqual(w.update({ responseId: id, brand: 'mens', status: '対応中', memo: '再試行' }).success, true);
+  assert.strictEqual(w.pub.rows()[1].status, '対応中');
+  assert.strictEqual(w.pub.rows()[1].memo, '再試行');
+});
+
 test('memo の数式は無害化して保存し、画面へは元の文字で返す', function () {
   var w = world();
   w.submit('snb', { comment: 'x' });

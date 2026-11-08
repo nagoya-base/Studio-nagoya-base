@@ -39,6 +39,9 @@ function createSheet(name) {
       return {
         getValues: read,
         setValues: function (values) {
+          /* _failAfterWrites: この回数の書き込みが成功した後は失敗させる（途中失敗の再現用） */
+          if (typeof sheet._failAfterWrites === 'number' && sheet._writes.length >= sheet._failAfterWrites) throw new Error('write failed');
+          sheet._writes.push({ row: row, col: col, numRows: numRows, numCols: numCols });
           for (var r = 0; r < values.length; r++) {
             rows[row - 1 + r] = rows[row - 1 + r] || [];
             for (var c = 0; c < values[r].length; c++) rows[row - 1 + r][col - 1 + c] = values[r][c];
@@ -48,6 +51,7 @@ function createSheet(name) {
     },
     deleteRow: function (rowNumber) { rows.splice(rowNumber - 1, 1); },
     _rows: rows,
+    _writes: [],
     _failWrites: false
   };
   return sheet;
