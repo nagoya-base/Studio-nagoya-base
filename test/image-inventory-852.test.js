@@ -36,6 +36,9 @@ test('相対パス・絶対URL・Liquid変数・ファイル名のみの参照�
   assert.deepStrictEqual(inventory.resolveToken('images/sample_04_neon_1200.webp', 'studio-x/index.html'), ['studio-x/images/sample_04_neon_1200.webp']);
   assert.deepStrictEqual(inventory.resolveToken('https://nagoya-base.github.io/Studio-nagoya-base/images/ogp-survey-1200x630.jpg', 'survey/index.html'), ['images/ogp-survey-1200x630.jpg']);
   assert.deepStrictEqual(inventory.resolveToken('../images/a%20b.webp?v=2', 'mens/index.html'), ['images/a b.webp']);
+  /* Markdown のリポジトリ基準パス（`images/x`）は docs/ 起点に解決しない */
+  assert.deepStrictEqual(inventory.resolveToken('images/apple-touch-icon.png', 'docs/image-inventory-852.md'), ['images/apple-touch-icon.png']);
+  assert.ok(!result.unresolved.some(function (u) { return u.reason === 'no-such-path' && /^docs\//.test(u.file); }), 'docs の実在パスが未解決にならない');
   assert.strictEqual(inventory.resolveToken('}}/equipment-mount-bracket.webp', '_includes/equipment_photo_cards.html'), null);
   assert.strictEqual(inventory.resolveToken('sample_04_neon_1200.webp', '_data/studio_x_worlds.yml'), null);
   /* include 経由・データ連結の参照も計上される */

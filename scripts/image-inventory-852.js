@@ -137,7 +137,8 @@ function resolveToken(token, sourceFile) {
   var sx = t.lastIndexOf('studio-x/images/');
   if (sx !== -1) return ['studio-x/images/' + t.slice(sx + 'studio-x/images/'.length)];
   var isRooted = /^\//.test(t) || /^https?:/.test(t) || /\}\}|baseurl/.test(t);
-  var isMarkup = /\.(html?|css|md)$/.test(sourceFile);
+  /* Markdown（README・docs）は公開ページではなく、`images/x` はリポジトリ基準のパスとして書かれるため、データと同じ扱いにする。 */
+  var isMarkup = /\.(html?|css)$/.test(sourceFile);
   if (isRooted) {
     var at = t.lastIndexOf('/images/');
     /* `{{ include.image_path }}/x.webp` のように Liquid 変数で場所が渡る場合はファイル名のみとして扱う。 */
@@ -202,7 +203,9 @@ function scanReferences(images, files) {
           else unresolved.push({ file: f, line: idx + 1, token: token, reason: candidates.length ? 'ambiguous-name' : 'unknown-name' });
         } else if (targets.length === 0) {
           /* images/ 以外を指すパス（例: studio-x/touch-icon.svg）。実在すれば対象外として扱う。 */
-          var other = /\.(html?|css|md)$/.test(f) ? path.posix.normalize(path.posix.join(path.posix.dirname(f), token.replace(/[?#].*$/, ''))) : null;
+          var bare = token.replace(/[?#].*$/, '');
+          var other = path.posix.normalize(/\.(html?|css)$/.test(f) ? path.posix.join(path.posix.dirname(f), bare) : bare);
+          if (!tracked[other]) other = null;
           if (!(other && tracked[other]) && !candidates.length) {
             unresolved.push({ file: f, line: idx + 1, token: token, reason: 'outside-image-dirs' });
           } else if (candidates.length === 1 && !other) {
@@ -212,7 +215,7 @@ function scanReferences(images, files) {
         } else {
           hit = targets.map(function (p) { return byPath[p]; }).filter(Boolean);
           /* テスト・スクリプト内の `images/x` は部分文字列検査のことが多いため、同名が1件なら名前で計上する。 */
-          if (!hit.length && !/\.(html?|css|md)$/.test(f) && candidates.length === 1) {
+          if (!hit.length && !/\.(html?|css)$/.test(f) && candidates.length === 1) {
             hit = [candidates[0]];
             fallback = true;
           }

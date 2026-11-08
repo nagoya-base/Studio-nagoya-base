@@ -229,7 +229,7 @@ blob SHA `4eb694c3a2d1fa5a5c110dfd8960a21e496adaac`、各 130,489 bytes、1200×
 
 ## Phase 2 で行う確認（承認後の別PR）
 
-- 承認された削除・移動のみ実施し、`node scripts/image-inventory-852.js` で「現行参照のある画像が消えていない」「未解決参照ゼロ」を確認。
+- 承認された削除・移動のみ実施し、`node scripts/image-inventory-852.js` で「現行参照のある画像が消えていない」「公開ページ（HTML / CSS）の未解決参照ゼロ」を確認（`npm test` の `test/image-inventory-852.test.js` が同じ条件を検証する）。
 - Jekyll ビルド前後の出力URL一覧の差分、全画像のデコード確認、OGP表示確認、PC/SP表示、`npm test`。
 - 予約・決済・会員・個人情報・SwitchBot/GAS のロジックと本番設定は変更しない。Git履歴の書き換えはしない。
 
