@@ -207,9 +207,28 @@ test('本番（モック台帳）: 保存に失敗したら消費を取り消す
   assert.deepStrictEqual(calls2, []);
 });
 
-test('混雑（ロック取得失敗）は BUSY で保存しない', function () {
-  var project = ready({ lockFails: true });
-  assert.strictEqual(project.call('submit', testPayload('snb')).error.code, 'BUSY');
+test('rate limit のカウンタはスクリプトロック内で読み書きし、保存前に解放する。ロックを取れなければ受け付けない', function () {
+  var project = ready();
+  var cache = project.sandbox.CacheService.getScriptCache();
+  var locks = project.sandbox.LockService;
+  var heldDuringCounter = [];
+  project.sandbox.CacheService = {
+    getScriptCache: function () {
+      return {
+        get: function (k) { heldDuringCounter.push(locks._isHeld()); return cache.get(k); },
+        put: function (k, v, t) { heldDuringCounter.push(locks._isHeld()); return cache.put(k, v, t); }
+      };
+    }
+  };
+  assert.strictEqual(project.call('submit', testPayload('snb')).success, true, 'カウンタ後にロックを解放しているので保存できる');
+  assert.strictEqual(project.call('verify', { brand: 'snb', test: 1 }).success, true);
+  assert.deepStrictEqual(heldDuringCounter, [true, true, true, true]);
+  assert.strictEqual(locks._isHeld(), false);
+
+  var busy = ready({ lockFails: true });
+  assert.strictEqual(busy.call('submit', testPayload('snb')).error.code, 'RATE_LIMITED');
+  assert.strictEqual(busy.call('verify', { brand: 'snb', test: 1 }).error.code, 'RATE_LIMITED');
+  assert.strictEqual(busy.rows().length, 0);
 });
 
 test('通知: 本番有効回答で要確認なら1通。中立的な件名・プレーンテキストでトークン等を含めない', function () {

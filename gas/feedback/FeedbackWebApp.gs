@@ -42,16 +42,28 @@ function feedbackError_(code, fields) {
   return { success: false, error: error };
 }
 
-/* 全体のリクエスト数/分の上限（CacheServiceの簡易カウンタ）。テスト回答も同じ枠で数える。 */
+/*
+ * 全体のリクエスト数/分の上限（CacheServiceの簡易カウンタ）。テスト回答・verify も同じ枠で数える。
+ * 読み取り→判定→書き込みをスクリプトロック内で行い、同時リクエストで上限を超えないようにする
+ * （ロックは回答保存の前に必ず解放する）。ロックを取れないほど混んでいるときは受け付けない（fail closed）。
+ */
+var FEEDBACK_RATE_LIMIT_LOCK_WAIT_MS = 3000;
+
 function feedbackWithinRateLimit_(now) {
   var limit = parseInt(PropertiesService.getScriptProperties().getProperty('FEEDBACK_RATE_LIMIT_PER_MINUTE'), 10);
   if (!(limit > 0)) limit = FEEDBACK_DEFAULT_RATE_LIMIT_PER_MINUTE;
-  var cache = CacheService.getScriptCache();
-  var key = 'feedback_rl_' + Math.floor(now.getTime() / 60000);
-  var count = parseInt(cache.get(key), 10) || 0;
-  if (count >= limit) return false;
-  cache.put(key, String(count + 1), 120);
-  return true;
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(FEEDBACK_RATE_LIMIT_LOCK_WAIT_MS)) return false;
+  try {
+    var cache = CacheService.getScriptCache();
+    var key = 'feedback_rl_' + Math.floor(now.getTime() / 60000);
+    var count = parseInt(cache.get(key), 10) || 0;
+    if (count >= limit) return false;
+    cache.put(key, String(count + 1), 120);
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function handleFeedbackRequest_(action, body, now) {
