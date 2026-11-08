@@ -10,7 +10,8 @@ var os = require('os');
 var path = require('path');
 var vm = require('vm');
 var stubs = require('./gas-stubs');
-var prepare = require('../../scripts/prepare-feedback-gas-project');
+var preparePublic = require('../../scripts/prepare-feedback-gas-project');
+var prepareAdmin = require('../../scripts/prepare-feedback-admin-gas-project');
 
 function createSheet(name) {
   var rows = [];
@@ -82,12 +83,16 @@ function createSpreadsheets() {
   };
 }
 
-/* options: properties / mailFails / lockFails / spreadsheetId(既定 'ss-feedback'。null で作らない) */
+/*
+ * options: target('public' 既定 | 'admin') / properties / mailFails / lockFails / activeEmail（管理者画面の閲覧者）
+ *          spreadsheetId(既定 'ss-feedback'。null で作らない) / spreadsheets（別プロジェクトと同じSpreadsheetを共有する）
+ */
 function loadFeedbackProject(options) {
   var opts = options || {};
+  var prepare = opts.target === 'admin' ? prepareAdmin : preparePublic;
   var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'feedback-gas-'));
   prepare.prepareProject(dir);
-  var spreadsheets = createSpreadsheets();
+  var spreadsheets = opts.spreadsheets || createSpreadsheets();
   var ssId = opts.spreadsheetId === undefined ? 'ss-feedback' : opts.spreadsheetId;
   if (ssId) spreadsheets.book(ssId);
   var properties = Object.assign(ssId ? { FEEDBACK_SPREADSHEET_ID: ssId } : {}, opts.properties || {});
@@ -123,6 +128,17 @@ function loadFeedbackProject(options) {
           }
         };
         return builder;
+      }
+    },
+    Session: {
+      getActiveUser: function () {
+        return { getEmail: function () { if (opts.activeEmailThrows) throw new Error('no email'); return opts.activeEmail || ''; } };
+      }
+    },
+    HtmlService: {
+      createHtmlOutput: function (text) { return { kind: 'text', text: text, setTitle: function () { return this; } }; },
+      createHtmlOutputFromFile: function (name) {
+        return { kind: 'file', name: name, setTitle: function () { return this; }, addMetaTag: function () { return this; } };
       }
     },
     Logger: { log: function (m) { logs.push(String(m)); } }
@@ -165,4 +181,4 @@ function loadFeedbackProject(options) {
   return project;
 }
 
-module.exports = { loadFeedbackProject: loadFeedbackProject };
+module.exports = { loadFeedbackProject: loadFeedbackProject, createSpreadsheets: createSpreadsheets };

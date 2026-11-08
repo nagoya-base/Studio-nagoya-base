@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>利用後アンケート管理</title>
+<style>
+  :root { --bg:#f6f6f4; --fg:#1f2328; --muted:#6b7280; --card:#fff; --line:#e1e1dc; --accent:#2f6f5e; --accent-fg:#fff; --bar-bg:#e8efec; --open:#b42318; --open-bg:#fdecea; --doing:#8a5a00; --doing-bg:#fff4d6; --done:#2f6f5e; --done-bg:#e8f3ef; --none-bg:#eef0f2; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14161a; --fg:#e6e6e3; --muted:#9aa0a6; --card:#1d2025; --line:#33373d; --accent:#5fb39c; --accent-fg:#0e1412; --bar-bg:#27312e; --open:#ff8a80; --open-bg:#3a1f1d; --doing:#ffd27a; --doing-bg:#3a2f14; --done:#7fd1b5; --done-bg:#1f2a27; --none-bg:#25282d; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif; -webkit-text-size-adjust:100%; }
+  main { max-width:960px; margin:0 auto; padding:0 12px 64px; }
+  h1 { font-size:19px; margin:16px 0 8px; }
+  h2 { font-size:16px; margin:20px 0 8px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; margin:8px 0; }
+  .filters label { display:flex; flex-direction:column; font-size:12px; color:var(--muted); min-width:0; }
+  select, textarea, button { font:inherit; font-size:16px; }
+  select { width:100%; min-height:44px; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--fg); }
+  .check { flex-direction:row !important; align-items:center; gap:8px; min-height:44px; font-size:14px !important; color:var(--fg) !important; }
+  .check input { width:20px; height:20px; }
+  .tabs { display:flex; gap:4px; position:sticky; top:0; z-index:2; background:var(--bg); padding:8px 0; border-bottom:1px solid var(--line); }
+  .tabs button { flex:1; min-height:44px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--fg); font-size:14px; padding:4px; }
+  .tabs button[aria-selected="true"] { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:700; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; margin:8px 0; min-width:0; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; }
+  .tile { margin:0; }
+  .tile b { display:block; font-size:24px; line-height:1.3; }
+  .row { display:grid; grid-template-columns:minmax(0,9em) 1fr minmax(0,7.5em); gap:8px; align-items:center; margin:4px 0; font-size:13px; }
+  .row > span { min-width:0; overflow-wrap:anywhere; }
+  .bar { height:10px; background:var(--bar-bg); border-radius:5px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--accent); }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+  .item h3 { font-size:14px; margin:0 0 4px; }
+  .breakdown { display:flex; flex-wrap:wrap; gap:4px 12px; font-size:12px; color:var(--muted); margin:0; }
+  .rate { font-weight:700; }
+  .fb-card header { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin:0 0 6px; }
+  .brand { font-weight:700; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:700; background:var(--none-bg); }
+  .badge.s-open { color:var(--open); background:var(--open-bg); }
+  .badge.s-doing { color:var(--doing); background:var(--doing-bg); }
+  .badge.s-done { color:var(--done); background:var(--done-bg); }
+  .badge.warn { color:var(--open); background:var(--open-bg); }
+  .chips { display:flex; flex-wrap:wrap; gap:4px; margin:4px 0; padding:0; list-style:none; }
+  .chips li { font-size:12px; padding:1px 8px; border:1px solid var(--line); border-radius:999px; }
+  .comment { white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; margin:6px 0; padding:8px; border-left:3px solid var(--accent); background:var(--bg); border-radius:4px; }
+  details { margin:6px 0; }
+  summary { cursor:pointer; min-height:36px; display:flex; align-items:center; font-size:13px; color:var(--muted); }
+  dl { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 10px; font-size:13px; margin:4px 0; }
+  dt { color:var(--muted); min-width:0; overflow-wrap:anywhere; }
+  dd { margin:0; text-align:right; }
+  .edit { display:grid; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid var(--line); }
+  .edit textarea { width:100%; min-height:64px; padding:8px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--fg); resize:vertical; }
+  .save { min-height:44px; border:0; border-radius:8px; background:var(--accent); color:var(--accent-fg); font-weight:700; }
+  .save[disabled] { opacity:.6; }
+  .state { font-size:13px; min-height:1.6em; margin:0; }
+  .state.ok { color:var(--done); }
+  .state.ng { color:var(--open); }
+  .empty { text-align:center; color:var(--muted); padding:24px 8px; }
+  #error { color:var(--open); }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>利用後アンケート管理</h1>
+  <p class="muted">SNB・SNB mens・Studio X の利用後アンケート。テスト回答は既定で集計・一覧から除外しています。</p>
+
+  <div class="filters">
+    <label>ブランド
+      <select id="f-brand"><option value="all">全体</option></select>
+    </label>
+    <label>期間
+      <select id="f-period">
+        <option value="30">直近30日</option>
+        <option value="90">直近90日</option>
+        <option value="all">全期間</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" id="f-test"> テスト回答だけを表示</label>
+  </div>
+
+  <nav class="tabs" role="tablist">
+    <button type="button" role="tab" id="tab-summary" aria-controls="panel-summary" aria-selected="true">概要</button>
+    <button type="button" role="tab" id="tab-issues" aria-controls="panel-issues" aria-selected="false">問題分析</button>
+    <button type="button" role="tab" id="tab-cards" aria-controls="panel-cards" aria-selected="false">ご意見・対応</button>
+  </nav>
+
+  <p id="error" role="alert"></p>
+  <p id="test-note" class="badge warn" hidden>テスト回答だけを表示中（本番集計ではありません）</p>
+
+  <section id="panel-summary" role="tabpanel" aria-labelledby="tab-summary"><p class="muted">読み込み中…</p></section>
+  <section id="panel-issues" role="tabpanel" aria-labelledby="tab-issues" hidden></section>
+  <section id="panel-cards" role="tabpanel" aria-labelledby="tab-cards" hidden>
+    <div class="filters">
+      <label>対応状況
+        <select id="f-status"><option value="all">すべて</option></select>
+      </label>
+      <label>問題・ご意見
+        <select id="f-problem">
+          <option value="all">すべて</option>
+          <option value="yes">問題・ご意見あり</option>
+          <option value="no">なし</option>
+        </select>
+      </label>
+    </div>
+    <div id="cards"></div>
+  </section>
+</main>
+<script>
+(function () {
+  'use strict';
+
+  var STATUS_CLASS = { '未対応': 's-open', '対応中': 's-doing', '対応済み': 's-done' };
+  var ERROR_TEXT = {
+    FORBIDDEN: 'アクセス権限がありません。',
+    STORAGE_UNAVAILABLE: '回答データを読み込めませんでした（保存先の設定を確認してください）。',
+    BUSY: '混み合っています。もう一度保存してください。',
+    NOT_FOUND: '対象の回答が見つかりません（削除された可能性があります）。再読み込みしてください。',
+    DUPLICATE_RESPONSE_ID: '同じ回答IDが複数あるため更新できません。Spreadsheetを確認してください。',
+    BRAND_MISMATCH: 'ブランドが一致しないため更新できません。再読み込みしてください。',
+    MEMO_TOO_LONG: 'メモが長すぎます。',
+    INVALID_STATUS: '対応状況が不正です。'
+  };
+  var state = { tab: 'summary', data: null, statusOptions: [], memoMax: 200, brandsLoaded: false };
+
+  function $(id) { return document.getElementById(id); }
+
+  function h(tag, attrs, children) {
+    var el = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      if (k === 'text') el.textContent = attrs[k];
+      else if (k === 'className') el.className = attrs[k];
+      else el.setAttribute(k, attrs[k]);
+    });
+    (children || []).forEach(function (c) { if (c) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return el;
+  }
+
+  function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+  function errorText(code) { return ERROR_TEXT[code] || 'エラーが発生しました（' + code + '）。'; }
+  function pct(part, whole) { return whole ? Math.round((part / whole) * 1000) / 10 : 0; }
+
+  function barRow(label, count, total, suffix) {
+    var bar = h('div', { className: 'bar' }, [h('i', { style: 'width:' + pct(count, total) + '%' })]);
+    return h('div', { className: 'row' }, [
+      h('span', { text: label }), bar,
+      h('span', { className: 'num', text: count + '件' + (total ? '（' + pct(count, total) + '%）' : '') + (suffix || '') })
+    ]);
+  }
+
+  function empty(text) { return h('p', { className: 'empty', text: text }); }
+
+  function filter() {
+    return {
+      brand: $('f-brand').value,
+      period: $('f-period').value,
+      scope: $('f-test').checked ? 'test' : 'production',
+      status: $('f-status').value,
+      problem: $('f-problem').value
+    };
+  }
+
+  function renderSummary(s) {
+    var panel = $('panel-summary');
+    clear(panel);
+    if (!s.count) { panel.appendChild(empty('この条件の回答はまだありません。')); return; }
+    panel.appendChild(h('div', { className: 'tiles' }, [
+      h('p', { className: 'card tile' }, [h('b', { text: String(s.count) }), '回答数']),
+      h('p', { className: 'card tile' }, [h('b', { text: s.averageRating === null ? '—' : s.averageRating.toFixed(1) }), '総合満足度の平均（5点満点）']),
+      h('p', { className: 'card tile' }, [h('b', { text: String(s.lowRatingCount) }), '低評価（1〜2点）']),
+      h('p', { className: 'card tile' }, [h('b', { text: String(s.openCount) }), '未対応']),
+      s.notifyFailedCount ? h('p', { className: 'card tile' }, [h('b', { text: String(s.notifyFailedCount) }), '通知失敗']) : null
+    ]));
+    var rated = s.ratingDistribution.reduce(function (n, d) { return n + d.count; }, 0);
+    panel.appendChild(h('h2', { text: '総合満足度の分布' }));
+    panel.appendChild(h('div', { className: 'card' }, s.ratingDistribution.slice().reverse().map(function (d) {
+      return barRow(d.score + '点', d.count, rated);
+    })));
+    var reuseTotal = s.reuse.reduce(function (n, d) { return n + d.count; }, 0);
+    panel.appendChild(h('h2', { text: '再利用意向' }));
+    panel.appendChild(h('div', { className: 'card' }, s.reuse.map(function (d) { return barRow(d.label, d.count, reuseTotal); })));
+    panel.appendChild(h('h2', { text: '対応状況' }));
+    panel.appendChild(h('div', { className: 'card' }, s.statusCounts.map(function (d) { return barRow(d.status, d.count, s.count); })));
+  }
+
+  function renderIssues(a) {
+    var panel = $('panel-issues');
+    clear(panel);
+    if (!a.count) { panel.appendChild(empty('この条件の回答はまだありません。')); return; }
+    panel.appendChild(h('p', { className: 'muted', text: '問題率＝（少し気になった＋困った）÷（問題なかった＋少し気になった＋困った）。未回答・該当なしは分母から除いています。' }));
+    [['q2', 'Q2. 予約・事前のご案内'], ['q3', 'Q3. 現地でのご利用']].forEach(function (g) {
+      panel.appendChild(h('h2', { text: g[1] }));
+      a.items.filter(function (i) { return i.group === g[0]; }).forEach(function (i) {
+        var c = i.counts;
+        panel.appendChild(h('div', { className: 'card item' }, [
+          h('h3', { text: i.label }),
+          barRow('問題率', i.problemCount, i.denominator, ''),
+          h('p', { className: 'breakdown' }, [
+            h('span', { text: '分母 ' + i.denominator + '件' }),
+            h('span', { text: '問題なかった ' + c.ok }),
+            h('span', { text: '少し気になった ' + c.minor }),
+            h('span', { text: '困った ' + c.trouble }),
+            h('span', { text: '該当なし ' + c.na }),
+            h('span', { text: '未回答 ' + c.unanswered })
+          ])
+        ]));
+      });
+    });
+    panel.appendChild(h('h2', { text: 'Q5. 気になった点（複数選択）' }));
+    panel.appendChild(h('p', { className: 'muted', text: '回答 ' + a.count + '件中。「特になし」' + a.noIssueCount + '件、Q5未回答 ' + (a.count - a.q5AnsweredCount) + '件。' }));
+    panel.appendChild(h('div', { className: 'card' }, a.categories.map(function (c) { return barRow(c.label, c.count, a.count); })));
+  }
+
+  function statusBadge(status) {
+    return h('span', { className: 'badge ' + (STATUS_CLASS[status] || ''), text: status || '（未設定）' });
+  }
+
+  function renderCard(card) {
+    var el = h('article', { className: 'card fb-card', 'data-response-id': card.responseId });
+    var badge = statusBadge(card.status);
+    el.appendChild(h('header', {}, [
+      h('span', { className: 'brand', text: card.brandName }),
+      h('span', { className: 'muted', text: card.receivedAt }),
+      h('span', { text: '総合 ' + (card.rating === null ? '—' : card.rating + '/5') }),
+      badge,
+      card.notifyFailed ? h('span', { className: 'badge warn', text: '通知失敗' }) : null,
+      card.isTest ? h('span', { className: 'badge warn', text: 'テスト' }) : null
+    ]));
+    if (card.issues.length) el.appendChild(h('ul', { className: 'chips', 'aria-label': '気になった点' }, card.issues.map(function (t) { return h('li', { text: t }); })));
+    if (card.comment) el.appendChild(h('p', { className: 'comment', text: card.comment }));
+    else el.appendChild(h('p', { className: 'muted', text: '自由記述なし' }));
+    el.appendChild(h('details', {}, [
+      h('summary', { text: '全設問の回答を見る' }),
+      h('dl', {}, card.details.reduce(function (list, d) { return list.concat([h('dt', { text: d.label }), h('dd', { text: d.value })]); }, []))
+    ]));
+
+    var select = h('select', { 'aria-label': '対応状況' });
+    state.statusOptions.forEach(function (s) {
+      var option = h('option', { value: s, text: s });
+      if (s === card.status) option.selected = true;
+      select.appendChild(option);
+    });
+    var memo = h('textarea', { 'aria-label': 'メモ', maxlength: String(state.memoMax), placeholder: 'メモ（' + state.memoMax + '字まで）' });
+    memo.value = card.memo || '';
+    var save = h('button', { type: 'button', className: 'save', text: '保存' });
+    var status = h('p', { className: 'state', role: 'status', 'aria-live': 'polite' });
+    save.addEventListener('click', function () {
+      save.disabled = true;
+      status.className = 'state';
+      status.textContent = '保存中…';
+      google.script.run
+        .withSuccessHandler(function (result) {
+          save.disabled = false;
+          if (!result || !result.success) {
+            status.className = 'state ng';
+            status.textContent = '保存できませんでした：' + errorText(result && result.error && result.error.code) + ' もう一度「保存」を押すと再試行します。';
+            return;
+          }
+          card.status = result.card.status;
+          card.memo = result.card.memo;
+          badge.textContent = card.status;
+          badge.className = 'badge ' + (STATUS_CLASS[card.status] || '');
+          status.className = 'state ok';
+          status.textContent = '保存しました。';
+        })
+        .withFailureHandler(function () {
+          save.disabled = false;
+          status.className = 'state ng';
+          status.textContent = '通信に失敗しました。もう一度「保存」を押すと再試行します。';
+        })
+        .updateFeedbackStatus({ responseId: card.responseId, brand: card.brand, status: select.value, memo: memo.value });
+    });
+    el.appendChild(h('div', { className: 'edit' }, [
+      h('label', { className: 'muted', text: '対応状況' }), select, memo, save, status
+    ]));
+    return el;
+  }
+
+  function renderCards(list) {
+    var box = $('cards');
+    clear(box);
+    if (!list.total) { box.appendChild(empty('該当する回答はありません。')); return; }
+    box.appendChild(h('p', { className: 'muted', text: list.total + '件' + (list.limited ? '（新しい順・未対応優先で先頭' + list.cards.length + '件を表示）' : '') }));
+    list.cards.forEach(function (card) { box.appendChild(renderCard(card)); });
+  }
+
+  function render(data) {
+    if (!data || !data.success) {
+      $('error').textContent = errorText(data && data.error && data.error.code);
+      clear($('panel-summary'));
+      return;
+    }
+    $('error').textContent = '';
+    state.data = data;
+    state.statusOptions = data.statusOptions;
+    state.memoMax = data.memoMaxChars;
+    if (!state.brandsLoaded) {
+      data.brands.forEach(function (b) { $('f-brand').appendChild(h('option', { value: b.id, text: b.name })); });
+      data.statusOptions.forEach(function (s) { $('f-status').appendChild(h('option', { value: s, text: s })); });
+      state.brandsLoaded = true;
+    }
+    $('test-note').hidden = data.filter.scope !== 'test';
+    renderSummary(data.summary);
+    renderIssues(data.issues);
+    renderCards(data.list);
+  }
+
+  function load() {
+    $('error').textContent = '';
+    google.script.run
+      .withSuccessHandler(render)
+      .withFailureHandler(function () { $('error').textContent = '読み込みに失敗しました。再読み込みしてください。'; })
+      .getFeedbackDashboard(filter());
+  }
+
+  function selectTab(name) {
+    state.tab = name;
+    ['summary', 'issues', 'cards'].forEach(function (t) {
+      $('tab-' + t).setAttribute('aria-selected', String(t === name));
+      $('panel-' + t).hidden = t !== name;
+    });
+  }
+
+  ['summary', 'issues', 'cards'].forEach(function (t) {
+    $('tab-' + t).addEventListener('click', function () { selectTab(t); });
+  });
+  ['f-brand', 'f-period', 'f-test', 'f-status', 'f-problem'].forEach(function (id) {
+    $(id).addEventListener('change', load);
+  });
+  load();
+})();
+</script>
+</body>
+</html>
