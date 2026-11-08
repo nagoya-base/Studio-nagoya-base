@@ -31,8 +31,8 @@ var IMAGE_EXT = /\.(png|jpe?g|webp|gif|svg|ico|avif)$/i;
 var TEXT_EXT = /\.(html?|md|markdown|css|scss|js|mjs|cjs|gs|json|ya?ml|xml|txt|liquid|sh|toml)$/i;
 var TEXT_BASENAMES = { 'Gemfile': true, '.gitignore': true, 'robots.txt': true };
 
-function git(args) {
-  return childProcess.execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+function git(args, input) {
+  return childProcess.execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', input: input, maxBuffer: 64 * 1024 * 1024 });
 }
 
 function listTrackedFiles() {
@@ -40,24 +40,21 @@ function listTrackedFiles() {
 }
 
 function listImages(files) {
-  var tree = git(['ls-tree', '-r', '-l', 'HEAD', '--'].concat(IMAGE_DIRS.map(function (d) { return d.replace(/\/$/, ''); })));
-  var shaByPath = {};
-  tree.split('\n').filter(Boolean).forEach(function (line) {
-    var m = /^\d+ blob ([0-9a-f]+)\s+(\d+)\t(.+)$/.exec(line);
-    if (m) shaByPath[m[3]] = { sha: m[1], bytes: Number(m[2]) };
-  });
-  return files.filter(function (f) {
-    return IMAGE_EXT.test(f) && IMAGE_DIRS.some(function (d) { return f.indexOf(d) === 0; });
-  }).sort().map(function (f) {
+  var paths = files.filter(function (f) {
+    return IMAGE_EXT.test(f) && IMAGE_DIRS.some(function (d) { return f.indexOf(d) === 0; }) &&
+      fs.existsSync(path.join(ROOT, f));
+  }).sort();
+  /* blob SHA・bytes は作業ツリーの内容から計算する（HEAD 未反映の追加・差し替え・リネームも同じスナップショットで扱う）。 */
+  var shas = paths.length ? git(['hash-object', '--stdin-paths'], paths.join('\n') + '\n').trim().split('\n') : [];
+  return paths.map(function (f, idx) {
     var buf = fs.readFileSync(path.join(ROOT, f));
-    var info = shaByPath[f] || { sha: null, bytes: buf.length };
     var dim = readDimensions(buf, f);
     return {
       path: f,
       dir: path.posix.dirname(f),
       name: path.posix.basename(f),
-      bytes: info.bytes,
-      sha: info.sha,
+      bytes: buf.length,
+      sha: shas[idx],
       format: dim.format,
       width: dim.width,
       height: dim.height,
@@ -146,7 +143,8 @@ function resolveToken(token, sourceFile) {
     /* `{{ include.image_path }}/x.webp` のように Liquid 変数で場所が渡る場合はファイル名のみとして扱う。 */
     return at === -1 ? null : [t.slice(at + 1)];
   }
-  if (!/\//.test(t)) return null; /* ファイル名のみ */
+  /* ファイル名のみ。HTML / CSS では同じディレクトリへの相対パスとして解決し、データ等では名前で照合する。 */
+  if (!/\//.test(t)) return isMarkup && !/^_includes\//.test(sourceFile) ? [path.posix.join(path.posix.dirname(sourceFile), t)] : null;
   if (/^_includes\//.test(sourceFile)) {
     var root = path.posix.normalize(t.replace(/^(\.\.\/)+/, ''));
     return [root, path.posix.normalize('studio-x/' + root)];
@@ -158,6 +156,17 @@ function resolveToken(token, sourceFile) {
   return at2 === -1 ? [] : [t.slice(at2)];
 }
 
+/*
+ * 画像パスらしいトークン（画像拡張子で終わる文字列）を、棚卸し対象の有無と無関係に抽出してから解決する。
+ * 削除・リネームで一覧から消えた画像への参照も、解決できない参照として unresolved に残すため。
+ */
+var TOKEN_RE = /(?:^|[^A-Za-z0-9_.%-])([^\s"'`()<>,\\]*?[A-Za-z0-9_%-]\.(?:png|jpe?g|webp|gif|svg|ico|avif))(?![A-Za-z0-9_-])/gi;
+var SITE_URL_RE = /^https?:\/\/nagoya-base\.github\.io\//i;
+
+function isInImageDirs(p) {
+  return IMAGE_DIRS.some(function (d) { return p.indexOf(d) === 0; });
+}
+
 function scanReferences(images, files) {
   var byPath = {};
   var byName = {};
@@ -165,34 +174,52 @@ function scanReferences(images, files) {
     byPath[img.path] = img;
     (byName[img.name] = byName[img.name] || []).push(img);
   });
-  var names = Object.keys(byName).sort(function (a, b) { return b.length - a.length; });
-  var nameRe = new RegExp('(?:^|[^A-Za-z0-9_.%-])((?:[^\\s"\'`()<>,\\\\]*?)(' + names.map(escapeRegExp).join('|') + '))(?![A-Za-z0-9_-])', 'g');
+  var tracked = {};
+  files.forEach(function (f) { tracked[f] = true; });
   var unresolved = [];
   files.forEach(function (f) {
     if (!isTextFile(f) || IMAGE_EXT.test(f)) return;
     var text;
     try { text = fs.readFileSync(path.join(ROOT, f), 'utf8'); } catch (e) { return; }
+    /* HTML コメント内の説明文（例: 「専用OGP: x.jpg」）は参照ではないため、行番号を保ったまま空白にする。 */
+    if (/\.html?$/.test(f)) text = text.replace(/<!--[\s\S]*?-->/g, function (c) { return c.replace(/[^\n]/g, ' '); });
     var lines = text.split('\n');
     lines.forEach(function (line, idx) {
-      nameRe.lastIndex = 0;
+      TOKEN_RE.lastIndex = 0;
       var m;
-      while ((m = nameRe.exec(line)) !== null) {
+      while ((m = TOKEN_RE.exec(line)) !== null) {
         var token = m[1];
-        var name = m[2];
+        /* 他サイトの画像URLは対象外（自サイトの絶対URLだけを解決する）。 */
+        if (/^[a-z]+:\/\//i.test(token) && !SITE_URL_RE.test(token)) continue;
+        var name = path.posix.basename(token.replace(/[?#].*$/, ''));
+        try { name = decodeURIComponent(name); } catch (e) { /* そのまま */ }
         var targets = resolveToken(token, f);
         var hit = [];
         var fallback = false;
+        var candidates = byName[name] || [];
         if (targets === null) {
-          if (byName[name].length === 1) hit = [byName[name][0]];
-          else unresolved.push({ file: f, line: idx + 1, token: token, reason: 'ambiguous-name' });
+          if (candidates.length === 1) hit = [candidates[0]];
+          else unresolved.push({ file: f, line: idx + 1, token: token, reason: candidates.length ? 'ambiguous-name' : 'unknown-name' });
+        } else if (targets.length === 0) {
+          /* images/ 以外を指すパス（例: studio-x/touch-icon.svg）。実在すれば対象外として扱う。 */
+          var other = /\.(html?|css|md)$/.test(f) ? path.posix.normalize(path.posix.join(path.posix.dirname(f), token.replace(/[?#].*$/, ''))) : null;
+          if (!(other && tracked[other]) && !candidates.length) {
+            unresolved.push({ file: f, line: idx + 1, token: token, reason: 'outside-image-dirs' });
+          } else if (candidates.length === 1 && !other) {
+            hit = [candidates[0]];
+            fallback = true;
+          }
         } else {
           hit = targets.map(function (p) { return byPath[p]; }).filter(Boolean);
           /* テスト・スクリプト内の `images/x` は部分文字列検査のことが多いため、同名が1件なら名前で計上する。 */
-          if (!hit.length && !/\.(html?|css|md)$/.test(f) && byName[name].length === 1) {
-            hit = [byName[name][0]];
+          if (!hit.length && !/\.(html?|css|md)$/.test(f) && candidates.length === 1) {
+            hit = [candidates[0]];
             fallback = true;
           }
-          if (!hit.length) unresolved.push({ file: f, line: idx + 1, token: token, reason: 'no-such-path' });
+          if (!hit.length && !targets.some(function (p) { return tracked[p] && !isInImageDirs(p); })) {
+            /* images/ 外の実在ファイル（例: studio-x/index.html の touch-icon.svg）は画像切れとしない。 */
+            unresolved.push({ file: f, line: idx + 1, token: token, reason: 'no-such-path' });
+          }
         }
         hit.forEach(function (img) {
           img.refs.push({ file: f, line: idx + 1, kind: classifySource(f), nameOnly: targets === null || fallback });
@@ -255,7 +282,14 @@ function run() {
   return { images: images, unresolved: unresolved };
 }
 
-module.exports = { run: run, readDimensions: readDimensions, resolveToken: resolveToken };
+module.exports = {
+  run: run,
+  listTrackedFiles: listTrackedFiles,
+  listImages: listImages,
+  scanReferences: scanReferences,
+  readDimensions: readDimensions,
+  resolveToken: resolveToken
+};
 
 if (require.main === module) {
   var result = run();

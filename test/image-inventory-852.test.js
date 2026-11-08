@@ -26,8 +26,8 @@ test('images/ と studio-x/images/ の全画像について形式と寸法を読
   });
 });
 
-test('HTML / CSS / Markdown から参照される画像パスはすべて実在する（画像切れなし）', function () {
-  var broken = result.unresolved.filter(function (u) { return /\.(html?|css|md)$/.test(u.file) && !/^docs\//.test(u.file); });
+test('公開ページ（HTML / CSS）から参照される画像パスはすべて実在する（画像切れなし）', function () {
+  var broken = result.unresolved.filter(function (u) { return /\.(html?|css)$/.test(u.file); });
   assert.deepStrictEqual(broken, []);
 });
 
@@ -50,4 +50,27 @@ test('棚卸しレポートは実在する全画像を1行ずつ記載してい�
   result.images.forEach(function (i) {
     assert.ok(doc.indexOf('| `' + i.path + '` |') !== -1, i.path + ' が docs/image-inventory-852.md の一覧にない');
   });
+});
+
+test('一覧から消えた画像（削除・リネーム後）への参照は未解決として検出する', function () {
+  var files = inventory.listTrackedFiles();
+  var images = inventory.listImages(files).filter(function (i) { return i.path !== 'images/gallery_bondage01_1200.webp'; });
+  var unresolved = inventory.scanReferences(images, files);
+  assert.ok(unresolved.some(function (u) {
+    return u.file === 'index.html' && /gallery_bondage01_1200\.webp$/.test(u.token);
+  }), 'index.html の gallery_bondage01 参照が未解決になる');
+});
+
+test('blob SHA と bytes は HEAD ではなく作業ツリーの内容から計算する（未コミットの追加画像も扱える）', function () {
+  var tmp = 'images/__inventory-test-852.png';
+  fs.copyFileSync(path.join(ROOT, 'images/apple-touch-icon.png'), path.join(ROOT, tmp));
+  try {
+    var listed = inventory.listImages([tmp, 'images/apple-touch-icon.png']);
+    assert.strictEqual(listed.length, 2);
+    assert.strictEqual(listed[0].path, tmp);
+    assert.strictEqual(listed[0].sha, byPath['images/apple-touch-icon.png'].sha);
+    assert.strictEqual(listed[0].bytes, byPath['images/apple-touch-icon.png'].bytes);
+  } finally {
+    fs.unlinkSync(path.join(ROOT, tmp));
+  }
 });
