@@ -58,7 +58,7 @@ Google Apps Script（GAS）の **公開Web App** と **管理者Web App** の2�
 | 送らない | 選択式のみ・空白のみ／`?test=1`／重複（`DUPLICATE_RESPONSE`）／18歳未満／検証エラー／schema版不一致／rate limit／保存エラー（`BUSY` 等） |
 | 対象の自由記述欄 | `SurveyCore.freeTextFields(schema)` がschemaから導出：`type:"text"` の独立コメント欄（`free_feedback`・`support_message`）と、選択肢の `otherTexts` 追記欄（`country`・`region_other`・`aichi_area_other`・`*_other` 各「その他の内容」・`gender_identity_other`・`sexual_orientation_other`）。schemaへ欄を足せば自動で対象になる。表示条件外で破棄された値は対象外 |
 | 件名 | `【Studio Nagoya Base】アンケートに自由記述の回答がありました` |
-| 本文 | 回答日時、入力のあった欄ごとに `■ 設問名`（追記欄は `設問名 ／ 欄名`）＋本文（schema順に1通へまとめる）、管理画面URL（`SURVEY_ADMIN_URL` 設定時） |
+| 本文 | 回答日時（日本時間。例 `2026/11/08 11:25:40 JST`。スクリプトのタイムゾーン設定に依存しない表示専用の変換で、保存する `timestamp` はISO/UTCのまま。Issue #847）、入力のあった欄ごとに `■ 設問名`（追記欄は `設問名 ／ 欄名`）＋本文（schema順に1通へまとめる）、管理画面URL（`SURVEY_ADMIN_URL` 設定時） |
 | 載せない | 選択式回答、`respondent_hash`、`survey_path`、`is_test`、Spreadsheet ID・トークン類 |
 | 宛先 | Script Properties `SURVEY_NOTIFICATION_EMAIL`（非公開設定。Gitへ書かない） |
 | 失敗時 | 宛先未設定・送信失敗でも回答保存の成功はそのまま返す。Loggerには `survey notify skipped: ...` / `survey notify failed: <例外名>` だけを残す（宛先・本文・hashは記録しない） |

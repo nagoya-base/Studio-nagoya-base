@@ -100,7 +100,8 @@ ENTRIES.forEach(function (entry) {
     assert.strictEqual(mail.subject, SUBJECT);
     var label = Core.findQuestion(schema, 'free_feedback').label;
     assert.ok(mail.body.indexOf('■ ' + label + '\nシャワーの水圧を上げてほしい\n') !== -1);
-    assert.ok(mail.body.indexOf(NOW.toISOString()) !== -1);
+    assert.ok(mail.body.indexOf('回答日時: 2026/11/08 12:00:00 JST\n') !== -1, '回答日時はJST表示（#847）');
+    assert.strictEqual(mail.body.indexOf(NOW.toISOString()), -1);
     assert.ok(mail.body.indexOf('https://example.com/admin') !== -1);
   });
 });
