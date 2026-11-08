@@ -327,7 +327,6 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 - `how-to/index.html` / `how-to/en.html` / `mens/how-to/index.html`
 - `legal/index.html` / `legal/en.html` / `mens/legal/index.html`（`_includes/legal_ja.html` 経由で共通化）
 - `studio-x/index.html` / `studio-x/legal/index.html` / `studio-x/reservation/index.html`
-- `archive/index.html` / `archive/how-to/index.html`
 
 ### 確認できる主な指標
 
