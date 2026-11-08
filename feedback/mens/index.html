@@ -1,0 +1,52 @@
+---
+---
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 回答用トークン（#t=…）をリファラ・外部へ渡さない。GA4等の解析タグは読み込まない（Issue #835）。 -->
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src https://script.google.com https://script.googleusercontent.com; base-uri 'none'; form-action 'none'">
+
+<title>ご利用後アンケート | SNB mens</title>
+
+<meta name="description" content="SNB mensをご利用いただいた方向けのアンケートです（約2〜3分）。">
+<meta name="robots" content="noindex, nofollow">
+<link rel="canonical" href="https://nagoya-base.github.io/Studio-nagoya-base/feedback/mens/">
+
+<meta property="og:title" content="ご利用後アンケート | SNB mens">
+<meta property="og:description" content="SNB mensをご利用いただいた方向けのアンケートです（約2〜3分）。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/feedback/mens/">
+<meta property="og:image" content="https://nagoya-base.github.io/Studio-nagoya-base/images/mens-preview-ogp-1200x630.jpg">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:site_name" content="SNB mens">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="../../images/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../../styles/feedback.css?v={{ site.time | date: '%s' }}">
+</head>
+
+<body data-brand="mens">
+<main class="fb-page">
+  <p class="fb-back"><a href="https://nagoya-base.github.io/Studio-nagoya-base/mens/" rel="noreferrer">← SNB mens に戻る</a></p>
+  <header class="fb-header">
+    <img class="fb-logo" src="../../images/logo.svg" width="48" height="48" alt="">
+    <div>
+      <p class="fb-brand-name">SNB mens</p>
+      <p class="fb-brand-sub">ご利用後アンケート</p>
+    </div>
+  </header>
+
+  <div id="feedback-app" data-brand="mens" aria-live="polite">
+    <noscript><p class="fb-error">このアンケートの回答にはJavaScriptを有効にしてください。</p></noscript>
+    <p class="fb-hint">読み込み中…</p>
+  </div>
+</main>
+
+<script src="../../scripts/feedback-core.js?v={{ site.time | date: '%s' }}"></script>
+<script src="../../scripts/feedback-config.js?v={{ site.time | date: '%s' }}"></script>
+<script src="../../scripts/feedback-app.js?v={{ site.time | date: '%s' }}"></script>
+</body>
+</html>
