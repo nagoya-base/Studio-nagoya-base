@@ -467,7 +467,6 @@ test('#660: 作品切替は1作品あたり画面高の約70%（svh基準）で�
 });
 
 /* Issue #641: ヒーロー・OGP画像の差し替え（生成画像の実寸・参照の整合） */
-function pngSize(buf) { return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) }; }
 function jpegSize(buf) {
   var i = 2;
   while (i < buf.length) {
@@ -481,7 +480,7 @@ function jpegSize(buf) {
 test('#641: OGP画像は1200x630、ヒーロー画像は元画像と同じ縦横比で幅1600以内（拡大なし）', function () {
   var ogp = jpegSize(fs.readFileSync(path.join(ROOT, 'images', 'mens-preview-ogp-1200x630.jpg')));
   assert.deepStrictEqual(ogp, { w: 1200, h: 630 });
-  var src = pngSize(fs.readFileSync(path.join(ROOT, 'images', 'F035A90C-B055-4850-97DF-7EF808B832D9.png')));
+  var src = { w: 1730, h: 909 }; /* 元PNG（F035A90C…, 削除済み）の寸法 */
   var webp = fs.readFileSync(path.join(ROOT, 'images', 'mens-preview-hero.webp'));
   assert.strictEqual(webp.slice(0, 4).toString(), 'RIFF');
   assert.strictEqual(webp.slice(8, 12).toString(), 'WEBP');
@@ -494,8 +493,7 @@ test('#641: OGP画像は1200x630、ヒーロー画像は元画像と同じ縦横
   assert.ok(html.indexOf('<link rel="preload" as="image" href="../images/mens-preview-hero.webp"') !== -1);
   assert.strictEqual(html.indexOf('ogp-mens-v2'), -1, '試作は旧OGPを参照しない');
 });
-test('#641/#658: 元画像は変更せず、本番トップは試作の専用OGP・HERO画像を参照する（旧OGPとの一致検査は#658で意図して外した）', function () {
-  assert.ok(fs.existsSync(path.join(ROOT, 'images', 'F035A90C-B055-4850-97DF-7EF808B832D9.png')));
+test('#641/#658: 本番トップは試作の専用OGP・HERO画像を参照する（旧OGPとの一致検査は#658で意図して外した）', function () {
   assert.ok(fs.existsSync(path.join(ROOT, 'images', 'ogp-mens-v2-1200x630.jpg')), '旧OGP画像はmens会員ページ等が参照するため残す');
   var prod = read('mens/index.html');
   assert.ok(prod.indexOf('images/mens-preview-ogp-1200x630.jpg') !== -1);
