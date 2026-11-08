@@ -183,6 +183,52 @@ test('保存失敗: 編集内容を保持してエラーを表示し、もう一
   assert.strictEqual(cardParts(p.cards()[0]).badge.textContent, '対応中', '再取得後のカードに反映');
 });
 
+test('保存後の再読込でも、他のカードの未保存の編集と、保存中に追加した編集は失われない', function () {
+  var p = setup();
+  p.submit('snb', { comment: 'A' });
+  p.submit('mens', { comment: 'B' });
+  p.start();
+  p.flush();
+  function byComment(text) {
+    return p.cards().filter(function (c) { return c.textContent.indexOf('自由記述') === -1 && c.findAll(function (n) { return n.hasClass('comment'); })[0].textContent === text; })[0];
+  }
+  function dirtyNote(card) { return card.findAll(function (n) { return n.textContent === '未保存の変更があります。'; })[0]; }
+
+  /* カードBを編集したまま保存しない */
+  var b = cardParts(byComment('B'));
+  b.select.value = '対応中'; b.select.dispatch('change');
+  b.memo.value = 'B の下書き'; b.memo.dispatch('input');
+  assert.strictEqual(dirtyNote(byComment('B')).hidden, false);
+
+  /* カードAを保存し、保存中にさらにメモを書き足す */
+  var a = cardParts(byComment('A'));
+  a.select.value = '対応済み'; a.select.dispatch('change');
+  a.memo.value = '1回目'; a.memo.dispatch('input');
+  a.save.click();
+  a.memo.value = '1回目＋追記'; a.memo.dispatch('input');
+  p.flush();
+
+  var b2 = cardParts(byComment('B'));
+  assert.strictEqual(b2.select.value, '対応中', 'B の未保存の状況が残る');
+  assert.strictEqual(b2.memo.value, 'B の下書き', 'B の未保存のメモが残る');
+  assert.strictEqual(dirtyNote(byComment('B')).hidden, false);
+  var a2 = cardParts(byComment('A'));
+  assert.strictEqual(p.pub.rows()[0].memo, '1回目', '保存されたのは送信時点の内容');
+  assert.strictEqual(a2.memo.value, '1回目＋追記', '保存中に追記した内容は下書きとして残る');
+  assert.strictEqual(dirtyNote(byComment('A')).hidden, false);
+
+  /* 追記を保存すると下書きは消える */
+  a2.save.click();
+  p.flush();
+  assert.strictEqual(p.pub.rows()[0].memo, '1回目＋追記');
+  assert.strictEqual(dirtyNote(byComment('A')).hidden, true);
+  /* 元の値に戻すと未保存扱いではなくなる */
+  var b3 = cardParts(byComment('B'));
+  b3.select.value = '未対応'; b3.select.dispatch('change');
+  b3.memo.value = ''; b3.memo.dispatch('input');
+  assert.strictEqual(dirtyNote(byComment('B')).hidden, true);
+});
+
 test('フィルタを続けて変えたとき、古い要求の応答は表示に反映しない', function () {
   var p = setup();
   p.submit('snb', { comment: 'snbの回答' });

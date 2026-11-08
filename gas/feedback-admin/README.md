@@ -14,6 +14,7 @@ SNB・SNB mens・Studio X の利用後アンケート（#835）の回答を、**
 | 画面（スマホ/PC） | `gas/feedback-admin/FeedbackAdminPage.html` |
 | 集計・カード生成・更新入力の検証（純粋関数） | `scripts/feedback-analytics.js` |
 | 回答Spreadsheetの識別・ヘッダ確認（#835と共通） | `gas/feedback/FeedbackRepository.gs` |
+| 保持期間による月次削除（本番180日・テスト30日） | `gas/feedback-admin/FeedbackMaintenance.gs` |
 | 配布物の組み立て | `scripts/prepare-feedback-admin-gas-project.js` |
 
 公開Web App（`gas/feedback/`。回答受付・通知）とは**別のGASプロジェクト**です。管理者プロジェクトには回答受付（doPost）・通知・トークン処理を含めません。
@@ -50,6 +51,13 @@ SNB・SNB mens・Studio X の利用後アンケート（#835）の回答を、**
 | `FEEDBACK_SPREADSHEET_ID` | #835 で作った利用後アンケート専用Spreadsheet のID（公開Web Appと同じ値） |
 | `FEEDBACK_ADMIN_EMAILS` | 閲覧・更新を許可するGoogleアカウント（カンマ区切り）。未設定だと全員拒否 |
 
+## 月次削除を管理者プロジェクトで行う理由
+
+行を削除すると、それより下の行番号がずれます。対応更新（`updateFeedbackStatus`）は `response_id` で行を特定してから書き込むため、
+削除が別プロジェクト（別ロック）で同時に走ると、ずれた後の行＝別の回答に書き込むおそれがあります。
+そこで削除（`purgeExpiredFeedbackResponses`）を**同じ管理者プロジェクトに置き、同じ `LockService.getScriptLock()` で直列化**しています。
+公開Web Appは末尾への追記だけを行い、既存行を動かしません（トリガー作成用の `script.scriptapp` 権限も公開側からは外しました）。
+
 ## 初期設定（オーナーの承認後に実施）
 
 1. 配布物を組み立てる（`.gas-deploy/` は `.gitignore` 済み）：
@@ -60,6 +68,7 @@ SNB・SNB mens・Studio X の利用後アンケート（#835）の回答を、**
 3. スクリプト プロパティに `FEEDBACK_SPREADSHEET_ID` と `FEEDBACK_ADMIN_EMAILS` を登録する。
 4. 「デプロイ → 新しいデプロイ → ウェブアプリ」：次のユーザーとして実行 **ウェブアプリケーションにアクセスしているユーザー**、アクセスできるユーザー **自分のみ**。
 5. 発行された `/exec` URL をスマホのブラウザで開き、ホーム画面に追加（ブックマーク）する。URLはGitやIssueに書かない。
+6. 管理者プロジェクトのエディタで `installFeedbackRetentionTrigger` を1回実行する（毎月1日4時台に保持期間切れの行を削除。初回は `script.scriptapp` の認可を許可）。止めるときは「トリガー」から `purgeExpiredFeedbackResponses` を削除する。
 
 ## 手動確認（公開前）
 

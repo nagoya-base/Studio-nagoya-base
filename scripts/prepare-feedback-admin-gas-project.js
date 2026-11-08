@@ -21,6 +21,7 @@ var FILES = [
   ['FeedbackAnalytics.gs', 'scripts/feedback-analytics.js'],
   ['FeedbackRepository.gs', 'gas/feedback/FeedbackRepository.gs'],
   ['FeedbackAdmin.gs', 'gas/feedback-admin/FeedbackAdmin.gs'],
+  ['FeedbackMaintenance.gs', 'gas/feedback-admin/FeedbackMaintenance.gs'],
   ['FeedbackAdminPage.html', 'gas/feedback-admin/FeedbackAdminPage.html'],
   ['appsscript.json', 'gas/feedback-admin/appsscript.json']
 ];

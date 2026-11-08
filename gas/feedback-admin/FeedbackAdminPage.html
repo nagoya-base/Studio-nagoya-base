@@ -58,6 +58,7 @@
   .state { font-size:13px; min-height:1.6em; margin:0; }
   .state.ok { color:var(--done); }
   .state.ng { color:var(--open); }
+  .dirty { margin:0; font-size:13px; color:var(--doing); font-weight:700; }
   .empty { text-align:center; color:var(--muted); padding:24px 8px; }
   #error { color:var(--open); }
   [hidden] { display:none !important; }
@@ -128,6 +129,9 @@
   var state = { tab: 'summary', data: null, statusOptions: [], memoMax: 200, brandsLoaded: false };
   /* 最新の読み込み要求の番号。古い要求の応答は表示しない（フィルタを素早く切り替えたときの上書き防止）。 */
   var latestRequest = 0;
+  /* 未保存の編集（response_id → { status, memo }）。保存後や絞り込みの再読込でカードを描き直しても、
+     他のカードで編集中の内容を失わないように保持し、描き直したカードへ戻す。 */
+  var drafts = {};
 
   function $(id) { return document.getElementById(id); }
 
@@ -240,20 +244,31 @@
       h('dl', {}, card.details.reduce(function (list, d) { return list.concat([h('dt', { text: d.label }), h('dd', { text: d.value })]); }, []))
     ]));
 
+    var draft = drafts[card.responseId];
     var select = h('select', { 'aria-label': '対応状況' });
     state.statusOptions.forEach(function (s) {
       var option = h('option', { value: s, text: s });
-      if (s === card.status) option.selected = true;
+      if (s === (draft ? draft.status : card.status)) option.selected = true;
       select.appendChild(option);
     });
     var memo = h('textarea', { 'aria-label': 'メモ', maxlength: String(state.memoMax), placeholder: 'メモ（' + state.memoMax + '字まで）' });
-    memo.value = card.memo || '';
+    memo.value = draft ? draft.memo : (card.memo || '');
+    var dirtyNote = h('p', { className: 'dirty', text: '未保存の変更があります。' });
+    dirtyNote.hidden = !draft;
+    function remember() {
+      if (select.value === card.status && memo.value === (card.memo || '')) delete drafts[card.responseId];
+      else drafts[card.responseId] = { status: select.value, memo: memo.value };
+      dirtyNote.hidden = !drafts[card.responseId];
+    }
+    select.addEventListener('change', remember);
+    memo.addEventListener('input', remember);
     var save = h('button', { type: 'button', className: 'save', text: '保存' });
     var status = h('p', { className: 'state', role: 'status', 'aria-live': 'polite' });
     save.addEventListener('click', function () {
       save.disabled = true;
       status.className = 'state';
       status.textContent = '保存中…';
+      var sent = { status: select.value, memo: memo.value };
       google.script.run
         .withSuccessHandler(function (result) {
           save.disabled = false;
@@ -262,6 +277,9 @@
             status.textContent = '保存できませんでした：' + errorText(result && result.error && result.error.code) + ' もう一度「保存」を押すと再試行します。';
             return;
           }
+          /* 保存した内容と同じなら下書きを消す。保存中にさらに編集していた場合は下書きを残す。 */
+          var current = drafts[card.responseId];
+          if (current && current.status === sent.status && current.memo === sent.memo) delete drafts[card.responseId];
           card.status = result.card.status;
           card.memo = result.card.memo;
           badge.textContent = card.status;
@@ -277,10 +295,10 @@
           status.className = 'state ng';
           status.textContent = '通信に失敗しました。もう一度「保存」を押すと再試行します。';
         })
-        .updateFeedbackStatus({ responseId: card.responseId, brand: card.brand, status: select.value, memo: memo.value });
+        .updateFeedbackStatus({ responseId: card.responseId, brand: card.brand, status: sent.status, memo: sent.memo });
     });
     el.appendChild(h('div', { className: 'edit' }, [
-      h('label', { className: 'muted', text: '対応状況' }), select, memo, save, status
+      h('label', { className: 'muted', text: '対応状況' }), select, memo, dirtyNote, save, status
     ]));
     return el;
   }

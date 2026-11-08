@@ -5,6 +5,12 @@
  * - installFeedbackRetentionTrigger() をGASエディタから1回実行すると、毎月1日4時台に
  *   purgeExpiredFeedbackResponses が動くトリガーを作る（同名トリガーは作り直すので冪等）。
  * - 削除件数だけをログに残す（回答内容は記録しない）。
+ *
+ * 置き場所は管理者プロジェクト（gas/feedback-admin/）。行を削除すると以降の行番号がずれるため、
+ * 行番号を特定して書き込む対応更新（FeedbackAdmin.gs の updateFeedbackStatus）と**同じプロジェクト＝同じ
+ * LockService.getScriptLock()** で直列化する（別プロジェクト同士のスクリプトロックは互いに排他にならない。#849 レビュー）。
+ * 公開Web App（gas/feedback/）は末尾への追記だけで既存行を動かさない。
+ * トリガーは管理者プロジェクトのエディタから installFeedbackRetentionTrigger() を実行して作る（作成者＝オーナーとして実行される）。
  */
 'use strict';
 

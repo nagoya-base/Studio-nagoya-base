@@ -41,6 +41,8 @@ function createSheet(name) {
         setValues: function (values) {
           /* _failAfterWrites: この回数の書き込みが成功した後は失敗させる（途中失敗の再現用） */
           if (typeof sheet._failAfterWrites === 'number' && sheet._writes.length >= sheet._failAfterWrites) throw new Error('write failed');
+          /* _beforeWrite: 書き込みの直前に割り込ませる処理（並行実行の再現用。1回だけ呼ぶ） */
+          if (sheet._beforeWrite) { var hook = sheet._beforeWrite; sheet._beforeWrite = null; hook(row, col); }
           sheet._writes.push({ row: row, col: col, numRows: numRows, numCols: numCols });
           for (var r = 0; r < values.length; r++) {
             rows[row - 1 + r] = rows[row - 1 + r] || [];

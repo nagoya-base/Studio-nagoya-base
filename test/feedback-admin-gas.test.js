@@ -44,12 +44,12 @@ function world(adminOptions, publicOptions) {
 
 test('配布物: 管理者プロジェクトは回答受付・通知を含まず、アクセスしているユーザーとして自分のみで実行', function () {
   var names = prepareAdmin.fileNames();
-  assert.deepStrictEqual(names, ['FeedbackCore.gs', 'FeedbackAnalytics.gs', 'FeedbackRepository.gs', 'FeedbackAdmin.gs', 'FeedbackAdminPage.html', 'appsscript.json']);
+  assert.deepStrictEqual(names, ['FeedbackCore.gs', 'FeedbackAnalytics.gs', 'FeedbackRepository.gs', 'FeedbackAdmin.gs', 'FeedbackMaintenance.gs', 'FeedbackAdminPage.html', 'appsscript.json']);
   assert.ok(names.indexOf('FeedbackWebApp.gs') === -1 && names.indexOf('FeedbackTokens.gs') === -1);
   var manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'gas/feedback-admin/appsscript.json'), 'utf8'));
   assert.strictEqual(manifest.webapp.access, 'MYSELF');
   assert.strictEqual(manifest.webapp.executeAs, 'USER_ACCESSING');
-  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
+  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/script.scriptapp']);
   var admin = fs.readFileSync(path.join(__dirname, '..', 'gas/feedback-admin/FeedbackAdmin.gs'), 'utf8');
   assert.ok(!/MailApp|doPost|SURVEY_|BOOKING/.test(admin));
 });
@@ -178,6 +178,36 @@ test('status と memo は1回の書き込みで更新する（途中で失敗し
   assert.strictEqual(w.pub.rows()[1].memo, '再試行');
 });
 
+test('月次削除と対応更新は同じプロジェクトのロックで直列化し、削除で行がずれて別の回答へ書くことはない', function () {
+  var w = world();
+  var sheet = w.pub.sheet('responses');
+  w.submit('snb', { comment: '古い回答' });
+  w.submit('mens', { comment: '対象の回答' });
+  w.submit('studio-x', { comment: '別の回答' });
+  /* 1行目（snb）を保持期間切れにする */
+  sheet._rows[1][Core.COLUMNS.indexOf('received_at')] = new Date(NOW.getTime() - 200 * 86400000).toISOString();
+  var targetId = w.pub.rows()[1].response_id;
+  var otherId = w.pub.rows()[2].response_id;
+
+  /* 対応更新が行を特定した後、書き込む直前に月次削除が割り込もうとする */
+  var purge = null;
+  w.admin.sandbox.__now = NOW;
+  sheet._beforeWrite = function () { purge = w.admin.run('purgeExpiredFeedbackResponses(__now)'); };
+  var result = w.update({ responseId: targetId, brand: 'mens', status: '対応済み', memo: '対応した' });
+  assert.strictEqual(result.success, true);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(purge)), { deleted: 0, skipped: true }, '更新中は削除がロックを取れず待つ（今回は見送り）');
+  var byId = {};
+  w.pub.rows().forEach(function (r) { byId[r.response_id] = r; });
+  assert.strictEqual(byId[targetId].status, '対応済み');
+  assert.strictEqual(byId[targetId].memo, '対応した');
+  assert.strictEqual(byId[otherId].status, '未対応', '別ブランドの回答には書かない');
+  assert.strictEqual(byId[otherId].memo, '');
+
+  /* 次回の削除で保持期間切れの行が消え、更新内容はそのまま残る */
+  assert.strictEqual(w.admin.run('purgeExpiredFeedbackResponses(__now)').deleted, 1);
+  assert.deepStrictEqual(w.pub.rows().map(function (r) { return [r.response_id === targetId, r.status]; }), [[true, '対応済み'], [false, '未対応']]);
+});
+
 test('memo の数式は無害化して保存し、画面へは元の文字で返す', function () {
   var w = world();
   w.submit('snb', { comment: 'x' });
@@ -216,7 +246,7 @@ test('管理画面HTML: textContent 描画・google.script.run だけで通信�
   var html = fs.readFileSync(path.join(__dirname, '..', 'gas/feedback-admin/FeedbackAdminPage.html'), 'utf8');
   assert.ok(!/innerHTML|insertAdjacentHTML|document\.write|eval\(/.test(html));
   assert.ok(!/fetch\(|XMLHttpRequest|googletagmanager|gtag\(/.test(html));
-  assert.match(html, /\.updateFeedbackStatus\(\{ responseId: card\.responseId, brand: card\.brand, status: select\.value, memo: memo\.value \}\)/);
+  assert.match(html, /\.updateFeedbackStatus\(\{ responseId: card\.responseId, brand: card\.brand, status: sent\.status, memo: sent\.memo \}\)/);
   assert.match(html, /\.getFeedbackDashboard\(filter\(\)\)/);
   /* 古いフィルタ要求の応答で新しい表示を上書きしない */
   assert.match(html, /var requestId = \+\+latestRequest;/);
