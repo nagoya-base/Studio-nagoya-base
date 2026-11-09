@@ -270,7 +270,17 @@ var EXCLUDED = {
   addPersonalDataRetentionMemberHold: '保留シートへの追記（個人情報を持たない）',
   resolvePersonalDataRetentionMemberHold: '保留シートの解決日時（個人情報を持たない）',
   createPersonalDataRetentionTrigger: 'トリガーの設定（シートへ書かない）',
-  removePersonalDataRetentionTriggers: 'トリガーの削除（シートへ書かない）'
+  removePersonalDataRetentionTriggers: 'トリガーの削除（シートへ書かない）',
+  /* Issue #834: 利用後アンケートの案内メール。Bookings等の予約系シートへは書かず、FeedbackInvites（予約ID・状態・日時・エラーコードのみ。個人情報なし）だけに書く。 */
+  setupFeedbackInvites: 'FeedbackInvitesシートの見出し作成のみ（予約系シートへ書かない）',
+  sendFeedbackInvites: 'アンケート案内の送信。予約は読むだけで、FeedbackInvites（個人情報なし）だけに書く',
+  dryRunFeedbackInvites: 'アンケート案内のdry-run（何も書かない）',
+  createFeedbackInviteTrigger: 'トリガーの設定（シートへ書かない）',
+  sendFeedbackInviteFromProperty: 'アンケート案内の手動送信。予約は読むだけで、FeedbackInvites（個人情報なし）だけに書く',
+  getFeedbackInviteStateFromProperty: 'アンケート案内の状態確認（読み取りのみ）',
+  purgeExpiredFeedbackInvites: 'FeedbackInvitesの180日経過行の削除（予約系シートへ書かない）',
+  dryRunFeedbackInvitePurge: 'FeedbackInvites削除のdry-run（何も書かない）',
+  createFeedbackInvitePurgeTrigger: 'トリガーの設定（シートへ書かない）'
 };
 
 test('構造: Booking Admin の公開関数は、すべて操作の表か除外の表（理由つき）のどちらかに分類されている。増えたらここで落ちる', function () {

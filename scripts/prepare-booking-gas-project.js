@@ -29,7 +29,18 @@ function usage() {
   );
 }
 
+/*
+ * gas/booking/ の外に正本がある配布ファイル（配布名 → リポジトリ相対パス）。
+ * Issue #834: 回答リンクのトークン処理は回答用GAS（gas/feedback/）と同じファイルを配るため scripts/ に置く。
+ */
+var EXTERNAL_SOURCE_FILES = {
+  'FeedbackTokenCore.gs': 'scripts/feedback-token-core.js'
+};
+
 function findSourceFile(repositoryRoot, target, fileName) {
+  if (Object.prototype.hasOwnProperty.call(EXTERNAL_SOURCE_FILES, fileName)) {
+    return path.join(repositoryRoot, EXTERNAL_SOURCE_FILES[fileName]);
+  }
   var candidates = [
     path.join(repositoryRoot, 'gas', 'booking', 'shared', fileName),
     path.join(repositoryRoot, 'gas', 'booking', target, fileName)
@@ -115,5 +126,6 @@ if (require.main === module) {
 
 module.exports = {
   prepareProject: prepareProject,
+  EXTERNAL_SOURCE_FILES: EXTERNAL_SOURCE_FILES,
   ADMIN_REQUIRED_OAUTH_SCOPES: ADMIN_REQUIRED_OAUTH_SCOPES
 };

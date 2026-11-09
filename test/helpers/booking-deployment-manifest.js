@@ -102,7 +102,11 @@ var BOOKING_ADMIN_FILES = [
   /* Issue #673: Bookingsシートの不足末尾列を追加する管理者用migration（エディタから手動実行）。Booking Admin専用で、Public・Webhookには配布しない。 */
   'BookingsSchemaMigration.gs',
   /* Issue #680: Bookings台帳の個人情報を180日経過後に消去する運用基盤（初期無効・dry-run必須）。Booking Admin専用で、Public・Webhookには配布しない。 */
-  'PersonalDataRetention.gs'
+  'PersonalDataRetention.gs',
+  /* Issue #834: 利用後アンケートの回答リンク（署名トークン）。元ファイルは scripts/feedback-token-core.js（回答用GASと同じファイル）。 */
+  'FeedbackTokenCore.gs',
+  /* Issue #834: 利用終了2時間後のアンケート案内メール（初期OFF・dry-runあり）。Booking Admin専用。 */
+  'FeedbackInvites.gs'
 ];
 
 /* Code.gs/RateLimiter.gs/AdminNotifier.gsはcreateBooking専用のためBooking Adminには

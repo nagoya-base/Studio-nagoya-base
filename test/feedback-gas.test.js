@@ -37,8 +37,8 @@ function installMockTokens(project, state) {
   return calls;
 }
 
-test('配布物: コア＋GAS 4ファイル。既存 survey の配布物・Booking と共有しない', function () {
-  assert.deepStrictEqual(prepare.fileNames(), ['FeedbackCore.gs', 'FeedbackTokens.gs', 'FeedbackRepository.gs', 'FeedbackWebApp.gs', 'appsscript.json']);
+test('配布物: コア＋トークン＋GAS 4ファイル。既存 survey の配布物・Booking と共有しない', function () {
+  assert.deepStrictEqual(prepare.fileNames(), ['FeedbackCore.gs', 'FeedbackTokenCore.gs', 'FeedbackTokens.gs', 'FeedbackRepository.gs', 'FeedbackWebApp.gs', 'appsscript.json']);
   prepare.FILES.forEach(function (entry) { assert.ok(!/survey|booking/.test(entry[1]), entry[1]); });
   var manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'gas/feedback/appsscript.json'), 'utf8'));
   assert.strictEqual(manifest.webapp.access, 'ANYONE_ANONYMOUS');

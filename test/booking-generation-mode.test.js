@@ -531,7 +531,9 @@ test('Booking Admin: BookingTestCredential.gsを配布せず、署名鍵・資�
 
   var gasDir = path.join(__dirname, '..', 'gas', 'booking');
   manifest.BOOKING_ADMIN_FILES.forEach(function (file) {
-    var found = ['shared', 'admin', 'public'].map(function (dir) { return path.join(gasDir, dir, file); }).filter(function (p) { return fs.existsSync(p); })[0];
+    var external = require('../scripts/prepare-booking-gas-project').EXTERNAL_SOURCE_FILES;
+    var found = external[file] ? path.join(__dirname, '..', external[file])
+      : ['shared', 'admin', 'public'].map(function (dir) { return path.join(gasDir, dir, file); }).filter(function (p) { return fs.existsSync(p); })[0];
     var source = fs.readFileSync(found, 'utf8');
     assert.ok(!/BOOKING_TEST_CREDENTIAL_KEY|BOOKING_TEST_ALLOWED_EMAILS|BOOKING_TEST_REVOKED_IDS|BookingTestCredential\.(verify|issue|revoke)/.test(source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')) ||
       file === 'BookingGenerationMode.gs', file + 'にテスト資格の鍵・設定を持たない');

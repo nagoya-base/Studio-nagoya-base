@@ -58,6 +58,17 @@ SNB・SNB mens・Studio X の利用後アンケート（#835）の回答を、**
 そこで削除（`purgeExpiredFeedbackResponses`）を**同じ管理者プロジェクトに置き、同じ `LockService.getScriptLock()` で直列化**しています。
 公開Web Appは末尾への追記だけを行い、既存行を動かしません（トリガー作成用の `script.scriptapp` 権限も公開側からは外しました）。
 
+## 利用後アンケート関連の定期削除（一覧。#834 で追加分を含む）
+
+| 対象 | 実行するGASプロジェクト | 関数・トリガー | 保持期間 | 作り方 |
+| --- | --- | --- | --- | --- |
+| 回答（`responses`） | 管理者GAS（`gas/feedback-admin/`） | `purgeExpiredFeedbackResponses`・毎月1日4時台 | 本番180日・テスト30日 | `installFeedbackRetentionTrigger` を1回実行 |
+| 使用済みトークン（`token_uses`） | 回答用 公開GAS（`gas/feedback/`） | `purgeExpiredFeedbackTokenUses`・**毎月1日4時台** | リンク期限（利用終了＋14日）から1日 | GASの「トリガー」画面で手動作成（公開側は `script.scriptapp` 権限なし） |
+| 案内メールの送信履歴（Booking の `FeedbackInvites`） | Booking Admin | `purgeExpiredFeedbackInvites`・毎日4時台 | 180日（行の最も遅い日時から） | `createFeedbackInvitePurgeTrigger`（`createFeedbackInviteTrigger` も作る） |
+
+それぞれ、書き込みと同じGASプロジェクトのスクリプトロック内で削除します（別プロジェクトのロックは互いに排他にならないため）。
+確認: `responses` は管理画面、`token_uses` は回答用GASの `getFeedbackTokenLedgerStatus`（`purgeable` が翌月まで残るならトリガー未作成・停止）、`FeedbackInvites` は Booking Admin の `dryRunFeedbackInvitePurge`（`expired` が翌日以降も残るなら同様）。
+
 ## 初期設定（オーナーの承認後に実施）
 
 1. 配布物を組み立てる（`.gas-deploy/` は `.gitignore` 済み）：

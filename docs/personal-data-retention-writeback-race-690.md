@@ -113,7 +113,7 @@ Booking Adminの公開関数（管理画面`admin*`、メニュー、時間主�
 - 読み取り・診断: `getAdminBookings`、`getAdminBookingDetail`、`getAdminPaymentRecoveries`、`adminGetBookingChanges`、`diagnoseReminderEligibility`、`previewReminderMail`、`sendReminderTestMail`（`NOT_NEXT_DAY`）。
 - 新規予約: `adminCreateBooking`（新しい行を追加する。古い行を読まない）。
 - 時間主導トリガー: `expirePendingBookings`（PENDINGのみ）、`sendNextDayReminders`・`sendNextDayReminderCatchUp`（翌日の確定予約のみ）、`processPendingStripeWebhookEvents`（§6）。古い行には書かなかった。
-- 公開関数のうち表に入れないもの（メニュー登録・トリガー設定・見出し行の列追加・消去本体の設定／保留）は、構造テストの`EXCLUDED`に理由つきで記録している。
+- 公開関数のうち表に入れないもの（メニュー登録・トリガー設定・見出し行の列追加・消去本体の設定／保留）は、構造テストの`EXCLUDED`に理由つきで記録している。Issue #834の利用後アンケート案内（`sendFeedbackInvites` ほか）も、予約系シートへは書かず個人情報を持たない `FeedbackInvites` シートだけに書くため、`EXCLUDED`に記録している。
 
 ### 9.4 この対応付けから分かったこと
 - 上の6種類の古い予約と合成の引数で観測した範囲では、古い行のセルへ書き込む操作は §9.1 の4系統だけで、**個人情報の列を含む連続範囲を書くのは、関数内で行を読み直すAtomic系**と、**その操作自身が作る新しい文言**（診断文・今回の入力）に限られる。ロック外で読んだ個人情報を後で書く操作は見つからなかった。
