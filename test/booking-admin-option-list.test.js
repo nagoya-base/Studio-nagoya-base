@@ -260,3 +260,77 @@ test('Issue #864: 台帳の読み取りに失敗しても計測ログは出て�
   assert.strictEqual(typeof result.serverTiming.totalMs, 'number');
   assert.strictEqual(result.serverTiming.optionOrdersRows, undefined, '未計測の項目はキー自体を付けない');
 });
+
+/* ---------- Issue #864: 一覧取得内でのスプレッドシート共有 ---------- */
+
+function countOpenById_(ctx, fn) {
+  var original = ctx.globals.SpreadsheetApp.openById;
+  var count = 0;
+  ctx.globals.SpreadsheetApp.openById = function () { count += 1; return original.apply(this, arguments); };
+  try {
+    return { result: fn(), count: count };
+  } finally {
+    ctx.globals.SpreadsheetApp.openById = original;
+  }
+}
+
+function stripTiming_(result) {
+  var copy = JSON.parse(JSON.stringify(result));
+  delete copy.serverTiming;
+  return copy;
+}
+
+test('Issue #864: getAdminBookingsはスプレッドシートを1回だけ開き、Bookings・OptionOrdersの両方に使う', function () {
+  var ctx = setup();
+  var id = createRoom(ctx);
+  addOrder(ctx, id);
+  var measured = countOpenById_(ctx, function () { return ctx.sandbox.getAdminBookings(); });
+  assert.strictEqual(measured.count, 1, 'openByIdは一覧取得1回につき1回');
+  assert.strictEqual(typeof measured.result.serverTiming.spreadsheetOpenMs, 'number');
+  assert.strictEqual(measured.result.serverTiming.optionOrdersRows, 1);
+});
+
+test('Issue #864: スプレッドシート共有の有無で一覧の結果（予約・オプション状態・件数）は変わらない', function () {
+  var ctx = setup();
+  var withOption = createRoom(ctx);
+  addOrder(ctx, withOption);
+  addOrder(ctx, withOption, { category: 'EQUIPMENT_RENTAL', approvalStatus: 'APPROVED', status: 'PENDING_PAYMENT', paymentStatus: 'NOT_STARTED' });
+  createRoom(ctx, { brand: 'snb', paymentMethod: 'オンラインクレジットカード' });
+  createRoom(ctx, { paymentMethod: 'オンラインクレジットカード', startTime: '15:00' });
+
+  var shared = ctx.sandbox.getAdminBookings();
+
+  /* 変更前の動き（各Repositoryが自分でスプレッドシートを開く）を再現して比較する。 */
+  var originalListAll = ctx.sandbox.OptionOrderRepository.listAll;
+  var originalGetAll = ctx.sandbox.SpreadsheetRepository.getAllBookings;
+  ctx.sandbox.OptionOrderRepository.listAll = function (stats) { return originalListAll(stats); };
+  ctx.sandbox.SpreadsheetRepository.getAllBookings = function () { return originalGetAll(); };
+  var separate = countOpenById_(ctx, function () { return ctx.sandbox.getAdminBookings(); });
+
+  assert.strictEqual(separate.count, 3, '変更前の再現では一覧用1回＋各Repository1回ずつ開く（前提確認）');
+  assert.deepStrictEqual(stripTiming_(shared), stripTiming_(separate.result));
+  assert.strictEqual(shared.bookings.length, 3);
+});
+
+test('Issue #864: 引数なしのgetAllBookings/listAllは従来どおり自分で開き、渡したときと同じ内容を返す', function () {
+  var ctx = setup();
+  var id = createRoom(ctx);
+  addOrder(ctx, id);
+  var own = countOpenById_(ctx, function () {
+    return { bookings: ctx.sandbox.SpreadsheetRepository.getAllBookings(), orders: ctx.sandbox.OptionOrderRepository.listAll() };
+  });
+  assert.strictEqual(own.count, 2);
+  var spreadsheet = ctx.globals.SpreadsheetApp.openById('ss1');
+  var injected = countOpenById_(ctx, function () {
+    return { bookings: ctx.sandbox.SpreadsheetRepository.getAllBookings({ spreadsheet: spreadsheet }), orders: ctx.sandbox.OptionOrderRepository.listAll(undefined, spreadsheet) };
+  });
+  assert.strictEqual(injected.count, 0);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(injected.result)), JSON.parse(JSON.stringify(own.result)));
+});
+
+test('Issue #864: スプレッドシートを開けないときは従来どおり一覧の取得が失敗する', function () {
+  var ctx = setup();
+  createRoom(ctx);
+  ctx.globals.SpreadsheetApp.openById = function () { throw new Error('open failed'); };
+  assert.throws(function () { ctx.sandbox.getAdminBookings(); }, /open failed/);
+});

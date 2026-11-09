@@ -217,10 +217,15 @@ function getAdminBookings() {
   /* Issue #449: 終了済み予約を通常一覧から外す判定用（予約タイムゾーン基準の'YYYY-MM-DD HH:mm'）。 */
   var nowJst = formatAdminDateTime_(now, timezone);
   lap('configMs');
+  /* Issue #864: Bookings台帳とOptionOrders台帳は同じスプレッドシート（SPREADSHEET_ID）にあるため、
+     この一覧取得の中だけで1回開いて両方に渡す（以前は各Repositoryが別々にopenByIdしていた）。
+     リクエストをまたいで保持はせず、書き込み・他の経路は従来どおり各Repositoryが自分で開く。 */
+  var spreadsheet = SpreadsheetApp.openById(BookingConfig.getSpreadsheetId());
+  lap('spreadsheetOpenMs');
   var optionStats = {};
-  var optionOrdersByBooking = loadAdminListOptionOrders_(optionStats);
+  var optionOrdersByBooking = loadAdminListOptionOrders_(optionStats, spreadsheet);
   lap('optionOrdersMs');
-  var bookingRows = SpreadsheetRepository.getAllBookings();
+  var bookingRows = SpreadsheetRepository.getAllBookings({ spreadsheet: spreadsheet });
   lap('bookingsReadMs');
   /* Issue #864: カード予約の支払期限計算に使うTTL設定は、一覧1回につき最初に必要になった
      時点で1回だけ読む（カード予約が0件なら読まない）。 */
@@ -333,11 +338,11 @@ function buildAdminBookingSchedule_(record, timezone) {
  * 台帳が使えない構成（OptionOrderRepository未配備）はnull＝optionSummaryを付けない。読み取りに失敗しても
  * 一覧そのものは表示できるよう、failed: trueを返してクライアントに「オプション状態不明」と出させる。
  */
-function loadAdminListOptionOrders_(stats) {
+function loadAdminListOptionOrders_(stats, spreadsheet) {
   if (typeof OptionOrderRepository === 'undefined' || typeof BookingOptions === 'undefined') return null;
   try {
     var byBooking = {};
-    OptionOrderRepository.listAll(stats).forEach(function (row) {
+    OptionOrderRepository.listAll(stats, spreadsheet).forEach(function (row) {
       var id = row.record.bookingId;
       (byBooking[id] = byBooking[id] || []).push(row.record);
     });

@@ -18,9 +18,11 @@ var SpreadsheetRepository = (function () {
     return SpreadsheetApp.openById(BookingConfig.getSpreadsheetId());
   }
 
-  /* シートが存在しない、またはヘッダー行が未設定の場合はヘッダー行を書く（冪等）。 */
-  function ensureBookingsSheet_() {
-    var spreadsheet = getSpreadsheet_();
+  /* シートが存在しない、またはヘッダー行が未設定の場合はヘッダー行を書く（冪等）。
+     openedSpreadsheet（省略可。Issue #864）: 呼び出し側が同じリクエスト内で既に開いた
+     スプレッドシート。省略時は従来どおりここで開く。 */
+  function ensureBookingsSheet_(openedSpreadsheet) {
+    var spreadsheet = openedSpreadsheet || getSpreadsheet_();
     var sheet = spreadsheet.getSheetByName(SHEET_NAME_);
     if (!sheet) {
       sheet = spreadsheet.insertSheet(SHEET_NAME_);
@@ -67,8 +69,10 @@ var SpreadsheetRepository = (function () {
   /* 全行をstatus問わず返す（Issue #305 Booking Admin Web UIの一覧表示用）。
      個人管理用途で件数が小規模な前提のため、getAllPendingBookings等と同じ
      「全行取得してから絞り込む」方針をそのまま踏襲する（専用の検索APIは作らない）。 */
-  function getAllBookings() {
-    var sheet = ensureBookingsSheet_();
+  /* options.spreadsheet（省略可。Issue #864）: Booking Admin一覧が同じリクエスト内で既に開いた
+     スプレッドシートを使い回すためのもの（openByIdの重複を避ける）。読み取り範囲・戻り値は省略時と同じ。 */
+  function getAllBookings(options) {
+    var sheet = ensureBookingsSheet_(options && options.spreadsheet);
     var values = sheet.getDataRange().getValues();
     var result = [];
     for (var i = 1; i < values.length; i++) {

@@ -111,8 +111,10 @@ var OptionOrderRepository = (function () {
    * 書き込む（openMs＝スプレッドシートを開く／sheetMs＝シート取得・ヘッダー確認／readMs＝
    * getValues／convertMs＝行→record変換／rows＝データ行数／columns＝列数）。読み取り内容・
    * 戻り値は省略時と同じ。
+   * openedSpreadsheet（省略可）: Booking Admin一覧が同じリクエスト内で既に開いたスプレッドシート
+   * （openByIdの重複を避ける。Issue #864）。渡されたときopenMsは0に近い値になる。
    */
-  function listAll(stats) {
+  function listAll(stats, openedSpreadsheet) {
     var measure = stats && typeof stats === 'object';
     var mark = Date.now();
     function lap(key) {
@@ -121,7 +123,7 @@ var OptionOrderRepository = (function () {
       stats[key] = current - mark;
       mark = current;
     }
-    var spreadsheet = getSpreadsheet_();
+    var spreadsheet = openedSpreadsheet || getSpreadsheet_();
     lap('openMs');
     var sheet = ensureSheet_(ORDERS_SHEET_, HEADERS_, spreadsheet);
     lap('sheetMs');
