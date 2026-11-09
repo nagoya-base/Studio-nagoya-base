@@ -309,6 +309,83 @@ function sba_logStatus_(r) {
   Logger.log('accessAdminStatus ' + JSON.stringify(out));
 }
 function accessAdminInventory() { return sba_runtime_().admin('inventory', {}); }
+
+// ── 棚卸しの安全な集計診断（#857。Access ON のまま実行可。読み取り専用）──
+// 既存 accessAdminInventory() の戻り値・権限・呼出元は変えない。こちらは既存の admin('inventory') の読取結果だけを
+// 件数に集計し、許可リスト方式で組み立てた1行JSONを実行ログに出す（そのまま相談に貼れる形）。
+// 出さないもの: record ID・予約ID・端末ID・終了時刻等の個別値・生inventory・例外内容。未知値は OTHER、失敗は固定コード。
+// 新規のSwitchBot API呼出し・sync/deliver/reconcile/delete・設定書換え・トリガー更新は行わない
+// （既存の管理者経路と同じく、ロック取得の記録 HB_ADMIN/LOCKFAIL のみ更新される）。
+// 切り分けの限界: total=0 は「発行管理記録が無い」ことまでしか示さない。予約が候補外・許可リスト不一致・
+// ブランド/施設/部屋不一致・支払い未承認・失効/取消のどれかは本関数では断定できない（別PRで集約理由を追加する方針）。
+var SBA_INV_SUMMARY_MAX_ = 5000;
+var SBA_INV_ISSUING_ = ['PLANNED', 'SENDING', 'SENT_WAIT_WEBHOOK', 'ACCEPTED_NO_COMMAND_ID'];
+var SBA_INV_REVOKING_ = ['EXPIRED', 'DELETE_PENDING', 'DELETE_SENDING', 'DELETE_SENT'];
+var SBA_INV_ENDED_ = ['DELETED_CONFIRMED', 'ALREADY_ABSENT', 'ARCHIVED_EXPIRED', 'ABANDONED'];
+
+function accessAdminInventorySummary() {
+  var out;
+  try {
+    sba_requireAdmin_();
+    out = sba_summarizeInventory_(sba_runtime_().admin('inventory', {}));
+  } catch (e) {
+    out = { ok: false, error: e && e.message === 'NOT_AUTHORIZED' ? 'NOT_AUTHORIZED' : 'EXCEPTION' };
+  }
+  var line;
+  try { line = JSON.stringify(out); } catch (e2) { out = { ok: false, error: 'LOG_FAILED' }; line = JSON.stringify(out); }
+  Logger.log('accessAdminInventorySummary ' + line);
+  return out;
+}
+
+/** inventory の読取結果 → 件数だけの要約（純関数。入力のどの値もそのままは出さない）。 */
+function sba_summarizeInventory_(r) {
+  var CODE_RE = /^[A-Z][A-Z0-9_]{0,39}$/;
+  if (!r || typeof r !== 'object' || r.ok !== true) {
+    return { ok: false, error: r && typeof r.error === 'string' && CODE_RE.test(r.error) ? r.error : 'ERROR' };
+  }
+  if (!Array.isArray(r.items)) return { ok: false, error: 'INVENTORY_INVALID' };
+  var C = SwitchBotAccessCore;
+  var states = Object.keys(C.STATE).map(function (k) { return C.STATE[k]; });
+  var dlvs = Object.keys(C.DLV).map(function (k) { return C.DLV[k]; });
+  var inc = function (o, k) { o[k] = (o[k] || 0) + 1; };
+  var byState = {}, byDelivery = {}, stages = {}, invalid = 0, unresolved = 0;
+  var n = Math.min(r.items.length, SBA_INV_SUMMARY_MAX_);
+  for (var i = 0; i < n; i++) {
+    var it = r.items[i];
+    if (!it || typeof it !== 'object' || typeof it.state !== 'string') { invalid++; continue; }
+    var st = states.indexOf(it.state) !== -1 ? it.state : 'OTHER';
+    var dl = it.delivery === null || it.delivery === undefined ? 'NONE' : (dlvs.indexOf(it.delivery) !== -1 ? it.delivery : 'OTHER');
+    inc(byState, st); inc(byDelivery, dl);
+    if (it.unresolved === true) unresolved++;
+    inc(stages, sba_inventoryStage_(st, dl));
+  }
+  var environment = null;
+  try { var env = sba_config_().environment; if (typeof env === 'string' && /^[a-z0-9_-]{1,20}$/.test(env)) environment = env; } catch (e) { /* 出さない */ }
+  return {
+    ok: true, environment: environment, scope: 'INVENTORY_ONLY',
+    diagnosis: r.items.length === 0 ? 'NO_RECORDS' : 'HAS_RECORDS',
+    total: r.items.length, scanned: n, truncated: r.items.length > n, invalid: invalid, unresolved: unresolved,
+    byState: byState, byDelivery: byDelivery, stages: stages
+  };
+}
+
+/** 発行状態×配送状態 → 「どこで止まっているか」の固定コード。確認できない状態は成功（DELIVERED）に寄せない。 */
+function sba_inventoryStage_(st, dl) {
+  if (SBA_INV_ISSUING_.indexOf(st) !== -1) return 'ISSUE_IN_PROGRESS';
+  if (st === 'UNKNOWN') return 'STATE_UNKNOWN'; // 発行・削除のどちらの失敗でも UNKNOWN になる（inventory では区別できない）
+  if (st === 'FAILED') return 'ISSUE_FAILED';
+  if (st === 'ISSUED_CONFIRMED') {
+    if (dl === 'NONE') return 'ISSUED_NO_DELIVERY_RECORD';
+    if (dl === 'DELIVERED') return 'ISSUED_DELIVERED';
+    if (dl === 'UNKNOWN') return 'ISSUED_DELIVERY_UNKNOWN';
+    if (dl === 'SUPPRESSED') return 'ISSUED_DELIVERY_SUPPRESSED';
+    if (dl === 'SENDING' || dl === 'NOT_SENT') return 'ISSUED_DELIVERY_PENDING';
+    return 'OTHER';
+  }
+  if (SBA_INV_REVOKING_.indexOf(st) !== -1) return 'REVOKE_IN_PROGRESS';
+  if (SBA_INV_ENDED_.indexOf(st) !== -1) return 'ENDED';
+  return 'OTHER';
+}
 function accessAdminInspect(recId) { return sba_runtime_().admin('inspect', { recId: recId }); }
 function accessAdminReconcile(recId) { return sba_runtime_().admin('reconcile', { recId: recId }); }
 function accessAdminResolveUnknown(recId, decision) { return sba_runtime_().admin('resolveUnknown', { recId: recId, decision: decision }); }

@@ -355,3 +355,131 @@ test('資格情報なしのAPI呼び出しは通信を行わずエラー（読�
   assert.strictEqual(env.fetches.length, 0);
   assert.ok(!Object.keys(env.script).some(function (k) { return k.indexOf('OP_') === 0 && /SENDING|SENT/.test(env.script[k]); }), '送信段階へ進まない');
 });
+
+// ================================================================ #857 棚卸しの安全な集計診断
+
+var INV_KEYS_857 = ['byDelivery', 'byState', 'diagnosis', 'environment', 'invalid', 'ok', 'scanned', 'scope', 'stages', 'total', 'truncated', 'unresolved'];
+function invLine857(env) {
+  var lines = env.logs.filter(function (l) { return l.indexOf('accessAdminInventorySummary ') === 0; });
+  assert.strictEqual(lines.length, 1, '実行ログは1行');
+  return { raw: lines[0], j: JSON.parse(lines[0].slice('accessAdminInventorySummary '.length)) };
+}
+function configured857() { var env = configured(); env.script.META_ENV = 'production'; return env; } // 本番は環境印が既にある
+
+function seedOp857(env, id, state, dlv) {
+  env.script['OP_' + id] = JSON.stringify({ id: id, bookingId: 'PII-BOOK-' + id, state: state, endSec: 1893456000, deviceId: H.DEV, passcodeId: 'KEYID-' + id, name: 'KEYNAME-' + id });
+  if (dlv) env.script['DLV_' + id] = JSON.stringify({ state: dlv, to: 'pii@example.test' });
+}
+function untouched857(before, after) {
+  var ign = /^(HB_ADMIN|LOCKFAIL)$/;
+  var pick = function (o) { var r = {}; Object.keys(o).filter(function (k) { return !ign.test(k); }).sort().forEach(function (k) { r[k] = o[k]; }); return r; };
+  assert.deepStrictEqual(pick(after), pick(before), '状態・設定は変わらない');
+}
+
+test('accessAdminInventorySummary（#857）: ON・0件でも読取専用で1行の安全JSON。外部通信・トリガー・状態に影響しない', function () {
+  var env = configured857();
+  env.triggers.push({ fn: 'accessSyncJob', getHandlerFunction: function () { return 'accessSyncJob'; } });
+  var before = Object.assign({}, env.script), userBefore = Object.assign({}, env.user);
+  var r = env.ctx.accessAdminInventorySummary();
+  var L = invLine857(env);
+  assert.deepStrictEqual(Object.keys(L.j).sort(), INV_KEYS_857);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(r)), L.j, '戻り値もログと同じ要約');
+  assert.strictEqual(L.j.ok, true);
+  assert.strictEqual(L.j.environment, 'production');
+  assert.strictEqual(L.j.diagnosis, 'NO_RECORDS');
+  assert.strictEqual(L.j.total, 0);
+  assert.strictEqual(env.fetches.length, 0, 'SwitchBot APIに触れない');
+  assert.strictEqual(env.mails.length, 0);
+  assert.strictEqual(env.triggers.length, 1, 'トリガーは変えない');
+  untouched857(before, env.script);
+  assert.deepStrictEqual(env.user, userBefore);
+  assert.strictEqual(env.script.ACCESS_ENABLED, 'true', 'ONのまま');
+});
+
+test('accessAdminInventorySummary（#857）: 状態別・配送別・段階別の件数のみ。ID・予約・端末・時刻・秘密は出さない', function () {
+  var env = configured857();
+  seedOp857(env, 'R1', 'ISSUED_CONFIRMED', null);
+  seedOp857(env, 'R2', 'ISSUED_CONFIRMED', 'NOT_SENT');
+  seedOp857(env, 'R3', 'ISSUED_CONFIRMED', 'DELIVERED');
+  seedOp857(env, 'R4', 'ISSUED_CONFIRMED', 'UNKNOWN');
+  seedOp857(env, 'R5', 'SENT_WAIT_WEBHOOK', null);
+  seedOp857(env, 'R6', 'UNKNOWN', null);
+  seedOp857(env, 'R7', 'DELETED_CONFIRMED', 'SUPPRESSED');
+  seedOp857(env, 'R8', 'WEIRD state <x>', 'odd');
+  env.script.OP_BROKEN = '{}';
+  env.script.OP_NOSTATE = JSON.stringify({ id: 'R9', state: 42 });
+  var before = Object.assign({}, env.script);
+  var raw = env.ctx.accessAdminInventory();
+  assert.strictEqual(raw.ok, true, '既存の accessAdminInventory は従来どおり');
+  assert.ok(Array.isArray(raw.items) && raw.items.length === 10);
+  env.logs.length = 0;
+  env.ctx.accessAdminInventorySummary();
+  var L = invLine857(env);
+  assert.deepStrictEqual(Object.keys(L.j).sort(), INV_KEYS_857);
+  assert.strictEqual(L.j.diagnosis, 'HAS_RECORDS');
+  assert.strictEqual(L.j.total, 10);
+  assert.strictEqual(L.j.invalid, 2);
+  assert.strictEqual(L.j.truncated, false);
+  assert.deepStrictEqual(L.j.byState, { ISSUED_CONFIRMED: 4, SENT_WAIT_WEBHOOK: 1, UNKNOWN: 1, DELETED_CONFIRMED: 1, OTHER: 1 });
+  assert.deepStrictEqual(L.j.byDelivery, { NONE: 3, NOT_SENT: 1, DELIVERED: 1, UNKNOWN: 1, SUPPRESSED: 1, OTHER: 1 });
+  assert.deepStrictEqual(L.j.stages, { ISSUED_NO_DELIVERY_RECORD: 1, ISSUED_DELIVERY_PENDING: 1, ISSUED_DELIVERED: 1, ISSUED_DELIVERY_UNKNOWN: 1, ISSUE_IN_PROGRESS: 1, STATE_UNKNOWN: 1, ENDED: 1, OTHER: 1 });
+  assert.ok(!/R[1-8]|PII|BOOK|KEYID|KEYNAME|pii@|AAAAAAAA|01FD|1893456000|WEIRD|odd|tok-test|sec-test|owner@example|ADMIN-1|WWWW/.test(L.raw), L.raw);
+  Object.keys(L.j.byState).concat(Object.keys(L.j.byDelivery), Object.keys(L.j.stages)).forEach(function (k) { assert.ok(/^[A-Z][A-Z0-9_]*$/.test(k), k); });
+  [L.j.byState, L.j.byDelivery, L.j.stages].forEach(function (o) { Object.keys(o).forEach(function (k) { assert.ok(Number.isSafeInteger(o[k]) && o[k] >= 0); }); });
+  assert.strictEqual(env.fetches.length, 0);
+  untouched857(before, env.script);
+});
+
+test('accessAdminInventorySummary（#857）: 管理者以外・管理API失敗・破損は固定コードのみ。例外内容は出さず投げない', function () {
+  var env = configured();
+  env.email = 'stranger@example.test';
+  var r = env.ctx.accessAdminInventorySummary();
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(r)), { ok: false, error: 'NOT_AUTHORIZED' });
+  assert.strictEqual(env.logs.join('\n'), 'accessAdminInventorySummary {"ok":false,"error":"NOT_AUTHORIZED"}');
+  // JSONとして読めない記録 → 既存の管理経路が固定コードで失敗
+  env = configured();
+  env.script.OP_X = 'not-json {secret}';
+  env.ctx.accessAdminInventorySummary();
+  var L = invLine857(env);
+  assert.deepStrictEqual(Object.keys(L.j).sort(), ['error', 'ok']);
+  assert.strictEqual(L.j.ok, false);
+  assert.ok(/^[A-Z][A-Z0-9_]*$/.test(L.j.error));
+  assert.ok(!/secret|not-json|Unexpected/.test(L.raw));
+  // 設定破損 → 既存経路の固定コード
+  env = configured();
+  env.script.ACCESS_CONFIG = '{broken';
+  env.ctx.accessAdminInventorySummary();
+  assert.strictEqual(env.logs.join('\n'), 'accessAdminInventorySummary {"ok":false,"error":"CONFIG_INVALID"}');
+  // 想定外の例外 → EXCEPTION（メッセージ・スタックは出さず、投げない）
+  env = configured();
+  env.ctx.sba_runtime_ = function () { throw new Error('detail pii@example.test tok-test'); };
+  assert.doesNotThrow(function () { env.ctx.accessAdminInventorySummary(); });
+  assert.strictEqual(env.logs.join('\n'), 'accessAdminInventorySummary {"ok":false,"error":"EXCEPTION"}');
+});
+
+test('accessAdminInventorySummary（#857）: 集計関数は非配列・自由文エラー・上限超過を安全に扱う', function () {
+  var env = configured();
+  var S = env.ctx.sba_summarizeInventory_;
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(S(null))), { ok: false, error: 'ERROR' });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(S({ ok: false, error: 'boom at line 3: pii@example.test' }))), { ok: false, error: 'ERROR' });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(S({ ok: false, error: 'LOCK_UNAVAILABLE' }))), { ok: false, error: 'LOCK_UNAVAILABLE' });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(S({ ok: true, items: {} }))), { ok: false, error: 'INVENTORY_INVALID' });
+  var many = []; for (var i = 0; i < 5003; i++) many.push({ id: 'I' + i, state: 'PLANNED', delivery: null, unresolved: true });
+  var big = S({ ok: true, items: many });
+  assert.strictEqual(big.total, 5003);
+  assert.strictEqual(big.scanned, 5000);
+  assert.strictEqual(big.truncated, true);
+  assert.strictEqual(big.unresolved, 5000);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(big.stages)), { ISSUE_IN_PROGRESS: 5000 });
+});
+
+test('accessAdminInventorySummary（#857）: ソース上、書込み・外部通信・ジョブ系を呼ばない', function () {
+  var src = fs.readFileSync(path.join(ROOT, 'gas/switchbot-access/SwitchBotAccessApp.gs'), 'utf8');
+  var start = src.indexOf('function accessAdminInventorySummary(');
+  var end = src.indexOf('function sba_inventoryStage_(');
+  var body = src.slice(start, src.indexOf('\n}\n', end) + 3).replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(start > 0 && end > start);
+  assert.ok(!/setProperty|deleteProperty|UrlFetchApp|MailApp|ScriptApp|syncCycle|deliverCycle|sweepCycle|reconcile|'delete'|'resolveUnknown'|'resolveDelivery'|createKey|deleteKey|newTrigger/.test(body), 'forbidden call');
+  assert.strictEqual((body.match(/\.admin\(/g) || []).length, 1);
+  assert.ok(/\.admin\('inventory', \{\}\)/.test(body));
+});
