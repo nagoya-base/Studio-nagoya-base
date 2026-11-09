@@ -12,7 +12,8 @@
  *   - brand: 'snb' | 'mens' | 'studio-x'（ページのパスから決めた値。一覧外は拒否）
  *   - test : 厳密に 1 のときだけテスト回答。サーバーが is_test=1 を確定し、トークンは一切扱わない
  *            （本番トークンが一緒に送られても検証・消費しない）。通知は送らない。
- *   - token: 本番回答用。第1段階では FeedbackTokens が常に拒否するため本番回答は保存できない。
+ *   - token: 本番回答用。Booking Admin が利用終了2時間後の案内メールで発行したもの（Issue #834）。
+ *            FEEDBACK_TOKEN_SECRET が未設定なら FeedbackTokens が常に拒否し、本番回答は保存できない。
  * テストでも入力検証・500字上限・rate limit は通常どおり行う。
  */
 'use strict';

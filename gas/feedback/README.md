@@ -3,8 +3,8 @@
 Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの **フォーム・回答保存・問題通知の基礎** です。
 オーナー1人で運用する前提で、設定・操作はGASエディタとSpreadsheetだけで完結します。
 
-> **第1段階では本番回答を受け付けません。** 本番用トークン（予約ごとのリンク）は第3段階 #834 で Booking と接続します。
-> それまで `?test=1` のテスト回答だけが保存されます。アンケートメールの配信も第3段階まで行いません。
+> **本番回答は、予約ごとのリンク（第3段階 #834）からだけ受け付けます。** リンクは Booking Admin が利用終了2時間後の案内メールで発行します
+> （`gas/booking/README.md`「Issue #834」節）。このGASに `FEEDBACK_TOKEN_SECRET` が未設定の間は、第1段階と同じく本番回答を保存しません。
 > 管理画面（第2段階 #849）は `gas/feedback-admin/README.md` を参照してください。
 
 全3段階：①本Issue #835 → ②管理画面 #849 → ③予約連動・自動送信 #834
@@ -17,7 +17,8 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 | 画面JS / 設定 / CSS | `scripts/feedback-app.js` ・ `scripts/feedback-config.js` ・ `styles/feedback.css` |
 | 設問・検証・保存行・要確認判定（ブラウザ＝GAS同一ファイル） | `scripts/feedback-core.js` |
 | 公開Web App（回答受付・通知・テスト通知） | `gas/feedback/FeedbackWebApp.gs` |
-| トークン検証インターフェース（第1段階は常に拒否） | `gas/feedback/FeedbackTokens.gs` |
+| 予約単位の回答リンク（署名トークン）の発行・検証。Booking Admin と同じファイル | `scripts/feedback-token-core.js`（配布名 `FeedbackTokenCore.gs`） |
+| トークンの検証・使用済み台帳（#834。`FEEDBACK_TOKEN_SECRET` 未設定なら常に拒否） | `gas/feedback/FeedbackTokens.gs` |
 | Spreadsheet入出力・初期設定 | `gas/feedback/FeedbackRepository.gs` |
 | 保持期間による月次削除 | `gas/feedback-admin/FeedbackMaintenance.gs`（管理者プロジェクトで実行。#849） |
 | 配布物の組み立て | `scripts/prepare-feedback-gas-project.js` |
@@ -35,7 +36,7 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 
 - ブランドは **ページのパス** だけで決まります（クエリ等では変えられません）。サーバーも3ブランド以外を拒否します。
 - `?test=1`（厳密にこの形）でテストモード。上部に `TEST MODE` を表示し、何度でも回答できます。
-- 本番用リンクは `…/feedback/<brand>/#t=<token>` の形（第3段階で発行）。トークンは `#` 以降に置くのでサーバーのアクセスログやリファラに載らず、
+- 本番用リンクは `…/feedback/<brand>/#t=<token>` の形（Booking Admin が案内メールで発行。下記「予約単位の回答リンク」）。トークンは `#` 以降に置くのでサーバーのアクセスログやリファラに載らず、
   画面は読み込み直後にURLからトークンを消します。トークンが無い・無効・使用済み・期限切れのときはフォームを出さず、戻り先へ案内します。
 - ページは GA4 等の解析タグを読み込まず、`<meta name="referrer" content="no-referrer">` と CSP（外部送信先は `script.google.com` のみ）を付けています。
   GitHub Pages はHTTPレスポンスヘッダを設定できないため、`Referrer-Policy` は meta で指定しています。
@@ -53,6 +54,25 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 | Q6 再利用意向 | `q6_reuse` | `definitely` / `maybe` / `not_now`（必須） |
 
 氏名・メール・予約番号は入力させず、保存もしません（「完全匿名」とは表記していません）。
+
+## 予約単位の回答リンク（Issue #834）
+
+| 項目 | 内容 |
+| --- | --- |
+| 発行 | Booking Admin（`gas/booking/admin/FeedbackInvites.gs`）が、利用終了2時間後の案内メールで予約ごとに発行 |
+| 形式 | `f1` + ブランド1文字 + 有効期限 + tokenId + 署名（英小文字・数字66文字）。HMAC-SHA256 で署名し、改ざんは `TOKEN_INVALID` |
+| 秘密鍵 | Script Property `FEEDBACK_TOKEN_SECRET`（Booking Admin と**同じ値**。32文字以上。Git・Issue・チャットに書かない） |
+| 有効期限 | 利用終了から **14日**。過ぎると `TOKEN_EXPIRED` |
+| ブランド | トークンのブランドとフォームのパスが違えば `TOKEN_BRAND_MISMATCH` |
+| 1予約1回答 | tokenId は予約IDから秘密鍵で導くため、同じ予約へ再送しても同じ tokenId。使用済みなら `TOKEN_USED`。別の予約のリンクなら再回答できる |
+| 使用済み台帳 | 回答Spreadsheetの `token_uses` シート（列 `token_key, expires_at`。`token_key` は `tk_` + tokenId）。**予約ID・回答ID・回答日時は書かない**（回答と予約を結び付けない） |
+| 同時送信 | 「未使用の確認 → 使用済みにする → 回答保存」を同じスクリプトロック内で行う。保存に失敗したら使用済みを取り消す（同じリンクで再回答できる）。台帳へ書けなければ回答も保存しない |
+| 回答画面を開くとき | `?action=verify` は台帳を読むだけで、使用済みにしない |
+| このGASが持たないもの | Booking の Spreadsheet ID・予約ID・利用者のメールアドレス（Booking の Spreadsheet は開かない） |
+
+`token_uses` の期限切れ行は `purgeExpiredFeedbackTokenUses` で削除できます（期限から1日以上過ぎた行だけ。日時が読めない行は残す）。
+期限切れのリンクは台帳が無くても拒否されるので、削除しても再回答はできません。実行は任意で、GASの「トリガー」画面から
+`purgeExpiredFeedbackTokenUses` の月1回の時間主導トリガーを作ります（公開側は `script.scriptapp` 権限を持たないため、作成用の補助関数は置いていません）。
 
 ## 回答Spreadsheet
 
@@ -77,12 +97,14 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 | 載せない | 予約者情報・トークン・Spreadsheet ID |
 | 失敗時 | 回答は維持し `notify_failed=1`。ログは `feedback notify failed: <例外名>` だけ（宛先・本文は残さない） |
 | 初期状態 | **OFF**（`FEEDBACK_NOTIFY` が `on` のときだけ送信） |
+| 利用者への案内メールとの関係 | **別物**。`FEEDBACK_NOTIFY` はこのGASからオーナーへの通知。利用者へのアンケート案内メールは Booking Admin の `FEEDBACK_INVITE_MODE`（#834）で、互いに影響しない |
 
 ## Script Properties（非公開設定。値はGitに書かない）
 
 | キー | 内容 |
 | --- | --- |
 | `FEEDBACK_SPREADSHEET_ID` | 利用後アンケート専用の新規Spreadsheet ID。未設定なら保存しない |
+| `FEEDBACK_TOKEN_SECRET` | 回答リンクの署名鍵（#834）。Booking Admin と同じ値。未設定・32文字未満なら本番回答を受け付けない |
 | `FEEDBACK_NOTIFY` | `on` で通知を有効化。未設定・それ以外はOFF |
 | `FEEDBACK_NOTIFY_EMAIL` | 通知先（オーナー） |
 | `FEEDBACK_RATE_LIMIT_PER_MINUTE` | 任意。全体の受付上限/分（既定 30。テスト回答も同じ枠） |
@@ -116,7 +138,7 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
    （`sendTestNotification(brand)` の引数なし入口）。初回は `script.send_mail` の認可を許可。
    - 合格：ログが `feedback test notification (<brand>): sent` で、件名 `[TEST] 【利用後アンケート】…（<ブランド名>）` のダミー通知が各1通届くこと。
    - `FEEDBACK_NOTIFY` がOFFでも送れます。公開フォーム（doPost）からは呼べません。
-4. 実予約・本番トークンでの最終確認は第3段階 #834 で行います。
+4. 実予約・本番トークンでの最終確認は、自動配信をONにする前に Booking 側READMEの「実予約での確認」で行います（#834）。
 
 ## 止め方
 
@@ -132,8 +154,24 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 - 受信日時が読めない行は削除しません（手で確認してください）。
 - 自由記述に個人情報が書かれていた場合は、Spreadsheet上で直接削除・編集してください（変更履歴はGoogleの版の履歴に残ります）。
 
-## 第1段階で未接続のこと
+## 第3段階（#834）の反映手順（このGAS側）
 
-- Booking 予約とトークンの実結合・送信済み／期限／重複チェックの本番E2E・利用終了2時間後のメール送信 → **#834**
+既存の公開GASプロジェクト（第1段階で作ったもの）を更新します。**新しいGASプロジェクトは作りません。** `/exec` URL も変えません。
+全体の順序（このGAS → Booking Admin → 実予約での確認 → 自動配信ON）は `gas/booking/README.md`「Issue #834」節を参照してください。
+
+1. 配布物を組み立てる：`node scripts/prepare-feedback-gas-project.js .gas-deploy/feedback`
+2. 既存の公開GASプロジェクトのエディタで、`.gas-deploy/feedback/` の `FeedbackTokenCore.gs`（新規）・`FeedbackTokens.gs`・`FeedbackRepository.gs`・`FeedbackWebApp.gs` を差し替える（`FeedbackCore.gs` と `appsscript.json` は変更なし。権限の再承認は不要）。
+3. エディタで `setupFeedbackSpreadsheet` を実行する。初期化済みのSpreadsheetには `token_uses` シートだけが追加される（`responses` / `settings` の既存行は変わらない）。
+4. 「デプロイを管理」→ 既存のウェブアプリのデプロイを編集 → バージョン「新しいバージョン」で更新する（URLは同じ）。
+5. 「プロジェクトの設定 → スクリプト プロパティ」に `FEEDBACK_TOKEN_SECRET` を登録する（Booking Admin と同じ値。作り方は Booking 側README）。
+   この時点ではまだリンクを発行していないので、利用者からの本番回答は来ない。`?test=1` のテスト回答は従来どおり。
+
+管理者GAS（`gas/feedback-admin/`）は変更不要です（集計・保持期間・月次削除はそのまま）。`FeedbackRepository.gs` の差分は `token_uses` の追加だけで、管理者GASの動作には影響しないため、次に管理者GASを更新するときに合わせて差し替えれば足ります。
+
+**止め方（このGAS側）**：`FEEDBACK_TOKEN_SECRET` を削除すると、すべての本番リンクが `TOKEN_NOT_CONNECTED` になり本番回答を受け付けなくなる（第1段階と同じ状態。テスト回答は可能）。
+**鍵の変更**：値を変えると、発行済みのリンクはすべて無効になり、tokenId も変わる（変更前に回答済みの予約へ再送すると再回答できてしまう）。漏えい時以外は変えない。
+
+## 過去の段階
+
 - 管理画面（概要・問題分析・コメント一覧・status/memo の画面内更新）→ **#849**（`gas/feedback-admin/` で実装済み）
-- 公開GASのデプロイ・`BASE_URL` 設定・本番通知ON → オーナー承認後に上記手順で実施（本PRでは行わない）
+- 公開GASのデプロイ・`BASE_URL` 設定 → 第1段階 #835 / #860 で実施済み

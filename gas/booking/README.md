@@ -71,6 +71,110 @@ admin-only → migration → full と段階的に更新するため、短時間�
 - 新コードは、既存行の新列が **空欄でもfailしない** こと。
 - schema追加と機能の利用開始の間で新旧が混在しても、予約作成・読取・管理画面が破損しないこと。
 
+## Issue #834: 利用終了2時間後の利用後アンケート案内メール（初期OFF）
+
+SNB / SNB mens / Studio X の**直接予約**の利用者へ、実際の利用終了2時間後に利用後アンケート（`/feedback/<brand>/`。#835）の案内メールを1通送る。
+回答の保存・管理画面は既存の回答用GAS（`gas/feedback/`）・管理者GAS（`gas/feedback-admin/`）がそのまま担う。**本番の自動配信は初期OFF**で、オーナーが下記の確認後に手動でONにする。
+
+### 構成
+
+| 役割 | 場所 |
+| --- | --- |
+| 対象判定・送信・重複防止・手動送信（Booking Admin専用） | `gas/booking/admin/FeedbackInvites.gs` |
+| 回答リンク（署名トークン）の発行・検証。回答用GASと同じファイル | `scripts/feedback-token-core.js`（配布名 `FeedbackTokenCore.gs`） |
+| 送信状態（Booking Spreadsheet） | `FeedbackInvites` シート（`setupFeedbackInvites` で作成。自動作成しない） |
+| 回答・使用済みトークン（回答Spreadsheet。Bookingとは独立） | `responses` / `token_uses`（`gas/feedback/README.md`） |
+
+Bookings の列は追加しない（schema migration 不要。production workflow は通常どおり承認1回）。Public / Webhook には配布しない。
+
+### 送る条件（送信直前に、ロック内で再読込した最新の台帳で毎回判定）
+
+- `brand` が `snb` / `mens` / `studio_x` で、`source` がそのブランドの予約フォームの値（`snb-booking-app` / `mens-booking-app` / `studio-x-booking-app`）。外部予約・管理者入力など、それ以外の source には送らない。
+- `status=CONFIRMED`・`confirmedAt` あり。取消・失効・仮予約（PENDING）は送らない。
+- 決済: 来場案内と同じ `Booking.evaluateAccessGate` がOK（Stripe Checkout予約は入金済みのみ）。返金の判断・申請・完了がある予約、延長の追加料金が未了（`feeSettlementState=PENDING_CHARGE / PENDING_DECISION`）、要復旧（`feeRecoveryRequiredAt` / `paymentRecoveryRequiredAt`）は送らない（解消すれば後の実行で送る）。
+- **最新の `endAt`（日程変更・延長の反映後）＋2時間**を過ぎている。抽出後・送信前に延長・取消された場合も、ロック内の再判定で止まる。
+- `endAt` が `FEEDBACK_INVITE_START_AT` 以降（**過去予約へ遡及しない**）、かつ「終了2時間後」から48時間以内（トリガー停止明けの一斉送信をしない）。
+- メールアドレスが正しい形式。
+
+除外理由は `dryRunFeedbackInvites` の `reasons` に件数で出る（`NOT_DIRECT_BOOKING` / `NOT_CONFIRMED` / `PAYMENT_NOT_SETTLED` / `REFUND_STARTED` / `EXTENSION_CHARGE_PENDING` / `RECOVERY_REQUIRED` / `NOT_YET` / `BEFORE_START_AT` / `TOO_LATE` / `START_AT_NOT_SET` / `EMAIL_MISSING` など）。
+
+### 重複防止と失敗時
+
+- `FeedbackInvites`（列: `bookingId, brand, state, endAt, expiresAt, claimedAt, sentAt, errorCode, updatedAt`）に予約1件1行。予約確定・失効・取消と同じ Booking Admin のスクリプトロック内で「行が無いことを確認 → `SENDING` を追記 → 送信 → `SENT`」。**行が1つでもある予約へは自動送信しない**（並列トリガー・再実行・二重操作でも1予約1通）。
+- 送信失敗は `FAILED`（`errorCode=MAIL_SEND_FAILED`）。送信後の状態更新に失敗した場合は `SENDING` のまま（結果不明）。**どちらも自動では再送しない。**
+- メールの成否にかかわらず、Bookings・Recovery・決済・鍵（revision）には一切書かない。
+- 1回の実行で最大20通。MailApp の残り枠が50通以下なら送らない（予約確定・来場案内の余力を残す）。
+- `FeedbackInvites` にはメールアドレス・氏名・トークンを書かない（予約ID・状態・日時・エラーコードのみ。個人情報を持たないため #680 の消去対象外で、行はBookingsの予約行と同様に残る）。ログは件数・理由コード・dry-runの送信予定予約IDだけ。
+
+### メール
+
+- 件名: `【SNB】` / `【SNB mens】` / `【Studio X】` + `ご利用ありがとうございました（アンケートのお願い）`。
+- 本文: 任意回答・約2〜3分・回答の有無は今後の予約に影響しない・氏名やメールの入力不要・ご利用後14日間有効・1回限りの専用リンク。署名はブランド別（Studio X の文面にSNBの表現を含めない）。
+- **件名・本文冒頭（プレビュー）に、利用目的・予約日時・予約ID・氏名・トークンを出さない。** 回答リンクは本文の中ほど。
+- リンク: `https://nagoya-base.github.io/Studio-nagoya-base/feedback/<snb|mens|studio-x>/#t=<トークン>`（トークンは `#` 以降だけ。旧 `/survey/`・`/mens/survey/` へは送らない）。
+- トークン: 予約IDから秘密鍵で導く tokenId と、期限（利用終了＋14日）・ブランドを HMAC-SHA256 で署名したもの。同じ予約へ再送しても同じリンクになる（回答は1予約1回）。
+
+### Script Properties（Booking Admin。値はGitに書かない）
+
+| キー | 内容 |
+| --- | --- |
+| `FEEDBACK_INVITE_MODE` | `on` のときだけ送信。`dry_run` は件数ログだけ。未設定・それ以外は何もしない（**初期値: 未設定＝OFF**） |
+| `FEEDBACK_INVITE_START_AT` | 自動送信の開始日時（タイムゾーン付きISO。例 `2026-12-10T12:00:00+09:00`）。これより前に終了した予約には送らない。未設定なら送らない |
+| `FEEDBACK_TOKEN_SECRET` | 回答リンクの署名鍵。**回答用GASと同じ値**（32文字以上） |
+| `FEEDBACK_INVITE_MANUAL_BOOKING_ID` / `FEEDBACK_INVITE_MANUAL_CONFIRM_NOT_DELIVERED` | 手動送信用の一時値（実行後に自動で削除される） |
+
+送信元表示名・返信先・問い合わせ先は既存の `BOOKING_MAIL_DISPLAY_NAME` / `BOOKING_MAIL_REPLY_TO` / `BOOKING_CONTACT_EMAIL` を使う。
+回答用GASの `FEEDBACK_NOTIFY`（要確認回答をオーナーへ通知）とは**別のスイッチ**で、互いに影響しない。
+
+秘密鍵の作り方（手元の端末で実行し、表示された値を2つのGASのScript Propertiesにだけ貼る。チャット・Issue・PRに書かない）:
+
+```sh
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+### エディタから実行する関数（Booking Admin）
+
+| 関数 | 内容 |
+| --- | --- |
+| `setupFeedbackInvites` | `FeedbackInvites` シートを作る（冪等。見出しが違えば止まる） |
+| `dryRunFeedbackInvites` | モードにかかわらず、送らずに対象件数・除外理由・送信予定の予約ID（最大50）・設定不足をログに出す |
+| `createFeedbackInviteTrigger` | 15分おきの `sendFeedbackInvites` トリガーを1本作る（既にあれば作らない。モードがOFFなら何もしない） |
+| `sendFeedbackInvites` | トリガーのハンドラ。`FEEDBACK_INVITE_MODE` に従う |
+| `sendFeedbackInviteFromProperty` | `FEEDBACK_INVITE_MANUAL_BOOKING_ID` の予約へ1件だけ手動送信（モードOFFでも可。開始日時・48時間窓は見ないが、終了2時間後・取消・未決済などの条件は守る。`SENT` の予約へは送らない） |
+| `getFeedbackInviteStateFromProperty` | `FEEDBACK_INVITE_MANUAL_BOOKING_ID` の送信状態（個人情報なし） |
+
+### 反映と有効化の手順（すべてオーナーの明示承認後）
+
+1. PRを `main` へマージする。
+2. 秘密鍵を作る（上記）。
+3. **回答用GAS**を更新し `setupFeedbackSpreadsheet` を再実行、`FEEDBACK_TOKEN_SECRET` を登録する（`gas/feedback/README.md`「第3段階（#834）の反映手順」）。既存のGASプロジェクト・`/exec` URLのまま。
+4. **Booking Admin**: production workflow を `scope=full`（`schema_migrated` 不要）で実行し、承認1回。
+5. Booking Admin の Script Properties に `FEEDBACK_TOKEN_SECRET`（同じ値）を登録する。`FEEDBACK_INVITE_MODE` は**まだ設定しない**。
+6. エディタで `setupFeedbackInvites` を実行（`FEEDBACK_INVITES_CREATED`）。
+7. **DRY_RUN**: `FEEDBACK_INVITE_START_AT` に予定する開始日時を入れ、`dryRunFeedbackInvites` を実行。`problems` が空で、`wouldSend`・`reasons` の件数が想定どおりか確認する（開始日時より前に終わった予約が `BEFORE_START_AT` になり、送信予定に入っていないこと）。
+8. **実予約での確認（自動配信ONの前）**: 3ブランドそれぞれ、オーナー自身の実際の直接予約（確定・決済済み）の終了2時間後に、`FEEDBACK_INVITE_MANUAL_BOOKING_ID` を設定して `sendFeedbackInviteFromProperty` を実行し、次を確認する。
+   - 届いたメールの件名・本文・署名がブランドどおりで、件名とプレビューに予約情報・利用目的が無い。
+   - リンクが `/feedback/<brand>/` を開き、回答画面が出る（アドレスバーからトークンが消える）。回答すると `responses` に `is_test=0` で1行増え、`token_uses` に1行増える。
+   - 同じリンクをもう一度開くと「回答済みです」。別ブランドのフォームのパスに付け替えると「このリンクは使用できません」。
+   - 要確認の回答（Q5で「特になし」以外、または自由記述あり）は `FEEDBACK_NOTIFY=on` なら管理者通知が届き、管理画面の「ご意見・対応」に表示され、status を更新できる。
+   - `getFeedbackInviteStateFromProperty` が `SENT`。もう一度 `sendFeedbackInviteFromProperty` を実行しても `ALREADY_SENT` で送られない。
+   - 予約・決済・鍵の状態（Booking Admin の予約詳細）が送信前と変わっていない。
+9. **ON**: `FEEDBACK_INVITE_START_AT` を「ONにする現在時刻」に更新 → `createFeedbackInviteTrigger` を実行 → 最後に `FEEDBACK_INVITE_MODE=on`。初回のトリガー実行ログ（`sendFeedbackInvites: {...}`）で `sent` と `reasons` を確認する。
+
+### 止め方・復旧・ロールバック
+
+- **自動送信を止める**: `FEEDBACK_INVITE_MODE` を削除するか `off` にする（次のトリガー実行から何もしない。トリガーは残してよい）。完全に止めるならトリガー画面で `sendFeedbackInvites` を削除する。
+- **回答の受付を止める**: 回答用GASの `FEEDBACK_TOKEN_SECRET` を削除（すべての本番リンクが無効）。
+- **`FAILED` / `SENDING`（結果不明）の予約**: Booking Admin を実行しているGoogleアカウントの Gmail「送信済み」で、その利用者宛てに件名「ご利用ありがとうございました（アンケートのお願い）」が送られているか確認する。
+  - 送られていない → `FEEDBACK_INVITE_MANUAL_BOOKING_ID` に予約ID、`FEEDBACK_INVITE_MANUAL_CONFIRM_NOT_DELIVERED` に `yes` を入れ、`sendFeedbackInviteFromProperty` を実行（同じリンクで1通だけ再送。プロパティは自動で消える）。
+  - 送られている → 何もしない（自動では再送されない）。記録を合わせたい場合だけ、`FeedbackInvites` の該当行の `state` を `SENT` に手で直す。
+- **ロールバック**: まず `FEEDBACK_INVITE_MODE=off`。コードを戻す場合は revert を `main` へマージして production workflow を再実行する（`FeedbackInvites` シートが残っても他の処理は読まない）。予約・決済・鍵には書いていないため、それらの復旧作業は不要。
+- **秘密鍵の変更**は発行済みリンクをすべて無効にし、回答済み予約の再回答も可能にしてしまうため、漏えい時以外は行わない。
+
+### テスト
+
+`test/feedback-token-core.test.js`（形式・改ざん・ブランド・期限・URL）、`test/feedback-invites.test.js`（初期OFF・DRY_RUN・2時間後・延長／変更／取消／未決済・遡及なし・3ブランド文面・1予約1回・並列・送信失敗・結果不明・手動復旧）、`test/feedback-invite-e2e.test.js`（Booking Admin のリンク → 回答用GAS の保存・1予約1回答・別予約・期限切れ・ブランド不一致・保存失敗・同時送信・`?test=1`）。
+
 ## Issue #753: 鍵連携 PR-A（`revision`列とスナップショット。フラグOFF）
 
 SwitchBot鍵連携の接続層。**鍵API・独立GAS・配送・本番migrationは含まない**（設計と範囲は [`docs/switchbot-access-key-748.md`](../../docs/switchbot-access-key-748.md) の「予約システム接続（PR-A）」）。
@@ -3659,6 +3763,8 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `AccessKeySnapshot.gs`（Issue #753。SwitchBot鍵連携用のrevision増分判定とJST正規化スナップショット。純粋ロジック） | ✓ | ✓ | – | `gas/booking/shared/AccessKeySnapshot.gs` |
 | `BookingsSchemaMigration.gs`（Issue #673。管理者がエディタから手動実行する `migrateBookingsSchema`。Booking Admin専用） | – | ✓ | – | `gas/booking/admin/BookingsSchemaMigration.gs` |
 | `PersonalDataRetention.gs`（Issue #680。Bookings台帳の個人情報を180日経過後に消去。初期無効・dry-run必須。Booking Admin専用） | – | ✓ | – | `gas/booking/admin/PersonalDataRetention.gs` |
+| `FeedbackTokenCore.gs`（Issue #834。利用後アンケートの予約単位の回答リンク＝署名トークンの発行・検証。回答用GAS `gas/feedback/` と同じファイル） | – | ✓ | – | `scripts/feedback-token-core.js`（配布時に `FeedbackTokenCore.gs` へ改名） |
+| `FeedbackInvites.gs`（Issue #834。利用終了2時間後のアンケート案内メール。初期OFF・dry-runあり。Booking Admin専用） | – | ✓ | – | `gas/booking/admin/FeedbackInvites.gs` |
 | `SpreadsheetRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/SpreadsheetRepository.gs` |
 | `RecoveryRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/RecoveryRepository.gs` |
 | `BookingRepository.gs` | ✓ | ✓ | – | `gas/booking/shared/BookingRepository.gs` |

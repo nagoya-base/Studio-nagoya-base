@@ -19,7 +19,13 @@ var BOOKING_DIR = path.join(__dirname, '..', '..', 'gas', 'booking');
    ファイル名だけで参照し、どのサブディレクトリにあるかはここで解決する）。 */
 var BOOKING_SUBDIRS = ['shared', 'public', 'admin', 'webhook'];
 
+/* gas/booking/ の外に正本がある配布ファイル（scripts/prepare-booking-gas-project.js の EXTERNAL_SOURCE_FILES と同じ）。 */
+var EXTERNAL_SOURCE_FILES = require('../../scripts/prepare-booking-gas-project').EXTERNAL_SOURCE_FILES;
+
 function resolveBookingFilePath(file) {
+  if (Object.prototype.hasOwnProperty.call(EXTERNAL_SOURCE_FILES, file)) {
+    return path.join(__dirname, '..', '..', EXTERNAL_SOURCE_FILES[file]);
+  }
   for (var i = 0; i < BOOKING_SUBDIRS.length; i++) {
     var candidate = path.join(BOOKING_DIR, BOOKING_SUBDIRS[i], file);
     if (fs.existsSync(candidate)) return candidate;

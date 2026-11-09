@@ -18,6 +18,8 @@ var ROOT = path.resolve(__dirname, '..');
 /* 出力名 → 元ファイル。vmへ読み込む順（依存順）でもある。 */
 var FILES = [
   ['FeedbackCore.gs', 'scripts/feedback-core.js'],
+  /* Issue #834: 予約単位の回答リンクの署名・検証（Booking Admin と同じファイルを配る）。 */
+  ['FeedbackTokenCore.gs', 'scripts/feedback-token-core.js'],
   ['FeedbackTokens.gs', 'gas/feedback/FeedbackTokens.gs'],
   ['FeedbackRepository.gs', 'gas/feedback/FeedbackRepository.gs'],
   ['FeedbackWebApp.gs', 'gas/feedback/FeedbackWebApp.gs'],
