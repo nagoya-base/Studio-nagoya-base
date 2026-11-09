@@ -3148,13 +3148,13 @@ test('Issue #864: buildLoadBookingsTiming_はserverTimingから同じ呼び出�
   var sandbox = loadClientSandbox();
   sandbox.state.bookings = [booking(), booking({ bookingId: 'SX-2' })];
   var timing = sandbox.buildLoadBookingsTiming_(
-    { serverTiming: { totalMs: 1400, configMs: 200, optionOrdersMs: 600, bookingsReadMs: 400, buildMs: 200, bookingRows: 2 } },
+    { serverTiming: { totalMs: 1400, configMs: 200, spreadsheetOpenMs: 300, optionOrdersMs: 300, bookingsReadMs: 400, buildMs: 200, bookingRows: 2 } },
     1000, 4500, 4510
   );
   assert.deepStrictEqual(JSON.parse(JSON.stringify(timing)), {
     responseMs: 3500, renderMs: 10, bookings: 2,
     serverTotalMs: 1400, outsideServerMs: 2100,
-    serverConfigMs: 200, serverOptionOrdersMs: 600, serverBookingsReadMs: 400, serverBuildMs: 200
+    serverConfigMs: 200, serverSpreadsheetOpenMs: 300, serverOptionOrdersMs: 300, serverBookingsReadMs: 400, serverBuildMs: 200
   });
 });
 

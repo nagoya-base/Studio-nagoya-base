@@ -1680,7 +1680,7 @@ test('Issue #864: getAdminBookingsの区間計測ログは所要時間と件数�
   var lines = ctx.globals.Logger._logs.filter(function (line) { return line.indexOf('getAdminBookings timing ') === 0; });
   assert.strictEqual(lines.length, 1);
   var timing = JSON.parse(lines[0].slice('getAdminBookings timing '.length));
-  assert.deepStrictEqual(Object.keys(timing).sort(), ['bookingRows', 'bookingsReadMs', 'buildMs', 'configMs', 'optionOrderBookings', 'optionOrdersMs', 'totalMs', 'ttlConfigReads'].sort());
+  assert.deepStrictEqual(Object.keys(timing).sort(), ['bookingRows', 'bookingsReadMs', 'buildMs', 'configMs', 'optionOrderBookings', 'optionOrdersMs', 'spreadsheetOpenMs', 'totalMs', 'ttlConfigReads'].sort());
   assert.strictEqual(timing.bookingRows, 2);
   assert.strictEqual(timing.ttlConfigReads, 1);
   Object.keys(timing).forEach(function (key) { assert.strictEqual(typeof timing[key], 'number', key); });
