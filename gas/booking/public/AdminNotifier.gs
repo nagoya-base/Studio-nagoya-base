@@ -43,11 +43,23 @@ var AdminNotifier = (function () {
     return Number.isFinite(value) ? '利用料金: ' + value.toLocaleString('ja-JP') + '円（税込）' : '';
   }
 
+  /* Issue #869: 予約台帳の氏名をそのまま表示する。未取得・空白のみなら推測で補完せず「未登録」。 */
+  function formatAdminCustomerName_(name) {
+    var value = (name === null || name === undefined) ? '' : String(name).trim();
+    return value || '未登録';
+  }
+
   /*
    * options.autoConfirmByCheckout（Issue #709）: 呼び出し元（BookingRepository）が
    * 「Stripe Checkoutの決済完了Webhookで自動CONFIRMEDになる通常カード予約」と判定した場合のみtrue。
    * この場合は手動確定を案内せず、決済待ちで自動確定される旨を明示する。
    * 現地払い・承認制予約（作品撮り/大人数）・Checkout無効のカード予約はfalse/未指定で従来文面。
+   *
+   * Issue #869: 通常カード決済のPENDINGは決済処理中の短時間の内部状態で管理者対応も不要なため、
+   * autoConfirm時は件名・本文から「仮予約」表現を除き「予約申し込み」とする（決済前なので「確定」とは
+   * 断言しない）。手動確定・承認が必要なケースは従来の「仮予約」文面を維持する。
+   * あわせて全ケースの本文に予約台帳の氏名（record.name）を載せる。件名・ログには出さず、
+   * 連絡先（メール・電話）は追加しない。氏名が空なら推測せず「未登録」と表示する。
    */
   function notifyNewPendingBooking(record, options) {
     var adminEmail = BookingConfig.getAdminNotificationEmail();
@@ -55,17 +67,24 @@ var AdminNotifier = (function () {
 
     var adminUrl = BookingConfig.getBookingAdminUrl();
     var autoConfirm = !!(options && options.autoConfirmByCheckout);
-    var confirmInstruction = autoConfirm
-      ? 'オンラインカード決済待ちです。支払い完了後に自動で確定されるため、管理者による確定操作は不要です。'
-      : adminUrl
+    var brandLabel = Booking.getBrandLabel(record.brand);
+    var subject;
+    var intro;
+    if (autoConfirm) {
+      subject = '[' + brandLabel + '] 予約申し込みを受け付けました: ' + record.bookingId;
+      intro = '新しい予約申し込みがありました。クレジットカード決済処理中です。支払い完了後に自動確定されるため、管理者の操作は不要です。';
+    } else {
+      subject = '[' + brandLabel + '] 仮予約を受け付けました: ' + record.bookingId;
+      intro = '新しい仮予約（PENDING）が届きました。' + (adminUrl
         ? '内容を確認し、問題なければBooking Adminから確定してください。'
-        : '内容を確認し、問題なければSpreadsheetの管理メニューから確定してください。';
+        : '内容を確認し、問題なければSpreadsheetの管理メニューから確定してください。');
+    }
 
-    var subject = '[' + Booking.getBrandLabel(record.brand) + '] 仮予約を受け付けました: ' + record.bookingId;
     var lines = [
-      '新しい仮予約（PENDING）が届きました。' + confirmInstruction,
+      intro,
       '',
       'bookingId: ' + record.bookingId,
+      '予約者名：' + formatAdminCustomerName_(record.name),
       '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date)
     ];
     var priceLine = formatAdminPriceLine_(record.priceAmount);
@@ -78,7 +97,7 @@ var AdminNotifier = (function () {
       lines.push(adminUrl);
     }
     lines.push('');
-    lines.push('※このメールにはお客様の氏名・連絡先は含めていません。詳細はSpreadsheet台帳（bookingIdで検索）を確認してください。');
+    lines.push('※このメールにはお客様の連絡先は含めていません。詳細はSpreadsheet台帳（bookingIdで検索）を確認してください。');
 
     MailApp.sendEmail(adminEmail, subject, lines.join('\n'));
   }
