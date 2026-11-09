@@ -7,7 +7,8 @@
  * 機能ON は行われない（それぞれ別の実施判断・別証跡）。
  *
  * ── 保存領域と実効権限（秘密と状態を分離）──
- *  Script Properties（プロジェクト編集者が閲覧可）… 設定 ACCESS_CONFIG（JSON・秘密なし）、ACCESS_ENABLED、
+ *  Script Properties（プロジェクト編集者が閲覧可）… 設定 ACCESS_CONFIG（JSON・秘密なし）または分割設定（ACCESS_CONFIG_FORMAT=split-v1。
+ *    #859。どちらか一方だけが正本）、ACCESS_ENABLED、
  *    ACCESS_ENVIRONMENT、LEDGER_SPREADSHEET_ID、ACCESS_ADMIN_ACTORS（メール→非個人情報ラベル）、状態（OP_/BK_/EVT_ …）
  *  User Properties（デプロイ実行者本人のみ）… SWITCHBOT_TOKEN / SWITCHBOT_SECRET / WEBHOOK_SHARED_TOKEN、
  *    パスコード（SECRET_*）。Web アプリ・時間主導トリガーは実行者として動くため読めるが、他の編集者は読めない。
@@ -57,15 +58,15 @@ function sba_secretStore_() {
   };
 }
 
+/**
+ * 設定の読込（Issue #859）。正本は ACCESS_CONFIG_FORMAT で一箇所に決まる: 未設定=旧 ACCESS_CONFIG（JSON）、
+ * 'split-v1'=分割プロパティ（ACCESS_ELIGIBLE_BRANDS 等）。旧・新の暗黙マージはしない（混在は CONFIG_SOURCE_MIXED で起動拒否）。
+ * フラグは別プロパティ ACCESS_ENABLED（'true' のときだけON。設定JSONの enabled は無視）。読込エラー時は enabled=false。
+ * 環境名は二重に持つ（設定の environment と ACCESS_ENVIRONMENT が一致しなければ起動しない）。
+ */
 function sba_config_() {
-  var raw = sba_scriptProps_().getProperty('ACCESS_CONFIG');
-  var cfg = {};
-  try { cfg = raw ? JSON.parse(raw) : {}; } catch (e) { cfg = {}; }
-  // フラグは別プロパティ（'true' のときだけON）。設定JSONの enabled は無視する。
-  cfg.enabled = sba_scriptProps_().getProperty('ACCESS_ENABLED') === 'true';
-  // 環境名は二重に持つ（設定JSONと専用プロパティが一致しなければ起動しない）
-  if (sba_scriptProps_().getProperty('ACCESS_ENVIRONMENT') !== cfg.environment) cfg.environment = '__MISMATCH__';
-  return cfg;
+  var sp = sba_scriptProps_();
+  return SwitchBotAccessInfra.loadConfig(function (k) { return sp.getProperty(k); }).cfg;
 }
 
 function sba_hmacBase64_(secret, message) {
@@ -493,11 +494,16 @@ function accessScrubBootstrapCredentials() {
 function accessCheckSetup() {
   var s = sba_scriptProps_(), u = sba_userProps_();
   var status = {};
-  ['ACCESS_CONFIG', 'ACCESS_ENVIRONMENT', 'LEDGER_SPREADSHEET_ID', 'ACCESS_ADMIN_ACTORS'].forEach(function (n) { status[n] = s.getProperty(n) ? 'SET' : 'MISSING'; });
+  [SwitchBotAccessInfra.CONFIG_FORMAT_PROP, 'ACCESS_CONFIG', 'ACCESS_ENVIRONMENT', 'LEDGER_SPREADSHEET_ID', 'ACCESS_ADMIN_ACTORS']
+    .concat(SwitchBotAccessInfra.SPLIT_PROP_NAMES).forEach(function (n) { status[n] = s.getProperty(n) ? 'SET' : 'MISSING'; });
   SBA_SECRET_NAMES_.forEach(function (n) { status[n] = u.getProperty(n) ? 'SET' : 'MISSING'; });
   status.ACCESS_ENABLED = s.getProperty('ACCESS_ENABLED') === 'true' ? 'ON' : 'OFF';
-  var v = SwitchBotAccessInfra.validateConfig(sba_config_());
+  var loaded = SwitchBotAccessInfra.loadConfig(function (k) { return s.getProperty(k); });
+  status.configSource = loaded.source;
+  var v = SwitchBotAccessInfra.validateConfig(loaded.cfg);
   status.config = v.ok ? 'VALID' : v.errors;
+  // 発行前提（#859）: 件数と固定コードのみ（予約ID・完全deviceId・宛先は出さない）
+  if (v.ok) status.issuance = SwitchBotAccessInfra.issuanceReadiness(loaded.cfg);
   Logger.log(JSON.stringify(status));
   return status;
 }

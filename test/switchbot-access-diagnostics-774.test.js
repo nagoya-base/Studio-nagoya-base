@@ -109,7 +109,9 @@ test('正常（未初期化の空ストア）: ok=true・DIAGNOSTICS_OK。値は
   var r = run(loadShell());
   assert.strictEqual(r.ok, true); assert.strictEqual(r.code, 'DIAGNOSTICS_OK'); assert.deepStrictEqual(r.failures, []);
   assert.strictEqual(r.identity, 'AUTHORIZED'); assert.strictEqual(r.accessEnabled, 'OFF'); assert.strictEqual(r.environment, 'PRODUCTION');
-  assert.deepStrictEqual(r.config, { state: 'VALID', envMatch: 'MATCH', errors: [] });
+  assert.strictEqual(r.config.state, 'VALID'); assert.strictEqual(r.config.envMatch, 'MATCH'); assert.deepStrictEqual(r.config.errors, []);
+  assert.strictEqual(r.config.source, 'LEGACY'); // #859: ACCESS_CONFIG_FORMAT 未設定は旧形式
+  assert.strictEqual(r.issuance.state, 'NOT_READY'); // #859: 対象ブランド等が無い設定は基本妥当でも発行前提不足を示す
   assert.deepStrictEqual(r.settings, { ACCESS_CONFIG: 'SET', ACCESS_ENVIRONMENT: 'SET', LEDGER_SPREADSHEET_ID: 'SET', ACCESS_ADMIN_ACTORS: 'SET' });
   assert.deepStrictEqual(r.credentials, { SWITCHBOT_TOKEN: 'SET', SWITCHBOT_SECRET: 'SET', WEBHOOK_SHARED_TOKEN: 'SET' });
   assert.strictEqual(r.ledger.state, 'LEDGER_ACCESS_OK'); assert.strictEqual(r.ledger.headers, 'COMPLETE'); assert.strictEqual(r.ledger.columnFormat, 'OK');

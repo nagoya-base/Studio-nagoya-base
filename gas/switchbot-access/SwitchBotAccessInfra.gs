@@ -92,6 +92,9 @@ var SwitchBotAccessInfra = (function () {
   function validateConfig(cfg) {
     var errors = [];
     cfg = cfg || {};
+    // 設定読込（loadConfig。#859）で見つかった問題は、そのまま設定不備として拒否する（fail-closed）
+    if (Array.isArray(cfg.configLoadErrors)) cfg.configLoadErrors.forEach(function (e) { errors.push(typeof e === 'string' && CODE_RE.test(e) ? e : 'CONFIG_LOAD_ERROR'); });
+    else if (cfg.configLoadErrors !== undefined) errors.push('CONFIG_LOAD_ERROR');
     var envs = Object.keys(ENVIRONMENT).map(function (k) { return ENVIRONMENT[k]; });
     if (envs.indexOf(cfg.environment) === -1) errors.push('ENVIRONMENT_INVALID');
     var allowed = Array.isArray(cfg.allowedLast4) ? cfg.allowedLast4.map(function (s) { return String(s).toUpperCase(); }) : [];
@@ -123,6 +126,224 @@ var SwitchBotAccessInfra = (function () {
     if (cfg.limitedRollout !== undefined && cfg.limitedRollout !== true && cfg.limitedRollout !== false) errors.push('LIMITED_ROLLOUT_INVALID');
     if (cfg.limitedRollout === true && (!Array.isArray(cfg.pilotBookingIds) || cfg.pilotBookingIds.length !== 1)) errors.push('PILOT_REQUIRED');
     return { ok: errors.length === 0, errors: errors.filter(function (e, i) { return errors.indexOf(e) === i; }) };
+  }
+
+  // ---------- 設定の読込（Issue #859。旧 ACCESS_CONFIG 一括JSON ／ 分割プロパティ split-v1）----------
+  //
+  // 正本は常に一箇所。ACCESS_CONFIG_FORMAT が未設定なら旧形式（ACCESS_CONFIG のみ）、'split-v1' なら分割形式のみを読む。
+  // 旧・新の暗黙マージや上書き優先順位は作らない。もう一方の形式のプロパティが残っていれば CONFIG_SOURCE_MIXED で拒否する
+  // （移行・ロールバックの途中＝不整合状態では発行しない）。読込エラーがあると enabled=false かつ validateConfig が失敗する。
+  // ここは Script Properties を読むだけ（書込み・通信なし）。値はエラーコードに含めない。
+
+  var CONFIG_FORMAT_PROP = 'ACCESS_CONFIG_FORMAT';
+  var CONFIG_FORMAT_SPLIT = 'split-v1';
+  var LEGACY_CONFIG_PROP = 'ACCESS_CONFIG';
+  /** 分割形式（split-v1）のプロパティ。高頻度の運営設定は独立プロパティ、低頻度の構造化設定は小さなJSON。 */
+  var SPLIT_PROPS = {
+    CORE: 'ACCESS_CORE_CONFIG',              // JSON: 商用承認・支払根拠・台帳対象・容量/保持など（低頻度）
+    DEVICES: 'ACCESS_DEVICES',               // JSON: environment・allowedLast4・keypads（端末対応。低頻度）
+    DELIVERY: 'ACCESS_DELIVERY',             // JSON: adminMailTo・deliveryConfigured・delivery（配送・通知先。低頻度）
+    BRANDS: 'ACCESS_ELIGIBLE_BRANDS',        // JSON配列: 発行対象ブランド（例 ["mens"]）
+    LIMITED: 'ACCESS_LIMITED_ROLLOUT',       // 'true' | 'false'
+    PILOT: 'ACCESS_PILOT_BOOKING_IDS',       // JSON配列: 限定モードの予約ID（ちょうど1件）。限定モードOFFでは設定しない
+    GRACE_BEFORE: 'ACCESS_GRACE_BEFORE_SEC', // 整数秒（0〜86400）
+    GRACE_AFTER: 'ACCESS_GRACE_AFTER_SEC'    // 整数秒（0〜86400）
+  };
+  var SPLIT_PROP_NAMES = Object.keys(SPLIT_PROPS).map(function (k) { return SPLIT_PROPS[k]; });
+  /** 各JSONに置いてよいキー。高頻度設定（ブランド・限定モード・予約ID・猶予）や enabled はJSONに置けない（二重管理の禁止）。 */
+  var SPLIT_JSON_KEYS = {
+    CORE: { required: ['commercialUseApproved', 'eligiblePaymentStatuses', 'ledgerTarget'],
+      optional: ['capacity', 'storageLimits', 'infra', 'maxReads', 'webhookWaitSec', 'readWaitSec', 'dailyCleanupMaxDeletes'] },
+    DEVICES: { required: ['environment', 'allowedLast4', 'keypads'], optional: [] },
+    DELIVERY: { required: ['adminMailTo', 'deliveryConfigured'], optional: ['delivery'] }
+  };
+  /** 支払根拠の語彙（AccessKeySnapshot.PAYMENT_BASIS）。UNVERIFIED や台帳の生値（not_started 等）は許可しない。 */
+  var ELIGIBLE_PAYMENT_BASIS = ['STRIPE_PAID', 'ADMIN_APPROVED'];
+  var PILOT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+  var GRACE_MAX_SEC = 86400;
+
+  function isPlainObject(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+  function hasDup(arr) { return arr.some(function (x, i) { return arr.indexOf(x) !== i; }); }
+
+  /** read(name) → { state: SET|MISSING|UNKNOWN, raw }。例外・undefined は UNKNOWN（MISSING に潰さない）。 */
+  function readProp(read, name) {
+    var v;
+    try { v = read(name); } catch (e) { return { state: 'UNKNOWN', raw: null }; }
+    if (v === undefined) return { state: 'UNKNOWN', raw: null };
+    return v === null || v === '' ? { state: 'MISSING', raw: null } : { state: 'SET', raw: String(v) };
+  }
+
+  /** 分割形式の小さなJSON（オブジェクト）を読む。未知キー・必須キー欠落は拒否。 */
+  function splitJson(r, part, errors) {
+    var prefix = part + '_CONFIG';
+    if (r.state !== 'SET') { errors.push(prefix + '_' + (r.state === 'MISSING' ? 'MISSING' : 'UNREADABLE')); return null; }
+    var obj = safeParse(r.raw);
+    if (!isPlainObject(obj)) { errors.push(prefix + '_PARSE_ERROR'); return null; }
+    var spec = SPLIT_JSON_KEYS[part];
+    var allowed = spec.required.concat(spec.optional);
+    if (Object.keys(obj).some(function (k) { return allowed.indexOf(k) === -1; })) errors.push(prefix + '_UNKNOWN_KEY');
+    if (spec.required.some(function (k) { return obj[k] === undefined; })) errors.push(prefix + '_KEY_MISSING');
+    return obj;
+  }
+
+  /** JSON配列の文字列プロパティ（空・重複・非文字列・形式不一致は拒否）。 */
+  function splitStringArray(r, code, itemOk, errors, allowMissing) {
+    if (r.state === 'MISSING' && allowMissing) return undefined;
+    if (r.state !== 'SET') { errors.push(code + '_' + (r.state === 'MISSING' ? 'MISSING' : 'UNREADABLE')); return null; }
+    var arr = safeParse(r.raw);
+    if (!Array.isArray(arr)) { errors.push(code + '_PARSE_ERROR'); return null; }
+    if (!arr.length) { errors.push(code + '_EMPTY'); return null; }
+    if (arr.some(function (x) { return typeof x !== 'string' || !itemOk(x); })) { errors.push(code + '_INVALID'); return null; }
+    if (hasDup(arr)) { errors.push(code + '_DUPLICATE'); return null; }
+    return arr;
+  }
+
+  function splitGrace(r, code, errors) {
+    if (r.state !== 'SET') { errors.push(code + '_' + (r.state === 'MISSING' ? 'MISSING' : 'UNREADABLE')); return null; }
+    if (!/^(0|[1-9][0-9]{0,5})$/.test(r.raw)) { errors.push(code + '_INVALID'); return null; }
+    var n = Number(r.raw);
+    if (n > GRACE_MAX_SEC) { errors.push(code + '_INVALID'); return null; }
+    return n;
+  }
+
+  /** 分割形式の端末対応の追加検査（旧形式より厳格）: brand 既知・facility 必須・キー限定・brand+facility+room の重複禁止。 */
+  function splitKeypadErrors(kps, errors) {
+    if (!Array.isArray(kps)) return;
+    var seen = [];
+    kps.forEach(function (k) {
+      if (!isPlainObject(k) || Object.keys(k).some(function (x) { return ['brand', 'facility', 'room', 'deviceId'].indexOf(x) === -1; })) { errors.push('KEYPAD_ENTRY_INVALID'); return; }
+      if (KNOWN_BRANDS.indexOf(k.brand) === -1) errors.push('KEYPAD_BRAND_INVALID');
+      if (typeof k.facility !== 'string' || !k.facility) errors.push('KEYPAD_FACILITY_INVALID');
+      if (k.room !== undefined && k.room !== null && (typeof k.room !== 'string' || !k.room)) errors.push('KEYPAD_ROOM_INVALID');
+      var key = JSON.stringify([k.brand, k.facility, k.room === undefined ? null : k.room]);
+      if (seen.indexOf(key) !== -1) errors.push('KEYPAD_DUPLICATE');
+      seen.push(key);
+    });
+    // allowedLast4 との照合は validateConfig（KEYPAD_NOT_ALLOWED_IN_ENV）が旧・新共通で行う
+  }
+
+  /**
+   * 設定を読み込む。read(name) は Script Properties の getProperty 相当（読取のみ）。
+   * 戻り値 { cfg, source: 'LEGACY' | 'SPLIT_V1' | 'UNKNOWN', errors: [固定コード], props: { 名前: SET|MISSING|UNKNOWN } }
+   * cfg.enabled は ACCESS_ENABLED==='true' かつ errors が空のときだけ true。ACCESS_ENVIRONMENT と設定の environment が
+   * 一致しなければ environment='__MISMATCH__'（従来どおり起動しない）。errors は cfg.configLoadErrors にも入れ、validateConfig が拒否する。
+   */
+  function loadConfig(read) {
+    var errors = [];
+    var props = {};
+    function rp(name) { var r = readProp(read, name); props[name] = r.state; return r; }
+    var fmt = rp(CONFIG_FORMAT_PROP);
+    var legacy = rp(LEGACY_CONFIG_PROP);
+    var split = {};
+    Object.keys(SPLIT_PROPS).forEach(function (k) { split[k] = rp(SPLIT_PROPS[k]); });
+    var envProp = rp('ACCESS_ENVIRONMENT');
+    var flag = rp('ACCESS_ENABLED');
+    var splitPresent = Object.keys(split).filter(function (k) { return split[k].state !== 'MISSING'; });
+    var cfg = {};
+    var source;
+
+    if (fmt.state === 'UNKNOWN') { source = 'UNKNOWN'; errors.push('CONFIG_FORMAT_UNREADABLE'); }
+    else if (fmt.state === 'MISSING') {
+      source = 'LEGACY';
+      if (splitPresent.length) errors.push('CONFIG_SOURCE_MIXED');
+      if (legacy.state === 'SET') {
+        var parsed = safeParse(legacy.raw);
+        if (isPlainObject(parsed)) cfg = parsed; else errors.push('LEGACY_CONFIG_PARSE_ERROR');
+      } else errors.push(legacy.state === 'MISSING' ? 'LEGACY_CONFIG_MISSING' : 'LEGACY_CONFIG_UNREADABLE');
+    } else if (fmt.raw !== CONFIG_FORMAT_SPLIT) { source = 'UNKNOWN'; errors.push('CONFIG_FORMAT_INVALID'); }
+    else {
+      source = 'SPLIT_V1';
+      if (legacy.state !== 'MISSING') errors.push('CONFIG_SOURCE_MIXED');
+      var core = splitJson(split.CORE, 'CORE', errors);
+      var dev = splitJson(split.DEVICES, 'DEVICES', errors);
+      var dlv = splitJson(split.DELIVERY, 'DELIVERY', errors);
+      [core, dev, dlv].forEach(function (o) { if (o) Object.keys(o).forEach(function (k) { cfg[k] = o[k]; }); });
+      if (core) {
+        if (typeof core.commercialUseApproved !== 'boolean') errors.push('COMMERCIAL_USE_INVALID');
+        var ps = core.eligiblePaymentStatuses;
+        if (!Array.isArray(ps) || !ps.length || ps.some(function (x) { return ELIGIBLE_PAYMENT_BASIS.indexOf(x) === -1; }) || hasDup(ps)) errors.push('PAYMENT_STATUSES_INVALID');
+      }
+      if (dev) splitKeypadErrors(dev.keypads, errors);
+      if (dlv) {
+        if (typeof dlv.deliveryConfigured !== 'boolean') errors.push('DELIVERY_CONFIGURED_INVALID');
+        if (dlv.deliveryConfigured === true && dlv.delivery === undefined) errors.push('DELIVERY_SETTINGS_MISSING');
+      }
+      var brands = splitStringArray(split.BRANDS, 'ELIGIBLE_BRANDS', function (b) { return KNOWN_BRANDS.indexOf(b) !== -1; }, errors, false);
+      if (brands) cfg.eligibleBrands = brands;
+      var limited = null;
+      if (split.LIMITED.state !== 'SET') errors.push('LIMITED_ROLLOUT_' + (split.LIMITED.state === 'MISSING' ? 'MISSING' : 'UNREADABLE'));
+      else if (split.LIMITED.raw === 'true') limited = true;
+      else if (split.LIMITED.raw === 'false') limited = false;
+      else errors.push('LIMITED_ROLLOUT_INVALID');
+      if (limited !== null) cfg.limitedRollout = limited;
+      var pilot = splitStringArray(split.PILOT, 'PILOT_BOOKING_IDS', function (x) { return PILOT_ID_RE.test(x); }, errors, true);
+      if (limited === true) {
+        if (pilot === undefined) errors.push('PILOT_REQUIRED');
+        else if (pilot && pilot.length !== 1) errors.push('PILOT_BOOKING_IDS_NOT_SINGLE');
+      }
+      // 限定モードOFFで予約IDだけ残すと「全件なのか限定なのか」が曖昧になるため拒否（解除は両方を外す）
+      if (limited === false && split.PILOT.state !== 'MISSING') errors.push('PILOT_WITHOUT_LIMITED_ROLLOUT');
+      if (pilot) cfg.pilotBookingIds = pilot;
+      var gb = splitGrace(split.GRACE_BEFORE, 'GRACE_BEFORE', errors);
+      var ga = splitGrace(split.GRACE_AFTER, 'GRACE_AFTER', errors);
+      if (gb !== null) cfg.graceBeforeSec = gb;
+      if (ga !== null) cfg.graceAfterSec = ga;
+    }
+
+    if (envProp.state !== 'SET' || envProp.raw !== cfg.environment) cfg.environment = '__MISMATCH__';
+    var uniq = errors.filter(function (e, i) { return errors.indexOf(e) === i; });
+    cfg.enabled = flag.state === 'SET' && flag.raw === 'true' && uniq.length === 0;
+    if (uniq.length) cfg.configLoadErrors = uniq;
+    else delete cfg.configLoadErrors;
+    return { cfg: cfg, source: source, errors: uniq, props: props };
+  }
+
+  /**
+   * 発行前提の診断（読取のみ）。validateConfig の基本妥当性とは別に、実際にコアの発行判定を通り得るかを固定コードで返す。
+   * 件数のみ返し、予約ID・完全deviceId・宛先は返さない。
+   */
+  function issuanceReadiness(cfg) {
+    cfg = cfg || {};
+    var problems = [];
+    var brands = Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : null;
+    var kps = Array.isArray(cfg.keypads) ? cfg.keypads : [];
+    var out = {
+      state: 'NOT_READY', problems: problems,
+      commercialUse: cfg.commercialUseApproved === true ? 'APPROVED' : (cfg.commercialUseApproved === false ? 'NOT_APPROVED' : 'NOT_SET'),
+      paymentStatuses: 0, brands: brands ? brands.length : 0,
+      limitedRollout: cfg.limitedRollout === true ? 'ON' : (cfg.limitedRollout === false || cfg.limitedRollout === undefined ? 'OFF' : 'INVALID'),
+      pilotBookingIds: Array.isArray(cfg.pilotBookingIds) ? cfg.pilotBookingIds.length : 0,
+      keypads: kps.length, grace: 'NOT_SET', delivery: 'NOT_CONFIGURED'
+    };
+    if (out.commercialUse !== 'APPROVED') problems.push('COMMERCIAL_USE_NOT_APPROVED');
+    var ps = cfg.eligiblePaymentStatuses;
+    if (!Array.isArray(ps) || !ps.length) problems.push('PAYMENT_STATUSES_MISSING');
+    else {
+      out.paymentStatuses = ps.length;
+      if (ps.some(function (x) { return ELIGIBLE_PAYMENT_BASIS.indexOf(x) === -1; })) problems.push('PAYMENT_STATUS_NOT_ALLOWED');
+    }
+    if (!brands || !brands.length) problems.push('ELIGIBLE_BRANDS_MISSING');
+    else if (brands.some(function (b) { return KNOWN_BRANDS.indexOf(b) === -1; })) problems.push('ELIGIBLE_BRANDS_INVALID');
+    if (out.limitedRollout === 'INVALID') problems.push('LIMITED_ROLLOUT_INVALID');
+    if (cfg.pilotBookingIds !== undefined && !Array.isArray(cfg.pilotBookingIds)) problems.push('PILOT_BOOKING_IDS_INVALID');
+    if (cfg.limitedRollout === true && out.pilotBookingIds !== 1) problems.push('PILOT_BOOKING_IDS_NOT_SINGLE');
+    if (cfg.limitedRollout !== true && cfg.pilotBookingIds !== undefined) problems.push('PILOT_WITHOUT_LIMITED_ROLLOUT');
+    var gOk = function (v) { return typeof v === 'number' && isFinite(v) && v >= 0 && Math.floor(v) === v && v <= GRACE_MAX_SEC; };
+    if (cfg.graceBeforeSec === undefined && cfg.graceAfterSec === undefined) problems.push('GRACE_NOT_CONFIGURED');
+    else if (!gOk(cfg.graceBeforeSec) || !gOk(cfg.graceAfterSec)) { out.grace = 'INVALID'; problems.push('GRACE_INVALID'); }
+    else out.grace = 'SET';
+    // 対象ブランドごとに端末対応があるか／対象外ブランドの端末（余計な対象端末）が無いか
+    if (brands) brands.forEach(function (b) {
+      if (!kps.some(function (k) { return k && k.brand === b; })) problems.push('KEYPAD_MISSING_FOR_BRAND');
+    });
+    if (kps.some(function (k) { return !k || !brands || brands.indexOf(k.brand) === -1; })) problems.push('KEYPAD_FOR_NON_TARGET_BRAND');
+    if (cfg.deliveryConfigured === true) out.delivery = deliverySettings(cfg) ? 'CONFIGURED' : 'INVALID';
+    else if (cfg.delivery !== undefined && !deliverySettings(cfg)) out.delivery = 'INVALID';
+    if (out.delivery === 'INVALID') problems.push('DELIVERY_CONFIG_INVALID');
+    var uniq = problems.filter(function (e, i) { return problems.indexOf(e) === i; });
+    out.problems = uniq;
+    out.state = uniq.length ? 'NOT_READY' : 'READY';
+    return out;
   }
 
   /** 状態ストアに環境名を刻む。別環境のストアへ向けた起動を拒否する（初回のみ記録）。 */
@@ -2771,9 +2992,10 @@ var SwitchBotAccessInfra = (function () {
     return {
       ok: false, code: 'DIAGNOSTICS_NOT_RUN', failures: [], stopped: false,
       identity: 'NOT_CHECKED', accessEnabled: 'NOT_CHECKED', environment: 'NOT_CHECKED',
-      config: { state: 'NOT_CHECKED', envMatch: 'NOT_CHECKED', errors: [] },
+      config: { state: 'NOT_CHECKED', source: 'NOT_CHECKED', envMatch: 'NOT_CHECKED', errors: [], splitProps: {} },
       settings: { ACCESS_CONFIG: 'NOT_CHECKED', ACCESS_ENVIRONMENT: 'NOT_CHECKED', LEDGER_SPREADSHEET_ID: 'NOT_CHECKED', ACCESS_ADMIN_ACTORS: 'NOT_CHECKED' },
       credentials: { SWITCHBOT_TOKEN: 'NOT_CHECKED', SWITCHBOT_SECRET: 'NOT_CHECKED', WEBHOOK_SHARED_TOKEN: 'NOT_CHECKED' },
+      issuance: { state: 'NOT_CHECKED', problems: [] },
       ledger: { state: 'NOT_CHECKED', headers: 'NOT_CHECKED', columnFormat: 'NOT_CHECKED', rows: 0, sampled: 0 },
       store: { state: 'NOT_CHECKED', metaEnv: 'NOT_CHECKED', gate: 'NOT_CHECKED', keys: 0, bytes: 0, ratio: 0, valueRatio: 0, byPrefix: {}, ops: { total: 0, unresolved: 0, unreadable: 0 } },
       notes: DIAG_NOTES.slice()
@@ -2841,7 +3063,13 @@ var SwitchBotAccessInfra = (function () {
       var idRaw = diagRead(sp, 'LEDGER_SPREADSHEET_ID'), actorsRaw = diagRead(sp, 'ACCESS_ADMIN_ACTORS');
       out.settings = { ACCESS_CONFIG: cfgRaw.state, ACCESS_ENVIRONMENT: envRaw.state, LEDGER_SPREADSHEET_ID: idRaw.state, ACCESS_ADMIN_ACTORS: actorsRaw.state };
       CREDENTIAL_NAMES.forEach(function (n) { out.credentials[n] = diagRead(up, n).state; });
-      var settingsOk = Object.keys(out.settings).every(function (k) { return out.settings[k] === 'SET'; });
+      // 設定の正本（#859）: ACCESS_CONFIG_FORMAT 未設定=旧 ACCESS_CONFIG、'split-v1'=分割プロパティ。旧形式のときだけ ACCESS_CONFIG を必須にする
+      var loaded = loadConfig(function (k) { return sp.get(k); });
+      out.config.source = loaded.source;
+      SPLIT_PROP_NAMES.concat([CONFIG_FORMAT_PROP]).forEach(function (n) { out.config.splitProps[n] = loaded.props[n] || 'UNKNOWN'; });
+      var settingsOk = Object.keys(out.settings).every(function (k) {
+        return out.settings[k] === 'SET' || (k === 'ACCESS_CONFIG' && loaded.source !== 'LEGACY' && out.settings[k] === 'MISSING');
+      });
       var credsOk = CREDENTIAL_NAMES.every(function (n) { return out.credentials[n] === 'SET'; });
       if (!settingsOk) fail('SETTINGS_INCOMPLETE');
       if (!credsOk) fail('CREDENTIALS_INCOMPLETE');
@@ -2850,7 +3078,13 @@ var SwitchBotAccessInfra = (function () {
       if (out.environment !== 'PRODUCTION' && envRaw.state === 'SET') fail('ENV_NOT_PRODUCTION');
 
       var cfg = {};
-      if (cfgRaw.state !== 'SET') out.config.state = cfgRaw.state;
+      if (loaded.source !== 'LEGACY') {
+        cfg = loaded.cfg;
+        out.config.envMatch = cfg.environment !== '__MISMATCH__' && envRaw.state === 'SET' ? 'MATCH' : 'MISMATCH';
+        var vs = validateConfig(cfg);
+        out.config.state = vs.ok && out.config.envMatch === 'MATCH' ? 'VALID' : 'INVALID';
+        out.config.errors = vs.errors.slice(0, 16);
+      } else if (cfgRaw.state !== 'SET') out.config.state = cfgRaw.state;
       else {
         var parsed = safeParse(cfgRaw.raw);
         if (parsed === null && cfgRaw.raw !== 'null') out.config.state = 'PARSE_ERROR';
@@ -2859,11 +3093,15 @@ var SwitchBotAccessInfra = (function () {
           cfg = parsed;
           out.config.envMatch = envRaw.state === 'SET' && cfg.environment === envRaw.raw ? 'MATCH' : 'MISMATCH';
           var v = validateConfig(out.config.envMatch === 'MATCH' ? cfg : Object.assign({}, cfg, { environment: '__MISMATCH__' }));
-          out.config.state = v.ok && out.config.envMatch === 'MATCH' ? 'VALID' : 'INVALID';
-          out.config.errors = v.errors.slice(0, 16);
+          // 旧形式のまま分割プロパティが残っている（移行途中・ロールバック漏れ）は黙って許容しない
+          var lerr = loaded.errors.filter(function (e) { return v.errors.indexOf(e) === -1; });
+          out.config.state = v.ok && !lerr.length && out.config.envMatch === 'MATCH' ? 'VALID' : 'INVALID';
+          out.config.errors = lerr.concat(v.errors).slice(0, 16);
         }
       }
       if (out.config.state !== 'VALID') fail(out.config.state === 'INVALID' ? 'CONFIG_INVALID' : 'CONFIG_' + out.config.state);
+      // 発行前提（#859）: 基本妥当性（VALID）とは別に、コアの発行判定を通り得るかを示す。ON前の合否は issuance.state=READY で判断する
+      if (out.config.state === 'VALID') out.issuance = issuanceReadiness(cfg);
 
       if (idRaw.state !== 'SET') { out.ledger.state = idRaw.state === 'MISSING' ? 'LEDGER_ID_MISSING' : 'LEDGER_READ_FAILED'; fail(out.ledger.state); }
       else {
@@ -2986,6 +3224,8 @@ var SwitchBotAccessInfra = (function () {
   return {
     ENVIRONMENT: ENVIRONMENT, PROPERTIES_LIMITS: PROPERTIES_LIMITS, DEFAULTS: DEFAULTS, CATALOG: CATALOG, FREEZE_REASONS: FREEZE_REASONS,
     validateConfig: validateConfig, ensureStoreEnvironment: ensureStoreEnvironment,
+    loadConfig: loadConfig, issuanceReadiness: issuanceReadiness, CONFIG_FORMAT_PROP: CONFIG_FORMAT_PROP, CONFIG_FORMAT_SPLIT: CONFIG_FORMAT_SPLIT,
+    SPLIT_PROPS: SPLIT_PROPS, SPLIT_PROP_NAMES: SPLIT_PROP_NAMES, SPLIT_JSON_KEYS: SPLIT_JSON_KEYS, ELIGIBLE_PAYMENT_BASIS: ELIGIBLE_PAYMENT_BASIS,
     constantTimeEquals: constantTimeEquals, authenticateWebhook: authenticateWebhook, authorizeAdmin: authorizeAdmin,
     CREDENTIAL_NAMES: CREDENTIAL_NAMES, validateCredentialInput: validateCredentialInput, setupCredentials: setupCredentials, credentialStatus: credentialStatus,
     BOOTSTRAP_KEYS: BOOTSTRAP_KEYS, accessFlagState: accessFlagState, migrateBootstrapCredentials: migrateBootstrapCredentials, bootstrapStatus: bootstrapStatus, scrubBootstrapCredentials: scrubBootstrapCredentials,
