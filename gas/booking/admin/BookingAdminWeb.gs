@@ -217,7 +217,8 @@ function getAdminBookings() {
   /* Issue #449: 終了済み予約を通常一覧から外す判定用（予約タイムゾーン基準の'YYYY-MM-DD HH:mm'）。 */
   var nowJst = formatAdminDateTime_(now, timezone);
   lap('configMs');
-  var optionOrdersByBooking = loadAdminListOptionOrders_();
+  var optionStats = {};
+  var optionOrdersByBooking = loadAdminListOptionOrders_(optionStats);
   lap('optionOrdersMs');
   var bookingRows = SpreadsheetRepository.getAllBookings();
   lap('bookingsReadMs');
@@ -302,8 +303,15 @@ function getAdminBookings() {
   timing.bookingRows = bookingRows.length;
   timing.optionOrderBookings = optionOrdersByBooking && optionOrdersByBooking.byBooking ? Object.keys(optionOrdersByBooking.byBooking).length : 0;
   timing.ttlConfigReads = ttlConfigReads;
+  /* Issue #864: OptionOrders台帳の読み取り内訳（未計測の区間はキー自体を付けない）。 */
+  ['openMs', 'sheetMs', 'readMs', 'convertMs', 'rows', 'columns'].forEach(function (key) {
+    if (typeof optionStats[key] === 'number') timing['optionOrders' + key.charAt(0).toUpperCase() + key.slice(1)] = optionStats[key];
+  });
   logAdminBookingsTiming_(timing);
-  return { todayJst: todayJst, nowJst: nowJst, bookings: bookings };
+  /* Issue #864: 同じ呼び出しのサーバー側計測値をクライアントへ返し、ブラウザ側の応答時間との差
+     （GAS呼び出しの外側＝起動・キュー待ち・転送等）を1回ごとに対応づけて記録できるようにする。
+     中身はミリ秒と件数だけ（ログと同じ値）。一覧の表示・判定には使わない。 */
+  return { todayJst: todayJst, nowJst: nowJst, bookings: bookings, serverTiming: Object.assign({}, timing) };
 }
 
 /*
@@ -325,11 +333,11 @@ function buildAdminBookingSchedule_(record, timezone) {
  * 台帳が使えない構成（OptionOrderRepository未配備）はnull＝optionSummaryを付けない。読み取りに失敗しても
  * 一覧そのものは表示できるよう、failed: trueを返してクライアントに「オプション状態不明」と出させる。
  */
-function loadAdminListOptionOrders_() {
+function loadAdminListOptionOrders_(stats) {
   if (typeof OptionOrderRepository === 'undefined' || typeof BookingOptions === 'undefined') return null;
   try {
     var byBooking = {};
-    OptionOrderRepository.listAll().forEach(function (row) {
+    OptionOrderRepository.listAll(stats).forEach(function (row) {
       var id = row.record.bookingId;
       (byBooking[id] = byBooking[id] || []).push(row.record);
     });

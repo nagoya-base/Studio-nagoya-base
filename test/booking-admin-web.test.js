@@ -1688,3 +1688,13 @@ test('Issue #864: getAdminBookingsの区間計測ログは所要時間と件数�
     assert.strictEqual(lines[0].indexOf(secret), -1, '計測ログに個人情報・IDを含めない: ' + secret);
   });
 });
+
+test('Issue #864: getAdminBookingsはserverTimingとしてログと同じ計測値（数値のみ）を返す', function () {
+  var ctx = setup();
+  createPending(ctx);
+  var result = ctx.sandbox.getAdminBookings();
+  var line = ctx.globals.Logger._logs.filter(function (l) { return l.indexOf('getAdminBookings timing ') === 0; })[0];
+  var serialized = JSON.parse(JSON.stringify(result.serverTiming));
+  assert.deepStrictEqual(serialized, JSON.parse(line.slice('getAdminBookings timing '.length)));
+  Object.keys(serialized).forEach(function (key) { assert.strictEqual(typeof serialized[key], 'number', key); });
+});

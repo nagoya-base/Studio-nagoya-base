@@ -562,6 +562,27 @@ function logLoadBookingsTiming_(timing) {
   } catch (ignored) { /* 計測ログの失敗で一覧表示を止めない */ }
 }
 
+/* Issue #864: 同じ呼び出しのブラウザ側応答時間とサーバー側計測値（serverTiming）を1件の
+   記録にまとめる。outsideServerMsは「応答時間 − GAS内の処理時間」で、GAS起動・キュー待ち・
+   応答の転送等をまとめた値（内訳は分けられない）。serverTimingが無い・数値でない場合は
+   サーバー側の項目を付けない。 */
+function buildLoadBookingsTiming_(result, requestedAt, respondedAt, renderedAt) {
+  var timing = {
+    responseMs: respondedAt - requestedAt,
+    renderMs: renderedAt - respondedAt,
+    bookings: state.bookings.length
+  };
+  var serverTiming = result && result.serverTiming;
+  if (serverTiming && typeof serverTiming.totalMs === 'number') {
+    timing.serverTotalMs = serverTiming.totalMs;
+    timing.outsideServerMs = timing.responseMs - serverTiming.totalMs;
+    ['configMs', 'optionOrdersMs', 'bookingsReadMs', 'buildMs'].forEach(function (key) {
+      if (typeof serverTiming[key] === 'number') timing['server' + key.charAt(0).toUpperCase() + key.slice(1)] = serverTiming[key];
+    });
+  }
+  return timing;
+}
+
 function loadBookings(onDone) {
   setStatusLine('読み込み中…');
   loadRequestSeq += 1;
@@ -579,7 +600,7 @@ function loadBookings(onDone) {
         setStatusLine('');
         updateLastUpdatedNow_();
         render();
-        logLoadBookingsTiming_({ responseMs: respondedAt - requestedAt, renderMs: Date.now() - respondedAt, bookings: state.bookings.length });
+        logLoadBookingsTiming_(buildLoadBookingsTiming_(result, requestedAt, respondedAt, Date.now()));
       }
       if (typeof onDone === 'function') onDone();
     })

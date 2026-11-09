@@ -49,7 +49,7 @@ function setup() {
     UrlFetchApp: stubs.createUrlFetchAppStub(function () { throw new Error('Stripe呼び出しは想定外'); }),
     Logger: stubs.createLoggerStub()
   };
-  return { sandbox: loadBookingSandbox(FILES, globals) };
+  return { sandbox: loadBookingSandbox(FILES, globals), globals: globals };
 }
 
 var dayOffset = 60;
@@ -211,4 +211,52 @@ test('Issue #451: スタッフ対応でない注文・日時未指定ではこ�
   assert.deepStrictEqual(JSON.parse(JSON.stringify(BO.describeStaffWork(['EQ:COB_BICOLOR:4', 'SELF_SETUP:EQUIPMENT']))), []);
   var plain = BO.summarizeForAdminList([{ status: 'PENDING_APPROVAL', items: ['STAFF_PRE_SETUP:EQUIPMENT'] }]);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(plain.lines)), ['事前設営（スタッフ）']);
+});
+
+/* ---------- Issue #864: OptionOrders台帳の読み取り内訳の計測 ---------- */
+
+test('Issue #864: listAll(stats)は区間ミリ秒と行数・列数だけを書き込み、戻り値は引数なしと同じ', function () {
+  var ctx = setup();
+  var id = createRoom(ctx);
+  addOrder(ctx, id);
+  addOrder(ctx, id, { category: 'EQUIPMENT_RENTAL' });
+
+  var stats = {};
+  var withStats = ctx.sandbox.OptionOrderRepository.listAll(stats);
+  var withoutStats = ctx.sandbox.OptionOrderRepository.listAll();
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(withStats)), JSON.parse(JSON.stringify(withoutStats)));
+  assert.deepStrictEqual(Object.keys(stats).sort(), ['columns', 'convertMs', 'openMs', 'readMs', 'rows', 'sheetMs']);
+  Object.keys(stats).forEach(function (key) { assert.strictEqual(typeof stats[key], 'number', key); });
+  assert.strictEqual(stats.rows, 2);
+  assert.ok(stats.columns > 0);
+});
+
+test('Issue #864: getAdminBookingsの計測ログとserverTimingにOptionOrdersの内訳が載り、個人情報・IDを含まない', function () {
+  var ctx = setup();
+  var id = createRoom(ctx);
+  addOrder(ctx, id);
+
+  var result = ctx.sandbox.getAdminBookings();
+  var lines = ctx.globals.Logger._logs.filter(function (line) { return line.indexOf('getAdminBookings timing ') === 0; });
+  assert.strictEqual(lines.length, 1);
+  var timing = JSON.parse(lines[0].slice('getAdminBookings timing '.length));
+  ['optionOrdersOpenMs', 'optionOrdersSheetMs', 'optionOrdersReadMs', 'optionOrdersConvertMs', 'optionOrdersRows', 'optionOrdersColumns'].forEach(function (key) {
+    assert.strictEqual(typeof timing[key], 'number', key);
+  });
+  assert.strictEqual(timing.optionOrdersRows, 1);
+  assert.strictEqual(timing.optionOrderBookings, 1);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.serverTiming)), timing, 'serverTimingはログと同じ値');
+  [id, '山田太郎', EMAIL, 'OPT-', 'ss1'].forEach(function (secret) {
+    assert.strictEqual(lines[0].indexOf(secret), -1, secret);
+  });
+});
+
+test('Issue #864: 台帳の読み取りに失敗しても計測ログは出て、一覧は返る', function () {
+  var ctx = setup();
+  var id = createRoom(ctx);
+  ctx.sandbox.OptionOrderRepository.listAll = function () { throw new Error('boom'); };
+  var result = ctx.sandbox.getAdminBookings();
+  assert.ok(result.bookings.some(function (b) { return b.bookingId === id; }));
+  assert.strictEqual(typeof result.serverTiming.totalMs, 'number');
+  assert.strictEqual(result.serverTiming.optionOrdersRows, undefined, '未計測の項目はキー自体を付けない');
 });
