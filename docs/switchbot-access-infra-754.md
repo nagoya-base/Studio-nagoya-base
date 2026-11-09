@@ -99,6 +99,8 @@
 - **固定分類**（`CATALOG`: 未解決/残存キー/失敗/容量/配送/基盤/凍結）。コアが出す全コードが分類済みであることをテストで固定。本文は固定文言＋検証済み識別子（予約参照・revision・末尾4桁・状態・環境）のみ。自由文・例外メッセージ・秘密・完全ID・個人情報は出さない。
 - 重複抑止: コアは record×code、基盤通知は事象キー×`notifyRepeatSec`(24時間)。**通知失敗は記録せず次周期で再試行**（コア）／基盤通知は指数バックオフで再送（`IALERT_*`）。連続失敗は `status.notifyFailingSince`／`notifyOutbox.pending` で確認できる（通知経路そのものの故障はメールでは届かないため、管理者が `accessAdminStatus` を定期確認する運用で拾う。定期確認の担当・頻度は運営が決める）。
 - 監視（`accessWatchdogJob`、ロック不要の読取のみ）: 有効時に照合ハートビートが15分以上止まれば `JOB_STALE`。`accessAdminStatus` で件数・未解決・保存使用率・ハートビート・API使用数・未送達通知を確認（秘密なし）。
+- 棚卸しの集計診断（#857）: `accessAdminInventorySummary` を管理者がエディタで実行すると、実行ログに `accessAdminInventorySummary {...}` が1行出る（Access ONのままでよい。読取専用で、SwitchBot API・sync/deliver・設定・トリガーには触れない）。出力は許可リスト方式の件数のみ：`total`／`invalid`（破損記録）／`unresolved`／`byState`（発行状態）／`byDelivery`（配送状態。記録なしは `NONE`）／`stages`（`ISSUE_IN_PROGRESS`・`ISSUE_UNKNOWN`・`ISSUE_FAILED`・`ISSUED_NO_DELIVERY_RECORD`・`ISSUED_DELIVERY_PENDING`・`ISSUED_DELIVERY_UNKNOWN`・`ISSUED_DELIVERY_SUPPRESSED`・`ISSUED_DELIVERED`・`REVOKE_IN_PROGRESS`・`ENDED`・`OTHER`）と `truncated`（5,000件超）。ID・予約・端末・時刻・秘密・例外内容は出さず、失敗は固定コード（`NOT_AUTHORIZED`／`EXCEPTION`／既存管理経路のコード）。既存の `accessAdminInventory` の戻り値・権限は変わらない。
+  - **切り分けの限界**: `diagnosis: NO_RECORDS`（total=0）は「発行管理記録が無い」ことまでしか示さない。予約が候補外・許可リスト不一致・ブランド/施設/部屋不一致・支払い未承認・失効/取消のどれかは本関数では断定できない（必要なら秘密・IDを出さない集約理由を別PRで追加する）。`ISSUED_DELIVERY_UNKNOWN`／`PENDING` を配送成功として扱わない。実顧客情報をログに出して調べない。
 - 通知先は設定 `adminMailTo`（非公開）。**公開の通知・Issue・PRに個人情報を含めない。**
 
 ## 9. OFF時の管理（ロールバック）
