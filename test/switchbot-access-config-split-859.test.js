@@ -490,3 +490,58 @@ function mensOnlySplit(kps) {
     assert.ok(has(Infra.validateConfig(r.cfg).errors, 'KEYPAD_NOT_ALLOWED_IN_ENV'));
   });
 });
+
+// ---------- 運営者方針（PR #871 補足）: 最終形は3ブランドすべて許可＋共通の物理端末 ----------
+
+function allBrandsLegacy(kps) {
+  return { ACCESS_CONFIG: legacyJson({ eligibleBrands: ['snb', 'mens', 'studio_x'], keypads: kps || threeBrandKeypads() }), ACCESS_ENVIRONMENT: 'production', ACCESS_ENABLED: 'true' };
+}
+function allBrandsSplit(kps) {
+  return splitProps({
+    ACCESS_ELIGIBLE_BRANDS: '["snb","mens","studio_x"]',
+    ACCESS_DEVICES: JSON.stringify({ environment: 'production', allowedLast4: ['01FD'], keypads: kps || threeBrandKeypads() })
+  });
+}
+
+[['legacy', allBrandsLegacy], ['split-v1', allBrandsSplit]].forEach(function (c) {
+  var name = c[0], make = c[1];
+
+  test(name + ': 3ブランドすべて許可＋共通端末は READY（警告なし）。各ブランドの予約が同じ共通端末で発行対象', function () {
+    var r = load(make());
+    assert.deepStrictEqual(r.errors, []);
+    assert.strictEqual(Infra.validateConfig(r.cfg).ok, true);
+    var iss = Infra.issuanceReadiness(r.cfg);
+    assert.strictEqual(iss.state, 'READY', iss.problems.join(','));
+    assert.deepStrictEqual(iss.problems, []);
+    assert.deepStrictEqual(iss.warnings, []);
+    assert.strictEqual(iss.brands, 3);
+    assert.strictEqual(iss.keypads, 3);
+    ['snb', 'mens', 'studio_x'].forEach(function (b) {
+      var e = Core.evaluateEligibility(booking({ brand: b }), r.cfg, NOW);
+      assert.strictEqual(e.eligible, true, b + ': ' + e.reason);
+      assert.strictEqual(e.deviceId, DEV_SHARED);
+    });
+  });
+
+  test(name + ': 3ブランド許可でも限定モードは維持（予約ID1件以外は NOT_PILOT_TARGET）。マージで全件拡大しない', function () {
+    var cfg = load(make()).cfg;
+    assert.strictEqual(cfg.limitedRollout, true);
+    assert.strictEqual(Core.evaluateEligibility(booking({ brand: 'studio_x', bookingId: 'OTHER-0004' }), cfg, NOW).reason, 'NOT_PILOT_TARGET');
+  });
+
+  test(name + ': 3ブランド許可で1ブランドの端末対応が欠ける／facility不一致なら NOT_READY', function () {
+    var missing = Infra.issuanceReadiness(load(make(threeBrandKeypads().filter(function (k) { return k.brand !== 'studio_x'; }))).cfg);
+    assert.strictEqual(missing.state, 'NOT_READY');
+    assert.ok(has(missing.problems, 'KEYPAD_MISSING_FOR_BRAND'));
+    var fac = Infra.issuanceReadiness(load(make(threeBrandKeypads({ snb: { facility: 'annex' } }))).cfg);
+    assert.strictEqual(fac.state, 'NOT_READY');
+    assert.ok(has(fac.problems, 'KEYPAD_MISSING_FOR_BRAND'));
+  });
+
+  test(name + ': 3ブランド許可でも支払未承認・商用未承認は発行しない', function () {
+    var cfg = load(make()).cfg;
+    assert.strictEqual(Core.evaluateEligibility(booking({ brand: 'snb', paymentStatus: 'UNVERIFIED' }), cfg, NOW).reason, 'PAYMENT_NOT_ELIGIBLE');
+    assert.strictEqual(Core.evaluateEligibility(booking({ brand: 'mens', status: 'PENDING' }), cfg, NOW).reason, 'NOT_CONFIRMED');
+    assert.strictEqual(Core.evaluateEligibility(booking({ brand: 'studio_x' }), Object.assign({}, cfg, { commercialUseApproved: false }), NOW).reason, 'COMMERCIAL_USE_NOT_APPROVED');
+  });
+});
