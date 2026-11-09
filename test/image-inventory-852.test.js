@@ -38,7 +38,11 @@ test('相対パス・絶対URL・Liquid変数・ファイル名のみの参照�
   assert.deepStrictEqual(inventory.resolveToken('../images/a%20b.webp?v=2', 'mens/index.html'), ['images/a b.webp']);
   /* Markdown のリポジトリ基準パス（`images/x`）は docs/ 起点に解決しない */
   assert.deepStrictEqual(inventory.resolveToken('images/apple-touch-icon.png', 'docs/image-inventory-852.md'), ['images/apple-touch-icon.png']);
-  assert.ok(!result.unresolved.some(function (u) { return u.reason === 'no-such-path' && /^docs\//.test(u.file); }), 'docs の実在パスが未解決にならない');
+  /* docs が記録として削除済み画像を挙げるのは正常。実在する画像パスが未解決扱いになっていないことだけを検証する。 */
+  var misresolved = result.unresolved.filter(function (u) {
+    return u.reason === 'no-such-path' && /^docs\//.test(u.file) && fs.existsSync(path.join(ROOT, u.token.replace(/[?#].*$/, '')));
+  });
+  assert.deepStrictEqual(misresolved, [], 'docs の実在パスが未解決にならない');
   assert.strictEqual(inventory.resolveToken('}}/equipment-mount-bracket.webp', '_includes/equipment_photo_cards.html'), null);
   assert.strictEqual(inventory.resolveToken('sample_04_neon_1200.webp', '_data/studio_x_worlds.yml'), null);
   /* include 経由・データ連結の参照も計上される */
