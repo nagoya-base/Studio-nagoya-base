@@ -325,12 +325,19 @@ test('保持期間: 本番180日・テスト30日を過ぎた行だけを削除�
     r[Core.COLUMNS.indexOf('received_at')] = at;
     return r;
   }
-  [row('p-keep', 0, daysAgo(179)), row('p-old', 0, daysAgo(181)), row('t-keep', 1, daysAgo(29)), row('t-old', 1, daysAgo(31)), row('bad-date', 0, 'not a date')]
+  /* 境界: ちょうど180日／30日は「過ぎた」に当たらないため残す（判定は経過時間 > 保持日数）。 */
+  [row('p-keep', 0, daysAgo(179)), row('p-edge', 0, daysAgo(180)), row('p-old', 0, daysAgo(181)),
+    row('t-keep', 1, daysAgo(29)), row('t-edge', 1, daysAgo(30)), row('t-old', 1, daysAgo(31)), row('bad-date', 0, 'not a date')]
     .forEach(function (r) { sheet._rows.push(r); });
   project.sandbox.__now = now;
   admin.sandbox.__now = now;
-  assert.strictEqual(admin.run('purgeExpiredFeedbackResponses(__now)').deleted, 2);
-  assert.deepStrictEqual(project.rows().map(function (r) { return r.response_id; }), ['p-keep', 't-keep', 'bad-date']);
+  /*
+   * vm の外で作った Date は sandbox 内の `instanceof Date` が false になり、関数が実時刻へフォールバックして
+   * 実行日依存になる（#855）。固定日時は sandbox 内の Date として渡す。
+   */
+  assert.strictEqual(admin.run('__now instanceof Date'), false, '前提: vm 外の Date は sandbox の Date ではない');
+  assert.strictEqual(admin.run('purgeExpiredFeedbackResponses(new Date(__now.getTime()))').deleted, 2);
+  assert.deepStrictEqual(project.rows().map(function (r) { return r.response_id; }), ['p-keep', 'p-edge', 't-keep', 't-edge', 'bad-date']);
 
   admin.run('installFeedbackRetentionTrigger()');
   admin.run('installFeedbackRetentionTrigger()');
