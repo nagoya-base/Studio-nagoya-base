@@ -552,21 +552,34 @@ var loadRequestSeq = 0;
    残り、該当ボタンが永久にdisableのままになってしまう（PRレビュー対応）。
    手動更新ボタン（Issue #322）もこの関数をそのまま呼ぶだけで、新しいAPI呼び出しは
    追加していない。 */
+/* Issue #864: 一覧取得の所要時間をブラウザのコンソールへ記録する（応答待ち・描画のミリ秒と
+   件数だけ。予約内容は出さない）。表示・操作の挙動には影響させない。 */
+function logLoadBookingsTiming_(timing) {
+  try {
+    if (typeof console !== 'undefined' && console && typeof console.info === 'function') {
+      console.info('[booking-admin] getAdminBookings timing', JSON.stringify(timing));
+    }
+  } catch (ignored) { /* 計測ログの失敗で一覧表示を止めない */ }
+}
+
 function loadBookings(onDone) {
   setStatusLine('読み込み中…');
   loadRequestSeq += 1;
   var requestId = loadRequestSeq;
+  var requestedAt = Date.now();
   google.script.run
     .withSuccessHandler(function (result) {
       /* 「今なお最新の呼び出しか」はstateへの反映・再描画・最終更新時刻の更新だけを
          スキップする条件で、onDone（busy解除）は呼び出し元に関わらず必ず実行する。 */
       if (requestId === loadRequestSeq) {
+        var respondedAt = Date.now();
         state.bookings = (result && result.bookings) || [];
         state.todayJst = result && result.todayJst;
         state.nowJst = (result && result.nowJst) || null;
         setStatusLine('');
         updateLastUpdatedNow_();
         render();
+        logLoadBookingsTiming_({ responseMs: respondedAt - requestedAt, renderMs: Date.now() - respondedAt, bookings: state.bookings.length });
       }
       if (typeof onDone === 'function') onDone();
     })
