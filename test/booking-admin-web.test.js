@@ -1622,3 +1622,69 @@ test('adminConfirmBooking（Issue #418）: Mail設定不足はfail-closed。ロ�
     assert.strictEqual(line.indexOf('private-user@example.com'), -1);
   });
 });
+
+/* ---------- Issue #864: 一覧のTTL設定読み込みN+1解消と区間計測 ---------- */
+
+function countTtlPropertyReads_(ctx, fn) {
+  var originalGetScriptProperties = ctx.globals.PropertiesService.getScriptProperties;
+  var ttlKeys = ['PENDING_TTL_HOURS', 'PENDING_TTL_MIN_HOURS_BEFORE_START', 'PENDING_TTL_MIN_HOLD_HOURS'];
+  var count = 0;
+  ctx.globals.PropertiesService.getScriptProperties = function () {
+    var inner = originalGetScriptProperties.call(ctx.globals.PropertiesService);
+    return Object.assign({}, inner, {
+      getProperty: function (key) {
+        if (ttlKeys.indexOf(key) !== -1) count += 1;
+        return inner.getProperty(key);
+      }
+    });
+  };
+  try {
+    return { result: fn(), count: count };
+  } finally {
+    ctx.globals.PropertiesService.getScriptProperties = originalGetScriptProperties;
+  }
+}
+
+test('Issue #864: getAdminBookingsはカード予約が複数あってもTTL設定を1回だけ読み、支払期限は詳細表示と同値', function () {
+  var ctx = setup();
+  var startTimes = ['10:00', '13:00', '16:00', '19:00'];
+  var ids = startTimes.map(function (startTime, index) {
+    return createPending(ctx, { paymentMethod: 'オンラインクレジットカード', email: 'ttl-' + index + '@example.com', startTime: startTime });
+  });
+
+  var measured = countTtlPropertyReads_(ctx, function () { return ctx.sandbox.getAdminBookings(); });
+  /* getTtlConfigはTTL系プロパティを3キー読む。カード予約4件でも1回分（3回）だけ。 */
+  assert.strictEqual(measured.count, 3, 'TTL設定は一覧1回につき1回だけ読むべき');
+
+  ids.forEach(function (bookingId) {
+    var listItem = measured.result.bookings.find(function (b) { return b.bookingId === bookingId; });
+    var detail = ctx.sandbox.getAdminBookingDetail(bookingId);
+    assert.ok(listItem.cardPaymentDueAt);
+    assert.strictEqual(listItem.cardPaymentDueAt, detail.booking.cardPaymentDueAt, '一覧と詳細の支払期限は同値であるべき');
+  });
+});
+
+test('Issue #864: カード予約が0件ならgetAdminBookingsはTTL設定を読まない', function () {
+  var ctx = setup();
+  createPending(ctx, { paymentMethod: '現金' });
+  var measured = countTtlPropertyReads_(ctx, function () { return ctx.sandbox.getAdminBookings(); });
+  assert.strictEqual(measured.count, 0);
+});
+
+test('Issue #864: getAdminBookingsの区間計測ログは所要時間と件数のみで、予約ID・氏名・連絡先を含まない', function () {
+  var ctx = setup();
+  var bookingId = createPending(ctx, { paymentMethod: 'オンラインクレジットカード' });
+  createPending(ctx, { paymentMethod: 'オンラインクレジットカード', email: 'second@example.com', startTime: '14:00' });
+
+  ctx.sandbox.getAdminBookings();
+  var lines = ctx.globals.Logger._logs.filter(function (line) { return line.indexOf('getAdminBookings timing ') === 0; });
+  assert.strictEqual(lines.length, 1);
+  var timing = JSON.parse(lines[0].slice('getAdminBookings timing '.length));
+  assert.deepStrictEqual(Object.keys(timing).sort(), ['bookingRows', 'bookingsReadMs', 'buildMs', 'configMs', 'optionOrderBookings', 'optionOrdersMs', 'totalMs', 'ttlConfigReads'].sort());
+  assert.strictEqual(timing.bookingRows, 2);
+  assert.strictEqual(timing.ttlConfigReads, 1);
+  Object.keys(timing).forEach(function (key) { assert.strictEqual(typeof timing[key], 'number', key); });
+  [bookingId, '山田太郎', 'example.com', '090-1234-5678', SPREADSHEET_ID].forEach(function (secret) {
+    assert.strictEqual(lines[0].indexOf(secret), -1, '計測ログに個人情報・IDを含めない: ' + secret);
+  });
+});

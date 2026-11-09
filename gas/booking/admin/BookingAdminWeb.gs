@@ -177,11 +177,16 @@ function normalizeAdminCreatedAt_(value, timezone) {
  * Booking.computeCardPaymentDueMillis（expirePendingBookingsの失効判定と同じ1関数）で
  * 計算し、Web UI用に'YYYY-MM-DD HH:mm'へ整形する。カード以外・データ不備の場合は
  * 空文字を返す（読み取り専用表示。台帳の値を書き換えることはしない）。
+ *
+ * Issue #864: getTtlConfigはScript Propertiesを4回読むため、一覧（getAdminBookings）では
+ * カード予約ごとに呼ぶと件数に比例して遅くなる。getTtlConfigを引数で渡せるようにし、
+ * 一覧側は1回だけ読んだ設定を使い回す（getTtlConfig省略時＝詳細表示は従来どおりここで読む）。
+ * 呼ばれるのは計算対象のカード予約のときだけで、計算式・設定値の読み方は変えない。
  */
-function computeAdminCardPaymentDueAt_(record, timezone) {
+function computeAdminCardPaymentDueAt_(record, timezone, getTtlConfig) {
   if (!Booking.isCardPaymentMethod(record.paymentMethod)) return '';
   if (!isAdminWebDateLike_(record.createdAt) || !isAdminWebDateLike_(record.startAt)) return '';
-  var ttlConfig = BookingConfig.getTtlConfig();
+  var ttlConfig = typeof getTtlConfig === 'function' ? getTtlConfig() : BookingConfig.getTtlConfig();
   var dueMillis = Booking.computeCardPaymentDueMillis(
     record.createdAt.getTime(), record.startAt.getTime(), ttlConfig.minHoursBeforeStart,
     Booking.cardMinHoldHours(record, timezone, ttlConfig.minHoldHours)
@@ -189,14 +194,45 @@ function computeAdminCardPaymentDueAt_(record, timezone) {
   return formatAdminDateTime_(new Date(dueMillis), timezone);
 }
 
+/*
+ * Issue #864: getAdminBookingsの区間計測。所要ミリ秒と件数（集計値）だけを1行で記録し、
+ * 予約ID・氏名・連絡先・決済情報・スプレッドシートID等は一切含めない。
+ */
+function logAdminBookingsTiming_(timing) {
+  Logger.log('getAdminBookings timing ' + JSON.stringify(timing));
+}
+
 function getAdminBookings() {
+  var startedAt = Date.now();
+  var timing = {};
+  var mark = startedAt;
+  function lap(key) {
+    var current = Date.now();
+    timing[key] = current - mark;
+    mark = current;
+  }
   var timezone = BookingConfig.getAvailabilityConfig().timezone;
   var now = new Date();
   var todayJst = BookingAvailability.formatDateInTimezone(now, timezone);
   /* Issue #449: 終了済み予約を通常一覧から外す判定用（予約タイムゾーン基準の'YYYY-MM-DD HH:mm'）。 */
   var nowJst = formatAdminDateTime_(now, timezone);
+  lap('configMs');
   var optionOrdersByBooking = loadAdminListOptionOrders_();
-  var bookings = SpreadsheetRepository.getAllBookings().map(function (item) {
+  lap('optionOrdersMs');
+  var bookingRows = SpreadsheetRepository.getAllBookings();
+  lap('bookingsReadMs');
+  /* Issue #864: カード予約の支払期限計算に使うTTL設定は、一覧1回につき最初に必要になった
+     時点で1回だけ読む（カード予約が0件なら読まない）。 */
+  var ttlConfigCache = null;
+  var ttlConfigReads = 0;
+  function getListTtlConfig() {
+    if (!ttlConfigCache) {
+      ttlConfigCache = BookingConfig.getTtlConfig();
+      ttlConfigReads += 1;
+    }
+    return ttlConfigCache;
+  }
+  var bookings = bookingRows.map(function (item) {
     var record = item.record;
     var priceSummary = buildAdminPriceSummary_(record);
     var paymentSummary = buildAdminPaymentSummary_(record);
@@ -217,7 +253,7 @@ function getAdminBookings() {
          「確定メール送信」（再試行）を出すための判定のみ。送信可否の最終判定はサーバー側。 */
       confirmedMailPending: record.status === 'CONFIRMED' && !record.confirmedMailSentAt,
       /* Issue #334: カード予約のみ非空（読み取り専用の支払期限表示用）。 */
-      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone),
+      cardPaymentDueAt: computeAdminCardPaymentDueAt_(record, timezone, getListTtlConfig),
       /*
        * Issue #342: 利用料金。一覧では「実際に案内すべき金額」（自動計算値・修正値の
        * いずれか）と「修正済みかどうか」だけを返し、詳細な区分（tier/dayType等）は
@@ -261,6 +297,12 @@ function getAdminBookings() {
     }
     return listItem;
   });
+  lap('buildMs');
+  timing.totalMs = Date.now() - startedAt;
+  timing.bookingRows = bookingRows.length;
+  timing.optionOrderBookings = optionOrdersByBooking && optionOrdersByBooking.byBooking ? Object.keys(optionOrdersByBooking.byBooking).length : 0;
+  timing.ttlConfigReads = ttlConfigReads;
+  logAdminBookingsTiming_(timing);
   return { todayJst: todayJst, nowJst: nowJst, bookings: bookings };
 }
 
