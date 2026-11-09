@@ -13,10 +13,12 @@ var Core = require('../scripts/feedback-core.js');
 function read(file) { return fs.readFileSync(path.join(__dirname, '..', file), 'utf8'); }
 
 var PAGES = {
-  snb: { name: 'Studio Nagoya Base', logo: '../../images/logo.svg' },
-  mens: { name: 'SNB mens', logo: '../../images/logo.svg' },
-  'studio-x': { name: 'Studio X', logo: '../../studio-x/touch-icon.svg' }
+  snb: { name: 'Studio Nagoya Base' },
+  mens: { name: 'SNB mens' },
+  'studio-x': { name: 'Studio X' }
 };
+
+function header(html) { return /<header class="fb-header">([\s\S]*?)<\/header>/.exec(html)[1]; }
 
 Object.keys(PAGES).forEach(function (brand) {
   test('ページ ' + brand + ': ブランド名・ロゴ・OGP・戻り先・data-brand が正しい', function () {
@@ -25,11 +27,9 @@ Object.keys(PAGES).forEach(function (brand) {
     assert.match(html, new RegExp('<title>ご利用後アンケート \\| ' + p.name + '</title>'));
     assert.ok(html.indexOf('<body data-brand="' + brand + '">') !== -1);
     assert.ok(html.indexOf('<div id="feedback-app" data-brand="' + brand + '"') !== -1);
-    assert.ok(html.indexOf('src="' + p.logo + '"') !== -1);
     assert.ok(html.indexOf('<a href="' + Core.BRANDS[brand].backUrl + '" rel="noreferrer">← ' + Core.BRANDS[brand].backLabel + '</a>') !== -1);
     assert.ok(html.indexOf('og:url" content="https://nagoya-base.github.io/Studio-nagoya-base/feedback/' + brand + '/"') !== -1);
     assert.match(html, /<meta property="og:image" content="https:\/\/nagoya-base\.github\.io\/Studio-nagoya-base\/[^"]+\.jpg">/);
-    assert.ok(fs.existsSync(path.join(__dirname, '..', 'feedback', brand, p.logo)), 'ロゴ画像が存在する');
     var og = /og:image" content="https:\/\/nagoya-base\.github\.io\/Studio-nagoya-base\/([^"]+)"/.exec(html)[1];
     assert.ok(fs.existsSync(path.join(__dirname, '..', og)), 'OGP画像が存在する: ' + og);
   });
@@ -44,6 +44,30 @@ Object.keys(PAGES).forEach(function (brand) {
     assert.deepStrictEqual(scripts, ['feedback-core.js', 'feedback-config.js', 'feedback-app.js']);
     assert.ok(!/<script>/.test(html), 'インラインscriptなし（CSPで禁止）');
   });
+});
+
+/* Issue #862: ヘッダーロゴは各ブランドの通常サイトと同じ文字ロゴ。SNB／mens に共通の別意匠画像を流用しない */
+test('ヘッダーロゴ: SNB・mens は通常サイト（_includes/header_ja.html）と同じ N マーク＋ブランド名', function () {
+  var include = read('_includes/header_ja.html');
+  [['snb', 'スタジオ　名古屋ベース'], ['mens', 'スタジオ名古屋ベース mens']].forEach(function (pair) {
+    var h = header(read('feedback/' + pair[0] + '/index.html'));
+    assert.ok(include.indexOf('nav_logo_name = "' + pair[1] + '"') !== -1, '通常サイトの表記: ' + pair[1]);
+    assert.ok(h.indexOf('<span class="fb-logo-mark" aria-hidden="true">N</span>') !== -1, pair[0]);
+    assert.ok(h.indexOf('<span class="fb-logo-name">' + pair[1] + '</span>') !== -1, pair[0]);
+    assert.ok(h.indexOf('KAMIMAEZU · NAGOYA') !== -1, pair[0]);
+    assert.ok(!/<img/.test(h), pair[0] + ': 画像に依存しない');
+  });
+  assert.ok(header(read('feedback/snb/index.html')).indexOf('mens') === -1, 'SNB に mens を表示しない');
+});
+
+test('ヘッダーロゴ: Studio X は通常サイト（studio-x/index.html）と同じ STUDIO X／KAMIMAEZU / NAGOYA', function () {
+  var top = read('studio-x/index.html');
+  var h = header(read('feedback/studio-x/index.html'));
+  assert.ok(top.indexOf('<span class="brand-name">STUDIO <b>X</b></span>') !== -1);
+  assert.ok(top.indexOf('<span class="brand-place">KAMIMAEZU / NAGOYA</span>') !== -1);
+  assert.ok(h.indexOf('<span class="fb-logo-x-name">STUDIO <b>X</b></span>') !== -1);
+  assert.ok(h.indexOf('<span class="fb-logo-x-place">KAMIMAEZU / NAGOYA</span>') !== -1);
+  assert.ok(!/<img/.test(h), '画像に依存しない');
 });
 
 test('Studio X のページに緊縛・フェチ等の用途を示す文言を混入させない', function () {

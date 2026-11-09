@@ -32,11 +32,15 @@
 <main class="fb-page">
   <p class="fb-back"><a href="https://nagoya-base.github.io/Studio-nagoya-base/mens/" rel="noreferrer">← SNB mens に戻る</a></p>
   <header class="fb-header">
-    <img class="fb-logo" src="../../images/logo.svg" width="48" height="48" alt="">
-    <div>
-      <p class="fb-brand-name">SNB mens</p>
-      <p class="fb-brand-sub">ご利用後アンケート</p>
-    </div>
+    <!-- 通常サイトのヘッダー（_includes/header_ja.html の logo-mark＋logo-name）と同じ文字ロゴ。画像に依存しない（Issue #862） -->
+    <p class="fb-logo fb-logo--nb">
+      <span class="fb-logo-mark" aria-hidden="true">N</span>
+      <span class="fb-logo-text">
+        <span class="fb-logo-name">スタジオ名古屋ベース mens</span>
+        <span class="fb-logo-en">KAMIMAEZU · NAGOYA</span>
+      </span>
+    </p>
+    <p class="fb-brand-sub">ご利用後アンケート</p>
   </header>
 
   <div id="feedback-app" data-brand="mens" aria-live="polite">
