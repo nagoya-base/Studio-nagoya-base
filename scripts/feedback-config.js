@@ -7,5 +7,5 @@
  * 手順は gas/feedback/README.md を参照（オーナー承認前にデプロイ・設定しない）。
  */
 window.FeedbackApiConfig = {
-  BASE_URL: ''
+  BASE_URL: 'https://script.google.com/macros/s/AKfycbx58zdSmueqRqE36stH03gYjbiRmHQJxmXYGZEuixLRvMeAPrIoipGIzoB6LAOGq0Jh/exec'
 };

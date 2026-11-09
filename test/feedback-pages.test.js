@@ -66,9 +66,11 @@ test('クライアントJS: textContent描画・text/plain送信・二重送信�
   ['ホームページの見やすさ', '消耗品不足', 'ぜひ利用したい'].forEach(function (w) { assert.strictEqual(js.indexOf(w), -1, w); });
 });
 
-test('設定: 公開GASのURLは未設定（オーナー承認前に接続しない）。既存surveyのURLを流用しない', function () {
+test('設定: 公開GAS（回答用 /exec）のURLに接続（Issue #860）。既存surveyのURLを流用しない', function () {
   var config = read('scripts/feedback-config.js');
-  assert.match(config, /BASE_URL: ''/);
+  var feedbackUrl = /BASE_URL: '([^']+)'/.exec(config)[1];
+  assert.strictEqual(feedbackUrl, 'https://script.google.com/macros/s/AKfycbx58zdSmueqRqE36stH03gYjbiRmHQJxmXYGZEuixLRvMeAPrIoipGIzoB6LAOGq0Jh/exec');
+  assert.match(feedbackUrl, /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/, '/dev ではなく公開デプロイの /exec');
   var surveyConfig = read('scripts/survey-config.js');
   var surveyUrl = /BASE_URL: '([^']+)'/.exec(surveyConfig)[1];
   assert.strictEqual(config.indexOf(surveyUrl), -1);
