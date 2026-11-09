@@ -513,11 +513,111 @@ test('FeedbackInvites: setup は冪等。見出しが違うシートには書か
   assert.strictEqual(bad.mails.length, 0);
 });
 
-test('トリガー: createFeedbackInviteTrigger は15分おきの sendFeedbackInvites を1本だけ作る', function () {
+test('トリガー: createFeedbackInviteTrigger は15分おきの送信と毎日4時台の180日削除を1本ずつ作る（重複作成しない）', function () {
   var ctx = setup();
+  ctx.sandbox.createFeedbackInvitePurgeTrigger();
   ctx.sandbox.createFeedbackInviteTrigger();
   ctx.sandbox.createFeedbackInviteTrigger();
   var triggers = ctx.sandbox.ScriptApp.getProjectTriggers();
-  assert.strictEqual(triggers.length, 1);
-  assert.strictEqual(triggers[0].getHandlerFunction(), 'sendFeedbackInvites');
+  assert.deepStrictEqual(triggers.map(function (t) { return t.getHandlerFunction(); }), ['purgeExpiredFeedbackInvites', 'sendFeedbackInvites']);
+  assert.deepStrictEqual(plain(triggers[0]._spec), { everyDays: 1, atHour: 4 });
+  assert.deepStrictEqual(plain(triggers[1]._spec), { everyMinutes: 15 });
+});
+
+// ============================================================================
+// 送信履歴の180日削除（オーナーレビュー P2）
+// ============================================================================
+
+var DAY = 24 * HOUR;
+
+function addInviteRow(ctx, bookingId, state, endAt, extra) {
+  var e = extra || {};
+  ctx.sheets.FeedbackInvites.appendRow([bookingId, 'snb', state, endAt, e.expiresAt || new Date(new Date(endAt).getTime() + 14 * DAY),
+    e.claimedAt === undefined ? endAt : e.claimedAt, e.sentAt === undefined ? '' : e.sentAt, e.errorCode || '', e.updatedAt === undefined ? endAt : e.updatedAt]);
+}
+
+test('180日削除: 起算点（endAt・claimedAt・sentAt・updatedAt の最も遅い日時）から180日以上の行だけを削除し、予約台帳は変えない', function () {
+  var ctx = setup();
+  seed(ctx);
+  var now = new Date('2027-07-01T00:00:00+09:00');
+  var old = new Date(now.getTime() - 181 * DAY);
+  addInviteRow(ctx, 'OLD-SENT', 'SENT', old, { sentAt: new Date(old.getTime() + 2 * HOUR) });
+  addInviteRow(ctx, 'EXACT-180', 'SENT', new Date(now.getTime() - 180 * DAY), { claimedAt: '', updatedAt: '' });
+  addInviteRow(ctx, 'RECENT', 'SENT', new Date(now.getTime() - 30 * DAY));
+  addInviteRow(ctx, 'OLD-END-LATE-UPDATE', 'FAILED', old, { updatedAt: new Date(now.getTime() - 10 * DAY) });
+  addInviteRow(ctx, 'OLD-SENDING', 'SENDING', old);
+  addInviteRow(ctx, 'UNREADABLE', 'SENT', 'not-a-date');
+  var before = bookingsSnapshot(ctx);
+  var result = plain(ctx.sandbox.purgeExpiredFeedbackInvites(now));
+  assert.deepStrictEqual(result, { status: 'OK', dryRun: false, scanned: 6, expired: 3, deleted: 3, retained: 2, undecidable: 1, truncated: false });
+  assert.deepStrictEqual(invites(ctx).map(function (r) { return r.bookingId; }), ['RECENT', 'OLD-END-LATE-UPDATE', 'UNREADABLE']);
+  assert.strictEqual(bookingsSnapshot(ctx), before);
+  assert.strictEqual(ctx.sheets.FeedbackInvites._rows[0].join(','), plain(ctx.sandbox.FeedbackInvites.HEADERS).join(','), '見出し行は残す');
+  var log = ctx.logs.join('\n');
+  assert.ok(log.indexOf('OLD-SENT') === -1 && log.indexOf('RECENT') === -1, 'ログに予約IDを出さない');
+});
+
+test('180日削除: dry-run は件数だけで削除しない。モードがOFFでも削除は動く', function () {
+  var props = Object.assign({}, ON);
+  delete props.FEEDBACK_INVITE_MODE;
+  var ctx = setup({ properties: props });
+  var now = new Date('2027-07-01T00:00:00+09:00');
+  addInviteRow(ctx, 'OLD', 'SENT', new Date(now.getTime() - 200 * DAY));
+  addInviteRow(ctx, 'NEW', 'SENT', new Date(now.getTime() - 1 * DAY));
+  var dry = plain(ctx.sandbox.dryRunFeedbackInvitePurge(now));
+  assert.strictEqual(dry.dryRun, true);
+  assert.strictEqual(dry.expired, 1);
+  assert.strictEqual(dry.deleted, 0);
+  assert.strictEqual(invites(ctx).length, 2);
+  assert.strictEqual(plain(ctx.sandbox.purgeExpiredFeedbackInvites(now)).deleted, 1);
+  assert.deepStrictEqual(invites(ctx).map(function (r) { return r.bookingId; }), ['NEW']);
+});
+
+test('180日削除: 履歴を消した後も、その予約へ自動・手動とも再送しない（リンク期限切れ・開始日時・48時間窓）', function () {
+  var ctx = setup();
+  var id = seed(ctx);
+  ctx.sandbox.sendFeedbackInvites(AFTER_2H);
+  assert.strictEqual(ctx.mails.length, 1);
+  var later = new Date(AFTER_2H.getTime() + 181 * DAY);
+  assert.strictEqual(plain(ctx.sandbox.purgeExpiredFeedbackInvites(later)).deleted, 1);
+  assert.strictEqual(invites(ctx).length, 0);
+  var summary = plain(ctx.sandbox.sendFeedbackInvites(later));
+  assert.deepStrictEqual(summary.reasons, { LINK_EXPIRED: 1 });
+  assert.deepStrictEqual(plain(ctx.sandbox.FeedbackInvites.sendManually(id, { now: later, confirmNotDelivered: true })), { outcome: 'SKIPPED', reason: 'LINK_EXPIRED' });
+  assert.strictEqual(ctx.mails.length, 1, '再送しない');
+  /* START_AT を後から動かしても、終了から14日を過ぎた予約はリンク期限で止まる */
+  var moved = setup({ properties: Object.assign({}, ON, { FEEDBACK_INVITE_START_AT: '2020-01-01T00:00:00Z' }) });
+  seed(moved);
+  assert.deepStrictEqual(plain(moved.sandbox.sendFeedbackInvites(new Date(END.getTime() + 15 * DAY))).reasons, { LINK_EXPIRED: 1 });
+  assert.strictEqual(moved.mails.length, 0);
+});
+
+test('180日削除: 送信と同じロックを使う（送信中は削除しない・削除中は送らない）。削除で行がずれても、後の更新は正しい行に入る', function () {
+  var busy = setup({ lockFails: true });
+  addInviteRow(busy, 'OLD', 'SENT', new Date(AFTER_2H.getTime() - 300 * DAY));
+  assert.throws(function () { busy.sandbox.purgeExpiredFeedbackInvites(AFTER_2H); }, /LOCK_TIMEOUT/);
+  assert.strictEqual(invites(busy).length, 1, 'ロックを取れなければ何も消さない');
+
+  var ctx = setup({ mailError: new Error('temporary') });
+  addInviteRow(ctx, 'OLD-1', 'SENT', new Date(AFTER_2H.getTime() - 300 * DAY));
+  addInviteRow(ctx, 'OLD-2', 'SENT', new Date(AFTER_2H.getTime() - 200 * DAY));
+  var id = seed(ctx);
+  ctx.sandbox.sendFeedbackInvites(AFTER_2H);
+  assert.deepStrictEqual(invites(ctx).map(function (r) { return [r.bookingId, r.state]; }), [['OLD-1', 'SENT'], ['OLD-2', 'SENT'], [id, 'FAILED']]);
+  ctx.sandbox.purgeExpiredFeedbackInvites(AFTER_2H);
+  assert.deepStrictEqual(invites(ctx).map(function (r) { return r.bookingId; }), [id]);
+  ctx.sandbox.MailApp = stubs.createMailAppStub();
+  assert.deepStrictEqual(plain(ctx.sandbox.FeedbackInvites.sendManually(id, { now: AFTER_2H, confirmNotDelivered: true })), { outcome: 'SENT' });
+  assert.deepStrictEqual(invites(ctx).map(function (r) { return [r.bookingId, r.state]; }), [[id, 'SENT']]);
+});
+
+test('180日削除: シート未作成は何もしない。見出しが違うシートは削除せず失敗として記録する', function () {
+  var none = setup({ setupSheet: false });
+  assert.strictEqual(plain(none.sandbox.purgeExpiredFeedbackInvites(AFTER_2H)).status, 'FEEDBACK_INVITES_NOT_INITIALIZED');
+  var bad = setup({ setupSheet: false });
+  bad.sheets.FeedbackInvites = stubs.createSheetStub('FeedbackInvites');
+  bad.sheets.FeedbackInvites.appendRow(['bookingId', 'email']);
+  bad.sheets.FeedbackInvites.appendRow(['X', 'x@example.com']);
+  assert.throws(function () { bad.sandbox.purgeExpiredFeedbackInvites(AFTER_2H); }, /SCHEMA_MISMATCH/);
+  assert.strictEqual(bad.sheets.FeedbackInvites._rows.length, 2);
 });

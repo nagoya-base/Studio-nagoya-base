@@ -217,8 +217,10 @@ test('purgeExpiredFeedbackTokenUses: 期限から1日以上過ぎた記録だけ
   project.sheet('token_uses')._rows[2][1] = new Date(AFTER_2H.getTime() + 30 * DAY).toISOString();
   project.sheet('token_uses')._rows.push(['tk_unreadable', 'not-a-date']);
   project.sandbox.__purgeNow = new Date(END.getTime() + 16 * DAY);
+  assert.deepStrictEqual(plain(project.run('getFeedbackTokenLedgerStatus(__purgeNow)')), { status: 'OK', total: 3, purgeable: 1 });
   var result = plain(project.run('purgeExpiredFeedbackTokenUses(__purgeNow)'));
   assert.deepStrictEqual(result, { status: 'OK', deleted: 1 });
   assert.strictEqual(ledger(project).length, 2, '期限内・日時不明の行は残す');
   assert.deepStrictEqual(submit(project, LINKS['SNB-1'], null, project.sandbox.__purgeNow), { success: false, error: { code: 'TOKEN_EXPIRED' } });
+  assert.deepStrictEqual(plain(project.run('getFeedbackTokenLedgerStatus(__purgeNow)')), { status: 'OK', total: 2, purgeable: 0 });
 });

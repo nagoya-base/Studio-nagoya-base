@@ -76,7 +76,8 @@ var FeedbackTokens = (function () {
 })();
 
 /*
- * 期限切れの使用済み記録を削除する（任意。GASエディタから実行するか、GASの「トリガー」画面で月1回の時間主導トリガーを作る）。
+ * 期限切れの使用済み記録を削除する（必須の運用。GASの「トリガー」画面で、管理者GASの月次削除と同じ「毎月1日・4時台」の
+ * 時間主導トリガーを作る。公開側は script.scriptapp 権限を持たないため作成用の補助関数は置かない。README参照）。
  * 期限（expires_at）から1日以上過ぎた行だけを消す。期限切れのトークンは台帳が無くても TOKEN_EXPIRED で拒否されるため、
  * 消しても再回答はできない。回答保存と同じスクリプトロック内で行う（行番号のずれを防ぐ）。
  * 戻り値・ログは件数だけ。
@@ -102,4 +103,21 @@ function purgeExpiredFeedbackTokenUses(now) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/*
+ * 削除漏れの確認（GASエディタから実行。読み取りのみ・ロック不要）。
+ * 戻り値・ログ: { status, total, purgeable }。purgeable が月をまたいで残り続けるならトリガーが動いていない。
+ */
+function getFeedbackTokenLedgerStatus(now) {
+  var current = now && typeof now.getTime === 'function' ? now : new Date();
+  var ledger = FeedbackRepository.openTokenLedger();
+  if (ledger.error) {
+    Logger.log('feedback token ledger status: ' + ledger.error);
+    return { status: ledger.error, total: 0, purgeable: 0 };
+  }
+  var counts = FeedbackRepository.countTokenUses(ledger.sheet, current.getTime() - FEEDBACK_TOKEN_USE_PURGE_GRACE_MS);
+  var result = { status: 'OK', total: counts.total, purgeable: counts.purgeable };
+  Logger.log('feedback token ledger status: ' + JSON.stringify(result));
+  return result;
 }

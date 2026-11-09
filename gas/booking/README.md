@@ -104,7 +104,19 @@ Bookings の列は追加しない（schema migration 不要。production workflo
 - 送信失敗は `FAILED`（`errorCode=MAIL_SEND_FAILED`）。送信後の状態更新に失敗した場合は `SENDING` のまま（結果不明）。**どちらも自動では再送しない。**
 - メールの成否にかかわらず、Bookings・Recovery・決済・鍵（revision）には一切書かない。
 - 1回の実行で最大20通。MailApp の残り枠が50通以下なら送らない（予約確定・来場案内の余力を残す）。
-- `FeedbackInvites` にはメールアドレス・氏名・トークンを書かない（予約ID・状態・日時・エラーコードのみ。個人情報を持たないため #680 の消去対象外で、行はBookingsの予約行と同様に残る）。ログは件数・理由コード・dry-runの送信予定予約IDだけ。
+- `FeedbackInvites` にはメールアドレス・氏名・トークンを書かない（予約ID・状態・日時・エラーコードのみ）。ログは件数・理由コード・dry-runの送信予定予約IDだけ。
+
+### 送信履歴の180日削除
+
+予約IDで予約台帳と突合できる送信履歴なので、Bookings の通常保存期間と同じ **180日** で行ごと削除する。
+
+- **判定**: 行の `endAt`・`claimedAt`・`sentAt`・`updatedAt` のうち最も遅い日時から180日以上たった行（状態 `SENT` / `FAILED` / `SENDING` を問わない）。`endAt` が読めない行は削除せず件数だけ報告する。
+- **実行**: Booking Admin の `purgeExpiredFeedbackInvites`（**毎日4時台**のトリガー。`createFeedbackInvitePurgeTrigger` で作る。`createFeedbackInviteTrigger` も無ければ一緒に作る）。`FEEDBACK_INVITE_MODE` と無関係に動く（自動送信を止めても履歴は消える）。
+- **ロック・同時実行**: 送信と同じ Booking Admin のスクリプトロックを取り、ロック内で読み直した行を下から削除する。送信中は削除せず、削除中は送らない（ロックを取れなければ何も消さず `LOCK_TIMEOUT` で失敗を実行履歴に残す）。1回最大2000行。
+- **#680 と競合しない**: `PersonalDataRetention.gs` はこのシートを読み書きしない。Bookings・Recovery・決済・鍵のデータは変更しない。
+- **削除後も再送しない**: 180日たった予約は回答リンクの期限（終了＋14日）を過ぎているため、自動送信・手動送信とも `LINK_EXPIRED` で止まる。自動送信はさらに `FEEDBACK_INVITE_START_AT` と48時間の送信窓でも止まる（判定はすべて送信直前に再評価）。
+- **確認**: `dryRunFeedbackInvitePurge` で削除対象の件数（`expired`）を削除せずに確認できる。翌日以降も `expired` が残るならトリガーが動いていない。
+- 回答側の `token_uses`・`responses` の定期削除との対応は `gas/feedback/README.md`「利用後アンケート関連の定期削除（一覧）」を参照。
 
 ### メール
 
@@ -138,7 +150,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 | --- | --- |
 | `setupFeedbackInvites` | `FeedbackInvites` シートを作る（冪等。見出しが違えば止まる） |
 | `dryRunFeedbackInvites` | モードにかかわらず、送らずに対象件数・除外理由・送信予定の予約ID（最大50）・設定不足をログに出す |
-| `createFeedbackInviteTrigger` | 15分おきの `sendFeedbackInvites` トリガーを1本作る（既にあれば作らない。モードがOFFなら何もしない） |
+| `createFeedbackInviteTrigger` | 15分おきの `sendFeedbackInvites` トリガーを1本作る（既にあれば作らない。モードがOFFなら何もしない）。180日削除のトリガーが無ければ一緒に作る |
+| `createFeedbackInvitePurgeTrigger` | 毎日4時台の `purgeExpiredFeedbackInvites` トリガーを1本作る（既にあれば作らない） |
+| `purgeExpiredFeedbackInvites` | 180日を過ぎた送信履歴の削除（トリガーのハンドラ。モードと無関係） |
+| `dryRunFeedbackInvitePurge` | 削除せずに、180日を過ぎた行の件数だけを確認する |
 | `sendFeedbackInvites` | トリガーのハンドラ。`FEEDBACK_INVITE_MODE` に従う |
 | `sendFeedbackInviteFromProperty` | `FEEDBACK_INVITE_MANUAL_BOOKING_ID` の予約へ1件だけ手動送信（モードOFFでも可。開始日時・48時間窓は見ないが、終了2時間後・取消・未決済などの条件は守る。`SENT` の予約へは送らない） |
 | `getFeedbackInviteStateFromProperty` | `FEEDBACK_INVITE_MANUAL_BOOKING_ID` の送信状態（個人情報なし） |
@@ -147,10 +162,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 
 1. PRを `main` へマージする。
 2. 秘密鍵を作る（上記）。
-3. **回答用GAS**を更新し `setupFeedbackSpreadsheet` を再実行、`FEEDBACK_TOKEN_SECRET` を登録する（`gas/feedback/README.md`「第3段階（#834）の反映手順」）。既存のGASプロジェクト・`/exec` URLのまま。
+3. **回答用GAS**を更新し `setupFeedbackSpreadsheet` を再実行、`FEEDBACK_TOKEN_SECRET` を登録し、`token_uses` の月次削除トリガーを作る（`gas/feedback/README.md`「第3段階（#834）の反映手順」1〜7）。既存のGASプロジェクト・`/exec` URLのまま。
 4. **Booking Admin**: production workflow を `scope=full`（`schema_migrated` 不要）で実行し、承認1回。
 5. Booking Admin の Script Properties に `FEEDBACK_TOKEN_SECRET`（同じ値）を登録する。`FEEDBACK_INVITE_MODE` は**まだ設定しない**。
-6. エディタで `setupFeedbackInvites` を実行（`FEEDBACK_INVITES_CREATED`）。
+6. エディタで `setupFeedbackInvites` を実行（`FEEDBACK_INVITES_CREATED`）し、続けて `createFeedbackInvitePurgeTrigger` を実行する（手動E2Eで作られる履歴も含め、ONの前から180日削除を有効にしておく）。
 7. **DRY_RUN**: `FEEDBACK_INVITE_START_AT` に予定する開始日時を入れ、`dryRunFeedbackInvites` を実行。`problems` が空で、`wouldSend`・`reasons` の件数が想定どおりか確認する（開始日時より前に終わった予約が `BEFORE_START_AT` になり、送信予定に入っていないこと）。
 8. **実予約での確認（自動配信ONの前）**: 3ブランドそれぞれ、オーナー自身の実際の直接予約（確定・決済済み）の終了2時間後に、`FEEDBACK_INVITE_MANUAL_BOOKING_ID` を設定して `sendFeedbackInviteFromProperty` を実行し、次を確認する。
    - 届いたメールの件名・本文・署名がブランドどおりで、件名とプレビューに予約情報・利用目的が無い。
@@ -163,7 +178,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 
 ### 止め方・復旧・ロールバック
 
-- **自動送信を止める**: `FEEDBACK_INVITE_MODE` を削除するか `off` にする（次のトリガー実行から何もしない。トリガーは残してよい）。完全に止めるならトリガー画面で `sendFeedbackInvites` を削除する。
+- **自動送信を止める**: `FEEDBACK_INVITE_MODE` を削除するか `off` にする（次のトリガー実行から何もしない。トリガーは残してよい）。完全に止めるならトリガー画面で `sendFeedbackInvites` を削除する。**`purgeExpiredFeedbackInvites` は残す**（残った履歴を180日で消すため）。
 - **回答の受付を止める**: 回答用GASの `FEEDBACK_TOKEN_SECRET` を削除（すべての本番リンクが無効）。
 - **`FAILED` / `SENDING`（結果不明）の予約**: Booking Admin を実行しているGoogleアカウントの Gmail「送信済み」で、その利用者宛てに件名「ご利用ありがとうございました（アンケートのお願い）」が送られているか確認する。
   - 送られていない → `FEEDBACK_INVITE_MANUAL_BOOKING_ID` に予約ID、`FEEDBACK_INVITE_MANUAL_CONFIRM_NOT_DELIVERED` に `yes` を入れ、`sendFeedbackInviteFromProperty` を実行（同じリンクで1通だけ再送。プロパティは自動で消える）。
@@ -173,7 +188,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 
 ### テスト
 
-`test/feedback-token-core.test.js`（形式・改ざん・ブランド・期限・URL）、`test/feedback-invites.test.js`（初期OFF・DRY_RUN・2時間後・延長／変更／取消／未決済・遡及なし・3ブランド文面・1予約1回・並列・送信失敗・結果不明・手動復旧）、`test/feedback-invite-e2e.test.js`（Booking Admin のリンク → 回答用GAS の保存・1予約1回答・別予約・期限切れ・ブランド不一致・保存失敗・同時送信・`?test=1`）。
+`test/feedback-token-core.test.js`（形式・改ざん・ブランド・期限・URL）、`test/feedback-invites.test.js`（初期OFF・DRY_RUN・2時間後・延長／変更／取消／未決済・遡及なし・3ブランド文面・1予約1回・並列・送信失敗・結果不明・手動復旧・180日削除の境界／起算点／dry-run／ロック／行ずれ／削除後に再送しない）、`test/feedback-invite-e2e.test.js`（Booking Admin のリンク → 回答用GAS の保存・1予約1回答・別予約・期限切れ・ブランド不一致・保存失敗・同時送信・`?test=1`）。
 
 ## Issue #753: 鍵連携 PR-A（`revision`列とスナップショット。フラグOFF）
 

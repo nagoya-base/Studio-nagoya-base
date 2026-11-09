@@ -22,6 +22,13 @@
  * いずれも手動確認のうえ sendFeedbackInviteFromProperty で1件ずつ再送できる（README参照）。
  * このシートにはメールアドレス・氏名・トークンを書かない（予約ID・状態・日時・エラーコードだけ）。
  *
+ * 【180日で削除】予約IDで予約台帳と突合できる送信履歴のため、Bookings の個人情報と同じ通常保存期間（180日）で行ごと削除する
+ * （purgeExpiredFeedbackInvites。毎日のトリガー。FEEDBACK_INVITE_MODE と無関係に動く）。起算点は行の endAt・claimedAt・
+ * sentAt・updatedAt のうち最も遅い日時。送信と同じ Booking Admin のスクリプトロック内で読み直してから下の行から削除するので、
+ * 同時送信と行番号がずれない。#680（PersonalDataRetention.gs）はこのシートを読み書きしないため競合しない。
+ * 削除後も同じ予約へ再送されない: 180日経った予約は回答リンクの期限（終了＋14日）を過ぎており、自動送信・手動送信の
+ * どちらも LINK_EXPIRED で止まる（自動送信はさらに開始日時と48時間の送信窓でも止まる）。
+ *
  * 【予約・決済・解錠を変えない】Bookings / Recovery / 鍵関連のシートへは一切書かない。メール失敗時も同じ。
  *
  * 【トークン】FeedbackTokenCore.gs（回答用GASと同じファイル）で予約ごとに発行し、フォームURLの `#t=` 以降に置く。
@@ -43,6 +50,9 @@ var FeedbackInvites = (function () {
   var MAIL_QUOTA_RESERVE = 50;
   var LOCK_TIMEOUT_MS = 10000;
   var DRY_RUN_LIST_LIMIT = 50;
+  var RETENTION_DAYS = 180;
+  var RETENTION_MS = RETENTION_DAYS * 24 * HOUR_MS;
+  var PURGE_MAX_ROWS = 2000;
 
   /* 直接予約の source（scripts/booking-logic.js のブランド定義と同じ値）。これ以外（外部予約・管理者入力など）は送らない。 */
   var DIRECT_SOURCES = { snb: 'snb-booking-app', mens: 'mens-booking-app', studio_x: 'studio-x-booking-app' };
@@ -424,6 +434,71 @@ var FeedbackInvites = (function () {
     return sendOne_(String(bookingId), settings, current, { manual: true, confirmNotDelivered: opts.confirmNotDelivered === true });
   }
 
+  /* ===== 180日経過した送信履歴の削除 ===== */
+
+  /* 行の保存期間の起算点（endAt・claimedAt・sentAt・updatedAt の最も遅い日時）。endAt が読めない行は判定しない（null）。 */
+  function retentionBaseMs_(row) {
+    var endMs = toMillis_(row.endAt);
+    if (endMs === null) return null;
+    var base = endMs;
+    ['claimedAt', 'sentAt', 'updatedAt'].forEach(function (key) {
+      var ms = toMillis_(row[key]);
+      if (ms !== null && ms > base) base = ms;
+    });
+    return base;
+  }
+
+  /*
+   * 起算点から180日以上たった行を削除する。options.dryRun なら件数だけ（削除しない）。
+   * 送信と同じスクリプトロックを取り、ロック内で読み直した行だけを、下の行から1行ずつ削除する。
+   * 日時が読めない行は削除しない（undecidable として件数だけ返す）。1回あたり最大 PURGE_MAX_ROWS 行。
+   * 戻り値・ログは件数だけ（予約ID・行内容は出さない）。
+   */
+  function purge(now, options) {
+    var current = isDate_(now) ? now : new Date();
+    var opts = options || {};
+    var result = { status: 'OK', dryRun: !!opts.dryRun, scanned: 0, expired: 0, deleted: 0, retained: 0, undecidable: 0, truncated: false };
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(LOCK_TIMEOUT_MS)) {
+      result.status = 'LOCK_TIMEOUT';
+      return result;
+    }
+    try {
+      var opened = openSheet_();
+      if (opened.error) {
+        result.status = opened.error;
+        return result;
+      }
+      var rows = readRows_(opened.sheet);
+      var targets = [];
+      rows.forEach(function (row) {
+        result.scanned++;
+        var base = retentionBaseMs_(row);
+        if (base === null) result.undecidable++;
+        else if (current.getTime() - base >= RETENTION_MS) targets.push(row.rowNumber);
+        else result.retained++;
+      });
+      result.expired = targets.length;
+      if (opts.dryRun) return result;
+      targets.sort(function (a, b) { return b - a; });
+      for (var i = 0; i < targets.length; i++) {
+        if (result.deleted >= PURGE_MAX_ROWS) {
+          result.truncated = true;
+          result.status = 'TRUNCATED';
+          break;
+        }
+        opened.sheet.deleteRows(targets[i], 1);
+        result.deleted++;
+      }
+      return result;
+    } catch (purgeError) {
+      result.status = 'PARTIAL_FAILURE';
+      return result;
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
   /* 1件の状態（個人情報なし）。 */
   function getState(bookingId) {
     var opened = openSheet_();
@@ -445,6 +520,8 @@ var FeedbackInvites = (function () {
     SEND_DELAY_MS: SEND_DELAY_MS,
     LATE_WINDOW_HOURS: LATE_WINDOW_HOURS,
     MAX_SENDS_PER_RUN: MAX_SENDS_PER_RUN,
+    RETENTION_DAYS: RETENTION_DAYS,
+    purge: purge,
     readSettings: readSettings,
     evaluate: evaluate,
     buildMail: buildMail,
@@ -479,17 +556,46 @@ function dryRunFeedbackInvites(now) {
   return feedbackInviteLog_('dryRunFeedbackInvites', FeedbackInvites.run(now, { dryRun: true }));
 }
 
-/* 15分おきに sendFeedbackInvites を実行するトリガーを作る（既にあれば作らない）。作ってもモードがOFFなら何も送らない。 */
-function createFeedbackInviteTrigger() {
-  var FUNCTION_NAME = 'sendFeedbackInvites';
+/*
+ * 毎日のトリガーのハンドラ。送信履歴（FeedbackInvites）のうち180日を過ぎた行を削除する。
+ * FEEDBACK_INVITE_MODE と無関係に動く（自動送信を止めても履歴は180日で消える）。失敗は例外にして実行履歴へ残す。
+ */
+function purgeExpiredFeedbackInvites(now) {
+  var result = feedbackInviteLog_('purgeExpiredFeedbackInvites', FeedbackInvites.purge(now, {}));
+  if (result.status !== 'OK' && result.status !== 'TRUNCATED' && result.status !== 'FEEDBACK_INVITES_NOT_INITIALIZED') {
+    throw new Error('purgeExpiredFeedbackInvites: ' + result.status);
+  }
+  return result;
+}
+
+/* 削除せずに、180日を過ぎた行の件数だけを確認する。 */
+function dryRunFeedbackInvitePurge(now) {
+  return feedbackInviteLog_('dryRunFeedbackInvitePurge', FeedbackInvites.purge(now, { dryRun: true }));
+}
+
+function createFeedbackInviteTriggerOnce_(functionName, configure) {
   var existing = ScriptApp.getProjectTriggers().filter(function (trigger) {
-    return trigger.getHandlerFunction() === FUNCTION_NAME;
+    return trigger.getHandlerFunction() === functionName;
   });
   if (existing.length > 0) {
-    Logger.log('トリガーは既に存在します: ' + FUNCTION_NAME);
+    Logger.log('トリガーは既に存在します: ' + functionName);
     return existing[0];
   }
-  return ScriptApp.newTrigger(FUNCTION_NAME).timeBased().everyMinutes(15).create();
+  return configure(ScriptApp.newTrigger(functionName).timeBased()).create();
+}
+
+/* 毎日4時台に purgeExpiredFeedbackInvites を実行するトリガーを作る（既にあれば作らない）。setupFeedbackInvites の直後に実行する。 */
+function createFeedbackInvitePurgeTrigger() {
+  return createFeedbackInviteTriggerOnce_('purgeExpiredFeedbackInvites', function (builder) { return builder.everyDays(1).atHour(4); });
+}
+
+/*
+ * 15分おきに sendFeedbackInvites を実行するトリガーを作る（既にあれば作らない）。作ってもモードがOFFなら何も送らない。
+ * 180日削除のトリガーが無ければ一緒に作る（送信だけが動いて履歴が残り続けることを防ぐ）。
+ */
+function createFeedbackInviteTrigger() {
+  createFeedbackInvitePurgeTrigger();
+  return createFeedbackInviteTriggerOnce_('sendFeedbackInvites', function (builder) { return builder.everyMinutes(15); });
 }
 
 /*

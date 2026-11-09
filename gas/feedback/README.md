@@ -70,9 +70,21 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 | 回答画面を開くとき | `?action=verify` は台帳を読むだけで、使用済みにしない |
 | このGASが持たないもの | Booking の Spreadsheet ID・予約ID・利用者のメールアドレス（Booking の Spreadsheet は開かない） |
 
-`token_uses` の期限切れ行は `purgeExpiredFeedbackTokenUses` で削除できます（期限から1日以上過ぎた行だけ。日時が読めない行は残す）。
-期限切れのリンクは台帳が無くても拒否されるので、削除しても再回答はできません。実行は任意で、GASの「トリガー」画面から
-`purgeExpiredFeedbackTokenUses` の月1回の時間主導トリガーを作ります（公開側は `script.scriptapp` 権限を持たないため、作成用の補助関数は置いていません）。
+`token_uses` の期限切れ行は `purgeExpiredFeedbackTokenUses` が削除します（期限から1日以上過ぎた行だけ。日時が読めない行は残す）。
+期限切れのリンクは台帳が無くても拒否されるので、削除しても再回答はできません。**削除漏れを防ぐため、トリガーの作成は必須の手順です**
+（下記「第3段階（#834）の反映手順」6）。回答の保存・取消と同じ公開GASのスクリプトロック内で削除するため、管理者GASでは実行しません
+（管理者GASから消すと、公開GASの取消処理と行番号がずれるおそれがある）。削除漏れは `getFeedbackTokenLedgerStatus`（読み取りのみ）の `purgeable` で確認できます。
+
+### 利用後アンケート関連の定期削除（一覧）
+
+| 対象 | 実行するGASプロジェクト | 関数・トリガー | 保持期間 | 作り方 |
+| --- | --- | --- | --- | --- |
+| 回答（`responses`） | 管理者GAS（`gas/feedback-admin/`） | `purgeExpiredFeedbackResponses`・毎月1日4時台 | 本番180日・テスト30日 | `installFeedbackRetentionTrigger` を1回実行 |
+| 使用済みトークン（`token_uses`） | 回答用 公開GAS（`gas/feedback/`） | `purgeExpiredFeedbackTokenUses`・**毎月1日4時台** | リンク期限（利用終了＋14日）から1日 | GASの「トリガー」画面で手動作成（公開側は `script.scriptapp` 権限なし） |
+| 案内メールの送信履歴（Booking の `FeedbackInvites`） | Booking Admin | `purgeExpiredFeedbackInvites`・毎日4時台 | 180日（行の最も遅い日時から） | `createFeedbackInvitePurgeTrigger`（`createFeedbackInviteTrigger` も作る） |
+
+それぞれ、書き込みと同じGASプロジェクトのスクリプトロック内で削除します（別プロジェクトのロックは互いに排他にならないため）。
+確認: `responses` は管理画面、`token_uses` は回答用GASの `getFeedbackTokenLedgerStatus`（`purgeable` が翌月まで残るならトリガー未作成・停止）、`FeedbackInvites` は Booking Admin の `dryRunFeedbackInvitePurge`（`expired` が翌日以降も残るなら同様）。
 
 ## 回答Spreadsheet
 
@@ -165,8 +177,14 @@ Studio Nagoya Base（SNB）・SNB mens・Studio X の利用後アンケートの
 4. 「デプロイを管理」→ 既存のウェブアプリのデプロイを編集 → バージョン「新しいバージョン」で更新する（URLは同じ）。
 5. 「プロジェクトの設定 → スクリプト プロパティ」に `FEEDBACK_TOKEN_SECRET` を登録する（Booking Admin と同じ値。作り方は Booking 側README）。
    この時点ではまだリンクを発行していないので、利用者からの本番回答は来ない。`?test=1` のテスト回答は従来どおり。
+6. **（必須）** 左メニュー「トリガー」で、`purgeExpiredFeedbackTokenUses` のトリガーが無いことを確認してから「トリガーを追加」→
+   関数 `purgeExpiredFeedbackTokenUses` / 時間主導型 / 月ベースのタイマー / **1日** / **午前4時〜5時**（管理者GASの月次削除と同じ）/ 失敗通知「すぐに通知を受け取る」。
+   認可を求められた場合は、オーナーのアカウントで許可する（トリガーはオーナーとして実行される）。
+7. エディタで `getFeedbackTokenLedgerStatus` を実行し `status: OK` を確認する。以後、翌月以降の確認で `purgeable` が 0 に戻っていればトリガーが動いている。
 
 管理者GAS（`gas/feedback-admin/`）は変更不要です（集計・保持期間・月次削除はそのまま）。`FeedbackRepository.gs` の差分は `token_uses` の追加だけで、管理者GASの動作には影響しないため、次に管理者GASを更新するときに合わせて差し替えれば足ります。
+
+**月次削除を止める**：「トリガー」から `purgeExpiredFeedbackTokenUses` を削除（回答受付には影響しない）。
 
 **止め方（このGAS側）**：`FEEDBACK_TOKEN_SECRET` を削除すると、すべての本番リンクが `TOKEN_NOT_CONNECTED` になり本番回答を受け付けなくなる（第1段階と同じ状態。テスト回答は可能）。
 **鍵の変更**：値を変えると、発行済みのリンクはすべて無効になり、tokenId も変わる（変更前に回答済みの予約へ再送すると再回答できてしまう）。漏えい時以外は変えない。

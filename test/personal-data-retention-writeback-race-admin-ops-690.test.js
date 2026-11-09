@@ -277,7 +277,10 @@ var EXCLUDED = {
   dryRunFeedbackInvites: 'アンケート案内のdry-run（何も書かない）',
   createFeedbackInviteTrigger: 'トリガーの設定（シートへ書かない）',
   sendFeedbackInviteFromProperty: 'アンケート案内の手動送信。予約は読むだけで、FeedbackInvites（個人情報なし）だけに書く',
-  getFeedbackInviteStateFromProperty: 'アンケート案内の状態確認（読み取りのみ）'
+  getFeedbackInviteStateFromProperty: 'アンケート案内の状態確認（読み取りのみ）',
+  purgeExpiredFeedbackInvites: 'FeedbackInvitesの180日経過行の削除（予約系シートへ書かない）',
+  dryRunFeedbackInvitePurge: 'FeedbackInvites削除のdry-run（何も書かない）',
+  createFeedbackInvitePurgeTrigger: 'トリガーの設定（シートへ書かない）'
 };
 
 test('構造: Booking Admin の公開関数は、すべて操作の表か除外の表（理由つき）のどちらかに分類されている。増えたらここで落ちる', function () {

@@ -155,7 +155,21 @@ var FeedbackRepository = (function () {
     return deleted;
   }
 
+  /* 件数だけ（読み取りのみ）。{ total, purgeable }（purgeable: expires_at が cutoffMs より前の行） */
+  function countTokenUses(sheet, cutoffMs) {
+    if (sheet.getLastRow() < 2) return { total: 0, purgeable: 0 };
+    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+    var purgeable = 0;
+    values.forEach(function (row) {
+      var raw = row[1];
+      var ms = raw && typeof raw.getTime === 'function' ? raw.getTime() : Date.parse(String(raw));
+      if (isFinite(ms) && ms < cutoffMs) purgeable++;
+    });
+    return { total: values.length, purgeable: purgeable };
+  }
+
   return {
+    countTokenUses: countTokenUses,
     openSpreadsheet_: openSpreadsheet_,
     hasMarker_: hasMarker_,
     openResponses: openResponses,
