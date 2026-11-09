@@ -1221,17 +1221,32 @@ test('管理者通知: ADMIN_NOTIFICATION_EMAIL未設定なら通知を送らな
   assert.strictEqual(mailApp._sentEmails.length, 0);
 });
 
-test('管理者通知: ADMIN_NOTIFICATION_EMAIL設定時は氏名・メール等のPIIを含まないメールを送る', function () {
+test('管理者通知 (Issue #869): 本文に台帳の予約者氏名を載せるが、件名・ログには出さず、メール・電話等の連絡先は含めない', function () {
   var mailApp = stubs.createMailAppStub();
   var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' }, mailApp: mailApp });
 
-  ctx.sandbox.BookingRepository.createBooking(validPayload({ name: '極秘太郎', email: 'himitsu@example.com' }));
+  ctx.sandbox.BookingRepository.createBooking(validPayload({ name: '極秘太郎', email: 'himitsu@example.com', phone: '080-9999-8888' }));
 
   assert.strictEqual(mailApp._sentEmails.length, 1);
   var sent = mailApp._sentEmails[0];
   assert.strictEqual(sent.to, 'admin@example.com');
-  assert.strictEqual(sent.body.indexOf('極秘太郎'), -1);
+  assert.ok(sent.body.indexOf('予約者名：極秘太郎') !== -1);
+  assert.strictEqual(sent.subject.indexOf('極秘太郎'), -1);
   assert.strictEqual(sent.body.indexOf('himitsu@example.com'), -1);
+  assert.strictEqual(sent.body.indexOf('080-9999-8888'), -1);
+  assert.strictEqual(ctx.globals.Logger._logs.join('\n').indexOf('極秘太郎'), -1);
+});
+
+test('管理者通知 (Issue #869): 氏名が未取得・空白のみでも通知は失敗せず、推測で補完せず「未登録」と表示する', function () {
+  [undefined, null, '', '   '].forEach(function (name) {
+    var mailApp = stubs.createMailAppStub();
+    var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' }, mailApp: mailApp });
+    ctx.sandbox.AdminNotifier.notifyNewPendingBooking({
+      bookingId: 'SX-20261119-00000001', brand: 'studio_x', date: '2026-11-19', name: name, priceAmount: 2400
+    }, { autoConfirmByCheckout: true });
+    assert.strictEqual(mailApp._sentEmails.length, 1, String(name));
+    assert.ok(mailApp._sentEmails[0].body.indexOf('予約者名：未登録') !== -1, String(name));
+  });
 });
 
 test('管理者通知 (Issue #342): 利用者向け仮予約受付メールと同じ利用料金を含む（PIIではないため表示してよい）', function () {
@@ -1438,9 +1453,44 @@ test('Issue #709: 通常オンラインカード予約（Checkout有効）の管
   var mails = adminMails_(mailApp);
   assert.strictEqual(mails.length, 1);
   assert.doesNotMatch(mails[0].body, /Booking Adminから確定してください/);
-  assert.match(mails[0].body, /支払い完了後に自動で確定/);
-  assert.match(mails[0].body, /確定操作は不要/);
+  assert.match(mails[0].body, /支払い完了後に自動確定/);
+  assert.match(mails[0].body, /管理者の操作は不要/);
   assert.ok(mails[0].body.indexOf('taro@example.com') === -1);
+});
+
+test('Issue #869: 通常オンラインカード予約の管理者通知は件名・本文とも「予約申し込み」で、「仮予約」と書かず、決済前に予約確定と断言しない', function () {
+  ['snb', 'studio_x'].forEach(function (brand) {
+    var mailApp = stubs.createMailAppStub();
+    var ctx = setup({ mailApp: mailApp, properties: Object.assign({}, MAIL_PROPERTIES_445, CHECKOUT_ENABLED_PROPERTIES_445, ADMIN_709_PROPERTIES) });
+    var result = ctx.sandbox.BookingRepository.createBooking(validPayload({
+      brand: brand, paymentMethod: 'オンラインクレジットカード', date: futureDateJst_(10), startTime: '10:00', email: 'taro@example.com'
+    }));
+    assert.strictEqual(result.success, true, brand);
+    var mails = adminMails_(mailApp);
+    assert.strictEqual(mails.length, 1, brand);
+    var label = ctx.sandbox.Booking.getBrandLabel(brand);
+    assert.strictEqual(mails[0].subject, '[' + label + '] 予約申し込みを受け付けました: ' + result.bookingId, brand);
+    assert.match(mails[0].body, /^新しい予約申し込みがありました。クレジットカード決済処理中です。/, brand);
+    assert.doesNotMatch(mails[0].subject + mails[0].body, /仮予約/, brand);
+    assert.doesNotMatch(mails[0].subject + mails[0].body, /予約(が|を)?確定(しました|済み)/, brand);
+  });
+});
+
+test('Issue #869: 現地払い・Checkout無効のカード予約の管理者通知は従来どおり「仮予約」件名・本文を維持する', function () {
+  [
+    { method: '現金', props: Object.assign({}, CHECKOUT_ENABLED_PROPERTIES_445, ADMIN_709_PROPERTIES) },
+    { method: 'オンラインクレジットカード', props: Object.assign({}, ADMIN_709_PROPERTIES) }
+  ].forEach(function (c) {
+    var mailApp = stubs.createMailAppStub();
+    var ctx = setup({ mailApp: mailApp, properties: Object.assign({}, MAIL_PROPERTIES_445, c.props) });
+    var result = ctx.sandbox.BookingRepository.createBooking(validPayload({
+      paymentMethod: c.method, date: futureDateJst_(10), startTime: '10:00', email: 'taro@example.com'
+    }));
+    var mails = adminMails_(mailApp);
+    assert.strictEqual(mails.length, 1, c.method);
+    assert.match(mails[0].subject, new RegExp('仮予約を受け付けました: ' + result.bookingId), c.method);
+    assert.match(mails[0].body, /^新しい仮予約（PENDING）が届きました。/, c.method);
+  });
 });
 
 test('Issue #709: 現地払い（現金・PayPay）とCheckout無効のカード予約は従来どおり「Booking Adminから確定してください」を案内する', function () {

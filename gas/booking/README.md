@@ -8376,3 +8376,10 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - 決済ゲート: `beginCardCheckout` は承認前に `SUPPORT_NOT_APPROVED`、期限後に `SUPPORT_PAYMENT_EXPIRED` を返す（Stripeを呼ばない）。`confirmBooking`（手動・Webhook共通）は承認済み＋`paymentStatus=paid` でなければ `SUPPORT_NOT_APPROVED` / `SUPPORT_PAYMENT_REQUIRED` で拒否する。お支払いページは `/mens/booking/support-payment/?b=<bookingId>#t=<checkoutAccessToken>`（トークンはURLフラグメント。ログ・Refererに出さない）。
 - 失効: `expirePendingBookings` は作品撮りサポートに24時間/72時間TTLを使わず、承認前は「利用開始の`PENDING_TTL_MIN_HOURS_BEFORE_START`前」、承認後は `supportPaymentDueAt` で判定する。失効（EXPIRED）で枠を解放し、不成立メールを送る（通常料金へ自動変換しない）。Stripe Checkout発行済みのときは既存の仮押さえ失効（paymentHoldExpiresAt）判定が優先。
 - 対象外: 日程変更（`PHOTO_SUPPORT_RESCHEDULE_NOT_SUPPORTED`）。取消・返金は既存のStripe取消・返金（支払総額に既存のキャンセル規定）。
+
+## Issue #869: カード決済の管理者受付メールから「仮予約」表現をなくす
+
+- `AdminNotifier.notifyNewPendingBooking`: 呼び出し元が `autoConfirmByCheckout: true`（Stripe Checkoutの決済完了Webhookで自動確定される通常カード予約。判定は既存の `shouldDeferPendingMailToCheckout_`）と判定した場合のみ、件名を `[ブランド表示名] 予約申し込みを受け付けました: {bookingId}`、本文冒頭を「新しい予約申し込みがありました。クレジットカード決済処理中です。支払い完了後に自動確定されるため、管理者の操作は不要です。」にする。決済前なので「予約確定」とは断言しない。
+- 承認制のカード予約（作品撮りサポート・大人数利用）、現地払い、Checkout無効のカード予約は、従来の「仮予約を受け付けました」「新しい仮予約（PENDING）が届きました。…確定してください。」を維持する。
+- 管理者向け受付メールの本文に、どのケースでも `予約者名：{record.name}`（予約台帳と同じ値）を追加。件名・ログには出さない。メールアドレス・電話番号などの連絡先は追加しない。氏名が空なら推測で補わず「未登録」と表示する。
+- 予約状態遷移・Stripe Webhook・金額・予約枠・管理者画面・利用者向けメールは変更なし。
