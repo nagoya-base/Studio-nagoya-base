@@ -372,3 +372,46 @@ test('回帰: 分割形式で読込エラーがあれば同期は CONFIG_INVALID
   assert.strictEqual(r.error, 'CONFIG_INVALID');
   assert.strictEqual(w.calls.length, 0);
 });
+
+// ---------- レビュー指摘（PR #871）への回帰 ----------
+
+test('移行漏れ防止: コードが読む設定キーはすべて split-v1 のどこかで表現できる（未知キー扱いで移行不能にしない）', function () {
+  var fs = require('fs');
+  var path = require('path');
+  var src = ['SwitchBotAccessCore.gs', 'SwitchBotAccessInfra.gs', 'SwitchBotAccessApp.gs'].map(function (f) {
+    return fs.readFileSync(path.join(__dirname, '..', 'gas', 'switchbot-access', f), 'utf8');
+  }).join('\n');
+  var keys = {};
+  src.replace(/\b(?:config|cfg)\.([A-Za-z][A-Za-z0-9]*)/g, function (m, k) { keys[k] = true; return m; });
+  // 診断出力のフィールド（out.config.*）と、ローダーが付与する内部項目は設定キーではない
+  var notConfig = ['state', 'envMatch', 'errors', 'last4', 'splitProps', 'source', 'enabled', 'configLoadErrors'];
+  var splitFields = ['eligibleBrands', 'limitedRollout', 'pilotBookingIds', 'graceBeforeSec', 'graceAfterSec'];
+  var jsonKeys = [];
+  Object.keys(Infra.SPLIT_JSON_KEYS).forEach(function (p) { jsonKeys = jsonKeys.concat(Infra.SPLIT_JSON_KEYS[p].required, Infra.SPLIT_JSON_KEYS[p].optional); });
+  var missing = Object.keys(keys).filter(function (k) { return notConfig.indexOf(k) === -1 && splitFields.indexOf(k) === -1 && jsonKeys.indexOf(k) === -1; });
+  assert.deepStrictEqual(missing, [], 'split-v1 で表現できない設定キー: ' + missing.join(','));
+  // 代表例: autoDeleteExpired=false をそのまま移行でき、自動削除が有効に戻らない
+  var core = JSON.parse(splitProps().ACCESS_CORE_CONFIG); core.autoDeleteExpired = false; core.expiredDeleteMaxPerSweep = 3;
+  var r = load(splitProps({ ACCESS_CORE_CONFIG: JSON.stringify(core), ACCESS_DELIVERY: JSON.stringify({ adminMailTo: ['ops@example.test'], deliveryConfigured: false, maxDeliveryAttempts: 2 }) }));
+  assert.deepStrictEqual(r.errors, []);
+  assert.strictEqual(r.cfg.autoDeleteExpired, false);
+  assert.strictEqual(r.cfg.maxDeliveryAttempts, 2);
+});
+
+test('発行前提: ブランドが一致しても ledgerTarget の facility/room と端末対応がずれていれば NOT_READY（コアと同じ完全一致で判定）', function () {
+  function withDevs(kps) { return splitProps({ ACCESS_DEVICES: JSON.stringify({ environment: 'production', allowedLast4: ['01FD'], keypads: kps }) }); }
+  var facMis = load(withDevs([{ brand: 'snb', facility: 'annex', deviceId: DEV }]));
+  assert.deepStrictEqual(facMis.errors, []);
+  assert.strictEqual(Infra.validateConfig(facMis.cfg).ok, true);
+  var iss = Infra.issuanceReadiness(facMis.cfg);
+  assert.strictEqual(iss.state, 'NOT_READY');
+  assert.ok(has(iss.problems, 'KEYPAD_MISSING_FOR_BRAND'));
+  var roomMis = Infra.issuanceReadiness(load(withDevs([{ brand: 'snb', facility: 'main', room: 'A', deviceId: DEV }])).cfg);
+  assert.ok(has(roomMis.problems, 'KEYPAD_MISSING_FOR_BRAND'), 'ledgerTarget.room=null に対して room 付き端末は一致しない');
+  var core = JSON.parse(splitProps().ACCESS_CORE_CONFIG); core.ledgerTarget = { facility: 'main', room: 'A' };
+  var roomOk = load(splitProps({ ACCESS_CORE_CONFIG: JSON.stringify(core), ACCESS_DEVICES: JSON.stringify({ environment: 'production', allowedLast4: ['01FD'], keypads: [{ brand: 'snb', facility: 'main', room: 'A', deviceId: DEV }] }) }));
+  assert.strictEqual(Infra.issuanceReadiness(roomOk.cfg).state, 'READY');
+  // 旧形式は brand+facility+room の重複を起動時に拒否しないため、診断で曖昧さを示す
+  var amb = JSON.parse(legacyJson({ keypads: [{ brand: 'snb', facility: 'main', deviceId: DEV }, { brand: 'snb', facility: 'main', deviceId: 'CCCCCCCCCCCC01FD' }] }));
+  assert.ok(has(Infra.issuanceReadiness(load({ ACCESS_CONFIG: JSON.stringify(amb), ACCESS_ENVIRONMENT: 'production' }).cfg).problems, 'KEYPAD_AMBIGUOUS_FOR_BRAND'));
+});

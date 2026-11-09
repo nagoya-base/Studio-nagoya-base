@@ -153,9 +153,11 @@ var SwitchBotAccessInfra = (function () {
   /** 各JSONに置いてよいキー。高頻度設定（ブランド・限定モード・予約ID・猶予）や enabled はJSONに置けない（二重管理の禁止）。 */
   var SPLIT_JSON_KEYS = {
     CORE: { required: ['commercialUseApproved', 'eligiblePaymentStatuses', 'ledgerTarget'],
-      optional: ['capacity', 'storageLimits', 'infra', 'maxReads', 'webhookWaitSec', 'readWaitSec', 'dailyCleanupMaxDeletes'] },
+      // 旧形式で使える運用パラメータはすべて移行できるようにする（未設定時の既定値は旧形式と同じ。例: autoDeleteExpired=false を落とすと自動削除が有効に戻る）
+      optional: ['capacity', 'storageLimits', 'infra', 'maxReads', 'webhookWaitSec', 'readWaitSec', 'dailyCleanupMaxDeletes',
+        'autoDeleteExpired', 'expiredDeleteMaxPerSweep', 'retentionSec', 'deleteFreshSec'] },
     DEVICES: { required: ['environment', 'allowedLast4', 'keypads'], optional: [] },
-    DELIVERY: { required: ['adminMailTo', 'deliveryConfigured'], optional: ['delivery'] }
+    DELIVERY: { required: ['adminMailTo', 'deliveryConfigured'], optional: ['delivery', 'maxDeliveryAttempts', 'deliveryRetrySec', 'maxReguides'] }
   };
   /** 支払根拠の語彙（AccessKeySnapshot.PAYMENT_BASIS）。UNVERIFIED や台帳の生値（not_started 等）は許可しない。 */
   var ELIGIBLE_PAYMENT_BASIS = ['STRIPE_PAID', 'ADMIN_APPROVED'];
@@ -332,9 +334,14 @@ var SwitchBotAccessInfra = (function () {
     if (cfg.graceBeforeSec === undefined && cfg.graceAfterSec === undefined) problems.push('GRACE_NOT_CONFIGURED');
     else if (!gOk(cfg.graceBeforeSec) || !gOk(cfg.graceAfterSec)) { out.grace = 'INVALID'; problems.push('GRACE_INVALID'); }
     else out.grace = 'SET';
-    // 対象ブランドごとに端末対応があるか／対象外ブランドの端末（余計な対象端末）が無いか
-    if (brands) brands.forEach(function (b) {
-      if (!kps.some(function (k) { return k && k.brand === b; })) problems.push('KEYPAD_MISSING_FOR_BRAND');
+    // 対象ブランドごとに、台帳対象（ledgerTarget の facility/room）でコアと同じ完全一致の端末解決ができるか／
+    // 対象外ブランドの端末（余計な対象端末）が無いか。brand だけ一致して facility/room がずれていれば全件 KEYPAD_NOT_CONFIGURED になる
+    var lt = isPlainObject(cfg.ledgerTarget) ? cfg.ledgerTarget : null;
+    if (!lt || typeof lt.facility !== 'string' || !lt.facility) problems.push('LEDGER_TARGET_MISSING');
+    else if (brands) brands.forEach(function (b) {
+      var kp = Core.resolveKeypad(cfg, { brand: b, facility: lt.facility, room: lt.room === undefined ? null : lt.room });
+      if (kp.error === 'KEYPAD_AMBIGUOUS') problems.push('KEYPAD_AMBIGUOUS_FOR_BRAND');
+      else if (!kp.deviceId) problems.push('KEYPAD_MISSING_FOR_BRAND');
     });
     if (kps.some(function (k) { return !k || !brands || brands.indexOf(k.brand) === -1; })) problems.push('KEYPAD_FOR_NON_TARGET_BRAND');
     if (cfg.deliveryConfigured === true) out.delivery = deliverySettings(cfg) ? 'CONFIGURED' : 'INVALID';

@@ -41,10 +41,11 @@
 
 | プロパティ | 必須キー | 任意キー | サンプル |
 | --- | --- | --- | --- |
-| `ACCESS_CORE_CONFIG` | `commercialUseApproved`（真偽値）, `eligiblePaymentStatuses`（`STRIPE_PAID`/`ADMIN_APPROVED` のみ・空重複不可）, `ledgerTarget` | `capacity`, `storageLimits`, `infra`, `maxReads`, `webhookWaitSec`, `readWaitSec`, `dailyCleanupMaxDeletes` | `{"commercialUseApproved":true,"eligiblePaymentStatuses":["STRIPE_PAID","ADMIN_APPROVED"],"ledgerTarget":{"facility":"main","room":null},"capacity":{"stopAt":80,"officialLimit":90}}` |
+| `ACCESS_CORE_CONFIG` | `commercialUseApproved`（真偽値）, `eligiblePaymentStatuses`（`STRIPE_PAID`/`ADMIN_APPROVED` のみ・空重複不可）, `ledgerTarget` | `capacity`, `storageLimits`, `infra`, `maxReads`, `webhookWaitSec`, `readWaitSec`, `dailyCleanupMaxDeletes`, `autoDeleteExpired`, `expiredDeleteMaxPerSweep`, `retentionSec`, `deleteFreshSec` | `{"commercialUseApproved":true,"eligiblePaymentStatuses":["STRIPE_PAID","ADMIN_APPROVED"],"ledgerTarget":{"facility":"main","room":null},"capacity":{"stopAt":80,"officialLimit":90}}` |
 | `ACCESS_DEVICES` | `environment`, `allowedLast4`, `keypads` | — | `{"environment":"production","allowedLast4":["01FD"],"keypads":[{"brand":"mens","facility":"main","deviceId":"<非公開の完全ID>"}]}` |
-| `ACCESS_DELIVERY` | `adminMailTo`, `deliveryConfigured`（真偽値） | `delivery`（`deliveryConfigured=true` なら必須） | `{"adminMailTo":["<運営の通知先>"],"deliveryConfigured":false}` |
+| `ACCESS_DELIVERY` | `adminMailTo`, `deliveryConfigured`（真偽値） | `delivery`（`deliveryConfigured=true` なら必須）, `maxDeliveryAttempts`, `deliveryRetrySec`, `maxReguides` | `{"adminMailTo":["<運営の通知先>"],"deliveryConfigured":false}` |
 
+- 旧 `ACCESS_CONFIG` で使っている運用パラメータは**すべてそのまま移せます**（未設定時の既定値は旧形式と同じ）。特に `autoDeleteExpired:false` を設定している場合は、`ACCESS_CORE_CONFIG` に必ず移すこと（落とすと期限切れキーの自動削除が有効に戻る）。
 - 高頻度の項目（`eligibleBrands` / `limitedRollout` / `pilotBookingIds` / `graceBeforeSec` / `graceAfterSec`）と `enabled` は**JSONに書けません**（二重管理の禁止）。
 - `keypads` の各要素は `brand`（既知ブランド）・`facility`（必須）・`room`（任意。指定するなら空でない文字列）・`deviceId` のみ。`brand+facility+room` の重複は `KEYPAD_DUPLICATE`。`allowedLast4` 外の端末は従来どおり `KEYPAD_NOT_ALLOWED_IN_ENV`。端末は**完全一致**で解決し、フォールバックしません。
 - 支払根拠は `AccessKeySnapshot` の判定結果（`STRIPE_PAID` / `ADMIN_APPROVED`）。台帳の生値（`not_started` 等）や `UNVERIFIED` は設定できません。現金/PayPay は従来どおり `ADMIN_APPROVED` 判定に従います。
@@ -56,7 +57,7 @@
 - `config.source`: `LEGACY` / `SPLIT_V1` / `UNKNOWN`。`config.splitProps`: 分割プロパティと `ACCESS_CONFIG_FORMAT` の SET/MISSING/UNKNOWN。
 - `config.state`: 基本妥当性（`VALID`/`INVALID` と `errors`）。分割形式では `ACCESS_CONFIG` の MISSING を不足扱いしません。
 - **`issuance`（新設）**: 実際の発行前提。`state`（`READY`/`NOT_READY`）、`problems`、`commercialUse`、`paymentStatuses`（件数）、`brands`（件数）、`limitedRollout`（ON/OFF）、`pilotBookingIds`（件数）、`keypads`（件数）、`grace`、`delivery`。
-  - 主な `problems`: `COMMERCIAL_USE_NOT_APPROVED` / `PAYMENT_STATUSES_MISSING` / `PAYMENT_STATUS_NOT_ALLOWED` / `ELIGIBLE_BRANDS_MISSING` / `PILOT_BOOKING_IDS_NOT_SINGLE` / `PILOT_WITHOUT_LIMITED_ROLLOUT` / `GRACE_NOT_CONFIGURED` / `GRACE_INVALID` / `KEYPAD_MISSING_FOR_BRAND`（対象ブランドに端末対応なし）/ `KEYPAD_FOR_NON_TARGET_BRAND`（対象外ブランドの端末が残る）/ `DELIVERY_CONFIG_INVALID`。
+  - 主な `problems`: `COMMERCIAL_USE_NOT_APPROVED` / `PAYMENT_STATUSES_MISSING` / `PAYMENT_STATUS_NOT_ALLOWED` / `ELIGIBLE_BRANDS_MISSING` / `PILOT_BOOKING_IDS_NOT_SINGLE` / `PILOT_WITHOUT_LIMITED_ROLLOUT` / `GRACE_NOT_CONFIGURED` / `GRACE_INVALID` / `LEDGER_TARGET_MISSING` / `KEYPAD_MISSING_FOR_BRAND`（対象ブランドについて、`ledgerTarget` の facility/room と brand の**完全一致**で端末を解決できない。コアの `resolveKeypad` と同じ判定）/ `KEYPAD_AMBIGUOUS_FOR_BRAND`（同じ組合せに端末が複数）/ `KEYPAD_FOR_NON_TARGET_BRAND`（対象外ブランドの端末が残る）/ `DELIVERY_CONFIG_INVALID`。
 - `ok`（`DIAGNOSTICS_OK`）は従来どおり基盤（設定・資格情報・台帳・ストア）の合否です。**ON前の合格条件は `ok=true` かつ `issuance.state=READY`** とします。`config=VALID` だけで「発行可能」と判断しないでください。
 - 旧形式でも `issuance` は出ます。旧JSONに `eligibleBrands` が無ければ `ELIGIBLE_BRANDS_MISSING` が見えます。
 - verify 環境専用の試験関数（#789/#791/#797/#756）は従来どおり旧形式の `ACCESS_CONFIG` だけを読みます（分割形式では `SETTINGS_INCOMPLETE` で止まる。安全側）。
