@@ -21,6 +21,8 @@
 
 ## 工程1b｜限定設定（OFFのまま・GASエディタ、運営者本人）
 
+> 設定形式について（#859）: 本節は旧形式 `ACCESS_CONFIG`（JSON一括）での手順。分割形式（`ACCESS_CONFIG_FORMAT=split-v1`）へ移行した後は、同じ値を [設定分離 #859](switchbot-access-config-split-859.md) の各プロパティで設定する。**旧形式のまま `ACCESS_ELIGIBLE_BRANDS` 等の独立プロパティを足しても読まれず、混在（`CONFIG_SOURCE_MIXED`）として停止する。** ON前の合格条件には、診断の `issuance.state=READY` も含める。
+
 Script Properties の `ACCESS_CONFIG`（JSON）に次を設定（既存キーは変えず、追加・更新のみ）。
 
 | キー | 値 |
