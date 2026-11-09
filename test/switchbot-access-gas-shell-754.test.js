@@ -422,7 +422,7 @@ test('accessAdminInventorySummary（#857）: 状態別・配送別・段階別�
   assert.strictEqual(L.j.truncated, false);
   assert.deepStrictEqual(L.j.byState, { ISSUED_CONFIRMED: 4, SENT_WAIT_WEBHOOK: 1, UNKNOWN: 1, DELETED_CONFIRMED: 1, OTHER: 1 });
   assert.deepStrictEqual(L.j.byDelivery, { NONE: 3, NOT_SENT: 1, DELIVERED: 1, UNKNOWN: 1, SUPPRESSED: 1, OTHER: 1 });
-  assert.deepStrictEqual(L.j.stages, { ISSUED_NO_DELIVERY_RECORD: 1, ISSUED_DELIVERY_PENDING: 1, ISSUED_DELIVERED: 1, ISSUED_DELIVERY_UNKNOWN: 1, ISSUE_IN_PROGRESS: 1, ISSUE_UNKNOWN: 1, ENDED: 1, OTHER: 1 });
+  assert.deepStrictEqual(L.j.stages, { ISSUED_NO_DELIVERY_RECORD: 1, ISSUED_DELIVERY_PENDING: 1, ISSUED_DELIVERED: 1, ISSUED_DELIVERY_UNKNOWN: 1, ISSUE_IN_PROGRESS: 1, STATE_UNKNOWN: 1, ENDED: 1, OTHER: 1 });
   assert.ok(!/R[1-8]|PII|BOOK|KEYID|KEYNAME|pii@|AAAAAAAA|01FD|1893456000|WEIRD|odd|tok-test|sec-test|owner@example|ADMIN-1|WWWW/.test(L.raw), L.raw);
   Object.keys(L.j.byState).concat(Object.keys(L.j.byDelivery), Object.keys(L.j.stages)).forEach(function (k) { assert.ok(/^[A-Z][A-Z0-9_]*$/.test(k), k); });
   [L.j.byState, L.j.byDelivery, L.j.stages].forEach(function (o) { Object.keys(o).forEach(function (k) { assert.ok(Number.isSafeInteger(o[k]) && o[k] >= 0); }); });

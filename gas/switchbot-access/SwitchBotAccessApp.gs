@@ -372,7 +372,7 @@ function sba_summarizeInventory_(r) {
 /** 発行状態×配送状態 → 「どこで止まっているか」の固定コード。確認できない状態は成功（DELIVERED）に寄せない。 */
 function sba_inventoryStage_(st, dl) {
   if (SBA_INV_ISSUING_.indexOf(st) !== -1) return 'ISSUE_IN_PROGRESS';
-  if (st === 'UNKNOWN') return 'ISSUE_UNKNOWN';
+  if (st === 'UNKNOWN') return 'STATE_UNKNOWN'; // 発行・削除のどちらの失敗でも UNKNOWN になる（inventory では区別できない）
   if (st === 'FAILED') return 'ISSUE_FAILED';
   if (st === 'ISSUED_CONFIRMED') {
     if (dl === 'NONE') return 'ISSUED_NO_DELIVERY_RECORD';
