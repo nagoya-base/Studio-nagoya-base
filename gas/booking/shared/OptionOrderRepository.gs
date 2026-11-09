@@ -59,8 +59,8 @@ var OptionOrderRepository = (function () {
     return SpreadsheetApp.openById(BookingConfig.getSpreadsheetId());
   }
 
-  function ensureSheet_(name, headers) {
-    var spreadsheet = getSpreadsheet_();
+  function ensureSheet_(name, headers, openedSpreadsheet) {
+    var spreadsheet = openedSpreadsheet || getSpreadsheet_();
     var sheet = spreadsheet.getSheetByName(name);
     if (!sheet) sheet = spreadsheet.insertSheet(name);
     if (sheet.getLastRow() < 1) sheet.appendRow(headers);
@@ -106,12 +106,35 @@ var OptionOrderRepository = (function () {
     return String(email || '').trim().toLowerCase();
   }
 
-  function listAll() {
-    var sheet = ensureSheet_(ORDERS_SHEET_, HEADERS_);
+  /*
+   * stats（省略可）: Issue #864の区間計測用。渡されたときだけ、所要ミリ秒と行数・列数（集計値）を
+   * 書き込む（openMs＝スプレッドシートを開く／sheetMs＝シート取得・ヘッダー確認／readMs＝
+   * getValues／convertMs＝行→record変換／rows＝データ行数／columns＝列数）。読み取り内容・
+   * 戻り値は省略時と同じ。
+   */
+  function listAll(stats) {
+    var measure = stats && typeof stats === 'object';
+    var mark = Date.now();
+    function lap(key) {
+      if (!measure) return;
+      var current = Date.now();
+      stats[key] = current - mark;
+      mark = current;
+    }
+    var spreadsheet = getSpreadsheet_();
+    lap('openMs');
+    var sheet = ensureSheet_(ORDERS_SHEET_, HEADERS_, spreadsheet);
+    lap('sheetMs');
     var values = sheet.getDataRange().getValues();
+    lap('readMs');
     var result = [];
     for (var i = 1; i < values.length; i++) {
       result.push({ rowNumber: i + 1, record: rowToRecord_(values[i]) });
+    }
+    lap('convertMs');
+    if (measure) {
+      stats.rows = result.length;
+      stats.columns = values.length > 0 ? values[0].length : 0;
     }
     return result;
   }

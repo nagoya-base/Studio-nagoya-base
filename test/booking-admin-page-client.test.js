@@ -3141,3 +3141,47 @@ test('静的HTML: フィルタ順は 今日/仮予約/今後/すべて で、「
   assert.deepStrictEqual(filters, ['today', 'pending', 'upcoming', 'all']);
   assert.ok(html.indexOf('data-filter="cancelled"') === -1);
 });
+
+/* ---------- Issue #864: 同じ呼び出しのブラウザ側応答時間とサーバー側計測値の対応づけ ---------- */
+
+test('Issue #864: buildLoadBookingsTiming_はserverTimingから同じ呼び出しのGAS外の時間を計算する', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.bookings = [booking(), booking({ bookingId: 'SX-2' })];
+  var timing = sandbox.buildLoadBookingsTiming_(
+    { serverTiming: { totalMs: 1400, configMs: 200, optionOrdersMs: 600, bookingsReadMs: 400, buildMs: 200, bookingRows: 2 } },
+    1000, 4500, 4510
+  );
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(timing)), {
+    responseMs: 3500, renderMs: 10, bookings: 2,
+    serverTotalMs: 1400, outsideServerMs: 2100,
+    serverConfigMs: 200, serverOptionOrdersMs: 600, serverBookingsReadMs: 400, serverBuildMs: 200
+  });
+});
+
+test('Issue #864: serverTimingが無い・不正な応答ではサーバー側の項目を付けない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.bookings = [];
+  [{}, { serverTiming: null }, { serverTiming: { totalMs: '1400' } }, null].forEach(function (result) {
+    var timing = JSON.parse(JSON.stringify(sandbox.buildLoadBookingsTiming_(result, 0, 100, 100)));
+    assert.deepStrictEqual(Object.keys(timing).sort(), ['bookings', 'renderMs', 'responseMs']);
+  });
+});
+
+test('Issue #864: 一覧応答の反映時にconsole.infoへ数値だけの計測記録を1件出し、一覧はserverTimingに関係なく描画される', function () {
+  var sandbox = loadClientSandbox(), run = sandbox.google.script.run;
+  var infos = [];
+  sandbox.console = { info: function () { infos.push(Array.prototype.slice.call(arguments)); } };
+  sandbox.loadBookings();
+  var index = run.calls.length - 1;
+  assert.strictEqual(run.calls[index].name, 'getAdminBookings');
+  run.resolveCall(index, { todayJst: TODAY, nowJst: TODAY + ' 09:00', bookings: [booking()], serverTiming: { totalMs: 1200, optionOrdersMs: 500 } });
+  assert.strictEqual(sandbox.state.bookings.length, 1);
+  assert.strictEqual(infos.length, 1);
+  assert.strictEqual(infos[0][0], '[booking-admin] getAdminBookings timing');
+  var logged = JSON.parse(infos[0][1]);
+  assert.strictEqual(logged.serverTotalMs, 1200);
+  assert.strictEqual(logged.outsideServerMs, logged.responseMs - 1200);
+  Object.keys(logged).forEach(function (key) { assert.strictEqual(typeof logged[key], 'number', key); });
+  assert.strictEqual(infos[0][1].indexOf('山田太郎'), -1);
+  assert.strictEqual(infos[0][1].indexOf('SX-20260101'), -1);
+});
