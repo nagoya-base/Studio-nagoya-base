@@ -275,7 +275,8 @@ test('発行前提: 旧JSONに eligibleBrands が無い場合、VALID でも iss
   // 対象ブランドに端末対応が無い／対象外ブランドの端末が残る
   var mismatch = Infra.issuanceReadiness(load(splitProps({ ACCESS_ELIGIBLE_BRANDS: '["mens"]' })).cfg);
   assert.ok(has(mismatch.problems, 'KEYPAD_MISSING_FOR_BRAND'));
-  assert.ok(has(mismatch.problems, 'KEYPAD_FOR_NON_TARGET_BRAND'));
+  assert.ok(!has(mismatch.problems, 'KEYPAD_FOR_NON_TARGET_BRAND'), '対象外ブランドの端末は problems にしない');
+  assert.ok(has(mismatch.warnings, 'KEYPAD_FOR_NON_TARGET_BRAND'), '非ブロッキング警告として示す');
   // 出力は件数・固定コードのみ（予約ID・完全deviceId・宛先を含まない）
   var dump = JSON.stringify(Infra.issuanceReadiness(load(splitProps()).cfg));
   [PILOT, DEV, 'ops@example.test'].forEach(function (w) { assert.ok(dump.indexOf(w) === -1, 'leak ' + w); });
@@ -414,4 +415,78 @@ test('発行前提: ブランドが一致しても ledgerTarget の facility/roo
   // 旧形式は brand+facility+room の重複を起動時に拒否しないため、診断で曖昧さを示す
   var amb = JSON.parse(legacyJson({ keypads: [{ brand: 'snb', facility: 'main', deviceId: DEV }, { brand: 'snb', facility: 'main', deviceId: 'CCCCCCCCCCCC01FD' }] }));
   assert.ok(has(Infra.issuanceReadiness(load({ ACCESS_CONFIG: JSON.stringify(amb), ACCESS_ENVIRONMENT: 'production' }).cfg).problems, 'KEYPAD_AMBIGUOUS_FOR_BRAND'));
+});
+
+// ---------- タケルレビュー（PR #871）: 対象外ブランドの予備マッピングは READY を妨げない ----------
+
+var DEV_SHARED = 'DDDDDDDDDDDD01FD'; // 共通の物理入口（3ブランド共用）のダミー
+function threeBrandKeypads(over) {
+  return [
+    { brand: 'snb', facility: 'main', deviceId: DEV_SHARED },
+    { brand: 'mens', facility: 'main', deviceId: DEV_SHARED },
+    { brand: 'studio_x', facility: 'main', deviceId: DEV_SHARED }
+  ].map(function (k) { return Object.assign({}, k, (over || {})[k.brand] || {}); });
+}
+function mensOnlyLegacy(kps) {
+  return { ACCESS_CONFIG: legacyJson({ eligibleBrands: ['mens'], keypads: kps || threeBrandKeypads() }), ACCESS_ENVIRONMENT: 'production', ACCESS_ENABLED: 'true' };
+}
+function mensOnlySplit(kps) {
+  return splitProps({
+    ACCESS_ELIGIBLE_BRANDS: '["mens"]',
+    ACCESS_DEVICES: JSON.stringify({ environment: 'production', allowedLast4: ['01FD'], keypads: kps || threeBrandKeypads() })
+  });
+}
+
+[['legacy', mensOnlyLegacy], ['split-v1', mensOnlySplit]].forEach(function (c) {
+  var name = c[0], make = c[1];
+
+  test(name + ': Mensのみ eligible ＋ 3ブランドの keypads は READY（対象外は警告のみ）', function () {
+    var r = load(make());
+    assert.deepStrictEqual(r.errors, []);
+    assert.strictEqual(Infra.validateConfig(r.cfg).ok, true);
+    var iss = Infra.issuanceReadiness(r.cfg);
+    assert.strictEqual(iss.state, 'READY', iss.problems.join(','));
+    assert.deepStrictEqual(iss.problems, []);
+    assert.deepStrictEqual(iss.warnings, ['KEYPAD_FOR_NON_TARGET_BRAND']);
+    assert.strictEqual(iss.keypads, 3);
+    assert.strictEqual(iss.brands, 1);
+  });
+
+  test(name + ': 対象外ブランド（snb / studio_x）の予約には発行しない。対象 Mens は共通入口で発行対象', function () {
+    var cfg = load(make()).cfg;
+    assert.strictEqual(Core.evaluateEligibility(booking({ brand: 'snb' }), cfg, NOW).reason, 'BRAND_NOT_TARGET');
+    assert.strictEqual(Core.evaluateEligibility(booking({ brand: 'studio_x' }), cfg, NOW).reason, 'BRAND_NOT_TARGET');
+    var ok = Core.evaluateEligibility(booking({ brand: 'mens' }), cfg, NOW);
+    assert.strictEqual(ok.eligible, true);
+    assert.strictEqual(ok.deviceId, DEV_SHARED);
+  });
+
+  test(name + ': 対象 Mens の facility/room 不一致は NOT_READY', function () {
+    var fac = Infra.issuanceReadiness(load(make(threeBrandKeypads({ mens: { facility: 'annex' } }))).cfg);
+    assert.strictEqual(fac.state, 'NOT_READY');
+    assert.ok(has(fac.problems, 'KEYPAD_MISSING_FOR_BRAND'));
+    var room = Infra.issuanceReadiness(load(make(threeBrandKeypads({ mens: { room: 'B' } }))).cfg);
+    assert.strictEqual(room.state, 'NOT_READY');
+    assert.ok(has(room.problems, 'KEYPAD_MISSING_FOR_BRAND'));
+  });
+
+  test(name + ': 対象 Mens の重複マッピングは停止（split-v1 は起動拒否、legacy は NOT_READY）', function () {
+    var kps = threeBrandKeypads().concat([{ brand: 'mens', facility: 'main', deviceId: 'EEEEEEEEEEEE01FD' }]);
+    var r = load(make(kps));
+    if (name === 'split-v1') {
+      assert.ok(has(r.errors, 'KEYPAD_DUPLICATE'));
+      assert.strictEqual(r.cfg.enabled, false);
+    } else {
+      assert.deepStrictEqual(r.errors, []);
+      var iss = Infra.issuanceReadiness(r.cfg);
+      assert.strictEqual(iss.state, 'NOT_READY');
+      assert.ok(has(iss.problems, 'KEYPAD_AMBIGUOUS_FOR_BRAND'));
+    }
+    assert.strictEqual(Core.evaluateEligibility(booking({ brand: 'mens' }), Object.assign({}, r.cfg, { enabled: true }), NOW).reason, 'KEYPAD_AMBIGUOUS');
+  });
+
+  test(name + ': 端末 allowlist は厳格なまま（対象外ブランドの端末でも許可外なら起動拒否）', function () {
+    var r = load(make(threeBrandKeypads({ snb: { deviceId: H.DEV_VERIFY } })));
+    assert.ok(has(Infra.validateConfig(r.cfg).errors, 'KEYPAD_NOT_ALLOWED_IN_ENV'));
+  });
 });

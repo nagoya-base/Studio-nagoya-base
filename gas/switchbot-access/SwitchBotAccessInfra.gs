@@ -310,7 +310,7 @@ var SwitchBotAccessInfra = (function () {
     var brands = Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : null;
     var kps = Array.isArray(cfg.keypads) ? cfg.keypads : [];
     var out = {
-      state: 'NOT_READY', problems: problems,
+      state: 'NOT_READY', problems: problems, warnings: [],
       commercialUse: cfg.commercialUseApproved === true ? 'APPROVED' : (cfg.commercialUseApproved === false ? 'NOT_APPROVED' : 'NOT_SET'),
       paymentStatuses: 0, brands: brands ? brands.length : 0,
       limitedRollout: cfg.limitedRollout === true ? 'ON' : (cfg.limitedRollout === false || cfg.limitedRollout === undefined ? 'OFF' : 'INVALID'),
@@ -343,12 +343,16 @@ var SwitchBotAccessInfra = (function () {
       if (kp.error === 'KEYPAD_AMBIGUOUS') problems.push('KEYPAD_AMBIGUOUS_FOR_BRAND');
       else if (!kp.deviceId) problems.push('KEYPAD_MISSING_FOR_BRAND');
     });
-    if (kps.some(function (k) { return !k || !brands || brands.indexOf(k.brand) === -1; })) problems.push('KEYPAD_FOR_NON_TARGET_BRAND');
+    // 対象外ブランドの予備マッピング（例: 共通入口に3ブランド分の keypads を置き、eligibleBrands は ["mens"] のみ）は、
+    // コアが BRAND_NOT_TARGET で止めるため発行に影響しない。READY を妨げない非ブロッキング警告としてだけ示す（PR #871 レビュー）。
+    var warnings = [];
+    if (kps.some(function (k) { return !k || !brands || brands.indexOf(k.brand) === -1; })) warnings.push('KEYPAD_FOR_NON_TARGET_BRAND');
     if (cfg.deliveryConfigured === true) out.delivery = deliverySettings(cfg) ? 'CONFIGURED' : 'INVALID';
     else if (cfg.delivery !== undefined && !deliverySettings(cfg)) out.delivery = 'INVALID';
     if (out.delivery === 'INVALID') problems.push('DELIVERY_CONFIG_INVALID');
     var uniq = problems.filter(function (e, i) { return problems.indexOf(e) === i; });
     out.problems = uniq;
+    out.warnings = warnings;
     out.state = uniq.length ? 'NOT_READY' : 'READY';
     return out;
   }
