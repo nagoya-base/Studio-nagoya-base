@@ -906,8 +906,13 @@ test('#874 review: tests run isolated (separate disposable user, env -i, verifie
   assert.match(script, /setpriv --reuid="\$uid" --regid="\$gid" --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all/);
   assert.match(script, /\n  env -i HOME="\$test_home" PATH="\$PATH"/, 'empty environment: no GITHUB_*/ACTIONS_* tokens');
   assert.match(script, /"\$status" -eq 97[\s\S]{0,120}teardown_failed=1/, 'a namespace setup failure is an isolation failure (exit 3)');
-  assert.match(script, /\/etc\/cron\.deny \/etc\/at\.deny/);
-  assert.match(script, /pkill -KILL -U "\$uid"/);
+  assert.doesNotMatch(script, /tee -a|>> *"?\/etc|cron\.deny"? *$|crontab -r/m, 'never changes host cron/at or other /etc files');
+  assert.doesNotMatch(script.slice(script.indexOf('teardown_failed=0'), script.indexOf('finish() {')), /\|\| true/, 'teardown never swallows a failure');
+  assert.match(script, /SCAN_FAILED: the filesystem scan for files of the isolated user did not complete/);
+  assert.match(script, /SCAN_FAILED: the re-scan of the shared temp areas did not complete/);
+  assert.match(script, /SHARED_TEMP_CLEANUP_FAILED/);
+  assert.match(script, /if out="\$\(sudo -n find "\$@" [^\n]*-print 2>\/dev\/null\)"; then/, 'a scan counts only when find exits 0');
+  assert.match(script, /for flag in -U -u; do[\s\S]{0,80}sudo -n pkill -KILL "\$flag" "\$uid"/);
   assert.match(script, /allowed_roots=\("\$test_home" \/tmp \/var\/tmp \/dev\/shm\)/);
   assert.match(script, /status --porcelain --untracked-files=all --ignored/);
   assert.match(script, /ISOLATION_NOT_CONFIRMED[^\n]*\n\s+exit 3/);
@@ -926,7 +931,14 @@ test('#874 review: PR CI proves the isolation with a hostile probe, a canary esc
   assert.match(job, /BOOKING_ISOLATION_CANARY=\/srv\/booking-isolation-canary/);
   assert.match(job, /sudo install -o "\$u" \/dev\/null \/srv\/booking-isolation-inject\/escape/, 'teardown detection is exercised from outside the namespace');
   assert.match(job, /pgrep -f 'sleep 6009'/);
-  assert.match(job, /run: bash scripts\/run-booking-tests-isolated\.sh repository-tests\n/);
+  for (const [pattern, code] of [["'^-n find / '", 'SCAN_FAILED: the filesystem scan'], ["'^-n find /tmp /var/tmp /dev/shm '", 'SCAN_FAILED: the re-scan'],
+    ["'^-n find /var/tmp -xdev -depth'", 'SHARED_TEMP_CLEANUP_FAILED']]) {
+    assert.ok(job.includes(`check ${pattern} '${code}`), pattern);
+  }
+  assert.match(job, /\/etc\/cron\.deny \/etc\/at\.deny/);
+  assert.match(job, /diff "\$RUNNER_TEMP\/host-state-before\.txt" "\$RUNNER_TEMP\/host-state-after\.txt"/);
+  assert.match(job, /done \| diff "\$RUNNER_TEMP\/host-state-before\.txt" -/);
+  assert.match(job, /\n          bash scripts\/run-booking-tests-isolated\.sh repository-tests\n/);
   const probe = fs.readFileSync(path.join(workspace, 'scripts/booking-test-isolation-probe.sh'), 'utf8');
   for (const target of ['workspace', 'runner-temp', 'node-bin', 'npm-global-prefix', 'usr-local-bin', 'canary', 'world-writable-file', 'root-filesystem',
     'docker-socket', 'docker-api', 'sudo', 'crontab', 'environ-of-other-process', 'inherited-github-env']) {

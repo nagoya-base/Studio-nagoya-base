@@ -200,7 +200,8 @@ Spreadsheet ID Secret・WIF/OIDCは使わず、`booking-production`に登録す�
 - GitHubのEnvironment承認はjob開始時に評価される。そのため、Secretsを使わない`validate` job（main限定・入力検査とSummaryの計画表示のみ）の直後に
   `booking-production`の`deploy` jobを開始し、承認後に同じjob内でリポジトリ全体のテスト（`npm test`）を実行する。同一runで再承認は求めない。
 - テストは後続のSecret付きstepから**プロセスとファイルシステムの両面で隔離**する（`scripts/run-booking-tests-isolated.sh`。PR #875レビュー）。
-  1. このrun専用の使い捨てOSユーザーを作る（sudo・docker・admグループなし。`/etc/cron.deny`・`/etc/at.deny`で遅延実行も禁止）。
+  1. このrun専用の使い捨てOSユーザーを作る（sudo・docker・admグループなし）。ホストの設定ファイル（`/etc/cron.deny`等）は変更しない。
+     cron/atの登録は、spoolが読取り専用であることと`no_new_privs`（crontab/atのsetgidが効かない）で防ぐ。ユーザーは終了時に削除し、アカウント関連ファイルは実行前と同一に戻る。
   2. 承認済みcommitのworkspace（`persist-credentials: false`でGitHubトークンなし）をそのユーザーのhomeへ複製する。
   3. 専用のmount namespaceとPID namespaceの中で実行する。ホストの**全mountを読取り専用**にし（GitHub-hosted runnerでworld-writableな`/usr/local/bin`・`/opt/hostedtoolcache`も含め、既存ファイルの上書きも不可）、
      書けるのはそのユーザーのhomeと、namespace専用のtmpfs（`/tmp`・`/var/tmp`・`/dev/shm`。終了とともに消える）だけ。
@@ -208,11 +209,15 @@ Spreadsheet ID Secret・WIF/OIDCは使わず、`booking-production`に登録す�
      PID namespaceの親が終わるとnamespace内の全プロセスはkernelにより終了する。
   4. 環境変数を空にして（`env -i`）実行する。`GITHUB_*`・`ACTIONS_*`・トークン・Secretは渡らない（この時点でSecretは存在しない）。依存は `npm ci --ignore-scripts` と `bundle install` でそのユーザーのhomeへ入る。
   5. 終了後（成否とも）に、全プロセスをKILLして残存0を確認 → そのユーザー所有のファイルを全ファイルシステムで探索し、home・`/tmp`・`/var/tmp`・`/dev/shm`以外に1つでもあれば失敗、許可領域のものは削除 → ユーザー削除 → workspaceが承認済みcommitのまま（追跡・未追跡・ignoredとも差分なし）であることを確認する。
-  6. namespaceの構築やこれらの確認のどれかに失敗すれば `ISOLATION_NOT_CONFIRMED`（exit 3）で停止し、Summaryに`テスト隔離の確認`で「更新前停止」と出る。Secret付きstepへは進まない。
+  6. 後片付けの各コマンドの失敗は握りつぶさない。所有ファイルの全探索は`find`が正常終了した走査だけを有効とし（不完全な走査は最大3回までやり直し）、
+     走査・共有一時領域の削除・再走査・pkill/pgrep・ユーザー削除のどれかが失敗すれば`SCAN_FAILED`／`SHARED_TEMP_CLEANUP_FAILED`などで隔離不成立とする。
+  7. namespaceの構築やこれらの確認のどれかに失敗すれば `ISOLATION_NOT_CONFIRMED`（exit 3）で停止し、Summaryに`テスト隔離の確認`で「更新前停止」と出る。Secret付きstepへは進まない。
 - 隔離の成立はPR CI（`booking-pr-tests.yml` の `booking-test-isolation` job）で毎回検証する。悪意あるテスト／依存を模したprobe
   （workspace・`RUNNER_TEMP`・Node/npm導入先・`/usr/local/bin`・`/etc`・ルートFS・ホスト上のworld-writableなディレクトリ（canary）と既存world-writableファイルへの書込み、
   Docker socket、sudo、cron/at、他プロセスの環境変数読取り）がすべて拒否されること、常駐プロセスと`/tmp`等の置き土産が消えること、
   隔離の外から隔離ユーザー所有のファイルと常駐プロセスを注入した場合に後片付けの検証がexit 3で止めること（プロセスは終了させる）、
+  走査・削除・再走査のコマンドだけを意図的に失敗させた場合にexit 3で止まること、
+  `/etc/passwd`・`group`・`shadow`・`gshadow`・`subuid`・`subgid`・`cron.deny`・`at.deny`・`cron.allow`・`at.allow`が実行前後で一致すること（存在しない場合も含む）、
   本番と同じコマンドでリポジトリ全体のテストが隔離ユーザーとして通ることを確認する。
   なお最初の版（ユーザー分離のみ）は、このCIでrunner上のworld-writableな`/usr/local/bin`・hostedtoolcacheへ書けることが検出されたため、読取り専用のmount namespaceを追加した。
 - 承認回数とEnvironmentの秘密境界: jobを分けると`booking-production`の承認が2回になる（Environment承認はjobごと）。そのため、jobは分けずに同じjob内のユーザー隔離とした。

@@ -78,6 +78,14 @@ jobs:
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
+      # 隔離の前後でホストのアカウント・cron/at設定ファイルが完全に一致することを確かめるための記録（存在しない場合も記録）。
+      - name: Record host account and cron/at files before the isolated runs
+        run: |
+          set -euo pipefail
+          for f in /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/subuid /etc/subgid /etc/cron.deny /etc/at.deny /etc/cron.allow /etc/at.allow; do
+            if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
+          done > "$RUNNER_TEMP/host-state-before.txt"
+          cat "$RUNNER_TEMP/host-state-before.txt"
       # runner上の /usr/local/bin・hostedtoolcache は world-writable。canaryと既存world-writableファイルでその状況を模す。
       - name: Probe - forbidden operations (incl. world-writable host paths) are refused and leftovers are removed
         run: |
@@ -121,5 +129,43 @@ jobs:
           if pgrep -f 'sleep 6009' >/dev/null; then echo "the injected process survived" >&2; exit 1; fi
           rm -f "$RUNNER_TEMP/isolation-stderr.txt"
           sudo rm -rf /srv/booking-isolation-inject
+      # 後片付けの走査・削除・再走査が失敗した場合（sudoを包むラッパーで該当コマンドだけを失敗させる）に、
+      # 握りつぶさず exit 3 で止まり、隔離ユーザー自体は削除されることを確かめる。
+      - name: Teardown check - scan, cleanup and re-scan failures fail closed (exit 3)
+        run: |
+          set -euo pipefail
+          fake="$RUNNER_TEMP/fake-sudo"
+          mkdir -p "$fake"
+          real_sudo="$(command -v sudo)"
+          printf '%s\n' '#!/bin/bash' \
+            'if [[ -n "${BOOKING_FAKE_SUDO_FAIL:-}" && "$*" =~ $BOOKING_FAKE_SUDO_FAIL ]]; then echo "injected failure" >&2; exit 2; fi' \
+            "exec $real_sudo \"\$@\"" > "$fake/sudo"
+          chmod 755 "$fake/sudo"
+          check() { # <pattern> <expected code>
+            local status=0
+            PATH="$fake:$PATH" BOOKING_FAKE_SUDO_FAIL="$1" \
+              bash scripts/run-booking-tests-isolated.sh probe scripts/booking-test-isolation-probe.sh 2>"$RUNNER_TEMP/isolation-stderr.txt" || status=$?
+            cat "$RUNNER_TEMP/isolation-stderr.txt" >&2
+            test "$status" -eq 3
+            grep -q ISOLATION_NOT_CONFIRMED "$RUNNER_TEMP/isolation-stderr.txt"
+            grep -q "$2" "$RUNNER_TEMP/isolation-stderr.txt"
+            if getent passwd | grep -q '^booking-test-'; then echo "the isolated user remains" >&2; exit 1; fi
+          }
+          check '^-n find / ' 'SCAN_FAILED: the filesystem scan'
+          check '^-n find /tmp /var/tmp /dev/shm ' 'SCAN_FAILED: the re-scan of the shared temp areas'
+          check '^-n find /var/tmp -xdev -depth' 'SHARED_TEMP_CLEANUP_FAILED'
+          rm -rf "$fake" "$RUNNER_TEMP/isolation-stderr.txt"
+      - name: Host account and cron/at files are unchanged after the probe runs
+        run: |
+          set -euo pipefail
+          for f in /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/subuid /etc/subgid /etc/cron.deny /etc/at.deny /etc/cron.allow /etc/at.allow; do
+            if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
+          done > "$RUNNER_TEMP/host-state-after.txt"
+          diff "$RUNNER_TEMP/host-state-before.txt" "$RUNNER_TEMP/host-state-after.txt"
       - name: Repository tests pass as the isolated user (same command as the production workflow)
-        run: bash scripts/run-booking-tests-isolated.sh repository-tests
+        run: |
+          set -euo pipefail
+          bash scripts/run-booking-tests-isolated.sh repository-tests
+          for f in /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/subuid /etc/subgid /etc/cron.deny /etc/at.deny /etc/cron.allow /etc/at.allow; do
+            if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
+          done | diff "$RUNNER_TEMP/host-state-before.txt" -

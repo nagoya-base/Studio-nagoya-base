@@ -7,16 +7,17 @@
 #   bash scripts/run-booking-tests-isolated.sh probe <repo相対のスクリプト>
 #       PR CI専用。隔離を破ろうとするprobeを同じ仕組みで実行し、後片付けと検証が効くことを確かめる。
 #
-# 隔離の方法（コンテナイメージやDocker socketは使わない）:
-#   1. 使い捨てのOSユーザー（sudo・docker・admグループなし、cron/at禁止）をこのrunで新規作成する。
+# 隔離の方法（コンテナイメージやDocker socketは使わない。ホストの設定ファイルは変更しない）:
+#   1. 使い捨てのOSユーザー（sudo・docker・admグループなし）をこのrunで新規作成する。
 #   2. 承認済みcommitのworkspaceを、そのユーザーのhomeへ複製する（workspace自体は書込み不可のまま）。
 #   3. 環境変数を空にして（env -i）、そのユーザーで実行する。GITHUB_*・ACTIONS_*・トークン・Secretは渡らない。
 #      mount namespaceでホストの全ファイルシステムを読取り専用にし（world-writableな場所も上書き不可）、/tmp等はnamespace専用tmpfs、
 #      PID namespace・no_new_privs・capabilityなしで実行する（詳細は下のlauncher）。
 #   4. 終了後（成功・失敗とも）: 全プロセスをKILLして残存0を確認 → そのユーザー所有のファイルを全ファイルシステムで探索し、
-#      home・/tmp・/var/tmp・/dev/shm 以外に1つでもあれば失敗（想定外の書込み先＝隔離不成立）、許可領域のものは削除 →
+#      home・/tmp・/var/tmp・/dev/shm 以外に1つでもあれば失敗（想定外の書込み先＝隔離不成立）、許可領域のものは削除して再走査 →
 #      ユーザー削除 → workspaceが承認済みcommitのまま無変更（追跡・未追跡・ignoredとも差分なし）であることを確認。
-#   いずれかの確認に失敗した場合は、テスト結果に関係なく exit 3 で停止する（後続のSecret付きstepへ進まない）。
+#   いずれかの確認に失敗した場合（走査の失敗・不完全な走査、削除や再確認の失敗を含む）は、テスト結果に関係なく
+#   exit 3 で停止する（後続のSecret付きstepへ進まない）。
 # 残余リスク（docs/booking-gas-production-deploy.md）: 同じVMのカーネルを共有するため、カーネル／setuidの脆弱性による
 # 権限昇格までは防げない。ネットワークは依存取得のため遮断しない（この時点でSecretは存在しない）。
 set -euo pipefail
@@ -61,56 +62,106 @@ workspace_is_clean() {
 workspace_is_clean || die "workspace is not the clean approved commit before the tests"
 
 # ---- 後片付けと検証（trapで必ず実行。失敗はexit 3） ----
+# 方針: 後片付けの各コマンドの失敗・部分的な走査は握りつぶさず、すべて隔離不成立（teardown_failed=1 → exit 3）とする。
 teardown_failed=0
-teardown() {
-  local uid gid attempt leftovers outside path root ok
-  if ! uid="$(id -u "$test_user" 2>/dev/null)" || ! gid="$(id -g "$test_user" 2>/dev/null)"; then
-    teardown_failed=1; echo "Isolation teardown: the isolated user is missing" >&2; return
-  fi
-  sudo -n usermod --lock --expiredate 1 "$test_user" >/dev/null 2>&1 || true
-  sudo -n crontab -r -u "$test_user" >/dev/null 2>&1 || true
-  # 実UID・実効UIDの両方で、残存0になるまでKILLする（daemon化・二重fork・setsidを含む）。
-  for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    sudo -n pkill -KILL -U "$uid" >/dev/null 2>&1 || true
-    sudo -n pkill -KILL -u "$uid" >/dev/null 2>&1 || true
-    if ! pgrep -U "$uid" >/dev/null && ! pgrep -u "$uid" >/dev/null; then break; fi
+teardown_fail() { teardown_failed=1; echo "Isolation teardown: $1" >&2; }
+
+# 指定UID/GIDのプロセス有無。0=あり 1=なし それ以外=pgrep自体の失敗（呼出し側で隔離不成立にする）。
+user_processes_exist() {
+  local s=0
+  pgrep -U "$1" >/dev/null || s=$?
+  [[ "$s" -le 1 ]] || return 2
+  [[ "$s" -eq 0 ]] && return 0
+  s=0
+  pgrep -u "$1" >/dev/null || s=$?
+  [[ "$s" -le 1 ]] || return 2
+  return "$s"
+}
+
+# そのユーザー所有（UIDまたはGID）のパスを走査し、結果を scan_result に入れる。
+# findが0以外で終わった走査（権限・I/Oエラー、走査中に消えたパスなど）は不完全とみなして最大3回までやり直し、
+# 3回とも完全に終わらなければ失敗を返す（呼出し側で隔離不成立にする）。
+scan_result=""
+scan_owned() { # <uid> <gid> <find対象...>（findの式は固定）
+  local uid="$1" gid="$2" attempt out
+  shift 2
+  for attempt in 1 2 3; do
+    if out="$(sudo -n find "$@" \( -path /proc -o -path /sys \) -prune -o \( -user "$uid" -o -group "$gid" \) -print 2>/dev/null)"; then
+      scan_result="$out"
+      return 0
+    fi
     sleep 1
   done
-  if pgrep -U "$uid" >/dev/null || pgrep -u "$uid" >/dev/null; then
-    teardown_failed=1; echo "Isolation teardown: processes of the isolated user survived" >&2
+  return 1
+}
+
+teardown() {
+  local uid gid attempt outside path root ok status
+  if ! uid="$(id -u "$test_user" 2>/dev/null)" || ! gid="$(id -g "$test_user" 2>/dev/null)"; then
+    teardown_fail "the isolated user is missing"; return
   fi
-  # sudoの試行（拒否されても）でsudo自身が作る記録ファイル（root作成・内容はタイムスタンプのみ）は既知の副作用として削除する。
-  sudo -n rm -f "/run/sudo/ts/$test_user" "/run/sudo/ts/$uid" "/var/run/sudo/ts/$test_user" "/var/run/sudo/ts/$uid"
-  # そのユーザー所有のファイルを全ファイルシステムで探す（/proc・/sysは除外）。許可領域外は隔離不成立。
-  leftovers="$(sudo -n find / \( -path /proc -o -path /sys \) -prune -o \( -user "$uid" -o -group "$gid" \) -print 2>/dev/null || true)"
-  outside=""
-  while IFS= read -r path; do
-    [[ -n "$path" ]] || continue
-    ok=0
-    for root in "${allowed_roots[@]}"; do
-      if [[ "$path" == "$root" || "$path" == "$root/"* ]]; then ok=1; fi
+  # 実UID・実効UIDの両方で、残存0になるまでKILLする（daemon化・二重fork・setsidを含む）。
+  # pkillの終了コード1は「該当なし」。それ以外の失敗は隔離不成立。
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    for flag in -U -u; do
+      status=0
+      sudo -n pkill -KILL "$flag" "$uid" >/dev/null 2>&1 || status=$?
+      [[ "$status" -le 1 ]] || { teardown_fail "pkill failed (exit $status)"; return; }
     done
-    [[ "$ok" -eq 1 ]] || outside+="$path"$'\n'
-  done <<<"$leftovers"
-  if [[ -n "$outside" ]]; then
-    teardown_failed=1
-    echo "Isolation teardown: the isolated user wrote outside its allowed areas ($(printf '%s' "$outside" | wc -l) path(s)):" >&2
-    printf '%s' "$outside" | head -n 20 | sed 's/^/  /' >&2
-  fi
-  for root in /tmp /var/tmp /dev/shm; do
-    sudo -n find "$root" -xdev \( -user "$uid" -o -group "$gid" \) -delete 2>/dev/null || true
+    status=0
+    user_processes_exist "$uid" || status=$?
+    [[ "$status" -le 1 ]] || { teardown_fail "could not list the processes of the isolated user"; return; }
+    [[ "$status" -eq 1 ]] && break
+    sleep 1
   done
-  sudo -n userdel --remove "$test_user" >/dev/null 2>&1 || true
-  sudo -n groupdel "$test_user" >/dev/null 2>&1 || true
-  sudo -n rm -rf "$test_home"
-  if id "$test_user" >/dev/null 2>&1 || [[ -e "$test_home" ]]; then
-    teardown_failed=1; echo "Isolation teardown: the isolated user or its home still exists" >&2
+  status=0
+  user_processes_exist "$uid" || status=$?
+  [[ "$status" -eq 1 ]] || teardown_fail "processes of the isolated user survived or could not be listed"
+  # sudoの試行（拒否されても）でsudo自身が作る記録ファイル（root作成・内容はタイムスタンプのみ）は既知の副作用として削除する。
+  sudo -n rm -f "/run/sudo/ts/$test_user" "/run/sudo/ts/$uid" "/var/run/sudo/ts/$test_user" "/var/run/sudo/ts/$uid" ||
+    teardown_fail "could not remove sudo timestamp records"
+  # そのユーザー所有のファイルを全ファイルシステムで探す（/proc・/sysは除外）。許可領域外は隔離不成立。
+  if ! scan_owned "$uid" "$gid" /; then
+    teardown_fail "SCAN_FAILED: the filesystem scan for files of the isolated user did not complete"
+  else
+    outside=""
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      ok=0
+      for root in "${allowed_roots[@]}"; do
+        if [[ "$path" == "$root" || "$path" == "$root/"* ]]; then ok=1; fi
+      done
+      [[ "$ok" -eq 1 ]] || outside+="$path"$'\n'
+    done <<<"$scan_result"
+    if [[ -n "$outside" ]]; then
+      teardown_fail "the isolated user wrote outside its allowed areas ($(printf '%s' "$outside" | wc -l) path(s)):"
+      printf '%s' "$outside" | head -n 20 | sed 's/^/  /' >&2
+    fi
   fi
-  if [[ -n "$(sudo -n find /tmp /var/tmp /dev/shm -xdev \( -user "$uid" -o -group "$gid" \) -print 2>/dev/null || true)" ]]; then
-    teardown_failed=1; echo "Isolation teardown: files of the isolated user remain in shared temp areas" >&2
+  # 共有一時領域に残った所有ファイルを削除し、必ず再走査で0件を確認する（削除・再走査の失敗も隔離不成立）。
+  for root in /tmp /var/tmp /dev/shm; do
+    ok=0
+    for attempt in 1 2 3; do
+      if sudo -n find "$root" -xdev -depth \( -user "$uid" -o -group "$gid" \) -delete 2>/dev/null; then ok=1; break; fi
+      sleep 1
+    done
+    [[ "$ok" -eq 1 ]] || teardown_fail "SHARED_TEMP_CLEANUP_FAILED: could not delete files of the isolated user in $root"
+  done
+  if ! scan_owned "$uid" "$gid" /tmp /var/tmp /dev/shm; then
+    teardown_fail "SCAN_FAILED: the re-scan of the shared temp areas did not complete"
+  elif [[ -n "$scan_result" ]]; then
+    teardown_fail "files of the isolated user remain in shared temp areas"
+  fi
+  sudo -n userdel --remove "$test_user" >/dev/null 2>&1 || teardown_fail "userdel failed"
+  if getent group "$test_user" >/dev/null; then
+    sudo -n groupdel "$test_user" >/dev/null 2>&1 || teardown_fail "groupdel failed"
+  fi
+  sudo -n rm -rf "$test_home" || teardown_fail "could not remove the isolated home"
+  if id "$test_user" >/dev/null 2>&1 || getent group "$test_user" >/dev/null || [[ -e "$test_home" ]]; then
+    teardown_fail "the isolated user, its group or its home still exists"
   fi
   if ! workspace_is_clean; then
-    teardown_failed=1; echo "Isolation teardown: the workspace changed during the tests" >&2
+    teardown_fail "the workspace changed during the tests"
   fi
 }
 
@@ -128,10 +179,8 @@ finish() {
 
 sudo -n useradd --create-home --home-dir "$test_home" --shell /bin/bash --user-group "$test_user"
 trap finish EXIT
-# cron/atによる遅延実行を禁止する（cron.allow/at.allowがあればそちらが優先され、未記載のユーザーは元々不可）。
-for deny in /etc/cron.deny /etc/at.deny; do
-  echo "$test_user" | sudo -n tee -a "$deny" >/dev/null
-done
+# cron/atの登録はホストのファイルを変えずに防ぐ: spool（/var/spool）はnamespace内で読取り専用、crontab/atの
+# setgidは no_new_privs で効かない。後片付けの全走査でも所有ファイルが残れば隔離不成立になる（/etc/cron.deny等は触らない）。
 sudo -n cp -a "$workspace/." "$test_home/repo"
 sudo -n rm -f "$test_home/repo/.git/config.lock"
 sudo -n chown -R "$test_user:$test_user" "$test_home/repo"
