@@ -11,6 +11,8 @@
 #   1. 使い捨てのOSユーザー（sudo・docker・admグループなし、cron/at禁止）をこのrunで新規作成する。
 #   2. 承認済みcommitのworkspaceを、そのユーザーのhomeへ複製する（workspace自体は書込み不可のまま）。
 #   3. 環境変数を空にして（env -i）、そのユーザーで実行する。GITHUB_*・ACTIONS_*・トークン・Secretは渡らない。
+#      mount namespaceでホストの全ファイルシステムを読取り専用にし（world-writableな場所も上書き不可）、/tmp等はnamespace専用tmpfs、
+#      PID namespace・no_new_privs・capabilityなしで実行する（詳細は下のlauncher）。
 #   4. 終了後（成功・失敗とも）: 全プロセスをKILLして残存0を確認 → そのユーザー所有のファイルを全ファイルシステムで探索し、
 #      home・/tmp・/var/tmp・/dev/shm 以外に1つでもあれば失敗（想定外の書込み先＝隔離不成立）、許可領域のものは削除 →
 #      ユーザー削除 → workspaceが承認済みcommitのまま無変更（追跡・未追跡・ignoredとも差分なし）であることを確認。
@@ -142,14 +144,42 @@ for name in HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy NODE
   [[ -z "${!name:-}" ]] || net_env+=("$name=${!name}")
 done
 
-echo "Running $mode as an isolated user (no secrets, no GitHub tokens, workspace not writable)"
-if sudo -n -u "$test_user" -H -- env -i \
-    HOME="$test_home" PATH="$PATH" LANG=C.UTF-8 CI=true TMPDIR="$test_home/tmp" \
+# 隔離ユーザーの実行環境（root権限でnamespaceを作り、最後にsetprivで権限を捨てる）:
+#  - mount namespace: ホストの全mountを読取り専用にする（world-writableなファイル・ディレクトリへの上書きも不可）。
+#    書けるのは隔離ユーザーのhomeと、namespace専用のtmpfs（/tmp・/var/tmp・/dev/shm。終了とともに消える）だけ。
+#  - PID namespace: 実行の親プロセス（PID 1）が終わると、namespace内の全プロセスがkernelにより終了させられる。
+#  - setpriv: 隔離ユーザーのUID/GIDだけ（補助グループなし）、no_new_privs（sudo等のsetuidで権限を得られない）、capabilityなし。
+# namespaceの構築に失敗した場合は exit 97 とし、隔離不成立（exit 3）として扱う。
+launcher='
+set -euo pipefail
+home="$1"; uid="$2"; gid="$3"; shift 3
+mount --make-rprivate / || exit 97
+mount --bind "$home" "$home" || exit 97
+while IFS= read -r mp; do
+  case "$mp" in /proc|/proc/*|/sys|/sys/*|/dev|/dev/*|"$home") continue ;; esac
+  mount -o remount,bind,ro "$mp" || exit 97
+done < <(awk "{print \$5}" /proc/self/mountinfo | while IFS= read -r raw; do printf "%b\n" "$raw"; done | sort -u)
+for t in /tmp /var/tmp /dev/shm; do
+  mount -t tmpfs -o nosuid,nodev,mode=1777 tmpfs "$t" || exit 97
+done
+if ( : > /.booking-isolation-rw-check ) 2>/dev/null; then rm -f /.booking-isolation-rw-check; exit 97; fi
+exec setpriv --reuid="$uid" --regid="$gid" --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all -- "$@"
+'
+
+echo "Running $mode as an isolated user (read-only host filesystem, private tmp, own PID namespace, no secrets, no GitHub tokens)"
+status=0
+sudo -n unshare --mount --pid --fork --mount-proc --propagation private \
+  bash -c "$launcher" booking-isolation "$test_home" "$(id -u "$test_user")" "$(id -g "$test_user")" \
+  env -i HOME="$test_home" PATH="$PATH" LANG=C.UTF-8 CI=true TMPDIR="$test_home/tmp" \
     BUNDLE_DEPLOYMENT=true BUNDLE_PATH="$test_home/bundle" ${probe_env[@]+"${probe_env[@]}"} ${net_env[@]+"${net_env[@]}"} \
-    bash -c "cd \"\$HOME/repo\" && $inner"; then
-  echo "Isolated $mode passed."
-else
-  status=$?
+    bash -c "cd \"\$HOME/repo\" && $inner" || status=$?
+if [[ "$status" -eq 97 ]]; then
+  echo "Isolated tests: the isolation namespace could not be set up." >&2
+  teardown_failed=1
+  exit 1
+fi
+if [[ "$status" -ne 0 ]]; then
   echo "Isolated $mode failed (exit $status)." >&2
   exit "$status"
 fi
+echo "Isolated $mode passed."

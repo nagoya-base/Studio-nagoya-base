@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Issue #874（PR #875 レビュー）: PR CI専用のprobe。run-booking-tests-isolated.sh の probe モードで、
 # 隔離ユーザーとして「テスト／依存コードが悪意を持っていた場合」の操作を試す。本番workflowからは呼ばない。
-#   - 失敗すべき操作（workspace・RUNNER_TEMP・Node/clasp導入先・/usr/local/binへの書込み、Docker socket、sudo、
+#   - 失敗すべき操作（workspace・RUNNER_TEMP・Node/clasp導入先・/usr/local/bin・ルートFS・既存world-writableファイルへの書込み、Docker socket、sudo、
 #     cron/at登録、他ユーザーのプロセス環境変数の読取り）が1つでも成功したら exit 1。
 #   - 成功してよい操作（常駐子プロセス・/tmp等への置き土産）は残したまま終わる。後片付けで消えることをCIが確認する。
-#   - BOOKING_ISOLATION_CANARY（許可領域外の書込み可能ディレクトリ）が渡された場合は、そこへ書き込む
-#     （後片付けの検知で exit 3 になることをCIが確認する）。
+#   - BOOKING_ISOLATION_CANARY（ホスト上のworld-writableなディレクトリ）が渡された場合は、そこへの書込みも失敗すべき操作として試す。
+#     （/usr/local/bin・hostedtoolcache のようにrunner上でworld-writableな場所を模す）
 set -uo pipefail
 
 escaped=()
@@ -22,6 +22,13 @@ try_write node-bin "${PROBE_NODE_BIN:-}"
 try_write npm-global-prefix "${PROBE_NPM_PREFIX:-}"
 try_write usr-local-bin /usr/local/bin
 try_write etc /etc
+
+try_write canary "${BOOKING_ISOLATION_CANARY:-}"
+# 既存のworld-writableなファイルを（内容を変えずに）書込みモードで開けたら隔離不成立。
+while IFS= read -r -d '' f; do
+  if ( : >> "$f" ) 2>/dev/null; then escaped+=("world-writable-file"); break; fi
+done < <(find /usr /opt /home /etc /var -xdev -type f -perm -0002 -print0 2>/dev/null | head -z -n 20)
+if ( : > /.booking-isolation-probe ) 2>/dev/null; then escaped+=(root-filesystem); fi
 
 if [[ -S /var/run/docker.sock && -w /var/run/docker.sock ]]; then escaped+=(docker-socket); fi
 if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then escaped+=(docker-api); fi
@@ -42,10 +49,6 @@ setsid nohup sleep 6007 >/dev/null 2>&1 < /dev/null &
 ( sleep 6008 & ) >/dev/null 2>&1
 : > /tmp/booking-isolation-leftover
 : > /dev/shm/booking-isolation-leftover 2>/dev/null || true
-
-if [[ -n "${BOOKING_ISOLATION_CANARY:-}" ]]; then
-  : > "$BOOKING_ISOLATION_CANARY/booking-isolation-escape" 2>/dev/null || true
-fi
 
 if [[ "${#escaped[@]}" -gt 0 ]]; then
   echo "Isolation probe: forbidden operations succeeded: ${escaped[*]}" >&2

@@ -78,10 +78,15 @@ jobs:
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
-      - name: Probe - forbidden operations are refused and leftovers are removed
+      # runner上の /usr/local/bin・hostedtoolcache は world-writable。canaryと既存world-writableファイルでその状況を模す。
+      - name: Probe - forbidden operations (incl. world-writable host paths) are refused and leftovers are removed
         run: |
           set -euo pipefail
-          bash scripts/run-booking-tests-isolated.sh probe scripts/booking-test-isolation-probe.sh
+          sudo mkdir -p /srv/booking-isolation-canary
+          sudo chmod 1777 /srv/booking-isolation-canary
+          BOOKING_ISOLATION_CANARY=/srv/booking-isolation-canary \
+            bash scripts/run-booking-tests-isolated.sh probe scripts/booking-test-isolation-probe.sh
+          if [[ -n "$(sudo find /srv/booking-isolation-canary -mindepth 1 -print -quit)" ]]; then echo "the canary was written" >&2; exit 1; fi
           if pgrep -f 'sleep 600[78]' >/dev/null; then echo "a background process of the isolated user survived" >&2; exit 1; fi
           for f in /tmp/booking-isolation-leftover /dev/shm/booking-isolation-leftover; do
             if [[ -e "$f" ]]; then echo "leftover file remains: $f" >&2; exit 1; fi
@@ -89,19 +94,32 @@ jobs:
           if getent passwd | grep -q '^booking-test-'; then echo "the isolated user remains" >&2; exit 1; fi
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain --untracked-files=all --ignored)"
-      - name: Probe - a write outside the allowed areas stops with ISOLATION_NOT_CONFIRMED (exit 3)
+          sudo rm -rf /srv/booking-isolation-canary
+      # 隔離の外（root）から、隔離ユーザー所有のファイルと常駐プロセスを注入し、後片付けの検証が exit 3 で止めることを確かめる。
+      - name: Teardown check - an injected leftover outside the allowed areas stops with ISOLATION_NOT_CONFIRMED (exit 3)
         run: |
           set -euo pipefail
-          sudo mkdir -p /srv/booking-isolation-canary
-          sudo chmod 1777 /srv/booking-isolation-canary
+          sudo mkdir -p /srv/booking-isolation-inject
+          (
+            for i in $(seq 1 600); do
+              u="$(getent passwd | awk -F: '/^booking-test-/{print $1; exit}')"
+              if [[ -n "$u" ]]; then
+                sudo install -o "$u" /dev/null /srv/booking-isolation-inject/escape
+                sudo -u "$u" setsid sleep 6009 </dev/null >/dev/null 2>&1 &
+                break
+              fi
+              sleep 0.1
+            done
+          ) &
           status=0
-          BOOKING_ISOLATION_CANARY=/srv/booking-isolation-canary \
-            bash scripts/run-booking-tests-isolated.sh probe scripts/booking-test-isolation-probe.sh 2>"$RUNNER_TEMP/isolation-stderr.txt" || status=$?
+          bash scripts/run-booking-tests-isolated.sh probe scripts/booking-test-isolation-probe.sh 2>"$RUNNER_TEMP/isolation-stderr.txt" || status=$?
+          wait
           cat "$RUNNER_TEMP/isolation-stderr.txt" >&2
           test "$status" -eq 3
           grep -q ISOLATION_NOT_CONFIRMED "$RUNNER_TEMP/isolation-stderr.txt"
-          grep -q /srv/booking-isolation-canary/booking-isolation-escape "$RUNNER_TEMP/isolation-stderr.txt"
+          grep -q /srv/booking-isolation-inject/escape "$RUNNER_TEMP/isolation-stderr.txt"
+          if pgrep -f 'sleep 6009' >/dev/null; then echo "the injected process survived" >&2; exit 1; fi
           rm -f "$RUNNER_TEMP/isolation-stderr.txt"
-          sudo rm -rf /srv/booking-isolation-canary
+          sudo rm -rf /srv/booking-isolation-inject
       - name: Repository tests pass as the isolated user (same command as the production workflow)
         run: bash scripts/run-booking-tests-isolated.sh repository-tests

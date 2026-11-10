@@ -899,7 +899,13 @@ test('#874 review: tests run isolated (separate disposable user, env -i, verifie
   assert.match(script, /^set -euo pipefail$/m);
   assert.match(script, /useradd --create-home --home-dir "\$test_home" --shell \/bin\/bash --user-group "\$test_user"\n/, 'no extra groups (sudo/docker/adm)');
   assert.doesNotMatch(script, /usermod -aG|--groups|-G /);
-  assert.match(script, /sudo -n -u "\$test_user" -H -- env -i \\/, 'empty environment: no GITHUB_*/ACTIONS_* tokens');
+  assert.match(script, /sudo -n unshare --mount --pid --fork --mount-proc --propagation private \\/, 'own mount and PID namespaces');
+  assert.match(script, /mount -o remount,bind,ro "\$mp" \|\| exit 97/, 'every host mount is read-only for the tests');
+  assert.match(script, /mount -t tmpfs -o nosuid,nodev,mode=1777 tmpfs "\$t"/, 'private tmp areas');
+  assert.match(script, /for t in \/tmp \/var\/tmp \/dev\/shm; do/);
+  assert.match(script, /setpriv --reuid="\$uid" --regid="\$gid" --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all/);
+  assert.match(script, /\n  env -i HOME="\$test_home" PATH="\$PATH"/, 'empty environment: no GITHUB_*/ACTIONS_* tokens');
+  assert.match(script, /"\$status" -eq 97[\s\S]{0,120}teardown_failed=1/, 'a namespace setup failure is an isolation failure (exit 3)');
   assert.match(script, /\/etc\/cron\.deny \/etc\/at\.deny/);
   assert.match(script, /pkill -KILL -U "\$uid"/);
   assert.match(script, /allowed_roots=\("\$test_home" \/tmp \/var\/tmp \/dev\/shm\)/);
@@ -917,10 +923,13 @@ test('#874 review: PR CI proves the isolation with a hostile probe, a canary esc
   assert.match(job, /run-booking-tests-isolated\.sh probe scripts\/booking-test-isolation-probe\.sh\n/);
   assert.match(job, /pgrep -f 'sleep 600\[78\]'/);
   assert.match(job, /test "\$status" -eq 3/);
-  assert.match(job, /BOOKING_ISOLATION_CANARY=/);
+  assert.match(job, /BOOKING_ISOLATION_CANARY=\/srv\/booking-isolation-canary/);
+  assert.match(job, /sudo install -o "\$u" \/dev\/null \/srv\/booking-isolation-inject\/escape/, 'teardown detection is exercised from outside the namespace');
+  assert.match(job, /pgrep -f 'sleep 6009'/);
   assert.match(job, /run: bash scripts\/run-booking-tests-isolated\.sh repository-tests\n/);
   const probe = fs.readFileSync(path.join(workspace, 'scripts/booking-test-isolation-probe.sh'), 'utf8');
-  for (const target of ['workspace', 'runner-temp', 'node-bin', 'npm-global-prefix', 'usr-local-bin', 'docker-socket', 'docker-api', 'sudo', 'crontab', 'environ-of-other-process', 'inherited-github-env']) {
+  for (const target of ['workspace', 'runner-temp', 'node-bin', 'npm-global-prefix', 'usr-local-bin', 'canary', 'world-writable-file', 'root-filesystem',
+    'docker-socket', 'docker-api', 'sudo', 'crontab', 'environ-of-other-process', 'inherited-github-env']) {
     assert.ok(probe.includes(target), target);
   }
   assert.match(probe, /setsid nohup sleep 6007/);

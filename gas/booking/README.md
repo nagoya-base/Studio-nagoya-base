@@ -40,7 +40,7 @@ schema変更時だけ承認は2回になります。
 | `admin-only` | 入力検査 →（Environment承認）→ repository tests → Admin preflight → Booking Admin更新 → Admin post-check → 終了（Publicは読取り・更新とも行わない） |
 | `public-only` | 入力検査 →（Environment承認）→ repository tests → Public preflight → **schema差分ガード（差分・前回SHA不明なら常に停止）** → Booking Web App更新 → Public post-check（Adminは読取り・更新とも行わない。Admin用Secretsも要求しない） |
 
-承認はjob開始時に評価されるため、Secretsなしの入力検査job（`validate`）の直後に承認を求め、テストは承認後の同じEnvironment job内で、最初のSecret利用より前に実行します（Issue #874。同一runで再承認なし）。テストは使い捨てのOSユーザーとして`env -i`で実行し、終了後にプロセス・ファイルの残存0とworkspace無変更を確認できなければSecret付きstepへ進みません（`scripts/run-booking-tests-isolated.sh`。詳細と残余リスクは `docs/booking-gas-production-deploy.md`）。`public-only` と `schema_migrated=true` の組合せは承認前に拒否します。
+承認はjob開始時に評価されるため、Secretsなしの入力検査job（`validate`）の直後に承認を求め、テストは承認後の同じEnvironment job内で、最初のSecret利用より前に実行します（Issue #874。同一runで再承認なし）。テストは使い捨てのOSユーザーとして、ホストの全ファイルシステムを読取り専用にしたmount/PID namespaceの中で`env -i`・`no_new_privs`で実行し、終了後にプロセス・ファイルの残存0とworkspace無変更を確認できなければSecret付きstepへ進みません（`scripts/run-booking-tests-isolated.sh`。詳細と残余リスクは `docs/booking-gas-production-deploy.md`）。`public-only` と `schema_migrated=true` の組合せは承認前に拒否します。
 
 いずれも既存Deploymentのみを更新します（新規Deployment・GAS projectは作りません）。`concurrency` はBooking GAS本番全体で `booking-gas-production` の1グループです。どれかが失敗した時点で後続は実行されません。Admin成功後にWeb Appが失敗した場合、workflowは失敗となり、ログに「Booking Admin is updated … Web App … update did not complete / applied but its verification failed」のどちらかが出ます。いずれもWeb Appのデプロイ状態を確認してください。Summaryには `更新前停止`（書込み0回）／`部分適用/UNKNOWN`／`UNKNOWN`／`事後確認未完了/UNKNOWN` と、更新済み・未着手・対象外の対象が出ます。自動rollback・無条件の再実行はしません。デプロイ状態を読取りで確認し、原因を直してから新しい実行で起動してください（Admin再更新は無害）。
 

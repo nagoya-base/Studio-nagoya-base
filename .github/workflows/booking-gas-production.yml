@@ -11,7 +11,8 @@ name: Deploy Booking GAS to production
 #
 # 承認の位置（Issue #874）: Environment承認はjob開始時に評価されるため、入力の簡易検査（validate job、Secretsなし）の
 # 直後に booking-production の deploy job を開始し、承認後に同じjob内で テスト → preflight → 更新 → post-check を連続実行する。
-# テストは scripts/run-booking-tests-isolated.sh で、このrun専用の使い捨てOSユーザー（sudo・docker不可、env -i）として
+# テストは scripts/run-booking-tests-isolated.sh で、このrun専用の使い捨てOSユーザー（env -i・no_new_privs）として、
+# ホストの全mountを読取り専用にしたmount/PID namespaceの中（/tmp等は専用tmpfs）で
 # workspaceの複製上で実行し、終了後に全プロセスKILL・所有ファイル全探索・ユーザー削除・workspace無変更を確認する。
 # 確認できなければ（ISOLATION_NOT_CONFIRMED）Secret付きstepへ進まない。テスト中にSecretも認証ファイルも存在しない。
 # 承認はテスト成功を意味しない。テスト・preflight・schema guard のいずれかが失敗すれば外部書込み0回で停止する。

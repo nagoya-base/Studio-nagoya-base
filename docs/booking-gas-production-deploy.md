@@ -201,17 +201,23 @@ Spreadsheet ID Secret・WIF/OIDCは使わず、`booking-production`に登録す�
   `booking-production`の`deploy` jobを開始し、承認後に同じjob内でリポジトリ全体のテスト（`npm test`）を実行する。同一runで再承認は求めない。
 - テストは後続のSecret付きstepから**プロセスとファイルシステムの両面で隔離**する（`scripts/run-booking-tests-isolated.sh`。PR #875レビュー）。
   1. このrun専用の使い捨てOSユーザーを作る（sudo・docker・admグループなし。`/etc/cron.deny`・`/etc/at.deny`で遅延実行も禁止）。
-  2. 承認済みcommitのworkspace（`persist-credentials: false`でGitHubトークンなし）をそのユーザーのhomeへ複製する。workspace・`RUNNER_TEMP`・Node/clasp/Rubyの導入先はそのユーザーから書込み不可。
-  3. 環境変数を空にして（`env -i`）実行する。`GITHUB_*`・`ACTIONS_*`・トークン・Secretは渡らない（この時点でSecretは存在しない）。依存は `npm ci --ignore-scripts` と `bundle install` でそのユーザーのhomeへ入る。
-  4. 終了後（成否とも）に、全プロセスをKILLして残存0を確認 → そのユーザー所有のファイルを全ファイルシステムで探索し、home・`/tmp`・`/var/tmp`・`/dev/shm`以外に1つでもあれば失敗、許可領域のものは削除 → ユーザー削除 → workspaceが承認済みcommitのまま（追跡・未追跡・ignoredとも差分なし）であることを確認する。
-  5. どれかを確認できなければ `ISOLATION_NOT_CONFIRMED`（exit 3）で停止し、Summaryに`テスト隔離の確認`で「更新前停止」と出る。Secret付きstepへは進まない。
+  2. 承認済みcommitのworkspace（`persist-credentials: false`でGitHubトークンなし）をそのユーザーのhomeへ複製する。
+  3. 専用のmount namespaceとPID namespaceの中で実行する。ホストの**全mountを読取り専用**にし（GitHub-hosted runnerでworld-writableな`/usr/local/bin`・`/opt/hostedtoolcache`も含め、既存ファイルの上書きも不可）、
+     書けるのはそのユーザーのhomeと、namespace専用のtmpfs（`/tmp`・`/var/tmp`・`/dev/shm`。終了とともに消える）だけ。
+     権限は`setpriv`でそのユーザーのUID/GIDだけ（補助グループなし）・`no_new_privs`（sudo等のsetuidで権限を得られない）・capabilityなしに落とす。
+     PID namespaceの親が終わるとnamespace内の全プロセスはkernelにより終了する。
+  4. 環境変数を空にして（`env -i`）実行する。`GITHUB_*`・`ACTIONS_*`・トークン・Secretは渡らない（この時点でSecretは存在しない）。依存は `npm ci --ignore-scripts` と `bundle install` でそのユーザーのhomeへ入る。
+  5. 終了後（成否とも）に、全プロセスをKILLして残存0を確認 → そのユーザー所有のファイルを全ファイルシステムで探索し、home・`/tmp`・`/var/tmp`・`/dev/shm`以外に1つでもあれば失敗、許可領域のものは削除 → ユーザー削除 → workspaceが承認済みcommitのまま（追跡・未追跡・ignoredとも差分なし）であることを確認する。
+  6. namespaceの構築やこれらの確認のどれかに失敗すれば `ISOLATION_NOT_CONFIRMED`（exit 3）で停止し、Summaryに`テスト隔離の確認`で「更新前停止」と出る。Secret付きstepへは進まない。
 - 隔離の成立はPR CI（`booking-pr-tests.yml` の `booking-test-isolation` job）で毎回検証する。悪意あるテスト／依存を模したprobe
-  （workspace・`RUNNER_TEMP`・Node/npm導入先・`/usr/local/bin`・`/etc`への書込み、Docker socket、sudo、cron/at、他プロセスの環境変数読取り）が
-  すべて拒否されること、常駐プロセスと`/tmp`等の置き土産が消えること、許可領域外への書込み（canary）でexit 3になること、
+  （workspace・`RUNNER_TEMP`・Node/npm導入先・`/usr/local/bin`・`/etc`・ルートFS・ホスト上のworld-writableなディレクトリ（canary）と既存world-writableファイルへの書込み、
+  Docker socket、sudo、cron/at、他プロセスの環境変数読取り）がすべて拒否されること、常駐プロセスと`/tmp`等の置き土産が消えること、
+  隔離の外から隔離ユーザー所有のファイルと常駐プロセスを注入した場合に後片付けの検証がexit 3で止めること（プロセスは終了させる）、
   本番と同じコマンドでリポジトリ全体のテストが隔離ユーザーとして通ることを確認する。
+  なお最初の版（ユーザー分離のみ）は、このCIでrunner上のworld-writableな`/usr/local/bin`・hostedtoolcacheへ書けることが検出されたため、読取り専用のmount namespaceを追加した。
 - 承認回数とEnvironmentの秘密境界: jobを分けると`booking-production`の承認が2回になる（Environment承認はjobごと）。そのため、jobは分けずに同じjob内のユーザー隔離とした。
   Secretは引き続き`booking-production`のEnvironment secretsだけで、隔離テストより後のstepにだけ渡る。Environment設定・Secretsは変更しない。
-- **残余リスク**: 同じVM（カーネル）を共有するため、カーネルやsetuidプログラムの脆弱性による権限昇格までは防げない（防ぐにはjob＝VMの分離が必要で、承認2回またはEnvironment設計の変更を伴う。運営者判断）。
+- **残余リスク**: 同じVM（カーネル）を共有するため、カーネルの脆弱性による権限昇格までは防げない（setuidは`no_new_privs`で無効）（防ぐにはjob＝VMの分離が必要で、承認2回またはEnvironment設計の変更を伴う。運営者判断）。
   ネットワークは依存取得のため遮断しない（Secretが存在しない時点なので持ち出す対象はない）。テストの信頼範囲は「承認したmainのcommitとlockfile」。テスト範囲の削減による高速化は行っていない。
 - 承認の有無・Required reviewersの現在値はGitHub Settings依存で、このworkflowからは読めない。承認が求められない場合は
   [#828の評価](booking-production-approval-gate-828.md)に従い、Settingsの実値を読取りで確認する（保護ルールを勝手に増減しない）。
