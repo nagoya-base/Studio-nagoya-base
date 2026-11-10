@@ -1553,3 +1553,92 @@ test('Issue #758: OPEN_TIME=08:15 でも、開始刻みの施行後の新規予�
   var pre = ctx.sandbox.BookingRepository.createBooking(validPayload({ date: '2026-11-26', startTime: '08:45', email: 'b@example.com' }), new Date('2026-11-18T23:59:59+09:00'));
   assert.strictEqual(pre.success, true, JSON.stringify(pre.error));
 });
+
+/*
+ * 管理者通知の利用時間（Issue #872）。予約台帳のstartAt/endAtからAsia/Tokyo基準で開始〜終了を表示する。
+ * 欠損・不正時は推測で補完せず「未取得」と表示し、既存の利用日・料金・bookingId・管理URLは維持する。
+ */
+function notifyDirect_(record, properties) {
+  var mailApp = stubs.createMailAppStub();
+  var ctx = setup({
+    properties: Object.assign({ ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' }, properties || {}),
+    mailApp: mailApp
+  });
+  ctx.sandbox.AdminNotifier.notifyNewPendingBooking(record, {});
+  assert.strictEqual(mailApp._sentEmails.length, 1);
+  return { body: mailApp._sentEmails[0].body, ctx: ctx };
+}
+
+function jst_(date, hhmm) {
+  return new Date(date + 'T' + hhmm + ':00+09:00');
+}
+
+test('管理者通知 (Issue #872): createBooking経由のPENDING通知に予約の開始・終了時刻が表示され、既存項目も残る', function () {
+  var mailApp = stubs.createMailAppStub();
+  var adminUrl = 'https://script.google.com/macros/s/EXAMPLE_ADMIN_DEPLOY_ID/exec';
+  var ctx = setup({
+    properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com', BOOKING_ADMIN_URL: adminUrl },
+    mailApp: mailApp
+  });
+  var result = ctx.sandbox.BookingRepository.createBooking(
+    validPayload({ brand: 'studio_x', date: FIXED_WEEKDAY_DATE, startTime: '10:00', durationMinutes: 180 }), FIXED_NOW
+  );
+  var body = mailApp._sentEmails.filter(function (m) { return m.to === 'admin@example.com'; })[0].body;
+  assert.ok(body.indexOf('利用時間: 10:00〜13:00') !== -1, body);
+  assert.ok(body.indexOf('bookingId: ' + result.bookingId) !== -1);
+  assert.ok(body.indexOf('利用日: ' + ctx.sandbox.BookingAvailability.formatDateWithWeekday(FIXED_WEEKDAY_DATE)) !== -1);
+  assert.match(body, /利用料金: 3,600円（税込）/);
+  assert.ok(body.indexOf(adminUrl) !== -1);
+  assert.ok(body.indexOf('利用日: ') < body.indexOf('利用時間: '), '利用日の直後に利用時間を出す');
+});
+
+test('管理者通知 (Issue #872): SNB / SNB mens / Studio X いずれも同じ経路で開始・終了時刻を表示する', function () {
+  ['snb', 'mens', 'studio_x'].forEach(function (brand) {
+    var mailApp = stubs.createMailAppStub();
+    var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' }, mailApp: mailApp });
+    var result = ctx.sandbox.BookingRepository.createBooking(validPayload({ brand: brand, startTime: '10:00', durationMinutes: 60 }));
+    assert.ok(result.success, brand + ': ' + JSON.stringify(result));
+    var adminMail = mailApp._sentEmails.filter(function (m) { return m.to === 'admin@example.com'; })[0];
+    assert.ok(adminMail, brand);
+    assert.ok(adminMail.body.indexOf('利用時間: 10:00〜11:00') !== -1, brand + ': ' + adminMail.body);
+  });
+});
+
+test('管理者通知 (Issue #872): 1時間・複数時間・30分端数・日跨ぎを正しく表示する（Asia/Tokyo基準）', function () {
+  var base = { bookingId: 'MENS-20261110-E15BCC90', brand: 'mens', date: '2026-11-10', name: 'テスト', priceAmount: 2000 };
+  var cases = [
+    { start: jst_('2026-11-10', '10:00'), end: jst_('2026-11-10', '11:00'), expected: '利用時間: 10:00〜11:00' },
+    { start: jst_('2026-11-10', '08:00'), end: jst_('2026-11-10', '11:00'), expected: '利用時間: 08:00〜11:00' },
+    { start: jst_('2026-11-10', '10:30'), end: jst_('2026-11-10', '12:00'), expected: '利用時間: 10:30〜12:00' },
+    { start: jst_('2026-11-10', '13:00'), end: jst_('2026-11-10', '14:30'), expected: '利用時間: 13:00〜14:30' },
+    { start: jst_('2026-11-10', '23:00'), end: jst_('2026-11-11', '01:00'), expected: '利用時間: 23:00〜2026-11-11（水） 01:00' }
+  ];
+  cases.forEach(function (c) {
+    var body = notifyDirect_(Object.assign({}, base, { startAt: c.start, endAt: c.end })).body;
+    assert.ok(body.indexOf(c.expected) !== -1, c.expected + '\n' + body);
+    assert.ok(body.indexOf('利用日: 2026-11-10（火）') !== -1);
+    assert.ok(body.indexOf('利用料金: 2,000円（税込）') !== -1);
+  });
+});
+
+test('管理者通知 (Issue #872): startAt/endAtが欠損・不正・逆転なら時刻を捏造せず「未取得」と表示し、通知自体は送る', function () {
+  var base = { bookingId: 'MENS-20261110-E15BCC90', brand: 'mens', date: '2026-11-10', name: 'テスト', priceAmount: 2000 };
+  var invalids = [
+    {},
+    { startAt: null, endAt: null },
+    { startAt: jst_('2026-11-10', '10:00') },
+    { startAt: new Date('invalid'), endAt: jst_('2026-11-10', '11:00') },
+    { startAt: '2026-11-10 10:00', endAt: '2026-11-10 11:00' },
+    { startAt: jst_('2026-11-10', '11:00'), endAt: jst_('2026-11-10', '10:00') },
+    { startAt: jst_('2026-11-10', '10:00'), endAt: jst_('2026-11-10', '10:00') }
+  ];
+  invalids.forEach(function (extra, i) {
+    var r = notifyDirect_(Object.assign({}, base, extra));
+    assert.ok(r.body.indexOf('利用時間: 未取得（予約台帳で確認してください）') !== -1, 'case ' + i + ': ' + r.body);
+    assert.ok(!/利用時間: \d/.test(r.body), 'case ' + i + ': 架空の時刻を出さない');
+    assert.ok(r.body.indexOf('bookingId: MENS-20261110-E15BCC90') !== -1);
+    var logs = r.ctx.globals.Logger._logs.join('\n');
+    assert.ok(logs.indexOf('MENS-20261110-E15BCC90') !== -1, '欠損をLoggerで検知できる');
+    assert.strictEqual(logs.indexOf('テスト'), -1, 'ログに氏名を出さない');
+  });
+});

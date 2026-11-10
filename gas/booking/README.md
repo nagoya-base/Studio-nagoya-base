@@ -8383,3 +8383,11 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - 承認制のカード予約（作品撮りサポート・大人数利用）、現地払い、Checkout無効のカード予約は、従来の「仮予約を受け付けました」「新しい仮予約（PENDING）が届きました。…確定してください。」を維持する。
 - 管理者向け受付メールの本文に、どのケースでも `予約者名：{record.name}`（予約台帳と同じ値）を追加。件名・ログには出さない。メールアドレス・電話番号などの連絡先は追加しない。氏名が空なら推測で補わず「未登録」と表示する。
 - 予約状態遷移・Stripe Webhook・金額・予約枠・管理者画面・利用者向けメールは変更なし。
+
+## Issue #872: 管理者向け仮予約受付メールに利用開始・終了時刻を表示する
+
+- `AdminNotifier.notifyNewPendingBooking`: 本文の `利用日: YYYY-MM-DD（曜）` 行の直後に `利用時間: HH:mm〜HH:mm` を追加。値は予約台帳の確定済み `record.startAt` / `record.endAt`（`createBooking`が保存するDate）から、Script Property `TIMEZONE`（既定 `Asia/Tokyo`）基準で `BookingAvailability.formatTimeInTimezone` により整形する。GAS実行環境のローカルtimezoneには依存しない。
+- 30分刻み等の端数もそのまま表示する（例 `10:30〜12:00`）。日跨ぎ時は終了側に日付を付ける（例 `23:00〜2026-11-11（水） 01:00`）。
+- `startAt`/`endAt` が欠損・不正・終了<=開始の場合は時刻を推測・補完せず `利用時間: 未取得（予約台帳で確認してください）` と表示し、`Logger` に bookingId のみを記録する。通知・予約作成は失敗させない。
+- 対象通知の洗い出し: 予約作成時の管理者通知は SNB / SNB mens / Studio X とも `createBooking` → `notifyNewPendingBooking` の単一経路（通常カード決済の「予約申し込み」文面、承認制・現地払いの「仮予約」文面の両方）のため、この1か所で3ブランドに反映される。オプション承認依頼（`OptionOrderService`）・`BookingAdminAlerts`は予約受付通知ではないため対象外。
+- bookingId・予約者名・利用日・プラン・利用料金・Booking Adminリンクは従来どおり。連絡先などのPIIは追加しない。予約・決済・鍵発行・状態遷移・利用者向けメールは変更なし。

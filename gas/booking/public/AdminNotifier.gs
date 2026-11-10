@@ -24,6 +24,18 @@
  *   設定されている場合のみ、Booking Adminへのリンクを本文末尾に追加し、確認方法の案内も
  *   「Booking Adminから確定してください」に切り替える。未設定時は従来どおり
  *   Spreadsheetの管理メニューへの案内のまま据え置く。
+ *
+ * Issue #872での変更点:
+ * - 「利用日」行の直後に「利用時間: HH:mm〜HH:mm」行を追加し、予約台帳の確定済み
+ *   record.startAt / record.endAt（Date値）から開始・終了時刻を表示する。時刻は
+ *   BookingConfig.getMailConfig().timezone（Script Property TIMEZONE。既定Asia/Tokyo）基準で
+ *   BookingAvailability.formatTimeInTimezone / formatDateInTimezoneにより整形し、GAS実行環境の
+ *   ローカルtimezoneには依存しない。日跨ぎ（終了の暦日が開始と異なる）の場合は終了側に日付も付ける。
+ * - startAt/endAtが欠損・不正・終了<=開始の場合は時刻を推測・補完せず「未取得（予約台帳で
+ *   確認してください）」と表示し、Loggerに bookingId のみを記録する（PIIは出さない）。
+ *   通知・予約作成自体は失敗させない。
+ * - SNB / SNB mens / Studio Xはいずれも同じcreateBooking→notifyNewPendingBooking経路のため、
+ *   この1か所の変更で3ブランドすべてに反映される。
  */
 'use strict';
 
@@ -41,6 +53,34 @@ var AdminNotifier = (function () {
     if (priceAmount === '' || priceAmount === null || priceAmount === undefined) return '';
     var value = Number(priceAmount);
     return Number.isFinite(value) ? '利用料金: ' + value.toLocaleString('ja-JP') + '円（税込）' : '';
+  }
+
+  /*
+   * 利用時間（開始〜終了）の表示値（Issue #872）。予約台帳の確定値（Date）のみを使い、
+   * 欠損・不正・逆転時は架空の時刻を作らずnullを返す（呼び出し側で「未取得」表示）。
+   * 日跨ぎ時は '23:00〜2026-11-11（水） 01:00' のように終了側へ日付を付ける。
+   */
+  function formatAdminTimeRange_(startAt, endAt, timezone) {
+    if (!isDateLike_(startAt) || !isDateLike_(endAt)) return null;
+    if (endAt.getTime() <= startAt.getTime()) return null;
+    var start = BookingAvailability.formatTimeInTimezone(startAt, timezone);
+    var end = BookingAvailability.formatTimeInTimezone(endAt, timezone);
+    var startDate = BookingAvailability.formatDateInTimezone(startAt, timezone);
+    var endDate = BookingAvailability.formatDateInTimezone(endAt, timezone);
+    if (!start || !end || !startDate || !endDate) return null;
+    if (endDate !== startDate) {
+      return start + '〜' + BookingAvailability.formatDateWithWeekday(endDate) + ' ' + end;
+    }
+    return start + '〜' + end;
+  }
+
+  function isDateLike_(value) {
+    return !!value && typeof value.getTime === 'function' && !isNaN(value.getTime());
+  }
+
+  function resolveTimezone_() {
+    var config = (typeof BookingConfig.getMailConfig === 'function') ? BookingConfig.getMailConfig() : null;
+    return (config && config.timezone) || 'Asia/Tokyo';
   }
 
   /* Issue #869: 予約台帳の氏名をそのまま表示する。未取得・空白のみなら推測で補完せず「未登録」。 */
@@ -87,6 +127,14 @@ var AdminNotifier = (function () {
       '予約者名：' + formatAdminCustomerName_(record.name),
       '利用日: ' + BookingAvailability.formatDateWithWeekday(record.date)
     ];
+    /* Issue #872: 開始・終了時刻。取得できなければ推測せず「未取得」と明示し、欠損を検知可能にする。 */
+    var timeRange = formatAdminTimeRange_(record.startAt, record.endAt, resolveTimezone_());
+    if (timeRange) {
+      lines.push('利用時間: ' + timeRange);
+    } else {
+      lines.push('利用時間: 未取得（予約台帳で確認してください）');
+      Logger.log('AdminNotifier: startAt/endAtが未設定または不正なため利用時間を表示できません: ' + record.bookingId);
+    }
     var priceLine = formatAdminPriceLine_(record.priceAmount);
     /* Issue #488: 通常料金か貸切ベースプランかを管理者通知でも識別できるようにする（通常予約は変更なし）。 */
     if (typeof BookingPricing !== 'undefined' && BookingPricing.planLabel(record.planCode)) lines.push('プラン: ' + BookingPricing.planLabel(record.planCode));
