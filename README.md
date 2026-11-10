@@ -247,7 +247,7 @@ API ready確認が完了するまでmainへマージしない**）
 | 内観 | `images/interior/` | `interior-<被写体>_<長辺>.webp` | `interior-shower_1200.webp` |
 | 背景・柄見本 | `images/backdrops/` | `backdrop-<種類>-<色>_<長辺>.webp` / `pattern-<柄>-<色>_<長辺>.webp` | `backdrop-color-green_1200.webp` |
 | 機材 | `images/equipment/`（既存） | `equipment-<機材>.webp` | `equipment-led-panel-light.webp` |
-| OGP / SNS | `images/`（既存OGPと同じ場所） | `ogp-<ページ>-1200x630.jpg` | `ogp-news-1200x630.jpg` |
+| OGP / SNS | `images/ogp/`（既存OGPは `images/` 直下のまま移動しない） | `ogp-<ページ>-1200x630.jpg` | `ogp-news-1200x630.jpg` |
 | Studio X | `studio-x/images/`（維持） | `studio-x-<用途>-<被写体>.<形式>` | `studio-x-event-1010-halloween-hero.webp` |
 
 - **表示用は WebP、OGP は JPEG（1200×630）。** SNS が WebP を読まない場合があるため、`og:image` / `twitter:image` には JPEG を使います。
