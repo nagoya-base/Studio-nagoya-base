@@ -25,7 +25,7 @@ SNB / SNB mensの会員料金制度は維持する。Issue #573は内部資料�
 ├── en.html             英語ページ
 ├── sitemap.xml         検索エンジン向けサイトマップ
 ├── robots.txt          クローラー向け設定
-├── images/             画像ファイル一式（ギャラリー・OGP・ロゴ・ファビコン）
+├── images/             画像ファイル一式（ギャラリー・OGP・ロゴ・ファビコン。新規は用途別サブフォルダ）
 ├── styles/             共通・ページ別 CSS
 │   ├── common.css
 │   ├── home.css
@@ -231,9 +231,39 @@ API ready確認が完了するまでmainへマージしない**）
 
 ### 4. 画像を差し替える
 
-画像ファイルは `images/` フォルダに配置し、HTML 内の `src` と `href` を差し替えます。
+画像ファイルは下記「画像の配置・命名ルール」に沿って配置し、HTML 内の `src` と `href` を差し替えます。
 
 ギャラリーは画像クリックで元画像を開く仕様です。
+
+#### 画像の配置・命名ルール（Issue #852 / #877）
+
+**新しく追加する画像から適用します。** 既存画像の一括移動・リネームはしません（[`docs/image-inventory-852.md`](docs/image-inventory-852.md) の案A）。既存画像の公開URL、HTML/CSS、予約GAS（`_data/studio_x_equipment.json` 由来の機材画像パス）、OGP の参照URLは変更しません。
+
+| 用途 | 置き場所 | 命名 | 例 |
+|---|---|---|---|
+| ロゴ・favicon | `images/`（既存の固定URLのまま） | 固定名 | `logo.svg`, `favicon.svg` |
+| ヒーロー | `images/hero/` | `hero-<ページ>_<長辺>.webp` | `hero-booking_1200.webp` |
+| ギャラリー作例 | `images/gallery/` | `gallery-<テーマ><連番2桁>_<長辺>.webp` | `gallery-lighting06_1200.webp` |
+| 内観 | `images/interior/` | `interior-<被写体>_<長辺>.webp` | `interior-shower_1200.webp` |
+| 背景・柄見本 | `images/backdrops/` | `backdrop-<種類>-<色>_<長辺>.webp` / `pattern-<柄>-<色>_<長辺>.webp` | `backdrop-color-green_1200.webp` |
+| 機材 | `images/equipment/`（既存） | `equipment-<機材>.webp` | `equipment-led-panel-light.webp` |
+| OGP / SNS | `images/ogp/`（既存OGPは `images/` 直下のまま移動しない） | `ogp-<ページ>-1200x630.jpg` | `ogp-news-1200x630.jpg` |
+| Studio X | `studio-x/images/`（維持） | `studio-x-<用途>-<被写体>.<形式>` | `studio-x-event-1010-halloween-hero.webp` |
+
+- **表示用は WebP、OGP は JPEG（1200×630）。** SNS が WebP を読まない場合があるため、`og:image` / `twitter:image` には JPEG を使います。
+- **ファイル名は中身と一致させます。** 用途・被写体が分かる名前にし、名前と写真が食い違うファイルを新たに作りません。
+- **差し替えは上書きせず、新しいファイル名で追加します**（例: `-v2`）。OGP など外部に公開済みのURLを持つ旧ファイルは、参照が外れても残します。
+- `preview` / `v2` / 連番などの名前だけで不要と判断しません。削除する場合は `node scripts/image-inventory-852.js` で参照ゼロを確認し、個別PRでレビューします。
+
+#### 判断保留の画像（削除・名称変更禁止）
+
+次の3件は現行ページから参照されていませんが、**オーナーの別判断があるまで削除・リネーム・移動をしません**（Issue #852 / #837）。親Issue #837 のクローズを妨げる残作業ではなく、利用判断が出るまで現状のまま維持します。
+
+| ファイル | 内容 | 保留理由 |
+|---|---|---|
+| `studio-x/images/sample_01_blackboard_1200.webp` | 黒板に「放課後アイドル撮影 Studio X」と書いた作例 | 今後の作例・イベント告知で使う可能性 |
+| `studio-x/images/studiox_guide.webp` | 「STUDIO X 紹介図鑑」インフォグラフィック | SNS・掲示物などサイト外利用の有無が未確認 |
+| `studio-x/images/studiox_lighting_1200.webp` | 4色照明のコラージュ | 今後の利用予定が未確定 |
 
 ### 5. OGP を更新する
 
@@ -309,7 +339,7 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 
 - 規約や料金を更新した場合、ニュース欄にも告知を追加したか
 - 文言変更が日本語ページと英語ページでずれていないか
-- 画像ファイルが `images/` フォルダに配置されているか
+- 画像ファイルが「画像の配置・命名ルール」どおりのフォルダ・ファイル名になっているか
 - 画像ファイル名に誤りがないか
 - OGP の URL と画像が実在するか
 - `sitemap.xml` の URL が最新か
@@ -422,5 +452,5 @@ OGP は SNS に URL を貼ったときのカード表示用メタ情報です。
 
 - このリポジトリはビルド不要の静的 HTML サイトです
 - CSS は `styles/` フォルダに、JavaScript は `scripts/main.js` に分離されています（Studio X は `studio-x/style.css` を使用）
-- 画像は `images/` フォルダにまとめて管理しています（Studio X サブページの画像を除く）
+- 画像は `images/` フォルダで管理しています（Studio X サブページの画像は `studio-x/images/`。配置・命名は「画像の配置・命名ルール」を参照）
 - 新しいページを追加した場合は、ナビゲーション・フッター導線・GA4 トラッキングコードも合わせて追加してください
