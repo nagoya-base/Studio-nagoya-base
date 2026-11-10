@@ -92,7 +92,7 @@ test('受入1/2/5: #835で保存された3ブランドの回答を集計し、�
   assert.strictEqual(d.summary.count, 3);
   assert.strictEqual(d.summary.averageRating, 3.3);
   assert.strictEqual(d.summary.openCount, 1);
-  assert.strictEqual(d.summary.notifyFailedCount, 1);
+  assert.strictEqual(d.summary.notifyFailedCount, 3, '#879以降は要確認でない本番回答も通知対象なので、送信失敗は3件とも記録される');
   assert.deepStrictEqual(d.statusOptions, ['未対応', '対応中', '対応済み', '対応不要']);
   assert.deepStrictEqual(d.brands.map(function (b) { return b.id; }), ['snb', 'mens', 'studio-x']);
   var card = d.list.cards[0];

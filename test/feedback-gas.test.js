@@ -237,32 +237,130 @@ test('通知: 本番有効回答で要確認なら1通。中立的な件名・�
   assert.strictEqual(project.mails.length, 1);
   var mail = project.mails[0];
   assert.strictEqual(mail.to, 'owner@example.com');
-  assert.strictEqual(mail.subject, '【利用後アンケート】確認が必要な回答があります（Studio X）');
+  assert.strictEqual(mail.subject, '【利用後アンケート】新しい回答が届きました（Studio X）');
   assert.match(mail.body, /ブランド: Studio X/);
   assert.match(mail.body, /受信日時: 2026\/11\/08 12:00 JST/);
-  assert.match(mail.body, /気になる点: 消耗品不足、清掃・衛生面/);
-  assert.match(mail.body, /照明の操作（困った）/);
+  assert.match(mail.body, /■ Q5 気になった点: 消耗品不足、清掃・衛生面/);
+  assert.match(mail.body, /・照明の操作: 困った/);
   assert.match(mail.body, /ゴミ袋が足りませんでした/);
+  assert.match(mail.body, /管理画面の初期状態: 未対応/);
   assert.match(mail.body, new RegExp('回答ID: ' + project.rows()[0].response_id));
   [TOKEN, 'ss-feedback', 'owner@example.com', '<'].forEach(function (s) { assert.strictEqual(mail.body.indexOf(s), -1, s); });
   ['緊縛', 'フェチ'].forEach(function (w) { assert.strictEqual(mail.subject.indexOf(w) + mail.body.indexOf(w), -2, w); });
+  assert.strictEqual(project.rows()[0].status, Core.STATUS_OPEN, '既存の要確認判定は維持');
   assert.strictEqual(project.rows()[0].notify_failed, '');
 });
 
-test('通知: 自由記述だけでも1通、「特になし」のみ・要確認なしは0通、初期設定（OFF）は0通', function () {
+test('#879 受入: 3ブランドとも Q1・Q6だけ（Q5なし・自由記述なし）でも保存後に1通。全設問を設問順・未回答/対象外付きで通知', function () {
+  var project = ready({ properties: NOTIFY_ON });
+  installMockTokens(project, {});
+  ['snb', 'mens', 'studio-x'].forEach(function (brand) {
+    assert.deepStrictEqual(project.call('submit', prodPayload(brand)), { success: true });
+  });
+  assert.strictEqual(project.mails.length, 3, '1回答につき1通');
+  assert.deepStrictEqual(project.mails.map(function (m) { return m.subject; }), [
+    '【利用後アンケート】新しい回答が届きました（Studio Nagoya Base）',
+    '【利用後アンケート】新しい回答が届きました（SNB mens）',
+    '【利用後アンケート】新しい回答が届きました（Studio X）'
+  ]);
+  project.rows().forEach(function (r) { assert.strictEqual(r.status, Core.STATUS_NONE, '要確認でない回答の初期statusは変えない'); });
+  project.mails.forEach(function (m) { assert.strictEqual(m.subject.indexOf('確認が必要') + m.body.indexOf('確認が必要'), -2, '問題のない回答に「確認が必要」と書かない'); });
+
+  var body = project.mails[0].body;
+  var expected = [
+    '■ Q1 総合満足度: 4 / 5（1=不満〜5=満足）',
+    '■ Q2 予約・事前のご案内',
+    '・ホームページの見やすさ: 未回答',
+    '・予約のしやすさ: 未回答',
+    '・案内メールのタイミング: 未回答',
+    '・案内メールのわかりやすさ: 未回答',
+    '■ Q3 現地でのご利用',
+    '・場所の見つけやすさ: 未回答',
+    '・照明の操作: 未回答',
+    '・エアコンの操作: 未回答',
+    '・備品の探しやすさ: 未回答',
+    '・後片付けのわかりやすさ: 未回答',
+    '■ Q4 スタッフの対応',
+    '・対応を受けたか: 未回答',
+    '・スタッフ対応の評価: 対象外',
+    '■ Q5 気になった点: 未回答',
+    '■ 気になった点・ご感想など（自由記述）',
+    '記入なし',
+    '■ Q6 また利用したいか: ぜひ利用したい',
+    '管理画面の初期状態: 対応不要'
+  ];
+  var lastIndex = -1;
+  expected.forEach(function (line) {
+    var at = body.indexOf(line + '\n');
+    assert.ok(at > lastIndex, '設問順に含まれる: ' + line);
+    lastIndex = at;
+  });
+});
+
+test('#879: Q2/Q3の正常・該当なしも省略せず、Q4評価・Q5「特になし」・自由記述を日本語ラベルで通知', function () {
+  var project = ready({ properties: NOTIFY_ON });
+  installMockTokens(project, {});
+  project.call('submit', prodPayload('mens', {
+    q1: 5,
+    q2: { website: 'ok', booking: 'minor', mail_timing: 'trouble', mail_clarity: 'na' },
+    q3: { location: 'ok', lighting: 'ok', aircon: 'na', equipment: 'minor', cleanup: 'ok' },
+    q4: 'yes', q4_rating: 2, q5: ['none'], q6: 'not_now'
+  }));
+  project.call('submit', prodPayload('mens', { q4: 'yes' }));
+  project.call('submit', prodPayload('mens', { q4: 'no', q6: 'maybe', comment: '=1+1\n二行目' }));
+  assert.strictEqual(project.mails.length, 3);
+  var full = project.mails[0].body;
+  ['■ Q1 総合満足度: 5 / 5（1=不満〜5=満足）',
+    '・ホームページの見やすさ: 問題なかった', '・予約のしやすさ: 少し気になった',
+    '・案内メールのタイミング: 困った', '・案内メールのわかりやすさ: 該当なし・利用していない',
+    '・場所の見つけやすさ: 問題なかった', '・照明の操作: 問題なかった', '・エアコンの操作: 該当なし・利用していない',
+    '・備品の探しやすさ: 少し気になった', '・後片付けのわかりやすさ: 問題なかった',
+    '・対応を受けたか: はい', '・スタッフ対応の評価: 2 / 5（1=不満〜5=満足）',
+    '■ Q5 気になった点: 特になし', '記入なし', '■ Q6 また利用したいか: 今のところ利用したいと思わない',
+    '管理画面の初期状態: 対応不要'
+  ].forEach(function (line) { assert.ok(full.indexOf(line + '\n') !== -1, line); });
+  assert.ok(project.mails[1].body.indexOf('・スタッフ対応の評価: 未回答\n') !== -1, 'Q4はいで評価なしは未回答');
+  var third = project.mails[2].body;
+  assert.ok(third.indexOf('・対応を受けたか: いいえ\n・スタッフ対応の評価: 対象外\n') !== -1);
+  assert.ok(third.indexOf('\n=1+1\n二行目\n') !== -1, '自由記述は原文のまま本文に入れる（Spreadsheet用の \' は付けない）');
+  assert.strictEqual(project.mails[2].subject.indexOf('=1+1'), -1, '自由記述は件名に入れない');
+  assert.ok(third.indexOf('管理画面の初期状態: 未対応') !== -1);
+  assert.deepStrictEqual(project.rows().map(function (r) { return r.status; }), [Core.STATUS_NONE, Core.STATUS_NONE, Core.STATUS_OPEN]);
+});
+
+test('通知: 要確認なしでも本番回答は各1通、テスト回答・初期設定（OFF）は0通', function () {
   var project = ready({ properties: NOTIFY_ON });
   installMockTokens(project, {});
   project.call('submit', prodPayload('snb', { comment: 'また来ます' }));
-  assert.strictEqual(project.mails.length, 1);
   project.call('submit', prodPayload('snb', { q5: ['none'] }));
   project.call('submit', prodPayload('snb', { q2: { booking: 'trouble' } }));
-  assert.strictEqual(project.mails.length, 1);
+  assert.strictEqual(project.mails.length, 3);
+  project.call('submit', testPayload('snb', { q5: ['damage'], comment: 'テスト' }));
+  assert.strictEqual(project.mails.length, 3, '?test=1 は通知しない');
 
   var off = ready({ properties: { FEEDBACK_NOTIFY_EMAIL: 'owner@example.com' } });
   installMockTokens(off, {});
   off.call('submit', prodPayload('mens', { q5: ['damage'] }));
+  off.call('submit', prodPayload('mens'));
   assert.strictEqual(off.mails.length, 0, 'FEEDBACK_NOTIFY が on でなければ送らない');
-  assert.strictEqual(off.rows()[0].notify_failed, '', 'OFF は失敗扱いにしない');
+  off.rows().forEach(function (r) { assert.strictEqual(r.notify_failed, '', 'OFF は失敗扱いにしない'); });
+});
+
+test('#879: トークン拒否・使用済み・保存失敗・検証失敗では、要確認なしの回答でも通知しない', function () {
+  var rejected = ready({ properties: NOTIFY_ON });
+  installMockTokens(rejected, { verify: { ok: false, code: 'TOKEN_USED' } });
+  assert.strictEqual(rejected.call('submit', prodPayload('snb')).success, false);
+  var consumeFail = ready({ properties: NOTIFY_ON });
+  installMockTokens(consumeFail, { consume: { ok: false, code: 'TOKEN_USED' } });
+  assert.strictEqual(consumeFail.call('submit', prodPayload('snb')).success, false);
+  var invalid = ready({ properties: NOTIFY_ON });
+  installMockTokens(invalid, {});
+  assert.strictEqual(invalid.call('submit', prodPayload('snb', { q6: '' })).error.code, 'VALIDATION_FAILED');
+  assert.strictEqual(invalid.call('submit', { brand: 'snb', answers: answers() }).error.code, 'TOKEN_MISSING');
+  var unsaved = loadFeedbackProject({ spreadsheetId: null, properties: NOTIFY_ON });
+  installMockTokens(unsaved, {});
+  assert.strictEqual(unsaved.call('submit', prodPayload('snb')).error.code, 'STORAGE_UNAVAILABLE');
+  [rejected, consumeFail, invalid, unsaved].forEach(function (p) { assert.strictEqual(p.mails.length, 0); });
 });
 
 test('通知失敗: 回答は維持し notify_failed=1 を記録。ログに宛先・本文を残さない', function () {
@@ -279,6 +377,18 @@ test('通知失敗: 回答は維持し notify_failed=1 を記録。ログに宛�
   installMockTokens(noAddress, {});
   noAddress.call('submit', prodPayload('snb', { q5: ['other'] }));
   assert.strictEqual(noAddress.rows()[0].notify_failed, 1, 'ON なのに宛先未設定は失敗として残す');
+
+  /* #879: 要確認なしの回答も通知対象なので、失敗すれば同様に記録する。1回だけ試し、再送しない。 */
+  var plainFail = ready({ properties: NOTIFY_ON, mailFails: true });
+  installMockTokens(plainFail, {});
+  var attempts = 0;
+  var originalSend = plainFail.sandbox.MailApp.sendEmail;
+  plainFail.sandbox.MailApp.sendEmail = function () { attempts++; return originalSend.apply(this, arguments); };
+  assert.deepStrictEqual(plainFail.call('submit', prodPayload('studio-x')), { success: true });
+  assert.strictEqual(attempts, 1, '最大1通・自動再送なし');
+  assert.strictEqual(plainFail.rows().length, 1);
+  assert.strictEqual(plainFail.rows()[0].notify_failed, 1);
+  assert.strictEqual(plainFail.rows()[0].status, Core.STATUS_NONE);
 });
 
 test('受入5: sendTestNotification(brand) で3ブランドの [TEST] 通知。Spreadsheetに触れず、OFFでも送れる', function () {
@@ -287,11 +397,18 @@ test('受入5: sendTestNotification(brand) で3ブランドの [TEST] 通知。S
   assert.strictEqual(project.run('sendTestNotificationMens()'), 'sent');
   assert.strictEqual(project.run('sendTestNotificationStudioX()'), 'sent');
   assert.deepStrictEqual(project.mails.map(function (m) { return m.subject; }), [
-    '[TEST] 【利用後アンケート】確認が必要な回答があります（Studio Nagoya Base）',
-    '[TEST] 【利用後アンケート】確認が必要な回答があります（SNB mens）',
-    '[TEST] 【利用後アンケート】確認が必要な回答があります（Studio X）'
+    '[TEST] 【利用後アンケート】新しい回答が届きました（Studio Nagoya Base）',
+    '[TEST] 【利用後アンケート】新しい回答が届きました（SNB mens）',
+    '[TEST] 【利用後アンケート】新しい回答が届きました（Studio X）'
   ]);
-  project.mails.forEach(function (m) { assert.match(m.body, /^\[TEST\] これは sendTestNotification による確認用のダミー通知です/); });
+  project.mails.forEach(function (m) {
+    assert.match(m.body, /^\[TEST\] これは sendTestNotification による確認用のダミー通知です/);
+    /* #879: ダミーも全設問通知形式 */
+    ['■ Q1 総合満足度: 3 / 5', '■ Q2 予約・事前のご案内', '・案内メールのわかりやすさ: 未回答', '■ Q3 現地でのご利用',
+      '・照明の操作: 困った', '・エアコンの操作: 該当なし・利用していない', '・対応を受けたか: はい',
+      '・スタッフ対応の評価: 4 / 5', '■ Q5 気になった点: 消耗品不足、その他改善してほしいこと', '■ Q6 また利用したいか: 機会があれば利用したい'
+    ].forEach(function (line) { assert.ok(m.body.indexOf(line) !== -1, line); });
+  });
   assert.strictEqual(project.run('sendTestNotification("other")'), 'skipped: invalid brand');
   assert.strictEqual(project.mails.length, 3);
 
