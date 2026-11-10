@@ -11,7 +11,7 @@ Issueの起票は更新の許可ではありません。**原則は、運営者�
 > **例外：SwitchBot verify は、対象ファイルを `main` へマージ（push）するだけで自動起動します。** マージ＝更新が始まり得ます。**承認の一時停止があるのは、Environment `switchbot-verify` に Required reviewers を設定している場合だけです**（手順書 #723 では任意）。未設定なら承認待ちなしでそのまま更新されるため、マージ前に設定の有無を確認してください（止めたいときはworkflowを無効化）。失敗時の確認（§4）は他と同じく必要です。「毎回手動起動」が前提なのは、それ以外の対象（Booking／Webhook／Survey／Access）です。
 
 1. **Actions → 対象workflow → Run workflow**（verifyは自動起動もあり、再反映は手動）。Branchは必ず `main`。
-2. `test`（秘密なし）が緑になるのを待つ。赤なら何も更新されない。
+2. `test`（秘密なし）が緑になるのを待つ。赤なら何も更新されない。**Booking（Deploy Booking GAS to production）だけは順番が逆**：入力の簡易検査の直後に承認待ちになり、テストは承認後に同じ実行の中で走る（Issue #874。承認＝テスト合格ではない。テストが赤なら何も更新されない）。
 3. **Environmentの承認待ち**になる（**Required reviewers を設定したEnvironmentだけ**。未設定のEnvironmentは待たずに通過する。Accessの `OFF_CONFIRMED` も、reviewers未設定なら承認の停止はない）。待ちになったら更新内容を確認して承認。**更新前に、対象Environmentの Required reviewers が設定済みか必ず確認する**（Booking／Webhookは、運営者が#828で設定を手動変更したと報告済みで、**現在値は読取り確認まで未確認**。確認方法と扱いは[#828の評価](booking-production-approval-gate-828.md)を参照。Accessは推奨、verifyは任意＝手順書どおり）。
 4. **更新前の確認（preflight）**＝読取りのみ。ここで止まれば**何も更新されていない**。
 5. 更新 → **更新後の確認**（`main <SHA>` の自動照合。40桁を目で比べる必要はない）。
@@ -21,7 +21,7 @@ Issueの起票は更新の許可ではありません。**原則は、運営者�
 
 | 対象 | workflow | Environment（承認） | 入力 | 通常更新の入力 |
 | --- | --- | --- | --- | --- |
-| Booking Admin＋Public | Deploy Booking GAS to production | `booking-production` | `scope` / `schema_migrated` | `scope=full`、チェックなし |
+| Booking Admin＋Public | Deploy Booking GAS to production | `booking-production` | `scope`（`full` / `admin-only` / `public-only`） / `schema_migrated` | `scope=full`、チェックなし。公開予約画面だけの変更は `public-only`、管理側だけは `admin-only` |
 | Booking Webhook | Update Booking Webhook GAS | `booking-production` | なし | そのまま実行 |
 | Survey | Deploy Survey GAS to production | `survey-production` | `target`（`public` / `admin`） | 更新する側を選び、**2回に分けて**実行 |
 | SwitchBot 鍵管理（Access） | Deploy SwitchBot access GAS | `switchbot-access-production`（ON宣言時は先に `switchbot-access-on-approval`） | 必須入力が複数 | 手順書 #768 の入力例どおり。**毎回の確認入力が必要** |
@@ -35,7 +35,7 @@ Issueの起票は更新の許可ではありません。**原則は、運営者�
 
 | 対象 | 承認者が見るもの | 必要な登録（名前のみ・値は書かない） |
 | --- | --- | --- |
-| Booking | 更新範囲（`full` / `admin-only`）と対象main | Admin用: `CLASPRC_JSON`、`BOOKING_ADMIN_SCRIPT_ID` / `_DEPLOYMENT_ID`。Public用（`full`で必須）: **別の** `BOOKING_PUBLIC_CLASPRC_JSON`、`BOOKING_PUBLIC_SCRIPT_ID` / `_DEPLOYMENT_ID` |
+| Booking | Summaryの更新範囲（`full` / `admin-only` / `public-only`）・更新対象と対象外・対象main | Admin用（`full`・`admin-only`で必須）: `CLASPRC_JSON`、`BOOKING_ADMIN_SCRIPT_ID` / `_DEPLOYMENT_ID`。Public用（`full`・`public-only`で必須）: **別の** `BOOKING_PUBLIC_CLASPRC_JSON`、`BOOKING_PUBLIC_SCRIPT_ID` / `_DEPLOYMENT_ID` |
 | Webhook | 対象main | `BOOKING_WEBHOOK_CLASPRC_JSON` / `_SCRIPT_ID` / `_DEPLOYMENT_ID`（Booking本体と別GAS） |
 | Survey | 選んだ `target` | `CLASPRC_JSON`、選んだ側の `SURVEY_<PUBLIC\|ADMIN>_SCRIPT_ID` / `_DEPLOYMENT_ID`（もう片方は不要・代用しない） |
 | Access | 入力の宣言内容。ON中の更新は**別の承認者**が `change_approval_reference` を確認 | `SWITCHBOT_ACCESS_CLASPRC_JSON` / `_SCRIPT_ID` / `_DEPLOYMENT_ID` |
@@ -71,6 +71,7 @@ Bookingで `PREVIOUS_SHA_UNKNOWN` ／ schema関連で止まった場合は §5�
    - **ロールバック（Access／verifyの `rollback`）**：**公開版が、指定した戻し先の版番号 `N` になっている**ことを確認する（説明文は `main <SHA>` ではなく `rollback to vN (run …)` になる。更新前より版番号が下がるのは正常）。
 2. 基準がそろった → 反映済み。結果を記録して完了。**deployで版番号だけ上がってSHAが違う・ロールバックで戻し先の版になっていない・どちらも判断できない場合は未解決のまま**、再実行も完了扱いもせず担当者へ。
    - 更新前のpreflight停止（§4-1）とは**区別する**。§4-1は何も更新されていないので「直して最初から再実行」でよい。ここ（更新の途中・後）は、現状を確認するまで再実行しない。
+   - Bookingは、Summaryに `部分適用/UNKNOWN`／`UNKNOWN` と、更新済み・未着手・対象外の対象が出る。`public-only`・`admin-only` の対象外は読取りも更新もしていない。
    - **Booking `scope=full` で途中まで更新された可能性があるとき（例：Adminは更新済み・Publicだけ未反映）**は、AdminとPublicを**別々に**、更新前後の版・説明文の `main <対象SHA>`・schema整合（`BookingsSchema.gs` の差分と `migrateBookingsSchema` の実施状況）を読取りで確認する。**途中更新・状態不明のまま `full` を一括で再実行しない。** 管理者判断と正規手順書（`docs/booking-gas-production-deploy.md`）の復旧方針が確定してから進める。
    - 「旧版のまま」（`NOT applied` を含む）で、**その対象が実際に未更新と読取りで確認できた**場合に限り、原因を直して再実行を検討する（Bookingは上記の対象別確認を先に行う）。
 3. 戻す場合は同じデプロイIDを既存の版へ戻す（作り直さない。URLは変わらない）。**SwitchBot verify は先に、後続の自動デプロイを止める**（Actions > Disable workflow）**ことと、実行中のrunがないことを確認する**。止めないと、回復中に別のmain pushが自動デプロイを起動し、戻した版が上書きされる。手順の正本は `docs/switchbot-verify-gas-deploy-723.md` の「ロールバック手順」。戻し終えたらworkflowを再有効化する判断も運営者が行う。入口は Access / 検証の `rollback`（`rollback_version`）。Accessは互換確認（`rollback_compat_confirmed`）が別途必要。
@@ -79,6 +80,7 @@ Bookingで `PREVIOUS_SHA_UNKNOWN` ／ schema関連で止まった場合は §5�
 ## 5. Bookingだけの注意：予約シートの列が変わるとき
 
 - 普通の更新は `scope=full`・`schema_migrated` チェックなし。自動でONにはならない。
+- `public-only` は、列の変更（`BookingsSchema.gs` の差分）や前回の本番版不明があると、`schema_migrated` に関係なく**更新前に止まる**（`PUBLIC_ONLY_SCHEMA_CHANGED` / `PREVIOUS_SHA_UNKNOWN`）。`public-only` と `schema_migrated=true` の組合せは承認前に拒否される。列の変更は必ず下の手順で行う。Admin処理・公開APIの互換性に関わる変更、`gas/booking/shared/` の変更も `full` を選ぶ。
 - `BookingsSchema.gs` に実変更がある、または前回の本番版を読み取れない（`PREVIOUS_SHA_UNKNOWN`）ときだけ、次の順:
   1. `scope=admin-only` で実行・承認（承認1回目）
   2. Booking Adminのエディタで `migrateBookingsSchema` を実行し成功を確認（不足列を足すだけ。何度でも安全）

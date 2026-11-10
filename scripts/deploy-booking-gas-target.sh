@@ -14,8 +14,10 @@
 # manifestと配布物の組立て（push/update-deploymentは呼ばない）。workflowが最初の書込み前に全対象で実行する。
 # 失敗は `Booking preflight failed: role=<admin|public> stage=<段階> code=<固定コード>. No deployment was updated.`
 # の固定形式（Secret・ID・メール・clasp生出力は出さない）。preflightは更新権限・将来のAPI成功を保証しない。
+# schema-guardには SCOPE（full|public-only）が必須（Issue #874）。public-onlyでは差分あり・前回SHA不明のとき
+# SCHEMA_MIGRATEDに関係なく失敗する（Adminを読まないため移行完了を確認できない＝安全側に停止）。
 # 必要な環境変数: CLASPRC_JSON / PUBLIC_CLASPRC_JSON / PUBLIC_SCRIPT_ID / PUBLIC_DEPLOYMENT_ID /
-#   ADMIN_SCRIPT_ID / ADMIN_DEPLOYMENT_ID / RUNNER_TEMP / GITHUB_WORKSPACE / GITHUB_SHA / SCHEMA_MIGRATED（guardのみ）
+#   ADMIN_SCRIPT_ID / ADMIN_DEPLOYMENT_ID / RUNNER_TEMP / GITHUB_WORKSPACE / GITHUB_SHA / SCOPE・SCHEMA_MIGRATED（guardのみ）
 # 出力にはSecret・ID・clasp生出力を含めない（固定メッセージとclassifierの分類のみ）。
 set -euo pipefail
 
@@ -109,6 +111,11 @@ verify_current_sha_with_retry() {
 
 if [[ "$mode" == "schema-guard" && "$target" != "public" ]]; then
   echo "schema-guard reads the previous production SHA from the public deployment only." >&2
+  exit 1
+fi
+# schema-guardはscope（full|public-only）で判定を変える（Issue #874）。不明なscopeでは何も読まずに停止する。
+if [[ "$mode" == "schema-guard" && "${SCOPE:-}" != "full" && "${SCOPE:-}" != "public-only" ]]; then
+  echo "schema-guard requires SCOPE=full or SCOPE=public-only; nothing was read or changed." >&2
   exit 1
 fi
 
@@ -239,6 +246,10 @@ if [[ "$mode" == "schema-guard" ]]; then
   # この初回のfullで説明文が `main <SHA>` に更新され、以後は通常のガードに戻る。
   previous_description="$(deployment_description)"
   if [[ ! "$previous_description" =~ ^main\ ([0-9a-f]{40})$ ]]; then
+    if [[ "$SCOPE" == "public-only" ]]; then
+      echo "PREVIOUS_SHA_UNKNOWN: the previous Web App production commit cannot be identified, so scope=public-only cannot rule out a Bookings schema change and stops (schema_migrated is not accepted for public-only). Use scope=full (after scope=admin-only and migrateBookingsSchema when the schema changed)." >&2
+      exit 1
+    fi
     if [[ "${SCHEMA_MIGRATED:-}" != "true" ]]; then
       echo "PREVIOUS_SHA_UNKNOWN: the previous Web App production commit cannot be identified from the deployment description, so whether the Bookings schema changed is unknown. Run migrateBookingsSchema in the Booking Admin Apps Script editor, then re-run with scope=full and schema_migrated=true." >&2
       exit 1
@@ -263,6 +274,12 @@ if [[ "$mode" == "schema-guard" ]]; then
       echo "Could not compare the Bookings schema with the previous Web App production commit; refusing to continue." >&2
       exit 1
     fi
+  fi
+  # public-onlyはAdminを読まない・更新しないため、Admin先行更新と移行完了をここで確認できない。
+  # 自己申告（schema_migrated）でのbypassは認めず、差分があれば常に停止して正規の二段階手順へ誘導する。
+  if [[ "$SCOPE" == "public-only" ]]; then
+    echo "PUBLIC_ONLY_SCHEMA_CHANGED: the Bookings schema changed since the previous Web App production commit. scope=public-only cannot confirm that Booking Admin was updated and migrateBookingsSchema succeeded, so it stops. Run scope=admin-only, then migrateBookingsSchema in the Booking Admin Apps Script editor, then scope=full with schema_migrated=true." >&2
+    exit 1
   fi
   if [[ "${SCHEMA_MIGRATED:-}" != "true" ]]; then
     echo "The Bookings schema changed since the previous Web App production commit. Run migrateBookingsSchema in the Booking Admin Apps Script editor, then re-run with scope=full and schema_migrated=true." >&2

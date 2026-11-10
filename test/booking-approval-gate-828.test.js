@@ -24,18 +24,27 @@ test('booking-production を使う workflow は想定の3本だけで、文書�
   }
 });
 
-test('Booking本番 workflow は workflow_dispatch のみで起動し、testがmain限定でdeployはtestに依存', () => {
+test('Booking本番 workflow は workflow_dispatch のみで起動し、main限定で、更新前に必ずテストを通す', () => {
   for (const f of ['booking-gas-production.yml', 'booking-gas-webhook-production.yml']) {
     const wf = read(`.github/workflows/${f}`);
     const on = wf.match(/\non:\n([\s\S]*?)\n\S/)[1];
     assert.match(on, /^  workflow_dispatch:/m, f);
     assert.doesNotMatch(on, /^  (push|pull_request|pull_request_target|schedule|workflow_run):/m, f);
     const jobs = wf.split(/\njobs:\n/)[1].split(/\n  (?=[a-z_-]+:\n)/);
-    // testはmain限定。deployは needs: test により、testがskipされればskipされる（直接ifは必須にしない）。
-    const test = jobs.find((j) => /^\s*test:/.test(j));
     const deploy = jobs.find((j) => /^\s*deploy:/.test(j));
-    assert.match(test, /if: github\.ref == 'refs\/heads\/main'/, f);
-    assert.match(deploy, /\n    needs: test\n/, f);
+    if (f === 'booking-gas-production.yml') {
+      // Issue #874: 承認をテスト前へ。Secretsなしの簡易検査job（main限定）→ Environment job内でテスト → 書込み。
+      const validate = jobs.find((j) => /^\s*validate:/.test(j));
+      assert.match(validate, /if: github\.ref == 'refs\/heads\/main'/, f);
+      assert.match(deploy, /if: github\.ref == 'refs\/heads\/main'/, f);
+      assert.match(deploy, /\n    needs: validate\n/, f);
+      assert.ok(deploy.indexOf('npm test') > 0 && deploy.indexOf('npm test') < deploy.indexOf('secrets.'), 'tests before the first secret');
+    } else {
+      // testはmain限定。deployは needs: test により、testがskipされればskipされる（直接ifは必須にしない）。
+      const test = jobs.find((j) => /^\s*test:/.test(j));
+      assert.match(test, /if: github\.ref == 'refs\/heads\/main'/, f);
+      assert.match(deploy, /\n    needs: test\n/, f);
+    }
     assert.match(wf, /permissions:\n  contents: read/, f);
     assert.match(wf, /cancel-in-progress: false/, f);
   }
