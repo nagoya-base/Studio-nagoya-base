@@ -380,6 +380,7 @@ function createMailAppStub(options) {
           to: toOrMessage.to,
           subject: toOrMessage.subject,
           body: toOrMessage.body,
+          htmlBody: toOrMessage.htmlBody,
           name: toOrMessage.name,
           replyTo: toOrMessage.replyTo
         });

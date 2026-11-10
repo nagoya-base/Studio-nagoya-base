@@ -621,3 +621,90 @@ test('180日削除: シート未作成は何もしない。見出しが違うシ
   assert.throws(function () { bad.sandbox.purgeExpiredFeedbackInvites(AFTER_2H); }, /SCHEMA_MISMATCH/);
   assert.strictEqual(bad.sheets.FeedbackInvites._rows.length, 2);
 });
+
+// ============================================================================
+// Issue #834 追加改善（2026-11-10）: HTML＋プレーンテキストのマルチパート
+// ============================================================================
+
+function htmlText(html) {
+  return String(html).replace(/<[^>]*>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+}
+
+function hrefsOf(html) {
+  var out = [];
+  var re = /<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+  var m;
+  while ((m = re.exec(html))) out.push({ href: m[1].replace(/&amp;/g, '&'), text: m[2] });
+  return out;
+}
+
+test('#834 HTML: 3ブランドとも「アンケートに回答する」のリンク文言で、ブランド別フォームのトークン付きURLへ飛ぶ。長いURLは表示しない', function () {
+  var ctx = setup();
+  var forms = { snb: 'snb', mens: 'mens', studio_x: 'studio-x' };
+  var sources = { snb: 'snb-booking-app', mens: 'mens-booking-app', studio_x: 'studio-x-booking-app' };
+  Object.keys(forms).forEach(function (brand) { seed(ctx, { brand: brand, source: sources[brand], email: brand + '@example.com' }); });
+  ctx.sandbox.sendFeedbackInvites(AFTER_2H);
+  assert.strictEqual(ctx.mails.length, 3);
+  Object.keys(forms).forEach(function (brand) {
+    var mail = ctx.mails.filter(function (m) { return m.to === brand + '@example.com'; })[0];
+    assert.ok(typeof mail.htmlBody === 'string' && mail.htmlBody.length > 0, brand + ': htmlBody を送る');
+    var textLink = tokenFromMail(mail);
+    var fullUrl = 'https://nagoya-base.github.io/Studio-nagoya-base/feedback/' + forms[brand] + '/#t=' + textLink.token;
+    assert.ok(mail.body.indexOf(fullUrl) !== -1, brand + ': テキスト本文には完全なURLを維持');
+    var links = hrefsOf(mail.htmlBody);
+    assert.strictEqual(links.length, 1, brand + ': HTMLのリンクは回答リンク1つだけ');
+    assert.strictEqual(links[0].text, 'アンケートに回答する');
+    assert.strictEqual(links[0].href, fullUrl, brand + ': テキスト本文と同じトークン付きURL（短縮・リダイレクトなし）');
+    var checked = TokenCore.check(textLink.token, forms[brand], AFTER_2H.getTime(), SECRET, hmacHex);
+    assert.strictEqual(checked.ok, true);
+    assert.strictEqual(TokenCore.check(textLink.token, brand === 'snb' ? 'mens' : 'snb', AFTER_2H.getTime(), SECRET, hmacHex).ok, false, 'ブランド違いは不一致のまま');
+    var visible = htmlText(mail.htmlBody);
+    assert.ok(visible.indexOf('#t=') === -1 && visible.indexOf(textLink.token) === -1, brand + ': HTMLの表示テキストにトークン付きURLを出さない');
+    assert.ok(!/\/survey\//.test(mail.htmlBody), brand + ': 旧surveyへ飛ばない');
+    /* 案内情報の欠落なし */
+    ['任意', '約2〜3分', '影響することはありません', 'お名前やメールアドレスの入力は不要', '14日間有効', '専用リンク', '回答は1回まで', 'お問い合わせ: contact@example.com'].forEach(function (word) {
+      assert.ok(visible.indexOf(word) !== -1, brand + ' html: ' + word);
+    });
+    /* プレビュー（HTMLの表示テキスト冒頭）・本文に予約情報を出さない */
+    var preview = visible.replace(/\s+/g, ' ').trim().slice(0, 120);
+    ['緊縛', '山田', '2026', '12/5', '090-', 'taro@'].forEach(function (w) { assert.ok(preview.indexOf(w) === -1, brand + ' html preview: ' + w); });
+    ['緊縛', '山田', '090-'].forEach(function (w) { assert.ok(mail.htmlBody.indexOf(w) === -1, brand + ' html: ' + w); });
+    /* 外部画像・トラッキングピクセル・外部CSS・スクリプトなし */
+    assert.ok(!/<img|<link|<script|<iframe|<style|\bsrc=|url\(|@import/i.test(mail.htmlBody), brand + ': 外部リソースを読み込まない');
+  });
+  var studioX = ctx.mails.filter(function (m) { return m.to === 'studio_x@example.com'; })[0];
+  assert.ok(!/SNB|Nagoya Base|緊縛/.test(htmlText(studioX.htmlBody)), 'Studio XのHTMLにSNBの表現を含めない');
+});
+
+test('#834 HTML: 差し込む値はHTMLエスケープし、https 以外のURLはリンクにしない', function () {
+  var ctx = setup();
+  var fi = ctx.sandbox.FeedbackInvites;
+  assert.strictEqual(fi.escapeHtml('<a href="x">\'&'), '&lt;a href=&quot;x&quot;&gt;&#39;&amp;');
+  var record = { brand: 'snb' };
+  var evil = fi.buildMail(record, 'https://nagoya-base.github.io/Studio-nagoya-base/feedback/snb/#t=abc', { contactEmail: '"><script>alert(1)</script>@example.com' });
+  assert.ok(evil.htmlBody.indexOf('<script') === -1, '問い合わせ先をエスケープ');
+  assert.ok(evil.htmlBody.indexOf('&quot;&gt;&lt;script&gt;') !== -1);
+  ['javascript:alert(1)', 'https://example.com/" onclick="x', 'http://example.com/', ''].forEach(function (bad) {
+    var mail = fi.buildMail(record, bad, { contactEmail: 'contact@example.com' });
+    assert.strictEqual(hrefsOf(mail.htmlBody).length, 0, '不正なURLはhrefにしない: ' + bad);
+    assert.ok(!/onclick=|javascript:/i.test(mail.htmlBody));
+  });
+  var amp = fi.buildMail(record, 'https://example.com/a?x=1&y=2', { contactEmail: 'c@example.com' });
+  assert.ok(amp.htmlBody.indexOf('href="https://example.com/a?x=1&amp;y=2"') !== -1, '属性値の & をエスケープ');
+});
+
+test('#834 HTML: 手動送信（sendManually）もHTML＋テキストで送る。送信失敗時の扱いは従来どおり', function () {
+  var ctx = setup({ properties: Object.assign({}, ON, { FEEDBACK_INVITE_MODE: 'off' }) });
+  var id = seed(ctx);
+  assert.deepStrictEqual(plain(ctx.sandbox.FeedbackInvites.sendManually(id, { now: AFTER_2H })), { outcome: 'SENT' });
+  assert.strictEqual(ctx.mails.length, 1);
+  assert.strictEqual(hrefsOf(ctx.mails[0].htmlBody)[0].text, 'アンケートに回答する');
+  assert.ok(tokenFromMail(ctx.mails[0]));
+
+  var failing = setup({ mailError: new Error('boom') });
+  var fid = seed(failing);
+  var before = bookingsSnapshot(failing);
+  failing.sandbox.sendFeedbackInvites(AFTER_2H);
+  assert.deepStrictEqual(invites(failing).map(function (r) { return [r.bookingId, r.state, r.errorCode]; }), [[fid, 'FAILED', 'MAIL_SEND_FAILED']]);
+  assert.strictEqual(bookingsSnapshot(failing), before, 'メール失敗時も予約台帳は変えない');
+});

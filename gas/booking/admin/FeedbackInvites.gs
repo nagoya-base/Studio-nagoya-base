@@ -143,33 +143,89 @@ var FeedbackInvites = (function () {
 
   /* ===== メール文面 ===== */
 
+  /* HTMLのテキスト・属性値に埋め込む文字列をエスケープする（& < > " ' の5文字）。 */
+  function escapeHtml_(value) {
+    return String(value === undefined || value === null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /* href に置けるのは https:// のURLだけ（javascript: 等を防ぐ）。それ以外は空文字。 */
+  function safeHttpsUrl_(url) {
+    var s = String(url || '');
+    return /^https:\/\/[^\s"'<>]+$/.test(s) ? s : '';
+  }
+
   /*
    * 件名・本文の冒頭（受信一覧のプレビュー）に、利用目的・予約日時・予約ID・金額・トークンを出さない。
    * 回答リンクは本文の中ほどに置く。氏名も載せない（転送・プレビューで第三者に見えても差し支えない文面にする）。
+   *
+   * Issue #834 追加改善（2026-11-10）: HTML＋プレーンテキストのマルチパートで送る。
+   * - body（テキスト）: 従来どおり完全なURLを載せる（HTML非対応の受信環境向け）。
+   * - htmlBody: 長いトークン付きURLを表示せず「アンケートに回答する」のリンク文言にする。
+   *   外部画像・トラッキングピクセル・外部CSS・URL短縮/リダイレクトは使わない。差し込む値はすべてエスケープする。
    */
   function buildMail(record, url, mailConfig) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var profile = Booking.getBrandProfile(record.brand);
-    var lines = [
+    var intro = [
       'このたびは ' + brandLabel + ' をご利用いただき、ありがとうございました。',
       '',
-      '今後のサービス改善のため、ご利用後アンケートへのご協力をお願いいたします。',
-      '・回答は任意です（所要時間は約2〜3分です）。',
-      '・回答の有無や内容が、今後のご予約・ご利用に影響することはありません。',
-      '・お名前やメールアドレスの入力は不要です。',
+      '今後のサービス改善のため、ご利用後アンケートへのご協力をお願いいたします。'
+    ];
+    var notes = [
+      '回答は任意です（所要時間は約2〜3分です）。',
+      '回答の有無や内容が、今後のご予約・ご利用に影響することはありません。',
+      'お名前やメールアドレスの入力は不要です。'
+    ];
+    var linkHeading = 'アンケートに回答する（ご利用後14日間有効）';
+    var linkNote = 'このリンクはご利用1回ごとの専用リンクです。回答は1回まで、転送や共有はお控えください。';
+    var footer = '※このメールは送信専用です。ご不明な点は下記までお問い合わせください。';
+    var contact = mailConfig.contactEmail ? 'お問い合わせ: ' + mailConfig.contactEmail : '';
+
+    var lines = intro.concat(notes.map(function (n) { return '・' + n; }), [
       '',
-      '▼ アンケートに回答する（ご利用後14日間有効）',
+      '▼ ' + linkHeading,
       url,
       '',
-      'このリンクはご利用1回ごとの専用リンクです。回答は1回まで、転送や共有はお控えください。',
+      linkNote,
       '',
-      '※このメールは送信専用です。ご不明な点は下記までお問い合わせください。'
-    ];
-    if (mailConfig.contactEmail) lines.push('お問い合わせ: ' + mailConfig.contactEmail);
+      footer
+    ]);
+    if (contact) lines.push(contact);
     lines.push('', '--', profile.signature, profile.siteUrl);
+
+    var href = safeHttpsUrl_(url);
+    var p = function (text) { return '<p style="margin:0 0 12px;">' + escapeHtml_(text) + '</p>'; };
+    var html = [
+      '<!DOCTYPE html>',
+      '<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>',
+      '<body style="margin:0;padding:16px;font-family:sans-serif;font-size:15px;line-height:1.7;color:#222;background:#fff;">',
+      '<div style="max-width:560px;margin:0 auto;">',
+      p(intro[0]),
+      p(intro[2]),
+      '<ul style="margin:0 0 16px;padding-left:20px;">',
+      notes.map(function (n) { return '<li>' + escapeHtml_(n) + '</li>'; }).join(''),
+      '</ul>',
+      '<p style="margin:0 0 8px;">' + escapeHtml_('▼ ご利用後14日間有効') + '</p>',
+      '<p style="margin:0 0 16px;font-size:17px;font-weight:bold;">' +
+        (href ? '<a href="' + escapeHtml_(href) + '" style="color:#0b57d0;text-decoration:underline;">' + escapeHtml_('アンケートに回答する') + '</a>' : escapeHtml_('アンケートに回答する')) +
+        '</p>',
+      p(linkNote),
+      p(footer),
+      contact ? p(contact) : '',
+      '<p style="margin:16px 0 0;color:#555;font-size:13px;">--<br>' + escapeHtml_(profile.signature) + '<br>' + escapeHtml_(profile.siteUrl) + '</p>',
+      '</div>',
+      '</body></html>'
+    ].join('');
+
     return {
       subject: '【' + brandLabel + '】ご利用ありがとうございました（アンケートのお願い）',
-      body: lines.join('\n') + '\n'
+      body: lines.join('\n') + '\n',
+      htmlBody: html
     };
   }
 
@@ -312,6 +368,7 @@ var FeedbackInvites = (function () {
           to: String(record.email).trim(),
           subject: mail.subject,
           body: mail.body,
+          htmlBody: mail.htmlBody,
           name: mailConfig.displayName,
           replyTo: mailConfig.replyTo
         });
@@ -525,6 +582,7 @@ var FeedbackInvites = (function () {
     readSettings: readSettings,
     evaluate: evaluate,
     buildMail: buildMail,
+    escapeHtml: escapeHtml_,
     setupSheet: setupSheet,
     run: run,
     sendManually: sendManually,
