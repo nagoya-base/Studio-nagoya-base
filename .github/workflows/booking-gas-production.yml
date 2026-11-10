@@ -1,24 +1,35 @@
 name: Deploy Booking GAS to production
 
 # 正規の本番反映手順（gas/booking/README.md）。
-#   scope=full（既定）: 1回のEnvironment承認で Booking Admin → Booking Web App → post-check を同一job内で直列実行。
-#   scope=admin-only  : Booking Adminだけを更新して停止（Publicは更新しない）。Bookings schema変更時・初回bootstrap用。
+#   scope=full（既定）  : Admin + Public。両対象のpreflight → schema guard → Admin更新 → Public更新 → 双方post-check。
+#   scope=admin-only    : Booking Adminだけを更新して停止（Publicは読取りも書込みもしない）。Bookings schema変更時・初回bootstrap用。
+#   scope=public-only   : Booking Web App（Public）だけ。Public preflight → schema guard → Public更新 → post-check（Adminは読取りも書込みもしない）。
+#                         BookingsSchema.gs に差分がある／前回本番SHAが不明な場合は schema_migrated に関係なく停止する（Issue #874）。
 # Bookings schema migrationはこのworkflowでは行わない。管理者がBooking AdminのApps Scriptエディタで
 # `migrateBookingsSchema` を実行する（Sheets API・サービスアカウント鍵・WIF/OIDCは使わない）。
 # schema変更時は admin-only → migrateBookingsSchema実行 → full(schema_migrated=true) の二段階。
-# いずれかが失敗した時点で後続は実行しない。
+#
+# 承認の位置（Issue #874）: Environment承認はjob開始時に評価されるため、入力の簡易検査（validate job、Secretsなし）の
+# 直後に booking-production の deploy job を開始し、承認後に同じjob内で テスト → preflight → 更新 → post-check を連続実行する。
+# テストは scripts/run-booking-tests-isolated.sh で、このrun専用の使い捨てOSユーザー（env -i・no_new_privs）として、
+# ホストの全mountを読取り専用にしたmount/PID namespaceの中（/tmp等は専用tmpfs）で
+# workspaceの複製上で実行し、終了後に全プロセスKILL・所有ファイル全探索・ユーザー削除・workspace無変更を確認する。
+# 確認できなければ（ISOLATION_NOT_CONFIRMED）Secret付きstepへ進まない。テスト中にSecretも認証ファイルも存在しない。
+# 承認はテスト成功を意味しない。テスト・preflight・schema guard のいずれかが失敗すれば外部書込み0回で停止する。
+# いずれかが失敗した時点で後続は実行しない（無条件の再実行・自動rollbackはしない）。
 on:
   workflow_dispatch:
     inputs:
       scope:
-        description: 'full: Admin -> Public -> post-check / admin-only: Booking Adminだけ更新して停止（schema変更時・初回bootstrap用）'
+        description: 'full: Admin + Public / admin-only: Booking Adminだけ（schema変更時・初回bootstrap用） / public-only: 公開予約画面（Public）だけ（schema差分があると停止）'
         type: choice
         options:
           - full
           - admin-only
+          - public-only
         default: full
       schema_migrated:
-        description: 'Apps ScriptエディタでmigrateBookingsSchema を実行し成功を確認済み（BookingsSchema.gsに差分があるfullでは必須）'
+        description: 'Apps ScriptエディタでmigrateBookingsSchema を実行し成功を確認済み（BookingsSchema.gsに差分があるfullでは必須。public-onlyでは指定不可）'
         type: boolean
         default: false
 
@@ -31,8 +42,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    name: Test main
+  validate:
+    name: Validate inputs (before approval)
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -42,20 +53,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Set up Ruby and Jekyll (Gemfile.lock)
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '3.3'
-          bundler-cache: true
-      - name: Install stripe-webhook-relay dependencies
-        run: npm ci
-        working-directory: cloud-run/stripe-webhook-relay
-      - name: Run repository tests
-        run: npm test
+      # Secretsなし・外部APIなし。scope/入力の組合せとmain/SHAだけを確認し、実行計画をRun Summaryへ書く。
+      - name: Validate scope and inputs
+        env:
+          SCOPE: ${{ inputs.scope }}
+          SCHEMA_MIGRATED: ${{ inputs.schema_migrated }}
+        run: node scripts/booking-gas-deploy-plan.js plan
 
   deploy:
-    name: Update existing Admin and Public deployments
-    needs: test
+    name: Test, then update the selected Booking deployments
+    needs: validate
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: booking-production
@@ -64,110 +71,141 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install pinned clasp
-        run: npm install --global @google/clasp@3.4.1
-      # 各stepには必要なSecretだけを渡す（clasp installのstepにはSecretを渡さない）。
       - name: Validate scope
+        env:
+          SCOPE: ${{ inputs.scope }}
+          SCHEMA_MIGRATED: ${{ inputs.schema_migrated }}
+        run: node scripts/booking-gas-deploy-plan.js approved
+      # ---- テスト（承認後・最初のSecret利用より前。Secretsは渡さず、プロセス・ファイルシステムとも隔離） ----
+      # Rubyはtoolcacheへ入れるだけ（gemのキャッシュをworkspaceへ作らない）。gemsとnpm依存は隔離ユーザーのhomeへ入る。
+      - name: Set up Ruby (no bundler cache in the workspace)
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - name: Run repository tests (isolated user, no secrets)
         env:
           SCOPE: ${{ inputs.scope }}
         run: |
           set -euo pipefail
-          if [[ "$SCOPE" != "full" && "$SCOPE" != "admin-only" ]]; then
-            echo "scope must be full or admin-only." >&2
+          status=0
+          bash scripts/run-booking-tests-isolated.sh repository-tests || status=$?
+          if [[ "$status" -eq 3 ]]; then
+            node scripts/booking-gas-deploy-plan.js stop TEST_ISOLATION
             exit 1
           fi
-      # Environment承認の直後・最初の書込み（Admin更新）の前に、更新対象すべての認証と配布物を読取りだけで確認する。
-      # full: Admin(default) と Public(booking-owner) の両方 / admin-only: Adminだけ（Public Secretは要求しない）。
-      # 失敗時は更新0回で停止し、役割・段階を固定コードで示す（Issue #804）。
+          if [[ "$status" -ne 0 ]]; then
+            node scripts/booking-gas-deploy-plan.js stop TEST
+            exit 1
+          fi
+          node scripts/booking-gas-deploy-plan.js passed TEST
+      - name: Install pinned clasp
+        run: npm install --global @google/clasp@3.4.1
+      # 各stepには必要なSecretだけを渡す（テスト・clasp installのstepにはSecretを渡さない）。
+      # 最初の書込みの前に、選択した対象すべての認証と配布物を読取りだけで確認する（Issue #804）。
+      # full: Admin(default) と Public(booking-owner) / admin-only: Adminだけ / public-only: Publicだけ（対象外のSecretは要求しない）。
       - name: Preflight (Booking Admin credentials and deployment, read-only)
+        if: inputs.scope == 'full' || inputs.scope == 'admin-only'
         env:
+          SCOPE: ${{ inputs.scope }}
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
           ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
           ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
-        run: bash scripts/deploy-booking-gas-target.sh admin preflight
+        run: |
+          set -euo pipefail
+          if ! bash scripts/deploy-booking-gas-target.sh admin preflight; then
+            node scripts/booking-gas-deploy-plan.js stop PREFLIGHT_ADMIN
+            exit 1
+          fi
+          node scripts/booking-gas-deploy-plan.js passed PREFLIGHT_ADMIN
       - name: Preflight (Booking Web App credentials and deployment, read-only)
-        if: inputs.scope == 'full'
+        if: inputs.scope == 'full' || inputs.scope == 'public-only'
         env:
+          SCOPE: ${{ inputs.scope }}
           PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
           PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
           PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
-        run: bash scripts/deploy-booking-gas-target.sh public preflight
-      # Environment承認の後・Admin更新の前に実行する（clasp認証はEnvironment secretsにある）。
+        run: |
+          set -euo pipefail
+          if ! bash scripts/deploy-booking-gas-target.sh public preflight; then
+            node scripts/booking-gas-deploy-plan.js stop PREFLIGHT_PUBLIC
+            exit 1
+          fi
+          node scripts/booking-gas-deploy-plan.js passed PREFLIGHT_PUBLIC
       # 基準SHAはBooking Web App（Public）のDeploymentからのみ取得する（Adminは基準にしない）。
+      # public-onlyでは、schema差分・前回SHA不明のときschema_migratedに関係なく停止する（移行完了をここで確認できないため）。
       - name: Schema diff guard (Booking Web App previous production commit)
-        if: inputs.scope == 'full'
+        if: inputs.scope == 'full' || inputs.scope == 'public-only'
         env:
+          SCOPE: ${{ inputs.scope }}
           PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
           PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
           PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
           SCHEMA_MIGRATED: ${{ inputs.schema_migrated }}
-        run: bash scripts/deploy-booking-gas-target.sh public schema-guard
+        run: |
+          set -euo pipefail
+          if ! bash scripts/deploy-booking-gas-target.sh public schema-guard; then
+            node scripts/booking-gas-deploy-plan.js stop SCHEMA_GUARD
+            exit 1
+          fi
+      # ---- 書込み（ここから先の失敗は「部分適用/UNKNOWN」になり得る） ----
       - name: Update the existing Booking Admin deployment
+        if: inputs.scope == 'full' || inputs.scope == 'admin-only'
         env:
+          SCOPE: ${{ inputs.scope }}
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
           ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
           ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
         run: |
           set -euo pipefail
           if ! bash scripts/deploy-booking-gas-target.sh admin; then
-            if [[ -f "$RUNNER_TEMP/booking-gas-admin-update-applied" ]]; then
-              echo "Booking Admin deployment update was applied but its verification failed; the Booking Web App was not started. Check the Admin deployment state." >&2
-            else
-              echo "Booking Admin update did not complete; the Booking Web App was not started. Check the Admin deployment state before re-running." >&2
-            fi
+            node scripts/booking-gas-deploy-plan.js stop UPDATE_ADMIN
             exit 1
           fi
       - name: Update the existing Booking Web App deployment
-        if: inputs.scope == 'full'
+        if: inputs.scope == 'full' || inputs.scope == 'public-only'
         env:
+          SCOPE: ${{ inputs.scope }}
           PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
           PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
           PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
         run: |
           set -euo pipefail
           if ! bash scripts/deploy-booking-gas-target.sh public; then
-            if [[ -f "$RUNNER_TEMP/booking-gas-public-update-applied" ]]; then
-              echo "Booking Admin is updated to the current main commit. The Booking Web App deployment update was applied but its verification failed; check the Web App deployment state." >&2
-            else
-              echo "Booking Admin is updated to the current main commit. The Booking Web App update did not complete; the Web App deployment state must be checked before re-running." >&2
-            fi
+            node scripts/booking-gas-deploy-plan.js stop UPDATE_PUBLIC
             exit 1
           fi
       - name: Post-deploy check (Booking Admin deployment)
+        if: inputs.scope == 'full' || inputs.scope == 'admin-only'
         env:
+          SCOPE: ${{ inputs.scope }}
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
           ADMIN_SCRIPT_ID: ${{ secrets.BOOKING_ADMIN_SCRIPT_ID }}
           ADMIN_DEPLOYMENT_ID: ${{ secrets.BOOKING_ADMIN_DEPLOYMENT_ID }}
         run: |
           set -euo pipefail
           if ! bash scripts/deploy-booking-gas-target.sh admin verify; then
-            if [[ -f "$RUNNER_TEMP/booking-gas-admin-update-applied" ]]; then
-              echo "Booking Admin update succeeded earlier in this run, but the final post-check did not confirm the current main commit (read-only retries exhausted). Final confirmation is NOT complete. Check the Admin deployment state read-only before deciding on any re-run; do not assume a rollback." >&2
-            else
-              echo "Booking Admin post-check did not confirm the current main commit. Check the Admin deployment state." >&2
-            fi
+            node scripts/booking-gas-deploy-plan.js stop VERIFY_ADMIN
             exit 1
           fi
       - name: Post-deploy check (Booking Web App deployment)
-        if: inputs.scope == 'full'
+        if: inputs.scope == 'full' || inputs.scope == 'public-only'
         env:
+          SCOPE: ${{ inputs.scope }}
           PUBLIC_CLASPRC_JSON: ${{ secrets.BOOKING_PUBLIC_CLASPRC_JSON }}
           PUBLIC_SCRIPT_ID: ${{ secrets.BOOKING_PUBLIC_SCRIPT_ID }}
           PUBLIC_DEPLOYMENT_ID: ${{ secrets.BOOKING_PUBLIC_DEPLOYMENT_ID }}
         run: |
           set -euo pipefail
           if ! bash scripts/deploy-booking-gas-target.sh public verify; then
-            if [[ -f "$RUNNER_TEMP/booking-gas-public-update-applied" ]]; then
-              echo "Booking Web App update succeeded earlier in this run, but the final post-check did not confirm the current main commit (read-only retries exhausted). Final confirmation is NOT complete. Check the Web App deployment state read-only before deciding on any re-run; do not assume a rollback." >&2
-            else
-              echo "Booking Web App post-check did not confirm the current main commit. Check the Web App deployment state." >&2
-            fi
+            node scripts/booking-gas-deploy-plan.js stop VERIFY_PUBLIC
             exit 1
           fi
-      - name: Next step after admin-only
-        if: inputs.scope == 'admin-only'
-        run: echo "Booking Admin was updated; the Booking Web App deployment was left unchanged. Run migrateBookingsSchema in the Booking Admin Apps Script editor, then run this workflow with scope=full and schema_migrated=true."
+      - name: Completion summary
+        env:
+          SCOPE: ${{ inputs.scope }}
+        run: node scripts/booking-gas-deploy-plan.js done

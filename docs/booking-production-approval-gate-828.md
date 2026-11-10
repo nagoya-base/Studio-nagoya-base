@@ -23,7 +23,7 @@ GitHub画面での手動承認待ちになった。アプリ／連携エージ�
 
 | workflow | 起動 | 条件 | 書込み | 備考 |
 | --- | --- | --- | --- | --- |
-| Deploy Booking GAS to production | `workflow_dispatch`のみ | 各jobに`github.ref == refs/heads/main`／`needs: test`／concurrency `booking-gas-production` | Booking Admin・Public（既存Deployment更新） | `environment:` を持つのは deploy job 1つだけ（承認は1回） |
+| Deploy Booking GAS to production | `workflow_dispatch`のみ | 各jobに`github.ref == refs/heads/main`／Secretsなしの`validate` job（入力検査）→ `deploy` job（承認後にテスト→preflight→更新→post-check。Issue #874）／concurrency `booking-gas-production` | Booking Admin・Public（`scope`で選んだ対象の既存Deployment更新） | `environment:` を持つのは deploy job 1つだけ（承認は1回） |
 | Update Booking Webhook GAS | `workflow_dispatch`のみ | testjobがmain限定、deployは`needs: test`で連動（deploy自体に直接のmain条件はない）／concurrency `booking-gas-webhook-production` | Webhook専用GAS（Booking本体とは別GAS） | **同じEnvironmentを共有** |
 | Confirm booking-production Google account | 手動のみ | Environment内で完結 | なし（アカウント確認のみ） | **同じEnvironmentを共有** |
 
@@ -75,7 +75,7 @@ GitHub側の権限制約・承認APIの利用可否は**実環境で未検証**�
 | --- | --- | --- |
 | `workflow_dispatch`のみ（push／PR／scheduleで起動しない） | ✓ | `test/booking-approval-gate-828.test.js` |
 | branch = `main` のみ（testjobの `if`。Webhookのdeployは`needs: test`経由、Booking本体は各jobにも`if`） | ✓ | 同上 |
-| 更新前にテスト（`needs: test`） | ✓ | 既存 `booking-gas-production-workflow.test.js` |
+| 更新前にテスト（Webhookは`needs: test`。Booking本体はIssue #874以降、承認後の同一job内で最初のSecret利用より前に`npm test`） | ✓ | 既存 `booking-gas-production-workflow.test.js` |
 | 読取りpreflight → 既存Deployment更新 → SHA/版のpost-check／失敗時停止 | ✓ | 既存テスト |
 | concurrency（同時実行なし・途中キャンセルなし） | ✓ | 既存テスト |
 | Secretsは `booking-production` のEnvironment secretsのみ・必要stepだけに渡す | ✓ | 既存テスト |

@@ -6,8 +6,11 @@
 
 1. 反映したい `main` のSHAを確認する（PRはマージ済みであること。PRブランチからは実行されない）。
 2. GitHubの **Actions > Deploy Booking GAS to production > Run workflow** を Branch=`main`、`scope=full`（既定）、`schema_migrated` は未指定（false）で起動する。
-3. repository testsが通ると `booking-production` の承認待ちになる。**承認は1回だけ**。承認する。
-4. Booking Admin → Booking Web App → post-check がすべて成功することを確認する。
+3. 入力の簡易検査（Secretsなし）の直後に `booking-production` の承認待ちになる（Issue #874）。Summaryの範囲・対象を確認し、**承認は1回だけ**。承認する。承認はテスト合格を意味しない。
+4. 承認後、同じjob内で repository tests → preflight → Booking Admin → Booking Web App → post-check と進む。すべて成功することを確認する（テストが失敗すれば何も更新されない）。
+
+公開予約画面（Public）だけの変更で、Admin更新が不要と判断できるときは `scope=public-only`、管理側だけの変更は `scope=admin-only` を選べる（下の表）。
+Admin処理・公開APIの互換性に関わる変更、`gas/booking/shared/` の変更を含むときは `full` を使う。
 5. 必要なら副作用のない公開確認（`/exec` URLが変わっていない、Admin画面が開く等）を行う。予約作成・Stripe決済・実メール送信を伴う確認は行わない。
 
 スプレッドシートの操作は不要です。
@@ -33,18 +36,21 @@ schema変更時だけ承認は2回になります。
 
 | `scope` | 流れ |
 | --- | --- |
-| `full`（既定） | repository tests →（Environment承認）→ **schema差分ガード** → Booking Admin更新 → Booking Web App更新 → post-check |
-| `admin-only` | repository tests →（Environment承認）→ Booking Admin更新 → Admin post-check → 終了（Publicは更新しない） |
+| `full`（既定） | 入力検査 →（Environment承認）→ repository tests → Admin/Public preflight → **schema差分ガード** → Booking Admin更新 → Booking Web App更新 → post-check |
+| `admin-only` | 入力検査 →（Environment承認）→ repository tests → Admin preflight → Booking Admin更新 → Admin post-check → 終了（Publicは読取り・更新とも行わない） |
+| `public-only` | 入力検査 →（Environment承認）→ repository tests → Public preflight → **schema差分ガード（差分・前回SHA不明なら常に停止）** → Booking Web App更新 → Public post-check（Adminは読取り・更新とも行わない。Admin用Secretsも要求しない） |
 
-どちらも既存Deploymentのみを更新します（新規Deployment・GAS projectは作りません）。`concurrency` はBooking GAS本番全体で `booking-gas-production` の1グループです。どれかが失敗した時点で後続は実行されません。Admin成功後にWeb Appが失敗した場合、workflowは失敗となり、ログに「Booking Admin is updated … Web App … update did not complete / applied but its verification failed」のどちらかが出ます。いずれもWeb Appのデプロイ状態を確認してください。自動rollbackはありません。原因を直して同じworkflowを再実行してください（Admin再更新は無害）。
+承認はjob開始時に評価されるため、Secretsなしの入力検査job（`validate`）の直後に承認を求め、テストは承認後の同じEnvironment job内で、最初のSecret利用より前に実行します（Issue #874。同一runで再承認なし）。テストは使い捨てのOSユーザーとして、ホストの全ファイルシステムを読取り専用にしたmount/PID namespaceの中で`env -i`・`no_new_privs`で実行し、終了後にプロセス・ファイルの残存0とworkspace無変更を確認できなければSecret付きstepへ進みません（`scripts/run-booking-tests-isolated.sh`。詳細と残余リスクは `docs/booking-gas-production-deploy.md`）。`public-only` と `schema_migrated=true` の組合せは承認前に拒否します。
+
+いずれも既存Deploymentのみを更新します（新規Deployment・GAS projectは作りません）。`concurrency` はBooking GAS本番全体で `booking-gas-production` の1グループです。どれかが失敗した時点で後続は実行されません。Admin成功後にWeb Appが失敗した場合、workflowは失敗となり、ログに「Booking Admin is updated … Web App … update did not complete / applied but its verification failed」のどちらかが出ます。いずれもWeb Appのデプロイ状態を確認してください。Summaryには `更新前停止`（書込み0回）／`部分適用/UNKNOWN`／`UNKNOWN`／`事後確認未完了/UNKNOWN` と、更新済み・未着手・対象外の対象が出ます。自動rollback・無条件の再実行はしません。デプロイ状態を読取りで確認し、原因を直してから新しい実行で起動してください（Admin再更新は無害）。
 
 ### schema差分ガード（migrationの実行漏れ防止）
 
-`scope=full` では、Environment承認の後・Admin更新の前（同じdeploy jobの最初のstep）に次を確認します。
+`scope=full` と `scope=public-only` では、Environment承認とテスト・preflightの後、最初の更新の前に次を確認します。
 
 1. **Booking Web App（Public）** の既存Deployment descriptionの `main <SHA>`（前回fullで本番反映したSHA）を取得する。Admin Deploymentは基準にしません（admin-only実行でAdminだけ今回SHAへ進むため）。
 2. そのSHAと今回の `GITHUB_SHA` の間で `gas/booking/shared/BookingsSchema.gs` の差分を `git diff` で判定する（前回SHAにこのファイルが無い初回bootstrapも「差分あり」）。
-3. 差分あり → `schema_migrated=true` がなければ**Admin更新前に停止**。差分なし → `schema_migrated` は不要。
+3. 差分あり → `full` は `schema_migrated=true` がなければ**Admin更新前に停止**。`public-only` は `schema_migrated` に関係なく**Public更新前に停止**（`PUBLIC_ONLY_SCHEMA_CHANGED`。Adminを読まないため、Admin先行更新と移行完了を確認できない。admin-only → `migrateBookingsSchema` → full の手順へ）。差分なし → `schema_migrated` は不要。
 4. 前回Public SHAを1つに特定できない・履歴にない・差分判定に失敗した場合も停止（fail closed）。
 
 `clasp list-deployments` の生出力・SHAはログへ出さず、固定メッセージだけを出力します。

@@ -34,27 +34,28 @@ const jobs = jobBlocks(workflow);
 const deploy = jobs.deploy;
 const deploySteps = steps(deploy);
 const stepIndex = (needle) => deploySteps.findIndex((s) => s.includes(needle));
+const ISOLATED_TESTS = 'run-booking-tests-isolated.sh repository-tests';
 
-test('workflow is manual (workflow_dispatch) only, with scope=full|admin-only and schema_migrated inputs', () => {
+test('workflow is manual (workflow_dispatch) only, with scope=full|admin-only|public-only and schema_migrated inputs', () => {
   const on = workflow.slice(workflow.indexOf('\non:\n'), workflow.indexOf('\npermissions:'));
   assert.match(on, /workflow_dispatch:/);
   assert.doesNotMatch(on, /push:|pull_request|schedule:|target/);
   assert.doesNotMatch(workflow, /inputs\.target/);
-  assert.match(on, /scope:\n(?:.*\n)*?        type: choice\n        options:\n          - full\n          - admin-only\n        default: full\n/);
+  assert.match(on, /scope:\n(?:.*\n)*?        type: choice\n        options:\n          - full\n          - admin-only\n          - public-only\n        default: full\n/);
   assert.match(on, /schema_migrated:\n(?:.*\n)*?        type: boolean\n        default: false\n/);
   assert.equal((on.match(/^      [a-z_]+:$/gm) || []).length, 2, 'only scope and schema_migrated');
 });
 
-test('production job needs test, and both jobs are restricted to main', () => {
-  assert.deepEqual(Object.keys(jobs), ['test', 'deploy']);
-  assert.match(deploy, /\n    needs: test\n/);
+test('production job needs only the light validate job (Issue #874), and both jobs are restricted to main', () => {
+  assert.deepEqual(Object.keys(jobs), ['validate', 'deploy']);
+  assert.match(deploy, /\n    needs: validate\n/);
   for (const job of Object.values(jobs)) assert.match(job, /\n    if: github\.ref == 'refs\/heads\/main'\n/);
 });
 
 test('exactly one job references the booking-production environment (single approval)', () => {
   assert.equal((workflow.match(/^\s*environment:/gm) || []).length, 1);
   assert.match(deploy, /\n    environment: booking-production\n/);
-  assert.doesNotMatch(jobs.test, /environment:|secrets\./);
+  assert.doesNotMatch(jobs.validate, /environment:|secrets\.|npm test|npm ci|clasp|deploy-booking-gas-target/);
 });
 
 test('single concurrency group for the whole Booking GAS production, not cancelled mid-run', () => {
@@ -63,7 +64,7 @@ test('single concurrency group for the whole Booking GAS production, not cancell
   assert.doesNotMatch(workflow, /\$\{\{[^}]*\}\}\s*\n\s*cancel-in-progress/);
 });
 
-test('scope=full runs: tests -> (approval) -> schema guard -> Admin -> Public -> post-check, with no schema migration step', () => {
+test('scope=full runs: (approval) -> tests -> preflight -> schema guard -> Admin -> Public -> post-check, with no schema migration step', () => {
   const guard = stepIndex('deploy-booking-gas-target.sh public schema-guard');
   const admin = stepIndex('Update the existing Booking Admin deployment');
   const publicStep = stepIndex('Update the existing Booking Web App deployment');
@@ -71,34 +72,37 @@ test('scope=full runs: tests -> (approval) -> schema guard -> Admin -> Public ->
   assert.ok(guard > 0 && admin > guard && publicStep > admin, [guard, admin, publicStep].join());
   assert.ok(checks[0] > publicStep && checks[1] > checks[0], checks.join());
   assert.ok(stepIndex('npm install --global @google/clasp@3.4.1') < guard, 'tooling is set up first');
-  assert.match(deploy, /\n    needs: test\n/);
+  assert.ok(stepIndex(ISOLATED_TESTS) > 0 && stepIndex(ISOLATED_TESTS) < stepIndex('admin preflight'), 'tests run before any preflight');
+  assert.match(deploy, /\n    needs: validate\n/);
   assert.match(deploy, /\n    environment: booking-production\n/);
   assert.doesNotMatch(workflow, /migrate-bookings-schema|migrate_bookings|Migrate the Bookings sheet schema/);
 });
 
-test('schema guard runs in the approved deploy job (environment secrets), before any Admin update, only for scope=full', () => {
+test('schema guard runs in the approved deploy job (environment secrets), before any update, for scope=full and public-only', () => {
   const guardStep = deploySteps[stepIndex('deploy-booking-gas-target.sh public schema-guard')];
-  assert.match(guardStep, /\n        if: inputs\.scope == 'full'\n/);
+  assert.match(guardStep, /\n        if: inputs\.scope == 'full' \|\| inputs\.scope == 'public-only'\n/);
+  assert.match(guardStep, /SCOPE: \$\{\{ inputs\.scope \}\}/);
   assert.match(guardStep, /SCHEMA_MIGRATED: \$\{\{ inputs\.schema_migrated \}\}/);
   assert.match(guardStep, /PUBLIC_CLASPRC_JSON: \$\{\{ secrets\.BOOKING_PUBLIC_CLASPRC_JSON \}\}/);
   assert.doesNotMatch(guardStep, /ADMIN_|[^_]CLASPRC_JSON/);
-  assert.equal(jobs.test.includes('schema-guard'), false, 'cannot run before approval: clasp credentials are Environment secrets');
+  assert.equal(jobs.validate.includes('schema-guard'), false, 'cannot run before approval: clasp credentials are Environment secrets');
   assert.ok(stepIndex('schema-guard') < stepIndex('Update the existing Booking Admin deployment'));
+  assert.ok(stepIndex('schema-guard') < stepIndex('Update the existing Booking Web App deployment'));
 });
 
-test('scope=admin-only updates and verifies Booking Admin only; Public steps are full-only', () => {
-  for (const needle of ['Update the existing Booking Web App deployment', 'deploy-booking-gas-target.sh public verify', 'schema-guard']) {
-    assert.match(deploySteps[stepIndex(needle)], /\n        if: inputs\.scope == 'full'\n/, needle);
+const ADMIN_IF = /\n        if: inputs\.scope == 'full' \|\| inputs\.scope == 'admin-only'\n/;
+const PUBLIC_IF = /\n        if: inputs\.scope == 'full' \|\| inputs\.scope == 'public-only'\n/;
+test('Admin steps run for full|admin-only, Public steps for full|public-only; every secret-bearing step is gated to its target', () => {
+  for (const needle of ['admin preflight', 'Update the existing Booking Admin deployment', 'deploy-booking-gas-target.sh admin verify']) {
+    assert.match(deploySteps[stepIndex(needle)], ADMIN_IF, needle);
   }
-  for (const needle of ['Update the existing Booking Admin deployment', 'deploy-booking-gas-target.sh admin verify']) {
-    assert.doesNotMatch(deploySteps[stepIndex(needle)], /\bif: /, needle + ' runs for both scopes');
+  for (const needle of ['public preflight', 'schema-guard', 'Update the existing Booking Web App deployment', 'deploy-booking-gas-target.sh public verify']) {
+    assert.match(deploySteps[stepIndex(needle)], PUBLIC_IF, needle);
   }
-  const publicRefs = deploySteps.filter((x) => /PUBLIC_|Web App/.test(x.split(/\n\s+run:/)[0]) && !x.startsWith('name: Next step') && !x.startsWith('name: Validate scope'));
-  assert.ok(publicRefs.length >= 3);
-  for (const x of publicRefs) assert.match(x, /\n        if: inputs\.scope == 'full'\n/, x.split('\n')[0]);
-  const next = deploySteps[stepIndex('Next step after admin-only')];
-  assert.match(next, /if: inputs\.scope == 'admin-only'/);
-  assert.match(deploySteps[stepIndex('Validate scope')], /scope must be full or admin-only/);
+  for (const x of deploySteps.filter((y) => /secrets\.(CLASPRC_JSON|BOOKING_ADMIN_)/.test(y))) assert.match(x, ADMIN_IF, x.split('\n')[0]);
+  for (const x of deploySteps.filter((y) => /secrets\.BOOKING_PUBLIC_/.test(y))) assert.match(x, PUBLIC_IF, x.split('\n')[0]);
+  assert.match(deploySteps[stepIndex('Validate scope')], /booking-gas-deploy-plan\.js approved/);
+  assert.match(deploySteps[stepIndex('Completion summary')], /booking-gas-deploy-plan\.js done/);
 });
 
 test('inputs are passed through env (never interpolated into shell) and the checkout has full history for the schema diff', () => {
@@ -121,19 +125,14 @@ test('no step can be skipped past a failure: no continue-on-error, failure()/alw
 
 test('Admin failure never reaches Public: Public is a later step of the same fail-fast job', () => {
   assert.ok(stepIndex('Update the existing Booking Admin deployment') < stepIndex('Update the existing Booking Web App deployment'));
-  const publicStep = deploySteps[stepIndex('Update the existing Booking Web App deployment')];
-  assert.match(publicStep, /Booking Admin is updated to the current main commit\./);
-  assert.match(publicStep, /exit 1/);
-  assert.doesNotMatch(workflow, /NOT updated|was not updated/);
-});
-
-test('failure messages distinguish "update did not complete" from "applied but verification failed" via the marker file', () => {
-  for (const target of ['admin', 'public']) {
-    const step = deploySteps[stepIndex(target === 'admin' ? 'Update the existing Booking Admin deployment' : 'Update the existing Booking Web App deployment')];
-    assert.match(step, new RegExp('-f "\\$RUNNER_TEMP/booking-gas-' + target + '-update-applied"'));
-    assert.match(step, /was applied but its verification failed/);
-    assert.match(step, /did not complete/);
+  for (const [needle, stage] of [['Update the existing Booking Admin deployment', 'UPDATE_ADMIN'], ['Update the existing Booking Web App deployment', 'UPDATE_PUBLIC'],
+    ['admin preflight', 'PREFLIGHT_ADMIN'], ['public preflight', 'PREFLIGHT_PUBLIC'], ['schema-guard', 'SCHEMA_GUARD'],
+    ['deploy-booking-gas-target.sh admin verify', 'VERIFY_ADMIN'], ['deploy-booking-gas-target.sh public verify', 'VERIFY_PUBLIC'],
+    [ISOLATED_TESTS, 'TEST'], [ISOLATED_TESTS, 'TEST_ISOLATION']]) {
+    const step = deploySteps[stepIndex(needle)];
+    assert.match(step, new RegExp(`booking-gas-deploy-plan\\.js stop ${stage}\n            exit 1\n`), needle);
   }
+  assert.doesNotMatch(workflow, /NOT updated|was not updated/);
 });
 
 test('no Sheets API / service-account / Spreadsheet secrets or WIF/OIDC remain in the production workflow or deploy script', () => {
@@ -468,7 +467,7 @@ function commit(dir, files, message) {
   git(dir, 'commit', '-q', '--allow-empty', '-m', message);
   return git(dir, 'rev-parse', 'HEAD');
 }
-function runGuard({ setup, describe, schemaMigrated, deploymentLine }) {
+function runGuard({ setup, describe, schemaMigrated, deploymentLine, scope = 'full' }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'booking-guard-'));
   try {
     const repo = path.join(dir, 'repo');
@@ -493,6 +492,7 @@ case "$1" in list-deployments) printf '%s\\n' "$MOCK_LIST" ;; *) exit 99 ;; esac
       ADMIN_SCRIPT_ID: 'admin-script-dummy', ADMIN_DEPLOYMENT_ID: 'admin-deployment-dummy',
       MOCK_CALLS: calls, MOCK_LIST: line, SCHEMA_MIGRATED: schemaMigrated === undefined ? 'false' : schemaMigrated
     };
+    if (scope === null) delete env.SCOPE; else env.SCOPE = scope;
     const result = spawnSync('bash', [deployScript, 'public', 'schema-guard'], { cwd: dir, env, encoding: 'utf8' });
     const invoked = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n') : [];
     assert.doesNotMatch(result.stdout + result.stderr, /script-dummy|deployment-dummy|token-dummy/);
@@ -585,14 +585,16 @@ test('schema guard extracts only the exact Public ID row when other rows contain
 });
 
 /* ---- Issue #804: 全対象の認証・配布物preflight（最初の書込み前・読取りのみ） ---- */
-test('preflight steps run after approval and before the first write; admin-only skips Public', () => {
+test('preflight steps run after approval and tests, before the first write; each scope skips the other target', () => {
   const adminPre = stepIndex('deploy-booking-gas-target.sh admin preflight');
   const publicPre = stepIndex('deploy-booking-gas-target.sh public preflight');
   const adminUpdate = stepIndex('Update the existing Booking Admin deployment');
   assert.ok(adminPre > 0 && publicPre > adminPre && publicPre < adminUpdate, [adminPre, publicPre, adminUpdate].join());
   assert.ok(stepIndex('schema-guard') > publicPre, 'schema guard follows the preflight');
-  assert.doesNotMatch(deploySteps[adminPre], /\bif: /);
-  assert.match(deploySteps[publicPre], /\n        if: inputs\.scope == 'full'\n/);
+  assert.match(deploySteps[adminPre], ADMIN_IF);
+  assert.match(deploySteps[publicPre], PUBLIC_IF);
+  assert.ok(stepIndex(ISOLATED_TESTS) < adminPre);
+  assert.ok(publicPre < stepIndex('Update the existing Booking Web App deployment'));
   assert.doesNotMatch(deploySteps[adminPre], /PUBLIC_/);
   assert.doesNotMatch(deploySteps[publicPre], /ADMIN_|[^_]CLASPRC_JSON/);
 });
@@ -851,4 +853,262 @@ test('D1a: the schema decision uses the published Public row (not the editable H
   // an Admin row that already shows the current SHA never stands in for the published Public version
   const adminOnly = runGuard({ setup: changed, deploymentLine: ({ current }) => `- admin-deployment-dummy @9 - main ${current}` });
   assert.equal(adminOnly.status, 1);
+});
+
+/* ---- Issue #874: 承認をテスト前へ移動・public-only追加 ---- */
+const planScript = path.join(workspace, 'scripts/booking-gas-deploy-plan.js');
+const SHA874 = 'abc123def456abc123def456abc123def456abcd';
+
+// workflowの `if: inputs.scope == 'a' || inputs.scope == 'b'` だけを解釈する最小の評価器（それ以外の形は失敗させる）。
+function stepRuns(step, scope) {
+  const m = step.match(/\n        if: (.+)\n/);
+  if (!m) return true;
+  const allowed = m[1].split(' || ').map((part) => {
+    const x = part.match(/^inputs\.scope == '([a-z-]+)'$/);
+    assert.ok(x, 'unsupported if: ' + m[1]);
+    return x[1];
+  });
+  return allowed.includes(scope);
+}
+const stepName = (step) => step.split('\n')[0].replace(/^name: /, '');
+function runningSteps(scope) { return deploySteps.filter((s) => stepRuns(s, scope)).map(stepName); }
+
+test('#874: the light validate job has no secrets and only checks inputs; approval (deploy job start) comes before the heavy tests', () => {
+  const v = steps(jobs.validate);
+  assert.match(jobs.validate, /\n    if: github\.ref == 'refs\/heads\/main'\n/);
+  assert.doesNotMatch(jobs.validate, /needs:|environment:|secrets\.|ruby|npm ci|npm test|clasp|run-booking-tests/);
+  assert.match(v[v.length - 1], /booking-gas-deploy-plan\.js plan/);
+  assert.match(v[v.length - 1], /SCOPE: \$\{\{ inputs\.scope \}\}/);
+  assert.match(v[v.length - 1], /SCHEMA_MIGRATED: \$\{\{ inputs\.schema_migrated \}\}/);
+  // テストはEnvironment job（承認後）の中で、最初にSecretを受け取るstepより前に走る。
+  const testStep = stepIndex(ISOLATED_TESTS);
+  const firstSecret = deploySteps.findIndex((s) => s.includes('secrets.'));
+  assert.ok(testStep > stepIndex('Validate scope') && testStep < firstSecret, [testStep, firstSecret].join());
+  assert.ok(stepIndex('npm install --global @google/clasp') > testStep, 'clasp is installed after the tests');
+  for (const s of deploySteps.slice(0, firstSecret)) assert.doesNotMatch(s, /secrets\.|clasprc/i, stepName(s));
+});
+
+test('#874 review: tests run isolated (separate disposable user, env -i, verified teardown) and no host step touches the workspace first', () => {
+  const t = deploySteps[stepIndex(ISOLATED_TESTS)];
+  assert.doesNotMatch(t, /secrets\./);
+  assert.doesNotMatch(t, /\n        if: /, 'tests run for every scope');
+  assert.match(t, /if \[\[ "\$status" -eq 3 \]\]; then\n            node scripts\/booking-gas-deploy-plan\.js stop TEST_ISOLATION\n            exit 1/);
+  assert.doesNotMatch(deploy, /npm test|npm ci|bundler-cache/, 'no test/dependency code runs as the runner user');
+  assert.match(deploySteps[0], /persist-credentials: false/, 'no GitHub token is left in .git/config for the copied repository');
+  const script = fs.readFileSync(path.join(workspace, 'scripts/run-booking-tests-isolated.sh'), 'utf8');
+  assert.match(script, /^set -euo pipefail$/m);
+  assert.match(script, /useradd --create-home --home-dir "\$test_home" --shell \/bin\/bash --user-group "\$test_user"\n/, 'no extra groups (sudo/docker/adm)');
+  assert.doesNotMatch(script, /usermod -aG|--groups|-G /);
+  assert.match(script, /sudo -n unshare --mount --pid --fork --mount-proc --propagation private \\/, 'own mount and PID namespaces');
+  assert.match(script, /mount -o remount,bind,ro "\$mp" \|\| exit 97/, 'every host mount is read-only for the tests');
+  assert.match(script, /mount -t tmpfs -o nosuid,nodev,mode=1777 tmpfs "\$t"/, 'private tmp areas');
+  assert.match(script, /for t in \/tmp \/var\/tmp \/dev\/shm; do/);
+  assert.match(script, /setpriv --reuid="\$uid" --regid="\$gid" --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all/);
+  assert.match(script, /\n  env -i HOME="\$test_home" PATH="\$PATH"/, 'empty environment: no GITHUB_*/ACTIONS_* tokens');
+  assert.match(script, /"\$status" -eq 97[\s\S]{0,120}teardown_failed=1/, 'a namespace setup failure is an isolation failure (exit 3)');
+  assert.doesNotMatch(script, /tee -a|>> *"?\/etc|cron\.deny"? *$|crontab -r/m, 'never changes host cron/at or other /etc files');
+  assert.doesNotMatch(script.slice(script.indexOf('teardown_failed=0'), script.indexOf('finish() {')), /\|\| true/, 'teardown never swallows a failure');
+  assert.match(script, /SCAN_FAILED: the filesystem scan for files of the isolated user did not complete/);
+  assert.match(script, /SCAN_FAILED: the re-scan of the shared temp areas did not complete/);
+  assert.match(script, /SHARED_TEMP_CLEANUP_FAILED/);
+  assert.match(script, /if out="\$\(sudo -n find "\$@" [^\n]*-print 2>\/dev\/null\)"; then/, 'a scan counts only when find exits 0');
+  assert.match(script, /for flag in -U -u; do[\s\S]{0,80}sudo -n pkill -KILL "\$flag" "\$uid"/);
+  assert.match(script, /allowed_roots=\("\$test_home" \/tmp \/var\/tmp \/dev\/shm\)/);
+  assert.match(script, /status --porcelain --untracked-files=all --ignored/);
+  assert.match(script, /ISOLATION_NOT_CONFIRMED[^\n]*\n\s+exit 3/);
+  assert.match(script, /trap finish EXIT/);
+  assert.match(script, /npm ci --ignore-scripts/);
+});
+
+test('#874 review: PR CI proves the isolation with a hostile probe, a canary escape (exit 3) and the real test command', () => {
+  const ci = fs.readFileSync(path.join(workflowDir, 'booking-pr-tests.yml'), 'utf8');
+  const job = ci.slice(ci.indexOf('\n  booking-test-isolation:\n'));
+  assert.ok(job.length > 30);
+  assert.match(job, /persist-credentials: false/);
+  assert.match(job, /run-booking-tests-isolated\.sh probe scripts\/booking-test-isolation-probe\.sh\n/);
+  assert.match(job, /pgrep -f 'sleep 600\[78\]'/);
+  assert.match(job, /test "\$status" -eq 3/);
+  assert.match(job, /BOOKING_ISOLATION_CANARY=\/srv\/booking-isolation-canary/);
+  assert.match(job, /sudo install -o "\$u" \/dev\/null \/srv\/booking-isolation-inject\/escape/, 'teardown detection is exercised from outside the namespace');
+  assert.match(job, /pgrep -f 'sleep 6009'/);
+  for (const [pattern, code] of [["'^-n find / '", 'SCAN_FAILED: the filesystem scan'], ["'^-n find /tmp /var/tmp /dev/shm '", 'SCAN_FAILED: the re-scan'],
+    ["'^-n find /var/tmp -xdev -depth'", 'SHARED_TEMP_CLEANUP_FAILED']]) {
+    assert.ok(job.includes(`check ${pattern} '${code}`), pattern);
+  }
+  assert.match(job, /\/etc\/cron\.deny \/etc\/at\.deny/);
+  assert.match(job, /diff "\$RUNNER_TEMP\/host-state-before\.txt" "\$RUNNER_TEMP\/host-state-after\.txt"/);
+  assert.match(job, /done \| diff "\$RUNNER_TEMP\/host-state-before\.txt" -/);
+  assert.match(job, /\n          bash scripts\/run-booking-tests-isolated\.sh repository-tests\n/);
+  const probe = fs.readFileSync(path.join(workspace, 'scripts/booking-test-isolation-probe.sh'), 'utf8');
+  for (const target of ['workspace', 'runner-temp', 'node-bin', 'npm-global-prefix', 'usr-local-bin', 'canary', 'world-writable-file', 'root-filesystem',
+    'docker-socket', 'docker-api', 'sudo', 'crontab', 'environ-of-other-process', 'inherited-github-env']) {
+    assert.ok(probe.includes(target), target);
+  }
+  assert.match(probe, /setsid nohup sleep 6007/);
+  // the probe is CI-only: the production workflow never runs it
+  assert.doesNotMatch(workflow, /isolation-probe|BOOKING_ISOLATION_CANARY/);
+});
+
+test('#874: per-scope step plan — only the selected targets are read, updated and verified', () => {
+  const common = ['Check out the approved main commit (full history for the schema diff guard)', 'Set up Node.js', 'Validate scope',
+    'Set up Ruby (no bundler cache in the workspace)', 'Run repository tests (isolated user, no secrets)', 'Install pinned clasp'];
+  const A = { pre: 'Preflight (Booking Admin credentials and deployment, read-only)', up: 'Update the existing Booking Admin deployment', check: 'Post-deploy check (Booking Admin deployment)' };
+  const P = { pre: 'Preflight (Booking Web App credentials and deployment, read-only)', guard: 'Schema diff guard (Booking Web App previous production commit)',
+    up: 'Update the existing Booking Web App deployment', check: 'Post-deploy check (Booking Web App deployment)' };
+  const done = 'Completion summary';
+  assert.deepEqual(runningSteps('full'), [...common, A.pre, P.pre, P.guard, A.up, P.up, A.check, P.check, done]);
+  assert.deepEqual(runningSteps('admin-only'), [...common, A.pre, A.up, A.check, done]);
+  assert.deepEqual(runningSteps('public-only'), [...common, P.pre, P.guard, P.up, P.check, done]);
+  // 対象外のSecretは要求しない（stepが走らない＝その値は参照されない）。
+  const secretsFor = (scope) => deploySteps.filter((s) => stepRuns(s, scope)).join('\n');
+  assert.doesNotMatch(secretsFor('public-only'), /secrets\.(CLASPRC_JSON|BOOKING_ADMIN_)/);
+  assert.doesNotMatch(secretsFor('admin-only'), /secrets\.BOOKING_PUBLIC_/);
+  assert.doesNotMatch(secretsFor('public-only'), /deploy-booking-gas-target\.sh admin/);
+  assert.doesNotMatch(secretsFor('admin-only'), /deploy-booking-gas-target\.sh public/);
+  // full: Admin更新は両対象のpreflightとschema guardがすべて終わった後。
+  const full = runningSteps('full');
+  assert.ok(full.indexOf(A.up) > Math.max(full.indexOf(A.pre), full.indexOf(P.pre), full.indexOf(P.guard)));
+});
+
+function runPlan(args, overrides = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'booking-plan-'));
+  try {
+    const summary = path.join(dir, 'summary.md');
+    for (const t of overrides.markers || []) fs.writeFileSync(path.join(dir, `booking-gas-${t}-update-applied`), '');
+    const env = { ...process.env, GITHUB_STEP_SUMMARY: summary, RUNNER_TEMP: dir, GITHUB_REF: 'refs/heads/main', GITHUB_SHA: SHA874,
+      SCOPE: 'full', SCHEMA_MIGRATED: 'false', ...overrides.env };
+    for (const [k, v] of Object.entries(env)) if (v === undefined) delete env[k];
+    const r = spawnSync(process.execPath, [planScript, ...args], { env, encoding: 'utf8' });
+    const text = fs.existsSync(summary) ? fs.readFileSync(summary, 'utf8') : '';
+    assert.doesNotMatch(r.stdout + r.stderr + text, /[0-9a-f]{40}/, 'never prints a full SHA');
+    return { ...r, summary: text };
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+test('#874 plan: the three scopes are accepted and the summary names scope, short SHA, targets and the untouched target', () => {
+  const expect = {
+    full: [/Booking Admin: 更新対象/, /Booking Web App（Public）: 更新対象/],
+    'admin-only': [/Booking Admin: 更新対象/, /Booking Web App（Public）: 対象外/],
+    'public-only': [/Booking Admin: 対象外/, /Booking Web App（Public）: 更新対象/]
+  };
+  for (const [scope, patterns] of Object.entries(expect)) {
+    for (const command of ['plan', 'approved']) {
+      const r = runPlan([command], { env: { SCOPE: scope } });
+      assert.equal(r.status, 0, r.stderr);
+      if (command === 'plan') {
+        assert.ok(r.summary.includes('scope: `' + scope + '`'));
+        assert.ok(r.summary.includes('`' + SHA874.slice(0, 12) + '`'));
+        for (const p of patterns) assert.match(r.summary, p);
+        assert.match(r.summary, /承認はテスト成功を意味しません/);
+      } else {
+        assert.match(r.summary, /承認: deploy jobが `booking-production` Environmentで開始/);
+        assert.match(r.summary, /テスト結果ではありません/);
+      }
+    }
+  }
+});
+
+test('#874 plan: invalid inputs stop before approval and before any write', () => {
+  const cases = [
+    [{ SCOPE: 'webhook' }, /scope must be full, admin-only or public-only/],
+    [{ SCOPE: '' }, /scope must be/],
+    [{ SCOPE: undefined }, /scope must be/],
+    [{ SCOPE: 'public-only', SCHEMA_MIGRATED: 'true' }, /schema_migrated=true cannot be combined with scope=public-only/],
+    [{ SCHEMA_MIGRATED: 'yes' }, /schema_migrated must be true or false/],
+    [{ GITHUB_REF: 'refs/heads/feature' }, /only from main/],
+    [{ GITHUB_SHA: 'abc123' }, /GITHUB_SHA is not a 40-digit commit SHA/]
+  ];
+  for (const command of ['plan', 'approved']) {
+    for (const [env, pattern] of cases) {
+      const r = runPlan([command], { env });
+      assert.equal(r.status, 1, JSON.stringify(env));
+      assert.match(r.stderr, pattern);
+      assert.equal(r.summary, '');
+    }
+  }
+  // admin-only/full with schema_migrated=true keeps the existing two-step procedure
+  for (const scope of ['full', 'admin-only']) assert.equal(runPlan(['plan'], { env: { SCOPE: scope, SCHEMA_MIGRATED: 'true' } }).status, 0);
+  assert.equal(runPlan(['bogus']).status, 1);
+});
+
+test('#874 stop: failures before the first write are reported as 更新前停止 with zero writes', () => {
+  for (const [scope, stage] of [['full', 'TEST'], ['public-only', 'TEST'], ['full', 'TEST_ISOLATION'], ['admin-only', 'PREFLIGHT_ADMIN'], ['full', 'PREFLIGHT_PUBLIC'],
+    ['public-only', 'SCHEMA_GUARD'], ['full', 'SCHEMA_GUARD']]) {
+    const r = runPlan(['stop', stage], { env: { SCOPE: scope } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.summary, /更新前停止: GASへの書込みは0回/);
+    assert.doesNotMatch(r.summary, /UNKNOWN|部分適用/);
+    assert.match(r.stderr, /Stopped before any update/);
+  }
+});
+
+test('#874 stop: failures after a write are 部分適用/UNKNOWN, name the untouched target and forbid blind re-runs/rollback', () => {
+  const cases = [
+    ['full', 'UPDATE_ADMIN', [], /UNKNOWN: Booking Admin — 更新が完了しませんでした/, /Booking Web App（Public）: 未着手（変更なし）/, /Booking Admin update did not complete; the Booking Web App was not started\./],
+    ['full', 'UPDATE_ADMIN', ['admin'], /UNKNOWN: Booking Admin — 更新は適用済み・反映確認は未完了/, /未着手/, /was applied but its verification failed; the Booking Web App was not started\./],
+    ['admin-only', 'UPDATE_ADMIN', ['admin'], /UNKNOWN: Booking Admin/, /Booking Web App（Public）: 対象外（変更なし）/, /out of scope \(unchanged\)/],
+    ['full', 'UPDATE_PUBLIC', ['admin', 'public'], /部分適用\/UNKNOWN: Booking Web App（Public） — 更新は適用済み/, /Booking Admin: 今回のmainへ更新済み/, /^Booking Admin is updated to the current main commit\. The Booking Web App deployment update was applied but its verification failed/],
+    ['full', 'UPDATE_PUBLIC', ['admin'], /部分適用\/UNKNOWN: Booking Web App（Public） — 更新が完了しませんでした/, /今回のmainへ更新済み/, /The Booking Web App update did not complete/],
+    ['public-only', 'UPDATE_PUBLIC', ['public'], /❌ UNKNOWN: Booking Web App（Public）/, /Booking Admin: 対象外（変更なし）/, /^Booking Admin is out of scope \(unchanged\)\. The Booking Web App deployment update was applied/],
+    ['public-only', 'VERIFY_PUBLIC', ['public'], /事後確認未完了\/UNKNOWN: Booking Web App（Public） — このrunで更新は成功/, /無条件の再実行・自動rollbackはしません/, /Final confirmation is NOT complete/],
+    ['admin-only', 'VERIFY_ADMIN', [], /事後確認未完了\/UNKNOWN: Booking Admin — 今回のmainを確認できませんでした/, /読取りで確認/, /do not assume a rollback/]
+  ];
+  for (const [scope, stage, markers, headline, other, stderr] of cases) {
+    const r = runPlan(['stop', stage], { env: { SCOPE: scope }, markers });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.summary, headline, `${scope} ${stage}`);
+    assert.match(r.summary, other, `${scope} ${stage}`);
+    assert.match(r.summary, /無条件の再実行・自動rollbackはしません/);
+    assert.match(r.stderr, stderr, `${scope} ${stage}`);
+    assert.doesNotMatch(r.summary, /更新前停止/);
+  }
+  // a stage for a target outside the scope is a wiring error, never a silent success
+  assert.equal(runPlan(['stop', 'UPDATE_ADMIN'], { env: { SCOPE: 'public-only' } }).status, 1);
+  assert.equal(runPlan(['stop', 'VERIFY_PUBLIC'], { env: { SCOPE: 'admin-only' } }).status, 1);
+});
+
+test('#874 done: the completion line lists updated and untouched targets per scope', () => {
+  const full = runPlan(['done']);
+  assert.match(full.summary, /完了（scope=`full`）: 更新・反映確認OK = Booking Admin、Booking Web App（Public）\n/);
+  const adminOnly = runPlan(['done'], { env: { SCOPE: 'admin-only' } });
+  assert.match(adminOnly.summary, /更新していない対象 = Booking Web App（Public）（変更なし）/);
+  assert.match(adminOnly.summary, /migrateBookingsSchema/);
+  assert.match(adminOnly.stdout, /Run migrateBookingsSchema in the Booking Admin Apps Script editor, then run this workflow with scope=full and schema_migrated=true\./);
+  const publicOnly = runPlan(['done'], { env: { SCOPE: 'public-only' } });
+  assert.match(publicOnly.summary, /更新・反映確認OK = Booking Web App（Public） ／ 更新していない対象 = Booking Admin（変更なし）/);
+});
+
+test('#874 schema guard (public-only): unchanged schema passes; a changed schema or an unknown baseline stops even with schema_migrated=true', () => {
+  const ok = runGuard({ setup: unchanged, scope: 'public-only' });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /schema is unchanged/);
+  assert.deepEqual(ok.invoked, ['list-deployments']);
+  for (const schemaMigrated of ['false', 'true', '']) {
+    const changedRun = runGuard({ setup: changed, scope: 'public-only', schemaMigrated });
+    assert.equal(changedRun.status, 1, `changed schema, schema_migrated=${schemaMigrated}`);
+    assert.match(changedRun.stderr, /^PUBLIC_ONLY_SCHEMA_CHANGED: /);
+    assert.match(changedRun.stderr, /scope=admin-only, then migrateBookingsSchema .* then scope=full with schema_migrated=true/);
+    assert.doesNotMatch(changedRun.stderr, /[0-9a-f]{40}/);
+    const unknown = runGuard({ setup: unchanged, scope: 'public-only', schemaMigrated, deploymentLine: () => '- public-deployment-dummy @5 - manual deploy' });
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /^PREVIOUS_SHA_UNKNOWN: .*scope=public-only cannot rule out a Bookings schema change/);
+  }
+  // first bootstrap (schema file absent at the previous SHA) also stops for public-only
+  const bootstrap = runGuard({ scope: 'public-only', schemaMigrated: 'true', setup: (repo) => ({
+    previous: commit(repo, { 'README.md': 'x' }, 'prev'), current: commit(repo, { [SCHEMA_PATH]: 'schema v1\n' }, 'cur') }) });
+  assert.equal(bootstrap.status, 1);
+  // the row-identification fail-closed checks are unchanged for public-only
+  const dup = runGuard({ setup: unchanged, scope: 'public-only',
+    deploymentLine: ({ previous }) => `- public-deployment-dummy @5 - main ${previous}\n- public-deployment-dummy @4 - main ${previous}` });
+  assert.equal(dup.status, 1);
+});
+
+test('#874 schema guard: a missing or unknown SCOPE stops before any clasp call; admin-only never runs the guard', () => {
+  for (const scope of [null, '', 'admin-only', 'webhook']) {
+    const r = runGuard({ setup: unchanged, scope });
+    assert.equal(r.status, 1, String(scope));
+    assert.match(r.stderr, /schema-guard requires SCOPE=full or SCOPE=public-only/);
+    assert.deepEqual(r.invoked, []);
+  }
+  assert.equal(stepRuns(deploySteps[stepIndex('schema-guard')], 'admin-only'), false);
 });

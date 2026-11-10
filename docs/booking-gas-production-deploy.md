@@ -4,9 +4,12 @@ GitHub `main`を唯一のソースとして、既存のBooking GASプロジェ�
 `clasp`で更新する。新しいGASプロジェクトや新しいデプロイは作成しない。
 
 対象は次の2プロジェクトで、通常は1回のworkflow実行（承認1回）で`Admin → Public →
-post-check`を同一jobで順に実行する（`scope=full`）。Bookings schema変更時だけ、
+post-check`を同一jobで順に実行する（`scope=full`）。公開予約画面（Public）だけの変更は
+`scope=public-only`、管理側だけの変更は`scope=admin-only`で、選んだ対象だけを更新できる（Issue #874）。
+Bookings schema変更時だけ、
 `scope=admin-only` → 管理者がApps Scriptエディタで`migrateBookingsSchema`を実行 →
 `scope=full`＋`schema_migrated=true`の二段階にする（Issue #673。承認は2回）。
+承認は入力の簡易検査の直後に求められ、承認後にテスト → preflight → 更新 → post-checkが続けて進む（Issue #874）。
 正規手順は[`gas/booking/README.md`](../gas/booking/README.md)冒頭に記載する。
 
 - `public`: Booking Web App（利用者向け。既存`/exec` URLを維持）
@@ -49,10 +52,15 @@ manifestは既存プロジェクトから取得して維持する。ただしBoo
 2. 更新の範囲を選びます。
    - `full`（全体更新・既定）: Booking AdminとBooking Web Appの両方を更新します。
    - `admin-only`（管理用だけ更新）: Booking Adminだけを更新して止まります。予約データの列を変えるときに使います（下の「Bookings schema変更時」）。
-3. テストが通ると `booking-production` の承認待ちになります。更新内容を確認して、**承認します**。
-4. 承認後、最初に**更新に必要な接続情報と設定を、更新する対象すべてについて確認**します（読み取りだけで、何も書き換えません）。
-   `full` ではAdminとWeb Appの両方、`admin-only` ではAdminだけを確認します。
-5. 確認が通ったら、更新を始めます。通らなければ何も更新せずに止まります。
+   - `public-only`（公開予約画面だけ更新）: Booking Web Appだけを更新します。Adminには読取りも書込みもしません。
+     公開画面・Publicのコードだけの変更で、Adminの更新が要らないと判断できるときに使います。
+     **Admin側の処理や公開APIの互換性に関わる変更、`gas/booking/shared/` の変更を含むときは `full` を選んでください。**
+     予約データの列の変更（`BookingsSchema.gs`）がある場合は、`schema_migrated` に関係なく安全のため止まります。
+3. 入力の簡易検査（数秒）のあと、すぐに `booking-production` の承認待ちになります（Required reviewersを設定している場合）。実行画面のSummaryに出る「範囲・対象・対象外」を確認して、**承認します**。
+   **承認はテストの合格を意味しません。** テストは承認の後に同じ実行の中で走ります。
+4. 承認後は、もう一度承認を求められることなく、テスト → **更新に必要な接続情報と設定の確認**（読み取りだけで、何も書き換えません）→ 更新 → 反映確認 と続けて進みます。
+   確認するのは更新する対象だけです（`full` はAdminとWeb Appの両方、`admin-only` はAdminだけ、`public-only` はWeb Appだけ）。
+5. テストや確認が通らなければ、**何も更新せずに止まります**（Summaryに「更新前停止」と出ます）。
 
 ### 結果の見方（SHAの確認は不要です）
 
@@ -60,6 +68,10 @@ manifestは既存プロジェクトから取得して維持する。ただしBoo
 
 - `Booking Admin: 反映確認OK` / `Booking Web App: 反映確認OK` … 更新先が今回の内容になったことを確認できました。
 - `Booking Admin: 未確認（stage=… code=…）` … 更新は適用済みの可能性がありますが、最終確認ができていません。**再実行する前に**、更新先（Apps Scriptの「デプロイを管理」）の状態を確認してください。自動で再実行・巻き戻しはしません。
+- Summaryの先頭には、`scope`・対象mainの短縮SHA・**更新対象と対象外**（対象外は読取りも更新もしない＝skipped）が出ます。止まったときは、次のどれかが出ます。
+  - `更新前停止: GASへの書込みは0回` … テスト・接続確認・schema確認のどこかで止まりました。何も変わっていません。原因を直して新しい実行で起動します。
+  - `部分適用/UNKNOWN` / `UNKNOWN` … 更新の途中で止まりました。どちらが更新済みで、どちらが未着手・対象外かが併記されます。**同じ実行をそのまま再実行せず**、更新先の状態を読取りで確認してから判断します。
+  - `事後確認未完了/UNKNOWN` … 更新後の反映確認ができませんでした。上の「未確認」と同じ扱いです。
 - 普通の更新では `scope` は `full`、`schema_migrated` はチェックなしのままで実行できます。`schema_migrated` はSHAのための入力ではなく、予約シートの列を変える変更（`BookingsSchema.gs` の実変更）があるときだけ、「Apps Scriptで`migrateBookingsSchema`を実行して成功を確認した」ことを運営者が伝えるためのものです。自動でONにはなりません。
 
 ### 初めての更新だけ、`schema_migrated` が必要になることがあります
@@ -161,10 +173,59 @@ Spreadsheet ID Secret・WIF/OIDCは使わず、`booking-production`に登録す�
 
 1. GitHubの **Actions > Deploy Booking GAS to production > Run workflow** を開く。
 2. Branchは`main`、`scope=full`（既定）を選ぶ。`schema_migrated`は指定しない。
-3. テスト成功後、`booking-production`の承認待ちになる。対象SHAを確認して**1回だけ**承認する。
-4. 承認後、同一job内で`preflight（Admin→Public、読取りのみ） → schema差分ガード → Booking Admin → Booking Web App → post-check`を順に実行する。
-   失敗した時点で後続は実行しない。Admin成功・Web App失敗の場合はworkflowが失敗し、Adminだけ新mainである旨が
-   ログに出る。原因を解消して同じworkflowを再実行する（自動rollbackはない）。
+3. 入力の簡易検査（`validate` job。Secretsなし）の直後に`booking-production`の承認待ちになる。Summaryの範囲・対象を確認して**1回だけ**承認する。
+4. 承認後、同一job内で`テスト → preflight（Admin→Public、読取りのみ） → schema差分ガード → Booking Admin → Booking Web App → post-check`を順に実行する。
+   失敗した時点で後続は実行しない。テスト・preflight・schema差分ガードの失敗は書込み0回（更新前停止）。
+   Admin成功・Web App失敗の場合はworkflowが失敗し、Summaryに`部分適用/UNKNOWN`とAdminだけ新mainである旨が出る。
+   Deploymentの状態を読取りで確認し、原因を解消してから新しい実行で起動する（無条件の再実行・自動rollbackはしない）。
+
+### 3つのscope（Issue #874）
+
+| scope | 承認後に実行するもの | 使うSecrets | 対象外（読取り・書込みとも0回） |
+| --- | --- | --- | --- |
+| `full`（既定） | テスト → Admin/Public preflight → schema guard → Admin更新 → Public更新 → 双方post-check | Admin用・Public用 | なし |
+| `admin-only` | テスト → Admin preflight → Admin更新 → Admin post-check | Admin用のみ | Booking Web App |
+| `public-only` | テスト → Public preflight → schema guard → Public更新 → Public post-check | Public用のみ | Booking Admin |
+
+- `public-only`は、公開UI・Publicのコードだけの変更など、Admin更新が不要と判断できる変更向け。Admin処理・公開APIの互換性に関わる変更や
+  `gas/booking/shared/`の変更は`full`を推奨する（workflowはここを自動判定しない）。
+- `public-only`のschema guardは、Publicの前回本番SHAと今回SHAの間で`BookingsSchema.gs`に差分がある場合、または前回SHAが不明な場合、
+  **`schema_migrated`に関係なく停止する**（`PUBLIC_ONLY_SCHEMA_CHANGED` / `PREVIOUS_SHA_UNKNOWN`）。`public-only`はAdminを読まないため、
+  Adminの先行更新と`migrateBookingsSchema`の完了をここで確認できず、自己申告によるbypassを認めないため。schema変更は下の二段階手順で行う。
+- `public-only`と`schema_migrated=true`の組合せは、承認前の入力検査で拒否する。
+- 既存のDeployment ID・`/exec` URL、concurrency（`booking-gas-production`・途中キャンセルなし）、厳密SHA照合は3つとも同じ。
+
+### 承認の位置とテスト（Issue #874）
+
+- GitHubのEnvironment承認はjob開始時に評価される。そのため、Secretsを使わない`validate` job（main限定・入力検査とSummaryの計画表示のみ）の直後に
+  `booking-production`の`deploy` jobを開始し、承認後に同じjob内でリポジトリ全体のテスト（`npm test`）を実行する。同一runで再承認は求めない。
+- テストは後続のSecret付きstepから**プロセスとファイルシステムの両面で隔離**する（`scripts/run-booking-tests-isolated.sh`。PR #875レビュー）。
+  1. このrun専用の使い捨てOSユーザーを作る（sudo・docker・admグループなし）。ホストの設定ファイル（`/etc/cron.deny`等）は変更しない。
+     cron/atの登録は、spoolが読取り専用であることと`no_new_privs`（crontab/atのsetgidが効かない）で防ぐ。ユーザーは終了時に削除し、アカウント関連ファイルは実行前と同一に戻る。
+  2. 承認済みcommitのworkspace（`persist-credentials: false`でGitHubトークンなし）をそのユーザーのhomeへ複製する。
+  3. 専用のmount namespaceとPID namespaceの中で実行する。ホストの**全mountを読取り専用**にし（GitHub-hosted runnerでworld-writableな`/usr/local/bin`・`/opt/hostedtoolcache`も含め、既存ファイルの上書きも不可）、
+     書けるのはそのユーザーのhomeと、namespace専用のtmpfs（`/tmp`・`/var/tmp`・`/dev/shm`。終了とともに消える）だけ。
+     権限は`setpriv`でそのユーザーのUID/GIDだけ（補助グループなし）・`no_new_privs`（sudo等のsetuidで権限を得られない）・capabilityなしに落とす。
+     PID namespaceの親が終わるとnamespace内の全プロセスはkernelにより終了する。
+  4. 環境変数を空にして（`env -i`）実行する。`GITHUB_*`・`ACTIONS_*`・トークン・Secretは渡らない（この時点でSecretは存在しない）。依存は `npm ci --ignore-scripts` と `bundle install` でそのユーザーのhomeへ入る。
+  5. 終了後（成否とも）に、全プロセスをKILLして残存0を確認 → そのユーザー所有のファイルを全ファイルシステムで探索し、home・`/tmp`・`/var/tmp`・`/dev/shm`以外に1つでもあれば失敗、許可領域のものは削除 → ユーザー削除 → workspaceが承認済みcommitのまま（追跡・未追跡・ignoredとも差分なし）であることを確認する。
+  6. 後片付けの各コマンドの失敗は握りつぶさない。所有ファイルの全探索は`find`が正常終了した走査だけを有効とし（不完全な走査は最大3回までやり直し）、
+     走査・共有一時領域の削除・再走査・pkill/pgrep・ユーザー削除のどれかが失敗すれば`SCAN_FAILED`／`SHARED_TEMP_CLEANUP_FAILED`などで隔離不成立とする。
+  7. namespaceの構築やこれらの確認のどれかに失敗すれば `ISOLATION_NOT_CONFIRMED`（exit 3）で停止し、Summaryに`テスト隔離の確認`で「更新前停止」と出る。Secret付きstepへは進まない。
+- 隔離の成立はPR CI（`booking-pr-tests.yml` の `booking-test-isolation` job）で毎回検証する。悪意あるテスト／依存を模したprobe
+  （workspace・`RUNNER_TEMP`・Node/npm導入先・`/usr/local/bin`・`/etc`・ルートFS・ホスト上のworld-writableなディレクトリ（canary）と既存world-writableファイルへの書込み、
+  Docker socket、sudo、cron/at、他プロセスの環境変数読取り）がすべて拒否されること、常駐プロセスと`/tmp`等の置き土産が消えること、
+  隔離の外から隔離ユーザー所有のファイルと常駐プロセスを注入した場合に後片付けの検証がexit 3で止めること（プロセスは終了させる）、
+  走査・削除・再走査のコマンドだけを意図的に失敗させた場合にexit 3で止まること、
+  `/etc/passwd`・`group`・`shadow`・`gshadow`・`subuid`・`subgid`・`cron.deny`・`at.deny`・`cron.allow`・`at.allow`が実行前後で一致すること（存在しない場合も含む）、
+  本番と同じコマンドでリポジトリ全体のテストが隔離ユーザーとして通ることを確認する。
+  なお最初の版（ユーザー分離のみ）は、このCIでrunner上のworld-writableな`/usr/local/bin`・hostedtoolcacheへ書けることが検出されたため、読取り専用のmount namespaceを追加した。
+- 承認回数とEnvironmentの秘密境界: jobを分けると`booking-production`の承認が2回になる（Environment承認はjobごと）。そのため、jobは分けずに同じjob内のユーザー隔離とした。
+  Secretは引き続き`booking-production`のEnvironment secretsだけで、隔離テストより後のstepにだけ渡る。Environment設定・Secretsは変更しない。
+- **残余リスク**: 同じVM（カーネル）を共有するため、カーネルの脆弱性による権限昇格までは防げない（setuidは`no_new_privs`で無効）（防ぐにはjob＝VMの分離が必要で、承認2回またはEnvironment設計の変更を伴う。運営者判断）。
+  ネットワークは依存取得のため遮断しない（Secretが存在しない時点なので持ち出す対象はない）。テストの信頼範囲は「承認したmainのcommitとlockfile」。テスト範囲の削減による高速化は行っていない。
+- 承認の有無・Required reviewersの現在値はGitHub Settings依存で、このworkflowからは読めない。承認が求められない場合は
+  [#828の評価](booking-production-approval-gate-828.md)に従い、Settingsの実値を読取りで確認する（保護ルールを勝手に増減しない）。
 
 ### Bookings schema変更時・初回bootstrap
 
@@ -179,10 +240,11 @@ Spreadsheet ID Secret・WIF/OIDCは使わず、`booking-production`に登録す�
 
 ### schema差分ガード
 
-`scope=full`では、承認後・Admin更新前に、Booking Web App（Public）の既存Deployment descriptionの
+`scope=full`と`scope=public-only`では、承認後・最初の更新前に、Booking Web App（Public）の既存Deployment descriptionの
 `main <SHA>`（前回full反映のSHA。Adminは基準にしない）と今回のSHAとの間で
 `gas/booking/shared/BookingsSchema.gs`の差分を判定する。差分がある（前回SHAにファイルが無い初回bootstrapを含む）
-場合は`schema_migrated=true`がなければAdmin更新前に停止する。前回SHAを特定できない場合も停止する。
+場合、`full`は`schema_migrated=true`がなければAdmin更新前に停止し、`public-only`は`schema_migrated`に関係なくPublic更新前に停止する。
+前回SHAを特定できない場合も停止する（`full`の初回ベースラインだけ下記P1の例外）。
 そのため`actions/checkout`は`fetch-depth: 0`で全履歴を取得する。
 
 ワークフローは指定したデプロイIDが対象プロジェクトに実在することを先に確認する。
@@ -203,7 +265,7 @@ ID不在・非一意、認証／一覧取得エラーは再試行せず即時停
 更新済みmarkerがあるのにpost-checkが失敗した場合は、「更新は成功済み・最終確認は未完了」とログに出る。
 この場合は更新全体を無条件に再実行せず、まずDeploymentの実状態を読取りで確認する（Issue #684）。
 
-post-checkは、既存DeploymentのID（`full`はAdminとPublic、`admin-only`はAdminのみ）が存在し
+post-checkは、既存DeploymentのID（`full`はAdminとPublic、`admin-only`はAdminのみ、`public-only`はPublicのみ）が存在し
 descriptionに今回のmain SHAが出ていることを確認する（`Bookings`ヘッダーの照合は行わない。
 migrationは管理者が`migrateBookingsSchema`で実行し、差分ガードが実行漏れを防ぐ）。
 `list-deployments`の出力そのものはログへ出さない。本番予約作成・Stripe決済・実メール送信を伴う
@@ -260,6 +322,7 @@ list-deployments → pull → push --force → update-deployment → 更新後�
 
 - `scope=full`: Admin（`default`）とPublic（`booking-owner`）の**両方**。Publicが失敗した場合、Adminは1回も更新されない。
 - `scope=admin-only`: Adminだけ。Public用Secretsは要求しない。
+- `scope=public-only`: Publicだけ。Admin用Secretsは要求しない（Issue #874）。
 - 確認内容: 必須Secrets → clasp資格情報JSON/user → 選択GASへの`list-deployments` → 既存Deploymentの完全一致・一意性 → `pull`とmanifest → 配布物の組立て。`push`/`update-deployment`は呼ばない。
 - 失敗は `Booking preflight failed: role=<admin|public> stage=<SECRETS|CREDENTIAL|LIST|DEPLOYMENT|PULL|BUILD> code=<固定コード>. No deployment was updated.` の形式。Secret・ID・メール・clasp生出力は出さない。
 - 認証失効（`CREDENTIAL` / `LIST`）の場合は、Secretsを貼らず`booking-production`のEnvironment secretsを再登録して再実行する。
