@@ -145,7 +145,7 @@ function handleFeedbackSubmit_(payload, isTest, now) {
     lock.releaseLock();
   }
 
-  /* 通知は保存成功後・本番回答だけ。失敗しても回答は維持し notify_failed に記録する。 */
+  /* 通知は保存成功後・本番回答だけ（要確認の有無は問わない。#879）。失敗しても回答は維持し notify_failed に記録する。 */
   if (!isTest && feedbackNotifyAdmin_(validated.answers, meta) === 'failed') {
     try {
       FeedbackRepository.markNotifyFailed(meta.responseId, saved.rowNumber);
@@ -165,40 +165,86 @@ function feedbackFormatJst_(date) {
     pad(jst.getUTCHours()) + ':' + pad(jst.getUTCMinutes()) + ' JST';
 }
 
+/*
+ * 件名はブランドだけが分かる中立的な表現（#879）。問題の有無・予約情報・回答内容は件名に載せない。
+ */
 function feedbackNotificationSubject_(brand) {
-  return '【利用後アンケート】確認が必要な回答があります（' + FeedbackCore.getBrand(brand).name + '）';
+  return '【利用後アンケート】新しい回答が届きました（' + FeedbackCore.getBrand(brand).name + '）';
 }
 
-/* プレーンテキスト本文。予約者情報・トークン・Spreadsheet IDは載せない。 */
+var FEEDBACK_NOTIFY_UNANSWERED = '未回答';
+var FEEDBACK_NOTIFY_NOT_APPLICABLE = '対象外';
+
+function feedbackScaleText_(value, question) {
+  if (!(typeof value === 'number' && value >= 1 && value <= 5)) return FEEDBACK_NOTIFY_UNANSWERED;
+  return value + ' / 5（1=' + question.low + '〜5=' + question.high + '）';
+}
+
+function feedbackOptionText_(options, id) {
+  if (!id) return FEEDBACK_NOTIFY_UNANSWERED;
+  return FeedbackCore.optionLabel(options, id) || FEEDBACK_NOTIFY_UNANSWERED;
+}
+
+/*
+ * プレーンテキスト本文（#879）。全設問を設問順・日本語ラベルで省略せず並べる。
+ * 未回答の任意項目は「未回答」、Q4で「はい」以外のときの評価は「対象外」、自由記述の空欄は「記入なし」。
+ * 予約者情報・トークン・Spreadsheet IDは載せない。自由記述は本文の文字列としてだけ扱う（件名・ヘッダに入れない）。
+ */
 function feedbackBuildNotificationBody_(answers, meta, isDummy) {
+  var Q = FeedbackCore.QUESTIONS;
+  var q2 = answers.q2 || {};
+  var q3 = answers.q3 || {};
   var lines = [];
   if (isDummy) lines.push('[TEST] これは sendTestNotification による確認用のダミー通知です。回答は保存されていません。', '');
-  lines.push('利用後アンケートに、確認が必要な回答がありました。', '');
+  lines.push('利用後アンケートに新しい回答が届きました。', '');
   lines.push('ブランド: ' + FeedbackCore.getBrand(meta.brand).name);
   lines.push('受信日時: ' + feedbackFormatJst_(new Date(meta.receivedAt)));
   lines.push('回答ID: ' + meta.responseId);
-  lines.push('総合満足度: ' + answers.q1 + ' / 5');
-  var issues = FeedbackCore.issueLabels(answers);
-  lines.push('気になる点: ' + (issues.length ? issues.join('、') : '（選択なし）'));
-  var concerns = [];
-  [[FeedbackCore.Q2_ITEMS, answers.q2], [FeedbackCore.Q3_ITEMS, answers.q3]].forEach(function (pair) {
-    pair[0].forEach(function (item) {
-      var value = pair[1][item.id];
-      if (value === 'minor' || value === 'trouble') {
-        concerns.push(item.label + '（' + FeedbackCore.optionLabel(FeedbackCore.CONDITION_OPTIONS, value) + '）');
-      }
-    });
+  lines.push('');
+
+  lines.push('■ Q1 総合満足度: ' + feedbackScaleText_(answers.q1, Q.q1), '');
+
+  lines.push('■ Q2 予約・事前のご案内');
+  FeedbackCore.Q2_ITEMS.forEach(function (item) {
+    lines.push('・' + item.label + ': ' + feedbackOptionText_(FeedbackCore.CONDITION_OPTIONS, q2[item.id]));
   });
-  if (concerns.length) lines.push('予約・現地で気になった項目: ' + concerns.join('、'));
-  lines.push('', '気になった点・ご感想など:', answers.comment ? answers.comment : '（記入なし）', '');
-  lines.push('対応状況は回答Spreadsheetの status / memo 列で管理してください。');
+  lines.push('');
+
+  lines.push('■ Q3 現地でのご利用');
+  FeedbackCore.Q3_ITEMS.forEach(function (item) {
+    lines.push('・' + item.label + ': ' + feedbackOptionText_(FeedbackCore.CONDITION_OPTIONS, q3[item.id]));
+  });
+  lines.push('');
+
+  lines.push('■ Q4 スタッフの対応');
+  lines.push('・対応を受けたか: ' + feedbackOptionText_(FeedbackCore.STAFF_OPTIONS, answers.q4));
+  lines.push('・スタッフ対応の評価: ' +
+    (answers.q4 === 'yes' ? feedbackScaleText_(answers.q4_rating, Q.q4_rating) : FEEDBACK_NOTIFY_NOT_APPLICABLE));
+  lines.push('');
+
+  var issues = FeedbackCore.issueLabels(answers);
+  lines.push('■ Q5 気になった点: ' + (issues.length ? issues.join('、') : FEEDBACK_NOTIFY_UNANSWERED), '');
+
+  lines.push('■ 気になった点・ご感想など（自由記述）');
+  lines.push(answers.comment ? String(answers.comment) : '記入なし');
+  lines.push('');
+
+  lines.push('■ Q6 また利用したいか: ' + feedbackOptionText_(FeedbackCore.REUSE_OPTIONS, answers.q6), '');
+
+  /* 管理画面の初期status（#835の判定）は通知の有無と独立。問題のない回答を「要確認」と書かない。 */
+  lines.push('管理画面の初期状態: ' + (FeedbackCore.needsAttention(answers)
+    ? FeedbackCore.STATUS_OPEN + '（Q5の指摘または自由記述あり）'
+    : FeedbackCore.STATUS_NONE));
+  lines.push('対応状況は管理画面（回答Spreadsheetの status / memo 列）で管理してください。');
   return lines.join('\n') + '\n';
 }
 
-/* 戻り値: 'off' | 'not_needed' | 'sent' | 'failed' */
+/*
+ * 戻り値: 'off' | 'sent' | 'failed'
+ * #879: 要確認かどうかに関わらず、保存に成功した本番回答はすべて通知する（1件につき最大1通・再送なし）。
+ */
 function feedbackNotifyAdmin_(answers, meta) {
   try {
-    if (!FeedbackCore.needsAttention(answers)) return 'not_needed';
     var props = PropertiesService.getScriptProperties();
     if (String(props.getProperty('FEEDBACK_NOTIFY') || '').trim() !== 'on') return 'off';
     var to = String(props.getProperty('FEEDBACK_NOTIFY_EMAIL') || '').trim();
@@ -231,7 +277,17 @@ function sendTestNotification(brand) {
       if (!to) {
         result = 'skipped: notification address not configured';
       } else {
-        var answers = { q1: 3, q2: { mail_timing: 'minor' }, q3: { lighting: 'trouble' }, q4: '', q4_rating: '', q5: ['supplies', 'other'], q6: 'maybe', comment: '（ダミー）通知の確認用サンプル文です。' };
+        /* 全設問通知形式（#879）の確認用。正常・気になる・該当なし・未回答・自由記述が1通で見えるダミー。 */
+        var answers = {
+          q1: 3,
+          q2: { website: 'ok', booking: 'ok', mail_timing: 'minor' },
+          q3: { location: 'ok', lighting: 'trouble', aircon: 'na', equipment: 'ok' },
+          q4: 'yes',
+          q4_rating: 4,
+          q5: ['supplies', 'other'],
+          q6: 'maybe',
+          comment: '（ダミー）通知の確認用サンプル文です。'
+        };
         var meta = { responseId: 'test-notification', receivedAt: new Date().toISOString(), brand: brand };
         MailApp.sendEmail(to, '[TEST] ' + feedbackNotificationSubject_(brand), feedbackBuildNotificationBody_(answers, meta, true));
         result = 'sent';
