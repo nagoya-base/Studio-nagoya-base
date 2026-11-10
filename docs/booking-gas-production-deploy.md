@@ -199,11 +199,20 @@ Spreadsheet ID Secret・WIF/OIDCは使わず、`booking-production`に登録す�
 
 - GitHubのEnvironment承認はjob開始時に評価される。そのため、Secretsを使わない`validate` job（main限定・入力検査とSummaryの計画表示のみ）の直後に
   `booking-production`の`deploy` jobを開始し、承認後に同じjob内でリポジトリ全体のテスト（`npm test`）を実行する。同一runで再承認は求めない。
-- テストstepにはSecretsを渡さず、clasp認証ファイルも存在しない（認証ファイルは後続のSecret付きstepの中でだけ作られ、終了時に削除される）。
-  テストはRun Summaryと後続stepの環境ファイル（`GITHUB_ENV`/`GITHUB_PATH`/`GITHUB_OUTPUT`）を外した環境で実行し、
-  テスト用の依存（`cloud-run/stripe-webhook-relay`）は`npm ci --ignore-scripts`で入れる。
-- 残るリスク: テストのコード・ロック済み依存は、後でSecretsを受け取るstepと同じrunner上で先に動く。信頼の範囲は「承認したmainのコミットとlockfile」で、
-  これはデプロイスクリプト自体と同じ。テスト範囲の削減による高速化は行っていない。
+- テストは後続のSecret付きstepから**プロセスとファイルシステムの両面で隔離**する（`scripts/run-booking-tests-isolated.sh`。PR #875レビュー）。
+  1. このrun専用の使い捨てOSユーザーを作る（sudo・docker・admグループなし。`/etc/cron.deny`・`/etc/at.deny`で遅延実行も禁止）。
+  2. 承認済みcommitのworkspace（`persist-credentials: false`でGitHubトークンなし）をそのユーザーのhomeへ複製する。workspace・`RUNNER_TEMP`・Node/clasp/Rubyの導入先はそのユーザーから書込み不可。
+  3. 環境変数を空にして（`env -i`）実行する。`GITHUB_*`・`ACTIONS_*`・トークン・Secretは渡らない（この時点でSecretは存在しない）。依存は `npm ci --ignore-scripts` と `bundle install` でそのユーザーのhomeへ入る。
+  4. 終了後（成否とも）に、全プロセスをKILLして残存0を確認 → そのユーザー所有のファイルを全ファイルシステムで探索し、home・`/tmp`・`/var/tmp`・`/dev/shm`以外に1つでもあれば失敗、許可領域のものは削除 → ユーザー削除 → workspaceが承認済みcommitのまま（追跡・未追跡・ignoredとも差分なし）であることを確認する。
+  5. どれかを確認できなければ `ISOLATION_NOT_CONFIRMED`（exit 3）で停止し、Summaryに`テスト隔離の確認`で「更新前停止」と出る。Secret付きstepへは進まない。
+- 隔離の成立はPR CI（`booking-pr-tests.yml` の `booking-test-isolation` job）で毎回検証する。悪意あるテスト／依存を模したprobe
+  （workspace・`RUNNER_TEMP`・Node/npm導入先・`/usr/local/bin`・`/etc`への書込み、Docker socket、sudo、cron/at、他プロセスの環境変数読取り）が
+  すべて拒否されること、常駐プロセスと`/tmp`等の置き土産が消えること、許可領域外への書込み（canary）でexit 3になること、
+  本番と同じコマンドでリポジトリ全体のテストが隔離ユーザーとして通ることを確認する。
+- 承認回数とEnvironmentの秘密境界: jobを分けると`booking-production`の承認が2回になる（Environment承認はjobごと）。そのため、jobは分けずに同じjob内のユーザー隔離とした。
+  Secretは引き続き`booking-production`のEnvironment secretsだけで、隔離テストより後のstepにだけ渡る。Environment設定・Secretsは変更しない。
+- **残余リスク**: 同じVM（カーネル）を共有するため、カーネルやsetuidプログラムの脆弱性による権限昇格までは防げない（防ぐにはjob＝VMの分離が必要で、承認2回またはEnvironment設計の変更を伴う。運営者判断）。
+  ネットワークは依存取得のため遮断しない（Secretが存在しない時点なので持ち出す対象はない）。テストの信頼範囲は「承認したmainのcommitとlockfile」。テスト範囲の削減による高速化は行っていない。
 - 承認の有無・Required reviewersの現在値はGitHub Settings依存で、このworkflowからは読めない。承認が求められない場合は
   [#828の評価](booking-production-approval-gate-828.md)に従い、Settingsの実値を読取りで確認する（保護ルールを勝手に増減しない）。
 

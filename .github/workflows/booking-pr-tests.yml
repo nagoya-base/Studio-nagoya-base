@@ -13,6 +13,8 @@ on:
       - 'scripts/classify-clasp-push-error.js'
       - 'scripts/classify-clasp-list-error.js'
       - 'scripts/deploy-booking-gas-target.sh'
+      - 'scripts/run-booking-tests-isolated.sh'
+      - 'scripts/booking-test-isolation-probe.sh'
       - 'admin/booking/**'
       - 'gas/survey/**'
       - 'gas/switchbot-verify/**'
@@ -61,3 +63,45 @@ jobs:
         working-directory: cloud-run/stripe-webhook-relay
       - name: Run repository tests
         run: npm test
+
+  # Issue #874（PR #875 レビュー）: Booking GAS本番workflowが承認後に使うテスト隔離（run-booking-tests-isolated.sh）が
+  # 実際に成立することを、Secretsなしで検証する。probeは「悪意あるテスト／依存コード」の操作を模す。
+  booking-test-isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - name: Probe - forbidden operations are refused and leftovers are removed
+        run: |
+          set -euo pipefail
+          bash scripts/run-booking-tests-isolated.sh probe scripts/booking-test-isolation-probe.sh
+          if pgrep -f 'sleep 600[78]' >/dev/null; then echo "a background process of the isolated user survived" >&2; exit 1; fi
+          for f in /tmp/booking-isolation-leftover /dev/shm/booking-isolation-leftover; do
+            if [[ -e "$f" ]]; then echo "leftover file remains: $f" >&2; exit 1; fi
+          done
+          if getent passwd | grep -q '^booking-test-'; then echo "the isolated user remains" >&2; exit 1; fi
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all --ignored)"
+      - name: Probe - a write outside the allowed areas stops with ISOLATION_NOT_CONFIRMED (exit 3)
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /srv/booking-isolation-canary
+          sudo chmod 1777 /srv/booking-isolation-canary
+          status=0
+          BOOKING_ISOLATION_CANARY=/srv/booking-isolation-canary \
+            bash scripts/run-booking-tests-isolated.sh probe scripts/booking-test-isolation-probe.sh 2>"$RUNNER_TEMP/isolation-stderr.txt" || status=$?
+          cat "$RUNNER_TEMP/isolation-stderr.txt" >&2
+          test "$status" -eq 3
+          grep -q ISOLATION_NOT_CONFIRMED "$RUNNER_TEMP/isolation-stderr.txt"
+          grep -q /srv/booking-isolation-canary/booking-isolation-escape "$RUNNER_TEMP/isolation-stderr.txt"
+          rm -f "$RUNNER_TEMP/isolation-stderr.txt"
+          sudo rm -rf /srv/booking-isolation-canary
+      - name: Repository tests pass as the isolated user (same command as the production workflow)
+        run: bash scripts/run-booking-tests-isolated.sh repository-tests

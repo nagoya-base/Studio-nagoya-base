@@ -26,6 +26,7 @@ var NO_RETRY = '無条件の再実行・自動rollbackはしません。対象De
 
 var READ_ONLY_STAGES = {
   TEST: 'テスト',
+  TEST_ISOLATION: 'テスト隔離の確認（プロセス・ファイルの残存またはworkspace変更）',
   PREFLIGHT_ADMIN: 'Booking Admin preflight（読取り）',
   PREFLIGHT_PUBLIC: 'Booking Web App preflight（読取り）',
   SCHEMA_GUARD: 'Bookings schema guard（読取り）'

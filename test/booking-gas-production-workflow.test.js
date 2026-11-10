@@ -34,6 +34,7 @@ const jobs = jobBlocks(workflow);
 const deploy = jobs.deploy;
 const deploySteps = steps(deploy);
 const stepIndex = (needle) => deploySteps.findIndex((s) => s.includes(needle));
+const ISOLATED_TESTS = 'run-booking-tests-isolated.sh repository-tests';
 
 test('workflow is manual (workflow_dispatch) only, with scope=full|admin-only|public-only and schema_migrated inputs', () => {
   const on = workflow.slice(workflow.indexOf('\non:\n'), workflow.indexOf('\npermissions:'));
@@ -71,7 +72,7 @@ test('scope=full runs: (approval) -> tests -> preflight -> schema guard -> Admin
   assert.ok(guard > 0 && admin > guard && publicStep > admin, [guard, admin, publicStep].join());
   assert.ok(checks[0] > publicStep && checks[1] > checks[0], checks.join());
   assert.ok(stepIndex('npm install --global @google/clasp@3.4.1') < guard, 'tooling is set up first');
-  assert.ok(stepIndex('npm test') > 0 && stepIndex('npm test') < stepIndex('admin preflight'), 'tests run before any preflight');
+  assert.ok(stepIndex(ISOLATED_TESTS) > 0 && stepIndex(ISOLATED_TESTS) < stepIndex('admin preflight'), 'tests run before any preflight');
   assert.match(deploy, /\n    needs: validate\n/);
   assert.match(deploy, /\n    environment: booking-production\n/);
   assert.doesNotMatch(workflow, /migrate-bookings-schema|migrate_bookings|Migrate the Bookings sheet schema/);
@@ -126,7 +127,8 @@ test('Admin failure never reaches Public: Public is a later step of the same fai
   assert.ok(stepIndex('Update the existing Booking Admin deployment') < stepIndex('Update the existing Booking Web App deployment'));
   for (const [needle, stage] of [['Update the existing Booking Admin deployment', 'UPDATE_ADMIN'], ['Update the existing Booking Web App deployment', 'UPDATE_PUBLIC'],
     ['admin preflight', 'PREFLIGHT_ADMIN'], ['public preflight', 'PREFLIGHT_PUBLIC'], ['schema-guard', 'SCHEMA_GUARD'],
-    ['deploy-booking-gas-target.sh admin verify', 'VERIFY_ADMIN'], ['deploy-booking-gas-target.sh public verify', 'VERIFY_PUBLIC'], ['npm test', 'TEST']]) {
+    ['deploy-booking-gas-target.sh admin verify', 'VERIFY_ADMIN'], ['deploy-booking-gas-target.sh public verify', 'VERIFY_PUBLIC'],
+    [ISOLATED_TESTS, 'TEST'], [ISOLATED_TESTS, 'TEST_ISOLATION']]) {
     const step = deploySteps[stepIndex(needle)];
     assert.match(step, new RegExp(`booking-gas-deploy-plan\\.js stop ${stage}\n            exit 1\n`), needle);
   }
@@ -157,9 +159,7 @@ test('only existing deployments are updated: no create-deployment, no new projec
   const script = fs.readFileSync(deployScript, 'utf8');
   assert.match(script, /update-deployment "\$deployment_id"/);
   assert.doesNotMatch(script + workflow, /clasp[^\n]*(create-deployment|deploy |create-script|clone)/);
-  // テスト用に stripe-webhook-relay の依存を入れるstep（Secretsなし）以外では Stripe/Webhook を扱わない。
-  for (const x of deploySteps.filter((y) => !y.startsWith('name: Install stripe-webhook-relay dependencies'))) assert.doesNotMatch(x, /STRIPE|webhook/i, x.split('\n')[0]);
-  assert.doesNotMatch(deploySteps[stepIndex('stripe-webhook-relay dependencies')], /secrets\./);
+  assert.doesNotMatch(deploy, /STRIPE|webhook/i);
 });
 
 test('the production workflow is the only one that deploys Booking Admin/Public (no double-run path)', () => {
@@ -593,7 +593,7 @@ test('preflight steps run after approval and tests, before the first write; each
   assert.ok(stepIndex('schema-guard') > publicPre, 'schema guard follows the preflight');
   assert.match(deploySteps[adminPre], ADMIN_IF);
   assert.match(deploySteps[publicPre], PUBLIC_IF);
-  assert.ok(stepIndex('npm test') < adminPre);
+  assert.ok(stepIndex(ISOLATED_TESTS) < adminPre);
   assert.ok(publicPre < stepIndex('Update the existing Booking Web App deployment'));
   assert.doesNotMatch(deploySteps[adminPre], /PUBLIC_/);
   assert.doesNotMatch(deploySteps[publicPre], /ADMIN_|[^_]CLASPRC_JSON/);
@@ -876,29 +876,61 @@ function runningSteps(scope) { return deploySteps.filter((s) => stepRuns(s, scop
 test('#874: the light validate job has no secrets and only checks inputs; approval (deploy job start) comes before the heavy tests', () => {
   const v = steps(jobs.validate);
   assert.match(jobs.validate, /\n    if: github\.ref == 'refs\/heads\/main'\n/);
-  assert.doesNotMatch(jobs.validate, /needs:|environment:|secrets\.|ruby|npm ci|npm test|clasp/);
+  assert.doesNotMatch(jobs.validate, /needs:|environment:|secrets\.|ruby|npm ci|npm test|clasp|run-booking-tests/);
   assert.match(v[v.length - 1], /booking-gas-deploy-plan\.js plan/);
   assert.match(v[v.length - 1], /SCOPE: \$\{\{ inputs\.scope \}\}/);
   assert.match(v[v.length - 1], /SCHEMA_MIGRATED: \$\{\{ inputs\.schema_migrated \}\}/);
   // テストはEnvironment job（承認後）の中で、最初にSecretを受け取るstepより前に走る。
-  const testStep = stepIndex('npm test');
+  const testStep = stepIndex(ISOLATED_TESTS);
   const firstSecret = deploySteps.findIndex((s) => s.includes('secrets.'));
   assert.ok(testStep > stepIndex('Validate scope') && testStep < firstSecret, [testStep, firstSecret].join());
   assert.ok(stepIndex('npm install --global @google/clasp') > testStep, 'clasp is installed after the tests');
   for (const s of deploySteps.slice(0, firstSecret)) assert.doesNotMatch(s, /secrets\.|clasprc/i, stepName(s));
 });
 
-test('#874: tests run without secrets and cannot write the run summary or later steps\' environment files', () => {
-  const t = deploySteps[stepIndex('npm test')];
+test('#874 review: tests run isolated (separate disposable user, env -i, verified teardown) and no host step touches the workspace first', () => {
+  const t = deploySteps[stepIndex(ISOLATED_TESTS)];
   assert.doesNotMatch(t, /secrets\./);
   assert.doesNotMatch(t, /\n        if: /, 'tests run for every scope');
-  for (const v of ['GITHUB_STEP_SUMMARY', 'GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_OUTPUT']) assert.match(t, new RegExp(`-u ${v}\\b`));
-  assert.match(deploySteps[stepIndex('stripe-webhook-relay dependencies')], /npm ci --ignore-scripts/);
+  assert.match(t, /if \[\[ "\$status" -eq 3 \]\]; then\n            node scripts\/booking-gas-deploy-plan\.js stop TEST_ISOLATION\n            exit 1/);
+  assert.doesNotMatch(deploy, /npm test|npm ci|bundler-cache/, 'no test/dependency code runs as the runner user');
+  assert.match(deploySteps[0], /persist-credentials: false/, 'no GitHub token is left in .git/config for the copied repository');
+  const script = fs.readFileSync(path.join(workspace, 'scripts/run-booking-tests-isolated.sh'), 'utf8');
+  assert.match(script, /^set -euo pipefail$/m);
+  assert.match(script, /useradd --create-home --home-dir "\$test_home" --shell \/bin\/bash --user-group "\$test_user"\n/, 'no extra groups (sudo/docker/adm)');
+  assert.doesNotMatch(script, /usermod -aG|--groups|-G /);
+  assert.match(script, /sudo -n -u "\$test_user" -H -- env -i \\/, 'empty environment: no GITHUB_*/ACTIONS_* tokens');
+  assert.match(script, /\/etc\/cron\.deny \/etc\/at\.deny/);
+  assert.match(script, /pkill -KILL -U "\$uid"/);
+  assert.match(script, /allowed_roots=\("\$test_home" \/tmp \/var\/tmp \/dev\/shm\)/);
+  assert.match(script, /status --porcelain --untracked-files=all --ignored/);
+  assert.match(script, /ISOLATION_NOT_CONFIRMED[^\n]*\n\s+exit 3/);
+  assert.match(script, /trap finish EXIT/);
+  assert.match(script, /npm ci --ignore-scripts/);
+});
+
+test('#874 review: PR CI proves the isolation with a hostile probe, a canary escape (exit 3) and the real test command', () => {
+  const ci = fs.readFileSync(path.join(workflowDir, 'booking-pr-tests.yml'), 'utf8');
+  const job = ci.slice(ci.indexOf('\n  booking-test-isolation:\n'));
+  assert.ok(job.length > 30);
+  assert.match(job, /persist-credentials: false/);
+  assert.match(job, /run-booking-tests-isolated\.sh probe scripts\/booking-test-isolation-probe\.sh\n/);
+  assert.match(job, /pgrep -f 'sleep 600\[78\]'/);
+  assert.match(job, /test "\$status" -eq 3/);
+  assert.match(job, /BOOKING_ISOLATION_CANARY=/);
+  assert.match(job, /run: bash scripts\/run-booking-tests-isolated\.sh repository-tests\n/);
+  const probe = fs.readFileSync(path.join(workspace, 'scripts/booking-test-isolation-probe.sh'), 'utf8');
+  for (const target of ['workspace', 'runner-temp', 'node-bin', 'npm-global-prefix', 'usr-local-bin', 'docker-socket', 'docker-api', 'sudo', 'crontab', 'environ-of-other-process', 'inherited-github-env']) {
+    assert.ok(probe.includes(target), target);
+  }
+  assert.match(probe, /setsid nohup sleep 6007/);
+  // the probe is CI-only: the production workflow never runs it
+  assert.doesNotMatch(workflow, /isolation-probe|BOOKING_ISOLATION_CANARY/);
 });
 
 test('#874: per-scope step plan — only the selected targets are read, updated and verified', () => {
   const common = ['Check out the approved main commit (full history for the schema diff guard)', 'Set up Node.js', 'Validate scope',
-    'Set up Ruby and Jekyll (Gemfile.lock)', 'Install stripe-webhook-relay dependencies (no install scripts)', 'Run repository tests', 'Install pinned clasp'];
+    'Set up Ruby (no bundler cache in the workspace)', 'Run repository tests (isolated user, no secrets)', 'Install pinned clasp'];
   const A = { pre: 'Preflight (Booking Admin credentials and deployment, read-only)', up: 'Update the existing Booking Admin deployment', check: 'Post-deploy check (Booking Admin deployment)' };
   const P = { pre: 'Preflight (Booking Web App credentials and deployment, read-only)', guard: 'Schema diff guard (Booking Web App previous production commit)',
     up: 'Update the existing Booking Web App deployment', check: 'Post-deploy check (Booking Web App deployment)' };
@@ -979,7 +1011,7 @@ test('#874 plan: invalid inputs stop before approval and before any write', () =
 });
 
 test('#874 stop: failures before the first write are reported as 更新前停止 with zero writes', () => {
-  for (const [scope, stage] of [['full', 'TEST'], ['public-only', 'TEST'], ['admin-only', 'PREFLIGHT_ADMIN'], ['full', 'PREFLIGHT_PUBLIC'],
+  for (const [scope, stage] of [['full', 'TEST'], ['public-only', 'TEST'], ['full', 'TEST_ISOLATION'], ['admin-only', 'PREFLIGHT_ADMIN'], ['full', 'PREFLIGHT_PUBLIC'],
     ['public-only', 'SCHEMA_GUARD'], ['full', 'SCHEMA_GUARD']]) {
     const r = runPlan(['stop', stage], { env: { SCOPE: scope } });
     assert.equal(r.status, 0, r.stderr);

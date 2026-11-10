@@ -38,7 +38,8 @@ test('Booking本番 workflow は workflow_dispatch のみで起動し、main限�
       assert.match(validate, /if: github\.ref == 'refs\/heads\/main'/, f);
       assert.match(deploy, /if: github\.ref == 'refs\/heads\/main'/, f);
       assert.match(deploy, /\n    needs: validate\n/, f);
-      assert.ok(deploy.indexOf('npm test') > 0 && deploy.indexOf('npm test') < deploy.indexOf('secrets.'), 'tests before the first secret');
+      const tests = deploy.indexOf('run-booking-tests-isolated.sh repository-tests');
+      assert.ok(tests > 0 && tests < deploy.indexOf('secrets.'), 'isolated tests before the first secret');
     } else {
       // testはmain限定。deployは needs: test により、testがskipされればskipされる（直接ifは必須にしない）。
       const test = jobs.find((j) => /^\s*test:/.test(j));

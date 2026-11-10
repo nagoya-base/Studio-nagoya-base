@@ -11,7 +11,9 @@ name: Deploy Booking GAS to production
 #
 # 承認の位置（Issue #874）: Environment承認はjob開始時に評価されるため、入力の簡易検査（validate job、Secretsなし）の
 # 直後に booking-production の deploy job を開始し、承認後に同じjob内で テスト → preflight → 更新 → post-check を連続実行する。
-# テストstepには Secrets を渡さない。認証ファイルはテスト後の各Secret付きstep（deploy-booking-gas-target.sh）の中だけで作られ、終了時に消えるため、テスト中は存在しない。
+# テストは scripts/run-booking-tests-isolated.sh で、このrun専用の使い捨てOSユーザー（sudo・docker不可、env -i）として
+# workspaceの複製上で実行し、終了後に全プロセスKILL・所有ファイル全探索・ユーザー削除・workspace無変更を確認する。
+# 確認できなければ（ISOLATION_NOT_CONFIRMED）Secret付きstepへ進まない。テスト中にSecretも認証ファイルも存在しない。
 # 承認はテスト成功を意味しない。テスト・preflight・schema guard のいずれかが失敗すれば外部書込み0回で停止する。
 # いずれかが失敗した時点で後続は実行しない（無条件の再実行・自動rollbackはしない）。
 on:
@@ -68,6 +70,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -77,22 +80,24 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           SCHEMA_MIGRATED: ${{ inputs.schema_migrated }}
         run: node scripts/booking-gas-deploy-plan.js approved
-      # ---- テスト（承認後・最初のSecret利用より前。Secretsは渡さない） ----
-      - name: Set up Ruby and Jekyll (Gemfile.lock)
+      # ---- テスト（承認後・最初のSecret利用より前。Secretsは渡さず、プロセス・ファイルシステムとも隔離） ----
+      # Rubyはtoolcacheへ入れるだけ（gemのキャッシュをworkspaceへ作らない）。gemsとnpm依存は隔離ユーザーのhomeへ入る。
+      - name: Set up Ruby (no bundler cache in the workspace)
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
-          bundler-cache: true
-      - name: Install stripe-webhook-relay dependencies (no install scripts)
-        run: npm ci --ignore-scripts
-        working-directory: cloud-run/stripe-webhook-relay
-      # テストはモックclaspで本スクリプトを動かすため、Run Summary／後続stepの環境ファイルへ書けないようにする。
-      - name: Run repository tests
+      - name: Run repository tests (isolated user, no secrets)
         env:
           SCOPE: ${{ inputs.scope }}
         run: |
           set -euo pipefail
-          if ! env -u GITHUB_STEP_SUMMARY -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_OUTPUT -u GITHUB_STATE npm test; then
+          status=0
+          bash scripts/run-booking-tests-isolated.sh repository-tests || status=$?
+          if [[ "$status" -eq 3 ]]; then
+            node scripts/booking-gas-deploy-plan.js stop TEST_ISOLATION
+            exit 1
+          fi
+          if [[ "$status" -ne 0 ]]; then
             node scripts/booking-gas-deploy-plan.js stop TEST
             exit 1
           fi
