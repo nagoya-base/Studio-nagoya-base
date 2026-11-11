@@ -135,6 +135,22 @@ var BookingAvailability = (function () {
   }
 
   /*
+   * Issue #885: 当日の「開始候補の下限」（computeBookableStartTimes / createBookingの minimumStartMinutes。
+   * start <= 戻り値 は不可）を返す。leadMinutes が 0 以下なら従来どおり現在時刻（開始が現在より後）。
+   * leadMinutes > 0 のときは「開始が現在時刻の leadMinutes 分後ちょうど以降」を許し、1秒でも手前なら不可にする
+   * （開始30:00前は可・29:59前は不可）。現在の分の端数（秒・ミリ秒）があれば切り上げて秒境界を厳密に扱う。
+   * timezone不正・dateが不正ならnull（呼び出し側でfail-closed）。
+   */
+  function getMinimumStartMinutes(date, timezone, leadMinutes) {
+    var current = getCurrentMinutesInTimezone(date, timezone);
+    if (current === null) return null;
+    if (!(typeof leadMinutes === 'number' && leadMinutes > 0)) return current;
+    var fractionMs = date.getTime() % 60000;
+    if (fractionMs < 0) fractionMs += 60000;
+    return current + leadMinutes - (fractionMs === 0 ? 1 : 0);
+  }
+
+  /*
    * dateを指定timezoneの'HH:mm'へ変換する（Issue #271。メールテンプレートの開始/終了時刻表示用）。
    * getCurrentMinutesInTimezoneと同じIntl.DateTimeFormatベースの実装を共有し、
    * ブラウザ・GAS実行環境のローカルtimezoneに依存しない。timezoneが不正な場合はnullを返す。
@@ -431,7 +447,7 @@ var BookingAvailability = (function () {
 
     var minimumStartMinutes = null;
     if (date === todayString) {
-      minimumStartMinutes = getCurrentMinutesInTimezone(receivedAt, config.timezone);
+      minimumStartMinutes = getMinimumStartMinutes(receivedAt, config.timezone, config.leadCutoffMinutes);
       if (minimumStartMinutes === null) {
         return { success: false, error: { code: 'INVALID_CONFIG', message: '営業時間・予約ルールの設定が正しくありません。' } };
       }
@@ -637,7 +653,7 @@ var BookingAvailability = (function () {
 
       var minimumStartMinutes = null;
       if (dateString === todayString) {
-        minimumStartMinutes = getCurrentMinutesInTimezone(receivedAt, config.timezone);
+        minimumStartMinutes = getMinimumStartMinutes(receivedAt, config.timezone, config.leadCutoffMinutes);
         if (minimumStartMinutes === null) {
           return { success: false, error: { code: 'INVALID_CONFIG', message: '営業時間・予約ルールの設定が正しくありません。' } };
         }
@@ -682,6 +698,7 @@ var BookingAvailability = (function () {
     formatTimeRangeJa: formatTimeRangeJa,
     formatDurationJa: formatDurationJa,
     getCurrentMinutesInTimezone: getCurrentMinutesInTimezone,
+    getMinimumStartMinutes: getMinimumStartMinutes,
     zonedDateTimeToUtcMillis: zonedDateTimeToUtcMillis,
     validateInput: validateInput,
     computeBookableStartTimes: computeBookableStartTimes,
