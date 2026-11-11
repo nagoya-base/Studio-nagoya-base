@@ -28,7 +28,8 @@
   {% endif %}
 
   <!-- Issue #758 / #896: key booking rules only (announced 2026-11-04, effective 2026-11-19 00:00 JST). Details live on the news / terms pages.
-       Only the current cutoff (30 minutes before start) is shown; the 60-minute cutoff (Issue #895) is not shown until its effective date is decided. -->
+       The short-notice warning + confirmation checkbox (Issue #895) is a separate PR and is shown conditionally near the start-time selector, not in this always-visible intro.
+       The new-booking cutoff stays at 30 minutes before the start (the 60-minute cutoff was withdrawn, so it is not shown here). -->
   <section class="ba-banner ba-banner--notice ba-brief" id="ba-booking-rules-notice" aria-labelledby="ba-booking-rules-title">
     <h2 class="ba-brief-title" id="ba-booking-rules-title">Before you book</h2>
     <ul class="ba-brief-list">

@@ -46,12 +46,12 @@ test('#885: お知らせは既存の11/19告知へ統合し、11/04告知に含�
 test('#885: 予約画面の案内（日英）に30分前締切が追記され、施行前を「施行済み」と見せない', function () {
   var ja = read('_includes/booking_app_ja.html');
   var en = read('_includes/booking_app_en.html');
-  /* Issue #896: 予約画面は短い箇条書き。11/19の施行前を「施行済み」と見せないよう「11/19から」を明示し、60分前（#895）は先行表示しない。 */
+  /* Issue #896: 予約画面は短い箇条書き。11/19の施行前を「施行済み」と見せないよう「11/19から」を明示し、新規予約の60分前締切は表示しない（#895の旧60分化は撤回済み。#895の注意・確認チェックは別PRで開始時刻欄の近くに条件表示する）。 */
   assert.ok(ja.indexOf('<li>新規予約は開始30分前まで（11/19から）。</li>') !== -1);
   assert.ok(ja.indexOf('<li>11/19から、予約開始は毎時00分・30分、予約間隔は30分。</li>') !== -1);
   assert.ok(en.indexOf('<li>New bookings up to 30 minutes before the start (from Nov 19).</li>') !== -1);
   assert.ok(en.indexOf('<li>From Nov 19: start times are :00 and :30') !== -1);
-  assert.ok(!/新規予約は開始60分前|60 minutes before the start/.test(ja + en), '60分前締切は施行日時の確定（#895）まで現在のルールとして表示しない');
+  assert.ok(!/新規予約は開始60分前|60 minutes before the start/.test(ja + en), '新規予約の締切は30分前のまま（60分前締切は撤回済みのため表示しない）');
 });
 
 ['how-to/index.html', 'mens/how-to/index.html'].forEach(function (f) {
