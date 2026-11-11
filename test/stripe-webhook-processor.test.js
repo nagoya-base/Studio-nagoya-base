@@ -1507,3 +1507,64 @@ test('ハートビートの時刻管理: 処理開始から90秒後にハート�
   var finalLedgerRow = ctx.sandbox.StripeEventRepository.findByEventId(eventId);
   assert.strictEqual(Number(finalLedgerRow.record.processingClaimCount), 1, '実行Bに処理権を奪われていない（世代が進んでいない）');
 });
+
+/*
+ * Issue #885: 締切（開始30分前）の前に始めた決済が締切後に完了した場合。
+ * 予約は成立のまま（自動取消・自動返金はしない）、施行済みなら運営者へ緊急通知する。
+ */
+var LEAD_PROPS = { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com', BOOKING_LEAD_2026_EFFECTIVE_AT: '2026-09-01T00:00:00+09:00' };
+
+function adminMails_(ctx) { return ctx.mailApp._sentEmails.filter(function (m) { return m.to === 'admin@example.com'; }); }
+
+test('Issue #885: 締切後（開始の20分前）に決済が完了しても予約は確定し、運営者へ緊急通知する（自動取消・返金なし）', function () {
+  var ctx = setup({ properties: LEAD_PROPS });
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  var result = receiveAndProcess(ctx, buildEvent('evt_late_1', 'checkout.session.completed'), new Date('2026-10-01T09:40:00+09:00'));
+  assert.strictEqual(result.code, 'CONFIRMED');
+  var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(BOOKING_ID).record;
+  assert.strictEqual(record.status, 'CONFIRMED');
+  assert.strictEqual(record.paymentStatus, 'paid');
+  var mails = adminMails_(ctx);
+  assert.strictEqual(mails.length, 1);
+  assert.ok(mails[0].subject.indexOf('【緊急】') === 0 && mails[0].subject.indexOf(BOOKING_ID) !== -1);
+  assert.ok(mails[0].body.indexOf('20分前') !== -1);
+  assert.ok(mails[0].body.indexOf('taro@example.com') === -1 && mails[0].body.indexOf('山田') === -1, '個人情報を本文に含めない');
+});
+
+test('Issue #885: 開始後に決済が完了した場合も確定し、「経過後」として通知する', function () {
+  var ctx = setup({ properties: LEAD_PROPS });
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  var result = receiveAndProcess(ctx, buildEvent('evt_late_2', 'checkout.session.completed'), new Date('2026-10-01T10:05:00+09:00'));
+  assert.strictEqual(result.code, 'CONFIRMED');
+  assert.ok(adminMails_(ctx)[0].body.indexOf('5分経過後') !== -1);
+});
+
+test('Issue #885: 開始の30:00前ちょうどまでの確定は通知しない（境界）', function () {
+  var ctx = setup({ properties: LEAD_PROPS });
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  receiveAndProcess(ctx, buildEvent('evt_late_3', 'checkout.session.completed'), new Date('2026-10-01T09:30:00+09:00'));
+  assert.strictEqual(adminMails_(ctx).length, 0);
+});
+
+test('Issue #885: 施行前（ゲート未設定）は開始直前の確定でも通知せず、従来どおり', function () {
+  var ctx = setup({ properties: { ADMIN_NOTIFICATION_EMAIL: 'admin@example.com' } });
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  var result = receiveAndProcess(ctx, buildEvent('evt_late_4', 'checkout.session.completed'), new Date('2026-10-01T09:40:00+09:00'));
+  assert.strictEqual(result.code, 'CONFIRMED');
+  assert.strictEqual(adminMails_(ctx).length, 0);
+});
+
+test('Issue #885: 管理者通知の送信が失敗しても決済確定は成功のまま', function () {
+  var failing = stubs.createMailAppStub();
+  var original = failing.sendEmail;
+  failing.sendEmail = function (to) { if (to === 'admin@example.com') throw new Error('mail down'); return original.apply(this, arguments); };
+  var ctx = setup({ properties: LEAD_PROPS, mailApp: failing });
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  var result = receiveAndProcess(ctx, buildEvent('evt_late_5', 'checkout.session.completed'), new Date('2026-10-01T09:40:00+09:00'));
+  assert.strictEqual(result.code, 'CONFIRMED');
+});

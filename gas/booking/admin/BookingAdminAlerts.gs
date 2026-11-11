@@ -84,7 +84,27 @@ var BookingAdminAlerts = (function () {
     ]);
   }
 
+  /*
+   * Issue #885: 締切（利用開始30分前）の前に始めた決済が、締切後（または開始後）に完了して予約が確定した。
+   * 予約は成立させる（入金済みの利用者を不成立にしない。返金額は管理者が決める既存方針）。ただし鍵の発行・反映が
+   * 開始に間に合わない恐れがあるため、運営者へ緊急通知する。本文は予約ID・利用日・開始までの分数のみ。
+   * minutesToStart が負なら開始後の確定。
+   */
+  function notifyLateConfirmedBooking(bookingId, dateValue, minutesToStart) {
+    var started = minutesToStart < 0;
+    var when = started ? '開始から' + Math.abs(minutesToStart) + '分経過後' : '開始の' + minutesToStart + '分前';
+    return send_('【緊急】利用開始直前に決済が完了し予約が確定しました: ' + bookingId, [
+      '新規予約の締切（開始30分前）の前に始まった決済が、' + when + 'に完了し、予約を確定しました（入金済みのため不成立にはしていません）。',
+      '個別キーの発行・反映が開始に間に合わない可能性があります。Booking Adminで予約とキーの状態を確認し、',
+      '必要なら利用者へ連絡して代替の入室対応を行ってください。返金が必要な場合は「取消・返金」で判断してください。',
+      '',
+      'bookingId: ' + bookingId,
+      '利用日: ' + formatDate_(dateValue)
+    ]);
+  }
+
   return {
+    notifyLateConfirmedBooking: notifyLateConfirmedBooking,
     notifyPaidBookingNotConfirmed: notifyPaidBookingNotConfirmed,
     notifyAccessGuideBlockedForTomorrow: notifyAccessGuideBlockedForTomorrow,
     notifyRefundNeedsAttention: notifyRefundNeedsAttention
