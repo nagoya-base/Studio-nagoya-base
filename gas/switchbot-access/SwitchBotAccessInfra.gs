@@ -1752,7 +1752,11 @@ var SwitchBotAccessInfra = (function () {
     function runKeyReadinessWithoutSync() {
       try {
         var nowMs = deps.nowMs();
-        var led = deps.ledger.read({ nowMs: nowMs, trackedIds: [] });
+        // 日付をまたいで続く予約は台帳の通常範囲から外れる。通常の同期と同じく、未解決の鍵操作がある予約を追跡対象にする
+        var ops0 = scanOps(deps.store);
+        var tracked = [];
+        ops0.forEach(function (r) { if (isUnresolved(r) && tracked.indexOf(r.bookingId) === -1) tracked.push(r.bookingId); });
+        var led = deps.ledger.read({ nowMs: nowMs, trackedIds: tracked });
         if (!led || led.ok !== true) return null;
         return runKeyReadiness(led.records.map(function (r) { return prepareRecord(r, nowMs); }));
       } catch (e) { return null; }

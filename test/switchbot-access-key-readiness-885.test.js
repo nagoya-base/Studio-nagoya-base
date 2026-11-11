@@ -707,3 +707,28 @@ test('再検証の台帳読取: 複数の未送達通知がある場合、全予
   assert.ok(sent.some(function (m) { return m.body.indexOf('SNB-B') !== -1; }));
   assert.strictEqual(pendingUrgent(w).filter(function (k) { return JSON.parse(w.props[k]).sentAt === null; }).length, 0, '未送達は残らない');
 });
+
+test('API予算超過の周期でも、日付をまたいで続く未確認の予約を追跡して再通知する（台帳の通常範囲外）', function () {
+  var w = H.createWorld();
+  var rec = H.record({ bookingId: 'SNB-N', startAt: H.jst('2030-01-10', '23:50'), endAt: H.jst('2030-01-11', '01:00'), confirmedAt: H.jst('2030-01-05', '10:05') });
+  w.records = [rec];
+  // 実際の選択規則に近づける: 追跡対象に指定された予約だけを返す（通常範囲外として扱う）
+  var origRead = w.ledger.read;
+  w.ledger.read = function (ctx) { var r = origRead(ctx); r.records = r.records.filter(function (x) { return (ctx.trackedIds || []).indexOf(x.bookingId) !== -1 || w.inRange; }); return r; };
+  w.inRange = true;                                      // 23:xx は通常範囲内
+  w.nowMs = H.jst('2030-01-10', '23:40').getTime();
+  w.runtime().syncCycle();                               // 発行を試行し OP が残る（Webhookは来ない）
+  assert.strictEqual(ops(w).length, 1);
+  w.nowMs = H.jst('2030-01-10', '23:56').getTime();
+  var rt = w.runtime(); rt.syncCycle();
+  assert.ok(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length >= 1, '日付変更前に開始後の通知');
+  w.inRange = false;                                     // 日付が変わり通常範囲外へ
+  w.nowMs = H.jst('2030-01-11', '00:20').getTime();
+  var day = new Date((w.sec() + 9 * 3600) * 1000);
+  w.props['APICOUNT_' + day.getUTCFullYear() + ('0' + (day.getUTCMonth() + 1)).slice(-2) + ('0' + day.getUTCDate()).slice(-2)] = '999999';
+  var before = mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length;
+  var r = rt.syncCycle();
+  assert.strictEqual(r.error, 'API_BUDGET_EXHAUSTED');
+  assert.ok(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length > before, '予算超過でも未確認の予約へ開始後の再通知');
+  assert.ok(JSON.parse(w.props.KEYREADY).count >= 1, 'KEYREADY が0件に消えない');
+});
