@@ -1,0 +1,113 @@
+/*
+ * Issue #885: 開始直前・開始後の個別キー未発行の検知と、開始15分前からの優先再評価。
+ * フェイクworldのみ（実API・実機・実メールなし）。発行・再発行の仕組みは変えず、通知と待ち時間の短縮だけを検証する。
+ */
+'use strict';
+
+var test = require('node:test');
+var assert = require('node:assert');
+var H = require('./helpers/switchbot-access-world');
+var Core = H.Core, S = Core.STATE;
+
+var DAY = '2030-01-11';
+
+function world() {
+  var w = H.createWorld({});
+  w.createMode = 'noCommandId';
+  w.preload(H.DEV, 2);
+  return w;
+}
+function at(w, hhmmss) { w.nowMs = Date.parse(DAY + 'T' + hhmmss + '+09:00'); }
+function alerts(w, code) { return w.mails.filter(function (m) { return m.subject.indexOf(code) !== -1; }); }
+function opsOf(w, state) {
+  return w.store.keys().filter(function (k) { return k.indexOf('OP_') === 0; })
+    .map(function (k) { return JSON.parse(w.store.get(k)); }).filter(function (o) { return o.state === state; });
+}
+/** 発行が受理されない（鍵が作られない）状態。 */
+function rejectIssue(w) {
+  w.api.createKey = function (p) { w.calls.push({ name: 'createKey', device: p.deviceId }); return { httpCode: 400, parsed: { statusCode: 400, body: {} } }; };
+}
+
+test('開始5分以内（4分前）に個別キーが未確認なら緊急通知する。10分前は通知しない', function () {
+  var w = world(); rejectIssue(w); var rt = w.runtime();
+  w.records = [H.record()]; // 10:00-12:00
+
+  at(w, '09:50:00');
+  rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_SOON').length, 0, '10分前は通知しない');
+
+  at(w, '09:56:00');
+  rt.syncCycle();
+  var m = alerts(w, 'KEY_NOT_ISSUED_SOON');
+  assert.strictEqual(m.length, 1, '4分前は通知する');
+  assert.ok(/\[high\]/.test(m[0].subject));
+  assert.ok(m[0].body.indexOf('代替入室') !== -1);
+  assert.ok(m[0].body.indexOf('SNB-1') !== -1, '予約参照を含む');
+  assert.ok(!/[0-9]{6,}/.test(m[0].body.replace('SNB-1', '')), '暗証番号・長い数字を含まない');
+});
+
+test('開始ちょうど5:00前は通知、5:01前は通知しない（境界）', function () {
+  var w = world(); rejectIssue(w); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:54:59'); rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_SOON').length, 0);
+  at(w, '09:55:00'); rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_SOON').length, 1);
+});
+
+test('開始後・終了前でも未発行なら別コードで通知し続ける（再通知は10分間隔）。終了後は通知しない', function () {
+  var w = world(); rejectIssue(w); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '10:05:00'); rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_STARTED').length, 1);
+  at(w, '10:10:00'); rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_STARTED').length, 1, '10分未満は再通知しない');
+  at(w, '10:16:00'); rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_STARTED').length, 2, '10分経過で再通知');
+  var before = w.mails.length;
+  at(w, '12:30:00'); rt.syncCycle();
+  assert.strictEqual(w.mails.length, before, '終了後は通知しない');
+});
+
+test('個別キーが反映確認済みなら通知しない', function () {
+  var w = world(); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:30:00');
+  for (var i = 0; i < 4; i++) { rt.syncCycle(); w.advance(300); }
+  assert.ok(opsOf(w, S.ISSUED_CONFIRMED).length >= 1, '前提: 発行・反映確認済み');
+  at(w, '09:56:00'); rt.syncCycle();
+  at(w, '10:05:00'); rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED').length, 0);
+});
+
+test('取消・非対象ブランド・限定稼働外の予約は未発行通知の対象にしない', function () {
+  var w = world(); rejectIssue(w); var rt = w.runtime();
+  at(w, '09:56:00');
+  w.records = [H.record({ status: 'CANCELLED', revision: 2 })]; rt.syncCycle();
+  w.records = [H.record({ bookingId: 'MENS-1', brand: 'mens' })]; rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED').length, 0);
+});
+
+test('優先再評価: 開始10分前は観測待ち（静穏時間）を待たず、最初の周期で発行を試みる', function () {
+  var w = world(); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:50:00'); // 開始10分前
+  rt.syncCycle();
+  assert.strictEqual(w.callCount('createKey'), 1, '優先窓では最初の周期で発行する');
+});
+
+test('優先窓の外（開始60分前）は従来どおり、最初の周期は観測のみで発行しない', function () {
+  var w = world(); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:00:00');
+  rt.syncCycle();
+  assert.strictEqual(w.callCount('createKey'), 0, '従来の静穏時間は維持');
+});
+
+test('通知メールの送信が失敗しても照合サイクルは成功のまま', function () {
+  var w = world(); rejectIssue(w); w.mailFail = true; var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:56:00');
+  var out = rt.syncCycle();
+  assert.strictEqual(out.ok, true);
+});

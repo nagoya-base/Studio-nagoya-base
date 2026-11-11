@@ -1195,6 +1195,9 @@ var SwitchBotAccessInfra = (function () {
       ISSUE_GATE_ERROR: c('SYSTEM', 'high', '発行前の安全確認で内部エラーが発生したため、新規発行を止めた。'),
       SYNC_ERROR: c('SYSTEM', 'high', '照合中に内部エラーが発生し、処理を中断した（詳細は公開しない）。'),
       NOTIFY_BACKLOG: c('SYSTEM', 'high', '管理者通知の送達が連続して失敗している。通知経路を確認する。'),
+      // 開始直前・開始後の未発行（Issue #885）。発行の成否は変えず、運営者へ気づかせるための通知。
+      KEY_NOT_ISSUED_SOON: c('NOT_ISSUED', 'high', '利用開始まで5分以内なのに、この予約の個別キーが発行済みと確認できない。管理者が予約とキーの状態を確認し、間に合わない場合は利用者へ連絡のうえ、代替入室（手動解錠・手動パスコード・キーボックス内の物理キー）を本人・予約を確認して個別に案内する。キーの再発行は自動では行わない。'),
+      KEY_NOT_ISSUED_STARTED: c('NOT_ISSUED', 'high', '利用開始後・終了前なのに、この予約の個別キーが発行済みと確認できない。利用者が入室できない可能性が高い。管理者が至急、予約とキーの状態を確認し、本人・予約を確認のうえ代替入室を個別に案内する。'),
       BOOKING_FROZEN: c('FROZEN', 'medium', '予約に鍵操作を止める条件がある（支払未確認・追加料金未了・要復旧・時刻不正など）。管理者が予約を確認する。既存キーは変更していない。'),
       DIGEST_MISMATCH: c('FROZEN', 'high', '予約の内容とrevisionが食い違っている。鍵操作を止めた。revision増分の漏れを確認する。')
     };
@@ -1484,6 +1487,55 @@ var SwitchBotAccessInfra = (function () {
     function readTrack(bookingId) { return safeParse(deps.store.get('TRK_' + bookingId)); }
     function writeTrack(bookingId, t) { deps.store.set('TRK_' + bookingId, JSON.stringify(t)); }
 
+    // ---- 開始直前・開始後の未発行の検知（Issue #885）----
+    // 鍵の発行・再発行の仕組みは変えない。気づくこと（通知）と、再評価の待ち時間を省くことだけを行う。
+    var PRIORITY_BEFORE_START_SEC = 15 * 60; // 開始15分前から優先して再評価する（静穏時間・ゲート待ちを待たない）
+    var URGENT_BEFORE_START_SEC = 5 * 60;    // 開始5分前から運営者へ緊急通知する
+
+    function timingOf(sn) {
+      var s = Core.jstToEpochSec(sn.date, sn.startTime);
+      var e = Core.jstToEpochSec(sn.endDate || sn.date, sn.endTime);
+      return (s === null || e === null || s >= e) ? null : { startSec: s, endSec: e };
+    }
+
+    /** この予約の現在の revision で、反映確認済みの個別キーがあるか。 */
+    function hasIssuedKey(opsList, sn) {
+      return opsList.some(function (r) {
+        return String(r.bookingId) === String(sn.bookingId) && r.op === Core.OP.ISSUE &&
+          r.revision === sn.revision && r.state === Core.STATE.ISSUED_CONFIRMED;
+      });
+    }
+
+    /** 開始15分前〜終了までで、確定済みなのに個別キーが未確認の予約か。 */
+    function needsPriority(sn, opsList, nowSec) {
+      if (sn.status !== 'CONFIRMED') return false;
+      var tm = timingOf(sn);
+      if (!tm || nowSec < tm.startSec - PRIORITY_BEFORE_START_SEC || nowSec >= tm.endSec) return false;
+      return !hasIssuedKey(opsList, sn);
+    }
+
+    /** 開始5分前以降（終了前）の未発行を運営者へ通知する。通知の失敗・例外は照合サイクルに影響させない。 */
+    function alertUnissuedNearStart(records, nowMs) {
+      try {
+        var opsNow = scanOps(deps.store);
+        var nowSec = deps.nowSec();
+        var eligibleBrands = Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : [];
+        records.forEach(function (rec) {
+          var sn = deps.snapshot.build(rec, { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
+          if (sn.status !== 'CONFIRMED') return;
+          if (eligibleBrands.indexOf(sn.brand) === -1) return;
+          if (Array.isArray(cfg.pilotBookingIds) && cfg.pilotBookingIds.indexOf(String(sn.bookingId)) === -1) return;
+          if (deps.snapshot.toCoreInput(sn, nowMs, { eligibleBrands: eligibleBrands }).action === 'FREEZE') return; // 凍結は BOOKING_FROZEN が担当
+          var tm = timingOf(sn);
+          if (!tm || nowSec >= tm.endSec) return;
+          var untilStart = tm.startSec - nowSec;
+          if (untilStart > URGENT_BEFORE_START_SEC) return;
+          if (hasIssuedKey(opsNow, sn)) return;
+          infraAlert(untilStart >= 0 ? 'KEY_NOT_ISSUED_SOON' : 'KEY_NOT_ISSUED_STARTED', safeRef(sn.bookingId), sn.revision, null, untilStart >= 0 ? 300 : 600);
+        });
+      } catch (e) { /* 検知の失敗で照合は止めない */ }
+    }
+
     // ---- 照合サイクル（5分）----
     function syncCycle() {
       return runLocked('SYNC', ic.lockWaitMs, function () {
@@ -1541,18 +1593,26 @@ var SwitchBotAccessInfra = (function () {
             continue;
           }
           var reasonsT = deps.snapshot.triggers(sn, { revision: tr ? tr.revision : null, issueWindowHandled: !!(tr && tr.windowHandled), openKeyRecord: !!openByBooking[sn.bookingId] }, nowMs);
-          if (!reasonsT.length) { summary.skipped++; continue; }
-          // 静穏時間: 同じ (revision, digest) を quietSec 以上前から観測している場合のみ同期（精算中の中間状態で発行しない）
           var nowS = deps.nowSec();
-          var sameObs = tr && tr.obsRevision === sn.revision && tr.obsDigest === sn.digest;
-          if (!sameObs) {
-            writeTrack(sn.bookingId, Object.assign({}, tr || {}, { obsRevision: sn.revision, obsDigest: sn.digest, obsAt: nowS, seenAt: nowS }));
-            summary.waiting++;
-            continue;
+          // 開始15分前からの優先再評価（Issue #885）: 確定済みで個別キーが未確認なら、処理済みの記録があっても毎周期同期を試み、
+          // 静穏時間・ゲート待ちを待たない。同期（engine.sync）は冪等で、発行の可否判定は従来どおりコア側が行う。
+          var priority = needsPriority(sn, ops, nowS);
+          if (!reasonsT.length && priority) reasonsT = ['KEY_NOT_ISSUED_PRIORITY'];
+          if (!reasonsT.length) { summary.skipped++; continue; }
+          if (priority) {
+            if (!tr) tr = { obsAt: nowS };
+          } else {
+            // 静穏時間: 同じ (revision, digest) を quietSec 以上前から観測している場合のみ同期（精算中の中間状態で発行しない）
+            var sameObs = tr && tr.obsRevision === sn.revision && tr.obsDigest === sn.digest;
+            if (!sameObs) {
+              writeTrack(sn.bookingId, Object.assign({}, tr || {}, { obsRevision: sn.revision, obsDigest: sn.digest, obsAt: nowS, seenAt: nowS }));
+              summary.waiting++;
+              continue;
+            }
+            if (nowS - tr.obsAt < ic.quietSec) { summary.waiting++; continue; }
+            // 発行ゲートで止まった予約は、再評価の間隔を空ける（OP が無い間のみ。進行中 OP の照合は止めない）
+            if (tr.gateHoldUntil && nowS < tr.gateHoldUntil && !openByBooking[sn.bookingId]) { summary.waiting++; continue; }
           }
-          if (nowS - tr.obsAt < ic.quietSec) { summary.waiting++; continue; }
-          // 発行ゲートで止まった予約は、再評価の間隔を空ける（OP が無い間のみ。進行中 OP の照合は止めない）
-          if (tr.gateHoldUntil && nowS < tr.gateHoldUntil && !openByBooking[sn.bookingId]) { summary.waiting++; continue; }
           var out;
           try { out = engine.sync(input.booking); }
           catch (e) {
@@ -1578,6 +1638,7 @@ var SwitchBotAccessInfra = (function () {
           else writeTrack(sn.bookingId, { revision: sn.revision, digest: sn.digest, windowHandled: windowOpen, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
         }
         engine.reconcilePending(syncedBookings); // 今回 sync で照合済みの予約は除く（読取回数を二重に消費しない）
+        alertUnissuedNearStart(records, nowMs); // 開始5分前以降の未発行を運営者へ通知（Issue #885。発行の成否は変えない）
         return summary;
       });
     }
