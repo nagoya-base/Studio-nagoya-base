@@ -1195,9 +1195,11 @@ var SwitchBotAccessInfra = (function () {
       ISSUE_GATE_ERROR: c('SYSTEM', 'high', '発行前の安全確認で内部エラーが発生したため、新規発行を止めた。'),
       SYNC_ERROR: c('SYSTEM', 'high', '照合中に内部エラーが発生し、処理を中断した（詳細は公開しない）。'),
       NOTIFY_BACKLOG: c('SYSTEM', 'high', '管理者通知の送達が連続して失敗している。通知経路を確認する。'),
-      // 開始直前・開始後の未発行（Issue #885）。発行の成否は変えず、運営者へ気づかせるための通知。
-      KEY_NOT_ISSUED_SOON: c('NOT_ISSUED', 'high', '利用開始まで5分以内なのに、この予約の個別キーが発行済みと確認できない。管理者が予約とキーの状態を確認し、間に合わない場合は利用者へ連絡のうえ、代替入室（手動解錠・手動パスコード・キーボックス内の物理キー）を本人・予約を確認して個別に案内する。キーの再発行は自動では行わない。'),
-      KEY_NOT_ISSUED_STARTED: c('NOT_ISSUED', 'high', '利用開始後・終了前なのに、この予約の個別キーが発行済みと確認できない。利用者が入室できない可能性が高い。管理者が至急、予約とキーの状態を確認し、本人・予約を確認のうえ代替入室を個別に案内する。'),
+      // 開始直前・開始後の「個別キーの反映未確認」（Issue #885）。発行の成否は変えず、運営者へ気づかせるための通知。
+      // 途中状態（送信済み・Webhook待ち等）を含むため、「発行失敗」とは断定しない。
+      KEY_NOT_ISSUED_NOTICE: c('NOT_ISSUED', 'medium', '利用開始まで10分以内で、この予約の個別キーの反映が確認できていない（発行の途中、または未発行）。発行失敗と断定はできない。管理者が予約とキーの状態を確認する。5分前になっても確認できない場合は緊急通知を送る。キーの再発行は自動では行わない。'),
+      KEY_NOT_ISSUED_SOON: c('NOT_ISSUED', 'high', '利用開始まで5分以内なのに、この予約の個別キーの反映が確認できていない（発行の途中、または未発行）。管理者が予約とキーの状態を確認し、間に合わない場合は利用者へ連絡のうえ、代替入室（手動解錠・手動パスコード・キーボックス内の物理キー）を本人・予約を確認して個別に案内する。キーの再発行は自動では行わない。'),
+      KEY_NOT_ISSUED_STARTED: c('NOT_ISSUED', 'high', '利用開始後・終了前なのに、この予約の個別キーの反映が確認できていない（発行の途中、または未発行）。利用者が入室できない可能性がある。管理者が至急、予約とキーの状態を確認し、本人・予約を確認のうえ代替入室を個別に案内する。'),
       BOOKING_FROZEN: c('FROZEN', 'medium', '予約に鍵操作を止める条件がある（支払未確認・追加料金未了・要復旧・時刻不正など）。管理者が予約を確認する。既存キーは変更していない。'),
       DIGEST_MISMATCH: c('FROZEN', 'high', '予約の内容とrevisionが食い違っている。鍵操作を止めた。revision増分の漏れを確認する。')
     };
@@ -1334,28 +1336,51 @@ var SwitchBotAccessInfra = (function () {
       }
     }
 
-    /**
-     * 開始直前・開始後の未発行通知（Issue #885）が、再送時点で古くなっていないか。利用終了を過ぎた、または現在の revision の
-     * 個別キーが反映確認済みになったものは、送らずに破棄する（「連絡して代替入室を」という古い緊急指示を後から送らない）。
-     */
-    function isObsoleteKeyAlert(rec) {
+    var KEY_ALERT_CODES = ['KEY_NOT_ISSUED_NOTICE', 'KEY_NOT_ISSUED_SOON', 'KEY_NOT_ISSUED_STARTED'];
+
+    /** 台帳を使わない再評価（利用終了を過ぎた／現在のrevisionの個別キーが反映確認済み）。 */
+    function isObsoleteKeyAlertLocal(rec) {
       var ev = rec && rec.event;
-      if (!ev || (ev.code !== 'KEY_NOT_ISSUED_SOON' && ev.code !== 'KEY_NOT_ISSUED_STARTED')) return false;
+      if (!ev || KEY_ALERT_CODES.indexOf(ev.code) === -1) return false;
       if (typeof rec.expiresAt === 'number' && deps.nowSec() >= rec.expiresAt) return true;
       return hasIssuedKey(scanOps(deps.store), { bookingId: ev.ref, revision: ev.rev });
+    }
+
+    /**
+     * 再送の直前に、最新の台帳で通知がまだ必要かを再評価する（予約の取消・revision変更・対象外・終了・反映確認済みなら破棄）。
+     * 台帳を読めない場合は、台帳を使わない判定だけで残す（古い通知より、必要な緊急通知の取りこぼしを避ける）。
+     */
+    function isObsoleteKeyAlertByLedger(rec, getLedger) {
+      var ev = rec && rec.event;
+      if (!ev || KEY_ALERT_CODES.indexOf(ev.code) === -1) return false;
+      var led = getLedger();
+      if (!led || led.ok !== true) return false;
+      var found = led.records.filter(function (r) { return String(r.bookingId) === String(ev.ref); })[0];
+      if (!found) return true;
+      var sn = deps.snapshot.build(found, { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
+      if (sn.revision !== ev.rev) return true; // 変更後の revision で未発行なら、検知側が新しい通知を作る
+      return !unissuedStatus(sn, scanOps(deps.store), deps.nowMs(), deps.nowSec());
     }
 
     /** 未送達の通知を再送する（バックオフ尊重）。 */
     function flushOutbox() {
       var now = deps.nowSec();
       var pending = 0, failing = 0;
+      var ledgerCache = null;
+      function getLedger() {
+        if (ledgerCache === null) {
+          try { ledgerCache = deps.ledger.read({ nowMs: deps.nowMs(), trackedIds: [] }); } catch (e) { ledgerCache = { ok: false }; }
+        }
+        return ledgerCache;
+      }
       deps.store.keys().filter(function (k) { return k.indexOf('IALERT_') === 0; }).forEach(function (k) {
         var rec = safeParse(deps.store.get(k));
         if (!rec || rec.sentAt !== null) return;
-        if (isObsoleteKeyAlert(rec)) { try { deps.store.del(k); } catch (e) { /* 次回 */ } return; }
+        if (isObsoleteKeyAlertLocal(rec)) { try { deps.store.del(k); } catch (e) { /* 次回 */ } return; }
         pending++;
         var wait = Math.min(ic.notifyBackoffMaxSec, ic.notifyBackoffBaseSec * Math.pow(2, Math.min(rec.attempts, 20)));
         if (rec.attempts > 0 && now - rec.lastTryAt < wait) { if (rec.attempts >= ic.notifyFailingAttempts) failing++; return; }
+        if (isObsoleteKeyAlertByLedger(rec, getLedger)) { try { deps.store.del(k); pending--; } catch (e) { /* 次回 */ } return; }
         if (!trySend(k, rec) && rec.attempts >= ic.notifyFailingAttempts) failing++;
       });
       return { pending: pending, failing: failing };
@@ -1503,6 +1528,7 @@ var SwitchBotAccessInfra = (function () {
     // ---- 開始直前・開始後の未発行の検知（Issue #885）----
     // 鍵の発行・再発行の仕組みは変えない。気づくこと（通知）と、再評価の待ち時間を省くことだけを行う。
     var PRIORITY_BEFORE_START_SEC = 15 * 60; // 開始15分前から優先して再評価する（静穏時間・ゲート待ちを待たない）
+    var NOTICE_BEFORE_START_SEC = 10 * 60;   // 開始10分前に運営者へ予告する
     var URGENT_BEFORE_START_SEC = 5 * 60;    // 開始5分前から運営者へ緊急通知する
 
     function timingOf(sn) {
@@ -1527,24 +1553,39 @@ var SwitchBotAccessInfra = (function () {
       return !hasIssuedKey(opsList, sn);
     }
 
-    /** 開始5分前以降（終了前）の未発行を運営者へ通知する。通知の失敗・例外は照合サイクルに影響させない。 */
+    /**
+     * 確定済みで、開始10分前〜終了までに個別キーの反映が確認できていない予約か。対象外（取消・対象外ブランド・限定稼働外・凍結・
+     * 時刻不正・終了後・反映確認済み）は null。通知の作成と、再送直前の再評価の両方で同じ判定を使う。
+     */
+    function unissuedStatus(sn, opsList, nowMs, nowSec) {
+      if (sn.status !== 'CONFIRMED') return null;
+      var eligibleBrands = Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : [];
+      if (eligibleBrands.indexOf(sn.brand) === -1) return null;
+      if (Array.isArray(cfg.pilotBookingIds) && cfg.pilotBookingIds.indexOf(String(sn.bookingId)) === -1) return null;
+      if (deps.snapshot.toCoreInput(sn, nowMs, { eligibleBrands: eligibleBrands }).action === 'FREEZE') return null; // 凍結は BOOKING_FROZEN が担当
+      var tm = timingOf(sn);
+      if (!tm || nowSec >= tm.endSec) return null;
+      var untilStart = tm.startSec - nowSec;
+      if (untilStart > NOTICE_BEFORE_START_SEC) return null;
+      if (hasIssuedKey(opsList, sn)) return null;
+      return { untilStart: untilStart, endSec: tm.endSec };
+    }
+
+    /**
+     * 個別キーの反映が未確認の予約を、段階的に運営者へ通知する。通知の失敗・例外は照合サイクルに影響させない。
+     *   開始10分前: 予告（KEY_NOT_ISSUED_NOTICE）／開始5分前: 緊急（KEY_NOT_ISSUED_SOON）／開始後: KEY_NOT_ISSUED_STARTED（10分間隔）。
+     * NOTICE と SOON は同じ予約・revision につき1回だけ（重複させない）。
+     */
     function alertUnissuedNearStart(records, nowMs) {
       try {
         var opsNow = scanOps(deps.store);
         var nowSec = deps.nowSec();
-        var eligibleBrands = Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : [];
         records.forEach(function (rec) {
           var sn = deps.snapshot.build(rec, { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
-          if (sn.status !== 'CONFIRMED') return;
-          if (eligibleBrands.indexOf(sn.brand) === -1) return;
-          if (Array.isArray(cfg.pilotBookingIds) && cfg.pilotBookingIds.indexOf(String(sn.bookingId)) === -1) return;
-          if (deps.snapshot.toCoreInput(sn, nowMs, { eligibleBrands: eligibleBrands }).action === 'FREEZE') return; // 凍結は BOOKING_FROZEN が担当
-          var tm = timingOf(sn);
-          if (!tm || nowSec >= tm.endSec) return;
-          var untilStart = tm.startSec - nowSec;
-          if (untilStart > URGENT_BEFORE_START_SEC) return;
-          if (hasIssuedKey(opsNow, sn)) return;
-          infraAlert(untilStart >= 0 ? 'KEY_NOT_ISSUED_SOON' : 'KEY_NOT_ISSUED_STARTED', safeRef(sn.bookingId), sn.revision, null, untilStart >= 0 ? 300 : 600, tm.endSec);
+          var st = unissuedStatus(sn, opsNow, nowMs, nowSec);
+          if (!st) return;
+          var code = st.untilStart < 0 ? 'KEY_NOT_ISSUED_STARTED' : (st.untilStart <= URGENT_BEFORE_START_SEC ? 'KEY_NOT_ISSUED_SOON' : 'KEY_NOT_ISSUED_NOTICE');
+          infraAlert(code, safeRef(sn.bookingId), sn.revision, null, code === 'KEY_NOT_ISSUED_STARTED' ? 600 : undefined, st.endSec);
         });
       } catch (e) { /* 検知の失敗で照合は止めない */ }
     }

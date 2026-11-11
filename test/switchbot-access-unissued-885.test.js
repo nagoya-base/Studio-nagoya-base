@@ -153,3 +153,90 @@ test('通知メールが不達の間に個別キーが反映確認済みにな�
   assert.ok(opsOf(w, S.ISSUED_CONFIRMED).length >= 1, '前提: 反映確認済み');
   assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED').length, 0, '反映確認後は古い通知を送らない');
 });
+
+// ---- 段階化（予告→緊急→開始後）と、再送直前の再評価（オーナーレビュー）----
+
+test('段階化: 開始10分前に予告（NOTICE）、5分前に緊急（SOON）、開始後に通知（STARTED）。5分周期で重複しない', function () {
+  var w = world(); rejectIssue(w); var rt = w.runtime();
+  w.records = [H.record()]; // 10:00開始
+  at(w, '09:48:00'); rt.syncCycle();                       // 12分前: 通知なし
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED').length, 0);
+  at(w, '09:53:00'); rt.syncCycle();                       // 7分前: 予告
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_NOTICE').length, 1);
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_SOON').length, 0);
+  at(w, '09:58:00'); rt.syncCycle();                       // 2分前: 緊急
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_SOON').length, 1);
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_NOTICE').length, 1, '予告は再送しない');
+  at(w, '10:03:00'); rt.syncCycle();                       // 開始後
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_STARTED').length, 1);
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_SOON').length, 1, '緊急は再送しない');
+  at(w, '10:08:00'); rt.syncCycle();                       // 開始後5分: 10分間隔のため再通知なし
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_STARTED').length, 1);
+  at(w, '10:14:00'); rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_STARTED').length, 2);
+});
+
+test('予告は開始10:00前ちょうどから（境界）。severityは予告=medium、緊急=high', function () {
+  var w = world(); rejectIssue(w); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:49:59'); rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_NOTICE').length, 0);
+  at(w, '09:50:00'); rt.syncCycle();
+  var n = alerts(w, 'KEY_NOT_ISSUED_NOTICE');
+  assert.strictEqual(n.length, 1);
+  assert.ok(/\[medium\]/.test(n[0].subject));
+});
+
+test('文言: 反映未確認と表現し、「発行失敗」と断定しない', function () {
+  var w = world(); rejectIssue(w); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:56:00'); rt.syncCycle();
+  var body = alerts(w, 'KEY_NOT_ISSUED_SOON')[0].body;
+  assert.ok(body.indexOf('反映が確認できていない') !== -1);
+  assert.ok(body.indexOf('発行失敗') === -1 || body.indexOf('発行失敗と断定') !== -1);
+});
+
+function pendingAlertThenChange(change) {
+  var w = world(); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:56:00');
+  w.mailFail = true;
+  rt.infraAlert('KEY_NOT_ISSUED_SOON', 'SNB-1', 1, null, 300, Math.floor(Date.parse(DAY + 'T12:00:00+09:00') / 1000));
+  assert.ok(w.store.keys().some(function (k) { return k.indexOf('IALERT_KEY_NOT_ISSUED_SOON') === 0; }), '前提: 送信待ち');
+  change(w);
+  w.mailFail = false;
+  at(w, '10:30:00'); // バックオフ経過後・終了前
+  rejectIssue(w);
+  rt.syncCycle();
+  return w;
+}
+
+test('再送直前の再評価: 不達の間に予約が取消されたら、回復後も古い緊急通知を送らない', function () {
+  var w = pendingAlertThenChange(function (x) { x.records = [H.record({ status: 'CANCELLED', revision: 2 })]; });
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED').length, 0);
+  assert.strictEqual(w.store.keys().filter(function (k) { return k.indexOf('IALERT_KEY_NOT_ISSUED_SOON') === 0; }).length, 0, '破棄される');
+});
+
+test('再送直前の再評価: 不達の間にrevisionが変わったら古いrevisionの通知は送らない（新しいrevisionの未発行は検知側が通知する）', function () {
+  var w = pendingAlertThenChange(function (x) { x.records = [H.record({ revision: 2 })]; });
+  var stale = w.mails.filter(function (m) { return m.subject.indexOf('KEY_NOT_ISSUED_SOON') !== -1 && /revision: 1/.test(m.body); });
+  assert.strictEqual(stale.length, 0);
+});
+
+test('再送直前の再評価: 不達の間に台帳から予約が消えたら送らない', function () {
+  var w = pendingAlertThenChange(function (x) { x.records = []; });
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED').length, 0);
+});
+
+test('再送直前の再評価: 台帳を読めない場合は、台帳を使わない判定だけで残し、必要な緊急通知を取りこぼさない', function () {
+  var w = world(); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:56:00');
+  w.mailFail = true;
+  rt.infraAlert('KEY_NOT_ISSUED_SOON', 'SNB-1', 1, null, 300, Math.floor(Date.parse(DAY + 'T12:00:00+09:00') / 1000));
+  w.mailFail = false;
+  w.ledgerFail = 'LEDGER_READ_FAILED';
+  at(w, '10:30:00');
+  rt.flushOutbox ? rt.flushOutbox() : rt.watchdog();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_SOON').length, 1, '台帳不明でも終了前・未確認なら送る');
+});
