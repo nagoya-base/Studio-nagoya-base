@@ -732,3 +732,51 @@ test('API予算超過の周期でも、日付をまたいで続く未確認の�
   assert.ok(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length > before, '予算超過でも未確認の予約へ開始後の再通知');
   assert.ok(JSON.parse(w.props.KEYREADY).count >= 1, 'KEYREADY が0件に消えない');
 });
+
+function overnightWorld() {
+  var w = H.createWorld();
+  w.records = [H.record({ bookingId: 'SNB-N', startAt: H.jst('2030-01-10', '23:50'), endAt: H.jst('2030-01-11', '01:00'), confirmedAt: H.jst('2030-01-05', '10:05') })];
+  var origRead = w.ledger.read;
+  w.inRange = true;
+  w.ledger.read = function (ctx) { var r = origRead(ctx); r.records = r.records.filter(function (x) { return (ctx.trackedIds || []).indexOf(x.bookingId) !== -1 || w.inRange; }); return r; };
+  return w;
+}
+
+test('日付をまたぐ予約: 容量で発行できず OP が無くても、日付変更後に追跡を続け、再通知・再試行する', function () {
+  var w = overnightWorld();
+  blockByCapacity(w);
+  var rt = w.runtime();
+  w.nowMs = H.jst('2030-01-10', '23:56').getTime(); rt.syncCycle();
+  assert.strictEqual(ops(w).length, 0, 'OP は無い');
+  assert.ok(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length >= 1);
+  w.inRange = false;                                     // 日付が変わり、通常の読取範囲から外れる
+  w.nowMs = H.jst('2030-01-11', '00:10').getTime();
+  var n = mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length;
+  var r = rt.syncCycle();
+  assert.ok(r.keyReadiness.started >= 1, '追跡が続いている');
+  assert.ok(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length > n, '10分後の再通知');
+  assert.ok(JSON.parse(w.props.KEYREADY).count >= 1);
+  unblock(w);                                            // 容量が空けば開始後でも再試行して発行
+  w.advance(60); rt.syncCycle();
+  assert.strictEqual(createCalls(w), 1, '開始後も安全な範囲で再試行');
+});
+
+test('日付をまたぐ予約: 発行が拒否（FAILED）されたままでも、日付変更後に追跡を続けて再通知する。利用終了後は止まる', function () {
+  var w = overnightWorld();
+  w.api.createKey = function (p) { w.calls.push({ name: 'createKey', device: p.deviceId }); return { httpCode: 400, parsed: { statusCode: 400 } }; };
+  var rt = w.runtime();
+  w.nowMs = H.jst('2030-01-10', '23:56').getTime(); rt.syncCycle();
+  assert.strictEqual(ops(w)[0].state, S.FAILED);
+  w.inRange = false;
+  w.nowMs = H.jst('2030-01-11', '00:10').getTime();
+  var n = mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length;
+  rt.syncCycle();
+  assert.ok(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length > n, 'FAILED のまま日付を跨いでも再通知');
+  assert.strictEqual(createCalls(w), 1, '再発行はしない');
+  w.nowMs = H.jst('2030-01-11', '01:30').getTime();      // 利用終了後
+  rt.syncCycle();
+  var m = keyMails(w).length;
+  for (var i = 0; i < 3; i++) { w.advance(600); rt.syncCycle(); }
+  assert.strictEqual(keyMails(w).length, m, '終了後は通知しない');
+  assert.strictEqual(JSON.parse(w.props.KEYREADY).count, 0, '終了後は追跡対象から外れる');
+});

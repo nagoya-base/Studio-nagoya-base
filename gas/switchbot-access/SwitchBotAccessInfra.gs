@@ -1668,6 +1668,19 @@ var SwitchBotAccessInfra = (function () {
     //  - 開始5分前〜 / 開始後: 運営者へ緊急通知（予約参照・revision のみ。暗証番号・個人情報は載せない）。
     // 再試行は既存の engine.sync（冪等）だけを使う。UNKNOWN/FAILED/送信中の鍵を壊して再発行することはしない
     // （同一予約・同一内容に対する二重発行を防ぐ）。通知は (コード, 予約参照, revision) ごとに1件で、不達のときだけ再送する。
+    /**
+     * 台帳読取で追跡する予約ID: 未解決の鍵操作がある予約 ∪ 直近の判定で反映未確認だった予約（KEYREADY.refs）。
+     * 日付をまたいで続く予約は台帳の通常範囲（当日・翌日）から外れるため、OP が無い（容量で止まった）／終端（FAILED）でも
+     * 反映未確認の間は追跡を続ける。解決・利用終了・台帳から消えた時点で、次の判定が refs から外す。
+     */
+    function trackedLedgerIds(ops) {
+      var out = [];
+      ops.forEach(function (r) { if (isUnresolved(r) && out.indexOf(r.bookingId) === -1) out.push(r.bookingId); });
+      var kr = safeParse(deps.store.get('KEYREADY'));
+      if (kr && Array.isArray(kr.refs)) kr.refs.forEach(function (id) { if (typeof id === 'string' && out.indexOf(id) === -1) out.push(id); });
+      return out;
+    }
+
     function prepareRecord(rec, nowMs) {
       var sn = deps.snapshot.build(rec, { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
       var input = deps.snapshot.toCoreInput(sn, nowMs, { eligibleBrands: Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : [] });
@@ -1714,12 +1727,14 @@ var SwitchBotAccessInfra = (function () {
         var nowSec = deps.nowSec();
         var opsBy = groupOps(scanOps(deps.store));
         var notReady = [];
+        var refs = [];
         var alerts = [];
         prepared.forEach(function (p) {
           var rd = readinessOf(p, opsBy, nowSec);
           if (!rd || rd.level === 'NONE' || rd.ready) return;
           var ref = safeRef(p.sn.bookingId);
           notReady.push({ ref: ref || '-', level: rd.level, opState: latestIssueState(opsBy[String(p.sn.bookingId)], p.sn.revision) });
+          if (ref && refs.length < 100) refs.push(ref);
           if (rd.level === 'PRIORITY') { report.priority++; return; }
           var code = rd.level === 'WARNING' ? 'KEY_UNCONFIRMED_WARNING' : (rd.level === 'URGENT' ? 'KEY_UNCONFIRMED_URGENT' : 'KEY_UNCONFIRMED_STARTED');
           if (rd.level === 'WARNING') report.warning++; else if (rd.level === 'URGENT') report.urgent++; else report.started++;
@@ -1739,7 +1754,7 @@ var SwitchBotAccessInfra = (function () {
         report.undelivered = Object.keys(undeliveredRefs).length;
         var prev = safeParse(deps.store.get('KEYREADY'));
         if (notReady.length || (prev && prev.count > 0)) {
-          deps.store.set('KEYREADY', JSON.stringify({ at: nowSec, count: notReady.length, undelivered: report.undelivered, notReady: notReady.slice(0, 20) }));
+          deps.store.set('KEYREADY', JSON.stringify({ at: nowSec, count: notReady.length, undelivered: report.undelivered, notReady: notReady.slice(0, 20), refs: refs }));
         }
         if (report.undelivered > 0) { try { deps.store.set('NOTIFYFAIL', String(nowSec)); } catch (e1) { /* 無視 */ } }
       } catch (e) {
@@ -1753,10 +1768,7 @@ var SwitchBotAccessInfra = (function () {
       try {
         var nowMs = deps.nowMs();
         // 日付をまたいで続く予約は台帳の通常範囲から外れる。通常の同期と同じく、未解決の鍵操作がある予約を追跡対象にする
-        var ops0 = scanOps(deps.store);
-        var tracked = [];
-        ops0.forEach(function (r) { if (isUnresolved(r) && tracked.indexOf(r.bookingId) === -1) tracked.push(r.bookingId); });
-        var led = deps.ledger.read({ nowMs: nowMs, trackedIds: tracked });
+        var led = deps.ledger.read({ nowMs: nowMs, trackedIds: trackedLedgerIds(scanOps(deps.store)) });
         if (!led || led.ok !== true) return null;
         return runKeyReadiness(led.records.map(function (r) { return prepareRecord(r, nowMs); }));
       } catch (e) { return null; }
@@ -1777,7 +1789,7 @@ var SwitchBotAccessInfra = (function () {
         var openByBooking = {};
         ops.forEach(function (r) { if (isUnresolved(r)) openByBooking[r.bookingId] = true; });
         var nowMs = deps.nowMs();
-        var led = deps.ledger.read({ nowMs: nowMs, trackedIds: Object.keys(openByBooking) });
+        var led = deps.ledger.read({ nowMs: nowMs, trackedIds: trackedLedgerIds(ops) });
         if (!led || led.ok !== true) {
           var ledCode = led && typeof led.error === 'string' && /^LEDGER_[A-Z_]+$/.test(led.error) && Object.prototype.hasOwnProperty.call(CATALOG, led.error) ? led.error : 'LEDGER_READ_FAILED';
           infraAlert(ledCode, null, null, null);
