@@ -60,7 +60,7 @@ function createElement(id) {
     classList: { add: function () {}, remove: function () {} },
     addEventListener: function (name, listener) { listeners[name] = listener; },
     appendChild: function () {},
-    focus: function () { this._focusCount = (this._focusCount || 0) + 1; },
+    focus: function () { this._focusCount = (this._focusCount || 0) + 1; createElement.lastFocused = this; },
     getAttribute: function (name) { return this._attrs ? (this._attrs[name] || null) : null; },
     setAttribute: function (name, value) { this._attrs = this._attrs || {}; this._attrs[name] = String(value); },
     removeAttribute: function (name) { if (this._attrs) delete this._attrs[name]; },
@@ -295,6 +295,7 @@ test('#895: ページを開いたまま時間が経過した場合も、最終�
   assert.strictEqual(ctx.el('ba-short-lead').hidden, false);
   assert.strictEqual(ctx.el('ba-short-lead-error').hidden, false);
   assert.ok(ctx.el('ba-short-lead-check')._focusCount >= 1, 'チェック欄へフォーカス');
+  assert.strictEqual(createElement.lastFocused, ctx.el('ba-short-lead-check'), '最後にフォーカスされるのはチェック欄（global errorではない）');
   assert.strictEqual(ctx.el('ba-global-error').hidden, false);
 });
 

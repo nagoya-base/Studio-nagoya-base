@@ -2941,8 +2941,9 @@
       /* Issue #895: 最終送信時にも現在時刻で再評価。30分以下になっていて未確認なら、チェック欄のあるStep1へ戻して止める。 */
       if (shortLeadApplies_() && !(shortLeadAckKey_ === state.date + '|' + state.startTime + '|' + state.durationMinutes && els.shortLeadCheck && els.shortLeadCheck.checked)) {
         goToStep('start-time');
-        shortLeadGuardOk_();
+        /* showGlobalErrorは自身へフォーカスを移すため先に呼び、最後にチェック欄へフォーカスを置く。 */
         showGlobalError(UI_TEXT.shortLeadRequired, []);
+        shortLeadGuardOk_();
         return;
       }
 
