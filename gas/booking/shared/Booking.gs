@@ -538,7 +538,8 @@ var Booking = (function () {
      * 必ずここで再検証する。
      */
     if (isSameDayBooking) {
-      var leadMinutes = availabilityConfig.leadCutoffMinutes > 0 ? availabilityConfig.leadCutoffMinutes : 0;
+      /* 管理者（server認証済みのwindowTier=ADMIN）は30分締切の対象外。従来の「開始が現在より後」は維持する。 */
+      var leadMinutes = windowTier !== BookingWindow.TIER.ADMIN && availabilityConfig.leadCutoffMinutes > 0 ? availabilityConfig.leadCutoffMinutes : 0;
       /* Issue #885: leadMinutes>0（施行後）は「開始の30分前ちょうどまで可・29:59前は不可」。サーバー時刻が正本で、画面の候補表示には依存しない。 */
       var minimumStartMinutes = BookingAvailability.getMinimumStartMinutes(receivedAt, availabilityConfig.timezone, leadMinutes);
       if (minimumStartMinutes === null) {

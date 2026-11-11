@@ -136,3 +136,19 @@ test('空き候補: 施行後の当日は開始30分以内の候補を出さな�
   assert.ok(res2.bookableStartTimes.indexOf('13:00') === -1, '29:59前は候補から外れる');
   assert.ok(res2.bookableStartTimes.indexOf('13:30') !== -1);
 });
+
+test('管理者tier（認証済みBooking Admin経路）は30分締切の対象外。開始が過去なら従来どおり拒否', function () {
+  var sb = setup(props()).sandbox;
+  var cfg = sb.BookingConfig.getAvailabilityConfig(at(0));
+  var ok = sb.Booking.validateCreateBookingInput(payload(), cfg, at(15 * 60), sb.BookingWindow.TIER.ADMIN);
+  assert.strictEqual(ok.valid, true, '13:00開始を12:45に管理者が作成できる');
+  var ng = sb.Booking.validateCreateBookingInput(payload(), cfg, at(31 * 60), sb.BookingWindow.TIER.ADMIN);
+  assert.strictEqual(ng.error.code, 'SAME_DAY_START_TIME_PASSED');
+  var pub = sb.Booking.validateCreateBookingInput(payload(), cfg, at(15 * 60), sb.BookingWindow.TIER.GENERAL);
+  assert.strictEqual(pub.error.code, 'BOOKING_LEAD_TIME_PASSED');
+});
+
+test('フロント: BOOKING_LEAD_TIME_PASSED は開始時刻の選び直し（reselect-time）へ誘導し、日英の文言を持つ', function () {
+  var logic = require('../scripts/booking-logic.js');
+  assert.strictEqual(logic.recoveryActionForErrorCode('BOOKING_LEAD_TIME_PASSED'), 'reselect-time');
+});

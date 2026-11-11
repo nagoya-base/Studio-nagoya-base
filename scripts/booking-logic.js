@@ -93,6 +93,7 @@
       INVALID_CUSTOMER_TYPE: '利用区分（初回利用／利用経験あり）を選択してください。',
       FIRST_TIME_CARD_PAYMENT_REQUIRED: '初回利用の方のお支払いはオンラインクレジットカード決済のみとなります。',
       SAME_DAY_START_TIME_PASSED: '指定した開始時刻はすでに過ぎています。現在時刻より後の開始時刻を選択してください。',
+      BOOKING_LEAD_TIME_PASSED: '新規のご予約は利用開始の30分前までです。別の開始時刻をお選びください。お急ぎの場合はお問い合わせください。',
       RATE_LIMITED: '送信回数が多すぎます。しばらく時間を置いてから再度お試しください。',
       LOCK_TIMEOUT: '一時的に混み合っています。もう一度お試しください。',
       BOOKING_SAVE_FAILED: '予約の保存に失敗しました。しばらくしてから再度お試しください。',
@@ -160,6 +161,7 @@
       INVALID_CUSTOMER_TYPE: 'Please select your customer type (first-time guest or returning guest).',
       FIRST_TIME_CARD_PAYMENT_REQUIRED: 'First-time guests can pay by online credit card only.',
       SAME_DAY_START_TIME_PASSED: 'The selected start time has already passed. Please choose a start time later than the current time.',
+      BOOKING_LEAD_TIME_PASSED: 'New bookings close 30 minutes before the start time. Please choose a later start time, or contact us if it is urgent.',
       RATE_LIMITED: 'Too many requests have been submitted. Please wait a moment and try again.',
       LOCK_TIMEOUT: 'The system is currently busy. Please try again.',
       BOOKING_SAVE_FAILED: 'We couldn’t save your booking. Please try again in a moment.',
@@ -275,7 +277,8 @@
       code === 'SLOT_CONFLICT' ||
       code === 'INVALID_START_TIME' ||
       code === 'START_TIME_NOT_ALIGNED' ||
-      code === 'SAME_DAY_START_TIME_PASSED'
+      code === 'SAME_DAY_START_TIME_PASSED' ||
+      code === 'BOOKING_LEAD_TIME_PASSED'
     ) {
       return 'reselect-time';
     }
