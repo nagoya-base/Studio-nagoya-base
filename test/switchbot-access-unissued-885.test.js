@@ -111,3 +111,45 @@ test('通知メールの送信が失敗しても照合サイクルは成功の�
   var out = rt.syncCycle();
   assert.strictEqual(out.ok, true);
 });
+
+test('API予算を使い切っていても、開始5分以内の未発行は運営者へ通知する（SwitchBot APIは呼ばない）', function () {
+  var w = world(); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:56:00');
+  var key = 'APICOUNT_' + '20300111';
+  w.props[key] = '8000';
+  var out = rt.syncCycle();
+  assert.strictEqual(out.error, 'API_BUDGET_EXHAUSTED');
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_SOON').length, 1);
+  assert.strictEqual(w.callCount('createKey'), 0, '変更APIは呼ばない');
+  assert.strictEqual(w.callCount('listDevices'), 0, 'SwitchBot APIを読まない');
+});
+
+test('通知メールが不達だった未発行通知は、回復後に利用終了を過ぎていれば送らず破棄する', function () {
+  var w = world(); rejectIssue(w); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:56:00');
+  w.mailFail = true;
+  rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_SOON').length, 0, '不達');
+  w.mailFail = false;
+  at(w, '12:30:00');
+  rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED').length, 0, '終了後は古い緊急通知を送らない');
+  var pending = w.store.keys().filter(function (k) { return k.indexOf('IALERT_KEY_NOT_ISSUED') === 0; });
+  assert.strictEqual(pending.length, 0, '破棄される');
+});
+
+test('通知メールが不達の間に個別キーが反映確認済みになれば、回復後も古い緊急通知は送らない', function () {
+  var w = world(); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:56:00');
+  w.mailFail = true;
+  // 不達で送信待ちに残った未発行通知（revision 1）を再現する
+  rt.infraAlert('KEY_NOT_ISSUED_SOON', 'SNB-1', 1, null, 300, Math.floor(Date.parse(DAY + 'T12:00:00+09:00') / 1000));
+  assert.ok(w.store.keys().some(function (k) { return k.indexOf('IALERT_KEY_NOT_ISSUED_SOON') === 0; }), '前提: 不達の通知が送信待ちに残っている');
+  w.mailFail = false;
+  for (var i = 0; i < 4; i++) { rt.syncCycle(); w.advance(60); }
+  assert.ok(opsOf(w, S.ISSUED_CONFIRMED).length >= 1, '前提: 反映確認済み');
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED').length, 0, '反映確認後は古い通知を送らない');
+});

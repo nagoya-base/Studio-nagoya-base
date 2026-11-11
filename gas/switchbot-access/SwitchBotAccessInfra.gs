@@ -1304,11 +1304,12 @@ var SwitchBotAccessInfra = (function () {
     function iaKey(code, ref, rev) { return 'IALERT_' + code + '_' + (ref || '-') + '_' + (rev === undefined || rev === null ? '-' : rev); }
 
     /** 基盤事象の通知。同一事象は repeatSec 内は再通知しない。送達失敗は次回以降バックオフ付きで再送。 */
-    function infraAlert(code, ref, rev, detail, repeatSec) {
+    function infraAlert(code, ref, rev, detail, repeatSec, expiresAtSec) {
       var k = iaKey(code, ref, rev);
       var cur = safeParse(deps.store.get(k));
       var now = deps.nowSec();
       var rec = cur || { event: { code: code, ref: ref || undefined, rev: rev === undefined ? undefined : rev, detail: detail || undefined }, firstAt: now, sentAt: null, attempts: 0, lastTryAt: 0 };
+      if (typeof expiresAtSec === 'number') rec.expiresAt = expiresAtSec; // 期限（例: 利用終了）を過ぎた未送信の通知は再送せず破棄する（Issue #885）
       if (rec.sentAt !== null && now - rec.sentAt < (repeatSec || ic.notifyRepeatSec)) return false;
       if (rec.sentAt === null && rec.attempts > 0) {
         var wait = Math.min(ic.notifyBackoffMaxSec, ic.notifyBackoffBaseSec * Math.pow(2, Math.min(rec.attempts, 20)));
@@ -1333,6 +1334,17 @@ var SwitchBotAccessInfra = (function () {
       }
     }
 
+    /**
+     * 開始直前・開始後の未発行通知（Issue #885）が、再送時点で古くなっていないか。利用終了を過ぎた、または現在の revision の
+     * 個別キーが反映確認済みになったものは、送らずに破棄する（「連絡して代替入室を」という古い緊急指示を後から送らない）。
+     */
+    function isObsoleteKeyAlert(rec) {
+      var ev = rec && rec.event;
+      if (!ev || (ev.code !== 'KEY_NOT_ISSUED_SOON' && ev.code !== 'KEY_NOT_ISSUED_STARTED')) return false;
+      if (typeof rec.expiresAt === 'number' && deps.nowSec() >= rec.expiresAt) return true;
+      return hasIssuedKey(scanOps(deps.store), { bookingId: ev.ref, revision: ev.rev });
+    }
+
     /** 未送達の通知を再送する（バックオフ尊重）。 */
     function flushOutbox() {
       var now = deps.nowSec();
@@ -1340,6 +1352,7 @@ var SwitchBotAccessInfra = (function () {
       deps.store.keys().filter(function (k) { return k.indexOf('IALERT_') === 0; }).forEach(function (k) {
         var rec = safeParse(deps.store.get(k));
         if (!rec || rec.sentAt !== null) return;
+        if (isObsoleteKeyAlert(rec)) { try { deps.store.del(k); } catch (e) { /* 次回 */ } return; }
         pending++;
         var wait = Math.min(ic.notifyBackoffMaxSec, ic.notifyBackoffBaseSec * Math.pow(2, Math.min(rec.attempts, 20)));
         if (rec.attempts > 0 && now - rec.lastTryAt < wait) { if (rec.attempts >= ic.notifyFailingAttempts) failing++; return; }
@@ -1531,8 +1544,15 @@ var SwitchBotAccessInfra = (function () {
           var untilStart = tm.startSec - nowSec;
           if (untilStart > URGENT_BEFORE_START_SEC) return;
           if (hasIssuedKey(opsNow, sn)) return;
-          infraAlert(untilStart >= 0 ? 'KEY_NOT_ISSUED_SOON' : 'KEY_NOT_ISSUED_STARTED', safeRef(sn.bookingId), sn.revision, null, untilStart >= 0 ? 300 : 600);
+          infraAlert(untilStart >= 0 ? 'KEY_NOT_ISSUED_SOON' : 'KEY_NOT_ISSUED_STARTED', safeRef(sn.bookingId), sn.revision, null, untilStart >= 0 ? 300 : 600, tm.endSec);
         });
+      } catch (e) { /* 検知の失敗で照合は止めない */ }
+    }
+
+    function detectUnissuedWithoutApi() {
+      try {
+        var led = deps.ledger.read({ nowMs: deps.nowMs(), trackedIds: [] });
+        if (led && led.ok === true) alertUnissuedNearStart(led.records, deps.nowMs());
       } catch (e) { /* 検知の失敗で照合は止めない */ }
     }
 
@@ -1543,7 +1563,11 @@ var SwitchBotAccessInfra = (function () {
         drainInbox();
         flushOutbox();
         if (cfg.enabled !== true) return { ok: true, skipped: 'FLAG_OFF' };
-        if (budget.exhausted()) { infraAlert('API_BUDGET_EXHAUSTED', null, null, null); return { ok: false, error: 'API_BUDGET_EXHAUSTED' }; }
+        if (budget.exhausted()) {
+          infraAlert('API_BUDGET_EXHAUSTED', null, null, null);
+          detectUnissuedWithoutApi(); // 変更APIが使えない時こそ、開始直前の未発行は運営者へ知らせる（台帳とストアのみ。SwitchBot APIは呼ばない）
+          return { ok: false, error: 'API_BUDGET_EXHAUSTED' };
+        }
         var ops = scanOps(deps.store);
         var openByBooking = {};
         ops.forEach(function (r) { if (isUnresolved(r)) openByBooking[r.bookingId] = true; });
