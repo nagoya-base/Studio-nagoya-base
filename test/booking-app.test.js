@@ -1561,7 +1561,8 @@ async function goToDetailsStep_(ctx) {
 }
 
 function flowBannerText_(ctx) {
-  return ctx.elements['ba-flow-banner-title'].textContent + ' ' + ctx.elements['ba-flow-banner-body'].textContent;
+  /* Issue #896: フォーム上部は見出し＋箇条書き（li×2）。 */
+  return ['ba-flow-banner-title', 'ba-flow-banner-item-1', 'ba-flow-banner-item-2'].map(function (id) { return ctx.elements[id].textContent; }).join(' ');
 }
 
 test('Issue #445: フォーム上部バナーは、クレカ選択で「決済完了で確定」、現金・PayPayで「仮受付→管理者確認」へ切り替わり、切替で更新される', async function () {

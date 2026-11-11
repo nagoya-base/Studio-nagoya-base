@@ -61,3 +61,25 @@ test('#758: 英語規約(legal/en.html)に予約ルール改定の告知（告�
     '60 minutes remain before the end', 'start time and only lengthens the end time', 'current conditions apply until the effective date',
     'not moved or cancelled automatically', 'unchanged', 'separate from the terms wording update effective November 16'].forEach(function (w) { assert.ok(t.indexOf(w) !== -1, w); });
 });
+
+/* Issue #896: 予約フォーム冒頭は短い箇条書き。ブランド固有の会員料金案内はmensだけに出す。 */
+['_includes/booking_app_ja.html', '_includes/booking_app_en.html'].forEach(function (f) {
+  test('#896: ' + f + ' の予約ルール・確定タイミングは見出し＋<ul>の短い箇条書きで、長い段落に戻っていない', function () {
+    var t = read(f);
+    var rules = t.match(/id="ba-booking-rules-notice"[\s\S]*?<\/section>/)[0];
+    var flow = t.match(/id="ba-flow-banner"[\s\S]*?<\/section>/)[0];
+    assert.strictEqual((rules.match(/<li>/g) || []).length, 4);
+    assert.strictEqual((flow.match(/<li /g) || []).length, 2);
+    assert.ok(/<ul class="ba-brief-list"/.test(rules) && /<ul class="ba-brief-list"/.test(flow));
+    assert.ok(!/<p[^>]*id="ba-(booking-rules-notice|flow-banner)"/.test(t), '段落バナーに戻さない');
+    assert.ok(rules.indexOf('/news/') !== -1, '詳細は別ページへのリンクで参照できる');
+    assert.ok(rules.replace(/<[^>]+>/g, '').length < 500, '案内が長文化していない');
+  });
+});
+
+test('#896: 会員料金の案内はmensの予約ページだけで、SNB・Studio Xへ混入しない', function () {
+  assert.ok(read('mens/booking/index.html').indexOf('会員登録なしでも、会員料金で利用できます。') !== -1);
+  ['booking/index.html', 'booking/en.html', 'studio-x/booking/index.html', '_includes/booking_app_ja.html', '_includes/booking_app_en.html'].forEach(function (f) {
+    assert.ok(!/会員料金|member rate/i.test(read(f).replace(/SNB MEMBER[^<]*/g, '')) || f.indexOf('_includes') !== -1, f);
+  });
+});
