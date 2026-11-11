@@ -357,6 +357,24 @@
     return Number(durationMinutes) >= UI_MIN_BOOKING_MINUTES;
   }
 
+  /* Issue #895: 直前予約の注意表示。予約操作時点から利用開始までの残り時間（リードタイム）が
+     30分00秒以下か。#758の予約間30分バッファーとは別概念。#885の受付締切ロジックは変更しない
+     （候補の有効性はサーバーが正本。ここは表示と確認チェックの要否だけを決める）。
+     date='YYYY-MM-DD'、time='HH:MM'（JST）、nowMs=現在のエポックms。不正入力はfalse。 */
+  var SHORT_LEAD_NOTICE_MS = 30 * 60 * 1000;
+
+  function msUntilStartJst(date, startTime, nowMs) {
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return NaN;
+    if (typeof startTime !== 'string' || !/^\d{2}:\d{2}$/.test(startTime)) return NaN;
+    var startMs = new Date(date + 'T' + startTime + ':00+09:00').getTime();
+    return startMs - Number(nowMs);
+  }
+
+  function isShortLeadStart(date, startTime, nowMs) {
+    var remaining = msUntilStartJst(date, startTime, nowMs);
+    return Number.isFinite(remaining) && remaining <= SHORT_LEAD_NOTICE_MS;
+  }
+
   /* 表示専用。'10:00' + 120分 → '12:00'。日をまたぐ場合も表示上は24時間表記で丸める
      （営業時間内であることの保証はサーバー側の入力検証が行う）。 */
   function computeEndTime(startTime, durationMinutes) {
@@ -1575,6 +1593,9 @@
     UI_MIN_BOOKING_MINUTES: UI_MIN_BOOKING_MINUTES,
     isDurationAtLeastUiMinimum: isDurationAtLeastUiMinimum,
     computeEndTime: computeEndTime,
+    SHORT_LEAD_NOTICE_MS: SHORT_LEAD_NOTICE_MS,
+    msUntilStartJst: msUntilStartJst,
+    isShortLeadStart: isShortLeadStart,
     validateDetailsForm: validateDetailsForm,
     validateEmailField: validateEmailField,
     buildPurposeValue: buildPurposeValue,

@@ -10,6 +10,8 @@ var assert = require('node:assert');
 var fs = require('node:fs');
 var path = require('node:path');
 var loadFrontendSandbox = require('./helpers/frontend-sandbox').loadFrontendSandbox;
+/* Issue #895: 利用開始まで30分以下の日付は確認チェックが必要になるため、これらのフローは十分先の日付で通す。 */
+var FUTURE_DATE = require('./helpers/future-date').futureJstDate(30);
 
 function createElement(id) {
   var listeners = {};
@@ -338,7 +340,7 @@ test('Issue #532: 見積りのGET応答の料金世代がV2なら会員区分欄
 
 test('Issue #532: メールアドレスはStep1で1回だけ入力する。未入力・形式不正ではStep1で止まり、有効なら進んで、Step2で再入力せず最終送信へそのまま使う', async function () {
   var ctx = setupFullFlow(null);
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
 
@@ -379,7 +381,7 @@ test('Issue #532: メールアドレスはStep1で1回だけ入力する。未�
 
 test('Issue #603: 規約等・安全ルールの同意が未チェックなら送信されず、チェックごとにエラーを出す', async function () {
   var ctx = setupFullFlow(null);
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
   ctx.elements['ba-email'].value = 'step1@example.com';
@@ -694,7 +696,7 @@ function setupFullFlowWithDeferredPrice(locale, options) {
 test('PR #343レビュー対応: Step4表示後に見積りAPIの応答が届くと、確認画面の料金が「計算中」から更新される（古い表示のまま固定されない）', async function () {
   var ctx = setupFullFlowWithDeferredPrice(null);
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -729,7 +731,7 @@ test('PR #343レビュー対応: Step4表示後に見積りAPIの応答が届く
 test('PR #343レビュー対応: Step4表示中に見積りAPIが失敗した場合も、古い金額のまま固定されず失敗理由を表示する', async function () {
   var ctx = setupFullFlowWithDeferredPrice(null);
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -755,7 +757,7 @@ test('PR #300再レビュー: English localeの確認画面はpeople/purpose/pay
   var ctx = setupFullFlow('en');
 
   /* Step1: 利用日・利用時間・利用区分 */
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -796,7 +798,7 @@ test('PR #300再レビュー: English localeの確認画面はpeople/purpose/pay
 test('PR #300再レビュー: 日本語locale（未指定）では確認画面の表示が既存どおり日本語のまま（回帰なし）', async function () {
   var ctx = setupFullFlow(null);
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -824,7 +826,7 @@ test('PR #300再レビュー: 日本語locale（未指定）では確認画面�
 test('Issue #301: 日本語（locale未指定）でduration=0はStep 1で止まり、field errorを表示してgetAvailabilityを呼ばない', async function () {
   var ctx = setupFullFlow(null);
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '0';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -839,7 +841,7 @@ test('Issue #301: 日本語（locale未指定）でduration=0はStep 1で止ま�
 test('Issue #342: 利用日・利用時間が揃うとStep1に見積り金額が1か所だけ表示される', async function () {
   var ctx = setupFullFlow(null);
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -852,7 +854,7 @@ test('Issue #342: 利用日・利用時間が揃うとStep1に見積り金額が
 test('Issue #301: 日本語（locale未指定）でduration=2は通常どおりStep 2へ進みavailabilityを取得する', async function () {
   var ctx = setupFullFlow(null);
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -866,7 +868,7 @@ test('Issue #301: 日本語（locale未指定）でduration=2は通常どおりS
 test('Issue #301: locale="en"でduration=0はStep 1で止まり、英語field errorを表示してgetAvailabilityを呼ばない', async function () {
   var ctx = setupFullFlow('en');
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '0';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -884,7 +886,7 @@ test('Issue #301: locale="en"でduration=0はStep 1で止まり、英語field er
 test('Issue #410: 日本語でduration=1（1時間）はStep 1で止まらずStep 2へ進みavailabilityを取得する', async function () {
   var ctx = setupFullFlow(null);
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '1';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -898,7 +900,7 @@ test('Issue #410: 日本語でduration=1（1時間）はStep 1で止まらずSte
 test('Issue #410: locale="en"でduration=1（1時間）はStep 1で止まらずStep 2へ進む', async function () {
   var ctx = setupFullFlow('en');
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '1';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -911,7 +913,7 @@ test('Issue #410: locale="en"でduration=1（1時間）はStep 1で止まらずS
 test('Issue #301: locale="en"でduration=2は通常どおりStep 2へ進みavailabilityを取得する', async function () {
   var ctx = setupFullFlow('en');
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -928,7 +930,7 @@ test('Issue #301: locale="en"でduration=2は通常どおりStep 2へ進みavail
 test('Issue #324: Step1で希望時間帯「午前」を選ぶと、Step2にはその時間帯の開始時刻だけが描画される', async function () {
   var ctx = setupFullFlow(null, { bookableStartTimes: ['08:00', '10:00', '13:00', '19:00'] });
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
   ctx.setTimeBand('morning');
@@ -943,7 +945,7 @@ test('Issue #324: Step1で希望時間帯「午前」を選ぶと、Step2には�
 test('Issue #324: 希望時間帯が未選択（DOM未配線含む）の場合はallとして扱われ、既存どおり全開始時刻が描画される（後方互換）', async function () {
   var ctx = setupFullFlow(null, { bookableStartTimes: ['08:00', '13:00', '19:00'] });
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -956,7 +958,7 @@ test('Issue #324: 希望時間帯が未選択（DOM未配線含む）の場合�
 test('Issue #324: 希望時間帯「夜」でStep2に該当候補が無い場合、既存の「開始時刻がありません」表示になる', async function () {
   var ctx = setupFullFlow(null, { bookableStartTimes: ['08:00', '09:00'] });
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '2';
   ctx.setCustomerType('returning');
   ctx.setTimeBand('evening');
@@ -1776,7 +1778,7 @@ test('Issue #445レビュー: Checkout作成後の完了画面は、paymentHoldE
 test('Issue #520: 開始時刻を選ぶと料金表示エリアに「利用時間：開始〜終了（N時間）」が出る', async function () {
   var ctx = setupFullFlow(null, { bookableStartTimes: ['11:00', '12:15'] });
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '6';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
@@ -1797,7 +1799,7 @@ test('Issue #520: 開始時刻を選ぶと料金表示エリアに「利用時�
 test('Issue #520: 利用時間を変更すると開始時刻が未選択に戻り、利用時間帯は消える', async function () {
   var ctx = setupFullFlow(null, { bookableStartTimes: ['11:00'] });
 
-  ctx.elements['ba-date'].value = '2026-10-10';
+  ctx.elements['ba-date'].value = FUTURE_DATE;
   ctx.elements['ba-duration'].value = '6';
   ctx.setCustomerType('returning');
   ctx.elements['ba-step-datetime-next']._listeners.click();
