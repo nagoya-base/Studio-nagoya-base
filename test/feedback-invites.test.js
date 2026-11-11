@@ -298,9 +298,9 @@ test('受入6: 終了2時間後から48時間を過ぎた予約へは自動送�
 test('受入2: 3ブランドの件名・送信先フォーム・14日期限。件名と本文冒頭に利用目的・予約情報・トークンを出さない', function () {
   var ctx = setup();
   var expected = {
-    snb: { subject: '【SNB】ご利用ありがとうございました（アンケートのお願い）', form: 'snb', source: 'snb-booking-app', signature: 'Studio Nagoya Base' },
-    mens: { subject: '【SNB mens】ご利用ありがとうございました（アンケートのお願い）', form: 'mens', source: 'mens-booking-app', signature: 'SNB mens（Studio Nagoya Base）' },
-    studio_x: { subject: '【Studio X】ご利用ありがとうございました（アンケートのお願い）', form: 'studio-x', source: 'studio-x-booking-app', signature: 'Studio X' }
+    snb: { subject: '【SNB】ご利用ありがとうございました｜2〜3分のアンケート', form: 'snb', source: 'snb-booking-app', signature: 'Studio Nagoya Base' },
+    mens: { subject: '【SNB mens】ご利用ありがとうございました｜2〜3分のアンケート', form: 'mens', source: 'mens-booking-app', signature: 'SNB mens（Studio Nagoya Base）' },
+    studio_x: { subject: '【Studio X】ご利用ありがとうございました｜2〜3分のアンケート', form: 'studio-x', source: 'studio-x-booking-app', signature: 'Studio X' }
   };
   var ids = {};
   Object.keys(expected).forEach(function (brand) {
@@ -707,4 +707,64 @@ test('#834 HTML: 手動送信（sendManually）もHTML＋テキストで送る�
   failing.sandbox.sendFeedbackInvites(AFTER_2H);
   assert.deepStrictEqual(invites(failing).map(function (r) { return [r.bookingId, r.state, r.errorCode]; }), [[fid, 'FAILED', 'MAIL_SEND_FAILED']]);
   assert.strictEqual(bookingsSnapshot(failing), before, 'メール失敗時も予約台帳は変えない');
+});
+
+// ============================================================================
+// Issue #882: 回答率改善（文面・CTA・3ブランド共通）
+// ============================================================================
+
+test('#882 3ブランド: 件名はブランド名＋所要時間の目安。本文は 謝辞→問いかけ→回答動機→所要時間→CTA→補足 の順', function () {
+  var ctx = setup();
+  var labels = { snb: 'SNB', mens: 'SNB mens', studio_x: 'Studio X' };
+  var sources = { snb: 'snb-booking-app', mens: 'mens-booking-app', studio_x: 'studio-x-booking-app' };
+  Object.keys(labels).forEach(function (brand) { seed(ctx, { brand: brand, source: sources[brand], email: brand + '@example.com' }); });
+  ctx.sandbox.sendFeedbackInvites(AFTER_2H);
+  assert.strictEqual(ctx.mails.length, 3);
+  Object.keys(labels).forEach(function (brand) {
+    var mail = ctx.mails.filter(function (m) { return m.to === brand + '@example.com'; })[0];
+    assert.strictEqual(mail.subject.indexOf('【' + labels[brand] + '】'), 0, brand + ': 件名の冒頭にブランド名');
+    assert.ok(mail.subject.indexOf('2〜3分のアンケート') !== -1, brand + ': 件名に所要時間の目安');
+    assert.ok(mail.subject.indexOf('2分で完了') === -1);
+
+    var order = [
+      'このたびは ' + labels[brand] + ' をご利用いただき、ありがとうございました。',
+      '今回のスタジオはいかがでしたか？',
+      '良かった点だけでも大歓迎',
+      '設備やサービスの改善に活かして',
+      '約2〜3分',
+      'アンケートに回答する',
+      '回答は任意です',
+      'お名前やメールアドレスの入力は不要です',
+      'ご利用終了から14日間',
+      '影響することはありません',
+      '転送や共有はお控えください',
+      'お問い合わせ: contact@example.com'
+    ];
+    [['text', mail.body], ['html', htmlText(mail.htmlBody).replace(/\s+/g, ' ')]].forEach(function (pair) {
+      var last = -1;
+      order.forEach(function (word) {
+        var at = pair[1].indexOf(word);
+        assert.ok(at > last, brand + ' ' + pair[0] + ': 順序/欠落 ' + word);
+        last = at;
+      });
+      ['匿名', '特典', '優遇', 'プレゼント', 'クーポン'].forEach(function (w) {
+        assert.ok(pair[1].indexOf(w) === -1, brand + ' ' + pair[0] + ': 過剰表現・存在しない利益を書かない ' + w);
+      });
+    });
+
+    /* テキスト版: 回答URLはCTA見出しの直後に残す */
+    var link = tokenFromMail(mail);
+    assert.ok(link, brand + ': テキスト版に回答URL');
+    var textLines = mail.body.split('\n');
+    var ctaAt = textLines.indexOf('▼ アンケートに回答する');
+    assert.ok(ctaAt > 0 && /^https:\/\/nagoya-base\.github\.io\/Studio-nagoya-base\/feedback\/[a-z-]+\/#t=/.test(textLines[ctaAt + 1]));
+
+    /* HTML版: 主CTAはボタン風（濃色背景・白文字・十分な余白）で、リンクは1つだけ */
+    var links = hrefsOf(mail.htmlBody);
+    assert.strictEqual(links.length, 1);
+    assert.strictEqual(links[0].text, 'アンケートに回答する');
+    assert.ok(links[0].href.indexOf('#t=' + link.token) !== -1, brand + ': テキスト版と同じ署名済みURL');
+    assert.ok(/bgcolor="#0b57d0"/.test(mail.htmlBody) && /color:#ffffff/.test(mail.htmlBody) && /display:block;padding:14px/.test(mail.htmlBody), brand + ': ボタン風CTA');
+    assert.ok(/name="color-scheme" content="light dark"/.test(mail.htmlBody), brand + ': ダーク表示に対応を宣言');
+  });
 });
