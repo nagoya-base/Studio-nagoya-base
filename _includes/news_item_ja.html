@@ -1,0 +1,17 @@
+{%- comment -%} お知らせ1件分。本文が【見出し】で始まる場合のみ見出しを分離（文言は変更しない） {%- endcomment -%}
+{%- assign news_body = include.item.body -%}
+{%- assign news_title = '' -%}
+{%- assign news_rest = news_body -%}
+{%- if news_body contains '】' and news_body contains '【' -%}
+  {%- assign news_first = news_body | slice: 0 -%}
+  {%- if news_first == '【' -%}
+    {%- assign news_parts = news_body | split: '】' -%}
+    {%- assign news_title = news_parts[0] | append: '】' -%}
+    {%- assign news_rest = news_body | remove_first: news_title -%}
+  {%- endif -%}
+{%- endif -%}
+<div class="news-item">
+  <span class="news-date">{{ include.item.date }}</span>
+  <span class="news-badge">{{ include.item.type }}</span>
+  <span class="news-text">{% if news_title != '' %}<strong class="news-title">{{ news_title }}</strong>{% endif %}{{ news_rest }}</span>
+</div>
