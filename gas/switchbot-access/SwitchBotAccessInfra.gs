@@ -42,8 +42,10 @@ var SwitchBotAccessInfra = (function () {
     notifyFailingAttempts: 10,
     // キー未発行対策（#885 第3弾）。いずれも「利用開始時刻までの残り秒」。開始15分前から優先再試行、5分前から緊急通知。
     priorityRetryLeadSec: 900,
+    warningNoticeLeadSec: 600,
     urgentNoticeLeadSec: 300,
-    // 緊急通知（KEY_NOT_ISSUED_*）の再送は一般通知より短い間隔に抑え、数回の失敗で「不達」と判定する
+    startedRenotifySec: 600,
+    // 緊急通知（KEY_UNCONFIRMED_*）の再送は一般通知より短い間隔に抑え、数回の失敗で「不達」と判定する
     urgentNotifyBackoffMaxSec: 120,
     urgentNotifyFailingAttempts: 2,
     lockFailAlertStreak: 3,
@@ -67,11 +69,12 @@ var SwitchBotAccessInfra = (function () {
     Object.keys(DEFAULTS).forEach(function (k) { out[k] = i[k] !== undefined ? i[k] : DEFAULTS[k]; });
     out.retention = Object.assign({}, DEFAULTS.retention, i.retention || {});
     // 優先再試行・緊急通知の閾値は正の有限数かつ「優先再試行 > 緊急通知」のときだけ採用する（不正なら既定値へ戻す）
-    ['priorityRetryLeadSec', 'urgentNoticeLeadSec', 'urgentNotifyBackoffMaxSec', 'urgentNotifyFailingAttempts'].forEach(function (k) {
+    ['priorityRetryLeadSec', 'warningNoticeLeadSec', 'urgentNoticeLeadSec', 'startedRenotifySec', 'urgentNotifyBackoffMaxSec', 'urgentNotifyFailingAttempts'].forEach(function (k) {
       if (typeof out[k] !== 'number' || !isFinite(out[k]) || out[k] <= 0) out[k] = DEFAULTS[k];
     });
-    if (out.urgentNoticeLeadSec >= out.priorityRetryLeadSec) {
+    if (!(out.priorityRetryLeadSec > out.warningNoticeLeadSec && out.warningNoticeLeadSec > out.urgentNoticeLeadSec)) {
       out.priorityRetryLeadSec = DEFAULTS.priorityRetryLeadSec;
+      out.warningNoticeLeadSec = DEFAULTS.warningNoticeLeadSec;
       out.urgentNoticeLeadSec = DEFAULTS.urgentNoticeLeadSec;
     }
     return out;
@@ -96,16 +99,20 @@ var SwitchBotAccessInfra = (function () {
 
   // ---------- キー未発行対策（#885 第3弾）: 純粋判定 ----------
 
-  /** 緊急通知（KEY_NOT_ISSUED_*）のコード。再送間隔と不達判定が一般通知より厳しい。 */
-  var URGENT_CODES = ['KEY_NOT_ISSUED_URGENT', 'KEY_NOT_ISSUED_STARTED'];
+  /** 緊急通知（KEY_UNCONFIRMED_*）のコード。再送間隔と不達判定が一般通知より厳しい。 */
+  var URGENT_CODES = ['KEY_UNCONFIRMED_WARNING', 'KEY_UNCONFIRMED_URGENT', 'KEY_UNCONFIRMED_STARTED'];
+  /** 通知コードごとに必要な最低段階（送信直前の再検証で、段階が下回る通知は失効させる）。 */
+  var URGENT_CODE_LEVEL = { KEY_UNCONFIRMED_WARNING: 'WARNING', KEY_UNCONFIRMED_URGENT: 'URGENT', KEY_UNCONFIRMED_STARTED: 'STARTED' };
+  var LEVEL_RANK = { NONE: 0, PRIORITY: 1, WARNING: 2, URGENT: 3, STARTED: 4 };
 
   /**
    * 利用開始までの残り時間から、キー未発行時の対応段階を決める（鍵の有無は見ない。時刻のみの純粋関数）。
    *  - NONE:     まだ早い、または利用終了済み
    *  - PRIORITY: 開始 priorityRetryLeadSec(既定15分) 以内 … 優先再試行（通知はしない）
+   *  - WARNING:  開始 warningNoticeLeadSec(既定10分) 以内 … 反映未確認の初回警告
    *  - URGENT:   開始 urgentNoticeLeadSec(既定5分) 以内 … 運営者へ緊急通知
-   *  - STARTED:  開始時刻を過ぎた（終了前）… 代替入室へエスカレーション。安全な範囲の再試行は続ける
-   * 境界: 残りちょうど priorityRetryLeadSec は PRIORITY、ちょうど urgentNoticeLeadSec は URGENT、開始ちょうどは STARTED。
+   *  - STARTED:  開始時刻を過ぎた（終了前）… 代替入室へエスカレーション。未解決の間は一定間隔で再通知し、安全な再試行は続ける
+   * 境界: 残りちょうど各閾値はその段階（15分=PRIORITY／10分=WARNING／5分=URGENT）、開始ちょうどは STARTED。
    * startSec/endSec は予約の利用時刻（キー有効期間の前後の許容時間を含めない）。
    */
   function keyReadinessLevel(nowSec, startSec, endSec, ic) {
@@ -115,6 +122,7 @@ var SwitchBotAccessInfra = (function () {
     var remain = startSec - nowSec;
     if (remain <= 0) return 'STARTED';
     if (remain <= ic.urgentNoticeLeadSec) return 'URGENT';
+    if (remain <= ic.warningNoticeLeadSec) return 'WARNING';
     if (remain <= ic.priorityRetryLeadSec) return 'PRIORITY';
     return 'NONE';
   }
@@ -1211,6 +1219,7 @@ var SwitchBotAccessInfra = (function () {
     if (ic.quietSec >= ic.syncIntervalSec * 2) warnings.push('QUIET_PERIOD_TOO_LONG');
     var rawInfra = cfg.infra || {};
     if ((rawInfra.priorityRetryLeadSec !== undefined && rawInfra.priorityRetryLeadSec !== ic.priorityRetryLeadSec) ||
+        (rawInfra.warningNoticeLeadSec !== undefined && rawInfra.warningNoticeLeadSec !== ic.warningNoticeLeadSec) ||
         (rawInfra.urgentNoticeLeadSec !== undefined && rawInfra.urgentNoticeLeadSec !== ic.urgentNoticeLeadSec)) warnings.push('KEY_READINESS_LEAD_INVALID');
     if (ic.priorityRetryLeadSec < ic.syncIntervalSec) warnings.push('PRIORITY_LEAD_SHORTER_THAN_SYNC_CYCLE');
     return {
@@ -1301,8 +1310,9 @@ var SwitchBotAccessInfra = (function () {
       ISSUE_GATE_ERROR: c('SYSTEM', 'high', '発行前の安全確認で内部エラーが発生したため、新規発行を止めた。'),
       SYNC_ERROR: c('SYSTEM', 'high', '照合中に内部エラーが発生し、処理を中断した（詳細は公開しない）。'),
       // キー未発行対策（#885 第3弾）: 開始5分前／開始後に、発行確認済みの個別キーが無い確定予約。予約・決済は取り消さない。
-      KEY_NOT_ISSUED_URGENT: c('KEY_NOT_READY', 'high', '利用開始5分前までに個別キーが発行確認済みになっていない。管理者は直ちに予約と鍵の状態を確認し（accessAdminInspect 等）、入室に間に合わない見込みなら、本人・予約を確認のうえ代替入室（手動解錠・手動パスコード発行・物理キー）を個別に案内する。予約・決済は取り消さない。この通知に暗証番号は含まれない。'),
-      KEY_NOT_ISSUED_STARTED: c('KEY_NOT_READY', 'high', '利用開始時刻を過ぎても個別キーが発行確認済みになっていない（自動の再試行は安全な範囲で継続中）。利用者が入室できていない可能性が高い。責任者は直ちに本人・予約を確認し、代替入室へ切り替える。予約・決済は取り消さない。'),
+      KEY_UNCONFIRMED_WARNING: c('KEY_UNCONFIRMED', 'medium', '利用開始10分前になっても、個別キーの反映を確認できていない（発行の途中状態を含む。「発行失敗」と確定したものではない）。自動の再試行は続いている。管理者は予約と鍵の状態を確認する。この通知に暗証番号は含まれない。'),
+      KEY_UNCONFIRMED_URGENT: c('KEY_UNCONFIRMED', 'high', '利用開始5分前になっても、個別キーの反映を確認できていない（途中状態を含む。「発行失敗」と確定したものではない）。管理者は直ちに予約と鍵の状態を確認し（accessAdminInspect 等）、入室に間に合わない見込みなら、本人・予約を確認のうえ代替入室（手動解錠・手動パスコード発行・物理キー）を個別に案内する。予約・決済は取り消さない。'),
+      KEY_UNCONFIRMED_STARTED: c('KEY_UNCONFIRMED', 'high', '利用開始時刻を過ぎても、個別キーの反映を確認できていない（未解決の間、約10分ごとに再通知する）。利用者が入室できていない可能性が高い。責任者は直ちに本人・予約を確認し、代替入室へ切り替える。予約・決済は取り消さない。'),
       NOTIFY_BACKLOG: c('SYSTEM', 'high', '管理者通知の送達が連続して失敗している。通知経路を確認する。'),
       BOOKING_FROZEN: c('FROZEN', 'medium', '予約に鍵操作を止める条件がある（支払未確認・追加料金未了・要復旧・時刻不正など）。管理者が予約を確認する。既存キーは変更していない。'),
       DIGEST_MISMATCH: c('FROZEN', 'high', '予約の内容とrevisionが食い違っている。鍵操作を止めた。revision増分の漏れを確認する。')
@@ -1410,7 +1420,7 @@ var SwitchBotAccessInfra = (function () {
     function iaKey(code, ref, rev) { return 'IALERT_' + code + '_' + (ref || '-') + '_' + (rev === undefined || rev === null ? '-' : rev); }
 
     /** 基盤事象の通知。同一事象は repeatSec 内は再通知しない。送達失敗は次回以降バックオフ付きで再送。 */
-    function infraAlert(code, ref, rev, detail, repeatSec) {
+    function infraAlert(code, ref, rev, detail, repeatSec, verified) {
       var k = iaKey(code, ref, rev);
       var cur = safeParse(deps.store.get(k));
       var now = deps.nowSec();
@@ -1419,7 +1429,7 @@ var SwitchBotAccessInfra = (function () {
       if (rec.sentAt === null && rec.attempts > 0) {
         if (now - rec.lastTryAt < backoffWaitSec(rec)) return false;
       }
-      return trySend(k, rec);
+      return trySend(k, rec, verified) === 'SENT';
     }
 
     /** 緊急通知は一般通知より短い間隔（既定2分）で再送し、少ない失敗回数（既定2回）で不達と判定する。 */
@@ -1430,7 +1440,17 @@ var SwitchBotAccessInfra = (function () {
     }
     function failingThreshold(rec) { return isUrgentRec(rec) ? ic.urgentNotifyFailingAttempts : ic.notifyFailingAttempts; }
 
-    function trySend(k, rec) {
+    /**
+     * 戻り値: 'SENT' 送信成功／'FAILED' 送信失敗（再送対象）／'VOID' 失効（送らず記録も消す）／'HOLD' 検証できず保留（何も変えない）。
+     * 緊急通知（KEY_UNCONFIRMED_*）は、送信直前に現行の台帳・OPで再検証する。メール失敗の後にキーが反映された、
+     * 予約が取消・変更（revision）・終了した場合に、古い通知を送らないため。verified=true は直前に同じ判定を済ませた呼出し。
+     */
+    function trySend(k, rec, verified) {
+      if (isUrgentRec(rec) && verified !== true) {
+        var v = urgentStillValid(rec);
+        if (v === 'HOLD') return 'HOLD';
+        if (v === 'VOID') { try { deps.store.del(k); } catch (e0) { /* 次回も失効判定になる */ } return 'VOID'; }
+      }
       var now = deps.nowSec();
       rec.attempts += 1; rec.lastTryAt = now;
       try {
@@ -1438,26 +1458,58 @@ var SwitchBotAccessInfra = (function () {
         deps.sendMail(m.subject, m.body);
         rec.sentAt = now; rec.attempts = 0;
         deps.store.set(k, JSON.stringify(rec));
-        return true;
+        return 'SENT';
       } catch (e) {
         rec.sentAt = null;
         try { deps.store.set(k, JSON.stringify(rec)); } catch (e2) { /* 記録不能でも次回の検知で再通知される */ }
-        return false;
+        return 'FAILED';
       }
+    }
+
+    var ledgerForFlush = null; // flushOutbox 1回の間だけ、再検証用の台帳読取を共有する
+    var flushing = false;
+
+    /** 緊急通知がまだ有効か。'OK' 送ってよい／'VOID' 失効／'HOLD' 台帳を確認できず保留。 */
+    function urgentStillValid(rec) {
+      var ev = rec.event || {};
+      var need = URGENT_CODE_LEVEL[ev.code];
+      if (!need || typeof ev.ref !== 'string' || !Number.isInteger(ev.rev)) return 'VOID';
+      if (cfg.enabled !== true) return 'VOID';
+      var nowMs = deps.nowMs();
+      var led = ledgerForFlush;
+      if (!led) {
+        try { led = deps.ledger.read({ nowMs: nowMs, trackedIds: [ev.ref] }); } catch (e) { return 'HOLD'; }
+        if (flushing) ledgerForFlush = led;
+      }
+      if (!led || led.ok !== true) return 'HOLD';
+      var hits = (led.records || []).filter(function (r) { return String(r.bookingId) === ev.ref; });
+      if (hits.length === 0) return 'VOID';
+      if (hits.length > 1) return 'HOLD';
+      var p;
+      try { p = prepareRecord(hits[0], nowMs); } catch (e1) { return 'HOLD'; }
+      if (p.sn.revision !== ev.rev) return 'VOID';
+      var rd = readinessOf(p, groupOps(scanOps(deps.store)), deps.nowSec());
+      if (!rd || rd.ready || LEVEL_RANK[rd.level] < LEVEL_RANK[need]) return 'VOID';
+      return 'OK';
     }
 
     /** 未送達の通知を再送する（バックオフ尊重）。 */
     function flushOutbox() {
       var now = deps.nowSec();
       var pending = 0, failing = 0;
-      deps.store.keys().filter(function (k) { return k.indexOf('IALERT_') === 0; }).forEach(function (k) {
-        var rec = safeParse(deps.store.get(k));
-        if (!rec || rec.sentAt !== null) return;
-        pending++;
-        var th = failingThreshold(rec);
-        if (rec.attempts > 0 && now - rec.lastTryAt < backoffWaitSec(rec)) { if (rec.attempts >= th) failing++; return; }
-        if (!trySend(k, rec) && rec.attempts >= th) failing++;
-      });
+      ledgerForFlush = null; flushing = true;
+      try {
+        deps.store.keys().filter(function (k) { return k.indexOf('IALERT_') === 0; }).forEach(function (k) {
+          var rec = safeParse(deps.store.get(k));
+          if (!rec || rec.sentAt !== null) return;
+          pending++;
+          var th = failingThreshold(rec);
+          if (rec.attempts > 0 && now - rec.lastTryAt < backoffWaitSec(rec)) { if (rec.attempts >= th) failing++; return; }
+          var res = trySend(k, rec);
+          if (res === 'VOID') pending--;
+          else if (res === 'FAILED' && rec.attempts >= th) failing++;
+        });
+      } finally { ledgerForFlush = null; flushing = false; }
       return { pending: pending, failing: failing };
     }
 
@@ -1646,7 +1698,7 @@ var SwitchBotAccessInfra = (function () {
      * 戻り値は件数のみ。予約単位の状態は状態ストア KEYREADY（予約参照・段階・OP状態のみ）へ最新を残す。
      */
     function runKeyReadiness(prepared) {
-      var report = { priority: 0, urgent: 0, started: 0, undelivered: 0 };
+      var report = { priority: 0, warning: 0, urgent: 0, started: 0, undelivered: 0 };
       try {
         var nowSec = deps.nowSec();
         var opsBy = groupOps(scanOps(deps.store));
@@ -1658,9 +1710,10 @@ var SwitchBotAccessInfra = (function () {
           var ref = safeRef(p.sn.bookingId);
           notReady.push({ ref: ref || '-', level: rd.level, opState: latestIssueState(opsBy[String(p.sn.bookingId)], p.sn.revision) });
           if (rd.level === 'PRIORITY') { report.priority++; return; }
-          var code = rd.level === 'URGENT' ? 'KEY_NOT_ISSUED_URGENT' : 'KEY_NOT_ISSUED_STARTED';
-          if (rd.level === 'URGENT') report.urgent++; else report.started++;
-          infraAlert(code, ref, p.sn.revision, null);
+          var code = rd.level === 'WARNING' ? 'KEY_UNCONFIRMED_WARNING' : (rd.level === 'URGENT' ? 'KEY_UNCONFIRMED_URGENT' : 'KEY_UNCONFIRMED_STARTED');
+          if (rd.level === 'WARNING') report.warning++; else if (rd.level === 'URGENT') report.urgent++; else report.started++;
+          // 開始後は未解決の間 startedRenotifySec ごとに再通知（利用終了で判定対象から外れて止まる）。直前に判定済みなので再検証は省く
+          infraAlert(code, ref, p.sn.revision, null, rd.level === 'STARTED' ? ic.startedRenotifySec : undefined, true);
           alerts.push({ code: code, ref: ref, rev: p.sn.revision });
         });
         // 通知の不達検知: 緊急通知が所定回数失敗したまま未送達

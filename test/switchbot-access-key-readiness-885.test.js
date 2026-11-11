@@ -18,7 +18,7 @@ var START = H.jst('2030-01-11', '10:00').getTime();     // 既定レコードの
 function setNow(w, minutesBeforeStart, extraSec) { w.nowMs = START - minutesBeforeStart * 60000 + (extraSec || 0) * 1000; }
 function ops(w) { return w.store.keys().filter(function (k) { return k.indexOf('OP_') === 0; }).map(function (k) { return JSON.parse(w.store.get(k)); }); }
 function mailsOf(w, code) { return w.mails.filter(function (m) { return m.subject.indexOf(code) !== -1; }); }
-function keyMails(w) { return w.mails.filter(function (m) { return /KEY_NOT_ISSUED_/.test(m.subject); }); }
+function keyMails(w) { return w.mails.filter(function (m) { return /KEY_UNCONFIRMED_/.test(m.subject); }); }
 function createCalls(w) { return w.callCount('createKey'); }
 
 /** 容量ゲートで新規発行が止まる状態（Keypad 登録数が停止閾値に達している）。 */
@@ -27,13 +27,15 @@ function unblock(w) { w.keys[H.DEV] = []; }
 
 // ================================================================ 純粋判定
 
-test('段階判定: 開始15分前=PRIORITY／5分前=URGENT／開始=STARTED の境界と、終了後・不正値はNONE', function () {
-  var ic = { priorityRetryLeadSec: 900, urgentNoticeLeadSec: 300 };
+test('段階判定: 開始15分前=PRIORITY／10分前=WARNING／5分前=URGENT／開始=STARTED の境界と、終了後・不正値はNONE', function () {
+  var ic = { priorityRetryLeadSec: 900, warningNoticeLeadSec: 600, urgentNoticeLeadSec: 300 };
   var L = Infra.keyReadinessLevel;
   var s = 100000, e = s + 7200;
   assert.strictEqual(L(s - 901, s, e, ic), 'NONE');
   assert.strictEqual(L(s - 900, s, e, ic), 'PRIORITY', '残りちょうど15:00は優先再試行');
-  assert.strictEqual(L(s - 301, s, e, ic), 'PRIORITY');
+  assert.strictEqual(L(s - 601, s, e, ic), 'PRIORITY');
+  assert.strictEqual(L(s - 600, s, e, ic), 'WARNING', '残りちょうど10:00は初回警告');
+  assert.strictEqual(L(s - 301, s, e, ic), 'WARNING');
   assert.strictEqual(L(s - 300, s, e, ic), 'URGENT', '残りちょうど5:00は緊急通知');
   assert.strictEqual(L(s - 1, s, e, ic), 'URGENT');
   assert.strictEqual(L(s, s, e, ic), 'STARTED', '開始ちょうどは開始後');
@@ -48,7 +50,7 @@ test('設定: 閾値が不正（0・負・逆転・非数）なら既定値へ�
   var w = H.createWorld({ cfg: { infra: { priorityRetryLeadSec: 200, urgentNoticeLeadSec: 300 } } });
   assert.deepStrictEqual(
     [w.runtime().plan.warnings.indexOf('KEY_READINESS_LEAD_INVALID') !== -1], [true]);
-  var ok = H.createWorld({ cfg: { infra: { priorityRetryLeadSec: 1200, urgentNoticeLeadSec: 240 } } });
+  var ok = H.createWorld({ cfg: { infra: { priorityRetryLeadSec: 1200, warningNoticeLeadSec: 600, urgentNoticeLeadSec: 240 } } });
   assert.strictEqual(ok.runtime().plan.warnings.indexOf('KEY_READINESS_LEAD_INVALID'), -1);
   var bad = H.createWorld({ cfg: { infra: { priorityRetryLeadSec: -5, urgentNoticeLeadSec: 'x' } } });
   assert.ok(bad.runtime().plan.warnings.indexOf('KEY_READINESS_LEAD_INVALID') !== -1);
@@ -125,31 +127,36 @@ test('優先再試行: 処理順は「開始が近い未発行」が先頭（実
 
 // ================================================================ 2. 開始5分前の緊急通知
 
-test('緊急通知: 開始6分前は通知せず、5分前から1件だけ通知する（コード・予約参照のみ。暗証番号・個人情報なし）', function () {
+test('段階通知: 11分前は通知せず、10分前に初回警告、5分前に緊急通知。各1件で重複しない（コード・予約参照のみ）', function () {
   var w = H.createWorld();
   w.records = [H.record()];
-  blockByCapacity(w);                       // 発行できない状態が続く
-  setNow(w, 7);
+  blockByCapacity(w);                       // 反映が確認できない状態が続く
   var rt = w.runtime();
-  rt.syncCycle();
-  setNow(w, 6);
-  rt.syncCycle();
-  assert.strictEqual(keyMails(w).length, 0, '開始6分前までは通知しない');
+  setNow(w, 11); rt.syncCycle();
+  assert.strictEqual(keyMails(w).length, 0, '開始11分前までは通知しない（優先再試行のみ）');
+
+  setNow(w, 10);
+  var r = rt.syncCycle();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_WARNING').length, 1, '開始10:00前で初回警告');
+  assert.strictEqual(r.keyReadiness.warning, 1);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 0);
+
+  setNow(w, 6); rt.syncCycle();
+  assert.strictEqual(keyMails(w).length, 1, '10分前〜5分前の間は増えない');
 
   setNow(w, 5);
-  var r = rt.syncCycle();
-  assert.strictEqual(keyMails(w).length, 1, '開始5:00前で緊急通知');
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_URGENT').length, 1);
+  r = rt.syncCycle();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1, '開始5:00前で緊急通知');
   assert.strictEqual(r.keyReadiness.urgent, 1);
-  var m = keyMails(w)[0];
+  var m = mailsOf(w, 'KEY_UNCONFIRMED_URGENT')[0];
   assert.ok(m.body.indexOf('SNB-1') !== -1, '予約参照を含む');
   assert.ok(/代替入室/.test(m.body), '代替入室の案内を含む');
+  assert.ok(/反映/.test(m.body) && !/発行失敗/.test(m.subject + m.body.replace(/「発行失敗」と確定したものではない/g, '')), '「反映未確認」と明記し、発行失敗と断定しない');
   assert.ok(!/guest@example\.test/.test(m.subject + m.body), '個人情報を含まない');
   assert.ok(!/\b\d{8}\b/.test(m.subject + m.body), '8桁の暗証番号を含まない');
 
-  // 重複通知防止: 以後の周期でも増えない
-  for (var i = 0; i < 4; i++) { w.advance(60); rt.syncCycle(); }
-  assert.strictEqual(keyMails(w).length, 1, '同一予約・同一revisionへの緊急通知は重複しない');
+  for (var i = 0; i < 4; i++) { w.advance(10); rt.syncCycle(); }
+  assert.strictEqual(keyMails(w).length, 2, '同一予約・同一revisionの警告/緊急通知は重複しない');
 });
 
 test('緊急通知: 開始後も未発行なら別コードで1回だけエスカレーションする', function () {
@@ -158,12 +165,12 @@ test('緊急通知: 開始後も未発行なら別コードで1回だけエス�
   blockByCapacity(w);
   var rt = w.runtime();
   setNow(w, 4); rt.syncCycle();
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_URGENT').length, 1);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1);
   setNow(w, 0, 1); rt.syncCycle();           // 開始後
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_STARTED').length, 1, '開始後は別コードでエスカレーション');
-  for (var i = 0; i < 4; i++) { w.advance(120); rt.syncCycle(); }
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_STARTED').length, 1);
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_URGENT').length, 1);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length, 1, '開始後は別コードでエスカレーション');
+  for (var i = 0; i < 4; i++) { w.advance(120); rt.syncCycle(); }   // 開始後8分: まだ10分に満たない
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length, 1);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1);
   assert.strictEqual(createCalls(w), 0, '容量ゲートが開くまで発行しない（強行しない）');
 });
 
@@ -173,7 +180,7 @@ test('開始後の安全な再試行: 容量が空けば開始後でも未送信
   blockByCapacity(w);
   var rt = w.runtime();
   setNow(w, 0, 30); rt.syncCycle();
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_STARTED').length, 1);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length, 1);
   unblock(w);
   w.advance(60); rt.syncCycle();
   assert.strictEqual(createCalls(w), 1, '開始後も安全な範囲（未送信）で再試行して発行');
@@ -203,7 +210,7 @@ test('通知不達: 緊急通知の送信が失敗したら短い間隔で再送
   var w = H.createWorld();
   w.records = [H.record()];
   blockByCapacity(w);
-  w.mailFailIf = function (subject) { return /KEY_NOT_ISSUED_/.test(subject); };
+  w.mailFailIf = function (subject) { return /KEY_UNCONFIRMED_/.test(subject); };
   var rt = w.runtime();
   setNow(w, 5);
   var r1 = rt.syncCycle();
@@ -225,9 +232,9 @@ test('通知不達: 緊急通知の送信が失敗したら短い間隔で再送
   w.mailFailIf = null;                           // メール復旧
   w.advance(120);                                // 再送の待機は最大2分
   rt.syncCycle();
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_URGENT').length, 1, '復旧後に再通知される');
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1, '復旧後に再通知される');
   for (var i = 0; i < 3; i++) { w.advance(10); rt.syncCycle(); }    // まだ開始前
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_URGENT').length, 1, '再通知は1件のみ（重複しない）');
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1, '再通知は1件のみ（重複しない）');
   assert.strictEqual(JSON.parse(w.props.KEYREADY).undelivered, 0, '届いたら不達は解消');
 });
 
@@ -251,7 +258,7 @@ test('通知不達: 監視ジョブ（watchdog）も緊急通知を再送し、2
   var w = H.createWorld();
   w.records = [H.record()];
   blockByCapacity(w);
-  w.mailFailIf = function (subject) { return /KEY_NOT_ISSUED_/.test(subject); };
+  w.mailFailIf = function (subject) { return /KEY_UNCONFIRMED_/.test(subject); };
   var rt = w.runtime();
   setNow(w, 4); rt.syncCycle();
   w.advance(150); var wd = rt.watchdog();
@@ -273,8 +280,8 @@ test('重複防止: 送信結果が不明（UNKNOWN）の鍵は再送せず、�
   for (var i = 0; i < 16; i++) { w.advance(60); rt.syncCycle(); }  // 開始5分前を過ぎ、開始も過ぎる
   assert.strictEqual(createCalls(w), 1, 'UNKNOWN の予約へ createKey を再送しない（二重発行しない）');
   assert.strictEqual(ops(w).length, 1, '同一予約に OP は1件のまま');
-  assert.ok(mailsOf(w, 'KEY_NOT_ISSUED_').length >= 1, '時刻が迫れば緊急通知は出る');
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_URGENT').length, 1);
+  assert.ok(mailsOf(w, 'KEY_UNCONFIRMED_').length >= 1, '時刻が迫れば緊急通知は出る');
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1);
   w.api.createKey = orig;
 });
 
@@ -288,8 +295,8 @@ test('重複防止: 明確に拒否された（FAILED）鍵も自動では再発
   for (var i = 0; i < 16; i++) { w.advance(60); rt.syncCycle(); }
   assert.strictEqual(createCalls(w), 1, '拒否された鍵を自動で繰り返し送らない');
   assert.strictEqual(ops(w).length, 1);
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_URGENT').length, 1);
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_STARTED').length, 1);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length, 1);
 });
 
 test('重複防止: 発行中（SENT_WAIT_WEBHOOK）の予約を毎周期呼んでも createKey は1回、完了後は追加の鍵を作らない', function () {
@@ -352,7 +359,7 @@ test('非影響: 別の予約が未発行で通知・再試行の対象でも、
   assert.strictEqual(keysA.length, 1);
   w.nowMs = H.jst('2030-01-11', '11:26').getTime();    // A は利用中、B は開始4分前
   var r = rt.syncCycle();
-  var urgent = mailsOf(w, 'KEY_NOT_ISSUED_URGENT');
+  var urgent = mailsOf(w, 'KEY_UNCONFIRMED_URGENT');
   assert.strictEqual(urgent.length, 1);
   assert.ok(urgent[0].body.indexOf('SNB-B') !== -1, '未発行の B が通知される');
   assert.ok(urgent[0].body.indexOf('SNB-A') === -1, '発行済みの A は通知されない');
@@ -422,7 +429,7 @@ test('同期不能でも未発行の緊急通知は出す: API 予算超過の�
   var r = rt.syncCycle();
   assert.strictEqual(r.error, 'API_BUDGET_EXHAUSTED');
   assert.strictEqual(createCalls(w), 0, '予算超過では鍵を作らない');
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_URGENT').length, 1, '未発行の緊急通知は予算超過でも届く');
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1, '未発行の緊急通知は予算超過でも届く');
 });
 
 // ================================================================ 7. 予約変更時の整合
@@ -433,12 +440,12 @@ test('改訂が進んだ予約は、新しい revision ごとに未発行を判�
   blockByCapacity(w);
   var rt = w.runtime();
   setNow(w, 4); rt.syncCycle();
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_URGENT').length, 1);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1);
   w.records = [H.record({ revision: 2 })];
   w.advance(60); rt.syncCycle();
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_URGENT').length, 2, '新しい revision は別の予約状態として通知');
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 2, '新しい revision は別の予約状態として通知');
   for (var i = 0; i < 3; i++) { w.advance(60); rt.syncCycle(); }
-  assert.strictEqual(mailsOf(w, 'KEY_NOT_ISSUED_URGENT').length, 2);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 2);
 });
 
 // ================================================================ 8. 通知内容の秘匿
@@ -455,4 +462,160 @@ test('通知内容: 件名・本文に暗証番号・完全な端末ID・個人�
   assert.ok(all.indexOf(H.DEV) === -1, '完全な端末IDを含まない');
   assert.ok(!/guest@example\.test/.test(all));
   w.createdPasswords.forEach(function (pw) { assert.ok(all.indexOf(pw) === -1); });
+});
+
+// ================================================================ 開始後の再通知（10分間隔・終了後停止）
+
+test('開始後の再通知: 未解決の間は10分間隔で通知し、利用終了後は止まる。解決（反映確認）後も止まる', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  var rt = w.runtime();
+  setNow(w, 0, 1); rt.syncCycle();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length, 1);
+  w.advance(300); rt.syncCycle();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length, 1, '5分後はまだ再通知しない');
+  w.advance(300); rt.syncCycle();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length, 2, '10分後に再通知');
+  w.advance(300); rt.syncCycle();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length, 2);
+  w.advance(300); rt.syncCycle();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length, 3);
+  w.nowMs = H.jst('2030-01-11', '12:10').getTime();           // 利用終了後
+  var before = keyMails(w).length;
+  for (var i = 0; i < 4; i++) { w.advance(600); rt.syncCycle(); }
+  assert.strictEqual(keyMails(w).length, before, '終了後は再通知しない');
+});
+
+test('開始後の再通知: 反映が確認できたら以後は通知しない', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  var rt = w.runtime();
+  setNow(w, 0, 1); rt.syncCycle();
+  unblock(w); w.advance(60); rt.syncCycle();
+  var op = ops(w)[0];
+  w.advance(10); rt.handleWebhook(H.webhook({ commandId: op.commandId }), H.TOKEN, H.TOKEN);
+  w.advance(60); rt.syncCycle();
+  assert.strictEqual(ops(w)[0].state, S.ISSUED_CONFIRMED);
+  var before = keyMails(w).length;
+  for (var i = 0; i < 4; i++) { w.advance(600); rt.syncCycle(); }
+  assert.strictEqual(keyMails(w).length, before);
+});
+
+// ================================================================ 古い緊急通知の失効（送信直前の再検証）
+
+function failUrgentMail(w) { w.mailFailIf = function (subject) { return /KEY_UNCONFIRMED_/.test(subject); }; }
+function pendingUrgent(w) { return w.store.keys().filter(function (k) { return /^IALERT_KEY_UNCONFIRMED_/.test(k); }); }
+
+test('失効: メール失敗→キー反映→メール復旧のとき、古い緊急通知は送らず破棄する', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 5); rt.syncCycle();
+  assert.strictEqual(pendingUrgent(w).length >= 1, true, '未送達として残る');
+  unblock(w);
+  setNow(w, 4); rt.syncCycle();
+  var op = ops(w)[0];
+  w.advance(10); rt.handleWebhook(H.webhook({ commandId: op.commandId }), H.TOKEN, H.TOKEN);
+  w.advance(30); rt.syncCycle();
+  assert.strictEqual(ops(w)[0].state, S.ISSUED_CONFIRMED);
+  w.mailFailIf = null;                          // メール復旧
+  w.advance(150); rt.syncCycle(); rt.watchdog();
+  assert.strictEqual(keyMails(w).length, 0, '反映済みの予約へ古い緊急通知を送らない');
+  assert.strictEqual(pendingUrgent(w).length, 0, '失効した通知は outbox から消える');
+  assert.strictEqual(rt.admin('status', {}).notifyOutbox.pending, 0);
+});
+
+test('失効: メール失敗→予約取消→メール復旧のとき、古い緊急通知は送らない（watchdog経由も同じ）', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 5); rt.syncCycle();
+  w.records = [H.record({ status: 'CANCELLED', revision: 2 })];
+  w.mailFailIf = null;
+  w.advance(150);
+  rt.watchdog();                                 // 監視ジョブによる再送経路
+  assert.strictEqual(keyMails(w).length, 0);
+  assert.strictEqual(pendingUrgent(w).length, 0);
+});
+
+test('失効: メール失敗→利用終了→メール復旧のとき、古い緊急通知は送らない', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 5); rt.syncCycle();
+  w.mailFailIf = null;
+  w.nowMs = H.jst('2030-01-11', '12:30').getTime();
+  rt.syncCycle(); rt.watchdog();
+  assert.strictEqual(keyMails(w).length, 0);
+  assert.strictEqual(pendingUrgent(w).length, 0);
+});
+
+test('失効: revision が進んだ予約は旧 revision の通知を送らず、新 revision の未確認だけを通知する', function () {
+  var w = H.createWorld();
+  w.records = [H.record({ revision: 1 })];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 5); rt.syncCycle();
+  w.records = [H.record({ revision: 2 })];
+  w.mailFailIf = null;
+  w.advance(150); rt.syncCycle();
+  var urgent = mailsOf(w, 'KEY_UNCONFIRMED_URGENT');
+  assert.strictEqual(urgent.length, 1, '旧 revision の通知は送らず、新 revision の1件のみ');
+  assert.ok(/revision: 2/.test(urgent[0].body));
+});
+
+test('有効な通知は送る: 未解決のままメールが復旧したら、再検証を通って1件だけ届く', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 5); rt.syncCycle();
+  w.mailFailIf = null;
+  w.advance(120); rt.syncCycle();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1);
+  for (var i = 0; i < 2; i++) { w.advance(10); rt.syncCycle(); rt.watchdog(); }
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1);
+});
+
+test('保留: 台帳を読めず再検証できない間は、送らず・破棄もしない。読めたら判定する', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 5); rt.syncCycle();
+  var keys = pendingUrgent(w);
+  assert.ok(keys.length >= 1);
+  w.mailFailIf = null;
+  var origRead = w.ledger.read;
+  w.ledger.read = function () { return { ok: false, error: 'LEDGER_READ_FAILED' }; };
+  w.advance(150); rt.watchdog();
+  assert.strictEqual(keyMails(w).length, 0, '検証できない間は送らない');
+  assert.deepStrictEqual(pendingUrgent(w), keys, '破棄もしない');
+  w.ledger.read = origRead;
+  w.advance(60); rt.watchdog();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1, '読めたら有効と判定して送る');
+});
+
+test('失効: 機能フラグOFFに戻した後は、残っていた緊急通知を送らない', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 5); rt.syncCycle();
+  w.mailFailIf = null;
+  var off = H.Infra.createRuntime(w.deps(), Object.assign({}, w.cfg, { enabled: false }));
+  w.advance(150); off.watchdog();
+  assert.strictEqual(keyMails(w).length, 0);
 });
