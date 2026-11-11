@@ -677,3 +677,33 @@ test('失効: sweep（日次回収・時間主導の回収）経路の再送で�
   assert.strictEqual(keyMails(w).length, 0);
   assert.strictEqual(pendingUrgent(w).length, 0);
 });
+
+test('再検証の台帳読取: 複数の未送達通知がある場合、全予約参照を追跡対象にして1回で読み、どれも誤って失効させない', function () {
+  var w = H.createWorld();
+  var a = H.record({ bookingId: 'SNB-A' });
+  var b = H.record({ bookingId: 'SNB-B', startAt: H.jst('2030-01-11', '10:02'), endAt: H.jst('2030-01-11', '12:30') });
+  w.records = [a, b];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 5); rt.syncCycle();
+  assert.ok(pendingUrgent(w).length >= 2, '2予約分の通知が未送達で残る');
+  // 台帳の通常範囲から外れる想定: 追跡対象に指定された予約だけを返す
+  var origRead = w.ledger.read;
+  var reads = 0;
+  w.ledger.read = function (ctx) {
+    reads++;
+    var r = origRead(ctx);
+    r.records = r.records.filter(function (x) { return (ctx.trackedIds || []).indexOf(x.bookingId) !== -1; });
+    return r;
+  };
+  w.mailFailIf = null;
+  w.advance(150);
+  rt.watchdog();
+  assert.strictEqual(reads, 1, '再検証の台帳読取は1回に共有される');
+  var sent = keyMails(w);
+  assert.strictEqual(sent.length, 2, '2予約とも有効な通知として送られる（片方を誤って失効させない）');
+  assert.ok(sent.some(function (m) { return m.body.indexOf('SNB-A') !== -1; }));
+  assert.ok(sent.some(function (m) { return m.body.indexOf('SNB-B') !== -1; }));
+  assert.strictEqual(pendingUrgent(w).filter(function (k) { return JSON.parse(w.props[k]).sentAt === null; }).length, 0, '未送達は残らない');
+});

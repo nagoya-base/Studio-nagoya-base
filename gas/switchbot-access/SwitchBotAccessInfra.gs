@@ -1468,6 +1468,7 @@ var SwitchBotAccessInfra = (function () {
 
     var ledgerForFlush = null; // flushOutbox 1回の間だけ、再検証用の台帳読取を共有する
     var flushing = false;
+    var flushTrackedIds = []; // flushOutbox 中に共有する台帳読取で追跡する、未送達の緊急通知の予約参照すべて
 
     /** 緊急通知がまだ有効か。'OK' 送ってよい／'VOID' 失効／'HOLD' 台帳を確認できず保留。 */
     function urgentStillValid(rec) {
@@ -1478,7 +1479,7 @@ var SwitchBotAccessInfra = (function () {
       var nowMs = deps.nowMs();
       var led = ledgerForFlush;
       if (!led) {
-        try { led = deps.ledger.read({ nowMs: nowMs, trackedIds: [ev.ref] }); } catch (e) { return 'HOLD'; }
+        try { led = deps.ledger.read({ nowMs: nowMs, trackedIds: flushing ? flushTrackedIds : [ev.ref] }); } catch (e) { return 'HOLD'; }
         if (flushing) ledgerForFlush = led;
       }
       if (!led || led.ok !== true) return 'HOLD';
@@ -1498,6 +1499,13 @@ var SwitchBotAccessInfra = (function () {
       var now = deps.nowSec();
       var pending = 0, failing = 0;
       ledgerForFlush = null; flushing = true;
+      // 日付をまたいで続く予約は、台帳の通常の読取範囲（当日・翌日）から外れうる。共有する1回の読取に、未送達の全予約参照を追跡対象として渡す
+      flushTrackedIds = [];
+      deps.store.keys().forEach(function (k0) {
+        if (k0.indexOf('IALERT_') !== 0) return;
+        var r0 = safeParse(deps.store.get(k0));
+        if (r0 && r0.sentAt === null && isUrgentRec(r0) && typeof r0.event.ref === 'string' && flushTrackedIds.indexOf(r0.event.ref) === -1) flushTrackedIds.push(r0.event.ref);
+      });
       try {
         deps.store.keys().filter(function (k) { return k.indexOf('IALERT_') === 0; }).forEach(function (k) {
           var rec = safeParse(deps.store.get(k));
@@ -1509,7 +1517,7 @@ var SwitchBotAccessInfra = (function () {
           if (res === 'VOID') pending--;
           else if (res === 'FAILED' && rec.attempts >= th) failing++;
         });
-      } finally { ledgerForFlush = null; flushing = false; }
+      } finally { ledgerForFlush = null; flushing = false; flushTrackedIds = []; }
       return { pending: pending, failing: failing };
     }
 
