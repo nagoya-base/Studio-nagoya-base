@@ -1121,6 +1121,27 @@ var StripeWebhookProcessor = (function () {
     return finalizeCompleted_(rowNumber, generation, 'MEMBERSHIP_REFUND_APPLIED', '会費の全額返金を反映し、その支払いの期間の資格を無効にしました。', now);
   }
 
+  /*
+   * Issue #885: 新規予約の締切（開始30分前）が施行済みで、決済完了による確定が締切以降（開始後を含む）になった場合、
+   * 運営者へ緊急通知する（予約は成立のまま。自動返金・自動取消はしない）。施行前は何もしない（挙動を変えない）。
+   * 通知の失敗は決済確定の結果に影響させない。
+   */
+  function notifyLateConfirmationBestEffort_(bookingId, record, injectedNow) {
+    try {
+      /* 実運用（injectedNow未指定）では確定が完了した「今」で判定する。処理開始時刻のままだと、Stripe照会やLock待ちで
+         締切をまたいだ確定を取りこぼす。テストが業務時刻を注入した場合はその時刻を使う。 */
+      var now = isDateLike_(injectedNow) ? injectedNow : new Date();
+      if (!BookingConfig.isLeadCutoffEffective(now)) return;
+      var startMs = record && isDateLike_(record.startAt) ? record.startAt.getTime() : NaN;
+      if (isNaN(startMs)) return;
+      var minutesToStart = Math.floor((startMs - now.getTime()) / 60000);
+      if (minutesToStart >= BookingConfig.BOOKING_LEAD_CUTOFF_MINUTES) return;
+      BookingAdminAlerts.notifyLateConfirmedBooking(bookingId, record.date, minutesToStart);
+    } catch (error) {
+      Logger.log('StripeWebhookProcessor: 開始直前確定の管理者通知に失敗しました bookingId=' + bookingId);
+    }
+  }
+
   function processSingleEvent_(rowNumber, record, now, generation) {
     var effectiveNow = isDateLike_(now) ? now : new Date();
     var eventId = record.eventId;
@@ -1391,6 +1412,9 @@ var StripeWebhookProcessor = (function () {
         Logger.log('StripeWebhookProcessor: 入金済み未確定の管理者通知に失敗しました bookingId=' + bookingId);
       }
     }
+
+    /* 冪等な再処理（alreadyConfirmed）は新たな確定ではないため通知しない。 */
+    if (confirmResult.success && confirmResult.alreadyConfirmed !== true) notifyLateConfirmationBestEffort_(bookingId, record2, now);
 
     return finalizeOutcome_(rowNumber, generation, {
       processingState: StripeEventRepository.STATE.COMPLETED,
