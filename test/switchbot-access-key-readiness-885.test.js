@@ -648,3 +648,32 @@ test('同期が例外で中断しても、反映未確認の判定・通知と K
   assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_').length >= 1, true, '通知は出る');
   assert.ok(w.props.KEYREADY, 'KEYREADY も更新される');
 });
+
+test('凍結: DIGEST_MISMATCH の予約は、反映未確認の警告・再試行の対象にしない（既存の凍結通知のみ）', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  w.props['TRK_SNB-1'] = JSON.stringify({ revision: 1, digest: 'stale-digest', windowHandled: true });
+  var rt = w.runtime();
+  setNow(w, 4);
+  var r = rt.syncCycle();
+  assert.strictEqual(createCalls(w), 0, '凍結中は鍵を作らない');
+  assert.strictEqual(keyMails(w).length, 0, '反映未確認の通知は出さない');
+  assert.ok(mailsOf(w, 'DIGEST_MISMATCH').length >= 1, '既存の凍結通知は出る');
+  assert.strictEqual(r.keyReadiness.urgent, 0);
+});
+
+test('失効: sweep（日次回収・時間主導の回収）経路の再送でも、古い緊急通知を送らない', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 5); rt.syncCycle();
+  w.records = [H.record({ status: 'CANCELLED', revision: 2 })];
+  w.mailFailIf = null;
+  w.advance(150);
+  rt.sweepCycle();
+  rt.dailyCleanupCycle();
+  assert.strictEqual(keyMails(w).length, 0);
+  assert.strictEqual(pendingUrgent(w).length, 0);
+});

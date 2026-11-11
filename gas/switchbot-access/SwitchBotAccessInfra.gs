@@ -1676,6 +1676,9 @@ var SwitchBotAccessInfra = (function () {
     function readinessOf(p, opsBy, nowSec) {
       var b = p.input && p.input.action === 'SYNC' ? p.input.booking : null;
       if (!b || b.status !== 'CONFIRMED') return null;
+      // 内容とrevisionが食い違う予約（DIGEST_MISMATCH）は鍵操作を止めて凍結している。反映未確認の警告・再試行の対象にしない
+      var trk = readTrack(p.sn.bookingId);
+      if (trk && trk.revision === p.sn.revision && trk.digest && trk.digest !== p.sn.digest) return null;
       var elig = Core.evaluateEligibility(b, coreConfig, nowSec);
       if (!elig.eligible) return null;
       var s0 = Core.jstToEpochSec(p.sn.date, p.sn.startTime);
