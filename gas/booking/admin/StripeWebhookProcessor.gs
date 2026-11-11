@@ -1126,8 +1126,11 @@ var StripeWebhookProcessor = (function () {
    * 運営者へ緊急通知する（予約は成立のまま。自動返金・自動取消はしない）。施行前は何もしない（挙動を変えない）。
    * 通知の失敗は決済確定の結果に影響させない。
    */
-  function notifyLateConfirmationBestEffort_(bookingId, record, now) {
+  function notifyLateConfirmationBestEffort_(bookingId, record, injectedNow) {
     try {
+      /* 実運用（injectedNow未指定）では確定が完了した「今」で判定する。処理開始時刻のままだと、Stripe照会やLock待ちで
+         締切をまたいだ確定を取りこぼす。テストが業務時刻を注入した場合はその時刻を使う。 */
+      var now = isDateLike_(injectedNow) ? injectedNow : new Date();
       if (!BookingConfig.isLeadCutoffEffective(now)) return;
       var startMs = record && isDateLike_(record.startAt) ? record.startAt.getTime() : NaN;
       if (isNaN(startMs)) return;
@@ -1411,7 +1414,7 @@ var StripeWebhookProcessor = (function () {
     }
 
     /* 冪等な再処理（alreadyConfirmed）は新たな確定ではないため通知しない。 */
-    if (confirmResult.success && confirmResult.alreadyConfirmed !== true) notifyLateConfirmationBestEffort_(bookingId, record2, effectiveNow);
+    if (confirmResult.success && confirmResult.alreadyConfirmed !== true) notifyLateConfirmationBestEffort_(bookingId, record2, now);
 
     return finalizeOutcome_(rowNumber, generation, {
       processingState: StripeEventRepository.STATE.COMPLETED,

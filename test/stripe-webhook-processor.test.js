@@ -1580,3 +1580,18 @@ test('Issue #885: 締切前に確定済みの予約へ、締切後に別イベ�
   assert.strictEqual(second.code, 'CONFIRMED');
   assert.strictEqual(adminMails_(ctx).length, 0, '再処理は新たな確定ではない');
 });
+
+test('Issue #885: 処理開始は締切前でも、Stripe照会などで確定が締切後にずれ込んだ場合は、確定完了時刻で判定して通知する', function () {
+  var clock = stubs.createControllableClock(new Date('2026-10-01T09:29:30+09:00'));
+  var inner = stubs.createUrlFetchAppStub(makeStripeResponder());
+  var advancing = { fetch: function () { clock.advanceByMillis(60000); return inner.fetch.apply(inner, arguments); } };
+  Object.keys(inner).forEach(function (k) { if (!(k in advancing)) advancing[k] = inner[k]; });
+  var ctx = setup({ properties: LEAD_PROPS, clock: clock, urlFetchApp: advancing });
+  ctx.clock = clock;
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  persistEvent(ctx, 'evt_drift_1', 'checkout.session.completed');
+  var run = ctx.sandbox.StripeWebhookProcessor.processPendingStripeWebhookEvents();
+  assert.strictEqual(run.results[0].code, 'CONFIRMED');
+  assert.strictEqual(adminMails_(ctx).length, 1, '09:30:30に確定した（開始の29分30秒前）ので通知する');
+});
