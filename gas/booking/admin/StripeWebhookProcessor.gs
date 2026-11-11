@@ -1410,7 +1410,8 @@ var StripeWebhookProcessor = (function () {
       }
     }
 
-    if (confirmResult.success) notifyLateConfirmationBestEffort_(bookingId, record2, effectiveNow);
+    /* 冪等な再処理（alreadyConfirmed）は新たな確定ではないため通知しない。 */
+    if (confirmResult.success && confirmResult.alreadyConfirmed !== true) notifyLateConfirmationBestEffort_(bookingId, record2, effectiveNow);
 
     return finalizeOutcome_(rowNumber, generation, {
       processingState: StripeEventRepository.STATE.COMPLETED,

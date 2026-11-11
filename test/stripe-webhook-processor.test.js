@@ -1568,3 +1568,15 @@ test('Issue #885: 管理者通知の送信が失敗しても決済確定は成�
   var result = receiveAndProcess(ctx, buildEvent('evt_late_5', 'checkout.session.completed'), new Date('2026-10-01T09:40:00+09:00'));
   assert.strictEqual(result.code, 'CONFIRMED');
 });
+
+test('Issue #885: 締切前に確定済みの予約へ、締切後に別イベントIDの成功通知が来ても、緊急通知しない（冪等な再処理）', function () {
+  var ctx = setup({ properties: LEAD_PROPS });
+  createBookingRow(ctx);
+  createCalendarEvent(ctx);
+  var first = receiveAndProcess(ctx, buildEvent('evt_replay_1', 'checkout.session.completed'), new Date('2026-10-01T09:00:00+09:00'));
+  assert.strictEqual(first.code, 'CONFIRMED');
+  assert.strictEqual(adminMails_(ctx).length, 0, '30分前より前の確定は通知しない');
+  var second = receiveAndProcess(ctx, buildEvent('evt_replay_2', 'checkout.session.async_payment_succeeded'), new Date('2026-10-01T09:40:00+09:00'));
+  assert.strictEqual(second.code, 'CONFIRMED');
+  assert.strictEqual(adminMails_(ctx).length, 0, '再処理は新たな確定ではない');
+});
