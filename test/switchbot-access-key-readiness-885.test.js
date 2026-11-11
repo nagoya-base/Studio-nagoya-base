@@ -619,3 +619,32 @@ test('失効: 機能フラグOFFに戻した後は、残っていた緊急通知
   w.advance(150); off.watchdog();
   assert.strictEqual(keyMails(w).length, 0);
 });
+
+// ================================================================ Codex指摘の回帰
+
+test('不達判定: 前の段階（緊急）の失敗が閾値に達していれば、次の段階（開始後）に移っても不達として数える', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 5); rt.syncCycle();                   // 緊急通知が1回失敗
+  setNow(w, 0, 1);
+  var r = rt.syncCycle();                         // 再送で2回目の失敗。選ばれた段階は開始後（失敗1回）
+  assert.strictEqual(r.keyReadiness.undelivered, 1, '緊急通知の不達を見落とさない');
+  assert.strictEqual(JSON.parse(w.props.KEYREADY).undelivered, 1);
+});
+
+test('同期が例外で中断しても、反映未確認の判定・通知と KEYREADY 更新は行う（結果は SYNC_ERROR のまま）', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  var origSet = w.store.set;
+  w.store.set = function (k, v) { if (k.indexOf('BK_') === 0) throw new Error('STORE_FAIL'); return origSet(k, v); };
+  var rt = w.runtime();
+  setNow(w, 4);
+  var r = rt.syncCycle();
+  assert.strictEqual(r.error, 'SYNC_ERROR');
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_').length >= 1, true, '通知は出る');
+  assert.ok(w.props.KEYREADY, 'KEYREADY も更新される');
+});

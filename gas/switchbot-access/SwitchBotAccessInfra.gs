@@ -1717,10 +1717,15 @@ var SwitchBotAccessInfra = (function () {
           alerts.push({ code: code, ref: ref, rev: p.sn.revision });
         });
         // 通知の不達検知: 緊急通知が所定回数失敗したまま未送達
+        // 同じ予約・revision の段階（警告／緊急／開始後）のいずれかが所定回数失敗したまま未送達なら、予約1件として数える
+        var undeliveredRefs = {};
         alerts.forEach(function (a) {
-          var r = safeParse(deps.store.get(iaKey(a.code, a.ref, a.rev)));
-          if (r && r.sentAt === null && r.attempts >= ic.urgentNotifyFailingAttempts) report.undelivered++;
+          URGENT_CODES.forEach(function (c) {
+            var r = safeParse(deps.store.get(iaKey(c, a.ref, a.rev)));
+            if (r && r.sentAt === null && r.attempts >= ic.urgentNotifyFailingAttempts) undeliveredRefs[(a.ref || '-') + '#' + a.rev] = true;
+          });
         });
+        report.undelivered = Object.keys(undeliveredRefs).length;
         var prev = safeParse(deps.store.get('KEYREADY'));
         if (notReady.length || (prev && prev.count > 0)) {
           deps.store.set('KEYREADY', JSON.stringify({ at: nowSec, count: notReady.length, undelivered: report.undelivered, notReady: notReady.slice(0, 20) }));
@@ -1830,6 +1835,7 @@ var SwitchBotAccessInfra = (function () {
           try { out = engine.sync(input.booking); }
           catch (e) {
             infraAlert('SYNC_ERROR', safeRef(sn.bookingId), sn.revision, null);
+            runKeyReadiness(prepared); // 同期が失敗しても、反映未確認の判定・通知は読取りと通知だけで実行できる（結果は SYNC_ERROR のまま）
             return { ok: false, error: 'SYNC_ERROR' }; // 保存失敗などはサイクルを止める（予約側へは何も伝播しない）
           }
           summary.synced++;
