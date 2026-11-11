@@ -991,15 +991,59 @@ var SwitchBotAccessInfra = (function () {
 
   function isUnresolved(rec) { return Core.TERMINAL.indexOf(rec.state) === -1; }
 
+  // ---------- 状態ストアのキー分類・APICOUNT の回収（Issue #887）----------
+
+  /** 日別API使用量の保持日数（JST 当日＋前日〜7日前＝計8暦日分）。それより前の正常な日付キーのみ回収する。 */
+  var APICOUNT_KEEP_DAYS = 7;
+  var APICOUNT_KEY_RE = /^APICOUNT_(\d{4})(\d{2})(\d{2})$/;
+  /** 稼働監視の既知キー（runLocked の job 名）。これ以外の HB_ は未分類として報告のみ。 */
+  var HB_JOBS = ['ADMIN', 'CLEANUP', 'DELIVER', 'SWEEP', 'SYNC'];
+  /** 値を1か所に上書きする常設キー（回収しない）。 */
+  var PERSISTENT_STATE_KEYS = ['META_ENV', 'LOCKFAIL', 'NOTIFYFAIL'];
+  /** 既存 garbageCollect が個別に回収判断する接頭辞（OP_ は Core.sweep が終端＋保持期限後に回収）。 */
+  var MANAGED_STATE_PREFIXES = ['OP_', 'BK_', 'EVT_', 'ALERT_', 'DLV_', 'INBOX_', 'TRK_', 'IALERT_', 'ADMINLOG_'];
+
+  /** JST の日番号（1970-01-01 JST からの暦日数）。 */
+  function jstDayNumber(sec) { return Math.floor((sec + 9 * 3600) / 86400); }
+
+  /**
+   * APICOUNT_YYYYMMDD の日番号。実在する暦日の正常形式だけ数値を返し、それ以外（形式不正・存在しない日付）は null。
+   */
+  function apiCountDayNumber(key) {
+    var m = APICOUNT_KEY_RE.exec(key);
+    if (!m) return null;
+    var y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    var t = Date.UTC(y, mo - 1, d);
+    var dt = new Date(t);
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+    return Math.round(t / 86400000);
+  }
+
+  /** 回収対象の APICOUNT か（JST 当日より APICOUNT_KEEP_DAYS 日を超えて前の正常な日付キーのみ true）。当日・将来・不正形式は false。 */
+  function isExpiredApiCountKey(key, nowSec) {
+    var day = apiCountDayNumber(key);
+    return day !== null && day < jstDayNumber(nowSec) - APICOUNT_KEEP_DAYS;
+  }
+
+  /** 状態ストアの既知キーか。接頭辞が似ているだけの不正キー（例 APICOUNT_x, HB_UNKNOWN）は false。 */
+  function isClassifiedStateKey(k) {
+    if (PERSISTENT_STATE_KEYS.indexOf(k) !== -1) return true;
+    if (k.indexOf('HB_') === 0) return HB_JOBS.indexOf(k.slice(3)) !== -1;
+    if (k.indexOf('APICOUNT_') === 0) return apiCountDayNumber(k) !== null;
+    return MANAGED_STATE_PREFIXES.some(function (p) { return k.indexOf(p) === 0; });
+  }
+
   /**
    * 保持期限に基づく回収（ロック保持下で呼ぶ）。未解決OPと、それに必要な根拠（索引・Webhook・秘密・通知マーカー）は
    * 期限に関わらず保護する。回収: 参照切れのBK索引項目／期限切れBK／期限切れかつ未参照のEVT／OP不在のALERT／
-   * OPが無い・終端OPの秘密／期限切れ受信箱／古い追跡・通知・管理者ログ。件数のみ返す。
+   * OPが無い・終端OPの秘密／期限切れ受信箱／古い追跡・通知・管理者ログ／JST当日より8日以上前の APICOUNT（#887）。件数のみ返す。
+   * report（任意）には、未分類の状態キーの件数 report.unclassified を入れる（削除しない。値・キー名は返さない）。
    */
-  function garbageCollect(store, secrets, nowSec, cfg) {
+  function garbageCollect(store, secrets, nowSec, cfg, report) {
     var ic = infraCfg(cfg);
     var ret = ic.retention;
-    var removed = { BK: 0, EVT: 0, ALERT: 0, SECRET: 0, INBOX: 0, TRK: 0, IALERT: 0, ADMINLOG: 0, BK_OPREF: 0, DLV: 0 };
+    var removed = { BK: 0, EVT: 0, ALERT: 0, SECRET: 0, INBOX: 0, TRK: 0, IALERT: 0, ADMINLOG: 0, BK_OPREF: 0, DLV: 0, APICOUNT: 0 };
+    var unclassified = 0;
     var ops = scanOps(store);
     var opIds = {}, unresolvedIds = {}, protectedEvt = {}, unresolvedBookings = {};
     ops.forEach(function (r) {
@@ -1015,6 +1059,16 @@ var SwitchBotAccessInfra = (function () {
     keys.forEach(function (k) {
       var v = store.get(k);
       if (v === null || v === undefined) return;
+      // --- 日別API使用量（当日の予算判定に使う当日分・将来日付・不正形式は回収しない） ---
+      if (k.indexOf('APICOUNT_') === 0) {
+        if (isExpiredApiCountKey(k, nowSec)) { store.del(k); removed.APICOUNT++; }
+        else if (apiCountDayNumber(k) === null) unclassified++;
+        return;
+      }
+      // --- 常設キー・稼働監視（上書き型。回収しない。未知の HB_ は報告のみ） ---
+      if (PERSISTENT_STATE_KEYS.indexOf(k) !== -1) return;
+      if (k.indexOf('HB_') === 0) { if (HB_JOBS.indexOf(k.slice(3)) === -1) unclassified++; return; }
+      if (!isClassifiedStateKey(k)) { unclassified++; return; } // 未知のキーは削除せず件数のみ報告
       // --- BK 索引 ---
       if (k.indexOf('BK_') === 0) {
         var idx = safeParse(v);
@@ -1086,6 +1140,7 @@ var SwitchBotAccessInfra = (function () {
         removed.SECRET++;
       }
     });
+    if (report) report.unclassified = unclassified;
     return removed;
   }
 
@@ -1620,10 +1675,12 @@ var SwitchBotAccessInfra = (function () {
       drainInbox();
       flushOutbox();
       var sw = engine.sweep(sweepOpts); // 期限切れ予約用キーの自動削除（Issue #829。ACCESS_ENABLED=ON のときだけ変更APIを呼ぶ）
-      var removed = garbageCollect(deps.store, deps.secrets, deps.nowSec(), cfg);
+      var gcReport = {};
+      var removed = garbageCollect(deps.store, deps.secrets, deps.nowSec(), cfg, gcReport);
+      // 未分類キーは削除も通知もしない（メール送信の副作用を増やさない）。件数のみ unclassifiedKeys で報告する。
       var st = storageGate(measureStore(deps.store), cfg, cfg.storageLimits);
       if (!st.ok) infraAlert(st.code, null, null, null);
-      return { ok: true, removed: removed, cleanup: { attempted: sw && sw.attempted || 0, confirmed: sw && sw.confirmed || 0, pending: sw && sw.pending || 0, stopped: sw && sw.stopped || 0, deferred: sw && sw.deferred || 0 }, storage: { ratio: st.ratio, ok: st.ok } };
+      return { ok: true, removed: removed, unclassifiedKeys: gcReport.unclassified || 0, cleanup: { attempted: sw && sw.attempted || 0, confirmed: sw && sw.confirmed || 0, pending: sw && sw.pending || 0, stopped: sw && sw.stopped || 0, deferred: sw && sw.deferred || 0 }, storage: { ratio: st.ratio, ok: st.ok } };
     }
 
     function sweepCycle() {
@@ -3245,7 +3302,7 @@ var SwitchBotAccessInfra = (function () {
     minimizeWebhook: minimizeWebhook, openWebhookOps: openWebhookOps, correlateWebhook: correlateWebhook,
     createLockDomain: createLockDomain, keypadCapacityGate: keypadCapacityGate,
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,
-    garbageCollect: garbageCollect, planJobs: planJobs, createApiBudget: createApiBudget,
+    garbageCollect: garbageCollect, isExpiredApiCountKey: isExpiredApiCountKey, APICOUNT_KEEP_DAYS: APICOUNT_KEEP_DAYS, planJobs: planJobs, createApiBudget: createApiBudget,
     classify: classify, renderNotification: renderNotification, createRuntime: createRuntime,
     deliverySettings: deliverySettings, renderCodeMail: renderCodeMail, notSentError: notSentError
   };
