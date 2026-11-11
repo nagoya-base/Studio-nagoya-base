@@ -71,7 +71,7 @@ function createWorld(opts) {
     mailFail: false, lockBusy: false, locked: false, storeFail: null,
     records: [], ledgerFail: null, ledgerCalls: 0, lastTracked: [],
     identity: { email: 'owner@example.test' }, delivered: [], deliverFail: false,
-    createdPasswords: [],
+    createdPasswords: [], sleeps: [], sleepHook: null,
     // 暗証番号案内メール（#752）: opts.mail のとき deliverCode ではなく sendUserMail / resolveRecipient を注入する
     userMails: [], recipients: { 'SNB-1': 'guest@example.test' }, mailMode: 'ok', userMailAttempts: 0, mailHook: null
   };
@@ -148,6 +148,14 @@ function createWorld(opts) {
       adminActors: { 'owner@example.test': 'ADMIN-1' },
       deliverCode: function (ref, code) { if (w.deliverFail) throw new Error('DELIVER_FAIL'); w.delivered.push({ ref: ref }); }
     };
+    // 同期実行内の短時間確認（#893）。opts.sleep のときだけ待機を注入する（仮想時計を進め、フックで Webhook 着信などを再現）。
+    if (opts.sleep) {
+      base.sleep = function (ms) {
+        w.sleeps.push(ms);
+        w.advance(ms / 1000);
+        if (w.sleepHook) w.sleepHook(w.sleeps.length, w);
+      };
+    }
     if (opts.mail) { delete base.deliverCode; Object.assign(base, w.mailDeps()); }
     return base;
   };

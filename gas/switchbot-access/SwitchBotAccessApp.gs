@@ -207,6 +207,8 @@ function sba_runtime_() {
     randomInt: function (n) { return Math.floor(Math.random() * n); },
     nowSec: function () { return Math.floor(Date.now() / 1000); },
     nowMs: function () { return Date.now(); },
+    // 同期実行内の短時間確認（#893）で使う待機。infra.inRunConfirmMaxSec が 0（既定）の間は呼ばれない。
+    sleep: function (ms) { Utilities.sleep(ms); },
     identity: function () { return { email: Session.getActiveUser().getEmail() }; },
     adminActors: sba_adminActors_(),
     // 配送（#752）の手段。cfg.deliveryConfigured が運営承認までtrueにならない限り、この2つは呼ばれない

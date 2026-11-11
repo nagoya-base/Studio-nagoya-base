@@ -53,8 +53,18 @@ var SwitchBotAccessInfra = (function () {
     storageStopRatio: 0.7,
     storageValueStopRatio: 0.8,
     jitterMarginSec: 120,
+    // 個別コード高速化（#893）。いずれも既定は無効（挙動不変）。有効化は運営の別途承認後に設定する。
+    //  - inRunConfirmMaxSec: 発行した同じ同期実行内で Webhook/keyList の反映確認を待つ最大秒数（0=待たない。上限 IN_RUN_CONFIRM_MAX_SEC_LIMIT）
+    //  - inRunDeliver: 同じ実行内で ISSUED_CONFIRMED になった鍵だけ配送を試みる（true のときのみ）
+    inRunConfirmMaxSec: 0,
+    inRunDeliver: false,
     retention: { bkSec: 30 * 86400, evtSec: 30 * 86400, outboxSec: 30 * 86400, trackSec: 30 * 86400, adminLogSec: 90 * 86400 }
   };
+
+  /** 同期内の反映確認で待ってよい最大秒数の上限（#893）。ロックを保持したまま待つため、他ジョブの待機（lockWaitMs=20秒）を踏まえて短く固定する。 */
+  var IN_RUN_CONFIRM_MAX_SEC_LIMIT = 60;
+  /** 反映確認の確認間隔（ミリ秒）。待機中は状態ストアの読取だけで、SwitchBot API は Webhook 着後の keyList 読取1回のみ。 */
+  var IN_RUN_POLL_MS = 3000;
 
   var REF_RE = /^[A-Za-z0-9._-]{1,64}$/;
   var CODE_RE = /^[A-Z][A-Z0-9_]{2,47}$/;
@@ -77,6 +87,10 @@ var SwitchBotAccessInfra = (function () {
       out.warningNoticeLeadSec = DEFAULTS.warningNoticeLeadSec;
       out.urgentNoticeLeadSec = DEFAULTS.urgentNoticeLeadSec;
     }
+    // 同期内確認の待機は 0〜上限の有限数のみ採用。不正値・負値は無効(0)、上限超過は上限へ丸める（無制限の待機を許さない）。
+    if (typeof out.inRunConfirmMaxSec !== 'number' || !isFinite(out.inRunConfirmMaxSec) || out.inRunConfirmMaxSec <= 0) out.inRunConfirmMaxSec = 0;
+    else if (out.inRunConfirmMaxSec > IN_RUN_CONFIRM_MAX_SEC_LIMIT) out.inRunConfirmMaxSec = IN_RUN_CONFIRM_MAX_SEC_LIMIT;
+    out.inRunDeliver = out.inRunDeliver === true;
     return out;
   }
 
@@ -1889,6 +1903,12 @@ var SwitchBotAccessInfra = (function () {
           if (pilotExcluded) writeTrack(sn.bookingId, { revision: null, windowHandled: false, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
           else writeTrack(sn.bookingId, { revision: sn.revision, digest: sn.digest, windowHandled: windowOpen, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
         }
+        // 個別コード高速化（#893。既定は無効）。今回の実行が発行した鍵の短時間確認と、確認済み鍵の即時配送。
+        // 失敗・未確認は従来の次回同期／配送ジョブへ戻る（ここで例外を外へ出さない）。
+        try {
+          var inRun = inRunFollowUp(startedMs, ops, syncedBookings);
+          if (inRun) summary.inRun = inRun;
+        } catch (eInRun) { infraAlert('SYNC_ERROR', null, null, null); }
         engine.reconcilePending(syncedBookings); // 今回 sync で照合済みの予約は除く（読取回数を二重に消費しない）
         summary.keyReadiness = runKeyReadiness(prepared); // 同期の成否とは別に、発行確認済みキーの有無を判定・通知する
         return summary;
@@ -1910,22 +1930,99 @@ var SwitchBotAccessInfra = (function () {
         var led = null;
         try { led = deps.ledger.read({ nowMs: deps.nowMs(), trackedIds: due.map(function (r) { return r.bookingId; }) }); } catch (e) { led = null; }
         if (!led || led.ok !== true) { infraAlert(ledgerErrCode(led), null, null, null); return { ok: false, error: 'LEDGER_READ_FAILED' }; }
-        cycleFresh = led;
-        try {
-          for (var i = 0; i < due.length; i++) {
-            if (deps.nowMs() - startedMs > ic.runBudgetSec * 1000) { out.held += due.length - i; break; } // 実行時間の上限。残りは次回
-            var d;
-            try { d = engine.deliver(due[i].id); }
-            catch (e2) { infraAlert('SYNC_ERROR', safeRef(due[i].bookingId), due[i].revision, null); out.failed++; continue; } // 保存失敗等: 送信前なら何も送っていない
-            if (d.delivered) out.delivered++;
-            else if (d.reason === 'DELIVERY_UNKNOWN') out.unknown++;
-            else if (d.reason === 'DELIVER_FAILED' || d.reason === 'RETRY_EXHAUSTED') out.failed++;
-            else if (typeof d.reason === 'string' && d.reason.indexOf('SUPPRESSED') === 0) out.suppressed++;
-            else out.held++;
-          }
-        } finally { cycleFresh = null; }
+        deliverRecords(due, led, startedMs, out);
         return out;
       });
+    }
+
+    /**
+     * 配送の実処理（deliverCycle と、同期内配送 #893 の共通部分）。呼び出し側がロック保持・配送設定の確認・
+     * 台帳の読取（led）を済ませていること。送信直前の安全確認（deliveryGate）・SENDING の先行永続化・
+     * DELIVERED/UNKNOWN の非再送はすべて engine.deliver 側にあり、ここでは省略も追加もしない。
+     */
+    function deliverRecords(due, led, startedMs, out) {
+      cycleFresh = led;
+      try {
+        for (var i = 0; i < due.length; i++) {
+          if (deps.nowMs() - startedMs > ic.runBudgetSec * 1000) { out.held += due.length - i; break; } // 実行時間の上限。残りは次回
+          var d;
+          try { d = engine.deliver(due[i].id); }
+          catch (e2) { infraAlert('SYNC_ERROR', safeRef(due[i].bookingId), due[i].revision, null); out.failed++; continue; } // 保存失敗等: 送信前なら何も送っていない
+          if (d.delivered) out.delivered++;
+          else if (d.reason === 'DELIVERY_UNKNOWN') out.unknown++;
+          else if (d.reason === 'DELIVER_FAILED' || d.reason === 'RETRY_EXHAUSTED') out.failed++;
+          else if (typeof d.reason === 'string' && d.reason.indexOf('SUPPRESSED') === 0) out.suppressed++;
+          else out.held++;
+        }
+      } finally { cycleFresh = null; }
+    }
+
+    /**
+     * 同期実行内の高速化（#893）。ロックを保持したまま、今回の実行が発行した鍵だけを対象にする。
+     *  b. SENT_WAIT_WEBHOOK の鍵を、上限つきで短時間確認する（待機中は drainInbox で退避受信を取り込み、発行 record だけを再照合）。
+     *     未確認なら何もせず従来の次回同期へ戻す。UNKNOWN/FAILED の鍵へ createKey は再送しない（再照合は読取のみ）。
+     *  c. 今回の実行で ISSUED_CONFIRMED になった鍵だけ、配送ジョブと同じ安全な配送処理を試みる。
+     * どちらも既定は無効（infra.inRunConfirmMaxSec=0 / infra.inRunDeliver=false）。戻り値は無効時 null。
+     */
+    function inRunFollowUp(startedMs, opsBefore, syncedBookings) {
+      var waitOn = ic.inRunConfirmMaxSec > 0;
+      var deliverOn = ic.inRunDeliver === true;
+      if (!waitOn && !deliverOn) return null;
+      var res = { pending: 0, confirmed: 0, unconfirmed: 0, waitSkipped: null, delivered: 0, deliverSkipped: null };
+      var startedSec = Math.floor(startedMs / 1000);
+      var wasConfirmed = {};
+      opsBefore.forEach(function (r) { if (r.state === Core.STATE.ISSUED_CONFIRMED) wasConfirmed[r.id] = true; });
+
+      if (waitOn) {
+        var pending = scanOps(deps.store).filter(function (r) {
+          return r.op === Core.OP.ISSUE && r.state === Core.STATE.SENT_WAIT_WEBHOOK && typeof r.sentAtSec === 'number' &&
+            r.sentAtSec >= startedSec && syncedBookings[String(r.bookingId)] === true;
+        }).map(function (r) { return r.id; });
+        res.pending = pending.length;
+        if (pending.length && typeof deps.sleep !== 'function') { res.waitSkipped = 'SLEEP_UNAVAILABLE'; }
+        else if (pending.length) {
+          // 待機の終わり = 設定秒数と、同期全体の実行時間上限（runBudgetSec）の早いほう
+          var deadline = Math.min(deps.nowMs() + ic.inRunConfirmMaxSec * 1000, startedMs + ic.runBudgetSec * 1000);
+          var guard = 0;
+          while (pending.length && guard++ < 1000) {
+            drainInbox(); // doPost がロック待ち超過で退避した Webhook を、到着時刻を保ったまま取り込む
+            var still = [];
+            pending.forEach(function (id) {
+              var r;
+              try { r = engine.reconcileIssueOnly(id); } catch (e) { infraAlert('SYNC_ERROR', null, null, null); return; }
+              if (r.state === Core.STATE.ISSUED_CONFIRMED) res.confirmed++;
+              else if (r.state === Core.STATE.SENT_WAIT_WEBHOOK && r.readsUsed === 0) still.push(id); // Webhook 未着: 引き続き待つ
+              // それ以外（UNKNOWN/FAILED=通知済み、keyList 読取失敗=reads 消費済み）は待機を打ち切り、次回同期の既存処理に任せる
+            });
+            pending = still;
+            if (!pending.length || deps.nowMs() + IN_RUN_POLL_MS > deadline) break;
+            deps.sleep(IN_RUN_POLL_MS);
+          }
+          res.unconfirmed = pending.length;
+        }
+      }
+
+      if (deliverOn) {
+        if (cfg.deliveryConfigured !== true || !deliveryReady()) { res.deliverSkipped = 'DELIVERY_NOT_CONFIGURED'; }
+        else {
+          var due = scanOps(deps.store).filter(function (r) {
+            return r.state === Core.STATE.ISSUED_CONFIRMED && !wasConfirmed[r.id] && syncedBookings[String(r.bookingId)] === true && engine.deliveryDue(r.id);
+          });
+          if (due.length) {
+            // 送信直前の台帳は、待機の後に改めて1回読む（同期開始時の台帳は古いことがある）。読めなければ何も送らず配送ジョブに任せる
+            var led = null;
+            try { led = deps.ledger.read({ nowMs: deps.nowMs(), trackedIds: due.map(function (r) { return r.bookingId; }) }); } catch (e3) { led = null; }
+            if (!led || led.ok !== true) { infraAlert(ledgerErrCode(led), null, null, null); res.deliverSkipped = 'LEDGER_READ_FAILED'; }
+            else {
+              var out = { delivered: 0, failed: 0, unknown: 0, held: 0, suppressed: 0 };
+              deliverRecords(due, led, startedMs, out);
+              res.delivered = out.delivered;
+              res.deliverHeld = out.held + out.failed + out.unknown + out.suppressed;
+            }
+          }
+        }
+      }
+      return res;
     }
 
     // ---- 期限切れ確認・回収・容量/保存の監視 ----

@@ -415,6 +415,28 @@ var SwitchBotAccessCore = (function () {
       return reconcileIssue(rec);
     }
 
+    /**
+     * 発行済み(SENT_WAIT_WEBHOOK)の1件だけを再照合する（Issue #893。同一同期実行内の短時間確認用）。
+     * 読み取り中心で、変更 API は呼ばない。SENT_WAIT_WEBHOOK 以外は何もしない（状態を進めない）。
+     * 予約全体の sync を繰り返すと、同じ予約の削除照合の読取回数（reads）を短時間で消費してしまうため、
+     * 発行 record だけを対象にする。Webhook 未着の間は API を呼ばず、reads も増えない。
+     * 戻り値: { state, readsUsed }（record が無い場合は state:null）。
+     */
+    function reconcileIssueOnly(recId) {
+      var head = load(recKey(recId));
+      if (!head) return { state: null, readsUsed: 0 };
+      var out = { state: head.state, readsUsed: 0 };
+      if (head.state !== STATE.SENT_WAIT_WEBHOOK) return out;
+      deps.lock(['BOOKING_' + head.bookingId, 'DEV_' + head.deviceId], function () {
+        var rec = load(recKey(recId));
+        if (!rec || rec.state !== STATE.SENT_WAIT_WEBHOOK) { out = { state: rec ? rec.state : null, readsUsed: 0 }; return; }
+        var before = rec.reads || 0;
+        var after = reconcileIssue(rec);
+        out = { state: after.state, readsUsed: (after.reads || 0) - before };
+      });
+      return out;
+    }
+
     /** 読み取りのみ。変更 API は一切呼ばない。 */
     function reconcileIssue(rec) {
       if (rec.state !== STATE.SENT_WAIT_WEBHOOK && rec.state !== STATE.ACCEPTED_NO_COMMAND_ID) return rec;
@@ -1139,7 +1161,7 @@ var SwitchBotAccessCore = (function () {
     }
 
     return {
-      sync: sync, ingestWebhook: ingestWebhook, deliver: deliver, deliveryDue: deliveryDue, sweep: sweep, reconcilePending: reconcilePending, adminResolveDelivery: adminResolveDelivery,
+      sync: sync, reconcileIssueOnly: reconcileIssueOnly, ingestWebhook: ingestWebhook, deliver: deliver, deliveryDue: deliveryDue, sweep: sweep, reconcilePending: reconcilePending, adminResolveDelivery: adminResolveDelivery,
       adminInspect: adminInspect, adminReconcile: adminReconcile, adminResolveUnknown: adminResolveUnknown, adminDelete: adminDelete,
       inventory: inventory
     };
