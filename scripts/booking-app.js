@@ -265,6 +265,10 @@
     cardPaymentNotice: document.getElementById('ba-card-payment-notice'),
     flowBannerTitle: document.getElementById('ba-flow-banner-title'),
     flowBannerBody: document.getElementById('ba-flow-banner-body'),
+    flowBannerItems: [
+      document.getElementById('ba-flow-banner-item-1'),
+      document.getElementById('ba-flow-banner-item-2')
+    ],
     confirmHeading: document.getElementById('ba-confirm-heading'),
     confirmFlowTitle: document.getElementById('ba-confirm-flow-title'),
     confirmFlowBody: document.getElementById('ba-confirm-flow-body'),
@@ -2476,8 +2480,14 @@
      送信処理・Stripe Checkout遷移ロジックには関与しない（表示文言のみ）。 */
   function updateBookingFlowCopy_() {
     var copy = flowCopy_(checkedPaymentMethod());
-    setText_(els.flowBannerTitle, copy.banner.title);
-    setText_(els.flowBannerBody, copy.banner.body);
+    /* Issue #896: フォーム上部は見出し＋短い箇条書き（<li>は固定2枠。文言だけ差し替え、構造と短さを維持する）。 */
+    setText_(els.flowBannerTitle, copy.brief.title);
+    els.flowBannerItems.forEach(function (li, i) {
+      if (!li) return;
+      var text = copy.brief.items[i] || '';
+      li.textContent = text;
+      li.hidden = !text;
+    });
     var confirmCopy = flowCopy_(state.paymentMethod || checkedPaymentMethod());
     var confirmKind = confirmCopy.kind === 'neutral' ? (photoSupportSelected_() ? flowCopy_('') : Logic.bookingFlowCopy('未定', locale)) : confirmCopy;
     setText_(els.confirmHeading, confirmKind.confirmHeading);

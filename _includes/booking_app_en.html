@@ -21,16 +21,33 @@
   data-locale="en">
 
   {% if include.intro_note %}
-  <p class="ba-banner ba-banner--notice">{{ include.intro_note }}</p>
+  <div class="ba-intro">
+    {% if include.intro_title %}<p class="ba-intro-title"><strong>{{ include.intro_title }}</strong></p>{% endif %}
+    <p class="ba-intro-note">{{ include.intro_note }}</p>
+  </div>
   {% endif %}
 
-  <!-- Issue #758: booking rules notice (announced 2026-11-04, effective 2026-11-19 00:00 JST). Current conditions apply until then. -->
-  <p class="ba-banner ba-banner--notice" id="ba-booking-rules-notice"><strong>Booking rules update:</strong> From 00:00 JST on 19 November 2026 (announced 4 November 2026), a 30-minute gap is required between bookings at all brands (applies to bookings and changes made on or after that date). Also, booking start times will be limited to :00 and :30 of each hour (durations stay in 1-hour units; bookings confirmed earlier are not changed). Same-day extensions may not be possible once less than 60 minutes remain before the end of your booking. New bookings will also be accepted only up to 30 minutes before the start time (exactly 30 minutes is allowed; added 11 November 2026). The current conditions apply until then. See the <a href="{{ site.baseurl }}/news/">news page</a> (Japanese).</p>
+  <!-- Issue #758 / #896: key booking rules only (announced 2026-11-04, effective 2026-11-19 00:00 JST). Details live on the news / terms pages.
+       Only the current cutoff (30 minutes before start) is shown; the 60-minute cutoff (Issue #895) is not shown until its effective date is decided. -->
+  <section class="ba-banner ba-banner--notice ba-brief" id="ba-booking-rules-notice" aria-labelledby="ba-booking-rules-title">
+    <h2 class="ba-brief-title" id="ba-booking-rules-title">Before you book</h2>
+    <ul class="ba-brief-list">
+      <li>From Nov 19: start times are :00 and :30 of each hour, with a 30-minute gap between bookings.</li>
+      <li>Booking length is in 1-hour units.</li>
+      <li>New bookings up to 30 minutes before the start (from Nov 19).</li>
+      <li>For same-day extensions, please contact us at least 60 minutes before the end.</li>
+    </ul>
+    <p class="ba-brief-more"><a href="{{ site.baseurl }}/news/">See booking rules and upcoming changes</a> (Japanese)</p>
+  </section>
 
-  <p class="ba-banner ba-banner--notice" id="ba-flow-banner">
-    <strong id="ba-flow-banner-title">The steps to confirm your booking depend on the payment method.</strong>
-    <span id="ba-flow-banner-body">Online credit card: go straight to payment after submitting; your booking is confirmed once payment is completed. Cash / PayPay: your request is received as pending and confirmed after staff review.</span>
-  </p>
+  <!-- Issue #445 / #896: the heading and bullets below are switched by scripts/booking-app.js according to the selected payment method. -->
+  <section class="ba-banner ba-banner--notice ba-brief" id="ba-flow-banner" aria-labelledby="ba-flow-banner-title">
+    <h2 class="ba-brief-title" id="ba-flow-banner-title">When your booking is confirmed</h2>
+    <ul class="ba-brief-list" id="ba-flow-banner-body">
+      <li id="ba-flow-banner-item-1">Credit card: confirmed once payment is completed.</li>
+      <li id="ba-flow-banner-item-2">Cash / PayPay: confirmed after we review your request.</li>
+    </ul>
+  </section>
 
   <ol class="ba-progress" id="ba-progress" aria-label="Booking progress">
     <li data-step="datetime">1. Email &amp; Date</li>

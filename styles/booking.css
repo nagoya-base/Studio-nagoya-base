@@ -79,6 +79,48 @@
   color: var(--ba-text);
 }
 
+/* ── Issue #896: 冒頭案内はコンパクトな見出し＋短い箇条書き（入力欄までのスクロールを短縮） ── */
+.ba-intro {
+  margin: 0 0 12px;
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+
+.ba-intro p {
+  margin: 0;
+}
+
+.ba-brief {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  line-height: 1.6;
+}
+
+.ba-brief-title {
+  margin: 0 0 4px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.ba-brief-list {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.ba-brief-list li {
+  margin: 0 0 2px;
+}
+
+.ba-brief-list li[hidden] {
+  display: none;
+}
+
+.ba-brief-more {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+}
+
 .ba-first-time-card-notice {
   /* 初回利用はカード決済のみという支払方法選択に直結する条件のため、補足文より目立たせる（Issue #445）。 */
   font-weight: 700;

@@ -617,15 +617,19 @@
     ja: {
       neutral: {
         title: '支払方法により予約確定までの流れが異なります。',
-        body: 'オンラインクレジットカード：申込後そのままお支払いへ進み、お支払い完了で予約確定。現金・PayPay：申込後は仮受付となり、当方で内容確認後に予約確定。'
+        body: 'オンラインクレジットカード：申込後そのままお支払いへ進み、お支払い完了で予約確定。現金・PayPay：申込後は仮受付となり、当方で内容確認後に予約確定。',
+        /* Issue #896: フォーム上部の短い見出し＋箇条書き（確認画面は従来のtitle/body）。 */
+        brief: { title: '予約の確定タイミング', items: ['クレジットカード：お支払い完了で予約確定。', '現金・PayPay：申込後に内容を確認し、予約確定をご連絡します。'] }
       },
       card: {
         title: '申込後そのままオンライン決済へ進み、お支払い完了で予約確定します。',
-        body: '予約申込 → そのままお支払い → お支払い完了で予約確定。予約申込後30分以内にお支払いを完了してください。'
+        body: '予約申込 → そのままお支払い → お支払い完了で予約確定。予約申込後30分以内にお支払いを完了してください。',
+        brief: { title: '予約の確定タイミング', items: ['クレジットカード：お支払い完了で予約確定。', '予約申込後30分以内にお支払いを完了してください。'] }
       },
       manual: {
         title: '申込後は仮受付です。この時点では予約は確定していません。',
-        body: '内容を確認のうえ、当方から確定のご連絡をします（当方からの確定連絡をもって予約成立となります）。'
+        body: '内容を確認のうえ、当方から確定のご連絡をします（当方からの確定連絡をもって予約成立となります）。',
+        brief: { title: '予約の確定タイミング', items: ['現金・PayPay：申込後は仮受付です。この時点では予約は確定していません。', '内容確認後、予約確定のご連絡をします。'] }
       },
       consentCard: '申込後にお支払い画面へ進むこと、申込後30分以内にお支払いを完了すること、お支払い完了で予約が確定することを確認しました。',
       consentManual: 'フォーム送信時点では予約は確定せず、当方からの確定連絡をもって予約成立となることを確認しました。',
@@ -643,15 +647,18 @@
     en: {
       neutral: {
         title: 'The steps to confirm your booking depend on the payment method.',
-        body: 'Online credit card: go straight to payment after submitting; your booking is confirmed once payment is completed. Cash / PayPay: your request is received as pending and confirmed after staff review.'
+        body: 'Online credit card: go straight to payment after submitting; your booking is confirmed once payment is completed. Cash / PayPay: your request is received as pending and confirmed after staff review.',
+        brief: { title: 'When your booking is confirmed', items: ['Credit card: confirmed once payment is completed.', 'Cash / PayPay: confirmed after we review your request.'] }
       },
       card: {
         title: 'After submitting, you go straight to online payment, and your booking is confirmed once payment is completed.',
-        body: 'Submit request → pay right away → booking confirmed on payment. Please complete payment within 30 minutes after submitting.'
+        body: 'Submit request → pay right away → booking confirmed on payment. Please complete payment within 30 minutes after submitting.',
+        brief: { title: 'When your booking is confirmed', items: ['Credit card: confirmed once payment is completed.', 'Please complete payment within 30 minutes after submitting.'] }
       },
       manual: {
         title: 'This form submits a pending booking request. Your booking is not confirmed yet.',
-        body: 'Your booking becomes confirmed only after we send you a confirmation.'
+        body: 'Your booking becomes confirmed only after we send you a confirmation.',
+        brief: { title: 'When your booking is confirmed', items: ['Cash / PayPay: your request is received as pending and is not confirmed yet.', 'We will contact you once it is confirmed.'] }
       },
       consentCard: 'I understand that I will proceed to payment after submitting, that I must complete payment within 30 minutes, and that my booking is confirmed once payment is completed.',
       consentManual: 'I understand that submitting this form does not confirm my booking, and that my booking is confirmed only once I receive a confirmation.',
@@ -683,6 +690,7 @@
     return {
       kind: kind,
       banner: t[kind],
+      brief: t[kind].brief,
       consent: isCard ? t.consentCard : t.consentManual,
       confirmHeading: isCard ? t.confirmHeadingCard : t.confirmHeadingManual,
       submitLabel: isCard ? t.submitCard : t.submitManual,
@@ -1332,6 +1340,7 @@
   /* 承認制の画面文言（bookingFlowCopyと同じ形）。申込＝承認待ち（仮押さえ）であり、承認前は決済できず、承認後24時間以内に決済する。 */
   var PHOTO_SUPPORT_FLOW_TEXT_ = {
     ja: {
+      brief: { title: '予約の確定タイミング', items: ['作品撮りサポートプラン：運営の承認後にお支払いです。', '申込時点では仮押さえで、予約は確定していません。'] },
       banner: { title: '【作品撮りサポートプラン：運営の承認後にお支払い】', body: '申込時点で対象時間帯を仮押さえします。運営がスタッフ対応の可否・機材・予約枠を確認し、承認できる場合に確定料金とお支払いのご案内をメールでお送りします。お支払い期限は承認後24時間です。承認前はお支払いできず、承認とお支払いの完了までは予約は確定しません。' },
       consent: '作品撮りサポートプランは運営の承認制であり、申込だけでは予約が確定しないこと、承認後24時間以内にお支払いが完了しない場合は不成立となり通常のSNB mens料金へは自動で切り替わらないことを理解しました。',
       confirmHeading: '作品撮りサポートプランの申込内容確認',
@@ -1341,6 +1350,7 @@
       statusValue: '承認待ち（仮押さえ中・未確定）'
     },
     en: {
+      brief: { title: 'When your booking is confirmed', items: ['Photo support plan: pay after our approval.', 'Applying only holds the slot; the booking is not confirmed yet.'] },
       banner: { title: '[Photo support plan: pay after approval]', body: 'Your time slot is held when you apply. After we confirm staff, equipment and availability, we email the final fee and payment instructions. Payment is due within 24 hours after approval. You cannot pay before approval, and the booking is not confirmed until you pay.' },
       consent: 'I understand that the photo support plan requires approval, that applying does not confirm the booking, and that if payment is not completed within 24 hours after approval the plan lapses without switching to the regular SNB mens rate.',
       confirmHeading: 'Review your photo support plan request',
@@ -1356,6 +1366,7 @@
     return {
       kind: 'photo_support',
       banner: t.banner,
+      brief: t.brief,
       consent: t.consent,
       confirmHeading: t.confirmHeading,
       submitLabel: t.submitLabel,
