@@ -780,3 +780,40 @@ test('日付をまたぐ予約: 発行が拒否（FAILED）されたままでも
   assert.strictEqual(keyMails(w).length, m, '終了後は通知しない');
   assert.strictEqual(JSON.parse(w.props.KEYREADY).count, 0, '終了後は追跡対象から外れる');
 });
+
+function exhaustBudget(w) {
+  var day = new Date((w.sec() + 9 * 3600) * 1000);
+  w.props['APICOUNT_' + day.getUTCFullYear() + ('0' + (day.getUTCMonth() + 1)).slice(-2) + ('0' + day.getUTCDate()).slice(-2)] = '999999';
+}
+
+[
+  { name: 'OPなし（容量ゲート）', setup: function (w) { blockByCapacity(w); }, opState: null },
+  { name: '終端FAILED', setup: function (w) { w.api.createKey = function (p) { w.calls.push({ name: 'createKey', device: p.deviceId }); return { httpCode: 400, parsed: { statusCode: 400 } }; }; }, opState: S.FAILED }
+].forEach(function (c) {
+  test('日付跨ぎ×API予算超過（' + c.name + '）: 00:10 に SwitchBot API を呼ばず、KEYREADY と開始後の再通知が持続する', function () {
+    var w = overnightWorld();
+    c.setup(w);
+    var rt = w.runtime();
+    w.nowMs = H.jst('2030-01-10', '23:56').getTime(); rt.syncCycle();
+    if (c.opState) assert.strictEqual(ops(w)[0].state, c.opState); else assert.strictEqual(ops(w).length, 0);
+    assert.ok(JSON.parse(w.props.KEYREADY).refs.indexOf('SNB-N') !== -1, '追跡対象が記録される');
+    w.inRange = false;                                   // 日付変更後は台帳の通常範囲外
+    w.nowMs = H.jst('2030-01-11', '00:10').getTime();
+    exhaustBudget(w);
+    var apiBefore = w.calls.length;
+    var n = mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length;
+    var r = rt.syncCycle();
+    assert.strictEqual(r.error, 'API_BUDGET_EXHAUSTED');
+    assert.strictEqual(w.calls.length, apiBefore, '予算超過の周期は SwitchBot API（listDevices/createKey/deleteKey）を呼ばない');
+    assert.ok(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length > n, '開始後の再通知が持続する');
+    assert.strictEqual(JSON.parse(w.props.KEYREADY).count, 1, 'KEYREADY が0件に消えない');
+    // 解決（利用終了）で解除され、古い通知は送られない
+    w.nowMs = H.jst('2030-01-11', '01:30').getTime();
+    exhaustBudget(w);
+    rt.syncCycle();
+    var m = keyMails(w).length;
+    w.advance(900); exhaustBudget(w); rt.syncCycle();
+    assert.strictEqual(keyMails(w).length, m);
+    assert.strictEqual(JSON.parse(w.props.KEYREADY).count, 0, '利用終了で追跡を解除');
+  });
+});
