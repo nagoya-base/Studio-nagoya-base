@@ -272,6 +272,19 @@
       <div id="ba-start-time-loading" class="ba-loading" role="status" hidden>Searching available start times…</div>
       <div id="ba-start-time-grid" class="ba-time-grid" role="group" aria-label="Start time" hidden></div>
       <p id="ba-start-time-empty" class="ba-time-empty" hidden>No bookable start times are available for this date and duration. Please choose another date or duration.</p>
+      <!-- Issue #895: shown only when a start time within 30 minutes is selected (JS: refreshShortLead_). Never shown at the top of the form. -->
+      <div class="ba-short-lead" id="ba-short-lead" hidden>
+        <p class="ba-banner ba-banner--notice" id="ba-short-lead-notice">
+          <strong>About your entry PIN</strong>
+          <span id="ba-short-lead-text">For bookings that start within 30 minutes, your entry PIN may be sent just before the start time.</span>
+          <span>The PIN is sent by a separate email after the booking is confirmed.</span>
+        </p>
+        <label class="ba-choice" style="align-items: flex-start;">
+          <input type="checkbox" id="ba-short-lead-check" aria-describedby="ba-short-lead-text ba-short-lead-error">
+          <span>I have read the above<span class="ba-required">Required</span></span>
+        </label>
+        <p class="ba-field-error" id="ba-short-lead-error" role="alert" hidden></p>
+      </div>
       <div id="ba-start-time-error" class="ba-banner ba-banner--error" role="alert" hidden>
         <p id="ba-start-time-error-message"></p>
         <div class="ba-banner-actions" id="ba-start-time-error-actions"></div>

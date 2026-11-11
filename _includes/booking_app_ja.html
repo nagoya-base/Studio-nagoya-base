@@ -372,6 +372,19 @@
       <div id="ba-start-time-loading" class="ba-loading" role="status" hidden>予約できる時間を検索しています…</div>
       <div id="ba-start-time-grid" class="ba-time-grid" role="group" aria-label="開始時刻" hidden></div>
       <p id="ba-start-time-empty" class="ba-time-empty" hidden>この日時では予約できる開始時刻がありません。日付・利用時間を変更してお試しください。</p>
+      <!-- Issue #895: 利用開始まで30分以下の候補を選んだときだけ表示（JS: refreshShortLead_）。冒頭には常時表示しない。 -->
+      <div class="ba-short-lead" id="ba-short-lead" hidden>
+        <p class="ba-banner ba-banner--notice" id="ba-short-lead-notice">
+          <strong>入室用の暗証番号のご案内について</strong>
+          <span id="ba-short-lead-text">利用開始まで30分以内のご予約は、入室用の暗証番号のご案内が開始直前になる場合があります。</span>
+          <span>暗証番号は予約確定後、別メールでお送りします。</span>
+        </p>
+        <label class="ba-choice" style="align-items: flex-start;">
+          <input type="checkbox" id="ba-short-lead-check" aria-describedby="ba-short-lead-text ba-short-lead-error">
+          <span>上記を確認しました<span class="ba-required">必須</span></span>
+        </label>
+        <p class="ba-field-error" id="ba-short-lead-error" role="alert" hidden></p>
+      </div>
       <div id="ba-start-time-error" class="ba-banner ba-banner--error" role="alert" hidden>
         <p id="ba-start-time-error-message"></p>
         <div class="ba-banner-actions" id="ba-start-time-error-actions"></div>

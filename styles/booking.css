@@ -778,3 +778,9 @@
 /* Issue #567: 送信ボタン行と成功カードの切替で高さが大きく変わらないよう、カード領域に最小高さを持たせる。 */
 .ba-member-state { min-height: 8.5rem; }
 @media (max-width: 640px) { .ba-member-state { min-height: 15rem; } }
+
+/* Issue #895: 直前予約（開始まで30分以下）の注意表示と確認チェック。開始時刻の直下に条件付きで出す。 */
+.ba-short-lead { margin-top: 12px; }
+.ba-short-lead[hidden] { display: none; }
+.ba-short-lead .ba-banner { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; }
+.ba-short-lead .ba-choice input:focus-visible { outline: 3px solid var(--ba-accent); outline-offset: 2px; }
