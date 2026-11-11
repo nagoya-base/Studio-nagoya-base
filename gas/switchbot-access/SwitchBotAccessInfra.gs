@@ -399,7 +399,7 @@ var SwitchBotAccessInfra = (function () {
   }
 
   /**
-   * 暗証番号案内メールの固定文面（予約確認メールとは別送）。差し込むのは暗証番号・施設名・有効時間・予約番号のみ。
+   * 暗証番号案内メールの固定文面（予約確認メールとは別送。別送である旨の括弧書きは本文に出さない＝#881運営指示）。差し込むのは暗証番号・施設名・有効時間・予約番号のみ。
    * 場所・キーボックス番号・バックアップキー・手動コードは載せない。p: { code, startSec, endSec, kind, previousInvalidated, bookingRef, settings }
    * 暗証番号の形式が不正ならメールを作らない（notSent）。
    */
@@ -412,9 +412,8 @@ var SwitchBotAccessInfra = (function () {
     var ref = typeof p.bookingRef === 'string' && REF_RE.test(p.bookingRef) ? p.bookingRef : null;
     var subject = '【' + st.facilityLabel + '】' + (change ? '暗証番号のご案内（変更のお知らせ）' : '入室用の暗証番号のご案内');
     var lines = [];
-    lines.push(st.senderName + ' です。');
+    lines.push(st.senderName + 'です。');
     lines.push(change ? 'ご予約内容の変更に伴い、入室用の暗証番号をあらためてお送りします。' : 'ご予約の入室用の暗証番号をお送りします。');
-    lines.push('（この暗証番号は、予約確認メールとは別にお送りしています）');
     if (change) {
       lines.push(p.previousInvalidated === true
         ? '以前にお送りした暗証番号は使用できません。本メールの暗証番号をご利用ください。'

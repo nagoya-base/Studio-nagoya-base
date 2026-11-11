@@ -209,7 +209,11 @@ test('buildConfirmedMail: キーボックス番号・解錠コードを含まな
   var mail = templates.buildConfirmedMail(sampleRecord(), CONFIG);
   assert.strictEqual(mail.body.indexOf('TEST-KEYBOX'), -1);
   assert.strictEqual(mail.body.indexOf('TEST-CODE'), -1);
-  assert.strictEqual(templates.buildConfirmedMail.length, 2);
+  /* Issue #881: 第3引数は方式判定のoptions（perBookingCodeの真偽のみ）。accessGuide（秘密値）は受け取らない。 */
+  assert.strictEqual(templates.buildConfirmedMail.length, 3);
+  var withOpts = templates.buildConfirmedMail(sampleRecord(), CONFIG, { perBookingCode: true, keyboxNumber: 'TEST-KEYBOX', unlockCode: 'TEST-CODE' });
+  assert.strictEqual(withOpts.body.indexOf('TEST-KEYBOX'), -1);
+  assert.strictEqual(withOpts.body.indexOf('TEST-CODE'), -1);
 });
 
 test('buildCancelledMail: キャンセル済みであること・予約ID・元の利用日時・ブランドを含む', function () {

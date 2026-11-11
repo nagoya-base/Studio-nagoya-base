@@ -475,7 +475,10 @@ var BookingMailTemplates = (function () {
    * ため、送信タイミングによって仮予約時と確定時で異なる金額が案内される事故を避ける。
    * 金額を確認したい場合はBooking Admin（実効金額はBooking.getEffectivePriceAmount）を見る運用とする）。
    */
-  function buildConfirmedMail(record, config) {
+  function buildConfirmedMail(record, config, options) {
+    /* Issue #881: options.perBookingCode===true（新方式対象予約）のときだけ予約別暗証番号の別送案内を足す。
+       確定メールは従来から暗証番号を載せない（旧共通コードも出さない）。それ以外の予約の本文は不変。 */
+    var perBookingCode = !!(options && options.perBookingCode === true);
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
 
@@ -495,6 +498,7 @@ var BookingMailTemplates = (function () {
       'ご利用時は、施設の利用ルールを守り、利用後は原状回復をお願いいたします。設備・備品の取り扱いには十分ご注意ください。',
       '',
       accessGuideNoticeLine_(record, timezone),
+      perBookingCode ? PER_BOOKING_CODE_NOTICE_LINE : '',
       'ご不明点やキャンセル・変更のご希望は下記までご連絡ください。',
       contactLine_(config),
       guideLine_(record),
@@ -812,7 +816,19 @@ var BookingMailTemplates = (function () {
    * 送信経路（前日18時台・19時以降の即時送信・21時catch-up・当日即時送信）ごとの
    * 複製はせず、すべてこの1箇所で決める。
    */
-  var PER_BOOKING_CODE_NOTICE_LINE = 'パスコードは別途お送りするメールでお知らせします';
+  /*
+   * Issue #881: 予約別暗証番号（独立Access GASが別メールで送る）の案内。確定メール・前日リマインドの
+   * 新方式対象予約（BookingConfig.resolveAccessCodeDelivery().perBookingCode===true）で共通に使う。
+   * 配送時期はAccess GASの現行ジョブ仕様（delivery.startHoursBeforeDay既定6＝利用日前日18:00 JST以降、
+   * それ以降に確定した予約は発行後の次の配送周期）に合わせる。送付済みとは断定しない。
+   * 旧共通暗証番号はこの案内と同じメールに出さない。未着時はこのメール（予約メールの返信先）への返信を案内する。
+   */
+  var PER_BOOKING_CODE_NOTICE_LINES = [
+    '入室用の暗証番号は、ご予約ごとに専用の番号を発行し、このメールとは別のメールでお送りします。',
+    'お届けは利用日前日の18時以降です（それ以降に確定したご予約は、確定後に順次お送りします）。',
+    '暗証番号のメールが届かない場合は、このメールにご返信ください。'
+  ];
+  var PER_BOOKING_CODE_NOTICE_LINE = PER_BOOKING_CODE_NOTICE_LINES.join('\n');
 
   function buildReminderMail(record, config, accessGuide, options) {
     var brandLabel = Booking.getBrandLabel(record.brand);
@@ -834,8 +850,8 @@ var BookingMailTemplates = (function () {
     /* Issue #753: SNBかつ options.separateCodeNotice===true（Script Property経由）のときだけ一行を足す。
        鍵の暗証番号そのものはこのメールに載せない（独立GASの別メール。#752）。ブランドが空/不明の旧データは対象外。 */
     /* Issue #832: options.perBookingCode===true（BookingConfig.resolveAccessCodeDelivery由来の新方式対象予約）
-       のときは、旧固定「解錠コード」行（ラベル・値とも）を出さず、運営指定の一文だけを句読点まで
-       そのまま出す。旧文言は新方式では使わない。送付済みとは断定しない。ACCESS_KEY_NOTICE_ENABLED
+       のときは、旧固定「解錠コード」行（ラベル・値とも）を出さず、予約別暗証番号の別送案内
+       （PER_BOOKING_CODE_NOTICE_LINES。#881で配送時期・未着時の返信案内つきへ更新）を出す。旧文言は新方式では使わない。送付済みとは断定しない。ACCESS_KEY_NOTICE_ENABLED
        （separateCodeNotice）は新方式の判定に影響しない。オートロック用キーボックス位置・番号は従来どおり残す。 */
     var perBookingCode = !!(options && options.perBookingCode === true);
     var separateCodeLine = perBookingCode

@@ -652,7 +652,9 @@ var BookingMailer = (function () {
         throw new Error('予約に有効なメールアドレスがないため確定メールを送信できません。');
       }
       var config = ensureMailConfigComplete_();
-      return BookingMailTemplates.buildConfirmedMail(record, config);
+      /* Issue #881: 新方式対象予約の判定は前日リマインドと同じ唯一の判定点（resolveAccessCodeDelivery）を使う。 */
+      var codeDelivery = BookingConfig.resolveAccessCodeDelivery(record);
+      return BookingMailTemplates.buildConfirmedMail(record, config, { perBookingCode: codeDelivery.perBookingCode });
     });
   }
 
