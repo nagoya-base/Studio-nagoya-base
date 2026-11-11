@@ -51,6 +51,7 @@
       phoneUnset: '（未入力）',
       noteUnset: '（なし）',
       consentRequired: '予約成立条件の確認が必要です。',
+      shortLeadRequired: '利用開始まで30分以内のご予約です。「上記を確認しました」にチェックしてください。',
       termsRequired: '利用規約・キャンセルポリシー・プライバシーポリシーへの同意が必要です。',
       safetyRequired: '安全ルールへの同意が必要です。',
       submitting: '送信中…',
@@ -81,6 +82,7 @@
       phoneUnset: '(not provided)',
       noteUnset: '(none)',
       consentRequired: 'Please confirm the pending booking condition.',
+      shortLeadRequired: 'This booking starts within 30 minutes. Please check “I have read the above”.',
       termsRequired: 'Please agree to the Terms of Use, Cancellation Policy, and Privacy Policy.',
       safetyRequired: 'Please agree to follow the safety rules.',
       submitting: 'Submitting…',
@@ -238,6 +240,9 @@
     startTimeLoading: document.getElementById('ba-start-time-loading'),
     startTimeGrid: document.getElementById('ba-start-time-grid'),
     startTimeEmpty: document.getElementById('ba-start-time-empty'),
+    shortLead: document.getElementById('ba-short-lead'),
+    shortLeadCheck: document.getElementById('ba-short-lead-check'),
+    shortLeadError: document.getElementById('ba-short-lead-error'),
     startTimeError: document.getElementById('ba-start-time-error'),
     startTimeErrorMessage: document.getElementById('ba-start-time-error-message'),
     startTimeErrorActions: document.getElementById('ba-start-time-error-actions'),
@@ -959,6 +964,71 @@
     return !memberAnswerRequired_() || checkedMemberStatus_() !== '';
   }
 
+  /* ── Issue #895: 直前予約（利用開始まで30分以下）の注意表示と確認チェック ──
+     警告の要否は「選択した時点」だけでなく、次へ進む時・最終送信時・一定間隔で現在時刻から再評価する。
+     候補の有効性（受付締切）はサーバーが正本で、ここでは締切ロジックに触れない。
+     端末時計のズレは、取得できる場合に限り availability 応答の Date ヘッダーとの差で補正する。 */
+  var clockOffsetMs_ = 0;
+  var shortLeadAckKey_ = '';
+
+  function nowMs_() { return Date.now() + clockOffsetMs_; }
+
+  function captureServerClock_(response) {
+    try {
+      var header = response && response.headers && typeof response.headers.get === 'function' ? response.headers.get('Date') : null;
+      var serverMs = header ? new Date(header).getTime() : NaN;
+      if (Number.isFinite(serverMs)) clockOffsetMs_ = serverMs - Date.now();
+    } catch (e) { /* 取得できなければ端末時刻のまま */ }
+  }
+
+  function shortLeadApplies_() {
+    return !!(state.startTime && typeof Logic.isShortLeadStart === 'function' && Logic.isShortLeadStart(state.date, state.startTime, nowMs_()));
+  }
+
+  function setShortLeadError_(message) {
+    if (!els.shortLeadError) return;
+    els.shortLeadError.textContent = message || '';
+    els.shortLeadError.hidden = !message;
+    if (els.shortLeadCheck) {
+      if (message) els.shortLeadCheck.setAttribute('aria-invalid', 'true');
+      else els.shortLeadCheck.removeAttribute('aria-invalid');
+    }
+  }
+
+  /* 表示・チェック状態を現在の選択と時刻に合わせる。開始時刻/日付が変わったらチェックを引き継がない。 */
+  function refreshShortLead_() {
+    if (!els.shortLead) return false;
+    var applies = shortLeadApplies_();
+    var key = applies ? state.date + '|' + state.startTime + '|' + state.durationMinutes : '';
+    if (!applies || key !== shortLeadAckKey_) {
+      if (els.shortLeadCheck) els.shortLeadCheck.checked = false;
+      setShortLeadError_('');
+    }
+    shortLeadAckKey_ = key;
+    els.shortLead.hidden = !applies;
+    return applies;
+  }
+
+  /* 進行してよいか。要確認で未チェックなら止め、インラインエラーとチェック欄へのフォーカスを出す。 */
+  function shortLeadGuardOk_() {
+    if (!refreshShortLead_()) return true;
+    if (els.shortLeadCheck && els.shortLeadCheck.checked) return true;
+    setShortLeadError_(UI_TEXT.shortLeadRequired);
+    if (els.shortLeadCheck && typeof els.shortLeadCheck.focus === 'function') els.shortLeadCheck.focus();
+    return false;
+  }
+
+  if (els.shortLeadCheck) {
+    els.shortLeadCheck.addEventListener('change', function () { if (els.shortLeadCheck.checked) setShortLeadError_(''); });
+  }
+  /* ページを開いたまま時間が経過して30分以下になった場合も表示する。 */
+  if (typeof setInterval === 'function') {
+    var shortLeadTimer_ = setInterval(function () {
+      if (els.startTimeArea && !els.startTimeArea.hidden) refreshShortLead_();
+    }, 15e3);
+    if (shortLeadTimer_ && typeof shortLeadTimer_.unref === 'function') shortLeadTimer_.unref();
+  }
+
   /* ── ステップ切り替え ──
      'start-time'（開始時刻の選択）は独立した画面でも進捗項目でもなく、Step1（#ba-step-datetime）内の
      カレンダー直後に表示するエリア（#ba-start-time-area）。goToStep('start-time')は
@@ -986,6 +1056,7 @@
       if (section) section.hidden = name !== sectionName;
     });
     setProgress_(stepName);
+    if (sectionName === 'datetime') { shortLeadAckKey_ = ''; refreshShortLead_(); }
     if (stepName === 'start-time') setStartTimeAreaVisible_(true);
     /* 開始時刻エリアはStep1のカレンダー直後にインライン表示する。ここでは動かさず、日付クリック時のみ
        proceedFromSelectedDate_がrevealStartTimeAreaIfOffscreen_で必要なときだけ寄せる。 */
@@ -2185,6 +2256,7 @@
     state.isMember = isMemberChecked_();
     state.startTime = null;
     renderPriceTimeRange_();
+    refreshShortLead_();
 
     /* カレンダーは隠さない（goToStep('start-time')でStep1全体を切り替えない）。
        Step1最下部の開始時刻エリアを表示し、その中だけをローディング→一覧へ切り替える。 */
@@ -2285,6 +2357,7 @@
     availabilityInFlightKey = null;
     state.startTime = null;
     renderPriceTimeRange_();
+    refreshShortLead_();
     setStartTimeAreaVisible_(false);
     if (els.startTimeLoading) els.startTimeLoading.hidden = true;
     if (els.startTimeGrid) { els.startTimeGrid.hidden = true; els.startTimeGrid.innerHTML = ''; }
@@ -2308,6 +2381,7 @@
        状態が変わる間も領域を空白にしない。 */
     state.startTime = null;
     renderPriceTimeRange_();
+    refreshShortLead_();
     els.startTimeSummary.textContent = UI_TEXT.startTimeSummary(state.date, state.durationMinutes / 60);
     els.startTimeLoading.textContent = UI_TEXT.searchingStartTimes;
     els.startTimeLoading.hidden = false;
@@ -2331,7 +2405,7 @@
       '&brand=' + encodeURIComponent(brand);
 
     fetch(url, { method: 'GET' })
-      .then(function (response) { return response.json(); })
+      .then(function (response) { captureServerClock_(response); return response.json(); })
       .then(function (body) {
         if (requestSeq !== availabilityRequestSeq) return;
         isFetchingAvailability = false;
@@ -2381,6 +2455,7 @@
       function select() {
         state.startTime = time;
         renderPriceTimeRange_();
+        refreshShortLead_();
         els.startTimeGrid.querySelectorAll('.ba-time-slot').forEach(function (el) {
           el.setAttribute('aria-pressed', el === button ? 'true' : 'false');
         });
@@ -2401,6 +2476,8 @@
     els.step2Next.addEventListener('click', function () {
       if (!state.startTime) return;
       if (reverifyBlocked_()) return;
+      /* Issue #895: 次へ進む時に現在時刻で再評価し、30分以下で未確認なら進ませない。 */
+      if (!shortLeadGuardOk_()) return;
       /* 会員区分（snb/studio_x）は未回答のまま進ませない。料金も会員区分の確定後にだけ表示する。 */
       if (!memberAnswered_()) {
         setFieldError_(null, els.memberError, UI_TEXT.memberRequired);
@@ -2860,6 +2937,14 @@
 
       /* Issue #548: 会員確認が期限切れ（端末の時計）または再確認待ちなら、送信せずStep1の会員確認へ戻す（黙って一般料金で送らない）。 */
       if (reverifyBlocked_()) { goToStep('datetime'); showGlobalError(Logic.messageForErrorCode('MEMBER_REVERIFY_REQUIRED', locale, brand), []); return; }
+
+      /* Issue #895: 最終送信時にも現在時刻で再評価。30分以下になっていて未確認なら、チェック欄のあるStep1へ戻して止める。 */
+      if (shortLeadApplies_() && !(shortLeadAckKey_ === state.date + '|' + state.startTime + '|' + state.durationMinutes && els.shortLeadCheck && els.shortLeadCheck.checked)) {
+        goToStep('start-time');
+        shortLeadGuardOk_();
+        showGlobalError(UI_TEXT.shortLeadRequired, []);
+        return;
+      }
 
       hideSubmitError();
       /* 成立条件確認・規約等・安全ルールの3つを先に全部判定してから止める（エラーを1度で全て表示する）。

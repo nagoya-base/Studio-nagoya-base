@@ -31,7 +31,9 @@ function read(rel) { return fs.readFileSync(path.join(__dirname, '..', rel), 'ut
     assert.ok(html.indexOf('id="ba-step-datetime"') < order[0] && order[order.length - 1] < step1Close, 'すべてStep1内');
     var area = order[5];
     var areaClose = html.indexOf('<fieldset', area);
-    assert.ok(html.slice(area, areaClose).indexOf('ba-field') === -1, 'エリア内に入力欄は無い');
+    /* Issue #895: 直前予約の確認チェック（ba-short-lead。条件付き表示）だけは開始時刻の直下に置く。 */
+    var areaHtml = html.slice(area, areaClose).replace(/<div class="ba-short-lead"[\s\S]*?<p class="ba-field-error" id="ba-short-lead-error"[^>]*><\/p>\s*<\/div>/, '');
+    assert.ok(areaHtml.indexOf('ba-field') === -1, 'エリア内に入力欄は無い');
     assert.ok(html.slice(area, areaClose).indexOf('ba-step-start-time-next') === -1, '次へボタンはエリア外（料金の後ろ）');
     assert.ok(html.indexOf('ba-start-time-price-line') === -1 && html.indexOf('ba-start-time-price-note') === -1, '開始時刻側の料金DOMは無い');
     assert.strictEqual(html.split('id="ba-price-line"').length - 1, 1, '料金表示は1か所');
@@ -49,6 +51,8 @@ function read(rel) { return fs.readFileSync(path.join(__dirname, '..', rel), 'ut
     assert.ok(member.indexOf('checked') === -1, '初期は未選択');
     var step1 = html.slice(html.indexOf('id="ba-step-datetime"'), html.indexOf('id="ba-step-details"'))
       /* Issue #478: 会員限定の特典（2名ペアパック・シャワー）のcheckboxは旧「会員」自己申告checkboxとは別物。 */
+      /* Issue #895: 直前予約の確認チェックも会員自己申告checkboxとは別物（条件付き表示）。 */
+      .replace(/<div class="ba-short-lead"[\s\S]*?<p class="ba-field-error" id="ba-short-lead-error"[^>]*><\/p>\s*<\/div>/, '')
       .replace(/<fieldset class="ba-fieldset" id="ba-benefits-field"[\s\S]*?<\/fieldset>/, '')
       /* Issue #546: 会員向け特典・先行予約のUI解除checkboxも会員自己申告checkboxとは別物（資格の正本にしない）。 */
       .replace(/<fieldset class="ba-fieldset" id="ba-member-unlock-field"[\s\S]*?<\/fieldset>/, '')
