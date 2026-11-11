@@ -15,7 +15,7 @@ LEGAL_JA.forEach(function (f) {
     var end = t.indexOf('</aside>', start);
     var n = t.slice(start, end);
     ['新規予約の受付締切', '利用開始の30分前まで', '30分前ちょうどは可', '予約操作時のサーバー時刻', '予約は成立のまま', '自動の取消・返金はしません',
-      '施行日前に確定した予約を変更・取消しすることはありません', '2026年11月11日に', '11月4日の告知への追記', 'お問い合わせ'].forEach(function (w) {
+      '施行日前に確定した予約を変更・取消しすることはありません', '2026年11月11日に追記', '2026年11月19日 0:00（日本時間）から適用', '11月4日の告知への追記', 'お問い合わせ'].forEach(function (w) {
       assert.ok(n.indexOf(w) !== -1, w);
     });
     // 既存の#758条件は維持
@@ -29,17 +29,18 @@ test('#885: 英語規約にも同じ内容（30分前・ちょうど可・決済
   var n = t.slice(s, t.indexOf('</aside>', s));
   ['Booking cutoff for new bookings', 'up to 30 minutes before the start time', 'exactly 30 minutes before is allowed', 'server time',
     'the booking stands', 'no automatic cancellation or refund', 'before the effective date are not changed or cancelled',
-    'added on November 11, 2026', 'an addition to the November 4 notice'].forEach(function (w) { assert.ok(n.indexOf(w) !== -1, w); });
+    'added on November 11, 2026', 'an addition to the November 4 notice', 'takes effect only at 00:00 JST on November 19, 2026'].forEach(function (w) { assert.ok(n.indexOf(w) !== -1, w); });
 });
 
 test('#885: お知らせは既存の11/19告知へ統合し、11/04告知に含まれていなかったことを明記する（新しい別告知は作らない）', function () {
   var t = read('_data/news_ja.yml');
   assert.strictEqual(t.split('新規予約は、利用開始の30分前まで受け付けます').length - 1, 1, '1箇所のみ');
   var entry = t.split('\n- date: ').filter(function (e) { return e.indexOf('予約ルール改定のお知らせ】告知日') !== -1; })[0];
-  ['③新規予約は、利用開始の30分前まで', '2026年11月11日に同日施行の条件として追記', '11月4日の告知時点では含まれていませんでした', '自動の取消・返金はしません', '2026年11月19日 0:00（日本時間）'].forEach(function (w) {
+  ['③新規予約は、利用開始の30分前まで', '2026年11月11日に追記。2026年11月19日 0:00（日本時間）から適用し、それまでは従前の条件です', '11月4日の告知時点では含まれていませんでした', '自動の取消・返金はしません', '2026年11月19日 0:00（日本時間）'].forEach(function (w) {
     assert.ok(entry.indexOf(w) !== -1, w);
   });
-  assert.ok(!/- date: "2026\.11\.1[1-9]"/.test(t), '新しい日付の別告知を作らない');
+  var separate = t.split('\n- date: ').filter(function (e) { return /^"2026\.11\.(1[1-9])"/.test(e) && e.indexOf('30分前') !== -1 && e.indexOf('新規予約') !== -1; });
+  assert.strictEqual(separate.length, 0, '本締切だけの別告知を作らない（無関係なお知らせは対象外）');
 });
 
 test('#885: 予約画面の案内（日英）に30分前締切が追記され、施行前を「施行済み」と見せない', function () {
