@@ -240,3 +240,30 @@ test('再送直前の再評価: 台帳を読めない場合は、台帳を使わ
   rt.flushOutbox ? rt.flushOutbox() : rt.watchdog();
   assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_SOON').length, 1, '台帳不明でも終了前・未確認なら送る');
 });
+
+test('DIGEST_MISMATCHで凍結された予約は、未発行の通常通知（緊急含む）を出さない', function () {
+  var w = world(); rejectIssue(w); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:40:00'); rt.syncCycle();                                   // 優先窓の外。追跡（revision・digest）が記録される
+  at(w, '09:50:00'); rt.syncCycle();                                   // 優先窓で発行を試みる（受理されない）
+  w.records = [H.record({ endAt: H.jst(DAY, '13:00') })];                // revisionを増やさずに内容だけ変わる
+  at(w, '09:56:00');
+  var out = rt.syncCycle();
+  assert.strictEqual(out.frozen, 1, '前提: 照合側が凍結している');
+  assert.strictEqual(alerts(w, 'DIGEST_MISMATCH').length, 1, '前提: 既存の凍結通知が出ている');
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_SOON').length, 0, '通常の発行遅延として緊急通知しない');
+});
+
+test('再送時に段階が進んでいたら、古い段階（予告）は送らず、現在の段階（開始後）だけを通知する', function () {
+  var w = world(); rejectIssue(w); var rt = w.runtime();
+  w.records = [H.record()];
+  at(w, '09:52:00');
+  w.mailFail = true;
+  rt.syncCycle();                                                      // 予告が不達で送信待ちに残る
+  assert.ok(w.store.keys().some(function (k) { return k.indexOf('IALERT_KEY_NOT_ISSUED_NOTICE') === 0; }), '前提: 予告が送信待ち');
+  w.mailFail = false;
+  at(w, '10:10:00');
+  rt.syncCycle();
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_NOTICE').length, 0, '開始後に「まだ始まっていない」予告を送らない');
+  assert.strictEqual(alerts(w, 'KEY_NOT_ISSUED_STARTED').length, 1, '現在の段階を通知する');
+});

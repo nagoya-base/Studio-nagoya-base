@@ -1306,11 +1306,12 @@ var SwitchBotAccessInfra = (function () {
     function iaKey(code, ref, rev) { return 'IALERT_' + code + '_' + (ref || '-') + '_' + (rev === undefined || rev === null ? '-' : rev); }
 
     /** 基盤事象の通知。同一事象は repeatSec 内は再通知しない。送達失敗は次回以降バックオフ付きで再送。 */
-    function infraAlert(code, ref, rev, detail, repeatSec, expiresAtSec) {
+    function infraAlert(code, ref, rev, detail, repeatSec, expiresAtSec, startSec) {
       var k = iaKey(code, ref, rev);
       var cur = safeParse(deps.store.get(k));
       var now = deps.nowSec();
       var rec = cur || { event: { code: code, ref: ref || undefined, rev: rev === undefined ? undefined : rev, detail: detail || undefined }, firstAt: now, sentAt: null, attempts: 0, lastTryAt: 0 };
+      if (typeof startSec === 'number') rec.startSec = startSec; // 段階の判定に使う（古い段階の通知を再送で出さない）
       if (typeof expiresAtSec === 'number') rec.expiresAt = expiresAtSec; // 期限（例: 利用終了）を過ぎた未送信の通知は再送せず破棄する（Issue #885）
       if (rec.sentAt !== null && now - rec.sentAt < (repeatSec || ic.notifyRepeatSec)) return false;
       if (rec.sentAt === null && rec.attempts > 0) {
@@ -1343,6 +1344,8 @@ var SwitchBotAccessInfra = (function () {
       var ev = rec && rec.event;
       if (!ev || KEY_ALERT_CODES.indexOf(ev.code) === -1) return false;
       if (typeof rec.expiresAt === 'number' && deps.nowSec() >= rec.expiresAt) return true;
+      // 古い段階の通知（予告が緊急・開始後に追い越された等）は送らない。現在の段階の通知は検知側が作る。
+      if (typeof rec.startSec === 'number' && stageCodeFor(rec.startSec - deps.nowSec()) !== ev.code) return true;
       return hasIssuedKey(scanOps(deps.store), { bookingId: ev.ref, revision: ev.rev });
     }
 
@@ -1359,7 +1362,8 @@ var SwitchBotAccessInfra = (function () {
       if (!found) return true;
       var sn = deps.snapshot.build(found, { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
       if (sn.revision !== ev.rev) return true; // 変更後の revision で未発行なら、検知側が新しい通知を作る
-      return !unissuedStatus(sn, scanOps(deps.store), deps.nowMs(), deps.nowSec());
+      var cur = unissuedStatus(sn, scanOps(deps.store), deps.nowMs(), deps.nowSec());
+      return !cur || stageCodeFor(cur.untilStart) !== ev.code; // 対象外、または段階が進んだ通知は破棄
     }
 
     /** 未送達の通知を再送する（バックオフ尊重）。 */
@@ -1557,18 +1561,26 @@ var SwitchBotAccessInfra = (function () {
      * 確定済みで、開始10分前〜終了までに個別キーの反映が確認できていない予約か。対象外（取消・対象外ブランド・限定稼働外・凍結・
      * 時刻不正・終了後・反映確認済み）は null。通知の作成と、再送直前の再評価の両方で同じ判定を使う。
      */
+    /** 開始までの秒数に対応する通知の段階（コード）。 */
+    function stageCodeFor(untilStart) {
+      return untilStart < 0 ? 'KEY_NOT_ISSUED_STARTED' : (untilStart <= URGENT_BEFORE_START_SEC ? 'KEY_NOT_ISSUED_SOON' : 'KEY_NOT_ISSUED_NOTICE');
+    }
+
     function unissuedStatus(sn, opsList, nowMs, nowSec) {
       if (sn.status !== 'CONFIRMED') return null;
       var eligibleBrands = Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : [];
       if (eligibleBrands.indexOf(sn.brand) === -1) return null;
       if (Array.isArray(cfg.pilotBookingIds) && cfg.pilotBookingIds.indexOf(String(sn.bookingId)) === -1) return null;
       if (deps.snapshot.toCoreInput(sn, nowMs, { eligibleBrands: eligibleBrands }).action === 'FREEZE') return null; // 凍結は BOOKING_FROZEN が担当
+      // 内容がrevisionの増分なしに変わった予約は照合側が凍結している（DIGEST_MISMATCH）。通常の発行遅延として通知しない。
+      var trk = readTrack(sn.bookingId);
+      if (trk && trk.revision === sn.revision && trk.digest && trk.digest !== sn.digest) return null;
       var tm = timingOf(sn);
       if (!tm || nowSec >= tm.endSec) return null;
       var untilStart = tm.startSec - nowSec;
       if (untilStart > NOTICE_BEFORE_START_SEC) return null;
       if (hasIssuedKey(opsList, sn)) return null;
-      return { untilStart: untilStart, endSec: tm.endSec };
+      return { untilStart: untilStart, startSec: tm.startSec, endSec: tm.endSec };
     }
 
     /**
@@ -1584,8 +1596,8 @@ var SwitchBotAccessInfra = (function () {
           var sn = deps.snapshot.build(rec, { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
           var st = unissuedStatus(sn, opsNow, nowMs, nowSec);
           if (!st) return;
-          var code = st.untilStart < 0 ? 'KEY_NOT_ISSUED_STARTED' : (st.untilStart <= URGENT_BEFORE_START_SEC ? 'KEY_NOT_ISSUED_SOON' : 'KEY_NOT_ISSUED_NOTICE');
-          infraAlert(code, safeRef(sn.bookingId), sn.revision, null, code === 'KEY_NOT_ISSUED_STARTED' ? 600 : undefined, st.endSec);
+          var code = stageCodeFor(st.untilStart);
+          infraAlert(code, safeRef(sn.bookingId), sn.revision, null, code === 'KEY_NOT_ISSUED_STARTED' ? 600 : undefined, st.endSec, st.startSec);
         });
       } catch (e) { /* 検知の失敗で照合は止めない */ }
     }
