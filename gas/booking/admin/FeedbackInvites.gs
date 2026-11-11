@@ -171,27 +171,42 @@ var FeedbackInvites = (function () {
   function buildMail(record, url, mailConfig) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var profile = Booking.getBrandProfile(record.brand);
-    var intro = [
-      'このたびは ' + brandLabel + ' をご利用いただき、ありがとうございました。',
-      '',
-      '今後のサービス改善のため、ご利用後アンケートへのご協力をお願いいたします。'
-    ];
+    /*
+     * Issue #882: 回答率改善のため「要点 → CTA → 補足」の順に並べ替える。
+     * 冒頭は謝辞・問いかけ・回答が活かされる理由・所要時間の目安だけにし、
+     * 任意性・入力不要・期限・予約への非影響・転送注意はCTAの下へまとめる（案内は削らない）。
+     * 特典・優遇など存在しない利益は書かない。「匿名」とは書かず「入力は不要」と事実だけ書く。
+     */
+    var thanks = 'このたびは ' + brandLabel + ' をご利用いただき、ありがとうございました。';
+    var question = '今回のスタジオはいかがでしたか？';
+    var invite = '「また利用したい」「ここが使いにくかった」など、率直なご感想をお聞かせください。' +
+      '良かった点だけでも大歓迎です。いただいた声は、設備やサービスの改善に活かしていきます。';
+    var duration = '所要時間は約2〜3分、選択式の質問が中心です。';
+    var ctaLabel = 'アンケートに回答する';
     var notes = [
-      '回答は任意です（所要時間は約2〜3分です）。',
+      '回答は任意です。',
+      'お名前やメールアドレスの入力は不要です。',
+      '回答期限はご利用終了から14日間です（リンクは14日間有効）。',
       '回答の有無や内容が、今後のご予約・ご利用に影響することはありません。',
-      'お名前やメールアドレスの入力は不要です。'
+      'このリンクはご予約1件ごとの専用リンクです。回答は1回まで、転送や共有はお控えください。'
     ];
-    var linkHeading = 'アンケートに回答する（ご利用後14日間有効）';
-    var linkNote = 'このリンクはご利用1回ごとの専用リンクです。回答は1回まで、転送や共有はお控えください。';
     var footer = '※このメールは送信専用です。ご不明な点は下記までお問い合わせください。';
     var contact = mailConfig.contactEmail ? 'お問い合わせ: ' + mailConfig.contactEmail : '';
 
-    var lines = intro.concat(notes.map(function (n) { return '・' + n; }), [
+    var lines = [
+      thanks,
       '',
-      '▼ ' + linkHeading,
+      question,
+      '',
+      invite,
+      '',
+      duration,
+      '',
+      '▼ ' + ctaLabel,
       url,
       '',
-      linkNote,
+      '【ご案内】'
+    ].concat(notes.map(function (n) { return '・' + n; }), [
       '',
       footer
     ]);
@@ -199,31 +214,45 @@ var FeedbackInvites = (function () {
     lines.push('', '--', profile.signature, profile.siteUrl);
 
     var href = safeHttpsUrl_(url);
-    var p = function (text) { return '<p style="margin:0 0 12px;">' + escapeHtml_(text) + '</p>'; };
+    var p = function (text, style) { return '<p style="margin:0 0 12px;' + (style || '') + '">' + escapeHtml_(text) + '</p>'; };
+    /*
+     * CTA: Gmail（iPhone/Android・ライト/ダーク）でも押しやすいボタン風リンク。
+     * <style> やクラスは使わず、表（bgcolor）＋インラインstyleで描く。濃い青地に白文字（コントラスト比 約6.4:1）で、
+     * ダーク表示で色が反転されても枠線と太字で判読できるようにする。リンク先は署名済みURLそのまま。
+     */
+    var cta = href
+      ? '<table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin:4px 0 20px;border-collapse:separate;width:100%;max-width:360px;">' +
+          '<tr><td align="center" bgcolor="#0b57d0" style="background-color:#0b57d0;border:2px solid #0842a0;border-radius:10px;">' +
+          '<a href="' + escapeHtml_(href) + '" target="_blank" rel="noopener" style="display:block;padding:14px 20px;color:#ffffff;' +
+          'font-size:17px;font-weight:bold;line-height:1.4;text-align:center;text-decoration:none;border-radius:8px;">' +
+          escapeHtml_(ctaLabel) + '</a></td></tr></table>'
+      : '<p style="margin:4px 0 20px;font-size:17px;font-weight:bold;">' + escapeHtml_(ctaLabel) + '</p>';
     var html = [
       '<!DOCTYPE html>',
-      '<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>',
+      '<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+        '<meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark"></head>',
       '<body style="margin:0;padding:16px;font-family:sans-serif;font-size:15px;line-height:1.7;color:#222;background:#fff;">',
       '<div style="max-width:560px;margin:0 auto;">',
-      p(intro[0]),
-      p(intro[2]),
-      '<ul style="margin:0 0 16px;padding-left:20px;">',
+      p(thanks),
+      p(question, 'font-size:18px;font-weight:bold;margin-top:4px;'),
+      p(invite),
+      p(duration, 'font-weight:bold;'),
+      cta,
+      '<div style="margin:0 0 16px;padding:12px 14px;border:1px solid #ccc;border-radius:8px;font-size:13px;line-height:1.6;color:#444;">',
+      '<p style="margin:0 0 6px;font-weight:bold;">' + escapeHtml_('ご案内') + '</p>',
+      '<ul style="margin:0;padding-left:18px;">',
       notes.map(function (n) { return '<li>' + escapeHtml_(n) + '</li>'; }).join(''),
       '</ul>',
-      '<p style="margin:0 0 8px;">' + escapeHtml_('▼ ご利用後14日間有効') + '</p>',
-      '<p style="margin:0 0 16px;font-size:17px;font-weight:bold;">' +
-        (href ? '<a href="' + escapeHtml_(href) + '" style="color:#0b57d0;text-decoration:underline;">' + escapeHtml_('アンケートに回答する') + '</a>' : escapeHtml_('アンケートに回答する')) +
-        '</p>',
-      p(linkNote),
-      p(footer),
-      contact ? p(contact) : '',
+      '</div>',
+      p(footer, 'font-size:13px;color:#444;'),
+      contact ? p(contact, 'font-size:13px;color:#444;') : '',
       '<p style="margin:16px 0 0;color:#555;font-size:13px;">--<br>' + escapeHtml_(profile.signature) + '<br>' + escapeHtml_(profile.siteUrl) + '</p>',
       '</div>',
       '</body></html>'
     ].join('');
 
     return {
-      subject: '【' + brandLabel + '】ご利用ありがとうございました（アンケートのお願い）',
+      subject: '【' + brandLabel + '】ご利用ありがとうございました｜2〜3分のアンケート',
       body: lines.join('\n') + '\n',
       htmlBody: html
     };
