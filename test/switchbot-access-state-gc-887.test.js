@@ -182,7 +182,7 @@ test('sweep: 既存の定期清掃に統合され、APICOUNT 回収件数・未�
   assert.ok(JSON.stringify(r).indexOf('ZZZ_UNKNOWN') === -1);
 });
 
-test('OFF 中の sweep: ローカル状態の回収のみ。SwitchBot変更API・メール配送・Webhook処理を起動しない', function () {
+test('OFF 中の sweep: 回収はローカル状態のみで、SwitchBot変更APIを呼ばない・メールを新規に増やさない', function () {
   var w = H.createWorld({ cfg: { enabled: false } });
   var rt = w.runtime();
   seed(w);
@@ -193,8 +193,21 @@ test('OFF 中の sweep: ローカル状態の回収のみ。SwitchBot変更API�
   assert.strictEqual(w.props['APICOUNT_20300101'], undefined);
   var mutating = w.calls.slice(callsBefore).filter(function (c) { return !/keyList|list|read/i.test(JSON.stringify(c)); });
   assert.deepStrictEqual(mutating, [], '変更APIは呼ばない');
-  assert.strictEqual(w.mails.length, mailsBefore, 'メールを送らない');
-  assert.strictEqual(w.userMails.length, 0);
+  assert.strictEqual(w.mails.length, mailsBefore, '未送達通知が無ければメールは増えない');
+  assert.strictEqual(w.userMails.length, 0, '利用者向けメール配送は起動しない');
+});
+
+test('OFF 中の sweep: 既存動作として未送達の管理者通知(IALERT_)は再送される（#887 は変更しない・文書化のとおり）', function () {
+  var w = H.createWorld({ cfg: { enabled: false } });
+  var rt = w.runtime();
+  seed(w);
+  w.props['IALERT_PENDING_-_-'] = JSON.stringify({ event: { code: 'READ_LIMIT' }, sentAt: null, attempts: 0, lastTryAt: 0 });
+  var mailsBefore = w.mails.length;
+  var r = rt.sweepCycle();
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(w.mails.length, mailsBefore + 1, '管理者通知の再送は OFF でも動く（既存仕様）');
+  assert.strictEqual(w.userMails.length, 0, '利用者向けメール配送は起動しない');
+  assert.strictEqual(r.removed.APICOUNT, 1);
 });
 
 test('日次クリーンアップ(HB_CLEANUP)も同じ回収を行い、ロック取得失敗時は何も回収しない', function () {
