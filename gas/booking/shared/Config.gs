@@ -135,7 +135,9 @@ var BookingConfig = (function () {
       bufferMinutes: effectiveBufferMinutes_(now),
       slotStepMinutes: effectiveSlotStepMinutes_(now),
       /* Issue #758: 開始刻みの施行後は、OPEN_TIMEの分に依存せず「時刻の分が00または30」で判定する（候補生成・新規予約・管理者変更で共通）。 */
-      slotStepAbsolute: isSlotStepRulesEffective(now)
+      slotStepAbsolute: isSlotStepRulesEffective(now),
+      /* Issue #885: 新規予約の確定締切（利用開始のN分前）。施行前は0（従来どおり「開始が現在時刻より後」だけを要求）。 */
+      leadCutoffMinutes: isLeadCutoffEffective(now) ? LEAD_CUTOFF_RULES_MINUTES : 0
     };
   }
 
@@ -214,6 +216,30 @@ var BookingConfig = (function () {
 
   function getSlotStepRulesStatus(now) {
     var effective = readEffectiveAtMillis_(SLOT_STEP_EFFECTIVE_AT_PROPERTY);
+    if (effective.state !== 'SET') return { state: effective.state, effective: false };
+    var on = toMillis_(now) >= effective.millis;
+    return { state: on ? 'EFFECTIVE' : 'PENDING', effective: on, effectiveAtMillis: effective.millis };
+  }
+
+  /*
+   * Issue #885: 新規予約の確定締切＝利用開始30分前。#758（バッファー・開始刻み・延長締切）とは**別の施行日時**
+   * （Script Property BOOKING_LEAD_2026_EFFECTIVE_AT。オフセット必須のISO 8601）で切り替える。
+   * 規約の事前告知期間（既存資料上14日前）を満たす前に効かせないため、#758の施行日とは連動させない。
+   * - 判定に使う時刻は「操作時のサーバー時刻（now）」。ちょうど施行日時は施行済み。
+   * - 未設定・空値・不正値は従来ルール（施行前扱い）。事前適用の事故を防ぐ側へ倒す。
+   * - 施行前に確定した予約は自動で移動・取消しない（この締切は新規確定の入口にだけ効く）。
+   * - 当日延長の「旧終了60分前」締切（BOOKING_RULES_EXTENSION_DEADLINE_MINUTES）は変更しない。
+   */
+  var LEAD_CUTOFF_EFFECTIVE_AT_PROPERTY = 'BOOKING_LEAD_2026_EFFECTIVE_AT';
+  var LEAD_CUTOFF_RULES_MINUTES = 30;
+
+  function isLeadCutoffEffective(now) {
+    var effective = readEffectiveAtMillis_(LEAD_CUTOFF_EFFECTIVE_AT_PROPERTY);
+    return effective.state === 'SET' && toMillis_(now) >= effective.millis;
+  }
+
+  function getLeadCutoffStatus(now) {
+    var effective = readEffectiveAtMillis_(LEAD_CUTOFF_EFFECTIVE_AT_PROPERTY);
     if (effective.state !== 'SET') return { state: effective.state, effective: false };
     var on = toMillis_(now) >= effective.millis;
     return { state: on ? 'EFFECTIVE' : 'PENDING', effective: on, effectiveAtMillis: effective.millis };
@@ -479,6 +505,10 @@ var BookingConfig = (function () {
     getSlotStepRulesStatus: getSlotStepRulesStatus,
     BOOKING_SLOT_STEP_EFFECTIVE_AT_PROPERTY: SLOT_STEP_EFFECTIVE_AT_PROPERTY,
     BOOKING_SLOT_STEP_RULES_MINUTES: SLOT_STEP_RULES_MINUTES,
+    isLeadCutoffEffective: isLeadCutoffEffective,
+    getLeadCutoffStatus: getLeadCutoffStatus,
+    BOOKING_LEAD_CUTOFF_EFFECTIVE_AT_PROPERTY: LEAD_CUTOFF_EFFECTIVE_AT_PROPERTY,
+    BOOKING_LEAD_CUTOFF_MINUTES: LEAD_CUTOFF_RULES_MINUTES,
     BOOKING_RULES_EFFECTIVE_AT_PROPERTY: BOOKING_RULES_EFFECTIVE_AT_PROPERTY,
     BOOKING_RULES_BUFFER_MINUTES: BOOKING_RULES_BUFFER_MINUTES,
     BOOKING_RULES_EXTENSION_DEADLINE_MINUTES: BOOKING_RULES_EXTENSION_DEADLINE_MINUTES,

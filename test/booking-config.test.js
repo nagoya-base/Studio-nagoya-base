@@ -26,7 +26,8 @@ test('Script Propertiesが空でも固定仕様のデフォルト値が使われ
     minBookingMinutes: 60,
     bufferMinutes: 15,
     slotStepMinutes: 15,
-    slotStepAbsolute: false
+    slotStepAbsolute: false,
+    leadCutoffMinutes: 0
   });
 });
 

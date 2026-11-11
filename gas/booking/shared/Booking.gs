@@ -538,11 +538,22 @@ var Booking = (function () {
      * 必ずここで再検証する。
      */
     if (isSameDayBooking) {
-      var currentMinutes = BookingAvailability.getCurrentMinutesInTimezone(receivedAt, availabilityConfig.timezone);
-      if (currentMinutes === null) {
+      var leadMinutes = availabilityConfig.leadCutoffMinutes > 0 ? availabilityConfig.leadCutoffMinutes : 0;
+      /* Issue #885: leadMinutes>0（施行後）は「開始の30分前ちょうどまで可・29:59前は不可」。サーバー時刻が正本で、画面の候補表示には依存しない。 */
+      var minimumStartMinutes = BookingAvailability.getMinimumStartMinutes(receivedAt, availabilityConfig.timezone, leadMinutes);
+      if (minimumStartMinutes === null) {
         return { valid: false, error: err_('INVALID_CONFIG', '営業時間・予約ルールの設定が正しくありません。') };
       }
-      if (startMinutes <= currentMinutes) {
+      if (startMinutes <= minimumStartMinutes) {
+        if (leadMinutes > 0) {
+          return {
+            valid: false,
+            error: err_(
+              'BOOKING_LEAD_TIME_PASSED',
+              '新規のご予約は利用開始の' + leadMinutes + '分前までです。別の開始時刻をお選びください。お急ぎの場合はお問い合わせください。'
+            )
+          };
+        }
         return {
           valid: false,
           error: err_(
