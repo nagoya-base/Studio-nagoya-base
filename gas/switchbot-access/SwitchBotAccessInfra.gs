@@ -101,7 +101,7 @@ var SwitchBotAccessInfra = (function () {
 
   /** 緊急通知（KEY_UNCONFIRMED_*）のコード。再送間隔と不達判定が一般通知より厳しい。 */
   var URGENT_CODES = ['KEY_UNCONFIRMED_WARNING', 'KEY_UNCONFIRMED_URGENT', 'KEY_UNCONFIRMED_STARTED'];
-  /** 通知コードごとに必要な最低段階（送信直前の再検証で、段階が下回る通知は失効させる）。 */
+  /** 通知コードごとの対応段階（送信直前の再検証で、現在の段階と一致しない通知は失効させる）。 */
   var URGENT_CODE_LEVEL = { KEY_UNCONFIRMED_WARNING: 'WARNING', KEY_UNCONFIRMED_URGENT: 'URGENT', KEY_UNCONFIRMED_STARTED: 'STARTED' };
   var LEVEL_RANK = { NONE: 0, PRIORITY: 1, WARNING: 2, URGENT: 3, STARTED: 4 };
 
@@ -1449,7 +1449,12 @@ var SwitchBotAccessInfra = (function () {
       if (isUrgentRec(rec) && verified !== true) {
         var v = urgentStillValid(rec);
         if (v === 'HOLD') return 'HOLD';
-        if (v === 'VOID') { try { deps.store.del(k); } catch (e0) { /* 次回も失効判定になる */ } return 'VOID'; }
+        if (v === 'VOID') {
+          // 不達のまま失効する場合も、通知経路の不達があった事実は残す（現行段階の通知が届くまで、状態表示で確認できる）
+          if (rec.attempts >= failingThreshold(rec)) { try { deps.store.set('NOTIFYFAIL', String(deps.nowSec())); } catch (e1) { /* 無視 */ } }
+          try { deps.store.del(k); } catch (e0) { /* 次回も失効判定になる */ }
+          return 'VOID';
+        }
       }
       var now = deps.nowSec();
       rec.attempts += 1; rec.lastTryAt = now;
@@ -1490,7 +1495,8 @@ var SwitchBotAccessInfra = (function () {
       try { p = prepareRecord(hits[0], nowMs); } catch (e1) { return 'HOLD'; }
       if (p.sn.revision !== ev.rev) return 'VOID';
       var rd = readinessOf(p, groupOps(scanOps(deps.store)), deps.nowSec());
-      if (!rd || rd.ready || LEVEL_RANK[rd.level] < LEVEL_RANK[need]) return 'VOID';
+      // 通知コードに対応する現在の段階と厳密に一致するときだけ有効。段階が進んだ後は、前段階の未送達通知（予告など）は送らず、現行段階の通知に任せる
+      if (!rd || rd.ready || rd.level !== need) return 'VOID';
       return 'OK';
     }
 

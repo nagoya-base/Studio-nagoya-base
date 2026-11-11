@@ -629,10 +629,15 @@ test('不達判定: 前の段階（緊急）の失敗が閾値に達していれ
   failUrgentMail(w);
   var rt = w.runtime();
   setNow(w, 5); rt.syncCycle();                   // 緊急通知が1回失敗
-  setNow(w, 0, 1);
-  var r = rt.syncCycle();                         // 再送で2回目の失敗。選ばれた段階は開始後（失敗1回）
+  w.advance(120);                                 // 再送で2回目の失敗（まだ緊急の段階）
+  var r = rt.syncCycle();
   assert.strictEqual(r.keyReadiness.undelivered, 1, '緊急通知の不達を見落とさない');
   assert.strictEqual(JSON.parse(w.props.KEYREADY).undelivered, 1);
+  setNow(w, 0, 1);                                // 開始後へ進む。古い緊急通知は失効し、不達の事実は NOTIFYFAIL に残る
+  r = rt.syncCycle();
+  assert.ok(Number(w.props.NOTIFYFAIL) > 0);
+  w.advance(120); r = rt.syncCycle();             // 現行（開始後）の通知も失敗し続ければ、現行段階の不達として数える
+  assert.strictEqual(r.keyReadiness.undelivered, 1);
 });
 
 test('同期が例外で中断しても、反映未確認の判定・通知と KEYREADY 更新は行う（結果は SYNC_ERROR のまま）', function () {
@@ -681,7 +686,7 @@ test('失効: sweep（日次回収・時間主導の回収）経路の再送で�
 test('再検証の台帳読取: 複数の未送達通知がある場合、全予約参照を追跡対象にして1回で読み、どれも誤って失効させない', function () {
   var w = H.createWorld();
   var a = H.record({ bookingId: 'SNB-A' });
-  var b = H.record({ bookingId: 'SNB-B', startAt: H.jst('2030-01-11', '10:02'), endAt: H.jst('2030-01-11', '12:30') });
+  var b = H.record({ bookingId: 'SNB-B', startAt: H.jst('2030-01-11', '10:04'), endAt: H.jst('2030-01-11', '12:30') });
   w.records = [a, b];
   blockByCapacity(w);
   failUrgentMail(w);
@@ -816,4 +821,53 @@ function exhaustBudget(w) {
     assert.strictEqual(keyMails(w).length, m);
     assert.strictEqual(JSON.parse(w.props.KEYREADY).count, 0, '利用終了で追跡を解除');
   });
+});
+
+// ================================================================ 段階が進んだ後の古い段階の通知
+
+test('失効: 予告（WARNING）の不達→開始後に復旧のとき、古い予告は届かず、現行の開始後通知（STARTED）だけが届く（同期経路）', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 10); rt.syncCycle();                     // 10分前の予告が失敗して outbox に残る
+  assert.ok(pendingUrgent(w).some(function (k) { return /WARNING/.test(k); }));
+  w.mailFailIf = null;                               // メール復旧
+  setNow(w, 0, 300);                                 // 開始5分後
+  rt.syncCycle();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_WARNING').length, 0, '古い予告は届かない');
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 0);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length, 1, '現行の開始後通知だけが届く');
+});
+
+test('失効: 緊急（URGENT）の不達→開始後に復旧のとき、watchdog 再送では古い緊急通知を送らず、同期で現行の開始後通知が届く', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 5); rt.syncCycle();
+  w.mailFailIf = null;
+  setNow(w, 0, 300);
+  rt.watchdog();                                     // 監視ジョブによる再送経路
+  assert.strictEqual(keyMails(w).length, 0, '段階が進んだ後の古い通知は watchdog 再送で届かない');
+  assert.strictEqual(pendingUrgent(w).filter(function (k) { return /URGENT|WARNING/.test(k); }).length, 0, '失効して消える');
+  rt.syncCycle();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 0);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_STARTED').length, 1, '現行の開始後通知は届く');
+});
+
+test('失効: 予告の不達→緊急の段階に進んだ後に復旧すると、予告は届かず緊急だけが届く', function () {
+  var w = H.createWorld();
+  w.records = [H.record()];
+  blockByCapacity(w);
+  failUrgentMail(w);
+  var rt = w.runtime();
+  setNow(w, 10); rt.syncCycle();
+  w.mailFailIf = null;
+  setNow(w, 4);
+  rt.syncCycle();
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_WARNING').length, 0);
+  assert.strictEqual(mailsOf(w, 'KEY_UNCONFIRMED_URGENT').length, 1);
 });
