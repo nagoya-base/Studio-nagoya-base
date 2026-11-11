@@ -20,6 +20,12 @@
 - **静穏時間**: 同じ(revision, digest)を `quietSec`(既定60秒)以上前から観測している場合のみ `sync`（日時変更直後の料金精算など中間状態で発行しない）。5分周期なので変更は通常2周期で反映。
 - **実行時間予算**: `runBudgetSec`(既定240秒＝GAS上限6分に余裕)を超えたら残りを次周期へ。未解決予約を先に処理。
 - **発行ゲート停止（容量・保存・API予算）**: OPを作れなかった予約は revision・発行窓を「未処理」のまま保持し、`gateRetrySec`(既定600秒)間隔でゲートを再評価する。停止が続く間は発行せず通知も重複しない。解消後の次の照合で同revisionのまま1件だけ発行する（発行対象から脱落しない）。進行中OPの照合は保留しない。
+- **キー未発行対策（Issue #885 第3弾）**: 開始が近い確定予約で、現行の改訂・端末・有効期間に一致する**発行確認済み（`ISSUED_CONFIRMED`）の個別キーが無い**場合の対処。同期ジョブの成功とは別に判定する。詳細は `docs/booking-lead-cutoff-885.md`。
+  - 利用開始15分前（`priorityRetryLeadSec`）〜: 処理順の先頭へ。静穏時間（`quietSec`）・ゲート待機（`gateRetrySec`）を省き、毎周期 `engine.sync`（冪等）で再評価。
+  - 利用開始10分前（`warningNoticeLeadSec`）〜: `KEY_UNCONFIRMED_WARNING`（反映未確認の初回警告）。5分前（`urgentNoticeLeadSec`）〜: `KEY_UNCONFIRMED_URGENT`。開始後は `KEY_UNCONFIRMED_STARTED`（代替入室へエスカレーション）で、未解決の間 `startedRenotifySec`（既定10分）ごとに再通知し、利用終了・反映確認で止まる。開始前の通知は (コード, 予約参照, revision) ごとに1件。
+  - 未送達で残った緊急通知は、再送の**送信直前に現行の台帳・OPで再検証**し、反映済み・取消・revision変更・終了後などは破棄する（台帳を読めない間は保留）。
+  - 再試行は「未送信」の予約に限る。`UNKNOWN`／`FAILED`／送信中の鍵へは `createKey` を再送しない（二重発行防止）。管理者の復旧手順（`accessAdminInspect`／`accessAdminResolveUnknown` 等）か代替入室で対応する。
+  - 判定対象は発行対象として有効な確定予約のみ（機能フラグ・商用承認・ブランド・限定稼働・凍結・取消を `evaluateEligibility`／`toCoreInput` で除外）。フラグOFFでは何もしない。
 - 例外は握りつぶさず `SYNC_ERROR`（固定分類・詳細非公開）で中断して通知。**予約・決済・返金の処理へは何も伝播しない**（独立GASであり予約GASへの書込み経路を持たない）。
 
 ## 2. 認証・認可・相関
@@ -92,6 +98,7 @@
 | `APICOUNT_YYYYMMDD` | JST日別のAPI呼出し数（当日の予算判定） | 消さない（当日分は予算判定に使う） | JST当日より8日以上前のみ（上表） |
 | `HB_ADMIN` / `HB_CLEANUP` / `HB_DELIVER` / `HB_SWEEP` / `HB_SYNC` | 各ジョブの直近の稼働状況（実行ごとに上書き） | 消さない（`JOB_STALE` 判定に使う） | 回収しない（常設・各1件） |
 | `LOCKFAIL` / `NOTIFYFAIL` | ロック取得失敗の連続数／通知失敗の開始時刻（上書き） | 消さない | 回収しない（常設・各1件） |
+| `KEYREADY` | キー未発行の最新状況（#885）。予約参照・段階・OP状態・件数・不達件数のみ（上書き。未発行が無くなれば件数0で上書き） | 消さない | 回収しない（常設・1件） |
 | `META_ENV` | 本番/検証ストアの取り違え防止 | **消さない（削除禁止）** | 回収しない |
 | `ACCESS_*` / `LEDGER_SPREADSHEET_ID` / `BOOTSTRAP_*` | 設定・台帳接続先（状態ストアの対象外） | **消さない（設定。別手順で管理）** | 回収の対象外 |
 
@@ -123,6 +130,7 @@
 
 - **固定分類**（`CATALOG`: 未解決/残存キー/失敗/容量/配送/基盤/凍結）。コアが出す全コードが分類済みであることをテストで固定。本文は固定文言＋検証済み識別子（予約参照・revision・末尾4桁・状態・環境）のみ。自由文・例外メッセージ・秘密・完全ID・個人情報は出さない。
 - 重複抑止: コアは record×code、基盤通知は事象キー×`notifyRepeatSec`(24時間)。**通知失敗は記録せず次周期で再試行**（コア）／基盤通知は指数バックオフで再送（`IALERT_*`）。連続失敗は `status.notifyFailingSince`／`notifyOutbox.pending` で確認できる（通知経路そのものの故障はメールでは届かないため、管理者が `accessAdminStatus` を定期確認する運用で拾う。定期確認の担当・頻度は運営が決める）。
+- **緊急通知（`KEY_UNCONFIRMED_URGENT`／`KEY_UNCONFIRMED_STARTED`、#885）の不達検知**: 一般通知より短い間隔（`urgentNotifyBackoffMaxSec`＝既定120秒）で再送し、`urgentNotifyFailingAttempts`（既定2回）失敗したら**不達**として `NOTIFYFAIL` を記録し、`accessAdminStatus` の `keyReadiness.undelivered` に出す。通知経路がメールだけのため、不達は同じ経路では届かない。**責任者は開始15分前以降、`accessAdminStatus` の `keyReadiness` を確認する運用とし、`undelivered>0` なら電話等の別経路で連絡する**（担当・手段は運営が決める）。送れた時点で不達は解消し、同一事象の通知は重複しない。
 - 監視（`accessWatchdogJob`、ロック不要の読取のみ）: 有効時に照合ハートビートが15分以上止まれば `JOB_STALE`。`accessAdminStatus` で件数・未解決・保存使用率・ハートビート・API使用数・未送達通知を確認（秘密なし）。
 - 棚卸しの集計診断（#857）: `accessAdminInventorySummary` を管理者がエディタで実行すると、実行ログに `accessAdminInventorySummary {...}` が1行出る（Access ONのままでよい。読取専用で、SwitchBot API・sync/deliver・設定・トリガーには触れない）。出力は許可リスト方式の件数のみ：`total`／`invalid`（破損記録）／`unresolved`／`byState`（発行状態）／`byDelivery`（配送状態。記録なしは `NONE`）／`stages`（`ISSUE_IN_PROGRESS`・`STATE_UNKNOWN`（発行・削除どちらの未確定かは区別しない）・`ISSUE_FAILED`・`ISSUED_NO_DELIVERY_RECORD`・`ISSUED_DELIVERY_PENDING`・`ISSUED_DELIVERY_UNKNOWN`・`ISSUED_DELIVERY_SUPPRESSED`・`ISSUED_DELIVERED`・`REVOKE_IN_PROGRESS`・`ENDED`・`OTHER`）と `truncated`（5,000件超）。ID・予約・端末・時刻・秘密・例外内容は出さず、失敗は固定コード（`NOT_AUTHORIZED`／`EXCEPTION`／既存管理経路のコード）。既存の `accessAdminInventory` の戻り値・権限は変わらない。
   - **切り分けの限界**: `diagnosis: NO_RECORDS`（total=0）は「発行管理記録が無い」ことまでしか示さない。予約が候補外・許可リスト不一致・ブランド/施設/部屋不一致・支払い未承認・失効/取消のどれかは本関数では断定できない（必要なら秘密・IDを出さない集約理由を別PRで追加する）。`ISSUED_DELIVERY_UNKNOWN`／`PENDING` を配送成功として扱わない。実顧客情報をログに出して調べない。

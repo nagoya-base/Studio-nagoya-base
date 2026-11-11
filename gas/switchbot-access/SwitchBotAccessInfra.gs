@@ -40,6 +40,14 @@ var SwitchBotAccessInfra = (function () {
     notifyBackoffBaseSec: 60,
     notifyBackoffMaxSec: 3600,
     notifyFailingAttempts: 10,
+    // キー未発行対策（#885 第3弾）。いずれも「利用開始時刻までの残り秒」。開始15分前から優先再試行、5分前から緊急通知。
+    priorityRetryLeadSec: 900,
+    warningNoticeLeadSec: 600,
+    urgentNoticeLeadSec: 300,
+    startedRenotifySec: 600,
+    // 緊急通知（KEY_UNCONFIRMED_*）の再送は一般通知より短い間隔に抑え、数回の失敗で「不達」と判定する
+    urgentNotifyBackoffMaxSec: 120,
+    urgentNotifyFailingAttempts: 2,
     lockFailAlertStreak: 3,
     apiDailyBudget: 8000,
     storageStopRatio: 0.7,
@@ -60,6 +68,15 @@ var SwitchBotAccessInfra = (function () {
     var out = {};
     Object.keys(DEFAULTS).forEach(function (k) { out[k] = i[k] !== undefined ? i[k] : DEFAULTS[k]; });
     out.retention = Object.assign({}, DEFAULTS.retention, i.retention || {});
+    // 優先再試行・緊急通知の閾値は正の有限数かつ「優先再試行 > 緊急通知」のときだけ採用する（不正なら既定値へ戻す）
+    ['priorityRetryLeadSec', 'warningNoticeLeadSec', 'urgentNoticeLeadSec', 'startedRenotifySec', 'urgentNotifyBackoffMaxSec', 'urgentNotifyFailingAttempts'].forEach(function (k) {
+      if (typeof out[k] !== 'number' || !isFinite(out[k]) || out[k] <= 0) out[k] = DEFAULTS[k];
+    });
+    if (!(out.priorityRetryLeadSec > out.warningNoticeLeadSec && out.warningNoticeLeadSec > out.urgentNoticeLeadSec)) {
+      out.priorityRetryLeadSec = DEFAULTS.priorityRetryLeadSec;
+      out.warningNoticeLeadSec = DEFAULTS.warningNoticeLeadSec;
+      out.urgentNoticeLeadSec = DEFAULTS.urgentNoticeLeadSec;
+    }
     return out;
   }
 
@@ -79,6 +96,44 @@ var SwitchBotAccessInfra = (function () {
   }
 
   function safeParse(raw) { try { return raw ? JSON.parse(raw) : null; } catch (e) { return null; } }
+
+  // ---------- キー未発行対策（#885 第3弾）: 純粋判定 ----------
+
+  /** 緊急通知（KEY_UNCONFIRMED_*）のコード。再送間隔と不達判定が一般通知より厳しい。 */
+  var URGENT_CODES = ['KEY_UNCONFIRMED_WARNING', 'KEY_UNCONFIRMED_URGENT', 'KEY_UNCONFIRMED_STARTED'];
+  /** 通知コードごとの対応段階（送信直前の再検証で、現在の段階と一致しない通知は失効させる）。 */
+  var URGENT_CODE_LEVEL = { KEY_UNCONFIRMED_WARNING: 'WARNING', KEY_UNCONFIRMED_URGENT: 'URGENT', KEY_UNCONFIRMED_STARTED: 'STARTED' };
+  var LEVEL_RANK = { NONE: 0, PRIORITY: 1, WARNING: 2, URGENT: 3, STARTED: 4 };
+
+  /**
+   * 利用開始までの残り時間から、キー未発行時の対応段階を決める（鍵の有無は見ない。時刻のみの純粋関数）。
+   *  - NONE:     まだ早い、または利用終了済み
+   *  - PRIORITY: 開始 priorityRetryLeadSec(既定15分) 以内 … 優先再試行（通知はしない）
+   *  - WARNING:  開始 warningNoticeLeadSec(既定10分) 以内 … 反映未確認の初回警告
+   *  - URGENT:   開始 urgentNoticeLeadSec(既定5分) 以内 … 運営者へ緊急通知
+   *  - STARTED:  開始時刻を過ぎた（終了前）… 代替入室へエスカレーション。未解決の間は一定間隔で再通知し、安全な再試行は続ける
+   * 境界: 残りちょうど各閾値はその段階（15分=PRIORITY／10分=WARNING／5分=URGENT）、開始ちょうどは STARTED。
+   * startSec/endSec は予約の利用時刻（キー有効期間の前後の許容時間を含めない）。
+   */
+  function keyReadinessLevel(nowSec, startSec, endSec, ic) {
+    if (typeof nowSec !== 'number' || typeof startSec !== 'number' || typeof endSec !== 'number') return 'NONE';
+    if (!isFinite(nowSec) || !isFinite(startSec) || !isFinite(endSec) || startSec >= endSec) return 'NONE';
+    if (nowSec >= endSec) return 'NONE';
+    var remain = startSec - nowSec;
+    if (remain <= 0) return 'STARTED';
+    if (remain <= ic.urgentNoticeLeadSec) return 'URGENT';
+    if (remain <= ic.warningNoticeLeadSec) return 'WARNING';
+    if (remain <= ic.priorityRetryLeadSec) return 'PRIORITY';
+    return 'NONE';
+  }
+
+  /** 現行の予約内容（改訂・端末・有効期間）に一致する、発行確認済み(ISSUED_CONFIRMED)の個別キーがあるか。 */
+  function hasConfirmedKey(opsOfBooking, revision, elig) {
+    return (opsOfBooking || []).some(function (r) {
+      return r && r.op === Core.OP.ISSUE && r.state === Core.STATE.ISSUED_CONFIRMED && r.revision === revision &&
+        r.startSec === elig.startSec && r.endSec === elig.endSec && r.deviceId === elig.deviceId;
+    });
+  }
 
   // ---------- 環境分離・設定検証 ----------
 
@@ -999,7 +1054,7 @@ var SwitchBotAccessInfra = (function () {
   /** 稼働監視の既知キー（runLocked の job 名）。これ以外の HB_ は未分類として報告のみ。 */
   var HB_JOBS = ['ADMIN', 'CLEANUP', 'DELIVER', 'SWEEP', 'SYNC'];
   /** 値を1か所に上書きする常設キー（回収しない）。 */
-  var PERSISTENT_STATE_KEYS = ['META_ENV', 'LOCKFAIL', 'NOTIFYFAIL'];
+  var PERSISTENT_STATE_KEYS = ['META_ENV', 'LOCKFAIL', 'NOTIFYFAIL', 'KEYREADY'];
   /** 既存 garbageCollect が個別に回収判断する接頭辞（OP_ は Core.sweep が終端＋保持期限後に回収）。 */
   var MANAGED_STATE_PREFIXES = ['OP_', 'BK_', 'EVT_', 'ALERT_', 'DLV_', 'INBOX_', 'TRK_', 'IALERT_', 'ADMINLOG_'];
 
@@ -1162,6 +1217,11 @@ var SwitchBotAccessInfra = (function () {
     if (readWaitSec < minRead) warnings.push('READ_WINDOW_TOO_SHORT_FOR_CYCLE');
     if (ic.runBudgetSec >= 300) warnings.push('RUN_BUDGET_NEAR_EXECUTION_LIMIT');
     if (ic.quietSec >= ic.syncIntervalSec * 2) warnings.push('QUIET_PERIOD_TOO_LONG');
+    var rawInfra = cfg.infra || {};
+    if ((rawInfra.priorityRetryLeadSec !== undefined && rawInfra.priorityRetryLeadSec !== ic.priorityRetryLeadSec) ||
+        (rawInfra.warningNoticeLeadSec !== undefined && rawInfra.warningNoticeLeadSec !== ic.warningNoticeLeadSec) ||
+        (rawInfra.urgentNoticeLeadSec !== undefined && rawInfra.urgentNoticeLeadSec !== ic.urgentNoticeLeadSec)) warnings.push('KEY_READINESS_LEAD_INVALID');
+    if (ic.priorityRetryLeadSec < ic.syncIntervalSec) warnings.push('PRIORITY_LEAD_SHORTER_THAN_SYNC_CYCLE');
     return {
       syncIntervalSec: ic.syncIntervalSec, maxReads: maxReads, webhookWaitSec: webhookWaitSec, readWaitSec: readWaitSec,
       quietSec: ic.quietSec, runBudgetSec: ic.runBudgetSec, apiDailyBudget: ic.apiDailyBudget,
@@ -1249,6 +1309,10 @@ var SwitchBotAccessInfra = (function () {
       CONFIG_INVALID: c('SYSTEM', 'high', '設定が不正のため停止した。'),
       ISSUE_GATE_ERROR: c('SYSTEM', 'high', '発行前の安全確認で内部エラーが発生したため、新規発行を止めた。'),
       SYNC_ERROR: c('SYSTEM', 'high', '照合中に内部エラーが発生し、処理を中断した（詳細は公開しない）。'),
+      // キー未発行対策（#885 第3弾）: 開始5分前／開始後に、発行確認済みの個別キーが無い確定予約。予約・決済は取り消さない。
+      KEY_UNCONFIRMED_WARNING: c('KEY_UNCONFIRMED', 'medium', '利用開始10分前になっても、個別キーの反映を確認できていない（発行の途中状態を含む。「発行失敗」と確定したものではない）。自動の再試行は続いている。管理者は予約と鍵の状態を確認する。この通知に暗証番号は含まれない。'),
+      KEY_UNCONFIRMED_URGENT: c('KEY_UNCONFIRMED', 'high', '利用開始5分前になっても、個別キーの反映を確認できていない（途中状態を含む。「発行失敗」と確定したものではない）。管理者は直ちに予約と鍵の状態を確認し（accessAdminInspect 等）、入室に間に合わない見込みなら、本人・予約を確認のうえ代替入室（手動解錠・手動パスコード発行・物理キー）を個別に案内する。予約・決済は取り消さない。'),
+      KEY_UNCONFIRMED_STARTED: c('KEY_UNCONFIRMED', 'high', '利用開始時刻を過ぎても、個別キーの反映を確認できていない（未解決の間、約10分ごとに再通知する）。利用者が入室できていない可能性が高い。責任者は直ちに本人・予約を確認し、代替入室へ切り替える。予約・決済は取り消さない。'),
       NOTIFY_BACKLOG: c('SYSTEM', 'high', '管理者通知の送達が連続して失敗している。通知経路を確認する。'),
       BOOKING_FROZEN: c('FROZEN', 'medium', '予約に鍵操作を止める条件がある（支払未確認・追加料金未了・要復旧・時刻不正など）。管理者が予約を確認する。既存キーは変更していない。'),
       DIGEST_MISMATCH: c('FROZEN', 'high', '予約の内容とrevisionが食い違っている。鍵操作を止めた。revision増分の漏れを確認する。')
@@ -1356,20 +1420,42 @@ var SwitchBotAccessInfra = (function () {
     function iaKey(code, ref, rev) { return 'IALERT_' + code + '_' + (ref || '-') + '_' + (rev === undefined || rev === null ? '-' : rev); }
 
     /** 基盤事象の通知。同一事象は repeatSec 内は再通知しない。送達失敗は次回以降バックオフ付きで再送。 */
-    function infraAlert(code, ref, rev, detail, repeatSec) {
+    function infraAlert(code, ref, rev, detail, repeatSec, verified) {
       var k = iaKey(code, ref, rev);
       var cur = safeParse(deps.store.get(k));
       var now = deps.nowSec();
       var rec = cur || { event: { code: code, ref: ref || undefined, rev: rev === undefined ? undefined : rev, detail: detail || undefined }, firstAt: now, sentAt: null, attempts: 0, lastTryAt: 0 };
       if (rec.sentAt !== null && now - rec.sentAt < (repeatSec || ic.notifyRepeatSec)) return false;
       if (rec.sentAt === null && rec.attempts > 0) {
-        var wait = Math.min(ic.notifyBackoffMaxSec, ic.notifyBackoffBaseSec * Math.pow(2, Math.min(rec.attempts, 20)));
-        if (now - rec.lastTryAt < wait) return false;
+        if (now - rec.lastTryAt < backoffWaitSec(rec)) return false;
       }
-      return trySend(k, rec);
+      return trySend(k, rec, verified) === 'SENT';
     }
 
-    function trySend(k, rec) {
+    /** 緊急通知は一般通知より短い間隔（既定2分）で再送し、少ない失敗回数（既定2回）で不達と判定する。 */
+    function isUrgentRec(rec) { return !!(rec && rec.event && URGENT_CODES.indexOf(rec.event.code) !== -1); }
+    function backoffWaitSec(rec) {
+      var max = isUrgentRec(rec) ? Math.min(ic.notifyBackoffMaxSec, ic.urgentNotifyBackoffMaxSec) : ic.notifyBackoffMaxSec;
+      return Math.min(max, ic.notifyBackoffBaseSec * Math.pow(2, Math.min(rec.attempts, 20)));
+    }
+    function failingThreshold(rec) { return isUrgentRec(rec) ? ic.urgentNotifyFailingAttempts : ic.notifyFailingAttempts; }
+
+    /**
+     * 戻り値: 'SENT' 送信成功／'FAILED' 送信失敗（再送対象）／'VOID' 失効（送らず記録も消す）／'HOLD' 検証できず保留（何も変えない）。
+     * 緊急通知（KEY_UNCONFIRMED_*）は、送信直前に現行の台帳・OPで再検証する。メール失敗の後にキーが反映された、
+     * 予約が取消・変更（revision）・終了した場合に、古い通知を送らないため。verified=true は直前に同じ判定を済ませた呼出し。
+     */
+    function trySend(k, rec, verified) {
+      if (isUrgentRec(rec) && verified !== true) {
+        var v = urgentStillValid(rec);
+        if (v === 'HOLD') return 'HOLD';
+        if (v === 'VOID') {
+          // 不達のまま失効する場合も、通知経路の不達があった事実は残す（現行段階の通知が届くまで、状態表示で確認できる）
+          if (rec.attempts >= failingThreshold(rec)) { try { deps.store.set('NOTIFYFAIL', String(deps.nowSec())); } catch (e1) { /* 無視 */ } }
+          try { deps.store.del(k); } catch (e0) { /* 次回も失効判定になる */ }
+          return 'VOID';
+        }
+      }
       var now = deps.nowSec();
       rec.attempts += 1; rec.lastTryAt = now;
       try {
@@ -1377,26 +1463,67 @@ var SwitchBotAccessInfra = (function () {
         deps.sendMail(m.subject, m.body);
         rec.sentAt = now; rec.attempts = 0;
         deps.store.set(k, JSON.stringify(rec));
-        return true;
+        return 'SENT';
       } catch (e) {
         rec.sentAt = null;
         try { deps.store.set(k, JSON.stringify(rec)); } catch (e2) { /* 記録不能でも次回の検知で再通知される */ }
-        return false;
+        return 'FAILED';
       }
+    }
+
+    var ledgerForFlush = null; // flushOutbox 1回の間だけ、再検証用の台帳読取を共有する
+    var flushing = false;
+    var flushTrackedIds = []; // flushOutbox 中に共有する台帳読取で追跡する、未送達の緊急通知の予約参照すべて
+
+    /** 緊急通知がまだ有効か。'OK' 送ってよい／'VOID' 失効／'HOLD' 台帳を確認できず保留。 */
+    function urgentStillValid(rec) {
+      var ev = rec.event || {};
+      var need = URGENT_CODE_LEVEL[ev.code];
+      if (!need || typeof ev.ref !== 'string' || !Number.isInteger(ev.rev)) return 'VOID';
+      if (cfg.enabled !== true) return 'VOID';
+      var nowMs = deps.nowMs();
+      var led = ledgerForFlush;
+      if (!led) {
+        try { led = deps.ledger.read({ nowMs: nowMs, trackedIds: flushing ? flushTrackedIds : [ev.ref] }); } catch (e) { return 'HOLD'; }
+        if (flushing) ledgerForFlush = led;
+      }
+      if (!led || led.ok !== true) return 'HOLD';
+      var hits = (led.records || []).filter(function (r) { return String(r.bookingId) === ev.ref; });
+      if (hits.length === 0) return 'VOID';
+      if (hits.length > 1) return 'HOLD';
+      var p;
+      try { p = prepareRecord(hits[0], nowMs); } catch (e1) { return 'HOLD'; }
+      if (p.sn.revision !== ev.rev) return 'VOID';
+      var rd = readinessOf(p, groupOps(scanOps(deps.store)), deps.nowSec());
+      // 通知コードに対応する現在の段階と厳密に一致するときだけ有効。段階が進んだ後は、前段階の未送達通知（予告など）は送らず、現行段階の通知に任せる
+      if (!rd || rd.ready || rd.level !== need) return 'VOID';
+      return 'OK';
     }
 
     /** 未送達の通知を再送する（バックオフ尊重）。 */
     function flushOutbox() {
       var now = deps.nowSec();
       var pending = 0, failing = 0;
-      deps.store.keys().filter(function (k) { return k.indexOf('IALERT_') === 0; }).forEach(function (k) {
-        var rec = safeParse(deps.store.get(k));
-        if (!rec || rec.sentAt !== null) return;
-        pending++;
-        var wait = Math.min(ic.notifyBackoffMaxSec, ic.notifyBackoffBaseSec * Math.pow(2, Math.min(rec.attempts, 20)));
-        if (rec.attempts > 0 && now - rec.lastTryAt < wait) { if (rec.attempts >= ic.notifyFailingAttempts) failing++; return; }
-        if (!trySend(k, rec) && rec.attempts >= ic.notifyFailingAttempts) failing++;
+      ledgerForFlush = null; flushing = true;
+      // 日付をまたいで続く予約は、台帳の通常の読取範囲（当日・翌日）から外れうる。共有する1回の読取に、未送達の全予約参照を追跡対象として渡す
+      flushTrackedIds = [];
+      deps.store.keys().forEach(function (k0) {
+        if (k0.indexOf('IALERT_') !== 0) return;
+        var r0 = safeParse(deps.store.get(k0));
+        if (r0 && r0.sentAt === null && isUrgentRec(r0) && typeof r0.event.ref === 'string' && flushTrackedIds.indexOf(r0.event.ref) === -1) flushTrackedIds.push(r0.event.ref);
       });
+      try {
+        deps.store.keys().filter(function (k) { return k.indexOf('IALERT_') === 0; }).forEach(function (k) {
+          var rec = safeParse(deps.store.get(k));
+          if (!rec || rec.sentAt !== null) return;
+          pending++;
+          var th = failingThreshold(rec);
+          if (rec.attempts > 0 && now - rec.lastTryAt < backoffWaitSec(rec)) { if (rec.attempts >= th) failing++; return; }
+          var res = trySend(k, rec);
+          if (res === 'VOID') pending--;
+          else if (res === 'FAILED' && rec.attempts >= th) failing++;
+        });
+      } finally { ledgerForFlush = null; flushing = false; flushTrackedIds = []; }
       return { pending: pending, failing: failing };
     }
 
@@ -1540,33 +1667,160 @@ var SwitchBotAccessInfra = (function () {
     function writeTrack(bookingId, t) { deps.store.set('TRK_' + bookingId, JSON.stringify(t)); }
 
     // ---- 照合サイクル（5分）----
+    // ---- キー未発行対策（#885 第3弾）----
+    // 「同期ジョブが完了した」ことと「個別キーが発行確認済みになった」ことは別。ジョブの成否とは独立に、
+    // 利用開始が近い確定予約について発行確認済みのキー（ISSUED_CONFIRMED）の有無を見る。
+    //  - 開始15分前〜: 優先再試行（観測待ち・ゲート待機を省き、処理順の先頭へ）。通知はしない。
+    //  - 開始5分前〜 / 開始後: 運営者へ緊急通知（予約参照・revision のみ。暗証番号・個人情報は載せない）。
+    // 再試行は既存の engine.sync（冪等）だけを使う。UNKNOWN/FAILED/送信中の鍵を壊して再発行することはしない
+    // （同一予約・同一内容に対する二重発行を防ぐ）。通知は (コード, 予約参照, revision) ごとに1件で、不達のときだけ再送する。
+    /**
+     * 台帳読取で追跡する予約ID: 未解決の鍵操作がある予約 ∪ 直近の判定で反映未確認だった予約（KEYREADY.refs）。
+     * 日付をまたいで続く予約は台帳の通常範囲（当日・翌日）から外れるため、OP が無い（容量で止まった）／終端（FAILED）でも
+     * 反映未確認の間は追跡を続ける。解決・利用終了・台帳から消えた時点で、次の判定が refs から外す。
+     */
+    function trackedLedgerIds(ops) {
+      var out = [];
+      ops.forEach(function (r) { if (isUnresolved(r) && out.indexOf(r.bookingId) === -1) out.push(r.bookingId); });
+      var kr = safeParse(deps.store.get('KEYREADY'));
+      if (kr && Array.isArray(kr.refs)) kr.refs.forEach(function (id) { if (typeof id === 'string' && out.indexOf(id) === -1) out.push(id); });
+      return out;
+    }
+
+    function prepareRecord(rec, nowMs) {
+      var sn = deps.snapshot.build(rec, { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
+      var input = deps.snapshot.toCoreInput(sn, nowMs, { eligibleBrands: Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : [] });
+      return { sn: sn, input: input };
+    }
+
+    function groupOps(ops) {
+      var m = {};
+      ops.forEach(function (r) { var k = String(r.bookingId); (m[k] = m[k] || []).push(r); });
+      return m;
+    }
+
+    /** 発行確認済みキーが期待される予約（発行対象として有効な確定予約）だけ段階を返す。それ以外は null。 */
+    function readinessOf(p, opsBy, nowSec) {
+      var b = p.input && p.input.action === 'SYNC' ? p.input.booking : null;
+      if (!b || b.status !== 'CONFIRMED') return null;
+      // 内容とrevisionが食い違う予約（DIGEST_MISMATCH）は鍵操作を止めて凍結している。反映未確認の警告・再試行の対象にしない
+      var trk = readTrack(p.sn.bookingId);
+      if (trk && trk.revision === p.sn.revision && trk.digest && trk.digest !== p.sn.digest) return null;
+      var elig = Core.evaluateEligibility(b, coreConfig, nowSec);
+      if (!elig.eligible) return null;
+      var s0 = Core.jstToEpochSec(p.sn.date, p.sn.startTime);
+      var e0 = Core.jstToEpochSec(p.sn.endDate || p.sn.date, p.sn.endTime);
+      if (s0 === null || e0 === null) return null;
+      var level = keyReadinessLevel(nowSec, s0, e0, ic);
+      return { level: level, ready: hasConfirmedKey(opsBy[String(p.sn.bookingId)], p.sn.revision, elig) };
+    }
+
+    function latestIssueState(opsOfBooking, revision) {
+      var mine = (opsOfBooking || []).filter(function (r) { return r.op === Core.OP.ISSUE && r.revision === revision; });
+      if (!mine.length) return 'NO_OP';
+      mine.sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
+      var st = mine[mine.length - 1].state;
+      return typeof st === 'string' && CODE_RE.test(st) ? st : 'UNKNOWN_STATE';
+    }
+
+    /**
+     * 未発行の判定と緊急通知。鍵・予約には一切触れない（読取のみ＋通知）。失敗しても同期結果に影響させない。
+     * 戻り値は件数のみ。予約単位の状態は状態ストア KEYREADY（予約参照・段階・OP状態のみ）へ最新を残す。
+     */
+    function runKeyReadiness(prepared) {
+      var report = { priority: 0, warning: 0, urgent: 0, started: 0, undelivered: 0 };
+      try {
+        var nowSec = deps.nowSec();
+        var opsBy = groupOps(scanOps(deps.store));
+        var notReady = [];
+        var refs = [];
+        var alerts = [];
+        prepared.forEach(function (p) {
+          var rd = readinessOf(p, opsBy, nowSec);
+          if (!rd || rd.level === 'NONE' || rd.ready) return;
+          var ref = safeRef(p.sn.bookingId);
+          notReady.push({ ref: ref || '-', level: rd.level, opState: latestIssueState(opsBy[String(p.sn.bookingId)], p.sn.revision) });
+          if (ref && refs.length < 100) refs.push(ref);
+          if (rd.level === 'PRIORITY') { report.priority++; return; }
+          var code = rd.level === 'WARNING' ? 'KEY_UNCONFIRMED_WARNING' : (rd.level === 'URGENT' ? 'KEY_UNCONFIRMED_URGENT' : 'KEY_UNCONFIRMED_STARTED');
+          if (rd.level === 'WARNING') report.warning++; else if (rd.level === 'URGENT') report.urgent++; else report.started++;
+          // 開始後は未解決の間 startedRenotifySec ごとに再通知（利用終了で判定対象から外れて止まる）。直前に判定済みなので再検証は省く
+          infraAlert(code, ref, p.sn.revision, null, rd.level === 'STARTED' ? ic.startedRenotifySec : undefined, true);
+          alerts.push({ code: code, ref: ref, rev: p.sn.revision });
+        });
+        // 通知の不達検知: 緊急通知が所定回数失敗したまま未送達
+        // 同じ予約・revision の段階（警告／緊急／開始後）のいずれかが所定回数失敗したまま未送達なら、予約1件として数える
+        var undeliveredRefs = {};
+        alerts.forEach(function (a) {
+          URGENT_CODES.forEach(function (c) {
+            var r = safeParse(deps.store.get(iaKey(c, a.ref, a.rev)));
+            if (r && r.sentAt === null && r.attempts >= ic.urgentNotifyFailingAttempts) undeliveredRefs[(a.ref || '-') + '#' + a.rev] = true;
+          });
+        });
+        report.undelivered = Object.keys(undeliveredRefs).length;
+        var prev = safeParse(deps.store.get('KEYREADY'));
+        if (notReady.length || (prev && prev.count > 0)) {
+          deps.store.set('KEYREADY', JSON.stringify({ at: nowSec, count: notReady.length, undelivered: report.undelivered, notReady: notReady.slice(0, 20), refs: refs }));
+        }
+        if (report.undelivered > 0) { try { deps.store.set('NOTIFYFAIL', String(nowSec)); } catch (e1) { /* 無視 */ } }
+      } catch (e) {
+        report.error = true; // 判定・記録の失敗は同期結果へ伝播させない（次の周期で再判定）
+      }
+      return report;
+    }
+
+    /** 同期を実行できない周期（API予算超過）でも、台帳を読めれば未発行の緊急通知だけは判定する。 */
+    function runKeyReadinessWithoutSync() {
+      try {
+        var nowMs = deps.nowMs();
+        // 日付をまたいで続く予約は台帳の通常範囲から外れる。通常の同期と同じく、未解決の鍵操作がある予約を追跡対象にする
+        var led = deps.ledger.read({ nowMs: nowMs, trackedIds: trackedLedgerIds(scanOps(deps.store)) });
+        if (!led || led.ok !== true) return null;
+        return runKeyReadiness(led.records.map(function (r) { return prepareRecord(r, nowMs); }));
+      } catch (e) { return null; }
+    }
+
     function syncCycle() {
       return runLocked('SYNC', ic.lockWaitMs, function () {
         var startedMs = deps.nowMs();
         drainInbox();
         flushOutbox();
         if (cfg.enabled !== true) return { ok: true, skipped: 'FLAG_OFF' };
-        if (budget.exhausted()) { infraAlert('API_BUDGET_EXHAUSTED', null, null, null); return { ok: false, error: 'API_BUDGET_EXHAUSTED' }; }
+        if (budget.exhausted()) {
+          infraAlert('API_BUDGET_EXHAUSTED', null, null, null);
+          runKeyReadinessWithoutSync();
+          return { ok: false, error: 'API_BUDGET_EXHAUSTED' };
+        }
         var ops = scanOps(deps.store);
         var openByBooking = {};
         ops.forEach(function (r) { if (isUnresolved(r)) openByBooking[r.bookingId] = true; });
         var nowMs = deps.nowMs();
-        var led = deps.ledger.read({ nowMs: nowMs, trackedIds: Object.keys(openByBooking) });
+        var led = deps.ledger.read({ nowMs: nowMs, trackedIds: trackedLedgerIds(ops) });
         if (!led || led.ok !== true) {
           var ledCode = led && typeof led.error === 'string' && /^LEDGER_[A-Z_]+$/.test(led.error) && Object.prototype.hasOwnProperty.call(CATALOG, led.error) ? led.error : 'LEDGER_READ_FAILED';
           infraAlert(ledCode, null, null, null);
           engine.reconcilePending({}); // 台帳が読めなくても、送信済み削除の確認（読み取りのみ）は期限内に進める（#829）
           return { ok: false, error: 'LEDGER_READ_FAILED' };
         }
-        var records = led.records.slice().sort(function (a, b) {
-          return (openByBooking[String(b.bookingId)] ? 1 : 0) - (openByBooking[String(a.bookingId)] ? 1 : 0);
+        // 準備: 予約ごとのスナップショットと入力を1回だけ作る。開始が近い未発行の予約（優先再試行の対象）を先頭へ、
+        // 次に未解決OPのある予約。実行時間の上限（runBudgetSec）で後ろが繰り延べられても、直近の予約が取り残されない。
+        var prepared = led.records.map(function (r) { return prepareRecord(r, nowMs); });
+        var opsBy = groupOps(ops);
+        var nowS0 = deps.nowSec();
+        var imminent = {};
+        prepared.forEach(function (p) {
+          var rd = readinessOf(p, opsBy, nowS0);
+          if (rd && rd.level !== 'NONE' && !rd.ready) imminent[String(p.sn.bookingId)] = rd.level;
         });
+        function rank(p) { var id = String(p.sn.bookingId); return imminent[id] ? 2 : (openByBooking[id] ? 1 : 0); }
+        var order = prepared.slice().sort(function (a, b) { return rank(b) - rank(a); });
         var summary = { ok: true, synced: 0, frozen: 0, waiting: 0, skipped: 0, deferred: 0, gateStops: [] };
         var syncedBookings = {};
-        for (var i = 0; i < records.length; i++) {
-          if (deps.nowMs() - startedMs > ic.runBudgetSec * 1000) { summary.deferred = records.length - i; break; }
-          var sn = deps.snapshot.build(records[i], { facility: cfg.ledgerTarget.facility, room: cfg.ledgerTarget.room });
-          var input = deps.snapshot.toCoreInput(sn, nowMs, { eligibleBrands: Array.isArray(cfg.eligibleBrands) ? cfg.eligibleBrands : [] });
+        for (var i = 0; i < order.length; i++) {
+          if (deps.nowMs() - startedMs > ic.runBudgetSec * 1000) { summary.deferred = order.length - i; break; }
+          var sn = order[i].sn;
+          var input = order[i].input;
+          var isImminent = !!imminent[String(sn.bookingId)];
           var tr = readTrack(sn.bookingId);
           // 限定稼働（#757）: 許可リスト外で、鍵の未解決OPも無い予約は、凍結通知・追跡記録のどちらも行わず黙って対象外とする。
           // 追跡（revision／発行窓の処理済み）を書かないので、後でリストに加えれば次の周期で再評価される。
@@ -1596,22 +1850,25 @@ var SwitchBotAccessInfra = (function () {
             continue;
           }
           var reasonsT = deps.snapshot.triggers(sn, { revision: tr ? tr.revision : null, issueWindowHandled: !!(tr && tr.windowHandled), openKeyRecord: !!openByBooking[sn.bookingId] }, nowMs);
-          if (!reasonsT.length) { summary.skipped++; continue; }
+          // 開始が近い未発行の予約は、改訂・発行窓が処理済みでも毎周期 engine.sync（冪等）で再評価する
+          if (!reasonsT.length && !isImminent) { summary.skipped++; continue; }
           // 静穏時間: 同じ (revision, digest) を quietSec 以上前から観測している場合のみ同期（精算中の中間状態で発行しない）
           var nowS = deps.nowSec();
           var sameObs = tr && tr.obsRevision === sn.revision && tr.obsDigest === sn.digest;
+          // 優先再試行（開始15分前〜）の予約は、静穏時間・ゲート待機を省く。支払未確認などは toCoreInput が先に凍結済みで、
+          // ここへ来るのは発行対象として有効な確定予約のみ。内容が後で変わっても、旧キーは次回の sync が回収する。
           if (!sameObs) {
             writeTrack(sn.bookingId, Object.assign({}, tr || {}, { obsRevision: sn.revision, obsDigest: sn.digest, obsAt: nowS, seenAt: nowS }));
-            summary.waiting++;
-            continue;
-          }
-          if (nowS - tr.obsAt < ic.quietSec) { summary.waiting++; continue; }
-          // 発行ゲートで止まった予約は、再評価の間隔を空ける（OP が無い間のみ。進行中 OP の照合は止めない）
-          if (tr.gateHoldUntil && nowS < tr.gateHoldUntil && !openByBooking[sn.bookingId]) { summary.waiting++; continue; }
+            if (!isImminent) { summary.waiting++; continue; }
+            tr = readTrack(sn.bookingId) || { obsAt: nowS };
+          } else if (nowS - tr.obsAt < ic.quietSec && !isImminent) { summary.waiting++; continue; }
+          // 発行ゲートで止まった予約は、再評価の間隔を空ける（OP が無い間のみ。進行中 OP の照合は止めない）。優先再試行の対象は毎周期再評価
+          if (tr.gateHoldUntil && nowS < tr.gateHoldUntil && !openByBooking[sn.bookingId] && !isImminent) { summary.waiting++; continue; }
           var out;
           try { out = engine.sync(input.booking); }
           catch (e) {
             infraAlert('SYNC_ERROR', safeRef(sn.bookingId), sn.revision, null);
+            runKeyReadiness(prepared); // 同期が失敗しても、反映未確認の判定・通知は読取りと通知だけで実行できる（結果は SYNC_ERROR のまま）
             return { ok: false, error: 'SYNC_ERROR' }; // 保存失敗などはサイクルを止める（予約側へは何も伝播しない）
           }
           summary.synced++;
@@ -1622,7 +1879,7 @@ var SwitchBotAccessInfra = (function () {
             summary.gateStops.push(out.gateStop);
             infraAlert(out.gateStop, null, null, null);
             writeTrack(sn.bookingId, { revision: tr ? tr.revision : null, digest: tr ? tr.digest : undefined, windowHandled: tr ? !!tr.windowHandled : false,
-              obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr.obsAt, seenAt: nowS, gateHoldUntil: nowS + ic.gateRetrySec });
+              obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr.obsAt, seenAt: nowS, gateHoldUntil: isImminent ? nowS : nowS + ic.gateRetrySec });
             continue;
           }
           var windowOpen = sn.status === 'CONFIRMED' && deps.snapshot.issueWindow(sn, nowMs).open;
@@ -1633,6 +1890,7 @@ var SwitchBotAccessInfra = (function () {
           else writeTrack(sn.bookingId, { revision: sn.revision, digest: sn.digest, windowHandled: windowOpen, obsRevision: sn.revision, obsDigest: sn.digest, obsAt: tr ? tr.obsAt : nowS, seenAt: nowS });
         }
         engine.reconcilePending(syncedBookings); // 今回 sync で照合済みの予約は除く（読取回数を二重に消費しない）
+        summary.keyReadiness = runKeyReadiness(prepared); // 同期の成否とは別に、発行確認済みキーの有無を判定・通知する
         return summary;
       });
     }
@@ -1763,7 +2021,7 @@ var SwitchBotAccessInfra = (function () {
         ok: true, environment: cfg.environment, enabled: cfg.enabled === true, byState: byState, unresolved: unresolved, deliveries: deliveries,
         storage: { keys: m.keys, bytes: m.bytes, ratio: st.ratio, gate: st.ok ? 'OK' : st.code, byPrefix: m.byPrefix },
         heartbeats: { SYNC: safeParse(deps.store.get('HB_SYNC')), SWEEP: safeParse(deps.store.get('HB_SWEEP')), CLEANUP: safeParse(deps.store.get('HB_CLEANUP')), DELIVER: safeParse(deps.store.get('HB_DELIVER')) },
-        apiCallsToday: budget.used(), notifyOutbox: outbox, notifyFailingSince: Number(deps.store.get('NOTIFYFAIL')) || null,
+        keyReadiness: safeParse(deps.store.get('KEYREADY')), apiCallsToday: budget.used(), notifyOutbox: outbox, notifyFailingSince: Number(deps.store.get('NOTIFYFAIL')) || null,
         plan: plan
       };
     }
@@ -3289,6 +3547,7 @@ var SwitchBotAccessInfra = (function () {
   }
 
   return {
+    keyReadinessLevel: keyReadinessLevel, hasConfirmedKey: hasConfirmedKey, URGENT_CODES: URGENT_CODES,
     ENVIRONMENT: ENVIRONMENT, PROPERTIES_LIMITS: PROPERTIES_LIMITS, DEFAULTS: DEFAULTS, CATALOG: CATALOG, FREEZE_REASONS: FREEZE_REASONS,
     validateConfig: validateConfig, ensureStoreEnvironment: ensureStoreEnvironment,
     loadConfig: loadConfig, issuanceReadiness: issuanceReadiness, CONFIG_FORMAT_PROP: CONFIG_FORMAT_PROP, CONFIG_FORMAT_SPLIT: CONFIG_FORMAT_SPLIT,
