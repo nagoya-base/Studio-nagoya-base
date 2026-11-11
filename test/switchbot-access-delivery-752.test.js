@@ -64,7 +64,7 @@ test('配送: 発行反映確認後も前日18:00 JST前は送らず、18:00ち�
   assert.strictEqual(m.name, 'Studio Nagoya Base');
   assert.ok(/入室用の暗証番号/.test(m.subject));
   assert.ok(m.body.indexOf(w.createdPasswords[0]) !== -1, '本文に発行したコードを含む');
-  assert.ok(/予約確認メールとは別/.test(m.body));
+  assert.ok(!/予約確認メールとは別/.test(m.body), '別送である旨の括弧書きは出さない（#881）');
   assert.strictEqual(dlvOf(w, op).state, D.DELIVERED);
   assert.strictEqual(w.mails.filter(function (x) { return PW8.test(x.body); }).length, 0, '管理者通知にコードを含めない');
   // 重複イベント・再実行・複数サイクルでも再送しない

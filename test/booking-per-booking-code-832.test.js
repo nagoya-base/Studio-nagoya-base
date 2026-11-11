@@ -14,7 +14,13 @@ var stubs = require('./helpers/gas-stubs');
 var BOOKING_ADMIN_FILES = require('./helpers/booking-deployment-manifest').BOOKING_ADMIN_FILES;
 
 var SPREADSHEET_ID = 'ss1';
-var NOTICE = 'パスコードは別途お送りするメールでお知らせします';
+/* Issue #881: 予約別暗証番号の別送案内（配送時期・未着時の返信案内つき）。#832の一文は置き換え済み。 */
+var NOTICE = [
+  '入室用の暗証番号は、ご予約ごとに専用の番号を発行し、このメールとは別のメールでお送りします。',
+  'お届けは利用日前日の18時以降です（それ以降に確定したご予約は、確定後に順次お送りします）。',
+  '暗証番号のメールが届かない場合は、このメールにご返信ください。'
+].join('\n');
+var NOTICE_832 = 'パスコードは別途お送りするメールでお知らせします';
 var OLD_NOTICE = '入室用の暗証番号は、別のメールでお送りします。';
 var NOW = new Date('2026-10-01T18:00:00+09:00');
 
@@ -74,8 +80,8 @@ function sendBody(ctx, id, extra) {
 }
 
 function assertNew(body) {
-  assert.ok(body.indexOf(NOTICE + '\n') !== -1 || body.endsWith(NOTICE), '運営指定の一文が句読点なしでそのまま入る');
-  assert.ok(body.indexOf(NOTICE + '。') === -1, '句点を足さない');
+  assert.ok(body.indexOf(NOTICE + '\n') !== -1 || body.endsWith(NOTICE), '予約別暗証番号の別送案内がそのまま入る');
+  assert.strictEqual(body.indexOf(NOTICE_832), -1, '#832の旧一文は使わない');
   assert.strictEqual(body.indexOf('解錠コード'), -1, '解錠コードのラベルなし');
   assert.strictEqual(body.indexOf('TEST-OLD-FIXED-CODE'), -1, '旧固定値なし');
   assert.strictEqual(body.indexOf(OLD_NOTICE), -1, '旧文言なし');
