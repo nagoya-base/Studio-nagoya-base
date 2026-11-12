@@ -13,6 +13,7 @@
 var test = require('node:test');
 var assert = require('node:assert');
 var loadFrontendSandbox = require('./helpers/frontend-sandbox').loadFrontendSandbox;
+var createFixedDate = require('./helpers/fixed-clock').createFixedDate;
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
@@ -186,6 +187,8 @@ function setup(options) {
   }
 
   loadFrontendSandbox(['booking-logic.js', 'booking-app.js'], {
+    /* Issue #903: 実行時刻でIssue #895の直前予約ガードが作動しないよう、時計を当日06:00(JST)に固定 */
+    Date: createFixedDate(),
     document: documentStub,
     window: windowStub,
     fetch: fetchStub
