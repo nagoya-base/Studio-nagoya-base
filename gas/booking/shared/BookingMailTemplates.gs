@@ -1150,11 +1150,11 @@ var BookingMailTemplates = (function () {
     /* Issue #901: 詳細案内リンク・PDFはStep 2の中（位置説明の直後・番号枠の前）に置く。
        リンク先（ACCESS_GUIDE_URL／ブランド別の利用案内ページ／ACCESS_GUIDE_PDF_URL）の内容は
        このテンプレートでは保証できないため、「写真で確認」などリンク先の中身を約束するラベルにしない。 */
+    /* 運営者確認: 案内PDFはキーボックス位置を説明する資料なのでStep 2（位置の直後・番号枠の前）に置く。
+       PDF未設定なら架空の資料を示さず出さない。PDF内の写真の有無は未確認のため「写真で」とは断定しない。
+       利用案内ページは入室・退室を含む利用方法全般の案内なので、キーボックス専用の名称にせず、3ステップの後に独立して置く。 */
     step2.links = [];
-    /* 運営者確認: キーボックスの位置・行き方の正本は「案内PDF」。主導線にする。PDF未設定なら架空の資料を示さず出さない。
-       PDF内に写真があるかは未確認のため「写真で」とは断定しない。一般の利用案内ページは正確な名称で、PDFの後に置く。 */
     if (guide.pdfUrl) step2.links.push({ label: 'キーボックスの位置・行き方を確認（PDF）', url: guide.pdfUrl });
-    if (reminderGuideUrl) step2.links.push({ label: '利用案内を見る', url: reminderGuideUrl });
     var step3 = { title: '解錠して入室', lines: [], rows: [] };
     if (guide.entryMethod) step3.rows.push(['入室方法', guide.entryMethod]);
     if (!perBookingCode) {
@@ -1170,6 +1170,10 @@ var BookingMailTemplates = (function () {
     ];
     /* Issue #753: SNB＋ACCESS_KEY_NOTICE_ENABLED のときだけの一行（旧方式の暗証番号別送案内）。手順の直下に置く。 */
     if (separateCodeLine) blocks.push({ type: 'p', text: separateCodeLine });
+    if (reminderGuideUrl) {
+      blocks.push({ type: 'heading', text: '利用案内' });
+      blocks.push({ type: 'links', items: [{ label: '利用案内ページ', htmlLabel: '写真つきの詳しい案内を見る（利用案内ページ）', url: reminderGuideUrl }] });
+    }
     blocks.push(
       { type: 'heading', text: 'ご退室時' },
       { type: 'p', text: '施錠し、鍵を使った場合は元の場所へ戻して、備品は原状に戻してください。' },
