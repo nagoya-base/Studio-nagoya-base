@@ -1381,8 +1381,8 @@ test('Issue #445: クレカ＋Checkout有効の予約は、実際のcheckoutUrl�
 test('Issue #445: クレカでもCheckout無効（Sessionが作られない）なら従来どおりcreateBooking時に受付メールを送り、現金・PayPayは常に仮受付メール', function () {
   [
     { method: 'オンラインクレジットカード', props: MAIL_PROPERTIES_445, expectSubject: /予約申込を受け付けました/ },
-    { method: '現金', props: Object.assign({}, MAIL_PROPERTIES_445, CHECKOUT_ENABLED_PROPERTIES_445), expectSubject: /仮予約を受け付けました（未確定）/ },
-    { method: 'PayPay', props: Object.assign({}, MAIL_PROPERTIES_445, CHECKOUT_ENABLED_PROPERTIES_445), expectSubject: /仮予約を受け付けました（未確定）/ }
+    { method: '現金', props: Object.assign({}, MAIL_PROPERTIES_445, CHECKOUT_ENABLED_PROPERTIES_445), expectSubject: /予約を受け付けました（未確定）/ },
+    { method: 'PayPay', props: Object.assign({}, MAIL_PROPERTIES_445, CHECKOUT_ENABLED_PROPERTIES_445), expectSubject: /予約を受け付けました（未確定）/ }
   ].forEach(function (c) {
     var mailApp = stubs.createMailAppStub();
     var ctx = setup({ mailApp: mailApp, properties: c.props });

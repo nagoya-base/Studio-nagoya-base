@@ -199,30 +199,26 @@ var BookingMailTemplates = (function () {
   function buildPhotoSupportReceivedMail_(record, config) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
-    var subject = '【' + brandLabel + '】作品撮りサポートプランのお申し込みを受け付けました（承認待ち・未確定）';
-    var body = joinNonEmpty_([
-      record.name + ' 様',
-      '',
-      brandLabel + ' の作品撮りサポートプランのお申し込みを受け付けました。対象の時間帯は仮押さえしています。',
-      '※このメールの時点では予約は確定していません。運営がスタッフ対応の可否・機材・予約枠を確認します（承認待ち）。',
-      '※承認前はお支払いできません。承認できる場合は、確定料金とお支払いのご案内をお送りします。お支払い期限は承認後24時間です。',
-      '※承認できない場合は仮押さえを解除し、本プランは不成立となります（通常のSNB mens料金へは自動で切り替えません）。',
-      '',
-      '予約ID: ' + record.bookingId,
-      dateTimeLine_(record, config.timezone),
-      durationLine_(record),
-      '利用人数: ' + record.people,
-      photoSupportBreakdownLines_(record).join('\n'),
-      photoSupportBackdropGuidance_(record) ? '\n' + photoSupportBackdropGuidance_(record) : '',
-      '',
-      '【ご注意】',
-      'スタッフ対応は、照明配置と選択した背景を使った撮影環境の事前準備・片付けに限ります（撮影代行・緊縛の施術や指導・吊り設備の組み替えは含みません）。',
-      'スタッフが常駐するサービスではなく、当日のご依頼はできません。SNB MEMBER限定のサービスです。',
-      contactLine_(config),
-      guideLine_(record),
-      signatureLines_(record)
-    ]);
-    return { subject: subject, body: body };
+    var subject = '【' + brandLabel + '】作品撮りサポートプランのお申し込みを受け付けました（承認待ち・未確定）' + whenSuffix_(record, timezone);
+    var backdropGuidance = photoSupportBackdropGuidance_(record);
+    return buildStatusMail_(record, config, {
+      subject: subject,
+      preheader: '作品撮りサポートプランは承認待ちで、まだ確定していません。承認前はお支払いできません。',
+      lead: brandLabel + ' の作品撮りサポートプランのお申し込みを受け付けました。対象の時間帯は仮押さえしています。',
+      kicker: '承認待ち・まだ未確定です',
+      meta: ['ブランド: ' + brandLabel, '利用人数: ' + record.people],
+      steps: [
+        '※このメールの時点では予約は確定していません。運営がスタッフ対応の可否・機材・予約枠を確認します（承認待ち）。',
+        '※承認前はお支払いできません。承認できる場合は、確定料金とお支払いのご案内をお送りします。お支払い期限は承認後24時間です。',
+        '※承認できない場合は仮押さえを解除し、本プランは不成立となります（通常のSNB mens料金へは自動で切り替えません）。'
+      ],
+      extraBlocks: [
+        { type: 'heading', text: 'ご利用内容・料金' },
+        { type: 'p', text: photoSupportBreakdownLines_(record).filter(Boolean).join('\n') + (backdropGuidance ? '\n' + backdropGuidance : '') },
+        { type: 'callout', title: 'ご注意', text: 'スタッフ対応は、照明配置と選択した背景を使った撮影環境の事前準備・片付けに限ります（撮影代行・緊縛の施術や指導・吊り設備の組み替えは含みません）。\nスタッフが常駐するサービスではなく、当日のご依頼はできません。SNB MEMBER限定のサービスです。' }
+      ],
+      links: guideLinks_(record)
+    });
   }
 
   /* Issue #667: 承認・お支払い案内メール。確定料金・お支払いページ・承認後24時間の期限を示し、お支払い完了までは未確定であることを明記する。 */
@@ -285,25 +281,20 @@ var BookingMailTemplates = (function () {
   function buildLargePartyPendingMail(record, config) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
-    var subject = '【' + brandLabel + '】5〜7名のご利用を受け付けました（運営の承認待ち・未確定）';
-    var body = joinNonEmpty_([
-      record.name + ' 様',
-      '',
-      brandLabel + ' の5〜7名でのご利用申込を受け付けました。',
-      '※このメールの時点ではご予約は確定していません。お支払いも不要です。',
-      '※ご希望の枠は仮押さえしています。運営が内容を確認し、承認できる場合のみ確定料金とお支払い方法をご案内します。',
-      '※承認後24時間以内にお支払いが完了しない場合は不成立となり、仮押さえを解除します。承認できない場合も仮押さえを解除します（4名扱いへの変更や自動のご請求はしません）。',
-      '',
-      '予約ID: ' + record.bookingId,
-      dateTimeLine_(record, config.timezone),
-      '利用人数: ' + record.people,
-      priceLine_(record),
-      '',
-      contactLine_(config),
-      guideLine_(record),
-      signatureLines_(record)
-    ]);
-    return { subject: subject, body: body };
+    var subject = '【' + brandLabel + '】5〜7名のご利用を受け付けました（運営の承認待ち・未確定）' + whenSuffix_(record, timezone);
+    return buildStatusMail_(record, config, {
+      subject: subject,
+      preheader: '5〜7名のご利用は運営の承認待ちで、まだ確定していません。お支払いも不要です。',
+      lead: brandLabel + ' の5〜7名でのご利用申込を受け付けました。',
+      kicker: '運営の承認待ち・まだ未確定です',
+      meta: ['ブランド: ' + brandLabel, '利用人数: ' + record.people].concat(priceMeta_(record)),
+      steps: [
+        '※このメールの時点ではご予約は確定していません。お支払いも不要です。',
+        '※ご希望の枠は仮押さえしています。運営が内容を確認し、承認できる場合のみ確定料金とお支払い方法をご案内します。',
+        '※承認後24時間以内にお支払いが完了しない場合は不成立となり、仮押さえを解除します。承認できない場合も仮押さえを解除します（4名扱いへの変更や自動のご請求はしません）。'
+      ],
+      links: guideLinks_(record)
+    });
   }
 
   /* 承認メール（Issue #668）。確定料金・支払期限（承認から24時間）・支払いページを案内する。 */
@@ -372,42 +363,41 @@ var BookingMailTemplates = (function () {
 
     /* Issue #445: オンラインクレジットカードは「申込→そのままオンライン決済→決済完了で自動確定」。
        決済前に届く受付メールで「あとで決済すればよい」「確定連絡待ち」と誤解させないため、
-       決済未完了であること・続けて決済が必要なこと・失効し得ることを明記する。現金・PayPay・未定は従来文言。 */
-    var subject = isCard
+       決済未完了であること・続けて決済が必要なこと・失効し得ることを明記する。現金・PayPay・未定は従来文言。
+       Issue #905: #901と同じモバイルHTML（ヒーロー枠に状態＋日時）へ統一。件名は日時つき。 */
+    var subject = (isCard
       ? '【' + brandLabel + '】予約申込を受け付けました（決済完了で確定）'
-      : '【' + brandLabel + '】仮予約を受け付けました（未確定）';
-    var intro = isCard
-      ? [
-        brandLabel + ' のご予約申込を受け付けました。',
-        '※このメールの時点ではお支払いが完了しておらず、ご予約はまだ確定しておりません。続けてオンライン決済を完了してください。お支払い完了後、ご予約は自動で確定します。',
-        '※予約申込後30分以内にお支払いを完了してください。決済を完了せずに時間が経過すると、ご予約が失効する場合があります。'
-      ]
-      : [
-        brandLabel + ' のご予約を仮受付いたしました。',
-        '※このメールの時点ではご予約はまだ確定しておりません。当方で内容を確認のうえ、確定のご連絡を改めてお送りします。'
-      ];
-    var body = joinNonEmpty_([
-      record.name + ' 様',
-      '',
-      intro[0],
-      intro[1],
-      intro[2] || '',
-      '',
-      '予約ID: ' + record.bookingId,
-      dateTimeLine_(record, config.timezone),
-      durationLine_(record),
-      'ブランド: ' + brandLabel,
-      '利用人数: ' + record.people,
-      priceLine_(record),
-      record.paymentMethod ? '支払方法: ' + record.paymentMethod : '',
-      '',
-      isCard ? buildCardPendingNotice_(record, config) : '',
-      contactLine_(config),
-      guideLine_(record),
-      signatureLines_(record)
-    ]);
-
-    return { subject: subject, body: body };
+      : '【' + brandLabel + '】予約を受け付けました（未確定）') + whenSuffix_(record, timezone);
+    var meta = ['ブランド: ' + brandLabel, record.people ? '利用人数: ' + record.people : ''].concat(priceMeta_(record));
+    if (record.paymentMethod) meta.push('支払方法: ' + record.paymentMethod);
+    if (isCard) {
+      var notice = buildCardPendingNotice_(record, config).split('\n');
+      return buildStatusMail_(record, config, {
+        subject: subject,
+        preheader: 'ご予約はまだ確定していません。続けてオンライン決済を完了してください（30分以内）。',
+        lead: brandLabel + ' のご予約申込を受け付けました。',
+        kicker: 'まだ未確定です｜お支払い完了で確定します',
+        meta: meta,
+        steps: [
+          '※このメールの時点ではお支払いが完了しておらず、ご予約はまだ確定しておりません。続けてオンライン決済を完了してください。お支払い完了後、ご予約は自動で確定します。',
+          '※予約申込後30分以内にお支払いを完了してください。決済を完了せずに時間が経過すると、ご予約が失効する場合があります。'
+        ],
+        callout: { title: String(notice[0]).replace(/^【|】$/g, ''), text: notice.slice(1).join('\n') },
+        links: guideLinks_(record)
+      });
+    }
+    return buildStatusMail_(record, config, {
+      subject: subject,
+      preheader: 'ご予約は確認中で、まだ確定していません。確定のご連絡をお待ちください。',
+      lead: brandLabel + ' のご予約を仮受付いたしました。',
+      kicker: '予約確認中・まだ未確定です',
+      meta: meta,
+      steps: [
+        '※このメールの時点ではご予約はまだ確定しておりません。当方で内容を確認のうえ、確定のご連絡を改めてお送りします。',
+        '確定のご連絡が届くまでは、ご利用（入室）いただけません。'
+      ],
+      links: guideLinks_(record)
+    });
   }
 
   /* paymentHoldExpiresAt（Date）をconfig.timezone基準の「YYYY/MM/DD HH:mm」へ整形する。
@@ -689,6 +679,69 @@ var BookingMailTemplates = (function () {
   }
 
   /*
+   * 仮受付・キャンセル系メールの共通ビルダ（Issue #905）。#901の確定・来場案内と同じレンダラ
+   * （renderBlocksHtml_ / renderBlocksText_）に載せるため、色・余白・文字サイズ・ボタン・署名は
+   * 別実装せず再利用する。最上部のヒーロー枠に「状態（未確定／キャンセル済み）＋利用日時」を置き、
+   * 次の行動・予約ID・問い合わせ・ブランド別リンクを下部へまとめる。HTML/textは同じブロック列から作る。
+   * o: { subject, preheader, lead, kicker, meta[], steps[], stepsHeading, callout{title,text},
+   *      extraBlocks[], button{label,url}, buttonHeading, links[], infoRows[] }
+   */
+  function whenSuffix_(record, timezone) {
+    var when = subjectWhenLabel_(record, timezone, false);
+    return when ? '｜' + when : '';
+  }
+
+  function buildStatusMail_(record, config, o) {
+    var timezone = config.timezone;
+    var dateText = BookingAvailability.formatDateJa(record.date, timezone);
+    var timeText = BookingAvailability.formatTimeRangeJa(record.startAt, record.endAt, timezone);
+    var duration = BookingAvailability.formatDurationJa(record.startAt, record.endAt);
+    var blocks = [];
+    if (o.steps && o.steps.length) {
+      blocks.push({ type: 'heading', text: o.stepsHeading || '次にすること' });
+      o.steps.forEach(function (text) { if (text) blocks.push({ type: 'p', text: text }); });
+    }
+    if (o.callout) blocks.push({ type: 'callout', title: o.callout.title, text: o.callout.text });
+    (o.extraBlocks || []).forEach(function (b) { blocks.push(b); });
+    if (o.button && safeHttpsUrl_(o.button.url)) {
+      blocks.push({ type: 'heading', text: o.buttonHeading || '再度ご利用になる場合' });
+      if (o.buttonText) blocks.push({ type: 'p', text: o.buttonText });
+      blocks.push({ type: 'button', label: o.button.label, url: o.button.url });
+    }
+    var rows = [['予約ID', record.bookingId]].concat(duration ? [['利用時間', duration]] : []).concat(o.infoRows || []);
+    blocks.push({ type: 'heading', text: 'ご予約情報・お問い合わせ' }, { type: 'kv', rows: rows });
+    if (config && config.contactEmail) {
+      blocks.push({ type: 'p', text: 'ご不明点は下記までご連絡ください。\nお問い合わせ: ' + config.contactEmail });
+    }
+    if (o.links && o.links.length) blocks.push({ type: 'links', items: o.links });
+    var model = {
+      title: o.subject,
+      preheader: o.preheader,
+      greeting: record.name + ' 様',
+      lead: o.lead,
+      hero: {
+        kicker: o.kicker,
+        dateText: dateText,
+        timeText: timeText,
+        textLine: dateTimeLine_(record, timezone),
+        meta: (o.meta || []).filter(Boolean)
+      },
+      blocks: blocks,
+      footer: signatureLines_(record).split('\n')
+    };
+    return { subject: o.subject, body: renderBlocksText_(model), htmlBody: renderBlocksHtml_(model) };
+  }
+
+  function guideLinks_(record) {
+    return [{ label: 'ご利用案内', url: Booking.getBrandProfile(record.brand).guideUrl }];
+  }
+
+  function priceMeta_(record) {
+    var price = priceLine_(record);
+    return price ? String(price).split('\n') : [];
+  }
+
+  /*
    * CONFIRMED（予約確定メール）。件名で確定が分かるようにする。
    * 料金は本文へ出さない（Issue #271本文の指示どおり据え置き。Issue #342で仮予約受付
    * メール（buildPendingMail）へ料金を追加したが、確定メールには追加しない方針にした:
@@ -766,50 +819,43 @@ var BookingMailTemplates = (function () {
   function buildCancelledMail(record, config) {
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
+    var rebook = { label: '再度のご予約はこちら', url: Booking.getBrandProfile(record.brand).bookingUrl };
+    var common = { links: [], button: rebook, meta: ['ブランド: ' + brandLabel] };
+    function withCommon(extra) { return Object.assign({}, common, extra); }
+
     if (isPhotoSupportRecord_(record) && !record.supportApprovedAt) {
       /* Issue #667: 承認前のキャンセル＝不承認（スタッフ対応・機材・予約枠の都合）。仮押さえを解除し、プランは不成立。 */
-      return {
+      return buildStatusMail_(record, config, withCommon({
         subject: '【' + brandLabel + '】作品撮りサポートプランを承認できませんでした',
-        body: joinNonEmpty_([
-          record.name + ' 様',
-          '',
-          '下記の作品撮りサポートプランのお申し込みは、スタッフ対応・機材・予約枠の都合により承認できませんでした。仮押さえは解除し、本プランは不成立です。お支払いは発生していません。',
-          '※通常のSNB mens料金へは自動で切り替わりません。通常の時間貸しをご希望の場合は、改めて予約ページからお申し込みください。',
-          '',
-          '予約ID: ' + record.bookingId,
-          dateTimeLine_(record, config.timezone),
-          '',
-          rebookLine_(record),
-          contactLine_(config),
-          signatureLines_(record)
-        ])
-      };
+        preheader: '作品撮りサポートプランは承認できず不成立となりました。お支払いは発生していません。',
+        lead: '下記の作品撮りサポートプランのお申し込みは、スタッフ対応・機材・予約枠の都合により承認できませんでした。仮押さえは解除し、本プランは不成立です。お支払いは発生していません。',
+        kicker: '承認できませんでした（不成立）｜元のご利用日時',
+        steps: ['※通常のSNB mens料金へは自動で切り替わりません。通常の時間貸しをご希望の場合は、改めて予約ページからお申し込みください。'],
+        stepsHeading: 'ご案内',
+        buttonHeading: '再度お申し込みになる場合'
+      }));
     }
 
     var rejected = isLargePartyRecord_(record) && Booking.largePartyApprovalStatus(record) === Booking.LARGE_PARTY_APPROVAL.REJECTED;
+    var refundNotice = rejected ? '' : String(refundNoticeLines_(record) || '').replace(/\n+$/, '');
     var subject = rejected
       ? '【' + brandLabel + '】5〜7名のご利用は承認できませんでした（仮押さえを解除しました）'
-      : '【' + brandLabel + '】ご予約キャンセルのお知らせ';
-    var body = joinNonEmpty_([
-      record.name + ' 様',
-      '',
-      rejected
+      : '【' + brandLabel + '】予約キャンセルのお知らせ' + whenSuffix_(record, timezone);
+    var extraBlocks = refundNotice
+      ? [{ type: 'heading', text: 'お支払い・返金について' }, { type: 'p', text: refundNotice }]
+      : [];
+    return buildStatusMail_(record, config, withCommon({
+      subject: subject,
+      preheader: rejected
+        ? '5〜7名のご利用は承認できず、仮押さえを解除しました。お支払いは発生していません。'
+        : '下記のご予約はキャンセルされました（元のご利用日時を記載しています）。',
+      lead: rejected
         ? '下記の5〜7名でのご利用は、運営の確認の結果、今回は承認できませんでした。仮押さえを解除しています。お支払いは発生していません（4名扱いへの変更や自動のご請求もありません）。'
         : '下記のご予約はキャンセルされました。',
-      '',
-      '予約ID: ' + record.bookingId,
-      dateTimeLine_(record, config.timezone),
-      durationLine_(record),
-      'ブランド: ' + brandLabel,
-      '',
-      refundNoticeLines_(record),
-      '改めてご利用をご希望の場合は、お手数ですが再度ご予約ください。',
-      rebookLine_(record),
-      contactLine_(config),
-      signatureLines_(record)
-    ]);
-
-    return { subject: subject, body: body };
+      kicker: rejected ? '承認できませんでした｜元のご利用日時' : 'キャンセル済み｜元のご利用日時',
+      extraBlocks: extraBlocks,
+      buttonText: '改めてご利用をご希望の場合は、お手数ですが再度ご予約ください。'
+    }));
   }
 
   /* Issue #412: 利用日がtimezone基準で今日か（確定メールの来場案内の一文の分岐用）。 */

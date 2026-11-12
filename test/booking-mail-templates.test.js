@@ -152,7 +152,7 @@ test('buildPendingMail: 現金・PayPay・未定は従来どおり仮受付→�
   ['現金', 'PayPay', '未定'].forEach(function (paymentMethod) {
     var templates = loadTemplates();
     var mail = templates.buildPendingMail(sampleRecord({ paymentMethod: paymentMethod }), CONFIG);
-    assert.match(mail.subject, /仮予約を受け付けました（未確定）/, paymentMethod);
+    assert.match(mail.subject, /予約を受け付けました（未確定）/, paymentMethod);
     assert.match(mail.body, /仮受付いたしました/, paymentMethod);
     assert.match(mail.body, /このメールの時点ではご予約はまだ確定しておりません。当方で内容を確認のうえ、確定のご連絡を改めてお送りします。/, paymentMethod);
     assert.doesNotMatch(mail.body, /管理者/, paymentMethod);
@@ -550,7 +550,9 @@ test('Issue #422: キャンセル・失効メールは各ブランドの予約�
   };
   Object.keys(expected).forEach(function (brand) {
     var record = sampleRecord({ brand: brand });
-    assert.ok(t.buildCancelledMail(record, CONFIG).body.indexOf('再度のご予約はこちら: ' + expected[brand]) !== -1);
+    var cancelled = t.buildCancelledMail(record, CONFIG);
+    assert.ok(cancelled.body.indexOf('▼ 再度のご予約はこちら\n' + expected[brand]) !== -1);
+    assert.ok(cancelled.htmlBody.indexOf('href="' + expected[brand] + '"') !== -1);
     assert.ok(t.buildExpiredMail(record, CONFIG).body.indexOf('再度のご予約はこちら: ' + expected[brand]) !== -1);
   });
 });
@@ -645,7 +647,8 @@ test('#705: SNB mensの却下（仮押さえ解除）メールがIssueの表示�
     largePartyPeople: 5
   });
   var mail = templates.buildCancelledMail(record, CONFIG);
-  assert.match(mail.body, /利用日時: 2026年12月1日（火）8:00〜11:00\n利用時間: 3時間\nブランド: SNB mens\n/);
+  assert.match(mail.body, /利用日時: 2026年12月1日（火）8:00〜11:00\nブランド: SNB mens\n/);
+  assert.match(mail.body, /利用時間: 3時間/);
   assert.match(mail.body, /予約ID: MENS-20261201-D9C202AF/);
 });
 
