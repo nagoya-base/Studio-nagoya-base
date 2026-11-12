@@ -1151,8 +1151,10 @@ var BookingMailTemplates = (function () {
        リンク先（ACCESS_GUIDE_URL／ブランド別の利用案内ページ／ACCESS_GUIDE_PDF_URL）の内容は
        このテンプレートでは保証できないため、「写真で確認」などリンク先の中身を約束するラベルにしない。 */
     step2.links = [];
-    if (reminderGuideUrl) step2.links.push({ label: '詳しい利用案内を見る', url: reminderGuideUrl });
-    if (guide.pdfUrl) step2.links.push({ label: '案内PDF', htmlLabel: '案内PDFを開く', url: guide.pdfUrl });
+    /* 運営者確認: キーボックスの位置・行き方の正本は「案内PDF」。主導線にする。PDF未設定なら架空の資料を示さず出さない。
+       PDF内に写真があるかは未確認のため「写真で」とは断定しない。一般の利用案内ページは正確な名称で、PDFの後に置く。 */
+    if (guide.pdfUrl) step2.links.push({ label: 'キーボックスの位置・行き方を確認（PDF）', url: guide.pdfUrl });
+    if (reminderGuideUrl) step2.links.push({ label: '利用案内を見る', url: reminderGuideUrl });
     var step3 = { title: '解錠して入室', lines: [], rows: [] };
     if (guide.entryMethod) step3.rows.push(['入室方法', guide.entryMethod]);
     if (!perBookingCode) {

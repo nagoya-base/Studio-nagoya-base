@@ -88,7 +88,7 @@ function assertNew(body) {
   assert.ok(body.indexOf('キーボックス位置: 玄関脇') !== -1, 'キーボックス位置は保持');
   assert.ok(body.indexOf('キーボックス番号: TEST-KEYBOX') !== -1, 'キーボックス番号は保持');
   assert.ok(body.indexOf('住所: 愛知県名古屋市...') !== -1);
-  assert.ok(body.indexOf('詳しい利用案内を見る:') !== -1);
+  assert.ok(body.indexOf('利用案内を見る:') !== -1);
 }
 
 function assertOld(body) {
