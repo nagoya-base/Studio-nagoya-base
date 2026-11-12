@@ -518,7 +518,7 @@ var SwitchBotAccessInfra = (function () {
 
       function emptyRow(branch, reasons) {
         return Object.assign({}, base, {
-          branch: branch, state: null, delivery: null, obs: null, sent: null, webhook: null, confirmed: null,
+          branch: branch, state: null, delivery: null, obs: null, sent: null, sentAck: null, webhook: null, confirmed: null,
           sendStart: null, sendCall: null, gateOpen: null, postGateDelay: null, sendCycles: null, reasons: reasons
         });
       }
@@ -573,18 +573,24 @@ var SwitchBotAccessInfra = (function () {
               if (nx.to === 'DELIVERED' && !(typeof nx.basis === 'string' && nx.basis.indexOf('ADMIN:') === 0)) doneAt = num(nx.at);
             }
           }
-          if (e.to === 'DELIVERED' && typeof e.basis === 'string' && e.basis.indexOf('ADMIN:') === 0) byAdmin = true;
+          // 管理者の確認が最初の送信の周期内のものだけを対象にする（後の再送を管理者が確認しても、最初の送信の計測は消さない）
+          if (e.to === 'DELIVERED' && sendCycles <= 1 && typeof e.basis === 'string' && e.basis.indexOf('ADMIN:') === 0) byAdmin = true;
         }
         row.sendCycles = dlv ? sendCycles : null;
         if (byAdmin) reasons.push('DELIVERED_BY_ADMIN');
         else if (sendingAt !== null && doneAt !== null && doneAt >= sendingAt) row.sendCall = doneAt - sendingAt;
 
         if (useT0) {
-          var confirmedAbs = null;
-          (Array.isArray(op.history) ? op.history : []).some(function (e) { if (e && e.to === Core.STATE.ISSUED_CONFIRMED && num(e.at) !== null) { confirmedAbs = e.at; return true; } return false; });
+          var confirmedAbs = null, sendingKeyAt = null;
+          (Array.isArray(op.history) ? op.history : []).forEach(function (e) {
+            if (!e || num(e.at) === null) return;
+            if (e.to === Core.STATE.SENDING && sendingKeyAt === null) sendingKeyAt = e.at; // createKey 呼出の直前に永続化される（リクエスト開始側）
+            if (e.to === Core.STATE.ISSUED_CONFIRMED && confirmedAbs === null) confirmedAbs = e.at;
+          });
           var evt = op.commandId && op.deviceId ? load('EVT_' + Core.normDev(op.deviceId) + '_createKey_' + op.commandId) : null;
           row.obs = relTo(obsOf(reasons), reasons);
-          row.sent = relTo(op.sentAtSec, reasons);
+          row.sent = relTo(sendingKeyAt, reasons);        // createKey リクエスト開始（SENDING の永続化）
+          row.sentAck = relTo(op.sentAtSec, reasons);     // API が受理を返した時刻（応答側。sent との差が API 応答の所要）
           row.webhook = relTo(evt ? evt.receivedAtSec : null, reasons);
           row.confirmed = relTo(confirmedAbs, reasons);
           row.sendStart = byAdmin ? null : relTo(sendingAt, reasons);

@@ -129,7 +129,9 @@ function seed(env, bid, o) {
   var op = {
     id: recId, bookingId: bid, revision: o.revision || 1, deviceId: DEV, op: 'ISSUE', name: 'SNB-' + bid, state: o.state || 'ISSUED_CONFIRMED',
     commandId: SENTINEL.cmd + bid, sentAtSec: o.sent, startSec: o.sent + 600, endSec: o.sent + 7800, evidence: [], reads: 1,
-    history: [{ at: o.created, from: null, to: 'PLANNED', basis: null }, { at: o.sent, from: 'PLANNED', to: 'SENT_WAIT_WEBHOOK', basis: null }].concat(
+    history: [{ at: o.created, from: null, to: 'PLANNED', basis: null },
+      { at: o.sending === undefined ? o.sent - 2 : o.sending, from: 'PLANNED', to: 'SENDING', basis: null },
+      { at: o.sent, from: 'SENDING', to: 'SENT_WAIT_WEBHOOK', basis: null }].concat(
       o.confirmed ? [{ at: o.confirmed, from: 'SENT_WAIT_WEBHOOK', to: 'ISSUED_CONFIRMED', basis: null }] : []),
     createdAt: o.created, updatedAt: o.created
   };
@@ -185,7 +187,8 @@ test('正常: 確定からの経過秒（初観測・送信・Webhook・登録�
   assert.strictEqual(r.brand, 'snb'); assert.strictEqual(r.pay, 'card'); assert.strictEqual(r.ledgerStatus, 'CONFIRMED');
   assert.strictEqual(r.tier, 'A'); assert.strictEqual(r.leadSec, 1800);
   assert.strictEqual(r.state, 'ISSUED_CONFIRMED'); assert.strictEqual(r.delivery, 'DELIVERED');
-  assert.strictEqual(r.obs, 20); assert.strictEqual(r.sent, 25); assert.strictEqual(r.webhook, 40); assert.strictEqual(r.confirmed, 45);
+  assert.strictEqual(r.obs, 20); assert.strictEqual(r.sent, 23, 'createKey リクエスト開始（SENDING の永続化）'); assert.strictEqual(r.sentAck, 25, 'API 受理の応答側');
+  assert.strictEqual(r.webhook, 40); assert.strictEqual(r.confirmed, 45);
   assert.strictEqual(r.sendStart, 46); assert.strictEqual(r.sendCall, 2);
   assert.strictEqual(r.gateOpen, null); assert.strictEqual(r.postGateDelay, null);
   assert.deepStrictEqual(r.reasons, []);
@@ -371,7 +374,7 @@ test('一部欠落（早期回収の途中）: 残った区間だけ出し、無
   env.rows = [ledgerRow()];
   seedA(env, { dlvHistory: undefined, webhook: undefined, confirmed: undefined, state: 'SENT_WAIT_WEBHOOK' });
   var r = run(env).rows[0];
-  assert.strictEqual(r.obs, 20); assert.strictEqual(r.sent, 25);
+  assert.strictEqual(r.obs, 20); assert.strictEqual(r.sent, 23);
   assert.strictEqual(r.webhook, null); assert.strictEqual(r.confirmed, null); assert.strictEqual(r.sendStart, null); assert.strictEqual(r.sendCall, null);
   assert.strictEqual(r.delivery, null);
 
@@ -403,7 +406,7 @@ test('複数の操作: 枝番で別行にし、t0 相対秒は現在 revision �
   var a = res.rows[0], b = res.rows[1];
   assert.ok(a.reasons.indexOf('REVISION_MISMATCH') !== -1 || a.reasons.indexOf('ORDER_VIOLATION') !== -1);
   assert.strictEqual(a.sent, null); assert.strictEqual(a.confirmed, null);
-  assert.strictEqual(b.sent, 35); assert.strictEqual(b.webhook, 50); assert.strictEqual(b.confirmed, 55); assert.deepStrictEqual(b.reasons, []);
+  assert.strictEqual(b.sent, 33); assert.strictEqual(b.webhook, 50); assert.strictEqual(b.confirmed, 55); assert.deepStrictEqual(b.reasons, []);
 });
 
 test('時刻逆転（確定より前に作られた操作・確定より前のイベント）: ORDER_VIOLATION で null。負の秒を出さない', function () {
@@ -420,7 +423,7 @@ test('時刻逆転（確定より前に作られた操作・確定より前の�
   var r2 = run(env2).rows[0];
   assert.strictEqual(r2.webhook, null);
   assert.ok(r2.reasons.indexOf('ORDER_VIOLATION') !== -1);
-  assert.strictEqual(r2.sent, 25);
+  assert.strictEqual(r2.sent, 23);
   [r, r2].forEach(function (x) { ['obs', 'sent', 'webhook', 'confirmed', 'sendStart', 'sendCall', 'postGateDelay'].forEach(function (f) { assert.ok(x[f] === null || x[f] >= 0, f); }); });
 });
 
@@ -431,7 +434,7 @@ test('追跡記録が旧 revision の観測なら初観測は null（現在 revi
   var r = run(env).rows[0];
   assert.strictEqual(r.obs, null);
   assert.ok(r.reasons.indexOf('REVISION_MISMATCH') !== -1);
-  assert.strictEqual(r.sent, 25);
+  assert.strictEqual(r.sent, 23);
 });
 
 // ================================================================ 配送
@@ -446,7 +449,7 @@ test('管理者が配送確認した行: DELIVERED_BY_ADMIN。送信呼出の秒
   var r = run(env).rows[0];
   assert.ok(r.reasons.indexOf('DELIVERED_BY_ADMIN') !== -1);
   assert.strictEqual(r.sendCall, null); assert.strictEqual(r.sendStart, null);
-  assert.strictEqual(r.sent, 25);
+  assert.strictEqual(r.sent, 23);
   assert.ok(JSON.stringify(run(env)).indexOf('ADMIN-1') === -1, '管理者ラベルを出さない');
 });
 
@@ -460,6 +463,20 @@ test('再送（送信が2回以上）: 最初の送信だけを計測し、sendC
   var r = run(env).rows[0];
   assert.strictEqual(r.sendCycles, 2);
   assert.strictEqual(r.sendStart, 46); assert.strictEqual(r.sendCall, 2);
+});
+
+test('再送の後で管理者が確認しても、最初の送信の計測は消さない（管理者確認の判定は最初の送信の周期内のみ）', function () {
+  var env = configured();
+  env.rows = [ledgerRow()];
+  seedA(env, { dlvHistory: [
+    { at: T0A + 46, from: null, to: 'SENDING', basis: null }, { at: T0A + 48, from: 'SENDING', to: 'DELIVERED', basis: null },
+    { at: T0A + 900, from: 'DELIVERED', to: 'SENDING', basis: 'REGUIDE' }, { at: T0A + 901, from: 'SENDING', to: 'UNKNOWN', basis: 'SEND_RESULT_UNKNOWN' },
+    { at: T0A + 5000, from: 'UNKNOWN', to: 'DELIVERED', basis: 'ADMIN:ADMIN-1' }
+  ] });
+  var r = run(env).rows[0];
+  assert.strictEqual(r.sendCycles, 2);
+  assert.strictEqual(r.sendStart, 46); assert.strictEqual(r.sendCall, 2);
+  assert.ok(r.reasons.indexOf('DELIVERED_BY_ADMIN') === -1);
 });
 
 test('送信が完了していない（NOT_SENT/UNKNOWN）: 送信呼出の秒は null で配送状態コードだけ示す', function () {
@@ -483,11 +500,27 @@ test('層C（前日18:00より前に確定）: 初観測〜登録確認は null 
   });
   var r = run(env).rows[0];
   assert.strictEqual(r.tier, 'C');
-  assert.strictEqual(r.obs, 30); assert.strictEqual(r.sent, 40); assert.strictEqual(r.webhook, 60); assert.strictEqual(r.confirmed, 70);
+  assert.strictEqual(r.obs, 30); assert.strictEqual(r.sent, 38); assert.strictEqual(r.webhook, 60); assert.strictEqual(r.confirmed, 70);
   assert.strictEqual(r.gateOpen, gate - t0);
   assert.strictEqual(r.sendStart, gate + 12 - t0);
   assert.strictEqual(r.postGateDelay, 12, 'ゲートが開いてから配送処理が始まるまで');
   assert.strictEqual(r.sendCall, 2);
+});
+
+test('層C: 発行確認がゲート開放より後なら、postGateDelay は「ゲート開放と発行確認の遅い方」から配送処理開始まで（発行の遅れを配送の遅延に混ぜない）', function () {
+  var env = configured();
+  var t0 = jst('2030-01-10', '15:00');
+  var gate = jst('2030-01-10', '18:00');
+  env.rows = [ledgerRow({ bookingId: 'DUMMY-916-C', confirmedAt: jd('2030-01-10', '15:00'), startAt: jd('2030-01-11', '10:00'), endAt: jd('2030-01-11', '12:00') })];
+  seed(env, 'DUMMY-916-C', {
+    created: gate + 3000, obs: gate + 3000, sent: gate + 3010, webhook: gate + 3030, confirmed: gate + 3600,
+    dlvHistory: [{ at: gate + 3612, from: null, to: 'SENDING', basis: null }, { at: gate + 3614, from: 'SENDING', to: 'DELIVERED', basis: null }]
+  });
+  var r = run(env).rows[0];
+  assert.strictEqual(r.tier, 'C');
+  assert.strictEqual(r.confirmed, gate + 3600 - t0, '発行確認までの経過（t0起点）は別の列に出る');
+  assert.strictEqual(r.postGateDelay, 12, '発行確認後に配送処理が始まるまで（ゲート開放起点なら3612秒になり、発行の遅れが混ざる）');
+  assert.strictEqual(r.gateOpen, gate - t0);
 });
 
 test('層の境界: 前日18:00ちょうどの確定は C にならず、開始まで60分以内なら A・超えれば B', function () {
@@ -517,7 +550,7 @@ test('配送ゲートの設定が読めない: 層は UNKNOWN_TIER（推測し�
   var r = run(env).rows[0];
   assert.strictEqual(r.tier, 'UNKNOWN_TIER');
   assert.strictEqual(r.gateOpen, null);
-  assert.strictEqual(r.sent, 25);
+  assert.strictEqual(r.sent, 23);
 });
 
 test('ブランド: 対象3つはそのまま、それ以外・空は OTHER。決済はカード/その他の2種類だけ', function () {

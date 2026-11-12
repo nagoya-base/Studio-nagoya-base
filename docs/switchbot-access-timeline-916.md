@@ -25,13 +25,14 @@
 | `tier` / `leadSec` | `A`=直前（C以外で開始まで60分以内）、`B`=その他、`C`=配送ゲート対象（前日18:00相当より前に確定）、`UNKNOWN_TIER`=設定が読めない / 開始までの余裕（秒） |
 | `state` / `delivery` | 発行・配送の状態コード |
 | `obs` | t0→初観測（追跡記録 `obsAt`。現在の revision の観測のみ） |
-| `sent` | t0→createKey送信 |
+| `sent` | t0→createKey リクエスト開始（操作履歴の `SENDING`。API呼出の直前に永続化される） |
+| `sentAck` | t0→APIが受理を返した時刻（`sentAtSec`。応答側）。`sentAck − sent` が createKey API の応答の所要 |
 | `webhook` | t0→Webhook到着（`receivedAtSec`） |
 | `confirmed` | t0→ISSUED_CONFIRMED |
 | `sendStart` | t0→配送の送信呼出の開始（`DLV` の `SENDING`） |
 | `sendCall` | 送信呼出の所要（`SENDING`→`DELIVERED`）。**利用者への到達時刻ではない**。受信はGmailで別途確認 |
-| `gateOpen` / `postGateDelay` | 層Cのみ。t0→配送ゲートが開く時刻 / ゲートが開いてから配送処理が始まるまでの遅延 |
-| `sendCycles` | 送信が複数回あった場合の回数。**最初の送信だけを計測**し、再送は集計に混ぜない |
+| `gateOpen` / `postGateDelay` | 層Cのみ。t0→配送ゲートが開く時刻 / 配送が可能になった時刻（ゲート開放と発行確認の**遅い方**）から配送処理が始まるまでの遅延。発行確認がゲート開放より後なら、その遅れは `confirmed` 側に現れ、配送の遅延には混ぜない |
+| `sendCycles` | 送信が複数回あった場合の回数。**最初の送信だけを計測**し、再送は集計に混ぜない（後の再送を管理者が確認済みにしても、最初の送信の計測は消さない） |
 | `reasons` | 下記の理由コード |
 
 t0 は `confirmedAt` のみ。欠ければ行ごと対象外（`paymentConfirmedAt` で代用しない）。精度は秒（±1秒）、`readConsistency: BEST_EFFORT`（複数キーの読取間に同期が状態を進めうる）。
