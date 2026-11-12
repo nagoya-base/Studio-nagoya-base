@@ -433,6 +433,181 @@ var SwitchBotAccessInfra = (function () {
     return cur === environment ? { ok: true, created: false } : { ok: false, error: 'ENV_MISMATCH' };
   }
 
+  // ---------- 発行タイムライン診断（Issue #916。読取専用の一時的な計測ツール）----------
+
+  /**
+   * 台帳の「直近に確定した予約」ごとに、予約確定(confirmedAt)から初観測・createKey送信・Webhook到着・登録確認・配送の
+   * 送信呼出までの経過秒を返す。遅延区間を実測するためだけの診断で、判断や是正は行わない。
+   *
+   * 読取専用: deps.store は get のみ使う（set/del/keys は呼ばない）。SwitchBot API・メール・ロック・書込・トリガーは使わない。
+   * 外部への読取は、台帳（deps.ledger.read = Sheets API の GET）のみ。
+   * 出力に載せるのは相対秒・順位・種別・固定コードだけ。予約ID・recId・氏名・メール・PIN・deviceId・commandId、
+   * および絶対日時（confirmedAt・startAt・各イベント時刻）は載せない。突合は confirmedAt の新しい順の順位で行う。
+   *
+   * 対象: 台帳リーダーが返す行（利用日がJSTで当日・翌日、対象ブランド）のうち confirmedAt が有効なものを新しい順に先頭10件。
+   * 窓の外の予約は取得していない（「記録なし」とは表示しない）。窓内で状態ストアに記録が無ければ NO_RECORD（未観測か回収済みかは区別できない）。
+   * t0 は confirmedAt のみ。欠ければ t0 起点の区間は null（paymentConfirmedAt で代用しない）。
+   *
+   * deps: { store:{get}, ledger:{read}, snapshot:{toJst,parseRevision}, nowMs(), gateHours:number|null, isCard(paymentMethod) }
+   */
+  function timelineReport(deps) {
+    var MAX_ROWS = 10;
+    var DIRECT_LEAD_SEC = 3600;
+    var BRANDS = ['snb', 'mens', 'studio_x'];
+    var LEDGER_STATUSES = ['CONFIRMED', 'CANCELLED', 'EXPIRED', 'PENDING'];
+    var STATES = Object.keys(Core.STATE).map(function (k) { return Core.STATE[k]; });
+    var DLVS = Object.keys(Core.DLV).map(function (k) { return Core.DLV[k]; });
+
+    function num(v) { return typeof v === 'number' && isFinite(v) ? v : null; }
+    function toMs(v) {
+      if (v && typeof v.getTime === 'function') { var t = v.getTime(); return isNaN(t) ? null : t; }
+      if (typeof v === 'string' && v.trim() !== '') { var p = Date.parse(v); return isNaN(p) ? null : p; }
+      return null;
+    }
+    function pick(v, list, fallback) { return list.indexOf(v) !== -1 ? v : fallback; }
+    function load(key) {
+      var raw = deps.store.get(key);
+      if (raw === null || raw === undefined || raw === '') return null;
+      try { var o = JSON.parse(raw); return o && typeof o === 'object' ? o : null; } catch (e) { return null; }
+    }
+
+    var led = deps.ledger.read({ nowMs: deps.nowMs(), trackedIds: [] });
+    if (!led || led.ok !== true) {
+      return { ok: false, error: led && typeof led.error === 'string' && /^LEDGER_[A-Z_]+$/.test(led.error) ? led.error : 'LEDGER_READ_FAILED' };
+    }
+    var records = Array.isArray(led.records) ? led.records : [];
+    var idCount = {};
+    records.forEach(function (r) { var id = String(r.bookingId); idCount[id] = (idCount[id] || 0) + 1; });
+
+    var candidates = [];
+    var excludedNoConfirmedAt = 0;
+    records.forEach(function (r) {
+      var ms = toMs(r.confirmedAt);
+      if (ms === null) { excludedNoConfirmedAt++; return; }
+      candidates.push({ r: r, t0: Math.floor(ms / 1000) });
+    });
+    candidates.sort(function (a, b) { return b.t0 - a.t0; });
+    var shown = candidates.slice(0, MAX_ROWS);
+    var hours = num(deps.gateHours);
+    var rows = [];
+
+    shown.forEach(function (c, i) {
+      var r = c.r, t0 = c.t0, id = String(r.bookingId);
+      var tie = (i > 0 && candidates[i - 1].t0 === t0) || (i + 1 < candidates.length && candidates[i + 1].t0 === t0);
+      var startMs = toMs(r.startAt), startSec = startMs === null ? null : Math.floor(startMs / 1000);
+      var jst = deps.snapshot.toJst(r.startAt);
+      var dayStart = jst ? Core.jstToEpochSec(jst.date, '00:00') : null;
+      var gateOpenAbs = hours !== null && num(dayStart) !== null ? dayStart - hours * 3600 : null;
+      var tier = gateOpenAbs === null || startSec === null ? 'UNKNOWN_TIER' : (t0 < gateOpenAbs ? 'C' : (startSec - t0 <= DIRECT_LEAD_SEC ? 'A' : 'B'));
+      var ledgerRev = deps.snapshot.parseRevision(r.revision);
+      var base = {
+        rank: i + 1, tie: tie, brand: pick(String(r.brand || ''), BRANDS, 'OTHER'), pay: deps.isCard(r.paymentMethod) ? 'card' : 'other',
+        ledgerStatus: pick(String(r.status || ''), LEDGER_STATUSES, 'OTHER'), tier: tier, leadSec: startSec === null ? null : startSec - t0
+      };
+      var ledgerAmbiguous = idCount[id] > 1;
+
+      var idx = load('BK_' + id);
+      var trk = load('TRK_' + id);
+      var ops = [];
+      (idx && Array.isArray(idx.ops) ? idx.ops : []).forEach(function (opId) {
+        if (typeof opId !== 'string') return;
+        var op = load('OP_' + opId);
+        if (op && op.op === Core.OP.ISSUE && String(op.bookingId) === id) ops.push(op);
+      });
+      ops.sort(function (a, b) { return (num(a.createdAt) || 0) - (num(b.createdAt) || 0); });
+
+      function emptyRow(branch, reasons) {
+        return Object.assign({}, base, {
+          branch: branch, state: null, delivery: null, obs: null, sent: null, webhook: null, confirmed: null,
+          sendStart: null, sendCall: null, gateOpen: null, postGateDelay: null, sendCycles: null, reasons: reasons
+        });
+      }
+      if (!idx && !trk) { rows.push(emptyRow('', ['NO_RECORD'])); return; }
+      if (ledgerAmbiguous) { rows.push(emptyRow('', ['LEDGER_AMBIGUOUS'])); return; }
+
+      function obsOf(reasons) {
+        // 追跡記録は予約単位。現在の revision で観測したものだけを使う（旧 revision の観測は混ぜない）
+        if (!trk || num(trk.obsAt) === null) return null;
+        if (ledgerRev === null || trk.obsRevision !== ledgerRev) { reasons.push('REVISION_MISMATCH'); return null; }
+        return trk.obsAt;
+      }
+      function relTo(abs, reasons) {
+        if (num(abs) === null) return null;
+        var d = abs - t0;
+        if (d < -1) { if (reasons.indexOf('ORDER_VIOLATION') === -1) reasons.push('ORDER_VIOLATION'); return null; }
+        return Math.max(0, d);
+      }
+
+      if (!ops.length) {
+        var r0 = ['NO_RECORD'];
+        var row0 = emptyRow('', r0);
+        row0.obs = relTo(obsOf(r0), r0);
+        rows.push(row0);
+        return;
+      }
+
+      ops.forEach(function (op, k) {
+        var reasons = [];
+        var branch = ops.length > 1 ? String.fromCharCode(97 + Math.min(k, 25)) : '';
+        var row = emptyRow(branch, reasons);
+        row.state = pick(op.state, STATES, 'OTHER');
+        var current = ledgerRev !== null && op.revision === ledgerRev;
+        if (!current) reasons.push('REVISION_MISMATCH');
+        // 確定より前に作られた操作は、現在の確定に対するものではない（誤結合の検出）
+        var stale = num(op.createdAt) !== null && op.createdAt < t0 - 1;
+        if (stale) reasons.push('ORDER_VIOLATION');
+        var useT0 = current && !stale;
+
+        // 配送: 最初の送信（SENDING→DELIVERED）だけを計測する。管理者の確認で DELIVERED になったものは送信時刻ではない
+        var dlv = load('DLV_' + op.id);
+        var hist = dlv && Array.isArray(dlv.history) ? dlv.history : [];
+        row.delivery = dlv ? pick(dlv.state, DLVS, 'OTHER') : null;
+        var sendingAt = null, sendCycles = 0, byAdmin = false, doneAt = null;
+        for (var h = 0; h < hist.length; h++) {
+          var e = hist[h] || {};
+          if (e.to === 'SENDING') {
+            sendCycles++;
+            if (sendCycles === 1) {
+              sendingAt = num(e.at);
+              var nx = hist[h + 1] || {};
+              if (nx.to === 'DELIVERED' && !(typeof nx.basis === 'string' && nx.basis.indexOf('ADMIN:') === 0)) doneAt = num(nx.at);
+            }
+          }
+          if (e.to === 'DELIVERED' && typeof e.basis === 'string' && e.basis.indexOf('ADMIN:') === 0) byAdmin = true;
+        }
+        row.sendCycles = dlv ? sendCycles : null;
+        if (byAdmin) reasons.push('DELIVERED_BY_ADMIN');
+        else if (sendingAt !== null && doneAt !== null && doneAt >= sendingAt) row.sendCall = doneAt - sendingAt;
+
+        if (useT0) {
+          var confirmedAbs = null;
+          (Array.isArray(op.history) ? op.history : []).some(function (e) { if (e && e.to === Core.STATE.ISSUED_CONFIRMED && num(e.at) !== null) { confirmedAbs = e.at; return true; } return false; });
+          var evt = op.commandId && op.deviceId ? load('EVT_' + Core.normDev(op.deviceId) + '_createKey_' + op.commandId) : null;
+          row.obs = relTo(obsOf(reasons), reasons);
+          row.sent = relTo(op.sentAtSec, reasons);
+          row.webhook = relTo(evt ? evt.receivedAtSec : null, reasons);
+          row.confirmed = relTo(confirmedAbs, reasons);
+          row.sendStart = byAdmin ? null : relTo(sendingAt, reasons);
+          if (tier === 'C') {
+            row.gateOpen = relTo(gateOpenAbs, reasons);
+            if (!byAdmin && sendingAt !== null && confirmedAbs !== null && gateOpenAbs !== null) {
+              var d = sendingAt - Math.max(gateOpenAbs, confirmedAbs);
+              if (d >= -1) row.postGateDelay = Math.max(0, d); else if (reasons.indexOf('ORDER_VIOLATION') === -1) reasons.push('ORDER_VIOLATION');
+            }
+          }
+        }
+        row.reasons = reasons.filter(function (x, n) { return reasons.indexOf(x) === n; });
+        rows.push(row);
+      });
+    });
+
+    return {
+      ok: true, readConsistency: 'BEST_EFFORT', precisionSec: 1,
+      scope: 'LEDGER_WINDOW_TODAY_TOMORROW_JST', outOfWindow: 'NOT_FETCHED',
+      windowTotal: records.length, excludedNoConfirmedAt: excludedNoConfirmedAt, shown: shown.length, rows: rows
+    };
+  }
+
   // ---------- 配送（暗証番号案内メール。Issue #752）----------
 
   /**
@@ -3734,7 +3909,8 @@ var SwitchBotAccessInfra = (function () {
     byteLength: byteLength, measureStore: measureStore, storageGate: storageGate, estimateStorage: estimateStorage,
     garbageCollect: garbageCollect, isExpiredApiCountKey: isExpiredApiCountKey, APICOUNT_KEEP_DAYS: APICOUNT_KEEP_DAYS, planJobs: planJobs, createApiBudget: createApiBudget,
     classify: classify, renderNotification: renderNotification, createRuntime: createRuntime,
-    deliverySettings: deliverySettings, renderCodeMail: renderCodeMail, notSentError: notSentError
+    deliverySettings: deliverySettings, renderCodeMail: renderCodeMail, notSentError: notSentError,
+    timelineReport: timelineReport
   };
 })();
 
