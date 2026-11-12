@@ -135,6 +135,6 @@ MailApp・SwitchBot API・Spreadsheet はすべてフェイク。実送信0。
 ## 11. 暗証番号メールのHTML化（Issue #906）
 - `renderCodeMail`（`gas/switchbot-access/SwitchBotAccessInfra.gs`）が `{ subject, body, htmlBody }` を返し、`sba_sendUserMail_` が `htmlBody` を `MailApp.sendEmail` に渡す（HTML + text/plain のマルチパート）。**件名・本文text・宛先・送信元名・replyTo/noReply・送信枠切れの扱い・再送/重複防止・配送記録は変更なし。** 文言の正本は text 版（従来文面を維持）で、HTML は同内容を表示するだけ。
 - HTML: 1列・表組み・インラインstyle。最上部に『入室用暗証番号』と大きな等幅数字、直下に『有効時間：開始〜終了（JST）』と『対象：施設（予約番号）』。注意3点と問い合わせ案内。変更通知の旧番号失効文言は `previousInvalidated===true` のときだけ『使用できません』と断言（従来どおり）。
-- 外部画像/CSS・リンク・トラッキング・スクリプトなし。差し込み値は全て `escapeHtml`。プレヘッダーは設けない（番号・予約IDを出さない）。ダークモードは `prefers-color-scheme`。Bookingの共有コードには依存しない（#902の仕様を参考にした独立実装）。
+- 外部画像/CSS・リンク・トラッキング・スクリプトなし。差し込み値は全て `escapeHtml`。本文冒頭に番号・予約ID・日時を含まない固定の非表示プレヘッダー（初回／変更で別文）を置き、受信トレイのスニペットに番号が出るリスクを下げる（全クライアントでの保証はできないため、iPhone Gmail受信トレイでの実機確認を受け入れ条件とする）。ダークモードは `prefers-color-scheme`。Bookingの共有コードには依存しない（#902の仕様を参考にした独立実装）。
 - **保護レベル**: 暗証番号は従来から本文textに載る。HTML版も同じ受信者・同じメール内に載せるだけで、件名・プレヘッダー・ログ・配送記録・状態に番号を出さない（テストで確認）。外部リソースを読まないため、開封追跡や番号の外部送出は増えない。
 - **反映経路（要・別判断）**: この変更は Booking GAS の full/public-only デプロイでは**反映されない**。独立GAS「SwitchBot Access Production」へ、`docs/switchbot-access-gas-deploy-768.md` の手動承認式ワークフロー（`workflow_dispatch`、既存Deploymentを更新、`ACCESS_ENABLED`・Properties・トリガー・Booking Admin/Publicの Deployment ID は変更しない）で運営者が反映する。マージ＝反映ではない。反映後に iPhone Gmail 実機確認（#906 受け入れ条件）。

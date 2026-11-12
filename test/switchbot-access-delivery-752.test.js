@@ -689,7 +689,15 @@ test('#906 HTML: 先頭に見出しと大きな等幅数字、直下に有効時
   assert.ok(h.indexOf('対象：' + H.DELIVERY_CFG.facilityLabel + '（予約番号 SNB-1）') !== -1);
   assert.strictEqual(a.subject.indexOf('12345678'), -1);
   assert.strictEqual(a.subject.indexOf('SNB-1'), -1);
-  assert.ok(!/display:none/.test(h), 'プレヘッダーを持たない（番号・予約IDを出さない）');
+  // レビュー(P2): 受信トレイのスニペットは本文冒頭から抽出される。安全な固定文を先頭に置き、番号・予約IDを含めない
+  var pre = h.match(/<body[^>]*><div style="display:none[^>]*>([\s\S]*?)<\/div>/);
+  assert.ok(pre, '本文冒頭に非表示プレヘッダー');
+  var preText = pre[1].replace(/&zwnj;|&nbsp;/g, '');
+  assert.ok(preText.length > 0 && preText.indexOf('12345678') === -1 && preText.indexOf('SNB-1') === -1 && !/\d{4}/.test(preText), 'プレヘッダー文面に番号・予約ID・日時を含めない');
+  assert.ok(h.indexOf('<body') < h.indexOf('display:none') && h.indexOf('display:none') < h.indexOf('12345678'), '番号より前にプレヘッダー');
+  var c = Infra.renderCodeMail({ code: '87654321', startSec: start, endSec: end, kind: 'CHANGE', previousInvalidated: true, bookingRef: 'SNB-9', settings: st });
+  var preC = c.htmlBody.match(/<body[^>]*><div style="display:none[^>]*>([\s\S]*?)<\/div>/)[1].replace(/&zwnj;|&nbsp;/g, '');
+  assert.ok(preC.length > 0 && preC.indexOf('87654321') === -1 && preC.indexOf('SNB-9') === -1 && c.subject.indexOf('87654321') === -1, '変更メールも同様');
   assert.ok(!/<img|<link|<script|<iframe|\bsrc=|href=|url\(|@import/i.test(h), '外部リソース・リンク・スクリプトなし');
   assert.ok(/name="color-scheme" content="light dark"/.test(h) && /max-width:600px/.test(h) && /name="viewport"/.test(h));
   assert.ok(!/キーボックス|物理キー|バックアップ|手動/.test(h));
