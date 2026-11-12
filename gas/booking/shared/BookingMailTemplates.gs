@@ -595,14 +595,22 @@ var BookingMailTemplates = (function () {
               '<td valign="top" style="padding:4px 0;font-size:16px;line-height:1.5;">' + escapeHtml_(r[1]) + '</td></tr>';
           }).join('') + '</table>');
       } else if (b.type === 'steps') {
+        /* Issue #901: 番号と見出しだけを横並びにし、説明・リンク・番号枠は全幅の縦積み（細い右列に長文を流さない）。 */
         b.items.forEach(function (s, i) {
-          parts.push('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;">' +
-            '<tr><td valign="top" width="36" style="padding:2px 10px 0 0;"><div style="width:30px;height:30px;line-height:30px;text-align:center;border:2px solid #0b57d0;border-radius:15px;font-size:16px;font-weight:bold;">' + (i + 1) + '</div></td>' +
-            '<td valign="top"><p style="margin:0 0 4px;font-size:17px;font-weight:bold;line-height:1.4;">' + escapeHtml_(s.title) + '</p>' +
+          parts.push('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;">' +
+            '<tr><td style="padding:0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>' +
+            '<td valign="middle" width="36" style="padding:0 10px 0 0;"><div style="width:30px;height:30px;line-height:30px;text-align:center;border:2px solid #0b57d0;border-radius:15px;font-size:16px;font-weight:bold;">' + (i + 1) + '</div></td>' +
+            '<td valign="middle"><p style="margin:0;font-size:17px;font-weight:bold;line-height:1.4;">' + escapeHtml_(s.title) + '</p></td></tr></table></td></tr>' +
+            '<tr><td style="padding:8px 0 0;">' +
             (s.lines || []).map(function (l) { return htmlParagraphs_(l); }).join('') +
-            (s.rows && s.rows.length ? '<table role="presentation" cellpadding="0" cellspacing="0" border="0">' + s.rows.map(function (r) {
-              return '<tr><td valign="top" style="padding:2px 10px 2px 0;font-size:14px;white-space:nowrap;" class="m-muted">' + escapeHtml_(r[0]) + '</td><td valign="top" style="padding:2px 0;font-size:16px;line-height:1.5;">' + escapeHtml_(r[1]) + '</td></tr>';
-            }).join('') + '</table>' : '') +
+            (s.rows || []).map(function (r) {
+              return '<p class="m-muted" style="margin:0;font-size:14px;line-height:1.5;">' + escapeHtml_(r[0]) + '</p>' +
+                '<p style="margin:0 0 8px;font-size:16px;line-height:1.6;">' + escapeHtml_(r[1]) + '</p>';
+            }).join('') +
+            (s.links || []).map(function (l) {
+              var lh = safeHttpsUrl_(l.url);
+              return lh ? '<p style="margin:0 0 8px;font-size:16px;line-height:1.6;"><a class="m-a" href="' + escapeHtml_(lh) + '" target="_blank" rel="noopener" style="color:#0b57d0;text-decoration:underline;font-weight:bold;">' + escapeHtml_(l.htmlLabel || l.label) + '</a></p>' : '';
+            }).join('') +
             (s.secret ? '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="m-box" style="margin:8px 0 0;border:2px solid #0b57d0;border-radius:8px;background-color:#eef3fd;color:#1a1a1a;"><tr><td style="padding:10px 12px;">' +
               '<p style="margin:0;font-size:14px;font-weight:bold;">' + escapeHtml_(s.secret.label) + '</p>' +
               '<p style="margin:2px 0 6px;font-size:24px;font-weight:bold;letter-spacing:2px;font-family:Menlo,Consolas,monospace;word-break:break-all;">' + escapeHtml_(s.secret.value) + '</p>' +
@@ -663,6 +671,7 @@ var BookingMailTemplates = (function () {
           lines.push((i + 1) + '. ' + s.title);
           (s.lines || []).forEach(function (l) { textLines_(l).forEach(function (x) { lines.push('   ' + x); }); });
           (s.rows || []).forEach(function (r) { lines.push('   ' + r[0] + ': ' + r[1]); });
+          (s.links || []).forEach(function (l) { var su = safeHttpsUrl_(l.url); if (su) lines.push('   ' + l.label + ': ' + su); });
           if (s.secret) {
             lines.push('   ' + s.secret.label + ': ' + s.secret.value);
             if (s.secret.note) lines.push('   ' + s.secret.note);
@@ -1184,6 +1193,14 @@ var BookingMailTemplates = (function () {
     if (guide.entrance) step1.rows.push(['入口からのご案内', guide.entrance]);
     var step2 = { title: '指定位置のキーボックスを開ける', lines: [], rows: [], secret: { label: 'キーボックス番号', value: guide.keyboxNumber ? guide.keyboxNumber : '（未設定）', note: keyboxNote } };
     if (guide.keyboxLocation) step2.rows.push(['キーボックス位置', guide.keyboxLocation]);
+    /* Issue #901: 詳細案内リンク・PDFはStep 2の中（位置説明の直後・番号枠の前）に置く。
+       リンク先（ACCESS_GUIDE_URL／ブランド別の利用案内ページ／ACCESS_GUIDE_PDF_URL）の内容は
+       このテンプレートでは保証できないため、「写真で確認」などリンク先の中身を約束するラベルにしない。 */
+    /* 運営者確認: 案内PDFはキーボックス位置を説明する資料なのでStep 2（位置の直後・番号枠の前）に置く。
+       PDF未設定なら架空の資料を示さず出さない。PDF内の写真の有無は未確認のため「写真で」とは断定しない。
+       利用案内ページは入室・退室を含む利用方法全般の案内なので、キーボックス専用の名称にせず、3ステップの後に独立して置く。 */
+    step2.links = [];
+    if (guide.pdfUrl) step2.links.push({ label: 'キーボックスの位置・行き方を確認（PDF）', url: guide.pdfUrl });
     var step3 = { title: '解錠して入室', lines: [], rows: [] };
     if (guide.entryMethod) step3.rows.push(['入室方法', guide.entryMethod]);
     if (!perBookingCode) {
@@ -1199,12 +1216,10 @@ var BookingMailTemplates = (function () {
     ];
     /* Issue #753: SNB＋ACCESS_KEY_NOTICE_ENABLED のときだけの一行（旧方式の暗証番号別送案内）。手順の直下に置く。 */
     if (separateCodeLine) blocks.push({ type: 'p', text: separateCodeLine });
-    var detailLinks = [];
-    if (reminderGuideUrl) detailLinks.push({ label: '利用案内ページ', htmlLabel: '写真つきの詳しい案内を見る（利用案内ページ）', url: reminderGuideUrl });
-    if (guide.pdfUrl) detailLinks.push({ label: '案内PDF', htmlLabel: '案内PDFを開く', url: guide.pdfUrl });
-    blocks.push({ type: 'heading', text: 'キーボックスの場所が分かりにくいとき' });
-    blocks.push({ type: 'p', text: '下記の案内で、キーボックスの位置や入口までの道順をご確認ください。' });
-    blocks.push({ type: 'links', items: detailLinks });
+    if (reminderGuideUrl) {
+      blocks.push({ type: 'heading', text: '利用案内' });
+      blocks.push({ type: 'links', items: [{ label: '利用案内ページ', htmlLabel: '写真つきの詳しい案内を見る（利用案内ページ）', url: reminderGuideUrl }] });
+    }
     blocks.push(
       { type: 'heading', text: 'ご退室時' },
       { type: 'p', text: '施錠し、鍵を使った場合は元の場所へ戻して、備品は原状に戻してください。' },

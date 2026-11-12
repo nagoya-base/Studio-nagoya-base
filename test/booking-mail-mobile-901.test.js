@@ -92,7 +92,7 @@ test('来場案内: 住所・建物・部屋・地図・3ステップ・退室�
   var m = T.buildReminderMail(rec(), CONFIG, GUIDE, { now: JST('2026-11-12T08:53:00'), perBookingCode: true });
   ['住所: 愛知県名古屋市中区テスト1-2-3', '建物: テストビル', '部屋番号: 101', '1. 建物の正面入口へ', '2. 指定位置のキーボックスを開ける',
     '3. 解錠して入室', 'キーボックス位置: エレベーター脇の壁面', 'キーボックス番号: KB-DUMMY-1', '入室方法: キーボックスの鍵で解錠',
-    '利用案内ページ: https://example.com/how-to/', '案内PDF: https://example.com/guide.pdf', '施錠し、鍵を使った場合は元の場所へ戻して'
+    '利用案内ページ: https://example.com/how-to/', 'キーボックスの位置・行き方を確認（PDF）: https://example.com/guide.pdf', '施錠し、鍵を使った場合は元の場所へ戻して'
   ].forEach(function (s) { assert.ok(m.body.indexOf(s) !== -1, s); });
   assert.match(m.body, /https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=/);
   assert.match(m.body, /これは鍵を保管する箱の番号です。入室用の暗証番号（別メール）とは別の番号です。/);
@@ -161,4 +161,37 @@ test('日付が解釈できない予約でも件名が壊れない（日時部�
   var m = T.buildConfirmedMail(rec({ date: 'invalid', startAt: '', endAt: '' }), CONFIG);
   assert.strictEqual(m.subject, '【SNB】予約確定');
   assert.doesNotMatch(m.body + m.htmlBody, /undefined|NaN|GMT/);
+});
+
+test('来場案内: Step 2に位置→PDF→番号の順で集約。利用案内ページは3ステップ後に独立（キーボックス専用の名称にしない）', function () {
+  var m = T.buildReminderMail(rec(), CONFIG, GUIDE, { now: JST('2026-11-12T08:53:00'), perBookingCode: true });
+  var t = m.body;
+  var i2 = t.indexOf('2. 指定位置のキーボックスを開ける'), i3 = t.indexOf('3. 解錠して入室');
+  ['キーボックス位置:', 'キーボックスの位置・行き方を確認（PDF）:', 'キーボックス番号:'].reduce(function (prev, label) {
+    var at = t.indexOf(label);
+    assert.ok(at > prev && at < i3, label);
+    return at;
+  }, i2);
+  assert.doesNotMatch(t + m.htmlBody, /分かりにくいとき/);
+  assert.ok(t.indexOf('利用案内ページ: https://example.com/how-to/') > i3, '利用案内ページは3ステップの後');
+  assert.match(m.htmlBody, /写真つきの詳しい案内を見る（利用案内ページ）/);
+  assert.strictEqual(t.split('https://example.com/how-to/').length, 2, 'リンクは重複しない');
+});
+
+test('来場案内: PDF未設定なら架空の資料を示さず、PDFリンク・文言を出さない', function () {
+  var g = Object.assign({}, GUIDE); delete g.pdfUrl;
+  var m = T.buildReminderMail(rec(), CONFIG, g, { now: JST('2026-11-12T08:53:00'), perBookingCode: true });
+  assert.doesNotMatch(m.body + m.htmlBody, /PDF/);
+  assert.match(m.body, /利用案内ページ: https:\/\/example\.com\/how-to\//);
+});
+
+test('HTML: 手順の説明・リンク・番号枠は番号列の外（全幅）。番号横の細い右列に長文を入れない', function () {
+  var m = T.buildReminderMail(rec(), CONFIG, GUIDE, { now: JST('2026-11-12T08:53:00'), perBookingCode: true });
+  var h = m.htmlBody;
+  var loc = h.indexOf('エレベーター脇の壁面');
+  var rowStart = h.lastIndexOf('<table', h.lastIndexOf('指定位置のキーボックスを開ける'));
+  var headerEnd = h.indexOf('</table>', h.indexOf('指定位置のキーボックスを開ける'));
+  assert.ok(loc > headerEnd, '位置の説明は見出し行の表の外にある');
+  assert.ok(rowStart >= 0);
+  assert.doesNotMatch(h, /white-space:nowrap;"[^>]*>キーボックス位置/);
 });
