@@ -1138,7 +1138,7 @@ var BookingMailTemplates = (function () {
     if (guide.entrance) step1.rows.push(['入口からのご案内', guide.entrance]);
     var step2 = { title: '指定位置のキーボックスを開ける', lines: [], rows: [], secret: { label: 'キーボックス番号', value: guide.keyboxNumber ? guide.keyboxNumber : '（未設定）', note: keyboxNote } };
     if (guide.keyboxLocation) step2.rows.push(['キーボックス位置', guide.keyboxLocation]);
-    var step3 = { title: '鍵で解錠して入室', lines: [], rows: [] };
+    var step3 = { title: '解錠して入室', lines: [], rows: [] };
     if (guide.entryMethod) step3.rows.push(['入室方法', guide.entryMethod]);
     if (!perBookingCode) {
       step3.secret = { label: '解錠コード', value: guide.unlockCode ? guide.unlockCode : '（未設定）', note: '' };
@@ -1161,7 +1161,7 @@ var BookingMailTemplates = (function () {
     blocks.push({ type: 'links', items: detailLinks });
     blocks.push(
       { type: 'heading', text: 'ご退室時' },
-      { type: 'p', text: '施錠して鍵をキーボックスへ戻し、備品は原状に戻してください。' },
+      { type: 'p', text: '施錠し、鍵を使った場合は元の場所へ戻して、備品は原状に戻してください。' },
       { type: 'heading', text: 'ご予約情報・お問い合わせ' },
       { type: 'kv', rows: [['予約ID', record.bookingId], ['ブランド', brandLabel]] }
     );
