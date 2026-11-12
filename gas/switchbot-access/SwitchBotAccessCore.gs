@@ -66,6 +66,9 @@ var SwitchBotAccessCore = (function () {
 
   var OP = { ISSUE: 'ISSUE', REVOKE: 'REVOKE' };
 
+  /** 同期内の高速確認（#918）で ISSUED_CONFIRMED にしたときの履歴 basis（固定列挙。T1〜T3 は追加確認の順番）。 */
+  var IN_RUN_BASIS = ['IN_RUN_T1', 'IN_RUN_T2', 'IN_RUN_T3'];
+
   /**
    * 配送（暗証番号案内メール）の状態（Issue #752）。発行 record（OP_）とは別の DLV_<OP id> に永続化する。
    *   SENDING   … 外部送信の直前に永続化。この状態で再開したら送信済みか不明 → UNKNOWN（再送しない）
@@ -448,6 +451,41 @@ var SwitchBotAccessCore = (function () {
         var before = rec.reads || 0;
         var after = reconcileIssue(rec);
         out = { state: after.state, readsUsed: (after.reads || 0) - before };
+      });
+      return out;
+    }
+
+    /**
+     * commandId なしで受理された発行（ACCEPTED_NO_COMMAND_ID）1件を、呼び出し側が取得済みの keyList スナップショット1つだけで確認する
+     * （Issue #918。同一同期実行内の高速確認用）。API は一切呼ばない（変更 API も listDevices も）。
+     *
+     * 通常の reconcileIssue との違い（意図的）:
+     *  - 確認できた（厳密に1件・ID あり・属性矛盾なしの judgeIssued 成功）場合だけ ISSUED_CONFIRMED へ進める。
+     *  - 未検出・重複・欠損・属性矛盾・不正応答は「何も変えない」。UNKNOWN／FAILED へは遷移させず、通知もしない
+     *    （異常の判定と停止は、従来どおり次回同期の通常読取＝reconcileIssue に委ねる）。
+     *  - rec.reads は増減しない（maxReads・READ_LIMIT・削除側の読取に影響しない）。
+     * basis は履歴の固定列挙（IN_RUN_T1/T2/T3）。確認の証拠は通常どおり KEYLIST_CONFIRMED（keyList 由来）。
+     * 戻り値: { state, confirmed, reason }（reason は固定コード。record が無ければ state:null）。
+     */
+    function confirmIssueFromSnapshot(recId, devices, basis) {
+      var out = { state: null, confirmed: false, reason: null };
+      if (IN_RUN_BASIS.indexOf(basis) === -1) { out.reason = 'BASIS_INVALID'; return out; }
+      var head = load(recKey(recId));
+      if (!head) { out.reason = 'RECORD_MISSING'; return out; }
+      out.state = head.state;
+      if (head.state !== STATE.ACCEPTED_NO_COMMAND_ID || head.op !== OP.ISSUE) { out.reason = 'NOT_ELIGIBLE'; return out; }
+      deps.lock(['BOOKING_' + head.bookingId, 'DEV_' + head.deviceId], function () {
+        var rec = load(recKey(recId));
+        if (!rec || rec.state !== STATE.ACCEPTED_NO_COMMAND_ID || rec.op !== OP.ISSUE) { out.state = rec ? rec.state : null; out.reason = 'NOT_ELIGIBLE'; return; }
+        var j = judgeIssued(inspectKeyList(devices, rec.deviceId, rec.name), rec);
+        if (!j.ok) { out.state = rec.state; out.reason = j.error; return; }
+        rec.passcodeId = j.id; // 通常確認と同じく生の型を保持
+        rec.passcodeIdType = j.idType;
+        rec.evidence = rec.evidence || [];
+        rec.evidence.push(EVIDENCE.KEYLIST_CONFIRMED);
+        transition(rec, STATE.ISSUED_CONFIRMED, basis);
+        out.state = rec.state;
+        out.confirmed = true;
       });
       return out;
     }
@@ -1216,14 +1254,14 @@ var SwitchBotAccessCore = (function () {
     }
 
     return {
-      sync: sync, reconcileIssueOnly: reconcileIssueOnly, ingestWebhook: ingestWebhook, deliver: deliver, deliveryDue: deliveryDue, sweep: sweep, reconcilePending: reconcilePending, adminResolveDelivery: adminResolveDelivery,
+      sync: sync, reconcileIssueOnly: reconcileIssueOnly, confirmIssueFromSnapshot: confirmIssueFromSnapshot, ingestWebhook: ingestWebhook, deliver: deliver, deliveryDue: deliveryDue, sweep: sweep, reconcilePending: reconcilePending, adminResolveDelivery: adminResolveDelivery,
       adminInspect: adminInspect, adminReconcile: adminReconcile, adminResolveUnknown: adminResolveUnknown, adminDelete: adminDelete,
       inventory: inventory
     };
   }
 
   return {
-    STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, TERMINAL: TERMINAL, EARLY_PURGE_GRACE_SEC: EARLY_PURGE_GRACE_SEC, headEndSec: headEndSec, DLV: DLV, DELIVERY_DECISIONS: DELIVERY_DECISIONS,
+    STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, IN_RUN_BASIS: IN_RUN_BASIS, TERMINAL: TERMINAL, EARLY_PURGE_GRACE_SEC: EARLY_PURGE_GRACE_SEC, headEndSec: headEndSec, DLV: DLV, DELIVERY_DECISIONS: DELIVERY_DECISIONS,
     maskId: maskId, jstToEpochSec: jstToEpochSec, resolveKeypad: resolveKeypad, validatePasscode: validatePasscode,
     evaluateEligibility: evaluateEligibility, inspectKeyList: inspectKeyList, inspectAbsence: inspectAbsence, normDev: normDev, judgeIssued: judgeIssued, classifyId: classifyId,
     parseKeypadWebhook: parseKeypadWebhook, classifyApi: classifyApi, createEngine: createEngine

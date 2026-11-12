@@ -65,6 +65,17 @@ var SwitchBotAccessInfra = (function () {
   var IN_RUN_CONFIRM_MAX_SEC_LIMIT = 60;
   /** 反映確認の確認間隔（ミリ秒）。待機中は状態ストアの読取だけで、SwitchBot API は Webhook 着後の keyList 読取1回のみ。 */
   var IN_RUN_POLL_MS = 3000;
+  /**
+   * commandId なし発行の高速 keyList 確認（#918）。待機ループ開始からの経過秒で、最大3回だけ keyList を追加読取する（固定。設定項目は作らない）。
+   * 各回は inRunConfirmMaxSec 以内のものだけ（45秒設定なら +10/+25/+45、30秒設定なら +10/+25）。
+   */
+  var IN_RUN_FAST_TICKS_SEC = [10, 25, 45];
+  /** 予定時刻より遅れて起きた場合に、その回を実施してよい遅れの上限。超えたら読まずに従来の次回同期へ（期限境界で無理に呼ばない）。 */
+  var IN_RUN_FAST_LATE_MS = 5000;
+  /** 高速読取を実施するのに必要な、実行時間上限（runBudgetSec）の残り。足りなければ実施せず後段の通常処理に時間を残す。 */
+  var IN_RUN_FAST_MIN_REMAIN_MS = 15000;
+  /** 高速読取は日次API予算の残りがこの割合を切ったら行わない（既存の通常業務へ予算を残す）。 */
+  var IN_RUN_FAST_BUDGET_RESERVE = 0.2;
 
   var REF_RE = /^[A-Za-z0-9._-]{1,64}$/;
   var CODE_RE = /^[A-Z][A-Z0-9_]{2,47}$/;
@@ -519,7 +530,8 @@ var SwitchBotAccessInfra = (function () {
       function emptyRow(branch, reasons) {
         return Object.assign({}, base, {
           branch: branch, state: null, delivery: null, obs: null, sent: null, sentAck: null, webhook: null, confirmed: null,
-          sendStart: null, sendCall: null, gateOpen: null, postGateDelay: null, sendCycles: null, reasons: reasons
+          sendStart: null, sendCall: null, gateOpen: null, postGateDelay: null, sendCycles: null, reasons: reasons,
+          hasCommandId: null, reads: null, evidence: null, basis: null
         });
       }
       // 台帳に同じIDが複数ある場合は、状態の有無にかかわらず誤結合を避けて未照合にする（NO_RECORD より優先）
@@ -582,12 +594,17 @@ var SwitchBotAccessInfra = (function () {
         else if (sendingAt !== null && doneAt !== null && doneAt >= sendingAt) row.sendCall = doneAt - sendingAt;
 
         if (useT0) {
-          var confirmedAbs = null, sendingKeyAt = null;
+          var confirmedAbs = null, sendingKeyAt = null, confirmedBasis; // confirmedBasis: undefined=未確認
           (Array.isArray(op.history) ? op.history : []).forEach(function (e) {
             if (!e || num(e.at) === null) return;
             if (e.to === Core.STATE.SENDING && sendingKeyAt === null) sendingKeyAt = e.at; // createKey 呼出の直前に永続化される（リクエスト開始側）
-            if (e.to === Core.STATE.ISSUED_CONFIRMED && confirmedAbs === null) confirmedAbs = e.at;
+            if (e.to === Core.STATE.ISSUED_CONFIRMED && confirmedAbs === null) { confirmedAbs = e.at; confirmedBasis = e.basis; }
           });
+          // 確認方法の判別（#918）。固定列挙・件数のみ（commandId・recId・絶対時刻は出さない）。basis=確認時の履歴の固定列挙（高速確認 IN_RUN_T1〜T3 / 従来の周期確認 PERIODIC）
+          row.hasCommandId = !!op.commandId;
+          row.reads = num(op.reads) !== null ? Math.max(0, Math.min(99, Math.floor(op.reads))) : null;
+          row.evidence = Array.isArray(op.evidence) ? Object.keys(Core.EVIDENCE).map(function (k) { return Core.EVIDENCE[k]; }).filter(function (v) { return op.evidence.indexOf(v) !== -1; }) : null;
+          row.basis = confirmedBasis === undefined ? null : (Core.IN_RUN_BASIS.indexOf(confirmedBasis) !== -1 ? confirmedBasis : 'PERIODIC');
           var evt = op.commandId && op.deviceId ? load('EVT_' + Core.normDev(op.deviceId) + '_createKey_' + op.commandId) : null;
           row.obs = relTo(obsOf(reasons), reasons);
           row.sent = relTo(sendingKeyAt, reasons);        // createKey リクエスト開始（SENDING の永続化）
@@ -2215,9 +2232,53 @@ var SwitchBotAccessInfra = (function () {
     }
 
     /**
+     * commandId なし発行の高速 keyList 確認の1回分（#918）。待機ループから呼ばれる。未確認で残る対象 id を返す。
+     *  - 予定時刻（t0+10/25/45秒）に達した回だけ実施。遅れすぎ・実行時間の残り不足・日次API予算の残り不足・ロック未保持は読まずに見送る（その回は消費済み）。
+     *  - listDevices は1回/回。取得した1スナップショットで、全対象鍵をまとめて照合する（鍵の数に比例して呼ばない）。
+     *  - 確認は Core.confirmIssueFromSnapshot のみ（厳密一致だけ ISSUED_CONFIRMED。未検出・曖昧・API失敗は何も変えない。reads・UNKNOWN・FAILED に触れない）。
+     *  - 例外・API失敗は従来の次回同期へ戻す。状態保存の失敗は SYNC_ERROR として通知する（隠さない）。
+     */
+    function fastBlocked(atMs, startedMs) {
+      if (atMs + IN_RUN_FAST_MIN_REMAIN_MS > startedMs + ic.runBudgetSec * 1000) return 'TIME_BUDGET';
+      if (!lockDomain.isHeld()) return 'LOCK_NOT_HELD';
+      try {
+        if (budget.used() >= ic.apiDailyBudget * (1 - IN_RUN_FAST_BUDGET_RESERVE)) return 'API_BUDGET_LOW';
+      } catch (eB) { return 'API_BUDGET_UNKNOWN'; }
+      return null;
+    }
+
+    function runFastTick(ticks, fastPending, startedMs, res) {
+      var now = deps.nowMs();
+      var due = ticks.filter(function (t) { return !t.done && t.at <= now; });
+      if (!due.length) return fastPending;
+      due.forEach(function (t) { t.done = true; }); // 遅れて起きても複数回分を1回に畳む（最大3回/run）
+      var tick = due[0];
+      var fast = res.fast;
+      function skip(code) { if (!fast.skipped) fast.skipped = code; return fastPending; }
+      if (now - tick.at > IN_RUN_FAST_LATE_MS) return skip('TICK_LATE');
+      var blocked = fastBlocked(now, startedMs);
+      if (blocked) { ticks.forEach(function (t) { t.done = true; }); return skip(blocked); } // 時間・予算・ロックの不足は後続の回でも解消しない
+      var snap;
+      fast.ticks++;
+      try { snap = api.listDevices(); } catch (eL) { snap = null; }
+      if (!snap || snap.ok !== true || !Array.isArray(snap.devices)) { if (!fast.skipped) fast.skipped = 'LIST_FAILED'; return fastPending; }
+      var basis = 'IN_RUN_T' + tick.n;
+      var left = [];
+      fastPending.forEach(function (id) {
+        var c;
+        try { c = engine.confirmIssueFromSnapshot(id, snap.devices, basis); }
+        catch (eC) { infraAlert('SYNC_ERROR', null, null, null); return; } // 状態保存の失敗等。通知して、この鍵は従来の次回同期に任せる
+        if (c.confirmed) { fast.confirmed++; res.confirmed++; }
+        else if (c.state === Core.STATE.ACCEPTED_NO_COMMAND_ID) left.push(id); // 未検出・曖昧・属性矛盾: 変更せず、次の回／従来の次回同期（通常の異常判定）へ
+      });
+      return left;
+    }
+
+    /**
      * 同期実行内の高速化（#893）。ロックを保持したまま、今回の実行が発行した鍵だけを対象にする。
      *  b. SENT_WAIT_WEBHOOK の鍵を、上限つきで短時間確認する（待機中は drainInbox で退避受信を取り込み、発行 record だけを再照合）。
      *     未確認なら何もせず従来の次回同期へ戻す。UNKNOWN/FAILED の鍵へ createKey は再送しない（再照合は読取のみ）。
+     *  b'. commandId なしで受理された鍵（ACCEPTED_NO_COMMAND_ID）を、待機ループ開始から +10/+25/+45秒（最大3回・listDevices は1回/回）の keyList 追加確認で早める（#918。runFastTick）。
      *  c. 今回の実行で ISSUED_CONFIRMED になった鍵だけ、配送ジョブと同じ安全な配送処理を試みる。
      * どちらも既定は無効（infra.inRunConfirmMaxSec=0 / infra.inRunDeliver=false）。戻り値は無効時 null。
      */
@@ -2231,31 +2292,58 @@ var SwitchBotAccessInfra = (function () {
       opsBefore.forEach(function (r) { if (r.state === Core.STATE.ISSUED_CONFIRMED) wasConfirmed[r.id] = true; });
 
       if (waitOn) {
-        var pending = scanOps(deps.store).filter(function (r) {
-          return r.op === Core.OP.ISSUE && r.state === Core.STATE.SENT_WAIT_WEBHOOK && typeof r.sentAtSec === 'number' &&
-            r.sentAtSec >= startedSec && syncedBookings[String(r.bookingId)] === true;
-        }).map(function (r) { return r.id; });
+        var targets = scanOps(deps.store).filter(function (r) {
+          return r.op === Core.OP.ISSUE && typeof r.sentAtSec === 'number' && r.sentAtSec >= startedSec && syncedBookings[String(r.bookingId)] === true;
+        });
+        // Webhook あり（#893）: SENT_WAIT_WEBHOOK。commandId なし（#918）: ACCEPTED_NO_COMMAND_ID（今回の実行で送信し、API応答直後の通常読取で未確認のもの）
+        var pending = targets.filter(function (r) { return r.state === Core.STATE.SENT_WAIT_WEBHOOK; }).map(function (r) { return r.id; });
+        var fastPending = targets.filter(function (r) { return r.state === Core.STATE.ACCEPTED_NO_COMMAND_ID; }).map(function (r) { return r.id; });
         res.pending = pending.length;
-        if (pending.length && typeof deps.sleep !== 'function') { res.waitSkipped = 'SLEEP_UNAVAILABLE'; }
-        else if (pending.length) {
-          // 待機の終わり = 設定秒数と、同期全体の実行時間上限（runBudgetSec）の早いほう
-          var deadline = Math.min(deps.nowMs() + ic.inRunConfirmMaxSec * 1000, startedMs + ic.runBudgetSec * 1000);
+        if (fastPending.length) res.fast = { targets: fastPending.length, ticks: 0, confirmed: 0, skipped: null };
+        if ((pending.length || fastPending.length) && typeof deps.sleep !== 'function') { res.waitSkipped = 'SLEEP_UNAVAILABLE'; }
+        else if (pending.length || fastPending.length) {
+          // 待機の終わり = 設定秒数と、同期全体の実行時間上限（runBudgetSec）の早いほう。待機ループ開始時刻 t0 を高速確認の起点にする
+          var t0 = deps.nowMs();
+          var deadline = Math.min(t0 + ic.inRunConfirmMaxSec * 1000, startedMs + ic.runBudgetSec * 1000);
+          // 高速確認の予定（最大3回。予定時刻が期限を超える回は作らない）。実施・見送りのどちらでも、その回は消費済みにする
+          var ticks = IN_RUN_FAST_TICKS_SEC.map(function (s, n) { return { n: n + 1, at: t0 + s * 1000, done: false }; })
+            .filter(function (t) { return t.at <= deadline; });
           var guard = 0;
-          while (pending.length && guard++ < 1000) {
-            drainInbox(); // doPost がロック待ち超過で退避した Webhook を、到着時刻を保ったまま取り込む
-            var still = [];
-            pending.forEach(function (id) {
-              var r;
-              try { r = engine.reconcileIssueOnly(id); } catch (e) { infraAlert('SYNC_ERROR', null, null, null); return; }
-              if (r.state === Core.STATE.ISSUED_CONFIRMED) res.confirmed++;
-              else if (r.state === Core.STATE.SENT_WAIT_WEBHOOK && r.readsUsed === 0) still.push(id); // Webhook 未着: 引き続き待つ
-              // それ以外（UNKNOWN/FAILED=通知済み、keyList 読取失敗=reads 消費済み）は待機を打ち切り、次回同期の既存処理に任せる
-            });
-            pending = still;
-            if (!pending.length || deps.nowMs() + IN_RUN_POLL_MS > deadline) break;
-            deps.sleep(IN_RUN_POLL_MS);
+          while ((pending.length || (fastPending.length && ticks.some(function (t) { return !t.done; }))) && guard++ < 1000) {
+            if (pending.length) {
+              drainInbox(); // doPost がロック待ち超過で退避した Webhook を、到着時刻を保ったまま取り込む
+              var still = [];
+              pending.forEach(function (id) {
+                var r;
+                try { r = engine.reconcileIssueOnly(id); } catch (e) { infraAlert('SYNC_ERROR', null, null, null); return; }
+                if (r.state === Core.STATE.ISSUED_CONFIRMED) res.confirmed++;
+                else if (r.state === Core.STATE.SENT_WAIT_WEBHOOK && r.readsUsed === 0) still.push(id); // Webhook 未着: 引き続き待つ
+                // それ以外（UNKNOWN/FAILED=通知済み、keyList 読取失敗=reads 消費済み）は待機を打ち切り、次回同期の既存処理に任せる
+              });
+              pending = still;
+            }
+            if (fastPending.length) fastPending = runFastTick(ticks, fastPending, startedMs, res);
+            var nowMs = deps.nowMs();
+            var nextTick = null;
+            if (fastPending.length) ticks.forEach(function (t) { if (!t.done && nextTick === null) nextTick = t.at; });
+            if (!pending.length && nextTick === null) break;
+            // 次に起きる時刻: Webhook 待ちがあれば従来の確認間隔、高速確認の予定があればその時刻の早いほう
+            var sleepMs = pending.length ? IN_RUN_POLL_MS : Infinity;
+            if (nextTick !== null) {
+              // 次の回が時間・API予算・ロックの不足で実施できないと分かっていれば、その回のために待たない（ロックを無駄に保持しない）
+              var blockedNext = fastBlocked(nextTick, startedMs);
+              if (blockedNext) {
+                ticks.forEach(function (t) { t.done = true; });
+                if (!res.fast.skipped) res.fast.skipped = blockedNext;
+                nextTick = null;
+                if (!pending.length) break;
+              } else sleepMs = Math.min(sleepMs, Math.max(0, nextTick - nowMs));
+            }
+            if (nowMs + sleepMs > deadline) break;
+            try { deps.sleep(sleepMs); } catch (eSleep) { res.waitSkipped = 'SLEEP_FAILED'; break; } // 待機できなければ従来の次回同期へ
           }
           res.unconfirmed = pending.length;
+          if (res.fast) res.fast.unconfirmed = fastPending.length;
         }
       }
 
