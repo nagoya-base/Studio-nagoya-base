@@ -390,6 +390,38 @@ function sba_inventoryStage_(st, dl) {
   if (SBA_INV_ENDED_.indexOf(st) !== -1) return 'ENDED';
   return 'OTHER';
 }
+// ── 発行タイムライン診断（#916。読取専用の一時的な計測ツール。エディタから引数なしで手動実行する管理者専用関数）──
+// 予約確定(confirmedAt)から初観測・createKey送信・Webhook到着・登録確認・配送の送信呼出までの経過秒を、直近に確定した最大10件で出す。
+// 副作用なし: 状態ストアは get のみ（set/del/keys は例外）、SwitchBot API・メール・ロック・トリガー・Properties書込は使わない。
+// 外部への読取は台帳（Sheets API の GET）のみ。既存の admin()／runLocked／drainInbox／createRuntime は通らない（HB_ADMIN 等を書くため）。
+// 出力は相対秒・順位・種別・固定コードの1行JSONだけ。予約ID・recId・氏名・メール・PIN・deviceId・commandId・絶対日時は出さない。
+// 管理者ローカルのみ。公開Issueへは行番号・層・相対秒・理由コードだけを転記する（手順: docs/switchbot-access-timeline-916.md）。
+function sba_timelineStore_() {
+  var props = sba_scriptProps_();
+  var denied = function () { throw new Error('READ_ONLY_STORE'); };
+  return { get: function (k) { return props.getProperty(k); }, set: denied, del: denied, keys: denied };
+}
+
+function accessTimelineDiag() {
+  var out;
+  try {
+    sba_requireAdmin_();
+    var ds = SwitchBotAccessInfra.deliverySettings(sba_config_());
+    out = SwitchBotAccessInfra.timelineReport({
+      store: sba_timelineStore_(), ledger: sba_ledger_(), snapshot: AccessKeySnapshot,
+      nowMs: function () { return Date.now(); },
+      gateHours: ds ? ds.startHoursBeforeDay : null,
+      isCard: function (m) { return Booking.isCardPaymentMethod(m); }
+    });
+  } catch (e) {
+    out = { ok: false, error: e && e.message === 'NOT_AUTHORIZED' ? 'NOT_AUTHORIZED' : 'UNEXPECTED_ERROR' }; // 例外本文は出さない
+  }
+  var line;
+  try { line = JSON.stringify(out); } catch (e2) { out = { ok: false, error: 'UNEXPECTED_ERROR' }; line = JSON.stringify(out); }
+  Logger.log('accessTimelineDiag ' + line);
+  return out;
+}
+
 function accessAdminInspect(recId) { return sba_runtime_().admin('inspect', { recId: recId }); }
 function accessAdminReconcile(recId) { return sba_runtime_().admin('reconcile', { recId: recId }); }
 function accessAdminResolveUnknown(recId, decision) { return sba_runtime_().admin('resolveUnknown', { recId: recId, decision: decision }); }
