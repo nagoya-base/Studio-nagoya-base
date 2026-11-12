@@ -763,7 +763,7 @@ test('失効と決済成功の競合: 実際の入金を記録し、予約は復
   assert.strictEqual(liveEvents(ctx).length, 0, 'Calendarの枠も復活させない');
   assert.ok(r.paymentRecoveryRequiredAt);
   assert.ok(mailsTo(ctx, 'admin@example.com').some(function (m) { return /入金済みですが予約を確定できませんでした/.test(m.subject); }));
-  assert.ok(!mailsTo(ctx, 'taro@example.com').some(function (m) { return /予約が確定しました/.test(m.subject); }), '確定メールを送らない');
+  assert.ok(!mailsTo(ctx, 'taro@example.com').some(function (m) { return /予約確定｜|予約確定$/.test(m.subject); }), '確定メールを送らない');
 
   /* 取消時の「返金なし」相当の操作だけでは解消できない。 */
   assert.strictEqual(ctx.sandbox.resolveBookingPaymentRecovery(BOOKING_ID, '確認').error.code, 'RECOVERY_REFUND_DECISION_REQUIRED');

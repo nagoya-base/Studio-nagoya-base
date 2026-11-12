@@ -467,6 +467,227 @@ var BookingMailTemplates = (function () {
     return { subject: subject, body: body };
   }
 
+  /* ===== スマホ向けメールの共通レンダラ（Issue #901） =====
+   * 予約確定メール・来場案内メールだけが使う。同じ「ブロック列」から text/plain と HTML を
+   * 同時に作るため、HTML版とテキスト版で必要事項（日時・場所・手順・リンク）がずれない。
+   * 外部画像・トラッキング・外部CSS・スクリプトは使わない。差し込む値はすべてHTMLエスケープし、
+   * https以外のURLはリンクにしない。キーボックス番号などの秘密値は、呼び出し側が渡した
+   * 値だけを描画する（ここでは取得・ログ出力・推測をしない）。 */
+  function escapeHtml_(value) {
+    return String(value === null || value === undefined ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function safeHttpsUrl_(value) {
+    var url = String(value === null || value === undefined ? '' : value).trim();
+    return /^https:\/\/[^\s<>"']+$/.test(url) ? url : '';
+  }
+
+  function textLines_(value) {
+    return String(value).split('\n');
+  }
+
+  function htmlParagraphs_(value, style) {
+    return textLines_(value).map(function (line) {
+      return '<p style="margin:0 0 8px;' + (style || '') + '">' + escapeHtml_(line) + '</p>';
+    }).join('');
+  }
+
+  /* 「11/12(木)」形式（件名用）。日付が解釈できなければ空文字（件名から日付部分を省く）。 */
+  function shortDateLabel_(record, timezone) {
+    var ja = BookingAvailability.formatDateJa(record.date, timezone);
+    var m = /(\d+)月(\d+)日（(.)）/.exec(ja);
+    return m ? m[1] + '/' + m[2] + '(' + m[3] + ')' : '';
+  }
+
+  function startTimeLabel_(record, timezone) {
+    var t = formatTime_(record.startAt, timezone);
+    return t ? t.replace(/^0(\d:)/, '$1') : '';
+  }
+
+  /* 件名の日時部分。例: 「11/12(木) 9:30–10:30」。開始/終了が取れないときは取れた分だけ。 */
+  function subjectWhenLabel_(record, timezone, withEnd) {
+    var date = shortDateLabel_(record, timezone);
+    var start = startTimeLabel_(record, timezone);
+    var end = withEnd ? formatTime_(record.endAt, timezone).replace(/^0(\d:)/, '$1') : '';
+    var time = start ? (end ? start + '–' + end : start) : '';
+    return [date, time].filter(Boolean).join(' ');
+  }
+
+  function addDaysYmd_(ymd, days) {
+    var p = String(ymd).split('-');
+    if (p.length !== 3) return '';
+    var d = new Date(Date.UTC(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10) + days));
+    return BookingAvailability.formatDateInTimezone(d, 'UTC') || '';
+  }
+
+  function useDateYmd_(record, timezone) {
+    return record.date && typeof record.date.getTime === 'function'
+      ? BookingAvailability.formatDateInTimezone(record.date, timezone)
+      : String(record.date || '');
+  }
+
+  /* 利用日と送信時点の関係: 'today' | 'tomorrow' | 'later'（過去日・解釈不能も 'later'）。timezone基準。 */
+  function useDateRelation_(record, timezone, now) {
+    var today = BookingAvailability.formatDateInTimezone(now, timezone);
+    var use = useDateYmd_(record, timezone);
+    if (!today || !use) return 'later';
+    if (use === today) return 'today';
+    if (use === addDaysYmd_(today, 1)) return 'tomorrow';
+    return 'later';
+  }
+
+  function hourInTimezone_(now, timezone) {
+    var t = BookingAvailability.formatTimeInTimezone(now, timezone);
+    var h = t ? parseInt(String(t).split(':')[0], 10) : NaN;
+    return Number.isFinite(h) ? h : null;
+  }
+
+  /*
+   * 予約別暗証番号（Access GASが別メールで送る）の案内文。送信時点と利用日の関係で説明を切り替え、
+   * 「前日18時以降」という固定案内を当日予約・18時を過ぎた翌日予約へ機械的に出さない（Issue #901）。
+   * - 当日: 前日の配信を待たず、発行でき次第送る（#753 当日予約の即時処理）。
+   * - 前日18時以降に確定した翌日予約（確定メールのみ）: 配信開始時刻を過ぎているため、発行でき次第。
+   * - それ以外: 従来の3行（#881）をそのまま使う。
+   * 送付済みとは断定しない。旧共通暗証番号はこの案内と同じメールに出さない。
+   */
+  function perBookingCodeNoticeLines_(record, timezone, now, context) {
+    var intro = '入室用の暗証番号は、ご予約ごとに専用の番号を発行し、このメールとは別のメールでお送りします。';
+    var missing = '暗証番号のメールが届かない場合は、このメールにご返信ください。';
+    var relation = useDateRelation_(record, timezone, now);
+    if (relation === 'today') {
+      return [intro, 'ご利用当日のご予約のため、発行でき次第お送りします。すでに届いている場合は、そちらをご確認ください。', missing];
+    }
+    if (relation === 'tomorrow' && context === 'confirmed') {
+      var hour = hourInTimezone_(now, timezone);
+      if (hour !== null && hour >= 18) {
+        return [intro, '前日18時の配信開始時刻を過ぎているため、発行でき次第順次お送りします。', missing];
+      }
+    }
+    return PER_BOOKING_CODE_NOTICE_LINES;
+  }
+
+  var MAIL_DARK_CSS_ = '@media (prefers-color-scheme: dark){' +
+    '.m-bg{background-color:#121212 !important}' +
+    '.m-card{background-color:#1e1e1e !important;color:#f1f1f1 !important;border-color:#555 !important}' +
+    '.m-box{background-color:#262626 !important;border-color:#8ab4f8 !important;color:#f1f1f1 !important}' +
+    '.m-muted{color:#c4c4c4 !important}' +
+    '.m-h{border-left-color:#8ab4f8 !important;color:#f1f1f1 !important}' +
+    '.m-a{color:#8ab4f8 !important}' +
+    '}';
+
+  /* HTML: 1列・表組み・本文16px・インラインstyle中心（Gmail iOS/Android・Apple Mail）。 */
+  function renderBlocksHtml_(model) {
+    var parts = [];
+    var hero = model.hero;
+    if (model.lead) parts.push(htmlParagraphs_(model.lead, 'margin-bottom:12px;'));
+    if (hero) {
+      parts.push(
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="m-box" style="margin:0 0 20px;border:2px solid #0b57d0;border-radius:10px;background-color:#eef3fd;color:#1a1a1a;">' +
+        '<tr><td style="padding:16px;">' +
+        '<p style="margin:0 0 6px;font-size:16px;font-weight:bold;">' + escapeHtml_(hero.kicker) + '</p>' +
+        (hero.dateText ? '<p style="margin:0;font-size:24px;line-height:1.3;font-weight:bold;">' + escapeHtml_(hero.dateText) + '</p>' : '') +
+        (hero.timeText ? '<p style="margin:2px 0 0;font-size:24px;line-height:1.3;font-weight:bold;">' + escapeHtml_(hero.timeText) + '</p>' : '') +
+        (hero.meta && hero.meta.length ? '<p style="margin:10px 0 0;font-size:16px;line-height:1.6;">' + hero.meta.map(escapeHtml_).join('<br>') + '</p>' : '') +
+        '</td></tr></table>'
+      );
+    }
+    model.blocks.forEach(function (b) {
+      if (b.type === 'heading') {
+        parts.push('<h2 class="m-h" style="margin:24px 0 10px;padding:2px 0 2px 10px;border-left:4px solid #0b57d0;font-size:18px;line-height:1.4;">' + escapeHtml_(b.text) + '</h2>');
+      } else if (b.type === 'p') {
+        parts.push(htmlParagraphs_(b.text, b.small ? 'font-size:14px;' : ''));
+      } else if (b.type === 'kv') {
+        parts.push('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 8px;">' +
+          b.rows.map(function (r) {
+            return '<tr><td valign="top" style="padding:4px 10px 4px 0;font-size:14px;line-height:1.5;white-space:nowrap;" class="m-muted">' + escapeHtml_(r[0]) + '</td>' +
+              '<td valign="top" style="padding:4px 0;font-size:16px;line-height:1.5;">' + escapeHtml_(r[1]) + '</td></tr>';
+          }).join('') + '</table>');
+      } else if (b.type === 'steps') {
+        b.items.forEach(function (s, i) {
+          parts.push('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;">' +
+            '<tr><td valign="top" width="36" style="padding:2px 10px 0 0;"><div style="width:30px;height:30px;line-height:30px;text-align:center;border:2px solid #0b57d0;border-radius:15px;font-size:16px;font-weight:bold;">' + (i + 1) + '</div></td>' +
+            '<td valign="top"><p style="margin:0 0 4px;font-size:17px;font-weight:bold;line-height:1.4;">' + escapeHtml_(s.title) + '</p>' +
+            (s.lines || []).map(function (l) { return htmlParagraphs_(l); }).join('') +
+            (s.rows && s.rows.length ? '<table role="presentation" cellpadding="0" cellspacing="0" border="0">' + s.rows.map(function (r) {
+              return '<tr><td valign="top" style="padding:2px 10px 2px 0;font-size:14px;white-space:nowrap;" class="m-muted">' + escapeHtml_(r[0]) + '</td><td valign="top" style="padding:2px 0;font-size:16px;line-height:1.5;">' + escapeHtml_(r[1]) + '</td></tr>';
+            }).join('') + '</table>' : '') +
+            (s.secret ? '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="m-box" style="margin:8px 0 0;border:2px solid #0b57d0;border-radius:8px;background-color:#eef3fd;color:#1a1a1a;"><tr><td style="padding:10px 12px;">' +
+              '<p style="margin:0;font-size:14px;font-weight:bold;">' + escapeHtml_(s.secret.label) + '</p>' +
+              '<p style="margin:2px 0 6px;font-size:24px;font-weight:bold;letter-spacing:2px;font-family:Menlo,Consolas,monospace;word-break:break-all;">' + escapeHtml_(s.secret.value) + '</p>' +
+              (s.secret.note ? '<p style="margin:0;font-size:14px;line-height:1.5;">' + escapeHtml_(s.secret.note) + '</p>' : '') +
+              '</td></tr></table>' : '') +
+            '</td></tr></table>');
+        });
+      } else if (b.type === 'callout') {
+        parts.push('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="m-box" style="margin:0 0 14px;border:2px solid #0b57d0;border-radius:8px;background-color:#eef3fd;color:#1a1a1a;"><tr><td style="padding:12px 14px;">' +
+          '<p style="margin:0 0 6px;font-size:16px;font-weight:bold;">' + escapeHtml_(b.title) + '</p>' +
+          htmlParagraphs_(b.text, 'font-size:15px;line-height:1.6;') + '</td></tr></table>');
+      } else if (b.type === 'button') {
+        var href = safeHttpsUrl_(b.url);
+        parts.push(href
+          ? '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 14px;max-width:360px;"><tr>' +
+            '<td align="center" bgcolor="#0b57d0" style="background-color:#0b57d0;border:2px solid #0842a0;border-radius:10px;">' +
+            '<a href="' + escapeHtml_(href) + '" target="_blank" rel="noopener" style="display:block;padding:14px 18px;color:#ffffff;font-size:17px;font-weight:bold;line-height:1.4;text-align:center;text-decoration:none;">' + escapeHtml_(b.label) + '</a></td></tr></table>'
+          : '');
+      } else if (b.type === 'links') {
+        parts.push('<p style="margin:0 0 8px;font-size:16px;line-height:1.8;">' + b.items.map(function (l) {
+          var href2 = safeHttpsUrl_(l.url);
+          return href2 ? '<a class="m-a" href="' + escapeHtml_(href2) + '" target="_blank" rel="noopener" style="color:#0b57d0;text-decoration:underline;">' + escapeHtml_(l.htmlLabel || l.label) + '</a>' : '';
+        }).filter(Boolean).join('<br>') + '</p>');
+      }
+    });
+    var footer = (model.footer || []).map(function (l) { return escapeHtml_(l); }).join('<br>');
+    return '<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark">' +
+      '<title>' + escapeHtml_(model.title) + '</title><style>' + MAIL_DARK_CSS_ + '</style></head>' +
+      '<body class="m-bg" style="margin:0;padding:0;background-color:#f4f4f4;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,\'Hiragino Sans\',\'Yu Gothic\',Meiryo,sans-serif;font-size:16px;line-height:1.7;">' +
+      '<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#f4f4f4;">' + escapeHtml_(model.preheader || '') + '&zwnj;&nbsp;&zwnj;&nbsp;</div>' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="m-bg" style="background-color:#f4f4f4;"><tr><td align="center" style="padding:12px;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="m-card" style="max-width:600px;background-color:#ffffff;border:1px solid #dddddd;border-radius:10px;color:#1a1a1a;"><tr><td style="padding:20px 16px;">' +
+      parts.join('') +
+      (footer ? '<p class="m-muted" style="margin:20px 0 0;padding-top:12px;border-top:1px solid #cccccc;font-size:14px;line-height:1.7;color:#555555;">' + footer + '</p>' : '') +
+      '</td></tr></table></td></tr></table></body></html>';
+  }
+
+  /* text/plain: HTMLと同じブロック列から作る。URLは省略せず全文を載せる（HTML非対応環境で手順とリンクが読める）。 */
+  function renderBlocksText_(model) {
+    var lines = [];
+    function gap() { if (lines.length && lines[lines.length - 1] !== '') lines.push(''); }
+    if (model.greeting) { lines.push(model.greeting); gap(); }
+    if (model.lead) { lines.push(model.lead); gap(); }
+    if (model.hero) {
+      lines.push(model.hero.kicker);
+      if (model.hero.textLine) lines.push(model.hero.textLine);
+      (model.hero.meta || []).forEach(function (m) { lines.push(m); });
+      gap();
+    }
+    model.blocks.forEach(function (b) {
+      if (b.type === 'heading') { gap(); lines.push('■ ' + b.text); }
+      else if (b.type === 'p') { Array.prototype.push.apply(lines, textLines_(b.text)); gap(); }
+      else if (b.type === 'kv') { b.rows.forEach(function (r) { lines.push(r[0] + ': ' + r[1]); }); gap(); }
+      else if (b.type === 'steps') {
+        b.items.forEach(function (s, i) {
+          lines.push((i + 1) + '. ' + s.title);
+          (s.lines || []).forEach(function (l) { textLines_(l).forEach(function (x) { lines.push('   ' + x); }); });
+          (s.rows || []).forEach(function (r) { lines.push('   ' + r[0] + ': ' + r[1]); });
+          if (s.secret) {
+            lines.push('   ' + s.secret.label + ': ' + s.secret.value);
+            if (s.secret.note) lines.push('   ' + s.secret.note);
+          }
+        });
+        gap();
+      } else if (b.type === 'callout') { lines.push('【' + b.title + '】'); Array.prototype.push.apply(lines, textLines_(b.text)); gap(); }
+      else if (b.type === 'button') { var u = safeHttpsUrl_(b.url); if (u) { lines.push('▼ ' + b.label); lines.push(u); gap(); } }
+      else if (b.type === 'links') { b.items.forEach(function (l) { var u2 = safeHttpsUrl_(l.url); if (u2) lines.push(l.label + ': ' + u2); }); gap(); }
+    });
+    (model.footer || []).forEach(function (l) { lines.push(l); });
+    return lines.filter(function (l, i) { return !(l === '' && (i === 0 || lines[i - 1] === '')); })
+      .join('\n').replace(/\n+$/, '');
+  }
+
   /*
    * CONFIRMED（予約確定メール）。件名で確定が分かるようにする。
    * 料金は本文へ出さない（Issue #271本文の指示どおり据え置き。Issue #342で仮予約受付
@@ -477,35 +698,65 @@ var BookingMailTemplates = (function () {
    */
   function buildConfirmedMail(record, config, options) {
     /* Issue #881: options.perBookingCode===true（新方式対象予約）のときだけ予約別暗証番号の別送案内を足す。
-       確定メールは従来から暗証番号を載せない（旧共通コードも出さない）。それ以外の予約の本文は不変。 */
+       確定メールは従来から暗証番号を載せない（旧共通コードも出さない）。
+       Issue #901: スマホで「いつ・どこ・どう入る・何を待つ」が数秒で分かる構成へ再設計。
+       件名と冒頭に日時、次のアクション（別メールで届く入室情報）を動的に説明し、
+       キーボックス・設備・原状復帰の長文は来場案内メールとご利用案内ページへ集約する。 */
     var perBookingCode = !!(options && options.perBookingCode === true);
     var brandLabel = Booking.getBrandLabel(record.brand);
     var timezone = config.timezone;
+    var now = options && options.now && typeof options.now.getTime === 'function' ? options.now : new Date();
 
-    var subject = '【' + brandLabel + '】ご予約が確定しました';
-    var body = joinNonEmpty_([
-      record.name + ' 様',
-      '',
-      'ご予約が確定しましたのでお知らせいたします。',
-      '',
-      '予約ID: ' + record.bookingId,
-      dateTimeLine_(record, config.timezone),
-      durationLine_(record),
+    var when = subjectWhenLabel_(record, timezone, true);
+    var subject = '【' + brandLabel + '】予約確定' + (when ? '｜' + when : '');
+
+    var dateText = BookingAvailability.formatDateJa(record.date, timezone);
+    var timeText = BookingAvailability.formatTimeRangeJa(record.startAt, record.endAt, timezone);
+    var duration = BookingAvailability.formatDurationJa(record.startAt, record.endAt);
+    var meta = [
       'ブランド: ' + brandLabel,
-      '利用人数: ' + record.people,
-      record.paymentMethod ? '支払方法: ' + record.paymentMethod : '',
-      '',
-      'ご利用時は、施設の利用ルールを守り、利用後は原状回復をお願いいたします。設備・備品の取り扱いには十分ご注意ください。',
-      '',
-      accessGuideNoticeLine_(record, timezone),
-      perBookingCode ? PER_BOOKING_CODE_NOTICE_LINE : '',
-      'ご不明点やキャンセル・変更のご希望は下記までご連絡ください。',
-      contactLine_(config),
-      guideLine_(record),
-      signatureLines_(record)
-    ]);
+      record.people ? '利用人数: ' + record.people : '',
+      record.paymentMethod ? '支払方法: ' + record.paymentMethod : ''
+    ].filter(Boolean);
 
-    return { subject: subject, body: body };
+    var noticeLine = accessGuideNoticeLine_(record, timezone, now);
+    var blocks = [
+      { type: 'heading', text: '次にすること' },
+      { type: 'p', text: noticeLine }
+    ];
+    if (perBookingCode) {
+      blocks.push({
+        type: 'callout',
+        title: 'ご予約専用の入室暗証番号は別メールです',
+        text: perBookingCodeNoticeLines_(record, timezone, now, 'confirmed').join('\n')
+      });
+    }
+    blocks.push(
+      { type: 'p', text: 'ご利用ルール・原状回復のお願いは、下記のご利用案内でご確認ください。', small: true },
+      { type: 'heading', text: 'ご予約情報・お問い合わせ' },
+      { type: 'kv', rows: [['予約ID', record.bookingId]].concat(duration ? [['利用時間', duration]] : []) },
+      { type: 'p', text: 'ご不明点やキャンセル・変更のご希望は下記までご連絡ください。' + (config && config.contactEmail ? '\nお問い合わせ: ' + config.contactEmail : '') },
+      { type: 'links', items: [{ label: 'ご利用案内', url: Booking.getBrandProfile(record.brand).guideUrl }] }
+    );
+
+    var footer = signatureLines_(record).split('\n');
+    var preheader = dateText + (timeText ? ' ' + timeText : '') + ' のご予約を承りました。' +
+      (perBookingCode ? '入室暗証番号は別メールでお送りします。' : '来場方法は別メールでご案内します。');
+    var model = {
+      title: subject,
+      preheader: preheader,
+      greeting: record.name + ' 様',
+      hero: {
+        kicker: 'ご予約が確定しました',
+        dateText: dateText,
+        timeText: timeText,
+        textLine: dateTimeLine_(record, timezone),
+        meta: meta
+      },
+      blocks: blocks,
+      footer: footer
+    };
+    return { subject: subject, body: renderBlocksText_(model), htmlBody: renderBlocksHtml_(model) };
   }
 
   /*
@@ -562,8 +813,8 @@ var BookingMailTemplates = (function () {
   }
 
   /* Issue #412: 利用日がtimezone基準で今日か（確定メールの来場案内の一文の分岐用）。 */
-  function isUseDateToday_(record, timezone) {
-    var today = BookingAvailability.formatDateInTimezone(new Date(), timezone);
+  function isUseDateToday_(record, timezone, now) {
+    var today = BookingAvailability.formatDateInTimezone(now || new Date(), timezone);
     var useDate = record.date && typeof record.date.getTime === 'function'
       ? BookingAvailability.formatDateInTimezone(record.date, timezone)
       : String(record.date || '');
@@ -574,12 +825,12 @@ var BookingMailTemplates = (function () {
    * 確定メールの来場案内に関する一文。当日予約は確定直後に即時送信、翌日以降は前日に送る
    * （Issue #412。Issue #414で鍵承認を廃止したため、Stripe予約も同じ文言）。
    */
-  function accessGuideNoticeLine_(record, timezone) {
+  function accessGuideNoticeLine_(record, timezone, now) {
     /*
      * Issue #412: 利用日が当日の予約は、確定直後に来場案内を即時送信する（前日案内は届かない）。
      * 「利用日前日に送る」とは書かない。
      */
-    if (isUseDateToday_(record, timezone)) {
+    if (isUseDateToday_(record, timezone, now)) {
       return 'このあと、来場方法・キーボックス等の詳細案内を別途メールでお送りします。';
     }
     return '来場方法・キーボックス等の詳細案内は、利用日前日に別途メールでお送りします。';
@@ -855,39 +1106,91 @@ var BookingMailTemplates = (function () {
        （separateCodeNotice）は新方式の判定に影響しない。オートロック用キーボックス位置・番号は従来どおり残す。 */
     var perBookingCode = !!(options && options.perBookingCode === true);
     var separateCodeLine = perBookingCode
-      ? PER_BOOKING_CODE_NOTICE_LINE
+      ? ''
       : (options && options.separateCodeNotice === true && record.brand === 'snb'
         ? '入室用の暗証番号は、別のメールでお送りします。' : '');
 
-    var subject = '【' + brandLabel + '】' + dayWord + 'のご利用案内';
-    var body = joinNonEmpty_([
-      record.name + ' 様',
-      '',
-      dayWord + 'のご予約について、来場方法をご案内します。',
-      '',
-      '予約ID: ' + record.bookingId,
-      dateTimeLine_(record, config.timezone),
-      'ブランド: ' + brandLabel,
-      '',
-      '--- 来場方法 ---',
-      guide.address ? '住所: ' + guide.address : '',
-      guide.building ? '建物: ' + guide.building : '',
-      guide.room ? '部屋番号: ' + guide.room : '',
-      guide.entrance ? '入口からのご案内: ' + guide.entrance : '',
-      guide.keyboxLocation ? 'キーボックス位置: ' + guide.keyboxLocation : '',
-      guide.entryMethod ? '入室方法: ' + guide.entryMethod : '',
-      separateCodeLine,
-      secretLine_('キーボックス番号', guide.keyboxNumber),
-      perBookingCode ? '' : secretLine_('解錠コード', guide.unlockCode),
-      reminderGuideUrl ? '利用案内ページ: ' + reminderGuideUrl : '',
-      guide.pdfUrl ? '案内PDF: ' + guide.pdfUrl : '',
-      '',
-      'ご利用時は忘れ物・原状回復にご注意ください。',
-      contactLine_(config),
-      signatureLines_(record)
-    ]);
+    /* Issue #901: 件名は「本日/明日の来場案内｜11/12(木) 9:30」。日付・開始時刻が取れない場合は省く。 */
+    var when = subjectWhenLabel_(record, timezone, false);
+    var subject = '【' + brandLabel + '】' + dayWord + 'の来場案内' + (when ? '｜' + when : '');
 
-    return { subject: subject, body: body };
+    var dateText = BookingAvailability.formatDateJa(record.date, timezone);
+    var timeText = BookingAvailability.formatTimeRangeJa(record.startAt, record.endAt, timezone);
+
+    /* 地図: 設定された地図URL（ACCESS_GUIDE_MAP_URL）を優先。無ければ、設定済みの住所・建物名から
+       地図アプリの検索リンクを作る（住所自体が未設定なら地図リンクは出さない＝場所を推測しない）。 */
+    var mapUrl = safeHttpsUrl_(guide.mapUrl) || (guide.address
+      ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(guide.address + (guide.building ? ' ' + guide.building : ''))
+      : '');
+
+    var placeRows = [];
+    if (guide.address) placeRows.push(['住所', guide.address]);
+    if (guide.building) placeRows.push(['建物', guide.building]);
+    if (guide.room) placeRows.push(['部屋番号', guide.room]);
+
+    /* キーボックス番号は「鍵の保管箱」の番号。予約固有の入室暗証番号（別メール）・旧共通の解錠コードとは
+       別物であることを、番号の直下に必ず明記する（Issue #901。取り違え防止）。 */
+    var keyboxNote = perBookingCode
+      ? '※これは鍵を保管する箱の番号です。入室用の暗証番号（別メール）とは別の番号です。'
+      : '※これは鍵を保管する箱の番号です。入室用の暗証番号・解錠コードとは別の番号です。';
+
+    var step1 = { title: '建物の正面入口へ', lines: [], rows: [] };
+    if (guide.entrance) step1.rows.push(['入口からのご案内', guide.entrance]);
+    var step2 = { title: '指定位置のキーボックスを開ける', lines: [], rows: [], secret: { label: 'キーボックス番号', value: guide.keyboxNumber ? guide.keyboxNumber : '（未設定）', note: keyboxNote } };
+    if (guide.keyboxLocation) step2.rows.push(['キーボックス位置', guide.keyboxLocation]);
+    var step3 = { title: '鍵で解錠して入室', lines: [], rows: [] };
+    if (guide.entryMethod) step3.rows.push(['入室方法', guide.entryMethod]);
+    if (!perBookingCode) {
+      step3.secret = { label: '解錠コード', value: guide.unlockCode ? guide.unlockCode : '（未設定）', note: '' };
+    }
+
+    var blocks = [
+      { type: 'heading', text: 'ご利用の場所' },
+      { type: 'kv', rows: placeRows },
+      { type: 'button', label: '地図を開く', url: mapUrl },
+      { type: 'heading', text: '入室の3ステップ' },
+      { type: 'steps', items: [step1, step2, step3] }
+    ];
+    /* Issue #753: SNB＋ACCESS_KEY_NOTICE_ENABLED のときだけの一行（旧方式の暗証番号別送案内）。手順の直下に置く。 */
+    if (separateCodeLine) blocks.push({ type: 'p', text: separateCodeLine });
+    var detailLinks = [];
+    if (reminderGuideUrl) detailLinks.push({ label: '利用案内ページ', htmlLabel: '写真つきの詳しい案内を見る（利用案内ページ）', url: reminderGuideUrl });
+    if (guide.pdfUrl) detailLinks.push({ label: '案内PDF', htmlLabel: '案内PDFを開く', url: guide.pdfUrl });
+    blocks.push({ type: 'heading', text: 'キーボックスの場所が分かりにくいとき' });
+    blocks.push({ type: 'p', text: '下記の案内で、キーボックスの位置や入口までの道順をご確認ください。' });
+    blocks.push({ type: 'links', items: detailLinks });
+    blocks.push(
+      { type: 'heading', text: 'ご退室時' },
+      { type: 'p', text: '施錠して鍵をキーボックスへ戻し、備品は原状に戻してください。' },
+      { type: 'heading', text: 'ご予約情報・お問い合わせ' },
+      { type: 'kv', rows: [['予約ID', record.bookingId], ['ブランド', brandLabel]] }
+    );
+    if (config && config.contactEmail) blocks.push({ type: 'p', text: 'お問い合わせ: ' + config.contactEmail });
+
+    var model = {
+      title: subject,
+      preheader: dayWord + 'のご予約の来場方法です。' + (perBookingCode ? '入室暗証番号は別メールで届きます。' : ''),
+      greeting: record.name + ' 様',
+      lead: dayWord + 'のご予約について、来場方法をご案内します。',
+      hero: {
+        kicker: dayWord + 'の来場案内',
+        dateText: dateText,
+        timeText: timeText,
+        textLine: dateTimeLine_(record, timezone),
+        meta: []
+      },
+      blocks: blocks,
+      footer: signatureLines_(record).split('\n')
+    };
+    /* ファーストビューは日時・住所・部屋・地図。暗証番号の別送案内は、その直後（入室手順の前）に置く。 */
+    if (perBookingCode) {
+      model.blocks.splice(3, 0, {
+        type: 'callout',
+        title: '入室用の暗証番号は別メールです',
+        text: perBookingCodeNoticeLines_(record, timezone, now || new Date(), 'reminder').join('\n')
+      });
+    }
+    return { subject: subject, body: renderBlocksText_(model), htmlBody: renderBlocksHtml_(model) };
   }
 
   /*

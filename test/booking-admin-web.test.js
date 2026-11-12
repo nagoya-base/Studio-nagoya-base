@@ -144,7 +144,7 @@ test('adminConfirmBooking: 既存confirmBookingと同じ結果になる（PENDIN
   assert.strictEqual(found.record.status, 'CONFIRMED', 'adminConfirmBookingはconfirmBookingと同じくstatusをCONFIRMEDへ進めるべき');
   assert.ok(found.record.confirmedAt, 'confirmedAtが記録されるべき（confirmBooking本体の挙動）');
 
-  var confirmedMails = mailApp._sentEmails.filter(function (mail) { return mail.subject && mail.subject.indexOf('予約が確定しました') !== -1; });
+  var confirmedMails = mailApp._sentEmails.filter(function (mail) { return mail.subject && mail.subject.indexOf('予約確定') !== -1; });
   assert.strictEqual(confirmedMails.length, 1, '確定メールが1通送られるべき（confirmBookingへの委譲が実際に効いていることの確認）');
 });
 
@@ -684,7 +684,7 @@ test('adminReviveExpiredCardBooking: 決済リンク未送信(paymentLinkSentAt�
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'PAYMENT_LINK_NOT_SENT');
   assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'EXPIRED');
-  assert.strictEqual(mailsWithSubject_(mailApp, '予約が確定しました').length, 0);
+  assert.strictEqual(mailsWithSubject_(mailApp, '予約確定').length, 0);
 });
 
 test('adminReviveExpiredCardBooking: 入金確認なし(true以外)は復活せずEXPIREDのまま', function () {
@@ -711,12 +711,12 @@ test('adminReviveExpiredCardBooking: 入金確認済み・枠が空き→CONFIRM
   var record = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
   assert.strictEqual(record.status, 'CONFIRMED');
   assert.ok(record.confirmedMailSentAt, 'confirmedMailSentAtが記録されるべき');
-  assert.strictEqual(mailsWithSubject_(mailApp, '予約が確定しました').length, 1);
+  assert.strictEqual(mailsWithSubject_(mailApp, '予約確定').length, 1);
 
   var again = ctx.sandbox.adminReviveExpiredCardBooking(bookingId, true);
   assert.strictEqual(again.success, false);
   assert.strictEqual(again.error.code, 'INVALID_TRANSITION');
-  assert.strictEqual(mailsWithSubject_(mailApp, '予約が確定しました').length, 1, '再操作で確定メールを二重送信しない');
+  assert.strictEqual(mailsWithSubject_(mailApp, '予約確定').length, 1, '再操作で確定メールを二重送信しない');
 });
 
 test('adminReviveExpiredCardBooking: 入金確認済みでも枠が埋まっていればSLOT_UNAVAILABLEで復活せず、EXPIRED維持・確定メールなし', function () {
@@ -731,7 +731,7 @@ test('adminReviveExpiredCardBooking: 入金確認済みでも枠が埋まって�
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.error.code, 'SLOT_UNAVAILABLE');
   assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'EXPIRED');
-  assert.strictEqual(mailsWithSubject_(mailApp, '予約が確定しました').length, 0);
+  assert.strictEqual(mailsWithSubject_(mailApp, '予約確定').length, 0);
 });
 
 test('adminReviveExpiredCardBooking: 利用開始時刻を過ぎていれば復活せずEXPIRED維持', function () {
@@ -1394,7 +1394,7 @@ test('Issue #396 adminConfirmBooking: 旧方式カード予約は決済リンク
   assert.strictEqual(result.error.code, 'PAYMENT_LINK_NOT_SENT');
   assert.strictEqual(ctx.sandbox.confirmBooking(bookingId).error.code, 'PAYMENT_LINK_NOT_SENT', 'Spreadsheetメニュー経路（confirmBooking）も同じ');
   assert.strictEqual(ctx.sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record.status, 'PENDING');
-  var confirmedMails = mailApp._sentEmails.filter(function (m) { return m.subject && m.subject.indexOf('予約が確定しました') !== -1; });
+  var confirmedMails = mailApp._sentEmails.filter(function (m) { return m.subject && m.subject.indexOf('予約確定') !== -1; });
   assert.strictEqual(confirmedMails.length, 0);
 });
 
@@ -1537,7 +1537,7 @@ test('Issue #398: 現金・PayPayは試行ID予約の有無にかかわらず従
 /* ---------- Issue #418: Admin確定時の確定メール ---------- */
 
 function confirmedMailsOf_(mailApp) {
-  return mailApp._sentEmails.filter(function (mail) { return mail.subject && mail.subject.indexOf('予約が確定しました') !== -1; });
+  return mailApp._sentEmails.filter(function (mail) { return mail.subject && mail.subject.indexOf('予約確定') !== -1; });
 }
 
 ['現金', 'PayPay'].forEach(function (paymentMethod) {

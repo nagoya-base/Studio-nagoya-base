@@ -369,13 +369,15 @@ function sendReminderTestMail_impl_(bookingId, baseDateString) {
   }
 
   try {
-    MailApp.sendEmail({
+    var testMessage = {
       to: adminEmail,
       subject: '[TEST] ' + mail.subject,
       body: mail.body,
       name: mailConfig.displayName,
       replyTo: mailConfig.replyTo
-    });
+    };
+    if (typeof mail.htmlBody === 'string' && mail.htmlBody) testMessage.htmlBody = mail.htmlBody;
+    MailApp.sendEmail(testMessage);
   } catch (sendError) {
     var sanitized = BookingMailer.sanitizeErrorMessage(
       String((sendError && sendError.message) || sendError),

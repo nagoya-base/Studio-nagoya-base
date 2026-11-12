@@ -177,7 +177,8 @@ test('getAccessGuideConfig: Script Propertiesが空ならすべて空文字（en
     unlockCode: '',
     entryMethod: '',
     url: '',
-    pdfUrl: ''
+    pdfUrl: '',
+    mapUrl: ''
   });
 });
 

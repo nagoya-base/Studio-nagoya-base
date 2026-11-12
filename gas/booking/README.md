@@ -3935,6 +3935,7 @@ Booking Web App側からは呼び出せない）。
 | `ACCESS_GUIDE_UNLOCK_CODE`（Issue #271。秘密値） | - | 解錠コード。同上 |
 | `ACCESS_GUIDE_URL`（Issue #271） | - | 利用案内ページURL。同上 |
 | `ACCESS_GUIDE_PDF_URL`（Issue #271） | - | キーボックス案内PDF等のURL。**これだけは任意**（「必要に応じて」の項目のため未設定でも送信は失敗にしない） |
+| `ACCESS_GUIDE_MAP_URL`（Issue #901） | - | 来場案内の「地図を開く」ボタンのリンク先（`https://`のみ）。**任意**。未設定なら設定済みの住所・建物名から地図アプリの検索リンクを作る（住所も未設定なら地図ボタンは出さない） |
 | `STRIPE_SECRET_KEY`（Issue #341 PR-B。秘密値） | - | StripeのAPI秘密鍵。**未設定または`STRIPE_CHECKOUT_ENABLED`が`'true'`でない限り、`beginCardCheckout`は`CHECKOUT_DISABLED`/`STRIPE_NOT_CONFIGURED`を返し、Stripe APIを一切呼ばない**（fail-closed。本番はオーナーの明示承認まで意図的に未設定/無効のままにする）。実値はGitHub・台帳・ログへ一切記載しない。テスト時はStripeのテストモードのキー（`sk_test_...`）のみ使用する |
 | `STRIPE_CHECKOUT_ENABLED`（Issue #341 PR-B） | - | 新しいCheckout即時決済導線のキルスイッチ。**値が厳密に`'true'`の文字列である場合のみ有効化**（他のいずれの値・未設定も無効。`BookingConfig.getStripeConfig`）。本番でこれを`true`にするのは、PR-C（Webhook自動確定）と連携可能になった後、オーナーの明示承認を得てから行う運用上の切り替えであり、**本PR-Bの実装自体はこの値を変更しない** |
 | `STRIPE_CHECKOUT_SUCCESS_URL` / `STRIPE_CHECKOUT_CANCEL_URL`（Issue #341 PR-B） | - | Checkout Session（`success_url`/`cancel_url`）の戻り先URL。いずれか未設定の場合も`beginCardCheckout`は`STRIPE_NOT_CONFIGURED`でfail-closedに拒否する |
@@ -8406,3 +8407,14 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 - `startAt`/`endAt` が欠損・不正・終了<=開始の場合は時刻を推測・補完せず `利用時間: 未取得（予約台帳で確認してください）` と表示し、`Logger` に bookingId のみを記録する。通知・予約作成は失敗させない。
 - 対象通知の洗い出し: 予約作成時の管理者通知は SNB / SNB mens / Studio X とも `createBooking` → `notifyNewPendingBooking` の単一経路（通常カード決済の「予約申し込み」文面、承認制・現地払いの「仮予約」文面の両方）のため、この1か所で3ブランドに反映される。オプション承認依頼（`OptionOrderService`）・`BookingAdminAlerts`は予約受付通知ではないため対象外。
 - bookingId・予約者名・利用日・プラン・利用料金・Booking Adminリンクは従来どおり。連絡先などのPIIは追加しない。予約・決済・鍵発行・状態遷移・利用者向けメールは変更なし。
+
+
+## 予約確定・来場案内メールのスマホ向け再設計（Issue #901）
+
+- **対象**: 予約確定メール（`buildConfirmedMail`）・来場案内メール（`buildReminderMail`）。SNB / mens / Studio X 共通ロジックで、ブランド差はブランド名・案内URL・署名のみ。予約・料金・鍵発行・送信タイミング・二重送信防止は変更なし。
+- **形式**: HTML＋text/plainのマルチパート（`MailApp.sendEmail`の`body`と`htmlBody`。テンプレートが`htmlBody`を返したときだけ付ける）。同じブロック列から両方を生成するため必要事項がずれない。1列・表組み・本文16px・`color-scheme: light dark`・ダーク用`@media`・非表示プレヘッダー。外部画像/CSS/スクリプトなし。差し込み値はHTMLエスケープし、`https://`以外はリンクにしない。HTMLでは長いURLをリンク文言にし、text版は全文URL。
+- **件名**: 確定=`【ブランド】予約確定｜11/12(木) 9:30–10:30`、来場案内=`【ブランド】本日の来場案内｜11/12(木) 9:30`（`明日`）。日付が解釈できないときは日時部分を省く。
+- **確定メール**: 冒頭に日時（大）・ブランド・人数・支払方法 → 次にすること（来場詳細は別メール／予約別暗証番号は別メール）→ 予約ID・問い合わせ・ご利用案内リンク。キーボックス・設備・原状復帰の長文は載せない。
+- **暗証番号の別送案内は動的**（`perBookingCodeNoticeLines_`）: 利用日が当日なら「発行でき次第」（前日18時以降を出さない・すでに届いている場合の注記つき）、前日18時以降に確定した翌日予約（確定メール）は「配信開始時刻を過ぎているため発行でき次第」、それ以外は従来の3行（#881）。判定はすべて`config.timezone`基準。
+- **来場案内**: 場所（住所・建物・部屋番号・地図ボタン）→ 入室の3ステップ（正面入口／指定位置のキーボックス／解錠・入室）→ キーボックスの場所が分かりにくいとき（利用案内ページ・案内PDFへの導線）→ 退室 → 予約情報。**キーボックス番号は枠付きのラベル付きで表示し、「入室用の暗証番号（別メール）とは別の番号」と直下に明記**する。旧方式の解錠コードは別ラベル。場所の断定はせず、設定された値だけを表示する。
+- **確認**: `test/booking-mail-mobile-901.test.js`（件名・動的文言・HTML/text一致・エスケープ・秘密値）。実メール確認はPR本文の手順（テスト送信 `sendReminderTestMail`）。

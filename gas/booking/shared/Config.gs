@@ -295,7 +295,9 @@ var BookingConfig = (function () {
       unlockCode: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_UNLOCK_CODE') || '',
       entryMethod: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_ENTRY_METHOD') || '',
       url: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_URL') || '',
-      pdfUrl: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_PDF_URL') || ''
+      pdfUrl: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_PDF_URL') || '',
+      /* Issue #901: 地図リンク（任意。https のみ）。未設定なら住所から地図検索リンクを作る。 */
+      mapUrl: PropertiesService.getScriptProperties().getProperty('ACCESS_GUIDE_MAP_URL') || ''
     };
   }
 
