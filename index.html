@@ -204,11 +204,7 @@
     <!-- 運用メモ: 料金や利用規約を更新した場合は、_data/news_ja.yml に告知を追加する（トップは最新3件、全件は /news/） -->
     <div class="news-list">
       {% for item in site.data.news_ja limit:3 %}
-      <div class="news-item">
-        <span class="news-date">{{ item.date }}</span>
-        <span class="news-badge">{{ item.type }}</span>
-        <span class="news-text">{{ item.body }}</span>
-      </div>
+      {% include news_item_ja.html item=item %}
       {% endfor %}
     </div>
     <p class="pricing-note"><a href="{{ '/news/' | relative_url }}" data-analytics-event="cta_click" data-analytics-type="news_list" data-analytics-location="news">お知らせ一覧（過去のお知らせ）を見る →</a></p>

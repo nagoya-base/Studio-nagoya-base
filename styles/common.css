@@ -967,6 +967,53 @@ details.faq-item summary:hover {
 .news-text {
   color: var(--text-muted);
   line-height: 1.7;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.news-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* お知らせ一覧ページは全文表示（内部スクロールなし） */
+.news-list--full {
+  max-height: none;
+  overflow: visible;
+}
+
+/* スマホ: 日付+ラベルを上段、見出し・本文を下段に縦積み */
+@media (max-width: 767px) {
+  .news-list {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .news-item {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 6px 12px;
+    padding: 16px;
+  }
+
+  .news-date {
+    grid-column: 1;
+  }
+
+  .news-badge {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .news-text {
+    grid-column: 1 / -1;
+  }
+
+  .news-title {
+    display: block;
+    margin-bottom: 4px;
+  }
 }
 
 /* =====================

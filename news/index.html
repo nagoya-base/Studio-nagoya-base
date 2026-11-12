@@ -55,13 +55,9 @@
     <p class="section-subtitle">News</p>
 
     <!-- 運用メモ: 料金や利用規約を更新した場合は、_data/news_ja.yml に告知を追加する（トップは最新3件、全件はこのページ） -->
-    <div class="news-list">
+    <div class="news-list news-list--full">
       {% for item in site.data.news_ja %}
-      <div class="news-item">
-        <span class="news-date">{{ item.date }}</span>
-        <span class="news-badge">{{ item.type }}</span>
-        <span class="news-text">{{ item.body }}</span>
-      </div>
+      {% include news_item_ja.html item=item %}
       {% endfor %}
     </div>
   </div>
