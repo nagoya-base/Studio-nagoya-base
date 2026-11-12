@@ -166,7 +166,7 @@ function createWorld(opts) {
         if (w.mailHook) w.mailHook(m);
         if (w.mailMode === 'notSent') { var e = new Error('QUOTA'); e.notSent = true; e.alertCode = 'DELIVER_FAILED'; throw e; }
         if (w.mailMode === 'throwUnknown') throw new Error('NETWORK_CUT'); // 相手に届いたか不明な例外
-        w.userMails.push({ to: m.to, subject: m.subject, body: m.body, name: m.name, replyTo: m.replyTo });
+        w.userMails.push({ to: m.to, subject: m.subject, body: m.body, htmlBody: m.htmlBody, name: m.name, replyTo: m.replyTo });
         if (w.mailMode === 'sendThenThrow') throw new Error('RESPONSE_LOST'); // 送信は成功したが応答を失った
       },
       resolveRecipient: function (ref) {

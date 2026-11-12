@@ -672,3 +672,89 @@ test('通知の取りこぼし防止(再レビュー指摘): 再試行上限到�
   assert.strictEqual(w.userMailAttempts, attempts, '利用者メールは再送しない');
   assert.strictEqual(w.userMails.length, 1);
 });
+
+// ---------------------------------------------------------------- Issue #906: HTML + text/plain
+
+function htmlVisible906(h) { return h.replace(/<style>[\s\S]*?<\/style>/g, '').replace(/<title>[\s\S]*?<\/title>/g, '').replace(/<[^>]+>/g, '\n').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'"); }
+
+test('#906 HTML: 先頭に見出しと大きな等幅数字、直下に有効時間(JST)と対象。件名・プレヘッダーに番号/予約IDを出さない', function () {
+  var st = Infra.deliverySettings({ delivery: H.DELIVERY_CFG });
+  var start = Core.jstToEpochSec('2030-01-11', '09:44'), end = Core.jstToEpochSec('2030-01-11', '12:15');
+  var a = Infra.renderCodeMail({ code: '12345678', startSec: start, endSec: end, kind: 'INITIAL', bookingRef: 'SNB-1', settings: st });
+  var h = a.htmlBody;
+  assert.ok(h.indexOf('<!DOCTYPE html>') === 0);
+  assert.ok(h.indexOf('入室用暗証番号') < h.indexOf('12345678') && h.indexOf('12345678') < h.indexOf('有効時間：') && h.indexOf('有効時間：') < h.indexOf('対象：'));
+  assert.ok(/letter-spacing:4px;font-family:Menlo/.test(h) && /font-size:34px/.test(h));
+  assert.ok(h.indexOf('有効時間：2030年1月11日 9:44 〜 2030年1月11日 12:15（JST）') !== -1);
+  assert.ok(h.indexOf('対象：' + H.DELIVERY_CFG.facilityLabel + '（予約番号 SNB-1）') !== -1);
+  assert.strictEqual(a.subject.indexOf('12345678'), -1);
+  assert.strictEqual(a.subject.indexOf('SNB-1'), -1);
+  // レビュー(P2): 受信トレイのスニペットは本文冒頭から抽出される。安全な固定文を先頭に置き、番号・予約IDを含めない
+  var pre = h.match(/<body[^>]*><div style="display:none[^>]*>([\s\S]*?)<\/div>/);
+  assert.ok(pre, '本文冒頭に非表示プレヘッダー');
+  var preText = pre[1].replace(/&zwnj;|&nbsp;/g, '');
+  assert.ok(preText.length > 0 && preText.indexOf('12345678') === -1 && preText.indexOf('SNB-1') === -1 && !/\d{4}/.test(preText), 'プレヘッダー文面に番号・予約ID・日時を含めない');
+  assert.ok(h.indexOf('<body') < h.indexOf('display:none') && h.indexOf('display:none') < h.indexOf('12345678'), '番号より前にプレヘッダー');
+  var c = Infra.renderCodeMail({ code: '87654321', startSec: start, endSec: end, kind: 'CHANGE', previousInvalidated: true, bookingRef: 'SNB-9', settings: st });
+  var preC = c.htmlBody.match(/<body[^>]*><div style="display:none[^>]*>([\s\S]*?)<\/div>/)[1].replace(/&zwnj;|&nbsp;/g, '');
+  assert.ok(preC.length > 0 && preC.indexOf('87654321') === -1 && preC.indexOf('SNB-9') === -1 && c.subject.indexOf('87654321') === -1, '変更メールも同様');
+  assert.ok(!/<img|<link|<script|<iframe|\bsrc=|href=|url\(|@import/i.test(h), '外部リソース・リンク・スクリプトなし');
+  assert.ok(/name="color-scheme" content="light dark"/.test(h) && /max-width:600px/.test(h) && /name="viewport"/.test(h));
+  assert.ok(!/キーボックス|物理キー|バックアップ|手動/.test(h));
+});
+
+test('#906 HTML/text一致: 初回・変更(失効確証あり/なし)で必要情報が両方にあり、変更文言は確証があるときだけ', function () {
+  var st = Infra.deliverySettings({ delivery: H.DELIVERY_CFG });
+  var start = Core.jstToEpochSec('2030-01-11', '09:44'), end = Core.jstToEpochSec('2030-01-11', '12:15');
+  var mk = function (kind, inv) { return Infra.renderCodeMail({ code: '12345678', startSec: start, endSec: end, kind: kind, previousInvalidated: inv, bookingRef: 'SNB-1', settings: st }); };
+  [mk('INITIAL'), mk('CHANGE', true), mk('CHANGE', false)].forEach(function (m) {
+    var vis = htmlVisible906(m.htmlBody);
+    ['12345678', '2030年1月11日 9:44 〜 2030年1月11日 12:15', H.DELIVERY_CFG.facilityLabel, 'SNB-1', H.DELIVERY_CFG.inquiryNote, H.DELIVERY_CFG.senderName,
+      '暗証番号は、ご案内した時間内のみご利用いただけます。', '暗証番号は、ご利用される方以外には共有しないでください。', '入室できない場合や暗証番号についてお困りの際は、お問い合わせください。'].forEach(function (s) {
+      assert.ok(m.body.indexOf(s) !== -1, 'text: ' + s);
+      assert.ok(vis.indexOf(s) !== -1, 'html: ' + s);
+    });
+    assert.strictEqual(m.htmlBody.split(H.DELIVERY_CFG.inquiryNote).length - 1, 1);
+  });
+  assert.ok(htmlVisible906(mk('CHANGE', true).htmlBody).indexOf('以前にお送りした暗証番号は使用できません') !== -1);
+  assert.ok(htmlVisible906(mk('CHANGE', false).htmlBody).indexOf('使用できません') === -1, '失効未確認なら断言しない');
+  assert.ok(htmlVisible906(mk('INITIAL').htmlBody).indexOf('以前にお送りした') === -1);
+});
+
+test('#906 HTML: 差し込み値はエスケープされ、予約番号の注入は載らない', function () {
+  var st = Object.assign({}, Infra.deliverySettings({ delivery: H.DELIVERY_CFG }), { facilityLabel: 'A<b>&"\'', inquiryNote: '<script>x</script>\nline2', senderName: '<i>S' });
+  var start = Core.jstToEpochSec('2030-01-11', '09:44'), end = Core.jstToEpochSec('2030-01-11', '12:15');
+  var m = Infra.renderCodeMail({ code: '12345678', startSec: start, endSec: end, kind: 'INITIAL', bookingRef: 'SNB-1', settings: st });
+  assert.ok(!/<script|<b>|<i>/.test(m.htmlBody));
+  assert.ok(m.htmlBody.indexOf('&lt;script&gt;x&lt;/script&gt;<br>line2') !== -1);
+  assert.ok(m.htmlBody.indexOf('A&lt;b&gt;&amp;&quot;&#39;') !== -1);
+});
+
+test('#906 配送: htmlBodyがsendUserMailへ渡り、宛先・再送・配送記録は従来どおり。ログ/記録/状態に番号を残さない', function () {
+  var w = mailWorld(); var rt = w.runtime();
+  issue(w, rt); open18(w); rt.deliverCycle();
+  assert.strictEqual(w.userMails.length, 1);
+  var um = w.userMails[0];
+  assert.ok(typeof um.htmlBody === 'string' && um.htmlBody.indexOf('<!DOCTYPE html>') === 0);
+  var code = w.createdPasswords[0];
+  assert.ok(um.htmlBody.indexOf(code) !== -1 && um.body.indexOf(code) !== -1);
+  assert.strictEqual(um.subject.indexOf(code), -1);
+  var dump = JSON.stringify(w.props) + JSON.stringify(w.mails) + JSON.stringify(rt.admin('status', {})) + JSON.stringify(rt.admin('inventory', {}));
+  assert.strictEqual(dump.indexOf(code), -1);
+  rt.deliverCycle();
+  assert.strictEqual(w.userMails.length, 1, '重複送信しない');
+});
+
+test('#906 GASシェル: htmlBodyがあればMailAppへ渡し、送信元・replyTo・noReply・枠切れ処理は不変。無ければtextのみ', function () {
+  var HEAD = Reader.REQUIRED_COLUMNS.concat(['name', 'email']);
+  var env = { script: { LEDGER_SPREADSHEET_ID: 'ss-test' }, quota: 5, sent: [], sheets: SheetsFake.create({ headers: HEAD, rows: [] }) };
+  var ctx = loadApp(env);
+  ctx.sba_sendUserMail_({ to: 'g@example.test', subject: 'S', body: 'B', htmlBody: '<p>H</p>', name: 'N', replyTo: 'r@example.test' });
+  assert.strictEqual(env.sent[0].htmlBody, '<p>H</p>');
+  assert.strictEqual(env.sent[0].body, 'B');
+  assert.strictEqual(env.sent[0].replyTo, 'r@example.test');
+  assert.strictEqual(env.sent[0].name, 'N');
+  ctx.sba_sendUserMail_({ to: 'g@example.test', subject: 'S', body: 'B', name: 'N' });
+  assert.strictEqual(env.sent[1].htmlBody, undefined);
+  assert.strictEqual(env.sent[1].noReply, true);
+});
